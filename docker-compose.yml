@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgis/postgis:15-3.4
+    container_name: motor_expansao_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ultra}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ultra123}
+      POSTGRES_DB: ${POSTGRES_DB:-motor_expansao}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/seeds:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ultra}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: infra/Dockerfile.api
+    container_name: motor_expansao_api
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-ultra}:${POSTGRES_PASSWORD:-ultra123}@db:5432/${POSTGRES_DB:-motor_expansao}
+      ENVIRONMENT: development
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    depends_on:
+      db:
+        condition: service_healthy
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  prefect:
+    image: prefecthq/prefect:2-latest
+    container_name: motor_expansao_prefect
+    environment:
+      PREFECT_API_URL: http://0.0.0.0:4200/api
+    ports:
+      - "4200:4200"
+    command: prefect server start --host 0.0.0.0
+    volumes:
+      - prefect_data:/root/.prefect
+
+volumes:
+  pgdata:
+  prefect_data:

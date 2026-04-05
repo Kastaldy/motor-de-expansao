@@ -1,0 +1,230 @@
+import pandas as pd
+
+from hex_enrichment import (
+    calcular_hex_score_final,
+    enriquecer_concorrencia_priorizados,
+    preparar_base_oportunidades,
+    resumir_validacao_nacional,
+    selecionar_areas_prioritarias,
+)
+from ibge_censo import IBGECenso
+from poi_enrichment import POIEnricher
+
+
+def test_detecta_coluna_codigo_municipio_sidra():
+    df = pd.DataFrame(
+        {
+            "D1C": ["5208707", "3509502", "4106902"],
+            "D1N": ["Goiania", "Campinas", "Curitiba"],
+            "V": ["2668.8", "2678.6", "3137.92"],
+        }
+    )
+
+    assert IBGECenso._detectar_coluna_codigo_municipio(df) == "D1C"
+
+
+def test_contar_academias_em_lote_respeita_raio():
+    poi = POIEnricher()
+    df_hex = pd.DataFrame(
+        [
+            {"lat": -16.6800, "lng": -49.2500},
+            {"lat": -16.7000, "lng": -49.3000},
+        ]
+    )
+    academias = [
+        {"osm_id": 1, "lat": -16.6805, "lng": -49.2505},
+        {"osm_id": 2, "lat": -16.8000, "lng": -49.4000},
+    ]
+
+    contagens = poi.contar_academias_em_lote(df_hex, academias=academias, raio_metros=1500)
+
+    assert contagens.tolist() == [1, 0]
+
+
+def test_resumir_validacao_nacional_detecta_anomalias_por_uf():
+    df = pd.DataFrame(
+        [
+            {
+                "uf": "GO",
+                "hex_score": 80.0,
+                "n_academias_osm": 2,
+                "renda_per_capita": 2600.0,
+                "pop_total": 0.0,
+                "pop_18_45": 1000.0,
+                "lat": -16.67,
+                "lng": -49.25,
+            },
+            {
+                "uf": "GO",
+                "hex_score": 60.0,
+                "n_academias_osm": 1,
+                "renda_per_capita": 2600.0,
+                "pop_total": 0.0,
+                "pop_18_45": 900.0,
+                "lat": -16.68,
+                "lng": -49.26,
+            },
+            {
+                "uf": "AC",
+                "hex_score": 50.0,
+                "n_academias_osm": 0,
+                "renda_per_capita": 0.0,
+                "pop_total": 0.0,
+                "pop_18_45": 0.0,
+                "lat": -9.97,
+                "lng": -67.81,
+            },
+            {
+                "uf": "AC",
+                "hex_score": 50.0,
+                "n_academias_osm": 0,
+                "renda_per_capita": 0.0,
+                "pop_total": 0.0,
+                "pop_18_45": 0.0,
+                "lat": -9.98,
+                "lng": -67.82,
+            },
+        ]
+    )
+
+    resumo = resumir_validacao_nacional(df)
+
+    assert resumo["total_hexagonos"] == 4
+    assert resumo["preenchimento_renda_pct"] == 50.0
+    assert resumo["preenchimento_pop_pct"] == 50.0
+    assert any(item["uf"] == "AC" for item in resumo["anomalias_uf"])
+
+
+def test_selecionar_areas_prioritarias_top_20_por_uf():
+    df = pd.DataFrame(
+        [
+            {"hex_id": "go1", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 0, "pop_18_45": 10, "populacao_proxy": 10, "fonte_demografica": "ibge", "hex_score_estrutural": 10},
+            {"hex_id": "go2", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 0, "pop_18_45": 20, "populacao_proxy": 20, "fonte_demografica": "ibge", "hex_score_estrutural": 20},
+            {"hex_id": "go3", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 0, "pop_18_45": 30, "populacao_proxy": 30, "fonte_demografica": "ibge", "hex_score_estrutural": 30},
+            {"hex_id": "go4", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 0, "pop_18_45": 40, "populacao_proxy": 40, "fonte_demografica": "ibge", "hex_score_estrutural": 40},
+            {"hex_id": "go5", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 0, "pop_18_45": 50, "populacao_proxy": 50, "fonte_demografica": "ibge", "hex_score_estrutural": 50},
+            {"hex_id": "sp1", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 0, "pop_18_45": 10, "populacao_proxy": 10, "fonte_demografica": "ibge", "hex_score_estrutural": 15},
+            {"hex_id": "sp2", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 0, "pop_18_45": 20, "populacao_proxy": 20, "fonte_demografica": "ibge", "hex_score_estrutural": 25},
+            {"hex_id": "sp3", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 0, "pop_18_45": 30, "populacao_proxy": 30, "fonte_demografica": "ibge", "hex_score_estrutural": 35},
+            {"hex_id": "sp4", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 0, "pop_18_45": 40, "populacao_proxy": 40, "fonte_demografica": "ibge", "hex_score_estrutural": 45},
+            {"hex_id": "sp5", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 0, "pop_18_45": 50, "populacao_proxy": 50, "fonte_demografica": "ibge", "hex_score_estrutural": 55},
+        ]
+    )
+
+    priorizados, validacao = selecionar_areas_prioritarias(df, top_pct_por_uf=0.20)
+
+    assert set(priorizados["hex_id"]) == {"go5", "sp5"}
+    assert validacao["total_priorizados"] == 2
+    assert validacao["pct_volume_priorizado"] == 20.0
+
+
+def test_enriquecer_concorrencia_priorizados_explicita_erro_sem_zero_silencioso():
+    df = pd.DataFrame(
+        [
+            {"hex_id": "ok1", "lat": -16.68, "lng": -49.25, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "Ok", "hex_score_estrutural": 80.0},
+            {"hex_id": "ok2", "lat": -16.69, "lng": -49.26, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "Ok", "hex_score_estrutural": 70.0},
+            {"hex_id": "er1", "lat": -23.55, "lng": -46.63, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "Erro", "hex_score_estrutural": 90.0},
+        ]
+    )
+
+    class FakePOI:
+        def buscar_academias_bbox_adaptativo(self, **kwargs):
+            if "cidade_SP_2" in kwargs["contexto"]:
+                raise RuntimeError("timeout")
+            return [{"osm_id": 1, "lat": -16.6805, "lng": -49.2505}]
+
+        def contar_academias_em_lote(self, df_hex, academias, raio_metros=1500, chunk_size=50_000):
+            assert raio_metros == 1500
+            return [1] * len(df_hex)
+
+    df_osm, metricas = enriquecer_concorrencia_priorizados(df, poi=FakePOI())
+
+    assert set(df_osm.loc[df_osm["osm_status"] == "ok", "n_academias_osm"].tolist()) == {1}
+    assert df_osm.loc[df_osm["hex_id"] == "er1", "n_academias_osm"].isna().all()
+    assert df_osm.loc[df_osm["hex_id"] == "er1", "osm_status"].iloc[0] == "erro"
+    assert (metricas["status"] == "erro").sum() == 1
+
+
+def test_calcular_hex_score_final_normaliza_globalmente():
+    df = pd.DataFrame(
+        [
+            {"hex_id": "a", "hex_score_estrutural": 90.0, "score_concorrencia": 10.0},
+            {"hex_id": "b", "hex_score_estrutural": 60.0, "score_concorrencia": 50.0},
+            {"hex_id": "c", "hex_score_estrutural": 30.0, "score_concorrencia": 90.0},
+        ]
+    )
+
+    resultado = calcular_hex_score_final(df)
+
+    assert resultado["hex_score_final"].min() == 0.0
+    assert resultado["hex_score_final"].max() == 100.0
+
+
+def test_preparar_base_oportunidades_classifica_regras_e_rankings():
+    df_estrutural = pd.DataFrame(
+        [
+            {"hex_id": "h1", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "3550308", "nome_municipio": "", "renda_per_capita": 3000, "populacao_proxy": 9000, "hex_score_estrutural": 90},
+            {"hex_id": "h2", "lat": 0, "lng": 1, "uf": "SP", "regiao": "SE", "cod_municipio": "3550308", "nome_municipio": "", "renda_per_capita": 3000, "populacao_proxy": 1000, "hex_score_estrutural": 70},
+            {"hex_id": "h3", "lat": 1, "lng": 0, "uf": "RJ", "regiao": "SE", "cod_municipio": "3304557", "nome_municipio": "", "renda_per_capita": 1000, "populacao_proxy": 9000, "hex_score_estrutural": 50},
+            {"hex_id": "h4", "lat": 1, "lng": 1, "uf": "RJ", "regiao": "SE", "cod_municipio": "3304557", "nome_municipio": "", "renda_per_capita": 1000, "populacao_proxy": 1000, "hex_score_estrutural": 30},
+        ]
+    )
+    df_priorizados = pd.DataFrame(
+        [
+            {"hex_id": "h1", "uf": "SP", "cod_municipio": "3550308", "criterio_prioridade": "top_20%_uf", "threshold_prioridade_uf": 70.0},
+            {"hex_id": "h3", "uf": "RJ", "cod_municipio": "3304557", "criterio_prioridade": "top_20%_uf", "threshold_prioridade_uf": 50.0},
+        ]
+    )
+
+    resultado, validacao = preparar_base_oportunidades(df_estrutural, df_priorizados)
+
+    h1 = resultado.loc[resultado["hex_id"] == "h1"].iloc[0]
+    h2 = resultado.loc[resultado["hex_id"] == "h2"].iloc[0]
+    h3 = resultado.loc[resultado["hex_id"] == "h3"].iloc[0]
+    h4 = resultado.loc[resultado["hex_id"] == "h4"].iloc[0]
+
+    assert h1["faixa_oportunidade"] == "prioridade_maxima"
+    assert h2["faixa_oportunidade"] == "alta"
+    assert h3["faixa_oportunidade"] == "media"
+    assert h4["faixa_oportunidade"] == "descartado"
+
+    assert h1["motivo_priorizacao"] == "combinado"
+    assert h2["motivo_priorizacao"] == "renda_alta"
+    assert h3["motivo_priorizacao"] == "alta_pop_jovem"
+    assert h4["motivo_priorizacao"] == "sem_destaque"
+
+    assert bool(h1["flag_viavel"]) is True
+    assert bool(h2["flag_viavel"]) is True
+    assert bool(h3["flag_viavel"]) is False
+    assert bool(h4["flag_viavel"]) is False
+
+    assert h2["observacao_estrategica"] == "Alta renda, baixa densidade"
+    assert h3["observacao_estrategica"] == "Regiao fora do target ideal"
+    assert h4["motivo_alerta"] == "renda_baixa | baixa_densidade | score_baixo"
+
+    assert h1["rank_brasil"] == 1
+    assert h2["rank_brasil"] == 2
+    assert h1["rank_uf"] == 1
+    assert h2["rank_uf"] == 2
+    assert h1["rank_cidade"] == 1
+    assert h2["rank_cidade"] == 2
+    assert bool(h1["flag_prioridade"]) is True
+    assert bool(h2["flag_prioridade"]) is False
+    assert validacao["pct_viavel"] == 50.0
+
+
+def test_preparar_base_oportunidades_desempata_de_forma_deterministica():
+    df_estrutural = pd.DataFrame(
+        [
+            {"hex_id": "b", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "3550308", "nome_municipio": "", "renda_per_capita": 2000, "populacao_proxy": 5000, "hex_score_estrutural": 80},
+            {"hex_id": "a", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "3550308", "nome_municipio": "", "renda_per_capita": 2000, "populacao_proxy": 5000, "hex_score_estrutural": 80},
+        ]
+    )
+    df_priorizados = pd.DataFrame(columns=["hex_id", "uf", "cod_municipio", "criterio_prioridade", "threshold_prioridade_uf"])
+
+    resultado, _ = preparar_base_oportunidades(df_estrutural, df_priorizados)
+
+    assert resultado["hex_id"].tolist() == ["a", "b"]
+    assert resultado["rank_brasil"].tolist() == [1, 2]
+    assert resultado["rank_uf"].tolist() == [1, 2]
+    assert resultado["rank_cidade"].tolist() == [1, 2]

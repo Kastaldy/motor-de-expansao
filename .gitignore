@@ -1,0 +1,59 @@
+# Ambiente
+.env
+.env.local
+.env.*.local
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Dados sensíveis e staging (nunca commitar)
+data/staging/
+data/snapshots/
+data/models/*.pkl
+data/models/*.joblib
+*.parquet
+*.csv
+!tests/contracts/fixtures/*.html
+
+# Banco
+*.db
+*.sqlite
+
+# IDE
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+
+# Logs
+logs/
+*.log
+
+# Coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Node (frontend)
+node_modules/
+.next/
+out/
+
+# Docker
+.docker/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Playwright
+playwright-report/
+test-results/
