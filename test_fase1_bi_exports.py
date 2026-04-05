@@ -19,7 +19,11 @@ def _sample_source_df() -> pd.DataFrame:
                 "regiao": "SE",
                 "municipio_label": "Sao Paulo",
                 "populacao_proxy": 12000.0,
+                "renda_pct_nacional": 0.95,
+                "pop_pct_nacional": 0.90,
                 "hex_score_estrutural": 92.5,
+                "ajuste_executivo": 5.0,
+                "score_priorizacao": 97.5,
                 "faixa_oportunidade": "prioridade_maxima",
                 "flag_viavel": True,
                 "rank_brasil": 1,
@@ -38,7 +42,11 @@ def _sample_source_df() -> pd.DataFrame:
                 "regiao": "SE",
                 "municipio_label": "Sao Paulo",
                 "populacao_proxy": 8000.0,
+                "renda_pct_nacional": 0.82,
+                "pop_pct_nacional": 0.62,
                 "hex_score_estrutural": 81.0,
+                "ajuste_executivo": 2.0,
+                "score_priorizacao": 83.0,
                 "faixa_oportunidade": "alta",
                 "flag_viavel": True,
                 "rank_brasil": 2,
@@ -57,7 +65,11 @@ def _sample_source_df() -> pd.DataFrame:
                 "regiao": "SE",
                 "municipio_label": "Rio de Janeiro",
                 "populacao_proxy": 9000.0,
+                "renda_pct_nacional": 0.55,
+                "pop_pct_nacional": 0.83,
                 "hex_score_estrutural": 70.0,
+                "ajuste_executivo": 1.0,
+                "score_priorizacao": 71.0,
                 "faixa_oportunidade": "media",
                 "flag_viavel": True,
                 "rank_brasil": 3,
@@ -76,7 +88,11 @@ def _sample_source_df() -> pd.DataFrame:
                 "regiao": "SE",
                 "municipio_label": "Rio de Janeiro",
                 "populacao_proxy": 3000.0,
+                "renda_pct_nacional": 0.18,
+                "pop_pct_nacional": 0.12,
                 "hex_score_estrutural": 40.0,
+                "ajuste_executivo": -8.0,
+                "score_priorizacao": 32.0,
                 "faixa_oportunidade": "descartado",
                 "flag_viavel": False,
                 "rank_brasil": 4,
@@ -102,19 +118,45 @@ def test_build_dashboard_dataset_padroniza_colunas_obrigatorias():
         "cidade",
         "regiao",
         "hex_score_estrutural",
+        "score_oficial",
+        "score_oficial_nome",
+        "score_percentil_nacional",
         "faixa_oportunidade",
         "flag_viavel",
+        "flag_prioridade",
         "rank_brasil",
         "rank_uf",
         "rank_cidade",
         "renda_per_capita",
+        "renda_target_proxy",
         "proxy_populacao",
+        "renda_pct_nacional",
+        "pop_pct_nacional",
+        "ajuste_executivo",
+        "score_priorizacao",
+        "criterio_prioridade",
+        "threshold_prioridade_uf",
+        "osm_status",
+        "fonte_demografica",
+        "fonte_renda",
+        "fonte_populacao",
+        "nivel_geografico_ibge",
+        "fallback_setor_censitario",
+        "motivo_fallback_setor",
+        "fonte_geometria_ibge",
+        "metodo_atribuicao_municipio",
+        "data_referencia_ibge",
         "motivo_priorizacao",
         "motivo_alerta",
         "observacao_estrategica",
     ]
     assert dashboard.loc[0, "cidade"] == "Sao Paulo"
     assert dashboard.loc[0, "proxy_populacao"] == 12000.0
+    assert dashboard.loc[0, "score_priorizacao"] == 97.5
+    assert dashboard.loc[0, "ajuste_executivo"] == 5.0
+    assert dashboard.loc[0, "score_oficial"] == 97.5
+    assert dashboard.loc[0, "score_oficial_nome"] == "score_priorizacao"
+    assert dashboard.loc[0, "osm_status"] == "nao_aplicado_mvp_nacional"
     assert str(dashboard["faixa_oportunidade"].dtype) == "category"
 
 
@@ -137,6 +179,8 @@ def test_build_top_oportunidades_resumo_restringe_para_hexagonos_viaveis():
     assert resumo["rank_brasil"].tolist() == [1, 2]
     assert resumo["cidade"].tolist() == ["Sao Paulo", "Sao Paulo"]
     assert resumo["faixa_oportunidade"].tolist() == ["prioridade_maxima", "alta"]
+    assert resumo["score_oficial_nome"].tolist() == ["score_priorizacao", "score_priorizacao"]
+    assert resumo["score_priorizacao"].tolist() == [97.5, 83.0]
 
 
 def test_build_resumo_por_uf_calcula_metricas_executivas():

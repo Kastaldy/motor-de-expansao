@@ -1,206 +1,143 @@
-# Motor de Expansão Ultra Academia
+# Motor de Expansao Ultra Academia
 
-> Sistema de expansão ativa contínua — identifica, ranqueia e monitora oportunidades de abertura de novas unidades.
+Base territorial do MVP nacional do `motor-de-expansao`.
 
-**Responsável:** Felipe Silva — Data Lead  
-**Stack:** Python 3.11 · FastAPI · PostgreSQL + PostGIS · Playwright · scikit-learn · H3  
-**Status:** Fase 0 — Foundation ✅
+O contrato canonico do projeto esta em `CLAUDE.md`. Para a Fase 1 / M1, o pipeline nacional oficial usa:
 
----
+- base estrutural oficial: `hex_score_estrutural`
+- score oficial de priorizacao executiva: `score_priorizacao`
+- replica executiva estavel: `score_oficial = score_priorizacao`
+- staging sempre em Parquet
+- IBGE como fonte oficial
+- OSM como opcional/futuro, fora do fechamento executivo nacional
 
-## Início Rápido (5 minutos)
+## Escopo atual do M1
+
+Fluxo oficial:
+
+1. `base_h3_brasil.py`
+   Gera a base H3 nacional particionada por UF em `data/staging/brasil/uf=XX/hexagonos.parquet`.
+2. `hex_enrichment.py`
+   Enriquece a base estrutural nacional, calcula score estrutural, ajuste executivo, score de priorizacao, corte top 20% por UF e camada de oportunidade.
+3. `fase1_bi_exports.py`
+   Gera os artefatos executivos/BI estaveis a partir de `data/staging/hexagonos_brasil_oportunidades.parquet`.
+
+## Regra canonica de score do M1
+
+Inputs estruturais:
+
+- `renda_per_capita`
+- `populacao_proxy`
+- `pop_18_45` como fonte preferida da proxy populacional
+- `pop_total` como fallback
+
+Calculo oficial:
+
+```python
+renda_pct_nacional = percentil_nacional(renda_per_capita)
+pop_pct_nacional = percentil_nacional(populacao_proxy)
+
+hex_score_estrutural = 100 * (
+    0.60 * renda_pct_nacional +
+    0.40 * pop_pct_nacional
+)
+
+ajuste_executivo = bonus_penalidade_por_quartil(
+    renda_pct_nacional,
+    pop_pct_nacional,
+)
+
+score_priorizacao = clip(hex_score_estrutural + ajuste_executivo, 0, 100)
+```
+
+Campos oficiais esperados:
+
+- `renda_pct_nacional`
+- `pop_pct_nacional`
+- `hex_score_estrutural`
+- `ajuste_executivo`
+- `score_priorizacao`
+- `score_oficial`
+- `score_oficial_nome`
+- `score_percentil_nacional`
+
+## Artefatos oficiais da Fase 1
+
+- `data/staging/brasil_estrutural.parquet`
+- `data/staging/brasil_priorizados.parquet`
+- `data/staging/hexagonos_brasil_oportunidades.parquet`
+- `data/outputs/hexagonos_brasil_dashboard.parquet`
+- `data/outputs/top_oportunidades_resumo.csv`
+- `data/outputs/resumo_por_uf.csv`
+- `data/reports/camada_oportunidade_fase1.md`
+- `data/reports/resumo_executivo_fase1.md`
+
+## Contrato oficial dos outputs do M1
+
+O contrato curto e estavel dos outputs oficiais do M1 esta em `docs/m1_outputs_oficiais.md`.
+
+Resumo pratico:
+
+- `brasil_estrutural.parquet`: base estrutural auditavel com IBGE e `hex_score_estrutural`
+- `brasil_priorizados.parquet`: recorte oficial top 20% por UF para priorizacao executiva
+- `hexagonos_brasil_oportunidades.parquet`: camada canonica com ranking Brasil, UF e cidade
+- `hexagonos_brasil_dashboard.parquet`: dataset oficial exportado para BI
+
+Colunas oficiais exportadas para BI:
+
+- `hex_id`, `lat`, `lng`, `uf`, `cidade`, `regiao`
+- `hex_score_estrutural`, `ajuste_executivo`, `score_priorizacao`
+- `score_oficial`, `score_oficial_nome`, `score_percentil_nacional`
+- `faixa_oportunidade`, `flag_viavel`, `flag_prioridade`
+- `rank_brasil`, `rank_uf`, `rank_cidade`
+- `criterio_prioridade`, `threshold_prioridade_uf`, `osm_status`
+- `fonte_demografica`, `fonte_renda`, `fonte_populacao`, `nivel_geografico_ibge`
+- `fallback_setor_censitario`, `motivo_fallback_setor`
+- `fonte_geometria_ibge`, `metodo_atribuicao_municipio`, `data_referencia_ibge`
+
+## Parametros canonicos do M1
+
+- `H3_RESOLUTION=7`
+- `DIST_MIN_ULTRA_KM=1.0`
+- `RENDA_MIN=4500`
+- `M1_SCORE_OFICIAL=score_priorizacao`
+- `M1_PRIORIZACAO_TOP_PCT_POR_UF=0.20`
+- `M1_OSM_ENABLED=false`
+- `M1_SETOR_CENSITARIO_OBRIGATORIO=false`
+
+## Rastreabilidade IBGE
+
+O pipeline estrutural nacional deve carregar por hexagono:
+
+- `fonte_demografica`
+- `fonte_renda`
+- `fonte_populacao`
+- `nivel_geografico_ibge`
+- `fallback_setor_censitario`
+- `motivo_fallback_setor`
+- `fonte_geometria_ibge`
+- `metodo_atribuicao_municipio`
+- `data_referencia_ibge`
+
+## Execucao rapida do M1
 
 ```bash
-# 1. Clonar e entrar no projeto
-git clone <repo-url> motor-expansao
-cd motor-expansao
-
-# 2. Configurar variáveis de ambiente
-cp .env.example .env
-# Editar .env com suas chaves (Google Maps, GeoFusion, etc.)
-
-# 3. Subir banco de dados
-docker-compose up -d db
-
-# 4. Instalar dependências Python
 pip install -e ".[dev]"
-
-# 5. Instalar browsers para scraping
-playwright install chromium
-
-# 6. Criar tabelas no banco
-alembic upgrade head
-
-# 7. Verificar setup
-python scripts/setup.py --check
-
-# 8. Rodar testes
-pytest tests/unit -v
-
-# 9. Iniciar API
-uvicorn api.main:app --reload
-# → http://localhost:8000/docs
+copy .env.example .env
+python base_h3_brasil.py
+python hex_enrichment.py --brasil
+python fase1_bi_exports.py
 ```
 
----
-
-## Estrutura do Projeto
-
-```
-motor-expansao/
-│
-├── CLAUDE.md               ← Contexto para Claude Code (ler primeiro!)
-│
-├── api/                    ← FastAPI
-│   ├── main.py             ← Ponto de entrada
-│   ├── config.py           ← Configurações centralizadas
-│   ├── routes/             ← Endpoints por módulo
-│   ├── schemas/            ← Pydantic models
-│   └── services/           ← Lógica de negócio
-│
-├── jobs/                   ← Pipelines e scrapers
-│   ├── daily_pipeline.py   ← Orquestrador diário (roda às 3h)
-│   ├── scrapers/
-│   │   ├── base_scraper.py         ← Classe base com retry/rate limiting
-│   │   ├── imovel_scraper.py       ← ZAP, VivaReal, OLX (M3)
-│   │   └── (wellhub, totalpass...) ← Concorrentes (M2) — ver base_scraper.py
-│   └── pipelines/
-│       ├── hex_enrichment.py       ← H3 + GeoFusion (M1)
-│       ├── imovel_qualification.py ← Filtros e score de imóveis (M3)
-│       ├── score_consolidado.py    ← Ranking final de oportunidades
-│       └── geocoding.py            ← Geocodificação com cache
-│
-├── ml/                     ← Modelos preditivos (M4 — Fase 4)
-│   ├── models/             ← Treino e artefatos
-│   ├── features/           ← Feature engineering
-│   └── validation/         ← Backtesting e métricas
-│
-├── db/
-│   ├── models.py           ← SQLAlchemy ORM (todas as entidades)
-│   ├── database.py         ← Engines async e sync
-│   └── migrations/         ← Alembic migrations
-│
-└── tests/
-    ├── conftest.py          ← Fixtures globais
-    ├── unit/               ← Testes de scores, filtros, transformações
-    ├── integration/        ← Testes de banco e API
-    ├── contracts/          ← Testes de contrato de scrapers
-    ├── data/               ← Validação de schema e qualidade
-    └── e2e/                ← Playwright (fluxos do produto)
-```
-
----
-
-## Módulos do Sistema
-
-| Módulo | Descrição | Status |
-|--------|-----------|--------|
-| **M1** Geográfico | Hexágonos H3 + GeoFusion | 🟡 Em desenvolvimento |
-| **M2** Radar Competitivo | Wellhub, TotalPass, SmartFit, Bluefit | 🟡 Em desenvolvimento |
-| **M3** Motor Imobiliário | ZAP, VivaReal, OLX + qualificação | 🟡 Em desenvolvimento |
-| **M4** Scoring Preditivo | ML de rentabilidade | ⚪ Fase 4 |
-| **M5** Operacional | Esteira imobiliária + workflow | ⚪ Fase 5 |
-| **M6** Observabilidade | Sentry + logs + alertas | 🟡 Configurado |
-
----
-
-## Comandos Úteis
+## Testes relevantes do M1
 
 ```bash
-# Rodar pipeline diário manualmente
-python -m jobs.daily_pipeline --cidades "São Paulo,SP;Campinas,SP"
-
-# Hexagonalizar uma cidade
-python -m jobs.pipelines.hex_enrichment --cidade "Goiânia" --uf GO
-
-# Coletar imóveis de uma cidade
-python -m jobs.scrapers.imovel_scraper --cidade "Belo Horizonte" --uf MG
-
-# Rodar testes unitários
-pytest tests/unit -v
-
-# Rodar testes com coverage
-pytest tests/unit tests/integration --cov --cov-report=html
-
-# Verificar linting
-ruff check .
-
-# Criar nova migration
-alembic revision --autogenerate -m "descricao da mudanca"
-
-# Aplicar migrations
-alembic upgrade head
+python -m pytest test_base_h3_brasil.py test_hex_enrichment_brasil.py test_fase1_bi_exports.py test_fontes_gratuitas.py -v
 ```
 
----
+## Fora do escopo deste fechamento
 
-## Fluxo de Dados
-
-```
-GeoFusion API
-    ↓
-[M1] Hexagonalização H3
-    ↓ hex_score por área
-    ↓
-[M2] Scrapers de concorrentes ──→ score_competitivo por área
-    ↓
-[M3] Scrapers de imóveis
-    ↓ geocodificação + qualificação
-    ↓ imovel_score
-    ↓
-[Score Consolidado]
-    hex_score × 0.30
-  + score_competitivo × 0.25
-  + imovel_score × 0.20
-  + alunos_est × 0.15
-  + payback_est × 0.10
-    = score_abertura (0-100)
-    ↓
-[Ranking de Oportunidades] → time imobiliário
-    ↓
-[M4 — Fase 4] ML de rentabilidade (79 unidades como treino)
-```
-
----
-
-## Convenções Obrigatórias
-
-- **CSV:** `sep=";"`, `encoding="utf-8-sig"`
-- **Parquet:** staging de todos os dados antes do banco
-- **H3:** resolução 8 por padrão
-- **Anti-canibalização:** 2km mínimo entre unidades Ultra
-- **Score:** sempre entre 0 e 100
-- **Git:** conventional commits, CI verde antes de merge
-- **Testes:** toda feature nova entra com teste
-
----
-
-## Contexto de Negócio
-
-Ultra Academia — rede brasileira com 79 unidades ativas e 80 planejadas.
-
-| Plano | Ticket Médio | LTV Estimado |
-|-------|-------------|-------------|
-| GOLD | R$117/mês | R$1.259 |
-| GOLDPASS | R$147/mês | — |
-| ULTRA360 | R$110/mês | R$1.757 |
-| STUDIOULTRA | R$197/mês | — |
-
-**Perfil ideal de unidade:** 800–1.500m², pé direito ≥3.5m, estacionamento, zoneamento ZC/ZM, público 18–45 anos, renda domiciliar ≥ R$3.000/mês.
-
----
-
-## Projeto Relacionado
-
-O **Projeto Lifetime** (churn + LTV por cluster) alimenta diretamente o Motor de Expansão com:
-- LTV médio por cluster e região → input para estimativa de rentabilidade
-- Perfil demográfico das 79 unidades → base de treino do M4
-- Taxa de churn histórica por região → ajuste do score de abertura
-
-Arquivos: `base_lifetime_v2.csv`, `base_ltv_final.csv`
-
----
-
-## Dúvidas?
-
-Ler o **CLAUDE.md** — todas as convenções, arquitetura, entidades e regras de negócio estão documentadas lá.
+- M2 competitivo
+- M3 imobiliario
+- frontend
+- ML

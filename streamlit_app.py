@@ -1,9 +1,13 @@
+import sys
 from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import pyarrow
+import pyarrow.parquet as pq
 import streamlit as st
+from streamlit.runtime.scriptrunner import get_script_run_ctx
+from streamlit.web import cli as stcli
 
 
 st.set_page_config(
@@ -12,6 +16,12 @@ st.set_page_config(
 )
 
 DATA_DIR = Path(__file__).resolve().parent / "data" / "outputs"
+REQUIRED_OUTPUT_FILES = [
+    "hexagonos_mapa_sample.parquet",
+    "hexagonos_brasil_dashboard.parquet",
+    "top_oportunidades_resumo.csv",
+    "resumo_por_uf.csv",
+]
 PARQUET_COLUMNS = [
     "hex_id",
     "lat",
@@ -19,6 +29,8 @@ PARQUET_COLUMNS = [
     "uf",
     "cidade",
     "regiao",
+    "score_oficial",
+    "score_priorizacao",
     "hex_score_estrutural",
     "faixa_oportunidade",
     "flag_viavel",
@@ -28,6 +40,12 @@ PARQUET_COLUMNS = [
     "motivo_priorizacao",
     "observacao_estrategica",
 ]
+DISPLAY_SCORE_CANDIDATES = [
+    "score_oficial",
+    "score_priorizacao",
+    "hex_score_estrutural",
+]
+DISPLAY_SCORE_LABEL = "Score oficial"
 FAIXA_ORDEM = [
     "prioridade_maxima",
     "alta",
@@ -39,25 +57,62 @@ MAPA_BRASIL_LIMITE = 120000
 MAPA_LOCAL_LIMITE = 20000
 
 
+def _ensure_required_outputs() -> None:
+    missing = [name for name in REQUIRED_OUTPUT_FILES if not (DATA_DIR / name).exists()]
+    if missing:
+        raise FileNotFoundError(
+            "Artefatos oficiais do M1 ausentes em data/outputs: "
+            + ", ".join(missing)
+            + ". Gere-os com `python base_h3_brasil.py` e `python hex_enrichment.py --brasil`."
+        )
+
+
+def _read_parquet_subset(path: Path, columns: list[str]) -> pd.DataFrame:
+    available_columns = set(pq.read_schema(path).names)
+    selected = [column for column in columns if column in available_columns]
+    if not selected:
+        raise ValueError(f"Nenhuma das colunas esperadas foi encontrada em {path}.")
+    return pd.read_parquet(path, columns=selected)
+
+
+def _resolve_score_column(columns) -> str:
+    for column in DISPLAY_SCORE_CANDIDATES:
+        if column in columns:
+            return column
+    raise ValueError(
+        "Nenhuma coluna de score compativel encontrada. Esperado um de: "
+        + ", ".join(DISPLAY_SCORE_CANDIDATES)
+    )
+
+
+def _prepare_dashboard_like(df: pd.DataFrame) -> pd.DataFrame:
+    prepared = df.copy()
+    score_column = _resolve_score_column(prepared.columns)
+    prepared["score_exibicao"] = pd.to_numeric(prepared[score_column], errors="coerce")
+    prepared["faixa_oportunidade"] = pd.Categorical(
+        prepared["faixa_oportunidade"],
+        categories=FAIXA_ORDEM,
+        ordered=True,
+    )
+    return prepared
+
+
 @st.cache_data(show_spinner=False)
 def load_data():
-    df_mapa = pd.read_parquet(
-        DATA_DIR / "hexagonos_mapa_sample.parquet",
-        columns=PARQUET_COLUMNS,
+    _ensure_required_outputs()
+
+    df_mapa = _prepare_dashboard_like(
+        _read_parquet_subset(DATA_DIR / "hexagonos_mapa_sample.parquet", PARQUET_COLUMNS)
     )
-    df_dashboard = pd.read_parquet(
-        DATA_DIR / "hexagonos_brasil_dashboard.parquet",
-        columns=PARQUET_COLUMNS,
+    df_dashboard = _prepare_dashboard_like(
+        _read_parquet_subset(DATA_DIR / "hexagonos_brasil_dashboard.parquet", PARQUET_COLUMNS)
     )
     df_top = pd.read_csv(DATA_DIR / "top_oportunidades_resumo.csv", sep=";")
     df_resumo = pd.read_csv(DATA_DIR / "resumo_por_uf.csv", sep=";")
-
-    for df in (df_mapa, df_dashboard):
-        df["faixa_oportunidade"] = pd.Categorical(
-            df["faixa_oportunidade"],
-            categories=FAIXA_ORDEM,
-            ordered=True,
-        )
+    df_top["score_exibicao"] = pd.to_numeric(
+        df_top[_resolve_score_column(df_top.columns)],
+        errors="coerce",
+    )
 
     return df_mapa, df_dashboard, df_top, df_resumo
 
@@ -78,15 +133,20 @@ def build_map(
         df,
         lat="lat",
         lon="lng",
-        color="hex_score_estrutural",
+        color="score_exibicao",
         color_continuous_scale="YlOrRd",
         hover_name="cidade",
         hover_data={
             "uf": True,
+            "score_exibicao": ":.2f",
             "hex_score_estrutural": ":.2f",
             "faixa_oportunidade": True,
             "lat": False,
             "lng": False,
+        },
+        labels={
+            "score_exibicao": DISPLAY_SCORE_LABEL,
+            "hex_score_estrutural": "Score estrutural",
         },
         center=center,
         zoom=zoom,
@@ -97,7 +157,7 @@ def build_map(
         mapbox_style="carto-positron",
         margin={"l": 0, "r": 0, "t": 48, "b": 0},
         title=title,
-        coloraxis_colorbar_title="Score",
+        coloraxis_colorbar_title=DISPLAY_SCORE_LABEL,
     )
     return fig
 
@@ -137,7 +197,7 @@ def main():
         )
         fig_brasil = build_map(
             df_mapa_brasil,
-            title="Mapa nacional de oportunidade estrutural",
+            title="Mapa nacional de oportunidade executiva",
             center={"lat": -14.235, "lon": -51.9253},
             zoom=3.2,
             height=620,
@@ -190,20 +250,18 @@ def main():
 
         info1, info2, info3 = st.columns(3)
         info1.metric("Hexágonos no recorte", format_int(len(df_filtrado)))
-        info2.metric("Score médio", f"{df_filtrado['hex_score_estrutural'].mean():.2f}")
+        info2.metric("Score médio", f"{df_filtrado['score_exibicao'].mean():.2f}")
         info3.metric(
             "Viáveis no recorte",
             format_int(int(df_filtrado["flag_viavel"].sum())),
         )
 
-        df_mapa_local = (
-            df_filtrado.sort_values(["hex_score_estrutural", "rank_uf"], ascending=[False, True])
-            .head(MAPA_LOCAL_LIMITE)
-        )
+        sort_column = "rank_cidade" if cidade_selecionada != "Todas" else "rank_uf"
+        df_mapa_local = df_filtrado.sort_values(sort_column).head(MAPA_LOCAL_LIMITE)
         if len(df_filtrado) > MAPA_LOCAL_LIMITE:
             st.caption(
                 f"Mapa local limitado aos {format_int(MAPA_LOCAL_LIMITE)} hexágonos "
-                "com maior score para evitar lentidão no recorte amplo."
+                "mais bem ranqueados para evitar lentidão no recorte amplo."
             )
 
         fig_local = build_map(
@@ -226,18 +284,18 @@ def main():
                     "hex_id",
                     "rank_uf",
                     "rank_cidade",
-                    "hex_score_estrutural",
+                    "score_exibicao",
                     "faixa_oportunidade",
                     "motivo_priorizacao",
                 ],
             ]
-            .sort_values(["hex_score_estrutural", "rank_uf"], ascending=[False, True])
+            .sort_values(sort_column)
             .rename(
                 columns={
                     "hex_id": "hex_id",
                     "rank_uf": "rank_uf",
                     "rank_cidade": "rank_cidade",
-                    "hex_score_estrutural": "score",
+                    "score_exibicao": "score",
                     "faixa_oportunidade": "faixa",
                     "motivo_priorizacao": "motivo_priorizacao",
                 }
@@ -257,7 +315,7 @@ def main():
             .head(100)
             .rename(
                 columns={
-                    "hex_score_estrutural": "score",
+                    "score_exibicao": "score",
                     "faixa_oportunidade": "faixa",
                 }
             )
@@ -272,7 +330,7 @@ def main():
                 [
                     "rank_uf",
                     "cidade",
-                    "hex_score_estrutural",
+                    "score_exibicao",
                     "faixa_oportunidade",
                     "motivo_priorizacao",
                 ],
@@ -281,7 +339,7 @@ def main():
             .head(50)
             .rename(
                 columns={
-                    "hex_score_estrutural": "score",
+                    "score_exibicao": "score",
                     "faixa_oportunidade": "faixa",
                 }
             )
@@ -293,4 +351,22 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    if get_script_run_ctx(suppress_warning=True) is None:
+        sys.argv = [
+            "streamlit",
+            "run",
+            str(Path(__file__).resolve()),
+            "--server.address",
+            "localhost",
+            "--server.port",
+            "5000",
+            "--server.headless",
+            "true",
+            "--server.showEmailPrompt",
+            "false",
+            "--browser.gatherUsageStats",
+            "false",
+        ]
+        raise SystemExit(stcli.main())
+    else:
+        main()

@@ -22,8 +22,15 @@ import pandas as pd
 import structlog
 from geopy.distance import geodesic
 
-from api.config import settings
-from jobs.pipelines.imovel_qualification import processar_lote_imoveis
+try:
+    from api.config import settings
+except ModuleNotFoundError:
+    from config import settings  # estrutura flat (desenvolvimento)
+
+try:
+    from jobs.pipelines.imovel_qualification import processar_lote_imoveis
+except ModuleNotFoundError:
+    from imovel_qualification import processar_lote_imoveis  # estrutura flat
 
 log = structlog.get_logger()
 

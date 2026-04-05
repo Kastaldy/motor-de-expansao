@@ -11,7 +11,7 @@ Testa:
 import pytest
 import pandas as pd
 
-from jobs.pipelines.score_consolidado import (
+from score_consolidado import (
     calcular_score_competitivo,
     calcular_alunos_estimados,
     calcular_payback_estimado,

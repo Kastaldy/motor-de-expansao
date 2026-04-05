@@ -20,11 +20,15 @@ import pytest
 # ---------------------------------------------------------------------------
 _mock_settings = MagicMock()
 _mock_settings.GOOGLE_MAPS_API_KEY = ""
-_mock_settings.DIST_MIN_ULTRA_KM = 2.0
+_mock_settings.DIST_MIN_ULTRA_KM = 1.0
+_mock_settings.RENDA_MIN = 4500.0
 _mock_settings.H3_RESOLUTION = 7
 _mock_settings.AREA_MIN_M2 = 1200.0
 _mock_settings.AREA_IDEAL_MIN_M2 = 1500.0
 _mock_settings.AREA_IDEAL_MAX_M2 = 2000.0
+_mock_settings.M1_SCORE_OFICIAL = "score_priorizacao"
+_mock_settings.M1_PRIORIZACAO_TOP_PCT_POR_UF = 0.20
+_mock_settings.M1_OSM_ENABLED = False
 
 _mock_api_config = MagicMock(settings=_mock_settings)
 _mock_api = MagicMock()
@@ -34,11 +38,6 @@ sys.modules.setdefault("api", _mock_api)
 sys.modules.setdefault("api.config", _mock_api_config)
 
 # hex_enrichment.py importa jobs.pipelines.ibge_censo / poi_enrichment
-sys.modules.setdefault("jobs", MagicMock())
-sys.modules.setdefault("jobs.pipelines", MagicMock())
-sys.modules.setdefault("jobs.pipelines.ibge_censo", MagicMock())
-sys.modules.setdefault("jobs.pipelines.poi_enrichment", MagicMock())
-
 # ---------------------------------------------------------------------------
 # IBGECenso
 # ---------------------------------------------------------------------------
@@ -59,7 +58,9 @@ class TestIBGECensoFeaturesPadrao:
         from ibge_censo import IBGECenso
         resultado = IBGECenso._features_padrao()
         chaves_esperadas = {"renda_per_capita", "pop_total", "pop_18_45",
-                            "n_domicilios", "densidade_dom", "area_km2", "fonte"}
+                            "n_domicilios", "densidade_dom", "area_km2", "fonte",
+                            "fonte_renda", "fonte_populacao", "nivel_geografico_ibge",
+                            "fallback_setor_censitario", "motivo_fallback_setor"}
         assert chaves_esperadas.issubset(set(resultado.keys()))
 
 
@@ -384,7 +385,7 @@ class TestCalcularHexScore:
         assert (df_scored["hex_score"] >= 0).all()
         assert (df_scored["hex_score"] <= 100).all()
 
-    def test_score_estrutural_repondera_variavel_disponivel(self):
+    def test_score_estrutural_usa_percentis_nacionais_com_proxy_populacional(self):
         from hex_enrichment import calcular_hex_score_estrutural
         df = pd.DataFrame({
             "hex_id": ["a", "b"],
@@ -394,8 +395,10 @@ class TestCalcularHexScore:
         })
         df_scored = calcular_hex_score_estrutural(df)
 
-        assert df_scored.loc[0, "hex_score_estrutural"] == pytest.approx(0.0)
-        assert df_scored.loc[1, "hex_score_estrutural"] == pytest.approx(100.0)
+        assert df_scored.loc[0, "populacao_proxy"] == pytest.approx(0.0)
+        assert df_scored.loc[0, "pop_pct_nacional"] == pytest.approx(0.5)
+        assert df_scored.loc[0, "hex_score_estrutural"] == pytest.approx(20.0)
+        assert df_scored.loc[1, "hex_score_estrutural"] == pytest.approx(80.0)
 
 
 class TestNormalizarSerie:

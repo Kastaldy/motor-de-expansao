@@ -1,6 +1,7 @@
 import pandas as pd
 
 from hex_enrichment import (
+    calcular_hex_score_estrutural,
     calcular_hex_score_final,
     enriquecer_concorrencia_priorizados,
     preparar_base_oportunidades,
@@ -9,6 +10,40 @@ from hex_enrichment import (
 )
 from ibge_censo import IBGECenso
 from poi_enrichment import POIEnricher
+
+
+def test_calcular_hex_score_estrutural_separa_base_ajuste_e_score_priorizacao():
+    df = pd.DataFrame(
+        [
+            {"hex_id": "a", "renda_per_capita": 6000.0, "pop_18_45": 600.0},
+            {"hex_id": "b", "renda_per_capita": 5000.0, "pop_18_45": 300.0},
+            {"hex_id": "c", "renda_per_capita": 3000.0, "pop_18_45": 500.0},
+            {"hex_id": "d", "renda_per_capita": 4000.0, "pop_18_45": 400.0},
+            {"hex_id": "e", "renda_per_capita": 2000.0, "pop_18_45": 200.0},
+            {"hex_id": "f", "renda_per_capita": 1000.0, "pop_18_45": 100.0},
+        ]
+    )
+
+    resultado = calcular_hex_score_estrutural(df).set_index("hex_id")
+
+    assert resultado.loc["a", "renda_pct_nacional"] == 1.0
+    assert resultado.loc["a", "pop_pct_nacional"] == 1.0
+    assert resultado.loc["a", "hex_score_estrutural"] == 100.0
+    assert resultado.loc["a", "ajuste_executivo"] == 5.0
+    assert resultado.loc["a", "score_priorizacao"] == 100.0
+
+    assert resultado.loc["b", "hex_score_estrutural"] == 64.0
+    assert resultado.loc["b", "ajuste_executivo"] == 2.0
+    assert resultado.loc["b", "score_priorizacao"] == 66.0
+
+    assert resultado.loc["c", "hex_score_estrutural"] == 56.0
+    assert resultado.loc["c", "ajuste_executivo"] == 1.0
+    assert resultado.loc["c", "score_priorizacao"] == 57.0
+
+    assert resultado.loc["e", "ajuste_executivo"] == -8.0
+    assert resultado.loc["e", "score_priorizacao"] == 12.0
+    assert resultado.loc["f", "hex_score_estrutural"] == 0.0
+    assert resultado.loc["f", "score_priorizacao"] == 0.0
 
 
 def test_detecta_coluna_codigo_municipio_sidra():
@@ -210,6 +245,12 @@ def test_preparar_base_oportunidades_classifica_regras_e_rankings():
     assert h2["rank_cidade"] == 2
     assert bool(h1["flag_prioridade"]) is True
     assert bool(h2["flag_prioridade"]) is False
+    assert h1["ajuste_executivo"] == 5.0
+    assert h1["score_priorizacao"] == 95.0
+    assert h1["score_oficial"] == 95.0
+    assert h1["score_oficial_nome"] == "score_priorizacao"
+    assert h1["osm_status"] == "nao_aplicado_mvp_nacional"
+    assert bool(h1["fallback_setor_censitario"]) is True
     assert validacao["pct_viavel"] == 50.0
 
 

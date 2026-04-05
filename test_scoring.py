@@ -11,7 +11,7 @@ Regras testadas:
 import pytest
 import pandas as pd
 
-from jobs.pipelines.imovel_qualification import (
+from imovel_qualification import (
     qualificar_imovel,
     processar_lote_imoveis,
     _score_area,
@@ -19,7 +19,7 @@ from jobs.pipelines.imovel_qualification import (
     STATUS_QUALIFICADO,
     STATUS_DESCARTADO,
 )
-from jobs.pipelines.hex_enrichment import (
+from hex_enrichment import (
     calcular_hex_score,
     normalizar_0_100,
 )

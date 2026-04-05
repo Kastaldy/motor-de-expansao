@@ -44,9 +44,12 @@ jobs:
       DATABASE_URL_SYNC: postgresql+psycopg2://ultra:ultra123@localhost:5432/motor_expansao_test
       ENVIRONMENT: test
       SECRET_KEY: chave-de-teste-nao-usar-em-producao
-      H3_RESOLUTION: 8
-      DIST_MIN_ULTRA_KM: 2.0
-      RENDA_MIN: 3000
+      H3_RESOLUTION: 7
+      DIST_MIN_ULTRA_KM: 1.0
+      RENDA_MIN: 4500
+      M1_SCORE_OFICIAL: score_priorizacao
+      M1_PRIORIZACAO_TOP_PCT_POR_UF: 0.20
+      M1_OSM_ENABLED: false
 
     steps:
       - uses: actions/checkout@v4
@@ -56,7 +59,7 @@ jobs:
       - name: Instalar dependências
         run: pip install -e ".[dev]"
       - name: Rodar testes
-        run: pytest tests/unit tests/integration -v --cov-fail-under=70
+        run: pytest test_*.py -v --cov-fail-under=70
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         if: always()

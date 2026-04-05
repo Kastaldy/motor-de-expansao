@@ -30,13 +30,34 @@ DASHBOARD_COLUMNS = [
     "cidade",
     "regiao",
     "hex_score_estrutural",
+    "score_oficial",
+    "score_oficial_nome",
+    "score_percentil_nacional",
     "faixa_oportunidade",
     "flag_viavel",
+    "flag_prioridade",
     "rank_brasil",
     "rank_uf",
     "rank_cidade",
     "renda_per_capita",
+    "renda_target_proxy",
     "proxy_populacao",
+    "renda_pct_nacional",
+    "pop_pct_nacional",
+    "ajuste_executivo",
+    "score_priorizacao",
+    "criterio_prioridade",
+    "threshold_prioridade_uf",
+    "osm_status",
+    "fonte_demografica",
+    "fonte_renda",
+    "fonte_populacao",
+    "nivel_geografico_ibge",
+    "fallback_setor_censitario",
+    "motivo_fallback_setor",
+    "fonte_geometria_ibge",
+    "metodo_atribuicao_municipio",
+    "data_referencia_ibge",
     "motivo_priorizacao",
     "motivo_alerta",
     "observacao_estrategica",
@@ -53,13 +74,34 @@ SOURCE_COLUMNS = [
     "nome_municipio",
     "populacao_proxy",
     "pop_18_45",
+    "renda_pct_nacional",
+    "pop_pct_nacional",
     "hex_score_estrutural",
+    "ajuste_executivo",
+    "score_priorizacao",
+    "score_oficial",
+    "score_oficial_nome",
+    "score_percentil_nacional",
     "faixa_oportunidade",
     "flag_viavel",
+    "flag_prioridade",
     "rank_brasil",
     "rank_uf",
     "rank_cidade",
     "renda_per_capita",
+    "renda_target_proxy",
+    "criterio_prioridade",
+    "threshold_prioridade_uf",
+    "osm_status",
+    "fonte_demografica",
+    "fonte_renda",
+    "fonte_populacao",
+    "nivel_geografico_ibge",
+    "fallback_setor_censitario",
+    "motivo_fallback_setor",
+    "fonte_geometria_ibge",
+    "metodo_atribuicao_municipio",
+    "data_referencia_ibge",
     "motivo_priorizacao",
     "motivo_alerta",
     "observacao_estrategica",
@@ -151,12 +193,34 @@ def build_dashboard_dataset(
                 _pick_first_existing(df_source, ["hex_score_estrutural"]),
                 errors="coerce",
             ).round(2),
+            "ajuste_executivo": pd.to_numeric(
+                _pick_first_existing(df_source, ["ajuste_executivo"]),
+                errors="coerce",
+            ).round(2),
+            "score_priorizacao": pd.to_numeric(
+                _pick_first_existing(df_source, ["score_priorizacao", "score_oficial", "hex_score_estrutural"]),
+                errors="coerce",
+            ).round(2),
+            "score_oficial": pd.to_numeric(
+                _pick_first_existing(df_source, ["score_oficial", "score_priorizacao", "hex_score_estrutural"]),
+                errors="coerce",
+            ).round(2),
+            "score_oficial_nome": _pick_first_existing(
+                df_source,
+                ["score_oficial_nome"],
+                default="score_priorizacao",
+            ).astype("string"),
+            "score_percentil_nacional": pd.to_numeric(
+                _pick_first_existing(df_source, ["score_percentil_nacional"]),
+                errors="coerce",
+            ).round(2),
             "faixa_oportunidade": pd.Categorical(
                 _pick_first_existing(df_source, ["faixa_oportunidade"]).astype("string"),
                 categories=FAIXAS_OPORTUNIDADE,
                 ordered=True,
             ),
             "flag_viavel": _pick_first_existing(df_source, ["flag_viavel"]).fillna(False).astype(bool),
+            "flag_prioridade": _pick_first_existing(df_source, ["flag_prioridade"]).fillna(False).astype(bool),
             "rank_brasil": pd.to_numeric(_pick_first_existing(df_source, ["rank_brasil"]), errors="coerce").astype("int64"),
             "rank_uf": pd.to_numeric(_pick_first_existing(df_source, ["rank_uf"]), errors="coerce").astype("int64"),
             "rank_cidade": pd.to_numeric(_pick_first_existing(df_source, ["rank_cidade"]), errors="coerce").astype("int64"),
@@ -164,7 +228,48 @@ def build_dashboard_dataset(
                 _pick_first_existing(df_source, ["renda_per_capita"]),
                 errors="coerce",
             ).round(2),
+            "renda_target_proxy": pd.to_numeric(
+                _pick_first_existing(df_source, ["renda_target_proxy"]),
+                errors="coerce",
+            ).round(2),
             "proxy_populacao": proxy_populacao,
+            "renda_pct_nacional": pd.to_numeric(
+                _pick_first_existing(df_source, ["renda_pct_nacional"]),
+                errors="coerce",
+            ).round(6),
+            "pop_pct_nacional": pd.to_numeric(
+                _pick_first_existing(df_source, ["pop_pct_nacional"]),
+                errors="coerce",
+            ).round(6),
+            "criterio_prioridade": _pick_first_existing(df_source, ["criterio_prioridade"]).astype("string"),
+            "threshold_prioridade_uf": pd.to_numeric(
+                _pick_first_existing(df_source, ["threshold_prioridade_uf"]),
+                errors="coerce",
+            ).round(2),
+            "osm_status": _pick_first_existing(
+                df_source,
+                ["osm_status"],
+                default="nao_aplicado_mvp_nacional",
+            ).astype("string"),
+            "fonte_demografica": _pick_first_existing(df_source, ["fonte_demografica"]).astype("string"),
+            "fonte_renda": _pick_first_existing(df_source, ["fonte_renda"]).astype("string"),
+            "fonte_populacao": _pick_first_existing(df_source, ["fonte_populacao"]).astype("string"),
+            "nivel_geografico_ibge": _pick_first_existing(df_source, ["nivel_geografico_ibge"]).astype("string"),
+            "fallback_setor_censitario": _pick_first_existing(
+                df_source,
+                ["fallback_setor_censitario"],
+            ).fillna(True).astype(bool),
+            "motivo_fallback_setor": _pick_first_existing(df_source, ["motivo_fallback_setor"]).astype("string"),
+            "fonte_geometria_ibge": _pick_first_existing(df_source, ["fonte_geometria_ibge"]).astype("string"),
+            "metodo_atribuicao_municipio": _pick_first_existing(
+                df_source,
+                ["metodo_atribuicao_municipio"],
+            ).astype("string"),
+            "data_referencia_ibge": _pick_first_existing(
+                df_source,
+                ["data_referencia_ibge"],
+                default="censo_2022",
+            ).astype("string"),
             "motivo_priorizacao": _pick_first_existing(df_source, ["motivo_priorizacao"]).astype("string"),
             "motivo_alerta": _pick_first_existing(df_source, ["motivo_alerta"]).astype("string"),
             "observacao_estrategica": _pick_first_existing(df_source, ["observacao_estrategica"]).astype("string"),
@@ -191,6 +296,10 @@ def validate_dashboard_dataset(df_dashboard: pd.DataFrame) -> None:
     if df_dashboard["cidade"].fillna("").str.strip().eq("").any():
         raise ValueError("Dashboard possui cidade vazia")
 
+    if df_dashboard["rank_brasil"].duplicated().any():
+        duplicated = int(df_dashboard["rank_brasil"].duplicated().sum())
+        raise ValueError(f"Dashboard possui {duplicated} ranks Brasil duplicados")
+
 
 def build_top_oportunidades_resumo(df_dashboard: pd.DataFrame, top_n: int = 500) -> pd.DataFrame:
     resumo = (
@@ -201,6 +310,10 @@ def build_top_oportunidades_resumo(df_dashboard: pd.DataFrame, top_n: int = 500)
                 "rank_brasil",
                 "uf",
                 "cidade",
+                "score_oficial",
+                "score_oficial_nome",
+                "score_priorizacao",
+                "ajuste_executivo",
                 "hex_score_estrutural",
                 "faixa_oportunidade",
                 "motivo_priorizacao",
@@ -218,11 +331,11 @@ def build_resumo_por_uf(df_dashboard: pd.DataFrame) -> pd.DataFrame:
     resumo = grouped.agg(
         total_hexagonos=("hex_id", "size"),
         total_viaveis=("flag_viavel", "sum"),
-        score_medio=("hex_score_estrutural", "mean"),
+        score_medio=("score_oficial", "mean"),
         qtd_prioridade_maxima=("faixa_oportunidade", lambda values: int((values == "prioridade_maxima").sum())),
         qtd_alta=("faixa_oportunidade", lambda values: int((values == "alta").sum())),
     )
-    score_p90 = grouped["hex_score_estrutural"].quantile(0.90).rename("score_p90")
+    score_p90 = grouped["score_oficial"].quantile(0.90).rename("score_p90")
     resumo = resumo.join(score_p90).reset_index()
     resumo["pct_viaveis"] = (resumo["total_viaveis"] / resumo["total_hexagonos"] * 100).round(2)
     resumo["score_medio"] = resumo["score_medio"].round(2)
@@ -271,7 +384,7 @@ def build_resumo_executivo(
         .groupby(["uf", "cidade"], sort=False)
         .agg(
             oportunidades_viaveis=("hex_id", "size"),
-            score_medio=("hex_score_estrutural", "mean"),
+            score_medio=("score_oficial", "mean"),
             melhor_rank_brasil=("rank_brasil", "min"),
         )
         .reset_index()
@@ -306,6 +419,9 @@ def build_resumo_executivo(
         "# Resumo Executivo Fase 1",
         "",
         "Metricas, ranking e faixas derivados de `data/staging/hexagonos_brasil_oportunidades.parquet`, sem recalculo de score ou alteracao de regras de negocio.",
+        "Score oficial de priorizacao executiva do M1 nacional: `score_priorizacao` (replicado em `score_oficial`).",
+        "Base estrutural oficial preservada em `hex_score_estrutural`; ajuste executivo auditavel exposto em `ajuste_executivo`.",
+        "OSM permanece `nao_aplicado_mvp_nacional` no fechamento oficial da Fase 1 e nao participa do ranking executivo.",
         "Rotulos de municipio enriquecidos apenas para exibicao via lookup oficial do IBGE em `data/ibge/municipios_nomes_ibge.parquet`.",
         "",
         "## Indicadores-chave",

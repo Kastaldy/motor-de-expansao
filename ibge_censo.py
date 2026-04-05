@@ -143,6 +143,7 @@ class IBGECenso:
         return cod
 
     def features_para_coordenada(self, lat: float, lng: float, uf: str = "") -> dict:
+        fallback_reason = ""
         if self._gdf_setores is None and uf:
             self._gdf_setores = self.carregar_setores(uf)
         if self._gdf_setores is not None:
@@ -161,24 +162,43 @@ class IBGECenso:
                         "renda_per_capita": float(row.get("V6531", 0) or 0),
                         "pop_18_45":        float(row.get("V18_45", 0) or 0),
                         "fonte":            "ibge_setor_2022",
+                        "fonte_renda":      "ibge_setor_2022",
+                        "fonte_populacao":  "ibge_setor_2022",
+                        "nivel_geografico_ibge": "setor_censitario",
+                        "fallback_setor_censitario": False,
+                        "motivo_fallback_setor": "",
                     }
+                fallback_reason = "setor_censitario_sem_intersecao"
             except Exception as e:
                 log.warning("setor_lookup_erro", erro=str(e))
-        return self._features_municipio_sidra(lat, lng)
+                fallback_reason = "erro_lookup_setor"
+        elif uf:
+            fallback_reason = "setor_censitario_indisponivel_uf"
+        else:
+            fallback_reason = "uf_nao_informada_para_setor"
+        return self._features_municipio_sidra(lat, lng, fallback_reason=fallback_reason)
 
     def features_para_hex(self, hex_id: str, uf: str = "") -> dict:
         lat, lng = h3.cell_to_latlng(hex_id)
         return self.features_para_coordenada(lat, lng, uf)
 
-    def _features_municipio_sidra(self, lat: float, lng: float) -> dict:
+    def _features_municipio_sidra(self, lat: float, lng: float, fallback_reason: str = "") -> dict:
         cod = getattr(self, '_municipio_padrao', None) or self._geocodigo_municipio(lat, lng)
         if not cod or cod == "__nenhum__":
-            return self._features_padrao()
-        return self._sidra_renda_populacao(cod)
+            return self._features_padrao(
+                motivo_fallback_setor=fallback_reason or "municipio_nao_resolvido",
+            )
+        resultado = dict(self._sidra_renda_populacao(cod))
+        if fallback_reason:
+            resultado["motivo_fallback_setor"] = fallback_reason
+        return resultado
 
     @lru_cache(maxsize=1000)
     def _sidra_renda_populacao(self, cod_municipio: str) -> dict:
         resultado = self._features_padrao()
+        resultado["nivel_geografico_ibge"] = "municipio"
+        resultado["fallback_setor_censitario"] = True
+        resultado["motivo_fallback_setor"] = "setor_censitario_indisponivel_uf"
 
         # Fonte primária: t.10295 v.13431 — rendimento médio domiciliar per capita Censo 2022
         # Não retorna sigiloso (..) para municípios grandes — ao contrário de t.10297
@@ -236,9 +256,12 @@ class IBGECenso:
                 resultado["pop_18_45"] = pop
         except Exception as e:
             log.warning("sidra_pop_erro", cod=cod_municipio, erro=str(e))
-        fonte_renda = resultado.pop("fonte_renda", "ibge_censo2022_sem_renda")
+        fonte_renda = resultado.get("fonte_renda", "ibge_censo2022_sem_renda")
+        fonte_populacao = resultado.get("fonte_populacao", "ibge_censo2022_sem_populacao")
         resultado["fonte"] = f"ibge_sidra_municipio_2022+{fonte_renda}"
         resultado["cod_municipio"] = cod_municipio
+        resultado["fonte_renda"] = fonte_renda
+        resultado["fonte_populacao"] = fonte_populacao
         return resultado
 
     @lru_cache(maxsize=500)
@@ -356,6 +379,8 @@ class IBGECenso:
                 "pop_18_45",
                 "n_domicilios",
                 "densidade_dom",
+                "fonte_renda",
+                "fonte_populacao",
                 "fonte_demografica",
             ]
         ].drop_duplicates(subset=["cod_municipio"])
@@ -422,9 +447,11 @@ class IBGECenso:
         pontos = shapely.points(df_hex["lng"].to_numpy(), df_hex["lat"].to_numpy())
         pares = tree.query(pontos, predicate="within")
         codigos = np.full(len(df_hex), None, dtype=object)
+        metodo_atribuicao = np.full(len(df_hex), None, dtype=object)
 
         if pares.size:
             codigos[pares[0]] = df_municipios["cod_municipio"].to_numpy()[pares[1]]
+            metodo_atribuicao[pares[0]] = "within"
 
         df = df_hex.copy()
         df["cod_municipio"] = codigos
@@ -435,6 +462,7 @@ class IBGECenso:
             if pares_intersects.size:
                 idx_hex = np.where(faltantes)[0][pares_intersects[0]]
                 codigos[idx_hex] = df_municipios["cod_municipio"].to_numpy()[pares_intersects[1]]
+                metodo_atribuicao[idx_hex] = "intersects"
                 df["cod_municipio"] = codigos
 
         faltantes_total = int(pd.isna(df["cod_municipio"]).sum())
@@ -446,11 +474,14 @@ class IBGECenso:
                 if idx_municipio is None:
                     continue
                 codigos[idx_hex] = codigos_municipio[int(idx_municipio)]
+                metodo_atribuicao[idx_hex] = "nearest"
             df["cod_municipio"] = codigos
 
         faltantes_total = int(pd.isna(df["cod_municipio"]).sum())
         if faltantes_total:
             raise RuntimeError(f"{uf}: {faltantes_total} hexagonos sem municipio apos join espacial do IBGE.")
+
+        df["metodo_atribuicao_municipio"] = pd.Series(metodo_atribuicao, index=df.index, dtype="object")
 
         df = df.merge(
             df_municipios[["cod_municipio", "nome_municipio"]],
@@ -464,7 +495,15 @@ class IBGECenso:
         df["n_domicilios"] = pd.to_numeric(df["n_domicilios"], errors="coerce").fillna(0.0)
         df["densidade_dom"] = pd.to_numeric(df["densidade_dom"], errors="coerce").fillna(0.0)
         df["nome_municipio"] = df["nome_municipio"].fillna("")
+        df["fonte_renda"] = df["fonte_renda"].fillna("ibge_censo2022_sem_renda")
+        df["fonte_populacao"] = df["fonte_populacao"].fillna("ibge_censo2022_sem_populacao")
         df["fonte_demografica"] = df["fonte_demografica"].fillna("fallback_padrao")
+        df["fonte_geometria_ibge"] = "ibge_malha_municipal_2022"
+        df["nivel_geografico_ibge"] = "municipio"
+        df["fallback_setor_censitario"] = True
+        df["motivo_fallback_setor"] = "setor_censitario_indisponivel_uf"
+        df["metodo_atribuicao_municipio"] = df["metodo_atribuicao_municipio"].fillna("desconhecido")
+        df["data_referencia_ibge"] = "censo_2022"
         return df
 
     @staticmethod
@@ -564,7 +603,7 @@ class IBGECenso:
         return resultado
 
     @staticmethod
-    def _features_padrao() -> dict:
+    def _features_padrao(motivo_fallback_setor: str = "fallback_padrao") -> dict:
         return {
             "renda_per_capita": 0.0,
             "pop_total":        0.0,
@@ -573,4 +612,9 @@ class IBGECenso:
             "densidade_dom":    0.0,
             "area_km2":         0.0,
             "fonte":            "fallback_padrao",
+            "fonte_renda":      "ibge_censo2022_sem_renda",
+            "fonte_populacao":  "ibge_censo2022_sem_populacao",
+            "nivel_geografico_ibge": "indisponivel",
+            "fallback_setor_censitario": True,
+            "motivo_fallback_setor": motivo_fallback_setor,
         }

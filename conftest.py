@@ -14,8 +14,12 @@ os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://ultra:ultra123@local
 os.environ.setdefault("DATABASE_URL_SYNC", "postgresql+psycopg2://ultra:ultra123@localhost:5432/motor_expansao_test")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
 os.environ.setdefault("H3_RESOLUTION", "7")
-os.environ.setdefault("DIST_MIN_ULTRA_KM", "2.0")
+os.environ.setdefault("DIST_MIN_ULTRA_KM", "1.0")
+os.environ.setdefault("RENDA_MIN", "4500")
 os.environ.setdefault("AREA_MIN_M2", "1200")
+os.environ.setdefault("M1_SCORE_OFICIAL", "score_priorizacao")
+os.environ.setdefault("M1_PRIORIZACAO_TOP_PCT_POR_UF", "0.20")
+os.environ.setdefault("M1_OSM_ENABLED", "false")
 
 
 @pytest.fixture

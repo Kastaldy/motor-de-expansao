@@ -154,7 +154,7 @@ class TestValidacaoSchema:
 
     def test_score_sempre_entre_0_e_100(self):
         """Qualquer score deve estar entre 0 e 100."""
-        from jobs.pipelines.imovel_qualification import qualificar_imovel
+        from imovel_qualification import qualificar_imovel
         imovel = {
             "area_m2": 900, "lat": -23.55, "lng": -46.63,
             "preco_aluguel": 40_000, "cidade": "São Paulo",

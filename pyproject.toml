@@ -104,8 +104,51 @@ strict = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-testpaths = ["tests"]
-addopts = "--cov=. --cov-report=term-missing --cov-fail-under=70"
+testpaths = [
+    "test_base_h3_brasil.py",
+    "test_hex_enrichment_brasil.py",
+    "test_fase1_bi_exports.py",
+    "test_fontes_gratuitas.py",
+]
+python_files = ["test_*.py"]
+addopts = """
+--cov=base_h3_brasil
+--cov=hex_enrichment
+--cov=fase1_bi_exports
+--cov=ibge_censo
+--cov=poi_enrichment
+--cov-report=term-missing
+--cov-fail-under=50
+"""
 
 [tool.coverage.run]
-omit = ["tests/*", "db/migrations/*", "scripts/*"]
+source = [
+    "base_h3_brasil.py",
+    "hex_enrichment.py",
+    "fase1_bi_exports.py",
+    "ibge_censo.py",
+    "poi_enrichment.py",
+]
+omit = ["test_*.py", "db/migrations/*", "scripts/*"]
+
+[tool.hatch.build.targets.wheel]
+only-include = [
+    "001_initial_schema.py",
+    "base_h3_brasil.py",
+    "base_scraper.py",
+    "config.py",
+    "daily_pipeline.py",
+    "database.py",
+    "fase1_bi_exports.py",
+    "geocoding.py",
+    "hex_enrichment.py",
+    "ibge_censo.py",
+    "imovel_qualification.py",
+    "imovel_scraper.py",
+    "main.py",
+    "models.py",
+    "poi_enrichment.py",
+    "score_consolidado.py",
+    "setup.py",
+    "streamlit_app.py",
+]

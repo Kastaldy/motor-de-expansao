@@ -1,6 +1,9 @@
 # Resumo Executivo Fase 1
 
 Metricas, ranking e faixas derivados de `data/staging/hexagonos_brasil_oportunidades.parquet`, sem recalculo de score ou alteracao de regras de negocio.
+Score oficial de priorizacao executiva do M1 nacional: `score_priorizacao` (replicado em `score_oficial`).
+Base estrutural oficial preservada em `hex_score_estrutural`; ajuste executivo auditavel exposto em `ajuste_executivo`.
+OSM permanece `nao_aplicado_mvp_nacional` no fechamento oficial da Fase 1 e nao participa do ranking executivo.
 Rotulos de municipio enriquecidos apenas para exibicao via lookup oficial do IBGE em `data/ibge/municipios_nomes_ibge.parquet`.
 
 ## Indicadores-chave
@@ -14,39 +17,39 @@ Rotulos de municipio enriquecidos apenas para exibicao via lookup oficial do IBG
 
 | uf | cidade | oportunidades_viaveis | score_medio | melhor_rank_brasil |
 | --- | --- | --- | --- | --- |
-| MS | Corumbá | 12432 | 16.97 | 341116 |
-| RO | Porto Velho | 6478 | 18.82 | 229533 |
-| MT | Juína | 4991 | 19.20 | 194716 |
-| MT | Aripuanã | 4672 | 23.00 | 64330 |
-| MT | Cáceres | 4657 | 17.33 | 317528 |
-| MT | Paranatinga | 4338 | 17.61 | 301710 |
-| MT | Juara | 4160 | 19.28 | 185501 |
-| MT | Comodoro | 4126 | 16.87 | 356678 |
-| MT | Apiacás | 3729 | 19.61 | 166934 |
-| MS | Ribas do Rio Pardo | 3337 | 18.87 | 221332 |
+| MS | 5003207 | 12432 | 87.06 | 112281 |
+| RO | Porto Velho | 6478 | 92.19 | 74617 |
+| MT | 5105150 | 4991 | 84.05 | 143255 |
+| MT | 5101407 | 4672 | 82.65 | 159569 |
+| MT | 5102504 | 4657 | 87.93 | 103715 |
+| MT | 5106307 | 4338 | 74.26 | 253640 |
+| MT | 5105101 | 4160 | 82.12 | 166478 |
+| MT | 5103304 | 4126 | 65.87 | 373722 |
+| MT | 5100805 | 3729 | 59.07 | 482613 |
+| MS | 5007109 | 3337 | 75.33 | 237181 |
 
 ## Top 10 UFs
 
 | uf | total_viaveis | pct_viaveis | score_medio | qtd_prioridade_maxima |
 | --- | --- | --- | --- | --- |
-| DF | 999 | 100.00 | 50.29 | 999 |
-| SC | 17459 | 86.86 | 22.78 | 16824 |
-| RS | 49156 | 80.83 | 19.86 | 42830 |
-| SP | 31094 | 65.96 | 18.84 | 23745 |
-| MT | 121202 | 73.44 | 18.35 | 97414 |
-| PR | 24204 | 60.12 | 17.94 | 19431 |
-| MS | 42751 | 61.65 | 17.19 | 27098 |
-| RJ | 3169 | 40.14 | 17.18 | 2928 |
-| GO | 35878 | 59.84 | 16.94 | 29842 |
-| ES | 3146 | 38.56 | 15.05 | 1881 |
+| DF | 999 | 100.00 | 100.00 | 999 |
+| RJ | 3169 | 40.14 | 73.66 | 4728 |
+| MS | 42751 | 61.65 | 69.45 | 37735 |
+| SC | 17459 | 86.86 | 68.84 | 8284 |
+| RS | 49156 | 80.83 | 68.46 | 28044 |
+| SP | 31094 | 65.96 | 68.39 | 20358 |
+| MT | 121202 | 73.44 | 66.02 | 61168 |
+| ES | 3146 | 38.56 | 65.94 | 2900 |
+| PR | 24204 | 60.12 | 63.89 | 14117 |
+| RO | 13401 | 29.16 | 62.59 | 14173 |
 
 ## Distribuicao por faixa_oportunidade
 
 | faixa_oportunidade | hexagonos | pct_hexagonos |
 | --- | --- | --- |
-| prioridade_maxima | 306645 | 20.01 |
-| alta | 229862 | 15.00 |
-| media | 229942 | 15.00 |
-| baixa | 230463 | 15.04 |
-| descartado | 535733 | 34.95 |
+| prioridade_maxima | 307005 | 20.03 |
+| alta | 229838 | 15.00 |
+| media | 229677 | 14.99 |
+| baixa | 230076 | 15.01 |
+| descartado | 536049 | 34.98 |
 

@@ -233,6 +233,8 @@ def gerar_relatorio(
     resolucao: int,
     tempo_execucao_s: float,
     problemas: list[str],
+    cache_path_uf: Path,
+    cache_path_brasil: Path,
 ) -> None:
     total_hexagonos = sum(item.validos for item in metricas)
     linhas = [
@@ -242,6 +244,10 @@ def gerar_relatorio(
         f"- Resolucao H3: {resolucao}",
         f"- Total de hexagonos: {total_hexagonos}",
         f"- Tempo de execucao: {tempo_execucao_s:.1f}s",
+        f"- Fonte malha UFs IBGE: {IBGE_MALHAS_UF_URL}",
+        f"- Cache malha UFs: {cache_path_uf}",
+        f"- Fonte malha Brasil IBGE: {IBGE_MALHA_BRASIL_URL}",
+        f"- Cache malha Brasil: {cache_path_brasil}",
         "",
         "## Distribuicao por UF",
         "",
@@ -358,6 +364,8 @@ def executar_base_h3_brasil(
         resolucao=resolucao,
         tempo_execucao_s=time.time() - started_at,
         problemas=problemas,
+        cache_path_uf=cache_path_uf,
+        cache_path_brasil=cache_path_brasil,
     )
 
     return {

@@ -1,18 +1,13 @@
 """
-jobs/pipelines/hex_enrichment.py — M1 Geográfico
-Hexagonalização H3 com enriquecimento via fontes 100% gratuitas.
+jobs/pipelines/hex_enrichment.py — M1 Geográfico / Fase 1
 
-Fontes:
-  IBGE Censo 2022  → renda, população, densidade
-  OSM Overpass     → academias concorrentes
-  Google Places    → vitalidade comercial (proxy de consumo)
-  Nominatim        → geocodificação gratuita
+Contrato canônico atual do MVP nacional:
+  - métrica oficial: hex_score_estrutural
+  - fechamento nacional: estrutural -> priorização -> camada de oportunidade
+  - OSM: opcional/futuro, fora do fechamento oficial nacional
 
-Resolução H3: 7 (~0.7km² por hexágono)
-Área mínima imóvel: 1.200m² | Ideal: 1.500–2.000m²+
-
-Uso:
-    python -m jobs.pipelines.hex_enrichment --cidade "São Paulo" --uf SP
+Fluxos legados com OSM permanecem no arquivo para uso pontual/local, mas não são a
+dependência operacional do pipeline oficial do M1.
 """
 
 import argparse
@@ -49,8 +44,8 @@ PESOS_HEX_SCORE = {
 }
 
 PESOS_HEX_SCORE_ESTRUTURAL = {
-    "renda_per_capita": 0.35,
-    "populacao_proxy": 0.25,
+    "renda_per_capita": 0.60,
+    "populacao_proxy": 0.40,
 }
 
 PESOS_HEX_SCORE_FINAL = {
@@ -84,6 +79,9 @@ FAIXAS_OPORTUNIDADE = [
     "alta",
     "prioridade_maxima",
 ]
+OSM_STATUS_NAO_APLICADO = "nao_aplicado_mvp_nacional"
+PERCENTIL_CORTE_SUPERIOR = 0.75
+PERCENTIL_CORTE_INFERIOR = 0.25
 
 CAPITAIS_UF = {
     "AC": {"cod_municipio": "1200401", "capital": "Rio Branco"},
@@ -141,6 +139,23 @@ def _normalizar_serie_disponivel(serie: pd.Series, considerar_zero_como_ausente:
     return resultado
 
 
+def _calcular_percentil_nacional(serie: pd.Series) -> pd.Series:
+    serie = pd.to_numeric(serie, errors="coerce")
+    resultado = pd.Series([float("nan")] * len(serie), index=serie.index, dtype="float64")
+    mascara = serie.notna()
+    if not mascara.any():
+        return resultado
+
+    serie_validos = serie.loc[mascara]
+    if len(serie_validos) == 1:
+        resultado.loc[mascara] = 0.5
+        return resultado
+
+    ranks = serie_validos.rank(method="average")
+    resultado.loc[mascara] = (ranks - 1) / (len(serie_validos) - 1)
+    return resultado.round(6)
+
+
 def _combinar_scores_proporcionalmente(
     index: pd.Index,
     componentes: list[tuple[pd.Series, float, pd.Series]],
@@ -164,6 +179,30 @@ def calcular_populacao_proxy(df: pd.DataFrame) -> pd.Series:
     pop_18_45 = _serie_numerica(df, "pop_18_45")
     pop_total = _serie_numerica(df, "pop_total")
     return pop_18_45.where(pop_18_45 > 0, pop_total)
+
+
+def calcular_ajuste_executivo(
+    renda_pct_nacional: pd.Series,
+    pop_pct_nacional: pd.Series,
+) -> pd.Series:
+    renda_pct_nacional = pd.to_numeric(renda_pct_nacional, errors="coerce")
+    pop_pct_nacional = pd.to_numeric(pop_pct_nacional, errors="coerce")
+
+    renda_alta = renda_pct_nacional >= PERCENTIL_CORTE_SUPERIOR
+    pop_alta = pop_pct_nacional >= PERCENTIL_CORTE_SUPERIOR
+    renda_baixa = renda_pct_nacional < PERCENTIL_CORTE_INFERIOR
+    pop_baixa = pop_pct_nacional < PERCENTIL_CORTE_INFERIOR
+
+    bonus = pd.Series(0.0, index=renda_pct_nacional.index, dtype="float64")
+    bonus.loc[renda_alta & pop_alta] = 5.0
+    bonus.loc[renda_alta & ~pop_alta] = 2.0
+    bonus.loc[pop_alta & ~renda_alta] = 1.0
+
+    penalidade = pd.Series(0.0, index=renda_pct_nacional.index, dtype="float64")
+    penalidade.loc[renda_baixa] -= 5.0
+    penalidade.loc[pop_baixa] -= 3.0
+
+    return (bonus + penalidade).round(2)
 
 
 def resumir_distribuicao_score(serie: pd.Series) -> dict:
@@ -246,23 +285,22 @@ def calcular_hex_score_estrutural(df: pd.DataFrame) -> pd.DataFrame:
     df["pop_total"] = _serie_numerica(df, "pop_total")
     df["pop_18_45"] = _serie_numerica(df, "pop_18_45")
     df["populacao_proxy"] = calcular_populacao_proxy(df)
-    df["renda_norm_estrutural"] = _normalizar_serie_disponivel(df["renda_per_capita"])
-    df["pop_norm_estrutural"] = _normalizar_serie_disponivel(df["populacao_proxy"])
-    df["hex_score_estrutural"] = _combinar_scores_proporcionalmente(
-        df.index,
-        [
-            (
-                df["renda_norm_estrutural"],
-                PESOS_HEX_SCORE_ESTRUTURAL["renda_per_capita"],
-                df["renda_per_capita"].notna() & (df["renda_per_capita"] > 0),
-            ),
-            (
-                df["pop_norm_estrutural"],
-                PESOS_HEX_SCORE_ESTRUTURAL["populacao_proxy"],
-                df["populacao_proxy"].notna() & (df["populacao_proxy"] > 0),
-            ),
-        ],
+    df["renda_pct_nacional"] = _calcular_percentil_nacional(df["renda_per_capita"])
+    df["pop_pct_nacional"] = _calcular_percentil_nacional(df["populacao_proxy"])
+    df["hex_score_estrutural"] = (
+        100
+        * (
+            PESOS_HEX_SCORE_ESTRUTURAL["renda_per_capita"] * df["renda_pct_nacional"]
+            + PESOS_HEX_SCORE_ESTRUTURAL["populacao_proxy"] * df["pop_pct_nacional"]
+        )
+    ).round(2)
+    df["ajuste_executivo"] = calcular_ajuste_executivo(
+        df["renda_pct_nacional"],
+        df["pop_pct_nacional"],
     )
+    df["score_priorizacao"] = (
+        (df["hex_score_estrutural"] + df["ajuste_executivo"]).clip(lower=0, upper=100)
+    ).round(2)
     return df
 
 
@@ -331,6 +369,12 @@ def enriquecer_hexagono(hex_id: str, uf: str, censo: IBGECenso, poi: POIEnricher
         "n_domicilios":      ibge.get("n_domicilios", 0),
         "densidade_dom":     ibge.get("densidade_dom", 0),
         "fonte_demografica": ibge.get("fonte", ""),
+        "fonte_renda":       ibge.get("fonte_renda", ""),
+        "fonte_populacao":   ibge.get("fonte_populacao", ""),
+        "nivel_geografico_ibge": ibge.get("nivel_geografico_ibge", ""),
+        "fallback_setor_censitario": ibge.get("fallback_setor_censitario", True),
+        "motivo_fallback_setor": ibge.get("motivo_fallback_setor", ""),
+        "data_referencia_ibge": "censo_2022",
         "n_academias_osm":   poi.contar_academias_proximas(lat, lng),
         "score_vitalidade":  50.0,  # Google Places: fallback neutro sem API key
     }
@@ -623,7 +667,23 @@ def enriquecer_hexagonos_uf_estrutural(
 def resumir_validacao_estrutural(df_total: pd.DataFrame) -> dict:
     df = df_total.copy()
     df["populacao_proxy"] = calcular_populacao_proxy(df)
-    score = pd.to_numeric(df["hex_score_estrutural"], errors="coerce")
+    score_estrutural = pd.to_numeric(df["hex_score_estrutural"], errors="coerce")
+    score_priorizacao = pd.to_numeric(df.get("score_priorizacao"), errors="coerce")
+    fallback_pct = round(float(df.get("fallback_setor_censitario", pd.Series([True] * len(df))).fillna(True).mean() * 100), 2)
+    rastreabilidade_ibge = (
+        df.groupby(
+            ["nivel_geografico_ibge", "fonte_renda", "fonte_populacao", "motivo_fallback_setor"],
+            dropna=False,
+            sort=True,
+        )
+        .size()
+        .reset_index(name="hexagonos")
+    )
+    atribuicao_municipio = (
+        df.groupby("metodo_atribuicao_municipio", dropna=False, sort=True)
+        .size()
+        .reset_index(name="hexagonos")
+    ) if "metodo_atribuicao_municipio" in df.columns else pd.DataFrame()
     rows_uf = []
     for uf, grupo in df.groupby("uf", sort=True):
         rows_uf.append(
@@ -633,8 +693,10 @@ def resumir_validacao_estrutural(df_total: pd.DataFrame) -> dict:
                 "municipios": int(grupo["cod_municipio"].nunique(dropna=True)),
                 "renda_preenchida_pct": round(float((grupo["renda_per_capita"] > 0).mean() * 100), 2),
                 "pop_proxy_preenchida_pct": round(float((grupo["populacao_proxy"] > 0).mean() * 100), 2),
-                "score_min": round(float(grupo["hex_score_estrutural"].min()), 2),
-                "score_max": round(float(grupo["hex_score_estrutural"].max()), 2),
+                "score_estrutural_min": round(float(grupo["hex_score_estrutural"].min()), 2),
+                "score_estrutural_max": round(float(grupo["hex_score_estrutural"].max()), 2),
+                "score_priorizacao_min": round(float(grupo["score_priorizacao"].min()), 2),
+                "score_priorizacao_max": round(float(grupo["score_priorizacao"].max()), 2),
             }
         )
 
@@ -650,6 +712,8 @@ def resumir_validacao_estrutural(df_total: pd.DataFrame) -> dict:
                 "renda_per_capita",
                 "populacao_proxy",
                 "hex_score_estrutural",
+                "ajuste_executivo",
+                "score_priorizacao",
             ]
         ]
         .copy()
@@ -658,7 +722,11 @@ def resumir_validacao_estrutural(df_total: pd.DataFrame) -> dict:
         "total_hexagonos": int(len(df)),
         "preenchimento_renda_pct": round(float((df["renda_per_capita"] > 0).mean() * 100), 2),
         "preenchimento_pop_pct": round(float((df["populacao_proxy"] > 0).mean() * 100), 2),
-        "distribuicao_score_estrutural": resumir_distribuicao_score(score),
+        "fallback_setor_censitario_pct": fallback_pct,
+        "distribuicao_score_estrutural": resumir_distribuicao_score(score_estrutural),
+        "distribuicao_score_priorizacao": resumir_distribuicao_score(score_priorizacao),
+        "rastreabilidade_ibge": rastreabilidade_ibge,
+        "atribuicao_municipio": atribuicao_municipio,
         "resumo_uf": pd.DataFrame(rows_uf),
         "top20_brasil": top20,
     }
@@ -740,19 +808,56 @@ def preparar_base_oportunidades(
     df["threshold_prioridade_uf"] = pd.to_numeric(df["threshold_prioridade_uf"], errors="coerce")
     df["renda_per_capita"] = _serie_numerica(df, "renda_per_capita")
     df["populacao_proxy"] = _serie_numerica(df, "populacao_proxy")
+    if "renda_pct_nacional" in df.columns:
+        df["renda_pct_nacional"] = pd.to_numeric(df["renda_pct_nacional"], errors="coerce")
+    else:
+        df["renda_pct_nacional"] = _calcular_percentil_nacional(df["renda_per_capita"])
+    if "pop_pct_nacional" in df.columns:
+        df["pop_pct_nacional"] = pd.to_numeric(df["pop_pct_nacional"], errors="coerce")
+    else:
+        df["pop_pct_nacional"] = _calcular_percentil_nacional(df["populacao_proxy"])
     df["hex_score_estrutural"] = _serie_numerica(df, "hex_score_estrutural")
+    if "ajuste_executivo" in df.columns:
+        df["ajuste_executivo"] = _serie_numerica(df, "ajuste_executivo")
+    else:
+        df["ajuste_executivo"] = calcular_ajuste_executivo(df["renda_pct_nacional"], df["pop_pct_nacional"])
+    if "score_priorizacao" in df.columns:
+        df["score_priorizacao"] = _serie_numerica(df, "score_priorizacao")
+    else:
+        df["score_priorizacao"] = (
+            (df["hex_score_estrutural"] + df["ajuste_executivo"]).clip(lower=0, upper=100)
+        ).round(2)
+    if "fonte_renda" not in df.columns:
+        df["fonte_renda"] = ""
+    if "fonte_populacao" not in df.columns:
+        df["fonte_populacao"] = ""
+    if "nivel_geografico_ibge" not in df.columns:
+        df["nivel_geografico_ibge"] = ""
+    if "fallback_setor_censitario" not in df.columns:
+        df["fallback_setor_censitario"] = True
+    if "motivo_fallback_setor" not in df.columns:
+        df["motivo_fallback_setor"] = ""
+    if "fonte_geometria_ibge" not in df.columns:
+        df["fonte_geometria_ibge"] = ""
+    if "metodo_atribuicao_municipio" not in df.columns:
+        df["metodo_atribuicao_municipio"] = ""
+    if "data_referencia_ibge" not in df.columns:
+        df["data_referencia_ibge"] = "censo_2022"
 
-    score_validos = df["hex_score_estrutural"].notna()
+    score_validos = df["score_priorizacao"].notna()
     df["score_percentil_nacional"] = pd.Series([float("nan")] * len(df), index=df.index, dtype="float64")
     if score_validos.any():
         df.loc[score_validos, "score_percentil_nacional"] = (
-            df.loc[score_validos, "hex_score_estrutural"].rank(method="max", pct=True) * 100
+            df.loc[score_validos, "score_priorizacao"].rank(method="max", pct=True) * 100
         ).round(2)
     df["faixa_oportunidade"] = _definir_faixa_oportunidade(df["score_percentil_nacional"])
+    df["score_oficial"] = df["score_priorizacao"].round(2)
+    df["score_oficial_nome"] = settings.M1_SCORE_OFICIAL
+    df["osm_status"] = OSM_STATUS_NAO_APLICADO
 
     renda_p75 = float(df["renda_per_capita"].quantile(0.75))
-    pop_p75 = float(df["populacao_proxy"].quantile(0.75))
-    pop_p25 = float(df["populacao_proxy"].quantile(0.25))
+    pop_p75 = float(df["populacao_proxy"].quantile(PERCENTIL_CORTE_SUPERIOR))
+    pop_p25 = float(df["populacao_proxy"].quantile(PERCENTIL_CORTE_INFERIOR))
     score_p50 = float(df["score_percentil_nacional"].quantile(0.50))
 
     fator_renda_target = 4500.0 / renda_p75 if renda_p75 > 0 else 1.0
@@ -760,9 +865,9 @@ def preparar_base_oportunidades(
     # alterar o score estrutural original.
     df["renda_target_proxy"] = (df["renda_per_capita"] * fator_renda_target).round(2)
 
-    renda_alta = df["renda_per_capita"] >= renda_p75
-    pop_alta = df["populacao_proxy"] >= pop_p75
-    baixa_densidade = df["populacao_proxy"] <= pop_p25
+    renda_alta = df["renda_pct_nacional"] >= PERCENTIL_CORTE_SUPERIOR
+    pop_alta = df["pop_pct_nacional"] >= PERCENTIL_CORTE_SUPERIOR
+    baixa_densidade = df["pop_pct_nacional"] < PERCENTIL_CORTE_INFERIOR
     score_baixo = df["score_percentil_nacional"] < score_p50
     renda_baixa = df["renda_target_proxy"] < 4500.0
 
@@ -805,7 +910,9 @@ def preparar_base_oportunidades(
     )
 
     colunas_ordenacao = [
+        "score_priorizacao",
         "hex_score_estrutural",
+        "ajuste_executivo",
         "score_percentil_nacional",
         "renda_per_capita",
         "populacao_proxy",
@@ -813,7 +920,7 @@ def preparar_base_oportunidades(
         "cod_municipio",
         "hex_id",
     ]
-    ascending = [False, False, False, False, True, True, True]
+    ascending = [False, False, False, False, False, False, True, True, True]
     df = df.sort_values(colunas_ordenacao, ascending=ascending, na_position="last").reset_index(drop=True)
     df["rank_brasil"] = np.arange(1, len(df) + 1, dtype=np.int64)
     df["rank_uf"] = df.groupby("uf", sort=False).cumcount().add(1).astype("int64")
@@ -859,6 +966,8 @@ def resumir_validacao_camada_oportunidade(
                 "faixa_oportunidade",
                 "motivo_priorizacao",
                 "observacao_estrategica",
+                "score_priorizacao",
+                "ajuste_executivo",
                 "hex_score_estrutural",
                 "score_percentil_nacional",
                 "renda_target_proxy",
@@ -876,6 +985,7 @@ def resumir_validacao_camada_oportunidade(
                 "cod_municipio",
                 "hex_id",
                 "faixa_oportunidade",
+                "score_priorizacao",
                 "hex_score_estrutural",
                 "score_percentil_nacional",
                 "flag_viavel",
@@ -888,8 +998,8 @@ def resumir_validacao_camada_oportunidade(
         .agg(
             hexagonos=("hex_id", "size"),
             viaveis=("flag_viavel", "sum"),
-            score_max=("hex_score_estrutural", "max"),
-            score_mediana=("hex_score_estrutural", "median"),
+            score_max=("score_priorizacao", "max"),
+            score_mediana=("score_priorizacao", "median"),
             prioridade_maxima=("faixa_oportunidade", lambda s: int((s == "prioridade_maxima").sum())),
         )
         .reset_index()
@@ -941,6 +1051,10 @@ def resumir_validacao_camada_oportunidade(
     return {
         "distribuicao_faixa": metadados["distribuicao_faixa"],
         "pct_viavel": metadados["pct_viavel"],
+        "fallback_setor_censitario_pct": round(
+            float(df_oportunidades["fallback_setor_censitario"].fillna(True).mean() * 100),
+            2,
+        ) if "fallback_setor_censitario" in df_oportunidades.columns else 0.0,
         "top20_brasil": top20_brasil,
         "top5_por_uf": top5_por_uf,
         "resumo_uf": resumo_uf,
@@ -951,6 +1065,7 @@ def resumir_validacao_camada_oportunidade(
         "pop_p75": metadados["pop_p75"],
         "pop_p25": metadados["pop_p25"],
         "fator_renda_target": metadados["fator_renda_target"],
+        "distribuicao_score_priorizacao": resumir_distribuicao_score(df_oportunidades["score_priorizacao"]),
     }
 
 
@@ -964,12 +1079,14 @@ def gerar_relatorio_camada_oportunidade(
         "## Resumo executivo",
         "",
         f"- percentual de hexagonos viaveis: {validacao['pct_viavel']:.2f}%",
+        f"- fallback explicito de setor censitario: {validacao['fallback_setor_censitario_pct']:.2f}%",
         f"- top 20 com renda alta ou combinada: {validacao['sanity_renda_topo_pct']:.2f}%",
         f"- capitais entre top 10 do proprio estado: {validacao['capitais_top10_uf']}/27",
         f"- renda p75 nacional usada na calibragem da proxy executiva: {validacao['renda_p75']:.2f}",
         f"- pop p75 nacional: {validacao['pop_p75']:.2f}",
         f"- pop p25 nacional: {validacao['pop_p25']:.2f}",
         f"- fator de proxy de renda domiciliar: {validacao['fator_renda_target']:.4f}",
+        _texto_distribuicao_score("distribuicao do score de priorizacao", validacao["distribuicao_score_priorizacao"]),
         "",
         "## Distribuicao por faixa_oportunidade",
         "",
@@ -999,7 +1116,7 @@ def rodar_camada_oportunidade_nacional(
     output_base_path: Path | str = "data/staging/hexagonos_brasil_oportunidades.parquet",
     output_top_brasil_csv: Path | str = "data/outputs/top_hexagonos_brasil.csv",
     output_top_uf_csv: Path | str = "data/outputs/top_hexagonos_por_uf.csv",
-    output_dashboard_path: Path | str = "data/outputs/hexagonos_brasil_dashboard.parquet",
+    output_dashboard_path: Path | str = "data/staging/hexagonos_brasil_dashboard_base.parquet",
     report_path: Path | str = "data/reports/camada_oportunidade_fase1.md",
 ) -> tuple[pd.DataFrame, dict]:
     df_estrutural = pd.read_parquet(input_estrutural_path)
@@ -1033,6 +1150,8 @@ def rodar_camada_oportunidade_nacional(
                 "motivo_alerta",
                 "flag_viavel",
                 "observacao_estrategica",
+                "score_priorizacao",
+                "ajuste_executivo",
                 "hex_score_estrutural",
                 "score_percentil_nacional",
                 "renda_target_proxy",
@@ -1059,6 +1178,8 @@ def rodar_camada_oportunidade_nacional(
                 "motivo_alerta",
                 "flag_viavel",
                 "observacao_estrategica",
+                "score_priorizacao",
+                "ajuste_executivo",
                 "hex_score_estrutural",
                 "score_percentil_nacional",
                 "renda_target_proxy",
@@ -1081,7 +1202,13 @@ def rodar_camada_oportunidade_nacional(
         "renda_per_capita",
         "renda_target_proxy",
         "populacao_proxy",
+        "renda_pct_nacional",
+        "pop_pct_nacional",
         "hex_score_estrutural",
+        "ajuste_executivo",
+        "score_priorizacao",
+        "score_oficial",
+        "score_oficial_nome",
         "score_percentil_nacional",
         "faixa_oportunidade",
         "motivo_priorizacao",
@@ -1091,6 +1218,16 @@ def rodar_camada_oportunidade_nacional(
         "flag_prioridade",
         "criterio_prioridade",
         "threshold_prioridade_uf",
+        "osm_status",
+        "fonte_demografica",
+        "fonte_renda",
+        "fonte_populacao",
+        "nivel_geografico_ibge",
+        "fallback_setor_censitario",
+        "motivo_fallback_setor",
+        "fonte_geometria_ibge",
+        "metodo_atribuicao_municipio",
+        "data_referencia_ibge",
         "rank_brasil",
         "rank_uf",
         "rank_cidade",
@@ -1125,20 +1262,42 @@ def selecionar_areas_prioritarias(
         vazio = pd.DataFrame(columns=["hex_id", "lat", "lng", "uf", "regiao", "hex_score_estrutural", "flag_prioridade"])
         return vazio, {"total_priorizados": 0, "resumo_uf": pd.DataFrame()}
 
+    df_estrutural = df_estrutural.copy()
+    df_estrutural["renda_per_capita"] = _serie_numerica(df_estrutural, "renda_per_capita")
+    df_estrutural["populacao_proxy"] = _serie_numerica(df_estrutural, "populacao_proxy")
+    df_estrutural["hex_score_estrutural"] = _serie_numerica(df_estrutural, "hex_score_estrutural")
+    if "renda_pct_nacional" not in df_estrutural.columns:
+        df_estrutural["renda_pct_nacional"] = _calcular_percentil_nacional(df_estrutural["renda_per_capita"])
+    if "pop_pct_nacional" not in df_estrutural.columns:
+        df_estrutural["pop_pct_nacional"] = _calcular_percentil_nacional(df_estrutural["populacao_proxy"])
+    if "ajuste_executivo" not in df_estrutural.columns:
+        df_estrutural["ajuste_executivo"] = calcular_ajuste_executivo(
+            df_estrutural["renda_pct_nacional"],
+            df_estrutural["pop_pct_nacional"],
+        )
+    if "score_priorizacao" not in df_estrutural.columns:
+        df_estrutural["score_priorizacao"] = (
+            (df_estrutural["hex_score_estrutural"] + df_estrutural["ajuste_executivo"]).clip(lower=0, upper=100)
+        ).round(2)
+
     frames = []
     for uf, grupo in df_estrutural.groupby("uf", sort=True):
-        df_uf = grupo.sort_values("hex_score_estrutural", ascending=False).copy()
+        df_uf = grupo.sort_values(
+            ["score_priorizacao", "hex_score_estrutural", "hex_id"],
+            ascending=[False, False, True],
+            na_position="last",
+        ).copy()
         df_uf["flag_prioridade"] = False
 
         if score_threshold is not None:
-            mascara = df_uf["hex_score_estrutural"] >= score_threshold
+            mascara = df_uf["score_priorizacao"] >= score_threshold
             threshold_uf = float(score_threshold)
             criterio = "threshold_global"
         else:
             n_prioritarios = max(1, math.ceil(len(df_uf) * top_pct_por_uf))
             idx_prioritarios = df_uf.head(n_prioritarios).index
             mascara = df_uf.index.isin(idx_prioritarios)
-            threshold_uf = float(df_uf.loc[idx_prioritarios, "hex_score_estrutural"].min())
+            threshold_uf = float(df_uf.loc[idx_prioritarios, "score_priorizacao"].min())
             criterio = f"top_{top_pct_por_uf:.0%}_uf"
 
         df_uf.loc[mascara, "flag_prioridade"] = True
@@ -1159,8 +1318,12 @@ def selecionar_areas_prioritarias(
         "pop_total",
         "pop_18_45",
         "populacao_proxy",
+        "renda_pct_nacional",
+        "pop_pct_nacional",
         "fonte_demografica",
         "hex_score_estrutural",
+        "ajuste_executivo",
+        "score_priorizacao",
         "flag_prioridade",
         "criterio_prioridade",
         "threshold_prioridade_uf",
@@ -1173,8 +1336,8 @@ def selecionar_areas_prioritarias(
         .agg(
             hexagonos_priorizados=("hex_id", "size"),
             municipios_priorizados=("cod_municipio", "nunique"),
-            score_min=("hex_score_estrutural", "min"),
-            score_max=("hex_score_estrutural", "max"),
+            score_min=("score_priorizacao", "min"),
+            score_max=("score_priorizacao", "max"),
         )
         .reset_index()
     )
@@ -1592,12 +1755,12 @@ def rodar_pipeline_fase1_brasil(
     input_root: Path | str = "data/staging/brasil",
     output_estrutural_path: Path | str = "data/staging/brasil_estrutural.parquet",
     output_priorizados_path: Path | str = "data/staging/brasil_priorizados.parquet",
-    output_oportunidades_path: Path | str = "data/staging/brasil_oportunidades.parquet",
-    report_path: Path | str = "data/reports/mvp_fase1_brasil.md",
+    output_oportunidades_path: Path | str = "data/staging/hexagonos_brasil_oportunidades.parquet",
+    report_path: Path | str = "data/reports/camada_oportunidade_fase1.md",
     tmp_root: Path | str = "data/staging/brasil_estrutural_tmp",
     refresh_demografia: bool = False,
     refresh_malha: bool = False,
-    top_pct_por_uf: float = 0.20,
+    top_pct_por_uf: float = settings.M1_PRIORIZACAO_TOP_PCT_POR_UF,
     score_threshold: float | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     started_at = time.time()
@@ -1625,33 +1788,23 @@ def rodar_pipeline_fase1_brasil(
     tempos["priorizacao_s"] = round(time.time() - t0, 2)
 
     t0 = time.time()
-    poi = POIEnricher()
-    df_osm, metricas_osm = enriquecer_concorrencia_priorizados(df_priorizados, poi=poi)
-    tempos["osm_s"] = round(time.time() - t0, 2)
+    df_oportunidades, validacao_oportunidades = rodar_camada_oportunidade_nacional(
+        input_estrutural_path=output_estrutural_path,
+        input_priorizados_path=output_priorizados_path,
+        output_base_path=output_oportunidades_path,
+        report_path=report_path,
+    )
+    tempos["camada_oportunidade_s"] = round(time.time() - t0, 2)
 
     t0 = time.time()
-    df_oportunidades = calcular_hex_score_final(df_osm)
-    df_oportunidades = df_oportunidades.sort_values(
-        ["hex_score_final", "hex_score_estrutural"],
-        ascending=[False, False],
-        na_position="last",
-    ).reset_index(drop=True)
-    output_oportunidades_path = Path(output_oportunidades_path)
-    output_oportunidades_path.parent.mkdir(parents=True, exist_ok=True)
-    df_oportunidades.to_parquet(output_oportunidades_path, index=False)
-    tempos["score_final_s"] = round(time.time() - t0, 2)
+    try:
+        from fase1_bi_exports import generate_fase1_bi_artifacts
+    except ModuleNotFoundError:
+        from jobs.pipelines.fase1_bi_exports import generate_fase1_bi_artifacts
 
-    validacao_oportunidades = resumir_validacao_oportunidades(df_oportunidades, metricas_osm)
+    artefatos_bi = generate_fase1_bi_artifacts(source_path=output_oportunidades_path)
+    tempos["bi_exports_s"] = round(time.time() - t0, 2)
     tempos["total_s"] = round(time.time() - started_at, 2)
-
-    gerar_relatorio_mvp_fase1_brasil(
-        validacao_estrutural=validacao_estrutural,
-        validacao_priorizacao=validacao_priorizacao,
-        validacao_oportunidades=validacao_oportunidades,
-        metricas_osm=metricas_osm,
-        tempos=tempos,
-        output_path=Path(report_path),
-    )
     log.info(
         "pipeline_fase1_brasil_concluido",
         total_estrutural=len(df_estrutural),
@@ -1666,19 +1819,20 @@ def rodar_pipeline_fase1_brasil(
         "estrutural": validacao_estrutural,
         "priorizacao": validacao_priorizacao,
         "oportunidades": validacao_oportunidades,
+        "bi_outputs": {chave: len(valor) if isinstance(valor, pd.DataFrame) else valor for chave, valor in artefatos_bi.items()},
         "tempos": tempos,
     }
 
 
 def rodar_pipeline_brasil(
     input_root: Path | str = "data/staging/brasil",
-    output_path: Path | str = "data/staging/brasil_oportunidades.parquet",
+    output_path: Path | str = "data/staging/hexagonos_brasil_oportunidades.parquet",
     output_part_root: Path | str = "data/staging/brasil_enriquecido",
-    report_path: Path | str = "data/reports/mvp_fase1_brasil.md",
+    report_path: Path | str = "data/reports/camada_oportunidade_fase1.md",
     tmp_root: Path | str = "data/staging/brasil_estrutural_tmp",
     refresh_demografia: bool = False,
     refresh_malha: bool = False,
-    top_pct_por_uf: float = 0.20,
+    top_pct_por_uf: float = settings.M1_PRIORIZACAO_TOP_PCT_POR_UF,
     score_threshold: float | None = None,
 ) -> tuple[pd.DataFrame, dict]:
     del output_part_root  # legado: mantido apenas para compatibilidade de assinatura
@@ -1703,7 +1857,7 @@ if __name__ == "__main__":
     parser.add_argument("--raio",    type=float, default=15.0)
     parser.add_argument("--batch",   action="store_true", help="Modo batch multi-cidade")
     parser.add_argument("--brasil",  action="store_true", help="Modo nacional por UF")
-    parser.add_argument("--prioridade-top-pct", type=float, default=0.20)
+    parser.add_argument("--prioridade-top-pct", type=float, default=settings.M1_PRIORIZACAO_TOP_PCT_POR_UF)
     parser.add_argument("--score-threshold", type=float)
     args = parser.parse_args()
 

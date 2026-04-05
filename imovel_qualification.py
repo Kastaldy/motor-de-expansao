@@ -9,7 +9,10 @@ from typing import Optional
 import pandas as pd
 import structlog
 
-from api.config import settings
+try:
+    from api.config import settings
+except ModuleNotFoundError:
+    from config import settings  # estrutura flat (desenvolvimento)
 
 log = structlog.get_logger()
 
