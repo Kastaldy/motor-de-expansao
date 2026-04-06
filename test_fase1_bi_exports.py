@@ -129,6 +129,7 @@ def test_build_dashboard_dataset_padroniza_colunas_obrigatorias():
         "rank_cidade",
         "renda_per_capita",
         "renda_target_proxy",
+        "populacao_proxy",
         "proxy_populacao",
         "renda_pct_nacional",
         "pop_pct_nacional",
@@ -151,6 +152,7 @@ def test_build_dashboard_dataset_padroniza_colunas_obrigatorias():
         "observacao_estrategica",
     ]
     assert dashboard.loc[0, "cidade"] == "Sao Paulo"
+    assert dashboard.loc[0, "populacao_proxy"] == 12000.0
     assert dashboard.loc[0, "proxy_populacao"] == 12000.0
     assert dashboard.loc[0, "score_priorizacao"] == 97.5
     assert dashboard.loc[0, "ajuste_executivo"] == 5.0

@@ -1,0 +1,421 @@
+{
+  "base_h3": {
+    "tempo_s": 153.55,
+    "resultado": {
+      "total_hexagonos": 1532645,
+      "total_removidos": 5997,
+      "tempo_execucao_s": 153.54,
+      "metricas": [
+        {
+          "uf": "AC",
+          "regiao": "N",
+          "candidatos": 28750,
+          "validos": 28370,
+          "removidos": 380,
+          "tempo_s": 3.18,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "AL",
+          "regiao": "NE",
+          "candidatos": 4595,
+          "validos": 4544,
+          "removidos": 51,
+          "tempo_s": 0.45,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "AM",
+          "regiao": "N",
+          "candidatos": 293503,
+          "validos": 292793,
+          "removidos": 710,
+          "tempo_s": 30.68,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "AP",
+          "regiao": "N",
+          "candidatos": 24482,
+          "validos": 24162,
+          "removidos": 320,
+          "tempo_s": 2.34,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "BA",
+          "regiao": "NE",
+          "candidatos": 94128,
+          "validos": 93918,
+          "removidos": 210,
+          "tempo_s": 9.87,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "CE",
+          "regiao": "NE",
+          "candidatos": 24109,
+          "validos": 23975,
+          "removidos": 134,
+          "tempo_s": 2.36,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "DF",
+          "regiao": "CO",
+          "candidatos": 999,
+          "validos": 999,
+          "removidos": 0,
+          "tempo_s": 0.11,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "ES",
+          "regiao": "SE",
+          "candidatos": 8243,
+          "validos": 8158,
+          "removidos": 85,
+          "tempo_s": 0.81,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "GO",
+          "regiao": "CO",
+          "candidatos": 59954,
+          "validos": 59952,
+          "removidos": 2,
+          "tempo_s": 5.85,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "MA",
+          "regiao": "NE",
+          "candidatos": 53554,
+          "validos": 53180,
+          "removidos": 374,
+          "tempo_s": 5.3,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "MG",
+          "regiao": "SE",
+          "candidatos": 104078,
+          "validos": 104078,
+          "removidos": 0,
+          "tempo_s": 10.47,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "MS",
+          "regiao": "CO",
+          "candidatos": 69692,
+          "validos": 69344,
+          "removidos": 348,
+          "tempo_s": 6.69,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "MT",
+          "regiao": "CO",
+          "candidatos": 165244,
+          "validos": 165033,
+          "removidos": 211,
+          "tempo_s": 16.13,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "PA",
+          "regiao": "N",
+          "candidatos": 214456,
+          "validos": 213997,
+          "removidos": 459,
+          "tempo_s": 21.24,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "PB",
+          "regiao": "NE",
+          "candidatos": 9255,
+          "validos": 9223,
+          "removidos": 32,
+          "tempo_s": 1.02,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "PE",
+          "regiao": "NE",
+          "candidatos": 16055,
+          "validos": 16013,
+          "removidos": 42,
+          "tempo_s": 1.54,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "PI",
+          "regiao": "NE",
+          "candidatos": 40883,
+          "validos": 40869,
+          "removidos": 14,
+          "tempo_s": 3.9,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "PR",
+          "regiao": "S",
+          "candidatos": 40388,
+          "validos": 40261,
+          "removidos": 127,
+          "tempo_s": 3.86,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "RJ",
+          "regiao": "SE",
+          "candidatos": 8140,
+          "validos": 7895,
+          "removidos": 245,
+          "tempo_s": 0.77,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "RN",
+          "regiao": "NE",
+          "candidatos": 8638,
+          "validos": 8555,
+          "removidos": 83,
+          "tempo_s": 0.81,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "RO",
+          "regiao": "N",
+          "candidatos": 46281,
+          "validos": 45962,
+          "removidos": 319,
+          "tempo_s": 4.43,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "RR",
+          "regiao": "N",
+          "candidatos": 43947,
+          "validos": 43424,
+          "removidos": 523,
+          "tempo_s": 4.25,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "RS",
+          "regiao": "S",
+          "candidatos": 61775,
+          "validos": 60811,
+          "removidos": 964,
+          "tempo_s": 6.06,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "SC",
+          "regiao": "S",
+          "candidatos": 20268,
+          "validos": 20100,
+          "removidos": 168,
+          "tempo_s": 1.96,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "SE",
+          "regiao": "NE",
+          "candidatos": 3627,
+          "validos": 3588,
+          "removidos": 39,
+          "tempo_s": 0.34,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "SP",
+          "regiao": "SE",
+          "candidatos": 47296,
+          "validos": 47139,
+          "removidos": 157,
+          "tempo_s": 4.58,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        },
+        {
+          "uf": "TO",
+          "regiao": "N",
+          "candidatos": 46302,
+          "validos": 46302,
+          "removidos": 0,
+          "tempo_s": 4.5,
+          "null_hex_id": 0,
+          "null_lat": 0,
+          "null_lng": 0,
+          "null_uf": 0
+        }
+      ],
+      "report_path": "data\\reports\\base_h3_brasil.md",
+      "output_root": "data\\staging\\brasil",
+      "cache_path_uf": "data\\raw\\ibge\\malha_uf_brasil.geojson",
+      "cache_path_brasil": "data\\raw\\ibge\\malha_brasil.geojson"
+    }
+  },
+  "pipeline_fase1": {
+    "tempo_s": 65.2,
+    "resultado": {
+      "estrutural": {
+        "total_hexagonos": 1532645,
+        "preenchimento_renda_pct": 100.0,
+        "preenchimento_pop_pct": 100.0,
+        "fallback_setor_censitario_pct": 100.0,
+        "distribuicao_score_estrutural": {
+          "count": 1532645,
+          "min": 2.92,
+          "max": 99.92,
+          "media": 50.0,
+          "mediana": 49.05,
+          "std": 21.03,
+          "p90": 81.64,
+          "p95": 87.19
+        },
+        "distribuicao_score_priorizacao": {
+          "count": 1532645,
+          "min": 0.0,
+          "max": 100.0,
+          "media": 48.87,
+          "mediana": 48.3,
+          "std": 23.74,
+          "p90": 83.12,
+          "p95": 92.19
+        },
+        "rastreabilidade_ibge": "  nivel_geografico_ibge  ... hexagonos\n0             municipio  ...   1532645\n\n[1 rows x 5 columns]",
+        "atribuicao_municipio": "  metodo_atribuicao_municipio  hexagonos\n0                     nearest        301\n1                      within    1532344",
+        "resumo_uf": "    uf  hexagonos  ...  score_priorizacao_min  score_priorizacao_max\n0   AC      28370  ...                   0.00                  90.71\n1   AL       4544  ...                   0.00                  97.63\n2   AM     292793  ...                   5.08                  82.77\n3   AP      24162  ...                   7.29                  83.17\n4   BA      93918  ...                   7.90                 100.00\n5   CE      23975  ...                   6.83                 100.00\n6   DF        999  ...                 100.00                 100.00\n7   ES       8158  ...                  29.18                 100.00\n8   GO      59952  ...                  25.83                 100.00\n9   MA      53180  ...                   0.00                  96.87\n10  MG     104078  ...                   3.68                 100.00\n11  MS      69344  ...                  23.86                 100.00\n12  MT     165033  ...                  27.95                 100.00\n13  PA     213997  ...                   0.29                  99.40\n14  PB       9223  ...                   0.00                 100.00\n15  PE      16013  ...                   1.67                 100.00\n16  PI      40869  ...                   0.00                  95.72\n17  PR      40261  ...                  26.10                 100.00\n18  RJ       7895  ...                  38.03                 100.00\n19  RN       8555  ...                   2.18                 100.00\n20  RO      45962  ...                  26.20                  95.55\n21  RR      43424  ...                   1.14                  85.45\n22  RS      60811  ...                  31.29                 100.00\n23  SC      20100  ...                  31.89                 100.00\n24  SE       3588  ...                   1.71                 100.00\n25  SP      47139  ...                  28.49                 100.00\n26  TO      46302  ...                   2.47                 100.00\n\n[27 rows x 9 columns]",
+        "top20_brasil": "    uf nome_municipio  ... ajuste_executivo  score_priorizacao\n0   DF                 ...              5.0              100.0\n1   DF                 ...              5.0              100.0\n2   DF                 ...              5.0              100.0\n3   DF                 ...              5.0              100.0\n4   DF                 ...              5.0              100.0\n5   DF                 ...              5.0              100.0\n6   DF                 ...              5.0              100.0\n7   DF                 ...              5.0              100.0\n8   DF                 ...              5.0              100.0\n9   DF                 ...              5.0              100.0\n10  DF                 ...              5.0              100.0\n11  DF                 ...              5.0              100.0\n12  DF                 ...              5.0              100.0\n13  DF                 ...              5.0              100.0\n14  DF                 ...              5.0              100.0\n15  DF                 ...              5.0              100.0\n16  DF                 ...              5.0              100.0\n17  DF                 ...              5.0              100.0\n18  DF                 ...              5.0              100.0\n19  DF                 ...              5.0              100.0\n\n[20 rows x 10 columns]"
+      },
+      "priorizacao": {
+        "criterio": "top 20% por UF",
+        "total_priorizados": 306538,
+        "pct_volume_priorizado": 20.0,
+        "resumo_uf": "    uf  hexagonos_priorizados  municipios_priorizados  score_min  score_max\n0   AC                   5674                       3      53.37      90.71\n1   AL                    909                      14      48.84      97.63\n2   AM                  58559                      15      39.03      82.77\n3   AP                   4833                       3      54.92      83.17\n4   BA                  18784                      59      55.16     100.00\n5   CE                   4795                      26      59.55     100.00\n6   DF                    200                       1     100.00     100.00\n7   ES                   1632                       9      87.22     100.00\n8   GO                  11991                      27      79.64     100.00\n9   MA                  10636                      23      50.83      96.87\n10  MG                  20816                      98      73.87     100.00\n11  MS                  13869                       9      87.06     100.00\n12  MT                  33007                      20      84.05     100.00\n13  PA                  42800                      10      73.45      99.40\n14  PB                   1845                      29      42.88     100.00\n15  PE                   3203                      31      56.86     100.00\n16  PI                   8174                      24      41.76      95.72\n17  PR                   8053                      50      82.08     100.00\n18  RJ                   1579                      13      91.08     100.00\n19  RN                   1711                      16      53.69     100.00\n20  RO                   9193                       3      92.19      95.55\n21  RR                   8685                       3      39.50      85.45\n22  RS                  12163                      44      90.45     100.00\n23  SC                   4020                      39      86.94     100.00\n24  SE                    718                       9      57.58     100.00\n25  SP                   9428                     101      91.80     100.00\n26  TO                   9261                      18      45.17     100.00"
+      },
+      "oportunidades": {
+        "distribuicao_faixa": "  faixa_oportunidade  hexagonos  pct_hexagonos\n0         descartado     536049          34.98\n1              baixa     230076          15.01\n2              media     229677          14.99\n3               alta     229838          15.00\n4  prioridade_maxima     307005          20.03",
+        "pct_viavel": 25.01,
+        "fallback_setor_censitario_pct": 100.0,
+        "top20_brasil": "    rank_brasil  uf  ... score_percentil_nacional renda_target_proxy\n0             1  DF  ...                    100.0            9635.82\n1             2  DF  ...                    100.0            9635.82\n2             3  DF  ...                    100.0            9635.82\n3             4  DF  ...                    100.0            9635.82\n4             5  DF  ...                    100.0            9635.82\n5             6  DF  ...                    100.0            9635.82\n6             7  DF  ...                    100.0            9635.82\n7             8  DF  ...                    100.0            9635.82\n8             9  DF  ...                    100.0            9635.82\n9            10  DF  ...                    100.0            9635.82\n10           11  DF  ...                    100.0            9635.82\n11           12  DF  ...                    100.0            9635.82\n12           13  DF  ...                    100.0            9635.82\n13           14  DF  ...                    100.0            9635.82\n14           15  DF  ...                    100.0            9635.82\n15           16  DF  ...                    100.0            9635.82\n16           17  DF  ...                    100.0            9635.82\n17           18  DF  ...                    100.0            9635.82\n18           19  DF  ...                    100.0            9635.82\n19           20  DF  ...                    100.0            9635.82\n\n[20 rows x 13 columns]",
+        "top5_por_uf": "       uf  rank_uf  ... score_percentil_nacional flag_viavel\n0      DF        1  ...                   100.00        True\n1      DF        2  ...                   100.00        True\n2      DF        3  ...                   100.00        True\n3      DF        4  ...                   100.00        True\n4      DF        5  ...                   100.00        True\n...    ..      ...  ...                      ...         ...\n88080  AC        1  ...                    94.25        True\n88081  AC        2  ...                    94.25        True\n88082  AC        3  ...                    94.25        True\n88083  AC        4  ...                    94.25        True\n88084  AC        5  ...                    94.25        True\n\n[120 rows x 10 columns]",
+        "resumo_uf": "    uf  hexagonos  viaveis  ...  score_mediana  prioridade_maxima  pct_viavel\n0   AC      28370     1588  ...          34.73               1588        5.60\n1   AL       4544       76  ...          30.97                187        1.67\n2   AM     292793        0  ...          27.28               2139        0.00\n3   AP      24162        0  ...          39.35               1348        0.00\n4   BA      93918      791  ...          38.51               6831        0.84\n5   CE      23975       59  ...          38.85                636        0.25\n6   DF        999      999  ...         100.00                999      100.00\n7   ES       8158     3146  ...          62.03               2900       38.56\n8   GO      59952    35878  ...          62.02              20359       59.84\n9   MA      53180       81  ...          32.27               2497        0.15\n10  MG     104078    35276  ...          51.76              24461       33.89\n11  MS      69344    42751  ...          71.61              37735       61.65\n12  MT     165033   121202  ...          63.57              61168       73.44\n13  PA     213997      173  ...          52.78              47881        0.08\n14  PB       9223       30  ...          26.22                199        0.33\n15  PE      16013       31  ...          41.64               1133        0.19\n16  PI      40869      225  ...          24.03                939        0.55\n17  PR      40261    24204  ...          59.65              14117       60.12\n18  RJ       7895     3169  ...          76.24               4728       40.14\n19  RN       8555       44  ...          32.46                589        0.51\n20  RO      45962    13401  ...          59.24              14173       29.16\n21  RR      43424        0  ...          35.50               1114        0.00\n22  RS      60811    49156  ...          67.08              28044       80.83\n23  SC      20100    17459  ...          64.78               8284       86.86\n24  SE       3588       34  ...          36.70                162        0.95\n25  SP      47139    31094  ...          67.10              20358       65.96\n26  TO      46302     2445  ...          34.29               2436        5.28\n\n[27 rows x 7 columns]",
+        "sanity_renda_topo_pct": 100.0,
+        "sanity_capitais": "    uf         capital  ... faixa_oportunidade  flag_viavel\n6   DF        Brasilia  ...  prioridade_maxima         True\n25  SP       Sao Paulo  ...  prioridade_maxima         True\n17  PR        Curitiba  ...  prioridade_maxima         True\n22  RS    Porto Alegre  ...  prioridade_maxima         True\n10  MG  Belo Horizonte  ...  prioridade_maxima         True\n18  RJ  Rio de Janeiro  ...  prioridade_maxima         True\n8   GO         Goiania  ...  prioridade_maxima         True\n23  SC   Florianopolis  ...  prioridade_maxima         True\n12  MT          Cuiaba  ...  prioridade_maxima         True\n15  PE          Recife  ...  prioridade_maxima         True\n7   ES         Vitoria  ...  prioridade_maxima         True\n26  TO          Palmas  ...  prioridade_maxima         True\n11  MS    Campo Grande  ...  prioridade_maxima         True\n24  SE         Aracaju  ...  prioridade_maxima         True\n19  RN           Natal  ...  prioridade_maxima         True\n14  PB     Joao Pessoa  ...  prioridade_maxima         True\n4   BA        Salvador  ...  prioridade_maxima         True\n5   CE       Fortaleza  ...  prioridade_maxima         True\n13  PA           Belem  ...  prioridade_maxima         True\n1   AL          Maceio  ...  prioridade_maxima         True\n9   MA        Sao Luis  ...  prioridade_maxima         True\n16  PI        Teresina  ...  prioridade_maxima         True\n20  RO     Porto Velho  ...  prioridade_maxima         True\n0   AC      Rio Branco  ...  prioridade_maxima         True\n21  RR       Boa Vista  ...  prioridade_maxima        False\n3   AP          Macapa  ...  prioridade_maxima        False\n2   AM          Manaus  ...  prioridade_maxima        False\n\n[27 rows x 7 columns]",
+        "capitais_top10_uf": 25,
+        "renda_p75": 1400.64,
+        "pop_p75": 19872.2,
+        "pop_p25": 4945.8,
+        "fator_renda_target": 3.2128,
+        "distribuicao_score_priorizacao": {
+          "count": 1532645,
+          "min": 0.0,
+          "max": 100.0,
+          "media": 48.87,
+          "mediana": 48.3,
+          "std": 23.74,
+          "p90": 83.12,
+          "p95": 92.19
+        }
+      },
+      "bi_outputs": {
+        "dashboard": 1532645,
+        "top_oportunidades": 500,
+        "resumo_por_uf": 27,
+        "mapa_sample": 459794,
+        "resumo_executivo": "# Resumo Executivo Fase 1\n\nMetricas, ranking e faixas derivados de `data/staging/hexagonos_brasil_oportunidades.parquet`, sem recalculo de score ou alteracao de regras de negocio.\nScore oficial de priorizacao executiva do M1 nacional: `score_priorizacao` (replicado em `score_oficial`).\nBase estrutural oficial preservada em `hex_score_estrutural`; ajuste executivo auditavel exposto em `ajuste_executivo`.\nOSM permanece `nao_aplicado_mvp_nacional` no fechamento oficial da Fase 1 e nao participa do ranking executivo.\nRotulos de municipio enriquecidos apenas para exibicao via lookup oficial do IBGE em `data/ibge/municipios_nomes_ibge.parquet`.\n\n## Indicadores-chave\n\n- total_hexagonos: 1.532.645\n- total_viaveis: 383.312\n- pct_viaveis: 25.01%\n- amostra_mapa_top_30_pct: 459.794 hexagonos\n\n## Top 10 cidades com mais oportunidades viaveis\n\n| uf | cidade | oportunidades_viaveis | score_medio | melhor_rank_brasil |\n| --- | --- | --- | --- | --- |\n| MS | 5003207 | 12432 | 87.06 | 112281 |\n| RO | Porto Velho | 6478 | 92.19 | 74617 |\n| MT | 5105150 | 4991 | 84.05 | 143255 |\n| MT | 5101407 | 4672 | 82.65 | 159569 |\n| MT | 5102504 | 4657 | 87.93 | 103715 |\n| MT | 5106307 | 4338 | 74.26 | 253640 |\n| MT | 5105101 | 4160 | 82.12 | 166478 |\n| MT | 5103304 | 4126 | 65.87 | 373722 |\n| MT | 5100805 | 3729 | 59.07 | 482613 |\n| MS | 5007109 | 3337 | 75.33 | 237181 |\n\n## Top 10 UFs\n\n| uf | total_viaveis | pct_viaveis | score_medio | qtd_prioridade_maxima |\n| --- | --- | --- | --- | --- |\n| DF | 999 | 100.00 | 100.00 | 999 |\n| RJ | 3169 | 40.14 | 73.66 | 4728 |\n| MS | 42751 | 61.65 | 69.45 | 37735 |\n| SC | 17459 | 86.86 | 68.84 | 8284 |\n| RS | 49156 | 80.83 | 68.46 | 28044 |\n| SP | 31094 | 65.96 | 68.39 | 20358 |\n| MT | 121202 | 73.44 | 66.02 | 61168 |\n| ES | 3146 | 38.56 | 65.94 | 2900 |\n| PR | 24204 | 60.12 | 63.89 | 14117 |\n| RO | 13401 | 29.16 | 62.59 | 14173 |\n\n## Distribuicao por faixa_oportunidade\n\n| faixa_oportunidade | hexagonos | pct_hexagonos |\n| --- | --- | --- |\n| prioridade_maxima | 307005 | 20.03 |\n| alta | 229838 | 15.00 |\n| media | 229677 | 14.99 |\n| baixa | 230076 | 15.01 |\n| descartado | 536049 | 34.98 |\n"
+      },
+      "tempos": {
+        "estrutural_s": 32.92,
+        "priorizacao_s": 2.59,
+        "camada_oportunidade_s": 18.16,
+        "bi_exports_s": 11.36,
+        "total_s": 65.03
+      }
+    }
+  },
+  "tempo_total_execucao_s": 218.75
+}

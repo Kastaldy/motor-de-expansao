@@ -6,6 +6,11 @@ from pathlib import Path
 import pandas as pd
 import pyarrow.parquet as pq
 
+try:
+    from jobs.pipelines.ibge_censo import carregar_lookup_municipios_ibge
+except ModuleNotFoundError:
+    from ibge_censo import carregar_lookup_municipios_ibge
+
 SOURCE_PATH = Path("data/staging/hexagonos_brasil_oportunidades.parquet")
 MUNICIPIOS_LOOKUP_PATH = Path("data/ibge/municipios_nomes_ibge.parquet")
 DASHBOARD_PATH = Path("data/outputs/hexagonos_brasil_dashboard.parquet")
@@ -41,6 +46,7 @@ DASHBOARD_COLUMNS = [
     "rank_cidade",
     "renda_per_capita",
     "renda_target_proxy",
+    "populacao_proxy",
     "proxy_populacao",
     "renda_pct_nacional",
     "pop_pct_nacional",
@@ -149,7 +155,7 @@ def load_oportunidades_source(path: Path | str = SOURCE_PATH) -> pd.DataFrame:
 def load_municipios_lookup(path: Path | str = MUNICIPIOS_LOOKUP_PATH) -> pd.DataFrame:
     path = Path(path)
     if not path.exists():
-        return pd.DataFrame(columns=["cod_municipio", "nome_municipio"])
+        return carregar_lookup_municipios_ibge(path=path)
     df_lookup = pd.read_parquet(path, columns=["cod_municipio", "nome_municipio"]).copy()
     df_lookup["cod_municipio"] = df_lookup["cod_municipio"].astype("string").str.extract(r"(\d{7})")[0]
     df_lookup["nome_municipio"] = df_lookup["nome_municipio"].astype("string").str.strip()
@@ -232,6 +238,7 @@ def build_dashboard_dataset(
                 _pick_first_existing(df_source, ["renda_target_proxy"]),
                 errors="coerce",
             ).round(2),
+            "populacao_proxy": proxy_populacao,
             "proxy_populacao": proxy_populacao,
             "renda_pct_nacional": pd.to_numeric(
                 _pick_first_existing(df_source, ["renda_pct_nacional"]),
@@ -295,6 +302,9 @@ def validate_dashboard_dataset(df_dashboard: pd.DataFrame) -> None:
 
     if df_dashboard["cidade"].fillna("").str.strip().eq("").any():
         raise ValueError("Dashboard possui cidade vazia")
+
+    if df_dashboard["populacao_proxy"].isna().any():
+        raise ValueError("Dashboard possui populacao_proxy nula")
 
     if df_dashboard["rank_brasil"].duplicated().any():
         duplicated = int(df_dashboard["rank_brasil"].duplicated().sum())

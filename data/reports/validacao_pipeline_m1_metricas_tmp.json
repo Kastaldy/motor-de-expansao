@@ -1,0 +1,384 @@
+{
+  "lookup_rows": 5570,
+  "nome_fill": {
+    "brasil_priorizados_pct": 100.0,
+    "hexagonos_brasil_oportunidades_pct": 100.0,
+    "hexagonos_brasil_dashboard_cidade_pct": 100.0,
+    "hexagonos_brasil_dashboard_codigos_em_cidade_pct": 0.0
+  },
+  "pop_metrics": {
+    "dashboard_has_populacao_proxy": true,
+    "dashboard_populacao_proxy_nulls": 0,
+    "oportunidades_populacao_proxy_nulls": 0,
+    "priorizados_populacao_proxy_nulls": 0
+  },
+  "signatures_before": {
+    "oportunidades": "7586233289011744651",
+    "dashboard": "14859733753380090522"
+  },
+  "signatures_after": {
+    "oportunidades": "7586233289011744651",
+    "dashboard": "14859733753380090522"
+  },
+  "signatures_equal": {
+    "oportunidades": true,
+    "dashboard": true
+  },
+  "top_pct_por_uf": [
+    {
+      "uf": "AC",
+      "total_hexagonos": 28370,
+      "priorizados": 5674,
+      "esperado_floor": 5674,
+      "pct_priorizados": 0.2,
+      "delta_linhas": 0,
+      "pct_exato_20": true
+    },
+    {
+      "uf": "AL",
+      "total_hexagonos": 4544,
+      "priorizados": 908,
+      "esperado_floor": 908,
+      "pct_priorizados": 0.199824,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "AM",
+      "total_hexagonos": 292793,
+      "priorizados": 58558,
+      "esperado_floor": 58558,
+      "pct_priorizados": 0.199998,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "AP",
+      "total_hexagonos": 24162,
+      "priorizados": 4832,
+      "esperado_floor": 4832,
+      "pct_priorizados": 0.199983,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "BA",
+      "total_hexagonos": 93918,
+      "priorizados": 18783,
+      "esperado_floor": 18783,
+      "pct_priorizados": 0.199994,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "CE",
+      "total_hexagonos": 23975,
+      "priorizados": 4795,
+      "esperado_floor": 4795,
+      "pct_priorizados": 0.2,
+      "delta_linhas": 0,
+      "pct_exato_20": true
+    },
+    {
+      "uf": "DF",
+      "total_hexagonos": 999,
+      "priorizados": 199,
+      "esperado_floor": 199,
+      "pct_priorizados": 0.199199,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "ES",
+      "total_hexagonos": 8158,
+      "priorizados": 1631,
+      "esperado_floor": 1631,
+      "pct_priorizados": 0.199926,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "GO",
+      "total_hexagonos": 59952,
+      "priorizados": 11990,
+      "esperado_floor": 11990,
+      "pct_priorizados": 0.199993,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "MA",
+      "total_hexagonos": 53180,
+      "priorizados": 10636,
+      "esperado_floor": 10636,
+      "pct_priorizados": 0.2,
+      "delta_linhas": 0,
+      "pct_exato_20": true
+    },
+    {
+      "uf": "MG",
+      "total_hexagonos": 104078,
+      "priorizados": 20815,
+      "esperado_floor": 20815,
+      "pct_priorizados": 0.199994,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "MS",
+      "total_hexagonos": 69344,
+      "priorizados": 13868,
+      "esperado_floor": 13868,
+      "pct_priorizados": 0.199988,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "MT",
+      "total_hexagonos": 165033,
+      "priorizados": 33006,
+      "esperado_floor": 33006,
+      "pct_priorizados": 0.199996,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "PA",
+      "total_hexagonos": 213997,
+      "priorizados": 42799,
+      "esperado_floor": 42799,
+      "pct_priorizados": 0.199998,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "PB",
+      "total_hexagonos": 9223,
+      "priorizados": 1844,
+      "esperado_floor": 1844,
+      "pct_priorizados": 0.199935,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "PE",
+      "total_hexagonos": 16013,
+      "priorizados": 3202,
+      "esperado_floor": 3202,
+      "pct_priorizados": 0.199963,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "PI",
+      "total_hexagonos": 40869,
+      "priorizados": 8173,
+      "esperado_floor": 8173,
+      "pct_priorizados": 0.19998,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "PR",
+      "total_hexagonos": 40261,
+      "priorizados": 8052,
+      "esperado_floor": 8052,
+      "pct_priorizados": 0.199995,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "RJ",
+      "total_hexagonos": 7895,
+      "priorizados": 1579,
+      "esperado_floor": 1579,
+      "pct_priorizados": 0.2,
+      "delta_linhas": 0,
+      "pct_exato_20": true
+    },
+    {
+      "uf": "RN",
+      "total_hexagonos": 8555,
+      "priorizados": 1711,
+      "esperado_floor": 1711,
+      "pct_priorizados": 0.2,
+      "delta_linhas": 0,
+      "pct_exato_20": true
+    },
+    {
+      "uf": "RO",
+      "total_hexagonos": 45962,
+      "priorizados": 9192,
+      "esperado_floor": 9192,
+      "pct_priorizados": 0.199991,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "RR",
+      "total_hexagonos": 43424,
+      "priorizados": 8684,
+      "esperado_floor": 8684,
+      "pct_priorizados": 0.199982,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "RS",
+      "total_hexagonos": 60811,
+      "priorizados": 12162,
+      "esperado_floor": 12162,
+      "pct_priorizados": 0.199997,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "SC",
+      "total_hexagonos": 20100,
+      "priorizados": 4020,
+      "esperado_floor": 4020,
+      "pct_priorizados": 0.2,
+      "delta_linhas": 0,
+      "pct_exato_20": true
+    },
+    {
+      "uf": "SE",
+      "total_hexagonos": 3588,
+      "priorizados": 717,
+      "esperado_floor": 717,
+      "pct_priorizados": 0.199833,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "SP",
+      "total_hexagonos": 47139,
+      "priorizados": 9427,
+      "esperado_floor": 9427,
+      "pct_priorizados": 0.199983,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    },
+    {
+      "uf": "TO",
+      "total_hexagonos": 46302,
+      "priorizados": 9260,
+      "esperado_floor": 9260,
+      "pct_priorizados": 0.199991,
+      "delta_linhas": 0,
+      "pct_exato_20": false
+    }
+  ],
+  "ufs_com_pct_exato_20": 6,
+  "ufs_sem_estouro_vs_floor": 27,
+  "max_pct_priorizados": 0.2,
+  "min_pct_priorizados": 0.199199,
+  "artifacts": {
+    "brasil_priorizados_rows": 306517,
+    "hexagonos_brasil_oportunidades_rows": 1532645,
+    "hexagonos_brasil_dashboard_rows": 1532645
+  },
+  "samples": {
+    "priorizados": [
+      {
+        "uf": "AC",
+        "cod_municipio": "1200401",
+        "nome_municipio": "Rio Branco",
+        "score_priorizacao": 90.71
+      },
+      {
+        "uf": "AC",
+        "cod_municipio": "1200401",
+        "nome_municipio": "Rio Branco",
+        "score_priorizacao": 90.71
+      },
+      {
+        "uf": "AC",
+        "cod_municipio": "1200401",
+        "nome_municipio": "Rio Branco",
+        "score_priorizacao": 90.71
+      },
+      {
+        "uf": "AC",
+        "cod_municipio": "1200401",
+        "nome_municipio": "Rio Branco",
+        "score_priorizacao": 90.71
+      },
+      {
+        "uf": "AC",
+        "cod_municipio": "1200401",
+        "nome_municipio": "Rio Branco",
+        "score_priorizacao": 90.71
+      }
+    ],
+    "oportunidades": [
+      {
+        "uf": "DF",
+        "cod_municipio": "5300108",
+        "nome_municipio": "Brasília",
+        "municipio_label": "Brasília",
+        "score_priorizacao": 100.0
+      },
+      {
+        "uf": "DF",
+        "cod_municipio": "5300108",
+        "nome_municipio": "Brasília",
+        "municipio_label": "Brasília",
+        "score_priorizacao": 100.0
+      },
+      {
+        "uf": "DF",
+        "cod_municipio": "5300108",
+        "nome_municipio": "Brasília",
+        "municipio_label": "Brasília",
+        "score_priorizacao": 100.0
+      },
+      {
+        "uf": "DF",
+        "cod_municipio": "5300108",
+        "nome_municipio": "Brasília",
+        "municipio_label": "Brasília",
+        "score_priorizacao": 100.0
+      },
+      {
+        "uf": "DF",
+        "cod_municipio": "5300108",
+        "nome_municipio": "Brasília",
+        "municipio_label": "Brasília",
+        "score_priorizacao": 100.0
+      }
+    ],
+    "dashboard": [
+      {
+        "uf": "DF",
+        "cidade": "Brasília",
+        "populacao_proxy": 1293402.4,
+        "score_priorizacao": 100.0
+      },
+      {
+        "uf": "DF",
+        "cidade": "Brasília",
+        "populacao_proxy": 1293402.4,
+        "score_priorizacao": 100.0
+      },
+      {
+        "uf": "DF",
+        "cidade": "Brasília",
+        "populacao_proxy": 1293402.4,
+        "score_priorizacao": 100.0
+      },
+      {
+        "uf": "DF",
+        "cidade": "Brasília",
+        "populacao_proxy": 1293402.4,
+        "score_priorizacao": 100.0
+      },
+      {
+        "uf": "DF",
+        "cidade": "Brasília",
+        "populacao_proxy": 1293402.4,
+        "score_priorizacao": 100.0
+      }
+    ]
+  }
+}

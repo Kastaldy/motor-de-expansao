@@ -153,6 +153,43 @@ def test_selecionar_areas_prioritarias_top_20_por_uf():
     assert validacao["pct_volume_priorizado"] == 20.0
 
 
+def test_selecionar_areas_prioritarias_nao_ultrapassa_top_pct_em_bases_nao_multiplas_de_5():
+    df = pd.DataFrame(
+        [
+            {"hex_id": f"df{i}", "lat": 0, "lng": 0, "uf": "DF", "regiao": "CO", "cod_municipio": "5300108", "nome_municipio": "Brasilia", "renda_per_capita": 1, "pop_total": 0, "pop_18_45": i, "populacao_proxy": i, "fonte_demografica": "ibge", "hex_score_estrutural": i}
+            for i in range(1, 10)
+        ]
+    )
+
+    priorizados, _ = selecionar_areas_prioritarias(df, top_pct_por_uf=0.20)
+
+    assert len(priorizados) == 1
+    assert priorizados["hex_id"].tolist() == ["df9"]
+
+
+def test_preparar_base_oportunidades_preenche_nome_municipio_via_lookup_ibge(monkeypatch):
+    monkeypatch.setattr(
+        "hex_enrichment.carregar_lookup_municipios_ibge",
+        lambda: pd.DataFrame([{"cod_municipio": "3550308", "nome_municipio": "Sao Paulo"}]),
+    )
+
+    df_estrutural = pd.DataFrame(
+        [
+            {"hex_id": "h1", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "3550308", "nome_municipio": "", "renda_per_capita": 3000, "populacao_proxy": 9000, "hex_score_estrutural": 90},
+        ]
+    )
+    df_priorizados = pd.DataFrame(
+        [
+            {"hex_id": "h1", "uf": "SP", "cod_municipio": "3550308", "criterio_prioridade": "top_20%_uf", "threshold_prioridade_uf": 90.0},
+        ]
+    )
+
+    resultado, _ = preparar_base_oportunidades(df_estrutural, df_priorizados)
+
+    assert resultado.loc[0, "nome_municipio"] == "Sao Paulo"
+    assert resultado.loc[0, "municipio_label"] == "Sao Paulo"
+
+
 def test_enriquecer_concorrencia_priorizados_explicita_erro_sem_zero_silencioso():
     df = pd.DataFrame(
         [

@@ -1,0 +1,253 @@
+{
+  "artifacts": {
+    "brasil_estrutural": {
+      "path": "data\\staging\\brasil_estrutural.parquet",
+      "exists": true,
+      "size_bytes": 34972328,
+      "rows": 1532645,
+      "cols": 27,
+      "empty": false,
+      "missing_critical_cols": [],
+      "null_critical_counts": {
+        "renda_per_capita": 0,
+        "populacao_proxy": 0,
+        "score_priorizacao": 0
+      }
+    },
+    "brasil_priorizados": {
+      "path": "data\\staging\\brasil_priorizados.parquet",
+      "exists": true,
+      "size_bytes": 7138329,
+      "rows": 306538,
+      "cols": 20,
+      "empty": false,
+      "missing_critical_cols": [],
+      "null_critical_counts": {
+        "renda_per_capita": 0,
+        "populacao_proxy": 0,
+        "score_priorizacao": 0
+      }
+    },
+    "hexagonos_brasil_oportunidades": {
+      "path": "data\\staging\\hexagonos_brasil_oportunidades.parquet",
+      "exists": true,
+      "size_bytes": 48857900,
+      "rows": 1532645,
+      "cols": 44,
+      "empty": false,
+      "missing_critical_cols": [],
+      "null_critical_counts": {
+        "renda_per_capita": 0,
+        "populacao_proxy": 0,
+        "score_priorizacao": 0
+      }
+    },
+    "hexagonos_brasil_dashboard": {
+      "path": "data\\outputs\\hexagonos_brasil_dashboard.parquet",
+      "exists": true,
+      "size_bytes": 48723245,
+      "rows": 1532645,
+      "cols": 38,
+      "empty": false,
+      "missing_critical_cols": [
+        "populacao_proxy"
+      ],
+      "null_critical_counts": {
+        "renda_per_capita": 0,
+        "score_priorizacao": 0
+      }
+    }
+  },
+  "checks": {
+    "integridade": {
+      "brasil_estrutural": {
+        "rows_gt_zero": true,
+        "not_empty": true,
+        "critical_non_null": true
+      },
+      "brasil_priorizados": {
+        "rows_gt_zero": true,
+        "not_empty": true,
+        "critical_non_null": true
+      },
+      "hexagonos_brasil_oportunidades": {
+        "rows_gt_zero": true,
+        "not_empty": true,
+        "critical_non_null": true
+      },
+      "hexagonos_brasil_dashboard": {
+        "rows_gt_zero": true,
+        "not_empty": true,
+        "critical_non_null": false
+      }
+    },
+    "score_range": {
+      "min": 0.0,
+      "max": 100.0,
+      "all_between_0_100": true
+    },
+    "business_columns_present": {
+      "hex_score_estrutural": true,
+      "ajuste_executivo": true,
+      "score_priorizacao": true
+    },
+    "trace_columns_present": {
+      "fonte_renda": true,
+      "fonte_populacao": true,
+      "nivel_geografico_ibge": true
+    },
+    "rank_nulls": {
+      "rank_brasil": 0,
+      "rank_uf": 0,
+      "rank_cidade": 0
+    },
+    "rank_brasil_order_ok": true,
+    "rank_uf_order_ok": true,
+    "rank_cidade_order_ok": false,
+    "top_20_pct_por_uf": {
+      "all_close_to_20pct": false,
+      "min_pct": 0.2,
+      "max_pct": 0.2002002002002002,
+      "sample": [
+        {
+          "uf": "AC",
+          "base_total": 28370,
+          "priorizados": 5674,
+          "pct": 0.2
+        },
+        {
+          "uf": "AL",
+          "base_total": 4544,
+          "priorizados": 909,
+          "pct": 0.20004401408450703
+        },
+        {
+          "uf": "AM",
+          "base_total": 292793,
+          "priorizados": 58559,
+          "pct": 0.20000136615287933
+        },
+        {
+          "uf": "AP",
+          "base_total": 24162,
+          "priorizados": 4833,
+          "pct": 0.20002483238142538
+        },
+        {
+          "uf": "BA",
+          "base_total": 93918,
+          "priorizados": 18784,
+          "pct": 0.20000425903447688
+        },
+        {
+          "uf": "CE",
+          "base_total": 23975,
+          "priorizados": 4795,
+          "pct": 0.2
+        },
+        {
+          "uf": "DF",
+          "base_total": 999,
+          "priorizados": 200,
+          "pct": 0.2002002002002002
+        },
+        {
+          "uf": "ES",
+          "base_total": 8158,
+          "priorizados": 1632,
+          "pct": 0.2000490316253984
+        },
+        {
+          "uf": "GO",
+          "base_total": 59952,
+          "priorizados": 11991,
+          "pct": 0.20001000800640512
+        },
+        {
+          "uf": "MA",
+          "base_total": 53180,
+          "priorizados": 10636,
+          "pct": 0.2
+        }
+      ]
+    },
+    "performance": {
+      "tempos": {
+        "estrutural_s": 32.92,
+        "priorizacao_s": 2.59,
+        "camada_oportunidade_s": 18.16,
+        "bi_exports_s": 11.36,
+        "total_s": 65.03
+      },
+      "tempo_total_execucao_s": 218.75,
+      "gargalos_gt_30pct": [
+        {
+          "etapa": "estrutural_s",
+          "tempo_s": 32.92,
+          "pct_total": 50.62
+        }
+      ]
+    }
+  },
+  "stats": {
+    "score_distribution": {
+      "min": 0.0,
+      "max": 100.0,
+      "media": 48.87
+    },
+    "top_10_cidades_score_medio": [
+      {
+        "nome_municipio": "",
+        "score_medio": 48.873112873496474,
+        "hexagonos": 1532645
+      }
+    ],
+    "top_10_ufs_hexagonos_priorizados": [
+      {
+        "uf": "AM",
+        "hexagonos_priorizados": 58559
+      },
+      {
+        "uf": "PA",
+        "hexagonos_priorizados": 42800
+      },
+      {
+        "uf": "MT",
+        "hexagonos_priorizados": 33007
+      },
+      {
+        "uf": "MG",
+        "hexagonos_priorizados": 20816
+      },
+      {
+        "uf": "BA",
+        "hexagonos_priorizados": 18784
+      },
+      {
+        "uf": "MS",
+        "hexagonos_priorizados": 13869
+      },
+      {
+        "uf": "RS",
+        "hexagonos_priorizados": 12163
+      },
+      {
+        "uf": "GO",
+        "hexagonos_priorizados": 11991
+      },
+      {
+        "uf": "MA",
+        "hexagonos_priorizados": 10636
+      },
+      {
+        "uf": "SP",
+        "hexagonos_priorizados": 9428
+      }
+    ]
+  },
+  "issues": [
+    "coluna_critica_ausente:hexagonos_brasil_dashboard:populacao_proxy",
+    "falha_ordenacao:rank_cidade_order_ok",
+    "top_20_pct_por_uf_nao_respeitado"
+  ]
+}

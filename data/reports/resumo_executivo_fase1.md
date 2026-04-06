@@ -17,16 +17,16 @@ Rotulos de municipio enriquecidos apenas para exibicao via lookup oficial do IBG
 
 | uf | cidade | oportunidades_viaveis | score_medio | melhor_rank_brasil |
 | --- | --- | --- | --- | --- |
-| MS | 5003207 | 12432 | 87.06 | 112281 |
+| MS | Corumbá | 12432 | 87.06 | 112281 |
 | RO | Porto Velho | 6478 | 92.19 | 74617 |
-| MT | 5105150 | 4991 | 84.05 | 143255 |
-| MT | 5101407 | 4672 | 82.65 | 159569 |
-| MT | 5102504 | 4657 | 87.93 | 103715 |
-| MT | 5106307 | 4338 | 74.26 | 253640 |
-| MT | 5105101 | 4160 | 82.12 | 166478 |
-| MT | 5103304 | 4126 | 65.87 | 373722 |
-| MT | 5100805 | 3729 | 59.07 | 482613 |
-| MS | 5007109 | 3337 | 75.33 | 237181 |
+| MT | Juína | 4991 | 84.05 | 143255 |
+| MT | Aripuanã | 4672 | 82.65 | 159569 |
+| MT | Cáceres | 4657 | 87.93 | 103715 |
+| MT | Paranatinga | 4338 | 74.26 | 253640 |
+| MT | Juara | 4160 | 82.12 | 166478 |
+| MT | Comodoro | 4126 | 65.87 | 373722 |
+| MT | Apiacás | 3729 | 59.07 | 482613 |
+| MS | Ribas do Rio Pardo | 3337 | 75.33 | 237181 |
 
 ## Top 10 UFs
 

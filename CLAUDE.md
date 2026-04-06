@@ -219,3 +219,55 @@ Decisao de design registrada:
 - `README.md` -> resumo operacional do estado atual
 - `docs/fontes_dados_gratuitas.md` -> fontes ativas do M1
 - `data/reports/` -> validacoes e relatorios executivos
+
+## 15. Registro de validacao rapida M1
+Validacao end-to-end executada em 2026-04-05 para prontidao executiva do fechamento nacional.
+
+Decisao registrada:
+- status da validacao: `ERRO`
+- recomendacao operacional: `NO-GO` ate corrigir contrato do dashboard (`populacao_proxy`), garantir corte top 20% exato por UF e restaurar lookup amigavel de municipios para o BI
+
+## 16. Registro tecnico de correcao M1
+Correcao executada em 2026-04-05 para liberar o uso executivo do fechamento nacional sem alterar a logica do modelo.
+
+Decisoes tecnicas registradas:
+- `nome_municipio` passa a ser restaurado de forma canonica via `data/ibge/municipios_nomes_ibge.parquet`
+- o lookup local de municipios deve ser construido a partir de fonte oficial IBGE ja usada no projeto, priorizando SIDRA tabela `10295` (`D1C` -> codigo, `D1N` -> nome) e reutilizado localmente nos exports
+- `hexagonos_brasil_dashboard.parquet` deve expor `populacao_proxy` como coluna canonica, preservando `proxy_populacao` apenas por compatibilidade
+- o corte top 20% por UF do M1 deve usar ordenacao deterministica por rank e cutoff `floor(total_uf * 0.20)` para eliminar excesso por arredondamento
+- observacao matematica canonica: com selecao binaria por linha, a proporcao aritmetica de `0.20` por UF so e exatamente representavel quando `total_uf` e multiplo de 5; fora disso, o contrato oficial e bater exatamente o cutoff deterministico sem estouro
+
+Status atualizado:
+- status da validacao: `GO`
+- recomendacao operacional: `GO` para uso executivo
+
+## 17. Registro do dashboard executivo Power BI
+Pacote executivo do M1 preparado em 2026-04-06 a partir do dataset oficial validado, sem alterar pipeline ou artefatos Parquet.
+
+Decisoes de dashboard e modelagem registradas:
+- fonte unica do dashboard: `data/outputs/hexagonos_brasil_dashboard.parquet`
+- aliases de exibicao no modelo Power BI: `UF` sobre `uf` e `nome_municipio` sobre `cidade`
+- score oficial do dashboard permanece `score_priorizacao`; `hex_score_estrutural` e `ajuste_executivo` ficam expostos apenas para leitura complementar
+- limite executivo mantido em 4 paginas: `Visao Executiva`, `Analise Territorial`, `Ranking e Priorizacao` e `Comparacao por UF`
+- filtros executivos padrao: `UF`, `nome_municipio` e `faixa_oportunidade`
+- pacote tecnico do dashboard salvo em `powerbi/m1_dashboard_executivo/` com tema, query M, medidas DAX e especificacao das paginas
+- screenshots executivas salvas em `export/` por limitacao do ambiente atual, que nao possui Power BI Desktop para gerar `.pbix`
+
+Status operacional do dashboard:
+- status da entrega: `PARCIALMENTE AUTOMATIZADA`
+- recomendacao operacional: `GO` para montagem final no Power BI usando o pacote salvo em `powerbi/m1_dashboard_executivo/`
+
+## 18. Registro do dashboard executivo Streamlit local
+Camada local do dashboard executivo M1 preparada em 2026-04-06 para leitura em navegador via Streamlit, sem publicar nem alterar pipeline, VPS ou artefatos oficiais.
+
+Decisoes registradas:
+- app local usa somente `data/outputs/hexagonos_brasil_dashboard.parquet` como fonte oficial
+- estrutura executiva mantida em 4 abas: `Visao Executiva`, `Analise Territorial`, `Ranking e Priorizacao` e `Comparacao por UF`
+- filtros globais mantidos em `UF`, `nome_municipio` e `faixa_oportunidade`
+- score oficial do app permanece `score_priorizacao`; `hex_score_estrutural` fica apenas como apoio visual no hover do mapa
+- padrao visual do Streamlit reaproveita a paleta e a hierarquia do pacote salvo em `powerbi/m1_dashboard_executivo/`
+- leitura local prioriza KPI, ranking e mapa, com limites de renderizacao para manter fluidez sem alterar o parquet oficial
+
+Status operacional:
+- status da entrega: `GO_LOCAL`
+- recomendacao operacional: `GO` para execucao local via `streamlit run streamlit_app.py`

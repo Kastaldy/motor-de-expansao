@@ -47,6 +47,13 @@ node_modules/
 .next/
 out/
 
+# Power BI / material de apoio local
+powerbi/
+powerbi_m1_dashboard.py
+test_powerbi_m1_dashboard.py
+docs/powerbi_dashboard_m1.md
+export/
+
 # Docker
 .docker/
 

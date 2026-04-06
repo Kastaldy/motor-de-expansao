@@ -28,10 +28,10 @@ except ModuleNotFoundError:
     from config import settings  # estrutura flat (desenvolvimento)
 
 try:
-    from jobs.pipelines.ibge_censo import IBGECenso
+    from jobs.pipelines.ibge_censo import IBGECenso, carregar_lookup_municipios_ibge
     from jobs.pipelines.poi_enrichment import POIEnricher
 except ModuleNotFoundError:
-    from ibge_censo import IBGECenso      # estrutura flat
+    from ibge_censo import IBGECenso, carregar_lookup_municipios_ibge      # estrutura flat
     from poi_enrichment import POIEnricher
 
 log = structlog.get_logger()
@@ -736,6 +736,36 @@ def _normalizar_codigo_municipio(serie: pd.Series) -> pd.Series:
     return serie.fillna("").astype(str).str.replace(".0", "", regex=False).str.zfill(7)
 
 
+def _resolver_nomes_municipio(codigos_municipio: pd.Series) -> pd.Series:
+    lookup = carregar_lookup_municipios_ibge()
+    if lookup.empty:
+        return pd.Series([""] * len(codigos_municipio), index=codigos_municipio.index, dtype="string")
+
+    mapping = (
+        lookup[["cod_municipio", "nome_municipio"]]
+        .drop_duplicates(subset=["cod_municipio"], keep="first")
+        .set_index("cod_municipio")["nome_municipio"]
+        .astype("string")
+    )
+    return codigos_municipio.astype("string").map(mapping).fillna("").astype("string")
+
+
+def _garantir_nomes_municipio(df: pd.DataFrame) -> pd.DataFrame:
+    if "cod_municipio" not in df.columns:
+        return df
+
+    df = df.copy()
+    df["cod_municipio"] = _normalizar_codigo_municipio(df["cod_municipio"])
+    nomes_atuais = (
+        df["nome_municipio"].fillna("").astype("string").str.strip()
+        if "nome_municipio" in df.columns
+        else pd.Series([""] * len(df), index=df.index, dtype="string")
+    )
+    nomes_lookup = _resolver_nomes_municipio(df["cod_municipio"])
+    df["nome_municipio"] = nomes_atuais.where(nomes_atuais.ne(""), nomes_lookup).fillna("").astype(str)
+    return df
+
+
 def _definir_faixa_oportunidade(percentil_score: pd.Series) -> pd.Series:
     faixa = pd.cut(
         percentil_score,
@@ -774,12 +804,8 @@ def preparar_base_oportunidades(
         vazio = df_estrutural.copy()
         return vazio, {"distribuicao_faixa": pd.DataFrame(), "pct_viavel": 0.0}
 
-    df = df_estrutural.copy()
+    df = _garantir_nomes_municipio(df_estrutural.copy())
     df["cod_municipio"] = _normalizar_codigo_municipio(df["cod_municipio"])
-    if "nome_municipio" not in df.columns:
-        df["nome_municipio"] = ""
-    else:
-        df["nome_municipio"] = df["nome_municipio"].fillna("").astype(str)
 
     df_prior = df_priorizados.copy()
     if not df_prior.empty:
@@ -1262,7 +1288,7 @@ def selecionar_areas_prioritarias(
         vazio = pd.DataFrame(columns=["hex_id", "lat", "lng", "uf", "regiao", "hex_score_estrutural", "flag_prioridade"])
         return vazio, {"total_priorizados": 0, "resumo_uf": pd.DataFrame()}
 
-    df_estrutural = df_estrutural.copy()
+    df_estrutural = _garantir_nomes_municipio(df_estrutural.copy())
     df_estrutural["renda_per_capita"] = _serie_numerica(df_estrutural, "renda_per_capita")
     df_estrutural["populacao_proxy"] = _serie_numerica(df_estrutural, "populacao_proxy")
     df_estrutural["hex_score_estrutural"] = _serie_numerica(df_estrutural, "hex_score_estrutural")
@@ -1294,10 +1320,14 @@ def selecionar_areas_prioritarias(
             threshold_uf = float(score_threshold)
             criterio = "threshold_global"
         else:
-            n_prioritarios = max(1, math.ceil(len(df_uf) * top_pct_por_uf))
+            n_prioritarios = math.floor(len(df_uf) * top_pct_por_uf)
             idx_prioritarios = df_uf.head(n_prioritarios).index
             mascara = df_uf.index.isin(idx_prioritarios)
-            threshold_uf = float(df_uf.loc[idx_prioritarios, "score_priorizacao"].min())
+            threshold_uf = (
+                float(df_uf.loc[idx_prioritarios, "score_priorizacao"].min())
+                if n_prioritarios > 0
+                else float("nan")
+            )
             criterio = f"top_{top_pct_por_uf:.0%}_uf"
 
         df_uf.loc[mascara, "flag_prioridade"] = True
@@ -1341,6 +1371,16 @@ def selecionar_areas_prioritarias(
         )
         .reset_index()
     )
+    hexagonos_total_uf = (
+        df_estrutural.groupby("uf", sort=True)
+        .size()
+        .rename("hexagonos_total_uf")
+        .reset_index()
+    )
+    resumo_uf = resumo_uf.merge(hexagonos_total_uf, on="uf", how="left")
+    resumo_uf["pct_priorizados"] = (
+        resumo_uf["hexagonos_priorizados"] / resumo_uf["hexagonos_total_uf"]
+    ).round(6)
     if not resumo_uf.empty:
         resumo_uf["score_min"] = resumo_uf["score_min"].round(2)
         resumo_uf["score_max"] = resumo_uf["score_max"].round(2)
@@ -1743,6 +1783,7 @@ def rodar_pipeline_estrutural_brasil(
 
     df_total = pd.concat([pd.read_parquet(path) for path in paths_tmp], ignore_index=True)
     df_total = calcular_hex_score_estrutural(df_total)
+    df_total = _garantir_nomes_municipio(df_total)
     df_total = df_total.sort_values("hex_score_estrutural", ascending=False).reset_index(drop=True)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

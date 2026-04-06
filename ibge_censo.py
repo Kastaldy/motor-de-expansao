@@ -32,11 +32,15 @@ log = structlog.get_logger()
 
 CACHE_DIR = Path("data/ibge")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+MUNICIPIOS_LOOKUP_PATH = CACHE_DIR / "municipios_nomes_ibge.parquet"
 
 IBGE_SETORES_BASE_URL = "https://ftp.ibge.gov.br/Censos/Censo_Demografico_2022/Agregados_por_Setores_Censitarios"
 IBGE_MALHA_MUNICIPIOS_URL = (
     "https://servicodados.ibge.gov.br/api/v3/malhas/estados/{uf}"
     "?intrarregiao=municipio&formato=application/vnd.geo+json&qualidade=maxima"
+)
+SIDRA_LOOKUP_MUNICIPIOS_URL = (
+    "https://apisidra.ibge.gov.br/values/t/10295/n6/all/v/13431/p/last"
 )
 SIDRA_RENDA_MUNICIPIO       = "10297"   # massa rendimento per capita — retorna sigiloso em cidades grandes
 SIDRA_RENDA_MEDIO_MUNICIPIO = "10295"   # rendimento MÉDIO domiciliar per capita Censo 2022 — sem sigilo
@@ -51,6 +55,103 @@ SIDRA_PESOS_IDADE_18_45 = {
     "93091": 1.00,  # 40 a 44 anos
     "93092": 0.20,  # 45 a 49 anos -> proxy 45
 }
+
+
+def _padronizar_lookup_municipios(df_lookup: pd.DataFrame) -> pd.DataFrame:
+    if df_lookup.empty:
+        return pd.DataFrame(columns=["uf", "cod_municipio", "nome_municipio"])
+
+    df_lookup = df_lookup.copy()
+    if "uf" not in df_lookup.columns:
+        df_lookup["uf"] = ""
+    df_lookup["uf"] = df_lookup["uf"].fillna("").astype("string").str.upper().str.strip()
+    df_lookup["cod_municipio"] = (
+        df_lookup["cod_municipio"]
+        .astype("string")
+        .str.extract(r"(\d{7})")[0]
+    )
+    df_lookup["nome_municipio"] = df_lookup["nome_municipio"].fillna("").astype("string").str.strip()
+    return (
+        df_lookup[
+            df_lookup["cod_municipio"].notna()
+            & df_lookup["nome_municipio"].ne("")
+        ][["uf", "cod_municipio", "nome_municipio"]]
+        .drop_duplicates(subset=["cod_municipio"], keep="first")
+        .sort_values(["uf", "cod_municipio"], kind="stable")
+        .reset_index(drop=True)
+    )
+
+
+def construir_lookup_municipios_ibge(cache_dir: Path | str = CACHE_DIR) -> pd.DataFrame:
+    cache_dir = Path(cache_dir)
+    registros = []
+
+    for geojson_path in sorted(cache_dir.glob("municipios_*.geojson")):
+        uf = geojson_path.stem.rsplit("_", maxsplit=1)[-1].upper()
+        payload = json.loads(geojson_path.read_text(encoding="utf-8"))
+        for feature in payload.get("features", []):
+            properties = feature.get("properties", {})
+            cod_municipio = IBGECenso._extrair_codigo_municipio_feature(properties)
+            nome_municipio = (
+                properties.get("nome")
+                or properties.get("NM_MUN")
+                or properties.get("name")
+                or ""
+            )
+            nome_municipio = str(nome_municipio).strip()
+            if not cod_municipio or not nome_municipio:
+                continue
+            registros.append(
+                {
+                    "uf": uf,
+                    "cod_municipio": cod_municipio,
+                    "nome_municipio": nome_municipio,
+                }
+            )
+
+    if not registros:
+        try:
+            resp = requests.get(SIDRA_LOOKUP_MUNICIPIOS_URL, timeout=180)
+            resp.raise_for_status()
+            payload = resp.json()
+            for row in payload[1:]:
+                cod_municipio = IBGECenso._normalizar_codigo_municipio(row.get("D1C"))
+                nome_bruto = str(row.get("D1N") or "").strip()
+                if not cod_municipio or not nome_bruto:
+                    continue
+                if " - " in nome_bruto:
+                    nome_municipio, uf = nome_bruto.rsplit(" - ", maxsplit=1)
+                else:
+                    nome_municipio, uf = nome_bruto, ""
+                registros.append(
+                    {
+                        "uf": uf.upper().strip(),
+                        "cod_municipio": cod_municipio,
+                        "nome_municipio": nome_municipio.strip(),
+                    }
+                )
+        except Exception as exc:
+            log.warning("lookup_municipios_sidra_indisponivel", erro=str(exc))
+            return pd.DataFrame(columns=["uf", "cod_municipio", "nome_municipio"])
+
+    return _padronizar_lookup_municipios(pd.DataFrame(registros))
+
+
+def carregar_lookup_municipios_ibge(
+    path: Path | str = MUNICIPIOS_LOOKUP_PATH,
+    refresh: bool = False,
+) -> pd.DataFrame:
+    path = Path(path)
+    if path.exists() and not refresh:
+        return _padronizar_lookup_municipios(pd.read_parquet(path))
+
+    df_lookup = construir_lookup_municipios_ibge()
+    if df_lookup.empty:
+        return df_lookup
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df_lookup.to_parquet(path, index=False)
+    return df_lookup
 
 
 class IBGECenso:
