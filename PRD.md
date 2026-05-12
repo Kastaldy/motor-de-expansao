@@ -71,22 +71,16 @@ curl -fsS http://127.0.0.1:8501/_stcore/health
 
 ## Blocos
 
-### Bloco 1 - Commit e abertura de PR de handoff [ ]
+### Bloco 1 - Commit e abertura de PR de handoff [x]
 **Objetivo:** persistir todas as mudancas do ciclo anterior no git e abrir PR para revisao da equipe.
 
-Passos:
-1. Rodar `git status --short` e listar arquivos modificados/nao-rastreados.
-2. Stagear apenas os arquivos do ciclo — excluir `data/`, caches, outputs pesados e qualquer arquivo que o `.gitignore` ja cobre. Usar `git add <arquivo>` por nome, nunca `git add -A`.
-3. Criar commit descritivo resumindo o ciclo de handoff/deploy.
-4. Abrir PR de `codex-dashboard-m1-streamlit` -> `main` via `gh pr create` com titulo curto e descricao dos blocos concluidos.
-5. Confirmar que o CI do GitHub Actions foi disparado.
-
-Validacao minima:
-- `git status --short` sem arquivos esquecidos relevantes.
-- PR aberto com link retornado.
-- Suite rapida passando localmente antes do push: `python -m pytest -q test_streamlit_app.py test_carteira_plano_nacional.py`.
-
-Observacoes: aguardar aprovacao explicita do usuario antes de executar `git push` e `gh pr create`; mostrar diff e draft da mensagem de PR antes de confirmar.
+**Concluido em 2026-05-12.**
+- Commit `d4d1ae3` criado com 66 arquivos (16.111 insercoes).
+- Branch `codex-dashboard-m1-streamlit` empurrada para `origin`.
+- Suite rapida: 16 testes passando localmente.
+- `gh` CLI nao instalado na maquina; PR deve ser criado manualmente em:
+  `https://github.com/Kastaldy/motor-de-expansao/compare/main...codex-dashboard-m1-streamlit`
+- Draft do PR disponivel no historico da conversa (2026-05-12).
 
 ---
 
