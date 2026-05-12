@@ -58,13 +58,16 @@ if BaseSettings is not None:
         # Geoespacial
         H3_RESOLUTION: int = 7
         DIST_MIN_ULTRA_KM: float = 1.0
-        RENDA_MIN: float = 4500.0
+        RENDA_MIN: float = 4500.0  # renda domiciliar minima (nao per capita)
 
         # Fase 1 / M1 nacional
         M1_SCORE_OFICIAL: str = "score_priorizacao"
         M1_PRIORIZACAO_TOP_PCT_POR_UF: float = 0.20
         M1_OSM_ENABLED: bool = False
         M1_SETOR_CENSITARIO_OBRIGATORIO: bool = False
+        # Hexágonos com populacao_proxy abaixo deste valor são excluídos do ranking
+        # e marcados como hex_sem_populacao=True (evita score alto em áreas rurais/água)
+        M1_POP_MINIMA_PROXY: int = 1
 
         # Alertas
         SLACK_WEBHOOK_URL: str = ""
@@ -120,13 +123,14 @@ else:
         # Geoespacial
         H3_RESOLUTION = 7
         DIST_MIN_ULTRA_KM = 1.0
-        RENDA_MIN = 4500.0
+        RENDA_MIN = 4500.0  # renda domiciliar minima (nao per capita)
 
         # Fase 1 / M1 nacional
         M1_SCORE_OFICIAL = "score_priorizacao"
         M1_PRIORIZACAO_TOP_PCT_POR_UF = 0.20
         M1_OSM_ENABLED = False
         M1_SETOR_CENSITARIO_OBRIGATORIO = False
+        M1_POP_MINIMA_PROXY: int = 1
 
         # Alertas
         SLACK_WEBHOOK_URL = ""

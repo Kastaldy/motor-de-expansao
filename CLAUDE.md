@@ -1,273 +1,119 @@
 # Motor de Expansao Ultra Academia - CLAUDE.md
-> Fonte canonica e resumida do projeto. Ler antes de qualquer tarefa.
+> Fonte canonica curta do projeto. Ler antes de qualquer tarefa.
 > Responsavel: Felipe Silva | Estrategia e Growth | Ultra Academia
 > Versao: Abril 2026
+> Regra de manutencao: manter curto; historico detalhado fica em `docs/` e `data/reports/`.
 
-## 1. Visao do projeto
-Sistema de expansao ativa continua da Ultra Academia.
+## 1. Norte
+- O repo agora tem 2 trilhas simultaneas:
+  - `M1 oficial territorial`: decide onde expandir no nivel executivo.
+  - `mercado por hexagono`: camada paralela e experimental para ler demanda, oferta mapeada e restricao da rede Ultra.
+- Perguntas centrais: onde expandir, quem ja atua ali, quais imoveis estao disponiveis e qual ponto tem maior chance de sucesso.
+- Publico-alvo prioritario: 18-45 anos.
+- `score_priorizacao` continua sendo o score oficial do projeto.
+- Nenhuma trilha paralela pode alterar o M1 sem aprovacao explicita.
+- **Decisao arquitetural (2026-04-24):** cada camada tem papel distinto e complementar:
+  - Visao executiva (mapa): exibe hexagonos do **setor censitario** para granularidade geografica real (elimina agua/rural visualmente).
+  - Carteira e recomendacao de expansao: usa **M1 (`score_priorizacao`)** como ranking oficial — validado com rho=0.42 (p=0.007) contra faturamento real das unidades Ultra.
+  - Nunca substituir um pelo outro; papeis sao complementares, nao concorrentes.
 
-Perguntas do produto:
-1. Onde vale expandir? -> inteligencia territorial
-2. Quem ja atua ali? -> radar competitivo
-3. Quais imoveis estao disponiveis? -> pipeline imobiliario
-4. Qual ponto tem maior chance de sucesso? -> score preditivo
+## 2. Regras operacionais
+- Ler o repositorio real antes de editar; este arquivo resume contexto, nao substitui o codigo.
+- Tratar `config.py` e este arquivo como fontes canonicas de parametros e guardrails.
+- Staging sempre em Parquet; para CSVs locais gerados pelo projeto usar `sep=";"` e `encoding="utf-8-sig"`.
+- Excecao de legado confirmada no piloto: `data/ultra/Ultra.csv` usa `sep=";"`, `encoding="latin-1"` e 1 linha inicial de metadado antes do cabecalho.
+- Ao tocar em camadas paralelas, preservar 100% das linhas e colunas oficiais do M1.
+- Nao criar dependencia de API ao vivo no fechamento nacional nem no piloto de mercado.
+- Toda mudanca relevante entra com teste; nenhum PR deve subir com CI quebrado.
+- No piloto de mercado, `prioridade_mercado_mapeado` usa regua absoluta de `som_indice_mapeado`; quartis ficam apenas como apoio de ranking relativo em analises auxiliares.
+- O guia operacional do ciclo ativo fica em `PRD.md`; o contrato tecnico detalhado da trilha de mercado fica em `docs/modelo_mercado_hexagonos.md`.
 
-Estado atual:
-- Fase 1 / M1 nacional e a frente ativa e canonica.
-- M2, M3, frontend e ML nao devem contaminar o fechamento do M1.
-- O contrato atual fecha com base territorial reproduzivel, auditavel e staging em Parquet.
+## 3. Nucleo oficial M1
 
-## 2. Contexto de negocio
-- Rede brasileira operando desde 2020.
-- 79 unidades ativas + 80 planejadas.
-- Publico-alvo: 18-45 anos.
-- Renda domiciliar alvo do entorno: >= R$ 4.500/mes.
-- Perfil ideal de unidade: minimo 1.200 m2, ideal 1.500-2.000 m2, pe-direito >= 3,5 m.
-- Distancia minima entre unidades Ultra: 1 km.
-
-## 3. Estrutura real do repositorio
-Estrutura atual e flat:
-
-```text
-.
-|- CLAUDE.md
-|- config.py
-|- base_h3_brasil.py
-|- ibge_censo.py
-|- hex_enrichment.py
-|- fase1_bi_exports.py
-|- poi_enrichment.py
-|- score_consolidado.py
-|- models.py
-|- main.py
-|- data/
-|- docs/
-`- test_*.py
-```
-
-## 4. Stack e convencoes
-- Python 3.11+, pandas, pyarrow, shapely, h3, requests
-- staging sempre em Parquet antes de qualquer persistencia posterior
-- CSV sempre com `sep=";"` e `encoding="utf-8-sig"`
-- commits em conventional commits
-
-## 5. Parametros canonicos atuais
-Manter coerencia entre codigo, CI, testes e docs:
-
+### Parametros canonicos
 ```python
 H3_RESOLUTION = 7
 DIST_MIN_ULTRA_KM = 1.0
-RENDA_MIN = 4500.0
+RENDA_MIN = 4500.0  # renda domiciliar minima (nao per capita)
 AREA_MIN_M2 = 1200.0
+AREA_IDEAL_MIN_M2 = 1500.0
+AREA_IDEAL_MAX_M2 = 2000.0
+PE_DIREITO_MIN = 3.5
 M1_SCORE_OFICIAL = "score_priorizacao"
 M1_PRIORIZACAO_TOP_PCT_POR_UF = 0.20
 M1_OSM_ENABLED = False
 M1_SETOR_CENSITARIO_OBRIGATORIO = False
+M1_POP_MINIMA_PROXY = 1  # populacao minima para hexagono entrar no ranking (evita agua/rural)
 ```
-## 6. Escopo canonico do M1 nacional
-Fluxo oficial da Fase 1:
-1. `base_h3_brasil.py` -> gera base H3 nacional por UF em `data/staging/brasil/uf=XX/hexagonos.parquet`
-2. `hex_enrichment.py` -> enriquecimento estrutural nacional com IBGE e saida `data/staging/brasil_estrutural.parquet`
-3. priorizacao nacional -> corte padrao top 20% por UF e saida `data/staging/brasil_priorizados.parquet`
-4. camada de oportunidade -> ranking Brasil, UF e municipio em `data/staging/hexagonos_brasil_oportunidades.parquet`
-5. `fase1_bi_exports.py` -> artefatos executivos/BI estaveis
-## 7. Regra oficial de score do M1
-Separar sempre:
-- `hex_score_estrutural`: base estrutural oficial
-- `ajuste_executivo`: bonus/penalidade de priorizacao
-- `score_priorizacao`: score oficial para ranking executivo
-Inputs oficiais:
-- `renda_per_capita`
-- `populacao_proxy`
-- `pop_18_45` como fonte preferida
-- `pop_total` como fallback
-Regra canonica:
+
+### Fluxo oficial
+1. `base_h3_brasil.py` -> `data/staging/brasil/uf=XX/hexagonos.parquet`
+2. `hex_enrichment.py` -> `data/staging/brasil_estrutural.parquet`, `data/staging/brasil_priorizados.parquet`, `data/staging/hexagonos_brasil_oportunidades.parquet`
+3. `fase1_bi_exports.py` -> artefatos executivos e BI estaveis
+
+### Regras oficiais
+- Fonte oficial do M1: IBGE.
+- Fallback padrao: atribuicao municipal IBGE + SIDRA com rastreabilidade explicita quando setor censitario nao estiver disponivel.
+- OSM nao e dependencia operacional do fechamento nacional; nos outputs oficiais `osm_status` deve ser `nao_aplicado_mvp_nacional`.
+- Inputs oficiais do score: `renda_per_capita`, `populacao_proxy`, `pop_18_45` como preferencia e `pop_total` como fallback.
 
 ```python
 renda_pct_nacional = percentil_nacional(renda_per_capita)
 pop_pct_nacional = percentil_nacional(populacao_proxy)
-
-hex_score_estrutural = 100 * (
-    0.60 * renda_pct_nacional +
-    0.40 * pop_pct_nacional
-)
-
-ajuste_executivo =
-    +5 se renda_pct_nacional >= 0.75 e pop_pct_nacional >= 0.75
-    +2 se renda_pct_nacional >= 0.75 e pop_pct_nacional < 0.75
-    +1 se pop_pct_nacional >= 0.75 e renda_pct_nacional < 0.75
-    -5 se renda_pct_nacional < 0.25
-    -3 se pop_pct_nacional < 0.25
-
+hex_score_estrutural = 100 * (0.40 * renda_pct_nacional + 0.60 * pop_pct_nacional)
 score_priorizacao = clip(hex_score_estrutural + ajuste_executivo, 0, 100)
 score_oficial = score_priorizacao
-score_oficial_nome = "score_priorizacao"
 ```
-Campos auditaveis esperados:
-- `renda_pct_nacional`
-- `pop_pct_nacional`
-- `hex_score_estrutural`
-- `ajuste_executivo`
-- `score_priorizacao`
-- `score_oficial`
-- `score_oficial_nome`
-- `score_percentil_nacional`
-Regra de governanca:
-- nao misturar score estrutural com regra executiva
-- usar `hex_score_estrutural` para leitura estrutural
-- usar `score_priorizacao` para ranking e priorizacao executiva
-## 8. Papel do OSM no estado atual
-OSM nao e dependencia operacional do fechamento nacional da Fase 1.
-- OSM segue suportado para fluxos locais, validacoes pontuais e retomada futura.
-- `hex_score_final` com concorrencia esta adiado.
-- nos outputs oficiais do M1, `osm_status` deve indicar `nao_aplicado_mvp_nacional`.
-## 9. IBGE e fallback oficial
-Fonte oficial do M1 nacional: IBGE.
-Fontes ativas:
-- malha do Brasil por UF
-- malha municipal por UF
-- SIDRA tabela 10295 variavel 13431 para renda municipal
-- SIDRA tabela 9514 para proxy de populacao 18-45
-Quando setor censitario nao estiver disponivel:
-1. atribuir municipio por malha municipal oficial do IBGE
-2. carregar renda e populacao no nivel municipal via SIDRA
-3. registrar fallback de forma explicita e auditavel
-Colunas esperadas de rastreabilidade:
-- `fonte_demografica`
-- `fonte_renda`
-- `fonte_populacao`
-- `nivel_geografico_ibge`
-- `fallback_setor_censitario`
-- `motivo_fallback_setor`
-- `fonte_geometria_ibge`
-- `metodo_atribuicao_municipio`
-- `data_referencia_ibge`
-## 10. Saidas oficiais da Fase 1
-- `data/staging/brasil_estrutural.parquet`
-- `data/staging/brasil_priorizados.parquet`
-- `data/staging/hexagonos_brasil_oportunidades.parquet`
-- `data/outputs/hexagonos_brasil_dashboard.parquet`
-- `data/outputs/hexagonos_mapa_sample.parquet`
-- `data/outputs/top_oportunidades_resumo.csv`
-- `data/outputs/resumo_por_uf.csv`
-- `data/reports/camada_oportunidade_fase1.md`
-- `data/reports/resumo_executivo_fase1.md`
+- ATENCAO: artefatos Parquet existentes (`brasil_estrutural.parquet`, `brasil_priorizados.parquet`, `hexagonos_brasil_oportunidades.parquet`) foram gerados com os pesos antigos (renda=0.60, pop=0.40). Re-executar `hex_enrichment.py` para refletir os novos pesos (renda=0.40, pop=0.60; aprovado diretoria 2026-04-24).
 
-Dicionario curto do contrato oficial:
-- `brasil_estrutural.parquet` -> base estrutural auditavel com `hex_score_estrutural`
-- `brasil_priorizados.parquet` -> recorte oficial top 20% por UF com `score_priorizacao`
-- `hexagonos_brasil_oportunidades.parquet` -> camada canonica de oportunidade e ranking
-- `hexagonos_brasil_dashboard.parquet` -> dataset oficial exportado para BI
-- `hexagonos_mapa_sample.parquet` -> amostra oficial do dashboard para visualizacao no Streamlit
-- documento curto de apoio: `docs/m1_outputs_oficiais.md`
+- Campos auditaveis minimos: `renda_pct_nacional`, `pop_pct_nacional`, `hex_score_estrutural`, `ajuste_executivo`, `score_priorizacao`, `score_oficial`, `score_oficial_nome`, `score_percentil_nacional`.
+- Artefatos oficiais: `brasil_estrutural.parquet`, `brasil_priorizados.parquet`, `hexagonos_brasil_oportunidades.parquet`, `hexagonos_brasil_dashboard.parquet`, `hexagonos_mapa_sample.parquet`, `top_oportunidades_resumo.csv`, `resumo_por_uf.csv`.
+- Suite principal do fechamento M1: `test_base_h3_brasil.py`, `test_hex_enrichment_brasil.py`, `test_fase1_bi_exports.py`, `test_fontes_gratuitas.py`.
 
-Campos executivos estaveis esperados:
-- `hex_score_estrutural`
-- `ajuste_executivo`
-- `score_priorizacao`
-- `score_oficial`
-- `score_oficial_nome`
-- `score_percentil_nacional`
-- `faixa_oportunidade`
-- `flag_viavel`
-- `flag_prioridade`
-- `rank_brasil`, `rank_uf`, `rank_cidade`
-- `osm_status`
-- colunas de rastreabilidade IBGE
+## 4. Camadas paralelas e estado atual
+- `M1.1` e paralelo ao M1. Nao altera `score_priorizacao`, `hex_score_estrutural` nem artefatos oficiais.
+- Fase A do Censo 2022 foi validada como camada experimental; continua `NO-GO` para substituir o score oficial nacional.
+- Validacao com unidades reais da Ultra manteve o M1 como modelo vencedor para ranking oficial; o censitario serve como camada editorial/local.
+- Modelo hibrido:
+  - regra: M1 aprova municipios; censitario ranqueia hexes dentro dos municipios aprovados;
+  - score operacional: `score_expansao_hibrido`;
+  - semantica: preserva `score_priorizacao` como base e adiciona bonus local minimo de desempate; por isso pode passar marginalmente de `100` sem virar novo score oficial;
+  - piso operacional intraurbano: exigir densidade setorial minima de `5.000 hab/km2` para elegibilidade censitaria;
+  - cobertura do censitario: 27 UFs; core `DF`, `GO`, `MG`, `RJ`, `RS`, `SP`; piloto expandido; nacional `data/staging/censo2022_setores_calibrado_nacional_completo.parquet` (21 UFs, 1.251.771 linhas, k_global=1.0213, gerado 2026-04-23);
+  - UFs com `qualidade_join_uf=C` (filtradas automaticamente): AM, RR (supressao IBGE), AL, AP, CE, MA, PA, PB, PE, RO, SE (gates);
+  - `modelo_hibrido_expansao.py` consome os 3 parquets; deduplicacao core > expandido > nacional por `hex_id`; hexes elegiveis: 222.619; municipios top M1 com camada local: 852;
+  - `qualidade_join_uf`: A/B se todos os gates passam, C se qualquer gate falha (filtrado pelo hibrido);
+  - status: `GO` para **visualizacao executiva** (mapa exibe hexagonos do setor censitario — granularidade geografica real, elimina agua/rural); M1 continua como **fonte oficial de ranking de carteira** (rho=0.42 vs faturamento real); `NO-GO` para substituir o M1 no ranking.
+- Dashboard local agora separa explicitamente os papeis: mapa executivo usa geometria granular quando `qualidade_join_uf` e `A/B`, fallback municipal nas UFs `C` e renderiza todos os hexagonos validos da UF selecionada sem cap editorial; aba de carteira volta a ordenar por `rank_brasil`/`score_priorizacao` do M1 e deixa Censitario/Hibrido apenas como apoio local.
+- Camada de mercado por hexagono:
+  - status: ciclo anterior de mercado fechado ate o Bloco 3; staging materializado, carteira/plano nacionais regenerados e validacao integrada concluida para handoff;
+  - objetivo: combinar demanda, oferta mapeada e restricao da rede propria Ultra;
+  - artefatos acionaveis atuais:
+    - `data/outputs/carteira_expansao_acionavel.parquet`: 5.406 linhas, 27 UFs, 1.093 municipios, 0 `hex_id` duplicado;
+    - `data/outputs/plano_expansao_curto_prazo.parquet`: 269 linhas, 27 UFs, 66 municipios, 0 `hex_id` duplicado;
+  - regra operacional nova: se o municipio top M1 tiver `top_hex_intraurbano=True`, a carteira usa somente os hexes granulares; se nao tiver, entra fallback municipal/M1 sem excluir a UF do output;
+  - insumos ja disponiveis:
+    - `concorrentes/*.csv`
+    - `data/ultra/Ultra.csv`
+    - `data/outputs/oportunidades_expansao_hibrido.parquet`
+    - `data/staging/brasil_estrutural.parquet`
+    - `data/staging/censo2022_setores_calibrado.parquet`
 
-## 11. Testes e qualidade
-Regra de ouro:
-- toda mudanca relevante entra com teste
-- nenhum PR deve subir com CI quebrado
+## 5. Ciclo ativo
+- Ciclo atual do `PRD.md`: handoff do repositorio e deploy Streamlit em VPS.
+- Objetivo: compartilhar codigo/docs/testes com a equipe e servir o dashboard com Parquets locais.
+- Deploy inicial: somente Streamlit via `Dockerfile.streamlit`/`docker-compose.prod.yml`; API/FastAPI, PostGIS, Prefect e pipelines pesados ficam fora.
+- Artefatos minimos do dashboard em `data/outputs/`: `hexagonos_brasil_dashboard.parquet`, `oportunidades_expansao_hibrido.parquet`, `carteira_expansao_acionavel.parquet`, `plano_expansao_curto_prazo.parquet`.
+- Contrato de handoff: `docs/handoff_repositorio.md`.
+- Guardrails permanentes: nao alterar `score_priorizacao`, `hex_score_estrutural` nem artefatos oficiais do M1 sem aprovacao explicita; dashboard de producao roda offline com dados locais e Parquet.
 
-Testes mais importantes para o M1:
-- `test_base_h3_brasil.py`
-- `test_hex_enrichment_brasil.py`
-- `test_fase1_bi_exports.py`
-- `test_fontes_gratuitas.py`
+## 6. Onde aprofundar
+- `PRD.md`: guia operacional em blocos do ciclo ativo.
+- `docs/modelo_mercado_hexagonos.md`: contrato tecnico de colunas e calculos.
+- `docs/m1_outputs_oficiais.md`: contrato curto dos outputs do M1.
+- `docs/m1_1_arquitetura_enriquecimento.md`: design da camada M1.1.
+- `docs/streamlit_dashboard_m1.md`: governanca e uso do dashboard.
+- `data/reports/validacao_modelo_ultra.md`: aderencia com dados reais das unidades Ultra.
+- `data/reports/modelo_hibrido_expansao.md`: regra e cobertura do modelo hibrido.
 
-Gate padrao atual:
-- `pytest` roda por padrao apenas a suite canonica do M1 acima
-- cobertura padrao mede apenas `base_h3_brasil.py`, `hex_enrichment.py`, `fase1_bi_exports.py`, `ibge_censo.py` e `poi_enrichment.py`
-- testes legados fora do M1 nao entram no gate padrao deste fechamento
-
-## 12. Prioridades para agentes
-Ao trabalhar neste projeto:
-- tratar `CLAUDE.md` como fonte canonica
-- inspecionar o repositorio real antes de editar
-- manter o M1 simples, reproduzivel, auditavel e coerente
-- preservar staging em Parquet
-- alinhar codigo, config, CI, testes e docs
-- nao aumentar escopo sem necessidade
-
-Evitar no contexto do M1:
-- concorrencia como dependencia obrigatoria
-- frontend
-- ML
-- expansao para M2/M3 sem pedido explicito
-
-## 13. Experimento paralelo 2010
-Foi criado um experimento paralelo de granularidade com setor censitario IBGE 2010 para teste de precisao espacial.
-- nao faz parte do pipeline oficial da Fase 1
-- nao substitui `hex_score_estrutural`, `score_priorizacao` nem os artefatos oficiais do M1
-- serve apenas para validacao metodologica em ambiente isolado
-
-Decisao de design registrada:
-- teste de granularidade censitaria 2010 deve ser executado em ambiente paralelo antes de qualquer eventual incorporacao ao pipeline principal
-
-## 14. Referencias rapidas
-- `README.md` -> resumo operacional do estado atual
-- `docs/fontes_dados_gratuitas.md` -> fontes ativas do M1
-- `data/reports/` -> validacoes e relatorios executivos
-
-## 15. Registro de validacao rapida M1
-Validacao end-to-end executada em 2026-04-05 para prontidao executiva do fechamento nacional.
-
-Decisao registrada:
-- status da validacao: `ERRO`
-- recomendacao operacional: `NO-GO` ate corrigir contrato do dashboard (`populacao_proxy`), garantir corte top 20% exato por UF e restaurar lookup amigavel de municipios para o BI
-
-## 16. Registro tecnico de correcao M1
-Correcao executada em 2026-04-05 para liberar o uso executivo do fechamento nacional sem alterar a logica do modelo.
-
-Decisoes tecnicas registradas:
-- `nome_municipio` passa a ser restaurado de forma canonica via `data/ibge/municipios_nomes_ibge.parquet`
-- o lookup local de municipios deve ser construido a partir de fonte oficial IBGE ja usada no projeto, priorizando SIDRA tabela `10295` (`D1C` -> codigo, `D1N` -> nome) e reutilizado localmente nos exports
-- `hexagonos_brasil_dashboard.parquet` deve expor `populacao_proxy` como coluna canonica, preservando `proxy_populacao` apenas por compatibilidade
-- o corte top 20% por UF do M1 deve usar ordenacao deterministica por rank e cutoff `floor(total_uf * 0.20)` para eliminar excesso por arredondamento
-- observacao matematica canonica: com selecao binaria por linha, a proporcao aritmetica de `0.20` por UF so e exatamente representavel quando `total_uf` e multiplo de 5; fora disso, o contrato oficial e bater exatamente o cutoff deterministico sem estouro
-
-Status atualizado:
-- status da validacao: `GO`
-- recomendacao operacional: `GO` para uso executivo
-
-## 17. Registro do dashboard executivo Power BI
-Pacote executivo do M1 preparado em 2026-04-06 a partir do dataset oficial validado, sem alterar pipeline ou artefatos Parquet.
-
-Decisoes de dashboard e modelagem registradas:
-- fonte unica do dashboard: `data/outputs/hexagonos_brasil_dashboard.parquet`
-- aliases de exibicao no modelo Power BI: `UF` sobre `uf` e `nome_municipio` sobre `cidade`
-- score oficial do dashboard permanece `score_priorizacao`; `hex_score_estrutural` e `ajuste_executivo` ficam expostos apenas para leitura complementar
-- limite executivo mantido em 4 paginas: `Visao Executiva`, `Analise Territorial`, `Ranking e Priorizacao` e `Comparacao por UF`
-- filtros executivos padrao: `UF`, `nome_municipio` e `faixa_oportunidade`
-- pacote tecnico do dashboard salvo em `powerbi/m1_dashboard_executivo/` com tema, query M, medidas DAX e especificacao das paginas
-- screenshots executivas salvas em `export/` por limitacao do ambiente atual, que nao possui Power BI Desktop para gerar `.pbix`
-
-Status operacional do dashboard:
-- status da entrega: `PARCIALMENTE AUTOMATIZADA`
-- recomendacao operacional: `GO` para montagem final no Power BI usando o pacote salvo em `powerbi/m1_dashboard_executivo/`
-
-## 18. Registro do dashboard executivo Streamlit local
-Camada local do dashboard executivo M1 preparada em 2026-04-06 para leitura em navegador via Streamlit, sem publicar nem alterar pipeline, VPS ou artefatos oficiais.
-
-Decisoes registradas:
-- app local usa somente `data/outputs/hexagonos_brasil_dashboard.parquet` como fonte oficial
-- estrutura executiva mantida em 4 abas: `Visao Executiva`, `Analise Territorial`, `Ranking e Priorizacao` e `Comparacao por UF`
-- filtros globais mantidos em `UF`, `nome_municipio` e `faixa_oportunidade`
-- score oficial do app permanece `score_priorizacao`; `hex_score_estrutural` fica apenas como apoio visual no hover do mapa
-- padrao visual do Streamlit reaproveita a paleta e a hierarquia do pacote salvo em `powerbi/m1_dashboard_executivo/`
-- leitura local prioriza KPI, ranking e mapa, com limites de renderizacao para manter fluidez sem alterar o parquet oficial
-
-Status operacional:
-- status da entrega: `GO_LOCAL`
-- recomendacao operacional: `GO` para execucao local via `streamlit run streamlit_app.py`
+Se um detalhe historico nao estiver aqui, procurar primeiro nesses docs antes de expandir novamente este arquivo.

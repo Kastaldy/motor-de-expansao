@@ -13,13 +13,19 @@ __pycache__/
 dist/
 build/
 
-# Dados sensíveis e staging (nunca commitar)
+# Dados sensiveis e staging (nunca commitar)
+data/raw/
 data/staging/
 data/snapshots/
+data/ultra/
+data/osm_cache/
 data/models/*.pkl
 data/models/*.joblib
+concorrentes/
 *.parquet
 *.csv
+*.xlsx
+*.tmp.md
 !tests/contracts/fixtures/*.html
 
 # Banco

@@ -25,6 +25,7 @@ FAIXAS_OPORTUNIDADE = [
     "media",
     "baixa",
     "descartado",
+    "inviavel",
 ]
 
 DASHBOARD_COLUMNS = [

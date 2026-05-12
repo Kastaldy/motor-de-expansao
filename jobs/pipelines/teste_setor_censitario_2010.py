@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import time
 import unicodedata
 from pathlib import Path
 from typing import Sequence
@@ -39,6 +40,25 @@ except ModuleNotFoundError:
     )
 
 log = structlog.get_logger()
+
+
+def _percentil_em_distribuicao_referencia(
+    serie: pd.Series, referencia: pd.Series
+) -> pd.Series:
+    """Percentil de cada valor de `serie` dentro da distribuicao `referencia`.
+
+    Permite ancorar percentis de setor 2010 na distribuicao nacional do M1,
+    tornando o score comparavel com o ranking oficial sem recalcular a base nacional.
+    """
+    serie = pd.to_numeric(serie, errors="coerce")
+    ref = pd.to_numeric(referencia, errors="coerce").dropna().sort_values().values
+    resultado = pd.Series(float("nan"), index=serie.index, dtype="float64")
+    mascara = serie.notna()
+    if mascara.any() and len(ref) > 1:
+        idx = np.searchsorted(ref, serie.loc[mascara].values, side="right")
+        resultado.loc[mascara] = (idx / len(ref)).round(6)
+    return resultado
+
 
 DEFAULT_CIDADES_ALVO = (
     {"cidade": "Sao Paulo", "uf": "SP", "cod_municipio": "3550308"},
@@ -548,7 +568,7 @@ def associar_hexagonos_a_setores(
     setores = df_setores.reset_index(drop=True).copy()
     tree = STRtree(setores["geometry"].tolist())
 
-    resultado = df_hex.copy()
+    resultado = df_hex.reset_index(drop=True).copy()
     resultado["geometry_hex"] = resultado["hex_id"].map(_hex_geometry)
     centroides = shapely.centroid(resultado["geometry_hex"].tolist())
     pares = tree.query(centroides, predicate="within")
@@ -623,11 +643,53 @@ def associar_hexagonos_a_setores(
     return resultado
 
 
-def calcular_score_setor_2010(df_hex_setor: pd.DataFrame) -> pd.DataFrame:
+def calcular_score_setor_2010(
+    df_hex_setor: pd.DataFrame,
+    base_nacional: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """Calcula score censitario 2010.
+
+    Variavel de renda: Basico V005 (rendimento medio do responsavel por domicilio).
+    Limitacao documentada: nao e renda per capita domiciliar. Proxy derivado
+    `renda_per_capita_setor_2010 = renda_setor_2010 / pop_total_setor_2010`
+    e calculado como alternativa mais rigorosa quando pop_total_setor_2010 > 0.
+
+    Percentis: calculados no subconjunto local por padrao.
+    Quando `base_nacional` e fornecida, percentis sao ancorados na distribuicao
+    nacional de renda_per_capita e populacao_proxy do M1 (comparabilidade nacional).
+
+    Nota de governanca: `hex_score_estrutural` oficial nao e alterado.
+    """
     df = df_hex_setor.copy()
-    df["renda_pct_setor_2010"] = _calcular_percentil_nacional(df["renda_setor_2010"])
-    df["pop_pct_setor_2010"] = _calcular_percentil_nacional(df["pop_setor_2010"])
-    mask = df["setor_match_status"].eq("match_setor") & df["renda_setor_2010"].notna() & df["pop_setor_2010"].notna()
+
+    # Proxy de renda per capita: V005 / pop_total (onde disponivel)
+    renda_v005 = pd.to_numeric(df.get("renda_setor_2010", pd.Series(dtype=float)), errors="coerce")
+    pop_total = pd.to_numeric(df.get("pop_total_setor_2010", pd.Series(dtype=float)), errors="coerce")
+    pop_valida = pop_total > 0
+    df["renda_per_capita_setor_2010"] = np.where(
+        pop_valida & renda_v005.notna(),
+        (renda_v005 / pop_total).where(pop_valida),
+        np.nan,
+    )
+    df["variante_renda_setor"] = np.where(
+        pop_valida & renda_v005.notna(),
+        "renda_per_capita_proxy_v005_por_pop_total",
+        "renda_media_responsavel_v005",
+    )
+
+    # Percentis: local (padrao) ou ancorados na distribuicao nacional
+    if base_nacional is not None and not base_nacional.empty:
+        ref_renda = pd.to_numeric(base_nacional.get("renda_per_capita", pd.Series(dtype=float)), errors="coerce")
+        ref_pop = pd.to_numeric(base_nacional.get("populacao_proxy", pd.Series(dtype=float)), errors="coerce")
+        df["renda_pct_setor_2010"] = _percentil_em_distribuicao_referencia(renda_v005, ref_renda)
+        df["pop_pct_setor_2010"] = _percentil_em_distribuicao_referencia(df["pop_setor_2010"], ref_pop)
+        df["percentil_escopo"] = "nacional_m1"
+    else:
+        df["renda_pct_setor_2010"] = _calcular_percentil_nacional(renda_v005)
+        df["pop_pct_setor_2010"] = _calcular_percentil_nacional(df["pop_setor_2010"])
+        df["percentil_escopo"] = "local_subconjunto"
+
+    mask = df["setor_match_status"].eq("match_setor") & renda_v005.notna() & df["pop_setor_2010"].notna()
     df["hex_score_setor_2010"] = np.nan
     if mask.any():
         df.loc[mask, "hex_score_setor_2010"] = (
@@ -640,21 +702,49 @@ def calcular_score_setor_2010(df_hex_setor: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def calcular_score_setor_ancorado(
+    df: pd.DataFrame, peso_municipal: float = 0.60
+) -> pd.DataFrame:
+    """Score censal ancorado na posicao nacional do M1.
+
+    Formula: score_setor_ancorado = peso_municipal * hex_score_estrutural
+                                   + (1 - peso_municipal) * hex_score_setor_2010
+
+    Raciocinio: preserva a posicao nacional do hexagono (hex_score_estrutural
+    ja foi calculado com percentis nacionais no M1) e adiciona diferenciacao
+    intraurbana via score local do setor 2010. Permite comparar hexagonos de
+    diferentes cidades sem distorcoes de base local.
+
+    Separacao canonica: nao substitui score_priorizacao oficial do M1.
+    """
+    df = df.copy()
+    score_mun = pd.to_numeric(df.get("hex_score_estrutural", pd.Series(dtype=float)), errors="coerce")
+    score_setor = pd.to_numeric(df.get("hex_score_setor_2010", pd.Series(dtype=float)), errors="coerce")
+    mask = score_mun.notna() & score_setor.notna()
+    df["score_setor_ancorado"] = np.nan
+    if mask.any():
+        df.loc[mask, "score_setor_ancorado"] = (
+            peso_municipal * score_mun.loc[mask] + (1 - peso_municipal) * score_setor.loc[mask]
+        ).clip(0, 100).round(2)
+    df["score_setor_ancorado_peso_municipal"] = round(peso_municipal, 2)
+    return df
+
+
 def construir_comparativo(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    comparativo = df[
-        [
-            "cidade",
-            "uf",
-            "cod_municipio",
-            "hex_id",
-            "hex_score_estrutural",
-            "hex_score_setor_2010",
-            "renda_setor_2010",
-            "pop_setor_2010",
-            "setor_match_status",
-            "setor_match_metodo",
-        ]
-    ].copy()
+    colunas_base = [
+        "cidade",
+        "uf",
+        "cod_municipio",
+        "hex_id",
+        "hex_score_estrutural",
+        "hex_score_setor_2010",
+        "renda_setor_2010",
+        "pop_setor_2010",
+        "setor_match_status",
+        "setor_match_metodo",
+    ]
+    colunas_extras = [c for c in ("score_setor_ancorado", "percentil_escopo", "variante_renda_setor") if c in df.columns]
+    comparativo = df[colunas_base + colunas_extras].copy()
     comparativo["diferenca_score"] = (
         pd.to_numeric(comparativo["hex_score_setor_2010"], errors="coerce")
         - pd.to_numeric(comparativo["hex_score_estrutural"], errors="coerce")
@@ -738,6 +828,7 @@ def gerar_relatorio_experimento(
     top_oficial: pd.DataFrame,
     info_setores: dict,
     cidades_alvo: Sequence[dict],
+    tempo_spatial_join_s: float = 0.0,
 ) -> str:
     cobertura = comparativo["setor_match_status"].eq("match_setor")
     total_hex = int(len(comparativo))
@@ -770,6 +861,19 @@ def gerar_relatorio_experimento(
         .reset_index(drop=True)
     )
 
+    # Score ancorado: disponivel apenas quando score_setor_ancorado esta no df
+    tem_ancorado = "score_setor_ancorado" in df_hex.columns and df_hex["score_setor_ancorado"].notna().any()
+    variante_renda = df_hex.get("variante_renda_setor", pd.Series(dtype=str)).mode()
+    variante_renda_str = variante_renda.iloc[0] if not variante_renda.empty else "renda_media_responsavel_v005"
+    percentil_escopo = df_hex.get("percentil_escopo", pd.Series(dtype=str)).mode()
+    percentil_escopo_str = percentil_escopo.iloc[0] if not percentil_escopo.empty else "local_subconjunto"
+
+    # Estimativa de custo computacional
+    hex_por_segundo = total_hex / max(tempo_spatial_join_s, 0.01)
+    hex_nacional_estimado = 215_000
+    t_nacional_s = hex_nacional_estimado / max(hex_por_segundo, 1)
+    t_nacional_min = round(t_nacional_s / 60, 1)
+
     linhas = [
         "# Teste Paralelo - Setor Censitario IBGE 2010",
         "",
@@ -779,6 +883,24 @@ def gerar_relatorio_experimento(
         f"- base oficial preservada: `{DEFAULT_BASE_OFICIAL_PATH}`",
         f"- geometria de setor: `{info_setores['geometria_path']}`",
         f"- atributos censitarios: `{info_setores['atributos_path']}`",
+        "",
+        "## Metodologia adotada",
+        "",
+        "### Variavel de renda",
+        "- fonte primaria: Basico V005 (rendimento medio nominal mensal do responsavel por domicilio particular permanente)",
+        "- limitacao documentada: V005 nao e renda per capita domiciliar; e a renda do chefe, nao dividida pelo numero de moradores",
+        "- proxy derivado disponivel: `renda_per_capita_setor_2010 = V005 / pop_total_setor_2010` (calculado quando pop_total > 0)",
+        f"- variante em uso neste experimento: `{variante_renda_str}`",
+        "- decisao: para producao, definir fonte canonica de renda per capita por setor (ex: tabela Domicilio do Censo 2010, V005 ponderado por V001/V002, ou Censo 2022 quando disponivel por setor)",
+        "",
+        "### Comparabilidade com ranking nacional",
+        f"- percentis calculados no escopo: `{percentil_escopo_str}`",
+        "- problema: percentil local nao e diretamente comparavel com percentil nacional do M1",
+        "- solucao implementada: `score_setor_ancorado = 0.60 * hex_score_estrutural + 0.40 * hex_score_setor_2010`",
+        "  - hex_score_estrutural: ancora o hexagono na posicao nacional do M1 (percentil nacional ja calculado)",
+        "  - hex_score_setor_2010: adiciona diferenciacao intraurbana via percentil local do setor 2010",
+        "  - resultado: score comparavel entre cidades, com granularidade intraurbana preservada",
+        "- alternativa futura: calcular percentis do setor contra distribuicao nacional via `_percentil_em_distribuicao_referencia()` (ja implementada no script)",
         "",
         "## Variaveis 2010 usadas",
         f"- codigo de setor: `{schema['cod_setor']}`",
@@ -794,26 +916,68 @@ def gerar_relatorio_experimento(
         f"- houve ganho de diferenciacao intraurbana? {'sim' if ganho_cidades else 'nao ou inconclusivo'}",
         f"- cidades com aumento de valores distintos no score: {', '.join(ganho_cidades) if ganho_cidades else 'nenhuma'}",
         f"- o topo do ranking ficou mais plausivel? leitura {plausibilidade}",
-        f"- custo computacional aceitavel? leitura preliminar: sim para escopo reduzido ({total_hex} hexagonos)",
-        "- vale evoluir para modulo oficial futuro? somente se a cobertura espacial e a separacao intraurbana se confirmarem com mais cidades",
+        f"- custo spatial join (subconjunto {total_hex} hex): {tempo_spatial_join_s:.2f}s",
+        "- vale evoluir para modulo oficial futuro? somente se bloqueadores canonicar forem resolvidos (ver secao de limitacoes)",
+        "",
+        "## Custo computacional estimado",
+        f"- spatial join neste experimento: {tempo_spatial_join_s:.2f}s para {total_hex} hexagonos",
+        f"- throughput medido: {hex_por_segundo:.0f} hexagonos/segundo",
+        f"- hexagonos H3-r7 estimados no Brasil (com populacao): ~{hex_nacional_estimado:,}",
+        f"- estimativa de tempo para escala nacional completa: ~{t_nacional_min} minutos (processamento sequencial por UF, sem paralelismo)",
+        "- nota: estimativa assume mesma densidade de setores por hex; regioes rurais podem ser mais rapidas por menor numero de setores",
+        "- recomendacao: avaliar paralelismo por UF e cache de STRtree antes de producao nacional",
         "",
         "## Metricas por cidade",
         _markdown_table(stats_df),
         "",
         "## Distribuicao de score",
         f"- score oficial atual: {resumir_distribuicao_score(pd.to_numeric(df_hex['hex_score_estrutural'], errors='coerce'))}",
-        f"- score setor 2010: {resumir_distribuicao_score(pd.to_numeric(df_hex['hex_score_setor_2010'], errors='coerce'))}",
+        f"- score setor 2010 (local): {resumir_distribuicao_score(pd.to_numeric(df_hex['hex_score_setor_2010'], errors='coerce'))}",
+    ]
+
+    if tem_ancorado:
+        linhas += [
+            f"- score setor ancorado (60% mun + 40% setor): {resumir_distribuicao_score(pd.to_numeric(df_hex['score_setor_ancorado'], errors='coerce'))}",
+        ]
+
+    linhas += [
         "",
         "## Top 10 por cidade - modelo atual",
         _markdown_table(top10_oficial[["cidade", "hex_id", "hex_score_estrutural"]]),
         "",
         "## Top 10 por cidade - modelo censitario",
         _markdown_table(top10_setor[["cidade", "hex_id", "hex_score_setor_2010", "diferenca_score"]]),
+    ]
+
+    if tem_ancorado and "score_setor_ancorado" in comparativo.columns:
+        top10_ancorado = (
+            comparativo[comparativo["score_setor_ancorado"].notna()]
+            .sort_values(["cidade", "score_setor_ancorado"], ascending=[True, False])
+            .groupby("cidade", sort=True, group_keys=False)
+            .head(10)
+            .reset_index(drop=True)
+        )
+        colunas_ancorado = [c for c in ["cidade", "hex_id", "hex_score_estrutural", "score_setor_ancorado", "hex_score_setor_2010"] if c in top10_ancorado.columns]
+        linhas += [
+            "",
+            "## Top 10 por cidade - score ancorado (60% municipal + 40% setor)",
+            _markdown_table(top10_ancorado[colunas_ancorado]),
+        ]
+
+    linhas += [
+        "",
+        "## Limitacoes remanescentes",
+        "- V005 nao e renda per capita domiciliar; necessario definir fonte canonica de renda por setor para producao",
+        "- percentis locais incompativeis com ranking nacional do M1 (mitigado pelo score_setor_ancorado, mas nao eliminado)",
+        "- custo computacional em escala nacional nao foi medido empiricamente (apenas estimado)",
+        "- cobertura espacial pode cair em regioes com setores muito pequenos ou geometrias problematicas",
+        "- fonte censitaria: Censo 2010 (defasagem de ~15 anos em relacao ao periodo de analise)",
         "",
         "## Observacoes",
         "- `hex_score_estrutural` oficial nao foi alterado.",
         "- hex sem setor permaneceram como `sem_match_setor`; nao houve preenchimento silencioso com zero.",
-        "- o experimento usa percentis apenas no subconjunto testado, entao a leitura principal aqui e de separacao espacial intraurbana, nao de ranking nacional.",
+        "- `score_setor_ancorado` e experimental: nao substitui `score_priorizacao` oficial do M1.",
+        "- o experimento usa percentis no subconjunto testado por padrao; `_percentil_em_distribuicao_referencia()` esta disponivel para ancoragem nacional futura.",
     ]
     return "\n".join(linhas) + "\n"
 
@@ -843,8 +1007,11 @@ def executar_experimento_setor_2010(
         atributos_path=atributos_path,
         cidades_alvo=cidades_resolvidas,
     )
+    t0_spatial = time.perf_counter()
     df_hex = associar_hexagonos_a_setores(df_hex, df_setores)
-    df_hex = calcular_score_setor_2010(df_hex)
+    tempo_spatial_join_s = round(time.perf_counter() - t0_spatial, 3)
+    df_hex = calcular_score_setor_2010(df_hex, base_nacional=base_oficial)
+    df_hex = calcular_score_setor_ancorado(df_hex)
     comparativo, stats_df, top_setor, top_comparativo = construir_comparativo(df_hex)
     top_oficial = (
         comparativo.sort_values(["cidade", "hex_score_estrutural", "hex_id"], ascending=[True, False, True])
@@ -860,6 +1027,7 @@ def executar_experimento_setor_2010(
         top_oficial=top_oficial,
         info_setores=info_setores,
         cidades_alvo=cidades_resolvidas,
+        tempo_spatial_join_s=tempo_spatial_join_s,
     )
 
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -885,6 +1053,8 @@ def executar_experimento_setor_2010(
         "report_path": str(report_path),
         "total_hex": int(len(df_hex)),
         "hex_com_setor": int(df_hex["setor_match_status"].eq("match_setor").sum()),
+        "tempo_spatial_join_s": tempo_spatial_join_s,
+        "tem_score_ancorado": "score_setor_ancorado" in df_hex.columns,
     }
     log.info("teste_setor_2010_concluido", **resultado)
     return resultado

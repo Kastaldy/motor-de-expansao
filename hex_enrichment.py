@@ -44,8 +44,8 @@ PESOS_HEX_SCORE = {
 }
 
 PESOS_HEX_SCORE_ESTRUTURAL = {
-    "renda_per_capita": 0.60,
-    "populacao_proxy": 0.40,
+    "renda_per_capita": 0.40,
+    "populacao_proxy": 0.60,
 }
 
 PESOS_HEX_SCORE_FINAL = {
@@ -73,6 +73,7 @@ PESOS_HEX_SCORE_FINAL = {
 }
 
 FAIXAS_OPORTUNIDADE = [
+    "inviavel",
     "descartado",
     "baixa",
     "media",
@@ -259,12 +260,12 @@ normalizar_0_100 = normalizar_serie
 def calcular_hex_score(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["renda_norm"] = (
-        normalizar_serie(df["renda_per_capita"].fillna(df["renda_per_capita"].median()))
+        normalizar_serie(df["renda_per_capita"].fillna(0.0))
         if "renda_per_capita" in df.columns and df["renda_per_capita"].notna().any()
         else pd.Series([50.0] * len(df), index=df.index)
     )
     df["pop_norm"] = (
-        normalizar_serie(df["pop_18_45"].fillna(df["pop_18_45"].median()))
+        normalizar_serie(df["pop_18_45"].fillna(0.0))
         if "pop_18_45" in df.columns and df["pop_18_45"].notna().any()
         else pd.Series([50.0] * len(df), index=df.index)
     )
@@ -285,8 +286,18 @@ def calcular_hex_score_estrutural(df: pd.DataFrame) -> pd.DataFrame:
     df["pop_total"] = _serie_numerica(df, "pop_total")
     df["pop_18_45"] = _serie_numerica(df, "pop_18_45")
     df["populacao_proxy"] = calcular_populacao_proxy(df)
-    df["renda_pct_nacional"] = _calcular_percentil_nacional(df["renda_per_capita"])
-    df["pop_pct_nacional"] = _calcular_percentil_nacional(df["populacao_proxy"])
+
+    # Hexágonos sem população (corpos d'água, áreas rurais sem dados) são excluídos
+    # do cálculo de percentil para não distorcer o ranking nacional.
+    hex_populado = df["populacao_proxy"] >= settings.M1_POP_MINIMA_PROXY
+    df["hex_sem_populacao"] = ~hex_populado
+
+    df["renda_pct_nacional"] = _calcular_percentil_nacional(
+        df["renda_per_capita"].where(hex_populado)
+    )
+    df["pop_pct_nacional"] = _calcular_percentil_nacional(
+        df["populacao_proxy"].where(hex_populado)
+    )
     df["hex_score_estrutural"] = (
         100
         * (
@@ -298,6 +309,8 @@ def calcular_hex_score_estrutural(df: pd.DataFrame) -> pd.DataFrame:
         df["renda_pct_nacional"],
         df["pop_pct_nacional"],
     )
+    # Força zero para hexágonos sem população (NaN viraria score indeterminado)
+    df.loc[~hex_populado, ["hex_score_estrutural", "ajuste_executivo"]] = 0.0
     df["score_priorizacao"] = (
         (df["hex_score_estrutural"] + df["ajuste_executivo"]).clip(lower=0, upper=100)
     ).round(2)
@@ -651,6 +664,7 @@ def enriquecer_hexagonos_uf_estrutural(
     else:
         df["nome_municipio"] = df["nome_municipio"].fillna("")
     df["fonte_demografica"] = df["fonte_demografica"].fillna("fallback_padrao")
+    df["confianca_geografica"] = "municipal"
     df = calcular_hex_score_estrutural(df)
 
     log.info(
@@ -766,11 +780,14 @@ def _garantir_nomes_municipio(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+_FAIXAS_SCORE = ["descartado", "baixa", "media", "alta", "prioridade_maxima"]
+
+
 def _definir_faixa_oportunidade(percentil_score: pd.Series) -> pd.Series:
     faixa = pd.cut(
         percentil_score,
         bins=[-float("inf"), 35, 50, 65, 80, float("inf")],
-        labels=FAIXAS_OPORTUNIDADE,
+        labels=_FAIXAS_SCORE,
         right=False,
     )
     return faixa.astype("object").fillna("descartado")
@@ -870,13 +887,16 @@ def preparar_base_oportunidades(
     if "data_referencia_ibge" not in df.columns:
         df["data_referencia_ibge"] = "censo_2022"
 
-    score_validos = df["score_priorizacao"].notna()
+    sem_populacao = df.get("hex_sem_populacao", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    score_validos = df["score_priorizacao"].notna() & ~sem_populacao
     df["score_percentil_nacional"] = pd.Series([float("nan")] * len(df), index=df.index, dtype="float64")
     if score_validos.any():
         df.loc[score_validos, "score_percentil_nacional"] = (
             df.loc[score_validos, "score_priorizacao"].rank(method="max", pct=True) * 100
         ).round(2)
     df["faixa_oportunidade"] = _definir_faixa_oportunidade(df["score_percentil_nacional"])
+    # Hexágonos sem população (rios, áreas rurais sem dados) recebem status próprio
+    df.loc[sem_populacao, "faixa_oportunidade"] = "inviavel"
     df["score_oficial"] = df["score_priorizacao"].round(2)
     df["score_oficial_nome"] = settings.M1_SCORE_OFICIAL
     df["osm_status"] = OSM_STATUS_NAO_APLICADO
@@ -886,16 +906,16 @@ def preparar_base_oportunidades(
     pop_p25 = float(df["populacao_proxy"].quantile(PERCENTIL_CORTE_INFERIOR))
     score_p50 = float(df["score_percentil_nacional"].quantile(0.50))
 
-    fator_renda_target = 4500.0 / renda_p75 if renda_p75 > 0 else 1.0
-    # A base disponivel e per capita; esta proxy reancora o target executivo de renda domiciliar sem
-    # alterar o score estrutural original.
+    # IBGE fornece renda per capita; escalamos para estimar renda domiciliar usando RENDA_MIN
+    # (renda domiciliar minima) como ancora, sem tocar o score estrutural.
+    fator_renda_target = settings.RENDA_MIN / renda_p75 if renda_p75 > 0 else 1.0
     df["renda_target_proxy"] = (df["renda_per_capita"] * fator_renda_target).round(2)
 
     renda_alta = df["renda_pct_nacional"] >= PERCENTIL_CORTE_SUPERIOR
     pop_alta = df["pop_pct_nacional"] >= PERCENTIL_CORTE_SUPERIOR
     baixa_densidade = df["pop_pct_nacional"] < PERCENTIL_CORTE_INFERIOR
     score_baixo = df["score_percentil_nacional"] < score_p50
-    renda_baixa = df["renda_target_proxy"] < 4500.0
+    renda_baixa = df["renda_target_proxy"] < settings.RENDA_MIN
 
     df["motivo_priorizacao"] = np.select(
         [renda_alta & pop_alta, renda_alta, pop_alta],
@@ -911,16 +931,18 @@ def preparar_base_oportunidades(
         ],
         default="sem_alerta",
     )
-    df["flag_viavel"] = (~renda_baixa) & (df["faixa_oportunidade"] != "descartado")
+    df["flag_viavel"] = (~renda_baixa) & ~df["faixa_oportunidade"].isin(["descartado", "inviavel"]) & (~sem_populacao)
 
     df["observacao_estrategica"] = np.select(
         [
+            sem_populacao,
             ~df["flag_viavel"],
             renda_alta & baixa_densidade,
             pop_alta & ~renda_alta,
             renda_alta & pop_alta,
         ],
         [
+            "Area inviavel (agua/rural sem populacao)",
             "Regiao fora do target ideal",
             "Alta renda, baixa densidade",
             "Alta densidade, renda moderada",

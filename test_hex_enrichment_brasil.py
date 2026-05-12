@@ -26,24 +26,54 @@ def test_calcular_hex_score_estrutural_separa_base_ajuste_e_score_priorizacao():
 
     resultado = calcular_hex_score_estrutural(df).set_index("hex_id")
 
+    # Pesos vigentes: renda=0.40, pop=0.60 (aprovado diretoria 2026-04-24)
     assert resultado.loc["a", "renda_pct_nacional"] == 1.0
     assert resultado.loc["a", "pop_pct_nacional"] == 1.0
     assert resultado.loc["a", "hex_score_estrutural"] == 100.0
     assert resultado.loc["a", "ajuste_executivo"] == 5.0
     assert resultado.loc["a", "score_priorizacao"] == 100.0
 
-    assert resultado.loc["b", "hex_score_estrutural"] == 64.0
+    # b: renda_pct=0.8, pop_pct=0.4 → 100*(0.40*0.8 + 0.60*0.4) = 56.0
+    assert resultado.loc["b", "hex_score_estrutural"] == 56.0
     assert resultado.loc["b", "ajuste_executivo"] == 2.0
-    assert resultado.loc["b", "score_priorizacao"] == 66.0
+    assert resultado.loc["b", "score_priorizacao"] == 58.0
 
-    assert resultado.loc["c", "hex_score_estrutural"] == 56.0
+    # c: renda_pct=0.4, pop_pct=0.8 → 100*(0.40*0.4 + 0.60*0.8) = 64.0
+    assert resultado.loc["c", "hex_score_estrutural"] == 64.0
     assert resultado.loc["c", "ajuste_executivo"] == 1.0
-    assert resultado.loc["c", "score_priorizacao"] == 57.0
+    assert resultado.loc["c", "score_priorizacao"] == 65.0
 
     assert resultado.loc["e", "ajuste_executivo"] == -8.0
     assert resultado.loc["e", "score_priorizacao"] == 12.0
     assert resultado.loc["f", "hex_score_estrutural"] == 0.0
     assert resultado.loc["f", "score_priorizacao"] == 0.0
+
+
+def test_calcular_hex_score_estrutural_exclui_hexagonos_sem_populacao():
+    df = pd.DataFrame(
+        [
+            {"hex_id": "urbano", "renda_per_capita": 5000.0, "pop_18_45": 500.0},
+            {"hex_id": "agua",   "renda_per_capita": 5000.0, "pop_18_45": 0.0},
+            {"hex_id": "rural",  "renda_per_capita": 0.0,    "pop_18_45": 0.0},
+        ]
+    )
+    resultado = calcular_hex_score_estrutural(df).set_index("hex_id")
+
+    # Hexágono urbano: tem população, entra no ranking
+    assert resultado.loc["urbano", "hex_sem_populacao"] is False or resultado.loc["urbano", "hex_sem_populacao"] == False
+    assert resultado.loc["urbano", "score_priorizacao"] > 0
+
+    # Hexágonos sem população: flag True, score forçado a zero
+    assert resultado.loc["agua", "hex_sem_populacao"] == True
+    assert resultado.loc["agua", "score_priorizacao"] == 0.0
+    assert resultado.loc["agua", "hex_score_estrutural"] == 0.0
+
+    assert resultado.loc["rural", "hex_sem_populacao"] == True
+    assert resultado.loc["rural", "score_priorizacao"] == 0.0
+
+    # Percentis de água/rural devem ser NaN (excluídos do ranking)
+    assert pd.isna(resultado.loc["agua", "renda_pct_nacional"])
+    assert pd.isna(resultado.loc["rural", "pop_pct_nacional"])
 
 
 def test_detecta_coluna_codigo_municipio_sidra():
@@ -306,3 +336,23 @@ def test_preparar_base_oportunidades_desempata_de_forma_deterministica():
     assert resultado["rank_brasil"].tolist() == [1, 2]
     assert resultado["rank_uf"].tolist() == [1, 2]
     assert resultado["rank_cidade"].tolist() == [1, 2]
+
+
+def test_preparar_base_oportunidades_marca_sem_populacao_como_inviavel():
+    df_estrutural = pd.DataFrame(
+        [
+            {"hex_id": "urbano", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "3550308", "nome_municipio": "", "renda_per_capita": 3000, "populacao_proxy": 5000, "hex_score_estrutural": 80, "hex_sem_populacao": False},
+            {"hex_id": "rio",    "lat": 1, "lng": 1, "uf": "SP", "regiao": "SE", "cod_municipio": "3550308", "nome_municipio": "", "renda_per_capita": 0,    "populacao_proxy": 0,    "hex_score_estrutural": 0,  "hex_sem_populacao": True},
+        ]
+    )
+    df_priorizados = pd.DataFrame(columns=["hex_id", "uf", "cod_municipio", "criterio_prioridade", "threshold_prioridade_uf"])
+
+    resultado, _ = preparar_base_oportunidades(df_estrutural, df_priorizados)
+
+    rio = resultado.loc[resultado["hex_id"] == "rio"].iloc[0]
+    urbano = resultado.loc[resultado["hex_id"] == "urbano"].iloc[0]
+
+    assert rio["faixa_oportunidade"] == "inviavel"
+    assert bool(rio["flag_viavel"]) is False
+    assert rio["observacao_estrategica"] == "Area inviavel (agua/rural sem populacao)"
+    assert urbano["faixa_oportunidade"] != "inviavel"

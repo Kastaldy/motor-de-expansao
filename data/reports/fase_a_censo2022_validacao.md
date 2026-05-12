@@ -1,0 +1,131 @@
+# Fase A - Validacao consolidada do Censo 2022
+
+> Data da validacao: 2026-04-09
+
+## 1. Auditoria do join posicional por UF
+
+| UF | Shapefile | Basico | Renda total | Renda valida | Mismatch total % | Seq municipio % | Alerta >5% |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| AC | 2215 | 2215 | 2127 | 1981 | 3.97 | 100.0000 | NAO |
+| AL | 6359 | 6359 | 6267 | 6167 | 1.45 | 100.0000 | NAO |
+| AM | 10729 | 10729 | 9602 | 8438 | 10.50 | 100.0000 | SIM |
+| AP | 1492 | 1492 | 1440 | 1359 | 3.49 | 100.0000 | NAO |
+| BA | 30985 | 30985 | 30739 | 30507 | 0.79 | 100.0000 | NAO |
+| CE | 20979 | 20979 | 20518 | 20096 | 2.20 | 100.0000 | NAO |
+| DF | 5418 | 5418 | 5342 | 5264 | 1.40 | 100.0000 | NAO |
+| ES | 8706 | 8706 | 8568 | 8472 | 1.59 | 100.0000 | NAO |
+| GO | 12861 | 12861 | 12816 | 12625 | 0.35 | 100.0000 | NAO |
+| MA | 16301 | 16301 | 16030 | 15571 | 1.66 | 100.0000 | NAO |
+| MG | 51387 | 51387 | 50929 | 50289 | 0.89 | 100.0000 | NAO |
+| MS | 6117 | 6117 | 6064 | 5985 | 0.87 | 100.0000 | NAO |
+| MT | 9381 | 9381 | 9188 | 8794 | 2.06 | 100.0000 | NAO |
+| PA | 16714 | 16714 | 16065 | 15527 | 3.88 | 100.0000 | NAO |
+| PB | 9639 | 9639 | 9563 | 9469 | 0.79 | 100.0000 | NAO |
+| PE | 19578 | 19578 | 19417 | 19201 | 0.82 | 100.0000 | NAO |
+| PI | 7340 | 7340 | 7278 | 7212 | 0.84 | 100.0000 | NAO |
+| PR | 23777 | 23777 | 23435 | 23178 | 1.44 | 100.0000 | NAO |
+| RJ | 41700 | 41700 | 40519 | 39804 | 2.83 | 100.0000 | NAO |
+| RN | 6095 | 6095 | 6013 | 5955 | 1.35 | 100.0000 | NAO |
+| RO | 3456 | 3456 | 3304 | 3135 | 4.40 | 100.0000 | NAO |
+| RR | 1783 | 1783 | 1612 | 1173 | 9.59 | 100.0000 | SIM |
+| RS | 25569 | 25569 | 25300 | 24871 | 1.05 | 99.9922 | NAO |
+| SC | 16736 | 16736 | 16435 | 16139 | 1.80 | 100.0000 | NAO |
+| SE | 5346 | 5346 | 5244 | 5199 | 1.91 | 100.0000 | NAO |
+| SP | 103319 | 103319 | 100928 | 99223 | 2.31 | 100.0000 | NAO |
+| TO | 4117 | 4117 | 4029 | 3897 | 2.14 | 100.0000 | NAO |
+
+## 2. Validacao da renda proxy
+
+| UF | Corr proxy vs M1 | Corr V06004 vs M1 | MAE proxy | MAE V06004 | Ratio proxy | Ratio V06004 | V06004/v0005 melhor? |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| GO | 0.3652 | 0.3349 | 435.71 | 1163.39 | 0.6835 | 1.8001 | SIM |
+| RJ | 0.2656 | 0.2175 | 412.59 | 1618.48 | 0.7614 | 1.9816 | SIM |
+| SP | 0.0436 | 0.0223 | 515.01 | 1854.33 | 0.7378 | 1.9907 | SIM |
+
+| UF | Setor mean | Setor median | Setor skew | Outlier % | Zeros % | M1 mean | M1 median | Distribuicao coerente? |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| GO | 975.83 | 889.22 | 4.46 | 1.53 | 1.72 | 1444.27 | 1489.52 | SIM |
+| RJ | 1032.41 | 844.43 | 4.57 | 2.71 | 3.74 | 1402.80 | 1385.75 | SIM |
+| SP | 1192.74 | 970.13 | 4.33 | 3.23 | 2.54 | 1551.84 | 1499.77 | SIM |
+
+### Capitais piloto
+
+| UF | Cidade | Proxy mun | V06004 mun | M1 mun | Cobertura % |
+| --- | --- | --- | --- | --- | --- |
+| GO | Goiania | 1830.47 | 4525.52 | 2668.80 | 99.35 |
+| RJ | Rio de Janeiro | 1764.64 | 4208.54 | 2515.32 | 99.14 |
+| SP | Sao Paulo | 1961.10 | 5051.50 | 2713.36 | 99.11 |
+
+## 3. Validacao intraurbana
+
+| UF | Cidade | Hex | Std municipal | Std setor | Ganho std | Amp municipal | Amp setor | Ganho amplitude | Correlacao |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| GO | Goiania | 128 | 0.00 | 23.54 | 23.54 | 0.00 | 75.77 | 75.77 | NA_baseline_uniforme |
+| RJ | Rio de Janeiro | 189 | 0.00 | 22.90 | 22.90 | 0.00 | 72.43 | 72.43 | NA_baseline_uniforme |
+| SP | Sao Paulo | 296 | 0.00 | 19.29 | 19.29 | 0.00 | 61.42 | 61.42 | NA_baseline_uniforme |
+
+## 4. Consistencia espacial intraurbana
+
+| UF | Cidade | Hex avaliados | Threshold | Outliers criticos | Status |
+| --- | --- | --- | --- | --- | --- |
+| GO | Goiania | 89 | 35.00 | 1 | REVIEW |
+| RJ | Rio de Janeiro | 140 | 57.56 | 1 | REVIEW |
+| SP | Sao Paulo | 217 | 35.00 | 1 | REVIEW |
+
+## 5. Stress test tecnico
+
+### Perfil medido nas UFs piloto
+
+| UF | Hex | Setores | Tempo s | Peak RSS MB |
+| --- | --- | --- | --- | --- |
+| GO | 59952 | 12824 | 296.60 | 924.29 |
+| RJ | 7895 | 40703 | 13.34 | 568.44 |
+| SP | 47139 | 101273 | 155.59 | 853.73 |
+
+| UF | Hex | Setores | Tempo est. s | Peak RSS est. MB |
+| --- | --- | --- | --- | --- |
+| AC | 28370 | 2215 | 114.86 | 437.39 |
+| AL | 4544 | 6359 | 18.40 | 70.06 |
+| AM | 292793 | 10729 | 1185.40 | 4514.04 |
+| AP | 24162 | 1492 | 97.82 | 372.51 |
+| BA | 93918 | 30985 | 380.23 | 1447.95 |
+| CE | 23975 | 20979 | 97.06 | 369.63 |
+| DF | 999 | 5418 | 4.04 | 15.40 |
+| ES | 8158 | 8706 | 33.03 | 125.77 |
+| GO | 59952 | 12861 | 242.72 | 924.29 |
+| MA | 53180 | 16301 | 215.30 | 819.88 |
+| MG | 104078 | 51387 | 421.37 | 1604.59 |
+| MS | 69344 | 6117 | 280.74 | 1069.09 |
+| MT | 165033 | 9381 | 668.15 | 2544.34 |
+| PA | 213997 | 16714 | 866.38 | 3299.23 |
+| PB | 9223 | 9639 | 37.34 | 142.19 |
+| PE | 16013 | 19578 | 64.83 | 246.88 |
+| PI | 40869 | 7340 | 165.46 | 630.08 |
+| PR | 40261 | 23777 | 163.00 | 620.71 |
+| RJ | 7895 | 41700 | 31.96 | 121.72 |
+| RN | 8555 | 6095 | 34.64 | 131.89 |
+| RO | 45962 | 3456 | 186.08 | 708.60 |
+| RR | 43424 | 1783 | 175.81 | 669.48 |
+| RS | 60811 | 25569 | 246.20 | 937.53 |
+| SC | 20100 | 16736 | 81.38 | 309.89 |
+| SE | 3588 | 5346 | 14.53 | 55.32 |
+| SP | 47139 | 103319 | 190.85 | 726.75 |
+| TO | 46302 | 4117 | 187.46 | 713.85 |
+
+- Tempo nacional estimado (sequencial): 103.42 min
+- Pico de memoria estimado na maior UF: 4514.04 MB
+- UFs com alerta de join >5%: AM, RR
+- Gargalo principal: Overlay geopandas/shapely e o principal gargalo; o pico de memoria fica concentrado na maior UF processada sequencialmente.
+
+## 6. Recomendacao
+
+**NO-GO** para escala nacional imediata.
+
+Motivos principais:
+- join posicional ainda tem alerta estrutural >5% em AM e RR
+- a calibracao municipal da renda proxy segue fraca frente ao M1 nas UFs piloto
+- nao ha validacao com performance real das unidades Ultra no repositorio atual
+
+## 7. Dados reais Ultra
+
+- Dados de faturamento/alunos/churn nao foram encontrados no repositorio; a validacao com performance real permanece pendente.

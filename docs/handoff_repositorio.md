@@ -1,0 +1,106 @@
+# Handoff do repositorio
+
+Contrato curto para compartilhar o repo com a equipe e preparar o deploy Streamlit em VPS.
+
+## Escopo do handoff
+
+- Dashboard Streamlit em `streamlit_app.py` lendo Parquets locais.
+- Deploy inicial via `Dockerfile.streamlit` e `docker-compose.prod.yml`.
+- Sem API ao vivo, PostGIS obrigatorio, Prefect ou recalculo nacional no deploy inicial.
+- `score_priorizacao` e o score oficial do M1; `hex_score_estrutural` e artefatos oficiais nao devem mudar sem aprovacao explicita.
+- Quartis sao apoio de ranking relativo; para reporte executivo e carteira, priorizar regua absoluta, churn esperado, receita esperada perdida e capacidade operacional.
+
+## Mapa de pastas
+
+| caminho | papel | handoff |
+| --- | --- | --- |
+| `streamlit_app.py` | dashboard executivo M1 + hibrido | codigo principal do deploy inicial |
+| `config.py` | parametros canonicos e defaults | manter junto do repo |
+| `jobs/pipelines/` | pipelines analiticos e geracao de artefatos | nao rodar no deploy inicial |
+| `docs/` | contratos tecnicos e runbooks | fonte de consulta da equipe |
+| `tests` / `test_*.py` | validacoes automatizadas | rodar suite rapida antes de handoff |
+| `data/outputs/` | artefatos minimos consumidos pelo dashboard | enviar como pacote de dados externo ou volume |
+| `data/staging/` | bases intermediarias nacionais/censitarias | pesado; externo ao repo compartilhavel |
+| `data/raw/` | dados brutos e sensiveis | nao versionar |
+| `concorrentes/` e `data/ultra/` | insumos operacionais locais | tratar como dado externo/sensivel |
+| `Dockerfile.streamlit` e `docker-compose.prod.yml` | deploy VPS do dashboard | caminho oficial do deploy inicial |
+| `docker-compose.yml` e `Dockerfile.api` | legado API/PostGIS/Prefect | fora do deploy inicial |
+
+## Artefatos minimos do dashboard
+
+Metadados locais observados em 2026-05-12, sem recalculo:
+
+| arquivo em `data/outputs/` | linhas | tamanho aprox. | uso |
+| --- | ---: | ---: | --- |
+| `hexagonos_brasil_dashboard.parquet` | 1.532.645 | 46,6 MB | base oficial M1 e mapa executivo |
+| `oportunidades_expansao_hibrido.parquet` | 1.532.645 | 66,7 MB | filtros, camada hibrida e enriquecimento censitario |
+| `carteira_expansao_acionavel.parquet` | 5.406 | 0,4 MB | carteira operacional |
+| `plano_expansao_curto_prazo.parquet` | 269 | 0,1 MB | plano curto prazo |
+
+Arquivos auxiliares em `data/outputs/`, como CSVs executivos e `hexagonos_mapa_sample.parquet`, sao uteis para BI/analise, mas nao compoem o contrato minimo do app completo atual.
+
+Camadas `data/staging/censo2022_setores_*.parquet` enriquecem rastreabilidade quando presentes. Elas sao opcionais para handoff leve e devem ser enviadas como artefatos externos se a equipe precisar auditar a origem censitaria.
+
+## Comandos oficiais
+
+Instalacao local:
+
+```bash
+python -m pip install -e ".[dev]"
+copy .env.example .env
+```
+
+Dashboard:
+
+```bash
+python -m streamlit run streamlit_app.py
+```
+
+Validacao rapida:
+
+```bash
+python -m pytest -q -o addopts='' test_streamlit_app.py test_carteira_plano_nacional.py
+python -c "import streamlit_app; print('ok')"
+```
+
+Validacao de artefatos:
+
+```bash
+python scripts/check_artifacts.py
+```
+
+Deploy Streamlit em VPS:
+
+```bash
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+curl -fsS http://127.0.0.1:8501/_stcore/health
+```
+
+Recalculo analitico do M1, fora do deploy inicial:
+
+```bash
+python base_h3_brasil.py
+python hex_enrichment.py --brasil
+python fase1_bi_exports.py
+```
+
+## Arquivos sensiveis ou pesados
+
+- Nao versionar `.env`, credenciais, planilhas privadas, dados brutos, staging nacional ou outputs temporarios.
+- Tratar `data/raw/`, `data/staging/`, `data/ultra/`, `concorrentes/` e planilhas locais como dados externos ao codigo.
+- Para VPS, montar `data/outputs/` como volume ou copiar o pacote minimo de Parquets para o servidor.
+
+## Docker/API
+
+O caminho oficial do deploy inicial e `Dockerfile.streamlit` + `docker-compose.prod.yml`, documentado em `docs/deploy_vps_streamlit.md`.
+O `docker-compose.yml` atual descreve PostGIS, API e Prefect de desenvolvimento e fica fora do deploy inicial.
+
+## Checklist de handoff
+
+- Repo compartilhado com codigo, docs, testes, manifests e arquivos Docker do Streamlit.
+- Pacote externo enviado com os 4 Parquets minimos em `data/outputs/`.
+- `.env` real e credenciais fora do git; usar `.env.example` como referencia.
+- Suite rapida executada antes do envio: `test_streamlit_app.py` e `test_carteira_plano_nacional.py`.
+- Smoke do dashboard executado localmente ou na VPS.
+- API/FastAPI, PostGIS, Prefect, scraping e pipelines nacionais pesados comunicados como fora do deploy inicial.
