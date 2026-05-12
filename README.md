@@ -2,52 +2,89 @@
 
 Base territorial do MVP nacional do `motor-de-expansao`.
 
-O contrato canonico do projeto esta em `CLAUDE.md`. Para a Fase 1 / M1, o pipeline nacional oficial usa:
+O contrato canonico do projeto esta em `CLAUDE.md`; detalhes do ciclo ativo ficam em `PRD.md`.
+O objetivo atual e deixar o repositorio compartilhavel com a equipe e subir o dashboard Streamlit em VPS com Parquets locais, sem API ao vivo, sem PostGIS obrigatorio e sem recalculo do M1 no deploy inicial.
 
-- base estrutural oficial: `hex_score_estrutural`
-- score oficial de priorizacao executiva: `score_priorizacao`
-- replica executiva estavel: `score_oficial = score_priorizacao`
-- staging sempre em Parquet
-- IBGE como fonte oficial
-- OSM como opcional/futuro, fora do fechamento executivo nacional
+## Quickstart local
 
-## Escopo atual do M1
+```bash
+python -m pip install -e ".[dev]"
+copy .env.example .env
+python -m streamlit run streamlit_app.py
+```
+
+O instalar `.[dev]` inclui apenas as dependencias do dashboard e dos testes rapidos.
+Extras opcionais: `.[api]` (FastAPI/PostGIS), `.[ml]` (XGBoost/LightGBM), `.[scraping]`.
+
+Validacao rapida recomendada antes de handoff:
+
+```bash
+python -m pytest -q test_streamlit_app.py test_carteira_plano_nacional.py
+python -c "import streamlit_app; print('ok')"
+```
+
+Suite de mercado (requer artefatos de staging):
+
+```bash
+python -m pytest -q test_modelo_mercado_hexagonos.py
+```
+
+## Dashboard Streamlit
+
+Arquivo principal: `streamlit_app.py`.
+
+O app roda offline e le Parquets locais. Para a experiencia completa do dashboard atual, manter estes artefatos em `data/outputs/`:
+
+| arquivo | uso no dashboard | obrigatoriedade |
+| --- | --- | --- |
+| `hexagonos_brasil_dashboard.parquet` | base oficial M1, KPIs, ranking e mapa executivo | obrigatorio |
+| `oportunidades_expansao_hibrido.parquet` | enriquecimento hibrido/censitario e filtros combinados | obrigatorio no app atual |
+| `carteira_expansao_acionavel.parquet` | aba de carteira operacional | recomendado |
+| `plano_expansao_curto_prazo.parquet` | aba de plano curto prazo | recomendado |
+
+Camadas de apoio em `data/staging/` podem enriquecer rastreabilidade censitaria, mas dados brutos e staging nacionais grandes devem ser tratados como artefatos externos ao codigo.
+
+## Deploy VPS Streamlit
+
+O deploy inicial de producao usa somente o dashboard Streamlit, com dados locais montados como volume.
+
+```bash
+python scripts/check_artifacts.py
+docker compose -f docker-compose.prod.yml build
+docker compose -f docker-compose.prod.yml up -d
+curl -fsS http://127.0.0.1:8501/_stcore/health
+```
+
+Contrato completo: `docs/deploy_vps_streamlit.md`.
+
+Recomendacoes operacionais:
+
+- montar `data/outputs/` na VPS com os 4 Parquets minimos do dashboard;
+- expor o app por proxy HTTPS com autenticacao, VPN ou allowlist;
+- nao embutir dados ou secrets na imagem Docker;
+- manter API/FastAPI, PostGIS, Prefect e pipelines pesados fora deste deploy inicial.
+
+## Contrato oficial do M1
 
 Fluxo oficial:
 
-1. `base_h3_brasil.py`
-   Gera a base H3 nacional particionada por UF em `data/staging/brasil/uf=XX/hexagonos.parquet`.
-2. `hex_enrichment.py`
-   Enriquece a base estrutural nacional, calcula score estrutural, ajuste executivo, score de priorizacao, corte top 20% por UF e camada de oportunidade.
-3. `fase1_bi_exports.py`
-   Gera os artefatos executivos/BI estaveis a partir de `data/staging/hexagonos_brasil_oportunidades.parquet`.
+1. `base_h3_brasil.py` gera a base H3 nacional particionada por UF em `data/staging/brasil/uf=XX/hexagonos.parquet`.
+2. `hex_enrichment.py` enriquece a base estrutural nacional, calcula score estrutural, ajuste executivo, score de priorizacao, corte top 20% por UF e camada de oportunidade.
+3. `fase1_bi_exports.py` gera os artefatos executivos/BI estaveis em `data/outputs/`.
 
-## Regra canonica de score do M1
-
-Inputs estruturais:
-
-- `renda_per_capita`
-- `populacao_proxy`
-- `pop_18_45` como fonte preferida da proxy populacional
-- `pop_total` como fallback
-
-Calculo oficial:
+Regra canonica de score:
 
 ```python
 renda_pct_nacional = percentil_nacional(renda_per_capita)
 pop_pct_nacional = percentil_nacional(populacao_proxy)
 
 hex_score_estrutural = 100 * (
-    0.60 * renda_pct_nacional +
-    0.40 * pop_pct_nacional
-)
-
-ajuste_executivo = bonus_penalidade_por_quartil(
-    renda_pct_nacional,
-    pop_pct_nacional,
+    0.40 * renda_pct_nacional +
+    0.60 * pop_pct_nacional
 )
 
 score_priorizacao = clip(hex_score_estrutural + ajuste_executivo, 0, 100)
+score_oficial = score_priorizacao
 ```
 
 Campos oficiais esperados:
@@ -61,83 +98,66 @@ Campos oficiais esperados:
 - `score_oficial_nome`
 - `score_percentil_nacional`
 
-## Artefatos oficiais da Fase 1
+Parametros canonicos:
+
+- `H3_RESOLUTION=7`
+- `DIST_MIN_ULTRA_KM=1.0`
+- `RENDA_MIN=4500` para renda domiciliar minima, nao per capita
+- `M1_SCORE_OFICIAL=score_priorizacao`
+- `M1_PRIORIZACAO_TOP_PCT_POR_UF=0.20`
+- `M1_OSM_ENABLED=false`
+- `M1_SETOR_CENSITARIO_OBRIGATORIO=false`
+- `M1_POP_MINIMA_PROXY=1`
+
+## Artefatos oficiais
 
 - `data/staging/brasil_estrutural.parquet`
 - `data/staging/brasil_priorizados.parquet`
 - `data/staging/hexagonos_brasil_oportunidades.parquet`
 - `data/outputs/hexagonos_brasil_dashboard.parquet`
+- `data/outputs/hexagonos_mapa_sample.parquet`
 - `data/outputs/top_oportunidades_resumo.csv`
 - `data/outputs/resumo_por_uf.csv`
-- `data/reports/camada_oportunidade_fase1.md`
-- `data/reports/resumo_executivo_fase1.md`
 
-## Contrato oficial dos outputs do M1
+O contrato curto dos outputs esta em `docs/m1_outputs_oficiais.md`.
+O contrato de handoff do repositorio esta em `docs/handoff_repositorio.md`.
 
-O contrato curto e estavel dos outputs oficiais do M1 esta em `docs/m1_outputs_oficiais.md`.
+## Mapa de docs
 
-Resumo pratico:
+- `CLAUDE.md`: contrato canonico curto e guardrails permanentes.
+- `PRD.md`: ciclo operacional atual e status dos blocos.
+- `docs/handoff_repositorio.md`: checklist para compartilhar o repo com a equipe.
+- `docs/artefatos_dados.md`: manifesto de dados, politica de versionamento e artefatos externos.
+- `docs/deploy_vps_streamlit.md`: runbook Docker/Streamlit para VPS.
+- `docs/streamlit_dashboard_m1.md`: governanca e uso do dashboard.
+- `docs/modelo_mercado_hexagonos.md`: contrato tecnico da camada de mercado.
 
-- `brasil_estrutural.parquet`: base estrutural auditavel com IBGE e `hex_score_estrutural`
-- `brasil_priorizados.parquet`: recorte oficial top 20% por UF para priorizacao executiva
-- `hexagonos_brasil_oportunidades.parquet`: camada canonica com ranking Brasil, UF e cidade
-- `hexagonos_brasil_dashboard.parquet`: dataset oficial exportado para BI
+## Recalculo do M1
 
-Colunas oficiais exportadas para BI:
-
-- `hex_id`, `lat`, `lng`, `uf`, `cidade`, `regiao`
-- `hex_score_estrutural`, `ajuste_executivo`, `score_priorizacao`
-- `score_oficial`, `score_oficial_nome`, `score_percentil_nacional`
-- `faixa_oportunidade`, `flag_viavel`, `flag_prioridade`
-- `rank_brasil`, `rank_uf`, `rank_cidade`
-- `criterio_prioridade`, `threshold_prioridade_uf`, `osm_status`
-- `fonte_demografica`, `fonte_renda`, `fonte_populacao`, `nivel_geografico_ibge`
-- `fallback_setor_censitario`, `motivo_fallback_setor`
-- `fonte_geometria_ibge`, `metodo_atribuicao_municipio`, `data_referencia_ibge`
-
-## Parametros canonicos do M1
-
-- `H3_RESOLUTION=7`
-- `DIST_MIN_ULTRA_KM=1.0`
-- `RENDA_MIN=4500`
-- `M1_SCORE_OFICIAL=score_priorizacao`
-- `M1_PRIORIZACAO_TOP_PCT_POR_UF=0.20`
-- `M1_OSM_ENABLED=false`
-- `M1_SETOR_CENSITARIO_OBRIGATORIO=false`
-
-## Rastreabilidade IBGE
-
-O pipeline estrutural nacional deve carregar por hexagono:
-
-- `fonte_demografica`
-- `fonte_renda`
-- `fonte_populacao`
-- `nivel_geografico_ibge`
-- `fallback_setor_censitario`
-- `motivo_fallback_setor`
-- `fonte_geometria_ibge`
-- `metodo_atribuicao_municipio`
-- `data_referencia_ibge`
-
-## Execucao rapida do M1
+Estes comandos sao de pipeline analitico, nao do deploy Streamlit inicial:
 
 ```bash
-pip install -e ".[dev]"
-copy .env.example .env
 python base_h3_brasil.py
 python hex_enrichment.py --brasil
 python fase1_bi_exports.py
 ```
 
-## Testes relevantes do M1
+Testes relevantes do M1:
 
 ```bash
 python -m pytest test_base_h3_brasil.py test_hex_enrichment_brasil.py test_fase1_bi_exports.py test_fontes_gratuitas.py -v
 ```
 
-## Fora do escopo deste fechamento
+## Docker, API e PostGIS
 
-- M2 competitivo
-- M3 imobiliario
-- frontend
-- ML
+O deploy inicial deste ciclo usa `Dockerfile.streamlit` e `docker-compose.prod.yml`.
+O `docker-compose.yml` e o `Dockerfile.api` ficam como legado de desenvolvimento para API/PostGIS/Prefect e nao entram no caminho de producao do dashboard.
+
+## Fora do deploy inicial
+
+- API/FastAPI
+- PostGIS obrigatorio
+- Prefect
+- pipelines nacionais pesados
+- dados brutos e staging grandes dentro do repositorio compartilhavel
+- dependencia de internet/API externa para o dashboard em producao
