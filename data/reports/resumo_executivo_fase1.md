@@ -52,4 +52,5 @@ Rotulos de municipio enriquecidos apenas para exibicao via lookup oficial do IBG
 | media | 230619 | 15.05 |
 | baixa | 232569 | 15.17 |
 | descartado | 532082 | 34.72 |
+| inviavel | 0 | 0.00 |
 

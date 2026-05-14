@@ -64,8 +64,7 @@ hex_score_estrutural = 100 * (0.40 * renda_pct_nacional + 0.60 * pop_pct_naciona
 score_priorizacao = clip(hex_score_estrutural + ajuste_executivo, 0, 100)
 score_oficial = score_priorizacao
 ```
-- ATENCAO: artefatos Parquet existentes (`brasil_estrutural.parquet`, `brasil_priorizados.parquet`, `hexagonos_brasil_oportunidades.parquet`) foram gerados com os pesos antigos (renda=0.60, pop=0.40). Re-executar `hex_enrichment.py` para refletir os novos pesos (renda=0.40, pop=0.60; aprovado diretoria 2026-04-24).
-
+- Pesos aplicados (aprovados diretoria 2026-04-24, recalculo executado 2026-05-12): `renda=0.40`, `pop=0.60`. Artefatos oficiais regenerados e validados com 18/18 testes passando.
 - Campos auditaveis minimos: `renda_pct_nacional`, `pop_pct_nacional`, `hex_score_estrutural`, `ajuste_executivo`, `score_priorizacao`, `score_oficial`, `score_oficial_nome`, `score_percentil_nacional`.
 - Artefatos oficiais: `brasil_estrutural.parquet`, `brasil_priorizados.parquet`, `hexagonos_brasil_oportunidades.parquet`, `hexagonos_brasil_dashboard.parquet`, `hexagonos_mapa_sample.parquet`, `top_oportunidades_resumo.csv`, `resumo_por_uf.csv`.
 - Suite principal do fechamento M1: `test_base_h3_brasil.py`, `test_hex_enrichment_brasil.py`, `test_fase1_bi_exports.py`, `test_fontes_gratuitas.py`.

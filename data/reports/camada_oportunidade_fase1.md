@@ -16,6 +16,7 @@
 
 | faixa_oportunidade | hexagonos | pct_hexagonos |
 | --- | --- | --- |
+| inviavel | 0 | 0.00000 |
 | descartado | 532082 | 34.72000 |
 | baixa | 232569 | 15.17000 |
 | media | 230619 | 15.05000 |

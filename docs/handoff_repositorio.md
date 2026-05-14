@@ -96,10 +96,48 @@ python fase1_bi_exports.py
 O caminho oficial do deploy inicial e `Dockerfile.streamlit` + `docker-compose.prod.yml`, documentado em `docs/deploy_vps_streamlit.md`.
 O `docker-compose.yml` atual descreve PostGIS, API e Prefect de desenvolvimento e fica fora do deploy inicial.
 
+## Pacote de arquivos externos ao git
+
+A equipe deve receber os seguintes arquivos **fora** do repositorio git (via drive, S3 ou transferencia direta):
+
+| arquivo | destino na VPS | obrigatorio |
+| --- | --- | --- |
+| `hexagonos_brasil_dashboard.parquet` | `data/outputs/` | sim |
+| `oportunidades_expansao_hibrido.parquet` | `data/outputs/` | sim |
+| `carteira_expansao_acionavel.parquet` | `data/outputs/` | sim |
+| `plano_expansao_curto_prazo.parquet` | `data/outputs/` | sim |
+| `.env` (preenchido com valores reais) | raiz do projeto | sim |
+| `censo2022_setores_calibrado.parquet` | `data/staging/` | sim |
+
+Apos copiar, validar com `python scripts/check_artifacts.py` antes do build.
+
+## Rollback
+
+Se um deploy com novos Parquets introduzir regressao:
+
+```bash
+# 1. Parar o container
+docker compose -f docker-compose.prod.yml stop streamlit
+
+# 2. Substituir os Parquets pelo conjunto anterior (manter backup antes de qualquer atualizacao)
+cp /backup/data/outputs/*.parquet data/outputs/
+
+# 3. Validar os artefatos
+python scripts/check_artifacts.py
+
+# 4. Reiniciar
+docker compose -f docker-compose.prod.yml start streamlit
+
+# 5. Confirmar saude
+curl -fsS http://127.0.0.1:8501/_stcore/health
+```
+
+Recomendacao: manter pelo menos uma versao anterior dos 4 Parquets em `/backup/data/outputs/` antes de qualquer atualizacao de dados.
+
 ## Checklist de handoff
 
 - Repo compartilhado com codigo, docs, testes, manifests e arquivos Docker do Streamlit.
-- Pacote externo enviado com os 4 Parquets minimos em `data/outputs/`.
+- Pacote externo enviado com os 4 Parquets minimos em `data/outputs/` (ver tabela acima).
 - `.env` real e credenciais fora do git; usar `.env.example` como referencia.
 - Suite rapida executada antes do envio: `test_streamlit_app.py` e `test_carteira_plano_nacional.py`.
 - Smoke do dashboard executado localmente ou na VPS.

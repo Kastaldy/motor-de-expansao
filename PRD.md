@@ -19,8 +19,8 @@
 - Ciclo de handoff/deploy encerrado em 2026-05-12 (Blocos 1-6 concluidos).
 - Repositorio preparado para compartilhamento; dashboard Streamlit empacotado para VPS.
 - Validacao final: 16 testes passando, `import streamlit_app ok`, smoke headless ok, `check_artifacts.py` com 4 criticos presentes.
-- As mudancas do ciclo estao no branch `codex-dashboard-m1-streamlit` e ainda nao foram commitadas nem mescladas em `main`.
-- Artefatos Parquet existentes foram gerados com pesos antigos (renda=0.60, pop=0.40); novos pesos (renda=0.40, pop=0.60) aprovados em 2026-04-24 ainda nao foram aplicados.
+- As mudancas do ciclo foram promovidas para `main` em 2026-05-14; o branch `codex-dashboard-m1-streamlit` permanece apenas como historico do ciclo.
+- Artefatos Parquet regenerados em 2026-05-12 com pesos corretos (renda=0.40, pop=0.60); 18/18 testes passando.
 
 ## Artefatos minimos do dashboard
 Manter em `data/outputs/` no ambiente da equipe ou montados como volume na VPS:
@@ -76,49 +76,35 @@ curl -fsS http://127.0.0.1:8501/_stcore/health
 
 **Concluido em 2026-05-12.**
 - Commit `d4d1ae3` criado com 66 arquivos (16.111 insercoes).
-- Branch `codex-dashboard-m1-streamlit` empurrada para `origin`.
+- Branch `codex-dashboard-m1-streamlit` empurrada para `origin` e depois promovida para `main` em 2026-05-14.
 - Suite rapida: 16 testes passando localmente.
-- `gh` CLI nao instalado na maquina; PR deve ser criado manualmente em:
-  `https://github.com/Kastaldy/motor-de-expansao/compare/main...codex-dashboard-m1-streamlit`
-- Draft do PR disponivel no historico da conversa (2026-05-12).
+- PR manual deixou de ser necessario porque a entrega foi consolidada diretamente na `main`.
 
 ---
 
-### Bloco 2 - Recalculo M1 com novos pesos (renda=0.40 / pop=0.60) [ ]
+### Bloco 2 - Recalculo M1 com novos pesos (renda=0.40 / pop=0.60) [x]
 **Objetivo:** aplicar os pesos aprovados pela diretoria em 2026-04-24 e regenerar os artefatos oficiais.
 
-**ATENCAO:** este bloco sobrescreve `brasil_estrutural.parquet`, `brasil_priorizados.parquet`, `hexagonos_brasil_oportunidades.parquet` e outputs do M1. Executar somente com aprovacao explicita do usuario.
-
-Passos:
-1. Ler `config.py` e `hex_enrichment.py` para confirmar os pesos atuais e onde sao aplicados.
-2. Atualizar os pesos para `renda=0.40` e `pop=0.60` se ainda estiverem nos valores antigos.
-3. Rodar `python hex_enrichment.py --brasil`.
-4. Rodar `python fase1_bi_exports.py`.
-5. Validar campos auditaveis nos Parquets gerados: `renda_pct_nacional`, `pop_pct_nacional`, `hex_score_estrutural`, `ajuste_executivo`, `score_priorizacao`, `score_oficial`, `score_oficial_nome`, `score_percentil_nacional`.
-6. Rodar suite do M1: `python -m pytest test_hex_enrichment_brasil.py test_fase1_bi_exports.py -v`.
-7. Confirmar que `score_priorizacao` continua sendo o score oficial e que nenhum artefato paralelo foi alterado.
-
-Validacao minima:
-- Suite do M1 passando sem falhas.
-- Parquets oficiais regenerados com pesos corretos verificados por inspecao de sample.
-- Atualizar `CLAUDE.md` removendo o aviso de pesos antigos se o recalculo for bem-sucedido.
+**Concluido em 2026-05-12.**
+- Pesos ja estavam corretos no codigo (`hex_enrichment.py` linhas 46-48); apenas o pipeline precisava ser re-executado.
+- `hex_enrichment.py --brasil`: 27 UFs processadas, 1.532.645 hexagonos, max diff pesos = 0.0000.
+- `fase1_bi_exports.py`: dashboard 1.532.645 hex, mapa sample 459.794 hex, 27 UFs.
+- Suite M1: 18/18 testes passando.
+- Todos os campos auditaveis confirmados: 5 em `brasil_estrutural.parquet`, 3 adicionais em `hexagonos_brasil_oportunidades.parquet`.
+- `score_oficial_nome = 'score_priorizacao'` e `score_oficial == score_priorizacao` em 100% das linhas.
+- `CLAUDE.md` atualizado: aviso de pesos antigos removido.
 
 ---
 
-### Bloco 3 - Preparacao e checklist de entrega VPS para a equipe [ ]
+### Bloco 3 - Preparacao e checklist de entrega VPS para a equipe [x]
 **Objetivo:** garantir que a equipe consiga replicar o deploy sem intervencao adicional.
 
-Passos:
-1. Rodar `python scripts/check_artifacts.py` e confirmar os 4 Parquets criticos presentes em `data/outputs/`.
-2. Revisar `docs/deploy_vps_streamlit.md` e `docs/handoff_repositorio.md` — completar qualquer lacuna de instrucao que impeca a equipe de subir o container sem ajuda.
-3. Verificar se `Dockerfile.streamlit` e `docker-compose.prod.yml` fazem referencia correta ao volume de `data/outputs/` e se o `HEALTHCHECK` esta configurado.
-4. Documentar em `docs/handoff_repositorio.md` o procedimento de rollback (parar container, substituir Parquets, reiniciar).
-5. Gerar lista final de arquivos que a equipe deve receber fora do git (os 4 Parquets + `.env` preenchido) e registrar no proprio doc.
-
-Validacao minima:
-- `check_artifacts.py` retorna todos os criticos presentes.
-- `docs/handoff_repositorio.md` descreve passo a passo suficiente para deploy sem dependencia de quem escreveu.
-- Nenhum secret ou dado bruto referenciado dentro do `Dockerfile.streamlit` ou do compose.
+**Concluido em 2026-05-12.**
+- `check_artifacts.py`: 4 criticos OK (dashboard 47 MB, hibrido 67 MB, carteira 0,4 MB, plano 0,1 MB); staging opcional tambem presente.
+- `Dockerfile.streamlit`: HEALTHCHECK configurado (`curl /_stcore/health`, interval 30s, start-period 45s); sem secrets; usuario nao-root.
+- `docker-compose.prod.yml`: volume `./data/outputs:/app/data/outputs:ro` correto; HEALTHCHECK redundante configurado; sem credentials no compose.
+- `docs/handoff_repositorio.md` atualizado com: (a) tabela de pacote de arquivos externos ao git (4 Parquets + `.env` + staging opcional); (b) secao de rollback com comandos passo a passo e recomendacao de backup.
+- `docs/deploy_vps_streamlit.md` revisado — sem lacunas de instrucao identificadas.
 
 ## Backlog do proximo ciclo
 - Hardening operacional da VPS: HTTPS/proxy reverso, autenticacao ou VPN, monitoramento de uptime.
