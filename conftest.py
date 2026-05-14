@@ -5,6 +5,9 @@ Disponíveis em todos os testes sem importação explícita.
 """
 
 import os
+import uuid
+from pathlib import Path
+
 import pytest
 import pandas as pd
 
@@ -20,6 +23,16 @@ os.environ.setdefault("AREA_MIN_M2", "1200")
 os.environ.setdefault("M1_SCORE_OFICIAL", "score_priorizacao")
 os.environ.setdefault("M1_PRIORIZACAO_TOP_PCT_POR_UF", "0.20")
 os.environ.setdefault("M1_OSM_ENABLED", "false")
+
+
+@pytest.fixture
+def tmp_path():
+    """Workspace-local tmp path for sandboxes where the OS temp dir is restricted."""
+    root = Path("tmp_codex_runtime") / "manual_pytest"
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / uuid.uuid4().hex
+    path.mkdir()
+    return path
 
 
 @pytest.fixture

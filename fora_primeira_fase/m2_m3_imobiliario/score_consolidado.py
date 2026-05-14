@@ -44,6 +44,22 @@ PESOS_SCORE_ABERTURA = {
 }
 
 
+def _cell_to_latlng(hex_id: str) -> tuple[float, float]:
+    if hasattr(h3, "cell_to_latlng"):
+        return h3.cell_to_latlng(hex_id)
+    return h3.h3_to_geo(hex_id)
+
+
+def _latlng_to_cell(lat: float, lng: float, resolution: int) -> str:
+    if hasattr(h3, "latlng_to_cell"):
+        return h3.latlng_to_cell(lat, lng, resolution)
+    return h3.geo_to_h3(lat, lng, resolution)
+
+
+def _numero_ou_default(valor: object, default: float) -> float:
+    return default if pd.isna(valor) else float(valor)
+
+
 def calcular_score_competitivo(
     hex_id: str,
     df_concorrentes: pd.DataFrame,
@@ -71,7 +87,7 @@ def calcular_score_competitivo(
         "low_cost":     18,
     }
 
-    lat, lng = h3.h3_to_geo(hex_id)
+    lat, lng = _cell_to_latlng(hex_id)
     penalidade_total = 0.0
 
     if df_concorrentes.empty:
@@ -145,11 +161,11 @@ def calcular_score_abertura(row: pd.Series) -> float:
     """
     Score final de abertura (0-100) combinando todos os scores parciais.
     """
-    hex_score        = row.get("hex_score", 50) or 50
-    score_comp       = row.get("score_competitivo", 50) or 50
-    imovel_score     = row.get("imovel_score", 50) or 50
-    alunos_est       = row.get("alunos_est", 400) or 400
-    payback_est      = row.get("payback_est", 24) or 24
+    hex_score = _numero_ou_default(row.get("hex_score", 50), 50)
+    score_comp = _numero_ou_default(row.get("score_competitivo", 50), 50)
+    imovel_score = _numero_ou_default(row.get("imovel_score", 50), 50)
+    alunos_est = _numero_ou_default(row.get("alunos_est", 400), 400)
+    payback_est = _numero_ou_default(row.get("payback_est", 24), 24)
 
     # Normalizar alunos (referência: 1000 alunos = 100 pontos)
     score_alunos = min(alunos_est / 1000 * 100, 100)
@@ -195,7 +211,7 @@ def gerar_ranking_oportunidades(
     # Associar hex_id a cada imóvel (se não tiver)
     if "hex_id" not in df.columns or df["hex_id"].isna().any():
         df["hex_id"] = df.apply(
-            lambda r: h3.geo_to_h3(r["lat"], r["lng"], settings.H3_RESOLUTION)
+            lambda r: _latlng_to_cell(r["lat"], r["lng"], settings.H3_RESOLUTION)
             if pd.notna(r.get("lat")) and pd.notna(r.get("lng")) else None,
             axis=1,
         )
@@ -204,7 +220,8 @@ def gerar_ranking_oportunidades(
     if not df_hexagonos.empty:
         cols_hex = ["hex_id", "hex_score", "renda_media", "pop_18_45", "n_concorrentes"]
         cols_hex = [c for c in cols_hex if c in df_hexagonos.columns]
-        df = df.merge(df_hexagonos[cols_hex], on="hex_id", how="left")
+        df_hex_features = df_hexagonos[cols_hex].drop_duplicates(subset=["hex_id"])
+        df = df.merge(df_hex_features, on="hex_id", how="left")
     else:
         df["hex_score"] = 50.0  # fallback
 
@@ -242,7 +259,7 @@ def gerar_ranking_oportunidades(
     # Colunas de saída
     colunas_output = [
         "rank", "score_abertura", "hex_score", "score_competitivo", "imovel_score",
-        "titulo", "endereco", "cidade", "uf", "area_m2", "preco_aluguel",
+        "titulo", "endereco", "cidade", "uf", "area_m2", "preco_aluguel", "status",
         "alunos_est", "payback_est", "hex_id", "url", "fonte",
     ]
     colunas_presentes = [c for c in colunas_output if c in df.columns]

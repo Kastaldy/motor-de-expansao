@@ -19,14 +19,14 @@ Extras opcionais: `.[api]` (FastAPI/PostGIS), `.[ml]` (XGBoost/LightGBM), `.[scr
 Validacao rapida recomendada antes de handoff:
 
 ```bash
-python -m pytest -q test_streamlit_app.py test_carteira_plano_nacional.py
+python -m pytest -q tests/integration/test_streamlit_app.py tests/integration/test_carteira_plano_nacional.py
 python -c "import streamlit_app; print('ok')"
 ```
 
 Suite de mercado (requer artefatos de staging):
 
 ```bash
-python -m pytest -q test_modelo_mercado_hexagonos.py
+python -m pytest -q tests/integration/test_modelo_mercado_hexagonos.py
 ```
 
 ## Dashboard Streamlit
@@ -131,6 +131,7 @@ O contrato de handoff do repositorio esta em `docs/handoff_repositorio.md`.
 - `docs/deploy_vps_streamlit.md`: runbook Docker/Streamlit para VPS.
 - `docs/streamlit_dashboard_m1.md`: governanca e uso do dashboard.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico da camada de mercado.
+- `fora_primeira_fase/README.md`: inventario dos codigos, docs e dados separados do deploy inicial.
 
 ## Recalculo do M1
 
@@ -145,13 +146,13 @@ python fase1_bi_exports.py
 Testes relevantes do M1:
 
 ```bash
-python -m pytest test_base_h3_brasil.py test_hex_enrichment_brasil.py test_fase1_bi_exports.py test_fontes_gratuitas.py -v
+python -m pytest tests/integration/test_base_h3_brasil.py tests/integration/test_hex_enrichment_brasil.py tests/integration/test_fase1_bi_exports.py tests/contracts/test_fontes_gratuitas.py -v
 ```
 
 ## Docker, API e PostGIS
 
 O deploy inicial deste ciclo usa `Dockerfile.streamlit` e `docker-compose.prod.yml`.
-O `docker-compose.yml` e o `Dockerfile.api` ficam como legado de desenvolvimento para API/PostGIS/Prefect e nao entram no caminho de producao do dashboard.
+O legado de API/PostGIS/Prefect foi movido para `fora_primeira_fase/api_postgis/` e nao entra no caminho de producao do dashboard.
 
 ## Fora do deploy inicial
 
@@ -159,5 +160,6 @@ O `docker-compose.yml` e o `Dockerfile.api` ficam como legado de desenvolvimento
 - PostGIS obrigatorio
 - Prefect
 - pipelines nacionais pesados
+- modulos M2/M3, pesquisas e legados em `fora_primeira_fase/`
 - dados brutos e staging grandes dentro do repositorio compartilhavel
 - dependencia de internet/API externa para o dashboard em producao

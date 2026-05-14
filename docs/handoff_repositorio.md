@@ -16,15 +16,16 @@ Contrato curto para compartilhar o repo com a equipe e preparar o deploy Streaml
 | --- | --- | --- |
 | `streamlit_app.py` | dashboard executivo M1 + hibrido | codigo principal do deploy inicial |
 | `config.py` | parametros canonicos e defaults | manter junto do repo |
+| `src/motor_expansao/` | pacote interno com dashboard, core e pipelines M1 | codigo modular do projeto |
 | `jobs/pipelines/` | pipelines analiticos e geracao de artefatos | nao rodar no deploy inicial |
 | `docs/` | contratos tecnicos e runbooks | fonte de consulta da equipe |
-| `tests` / `test_*.py` | validacoes automatizadas | rodar suite rapida antes de handoff |
+| `tests/` | validacoes automatizadas em `unit/`, `integration/` e `contracts/` | rodar suite rapida antes de handoff |
 | `data/outputs/` | artefatos minimos consumidos pelo dashboard | enviar como pacote de dados externo ou volume |
 | `data/staging/` | bases intermediarias nacionais/censitarias | pesado; externo ao repo compartilhavel |
 | `data/raw/` | dados brutos e sensiveis | nao versionar |
 | `concorrentes/` e `data/ultra/` | insumos operacionais locais | tratar como dado externo/sensivel |
 | `Dockerfile.streamlit` e `docker-compose.prod.yml` | deploy VPS do dashboard | caminho oficial do deploy inicial |
-| `docker-compose.yml` e `Dockerfile.api` | legado API/PostGIS/Prefect | fora do deploy inicial |
+| `fora_primeira_fase/` | legado API/PostGIS/Prefect, M2/M3, pesquisas e Power BI | fora do deploy inicial |
 
 ## Artefatos minimos do dashboard
 
@@ -59,7 +60,7 @@ python -m streamlit run streamlit_app.py
 Validacao rapida:
 
 ```bash
-python -m pytest -q -o addopts='' test_streamlit_app.py test_carteira_plano_nacional.py
+python -m pytest -q -o addopts='' tests/integration/test_streamlit_app.py tests/integration/test_carteira_plano_nacional.py
 python -c "import streamlit_app; print('ok')"
 ```
 
@@ -94,7 +95,7 @@ python fase1_bi_exports.py
 ## Docker/API
 
 O caminho oficial do deploy inicial e `Dockerfile.streamlit` + `docker-compose.prod.yml`, documentado em `docs/deploy_vps_streamlit.md`.
-O `docker-compose.yml` atual descreve PostGIS, API e Prefect de desenvolvimento e fica fora do deploy inicial.
+O compose/API legado de PostGIS, FastAPI e Prefect fica arquivado em `fora_primeira_fase/api_postgis/`.
 
 ## Pacote de arquivos externos ao git
 
@@ -139,6 +140,6 @@ Recomendacao: manter pelo menos uma versao anterior dos 4 Parquets em `/backup/d
 - Repo compartilhado com codigo, docs, testes, manifests e arquivos Docker do Streamlit.
 - Pacote externo enviado com os 4 Parquets minimos em `data/outputs/` (ver tabela acima).
 - `.env` real e credenciais fora do git; usar `.env.example` como referencia.
-- Suite rapida executada antes do envio: `test_streamlit_app.py` e `test_carteira_plano_nacional.py`.
+- Suite rapida executada antes do envio: `tests/integration/test_streamlit_app.py` e `tests/integration/test_carteira_plano_nacional.py`.
 - Smoke do dashboard executado localmente ou na VPS.
 - API/FastAPI, PostGIS, Prefect, scraping e pipelines nacionais pesados comunicados como fora do deploy inicial.

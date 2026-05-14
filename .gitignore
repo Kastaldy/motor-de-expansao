@@ -43,10 +43,13 @@ concorrentes/
 logs/
 *.log
 
-# Coverage
+# Coverage / pytest
 .coverage
 htmlcov/
 .pytest_cache/
+.pytest_tmp/
+.pytest_tmp_run/
+tmp_codex_runtime/
 
 # Node (frontend)
 node_modules/
@@ -54,11 +57,11 @@ node_modules/
 out/
 
 # Power BI / material de apoio local
-powerbi/
-powerbi_m1_dashboard.py
-test_powerbi_m1_dashboard.py
-docs/powerbi_dashboard_m1.md
-export/
+/powerbi/
+/powerbi_m1_dashboard.py
+/test_powerbi_m1_dashboard.py
+/docs/powerbi_dashboard_m1.md
+/export/
 
 # Docker
 .docker/

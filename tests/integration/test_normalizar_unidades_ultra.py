@@ -7,7 +7,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-PARQUET = Path(__file__).parent / "data" / "staging" / "unidades_ultra_mapeadas.parquet"
+ROOT = Path(__file__).resolve().parents[2]
+PARQUET = ROOT / "data" / "staging" / "unidades_ultra_mapeadas.parquet"
 
 SCHEMA_OBRIGATORIO = {
     "ultra_id", "unidade", "uf", "cidade", "lat", "lng",

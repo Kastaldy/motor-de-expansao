@@ -7,7 +7,7 @@ Status do piloto em 2026-04-23:
 - blocos 1 a 9 fechados;
 - staging materializado em `data/staging/concorrentes_mapeados.parquet`, `data/staging/unidades_ultra_mapeadas.parquet` e `data/staging/hexagonos_mercado_mapeado.parquet`;
 - pipeline nacional para 21 UFs pronto em `fase_a_nacional_completo.py`; parquet pendente de execucao real sobre `data/raw/CENSO 2022/`;
-- suite minima do piloto em `test_modelo_mercado_hexagonos.py` usada como validacao de handoff;
+- suite minima do piloto em `tests/integration/test_modelo_mercado_hexagonos.py` usada como validacao de handoff;
 - `score_priorizacao` segue como score oficial; a camada abaixo continua operacional e paralela.
 
 ## 1. Escopo

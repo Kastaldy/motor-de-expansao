@@ -7,7 +7,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-PARQUET = Path(__file__).parent / "data" / "staging" / "concorrentes_mapeados.parquet"
+ROOT = Path(__file__).resolve().parents[2]
+PARQUET = ROOT / "data" / "staging" / "concorrentes_mapeados.parquet"
 
 SCHEMA_OBRIGATORIO = {
     "concorrente_id", "rede", "nome_unidade", "lat", "lng",

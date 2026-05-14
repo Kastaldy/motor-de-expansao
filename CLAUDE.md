@@ -47,6 +47,7 @@ M1_POP_MINIMA_PROXY = 1  # populacao minima para hexagono entrar no ranking (evi
 ```
 
 ### Fluxo oficial
+Implementacao em `src/motor_expansao/pipelines/m1/`; scripts da raiz continuam como wrappers legados:
 1. `base_h3_brasil.py` -> `data/staging/brasil/uf=XX/hexagonos.parquet`
 2. `hex_enrichment.py` -> `data/staging/brasil_estrutural.parquet`, `data/staging/brasil_priorizados.parquet`, `data/staging/hexagonos_brasil_oportunidades.parquet`
 3. `fase1_bi_exports.py` -> artefatos executivos e BI estaveis
@@ -67,7 +68,7 @@ score_oficial = score_priorizacao
 - Pesos aplicados (aprovados diretoria 2026-04-24, recalculo executado 2026-05-12): `renda=0.40`, `pop=0.60`. Artefatos oficiais regenerados e validados com 18/18 testes passando.
 - Campos auditaveis minimos: `renda_pct_nacional`, `pop_pct_nacional`, `hex_score_estrutural`, `ajuste_executivo`, `score_priorizacao`, `score_oficial`, `score_oficial_nome`, `score_percentil_nacional`.
 - Artefatos oficiais: `brasil_estrutural.parquet`, `brasil_priorizados.parquet`, `hexagonos_brasil_oportunidades.parquet`, `hexagonos_brasil_dashboard.parquet`, `hexagonos_mapa_sample.parquet`, `top_oportunidades_resumo.csv`, `resumo_por_uf.csv`.
-- Suite principal do fechamento M1: `test_base_h3_brasil.py`, `test_hex_enrichment_brasil.py`, `test_fase1_bi_exports.py`, `test_fontes_gratuitas.py`.
+- Suite principal do fechamento M1: `tests/integration/test_base_h3_brasil.py`, `tests/integration/test_hex_enrichment_brasil.py`, `tests/integration/test_fase1_bi_exports.py`, `tests/contracts/test_fontes_gratuitas.py`.
 
 ## 4. Camadas paralelas e estado atual
 - `M1.1` e paralelo ao M1. Nao altera `score_priorizacao`, `hex_score_estrutural` nem artefatos oficiais.
@@ -84,6 +85,7 @@ score_oficial = score_priorizacao
   - `qualidade_join_uf`: A/B se todos os gates passam, C se qualquer gate falha (filtrado pelo hibrido);
   - status: `GO` para **visualizacao executiva** (mapa exibe hexagonos do setor censitario — granularidade geografica real, elimina agua/rural); M1 continua como **fonte oficial de ranking de carteira** (rho=0.42 vs faturamento real); `NO-GO` para substituir o M1 no ranking.
 - Dashboard local agora separa explicitamente os papeis: mapa executivo usa geometria granular quando `qualidade_join_uf` e `A/B`, fallback municipal nas UFs `C` e renderiza todos os hexagonos validos da UF selecionada sem cap editorial; aba de carteira volta a ordenar por `rank_brasil`/`score_priorizacao` do M1 e deixa Censitario/Hibrido apenas como apoio local.
+- Testes automatizados ficam em `tests/unit/`, `tests/integration/` e `tests/contracts/`; `pyproject.toml` limita a coleta ao diretorio `tests`.
 - Camada de mercado por hexagono:
   - status: ciclo anterior de mercado fechado ate o Bloco 3; staging materializado, carteira/plano nacionais regenerados e validacao integrada concluida para handoff;
   - objetivo: combinar demanda, oferta mapeada e restricao da rede propria Ultra;
@@ -102,6 +104,7 @@ score_oficial = score_priorizacao
 - Ciclo atual do `PRD.md`: handoff do repositorio e deploy Streamlit em VPS.
 - Objetivo: compartilhar codigo/docs/testes com a equipe e servir o dashboard com Parquets locais.
 - Deploy inicial: somente Streamlit via `Dockerfile.streamlit`/`docker-compose.prod.yml`; API/FastAPI, PostGIS, Prefect e pipelines pesados ficam fora.
+- Legados fora do deploy inicial ficam em `fora_primeira_fase/`: API/PostGIS, M2/M3, pesquisas, Power BI e testes associados.
 - Artefatos minimos do dashboard em `data/outputs/`: `hexagonos_brasil_dashboard.parquet`, `oportunidades_expansao_hibrido.parquet`, `carteira_expansao_acionavel.parquet`, `plano_expansao_curto_prazo.parquet`.
 - Contrato de handoff: `docs/handoff_repositorio.md`.
 - Guardrails permanentes: nao alterar `score_priorizacao`, `hex_score_estrutural` nem artefatos oficiais do M1 sem aprovacao explicita; dashboard de producao roda offline com dados locais e Parquet.

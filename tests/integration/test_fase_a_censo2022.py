@@ -8,7 +8,6 @@ fallback, rastreabilidade, validacao de gates.
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 
 import geopandas as gpd
@@ -40,11 +39,8 @@ from jobs.pipelines.fase_a_censo2022_setores import (
 
 
 @pytest.fixture
-def tmp_dir():
-    root = Path("fixtures") / "_tmp_codex_tests"
-    root.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=root) as d:
-        yield Path(d)
+def tmp_dir(tmp_path: Path):
+    return tmp_path
 
 
 @pytest.fixture

@@ -21,6 +21,14 @@ from score_consolidado import (
 )
 
 
+def _latlng_to_cell(lat: float, lng: float, resolution: int) -> str:
+    import h3
+
+    if hasattr(h3, "latlng_to_cell"):
+        return h3.latlng_to_cell(lat, lng, resolution)
+    return h3.geo_to_h3(lat, lng, resolution)
+
+
 # ============================================================
 #  FIXTURES
 # ============================================================
@@ -49,9 +57,8 @@ def df_concorrentes_independente():
 
 @pytest.fixture
 def hex_sp_centro():
-    """hex_id H3 res=8 próximo ao centro de SP."""
-    import h3
-    return h3.geo_to_h3(-23.550, -46.633, 8)
+    """hex_id H3 res=7 próximo ao centro de SP."""
+    return _latlng_to_cell(-23.550, -46.633, 7)
 
 
 @pytest.fixture
@@ -80,9 +87,8 @@ def df_imoveis_qualificados():
 
 @pytest.fixture
 def df_hexagonos_sp():
-    import h3
-    hex1 = h3.geo_to_h3(-23.55, -46.63, 8)
-    hex2 = h3.geo_to_h3(-23.56, -46.64, 8)
+    hex1 = _latlng_to_cell(-23.55, -46.63, 7)
+    hex2 = _latlng_to_cell(-23.56, -46.64, 7)
     return pd.DataFrame([
         {"hex_id": hex1, "hex_score": 82.0, "renda_media": 7_500, "pop_18_45": 18_000, "n_concorrentes": 1},
         {"hex_id": hex2, "hex_score": 71.0, "renda_media": 5_500, "pop_18_45": 12_000, "n_concorrentes": 0},

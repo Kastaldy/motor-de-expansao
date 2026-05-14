@@ -179,6 +179,14 @@ def processar_lote_imoveis(df: pd.DataFrame) -> pd.DataFrame:
     Output: DataFrame enriquecido com imovel_score, qualificado, status.
     """
     df = df.copy()
+    if df.empty:
+        return df.assign(
+            qualificado=pd.Series(dtype=bool),
+            imovel_score=pd.Series(dtype="float64"),
+            motivo_desqualificacao=pd.Series(dtype=object),
+            status=pd.Series(dtype=object),
+        )
+
     resultados = []
 
     for _, row in df.iterrows():

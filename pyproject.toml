@@ -95,16 +95,9 @@ strict = false
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = [".", "src"]
 python_files = ["test_*.py"]
 
 [tool.hatch.build.targets.wheel]
-only-include = [
-    "config.py",
-    "streamlit_app.py",
-    "dashboard/",
-    "hex_enrichment.py",
-    "fase1_bi_exports.py",
-    "base_h3_brasil.py",
-    "jobs/",
-    "scripts/",
-]
+packages = ["src/motor_expansao"]

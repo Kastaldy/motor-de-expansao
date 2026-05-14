@@ -26,9 +26,12 @@ _mock_settings.H3_RESOLUTION = 7
 _mock_settings.AREA_MIN_M2 = 1200.0
 _mock_settings.AREA_IDEAL_MIN_M2 = 1500.0
 _mock_settings.AREA_IDEAL_MAX_M2 = 2000.0
+_mock_settings.PE_DIREITO_MIN = 3.5
 _mock_settings.M1_SCORE_OFICIAL = "score_priorizacao"
 _mock_settings.M1_PRIORIZACAO_TOP_PCT_POR_UF = 0.20
 _mock_settings.M1_OSM_ENABLED = False
+_mock_settings.M1_SETOR_CENSITARIO_OBRIGATORIO = False
+_mock_settings.M1_POP_MINIMA_PROXY = 1
 
 _mock_api_config = MagicMock(settings=_mock_settings)
 _mock_api = MagicMock()
@@ -385,7 +388,7 @@ class TestCalcularHexScore:
         assert (df_scored["hex_score"] >= 0).all()
         assert (df_scored["hex_score"] <= 100).all()
 
-    def test_score_estrutural_usa_percentis_nacionais_com_proxy_populacional(self):
+    def test_score_estrutural_exclui_hex_sem_populacao_do_ranking(self):
         from hex_enrichment import calcular_hex_score_estrutural
         df = pd.DataFrame({
             "hex_id": ["a", "b"],
@@ -396,9 +399,12 @@ class TestCalcularHexScore:
         df_scored = calcular_hex_score_estrutural(df)
 
         assert df_scored.loc[0, "populacao_proxy"] == pytest.approx(0.0)
-        assert df_scored.loc[0, "pop_pct_nacional"] == pytest.approx(0.5)
-        assert df_scored.loc[0, "hex_score_estrutural"] == pytest.approx(20.0)
-        assert df_scored.loc[1, "hex_score_estrutural"] == pytest.approx(80.0)
+        assert pd.isna(df_scored.loc[0, "pop_pct_nacional"])
+        assert pd.isna(df_scored.loc[1, "pop_pct_nacional"])
+        assert df_scored.loc[0, "hex_score_estrutural"] == pytest.approx(0.0)
+        assert df_scored.loc[1, "hex_score_estrutural"] == pytest.approx(0.0)
+        assert df_scored.loc[0, "score_priorizacao"] == pytest.approx(0.0)
+        assert df_scored.loc[1, "score_priorizacao"] == pytest.approx(0.0)
 
 
 class TestNormalizarSerie:

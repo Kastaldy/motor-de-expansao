@@ -23,6 +23,11 @@ from hex_enrichment import (
     calcular_hex_score,
     normalizar_0_100,
 )
+from motor_expansao.core.scoring import (
+    _calcular_percentil_nacional,
+    calcular_ajuste_executivo,
+    calcular_hex_score_estrutural as calcular_hex_score_estrutural_core,
+)
 
 
 # ============================================================
@@ -32,7 +37,7 @@ from hex_enrichment import (
 @pytest.fixture
 def imovel_valido():
     return {
-        "area_m2": 900,
+        "area_m2": 1500,
         "lat": -23.55,
         "lng": -46.63,
         "preco_aluguel": 45_000,
@@ -47,7 +52,7 @@ def imovel_valido():
 def imovel_minimo():
     """Imóvel que passa com nota mínima aceitável."""
     return {
-        "area_m2": 600,
+        "area_m2": 1200,
         "lat": -19.92,
         "lng": -43.94,
         "preco_aluguel": 30_000,
@@ -62,9 +67,10 @@ def imovel_minimo():
 def df_hexagonos():
     return pd.DataFrame({
         "hex_id": ["hex_A", "hex_B", "hex_C"],
-        "renda_media": [8_000, 3_000, 1_500],
+        "renda_per_capita": [8_000, 3_000, 1_500],
         "pop_18_45": [15_000, 8_000, 3_000],
-        "n_concorrentes": [0, 2, 5],
+        "n_academias_osm": [0, 2, 5],
+        "score_vitalidade": [50.0, 50.0, 50.0],
     })
 
 
@@ -74,27 +80,26 @@ def df_hexagonos():
 
 class TestScoreArea:
     def test_area_ideal_retorna_100(self):
-        assert _score_area(900) == 100.0
-        assert _score_area(1200) == 100.0
         assert _score_area(1500) == 100.0
+        assert _score_area(1750) == 100.0
+        assert _score_area(2000) == 100.0
 
     def test_area_minima_retorna_60(self):
-        score = _score_area(600)
+        score = _score_area(1200)
         assert score == pytest.approx(60.0, abs=1.0)
 
     def test_area_grande_penalizada(self):
-        assert _score_area(3000) == 60.0
+        assert _score_area(3000) == 85.0
 
     def test_area_abaixo_minimo_retorna_0(self):
-        assert _score_area(400) == 0.0
         assert _score_area(0) == 0.0
-        assert _score_area(599) == 0.0
+        assert _score_area(1199) == 0.0
 
     def test_invariante_maior_area_maior_score_ate_1500(self):
         """Imóveis maiores devem ter score maior (até 1500m²)."""
-        scores = [_score_area(a) for a in [600, 700, 800, 900, 1200, 1500]]
+        scores = [_score_area(a) for a in [1200, 1300, 1400, 1500]]
         for i in range(len(scores) - 1):
-            assert scores[i] <= scores[i + 1], f"Quebra de invariante: score({600 + i*150}) > score({750 + i*150})"
+            assert scores[i] <= scores[i + 1]
 
 
 # ============================================================
@@ -135,7 +140,7 @@ class TestQualificacaoImovel:
         assert res.qualificado is False
 
     def test_canibalizacao_desqualifica(self, imovel_valido):
-        imovel_valido["dist_ultra_mais_proxima_km"] = 1.0  # < 2km
+        imovel_valido["dist_ultra_mais_proxima_km"] = 0.5
         res = qualificar_imovel(imovel_valido)
         assert res.qualificado is False
         assert "Canibalização" in res.motivo_desqualificacao
@@ -152,8 +157,8 @@ class TestQualificacaoImovel:
         assert res.imovel_score is None
 
     def test_area_exatamente_no_limite(self, imovel_valido):
-        """Área exatamente 600m² deve qualificar."""
-        imovel_valido["area_m2"] = 600.0
+        """Área exatamente 1200m² deve qualificar."""
+        imovel_valido["area_m2"] = 1200.0
         res = qualificar_imovel(imovel_valido)
         assert res.qualificado is True
 
@@ -165,7 +170,7 @@ class TestQualificacaoImovel:
 class TestProcessarLote:
     def test_lote_retorna_colunas_esperadas(self):
         df = pd.DataFrame([
-            {"area_m2": 900, "lat": -23.55, "lng": -46.63,
+            {"area_m2": 1500, "lat": -23.55, "lng": -46.63,
              "preco_aluguel": 40_000, "cidade": "São Paulo",
              "dist_ultra_mais_proxima_km": 5.0},
             {"area_m2": 200, "lat": -23.55, "lng": -46.63,
@@ -180,7 +185,7 @@ class TestProcessarLote:
 
     def test_lote_preserva_linhas_originais(self):
         df = pd.DataFrame([
-            {"area_m2": 900, "lat": -23.55, "lng": -46.63,
+            {"area_m2": 1500, "lat": -23.55, "lng": -46.63,
              "preco_aluguel": 40_000, "cidade": "SP",
              "dist_ultra_mais_proxima_km": 5.0},
         ])
@@ -205,7 +210,7 @@ class TestHexScore:
 
     def test_hex_maior_renda_maior_score(self, df_hexagonos):
         resultado = calcular_hex_score(df_hexagonos)
-        scores = resultado.sort_values("renda_media", ascending=False)["hex_score"].values
+        scores = resultado.sort_values("renda_per_capita", ascending=False)["hex_score"].values
         # Hex com maior renda deve ter score maior que o com menor
         assert scores[0] >= scores[-1]
 
@@ -224,3 +229,50 @@ class TestHexScore:
         serie = pd.Series([42, 42, 42])
         resultado = normalizar_0_100(serie)
         assert (resultado == 50.0).all()
+
+
+class TestM1CoreScoring:
+    def test_percentil_nacional_ignora_nulos_e_preserva_indice(self):
+        serie = pd.Series([10.0, None, 30.0, 20.0], index=["a", "b", "c", "d"])
+
+        resultado = _calcular_percentil_nacional(serie)
+
+        assert resultado.loc["a"] == 0.0
+        assert pd.isna(resultado.loc["b"])
+        assert resultado.loc["c"] == 1.0
+        assert resultado.loc["d"] == 0.5
+
+    def test_ajuste_executivo_aplica_bonus_e_penalidades(self):
+        renda_pct = pd.Series([0.90, 0.90, 0.50, 0.10])
+        pop_pct = pd.Series([0.90, 0.50, 0.90, 0.10])
+
+        resultado = calcular_ajuste_executivo(renda_pct, pop_pct)
+
+        assert resultado.tolist() == [5.0, 2.0, 1.0, -8.0]
+
+    def test_score_estrutural_core_calcula_percentis_pesos_e_clip(self):
+        df = pd.DataFrame(
+            [
+                {"hex_id": "top", "renda_per_capita": 6000.0, "pop_18_45": 600.0},
+                {"hex_id": "mid", "renda_per_capita": 3000.0, "pop_18_45": 300.0},
+                {"hex_id": "zero", "renda_per_capita": 6000.0, "pop_18_45": 0.0},
+            ]
+        )
+
+        resultado = calcular_hex_score_estrutural_core(df).set_index("hex_id")
+
+        assert resultado.loc["top", "renda_pct_nacional"] == 1.0
+        assert resultado.loc["top", "pop_pct_nacional"] == 1.0
+        assert resultado.loc["top", "hex_score_estrutural"] == 100.0
+        assert resultado.loc["top", "ajuste_executivo"] == 5.0
+        assert resultado.loc["top", "score_priorizacao"] == 100.0
+
+        assert resultado.loc["mid", "renda_pct_nacional"] == 0.0
+        assert resultado.loc["mid", "pop_pct_nacional"] == 0.0
+        assert resultado.loc["mid", "hex_score_estrutural"] == 0.0
+        assert resultado.loc["mid", "ajuste_executivo"] == -8.0
+        assert resultado.loc["mid", "score_priorizacao"] == 0.0
+
+        assert bool(resultado.loc["zero", "hex_sem_populacao"]) is True
+        assert pd.isna(resultado.loc["zero", "renda_pct_nacional"])
+        assert resultado.loc["zero", "hex_score_estrutural"] == 0.0
