@@ -96,8 +96,10 @@ COD_SETOR_CANDIDATES = (
     "Cod_setor", "CD_SETOR", "cod_setor", "cd_setor",
     "GEOCODIGO", "geocodigo", "Codigo_do_setor",
 )
-# v0002 = populacao total (arquivo Basico nacional 2022)
-POP_V002_CANDIDATES = ("V002", "v002", "v0002", "V0002")
+# v0001 = Total de pessoas (populacao total do setor — dicionario IBGE 2022)
+# v0002 = Total de Domicilios (nao populacao; era usado erroneamente como pop antes de 2026-05-15)
+# Candidatas em ordem de preferencia: v0001 primeiro para arquivos nacionais 2022
+POP_V002_CANDIDATES = ("v0001", "V0001", "V001", "v001", "V002", "v002", "v0002", "V0002")
 # V06005 = renda total dos responsaveis; V06004 = media (arquivo renda_responsavel)
 RENDA_V003_CANDIDATES = ("V003", "v003", "V06005", "v06005", "V06004", "v06004")
 
@@ -413,8 +415,10 @@ def calcular_score_setor_2022(
     pop = pd.to_numeric(df.get("pop_total_setor_2022", pd.Series(dtype=float)), errors="coerce")
     renda = pd.to_numeric(df.get("renda_per_capita_setor_2022", pd.Series(dtype=float)), errors="coerce")
 
-    # Fonte de populacao
-    df["fonte_populacao_setor"] = np.where(pop.notna(), "pop_total_proxy", pd.NA)
+    # Fonte de populacao: V002/v0002 do Censo 2022, agregada ao hexagono por area.
+    df["fonte_populacao_setor"] = np.where(
+        pop.notna(), "ibge_censo2022_v0002_pop_total_area_weighted", pd.NA
+    )
 
     # Percentis ancorados na distribuicao nacional do M1
     if base_nacional is not None and not base_nacional.empty:
@@ -951,25 +955,28 @@ def ler_basico_nacional_uf(basico_path: Path, uf: str) -> pd.DataFrame:
     """Le CSV Basico nacional e filtra por CD_UF.
 
     Preserva a ordem original (igual ao shapefile filtrado por UF).
-    Colunas carregadas:
-    - v0001: domicilios particulares permanentes ocupados (households)
-    - v0002: moradores em domicilios particulares permanentes (residents)
-    - v0005: media de moradores por domicilio (household size, formato '2,8')
+    Colunas carregadas (dicionario IBGE Censo 2022):
+    - v0001: Total de pessoas (populacao total do setor)
+    - v0002: Total de Domicilios (nao populacao — usado apenas como fallback de domicilios)
+    - v0005: Media de moradores em Domicilios Particulares Ocupados (household size, '2,8')
+    - v0007: Total de Domicilios Particulares Ocupados (DPPO + DPIO)
     """
     cod_uf = int(UFS_PILOTO[uf])
     df = pd.read_csv(basico_path, sep=";", encoding="latin-1", low_memory=False,
-                     usecols=["CD_UF", "v0001", "v0002", "v0005"], dtype=str)
+                     usecols=["CD_UF", "v0001", "v0002", "v0005", "v0007"], dtype=str)
     df = df[df["CD_UF"].astype(int) == cod_uf].copy()
 
-    df["pop_total_setor_2022"] = pd.to_numeric(df["v0002"], errors="coerce")
+    # v0001 = Total de pessoas (populacao total) — corrigido em 2026-05-15
+    df["pop_total_setor_2022"] = pd.to_numeric(df["v0001"], errors="coerce")
     df["pop_total_setor_2022"] = df["pop_total_setor_2022"].where(
         df["pop_total_setor_2022"] >= 0, np.nan
     )
+    # v0007 = Domicilios Particulares Ocupados (referencia para household size)
+    df["domicilios_setor"] = pd.to_numeric(df["v0007"], errors="coerce")
     # v0005 = media de moradores por domicilio (comma decimal, e.g. '2,8')
-    df["domicilios_setor"] = pd.to_numeric(df["v0001"], errors="coerce")
     v0005_str = df["v0005"].str.replace(",", ".", regex=False)
     df["avg_household_size"] = pd.to_numeric(v0005_str, errors="coerce")
-    # Fallback: calcular a partir de v0002/v0001 se v0005 invalido
+    # Fallback: v0001/v0007 = pessoas / domicilios particulares ocupados
     fallback_size = np.where(
         df["domicilios_setor"] > 0,
         df["pop_total_setor_2022"] / df["domicilios_setor"],

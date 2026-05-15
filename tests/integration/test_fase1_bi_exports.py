@@ -76,7 +76,7 @@ def _sample_source_df() -> pd.DataFrame:
                 "rank_uf": 1,
                 "rank_cidade": 1,
                 "renda_per_capita": 2500.0,
-                "motivo_priorizacao": "alta_pop_jovem",
+                "motivo_priorizacao": "alta_populacao",
                 "motivo_alerta": "sem_alerta",
                 "observacao_estrategica": "Alta densidade, renda moderada",
             },

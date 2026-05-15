@@ -26,7 +26,7 @@ M1_POP_MINIMA_PROXY = settings.M1_POP_MINIMA_PROXY
 
 PESOS_HEX_SCORE = {
     "renda_normalizada": 0.35,
-    "pop_jovem_normalizada": 0.25,
+    "pop_total_normalizada": 0.25,
     "ausencia_concorrencia": 0.25,
     "vitalidade_comercial": 0.15,
 }

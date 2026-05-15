@@ -72,7 +72,7 @@ def df_hexagonos_sample():
     return pd.DataFrame({
         "hex_id": [f"8a2a{i:07x}fffff" for i in range(5)],
         "renda_media": [8_000, 5_000, 3_000, 1_500, 10_000],
-        "pop_18_45": [20_000, 12_000, 8_000, 3_000, 25_000],
+        "pop_total": [20_000, 12_000, 8_000, 3_000, 25_000],
         "n_concorrentes": [0, 1, 3, 5, 0],
         "cidade": ["São Paulo"] * 5,
         "uf": ["SP"] * 5,

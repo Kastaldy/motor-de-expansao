@@ -1,7 +1,7 @@
 # Motor de Expansao Ultra Academia - CLAUDE.md
 > Fonte canonica curta do projeto. Ler antes de qualquer tarefa.
 > Responsavel: Felipe Silva | Estrategia e Growth | Ultra Academia
-> Versao: Abril 2026
+> Versao: Maio 2026
 > Regra de manutencao: manter curto; historico detalhado fica em `docs/` e `data/reports/`.
 
 ## 1. Norte
@@ -27,6 +27,7 @@
 - Toda mudanca relevante entra com teste; nenhum PR deve subir com CI quebrado.
 - No piloto de mercado, `prioridade_mercado_mapeado` usa regua absoluta de `som_indice_mapeado`; quartis ficam apenas como apoio de ranking relativo em analises auxiliares.
 - Pins/logos de concorrentes no dashboard sao apenas camada visual de apoio; nao alteram score, ranking, carteira nem artefatos oficiais do M1.
+- Variaveis IBGE Censo 2022 Basico (corrigido 2026-05-15): `v0001` = Total de pessoas (populacao total do setor — variavel CORRETA); `v0002` = Total de Domicilios (nao populacao); `v0007` = Domicilios Particulares Ocupados; `v0005` = media de moradores. Antes da correcao, `v0002` era usado erroneamente como populacao (~2.3x undercount).
 - O guia operacional do ciclo ativo fica em `PRD.md`; o contrato tecnico detalhado da trilha de mercado fica em `docs/modelo_mercado_hexagonos.md`.
 
 ## 3. Nucleo oficial M1
@@ -57,7 +58,7 @@ Implementacao em `src/motor_expansao/pipelines/m1/`; scripts da raiz continuam c
 - Fonte oficial do M1: IBGE.
 - Fallback padrao: atribuicao municipal IBGE + SIDRA com rastreabilidade explicita quando setor censitario nao estiver disponivel.
 - OSM nao e dependencia operacional do fechamento nacional; nos outputs oficiais `osm_status` deve ser `nao_aplicado_mvp_nacional`.
-- Inputs oficiais do score: `renda_per_capita`, `populacao_proxy`, `pop_18_45` como preferencia e `pop_total` como fallback.
+- Inputs oficiais do score: `renda_per_capita` e `populacao_proxy` (= `pop_total`). Alterado em 2026-05-15: trava de faixa etaria 18-45 removida; `populacao_proxy` agora e igual a `pop_total` para todos os hexagonos.
 
 ```python
 renda_pct_nacional = percentil_nacional(renda_per_capita)
@@ -66,7 +67,7 @@ hex_score_estrutural = 100 * (0.40 * renda_pct_nacional + 0.60 * pop_pct_naciona
 score_priorizacao = clip(hex_score_estrutural + ajuste_executivo, 0, 100)
 score_oficial = score_priorizacao
 ```
-- Pesos aplicados (aprovados diretoria 2026-04-24, recalculo executado 2026-05-12): `renda=0.40`, `pop=0.60`. Artefatos oficiais regenerados e validados com 18/18 testes passando.
+- Pesos aplicados (aprovados diretoria 2026-04-24; rematerializacao com `populacao_proxy=pop_total` em 2026-05-15): `renda=0.40`, `pop=0.60`. Artefatos oficiais regenerados e validados.
 - Campos auditaveis minimos: `renda_pct_nacional`, `pop_pct_nacional`, `hex_score_estrutural`, `ajuste_executivo`, `score_priorizacao`, `score_oficial`, `score_oficial_nome`, `score_percentil_nacional`.
 - Artefatos oficiais: `brasil_estrutural.parquet`, `brasil_priorizados.parquet`, `hexagonos_brasil_oportunidades.parquet`, `hexagonos_brasil_dashboard.parquet`, `hexagonos_mapa_sample.parquet`, `top_oportunidades_resumo.csv`, `resumo_por_uf.csv`.
 - Suite principal do fechamento M1: `tests/integration/test_base_h3_brasil.py`, `tests/integration/test_hex_enrichment_brasil.py`, `tests/integration/test_fase1_bi_exports.py`, `tests/contracts/test_fontes_gratuitas.py`.
@@ -80,9 +81,9 @@ score_oficial = score_priorizacao
   - score operacional: `score_expansao_hibrido`;
   - semantica: preserva `score_priorizacao` como base e adiciona bonus local minimo de desempate; por isso pode passar marginalmente de `100` sem virar novo score oficial;
   - piso operacional intraurbano: exigir densidade setorial minima de `5.000 hab/km2` para elegibilidade censitaria;
-  - cobertura do censitario: 27 UFs; core `DF`, `GO`, `MG`, `RJ`, `RS`, `SP`; piloto expandido; nacional `data/staging/censo2022_setores_calibrado_nacional_completo.parquet` (21 UFs, 1.251.771 linhas, k_global=1.0213, gerado 2026-04-23);
+  - cobertura do censitario: 27 UFs; core `GO`, `RJ`, `SP`; piloto expandido `DF`, `MG`, `RS`; nacional 21 UFs restantes; todos os 3 parquets regenerados com v0001 em 2026-05-15; cobertura 84-100% IBGE 2022 por UF;
   - UFs com `qualidade_join_uf=C` (filtradas automaticamente): AM, RR (supressao IBGE), AL, AP, CE, MA, PA, PB, PE, RO, SE (gates);
-  - `modelo_hibrido_expansao.py` consome os 3 parquets; deduplicacao core > expandido > nacional por `hex_id`; hexes elegiveis: 222.619; municipios top M1 com camada local: 852;
+  - `modelo_hibrido_expansao.py` consome os 3 parquets; deduplicacao core > expandido > nacional por `hex_id`; apos todos os 3 parquets com v0001 corrigido em 2026-05-15: hexes elegiveis no fluxo hibrido: 780 (eram 185 com v0002); municipios top M1 com camada local: 175;
   - `qualidade_join_uf`: A/B se todos os gates passam, C se qualquer gate falha (filtrado pelo hibrido);
   - status: `GO` para **visualizacao executiva** (mapa exibe hexagonos do setor censitario — granularidade geografica real, elimina agua/rural); M1 continua como **fonte oficial de ranking de carteira** (rho=0.42 vs faturamento real); `NO-GO` para substituir o M1 no ranking.
 - Dashboard local agora separa explicitamente os papeis: mapa executivo usa geometria granular quando `qualidade_join_uf` e `A/B`, fallback municipal nas UFs `C` e renderiza todos os hexagonos validos da UF selecionada sem cap editorial; aba de carteira volta a ordenar por `rank_brasil`/`score_priorizacao` do M1 e deixa Censitario/Hibrido apenas como apoio local.
@@ -90,11 +91,11 @@ score_oficial = score_priorizacao
 - Dashboard sobrepoe pins de concorrentes e unidades proprias Ultra nos mapas principal e hibrido; concorrentes: CSVs em `concorrentes/`; Ultra: `data/ultra/Ultra.csv` (skiprows=1, sep=";", encoding latin-1, primeira linha metadado); ambos via `competitors.py`; camadas `IconLayer` e legendas em `components.py`. Dashboard funciona sem esses arquivos.
 - Testes automatizados ficam em `tests/unit/`, `tests/integration/` e `tests/contracts/`; `pyproject.toml` limita a coleta ao diretorio `tests`.
 - Camada de mercado por hexagono:
-  - status: ciclo anterior de mercado fechado ate o Bloco 3; staging materializado, carteira/plano nacionais regenerados e validacao integrada concluida para handoff;
+  - status: ciclo de mercado rematerializado em 2026-05-15 apos remocao do proxy 18-45; staging, carteira/plano nacionais regenerados e validacao integrada concluida para handoff;
   - objetivo: combinar demanda, oferta mapeada e restricao da rede propria Ultra;
-  - artefatos acionaveis atuais:
-    - `data/outputs/carteira_expansao_acionavel.parquet`: 5.406 linhas, 27 UFs, 1.093 municipios, 0 `hex_id` duplicado;
-    - `data/outputs/plano_expansao_curto_prazo.parquet`: 269 linhas, 27 UFs, 66 municipios, 0 `hex_id` duplicado;
+  - artefatos acionaveis atuais (todos os 3 parquets censitarios com v0001, cadeia completa 2026-05-15):
+    - `data/outputs/carteira_expansao_acionavel.parquet`: 4.892 linhas, 27 UFs, 1.103 municipios, 0 `hex_id` duplicado; granular censitario em 175 municipios;
+    - `data/outputs/plano_expansao_curto_prazo.parquet`: 267 linhas, 27 UFs, 100 municipios, 0 `hex_id` duplicado; 20 Estrategicos, 30 Alta, 217 Taticos;
   - regra operacional nova: se o municipio top M1 tiver `top_hex_intraurbano=True`, a carteira usa somente os hexes granulares; se nao tiver, entra fallback municipal/M1 sem excluir a UF do output;
   - insumos ja disponiveis:
     - `concorrentes/*.csv` (tambem usados como pins visuais no dashboard)

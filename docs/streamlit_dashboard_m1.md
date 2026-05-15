@@ -83,7 +83,7 @@
 
 - Constante: `POP_MIN_ACIONAVEL = 5_000` em `dashboard/constants.py`.
 - Colunas derivadas em `enrich_dashboard_data`: `populacao_corte_hex`, `fonte_populacao_corte`, `flag_pop_min_5k`.
-- Fonte preferencial: `pop_total_setor_2022` (UFs A/B); fallback: `populacao_proxy` (municipal).
+- Fonte preferencial: `pop_total_setor_2022` (UFs A/B); fallback: `populacao_proxy` = `pop_total` municipal (trava 18-45 removida em 2026-05-15).
 - Mapas: hexes com `flag_pop_min_5k=False` recebem cor cinza `[120,120,140,70]`; legenda "Descartado <5k hab" via `render_pop_cut_legend`.
 - Abas Carteira e Plano filtram esses hexes via lookup por `hex_id`.
 - Tooltip do hex descartado exibe sufixo " — Descartado <5k hab".

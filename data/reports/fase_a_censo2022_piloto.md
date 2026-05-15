@@ -1,6 +1,6 @@
 # Fase A — Censo 2022 por Setor Censitario (Piloto GO + SP + RJ)
 
-> Data de execucao: 2026-04-09
+> Data de execucao: 2026-05-15
 > Fonte: IBGE Censo Demografico 2022 — Agregados por Setores Censitarios
 
 ## 1. Setores processados por UF
@@ -36,17 +36,17 @@
 
 | UF | Hex total | Hex com match | Cobertura % | Ref 2010 % | Gate (>=85%) |
 | --- | --- | --- | --- | --- | --- |
-| GO | 59952 | 59905 | 99.92 | 100.0 | PASS |
-| SP | 47139 | 46905 | 99.50 | 100.0 | PASS |
-| RJ | 7895 | 7851 | 99.44 | 97.88 | PASS |
+| GO | 59952 | 59878 | 99.88 | 100.0 | PASS |
+| SP | 47139 | 46670 | 99.01 | 100.0 | PASS |
+| RJ | 7895 | 7841 | 99.32 | 97.88 | PASS |
 
 ## 3. Amplitude intraurbana (score_setor_2022_exp)
 
 | UF | Amplitude p95-p05 | Ref 2010 | Std | Distintos | Gate (>50) |
 | --- | --- | --- | --- | --- | --- |
-| GO | 54.28 | 71.47 | 14.76 | 2617 | PASS |
-| SP | 59.31 | 69.06 | 17.56 | 4104 | PASS |
-| RJ | 59.88 | 74.31 | 18.85 | 2445 | PASS |
+| GO | 54.06 | 71.47 | 14.73 | 2613 | PASS |
+| SP | 59.59 | 69.06 | 17.42 | 3998 | PASS |
+| RJ | 59.85 | 74.31 | 18.67 | 2315 | PASS |
 
 ## 4. Rastreabilidade
 
@@ -60,19 +60,19 @@
 
 | UF | Cobertura 2022 | Cobertura 2010 | Ampl. 2022 | Ampl. 2010 |
 | --- | --- | --- | --- | --- |
-| GO | 99.92% | 100.0% | 54.28 | 71.47 |
-| SP | 99.50% | 100.0% | 59.31 | 69.06 |
-| RJ | 99.44% | 97.88% | 59.88 | 74.31 |
+| GO | 99.88% | 100.0% | 54.06 | 71.47 |
+| SP | 99.01% | 100.0% | 59.59 | 69.06 |
+| RJ | 99.32% | 97.88% | 59.85 | 74.31 |
 
 ## 6. Distribuicao do score experimental
 
-- count: 114371
+- count: 114024
 - min: 0.0
-- max: 98.39
-- media: 29.79
-- mediana: 29.46
-- std: 16.43
-- p90: 55.61
+- max: 96.17
+- media: 29.59
+- mediana: 29.21
+- std: 16.32
+- p90: 55.15
 
 ## 7. Status do gate de qualidade
 

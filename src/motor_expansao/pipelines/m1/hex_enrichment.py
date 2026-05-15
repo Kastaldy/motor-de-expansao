@@ -112,7 +112,6 @@ def enriquecer_hexagono(hex_id: str, uf: str, censo: IBGECenso, poi: POIEnricher
         "lng":               lng,
         "renda_per_capita":  ibge.get("renda_per_capita", 0),
         "pop_total":         ibge.get("pop_total", 0),
-        "pop_18_45":         ibge.get("pop_18_45", 0),
         "n_domicilios":      ibge.get("n_domicilios", 0),
         "densidade_dom":     ibge.get("densidade_dom", 0),
         "fonte_demografica": ibge.get("fonte", ""),
@@ -354,7 +353,6 @@ def enriquecer_hexagonos_uf_brasil(
     df["score_vitalidade"] = 50.0
     df["renda_per_capita"] = pd.to_numeric(df["renda_per_capita"], errors="coerce").fillna(0.0)
     df["pop_total"] = pd.to_numeric(df["pop_total"], errors="coerce").fillna(0.0)
-    df["pop_18_45"] = pd.to_numeric(df["pop_18_45"], errors="coerce").fillna(0.0)
     df["n_domicilios"] = pd.to_numeric(df["n_domicilios"], errors="coerce").fillna(0.0)
     df["densidade_dom"] = pd.to_numeric(df["densidade_dom"], errors="coerce").fillna(0.0)
     df["fonte_demografica"] = df["fonte_demografica"].fillna("fallback_padrao")
@@ -368,7 +366,7 @@ def enriquecer_hexagonos_uf_brasil(
         window_step=window_step,
         academias_osm=len(academias),
         renda_preenchida=int((df["renda_per_capita"] > 0).sum()),
-        pop_preenchida=int(((df["pop_total"] > 0) | (df["pop_18_45"] > 0)).sum()),
+        pop_preenchida=int((df["pop_total"] > 0).sum()),
     )
     return df
 
@@ -390,7 +388,6 @@ def enriquecer_hexagonos_uf_estrutural(
     )
     df["renda_per_capita"] = pd.to_numeric(df["renda_per_capita"], errors="coerce").fillna(0.0)
     df["pop_total"] = pd.to_numeric(df["pop_total"], errors="coerce").fillna(0.0)
-    df["pop_18_45"] = pd.to_numeric(df["pop_18_45"], errors="coerce").fillna(0.0)
     df["n_domicilios"] = pd.to_numeric(df["n_domicilios"], errors="coerce").fillna(0.0)
     df["densidade_dom"] = pd.to_numeric(df["densidade_dom"], errors="coerce").fillna(0.0)
     if "nome_municipio" not in df.columns:
@@ -653,7 +650,7 @@ def preparar_base_oportunidades(
 
     df["motivo_priorizacao"] = np.select(
         [renda_alta & pop_alta, renda_alta, pop_alta],
-        ["combinado", "renda_alta", "alta_pop_jovem"],
+        ["combinado", "renda_alta", "alta_populacao"],
         default="sem_destaque",
     )
     df["motivo_alerta"] = _combinar_rotulos(
@@ -1102,7 +1099,6 @@ def selecionar_areas_prioritarias(
         "nome_municipio",
         "renda_per_capita",
         "pop_total",
-        "pop_18_45",
         "populacao_proxy",
         "renda_pct_nacional",
         "pop_pct_nacional",
@@ -1288,7 +1284,7 @@ def resumir_validacao_oportunidades(df_oportunidades: pd.DataFrame, metricas_osm
 
 def resumir_validacao_nacional(df_total: pd.DataFrame) -> dict:
     score = df_total["hex_score"]
-    preenchimento_pop = ((df_total["pop_total"] > 0) | (df_total["pop_18_45"] > 0)).mean() * 100
+    preenchimento_pop = (df_total["pop_total"] > 0).mean() * 100
 
     anomalias = []
     rows_uf = []

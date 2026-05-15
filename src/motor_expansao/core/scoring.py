@@ -84,9 +84,9 @@ def _combinar_scores_proporcionalmente(
 
 
 def calcular_populacao_proxy(df: pd.DataFrame) -> pd.Series:
-    pop_18_45 = _serie_numerica(df, "pop_18_45")
-    pop_total = _serie_numerica(df, "pop_total")
-    return pop_18_45.where(pop_18_45 > 0, pop_total)
+    # Alterado em 2026-05-15: removida trava de faixa etária 18-45.
+    # populacao_proxy agora representa POPULAÇÃO TOTAL do hexágono, não proxy de jovens.
+    return _serie_numerica(df, "pop_total")
 
 
 def calcular_ajuste_executivo(
@@ -152,7 +152,7 @@ def _normalizar_coluna_ou_padrao(
 def calcular_hex_score(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["renda_norm"] = _normalizar_coluna_ou_padrao(df, ("renda_per_capita", "renda_media"), 50.0)
-    df["pop_norm"] = _normalizar_coluna_ou_padrao(df, ("pop_18_45",), 50.0)
+    df["pop_norm"] = _normalizar_coluna_ou_padrao(df, ("pop_total",), 50.0)
 
     coluna_concorrencia = "n_academias_osm" if "n_academias_osm" in df.columns else "n_concorrentes"
     if coluna_concorrencia in df.columns:
@@ -168,7 +168,7 @@ def calcular_hex_score(df: pd.DataFrame) -> pd.DataFrame:
 
     df["hex_score"] = (
         df["renda_norm"] * PESOS_HEX_SCORE["renda_normalizada"]
-        + df["pop_norm"] * PESOS_HEX_SCORE["pop_jovem_normalizada"]
+        + df["pop_norm"] * PESOS_HEX_SCORE["pop_total_normalizada"]
         + df["concorrencia_norm"] * PESOS_HEX_SCORE["ausencia_concorrencia"]
         + df["vitalidade_norm"] * PESOS_HEX_SCORE["vitalidade_comercial"]
     ).round(2)
@@ -179,7 +179,6 @@ def calcular_hex_score_estrutural(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df["renda_per_capita"] = _serie_numerica(df, "renda_per_capita")
     df["pop_total"] = _serie_numerica(df, "pop_total")
-    df["pop_18_45"] = _serie_numerica(df, "pop_18_45")
     df["populacao_proxy"] = calcular_populacao_proxy(df)
 
     hex_populado = df["populacao_proxy"] >= M1_POP_MINIMA_PROXY

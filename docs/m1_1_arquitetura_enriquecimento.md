@@ -67,8 +67,7 @@ Cada camada deve gravar uma coluna `metodo_agregacao_<camada>` com valor padroni
 
 | coluna | fonte | qualidade | descricao | agregacao H3-r7 | rastreabilidade |
 | --- | --- | --- | --- | --- | --- |
-| `pop_total_setor_2022` | IBGE Censo 2022 | gold | populacao total por setor censitario, agregada ao hexagono | soma ponderada por area | `fonte_censo_2022`, `data_referencia_censo_2022`, `metodo_agregacao_censo_2022`, `coverage_pct_censo_2022`, `qualidade_censo_2022` |
-| `pop_18_45_setor_2022` | IBGE Censo 2022 | gold | populacao 18-45 anos por setor, agregada ao hexagono | soma ponderada por area | (idem) |
+| `pop_total_setor_2022` | IBGE Censo 2022 | gold | populacao total por setor censitario, agregada ao hexagono; coluna canonica de populacao (trava 18-45 removida em 2026-05-15) | soma ponderada por area | `fonte_censo_2022`, `data_referencia_censo_2022`, `metodo_agregacao_censo_2022`, `coverage_pct_censo_2022`, `qualidade_censo_2022` |
 | `renda_per_capita_setor_2022` | IBGE Censo 2022 | gold | renda per capita domiciliar media do setor, agregada ao hexagono | media ponderada por populacao do setor | (idem) |
 | `domicilios_setor_2022` | IBGE Censo 2022 | gold | total de domicilios particulares permanentes por setor | soma ponderada por area | (idem) |
 | `cobertura_setor_2022_pct` | IBGE Censo 2022 | gold | percentual da area do hexagono coberta por setores censitarios | calculado diretamente (area coberta / area hexagono) | (idem) |
@@ -132,7 +131,7 @@ score_priorizacao  (M1_SCORE_OFICIAL em config.py)
 ```
 
 - Definido na secao 7 do CLAUDE.md.
-- Inputs: `renda_per_capita` e `populacao_proxy` em nivel municipal (SIDRA).
+- Inputs: `renda_per_capita` e `populacao_proxy` (= `pop_total`) em nivel municipal (SIDRA). Alterado em 2026-05-15: trava 18-45 removida.
 - Nenhuma alteracao permitida no calculo, nos pesos, nos inputs ou nos artefatos de saida.
 - `hex_score_estrutural`, `ajuste_executivo` e `score_priorizacao` permanecem como estao.
 
@@ -216,7 +215,7 @@ data/
 | item | valor |
 | --- | --- |
 | **fonte** | IBGE Censo Demografico 2022 — microdados por setor censitario |
-| **colunas geradas** | `pop_total_setor_2022`, `pop_18_45_setor_2022`, `renda_per_capita_setor_2022`, `domicilios_setor_2022`, `cobertura_setor_2022_pct` |
+| **colunas geradas** | `pop_total_setor_2022`, `renda_per_capita_setor_2022`, `domicilios_setor_2022`, `cobertura_setor_2022_pct` |
 | **metodo de ingestao** | download dos shapefiles de setores + tabulacoes do Censo 2022; spatial join setor x H3-r7 com ponderacao por area de intersecao |
 | **criterio de qualidade minimo** | cobertura >= 85% dos hexagonos por UF em pelo menos 25 UFs; amplitude intraurbana p95-p05 > 50 em capitais testadas; colunas de rastreabilidade sem nulos em > 5% dos hexagonos |
 | **dependencia** | nenhuma (primeira fase) |

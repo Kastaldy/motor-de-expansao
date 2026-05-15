@@ -33,7 +33,6 @@ SOURCE_REQUIRED_COLS = {
     "score_priorizacao",
     "flag_hex_hibrido_elegivel",
     "score_expansao_hibrido",
-    "pop_18_45",
     "flag_viavel",
     "top_municipio",
     "flag_white_space_2km",
@@ -44,13 +43,18 @@ SOURCE_REQUIRED_COLS = {
 
 
 def anexar_colunas_censo(df: pd.DataFrame) -> pd.DataFrame:
-    """Atualiza as colunas censitarias necessarias sem criar duplicatas."""
+    """Atualiza as colunas censitarias necessarias sem criar duplicatas.
+
+    O input do Bloco 3 ja herda a camada censitaria completa do hibrido
+    (core + expandida + nacional). A leitura do parquet core aqui deve apenas
+    preencher lacunas legadas, sem apagar dados censitarios ja materializados.
+    """
     legacy_cols = {
         f"{col}_{suffix}"
         for col in CENSO_COLS[1:]
         for suffix in ("x", "y")
     }
-    cols_para_remover = [col for col in [*CENSO_COLS[1:], *sorted(legacy_cols)] if col in df.columns]
+    cols_para_remover = [col for col in sorted(legacy_cols) if col in df.columns]
     if cols_para_remover:
         df = df.drop(columns=cols_para_remover)
 
@@ -59,7 +63,15 @@ def anexar_colunas_censo(df: pd.DataFrame) -> pd.DataFrame:
         n_dup = int(censo["hex_id"].duplicated().sum())
         raise AssertionError(f"censo2022_setores_calibrado com hex_id duplicado: {n_dup}")
 
-    return df.merge(censo, on="hex_id", how="left")
+    censo = censo.rename(columns={col: f"{col}_core" for col in CENSO_COLS[1:]})
+    merged = df.merge(censo, on="hex_id", how="left")
+    for col in CENSO_COLS[1:]:
+        core_col = f"{col}_core"
+        if col in merged.columns:
+            merged[col] = merged[col].where(merged[col].notna(), merged[core_col])
+        else:
+            merged[col] = merged[core_col]
+    return merged.drop(columns=[f"{col}_core" for col in CENSO_COLS[1:]])
 
 
 def validar_entradas(df: pd.DataFrame) -> None:
@@ -105,9 +117,8 @@ def calcular(df: pd.DataFrame) -> pd.DataFrame:
     )
     df["tam_indice_demanda_norm"] = df["tam_indice_demanda"] / 100.0
 
-    df["tam_pop_18_45_base"] = np.where(
-        df["pop_18_45"].notna(), df["pop_18_45"], df["populacao_proxy"]
-    )
+    # Alterado em 2026-05-15: removida trava 18-45; população total via populacao_proxy.
+    df["tam_pop_total_base"] = df["populacao_proxy"]
 
     # 5.4 - SAM
     flag_canibal = df["flag_canibalizacao_ultra_1km"].fillna(False).astype(bool)
@@ -174,7 +185,7 @@ def validar(df: pd.DataFrame) -> None:
         "data_snapshot_mercado", "fonte_demanda_principal", "fonte_oferta_principal",
         "n_redes_mapeadas", "demanda_granularidade",
         "tam_populacao_base", "tam_renda_base", "tam_indice_demanda",
-        "tam_indice_demanda_norm", "tam_pop_18_45_base",
+        "tam_indice_demanda_norm", "tam_pop_total_base",
         "flag_sam", "sam_indice_operavel", "sam_populacao_base", "sam_granularidade",
         "residual_indice_mapeado", "residual_populacao_mapeada",
         "capacidade_captura_mapeada", "som_indice_mapeado", "som_populacao_mapeada",

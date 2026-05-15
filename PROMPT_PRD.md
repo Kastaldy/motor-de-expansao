@@ -1,4 +1,4 @@
-Leia primeiro `CLAUDE.md` e depois `PRD.md`.
+Leia primeiro `CLAUDE.md`, `README.md`  e depois `PRD.md`.
 
 Sua tarefa e executar apenas o proximo bloco pendente do `PRD.md`, respeitando integralmente as instrucoes dos dois arquivos.
 

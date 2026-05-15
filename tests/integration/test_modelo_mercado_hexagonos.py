@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from jobs.pipelines import calcular_colunas_mercado as mercado_module
 from jobs.pipelines.calcular_colunas_mercado import HYBRID_TIEBREAK_MAX_SCORE, calcular
 from jobs.pipelines.normalizar_unidades_ultra import carregar_ultra
 
@@ -32,7 +33,7 @@ MERCADO_REQUIRED_COLS = {
     "tam_renda_base",
     "tam_indice_demanda",
     "tam_indice_demanda_norm",
-    "tam_pop_18_45_base",
+    "tam_pop_total_base",
     "gap_competitivo_2km",
     "pressao_concorrencial_score_2km",
     "flag_canibalizacao_ultra_1km",
@@ -135,7 +136,6 @@ def test_calcular_bloqueia_sam_quando_ha_canibalizacao():
             "score_priorizacao": [80.0, 70.0],
             "flag_hex_hibrido_elegivel": [True, False],
             "score_expansao_hibrido": [99.5, None],
-            "pop_18_45": [450.0, None],
             "flag_viavel": [True, True],
             "top_municipio": [True, True],
             "flag_white_space_2km": [True, False],
@@ -159,6 +159,32 @@ def test_calcular_bloqueia_sam_quando_ha_canibalizacao():
     assert operavel["sam_granularidade"] == "municipio_priorizado"
     assert operavel["sam_indice_operavel"] == pytest.approx(70.0)
     assert operavel["tese_entrada"] == "abrir_com_disputa"
+
+
+def test_anexar_colunas_censo_preserva_camada_censitaria_do_hibrido(tmp_path, monkeypatch):
+    censo_path = tmp_path / "censo_core.parquet"
+    pd.DataFrame(
+        {
+            "hex_id": ["h1", "h2"],
+            "pop_total_setor_2022": [100.0, 200.0],
+            "renda_per_capita_setor_2022_calibrada": [1000.0, 2000.0],
+        }
+    ).to_parquet(censo_path, index=False)
+    monkeypatch.setattr(mercado_module, "CENSO_PATH", censo_path)
+
+    base = pd.DataFrame(
+        {
+            "hex_id": ["h1", "h2", "h3"],
+            "pop_total_setor_2022": [1000.0, None, 3000.0],
+            "renda_per_capita_setor_2022_calibrada": [1100.0, None, 3300.0],
+        }
+    )
+
+    result = mercado_module.anexar_colunas_censo(base)
+
+    assert result.loc[result["hex_id"] == "h1", "pop_total_setor_2022"].iloc[0] == pytest.approx(1000.0)
+    assert result.loc[result["hex_id"] == "h2", "pop_total_setor_2022"].iloc[0] == pytest.approx(200.0)
+    assert result.loc[result["hex_id"] == "h3", "pop_total_setor_2022"].iloc[0] == pytest.approx(3000.0)
 
 
 def test_parquet_final_tem_schema_minimo(mercado_guardrails_df: pd.DataFrame):

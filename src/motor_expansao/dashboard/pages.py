@@ -421,7 +421,7 @@ def render_hex_search_result(
     cols = st.columns(4)
     cols[0].metric("Score M1", format_score(result.get("score_priorizacao")))
     cols[1].metric("Rank Brasil", format_int(result.get("rank_brasil")) if result.get("rank_brasil") is not None else "-")
-    pop_val = result.get("pop_total_setor_2022") or result.get("populacao_proxy")
+    pop_val = result.get("pop_total_setor_2022") or result.get("pop_total") or result.get("populacao_proxy")
     cols[2].metric("Populacao", format_int(pop_val) if pop_val is not None else "-")
     renda_val = result.get("renda_per_capita_setor_2022_calibrada") or result.get("renda_per_capita")
     cols[3].metric("Renda per capita", f"R$ {format_int(renda_val)}" if renda_val is not None else "-")

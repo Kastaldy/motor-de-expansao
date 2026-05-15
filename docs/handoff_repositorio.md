@@ -29,14 +29,14 @@ Contrato curto para compartilhar o repo com a equipe e preparar o deploy Streaml
 
 ## Artefatos minimos do dashboard
 
-Metadados locais observados em 2026-05-12, sem recalculo:
+Metadados locais observados em 2026-05-15, apos rematerializacao com `populacao_proxy=pop_total`:
 
 | arquivo em `data/outputs/` | linhas | tamanho aprox. | uso |
 | --- | ---: | ---: | --- |
 | `hexagonos_brasil_dashboard.parquet` | 1.532.645 | 46,6 MB | base oficial M1 e mapa executivo |
-| `oportunidades_expansao_hibrido.parquet` | 1.532.645 | 66,7 MB | filtros, camada hibrida e enriquecimento censitario |
-| `carteira_expansao_acionavel.parquet` | 5.406 | 0,4 MB | carteira operacional |
-| `plano_expansao_curto_prazo.parquet` | 269 | 0,1 MB | plano curto prazo |
+| `oportunidades_expansao_hibrido.parquet` | 1.532.645 | 66,9 MB | filtros, camada hibrida e enriquecimento censitario |
+| `carteira_expansao_acionavel.parquet` | 5.415 | 0,4 MB | carteira operacional |
+| `plano_expansao_curto_prazo.parquet` | 274 | 0,1 MB | plano curto prazo |
 
 Arquivos auxiliares em `data/outputs/`, como CSVs executivos e `hexagonos_mapa_sample.parquet`, sao uteis para BI/analise, mas nao compoem o contrato minimo do app completo atual.
 

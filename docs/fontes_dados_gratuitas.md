@@ -27,8 +27,8 @@ No MVP nacional atual:
   `https://servicodados.ibge.gov.br/api/v3/malhas/estados/{uf}?intrarregiao=municipio&formato=application/vnd.geo+json&qualidade=maxima`
 - SIDRA renda municipal:
   tabela `10295`, variável `13431`
-- SIDRA população municipal proxy 18–45:
-  tabela `9514`, variável `93`, com ponderação parcial das faixas 15–19 e 45–49
+- SIDRA população municipal total (alterado 2026-05-15; trava 18-45 removida):
+  tabela `4709`, variável `93`, período `last`/`2022`
 
 ### Fallback oficial atual
 
@@ -89,8 +89,7 @@ Regras:
 
 - normalização nacional por percentil
 - `hex_score_estrutural` fica separado do `ajuste_executivo`
-- `pop_18_45` é preferida
-- `pop_total` entra como fallback da proxy populacional
+- `pop_total` é a fonte canônica de população (trava 18-45 removida em 2026-05-15; `populacao_proxy` = `pop_total`)
 
 ## 5. Saídas oficiais
 

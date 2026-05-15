@@ -80,7 +80,6 @@ SOURCE_COLUMNS = [
     "municipio_label",
     "nome_municipio",
     "populacao_proxy",
-    "pop_18_45",
     "renda_pct_nacional",
     "pop_pct_nacional",
     "hex_score_estrutural",
@@ -184,7 +183,7 @@ def build_dashboard_dataset(
         cidade = cidade.where(cidade.fillna("").str.strip().ne(""), cidade_lookup)
 
     proxy_populacao = pd.to_numeric(
-        _pick_first_existing(df_source, ["populacao_proxy", "pop_18_45", "proxy_populacao"]),
+        _pick_first_existing(df_source, ["populacao_proxy", "proxy_populacao"]),
         errors="coerce",
     )
 

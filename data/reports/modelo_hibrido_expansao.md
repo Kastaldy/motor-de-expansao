@@ -1,6 +1,6 @@
 # Modelo Hibrido de Expansao
 
-> Data: 2026-04-24
+> Data: 2026-05-15
 > Status: GO para uso pratico controlado como camada complementar ao M1
 
 ## Regra final do modelo
@@ -14,10 +14,10 @@
 ## Cobertura operacional
 
 - UFs com camada censitaria disponivel: AC, AL, AM, AP, BA, CE, DF, ES, GO, MA, MG, MS, MT, PA, PB, PE, PI, PR, RJ, RN, RO, RR, RS, SC, SE, SP, TO
-- Hexes com score censitario disponivel: 1,331,239
-- Hexes elegiveis no fluxo hibrido: 186
-- Municipios top M1 com camada local utilizavel: 26
-- Registros priorizados para monitoramento futuro: 141
+- Hexes com score censitario disponivel: 1,302,296
+- Hexes elegiveis no fluxo hibrido: 780
+- Municipios top M1 com camada local utilizavel: 159
+- Registros priorizados para monitoramento futuro: 522
 
 ## Como usar na pratica
 
@@ -30,40 +30,46 @@
 
 | UF | Municipios top M1 com camada local | Score medio municipal |
 | --- | --- | --- |
-| SP | 16 | 96.97 |
-| MG | 3 | 100.00 |
-| BA | 1 | 100.00 |
+| SP | 49 | 98.08 |
+| MG | 31 | 94.93 |
+| BA | 18 | 84.16 |
+| RJ | 11 | 97.39 |
+| RS | 10 | 98.45 |
+| SC | 8 | 100.00 |
+| GO | 8 | 90.75 |
+| PR | 7 | 98.49 |
+| ES | 6 | 95.94 |
+| RN | 4 | 91.60 |
+| MT | 3 | 99.24 |
 | DF | 1 | 100.00 |
-| ES | 1 | 100.00 |
-| GO | 1 | 100.00 |
-| PR | 1 | 100.00 |
-| RJ | 1 | 100.00 |
-| RS | 1 | 100.00 |
+| MS | 1 | 100.00 |
+| AC | 1 | 94.93 |
+| TO | 1 | 94.37 |
 
 ## Top 20 oportunidades Brasil
 
 | Rank Brasil | UF | Municipio | Hex | Score M1 | Score censitario | Score hibrido | Rank intraurbano |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | SP | São Paulo | 87a8100e1ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 2 | SP | São Paulo | 87a8100eaffffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 3 | SP | São Paulo | 87a810764ffffff | 100.00 | 100.00 | 100.00100 | 3 |
-| 4 | GO | Goiânia | 87a8c0ce0ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 5 | DF | Brasília | 87a8c2419ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 6 | RS | Porto Alegre | 87a901283ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 7 | RS | Porto Alegre | 87a90128effffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 8 | RS | Porto Alegre | 87a90129dffffff | 100.00 | 100.00 | 100.00100 | 3 |
-| 9 | BA | Salvador | 878116b1dffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 10 | SP | Campinas | 87a813b22ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 11 | MG | Juiz de Fora | 87a8a3656ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 12 | MG | Belo Horizonte | 87a88cdb5ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 13 | SP | São Paulo | 87a8100c1ffffff | 100.00 | 100.00 | 100.00100 | 4 |
-| 14 | SP | São Paulo | 87a8100c5ffffff | 100.00 | 100.00 | 100.00100 | 5 |
-| 15 | MG | Belo Horizonte | 87a88cd94ffffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 16 | SP | Guarulhos | 87a810709ffffff | 100.00 | 100.00 | 100.00100 | 1 |
-| 17 | DF | Brasília | 87a8c241bffffff | 100.00 | 100.00 | 100.00100 | 2 |
-| 18 | SP | São Paulo | 87a810088ffffff | 100.00 | 100.00 | 100.00100 | 6 |
-| 19 | SP | São Paulo | 87a810075ffffff | 100.00 | 100.00 | 100.00100 | 7 |
-| 20 | SP | São Paulo | 87a8100e2ffffff | 100.00 | 100.00 | 100.00100 | 8 |
+| 1 | PR | Londrina | 87a801374ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 2 | PR | Curitiba | 87a804d92ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 3 | SP | São Paulo | 87a810764ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 4 | SP | Campinas | 87a81148bffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 5 | PR | Curitiba | 87a831361ffffff | 100.00 | 100.00 | 100.00100 | 2 |
+| 6 | SC | Joinville | 87a835640ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 7 | SC | Itajaí | 87a835c40ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 8 | MG | Belo Horizonte | 87a88cda6ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 9 | GO | Goiânia | 87a8c0ce0ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 10 | GO | Goiânia | 87a8c0ce1ffffff | 100.00 | 100.00 | 100.00100 | 2 |
+| 11 | GO | Goiânia | 87a8c0ce3ffffff | 100.00 | 100.00 | 100.00100 | 3 |
+| 12 | DF | Brasília | 87a8c2405ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 13 | DF | Brasília | 87a8c2419ffffff | 100.00 | 100.00 | 100.00100 | 2 |
+| 14 | DF | Brasília | 87a8c24e4ffffff | 100.00 | 100.00 | 100.00100 | 3 |
+| 15 | DF | Brasília | 87a8c24f3ffffff | 100.00 | 100.00 | 100.00100 | 4 |
+| 16 | DF | Brasília | 87a8d186affffff | 100.00 | 100.00 | 100.00100 | 5 |
+| 17 | RS | Porto Alegre | 87a901281ffffff | 100.00 | 100.00 | 100.00100 | 1 |
+| 18 | RS | Porto Alegre | 87a901283ffffff | 100.00 | 100.00 | 100.00100 | 2 |
+| 19 | RS | Porto Alegre | 87a90128effffff | 100.00 | 100.00 | 100.00100 | 3 |
+| 20 | RS | Porto Alegre | 87a90129dffffff | 100.00 | 100.00 | 100.00100 | 4 |
 
 ## Monitoramento futuro (6-12 meses)
 

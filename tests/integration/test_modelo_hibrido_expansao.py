@@ -273,6 +273,27 @@ def test_load_censo_deduplicacao_prioridade_core_sobre_nacional(local_tmp_dir):
     assert "fase_a_calibrada_nacional" in fontes
 
 
+def test_load_censo_deriva_qualidade_join_quando_validado_traz_mismatch(local_tmp_dir):
+    core = pd.DataFrame(
+        {
+            "hex_id": ["h1", "h2", "h3"],
+            "uf": ["GO", "GO", "GO"],
+            "score_setor_2022_calibrado": [80.0, 70.0, 60.0],
+            "coverage_pct_setor_2022": [95.0, 95.0, 95.0],
+            "join_mismatch_pct_uf": [0.5, 3.0, 8.0],
+            "status_validacao_join_uf": ["GO", "GO", "REVIEW"],
+        }
+    )
+    core_path = local_tmp_dir / "core_mismatch.parquet"
+    expanded_path = local_tmp_dir / "expanded_mismatch.parquet"
+    core.to_parquet(core_path, index=False)
+    core.iloc[0:0].to_parquet(expanded_path, index=False)
+
+    resultado = _load_censo(core_path, expanded_path, None).sort_values("hex_id")
+
+    assert resultado["qualidade_join_uf"].tolist() == ["A", "B", "C"]
+
+
 def test_load_censo_sem_nacional_nao_falha(local_tmp_dir):
     """Se censo_nacional_path=None, _load_censo deve funcionar normalmente."""
     core = pd.DataFrame(

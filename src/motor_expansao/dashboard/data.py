@@ -230,10 +230,18 @@ def enrich_dashboard_data(
     base_df: pd.DataFrame,
     hybrid_df: pd.DataFrame | None = None,
     censo_df: pd.DataFrame | None = None,
+    estrutural_pop_df: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     enriched = base_df.copy()
     hybrid_df = hybrid_df if hybrid_df is not None else pd.DataFrame()
     censo_df = censo_df if censo_df is not None else pd.DataFrame()
+
+    # Injeta pop_total do parquet estrutural quando disponivel para manter
+    # fallback municipal explicito e resiliente a parquets legados.
+    if estrutural_pop_df is not None and not estrutural_pop_df.empty:
+        if "pop_total" in estrutural_pop_df.columns and "hex_id" in estrutural_pop_df.columns:
+            pop_map = estrutural_pop_df.set_index("hex_id")["pop_total"]
+            enriched["pop_total"] = enriched["hex_id"].map(pop_map)
 
     hybrid_extra_cols = [
         "hex_id",
@@ -434,8 +442,8 @@ def build_city_summary(df: pd.DataFrame) -> pd.DataFrame:
 def derive_pop_cut_columns(df: pd.DataFrame, pop_min: int = POP_MIN_ACIONAVEL) -> pd.DataFrame:
     """Deriva colunas auditaveis para a regua operacional de populacao minima.
 
-    - populacao_corte_hex: valor usado no corte (setor 2022 preferencial, fallback proxy)
-    - fonte_populacao_corte: origem do valor ("setor_2022", "proxy_municipal" ou "ausente")
+    - populacao_corte_hex: valor usado no corte (setor 2022 preferencial, fallback total municipal)
+    - fonte_populacao_corte: origem do valor ("setor_2022", "total_municipal" ou "ausente")
     - flag_pop_min_5k: True quando populacao_corte_hex >= pop_min
     Nao altera score_priorizacao nem artefatos oficiais do M1.
     """
@@ -446,25 +454,32 @@ def derive_pop_cut_columns(df: pd.DataFrame, pop_min: int = POP_MIN_ACIONAVEL) -
         else pd.Series(False, index=result.index)
     )
     has_setor = "pop_total_setor_2022" in result.columns
+    # Preferir pop_total (total real) sobre populacao_proxy legado (proxy 18-45 antigo).
+    has_pop_total = "pop_total" in result.columns
     has_proxy = "populacao_proxy" in result.columns
 
-    if has_setor and has_proxy:
+    pop_municipal = (
+        result["pop_total"] if has_pop_total else
+        result["populacao_proxy"] if has_proxy else
+        pd.Series(pd.NA, index=result.index, dtype="Float64")
+    )
+    pop_municipal_notna = (
+        result["pop_total"].notna() if has_pop_total else
+        result["populacao_proxy"].notna() if has_proxy else
+        pd.Series(False, index=result.index)
+    )
+
+    if has_setor:
         use_setor = is_granular & result["pop_total_setor_2022"].notna()
-        pop_val = result["pop_total_setor_2022"].where(use_setor, result["populacao_proxy"])
+        pop_val = result["pop_total_setor_2022"].where(use_setor, pop_municipal)
         fonte = np.where(
             use_setor,
             "setor_2022",
-            np.where(result["populacao_proxy"].notna(), "proxy_municipal", "ausente"),
+            np.where(pop_municipal_notna, "total_municipal", "ausente"),
         )
-    elif has_setor:
-        pop_val = result["pop_total_setor_2022"]
-        fonte = np.where(result["pop_total_setor_2022"].notna(), "setor_2022", "ausente")
-    elif has_proxy:
-        pop_val = result["populacao_proxy"]
-        fonte = np.where(result["populacao_proxy"].notna(), "proxy_municipal", "ausente")
     else:
-        pop_val = pd.Series(pd.NA, index=result.index, dtype="Float64")
-        fonte = np.full(len(result), "ausente")
+        pop_val = pop_municipal
+        fonte = np.where(pop_municipal_notna, "total_municipal", "ausente")
 
     result["populacao_corte_hex"] = pd.to_numeric(pop_val, errors="coerce")
     result["fonte_populacao_corte"] = fonte

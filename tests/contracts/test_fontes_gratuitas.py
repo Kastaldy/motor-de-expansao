@@ -51,7 +51,6 @@ class TestIBGECensoFeaturesPadrao:
         resultado = IBGECenso._features_padrao()
         assert resultado["renda_per_capita"] == 0.0
         assert resultado["pop_total"] == 0.0
-        assert resultado["pop_18_45"] == 0.0
         assert resultado["n_domicilios"] == 0.0
         assert resultado["densidade_dom"] == 0.0
         assert resultado["area_km2"] == 0.0
@@ -60,7 +59,7 @@ class TestIBGECensoFeaturesPadrao:
     def test_todas_chaves_presentes(self):
         from ibge_censo import IBGECenso
         resultado = IBGECenso._features_padrao()
-        chaves_esperadas = {"renda_per_capita", "pop_total", "pop_18_45",
+        chaves_esperadas = {"renda_per_capita", "pop_total",
                             "n_domicilios", "densidade_dom", "area_km2", "fonte",
                             "fonte_renda", "fonte_populacao", "nivel_geografico_ibge",
                             "fallback_setor_censitario", "motivo_fallback_setor"}
@@ -109,7 +108,7 @@ class TestIBGECensoSidraRenda:
             resultado = censo._sidra_renda_populacao.__wrapped__(censo, "3550308")
 
         assert resultado["renda_per_capita"] == pytest.approx(2500.50)
-        assert resultado["pop_18_45"] == pytest.approx(27000.0)
+        assert resultado["pop_total"] == pytest.approx(27000.0)
 
     def test_falha_de_rede_retorna_padrao(self):
         from ibge_censo import IBGECenso
@@ -356,7 +355,7 @@ class TestCalcularHexScore:
         return pd.DataFrame({
             "hex_id":           ["aaa", "bbb", "ccc"],
             "renda_per_capita": [1000.0, 3000.0, 5000.0],
-            "pop_18_45":        [500.0, 1500.0, 3000.0],
+            "pop_total":        [500.0, 1500.0, 3000.0],
             "n_academias_osm":  [0, 1, 5],
             "score_vitalidade": [30.0, 60.0, 90.0],
         })
@@ -371,7 +370,7 @@ class TestCalcularHexScore:
         from hex_enrichment import calcular_hex_score
         df = pd.DataFrame({
             "renda_per_capita": [1000.0, 5000.0],
-            "pop_18_45":        [1000.0, 1000.0],
+            "pop_total":        [1000.0, 1000.0],
             "n_academias_osm":  [0, 0],
             "score_vitalidade": [50.0, 50.0],
         })
@@ -394,7 +393,6 @@ class TestCalcularHexScore:
             "hex_id": ["a", "b"],
             "renda_per_capita": [1500.0, 4500.0],
             "pop_total": [0.0, 0.0],
-            "pop_18_45": [None, None],
         })
         df_scored = calcular_hex_score_estrutural(df)
 
@@ -476,13 +474,13 @@ class TestRodarPipelineHexOtimizado:
             mock_censo = MockCenso.return_value
             mock_censo.resolver_municipio.return_value = "5208707"
             mock_censo._sidra_renda_populacao.return_value = {
-                "renda_per_capita": 1800.0, "pop_18_45": 45000.0,
-                "pop_total": 120000.0, "n_domicilios": 40000.0,
+                "renda_per_capita": 1800.0, "pop_total": 120000.0,
+                "n_domicilios": 40000.0,
                 "densidade_dom": 50.0, "fonte": "ibge_sidra_municipio_2022",
             }
             mock_censo.features_para_coordenada.return_value = {
-                "renda_per_capita": 1800.0, "pop_18_45": 45000.0,
-                "pop_total": 120000.0, "n_domicilios": 40000.0,
+                "renda_per_capita": 1800.0, "pop_total": 120000.0,
+                "n_domicilios": 40000.0,
                 "densidade_dom": 50.0, "fonte": "ibge_sidra_municipio_2022",
             }
             mock_poi = MockPOI.return_value
@@ -514,7 +512,7 @@ class TestRodarPipelineHexOtimizado:
             mock_censo.resolver_municipio.return_value = "5208707"
             mock_censo._sidra_renda_populacao.return_value = {}
             mock_censo.features_para_coordenada.return_value = {
-                "renda_per_capita": 0, "pop_18_45": 0, "pop_total": 0,
+                "renda_per_capita": 0, "pop_total": 0,
                 "n_domicilios": 0, "densidade_dom": 0, "fonte": "fallback_padrao",
             }
             mock_poi = MockPOI.return_value

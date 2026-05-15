@@ -269,11 +269,11 @@ def main():
 
     print("\n1. Carregando bases...")
     df_hibrido = pd.read_parquet(HIBRIDO_PATH)
-    df_est = pd.read_parquet(ESTRUTURAL_PATH, columns=["hex_id", "lat", "lng", "pop_18_45"])
+    df_est = pd.read_parquet(ESTRUTURAL_PATH, columns=["hex_id", "lat", "lng", "pop_total"])
     df_comp = pd.read_parquet(CONCORRENTES_PATH)
     df_ultra = pd.read_parquet(ULTRA_PATH)
     print(f"   hibrido: {len(df_hibrido):,}")
-    print(f"   estrutural (lat/lng/pop_18_45): {len(df_est):,}")
+    print(f"   estrutural (lat/lng/pop_total): {len(df_est):,}")
     print(f"   concorrentes validos: {(df_comp.status_registro == 'valido').sum()}")
     print(f"   ultra validas: {df_ultra.flag_coord_valida.sum()}")
 

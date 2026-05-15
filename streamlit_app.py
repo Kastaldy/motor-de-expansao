@@ -130,6 +130,9 @@ CENSO_EXPANDED_PATH = (
 CENSO_VALIDATED_PATH = (
     Path(__file__).resolve().parent / "data" / "staging" / "censo2022_setores_validado_v2.parquet"
 )
+ESTRUTURAL_PATH = (
+    Path(__file__).resolve().parent / "data" / "staging" / "brasil_estrutural.parquet"
+)
 
 preload_logos(CONCORRENTES_DIR, ultra_dir=ULTRA_PATH.parent)
 
@@ -190,11 +193,18 @@ def load_censo_trace_data() -> pd.DataFrame:
 
 
 @st.cache_resource(show_spinner=False)
+def load_estrutural_pop() -> pd.DataFrame:
+    """Carrega pop_total do parquet estrutural para corrigir o fallback de população no tooltip."""
+    return _read_optional_parquet_subset(ESTRUTURAL_PATH, ["hex_id", "pop_total"])
+
+
+@st.cache_resource(show_spinner=False)
 def build_dashboard_dataset() -> pd.DataFrame:
     return enrich_dashboard_data(
         load_data(),
         load_hybrid_data(),
         load_censo_trace_data(),
+        estrutural_pop_df=load_estrutural_pop(),
     )
 
 

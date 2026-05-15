@@ -98,6 +98,7 @@ def test_aplica_flags_de_validacao_por_uf():
     )
     row = result.iloc[0]
     assert row["status_validacao_join_uf"] == "GO"
+    assert row["qualidade_join_uf"] == "A"
     assert row["status_distribuicao_renda_uf"] == "GO"
     assert row["status_intraurbano_uf"] == "GO"
     assert row["status_validacao_fase_a_uf"] == "GO"

@@ -1,14 +1,14 @@
 # Calibração de Renda Setor Censitário 2022 — Relatório
 
-> Data: 2026-04-09
+> Data: 2026-05-15
 > Status: **GO**
 
 ## Método selecionado
 
-**Multiplicativo global** com `k = 1.0213`
+**Multiplicativo global** com `k = 1.0239`
 
 ```
-renda_per_capita_setor_2022_calibrada = renda_per_capita_setor_2022 × 1.0213
+renda_per_capita_setor_2022_calibrada = renda_per_capita_setor_2022 × 1.0239
 renda_pct_nacional_calibrado = percentile(renda_calibrada, M1_nacional)
 pop_pct_municipal = rank(pop_total_setor_2022) within-municipality
 score_setor_2022_calibrado = clip(100×(0.60×renda_pct_cal + 0.40×pop_pct_mun) + ajuste, 0, 100)
@@ -29,9 +29,9 @@ score_setor_2022_calibrado = clip(100×(0.60×renda_pct_cal + 0.40×pop_pct_mun)
 
 | UF | n_hexes | Mediana setor raw | Mediana calibrada | Mediana M1 | Corr raw vs M1 | Corr cal vs M1 |
 |---|---|---|---|---|---|---|
-| GO | 59,881 | 889 | 908 | 1490 | 0.1567 | 0.1567 |
-| SP | 46,678 | 970 | 991 | 1500 | 0.0038 | 0.0038 |
-| RJ | 7,812 | 844 | 862 | 1386 | 0.0090 | 0.0090 |
+| GO | 59,846 | 889 | 910 | 1490 | 0.1597 | 0.1597 |
+| SP | 46,389 | 963 | 986 | 1500 | 0.0139 | 0.0139 |
+| RJ | 7,789 | 834 | 854 | 1386 | -0.0140 | -0.0140 |
 
 **Nota**: Correlação hex-level com M1 é estruturalmente baixa (~0.08) porque M1 é uniforme
 por município enquanto o setor tem variação intraurbana real. Isso é o valor da Fase A,
@@ -41,15 +41,15 @@ não um defeito. A calibração preserva essa granularidade.
 
 | Capital | n_hexes | Amp score_exp | Amp score_cal | Gate amp>50 | Spearman cal | Gate spearman>0.6 |
 |---|---|---|---|---|---|---|
-| GO | 128 | 75.8 | 91.8 | ✓ PASS | 0.8668 | ✓ PASS |
-| SP | 290 | 61.4 | 62.7 | ✓ PASS | 0.6618 | ✓ PASS |
-| RJ | 187 | 72.4 | 74.1 | ✓ PASS | 0.8199 | ✓ PASS |
+| GO | 128 | 73.4 | 88.8 | ✓ PASS | 0.8653 | ✓ PASS |
+| SP | 290 | 61.0 | 62.5 | ✓ PASS | 0.6609 | ✓ PASS |
+| RJ | 182 | 72.7 | 75.0 | ✓ PASS | 0.8487 | ✓ PASS |
 
 ## Gates globais
 
 - Amplitude > 50 em todas as capitais: **PASS**
 - Spearman > 0.6 em todas as capitais: **PASS**
-- Coverage calibrado: **0.9947** [PASS]
+- Coverage calibrado: **0.9916** [PASS]
 - **STATUS GLOBAL: GO**
 
 ## Restrições e rastreabilidade

@@ -45,16 +45,11 @@ SIDRA_LOOKUP_MUNICIPIOS_URL = (
 SIDRA_RENDA_MUNICIPIO       = "10297"   # massa rendimento per capita — retorna sigiloso em cidades grandes
 SIDRA_RENDA_MEDIO_MUNICIPIO = "10295"   # rendimento MÉDIO domiciliar per capita Censo 2022 — sem sigilo
 SIDRA_VAR_RENDA_MEDIO       = "13431"   # var: Valor do rendimento nominal médio mensal domiciliar per capita
-SIDRA_POPULACAO_FAIXA       = "9514"
-SIDRA_PESOS_IDADE_18_45 = {
-    "93086": 0.40,  # 15 a 19 anos -> proxy 18-19
-    "93087": 1.00,  # 20 a 24 anos
-    "93088": 1.00,  # 25 a 29 anos
-    "93089": 1.00,  # 30 a 34 anos
-    "93090": 1.00,  # 35 a 39 anos
-    "93091": 1.00,  # 40 a 44 anos
-    "93092": 0.20,  # 45 a 49 anos -> proxy 45
-}
+SIDRA_POPULACAO_TOTAL_MUNICIPIO = "4709"
+SIDRA_FONTE_POP_TOTAL = "ibge_censo2022_t4709_pop_total"
+# Alterado em 2026-05-15: removida trava de faixa etária 18-45.
+# O score agora usa POPULAÇÃO TOTAL; SIDRA_PESOS_IDADE_18_45 foi removido.
+# A query de populacao usa a tabela 4709, variavel 93, sem quebras por idade.
 
 
 def _padronizar_lookup_municipios(df_lookup: pd.DataFrame) -> pd.DataFrame:
@@ -261,7 +256,7 @@ class IBGECenso:
                         "area_km2":         float(row.get("AREA_KM2", 0.1) or 0.1),
                         "densidade_dom":    float(row.get("V001", 0) or 0) / max(float(row.get("AREA_KM2", 0.1) or 0.1), 0.01),
                         "renda_per_capita": float(row.get("V6531", 0) or 0),
-                        "pop_18_45":        float(row.get("V18_45", 0) or 0),
+                        # Alterado 2026-05-15: pop_18_45 removido; score usa pop_total.
                         "fonte":            "ibge_setor_2022",
                         "fonte_renda":      "ibge_setor_2022",
                         "fonte_populacao":  "ibge_setor_2022",
@@ -337,11 +332,12 @@ class IBGECenso:
             except Exception as e:
                 log.warning("sidra_renda_erro", cod=cod_municipio, erro=str(e))
 
+        # Alterado em 2026-05-15: busca populacao TOTAL municipal (tabela 4709), nao proxy 18-45.
         time.sleep(0.5)
         try:
             url = (
-                f"https://apisidra.ibge.gov.br/values/t/{SIDRA_POPULACAO_FAIXA}"
-                f"/n6/{cod_municipio}/v/93/p/last/c287/{','.join(SIDRA_PESOS_IDADE_18_45)}"
+                f"https://apisidra.ibge.gov.br/values/t/{SIDRA_POPULACAO_TOTAL_MUNICIPIO}"
+                f"/n6/{cod_municipio}/v/93/p/last"
             )
             resp = requests.get(url, timeout=30)
             if resp.status_code == 200:
@@ -351,10 +347,9 @@ class IBGECenso:
                     valor = str(d.get("V", "")).strip()
                     if valor in ["...", "..", "-", "", "X", "x"]:
                         continue
-                    codigo_idade = str(d.get("D4C", "")).strip()
-                    peso = SIDRA_PESOS_IDADE_18_45.get(codigo_idade, 1.0)
-                    pop += float(valor.replace(",", ".")) * peso
-                resultado["pop_18_45"] = pop
+                    pop += float(valor.replace(",", "."))
+                resultado["pop_total"] = pop
+                resultado["fonte_populacao"] = SIDRA_FONTE_POP_TOTAL
         except Exception as e:
             log.warning("sidra_pop_erro", cod=cod_municipio, erro=str(e))
         fonte_renda = resultado.get("fonte_renda", "ibge_censo2022_sem_renda")
@@ -440,17 +435,40 @@ class IBGECenso:
     def carregar_demografia_municipios(self, refresh: bool = False) -> pd.DataFrame:
         cache_file = CACHE_DIR / "demografia_municipios_2022.parquet"
         if cache_file.exists() and not refresh:
-            log.info("demografia_municipios_cache_hit", path=str(cache_file))
-            return pd.read_parquet(cache_file)
+            df_cache = pd.read_parquet(cache_file)
+            pop_total_cache = (
+                pd.to_numeric(df_cache["pop_total"], errors="coerce")
+                if "pop_total" in df_cache.columns
+                else pd.Series(0.0, index=df_cache.index)
+            )
+            fonte_pop_cache = (
+                df_cache.get("fonte_populacao", pd.Series("", index=df_cache.index))
+                .fillna("")
+                .astype(str)
+                .str.lower()
+            )
+            cache_legado_18_45 = fonte_pop_cache.str.contains(r"18_45|18-45", regex=True).any()
+            cache_fonte_total_ok = fonte_pop_cache.eq(SIDRA_FONTE_POP_TOTAL).all()
+            cache_tem_pop_total = bool(pop_total_cache.gt(0).any())
+            if cache_tem_pop_total and not cache_legado_18_45 and cache_fonte_total_ok:
+                log.info("demografia_municipios_cache_hit", path=str(cache_file))
+                return df_cache
+
+            log.warning(
+                "demografia_municipios_cache_legado_ignorado",
+                path=str(cache_file),
+                motivo="pop_total ausente/zerado ou fonte de populacao desatualizada",
+            )
 
         log.info("demografia_municipios_download_iniciado")
         df_renda = self._baixar_renda_municipios_sidra()
-        df_pop = self._baixar_populacao_18_45_municipios_sidra()
+        # Alterado em 2026-05-15: usa população TOTAL, não proxy 18-45.
+        df_pop = self._baixar_populacao_total_municipios_sidra()
 
         if df_renda.empty:
             raise RuntimeError("SIDRA renda municipal nao retornou dados para a carga nacional.")
         if df_pop.empty:
-            raise RuntimeError("SIDRA populacao 18-45 municipal nao retornou dados para a carga nacional.")
+            raise RuntimeError("SIDRA populacao total municipal nao retornou dados para a carga nacional.")
 
         df = df_renda.merge(df_pop, on="cod_municipio", how="outer")
         if "pop_total" not in df.columns:
@@ -459,8 +477,8 @@ class IBGECenso:
             df["n_domicilios"] = 0.0
         if "densidade_dom" not in df.columns:
             df["densidade_dom"] = 0.0
+        # Alterado em 2026-05-15: pop_total é a coluna canônica de população; pop_18_45 removida.
         df["renda_per_capita"] = pd.to_numeric(df["renda_per_capita"], errors="coerce").fillna(0.0)
-        df["pop_18_45"] = pd.to_numeric(df["pop_18_45"], errors="coerce").fillna(0.0)
         df["pop_total"] = pd.to_numeric(df["pop_total"], errors="coerce").fillna(0.0)
         df["n_domicilios"] = pd.to_numeric(df["n_domicilios"], errors="coerce").fillna(0.0)
         df["densidade_dom"] = pd.to_numeric(df["densidade_dom"], errors="coerce").fillna(0.0)
@@ -477,7 +495,6 @@ class IBGECenso:
                 "cod_municipio",
                 "renda_per_capita",
                 "pop_total",
-                "pop_18_45",
                 "n_domicilios",
                 "densidade_dom",
                 "fonte_renda",
@@ -592,7 +609,6 @@ class IBGECenso:
         df = df.merge(df_demografia, on="cod_municipio", how="left")
         df["renda_per_capita"] = pd.to_numeric(df["renda_per_capita"], errors="coerce").fillna(0.0)
         df["pop_total"] = pd.to_numeric(df["pop_total"], errors="coerce").fillna(0.0)
-        df["pop_18_45"] = pd.to_numeric(df["pop_18_45"], errors="coerce").fillna(0.0)
         df["n_domicilios"] = pd.to_numeric(df["n_domicilios"], errors="coerce").fillna(0.0)
         df["densidade_dom"] = pd.to_numeric(df["densidade_dom"], errors="coerce").fillna(0.0)
         df["nome_municipio"] = df["nome_municipio"].fillna("")
@@ -676,10 +692,11 @@ class IBGECenso:
         )
         return resultado.dropna(subset=["cod_municipio"]).drop_duplicates(subset=["cod_municipio"])
 
-    def _baixar_populacao_18_45_municipios_sidra(self) -> pd.DataFrame:
+    def _baixar_populacao_total_municipios_sidra(self) -> pd.DataFrame:
+        # Alterado em 2026-05-15: removida trava 18-45; busca populacao TOTAL municipal (tabela 4709).
         url = (
-            f"https://apisidra.ibge.gov.br/values/t/{SIDRA_POPULACAO_FAIXA}"
-            f"/n6/all/v/93/p/last/c287/{','.join(SIDRA_PESOS_IDADE_18_45)}"
+            f"https://apisidra.ibge.gov.br/values/t/{SIDRA_POPULACAO_TOTAL_MUNICIPIO}"
+            f"/n6/all/v/93/p/last"
         )
         resp = requests.get(url, timeout=180)
         resp.raise_for_status()
@@ -688,27 +705,24 @@ class IBGECenso:
             return df
 
         codigo_col = self._detectar_coluna_codigo_municipio(df)
-        df["cod_municipio"] = df[codigo_col].astype(str).str.extract(r"(\d{7})")[0]
-        df["peso_idade"] = df["D4C"].astype(str).map(SIDRA_PESOS_IDADE_18_45).fillna(1.0)
-        df["valor"] = pd.to_numeric(
-            df["V"].astype(str).str.replace(",", ".", regex=False),
-            errors="coerce",
-        ).fillna(0.0)
-        df["valor_ponderado"] = df["valor"] * df["peso_idade"]
-        resultado = (
-            df.groupby("cod_municipio", as_index=False)["valor_ponderado"]
-            .sum()
-            .rename(columns={"valor_ponderado": "pop_18_45"})
+        resultado = pd.DataFrame(
+            {
+                "cod_municipio": df[codigo_col].astype(str).str.extract(r"(\d{7})")[0],
+                "pop_total": pd.to_numeric(
+                    df["V"].astype(str).str.replace(",", ".", regex=False),
+                    errors="coerce",
+                ).fillna(0.0),
+            }
         )
-        resultado["fonte_populacao"] = "ibge_censo2022_t9514_18_45_proxy"
-        return resultado
+        resultado["fonte_populacao"] = SIDRA_FONTE_POP_TOTAL
+        return resultado.dropna(subset=["cod_municipio"]).drop_duplicates(subset=["cod_municipio"])
 
     @staticmethod
     def _features_padrao(motivo_fallback_setor: str = "fallback_padrao") -> dict:
+        # Alterado em 2026-05-15: pop_18_45 removido; população total via pop_total.
         return {
             "renda_per_capita": 0.0,
             "pop_total":        0.0,
-            "pop_18_45":        0.0,
             "n_domicilios":     0.0,
             "densidade_dom":    0.0,
             "area_km2":         0.0,

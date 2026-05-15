@@ -45,7 +45,7 @@ Colunas adicionais disponiveis:
 
 - `lat`, `lng`
 - `cod_municipio`, `nome_municipio`
-- `pop_total`, `pop_18_45`, `n_domicilios`, `densidade_dom`
+- `pop_total`, `n_domicilios`, `densidade_dom` (trava 18-45 removida em 2026-05-15; `populacao_proxy` = `pop_total`)
 - `renda_pct_nacional`, `pop_pct_nacional`
 
 ### 2.3 Base censitaria complementar
@@ -177,7 +177,7 @@ Regras de leitura:
 | `tam_renda_base` | float | `renda_per_capita_setor_2022_calibrada` quando `demanda_granularidade='hex_censo'` e a coluna estiver preenchida; senao `renda_per_capita` |
 | `tam_indice_demanda` | float | `score_expansao_hibrido` quando `flag_hex_hibrido_elegivel=True` e `score_expansao_hibrido.notna()`; senao `score_priorizacao` |
 | `tam_indice_demanda_norm` | float | `tam_indice_demanda / 100.0` |
-| `tam_pop_18_45_base` | float | `pop_18_45` quando disponivel em `brasil_estrutural`; senao `populacao_proxy` |
+| `tam_pop_total_base` | float | `populacao_proxy` (= `pop_total`; trava 18-45 removida em 2026-05-15) |
 
 Observacao:
 

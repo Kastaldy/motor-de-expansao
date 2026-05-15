@@ -1,6 +1,6 @@
 # Fase A - Validacao consolidada do Censo 2022
 
-> Data da validacao: 2026-04-09
+> Data da validacao: 2026-05-15
 
 ## 1. Auditoria do join posicional por UF
 
@@ -44,9 +44,9 @@
 
 | UF | Setor mean | Setor median | Setor skew | Outlier % | Zeros % | M1 mean | M1 median | Distribuicao coerente? |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| GO | 975.83 | 889.22 | 4.46 | 1.53 | 1.72 | 1444.27 | 1489.52 | SIM |
-| RJ | 1032.41 | 844.43 | 4.57 | 2.71 | 3.74 | 1402.80 | 1385.75 | SIM |
-| SP | 1192.74 | 970.13 | 4.33 | 3.23 | 2.54 | 1551.84 | 1499.77 | SIM |
+| GO | 974.71 | 889.19 | 4.49 | 1.54 | 1.72 | 1444.27 | 1489.52 | SIM |
+| RJ | 1014.46 | 833.97 | 3.79 | 2.80 | 3.77 | 1402.80 | 1385.75 | SIM |
+| SP | 1168.50 | 963.01 | 3.76 | 3.09 | 2.56 | 1551.84 | 1499.77 | SIM |
 
 ### Capitais piloto
 
@@ -60,60 +60,52 @@
 
 | UF | Cidade | Hex | Std municipal | Std setor | Ganho std | Amp municipal | Amp setor | Ganho amplitude | Correlacao |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| GO | Goiania | 128 | 0.00 | 23.54 | 23.54 | 0.00 | 75.77 | 75.77 | NA_baseline_uniforme |
-| RJ | Rio de Janeiro | 189 | 0.00 | 22.90 | 22.90 | 0.00 | 72.43 | 72.43 | NA_baseline_uniforme |
-| SP | Sao Paulo | 296 | 0.00 | 19.29 | 19.29 | 0.00 | 61.42 | 61.42 | NA_baseline_uniforme |
+| GO | Goiania | 128 | 0.00 | 22.97 | 22.97 | 0.00 | 73.38 | 73.38 | NA_baseline_uniforme |
+| RJ | Rio de Janeiro | 189 | 0.00 | 23.63 | 23.63 | 0.00 | 72.66 | 72.66 | NA_baseline_uniforme |
+| SP | Sao Paulo | 296 | 0.00 | 19.23 | 19.23 | 0.00 | 61.04 | 61.04 | NA_baseline_uniforme |
 
 ## 4. Consistencia espacial intraurbana
 
 | UF | Cidade | Hex avaliados | Threshold | Outliers criticos | Status |
 | --- | --- | --- | --- | --- | --- |
 | GO | Goiania | 89 | 35.00 | 1 | REVIEW |
-| RJ | Rio de Janeiro | 140 | 57.56 | 1 | REVIEW |
+| RJ | Rio de Janeiro | 130 | 57.37 | 1 | REVIEW |
 | SP | Sao Paulo | 217 | 35.00 | 1 | REVIEW |
 
 ## 5. Stress test tecnico
 
-### Perfil medido nas UFs piloto
-
-| UF | Hex | Setores | Tempo s | Peak RSS MB |
-| --- | --- | --- | --- | --- |
-| GO | 59952 | 12824 | 296.60 | 924.29 |
-| RJ | 7895 | 40703 | 13.34 | 568.44 |
-| SP | 47139 | 101273 | 155.59 | 853.73 |
-
 | UF | Hex | Setores | Tempo est. s | Peak RSS est. MB |
 | --- | --- | --- | --- | --- |
-| AC | 28370 | 2215 | 114.86 | 437.39 |
-| AL | 4544 | 6359 | 18.40 | 70.06 |
-| AM | 292793 | 10729 | 1185.40 | 4514.04 |
-| AP | 24162 | 1492 | 97.82 | 372.51 |
-| BA | 93918 | 30985 | 380.23 | 1447.95 |
-| CE | 23975 | 20979 | 97.06 | 369.63 |
-| DF | 999 | 5418 | 4.04 | 15.40 |
-| ES | 8158 | 8706 | 33.03 | 125.77 |
-| GO | 59952 | 12861 | 242.72 | 924.29 |
-| MA | 53180 | 16301 | 215.30 | 819.88 |
-| MG | 104078 | 51387 | 421.37 | 1604.59 |
-| MS | 69344 | 6117 | 280.74 | 1069.09 |
-| MT | 165033 | 9381 | 668.15 | 2544.34 |
-| PA | 213997 | 16714 | 866.38 | 3299.23 |
-| PB | 9223 | 9639 | 37.34 | 142.19 |
-| PE | 16013 | 19578 | 64.83 | 246.88 |
-| PI | 40869 | 7340 | 165.46 | 630.08 |
-| PR | 40261 | 23777 | 163.00 | 620.71 |
-| RJ | 7895 | 41700 | 31.96 | 121.72 |
-| RN | 8555 | 6095 | 34.64 | 131.89 |
-| RO | 45962 | 3456 | 186.08 | 708.60 |
-| RR | 43424 | 1783 | 175.81 | 669.48 |
-| RS | 60811 | 25569 | 246.20 | 937.53 |
-| SC | 20100 | 16736 | 81.38 | 309.89 |
-| SE | 3588 | 5346 | 14.53 | 55.32 |
-| SP | 47139 | 103319 | 190.85 | 726.75 |
-| TO | 46302 | 4117 | 187.46 | 713.85 |
+| AC | 28370 | 2215 | 56.74 | N/A |
+| AL | 4544 | 6359 | 9.09 | N/A |
+| AM | 292793 | 10729 | 585.59 | N/A |
+| AP | 24162 | 1492 | 48.32 | N/A |
+| BA | 93918 | 30985 | 187.84 | N/A |
+| CE | 23975 | 20979 | 47.95 | N/A |
+| DF | 999 | 5418 | 2.00 | N/A |
+| ES | 8158 | 8706 | 16.32 | N/A |
+| GO | 59952 | 12861 | 119.90 | N/A |
+| MA | 53180 | 16301 | 106.36 | N/A |
+| MG | 104078 | 51387 | 208.16 | N/A |
+| MS | 69344 | 6117 | 138.69 | N/A |
+| MT | 165033 | 9381 | 330.07 | N/A |
+| PA | 213997 | 16714 | 427.99 | N/A |
+| PB | 9223 | 9639 | 18.45 | N/A |
+| PE | 16013 | 19578 | 32.03 | N/A |
+| PI | 40869 | 7340 | 81.74 | N/A |
+| PR | 40261 | 23777 | 80.52 | N/A |
+| RJ | 7895 | 41700 | 15.79 | N/A |
+| RN | 8555 | 6095 | 17.11 | N/A |
+| RO | 45962 | 3456 | 91.92 | N/A |
+| RR | 43424 | 1783 | 86.85 | N/A |
+| RS | 60811 | 25569 | 121.62 | N/A |
+| SC | 20100 | 16736 | 40.20 | N/A |
+| SE | 3588 | 5346 | 7.18 | N/A |
+| SP | 47139 | 103319 | 94.28 | N/A |
+| TO | 46302 | 4117 | 92.60 | N/A |
 
-- Tempo nacional estimado (sequencial): 103.42 min
-- Pico de memoria estimado na maior UF: 4514.04 MB
+- Tempo nacional estimado (sequencial): 51.09 min
+- Pico de memoria estimado na maior UF: N/A
 - UFs com alerta de join >5%: AM, RR
 - Gargalo principal: Overlay geopandas/shapely e o principal gargalo; o pico de memoria fica concentrado na maior UF processada sequencialmente.
 

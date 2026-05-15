@@ -171,6 +171,8 @@ def _padronizar_censo(df: pd.DataFrame, *, fonte: str) -> pd.DataFrame:
         "score_setor_2022_calibrado",
         "coverage_pct_setor_2022",
         "qualidade_join_uf",
+        "join_mismatch_pct_uf",
+        "status_validacao_join_uf",
         "flag_join_uf_restrito",
         "flag_baixa_pop_setor",
         "flag_outlier_espacial",
@@ -187,6 +189,18 @@ def _padronizar_censo(df: pd.DataFrame, *, fonte: str) -> pd.DataFrame:
     }.items():
         if col not in out.columns:
             out[col] = default
+    if "qualidade_join_uf" not in out.columns or out["qualidade_join_uf"].isna().all():
+        if "join_mismatch_pct_uf" in out.columns:
+            mismatch = pd.to_numeric(out["join_mismatch_pct_uf"], errors="coerce")
+            out["qualidade_join_uf"] = np.select(
+                [mismatch < 2.0, mismatch <= 5.0],
+                ["A", "B"],
+                default="C",
+            )
+            out.loc[mismatch.isna(), "qualidade_join_uf"] = pd.NA
+        elif "status_validacao_join_uf" in out.columns:
+            status = out["status_validacao_join_uf"].astype("string")
+            out["qualidade_join_uf"] = np.where(status.eq("GO"), "B", "C")
     out["fonte_camada_censitaria"] = fonte
     return out
 

@@ -91,7 +91,7 @@ A sidebar do dashboard inclui um campo de busca de hexagono por coordenada geogr
 Hexagonos com menos de 5.000 habitantes sao descartados das abas Carteira e Plano e recebem cor cinza nos mapas.
 
 - Constante: `POP_MIN_ACIONAVEL = 5_000` em `dashboard/constants.py`
-- Fonte preferencial de populacao: `pop_total_setor_2022` (granular, UFs A/B); fallback: `populacao_proxy` (municipal)
+- Fonte preferencial de populacao: `pop_total_setor_2022` (granular, UFs A/B); fallback: `populacao_proxy` = `pop_total` municipal (alterado 2026-05-15: removida trava 18-45)
 - Cor dos hexes descartados nos mapas: `[120, 120, 140, 70]` (cinza semitransparente)
 - Legenda "Descartado <5k hab" visivel nos mapas principal e hibrido
 - M1 (`score_priorizacao`) nao e alterado por este corte
@@ -127,6 +127,7 @@ Fluxo oficial:
 Regra canonica de score:
 
 ```python
+# populacao_proxy = pop_total (trava de faixa etária 18-45 removida em 2026-05-15)
 renda_pct_nacional = percentil_nacional(renda_per_capita)
 pop_pct_nacional = percentil_nacional(populacao_proxy)
 
@@ -200,6 +201,35 @@ Testes relevantes do M1:
 ```bash
 python -m pytest tests/integration/test_base_h3_brasil.py tests/integration/test_hex_enrichment_brasil.py tests/integration/test_fase1_bi_exports.py tests/contracts/test_fontes_gratuitas.py -v
 ```
+
+## Camada censitaria — populacao v0001
+
+A variavel correta para populacao total no Censo IBGE 2022 Basico e `v0001` (Total de pessoas). Antes de 2026-05-15 era usada `v0002` (Total de Domicilios), causando undercount de ~2.3x.
+
+**Status atual:**
+- Piloto GO/SP/RJ (`censo2022_setores_calibrado.parquet`): corrigido e rematerializado.
+- Nacional — 21 UFs restantes (`censo2022_setores_calibrado_nacional_completo.parquet`): aguarda regeneracao (Bloco 8 do PRD).
+
+**Cadeia de regeneracao** (em `jobs/pipelines/`, executar na ordem):
+
+| passo | script | saida |
+| --- | --- | --- |
+| 1 | `fase_a_censo2022_setores.py` | `censo2022_setores_h3_res7.parquet`, `nacional_completo.parquet` |
+| 2 | `validar_fase_a_censo2022.py` + copiar para `validado_v2` | `censo2022_setores_validado_v2.parquet` |
+| 3 | `calibrar_renda_setor_2022.py` | `censo2022_setores_calibrado.parquet` |
+| 4 | `modelo_hibrido_expansao.py` | `oportunidades_expansao_hibrido.parquet` |
+| 5 | `calcular_colunas_mercado.py` | `hexagonos_mercado_mapeado.parquet` |
+| 6 | `gerar_carteira_acionavel.py` | `carteira_expansao_acionavel.parquet` |
+| 7 | `gerar_plano_expansao_curto_prazo.py` | `plano_expansao_curto_prazo.parquet` |
+
+**Testes de regressao da camada censitaria:**
+
+```bash
+python -m pytest tests/unit/test_pop_censo_v0001.py -v
+python -m pytest tests/integration/test_modelo_hibrido_expansao.py tests/integration/test_modelo_mercado_hexagonos.py -v
+```
+
+UFs com `qualidade_join_uf=C` (AM, RR, AL, AP, CE, MA, PA, PB, PE, RO, SE) sao filtradas automaticamente pelo modelo hibrido; nao afetam a carteira final.
 
 ## Docker, API e PostGIS
 

@@ -699,6 +699,13 @@ def aplicar_flags_validacao(
             "join_consistente": "status_validacao_join_uf",
         }
     )
+    mismatch = pd.to_numeric(join_flags["join_mismatch_pct_uf"], errors="coerce")
+    join_flags["qualidade_join_uf"] = np.select(
+        [mismatch < 2.0, mismatch <= 5.0],
+        ["A", "B"],
+        default="C",
+    )
+    join_flags.loc[mismatch.isna(), "qualidade_join_uf"] = pd.NA
     renda_flags = renda_proxy[
         ["uf", "corr_proxy_vs_m1", "transformacao_v0005_melhor_que_bruta"]
     ].rename(

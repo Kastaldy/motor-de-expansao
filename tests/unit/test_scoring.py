@@ -15,7 +15,7 @@ def df_hexagonos():
         {
             "hex_id": ["hex_A", "hex_B", "hex_C"],
             "renda_per_capita": [8_000, 3_000, 1_500],
-            "pop_18_45": [15_000, 8_000, 3_000],
+            "pop_total": [15_000, 8_000, 3_000],
             "n_academias_osm": [0, 2, 5],
             "score_vitalidade": [50.0, 50.0, 50.0],
         }
@@ -70,9 +70,9 @@ class TestM1CoreScoring:
     def test_score_estrutural_core_calcula_percentis_pesos_e_clip(self):
         df = pd.DataFrame(
             [
-                {"hex_id": "top", "renda_per_capita": 6000.0, "pop_18_45": 600.0},
-                {"hex_id": "mid", "renda_per_capita": 3000.0, "pop_18_45": 300.0},
-                {"hex_id": "zero", "renda_per_capita": 6000.0, "pop_18_45": 0.0},
+                {"hex_id": "top", "renda_per_capita": 6000.0, "pop_total": 600.0},
+                {"hex_id": "mid", "renda_per_capita": 3000.0, "pop_total": 300.0},
+                {"hex_id": "zero", "renda_per_capita": 6000.0, "pop_total": 0.0},
             ]
         )
 

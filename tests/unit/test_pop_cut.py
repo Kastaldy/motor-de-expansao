@@ -28,7 +28,7 @@ def test_dado_censitario_granular_usa_setor_2022():
     assert bool(result.loc[0, "flag_pop_min_5k"]) is True
 
 
-def test_fallback_proxy_municipal_quando_nao_granular():
+def test_fallback_total_municipal_quando_nao_granular():
     df = _df(
         confianca_geografica="municipal",
         pop_total_setor_2022=15_000.0,
@@ -36,7 +36,7 @@ def test_fallback_proxy_municipal_quando_nao_granular():
     )
     result = derive_pop_cut_columns(df)
 
-    assert result.loc[0, "fonte_populacao_corte"] == "proxy_municipal"
+    assert result.loc[0, "fonte_populacao_corte"] == "total_municipal"
     assert float(result.loc[0, "populacao_corte_hex"]) == 12_000.0
     assert bool(result.loc[0, "flag_pop_min_5k"]) is True
 
@@ -57,7 +57,7 @@ def test_abaixo_do_limiar_retorna_flag_false():
     )
     result = derive_pop_cut_columns(df)
 
-    assert result.loc[0, "fonte_populacao_corte"] == "proxy_municipal"
+    assert result.loc[0, "fonte_populacao_corte"] == "total_municipal"
     assert bool(result.loc[0, "flag_pop_min_5k"]) is False
 
 
@@ -71,14 +71,14 @@ def test_exatamente_no_limiar_retorna_flag_true():
     assert bool(result.loc[0, "flag_pop_min_5k"]) is True
 
 
-def test_granular_sem_setor_pop_cai_para_proxy():
+def test_granular_sem_setor_pop_cai_para_total_municipal():
     df = _df(
         confianca_geografica="granular",
         populacao_proxy=11_000.0,
     )
     result = derive_pop_cut_columns(df)
 
-    assert result.loc[0, "fonte_populacao_corte"] == "proxy_municipal"
+    assert result.loc[0, "fonte_populacao_corte"] == "total_municipal"
     assert bool(result.loc[0, "flag_pop_min_5k"]) is True
 
 
@@ -107,8 +107,8 @@ def test_nao_altera_score_priorizacao():
 
 def test_build_pop_cut_lookup_extrai_subset_por_hex_id():
     df = pd.DataFrame([
-        {"hex_id": "a", "populacao_corte_hex": 15_000.0, "fonte_populacao_corte": "proxy_municipal", "flag_pop_min_5k": True, "score_priorizacao": 80.0},
-        {"hex_id": "b", "populacao_corte_hex": 5_000.0, "fonte_populacao_corte": "proxy_municipal", "flag_pop_min_5k": False, "score_priorizacao": 70.0},
+        {"hex_id": "a", "populacao_corte_hex": 15_000.0, "fonte_populacao_corte": "total_municipal", "flag_pop_min_5k": True, "score_priorizacao": 80.0},
+        {"hex_id": "b", "populacao_corte_hex": 5_000.0, "fonte_populacao_corte": "total_municipal", "flag_pop_min_5k": False, "score_priorizacao": 70.0},
     ])
     lookup = build_pop_cut_lookup(df)
 

@@ -1,39 +1,39 @@
 # Fase A - Pipeline Nacional Completo (Bloco 7)
 
-> Data: 2026-04-23
+> Data: 2026-05-15
 > UFs: AC, AL, AM, AP, BA, CE, ES, MA, MS, MT, PA, PB, PE, PI, PR, RN, RO, RR, SC, SE, TO
-> k_global fixo da calibracao validada: 1.0213
+> k_global fixo da calibracao validada: 1.0239
 
 ## 1. Validacao tecnica por UF
 
 | UF | Coverage % | Amp p95-p05 | Std | Mismatch % | Classe join | qualidade_join_uf | Status tecnico |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| AC | 85.58 | 54.11 | 16.06 | 3.97 | B | B | GO |
-| AL | 100.00 | 47.98 | 16.03 | 1.45 | A | C | NO-GO |
-| AM | 60.59 | 56.00 | 16.92 | 10.50 | C | C | NO-GO |
-| AP | 62.14 | 59.18 | 18.64 | 3.49 | B | C | NO-GO |
-| BA | 99.31 | 59.77 | 18.30 | 0.79 | A | A | GO |
-| CE | 99.89 | 49.36 | 16.29 | 2.20 | B | C | NO-GO |
-| ES | 99.88 | 70.11 | 20.84 | 1.59 | A | A | GO |
-| MA | 97.90 | 48.12 | 15.96 | 1.66 | A | C | NO-GO |
-| MS | 99.49 | 72.62 | 21.63 | 0.87 | A | A | GO |
-| MT | 95.68 | 83.70 | 24.31 | 2.06 | B | B | GO |
-| PA | 80.96 | 63.56 | 18.88 | 3.88 | B | C | NO-GO |
-| PB | 100.00 | 47.25 | 15.90 | 0.79 | A | C | NO-GO |
-| PE | 99.86 | 47.92 | 16.00 | 0.82 | A | C | NO-GO |
-| PI | 98.39 | 50.43 | 16.22 | 0.84 | A | A | GO |
-| PR | 98.57 | 72.53 | 21.41 | 1.44 | A | A | GO |
-| RN | 99.99 | 54.83 | 17.36 | 1.35 | A | A | GO |
-| RO | 84.76 | 78.33 | 22.62 | 4.40 | B | C | NO-GO |
-| RR | 69.86 | 48.68 | 15.29 | 9.59 | C | C | NO-GO |
-| SC | 99.36 | 67.02 | 20.10 | 1.80 | A | A | GO |
-| SE | 100.00 | 46.74 | 15.59 | 1.91 | A | C | NO-GO |
-| TO | 99.17 | 68.99 | 20.92 | 2.14 | B | B | GO |
+| AC | 85.29 | 53.24 | 15.86 | 3.97 | B | B | GO |
+| AL | 100.00 | 48.07 | 16.05 | 1.45 | A | C | NO-GO |
+| AM | 55.87 | 49.73 | 14.54 | 10.50 | C | C | NO-GO |
+| AP | 61.62 | 57.87 | 17.46 | 3.49 | B | C | NO-GO |
+| BA | 98.10 | 58.77 | 17.90 | 0.79 | A | A | GO |
+| CE | 99.84 | 49.38 | 16.27 | 2.20 | B | C | NO-GO |
+| ES | 99.85 | 69.90 | 20.77 | 1.59 | A | A | GO |
+| MA | 97.64 | 46.66 | 15.62 | 1.66 | A | C | NO-GO |
+| MS | 99.45 | 71.79 | 21.20 | 0.87 | A | A | GO |
+| MT | 93.32 | 83.31 | 23.90 | 2.06 | B | B | GO |
+| PA | 78.66 | 61.26 | 17.68 | 3.88 | B | C | NO-GO |
+| PB | 99.99 | 46.82 | 15.79 | 0.79 | A | C | NO-GO |
+| PE | 99.83 | 47.99 | 15.93 | 0.82 | A | C | NO-GO |
+| PI | 97.30 | 49.82 | 15.98 | 0.84 | A | C | NO-GO |
+| PR | 98.11 | 71.89 | 21.27 | 1.44 | A | A | GO |
+| RN | 99.99 | 54.88 | 17.17 | 1.35 | A | A | GO |
+| RO | 81.62 | 74.31 | 21.94 | 4.40 | B | C | NO-GO |
+| RR | 65.56 | 43.48 | 13.36 | 9.59 | C | C | NO-GO |
+| SC | 99.20 | 65.46 | 19.87 | 1.80 | A | A | GO |
+| SE | 100.00 | 46.71 | 15.41 | 1.91 | A | C | NO-GO |
+| TO | 98.25 | 68.89 | 20.84 | 2.14 | B | B | GO |
 
 ## 2. Resumo de cobertura
 
-- UFs com gates aprovados (qualidade A/B): 10 — AC, BA, ES, MS, MT, PI, PR, RN, SC, TO
-- UFs com gate degradado (qualidade C): 11 — AL, AM, AP, CE, MA, PA, PB, PE, RO, RR, SE
+- UFs com gates aprovados (qualidade A/B): 9 — AC, BA, ES, MS, MT, PR, RN, SC, TO
+- UFs com gate degradado (qualidade C): 12 — AL, AM, AP, CE, MA, PA, PB, PE, PI, RO, RR, SE
 - Nota: gates sao informacionais. Todas as UFs foram incluidas no parquet de saida.
 
 ## 3. Decisao consolidada

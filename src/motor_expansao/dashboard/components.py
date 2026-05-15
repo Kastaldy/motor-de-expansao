@@ -704,13 +704,15 @@ def build_map_figure(
     map_df["flag_prioridade_label"] = map_df["flag_prioridade"].map({True: "Sim", False: "Nao"})
     is_granular = (map_df.get("confianca_geografica", pd.Series("municipal", index=map_df.index)) == "granular")
     _na_float = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
+    # Fallback municipal: preferir pop_total (população total) sobre populacao_proxy legado (18-45).
+    pop_municipal = map_df.get("pop_total", map_df.get("populacao_proxy", _na_float))
     has_setor_pop = "pop_total_setor_2022" in map_df.columns and map_df["pop_total_setor_2022"].notna().any()
     if has_setor_pop:
         use_setor_pop = is_granular & map_df["pop_total_setor_2022"].notna()
-        pop_val = map_df["pop_total_setor_2022"].where(use_setor_pop, map_df.get("populacao_proxy", _na_float))
+        pop_val = map_df["pop_total_setor_2022"].where(use_setor_pop, pop_municipal)
         pop_suffix = np.where(use_setor_pop, "", " (municipal)")
     else:
-        pop_val = map_df.get("populacao_proxy", _na_float)
+        pop_val = pop_municipal
         pop_suffix = np.full(len(map_df), " (municipal)")
     map_df["pop_fmt"] = pop_val.map(lambda v: format_int(v) if pd.notna(v) else "-") + pop_suffix
     has_setor_renda = "renda_per_capita_setor_2022_calibrada" in map_df.columns and map_df["renda_per_capita_setor_2022_calibrada"].notna().any()
@@ -890,13 +892,15 @@ def build_hybrid_map_figure(
     map_df["top_hex_label"] = map_df["top_hex_intraurbano"].map({True: "Sim", False: "Nao"})
     map_df["motivo_label"] = map_df["motivo_nao_elegivel_censo"].astype(object).fillna("-").astype(str)
     _na_float_h = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
+    # Fallback municipal: preferir pop_total (população total) sobre populacao_proxy legado (18-45).
+    pop_municipal_h = map_df.get("pop_total", map_df.get("populacao_proxy", _na_float_h))
     has_setor_pop_h = "pop_total_setor_2022" in map_df.columns and map_df["pop_total_setor_2022"].notna().any()
     if has_setor_pop_h:
         use_setor_pop_h = map_df["pop_total_setor_2022"].notna()
-        pop_val_h = map_df["pop_total_setor_2022"].where(use_setor_pop_h, map_df.get("populacao_proxy", _na_float_h))
+        pop_val_h = map_df["pop_total_setor_2022"].where(use_setor_pop_h, pop_municipal_h)
         pop_suffix_h = np.where(use_setor_pop_h, "", " (municipal)")
     else:
-        pop_val_h = map_df.get("populacao_proxy", _na_float_h)
+        pop_val_h = pop_municipal_h
         pop_suffix_h = np.full(len(map_df), " (municipal)")
     map_df["pop_fmt"] = pop_val_h.map(lambda v: format_int(v) if pd.notna(v) else "-") + pop_suffix_h
     has_setor_renda_h = "renda_per_capita_setor_2022_calibrada" in map_df.columns and map_df["renda_per_capita_setor_2022_calibrada"].notna().any()
