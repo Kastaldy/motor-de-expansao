@@ -307,6 +307,43 @@ def test_faixa_alta_usa_amarelo_no_mapa_e_na_legenda():
     assert streamlit_app.hex_to_rgba(streamlit_app.FAIXA_COLORS["alta"], 140) == [245, 158, 11, 140]
 
 
+def test_load_competitors_ignora_skyfit(tmp_path):
+    (tmp_path / "unidades_smart_fit.csv").write_text(
+        "nome_unidade;latitude;longitude;data_coleta\n"
+        "Augusta;-23.5572558791;-46.6591845018;2026-04-22\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "SkyFit_unidades_geocodificado.csv").write_text(
+        "NOMENCLATURA UNIDADE;CIDADE;ESTADO;latitude;longitude;geocoding_status\n"
+        "SKYFIT TAQUARA;RIO DE JANEIRO;RJ;-22.9236315;-43.3750906;OK\n",
+        encoding="utf-8-sig",
+    )
+    competitors = streamlit_app.load_competitor_points(tmp_path)
+    assert "skyfit" not in set(competitors["rede"])
+    assert "smart_fit" in set(competitors["rede"])
+
+
+def test_load_competitors_carrega_multiplas_planilhas(tmp_path):
+    (tmp_path / "unidades_smart_fit.csv").write_text(
+        "nome_unidade;latitude;longitude;data_coleta\n"
+        "Augusta;-23.5572558791;-46.6591845018;2026-04-22\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "unidades_bluefit.csv").write_text(
+        "nome_unidade;latitude;longitude;data_coleta\n"
+        "Blue Rio;-22.90;-43.20;2026-04-22\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "unidades_26fit.csv").write_text(
+        "nome_unidade;latitude;longitude;data_coleta\n"
+        "Alegrete;-29.781996;-55.793823;2026-04-29\n",
+        encoding="utf-8",
+    )
+    competitors = streamlit_app.load_competitor_points(tmp_path)
+    assert set(competitors["rede"]) == {"smart_fit", "bluefit", "26fit"}
+    assert len(competitors) == 3
+
+
 def test_build_map_figure_mostra_todos_os_hexes_validos_da_uf_sem_cap_editorial():
     df = pd.DataFrame(
         [
@@ -427,6 +464,70 @@ def test_build_map_figure_mostra_todos_os_hexes_validos_da_uf_sem_cap_editorial(
     assert set(rendered["hex_id"]) == {"sp_granular_1", "sp_granular_2", "sp_granular_3"}
     assert rendered["hex_id"].nunique() == len(rendered)
     assert rendered["confianca_geografica"].tolist() == ["granular", "granular", "granular"]
+
+
+def test_build_map_figure_adiciona_pins_de_concorrentes_no_recorte():
+    df = pd.DataFrame(
+        [
+            {
+                "hex_id": "sp_granular",
+                "lat": -23.55,
+                "lng": -46.63,
+                "cidade": "Sao Paulo",
+                "nome_municipio": "Sao Paulo",
+                "uf": "SP",
+                "faixa_oportunidade": "alta",
+                "score_priorizacao": 98.0,
+                "hex_score_estrutural": 92.0,
+                "flag_viavel": True,
+                "flag_prioridade": True,
+                "score_setor_2022_calibrado": 88.0,
+                "coverage_pct_setor_2022": 97.0,
+                "qualidade_join_uf": "A",
+                "flag_censo_disponivel": True,
+            }
+        ]
+    )
+    competitors = pd.DataFrame(
+        [
+            {
+                "rede": "smart_fit",
+                "rede_label": "Smart Fit",
+                "nome_unidade": "Smart Paulista",
+                "lat": -23.551,
+                "lng": -46.631,
+                "cidade": "",
+                "uf": "",
+                "arquivo_origem": "unidades_smart_fit.csv",
+            },
+            {
+                "rede": "bluefit",
+                "rede_label": "Bluefit",
+                "nome_unidade": "Blue Rio",
+                "lat": -22.90,
+                "lng": -43.20,
+                "cidade": "",
+                "uf": "",
+                "arquivo_origem": "unidades_bluefit.csv",
+            },
+        ]
+    )
+
+    deck, points = streamlit_app.build_map_figure(
+        df,
+        selected_ufs=["SP"],
+        selected_cities=[],
+        competitors_df=competitors,
+    )
+
+    assert deck is not None
+    assert points == 1
+    assert len(deck.layers) == 2
+    rendered_hex = pd.DataFrame(deck.layers[0].data)
+    rendered_competitors = pd.DataFrame(deck.layers[1].data)
+    assert "tooltip_title" in rendered_hex.columns
+    assert rendered_competitors["nome_unidade"].tolist() == ["Smart Paulista"]
+    assert rendered_competitors.loc[0, "icon_data"]["url"].startswith("data:image/")
 
 
 def test_build_map_figure_usa_geometria_granular_em_uf_ab_e_fallback_municipal_em_uf_c():
@@ -573,3 +674,268 @@ def test_tabelas_hibridas_expoem_flags_de_rastreabilidade():
     assert municipios.loc[0, "Melhor Hex Dens. < 5k"] == "Sim"
     assert "Outlier" in portfolio.columns
     assert portfolio.loc[0, "Dens. < 5k"] == "Sim"
+
+
+def test_enrich_dashboard_data_deriva_colunas_pop_cut():
+    base_df = pd.DataFrame(
+        [
+            {
+                "hex_id": "h1",
+                "lat": -23.55,
+                "lng": -46.63,
+                "uf": "SP",
+                "cidade": "Sao Paulo",
+                "regiao": "SE",
+                "score_priorizacao": 80.0,
+                "hex_score_estrutural": 75.0,
+                "ajuste_executivo": 5.0,
+                "faixa_oportunidade": "alta",
+                "flag_viavel": True,
+                "flag_prioridade": True,
+                "rank_brasil": 1,
+                "rank_uf": 1,
+                "rank_cidade": 1,
+                "renda_per_capita": 5000.0,
+                "populacao_proxy": 15_000.0,
+            },
+            {
+                "hex_id": "h2",
+                "lat": -23.56,
+                "lng": -46.64,
+                "uf": "SP",
+                "cidade": "Sao Paulo",
+                "regiao": "SE",
+                "score_priorizacao": 70.0,
+                "hex_score_estrutural": 65.0,
+                "ajuste_executivo": 5.0,
+                "faixa_oportunidade": "media",
+                "flag_viavel": False,
+                "flag_prioridade": False,
+                "rank_brasil": 2,
+                "rank_uf": 2,
+                "rank_cidade": 2,
+                "renda_per_capita": 4000.0,
+                "populacao_proxy": 3_000.0,
+            },
+        ]
+    )
+
+    enriched = streamlit_app.enrich_dashboard_data(base_df)
+
+    assert "populacao_corte_hex" in enriched.columns
+    assert "fonte_populacao_corte" in enriched.columns
+    assert "flag_pop_min_5k" in enriched.columns
+    assert bool(enriched.loc[enriched["hex_id"] == "h1", "flag_pop_min_5k"].values[0]) is True
+    assert bool(enriched.loc[enriched["hex_id"] == "h2", "flag_pop_min_5k"].values[0]) is False
+    assert enriched.loc[enriched["hex_id"] == "h1", "score_priorizacao"].values[0] == 80.0
+
+
+def test_enrich_dashboard_data_usa_setor_2022_quando_granular():
+    base_df = pd.DataFrame(
+        [
+            {
+                "hex_id": "g1",
+                "lat": -15.0,
+                "lng": -47.0,
+                "uf": "DF",
+                "cidade": "Brasilia",
+                "regiao": "CO",
+                "score_priorizacao": 95.0,
+                "hex_score_estrutural": 90.0,
+                "ajuste_executivo": 5.0,
+                "faixa_oportunidade": "prioridade_maxima",
+                "flag_viavel": True,
+                "flag_prioridade": True,
+                "rank_brasil": 1,
+                "rank_uf": 1,
+                "rank_cidade": 1,
+                "renda_per_capita": 7000.0,
+                "populacao_proxy": 5_000.0,
+            }
+        ]
+    )
+    hybrid_df = pd.DataFrame(
+        [
+            {
+                "hex_id": "g1",
+                "nome_municipio": "Brasilia",
+                "qualidade_join_uf": "A",
+                "flag_censo_disponivel": True,
+                "pop_total_setor_2022": 20_000.0,
+                "score_setor_2022_calibrado": 88.0,
+                "flag_censo_elegivel": True,
+                "flag_hex_hibrido_elegivel": True,
+                "top_municipio": True,
+                "top_municipio_hibrido": True,
+                "top_hex_intraurbano": True,
+                "rank_hex_intraurbano": 1,
+                "rank_municipio_uf": 1,
+                "coverage_pct_setor_2022": 99.0,
+                "flag_join_uf_restrito": False,
+                "flag_baixa_pop_setor": False,
+                "flag_outlier_espacial": False,
+                "motivo_nao_elegivel_censo": "elegivel",
+                "top_oportunidade_municipio": True,
+            }
+        ]
+    )
+
+    enriched = streamlit_app.enrich_dashboard_data(base_df, hybrid_df)
+
+    row = enriched.loc[enriched["hex_id"] == "g1"].iloc[0]
+    assert row["fonte_populacao_corte"] == "setor_2022"
+    assert float(row["populacao_corte_hex"]) == 20_000.0
+    assert bool(row["flag_pop_min_5k"]) is True
+
+
+def test_parse_coordinate_input_via_streamlit_app():
+    assert streamlit_app.parse_coordinate_input("-23.55,-46.63") == pytest.approx((-23.55, -46.63))
+    assert streamlit_app.parse_coordinate_input("-23,55; -46,63") == pytest.approx((-23.55, -46.63))
+    assert streamlit_app.parse_coordinate_input("invalido") is None
+    assert streamlit_app.parse_coordinate_input("20.0,-50.0") is None  # fora do Brasil
+
+
+def test_lookup_hex_by_coord_encontra_hex_na_base():
+    import h3
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([{
+        "hex_id": hex_id,
+        "lat": lat,
+        "lng": lng,
+        "uf": "SP",
+        "cidade": "Sao Paulo",
+        "score_priorizacao": 80.0,
+        "rank_brasil": 100,
+    }])
+    result = streamlit_app.lookup_hex_by_coord(lat, lng, df)
+    assert result is not None
+    assert result["hex_id"] == hex_id
+    assert result["_not_found"] is False
+
+
+def test_build_map_figure_centraliza_no_search_pin_e_adiciona_layer():
+    import h3
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([{
+        "hex_id": hex_id,
+        "lat": lat,
+        "lng": lng,
+        "cidade": "Sao Paulo",
+        "nome_municipio": "Sao Paulo",
+        "uf": "SP",
+        "faixa_oportunidade": "alta",
+        "score_priorizacao": 80.0,
+        "hex_score_estrutural": 75.0,
+        "flag_viavel": True,
+        "flag_prioridade": True,
+        "score_setor_2022_calibrado": pd.NA,
+        "coverage_pct_setor_2022": pd.NA,
+        "qualidade_join_uf": "C",
+        "flag_censo_disponivel": False,
+    }])
+
+    deck, points = streamlit_app.build_map_figure(
+        df,
+        selected_ufs=["SP"],
+        selected_cities=[],
+        search_pin=(-15.77, -47.93),
+    )
+
+    assert deck is not None
+    assert len(deck.layers) == 2  # hex layer + pin layer
+    view = deck.initial_view_state
+    assert view.latitude == pytest.approx(-15.77)
+    assert view.longitude == pytest.approx(-47.93)
+    assert view.zoom == pytest.approx(10.0)
+
+
+def _hex_row(hex_id: str, lat: float, lng: float, **kwargs) -> dict:
+    base = {
+        "hex_id": hex_id,
+        "lat": lat,
+        "lng": lng,
+        "cidade": "Sao Paulo",
+        "nome_municipio": "Sao Paulo",
+        "uf": "SP",
+        "faixa_oportunidade": "alta",
+        "score_priorizacao": 80.0,
+        "hex_score_estrutural": 75.0,
+        "flag_viavel": True,
+        "flag_prioridade": True,
+        "score_setor_2022_calibrado": 85.0,
+        "coverage_pct_setor_2022": 97.0,
+        "qualidade_join_uf": "A",
+        "flag_censo_disponivel": True,
+    }
+    base.update(kwargs)
+    return base
+
+
+def test_build_map_figure_pinta_hex_descartado_por_pop_com_cor_neutra():
+    import h3
+    lat_ok, lng_ok = -23.55, -46.63
+    lat_bad, lng_bad = -23.65, -46.50  # coords diferentes o suficiente para hex distinto
+    hex_ok = h3.latlng_to_cell(lat_ok, lng_ok, 7)
+    hex_bad = h3.latlng_to_cell(lat_bad, lng_bad, 7)
+    assert hex_ok != hex_bad, "sanity: coords devem mapear para hexes distintos"
+
+    df = pd.DataFrame([
+        _hex_row(hex_ok, lat_ok, lng_ok, flag_pop_min_5k=True),
+        _hex_row(hex_bad, lat_bad, lng_bad, flag_pop_min_5k=False),
+    ])
+
+    deck, points = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+
+    assert deck is not None
+    assert points == 2
+    rendered = pd.DataFrame(deck.layers[0].data).set_index("hex_id")
+    # hex descartado deve ter cor cinza neutra
+    assert rendered.loc[hex_bad, "fill_color"] == [120, 120, 140, 70]
+    # hex nao descartado nao deve ter cor cinza
+    assert rendered.loc[hex_ok, "fill_color"] != [120, 120, 140, 70]
+    # tooltip do descartado deve mencionar descarte
+    assert "Descartado" in rendered.loc[hex_bad, "tooltip_title"]
+    # tooltip do nao descartado nao deve mencionar descarte
+    assert "Descartado" not in rendered.loc[hex_ok, "tooltip_title"]
+
+
+def test_build_map_figure_adiciona_layer_de_destaque_do_hex_pesquisado():
+    import h3
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([_hex_row(hex_id, lat, lng)])
+
+    # sem search_hex_id: apenas 1 layer (sem competidores)
+    deck_sem, _ = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+    assert deck_sem is not None
+    assert len(deck_sem.layers) == 1
+
+    # com search_hex_id: 2 layers (hex + destaque)
+    deck_com, _ = streamlit_app.build_map_figure(
+        df, selected_ufs=["SP"], selected_cities=[], search_hex_id=hex_id
+    )
+    assert deck_com is not None
+    assert len(deck_com.layers) == 2
+    highlight_data = pd.DataFrame(deck_com.layers[-1].data)
+    assert hex_id in highlight_data["hex_id"].values
+
+
+def test_build_map_figure_destaque_hex_aparece_mesmo_fora_dos_filtros():
+    """Hex pesquisado deve ser destacado mesmo se nao existir no recorte filtrado."""
+    import h3
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([_hex_row(hex_id, lat, lng)])
+
+    # hex_id de Brasilia nao esta no df (SP only) — ainda assim o layer deve aparecer
+    hex_brasilia = h3.latlng_to_cell(-15.77, -47.93, 7)
+    deck, _ = streamlit_app.build_map_figure(
+        df, selected_ufs=["SP"], selected_cities=[], search_hex_id=hex_brasilia
+    )
+    assert deck is not None
+    # deve ter o hex layer (SP) + destaque (Brasilia, mesmo nao estando no df)
+    assert len(deck.layers) == 2
+    highlight_data = pd.DataFrame(deck.layers[-1].data)
+    assert hex_brasilia in highlight_data["hex_id"].values

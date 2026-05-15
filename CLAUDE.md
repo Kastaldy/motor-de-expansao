@@ -26,6 +26,7 @@
 - Nao criar dependencia de API ao vivo no fechamento nacional nem no piloto de mercado.
 - Toda mudanca relevante entra com teste; nenhum PR deve subir com CI quebrado.
 - No piloto de mercado, `prioridade_mercado_mapeado` usa regua absoluta de `som_indice_mapeado`; quartis ficam apenas como apoio de ranking relativo em analises auxiliares.
+- Pins/logos de concorrentes no dashboard sao apenas camada visual de apoio; nao alteram score, ranking, carteira nem artefatos oficiais do M1.
 - O guia operacional do ciclo ativo fica em `PRD.md`; o contrato tecnico detalhado da trilha de mercado fica em `docs/modelo_mercado_hexagonos.md`.
 
 ## 3. Nucleo oficial M1
@@ -85,6 +86,8 @@ score_oficial = score_priorizacao
   - `qualidade_join_uf`: A/B se todos os gates passam, C se qualquer gate falha (filtrado pelo hibrido);
   - status: `GO` para **visualizacao executiva** (mapa exibe hexagonos do setor censitario — granularidade geografica real, elimina agua/rural); M1 continua como **fonte oficial de ranking de carteira** (rho=0.42 vs faturamento real); `NO-GO` para substituir o M1 no ranking.
 - Dashboard local agora separa explicitamente os papeis: mapa executivo usa geometria granular quando `qualidade_join_uf` e `A/B`, fallback municipal nas UFs `C` e renderiza todos os hexagonos validos da UF selecionada sem cap editorial; aba de carteira volta a ordenar por `rank_brasil`/`score_priorizacao` do M1 e deixa Censitario/Hibrido apenas como apoio local.
+- Tooltip dos hexagonos exibe `Habitantes` e `Renda per capita` com granularidade condicional: fonte preferencial e `pop_total_setor_2022` / `renda_per_capita_setor_2022_calibrada` (dado real do setor, disponivel nas UFs A/B); fallback e `populacao_proxy` / `renda_per_capita` (proxy municipal, mesmo valor para todos os hexes do municipio, identificado com sufixo `(municipal)` no tooltip).
+- Dashboard sobrepoe pins de concorrentes e unidades proprias Ultra nos mapas principal e hibrido; concorrentes: CSVs em `concorrentes/`; Ultra: `data/ultra/Ultra.csv` (skiprows=1, sep=";", encoding latin-1, primeira linha metadado); ambos via `competitors.py`; camadas `IconLayer` e legendas em `components.py`. Dashboard funciona sem esses arquivos.
 - Testes automatizados ficam em `tests/unit/`, `tests/integration/` e `tests/contracts/`; `pyproject.toml` limita a coleta ao diretorio `tests`.
 - Camada de mercado por hexagono:
   - status: ciclo anterior de mercado fechado ate o Bloco 3; staging materializado, carteira/plano nacionais regenerados e validacao integrada concluida para handoff;
@@ -94,7 +97,7 @@ score_oficial = score_priorizacao
     - `data/outputs/plano_expansao_curto_prazo.parquet`: 269 linhas, 27 UFs, 66 municipios, 0 `hex_id` duplicado;
   - regra operacional nova: se o municipio top M1 tiver `top_hex_intraurbano=True`, a carteira usa somente os hexes granulares; se nao tiver, entra fallback municipal/M1 sem excluir a UF do output;
   - insumos ja disponiveis:
-    - `concorrentes/*.csv`
+    - `concorrentes/*.csv` (tambem usados como pins visuais no dashboard)
     - `data/ultra/Ultra.csv`
     - `data/outputs/oportunidades_expansao_hibrido.parquet`
     - `data/staging/brasil_estrutural.parquet`
@@ -106,8 +109,14 @@ score_oficial = score_priorizacao
 - Deploy inicial: somente Streamlit via `Dockerfile.streamlit`/`docker-compose.prod.yml`; API/FastAPI, PostGIS, Prefect e pipelines pesados ficam fora.
 - Legados fora do deploy inicial ficam em `fora_primeira_fase/`: API/PostGIS, M2/M3, pesquisas, Power BI e testes associados.
 - Artefatos minimos do dashboard em `data/outputs/`: `hexagonos_brasil_dashboard.parquet`, `oportunidades_expansao_hibrido.parquet`, `carteira_expansao_acionavel.parquet`, `plano_expansao_curto_prazo.parquet`.
+- Camada visual opcional do dashboard: manter `concorrentes/*.csv` junto ao deploy quando quiser ver pins/logos dos players mapeados; sem esses arquivos o app segue funcionando sem a sobreposicao.
 - Contrato de handoff: `docs/handoff_repositorio.md`.
 - Guardrails permanentes: nao alterar `score_priorizacao`, `hex_score_estrutural` nem artefatos oficiais do M1 sem aprovacao explicita; dashboard de producao roda offline com dados locais e Parquet.
+- Regua operacional de populacao minima (atualizada 2026-05-14): `POP_MIN_ACIONAVEL = 5_000` em `dashboard/constants.py`; colunas auditaveis `populacao_corte_hex`, `fonte_populacao_corte`, `flag_pop_min_5k` derivadas em `enrich_dashboard_data`; corte aplicado nas abas Carteira e Plano via lookup por `hex_id`; M1 (`score_priorizacao`, artefatos oficiais) nao e alterado.
+- Busca por coordenada (Bloco 2, 2026-05-14): `parse_coordinate_input` e `lookup_hex_by_coord` em `src/motor_expansao/dashboard/data.py`; widget na sidebar via `render_coord_search_sidebar`; card de detalhe via `render_hex_search_result`; `build_map_figure` e `build_hybrid_map_figure` aceitam `search_pin=(lat, lng)` e centralizam o mapa; funciona offline sem API externa; nao altera score nem artefatos oficiais.
+- Visual pop-cut e destaque de busca (Bloco 3, 2026-05-14): hex com `flag_pop_min_5k=False` recebe cor cinza `[120,120,140,70]` nos mapas (via `_apply_pop_cut_colors`); legenda `render_pop_cut_legend` exibe chip "Descartado <5k hab"; `build_map_figure`/`build_hybrid_map_figure` aceitam `search_hex_id: str | None` e adicionam `H3HexagonLayer` amarelo de destaque acima das demais camadas — aparece mesmo se o hex estiver fora dos filtros ou descartado; `streamlit_app.py` deriva `search_hex_id` via `lookup_hex_by_coord`.
+- Pins das unidades Ultra (Bloco 4, 2026-05-14): `load_ultra_points` em `competitors.py`; pin vermelho (#C8001E, sigla `UA`); `_build_ultra_icon_layer` e `render_ultra_legend` em `components.py`; `build_map_figure`/`build_hybrid_map_figure` aceitam `ultra_df`; camada visual de apoio, nao altera score nem artefatos oficiais; arquivo `data/ultra/Ultra.csv` e opcional (dashboard funciona sem ele).
+- Concorrentes e logos (Bloco 6, 2026-05-14): `COMPETITOR_SPECS` expandido para 27 redes (SkyFit removida); `preload_logos(competitors_dir, ultra_dir)` le PNGs de `concorrentes/` e `data/ultra/logo_ultra.png` para `_ICON_CACHE`; `competitor_icon_data`/`ultra_icon_data` usam PNG quando disponivel, fallback SVG; `_read_csv` detecta `;` vs `,` automaticamente; `render_competitor_legend` removida dos 3 mapas (tooltips mantidos); `preload_logos` chamada no nivel de modulo de `streamlit_app.py`.
 
 ## 6. Onde aprofundar
 - `PRD.md`: guia operacional em blocos do ciclo ativo.

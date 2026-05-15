@@ -44,6 +44,58 @@ O app roda offline e le Parquets locais. Para a experiencia completa do dashboar
 
 Camadas de apoio em `data/staging/` podem enriquecer rastreabilidade censitaria, mas dados brutos e staging nacionais grandes devem ser tratados como artefatos externos ao codigo.
 
+### Pins de concorrentes no mapa
+
+O dashboard tambem pode sobrepor pins dos concorrentes nos mapas principal e hibrido. A camada e visual: nao altera `score_priorizacao`, ranking, carteira nem nenhum artefato oficial.
+
+Arquivos usados:
+
+- CSVs em `concorrentes/` (`unidades_smart_fit.csv`, `unidades_bluefit.csv`, `unidades_panobianco.csv`, `SkyFit_unidades_geocodificado.csv`)
+- Loader: `src/motor_expansao/dashboard/competitors.py`
+- Camada de mapa: `src/motor_expansao/dashboard/components.py`
+
+Como alterar imagem/cor das logos:
+
+1. Para mudar cores ou iniciais dos pins atuais, edite `COMPETITOR_BRANDS` em `src/motor_expansao/dashboard/competitors.py`.
+2. Para usar logos oficiais em vez do SVG com iniciais, altere `competitor_icon_data()` no mesmo arquivo para retornar um `url` da imagem, de preferencia em `data:image/png;base64,...` ou `data:image/svg+xml;base64,...` para manter o dashboard offline.
+3. Mantenha o retorno no formato esperado pelo `pydeck.IconLayer`: `{"url": "...", "width": 128, "height": 128, "anchorY": 122}`.
+
+Como diminuir o tamanho dos pins:
+
+1. Abra `src/motor_expansao/dashboard/components.py`.
+2. Na funcao `_build_competitor_icon_layer()`, reduza `comp["icon_size"] = 34`.
+3. Se necessario, ajuste tambem `size_min_pixels=24` e `size_max_pixels=42` na criacao do `pdk.Layer("IconLayer", ...)`.
+4. Rode `python -m pytest -q tests/integration/test_streamlit_app.py` para validar a camada.
+
+### Pins das unidades Ultra no mapa
+
+O dashboard sobrepoe pins das unidades proprias da Ultra Academia nos mapas principal e hibrido. A camada e visual e nao altera `score_priorizacao`, ranking nem artefatos do M1.
+
+- Arquivo: `data/ultra/Ultra.csv` (opcional; formato: `sep=";"`, `encoding=latin-1`, 1 linha de metadado antes do cabecalho)
+- Loader: `load_ultra_points` em `src/motor_expansao/dashboard/competitors.py`
+- Pin vermelho (#C8001E) com sigla `UA`; tamanho ligeiramente maior que concorrentes para distincao visual
+- Sem o arquivo, o app funciona normalmente sem a sobreposicao de pins Ultra
+
+### Busca por coordenada
+
+A sidebar do dashboard inclui um campo de busca de hexagono por coordenada geografica.
+
+- Formatos aceitos: `lat, lng` (ex: `-23.55, -46.63`) ou `lat lng` separado por espaco
+- O mapa centraliza na coordenada pesquisada com zoom 10
+- O hex correspondente recebe destaque em amarelo em ambos os mapas (aparece mesmo fora dos filtros ou descartado pela regua 5k)
+- Um card de detalhe acima das abas exibe `hex_id`, score, ranking, renda e populacao do hex
+- Funciona offline sem API externa; nao altera score nem artefatos oficiais
+
+### Regua visual de populacao minima (5k hab)
+
+Hexagonos com menos de 5.000 habitantes sao descartados das abas Carteira e Plano e recebem cor cinza nos mapas.
+
+- Constante: `POP_MIN_ACIONAVEL = 5_000` em `dashboard/constants.py`
+- Fonte preferencial de populacao: `pop_total_setor_2022` (granular, UFs A/B); fallback: `populacao_proxy` (municipal)
+- Cor dos hexes descartados nos mapas: `[120, 120, 140, 70]` (cinza semitransparente)
+- Legenda "Descartado <5k hab" visivel nos mapas principal e hibrido
+- M1 (`score_priorizacao`) nao e alterado por este corte
+
 ## Deploy VPS Streamlit
 
 O deploy inicial de producao usa somente o dashboard Streamlit, com dados locais montados como volume.

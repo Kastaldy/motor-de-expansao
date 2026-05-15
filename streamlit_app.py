@@ -38,21 +38,7 @@ from dashboard.utils import (  # noqa: F401
     format_score,
     hex_to_rgba,
 )
-from motor_expansao.dashboard.data import (  # noqa: F401
-    _coalesce_columns,
-    _derive_confianca_geografica,
-    _derive_hybrid_labels,
-    _has_censo_signal,
-    _normalized_join_quality,
-    _prepare_censo_trace,
-    _prepare_dataframe,
-    _read_optional_parquet_subset,
-    _read_parquet_subset,
-    apply_global_filters,
-    build_city_summary,
-    build_uf_summary,
-    enrich_dashboard_data,
-)
+from motor_expansao.dashboard.competitors import load_competitor_points, load_ultra_points, preload_logos  # noqa: F401
 from motor_expansao.dashboard.components import (  # noqa: F401
     _carteira_prioridade_color,
     _category_options,
@@ -81,18 +67,42 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     build_uf_metric_figure,
     render_answer_card,
     render_censo_score_legend,
+    render_competitor_legend,
     render_faixa_legend,
     render_geographic_source_legend,
+    render_pop_cut_legend,
+    render_ultra_legend,
     resolve_map_view,
     style_ranking_table,
+)
+from motor_expansao.dashboard.data import (  # noqa: F401
+    _coalesce_columns,
+    _derive_confianca_geografica,
+    _derive_hybrid_labels,
+    _has_censo_signal,
+    _normalized_join_quality,
+    _prepare_censo_trace,
+    _prepare_dataframe,
+    _read_optional_parquet_subset,
+    _read_parquet_subset,
+    apply_global_filters,
+    build_city_summary,
+    build_pop_cut_lookup,
+    build_uf_summary,
+    derive_pop_cut_columns,
+    enrich_dashboard_data,
+    lookup_hex_by_coord,
+    parse_coordinate_input,
 )
 from motor_expansao.dashboard.pages import (  # noqa: F401
     inject_styles,
     render_analise_territorial,
     render_carteira_expansao,
     render_comparacao_uf,
+    render_coord_search_sidebar,
     render_empty_state,
     render_header,
+    render_hex_search_result,
     render_modelo_hibrido,
     render_modelo_hibrido_v2,
     render_plano_expansao,
@@ -111,6 +121,8 @@ DATASET_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "hexagonos
 HYBRID_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "oportunidades_expansao_hibrido.parquet"
 CARTEIRA_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "carteira_expansao_acionavel.parquet"
 PLANO_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "plano_expansao_curto_prazo.parquet"
+CONCORRENTES_DIR = Path(__file__).resolve().parent / "concorrentes"
+ULTRA_PATH = Path(__file__).resolve().parent / "data" / "ultra" / "Ultra.csv"
 CENSO_CORE_PATH = Path(__file__).resolve().parent / "data" / "staging" / "censo2022_setores_calibrado.parquet"
 CENSO_EXPANDED_PATH = (
     Path(__file__).resolve().parent / "data" / "staging" / "censo2022_setores_calibrado_piloto_expandido.parquet"
@@ -118,6 +130,8 @@ CENSO_EXPANDED_PATH = (
 CENSO_VALIDATED_PATH = (
     Path(__file__).resolve().parent / "data" / "staging" / "censo2022_setores_validado_v2.parquet"
 )
+
+preload_logos(CONCORRENTES_DIR, ultra_dir=ULTRA_PATH.parent)
 
 
 def _ensure_dataset() -> None:
@@ -185,6 +199,16 @@ def build_dashboard_dataset() -> pd.DataFrame:
 
 
 @st.cache_data(show_spinner=False)
+def load_competitors() -> pd.DataFrame:
+    return load_competitor_points(CONCORRENTES_DIR)
+
+
+@st.cache_data(show_spinner=False)
+def load_ultra() -> pd.DataFrame:
+    return load_ultra_points(ULTRA_PATH)
+
+
+@st.cache_data(show_spinner=False)
 def load_carteira() -> pd.DataFrame:
     if not CARTEIRA_PATH.exists():
         return pd.DataFrame()
@@ -232,8 +256,11 @@ def main() -> None:
         st.error(str(exc))
         st.stop()
 
+    pop_lookup = build_pop_cut_lookup(df)
     carteira_df = load_carteira()
     plano_df = load_plano()
+    competitors_df = load_competitors()
+    ultra_df = load_ultra()
 
     (
         selected_ufs,
@@ -245,6 +272,10 @@ def main() -> None:
         only_top_municipio,
         only_top_hex_intraurbano,
     ) = render_sidebar_filters(df)
+
+    search_pin = render_coord_search_sidebar()
+    _search_result = lookup_hex_by_coord(*search_pin, df) if search_pin is not None else None
+    search_hex_id = _search_result["hex_id"] if _search_result is not None else None
 
     filtered_df = apply_global_filters(
         df,
@@ -267,6 +298,14 @@ def main() -> None:
         "Base oficial preservada: `data/outputs/hexagonos_brasil_dashboard.parquet` continua sendo a fonte do M1. "
         "As camadas censitaria e hibrida entram apenas como enriquecimento local."
     )
+
+    if search_pin is not None:
+        render_hex_search_result(
+            search_pin,
+            full_df=df,
+            filtered_df=filtered_df,
+            pop_cut_lookup=pop_lookup,
+        )
 
     if not selected_ufs:
         st.info("Selecione uma UF na barra lateral para iniciar a analise do dashboard.")
@@ -298,6 +337,10 @@ def main() -> None:
             uf_summary,
             selected_ufs=selected_ufs,
             selected_cities=selected_cities,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+            search_pin=search_pin,
+            search_hex_id=search_hex_id,
         )
 
     with tabs[1]:
@@ -315,6 +358,10 @@ def main() -> None:
             selected_ufs=selected_ufs,
             selected_cities=selected_cities,
             selected_faixas=selected_faixas,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+            search_pin=search_pin,
+            search_hex_id=search_hex_id,
         )
 
     with tabs[5]:
@@ -322,10 +369,11 @@ def main() -> None:
             carteira_df,
             selected_ufs=selected_ufs,
             selected_cities=selected_cities,
+            pop_cut_lookup=pop_lookup,
         )
 
     with tabs[6]:
-        render_plano_expansao(plano_df)
+        render_plano_expansao(plano_df, pop_cut_lookup=pop_lookup)
 
 
 if __name__ == "__main__":

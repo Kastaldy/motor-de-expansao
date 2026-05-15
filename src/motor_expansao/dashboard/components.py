@@ -23,6 +23,12 @@ from dashboard.utils import (
     format_score,
     hex_to_rgba,
 )
+from motor_expansao.dashboard.competitors import (
+    competitor_icon_data,
+    competitor_legend_entries,
+    ultra_icon_data,
+    ultra_legend_entry,
+)
 from motor_expansao.dashboard.data import _has_censo_signal, _normalized_join_quality
 
 
@@ -172,6 +178,112 @@ def render_censo_score_legend() -> None:
     st.markdown(f"<div class='legend-row'>{chips}</div>", unsafe_allow_html=True)
 
 
+def render_competitor_legend(competitors_df: pd.DataFrame | None = None) -> None:
+    if competitors_df is None or competitors_df.empty or "rede" not in competitors_df.columns:
+        return
+
+    entries = competitor_legend_entries(competitors_df["rede"])
+    if not entries:
+        return
+
+    chips = "".join(
+        (
+            f"<span class='legend-chip'>"
+            f"<span style='display:inline-flex;align-items:center;justify-content:center;"
+            f"width:22px;height:22px;border-radius:999px;background:{entry['bg']};"
+            f"color:{entry['fg']};font-size:0.62rem;font-weight:800;border:2px solid rgba(255,255,255,0.84);'>"
+            f"{entry['short']}</span>"
+            f"{entry['label']}"
+            f"</span>"
+        )
+        for entry in entries
+    )
+    st.markdown(f"<div class='legend-row'>{chips}</div>", unsafe_allow_html=True)
+
+
+def render_ultra_legend(ultra_df: pd.DataFrame | None = None) -> None:
+    if ultra_df is None or ultra_df.empty:
+        return
+    entry = ultra_legend_entry()
+    chip = (
+        f"<span class='legend-chip'>"
+        f"<span style='display:inline-flex;align-items:center;justify-content:center;"
+        f"width:22px;height:22px;border-radius:999px;background:{entry['bg']};"
+        f"color:{entry['fg']};font-size:0.62rem;font-weight:800;border:2px solid rgba(255,255,255,0.84);'>"
+        f"{entry['short']}</span>"
+        f"{entry['label']}"
+        f"</span>"
+    )
+    st.markdown(f"<div class='legend-row'>{chip}</div>", unsafe_allow_html=True)
+
+
+def _build_ultra_icon_layer(
+    ultra_df: pd.DataFrame | None,
+    reference_df: pd.DataFrame,
+):
+    if ultra_df is None or ultra_df.empty:
+        return None
+    if reference_df.empty or not {"lat", "lng"} <= set(reference_df.columns):
+        return None
+    if not {"lat", "lng", "nome_unidade"} <= set(ultra_df.columns):
+        return None
+
+    ultra = ultra_df.loc[ultra_df["lat"].notna() & ultra_df["lng"].notna()].copy()
+    if ultra.empty:
+        return None
+
+    lat_span = float(reference_df["lat"].max() - reference_df["lat"].min())
+    lng_span = float(reference_df["lng"].max() - reference_df["lng"].min())
+    padding = max(0.05, min(0.8, max(lat_span, lng_span) * 0.08))
+
+    ultra = ultra.loc[
+        ultra["lat"].between(float(reference_df["lat"].min()) - padding, float(reference_df["lat"].max()) + padding)
+        & ultra["lng"].between(float(reference_df["lng"].min()) - padding, float(reference_df["lng"].max()) + padding)
+    ].copy()
+    if ultra.empty:
+        return None
+
+    for column in ["cidade", "uf", "arquivo_origem"]:
+        if column not in ultra.columns:
+            ultra[column] = ""
+
+    icon = ultra_icon_data()
+    ultra["icon_data"] = [icon] * len(ultra)
+    ultra["icon_size"] = 38
+    ultra["tooltip_title"] = "Ultra Academia: " + ultra["nome_unidade"].astype(str)
+    ultra["tooltip_line_1"] = "Tipo: Unidade Ultra Academia"
+    ultra["tooltip_line_2"] = ultra.apply(
+        lambda row: "Cidade/UF: "
+        + (
+            f"{_clean_tooltip_value(row.get('cidade'))} / {_clean_tooltip_value(row.get('uf'))}"
+            if _clean_tooltip_value(row.get("cidade")) != "-" or _clean_tooltip_value(row.get("uf")) != "-"
+            else "-"
+        ),
+        axis=1,
+    )
+    ultra["tooltip_line_3"] = "Coordenadas: " + ultra.apply(
+        lambda row: _format_coordinate_pair(row["lat"], row["lng"]),
+        axis=1,
+    )
+    ultra["tooltip_line_4"] = "Fonte: " + ultra["arquivo_origem"].astype(str)
+    for idx in range(5, 13):
+        ultra[f"tooltip_line_{idx}"] = ""
+
+    return pdk.Layer(
+        "IconLayer",
+        data=ultra,
+        get_icon="icon_data",
+        get_position="[lng, lat]",
+        get_size="icon_size",
+        size_units="pixels",
+        size_scale=1,
+        size_min_pixels=26,
+        size_max_pixels=46,
+        pickable=True,
+        billboard=True,
+    )
+
+
 def apply_exec_layout(fig, *, title: str, height: int) -> None:
     fig.update_layout(
         title=title,
@@ -226,11 +338,263 @@ def build_map_scope_caption(points_used: int, *, selected_ufs: list[str]) -> str
     )
 
 
+def _clean_tooltip_value(value: object, fallback: str = "-") -> str:
+    if pd.isna(value):
+        return fallback
+    text = str(value).strip()
+    return text if text else fallback
+
+
+def _format_coordinate_pair(lat: object, lng: object) -> str:
+    if pd.isna(lat) or pd.isna(lng):
+        return "-"
+    return f"{float(lat):.5f}, {float(lng):.5f}"
+
+
+def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str) -> pd.DataFrame:
+    if mode == "hybrid":
+        map_df["tooltip_title"] = map_df["nome_municipio"].astype(str) + " / " + map_df["uf"].astype(str)
+        map_df["tooltip_line_1"] = "Score Censitario 2022: " + map_df["score_censo_fmt"].astype(str)
+        map_df["tooltip_line_2"] = "Score M1: " + map_df["score_m1_fmt"].astype(str)
+        map_df["tooltip_line_3"] = "Score Hibrido: " + map_df["score_hibrido_fmt"].astype(str)
+        map_df["tooltip_line_4"] = "Densidade setorial: " + map_df["densidade_fmt"].astype(str) + " hab/km2"
+        map_df["tooltip_line_5"] = "Rank Intraurbano: " + map_df["rank_hex_fmt"].astype(str)
+        map_df["tooltip_line_6"] = "Top intraurbano: " + map_df["top_hex_label"].astype(str)
+        map_df["tooltip_line_7"] = "Elegibilidade: " + map_df["elegibilidade_hibrida"].astype(str)
+        map_df["tooltip_line_8"] = "Qualidade join: " + map_df["qualidade_join_uf"].astype(str)
+        map_df["tooltip_line_9"] = "Outlier espacial: " + map_df["outlier_label"].astype(str)
+        map_df["tooltip_line_10"] = "Motivo editorial: " + map_df["motivo_label"].astype(str)
+        map_df["tooltip_line_11"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
+        map_df["tooltip_line_12"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
+        if "flag_pop_min_5k" in map_df.columns:
+            discarded = ~map_df["flag_pop_min_5k"].fillna(True)
+            map_df.loc[discarded, "tooltip_title"] = (
+                map_df.loc[discarded, "tooltip_title"].astype(str) + " — Descartado <5k hab"
+            )
+        return map_df
+
+    map_df["tooltip_title"] = map_df["nome_municipio"].astype(str) + " / " + map_df["uf"].astype(str)
+    map_df["tooltip_line_1"] = "Fonte geografica: " + map_df["fonte_geografica_label"].astype(str)
+    map_df["tooltip_line_2"] = "Faixa M1: " + map_df["faixa_label"].astype(str)
+    map_df["tooltip_line_3"] = "Score M1: " + map_df["score_priorizacao_fmt"].astype(str)
+    map_df["tooltip_line_4"] = "Score estrutural: " + map_df["hex_score_estrutural_fmt"].astype(str)
+    map_df["tooltip_line_5"] = "Score censitario: " + map_df["score_censo_fmt"].astype(str)
+    map_df["tooltip_line_6"] = "Qualidade join: " + map_df["qualidade_join_label"].astype(str)
+    map_df["tooltip_line_7"] = "Coverage censitario: " + map_df["coverage_fmt"].astype(str)
+    map_df["tooltip_line_8"] = "Viavel: " + map_df["flag_viavel_label"].astype(str)
+    map_df["tooltip_line_9"] = "Prioridade: " + map_df["flag_prioridade_label"].astype(str)
+    map_df["tooltip_line_10"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
+    map_df["tooltip_line_11"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
+    map_df["tooltip_line_12"] = ""
+    if "flag_pop_min_5k" in map_df.columns:
+        discarded = ~map_df["flag_pop_min_5k"].fillna(True)
+        map_df.loc[discarded, "tooltip_title"] = (
+            map_df.loc[discarded, "tooltip_title"].astype(str) + " — Descartado <5k hab"
+        )
+    return map_df
+
+
+def _filter_competitors_to_reference(
+    competitors_df: pd.DataFrame | None,
+    reference_df: pd.DataFrame,
+) -> pd.DataFrame:
+    if competitors_df is None or competitors_df.empty:
+        return pd.DataFrame()
+    if reference_df.empty or not {"lat", "lng"} <= set(reference_df.columns):
+        return pd.DataFrame()
+    if not {"lat", "lng", "rede", "nome_unidade"} <= set(competitors_df.columns):
+        return pd.DataFrame()
+
+    comp = competitors_df.loc[
+        competitors_df["lat"].notna() & competitors_df["lng"].notna()
+    ].copy()
+    if comp.empty:
+        return comp
+
+    lat_span = float(reference_df["lat"].max() - reference_df["lat"].min())
+    lng_span = float(reference_df["lng"].max() - reference_df["lng"].min())
+    padding = max(0.05, min(0.8, max(lat_span, lng_span) * 0.08))
+
+    lat_min = float(reference_df["lat"].min()) - padding
+    lat_max = float(reference_df["lat"].max()) + padding
+    lng_min = float(reference_df["lng"].min()) - padding
+    lng_max = float(reference_df["lng"].max()) + padding
+
+    return comp.loc[
+        comp["lat"].between(lat_min, lat_max) & comp["lng"].between(lng_min, lng_max)
+    ].copy()
+
+
+def _build_competitor_icon_layer(
+    competitors_df: pd.DataFrame | None,
+    reference_df: pd.DataFrame,
+):
+    comp = _filter_competitors_to_reference(competitors_df, reference_df)
+    if comp.empty:
+        return None, comp
+
+    if "rede_label" not in comp.columns:
+        comp["rede_label"] = comp["rede"].astype(str)
+    for column in ["cidade", "uf", "arquivo_origem"]:
+        if column not in comp.columns:
+            comp[column] = ""
+
+    comp["icon_data"] = comp["rede"].astype(str).map(competitor_icon_data)
+    comp["icon_size"] = 34
+    comp["tooltip_title"] = comp.apply(
+        lambda row: f"{_clean_tooltip_value(row.get('rede_label'))}: {_clean_tooltip_value(row.get('nome_unidade'))}",
+        axis=1,
+    )
+    comp["tooltip_line_1"] = "Tipo: Concorrente mapeado"
+    comp["tooltip_line_2"] = "Rede: " + comp["rede_label"].astype(str)
+    comp["tooltip_line_3"] = comp.apply(
+        lambda row: "Cidade/UF: "
+        + (
+            f"{_clean_tooltip_value(row.get('cidade'))} / {_clean_tooltip_value(row.get('uf'))}"
+            if _clean_tooltip_value(row.get("cidade")) != "-" or _clean_tooltip_value(row.get("uf")) != "-"
+            else "-"
+        ),
+        axis=1,
+    )
+    comp["tooltip_line_4"] = "Coordenadas: " + comp.apply(
+        lambda row: _format_coordinate_pair(row["lat"], row["lng"]),
+        axis=1,
+    )
+    comp["tooltip_line_5"] = "Fonte: " + comp["arquivo_origem"].astype(str)
+    for idx in range(6, 11):
+        comp[f"tooltip_line_{idx}"] = ""
+
+    layer = pdk.Layer(
+        "IconLayer",
+        data=comp,
+        get_icon="icon_data",
+        get_position="[lng, lat]",
+        get_size="icon_size",
+        size_units="pixels",
+        size_scale=1,
+        size_min_pixels=24,
+        size_max_pixels=42,
+        pickable=True,
+        billboard=True,
+    )
+    return layer, comp
+
+
+def _shared_map_tooltip() -> dict[str, object]:
+    return {
+        "html": (
+            "<b>{tooltip_title}</b><br/>"
+            "{tooltip_line_1}<br/>"
+            "{tooltip_line_2}<br/>"
+            "{tooltip_line_3}<br/>"
+            "{tooltip_line_4}<br/>"
+            "{tooltip_line_5}<br/>"
+            "{tooltip_line_6}<br/>"
+            "{tooltip_line_7}<br/>"
+            "{tooltip_line_8}<br/>"
+            "{tooltip_line_9}<br/>"
+            "{tooltip_line_10}<br/>"
+            "{tooltip_line_11}<br/>"
+            "{tooltip_line_12}"
+        ),
+        "style": {
+            "backgroundColor": "rgba(10, 15, 31, 0.94)",
+            "color": COLORS["text"],
+            "border": f"1px solid {COLORS['border']}",
+            "borderRadius": "10px",
+            "fontFamily": "Bahnschrift, Aptos, Segoe UI, sans-serif",
+        },
+    }
+
+
+_DISCARDED_FILL = [120, 120, 140, 70]
+_DISCARDED_LINE = [120, 120, 140, 180]
+
+
+def _apply_pop_cut_colors(map_df: pd.DataFrame) -> pd.DataFrame:
+    if "flag_pop_min_5k" not in map_df.columns:
+        return map_df
+    discarded = ~map_df["flag_pop_min_5k"].fillna(True)
+    if not discarded.any():
+        return map_df
+    map_df["fill_color"] = [
+        _DISCARDED_FILL if d else c
+        for d, c in zip(discarded, map_df["fill_color"])
+    ]
+    map_df["line_color"] = [
+        _DISCARDED_LINE if d else c
+        for d, c in zip(discarded, map_df["line_color"])
+    ]
+    return map_df
+
+
+def render_pop_cut_legend() -> None:
+    st.markdown(
+        "<div class='legend-row'>"
+        "<span class='legend-chip'>"
+        "<span class='legend-dot' style='background:#78788C;opacity:0.7;'></span>"
+        "Descartado &lt;5k hab (mapa)"
+        "</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _build_search_hex_layer(hex_id: str):
+    hex_df = pd.DataFrame([{
+        "hex_id": hex_id,
+        "tooltip_title": f"Hex pesquisado: {hex_id}",
+        "tooltip_line_1": "Destaque de busca por coordenada",
+        **{f"tooltip_line_{i}": "" for i in range(2, 13)},
+    }])
+    return pdk.Layer(
+        "H3HexagonLayer",
+        data=hex_df,
+        get_hexagon="hex_id",
+        get_fill_color=[255, 230, 0, 50],
+        get_line_color=[255, 230, 0, 240],
+        filled=True,
+        stroked=True,
+        extruded=False,
+        pickable=True,
+        line_width_min_pixels=3,
+        opacity=1.0,
+    )
+
+
+def _build_search_pin_layer(lat: float, lng: float):
+    pin_df = pd.DataFrame([{
+        "lat": lat,
+        "lng": lng,
+        "tooltip_title": "Coordenada pesquisada",
+        "tooltip_line_1": f"Lat: {lat:.5f}",
+        "tooltip_line_2": f"Lng: {lng:.5f}",
+        **{f"tooltip_line_{i}": "" for i in range(3, 13)},
+    }])
+    return pdk.Layer(
+        "ScatterplotLayer",
+        data=pin_df,
+        get_position="[lng, lat]",
+        get_radius=300,
+        radius_min_pixels=10,
+        radius_max_pixels=22,
+        get_fill_color=[255, 230, 0, 230],
+        get_line_color=[0, 0, 0, 200],
+        line_width_min_pixels=2,
+        stroked=True,
+        filled=True,
+        pickable=True,
+    )
+
+
 def build_map_figure(
     df: pd.DataFrame,
     *,
     selected_ufs: list[str],
     selected_cities: list[str],
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    search_pin: tuple[float, float] | None = None,
+    search_hex_id: str | None = None,
 ):
     map_columns = [
         "hex_id",
@@ -249,6 +613,11 @@ def build_map_figure(
         "qualidade_join_uf",
         "flag_censo_disponivel",
         "confianca_geografica",
+        "populacao_proxy",
+        "renda_per_capita",
+        "pop_total_setor_2022",
+        "renda_per_capita_setor_2022_calibrada",
+        "flag_pop_min_5k",
     ]
     valid = df.loc[
         df["hex_id"].notna()
@@ -333,6 +702,28 @@ def build_map_figure(
     )
     map_df["flag_viavel_label"] = map_df["flag_viavel"].map({True: "Sim", False: "Nao"})
     map_df["flag_prioridade_label"] = map_df["flag_prioridade"].map({True: "Sim", False: "Nao"})
+    is_granular = (map_df.get("confianca_geografica", pd.Series("municipal", index=map_df.index)) == "granular")
+    _na_float = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
+    has_setor_pop = "pop_total_setor_2022" in map_df.columns and map_df["pop_total_setor_2022"].notna().any()
+    if has_setor_pop:
+        use_setor_pop = is_granular & map_df["pop_total_setor_2022"].notna()
+        pop_val = map_df["pop_total_setor_2022"].where(use_setor_pop, map_df.get("populacao_proxy", _na_float))
+        pop_suffix = np.where(use_setor_pop, "", " (municipal)")
+    else:
+        pop_val = map_df.get("populacao_proxy", _na_float)
+        pop_suffix = np.full(len(map_df), " (municipal)")
+    map_df["pop_fmt"] = pop_val.map(lambda v: format_int(v) if pd.notna(v) else "-") + pop_suffix
+    has_setor_renda = "renda_per_capita_setor_2022_calibrada" in map_df.columns and map_df["renda_per_capita_setor_2022_calibrada"].notna().any()
+    if has_setor_renda:
+        use_setor_renda = is_granular & map_df["renda_per_capita_setor_2022_calibrada"].notna()
+        renda_val = map_df["renda_per_capita_setor_2022_calibrada"].where(use_setor_renda, map_df.get("renda_per_capita", _na_float))
+        renda_suffix = np.where(use_setor_renda, "", " (municipal)")
+    else:
+        renda_val = map_df.get("renda_per_capita", _na_float)
+        renda_suffix = np.full(len(map_df), " (municipal)")
+    map_df["renda_fmt"] = renda_val.map(lambda v: format_int(v) if pd.notna(v) else "-") + renda_suffix
+    map_df = _apply_pop_cut_colors(map_df)
+    map_df = _apply_hex_tooltip_fields(map_df, mode="m1")
     center, zoom = resolve_map_view(
         map_df,
         selected_ufs=selected_ufs,
@@ -354,6 +745,19 @@ def build_map_figure(
         opacity=0.78,
         line_width_min_pixels=1,
     )
+    competitor_layer, _ = _build_competitor_icon_layer(competitors_df, map_df)
+    ultra_layer = _build_ultra_icon_layer(ultra_df, map_df)
+    layers = [hex_layer]
+    if competitor_layer is not None:
+        layers.append(competitor_layer)
+    if ultra_layer is not None:
+        layers.append(ultra_layer)
+    if search_pin is not None:
+        layers.append(_build_search_pin_layer(*search_pin))
+        center = {"lat": search_pin[0], "lon": search_pin[1]}
+        zoom = 10.0
+    if search_hex_id is not None:
+        layers.append(_build_search_hex_layer(search_hex_id))
 
     deck = pdk.Deck(
         map_style=pdk.map_styles.CARTO_DARK,
@@ -366,28 +770,8 @@ def build_map_figure(
             pitch=0,
             bearing=0,
         ),
-        layers=[hex_layer],
-        tooltip={
-            "html": (
-                "<b>{nome_municipio}</b> / {uf}<br/>"
-                "Fonte geografica: <b>{fonte_geografica_label}</b><br/>"
-                "Faixa M1: {faixa_label}<br/>"
-                "Score M1: {score_priorizacao_fmt}<br/>"
-                "Score estrutural: {hex_score_estrutural_fmt}<br/>"
-                "Score censitario: {score_censo_fmt}<br/>"
-                "Qualidade join: {qualidade_join_label}<br/>"
-                "Coverage censitario: {coverage_fmt}<br/>"
-                "Viavel: {flag_viavel_label}<br/>"
-                "Prioridade: {flag_prioridade_label}"
-            ),
-            "style": {
-                "backgroundColor": "rgba(10, 15, 31, 0.94)",
-                "color": COLORS["text"],
-                "border": f"1px solid {COLORS['border']}",
-                "borderRadius": "10px",
-                "fontFamily": "Bahnschrift, Aptos, Segoe UI, sans-serif",
-            },
-        },
+        layers=layers,
+        tooltip=_shared_map_tooltip(),
     )
     return deck, len(map_df)
 
@@ -413,6 +797,10 @@ def build_hybrid_map_figure(
     selected_ufs: list[str],
     selected_cities: list[str],
     selected_faixas: list[str] | None = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    search_pin: tuple[float, float] | None = None,
+    search_hex_id: str | None = None,
 ):
     if "score_setor_2022_calibrado" not in hdf.columns:
         return None, 0
@@ -438,6 +826,11 @@ def build_hybrid_map_figure(
         "rank_hex_intraurbano",
         "top_hex_intraurbano",
         "top_oportunidade_municipio",
+        "populacao_proxy",
+        "renda_per_capita",
+        "pop_total_setor_2022",
+        "renda_per_capita_setor_2022_calibrada",
+        "flag_pop_min_5k",
     ]
     map_df = hdf.loc[
         hdf["score_setor_2022_calibrado"].notna()
@@ -496,6 +889,27 @@ def build_hybrid_map_figure(
     )
     map_df["top_hex_label"] = map_df["top_hex_intraurbano"].map({True: "Sim", False: "Nao"})
     map_df["motivo_label"] = map_df["motivo_nao_elegivel_censo"].astype(object).fillna("-").astype(str)
+    _na_float_h = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
+    has_setor_pop_h = "pop_total_setor_2022" in map_df.columns and map_df["pop_total_setor_2022"].notna().any()
+    if has_setor_pop_h:
+        use_setor_pop_h = map_df["pop_total_setor_2022"].notna()
+        pop_val_h = map_df["pop_total_setor_2022"].where(use_setor_pop_h, map_df.get("populacao_proxy", _na_float_h))
+        pop_suffix_h = np.where(use_setor_pop_h, "", " (municipal)")
+    else:
+        pop_val_h = map_df.get("populacao_proxy", _na_float_h)
+        pop_suffix_h = np.full(len(map_df), " (municipal)")
+    map_df["pop_fmt"] = pop_val_h.map(lambda v: format_int(v) if pd.notna(v) else "-") + pop_suffix_h
+    has_setor_renda_h = "renda_per_capita_setor_2022_calibrada" in map_df.columns and map_df["renda_per_capita_setor_2022_calibrada"].notna().any()
+    if has_setor_renda_h:
+        use_setor_renda_h = map_df["renda_per_capita_setor_2022_calibrada"].notna()
+        renda_val_h = map_df["renda_per_capita_setor_2022_calibrada"].where(use_setor_renda_h, map_df.get("renda_per_capita", _na_float_h))
+        renda_suffix_h = np.where(use_setor_renda_h, "", " (municipal)")
+    else:
+        renda_val_h = map_df.get("renda_per_capita", _na_float_h)
+        renda_suffix_h = np.full(len(map_df), " (municipal)")
+    map_df["renda_fmt"] = renda_val_h.map(lambda v: format_int(v) if pd.notna(v) else "-") + renda_suffix_h
+    map_df = _apply_pop_cut_colors(map_df)
+    map_df = _apply_hex_tooltip_fields(map_df, mode="hybrid")
 
     center, zoom = resolve_map_view(map_df, selected_ufs=selected_ufs, selected_cities=selected_cities)
 
@@ -514,6 +928,19 @@ def build_hybrid_map_figure(
         opacity=0.85,
         line_width_min_pixels=1,
     )
+    competitor_layer, _ = _build_competitor_icon_layer(competitors_df, map_df)
+    ultra_layer = _build_ultra_icon_layer(ultra_df, map_df)
+    layers = [hex_layer]
+    if competitor_layer is not None:
+        layers.append(competitor_layer)
+    if ultra_layer is not None:
+        layers.append(ultra_layer)
+    if search_pin is not None:
+        layers.append(_build_search_pin_layer(*search_pin))
+        center = {"lat": search_pin[0], "lon": search_pin[1]}
+        zoom = 10.0
+    if search_hex_id is not None:
+        layers.append(_build_search_hex_layer(search_hex_id))
 
     deck = pdk.Deck(
         map_style=pdk.map_styles.CARTO_DARK,
@@ -526,33 +953,8 @@ def build_hybrid_map_figure(
             pitch=0,
             bearing=0,
         ),
-        layers=[hex_layer],
-        tooltip={
-            "html": (
-                "<b>{nome_municipio}</b> / {uf}<br/>"
-                "Score Censitario 2022: <b>{score_censo_fmt}</b><br/>"
-                "Score M1: {score_m1_fmt}<br/>"
-                "Score Hibrido: {score_hibrido_fmt}<br/>"
-                "Densidade setorial: {densidade_fmt} hab/km2<br/>"
-                "Rank Intraurbano: {rank_hex_fmt}<br/>"
-                "Top intraurbano: {top_hex_label}<br/>"
-                "Elegibilidade: {elegibilidade_hibrida}<br/>"
-                "Coverage: {coverage_fmt}<br/>"
-                "Qualidade join: {qualidade_join_uf}<br/>"
-                "Join restrito: {join_restrito_label}<br/>"
-                "Abaixo do piso densidade: {baixa_pop_label}<br/>"
-                "Outlier espacial: {outlier_label}<br/>"
-                "Causa do outlier: {causa_outlier_label}<br/>"
-                "Motivo editorial: {motivo_label}"
-            ),
-            "style": {
-                "backgroundColor": "rgba(10, 15, 31, 0.94)",
-                "color": COLORS["text"],
-                "border": f"1px solid {COLORS['border']}",
-                "borderRadius": "10px",
-                "fontFamily": "Bahnschrift, Aptos, Segoe UI, sans-serif",
-            },
-        },
+        layers=layers,
+        tooltip=_shared_map_tooltip(),
     )
     return deck, len(map_df)
 

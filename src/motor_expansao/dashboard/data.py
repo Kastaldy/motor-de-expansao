@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
@@ -15,6 +16,7 @@ from dashboard.constants import (
     MAP_SORT_ASCENDING,
     MAP_SORT_COLUMNS,
     OPTIONAL_DATASET_COLUMNS,
+    POP_MIN_ACIONAVEL,
     TEXT_COLUMNS,
 )
 
@@ -266,6 +268,7 @@ def enrich_dashboard_data(
         "flag_monitoramento_prioritario",
         "criterio_score_expansao_hibrido",
         "camada_modelo_hibrido",
+        "pop_total_setor_2022",
     ]
     if not hybrid_df.empty:
         hybrid_subset = hybrid_df[[column for column in hybrid_extra_cols if column in hybrid_df.columns]]
@@ -287,6 +290,7 @@ def enrich_dashboard_data(
         "metodo_join_setor_2022",
         "motivo_fallback_setor_2022",
         "renda_per_capita_setor_2022_calibrada",
+        "pop_total_setor_2022",
     ]
     if not censo_df.empty:
         censo_subset = censo_df[[column for column in censo_extra_cols if column in censo_df.columns]]
@@ -334,6 +338,8 @@ def enrich_dashboard_data(
         "causa_outlier_espacial",
         "metodo_join_setor_2022",
         "motivo_fallback_setor_2022",
+        "score_setor_2022_calibrado",
+        "coverage_pct_setor_2022",
     ]:
         if column not in enriched.columns:
             enriched[column] = pd.NA
@@ -349,6 +355,7 @@ def enrich_dashboard_data(
     )
     enriched["confianca_geografica"] = _derive_confianca_geografica(enriched)
     enriched = _derive_hybrid_labels(enriched)
+    enriched = derive_pop_cut_columns(enriched)
     return _prepare_dataframe(enriched)
 
 
@@ -424,6 +431,55 @@ def build_city_summary(df: pd.DataFrame) -> pd.DataFrame:
     return grouped
 
 
+def derive_pop_cut_columns(df: pd.DataFrame, pop_min: int = POP_MIN_ACIONAVEL) -> pd.DataFrame:
+    """Deriva colunas auditaveis para a regua operacional de populacao minima.
+
+    - populacao_corte_hex: valor usado no corte (setor 2022 preferencial, fallback proxy)
+    - fonte_populacao_corte: origem do valor ("setor_2022", "proxy_municipal" ou "ausente")
+    - flag_pop_min_5k: True quando populacao_corte_hex >= pop_min
+    Nao altera score_priorizacao nem artefatos oficiais do M1.
+    """
+    result = df.copy()
+    is_granular = (
+        result["confianca_geografica"].eq("granular")
+        if "confianca_geografica" in result.columns
+        else pd.Series(False, index=result.index)
+    )
+    has_setor = "pop_total_setor_2022" in result.columns
+    has_proxy = "populacao_proxy" in result.columns
+
+    if has_setor and has_proxy:
+        use_setor = is_granular & result["pop_total_setor_2022"].notna()
+        pop_val = result["pop_total_setor_2022"].where(use_setor, result["populacao_proxy"])
+        fonte = np.where(
+            use_setor,
+            "setor_2022",
+            np.where(result["populacao_proxy"].notna(), "proxy_municipal", "ausente"),
+        )
+    elif has_setor:
+        pop_val = result["pop_total_setor_2022"]
+        fonte = np.where(result["pop_total_setor_2022"].notna(), "setor_2022", "ausente")
+    elif has_proxy:
+        pop_val = result["populacao_proxy"]
+        fonte = np.where(result["populacao_proxy"].notna(), "proxy_municipal", "ausente")
+    else:
+        pop_val = pd.Series(pd.NA, index=result.index, dtype="Float64")
+        fonte = np.full(len(result), "ausente")
+
+    result["populacao_corte_hex"] = pd.to_numeric(pop_val, errors="coerce")
+    result["fonte_populacao_corte"] = fonte
+    result["flag_pop_min_5k"] = result["populacao_corte_hex"].ge(pop_min).fillna(False)
+    return result
+
+
+def build_pop_cut_lookup(enriched_df: pd.DataFrame) -> pd.DataFrame:
+    """Extrai lookup leve {hex_id -> colunas de corte} para enriquecer carteira/plano."""
+    cols = [c for c in ["hex_id", "populacao_corte_hex", "fonte_populacao_corte", "flag_pop_min_5k"] if c in enriched_df.columns]
+    if "hex_id" not in cols:
+        return pd.DataFrame()
+    return enriched_df[cols].drop_duplicates(subset=["hex_id"]).copy()
+
+
 def build_uf_summary(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(
@@ -451,3 +507,100 @@ def build_uf_summary(df: pd.DataFrame) -> pd.DataFrame:
         grouped["hexagonos_priorizados"] / grouped["total_hexagonos"] * 100
     ).fillna(0.0)
     return grouped
+
+
+# ── Coordinate search ────────────────────────────────────────────────────────
+
+_BRAZIL_LAT_MIN = -33.75
+_BRAZIL_LAT_MAX = 5.27
+_BRAZIL_LNG_MIN = -73.99
+_BRAZIL_LNG_MAX = -28.65
+
+
+def _validate_brazil_bbox(lat: float, lng: float) -> tuple[float, float] | None:
+    if _BRAZIL_LAT_MIN <= lat <= _BRAZIL_LAT_MAX and _BRAZIL_LNG_MIN <= lng <= _BRAZIL_LNG_MAX:
+        return lat, lng
+    return None
+
+
+def parse_coordinate_input(text: str) -> tuple[float, float] | None:
+    """Parse a coordinate string in common formats and validate for Brazil.
+
+    Accepted formats:
+    - ``-23.55,-46.63``  (dot decimal, comma separator)
+    - ``-23,55; -46,63`` (BR comma decimal, semicolon separator)
+    - ``-23.55 -46.63``  (space separator)
+    - ``-23,55 -46,63``  (BR comma decimal, space separator)
+
+    Returns ``(lat, lng)`` or ``None`` if invalid or outside Brazil bounding box.
+    """
+    if not text or not text.strip():
+        return None
+    text = text.strip()
+
+    # Semicolon separator (handles BR comma-as-decimal)
+    m = re.match(r'^([+-]?\d+[.,]\d+)\s*;\s*([+-]?\d+[.,]\d+)$', text)
+    if m:
+        try:
+            lat = float(m.group(1).replace(',', '.'))
+            lng = float(m.group(2).replace(',', '.'))
+            return _validate_brazil_bbox(lat, lng)
+        except ValueError:
+            pass
+
+    # Dot decimal with comma separator: -23.55,-46.63
+    m = re.match(r'^([+-]?\d+\.\d+)\s*,\s*([+-]?\d+\.\d+)$', text)
+    if m:
+        try:
+            lat, lng = float(m.group(1)), float(m.group(2))
+            return _validate_brazil_bbox(lat, lng)
+        except ValueError:
+            pass
+
+    # Space separator (dot or comma decimal)
+    parts = text.split()
+    if len(parts) == 2:
+        try:
+            lat = float(parts[0].replace(',', '.'))
+            lng = float(parts[1].replace(',', '.'))
+            return _validate_brazil_bbox(lat, lng)
+        except ValueError:
+            pass
+
+    # Comma separator where second token starts with minus: -23,55,-46,63
+    m = re.match(r'^([+-]?\d+(?:[.,]\d+)?)\s*,\s*(-\d+(?:[.,]\d+)?)$', text)
+    if m:
+        try:
+            lat = float(m.group(1).replace(',', '.'))
+            lng = float(m.group(2).replace(',', '.'))
+            return _validate_brazil_bbox(lat, lng)
+        except ValueError:
+            pass
+
+    return None
+
+
+def lookup_hex_by_coord(
+    lat: float,
+    lng: float,
+    df: pd.DataFrame,
+    h3_res: int = 7,
+) -> dict | None:
+    """Convert ``lat/lng`` to H3 ``hex_id`` at ``h3_res`` and look up in ``df``.
+
+    Returns a dict with the matching row (plus ``_searched_lat``, ``_searched_lng``,
+    ``_not_found=False``). If the hex is not in ``df``, returns the dict with
+    ``_not_found=True``. Returns ``None`` only on H3 conversion failure.
+    """
+    try:
+        import h3 as h3lib
+        hex_id = h3lib.latlng_to_cell(lat, lng, h3_res)
+    except Exception:
+        return None
+    matches = df.loc[df["hex_id"] == hex_id]
+    meta = {"_searched_lat": lat, "_searched_lng": lng}
+    if matches.empty:
+        return {"hex_id": hex_id, "_not_found": True, **meta}
+    row = matches.iloc[0].to_dict()
+    row.update({**meta, "_not_found": False})
+    return row

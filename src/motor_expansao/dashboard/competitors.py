@@ -1,0 +1,428 @@
+from __future__ import annotations
+
+import base64
+import re
+from functools import cache
+from pathlib import Path
+
+import pandas as pd
+
+LAT_MIN, LAT_MAX = -34.0, 6.0
+LNG_MIN, LNG_MAX = -75.0, -28.0
+
+COMPETITOR_COLUMNS = [
+    "rede",
+    "rede_label",
+    "nome_unidade",
+    "lat",
+    "lng",
+    "cidade",
+    "uf",
+    "data_coleta",
+    "arquivo_origem",
+    "status_registro",
+]
+
+# ── helpers ────────────────────────────────────────────────────────────────────
+
+def _std(rede: str, label: str) -> dict[str, str]:
+    return {
+        "rede": rede,
+        "rede_label": label,
+        "nome": "nome_unidade",
+        "lat": "latitude",
+        "lng": "longitude",
+        "data_coleta": "data_coleta",
+    }
+
+
+# ── specs e brands ─────────────────────────────────────────────────────────────
+# SkyFit excluida conforme decisao de bloco 6.
+
+COMPETITOR_SPECS: dict[str, dict[str, str]] = {
+    "unidades_smart_fit.csv":     _std("smart_fit",       "Smart Fit"),
+    "unidades_bluefit.csv":       _std("bluefit",         "Bluefit"),
+    "unidades_panobianco.csv":    _std("panobianco",       "Panobianco"),
+    "unidades_26fit.csv":         _std("26fit",            "26Fit"),
+    "unidades_aera_pilates.csv":  _std("aera_pilates",     "Aera Pilates"),
+    "unidades_allp_fit.csv":      _std("allp_fit",         "Allp Fit"),
+    "unidades_alpha_fitness.csv": _std("alpha_fitness",    "Alpha Fitness"),
+    "unidades_bio_ritmo.csv":     _std("bio_ritmo",        "Bio Ritmo"),
+    "unidades_bodytech.csv":      _std("bodytech",         "Bodytech"),
+    "unidades_cia_athletica.csv": _std("cia_athletica",    "CIA Athletica"),
+    "unidades_contorno_do_corpo.csv": _std("contorno_do_corpo", "Contorno do Corpo"),
+    "unidades_evoque.csv":        _std("evoque",           "Evoque"),
+    "unidades_gavioes.csv":       _std("gavioes",          "Gavioes"),
+    "unidades_greenlife.csv":     _std("greenlife",        "Greenlife"),
+    "unidades_jab_house.csv":     _std("jab_house",        "Jab House"),
+    "unidades_kore.csv":          _std("kore",             "Kore Studios"),
+    "unidades_live.csv":          _std("live",             "Live Academia"),
+    "unidades_phd_sports.csv":    _std("phd_sports",       "PhD Sports"),
+    "unidades_pratique.csv":      _std("pratique",         "Pratique"),
+    "unidades_race_bootcamp.csv": _std("race_bootcamp",    "Race Bootcamp"),
+    "unidades_red_fitness.csv":   _std("red_fitness",      "Red Fitness"),
+    "unidades_selfit.csv":        _std("selfit",           "Selfit"),
+    "unidades_tonus_gym.csv":     _std("tonus_gym",        "Tonus Gym"),
+    "unidades_velocity.csv":      _std("velocity",         "Velocity"),
+    "unidades_vidya_studio.csv":  _std("vidya_studio",     "Vidya Studio"),
+    "unidades_world_gym.csv":     _std("world_gym",        "World Gym"),
+    "unidades_xprime.csv":        _std("xprime",           "Xprime"),
+}
+
+COMPETITOR_BRANDS: dict[str, dict[str, str]] = {
+    "smart_fit":       {"label": "Smart Fit",        "short": "SF",  "bg": "#FFE600", "fg": "#111111"},
+    "bluefit":         {"label": "Bluefit",           "short": "BF",  "bg": "#174EA6", "fg": "#FFFFFF"},
+    "panobianco":      {"label": "Panobianco",        "short": "P",   "bg": "#F97316", "fg": "#FFFFFF"},
+    "26fit":           {"label": "26Fit",             "short": "26",  "bg": "#22C55E", "fg": "#FFFFFF"},
+    "aera_pilates":    {"label": "Aera Pilates",      "short": "AP",  "bg": "#A855F7", "fg": "#FFFFFF"},
+    "allp_fit":        {"label": "Allp Fit",          "short": "AL",  "bg": "#3B82F6", "fg": "#FFFFFF"},
+    "alpha_fitness":   {"label": "Alpha Fitness",     "short": "AF",  "bg": "#EF4444", "fg": "#FFFFFF"},
+    "bio_ritmo":       {"label": "Bio Ritmo",         "short": "BR",  "bg": "#06B6D4", "fg": "#FFFFFF"},
+    "bodytech":        {"label": "Bodytech",          "short": "BT",  "bg": "#1E293B", "fg": "#FFFFFF"},
+    "cia_athletica":   {"label": "CIA Athletica",     "short": "CA",  "bg": "#0EA5E9", "fg": "#FFFFFF"},
+    "contorno_do_corpo": {"label": "Contorno do Corpo", "short": "CC", "bg": "#EC4899", "fg": "#FFFFFF"},
+    "evoque":          {"label": "Evoque",            "short": "EV",  "bg": "#78716C", "fg": "#FFFFFF"},
+    "gavioes":         {"label": "Gavioes",           "short": "GV",  "bg": "#84CC16", "fg": "#111111"},
+    "greenlife":       {"label": "Greenlife",         "short": "GL",  "bg": "#16A34A", "fg": "#FFFFFF"},
+    "jab_house":       {"label": "Jab House",         "short": "JH",  "bg": "#DC2626", "fg": "#FFFFFF"},
+    "kore":            {"label": "Kore Studios",      "short": "KO",  "bg": "#7C3AED", "fg": "#FFFFFF"},
+    "live":            {"label": "Live Academia",     "short": "LV",  "bg": "#F59E0B", "fg": "#111111"},
+    "phd_sports":      {"label": "PhD Sports",        "short": "PhD", "bg": "#0F172A", "fg": "#FFFFFF"},
+    "pratique":        {"label": "Pratique",          "short": "PR",  "bg": "#10B981", "fg": "#FFFFFF"},
+    "race_bootcamp":   {"label": "Race Bootcamp",     "short": "RB",  "bg": "#FF6B00", "fg": "#FFFFFF"},
+    "red_fitness":     {"label": "Red Fitness",       "short": "RF",  "bg": "#B91C1C", "fg": "#FFFFFF"},
+    "selfit":          {"label": "Selfit",            "short": "SF2", "bg": "#0284C7", "fg": "#FFFFFF"},
+    "tonus_gym":       {"label": "Tonus Gym",         "short": "TG",  "bg": "#9333EA", "fg": "#FFFFFF"},
+    "velocity":        {"label": "Velocity",          "short": "VL",  "bg": "#475569", "fg": "#FFFFFF"},
+    "vidya_studio":    {"label": "Vidya Studio",      "short": "VS",  "bg": "#E11D48", "fg": "#FFFFFF"},
+    "world_gym":       {"label": "World Gym",         "short": "WG",  "bg": "#1D4ED8", "fg": "#FFFFFF"},
+    "xprime":          {"label": "Xprime",            "short": "XP",  "bg": "#0891B2", "fg": "#FFFFFF"},
+}
+
+# logo filenames dentro de concorrentes/
+COMPETITOR_LOGO_FILES: dict[str, str] = {
+    "smart_fit":         "logo_smart_fit.png",
+    "bluefit":           "bluefit_academia_logo.png",
+    "panobianco":        "logo_panobianco.png",
+    "26fit":             "logo_26fit.png",
+    "aera_pilates":      "logo_aerapilates.png",
+    "allp_fit":          "logo_allpfit.png",
+    "alpha_fitness":     "logo_alphafitness.png",
+    "bio_ritmo":         "logo_bioritmo.png",
+    "bodytech":          "logo_bodytech.png",
+    "cia_athletica":     "logo_cia_athletica.png",
+    "contorno_do_corpo": "logo_engenharia_do_corpo.png",
+    "evoque":            "logo_evoque.png",
+    "gavioes":           "logo_gavioes.png",
+    "greenlife":         "logo_greenlife.png",
+    "jab_house":         "logo_jabhouse.png",
+    "kore":              "logo_kore_studios.png",
+    "live":              "logo_live_academia.png",
+    "phd_sports":        "logo_phd_sports.png",
+    "pratique":          "logo_pratique.png",
+    "race_bootcamp":     "logo_race_bootcamp.png",
+    "red_fitness":       "logo_red_fitness.png",
+    "selfit":            "logo_selfit.png",
+    "tonus_gym":         "logo_tonus_gym.png",
+    "velocity":          "logo_velocity.png",
+    "vidya_studio":      "logo_vydia_studio.png",
+    "world_gym":         "logo_world_gym.png",
+    "xprime":            "logo_xprime.png",
+}
+
+ULTRA_LOGO_FILE = "logo_ultra.png"
+
+# cache de logos PNG: rede -> icon_data; "__ultra__" para Ultra
+_ICON_CACHE: dict[str, dict] = {}
+
+
+def _png_to_pin_svg(png_b64: str, *, pin_bg: str, pin_stroke: str = "#FFFFFF") -> str:
+    """Gera SVG de pin de mapa com logo PNG clipada em circulo branco interno."""
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"'
+        ' width="128" height="128" viewBox="0 0 128 128">'
+        "<defs><clipPath id=\"lc\"><circle cx=\"64\" cy=\"47\" r=\"27\"/></clipPath></defs>"
+        f'<path d="M64 6C40.8 6 22 24.8 22 48c0 31.5 42 74 42 74s42-42.5 42-74'
+        f'C106 24.8 87.2 6 64 6z" fill="{pin_bg}" stroke="{pin_stroke}" stroke-width="6"/>'
+        '<circle cx="64" cy="47" r="27" fill="#FFFFFF"/>'
+        f'<image href="data:image/png;base64,{png_b64}"'
+        ' x="37" y="20" width="54" height="54" clip-path="url(#lc)"'
+        ' preserveAspectRatio="xMidYMid meet"/>'
+        "</svg>"
+    )
+
+
+def _png_icon_data(path: Path, *, pin_bg: str = "#FFFFFF") -> dict[str, object] | None:
+    """Le PNG, envolve em pin SVG e retorna icon_data para pydeck IconLayer."""
+    if not path.exists():
+        return None
+    try:
+        png_b64 = base64.b64encode(path.read_bytes()).decode("ascii")
+        svg = _png_to_pin_svg(png_b64, pin_bg=pin_bg)
+        encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+        return {"url": f"data:image/svg+xml;base64,{encoded}", "width": 128, "height": 128, "anchorY": 122}
+    except Exception:
+        return None
+
+
+def preload_logos(competitors_dir: Path, ultra_dir: Path | None = None) -> None:
+    """Le logos PNG locais e popula _ICON_CACHE. App funciona sem esses arquivos."""
+    for rede, filename in COMPETITOR_LOGO_FILES.items():
+        pin_bg = COMPETITOR_BRANDS.get(rede, {}).get("bg", "#FFFFFF")
+        icon = _png_icon_data(competitors_dir / filename, pin_bg=pin_bg)
+        if icon is not None:
+            _ICON_CACHE[rede] = icon
+    if ultra_dir is not None:
+        icon = _png_icon_data(ultra_dir / ULTRA_LOGO_FILE, pin_bg=ULTRA_BRAND["bg"])
+        if icon is not None:
+            _ICON_CACHE["__ultra__"] = icon
+
+
+# ── I/O ────────────────────────────────────────────────────────────────────────
+
+def _empty_competitors() -> pd.DataFrame:
+    return pd.DataFrame(columns=COMPETITOR_COLUMNS)
+
+
+def _read_csv(path: Path) -> pd.DataFrame:
+    last_error: UnicodeDecodeError | None = None
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            df = pd.read_csv(path, sep=";", dtype=str, encoding=encoding)
+            if len(df.columns) >= 2:
+                return df
+            # provavelmente sep=","
+            df2 = pd.read_csv(path, sep=",", dtype=str, encoding=encoding)
+            if len(df2.columns) >= 2:
+                return df2
+            return df
+        except UnicodeDecodeError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
+    return pd.read_csv(path, sep=";", dtype=str)
+
+
+def _find_column(df: pd.DataFrame, expected: str | None) -> str | None:
+    if not expected:
+        return None
+    if expected in df.columns:
+        return expected
+    normalized = {str(column).strip().lower(): column for column in df.columns}
+    return normalized.get(expected.strip().lower())
+
+
+def _coord_in_brazil(value: float, *, axis: str) -> bool:
+    if axis == "lat":
+        return LAT_MIN <= value <= LAT_MAX
+    return LNG_MIN <= value <= LNG_MAX
+
+
+def _parse_coordinate(value: object, *, axis: str) -> float | None:
+    if pd.isna(value):
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    normalized = text.replace(",", ".")
+    direct = pd.to_numeric(normalized, errors="coerce")
+    if pd.notna(direct) and _coord_in_brazil(float(direct), axis=axis):
+        return float(direct)
+
+    digits = re.sub(r"\D", "", text)
+    if not digits:
+        return None
+
+    sign = -1 if text.lstrip().startswith("-") else 1
+    numeric = int(digits)
+    for decimals in range(4, min(len(digits), 10) + 1):
+        candidate = sign * numeric / (10**decimals)
+        if _coord_in_brazil(candidate, axis=axis):
+            return float(candidate)
+
+    return None
+
+
+def _series_or_empty(df: pd.DataFrame, column: str | None) -> pd.Series:
+    if column and column in df.columns:
+        return df[column].astype("string").fillna("").str.strip()
+    return pd.Series([""] * len(df), index=df.index, dtype="string")
+
+
+def _normalize_frame(path: Path, spec: dict[str, str]) -> pd.DataFrame:
+    raw = _read_csv(path)
+    nome_col = _find_column(raw, spec.get("nome"))
+    lat_col = _find_column(raw, spec.get("lat"))
+    lng_col = _find_column(raw, spec.get("lng"))
+    cidade_col = _find_column(raw, spec.get("cidade"))
+    uf_col = _find_column(raw, spec.get("uf"))
+    data_col = _find_column(raw, spec.get("data_coleta"))
+    status_col = _find_column(raw, spec.get("status"))
+
+    if not nome_col or not lat_col or not lng_col:
+        return _empty_competitors()
+
+    out = pd.DataFrame(
+        {
+            "rede": spec["rede"],
+            "rede_label": spec["rede_label"],
+            "nome_unidade": _series_or_empty(raw, nome_col),
+            "lat": raw[lat_col].map(lambda value: _parse_coordinate(value, axis="lat")),
+            "lng": raw[lng_col].map(lambda value: _parse_coordinate(value, axis="lng")),
+            "cidade": _series_or_empty(raw, cidade_col),
+            "uf": _series_or_empty(raw, uf_col).str.upper(),
+            "data_coleta": _series_or_empty(raw, data_col),
+            "arquivo_origem": path.name,
+            "status_registro": _series_or_empty(raw, status_col),
+        }
+    )
+
+    valid_coord = out["lat"].notna() & out["lng"].notna()
+    out["status_registro"] = out["status_registro"].where(out["status_registro"] != "", "valido")
+    out = out.loc[valid_coord].copy()
+    return out[COMPETITOR_COLUMNS]
+
+
+def load_competitor_points(competitors_dir: Path) -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for filename, spec in COMPETITOR_SPECS.items():
+        path = competitors_dir / filename
+        if path.exists():
+            frame = _normalize_frame(path, spec)
+            if not frame.empty:
+                frames.append(frame)
+
+    if not frames:
+        return _empty_competitors()
+
+    competitors = pd.concat(frames, ignore_index=True)
+    competitors = competitors.drop_duplicates(subset=["rede", "lat", "lng"], keep="first")
+    competitors = competitors.sort_values(["rede_label", "nome_unidade"], kind="stable").reset_index(drop=True)
+    return competitors[COMPETITOR_COLUMNS]
+
+
+# ── icons ──────────────────────────────────────────────────────────────────────
+
+@cache
+def _competitor_icon_svg(rede: str) -> dict[str, object]:
+    brand = COMPETITOR_BRANDS.get(
+        str(rede),
+        {"label": "Concorrente", "short": "C", "bg": "#64748B", "fg": "#FFFFFF"},
+    )
+    short = str(brand["short"])[:3]
+    bg = brand["bg"]
+    fg = brand["fg"]
+    svg = f"""
+    <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+      <path d="M64 6C40.8 6 22 24.8 22 48c0 31.5 42 74 42 74s42-42.5 42-74C106 24.8 87.2 6 64 6z" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>
+      <circle cx="64" cy="49" r="32" fill="rgba(255,255,255,0.18)"/>
+      <text x="64" y="60" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="800" fill="{fg}">{short}</text>
+    </svg>
+    """.strip()
+    encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return {"url": f"data:image/svg+xml;base64,{encoded}", "width": 128, "height": 128, "anchorY": 122}
+
+
+def competitor_icon_data(rede: str) -> dict[str, object]:
+    if rede in _ICON_CACHE:
+        return _ICON_CACHE[rede]
+    return _competitor_icon_svg(rede)
+
+
+def competitor_legend_entries(redes: list[str] | pd.Series | None = None) -> list[dict[str, str]]:
+    if redes is None:
+        ordered_redes = list(COMPETITOR_BRANDS)
+    else:
+        ordered_redes = [rede for rede in COMPETITOR_BRANDS if rede in set(redes)]
+    return [
+        {
+            "rede": rede,
+            "label": COMPETITOR_BRANDS[rede]["label"],
+            "short": COMPETITOR_BRANDS[rede]["short"],
+            "bg": COMPETITOR_BRANDS[rede]["bg"],
+            "fg": COMPETITOR_BRANDS[rede]["fg"],
+        }
+        for rede in ordered_redes
+    ]
+
+
+# ── Ultra Academia ────────────────────────────────────────────────────────────
+
+ULTRA_BRAND = {"label": "Ultra Academia", "short": "UA", "bg": "#C8001E", "fg": "#FFFFFF"}
+
+ULTRA_COLUMNS = ["nome_unidade", "lat", "lng", "cidade", "uf", "arquivo_origem"]
+
+
+def _empty_ultra() -> pd.DataFrame:
+    return pd.DataFrame(columns=ULTRA_COLUMNS)
+
+
+def load_ultra_points(ultra_path: Path) -> pd.DataFrame:
+    if not ultra_path.exists():
+        return _empty_ultra()
+    try:
+        raw = None
+        for encoding in ("latin-1", "utf-8-sig", "utf-8"):
+            try:
+                raw = pd.read_csv(ultra_path, sep=";", dtype=str, encoding=encoding, skiprows=1)
+                break
+            except UnicodeDecodeError:
+                continue
+        if raw is None or raw.empty:
+            return _empty_ultra()
+    except Exception:
+        return _empty_ultra()
+
+    unidade_col = _find_column(raw, "UNIDADE")
+    lat_col = _find_column(raw, "Latitude")
+    lng_col = _find_column(raw, "Longitude")
+    cidade_col = _find_column(raw, "CIDADE")
+    estado_col = _find_column(raw, "ESTADO")
+
+    if not unidade_col or not lat_col or not lng_col:
+        return _empty_ultra()
+
+    out = pd.DataFrame({
+        "nome_unidade": _series_or_empty(raw, unidade_col),
+        "lat": raw[lat_col].map(lambda v: _parse_coordinate(v, axis="lat")),
+        "lng": raw[lng_col].map(lambda v: _parse_coordinate(v, axis="lng")),
+        "cidade": _series_or_empty(raw, cidade_col),
+        "uf": _series_or_empty(raw, estado_col).str.upper(),
+        "arquivo_origem": ultra_path.name,
+    })
+
+    valid_coord = out["lat"].notna() & out["lng"].notna()
+    return out.loc[valid_coord].reset_index(drop=True)[ULTRA_COLUMNS]
+
+
+@cache
+def _ultra_icon_svg() -> dict[str, object]:
+    bg = ULTRA_BRAND["bg"]
+    fg = ULTRA_BRAND["fg"]
+    short = ULTRA_BRAND["short"]
+    svg = f"""
+    <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
+      <path d="M64 6C40.8 6 22 24.8 22 48c0 31.5 42 74 42 74s42-42.5 42-74C106 24.8 87.2 6 64 6z" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>
+      <circle cx="64" cy="49" r="32" fill="rgba(255,255,255,0.18)"/>
+      <text x="64" y="60" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="800" fill="{fg}">{short}</text>
+    </svg>
+    """.strip()
+    encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    return {"url": f"data:image/svg+xml;base64,{encoded}", "width": 128, "height": 128, "anchorY": 122}
+
+
+def ultra_icon_data() -> dict[str, object]:
+    if "__ultra__" in _ICON_CACHE:
+        return _ICON_CACHE["__ultra__"]
+    return _ultra_icon_svg()
+
+
+def ultra_legend_entry() -> dict[str, str]:
+    return {
+        "label": ULTRA_BRAND["label"],
+        "short": ULTRA_BRAND["short"],
+        "bg": ULTRA_BRAND["bg"],
+        "fg": ULTRA_BRAND["fg"],
+    }

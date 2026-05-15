@@ -1,11 +1,12 @@
 import motor_expansao
-import motor_expansao.dashboard
-import motor_expansao.dashboard.data
-import motor_expansao.dashboard.components
-import motor_expansao.dashboard.pages
 import motor_expansao.core
 import motor_expansao.core.constants
 import motor_expansao.core.scoring
+import motor_expansao.dashboard
+import motor_expansao.dashboard.competitors
+import motor_expansao.dashboard.components
+import motor_expansao.dashboard.data
+import motor_expansao.dashboard.pages
 import motor_expansao.data
 import motor_expansao.pipelines
 import motor_expansao.pipelines.m1
@@ -39,6 +40,7 @@ def test_core_modules_importable():
 
 def test_dashboard_modules_importable():
     for mod in (
+        motor_expansao.dashboard.competitors,
         motor_expansao.dashboard.data,
         motor_expansao.dashboard.components,
         motor_expansao.dashboard.pages,
@@ -56,12 +58,21 @@ def test_dashboard_data_exports():
     assert all(callable(f) for f in [apply_global_filters, build_city_summary, build_uf_summary, enrich_dashboard_data])
 
 
+def test_dashboard_competitors_exports():
+    from motor_expansao.dashboard.competitors import (
+        competitor_icon_data,
+        load_competitor_points,
+    )
+
+    assert all(callable(f) for f in [competitor_icon_data, load_competitor_points])
+
+
 def test_dashboard_components_exports():
     from motor_expansao.dashboard.components import (
-        build_kpis,
-        build_hybrid_kpis,
-        build_map_figure,
         _sort_carteira_by_m1,
+        build_hybrid_kpis,
+        build_kpis,
+        build_map_figure,
     )
     assert all(callable(f) for f in [build_kpis, build_hybrid_kpis, build_map_figure, _sort_carteira_by_m1])
 

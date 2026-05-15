@@ -94,60 +94,92 @@ python fase1_bi_exports.py
 
 ## Blocos concluidos
 
-### Bloco 1 - Diagnostico e baseline [x]
+### Ciclo anterior - Handoff, refatoracao segura e preparacao VPS [x]
 **Concluido:** 2026-05-14
-- Inventario do repo, modulos, imports, monolitos e artefatos sensiveis.
-- Validacao: suite rapida e import do Streamlit passaram.
+- Blocos 1 a 6 fechados: diagnostico, higiene segura, pacote interno, extracao do dashboard, isolamento do M1, pipelines/testes e handoff.
+- Validacao final registrada: `scripts/check_artifacts.py`, suite completa com `215 passed, 4 warnings` e import smoke dos entrypoints.
+- Historico operacional consolidado em `Estado atual`; detalhes tecnicos permanecem no git e nos docs de referencia.
 
-### Bloco 2 - Higiene segura do repositorio [x]
-**Concluido:** 2026-05-14
-- `.gitignore` atualizado para temporarios; `ci.yml` raiz e `setup.py` legados removidos.
-- Validacao: `scripts/check_artifacts.py` e suite rapida passaram.
+## Blocos pendentes
 
-### Bloco 3 - Pacote interno com entrypoints preservados [x]
-**Concluido:** 2026-05-14
-- Criado `src/motor_expansao/` com subpacotes minimos e teste de import.
-- Validacao: imports e 18 testes passando.
-
-### Bloco 4 - Extracao incremental do dashboard [x]
-**Concluido:** 2026-05-14
-- Extraidos `dashboard/data.py`, `dashboard/components.py` e `dashboard/pages.py`; `streamlit_app.py` segue entrypoint.
-- Validacao: 22 testes passando e import ok.
-
-### Bloco 5 - Isolamento das regras puras do M1 [x]
-**Concluido:** 2026-05-14
-- Criados `core/constants.py` e `core/scoring.py`; `hex_enrichment.py` preservou API legada.
-- Validacao: 43 testes M1 passando; import ok.
-
-### Bloco 6 - Pipelines, testes e handoff final [x]
-**Objetivo:** organizar pipelines/testes e fechar a refatoracao com validacao operacional.
+### Bloco 1 - Regua populacional 5k para mercado/dashboard [x]
 **Concluido:** 2026-05-14
 
-**Checklist:**
-- [x] Criar ou consolidar modulos em `src/motor_expansao/pipelines/m1/` com wrappers legados na raiz.
-- [x] Mover testes para `tests/unit/`, `tests/integration/` e `tests/contracts/` em lotes pequenos, sem apagar cenarios.
-- [x] Atualizar `pyproject.toml`, README, CI e docs somente com comandos reais.
-- [x] Rodar `scripts/check_artifacts.py`, suite rapida, suite M1, suite completa e import smoke.
-- [x] Registrar conclusao, validacoes e riscos residuais neste PRD.
+**Observacoes:**
+- `POP_MIN_ACIONAVEL = 5_000` em `dashboard/constants.py`.
+- `derive_pop_cut_columns` e `build_pop_cut_lookup` em `src/motor_expansao/dashboard/data.py`; chamadas dentro de `enrich_dashboard_data`.
+- Fonte preferencial: `pop_total_setor_2022` (quando `confianca_geografica=granular`); fallback: `populacao_proxy`; ausente: `flag_pop_min_5k=False`.
+- Corte aplicado nas abas Carteira e Plano via join por `hex_id` em `render_carteira_expansao`/`render_plano_expansao`; mapa M1 principal nao filtrado (guardrail preservado).
+- Ajuste visual pendente: hex abaixo de `5.000` habitantes nao pode continuar verde/como oportunidade no mapa; tratar no proximo bloco.
+- `pop_total_setor_2022` adicionado ao merge do hybrid em `enrich_dashboard_data` para que dado censitario chegue ao lookup.
+- Bug corrigido em `components.py`: `pd.Series(dtype=float)` como default causava UFuncTypeError ao concatenar strings; corrigido com `pd.Series(pd.NA, index=map_df.index, dtype="Float64")`.
+- Suite: `28 passed` em `tests/unit/test_pop_cut.py` + `tests/integration/test_streamlit_app.py`; smoke test `import streamlit_app` ok.
 
-**Observacoes (2026-05-14):**
-- `base_h3_brasil.py`, `hex_enrichment.py` e `fase1_bi_exports.py` da raiz agora sao wrappers; a implementacao esta em `src/motor_expansao/pipelines/m1/`.
-- `hex_enrichment` ganhou `main()` explicito e usa o export BI empacotado.
-- `tests/` foi reorganizado por categoria; `pyproject.toml` define `testpaths = ["tests"]` e `pythonpath = [".", "src"]`.
-- `conftest.py` usa `tmp_path` local em `tmp_codex_runtime/manual_pytest` para evitar falhas de permissao no temp do Windows.
-- `fora_primeira_fase/m2_m3_imobiliario/score_consolidado.py` recebeu compatibilidade H3 v3/v4, fallback numerico para `NaN`, deduplicacao de `hex_id` antes de merge e preservacao de `status` no output.
-- Contratos de mercado foram ajustados para validar cobertura e consistencia interna sem exigir igualdade entre staging de mercado antigo e output hibrido recalculado.
-- Teste de contrato do M1 foi alinhado a `M1_POP_MINIMA_PROXY=1`: hex sem populacao fica fora dos percentis e com score zero.
+### Bloco 2 - Busca direta por coordenada/pin [x]
+**Concluido:** 2026-05-14
 
-**Validacao final:**
-```bash
-python scripts/check_artifacts.py
-python -m pytest -q
-python -c "import streamlit_app; import base_h3_brasil; import hex_enrichment; import fase1_bi_exports; print('ok')"
-```
-Resultado: artefatos criticos e staging opcionais presentes; `215 passed, 4 warnings`; import ok. Warnings restantes: GeoPandas alerta CRS geografico em testes sinteticos da Fase A.
+**Observacoes:**
+- `parse_coordinate_input` e `lookup_hex_by_coord` em `src/motor_expansao/dashboard/data.py`; bbox Brasil hardcoded.
+- `render_coord_search_sidebar` e `render_hex_search_result` em `src/motor_expansao/dashboard/pages.py`; widget na sidebar, card de detalhe acima das abas.
+- `_build_search_pin_layer` em `components.py`; `build_map_figure` e `build_hybrid_map_figure` aceitam `search_pin: tuple[float, float] | None` e centralizam o mapa no pin com `zoom=10.0`.
+- Quando hex nao encontrado na base: mensagem clara. Quando fora do recorte de filtros ou descartado pela regua de 5k hab: aviso com motivo. Quando visivel: badge de sucesso.
+- Ajuste visual pendente: a busca precisa desenhar/destacar o hex pesquisado no mapa, nao apenas mostrar card numerico; tratar no proximo bloco.
+- Testes: `tests/unit/test_coord_search.py` (21 cases) + 3 novos em `test_streamlit_app.py`; 53 passed, 0 failed.
 
-## Backlog do proximo ciclo
+### Bloco 3 - Correcoes visuais da regua 5k e busca por coordenada [x]
+**Concluido:** 2026-05-14
+
+**Observacoes:**
+- `_apply_pop_cut_colors` em `components.py`: aplica `fill_color=[120,120,140,70]` e `line_color=[120,120,140,180]` para hexes com `flag_pop_min_5k=False`; nao altera `score_priorizacao` nem artefatos M1.
+- `render_pop_cut_legend` em `components.py`: chip visual cinza na legenda dos mapas principal e hibrido.
+- `_build_search_hex_layer` em `components.py`: `H3HexagonLayer` amarelo destacado (fill semi-transparente, borda solida) renderizado acima de todas as camadas; aparece mesmo se o hex nao estiver nos filtros nem na base.
+- `_apply_hex_tooltip_fields` atualizado: titulo do tooltip recebe sufixo " — Descartado <5k hab" quando `flag_pop_min_5k=False`.
+- `build_map_figure` e `build_hybrid_map_figure`: aceitam `search_hex_id: str | None = None`; `flag_pop_min_5k` incluido nos `map_columns`.
+- `render_visao_executiva` e `render_modelo_hibrido_v2` em `pages.py`: aceitam `search_hex_id` e chamam `render_pop_cut_legend`.
+- `streamlit_app.py`: `search_hex_id` derivado de `lookup_hex_by_coord` e repassado a ambas as funcoes de render.
+- Suite: `56 passed` em `test_pop_cut.py` + `test_coord_search.py` + `test_streamlit_app.py`; smoke test `import streamlit_app` ok.
+- 3 novos testes: `test_build_map_figure_pinta_hex_descartado_por_pop_com_cor_neutra`, `test_build_map_figure_adiciona_layer_de_destaque_do_hex_pesquisado`, `test_build_map_figure_destaque_hex_aparece_mesmo_fora_dos_filtros`.
+
+### Bloco 4 - Pins das unidades Ultra [x]
+**Concluido:** 2026-05-14
+
+**Observacoes:**
+- `load_ultra_points(ultra_path)` em `competitors.py`: le `data/ultra/Ultra.csv` com `skiprows=1` (metadado), `sep=";"`, fallback de encoding `latin-1 -> utf-8-sig -> utf-8`; retorna `pd.DataFrame` vazio se arquivo ausente ou sem colunas obrigatorias.
+- `ultra_icon_data()` e `ultra_legend_entry()` em `competitors.py`: pin vermelho `#C8001E` com sigla `UA`; SVG base64 identico ao padrao dos concorrentes.
+- `_build_ultra_icon_layer(ultra_df, reference_df)` em `components.py`: filtra pelo bounding box do recorte atual (mesma logica de concorrentes); tamanho de icone ligeiramente maior (38px) para distinção visual.
+- `render_ultra_legend(ultra_df)` em `components.py`: chip na legenda somente quando `ultra_df` nao estiver vazio; chamado apos `render_competitor_legend` em ambos os mapas.
+- `build_map_figure` e `build_hybrid_map_figure` aceitam `ultra_df: pd.DataFrame | None = None`; layer Ultra e empilhado apos concorrentes.
+- `render_visao_executiva` e `render_modelo_hibrido_v2` em `pages.py` aceitam `ultra_df`.
+- `streamlit_app.py`: `ULTRA_PATH`, `load_ultra()` com `@st.cache_data`; `ultra_df` passado a ambas as abas de mapa.
+- Guardrail preservado: `score_priorizacao`, artefatos M1 e carteira intocados.
+- Suite: `88 passed` em `tests/unit` + `test_streamlit_app.py`; smoke test `import streamlit_app` ok.
+- 17 novos testes em `tests/unit/test_ultra_pins.py`.
+
+### Bloco 5 - Documentacao e fechamento do ciclo [x]
+**Concluido:** 2026-05-14
+
+**Observacoes:**
+- `CLAUDE.md` atualizado: linha sobre pins Ultra (Bloco 4) adicionada na secao 5; arquivo ficou em 131 linhas (abaixo do limite 200).
+- `README.md` atualizado: novas subsecoes "Pins das unidades Ultra no mapa", "Busca por coordenada" e "Regua visual de populacao minima (5k hab)".
+- `docs/streamlit_dashboard_m1.md` atualizado: secoes correspondentes adicionadas antes de "Performance e limites locais".
+- Suite rapida: `26 passed` em `test_streamlit_app.py` + `test_carteira_plano_nacional.py`; smoke test `import streamlit_app` ok.
+- Ciclo de blocos 1-5 encerrado; nenhuma alteracao em `score_priorizacao`, artefatos M1 ou estrutura de dados.
+
+### Bloco 6 - Atualizacao de concorrentes, logos e legenda [x]
+**Concluido:** 2026-05-14
+
+**Observacoes:**
+- `COMPETITOR_SPECS` expandido de 4 para 27 redes (SkyFit removida); todas as novas planilhas seguem schema `nome_unidade;latitude;longitude;data_coleta`; `bio_ritmo` e `phd_sports` usam `,` — detectado automaticamente em `_read_csv` (tenta `;`, se 1 coluna, tenta `,`).
+- `COMPETITOR_BRANDS` atualizado com entradas para todas as 27 redes; fallback SVG preservado para quando logo PNG estiver ausente.
+- `COMPETITOR_LOGO_FILES` mapeando rede → filename PNG em `concorrentes/`; `ULTRA_LOGO_FILE = "logo_ultra.png"` em `data/ultra/`.
+- `_ICON_CACHE` (dict global), `_png_icon_data` e `preload_logos(competitors_dir, ultra_dir)` adicionados; `competitor_icon_data`/`ultra_icon_data` checam o cache primeiro, fallback ao SVG com `@cache`.
+- `preload_logos(CONCORRENTES_DIR, ultra_dir=ULTRA_PATH.parent)` chamado no nivel de modulo de `streamlit_app.py`; logos carregadas antes de qualquer render.
+- Legenda de concorrentes removida dos 3 pontos em `pages.py` (visao executiva, modelo hibrido legado, modelo hibrido v2); import `render_competitor_legend` removido de `pages.py`; funcao permanece em `components.py` e importada em `streamlit_app.py` (retro-compat).
+- Guardrails preservados: `score_priorizacao`, artefatos M1, carteira e plano intocados; app funciona sem arquivos de logo (fallback SVG) e sem arquivos de CSV (retorna DataFrame vazio).
+- Suite: `43 passed` em `test_ultra_pins.py` + `test_streamlit_app.py`; smoke test `import streamlit_app` ok.
+- Novos testes: `test_skyfit_nao_esta_no_competitor_specs`, `test_load_competitors_ignora_skyfit`, `test_load_competitors_carrega_multiplas_planilhas`, `test_preload_logos_*` (3 casos: PNG ultra, PNG concorrente, sem arquivos).
+
+## Backlog posterior
 - Hardening operacional da VPS: HTTPS/proxy reverso, autenticacao ou VPN, monitoramento de uptime.
 - Limpeza assistida dos diretorios temporarios antigos com permissao negada em `fixtures/`.
-- Avaliar se camada de mercado por hexagono deve ser regenerada apos o recalculo M1 de 2026-05-12.
+- Avaliar regeneracao nacional da camada de mercado apos estabilizar a regua de `5.000` habitantes.

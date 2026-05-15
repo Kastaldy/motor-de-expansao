@@ -37,6 +37,8 @@ HYBRID_LOAD_COLS = [
     "motivo_nao_elegivel_censo", "status_espacial_uf", "fonte_camada_censitaria",
     "flag_monitoramento_prioritario", "criterio_score_expansao_hibrido",
     "camada_modelo_hibrido",
+    "populacao_proxy", "renda_per_capita", "pop_total_setor_2022",
+    "renda_per_capita_setor_2022_calibrada",
 ]
 
 CENSO_TRACE_LOAD_COLS = [
@@ -74,6 +76,7 @@ FAIXA_ORDEM = [
 ]
 MAP_POINT_LIMIT = 35000
 TABLE_ROW_LIMIT = 1000
+POP_MIN_ACIONAVEL = 5_000
 BRASIL_CENTER = {"lat": -14.235, "lon": -51.9253}
 FLOAT_COLUMNS = [
     "lat",
@@ -96,6 +99,7 @@ FLOAT_COLUMNS = [
     "rank_hibrido_brasil",
     "rank_hibrido_uf",
     "delta_vs_vizinhos",
+    "populacao_corte_hex",
 ]
 BOOL_COLUMNS = [
     "flag_viavel",
@@ -114,6 +118,7 @@ BOOL_COLUMNS = [
     "top_oportunidade_municipio",
     "top_oportunidade_brasil",
     "top_oportunidade_uf",
+    "flag_pop_min_5k",
 ]
 TEXT_COLUMNS = [
     "uf",
@@ -130,6 +135,7 @@ TEXT_COLUMNS = [
     "causa_outlier_espacial",
     "metodo_join_setor_2022",
     "motivo_fallback_setor_2022",
+    "fonte_populacao_corte",
 ]
 MAP_SORT_COLUMNS = ["flag_prioridade", "flag_viavel", "score_priorizacao", "rank_brasil"]
 MAP_SORT_ASCENDING = [False, False, False, True]

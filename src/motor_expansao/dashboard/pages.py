@@ -9,6 +9,7 @@ from dashboard.constants import (
     FAIXA_ORDEM,
     HYBRID_ELIGIBILITY_ORDER,
     JOIN_QUALITY_ORDER,
+    POP_MIN_ACIONAVEL,
     TABLE_ROW_LIMIT,
 )
 from dashboard.utils import format_int, format_score
@@ -40,8 +41,11 @@ from motor_expansao.dashboard.components import (
     render_censo_score_legend,
     render_faixa_legend,
     render_geographic_source_legend,
+    render_pop_cut_legend,
+    render_ultra_legend,
     style_ranking_table,
 )
+from motor_expansao.dashboard.data import lookup_hex_by_coord, parse_coordinate_input
 
 
 def inject_styles() -> None:
@@ -335,6 +339,106 @@ def render_empty_state() -> None:
     st.warning("Nenhum dado encontrado para o recorte atual. Ajuste os filtros globais.")
 
 
+def render_coord_search_sidebar() -> tuple[float, float] | None:
+    """Render coordinate search widget in sidebar. Returns ``(lat, lng)`` or ``None``."""
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### Busca por coordenada")
+    st.sidebar.caption("Localize um hexagono pela coordenada. Offline, sem API externa.")
+    raw = st.sidebar.text_input(
+        "Coordenada (lat, lng)",
+        placeholder="-23.55, -46.63",
+        key="coord_search_input",
+    )
+    if not raw or not raw.strip():
+        return None
+    result = parse_coordinate_input(raw)
+    if result is None:
+        st.sidebar.error(
+            "Formato invalido ou fora dos limites do Brasil. "
+            "Use: -23.55, -46.63  ou  -23,55; -46,63  ou  -23.55 -46.63"
+        )
+    return result
+
+
+def render_hex_search_result(
+    search_coord: tuple[float, float] | None,
+    *,
+    full_df: pd.DataFrame,
+    filtered_df: pd.DataFrame,
+    pop_cut_lookup: pd.DataFrame | None = None,
+) -> None:
+    """Render the detail card for the searched coordinate, if any."""
+    if search_coord is None:
+        return
+
+    lat, lng = search_coord
+    result = lookup_hex_by_coord(lat, lng, full_df)
+
+    st.markdown("---")
+    st.markdown(f"#### Hexagono pesquisado para `{lat:.5f}, {lng:.5f}`")
+
+    if result is None:
+        st.warning("Nao foi possivel converter a coordenada para um hexagono H3.")
+        return
+
+    hex_id = result["hex_id"]
+
+    if result.get("_not_found"):
+        st.info(
+            f"Hexagono `{hex_id}` nao encontrado na base oficial M1. "
+            "Pode ser uma area rural, maritima ou fora dos municipios mapeados."
+        )
+        return
+
+    # Check visibility in current filters
+    in_recorte = bool(
+        not filtered_df.empty and not filtered_df.loc[filtered_df["hex_id"] == hex_id].empty
+    )
+
+    # Check pop cut removal
+    pop_flag = True
+    if pop_cut_lookup is not None and not pop_cut_lookup.empty and "hex_id" in pop_cut_lookup.columns:
+        pop_row = pop_cut_lookup.loc[pop_cut_lookup["hex_id"] == hex_id]
+        if not pop_row.empty:
+            pop_flag = bool(pop_row.iloc[0].get("flag_pop_min_5k", True))
+
+    status_lines = []
+    if not in_recorte and not filtered_df.empty:
+        uf_hex = result.get("uf", "")
+        selected_ufs_in_view = sorted(filtered_df["uf"].dropna().unique().tolist()) if "uf" in filtered_df.columns else []
+        if uf_hex and selected_ufs_in_view and uf_hex not in selected_ufs_in_view:
+            status_lines.append(f"Fora do recorte atual (UF {uf_hex} nao selecionada).")
+        else:
+            status_lines.append("Fora do recorte atual (verificar filtros de faixa, cidade ou hibrido).")
+    if not pop_flag:
+        status_lines.append(f"Descartado pela regua de populacao minima ({format_int(POP_MIN_ACIONAVEL)} hab).")
+
+    if status_lines:
+        st.warning("  ".join(status_lines))
+    else:
+        st.success("Hexagono visivel no recorte atual.")
+
+    cols = st.columns(4)
+    cols[0].metric("Score M1", format_score(result.get("score_priorizacao")))
+    cols[1].metric("Rank Brasil", format_int(result.get("rank_brasil")) if result.get("rank_brasil") is not None else "-")
+    pop_val = result.get("pop_total_setor_2022") or result.get("populacao_proxy")
+    cols[2].metric("Populacao", format_int(pop_val) if pop_val is not None else "-")
+    renda_val = result.get("renda_per_capita_setor_2022_calibrada") or result.get("renda_per_capita")
+    cols[3].metric("Renda per capita", f"R$ {format_int(renda_val)}" if renda_val is not None else "-")
+
+    detail_cols = st.columns(3)
+    detail_cols[0].metric("Hex ID", hex_id)
+    detail_cols[1].metric("UF / Cidade", f"{result.get('uf', '-')} / {result.get('nome_municipio') or result.get('cidade', '-')}")
+    detail_cols[2].metric("Fonte geografica", str(result.get("confianca_geografica", "municipal")))
+
+    score_censo = result.get("score_setor_2022_calibrado")
+    if score_censo is not None and not pd.isna(score_censo):
+        extra_cols = st.columns(3)
+        extra_cols[0].metric("Score Censitario", format_score(score_censo))
+        extra_cols[1].metric("Elegibilidade hibrida", str(result.get("elegibilidade_hibrida", "-")))
+        extra_cols[2].metric("Qualidade join", str(result.get("qualidade_join_uf", "-")))
+
+
 def render_visao_executiva(
     df: pd.DataFrame,
     city_summary: pd.DataFrame,
@@ -342,6 +446,10 @@ def render_visao_executiva(
     *,
     selected_ufs: list[str],
     selected_cities: list[str],
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    search_pin: tuple[float, float] | None = None,
+    search_hex_id: str | None = None,
 ) -> None:
     kpis = build_kpis(df, city_summary, uf_summary)
     col1, col2, col3, col4 = st.columns(4)
@@ -365,10 +473,16 @@ def render_visao_executiva(
     )
     render_faixa_legend()
     render_geographic_source_legend()
+    render_pop_cut_legend()
+    render_ultra_legend(ultra_df)
     map_figure, points_used = build_map_figure(
         df,
         selected_ufs=selected_ufs,
         selected_cities=selected_cities,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+        search_pin=search_pin,
+        search_hex_id=search_hex_id,
     )
     if map_figure is None:
         st.info("Sem pontos geograficos validos para o mapa neste recorte.")
@@ -468,6 +582,7 @@ def render_modelo_hibrido(
     *,
     selected_ufs: list[str],
     selected_cities: list[str],
+    competitors_df: pd.DataFrame | None = None,
 ) -> None:
     if hdf.empty:
         st.warning("Dataset hibrido nao disponivel. Verifique `data/outputs/oportunidades_expansao_hibrido.parquet`.")
@@ -541,9 +656,9 @@ def render_modelo_hibrido(
 
     hybrid_map, n_points = build_hybrid_map_figure(
         hdf,
-        df_m1,
         selected_ufs=selected_ufs,
         selected_cities=selected_cities,
+        competitors_df=competitors_df,
     )
     if hybrid_map is None:
         st.info(
@@ -635,6 +750,10 @@ def render_modelo_hibrido_v2(
     selected_ufs: list[str],
     selected_cities: list[str],
     selected_faixas: list[str] | None = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    search_pin: tuple[float, float] | None = None,
+    search_hex_id: str | None = None,
 ) -> None:
     if hdf.empty:
         st.warning("Dataset hibrido nao disponivel. Verifique `data/outputs/oportunidades_expansao_hibrido.parquet`.")
@@ -719,11 +838,17 @@ def render_modelo_hibrido_v2(
             "Mapa colorido por `score_setor_2022_calibrado`, com hover de rastreabilidade. Linhas vermelhas indicam join restrito ou qualidade C."
         )
         render_censo_score_legend()
+        render_pop_cut_legend()
+        render_ultra_legend(ultra_df)
         hybrid_map, n_points = build_hybrid_map_figure(
             hdf,
             selected_ufs=selected_ufs,
             selected_cities=selected_cities,
             selected_faixas=selected_faixas,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+            search_pin=search_pin,
+            search_hex_id=search_hex_id,
         )
         if hybrid_map is None:
             st.info("Nao ha score censitario disponivel no recorte atual.")
@@ -808,6 +933,7 @@ def render_carteira_expansao(
     *,
     selected_ufs: list[str],
     selected_cities: list[str],
+    pop_cut_lookup: pd.DataFrame | None = None,
 ) -> None:
     if carteira.empty:
         st.warning(
@@ -877,6 +1003,20 @@ def render_carteira_expansao(
         view = view[view["nome_municipio"].isin(muns_sel)]
     if prioridades_sel:
         view = view[view["prioridade_abertura"].isin(prioridades_sel)]
+
+    if pop_cut_lookup is not None and not pop_cut_lookup.empty and "hex_id" in view.columns:
+        lookup_cols = [c for c in ["hex_id", "populacao_corte_hex", "fonte_populacao_corte", "flag_pop_min_5k"] if c in pop_cut_lookup.columns]
+        view = view.merge(pop_cut_lookup[lookup_cols], on="hex_id", how="left")
+        view["flag_pop_min_5k"] = view["flag_pop_min_5k"].fillna(False).astype(bool)
+        n_descartados = int((~view["flag_pop_min_5k"]).sum())
+        if n_descartados > 0:
+            st.warning(
+                f"{format_int(n_descartados)} oportunidades removidas pela regua de {format_int(POP_MIN_ACIONAVEL)} habitantes "
+                f"(populacao_corte_hex < {format_int(POP_MIN_ACIONAVEL)} ou ausente). "
+                "Essas oportunidades continuam no M1 oficial — apenas excluidas da carteira acionavel."
+            )
+        view = view[view["flag_pop_min_5k"]]
+
     view = _sort_carteira_by_m1(view)
 
     st.markdown("---")
@@ -1002,7 +1142,7 @@ def render_carteira_expansao(
         )
 
 
-def render_plano_expansao(plano: pd.DataFrame) -> None:
+def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame | None = None) -> None:
     if plano.empty:
         st.warning(
             "Plano de curto prazo nao disponivel. Execute "
@@ -1056,6 +1196,19 @@ def render_plano_expansao(plano: pd.DataFrame) -> None:
         view = view[view["nome_municipio"].isin(muns_sel)]
     if niveis_sel:
         view = view[view["nivel_prioridade_final"].isin(niveis_sel)]
+
+    if pop_cut_lookup is not None and not pop_cut_lookup.empty and "hex_id" in view.columns:
+        lookup_cols = [c for c in ["hex_id", "populacao_corte_hex", "fonte_populacao_corte", "flag_pop_min_5k"] if c in pop_cut_lookup.columns]
+        view = view.merge(pop_cut_lookup[lookup_cols], on="hex_id", how="left")
+        view["flag_pop_min_5k"] = view["flag_pop_min_5k"].fillna(False).astype(bool)
+        n_descartados = int((~view["flag_pop_min_5k"]).sum())
+        if n_descartados > 0:
+            st.warning(
+                f"{format_int(n_descartados)} oportunidades removidas pela regua de {format_int(POP_MIN_ACIONAVEL)} habitantes "
+                f"(populacao_corte_hex < {format_int(POP_MIN_ACIONAVEL)} ou ausente). "
+                "Essas oportunidades continuam no M1 oficial — apenas excluidas do plano acionavel."
+            )
+        view = view[view["flag_pop_min_5k"]]
 
     st.markdown("---")
     k1, k2, k3, k4, k5 = st.columns(5)
