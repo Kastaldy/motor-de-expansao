@@ -17,6 +17,7 @@ from dashboard.constants import (
     MAP_SORT_COLUMNS,
     OPTIONAL_DATASET_COLUMNS,
     POP_MIN_ACIONAVEL,
+    RESIDUAL_MERCADO_COLS,
     TEXT_COLUMNS,
 )
 
@@ -277,6 +278,7 @@ def enrich_dashboard_data(
         "criterio_score_expansao_hibrido",
         "camada_modelo_hibrido",
         "pop_total_setor_2022",
+        *RESIDUAL_MERCADO_COLS,
     ]
     if not hybrid_df.empty:
         hybrid_subset = hybrid_df[[column for column in hybrid_extra_cols if column in hybrid_df.columns]]

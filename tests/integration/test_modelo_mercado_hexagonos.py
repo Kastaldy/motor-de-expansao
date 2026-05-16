@@ -8,7 +8,14 @@ import pandas as pd
 import pytest
 
 from jobs.pipelines import calcular_colunas_mercado as mercado_module
-from jobs.pipelines.calcular_colunas_mercado import HYBRID_TIEBREAK_MAX_SCORE, calcular
+from jobs.pipelines.calcular_colunas_mercado import (
+    CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS,
+    HYBRID_TIEBREAK_MAX_SCORE,
+    TAXA_FITNESS_CALIBRADA,
+    TAXA_FITNESS_MERCADO_FALLBACK,
+    anexar_oferta_ultra_real,
+    calcular,
+)
 from jobs.pipelines.normalizar_unidades_ultra import carregar_ultra
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,18 +41,35 @@ MERCADO_REQUIRED_COLS = {
     "tam_indice_demanda",
     "tam_indice_demanda_norm",
     "tam_pop_total_base",
+    "pop_hex_base",
+    "fonte_pop_hex_base",
+    "tam_populacao_hex",
+    "taxa_fitness_calibrada",
+    "taxa_fitness_mercado_calibrada",
+    "tam_fitness_potencial",
     "gap_competitivo_2km",
     "pressao_concorrencial_score_2km",
     "flag_canibalizacao_ultra_1km",
     "flag_sam",
+    "flag_sam_fitness",
     "sam_indice_operavel",
     "sam_populacao_base",
+    "sam_fitness_potencial",
     "sam_granularidade",
     "residual_indice_mapeado",
     "residual_populacao_mapeada",
     "capacidade_captura_mapeada",
     "som_indice_mapeado",
     "som_populacao_mapeada",
+    "capacidade_default_concorrente_alunos",
+    "oferta_consumida_mercado_estimada",
+    "oferta_consumida_ultra_real",
+    "oferta_consumida_ultra_estimada",
+    "oferta_consumida_total_estimada",
+    "oferta_efetiva_disponivel",
+    "penetracao_fitness_mercado_estimada",
+    "share_ultra_estimado_hex",
+    "score_oportunidade_residual",
     "tese_entrada",
     "prioridade_mercado_mapeado",
 }
@@ -140,6 +164,8 @@ def test_calcular_bloqueia_sam_quando_ha_canibalizacao():
             "top_municipio": [True, True],
             "flag_white_space_2km": [True, False],
             "flag_canibalizacao_ultra_1km": [True, False],
+            "n_concorrentes_mapeados_2km": [0, 1],
+            "oferta_efetiva_mapeada_2km": [0.0, 0.5],
             "gap_competitivo_2km": [1.0, 0.5],
             "pressao_concorrencial_score_2km": [0.0, 50.0],
         }
@@ -151,6 +177,9 @@ def test_calcular_bloqueia_sam_quando_ha_canibalizacao():
     assert bool(bloqueado["flag_sam"]) is False
     assert bloqueado["sam_indice_operavel"] == pytest.approx(0.0)
     assert bloqueado["sam_populacao_base"] == pytest.approx(0.0)
+    assert bool(bloqueado["flag_sam_fitness"]) is False
+    assert bloqueado["sam_fitness_potencial"] == pytest.approx(0.0)
+    assert bloqueado["oferta_efetiva_disponivel"] == pytest.approx(0.0)
     assert bloqueado["tese_entrada"] == "proteger_rede_atual"
     assert bloqueado["prioridade_mercado_mapeado"] == "nula"
 
@@ -158,7 +187,68 @@ def test_calcular_bloqueia_sam_quando_ha_canibalizacao():
     assert bool(operavel["flag_sam"]) is True
     assert operavel["sam_granularidade"] == "municipio_priorizado"
     assert operavel["sam_indice_operavel"] == pytest.approx(70.0)
+    assert operavel["tam_fitness_potencial"] == pytest.approx(800.0 * TAXA_FITNESS_CALIBRADA)
+    assert operavel["oferta_consumida_mercado_estimada"] == pytest.approx(
+        0.5 * CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS
+    )
     assert operavel["tese_entrada"] == "abrir_com_disputa"
+
+
+def test_calcular_tam_sam_residual_absoluto_exemplo_manual():
+    df = pd.DataFrame(
+        {
+            "hex_id": ["h10k"],
+            "flag_censo_elegivel": [True],
+            "pop_total_setor_2022": [10_000.0],
+            "renda_per_capita_setor_2022_calibrada": [2_500.0],
+            "populacao_proxy": [99_999.0],
+            "renda_per_capita": [2_000.0],
+            "score_priorizacao": [80.0],
+            "flag_hex_hibrido_elegivel": [True],
+            "score_expansao_hibrido": [90.0],
+            "flag_viavel": [True],
+            "top_municipio": [True],
+            "flag_white_space_2km": [False],
+            "flag_canibalizacao_ultra_1km": [False],
+            "n_concorrentes_mapeados_2km": [1],
+            "oferta_efetiva_mapeada_2km": [0.1],
+            "gap_competitivo_2km": [1.0 / 1.1],
+            "pressao_concorrencial_score_2km": [100.0 * (1.0 - 1.0 / 1.1)],
+        }
+    )
+
+    result = calcular(df).iloc[0]
+
+    potencial = 10_000.0 * TAXA_FITNESS_CALIBRADA
+    consumo = 0.1 * CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS
+    residual = potencial - consumo
+
+    assert result["pop_hex_base"] == pytest.approx(10_000.0)
+    assert result["tam_populacao_hex"] == pytest.approx(10_000.0)
+    assert result["tam_fitness_potencial"] == pytest.approx(potencial)
+    assert result["sam_fitness_potencial"] == pytest.approx(potencial)
+    assert result["oferta_consumida_mercado_estimada"] == pytest.approx(consumo)
+    assert result["oferta_efetiva_disponivel"] == pytest.approx(residual)
+    assert result["score_oportunidade_residual"] == pytest.approx(
+        100.0 * residual / CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS
+    )
+
+
+def test_anexar_oferta_ultra_real_soma_alunos_por_hex(tmp_path):
+    perf_path = tmp_path / "unidades_ultra_performance_hex.parquet"
+    pd.DataFrame(
+        {
+            "hex_id_res7": ["h1", "h1", "h3", None],
+            "alunos_total": [1000, 500, 300, 999],
+        }
+    ).to_parquet(perf_path, index=False)
+
+    base = pd.DataFrame({"hex_id": ["h1", "h2"]})
+    result = anexar_oferta_ultra_real(base, perf_path)
+
+    assert result.loc[result["hex_id"].eq("h1"), "oferta_consumida_ultra_real"].iat[0] == pytest.approx(1500.0)
+    assert result.loc[result["hex_id"].eq("h1"), "n_unidades_ultra_performance_hex"].iat[0] == 2
+    assert result.loc[result["hex_id"].eq("h2"), "oferta_consumida_ultra_real"].iat[0] == pytest.approx(0.0)
 
 
 def test_anexar_colunas_censo_preserva_camada_censitaria_do_hibrido(tmp_path, monkeypatch):
@@ -187,6 +277,49 @@ def test_anexar_colunas_censo_preserva_camada_censitaria_do_hibrido(tmp_path, mo
     assert result.loc[result["hex_id"] == "h3", "pop_total_setor_2022"].iloc[0] == pytest.approx(3000.0)
 
 
+def test_bloco8_pop_hex_base_usa_censo_independente_de_flag_censo_elegivel():
+    """Bloco 8: pop_total_setor_2022 > 0 define pop_hex_base mesmo quando flag_censo_elegivel=False."""
+    base = {
+        "flag_censo_elegivel": [False, False, True, False],
+        "pop_total_setor_2022": [5000.0, None, 8000.0, None],
+        "renda_per_capita_setor_2022_calibrada": [2000.0, None, 3000.0, None],
+        "populacao_proxy": [200_000.0, 150_000.0, 99_000.0, 0.0],
+        "renda_per_capita": [1800.0, 1600.0, 2800.0, 1200.0],
+        "score_priorizacao": [75.0, 70.0, 80.0, 60.0],
+        "flag_hex_hibrido_elegivel": [False, False, False, False],
+        "score_expansao_hibrido": [None, None, None, None],
+        "flag_viavel": [True, True, True, True],
+        "top_municipio": [True, True, True, True],
+        "flag_white_space_2km": [True, True, True, True],
+        "flag_canibalizacao_ultra_1km": [False, False, False, False],
+        "n_concorrentes_mapeados_2km": [0, 0, 0, 0],
+        "oferta_efetiva_mapeada_2km": [0.0, 0.0, 0.0, 0.0],
+        "gap_competitivo_2km": [1.0, 1.0, 1.0, 1.0],
+        "pressao_concorrencial_score_2km": [0.0, 0.0, 0.0, 0.0],
+        "total_hex_municipio": [50, 50, 40, 30],
+        "hex_id": ["h_a", "h_b", "h_c", "h_d"],
+    }
+    df = pd.DataFrame(base)
+    result = calcular(df.copy())
+
+    row_a = result.loc[result["hex_id"] == "h_a"].iloc[0]
+    assert row_a["pop_hex_base"] == pytest.approx(5000.0), "h_a deve usar censo (pop_total_setor_2022)"
+    assert row_a["fonte_pop_hex_base"] == "censo_2022_setor"
+    assert row_a["tam_fitness_potencial"] == pytest.approx(5000.0 * TAXA_FITNESS_CALIBRADA)
+
+    row_b = result.loc[result["hex_id"] == "h_b"].iloc[0]
+    assert row_b["pop_hex_base"] == pytest.approx(150_000.0 / 50), "h_b deve usar proxy/total_hex_municipio"
+    assert row_b["fonte_pop_hex_base"] == "m1_municipal_proxy_per_hex"
+    assert row_b["tam_fitness_potencial"] == pytest.approx((150_000.0 / 50) * TAXA_FITNESS_CALIBRADA)
+
+    row_c = result.loc[result["hex_id"] == "h_c"].iloc[0]
+    assert row_c["pop_hex_base"] == pytest.approx(8000.0), "h_c usa censo (flag_censo_elegivel=True e pop > 0)"
+    assert row_c["fonte_pop_hex_base"] == "censo_2022_setor"
+
+    row_d = result.loc[result["hex_id"] == "h_d"].iloc[0]
+    assert row_d["fonte_pop_hex_base"] == "sem_populacao_valida", "h_d: sem censo, proxy=0 → sem_populacao_valida"
+
+
 def test_parquet_final_tem_schema_minimo(mercado_guardrails_df: pd.DataFrame):
     assert MERCADO_REQUIRED_COLS <= set(mercado_guardrails_df.columns)
 
@@ -198,7 +331,7 @@ def test_parquet_final_respeita_guardrails_do_piloto(mercado_guardrails_df: pd.D
     assert set(mercado_guardrails_df["fonte_oferta_principal"].dropna().unique()) == {
         "csv_big_players_mapeados"
     }
-    assert set(mercado_guardrails_df["n_redes_mapeadas"].dropna().unique()) == {3}
+    assert (mercado_guardrails_df["n_redes_mapeadas"].dropna() >= 3).all()
     assert set(mercado_guardrails_df["demanda_granularidade"].dropna().unique()) <= {
         "hex_censo",
         "municipio_proxy",

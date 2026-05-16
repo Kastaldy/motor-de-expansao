@@ -21,6 +21,26 @@ REQUIRED_COLUMNS = [
 ]
 OPTIONAL_DATASET_COLUMNS = ["confianca_geografica"]
 
+RESIDUAL_MERCADO_COLS = [
+    "pop_hex_base",
+    "fonte_pop_hex_base",
+    "tam_populacao_hex",
+    "tam_fitness_potencial",
+    "flag_sam_fitness",
+    "sam_fitness_potencial",
+    "capacidade_default_concorrente_alunos",
+    "oferta_consumida_mercado_estimada",
+    "oferta_consumida_ultra_real",
+    "n_unidades_ultra_performance_hex",
+    "oferta_efetiva_disponivel",
+    "penetracao_fitness_mercado_estimada",
+    "share_ultra_estimado_hex",
+    "score_oportunidade_residual",
+    "quartil_oportunidade_residual",
+    "prioridade_mercado_mapeado",
+    "tese_entrada",
+]
+
 HYBRID_LOAD_COLS = [
     "hex_id", "uf", "cidade", "nome_municipio",
     "score_priorizacao", "hex_score_estrutural", "faixa_oportunidade",
@@ -39,6 +59,7 @@ HYBRID_LOAD_COLS = [
     "camada_modelo_hibrido",
     "populacao_proxy", "renda_per_capita", "pop_total_setor_2022",
     "renda_per_capita_setor_2022_calibrada",
+    *RESIDUAL_MERCADO_COLS,
 ]
 
 CENSO_TRACE_LOAD_COLS = [
@@ -100,6 +121,18 @@ FLOAT_COLUMNS = [
     "rank_hibrido_uf",
     "delta_vs_vizinhos",
     "populacao_corte_hex",
+    "pop_hex_base",
+    "tam_populacao_hex",
+    "tam_fitness_potencial",
+    "sam_fitness_potencial",
+    "capacidade_default_concorrente_alunos",
+    "oferta_consumida_mercado_estimada",
+    "oferta_consumida_ultra_real",
+    "n_unidades_ultra_performance_hex",
+    "oferta_efetiva_disponivel",
+    "penetracao_fitness_mercado_estimada",
+    "share_ultra_estimado_hex",
+    "score_oportunidade_residual",
 ]
 BOOL_COLUMNS = [
     "flag_viavel",
@@ -119,6 +152,7 @@ BOOL_COLUMNS = [
     "top_oportunidade_brasil",
     "top_oportunidade_uf",
     "flag_pop_min_5k",
+    "flag_sam_fitness",
 ]
 TEXT_COLUMNS = [
     "uf",
@@ -136,6 +170,10 @@ TEXT_COLUMNS = [
     "metodo_join_setor_2022",
     "motivo_fallback_setor_2022",
     "fonte_populacao_corte",
+    "fonte_pop_hex_base",
+    "quartil_oportunidade_residual",
+    "prioridade_mercado_mapeado",
+    "tese_entrada",
 ]
 MAP_SORT_COLUMNS = ["flag_prioridade", "flag_viavel", "score_priorizacao", "rank_brasil"]
 MAP_SORT_ASCENDING = [False, False, False, True]

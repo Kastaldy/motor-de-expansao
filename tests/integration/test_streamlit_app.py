@@ -253,6 +253,13 @@ def test_enrich_dashboard_data_preserva_base_oficial_e_sobrepoe_rastreabilidade(
                 "flag_baixa_pop_setor": False,
                 "flag_outlier_espacial": False,
                 "motivo_nao_elegivel_censo": "elegivel",
+                "sam_fitness_potencial": 810.0,
+                "oferta_consumida_mercado_estimada": 250.0,
+                "oferta_consumida_ultra_real": 120.0,
+                "oferta_efetiva_disponivel": 560.0,
+                "share_ultra_estimado_hex": 0.324,
+                "score_oportunidade_residual": 22.4,
+                "quartil_oportunidade_residual": "Q4_maior_residual",
             }
         ]
     )
@@ -288,6 +295,8 @@ def test_enrich_dashboard_data_preserva_base_oficial_e_sobrepoe_rastreabilidade(
     assert str(enriched.loc[0, "elegibilidade_hibrida"]) == "Elegivel"
     assert str(enriched.loc[0, "cobertura_censitaria_bucket"]) == "95-99,9%"
     assert str(enriched.loc[0, "qualidade_camada"]) == "B"
+    assert float(enriched.loc[0, "oferta_efetiva_disponivel"]) == 560.0
+    assert str(enriched.loc[0, "quartil_oportunidade_residual"]) == "Q4_maior_residual"
 
 
 def test_build_map_scope_caption_reflete_todos_os_hexes_da_uf():
@@ -868,6 +877,18 @@ def _hex_row(hex_id: str, lat: float, lng: float, **kwargs) -> dict:
         "coverage_pct_setor_2022": 97.0,
         "qualidade_join_uf": "A",
         "flag_censo_disponivel": True,
+        "populacao_proxy": 12_000,
+        "renda_per_capita": 3_500,
+        "pop_total_setor_2022": 12_345,
+        "renda_per_capita_setor_2022_calibrada": 6_789,
+        "flag_pop_min_5k": True,
+        "sam_fitness_potencial": 540.0,
+        "oferta_consumida_mercado_estimada": 200.0,
+        "oferta_consumida_ultra_real": 25.0,
+        "oferta_efetiva_disponivel": 300.0,
+        "share_ultra_estimado_hex": 0.111,
+        "score_oportunidade_residual": 12.0,
+        "quartil_oportunidade_residual": "Q3",
     }
     base.update(kwargs)
     return base
@@ -905,7 +926,25 @@ def test_build_map_figure_adiciona_layer_de_destaque_do_hex_pesquisado():
     import h3
     lat, lng = -23.55, -46.63
     hex_id = h3.latlng_to_cell(lat, lng, 7)
-    df = pd.DataFrame([_hex_row(hex_id, lat, lng)])
+    lat_bsb, lng_bsb = -15.77, -47.93
+    hex_brasilia = h3.latlng_to_cell(lat_bsb, lng_bsb, 7)
+    df = pd.DataFrame([
+        _hex_row(hex_id, lat, lng),
+        _hex_row(
+            hex_brasilia,
+            lat_bsb,
+            lng_bsb,
+            cidade="Brasilia",
+            nome_municipio="Brasilia",
+            uf="DF",
+            score_priorizacao=91.0,
+            hex_score_estrutural=89.0,
+            populacao_proxy=20_000,
+            renda_per_capita=4_200,
+            pop_total_setor_2022=21_000,
+            renda_per_capita_setor_2022_calibrada=4_500,
+        ),
+    ])
 
     # sem search_hex_id: apenas 1 layer (sem competidores)
     deck_sem, _ = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
@@ -920,22 +959,115 @@ def test_build_map_figure_adiciona_layer_de_destaque_do_hex_pesquisado():
     assert len(deck_com.layers) == 2
     highlight_data = pd.DataFrame(deck_com.layers[-1].data)
     assert hex_id in highlight_data["hex_id"].values
+    highlight = highlight_data.iloc[0]
+    assert highlight["tooltip_title"] == "Sao Paulo / SP"
+    assert highlight["tooltip_line_3"] == "Score M1: 80.00"
+    assert highlight["tooltip_line_10"] == "Habitantes: 12.345"
+    assert highlight["tooltip_line_11"] == "Renda per capita: R$ 6.789"
+    assert highlight["tooltip_line_12"] == "Residual fitness: 300 | Score residual: 12.00 | Q3"
+    assert highlight["tooltip_line_13"] == "SAM fitness: 540 | Consumo mercado: 200"
+    assert highlight["tooltip_line_14"] == "Ultra real: 25 | Share Ultra: 11.1%"
 
 
 def test_build_map_figure_destaque_hex_aparece_mesmo_fora_dos_filtros():
-    """Hex pesquisado deve ser destacado mesmo se nao existir no recorte filtrado."""
+    """Hex pesquisado deve ser destacado mesmo se estiver fora do recorte filtrado."""
     import h3
     lat, lng = -23.55, -46.63
     hex_id = h3.latlng_to_cell(lat, lng, 7)
-    df = pd.DataFrame([_hex_row(hex_id, lat, lng)])
-
-    # hex_id de Brasilia nao esta no df (SP only) — ainda assim o layer deve aparecer
-    hex_brasilia = h3.latlng_to_cell(-15.77, -47.93, 7)
+    lat_bsb, lng_bsb = -15.77, -47.93
+    hex_brasilia = h3.latlng_to_cell(lat_bsb, lng_bsb, 7)
+    df = pd.DataFrame([
+        _hex_row(hex_id, lat, lng),
+        _hex_row(
+            hex_brasilia,
+            lat_bsb,
+            lng_bsb,
+            cidade="Brasilia",
+            nome_municipio="Brasilia",
+            uf="DF",
+            score_priorizacao=91.0,
+            hex_score_estrutural=89.0,
+            populacao_proxy=20_000,
+            renda_per_capita=4_200,
+            pop_total_setor_2022=21_000,
+            renda_per_capita_setor_2022_calibrada=4_500,
+        ),
+    ])
     deck, _ = streamlit_app.build_map_figure(
         df, selected_ufs=["SP"], selected_cities=[], search_hex_id=hex_brasilia
     )
     assert deck is not None
-    # deve ter o hex layer (SP) + destaque (Brasilia, mesmo nao estando no df)
+    # deve ter o hex layer (SP) + destaque (Brasilia fora do filtro)
     assert len(deck.layers) == 2
     highlight_data = pd.DataFrame(deck.layers[-1].data)
     assert hex_brasilia in highlight_data["hex_id"].values
+    highlight = highlight_data.iloc[0]
+    assert highlight["tooltip_title"] == "Brasilia / DF"
+    assert highlight["tooltip_line_3"] == "Score M1: 91.00"
+    assert highlight["tooltip_line_10"] == "Habitantes: 21.000"
+
+
+def test_build_hybrid_map_figure_destaque_hex_usa_tooltip_completo():
+    import h3
+
+    def hybrid_row(hex_id: str, lat: float, lng: float, uf: str, cidade: str, score_m1: float) -> dict:
+        return {
+            "hex_id": hex_id,
+            "lat": lat,
+            "lng": lng,
+            "uf": uf,
+            "nome_municipio": cidade,
+            "score_setor_2022_calibrado": 88.0,
+            "score_priorizacao": score_m1,
+            "score_expansao_hibrido": 93.0,
+            "densidade_pop_setor_hab_km2": 8_500,
+            "qualidade_join_uf": "A",
+            "flag_join_uf_restrito": False,
+            "flag_baixa_pop_setor": False,
+            "flag_outlier_espacial": False,
+            "causa_outlier_espacial": pd.NA,
+            "coverage_pct_setor_2022": 96.0,
+            "motivo_nao_elegivel_censo": pd.NA,
+            "elegibilidade_hibrida": "Elegivel",
+            "rank_hex_intraurbano": 1,
+            "top_hex_intraurbano": True,
+            "top_oportunidade_municipio": True,
+            "populacao_proxy": 20_000,
+            "renda_per_capita": 4_200,
+            "pop_total_setor_2022": 21_000,
+            "renda_per_capita_setor_2022_calibrada": 4_500,
+            "flag_pop_min_5k": True,
+            "sam_fitness_potencial": 1000.0,
+            "oferta_consumida_mercado_estimada": 350.0,
+            "oferta_consumida_ultra_real": 150.0,
+            "oferta_efetiva_disponivel": 650.0,
+            "share_ultra_estimado_hex": 0.3,
+            "score_oportunidade_residual": 26.0,
+            "quartil_oportunidade_residual": "Q4_maior_residual",
+        }
+
+    hex_sp = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hex_brasilia = h3.latlng_to_cell(-15.77, -47.93, 7)
+    hdf = pd.DataFrame([
+        hybrid_row(hex_sp, -23.55, -46.63, "SP", "Sao Paulo", 80.0),
+        hybrid_row(hex_brasilia, -15.77, -47.93, "DF", "Brasilia", 91.0),
+    ])
+
+    deck, _ = streamlit_app.build_hybrid_map_figure(
+        hdf,
+        selected_ufs=["SP"],
+        selected_cities=[],
+        search_hex_id=hex_brasilia,
+    )
+
+    assert deck is not None
+    assert len(deck.layers) == 2
+    highlight = pd.DataFrame(deck.layers[-1].data).iloc[0]
+    assert highlight["tooltip_title"] == "Brasilia / DF"
+    assert highlight["tooltip_line_1"] == "Score Censitario 2022: 88.00"
+    assert highlight["tooltip_line_2"] == "Score M1: 91.00"
+    assert highlight["tooltip_line_3"] == "Score Hibrido: 93.00"
+    assert highlight["tooltip_line_11"] == "Habitantes: 21.000"
+    assert highlight["tooltip_line_12"] == "Renda per capita: R$ 4.500"
+    assert highlight["tooltip_line_13"] == "Residual fitness: 650 | Score residual: 26.00 | Q4_maior_residual"
+    assert highlight["tooltip_line_14"] == "SAM fitness: 1.000 | Consumo mercado: 350 | Ultra real: 150 | Share Ultra: 30.0%"

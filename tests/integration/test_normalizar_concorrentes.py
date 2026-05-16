@@ -16,7 +16,7 @@ SCHEMA_OBRIGATORIO = {
     "flag_duplicado_rede_coord", "status_registro", "hex_id_res7",
 }
 
-REDES_ESPERADAS = {"smart_fit", "bluefit", "panobianco"}
+REDES_MINIMAS = {"smart_fit", "bluefit", "panobianco"}
 
 
 @pytest.fixture(scope="module")
@@ -30,7 +30,9 @@ def test_schema(df):
 
 
 def test_redes_presentes(df):
-    assert REDES_ESPERADAS == set(df["rede"].unique())
+    redes = set(df["rede"].unique())
+    assert REDES_MINIMAS <= redes, f"Redes obrigatorias ausentes: {REDES_MINIMAS - redes}"
+    assert len(redes) >= len(REDES_MINIMAS), f"Esperado >= {len(REDES_MINIMAS)} redes, encontrado {len(redes)}"
 
 
 def test_registros_validos_existem(df):

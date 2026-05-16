@@ -16,6 +16,7 @@ dependencies = [
     "pandas>=2.2.0",
     "pyarrow>=16.0.0",
     "numpy>=1.26.0",
+    "openpyxl>=3.1.0",
     "plotly>=5.20.0",
     "pydeck>=0.8.1",
 

@@ -27,15 +27,37 @@ import math
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[2]
 INPUT_PATH = ROOT / "data" / "outputs" / "oportunidades_expansao_hibrido.parquet"
+MERCADO_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
 OUTPUT_PARQUET = ROOT / "data" / "outputs" / "carteira_expansao_acionavel.parquet"
 OUTPUT_CSV = ROOT / "data" / "outputs" / "carteira_expansao_acionavel.csv"
 
 TOP_N_HEX_POR_MUNICIPIO = 5
 PRIORIDADE_ALTA_RANK_UF = 5
 PRIORIDADE_ALTA_RANK_BRASIL = 50
+
+RESIDUAL_MERCADO_COLS = [
+    "pop_hex_base",
+    "fonte_pop_hex_base",
+    "tam_populacao_hex",
+    "tam_fitness_potencial",
+    "flag_sam_fitness",
+    "sam_fitness_potencial",
+    "capacidade_default_concorrente_alunos",
+    "oferta_consumida_mercado_estimada",
+    "oferta_consumida_ultra_real",
+    "n_unidades_ultra_performance_hex",
+    "oferta_efetiva_disponivel",
+    "penetracao_fitness_mercado_estimada",
+    "share_ultra_estimado_hex",
+    "score_oportunidade_residual",
+    "quartil_oportunidade_residual",
+    "prioridade_mercado_mapeado",
+    "tese_entrada",
+]
 
 LOAD_COLS = [
     "hex_id",
@@ -78,6 +100,7 @@ LOAD_COLS = [
     "causa_outlier_espacial",
     "criterio_score_expansao_hibrido",
     "camada_modelo_hibrido",
+    *RESIDUAL_MERCADO_COLS,
 ]
 
 NUMERIC_COLUMNS = [
@@ -91,6 +114,18 @@ NUMERIC_COLUMNS = [
     "rank_municipio_uf",
     "rank_municipio_brasil",
     "rank_hex_intraurbano",
+    "pop_hex_base",
+    "tam_populacao_hex",
+    "tam_fitness_potencial",
+    "sam_fitness_potencial",
+    "capacidade_default_concorrente_alunos",
+    "oferta_consumida_mercado_estimada",
+    "oferta_consumida_ultra_real",
+    "n_unidades_ultra_performance_hex",
+    "oferta_efetiva_disponivel",
+    "penetracao_fitness_mercado_estimada",
+    "share_ultra_estimado_hex",
+    "score_oportunidade_residual",
 ]
 
 BOOL_COLUMNS = [
@@ -100,6 +135,7 @@ BOOL_COLUMNS = [
     "flag_outlier_espacial",
     "flag_baixa_pop_setor",
     "flag_join_uf_restrito",
+    "flag_sam_fitness",
 ]
 
 
@@ -119,6 +155,71 @@ def _safe_float(value: object) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _adicionar_quartil_residual(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if "oferta_efetiva_disponivel" not in out.columns:
+        return out
+
+    oferta = pd.to_numeric(out["oferta_efetiva_disponivel"], errors="coerce")
+    out["quartil_oportunidade_residual"] = "sem_residual"
+    elegivel = oferta.notna() & oferta.gt(0)
+    if not elegivel.any():
+        return out
+
+    if int(elegivel.sum()) < 4:
+        out.loc[elegivel, "quartil_oportunidade_residual"] = "Q4_maior_residual"
+        return out
+
+    labels = ["Q1_menor_residual", "Q2", "Q3", "Q4_maior_residual"]
+    quartis = pd.qcut(oferta.loc[elegivel].rank(method="first"), q=4, labels=labels)
+    out.loc[elegivel, "quartil_oportunidade_residual"] = quartis.astype(str)
+    return out
+
+
+def carregar_colunas_residual_mercado(
+    mercado_path: Path = MERCADO_PATH,
+) -> pd.DataFrame:
+    if not mercado_path.exists():
+        return pd.DataFrame()
+
+    available = set(pq.read_schema(mercado_path).names)
+    cols = ["hex_id"] + [
+        column
+        for column in RESIDUAL_MERCADO_COLS
+        if column in available and column != "quartil_oportunidade_residual"
+    ]
+    if len(cols) == 1:
+        return pd.DataFrame()
+
+    mercado = pd.read_parquet(mercado_path, columns=cols)
+    if mercado["hex_id"].duplicated().any():
+        n_dup = int(mercado["hex_id"].duplicated().sum())
+        raise AssertionError(f"Mercado residual com hex_id duplicado: {n_dup}")
+
+    return _adicionar_quartil_residual(mercado)
+
+
+def anexar_colunas_residual_mercado(
+    df: pd.DataFrame,
+    mercado_path: Path = MERCADO_PATH,
+) -> pd.DataFrame:
+    mercado = carregar_colunas_residual_mercado(mercado_path)
+    if mercado.empty:
+        return df.copy()
+
+    merge_cols = [column for column in mercado.columns if column != "hex_id"]
+    base = df.drop(columns=[column for column in merge_cols if column in df.columns]).copy()
+    merged = base.merge(mercado, on="hex_id", how="left", validate="many_to_one")
+    assert len(merged) == len(df), "Join de residual alterou cardinalidade"
+
+    if "score_priorizacao" in df.columns:
+        original = pd.to_numeric(df["score_priorizacao"], errors="coerce").reset_index(drop=True)
+        atual = pd.to_numeric(merged["score_priorizacao"], errors="coerce").reset_index(drop=True)
+        assert original.equals(atual), "score_priorizacao foi alterado ao anexar residual"
+
+    return merged
 
 
 def _resolve_municipio_keys(df: pd.DataFrame) -> list[str]:
@@ -260,11 +361,15 @@ def _selecionar_base_carteira(df: pd.DataFrame) -> pd.DataFrame:
 
 def gerar_carteira() -> pd.DataFrame:
     print(f"[carteira] Lendo: {INPUT_PATH}")
-    all_cols = pd.read_parquet(INPUT_PATH).columns.tolist()
+    all_cols = pq.read_schema(INPUT_PATH).names
     load_cols = [column for column in LOAD_COLS if column in all_cols]
 
     df = pd.read_parquet(INPUT_PATH, columns=load_cols)
     print(f"[carteira] Total de linhas no input: {len(df):,}")
+    df = anexar_colunas_residual_mercado(df, MERCADO_PATH)
+    if "oferta_efetiva_disponivel" in df.columns:
+        total_residual = pd.to_numeric(df["oferta_efetiva_disponivel"], errors="coerce").fillna(0.0).sum()
+        print(f"[carteira] Oferta residual disponivel no input: {total_residual:,.0f}")
 
     carteira = _selecionar_base_carteira(df)
     print(f"[carteira] UFs cobertas: {sorted(carteira['uf'].dropna().unique())}")
@@ -343,6 +448,13 @@ def salvar_carteira(carteira: pd.DataFrame) -> None:
         "score_expansao_hibrido",
         "score_setor_2022_calibrado",
         "densidade_pop_setor_hab_km2",
+        "sam_fitness_potencial",
+        "oferta_efetiva_disponivel",
+        "score_oportunidade_residual",
+        "quartil_oportunidade_residual",
+        "share_ultra_estimado_hex",
+        "oferta_consumida_mercado_estimada",
+        "oferta_consumida_ultra_real",
         "score_priorizacao_municipio",
         "rank_municipio_uf",
         "rank_municipio_brasil",

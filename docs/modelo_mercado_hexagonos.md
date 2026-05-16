@@ -19,7 +19,7 @@ Importante:
 - O M1 oficial continua sendo o gate principal de prioridade territorial.
 - A camada abaixo nao substitui `score_priorizacao`.
 - A camada abaixo usa apenas dados ja disponiveis no repo.
-- A oferta competitiva aqui e `oferta mapeada`, nao `oferta total do mercado`, porque hoje so existem 3 bases de concorrentes no workspace.
+- A oferta competitiva aqui e `oferta mapeada`, nao `oferta total do mercado`, porque a base atual cobre grandes redes mapeadas, nao academias independentes.
 
 ## 2. Fontes disponiveis
 
@@ -64,18 +64,16 @@ Colunas adicionais disponiveis:
 
 ### 2.4 Bases de concorrentes disponiveis
 
-Arquivos:
+Arquivos: todos os `concorrentes/unidades_*.csv` descobertos automaticamente por `descobrir_csvs()` em `normalizar_concorrentes.py`. Atualmente **28 redes** mapeadas.
 
-- `concorrentes/unidades_smart_fit.csv`
-- `concorrentes/unidades_bluefit.csv`
-- `concorrentes/unidades_panobianco.csv`
-
-Colunas disponiveis nos 3 CSVs:
+Colunas minimas esperadas em cada CSV:
 
 - `nome_unidade`
 - `latitude`
 - `longitude`
 - `data_coleta`
+
+Separador detectado automaticamente (`;` ou `,`) por `_detectar_sep()` nos primeiros 500 caracteres do arquivo.
 
 ### 2.5 Base de unidades Ultra
 
@@ -105,7 +103,7 @@ Arquivo proposto: `data/staging/concorrentes_mapeados.parquet`
 | coluna | tipo | regra exata |
 | --- | --- | --- |
 | `concorrente_id` | string | `sha1(f"{rede}|{nome_unidade}|{lat:.6f}|{lng:.6f}")` |
-| `rede` | string | mapeamento fixo do nome do arquivo: `unidades_smart_fit.csv -> smart_fit`, `unidades_bluefit.csv -> bluefit`, `unidades_panobianco.csv -> panobianco` |
+| `rede` | string | derivado automaticamente do nome do arquivo: `unidades_<rede>.csv -> <rede>` via `p.stem.removeprefix("unidades_")`; cobre todos os `unidades_*.csv` de `concorrentes/` |
 | `nome_unidade` | string | valor original de `nome_unidade` com `strip()` |
 | `lat` | float | `to_numeric(latitude)` |
 | `lng` | float | `to_numeric(longitude)` |
@@ -118,11 +116,12 @@ Arquivo proposto: `data/staging/concorrentes_mapeados.parquet`
 
 ### 3.2 Regras de limpeza
 
-1. Ler os 3 CSVs com `sep=";"`.
-2. Padronizar os nomes de colunas para o contrato acima.
-3. Descartar linhas com coordenadas ausentes ou fora do envelope do Brasil.
-4. Descartar duplicatas exatas por rede + coordenada.
-5. Nao deduplicar nomes iguais com coordenadas diferentes.
+1. Descobrir todos os `unidades_*.csv` em `concorrentes/` via glob; derivar nome da rede pelo stem do arquivo.
+2. Detectar separador automaticamente (`;` vs `,`) por `_detectar_sep()`.
+3. Padronizar os nomes de colunas para o contrato acima.
+4. Descartar linhas com coordenadas ausentes ou fora do envelope do Brasil.
+5. Descartar duplicatas exatas por rede + coordenada.
+6. Nao deduplicar nomes iguais com coordenadas diferentes.
 
 ## 4. Camada 2 - mercado mapeado por hexagono
 
@@ -166,18 +165,24 @@ Regras de leitura:
 | `data_snapshot_mercado` | string | data da execucao da camada |
 | `fonte_demanda_principal` | string | `censo_2022_hex` quando `flag_censo_elegivel=True` e `pop_total_setor_2022.notna()`; senao `m1_municipal_proxy` |
 | `fonte_oferta_principal` | string | valor fixo `csv_big_players_mapeados` |
-| `n_redes_mapeadas` | int | valor fixo `3` enquanto a camada usar apenas Smart Fit, Bluefit e Panobianco |
+| `n_redes_mapeadas` | int | contagem dinamica de redes unicas validas em `concorrentes_mapeados.parquet`; calculado via `_contar_redes_mapeadas()` no Bloco 5; atualmente **28** (todos os `unidades_*.csv` de `concorrentes/`) |
 
 ### 5.2 Demanda potencial (TAM)
 
 | coluna | tipo | regra exata |
 | --- | --- | --- |
 | `demanda_granularidade` | string | `hex_censo` quando `flag_censo_elegivel=True` e `pop_total_setor_2022.notna()`; senao `municipio_proxy` |
+| `pop_hex_base` | float | `pop_total_setor_2022` positivo quando existe censo elegivel; senao `populacao_proxy` positiva; senao `null` |
+| `fonte_pop_hex_base` | string | `censo_2022_hex`, `m1_municipal_proxy` ou `sem_populacao_valida` |
 | `tam_populacao_base` | float | `pop_total_setor_2022` quando `demanda_granularidade='hex_censo'`; senao `populacao_proxy` |
 | `tam_renda_base` | float | `renda_per_capita_setor_2022_calibrada` quando `demanda_granularidade='hex_censo'` e a coluna estiver preenchida; senao `renda_per_capita` |
 | `tam_indice_demanda` | float | `score_expansao_hibrido` quando `flag_hex_hibrido_elegivel=True` e `score_expansao_hibrido.notna()`; senao `score_priorizacao` |
 | `tam_indice_demanda_norm` | float | `tam_indice_demanda / 100.0` |
 | `tam_pop_total_base` | float | `populacao_proxy` (= `pop_total`; trava 18-45 removida em 2026-05-15) |
+| `tam_populacao_hex` | float | alias auditavel de `pop_hex_base` para sizing absoluto do Bloco 5 |
+| `taxa_fitness_mercado_calibrada` | float | taxa de penetracao fitness calibrada em runtime por `calibrar_taxa_fitness_mercado(df)`: mediana de `(n_total_academias_2km * 2000) / pop_hex_base` nos hexes com >= 1 academia e populacao > 0; clip `[0.05, 0.50]`; fallback `TAXA_FITNESS_MERCADO_FALLBACK = 0.10` se < 10 hexes com academias na base; com todos os 28 CSVs mapeados resulta em **20%** |
+| `taxa_fitness_calibrada` | float | alias de `taxa_fitness_mercado_calibrada` mantido para compatibilidade retroativa |
+| `tam_fitness_potencial` | float | `tam_populacao_hex * taxa_fitness_mercado_calibrada` |
 
 Observacao:
 
@@ -230,8 +235,10 @@ Leitura:
 | coluna | tipo | regra exata |
 | --- | --- | --- |
 | `flag_sam` | bool | `flag_viavel.fillna(False) and top_municipio.fillna(False) and not flag_canibalizacao_ultra_1km` |
+| `flag_sam_fitness` | bool | `flag_sam=True` e `tam_populacao_hex > 0` |
 | `sam_indice_operavel` | float | `tam_indice_demanda` quando `flag_sam=True`; senao `0` |
 | `sam_populacao_base` | float | `tam_populacao_base` quando `flag_sam=True`; senao `0` |
+| `sam_fitness_potencial` | float | `tam_fitness_potencial` quando `flag_sam_fitness=True`; senao `0` |
 | `sam_granularidade` | string | `hex_censo` quando `flag_hex_hibrido_elegivel=True`; senao `municipio_priorizado` quando `flag_sam=True`; `bloqueado_rede_ultra` quando `flag_canibalizacao_ultra_1km=True`; senao `fora_escopo_atual` |
 
 Leitura:
@@ -273,12 +280,26 @@ Leitura:
 | `capacidade_captura_mapeada` | float | `(sam_indice_operavel / 100.0) * gap_competitivo_2km` |
 | `som_indice_mapeado` | float | `100 * capacidade_captura_mapeada` |
 | `som_populacao_mapeada` | float | `sam_populacao_base * gap_competitivo_2km` quando `demanda_granularidade='hex_censo'`; senao `null` |
+| `capacidade_default_concorrente_alunos` | float | `2500`; capacidade proxy por unidade grande mapeada ate existir calibracao por rede |
+| `oferta_consumida_mercado_estimada` | float | `oferta_efetiva_mapeada_2km * capacidade_default_concorrente_alunos` |
+| `oferta_consumida_ultra_real` | float | soma de `alunos_total` das unidades Ultra reais no mesmo `hex_id`, quando disponivel em `unidades_ultra_performance_hex.parquet`; senao `0` |
+| `oferta_consumida_ultra_estimada` | float | `oferta_consumida_ultra_real` quando > 0; senao `n_unidades_ultra_2km * 2500` (proxy de capacidade Ultra) |
+| `oferta_consumida_total_estimada` | float | `oferta_consumida_mercado_estimada + oferta_consumida_ultra_estimada`; total de alunos estimados ja atendidos (concorrentes + Ultra) |
+| `oferta_efetiva_disponivel` | float | `max(sam_fitness_potencial - oferta_consumida_total_estimada, 0)` |
+| `penetracao_fitness_mercado_estimada` | float | `oferta_consumida_total_estimada / tam_fitness_potencial` quando o denominador for positivo; senao `0` |
+| `share_ultra_estimado_hex` | float | `oferta_consumida_ultra_real / (oferta_consumida_ultra_real + oferta_consumida_mercado_estimada)` quando o denominador for positivo; senao `0` |
+| `score_oportunidade_residual` | float | `clip(100 * oferta_efetiva_disponivel / 2500, 0, 100)`; 100 representa residual suficiente para uma unidade grande proxy |
+| `quartil_oportunidade_residual` | string | quartil relativo de `oferta_efetiva_disponivel` positiva (`Q1_menor_residual` a `Q4_maior_residual`); `sem_residual` quando nao houver residual positivo |
 
 Leitura:
 
 - `residual_indice_mapeado` = demanda potencial ajustada pela oferta mapeada dos players monitorados.
 - `som_indice_mapeado` = parte operavel desse residual no modelo atual.
 - `som_populacao_mapeada` so deve ser lido como proxy volumetrico quando a granularidade for `hex_censo`.
+- `oferta_efetiva_disponivel` e `score_oportunidade_residual` sao sizing absoluto inicial em alunos potenciais, nao substituem `score_priorizacao`.
+- `oferta_consumida_total_estimada` desconta tanto os concorrentes mapeados quanto a propria Ultra; e o denominador correto para penetracao total, nao apenas de terceiros.
+- A capacidade concorrente de `2500` alunos e uma proxy conservadora e deve ser substituida quando houver capacidade real por rede/unidade.
+- `quartil_oportunidade_residual` e apenas apoio visual de ranking relativo; nao deve ser usado como sizing absoluto nem como substituto do M1.
 
 ### 5.7 Classificacoes executivas
 
@@ -293,7 +314,7 @@ Leitura:
 
 ## 6. Ordem de calculo recomendada
 
-1. Normalizar os 3 CSVs de concorrentes.
+1. Descobrir e normalizar todos os `unidades_*.csv` de `concorrentes/` (auto-discovery); separador detectado automaticamente.
 2. Materializar `concorrentes_mapeados.parquet`.
 3. Ler `oportunidades_expansao_hibrido.parquet` como base principal.
 4. Join por `hex_id` com `brasil_estrutural.parquet`.
@@ -304,13 +325,14 @@ Leitura:
 9. Materializar as colunas de oferta mapeada e de rede propria.
 10. Calcular `tam_*`, `sam_*`, `residual_*`, `som_*`.
 11. Exportar `hexagonos_mercado_mapeado.parquet`.
+12. Propagar os campos acionaveis com `enriquecer_outputs_residual_mercado.py` para `oportunidades_expansao_hibrido.parquet`, `carteira_expansao_acionavel.parquet` e `plano_expansao_curto_prazo.parquet`; a carteira tambem reanexa esses campos ao ser regenerada.
 
 ## 7. O que esta fora desta versao
 
 Itens abaixo nao devem entrar nesta primeira camada porque ainda nao existem como variaveis confiaveis e estruturadas no repo:
 
 - ticket medio por rede concorrente
-- capacidade fisica por concorrente
+- capacidade fisica real por concorrente
 - area da unidade concorrente
 - rating e reviews por unidade
 - dados de churn/conversao por hexagono
@@ -331,11 +353,14 @@ Para a diretoria:
 - `dist_ultra_mais_proxima_m` e `flag_canibalizacao_ultra_1km`: onde a propria rede ja ocupa o mercado local.
 - `residual_indice_mapeado`: onde existe demanda com menor pressao mapeada.
 - `som_indice_mapeado`: onde o modelo atual consegue capturar primeiro.
+- `oferta_efetiva_disponivel`: sizing absoluto inicial em alunos potenciais depois da oferta mapeada.
+- `score_oportunidade_residual`: leitura de capacidade residual em escala 0-100, ancorada em uma unidade grande proxy de 2500 alunos.
+- `quartil_oportunidade_residual`: apoio visual relativo para filtros e leitura rapida; nao substitui a regua absoluta.
 - `tese_entrada`: como agir agora.
 
 Para a equipe de dados:
 
 - manter o M1 como gate principal;
 - tratar `som_populacao_mapeada` como proxy apenas nas UFs com `hex_censo`;
-- para sizing e corte executivo desta camada, priorizar `flag_sam`, `som_indice_mapeado`, `tese_entrada` e capacidade operacional disponivel, sem reinterpretar quartis como capacidade absoluta;
+- para sizing e corte executivo desta camada, priorizar `flag_sam`, `oferta_efetiva_disponivel`, `score_oportunidade_residual`, `tese_entrada` e capacidade operacional disponivel, sem reinterpretar quartis como capacidade absoluta;
 - nao chamar `residual` de "mercado vazio" enquanto a base de concorrentes nao incluir independentes.

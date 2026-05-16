@@ -12,7 +12,7 @@ from dashboard.constants import (
     POP_MIN_ACIONAVEL,
     TABLE_ROW_LIMIT,
 )
-from dashboard.utils import format_int, format_score
+from dashboard.utils import format_int, format_pct, format_score
 from motor_expansao.dashboard.components import (
     _carteira_prioridade_color,
     _category_options,
@@ -42,10 +42,46 @@ from motor_expansao.dashboard.components import (
     render_faixa_legend,
     render_geographic_source_legend,
     render_pop_cut_legend,
+    render_residual_legend,
     render_ultra_legend,
     style_ranking_table,
 )
 from motor_expansao.dashboard.data import lookup_hex_by_coord, parse_coordinate_input
+
+
+RESIDUAL_SORT_COLUMNS = [
+    "oferta_efetiva_disponivel",
+    "score_oportunidade_residual",
+    "rank_brasil",
+]
+
+
+def _has_residual_metrics(df: pd.DataFrame) -> bool:
+    return "oferta_efetiva_disponivel" in df.columns and df["oferta_efetiva_disponivel"].notna().any()
+
+
+def _sort_by_residual(df: pd.DataFrame) -> pd.DataFrame:
+    cols = [column for column in RESIDUAL_SORT_COLUMNS if column in df.columns]
+    if not cols:
+        return df
+    ascending = [False if column != "rank_brasil" else True for column in cols]
+    return df.sort_values(cols, ascending=ascending, kind="stable")
+
+
+def _format_residual_display_columns(df: pd.DataFrame) -> pd.DataFrame:
+    formatted = df.copy()
+    for col in ["SAM Fitness", "Oferta Residual", "Consumo Mercado", "Ultra Real"]:
+        if col in formatted.columns:
+            formatted[col] = formatted[col].map(lambda v: format_int(v) if pd.notna(v) else "-")
+    if "Score Residual" in formatted.columns:
+        formatted["Score Residual"] = formatted["Score Residual"].map(
+            lambda v: f"{v:.1f}" if pd.notna(v) else "-"
+        )
+    if "Share Ultra" in formatted.columns:
+        formatted["Share Ultra"] = formatted["Share Ultra"].map(
+            lambda v: format_pct(float(v) * 100) if pd.notna(v) else "-"
+        )
+    return formatted
 
 
 def inject_styles() -> None:
@@ -474,6 +510,7 @@ def render_visao_executiva(
     render_faixa_legend()
     render_geographic_source_legend()
     render_pop_cut_legend()
+    render_residual_legend(df)
     render_ultra_legend(ultra_df)
     map_figure, points_used = build_map_figure(
         df,
@@ -839,6 +876,7 @@ def render_modelo_hibrido_v2(
         )
         render_censo_score_legend()
         render_pop_cut_legend()
+        render_residual_legend(hdf)
         render_ultra_legend(ultra_df)
         hybrid_map, n_points = build_hybrid_map_figure(
             hdf,
@@ -965,10 +1003,11 @@ def render_carteira_expansao(
         "Quando ha camada granular, o Censitario refina o hex; quando nao ha, a carteira usa fallback municipal/M1."
     )
 
+    residual_disponivel = _has_residual_metrics(carteira)
     ufs_disponiveis = sorted(carteira["uf"].dropna().unique().tolist())
     municipios_disponiveis = sorted(carteira["nome_municipio"].dropna().unique().tolist())
 
-    fc1, fc2, fc3 = st.columns([2, 3, 2])
+    fc1, fc2, fc3, fc4, fc5 = st.columns([1.4, 2.2, 1.2, 1.8, 1.8])
     with fc1:
         ufs_sel = st.multiselect(
             "UF",
@@ -995,6 +1034,27 @@ def render_carteira_expansao(
             default=prioridades_opcoes,
             key="carteira_prior",
         )
+    with fc4:
+        if residual_disponivel and "quartil_oportunidade_residual" in carteira.columns:
+            quartis_opcoes = sorted(carteira["quartil_oportunidade_residual"].dropna().unique().tolist())
+            quartis_sel = st.multiselect(
+                "Quartil residual",
+                options=quartis_opcoes,
+                default=quartis_opcoes,
+                key="carteira_quartil_residual",
+            )
+        else:
+            quartis_sel = []
+    with fc5:
+        if residual_disponivel:
+            ordenacao = st.selectbox(
+                "Ordenacao",
+                options=["M1 oficial", "Oportunidade residual"],
+                index=0,
+                key="carteira_ordenacao",
+            )
+        else:
+            ordenacao = "M1 oficial"
 
     view = carteira.copy()
     if ufs_sel:
@@ -1003,6 +1063,8 @@ def render_carteira_expansao(
         view = view[view["nome_municipio"].isin(muns_sel)]
     if prioridades_sel:
         view = view[view["prioridade_abertura"].isin(prioridades_sel)]
+    if quartis_sel and "quartil_oportunidade_residual" in view.columns:
+        view = view[view["quartil_oportunidade_residual"].isin(quartis_sel)]
 
     if pop_cut_lookup is not None and not pop_cut_lookup.empty and "hex_id" in view.columns:
         lookup_cols = [c for c in ["hex_id", "populacao_corte_hex", "fonte_populacao_corte", "flag_pop_min_5k"] if c in pop_cut_lookup.columns]
@@ -1017,25 +1079,34 @@ def render_carteira_expansao(
             )
         view = view[view["flag_pop_min_5k"]]
 
-    view = _sort_carteira_by_m1(view)
+    if ordenacao == "Oportunidade residual":
+        view = _sort_by_residual(view)
+    else:
+        view = _sort_carteira_by_m1(view)
 
     st.markdown("---")
-    k1, k2, k3, k4 = st.columns(4)
+    metric_cols = st.columns(5 if residual_disponivel else 4)
     n_oportunidades = len(view)
     n_municipios = view["cod_municipio"].nunique() if "cod_municipio" in view.columns else view["nome_municipio"].nunique()
     n_altas = int((view["prioridade_abertura"] == "Alta").sum())
     n_ufs = view["uf"].nunique()
-    k1.metric("Oportunidades no recorte", format_int(n_oportunidades))
-    k2.metric("Municipios no recorte", format_int(n_municipios))
-    k3.metric("Prioridade Alta", format_int(n_altas))
-    k4.metric("UFs representadas", format_int(n_ufs))
+    metric_cols[0].metric("Oportunidades no recorte", format_int(n_oportunidades))
+    metric_cols[1].metric("Municipios no recorte", format_int(n_municipios))
+    metric_cols[2].metric("Prioridade Alta", format_int(n_altas))
+    metric_cols[3].metric("UFs representadas", format_int(n_ufs))
+    if residual_disponivel:
+        residual_total = pd.to_numeric(view.get("oferta_efetiva_disponivel"), errors="coerce").fillna(0.0).sum()
+        metric_cols[4].metric("Oferta residual", format_int(residual_total))
 
     if view.empty:
         st.info("Nenhuma oportunidade no recorte selecionado.")
         return
 
     st.markdown("##### Top oportunidades por UF")
-    st.caption("Melhor hex de cada UF no recorte atual, ordenado pelo `rank_brasil` oficial do M1.")
+    st.caption(
+        "Melhor hex de cada UF no recorte atual, respeitando a ordenacao escolhida. "
+        "A ordenacao padrao segue o `rank_brasil` oficial do M1."
+    )
     top_por_uf = (
         view.groupby("uf", sort=False)
         .first()
@@ -1051,6 +1122,10 @@ def render_carteira_expansao(
         "modo_selecao_carteira": "Modo Hex",
         "rank_hex_intraurbano": "Rank Intraurbano",
         "score_setor_2022_calibrado": "Score Censo",
+        "sam_fitness_potencial": "SAM Fitness",
+        "oferta_efetiva_disponivel": "Oferta Residual",
+        "score_oportunidade_residual": "Score Residual",
+        "quartil_oportunidade_residual": "Quartil Residual",
         "qualidade_join_uf": "Join",
     }
     uf_disp = top_por_uf[[c for c in uf_display_cols if c in top_por_uf.columns]].rename(
@@ -1062,12 +1137,19 @@ def render_carteira_expansao(
     for col in ["Rank Brasil", "Rank UF", "Rank Intraurbano"]:
         if col in uf_disp.columns:
             uf_disp[col] = uf_disp[col].map(lambda v: int(v) if pd.notna(v) else "-")
+    uf_disp = _format_residual_display_columns(uf_disp)
     st.dataframe(uf_disp, width="stretch", hide_index=True, height=min(250, 38 + 35 * len(uf_disp)))
 
     st.markdown("##### Tabela principal — onde abrir agora?")
-    st.caption(
-        "Ordenada pelo `rank_brasil` oficial do M1. O Censitario e o Hibrido aparecem apenas como apoio para leitura local e desempate operacional."
-    )
+    if ordenacao == "Oportunidade residual":
+        st.caption(
+            "Ordenada por `oferta_efetiva_disponivel` como leitura auxiliar de potencial absoluto; "
+            "o ranking oficial M1 permanece preservado nas colunas."
+        )
+    else:
+        st.caption(
+            "Ordenada pelo `rank_brasil` oficial do M1. O Censitario, o Hibrido e o residual aparecem apenas como apoio para leitura local e sizing operacional."
+        )
 
     display_cols_order = {
         "rank_brasil": "Rank Brasil",
@@ -1081,6 +1163,13 @@ def render_carteira_expansao(
         "rank_hex_intraurbano": "Rank Intraurbano",
         "score_setor_2022_calibrado": "Score Censo",
         "score_expansao_hibrido": "Score Hibrido (apoio)",
+        "sam_fitness_potencial": "SAM Fitness",
+        "oferta_efetiva_disponivel": "Oferta Residual",
+        "score_oportunidade_residual": "Score Residual",
+        "quartil_oportunidade_residual": "Quartil Residual",
+        "share_ultra_estimado_hex": "Share Ultra",
+        "oferta_consumida_mercado_estimada": "Consumo Mercado",
+        "oferta_consumida_ultra_real": "Ultra Real",
         "rank_municipio_uf": "Rank Mun. UF",
         "rank_municipio_brasil": "Rank Mun. Brasil",
         "motivo_priorizacao": "Motivo",
@@ -1105,6 +1194,7 @@ def render_carteira_expansao(
     for col in ["Rank Brasil", "Rank UF", "Rank Mun. UF", "Rank Mun. Brasil", "Rank Intraurbano"]:
         if col in tbl.columns:
             tbl[col] = tbl[col].map(lambda v: int(v) if pd.notna(v) else "-")
+    tbl = _format_residual_display_columns(tbl)
 
     height_tbl = min(620, 38 + 35 * min(len(tbl), 100))
     st.dataframe(tbl.head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
@@ -1173,6 +1263,7 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
         "Nivel Estrategico = top 20 Brasil | Alta = top 21-50 | Tatica = top 10 UF fora do top 50."
     )
 
+    residual_disponivel = _has_residual_metrics(plano)
     ufs_disp = sorted(plano["uf"].dropna().unique().tolist())
     muns_disp = sorted(plano["nome_municipio"].dropna().unique().tolist())
     niveis_disp = ["Estrategico", "Alta", "Tatica"]
@@ -1211,12 +1302,15 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
         view = view[view["flag_pop_min_5k"]]
 
     st.markdown("---")
-    k1, k2, k3, k4, k5 = st.columns(5)
-    k1.metric("Oportunidades", format_int(len(view)))
-    k2.metric("Municipios", format_int(view["cod_municipio"].nunique() if "cod_municipio" in view.columns else view["nome_municipio"].nunique()))
-    k3.metric("Estrategico", format_int(int((view["nivel_prioridade_final"] == "Estrategico").sum())))
-    k4.metric("Alta", format_int(int((view["nivel_prioridade_final"] == "Alta").sum())))
-    k5.metric("Tatica", format_int(int((view["nivel_prioridade_final"] == "Tatica").sum())))
+    metric_cols = st.columns(6 if residual_disponivel else 5)
+    metric_cols[0].metric("Oportunidades", format_int(len(view)))
+    metric_cols[1].metric("Municipios", format_int(view["cod_municipio"].nunique() if "cod_municipio" in view.columns else view["nome_municipio"].nunique()))
+    metric_cols[2].metric("Estrategico", format_int(int((view["nivel_prioridade_final"] == "Estrategico").sum())))
+    metric_cols[3].metric("Alta", format_int(int((view["nivel_prioridade_final"] == "Alta").sum())))
+    metric_cols[4].metric("Tatica", format_int(int((view["nivel_prioridade_final"] == "Tatica").sum())))
+    if residual_disponivel:
+        residual_total = pd.to_numeric(view.get("oferta_efetiva_disponivel"), errors="coerce").fillna(0.0).sum()
+        metric_cols[5].metric("Oferta residual", format_int(residual_total))
 
     if view.empty:
         st.info("Nenhuma oportunidade no recorte selecionado.")
@@ -1239,6 +1333,8 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
         "score_priorizacao": "Score M1",
         "modo_selecao_carteira": "Modo Hex",
         "score_setor_2022_calibrado": "Score Censo",
+        "oferta_efetiva_disponivel": "Oferta Residual",
+        "score_oportunidade_residual": "Score Residual",
         "qualidade_join_uf": "Join",
         "status_pipeline": "Status",
     }
@@ -1250,6 +1346,7 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
             top_uf_disp[col] = top_uf_disp[col].map(lambda v: f"{v:.1f}" if pd.notna(v) else "-")
     if "Rank Brasil" in top_uf_disp.columns:
         top_uf_disp["Rank Brasil"] = top_uf_disp["Rank Brasil"].map(lambda v: int(v) if pd.notna(v) else "-")
+    top_uf_disp = _format_residual_display_columns(top_uf_disp)
     st.dataframe(top_uf_disp, width="stretch", hide_index=True, height=min(280, 38 + 35 * len(top_uf_disp)))
 
     st.markdown("##### Top 50 Brasil + Top 10 por UF — lista completa")
@@ -1266,6 +1363,13 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
         "score_expansao_hibrido": "Score Hibrido",
         "score_priorizacao": "Score M1",
         "score_setor_2022_calibrado": "Score Censo",
+        "sam_fitness_potencial": "SAM Fitness",
+        "oferta_efetiva_disponivel": "Oferta Residual",
+        "score_oportunidade_residual": "Score Residual",
+        "quartil_oportunidade_residual": "Quartil Residual",
+        "share_ultra_estimado_hex": "Share Ultra",
+        "oferta_consumida_mercado_estimada": "Consumo Mercado",
+        "oferta_consumida_ultra_real": "Ultra Real",
         "qualidade_join_uf": "Join",
         "coverage_pct_setor_2022": "Coverage %",
         "motivo_priorizacao": "Motivo",
@@ -1287,6 +1391,7 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
     for col in ["Rank Brasil", "Rank UF"]:
         if col in tbl.columns:
             tbl[col] = tbl[col].map(lambda v: int(v) if pd.notna(v) else "-")
+    tbl = _format_residual_display_columns(tbl)
 
     height_tbl = min(700, 38 + 35 * min(len(tbl), 100))
     st.dataframe(tbl, width="stretch", hide_index=True, height=height_tbl)

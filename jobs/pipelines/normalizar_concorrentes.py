@@ -22,12 +22,6 @@ sys.path.insert(0, str(ROOT))
 CONCORRENTES_DIR = ROOT / "concorrentes"
 OUT_PATH = ROOT / "data" / "staging" / "concorrentes_mapeados.parquet"
 
-REDE_MAP = {
-    "unidades_smart_fit.csv": "smart_fit",
-    "unidades_bluefit.csv": "bluefit",
-    "unidades_panobianco.csv": "panobianco",
-}
-
 # Envelope geografico do Brasil
 LAT_MIN, LAT_MAX = -34.0, 6.0
 LNG_MIN, LNG_MAX = -75.0, -28.0
@@ -50,8 +44,14 @@ def _coord_valida(lat, lng) -> bool:
         return False
 
 
+def _detectar_sep(arquivo: Path) -> str:
+    amostra = arquivo.read_text(encoding="utf-8", errors="replace")[:500]
+    return ";" if amostra.count(";") >= amostra.count(",") else ","
+
+
 def carregar_csv(arquivo: Path, rede: str) -> pd.DataFrame:
-    df = pd.read_csv(arquivo, sep=";", dtype=str)
+    sep = _detectar_sep(arquivo)
+    df = pd.read_csv(arquivo, sep=sep, dtype=str)
     df.columns = [c.strip().lower() for c in df.columns]
     df["nome_unidade"] = df["nome_unidade"].str.strip()
     df["lat"] = pd.to_numeric(df["latitude"], errors="coerce")
@@ -131,16 +131,24 @@ def validar(df: pd.DataFrame) -> None:
     print("\nSchema OK")
 
 
+def descobrir_csvs(concorrentes_dir: Path) -> dict[str, str]:
+    """Descobre todos os unidades_*.csv e deriva o nome da rede pelo nome do arquivo."""
+    return {
+        p.name: p.stem.removeprefix("unidades_")
+        for p in sorted(concorrentes_dir.glob("unidades_*.csv"))
+    }
+
+
 def main():
+    rede_map = descobrir_csvs(CONCORRENTES_DIR)
+    print(f"CSVs encontrados: {len(rede_map)}")
+
     dfs = []
-    for fname, rede in REDE_MAP.items():
+    for fname, rede in rede_map.items():
         path = CONCORRENTES_DIR / fname
-        if not path.exists():
-            print(f"AVISO: arquivo nao encontrado: {path}")
-            continue
         df = carregar_csv(path, rede)
         dfs.append(df)
-        print(f"Lido {fname}: {len(df)} linhas")
+        print(f"  {rede:<30} {len(df):>5} unidades")
 
     if not dfs:
         print("Nenhum arquivo encontrado. Abortando.")

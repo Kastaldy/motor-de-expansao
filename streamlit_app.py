@@ -27,6 +27,7 @@ from dashboard.constants import (  # noqa: F401
     MAP_SORT_COLUMNS,
     OPTIONAL_DATASET_COLUMNS,
     REQUIRED_COLUMNS,
+    RESIDUAL_MERCADO_COLS,
     TABLE_ROW_LIMIT,
     TEXT_COLUMNS,
 )
@@ -71,6 +72,7 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     render_faixa_legend,
     render_geographic_source_legend,
     render_pop_cut_legend,
+    render_residual_legend,
     render_ultra_legend,
     resolve_map_view,
     style_ranking_table,
@@ -228,11 +230,17 @@ def load_carteira() -> pd.DataFrame:
         "score_priorizacao_municipio", "coverage_pct_setor_2022", "rank_brasil", "rank_uf",
         "rank_carteira_brasil", "rank_carteira_uf", "rank_municipio_uf",
         "rank_municipio_brasil", "rank_hex_intraurbano",
+        "pop_hex_base", "tam_populacao_hex", "tam_fitness_potencial",
+        "sam_fitness_potencial", "capacidade_default_concorrente_alunos",
+        "oferta_consumida_mercado_estimada", "oferta_consumida_ultra_real",
+        "n_unidades_ultra_performance_hex", "oferta_efetiva_disponivel",
+        "penetracao_fitness_mercado_estimada", "share_ultra_estimado_hex",
+        "score_oportunidade_residual",
     ]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
     for col in ["flag_outlier_espacial", "flag_baixa_pop_setor", "flag_join_uf_restrito",
-                "flag_monitoramento_prioritario"]:
+                "flag_monitoramento_prioritario", "flag_sam_fitness"]:
         if col in df.columns:
             df[col] = df[col].fillna(False).astype(bool)
     return df
@@ -247,10 +255,16 @@ def load_plano() -> pd.DataFrame:
         "score_priorizacao_municipio", "coverage_pct_setor_2022", "rank_brasil", "rank_uf",
         "rank_carteira_brasil", "rank_carteira_uf", "rank_municipio_uf",
         "rank_municipio_brasil", "rank_hex_intraurbano",
+        "pop_hex_base", "tam_populacao_hex", "tam_fitness_potencial",
+        "sam_fitness_potencial", "capacidade_default_concorrente_alunos",
+        "oferta_consumida_mercado_estimada", "oferta_consumida_ultra_real",
+        "n_unidades_ultra_performance_hex", "oferta_efetiva_disponivel",
+        "penetracao_fitness_mercado_estimada", "share_ultra_estimado_hex",
+        "score_oportunidade_residual",
     ]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-    for col in ["flag_outlier_espacial", "flag_baixa_pop_setor", "flag_join_uf_restrito"]:
+    for col in ["flag_outlier_espacial", "flag_baixa_pop_setor", "flag_join_uf_restrito", "flag_sam_fitness"]:
         if col in df.columns:
             df[col] = df[col].fillna(False).astype(bool)
     return df

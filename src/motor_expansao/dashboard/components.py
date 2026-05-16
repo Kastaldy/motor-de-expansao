@@ -266,7 +266,7 @@ def _build_ultra_icon_layer(
         axis=1,
     )
     ultra["tooltip_line_4"] = "Fonte: " + ultra["arquivo_origem"].astype(str)
-    for idx in range(5, 13):
+    for idx in range(5, 15):
         ultra[f"tooltip_line_{idx}"] = ""
 
     return pdk.Layer(
@@ -351,7 +351,71 @@ def _format_coordinate_pair(lat: object, lng: object) -> str:
     return f"{float(lat):.5f}, {float(lng):.5f}"
 
 
+def _has_residual_signal(map_df: pd.DataFrame) -> bool:
+    return (
+        "oferta_efetiva_disponivel" in map_df.columns
+        and pd.to_numeric(map_df["oferta_efetiva_disponivel"], errors="coerce").notna().any()
+    )
+
+
+def _apply_residual_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
+    if not _has_residual_signal(map_df):
+        map_df["tooltip_residual_1"] = ""
+        map_df["tooltip_residual_2"] = ""
+        map_df["tooltip_residual_3"] = ""
+        return map_df
+
+    na_float = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
+    oferta = pd.to_numeric(map_df.get("oferta_efetiva_disponivel", na_float), errors="coerce")
+    sam = pd.to_numeric(map_df.get("sam_fitness_potencial", na_float), errors="coerce")
+    score = pd.to_numeric(map_df.get("score_oportunidade_residual", na_float), errors="coerce")
+    consumo_mercado = pd.to_numeric(map_df.get("oferta_consumida_mercado_estimada", na_float), errors="coerce")
+    consumo_ultra = pd.to_numeric(map_df.get("oferta_consumida_ultra_real", na_float), errors="coerce")
+    share_ultra = pd.to_numeric(map_df.get("share_ultra_estimado_hex", na_float), errors="coerce")
+    quartil = (
+        map_df["quartil_oportunidade_residual"].astype(object).where(
+            map_df["quartil_oportunidade_residual"].notna(), "-"
+        ).astype(str)
+        if "quartil_oportunidade_residual" in map_df.columns
+        else pd.Series("-", index=map_df.index)
+    )
+
+    fonte_pop = (
+        map_df["fonte_pop_hex_base"].astype(str)
+        if "fonte_pop_hex_base" in map_df.columns
+        else pd.Series("", index=map_df.index)
+    )
+    proxy_suffix = pd.Series(
+        np.where(fonte_pop.eq("m1_municipal_proxy_per_hex"), " (est. proxy)", ""),
+        index=map_df.index,
+    )
+
+    map_df["tooltip_residual_1"] = (
+        "Residual fitness: "
+        + oferta.map(lambda v: format_int(v) if pd.notna(v) else "-")
+        + " | Score residual: "
+        + score.map(format_score)
+        + " | "
+        + quartil
+    )
+    map_df["tooltip_residual_2"] = (
+        "SAM fitness: "
+        + sam.map(lambda v: format_int(v) if pd.notna(v) else "-")
+        + proxy_suffix
+        + " | Consumo mercado: "
+        + consumo_mercado.map(lambda v: format_int(v) if pd.notna(v) else "-")
+    )
+    map_df["tooltip_residual_3"] = (
+        "Ultra real: "
+        + consumo_ultra.map(lambda v: format_int(v) if pd.notna(v) else "-")
+        + " | Share Ultra: "
+        + (share_ultra * 100).map(format_pct)
+    )
+    return map_df
+
+
 def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str) -> pd.DataFrame:
+    map_df = _apply_residual_tooltip_fields(map_df)
     if mode == "hybrid":
         map_df["tooltip_title"] = map_df["nome_municipio"].astype(str) + " / " + map_df["uf"].astype(str)
         map_df["tooltip_line_1"] = "Score Censitario 2022: " + map_df["score_censo_fmt"].astype(str)
@@ -366,6 +430,8 @@ def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str) -> pd.DataFram
         map_df["tooltip_line_10"] = "Motivo editorial: " + map_df["motivo_label"].astype(str)
         map_df["tooltip_line_11"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
         map_df["tooltip_line_12"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
+        map_df["tooltip_line_13"] = map_df["tooltip_residual_1"]
+        map_df["tooltip_line_14"] = map_df["tooltip_residual_2"] + " | " + map_df["tooltip_residual_3"]
         if "flag_pop_min_5k" in map_df.columns:
             discarded = ~map_df["flag_pop_min_5k"].fillna(True)
             map_df.loc[discarded, "tooltip_title"] = (
@@ -385,12 +451,182 @@ def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str) -> pd.DataFram
     map_df["tooltip_line_9"] = "Prioridade: " + map_df["flag_prioridade_label"].astype(str)
     map_df["tooltip_line_10"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
     map_df["tooltip_line_11"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
-    map_df["tooltip_line_12"] = ""
+    map_df["tooltip_line_12"] = map_df["tooltip_residual_1"]
+    map_df["tooltip_line_13"] = map_df["tooltip_residual_2"]
+    map_df["tooltip_line_14"] = map_df["tooltip_residual_3"]
     if "flag_pop_min_5k" in map_df.columns:
         discarded = ~map_df["flag_pop_min_5k"].fillna(True)
         map_df.loc[discarded, "tooltip_title"] = (
             map_df.loc[discarded, "tooltip_title"].astype(str) + " — Descartado <5k hab"
         )
+    return map_df
+
+
+def _ensure_columns(map_df: pd.DataFrame, defaults: dict[str, object]) -> pd.DataFrame:
+    for column, default in defaults.items():
+        if column not in map_df.columns:
+            map_df[column] = default
+    return map_df
+
+
+def _infer_confianca_geografica(map_df: pd.DataFrame) -> pd.Series:
+    quality = _normalized_join_quality(map_df)
+    has_censo = _has_censo_signal(map_df)
+    inferred = pd.Series(
+        np.where(quality.isin(["A", "B"]) & has_censo, "granular", "municipal"),
+        index=map_df.index,
+        dtype="object",
+    )
+    if "confianca_geografica" not in map_df.columns:
+        return inferred
+
+    current = (
+        map_df["confianca_geografica"]
+        .astype(object)
+        .where(map_df["confianca_geografica"].notna(), inferred)
+        .astype(str)
+        .str.lower()
+    )
+    return current.where(current.isin(["granular", "municipal"]), inferred)
+
+
+def _prepare_m1_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
+    map_df = map_df.copy()
+    _ensure_columns(
+        map_df,
+        {
+            "cidade": "-",
+            "nome_municipio": pd.NA,
+            "uf": "-",
+            "faixa_oportunidade": "Nao informado",
+            "score_priorizacao": pd.NA,
+            "hex_score_estrutural": pd.NA,
+            "flag_viavel": pd.NA,
+            "flag_prioridade": pd.NA,
+            "score_setor_2022_calibrado": pd.NA,
+            "coverage_pct_setor_2022": pd.NA,
+            "qualidade_join_uf": pd.NA,
+            "populacao_proxy": pd.NA,
+            "renda_per_capita": pd.NA,
+        },
+    )
+    map_df["nome_municipio"] = map_df["nome_municipio"].fillna(map_df["cidade"])
+    map_df["confianca_geografica"] = _infer_confianca_geografica(map_df)
+    map_df["faixa_label"] = (
+        map_df["faixa_oportunidade"]
+        .astype(object)
+        .where(map_df["faixa_oportunidade"].notna(), "Nao informado")
+        .astype(str)
+    )
+    map_df["fonte_geografica_label"] = map_df["confianca_geografica"].map(
+        {
+            "granular": "Setor censitario (qualidade A/B)",
+            "municipal": "Dado municipal (fallback M1)",
+        }
+    )
+    map_df["score_priorizacao_fmt"] = map_df["score_priorizacao"].map(format_score)
+    map_df["hex_score_estrutural_fmt"] = map_df["hex_score_estrutural"].map(format_score)
+    map_df["score_censo_fmt"] = map_df["score_setor_2022_calibrado"].map(format_score)
+    map_df["coverage_fmt"] = map_df["coverage_pct_setor_2022"].map(format_pct)
+    map_df["qualidade_join_label"] = (
+        map_df["qualidade_join_uf"]
+        .astype(object)
+        .where(map_df["qualidade_join_uf"].notna(), "Sem camada")
+        .astype(str)
+    )
+    map_df["flag_viavel_label"] = map_df["flag_viavel"].map({True: "Sim", False: "Nao"}).fillna("-")
+    map_df["flag_prioridade_label"] = map_df["flag_prioridade"].map({True: "Sim", False: "Nao"}).fillna("-")
+
+    is_granular = map_df["confianca_geografica"].eq("granular")
+    na_float = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
+    pop_municipal = map_df["pop_total"] if "pop_total" in map_df.columns else map_df.get("populacao_proxy", na_float)
+    has_setor_pop = "pop_total_setor_2022" in map_df.columns and map_df["pop_total_setor_2022"].notna().any()
+    if has_setor_pop:
+        use_setor_pop = is_granular & map_df["pop_total_setor_2022"].notna()
+        pop_val = map_df["pop_total_setor_2022"].where(use_setor_pop, pop_municipal)
+        pop_suffix = np.where(use_setor_pop, "", " (municipal)")
+    else:
+        pop_val = pop_municipal
+        pop_suffix = np.full(len(map_df), " (municipal)")
+    map_df["pop_fmt"] = pop_val.map(lambda v: format_int(v) if pd.notna(v) else "-") + pop_suffix
+
+    has_setor_renda = (
+        "renda_per_capita_setor_2022_calibrada" in map_df.columns
+        and map_df["renda_per_capita_setor_2022_calibrada"].notna().any()
+    )
+    if has_setor_renda:
+        use_setor_renda = is_granular & map_df["renda_per_capita_setor_2022_calibrada"].notna()
+        renda_val = map_df["renda_per_capita_setor_2022_calibrada"].where(
+            use_setor_renda,
+            map_df.get("renda_per_capita", na_float),
+        )
+        renda_suffix = np.where(use_setor_renda, "", " (municipal)")
+    else:
+        renda_val = map_df.get("renda_per_capita", na_float)
+        renda_suffix = np.full(len(map_df), " (municipal)")
+    map_df["renda_fmt"] = renda_val.map(lambda v: format_int(v) if pd.notna(v) else "-") + renda_suffix
+    return map_df
+
+
+def _prepare_hybrid_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
+    map_df = map_df.copy()
+    _ensure_columns(
+        map_df,
+        {
+            "nome_municipio": "-",
+            "uf": "-",
+            "score_setor_2022_calibrado": pd.NA,
+            "score_priorizacao": pd.NA,
+            "score_expansao_hibrido": pd.NA,
+            "densidade_pop_setor_hab_km2": pd.NA,
+            "qualidade_join_uf": pd.NA,
+            "flag_outlier_espacial": pd.NA,
+            "motivo_nao_elegivel_censo": pd.NA,
+            "elegibilidade_hibrida": "-",
+            "rank_hex_intraurbano": pd.NA,
+            "top_hex_intraurbano": pd.NA,
+            "populacao_proxy": pd.NA,
+            "renda_per_capita": pd.NA,
+        },
+    )
+    map_df["score_censo_fmt"] = map_df["score_setor_2022_calibrado"].map(format_score)
+    map_df["score_m1_fmt"] = map_df["score_priorizacao"].map(format_score)
+    map_df["score_hibrido_fmt"] = map_df["score_expansao_hibrido"].map(format_score)
+    map_df["densidade_fmt"] = map_df["densidade_pop_setor_hab_km2"].map(format_density)
+    map_df["outlier_label"] = map_df["flag_outlier_espacial"].map({True: "Sim (revisar)", False: "Nao"}).fillna("-")
+    map_df["rank_hex_fmt"] = map_df["rank_hex_intraurbano"].map(
+        lambda v: str(int(v)) if not pd.isna(v) else "-"
+    )
+    map_df["top_hex_label"] = map_df["top_hex_intraurbano"].map({True: "Sim", False: "Nao"}).fillna("-")
+    map_df["motivo_label"] = map_df["motivo_nao_elegivel_censo"].astype(object).fillna("-").astype(str)
+
+    na_float = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
+    pop_municipal = map_df["pop_total"] if "pop_total" in map_df.columns else map_df.get("populacao_proxy", na_float)
+    has_setor_pop = "pop_total_setor_2022" in map_df.columns and map_df["pop_total_setor_2022"].notna().any()
+    if has_setor_pop:
+        use_setor_pop = map_df["pop_total_setor_2022"].notna()
+        pop_val = map_df["pop_total_setor_2022"].where(use_setor_pop, pop_municipal)
+        pop_suffix = np.where(use_setor_pop, "", " (municipal)")
+    else:
+        pop_val = pop_municipal
+        pop_suffix = np.full(len(map_df), " (municipal)")
+    map_df["pop_fmt"] = pop_val.map(lambda v: format_int(v) if pd.notna(v) else "-") + pop_suffix
+
+    has_setor_renda = (
+        "renda_per_capita_setor_2022_calibrada" in map_df.columns
+        and map_df["renda_per_capita_setor_2022_calibrada"].notna().any()
+    )
+    if has_setor_renda:
+        use_setor_renda = map_df["renda_per_capita_setor_2022_calibrada"].notna()
+        renda_val = map_df["renda_per_capita_setor_2022_calibrada"].where(
+            use_setor_renda,
+            map_df.get("renda_per_capita", na_float),
+        )
+        renda_suffix = np.where(use_setor_renda, "", " (municipal)")
+    else:
+        renda_val = map_df.get("renda_per_capita", na_float)
+        renda_suffix = np.full(len(map_df), " (municipal)")
+    map_df["renda_fmt"] = renda_val.map(lambda v: format_int(v) if pd.notna(v) else "-") + renda_suffix
     return map_df
 
 
@@ -461,7 +697,7 @@ def _build_competitor_icon_layer(
         axis=1,
     )
     comp["tooltip_line_5"] = "Fonte: " + comp["arquivo_origem"].astype(str)
-    for idx in range(6, 11):
+    for idx in range(6, 15):
         comp[f"tooltip_line_{idx}"] = ""
 
     layer = pdk.Layer(
@@ -495,7 +731,9 @@ def _shared_map_tooltip() -> dict[str, object]:
             "{tooltip_line_9}<br/>"
             "{tooltip_line_10}<br/>"
             "{tooltip_line_11}<br/>"
-            "{tooltip_line_12}"
+            "{tooltip_line_12}<br/>"
+            "{tooltip_line_13}<br/>"
+            "{tooltip_line_14}"
         ),
         "style": {
             "backgroundColor": "rgba(10, 15, 31, 0.94)",
@@ -539,13 +777,43 @@ def render_pop_cut_legend() -> None:
     )
 
 
-def _build_search_hex_layer(hex_id: str):
-    hex_df = pd.DataFrame([{
+def render_residual_legend(df: pd.DataFrame | None = None) -> None:
+    if df is not None and (
+        df.empty or "oferta_efetiva_disponivel" not in df.columns
+    ):
+        return
+    st.markdown(
+        "<div class='legend-row'>"
+        "<span class='legend-chip'>"
+        "<span class='legend-dot' style='background:#22C55E;opacity:0.85;'></span>"
+        "Oferta residual: leitura auxiliar absoluta"
+        "</span>"
+        "<span class='legend-chip'>Quartis: apoio visual, nao ranking oficial</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _search_hex_payload(hex_id: str, tooltip_source: pd.DataFrame | None = None) -> pd.DataFrame:
+    tooltip_columns = ["tooltip_title"] + [f"tooltip_line_{i}" for i in range(1, 15)]
+    if tooltip_source is not None and not tooltip_source.empty and "hex_id" in tooltip_source.columns:
+        source = tooltip_source.loc[tooltip_source["hex_id"].astype(str) == str(hex_id)].head(1).copy()
+        if not source.empty and "tooltip_title" in source.columns:
+            for column in tooltip_columns:
+                if column not in source.columns:
+                    source[column] = ""
+            return source[["hex_id", *tooltip_columns]]
+
+    return pd.DataFrame([{
         "hex_id": hex_id,
         "tooltip_title": f"Hex pesquisado: {hex_id}",
         "tooltip_line_1": "Destaque de busca por coordenada",
-        **{f"tooltip_line_{i}": "" for i in range(2, 13)},
+        **{f"tooltip_line_{i}": "" for i in range(2, 15)},
     }])
+
+
+def _build_search_hex_layer(hex_id: str, tooltip_source: pd.DataFrame | None = None):
+    hex_df = _search_hex_payload(hex_id, tooltip_source)
     return pdk.Layer(
         "H3HexagonLayer",
         data=hex_df,
@@ -568,7 +836,7 @@ def _build_search_pin_layer(lat: float, lng: float):
         "tooltip_title": "Coordenada pesquisada",
         "tooltip_line_1": f"Lat: {lat:.5f}",
         "tooltip_line_2": f"Lng: {lng:.5f}",
-        **{f"tooltip_line_{i}": "" for i in range(3, 13)},
+        **{f"tooltip_line_{i}": "" for i in range(3, 15)},
     }])
     return pdk.Layer(
         "ScatterplotLayer",
@@ -613,22 +881,32 @@ def build_map_figure(
         "qualidade_join_uf",
         "flag_censo_disponivel",
         "confianca_geografica",
+        "pop_total",
         "populacao_proxy",
         "renda_per_capita",
         "pop_total_setor_2022",
         "renda_per_capita_setor_2022_calibrada",
         "flag_pop_min_5k",
+        "sam_fitness_potencial",
+        "oferta_consumida_mercado_estimada",
+        "oferta_consumida_ultra_real",
+        "oferta_efetiva_disponivel",
+        "share_ultra_estimado_hex",
+        "score_oportunidade_residual",
+        "quartil_oportunidade_residual",
+        "fonte_pop_hex_base",
     ]
-    valid = df.loc[
+    valid_all = df.loc[
         df["hex_id"].notna()
         & df["lat"].notna()
         & df["lng"].notna()
         & df["score_priorizacao"].notna(),
         [column for column in map_columns if column in df.columns],
     ].copy()
-    if valid.empty:
+    if valid_all.empty:
         return None, 0
 
+    valid = valid_all.copy()
     if "nome_municipio" not in valid.columns:
         valid["nome_municipio"] = valid["cidade"]
     else:
@@ -658,14 +936,7 @@ def build_map_figure(
     )
     map_df = map_df.drop_duplicates(subset=["hex_id"], keep="first").reset_index(drop=True)
 
-    if "score_setor_2022_calibrado" not in map_df.columns:
-        map_df["score_setor_2022_calibrado"] = pd.NA
-    if "coverage_pct_setor_2022" not in map_df.columns:
-        map_df["coverage_pct_setor_2022"] = pd.NA
-    if "qualidade_join_uf" not in map_df.columns:
-        map_df["qualidade_join_uf"] = pd.NA
-
-    map_df["faixa_label"] = map_df["faixa_oportunidade"].astype(str)
+    map_df = _prepare_m1_tooltip_fields(map_df)
     map_df["fill_color"] = map_df.apply(
         lambda row: (
             _censo_score_to_color(row.get("score_setor_2022_calibrado"))
@@ -684,48 +955,17 @@ def build_map_figure(
             "municipal": [245, 158, 11, 220],
         }
     )
-    map_df["fonte_geografica_label"] = map_df["confianca_geografica"].map(
-        {
-            "granular": "Setor censitario (qualidade A/B)",
-            "municipal": "Dado municipal (fallback M1)",
-        }
-    )
-    map_df["score_priorizacao_fmt"] = map_df["score_priorizacao"].map(format_score)
-    map_df["hex_score_estrutural_fmt"] = map_df["hex_score_estrutural"].map(format_score)
-    map_df["score_censo_fmt"] = map_df["score_setor_2022_calibrado"].map(format_score)
-    map_df["coverage_fmt"] = map_df["coverage_pct_setor_2022"].map(format_pct)
-    map_df["qualidade_join_label"] = (
-        map_df["qualidade_join_uf"]
-        .astype(object)
-        .where(map_df["qualidade_join_uf"].notna(), "Sem camada")
-        .astype(str)
-    )
-    map_df["flag_viavel_label"] = map_df["flag_viavel"].map({True: "Sim", False: "Nao"})
-    map_df["flag_prioridade_label"] = map_df["flag_prioridade"].map({True: "Sim", False: "Nao"})
-    is_granular = (map_df.get("confianca_geografica", pd.Series("municipal", index=map_df.index)) == "granular")
-    _na_float = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
-    # Fallback municipal: preferir pop_total (população total) sobre populacao_proxy legado (18-45).
-    pop_municipal = map_df.get("pop_total", map_df.get("populacao_proxy", _na_float))
-    has_setor_pop = "pop_total_setor_2022" in map_df.columns and map_df["pop_total_setor_2022"].notna().any()
-    if has_setor_pop:
-        use_setor_pop = is_granular & map_df["pop_total_setor_2022"].notna()
-        pop_val = map_df["pop_total_setor_2022"].where(use_setor_pop, pop_municipal)
-        pop_suffix = np.where(use_setor_pop, "", " (municipal)")
-    else:
-        pop_val = pop_municipal
-        pop_suffix = np.full(len(map_df), " (municipal)")
-    map_df["pop_fmt"] = pop_val.map(lambda v: format_int(v) if pd.notna(v) else "-") + pop_suffix
-    has_setor_renda = "renda_per_capita_setor_2022_calibrada" in map_df.columns and map_df["renda_per_capita_setor_2022_calibrada"].notna().any()
-    if has_setor_renda:
-        use_setor_renda = is_granular & map_df["renda_per_capita_setor_2022_calibrada"].notna()
-        renda_val = map_df["renda_per_capita_setor_2022_calibrada"].where(use_setor_renda, map_df.get("renda_per_capita", _na_float))
-        renda_suffix = np.where(use_setor_renda, "", " (municipal)")
-    else:
-        renda_val = map_df.get("renda_per_capita", _na_float)
-        renda_suffix = np.full(len(map_df), " (municipal)")
-    map_df["renda_fmt"] = renda_val.map(lambda v: format_int(v) if pd.notna(v) else "-") + renda_suffix
     map_df = _apply_pop_cut_colors(map_df)
     map_df = _apply_hex_tooltip_fields(map_df, mode="m1")
+    search_tooltip_source = None
+    if search_hex_id is not None:
+        search_source = valid_all.loc[valid_all["hex_id"].astype(str) == str(search_hex_id)].copy()
+        if not search_source.empty:
+            search_source = search_source.drop_duplicates(subset=["hex_id"], keep="first")
+            search_tooltip_source = _apply_hex_tooltip_fields(
+                _prepare_m1_tooltip_fields(search_source),
+                mode="m1",
+            )
     center, zoom = resolve_map_view(
         map_df,
         selected_ufs=selected_ufs,
@@ -759,7 +999,7 @@ def build_map_figure(
         center = {"lat": search_pin[0], "lon": search_pin[1]}
         zoom = 10.0
     if search_hex_id is not None:
-        layers.append(_build_search_hex_layer(search_hex_id))
+        layers.append(_build_search_hex_layer(search_hex_id, search_tooltip_source))
 
     deck = pdk.Deck(
         map_style=pdk.map_styles.CARTO_DARK,
@@ -828,18 +1068,28 @@ def build_hybrid_map_figure(
         "rank_hex_intraurbano",
         "top_hex_intraurbano",
         "top_oportunidade_municipio",
+        "pop_total",
         "populacao_proxy",
         "renda_per_capita",
         "pop_total_setor_2022",
         "renda_per_capita_setor_2022_calibrada",
         "flag_pop_min_5k",
+        "sam_fitness_potencial",
+        "oferta_consumida_mercado_estimada",
+        "oferta_consumida_ultra_real",
+        "oferta_efetiva_disponivel",
+        "share_ultra_estimado_hex",
+        "score_oportunidade_residual",
+        "quartil_oportunidade_residual",
+        "fonte_pop_hex_base",
     ]
-    map_df = hdf.loc[
+    hdf_valid_all = hdf.loc[
         hdf["score_setor_2022_calibrado"].notna()
         & hdf["lat"].notna()
         & hdf["lng"].notna(),
         [column for column in map_columns if column in hdf.columns],
     ].copy()
+    map_df = hdf_valid_all.copy()
     if map_df.empty:
         return None, 0
 
@@ -914,6 +1164,15 @@ def build_hybrid_map_figure(
     map_df["renda_fmt"] = renda_val_h.map(lambda v: format_int(v) if pd.notna(v) else "-") + renda_suffix_h
     map_df = _apply_pop_cut_colors(map_df)
     map_df = _apply_hex_tooltip_fields(map_df, mode="hybrid")
+    search_tooltip_source = None
+    if search_hex_id is not None:
+        search_source = hdf_valid_all.loc[hdf_valid_all["hex_id"].astype(str) == str(search_hex_id)].copy()
+        if not search_source.empty:
+            search_source = search_source.drop_duplicates(subset=["hex_id"], keep="first")
+            search_tooltip_source = _apply_hex_tooltip_fields(
+                _prepare_hybrid_tooltip_fields(search_source),
+                mode="hybrid",
+            )
 
     center, zoom = resolve_map_view(map_df, selected_ufs=selected_ufs, selected_cities=selected_cities)
 
@@ -944,7 +1203,7 @@ def build_hybrid_map_figure(
         center = {"lat": search_pin[0], "lon": search_pin[1]}
         zoom = 10.0
     if search_hex_id is not None:
-        layers.append(_build_search_hex_layer(search_hex_id))
+        layers.append(_build_search_hex_layer(search_hex_id, search_tooltip_source))
 
     deck = pdk.Deck(
         map_style=pdk.map_styles.CARTO_DARK,
