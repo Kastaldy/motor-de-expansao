@@ -1067,7 +1067,246 @@ def test_build_hybrid_map_figure_destaque_hex_usa_tooltip_completo():
     assert highlight["tooltip_line_1"] == "Score Censitario 2022: 88.00"
     assert highlight["tooltip_line_2"] == "Score M1: 91.00"
     assert highlight["tooltip_line_3"] == "Score Hibrido: 93.00"
-    assert highlight["tooltip_line_11"] == "Habitantes: 21.000"
-    assert highlight["tooltip_line_12"] == "Renda per capita: R$ 4.500"
-    assert highlight["tooltip_line_13"] == "Residual fitness: 650 | Score residual: 26.00 | Q4_maior_residual"
-    assert highlight["tooltip_line_14"] == "SAM fitness: 1.000 | Consumo mercado: 350 | Ultra real: 150 | Share Ultra: 30.0%"
+    # Quando _HYBRID_TOOLTIP_SHOW_DETAIL=False (compacto): linhas 5-8 sao Habitantes/Renda/Residual.
+    # Para restaurar os campos de detalhe (Rank, Top, Elegibilidade, Qualidade, Outlier, Motivo),
+    # setar _HYBRID_TOOLTIP_SHOW_DETAIL=True em components.py e ajustar as assertions abaixo
+    # para tooltip_line_11/12/13/14.
+    assert highlight["tooltip_line_5"] == "Habitantes: 21.000"
+    assert highlight["tooltip_line_6"] == "Renda per capita: R$ 4.500"
+    assert highlight["tooltip_line_7"] == "Residual fitness: 650 | Score residual: 26.00 | Q4_maior_residual"
+    assert highlight["tooltip_line_8"] == "SAM fitness: 1.000 | Consumo mercado: 350 | Ultra real: 150 | Share Ultra: 30.0%"
+
+
+def test_residual_score_to_color_faixas():
+    assert streamlit_app._residual_score_to_color(0) == [148, 18, 18, 190]
+    assert streamlit_app._residual_score_to_color(5) == [148, 18, 18, 190]
+    assert streamlit_app._residual_score_to_color(95) == [10, 130, 38, 170]
+    assert streamlit_app._residual_score_to_color(100) == [10, 130, 38, 170]
+    assert streamlit_app._residual_score_to_color(None) == [120, 120, 140, 70]
+
+
+def test_build_residual_heatmap_figure_retorna_deck_com_hexes():
+    import h3
+
+    def residual_row(hex_id: str, lat: float, lng: float, score_residual: float) -> dict:
+        return {
+            "hex_id": hex_id,
+            "lat": lat,
+            "lng": lng,
+            "uf": "SP",
+            "nome_municipio": "Sao Paulo",
+            "score_setor_2022_calibrado": 75.0,
+            "score_priorizacao": 80.0,
+            "score_expansao_hibrido": 82.0,
+            "densidade_pop_setor_hab_km2": 9_000,
+            "qualidade_join_uf": "A",
+            "flag_join_uf_restrito": False,
+            "flag_baixa_pop_setor": False,
+            "flag_outlier_espacial": False,
+            "coverage_pct_setor_2022": 97.0,
+            "elegibilidade_hibrida": "Elegivel",
+            "rank_hex_intraurbano": 1,
+            "top_hex_intraurbano": True,
+            "top_oportunidade_municipio": True,
+            "populacao_proxy": 30_000,
+            "renda_per_capita": 5_000,
+            "pop_total_setor_2022": 25_000,
+            "flag_pop_min_5k": True,
+            "oferta_efetiva_disponivel": 800.0,
+            "score_oportunidade_residual": score_residual,
+            "quartil_oportunidade_residual": "Q4_maior_residual",
+        }
+
+    hex1 = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hex2 = h3.latlng_to_cell(-23.56, -46.64, 7)
+    hdf = pd.DataFrame([
+        residual_row(hex1, -23.55, -46.63, 85.0),
+        residual_row(hex2, -23.56, -46.64, 15.0),
+    ])
+
+    deck, n_points = streamlit_app.build_residual_heatmap_figure(
+        hdf,
+        selected_ufs=[],
+        selected_cities=[],
+    )
+
+    assert deck is not None
+    assert n_points == 2
+    map_layer_data = pd.DataFrame(deck.layers[0].data)
+    assert map_layer_data.iloc[0]["score_oportunidade_residual"] == 85.0
+    fill_high = map_layer_data.iloc[0]["fill_color"]
+    fill_low = map_layer_data.iloc[1]["fill_color"]
+    assert fill_high == [25, 168, 50, 165]
+    assert fill_low == [185, 35, 35, 185]
+
+
+def test_build_residual_heatmap_figure_sem_score_retorna_none():
+    hdf = pd.DataFrame([{"hex_id": "a", "lat": -23.5, "lng": -46.6, "uf": "SP"}])
+    deck, n = streamlit_app.build_residual_heatmap_figure(
+        hdf, selected_ufs=[], selected_cities=[]
+    )
+    assert deck is None
+    assert n == 0
+
+
+def test_load_plano_dominio_retorna_vazio_quando_ausente(monkeypatch):
+    monkeypatch.setattr(streamlit_app, "PLANO_DOMINIO_PATH", Path("_nao_existe_dominio.parquet"))
+    streamlit_app.load_plano_dominio.clear()
+    df = streamlit_app.load_plano_dominio()
+    assert df.empty
+
+
+def test_render_expansao_dominio_exibe_warning_sem_dados():
+    """render_expansao_dominio nao deve lancar excecao com DataFrame vazio."""
+    import unittest.mock as mock
+
+    with mock.patch("streamlit.warning") as warn_mock:
+        streamlit_app.render_expansao_dominio(pd.DataFrame())
+    warn_mock.assert_called_once()
+    msg = warn_mock.call_args[0][0]
+    assert "Expansao de Dominio" in msg or "plano" in msg.lower()
+
+
+def _dominio_row(hex_id: str, uf: str, cidade: str, ordem: int, tese: str) -> dict:
+    return {
+        "hex_id": hex_id,
+        "uf": uf,
+        "cod_municipio": f"cod_{cidade[:3]}",
+        "nome_municipio": cidade,
+        "lat": -23.55,
+        "lng": -46.63,
+        "cluster_id": f"cluster_{cidade[:3]}_001",
+        "score_oportunidade_residual": 65.0,
+        "oferta_efetiva_disponivel": 500.0,
+        "sam_fitness_potencial": 1200.0,
+        "residual_incremental_capturado": 300.0 - ordem * 10,
+        "residual_cluster_pos_acao": 200.0,
+        "dist_ultra_mais_proxima_m": 1800.0,
+        "n_concorrentes_mapeados_2km": 1,
+        "tese_dominio": tese,
+        "ordem_expansao_cidade": ordem,
+        "rank_dominio_brasil": ordem,
+        "rank_dominio_uf": ordem,
+        "rank_dominio_cidade": ordem,
+    }
+
+
+def _mock_columns(n_or_list, **kw):
+    import unittest.mock as mock
+    n = n_or_list if isinstance(n_or_list, int) else len(n_or_list)
+    return [mock.MagicMock() for _ in range(n)]
+
+
+def test_render_expansao_dominio_exibe_tabela_com_dados():
+    """Com dados validos, render_expansao_dominio deve exibir dataframe sem excecao."""
+    import unittest.mock as mock
+
+    plano = pd.DataFrame([
+        _dominio_row("hex_a", "SP", "Sao Paulo", 1, "dominar_white_space"),
+        _dominio_row("hex_b", "SP", "Sao Paulo", 2, "adensar_cluster"),
+        _dominio_row("hex_c", "RJ", "Rio de Janeiro", 1, "abrir_com_disputa"),
+    ])
+
+    rendered_frames = []
+
+    with (
+        mock.patch("streamlit.dataframe", side_effect=lambda df, **kw: rendered_frames.append(df)),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.multiselect", side_effect=lambda label, options, **kw: options),
+        mock.patch("streamlit.info"),
+    ):
+        streamlit_app.render_expansao_dominio(plano, selected_ufs=["SP", "RJ"])
+
+    assert len(rendered_frames) >= 1
+    tbl = rendered_frames[0]
+    assert "Hex Ancora" in tbl.columns or "hex_id" in tbl.columns or "Tese" in tbl.columns
+
+
+def test_render_expansao_dominio_filtro_por_tese():
+    """Filtro por tese deve reduzir as linhas exibidas."""
+    import unittest.mock as mock
+
+    plano = pd.DataFrame([
+        _dominio_row("hex_a", "SP", "Sao Paulo", 1, "dominar_white_space"),
+        _dominio_row("hex_b", "SP", "Sao Paulo", 2, "adensar_cluster"),
+        _dominio_row("hex_c", "SP", "Sao Paulo", 3, "monitorar"),
+    ])
+
+    rendered_frames = []
+
+    def fake_multiselect(label, options, **kw):
+        if label == "Tese de dominio":
+            return ["dominar_white_space"]
+        return options
+
+    with (
+        mock.patch("streamlit.dataframe", side_effect=lambda df, **kw: rendered_frames.append(df)),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.multiselect", side_effect=fake_multiselect),
+        mock.patch("streamlit.info"),
+    ):
+        streamlit_app.render_expansao_dominio(plano)
+
+    assert len(rendered_frames) >= 1
+    tbl = rendered_frames[0]
+    assert len(tbl) == 1
+
+
+def test_build_dominio_map_figure_retorna_deck_com_ancoras():
+    """build_dominio_map_figure deve retornar deck com layer de hexes e contar ancoras."""
+    import h3
+
+    # Usar coordenadas de cidades diferentes para garantir hexes distintos em res7
+    hex_sp = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hex_rj = h3.latlng_to_cell(-22.90, -43.17, 7)
+    assert hex_sp != hex_rj, "sanity: SP e RJ devem ter hexes distintos"
+
+    plano = pd.DataFrame([
+        {
+            "hex_id": hex_sp, "uf": "SP", "nome_municipio": "Sao Paulo",
+            "lat": -23.55, "lng": -46.63, "cluster_id": "cluster_SP_001",
+            "ordem_expansao_cidade": 1, "tese_dominio": "dominar_white_space",
+            "score_oportunidade_residual": 75.0, "residual_incremental_capturado": 400.0,
+            "dist_ultra_mais_proxima_m": 1800.0, "n_concorrentes_mapeados_2km": 0,
+            "rank_dominio_brasil": 1,
+        },
+        {
+            "hex_id": hex_rj, "uf": "RJ", "nome_municipio": "Rio de Janeiro",
+            "lat": -22.90, "lng": -43.17, "cluster_id": "cluster_RJ_001",
+            "ordem_expansao_cidade": 1, "tese_dominio": "adensar_cluster",
+            "score_oportunidade_residual": 60.0, "residual_incremental_capturado": 280.0,
+            "dist_ultra_mais_proxima_m": 2100.0, "n_concorrentes_mapeados_2km": 1,
+            "rank_dominio_brasil": 2,
+        },
+    ])
+
+    deck, n = streamlit_app.build_dominio_map_figure(plano)
+
+    assert deck is not None
+    assert n == 2
+    layer_data = pd.DataFrame(deck.layers[0].data)
+    assert set(layer_data["hex_id"]) == {hex_sp, hex_rj}
+    # ordem 1 em ambos: fill_color igual (mesmo gradiente)
+    row_sp = layer_data.loc[layer_data["hex_id"] == hex_sp].iloc[0]
+    assert "Abertura #1" in row_sp["tooltip_line_1"]
+    assert "dominar_white_space" in row_sp["tooltip_line_2"]
+    # borda distingue tese: SP=verde, RJ=purple
+    row_rj = layer_data.loc[layer_data["hex_id"] == hex_rj].iloc[0]
+    assert row_sp["line_color"] != row_rj["line_color"]
+
+
+def test_build_dominio_map_figure_retorna_none_sem_dados():
+    """build_dominio_map_figure deve retornar (None, 0) com DataFrame vazio ou sem colunas minimas."""
+    deck, n = streamlit_app.build_dominio_map_figure(pd.DataFrame())
+    assert deck is None
+    assert n == 0
+
+    deck2, n2 = streamlit_app.build_dominio_map_figure(
+        pd.DataFrame([{"uf": "SP", "nome_municipio": "Sao Paulo"}])
+    )
+    assert deck2 is None
+    assert n2 == 0

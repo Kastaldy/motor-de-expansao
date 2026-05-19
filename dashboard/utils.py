@@ -42,3 +42,29 @@ def _censo_score_to_color(score) -> list[int]:
         return [245, 158, 11, 140]
     else:
         return [20, 200, 80, 140]
+
+
+def _residual_score_to_color(score) -> list[int]:
+    if pd.isna(score):
+        return [120, 120, 140, 70]
+    s = float(score)
+    if s < 10:
+        return [148, 18, 18, 190]
+    elif s < 20:
+        return [185, 35, 35, 185]
+    elif s < 30:
+        return [220, 65, 65, 178]
+    elif s < 40:
+        return [220, 105, 20, 175]
+    elif s < 50:
+        return [240, 148, 30, 170]
+    elif s < 60:
+        return [238, 200, 40, 165]
+    elif s < 70:
+        return [150, 210, 80, 165]
+    elif s < 80:
+        return [80, 195, 60, 165]
+    elif s < 90:
+        return [25, 168, 50, 165]
+    else:
+        return [10, 130, 38, 170]

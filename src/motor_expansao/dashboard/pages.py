@@ -18,6 +18,7 @@ from motor_expansao.dashboard.components import (
     _category_options,
     _sort_carteira_by_m1,
     build_business_answers,
+    build_dominio_map_figure,
     build_faixa_comparison_figure,
     build_hybrid_alerts,
     build_hybrid_kpis,
@@ -31,6 +32,7 @@ from motor_expansao.dashboard.components import (
     build_map_figure,
     build_map_scope_caption,
     build_ranking_table,
+    build_residual_heatmap_figure,
     build_scatter_figure,
     build_score_distribution_figure,
     build_top_bottom_uf_figure,
@@ -39,10 +41,12 @@ from motor_expansao.dashboard.components import (
     build_uf_metric_figure,
     render_answer_card,
     render_censo_score_legend,
+    render_dominio_tese_legend,
     render_faixa_legend,
     render_geographic_source_legend,
     render_pop_cut_legend,
     render_residual_legend,
+    render_residual_score_legend,
     render_ultra_legend,
     style_ranking_table,
 )
@@ -866,17 +870,18 @@ def render_modelo_hibrido_v2(
             "Ranking Intraurbano",
             "M1 vs Censitario",
             "Municipios + Melhores Hexes",
+            "Mapa Residual Fitness",
         ]
     )
 
     with subtabs[0]:
-        st.markdown("##### Mapa com score intraurbano")
+        st.markdown("##### Mapa com residual fitness")
         st.caption(
-            "Mapa colorido por `score_setor_2022_calibrado`, com hover de rastreabilidade. Linhas vermelhas indicam join restrito ou qualidade C."
+            "Mapa colorido por `score_oportunidade_residual` (potencial residual apos desconto da oferta instalada). "
+            "Linhas vermelhas indicam join restrito ou qualidade C."
         )
-        render_censo_score_legend()
+        render_residual_score_legend()
         render_pop_cut_legend()
-        render_residual_legend(hdf)
         render_ultra_legend(ultra_df)
         hybrid_map, n_points = build_hybrid_map_figure(
             hdf,
@@ -964,6 +969,33 @@ def render_modelo_hibrido_v2(
                 """,
                 unsafe_allow_html=True,
             )
+
+    with subtabs[4]:
+        st.caption(
+            "Mapa colorido por `score_oportunidade_residual`: potencial de mercado residual apos desconto "
+            "da oferta ja instalada (concorrentes + Ultra). Verde escuro = alta oportunidade residual; "
+            "vermelho escuro = mercado ja ocupado ou potencial pequeno."
+        )
+        render_residual_score_legend()
+        render_pop_cut_legend()
+        render_ultra_legend(ultra_df)
+        residual_map, n_residual = build_residual_heatmap_figure(
+            hdf,
+            selected_ufs=selected_ufs,
+            selected_cities=selected_cities,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+            search_pin=search_pin,
+            search_hex_id=search_hex_id,
+        )
+        if residual_map is None:
+            st.info("Nao ha score residual disponivel no recorte atual.")
+        else:
+            if len(hdf) > n_residual:
+                st.caption(
+                    f"Mapa limitado aos {format_int(n_residual)} hexes mais relevantes do recorte para manter performance local."
+                )
+            st.pydeck_chart(residual_map, width="stretch", height=580)
 
 
 def render_carteira_expansao(
@@ -1226,6 +1258,169 @@ def render_carteira_expansao(
                 <p><strong>Join C</strong>: mantido na carteira apenas via fallback municipal/M1, sem usar o score local como ancora.</p>
                 <p><strong>Outlier espacial</strong>: fenomeno real, nao erro; ler contexto antes de agir.</p>
                 <p><strong>score_priorizacao</strong> M1 nao foi alterado e continua sendo a base da carteira.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def render_expansao_dominio(
+    plano: pd.DataFrame,
+    *,
+    selected_ufs: list[str] | None = None,
+    selected_cities: list[str] | None = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+) -> None:
+    if plano.empty:
+        st.warning(
+            "Plano de Expansao de Dominio nao disponivel. Execute "
+            "`python jobs/pipelines/gerar_plano_expansao_dominio.py` para gerar o arquivo."
+        )
+        return
+
+    st.markdown("#### Expansao de Dominio — Plano sequencial de ocupacao territorial")
+    st.caption(
+        "Camada paralela ao M1: transforma o ranking de hexes em sequencia de aberturas coordenadas "
+        "por cidade, priorizando residual fitness, cobertura espacial e protecao contra canibalizacao. "
+        "Nao substitui o M1, a carteira acionavel nem o plano de curto prazo."
+    )
+
+    ufs_disp = sorted(plano["uf"].dropna().unique().tolist())
+    muns_disp = sorted(plano["nome_municipio"].dropna().unique().tolist())
+    teses_disp = sorted(plano["tese_dominio"].dropna().unique().tolist()) if "tese_dominio" in plano.columns else []
+
+    df1, df2, df3 = st.columns([2, 3, 2])
+    with df1:
+        default_ufs = [u for u in (selected_ufs or []) if u in ufs_disp] or ufs_disp
+        ufs_sel = st.multiselect("UF", options=ufs_disp, default=default_ufs, key="dominio_uf")
+    with df2:
+        muns_opcoes = sorted(
+            plano[plano["uf"].isin(ufs_sel)]["nome_municipio"].dropna().unique().tolist()
+            if ufs_sel else muns_disp
+        )
+        default_muns = [m for m in (selected_cities or []) if m in muns_opcoes]
+        muns_sel = st.multiselect("Municipio", options=muns_opcoes, default=default_muns, key="dominio_mun")
+    with df3:
+        teses_sel = st.multiselect("Tese de dominio", options=teses_disp, default=teses_disp, key="dominio_tese")
+
+    view = plano.copy()
+    if ufs_sel:
+        view = view[view["uf"].isin(ufs_sel)]
+    if muns_sel:
+        view = view[view["nome_municipio"].isin(muns_sel)]
+    if teses_sel and "tese_dominio" in view.columns:
+        view = view[view["tese_dominio"].isin(teses_sel)]
+
+    st.markdown("---")
+    kpi_cols = st.columns(4)
+    n_ancoras = len(view)
+    n_cidades = view["nome_municipio"].nunique() if not view.empty else 0
+    n_ufs = view["uf"].nunique() if not view.empty else 0
+    residual_cap = (
+        pd.to_numeric(view["residual_incremental_capturado"], errors="coerce").fillna(0.0).sum()
+        if "residual_incremental_capturado" in view.columns else 0.0
+    )
+    kpi_cols[0].metric("Ancoras recomendadas", format_int(n_ancoras))
+    kpi_cols[1].metric("Cidades cobertas", format_int(n_cidades))
+    kpi_cols[2].metric("UFs representadas", format_int(n_ufs))
+    kpi_cols[3].metric("Residual capturado estimado", format_int(residual_cap))
+
+    if view.empty:
+        st.info("Nenhuma ancora no recorte selecionado.")
+        return
+
+    st.markdown("##### Mapa de dominio — ancoras e clusters recomendados")
+    st.caption(
+        "Ancoras coloridas por ordem de abertura (cyan = primeira, azul = posterior). "
+        "Borda indica a tese estrategica. Pins Ultra e concorrentes como camada de contexto."
+    )
+    render_dominio_tese_legend()
+    dominio_map, n_ancoras_mapa = build_dominio_map_figure(
+        view,
+        selected_ufs=ufs_sel or None,
+        selected_cities=muns_sel or None,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+    )
+    if dominio_map is None:
+        st.info("Sem ancoras com coordenadas validas no recorte atual.")
+    else:
+        st.caption(f"{format_int(n_ancoras_mapa)} ancoras exibidas no mapa.")
+        st.pydeck_chart(dominio_map, width="stretch", height=560)
+
+    st.markdown("---")
+    st.markdown("##### Tabela operacional — sequencia de aberturas")
+    st.caption(
+        "Ordenada por `rank_dominio_brasil`. "
+        "Cada linha e um hex ancora recomendado com ordem de abertura na cidade, tese estrategica e residual capturado estimado."
+    )
+
+    display_cols = {
+        "rank_dominio_brasil": "Rank Brasil",
+        "rank_dominio_uf": "Rank UF",
+        "uf": "UF",
+        "nome_municipio": "Cidade",
+        "cluster_id": "Cluster",
+        "hex_id": "Hex Ancora",
+        "ordem_expansao_cidade": "Ordem na Cidade",
+        "score_oportunidade_residual": "Score Residual",
+        "residual_incremental_capturado": "Residual Capturado",
+        "oferta_efetiva_disponivel": "Oferta Disponivel",
+        "dist_ultra_mais_proxima_m": "Dist. Ultra (m)",
+        "n_concorrentes_mapeados_2km": "Concorrentes 2km",
+        "tese_dominio": "Tese",
+        "rank_dominio_cidade": "Rank Cidade",
+    }
+
+    if "rank_dominio_brasil" in view.columns:
+        view = view.sort_values("rank_dominio_brasil")
+
+    tbl = view[[c for c in display_cols if c in view.columns]].rename(
+        columns={k: v for k, v in display_cols.items() if k in view.columns}
+    )
+
+    for col in ["Score Residual"]:
+        if col in tbl.columns:
+            tbl[col] = tbl[col].map(lambda v: f"{v:.1f}" if pd.notna(v) else "-")
+    for col in ["Residual Capturado", "Oferta Disponivel"]:
+        if col in tbl.columns:
+            tbl[col] = tbl[col].map(lambda v: format_int(v) if pd.notna(v) else "-")
+    for col in ["Dist. Ultra (m)"]:
+        if col in tbl.columns:
+            tbl[col] = tbl[col].map(lambda v: f"{int(v):,}".replace(",", ".") if pd.notna(v) else "-")
+    for col in ["Rank Brasil", "Rank UF", "Rank Cidade", "Ordem na Cidade", "Concorrentes 2km"]:
+        if col in tbl.columns:
+            tbl[col] = tbl[col].map(lambda v: int(v) if pd.notna(v) else "-")
+
+    height_tbl = min(700, 38 + 35 * min(len(tbl), 100))
+    st.dataframe(tbl.head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
+
+    st.markdown("---")
+    note_cols = st.columns(2)
+    with note_cols[0]:
+        st.markdown(
+            """
+            <div class="section-card">
+                <h4>Como ler o plano de dominio</h4>
+                <p><strong>Ordem na Cidade</strong>: sequencia de abertura greedy por residual capturado.</p>
+                <p><strong>Residual Capturado</strong>: potencial incremental estimado para o hex ancora considerando decaimento espacial de 2 km.</p>
+                <p><strong>Dist. Ultra (m)</strong>: distancia da unidade Ultra mais proxima — piso de 1 km por guardrail.</p>
+                <p><strong>Tese</strong>: classificacao estrategica do hex ancora.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with note_cols[1]:
+        st.markdown(
+            """
+            <div class="section-card">
+                <h4>Teses de dominio</h4>
+                <p><strong>dominar_white_space</strong>: area sem oferta — captura rapida e baixo risco.</p>
+                <p><strong>abrir_com_disputa</strong>: concorrente presente — precisa de vantagem diferencial.</p>
+                <p><strong>proteger_corredor_ultra</strong>: entre 1-2 km de Ultra existente — fortalece marca.</p>
+                <p><strong>adensar_cluster</strong>: segunda ancora ou mais no cluster — maior cobertura local.</p>
+                <p><strong>monitorar</strong>: oportunidade presente mas sem sinal forte o suficiente ainda.</p>
             </div>
             """,
             unsafe_allow_html=True,

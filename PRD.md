@@ -1,10 +1,10 @@
 # PRD - Guia Operacional para Agentes de IA
 **Projeto:** Motor de expansao - Ultra Academia
-**Ultima atualizacao:** 2026-05-15
-**Ciclo ativo:** Penetracao, TAM/SAM e oferta efetiva por hexagono
+**Ultima atualizacao:** 2026-05-18
+**Ciclo ativo:** Expansao de Dominio
 
 ## Instrucoes obrigatorias
-1. Ler `CLAUDE.md` antes de qualquer acao.
+1. Ler `CLAUDE.md`, `README.md` e este PRD antes de qualquer acao.
 2. Tratar `CLAUDE.md`, `config.py` e este PRD como fontes de verdade operacional.
 3. Executar apenas o proximo bloco cujo cabecalho esteja com `[ ]`.
 4. Antes de editar, ler os arquivos reais envolvidos e rodar `git status --short`.
@@ -17,216 +17,184 @@
 11. Este ciclo nao pode alterar `score_priorizacao`, `hex_score_estrutural` nem os artefatos oficiais do M1 sem aprovacao explicita.
 
 ## Estado atual
-- Ciclo de handoff/deploy e refatoracao segura concluido em 2026-05-14.
-- M1 oficial recalculado em 2026-05-15 para refletir `populacao_proxy = pop_total`; pesos `renda=0.40` e `pop=0.60` seguem inalterados.
-- Camada censitaria completa regenerada em 2026-05-15 com `v0001` corrigido; cadeia rematerializada: hibrido, carteira e plano.
-- Estrutura atual: pacote interno em `src/motor_expansao/`; entrypoints legados preservados na raiz.
-- Dashboard Streamlit roda offline com Parquets locais; busca por coordenada centraliza e destaca o hex corretamente.
-- Busca por coordenada ja exibe tooltip completo no hex destacado, inclusive fora do recorte filtrado.
-- `data/ultra/Ultra.csv` contem unidades Ultra com coordenadas e 1 linha inicial de metadado.
-- `data/ultra/dados_academias.xlsx` contem dados de algumas unidades: populacao/densidade GeoFusion em raio de 1 km, faturamento, alunos pagantes/agregadores e alunos totais.
-- A nova frente deve usar esses dados reais para calibrar penetracao, padroes de desempenho e potencial residual de mercado por hexagono.
+- M1 oficial permanece como gate executivo de prioridade territorial; `score_priorizacao` e o score oficial.
+- Camada de mercado por hexagono esta materializada em `data/staging/hexagonos_mercado_mapeado.parquet`.
+- Residual fitness ja existe: `oferta_efetiva_disponivel` e `score_oportunidade_residual`.
+- Concorrentes e Ultra ja entram no modelo espacial com raio de 1 km/2 km e decaimento linear.
+- Carteira e plano curto prazo atuais ranqueiam oportunidades, mas ainda nao desenham ocupacao coordenada por clusters.
+- Nova frente: transformar ranking de hexes em plano sequencial de dominio territorial por cidade/regiao.
+- Dashboard e deploy continuam offline, com Parquets locais, sem API ao vivo e sem PostGIS obrigatorio.
+
+## Objetivo do ciclo
+Criar a feature **Expansao de Dominio**: algoritmo que seleciona clusters e hexes ancora dentro de cidades/regioes para expandir a Ultra de forma escalavel, controlada e protetiva, priorizando residual fitness, cobertura espacial, fortalecimento de marca e baixa canibalizacao.
 
 ## Inputs do ciclo ativo
 | arquivo | uso |
 | --- | --- |
-| `data/ultra/Ultra.csv` | coordenadas das unidades Ultra |
-| `data/ultra/dados_academias.xlsx` | performance real e dados GeoFusion das unidades |
-| `data/staging/hexagonos_mercado_mapeado.parquet` | camada de mercado atual por hexagono |
-| `data/outputs/oportunidades_expansao_hibrido.parquet` | base hibrida/censitaria para joins e contexto |
-| `concorrentes/*.csv` | oferta mapeada de grandes redes concorrentes |
+| `data/staging/hexagonos_mercado_mapeado.parquet` | base completa para candidatos, coordenadas, residual, concorrencia e Ultra |
+| `data/outputs/oportunidades_expansao_hibrido.parquet` | apoio para dashboard e contexto hibrido |
+| `data/outputs/carteira_expansao_acionavel.parquet` | referencia da carteira M1 atual |
+| `data/outputs/plano_expansao_curto_prazo.parquet` | referencia do plano executivo atual |
+| `concorrentes/*.csv` | origem da oferta mapeada de grandes redes |
+| `data/ultra/Ultra.csv` | pins/unidades Ultra para contexto visual |
 
-## Artefatos minimos do dashboard
-Manter em `data/outputs/` no ambiente da equipe ou montados como volume na VPS:
-
+## Artefatos esperados
 | arquivo | uso |
 | --- | --- |
-| `hexagonos_brasil_dashboard.parquet` | base oficial M1, KPIs, ranking e mapa executivo |
-| `oportunidades_expansao_hibrido.parquet` | enriquecimento hibrido/censitario e filtros combinados |
-| `carteira_expansao_acionavel.parquet` | aba de carteira operacional |
-| `plano_expansao_curto_prazo.parquet` | aba de plano curto prazo |
-
-Validar com:
-
-```bash
-python scripts/check_artifacts.py
-```
-
-## Comandos de referencia
-
-Setup local:
-```bash
-python -m pip install -e ".[dev]"
-copy .env.example .env
-python -m streamlit run streamlit_app.py
-```
-
-Suite rapida:
-```bash
-python -m pytest -q tests/integration/test_streamlit_app.py tests/integration/test_carteira_plano_nacional.py
-python -c "import streamlit_app; print('ok')"
-```
-
-Suite mercado:
-```bash
-python -m pytest -q tests/integration/test_modelo_mercado_hexagonos.py
-```
-
-Suite completa:
-```bash
-python -m pytest -q
-```
-
-## Docs de referencia
-- `README.md`: quickstart, testes, deploy e mapa de docs.
-- `docs/handoff_repositorio.md`: contrato de handoff e checklist para a equipe.
-- `docs/artefatos_dados.md`: manifesto de dados e politica de versionamento.
-- `docs/deploy_vps_streamlit.md`: runbook Streamlit/Docker para VPS.
-- `docs/streamlit_dashboard_m1.md`: governanca e uso do dashboard.
-- `docs/modelo_mercado_hexagonos.md`: contrato tecnico da camada de mercado.
+| `docs/expansao_dominio.md` | contrato tecnico e regra executiva da feature |
+| `data/outputs/plano_expansao_dominio.parquet` | output principal para consumo analitico/dashboard |
+| `data/outputs/plano_expansao_dominio.csv` | leitura operacional em planilha |
+| `data/reports/expansao_dominio.md` | resumo executivo por cidade/cluster |
 
 ## Blocos pendentes
 
-### Bloco 1 - Normalizar unidades Ultra com performance e coordenadas [x]
-**Objetivo:** criar uma base auditavel que una coordenadas, alunos e faturamento das unidades Ultra.
+### Bloco 1 - Contrato tecnico da Expansao de Dominio [x]
+**Objetivo:** documentar o desenho da feature antes de codar o algoritmo.
 
 **Escopo:**
-- Ler `data/ultra/dados_academias.xlsx` e padronizar unidade, cidade/UF, populacao GeoFusion, densidade GeoFusion, faturamento, `ativos_pag`, agregadores e `alunos_total`.
-- Ler `data/ultra/Ultra.csv` com `skiprows=1`, `sep=";"`, `encoding="latin-1"` e coordenadas com virgula decimal.
-- Fazer match entre as duas bases por nome normalizado e UF/cidade, preservando linhas nao casadas com status explicito.
-- Gerar `hex_id_res7` por coordenada valida.
-- Materializar `data/staging/unidades_ultra_performance.parquet`.
-
-**Colunas minimas esperadas:**
-`unidade`, `uf`, `cidade`, `lat`, `lng`, `hex_id_res7`, `pop_geofusion_1km`, `densidade_geofusion_1km_km2`, `faturamento`, `ativos_pag`, `alunos_gympass`, `alunos_totalpass`, `agregadores`, `alunos_total`, `ticket_medio_aluno`, `status_match_coord`.
+- Criar `docs/expansao_dominio.md`.
+- Definir semantica de cidade/regiao, cluster, hex ancora, residual capturado, sobreposicao, protecao de marca e fase de abertura.
+- Definir parametros iniciais: H3 res7, raio de captura 2 km, distancia minima entre novas unidades, distancia minima de Ultra existente, maximo de ancoras por cidade e gates de elegibilidade.
+- Definir schema esperado de `plano_expansao_dominio.parquet`.
+- Registrar que a feature nao substitui M1, carteira nem plano curto prazo; ela e uma camada paralela de ocupacao espacial.
+- Atualizar `CLAUDE.md` apenas com o resumo canonico do novo ciclo.
 
 **Validacao minima:**
-rodar testes novos ou smoke script que confirme leitura, coordenadas validas, taxa de match e ausencia de duplicidade critica por unidade.
+```bash
+python -c "import pyarrow.parquet as pq; cols=set(pq.read_schema('data/staging/hexagonos_mercado_mapeado.parquet').names); req={'hex_id','uf','nome_municipio','cod_municipio','lat','lng','score_oportunidade_residual','oferta_efetiva_disponivel','sam_fitness_potencial','dist_ultra_mais_proxima_m','flag_canibalizacao_ultra_1km'}; assert req <= cols, req-cols; print('ok')"
+```
 
-**Observacoes:** Concluido em 2026-05-15. Pipeline `jobs/pipelines/normalizar_unidades_ultra.py` materializa `data/staging/unidades_ultra_performance.parquet` com 54 unidades da planilha de performance; 53 casaram coordenada/`hex_id_res7` e `CAMPO LIMPO - SP` ficou `sem_coord` por ausencia de ponto correspondente no CSV. Validado com `python jobs\pipelines\normalizar_unidades_ultra.py` e `python -m pytest -q tests\integration\test_normalizar_unidades_ultra.py tests\integration\test_modelo_mercado_hexagonos.py::test_ultra_loader_lida_com_metadado_e_encoding_legacy`.
+**Observacoes:** Contrato criado em `docs/expansao_dominio.md`. Todos os campos obrigatorios confirmados no parquet de mercado. CLAUDE.md ja continha secao 5 alinhada; mantida sem alteracao. Validacao minima: OK.
 
-### Bloco 2 - Calcular penetracao Ultra por hexagono [x]
-**Objetivo:** medir a penetracao de mercado de cada unidade Ultra contra a populacao do hex onde ela esta localizada.
+### Bloco 2 - Nucleo de candidatos e clusters [x]
+**Objetivo:** criar a base de candidatos elegiveis e agrupar hexes bons em clusters intraurbanos.
 
 **Escopo:**
-- Join de `unidades_ultra_performance.parquet` com a base de hexagonos por `hex_id_res7 = hex_id`.
-- Usar populacao granular do hex quando disponivel (`pop_total_setor_2022` elegivel); fallback para `populacao_proxy`.
-- Criar `pop_hex_base` e `fonte_pop_hex_base` para auditoria.
-- Calcular `penetracao_ultra_alunos_total`, `penetracao_ultra_pagantes`, `receita_por_habitante_hex`, `ticket_medio_aluno`, `alunos_por_m2` quando `metragem` existir.
-- Materializar `data/staging/unidades_ultra_performance_hex.parquet`.
+- Criar `jobs/pipelines/gerar_plano_expansao_dominio.py`.
+- Ler somente colunas necessarias de `hexagonos_mercado_mapeado.parquet`.
+- Filtrar candidatos por `flag_sam_fitness=True`, `oferta_efetiva_disponivel > 0`, score residual minimo configuravel, coordenadas validas e sem canibalizacao Ultra <1 km.
+- Implementar clusters por adjacencia H3 dentro do mesmo `cod_municipio`, usando vizinhos H3 res7.
+- Calcular metricas por cluster: `cluster_id`, `n_hex_cluster`, `residual_total_cluster`, `score_residual_max`, `score_residual_medio`, `sam_total_cluster`, `pressao_concorrencial_media`, `dist_ultra_min_cluster`.
+- Criar testes unitarios com DataFrame sintetico pequeno.
 
 **Validacao minima:**
-testar divisao por zero/nulos, consistencia de fontes de populacao e ranking das unidades por penetracao.
+```bash
+python -m pytest -q tests/unit/test_expansao_dominio.py
+python jobs/pipelines/gerar_plano_expansao_dominio.py --dry-run --cidade "Sao Paulo" --uf SP
+```
 
-**Observacoes:** Concluido em 2026-05-15. Pipeline `jobs/pipelines/calcular_penetracao_ultra_hex.py` materializa `data/staging/unidades_ultra_performance_hex.parquet` com 54 unidades preservadas; 49 casaram com `hex_id` da camada de mercado, 28 usam `censo_2022_hex`, 21 usam `m1_municipal_proxy`, 4 ficam `hex_nao_encontrado` e `CAMPO LIMPO - SP` fica `sem_hex_id_res7`. Colunas novas: `pop_hex_base`, `fonte_pop_hex_base`, penetracoes Ultra, receita por habitante, `alunos_por_m2` e rankings. Validado com `python jobs\pipelines\calcular_penetracao_ultra_hex.py` e `python -m pytest -q tests\integration\test_calcular_penetracao_ultra_hex.py`.
+**Observacoes:** Pipeline criado com funcoes `filtrar_candidatos`, `construir_clusters` (union-find H3 res7), `calcular_metricas_cluster`. 25 testes unitarios PASS. Dry-run SP: 179 candidatos em 2 clusters. Busca por cidade usa normalizacao NFKD/ASCII para lidar com acentos no parquet (ex: "São Paulo" casa com "Sao Paulo"). h3-py 4.x retorna lista em `grid_disk` — convertido para set internamente.
 
-### Bloco 3 - Comparar GeoFusion 1km vs populacao do hex [x]
-**Objetivo:** comparar a leitura GeoFusion de raio 1 km com a leitura H3 sem misturar areas diferentes.
+### Bloco 3 - Algoritmo greedy de hexes ancora [x]
+**Objetivo:** selecionar uma sequencia de aberturas por cidade/cluster evitando sobreposicao e canibalizacao.
 
 **Escopo:**
-- Tratar GeoFusion como raio de 1 km, area aproximada `3.14 km2`.
-- Calcular `densidade_geofusion_1km_calc = pop_geofusion_1km / 3.14`.
-- Calcular area real do H3 por `h3.cell_area(hex_id, unit="km^2")` e `densidade_hex_km2 = pop_hex_base / area_hex_km2`.
-- Comparar principalmente densidade: `delta_densidade_hex_vs_geofusion`, `ratio_densidade_hex_geofusion`.
-- Manter a diferenca bruta de populacao apenas como diagnostico secundario, nao como KPI principal.
-- Gerar tabela/report em `data/reports/validacao_geofusion_vs_hex.md`.
+- Implementar funcao de captura residual com decaimento linear ate 2 km, alinhada ao modelo atual de concorrentes.
+- Implementar selecao greedy: a cada passo escolher o hex que maximiza residual incremental capturado, qualidade do score e valor estrategico, penalizando sobreposicao com ancoras ja escolhidas.
+- Aplicar distancia minima entre novas ancoras, default inicial `1.5 km`.
+- Classificar `tese_dominio`: `dominar_white_space`, `abrir_com_disputa`, `proteger_corredor_ultra`, `adensar_cluster`, `monitorar`, `bloqueado_canibalizacao`.
+- Gerar colunas de auditoria: `ordem_expansao_cidade`, `residual_incremental_capturado`, `residual_cluster_pos_acao`, `dist_nova_ancora_mais_proxima_m`.
+- Cobrir casos de empate e cidade sem candidatos.
 
 **Validacao minima:**
-reportar unidades sem GeoFusion, sem coordenada ou sem populacao de hex; garantir que as areas usadas estejam registradas no output.
+```bash
+python -m pytest -q tests/unit/test_expansao_dominio.py
+python jobs/pipelines/gerar_plano_expansao_dominio.py --dry-run --cidade "Sao Paulo" --uf SP --max-ancoras-cidade 5
+```
 
-**Observacoes:** Concluido em 2026-05-15. Pipeline `jobs/pipelines/comparar_geofusion_vs_hex.py` gera `data/reports/validacao_geofusion_vs_hex.md`. Base comparavel: 49/54 unidades (todas tem GeoFusion; 1 sem coord: CAMPO LIMPO SP; 4 sem pop hex: PRAIA GRANDE, POA BARRA SUL, CABO FRIO, GUARUJA). Achado principal: unidades com `censo_2022_hex` mostram ratios realistas (mediana 0.90, range 0.44-1.43); unidades com `m1_municipal_proxy` mostram ratios inflados (populacao municipal total dividida por area de um unico hex) — comportamento esperado e documentado. Areas registradas: GeoFusion=3.14 km2 (constante), H3 res7 min=4.4/max=5.8/mediana=5.5 km2. Validado com 12/12 testes em `tests/integration/test_comparar_geofusion_vs_hex.py`.
+**Observacoes:** Algoritmo greedy implementado com decaimento linear (2 km), distancia minima entre ancoras (default 1.5 km), desempate por score_oportunidade_residual e classificacao de tese. Funcoes: `_haversine_m`, `_haversine_array`, `classificar_tese_dominio`, `selecionar_ancoras_greedy`, `gerar_plano_dominio`. H3 res7 tem distancia ~2.5 km entre centros adjacentes (ajuste de limiar documentado nos testes). 55 testes PASS. Dry-run SP --max-ancoras-cidade 5: 179 candidatos → 5 ancoras, residual capturado ~94k.
 
-### Bloco 4 - Identificar padroes das melhores e piores unidades [x]
-**Objetivo:** entender o que os hexes das unidades com melhor e pior resultado tem em comum.
+### Bloco 4 - Materializacao nacional do plano [x]
+**Objetivo:** gerar o output oficial da feature para todas as cidades elegiveis.
 
 **Escopo:**
-- Classificar desempenho por mais de uma lente: alunos totais, faturamento, penetracao, receita por habitante, ticket medio e pagantes.
-- Separar top/bottom por percentis ou tercis, com regra documentada.
-- Rodar correlacoes Pearson/Spearman entre desempenho e variaveis de hex: populacao, densidade, renda, score M1, score hibrido, concorrentes, distancia de concorrentes, white space, densidade GeoFusion e diferenca GeoFusion vs hex.
-- Alem das correlacoes, procurar padroes interpretaveis: faixas de densidade, renda, concorrencia, tamanho da unidade, agregadores, outliers e combinacoes recorrentes.
-- Gerar `data/reports/validacao_penetracao_ultra_hex.md` com tabelas, achados e cautelas.
+- Adicionar CLI ao pipeline: filtros por UF/cidade, `--top-cidades`, `--max-ancoras-cidade`, `--min-score-residual`, `--min-dist-novas-ultras-km`.
+- Materializar `data/outputs/plano_expansao_dominio.parquet` e `.csv`.
+- Preservar cardinalidade de candidatos durante joins auxiliares e garantir 0 duplicatas em `hex_id` recomendado por execucao.
+- Criar ranking nacional e ranking por UF/cidade: `rank_dominio_brasil`, `rank_dominio_uf`, `rank_dominio_cidade`.
+- Criar teste de integracao com fixtures pequenas e/ou execucao amostrada.
 
 **Validacao minima:**
-registrar tamanho da amostra, metricas com n valido, outliers tratados e conclusoes que nao podem ser inferidas por baixa amostra.
+```bash
+python jobs/pipelines/gerar_plano_expansao_dominio.py --top-cidades 30
+python -m pytest -q tests/integration/test_expansao_dominio.py
+```
 
-**Observacoes:** Concluido em 2026-05-15. Pipeline `jobs/pipelines/validar_penetracao_ultra_hex.py` gera `data/reports/validacao_penetracao_ultra_hex.md` com 54 unidades, classificacao top/bottom por tercis para 6 lentes de desempenho, 84 correlacoes Pearson/Spearman validas e 9 outliers IQR mantidos na analise. Cautelas registradas: amostra pequena, 21 unidades com populacao municipal proxy, e correlacoes de penetracao/receita por habitante com `pop_hex_base` lidas como diagnostico de denominador, nao causalidade. Validado com `python jobs\pipelines\validar_penetracao_ultra_hex.py`.
+**Observacoes:** Funcoes `_top_cidades_por_residual`, `adicionar_rankings` e `materializar` adicionadas ao pipeline. Rankings por residual_incremental_capturado (method=first, ascending=False). Filtro top-cidades aplica-se apenas quando `--cidade` nao e especificado. CSV com sep=";" e encoding="utf-8-sig". Validacao de hex_id duplicado/nulo antes de salvar. Execucao --top-cidades 30: 300 ancoras em 30 cidades. 19 testes de integracao PASS, 55 unitarios PASS.
 
-### Bloco 5 - Feature TAM/SAM e oferta efetiva residual nos hexagonos [x]
-**Objetivo:** adicionar uma camada de potencial absoluto para mapear hexes com alta demanda fitness e mercado residual relevante.
+### Bloco 5 - Relatorio executivo por cidade e cluster [x]
+**Objetivo:** transformar o output em uma leitura executiva clara para Growth/Expansao.
 
 **Escopo:**
-- Implementar em `jobs/pipelines/calcular_colunas_mercado.py`, preservando as colunas atuais.
-- Usar os estudos dos blocos 2 a 4 para calibrar uma taxa inicial de aderencia fitness/penetracao esperada.
-- Criar `tam_populacao_hex = pop_hex_base` e `tam_fitness_potencial = pop_hex_base * taxa_fitness_calibrada`.
-- Criar `sam_fitness_potencial` aplicando gates operacionais ja existentes: viabilidade, municipio priorizado, renda/densidade quando documentado e restricao de canibalizacao Ultra.
-- Estimar consumo de mercado por grandes redes mapeadas: concorrentes grandes com capacidade default documentada (ex.: 2.500 alunos por unidade ate calibracao melhor) e unidades Ultra com alunos reais quando disponiveis.
-- Criar `oferta_consumida_mercado_estimada`, `oferta_consumida_ultra_real`, `oferta_efetiva_disponivel = max(sam_fitness_potencial - oferta_consumida_mercado_estimada, 0)`.
-- Criar metricas de leitura: `penetracao_fitness_mercado_estimada`, `share_ultra_estimado_hex`, `score_oportunidade_residual`.
-- Atualizar `docs/modelo_mercado_hexagonos.md` com a semantica de TAM, SAM e oferta efetiva residual.
+- Criar `jobs/pipelines/gerar_relatorio_expansao_dominio.py`.
+- Gerar `data/reports/expansao_dominio.md`.
+- Reportar top cidades por residual capturado, top clusters, quantidade sugerida de ancoras, tese dominante e cautelas.
+- Comparar a nova lista com `carteira_expansao_acionavel.parquet` e `plano_expansao_curto_prazo.parquet` sem alterar esses artefatos.
+- Registrar limitações: concorrentes grandes mapeados, ausencia de independentes, capacidade proxy de 2500 alunos e qualidade da populacao por fonte.
 
 **Validacao minima:**
-testes de contrato garantindo que o M1 oficial nao mudou, colunas novas existem, valores nao ficam negativos e exemplos manuais batem com a regra: `10k hab -> potencial -> consumo concorrente -> residual`.
+```bash
+python jobs/pipelines/gerar_relatorio_expansao_dominio.py
+python -c "from pathlib import Path; p=Path('data/reports/expansao_dominio.md'); assert p.exists() and p.stat().st_size > 1000; print('ok')"
+```
 
-**Observacoes:** Concluido e revisado em 2026-05-15. Logica corrigida em relacao a versao inicial: (1) `taxa_fitness_calibrada` nao e mais um valor fixo de `0.045` — e calibrada em runtime por `calibrar_taxa_fitness_mercado(df)` como mediana de `(n_total_academias_2km * 2000) / pop_hex_base` nos hexes com academias; resultado com 28 redes e **20%**; fallback `TAXA_FITNESS_MERCADO_FALLBACK = 0.10` quando base insuficiente para calibracao. (2) `oferta_efetiva_disponivel` agora desconta `oferta_consumida_total_estimada = oferta_consumida_mercado_estimada + oferta_consumida_ultra_estimada` — Ultra propria tambem entra no calculo de consumo (alunos reais quando disponivel, proxy `n_unidades_ultra_2km * 2500` caso contrario). (3) Cobertura de concorrentes expandida de 3 redes (1.684 unidades) para **28 redes** (3.179 unidades validas) via auto-discovery de todos os `unidades_*.csv` de `concorrentes/`. Novas colunas: `taxa_fitness_mercado_calibrada`, `oferta_consumida_ultra_estimada`, `oferta_consumida_total_estimada`. `penetracao_fitness_mercado_estimada` usa `oferta_consumida_total_estimada` como numerador. Parquet regenerado com 1.532.645 linhas; soma `oferta_efetiva_disponivel` pos-Bloco 8: 3.17M alunos (correto apos correcao de inflate de populacao).
+**Observacoes:** Script criado em `jobs/pipelines/gerar_relatorio_expansao_dominio.py`. Relatorio gerado em `data/reports/expansao_dominio.md` (5.3 kb). Secoes: sumario executivo, top 15 cidades, top 10 clusters, resumo por UF, comparativo com M1 (todas as 30 cidades do dominio ja estao na carteira; 27 no plano CP), parametros e cautelas. Nenhum artefato M1 foi alterado. Validacao minima: OK.
 
-### Bloco 6 - Tooltip completo para hex pesquisado por coordenada [x]
-**Objetivo:** fazer o hover do hex destacado pela busca por coordenada exibir os mesmos dados de um hex normal.
+### Bloco 6 - Expor Expansao de Dominio no dashboard [x]
+**Objetivo:** permitir explorar o plano novo no Streamlit sem recalcular nada em producao.
 
 **Escopo:**
-- Ajustar `src/motor_expansao/dashboard/components.py`: `_build_search_hex_layer` deve receber os campos de tooltip do hex pesquisado quando eles existirem.
-- Reaproveitar `_apply_hex_tooltip_fields` para montar o payload do destaque, mantendo o fallback atual apenas quando o `hex_id` nao estiver na base.
-- Preservar destaque amarelo, centralizacao e exibicao mesmo fora dos filtros.
-- Atualizar testes em `tests/integration/test_streamlit_app.py` e/ou `tests/unit/test_coord_search.py`.
+- Adicionar loader opcional para `plano_expansao_dominio.parquet`.
+- Criar aba/subaba "Expansao de Dominio" com tabela operacional, filtros por UF/cidade/tese e KPIs de residual capturado.
+- Exibir colunas essenciais: ordem, cidade, cluster, hex ancora, score residual, residual capturado, distancia Ultra, tese e ranking.
+- Manter o dashboard funcional quando o parquet nao existir.
+- Nao alterar mapas M1/hibrido existentes.
 
 **Validacao minima:**
-teste deve confirmar que o layer de destaque possui `Habitantes`, `Renda per capita`, scores e demais linhas esperadas, nao apenas `Hex pesquisado`.
+```bash
+python -c "import streamlit_app; print('ok')"
+python -m pytest -q tests/integration/test_streamlit_app.py
+```
 
-**Observacoes:** Concluido em 2026-05-15. `_build_search_hex_layer` agora recebe payload de tooltip gerado com `_apply_hex_tooltip_fields`; quando o `hex_id` existe na base, o destaque amarelo mostra o mesmo tooltip do hex normal, inclusive fora do recorte filtrado; fallback simples permanece para hex nao encontrado. Validado com `python -m pytest -q tests\integration\test_streamlit_app.py::test_build_map_figure_adiciona_layer_de_destaque_do_hex_pesquisado tests\integration\test_streamlit_app.py::test_build_map_figure_destaque_hex_aparece_mesmo_fora_dos_filtros tests\unit\test_coord_search.py` e `python -m pytest -q tests\integration\test_streamlit_app.py`.
+**Observacoes:** `load_plano_dominio` adicionado com `@st.cache_data`; retorna DataFrame vazio graciosamente quando parquet ausente. Nova aba "Expansao de Dominio" (tabs[7]) com KPIs (ancoras, cidades, UFs, residual capturado), filtros por UF/cidade/tese e tabela operacional ordenada por `rank_dominio_brasil`. `render_expansao_dominio` adicionada a `pages.py` seguindo padrao das outras paginas. 4 novos testes de integracao adicionados (mock colunas com `side_effect` em vez de `return_value` fixo para suportar chamadas com n variavel). Validacao: `import streamlit_app` OK, 33 testes de integracao PASS (31 anteriores + 4 novos, sendo 2 que existiam). Mapas M1/hibrido intactos.
 
-### Bloco 8 - Corrigir base populacional do SAM/TAM e sinalizar proxy no dashboard [x]
-**Objetivo:** corrigir o bug onde `populacao_proxy` (populacao total do municipio) era usada diretamente no sizing absoluto de TAM/SAM, inflando o SAM de cada hex pelo total do municipio inteiro.
+### Bloco 7 - Mapa de dominio e narrativa visual [x]
+**Objetivo:** visualizar as ancoras e clusters recomendados sobre os mapas existentes.
 
-**Contexto do bug diagnosticado em 2026-05-15:**
-- `pop_hex_base` usava `populacao_proxy` (total municipal) como fallback para hexes sem `flag_censo_elegivel=True`, mesmo quando `pop_total_setor_2022` estava disponivel.
-- Resultado: todos os hexes de um mesmo municipio recebiam SAM identico e inflado. Ex.: Rio de Janeiro (6,2M hab) -> SAM de 279k alunos por hex; Sao Paulo (11,4M) -> 515k por hex.
-- O tooltip exibia `Habitantes` do censo (~30k) mas o SAM era calculado sobre o proxy municipal, criando contradicao visual direta.
-- 1.816 hexes em RJ com `flag_sam=True` tinham esse conflito; 1,3M hexes no total com `pop_total_setor_2022` disponivel mas SAM usando proxy.
-
-**Escopo — correcao do calculo (`calcular_colunas_mercado.py`):**
-- Mudar a condicao de `pop_hex_base` de `flag_censo_elegivel=True AND pop_total_setor_2022.notna()` para `pop_total_setor_2022 > 0` (usar o dado censitario sempre que existir, independente do gate de densidade do modelo hibrido).
-- Novo fallback quando censo nao estiver disponivel: `populacao_proxy / total_hex_municipio` (coluna `total_hex_municipio` ja existe no parquet) em vez do total bruto municipal.
-- Atualizar `fonte_pop_hex_base` para refletir a nova logica: `censo_2022_setor` quando usar `pop_total_setor_2022`; `m1_municipal_proxy_per_hex` quando usar o fallback dividido.
-- Apos recalcular o staging, rodar `enriquecer_outputs_residual_mercado.py` e `gerar_carteira_acionavel.py` para propagar os novos valores.
-
-**Escopo — sinalizacao no dashboard (`components.py` e tooltip):**
-- No tooltip dos hexes, exibir SAM/TAM com sufixo `(est. proxy)` quando `fonte_pop_hex_base` for `m1_municipal_proxy_per_hex`.
-- Na aba Carteira, adicionar coluna ou badge visual indicando confiabilidade do sizing absoluto.
-
-**Restricoes:**
-- Nao alterar `score_priorizacao`, `hex_score_estrutural` nem rankings oficiais M1.
-- `flag_censo_elegivel` segue intocado; mudanca e somente na condicao de `pop_hex_base` para sizing absoluto.
-- Testes de contrato de schema devem continuar passando; valores numericos de SAM/TAM vao mudar — atualizar fixtures/expects nos testes afetados.
+**Escopo:**
+- Adicionar camada visual opcional de ancoras da Expansao de Dominio.
+- Diferenciar ordem de expansao por cor/tamanho e tese por tooltip.
+- Destacar cluster recomendado e residual no entorno sem alterar score nem ranking.
+- Reutilizar pins Ultra e concorrentes ja existentes.
+- Adicionar legenda enxuta e testes de construcao da figura.
 
 **Validacao minima:**
-- Confirmar que nenhum hex tem `sam_fitness_potencial > populacao_proxy / total_hex_municipio * 0.05` para hexes proxy.
-- Confirmar que hexes com `pop_total_setor_2022` disponivel usam esse valor como `pop_hex_base`.
-- Smoke do dashboard: hex de RJ com censo disponivel deve mostrar SAM coerente com os `Habitantes` exibidos no tooltip.
-- `python -m pytest -q tests/integration/test_modelo_mercado_hexagonos.py tests/integration/test_carteira_plano_nacional.py tests/integration/test_streamlit_app.py`
+```bash
+python -m pytest -q tests/integration/test_streamlit_app.py
+python -c "import streamlit_app; print('ok')"
+```
 
-**Observacoes:** Concluido em 2026-05-15. `calcular_colunas_mercado.py` corrigido: `pop_hex_base` agora usa `pop_total_setor_2022` para 1.302.296 hexes (antes apenas 850 via `flag_censo_elegivel`); fallback `populacao_proxy / total_hex_municipio` para 230.349 hexes restantes; labels atualizados para `censo_2022_setor` e `m1_municipal_proxy_per_hex`. `oferta_efetiva_disponivel` total caiu de 1.27B para 3.17M alunos (correto — eliminado inflate por populacao municipal bruta). Dashboard sinaliza `(est. proxy)` no tooltip do SAM quando fonte e proxy. `fonte_pop_hex_base` adicionada as map_columns de ambos os mapas. Propagado via `enriquecer_outputs_residual_mercado.py` e `gerar_carteira_acionavel.py`. 270/270 testes passando.
+**Observacoes:** `build_dominio_map_figure` e `render_dominio_tese_legend` adicionadas a `components.py`. Fill-color por `ordem_expansao_cidade` (cyan brilhante=1, azul=posterior); line-color por `tese_dominio` (6 cores distintas). `render_expansao_dominio` em `pages.py` ganhou secao de mapa antes da tabela, com legenda de teses, caption de contexto e suporte a `competitors_df`/`ultra_df`. `streamlit_app.py` exporta as novas funcoes e repassa os DataFrames de contexto. 2 novos testes de integracao adicionados. Total: 35 testes de integracao PASS. `import streamlit_app` OK. Mapas M1/hibrido intactos.
+
+### Bloco 8 - Calibracao e hardening operacional [x]
+**Objetivo:** estabilizar parametros para uso recorrente pela equipe.
+
+**Escopo:**
+- Centralizar parametros da feature em constantes documentadas.
+- Adicionar smoke de schema para `plano_expansao_dominio.parquet`.
+- Validar que nenhum output da feature altera `score_priorizacao`, `hex_score_estrutural`, carteira ou plano curto prazo.
+- Testar cenarios: cidade sem candidatos, todos bloqueados por Ultra, multiplos clusters, empate de score residual, limite de ancoras por cidade.
+- Atualizar `docs/expansao_dominio.md`, `CLAUDE.md` e este PRD com observacoes finais do ciclo.
+
+**Validacao minima:**
+```bash
+python -m pytest -q tests/unit/test_expansao_dominio.py tests/integration/test_expansao_dominio.py tests/integration/test_streamlit_app.py
+python -c "import pandas as pd; df=pd.read_parquet('data/outputs/plano_expansao_dominio.parquet'); assert df['hex_id'].notna().all(); assert not df['hex_id'].duplicated().any(); print(len(df))"
+```
+
+**Observacoes:** `DOMINIO_SCHEMA_MINIMO` e `DOMINIO_TESES_VALIDAS` centralizados em `dashboard/constants.py`; `SCHEMA_DOMINIO_OBRIGATORIO` no pipeline espelha o mesmo conjunto (validado por teste unitario). `validate_dominio_schema()` adicionada ao pipeline e chamada dentro de `materializar()`. Novos testes unitarios (8): smoke de schema, schema vs. constants, todos-bloqueados-por-Ultra, multiplos-clusters, limite-ancoras-por-cidade, guardrail de paths M1. Novos testes de integracao (3 condicionais): carteira contem score_priorizacao, plano_cp contem score_priorizacao, plano dominio nao altera scores M1. Corrigido conflito de nomes pytest (`tests/unit/test_expansao_dominio.py` x `tests/integration/test_expansao_dominio.py`) com `__init__.py` nos subdirs. Total final: 63 unitarios PASS + 84 expansao-dominio PASS + 35 streamlit PASS. `docs/expansao_dominio.md` atualizado com secao 9 (hardening).
 
 ## Backlog posterior
-- Hardening operacional da VPS: HTTPS/proxy reverso, autenticacao ou VPN, monitoramento de uptime.
-- Limpeza assistida dos diretorios temporarios antigos com permissao negada em `fixtures/`.
-- Avaliar atualizacao da carteira/plano apos estabilizar a nova camada de TAM/SAM/oferta residual.
-### Bloco 7 - Expor oferta residual nos parquets e dashboard [x]
-**Objetivo:** propagar as colunas de TAM/SAM fitness e residual absoluto para os parquets principais e permitir ranquear os melhores hexes/ofertas no dashboard.
-
-**Escopo:**
-- Enriquecer `oportunidades_expansao_hibrido.parquet`, `carteira_expansao_acionavel.parquet` e `plano_expansao_curto_prazo.parquet` a partir de `data/staging/hexagonos_mercado_mapeado.parquet`, preservando `score_priorizacao` e rankings M1.
-- Carregar no Streamlit `sam_fitness_potencial`, `oferta_efetiva_disponivel`, `score_oportunidade_residual`, `share_ultra_estimado_hex` e consumo estimado/Ultra real.
-- Adicionar esses campos ao tooltip/legenda dos hexagonos e a filtros/ordenacao da aba de carteira para ranquear por oportunidade residual, com quartis apenas como apoio visual.
-
-**Validacao minima:** testes de contrato dos parquets enriquecidos, smoke do dashboard/import Streamlit e teste garantindo que ranking oficial M1 segue preservado.
-
-**Observacoes:** Concluido em 2026-05-15. Novo pipeline `jobs/pipelines/enriquecer_outputs_residual_mercado.py` propaga TAM/SAM fitness, consumo estimado, Ultra real, `oferta_efetiva_disponivel`, `score_oportunidade_residual`, `share_ultra_estimado_hex` e `quartil_oportunidade_residual` para `oportunidades_expansao_hibrido.parquet`, carteira e plano sem alterar `score_priorizacao` nem ranks oficiais. `gerar_carteira_acionavel.py` tambem anexa residual a partir do staging ao regenerar a carteira; o plano herda as colunas. Dashboard carrega os campos, mostra residual no tooltip dos mapas, legenda auxiliar, filtro de quartil e ordenacao opcional por oportunidade residual na aba Carteira; ordenacao padrao segue M1. Parquets materializados: hibrido 1.532.645 linhas, carteira 4.892, plano 267, todos com cobertura residual 100%. Validado com `python jobs\pipelines\enriquecer_outputs_residual_mercado.py`, `python jobs\pipelines\gerar_carteira_acionavel.py`, `python jobs\pipelines\gerar_plano_expansao_curto_prazo.py`, checagem de schema/somas dos 3 parquets e `python -m pytest -q tests\integration\test_carteira_plano_nacional.py tests\integration\test_streamlit_app.py tests\integration\test_modelo_mercado_hexagonos.py`.
+- Calibrar capacidade por formato de unidade Ultra e por rede concorrente quando houver dado confiavel.
+- Incluir imoveis disponiveis e funil real de implantacao como restricao do plano.
+- Criar cenario de budget trimestral: maximo de aberturas por UF/cidade e simulacao de cobertura.

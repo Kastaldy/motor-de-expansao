@@ -28,11 +28,13 @@ from dashboard.constants import (  # noqa: F401
     OPTIONAL_DATASET_COLUMNS,
     REQUIRED_COLUMNS,
     RESIDUAL_MERCADO_COLS,
+    RESIDUAL_SCORE_BANDS,
     TABLE_ROW_LIMIT,
     TEXT_COLUMNS,
 )
 from dashboard.utils import (  # noqa: F401
     _censo_score_to_color,
+    _residual_score_to_color,
     format_density,
     format_int,
     format_pct,
@@ -47,6 +49,7 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     _sort_carteira_by_m1,
     apply_exec_layout,
     build_business_answers,
+    build_dominio_map_figure,
     build_faixa_comparison_figure,
     build_hybrid_alerts,
     build_hybrid_kpis,
@@ -60,6 +63,7 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     build_map_figure,
     build_map_scope_caption,
     build_ranking_table,
+    build_residual_heatmap_figure,
     build_scatter_figure,
     build_score_distribution_figure,
     build_top_bottom_uf_figure,
@@ -69,10 +73,12 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     render_answer_card,
     render_censo_score_legend,
     render_competitor_legend,
+    render_dominio_tese_legend,
     render_faixa_legend,
     render_geographic_source_legend,
     render_pop_cut_legend,
     render_residual_legend,
+    render_residual_score_legend,
     render_ultra_legend,
     resolve_map_view,
     style_ranking_table,
@@ -103,6 +109,7 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_comparacao_uf,
     render_coord_search_sidebar,
     render_empty_state,
+    render_expansao_dominio,
     render_header,
     render_hex_search_result,
     render_modelo_hibrido,
@@ -135,6 +142,7 @@ CENSO_VALIDATED_PATH = (
 ESTRUTURAL_PATH = (
     Path(__file__).resolve().parent / "data" / "staging" / "brasil_estrutural.parquet"
 )
+PLANO_DOMINIO_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "plano_expansao_dominio.parquet"
 
 preload_logos(CONCORRENTES_DIR, ultra_dir=ULTRA_PATH.parent)
 
@@ -246,6 +254,30 @@ def load_carteira() -> pd.DataFrame:
     return df
 
 
+@st.cache_data(show_spinner=False)
+def load_plano_dominio() -> pd.DataFrame:
+    if not PLANO_DOMINIO_PATH.exists():
+        return pd.DataFrame()
+    df = pd.read_parquet(PLANO_DOMINIO_PATH)
+    for col in [
+        "score_oportunidade_residual", "oferta_efetiva_disponivel", "sam_fitness_potencial",
+        "residual_incremental_capturado", "residual_cluster_pos_acao",
+        "dist_ultra_mais_proxima_m", "dist_nova_ancora_mais_proxima_m",
+        "pressao_concorrencial_score_2km", "pressao_concorrencial_media",
+        "n_hex_cluster", "residual_total_cluster", "score_residual_max",
+        "score_residual_medio", "sam_total_cluster", "dist_ultra_min_cluster",
+        "n_concorrentes_mapeados_2km",
+        "rank_dominio_brasil", "rank_dominio_uf", "rank_dominio_cidade",
+        "ordem_expansao_cidade",
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+    for col in ["flag_sam_fitness", "flag_canibalizacao_ultra_1km", "flag_white_space_2km"]:
+        if col in df.columns:
+            df[col] = df[col].fillna(False).astype(bool)
+    return df
+
+
 def load_plano() -> pd.DataFrame:
     if not PLANO_PATH.exists():
         return pd.DataFrame()
@@ -283,6 +315,7 @@ def main() -> None:
     pop_lookup = build_pop_cut_lookup(df)
     carteira_df = load_carteira()
     plano_df = load_plano()
+    plano_dominio_df = load_plano_dominio()
     competitors_df = load_competitors()
     ultra_df = load_ultra()
 
@@ -351,6 +384,7 @@ def main() -> None:
             "Modelo Hibrido",
             "Carteira de Expansao",
             "Plano de Expansao",
+            "Expansao de Dominio",
         ]
     )
 
@@ -398,6 +432,15 @@ def main() -> None:
 
     with tabs[6]:
         render_plano_expansao(plano_df, pop_cut_lookup=pop_lookup)
+
+    with tabs[7]:
+        render_expansao_dominio(
+            plano_dominio_df,
+            selected_ufs=selected_ufs,
+            selected_cities=selected_cities,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+        )
 
 
 if __name__ == "__main__":

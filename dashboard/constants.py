@@ -209,3 +209,28 @@ CENSO_SCORE_COLORS = {
     "50-75": [245, 158, 11, 140],
     "75-100": [20, 200, 80, 140],
 }
+RESIDUAL_SCORE_BANDS: list[tuple[str, str]] = [
+    ("0-10",   "#941212"),
+    ("10-20",  "#B92323"),
+    ("20-30",  "#DC4141"),
+    ("30-40",  "#DC6914"),
+    ("40-50",  "#F0941E"),
+    ("50-60",  "#EEC828"),
+    ("60-70",  "#96D250"),
+    ("70-80",  "#50C33C"),
+    ("80-90",  "#19A832"),
+    ("90-100", "#0A8226"),
+]
+
+# Expansao de Dominio — constantes canonicas
+DOMINIO_SCHEMA_MINIMO: frozenset[str] = frozenset({
+    "hex_id", "uf", "cod_municipio", "nome_municipio", "lat", "lng",
+    "cluster_id", "tese_dominio",
+    "ordem_expansao_cidade", "residual_incremental_capturado",
+    "residual_cluster_pos_acao", "dist_nova_ancora_mais_proxima_m",
+    "rank_dominio_brasil", "rank_dominio_uf", "rank_dominio_cidade",
+})
+DOMINIO_TESES_VALIDAS: frozenset[str] = frozenset({
+    "dominar_white_space", "abrir_com_disputa", "proteger_corredor_ultra",
+    "adensar_cluster", "monitorar", "bloqueado_canibalizacao",
+})

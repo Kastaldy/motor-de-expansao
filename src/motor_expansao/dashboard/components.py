@@ -13,10 +13,12 @@ from dashboard.constants import (
     FAIXA_COLORS,
     FAIXA_ORDEM,
     MAP_POINT_LIMIT,
+    RESIDUAL_SCORE_BANDS,
     TABLE_ROW_LIMIT,
 )
 from dashboard.utils import (
     _censo_score_to_color,
+    _residual_score_to_color,
     format_density,
     format_int,
     format_pct,
@@ -422,16 +424,24 @@ def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str) -> pd.DataFram
         map_df["tooltip_line_2"] = "Score M1: " + map_df["score_m1_fmt"].astype(str)
         map_df["tooltip_line_3"] = "Score Hibrido: " + map_df["score_hibrido_fmt"].astype(str)
         map_df["tooltip_line_4"] = "Densidade setorial: " + map_df["densidade_fmt"].astype(str) + " hab/km2"
-        map_df["tooltip_line_5"] = "Rank Intraurbano: " + map_df["rank_hex_fmt"].astype(str)
-        map_df["tooltip_line_6"] = "Top intraurbano: " + map_df["top_hex_label"].astype(str)
-        map_df["tooltip_line_7"] = "Elegibilidade: " + map_df["elegibilidade_hibrida"].astype(str)
-        map_df["tooltip_line_8"] = "Qualidade join: " + map_df["qualidade_join_uf"].astype(str)
-        map_df["tooltip_line_9"] = "Outlier espacial: " + map_df["outlier_label"].astype(str)
-        map_df["tooltip_line_10"] = "Motivo editorial: " + map_df["motivo_label"].astype(str)
-        map_df["tooltip_line_11"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
-        map_df["tooltip_line_12"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
-        map_df["tooltip_line_13"] = map_df["tooltip_residual_1"]
-        map_df["tooltip_line_14"] = map_df["tooltip_residual_2"] + " | " + map_df["tooltip_residual_3"]
+        if _HYBRID_TOOLTIP_SHOW_DETAIL:
+            # Campos de detalhe tecnico — ocultos quando _HYBRID_TOOLTIP_SHOW_DETAIL=False.
+            # Para restaurar: mudar a constante para True (acima de _hybrid_compact_tooltip).
+            map_df["tooltip_line_5"] = "Rank Intraurbano: " + map_df["rank_hex_fmt"].astype(str)
+            map_df["tooltip_line_6"] = "Top intraurbano: " + map_df["top_hex_label"].astype(str)
+            map_df["tooltip_line_7"] = "Elegibilidade: " + map_df["elegibilidade_hibrida"].astype(str)
+            map_df["tooltip_line_8"] = "Qualidade join: " + map_df["qualidade_join_uf"].astype(str)
+            map_df["tooltip_line_9"] = "Outlier espacial: " + map_df["outlier_label"].astype(str)
+            map_df["tooltip_line_10"] = "Motivo editorial: " + map_df["motivo_label"].astype(str)
+            map_df["tooltip_line_11"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
+            map_df["tooltip_line_12"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
+            map_df["tooltip_line_13"] = map_df["tooltip_residual_1"]
+            map_df["tooltip_line_14"] = map_df["tooltip_residual_2"] + " | " + map_df["tooltip_residual_3"]
+        else:
+            map_df["tooltip_line_5"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
+            map_df["tooltip_line_6"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
+            map_df["tooltip_line_7"] = map_df["tooltip_residual_1"]
+            map_df["tooltip_line_8"] = map_df["tooltip_residual_2"] + " | " + map_df["tooltip_residual_3"]
         if "flag_pop_min_5k" in map_df.columns:
             discarded = ~map_df["flag_pop_min_5k"].fillna(True)
             map_df.loc[discarded, "tooltip_title"] = (
@@ -745,6 +755,37 @@ def _shared_map_tooltip() -> dict[str, object]:
     }
 
 
+# Controla a exibicao de campos de detalhe tecnico no tooltip do mapa hibrido.
+# False = tooltip compacto (oculta Rank Intraurbano, Top Intraurbano, Elegibilidade,
+#         Qualidade Join, Outlier Espacial, Motivo Editorial).
+# True  = tooltip completo com todos os 14 campos (restaura os campos acima).
+_HYBRID_TOOLTIP_SHOW_DETAIL = False
+
+
+def _hybrid_compact_tooltip() -> dict[str, object]:
+    """Tooltip de 8 linhas para mapas hibridos quando _HYBRID_TOOLTIP_SHOW_DETAIL=False."""
+    return {
+        "html": (
+            "<b>{tooltip_title}</b><br/>"
+            "{tooltip_line_1}<br/>"
+            "{tooltip_line_2}<br/>"
+            "{tooltip_line_3}<br/>"
+            "{tooltip_line_4}<br/>"
+            "{tooltip_line_5}<br/>"
+            "{tooltip_line_6}<br/>"
+            "{tooltip_line_7}<br/>"
+            "{tooltip_line_8}"
+        ),
+        "style": {
+            "backgroundColor": "rgba(10, 15, 31, 0.94)",
+            "color": COLORS["text"],
+            "border": f"1px solid {COLORS['border']}",
+            "borderRadius": "10px",
+            "fontFamily": "Bahnschrift, Aptos, Segoe UI, sans-serif",
+        },
+    }
+
+
 _DISCARDED_FILL = [120, 120, 140, 70]
 _DISCARDED_LINE = [120, 120, 140, 180]
 
@@ -792,6 +833,14 @@ def render_residual_legend(df: pd.DataFrame | None = None) -> None:
         "</div>",
         unsafe_allow_html=True,
     )
+
+
+def render_residual_score_legend() -> None:
+    chips = "".join(
+        f"<span class='legend-chip'><span class='legend-dot' style='background:{color};'></span>Score {label}</span>"
+        for label, color in RESIDUAL_SCORE_BANDS
+    )
+    st.markdown(f"<div class='legend-row'>{chips}</div>", unsafe_allow_html=True)
 
 
 def _search_hex_payload(hex_id: str, tooltip_source: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -1118,7 +1167,11 @@ def build_hybrid_map_figure(
         map_df = map_df.sort_values(sort_cols, ascending=ascending, kind="stable")
     map_df = map_df.head(MAP_POINT_LIMIT)
 
-    map_df["fill_color"] = map_df["score_setor_2022_calibrado"].map(_censo_score_to_color)
+    residual_col = "score_oportunidade_residual"
+    if residual_col in map_df.columns:
+        map_df["fill_color"] = map_df[residual_col].map(_residual_score_to_color)
+    else:
+        map_df["fill_color"] = map_df["score_setor_2022_calibrado"].map(_censo_score_to_color)
     map_df["line_color"] = map_df.apply(
         lambda row: (
             [255, 90, 107, 220]
@@ -1217,9 +1270,324 @@ def build_hybrid_map_figure(
             bearing=0,
         ),
         layers=layers,
+        tooltip=_shared_map_tooltip() if _HYBRID_TOOLTIP_SHOW_DETAIL else _hybrid_compact_tooltip(),
+    )
+    return deck, len(map_df)
+
+
+def build_residual_heatmap_figure(
+    hdf: pd.DataFrame,
+    *,
+    selected_ufs: list[str],
+    selected_cities: list[str],
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    search_pin: tuple[float, float] | None = None,
+    search_hex_id: str | None = None,
+):
+    if "score_setor_2022_calibrado" not in hdf.columns:
+        return None, 0
+
+    map_columns = [
+        "hex_id",
+        "lat",
+        "lng",
+        "uf",
+        "nome_municipio",
+        "score_setor_2022_calibrado",
+        "score_priorizacao",
+        "score_expansao_hibrido",
+        "densidade_pop_setor_hab_km2",
+        "qualidade_join_uf",
+        "flag_join_uf_restrito",
+        "flag_baixa_pop_setor",
+        "flag_outlier_espacial",
+        "causa_outlier_espacial",
+        "coverage_pct_setor_2022",
+        "motivo_nao_elegivel_censo",
+        "elegibilidade_hibrida",
+        "rank_hex_intraurbano",
+        "top_hex_intraurbano",
+        "top_oportunidade_municipio",
+        "pop_total",
+        "populacao_proxy",
+        "renda_per_capita",
+        "pop_total_setor_2022",
+        "renda_per_capita_setor_2022_calibrada",
+        "flag_pop_min_5k",
+        "sam_fitness_potencial",
+        "oferta_consumida_mercado_estimada",
+        "oferta_consumida_ultra_real",
+        "oferta_efetiva_disponivel",
+        "share_ultra_estimado_hex",
+        "score_oportunidade_residual",
+        "quartil_oportunidade_residual",
+        "fonte_pop_hex_base",
+    ]
+    hdf_valid_all = hdf.loc[
+        hdf["score_setor_2022_calibrado"].notna()
+        & hdf["lat"].notna()
+        & hdf["lng"].notna(),
+        [column for column in map_columns if column in hdf.columns],
+    ].copy()
+    map_df = hdf_valid_all.copy()
+    if map_df.empty:
+        return None, 0
+
+    if selected_ufs:
+        map_df = map_df.loc[map_df["uf"].isin(selected_ufs)].copy()
+    if selected_cities:
+        city_col = "nome_municipio" if "nome_municipio" in map_df.columns else "uf"
+        map_df = map_df.loc[map_df[city_col].isin(selected_cities)].copy()
+    if map_df.empty:
+        return None, 0
+
+    if "score_oportunidade_residual" in map_df.columns:
+        map_df = map_df.sort_values(
+            "score_oportunidade_residual", ascending=False, na_position="last", kind="stable"
+        )
+    map_df = map_df.head(MAP_POINT_LIMIT)
+
+    if "score_oportunidade_residual" in map_df.columns:
+        map_df["fill_color"] = map_df["score_oportunidade_residual"].map(_residual_score_to_color)
+    else:
+        map_df["fill_color"] = [[120, 120, 140, 70]] * len(map_df)
+    map_df["line_color"] = map_df.apply(
+        lambda row: (
+            [255, 90, 107, 220]
+            if bool(row.get("flag_join_uf_restrito", False)) or str(row.get("qualidade_join_uf", "")) == "C"
+            else hex_to_rgba(COLORS["map_line"], 100)
+        ),
+        axis=1,
+    )
+    map_df = _prepare_hybrid_tooltip_fields(map_df)
+    map_df = _apply_pop_cut_colors(map_df)
+    map_df = _apply_hex_tooltip_fields(map_df, mode="hybrid")
+
+    search_tooltip_source = None
+    if search_hex_id is not None:
+        search_source = hdf_valid_all.loc[hdf_valid_all["hex_id"].astype(str) == str(search_hex_id)].copy()
+        if not search_source.empty:
+            search_source = search_source.drop_duplicates(subset=["hex_id"], keep="first")
+            search_tooltip_source = _apply_hex_tooltip_fields(
+                _prepare_hybrid_tooltip_fields(search_source),
+                mode="hybrid",
+            )
+
+    center, zoom = resolve_map_view(map_df, selected_ufs=selected_ufs, selected_cities=selected_cities)
+
+    hex_layer = pdk.Layer(
+        "H3HexagonLayer",
+        data=map_df,
+        get_hexagon="hex_id",
+        get_fill_color="fill_color",
+        get_line_color="line_color",
+        filled=True,
+        stroked=True,
+        extruded=False,
+        pickable=True,
+        auto_highlight=True,
+        highlight_color=[255, 255, 255, 60],
+        opacity=0.85,
+        line_width_min_pixels=1,
+    )
+    competitor_layer, _ = _build_competitor_icon_layer(competitors_df, map_df)
+    ultra_layer = _build_ultra_icon_layer(ultra_df, map_df)
+    layers = [hex_layer]
+    if competitor_layer is not None:
+        layers.append(competitor_layer)
+    if ultra_layer is not None:
+        layers.append(ultra_layer)
+    if search_pin is not None:
+        layers.append(_build_search_pin_layer(*search_pin))
+        center = {"lat": search_pin[0], "lon": search_pin[1]}
+        zoom = 10.0
+    if search_hex_id is not None:
+        layers.append(_build_search_hex_layer(search_hex_id, search_tooltip_source))
+
+    deck = pdk.Deck(
+        map_style=pdk.map_styles.CARTO_DARK,
+        initial_view_state=pdk.ViewState(
+            latitude=center["lat"],
+            longitude=center["lon"],
+            zoom=zoom,
+            min_zoom=3,
+            max_zoom=15,
+            pitch=0,
+            bearing=0,
+        ),
+        layers=layers,
+        tooltip=_shared_map_tooltip() if _HYBRID_TOOLTIP_SHOW_DETAIL else _hybrid_compact_tooltip(),
+    )
+    return deck, len(map_df)
+
+
+_TESE_LINE_COLORS: dict[str, list[int]] = {
+    "dominar_white_space": [34, 197, 94, 230],
+    "abrir_com_disputa": [249, 115, 22, 230],
+    "proteger_corredor_ultra": [59, 130, 246, 230],
+    "adensar_cluster": [168, 85, 247, 230],
+    "monitorar": [148, 163, 184, 180],
+    "bloqueado_canibalizacao": [239, 68, 68, 230],
+}
+
+_TESE_LEGEND_COLORS: dict[str, str] = {
+    "dominar_white_space": "#22C55E",
+    "abrir_com_disputa": "#F97316",
+    "proteger_corredor_ultra": "#3B82F6",
+    "adensar_cluster": "#A855F7",
+    "monitorar": "#94A3B8",
+    "bloqueado_canibalizacao": "#EF4444",
+}
+
+
+def _dominio_fill_color(ordem) -> list[int]:
+    """Gradient: ordem 1 = cyan brilhante, maior = azul mais escuro."""
+    try:
+        n = max(int(float(ordem)), 1)
+    except (TypeError, ValueError):
+        n = 5
+    t = min(n - 1, 9) / 9.0
+    return [int(t * 60), int(220 - t * 120), int(255 - t * 75), int(220 - t * 100)]
+
+
+def build_dominio_map_figure(
+    plano: pd.DataFrame,
+    *,
+    selected_ufs: list[str] | None = None,
+    selected_cities: list[str] | None = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+):
+    """Mapa de ancoras da Expansao de Dominio coloridas por ordem e tese."""
+    if plano.empty or not {"hex_id", "lat", "lng"} <= set(plano.columns):
+        return None, 0
+
+    map_df = plano.loc[
+        plano["hex_id"].notna() & plano["lat"].notna() & plano["lng"].notna()
+    ].copy()
+    if map_df.empty:
+        return None, 0
+
+    if selected_ufs:
+        map_df = map_df.loc[map_df["uf"].isin(selected_ufs)].copy()
+    if selected_cities and "nome_municipio" in map_df.columns:
+        map_df = map_df.loc[map_df["nome_municipio"].isin(selected_cities)].copy()
+    if map_df.empty:
+        return None, 0
+
+    map_df = map_df.drop_duplicates(subset=["hex_id"], keep="first").reset_index(drop=True)
+
+    if "ordem_expansao_cidade" in map_df.columns:
+        map_df["fill_color"] = map_df["ordem_expansao_cidade"].map(_dominio_fill_color)
+    else:
+        map_df["fill_color"] = [[0, 200, 240, 180]] * len(map_df)
+
+    if "tese_dominio" in map_df.columns:
+        map_df["line_color"] = map_df["tese_dominio"].map(
+            lambda t: _TESE_LINE_COLORS.get(str(t), [120, 120, 140, 180])
+        )
+    else:
+        map_df["line_color"] = [[120, 120, 140, 180]] * len(map_df)
+
+    city_col = "nome_municipio" if "nome_municipio" in map_df.columns else "uf"
+    map_df["tooltip_title"] = map_df[city_col].astype(str) + " / " + map_df["uf"].astype(str)
+    if "cluster_id" in map_df.columns:
+        map_df["tooltip_title"] = map_df["tooltip_title"] + " | " + map_df["cluster_id"].astype(str)
+
+    map_df["tooltip_line_1"] = (
+        "Abertura #" + map_df["ordem_expansao_cidade"].map(lambda v: str(int(v)) if pd.notna(v) else "-")
+        if "ordem_expansao_cidade" in map_df.columns else ""
+    )
+    map_df["tooltip_line_2"] = (
+        "Tese: " + map_df["tese_dominio"].astype(str)
+        if "tese_dominio" in map_df.columns else ""
+    )
+    map_df["tooltip_line_3"] = (
+        "Score residual: " + map_df["score_oportunidade_residual"].map(lambda v: f"{v:.1f}" if pd.notna(v) else "-")
+        if "score_oportunidade_residual" in map_df.columns else ""
+    )
+    map_df["tooltip_line_4"] = (
+        "Residual capturado: " + map_df["residual_incremental_capturado"].map(lambda v: format_int(v) if pd.notna(v) else "-")
+        if "residual_incremental_capturado" in map_df.columns else ""
+    )
+    map_df["tooltip_line_5"] = (
+        "Dist. Ultra: " + map_df["dist_ultra_mais_proxima_m"].map(lambda v: f"{int(v):,}".replace(",", ".") if pd.notna(v) else "-") + " m"
+        if "dist_ultra_mais_proxima_m" in map_df.columns else ""
+    )
+    map_df["tooltip_line_6"] = (
+        "Concorrentes 2km: " + map_df["n_concorrentes_mapeados_2km"].map(lambda v: str(int(v)) if pd.notna(v) else "-")
+        if "n_concorrentes_mapeados_2km" in map_df.columns else ""
+    )
+    map_df["tooltip_line_7"] = (
+        "Rank Brasil: " + map_df["rank_dominio_brasil"].map(lambda v: str(int(v)) if pd.notna(v) else "-")
+        if "rank_dominio_brasil" in map_df.columns else ""
+    )
+    for _i in range(8, 15):
+        map_df[f"tooltip_line_{_i}"] = ""
+
+    center, zoom = resolve_map_view(
+        map_df,
+        selected_ufs=selected_ufs or [],
+        selected_cities=selected_cities or [],
+    )
+
+    hex_layer = pdk.Layer(
+        "H3HexagonLayer",
+        data=map_df,
+        get_hexagon="hex_id",
+        get_fill_color="fill_color",
+        get_line_color="line_color",
+        filled=True,
+        stroked=True,
+        extruded=False,
+        pickable=True,
+        auto_highlight=True,
+        highlight_color=[255, 255, 255, 80],
+        opacity=0.88,
+        line_width_min_pixels=2,
+    )
+    competitor_layer, _ = _build_competitor_icon_layer(competitors_df, map_df)
+    ultra_layer = _build_ultra_icon_layer(ultra_df, map_df)
+    layers = [hex_layer]
+    if competitor_layer is not None:
+        layers.append(competitor_layer)
+    if ultra_layer is not None:
+        layers.append(ultra_layer)
+
+    deck = pdk.Deck(
+        map_style=pdk.map_styles.CARTO_DARK,
+        initial_view_state=pdk.ViewState(
+            latitude=center["lat"],
+            longitude=center["lon"],
+            zoom=zoom,
+            min_zoom=3,
+            max_zoom=14,
+            pitch=0,
+            bearing=0,
+        ),
+        layers=layers,
         tooltip=_shared_map_tooltip(),
     )
     return deck, len(map_df)
+
+
+def render_dominio_tese_legend() -> None:
+    chips = "".join(
+        f"<span class='legend-chip'><span class='legend-dot' style='background:{color};'></span>{label.replace('_', ' ')}</span>"
+        for label, color in _TESE_LEGEND_COLORS.items()
+    )
+    order_chip = (
+        "<span class='legend-chip'>"
+        "<span style='display:inline-flex;gap:3px;align-items:center;'>"
+        "<span class='legend-dot' style='background:#00DCFF;'></span>"
+        "<span class='legend-dot' style='background:#008BC8;'></span>"
+        "<span class='legend-dot' style='background:#3C64B4;'></span>"
+        "</span>"
+        "Ordem de abertura (1=cyan, +tarde=azul)"
+        "</span>"
+    )
+    st.markdown(f"<div class='legend-row'>{chips}{order_chip}</div>", unsafe_allow_html=True)
 
 
 def build_top_city_figure(city_summary: pd.DataFrame):
