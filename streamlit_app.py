@@ -14,6 +14,9 @@ from dashboard.constants import (  # noqa: F401
     CENSO_SCORE_COLORS,
     CENSO_TRACE_LOAD_COLS,
     CENSO_UFS,
+    COLOR_MODE_DEFAULT,
+    COLOR_MODE_IDS,
+    COLOR_MODES,
     COLORS,
     COVERAGE_BUCKET_ORDER,
     FAIXA_COLORS,
@@ -26,11 +29,15 @@ from dashboard.constants import (  # noqa: F401
     MAP_SORT_ASCENDING,
     MAP_SORT_COLUMNS,
     OPTIONAL_DATASET_COLUMNS,
+    OVERLAY_IDS,
+    OVERLAYS,
     REQUIRED_COLUMNS,
     RESIDUAL_MERCADO_COLS,
     RESIDUAL_SCORE_BANDS,
     TABLE_ROW_LIMIT,
     TEXT_COLUMNS,
+    color_mode_available,
+    overlay_available,
 )
 from dashboard.utils import (  # noqa: F401
     _censo_score_to_color,
@@ -40,6 +47,7 @@ from dashboard.utils import (  # noqa: F401
     format_pct,
     format_score,
     hex_to_rgba,
+    score_band_to_color,
 )
 from motor_expansao.dashboard.competitors import load_competitor_points, load_ultra_points, preload_logos  # noqa: F401
 from motor_expansao.dashboard.components import (  # noqa: F401
@@ -48,6 +56,7 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     _derivar_faixa_hibrida,
     _sort_carteira_by_m1,
     apply_exec_layout,
+    build_analise_pontual_map,
     build_business_answers,
     build_dominio_map_figure,
     build_faixa_comparison_figure,
@@ -63,13 +72,20 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     build_map_figure,
     build_map_scope_caption,
     build_ranking_table,
+    build_residual_by_uf_figure,
     build_residual_heatmap_figure,
+    build_residual_score_dist_figure,
     build_scatter_figure,
     build_score_distribution_figure,
     build_top_bottom_uf_figure,
+    build_top_cities_residual_figure,
     build_top_city_figure,
     build_top_uf_figure,
     build_uf_metric_figure,
+    build_ultra_network_kpis,
+    build_ultra_presence_map,
+    build_unified_map_figure,
+    filter_points_to_radius,
     render_answer_card,
     render_censo_score_legend,
     render_competitor_legend,
@@ -79,6 +95,7 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     render_pop_cut_legend,
     render_residual_legend,
     render_residual_score_legend,
+    render_score_bands_legend,
     render_ultra_legend,
     resolve_map_view,
     style_ranking_table,
@@ -93,18 +110,23 @@ from motor_expansao.dashboard.data import (  # noqa: F401
     _prepare_dataframe,
     _read_optional_parquet_subset,
     _read_parquet_subset,
+    analisar_entorno_ponto,
     apply_global_filters,
     build_city_summary,
     build_pop_cut_lookup,
     build_uf_summary,
     derive_pop_cut_columns,
     enrich_dashboard_data,
+    haversine_km,
     lookup_hex_by_coord,
     parse_coordinate_input,
 )
 from motor_expansao.dashboard.pages import (  # noqa: F401
+    _extract_click_coord_from_selection,
     inject_styles,
+    render_analise_pontual,
     render_analise_territorial,
+    render_carteira_e_plano,
     render_carteira_expansao,
     render_comparacao_uf,
     render_coord_search_sidebar,
@@ -112,6 +134,7 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_expansao_dominio,
     render_header,
     render_hex_search_result,
+    render_mapa_territorial,
     render_modelo_hibrido,
     render_modelo_hibrido_v2,
     render_plano_expansao,
@@ -121,7 +144,7 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
 )
 
 st.set_page_config(
-    page_title="Ultra Academia | Dashboard Executivo M1 + Hibrido",
+    page_title="Ultra Academia | Mapa Territorial",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -278,6 +301,7 @@ def load_plano_dominio() -> pd.DataFrame:
     return df
 
 
+@st.cache_data(show_spinner=False)
 def load_plano() -> pd.DataFrame:
     if not PLANO_PATH.exists():
         return pd.DataFrame()
@@ -378,13 +402,9 @@ def main() -> None:
     tabs = st.tabs(
         [
             "Visao Executiva",
-            "Analise Territorial",
-            "Ranking e Priorizacao",
-            "Comparacao por UF",
-            "Modelo Hibrido",
-            "Carteira de Expansao",
-            "Plano de Expansao",
+            "Mapa Territorial",
             "Expansao de Dominio",
+            "Carteira e Plano",
         ]
     )
 
@@ -397,49 +417,43 @@ def main() -> None:
             selected_cities=selected_cities,
             competitors_df=competitors_df,
             ultra_df=ultra_df,
+            carteira_df=carteira_df,
+            plano_dominio_df=plano_dominio_df,
             search_pin=search_pin,
             search_hex_id=search_hex_id,
         )
 
     with tabs[1]:
-        render_analise_territorial(filtered_df, city_summary)
-
-    with tabs[2]:
-        render_ranking_priorizacao(filtered_df)
-
-    with tabs[3]:
-        render_comparacao_uf(city_summary, uf_summary)
-
-    with tabs[4]:
-        render_modelo_hibrido_v2(
+        render_mapa_territorial(
             filtered_df,
             selected_ufs=selected_ufs,
             selected_cities=selected_cities,
-            selected_faixas=selected_faixas,
             competitors_df=competitors_df,
             ultra_df=ultra_df,
             search_pin=search_pin,
             search_hex_id=search_hex_id,
+            dominio_df=plano_dominio_df,
+            city_summary=city_summary,
+            uf_summary=uf_summary,
+            selected_faixas=selected_faixas,
         )
 
-    with tabs[5]:
-        render_carteira_expansao(
-            carteira_df,
-            selected_ufs=selected_ufs,
-            selected_cities=selected_cities,
-            pop_cut_lookup=pop_lookup,
-        )
-
-    with tabs[6]:
-        render_plano_expansao(plano_df, pop_cut_lookup=pop_lookup)
-
-    with tabs[7]:
+    with tabs[2]:
         render_expansao_dominio(
             plano_dominio_df,
             selected_ufs=selected_ufs,
             selected_cities=selected_cities,
             competitors_df=competitors_df,
             ultra_df=ultra_df,
+        )
+
+    with tabs[3]:
+        render_carteira_e_plano(
+            carteira_df,
+            plano_df,
+            selected_ufs=selected_ufs,
+            selected_cities=selected_cities,
+            pop_cut_lookup=pop_lookup,
         )
 
 

@@ -234,3 +234,90 @@ DOMINIO_TESES_VALIDAS: frozenset[str] = frozenset({
     "dominar_white_space", "abrir_com_disputa", "proteger_corredor_ultra",
     "adensar_cluster", "monitorar", "bloqueado_canibalizacao",
 })
+
+# ── Mapa Territorial Unificado — camadas ──────────────────────────────────────
+
+COLOR_MODES: dict[str, dict] = {
+    "m1": {
+        "label": "M1",
+        "parquet": "hexagonos_brasil_dashboard.parquet",
+        "required_cols": ["faixa_oportunidade", "score_priorizacao"],
+        "optional_cols": [],
+    },
+    "hibrido": {
+        "label": "Hibrido",
+        "parquet": "oportunidades_expansao_hibrido.parquet",
+        "required_cols": ["score_expansao_hibrido"],
+        "optional_cols": ["score_setor_2022_calibrado"],
+    },
+    "censitario": {
+        "label": "Censitario",
+        "parquet": "oportunidades_expansao_hibrido.parquet",
+        "required_cols": ["score_setor_2022_calibrado"],
+        "optional_cols": [],
+    },
+    "residual": {
+        "label": "Residual Fitness",
+        "parquet": "oportunidades_expansao_hibrido.parquet",
+        "required_cols": ["score_oportunidade_residual"],
+        "optional_cols": ["oferta_efetiva_disponivel"],
+    },
+    "dominio": {
+        "label": "Expansao de Dominio",
+        "parquet": "plano_expansao_dominio.parquet",
+        "required_cols": ["ordem_expansao_cidade", "tese_dominio"],
+        "optional_cols": ["residual_incremental_capturado"],
+    },
+}
+COLOR_MODE_DEFAULT = "m1"
+COLOR_MODE_IDS: list[str] = list(COLOR_MODES)
+
+OVERLAYS: dict[str, dict] = {
+    "concorrentes": {
+        "label": "Concorrentes",
+        "default": True,
+        "required_cols": ["lat", "lng", "rede"],
+        "absent_behavior": "hide_silently",
+    },
+    "ultra": {
+        "label": "Ultra",
+        "default": True,
+        "required_cols": ["lat", "lng"],
+        "absent_behavior": "hide_silently",
+    },
+    "ancoras_dominio": {
+        "label": "Ancoras Dominio",
+        "default": False,
+        "required_cols": ["lat", "lng", "hex_id"],
+        "absent_behavior": "hide_silently",
+    },
+    "hex_pesquisado": {
+        "label": "Hex pesquisado",
+        "default": True,
+        "required_cols": [],
+        "absent_behavior": "hide_when_no_search",
+    },
+    "descartados_5k": {
+        "label": "Descartados <5k hab",
+        "default": True,
+        "required_cols": ["flag_pop_min_5k"],
+        "absent_behavior": "show_neutral",
+    },
+}
+OVERLAY_IDS: list[str] = list(OVERLAYS)
+
+
+def color_mode_available(df, mode_id: str) -> bool:
+    """Retorna True se todas as colunas obrigatorias do modo existirem no DataFrame."""
+    cfg = COLOR_MODES.get(mode_id)
+    if cfg is None:
+        return False
+    return all(c in df.columns for c in cfg["required_cols"])
+
+
+def overlay_available(df, overlay_id: str) -> bool:
+    """Retorna True se todas as colunas obrigatorias do overlay existirem no DataFrame."""
+    cfg = OVERLAYS.get(overlay_id)
+    if cfg is None:
+        return False
+    return all(c in df.columns for c in cfg["required_cols"])

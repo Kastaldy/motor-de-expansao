@@ -597,6 +597,180 @@ def parse_coordinate_input(text: str) -> tuple[float, float] | None:
     return None
 
 
+_RAIO_DEFAULT_KM: float = 1.6
+_AREA_RAIO_KM2: float = round(3.14159265358979 * _RAIO_DEFAULT_KM**2, 2)
+_POP_RAIO_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("pop_total_setor_2022", "setor_2022"),
+    ("pop_hex_base", "pop_hex_base"),
+    ("pop_total", "pop_total"),
+    ("populacao_proxy", "populacao_proxy"),
+)
+_RENDA_RAIO_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("renda_per_capita_setor_2022_calibrada", "setor_2022_calibrado"),
+    ("renda_per_capita", "renda_per_capita"),
+)
+
+
+def haversine_km(
+    lat1: float,
+    lat2: "np.ndarray | float",
+    lng1: float,
+    lng2: "np.ndarray | float",
+) -> "np.ndarray":
+    """Vectorized haversine distance (km) from scalar (lat1, lng1) to array (lat2, lng2)."""
+    R = 6371.0
+    lat1_r = np.radians(lat1)
+    lat2_r = np.radians(lat2)
+    dlat = lat2_r - lat1_r
+    dlng = np.radians(lng2) - np.radians(lng1)
+    a = np.sin(dlat / 2) ** 2 + np.cos(lat1_r) * np.cos(lat2_r) * np.sin(dlng / 2) ** 2
+    return R * 2 * np.arctan2(np.sqrt(a), np.sqrt(np.maximum(0.0, 1.0 - a)))
+
+
+def _coalesce_numeric_with_source(
+    df: pd.DataFrame,
+    candidates: tuple[tuple[str, str], ...],
+) -> tuple[pd.Series, pd.Series]:
+    values = pd.Series(np.nan, index=df.index, dtype="float64")
+    sources = pd.Series("ausente", index=df.index, dtype="object")
+    for column, source in candidates:
+        if column not in df.columns:
+            continue
+        numeric = pd.to_numeric(df[column], errors="coerce")
+        use_value = values.isna() & numeric.notna()
+        values = values.where(~use_value, numeric)
+        sources = sources.where(~use_value, source)
+    return values, sources
+
+
+def _summarize_sources(sources: pd.Series) -> str:
+    valid_sources = [str(source) for source in sources.dropna().unique().tolist() if str(source) != "ausente"]
+    if not valid_sources:
+        return "ausente"
+    if len(valid_sources) == 1:
+        return valid_sources[0]
+    return "misto: " + ", ".join(valid_sources)
+
+
+def analisar_entorno_ponto(
+    lat: float,
+    lng: float,
+    hex_df: pd.DataFrame,
+    raio_km: float = _RAIO_DEFAULT_KM,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    dominio_df: pd.DataFrame | None = None,
+) -> dict:
+    """Aggregate hex/candidate metrics within raio_km of (lat, lng).
+
+    Uses haversine distance from hex centroid to the query point. Results are
+    approximate: without fine street/sector geometries, precision reflects
+    centroid proximity only. Does not recalculate or alter score_priorizacao,
+    hex_score_estrutural, carteira, plano or any official M1 artifact.
+    """
+    area_km2 = round(3.14159265358979 * raio_km**2, 2)
+    result: dict = {
+        "lat": lat,
+        "lng": lng,
+        "raio_km": raio_km,
+        "area_km2": area_km2,
+        "n_hexes": 0,
+        "residual_total": None,
+        "score_residual_medio": None,
+        "score_residual_max": None,
+        "score_m1_medio": None,
+        "score_m1_max": None,
+        "score_hibrido_medio": None,
+        "score_hibrido_max": None,
+        "pop_total_raio": None,
+        "fonte_pop_total_raio": "ausente",
+        "renda_per_capita_media_raio": None,
+        "metodo_renda_raio": "ausente",
+        "n_hexes_com_pop": 0,
+        "n_hexes_com_renda": 0,
+        "n_concorrentes": 0,
+        "n_ultra": 0,
+        "n_ancoras_dominio": 0,
+        "hexes_entorno": pd.DataFrame(),
+    }
+
+    def _count_in_radius(df_pts: pd.DataFrame | None) -> int:
+        if df_pts is None or df_pts.empty:
+            return 0
+        if "lat" not in df_pts.columns or "lng" not in df_pts.columns:
+            return 0
+        dists = haversine_km(lat, df_pts["lat"].to_numpy(dtype=float), lng, df_pts["lng"].to_numpy(dtype=float))
+        return int((dists <= raio_km).sum())
+
+    if hex_df is None or hex_df.empty or "lat" not in hex_df.columns or "lng" not in hex_df.columns:
+        result["n_concorrentes"] = _count_in_radius(competitors_df)
+        result["n_ultra"] = _count_in_radius(ultra_df)
+        result["n_ancoras_dominio"] = _count_in_radius(dominio_df)
+        return result
+
+    dists = haversine_km(lat, hex_df["lat"].to_numpy(dtype=float), lng, hex_df["lng"].to_numpy(dtype=float))
+    mask = dists <= raio_km
+    nearby = hex_df.loc[mask].copy()
+    nearby["dist_km"] = np.round(dists[mask], 4)
+
+    result["n_hexes"] = len(nearby)
+
+    if not nearby.empty:
+        pop_values, pop_sources = _coalesce_numeric_with_source(nearby, _POP_RAIO_COLUMNS)
+        renda_values, renda_sources = _coalesce_numeric_with_source(nearby, _RENDA_RAIO_COLUMNS)
+        nearby["pop_total_raio_hex"] = pop_values
+        nearby["fonte_pop_total_raio_hex"] = pop_sources
+        nearby["renda_per_capita_raio_hex"] = renda_values
+        nearby["fonte_renda_per_capita_raio_hex"] = renda_sources
+
+        valid_pop = pop_values.notna()
+        valid_renda = renda_values.notna()
+        result["n_hexes_com_pop"] = int(valid_pop.sum())
+        result["n_hexes_com_renda"] = int(valid_renda.sum())
+        if valid_pop.any():
+            result["pop_total_raio"] = float(pop_values[valid_pop].sum())
+            result["fonte_pop_total_raio"] = _summarize_sources(pop_sources[valid_pop])
+
+        weighted_mask = valid_renda & pop_values.gt(0).fillna(False)
+        if weighted_mask.any():
+            weights = pop_values[weighted_mask]
+            result["renda_per_capita_media_raio"] = round(
+                float(np.average(renda_values[weighted_mask], weights=weights)),
+                2,
+            )
+            result["metodo_renda_raio"] = "ponderada_populacao"
+        elif valid_renda.any():
+            result["renda_per_capita_media_raio"] = round(float(renda_values[valid_renda].mean()), 2)
+            result["metodo_renda_raio"] = "media_simples"
+
+        if "oferta_efetiva_disponivel" in nearby.columns:
+            result["residual_total"] = float(pd.to_numeric(nearby["oferta_efetiva_disponivel"], errors="coerce").sum())
+
+        for col, key_med, key_max in [
+            ("score_oportunidade_residual", "score_residual_medio", "score_residual_max"),
+            ("score_priorizacao", "score_m1_medio", "score_m1_max"),
+            ("score_expansao_hibrido", "score_hibrido_medio", "score_hibrido_max"),
+        ]:
+            if col in nearby.columns:
+                s = pd.to_numeric(nearby[col], errors="coerce").dropna()
+                if not s.empty:
+                    result[key_med] = round(float(s.mean()), 2)
+                    result[key_max] = round(float(s.max()), 2)
+
+        sort_cols = ["dist_km"]
+        sort_asc = [True]
+        if "score_oportunidade_residual" in nearby.columns:
+            sort_cols.append("score_oportunidade_residual")
+            sort_asc.append(False)
+        nearby = nearby.sort_values(sort_cols, ascending=sort_asc, kind="stable").reset_index(drop=True)
+        result["hexes_entorno"] = nearby
+
+    result["n_concorrentes"] = _count_in_radius(competitors_df)
+    result["n_ultra"] = _count_in_radius(ultra_df)
+    result["n_ancoras_dominio"] = _count_in_radius(dominio_df)
+    return result
+
+
 def lookup_hex_by_coord(
     lat: float,
     lng: float,

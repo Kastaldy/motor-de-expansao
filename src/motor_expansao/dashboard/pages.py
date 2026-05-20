@@ -4,13 +4,17 @@ import pandas as pd
 import streamlit as st
 
 from dashboard.constants import (
+    COLOR_MODE_DEFAULT,
+    COLOR_MODES,
     COLORS,
     COVERAGE_BUCKET_ORDER,
     FAIXA_ORDEM,
     HYBRID_ELIGIBILITY_ORDER,
     JOIN_QUALITY_ORDER,
+    OVERLAYS,
     POP_MIN_ACIONAVEL,
     TABLE_ROW_LIMIT,
+    color_mode_available,
 )
 from dashboard.utils import format_int, format_pct, format_score
 from motor_expansao.dashboard.components import (
@@ -32,25 +36,35 @@ from motor_expansao.dashboard.components import (
     build_map_figure,
     build_map_scope_caption,
     build_ranking_table,
+    build_residual_by_uf_figure,
     build_residual_heatmap_figure,
+    build_residual_score_dist_figure,
     build_scatter_figure,
     build_score_distribution_figure,
     build_top_bottom_uf_figure,
+    build_top_cities_residual_figure,
     build_top_city_figure,
     build_top_uf_figure,
     build_uf_metric_figure,
+    build_analise_pontual_map,
+    build_ultra_network_kpis,
+    build_ultra_presence_map,
+    build_unified_map_figure,
+    filter_points_to_radius,
     render_answer_card,
     render_censo_score_legend,
+    render_competitor_legend,
     render_dominio_tese_legend,
     render_faixa_legend,
     render_geographic_source_legend,
     render_pop_cut_legend,
     render_residual_legend,
     render_residual_score_legend,
+    render_score_bands_legend,
     render_ultra_legend,
     style_ranking_table,
 )
-from motor_expansao.dashboard.data import lookup_hex_by_coord, parse_coordinate_input
+from motor_expansao.dashboard.data import analisar_entorno_ponto, lookup_hex_by_coord, parse_coordinate_input
 
 
 RESIDUAL_SORT_COLUMNS = [
@@ -488,6 +502,8 @@ def render_visao_executiva(
     selected_cities: list[str],
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
+    carteira_df: pd.DataFrame | None = None,
+    plano_dominio_df: pd.DataFrame | None = None,
     search_pin: tuple[float, float] | None = None,
     search_hex_id: str | None = None,
 ) -> None:
@@ -507,31 +523,61 @@ def render_visao_executiva(
     with answer_cols[2]:
         render_answer_card("Onde evitar expansao", answers["evitar"])
 
-    st.markdown("#### Mapa principal")
+    st.markdown("#### Presenca Ultra Academia")
     st.caption(
-        "Mapa executivo exibe todos os hexagonos validos da UF selecionada, usando setor censitario nas UFs com `qualidade_join_uf` A/B e fallback municipal nas UFs C."
+        "Mapa institucional da rede propria. Exibe apenas unidades Ultra com filtros de UF/cidade. "
+        "Para analise de hexagonos, scores e residual, use a aba Mapa Territorial."
     )
-    render_faixa_legend()
-    render_geographic_source_legend()
-    render_pop_cut_legend()
-    render_residual_legend(df)
     render_ultra_legend(ultra_df)
-    map_figure, points_used = build_map_figure(
-        df,
+    ultra_map, ultra_count = build_ultra_presence_map(
+        ultra_df,
         selected_ufs=selected_ufs,
         selected_cities=selected_cities,
-        competitors_df=competitors_df,
-        ultra_df=ultra_df,
-        search_pin=search_pin,
-        search_hex_id=search_hex_id,
     )
-    if map_figure is None:
-        st.info("Sem pontos geograficos validos para o mapa neste recorte.")
+    if ultra_map is None:
+        st.info(
+            "Dados de unidades Ultra nao disponíveis ou sem unidades no recorte selecionado. "
+            "Verifique `data/ultra/Ultra.csv`."
+        )
     else:
-        st.markdown("##### Territorio priorizado no recorte atual")
-        st.caption(build_map_scope_caption(points_used, selected_ufs=selected_ufs))
-        st.pydeck_chart(map_figure, width="stretch", height=600)
+        st.caption(f"Exibindo {ultra_count} unidade(s) Ultra no recorte atual.")
+        st.pydeck_chart(ultra_map, width="stretch", height=500)
 
+    st.markdown("---")
+    st.markdown("#### Rede Ultra e Mercado")
+    net_kpis = build_ultra_network_kpis(
+        df,
+        ultra_df,
+        carteira_df,
+        plano_dominio_df,
+        selected_ufs=selected_ufs,
+        selected_cities=selected_cities,
+    )
+    kpi_row1 = st.columns(3)
+    kpi_row1[0].metric("Unidades Ultra no recorte", net_kpis["ultra_units"])
+    kpi_row1[1].metric("Cidades com Ultra", net_kpis["cidades_com_ultra"])
+    kpi_row1[2].metric("Score medio M1", net_kpis["score_medio_m1"])
+    kpi_row2 = st.columns(3)
+    kpi_row2[0].metric("Residual total (alunos)", net_kpis["residual_total"])
+    kpi_row2[1].metric("Oportunidades sem Ultra proxima", net_kpis["opps_sem_ultra"])
+    kpi_row2[2].metric("Ancoras de dominio", net_kpis["ancoras_dominio"])
+
+    res_col1, res_col2 = st.columns(2)
+    with res_col1:
+        res_uf_fig = build_residual_by_uf_figure(carteira_df)
+        if res_uf_fig is not None:
+            st.plotly_chart(res_uf_fig, width="stretch")
+    with res_col2:
+        res_dist_fig = build_residual_score_dist_figure(carteira_df)
+        if res_dist_fig is not None:
+            st.plotly_chart(res_dist_fig, width="stretch")
+
+    top_res_fig = build_top_cities_residual_figure(carteira_df)
+    if top_res_fig is not None:
+        st.plotly_chart(top_res_fig, width="stretch")
+
+    st.markdown("---")
+    st.markdown("#### Analise Comparativa por UF")
     chart_col_1, chart_col_2 = st.columns(2)
     with chart_col_1:
         top_city_fig = build_top_city_figure(city_summary)
@@ -541,6 +587,21 @@ def render_visao_executiva(
         top_uf_fig = build_top_uf_figure(uf_summary)
         if top_uf_fig is not None:
             st.plotly_chart(top_uf_fig, width="stretch")
+
+    answers_uf = build_business_answers(city_summary, uf_summary)
+    uf_col1, uf_col2, uf_col3 = st.columns(3)
+    with uf_col1:
+        render_answer_card("UFs a priorizar", answers_uf["ufs_priorizar"])
+    with uf_col2:
+        fig_opps = build_uf_metric_figure(
+            uf_summary, metric="oportunidades_viaveis", label="Oportunidades viaveis", color=COLORS["brand_alt"]
+        )
+        if fig_opps is not None:
+            st.plotly_chart(fig_opps, width="stretch")
+    with uf_col3:
+        fig_top_bottom = build_top_bottom_uf_figure(uf_summary)
+        if fig_top_bottom is not None:
+            st.plotly_chart(fig_top_bottom, width="stretch")
 
 
 def render_analise_territorial(df: pd.DataFrame, city_summary: pd.DataFrame) -> None:
@@ -693,7 +754,7 @@ def render_modelo_hibrido(
         "Hexes com `top_hex_intraurbano=True` coloridos pelo `score_setor_2022_calibrado`. "
         "Apenas UFs com camada censitaria elegivel (DF, GO, MG, RJ, RS, SP)."
     )
-    render_censo_score_legend()
+    render_score_bands_legend("Score Censitario (score_setor_2022_calibrado)")
 
     hybrid_map, n_points = build_hybrid_map_figure(
         hdf,
@@ -880,7 +941,7 @@ def render_modelo_hibrido_v2(
             "Mapa colorido por `score_oportunidade_residual` (potencial residual apos desconto da oferta instalada). "
             "Linhas vermelhas indicam join restrito ou qualidade C."
         )
-        render_residual_score_legend()
+        render_score_bands_legend("Score Residual (score_oportunidade_residual)")
         render_pop_cut_legend()
         render_ultra_legend(ultra_df)
         hybrid_map, n_points = build_hybrid_map_figure(
@@ -888,6 +949,7 @@ def render_modelo_hibrido_v2(
             selected_ufs=selected_ufs,
             selected_cities=selected_cities,
             selected_faixas=selected_faixas,
+            color_col="score_oportunidade_residual",
             competitors_df=competitors_df,
             ultra_df=ultra_df,
             search_pin=search_pin,
@@ -976,7 +1038,7 @@ def render_modelo_hibrido_v2(
             "da oferta ja instalada (concorrentes + Ultra). Verde escuro = alta oportunidade residual; "
             "vermelho escuro = mercado ja ocupado ou potencial pequeno."
         )
-        render_residual_score_legend()
+        render_score_bands_legend("Score Residual (score_oportunidade_residual)")
         render_pop_cut_legend()
         render_ultra_legend(ultra_df)
         residual_map, n_residual = build_residual_heatmap_figure(
@@ -1620,3 +1682,377 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
             """,
             unsafe_allow_html=True,
         )
+
+
+def _render_unified_legend(
+    color_mode: str,
+    enabled_overlays: list[str],
+    *,
+    competitors_df: "pd.DataFrame | None" = None,
+    ultra_df: "pd.DataFrame | None" = None,
+) -> None:
+    if color_mode == "m1":
+        render_score_bands_legend("Score M1 (score_priorizacao)")
+        render_geographic_source_legend()
+        render_pop_cut_legend()
+    elif color_mode == "hibrido":
+        render_score_bands_legend("Score Hibrido (score_expansao_hibrido)")
+        render_pop_cut_legend()
+    elif color_mode == "censitario":
+        render_score_bands_legend("Score Censitario (score_setor_2022_calibrado)")
+        render_pop_cut_legend()
+    elif color_mode == "residual":
+        render_score_bands_legend("Score Residual (score_oportunidade_residual)")
+        render_pop_cut_legend()
+    elif color_mode == "dominio":
+        render_dominio_tese_legend()
+    if "concorrentes" in enabled_overlays:
+        render_competitor_legend(competitors_df)
+    if "ultra" in enabled_overlays:
+        render_ultra_legend(ultra_df)
+
+
+def render_carteira_e_plano(
+    carteira: pd.DataFrame,
+    plano: pd.DataFrame,
+    *,
+    selected_ufs: list[str],
+    selected_cities: list[str],
+    pop_cut_lookup: "pd.DataFrame | None" = None,
+) -> None:
+    """Carteira de Expansao e Plano Curto Prazo em tabs internas."""
+    inner = st.tabs(["Carteira de Expansao", "Plano Curto Prazo"])
+    with inner[0]:
+        render_carteira_expansao(
+            carteira,
+            selected_ufs=selected_ufs,
+            selected_cities=selected_cities,
+            pop_cut_lookup=pop_cut_lookup,
+        )
+    with inner[1]:
+        render_plano_expansao(plano, pop_cut_lookup=pop_cut_lookup)
+
+
+def render_analise_pontual(
+    search_pin: tuple[float, float] | None,
+    df: pd.DataFrame,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    dominio_df: pd.DataFrame | None = None,
+    raio_km: float = 1.6,
+) -> None:
+    """Renders the Analise Pontual de Entorno section for a given coordinate.
+
+    Aggregates hex metrics within raio_km of the point. Does not alter
+    score_priorizacao, carteira, plano or any official M1 artifact.
+    Precision is approximate (centroid-based).
+    """
+    if search_pin is None:
+        st.info(
+            "Clique em um hexagono no mapa ou digite uma coordenada na barra lateral "
+            "(ex: -23.55, -46.63) para ativar a Analise Pontual de Entorno."
+        )
+        st.caption(
+            "Clique em objeto de mapa: suportado via `st.pydeck_chart` com `on_select` (Streamlit 1.26+). "
+            "Botao direito: nao suportado pelo componente `st.pydeck_chart`. "
+            "Fallback: campo de coordenada na barra lateral."
+        )
+        return
+
+    lat, lng = search_pin
+    area_km2 = round(3.14159265358979 * raio_km ** 2, 2)
+
+    resultado = analisar_entorno_ponto(
+        lat,
+        lng,
+        hex_df=df,
+        raio_km=raio_km,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+        dominio_df=dominio_df,
+    )
+
+    st.caption(
+        f"Ponto: `{lat:.5f}, {lng:.5f}` | Raio: {raio_km} km | Area aproximada: {area_km2} km²"
+    )
+    st.caption(
+        "Leitura por centroide de hexagono H3 res-7: precisao aproximada ~0.5-1 km. "
+        "Nao altera score_priorizacao, carteira, plano ou artefatos do M1."
+    )
+
+    coord_gmaps = f"{lat:.6f},{lng:.6f}"
+    st.markdown(f"**Coordenada para Google Maps / GPS:** `{coord_gmaps}`")
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Hexes no raio", resultado["n_hexes"])
+    pop_total = resultado["pop_total_raio"]
+    k2.metric("Populacao no raio", format_int(int(pop_total)) if pop_total is not None else "-")
+    renda_media = resultado["renda_per_capita_media_raio"]
+    k3.metric("Renda per capita med.", f"R$ {format_int(int(renda_media))}" if renda_media is not None else "-")
+    res_total = resultado["residual_total"]
+    k4.metric("Residual total", format_int(int(res_total)) if res_total is not None else "-")
+
+    st.caption(
+        "Populacao: "
+        f"{resultado['fonte_pop_total_raio']} ({resultado['n_hexes_com_pop']} hexes com dado). "
+        "Renda: "
+        f"{resultado['metodo_renda_raio']} ({resultado['n_hexes_com_renda']} hexes com dado)."
+    )
+
+    k5, k6, k7, k8 = st.columns(4)
+    score_res = resultado["score_residual_medio"]
+    k5.metric("Score residual med.", f"{score_res:.1f}" if score_res is not None else "-")
+    score_m1 = resultado["score_m1_medio"]
+    k6.metric("Score M1 med.", f"{score_m1:.1f}" if score_m1 is not None else "-")
+    k7.metric("Concorrentes no raio", resultado["n_concorrentes"])
+    k8.metric("Ultra no raio", resultado["n_ultra"])
+
+    hexes_entorno = resultado["hexes_entorno"]
+    pontual_map = build_analise_pontual_map(
+        lat,
+        lng,
+        raio_km,
+        hexes_entorno,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+    )
+    if pontual_map is not None:
+        st.pydeck_chart(pontual_map, width="stretch", height=420)
+
+    competitors_raio = filter_points_to_radius(
+        competitors_df,
+        lat,
+        lng,
+        raio_km,
+        required_columns={"rede", "nome_unidade"},
+    )
+    ultra_raio = filter_points_to_radius(
+        ultra_df,
+        lat,
+        lng,
+        raio_km,
+        required_columns={"nome_unidade"},
+    )
+    if competitors_raio.empty and ultra_raio.empty:
+        st.caption("Sem concorrentes ou unidades Ultra mapeadas dentro do raio analisado.")
+    else:
+        if not competitors_raio.empty:
+            render_competitor_legend(competitors_raio)
+        if not ultra_raio.empty:
+            render_ultra_legend(ultra_raio)
+
+    if not hexes_entorno.empty:
+        st.markdown("##### Hexes no entorno")
+        display_cols = {
+            "hex_id": "Hex ID",
+            "dist_km": "Dist. (km)",
+            "uf": "UF",
+            "nome_municipio": "Cidade",
+            "score_priorizacao": "Score M1",
+            "score_expansao_hibrido": "Score Hibrido",
+            "score_oportunidade_residual": "Score Residual",
+            "oferta_efetiva_disponivel": "Residual (alunos)",
+            "pop_total_raio_hex": "Pop. usada",
+            "fonte_pop_total_raio_hex": "Fonte pop.",
+            "renda_per_capita_raio_hex": "Renda usada",
+            "fonte_renda_per_capita_raio_hex": "Fonte renda",
+        }
+        tbl = hexes_entorno[[c for c in display_cols if c in hexes_entorno.columns]].rename(
+            columns={k: v for k, v in display_cols.items() if k in hexes_entorno.columns}
+        ).copy()
+        for col in ["Score M1", "Score Hibrido", "Score Residual"]:
+            if col in tbl.columns:
+                tbl[col] = tbl[col].map(lambda v: f"{v:.1f}" if pd.notna(v) else "-")
+        if "Dist. (km)" in tbl.columns:
+            tbl["Dist. (km)"] = tbl["Dist. (km)"].map(lambda v: f"{v:.2f}" if pd.notna(v) else "-")
+        if "Residual (alunos)" in tbl.columns:
+            tbl["Residual (alunos)"] = tbl["Residual (alunos)"].map(
+                lambda v: format_int(int(v)) if pd.notna(v) else "-"
+            )
+        if "Pop. usada" in tbl.columns:
+            tbl["Pop. usada"] = tbl["Pop. usada"].map(
+                lambda v: format_int(int(v)) if pd.notna(v) else "-"
+            )
+        if "Renda usada" in tbl.columns:
+            tbl["Renda usada"] = tbl["Renda usada"].map(
+                lambda v: f"R$ {format_int(int(v))}" if pd.notna(v) else "-"
+            )
+        st.dataframe(tbl, width="stretch", hide_index=True, height=min(420, 38 + 35 * len(tbl)))
+    else:
+        st.info(
+            f"Nenhum hexagono encontrado no raio de {raio_km} km a partir de "
+            f"({lat:.5f}, {lng:.5f}). Tente uma coordenada dentro de uma area urbana mapeada."
+        )
+
+
+def _extract_click_coord_from_selection(map_event) -> "tuple[float, float] | None":
+    """Extract (lat, lng) from a pydeck on_select map event.
+
+    Returns None when the event is absent, the selection is empty, or the
+    selected object does not contain both 'lat' and 'lng' fields.  Robust
+    against MagicMock objects used in unit tests.
+    """
+    if map_event is None:
+        return None
+    try:
+        selection = getattr(map_event, "selection", None)
+        if selection is None:
+            return None
+        objects = getattr(selection, "objects", None)
+        if not isinstance(objects, dict):
+            return None
+        for rows in objects.values():
+            if not isinstance(rows, list) or not rows:
+                continue
+            row = rows[0]
+            if isinstance(row, dict) and "lat" in row and "lng" in row:
+                return (float(row["lat"]), float(row["lng"]))
+    except (TypeError, ValueError, AttributeError):
+        pass
+    return None
+
+
+def render_mapa_territorial(
+    df: "pd.DataFrame",
+    *,
+    selected_ufs: list[str],
+    selected_cities: list[str],
+    competitors_df: "pd.DataFrame | None" = None,
+    ultra_df: "pd.DataFrame | None" = None,
+    search_pin: "tuple[float, float] | None" = None,
+    search_hex_id: "str | None" = None,
+    dominio_df: "pd.DataFrame | None" = None,
+    city_summary: "pd.DataFrame | None" = None,
+    uf_summary: "pd.DataFrame | None" = None,
+    selected_faixas: "list[str] | None" = None,
+) -> None:
+    """Mapa Territorial Unificado: modo de cor selecionavel com overlays opcionais.
+
+    Camada visual: nao altera score_priorizacao, carteira, plano nem artefatos oficiais do M1.
+    """
+    st.markdown("#### Mapa Territorial Unificado")
+    st.caption(
+        "Selecione o modo de cor e os overlays desejados. "
+        "Camadas visuais nao alteram score, ranking, carteira nem artefatos oficiais do M1."
+    )
+
+    ctrl_col1, ctrl_col2 = st.columns([1.6, 2.4])
+
+    with ctrl_col1:
+        mode_labels = {mode_id: cfg["label"] for mode_id, cfg in COLOR_MODES.items()}
+        available_modes = [
+            mode_id for mode_id in COLOR_MODES
+            if mode_id == "dominio" or color_mode_available(df, mode_id)
+        ]
+        if not available_modes:
+            available_modes = [COLOR_MODE_DEFAULT]
+        default_idx = available_modes.index(COLOR_MODE_DEFAULT) if COLOR_MODE_DEFAULT in available_modes else 0
+        selected_mode = st.selectbox(
+            "Modo de cor",
+            options=available_modes,
+            format_func=lambda m: mode_labels.get(m, m),
+            index=default_idx,
+            key="mapa_territorial_color_mode",
+        )
+
+    with ctrl_col2:
+        overlay_labels = {oid: cfg["label"] for oid, cfg in OVERLAYS.items()}
+        default_overlays = [oid for oid, cfg in OVERLAYS.items() if cfg["default"]]
+        enabled_overlays = st.multiselect(
+            "Overlays",
+            options=list(OVERLAYS),
+            default=default_overlays,
+            format_func=lambda o: overlay_labels.get(o, o),
+            key="mapa_territorial_overlays",
+        )
+
+    if selected_mode != "dominio" and not color_mode_available(df, selected_mode):
+        st.warning(
+            f"Modo '{mode_labels.get(selected_mode, selected_mode)}' nao disponivel no recorte atual. "
+            "Verifique se os arquivos de dados necessarios estao presentes em `data/outputs/`."
+        )
+        return
+
+    if selected_mode == "dominio" and (dominio_df is None or dominio_df.empty):
+        st.info(
+            "Dados de dominio nao disponiveis. "
+            "Execute `python jobs/pipelines/gerar_plano_expansao_dominio.py` para habilitar este modo."
+        )
+        return
+
+    _render_unified_legend(selected_mode, enabled_overlays, competitors_df=competitors_df, ultra_df=ultra_df)
+
+    deck, n_points = build_unified_map_figure(
+        df,
+        color_mode=selected_mode,
+        enabled_overlays=enabled_overlays,
+        selected_ufs=selected_ufs,
+        selected_cities=selected_cities,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+        search_pin=search_pin,
+        search_hex_id=search_hex_id,
+        dominio_df=dominio_df,
+    )
+
+    if deck is None:
+        st.info(
+            "Sem dados para o modo selecionado no recorte atual. "
+            "Ajuste os filtros globais ou selecione outro modo de cor."
+        )
+        return
+
+    from dashboard.constants import MAP_POINT_LIMIT
+    st.caption(build_map_scope_caption(n_points, selected_ufs=selected_ufs, capped=n_points >= MAP_POINT_LIMIT))
+    st.caption(
+        "Clique em um hexagono no mapa para ativar a Analise Pontual de Entorno (raio 1.6 km). "
+        "Botao direito nao e suportado pelo componente de mapa."
+    )
+    map_event = st.pydeck_chart(
+        deck, on_select="rerun", key="main_unified_map", width="stretch", height=600
+    )
+    _new_click = _extract_click_coord_from_selection(map_event)
+    if _new_click is not None:
+        st.session_state["click_coord"] = _new_click
+    click_coord: "tuple[float, float] | None" = st.session_state.get("click_coord")
+    if click_coord is not None:
+        _col_btn, _cap_col = st.columns([1, 4])
+        with _col_btn:
+            if st.button("Limpar selecao do mapa", key="clear_click_coord"):
+                st.session_state.pop("click_coord", None)
+                click_coord = None
+        if click_coord is not None:
+            with _cap_col:
+                st.caption(
+                    f"Ponto ativo: `{click_coord[0]:.5f}, {click_coord[1]:.5f}` "
+                    "(centroide do hex selecionado). "
+                    "Para coordenada exata, use lat,lng na barra lateral."
+                )
+
+    if city_summary is not None:
+        st.markdown("---")
+        with st.expander("Analise Territorial", expanded=False):
+            render_analise_territorial(df, city_summary)
+        with st.expander("Ranking de Priorizacao", expanded=False):
+            render_ranking_priorizacao(df)
+        if "score_expansao_hibrido" in df.columns and df["score_expansao_hibrido"].notna().any():
+            with st.expander("Camada Hibrida — Detalhe", expanded=False):
+                render_modelo_hibrido_v2(
+                    df,
+                    selected_ufs=selected_ufs,
+                    selected_cities=selected_cities,
+                    selected_faixas=selected_faixas,
+                    competitors_df=competitors_df,
+                    ultra_df=ultra_df,
+                    search_pin=search_pin,
+                    search_hex_id=search_hex_id,
+                )
+        effective_pin = click_coord or search_pin
+        with st.expander("Analise Pontual de Entorno", expanded=effective_pin is not None):
+            render_analise_pontual(
+                effective_pin,
+                df,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
+                dominio_df=dominio_df,
+            )

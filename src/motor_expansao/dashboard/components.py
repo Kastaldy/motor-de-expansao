@@ -13,6 +13,9 @@ from dashboard.constants import (
     FAIXA_COLORS,
     FAIXA_ORDEM,
     MAP_POINT_LIMIT,
+    MAP_SORT_ASCENDING,
+    MAP_SORT_COLUMNS,
+    OVERLAYS,
     RESIDUAL_SCORE_BANDS,
     TABLE_ROW_LIMIT,
 )
@@ -24,6 +27,7 @@ from dashboard.utils import (
     format_pct,
     format_score,
     hex_to_rgba,
+    score_band_to_color,
 )
 from motor_expansao.dashboard.competitors import (
     competitor_icon_data,
@@ -31,7 +35,7 @@ from motor_expansao.dashboard.competitors import (
     ultra_icon_data,
     ultra_legend_entry,
 )
-from motor_expansao.dashboard.data import _has_censo_signal, _normalized_join_quality
+from motor_expansao.dashboard.data import _has_censo_signal, _normalized_join_quality, haversine_km
 
 
 def build_kpis(
@@ -332,8 +336,14 @@ def resolve_map_view(
     return BRASIL_CENTER, 3.2
 
 
-def build_map_scope_caption(points_used: int, *, selected_ufs: list[str]) -> str:
+def build_map_scope_caption(points_used: int, *, selected_ufs: list[str], capped: bool = False) -> str:
     scope_label = "da UF selecionada" if len(selected_ufs) == 1 else "do recorte atual"
+    if capped:
+        return (
+            f"Mostrando os {format_int(MAP_POINT_LIMIT)} hexagonos de maior prioridade {scope_label} "
+            f"(recorte total maior que o limite de renderizacao). "
+            "Aplique filtros de municipio para ver o recorte completo."
+        )
     return (
         f"Mostrando todos os hexagonos validos {scope_label} "
         f"({format_int(points_used)} no recorte atual), preservando a geometria granular onde ela e confiavel."
@@ -726,6 +736,35 @@ def _build_competitor_icon_layer(
     return layer, comp
 
 
+def filter_points_to_radius(
+    points_df: pd.DataFrame | None,
+    lat: float,
+    lng: float,
+    raio_km: float,
+    *,
+    required_columns: set[str] | None = None,
+) -> pd.DataFrame:
+    """Return valid point rows within raio_km of a center coordinate."""
+    if points_df is None or points_df.empty:
+        return pd.DataFrame()
+    required = {"lat", "lng"} | (required_columns or set())
+    if not required <= set(points_df.columns):
+        return pd.DataFrame()
+
+    points = points_df.loc[points_df["lat"].notna() & points_df["lng"].notna()].copy()
+    if points.empty:
+        return points
+
+    dists = haversine_km(
+        lat,
+        pd.to_numeric(points["lat"], errors="coerce").to_numpy(dtype=float),
+        lng,
+        pd.to_numeric(points["lng"], errors="coerce").to_numpy(dtype=float),
+    )
+    points["dist_km"] = np.round(dists, 4)
+    return points.loc[points["dist_km"] <= raio_km].copy()
+
+
 def _shared_map_tooltip() -> dict[str, object]:
     return {
         "html": (
@@ -836,11 +875,22 @@ def render_residual_legend(df: pd.DataFrame | None = None) -> None:
 
 
 def render_residual_score_legend() -> None:
+    render_score_bands_legend("Score Residual")
+
+
+def render_score_bands_legend(mode_label: str = "Score") -> None:
+    """Renders the canonical 10-band (0-10, 10-20, …, 90-100) score legend.
+
+    mode_label names the active score, e.g. 'Score M1 (score_priorizacao)'.
+    """
     chips = "".join(
-        f"<span class='legend-chip'><span class='legend-dot' style='background:{color};'></span>Score {label}</span>"
+        f"<span class='legend-chip'><span class='legend-dot' style='background:{color};'></span>{label}</span>"
         for label, color in RESIDUAL_SCORE_BANDS
     )
-    st.markdown(f"<div class='legend-row'>{chips}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div class='legend-row'><strong style='color:#A7B3D1;margin-right:6px;font-size:0.75rem;'>{mode_label}:</strong>{chips}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def _search_hex_payload(hex_id: str, tooltip_source: pd.DataFrame | None = None) -> pd.DataFrame:
@@ -955,49 +1005,52 @@ def build_map_figure(
     if valid_all.empty:
         return None, 0
 
-    valid = valid_all.copy()
-    if "nome_municipio" not in valid.columns:
-        valid["nome_municipio"] = valid["cidade"]
+    # Normaliza nome_municipio direto em valid_all (já é cópia)
+    if "nome_municipio" not in valid_all.columns:
+        valid_all["nome_municipio"] = valid_all["cidade"]
     else:
-        valid["nome_municipio"] = valid["nome_municipio"].fillna(valid["cidade"])
+        valid_all["nome_municipio"] = valid_all["nome_municipio"].fillna(valid_all["cidade"])
 
+    # Filtra como views — sem .copy() até após o cap
+    filtered = valid_all
     if selected_ufs:
-        valid = valid.loc[valid["uf"].isin(selected_ufs)].copy()
+        filtered = filtered.loc[filtered["uf"].isin(selected_ufs)]
     if selected_cities:
-        valid = valid.loc[valid["nome_municipio"].isin(selected_cities)].copy()
-    if valid.empty:
+        filtered = filtered.loc[filtered["nome_municipio"].isin(selected_cities)]
+    if filtered.empty:
         return None, 0
 
-    quality = _normalized_join_quality(valid)
-    has_censo = _has_censo_signal(valid)
-    granular_ufs = set(valid.loc[quality.isin(["A", "B"]) & has_censo, "uf"].dropna().tolist())
+    quality = _normalized_join_quality(filtered)
+    has_censo = _has_censo_signal(filtered)
+    granular_ufs = set(filtered.loc[quality.isin(["A", "B"]) & has_censo, "uf"].dropna().tolist())
 
-    granular_rows = valid["uf"].isin(granular_ufs) & has_censo
-    municipal_rows = ~valid["uf"].isin(granular_ufs)
-    map_df = valid.loc[granular_rows | municipal_rows].copy()
-    if map_df.empty:
+    granular_rows = filtered["uf"].isin(granular_ufs) & has_censo
+    municipal_rows = ~filtered["uf"].isin(granular_ufs)
+    filtered = filtered.loc[granular_rows | municipal_rows]
+    if filtered.empty:
         return None, 0
+
+    # Sort + cap antecipado — gera uma única cópia pequena (≤MAP_POINT_LIMIT linhas)
+    sort_cols = [c for c in MAP_SORT_COLUMNS if c in filtered.columns]
+    if sort_cols:
+        asc = [MAP_SORT_ASCENDING[MAP_SORT_COLUMNS.index(c)] for c in sort_cols]
+        map_df = (
+            filtered.sort_values(sort_cols, ascending=asc, kind="stable")
+            .drop_duplicates(subset=["hex_id"], keep="first")
+            .head(MAP_POINT_LIMIT)
+            .reset_index(drop=True)
+        )
+    else:
+        map_df = filtered.drop_duplicates(subset=["hex_id"], keep="first").head(MAP_POINT_LIMIT).reset_index(drop=True)
 
     map_df["confianca_geografica"] = np.where(
         map_df["uf"].isin(granular_ufs),
         "granular",
         "municipal",
     )
-    map_df = map_df.drop_duplicates(subset=["hex_id"], keep="first").reset_index(drop=True)
 
     map_df = _prepare_m1_tooltip_fields(map_df)
-    map_df["fill_color"] = map_df.apply(
-        lambda row: (
-            _censo_score_to_color(row.get("score_setor_2022_calibrado"))
-            if row["confianca_geografica"] == "granular"
-            and not pd.isna(row.get("score_setor_2022_calibrado"))
-            else hex_to_rgba(
-                FAIXA_COLORS.get(row["faixa_label"], COLORS["muted"]),
-                96,
-            )
-        ),
-        axis=1,
-    )
+    map_df["fill_color"] = map_df["score_priorizacao"].map(score_band_to_color)
     map_df["line_color"] = map_df["confianca_geografica"].map(
         {
             "granular": hex_to_rgba(COLORS["map_line"], 122),
@@ -1067,6 +1120,95 @@ def build_map_figure(
     return deck, len(map_df)
 
 
+def build_ultra_presence_map(
+    ultra_df: pd.DataFrame | None,
+    *,
+    selected_ufs: list[str],
+    selected_cities: list[str],
+):
+    if ultra_df is None or ultra_df.empty:
+        return None, 0
+    if not {"lat", "lng", "nome_unidade"} <= set(ultra_df.columns):
+        return None, 0
+
+    ultra = ultra_df.loc[ultra_df["lat"].notna() & ultra_df["lng"].notna()].copy()
+    if ultra.empty:
+        return None, 0
+
+    if selected_ufs and "uf" in ultra.columns:
+        ultra = ultra.loc[ultra["uf"].isin(selected_ufs)]
+    if selected_cities and "cidade" in ultra.columns:
+        ultra = ultra.loc[ultra["cidade"].isin(selected_cities)]
+    if ultra.empty:
+        return None, 0
+
+    for column in ["cidade", "uf", "arquivo_origem"]:
+        if column not in ultra.columns:
+            ultra[column] = ""
+
+    icon = ultra_icon_data()
+    ultra["icon_data"] = [icon] * len(ultra)
+    ultra["icon_size"] = 38
+    ultra["tooltip_title"] = "Ultra Academia: " + ultra["nome_unidade"].astype(str)
+    ultra["tooltip_line_1"] = "Tipo: Unidade Ultra Academia"
+    ultra["tooltip_line_2"] = ultra.apply(
+        lambda row: "Cidade/UF: "
+        + (
+            f"{_clean_tooltip_value(row.get('cidade'))} / {_clean_tooltip_value(row.get('uf'))}"
+            if _clean_tooltip_value(row.get("cidade")) != "-" or _clean_tooltip_value(row.get("uf")) != "-"
+            else "-"
+        ),
+        axis=1,
+    )
+    ultra["tooltip_line_3"] = "Coordenadas: " + ultra.apply(
+        lambda row: _format_coordinate_pair(row["lat"], row["lng"]),
+        axis=1,
+    )
+    ultra["tooltip_line_4"] = "Fonte: " + ultra["arquivo_origem"].astype(str)
+    for idx in range(5, 15):
+        ultra[f"tooltip_line_{idx}"] = ""
+
+    icon_layer = pdk.Layer(
+        "IconLayer",
+        data=ultra,
+        get_icon="icon_data",
+        get_position="[lng, lat]",
+        get_size="icon_size",
+        size_units="pixels",
+        size_scale=1,
+        size_min_pixels=26,
+        size_max_pixels=46,
+        pickable=True,
+        billboard=True,
+    )
+
+    if selected_cities or len(selected_ufs) == 1:
+        center = {"lat": float(ultra["lat"].mean()), "lon": float(ultra["lng"].mean())}
+        zoom = 7.2 if not selected_cities else 9.0
+    elif selected_ufs:
+        center = {"lat": float(ultra["lat"].mean()), "lon": float(ultra["lng"].mean())}
+        zoom = 4.5
+    else:
+        center = BRASIL_CENTER
+        zoom = 3.8
+
+    deck = pdk.Deck(
+        map_style=pdk.map_styles.CARTO_DARK,
+        initial_view_state=pdk.ViewState(
+            latitude=center["lat"],
+            longitude=center["lon"],
+            zoom=zoom,
+            min_zoom=3,
+            max_zoom=14,
+            pitch=0,
+            bearing=0,
+        ),
+        layers=[icon_layer],
+        tooltip=_shared_map_tooltip(),
+    )
+    return deck, len(ultra)
+
+
 def _derivar_faixa_hibrida(df: pd.DataFrame) -> pd.Series:
     col = "score_expansao_hibrido"
     if col not in df.columns or df[col].isna().all():
@@ -1088,6 +1230,7 @@ def build_hybrid_map_figure(
     selected_ufs: list[str],
     selected_cities: list[str],
     selected_faixas: list[str] | None = None,
+    color_col: str = "score_expansao_hibrido",
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     search_pin: tuple[float, float] | None = None,
@@ -1138,22 +1281,22 @@ def build_hybrid_map_figure(
         & hdf["lng"].notna(),
         [column for column in map_columns if column in hdf.columns],
     ].copy()
-    map_df = hdf_valid_all.copy()
-    if map_df.empty:
+    if hdf_valid_all.empty:
         return None, 0
 
+    # Filtra como views — sem .copy() até após o cap
+    map_df = hdf_valid_all
     if selected_ufs:
-        map_df = map_df.loc[map_df["uf"].isin(selected_ufs)].copy()
+        map_df = map_df.loc[map_df["uf"].isin(selected_ufs)]
     if selected_cities:
         city_col = "nome_municipio" if "nome_municipio" in map_df.columns else "uf"
-        map_df = map_df.loc[map_df[city_col].isin(selected_cities)].copy()
+        map_df = map_df.loc[map_df[city_col].isin(selected_cities)]
     if map_df.empty:
         return None, 0
 
     if selected_faixas:
-        map_df["_faixa_hibrida"] = _derivar_faixa_hibrida(map_df)
-        map_df = map_df.loc[map_df["_faixa_hibrida"].isin(selected_faixas)].copy()
-        map_df = map_df.drop(columns=["_faixa_hibrida"])
+        _faixa_hibrida = _derivar_faixa_hibrida(map_df)
+        map_df = map_df.loc[_faixa_hibrida.isin(selected_faixas)]
     if map_df.empty:
         return None, 0
 
@@ -1164,22 +1307,20 @@ def build_hybrid_map_figure(
     ]
     ascending = [False for _ in sort_cols]
     if sort_cols:
-        map_df = map_df.sort_values(sort_cols, ascending=ascending, kind="stable")
-    map_df = map_df.head(MAP_POINT_LIMIT)
-
-    residual_col = "score_oportunidade_residual"
-    if residual_col in map_df.columns:
-        map_df["fill_color"] = map_df[residual_col].map(_residual_score_to_color)
+        map_df = map_df.sort_values(sort_cols, ascending=ascending, kind="stable").head(MAP_POINT_LIMIT).reset_index(drop=True)
     else:
-        map_df["fill_color"] = map_df["score_setor_2022_calibrado"].map(_censo_score_to_color)
-    map_df["line_color"] = map_df.apply(
-        lambda row: (
-            [255, 90, 107, 220]
-            if bool(row.get("flag_join_uf_restrito", False)) or str(row.get("qualidade_join_uf", "")) == "C"
-            else ([245, 158, 11, 220] if bool(row.get("flag_outlier_espacial", False)) else hex_to_rgba(COLORS["map_line"], 100))
-        ),
-        axis=1,
-    )
+        map_df = map_df.head(MAP_POINT_LIMIT).reset_index(drop=True)
+
+    _color_src = map_df[color_col] if color_col in map_df.columns else pd.Series(pd.NA, index=map_df.index)
+    map_df["fill_color"] = _color_src.map(score_band_to_color)
+    _restrito = map_df["flag_join_uf_restrito"].fillna(False).astype(bool) if "flag_join_uf_restrito" in map_df.columns else pd.Series(False, index=map_df.index)
+    _quality_c = _normalized_join_quality(map_df) == "C"
+    _outlier = map_df["flag_outlier_espacial"].fillna(False).astype(bool) if "flag_outlier_espacial" in map_df.columns else pd.Series(False, index=map_df.index)
+    _default_line = hex_to_rgba(COLORS["map_line"], 100)
+    map_df["line_color"] = [
+        [255, 90, 107, 220] if (r or q) else ([245, 158, 11, 220] if o else _default_line)
+        for r, q, o in zip(_restrito, _quality_c, _outlier)
+    ]
     map_df["score_censo_fmt"] = map_df["score_setor_2022_calibrado"].map(format_score)
     map_df["score_m1_fmt"] = map_df["score_priorizacao"].map(format_score)
     map_df["score_hibrido_fmt"] = map_df["score_expansao_hibrido"].map(format_score)
@@ -1330,36 +1471,37 @@ def build_residual_heatmap_figure(
         & hdf["lng"].notna(),
         [column for column in map_columns if column in hdf.columns],
     ].copy()
-    map_df = hdf_valid_all.copy()
-    if map_df.empty:
+    if hdf_valid_all.empty:
         return None, 0
 
+    # Filtra como views — sem .copy() até após o cap
+    map_df = hdf_valid_all
     if selected_ufs:
-        map_df = map_df.loc[map_df["uf"].isin(selected_ufs)].copy()
+        map_df = map_df.loc[map_df["uf"].isin(selected_ufs)]
     if selected_cities:
         city_col = "nome_municipio" if "nome_municipio" in map_df.columns else "uf"
-        map_df = map_df.loc[map_df[city_col].isin(selected_cities)].copy()
+        map_df = map_df.loc[map_df[city_col].isin(selected_cities)]
     if map_df.empty:
         return None, 0
 
     if "score_oportunidade_residual" in map_df.columns:
         map_df = map_df.sort_values(
             "score_oportunidade_residual", ascending=False, na_position="last", kind="stable"
-        )
-    map_df = map_df.head(MAP_POINT_LIMIT)
+        ).head(MAP_POINT_LIMIT).reset_index(drop=True)
+    else:
+        map_df = map_df.head(MAP_POINT_LIMIT).reset_index(drop=True)
 
     if "score_oportunidade_residual" in map_df.columns:
-        map_df["fill_color"] = map_df["score_oportunidade_residual"].map(_residual_score_to_color)
+        map_df["fill_color"] = map_df["score_oportunidade_residual"].map(score_band_to_color)
     else:
         map_df["fill_color"] = [[120, 120, 140, 70]] * len(map_df)
-    map_df["line_color"] = map_df.apply(
-        lambda row: (
-            [255, 90, 107, 220]
-            if bool(row.get("flag_join_uf_restrito", False)) or str(row.get("qualidade_join_uf", "")) == "C"
-            else hex_to_rgba(COLORS["map_line"], 100)
-        ),
-        axis=1,
-    )
+    _restrito = map_df["flag_join_uf_restrito"].fillna(False).astype(bool) if "flag_join_uf_restrito" in map_df.columns else pd.Series(False, index=map_df.index)
+    _quality_c = _normalized_join_quality(map_df) == "C"
+    _default_line = hex_to_rgba(COLORS["map_line"], 100)
+    map_df["line_color"] = [
+        [255, 90, 107, 220] if (r or q) else _default_line
+        for r, q in zip(_restrito, _quality_c)
+    ]
     map_df = _prepare_hybrid_tooltip_fields(map_df)
     map_df = _apply_pop_cut_colors(map_df)
     map_df = _apply_hex_tooltip_fields(map_df, mode="hybrid")
@@ -1801,6 +1943,159 @@ def build_top_bottom_uf_figure(uf_summary: pd.DataFrame):
     )
     fig.update_traces(texttemplate="%{text:.2f}", textposition="outside")
     apply_exec_layout(fig, title="Top e bottom UFs por score medio", height=620)
+    return fig
+
+
+def build_ultra_network_kpis(
+    df: pd.DataFrame,
+    ultra_df: pd.DataFrame | None,
+    carteira_df: pd.DataFrame | None,
+    plano_dominio_df: pd.DataFrame | None,
+    *,
+    selected_ufs: list[str],
+    selected_cities: list[str],
+) -> dict[str, str]:
+    """KPIs da rede Ultra e mercado para a Visao Executiva."""
+    ultra_units = 0
+    cidades_com_ultra = 0
+    if ultra_df is not None and not ultra_df.empty and {"lat", "lng"} <= set(ultra_df.columns):
+        u = ultra_df.loc[ultra_df["lat"].notna() & ultra_df["lng"].notna()].copy()
+        if selected_ufs and "uf" in u.columns:
+            u = u.loc[u["uf"].isin(selected_ufs)]
+        if selected_cities and "cidade" in u.columns:
+            u = u.loc[u["cidade"].isin(selected_cities)]
+        ultra_units = len(u)
+        if "cidade" in u.columns:
+            cidades_com_ultra = u["cidade"].nunique()
+
+    score_medio_m1 = "-"
+    if not df.empty and "score_priorizacao" in df.columns:
+        score_medio_m1 = f"{df['score_priorizacao'].mean():.1f}"
+
+    residual_total = "-"
+    opps_sem_ultra = "-"
+    if carteira_df is not None and not carteira_df.empty:
+        cart = carteira_df
+        if selected_ufs and "uf" in cart.columns:
+            cart = cart.loc[cart["uf"].isin(selected_ufs)]
+        if selected_cities:
+            city_col = "nome_municipio" if "nome_municipio" in cart.columns else "cidade" if "cidade" in cart.columns else None
+            if city_col:
+                cart = cart.loc[cart[city_col].isin(selected_cities)]
+        if "oferta_efetiva_disponivel" in cart.columns:
+            total = cart["oferta_efetiva_disponivel"].sum(skipna=True)
+            if pd.notna(total):
+                residual_total = format_int(int(total))
+        if "n_unidades_ultra_performance_hex" in cart.columns:
+            sem_ultra = int((cart["n_unidades_ultra_performance_hex"].fillna(0) == 0).sum())
+            opps_sem_ultra = format_int(sem_ultra)
+
+    ancoras_dominio = "-"
+    if plano_dominio_df is not None and not plano_dominio_df.empty:
+        dom = plano_dominio_df
+        if selected_ufs and "uf" in dom.columns:
+            dom = dom.loc[dom["uf"].isin(selected_ufs)]
+        if selected_cities:
+            city_col = "nome_municipio" if "nome_municipio" in dom.columns else "cidade" if "cidade" in dom.columns else None
+            if city_col:
+                dom = dom.loc[dom[city_col].isin(selected_cities)]
+        ancoras_dominio = format_int(len(dom))
+
+    return {
+        "ultra_units": format_int(ultra_units),
+        "cidades_com_ultra": format_int(cidades_com_ultra),
+        "residual_total": residual_total,
+        "opps_sem_ultra": opps_sem_ultra,
+        "ancoras_dominio": ancoras_dominio,
+        "score_medio_m1": score_medio_m1,
+    }
+
+
+def build_residual_by_uf_figure(carteira_df: pd.DataFrame | None):
+    """Residual potencial (oferta_efetiva_disponivel) agregado por UF."""
+    if carteira_df is None or carteira_df.empty:
+        return None
+    if "oferta_efetiva_disponivel" not in carteira_df.columns or "uf" not in carteira_df.columns:
+        return None
+    grouped = (
+        carteira_df.groupby("uf", as_index=False)["oferta_efetiva_disponivel"]
+        .sum()
+        .sort_values("oferta_efetiva_disponivel", ascending=True, kind="stable")
+        .tail(15)
+    )
+    if grouped.empty:
+        return None
+    fig = px.bar(
+        grouped,
+        x="oferta_efetiva_disponivel",
+        y="uf",
+        orientation="h",
+        color_discrete_sequence=[COLORS["brand_alt"]],
+        labels={"oferta_efetiva_disponivel": "Residual (alunos)", "uf": "UF"},
+        text="oferta_efetiva_disponivel",
+    )
+    fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+    apply_exec_layout(fig, title="Residual potencial por UF", height=430)
+    return fig
+
+
+def build_residual_score_dist_figure(carteira_df: pd.DataFrame | None):
+    """Histograma de score_oportunidade_residual."""
+    if carteira_df is None or carteira_df.empty:
+        return None
+    if "score_oportunidade_residual" not in carteira_df.columns:
+        return None
+    valid = carteira_df["score_oportunidade_residual"].dropna()
+    if valid.empty:
+        return None
+    fig = px.histogram(
+        carteira_df,
+        x="score_oportunidade_residual",
+        nbins=20,
+        color_discrete_sequence=[COLORS["brand"]],
+        labels={"score_oportunidade_residual": "Score residual"},
+    )
+    apply_exec_layout(fig, title="Distribuicao do score residual", height=320)
+    return fig
+
+
+def build_top_cities_residual_figure(carteira_df: pd.DataFrame | None):
+    """Top cidades com alto residual e baixa presenca Ultra."""
+    if carteira_df is None or carteira_df.empty:
+        return None
+    city_col = "nome_municipio" if "nome_municipio" in carteira_df.columns else "cidade" if "cidade" in carteira_df.columns else None
+    if city_col is None or "oferta_efetiva_disponivel" not in carteira_df.columns:
+        return None
+
+    agg: dict[str, object] = {"oferta_efetiva_disponivel": "sum", "uf": "first"}
+    if "n_unidades_ultra_performance_hex" in carteira_df.columns:
+        agg["n_unidades_ultra_performance_hex"] = "sum"
+
+    grouped = carteira_df.groupby(city_col, as_index=False).agg(agg)
+
+    if "n_unidades_ultra_performance_hex" in grouped.columns:
+        low_ultra = grouped.loc[grouped["n_unidades_ultra_performance_hex"] == 0]
+        if len(low_ultra) >= 5:
+            grouped = low_ultra
+
+    grouped = grouped.sort_values(
+        "oferta_efetiva_disponivel", ascending=True, kind="stable"
+    ).tail(10)
+    if grouped.empty:
+        return None
+
+    grouped["label"] = grouped[city_col].astype(str) + " / " + grouped["uf"].astype(str)
+    fig = px.bar(
+        grouped,
+        x="oferta_efetiva_disponivel",
+        y="label",
+        orientation="h",
+        color_discrete_sequence=[COLORS["warning"]],
+        labels={"oferta_efetiva_disponivel": "Residual (alunos)", "label": "Cidade"},
+        text="oferta_efetiva_disponivel",
+    )
+    fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+    apply_exec_layout(fig, title="Top cidades: alto residual, baixa presenca Ultra", height=430)
     return fig
 
 
@@ -2282,3 +2577,172 @@ def _sort_carteira_by_m1(df: pd.DataFrame) -> pd.DataFrame:
 
     ascending = [column in {"rank_brasil", "rank_uf", "rank_hex_intraurbano"} for column in sort_cols]
     return df.sort_values(sort_cols, ascending=ascending, kind="stable")
+
+
+def build_unified_map_figure(
+    df: pd.DataFrame,
+    *,
+    color_mode: str = "m1",
+    enabled_overlays: list[str] | None = None,
+    selected_ufs: list[str],
+    selected_cities: list[str],
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    search_pin: tuple[float, float] | None = None,
+    search_hex_id: str | None = None,
+    dominio_df: pd.DataFrame | None = None,
+):
+    """Dispatcher do Mapa Territorial Unificado.
+
+    Retorna (deck, n_pontos) delegando ao builder correto conforme color_mode.
+    Overlays sao controlados por enabled_overlays; None ativa todos.
+    Nao altera score_priorizacao, carteira, plano nem artefatos oficiais do M1.
+    """
+    if enabled_overlays is None:
+        enabled_overlays = list(OVERLAYS)
+
+    _comp = competitors_df if "concorrentes" in enabled_overlays else None
+    _ultra = ultra_df if "ultra" in enabled_overlays else None
+
+    if color_mode == "dominio":
+        plano = dominio_df if dominio_df is not None else pd.DataFrame()
+        return build_dominio_map_figure(
+            plano,
+            selected_ufs=selected_ufs or None,
+            selected_cities=selected_cities or None,
+            competitors_df=_comp,
+            ultra_df=_ultra,
+        )
+
+    if color_mode == "residual":
+        return build_residual_heatmap_figure(
+            df,
+            selected_ufs=selected_ufs,
+            selected_cities=selected_cities,
+            competitors_df=_comp,
+            ultra_df=_ultra,
+            search_pin=search_pin,
+            search_hex_id=search_hex_id,
+        )
+
+    if color_mode in ("hibrido", "censitario"):
+        _color_col = "score_setor_2022_calibrado" if color_mode == "censitario" else "score_expansao_hibrido"
+        return build_hybrid_map_figure(
+            df,
+            selected_ufs=selected_ufs,
+            selected_cities=selected_cities,
+            color_col=_color_col,
+            competitors_df=_comp,
+            ultra_df=_ultra,
+            search_pin=search_pin,
+            search_hex_id=search_hex_id,
+        )
+
+    # Default: m1
+    return build_map_figure(
+        df,
+        selected_ufs=selected_ufs,
+        selected_cities=selected_cities,
+        competitors_df=_comp,
+        ultra_df=_ultra,
+        search_pin=search_pin,
+        search_hex_id=search_hex_id,
+    )
+
+
+def build_analise_pontual_map(
+    lat: float,
+    lng: float,
+    raio_km: float,
+    hexes_entorno: pd.DataFrame,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+) -> pdk.Deck | None:
+    """Map with center point, radius circle and hexes within range for Analise Pontual.
+
+    Does not recalculate or alter score_priorizacao or any official M1 artifact.
+    """
+    raio_m = raio_km * 1000
+    layers: list[pdk.Layer] = []
+
+    if not hexes_entorno.empty and "hex_id" in hexes_entorno.columns:
+        layers.append(
+            pdk.Layer(
+                "H3HexagonLayer",
+                data=hexes_entorno[["hex_id"]],
+                get_hexagon="hex_id",
+                filled=True,
+                extruded=False,
+                get_fill_color=[25, 183, 255, 90],
+                get_line_color=[25, 183, 255, 200],
+                line_width_min_pixels=1,
+                pickable=False,
+                opacity=0.65,
+            )
+        )
+
+    layers.append(
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=[{"lat": lat, "lng": lng}],
+            get_position=["lng", "lat"],
+            get_radius=raio_m,
+            get_fill_color=[255, 165, 0, 18],
+            get_line_color=[255, 165, 0, 200],
+            stroked=True,
+            filled=True,
+            line_width_min_pixels=2,
+            pickable=False,
+        )
+    )
+
+    layers.append(
+        pdk.Layer(
+            "ScatterplotLayer",
+            data=[{"lat": lat, "lng": lng}],
+            get_position=["lng", "lat"],
+            get_radius=100,
+            get_fill_color=[255, 77, 141, 240],
+            get_line_color=[255, 255, 255, 210],
+            stroked=True,
+            filled=True,
+            line_width_min_pixels=2,
+            pickable=False,
+        )
+    )
+
+    competitors_raio = filter_points_to_radius(
+        competitors_df,
+        lat,
+        lng,
+        raio_km,
+        required_columns={"rede", "nome_unidade"},
+    )
+    competitor_layer, _ = _build_competitor_icon_layer(competitors_raio, competitors_raio)
+    ultra_raio = filter_points_to_radius(
+        ultra_df,
+        lat,
+        lng,
+        raio_km,
+        required_columns={"nome_unidade"},
+    )
+    ultra_layer = _build_ultra_icon_layer(ultra_raio, ultra_raio)
+
+    if competitor_layer is not None:
+        layers.append(competitor_layer)
+    if ultra_layer is not None:
+        layers.append(ultra_layer)
+
+    return pdk.Deck(
+        map_style=pdk.map_styles.CARTO_DARK,
+        initial_view_state=pdk.ViewState(
+            latitude=lat,
+            longitude=lng,
+            zoom=12,
+            min_zoom=9,
+            max_zoom=16,
+            pitch=0,
+            bearing=0,
+        ),
+        layers=layers,
+    )

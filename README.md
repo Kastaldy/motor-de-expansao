@@ -3,7 +3,7 @@
 Base territorial do MVP nacional do `motor-de-expansao`.
 
 O contrato canonico do projeto esta em `CLAUDE.md`; detalhes do ciclo ativo ficam em `PRD.md`.
-O objetivo atual e deixar o repositorio compartilhavel com a equipe e subir o dashboard Streamlit em VPS com Parquets locais, sem API ao vivo, sem PostGIS obrigatorio e sem recalculo do M1 no deploy inicial.
+O dashboard Streamlit esta estabilizado (ciclo Blocos 1-13 concluido em 2026-05-20): Visao Executiva Ultra-only, Analise Pontual de Entorno com populacao/renda/pins de concorrentes, regua visual 10-em-10 para M1/Censitario/Hibrido/Residual, e captura por clique com centroide de hex. Roda offline com Parquets locais, sem API ao vivo, sem PostGIS obrigatorio e sem recalculo do M1 no deploy inicial.
 
 ## Quickstart local
 
@@ -85,6 +85,16 @@ A sidebar do dashboard inclui um campo de busca de hexagono por coordenada geogr
 - O hex correspondente recebe destaque em amarelo em ambos os mapas (aparece mesmo fora dos filtros ou descartado pela regua 5k)
 - Um card de detalhe acima das abas exibe `hex_id`, score, ranking, renda e populacao do hex
 - Funciona offline sem API externa; nao altera score nem artefatos oficiais
+
+### Analise Pontual de Entorno
+
+A aba `Mapa Territorial` inclui uma analise de raio ao redor de uma coordenada.
+
+- Raio default: `1.6 km` (area circular aproximada de `8.04 km2`)
+- Clique via `st.pydeck_chart` retorna centroide do hex (decisao tecnica concluida no Bloco 12; pydeck mantido, folium descartado)
+- Populacao total, renda per capita media e pins de concorrentes/Ultra filtrados por distancia haversine dentro do raio
+- Nota visual exibida quando clique ativo; fallback por campo `lat,lng` na sidebar para coordenada exata
+- Guardrail: a analise e visual/analitica e nao altera `score_priorizacao`, carteira, plano ou artefatos oficiais
 
 ### Regua visual de populacao minima (5k hab)
 
@@ -183,6 +193,7 @@ O contrato de handoff do repositorio esta em `docs/handoff_repositorio.md`.
 - `docs/artefatos_dados.md`: manifesto de dados, politica de versionamento e artefatos externos.
 - `docs/deploy_vps_streamlit.md`: runbook Docker/Streamlit para VPS.
 - `docs/streamlit_dashboard_m1.md`: governanca e uso do dashboard.
+- `docs/analise_pontual_entorno.md`: contrato de UX, metricas de raio e limites tecnicos da analise pontual e Visao Executiva Ultra.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico da camada de mercado.
 - `fora_primeira_fase/README.md`: inventario dos codigos, docs e dados separados do deploy inicial.
 

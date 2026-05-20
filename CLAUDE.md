@@ -83,13 +83,18 @@ score_oficial = score_priorizacao
 - API/FastAPI, PostGIS, Prefect, pipelines pesados, M2/M3, pesquisas e Power BI continuam fora do deploy inicial.
 
 ## 5. Ciclo ativo
-- Ciclo atual do `PRD.md`: Expansao de Dominio.
-- Objetivo: transformar ranking individual de hexes em plano sequencial de ocupacao territorial por cidade/regiao, usando clusters, hexes ancora, residual fitness, cobertura espacial e protecao contra canibalizacao da rede Ultra.
-- A feature e camada paralela: nao substitui M1, carteira acionavel nem plano curto prazo; usa `score_priorizacao` apenas como gate/contexto e preserva os artefatos oficiais.
-- Insumo principal: `data/staging/hexagonos_mercado_mapeado.parquet`, pois contem coordenadas, `score_oportunidade_residual`, `oferta_efetiva_disponivel`, concorrencia, distancia da Ultra e flags de canibalizacao.
-- Artefatos esperados: `docs/expansao_dominio.md`, `data/outputs/plano_expansao_dominio.parquet`, `data/outputs/plano_expansao_dominio.csv` e `data/reports/expansao_dominio.md`.
-- Regra de desenho: selecionar clusters de oportunidade dentro de cidades, escolher hexes ancora com espacamento minimo, simular captura residual por decaimento espacial e classificar teses como `dominar_white_space`, `abrir_com_disputa`, `proteger_corredor_ultra`, `adensar_cluster`, `monitorar` ou `bloqueado_canibalizacao`.
-- Guardrail especifico: qualquer ajuste de parametros da Expansao de Dominio deve ser documentado em `docs/expansao_dominio.md` e validado por testes; nao recalcular ou alterar `score_priorizacao`, `hex_score_estrutural`, carteira ou plano curto prazo sem aprovacao explicita.
+- Ciclo `Hardening da Analise Pontual e Padronizacao Visual de Scores` concluido em 2026-05-20 (Blocos 8-13 do PRD).
+- Ciclo `Visao Executiva Ultra e Analise Pontual` concluido em 2026-05-20 (Blocos 1-7 do PRD).
+- Dashboard tem 4 tabs: `Visao Executiva`, `Mapa Territorial`, `Expansao de Dominio`, `Carteira e Plano`.
+- `Visao Executiva`: mapa Ultra-only (sem hexagonos), KPIs de rede, graficos de residual por UF/cidade.
+- `Analise Pontual de Entorno`: raio 1.6 km, helper `analisar_entorno_ponto` em `data.py`; usa centroide de hex/ponto como aproximacao, nao muta inputs, retorna populacao/renda do raio e exibe pins de concorrentes/Ultra filtrados pelo raio.
+- Hardening concluido (Bloco 13): 189 testes passam; ciclo completo em 2026-05-20.
+- Padronizacao visual concluida (Bloco 9): todos os 4 modos quantitativos usam `score_band_to_color` (10 faixas via `RESIDUAL_SCORE_BANDS`); helper em `dashboard/utils.py`; legenda generica `render_score_bands_legend(mode_label)` em `components.py`.
+- Clique exato — decisao tecnica concluida (Bloco 12): manter `st.pydeck_chart` com centroide do hex. `streamlit-folium` (+2 deps) e componente customizado (fora de escopo) descartados. Nota de centroide exibida no dashboard quando clique ativo.
+- Captura por clique: `st.pydeck_chart(on_select="rerun")`; retorna centroide do hex selecionado; espaco vazio e botao direito nao suportados; fallback: campo lat,lng na sidebar.
+- Regra visual canonica (Bloco 9 em diante): faixas de 10 pontos (0-10 a 90-100) via `RESIDUAL_SCORE_BANDS`; M1 colore por `score_priorizacao`, Censitario por `score_setor_2022_calibrado`, Hibrido por `score_expansao_hibrido`, Residual por `score_oportunidade_residual`.
+- Area do raio 1.6 km = pi*1.6^2 = 8.04 km2 (corrige `~5 km2` que aparecia em docs anteriores); para ~5 km2 usar raio ~1.26 km com aprovacao explicita.
+- Guardrail permanente: visualizacoes, analise radial e interacoes de mapa nao podem recalcular ou alterar `score_priorizacao`, `hex_score_estrutural`, carteira, plano curto prazo, plano dominio ou artefatos oficiais do M1 sem aprovacao explicita.
 
 ## 6. Onde aprofundar
 - `PRD.md`: guia operacional em blocos do ciclo ativo.

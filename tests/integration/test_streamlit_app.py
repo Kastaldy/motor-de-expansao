@@ -4,6 +4,17 @@ import pandas as pd
 import pytest
 
 import streamlit_app
+from dashboard.constants import (
+    COLOR_MODE_IDS,
+    COLOR_MODES,
+    DOMINIO_SCHEMA_MINIMO,
+    HYBRID_LOAD_COLS,
+    OVERLAY_IDS,
+    OVERLAYS,
+    REQUIRED_COLUMNS,
+    color_mode_available,
+    overlay_available,
+)
 
 
 def _write_dashboard_parquet(root: Path, rows: list[dict[str, object]]) -> Path:
@@ -307,8 +318,10 @@ def test_build_map_scope_caption_reflete_todos_os_hexes_da_uf():
     assert "1.234" in caption
 
 
-def test_censo_score_to_color_usa_amarelo_na_faixa_50_a_75():
-    assert streamlit_app._censo_score_to_color(60) == [245, 158, 11, 140]
+def test_censo_score_to_color_delega_para_score_band_to_color():
+    # _censo_score_to_color agora delega para score_band_to_color (10-band)
+    # score=60 → faixa 60-70 → #96D250 → [150, 210, 80, 170]
+    assert streamlit_app._censo_score_to_color(60) == streamlit_app.score_band_to_color(60)
 
 
 def test_faixa_alta_usa_amarelo_no_mapa_e_na_legenda():
@@ -1136,8 +1149,9 @@ def test_build_residual_heatmap_figure_retorna_deck_com_hexes():
     assert map_layer_data.iloc[0]["score_oportunidade_residual"] == 85.0
     fill_high = map_layer_data.iloc[0]["fill_color"]
     fill_low = map_layer_data.iloc[1]["fill_color"]
-    assert fill_high == [25, 168, 50, 165]
-    assert fill_low == [185, 35, 35, 185]
+    assert fill_high == streamlit_app.score_band_to_color(85.0)
+    assert fill_low == streamlit_app.score_band_to_color(15.0)
+    assert fill_high != fill_low
 
 
 def test_build_residual_heatmap_figure_sem_score_retorna_none():
@@ -1310,3 +1324,1247 @@ def test_build_dominio_map_figure_retorna_none_sem_dados():
     )
     assert deck2 is None
     assert n2 == 0
+
+
+# ── Testes de configuracao de camadas (Bloco 2) ───────────────────────────────
+
+def test_color_mode_ids_sem_duplicatas():
+    assert len(COLOR_MODE_IDS) == len(set(COLOR_MODE_IDS))
+
+
+def test_overlay_ids_sem_duplicatas():
+    assert len(OVERLAY_IDS) == len(set(OVERLAY_IDS))
+
+
+def test_color_mode_required_cols_existem_em_schemas_conhecidos():
+    known = set(REQUIRED_COLUMNS) | set(HYBRID_LOAD_COLS) | set(DOMINIO_SCHEMA_MINIMO)
+    for mode_id, cfg in COLOR_MODES.items():
+        for col in cfg["required_cols"]:
+            assert col in known, f"Coluna '{col}' no modo '{mode_id}' nao encontrada nos schemas conhecidos"
+
+
+def test_color_mode_available_fallback_gracioso():
+    df_m1 = pd.DataFrame(columns=["faixa_oportunidade", "score_priorizacao"])
+    assert color_mode_available(df_m1, "m1") is True
+    assert color_mode_available(df_m1, "hibrido") is False
+    assert color_mode_available(df_m1, "modo_inexistente") is False
+
+
+def test_overlay_available_fallback_gracioso():
+    df = pd.DataFrame(columns=["lat", "lng", "rede"])
+    assert overlay_available(df, "concorrentes") is True
+    assert overlay_available(df, "ultra") is True
+    assert overlay_available(df, "descartados_5k") is False
+    assert overlay_available(df, "overlay_inexistente") is False
+
+
+# ── Testes do Bloco 3: build_unified_map_figure ───────────────────────────────
+
+def _hybrid_row_unified(hex_id: str, lat: float, lng: float, **kwargs) -> dict:
+    base = {
+        "hex_id": hex_id,
+        "lat": lat,
+        "lng": lng,
+        "uf": "SP",
+        "nome_municipio": "Sao Paulo",
+        "score_setor_2022_calibrado": 75.0,
+        "score_priorizacao": 80.0,
+        "score_expansao_hibrido": 82.0,
+        "densidade_pop_setor_hab_km2": 9_000,
+        "qualidade_join_uf": "A",
+        "flag_join_uf_restrito": False,
+        "flag_baixa_pop_setor": False,
+        "flag_outlier_espacial": False,
+        "causa_outlier_espacial": pd.NA,
+        "coverage_pct_setor_2022": 95.0,
+        "motivo_nao_elegivel_censo": pd.NA,
+        "elegibilidade_hibrida": "Elegivel",
+        "rank_hex_intraurbano": 1,
+        "top_hex_intraurbano": True,
+        "top_oportunidade_municipio": True,
+        "populacao_proxy": 12_000,
+        "renda_per_capita": 3_500,
+        "pop_total_setor_2022": 12_345,
+        "renda_per_capita_setor_2022_calibrada": 6_789,
+        "flag_pop_min_5k": True,
+        "score_oportunidade_residual": 55.0,
+        "oferta_efetiva_disponivel": 400.0,
+        "quartil_oportunidade_residual": "Q3",
+    }
+    base.update(kwargs)
+    return base
+
+
+def test_build_unified_map_figure_modo_m1_retorna_deck():
+    import h3
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    deck, n = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1", selected_ufs=["SP"], selected_cities=[]
+    )
+    assert deck is not None
+    assert n == 1
+    rendered = pd.DataFrame(deck.layers[0].data)
+    assert "hex_id" in rendered.columns
+
+
+def test_build_unified_map_figure_modo_residual_usa_score_residual():
+    import h3
+    hex1 = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hex2 = h3.latlng_to_cell(-23.65, -46.50, 7)
+    assert hex1 != hex2
+    df = pd.DataFrame([
+        _hybrid_row_unified(hex1, -23.55, -46.63, score_oportunidade_residual=85.0),
+        _hybrid_row_unified(hex2, -23.65, -46.50, score_oportunidade_residual=15.0),
+    ])
+    deck, n = streamlit_app.build_unified_map_figure(
+        df, color_mode="residual", selected_ufs=[], selected_cities=[]
+    )
+    assert deck is not None
+    assert n == 2
+    rendered = pd.DataFrame(deck.layers[0].data).set_index("hex_id")
+    # scores opostos devem gerar cores opostas
+    assert rendered.loc[hex1, "fill_color"] != rendered.loc[hex2, "fill_color"]
+
+
+def test_build_unified_map_figure_overlay_concorrentes_desligado():
+    import h3
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    competitors = pd.DataFrame([{
+        "rede": "smart_fit",
+        "rede_label": "Smart Fit",
+        "nome_unidade": "Smart Paulista",
+        "lat": -23.551,
+        "lng": -46.631,
+        "cidade": "",
+        "uf": "",
+        "arquivo_origem": "unidades_smart_fit.csv",
+    }])
+    deck_com, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1", enabled_overlays=["concorrentes"],
+        selected_ufs=["SP"], selected_cities=[], competitors_df=competitors,
+    )
+    assert deck_com is not None
+    assert len(deck_com.layers) == 2
+
+    deck_sem, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1", enabled_overlays=[],
+        selected_ufs=["SP"], selected_cities=[], competitors_df=competitors,
+    )
+    assert deck_sem is not None
+    assert len(deck_sem.layers) == 1
+
+
+def test_build_unified_map_figure_modo_dominio_fallback_sem_dados():
+    deck, n = streamlit_app.build_unified_map_figure(
+        pd.DataFrame(), color_mode="dominio",
+        selected_ufs=[], selected_cities=[],
+        dominio_df=pd.DataFrame(),
+    )
+    assert deck is None
+    assert n == 0
+
+
+def test_build_unified_map_figure_censitario_vs_hibrido_cor_diferente():
+    """Modo censitario dropa residual: hex com censo alto deve ter cor diferente de modo hibrido."""
+    import h3
+    hex1 = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hex2 = h3.latlng_to_cell(-23.65, -46.50, 7)
+    assert hex1 != hex2
+    # censo alto / residual baixo para hex1; censo baixo / residual alto para hex2
+    df = pd.DataFrame([
+        _hybrid_row_unified(hex1, -23.55, -46.63, score_setor_2022_calibrado=90.0, score_oportunidade_residual=10.0),
+        _hybrid_row_unified(hex2, -23.65, -46.50, score_setor_2022_calibrado=10.0, score_oportunidade_residual=90.0),
+    ])
+    deck_censo, n_censo = streamlit_app.build_unified_map_figure(
+        df, color_mode="censitario", selected_ufs=[], selected_cities=[]
+    )
+    deck_hibrido, n_hibrido = streamlit_app.build_unified_map_figure(
+        df, color_mode="hibrido", selected_ufs=[], selected_cities=[]
+    )
+    assert deck_censo is not None and n_censo == 2
+    assert deck_hibrido is not None and n_hibrido == 2
+    rendered_censo = pd.DataFrame(deck_censo.layers[0].data).set_index("hex_id")
+    rendered_hibrido = pd.DataFrame(deck_hibrido.layers[0].data).set_index("hex_id")
+    # No modo censitario hex1 (censo=90) deve ser verde; hex2 (censo=10) deve ser vermelho
+    # No modo hibrido hex2 (residual=90) deve ser verde; hex1 (residual=10) deve ser vermelho
+    color_hex1_censo = rendered_censo.loc[hex1, "fill_color"]
+    color_hex2_censo = rendered_censo.loc[hex2, "fill_color"]
+    color_hex1_hibrido = rendered_hibrido.loc[hex1, "fill_color"]
+    color_hex2_hibrido = rendered_hibrido.loc[hex2, "fill_color"]
+    # hex1 deve ser melhor no modo censitario do que no hibrido
+    assert color_hex1_censo != color_hex1_hibrido
+
+
+# ── Testes do Bloco 4: render_mapa_territorial ────────────────────────────────
+
+def test_render_mapa_territorial_e_exportado():
+    assert hasattr(streamlit_app, "render_mapa_territorial")
+    assert callable(streamlit_app.render_mapa_territorial)
+
+
+def test_render_mapa_territorial_modo_m1_renderiza_mapa():
+    import h3
+    import unittest.mock as mock
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+
+    rendered_decks = []
+
+    with (
+        mock.patch("streamlit.selectbox", return_value="m1"),
+        mock.patch("streamlit.multiselect", return_value=["concorrentes", "ultra", "hex_pesquisado", "descartados_5k"]),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.info"),
+        mock.patch("streamlit.warning"),
+        mock.patch("streamlit.pydeck_chart", side_effect=lambda deck, **kw: rendered_decks.append(deck)),
+    ):
+        streamlit_app.render_mapa_territorial(df, selected_ufs=["SP"], selected_cities=[])
+
+    assert len(rendered_decks) == 1
+    assert rendered_decks[0] is not None
+
+
+def test_render_mapa_territorial_modo_indisponivel_exibe_aviso():
+    import unittest.mock as mock
+
+    df = pd.DataFrame([{
+        "hex_id": "h1", "lat": -23.5, "lng": -46.6,
+        "faixa_oportunidade": "alta", "score_priorizacao": 80.0,
+    }])
+
+    warnings_captured = []
+
+    with (
+        mock.patch("streamlit.selectbox", return_value="hibrido"),
+        mock.patch("streamlit.multiselect", return_value=[]),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.warning", side_effect=lambda msg, **kw: warnings_captured.append(msg)),
+    ):
+        streamlit_app.render_mapa_territorial(df, selected_ufs=["SP"], selected_cities=[])
+
+    assert len(warnings_captured) >= 1
+    assert any("Hibrido" in w or "disponivel" in w for w in warnings_captured)
+
+
+def test_render_mapa_territorial_dominio_sem_dados_exibe_info():
+    import h3
+    import unittest.mock as mock
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+
+    infos_captured = []
+
+    with (
+        mock.patch("streamlit.selectbox", return_value="dominio"),
+        mock.patch("streamlit.multiselect", return_value=[]),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.info", side_effect=lambda msg, **kw: infos_captured.append(msg)),
+        mock.patch("streamlit.warning"),
+    ):
+        streamlit_app.render_mapa_territorial(
+            df, selected_ufs=["SP"], selected_cities=[], dominio_df=pd.DataFrame()
+        )
+
+    assert len(infos_captured) >= 1
+
+
+def test_render_mapa_territorial_sem_dados_no_mapa_exibe_info():
+    """Quando build_unified_map_figure retorna None, deve mostrar info em vez de erro."""
+    import unittest.mock as mock
+
+    df = pd.DataFrame([_hybrid_row_unified(
+        "h1", -23.55, -46.63,
+        score_setor_2022_calibrado=pd.NA,
+        score_oportunidade_residual=pd.NA,
+    )])
+
+    infos_captured = []
+
+    with (
+        mock.patch("streamlit.selectbox", return_value="residual"),
+        mock.patch("streamlit.multiselect", return_value=[]),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.info", side_effect=lambda msg, **kw: infos_captured.append(msg)),
+        mock.patch("streamlit.warning"),
+    ):
+        streamlit_app.render_mapa_territorial(df, selected_ufs=["SP"], selected_cities=[])
+
+    assert len(infos_captured) >= 1
+
+
+# ── Testes do Bloco 5: enxugar abas ──────────────────────────────────────────
+
+def test_render_carteira_e_plano_e_exportado():
+    """render_carteira_e_plano deve estar disponivel via streamlit_app."""
+    assert hasattr(streamlit_app, "render_carteira_e_plano")
+    assert callable(streamlit_app.render_carteira_e_plano)
+
+
+def test_render_mapa_territorial_com_city_summary_renderiza_expanders():
+    """Passando city_summary, render_mapa_territorial deve criar expanders abaixo do mapa."""
+    import h3
+    import unittest.mock as mock
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    city_summary = pd.DataFrame([{
+        "uf": "SP", "cidade": "Sao Paulo", "score_medio": 80.0, "melhor_rank_brasil": 1,
+        "oportunidades_viaveis": 3, "renda_per_capita": 5000.0, "populacao_proxy": 15000.0,
+    }])
+    uf_summary = pd.DataFrame([{
+        "uf": "SP", "oportunidades_viaveis": 3, "score_medio": 80.0,
+        "renda_per_capita": 5000.0, "populacao_proxy": 15000.0,
+    }])
+
+    expanders_created = []
+
+    def fake_expander(label, **kw):
+        expanders_created.append(label)
+        return mock.MagicMock()
+
+    with (
+        mock.patch("streamlit.selectbox", return_value="m1"),
+        mock.patch("streamlit.multiselect", return_value=[]),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.info"),
+        mock.patch("streamlit.warning"),
+        mock.patch("streamlit.pydeck_chart"),
+        mock.patch("streamlit.plotly_chart"),
+        mock.patch("streamlit.dataframe"),
+        mock.patch("streamlit.metric"),
+        mock.patch("streamlit.tabs", side_effect=_mock_columns),
+        mock.patch("streamlit.checkbox", return_value=False),
+        mock.patch("streamlit.expander", side_effect=fake_expander),
+        # isola conteudo interno dos expanders para manter o teste focado
+        mock.patch("motor_expansao.dashboard.pages.render_analise_territorial"),
+        mock.patch("motor_expansao.dashboard.pages.render_ranking_priorizacao"),
+    ):
+        streamlit_app.render_mapa_territorial(
+            df,
+            selected_ufs=["SP"],
+            selected_cities=[],
+            city_summary=city_summary,
+            uf_summary=uf_summary,
+        )
+
+    assert any("Analise" in e for e in expanders_created), f"Expanders criados: {expanders_created}"
+    assert any("Ranking" in e for e in expanders_created), f"Expanders criados: {expanders_created}"
+
+
+# ── Testes do Bloco 6: hardening de cache, invariante de score e limite de pontos ──
+
+def test_loaders_com_cache_tem_metodo_clear():
+    """Todos os loaders de dados criticos devem usar cache do Streamlit (expoe .clear)."""
+    loaders = [
+        streamlit_app.load_data,
+        streamlit_app.load_hybrid_data,
+        streamlit_app.load_estrutural_pop,
+        streamlit_app.build_dashboard_dataset,
+        streamlit_app.load_competitors,
+        streamlit_app.load_ultra,
+        streamlit_app.load_carteira,
+        streamlit_app.load_plano,
+        streamlit_app.load_plano_dominio,
+    ]
+    for fn in loaders:
+        assert hasattr(fn, "clear"), f"Loader sem cache: {fn.__name__}"
+
+
+def test_score_priorizacao_invariante_enrich_e_carteira():
+    """score_priorizacao nao deve ser alterado pelo enrich nem pelo load_carteira."""
+    base_df = pd.DataFrame([{
+        "hex_id": "h1",
+        "lat": -23.55, "lng": -46.63,
+        "uf": "SP", "cidade": "Sao Paulo", "regiao": "SE",
+        "score_priorizacao": 88.5,
+        "hex_score_estrutural": 84.0,
+        "ajuste_executivo": 4.5,
+        "faixa_oportunidade": "alta",
+        "flag_viavel": True, "flag_prioridade": True,
+        "rank_brasil": 1, "rank_uf": 1, "rank_cidade": 1,
+        "renda_per_capita": 6000.0, "populacao_proxy": 20_000.0,
+    }])
+    enriched = streamlit_app.enrich_dashboard_data(base_df)
+    assert float(enriched.loc[0, "score_priorizacao"]) == 88.5
+    assert float(enriched.loc[0, "hex_score_estrutural"]) == 84.0
+
+
+def test_map_point_limit_respeitado_no_mapa_hibrido():
+    """build_hybrid_map_figure nao deve renderizar mais de MAP_POINT_LIMIT pontos."""
+    from dashboard.constants import MAP_POINT_LIMIT
+    import h3
+
+    rows = []
+    base_lat, base_lng = -23.55, -46.63
+    for i in range(MAP_POINT_LIMIT + 5):
+        offset = i * 0.0001
+        lat, lng = base_lat + offset, base_lng + offset
+        hex_id = h3.latlng_to_cell(lat, lng, 7)
+        rows.append({
+            "hex_id": hex_id,
+            "lat": lat, "lng": lng,
+            "uf": "SP", "nome_municipio": "Sao Paulo",
+            "score_setor_2022_calibrado": 75.0,
+            "score_priorizacao": 80.0,
+            "score_expansao_hibrido": 82.0,
+            "densidade_pop_setor_hab_km2": 9_000,
+            "qualidade_join_uf": "A",
+            "flag_join_uf_restrito": False,
+            "flag_baixa_pop_setor": False,
+            "flag_outlier_espacial": False,
+            "causa_outlier_espacial": pd.NA,
+            "coverage_pct_setor_2022": 95.0,
+            "motivo_nao_elegivel_censo": pd.NA,
+            "elegibilidade_hibrida": "Elegivel",
+            "rank_hex_intraurbano": i + 1,
+            "top_hex_intraurbano": True,
+            "top_oportunidade_municipio": True,
+            "populacao_proxy": 12_000,
+            "renda_per_capita": 3_500,
+            "pop_total_setor_2022": 12_345,
+            "renda_per_capita_setor_2022_calibrada": 6_789,
+            "flag_pop_min_5k": True,
+            "score_oportunidade_residual": 55.0,
+            "oferta_efetiva_disponivel": 400.0,
+            "quartil_oportunidade_residual": "Q3",
+        })
+
+    df = pd.DataFrame(rows).drop_duplicates(subset=["hex_id"])
+    deck, n = streamlit_app.build_hybrid_map_figure(df, selected_ufs=[], selected_cities=[])
+    assert deck is not None
+    assert n <= MAP_POINT_LIMIT
+
+
+def test_build_ultra_presence_map_retorna_none_sem_dados():
+    deck, n = streamlit_app.build_ultra_presence_map(
+        None, selected_ufs=[], selected_cities=[]
+    )
+    assert deck is None
+    assert n == 0
+
+    deck, n = streamlit_app.build_ultra_presence_map(
+        pd.DataFrame(), selected_ufs=[], selected_cities=[]
+    )
+    assert deck is None
+    assert n == 0
+
+
+def test_build_ultra_presence_map_nao_usa_h3hexagonlayer():
+    ultra_df = pd.DataFrame([
+        {"lat": -23.55, "lng": -46.63, "nome_unidade": "Ultra SP Centro", "cidade": "Sao Paulo", "uf": "SP"},
+        {"lat": -15.77, "lng": -47.93, "nome_unidade": "Ultra BSB", "cidade": "Brasilia", "uf": "DF"},
+    ])
+    deck, n = streamlit_app.build_ultra_presence_map(
+        ultra_df, selected_ufs=[], selected_cities=[]
+    )
+    assert deck is not None
+    assert n == 2
+    layer_types = [type(layer).__name__ for layer in deck.layers]
+    assert "H3HexagonLayer" not in str(deck.to_json())
+    assert any("IconLayer" in t or "icon" in str(layer.type).lower() for layer, t in zip(deck.layers, layer_types))
+
+
+def test_build_ultra_presence_map_filtra_por_uf():
+    ultra_df = pd.DataFrame([
+        {"lat": -23.55, "lng": -46.63, "nome_unidade": "Ultra SP", "cidade": "Sao Paulo", "uf": "SP"},
+        {"lat": -15.77, "lng": -47.93, "nome_unidade": "Ultra DF", "cidade": "Brasilia", "uf": "DF"},
+    ])
+    deck, n = streamlit_app.build_ultra_presence_map(
+        ultra_df, selected_ufs=["SP"], selected_cities=[]
+    )
+    assert deck is not None
+    assert n == 1
+    icon_data = pd.DataFrame(deck.layers[0].data)
+    assert all(icon_data["tooltip_title"].str.contains("Ultra SP"))
+
+
+def test_build_ultra_presence_map_estado_vazio_sem_uf_match():
+    ultra_df = pd.DataFrame([
+        {"lat": -23.55, "lng": -46.63, "nome_unidade": "Ultra SP", "cidade": "Sao Paulo", "uf": "SP"},
+    ])
+    deck, n = streamlit_app.build_ultra_presence_map(
+        ultra_df, selected_ufs=["RJ"], selected_cities=[]
+    )
+    assert deck is None
+    assert n == 0
+
+
+def test_build_ultra_network_kpis_retorna_chaves_esperadas():
+    df = pd.DataFrame([{"score_priorizacao": 70.0, "uf": "SP", "cidade": "Campinas"}])
+    ultra_df = pd.DataFrame([
+        {"lat": -22.9, "lng": -47.06, "nome_unidade": "Ultra Campinas", "cidade": "Campinas", "uf": "SP"},
+    ])
+    carteira_df = pd.DataFrame([
+        {
+            "uf": "SP",
+            "nome_municipio": "Campinas",
+            "oferta_efetiva_disponivel": 1000.0,
+            "score_oportunidade_residual": 65.0,
+            "n_unidades_ultra_performance_hex": 0,
+        }
+    ])
+    result = streamlit_app.build_ultra_network_kpis(
+        df,
+        ultra_df,
+        carteira_df,
+        None,
+        selected_ufs=["SP"],
+        selected_cities=["Campinas"],
+    )
+    assert set(result.keys()) == {"ultra_units", "cidades_com_ultra", "residual_total", "opps_sem_ultra", "ancoras_dominio", "score_medio_m1"}
+    assert result["ultra_units"] == "1"
+    assert result["residual_total"] == "1.000"
+    assert result["opps_sem_ultra"] == "1"
+    assert result["ancoras_dominio"] == "-"
+
+
+def test_build_residual_by_uf_figure_retorna_none_sem_dados():
+    assert streamlit_app.build_residual_by_uf_figure(None) is None
+    assert streamlit_app.build_residual_by_uf_figure(pd.DataFrame()) is None
+
+
+def test_build_residual_score_dist_figure_retorna_none_sem_coluna():
+    df_sem_col = pd.DataFrame([{"uf": "SP", "score_priorizacao": 70.0}])
+    assert streamlit_app.build_residual_score_dist_figure(df_sem_col) is None
+    assert streamlit_app.build_residual_score_dist_figure(None) is None
+
+
+def test_build_top_cities_residual_figure_retorna_figura_com_dados():
+    cart = pd.DataFrame([
+        {"nome_municipio": "Campinas", "uf": "SP", "oferta_efetiva_disponivel": 2000.0, "n_unidades_ultra_performance_hex": 0},
+        {"nome_municipio": "Goiania", "uf": "GO", "oferta_efetiva_disponivel": 1500.0, "n_unidades_ultra_performance_hex": 0},
+        {"nome_municipio": "Curitiba", "uf": "PR", "oferta_efetiva_disponivel": 1200.0, "n_unidades_ultra_performance_hex": 0},
+        {"nome_municipio": "Fortaleza", "uf": "CE", "oferta_efetiva_disponivel": 900.0, "n_unidades_ultra_performance_hex": 0},
+        {"nome_municipio": "Manaus", "uf": "AM", "oferta_efetiva_disponivel": 800.0, "n_unidades_ultra_performance_hex": 0},
+    ])
+    fig = streamlit_app.build_top_cities_residual_figure(cart)
+    assert fig is not None
+    assert streamlit_app.build_top_cities_residual_figure(None) is None
+
+
+# ── Testes do Bloco 4: haversine_km e analisar_entorno_ponto ──────────────────
+
+def test_haversine_km_zero_para_mesmo_ponto():
+    import numpy as np
+    lat, lng = -23.5, -46.6
+    dist = streamlit_app.haversine_km(lat, np.array([lat]), lng, np.array([lng]))
+    assert float(dist[0]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_haversine_km_distancia_conhecida():
+    """SP (~-23.55, -46.63) a RJ (~-22.90, -43.17) ≈ 360 km."""
+    import numpy as np
+    dist = streamlit_app.haversine_km(-23.55, np.array([-22.90]), -46.63, np.array([-43.17]))
+    assert 340 < float(dist[0]) < 380
+
+
+def test_analisar_entorno_ponto_retorna_vazio_sem_dados():
+    result = streamlit_app.analisar_entorno_ponto(-23.5, -46.6, pd.DataFrame())
+    assert result["n_hexes"] == 0
+    assert result["residual_total"] is None
+    assert result["raio_km"] == pytest.approx(1.6)
+    assert result["area_km2"] == pytest.approx(3.14159265358979 * 1.6 ** 2, abs=0.01)
+    assert result["hexes_entorno"].empty
+
+
+def test_analisar_entorno_ponto_inclui_hex_proximo_e_exclui_distante():
+    # centro: -23.5, -46.6
+    # hex_near: mesmo ponto → dist ≈ 0 km (dentro de 1.6 km)
+    # hex_far:  offset 0.05° lat ≈ 5.5 km (fora)
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([
+        {
+            "hex_id": "near", "lat": lat_c, "lng": lng_c,
+            "score_priorizacao": 80.0, "oferta_efetiva_disponivel": 500.0,
+            "score_oportunidade_residual": 40.0,
+        },
+        {
+            "hex_id": "far", "lat": lat_c - 0.05, "lng": lng_c,
+            "score_priorizacao": 90.0, "oferta_efetiva_disponivel": 200.0,
+            "score_oportunidade_residual": 60.0,
+        },
+    ])
+    result = streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+    assert result["n_hexes"] == 1
+    assert result["hexes_entorno"].iloc[0]["hex_id"] == "near"
+    assert result["residual_total"] == pytest.approx(500.0)
+    assert result["score_m1_medio"] == pytest.approx(80.0)
+    assert result["score_residual_medio"] == pytest.approx(40.0)
+
+
+def test_analisar_entorno_ponto_dois_hexes_no_raio_ordenados_por_distancia():
+    lat_c, lng_c = -23.5, -46.6
+    # hex_a: muito proximo; hex_b: um pouco mais longe (mas dentro)
+    df = pd.DataFrame([
+        {
+            "hex_id": "b", "lat": lat_c - 0.01, "lng": lng_c,
+            "score_priorizacao": 75.0, "oferta_efetiva_disponivel": 300.0,
+            "score_oportunidade_residual": 30.0,
+        },
+        {
+            "hex_id": "a", "lat": lat_c, "lng": lng_c,
+            "score_priorizacao": 82.0, "oferta_efetiva_disponivel": 700.0,
+            "score_oportunidade_residual": 70.0,
+        },
+    ])
+    result = streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+    assert result["n_hexes"] == 2
+    # ordenado por distancia ascendente → hex_a (dist=0) antes de hex_b
+    assert result["hexes_entorno"].iloc[0]["hex_id"] == "a"
+    assert result["residual_total"] == pytest.approx(1000.0)
+    assert result["score_m1_max"] == pytest.approx(82.0)
+    assert result["score_m1_medio"] == pytest.approx(78.5)
+
+
+def test_analisar_entorno_ponto_conta_concorrentes_e_ultra():
+    lat_c, lng_c = -23.5, -46.6
+    hex_df = pd.DataFrame([
+        {"hex_id": "h1", "lat": lat_c, "lng": lng_c, "score_priorizacao": 80.0},
+    ])
+    competitors = pd.DataFrame([
+        {"rede": "smart_fit", "lat": lat_c + 0.005, "lng": lng_c},   # ~0.55 km → dentro
+        {"rede": "bluefit", "lat": lat_c - 0.1, "lng": lng_c},       # ~11 km → fora
+    ])
+    ultra = pd.DataFrame([
+        {"nome_unidade": "Ultra A", "lat": lat_c, "lng": lng_c + 0.003},  # ~0.28 km → dentro
+        {"nome_unidade": "Ultra B", "lat": lat_c + 0.08, "lng": lng_c},  # ~8.9 km → fora
+    ])
+    dominio = pd.DataFrame([
+        {"hex_id": "d1", "lat": lat_c + 0.01, "lng": lng_c},   # ~1.11 km → dentro
+        {"hex_id": "d2", "lat": lat_c + 0.03, "lng": lng_c},   # ~3.3 km → fora
+    ])
+    result = streamlit_app.analisar_entorno_ponto(
+        lat_c, lng_c, hex_df, raio_km=1.6,
+        competitors_df=competitors,
+        ultra_df=ultra,
+        dominio_df=dominio,
+    )
+    assert result["n_concorrentes"] == 1
+    assert result["n_ultra"] == 1
+    assert result["n_ancoras_dominio"] == 1
+
+
+def test_analisar_entorno_ponto_sem_colunas_residual_retorna_none():
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([
+        {"hex_id": "h1", "lat": lat_c, "lng": lng_c, "score_priorizacao": 80.0},
+    ])
+    result = streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df)
+    assert result["n_hexes"] == 1
+    assert result["residual_total"] is None
+    assert result["score_residual_medio"] is None
+
+
+def test_analisar_entorno_ponto_exportado_via_streamlit_app():
+    assert hasattr(streamlit_app, "analisar_entorno_ponto")
+    assert callable(streamlit_app.analisar_entorno_ponto)
+    assert hasattr(streamlit_app, "haversine_km")
+    assert callable(streamlit_app.haversine_km)
+
+
+# ── Testes do Bloco 5: UI de Analise Pontual ─────────────────────────────────
+
+def test_build_analise_pontual_map_retorna_deck_com_camadas():
+    """build_analise_pontual_map deve retornar Deck com layer de hexes + circulo + ponto."""
+    import h3
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    hexes = pd.DataFrame([{"hex_id": hex_id}])
+
+    deck = streamlit_app.build_analise_pontual_map(lat, lng, 1.6, hexes)
+
+    assert deck is not None
+    # hex layer + circulo + ponto central
+    assert len(deck.layers) == 3
+    assert deck.initial_view_state.latitude == pytest.approx(lat)
+    assert deck.initial_view_state.longitude == pytest.approx(lng)
+    assert deck.initial_view_state.zoom == pytest.approx(12.0)
+
+
+def test_build_analise_pontual_map_sem_hexes_retorna_deck_com_2_camadas():
+    """Sem hexes no raio, deve retornar apenas camadas de circulo e ponto central."""
+    deck = streamlit_app.build_analise_pontual_map(-15.77, -47.93, 1.6, pd.DataFrame())
+
+    assert deck is not None
+    # sem hex layer: apenas circulo + ponto
+    assert len(deck.layers) == 2
+
+
+def test_build_analise_pontual_map_inclui_pins_no_raio():
+    lat, lng = -23.55, -46.63
+    competitors = pd.DataFrame([
+        {
+            "rede": "smart_fit",
+            "rede_label": "Smart Fit",
+            "nome_unidade": "Smart Paulista",
+            "lat": -23.551,
+            "lng": -46.631,
+            "cidade": "Sao Paulo",
+            "uf": "SP",
+            "arquivo_origem": "unidades_smart_fit.csv",
+        },
+        {
+            "rede": "bluefit",
+            "rede_label": "Bluefit",
+            "nome_unidade": "Blue Rio",
+            "lat": -22.90,
+            "lng": -43.20,
+            "cidade": "Rio de Janeiro",
+            "uf": "RJ",
+            "arquivo_origem": "unidades_bluefit.csv",
+        },
+    ])
+    ultra = pd.DataFrame([
+        {
+            "nome_unidade": "Ultra Paulista",
+            "lat": -23.552,
+            "lng": -46.632,
+            "cidade": "Sao Paulo",
+            "uf": "SP",
+            "arquivo_origem": "Ultra.csv",
+        },
+        {
+            "nome_unidade": "Ultra Rio",
+            "lat": -22.90,
+            "lng": -43.20,
+            "cidade": "Rio de Janeiro",
+            "uf": "RJ",
+            "arquivo_origem": "Ultra.csv",
+        },
+    ])
+
+    deck = streamlit_app.build_analise_pontual_map(
+        lat,
+        lng,
+        1.6,
+        pd.DataFrame(),
+        competitors_df=competitors,
+        ultra_df=ultra,
+    )
+
+    assert deck is not None
+    assert len(deck.layers) == 4
+    icon_layers = [layer for layer in deck.layers if str(layer.type) == "IconLayer"]
+    assert len(icon_layers) == 2
+    competitor_data = pd.DataFrame(icon_layers[0].data)
+    ultra_data = pd.DataFrame(icon_layers[1].data)
+    assert competitor_data["nome_unidade"].tolist() == ["Smart Paulista"]
+    assert ultra_data["nome_unidade"].tolist() == ["Ultra Paulista"]
+
+
+def test_build_analise_pontual_map_nao_inclui_pins_fora_do_raio():
+    competitors = pd.DataFrame([
+        {
+            "rede": "smart_fit",
+            "rede_label": "Smart Fit",
+            "nome_unidade": "Smart Rio",
+            "lat": -22.90,
+            "lng": -43.20,
+            "cidade": "Rio de Janeiro",
+            "uf": "RJ",
+            "arquivo_origem": "unidades_smart_fit.csv",
+        }
+    ])
+    ultra = pd.DataFrame([
+        {
+            "nome_unidade": "Ultra Rio",
+            "lat": -22.90,
+            "lng": -43.20,
+            "cidade": "Rio de Janeiro",
+            "uf": "RJ",
+            "arquivo_origem": "Ultra.csv",
+        }
+    ])
+
+    deck = streamlit_app.build_analise_pontual_map(
+        -23.55,
+        -46.63,
+        1.6,
+        pd.DataFrame(),
+        competitors_df=competitors,
+        ultra_df=ultra,
+    )
+
+    assert deck is not None
+    assert len(deck.layers) == 2
+    assert all(str(layer.type) != "IconLayer" for layer in deck.layers)
+
+
+def test_render_analise_pontual_sem_coordenada_exibe_info():
+    """render_analise_pontual sem search_pin deve mostrar info de instrucao."""
+    import unittest.mock as mock
+
+    df = pd.DataFrame([{"hex_id": "h1", "lat": -23.55, "lng": -46.63, "score_priorizacao": 80.0}])
+
+    with mock.patch("streamlit.info") as info_mock, mock.patch("streamlit.caption"):
+        streamlit_app.render_analise_pontual(None, df)
+
+    info_mock.assert_called_once()
+    msg = info_mock.call_args[0][0]
+    assert "coordenada" in msg.lower() or "sidebar" in msg.lower()
+
+
+def test_render_analise_pontual_com_coordenada_exibe_kpis():
+    """render_analise_pontual com search_pin deve chamar st.metric para os KPIs."""
+    import unittest.mock as mock
+
+    lat, lng = -23.55, -46.63
+    df = pd.DataFrame([{
+        "hex_id": "h1",
+        "lat": lat,
+        "lng": lng,
+        "score_priorizacao": 80.0,
+        "oferta_efetiva_disponivel": 500.0,
+        "score_oportunidade_residual": 42.0,
+    }])
+
+    metric_calls = []
+
+    def fake_columns(n_or_list, **kw):
+        n = n_or_list if isinstance(n_or_list, int) else len(n_or_list)
+        cols = []
+        for _ in range(n):
+            m = mock.MagicMock()
+            m.metric = mock.MagicMock(side_effect=lambda label, value, **kw: metric_calls.append(label))
+            cols.append(m)
+        return cols
+
+    with (
+        mock.patch("streamlit.columns", side_effect=fake_columns),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.info"),
+        mock.patch("streamlit.pydeck_chart"),
+        mock.patch("streamlit.dataframe"),
+    ):
+        streamlit_app.render_analise_pontual((lat, lng), df)
+
+    labels = [c.lower() for c in metric_calls]
+    assert any("hex" in l for l in labels)
+    assert any("residual" in l or "score" in l for l in labels)
+
+
+def test_render_analise_pontual_exportado_via_streamlit_app():
+    assert hasattr(streamlit_app, "render_analise_pontual")
+    assert callable(streamlit_app.render_analise_pontual)
+
+
+# ── Testes do Bloco 6: captura de coordenada por clique no mapa ───────────────
+
+class _MockSelection:
+    def __init__(self, objects: dict):
+        self.objects = objects
+
+
+class _MockMapEvent:
+    def __init__(self, objects: dict):
+        self.selection = _MockSelection(objects)
+
+
+def test_extract_click_coord_retorna_lat_lng_de_selecao():
+    event = _MockMapEvent({"hex_layer": [{"lat": -23.55, "lng": -46.63, "hex_id": "abc"}]})
+    result = streamlit_app._extract_click_coord_from_selection(event)
+    assert result == pytest.approx((-23.55, -46.63))
+
+
+def test_extract_click_coord_retorna_none_sem_selecao():
+    event = _MockMapEvent({})
+    assert streamlit_app._extract_click_coord_from_selection(event) is None
+
+
+def test_extract_click_coord_retorna_none_quando_row_sem_lat_lng():
+    event = _MockMapEvent({"hex_layer": [{"hex_id": "abc", "score_priorizacao": 80.0}]})
+    assert streamlit_app._extract_click_coord_from_selection(event) is None
+
+
+def test_extract_click_coord_retorna_none_para_none():
+    assert streamlit_app._extract_click_coord_from_selection(None) is None
+
+
+def test_extract_click_coord_e_robusto_contra_mock_object():
+    """MagicMock (retorno padrao nos testes que mokam pydeck_chart) nao deve causar excecao."""
+    import unittest.mock as mock
+    mock_event = mock.MagicMock()
+    # MagicMock.selection.objects nao e dict -> deve retornar None sem excecao
+    result = streamlit_app._extract_click_coord_from_selection(mock_event)
+    assert result is None
+
+
+def test_extract_click_coord_exportado_via_streamlit_app():
+    assert hasattr(streamlit_app, "_extract_click_coord_from_selection")
+    assert callable(streamlit_app._extract_click_coord_from_selection)
+
+
+def test_render_analise_pontual_vazio_menciona_clique_e_sidebar():
+    """Estado vazio deve mencionar clique no mapa E campo de coordenada."""
+    import unittest.mock as mock
+
+    df = pd.DataFrame([{"hex_id": "h1", "lat": -23.55, "lng": -46.63, "score_priorizacao": 80.0}])
+
+    with mock.patch("streamlit.info") as info_mock, mock.patch("streamlit.caption"):
+        streamlit_app.render_analise_pontual(None, df)
+
+    msg = info_mock.call_args[0][0].lower()
+    assert "clique" in msg or "mapa" in msg
+    assert "coordenada" in msg or "sidebar" in msg
+
+
+# ── Testes do Bloco 7: hardening final ───────────────────────────────────────
+
+def test_render_visao_executiva_nao_chama_builders_com_hexagonos():
+    """render_visao_executiva nao deve chamar build_map_figure nem build_hybrid_map_figure."""
+    import unittest.mock as mock
+
+    df = pd.DataFrame([{
+        "hex_id": "h1", "lat": -23.55, "lng": -46.63,
+        "uf": "SP", "cidade": "Sao Paulo", "regiao": "SE",
+        "score_priorizacao": 80.0, "hex_score_estrutural": 75.0, "ajuste_executivo": 5.0,
+        "faixa_oportunidade": "alta", "flag_viavel": True, "flag_prioridade": True,
+        "rank_brasil": 1, "rank_uf": 1, "rank_cidade": 1,
+        "renda_per_capita": 5000.0, "populacao_proxy": 15_000.0,
+    }])
+    city_summary = pd.DataFrame([{
+        "uf": "SP", "cidade": "Sao Paulo", "score_medio": 80.0, "melhor_rank_brasil": 1,
+        "oportunidades_viaveis": 3, "renda_per_capita": 5000.0, "populacao_proxy": 15_000.0,
+    }])
+    uf_summary = pd.DataFrame([{
+        "uf": "SP", "oportunidades_viaveis": 3, "score_medio": 80.0,
+        "renda_per_capita": 5000.0, "populacao_proxy": 15_000.0,
+    }])
+
+    _fake_kpis = {"total_oportunidades_viaveis": "3", "total_hexagonos_priorizados": "1",
+                  "uf_lider_oportunidades": "SP", "cidade_lider_score": "Sao Paulo"}
+    _fake_answers = {"expandir": "SP", "priorizar": "SP", "evitar": "-",
+                     "ufs_priorizar": "SP", "ufs_evitar": "-"}
+
+    with (
+        mock.patch("motor_expansao.dashboard.pages.build_map_figure") as map_mock,
+        mock.patch("motor_expansao.dashboard.pages.build_hybrid_map_figure") as hybrid_mock,
+        mock.patch("motor_expansao.dashboard.pages.build_kpis", return_value=_fake_kpis),
+        mock.patch("motor_expansao.dashboard.pages.build_business_answers", return_value=_fake_answers),
+        mock.patch("motor_expansao.dashboard.pages.build_ultra_network_kpis",
+                   return_value={"ultra_units": "1", "cidades_com_ultra": "1", "score_medio_m1": "80",
+                                 "residual_total": "1.000", "opps_sem_ultra": "1", "ancoras_dominio": "-"}),
+        mock.patch("motor_expansao.dashboard.pages.render_answer_card"),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.metric"),
+        mock.patch("streamlit.info"),
+        mock.patch("streamlit.pydeck_chart"),
+        mock.patch("streamlit.plotly_chart"),
+    ):
+        streamlit_app.render_visao_executiva(
+            df, city_summary, uf_summary,
+            selected_ufs=[], selected_cities=[],
+        )
+
+    map_mock.assert_not_called()
+    hybrid_mock.assert_not_called()
+
+
+def test_analisar_entorno_ponto_nao_muta_dataframe_input():
+    """analisar_entorno_ponto nao deve modificar o DataFrame de entrada."""
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([{
+        "hex_id": "h1", "lat": lat_c, "lng": lng_c,
+        "score_priorizacao": 80.0, "oferta_efetiva_disponivel": 500.0,
+        "score_oportunidade_residual": 40.0,
+    }])
+    original_cols = list(df.columns)
+    original_shape = df.shape
+    original_score = float(df.loc[0, "score_priorizacao"])
+
+    streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+
+    assert list(df.columns) == original_cols
+    assert df.shape == original_shape
+    assert float(df.loc[0, "score_priorizacao"]) == original_score
+
+
+def test_score_priorizacao_nao_alterado_por_analise_pontual():
+    """score_priorizacao nos dados originais deve ser identico antes e apos analise_entorno_ponto."""
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([
+        {"hex_id": "h1", "lat": lat_c, "lng": lng_c, "score_priorizacao": 88.5},
+        {"hex_id": "h2", "lat": lat_c - 0.1, "lng": lng_c, "score_priorizacao": 72.3},
+    ])
+    scores_antes = df["score_priorizacao"].tolist()
+
+    streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+
+    assert df["score_priorizacao"].tolist() == scores_antes
+
+
+# ── Testes do Bloco 9: score_band_to_color e padronizacao visual ──────────────
+
+# Testes do Bloco 10: populacao e renda na Analise Pontual
+
+def test_analisar_entorno_ponto_prefere_populacao_setor_2022():
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([
+        {
+            "hex_id": "h1",
+            "lat": lat_c,
+            "lng": lng_c,
+            "pop_total_setor_2022": 1200,
+            "pop_hex_base": 9000,
+            "pop_total": 8000,
+            "populacao_proxy": 7000,
+            "renda_per_capita_setor_2022_calibrada": 2500,
+        },
+        {
+            "hex_id": "h2",
+            "lat": lat_c + 0.005,
+            "lng": lng_c,
+            "pop_total_setor_2022": 800,
+            "pop_hex_base": 6000,
+            "pop_total": 5000,
+            "populacao_proxy": 4000,
+            "renda_per_capita_setor_2022_calibrada": 3500,
+        },
+    ])
+
+    result = streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+
+    assert result["pop_total_raio"] == pytest.approx(2000.0)
+    assert result["fonte_pop_total_raio"] == "setor_2022"
+    assert result["n_hexes_com_pop"] == 2
+    hexes = result["hexes_entorno"].set_index("hex_id")
+    assert hexes.loc["h1", "pop_total_raio_hex"] == pytest.approx(1200.0)
+    assert hexes.loc["h1", "fonte_pop_total_raio_hex"] == "setor_2022"
+
+
+def test_analisar_entorno_ponto_fallback_populacao_misto():
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([
+        {"hex_id": "h1", "lat": lat_c, "lng": lng_c, "pop_hex_base": 1500},
+        {"hex_id": "h2", "lat": lat_c + 0.005, "lng": lng_c, "pop_total": 2500},
+        {"hex_id": "h3", "lat": lat_c + 0.006, "lng": lng_c, "populacao_proxy": 3500},
+    ])
+
+    result = streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+
+    assert result["pop_total_raio"] == pytest.approx(7500.0)
+    assert result["fonte_pop_total_raio"] == "misto: pop_hex_base, pop_total, populacao_proxy"
+    assert result["n_hexes_com_pop"] == 3
+
+
+def test_analisar_entorno_ponto_calcula_renda_ponderada_por_populacao():
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([
+        {
+            "hex_id": "h1",
+            "lat": lat_c,
+            "lng": lng_c,
+            "pop_total_setor_2022": 100,
+            "renda_per_capita_setor_2022_calibrada": 1000,
+            "renda_per_capita": 9000,
+        },
+        {
+            "hex_id": "h2",
+            "lat": lat_c + 0.005,
+            "lng": lng_c,
+            "pop_total_setor_2022": 300,
+            "renda_per_capita_setor_2022_calibrada": 3000,
+            "renda_per_capita": 8000,
+        },
+    ])
+
+    result = streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+
+    assert result["renda_per_capita_media_raio"] == pytest.approx(2500.0)
+    assert result["metodo_renda_raio"] == "ponderada_populacao"
+    assert result["n_hexes_com_renda"] == 2
+
+
+def test_analisar_entorno_ponto_usa_media_simples_de_renda_sem_populacao():
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([
+        {"hex_id": "h1", "lat": lat_c, "lng": lng_c, "renda_per_capita": 2000},
+        {"hex_id": "h2", "lat": lat_c + 0.005, "lng": lng_c, "renda_per_capita": 4000},
+    ])
+
+    result = streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+
+    assert result["pop_total_raio"] is None
+    assert result["fonte_pop_total_raio"] == "ausente"
+    assert result["renda_per_capita_media_raio"] == pytest.approx(3000.0)
+    assert result["metodo_renda_raio"] == "media_simples"
+
+
+def test_analisar_entorno_ponto_sem_colunas_pop_renda_sinaliza_ausente():
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([{"hex_id": "h1", "lat": lat_c, "lng": lng_c}])
+
+    result = streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+
+    assert result["pop_total_raio"] is None
+    assert result["fonte_pop_total_raio"] == "ausente"
+    assert result["renda_per_capita_media_raio"] is None
+    assert result["metodo_renda_raio"] == "ausente"
+
+
+# Testes do Bloco 9: score_band_to_color e padronizacao visual
+
+def test_score_band_to_color_nan_retorna_cinza():
+    import math
+    assert streamlit_app.score_band_to_color(float("nan")) == [120, 120, 140, 70]
+    assert streamlit_app.score_band_to_color(None) == [120, 120, 140, 70]
+
+
+def test_score_band_to_color_bordas_de_faixa():
+    c0 = streamlit_app.score_band_to_color(0)
+    c9_99 = streamlit_app.score_band_to_color(9.99)
+    c10 = streamlit_app.score_band_to_color(10)
+    c49_9 = streamlit_app.score_band_to_color(49.9)
+    c50 = streamlit_app.score_band_to_color(50)
+    c89_9 = streamlit_app.score_band_to_color(89.9)
+    c90 = streamlit_app.score_band_to_color(90)
+    c100 = streamlit_app.score_band_to_color(100)
+
+    assert c0 == c9_99, "0 e 9.99 devem estar na mesma faixa (0-10)"
+    assert c0 != c10, "9.99 e 10 devem estar em faixas distintas"
+    assert c49_9 != c50, "49.9 e 50 devem estar em faixas distintas"
+    assert c89_9 != c90, "89.9 e 90 devem estar em faixas distintas"
+    assert c90 == c100, "90 e 100 devem cair na mesma faixa (90-100)"
+
+
+def test_score_band_to_color_escala_ascendente():
+    """Scores mais altos devem ter cores mais 'verdes' (componente verde maior que vermelho)."""
+    cor_baixa = streamlit_app.score_band_to_color(5)
+    cor_alta = streamlit_app.score_band_to_color(95)
+    r_baixa, g_baixa, b_baixa = cor_baixa[:3]
+    r_alta, g_alta, b_alta = cor_alta[:3]
+    assert g_alta > r_alta, "score alto deve ser mais verde do que vermelho"
+    assert r_baixa > g_baixa, "score baixo deve ser mais vermelho do que verde"
+
+
+def test_score_band_to_color_retorna_4_elementos():
+    cor = streamlit_app.score_band_to_color(50)
+    assert len(cor) == 4
+    assert all(0 <= v <= 255 for v in cor)
+
+
+def test_build_unified_map_modo_m1_usa_score_priorizacao_para_cor():
+    """No modo M1 dois hexes com scores bem distintos devem ter cores diferentes."""
+    import h3
+    hex1 = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hex2 = h3.latlng_to_cell(-23.65, -46.50, 7)
+    assert hex1 != hex2
+
+    def _row(hex_id, lat, lng, score):
+        return {
+            "hex_id": hex_id, "lat": lat, "lng": lng,
+            "uf": "SP", "cidade": "Sao Paulo", "regiao": "SE",
+            "score_priorizacao": score, "hex_score_estrutural": score - 2,
+            "ajuste_executivo": 2.0, "faixa_oportunidade": "alta",
+            "flag_viavel": True, "flag_prioridade": True,
+            "rank_brasil": 1, "rank_uf": 1, "rank_cidade": 1,
+            "renda_per_capita": 5000.0, "populacao_proxy": 15_000.0,
+        }
+
+    df = pd.DataFrame([_row(hex1, -23.55, -46.63, 5.0), _row(hex2, -23.65, -46.50, 95.0)])
+    deck, n = streamlit_app.build_unified_map_figure(df, color_mode="m1", selected_ufs=["SP"], selected_cities=[])
+    assert deck is not None and n == 2
+    rendered = pd.DataFrame(deck.layers[0].data).set_index("hex_id")
+    assert rendered.loc[hex1, "fill_color"] != rendered.loc[hex2, "fill_color"]
+
+
+def test_build_unified_map_hibrido_usa_score_expansao_hibrido_nao_residual():
+    """Modo hibrido deve colorir por score_expansao_hibrido, nao score_oportunidade_residual."""
+    import h3
+    hex1 = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hex2 = h3.latlng_to_cell(-23.65, -46.50, 7)
+    assert hex1 != hex2
+    # hex1: hibrido alto / residual baixo; hex2: hibrido baixo / residual alto
+    df = pd.DataFrame([
+        _hybrid_row_unified(hex1, -23.55, -46.63, score_expansao_hibrido=90.0, score_oportunidade_residual=10.0),
+        _hybrid_row_unified(hex2, -23.65, -46.50, score_expansao_hibrido=10.0, score_oportunidade_residual=90.0),
+    ])
+    deck, n = streamlit_app.build_unified_map_figure(df, color_mode="hibrido", selected_ufs=[], selected_cities=[])
+    assert deck is not None and n == 2
+    rendered = pd.DataFrame(deck.layers[0].data).set_index("hex_id")
+    c_hex1 = rendered.loc[hex1, "fill_color"]
+    c_hex2 = rendered.loc[hex2, "fill_color"]
+    # hex1 tem hibrido=90 (verde) e hex2 tem hibrido=10 (vermelho): devem ter cores diferentes
+    assert c_hex1 != c_hex2
+    # Em modo residual a ordem seria invertida: hex2 (residual=90) seria verde
+    deck_res, _ = streamlit_app.build_unified_map_figure(df, color_mode="residual", selected_ufs=[], selected_cities=[])
+    rendered_res = pd.DataFrame(deck_res.layers[0].data).set_index("hex_id")
+    # No modo residual hex2 (residual=90) deve ser verde; no modo hibrido hex1 (hibrido=90) e verde
+    assert rendered_res.loc[hex1, "fill_color"] != c_hex1
+
+
+def test_render_score_bands_legend_exportada():
+    assert hasattr(streamlit_app, "render_score_bands_legend")
+    assert callable(streamlit_app.render_score_bands_legend)
+
+
+def test_score_band_to_color_exportado():
+    assert hasattr(streamlit_app, "score_band_to_color")
+    assert callable(streamlit_app.score_band_to_color)
+
+
+# ── Testes do Bloco 12: decisao tecnica clique exato ─────────────────────────
+
+def test_extract_click_coord_retorna_centroide_do_hex_nao_coord_livre():
+    """_extract_click_coord retorna lat/lng do objeto (centroide do hex), nao coordenada exata do clique.
+
+    Comportamento documentado: pydeck on_select passa dados do objeto de camada; para H3HexagonLayer
+    os campos lat/lng sao os centroides dos hexes conforme a coluna do DataFrame.
+    Fallback para coordenada exata: campo lat,lng na barra lateral.
+    """
+    centroide_lat, centroide_lng = -23.5505, -46.6333
+    event = _MockMapEvent({"main_unified_map": [{"lat": centroide_lat, "lng": centroide_lng, "hex_id": "abc123"}]})
+    result = streamlit_app._extract_click_coord_from_selection(event)
+    assert result is not None
+    assert result == pytest.approx((centroide_lat, centroide_lng))
+
+
+def test_extract_click_coord_espaco_vazio_nao_dispara_evento():
+    """Clique em espaco vazio do mapa pydeck nao retorna coordenada (sem objeto de camada)."""
+    event = _MockMapEvent({})
+    assert streamlit_app._extract_click_coord_from_selection(event) is None
+
+
+def test_decisao_clique_documentada_em_analise_pontual_entorno():
+    """docs/analise_pontual_entorno.md deve conter a decisao tecnica do Bloco 12."""
+    doc = (
+        Path("docs") / "analise_pontual_entorno.md"
+    )
+    assert doc.exists(), "docs/analise_pontual_entorno.md deve existir"
+    texto = doc.read_text(encoding="utf-8").lower()
+    assert "pydeck" in texto, "decisao deve mencionar pydeck"
+    assert "streamlit-folium" in texto, "decisao deve mencionar streamlit-folium como opcao avaliada"
+    assert "descartada" in texto or "adotada" in texto, "decisao deve registrar resultado da avaliacao"
+
+
+def test_render_analise_pontual_estado_vazio_menciona_fallback_sidebar():
+    """Estado vazio da Analise Pontual deve orientar uso do campo lat,lng na sidebar."""
+    import unittest.mock as mock
+
+    df = pd.DataFrame([{"hex_id": "h1", "lat": -23.55, "lng": -46.63, "score_priorizacao": 80.0}])
+
+    with mock.patch("streamlit.info") as info_mock, mock.patch("streamlit.caption") as cap_mock:
+        streamlit_app.render_analise_pontual(None, df)
+
+    all_text = " ".join(
+        str(c[0][0]) for c in (list(info_mock.call_args_list) + list(cap_mock.call_args_list))
+        if c[0]
+    ).lower()
+    assert "sidebar" in all_text or "barra lateral" in all_text or "lat" in all_text
