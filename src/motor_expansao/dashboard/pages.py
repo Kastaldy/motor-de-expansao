@@ -18,6 +18,7 @@ from dashboard.constants import (
 )
 from dashboard.utils import format_int, format_pct, format_score
 from motor_expansao.dashboard.components import (
+    _build_multihex_selection_layer,
     _carteira_prioridade_color,
     _category_options,
     _sort_carteira_by_m1,
@@ -47,6 +48,7 @@ from motor_expansao.dashboard.components import (
     build_top_uf_figure,
     build_uf_metric_figure,
     build_analise_pontual_map,
+    build_multihex_analysis_map,
     build_ultra_network_kpis,
     build_ultra_presence_map,
     build_unified_map_figure,
@@ -64,7 +66,13 @@ from motor_expansao.dashboard.components import (
     render_ultra_legend,
     style_ranking_table,
 )
-from motor_expansao.dashboard.data import analisar_entorno_ponto, lookup_hex_by_coord, parse_coordinate_input
+from motor_expansao.dashboard.data import (
+    agregar_cenario_multihex,
+    analisar_entorno_ponto,
+    lookup_hex_by_coord,
+    parse_coordinate_input,
+    parse_hex_ids_from_text,
+)
 
 
 RESIDUAL_SORT_COLUMNS = [
@@ -88,7 +96,7 @@ def _sort_by_residual(df: pd.DataFrame) -> pd.DataFrame:
 
 def _format_residual_display_columns(df: pd.DataFrame) -> pd.DataFrame:
     formatted = df.copy()
-    for col in ["SAM Fitness", "Oferta Residual", "Consumo Mercado", "Ultra Real"]:
+    for col in ["SAM Fitness", "Oferta Residual", "Consumo Conc. (est.)", "Consumo Ultra (real)", "Consumo Total Instalado"]:
         if col in formatted.columns:
             formatted[col] = formatted[col].map(lambda v: format_int(v) if pd.notna(v) else "-")
     if "Score Residual" in formatted.columns:
@@ -1262,8 +1270,8 @@ def render_carteira_expansao(
         "score_oportunidade_residual": "Score Residual",
         "quartil_oportunidade_residual": "Quartil Residual",
         "share_ultra_estimado_hex": "Share Ultra",
-        "oferta_consumida_mercado_estimada": "Consumo Mercado",
-        "oferta_consumida_ultra_real": "Ultra Real",
+        "oferta_consumida_mercado_estimada": "Consumo Conc. (est.)",
+        "oferta_consumida_ultra_real": "Consumo Ultra (real)",
         "rank_municipio_uf": "Rank Mun. UF",
         "rank_municipio_brasil": "Rank Mun. Brasil",
         "motivo_priorizacao": "Motivo",
@@ -1429,6 +1437,8 @@ def render_expansao_dominio(
         "score_oportunidade_residual": "Score Residual",
         "residual_incremental_capturado": "Residual Capturado",
         "oferta_efetiva_disponivel": "Oferta Disponivel",
+        "oferta_consumida_mercado_estimada": "Consumo Conc. (est.)",
+        "oferta_consumida_ultra_real": "Consumo Ultra (real)",
         "dist_ultra_mais_proxima_m": "Dist. Ultra (m)",
         "n_concorrentes_mapeados_2km": "Concorrentes 2km",
         "tese_dominio": "Tese",
@@ -1445,7 +1455,7 @@ def render_expansao_dominio(
     for col in ["Score Residual"]:
         if col in tbl.columns:
             tbl[col] = tbl[col].map(lambda v: f"{v:.1f}" if pd.notna(v) else "-")
-    for col in ["Residual Capturado", "Oferta Disponivel"]:
+    for col in ["Residual Capturado", "Oferta Disponivel", "Consumo Conc. (est.)", "Consumo Ultra (real)"]:
         if col in tbl.columns:
             tbl[col] = tbl[col].map(lambda v: format_int(v) if pd.notna(v) else "-")
     for col in ["Dist. Ultra (m)"]:
@@ -1625,8 +1635,8 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
         "score_oportunidade_residual": "Score Residual",
         "quartil_oportunidade_residual": "Quartil Residual",
         "share_ultra_estimado_hex": "Share Ultra",
-        "oferta_consumida_mercado_estimada": "Consumo Mercado",
-        "oferta_consumida_ultra_real": "Ultra Real",
+        "oferta_consumida_mercado_estimada": "Consumo Conc. (est.)",
+        "oferta_consumida_ultra_real": "Consumo Ultra (real)",
         "qualidade_join_uf": "Join",
         "coverage_pct_setor_2022": "Coverage %",
         "motivo_priorizacao": "Motivo",
@@ -1733,6 +1743,142 @@ def render_carteira_e_plano(
         render_plano_expansao(plano, pop_cut_lookup=pop_cut_lookup)
 
 
+def _render_analise_pontual_multihex(
+    search_pin: "tuple[float, float] | None",
+    df: "pd.DataFrame",
+    multihex_ids: "list[str]",
+    *,
+    competitors_df: "pd.DataFrame | None" = None,
+    ultra_df: "pd.DataFrame | None" = None,
+    raio_km: float = 1.6,
+) -> None:
+    """Renders aggregated multi-hex analysis inside Analise Pontual de Entorno.
+
+    Shows KPIs for the full selected set, map with highlighted hexes, and secondary table.
+    search_pin, when present, adds radius reference circle and competitor/Ultra pins.
+    Does not alter score_priorizacao or any official M1 artifact.
+    """
+    agg = agregar_cenario_multihex(df, multihex_ids)
+    n = agg["qtd_hexes"]
+
+    if n == 0:
+        st.info("Nenhum dos hex_ids do cenario foi encontrado no dataset atual.")
+        st.caption(
+            "Adicione hexes validos pelo campo de busca ou pelo botao '+ Incluir hex ativo' acima."
+        )
+        return
+
+    lat_ref: "float | None" = search_pin[0] if search_pin else None
+    lng_ref: "float | None" = search_pin[1] if search_pin else None
+
+    st.markdown(f"**Cenario multi-hex — {n} hex(es) selecionado(s)**")
+    if search_pin is not None:
+        area_km2 = round(3.14159265358979 * raio_km ** 2, 2)
+        st.caption(
+            f"Referencia ativa: `{lat_ref:.5f}, {lng_ref:.5f}` | Raio: {raio_km} km (~{area_km2} km²). "
+            "KPIs abaixo sao dos hexes selecionados no cenario, nao apenas do raio."
+        )
+    else:
+        st.caption(
+            "Sem ponto ativo. KPIs do conjunto de hexes selecionados. "
+            "Clique em um hex ou informe coordenada na sidebar para ativar referencia de raio."
+        )
+    st.caption(
+        "Leitura por centroide H3 res-7: precisao aproximada ~0.5-1 km. "
+        "Nao altera score_priorizacao, carteira, plano ou artefatos do M1."
+    )
+
+    def _fi(v: "float | None") -> str:
+        return format_int(int(v)) if v is not None else "-"
+
+    def _fs(v: "float | None") -> str:
+        return f"{v:.1f}" if v is not None else "-"
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Hexes selecionados", str(n))
+    k2.metric("Habitantes", _fi(agg["pop_total"]))
+    k3.metric("Renda per capita med.", f"R$ {_fi(agg['renda_per_capita_media'])}" if agg["renda_per_capita_media"] is not None else "-")
+    k4.metric("Residual fitness", _fi(agg["residual_total"]))
+
+    k5, k6, k7, k8, k9 = st.columns(5)
+    k5.metric("Consumo concorrentes", _fi(agg["consumo_concorrentes_total"]))
+    k6.metric("Consumo Ultra", _fi(agg["consumo_ultra_total"]))
+    k7.metric("Consumo total instalado", _fi(agg["consumo_total_instalado"]))
+    k8.metric("Presenca Ultra", "Sim" if agg["presenca_ultra"] else "Nao")
+    k9.metric("Concorrentes (hexes)", _fi(agg["n_concorrentes_total"]))
+
+    k9, k10, k11 = st.columns(3)
+    k9.metric("Score M1 med.", _fs(agg["score_m1_medio"]), delta=f"max {_fs(agg['score_m1_max'])}", delta_color="off")
+    k10.metric("Score Residual med.", _fs(agg["score_residual_medio"]), delta=f"max {_fs(agg['score_residual_max'])}", delta_color="off")
+    k11.metric("Score Dominio Hibrido med.", _fs(agg["score_dominio_hibrido_medio"]), delta=f"max {_fs(agg['score_dominio_hibrido_max'])}", delta_color="off")
+
+    multihex_map = build_multihex_analysis_map(
+        multihex_ids,
+        lat=lat_ref,
+        lng=lng_ref,
+        raio_km=raio_km,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+    )
+    if multihex_map is not None:
+        st.pydeck_chart(multihex_map, width="stretch", height=420)
+
+    if search_pin is not None:
+        competitors_raio = filter_points_to_radius(
+            competitors_df, lat_ref, lng_ref, raio_km,
+            required_columns={"rede", "nome_unidade"},
+        )
+        ultra_raio = filter_points_to_radius(
+            ultra_df, lat_ref, lng_ref, raio_km,
+            required_columns={"nome_unidade"},
+        )
+        if not competitors_raio.empty:
+            render_competitor_legend(competitors_raio)
+        if not ultra_raio.empty:
+            render_ultra_legend(ultra_raio)
+
+    if agg["hex_ids_ausentes"]:
+        st.caption(f"hex_ids nao encontrados no recorte atual: {', '.join(agg['hex_ids_ausentes'])}")
+
+    selecionados = agg["hexes_selecionados"]
+    if not selecionados.empty:
+        st.markdown("##### Hexes selecionados")
+        display_cols = {
+            "hex_id": "Hex ID",
+            "nome_municipio": "Municipio",
+            "uf": "UF",
+            "score_priorizacao": "Score M1",
+            "score_setor_2022_calibrado": "Score Censo",
+            "score_oportunidade_residual": "Score Residual",
+            "score_expansao_hibrido": "Score Hibrido",
+            "populacao_proxy": "Pop. proxy",
+            "pop_total_setor_2022": "Pop. setor",
+            "renda_per_capita": "Renda per capita",
+            "oferta_efetiva_disponivel": "Residual (alunos)",
+            "oferta_consumida_mercado_estimada": "Consumo Conc. (est.)",
+            "oferta_consumida_ultra_real": "Consumo Ultra (real)",
+        }
+        cols = [c for c in display_cols if c in selecionados.columns]
+        tbl = selecionados[cols].rename(columns={k: v for k, v in display_cols.items() if k in cols}).copy()
+        for col in ["Score M1", "Score Censo", "Score Residual", "Score Hibrido"]:
+            if col in tbl.columns:
+                tbl[col] = tbl[col].map(lambda v: f"{v:.1f}" if pd.notna(v) else "-")
+        for col in ["Pop. proxy", "Pop. setor", "Residual (alunos)", "Consumo Conc. (est.)", "Consumo Ultra (real)"]:
+            if col in tbl.columns:
+                tbl[col] = tbl[col].map(lambda v: format_int(int(v)) if pd.notna(v) else "-")
+        if "Renda per capita" in tbl.columns:
+            tbl["Renda per capita"] = tbl["Renda per capita"].map(
+                lambda v: f"R$ {format_int(int(v))}" if pd.notna(v) else "-"
+            )
+        st.dataframe(
+            tbl,
+            column_config={"Hex ID": st.column_config.TextColumn("Hex ID", width="large")},
+            width="stretch",
+            hide_index=True,
+            height=min(420, 38 + 35 * len(tbl)),
+        )
+
+
 def render_analise_pontual(
     search_pin: tuple[float, float] | None,
     df: pd.DataFrame,
@@ -1740,13 +1886,28 @@ def render_analise_pontual(
     ultra_df: pd.DataFrame | None = None,
     dominio_df: pd.DataFrame | None = None,
     raio_km: float = 1.6,
+    multihex_ids: list[str] | None = None,
 ) -> None:
-    """Renders the Analise Pontual de Entorno section for a given coordinate.
+    """Renders the Analise Pontual de Entorno section.
 
-    Aggregates hex metrics within raio_km of the point. Does not alter
-    score_priorizacao, carteira, plano or any official M1 artifact.
-    Precision is approximate (centroid-based).
+    When multihex_ids is non-empty, shows aggregated KPIs and map for all selected hexes.
+    search_pin, when present, adds radius circle and competitor/Ultra pins as reference.
+    Falls back to single-point mode when no multi-hex is active.
+    Does not alter score_priorizacao, carteira, plano or any official M1 artifact.
     """
+    _multihex = list(multihex_ids) if multihex_ids else []
+
+    if _multihex:
+        _render_analise_pontual_multihex(
+            search_pin,
+            df,
+            _multihex,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+            raio_km=raio_km,
+        )
+        return
+
     if search_pin is None:
         st.info(
             "Clique em um hexagono no mapa ou digite uma coordenada na barra lateral "
@@ -1783,6 +1944,24 @@ def render_analise_pontual(
     coord_gmaps = f"{lat:.6f},{lng:.6f}"
     st.markdown(f"**Coordenada para Google Maps / GPS:** `{coord_gmaps}`")
 
+    _hex_lookup = lookup_hex_by_coord(lat, lng, df)
+    if _hex_lookup is not None:
+        _hex_id_found = str(_hex_lookup["hex_id"])
+        _id_col, _btn_col = st.columns([5, 3])
+        with _id_col:
+            st.caption("Hex ID do ponto selecionado:")
+            st.code(_hex_id_found, language=None)
+        with _btn_col:
+            if "multihex_cenario" not in st.session_state:
+                st.session_state["multihex_cenario"] = []
+            _cenario_atual = list(st.session_state["multihex_cenario"])
+            if _hex_id_found not in _cenario_atual:
+                if st.button("+ Adicionar ao cenario", key="btn_analise_pontual_add_hex"):
+                    st.session_state["multihex_cenario"] = _cenario_atual + [_hex_id_found]
+            else:
+                if st.button("- Remover do cenario", key="btn_analise_pontual_remove_hex"):
+                    st.session_state["multihex_cenario"] = [h for h in _cenario_atual if h != _hex_id_found]
+
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Hexes no raio", resultado["n_hexes"])
     pop_total = resultado["pop_total_raio"]
@@ -1806,6 +1985,17 @@ def render_analise_pontual(
     k6.metric("Score M1 med.", f"{score_m1:.1f}" if score_m1 is not None else "-")
     k7.metric("Concorrentes no raio", resultado["n_concorrentes"])
     k8.metric("Ultra no raio", resultado["n_ultra"])
+
+    _fmt_int_none = lambda v: format_int(int(v)) if v is not None else "-"
+    consumo_conc = resultado.get("consumo_concorrentes_raio")
+    consumo_ultra_val = resultado.get("consumo_ultra_raio")
+    if consumo_conc is not None or consumo_ultra_val is not None:
+        ka, kb, kc = st.columns(3)
+        ka.metric("Consumo concorrentes", _fmt_int_none(consumo_conc))
+        kb.metric("Consumo Ultra", _fmt_int_none(consumo_ultra_val))
+        consumo_tot = (consumo_conc or 0.0) + (consumo_ultra_val or 0.0)
+        kc.metric("Consumo total instalado", format_int(int(consumo_tot)))
+        st.caption("Consumo fitness instalado: leitura de mercado (alunos estimados ocupando capacidade), nao score oficial.")
 
     hexes_entorno = resultado["hexes_entorno"]
     pontual_map = build_analise_pontual_map(
@@ -1852,6 +2042,8 @@ def render_analise_pontual(
             "score_expansao_hibrido": "Score Hibrido",
             "score_oportunidade_residual": "Score Residual",
             "oferta_efetiva_disponivel": "Residual (alunos)",
+            "oferta_consumida_mercado_estimada": "Consumo Conc. (est.)",
+            "oferta_consumida_ultra_real": "Consumo Ultra (real)",
             "pop_total_raio_hex": "Pop. usada",
             "fonte_pop_total_raio_hex": "Fonte pop.",
             "renda_per_capita_raio_hex": "Renda usada",
@@ -1865,10 +2057,9 @@ def render_analise_pontual(
                 tbl[col] = tbl[col].map(lambda v: f"{v:.1f}" if pd.notna(v) else "-")
         if "Dist. (km)" in tbl.columns:
             tbl["Dist. (km)"] = tbl["Dist. (km)"].map(lambda v: f"{v:.2f}" if pd.notna(v) else "-")
-        if "Residual (alunos)" in tbl.columns:
-            tbl["Residual (alunos)"] = tbl["Residual (alunos)"].map(
-                lambda v: format_int(int(v)) if pd.notna(v) else "-"
-            )
+        for col in ["Residual (alunos)", "Consumo Conc. (est.)", "Consumo Ultra (real)"]:
+            if col in tbl.columns:
+                tbl[col] = tbl[col].map(lambda v: format_int(int(v)) if pd.notna(v) else "-")
         if "Pop. usada" in tbl.columns:
             tbl["Pop. usada"] = tbl["Pop. usada"].map(
                 lambda v: format_int(int(v)) if pd.notna(v) else "-"
@@ -1882,6 +2073,165 @@ def render_analise_pontual(
         st.info(
             f"Nenhum hexagono encontrado no raio de {raio_km} km a partir de "
             f"({lat:.5f}, {lng:.5f}). Tente uma coordenada dentro de uma area urbana mapeada."
+        )
+
+
+def _render_multihex_controls(
+    active_hex_id: "str | None",
+    multihex_ids: "list[str]",
+) -> None:
+    """Renderiza controles do cenario multi-hex: incluir, remover, limpar e colar lista."""
+    st.markdown("##### Cenario Multi-Hex")
+
+    if active_hex_id is not None:
+        st.caption("Hex ativo:")
+        st.code(active_hex_id, language=None)
+
+    btn_col, clear_col, count_col = st.columns([2, 2, 4])
+    with btn_col:
+        if active_hex_id is not None:
+            if active_hex_id not in multihex_ids:
+                if st.button("+ Incluir no cenario", key="btn_multihex_add"):
+                    st.session_state["multihex_cenario"] = multihex_ids + [active_hex_id]
+            else:
+                if st.button("- Remover do cenario", key="btn_multihex_remove"):
+                    st.session_state["multihex_cenario"] = [h for h in multihex_ids if h != active_hex_id]
+        else:
+            st.caption("Selecione um hex no mapa ou via busca para incluir no cenario.")
+    with clear_col:
+        if multihex_ids:
+            if st.button("Limpar cenario", key="btn_multihex_clear"):
+                st.session_state["multihex_cenario"] = []
+    with count_col:
+        st.caption(f"{len(multihex_ids)} hex(es) no cenario")
+
+    with st.expander("Adicionar hexes por ID (colar lista)", expanded=False):
+        paste_raw = st.text_area(
+            "hex_ids (um por linha, ou separados por virgula, ponto e virgula ou espaco):",
+            value="",
+            key="multihex_paste_input",
+            placeholder="87ad...abc\n87be...xyz",
+            height=80,
+        )
+        if st.button("Adicionar lista", key="btn_multihex_paste_add") and paste_raw.strip():
+            parsed = parse_hex_ids_from_text(paste_raw)
+            existing_set = set(st.session_state.get("multihex_cenario", []))
+            new_ids = [h for h in parsed if h not in existing_set]
+            dupes = len(parsed) - len(new_ids)
+            st.session_state["multihex_cenario"] = list(existing_set) + new_ids
+            if new_ids:
+                msg = f"{len(new_ids)} hex(es) adicionado(s)."
+                if dupes:
+                    msg += f" {dupes} duplicado(s) ignorado(s)."
+            elif dupes:
+                msg = f"Nenhum hex novo. {dupes} duplicado(s) ignorado(s)."
+            else:
+                msg = "Nenhum hex_id valido encontrado."
+            st.caption(msg)
+
+    current = list(st.session_state.get("multihex_cenario", []))
+    if current:
+        with st.expander(f"Hexes no cenario ({len(current)})", expanded=len(current) <= 10):
+            for hid in list(current):
+                col_hex, col_btn = st.columns([8, 1])
+                with col_hex:
+                    st.code(hid, language=None)
+                with col_btn:
+                    if st.button("x", key=f"multihex_rem_{hid}"):
+                        st.session_state["multihex_cenario"] = [h for h in st.session_state["multihex_cenario"] if h != hid]
+
+
+def _render_multihex_kpis(df: "pd.DataFrame", multihex_ids: "list[str]") -> None:
+    """Exibe KPIs agregados e tabela dos hexes do cenario multi-hex."""
+    from dashboard.utils import format_int, format_score
+
+    agg = agregar_cenario_multihex(df, multihex_ids)
+    n = agg["qtd_hexes"]
+    if n == 0:
+        st.info("Nenhum dos hex_ids do cenario foi encontrado no dataset atual.")
+        return
+
+    st.markdown(f"**Potencial agregado — {n} hex(es) selecionado(s)**")
+
+    def _fmt_int(v: "float | None") -> str:
+        return format_int(int(v)) if v is not None else "-"
+
+    def _fmt_score(v: "float | None") -> str:
+        return f"{v:.1f}" if v is not None else "-"
+
+    def _fmt_brl(v: "float | None") -> str:
+        return f"R$ {format_int(int(v))}" if v is not None else "-"
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.metric("Habitantes", _fmt_int(agg["pop_total"]))
+    with c2:
+        st.metric("Renda per capita media", _fmt_brl(agg["renda_per_capita_media"]))
+    with c3:
+        st.metric("Residual fitness (alunos)", _fmt_int(agg["residual_total"]))
+
+    c4, c5, c6 = st.columns(3)
+    with c4:
+        st.metric("Consumo concorrentes", _fmt_int(agg["consumo_concorrentes_total"]))
+    with c5:
+        st.metric("Consumo Ultra", _fmt_int(agg["consumo_ultra_total"]))
+    with c6:
+        st.metric("Consumo total instalado", _fmt_int(agg["consumo_total_instalado"]))
+
+    c7, c8, c9 = st.columns(3)
+    with c7:
+        lbl = "Score M1 medio"
+        val = _fmt_score(agg["score_m1_medio"])
+        mx = _fmt_score(agg["score_m1_max"])
+        st.metric(lbl, val, delta=f"max {mx}", delta_color="off")
+    with c8:
+        lbl = "Score Censo medio"
+        val = _fmt_score(agg["score_censo_medio"])
+        mx = _fmt_score(agg["score_censo_max"])
+        st.metric(lbl, val, delta=f"max {mx}", delta_color="off")
+    with c9:
+        lbl = "Score Dominio Hibrido medio"
+        val = _fmt_score(agg["score_dominio_hibrido_medio"])
+        mx = _fmt_score(agg["score_dominio_hibrido_max"])
+        st.metric(lbl, val, delta=f"max {mx}", delta_color="off")
+
+    if agg["hex_ids_ausentes"]:
+        st.caption(f"hex_ids nao encontrados no recorte atual: {', '.join(agg['hex_ids_ausentes'])}")
+
+    # Tabela dos hexes selecionados
+    selecionados = agg["hexes_selecionados"]
+    if not selecionados.empty:
+        display_cols = {
+            "hex_id": "Hex ID",
+            "nome_municipio": "Municipio",
+            "uf": "UF",
+            "score_priorizacao": "Score M1",
+            "score_setor_2022_calibrado": "Score Censo",
+            "score_oportunidade_residual": "Score Residual",
+            "score_expansao_hibrido": "Score Hibrido",
+            "populacao_proxy": "Pop. proxy",
+            "pop_total_setor_2022": "Pop. setor",
+            "renda_per_capita": "Renda per capita",
+            "oferta_efetiva_disponivel": "Residual (alunos)",
+        }
+        cols = [c for c in display_cols if c in selecionados.columns]
+        tbl = selecionados[cols].rename(columns={k: v for k, v in display_cols.items() if k in cols}).copy()
+        for col in ["Score M1", "Score Censo", "Score Residual", "Score Hibrido"]:
+            if col in tbl.columns:
+                tbl[col] = tbl[col].map(lambda v: f"{v:.1f}" if pd.notna(v) else "-")
+        for col in ["Pop. proxy", "Pop. setor", "Residual (alunos)"]:
+            if col in tbl.columns:
+                tbl[col] = tbl[col].map(lambda v: format_int(int(v)) if pd.notna(v) else "-")
+        if "Renda per capita" in tbl.columns:
+            tbl["Renda per capita"] = tbl["Renda per capita"].map(
+                lambda v: f"R$ {format_int(int(v))}" if pd.notna(v) else "-"
+            )
+        st.dataframe(
+            tbl,
+            column_config={"Hex ID": st.column_config.TextColumn("Hex ID", width="large")},
+            width="stretch",
+            hide_index=True,
+            height=min(420, 38 + 35 * len(tbl)),
         )
 
 
@@ -1930,6 +2280,11 @@ def render_mapa_territorial(
 
     Camada visual: nao altera score_priorizacao, carteira, plano nem artefatos oficiais do M1.
     """
+    # Inicializa estado do cenario multi-hex
+    if "multihex_cenario" not in st.session_state:
+        st.session_state["multihex_cenario"] = []
+    multihex_ids: list[str] = list(st.session_state["multihex_cenario"])
+
     st.markdown("#### Mapa Territorial Unificado")
     st.caption(
         "Selecione o modo de cor e os overlays desejados. "
@@ -2002,6 +2357,10 @@ def render_mapa_territorial(
         )
         return
 
+    # Adiciona camada de destaque multi-hex sem alterar cores dos modos existentes
+    if multihex_ids:
+        deck.layers.append(_build_multihex_selection_layer(multihex_ids))
+
     from dashboard.constants import MAP_POINT_LIMIT
     st.caption(build_map_scope_caption(n_points, selected_ufs=selected_ufs, capped=n_points >= MAP_POINT_LIMIT))
     st.caption(
@@ -2029,6 +2388,22 @@ def render_mapa_territorial(
                     "Para coordenada exata, use lat,lng na barra lateral."
                 )
 
+    # --- Cenario Multi-Hex ---
+    # Determina o hex ativo a partir do clique ou da busca por coordenada
+    active_hex_id: "str | None" = None
+    if click_coord is not None:
+        _click_result = lookup_hex_by_coord(*click_coord, df)
+        if _click_result is not None and not _click_result.get("_not_found"):
+            active_hex_id = str(_click_result["hex_id"])
+    elif search_hex_id is not None:
+        active_hex_id = str(search_hex_id)
+
+    st.markdown("---")
+    _render_multihex_controls(active_hex_id, multihex_ids)
+
+    # Re-le estado apos possiveis mutacoes dos botoes
+    multihex_ids = list(st.session_state.get("multihex_cenario", []))
+
     if city_summary is not None:
         st.markdown("---")
         with st.expander("Analise Territorial", expanded=False):
@@ -2048,11 +2423,15 @@ def render_mapa_territorial(
                     search_hex_id=search_hex_id,
                 )
         effective_pin = click_coord or search_pin
-        with st.expander("Analise Pontual de Entorno", expanded=effective_pin is not None):
+        with st.expander(
+            "Analise Pontual de Entorno",
+            expanded=bool(multihex_ids) or effective_pin is not None,
+        ):
             render_analise_pontual(
                 effective_pin,
                 df,
                 competitors_df=competitors_df,
                 ultra_df=ultra_df,
                 dominio_df=dominio_df,
+                multihex_ids=multihex_ids,
             )

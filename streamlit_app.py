@@ -51,12 +51,14 @@ from dashboard.utils import (  # noqa: F401
 )
 from motor_expansao.dashboard.competitors import load_competitor_points, load_ultra_points, preload_logos  # noqa: F401
 from motor_expansao.dashboard.components import (  # noqa: F401
+    _build_multihex_selection_layer,
     _carteira_prioridade_color,
     _category_options,
     _derivar_faixa_hibrida,
     _sort_carteira_by_m1,
     apply_exec_layout,
     build_analise_pontual_map,
+    build_multihex_analysis_map,
     build_business_answers,
     build_dominio_map_figure,
     build_faixa_comparison_figure,
@@ -110,6 +112,7 @@ from motor_expansao.dashboard.data import (  # noqa: F401
     _prepare_dataframe,
     _read_optional_parquet_subset,
     _read_parquet_subset,
+    agregar_cenario_multihex,
     analisar_entorno_ponto,
     apply_global_filters,
     build_city_summary,
@@ -120,9 +123,12 @@ from motor_expansao.dashboard.data import (  # noqa: F401
     haversine_km,
     lookup_hex_by_coord,
     parse_coordinate_input,
+    parse_hex_ids_from_text,
 )
 from motor_expansao.dashboard.pages import (  # noqa: F401
     _extract_click_coord_from_selection,
+    _render_multihex_controls,
+    _render_multihex_kpis,
     inject_styles,
     render_analise_pontual,
     render_analise_territorial,

@@ -82,10 +82,15 @@ score_oficial = score_priorizacao
 - Dashboard funciona offline com Parquets locais em `data/outputs/`.
 - API/FastAPI, PostGIS, Prefect, pipelines pesados, M2/M3, pesquisas e Power BI continuam fora do deploy inicial.
 
-## 5. Ciclo ativo
+## 5. Ciclos concluidos
+- Ciclo `Cenarios Multi-Hex e Dominio Hibrido Censitario-Residual` concluido em 2026-05-21 (Blocos 14-19 do PRD).
 - Ciclo `Hardening da Analise Pontual e Padronizacao Visual de Scores` concluido em 2026-05-20 (Blocos 8-13 do PRD).
 - Ciclo `Visao Executiva Ultra e Analise Pontual` concluido em 2026-05-20 (Blocos 1-7 do PRD).
 - Dashboard tem 4 tabs: `Visao Executiva`, `Mapa Territorial`, `Expansao de Dominio`, `Carteira e Plano`.
+- Multi-Hex (Blocos 14-16.2): `agregar_cenario_multihex` retorna 25 campos; hex_id copiavel via `st.code()`; botao add/remove na Analise Pontual; `parse_hex_ids_from_text` aceita qualquer separador; `column_config TextColumn(width="large")` para hex_id integral.
+- Dominio Hibrido (Bloco 17): `score_dominio_hibrido = clip(0.60*score_setor_2022_calibrado + 0.40*score_oportunidade_residual, 0, 100)` com fallback para componente unico; rastreabilidade via `motivo_dominio`.
+- Consumo fitness (Bloco 18): `Consumo Conc. (est.)`, `Consumo Ultra (real)`, `Consumo Total Instalado` em tooltips, Analise Pontual e tabelas. `analisar_entorno_ponto` retorna `consumo_concorrentes_raio`/`consumo_ultra_raio`.
+- Bloco 19 concluido em 2026-05-21: 497 testes passam, 1 skipped; docs atualizados; ciclo Blocos 14-19 completo.
 - `Visao Executiva`: mapa Ultra-only (sem hexagonos), KPIs de rede, graficos de residual por UF/cidade.
 - `Analise Pontual de Entorno`: raio 1.6 km, helper `analisar_entorno_ponto` em `data.py`; usa centroide de hex/ponto como aproximacao, nao muta inputs, retorna populacao/renda do raio e exibe pins de concorrentes/Ultra filtrados pelo raio.
 - Hardening concluido (Bloco 13): 189 testes passam; ciclo completo em 2026-05-20.

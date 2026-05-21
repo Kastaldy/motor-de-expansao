@@ -414,11 +414,11 @@ def _apply_residual_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
         "SAM fitness: "
         + sam.map(lambda v: format_int(v) if pd.notna(v) else "-")
         + proxy_suffix
-        + " | Consumo mercado: "
+        + " | Consumo concorrentes: "
         + consumo_mercado.map(lambda v: format_int(v) if pd.notna(v) else "-")
     )
     map_df["tooltip_residual_3"] = (
-        "Ultra real: "
+        "Consumo Ultra: "
         + consumo_ultra.map(lambda v: format_int(v) if pd.notna(v) else "-")
         + " | Share Ultra: "
         + (share_ultra * 100).map(format_pct)
@@ -2740,6 +2740,129 @@ def build_analise_pontual_map(
             longitude=lng,
             zoom=12,
             min_zoom=9,
+            max_zoom=16,
+            pitch=0,
+            bearing=0,
+        ),
+        layers=layers,
+    )
+
+
+def _build_multihex_selection_layer(hex_ids: list[str]) -> pdk.Layer:
+    """Layer de destaque (borda laranja) para hexes no cenario multi-hex.
+
+    Nao interfere nas cores dos modos M1/Censitario/Hibrido/Residual/Dominio.
+    Nao altera score_priorizacao nem artefatos oficiais do M1.
+    """
+    return pdk.Layer(
+        "H3HexagonLayer",
+        data=pd.DataFrame({"hex_id": hex_ids}),
+        get_hexagon="hex_id",
+        get_fill_color=[255, 165, 0, 50],
+        get_line_color=[255, 165, 0, 255],
+        filled=True,
+        stroked=True,
+        extruded=False,
+        pickable=False,
+        line_width_min_pixels=3,
+        opacity=0.9,
+    )
+
+
+def build_multihex_analysis_map(
+    hex_ids: list[str],
+    lat: float | None = None,
+    lng: float | None = None,
+    raio_km: float = 1.6,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+) -> pdk.Deck | None:
+    """Map highlighting selected multi-hex hexagons with optional active-point radius.
+
+    When lat/lng provided: adds radius circle, center pin and competitor/Ultra pins within range.
+    Without lat/lng: centers view on the first hex centroid.
+    Does not recalculate or alter score_priorizacao or any official M1 artifact.
+    """
+    if not hex_ids:
+        return None
+
+    layers: list[pdk.Layer] = []
+
+    layers.append(
+        pdk.Layer(
+            "H3HexagonLayer",
+            data=pd.DataFrame({"hex_id": hex_ids}),
+            get_hexagon="hex_id",
+            filled=True,
+            extruded=False,
+            get_fill_color=[255, 165, 0, 110],
+            get_line_color=[255, 165, 0, 255],
+            line_width_min_pixels=3,
+            pickable=False,
+            opacity=0.9,
+        )
+    )
+
+    if lat is not None and lng is not None:
+        raio_m = raio_km * 1000
+        layers.append(
+            pdk.Layer(
+                "ScatterplotLayer",
+                data=[{"lat": lat, "lng": lng}],
+                get_position=["lng", "lat"],
+                get_radius=raio_m,
+                get_fill_color=[255, 165, 0, 18],
+                get_line_color=[255, 165, 0, 140],
+                stroked=True,
+                filled=True,
+                line_width_min_pixels=2,
+                pickable=False,
+            )
+        )
+        layers.append(
+            pdk.Layer(
+                "ScatterplotLayer",
+                data=[{"lat": lat, "lng": lng}],
+                get_position=["lng", "lat"],
+                get_radius=100,
+                get_fill_color=[255, 77, 141, 240],
+                get_line_color=[255, 255, 255, 210],
+                stroked=True,
+                filled=True,
+                line_width_min_pixels=2,
+                pickable=False,
+            )
+        )
+        competitors_raio = filter_points_to_radius(
+            competitors_df, lat, lng, raio_km,
+            required_columns={"rede", "nome_unidade"},
+        )
+        competitor_layer, _ = _build_competitor_icon_layer(competitors_raio, competitors_raio)
+        ultra_raio = filter_points_to_radius(
+            ultra_df, lat, lng, raio_km,
+            required_columns={"nome_unidade"},
+        )
+        ultra_layer = _build_ultra_icon_layer(ultra_raio, ultra_raio)
+        if competitor_layer is not None:
+            layers.append(competitor_layer)
+        if ultra_layer is not None:
+            layers.append(ultra_layer)
+        view_lat, view_lng, view_zoom = lat, lng, 12
+    else:
+        try:
+            import h3
+            cell_lat, cell_lng = h3.cell_to_latlng(hex_ids[0])
+            view_lat, view_lng, view_zoom = cell_lat, cell_lng, 11
+        except Exception:
+            view_lat, view_lng, view_zoom = -15.77, -47.93, 4
+
+    return pdk.Deck(
+        map_style=pdk.map_styles.CARTO_DARK,
+        initial_view_state=pdk.ViewState(
+            latitude=view_lat,
+            longitude=view_lng,
+            zoom=view_zoom,
+            min_zoom=4,
             max_zoom=16,
             pitch=0,
             bearing=0,

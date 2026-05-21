@@ -691,6 +691,8 @@ def analisar_entorno_ponto(
         "n_concorrentes": 0,
         "n_ultra": 0,
         "n_ancoras_dominio": 0,
+        "consumo_concorrentes_raio": None,
+        "consumo_ultra_raio": None,
         "hexes_entorno": pd.DataFrame(),
     }
 
@@ -745,6 +747,14 @@ def analisar_entorno_ponto(
 
         if "oferta_efetiva_disponivel" in nearby.columns:
             result["residual_total"] = float(pd.to_numeric(nearby["oferta_efetiva_disponivel"], errors="coerce").sum())
+        if "oferta_consumida_mercado_estimada" in nearby.columns:
+            s = pd.to_numeric(nearby["oferta_consumida_mercado_estimada"], errors="coerce").dropna()
+            if not s.empty:
+                result["consumo_concorrentes_raio"] = float(s.sum())
+        if "oferta_consumida_ultra_real" in nearby.columns:
+            s = pd.to_numeric(nearby["oferta_consumida_ultra_real"], errors="coerce").dropna()
+            if not s.empty:
+                result["consumo_ultra_raio"] = float(s.sum())
 
         for col, key_med, key_max in [
             ("score_oportunidade_residual", "score_residual_medio", "score_residual_max"),
@@ -769,6 +779,174 @@ def analisar_entorno_ponto(
     result["n_ultra"] = _count_in_radius(ultra_df)
     result["n_ancoras_dominio"] = _count_in_radius(dominio_df)
     return result
+
+
+# ── Multi-hex scenario aggregator ──────────────────────────────────────────
+
+_POP_MULTIHEX_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("pop_total_setor_2022", "setor_2022"),
+    ("populacao_proxy", "populacao_proxy"),
+)
+
+
+def agregar_cenario_multihex(
+    df: pd.DataFrame,
+    hex_ids: list[str],
+) -> dict:
+    """Agrega KPIs de uma lista de hex_ids para cenario multi-hex.
+
+    Funcao pura — nao muta df. Fallback de populacao: pop_total_setor_2022 > populacao_proxy.
+    Retorna dict com metricas agregadas e 'hexes_selecionados' (DataFrame dos hexes filtrados).
+    hex_ids ausentes no df sao registrados em 'hex_ids_ausentes'.
+    """
+    result: dict = {
+        "qtd_hexes": 0,
+        "hex_ids_existentes": [],
+        "hex_ids_ausentes": [],
+        "pop_total": None,
+        "renda_per_capita_media": None,
+        "metodo_renda": "ausente",
+        "residual_total": None,
+        "sam_fitness_total": None,
+        "consumo_concorrentes_total": None,
+        "consumo_ultra_total": None,
+        "consumo_total_instalado": None,
+        "n_concorrentes_total": None,
+        "n_unidades_ultra": None,
+        "presenca_ultra": False,
+        "score_m1_medio": None,
+        "score_m1_max": None,
+        "score_censo_medio": None,
+        "score_censo_max": None,
+        "score_residual_medio": None,
+        "score_residual_max": None,
+        "score_hibrido_medio": None,
+        "score_hibrido_max": None,
+        "score_dominio_hibrido_medio": None,
+        "score_dominio_hibrido_max": None,
+        "hexes_selecionados": pd.DataFrame(),
+    }
+
+    if not hex_ids or df is None or df.empty:
+        return result
+
+    mask = df["hex_id"].isin(hex_ids)
+    selecionados = df.loc[mask].copy()
+
+    presentes = set(selecionados["hex_id"].tolist())
+    result["hex_ids_existentes"] = [h for h in hex_ids if h in presentes]
+    result["hex_ids_ausentes"] = [h for h in hex_ids if h not in presentes]
+    result["qtd_hexes"] = len(selecionados)
+
+    if selecionados.empty:
+        return result
+
+    # --- Populacao ---
+    pop_values, _ = _coalesce_numeric_with_source(selecionados, _POP_MULTIHEX_COLUMNS)
+    valid_pop = pop_values.notna()
+    if valid_pop.any():
+        result["pop_total"] = float(pop_values[valid_pop].sum())
+
+    # --- Renda media ponderada por populacao ---
+    renda_values, _ = _coalesce_numeric_with_source(selecionados, _RENDA_RAIO_COLUMNS)
+    valid_renda = renda_values.notna()
+    weighted_mask = valid_renda & pop_values.gt(0).fillna(False)
+    if weighted_mask.any():
+        result["renda_per_capita_media"] = round(
+            float(np.average(renda_values[weighted_mask], weights=pop_values[weighted_mask])), 2
+        )
+        result["metodo_renda"] = "ponderada_populacao"
+    elif valid_renda.any():
+        result["renda_per_capita_media"] = round(float(renda_values[valid_renda].mean()), 2)
+        result["metodo_renda"] = "media_simples"
+
+    # --- Fitness e residual ---
+    def _soma(col: str) -> float | None:
+        if col not in selecionados.columns:
+            return None
+        s = pd.to_numeric(selecionados[col], errors="coerce").dropna()
+        return float(s.sum()) if not s.empty else None
+
+    result["residual_total"] = _soma("oferta_efetiva_disponivel")
+    result["sam_fitness_total"] = _soma("sam_fitness_potencial")
+    result["consumo_concorrentes_total"] = _soma("oferta_consumida_mercado_estimada")
+    result["consumo_ultra_total"] = _soma("oferta_consumida_ultra_real")
+
+    c = result["consumo_concorrentes_total"]
+    u = result["consumo_ultra_total"]
+    if c is not None or u is not None:
+        result["consumo_total_instalado"] = (c or 0.0) + (u or 0.0)
+
+    result["n_concorrentes_total"] = _soma("n_concorrentes_hex")
+    n_ultra = _soma("n_unidades_ultra_performance_hex")
+    result["n_unidades_ultra"] = n_ultra
+    result["presenca_ultra"] = n_ultra is not None and n_ultra > 0
+
+    # --- Scores (media ponderada por populacao e maximo) ---
+    def _score_stats(col: str) -> tuple[float | None, float | None]:
+        if col not in selecionados.columns:
+            return None, None
+        s = pd.to_numeric(selecionados[col], errors="coerce")
+        valid = s.notna()
+        if not valid.any():
+            return None, None
+        s_v = s[valid]
+        w = pop_values[valid].fillna(0)
+        med = (
+            round(float(np.average(s_v, weights=w)), 2)
+            if w.sum() > 0
+            else round(float(s_v.mean()), 2)
+        )
+        return med, round(float(s_v.max()), 2)
+
+    result["score_m1_medio"], result["score_m1_max"] = _score_stats("score_priorizacao")
+    result["score_censo_medio"], result["score_censo_max"] = _score_stats("score_setor_2022_calibrado")
+    result["score_residual_medio"], result["score_residual_max"] = _score_stats("score_oportunidade_residual")
+    result["score_hibrido_medio"], result["score_hibrido_max"] = _score_stats("score_expansao_hibrido")
+
+    # Dominio hibrido: clip(0.60 * censo + 0.40 * residual, 0, 100) com fallback por componente
+    censo_s = (
+        pd.to_numeric(selecionados["score_setor_2022_calibrado"], errors="coerce")
+        if "score_setor_2022_calibrado" in selecionados.columns
+        else pd.Series(np.nan, index=selecionados.index)
+    )
+    residual_s = (
+        pd.to_numeric(selecionados["score_oportunidade_residual"], errors="coerce")
+        if "score_oportunidade_residual" in selecionados.columns
+        else pd.Series(np.nan, index=selecionados.index)
+    )
+    both = censo_s.notna() & residual_s.notna()
+    only_c = censo_s.notna() & residual_s.isna()
+    only_r = censo_s.isna() & residual_s.notna()
+    dominio_s = pd.Series(np.nan, index=selecionados.index, dtype="float64")
+    if both.any():
+        dominio_s[both] = (0.60 * censo_s[both] + 0.40 * residual_s[both]).clip(0, 100)
+    if only_c.any():
+        dominio_s[only_c] = censo_s[only_c].clip(0, 100)
+    if only_r.any():
+        dominio_s[only_r] = residual_s[only_r].clip(0, 100)
+    valid_d = dominio_s.notna()
+    if valid_d.any():
+        d_v = dominio_s[valid_d]
+        w_d = pop_values[valid_d].fillna(0)
+        med_d = (
+            round(float(np.average(d_v, weights=w_d)), 2)
+            if w_d.sum() > 0
+            else round(float(d_v.mean()), 2)
+        )
+        result["score_dominio_hibrido_medio"] = med_d
+        result["score_dominio_hibrido_max"] = round(float(d_v.max()), 2)
+
+    result["hexes_selecionados"] = selecionados.reset_index(drop=True)
+    return result
+
+
+def parse_hex_ids_from_text(text: str) -> list[str]:
+    """Parse hex_ids from text, accepting newline, comma, semicolon or space as separators."""
+    if not text or not text.strip():
+        return []
+    tokens = re.split(r'[\s,;]+', text.strip())
+    return [t for t in tokens if t]
 
 
 def lookup_hex_by_coord(

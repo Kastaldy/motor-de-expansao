@@ -978,8 +978,8 @@ def test_build_map_figure_adiciona_layer_de_destaque_do_hex_pesquisado():
     assert highlight["tooltip_line_10"] == "Habitantes: 12.345"
     assert highlight["tooltip_line_11"] == "Renda per capita: R$ 6.789"
     assert highlight["tooltip_line_12"] == "Residual fitness: 300 | Score residual: 12.00 | Q3"
-    assert highlight["tooltip_line_13"] == "SAM fitness: 540 | Consumo mercado: 200"
-    assert highlight["tooltip_line_14"] == "Ultra real: 25 | Share Ultra: 11.1%"
+    assert highlight["tooltip_line_13"] == "SAM fitness: 540 | Consumo concorrentes: 200"
+    assert highlight["tooltip_line_14"] == "Consumo Ultra: 25 | Share Ultra: 11.1%"
 
 
 def test_build_map_figure_destaque_hex_aparece_mesmo_fora_dos_filtros():
@@ -1087,7 +1087,7 @@ def test_build_hybrid_map_figure_destaque_hex_usa_tooltip_completo():
     assert highlight["tooltip_line_5"] == "Habitantes: 21.000"
     assert highlight["tooltip_line_6"] == "Renda per capita: R$ 4.500"
     assert highlight["tooltip_line_7"] == "Residual fitness: 650 | Score residual: 26.00 | Q4_maior_residual"
-    assert highlight["tooltip_line_8"] == "SAM fitness: 1.000 | Consumo mercado: 350 | Ultra real: 150 | Share Ultra: 30.0%"
+    assert highlight["tooltip_line_8"] == "SAM fitness: 1.000 | Consumo concorrentes: 350 | Consumo Ultra: 150 | Share Ultra: 30.0%"
 
 
 def test_residual_score_to_color_faixas():
@@ -2568,3 +2568,450 @@ def test_render_analise_pontual_estado_vazio_menciona_fallback_sidebar():
         if c[0]
     ).lower()
     assert "sidebar" in all_text or "barra lateral" in all_text or "lat" in all_text
+
+
+# ── Bloco 16: UI Cenario Multi-Hex ───────────────────────────────────────────
+
+def test_build_multihex_selection_layer_retorna_layer():
+    """_build_multihex_selection_layer deve retornar um pdk.Layer H3HexagonLayer."""
+    import pydeck as pdk
+    layer = streamlit_app._build_multihex_selection_layer(["hex1", "hex2"])
+    assert isinstance(layer, pdk.Layer)
+    assert layer.type == "H3HexagonLayer"
+
+
+def test_build_multihex_selection_layer_lista_vazia():
+    """Layer com lista vazia nao deve lancar excecao."""
+    import pydeck as pdk
+    layer = streamlit_app._build_multihex_selection_layer([])
+    assert isinstance(layer, pdk.Layer)
+
+
+def test_render_multihex_controls_estado_vazio():
+    """_render_multihex_controls com cenario vazio e sem hex ativo deve renderizar sem erro."""
+    import unittest.mock as mock
+
+    with mock.patch("streamlit.markdown"), \
+         mock.patch("streamlit.columns", return_value=[mock.MagicMock(), mock.MagicMock(), mock.MagicMock()]), \
+         mock.patch("streamlit.caption"), \
+         mock.patch("streamlit.button", return_value=False), \
+         mock.patch("streamlit.expander") as exp_mock, \
+         mock.patch("streamlit.session_state", {}):
+        exp_mock.return_value.__enter__ = lambda s: s
+        exp_mock.return_value.__exit__ = mock.MagicMock(return_value=False)
+        streamlit_app._render_multihex_controls(None, [])
+
+
+def test_render_multihex_kpis_sem_hexes_validos():
+    """_render_multihex_kpis com hex_ids ausentes no df deve exibir info."""
+    import unittest.mock as mock
+
+    df = pd.DataFrame([{
+        "hex_id": "h1",
+        "populacao_proxy": 10_000.0,
+        "score_priorizacao": 80.0,
+        "renda_per_capita": 5_000.0,
+    }])
+    with mock.patch("streamlit.info") as info_mock, \
+         mock.patch("streamlit.markdown"), \
+         mock.patch("streamlit.columns", return_value=[mock.MagicMock(), mock.MagicMock(), mock.MagicMock()]), \
+         mock.patch("streamlit.metric"), \
+         mock.patch("streamlit.caption"), \
+         mock.patch("streamlit.dataframe"):
+        streamlit_app._render_multihex_kpis(df, ["hex_inexistente"])
+
+    assert info_mock.called
+
+
+def test_render_multihex_kpis_com_hexes_validos():
+    """_render_multihex_kpis com hexes presentes deve exibir metricas sem erro."""
+    import unittest.mock as mock
+
+    df = pd.DataFrame([
+        {"hex_id": "h1", "populacao_proxy": 10_000.0, "score_priorizacao": 80.0, "renda_per_capita": 5_000.0},
+        {"hex_id": "h2", "populacao_proxy": 5_000.0, "score_priorizacao": 60.0, "renda_per_capita": 4_000.0},
+    ])
+    with mock.patch("streamlit.markdown"), \
+         mock.patch("streamlit.columns", return_value=[mock.MagicMock(), mock.MagicMock(), mock.MagicMock()]), \
+         mock.patch("streamlit.metric") as metric_mock, \
+         mock.patch("streamlit.caption"), \
+         mock.patch("streamlit.dataframe"):
+        streamlit_app._render_multihex_kpis(df, ["h1", "h2"])
+
+    assert metric_mock.called
+
+
+def test_render_multihex_kpis_exportado_via_streamlit_app():
+    """_render_multihex_kpis deve estar acessivel via streamlit_app."""
+    assert hasattr(streamlit_app, "_render_multihex_kpis")
+    assert callable(streamlit_app._render_multihex_kpis)
+
+
+def test_render_multihex_controls_exportado_via_streamlit_app():
+    """_render_multihex_controls deve estar acessivel via streamlit_app."""
+    assert hasattr(streamlit_app, "_render_multihex_controls")
+    assert callable(streamlit_app._render_multihex_controls)
+
+
+# ── Testes do Bloco 16.1: Integrar Multi-Hex ao Mapa da Analise Pontual ──────
+
+def test_build_multihex_analysis_map_retorna_deck_com_layer():
+    """build_multihex_analysis_map com hex_ids deve retornar Deck com layer H3."""
+    import h3
+    import pydeck as pdk
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    deck = streamlit_app.build_multihex_analysis_map([hex_id])
+    assert deck is not None
+    assert isinstance(deck, pdk.Deck)
+    assert len(deck.layers) >= 1
+
+
+def test_build_multihex_analysis_map_lista_vazia_retorna_none():
+    """build_multihex_analysis_map com lista vazia deve retornar None."""
+    assert streamlit_app.build_multihex_analysis_map([]) is None
+
+
+def test_build_multihex_analysis_map_com_coordenada_adiciona_raio():
+    """Com lat/lng, deve adicionar camadas de raio e ponto alem do layer de hexes."""
+    import h3
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    deck_sem_coord = streamlit_app.build_multihex_analysis_map([hex_id])
+    deck_com_coord = streamlit_app.build_multihex_analysis_map([hex_id], lat=lat, lng=lng)
+    assert deck_com_coord is not None
+    assert len(deck_com_coord.layers) > len(deck_sem_coord.layers)
+
+
+def test_render_analise_pontual_com_multihex_exibe_mapa_e_kpis():
+    """render_analise_pontual com multihex_ids deve chamar pydeck_chart e markdown de cabecalho."""
+    import unittest.mock as mock
+    import h3
+
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([{
+        "hex_id": hex_id,
+        "populacao_proxy": 10_000.0,
+        "score_priorizacao": 75.0,
+        "renda_per_capita": 5_000.0,
+        "oferta_efetiva_disponivel": 2_000.0,
+        "lat": lat,
+        "lng": lng,
+    }])
+
+    markdowns = []
+    def _cols(n, *a, **kw):
+        return [mock.MagicMock() for _ in range(n if isinstance(n, int) else len(n))]
+
+    with mock.patch("streamlit.markdown", side_effect=lambda msg, **kw: markdowns.append(str(msg))), \
+         mock.patch("streamlit.caption"), \
+         mock.patch("streamlit.columns", side_effect=_cols), \
+         mock.patch("streamlit.pydeck_chart") as pydeck_mock, \
+         mock.patch("streamlit.dataframe"):
+        streamlit_app.render_analise_pontual(None, df, multihex_ids=[hex_id])
+
+    # mapa renderizado
+    assert pydeck_mock.called
+    # cabecalho menciona multi-hex ou n de hexes
+    all_md = " ".join(markdowns).lower()
+    assert "hex" in all_md or "cenario" in all_md
+
+
+def test_render_analise_pontual_multihex_sem_hexes_validos_exibe_info():
+    """Com multihex_ids inexistentes no df, deve exibir info."""
+    import unittest.mock as mock
+
+    df = pd.DataFrame([{"hex_id": "h1", "populacao_proxy": 1000.0, "score_priorizacao": 50.0}])
+    with mock.patch("streamlit.info") as info_mock, \
+         mock.patch("streamlit.caption"), \
+         mock.patch("streamlit.markdown"):
+        streamlit_app.render_analise_pontual(None, df, multihex_ids=["hex_inexistente"])
+
+    assert info_mock.called
+
+
+def test_render_analise_pontual_multihex_com_coordenada_ativa_mostra_referencia():
+    """Com multihex_ids e search_pin, caption deve mencionar coordenada de referencia."""
+    import unittest.mock as mock
+    import h3
+
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([{
+        "hex_id": hex_id,
+        "populacao_proxy": 5_000.0,
+        "score_priorizacao": 60.0,
+        "renda_per_capita": 4_000.0,
+    }])
+
+    captions = []
+    def _cols(n, *a, **kw):
+        return [mock.MagicMock() for _ in range(n if isinstance(n, int) else len(n))]
+
+    with mock.patch("streamlit.caption", side_effect=lambda msg, **kw: captions.append(str(msg))), \
+         mock.patch("streamlit.markdown"), \
+         mock.patch("streamlit.metric"), \
+         mock.patch("streamlit.columns", side_effect=_cols), \
+         mock.patch("streamlit.pydeck_chart"), \
+         mock.patch("streamlit.dataframe"):
+        streamlit_app.render_analise_pontual((lat, lng), df, multihex_ids=[hex_id])
+
+    all_text = " ".join(captions).lower()
+    assert str(round(lat, 5)) in all_text or "referenc" in all_text or "raio" in all_text
+
+
+def test_render_analise_pontual_sem_multihex_preserva_comportamento_atual():
+    """Sem multihex_ids, render_analise_pontual sem search_pin deve exibir info de instrucao."""
+    import unittest.mock as mock
+
+    df = pd.DataFrame([{"hex_id": "h1", "lat": -23.55, "lng": -46.63, "score_priorizacao": 80.0}])
+    with mock.patch("streamlit.info") as info_mock, mock.patch("streamlit.caption"):
+        streamlit_app.render_analise_pontual(None, df)
+
+    info_mock.assert_called_once()
+
+
+def test_build_multihex_analysis_map_exportado_via_streamlit_app():
+    """build_multihex_analysis_map deve estar acessivel via streamlit_app."""
+    assert hasattr(streamlit_app, "build_multihex_analysis_map")
+    assert callable(streamlit_app.build_multihex_analysis_map)
+
+
+# ── Bloco 16.2: Facilitar Copia e Inclusao de hex_id ─────────────────────────
+
+def test_parse_hex_ids_from_text_separadores_variados():
+    """parse_hex_ids_from_text deve aceitar linha, virgula, ponto-e-virgula e espaco."""
+    from motor_expansao.dashboard.data import parse_hex_ids_from_text
+
+    assert parse_hex_ids_from_text("87abc\n87xyz") == ["87abc", "87xyz"]
+    assert parse_hex_ids_from_text("87abc,87xyz") == ["87abc", "87xyz"]
+    assert parse_hex_ids_from_text("87abc;87xyz") == ["87abc", "87xyz"]
+    assert parse_hex_ids_from_text("87abc 87xyz") == ["87abc", "87xyz"]
+    result = parse_hex_ids_from_text("87abc\n87xyz, 87def;87ghi 87jkl")
+    assert result == ["87abc", "87xyz", "87def", "87ghi", "87jkl"]
+
+
+def test_parse_hex_ids_from_text_texto_vazio():
+    """parse_hex_ids_from_text deve retornar lista vazia para texto vazio ou espacos."""
+    from motor_expansao.dashboard.data import parse_hex_ids_from_text
+
+    assert parse_hex_ids_from_text("") == []
+    assert parse_hex_ids_from_text("   ") == []
+    assert parse_hex_ids_from_text("\n\n") == []
+
+
+def test_parse_hex_ids_from_text_duplicados_count():
+    """Logica de duplicados via parse_hex_ids_from_text deve detectar entradas repetidas."""
+    from motor_expansao.dashboard.data import parse_hex_ids_from_text
+
+    existing = {"hex_a", "hex_b"}
+    parsed = parse_hex_ids_from_text("hex_b\nhex_c\nhex_b")
+    new_ids = [h for h in parsed if h not in existing]
+    dupes = len(parsed) - len(new_ids)
+    assert new_ids == ["hex_c"]
+    assert dupes == 2
+
+
+def test_parse_hex_ids_from_text_exportado_via_streamlit_app():
+    """parse_hex_ids_from_text deve estar acessivel via streamlit_app."""
+    assert hasattr(streamlit_app, "parse_hex_ids_from_text")
+    assert callable(streamlit_app.parse_hex_ids_from_text)
+
+
+def test_render_multihex_controls_exibe_hex_id_ativo_via_code():
+    """_render_multihex_controls com hex ativo deve chamar st.code com o hex_id."""
+    import unittest.mock as mock
+
+    code_calls = []
+
+    def _cols(spec, **kw):
+        n = spec if isinstance(spec, int) else len(spec)
+        return [mock.MagicMock() for _ in range(n)]
+
+    with mock.patch("streamlit.markdown"), \
+         mock.patch("streamlit.button", return_value=False), \
+         mock.patch("streamlit.caption"), \
+         mock.patch("streamlit.code", side_effect=lambda v, **kw: code_calls.append(v)), \
+         mock.patch("streamlit.columns", side_effect=_cols), \
+         mock.patch("streamlit.expander") as exp_mock, \
+         mock.patch("streamlit.text_area", return_value=""):
+        exp_mock.return_value.__enter__ = lambda s: s
+        exp_mock.return_value.__exit__ = mock.MagicMock(return_value=False)
+        streamlit_app._render_multihex_controls("87abc123def456", [])
+
+    assert "87abc123def456" in code_calls
+
+
+def test_render_multihex_paste_com_newlines_aceito():
+    """parse_hex_ids_from_text deve aceitar lista com quebras de linha (simulando colar)."""
+    from motor_expansao.dashboard.data import parse_hex_ids_from_text
+
+    raw = "87hex_a\n87hex_b\n87hex_c"
+    result = parse_hex_ids_from_text(raw)
+    assert len(result) == 3
+    assert result == ["87hex_a", "87hex_b", "87hex_c"]
+
+
+def test_render_analise_pontual_single_point_exibe_hex_id():
+    """render_analise_pontual no modo single-point deve chamar st.code com o hex_id do ponto."""
+    import unittest.mock as mock
+    import h3
+
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([{
+        "hex_id": hex_id, "lat": lat, "lng": lng,
+        "uf": "SP", "cidade": "Sao Paulo", "nome_municipio": "Sao Paulo",
+        "score_priorizacao": 75.0, "renda_per_capita": 4000.0,
+        "populacao_proxy": 10000.0, "rank_brasil": 100,
+    }])
+
+    code_calls = []
+
+    def _cols(spec, **kw):
+        n = spec if isinstance(spec, int) else len(spec)
+        return [mock.MagicMock() for _ in range(n)]
+
+    with mock.patch("streamlit.code", side_effect=lambda v, **kw: code_calls.append(v)), \
+         mock.patch("streamlit.caption"), \
+         mock.patch("streamlit.markdown"), \
+         mock.patch("streamlit.columns", side_effect=_cols), \
+         mock.patch("streamlit.metric"), \
+         mock.patch("streamlit.button", return_value=False), \
+         mock.patch("streamlit.pydeck_chart"), \
+         mock.patch("streamlit.dataframe"), \
+         mock.patch("streamlit.info"):
+        streamlit_app.render_analise_pontual((lat, lng), df)
+
+    assert any(hex_id in str(c) for c in code_calls)
+
+
+def test_render_analise_pontual_single_point_botao_adicionar_ao_cenario():
+    """render_analise_pontual no modo single-point deve chamar st.button para adicionar ao cenario."""
+    import unittest.mock as mock
+    import h3
+
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([{
+        "hex_id": hex_id, "lat": lat, "lng": lng,
+        "uf": "SP", "cidade": "Sao Paulo", "nome_municipio": "Sao Paulo",
+        "score_priorizacao": 75.0, "renda_per_capita": 4000.0,
+        "populacao_proxy": 10000.0, "rank_brasil": 100,
+    }])
+
+    button_labels = []
+
+    def _cols(spec, **kw):
+        n = spec if isinstance(spec, int) else len(spec)
+        return [mock.MagicMock() for _ in range(n)]
+
+    with mock.patch("streamlit.code"), \
+         mock.patch("streamlit.caption"), \
+         mock.patch("streamlit.markdown"), \
+         mock.patch("streamlit.columns", side_effect=_cols), \
+         mock.patch("streamlit.metric"), \
+         mock.patch("streamlit.button", side_effect=lambda label, **kw: button_labels.append(label) or False), \
+         mock.patch("streamlit.pydeck_chart"), \
+         mock.patch("streamlit.dataframe"), \
+         mock.patch("streamlit.info"):
+        streamlit_app.render_analise_pontual((lat, lng), df)
+
+    assert any("cenario" in str(lbl).lower() or "adicionar" in str(lbl).lower() for lbl in button_labels)
+
+
+# ── Testes do Bloco 18: consumo fitness nos detalhes ─────────────────────────
+
+def test_analisar_entorno_ponto_retorna_consumo_quando_colunas_presentes():
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([{
+        "hex_id": "h1", "lat": lat_c, "lng": lng_c,
+        "oferta_efetiva_disponivel": 500.0,
+        "oferta_consumida_mercado_estimada": 1200.0,
+        "oferta_consumida_ultra_real": 300.0,
+    }])
+    result = streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+    assert result["consumo_concorrentes_raio"] == pytest.approx(1200.0)
+    assert result["consumo_ultra_raio"] == pytest.approx(300.0)
+
+
+def test_analisar_entorno_ponto_consumo_none_quando_colunas_ausentes():
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([{
+        "hex_id": "h1", "lat": lat_c, "lng": lng_c,
+        "oferta_efetiva_disponivel": 500.0,
+    }])
+    result = streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+    assert result["consumo_concorrentes_raio"] is None
+    assert result["consumo_ultra_raio"] is None
+
+
+def test_analisar_entorno_ponto_consumo_soma_hexes_no_raio():
+    lat_c, lng_c = -23.5, -46.6
+    df = pd.DataFrame([
+        {
+            "hex_id": "h1", "lat": lat_c, "lng": lng_c,
+            "oferta_consumida_mercado_estimada": 800.0,
+            "oferta_consumida_ultra_real": 200.0,
+        },
+        {
+            "hex_id": "h2", "lat": lat_c + 0.005, "lng": lng_c,
+            "oferta_consumida_mercado_estimada": 400.0,
+            "oferta_consumida_ultra_real": 100.0,
+        },
+        # hex fora do raio
+        {
+            "hex_id": "h3", "lat": lat_c - 0.05, "lng": lng_c,
+            "oferta_consumida_mercado_estimada": 999.0,
+            "oferta_consumida_ultra_real": 999.0,
+        },
+    ])
+    result = streamlit_app.analisar_entorno_ponto(lat_c, lng_c, df, raio_km=1.6)
+    assert result["consumo_concorrentes_raio"] == pytest.approx(1200.0)
+    assert result["consumo_ultra_raio"] == pytest.approx(300.0)
+
+
+def test_render_expansao_dominio_exibe_consumo_quando_colunas_presentes(tmp_path, monkeypatch):
+    from unittest import mock
+    plano = pd.DataFrame([{
+        "rank_dominio_brasil": 1,
+        "rank_dominio_uf": 1,
+        "uf": "SP",
+        "nome_municipio": "Sao Paulo",
+        "cluster_id": "c1",
+        "hex_id": "h_anc",
+        "lat": -23.55,
+        "lng": -46.63,
+        "ordem_expansao_cidade": 1,
+        "score_oportunidade_residual": 70.0,
+        "residual_incremental_capturado": 1500.0,
+        "oferta_efetiva_disponivel": 2000.0,
+        "oferta_consumida_mercado_estimada": 3000.0,
+        "oferta_consumida_ultra_real": 500.0,
+        "tese_dominio": "ancora_isolada",
+        "rank_dominio_cidade": 1,
+    }])
+
+    rendered_dfs = []
+
+    def _cols(spec, **kw):
+        n = spec if isinstance(spec, int) else len(spec)
+        return [mock.MagicMock() for _ in range(n)]
+
+    with mock.patch("streamlit.markdown"), \
+         mock.patch("streamlit.caption"), \
+         mock.patch("streamlit.columns", side_effect=_cols), \
+         mock.patch("streamlit.metric"), \
+         mock.patch("streamlit.multiselect", return_value=[]), \
+         mock.patch("streamlit.info"), \
+         mock.patch("streamlit.pydeck_chart"), \
+         mock.patch("streamlit.dataframe", side_effect=lambda df, **kw: rendered_dfs.append(df)):
+        streamlit_app.render_expansao_dominio(plano)
+
+    assert rendered_dfs, "dataframe nao renderizado"
+    tbl = rendered_dfs[0]
+    assert "Consumo Conc. (est.)" in tbl.columns
+    assert "Consumo Ultra (real)" in tbl.columns
+    assert tbl["Consumo Conc. (est.)"].iloc[0] == "3.000"
+    assert tbl["Consumo Ultra (real)"].iloc[0] == "500"

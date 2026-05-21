@@ -23,6 +23,7 @@ from typing import Optional
 import h3
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[2]
 ENTRADA = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
@@ -37,6 +38,8 @@ DIST_MIN_ULTRA_EXISTENTE_KM = 1.0
 MAX_ANCORAS_POR_CIDADE = 10
 MIN_SCORE_OPORTUNIDADE_RESIDUAL = 20.0
 CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS = 2500
+PESO_CENSO_DOMINIO: float = 0.60
+PESO_RESIDUAL_DOMINIO: float = 0.40
 
 COLS_INPUT = [
     "hex_id", "uf", "cod_municipio", "nome_municipio",
@@ -47,6 +50,7 @@ COLS_INPUT = [
     "pressao_concorrencial_score_2km", "flag_white_space_2km",
     "n_concorrentes_mapeados_2km",
 ]
+_COLS_OPCIONAIS = ["score_setor_2022_calibrado"]
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
@@ -61,10 +65,11 @@ def filtrar_candidatos(
     min_score: float = MIN_SCORE_OPORTUNIDADE_RESIDUAL,
 ) -> pd.DataFrame:
     """Aplica os 6 gates de elegibilidade e retorna candidatos validos."""
+    df = calcular_score_dominio_hibrido(df)
     mask = (
         (df["flag_sam_fitness"] == True)  # noqa: E712
         & (df["oferta_efetiva_disponivel"] > 0)
-        & (df["score_oportunidade_residual"] >= min_score)
+        & (df["score_dominio_hibrido"].fillna(-1) >= min_score)
         & df["lat"].notna()
         & df["lng"].notna()
         & (df["flag_canibalizacao_ultra_1km"] == False)  # noqa: E712
@@ -209,6 +214,55 @@ def classificar_tese_dominio(
 
 
 # =============================================================================
+# 5b. Score hibrido de dominio (censitario + residual)
+# =============================================================================
+
+def calcular_score_dominio_hibrido(df: pd.DataFrame) -> pd.DataFrame:
+    """Calcula score_dominio_hibrido e colunas de rastreabilidade.
+
+    Quando apenas um componente disponivel, usa esse componente com peso 1.0.
+    Nao altera score_priorizacao nem artefatos oficiais do M1.
+    """
+    result = df.copy()
+    censo_s = (
+        pd.to_numeric(result["score_setor_2022_calibrado"], errors="coerce")
+        if "score_setor_2022_calibrado" in result.columns
+        else pd.Series(np.nan, index=result.index, dtype="float64")
+    )
+    residual_s = pd.to_numeric(result["score_oportunidade_residual"], errors="coerce")
+
+    both = censo_s.notna() & residual_s.notna()
+    only_censo = censo_s.notna() & residual_s.isna()
+    only_residual = censo_s.isna() & residual_s.notna()
+
+    score = pd.Series(np.nan, index=result.index, dtype="float64")
+    peso_c = pd.Series(0.0, index=result.index, dtype="float64")
+    peso_r = pd.Series(0.0, index=result.index, dtype="float64")
+    motivo = pd.Series("indisponivel", index=result.index, dtype="object")
+
+    score[both] = (PESO_CENSO_DOMINIO * censo_s[both] + PESO_RESIDUAL_DOMINIO * residual_s[both]).clip(0, 100)
+    peso_c[both] = PESO_CENSO_DOMINIO
+    peso_r[both] = PESO_RESIDUAL_DOMINIO
+    motivo[both] = "censitario+residual"
+
+    score[only_censo] = censo_s[only_censo].clip(0, 100)
+    peso_c[only_censo] = 1.0
+    motivo[only_censo] = "so_censitario"
+
+    score[only_residual] = residual_s[only_residual].clip(0, 100)
+    peso_r[only_residual] = 1.0
+    motivo[only_residual] = "so_residual"
+
+    result["score_dominio_hibrido"] = score.round(2)
+    result["peso_censitario_dominio"] = peso_c
+    result["peso_residual_dominio"] = peso_r
+    result["flag_dominio_por_censo"] = censo_s.notna()
+    result["flag_dominio_por_residual"] = residual_s.fillna(0) > 0
+    result["motivo_dominio"] = motivo
+    return result
+
+
+# =============================================================================
 # 6. Selecao greedy de hexes ancora por cidade
 # =============================================================================
 
@@ -234,7 +288,11 @@ def selecionar_ancoras_greedy(
     n = len(df)
     lats = df["lat"].to_numpy(dtype=float)
     lngs = df["lng"].to_numpy(dtype=float)
-    scores = df["score_oportunidade_residual"].to_numpy(dtype=float)
+    scores = (
+        df["score_dominio_hibrido"].to_numpy(dtype=float)
+        if "score_dominio_hibrido" in df.columns
+        else df["score_oportunidade_residual"].to_numpy(dtype=float)
+    )
 
     # Distancias pairwise (n x n) — O(n²), aceitavel para granularidade hex
     dist_matrix = np.zeros((n, n), dtype=float)
@@ -354,7 +412,9 @@ def carregar_candidatos(
         log.error("Parquet de mercado nao encontrado: %s", ENTRADA)
         sys.exit(1)
 
-    df = pd.read_parquet(ENTRADA, columns=COLS_INPUT)
+    available = set(pq.read_schema(ENTRADA).names)
+    cols = COLS_INPUT + [c for c in _COLS_OPCIONAIS if c in available]
+    df = pd.read_parquet(ENTRADA, columns=cols)
     log.info(
         "Base carregada: %d hexes | %d municipios | %d UFs",
         len(df), df["cod_municipio"].nunique(), df["uf"].nunique(),
@@ -436,6 +496,7 @@ SCHEMA_DOMINIO_OBRIGATORIO: frozenset[str] = frozenset({
     "ordem_expansao_cidade", "residual_incremental_capturado",
     "residual_cluster_pos_acao", "dist_nova_ancora_mais_proxima_m",
     "rank_dominio_brasil", "rank_dominio_uf", "rank_dominio_cidade",
+    "score_dominio_hibrido", "motivo_dominio",
 })
 
 

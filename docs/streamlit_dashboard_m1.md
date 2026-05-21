@@ -55,9 +55,10 @@ Mapa unificado com modos de cor selecionaveis. Mantém todos os modos ativos do 
 - Raio default `1.6 km` (~8.04 km2 = pi*1.6^2); leitura por centroide documentada como aproximada.
 - Mapa com hexes no raio, circulo laranja, ponto central rosa e `IconLayer` para concorrentes/Ultra filtrados por raio quando existirem.
 - KPIs: hexes no raio, populacao, renda per capita media, residual total, score residual medio, score M1 medio, concorrentes e Ultra.
+- Quando colunas de consumo presentes no dataset: exibe `consumo_concorrentes_raio` e `consumo_ultra_raio` agregados dos hexes no raio, mais `consumo total instalado`. Leitura de mercado — nao score oficial.
 - Coordenada copiavel em formato `lat,lng` para Google Maps.
 - Funcao principal: `analisar_entorno_ponto(lat, lng, df, raio_km=1.6)` em `data.py`; nao muta os DataFrames de entrada.
-- Tabela de entorno exibe populacao/renda usadas por hex; sem concorrentes ou Ultra no raio, o app mostra estado vazio discreto.
+- Tabela de entorno exibe populacao/renda usadas por hex e colunas de consumo fitness quando presentes; sem concorrentes ou Ultra no raio, o app mostra estado vazio discreto.
 
 **Captura por clique — decisao tecnica (Bloco 12 concluido):**
 - `st.pydeck_chart(..., on_select="rerun", key="main_unified_map")` captura selecao de objeto de camada.
@@ -67,17 +68,35 @@ Mapa unificado com modos de cor selecionaveis. Mantém todos os modos ativos do 
 - Nota visual exibida quando clique ativo: `"centroide do hex selecionado. Para coordenada exata, use lat,lng na barra lateral."`.
 - Fallback: campo `lat,lng` na sidebar permanece o caminho padrao para precisao exata.
 
+**Cenario Multi-Hex (Bloco 14+):**
+- Selecao multi-hex e estado de UI/session_state; nao altera artefatos M1.
+- Usuario adiciona/remove hexes via clique ou cola de lista de `hex_id`; hexes selecionados recebem camada visual propria sem mudar cores dos modos M1/Censitario/Hibrido/Residual/Dominio.
+- Agregacoes do cenario:
+  - `populacao`: soma de `pop_total_setor_2022` (fallback `populacao_proxy`).
+  - `renda per capita`: media ponderada por populacao.
+  - `residual` (`oferta_efetiva_disponivel`): soma.
+  - consumo fitness instalado (concorrentes, Ultra, total): soma quando colunas presentes.
+  - `n_concorrentes_hex`: soma; presenca Ultra: OR sobre os hexes.
+  - scores (M1, censitario, hibrido, residual, dominio): media ponderada por populacao; maximo exibido quando util para tese.
+- Colunas de consumo consultadas quando presentes: `oferta_consumida_mercado_estimada`, `oferta_consumida_ultra_real`, `oferta_consumida_total_estimada`, `n_concorrentes_hex`, `flag_canibalizacao_ultra_1km`.
+- Quando coluna ausente no artefato, exibir `-` sem quebrar o app.
+
 ---
 
 ## Expansao de Dominio
 
-Visualizacao das ancoras de expansao sequencial com mapa H3 de tese e ordem.
+Visualizacao das ancoras de expansao sequencial com mapa H3 de tese e ordem. Tabela inclui `Consumo Conc. (est.)` e `Consumo Ultra (real)` quando colunas presentes no artefato — leitura de mercado, nao score oficial.
 
 ---
 
 ## Carteira e Plano
 
-Tabelas operacionais filtradas pela regua <5k hab. Ordenacao por `rank_brasil` (M1) seguida de hibrido.
+Tabelas operacionais filtradas pela regua <5k hab. Ordenacao por `rank_brasil` (M1) seguida de hibrido. Colunas `Consumo Conc. (est.)` e `Consumo Ultra (real)` aparecem quando presentes no artefato — leitura de mercado, nao score oficial.
+
+**Semantica padrao de consumo fitness:**
+- `Consumo Conc. (est.)` = `oferta_consumida_mercado_estimada`: alunos estimados em concorrentes no hex (estimativa de demanda ocupada).
+- `Consumo Ultra (real)` = `oferta_consumida_ultra_real`: alunos reais nas unidades Ultra no hex.
+- `Consumo Total Instalado` = soma dos dois acima; exibido nos KPIs agregados do cenario multi-hex e na analise pontual.
 
 ---
 
@@ -135,5 +154,7 @@ Tabelas operacionais filtradas pela regua <5k hab. Ordenacao por `rank_brasil` (
 
 1. Clique no mapa funciona apenas em objetos de camada; espaco vazio nao dispara evento.
 2. Botao direito nao e suportado pelo `st.pydeck_chart`.
-3. Analise pontual usa centroides de hexes H3 como proxy de localizacao; sem geometrias de setor/rua, a leitura e aproximada.
+3. Analise pontual e selecao multi-hex usam centroides de hexes H3 como proxy de localizacao; sem geometrias de setor/rua, a leitura e aproximada.
 4. Sem as camadas hibrido/censitario, modos `hibrido`, `censitario` e `residual` exibem aviso de indisponibilidade.
+5. Colunas de consumo fitness (`oferta_consumida_mercado_estimada`, `oferta_consumida_ultra_real`) e dominio hibrido (`score_setor_2022_calibrado`) sao opcionais por artefato; exibem `-` quando ausentes no Parquet carregado.
+6. Cobertura censitaria parcial: UFs com `qualidade_join_uf=C` (AM, RR e outras) sao filtradas pelo modelo hibrido; score censitario nao disponivel para esses hexes.

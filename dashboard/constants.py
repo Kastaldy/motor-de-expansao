@@ -229,6 +229,7 @@ DOMINIO_SCHEMA_MINIMO: frozenset[str] = frozenset({
     "ordem_expansao_cidade", "residual_incremental_capturado",
     "residual_cluster_pos_acao", "dist_nova_ancora_mais_proxima_m",
     "rank_dominio_brasil", "rank_dominio_uf", "rank_dominio_cidade",
+    "score_dominio_hibrido", "motivo_dominio",
 })
 DOMINIO_TESES_VALIDAS: frozenset[str] = frozenset({
     "dominar_white_space", "abrir_com_disputa", "proteger_corredor_ultra",

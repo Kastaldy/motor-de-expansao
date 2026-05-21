@@ -3,7 +3,7 @@
 Base territorial do MVP nacional do `motor-de-expansao`.
 
 O contrato canonico do projeto esta em `CLAUDE.md`; detalhes do ciclo ativo ficam em `PRD.md`.
-O dashboard Streamlit esta estabilizado (ciclo Blocos 1-13 concluido em 2026-05-20): Visao Executiva Ultra-only, Analise Pontual de Entorno com populacao/renda/pins de concorrentes, regua visual 10-em-10 para M1/Censitario/Hibrido/Residual, e captura por clique com centroide de hex. Roda offline com Parquets locais, sem API ao vivo, sem PostGIS obrigatorio e sem recalculo do M1 no deploy inicial.
+O dashboard Streamlit esta estabilizado (ciclos Blocos 1-19 concluidos em 2026-05-21): Visao Executiva Ultra-only, Analise Pontual de Entorno com populacao/renda/pins de concorrentes, Cenario Multi-Hex com agregacao de potencial regional, Expansao de Dominio por score hibrido censitario-residual, consumo fitness instalado em todo o app, regua visual 10-em-10 para M1/Censitario/Hibrido/Residual, e captura por clique com centroide de hex. Roda offline com Parquets locais, sem API ao vivo, sem PostGIS obrigatorio e sem recalculo do M1 no deploy inicial.
 
 ## Quickstart local
 

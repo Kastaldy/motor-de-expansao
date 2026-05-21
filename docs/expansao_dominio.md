@@ -1,5 +1,5 @@
 # Expansao de Dominio — Contrato Tecnico
-> Versao: 2026-05-18 | Ciclo: Expansao de Dominio
+> Versao: 2026-05-21 | Ciclo: Cenarios Multi-Hex e Dominio Hibrido (concluido)
 > Feature paralela ao M1: nao substitui score_priorizacao, carteira nem plano curto prazo.
 
 ## 1. Posicionamento
@@ -53,7 +53,7 @@ CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS = 2500
 Um hex entra na base de candidatos apenas se:
 1. `flag_sam_fitness == True`
 2. `oferta_efetiva_disponivel > 0`
-3. `score_oportunidade_residual >= MIN_SCORE_OPORTUNIDADE_RESIDUAL`
+3. `score_dominio_hibrido >= MIN_SCORE_OPORTUNIDADE_RESIDUAL` (Bloco 17: gate migrou de `score_oportunidade_residual` isolado para `score_dominio_hibrido`; permite entrada por qualidade censitaria mesmo com residual baixo)
 4. `lat` e `lng` nao nulos
 5. `flag_canibalizacao_ultra_1km == False`
 6. Coordenadas geograficamente validas (lat em [-90,90], lng em [-180,180])
@@ -90,6 +90,14 @@ Um hex entra na base de candidatos apenas se:
 | `n_concorrentes_mapeados_2km` | int | Concorrentes mapeados em 2 km |
 | `dist_ultra_mais_proxima_m` | float | Distancia a Ultra existente mais proxima (m) |
 | `flag_canibalizacao_ultra_1km` | bool | Flag de canibalizacao Ultra em 1 km |
+| `score_dominio_hibrido` | float | `clip(0.60*score_setor_2022_calibrado + 0.40*score_oportunidade_residual, 0, 100)`; score principal de gate e desempate (Bloco 17) |
+| `peso_censitario_dominio` | float | `0.60` quando `score_setor_2022_calibrado` disponivel; `0.0` senao |
+| `peso_residual_dominio` | float | `0.40` quando `score_oportunidade_residual` disponivel; `0.0` senao |
+| `flag_dominio_por_censo` | bool | `True` quando `score_setor_2022_calibrado` presente e elegivel |
+| `flag_dominio_por_residual` | bool | `True` quando `score_oportunidade_residual > 0` |
+| `motivo_dominio` | str | `censitario+residual`, `so_censitario`, `so_residual` ou `indisponivel` |
+| `oferta_consumida_mercado_estimada` | float | Consumo estimado por concorrentes no hex (quando presente no input) |
+| `oferta_consumida_ultra_real` | float | Consumo real pelas unidades Ultra no hex (quando presente no input) |
 
 ## 6. Teses de dominio
 
@@ -123,3 +131,41 @@ Um hex entra na base de candidatos apenas se:
 - `SCHEMA_DOMINIO_OBRIGATORIO` no pipeline e `DOMINIO_SCHEMA_MINIMO` em `constants.py` sao identicos por design — teste unitario valida a igualdade.
 - **Guardrail M1**: testes unitarios verificam que `SAIDA_PARQUET` e `SAIDA_CSV` nao apontam para paths de artefatos M1; testes de integracao (condicionais) verificam que `carteira` e `plano_cp` contem `score_priorizacao` intacto apos execucao do pipeline.
 - **Conflito de nomes pytest**: adicionados `__init__.py` a `tests/unit/`, `tests/integration/` e `tests/contracts/` para resolver colisao de modulos de mesmo nome.
+
+## 10. Score de Dominio Hibrido Censitario-Residual
+
+Score operacional que combina qualidade censitaria com residual de mercado para sequenciamento de abertura.
+
+### Formula canonica
+
+```python
+score_dominio_hibrido = clip(
+    0.60 * score_setor_2022_calibrado + 0.40 * score_oportunidade_residual,
+    0, 100
+)
+```
+
+Pesos aprovados: `censitario=0.60`, `residual=0.40`.
+
+### Colunas de rastreabilidade e fallback
+
+| coluna | tipo | regra |
+| --- | --- | --- |
+| `score_dominio_hibrido` | float | formula acima; `null` quando ambos os componentes ausentes |
+| `peso_censitario_dominio` | float | `0.60` quando `score_setor_2022_calibrado` disponivel; `0.0` senao |
+| `peso_residual_dominio` | float | `0.40` quando `score_oportunidade_residual` disponivel; `0.0` senao |
+| `flag_dominio_por_censo` | bool | `True` quando `score_setor_2022_calibrado` presente e elegivel |
+| `flag_dominio_por_residual` | bool | `True` quando `score_oportunidade_residual > 0` |
+| `motivo_dominio` | string | `censitario+residual`, `so_censitario`, `so_residual` ou `indisponivel` |
+
+Quando apenas um componente estiver disponivel, os pesos sao redistribuidos para esse componente (score inteiro). `motivo_dominio` registra a fonte usada.
+
+### Elegibilidade pelo score hibrido
+
+Um hex com alto score censitario e baixo residual pode ser elegivel ao dominio — isso e intencional para captura preemptiva em regioes de qualidade demografica alta antes que concorrentes cheguem.
+
+### Guardrail
+
+- `score_dominio_hibrido` **nao substitui** `score_priorizacao` nem altera ranking oficial M1.
+- E um score operacional paralelo para sequenciamento de abertura na Expansao de Dominio.
+- Nenhuma mudanca de pesos entra em producao sem aprovacao explicita e registro neste documento.

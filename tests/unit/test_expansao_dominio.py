@@ -10,11 +10,14 @@ import pandas as pd
 import pytest
 
 from jobs.pipelines.gerar_plano_expansao_dominio import (
+    PESO_CENSO_DOMINIO,
+    PESO_RESIDUAL_DOMINIO,
     SAIDA_CSV,
     SAIDA_PARQUET,
     SCHEMA_DOMINIO_OBRIGATORIO,
     _haversine_m,
     calcular_metricas_cluster,
+    calcular_score_dominio_hibrido,
     classificar_tese_dominio,
     construir_clusters,
     filtrar_candidatos,
@@ -81,6 +84,77 @@ def _row(
 
 def _df(*rows) -> pd.DataFrame:
     return pd.DataFrame(list(rows))
+
+
+# =============================================================================
+# calcular_score_dominio_hibrido
+# =============================================================================
+
+class TestCalcularScoreDominioHibrido:
+    def _df_ambos(self, censo=70.0, residual=50.0) -> pd.DataFrame:
+        return pd.DataFrame([_row(
+            score_oportunidade_residual=residual,
+            score_setor_2022_calibrado=censo,
+        )])
+
+    def _df_sem_censo(self, residual=50.0) -> pd.DataFrame:
+        return pd.DataFrame([_row(score_oportunidade_residual=residual)])
+
+    def test_colunas_rastreabilidade_presentes(self):
+        result = calcular_score_dominio_hibrido(self._df_ambos())
+        for col in [
+            "score_dominio_hibrido", "peso_censitario_dominio", "peso_residual_dominio",
+            "flag_dominio_por_censo", "flag_dominio_por_residual", "motivo_dominio",
+        ]:
+            assert col in result.columns, f"coluna ausente: {col}"
+
+    def test_formula_ambos_componentes(self):
+        result = calcular_score_dominio_hibrido(self._df_ambos(censo=80.0, residual=60.0))
+        esperado = round(PESO_CENSO_DOMINIO * 80.0 + PESO_RESIDUAL_DOMINIO * 60.0, 2)
+        assert float(result["score_dominio_hibrido"].iloc[0]) == pytest.approx(esperado)
+
+    def test_motivo_ambos_componentes(self):
+        result = calcular_score_dominio_hibrido(self._df_ambos())
+        assert result["motivo_dominio"].iloc[0] == "censitario+residual"
+
+    def test_pesos_ambos_componentes(self):
+        result = calcular_score_dominio_hibrido(self._df_ambos())
+        assert float(result["peso_censitario_dominio"].iloc[0]) == pytest.approx(PESO_CENSO_DOMINIO)
+        assert float(result["peso_residual_dominio"].iloc[0]) == pytest.approx(PESO_RESIDUAL_DOMINIO)
+
+    def test_fallback_so_residual_sem_coluna_censo(self):
+        result = calcular_score_dominio_hibrido(self._df_sem_censo(residual=45.0))
+        assert float(result["score_dominio_hibrido"].iloc[0]) == pytest.approx(45.0)
+        assert result["motivo_dominio"].iloc[0] == "so_residual"
+        assert float(result["peso_residual_dominio"].iloc[0]) == pytest.approx(1.0)
+        assert float(result["peso_censitario_dominio"].iloc[0]) == pytest.approx(0.0)
+
+    def test_clipping_nao_ultrapassa_100(self):
+        result = calcular_score_dominio_hibrido(self._df_ambos(censo=100.0, residual=100.0))
+        assert float(result["score_dominio_hibrido"].iloc[0]) <= 100.0
+
+    def test_clipping_nao_negativo(self):
+        result = calcular_score_dominio_hibrido(self._df_ambos(censo=0.0, residual=0.0))
+        assert float(result["score_dominio_hibrido"].iloc[0]) >= 0.0
+
+    def test_nao_altera_score_priorizacao(self):
+        df = pd.DataFrame([_row(score_oportunidade_residual=50.0, score_priorizacao=88.0)])
+        result = calcular_score_dominio_hibrido(df)
+        assert float(result["score_priorizacao"].iloc[0]) == pytest.approx(88.0)
+
+    def test_flag_dominio_por_censo_verdadeiro_quando_censo_presente(self):
+        result = calcular_score_dominio_hibrido(self._df_ambos())
+        assert bool(result["flag_dominio_por_censo"].iloc[0]) is True
+
+    def test_flag_dominio_por_censo_falso_sem_coluna_censo(self):
+        result = calcular_score_dominio_hibrido(self._df_sem_censo())
+        assert bool(result["flag_dominio_por_censo"].iloc[0]) is False
+
+    def test_nao_muta_dataframe_original(self):
+        df = self._df_ambos()
+        cols_antes = set(df.columns)
+        calcular_score_dominio_hibrido(df)
+        assert set(df.columns) == cols_antes
 
 
 # =============================================================================
