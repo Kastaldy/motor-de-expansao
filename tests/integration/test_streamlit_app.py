@@ -1749,6 +1749,59 @@ def test_map_point_limit_respeitado_no_mapa_hibrido():
     assert n <= MAP_POINT_LIMIT
 
 
+def test_downsample_map_index_respeita_cap_dedup_e_ordem():
+    """O helper deve ordenar pela chave, deduplicar opcionalmente e respeitar o cap."""
+    from motor_expansao.dashboard.components import _downsample_map_index
+
+    key = pd.DataFrame(
+        {
+            "hex_id": ["a", "a", "b", "c", "d"],
+            "score": [10.0, 10.0, 50.0, 30.0, 20.0],
+        }
+    )
+    idx_sem_dedup = _downsample_map_index(key, sort_columns=["score"], ascending=[False], limit=3)
+    assert key.loc[idx_sem_dedup, "hex_id"].tolist() == ["b", "c", "d"]
+
+    idx_dedup = _downsample_map_index(
+        key, sort_columns=["score"], ascending=[False], limit=10, dedup_column="hex_id"
+    )
+    assert key.loc[idx_dedup, "hex_id"].tolist() == ["b", "c", "d", "a"]
+
+
+def test_build_map_figure_downsample_mantem_exatamente_o_top_por_prioridade():
+    """O downsample antes do cap deve manter os mesmos top-MAP_POINT_LIMIT hexes
+    por prioridade do fluxo anterior (sem regressao no cap)."""
+    from dashboard.constants import MAP_POINT_LIMIT, MAP_SORT_ASCENDING, MAP_SORT_COLUMNS
+
+    extra = 40
+    total = MAP_POINT_LIMIT + extra
+    rows = [
+        _hex_row(
+            f"sp_{i:06d}",
+            -23.55 + i * 0.0005,
+            -46.63 + i * 0.0005,
+            # score decrescente: as primeiras linhas tem maior prioridade
+            score_priorizacao=float(total - i),
+        )
+        for i in range(total)
+    ]
+    df = pd.DataFrame(rows)
+    assert df["hex_id"].nunique() == total
+
+    deck, n = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+    assert deck is not None
+    assert n == MAP_POINT_LIMIT
+
+    rendered = set(pd.DataFrame(deck.layers[0].data)["hex_id"])
+    sort_cols = [c for c in MAP_SORT_COLUMNS if c in df.columns]
+    asc = [MAP_SORT_ASCENDING[MAP_SORT_COLUMNS.index(c)] for c in sort_cols]
+    expected_top = set(
+        df.sort_values(sort_cols, ascending=asc, kind="stable")
+        .head(MAP_POINT_LIMIT)["hex_id"]
+    )
+    assert rendered == expected_top
+
+
 def test_build_ultra_presence_map_retorna_none_sem_dados():
     deck, n = streamlit_app.build_ultra_presence_map(
         None, selected_ufs=[], selected_cities=[]
@@ -3015,3 +3068,178 @@ def test_render_expansao_dominio_exibe_consumo_quando_colunas_presentes(tmp_path
     assert "Consumo Ultra (real)" in tbl.columns
     assert tbl["Consumo Conc. (est.)"].iloc[0] == "3.000"
     assert tbl["Consumo Ultra (real)"].iloc[0] == "500"
+
+
+# ── Testes do Bloco 4: carga lazy por UF ──
+
+def _build_lazy_partitions(base_dir: Path) -> Path:
+    """Materializa um dataset enriquecido particionado sintetico (SP, RJ)."""
+    from motor_expansao.pipelines.m1.fase1_bi_exports import write_enriched_dashboard_partitioned
+
+    rows = [
+        ("hSP1", "SP", "Sao Paulo", 1),
+        ("hSP2", "SP", "Campinas", 2),
+        ("hRJ1", "RJ", "Rio de Janeiro", 3),
+    ]
+    records = [
+        {
+            "hex_id": hex_id, "lat": -23.5 - i, "lng": -46.6 - i,
+            "uf": uf, "cidade": cidade, "regiao": "SE",
+            "score_priorizacao": 90.0 - i, "hex_score_estrutural": 86.0 - i,
+            "ajuste_executivo": 4.0, "faixa_oportunidade": "alta",
+            "flag_viavel": True, "flag_prioridade": True,
+            "rank_brasil": rank, "rank_uf": 1, "rank_cidade": 1,
+            "renda_per_capita": 5200.0, "populacao_proxy": 16000.0,
+        }
+        for i, (hex_id, uf, cidade, rank) in enumerate(rows)
+    ]
+    base = streamlit_app._prepare_dataframe(pd.DataFrame(records)[REQUIRED_COLUMNS])
+    enriched = streamlit_app.enrich_dashboard_data(base, pd.DataFrame(), pd.DataFrame())
+    out = base_dir / "enriquecido_lazy"
+    write_enriched_dashboard_partitioned(enriched, base_dir=out)
+    return out
+
+
+def test_list_partitioned_ufs_lista_e_vazio(tmp_path):
+    out = _build_lazy_partitions(tmp_path)
+    assert streamlit_app.list_partitioned_ufs(out) == ["RJ", "SP"]
+    assert streamlit_app.list_partitioned_ufs(tmp_path / "nao_existe") == []
+
+
+def test_read_enriched_uf_partition_le_apenas_uf(tmp_path):
+    out = _build_lazy_partitions(tmp_path)
+    sp = streamlit_app.read_enriched_uf_partition(out, "SP")
+    assert not sp.empty
+    assert set(sp["uf"].astype(str).unique()) == {"SP"}
+    assert len(sp) == 2
+    assert "UF" in sp.columns and "score_exibicao" in sp.columns
+    # particao inexistente -> frame vazio (sem erro)
+    assert streamlit_app.read_enriched_uf_partition(out, "MG").empty
+
+
+def test_load_uf_catalog_usa_particoes(tmp_path, monkeypatch):
+    out = _build_lazy_partitions(tmp_path)
+    monkeypatch.setattr(streamlit_app, "ENRIQUECIDO_DIR", out)
+    streamlit_app.load_uf_catalog.clear()
+    assert streamlit_app.load_uf_catalog() == ["RJ", "SP"]
+
+
+def test_load_uf_catalog_fallback_parquet_oficial(local_tmp_dir, monkeypatch):
+    path = _write_dashboard_parquet(
+        local_tmp_dir,
+        [
+            {"hex_id": "a", "lat": -23.55, "lng": -46.63, "uf": "SP", "cidade": "Sao Paulo",
+             "regiao": "SE", "score_priorizacao": 80.0, "hex_score_estrutural": 76.0,
+             "ajuste_executivo": 4.0, "faixa_oportunidade": "alta", "flag_viavel": True,
+             "flag_prioridade": True, "rank_brasil": 1, "rank_uf": 1, "rank_cidade": 1,
+             "renda_per_capita": 5200.0, "populacao_proxy": 16000.0},
+            {"hex_id": "b", "lat": -22.91, "lng": -43.17, "uf": "RJ", "cidade": "Rio de Janeiro",
+             "regiao": "SE", "score_priorizacao": 70.0, "hex_score_estrutural": 66.0,
+             "ajuste_executivo": 4.0, "faixa_oportunidade": "alta", "flag_viavel": True,
+             "flag_prioridade": True, "rank_brasil": 2, "rank_uf": 1, "rank_cidade": 1,
+             "renda_per_capita": 4800.0, "populacao_proxy": 12000.0},
+        ],
+    )
+    monkeypatch.setattr(streamlit_app, "ENRIQUECIDO_DIR", local_tmp_dir / "sem_particoes")
+    monkeypatch.setattr(streamlit_app, "DATASET_PATH", path)
+    streamlit_app.load_uf_catalog.clear()
+    assert streamlit_app.load_uf_catalog() == ["RJ", "SP"]
+
+
+def test_load_uf_slice_le_so_a_particao(tmp_path, monkeypatch):
+    out = _build_lazy_partitions(tmp_path)
+    monkeypatch.setattr(streamlit_app, "ENRIQUECIDO_DIR", out)
+    streamlit_app.load_uf_slice.clear()
+    sp = streamlit_app.load_uf_slice("SP")
+    assert set(sp["uf"].astype(str).unique()) == {"SP"}
+    assert len(sp) == 2
+
+
+# ── Performance Bloco 5: render lazy das abas ────────────────────────────────
+
+def test_render_tab_selector_e_exportado():
+    assert hasattr(streamlit_app, "render_tab_selector")
+    assert callable(streamlit_app.render_tab_selector)
+    assert streamlit_app.DASHBOARD_TAB_LABELS == [
+        "Visao Executiva",
+        "Mapa Territorial",
+        "Expansao de Dominio",
+        "Carteira e Plano",
+    ]
+
+
+def test_render_tab_selector_retorna_aba_ativa():
+    """O seletor devolve a aba escolhida no segmented_control."""
+    import unittest.mock as mock
+
+    with (
+        mock.patch("streamlit.segmented_control", return_value="Mapa Territorial"),
+        mock.patch("streamlit.session_state", {}),
+    ):
+        result = streamlit_app.render_tab_selector()
+
+    assert result == "Mapa Territorial"
+
+
+def test_render_tab_selector_fallback_quando_desmarcado():
+    """Quando segmented_control devolve None (desmarcado), mantem a ultima aba ou o default."""
+    import unittest.mock as mock
+
+    # Sem ultima aba registrada -> cai para o primeiro label.
+    with (
+        mock.patch("streamlit.segmented_control", return_value=None),
+        mock.patch("streamlit.session_state", {}),
+    ):
+        result = streamlit_app.render_tab_selector()
+    assert result == "Visao Executiva"
+
+    # Com ultima aba registrada -> preserva a aba previa.
+    with (
+        mock.patch("streamlit.segmented_control", return_value=None),
+        mock.patch("streamlit.session_state", {"dashboard_active_tab_last": "Carteira e Plano"}),
+    ):
+        result = streamlit_app.render_tab_selector()
+    assert result == "Carteira e Plano"
+
+
+def test_main_renderiza_apenas_a_aba_ativa(tmp_path, monkeypatch):
+    """main() deve chamar somente o render_* da aba ativa, nao das outras tres."""
+    import unittest.mock as mock
+
+    out = _build_lazy_partitions(tmp_path)
+    monkeypatch.setattr(streamlit_app, "ENRIQUECIDO_DIR", out)
+    streamlit_app.load_uf_catalog.clear()
+    streamlit_app.load_uf_slice.clear()
+
+    empty = pd.DataFrame()
+    with (
+        mock.patch("streamlit.session_state", {}),
+        mock.patch.object(streamlit_app, "inject_styles"),
+        mock.patch.object(streamlit_app, "render_header"),
+        mock.patch.object(streamlit_app, "render_uf_selectbox", return_value="SP"),
+        mock.patch.object(streamlit_app, "render_sidebar_filters",
+                          return_value=([], [], [], [], [], [], False, False)),
+        mock.patch.object(streamlit_app, "render_coord_search_sidebar", return_value=None),
+        mock.patch.object(streamlit_app, "render_tab_selector", return_value="Expansao de Dominio"),
+        mock.patch.object(streamlit_app, "load_carteira", return_value=empty),
+        mock.patch.object(streamlit_app, "load_plano", return_value=empty),
+        mock.patch.object(streamlit_app, "load_plano_dominio", return_value=empty),
+        mock.patch.object(streamlit_app, "load_competitors", return_value=empty),
+        mock.patch.object(streamlit_app, "load_ultra", return_value=empty),
+        mock.patch.object(streamlit_app, "render_visao_executiva") as visao_mock,
+        mock.patch.object(streamlit_app, "render_mapa_territorial") as mapa_mock,
+        mock.patch.object(streamlit_app, "render_expansao_dominio") as dominio_mock,
+        mock.patch.object(streamlit_app, "render_carteira_e_plano") as carteira_mock,
+        mock.patch.object(streamlit_app, "build_city_summary") as city_mock,
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.info"),
+    ):
+        streamlit_app.main()
+
+    assert dominio_mock.called
+    assert not visao_mock.called
+    assert not mapa_mock.called
+    assert not carteira_mock.called
+    # summaries so sao computados para abas que os consomem (Visao/Mapa), nao para Dominio
+    assert not city_mock.called

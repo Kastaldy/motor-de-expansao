@@ -15,6 +15,8 @@ from dashboard.constants import (
     MAP_POINT_LIMIT,
     MAP_SORT_ASCENDING,
     MAP_SORT_COLUMNS,
+    MAP_SOURCE_COLUMNS_HYBRID,
+    MAP_SOURCE_COLUMNS_M1,
     OVERLAYS,
     RESIDUAL_SCORE_BANDS,
     TABLE_ROW_LIMIT,
@@ -953,6 +955,32 @@ def _build_search_pin_layer(lat: float, lng: float):
     )
 
 
+def _downsample_map_index(
+    key_df: pd.DataFrame,
+    *,
+    sort_columns: list[str],
+    ascending: list[bool],
+    limit: int = MAP_POINT_LIMIT,
+    dedup_column: str | None = None,
+) -> pd.Index:
+    """Indice das ate `limit` linhas de maior prioridade da fonte do mapa.
+
+    Calculado sobre uma projecao leve (apenas chaves de ordenacao/granularidade)
+    ANTES de materializar todas as colunas do mapa. Mantem o cap MAP_POINT_LIMIT
+    identico ao fluxo anterior — mesma chave de ordenacao, mesmo dedup e mesmo
+    head — apenas evita copiar todas as colunas das UFs grandes (ex.: AM 293k)
+    so para descartar o excedente. Nao altera score nem artefatos oficiais.
+    """
+    ordered = key_df
+    present_sort = [column for column in sort_columns if column in ordered.columns]
+    if present_sort:
+        asc = [ascending[sort_columns.index(column)] for column in present_sort]
+        ordered = ordered.sort_values(present_sort, ascending=asc, kind="stable")
+    if dedup_column is not None and dedup_column in ordered.columns:
+        ordered = ordered.drop_duplicates(subset=[dedup_column], keep="first")
+    return ordered.head(limit).index
+
+
 def build_map_figure(
     df: pd.DataFrame,
     *,
@@ -963,85 +991,67 @@ def build_map_figure(
     search_pin: tuple[float, float] | None = None,
     search_hex_id: str | None = None,
 ):
-    map_columns = [
-        "hex_id",
-        "lat",
-        "lng",
-        "cidade",
-        "nome_municipio",
-        "uf",
-        "faixa_oportunidade",
-        "score_priorizacao",
-        "hex_score_estrutural",
-        "flag_viavel",
-        "flag_prioridade",
-        "score_setor_2022_calibrado",
-        "coverage_pct_setor_2022",
-        "qualidade_join_uf",
-        "flag_censo_disponivel",
-        "confianca_geografica",
-        "pop_total",
-        "populacao_proxy",
-        "renda_per_capita",
-        "pop_total_setor_2022",
-        "renda_per_capita_setor_2022_calibrada",
-        "flag_pop_min_5k",
-        "sam_fitness_potencial",
-        "oferta_consumida_mercado_estimada",
-        "oferta_consumida_ultra_real",
-        "oferta_efetiva_disponivel",
-        "share_ultra_estimado_hex",
-        "score_oportunidade_residual",
-        "quartil_oportunidade_residual",
-        "fonte_pop_hex_base",
-    ]
-    valid_all = df.loc[
+    present_columns = [column for column in MAP_SOURCE_COLUMNS_M1 if column in df.columns]
+
+    scope = (
         df["hex_id"].notna()
         & df["lat"].notna()
         & df["lng"].notna()
-        & df["score_priorizacao"].notna(),
-        [column for column in map_columns if column in df.columns],
-    ].copy()
-    if valid_all.empty:
-        return None, 0
-
-    # Normaliza nome_municipio direto em valid_all (já é cópia)
-    if "nome_municipio" not in valid_all.columns:
-        valid_all["nome_municipio"] = valid_all["cidade"]
-    else:
-        valid_all["nome_municipio"] = valid_all["nome_municipio"].fillna(valid_all["cidade"])
-
-    # Filtra como views — sem .copy() até após o cap
-    filtered = valid_all
+        & df["score_priorizacao"].notna()
+    )
     if selected_ufs:
-        filtered = filtered.loc[filtered["uf"].isin(selected_ufs)]
+        scope = scope & df["uf"].isin(selected_ufs)
     if selected_cities:
-        filtered = filtered.loc[filtered["nome_municipio"].isin(selected_cities)]
-    if filtered.empty:
+        if "nome_municipio" in df.columns:
+            nome_municipio = (
+                df["nome_municipio"].fillna(df["cidade"]) if "cidade" in df.columns else df["nome_municipio"]
+            )
+        elif "cidade" in df.columns:
+            nome_municipio = df["cidade"]
+        else:
+            nome_municipio = pd.Series(pd.NA, index=df.index)
+        scope = scope & nome_municipio.isin(selected_cities)
+    if not bool(scope.any()):
         return None, 0
 
-    quality = _normalized_join_quality(filtered)
-    has_censo = _has_censo_signal(filtered)
-    granular_ufs = set(filtered.loc[quality.isin(["A", "B"]) & has_censo, "uf"].dropna().tolist())
+    # Projeção leve (chaves de granularidade + ordenação) para fazer o downsample
+    # antes do cap: as colunas completas do mapa só são copiadas para os ≤MAP_POINT_LIMIT
+    # sobreviventes, em vez de todo o slice da UF.
+    key_columns = [
+        column
+        for column in [
+            "hex_id",
+            "uf",
+            "qualidade_join_uf",
+            "flag_censo_disponivel",
+            "score_setor_2022_calibrado",
+            *MAP_SORT_COLUMNS,
+        ]
+        if column in df.columns
+    ]
+    key = df.loc[scope, key_columns].copy()
 
-    granular_rows = filtered["uf"].isin(granular_ufs) & has_censo
-    municipal_rows = ~filtered["uf"].isin(granular_ufs)
-    filtered = filtered.loc[granular_rows | municipal_rows]
-    if filtered.empty:
+    quality = _normalized_join_quality(key)
+    has_censo = _has_censo_signal(key)
+    granular_ufs = set(key.loc[quality.isin(["A", "B"]) & has_censo, "uf"].dropna().tolist())
+    granular_rows = key["uf"].isin(granular_ufs) & has_censo
+    municipal_rows = ~key["uf"].isin(granular_ufs)
+    key = key.loc[granular_rows | municipal_rows]
+    if key.empty:
         return None, 0
 
-    # Sort + cap antecipado — gera uma única cópia pequena (≤MAP_POINT_LIMIT linhas)
-    sort_cols = [c for c in MAP_SORT_COLUMNS if c in filtered.columns]
-    if sort_cols:
-        asc = [MAP_SORT_ASCENDING[MAP_SORT_COLUMNS.index(c)] for c in sort_cols]
-        map_df = (
-            filtered.sort_values(sort_cols, ascending=asc, kind="stable")
-            .drop_duplicates(subset=["hex_id"], keep="first")
-            .head(MAP_POINT_LIMIT)
-            .reset_index(drop=True)
-        )
+    survive_index = _downsample_map_index(
+        key,
+        sort_columns=MAP_SORT_COLUMNS,
+        ascending=MAP_SORT_ASCENDING,
+        dedup_column="hex_id",
+    )
+
+    map_df = df.loc[survive_index, present_columns].copy().reset_index(drop=True)
+    if "nome_municipio" not in map_df.columns:
+        map_df["nome_municipio"] = map_df["cidade"]
     else:
-        map_df = filtered.drop_duplicates(subset=["hex_id"], keep="first").head(MAP_POINT_LIMIT).reset_index(drop=True)
+        map_df["nome_municipio"] = map_df["nome_municipio"].fillna(map_df["cidade"])
 
     map_df["confianca_geografica"] = np.where(
         map_df["uf"].isin(granular_ufs),
@@ -1061,7 +1071,10 @@ def build_map_figure(
     map_df = _apply_hex_tooltip_fields(map_df, mode="m1")
     search_tooltip_source = None
     if search_hex_id is not None:
-        search_source = valid_all.loc[valid_all["hex_id"].astype(str) == str(search_hex_id)].copy()
+        search_source = df.loc[
+            df["hex_id"].astype(str) == str(search_hex_id),
+            present_columns,
+        ].copy()
         if not search_source.empty:
             search_source = search_source.drop_duplicates(subset=["hex_id"], keep="first")
             search_tooltip_source = _apply_hex_tooltip_fields(
@@ -1239,77 +1252,44 @@ def build_hybrid_map_figure(
     if "score_setor_2022_calibrado" not in hdf.columns:
         return None, 0
 
-    map_columns = [
-        "hex_id",
-        "lat",
-        "lng",
-        "uf",
-        "nome_municipio",
-        "score_setor_2022_calibrado",
-        "score_priorizacao",
-        "score_expansao_hibrido",
-        "densidade_pop_setor_hab_km2",
-        "qualidade_join_uf",
-        "flag_join_uf_restrito",
-        "flag_baixa_pop_setor",
-        "flag_outlier_espacial",
-        "causa_outlier_espacial",
-        "coverage_pct_setor_2022",
-        "motivo_nao_elegivel_censo",
-        "elegibilidade_hibrida",
-        "rank_hex_intraurbano",
-        "top_hex_intraurbano",
-        "top_oportunidade_municipio",
-        "pop_total",
-        "populacao_proxy",
-        "renda_per_capita",
-        "pop_total_setor_2022",
-        "renda_per_capita_setor_2022_calibrada",
-        "flag_pop_min_5k",
-        "sam_fitness_potencial",
-        "oferta_consumida_mercado_estimada",
-        "oferta_consumida_ultra_real",
-        "oferta_efetiva_disponivel",
-        "share_ultra_estimado_hex",
-        "score_oportunidade_residual",
-        "quartil_oportunidade_residual",
-        "fonte_pop_hex_base",
-    ]
-    hdf_valid_all = hdf.loc[
+    present_columns = [column for column in MAP_SOURCE_COLUMNS_HYBRID if column in hdf.columns]
+
+    scope = (
         hdf["score_setor_2022_calibrado"].notna()
         & hdf["lat"].notna()
-        & hdf["lng"].notna(),
-        [column for column in map_columns if column in hdf.columns],
-    ].copy()
-    if hdf_valid_all.empty:
+        & hdf["lng"].notna()
+    )
+    if selected_ufs:
+        scope = scope & hdf["uf"].isin(selected_ufs)
+    if selected_cities:
+        city_col = "nome_municipio" if "nome_municipio" in hdf.columns else "uf"
+        scope = scope & hdf[city_col].isin(selected_cities)
+    if not bool(scope.any()):
         return None, 0
 
-    # Filtra como views — sem .copy() até após o cap
-    map_df = hdf_valid_all
-    if selected_ufs:
-        map_df = map_df.loc[map_df["uf"].isin(selected_ufs)]
-    if selected_cities:
-        city_col = "nome_municipio" if "nome_municipio" in map_df.columns else "uf"
-        map_df = map_df.loc[map_df[city_col].isin(selected_cities)]
-    if map_df.empty:
-        return None, 0
+    # Projeção leve para o downsample antes do cap: ordena/filtra pela faixa nas
+    # chaves e materializa as colunas completas só para os ≤MAP_POINT_LIMIT sobreviventes.
+    _HYBRID_SORT = ["top_hex_intraurbano", "top_oportunidade_municipio", "score_expansao_hibrido", "score_setor_2022_calibrado"]
+    key_columns = [
+        column
+        for column in ["hex_id", "uf", *_HYBRID_SORT]
+        if column in hdf.columns
+    ]
+    key = hdf.loc[scope, key_columns].copy()
 
     if selected_faixas:
-        _faixa_hibrida = _derivar_faixa_hibrida(map_df)
-        map_df = map_df.loc[_faixa_hibrida.isin(selected_faixas)]
-    if map_df.empty:
+        _faixa_hibrida = _derivar_faixa_hibrida(key)
+        key = key.loc[_faixa_hibrida.isin(selected_faixas)]
+    if key.empty:
         return None, 0
 
-    sort_cols = [
-        column
-        for column in ["top_hex_intraurbano", "top_oportunidade_municipio", "score_expansao_hibrido", "score_setor_2022_calibrado"]
-        if column in map_df.columns
-    ]
-    ascending = [False for _ in sort_cols]
-    if sort_cols:
-        map_df = map_df.sort_values(sort_cols, ascending=ascending, kind="stable").head(MAP_POINT_LIMIT).reset_index(drop=True)
-    else:
-        map_df = map_df.head(MAP_POINT_LIMIT).reset_index(drop=True)
+    survive_index = _downsample_map_index(
+        key,
+        sort_columns=_HYBRID_SORT,
+        ascending=[False, False, False, False],
+    )
+
+    map_df = hdf.loc[survive_index, present_columns].copy().reset_index(drop=True)
 
     _color_src = map_df[color_col] if color_col in map_df.columns else pd.Series(pd.NA, index=map_df.index)
     map_df["fill_color"] = _color_src.map(score_band_to_color)
@@ -1360,7 +1340,10 @@ def build_hybrid_map_figure(
     map_df = _apply_hex_tooltip_fields(map_df, mode="hybrid")
     search_tooltip_source = None
     if search_hex_id is not None:
-        search_source = hdf_valid_all.loc[hdf_valid_all["hex_id"].astype(str) == str(search_hex_id)].copy()
+        search_source = hdf.loc[
+            hdf["hex_id"].astype(str) == str(search_hex_id),
+            present_columns,
+        ].copy()
         if not search_source.empty:
             search_source = search_source.drop_duplicates(subset=["hex_id"], keep="first")
             search_tooltip_source = _apply_hex_tooltip_fields(
@@ -1429,67 +1412,33 @@ def build_residual_heatmap_figure(
     if "score_setor_2022_calibrado" not in hdf.columns:
         return None, 0
 
-    map_columns = [
-        "hex_id",
-        "lat",
-        "lng",
-        "uf",
-        "nome_municipio",
-        "score_setor_2022_calibrado",
-        "score_priorizacao",
-        "score_expansao_hibrido",
-        "densidade_pop_setor_hab_km2",
-        "qualidade_join_uf",
-        "flag_join_uf_restrito",
-        "flag_baixa_pop_setor",
-        "flag_outlier_espacial",
-        "causa_outlier_espacial",
-        "coverage_pct_setor_2022",
-        "motivo_nao_elegivel_censo",
-        "elegibilidade_hibrida",
-        "rank_hex_intraurbano",
-        "top_hex_intraurbano",
-        "top_oportunidade_municipio",
-        "pop_total",
-        "populacao_proxy",
-        "renda_per_capita",
-        "pop_total_setor_2022",
-        "renda_per_capita_setor_2022_calibrada",
-        "flag_pop_min_5k",
-        "sam_fitness_potencial",
-        "oferta_consumida_mercado_estimada",
-        "oferta_consumida_ultra_real",
-        "oferta_efetiva_disponivel",
-        "share_ultra_estimado_hex",
-        "score_oportunidade_residual",
-        "quartil_oportunidade_residual",
-        "fonte_pop_hex_base",
-    ]
-    hdf_valid_all = hdf.loc[
+    present_columns = [column for column in MAP_SOURCE_COLUMNS_HYBRID if column in hdf.columns]
+
+    scope = (
         hdf["score_setor_2022_calibrado"].notna()
         & hdf["lat"].notna()
-        & hdf["lng"].notna(),
-        [column for column in map_columns if column in hdf.columns],
-    ].copy()
-    if hdf_valid_all.empty:
-        return None, 0
-
-    # Filtra como views — sem .copy() até após o cap
-    map_df = hdf_valid_all
+        & hdf["lng"].notna()
+    )
     if selected_ufs:
-        map_df = map_df.loc[map_df["uf"].isin(selected_ufs)]
+        scope = scope & hdf["uf"].isin(selected_ufs)
     if selected_cities:
-        city_col = "nome_municipio" if "nome_municipio" in map_df.columns else "uf"
-        map_df = map_df.loc[map_df[city_col].isin(selected_cities)]
-    if map_df.empty:
+        city_col = "nome_municipio" if "nome_municipio" in hdf.columns else "uf"
+        scope = scope & hdf[city_col].isin(selected_cities)
+    if not bool(scope.any()):
         return None, 0
 
-    if "score_oportunidade_residual" in map_df.columns:
-        map_df = map_df.sort_values(
-            "score_oportunidade_residual", ascending=False, na_position="last", kind="stable"
-        ).head(MAP_POINT_LIMIT).reset_index(drop=True)
-    else:
-        map_df = map_df.head(MAP_POINT_LIMIT).reset_index(drop=True)
+    # Downsample antes do cap: ordena pelo residual nas chaves leves e copia as
+    # colunas completas só para os ≤MAP_POINT_LIMIT sobreviventes.
+    key_columns = [
+        column for column in ["hex_id", "uf", "score_oportunidade_residual"] if column in hdf.columns
+    ]
+    key = hdf.loc[scope, key_columns].copy()
+    survive_index = _downsample_map_index(
+        key,
+        sort_columns=["score_oportunidade_residual"],
+        ascending=[False],
+    )
+    map_df = hdf.loc[survive_index, present_columns].copy().reset_index(drop=True)
 
     if "score_oportunidade_residual" in map_df.columns:
         map_df["fill_color"] = map_df["score_oportunidade_residual"].map(score_band_to_color)
@@ -1508,7 +1457,10 @@ def build_residual_heatmap_figure(
 
     search_tooltip_source = None
     if search_hex_id is not None:
-        search_source = hdf_valid_all.loc[hdf_valid_all["hex_id"].astype(str) == str(search_hex_id)].copy()
+        search_source = hdf.loc[
+            hdf["hex_id"].astype(str) == str(search_hex_id),
+            present_columns,
+        ].copy()
         if not search_source.empty:
             search_source = search_source.drop_duplicates(subset=["hex_id"], keep="first")
             search_tooltip_source = _apply_hex_tooltip_fields(

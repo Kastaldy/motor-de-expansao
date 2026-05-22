@@ -80,9 +80,14 @@ score_oficial = score_priorizacao
   - capacidade default de concorrente/unidade proxy: 2500 alunos;
   - `pop_hex_base` usa `pop_total_setor_2022` quando disponivel e fallback `populacao_proxy / total_hex_municipio`.
 - Dashboard funciona offline com Parquets locais em `data/outputs/`.
+- Artefato derivado (NAO oficial M1): `fase1_bi_exports.py` tambem materializa `data/outputs/hexagonos_dashboard_enriquecido/uf=XX/parte-*.parquet` (resultado de `enrich_dashboard_data`, particionado por UF) para acelerar a carga do dashboard; nao recalcula score nem altera artefatos oficiais. Detalhe em `docs/m1_outputs_oficiais.md`.
+- Carga lazy por UF (Bloco 4): o dashboard le so a particao `uf=XX` desse artefato (`load_uf_slice`/`read_enriched_uf_partition`), com catalogo leve via diretorios de particao (`load_uf_catalog`/`list_partitioned_ufs`) e fallback para `build_dashboard_dataset()` filtrado quando a particao nao existe. Consequencia: a busca por coordenada resolve dentro da UF carregada.
+- Render lazy das abas (Bloco 5): `main()` usa `render_tab_selector` (`st.segmented_control` + `session_state`) no lugar de `st.tabs`; so o `render_*` da aba ativa roda por rerun (UX de 4 abas preservada). `build_city_summary`/`build_uf_summary` so sao computados nas abas Visao Executiva/Mapa Territorial. Nao recalcula score nem altera artefatos.
+- Fonte de mapa enxuta (Bloco 6): os builders de mapa fazem downsample antes do cap via `_downsample_map_index` (ordena/dedup/`head(MAP_POINT_LIMIT)` sobre projecao leve de chaves) e so materializam as colunas completas (`MAP_SOURCE_COLUMNS_M1`/`MAP_SOURCE_COLUMNS_HYBRID` em `constants.py`) para os ≤35k sobreviventes. Cap inalterado (mesmos top-N por prioridade); busca por hex fora do recorte lida do `df`. Nao usa `hexagonos_mapa_sample.parquet` (nacional, so 39 cols M1). Nao recalcula score nem altera artefatos.
 - API/FastAPI, PostGIS, Prefect, pipelines pesados, M2/M3, pesquisas e Power BI continuam fora do deploy inicial.
 
 ## 5. Ciclos concluidos
+- Ciclo `Performance e Refatoracao do Dashboard` concluido em 2026-05-22 (7 blocos): carga lazy por UF (le so a particao do enriquecido), render lazy de abas, fonte de mapa enxuta e dataset enriquecido particionado; 509 testes passam, 1 skipped. Detalhe em `data/reports/perf_baseline_dashboard.md`. Sem recalculo de score/carteira/plano/artefatos M1.
 - Ciclo `Cenarios Multi-Hex e Dominio Hibrido Censitario-Residual` concluido em 2026-05-21 (Blocos 14-19 do PRD).
 - Ciclo `Hardening da Analise Pontual e Padronizacao Visual de Scores` concluido em 2026-05-20 (Blocos 8-13 do PRD).
 - Ciclo `Visao Executiva Ultra e Analise Pontual` concluido em 2026-05-20 (Blocos 1-7 do PRD).

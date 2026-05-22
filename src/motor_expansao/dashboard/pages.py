@@ -324,22 +324,66 @@ def render_header() -> None:
     )
 
 
-def render_sidebar_filters(
-    df: pd.DataFrame,
-) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str], bool, bool]:
+def render_uf_selectbox(uf_options: list[str]) -> str | None:
+    """Renderiza apenas o seletor de UF a partir do catalogo leve.
+
+    A carga lazy por UF (Bloco 4) depende deste valor: o dataset so e lido apos a
+    escolha da UF, evitando fundir o Brasil inteiro a frio.
+    """
     st.sidebar.markdown("### Filtros globais")
     st.sidebar.caption("Refine o recorte executivo do M1 e da camada hibrida sem alterar o score oficial.")
-    all_ufs = _category_options(df["uf"])
-    uf_selecionada = st.sidebar.selectbox(
+    return st.sidebar.selectbox(
         "UF",
-        options=all_ufs,
+        options=uf_options,
         index=None,
         placeholder="Selecione uma UF",
     )
-    selected_ufs = [uf_selecionada] if uf_selecionada else []
 
-    city_source = df.loc[df["uf"] == uf_selecionada, "nome_municipio"] if uf_selecionada else df["nome_municipio"]
-    all_cities = _category_options(city_source, observed=True)
+
+DASHBOARD_TAB_LABELS = [
+    "Visao Executiva",
+    "Mapa Territorial",
+    "Expansao de Dominio",
+    "Carteira e Plano",
+]
+
+
+def render_tab_selector(
+    labels: list[str] | None = None,
+    *,
+    key: str = "dashboard_active_tab",
+) -> str:
+    """Seletor de aba que gateia o render: so a aba ativa e construida por rerun.
+
+    Substitui `st.tabs` (que executa o corpo das 4 abas a cada rerun) por um
+    `st.segmented_control` com estado em `session_state`, preservando a UX de abas
+    mas chamando apenas o `render_*` da aba ativa (Bloco 5 — render lazy das abas).
+    """
+    opts = labels or DASHBOARD_TAB_LABELS
+    last_key = f"{key}_last"
+    selected = st.segmented_control(
+        "Navegacao do dashboard",
+        options=opts,
+        default=opts[0],
+        key=key,
+        label_visibility="collapsed",
+    )
+    # selection_mode="single" permite desmarcar (None); manter a ultima aba ativa.
+    if not selected:
+        selected = st.session_state.get(last_key) or opts[0]
+    st.session_state[last_key] = selected
+    return selected
+
+
+def render_sidebar_filters(
+    df: pd.DataFrame,
+    selected_uf: str | None = None,
+) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str], bool, bool]:
+    # `df` ja chega como o slice da UF selecionada (carga lazy do Bloco 4); o
+    # seletor de UF e renderizado antes, por `render_uf_selectbox`.
+    selected_ufs = [selected_uf] if selected_uf else []
+
+    all_cities = _category_options(df["nome_municipio"], observed=True)
     selected_cities = st.sidebar.multiselect(
         "Municipio",
         options=all_cities,

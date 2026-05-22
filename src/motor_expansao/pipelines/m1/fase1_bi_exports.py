@@ -4,7 +4,19 @@ import math
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.dataset as ds
 import pyarrow.parquet as pq
+
+from dashboard.constants import CENSO_TRACE_LOAD_COLS, HYBRID_LOAD_COLS, REQUIRED_COLUMNS
+from motor_expansao.dashboard.data import (
+    _coalesce_columns,
+    _prepare_censo_trace,
+    _prepare_dataframe,
+    _read_optional_parquet_subset,
+    _read_parquet_subset,
+    enrich_dashboard_data,
+)
 
 try:
     from jobs.pipelines.ibge_censo import carregar_lookup_municipios_ibge
@@ -18,6 +30,16 @@ TOP_OPORTUNIDADES_PATH = Path("data/outputs/top_oportunidades_resumo.csv")
 RESUMO_UF_PATH = Path("data/outputs/resumo_por_uf.csv")
 MAPA_SAMPLE_PATH = Path("data/outputs/hexagonos_mapa_sample.parquet")
 RESUMO_EXECUTIVO_PATH = Path("data/reports/resumo_executivo_fase1.md")
+
+# Insumos do dataset enriquecido (derivado, NAO oficial M1). Espelham os caminhos
+# lidos pelo dashboard em streamlit_app, para materializar offline o merge que hoje
+# roda a frio em runtime via enrich_dashboard_data.
+HYBRID_PATH = Path("data/outputs/oportunidades_expansao_hibrido.parquet")
+CENSO_CORE_PATH = Path("data/staging/censo2022_setores_calibrado.parquet")
+CENSO_EXPANDED_PATH = Path("data/staging/censo2022_setores_calibrado_piloto_expandido.parquet")
+CENSO_VALIDATED_PATH = Path("data/staging/censo2022_setores_validado_v2.parquet")
+ESTRUTURAL_PATH = Path("data/staging/brasil_estrutural.parquet")
+ENRIQUECIDO_DIR = Path("data/outputs/hexagonos_dashboard_enriquecido")
 
 FAIXAS_OPORTUNIDADE = [
     "prioridade_maxima",
@@ -498,6 +520,113 @@ def generate_fase1_bi_artifacts(source_path: Path | str = SOURCE_PATH) -> dict[s
     }
 
 
+# ---------------------------------------------------------------------------
+# Dataset enriquecido particionado por UF (artefato derivado, NAO oficial M1)
+# ---------------------------------------------------------------------------
+# Materializa offline o resultado de enrich_dashboard_data (M1 + hibrido + censo +
+# pop estrutural). Os readers replicam o caminho de carga de streamlit_app, mas
+# importam apenas a camada de dados (sem streamlit), mantendo o pipeline leve.
+
+
+def _read_m1_dashboard_frame(path: Path | str = DASHBOARD_PATH) -> pd.DataFrame:
+    return _prepare_dataframe(_read_parquet_subset(Path(path), REQUIRED_COLUMNS))
+
+
+def _read_hybrid_frame(path: Path | str = HYBRID_PATH) -> pd.DataFrame:
+    return _prepare_dataframe(_read_optional_parquet_subset(Path(path), HYBRID_LOAD_COLS))
+
+
+def _read_censo_trace_frame() -> pd.DataFrame:
+    frames: list[pd.DataFrame] = []
+    for path in [CENSO_CORE_PATH, CENSO_EXPANDED_PATH]:
+        frame = _prepare_censo_trace(_read_optional_parquet_subset(path, CENSO_TRACE_LOAD_COLS))
+        if not frame.empty:
+            frames.append(frame)
+
+    if not frames:
+        return pd.DataFrame()
+
+    censo = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["hex_id"], keep="first")
+    validated = _prepare_censo_trace(_read_optional_parquet_subset(CENSO_VALIDATED_PATH, CENSO_TRACE_LOAD_COLS))
+    if validated.empty:
+        return censo
+
+    overlay_columns = [
+        "qualidade_join_uf",
+        "flag_join_uf_restrito",
+        "flag_baixa_pop_setor",
+        "flag_outlier_espacial",
+        "causa_outlier_espacial",
+        "delta_vs_vizinhos",
+        "metodo_join_setor_2022",
+        "motivo_fallback_setor_2022",
+    ]
+    validated = validated[[column for column in ["hex_id"] + overlay_columns if column in validated.columns]]
+    censo = censo.merge(validated, on="hex_id", how="left", suffixes=("", "_validado"))
+
+    for column in overlay_columns:
+        censo = _coalesce_columns(censo, column, f"{column}_validado")
+
+    return censo
+
+
+def _read_estrutural_pop_frame(path: Path | str = ESTRUTURAL_PATH) -> pd.DataFrame:
+    return _read_optional_parquet_subset(Path(path), ["hex_id", "pop_total"])
+
+
+def build_enriched_dashboard_frame(dashboard_path: Path | str = DASHBOARD_PATH) -> pd.DataFrame:
+    """Reproduz offline o frame que streamlit_app monta em runtime via enrich_dashboard_data."""
+    return enrich_dashboard_data(
+        _read_m1_dashboard_frame(dashboard_path),
+        _read_hybrid_frame(),
+        _read_censo_trace_frame(),
+        estrutural_pop_df=_read_estrutural_pop_frame(),
+    )
+
+
+def write_enriched_dashboard_partitioned(
+    df_enriched: pd.DataFrame,
+    base_dir: Path | str = ENRIQUECIDO_DIR,
+) -> Path:
+    """Grava o frame enriquecido como dataset pyarrow particionado em uf=XX/parte-*.parquet."""
+    base_dir = Path(base_dir)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    frame = df_enriched.copy()
+    # uf vem como categorical do _prepare_dataframe; pyarrow nao particiona por
+    # coluna dictionary, entao normalizamos para string antes de escrever.
+    frame["uf"] = frame["uf"].astype("string").astype(str)
+    table = pa.Table.from_pandas(frame, preserve_index=False)
+    ds.write_dataset(
+        table,
+        base_dir=str(base_dir),
+        format="parquet",
+        partitioning=ds.partitioning(pa.schema([("uf", pa.string())]), flavor="hive"),
+        basename_template="parte-{i}.parquet",
+        existing_data_behavior="delete_matching",
+    )
+    return base_dir
+
+
+def read_enriched_dashboard(
+    base_dir: Path | str = ENRIQUECIDO_DIR,
+    uf: str | None = None,
+) -> pd.DataFrame:
+    """Le o dataset enriquecido particionado; opcionalmente apenas a particao da UF."""
+    dataset = ds.dataset(str(Path(base_dir)), format="parquet", partitioning="hive")
+    if uf is None:
+        return dataset.to_table().to_pandas()
+    return dataset.to_table(filter=ds.field("uf") == str(uf)).to_pandas()
+
+
+def materialize_enriched_dashboard(
+    dashboard_path: Path | str = DASHBOARD_PATH,
+    base_dir: Path | str = ENRIQUECIDO_DIR,
+) -> pd.DataFrame:
+    df_enriched = build_enriched_dashboard_frame(dashboard_path)
+    write_enriched_dashboard_partitioned(df_enriched, base_dir)
+    return df_enriched
+
+
 def main() -> None:
     artifacts = generate_fase1_bi_artifacts()
     dashboard = artifacts["dashboard"]
@@ -508,6 +637,14 @@ def main() -> None:
     print(f"Dashboard: {len(dashboard)} hexagonos")
     print(f"UFs: {len(resumo_por_uf)}")
     print(f"Mapa sample: {len(mapa_sample)} hexagonos")
+
+    # Artefato derivado (nao oficial M1): so materializa quando o insumo hibrido
+    # ja existe, mantendo o export oficial independente das camadas paralelas.
+    if HYBRID_PATH.exists():
+        enriched = materialize_enriched_dashboard()
+        print(f"Enriquecido particionado: {len(enriched)} linhas em {ENRIQUECIDO_DIR}/uf=*/")
+    else:
+        print(f"Enriquecido pulado: insumo ausente ({HYBRID_PATH})")
 
 
 if __name__ == "__main__":

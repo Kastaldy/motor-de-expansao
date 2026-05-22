@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 import numpy as np
 import pandas as pd
+import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 from pathlib import Path
 
@@ -45,6 +46,40 @@ def _read_optional_parquet_subset(path: Path, columns: list[str]) -> pd.DataFram
     if not cols:
         return pd.DataFrame()
     return pd.read_parquet(path, columns=cols)
+
+
+def list_partitioned_ufs(base_dir: Path) -> list[str]:
+    """Lista as UFs do dataset enriquecido particionado (`uf=XX`).
+
+    Catalogo leve para a sidebar: inspeciona apenas os diretorios de particao,
+    sem carregar dados. Retorna lista vazia quando o dataset nao existe.
+    """
+    base = Path(base_dir)
+    if not base.is_dir():
+        return []
+    ufs = [
+        child.name.split("=", 1)[1]
+        for child in base.iterdir()
+        if child.is_dir() and child.name.startswith("uf=")
+    ]
+    return sorted(uf for uf in ufs if uf)
+
+
+def read_enriched_uf_partition(base_dir: Path, uf: str) -> pd.DataFrame:
+    """Le apenas a particao `uf=XX` do dataset enriquecido (Bloco 3).
+
+    Restaura tipos/categoricos via `_prepare_dataframe` para igualar o frame que
+    `enrich_dashboard_data` produziria em runtime. Retorna DataFrame vazio quando
+    o dataset ou a particao nao existem. Nao recalcula score nem altera artefatos.
+    """
+    base = Path(base_dir)
+    if not base.is_dir():
+        return pd.DataFrame()
+    dataset = ds.dataset(str(base), format="parquet", partitioning="hive")
+    frame = dataset.to_table(filter=ds.field("uf") == str(uf)).to_pandas()
+    if frame.empty:
+        return frame
+    return _prepare_dataframe(frame)
 
 
 def _normalized_join_quality(df: pd.DataFrame) -> pd.Series:

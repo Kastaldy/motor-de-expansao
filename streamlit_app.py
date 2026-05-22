@@ -121,11 +121,14 @@ from motor_expansao.dashboard.data import (  # noqa: F401
     derive_pop_cut_columns,
     enrich_dashboard_data,
     haversine_km,
+    list_partitioned_ufs,
     lookup_hex_by_coord,
     parse_coordinate_input,
     parse_hex_ids_from_text,
+    read_enriched_uf_partition,
 )
 from motor_expansao.dashboard.pages import (  # noqa: F401
+    DASHBOARD_TAB_LABELS,
     _extract_click_coord_from_selection,
     _render_multihex_controls,
     _render_multihex_kpis,
@@ -146,6 +149,8 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_plano_expansao,
     render_ranking_priorizacao,
     render_sidebar_filters,
+    render_tab_selector,
+    render_uf_selectbox,
     render_visao_executiva,
 )
 
@@ -172,6 +177,9 @@ ESTRUTURAL_PATH = (
     Path(__file__).resolve().parent / "data" / "staging" / "brasil_estrutural.parquet"
 )
 PLANO_DOMINIO_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "plano_expansao_dominio.parquet"
+ENRIQUECIDO_DIR = (
+    Path(__file__).resolve().parent / "data" / "outputs" / "hexagonos_dashboard_enriquecido"
+)
 
 preload_logos(CONCORRENTES_DIR, ultra_dir=ULTRA_PATH.parent)
 
@@ -183,20 +191,17 @@ def _ensure_dataset() -> None:
         )
 
 
-@st.cache_resource(show_spinner=False)
-def load_data() -> pd.DataFrame:
+def _read_m1_frame() -> pd.DataFrame:
     _ensure_dataset()
     df = _read_parquet_subset(DATASET_PATH, REQUIRED_COLUMNS)
     return _prepare_dataframe(df)
 
 
-@st.cache_resource(show_spinner=False)
-def load_hybrid_data() -> pd.DataFrame:
+def _read_hybrid_frame() -> pd.DataFrame:
     return _prepare_dataframe(_read_optional_parquet_subset(HYBRID_PATH, HYBRID_LOAD_COLS))
 
 
-@st.cache_resource(show_spinner=False)
-def load_censo_trace_data() -> pd.DataFrame:
+def _read_censo_trace_frame() -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     for path in [CENSO_CORE_PATH, CENSO_EXPANDED_PATH]:
         frame = _prepare_censo_trace(_read_optional_parquet_subset(path, CENSO_TRACE_LOAD_COLS))
@@ -231,20 +236,70 @@ def load_censo_trace_data() -> pd.DataFrame:
     return censo
 
 
-@st.cache_resource(show_spinner=False)
-def load_estrutural_pop() -> pd.DataFrame:
+def _read_estrutural_pop_frame() -> pd.DataFrame:
     """Carrega pop_total do parquet estrutural para corrigir o fallback de população no tooltip."""
     return _read_optional_parquet_subset(ESTRUTURAL_PATH, ["hex_id", "pop_total"])
 
 
 @st.cache_resource(show_spinner=False)
+def load_data() -> pd.DataFrame:
+    return _read_m1_frame()
+
+
+@st.cache_resource(show_spinner=False)
+def load_hybrid_data() -> pd.DataFrame:
+    return _read_hybrid_frame()
+
+
+@st.cache_resource(show_spinner=False)
+def load_censo_trace_data() -> pd.DataFrame:
+    return _read_censo_trace_frame()
+
+
+@st.cache_resource(show_spinner=False)
+def load_estrutural_pop() -> pd.DataFrame:
+    return _read_estrutural_pop_frame()
+
+
+@st.cache_resource(show_spinner=False)
 def build_dashboard_dataset() -> pd.DataFrame:
+    # Le e funde via helpers nao-cacheados: os insumos intermediarios (M1, hibrido,
+    # censo, estrutural ~600 MB) viram locais liberados apos o merge, em vez de
+    # ficarem residentes em caches @st.cache_resource paralelos. Os loaders cacheados
+    # acima seguem disponiveis para uso pontual e testes, sem entrar no caminho do app.
     return enrich_dashboard_data(
-        load_data(),
-        load_hybrid_data(),
-        load_censo_trace_data(),
-        estrutural_pop_df=load_estrutural_pop(),
+        _read_m1_frame(),
+        _read_hybrid_frame(),
+        _read_censo_trace_frame(),
+        estrutural_pop_df=_read_estrutural_pop_frame(),
     )
+
+
+@st.cache_data(show_spinner=False)
+def load_uf_catalog() -> list[str]:
+    # Catalogo leve para a sidebar: lista as particoes `uf=XX` do dataset
+    # enriquecido (Bloco 3) sem carregar dados. Fallback: le apenas a coluna `uf`
+    # do parquet oficial M1 quando o artefato particionado ainda nao existe.
+    ufs = list_partitioned_ufs(ENRIQUECIDO_DIR)
+    if ufs:
+        return ufs
+    _ensure_dataset()
+    uf_df = _read_optional_parquet_subset(DATASET_PATH, ["uf"])
+    if uf_df.empty:
+        return []
+    return sorted(uf_df["uf"].dropna().astype(str).unique().tolist())
+
+
+@st.cache_resource(show_spinner=False)
+def load_uf_slice(uf: str) -> pd.DataFrame:
+    # Carga lazy por UF (cache por UF). Caminho rapido: particao `uf=XX` do dataset
+    # enriquecido (Bloco 3). Fallback: funde o Brasil em runtime e filtra a UF
+    # quando a particao nao existe. Nao recalcula score nem altera artefatos.
+    slice_df = read_enriched_uf_partition(ENRIQUECIDO_DIR, uf)
+    if not slice_df.empty:
+        return slice_df
+    full = build_dashboard_dataset()
+    return full.loc[full["uf"] == uf].reset_index(drop=True)
 
 
 @st.cache_data(show_spinner=False)
@@ -337,10 +392,28 @@ def main() -> None:
     render_header()
 
     try:
-        df = build_dashboard_dataset()
+        uf_catalog = load_uf_catalog()
     except (FileNotFoundError, ValueError) as exc:
         st.error(str(exc))
         st.stop()
+
+    # Seletor de UF primeiro (catalogo leve): a carga so acontece apos a escolha,
+    # lendo somente a particao da UF em vez de fundir o Brasil inteiro a frio.
+    selected_uf = render_uf_selectbox(uf_catalog)
+
+    if not selected_uf:
+        st.info("Selecione uma UF na barra lateral para iniciar a analise do dashboard.")
+        st.stop()
+
+    try:
+        df = load_uf_slice(selected_uf)
+    except (FileNotFoundError, ValueError) as exc:
+        st.error(str(exc))
+        st.stop()
+
+    if df.empty:
+        render_empty_state()
+        return
 
     pop_lookup = build_pop_cut_lookup(df)
     carteira_df = load_carteira()
@@ -358,7 +431,7 @@ def main() -> None:
         selected_join_quality,
         only_top_municipio,
         only_top_hex_intraurbano,
-    ) = render_sidebar_filters(df)
+    ) = render_sidebar_filters(df, selected_uf)
 
     search_pin = render_coord_search_sidebar()
     _search_result = lookup_hex_by_coord(*search_pin, df) if search_pin is not None else None
@@ -394,27 +467,20 @@ def main() -> None:
             pop_cut_lookup=pop_lookup,
         )
 
-    if not selected_ufs:
-        st.info("Selecione uma UF na barra lateral para iniciar a analise do dashboard.")
-        st.stop()
-
     if filtered_df.empty:
         render_empty_state()
         return
 
-    city_summary = build_city_summary(filtered_df)
-    uf_summary = build_uf_summary(filtered_df)
+    # Render lazy por aba (Bloco 5): so a aba ativa e construida por rerun, em vez
+    # de `st.tabs` executar o corpo das 4 abas a cada interacao. Os summaries so sao
+    # calculados para as abas que os consomem.
+    active_tab = render_tab_selector(DASHBOARD_TAB_LABELS)
 
-    tabs = st.tabs(
-        [
-            "Visao Executiva",
-            "Mapa Territorial",
-            "Expansao de Dominio",
-            "Carteira e Plano",
-        ]
-    )
+    if active_tab in ("Visao Executiva", "Mapa Territorial"):
+        city_summary = build_city_summary(filtered_df)
+        uf_summary = build_uf_summary(filtered_df)
 
-    with tabs[0]:
+    if active_tab == "Visao Executiva":
         render_visao_executiva(
             filtered_df,
             city_summary,
@@ -428,8 +494,7 @@ def main() -> None:
             search_pin=search_pin,
             search_hex_id=search_hex_id,
         )
-
-    with tabs[1]:
+    elif active_tab == "Mapa Territorial":
         render_mapa_territorial(
             filtered_df,
             selected_ufs=selected_ufs,
@@ -443,8 +508,7 @@ def main() -> None:
             uf_summary=uf_summary,
             selected_faixas=selected_faixas,
         )
-
-    with tabs[2]:
+    elif active_tab == "Expansao de Dominio":
         render_expansao_dominio(
             plano_dominio_df,
             selected_ufs=selected_ufs,
@@ -452,8 +516,7 @@ def main() -> None:
             competitors_df=competitors_df,
             ultra_df=ultra_df,
         )
-
-    with tabs[3]:
+    elif active_tab == "Carteira e Plano":
         render_carteira_e_plano(
             carteira_df,
             plano_df,

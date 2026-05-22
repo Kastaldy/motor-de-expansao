@@ -1,10 +1,15 @@
+import numpy as np
 import pandas as pd
 
+from dashboard.constants import REQUIRED_COLUMNS
+from motor_expansao.dashboard.data import _prepare_dataframe, enrich_dashboard_data
 from fase1_bi_exports import (
     build_dashboard_dataset,
     build_hexagonos_mapa_sample,
     build_resumo_por_uf,
     build_top_oportunidades_resumo,
+    read_enriched_dashboard,
+    write_enriched_dashboard_partitioned,
 )
 
 
@@ -206,3 +211,66 @@ def test_build_hexagonos_mapa_sample_pega_top_30_por_cento_do_ranking():
     sample = build_hexagonos_mapa_sample(dashboard, top_pct=0.30)
 
     assert sample["hex_id"].tolist() == ["h1", "h2"]
+
+
+def _sample_m1_base_df() -> pd.DataFrame:
+    rows = [
+        ("hSP1", "SP", "Sao Paulo", "prioridade_maxima", True, True, 1),
+        ("hSP2", "SP", "Campinas", "alta", True, False, 2),
+        ("hRJ1", "RJ", "Rio de Janeiro", "media", True, False, 3),
+        ("hRJ2", "RJ", "Niteroi", "descartado", False, False, 4),
+    ]
+    records = []
+    for i, (hex_id, uf, cidade, faixa, viavel, prioridade, rank) in enumerate(rows):
+        records.append(
+            {
+                "hex_id": hex_id,
+                "lat": -23.5 - i,
+                "lng": -46.6 - i,
+                "uf": uf,
+                "cidade": cidade,
+                "regiao": "SE",
+                "score_priorizacao": 95.0 - i * 5,
+                "hex_score_estrutural": 90.0 - i * 5,
+                "ajuste_executivo": 2.0,
+                "faixa_oportunidade": faixa,
+                "flag_viavel": viavel,
+                "flag_prioridade": prioridade,
+                "rank_brasil": rank,
+                "rank_uf": rank,
+                "rank_cidade": 1,
+                "renda_per_capita": 3000.0 + i,
+                "populacao_proxy": 12000.0 - i * 100,
+            }
+        )
+    return pd.DataFrame(records)[REQUIRED_COLUMNS]
+
+
+def test_dataset_enriquecido_particionado_bate_com_runtime_para_uf(tmp_path):
+    base = _prepare_dataframe(_sample_m1_base_df())
+    runtime = enrich_dashboard_data(base, pd.DataFrame(), pd.DataFrame())
+
+    out_dir = write_enriched_dashboard_partitioned(runtime, base_dir=tmp_path / "enriquecido")
+    assert (out_dir / "uf=SP").exists()
+    assert (out_dir / "uf=RJ").exists()
+
+    materializado = read_enriched_dashboard(out_dir, uf="SP")
+    runtime_sp = runtime[runtime["uf"].astype(str) == "SP"]
+
+    # contagem de linhas por particao
+    assert len(materializado) == len(runtime_sp)
+
+    key_cols = ["hex_id", "score_priorizacao", "rank_brasil", "populacao_proxy", "faixa_oportunidade"]
+    mat = materializado.sort_values("hex_id").reset_index(drop=True)
+    rt = runtime_sp.sort_values("hex_id").reset_index(drop=True)
+
+    assert mat["hex_id"].tolist() == rt["hex_id"].tolist()
+    assert mat["uf"].astype(str).tolist() == ["SP"] * len(mat)
+    assert mat["faixa_oportunidade"].astype(str).tolist() == rt["faixa_oportunidade"].astype(str).tolist()
+    for col in ["score_priorizacao", "rank_brasil", "populacao_proxy"]:
+        np.testing.assert_allclose(
+            pd.to_numeric(mat[col]).to_numpy(),
+            pd.to_numeric(rt[col]).to_numpy(),
+        )
+    # nenhuma coluna do frame de runtime se perde no round-trip (uf reconstruida da particao)
+    assert set(runtime.columns) <= set(materializado.columns)

@@ -30,3 +30,11 @@ Contrato curto e canonico dos artefatos do fechamento nacional do M1.
 | `rank_brasil`, `rank_uf`, `rank_cidade` | ranking executivo oficial nas tres granularidades |
 | `osm_status` | status do uso de OSM; no fechamento nacional atual deve ser `nao_aplicado_mvp_nacional` |
 | colunas de rastreabilidade IBGE | `fonte_demografica`, `fonte_renda`, `fonte_populacao`, `nivel_geografico_ibge`, `fallback_setor_censitario`, `motivo_fallback_setor`, `fonte_geometria_ibge`, `metodo_atribuicao_municipio`, `data_referencia_ibge` |
+
+## Artefato derivado (NAO oficial M1)
+
+`data/outputs/hexagonos_dashboard_enriquecido/uf=XX/parte-*.parquet` materializa offline o merge que o dashboard montava a frio em runtime (M1 + hibrido censitario + censo + `pop_total` estrutural). E um dataset pyarrow particionado por `uf`, gerado por `fase1_bi_exports.materialize_enriched_dashboard()` a partir de `enrich_dashboard_data`, sem recalcular `score_priorizacao`, `hex_score_estrutural`, carteira, plano nem os artefatos oficiais acima.
+
+- Papel: acelerar a carga do dashboard (Bloco 4 le apenas a particao da UF selecionada); nao substitui nem altera o M1 oficial.
+- Insumos: `hexagonos_brasil_dashboard.parquet` (oficial), `oportunidades_expansao_hibrido.parquet`, `censo2022_setores_calibrado*.parquet`, `censo2022_setores_validado_v2.parquet`, `brasil_estrutural.parquet`.
+- Conteudo: mesmas colunas e linhas de `enrich_dashboard_data` (`uf` reconstruida da particao na leitura); regenera-se com `python fase1_bi_exports.py` quando o insumo hibrido existe.
