@@ -3,7 +3,7 @@
 Base territorial do MVP nacional do `motor-de-expansao`.
 
 O contrato canonico do projeto esta em `CLAUDE.md`; detalhes do ciclo ativo ficam em `PRD.md`.
-O dashboard Streamlit esta estabilizado (ciclos Blocos 1-19 concluidos em 2026-05-21): Visao Executiva Ultra-only, Analise Pontual de Entorno com populacao/renda/pins de concorrentes, Cenario Multi-Hex com agregacao de potencial regional, Expansao de Dominio por score hibrido censitario-residual, consumo fitness instalado em todo o app, regua visual 10-em-10 para M1/Censitario/Hibrido/Residual, e captura por clique com centroide de hex. Roda offline com Parquets locais, sem API ao vivo, sem PostGIS obrigatorio e sem recalculo do M1 no deploy inicial.
+O dashboard Streamlit esta estabilizado (ciclos Blocos 1-19 concluidos em 2026-05-21): Visao Executiva Ultra-only, Analise Pontual de Entorno com populacao/renda/pins de concorrentes, Cenario Multi-Hex com agregacao de potencial regional, Expansao de Dominio por score hibrido censitario-residual, consumo fitness instalado em todo o app, regua visual 10-em-10 para M1/Censitario/Hibrido/Residual, captura por clique com centroide de hex e Relatorio Pontual Censitario 1.5 km com setor real, mapa PNG e export CSV/PDF. Roda offline com Parquets locais, sem API ao vivo, sem PostGIS obrigatorio e sem recalculo do M1 no deploy inicial.
 O ciclo `Performance e Refatoracao do Dashboard` (concluido em 2026-05-22) tornou a carga lazy por UF: o app le apenas a particao `uf=XX` do dataset enriquecido materializado (`data/outputs/hexagonos_dashboard_enriquecido/`), renderiza so a aba ativa e usa fonte de mapa enxuta. Medicoes em `data/reports/perf_baseline_dashboard.md`.
 
 ## Quickstart local
@@ -42,6 +42,7 @@ O app roda offline e le Parquets locais. Para a experiencia completa do dashboar
 | `oportunidades_expansao_hibrido.parquet` | enriquecimento hibrido/censitario e filtros combinados | obrigatorio no app atual |
 | `carteira_expansao_acionavel.parquet` | aba de carteira operacional | recomendado |
 | `plano_expansao_curto_prazo.parquet` | aba de plano curto prazo | recomendado |
+| `setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN/part-000.parquet` | Relatorio Pontual Censitario 1.5 km | opcional, por municipio |
 
 Camadas de apoio em `data/staging/` podem enriquecer rastreabilidade censitaria, mas dados brutos e staging nacionais grandes devem ser tratados como artefatos externos ao codigo.
 
@@ -96,6 +97,16 @@ A aba `Mapa Territorial` inclui uma analise de raio ao redor de uma coordenada.
 - Populacao total, renda per capita media e pins de concorrentes/Ultra filtrados por distancia haversine dentro do raio
 - Nota visual exibida quando clique ativo; fallback por campo `lat,lng` na sidebar para coordenada exata
 - Guardrail: a analise e visual/analitica e nao altera `score_priorizacao`, carteira, plano ou artefatos oficiais
+
+### Relatorio Pontual Censitario 1.5 km
+
+O expander `Relatorio Pontual Censitario`, na aba `Mapa Territorial`, usa a coordenada ativa do clique ou da busca da sidebar e raio fixo `1.5 km`.
+
+- Base: `data/outputs/setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN/part-000.parquet`
+- Metodo: intersecao real setor censitario x circulo em CRS metrico local (`setor_censitario_intersecao_area_1p5km`)
+- Saidas: KPIs, mapa PNG offline, tabela de setores intersectados e downloads CSV/PDF em memoria
+- Sem base municipal, o app mostra mensagem clara e nao carrega shapefile nacional
+- Guardrail: feature paralela; nao recalcula `score_priorizacao`, carteira, plano nem artefatos oficiais
 
 ### Regua visual de populacao minima (5k hab)
 

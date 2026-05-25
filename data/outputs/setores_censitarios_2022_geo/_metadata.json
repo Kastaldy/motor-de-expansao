@@ -1,0 +1,312 @@
+{
+  "data_execucao": "2026-05-25",
+  "output_root": "data\\outputs\\setores_censitarios_2022_geo",
+  "report_path": "data\\reports\\relatorio_pontual_censitario_base_geo.md",
+  "ufs": [
+    {
+      "uf": "AC",
+      "municipios": 22,
+      "setores": 2215,
+      "arquivos": 22,
+      "tamanho_mb": 13.06,
+      "tempo_s": 6.18,
+      "renda_cobertura_pct": 89.44,
+      "score_cobertura_pct": 89.44
+    },
+    {
+      "uf": "AL",
+      "municipios": 102,
+      "setores": 6359,
+      "arquivos": 102,
+      "tamanho_mb": 19.75,
+      "tempo_s": 11.61,
+      "renda_cobertura_pct": 96.98,
+      "score_cobertura_pct": 96.98
+    },
+    {
+      "uf": "AM",
+      "municipios": 62,
+      "setores": 10729,
+      "arquivos": 62,
+      "tamanho_mb": 83.76,
+      "tempo_s": 12.46,
+      "renda_cobertura_pct": 78.65,
+      "score_cobertura_pct": 78.65
+    },
+    {
+      "uf": "AP",
+      "municipios": 16,
+      "setores": 1492,
+      "arquivos": 16,
+      "tamanho_mb": 3.73,
+      "tempo_s": 8.2,
+      "renda_cobertura_pct": 91.09,
+      "score_cobertura_pct": 91.09
+    },
+    {
+      "uf": "BA",
+      "municipios": 417,
+      "setores": 30985,
+      "arquivos": 417,
+      "tamanho_mb": 91.18,
+      "tempo_s": 26.87,
+      "renda_cobertura_pct": 98.46,
+      "score_cobertura_pct": 98.46
+    },
+    {
+      "uf": "CE",
+      "municipios": 184,
+      "setores": 20979,
+      "arquivos": 184,
+      "tamanho_mb": 24.6,
+      "tempo_s": 14.82,
+      "renda_cobertura_pct": 95.79,
+      "score_cobertura_pct": 95.79
+    },
+    {
+      "uf": "DF",
+      "municipios": 1,
+      "setores": 5418,
+      "arquivos": 1,
+      "tamanho_mb": 3.46,
+      "tempo_s": 40.83,
+      "renda_cobertura_pct": 97.16,
+      "score_cobertura_pct": 97.16
+    },
+    {
+      "uf": "ES",
+      "municipios": 78,
+      "setores": 8706,
+      "arquivos": 78,
+      "tamanho_mb": 19.62,
+      "tempo_s": 22.54,
+      "renda_cobertura_pct": 97.31,
+      "score_cobertura_pct": 97.31
+    },
+    {
+      "uf": "GO",
+      "municipios": 246,
+      "setores": 12861,
+      "arquivos": 246,
+      "tamanho_mb": 85.15,
+      "tempo_s": 47.1,
+      "renda_cobertura_pct": 98.16,
+      "score_cobertura_pct": 98.16
+    },
+    {
+      "uf": "MA",
+      "municipios": 217,
+      "setores": 16301,
+      "arquivos": 217,
+      "tamanho_mb": 40.69,
+      "tempo_s": 16.53,
+      "renda_cobertura_pct": 95.52,
+      "score_cobertura_pct": 95.52
+    },
+    {
+      "uf": "MG",
+      "municipios": 853,
+      "setores": 51387,
+      "arquivos": 853,
+      "tamanho_mb": 149.7,
+      "tempo_s": 51.43,
+      "renda_cobertura_pct": 97.86,
+      "score_cobertura_pct": 97.86
+    },
+    {
+      "uf": "MS",
+      "municipios": 79,
+      "setores": 6117,
+      "arquivos": 79,
+      "tamanho_mb": 24.08,
+      "tempo_s": 36.36,
+      "renda_cobertura_pct": 97.84,
+      "score_cobertura_pct": 97.84
+    },
+    {
+      "uf": "MT",
+      "municipios": 141,
+      "setores": 9381,
+      "arquivos": 141,
+      "tamanho_mb": 38.07,
+      "tempo_s": 41.61,
+      "renda_cobertura_pct": 93.74,
+      "score_cobertura_pct": 93.74
+    },
+    {
+      "uf": "PA",
+      "municipios": 144,
+      "setores": 16714,
+      "arquivos": 144,
+      "tamanho_mb": 33.8,
+      "tempo_s": 17.93,
+      "renda_cobertura_pct": 92.9,
+      "score_cobertura_pct": 92.9
+    },
+    {
+      "uf": "PB",
+      "municipios": 223,
+      "setores": 9639,
+      "arquivos": 223,
+      "tamanho_mb": 19.94,
+      "tempo_s": 14.9,
+      "renda_cobertura_pct": 98.24,
+      "score_cobertura_pct": 98.24
+    },
+    {
+      "uf": "PE",
+      "municipios": 185,
+      "setores": 19578,
+      "arquivos": 185,
+      "tamanho_mb": 30.9,
+      "tempo_s": 14.47,
+      "renda_cobertura_pct": 98.07,
+      "score_cobertura_pct": 98.07
+    },
+    {
+      "uf": "PI",
+      "municipios": 224,
+      "setores": 7340,
+      "arquivos": 224,
+      "tamanho_mb": 30.89,
+      "tempo_s": 13.08,
+      "renda_cobertura_pct": 98.26,
+      "score_cobertura_pct": 98.26
+    },
+    {
+      "uf": "PR",
+      "municipios": 399,
+      "setores": 23777,
+      "arquivos": 399,
+      "tamanho_mb": 46.23,
+      "tempo_s": 24.68,
+      "renda_cobertura_pct": 97.48,
+      "score_cobertura_pct": 97.48
+    },
+    {
+      "uf": "RJ",
+      "municipios": 92,
+      "setores": 41700,
+      "arquivos": 92,
+      "tamanho_mb": 46.37,
+      "tempo_s": 33.2,
+      "renda_cobertura_pct": 95.45,
+      "score_cobertura_pct": 95.45
+    },
+    {
+      "uf": "RN",
+      "municipios": 167,
+      "setores": 6095,
+      "arquivos": 167,
+      "tamanho_mb": 7.41,
+      "tempo_s": 18.01,
+      "renda_cobertura_pct": 97.7,
+      "score_cobertura_pct": 97.7
+    },
+    {
+      "uf": "RO",
+      "municipios": 52,
+      "setores": 3456,
+      "arquivos": 52,
+      "tamanho_mb": 6.84,
+      "tempo_s": 8.1,
+      "renda_cobertura_pct": 90.71,
+      "score_cobertura_pct": 90.71
+    },
+    {
+      "uf": "RR",
+      "municipios": 15,
+      "setores": 1783,
+      "arquivos": 15,
+      "tamanho_mb": 5.43,
+      "tempo_s": 7.26,
+      "renda_cobertura_pct": 65.79,
+      "score_cobertura_pct": 65.79
+    },
+    {
+      "uf": "RS",
+      "municipios": 498,
+      "setores": 25569,
+      "arquivos": 498,
+      "tamanho_mb": 47.9,
+      "tempo_s": 27.53,
+      "renda_cobertura_pct": 97.27,
+      "score_cobertura_pct": 97.27
+    },
+    {
+      "uf": "SC",
+      "municipios": 295,
+      "setores": 16736,
+      "arquivos": 295,
+      "tamanho_mb": 98.83,
+      "tempo_s": 51.01,
+      "renda_cobertura_pct": 96.43,
+      "score_cobertura_pct": 96.43
+    },
+    {
+      "uf": "SE",
+      "municipios": 75,
+      "setores": 5346,
+      "arquivos": 75,
+      "tamanho_mb": 8.42,
+      "tempo_s": 12.78,
+      "renda_cobertura_pct": 97.25,
+      "score_cobertura_pct": 97.25
+    },
+    {
+      "uf": "SP",
+      "municipios": 645,
+      "setores": 103319,
+      "arquivos": 645,
+      "tamanho_mb": 124.88,
+      "tempo_s": 84.42,
+      "renda_cobertura_pct": 96.04,
+      "score_cobertura_pct": 96.04
+    },
+    {
+      "uf": "TO",
+      "municipios": 139,
+      "setores": 4117,
+      "arquivos": 139,
+      "tamanho_mb": 66.1,
+      "tempo_s": 11.08,
+      "renda_cobertura_pct": 94.66,
+      "score_cobertura_pct": 94.66
+    }
+  ],
+  "schema": [
+    "cod_setor",
+    "uf",
+    "cod_uf",
+    "cod_municipio",
+    "nome_municipio",
+    "situacao_setor",
+    "area_setor_km2_ibge",
+    "area_setor_m2",
+    "geometry_wkb",
+    "crs_origem",
+    "pop_total_setor_2022",
+    "domicilios_particulares_ocupados_setor_2022",
+    "avg_moradores_domicilio_setor_2022",
+    "renda_responsavel_media_setor_2022",
+    "renda_per_capita_setor_2022",
+    "renda_per_capita_setor_2022_calibrada",
+    "densidade_pop_setor_hab_km2",
+    "renda_pct_nacional_calibrado",
+    "pop_pct_municipal",
+    "hex_score_estrutural_calibrado",
+    "ajuste_calibrado",
+    "score_setor_2022_calibrado",
+    "bbox_minx",
+    "bbox_miny",
+    "bbox_maxx",
+    "bbox_maxy",
+    "flag_renda_disponivel",
+    "flag_geometria_valida",
+    "flag_score_calibrado_disponivel",
+    "qualidade_join_uf",
+    "metodo_renda_setor_2022",
+    "metodo_score_setor_2022",
+    "data_materializacao"
+  ]
+}

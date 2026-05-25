@@ -3243,3 +3243,131 @@ def test_main_renderiza_apenas_a_aba_ativa(tmp_path, monkeypatch):
     assert not carteira_mock.called
     # summaries so sao computados para abas que os consomem (Visao/Mapa), nao para Dominio
     assert not city_mock.called
+
+
+def test_render_relatorio_pontual_censitario_sem_coordenada_exibe_info():
+    import unittest.mock as mock
+
+    with mock.patch("streamlit.info") as info_mock, mock.patch("streamlit.caption"):
+        streamlit_app.render_relatorio_pontual_censitario(
+            None,
+            pd.DataFrame(),
+            censo_geo_loader=lambda uf, cod: pd.DataFrame(),
+        )
+
+    info_mock.assert_called_once()
+    assert "coordenada" in info_mock.call_args[0][0].lower()
+
+
+def test_render_relatorio_pontual_censitario_sem_base_setorial_exibe_warning():
+    import unittest.mock as mock
+    import h3
+
+    lat, lng = -15.7939, -47.8828
+    df = pd.DataFrame([{
+        "hex_id": h3.latlng_to_cell(lat, lng, 7),
+        "lat": lat,
+        "lng": lng,
+        "uf": "DF",
+        "cidade": "Brasilia",
+        "nome_municipio": "BRASILIA",
+        "cod_municipio": "5300108",
+    }])
+
+    with (
+        mock.patch("streamlit.warning") as warning_mock,
+        mock.patch("streamlit.caption"),
+    ):
+        streamlit_app.render_relatorio_pontual_censitario(
+            (lat, lng),
+            df,
+            censo_geo_loader=lambda uf, cod: pd.DataFrame(),
+        )
+
+    assert "base setorial" in warning_mock.call_args[0][0].lower()
+    assert "5300108" in warning_mock.call_args[0][0]
+
+
+def test_render_relatorio_pontual_censitario_com_coordenada_gera_mapa_e_downloads():
+    import unittest.mock as mock
+    import h3
+
+    lat, lng = -15.7939, -47.8828
+    df = pd.DataFrame([{
+        "hex_id": h3.latlng_to_cell(lat, lng, 7),
+        "lat": lat,
+        "lng": lng,
+        "uf": "DF",
+        "cidade": "Brasilia",
+        "nome_municipio": "BRASILIA",
+        "cod_municipio": "5300108",
+    }])
+    setores_df = pd.DataFrame([{"cod_setor": "530010805000001", "geometry_wkb": b"fake"}])
+    result = {
+        "lat": lat,
+        "lng": lng,
+        "raio_km": 1.5,
+        "metodo": "setor_censitario_intersecao_area_1p5km",
+        "n_setores": 1,
+        "pop_total_raio": 1234.0,
+        "renda_per_capita_media_raio": 2100.0,
+        "densidade_pop_raio_hab_km2": 175.0,
+        "score_setor_medio": 77.0,
+        "score_setor_max": 88.0,
+        "n_concorrentes": 2,
+        "n_ultra": 1,
+        "setores_intersectados": pd.DataFrame([{
+            "cod_setor": "530010805000001",
+            "nome_municipio": "BRASILIA",
+            "area_intersecao_m2": 1000.0,
+            "peso_area_setor": 0.5,
+            "pop_estimada_intersecao": 1234.0,
+            "renda_per_capita_setor_2022_calibrada": 2100.0,
+            "score_setor_2022_calibrado": 77.0,
+            "qualidade_join_uf": "A",
+        }]),
+    }
+
+    with (
+        mock.patch("motor_expansao.dashboard.pages.analisar_ponto_censitario_setores", return_value=result) as analyze_mock,
+        mock.patch("motor_expansao.dashboard.pages.render_mapa_censitario_estatico_png", return_value=b"PNG") as map_mock,
+        mock.patch("motor_expansao.dashboard.pages.render_downloads_relatorio_censitario") as download_mock,
+        mock.patch("streamlit.selectbox", return_value="Populacao estimada"),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.image"),
+        mock.patch("streamlit.dataframe"),
+    ):
+        streamlit_app.render_relatorio_pontual_censitario(
+            (lat, lng),
+            df,
+            censo_geo_loader=lambda uf, cod: setores_df,
+        )
+
+    analyze_mock.assert_called_once()
+    map_mock.assert_called_once()
+    download_mock.assert_called_once()
+
+
+def test_load_censo_geo_setores_le_particao_por_municipio(tmp_path, monkeypatch):
+    base = tmp_path / "setores_censitarios_2022_geo"
+    part = base / "uf=DF" / "cod_municipio=5300108"
+    part.mkdir(parents=True)
+    pd.DataFrame([{
+        "cod_setor": "530010805000001",
+        "geometry_wkb": b"fake",
+        "pop_total_setor_2022": 100.0,
+    }]).to_parquet(part / "part-000.parquet", index=False)
+
+    monkeypatch.setattr(streamlit_app, "CENSO_GEO_DIR", base)
+    streamlit_app.load_censo_geo_setores.clear()
+    streamlit_app.load_censo_geo_municipios.clear()
+
+    municipios = streamlit_app.load_censo_geo_municipios("DF")
+    setores = streamlit_app.load_censo_geo_setores("DF", "5300108")
+
+    assert municipios == ["5300108"]
+    assert len(setores) == 1
+    assert setores.loc[0, "uf"] == "DF"
+    assert setores.loc[0, "cod_municipio"] == "5300108"

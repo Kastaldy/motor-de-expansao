@@ -50,6 +50,14 @@ from dashboard.utils import (  # noqa: F401
     score_band_to_color,
 )
 from motor_expansao.dashboard.competitors import load_competitor_points, load_ultra_points, preload_logos  # noqa: F401
+from motor_expansao.dashboard.censo_map import render_mapa_censitario_estatico_png  # noqa: F401
+from motor_expansao.dashboard.censo_point import analisar_ponto_censitario_setores  # noqa: F401
+from motor_expansao.dashboard.censo_report import (  # noqa: F401
+    gerar_csv_setores_censitarios,
+    gerar_payloads_download_relatorio_censitario,
+    gerar_pdf_relatorio_pontual_censitario,
+    render_downloads_relatorio_censitario,
+)
 from motor_expansao.dashboard.components import (  # noqa: F401
     _build_multihex_selection_layer,
     _carteira_prioridade_color,
@@ -121,11 +129,14 @@ from motor_expansao.dashboard.data import (  # noqa: F401
     derive_pop_cut_columns,
     enrich_dashboard_data,
     haversine_km,
+    list_censo_geo_municipios,
     list_partitioned_ufs,
     lookup_hex_by_coord,
     parse_coordinate_input,
     parse_hex_ids_from_text,
+    read_censo_geo_partition,
     read_enriched_uf_partition,
+    resolve_cod_municipio_from_geo_dir,
 )
 from motor_expansao.dashboard.pages import (  # noqa: F401
     DASHBOARD_TAB_LABELS,
@@ -140,6 +151,7 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_comparacao_uf,
     render_coord_search_sidebar,
     render_empty_state,
+    render_relatorio_pontual_censitario,
     render_expansao_dominio,
     render_header,
     render_hex_search_result,
@@ -180,6 +192,7 @@ PLANO_DOMINIO_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "pla
 ENRIQUECIDO_DIR = (
     Path(__file__).resolve().parent / "data" / "outputs" / "hexagonos_dashboard_enriquecido"
 )
+CENSO_GEO_DIR = Path(__file__).resolve().parent / "data" / "outputs" / "setores_censitarios_2022_geo"
 
 preload_logos(CONCORRENTES_DIR, ultra_dir=ULTRA_PATH.parent)
 
@@ -300,6 +313,16 @@ def load_uf_slice(uf: str) -> pd.DataFrame:
         return slice_df
     full = build_dashboard_dataset()
     return full.loc[full["uf"] == uf].reset_index(drop=True)
+
+
+@st.cache_data(show_spinner=False)
+def load_censo_geo_municipios(uf: str) -> list[str]:
+    return list_censo_geo_municipios(CENSO_GEO_DIR, uf)
+
+
+@st.cache_data(show_spinner=False)
+def load_censo_geo_setores(uf: str, cod_municipio: str | None = None) -> pd.DataFrame:
+    return read_censo_geo_partition(CENSO_GEO_DIR, uf, cod_municipio)
 
 
 @st.cache_data(show_spinner=False)
@@ -507,6 +530,8 @@ def main() -> None:
             city_summary=city_summary,
             uf_summary=uf_summary,
             selected_faixas=selected_faixas,
+            censo_geo_loader=load_censo_geo_setores,
+            censo_geo_dir=CENSO_GEO_DIR,
         )
     elif active_tab == "Expansao de Dominio":
         render_expansao_dominio(

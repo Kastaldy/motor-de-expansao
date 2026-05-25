@@ -19,7 +19,7 @@ REQUIRED_COLUMNS = [
     "renda_per_capita",
     "populacao_proxy",
 ]
-OPTIONAL_DATASET_COLUMNS = ["confianca_geografica"]
+OPTIONAL_DATASET_COLUMNS = ["confianca_geografica", "cod_municipio"]
 
 RESIDUAL_MERCADO_COLS = [
     "pop_hex_base",

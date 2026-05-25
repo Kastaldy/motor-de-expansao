@@ -68,6 +68,16 @@ Mapa unificado com modos de cor selecionaveis. Mantém todos os modos ativos do 
 - Nota visual exibida quando clique ativo: `"centroide do hex selecionado. Para coordenada exata, use lat,lng na barra lateral."`.
 - Fallback: campo `lat,lng` na sidebar permanece o caminho padrao para precisao exata.
 
+**Relatorio Pontual Censitario 1.5 km** (expander ao fim da aba):
+- Complementar a Analise Pontual H3; usa setores censitarios reais, nao hexagonos.
+- Ativado pela coordenada ativa do clique ou da busca da sidebar; raio fixo `1.5 km`.
+- Carga lazy/cacheada por `uf` e `cod_municipio` via `load_censo_geo_setores` e `read_censo_geo_partition`.
+- Base esperada: `data/outputs/setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN/part-000.parquet`.
+- Metodo canonico: `setor_censitario_intersecao_area_1p5km`, com intersecao real setor x circulo em CRS metrico local e ponderacao por area/populacao.
+- Exibe KPIs, mapa PNG offline (`render_mapa_censitario_estatico_png`), tabela de setores intersectados e downloads CSV/PDF em memoria.
+- Sem base municipal, mostra mensagem clara e nao tenta carregar shapefile nacional.
+- Guardrail: nao recalcula `score_priorizacao`, carteira, plano, plano dominio nem artefatos oficiais do M1.
+
 **Cenario Multi-Hex (Bloco 14+):**
 - Selecao multi-hex e estado de UI/session_state; nao altera artefatos M1.
 - Usuario adiciona/remove hexes via clique ou cola de lista de `hex_id`; hexes selecionados recebem camada visual propria sem mudar cores dos modos M1/Censitario/Hibrido/Residual/Dominio.
@@ -109,6 +119,7 @@ Tabelas operacionais filtradas pela regua <5k hab. Ordenacao por `rank_brasil` (
 | `data/outputs/carteira_expansao_acionavel.parquet` | carteira operacional | recomendado |
 | `data/outputs/plano_expansao_curto_prazo.parquet` | plano curto prazo | recomendado |
 | `data/outputs/plano_expansao_dominio.parquet` | modo dominio e ancoras | recomendado |
+| `data/outputs/setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN/part-000.parquet` | relatorio pontual censitario | opcional por municipio |
 | `data/ultra/Ultra.csv` | pins Ultra e KPIs de rede | opcional |
 | `concorrentes/*.csv` | pins de concorrentes | opcional |
 
@@ -154,7 +165,8 @@ Tabelas operacionais filtradas pela regua <5k hab. Ordenacao por `rank_brasil` (
 
 1. Clique no mapa funciona apenas em objetos de camada; espaco vazio nao dispara evento.
 2. Botao direito nao e suportado pelo `st.pydeck_chart`.
-3. Analise pontual e selecao multi-hex usam centroides de hexes H3 como proxy de localizacao; sem geometrias de setor/rua, a leitura e aproximada.
+3. Analise pontual H3 e selecao multi-hex usam centroides de hexes H3 como proxy de localizacao; sem geometrias de setor/rua, a leitura e aproximada.
 4. Sem as camadas hibrido/censitario, modos `hibrido`, `censitario` e `residual` exibem aviso de indisponibilidade.
 5. Colunas de consumo fitness (`oferta_consumida_mercado_estimada`, `oferta_consumida_ultra_real`) e dominio hibrido (`score_setor_2022_calibrado`) sao opcionais por artefato; exibem `-` quando ausentes no Parquet carregado.
 6. Cobertura censitaria parcial: UFs com `qualidade_join_uf=C` (AM, RR e outras) sao filtradas pelo modelo hibrido; score censitario nao disponivel para esses hexes.
+7. Relatorio Pontual Censitario depende do artefato geo municipal materializado; a distribuicao intrassetor e aproximada por area e nao promete precisao de rua, lote ou quadra.

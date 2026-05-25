@@ -19,9 +19,11 @@ dependencies = [
     "openpyxl>=3.1.0",
     "plotly>=5.20.0",
     "pydeck>=0.8.1",
+    "pillow>=10.0.0",
 
     # Geoespacial (pipeline M1 + camadas)
     "h3>=3.7.7",
+    "geopandas>=0.14.4",
     "shapely>=2.0.4",
     "pyproj>=3.6.1",
     "geopy>=2.4.1",

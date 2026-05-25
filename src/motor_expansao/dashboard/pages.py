@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 
@@ -72,7 +75,14 @@ from motor_expansao.dashboard.data import (
     lookup_hex_by_coord,
     parse_coordinate_input,
     parse_hex_ids_from_text,
+    resolve_cod_municipio_from_geo_dir,
 )
+from motor_expansao.dashboard.censo_map import render_mapa_censitario_estatico_png
+from motor_expansao.dashboard.censo_point import (
+    RAIO_CENSITARIO_DEFAULT_KM,
+    analisar_ponto_censitario_setores,
+)
+from motor_expansao.dashboard.censo_report import render_downloads_relatorio_censitario
 
 
 RESIDUAL_SORT_COLUMNS = [
@@ -2306,6 +2316,203 @@ def _extract_click_coord_from_selection(map_event) -> "tuple[float, float] | Non
     return None
 
 
+def _normalizar_cod_municipio(value: object) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none"}:
+        return None
+    number = pd.to_numeric(text, errors="coerce")
+    if pd.notna(number):
+        text = str(int(number))
+    return text.zfill(7) if text.isdigit() else text
+
+
+def _resolve_censo_context(
+    search_pin: tuple[float, float],
+    df: pd.DataFrame,
+    censo_geo_dir: Path | None = None,
+) -> dict[str, str] | None:
+    lat, lng = search_pin
+    found = lookup_hex_by_coord(lat, lng, df)
+    if found is None or found.get("_not_found"):
+        return None
+
+    uf = str(found.get("uf") or "").upper()
+    cod_municipio = _normalizar_cod_municipio(found.get("cod_municipio"))
+    nome_municipio = str(found.get("nome_municipio") or found.get("cidade") or "").strip()
+
+    if not cod_municipio and "cod_municipio" in df.columns:
+        rows = df.loc[df["hex_id"].astype(str) == str(found.get("hex_id"))]
+        if not rows.empty:
+            cod_municipio = _normalizar_cod_municipio(rows.iloc[0].get("cod_municipio"))
+
+    if not cod_municipio and uf and nome_municipio and censo_geo_dir is not None:
+        cod_municipio = resolve_cod_municipio_from_geo_dir(censo_geo_dir, uf, nome_municipio)
+
+    if not uf or not cod_municipio:
+        return None
+    return {
+        "uf": uf,
+        "cod_municipio": cod_municipio,
+        "nome_municipio": nome_municipio or cod_municipio,
+        "hex_id": str(found.get("hex_id", "")),
+    }
+
+
+def _format_brl(value: object) -> str:
+    return f"R$ {format_int(int(value))}" if value is not None and pd.notna(value) else "-"
+
+
+def _render_setores_censitarios_table(setores: pd.DataFrame) -> None:
+    if setores is None or setores.empty:
+        st.info("Nenhum setor censitario intersectado no raio.")
+        return
+    display_cols = {
+        "cod_setor": "Setor",
+        "nome_municipio": "Municipio",
+        "area_intersecao_m2": "Area intersecao (m2)",
+        "peso_area_setor": "Peso area",
+        "pop_estimada_intersecao": "Pop. estimada",
+        "renda_per_capita_setor_2022_calibrada": "Renda per capita",
+        "score_setor_2022_calibrado": "Score censo",
+        "qualidade_join_uf": "Qualidade",
+    }
+    table = setores[[c for c in display_cols if c in setores.columns]].rename(
+        columns={k: v for k, v in display_cols.items() if k in setores.columns}
+    ).copy()
+    for col in ["Area intersecao (m2)", "Pop. estimada"]:
+        if col in table.columns:
+            table[col] = table[col].map(lambda v: format_int(int(v)) if pd.notna(v) else "-")
+    if "Peso area" in table.columns:
+        table["Peso area"] = table["Peso area"].map(lambda v: f"{float(v):.3f}" if pd.notna(v) else "-")
+    if "Renda per capita" in table.columns:
+        table["Renda per capita"] = table["Renda per capita"].map(_format_brl)
+    if "Score censo" in table.columns:
+        table["Score censo"] = table["Score censo"].map(lambda v: f"{float(v):.1f}" if pd.notna(v) else "-")
+
+    st.dataframe(
+        table.head(80),
+        width="stretch",
+        hide_index=True,
+        height=min(420, 38 + 35 * min(len(table), 80)),
+    )
+
+
+def render_relatorio_pontual_censitario(
+    search_pin: tuple[float, float] | None,
+    df: pd.DataFrame,
+    *,
+    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
+    censo_geo_dir: Path | None = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
+) -> None:
+    """Renderiza o fluxo Streamlit do relatorio pontual censitario 1.5 km."""
+    st.caption(
+        "Usa setores censitarios reais IBGE 2022 e intersecao geometrica com raio fixo de "
+        f"{raio_km:.1f} km. Camada complementar: nao altera M1, carteira ou plano."
+    )
+
+    if search_pin is None:
+        st.info(
+            "Clique em um hexagono no mapa ou informe uma coordenada na sidebar para gerar "
+            "o Relatorio Pontual Censitario."
+        )
+        return
+
+    if censo_geo_loader is None:
+        st.warning("Loader da base setorial nao configurado para o relatorio censitario.")
+        return
+
+    context = _resolve_censo_context(search_pin, df, censo_geo_dir=censo_geo_dir)
+    if context is None:
+        st.warning(
+            "Nao foi possivel identificar UF e municipio na base M1 para esta coordenada. "
+            "Tente uma coordenada urbana dentro do recorte carregado."
+        )
+        return
+
+    lat, lng = search_pin
+    uf = context["uf"]
+    cod_municipio = context["cod_municipio"]
+    nome_municipio = context["nome_municipio"]
+
+    setores_df = censo_geo_loader(uf, cod_municipio)
+    if setores_df is None or setores_df.empty:
+        st.warning(
+            "Base setorial geografica nao encontrada para "
+            f"{nome_municipio}/{uf} (`cod_municipio={cod_municipio}`). "
+            "Materialize `data/outputs/setores_censitarios_2022_geo/` para habilitar o relatorio."
+        )
+        return
+
+    metric_options = {
+        "Populacao estimada": "pop_estimada_intersecao",
+        "Renda per capita": "renda_per_capita_setor_2022_calibrada",
+        "Score censitario": "score_setor_2022_calibrado",
+        "Peso de area": "peso_area_setor",
+    }
+    metric_label = st.selectbox(
+        "Metrica do mapa censitario",
+        options=list(metric_options),
+        index=0,
+        key="relatorio_censitario_metric",
+    )
+    metric_column = metric_options[metric_label]
+
+    result = analisar_ponto_censitario_setores(
+        lat,
+        lng,
+        setores_df,
+        raio_km=raio_km,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+    )
+    mapa_png = render_mapa_censitario_estatico_png(
+        lat,
+        lng,
+        setores_df,
+        raio_km=raio_km,
+        metric_column=metric_column,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+    )
+
+    st.markdown(f"**Ponto analisado:** `{lat:.5f}, {lng:.5f}` | `{nome_municipio}/{uf}`")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Setores", format_int(result["n_setores"]))
+    k2.metric("Populacao estimada", format_int(int(result["pop_total_raio"])) if result["pop_total_raio"] is not None else "-")
+    k3.metric("Renda per capita", _format_brl(result["renda_per_capita_media_raio"]))
+    dens = result["densidade_pop_raio_hab_km2"]
+    k4.metric("Densidade", f"{format_int(int(dens))} hab/km2" if dens is not None else "-")
+
+    k5, k6, k7, k8 = st.columns(4)
+    score = result["score_setor_medio"]
+    k5.metric("Score censo medio", f"{score:.1f}" if score is not None else "-")
+    score_max = result["score_setor_max"]
+    k6.metric("Score censo max", f"{score_max:.1f}" if score_max is not None else "-")
+    k7.metric("Concorrentes", format_int(result["n_concorrentes"]))
+    k8.metric("Ultra", format_int(result["n_ultra"]))
+
+    st.caption(
+        f"Metodo: `{result['metodo']}`. Populacao estimada por peso de area; "
+        "renda e scores ponderados por populacao estimada, com fallback por area."
+    )
+    st.image(mapa_png, caption=f"Mapa censitario offline por {metric_label.lower()}.", width="stretch")
+
+    st.markdown("##### Setores intersectados")
+    _render_setores_censitarios_table(result["setores_intersectados"])
+
+    render_downloads_relatorio_censitario(
+        st,
+        result,
+        mapa_png,
+        filename_prefix=f"relatorio_censitario_{uf}_{cod_municipio}_{lat:.5f}_{lng:.5f}".replace("-", "m").replace(".", "p"),
+    )
+
+
 def render_mapa_territorial(
     df: "pd.DataFrame",
     *,
@@ -2319,6 +2526,8 @@ def render_mapa_territorial(
     city_summary: "pd.DataFrame | None" = None,
     uf_summary: "pd.DataFrame | None" = None,
     selected_faixas: "list[str] | None" = None,
+    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
+    censo_geo_dir: Path | None = None,
 ) -> None:
     """Mapa Territorial Unificado: modo de cor selecionavel com overlays opcionais.
 
@@ -2478,4 +2687,16 @@ def render_mapa_territorial(
                 ultra_df=ultra_df,
                 dominio_df=dominio_df,
                 multihex_ids=multihex_ids,
+            )
+        with st.expander(
+            "Relatorio Pontual Censitario",
+            expanded=effective_pin is not None,
+        ):
+            render_relatorio_pontual_censitario(
+                effective_pin,
+                df,
+                censo_geo_loader=censo_geo_loader,
+                censo_geo_dir=censo_geo_dir,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
             )

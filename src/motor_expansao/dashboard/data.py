@@ -82,6 +82,87 @@ def read_enriched_uf_partition(base_dir: Path, uf: str) -> pd.DataFrame:
     return _prepare_dataframe(frame)
 
 
+def resolve_cod_municipio_from_geo_dir(
+    base_dir: Path,
+    uf: str,
+    nome_municipio: str,
+) -> str | None:
+    """Resolve cod_municipio pelo nome do municipio varrendo o artefato geo censitario.
+
+    Le apenas uma linha e a coluna `nome_municipio` de cada particao para
+    identificar o codigo sem carregar dados completos. Retorna None se nao
+    encontrar correspondencia exata (case-insensitive).
+    """
+    uf_dir = Path(base_dir) / f"uf={str(uf).upper()}"
+    if not uf_dir.is_dir():
+        return None
+    nome_norm = str(nome_municipio).strip().upper()
+    if not nome_norm:
+        return None
+    for child in sorted(uf_dir.iterdir()):
+        if not child.is_dir() or not child.name.startswith("cod_municipio="):
+            continue
+        cod = child.name.split("=", 1)[1]
+        try:
+            sample = pd.read_parquet(child, columns=["nome_municipio"]).head(1)
+            if not sample.empty and str(sample.iloc[0]["nome_municipio"]).strip().upper() == nome_norm:
+                return cod
+        except Exception:
+            pass
+    return None
+
+
+def list_censo_geo_municipios(base_dir: Path, uf: str) -> list[str]:
+    """Lista municipios materializados no artefato geo censitario de uma UF."""
+    uf_dir = Path(base_dir) / f"uf={str(uf).upper()}"
+    if not uf_dir.is_dir():
+        return []
+    municipios = [
+        child.name.split("=", 1)[1]
+        for child in uf_dir.iterdir()
+        if child.is_dir() and child.name.startswith("cod_municipio=")
+    ]
+    return sorted(m for m in municipios if m)
+
+
+def read_censo_geo_partition(
+    base_dir: Path,
+    uf: str,
+    cod_municipio: str | None = None,
+) -> pd.DataFrame:
+    """Le setores censitarios geograficos por UF e, quando possivel, municipio.
+
+    O artefato e derivado e particionado como
+    `setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN`. Este helper nao
+    recalcula score nem toca nos artefatos oficiais do M1; apenas carrega o
+    recorte necessario ao relatorio pontual censitario.
+    """
+    base = Path(base_dir)
+    uf_value = str(uf).upper()
+    if not base.is_dir():
+        return pd.DataFrame()
+
+    if cod_municipio:
+        cod_value = str(cod_municipio)
+        part_dir = base / f"uf={uf_value}" / f"cod_municipio={cod_value}"
+        if part_dir.is_dir():
+            frame = pd.read_parquet(part_dir)
+            if "uf" not in frame.columns:
+                frame["uf"] = uf_value
+            if "cod_municipio" not in frame.columns:
+                frame["cod_municipio"] = cod_value
+            return frame.reset_index(drop=True)
+        return pd.DataFrame()
+
+    uf_dir = base / f"uf={uf_value}"
+    if not uf_dir.is_dir():
+        return pd.DataFrame()
+
+    dataset = ds.dataset(str(base), format="parquet", partitioning="hive")
+    filter_expr = ds.field("uf") == uf_value
+    return dataset.to_table(filter=filter_expr).to_pandas().reset_index(drop=True)
+
+
 def _normalized_join_quality(df: pd.DataFrame) -> pd.Series:
     if "qualidade_join_uf" not in df.columns:
         return pd.Series("", index=df.index, dtype="object")
@@ -321,6 +402,7 @@ def enrich_dashboard_data(
 
     censo_extra_cols = [
         "hex_id",
+        "cod_municipio",
         "nome_municipio",
         "confianca_geografica",
         "score_setor_2022_calibrado",
