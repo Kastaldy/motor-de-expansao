@@ -2513,6 +2513,52 @@ def render_relatorio_pontual_censitario(
     )
 
 
+@st.fragment
+def render_mapa_pydeck_fragment(
+    deck: "pdk.Deck",
+    n_points: int,
+    selected_ufs: "list[str]",
+    multihex_ids: "list[str]",
+) -> None:
+    """Fragmento isolado para renderizacao do pydeck_chart e captura de clique.
+
+    - on_select="rerun" dentro do fragmento dispara rerun so do fragmento (comportamento esperado).
+    - Ao detectar clique novo: escreve em session_state["click_coord"] e chama st.rerun()
+      (rerun completo da aba) para propagar o novo ponto para os expanders dependentes.
+    - Sem clique novo: fragmento reroda a si mesmo sem propagar rerun da aba.
+    - Nao contem chamadas a st.sidebar (restricao do Streamlit).
+    - Nao recalcula score, carteira, plano nem artefatos oficiais do M1.
+    """
+    from dashboard.constants import MAP_POINT_LIMIT
+    st.caption(build_map_scope_caption(n_points, selected_ufs=selected_ufs, capped=n_points >= MAP_POINT_LIMIT))
+    st.caption(
+        "Clique em um hexagono no mapa para ativar a Analise Pontual de Entorno (raio 1.6 km). "
+        "Botao direito nao e suportado pelo componente de mapa."
+    )
+    map_event = st.pydeck_chart(
+        deck, on_select="rerun", key="main_unified_map", width="stretch", height=600
+    )
+    _new_click = _extract_click_coord_from_selection(map_event)
+    _prev_click: "tuple[float, float] | None" = st.session_state.get("click_coord")
+    if _new_click is not None and _new_click != _prev_click:
+        st.session_state["click_coord"] = _new_click
+        st.rerun()  # rerun completo da aba para propagar click_coord aos expanders
+    click_coord: "tuple[float, float] | None" = st.session_state.get("click_coord")
+    if click_coord is not None:
+        _col_btn, _cap_col = st.columns([1, 4])
+        with _col_btn:
+            if st.button("Limpar selecao do mapa", key="clear_click_coord"):
+                st.session_state.pop("click_coord", None)
+                st.rerun()  # rerun completo para limpar estado dos expanders
+        if st.session_state.get("click_coord") is not None:
+            with _cap_col:
+                st.caption(
+                    f"Ponto ativo: `{click_coord[0]:.5f}, {click_coord[1]:.5f}` "
+                    "(centroide do hex selecionado). "
+                    "Para coordenada exata, use lat,lng na barra lateral."
+                )
+
+
 def render_mapa_territorial(
     df: "pd.DataFrame",
     *,
@@ -2614,32 +2660,10 @@ def render_mapa_territorial(
     if multihex_ids:
         deck.layers.append(_build_multihex_selection_layer(multihex_ids))
 
-    from dashboard.constants import MAP_POINT_LIMIT
-    st.caption(build_map_scope_caption(n_points, selected_ufs=selected_ufs, capped=n_points >= MAP_POINT_LIMIT))
-    st.caption(
-        "Clique em um hexagono no mapa para ativar a Analise Pontual de Entorno (raio 1.6 km). "
-        "Botao direito nao e suportado pelo componente de mapa."
-    )
-    map_event = st.pydeck_chart(
-        deck, on_select="rerun", key="main_unified_map", width="stretch", height=600
-    )
-    _new_click = _extract_click_coord_from_selection(map_event)
-    if _new_click is not None:
-        st.session_state["click_coord"] = _new_click
+    render_mapa_pydeck_fragment(deck, n_points, selected_ufs, multihex_ids)
+
+    # Leitura de click_coord apos o fragmento (pode ter sido atualizado)
     click_coord: "tuple[float, float] | None" = st.session_state.get("click_coord")
-    if click_coord is not None:
-        _col_btn, _cap_col = st.columns([1, 4])
-        with _col_btn:
-            if st.button("Limpar selecao do mapa", key="clear_click_coord"):
-                st.session_state.pop("click_coord", None)
-                click_coord = None
-        if click_coord is not None:
-            with _cap_col:
-                st.caption(
-                    f"Ponto ativo: `{click_coord[0]:.5f}, {click_coord[1]:.5f}` "
-                    "(centroide do hex selecionado). "
-                    "Para coordenada exata, use lat,lng na barra lateral."
-                )
 
     # --- Cenario Multi-Hex ---
     # Determina o hex ativo a partir do clique ou da busca por coordenada

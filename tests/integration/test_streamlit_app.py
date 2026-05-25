@@ -1511,7 +1511,7 @@ def test_render_mapa_territorial_modo_m1_renderiza_mapa():
     hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
     df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
 
-    rendered_decks = []
+    fragment_calls = []
 
     with (
         mock.patch("streamlit.selectbox", return_value="m1"),
@@ -1521,12 +1521,15 @@ def test_render_mapa_territorial_modo_m1_renderiza_mapa():
         mock.patch("streamlit.caption"),
         mock.patch("streamlit.info"),
         mock.patch("streamlit.warning"),
-        mock.patch("streamlit.pydeck_chart", side_effect=lambda deck, **kw: rendered_decks.append(deck)),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_mapa_pydeck_fragment",
+            side_effect=lambda deck, n_points, selected_ufs, multihex_ids: fragment_calls.append(deck),
+        ),
     ):
         streamlit_app.render_mapa_territorial(df, selected_ufs=["SP"], selected_cities=[])
 
-    assert len(rendered_decks) == 1
-    assert rendered_decks[0] is not None
+    assert len(fragment_calls) == 1
+    assert fragment_calls[0] is not None
 
 
 def test_render_mapa_territorial_modo_indisponivel_exibe_aviso():

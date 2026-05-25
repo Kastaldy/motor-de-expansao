@@ -155,6 +155,7 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_expansao_dominio,
     render_header,
     render_hex_search_result,
+    render_mapa_pydeck_fragment,
     render_mapa_territorial,
     render_modelo_hibrido,
     render_modelo_hibrido_v2,
