@@ -61,13 +61,14 @@ def test_normalizar_features_uf_mapeia_todas_as_ufs():
 
 
 def test_gerar_hexagonos_validos_uf_remove_hexagonos_fora_do_brasil():
+    # brasil_geom cobre (0,0)-(10,10); hex_in tem centroide em (5,5), hex_out em (11,11)
     feature_uf = {"uf": "RJ", "geometry": {"type": "Polygon", "coordinates": []}}
     brasil_geom = box(0, 0, 10, 10)
 
     with patch("base_h3_brasil.h3.geo_to_cells", return_value=["hex_in", "hex_out"]):
         with patch(
-            "base_h3_brasil._hex_polygon",
-            side_effect=[box(1, 1, 2, 2), box(11, 11, 12, 12)],
+            "base_h3_brasil.h3.cell_to_latlng",
+            side_effect=[(5, 5), (11, 11)],  # (lat, lng): hex_in dentro, hex_out fora
         ):
             validos, removidos = gerar_hexagonos_validos_uf(
                 feature_uf=feature_uf,

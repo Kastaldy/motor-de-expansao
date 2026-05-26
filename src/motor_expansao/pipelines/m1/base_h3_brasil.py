@@ -4,7 +4,7 @@ Base nacional H3 do Brasil (resolucao 7) pronta para enriquecimento da Fase 1.
 Fluxo:
 1. Baixa ou reutiliza a malha oficial do IBGE por UF.
 2. Gera os hexagonos H3 de cada UF.
-3. Remove hexagonos cujo poligono extrapola o territorio nacional.
+3. Mantém hexagonos cujo CENTROIDE está dentro do Brasil (inclui costeiros que tocam o mar).
 4. Salva parquet particionado por UF em data/staging/brasil/uf=XX/hexagonos.parquet.
 5. Gera relatorio curto de execucao em data/reports/base_h3_brasil.md.
 """
@@ -180,8 +180,15 @@ def gerar_hexagonos_validos_uf(
     validos: list[str] = []
     removidos = 0
     for chunk in _chunks(candidatos, chunk_size):
-        chunk_polygons = [_hex_polygon(hex_id) for hex_id in chunk]
-        mask = shapely.covers(brasil_geom, chunk_polygons)
+        # Critério: centroide do hexágono dentro do Brasil.
+        # Usar o polígono inteiro (covers) descartava hexágonos costeiros cujo
+        # centroide está em terra mas que tocam o oceano na borda.
+        lats_lngs = [h3.cell_to_latlng(hex_id) for hex_id in chunk]
+        chunk_centroids = shapely.points(
+            [lng for lat, lng in lats_lngs],
+            [lat for lat, lng in lats_lngs],
+        )
+        mask = shapely.intersects(brasil_geom, chunk_centroids)
         for hex_id, keep in zip(chunk, mask, strict=True):
             if keep:
                 validos.append(hex_id)
@@ -353,8 +360,8 @@ def executar_base_h3_brasil(
         problemas.insert(
             0,
             (
-                f"{total_removidos} hexagonos de borda foram removidos intencionalmente "
-                f"por extrapolar mar/fronteira em {ufs_com_remocao} UFs."
+                f"{total_removidos} hexagonos sem centroide no Brasil removidos "
+                f"(centroide em mar/fronteira) em {ufs_com_remocao} UFs."
             ),
         )
 
