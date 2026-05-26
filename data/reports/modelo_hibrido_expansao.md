@@ -1,6 +1,6 @@
 # Modelo Hibrido de Expansao
 
-> Data: 2026-05-15
+> Data: 2026-05-26
 > Status: GO para uso pratico controlado como camada complementar ao M1
 
 ## Regra final do modelo
@@ -31,12 +31,12 @@
 | UF | Municipios top M1 com camada local | Score medio municipal |
 | --- | --- | --- |
 | SP | 49 | 98.08 |
-| MG | 31 | 94.93 |
-| BA | 18 | 84.16 |
-| RJ | 11 | 97.39 |
+| MG | 31 | 94.92 |
+| BA | 18 | 84.15 |
+| RJ | 11 | 97.38 |
 | RS | 10 | 98.45 |
 | SC | 8 | 100.00 |
-| GO | 8 | 90.75 |
+| GO | 8 | 90.74 |
 | PR | 7 | 98.49 |
 | ES | 6 | 95.94 |
 | RN | 4 | 91.60 |
@@ -44,7 +44,7 @@
 | DF | 1 | 100.00 |
 | MS | 1 | 100.00 |
 | AC | 1 | 94.93 |
-| TO | 1 | 94.37 |
+| TO | 1 | 94.36 |
 
 ## Top 20 oportunidades Brasil
 

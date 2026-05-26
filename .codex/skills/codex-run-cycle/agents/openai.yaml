@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Run Cycle"
+  short_description: "Orquestra ciclos com sub-agentes Codex"
+  default_prompt: "Use $codex-run-cycle para executar um ciclo autonomo neste repositorio."

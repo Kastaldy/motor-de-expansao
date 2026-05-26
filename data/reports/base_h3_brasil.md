@@ -1,9 +1,9 @@
 # Base H3 Brasil
 
-- Data de execucao: 2026-04-05 16:28:37
+- Data de execucao: 2026-05-26 09:32:57
 - Resolucao H3: 7
-- Total de hexagonos: 1532645
-- Tempo de execucao: 153.5s
+- Total de hexagonos: 1537950
+- Tempo de execucao: 48.2s
 - Fonte malha UFs IBGE: https://servicodados.ibge.gov.br/api/v3/malhas/paises/BR?formato=application/vnd.geo+json&intrarregiao=UF&qualidade=maxima
 - Cache malha UFs: data\raw\ibge\malha_uf_brasil.geojson
 - Fonte malha Brasil IBGE: https://servicodados.ibge.gov.br/api/v3/malhas/paises/BR?formato=application/vnd.geo+json&qualidade=maxima
@@ -13,34 +13,34 @@
 
 | UF | Regiao | Hexagonos | Removidos | Tempo (s) |
 |----|--------|-----------|-----------|-----------|
-| AC | N | 28370 | 380 | 3.2 |
-| AL | NE | 4544 | 51 | 0.5 |
-| AM | N | 292793 | 710 | 30.7 |
-| AP | N | 24162 | 320 | 2.3 |
-| BA | NE | 93918 | 210 | 9.9 |
-| CE | NE | 23975 | 134 | 2.4 |
-| DF | CO | 999 | 0 | 0.1 |
-| ES | SE | 8158 | 85 | 0.8 |
-| GO | CO | 59952 | 2 | 5.8 |
-| MA | NE | 53180 | 374 | 5.3 |
-| MG | SE | 104078 | 0 | 10.5 |
-| MS | CO | 69344 | 348 | 6.7 |
-| MT | CO | 165033 | 211 | 16.1 |
-| PA | N | 213997 | 459 | 21.2 |
-| PB | NE | 9223 | 32 | 1.0 |
-| PE | NE | 16013 | 42 | 1.5 |
-| PI | NE | 40869 | 14 | 3.9 |
-| PR | S | 40261 | 127 | 3.9 |
-| RJ | SE | 7895 | 245 | 0.8 |
-| RN | NE | 8555 | 83 | 0.8 |
-| RO | N | 45962 | 319 | 4.4 |
-| RR | N | 43424 | 523 | 4.2 |
-| RS | S | 60811 | 964 | 6.1 |
-| SC | S | 20100 | 168 | 2.0 |
-| SE | NE | 3588 | 39 | 0.3 |
-| SP | SE | 47139 | 157 | 4.6 |
-| TO | N | 46302 | 0 | 4.5 |
+| AC | N | 28721 | 29 | 1.1 |
+| AL | NE | 4594 | 1 | 0.1 |
+| AM | N | 293431 | 72 | 11.6 |
+| AP | N | 24465 | 17 | 0.7 |
+| BA | NE | 94117 | 11 | 2.8 |
+| CE | NE | 24096 | 13 | 0.6 |
+| DF | CO | 999 | 0 | 0.0 |
+| ES | SE | 8239 | 4 | 0.2 |
+| GO | CO | 59953 | 1 | 1.7 |
+| MA | NE | 53487 | 67 | 1.5 |
+| MG | SE | 104078 | 0 | 3.5 |
+| MS | CO | 69655 | 37 | 1.7 |
+| MT | CO | 165230 | 14 | 4.7 |
+| PA | N | 214388 | 68 | 7.1 |
+| PB | NE | 9250 | 5 | 0.2 |
+| PE | NE | 16050 | 5 | 0.4 |
+| PI | NE | 40882 | 1 | 1.2 |
+| PR | S | 40373 | 15 | 1.3 |
+| RJ | SE | 8089 | 51 | 0.2 |
+| RN | NE | 8632 | 6 | 0.2 |
+| RO | N | 46229 | 52 | 1.2 |
+| RR | N | 43882 | 65 | 1.1 |
+| RS | S | 61672 | 103 | 1.9 |
+| SC | S | 20239 | 29 | 0.6 |
+| SE | NE | 3625 | 2 | 0.1 |
+| SP | SE | 47272 | 24 | 1.2 |
+| TO | N | 46302 | 0 | 1.1 |
 
 ## Problemas encontrados
 
-- 5997 hexagonos de borda foram removidos intencionalmente por extrapolar mar/fronteira em 24 UFs.
+- 692 hexagonos sem centroide no Brasil removidos (centroide em mar/fronteira) em 24 UFs.

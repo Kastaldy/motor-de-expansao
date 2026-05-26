@@ -209,60 +209,89 @@ O contrato de handoff do repositorio esta em `docs/handoff_repositorio.md`.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico da camada de mercado.
 - `fora_primeira_fase/README.md`: inventario dos codigos, docs e dados separados do deploy inicial.
 
-## Orquestração por Skills
+## Orquestração de Agentes
 
-O projeto usa um sistema de orquestração autônoma baseado em Skills do Claude Code. Cada ciclo de trabalho é delimitado, planejado, executado e validado por Skills especializadas, acionadas pelo comando `/run-cycle`.
+O projeto usa uma esteira de agentes especializados para manter cada ciclo pequeno, rastreável e proporcional ao risco. O mesmo protocolo funciona no Claude Code e no Codex: a tarefa entra por um orquestrador, passa por papéis com escopo definido e deixa o próximo passo registrado em `context/handoff.md`.
 
-### Diretórios de controle
+### Estrutura de controle
 
-| Diretório | Conteúdo |
+| Caminho | Papel |
 | --- | --- |
-| `tasks/` | Estado da tarefa ativa e histórico: `current_task.md`, `backlog.md`, `completed.md` |
-| `context/` | Arquivo de passagem entre Skills: `context/handoff.md` (sobrescrito a cada ciclo) |
-| `prompts/` | Prompts das Skills: `block_orchestrator.md`, `planner.md`, `builder.md`, `qa_analyzer.md` |
-| `.claude/commands/` | Slash commands do Claude Code: `run-cycle.md` |
+| `tasks/current_task.md` | Tarefa ativa: ID, status, escopo, criticidade, esteira e próxima etapa |
+| `tasks/backlog.md` | Tarefas pendentes, prioridades e criticidade esperada |
+| `tasks/completed.md` | Histórico resumido dos ciclos concluídos |
+| `context/handoff.md` | Passagem objetiva entre agentes; é atualizado a cada etapa |
+| `prompts/` | Prompts versionados dos papéis: Orchestrator, Planner, Builder e QA |
+| `.claude/commands/run-cycle.md` | Comando `/run-cycle` do Claude Code |
+| `.codex/skills/codex-run-cycle/SKILL.md` | Skill do Codex que replica a esteira com os mesmos arquivos de controle |
 
-### Arquivos de controle
+### Papéis dos agentes
 
-| Arquivo | Papel |
+| Agente | Responsabilidade |
 | --- | --- |
-| `tasks/current_task.md` | Tarefa ativa: ID, status, escopo, skill atual e próxima skill |
-| `tasks/backlog.md` | Tarefas pendentes com prioridade e criticidade |
-| `tasks/completed.md` | Histórico de ciclos concluídos |
-| `context/handoff.md` | Passagem de contexto entre skills (sobrescrito a cada ciclo) |
-
-### Skills e seus papéis
-
-| Skill | Papel |
-| --- | --- |
-| **Block Orchestrator** | Delimita o escopo do bloco, elimina ambiguidades e produz o handoff para a próxima skill. Não implementa. |
-| **Planner** | Transforma o bloco delimitado em plano técnico numerado e executável. Não implementa. |
-| **Builder** | Executa o bloco aprovado com mudanças mínimas, controladas e rastreáveis. |
-| **QA / Quality Analyzer** | Audita a entrega do Builder, verifica aderência ao escopo e emite veredito fundamentado. |
+| **Block Orchestrator** | Delimita o bloco, reduz ambiguidade, define escopo, fora de escopo, arquivos e critérios de aceite. Não implementa. |
+| **Planner** | Converte o bloco em plano técnico numerado, com riscos, dependências e validações. Não implementa. |
+| **Builder** | Executa somente o que foi autorizado no handoff, com mudanças mínimas e rastreáveis. |
+| **QA / Quality Analyzer** | Audita a entrega, verifica aderência ao escopo, valida evidências e emite veredito. |
+| **Codex chefe** | No Codex, é o agente principal: coordena a esteira, decide quando usar sub-agentes, cobra handoff e pede aprovação humana quando necessário. |
 
 ### Esteiras por criticidade
 
 | Criticidade | Exemplos | Esteira |
 | --- | --- | --- |
-| Baixa | ajuste textual, bug isolado, doc simples | Block Orchestrator → Builder |
-| Média | nova função, melhoria localizada, nova tela | Block Orchestrator → Planner → Builder → QA |
-| Alta | nova feature, mudança em pipeline | Block Orchestrator → Planner → [aprovação humana] → Builder → QA |
-| Crítica | score, ranking, artefato M1, KPI executivo | Block Orchestrator → Planner → [aprovação humana] → Builder → QA |
-| Estratégica | redesenho arquitetural, nova fase | Block Orchestrator → Planner → [aprovação humana] → Builder → QA |
+| Baixa | ajuste textual, bug isolado, documentação simples | Block Orchestrator → Builder |
+| Média | melhoria localizada, nova função pequena, nova tela simples | Block Orchestrator → Planner → Builder → QA |
+| Alta | feature nova, mudança em pipeline, impacto operacional relevante | Block Orchestrator → Planner → aprovação humana → Builder → QA |
+| Crítica | `score_priorizacao`, ranking, artefato M1, KPI executivo, carteira ou plano oficial | Block Orchestrator → Planner → aprovação humana obrigatória → Builder → QA |
+| Estratégica | redesenho arquitetural, nova fase, mudança de premissa central | Block Orchestrator → Planner → aprovação humana obrigatória → Builder → QA |
 
-### Como acionar o ciclo
+Qualquer tarefa que toque `score_priorizacao`, `hex_score_estrutural`, pesos do score, carteira, plano curto prazo ou artefatos oficiais do M1 deve ser tratada como crítica.
 
-```
-/run-cycle "descrição da tarefa"
-```
+### Como usar no Claude Code
 
-Exemplo:
+Acione o comando `/run-cycle` com a descrição objetiva do bloco:
 
-```
+```text
 /run-cycle "Adicionar filtro de renda mínima no painel de carteira"
 ```
 
-O orquestrador classifica a criticidade, seleciona a esteira adequada, registra a tarefa em `tasks/current_task.md` e aciona a próxima skill. Para tarefas de criticidade alta ou superior, o ciclo pausa antes da execução para aprovação humana.
+O Claude Code lê `CLAUDE.md`, verifica `tasks/current_task.md`, classifica a criticidade, registra a tarefa ativa, executa a esteira correta e atualiza `context/handoff.md` entre as etapas. Se a criticidade for alta, crítica ou estratégica, o ciclo pausa antes do Builder e aguarda aprovação explícita.
+
+### Como usar no Codex
+
+No Codex, peça explicitamente para usar a skill `codex-run-cycle` e descreva a tarefa. O Codex usa os mesmos arquivos do Claude Code, mas atua como orquestrador principal do ciclo.
+
+Exemplo de documentação simples:
+
+```text
+Use codex-run-cycle para atualizar o README.md com instruções de uso da carteira operacional.
+```
+
+Exemplo de melhoria média:
+
+```text
+Use codex-run-cycle para adicionar um filtro de UF na aba Carteira e Plano.
+```
+
+Exemplo crítico:
+
+```text
+Use codex-run-cycle para revisar a regra de score_priorizacao.
+```
+
+Nesse último caso, o Codex deve parar após o Planner, mostrar o handoff completo e só executar o Builder depois de uma resposta explícita como `aprovar`.
+
+### Fluxo operacional no Codex
+
+1. Ler `CLAUDE.md`, `README.md`, `tasks/current_task.md` e, se necessário, `tasks/backlog.md`.
+2. Classificar a criticidade da demanda.
+3. Registrar ou atualizar `tasks/current_task.md` quando o ciclo exigir controle formal.
+4. Executar os papéis da esteira usando `prompts/` e `context/handoff.md`.
+5. Para tarefas altas, críticas ou estratégicas, pausar antes do Builder e pedir aprovação humana.
+6. Validar a entrega com os comandos definidos no handoff.
+7. Fechar o ciclo com status, resumo, arquivos alterados e próximo passo recomendado.
+
+Para tarefas simples de documentação, o ciclo costuma ser: delimitar escopo, editar o arquivo alvo, revisar o diff e reportar a validação executada.
 
 ## Recalculo do M1
 
