@@ -68,6 +68,19 @@ Decisões relacionadas: st.rerun() sem scope (rerun completo) obrigatório ao de
 
 ---
 
+## BLK-20260525-01 — Documentar estrutura de orquestração por Skills no README.md
+
+Data: 2026-05-25
+Resumo: Seção "## Orquestração por Skills" adicionada ao README.md (~55 linhas) entre
+"## Mapa de docs" e "## Recalculo do M1". Cobre diretórios de controle, arquivos de
+controle, papéis das quatro Skills, esteiras por criticidade e exemplo de uso do /run-cycle.
+Arquivos alterados: README.md (somente)
+Validações: documentação pura — pytest não aplicável; seções existentes preservadas
+Veredito: APROVADO (criticidade baixa, sem QA obrigatório)
+Skills executadas: Block Orchestrator → Builder
+
+---
+
 ## PRÉ-ORQ — Implementação da estrutura de Skills Fase 1
 
 Data: 2026-05-25

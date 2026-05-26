@@ -209,6 +209,61 @@ O contrato de handoff do repositorio esta em `docs/handoff_repositorio.md`.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico da camada de mercado.
 - `fora_primeira_fase/README.md`: inventario dos codigos, docs e dados separados do deploy inicial.
 
+## Orquestração por Skills
+
+O projeto usa um sistema de orquestração autônoma baseado em Skills do Claude Code. Cada ciclo de trabalho é delimitado, planejado, executado e validado por Skills especializadas, acionadas pelo comando `/run-cycle`.
+
+### Diretórios de controle
+
+| Diretório | Conteúdo |
+| --- | --- |
+| `tasks/` | Estado da tarefa ativa e histórico: `current_task.md`, `backlog.md`, `completed.md` |
+| `context/` | Arquivo de passagem entre Skills: `context/handoff.md` (sobrescrito a cada ciclo) |
+| `prompts/` | Prompts das Skills: `block_orchestrator.md`, `planner.md`, `builder.md`, `qa_analyzer.md` |
+| `.claude/commands/` | Slash commands do Claude Code: `run-cycle.md` |
+
+### Arquivos de controle
+
+| Arquivo | Papel |
+| --- | --- |
+| `tasks/current_task.md` | Tarefa ativa: ID, status, escopo, skill atual e próxima skill |
+| `tasks/backlog.md` | Tarefas pendentes com prioridade e criticidade |
+| `tasks/completed.md` | Histórico de ciclos concluídos |
+| `context/handoff.md` | Passagem de contexto entre skills (sobrescrito a cada ciclo) |
+
+### Skills e seus papéis
+
+| Skill | Papel |
+| --- | --- |
+| **Block Orchestrator** | Delimita o escopo do bloco, elimina ambiguidades e produz o handoff para a próxima skill. Não implementa. |
+| **Planner** | Transforma o bloco delimitado em plano técnico numerado e executável. Não implementa. |
+| **Builder** | Executa o bloco aprovado com mudanças mínimas, controladas e rastreáveis. |
+| **QA / Quality Analyzer** | Audita a entrega do Builder, verifica aderência ao escopo e emite veredito fundamentado. |
+
+### Esteiras por criticidade
+
+| Criticidade | Exemplos | Esteira |
+| --- | --- | --- |
+| Baixa | ajuste textual, bug isolado, doc simples | Block Orchestrator → Builder |
+| Média | nova função, melhoria localizada, nova tela | Block Orchestrator → Planner → Builder → QA |
+| Alta | nova feature, mudança em pipeline | Block Orchestrator → Planner → [aprovação humana] → Builder → QA |
+| Crítica | score, ranking, artefato M1, KPI executivo | Block Orchestrator → Planner → [aprovação humana] → Builder → QA |
+| Estratégica | redesenho arquitetural, nova fase | Block Orchestrator → Planner → [aprovação humana] → Builder → QA |
+
+### Como acionar o ciclo
+
+```
+/run-cycle "descrição da tarefa"
+```
+
+Exemplo:
+
+```
+/run-cycle "Adicionar filtro de renda mínima no painel de carteira"
+```
+
+O orquestrador classifica a criticidade, seleciona a esteira adequada, registra a tarefa em `tasks/current_task.md` e aciona a próxima skill. Para tarefas de criticidade alta ou superior, o ciclo pausa antes da execução para aprovação humana.
+
 ## Recalculo do M1
 
 Estes comandos sao de pipeline analitico, nao do deploy Streamlit inicial:
