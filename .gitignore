@@ -35,7 +35,9 @@ concorrentes/
 # IDE
 .vscode/
 .idea/
-.claude/
+.claude/*
+!.claude/commands/
+!.claude/commands/**
 *.swp
 *.swo
 
