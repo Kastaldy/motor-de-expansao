@@ -83,3 +83,4 @@ authelia/users_database.yml
 authelia/configuration.yml
 authelia/db.sqlite3
 authelia/notification.txt
+usuarios.md
