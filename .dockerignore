@@ -35,3 +35,6 @@ tmp_codex_runtime/
 Caddyfile
 authelia/
 .env
+
+# Secrets não entram na imagem (são montados via volume ou desencriptados em runtime)
+secrets/

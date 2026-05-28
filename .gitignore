@@ -84,3 +84,12 @@ authelia/configuration.yml
 authelia/db.sqlite3
 authelia/notification.txt
 usuarios.md
+
+# === Secrets (SOPS+age) ===
+# Plaintext outputs nunca podem ser commitados:
+secrets/*.dec
+secrets/*.plain.*
+# Chaves privadas age — NUNCA commitar:
+*.age.key
+key.txt
+keys.txt

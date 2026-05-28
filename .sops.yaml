@@ -1,0 +1,23 @@
+# .sops.yaml — regras de criptografia para secrets/**
+# Substitua age1REPLACE_WITH_REAL_RECIPIENT pelo recipient publico real
+# apos executar age-keygen (ver docs/backup_restore.md §7 ou §7-bis).
+#
+# Convencao de nomes:
+#   secrets/*.enc.yaml  -> YAML estruturado (Authelia configuration/users_database)
+#   secrets/*.enc.env   -> dotenv (KEY=value) — encripta todos os valores
+#   secrets/*.enc.txt   -> texto simples (Caddyfile)
+#   secrets/*.enc       -> binario opaco (ex.: authelia/db.sqlite3)
+#
+# IMPORTANTE: o recipient publico age (`age1...`) PODE ser commitado.
+# A chave privada (`AGE-SECRET-KEY-1...`) NUNCA pode entrar no git.
+
+creation_rules:
+  - path_regex: secrets/.*\.enc\.yaml$
+    age: age1REPLACE_WITH_REAL_RECIPIENT
+  - path_regex: secrets/.*\.enc\.env$
+    age: age1REPLACE_WITH_REAL_RECIPIENT
+    encrypted_regex: '^.*$'
+  - path_regex: secrets/.*\.enc\.txt$
+    age: age1REPLACE_WITH_REAL_RECIPIENT
+  - path_regex: secrets/.*\.enc$
+    age: age1REPLACE_WITH_REAL_RECIPIENT
