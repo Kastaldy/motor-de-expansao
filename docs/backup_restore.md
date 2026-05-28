@@ -99,7 +99,7 @@ New-Item -ItemType Directory -Force $ToolsDir | Out-Null
 
 # 2. Baixar sops.exe
 Invoke-WebRequest `
-  -Uri "https://github.com/getsops/sops/releases/download/v3.8.1/sops-v3.8.1.windows.amd64.exe" `
+  -Uri "https://github.com/getsops/sops/releases/download/v3.8.1/sops-v3.8.1.exe" `
   -OutFile "$ToolsDir\sops.exe"
 
 # 3. Baixar age (zip contendo age.exe + age-keygen.exe)
@@ -607,18 +607,37 @@ Contagens esperadas (baseline 2026-05-22):
 - Recipient publico (`age1...`) pode entrar no git; chave privada
   (`AGE-SECRET-KEY-1...`) **nunca**.
 
-### 15.2. Varredura gitleaks via Docker (sem instalar no host)
+### 15.2. Varredura gitleaks
+
+O repo inclui `.gitleaks.toml` (allowlist de paths sem segredos: `data/`, `.venv/`,
+`*.parquet`, `*.csv`, `*.png` etc.) e `.gitleaksignore` (fingerprints de falsos
+positivos confirmados — placeholders de `.env.example` e nomes de coluna de
+DataFrame). Use sempre essas duas configs para evitar runs de 2h em `data/`.
 
 ```powershell
-# PowerShell:
-docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:latest detect --no-git --source /repo -v
-# Exit code 0 = sem findings.
+# PowerShell, gitleaks binario nativo (release oficial):
+gitleaks detect --no-git --source . --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore
+# Exit code 0 = sem findings nao-ignorados.
 ```
 
 ```bash
-# Bash:
-docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect --no-git --source /repo -v
+# Bash, gitleaks binario nativo:
+gitleaks detect --no-git --source . --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore
 ```
+
+Alternativa via Docker (sem instalar gitleaks no host):
+
+```bash
+docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect \
+  --no-git --source /repo \
+  --config /repo/.gitleaks.toml \
+  --gitleaks-ignore-path /repo/.gitleaksignore
+```
+
+> Instalar `gitleaks.exe` no Windows: baixar release oficial em
+> `https://github.com/gitleaks/gitleaks/releases/latest` (asset
+> `gitleaks_X.Y.Z_windows_x64.zip`), extrair `gitleaks.exe` para
+> `$env:USERPROFILE\tools\` e garantir que esta no `$env:PATH`.
 
 ### 15.3. Verificar gitignore
 

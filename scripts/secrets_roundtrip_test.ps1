@@ -62,8 +62,10 @@ try {
     }
     $DummyRecipient = ($RecipientLine -split ':', 2)[1].Trim()
 
-    # Encriptar (stdout do sops vai direto para arquivo via redirecionamento)
-    $EncContent = & sops --age $DummyRecipient -e $Fixture 2>$null
+    # Encriptar (--config NUL: ignora .sops.yaml do projeto, cujas creation_rules
+    # casam apenas com secrets/**; o teste vive em tests/fixtures/).
+    $NullCfg = if ($IsWindows -or $PSVersionTable.PSEdition -eq 'Desktop') { 'NUL' } else { '/dev/null' }
+    $EncContent = & sops --config $NullCfg --age $DummyRecipient -e $Fixture 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host 'ROUNDTRIP FAIL: sops -e falhou.'
         exit 1
@@ -71,23 +73,30 @@ try {
     $EncContent | Out-File -FilePath $Enc -Encoding utf8
 
     # Desencriptar
-    $DecContent = & sops -d $Enc 2>$null
+    $DecContent = & sops --config $NullCfg -d $Enc 2>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Host 'ROUNDTRIP FAIL: sops -d falhou.'
         exit 1
     }
     $DecContent | Out-File -FilePath $Round -Encoding utf8
 
-    # Comparar por hash (insensivel a encoding/newline normalization de Out-File:
-    # comparamos via bytes do conteudo logico apos re-leitura como texto)
-    $OrigText  = (Get-Content $Fixture -Raw) -replace "`r`n", "`n"
-    $RoundText = (Get-Content $Round   -Raw) -replace "`r`n", "`n"
-
-    if ($OrigText -eq $RoundText) {
+    # Comparar via parse YAML semantico (sops normaliza aspas/indentacao na
+    # desencriptacao; conteudo logico e identico, byte-a-byte nao). Usa PyYAML.
+    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+        Write-Host 'ROUNDTRIP FAIL: python ausente para comparacao YAML.'
+        exit 1
+    }
+    $PyCode = @'
+import sys, yaml
+with open(sys.argv[1], encoding="utf-8") as fa, open(sys.argv[2], encoding="utf-8") as fb:
+    sys.exit(0 if yaml.safe_load(fa) == yaml.safe_load(fb) else 1)
+'@
+    & python -c $PyCode $Fixture $Round
+    if ($LASTEXITCODE -eq 0) {
         Write-Host 'ROUNDTRIP OK'
         $ExitCode = 0
     } else {
-        Write-Host 'ROUNDTRIP FAIL: diff entre original e roundtrip nao bate.'
+        Write-Host 'ROUNDTRIP FAIL: estrutura YAML do roundtrip diverge do original.'
         $ExitCode = 1
     }
 }

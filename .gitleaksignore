@@ -1,0 +1,13 @@
+# Fingerprints de falsos positivos confirmados.
+# Formato: <file>:<rule>:<line> (gerado pelo gitleaks; copiar de "Fingerprint:" do output).
+#
+# Cada entrada deve ter justificativa em comentario acima.
+# Renovar se a linha mover (line number muda) ou se o conteudo da regra mudar.
+
+# .env.example linha 17: 'GEOFUSION_API_KEY=' e placeholder sem valor; nao e segredo.
+.env.example:generic-api-key:17
+
+# Nome de coluna do dataframe censitario calibrado, nao segredo.
+# Aparece em strings de codigo e em rotulos do dashboard.
+jobs/pipelines/calibrar_renda_setor_2022.py:generic-api-key:122
+src/motor_expansao/dashboard/pages.py:generic-api-key:2453

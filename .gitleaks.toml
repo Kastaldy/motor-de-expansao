@@ -1,0 +1,35 @@
+# Configuracao do gitleaks para o repo motor-de-expansao.
+#
+# Objetivos:
+# - Excluir do scan diretorios pesados que nao contem segredos (data/, .venv/,
+#   node_modules/, caches, parquets), evitando que rodar gitleaks leve horas
+#   varrendo 13+ GB de dados estatisticos.
+# - Manter a deteccao default ativa (extends do config embarcado do gitleaks).
+# - Falsos positivos pontuais (nomes de coluna, placeholders de .env.example)
+#   ficam em .gitleaksignore por fingerprint, nao aqui.
+#
+# Uso: gitleaks detect --no-git --source . --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Paths excluidos do scan (sem segredos por design)"
+paths = [
+    '''^data/''',
+    '''^\.venv/''',
+    '''^venv/''',
+    '''^\.mypy_cache/''',
+    '''^\.pytest_cache/''',
+    '''^\.ruff_cache/''',
+    '''^node_modules/''',
+    '''^htmlcov/''',
+    '''^concorrentes/''',
+    '''.*\.parquet$''',
+    '''.*\.csv$''',
+    '''.*\.png$''',
+    '''.*\.jpg$''',
+    '''.*\.svg$''',
+    '''.*\.geojson$''',
+    '''.*\.pdf$''',
+]

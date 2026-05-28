@@ -52,23 +52,33 @@ if [[ -z "${DUMMY_RECIPIENT}" ]]; then
   exit 1
 fi
 
-# Encriptar
-if ! sops --age "${DUMMY_RECIPIENT}" -e "${FIXTURE}" > "${ENC}" 2>/dev/null; then
+# Encriptar (--config /dev/null: ignora .sops.yaml do projeto, cujas creation_rules
+# casam apenas com secrets/**; o teste vive em tests/fixtures/).
+if ! sops --config /dev/null --age "${DUMMY_RECIPIENT}" -e "${FIXTURE}" > "${ENC}" 2>/dev/null; then
   echo "ROUNDTRIP FAIL: sops -e falhou." >&2
   exit 1
 fi
 
 # Desencriptar
-if ! sops -d "${ENC}" > "${ROUNDTRIP}" 2>/dev/null; then
+if ! sops --config /dev/null -d "${ENC}" > "${ROUNDTRIP}" 2>/dev/null; then
   echo "ROUNDTRIP FAIL: sops -d falhou." >&2
   exit 1
 fi
 
-# Comparar
-if diff -q "${FIXTURE}" "${ROUNDTRIP}" >/dev/null 2>&1; then
+# Comparar via parse YAML semantico (sops normaliza aspas e indentacao na
+# desencriptacao; o conteudo logico e identico, o byte-a-byte nao).
+if ! command -v python >/dev/null 2>&1; then
+  echo "ROUNDTRIP FAIL: python ausente para comparacao YAML." >&2
+  exit 1
+fi
+if python -c '
+import sys, yaml
+with open(sys.argv[1], encoding="utf-8") as fa, open(sys.argv[2], encoding="utf-8") as fb:
+    sys.exit(0 if yaml.safe_load(fa) == yaml.safe_load(fb) else 1)
+' "${FIXTURE}" "${ROUNDTRIP}"; then
   echo "ROUNDTRIP OK"
   exit 0
 else
-  echo "ROUNDTRIP FAIL: diff entre original e roundtrip nao bate." >&2
+  echo "ROUNDTRIP FAIL: estrutura YAML do roundtrip diverge do original." >&2
   exit 1
 fi

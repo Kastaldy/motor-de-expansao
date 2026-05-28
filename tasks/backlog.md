@@ -78,34 +78,41 @@ echo "dummy: ok" > /tmp/t.yaml && sops -e /tmp/t.yaml | sops -d /dev/stdin
 
 ### BLK-OPS-01-FU1 — Stage do `secrets_roundtrip_test.ps1` no próximo commit
 
-Status: pendente
+Status: CONCLUÍDO (2026-05-28, commit 4ed75d8)
 Criticidade: baixa
-Prioridade: alta (impede que o `.ps1` falte no repo)
-Tipo: operação
-Skill recomendada: comando direto (sem /run-cycle)
-Resumo: Builder criou `scripts/secrets_roundtrip_test.ps1` mas ele ficou untracked
-(`git status` mostra `??`); os dois `.sh` já estão `A` (staged). Antes do commit de
-fechamento do ciclo BLK-OPS-01, rodar `git add scripts/secrets_roundtrip_test.ps1`.
-Origem: QA de BLK-OPS-01 (problema médio #1).
-Dependências: nenhuma.
+Resumo: `git add scripts/secrets_roundtrip_test.ps1` aplicado antes do commit
+de fechamento. Arquivo entrou no repo.
 
 ---
 
 
 ### BLK-OPS-01-FU2 — Executar roundtrip SOPS + gitleaks no ambiente do dev
 
-Status: pendente
+Status: CONCLUÍDO (2026-05-28)
 Criticidade: alta
-Prioridade: alta (validação operacional do tooling)
 Tipo: operação / validação
-Skill recomendada: comando direto (sem /run-cycle)
-Resumo: Instalar `sops` 3.8.1 e `age` 1.1.1 conforme `docs/backup_restore.md` §5
-(Windows) e rodar `pwsh scripts/secrets_roundtrip_test.ps1` — esperado `ROUNDTRIP OK`
-+ exit 0. Em seguida, com Docker disponível, rodar
-`docker run --rm -v "${PWD}:/repo" zricethezav/gitleaks:latest detect --no-git --source /repo -v`
-— esperado 0 findings, exit 0. Não executados no QA porque sops/age/Docker ausentes
-no ambiente.
-Dependências: instalar sops, age e Docker localmente.
+Resumo da execução:
+- sops 3.8.1, age 1.1.1 e gitleaks 8.30.1 baixados para `$env:USERPROFILE\tools\`
+  (sem privilégio admin; PATH ajustado só na sessão).
+- Primeira execução revelou 3 defeitos no tooling entregue por BLK-OPS-01:
+  (a) URL do SOPS em `docs/backup_restore.md` §5 incorreta — asset oficial é
+      `sops-v3.8.1.exe`, não `sops-v3.8.1.windows.amd64.exe`.
+  (b) `scripts/secrets_roundtrip_test.{sh,ps1}` falhavam com `no matching creation
+      rules found` porque o `.sops.yaml` tem regras apenas para `secrets/**` e a
+      fixture vive em `tests/fixtures/`. Correção: passar `--config /dev/null`.
+  (c) Comparação `diff -q` byte-a-byte falhava porque sops normaliza YAML
+      (remove aspas redundantes, indentação nested 2→4 espaços). Correção:
+      comparação YAML semântica via Python+PyYAML.
+- Gitleaks sem config scaneou 13.26 GB em 1h57m e encontrou 3 falsos positivos:
+  `.env.example:17 GEOFUSION_API_KEY=` (placeholder), 2x
+  `renda_per_capita_setor_2022_calibrada` (nome de coluna de DataFrame em
+  `jobs/pipelines/calibrar_renda_setor_2022.py:122` e
+  `src/motor_expansao/dashboard/pages.py:2453`). Nenhum segredo real.
+- Após correções: roundtrip `ROUNDTRIP OK` + exit 0; gitleaks 0 leaks em 4.63s.
+Arquivos alterados pelas correções: `.gitleaks.toml` (novo), `.gitleaksignore`
+(novo, 3 FPs registrados), `scripts/secrets_roundtrip_test.{sh,ps1}` (corrigidos),
+`docs/backup_restore.md` (§5 URL SOPS + §15.2 gitleaks com config). Commit
+corretivo separado.
 
 ---
 
