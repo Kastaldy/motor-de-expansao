@@ -26,8 +26,8 @@ ULTRA_RAW_PATH = ROOT / "data" / "ultra" / "Ultra.csv"
 CSV_REQUIRED_COLS = {"nome_unidade", "latitude", "longitude", "data_coleta"}
 CSV_SOURCES = {
     ROOT / "concorrentes" / "unidades_smart_fit.csv": 1000,
-    ROOT / "concorrentes" / "unidades_bluefit.csv": 226,
-    ROOT / "concorrentes" / "unidades_panobianco.csv": 458,
+    ROOT / "concorrentes" / "unidades_bluefit.csv": 223,
+    ROOT / "concorrentes" / "unidades_panobianco.csv": 472,
 }
 
 MERCADO_REQUIRED_COLS = {
