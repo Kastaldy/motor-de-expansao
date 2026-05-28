@@ -119,15 +119,15 @@ corretivo separado.
 
 ### BLK-OPS-01-FU3 — Atualizar baseline de testes no CLAUDE.md §5
 
-Status: pendente
+Status: CONCLUÍDO (2026-05-28)
 Criticidade: baixa
-Prioridade: baixa
 Tipo: documentação / housekeeping
-Skill recomendada: comando direto (sem /run-cycle)
-Resumo: CLAUDE.md §5 cita `509 passed, 1 skipped` como baseline, mas `pytest -q`
-roda hoje `532 passed, 1 skipped, 9 warnings`. Atualizar a referência canônica para
-não causar estranhamento em QAs futuros. Origem: QA de BLK-OPS-01 (problema médio #2).
-Dependências: nenhuma.
+Resumo: Diagnóstico do QA original interpretou o `509 passed` da linha 94 (descrição
+histórica do ciclo Performance e Refatoração de 22-mai) como baseline atual. Decisão:
+NÃO reescrever a história do ciclo Performance — adicionar nova linha no topo de §5
+declarando explicitamente a baseline atual (`532 passed, 1 skipped, 9 warnings` em
+2026-05-28) e marcar que os números menores nos ciclos abaixo são históricos. Também
+acrescentado o registro do ciclo BLK-OPS-01 (incluindo FU1, FU2, FU3) em §5.
 
 ---
 
