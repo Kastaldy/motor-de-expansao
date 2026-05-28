@@ -1,4 +1,19 @@
+# docker-compose.prod.yml — Motor de Expansão Ultra Academia
+#
+# Serviços:
+#   streamlit  — dashboard Streamlit (sem porta exposta no host; acessível apenas via rede interna)
+#   caddy      — reverse proxy com HTTPS automático via Let's Encrypt
+#   authelia   — autenticação self-hosted com tela de login e suporte a 2FA opcional
+#
+# Pré-condições antes de `docker compose up`:
+#   1. Copiar .env.example para .env e preencher os segredos
+#   2. Preencher domínio real em Caddyfile e authelia/configuration.yml
+#   3. Preencher usuários reais em authelia/users_database.yml
+#   4. Garantir que /opt/motor-expansao/data/outputs/ existe e tem os parquets (~1,6 GB)
+
 services:
+
+  # ── Streamlit ──────────────────────────────────────────────────────────────
   streamlit:
     build:
       context: .
@@ -6,15 +21,18 @@ services:
     image: motor-expansao-streamlit:latest
     container_name: motor_expansao_streamlit
     restart: unless-stopped
-    ports:
-      - "${STREAMLIT_PORT:-8501}:8501"
+    # Porta NÃO exposta no host — acesso apenas via caddy na rede interna
+    mem_limit: 10g
+    memswap_limit: 12g
     environment:
       STREAMLIT_SERVER_HEADLESS: "true"
       STREAMLIT_SERVER_ADDRESS: "0.0.0.0"
       STREAMLIT_SERVER_PORT: "8501"
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
     volumes:
-      - ./data/outputs:/app/data/outputs:ro
+      - /opt/motor-expansao/data/outputs:/app/data/outputs:ro
+    networks:
+      - app_net
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -23,3 +41,53 @@ services:
       timeout: 5s
       retries: 3
       start_period: 45s
+
+  # ── Caddy (reverse proxy + TLS automático) ─────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: motor_expansao_caddy
+    restart: unless-stopped
+    depends_on:
+      - authelia
+      - streamlit
+    ports:
+      - "80:80"
+      - "80:80/udp"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - app_net
+    security_opt:
+      - no-new-privileges:true
+
+  # ── Authelia (autenticação self-hosted) ────────────────────────────────────
+  authelia:
+    image: authelia/authelia:4.38
+    container_name: motor_expansao_authelia
+    restart: unless-stopped
+    expose:
+      - "9091"
+    volumes:
+      - ./authelia:/config
+    environment:
+      AUTHELIA_JWT_SECRET: ${AUTHELIA_JWT_SECRET}
+      AUTHELIA_SESSION_SECRET: ${AUTHELIA_SESSION_SECRET}
+      AUTHELIA_STORAGE_ENCRYPTION_KEY: ${AUTHELIA_STORAGE_ENCRYPTION_KEY}
+    networks:
+      - app_net
+    security_opt:
+      - no-new-privileges:true
+
+# ── Rede interna ───────────────────────────────────────────────────────────────
+networks:
+  app_net:
+    driver: bridge
+
+# ── Volumes nomeados ───────────────────────────────────────────────────────────
+volumes:
+  caddy_data:
+  caddy_config:

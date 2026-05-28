@@ -110,7 +110,13 @@ score_oficial = score_priorizacao
 - Area do raio 1.6 km = pi*1.6^2 = 8.04 km2 (corrige `~5 km2` que aparecia em docs anteriores); para ~5 km2 usar raio ~1.26 km com aprovacao explicita.
 - Guardrail permanente: visualizacoes, analise radial e interacoes de mapa nao podem recalcular ou alterar `score_priorizacao`, `hex_score_estrutural`, carteira, plano curto prazo, plano dominio ou artefatos oficiais do M1 sem aprovacao explicita.
 
-## 6. Onde aprofundar
+## 6. Guardrails de infraestrutura e VPS
+- MCP configurado: `ssh-vps-ultra` conecta em `root@2.25.137.241` (Hostinger KVM4, producao).
+- GUARDRAIL ABSOLUTO: nunca executar qualquer comando no servidor via MCP (ou qualquer tool SSH) sem confirmacao explicita do usuario para cada comando individual. Isso inclui git pull, docker compose, chmod, rm, e qualquer outro.
+- Nao encadear multiplos comandos no servidor sem aprovacao intermediaria.
+- Detalhes de manutencao e deploy em `docs/infra_producao.md`.
+
+## 7. Onde aprofundar
 - `PRD.md`: guia operacional em blocos do ciclo ativo.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico de colunas e calculos de mercado/residual.
 - `docs/m1_outputs_oficiais.md`: contrato curto dos outputs do M1.

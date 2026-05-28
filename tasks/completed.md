@@ -81,6 +81,25 @@ Skills executadas: Block Orchestrator → Builder
 
 ---
 
+## BLK-20260527-01 — Plano de Deploy + Infraestrutura Hostinger KVM4
+
+Data: 2026-05-27
+Resumo: Análise técnica comparativa de deploy e implementação dos arquivos de infraestrutura
+para hospedar o dashboard Streamlit na Hostinger KVM4 (4 vCPU, 16 GB RAM, 200 GB NVMe,
+~R$ 780/ano) com stack Caddy + Authelia (tela de login real, 2FA opcional, 100% self-hosted).
+Arquivos criados/modificados: .dockerignore, docker-compose.prod.yml (3 serviços: streamlit +
+caddy + authelia), Caddyfile, authelia/configuration.yml, authelia/users_database.yml (template),
+.env.example, .gitignore (entradas de deploy), docs/deploy_plan.md (17 passos).
+Nenhum arquivo Python alterado. Nenhum artefato M1 tocado.
+Validações: 147 testes passaram (tests/integration/test_streamlit_app.py); import ok.
+Veredito QA: APROVADO (após correção de 3 bloqueadores: server.address Authelia v4.38,
+endpoint /api/authz/forward-auth, pin de versão authelia:4.38).
+Skills executadas: Block Orchestrator → Planner (×3 revisões) → Builder → QA (×2)
+Pendências do usuário: contratar KVM4 na Hostinger, configurar DNS, substituir
+SEU_DOMINIO.COM.BR nos arquivos de config, gerar hashes de usuários reais.
+
+---
+
 ## PRÉ-ORQ — Implementação da estrutura de Skills Fase 1
 
 Data: 2026-05-25

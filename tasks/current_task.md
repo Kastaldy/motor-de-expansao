@@ -2,66 +2,54 @@
 
 ## Bloco atual
 
-ID: BLK-20260525-01
-Nome: Documentar estrutura de orquestração por Skills no README.md
-Status: concluído
-Tipo: doc
-Criticidade: baixa
-Esteira: Block Orchestrator → Builder
-Skill atual: —
-Próxima Skill: —
-Dependências: nenhuma
+ID: BLK-20260527-01
+Nome: Deploy Hostinger KVM4 + Caddy + Authelia
+Status: aprovado — pronto para fechamento do ciclo
+Tipo: operação / infraestrutura
+Criticidade: estratégica
+Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA → Builder (correção) → QA
+Skill atual: QA re-run (concluído — APROVADO)
+Próxima Skill: Fechamento do ciclo
 
 ## Objetivo
 
-Adicionar ao README.md uma seção explicando a estrutura de orquestração por Skills do projeto — cobrindo os diretórios tasks/, context/, prompts/ e como usar o comando /run-cycle.
+Implementar os arquivos de infraestrutura para deploy do dashboard Streamlit Motor de Expansão
+na Hostinger KVM4, com autenticação Authelia (tela de login com formulário, 2FA opcional,
+100% self-hosted) via Caddy reverse proxy com TLS automático.
 
-## Escopo permitido
-- Adicionar uma seção nova ao README.md sobre orquestração por Skills
-- Descrever os diretórios: tasks/, context/, prompts/, .claude/commands/
-- Descrever os arquivos de controle: current_task.md, backlog.md, completed.md, handoff.md
-- Descrever as Skills e seus papéis: Block Orchestrator, Planner, Builder, QA
-- Descrever as esteiras por criticidade (baixa, média/alta, crítica/estratégica)
-- Explicar como acionar o ciclo via /run-cycle com exemplo concreto
+## O que foi implementado (Builder)
 
-## Fora de escopo
-- Não alterar nenhuma seção já existente do README.md
-- Não alterar CLAUDE.md, PRD.md ou arquivos de prompts
-- Não alterar código Python, pipelines ou parquets
-- Não criar novos arquivos além dos já previstos no handoff
-- Não documentar detalhes internos dos prompts (apenas comportamento observável)
-- Não alterar tasks/backlog.md ou tasks/completed.md
+- `.dockerignore` reescrito
+- `docker-compose.prod.yml` reescrito (streamlit + caddy + authelia)
+- `Caddyfile` criado (template com placeholder)
+- `authelia/configuration.yml` criado
+- `authelia/users_database.yml` criado (template com placeholders)
+- `.env.example` atualizado com segredos Authelia
+- `.gitignore` atualizado com entradas de deploy
+- `docs/deploy_plan.md` criado
 
-## Arquivos que devem ser lidos
-- README.md — estrutura atual completa
-- .claude/commands/run-cycle.md — comportamento do orquestrador e tabela de criticidade
-- prompts/block_orchestrator.md — papel da Skill
-- prompts/builder.md — papel da Skill
-- prompts/planner.md — papel da Skill
-- prompts/qa_analyzer.md — papel da Skill
+## Validações (Builder)
 
-## Arquivos que podem ser alterados
-- README.md — único arquivo a ser modificado neste bloco
+- pytest tests/integration/test_streamlit_app.py: 147 passed
+- import streamlit_app: ok
 
-## Critérios de aceite
-- README.md contém seção nova sobre orquestração por Skills com título explícito
-- Seção lista e descreve os quatro diretórios (tasks/, context/, prompts/, .claude/commands/)
-- Seção descreve os arquivos de controle com uma linha cada
-- Seção descreve as quatro Skills e seus papéis (uma linha cada)
-- Seção apresenta esteiras por criticidade (baixa, média/alta, crítica/estratégica)
-- Seção explica como usar /run-cycle com exemplo concreto de chamada
-- Nenhuma seção existente do README.md foi removida ou alterada
-- Nenhum arquivo fora do README.md foi modificado
+## Pendências antes do deploy (ações do usuário)
 
-## Validações obrigatórias
-[ainda a ser definido pelo Planner]
+1. Contratar Hostinger KVM4 e anotar IP + domínio
+2. Criar registros DNS A para dashboard.* e auth.*
+3. Substituir SEU_DOMINIO.COM.BR em Caddyfile e authelia/configuration.yml
+4. Gerar hashes reais dos usuários e preencher authelia/users_database.yml
+5. Copiar .env.example para .env e preencher segredos Authelia
+6. Transferir data/outputs/ e data/ultra/ via rsync para o servidor
 
-## Riscos
-- README.md pode ter formatação sensível a posição de seção; inserir sem quebrar âncoras existentes
-- Risco de verbosidade excessiva: seção deve ser concisa e orientada ao usuário
+## Resultado QA #1 (2026-05-27)
 
-## Handoff esperado
-context/handoff.md gerado pelo Block Orchestrator
+REPROVADO. Bloqueadores identificados: server.host/port deprecado, /api/verify deprecado, imagem latest sem pin, depends_on ausente no caddy. Problema médio: authelia/configuration.yml fora do .gitignore, inconsistência root@ no deploy_plan.md.
 
-## Próximo passo após conclusão
-Builder
+## Resultado QA #2 — Re-run (2026-05-27)
+
+APROVADO. Todos os 5 bloqueadores corrigidos com exatidão. Ambos os problemas médios corrigidos. Nenhum arquivo Python alterado. Nenhum artefato M1 tocado. 147 testes passam (referência Builder). Ver context/handoff.md para detalhes completos.
+
+## Próxima ação
+
+Fechamento do ciclo BLK-20260527-01.

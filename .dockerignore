@@ -1,36 +1,37 @@
+# Dados — montados via volume em runtime
+data/
+
+# Desenvolvimento e docs
+tests/
+docs/
+context/
+tasks/
+fora_primeira_fase/
 .git/
 .github/
-.claude/
-.pytest_cache/
-.pytest_tmp/
-.pytest_tmp_run/
+
+# Artefatos de build e runtime
 __pycache__/
-*.py[cod]
+*.pyc
 *.pyo
-*.pyd
-*.egg-info/
-.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 htmlcov/
+.coverage
 
-.env
-.env.local
-.env.*.local
+# Arquivos de IDE e SO
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
 
-data/raw/
-data/staging/
-data/snapshots/
-data/ultra/
-data/osm_cache/
-data/outputs/
-concorrentes/
-*.parquet
-*.csv
+# Arquivos pesados não necessários na imagem
 *.xlsx
+*.csv
+tmp_codex_runtime/
 
-logs/
-*.log
-.docker/
-powerbi/
-export/
-playwright-report/
-test-results/
+# Configurações de deploy (montados via volume)
+Caddyfile
+authelia/
+.env
