@@ -31,6 +31,8 @@ services:
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro
+      - /opt/motor-expansao/concorrentes:/app/concorrentes:ro
+      - /opt/motor-expansao/data/ultra:/app/data/ultra:ro
     networks:
       - app_net
     security_opt:
