@@ -440,3 +440,62 @@ FU4 (`97195e3`) mergeado no `main` por fast-forward. A branch `ciclo/BLK-OPS-05-
 commit dummy `8705e24` (doc `docs/orquestracao_dryrun_ops05.md` + handoffs `…-151225-…`/`…-151410-…`)
 foram **descartados** após a validação — eram artefatos de uma tarefa dummy; este registro é o
 canônico. BLK-OPS-05 fica 100% fechado.
+
+---
+
+## BLK-OPS-06 — Alinhar checkout do VPS via `git pull` — 2026-05-29
+
+Veredito: APROVADO. Esteira: Block Orchestrator → execução VPS conduzida pelo orquestrador
+(comando-a-comando, §6) → Fechamento. Criticidade: baixa. Tipo: operação / infraestrutura.
+
+### Objetivo
+Trazer o checkout git de `/opt/motor-expansao/app` no VPS de produção para `origin/main` via
+fast-forward, materializando os 5 `secrets/*.enc.*` como arquivos rastreados e eliminando o
+estado "atrás do origin".
+
+### Execução (VPS, comando-a-comando sob GUARDRAIL §6)
+Conduzida pelo ORQUESTRADOR (main loop), NÃO por sub-agente Builder autônomo — cada comando
+aprovado individualmente pelo usuário. MCP `ssh-vps-ultra` (`root@2.25.137.241`).
+- **Diagnóstico (read-only, aprovado em bloco):** `git status` → working tree limpo em arquivos
+  rastreados, só untracked não relacionados (`authelia/`, `Caddyfile.backup.1779977816`,
+  `docker-compose.prod.yml.backup.1779977827`). HEAD do VPS = `64e68b1`. `fetch --dry-run` →
+  `64e68b1..8218f38 main -> origin/main`.
+- **Reconciliação da premissa do backlog (feita localmente, sem tocar o VPS):** o `origin/main`
+  no GitHub está em `8218f38` (não no HEAD local `97195e3`). Confirmado que `a2a4cea` (commit
+  dos 5 `.enc.*`) é ancestral de `8218f38`; o range `64e68b1..8218f38` adiciona os 5
+  `secrets/*.enc.*` + `.gitattributes` e modifica `CLAUDE.md`/`tasks/*` — e NÃO toca `authelia/`,
+  `Caddyfile*` nem `docker-compose.prod.yml*` (risco de colisão com untracked do VPS descartado).
+- **Escrita (único comando, aprovado em separado):** `git -C /opt/motor-expansao/app pull --ff-only`
+  → `Updating 64e68b1..8218f38`, fast-forward limpo, 5 `.enc.*` criados + `.gitattributes`.
+- **Verificação (read-only):** HEAD do VPS = `8218f38` **== origin/main**; `git ls-files secrets/`
+  lista os 5 `.enc.*` + `README.md` como tracked; `git status -s` mostra só os 3 untracked não
+  relacionados intactos. Nenhum rebuild/restart de docker.
+
+### Critérios de aceite — todos atendidos
+- Passos read-only aprovados individualmente; `pull --ff-only` só após aprovação explícita.
+- Fast-forward limpo (sem merge commit, sem conflito).
+- HEAD do VPS == origin/main (`8218f38`, contém `a2a4cea`).
+- 5 `secrets/*.enc.*` rastreados no VPS.
+- Sem rebuild de docker; nenhum segredo em texto puro tocado; chave age privada nunca esteve no VPS.
+
+### Observação de estado (não bloqueia o bloco)
+O VPS ficou em `8218f38`, ainda SEM `4ee9685` (BLK-OPS-05) e `97195e3` (FU4), que são commits
+locais ainda NÃO enviados ao GitHub (local `main` ahead 2–3 de origin). Irrelevante para o
+objetivo do bloco (os `.enc.*` já vieram via `a2a4cea`). Para alinhar o VPS 100% ao HEAD local,
+fazer `git push` do `main` local ao GitHub e novo `pull` no VPS — passo OPCIONAL, fora do escopo
+deste bloco.
+
+### Guard de recursão / dry-run
+Ciclo NÃO altera a orquestração (run-cycle/prompts/esteira) — é operação git no VPS + arquivos de
+controle. `dry_run: false`. Portanto NÃO dispara dry-run pós-merge (Passo 6.c).
+
+### Guardrails
+M1, score_priorizacao, artefatos oficiais e dashboard inalterados (nenhum código/artefato tocado).
+
+### Nota de escopo no fechamento (commit por path)
+`tasks/backlog.md` tinha 92 linhas de edição pré-existente NÃO relacionada (migração de blocos,
+incl. a própria definição do BLK-OPS-06) e `PRD.md` (M) é alheio ao ciclo. Para não arrastar
+edições de terceiros ao commit do ciclo, o commit por path incluiu apenas `tasks/current_task.md`,
+`tasks/completed.md`, `context/handoff.md` e `context/handoff/`. A marcação de BLK-OPS-06 como
+concluído em `tasks/backlog.md` foi feita no working tree mas deixada NÃO-commitada, junto da
+edição pré-existente, para o humano commitar separadamente.
