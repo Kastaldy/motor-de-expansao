@@ -132,6 +132,45 @@ acrescentado o registro do ciclo BLK-OPS-01 (incluindo FU1, FU2, FU3) em §5.
 ---
 
 
+### BLK-OPS-01-FU4 — Corrigir `encrypt_one` no `setup_secrets_vps.sh`
+
+Status: pendente
+Criticidade: média
+Prioridade: média
+Tipo: bug / tooling
+Skill recomendada: comando direto (sem /run-cycle)
+Resumo: Durante o fechamento real de BLK-OPS-01 em 2026-05-29 (passo 4.5), descobriu-se
+que a função `encrypt_one` do script usa `sops -e SRC > DST` com SRC fora de `secrets/`.
+Isso falha com "no matching creation rules found" pelo mesmo motivo do defeito 3
+(SOPS 3.8.1 não casa `path_regex` com `/`). O workaround manual usado no fechamento
+foi `cp SRC DST && sops -e -i DST`. Corrigir a função `encrypt_one` para usar esse
+padrão. Adicionar tratamento de erro: se `sops -e -i` falhar, fazer `rm DST` para
+não deixar plaintext em `secrets/`.
+Dependências: nenhuma.
+
+---
+
+
+### BLK-OPS-01-FU5 — Decidir destino dos `secrets/*.enc.*` no VPS
+
+Status: pendente
+Criticidade: baixa
+Prioridade: baixa
+Tipo: operação / decisão
+Skill recomendada: decisão humana + comando direto
+Resumo: Após o passo 4 do fechamento real (encriptação no VPS) + 4.6 (SCP para repo
+local) + 4.7 (commit) + 5 (restore validado), os `secrets/*.enc.*` permaneceram no
+VPS em `/opt/motor-expansao/app/secrets/`. Decisão pendente: (a) apagar do VPS agora
+(reduzir superfície, garantir single source of truth = repo); (b) manter como cópia
+adicional de fallback (defense in depth, mas drift possível se for editar via `sops`
+direto no VPS sem subir pro repo). Recomendação: apagar do VPS após confirmação
+de que o repo está com tudo (já está) e re-criar via `git pull && sops -d` no momento
+do deploy/restore.
+Dependências: aprovação explícita do usuário antes de qualquer `rm` no VPS.
+
+---
+
+
 ### BLK-ORQ-02 — Implementar estrutura Fase 2
 
 Status: pendente (depende de BLK-ORQ-01 validado)

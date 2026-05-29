@@ -211,3 +211,89 @@ de testes desatualizada no CLAUDE.md §5). Ambos registrados como follow-ups
 Skills executadas: Block Orchestrator → Planner → [aprovação humana] → Planner (revisão com 3 ajustes) → [aprovação humana] → Builder → QA
 Guardrails: VPS intocado; nenhum segredo real manipulado; score_priorizacao, hex_score_estrutural,
 config.py, src/, data/, dashboard/, docker-compose.prod.yml, authelia/, Caddyfile inalterados.
+
+---
+
+## BLK-OPS-01 — Fechamento REAL (backup real + restore validado)
+
+Data: 2026-05-29
+Criticidade: alta
+Resumo: O ciclo BLK-OPS-01 de 2026-05-28 entregou TOOLING (scripts, .sops.yaml com placeholder,
+runbook, fixture dummy). Mas o backup real continuava aberto — `.sops.yaml` tinha
+`age1REPLACE_WITH_REAL_RECIPIENT`, nenhuma chave age existia, nenhum segredo real estava
+encriptado. Este registro documenta o fechamento real, executado em uma sequência guiada
+de 6 passos (~3 horas) com 7 commits.
+
+Passos executados:
+1. Chave age real gerada via Plano B em PowerShell local (`age-keygen -o ~/.sops/age/keys.txt`).
+   Recipient público `age1lau0w4xgfkh9xnn58f2nwt0t4vstva30nht9zcggg2g7ssgq9uqsvd8zmd`.
+2. `.sops.yaml` atualizado com recipient real (commit `1632844`).
+3. Chave privada guardada em DOIS lugares offline: KeePassXC (`motor-expansao-vault.kdbx`)
+   + cópia em papel guardada fisicamente. Pen drive não usado por indisponibilidade.
+4. SOPS 3.8.1 + age 1.1.1 instalados no VPS via `curl` direto (sem package manager). 5 segredos
+   reais encriptados *in-place* no VPS (`cp src dst && sops -e -i dst`), recipient público
+   usado (chave privada nunca tocou o VPS). 5 `.enc.*` baixados via SCP. Commit `a2a4cea`.
+5. Restore real validado em pasta limpa `C:\Users\Felipe Silva\restore-test\` (apagada após):
+   - `git clone --depth 1` fresh da branch main.
+   - Hashes do clone batem byte-a-byte com working tree (`.gitattributes` segurou conversão).
+   - `sha256` no VPS dos 5 originais capturados.
+   - `sops -d | sha256sum` no clone para binários: Caddyfile e db.sqlite3 batem exatamente
+     com originais.
+   - Comparação semântica via Python+PyYAML para textos (SOPS normaliza YAML/dotenv):
+     env (29 chaves), configuration.yml (7 chaves), users_database.yml (1 chave) — todos
+     idênticos semanticamente aos originais.
+   - Cleanup: `restore-test/` removido inteiro.
+6. Gitleaks com `.enc.*` presentes: 0 leaks, 5.9s (vs ~2h sem config no FU2). Antecipado
+   antes do passo 5.
+
+Defeitos do tooling original descobertos e corrigidos durante o fechamento:
+- DEFEITO 3 (`64e68b1`): SOPS 3.8.1 não casa `path_regex` contendo `/`. Os 4 regex foram
+  trocados de `secrets/.*\.enc\.*$` para `.*\.enc\.*$` (sem prefixo de diretório). Também
+  renomeado `secrets/env.enc` para `secrets/env.enc.env` (necessário para a regra dotenv
+  casar e preservar `encrypted_regex: ^.*$`).
+- DEFEITO 4: `encrypt_one` no `scripts/setup_secrets_vps.sh` usava `sops -e SRC > DST` com
+  SRC fora de `secrets/`, mesmo problema do defeito 3 (path matching). Não corrigido neste
+  ciclo — registrado como follow-up BLK-OPS-01-FU4. Workaround manual: `cp SRC DST &&
+  sops -e -i DST`.
+- DEFEITO 5 (`a2a4cea`): `.gitattributes` ausente. Git Windows ia converter LF↔CRLF nos
+  `.enc.*`, quebrando o MAC do SOPS no decrypt. Criado `.gitattributes` com `secrets/*.enc*
+  binary` e `*.sh text eol=lf`.
+
+Arquivos finais commitados (sequência 1632844 → 793127b → 64e68b1 → a2a4cea):
+- `.sops.yaml` (recipient real + path_regex sem `/`)
+- `.gitattributes` (binary para .enc.*, eol=lf para .sh)
+- `secrets/env.enc.env` (5238 bytes, dotenv encrypted)
+- `secrets/Caddyfile.enc` (1656 bytes, binary)
+- `secrets/authelia.configuration.enc.yaml` (8073 bytes, yaml)
+- `secrets/authelia.users_database.enc.yaml` (12269 bytes, yaml)
+- `secrets/authelia.db.sqlite3.enc` (334280 bytes, binary base64)
+- `docs/backup_restore.md` (sec 9 nota técnica sobre `.enc.env` + quirk path_regex;
+  8 refs `env.enc` → `env.enc.env`)
+- `scripts/setup_secrets_vps.sh` (linha 156 atualizada)
+- `secrets/README.md` (inventário atualizado + nota explicativa)
+
+Guardrails verificados ao longo de toda a sequência:
+- Chave privada age NUNCA passou pela conversa com Claude (apenas o usuário viu).
+- Chave privada NUNCA foi copiada para o VPS (encriptação no VPS usou só o recipient público).
+- Plaintexts originais foram lidos pelo Python local para comparação semântica, mas nunca
+  impressos ou expostos na conversa; arquivos temporários removidos imediatamente após.
+- VPS recebeu apenas: instalação de SOPS+age em /usr/local/bin/, `git pull`, encriptação
+  in-place dos 5 segredos para `secrets/*.enc.*`. Nenhum estado de produção alterado
+  (containers, redes Docker, dados, configurações ativas).
+- M1, dashboard, pipeline e parâmetros canônicos (H3_RESOLUTION=7, etc.) inalterados.
+
+DoD do plano original: "só declare encerrado depois que o passo 5 (restore real) passar.
+Tooling commitado NÃO é 'done'." → Passo 5 passou em 2026-05-29 12:21 UTC-3.
+
+**BLK-OPS-01 FECHADO DE VERDADE.** Risco de DR (perda do VPS sem possibilidade de
+reconstrução completa dos segredos) eliminado.
+
+Follow-ups pendentes registrados em `tasks/backlog.md`:
+- BLK-OPS-01-FU4: corrigir `encrypt_one` no `scripts/setup_secrets_vps.sh` para usar
+  o padrão `cp + sops -e -i` (consistente com o que foi feito manualmente).
+- BLK-OPS-01-FU5: decidir se apaga os `secrets/*.enc.*` do VPS agora (já vivem no repo) ou
+  mantém como cópia adicional. Decisão pendente de aprovação.
+
+Skills executadas: usuario manual + Claude guiando comando-por-comando (sem /run-cycle).
+Tempo total real (relogio do usuario): ~3-4 horas espalhadas em 2 dias (2026-05-28 tooling,
+2026-05-29 backup real).
