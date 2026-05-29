@@ -499,3 +499,54 @@ edições de terceiros ao commit do ciclo, o commit por path incluiu apenas `tas
 `tasks/completed.md`, `context/handoff.md` e `context/handoff/`. A marcação de BLK-OPS-06 como
 concluído em `tasks/backlog.md` foi feita no working tree mas deixada NÃO-commitada, junto da
 edição pré-existente, para o humano commitar separadamente.
+
+---
+
+## BLK-PRD-01 — Reescrever PRD.md como PRD padrão do projeto
+
+Status: CONCLUÍDO (2026-05-29) — APROVADO pelo QA via /run-cycle (esteira média + gate de
+revisão humana do outline). Branch do ciclo: `ciclo/BLK-PRD-01`.
+
+### Objetivo
+Substituir o conteúdo temporário do `PRD.md` ("Programa de Melhorias — Referência do Master
+Orchestrator", cujos 9 blocos já haviam sido migrados para `tasks/backlog.md` em 2026-05-29) por
+um PRD padrão de produto canônico, subordinado ao `CLAUDE.md`.
+
+### Esteira executada
+Block Orchestrator → Planner → [revisão humana do outline: APROVADO pelo usuário] → Builder → QA.
+Criticidade: Média (doc-only; não toca score/M1/código/`config.py`/`CLAUDE.md`), com gate de
+revisão humana do outline obrigatório por `PRD.md` ser documento canônico.
+
+### Entregável
+`PRD.md` reescrito em 11 seções (0–10): cabeçalho com subordinação explícita ao `CLAUDE.md` ·
+visão/objetivo · público (18–45) e contextos · escopo/fora de escopo · camadas e trilhas (M1
+oficial, censitário, híbrido, mercado/residual, Expansão de Domínio) · score oficial e guardrails
+(REFERENCIANDO `CLAUDE.md` §3/§5) · requisitos funcionais e não-funcionais (dashboard offline, sem
+API ao vivo, performance) · métricas de sucesso · roadmap (REFERENCIANDO `tasks/backlog.md`) ·
+dependências e restrições (infra/VPS) · referências canônicas.
+
+### Princípio central aplicado
+Referenciar, nunca redefinir. Nenhum valor numérico canônico (pesos renda/pop, `H3_RESOLUTION`,
+`DIST_MIN_ULTRA_KM`, `RENDA_MIN`, `AREA_*`, etc.) foi duplicado no PRD — todos apontam para
+`CLAUDE.md` §3/§5. Scan anti-deriva do QA confirmou que só aparecem NOMES de parâmetros (na seção
+de referência), nunca valores. Roadmap por referência ao backlog, sem copiar blocos.
+
+### Validação (QA re-executou por conta própria — NO-BYPASS)
+- `pytest -q` → `532 passed, 1 skipped, 9 warnings in 105.31s` (igual à baseline; doc-only).
+- `git --no-pager diff --stat -- PRD.md` → `1 file changed, 226 insertions(+), 80 deletions(-)`.
+- Diff de conteúdo restrito a `PRD.md`.
+
+### Nota de escopo no fechamento (commit por path)
+`tasks/backlog.md` estava pré-sujo (`M`, ~127 linhas de migração de blocos alheia a este ciclo) e
+NÃO foi incluído no commit por path — `git add tasks/backlog.md` arrastaria conteúdo de terceiros.
+A marcação de BLK-PRD-01 como concluído fica aqui em `tasks/completed.md`; `backlog.md` deixado ao
+humano (mesmo padrão do fechamento do BLK-OPS-06). Commit do ciclo: `PRD.md` + arquivos de controle
+(`tasks/current_task.md`, `tasks/completed.md`, `context/handoff.md`, `context/handoff/`).
+
+### Guard de recursão / dry-run
+Ciclo doc-only — NÃO altera a orquestração (run-cycle.md / prompts / esteira). `dry_run: false`.
+Portanto NÃO dispara dry-run pós-merge (Passo 6.c).
+
+### Guardrails
+`CLAUDE.md`, código, `config.py`, `score_priorizacao`, `hex_score_estrutural`, artefatos M1 e
+dashboard inalterados. VPS intocado. Nenhum valor canônico redefinido.
