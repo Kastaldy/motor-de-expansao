@@ -1,10 +1,10 @@
-# .sops.yaml — regras de criptografia para secrets/**
+# .sops.yaml — regras de criptografia
 # Recipient publico age abaixo (age1lau0w4xg...) — gerado pelo operador em
 # 2026-05-29 via Plano B do runbook. A chave privada correspondente
 # (AGE-SECRET-KEY-1...) vive APENAS no cofre offline.
 # Ver docs/backup_restore.md §7-bis (geracao) e §11 (rotacao).
 #
-# Convencao de nomes:
+# Convencao de nomes (todos os encriptados devem ficar em secrets/):
 #   secrets/*.enc.yaml  -> YAML estruturado (Authelia configuration/users_database)
 #   secrets/*.enc.env   -> dotenv (KEY=value) — encripta todos os valores
 #   secrets/*.enc.txt   -> texto simples (Caddyfile)
@@ -12,14 +12,21 @@
 #
 # IMPORTANTE: o recipient publico age (`age1...`) PODE ser commitado.
 # A chave privada (`AGE-SECRET-KEY-1...`) NUNCA pode entrar no git.
+#
+# NOTA TECNICA — path_regex sem prefixo de diretorio:
+# SOPS 3.8.1 nao consegue casar path_regex contendo `/` (testado empiricamente
+# em 2026-05-29 durante o fechamento real do BLK-OPS-01). O regex `secrets/.*`
+# falha mesmo com o input em `secrets/foo.enc.env`. Por isso as regras abaixo
+# casam apenas pelo sufixo. A convencao de manter os encriptados em secrets/
+# fica como disciplina humana (e o secrets/README.md/.gitignore reforcam).
 
 creation_rules:
-  - path_regex: secrets/.*\.enc\.yaml$
+  - path_regex: '.*\.enc\.yaml$'
     age: age1lau0w4xgfkh9xnn58f2nwt0t4vstva30nht9zcggg2g7ssgq9uqsvd8zmd
-  - path_regex: secrets/.*\.enc\.env$
+  - path_regex: '.*\.enc\.env$'
     age: age1lau0w4xgfkh9xnn58f2nwt0t4vstva30nht9zcggg2g7ssgq9uqsvd8zmd
     encrypted_regex: '^.*$'
-  - path_regex: secrets/.*\.enc\.txt$
+  - path_regex: '.*\.enc\.txt$'
     age: age1lau0w4xgfkh9xnn58f2nwt0t4vstva30nht9zcggg2g7ssgq9uqsvd8zmd
-  - path_regex: secrets/.*\.enc$
+  - path_regex: '.*\.enc$'
     age: age1lau0w4xgfkh9xnn58f2nwt0t4vstva30nht9zcggg2g7ssgq9uqsvd8zmd

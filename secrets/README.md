@@ -28,11 +28,15 @@ esta no `.gitignore`.
 
 | Arquivo neste diretorio                         | Origem no VPS                                |
 | ----------------------------------------------- | -------------------------------------------- |
-| `secrets/env.enc`                               | `/opt/motor-expansao/app/.env`               |
+| `secrets/env.enc.env`                           | `/opt/motor-expansao/app/.env` (dotenv)      |
 | `secrets/Caddyfile.enc`                         | `/opt/motor-expansao/app/Caddyfile`          |
 | `secrets/authelia.configuration.enc.yaml`       | `authelia/configuration.yml`                 |
 | `secrets/authelia.users_database.enc.yaml`      | `authelia/users_database.yml`                |
 | `secrets/authelia.db.sqlite3.enc`               | `authelia/db.sqlite3` (binario)              |
+
+> O sufixo `.enc.env` (em vez de apenas `.enc`) e necessario para que a regra
+> dotenv do `.sops.yaml` case e encripte cada KEY=VALUE em vez de tratar o
+> arquivo como blob binario opaco.
 
 Antes do primeiro setup, esses arquivos nao existem — apenas este README e o
 `.sops.yaml` na raiz. A geracao inicial e responsabilidade do operador, conforme

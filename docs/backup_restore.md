@@ -276,13 +276,23 @@ pode entrar no git.
 > chave se ausente, encriptacao dos 5 arquivos e pausa para git commit
 > manual). O passo 3 (cofre offline) continua manual.
 
+> **NOTA TECNICA — sufixo `.enc.env` e path_regex sem `/`:** o `.env` produz
+> `secrets/env.enc.env` (sufixo duplo), nao `secrets/env.enc`. Isso e
+> necessario para que a regra dotenv do `.sops.yaml` case (`.*\.enc\.env$`)
+> e cada KEY=VALUE seja encriptado em vez de tratar o arquivo como blob
+> opaco. Adicionalmente, o `.sops.yaml` usa `path_regex` sem prefixo de
+> diretorio (`.*\.enc\.env$`, nao `secrets/.*\.enc\.env$`) por conta de uma
+> quirk do SOPS 3.8.1 que nao casa `path_regex` contendo `/`. A convencao
+> de manter os encriptados em `secrets/` fica como disciplina humana,
+> reforcada por este runbook e pelo `secrets/README.md`.
+
 ### Comandos exatos por arquivo (manual)
 
 ```bash
 cd /opt/motor-expansao/app/
 
-# 1. .env -> secrets/env.enc
-sops --input-type dotenv --output-type dotenv -e .env > secrets/env.enc
+# 1. .env -> secrets/env.enc.env
+sops --input-type dotenv --output-type dotenv -e .env > secrets/env.enc.env
 
 # 2. Caddyfile -> secrets/Caddyfile.enc
 sops --input-type binary --output-type binary -e Caddyfile > secrets/Caddyfile.enc
@@ -368,7 +378,7 @@ cd app/
 cd /opt/motor-expansao/app/
 
 # 1. .env
-sops --input-type dotenv --output-type dotenv -d secrets/env.enc > .env
+sops --input-type dotenv --output-type dotenv -d secrets/env.enc.env > .env
 chmod 600 .env
 
 # 2. Caddyfile
@@ -441,7 +451,7 @@ creation_rules:
 ### 11.3. Re-encriptar todos os arquivos
 
 ```bash
-sops updatekeys secrets/env.enc
+sops updatekeys secrets/env.enc.env
 sops updatekeys secrets/Caddyfile.enc
 sops updatekeys secrets/authelia.configuration.enc.yaml
 sops updatekeys secrets/authelia.users_database.enc.yaml
@@ -470,10 +480,10 @@ edite `.sops.yaml`, remova o `age1OLD_RECIPIENT`, e rode novamente
 
 ```bash
 # Editar um segredo (abre editor com plaintext em memoria):
-sops secrets/env.enc
+sops secrets/env.enc.env
 
 # Salvar e sair re-encripta automaticamente.
-git add secrets/env.enc
+git add secrets/env.enc.env
 git commit -m "chore: rotacionar AUTHELIA_JWT_SECRET"
 git push
 
@@ -481,7 +491,7 @@ git push
 ssh root@2.25.137.241
 cd /opt/motor-expansao/app/
 git pull
-sops --input-type dotenv --output-type dotenv -d secrets/env.enc > .env
+sops --input-type dotenv --output-type dotenv -d secrets/env.enc.env > .env
 docker compose -f docker-compose.prod.yml restart authelia
 ```
 
@@ -642,7 +652,7 @@ docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest detect \
 ### 15.3. Verificar gitignore
 
 ```bash
-git check-ignore -v secrets/env.enc      # esperado: NAO ignorado (exit 1, nada)
+git check-ignore -v secrets/env.enc.env      # esperado: NAO ignorado (exit 1, nada)
 git check-ignore -v secrets/env.dec      # esperado: ignorado
 git check-ignore -v secrets/keys.txt     # esperado: ignorado (regra keys.txt cobre)
 git check-ignore -v .sops.yaml           # esperado: NAO ignorado

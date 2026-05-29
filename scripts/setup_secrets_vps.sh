@@ -153,7 +153,7 @@ encrypt_one() {
   echo "  OK: ${src} -> ${dst}"
 }
 
-encrypt_one ".env"                          "secrets/env.enc"                              dotenv
+encrypt_one ".env"                          "secrets/env.enc.env"                          dotenv
 encrypt_one "Caddyfile"                     "secrets/Caddyfile.enc"                        binary
 encrypt_one "authelia/configuration.yml"    "secrets/authelia.configuration.enc.yaml"      yaml
 encrypt_one "authelia/users_database.yml"   "secrets/authelia.users_database.enc.yaml"     yaml
