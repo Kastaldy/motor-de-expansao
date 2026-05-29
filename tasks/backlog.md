@@ -47,9 +47,13 @@ Dependências: aprovação explícita do usuário, comando a comando, antes de q
 
 ---
 
-### BLK-OPS-07 — Sincronizar VPS 100% com o `main` local (git push + pull)
+### BLK-OPS-07 — Sincronizar VPS 100% com o `main` local (git push + pull) — CONCLUÍDO (2026-05-29)
 
-Status: pendente — executar APÓS concluir BLK-PRD-01 (não rodar neste ciclo)
+Status: CONCLUÍDO (2026-05-29) — APROVADO. Detalhes em `tasks/completed.md`. VPS sincronizado
+`8218f38 → 76fc89e` via `git pull --ff-only` (fast-forward, gate humano por comando). O `git push`
+do passo 1 era NO-OP (`origin/main` já == `main` == `76fc89e`) e foi pulado por decisão humana.
+Mover para a seção Concluídos no próximo housekeeping do backlog. Texto original abaixo preservado.
+(antes: pendente — executar APÓS concluir BLK-PRD-01)
 Criticidade: baixa
 Prioridade: média (fechamento de sincronização, ao final do ciclo do BLK-PRD-01)
 Tipo: operação / infraestrutura
@@ -187,6 +191,7 @@ docker build -f Dockerfile.streamlit -t test:ci .   # build local sanity
 Se o acoplamento a dados locais for grande, considerar quebrar em sub-bloco de fixtures.
 
 ---
+
 
 ### BLK-OPS-03 — Manifesto de proveniência nos outputs
 

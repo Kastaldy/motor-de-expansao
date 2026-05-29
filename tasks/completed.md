@@ -550,3 +550,46 @@ Portanto NÃO dispara dry-run pós-merge (Passo 6.c).
 ### Guardrails
 `CLAUDE.md`, código, `config.py`, `score_priorizacao`, `hex_score_estrutural`, artefatos M1 e
 dashboard inalterados. VPS intocado. Nenhum valor canônico redefinido.
+
+---
+
+## BLK-OPS-07 — Sincronizar VPS 100% com o `main` local (git push + pull)
+
+Data: 2026-05-29
+Veredito: CONCLUÍDO COM SUCESSO. VPS (`/opt/motor-expansao/app`) sincronizado de
+`8218f38` → `76fc89e` (== `main` == `origin/main`).
+
+### Esteira executada
+Block Orchestrator → Builder (execução conduzida pelo orquestrador no loop principal,
+interativa, com confirmação humana comando a comando no VPS — não delegada a subagente
+isolado, por CLAUDE.md §6 GUARDRAIL ABSOLUTO + push outward-facing). Criticidade: baixa.
+
+### Achado-chave de pré-execução
+`git fetch origin` na máquina local mostrou `origin/main` == `main` == `76fc89e`, ahead/behind
+`0 0`. **O `git push origin main` do passo 1 do backlog é NO-OP** — o GitHub já tinha tudo
+(FU4 `97195e3`, BLK-OPS-05, BLK-OPS-06 `f36adfe`, BLK-PRD-01 `3d1ca1a`/`76fc89e`). Push pulado
+por decisão humana confirmada. Trabalho real ficou só no lado VPS.
+
+### Execução no VPS (7 comandos, todos com gate humano individual; read-only antes do write)
+1. `git status` → working tree limpo; untracked conhecidos (`authelia/`, `Caddyfile.backup.*`,
+   `docker-compose.prod.yml.backup.*`).
+2. `git rev-parse HEAD` → `8218f38` (esperado).
+3. `git fetch --dry-run` → `8218f38..76fc89e main -> origin/main` (fast-forward limpo).
+4. `git pull --ff-only` → `Updating 8218f38..76fc89e Fast-forward`, 26 arquivos (só docs/controle:
+   PRD.md, handoffs, backlog, prompts, run-cycle, docs/scripts de tooling de secrets).
+5–6. `git rev-parse HEAD origin/main` → ambos `76fc89e9a17...`.
+7. `git status -s` → só os 3 untracked conhecidos.
+
+### Critérios de aceite — todos atendidos
+VPS HEAD == `76fc89e` == origin/main · pull foi fast-forward · status sem mudanças inesperadas ·
+NENHUM rebuild/restart de Docker (só arquivos versionados doc/controle mudaram) · push no-op
+confirmado. BLK-OPS-06 (que deixou esta sincronização pendente) agora plenamente fechado.
+
+### Guard de recursão / dry-run
+Ciclo operacional — NÃO altera a orquestração (run-cycle.md / prompts / esteira). `dry_run: false`.
+Portanto NÃO dispara dry-run pós-merge (Passo 6.c).
+
+### Guardrails
+Nenhum código de aplicação, imagem Docker, `config.py`, `score_priorizacao`,
+`hex_score_estrutural`, artefato M1, `CLAUDE.md` ou `PRD.md` local tocado. Pull restrito a
+`--ff-only`. Cada comando no VPS aprovado individualmente (§6); sem encadeamento.
