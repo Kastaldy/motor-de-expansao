@@ -297,3 +297,64 @@ Follow-ups pendentes registrados em `tasks/backlog.md`:
 Skills executadas: usuario manual + Claude guiando comando-por-comando (sem /run-cycle).
 Tempo total real (relogio do usuario): ~3-4 horas espalhadas em 2 dias (2026-05-28 tooling,
 2026-05-29 backup real).
+
+
+---
+
+## BLK-OPS-05 — Hardening do sistema de orquestracao
+
+Concluido em 2026-05-29. Veredito do QA: **APROVADO** (re-execucao independente).
+Criticidade: Alta (meta — altera o proprio mecanismo de ciclos). Esteira completa:
+Block Orchestrator -> Planner -> [revisao humana: aprovado por Felipe Silva, com 1 rodada
+de ajuste] -> Builder -> QA.
+
+### O que foi entregue (7 caminhos de orquestracao, so markdown)
+1. **QA com evidencia propria e SEM bypass** (`prompts/qa_analyzer.md`): o QA passa a
+   re-executar TODAS as validacoes obrigatorias do handoff (nao so `pytest`) contra a
+   config e os artefatos REAIS, colando a saida literal. Verde obtido por bypass
+   (`sops --config /dev/null`, fixture que nao casa as `creation_rules` reais, mock do
+   caminho critico) = NAO-EXECUTADO e impede APROVADO. Exige >=1 execucao de tooling
+   contra o caminho real de producao. Regra ancorada no episodio dos 5 defeitos do
+   BLK-OPS-01 (path_regex sem `/`, sufixo `env.enc.env`, `.gitattributes` binary — todos
+   so pegos no fechamento real contra producao, nao na validacao inicial que contornava
+   a config).
+2. **Handoffs versionados append-only** (`context/handoff/AAAAMMDD-HHMMSS-<slug>.md`,
+   com SEGUNDOS): novo diretorio `context/handoff/` + `README.md` documentando a convencao;
+   `context/handoff.md` (raiz) segue sendo o "corrente". Slugs: `block-orchestrator`,
+   `planner`, `builder`, `qa`. Cada papel grava seu snapshot no "Ao final" (bullet
+   adicionado em block_orchestrator/planner/builder; qa_analyzer cobre o slug `qa`);
+   `/run-cycle` Passo 4 atua como rede de seguranca.
+3. **Disciplina de git por ciclo** (`.claude/commands/run-cycle.md`): novo Passo 0
+   (branch `ciclo/<ID>` a partir do HEAD, tratamento de worktree pre-sujo, commit por
+   path — nunca `git add -A` —, ciclo re-entrante); Passo 6.a/6.b/6.c (dry-run pos-merge
+   como gate, commit isolado por path, rollback preferencialmente nao-destrutivo, reset
+   destrutivo so com confirmacao humana); 4 guardrails permanentes, sendo o 4o o NO-BYPASS
+   de validacao.
+4. **Paridade Claude<->Codex** (`.codex/skills/codex-run-cycle/SKILL.md`): mesmas regras
+   em ingles, sem divergencia (Triggered Workflow, Role Execution Pattern, Validation com
+   no-bypass + dry-run gate, 4 Mandatory Guardrails, Repository Contract).
+
+### Decisao de processo registrada
+O dry-run dos criterios de aceite (`/run-cycle` com tarefa dummy criticidade Baixa) NAO foi
+executado dentro deste ciclo (seria recursivo/circular). E um GATE de validacao humana
+POS-MERGE: a primeira acao apos o merge e o dry-run; nenhum bloco real roda antes de ele
+passar; se falhar -> reverter o merge.
+
+### Validacoes (re-executadas pelo QA, sem bypass)
+- `python -m pytest -q` -> `532 passed, 1 skipped, 9 warnings` (baseline preservada, 0 novas falhas).
+- `python -c "import streamlit_app; print('import ok')"` -> `import ok`.
+- Escopo: git status/diff confirmam que `src/`, `config.py`, `data/`, `dashboard/`, pipelines
+  NAO foram tocados; `M PRD.md` e a entrada BLK-OPS-05 do `tasks/backlog.md` sao edicoes
+  pre-existentes nao relacionadas, NAO revertidas nem commitadas pelo ciclo.
+- Paridade Claude<->Codex e no-bypass conferidos textualmente em ambos os arquivos.
+
+### Dogfooding da Feature 2
+Snapshots versionados ja existem em `context/handoff/`: `20260529-133300-builder.md` e
+`20260529-133652-qa.md` (carimbos aproximados), alem do `README.md`.
+
+### Guardrails
+M1, score_priorizacao, hex_score_estrutural, artefatos oficiais, dashboard e VPS inalterados
+(mudancas puramente em markdown de orquestracao). Nenhum segredo manipulado.
+
+### Pendencia pos-ciclo (gate)
+Dry-run pos-merge (validacao humana) antes de confiar a esteira nova aos ciclos de producao.

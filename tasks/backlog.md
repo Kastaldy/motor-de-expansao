@@ -171,6 +171,55 @@ Dependências: aprovação explícita do usuário antes de qualquer `rm` no VPS.
 ---
 
 
+### BLK-OPS-05 — Hardening do sistema de orquestração
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta *(meta: altera o próprio mecanismo de ciclos)* |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
+| **Depende de** | — |
+| **Status** | Concluído (2026-05-29) — APROVADO pelo QA. Detalhes em `tasks/completed.md`. Pendente apenas o dry-run pós-merge (gate de validação humana, Passo 6.a). |
+
+**Objetivo:** fechar três lacunas de confiabilidade da orquestração: (1) QA re-executa testes em
+vez de confiar no log do Builder; (2) handoffs versionados/auditáveis; (3) disciplina de git por ciclo.
+
+**Escopo permitido:**
+- Atualizar `prompts/qa_analyzer.md`: QA roda `pytest -q` por conta própria e cola a saída;
+  log reportado pelo Builder **não** é aceito como evidência.
+- Handoff versionado: `context/handoff/AAAAMMDD-HHMM-<skill>.md` (append-only) ou log acumulativo,
+  preservando estados intermediários do ciclo.
+- `.claude/commands/run-cycle.md`: cada ciclo cria branch/commit isolado; ao falhar no meio,
+  procedimento de `git reset` documentado e ciclo re-entrante.
+- Portar mudanças equivalentes para `.codex/skills/codex-run-cycle/SKILL.md`.
+
+**Fora de escopo:** Fase 2 completa (Master Orchestrator, +5 Skills) — isso é bloco Estratégico à parte.
+
+**Arquivos a ler:** `prompts/*.md` · `.claude/commands/run-cycle.md` ·
+`.codex/skills/codex-run-cycle/SKILL.md` · `CLAUDE.md` §4.
+**Arquivos a alterar:** os acima.
+
+**Critérios de aceite:**
+- Prompt do QA exige re-execução independente de testes.
+- Handoffs de um ciclo de exemplo ficam preservados e versionados.
+- Ciclo de exemplo gera branch/commit próprio; rollback documentado e testado num dry-run.
+- Versão Claude e Codex consistentes.
+
+**Validações obrigatórias:**
+```
+# Dry-run de um ciclo trivial (ex.: ajuste de doc) end-to-end:
+/run-cycle   # com tarefa dummy de criticidade Baixa
+git log --oneline -3   # confirma commit isolado do ciclo
+ls context/handoff/     # confirma handoffs versionados
+```
+
+**Guardrails específicos:**
+- Como este bloco modifica a própria esteira, rodá-lo com **observação humana atenta** (gate
+  `[revisão humana]`) e validar num ciclo dummy antes de confiar nos ciclos de produção.
+
+**Risco:** médio — alterar o mecanismo enquanto se depende dele. Mitigar com dry-run em tarefa trivial.
+
+---
+
 ### BLK-ORQ-02 — Implementar estrutura Fase 2
 
 Status: pendente (depende de BLK-ORQ-01 validado)

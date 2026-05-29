@@ -87,6 +87,7 @@ obrigatória antes do Builder. O usuário deve ler este handoff e confirmar."]
 ## Ao final
 
 - Atualize context/handoff.md com o formato acima.
+- Além de `context/handoff.md` (corrente), grave uma cópia append-only em `context/handoff/AAAAMMDD-HHMMSS-planner.md` (com SEGUNDOS no carimbo). Nunca edite snapshots já existentes. Ver `context/handoff/README.md`.
 - Atualize tasks/current_task.md com próxima Skill.
 - Se houver decisão técnica relevante e DECISIONS.md existir, registre.
 - Emita resumo de uma linha: o que foi planejado e próximo passo.

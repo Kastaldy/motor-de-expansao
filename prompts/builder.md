@@ -91,6 +91,7 @@ QA/Quality Analyzer
 ## Ao final
 
 - Atualize context/handoff.md com o formato acima.
+- Além de `context/handoff.md` (corrente), grave uma cópia append-only em `context/handoff/AAAAMMDD-HHMMSS-builder.md` (com SEGUNDOS no carimbo). Nunca edite snapshots já existentes. Ver `context/handoff/README.md`.
 - Atualize tasks/current_task.md (status: aguardando QA).
 - Se houver mudança de estado relevante, sinalize para atualização do CLAUDE.md.
 - Emita resumo de uma linha: o que foi implementado e resultado dos testes.

@@ -19,7 +19,8 @@ Use these repo files as the shared protocol:
 - `tasks/current_task.md`: active task state.
 - `tasks/backlog.md`: pending tasks.
 - `tasks/completed.md`: completed cycle history.
-- `context/handoff.md`: handoff between roles.
+- `context/handoff.md`: current handoff between roles.
+- `context/handoff/`: append-only versioned handoff snapshots (`AAAAMMDD-HHMMSS-<slug>.md`, seconds in the timestamp; slugs `block-orchestrator`, `planner`, `builder`, `qa`; never edited after creation). See `context/handoff/README.md`. `context/handoff.md` stays the current handoff; these are audit snapshots.
 - `prompts/block_orchestrator.md`: Block Orchestrator role prompt.
 - `prompts/planner.md`: Planner role prompt.
 - `prompts/builder.md`: Builder role prompt.
@@ -39,13 +40,13 @@ When the user asks to run a cycle, act as the Codex "chefe" and perform this seq
    - alta: new feature or pipeline change.
    - critica: score, ranking, official M1 artifact, executive KPI, `score_priorizacao`, `hex_score_estrutural`, official portfolio or short-term plan.
    - estrategica: architecture redesign or new phase.
-4. Write `tasks/current_task.md` using the existing Claude format from `.claude/commands/run-cycle.md`.
+4. Write `tasks/current_task.md` using the existing Claude format from `.claude/commands/run-cycle.md`. Create/use an isolated branch `ciclo/<ID>` from the current HEAD (`git switch -c ciclo/<ID>`, or `git switch ciclo/<ID>` if it already exists — re-entrant cycle); branching from HEAD does not touch the working tree, so unrelated edits (e.g. `M PRD.md`) stay put.
 5. Run the role sequence for the criticity:
    - baixa: Block Orchestrator -> Builder.
    - media: Block Orchestrator -> Planner -> Builder -> QA.
    - alta: Block Orchestrator -> Planner -> human approval -> Builder -> QA.
    - critica or estrategica: Block Orchestrator -> Planner -> human approval -> Builder -> QA.
-6. After each role, update `context/handoff.md` with the role's handoff, then read it before continuing.
+6. After each role (including QA), update `context/handoff.md` AND append a versioned snapshot `context/handoff/AAAAMMDD-HHMMSS-<slug>.md` (append-only, seconds in the timestamp; never edit existing snapshots), then read the current handoff before continuing.
 7. Close the cycle by updating `tasks/current_task.md`, appending to `tasks/completed.md`, and reporting the final verdict.
 
 ## Sub-Agent Policy
@@ -77,7 +78,7 @@ For each role:
    - explicit output requirement: return the full `context/handoff.md` replacement body.
 5. Spawn the role sub-agent or execute serially.
 6. Validate that the returned handoff contains the required sections from the role prompt.
-7. Write the handoff to `context/handoff.md`.
+7. Write the handoff to `context/handoff.md` AND a versioned append-only copy `context/handoff/AAAAMMDD-HHMMSS-<slug>.md` (seconds in the timestamp; slugs `block-orchestrator`, `planner`, `builder`, `qa` — including the `qa` slug; never edit existing snapshots).
 8. Stop and ask the user if the handoff is malformed, the role exceeded scope, or approval is required.
 
 For Builder, require implementation to follow the Planner handoff exactly. For QA, require a review stance: findings and verdict first, test evidence second.
@@ -108,6 +109,11 @@ APROVADO POR [usuario] EM [data]
 - Keep every cycle to one block; put new work in backlog.
 - Do not overwrite `tasks/completed.md`; append only.
 - Respect existing user changes in the worktree and do not revert unrelated edits.
+- **Isolated branch/commit per cycle:** one isolated branch/commit per cycle (`ciclo/<ID>`); commit only the cycle's paths, never `git add -A`/`git add .`; never drag or revert unrelated edits (e.g. `PRD.md`).
+- **Non-destructive rollback preferred:** prefer `git switch`/`git restore --staged`; destructive `git reset --hard`/`git branch -D` only with explicit human confirmation and never reaching unrelated edits (reinforces "do not revert unrelated edits" above).
+- **Versioned append-only handoff snapshot per role (including QA):** each role writes `context/handoff/AAAAMMDD-HHMMSS-<slug>.md` (seconds in the timestamp); never edit existing snapshots.
+- **NO-BYPASS of validation:** a "green" obtained by bypassing the real config/artifacts (`--config /dev/null`, a fixture that does not match the real `creation_rules`, mocking the critical path) counts as NOT-EXECUTED; the cycle cannot close as APROVADO. (Justification: BLK-OPS-01 five-defects episode.)
+- **Autonomous orchestration dry-run:** cycles that change the orchestration (run-cycle / prompts / role chain) trigger, **after the human merge**, an AUTONOMOUS dry-run run by the orchestrator (dummy Baixa task + `dry_run: true`), with a depth-1 recursion guard. Normal cycles do NOT trigger it. The human reads the report; the orchestrator conducts the dry-run.
 
 ## Validation
 
@@ -119,6 +125,10 @@ python -c "import streamlit_app; print('import ok')"
 ```
 
 If tests cannot run, record the reason in `context/handoff.md` and the final response.
+
+QA must re-run BY ITSELF every command listed under the cycle handoff's "Validações obrigatórias" (not only `pytest`) against the REAL config and artifacts, and paste each command's literal output into the handoff. The Builder's log is cross-reference only. Any "green" obtained by bypassing the real config/artifacts — e.g. `sops --config /dev/null`, a fixture that does not match the real `creation_rules`, or mocking the critical path — counts as NOT-EXECUTED and forbids an APROVADO verdict. (See the BLK-OPS-01 five-defects episode: defects only surfaced because initial validation bypassed the real config.)
+
+After a cycle that changed the orchestration itself (`run-cycle`, `prompts/*`, this SKILL, or the role chain), the closing order is: (1) isolated commit by path; (2) the **human** merges the `ciclo/<ID>` branch; (3) the orchestrator then runs an **autonomous** dry-run by itself — a trivial cycle with a dummy Baixa-criticality task carrying `dry_run: true` in `current_task.md`. **Recursion guard (mandatory):** at the start of cycle-closing, check "am I a dry-run?" by reading `dry_run: true`; if so, do NOT trigger another dry-run (breaks recursion at depth 1). Normal cycles (that do not touch the orchestration) do NOT trigger a dry-run. The orchestrator verifies by itself (`git log --oneline -3`, `ls context/handoff/`, `git status`) and, on failure, reverts NON-destructively (prefer `git switch`) and reports; destructive rollback still needs human confirmation. The human's role is to read the dry-run report, not to conduct it.
 
 ## Final Report
 

@@ -82,5 +82,6 @@ Block Orchestrator
 ## Ao final
 
 - Escreva context/handoff.md com o formato acima.
+- Além de `context/handoff.md` (corrente), grave uma cópia append-only em `context/handoff/AAAAMMDD-HHMMSS-block-orchestrator.md` (com SEGUNDOS no carimbo). Nunca edite snapshots já existentes. Ver `context/handoff/README.md`.
 - Atualize tasks/current_task.md com ID, nome, criticidade, esteira e próxima Skill.
 - Emita resumo de uma linha: o que foi delimitado e próximo passo.
