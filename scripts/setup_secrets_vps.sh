@@ -137,13 +137,28 @@ encrypt_one() {
 
   case "${mode}" in
     dotenv)
-      sops --input-type dotenv --output-type dotenv -e "${src}" > "${dst}"
+      cp "${src}" "${dst}"
+      if ! sops --input-type dotenv --output-type dotenv -e -i "${dst}"; then
+        rm -f "${dst}"
+        echo "ERRO: falha ao encriptar ${dst} (dotenv); DST removido." >&2
+        return 1
+      fi
       ;;
     binary)
-      sops --input-type binary --output-type binary -e "${src}" > "${dst}"
+      cp "${src}" "${dst}"
+      if ! sops --input-type binary --output-type binary -e -i "${dst}"; then
+        rm -f "${dst}"
+        echo "ERRO: falha ao encriptar ${dst} (binary); DST removido." >&2
+        return 1
+      fi
       ;;
     yaml)
-      sops -e "${src}" > "${dst}"
+      cp "${src}" "${dst}"
+      if ! sops -e -i "${dst}"; then
+        rm -f "${dst}"
+        echo "ERRO: falha ao encriptar ${dst} (yaml); DST removido." >&2
+        return 1
+      fi
       ;;
     *)
       echo "ERRO: modo desconhecido ${mode}." >&2

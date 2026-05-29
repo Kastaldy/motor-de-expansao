@@ -292,20 +292,19 @@ pode entrar no git.
 cd /opt/motor-expansao/app/
 
 # 1. .env -> secrets/env.enc.env
-sops --input-type dotenv --output-type dotenv -e .env > secrets/env.enc.env
+cp .env secrets/env.enc.env && sops --input-type dotenv --output-type dotenv -e -i secrets/env.enc.env
 
 # 2. Caddyfile -> secrets/Caddyfile.enc
-sops --input-type binary --output-type binary -e Caddyfile > secrets/Caddyfile.enc
+cp Caddyfile secrets/Caddyfile.enc && sops --input-type binary --output-type binary -e -i secrets/Caddyfile.enc
 
 # 3. authelia/configuration.yml -> secrets/authelia.configuration.enc.yaml
-sops -e authelia/configuration.yml > secrets/authelia.configuration.enc.yaml
+cp authelia/configuration.yml secrets/authelia.configuration.enc.yaml && sops -e -i secrets/authelia.configuration.enc.yaml
 
 # 4. authelia/users_database.yml -> secrets/authelia.users_database.enc.yaml
-sops -e authelia/users_database.yml > secrets/authelia.users_database.enc.yaml
+cp authelia/users_database.yml secrets/authelia.users_database.enc.yaml && sops -e -i secrets/authelia.users_database.enc.yaml
 
 # 5. authelia/db.sqlite3 -> secrets/authelia.db.sqlite3.enc
-sops --input-type binary --output-type binary -e authelia/db.sqlite3 \
-  > secrets/authelia.db.sqlite3.enc
+cp authelia/db.sqlite3 secrets/authelia.db.sqlite3.enc && sops --input-type binary --output-type binary -e -i secrets/authelia.db.sqlite3.enc
 
 # Verificar diff antes de committar:
 git add secrets/*.enc*
@@ -316,6 +315,16 @@ git diff --cached --stat
 git commit -m "chore: encriptar segredos iniciais (SOPS+age)"
 git push
 ```
+
+> **NOTA TECNICA — `cp` + `sops -e -i` (in-place):** o SOPS 3.8.1 casa
+> `creation_rules.path_regex` contra o caminho do arquivo de **entrada**.
+> Como os SRCs (`.env`, `Caddyfile`, etc.) nao tem sufixo `.enc.*`, o
+> padrao antigo `sops -e SRC > DST` falhava com "no matching creation
+> rules found". A correcao e copiar o SRC para o DST (que ja carrega o
+> sufixo que casa a regra) e encriptar in-place com `-i`. O modo binary
+> exige `--input-type/--output-type binary` porque a extensao `.enc` nao e
+> reconhecida por SOPS; sem isso o conteudo seria tratado como JSON/YAML e
+> corrompido.
 
 > **Importante:** o `setup_secrets_vps.sh` faz tudo isso e pausa antes do
 > commit para voce revisar o diff. O script **NAO** comita por seguranca.

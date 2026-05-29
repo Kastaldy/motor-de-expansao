@@ -358,3 +358,50 @@ M1, score_priorizacao, hex_score_estrutural, artefatos oficiais, dashboard e VPS
 
 ### Pendencia pos-ciclo (gate)
 Dry-run pos-merge (validacao humana) antes de confiar a esteira nova aos ciclos de producao.
+
+---
+
+## BLK-OPS-01-FU4 — Corrigir `encrypt_one` no `setup_secrets_vps.sh`
+
+Concluido em 2026-05-29. Veredito do QA: **APROVADO** (re-execucao independente).
+Criticidade: Media. Esteira completa: Block Orchestrator -> Planner -> Builder -> QA.
+Branch do ciclo: `ciclo/BLK-OPS-01-FU4`.
+
+### O que foi entregue
+Correcao do bug descoberto no fechamento real do BLK-OPS-01 (passo 4.5): a funcao
+`encrypt_one` usava `sops -e SRC > DST` com SRC fora de `secrets/`, falhando com
+"no matching creation rules found" (SOPS 3.8.1 casa `path_regex` contra o caminho de
+ENTRADA, e os SRCs `.env`/`Caddyfile`/`authelia/*` nao tem sufixo `.enc.*`). Os 3 ramos
+do `case` foram reescritos para o padrao in-place ja validado manualmente em producao:
+`cp "${src}" "${dst}"` seguido de `if ! sops [flags] -e -i "${dst}"; then rm -f "${dst}";
+echo "ERRO..." >&2; return 1; fi` — a guarda apaga o DST em qualquer falha do `sops`
+para nunca deixar plaintext copiado em `secrets/` (critico sob `set -euo pipefail`).
+Flags por modo (decisao do Planner): dotenv = `--input-type dotenv --output-type dotenv`;
+binary = `--input-type binary --output-type binary` (OBRIGATORIO — extensao `.enc` nao e
+reconhecida pelo SOPS, sem a flag corromperia o conteudo); yaml = sem flags (inferencia
+por `.yaml`). As 5 chamadas a `encrypt_one` (linhas 156-160) ficaram byte-identicas.
+O `docs/backup_restore.md` (bloco "Comandos exatos por arquivo (manual)") foi alinhado
+ao mesmo padrao + nota tecnica explicando a quirk.
+
+### Validacoes (re-executadas pelo QA, sem bypass)
+- `bash -n scripts/setup_secrets_vps.sh` -> exit 0 (sintaxe valida).
+- `shellcheck` -> nao disponivel no ambiente (registrado).
+- Inspecao estatica: nenhum `sops -e SRC > DST` remanescente no script nem no doc; os 3
+  ramos com `cp`+guarda `rm -f`+`return 1`; flags por modo corretas; 5 chamadas intactas;
+  nota tecnica presente no doc.
+- Escopo: `git diff --stat` confirma apenas `scripts/setup_secrets_vps.sh` e
+  `docs/backup_restore.md` como arquivos do ciclo (+ controle); `src/`, `config.py`,
+  `data/` intactos; `M PRD.md` (edicao pre-existente nao relacionada) NAO revertida nem
+  commitada pelo ciclo.
+
+### No-bypass
+Nao houve execucao de tooling SOPS (real nem falsa): o script roda exclusivamente no VPS,
+como passo humano, sobre segredos reais — proibido executar aqui por guardrail (CLAUDE.md
+§6). A validacao maxima viavel e estatica + a correcao replica fielmente o workaround ja
+validado contra producao no fechamento real de 2026-05-29. Isso NAO e "verde por bypass":
+nao se forjou nenhum verde de SOPS contra config falsa.
+
+### Guardrails
+M1, score_priorizacao, hex_score_estrutural, artefatos oficiais, dashboard e VPS inalterados
+(mudanca puramente em shell/markdown). Nenhum segredo manipulado. Ciclo NAO altera a
+orquestracao -> nao dispara dry-run pos-merge (Passo 6.c).

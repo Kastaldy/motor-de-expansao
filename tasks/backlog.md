@@ -134,7 +134,7 @@ acrescentado o registro do ciclo BLK-OPS-01 (incluindo FU1, FU2, FU3) em §5.
 
 ### BLK-OPS-01-FU4 — Corrigir `encrypt_one` no `setup_secrets_vps.sh`
 
-Status: pendente
+Status: CONCLUÍDO (2026-05-29) — APROVADO pelo QA via /run-cycle (esteira média completa). Detalhes em `tasks/completed.md`.
 Criticidade: média
 Prioridade: média
 Tipo: bug / tooling
