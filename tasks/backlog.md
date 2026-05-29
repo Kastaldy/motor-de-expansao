@@ -13,6 +13,133 @@ Próximo ciclo recomendado: validar a estrutura de Skills com uma tarefa real do
 
 ## Tarefas pendentes
 
+### BLK-OPS-06 — Alinhar checkout do VPS via `git pull` — CONCLUÍDO (2026-05-29)
+
+Status: CONCLUÍDO (2026-05-29) — APROVADO. Detalhes em `tasks/completed.md`. Mover para a seção
+Concluídos no próximo housekeeping do backlog. Execução: `git pull --ff-only` no VPS levou
+`/opt/motor-expansao/app` de `64e68b1 → 8218f38` (fast-forward), materializando os 5
+`secrets/*.enc.*` como rastreados; HEAD do VPS == origin/main. VPS ainda sem `4ee9685`/`97195e3`
+(locais não enviados ao GitHub) — alinhamento 100% via `git push` + novo pull é OPCIONAL.
+Criticidade: baixa
+Prioridade: alta (próxima da fila)
+Tipo: operação / infraestrutura
+Skill recomendada: decisão humana + comando direto (per-command no VPS)
+Resumo: Fechamento operacional do FU5. O checkout git em `/opt/motor-expansao/app`
+(origin = github.com/Kastaldy/motor-de-expansao) está atrás do `origin/main` — não tem
+o commit `a2a4cea` que versionou os 5 `secrets/*.enc.*`. No FU5 esses arquivos estavam
+untracked no VPS e foram removidos (`rm`), com as versões canônicas vivendo no repo/origin.
+Um `git pull` no VPS faz fast-forward e materializa os `.enc.*` como arquivos **rastreados**,
+eliminando o estado "atrás do origin" e deixando o checkout limpo/alinhado.
+Passos sugeridos (todos per-command, com confirmação explícita — GUARDRAIL CLAUDE.md §6):
+1. read-only: `git -C /opt/motor-expansao/app status` e `git -C /opt/motor-expansao/app rev-parse HEAD`
+   (confirmar working tree limpo e quão atrás está antes de qualquer pull).
+2. read-only: `git -C /opt/motor-expansao/app fetch --dry-run` (ver o que viria).
+3. `git -C /opt/motor-expansao/app pull --ff-only` (aplicar; abortar se não for fast-forward).
+4. verificar: `secrets/*.enc.*` presentes e tracked; `docker compose` não precisa rebuild
+   (mudança é só de arquivos versionados, não de imagem).
+Observações:
+- Pré-requisito opcional: `git push` do `main` local (hoje `ahead 3` do origin) se quiser que
+  o VPS receba também FU4 + housekeeping. NÃO é necessário para os `.enc.*` (já estão no origin
+  via `a2a4cea`).
+- Não urgente, mas deve ser feita antes do próximo deploy/restore para evitar surpresa de
+  estado divergente no servidor.
+Dependências: aprovação explícita do usuário, comando a comando, antes de qualquer execução no VPS.
+
+---
+
+### BLK-OPS-07 — Sincronizar VPS 100% com o `main` local (git push + pull)
+
+Status: pendente — executar APÓS concluir BLK-PRD-01 (não rodar neste ciclo)
+Criticidade: baixa
+Prioridade: média (fechamento de sincronização, ao final do ciclo do BLK-PRD-01)
+Tipo: operação / infraestrutura
+Skill recomendada: decisão humana + comando direto (per-command no VPS)
+Resumo: Fechar a sincronização deixada pendente pelo BLK-OPS-06. Depois daquele bloco, o VPS
+(`/opt/motor-expansao/app`) ficou em `8218f38` (origin/main no GitHub no momento), com os 5
+`secrets/*.enc.*` já rastreados — MAS o `main` local está à frente do `origin/main` (ahead ~3:
+inclui `97195e3` FU4, `4ee9685` BLK-OPS-05 e o fechamento do BLK-OPS-06 `f36adfe`). Para o VPS
+refletir 100% o HEAD local, é preciso primeiro publicar o `main` local no GitHub e depois puxar
+no VPS.
+Passos sugeridos (todos per-command, com confirmação explícita — GUARDRAIL CLAUDE.md §6):
+1. local (sua máquina): `git push origin main` (publica FU4 + BLK-OPS-05 + BLK-OPS-06 no GitHub).
+   Pré-checagem read-only opcional: `git log --oneline origin/main..main` para ver o que sobe.
+2. read-only no VPS: `git -C /opt/motor-expansao/app fetch --dry-run` (confirmar o range que viria).
+3. VPS: `git -C /opt/motor-expansao/app pull --ff-only` (abortar se não for fast-forward).
+4. verificar no VPS: `git rev-parse HEAD` == `origin/main`; `git status -s` limpo (só os untracked
+   não relacionados conhecidos: `authelia/`, `Caddyfile.backup.*`, `docker-compose.prod.yml.backup.*`).
+   `docker compose` NÃO precisa rebuild (só arquivos versionados mudam; nenhuma imagem/serviço).
+Observações:
+- Pré-requisito: BLK-PRD-01 concluído e commitado (a reescrita do PRD.md deve estar no `main` local
+  antes do push, para subir tudo de uma vez).
+- Antes do push, garantir que as edições pendentes de `tasks/backlog.md` e `PRD.md` estejam
+  resolvidas/commitadas como se deseja — o push leva o estado do `main` local.
+Dependências: BLK-PRD-01 concluído; aprovação explícita do usuário, comando a comando, antes de
+qualquer execução no VPS.
+
+---
+
+### BLK-PRD-01 — Reescrever PRD.md como PRD padrão do projeto
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média *(doc canônico §2 do CLAUDE.md; Block Orchestrator pode ELEVAR p/ Alta se quiser gate de aprovação do novo formato — nunca rebaixar)* |
+| **Prioridade** | Alta |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana do outline]` → Builder → QA |
+| **Depende de** | — |
+| **Status** | CONCLUÍDO (2026-05-29) — APROVADO pelo QA via /run-cycle (commit `3d1ca1a`, branch `ciclo/BLK-PRD-01`). Detalhes em `tasks/completed.md`. |
+| **Skill** | /run-cycle |
+
+**Contexto:** o `PRD.md` atual contém o "Programa de Melhorias — Referência do Master
+Orchestrator" — conteúdo **temporário** que substituiu o PRD padrão antigo (apagado por estar
+desatualizado). Os 9 blocos desse programa **já foram migrados** para `tasks/backlog.md`
+(2026-05-29). Há também uma edição não-commitada pré-existente em `PRD.md` (`M PRD.md`) que será
+absorvida/substituída pela reescrita.
+
+**Objetivo:** reescrever `PRD.md` como um **PRD padrão do projeto** — documento de produto
+canônico, subordinado ao `CLAUDE.md` (fonte de verdade), sem duplicar o backlog.
+
+**Escopo permitido:**
+- Substituir todo o conteúdo de `PRD.md` por um PRD padrão. Estrutura **sugerida** (o Planner
+  refina e apresenta o outline para revisão humana antes do Builder escrever, por ser doc canônico):
+  - Visão e objetivo do produto (Motor de Expansão Ultra Academia)
+  - Público-alvo (18–45) e contextos de uso
+  - Escopo do produto / fora de escopo
+  - Camadas e trilhas (M1 oficial territorial, censitário, híbrido, mercado/residual, Expansão de Domínio)
+  - Score oficial e guardrails canônicos — **referenciar** o `CLAUDE.md` §3/§5, não redefinir valores
+  - Requisitos funcionais e não-funcionais (dashboard offline, performance, sem API ao vivo)
+  - Métricas de sucesso
+  - Roadmap/fases — **referenciar** `tasks/backlog.md` para o detalhe dos blocos, não copiá-los
+  - Dependências e restrições (infra/VPS)
+- **Commit do `PRD.md` atualizado por path** — este é o entregável final do ciclo (incluído no escopo a pedido do usuário).
+
+**Fora de escopo:**
+- Alterar `CLAUDE.md`, código, `config.py`, score, artefatos M1.
+- Reescrever, mover ou re-duplicar blocos do `tasks/backlog.md`.
+
+**Arquivos a ler:** `PRD.md` (estado atual + histórico git) · `CLAUDE.md` (fonte canônica) · `tasks/backlog.md` (para referenciar, não duplicar).
+**Arquivos a alterar:** `PRD.md`.
+
+**Critérios de aceite:**
+- `PRD.md` é um PRD padrão coerente, subordinado ao `CLAUDE.md`, sem duplicar o backlog.
+- Nenhum valor canônico contradiz o `CLAUDE.md` (PRD referencia, não redefine pesos/parâmetros).
+- `PRD.md` commitado por path (sem arrastar outros arquivos não relacionados).
+
+**Validações obrigatórias:**
+```
+pytest -q            # doc-only: suíte deve seguir verde (nada de código tocado)
+git --no-pager diff --stat -- PRD.md    # escopo: só PRD.md alterado
+```
+
+**Guardrails específicos:**
+- Doc-only: não toca score/M1/código/artefatos. Por ser canônico, recomenda-se `[revisão humana]`
+  do outline proposto pelo Planner antes do Builder escrever.
+- Commit isolado por path (`git add PRD.md`); não arrastar a edição pré-existente de outros arquivos.
+
+**Risco:** baixo (documentação). Variância no alinhamento do formato com a expectativa do usuário —
+mitigado pela revisão humana do outline.
+
+---
+
 ### BLK-OPS-02 — CI completo + build via registry (fora da prod)
 
 | Campo | Valor |
