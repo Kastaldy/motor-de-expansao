@@ -1,6 +1,8 @@
 # .sops.yaml — regras de criptografia para secrets/**
-# Substitua age1REPLACE_WITH_REAL_RECIPIENT pelo recipient publico real
-# apos executar age-keygen (ver docs/backup_restore.md §7 ou §7-bis).
+# Recipient publico age abaixo (age1lau0w4xg...) — gerado pelo operador em
+# 2026-05-29 via Plano B do runbook. A chave privada correspondente
+# (AGE-SECRET-KEY-1...) vive APENAS no cofre offline.
+# Ver docs/backup_restore.md §7-bis (geracao) e §11 (rotacao).
 #
 # Convencao de nomes:
 #   secrets/*.enc.yaml  -> YAML estruturado (Authelia configuration/users_database)
@@ -13,11 +15,11 @@
 
 creation_rules:
   - path_regex: secrets/.*\.enc\.yaml$
-    age: age1REPLACE_WITH_REAL_RECIPIENT
+    age: age1lau0w4xgfkh9xnn58f2nwt0t4vstva30nht9zcggg2g7ssgq9uqsvd8zmd
   - path_regex: secrets/.*\.enc\.env$
-    age: age1REPLACE_WITH_REAL_RECIPIENT
+    age: age1lau0w4xgfkh9xnn58f2nwt0t4vstva30nht9zcggg2g7ssgq9uqsvd8zmd
     encrypted_regex: '^.*$'
   - path_regex: secrets/.*\.enc\.txt$
-    age: age1REPLACE_WITH_REAL_RECIPIENT
+    age: age1lau0w4xgfkh9xnn58f2nwt0t4vstva30nht9zcggg2g7ssgq9uqsvd8zmd
   - path_regex: secrets/.*\.enc$
-    age: age1REPLACE_WITH_REAL_RECIPIENT
+    age: age1lau0w4xgfkh9xnn58f2nwt0t4vstva30nht9zcggg2g7ssgq9uqsvd8zmd
