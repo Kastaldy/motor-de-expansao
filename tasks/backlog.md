@@ -151,7 +151,7 @@ mitigado pela revisão humana do outline.
 | **Criticidade** | Alta |
 | **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
 | **Depende de** | — |
-| **Status** | EM EXECUÇÃO (Builder, 2026-05-29) — aguardando QA. Branch `ciclo/BLK-OPS-02`. ruff/mypy entregues como steps NÃO-BLOQUEANTES no CI; saneamento completo movido para BLK-OPS-02b (volume muito acima do escopo trivial: 286 erros ruff + 23 mypy em produção/M1). |
+| **Status** | CONCLUÍDO (2026-05-29) — APROVADO COM RESSALVAS pelo QA via /run-cycle; **mergeado no `main`** (merge commit `24aa066`, PR #1). Detalhes em `tasks/completed.md`. CI completo verde no runner limpo (460 passed, 73 skipped); `Docker Publish (GHCR)` rodou no push à `main` e publicou a imagem (run `26664812524`). Ressalvas: ruff/mypy não-bloqueantes → **BLK-OPS-02b**; upgrade de actions Node 20 → **BLK-OPS-08**. Mover para Concluídos no próximo housekeeping. |
 
 **Objetivo:** o gate do `main` deve rodar a suíte completa (hoje só 2 arquivos + smoke import),
 e o deploy deve usar imagem buildada no CI e empurrada para um registry — o servidor faz `pull`,
@@ -237,6 +237,35 @@ testes M1 (F601 só pode ser tocado provando invariância do fixture).
 
 **Risco:** médio-alto — toca produção M1; mitigar com passos pequenos + prova de não-regressão
 (pytest verde + hash dos artefatos M1) a cada passo.
+
+---
+
+### BLK-OPS-08 — Atualizar actions do CI para Node 24 (fim do Node 20)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Baixa |
+| **Esteira** | Block Orchestrator → Builder |
+| **Depende de** | **BLK-OPS-02** (workflows criados) — ✅ satisfeita |
+| **Status** | Pendente *(aberto por BLK-OPS-02 em 2026-05-29 ao observar o aviso de descontinuação nos runs do CI)* |
+
+**Contexto:** os runs do CI/Docker Publish emitem aviso de descontinuação — `actions/checkout@v4`
+e `actions/setup-python@v5` rodam em Node 20, que o GitHub força a Node 24 a partir de 16-jun-2026
+e remove do runner em 16-set-2026. Os `docker/*-action` usados no `docker-publish.yml` (login@v3,
+metadata@v5, build-push@v6) não estão no aviso, mas vale revisar versões no mesmo passo.
+
+**Escopo permitido:**
+- Atualizar `.github/workflows/ci.yml` e `.github/workflows/docker-publish.yml` para as versões de
+  actions que suportam Node 24 (ex.: `actions/checkout@v5`, `actions/setup-python@v6` ou a mais
+  recente estável no momento da execução).
+- Confirmar via run verde no GitHub Actions (push em branch de teste / PR) que o aviso some.
+
+**Fora de escopo:** mudar lógica de CI, steps de teste, scoring, artefatos M1.
+
+**Critérios de aceite:** runs de CI e Docker Publish verdes sem o aviso de Node 20; nenhum step
+de teste/build alterado em comportamento.
+
+**Risco:** baixo — atualização de versão de actions; reversível.
 
 ---
 
@@ -337,8 +366,8 @@ pytest -q   # garantir que nada existente quebrou
 |---|---|
 | **Criticidade** | Alta |
 | **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
-| **Depende de** | **BLK-OPS-02** (CI completo verde como rede de segurança) |
-| **Status** | Pendente |
+| **Depende de** | **BLK-OPS-02** (CI completo verde como rede de segurança) — ✅ SATISFEITA (BLK-OPS-02 concluído/mergeado em 2026-05-29; suíte completa roda verde no CI). |
+| **Status** | Pendente *(desbloqueado — dependência satisfeita; candidato à fila após BLK-OPS-02b)* |
 
 **Objetivo:** eliminar a dualidade `src/` vs. legado (`dashboard/` flat, `jobs/`, wrappers de
 raiz). Uma única fonte de verdade por função, sem quebrar o dashboard.
@@ -388,14 +417,14 @@ dashboard / acesso a dados) se o mapeamento revelar acoplamento grande.
 | **Depende de** | — *(pode rodar em paralelo à Frente A)* |
 | **Status** | Pendente |
 
-**Objetivo:** montar a base que liga cada unidade existente (Ultra e Skyfit) ao score do
+**Objetivo:** montar a base que liga cada unidade existente (Ultra, Skyfit e Engenharia do Corpo) ao score do
 hex/setor onde ela caiu (M1, censitário, residual, domínio) e ao desfecho observado (alunos
 recorrentes; Wellhub/Totalpass como proxy de demanda independente). É insumo do backtest.
 
 **Escopo permitido:**
 - Geocodificar cada unidade → célula H3 (res. 7) e setor IBGE correspondente.
 - Fazer join com os scores existentes (leitura dos outputs M1 e camadas paralelas).
-- Anexar desfechos: `alunos_recorrentes`, sinal Wellhub/Totalpass, `data_abertura` (para maturação).
+- Anexar desfechos: `alunos_recorrentes`, sinal Wellhub/Totalpass, `alunos_totais` , `data_abertura` (para maturação).
 - Gravar artefato de análise em `data/analysis/dataset_validacao.parquet` — **fora** de
   `data/outputs/` (não é artefato de produto, é insumo de análise).
 
