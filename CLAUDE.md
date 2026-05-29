@@ -22,6 +22,7 @@
 - Tratar `config.py`, este arquivo e `PRD.md` como fontes canonicas de parametros e guardrails.
 - Staging sempre em Parquet; CSVs locais gerados pelo projeto usam `sep=";"` e `encoding="utf-8-sig"`.
 - Excecao de legado: `data/ultra/Ultra.csv` usa `sep=";"`, `encoding="latin-1"` e 1 linha inicial de metadado.
+- Bases de validacao de scores (concorrentes) ficam em `data/validacao/` (gitignored, dados reais): `Sky Fit dados.xlsx` e `academias_engenharia_do_corpo.xlsx` (alunos/m² + metragem). Insumo do BLK-SCORE-01; contrato em `data/validacao/README.md`. Read-only sobre o M1.
 - Ao tocar em camadas paralelas, preservar 100% das linhas e colunas oficiais do M1.
 - Nao criar dependencia de API ao vivo no dashboard de producao.
 - Toda mudanca relevante entra com teste; nenhum PR deve subir com CI quebrado.

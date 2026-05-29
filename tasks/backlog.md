@@ -430,7 +430,9 @@ recorrentes; Wellhub/Totalpass como proxy de demanda independente). É insumo do
 
 **Fora de escopo:** **qualquer escrita em artefato M1 ou alteração de score.** Apenas leitura e join.
 
-**Arquivos a ler:** fontes Ultra/Skyfit/Wellhub · `data/outputs/*` (scores) · `core/scoring.py`
+**Arquivos a ler:** fontes Ultra/Skyfit/Wellhub · **bases de validação de concorrentes em
+`data/validacao/`** (`Sky Fit dados.xlsx`, `academias_engenharia_do_corpo.xlsx` — alunos/m² + metragem;
+gitignored, ver `data/validacao/README.md`) · `data/outputs/*` (scores) · `core/scoring.py`
 (para entender as colunas) · esquema dos setores censitários.
 **Arquivos a criar:** script de montagem (ex.: `analysis/build_validation_dataset.py`) ·
 `data/analysis/dataset_validacao.parquet` · `tests/unit/test_validation_dataset.py`.
