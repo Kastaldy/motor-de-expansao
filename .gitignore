@@ -28,6 +28,10 @@ concorrentes/
 *.tmp.md
 !tests/contracts/fixtures/*.html
 
+# Fixtures de teste versionadas (sinteticas, sem dado real) - excecao ao ignore de parquet/csv
+!tests/fixtures/
+!tests/fixtures/**
+
 # Banco
 *.db
 *.sqlite

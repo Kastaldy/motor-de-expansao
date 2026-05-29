@@ -2,32 +2,33 @@
 
 ## Bloco atual
 
-ID: BLK-OPS-07
-Nome: Sincronizar VPS 100% com o `main` local (git push + pull)
-Status: CONCLUÍDO (2026-05-29) — VPS sincronizado em `76fc89e`
+ID: BLK-OPS-02
+Nome: CI completo + build via registry (fora da prod)
+Status: aguardando QA (Builder concluído 2026-05-29; Fase E — push/PR — pendente: gh CLI ausente nesta máquina)
 Tipo: operação / infraestrutura
-Criticidade: baixa
-Esteira: Block Orchestrator → Builder (execução interativa com gate humano por comando no VPS)
-Skill atual: Builder (concluído)
-Próxima Skill: Fechamento manual (commit de controle por path pelo orquestrador) → merge pelo humano
-Branch do ciclo: ciclo/BLK-OPS-07
+Criticidade: alta
+Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
+Skill atual: Builder (APROVADO POR Felipe Silva EM 2026-05-29)
+Próxima Skill: QA
+Gate de aprovação humana: APROVADO POR Felipe Silva EM 2026-05-29 (plano ajustado: PR de ciclo + .gitignore fixtures + ruff/mypy escopo limitado/BLK-OPS-02b)
+Branch do ciclo: ciclo/BLK-OPS-02
 dry_run: false
 
 ## Objetivo
-Deixar o checkout do VPS (`/opt/motor-expansao/app`) refletindo 100% o `main`/`origin/main`, publicando o `main` local no GitHub (se necessário) e puxando no VPS via `git pull --ff-only`.
+O gate do `main` deve rodar a suíte completa de testes (hoje só 2 arquivos + smoke import)
+e o deploy deve usar imagem buildada no CI e empurrada para um registry (ex.: GHCR) — o
+servidor faz `pull`, não `build`.
 
-## Achado de pré-execução (read-only, já confirmado)
-- `git fetch origin` executado: `origin/main` HEAD == `main` HEAD == `76fc89e`; ahead/behind = `0 0`.
-- **Consequência:** o `git push origin main` do passo 1 do backlog é NO-OP — o GitHub já tem tudo até `76fc89e` (FU4 97195e3, BLK-OPS-05, BLK-OPS-06 f36adfe, BLK-PRD-01 3d1ca1a/76fc89e).
-- Trabalho remanescente real = **só o lado VPS**: VPS estava em `8218f38` (BLK-OPS-06); precisa `git pull --ff-only` para alcançar `76fc89e`.
-
-## Paths do ciclo (commit por path no fechamento)
-- Controle: `tasks/current_task.md`, `tasks/completed.md`, `tasks/backlog.md` (marcar BLK-OPS-07 concluído — backlog está LIMPO agora, sem pré-sujeira), `context/handoff.md`, `context/handoff/`.
-- Nenhum arquivo de código/artefato M1/`CLAUDE.md`/`PRD.md` é tocado.
+## Paths candidatos do ciclo (commit por path no fechamento)
+- Código/infra: `.github/workflows/ci.yml`, novo workflow de build/push, `tests/fixtures/` (se criadas), `docs/deploy.md`.
+- Controle: `tasks/current_task.md`, `tasks/completed.md`, `tasks/backlog.md` (marcar BLK-OPS-02), `context/handoff.md`, `context/handoff/`.
+- Pré-sujeira `M tasks/backlog.md`: edição interna ao próprio bloco BLK-OPS-02 (nota de verificação externa) — é path do ciclo, será incluída. NÃO arrastar `PRD.md` nem qualquer arquivo não relacionado.
 
 ## Guardrails ativos
-- CLAUDE.md §6 GUARDRAIL ABSOLUTO: nenhum comando no VPS via MCP sem confirmação explícita do usuário, comando a comando. Não encadear comandos sem aprovação intermediária.
-- `git push` é ação outward-facing: confirmar com o usuário antes (mesmo sendo no-op, confirmar a decisão de pular).
+- Fora de escopo: alterar lógica de scoring, alterar artefatos M1, executar deploy no VPS.
+- Fixtures de teste NÃO contêm dados reais de Ultra/Skyfit/Wellhub.
+- Deploy efetivo no VPS é passo humano, fora deste bloco.
+- CLAUDE.md §6: nenhum comando no VPS sem confirmação humana por comando (não aplicável a este bloco, que é CI/build, mas vale como guardrail permanente).
 
 ## Nota de orquestração
-Ciclo operacional. NÃO altera a própria orquestração (run-cycle.md / prompts / esteira) → NÃO dispara dry-run pós-merge.
+Este ciclo NÃO altera a própria orquestração (run-cycle.md / prompts / esteira) → NÃO dispara dry-run pós-merge.

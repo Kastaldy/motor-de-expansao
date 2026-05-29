@@ -151,7 +151,7 @@ mitigado pela revisão humana do outline.
 | **Criticidade** | Alta |
 | **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
 | **Depende de** | — |
-| **Status** | Pendente |
+| **Status** | EM EXECUÇÃO (Builder, 2026-05-29) — aguardando QA. Branch `ciclo/BLK-OPS-02`. ruff/mypy entregues como steps NÃO-BLOQUEANTES no CI; saneamento completo movido para BLK-OPS-02b (volume muito acima do escopo trivial: 286 erros ruff + 23 mypy em produção/M1). |
 
 **Objetivo:** o gate do `main` deve rodar a suíte completa (hoje só 2 arquivos + smoke import),
 e o deploy deve usar imagem buildada no CI e empurrada para um registry — o servidor faz `pull`,
@@ -189,6 +189,54 @@ docker build -f Dockerfile.streamlit -t test:ci .   # build local sanity
 
 **Risco:** médio — variância concentrada nas dependências de dados dos 532 testes no runner.
 Se o acoplamento a dados locais for grande, considerar quebrar em sub-bloco de fixtures.
+
+---
+
+### BLK-OPS-02b — Saneamento ruff/mypy (violações que exigem refatoração)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta *(toca código de produção M1: hex_enrichment.py, base_h3_brasil.py — additivo/mecânico, mas exige cuidado anti-regressão)* |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
+| **Depende de** | **BLK-OPS-02** (steps ruff/mypy já existem no CI, hoje não-bloqueantes) |
+| **Status** | Pendente *(aberto por BLK-OPS-02 em 2026-05-29 ao descobrir o volume da dívida)* |
+
+**Contexto:** `ruff`/`mypy` nunca rodaram no CI. Ao wirá-los em BLK-OPS-02 descobriu-se dívida
+latente muito acima do escopo trivial daquele bloco: **286 erros ruff** (228 auto-fixáveis via
+`ruff check . --fix`, 68 remanescentes não-triviais) e **23 erros mypy** em `src/`. Os
+remanescentes estão espalhados por ~22 arquivos incluindo **código de produção M1**
+(`src/motor_expansao/pipelines/m1/hex_enrichment.py`, `base_h3_brasil.py`), dashboard
+(`pages.py`, `components.py`, `data.py`, `censo_*`), pipelines `jobs/`, legado
+`fora_primeira_fase/` e **testes de fixtures M1** (`tests/integration/test_hex_enrichment_brasil.py`
+com 14× F601 "repeated dict key", `test_fase_a_censo2022.py`). Zerá-los exige refatoração de
+produção e tocar a semântica de testes M1 — **proibido em BLK-OPS-02** (trivial only; guardrail
+"não refatorar produção", "não mass-suppress", "não desabilitar regra no pyproject"). Por isso,
+em BLK-OPS-02 os steps ruff/mypy foram adicionados ao `ci.yml` como **`continue-on-error: true`**
+(informativos), mantendo o gate verde (CLAUDE.md §2).
+
+**Pendências herdadas de BLK-OPS-02 (lista para sanear aqui):**
+- Aplicar `ruff check . --fix` (228 auto-fixes mecânicos: I001 import-sort, F401 unused-import,
+  UP045/UP037 anotações, F541 f-string, UP035) — diff amplo (~52 arquivos), validar com `pytest -q`.
+- 68 ruff remanescentes não-autofixáveis, com destaque para itens que NÃO são triviais:
+  - `src/motor_expansao/dashboard/pages.py:2511 F821 Undefined name pdk` — **bug latente real** em produção (avaliar import/uso de `pydeck as pdk`).
+  - `ibge_censo.py` 3× B019 `lru_cache` em método (risco de memory leak — refatorar, não suprimir cego).
+  - `tests/integration/test_hex_enrichment_brasil.py` 14× F601 `"pop_total"` repetido em dict literal — **M1**: mudar a chave repetida altera qual valor vence; exige entender o fixture antes de tocar (não mexer sem confirmar invariância M1).
+  - Diversos B905 (`zip(strict=)`), E712 (`== True`), F841 (var não usada), B007/B023/B017/E731/E741 em produção e testes — triviais individualmente, mas em volume.
+- 23 mypy em `src/`: `dashboard/pages.py` (8), `pipelines/m1/hex_enrichment.py` (6 — implicit Optional, dict-item, no-redef de `generate_fase1_bi_artifacts`), `config.py` (5 — SettingsConfigDict/no-redef), `dashboard/censo_map.py` (2), `components.py` (1), `pipelines/m1/base_h3_brasil.py` (1 — Generator return type).
+
+**Escopo permitido:** corrigir as violações de verdade (refatoração mecânica/segura), preferindo
+correção a supressão; supressão pontual `# noqa: <code>` / `# type: ignore[<code>]` SEMPRE
+documentada quando o fix for arriscado. Ao final, tornar os steps ruff/mypy **bloqueantes**
+(remover `continue-on-error`) no `ci.yml`.
+
+**Fora de escopo:** alterar lógica de scoring/pesos, alterar artefatos M1, mudar semântica de
+testes M1 (F601 só pode ser tocado provando invariância do fixture).
+
+**Critérios de aceite:** `ruff check .` → 0 erros; `mypy src/` → 0 erros; steps bloqueantes no CI;
+`pytest -q` mantém `532 passed, 1 skipped` (zero regressão); hashes dos Parquets M1 inalterados.
+
+**Risco:** médio-alto — toca produção M1; mitigar com passos pequenos + prova de não-regressão
+(pytest verde + hash dos artefatos M1) a cada passo.
 
 ---
 

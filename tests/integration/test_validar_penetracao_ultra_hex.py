@@ -5,8 +5,18 @@ Teste minimo - Bloco 4: padroes de penetracao Ultra por hex.
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from jobs.pipelines import validar_penetracao_ultra_hex as modulo
+
+ROOT = Path(__file__).resolve().parents[2]
+# gerar_analise() le este parquet (PERF_HEX_PATH em validar_penetracao_ultra_hex.py)
+PERF_HEX_PATH = ROOT / "data" / "staging" / "unidades_ultra_performance_hex.parquet"
+
+pytestmark = pytest.mark.skipif(
+    not PERF_HEX_PATH.exists(),
+    reason="unidades_ultra_performance_hex.parquet ausente (dados reais)",
+)
 
 
 def test_gerar_analise_schema_minimo():
