@@ -4,7 +4,7 @@
 
 ID: BLK-OPS-02
 Nome: CI completo + build via registry (fora da prod)
-Status: aguardando QA (Builder concluído 2026-05-29; Fase E — push/PR — pendente: gh CLI ausente nesta máquina)
+Status: aguardando re-run de CI + QA (Builder corrigiu 2026-05-29: psutil declarado em pyproject; novo push em ciclo/BLK-OPS-02 re-dispara o CI do PR #1 que havia falhado na coleta por ModuleNotFoundError: psutil)
 Tipo: operação / infraestrutura
 Criticidade: alta
 Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
