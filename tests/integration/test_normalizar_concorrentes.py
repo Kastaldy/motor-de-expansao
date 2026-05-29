@@ -10,6 +10,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 PARQUET = ROOT / "data" / "staging" / "concorrentes_mapeados.parquet"
 
+pytestmark = pytest.mark.skipif(
+    not PARQUET.exists(),
+    reason="data/staging/concorrentes_mapeados.parquet ausente (dados reais)",
+)
+
 SCHEMA_OBRIGATORIO = {
     "concorrente_id", "rede", "nome_unidade", "lat", "lng",
     "data_coleta", "arquivo_origem", "flag_coord_valida",
@@ -21,7 +26,6 @@ REDES_MINIMAS = {"smart_fit", "bluefit", "panobianco"}
 
 @pytest.fixture(scope="module")
 def df():
-    assert PARQUET.exists(), f"Parquet nao encontrado: {PARQUET}"
     return pd.read_parquet(PARQUET)
 
 

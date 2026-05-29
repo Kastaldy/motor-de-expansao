@@ -15,10 +15,12 @@ services:
 
   # ── Streamlit ──────────────────────────────────────────────────────────────
   streamlit:
-    build:
-      context: .
-      dockerfile: Dockerfile.streamlit
-    image: motor-expansao-streamlit:latest
+    # Modo PULL: o servidor puxa a imagem publicada no GHCR pelo workflow
+    # Docker Publish (NAO faz build local). Override por commit via STREAMLIT_IMAGE,
+    # ex.: STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit:sha-<sha>
+    # Runbook: docs/deploy.md. Build local de sanity continua via
+    # `docker build -f Dockerfile.streamlit -t test:ci .` (independe deste compose).
+    image: ${STREAMLIT_IMAGE:-ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit:latest}
     container_name: motor_expansao_streamlit
     restart: unless-stopped
     # Porta NÃO exposta no host — acesso apenas via caddy na rede interna

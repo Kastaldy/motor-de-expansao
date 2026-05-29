@@ -38,3 +38,6 @@ authelia/
 
 # Secrets não entram na imagem (são montados via volume ou desencriptados em runtime)
 secrets/
+
+# Dados de concorrentes (montados via volume read-only em runtime; nunca na imagem)
+concorrentes/

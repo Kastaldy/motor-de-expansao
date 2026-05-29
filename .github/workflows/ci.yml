@@ -5,6 +5,7 @@ on:
     branches: [main, codex-dashboard-m1-streamlit]
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
 
 jobs:
   test:
@@ -15,12 +16,31 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
 
       - name: Instalar dependencias
         run: pip install -e ".[dev]"
 
-      - name: Testes rapidos (dashboard + carteira)
-        run: python -m pytest -q tests/integration/test_streamlit_app.py tests/integration/test_carteira_plano_nacional.py
+      # ruff/mypy entram como steps de qualidade. ATENCAO: o repo tem divida de
+      # lint/tipos latente (nunca rodou no CI): 286 erros ruff + 23 mypy em src/,
+      # muitos em codigo de producao M1 (hex_enrichment.py, base_h3_brasil.py) e
+      # em testes de fixtures M1 (test_hex_enrichment_brasil.py). Zera-los exige
+      # refatoracao de producao + tocar semantica de testes M1 — fora do escopo
+      # de BLK-OPS-02 (trivial only) e proibido pelos guardrails. Por isso estes
+      # dois steps sao NAO-BLOQUEANTES (continue-on-error) ate o saneamento
+      # BLK-OPS-02b; sao informativos no log do CI sem reprovar o gate (CLAUDE.md
+      # §2: nenhum PR sobe com CI quebrado). Tornar bloqueante = passo de BLK-OPS-02b.
+      - name: Lint (ruff) — informativo ate BLK-OPS-02b
+        continue-on-error: true
+        run: ruff check .
+
+      - name: Types (mypy src/) — informativo ate BLK-OPS-02b
+        continue-on-error: true
+        run: mypy src/
+
+      - name: Testes (suite completa)
+        run: python -m pytest -q
 
       - name: Smoke import
         run: python -c "import streamlit_app; print('ok')"

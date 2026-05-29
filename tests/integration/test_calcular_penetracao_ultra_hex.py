@@ -34,6 +34,8 @@ SCHEMA_OBRIGATORIO = {
 
 @pytest.fixture(scope="module")
 def df() -> pd.DataFrame:
+    if not UNIDADES_PATH.exists():
+        pytest.skip("unidades_ultra_performance.parquet ausente (dados reais)")
     return modulo.gerar_base()
 
 

@@ -11,6 +11,8 @@ import pytest
 from jobs.pipelines import comparar_geofusion_vs_hex as modulo
 
 ROOT = Path(__file__).resolve().parents[2]
+# gerar_comparacao() le este parquet (PERF_HEX_PATH em comparar_geofusion_vs_hex.py)
+PERF_HEX_PATH = ROOT / "data" / "staging" / "unidades_ultra_performance_hex.parquet"
 
 SCHEMA_OBRIGATORIO = {
     "unidade",
@@ -34,6 +36,8 @@ SCHEMA_OBRIGATORIO = {
 
 @pytest.fixture(scope="module")
 def df() -> pd.DataFrame:
+    if not PERF_HEX_PATH.exists():
+        pytest.skip("unidades_ultra_performance_hex.parquet ausente (dados reais)")
     return modulo.gerar_comparacao()
 
 

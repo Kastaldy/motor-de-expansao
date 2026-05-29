@@ -1,0 +1,55 @@
+name: Docker Publish (GHCR)
+
+# Builda a imagem Streamlit e publica no GitHub Container Registry (GHCR).
+# Gatilhos:
+#   - push em main: publica a imagem do commit que entrou em producao.
+#   - workflow_dispatch: permite ao QA disparar manualmente numa branch de ciclo
+#     (ex.: ciclo/BLK-OPS-02) para verificar o build/push ANTES do merge.
+# Deploy efetivo no VPS continua sendo passo HUMANO (modo pull) — ver docs/deploy.md.
+# A imagem NAO embute segredos: .env/Caddyfile/authelia/secrets/data ja sao
+# gitignored (fora do checkout) e excluidos no .dockerignore (defesa em profundidade).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Metadata (tags/labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/motor-expansao-streamlit
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build e push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.streamlit
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

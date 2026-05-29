@@ -81,6 +81,10 @@ https://dashboard.ultra-interno.example -> http://127.0.0.1:8501
 
 ## Atualizacao
 
+> **Modo recomendado (pull):** a imagem agora e buildada no CI e publicada no GHCR; o
+> servidor faz `pull` + `up -d` sem `--build`. Ver o runbook canonico em `docs/deploy.md`.
+> O fluxo `git pull` + `build` abaixo permanece como alternativa de build local.
+
 ```bash
 git pull
 python scripts/check_artifacts.py
