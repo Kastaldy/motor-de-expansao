@@ -4,12 +4,12 @@
 
 ID: BLK-OPS-02
 Nome: CI completo + build via registry (fora da prod)
-Status: aguardando re-run de CI + QA (Builder corrigiu 2026-05-29: psutil declarado em pyproject; novo push em ciclo/BLK-OPS-02 re-dispara o CI do PR #1 que havia falhado na coleta por ModuleNotFoundError: psutil)
+Status: aprovado com ressalvas (QA 2026-05-29 19:01 — CI completo verde no runner limpo 460 passed/73 skipped/0 failed no commit 4af99de run 26664015146; baseline local 532 passed/1 skipped intacto; M1/score/artefatos NÃO tocados; ressalvas aprovadas: ruff/mypy informativo→BLK-OPS-02b, Docker Publish verificado-na-fusão). Liberado para MERGE humano.
 Tipo: operação / infraestrutura
 Criticidade: alta
-Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
-Skill atual: Builder (APROVADO POR Felipe Silva EM 2026-05-29)
-Próxima Skill: QA
+Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA → [merge humano]
+Skill atual: QA (concluído)
+Próxima Skill: MERGE humano (fechamento) — depois acompanhar 1º run docker-publish.yml no push à main
 Gate de aprovação humana: APROVADO POR Felipe Silva EM 2026-05-29 (plano ajustado: PR de ciclo + .gitignore fixtures + ruff/mypy escopo limitado/BLK-OPS-02b)
 Branch do ciclo: ciclo/BLK-OPS-02
 dry_run: false

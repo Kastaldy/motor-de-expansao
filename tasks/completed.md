@@ -593,3 +593,58 @@ Portanto NÃO dispara dry-run pós-merge (Passo 6.c).
 Nenhum código de aplicação, imagem Docker, `config.py`, `score_priorizacao`,
 `hex_score_estrutural`, artefato M1, `CLAUDE.md` ou `PRD.md` local tocado. Pull restrito a
 `--ff-only`. Cada comando no VPS aprovado individualmente (§6); sem encadeamento.
+
+---
+
+## BLK-OPS-02 — CI completo + build via registry (fora da prod)
+
+Status: CONCLUÍDO (2026-05-29) — APROVADO COM RESSALVAS pelo QA via /run-cycle.
+Branch: `ciclo/BLK-OPS-02`. Commits: `ff63a54` (entrega principal) + `4af99de` (correção psutil).
+PR de ciclo: https://github.com/Kastaldy/motor-de-expansao/pull/1 (aberto, **aguardando merge humano**).
+Criticidade: alta. Esteira: Block Orchestrator → Planner → [aprovação humana: Felipe Silva, 2026-05-29] → Builder → QA.
+
+### O que foi entregue
+- **CI completo (`.github/workflows/ci.yml`):** o gate passou de 2 arquivos + smoke para `python -m pytest -q`
+  da suíte inteira + cache pip + `workflow_dispatch`. Steps `ruff check .` e `mypy src/` adicionados
+  como **informativos** (`continue-on-error: true`) — ver ressalva 1.
+- **Build via registry:** novo `.github/workflows/docker-publish.yml` builda e publica no GHCR com tag por
+  SHA (`push: main` + `workflow_dispatch`, `GITHUB_TOKEN` / `packages: write`, build-push-action@v6, cache gha).
+- **Deploy modo pull:** `docker-compose.prod.yml` migrou de `build:` para
+  `image: ${STREAMLIT_IMAGE:-ghcr.io/Kastaldy/motor-de-expansao/motor-expansao-streamlit:latest}`;
+  novo runbook `docs/deploy.md` (`pull` + `up -d` sem `--build`, rollback por SHA, guardrail §6);
+  nota de cruzamento em `docs/deploy_vps_streamlit.md`. `.dockerignore` criado (`.env`/`data`/`secrets` fora da imagem).
+- **Skip-guards:** ~6 testes de integração acoplados a dados reais de produção (gitignored, ausentes no
+  runner) passaram a `pytest.skip`/`skipif` no padrão de `test_expansao_dominio.py`. Só `assert PATH.exists()`
+  foi convertido — NENHUM assert de schema/contagem/scoring (`score_oficial==score_priorizacao`,
+  `score_oficial_nome`, `osm_status`, `len==54`, row-counts 1000/223/472) tocado.
+- **Correção `4af99de`:** `psutil` (importado por `jobs/pipelines/validar_fase_a_censo2022.py` e
+  `scripts/profile_dashboard.py`, mas não declarado) adicionado a `dependencies` core do `pyproject.toml`.
+  Sem ele, a coleta do pytest abortava no runner limpo (`ModuleNotFoundError`, exit 2) — falha latente
+  mascarada localmente porque psutil estava instalado no ambiente do dev.
+
+### Evidência de aceite (verificada pelo QA, re-execução própria)
+- **CI verde no runner limpo** (PR #1, run `26664015146`, commit `4af99de`): `460 passed, 73 skipped,
+  0 failed / 0 errors`. As 73 skips = testes de dado real ausente no runner. PR check `test` = pass.
+- **Baseline local intacto** (com dados reais): `532 passed, 1 skipped` — prova de que o skip-guard não
+  mascara regressão de M1.
+- `import streamlit_app` ok; `test_streamlit_app.py` 147 passed; `git check-ignore tests/fixtures/sample.parquet` exit 1.
+- Guardrails: diff `092a43b..4af99de` não toca `src/`/`config.py`/scoring/parquets de `data/outputs/`;
+  parâmetros canônicos intactos; `PRD.md` não tocado; nenhum comando no VPS.
+
+### Ressalvas (conhecidas e pré-aprovadas)
+1. **ruff (286) / mypy (~20-23) não zerados** → mantidos informativos (`continue-on-error`) por decisão
+   humana explícita; saneamento completo fica em **BLK-OPS-02b** (já registrado no backlog).
+2. **`docker-publish.yml` não verificado pré-merge:** `workflow_dispatch` exige o workflow no branch
+   default (404 na branch do ciclo) e ele não tem trigger `pull_request`. Dispara via `push: main` ao
+   mergear → **verificado-na-fusão**. Acompanhar o 1º run pós-merge.
+
+### Pendências de fechamento (passo humano)
+- **Merge humano** do PR #1 (`ciclo/BLK-OPS-02` → `main`). Pós-merge: observar o 1º run de `docker-publish.yml`.
+- `tasks/backlog.md`: marcar BLK-OPS-02 como concluído está PENDENTE — não foi feito no commit de
+  fechamento porque o working tree tem uma edição **não-relacionada** em `backlog.md` (BLK-SCORE-01:
+  "Engenharia do Corpo" + `alunos_totais`) que NÃO pode ser arrastada para o ciclo. O humano resolve as
+  duas coisas no housekeeping do backlog.
+
+### Nota de orquestração
+Ciclo de infra/CI — NÃO altera a própria orquestração (run-cycle.md / prompts / esteira). `dry_run: false`.
+Portanto NÃO dispara dry-run pós-merge (Passo 6.c).
