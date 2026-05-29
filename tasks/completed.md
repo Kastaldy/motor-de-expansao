@@ -405,3 +405,38 @@ nao se forjou nenhum verde de SOPS contra config falsa.
 M1, score_priorizacao, hex_score_estrutural, artefatos oficiais, dashboard e VPS inalterados
 (mudanca puramente em shell/markdown). Nenhum segredo manipulado. Ciclo NAO altera a
 orquestracao -> nao dispara dry-run pos-merge (Passo 6.c).
+
+---
+
+## BLK-OPS-05-DRYRUN — Dry-run pós-merge do BLK-OPS-05 (gate de validação humana, Passo 6.a) — 2026-05-29
+
+Veredito: APROVADO (dry-run autônomo). Esteira: Block Orchestrator → Builder (criticidade baixa).
+
+### Objetivo
+Exercitar end-to-end a esteira de orquestração endurecida no BLK-OPS-05, validando o gate do
+Passo 6.a: branch/commit isolado por path e handoffs versionados append-only com carimbo de
+segundos. Tarefa dummy trivial de doc — sem entrega de feature.
+
+### O que foi exercitado
+- Branch isolado `ciclo/BLK-OPS-05-DRYRUN` criado a partir do HEAD; working tree pré-sujo
+  (`M PRD.md`, `M tasks/backlog.md`) preservado e NÃO arrastado para o commit.
+- Block Orchestrator e Builder rodaram como sub-agentes de contexto isolado, cada um gravando
+  `context/handoff.md` corrente + snapshot append-only:
+  `context/handoff/20260529-151225-block-orchestrator.md` e `...-151410-builder.md`.
+- Builder criou `docs/orquestracao_dryrun_ops05.md` (nota de validação) e rodou as validações
+  obrigatórias: `pytest -q tests/integration/test_streamlit_app.py` → 147 passed, 0 failed,
+  0 skipped; `python -c "import streamlit_app"` → import ok.
+- Commit isolado por path (sem PRD.md, sem tasks/backlog.md).
+
+### Guard de recursão
+Este ciclo rodou com `dry_run: true` → NÃO disparou outro dry-run no fechamento (quebra a
+recursão na profundidade 1, conforme Passo 6.c).
+
+### Guardrails
+M1, score_priorizacao, artefatos oficiais e dashboard inalterados (mudança puramente em doc).
+
+### Fechamento (histórico limpo)
+FU4 (`97195e3`) mergeado no `main` por fast-forward. A branch `ciclo/BLK-OPS-05-DRYRUN` e o
+commit dummy `8705e24` (doc `docs/orquestracao_dryrun_ops05.md` + handoffs `…-151225-…`/`…-151410-…`)
+foram **descartados** após a validação — eram artefatos de uma tarefa dummy; este registro é o
+canônico. BLK-OPS-05 fica 100% fechado.
