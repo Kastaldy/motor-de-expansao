@@ -1,0 +1,12 @@
+# Arquivos encriptados por SOPS sao sensiveis a byte exato — qualquer
+# conversao de line ending (LF<->CRLF) ou normalizacao quebra o MAC do
+# SOPS e o decrypt falha com "Failed to verify Message Authentication Code".
+# Forcamos tratamento como binario para todos os formatos do envelope.
+secrets/*.enc       binary
+secrets/*.enc.yaml  binary
+secrets/*.enc.env   binary
+secrets/*.enc.txt   binary
+
+# Scripts bash devem manter LF mesmo em working tree Windows — line endings
+# CRLF quebram o shebang e o parser em VPS Linux.
+*.sh                text eol=lf
