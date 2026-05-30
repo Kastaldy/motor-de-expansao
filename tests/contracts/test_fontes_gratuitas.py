@@ -48,7 +48,7 @@ sys.modules.setdefault("api.config", _mock_api_config)
 
 class TestIBGECensoFeaturesPadrao:
     def test_retorna_zeros(self):
-        from ibge_censo import IBGECenso
+        from motor_expansao.pipelines.m1.ibge_censo import IBGECenso
         resultado = IBGECenso._features_padrao()
         assert resultado["renda_per_capita"] == 0.0
         assert resultado["pop_total"] == 0.0
@@ -58,7 +58,7 @@ class TestIBGECensoFeaturesPadrao:
         assert resultado["fonte"] == "fallback_padrao"
 
     def test_todas_chaves_presentes(self):
-        from ibge_censo import IBGECenso
+        from motor_expansao.pipelines.m1.ibge_censo import IBGECenso
         resultado = IBGECenso._features_padrao()
         chaves_esperadas = {"renda_per_capita", "pop_total",
                             "n_domicilios", "densidade_dom", "area_km2", "fonte",
@@ -70,7 +70,7 @@ class TestIBGECensoFeaturesPadrao:
 class TestIBGECensoSidraRenda:
     def test_valor_reticencias_retorna_zero(self):
         """_sidra_renda_populacao deve lidar com valor '...' sem quebrar."""
-        from ibge_censo import IBGECenso
+        from motor_expansao.pipelines.m1.ibge_censo import IBGECenso
         censo = IBGECenso()
         resposta_renda = MagicMock()
         resposta_renda.status_code = 200
@@ -89,7 +89,7 @@ class TestIBGECensoSidraRenda:
         assert isinstance(resultado, dict)
 
     def test_valor_numerico_parseado_corretamente(self):
-        from ibge_censo import IBGECenso
+        from motor_expansao.pipelines.m1.ibge_censo import IBGECenso
         censo = IBGECenso()
         resposta_renda = MagicMock()
         resposta_renda.status_code = 200
@@ -112,7 +112,7 @@ class TestIBGECensoSidraRenda:
         assert resultado["pop_total"] == pytest.approx(27000.0)
 
     def test_falha_de_rede_retorna_padrao(self):
-        from ibge_censo import IBGECenso
+        from motor_expansao.pipelines.m1.ibge_censo import IBGECenso
         censo = IBGECenso()
         with patch("requests.get", side_effect=ConnectionError("timeout")):
             resultado = censo._sidra_renda_populacao.__wrapped__(censo, "3550308")
@@ -120,7 +120,7 @@ class TestIBGECensoSidraRenda:
         assert resultado["fonte"].startswith("ibge_sidra_municipio_2022")
 
     def test_geocodigo_municipio_retorna_none_em_falha(self):
-        from ibge_censo import IBGECenso
+        from motor_expansao.pipelines.m1.ibge_censo import IBGECenso
         censo = IBGECenso()
         with patch("requests.get", side_effect=ConnectionError("sem rede")):
             cod = censo._geocodigo_municipio.__wrapped__(censo, -23.5, -46.6)
@@ -140,7 +140,7 @@ class TestPOIEnricher:
         return path
 
     def test_buscar_academias_osm_retorna_lista(self):
-        from poi_enrichment import POIEnricher
+        from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
         enricher = POIEnricher()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -162,14 +162,14 @@ class TestPOIEnricher:
         assert resultado[0]["fonte"] == "osm"
 
     def test_buscar_academias_osm_retorna_lista_vazia_em_erro(self):
-        from poi_enrichment import POIEnricher
+        from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
         enricher = POIEnricher()
         with patch("requests.post", side_effect=ConnectionError("sem rede")):
             resultado = enricher.buscar_academias_osm(-23.5, -46.6)
         assert resultado == []
 
     def test_score_vitalidade_sem_google_key_retorna_50(self):
-        from poi_enrichment import POIEnricher
+        from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
         with patch("api.config.settings") as mock_settings:
             mock_settings.GOOGLE_MAPS_API_KEY = ""
             enricher = POIEnricher()
@@ -178,14 +178,14 @@ class TestPOIEnricher:
         assert score == 50.0
 
     def test_buscar_pois_google_sem_key_retorna_lista_vazia(self):
-        from poi_enrichment import POIEnricher
+        from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
         enricher = POIEnricher()
         enricher._google_key = ""
         resultado = enricher.buscar_pois_google(-23.5, -46.6, tipo="gym")
         assert resultado == []
 
     def test_features_para_hex_sem_google_key(self):
-        from poi_enrichment import POIEnricher
+        from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
         enricher = POIEnricher()
         enricher._google_key = ""
         mock_resp = MagicMock()
@@ -194,14 +194,14 @@ class TestPOIEnricher:
         mock_resp.json.return_value = {"elements": []}
         with patch("requests.post", return_value=mock_resp), \
              patch("time.sleep"), \
-             patch("poi_enrichment.h3.cell_to_latlng", return_value=(-23.5, -46.6)):
+             patch("motor_expansao.pipelines.m1.poi_enrichment.h3.cell_to_latlng", return_value=(-23.5, -46.6)):
             resultado = enricher.features_para_hex("877b59a69ffffff")
         assert resultado["score_vitalidade"] == 50.0
         assert "n_academias_osm" in resultado
 
     def test_carregar_academias_cidade_popula_cache(self):
         """carregar_academias_cidade() deve popular self._cache_academias."""
-        from poi_enrichment import POIEnricher
+        from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
         enricher = POIEnricher()
         cache_path = self._cache_teste("bbox_ok_test.json")
         mock_resp = MagicMock()
@@ -224,7 +224,7 @@ class TestPOIEnricher:
         assert enricher._cache_academias[0]["nome"] == "Academia X"
 
     def test_carregar_academias_cidade_erro_levanta_excecao(self):
-        from poi_enrichment import POIEnricher
+        from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
         enricher = POIEnricher()
         cache_path = self._cache_teste("bbox_erro_test.json")
         with patch("requests.post", side_effect=ConnectionError("timeout")), \
@@ -235,7 +235,7 @@ class TestPOIEnricher:
         assert enricher._cache_academias is None
 
     def test_carregar_academias_cidade_tenta_endpoint_reserva(self):
-        from poi_enrichment import POIEnricher
+        from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
         enricher = POIEnricher()
         cache_path = self._cache_teste("bbox_reserva_test.json")
         mock_resp = MagicMock()
@@ -262,7 +262,7 @@ class TestPOIEnricher:
 
     def test_contar_academias_proximas_com_cache(self):
         """Conta usando self._cache_academias — sem HTTP."""
-        from poi_enrichment import POIEnricher
+        from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
         enricher = POIEnricher()
         enricher._cache_academias = [
             {"lat": -16.682, "lng": -49.254},   # ~0m — dentro
@@ -275,7 +275,7 @@ class TestPOIEnricher:
 
     def test_contar_academias_proximas_sem_cache_faz_fallback_osm(self):
         """Sem cache, cai em buscar_academias_osm()."""
-        from poi_enrichment import POIEnricher
+        from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
         enricher = POIEnricher()
         assert enricher._cache_academias is None
         mock_resp = MagicMock()
@@ -294,7 +294,7 @@ class TestPOIEnricher:
 class TestIBGECensoMunicipioPadrao:
     def test_set_municipio_padrao_elimina_geocodificacao(self):
         """Após set_municipio_padrao, _geocodigo_municipio não deve ser chamado."""
-        from ibge_censo import IBGECenso
+        from motor_expansao.pipelines.m1.ibge_censo import IBGECenso
         censo = IBGECenso()
         censo.set_municipio_padrao("5208707", "GO")
         assert censo._municipio_padrao == "5208707"
@@ -316,7 +316,7 @@ class TestIBGECensoMunicipioPadrao:
 
     def test_resolver_municipio_chama_ibge_localidades(self):
         """resolver_municipio deve consultar a API IBGE de localidades."""
-        from ibge_censo import IBGECenso
+        from motor_expansao.pipelines.m1.ibge_censo import IBGECenso
         censo = IBGECenso()
         municipios_mock = [
             {"nome": "Goiania", "id": 5208707,
@@ -334,7 +334,7 @@ class TestIBGECensoMunicipioPadrao:
         assert censo._uf_padrao == "GO"
 
     def test_resolver_municipio_nao_encontrado_retorna_none(self):
-        from ibge_censo import IBGECenso
+        from motor_expansao.pipelines.m1.ibge_censo import IBGECenso
         censo = IBGECenso()
         resp = MagicMock()
         resp.status_code = 200
@@ -362,13 +362,13 @@ class TestCalcularHexScore:
         })
 
     def test_score_entre_0_e_100(self):
-        from hex_enrichment import calcular_hex_score
+        from motor_expansao.pipelines.m1.hex_enrichment import calcular_hex_score
         df = calcular_hex_score(self._df_base())
         assert (df["hex_score"] >= 0).all()
         assert (df["hex_score"] <= 100).all()
 
     def test_maior_renda_gera_maior_score(self):
-        from hex_enrichment import calcular_hex_score
+        from motor_expansao.pipelines.m1.hex_enrichment import calcular_hex_score
         df = pd.DataFrame({
             "renda_per_capita": [1000.0, 5000.0],
             "pop_total":        [1000.0, 1000.0],
@@ -379,7 +379,7 @@ class TestCalcularHexScore:
         assert df_scored.iloc[1]["hex_score"] > df_scored.iloc[0]["hex_score"]
 
     def test_score_com_colunas_ausentes_usa_fallback(self):
-        from hex_enrichment import calcular_hex_score
+        from motor_expansao.pipelines.m1.hex_enrichment import calcular_hex_score
         df = pd.DataFrame({
             "n_academias_osm":  [0, 2],
             "score_vitalidade": [50.0, 80.0],
@@ -389,7 +389,7 @@ class TestCalcularHexScore:
         assert (df_scored["hex_score"] <= 100).all()
 
     def test_score_estrutural_exclui_hex_sem_populacao_do_ranking(self):
-        from hex_enrichment import calcular_hex_score_estrutural
+        from motor_expansao.pipelines.m1.hex_enrichment import calcular_hex_score_estrutural
         df = pd.DataFrame({
             "hex_id": ["a", "b"],
             "renda_per_capita": [1500.0, 4500.0],
@@ -408,13 +408,13 @@ class TestCalcularHexScore:
 
 class TestNormalizarSerie:
     def test_serie_constante_retorna_50(self):
-        from hex_enrichment import normalizar_serie
+        from motor_expansao.pipelines.m1.hex_enrichment import normalizar_serie
         serie = pd.Series([100.0, 100.0, 100.0])
         resultado = normalizar_serie(serie)
         assert (resultado == 50.0).all()
 
     def test_normalizacao_min_max(self):
-        from hex_enrichment import normalizar_serie
+        from motor_expansao.pipelines.m1.hex_enrichment import normalizar_serie
         serie = pd.Series([0.0, 50.0, 100.0])
         resultado = normalizar_serie(serie)
         assert resultado.iloc[0] == pytest.approx(0.0)
@@ -428,26 +428,26 @@ class TestNormalizarSerie:
 
 class TestVerificarCanibalizacao:
     def test_sem_unidades_retorna_false(self):
-        from hex_enrichment import verificar_canibalizacao
+        from motor_expansao.pipelines.m1.hex_enrichment import verificar_canibalizacao
         resultado = verificar_canibalizacao("877b59a69ffffff", [])
         assert resultado["tem_ultra_proxima"] is False
         assert resultado["dist_ultra_mais_proxima_km"] is None
 
     def test_detecta_unidade_proxima(self):
-        from hex_enrichment import verificar_canibalizacao
+        from motor_expansao.pipelines.m1.hex_enrichment import verificar_canibalizacao
         lat, lng = -23.5505, -46.6333  # São Paulo centro
         unidade_proxima = (lat + 0.001, lng + 0.001)  # ~150m de distância
         hex_id = "877b59a69ffffff"
-        with patch("hex_enrichment.h3.cell_to_latlng", return_value=(lat, lng)):
+        with patch("motor_expansao.pipelines.m1.hex_enrichment.h3.cell_to_latlng", return_value=(lat, lng)):
             resultado = verificar_canibalizacao(hex_id, [unidade_proxima])
         assert resultado["tem_ultra_proxima"] is True
 
     def test_unidade_distante_nao_canibaliza(self):
-        from hex_enrichment import verificar_canibalizacao
+        from motor_expansao.pipelines.m1.hex_enrichment import verificar_canibalizacao
         lat, lng = -23.5505, -46.6333
         unidade_distante = (lat + 0.1, lng + 0.1)  # ~14km de distância
         hex_id = "877b59a69ffffff"
-        with patch("hex_enrichment.h3.cell_to_latlng", return_value=(lat, lng)):
+        with patch("motor_expansao.pipelines.m1.hex_enrichment.h3.cell_to_latlng", return_value=(lat, lng)):
             resultado = verificar_canibalizacao(hex_id, [unidade_distante])
         assert resultado["tem_ultra_proxima"] is False
 
@@ -459,16 +459,16 @@ class TestVerificarCanibalizacao:
 class TestRodarPipelineHexOtimizado:
     def test_resolver_municipio_chamado_uma_vez(self):
         """rodar_pipeline_hex deve chamar resolver_municipio exatamente 1 vez."""
-        import hex_enrichment
-        from hex_enrichment import rodar_pipeline_hex
+        from motor_expansao.pipelines.m1 import hex_enrichment
+        from motor_expansao.pipelines.m1.hex_enrichment import rodar_pipeline_hex
 
         hexagonos_fake = ["87a8c0d03ffffff", "87a8c0d08ffffff", "87a8c0d09ffffff"]
 
         with patch.object(hex_enrichment, "gerar_hexagonos_cidade",
                           return_value=hexagonos_fake), \
-             patch("hex_enrichment.IBGECenso") as MockCenso, \
-             patch("hex_enrichment.POIEnricher") as MockPOI, \
-             patch("hex_enrichment.h3.cell_to_latlng",
+             patch("motor_expansao.pipelines.m1.hex_enrichment.IBGECenso") as MockCenso, \
+             patch("motor_expansao.pipelines.m1.hex_enrichment.POIEnricher") as MockPOI, \
+             patch("motor_expansao.pipelines.m1.hex_enrichment.h3.cell_to_latlng",
                    side_effect=[(-16.95, -49.25), (-16.93, -49.29),
                                  (-16.91, -49.31)] * 4):
 
@@ -488,7 +488,7 @@ class TestRodarPipelineHexOtimizado:
             mock_poi.carregar_academias_cidade.return_value = []
             mock_poi.contar_academias_proximas.return_value = 0
 
-            with patch("hex_enrichment.pd.DataFrame.to_parquet"):
+            with patch("motor_expansao.pipelines.m1.hex_enrichment.pd.DataFrame.to_parquet"):
                 rodar_pipeline_hex("Goiania", "GO", raio_km=5.0)
 
         # resolver_municipio chamado exatamente 1 vez, não 1 por hexágono
@@ -497,16 +497,16 @@ class TestRodarPipelineHexOtimizado:
 
     def test_carregar_academias_cidade_chamado_uma_vez(self):
         """carregar_academias_cidade deve ser chamado 1 vez (bulk), não N vezes."""
-        import hex_enrichment
-        from hex_enrichment import rodar_pipeline_hex
+        from motor_expansao.pipelines.m1 import hex_enrichment
+        from motor_expansao.pipelines.m1.hex_enrichment import rodar_pipeline_hex
 
         hexagonos_fake = ["87a8c0d03ffffff", "87a8c0d08ffffff"]
 
         with patch.object(hex_enrichment, "gerar_hexagonos_cidade",
                           return_value=hexagonos_fake), \
-             patch("hex_enrichment.IBGECenso") as MockCenso, \
-             patch("hex_enrichment.POIEnricher") as MockPOI, \
-             patch("hex_enrichment.h3.cell_to_latlng",
+             patch("motor_expansao.pipelines.m1.hex_enrichment.IBGECenso") as MockCenso, \
+             patch("motor_expansao.pipelines.m1.hex_enrichment.POIEnricher") as MockPOI, \
+             patch("motor_expansao.pipelines.m1.hex_enrichment.h3.cell_to_latlng",
                    side_effect=[(-16.95, -49.25), (-16.93, -49.29)] * 4):
 
             mock_censo = MockCenso.return_value
@@ -520,7 +520,7 @@ class TestRodarPipelineHexOtimizado:
             mock_poi.carregar_academias_cidade.return_value = []
             mock_poi.contar_academias_proximas.return_value = 0
 
-            with patch("hex_enrichment.pd.DataFrame.to_parquet"):
+            with patch("motor_expansao.pipelines.m1.hex_enrichment.pd.DataFrame.to_parquet"):
                 rodar_pipeline_hex("Goiania", "GO", raio_km=5.0)
 
         # 1 chamada para toda a cidade, não 1 por hexágono

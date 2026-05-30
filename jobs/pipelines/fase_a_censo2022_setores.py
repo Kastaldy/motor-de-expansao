@@ -37,25 +37,10 @@ except ModuleNotFoundError:
         _percentil_em_distribuicao_referencia,
     )
 
-try:
-    from hex_enrichment import (
-        _calcular_percentil_nacional,
-        resumir_distribuicao_score,
-    )
-except ModuleNotFoundError:
-    try:
-        from jobs.pipelines.hex_enrichment import (
-            _calcular_percentil_nacional,
-            resumir_distribuicao_score,
-        )
-    except ModuleNotFoundError:
-        import os
-        import sys
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
-        from hex_enrichment import (
-            _calcular_percentil_nacional,
-            resumir_distribuicao_score,
-        )
+from motor_expansao.pipelines.m1.hex_enrichment import (
+    _calcular_percentil_nacional,
+    resumir_distribuicao_score,
+)
 
 log = structlog.get_logger()
 

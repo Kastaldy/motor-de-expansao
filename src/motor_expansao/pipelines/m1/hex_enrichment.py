@@ -22,18 +22,7 @@ import structlog
 from geopy.distance import geodesic
 from geopy.geocoders import Nominatim
 
-try:
-    from api.config import settings
-except ModuleNotFoundError:
-    from config import settings  # estrutura flat (desenvolvimento)
-
-try:
-    from jobs.pipelines.ibge_censo import IBGECenso, carregar_lookup_municipios_ibge
-    from jobs.pipelines.poi_enrichment import POIEnricher
-except ModuleNotFoundError:
-    from ibge_censo import IBGECenso, carregar_lookup_municipios_ibge  # estrutura flat
-    from poi_enrichment import POIEnricher
-
+from motor_expansao.config import settings
 from motor_expansao.core import scoring as _scoring
 from motor_expansao.core.constants import (
     CAPITAIS_UF,
@@ -53,6 +42,8 @@ from motor_expansao.core.scoring import (
     normalizar_serie,  # noqa: F401 - re-exportado: tests/wrappers fazem `from hex_enrichment import normalizar_serie`
     resumir_distribuicao_score,
 )
+from motor_expansao.pipelines.m1.ibge_censo import IBGECenso, carregar_lookup_municipios_ibge
+from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
 
 log = structlog.get_logger()
 
@@ -1585,13 +1576,7 @@ def rodar_pipeline_fase1_brasil(
     tempos["camada_oportunidade_s"] = round(time.time() - t0, 2)
 
     t0 = time.time()
-    try:
-        from motor_expansao.pipelines.m1.fase1_bi_exports import generate_fase1_bi_artifacts
-    except ModuleNotFoundError:
-        # fallback de import quando rodando fora do pacote (estrutura flat)
-        from fase1_bi_exports import (  # type: ignore[no-redef,attr-defined]
-            generate_fase1_bi_artifacts,
-        )
+    from motor_expansao.pipelines.m1.fase1_bi_exports import generate_fase1_bi_artifacts
 
     artefatos_bi = generate_fase1_bi_artifacts(source_path=output_oportunidades_path)
     tempos["bi_exports_s"] = round(time.time() - t0, 2)

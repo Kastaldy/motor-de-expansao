@@ -1,6 +1,6 @@
 import pandas as pd
 
-from hex_enrichment import (
+from motor_expansao.pipelines.m1.hex_enrichment import (
     calcular_hex_score_estrutural,
     calcular_hex_score_final,
     enriquecer_concorrencia_priorizados,
@@ -8,8 +8,8 @@ from hex_enrichment import (
     resumir_validacao_nacional,
     selecionar_areas_prioritarias,
 )
-from ibge_censo import IBGECenso
-from poi_enrichment import POIEnricher
+from motor_expansao.pipelines.m1.ibge_censo import IBGECenso
+from motor_expansao.pipelines.m1.poi_enrichment import POIEnricher
 
 
 def test_calcular_hex_score_estrutural_separa_base_ajuste_e_score_priorizacao():
@@ -195,7 +195,7 @@ def test_selecionar_areas_prioritarias_nao_ultrapassa_top_pct_em_bases_nao_multi
 
 def test_preparar_base_oportunidades_preenche_nome_municipio_via_lookup_ibge(monkeypatch):
     monkeypatch.setattr(
-        "hex_enrichment.carregar_lookup_municipios_ibge",
+        "motor_expansao.pipelines.m1.hex_enrichment.carregar_lookup_municipios_ibge",
         lambda: pd.DataFrame([{"cod_municipio": "3550308", "nome_municipio": "Sao Paulo"}]),
     )
 

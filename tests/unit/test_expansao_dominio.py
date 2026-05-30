@@ -596,7 +596,7 @@ class TestValidateDominioSchema:
             validate_dominio_schema(df)
 
     def test_schema_obrigatorio_alinhado_com_constants(self):
-        from dashboard.constants import DOMINIO_SCHEMA_MINIMO
+        from motor_expansao.dashboard.constants import DOMINIO_SCHEMA_MINIMO
         assert SCHEMA_DOMINIO_OBRIGATORIO == DOMINIO_SCHEMA_MINIMO
 
 

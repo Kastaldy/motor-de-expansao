@@ -1,7 +1,6 @@
 import pandas as pd
 import pytest
 
-from hex_enrichment import calcular_hex_score, normalizar_0_100
 from motor_expansao.core.scoring import (
     _calcular_percentil_nacional,
     calcular_ajuste_executivo,
@@ -9,6 +8,7 @@ from motor_expansao.core.scoring import (
 from motor_expansao.core.scoring import (
     calcular_hex_score_estrutural as calcular_hex_score_estrutural_core,
 )
+from motor_expansao.pipelines.m1.hex_enrichment import calcular_hex_score, normalizar_0_100
 
 
 @pytest.fixture

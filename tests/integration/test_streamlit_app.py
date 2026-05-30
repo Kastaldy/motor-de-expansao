@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 import streamlit_app
-from dashboard.constants import (
+from motor_expansao.dashboard.constants import (
     COLOR_MODE_IDS,
     COLOR_MODES,
     DOMINIO_SCHEMA_MINIMO,
@@ -1710,7 +1710,7 @@ def test_map_point_limit_respeitado_no_mapa_hibrido():
     """build_hybrid_map_figure nao deve renderizar mais de MAP_POINT_LIMIT pontos."""
     import h3
 
-    from dashboard.constants import MAP_POINT_LIMIT
+    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT
 
     rows = []
     base_lat, base_lng = -23.55, -46.63
@@ -1775,7 +1775,11 @@ def test_downsample_map_index_respeita_cap_dedup_e_ordem():
 def test_build_map_figure_downsample_mantem_exatamente_o_top_por_prioridade():
     """O downsample antes do cap deve manter os mesmos top-MAP_POINT_LIMIT hexes
     por prioridade do fluxo anterior (sem regressao no cap)."""
-    from dashboard.constants import MAP_POINT_LIMIT, MAP_SORT_ASCENDING, MAP_SORT_COLUMNS
+    from motor_expansao.dashboard.constants import (
+        MAP_POINT_LIMIT,
+        MAP_SORT_ASCENDING,
+        MAP_SORT_COLUMNS,
+    )
 
     extra = 40
     total = MAP_POINT_LIMIT + extra

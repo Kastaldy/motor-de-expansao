@@ -96,11 +96,3 @@ def test_m1_pipeline_modules_importable():
         assert mod is not None
 
 
-def test_legacy_m1_wrappers_export_modules():
-    import base_h3_brasil
-    import fase1_bi_exports
-    import hex_enrichment
-
-    assert callable(base_h3_brasil.main)
-    assert callable(fase1_bi_exports.main)
-    assert callable(hex_enrichment.main)

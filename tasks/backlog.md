@@ -112,51 +112,64 @@ pytest -q   # garantir que nada existente quebrou
 
 ---
 
-### BLK-ARCH-01 — Concluir migração `src/` e remover legado
+- BLK-ARCH-01 (concluído 2026-05-29) — ver tasks/completed.md
+
+---
+
+### BLK-ARCH-01a — Migrar `jobs/pipelines/*` para `src/` e limpar `pythonpath`
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | Alta |
+| **Criticidade** | Alta *(toca pipelines de mercado/residual/fase-A; migração mecânica, provada por hash)* |
 | **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
-| **Depende de** | **BLK-OPS-02** (CI completo verde como rede de segurança) — ✅ SATISFEITA (BLK-OPS-02 concluído/mergeado em 2026-05-29; suíte completa roda verde no CI). |
-| **Status** | Pendente *(desbloqueado — dependência satisfeita; candidato à fila após BLK-OPS-02b)* |
+| **Depende de** | **BLK-ARCH-01 (FATIA-1)** — ✅ SATISFEITA (concluído/aprovado 2026-05-29). |
+| **Status** | Pendente *(desbloqueado — sub-bloco remanescente da migração `src/`)* |
 
-**Objetivo:** eliminar a dualidade `src/` vs. legado (`dashboard/` flat, `jobs/`, wrappers de
-raiz). Uma única fonte de verdade por função, sem quebrar o dashboard.
+**Objetivo:** concluir a migração `src/` movendo os 21 módulos de `jobs/pipelines/*` para
+`src/motor_expansao/pipelines/` e, só então, remover `"."` de `pythonpath` — eliminando a última
+fonte de imports de raiz viva. É a FATIA-2 (e final) de BLK-ARCH-01.
 
 **Escopo permitido:**
-- Mapear o que ainda é importado dos caminhos legados (`base_h3_brasil.py` raiz, `dashboard/`,
-  `jobs/`, `ibge_censo.py`, `poi_enrichment.py`).
-- Migrar o que estiver vivo para `src/motor_expansao/`, atualizar imports, remover wrappers e
-  legado morto **em passos pequenos e reversíveis**.
-- Cada passo: testes verdes antes de avançar.
+- Mover os 21 módulos de `jobs/pipelines/` para `src/motor_expansao/pipelines/` (sugestão de
+  subpacotes por grupo funcional: `fase_a/`, `mercado/`, `dominio/`, `penetracao/`, `normalizacao/`
+  — o Planner do sub-bloco decide a partição), via `git mv`, em passos pequenos e reversíveis.
+- Atualizar os imports internos `jobs.pipelines.*` (acoplamento entre si) e os testes de
+  integração/unit que consomem esses módulos.
+- Remover `"."` de `pythonpath` em `pyproject.toml` SOMENTE ao final, e SÓ se grep confirmar zero
+  dependência de raiz viva (excluir `fora_primeira_fase/*`, que permanece órfão por design).
 
-**Fora de escopo:** mudar comportamento de scoring, mudar artefatos M1, refatorar lógica além do
-necessário para mover.
+**Fora de escopo:** mudar comportamento de scoring, artefatos M1, ou lógica além do necessário para
+mover. `fora_primeira_fase/*` (imports órfãos NÃO consertar). `concorrentes/geo_skyfit.py` (script
+standalone isolado).
 
-**Arquivos a ler:** árvore completa do repo (`view`), `streamlit_app.py`, todos os imports.
-**Arquivos a alterar:** múltiplos — listados pelo Planner após o mapeamento.
+**Arquivos a ler:** `jobs/pipelines/*.py` (todos), `pyproject.toml` (`pythonpath`, `packages`),
+testes que importam `jobs.pipelines.*`.
+**Arquivos a alterar:** `jobs/pipelines/*` (mover) · imports internos e nos testes · `pyproject.toml`
+(só ao final).
 
 **Critérios de aceite:**
-- Nenhum import aponta para caminhos legados removidos.
-- `import streamlit_app` ok; dashboard sobe localmente.
-- Suíte completa verde; comportamento idêntico (scores e artefatos inalterados).
+- Nenhum import vivo aponta para `jobs.pipelines.*` nem para raiz removida (grep limpo, excl.
+  `fora_primeira_fase/`).
+- `python -c "import streamlit_app; print('ok')"` ok; `pytest -q` verde; `ruff check .` e `mypy src/`
+  limpos.
+- **Prova de não-mutação M1 (hash idêntico pré/pós)** dos 4 artefatos oficiais.
+- `pythonpath` sem `"."` (se e só se nada vivo depender de raiz).
 
 **Validações obrigatórias:**
 ```
 pytest -q
 python -c "import streamlit_app; print('ok')"
 ruff check . && mypy src/
-# Prova de equivalência de M1 (hashes idênticos pré/pós migração):
-sha256sum data/outputs/brasil_priorizados.parquet
+# Prova de equivalência M1 (caminhos reais):
+python -c "import hashlib,pathlib; [print(hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest(), p) for p in ['data/staging/brasil_priorizados.parquet','data/staging/brasil_estrutural.parquet','data/staging/hexagonos_brasil_oportunidades.parquet','data/outputs/hexagonos_brasil_dashboard.parquet']]"
 ```
 
-**Guardrails específicos:**
-- Migração é **mecânica**, não pode alterar nenhum valor de output M1 (provar por hash).
-- Avançar só com CI verde a cada passo — daí a dependência de BLK-OPS-02.
+**Guardrails específicos:** migração mecânica (sem renomear funções/assinaturas/valores); avançar só
+com `pytest -q` verde a cada grupo de módulos movido; `"."` de `pythonpath` é o ÚLTIMO passo.
 
-**Risco:** alto e de variância alta (2–5 dias). Quebrar em sub-blocos por área (pipelines /
-dashboard / acesso a dados) se o mapeamento revelar acoplamento grande.
+**Risco:** médio-alto — volume (21 módulos) + acoplamento interno (`fase_a_*`,
+`validar_penetracao` ↔ `comparar_geofusion`, `enriquecer_outputs_residual` ↔ `gerar_carteira`).
+Mover por grupo funcional, testes verdes a cada grupo, em vez de big-bang.
 
 ---
 

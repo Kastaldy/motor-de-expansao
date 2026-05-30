@@ -6,10 +6,7 @@ stable aliases used by package code and legacy entrypoints.
 
 from __future__ import annotations
 
-try:
-    from api.config import settings
-except ModuleNotFoundError:
-    from config import settings
+from motor_expansao.config import settings
 
 H3_RESOLUTION = settings.H3_RESOLUTION
 DIST_MIN_ULTRA_KM = settings.DIST_MIN_ULTRA_KM

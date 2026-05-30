@@ -2,31 +2,43 @@
 
 ## Bloco atual
 
-ID: BLK-OPS-10
-Nome: Automatizar housekeeping de concluídos no Passo 6 do /run-cycle (helper versionado)
-Status: APROVADO (aguardando commit por path + merge humano + dry-run 6.c pós-merge)
-Tipo: manutenção / orquestração + tooling
-Criticidade: alta (altera a própria orquestração → dispara dry-run autônomo no 6.c)
-Esteira: Block Orchestrator → Planner → [APROVAÇÃO HUMANA: ok] → Builder → QA → (pós-merge: dry-run 6.c)
+ID: BLK-ARCH-01
+Nome: Concluir migração `src/` e remover legado (FATIA-1)
+Status: APROVADO (housekeeping 6.0 feito; aguardando commit por path + merge humano)
+Tipo: refatoração
+Criticidade: alta
+Esteira: Block Orchestrator → Planner → [APROVAÇÃO HUMANA: ok 2026-05-29] → Builder → QA
 Skill atual: run-cycle (fechamento)
+Próxima Skill: —
 dry_run: false
 
 ## Resultado (APROVADO pelo QA)
-- Helper versionado scripts/housekeeping_move_block.py (move_block/verify_moved puros + CLI;
-  byte-identity por fatia literal; CRLF preservado via newline=""; EXIT_AD_HOC=3).
-- tests/unit/test_housekeeping_helper.py: 10 testes (inclui idempotência re-entrante + CRLF).
-- .claude/commands/run-cycle.md: Passo 6.0 (move via helper, antes de 6.a) + bullet 6.c (dummy block na
-  branch do dry-run, abandona sem merge) + guardrail permanente. Rótulos 6.a–6.d preservados.
-- prompts/qa_analyzer.md: checklist de housekeeping exigindo o helper (--check + byte-identity + pytest).
-- Validações: pytest -q → 542 passed, 1 skipped; ruff clean; smoke CLI contra conteúdo REAL (CRLF) ok.
-- Defeitos achados no QA e corrigidos: regex do stub em CRLF (verify_moved) + ruff I001 (import sort).
+- FATIA-1 (núcleo M1 + dashboard): removidos 3 wrappers de raiz; `dashboard/constants.py`+`utils.py`
+  movidos para `src/motor_expansao/dashboard/` (imports invertidos, pacote flat removido);
+  `ibge_censo.py`+`poi_enrichment.py` para `src/.../pipelines/m1/` (branches mortos `jobs.pipelines.*`
+  limpos); `config.py` para `src/motor_expansao/config.py` (branch morto `api.config` limpo). Tudo
+  via `git mv`, sem mudar funções/assinaturas/valores.
+- `jobs/pipelines/*` NÃO migrado nesta fatia → registrado como BLK-ARCH-01a no backlog.
+- Validações (QA re-executou, sem bypass): `pytest -q` → 541 passed, 1 skipped, 0 failed;
+  `import streamlit_app` ok; `ruff check .` limpo; `mypy src/` Success (23 arquivos); greps de
+  import legado vazios em código vivo.
+- Prova de não-mutação M1: 4 artefatos oficiais com sha256 byte-idêntico pré/pós. Params canônicos
+  intactos (H3_RESOLUTION=7, pesos 0.40/0.60, DIST_MIN_ULTRA_KM=1.0, RENDA_MIN=4500.0).
+- 3 desvios do plano auditados como legítimos pelo QA (teste obsoleto de wrappers; reaponte de
+  strings patch/monkeypatch; 1 linha de import em 2 módulos jobs/pipelines exercidos por testes
+  em escopo — rewiring mínimo forçado pela remoção do wrapper, sem migração estrutural de jobs/).
 
 ## Paths do ciclo (commit por path — NUNCA git add -A)
-scripts/housekeeping_move_block.py · tests/unit/test_housekeeping_helper.py ·
-.claude/commands/run-cycle.md · prompts/qa_analyzer.md · tasks/current_task.md ·
-context/handoff.md · context/handoff/
+src/motor_expansao/config.py · src/motor_expansao/dashboard/constants.py ·
+src/motor_expansao/dashboard/utils.py · src/motor_expansao/pipelines/m1/ibge_censo.py ·
+src/motor_expansao/pipelines/m1/poi_enrichment.py · src/motor_expansao/dashboard/* (imports) ·
+src/motor_expansao/pipelines/m1/* (imports) · src/motor_expansao/core/constants.py ·
+streamlit_app.py · tests/** (reapontados) ·
+jobs/pipelines/{fase_a_censo2022_setores,teste_setor_censitario_2010}.py (só import) ·
+dashboard/ (removido) · base_h3_brasil.py + hex_enrichment.py + fase1_bi_exports.py (raiz, removidos) ·
+ibge_censo.py + poi_enrichment.py + config.py (raiz, movidos) ·
+tasks/current_task.md · tasks/backlog.md · tasks/completed.md · context/handoff.md · context/handoff/
 
 ## Pendência humana
-- Revisar a branch ciclo/BLK-OPS-10 e fazer o merge em main.
-- PÓS-MERGE: este ciclo ALTERA a orquestração → o orquestrador roda o dry-run autônomo (6.c)
-  exercitando o novo 6.0 num ciclo dummy Baixa (bloco dummy na branch, abandona sem merge).
+- Revisar a branch ciclo/BLK-ARCH-01 e fazer o merge em main (Passo 6.b).
+- Este ciclo NÃO altera a orquestração (run-cycle/prompts/esteira) → dry-run 6.c NÃO dispara.
