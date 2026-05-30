@@ -1,32 +1,63 @@
-# Handoff (corrente) — BLK-OPS-09 (Housekeeping do backlog.md)
+# Handoff — QA/Quality Analyzer — BLK-OPS-10 (Automatizar housekeeping no Passo 6)
 
-> Cópia corrente; idêntica em conteúdo ao último snapshot versionado
-> `context/handoff/20260529-214655-qa.md`.
+## Skill que gerou este handoff
+QA/Quality Analyzer (re-execução independente; consolidado no orquestrador)
 
-Ciclo: BLK-OPS-09 — Housekeeping do backlog.md. Branch `ciclo/BLK-OPS-09`. dry_run: false.
+## Próxima Skill recomendada
+Fechamento manual → commit por path → merge humano → dry-run autônomo (6.c)
 
-## O que foi feito (Builder)
-- 15 blocos `Status: CONCLUÍDO` movidos íntegros (append-only) para `tasks/completed.md` sob a seção
-  "## Housekeeping BLK-OPS-09 — blocos migrados do backlog (2026-05-29)":
-  - 6 de "Tarefas pendentes": BLK-OPS-06, BLK-OPS-07, BLK-PRD-01, BLK-OPS-02, BLK-OPS-02b, BLK-OPS-08
-    → substituídos por stub de 1 linha no backlog.
-  - 9 da seção "## Concluídos": BLK-OPS-01-FU5, BLK-OPS-05, BLK-OPS-01, BLK-OPS-01-FU1, BLK-OPS-01-FU2,
-    BLK-OPS-01-FU3, BLK-OPS-01-FU4, BLK-20260528-02, BLK-PROD-04 → seção "## Concluídos" removida.
-- `tasks/backlog.md`: 860 → 426 linhas; 13 blocos pendentes preservados verbatim.
-- Método: helper Python sobre os bytes reais → conteúdo movido byte-idêntico ao original.
+## VEREDITO
+APROVADO
 
-## Achado de escopo
-Enunciado citava 9+8 blocos; o real era 6+9=15. Regra `Status: CONCLUÍDO` aplicada (inequívoca).
-Redução ~50% (não os ~330 linhas estimados; a estimativa assumia 9 concluídos em "Tarefas pendentes").
+## Justificativa
+Helper versionado, puro e testado (10 casos verdes), faz o move byte-idêntico (fatia literal,
+CRLF preservado); 6.0 + 6.c + checklist do QA atualizados de forma coerente; suíte completa verde
+(542 passed) e smoke de CLI contra conteúdo REAL (sem bypass) confirma move/--check/ad-hoc.
 
-## QA (re-execução independente — NO-BYPASS)
-- `pytest -q` → 532 passed, 1 skipped, 9 warnings (exit 0). Igual ao baseline (CLAUDE.md §5).
-- Verificação byte-level contra `git show HEAD:` (suíte/conteúdo reais, sem mock): TODOS PASS —
-  completed.md append-only; 15 blocos verbatim em completed.md; 15 blocos removidos do backlog;
-  6 stubs presentes; "## Concluídos" ausente; 13 pendentes verbatim; "Priorização atual" preservada.
-- Escopo substantivo: SOMENTE `tasks/backlog.md` + `tasks/completed.md`. Não tocou
-  CLAUDE.md/PRD.md/código/M1/artefatos/prompts/.claude/commands.
+## Escopo entregue (4 arquivos substantivos + bookkeeping)
+- scripts/housekeeping_move_block.py (NOVO): move_block/verify_moved (puros) + CLI (--check, EXIT_AD_HOC=3).
+- tests/unit/test_housekeeping_helper.py (NOVO): 10 testes (fatia literal, stub, append-only,
+  BlockNotFound, verify pré/pós, idempotência re-entrante, CRLF byte-identity + verify CRLF, 3 de CLI/rc).
+- .claude/commands/run-cycle.md: Passo 6.0 (move via helper, antes de 6.a) + bullet 6.c (dummy block na
+  branch, abandona sem merge) + guardrail permanente. Rótulos 6.a–6.d preservados.
+- prompts/qa_analyzer.md: seção "Housekeeping de concluídos (fechamento)" exigindo --check + byte-identity
+  vs git HEAD + pytest com o teste do helper; ad-hoc → "N/A".
 
-## Veredito
-APROVADO. Commit do ciclo: `d375402` (commit isolado por path; PRD.md não arrastado).
-Próxima etapa: merge humano de `ciclo/BLK-OPS-09` → `main`. Ciclo não altera a orquestração → sem dry-run.
+## Notas de implementação do humano — atendidas
+1. moved = backlog[start:content_end] (fatia literal por offset de caractere). OK (test_moved_is_literal_byte_identical_slice + CRLF).
+2. CLI abre com newline="" + utf-8 (preserva CRLF disco↔memória). OK (test_crlf_*; smoke real CRLF).
+3. Caso de idempotência re-entrante (2º move → BlockNotFound). OK (test_idempotent_reentrant_second_move_raises).
+
+## Defeito encontrado e corrigido durante o QA (no-bypass real)
+O smoke contra conteúdo REAL (CRLF) reprovou o `--check` inicial: a regex do stub terminava em ` *$`,
+que não tolera o `\r` antes do `\n` em CRLF → "stub ausente" falso. Corrigido para `[ \t\r]*$` e
+adicionado assert de `verify_moved` em CRLF no teste. (Os testes só com LF não pegavam — o smoke real pegou.)
+Também: ruff I001 (import block) no helper, auto-corrigido com `ruff check --fix` (reordenação cosmética).
+
+## Saída literal das validações (re-executadas pelo QA)
+### pytest -q (suíte completa)
+```
+542 passed, 1 skipped, 9 warnings in 139.34s
+```
+### ruff check scripts/housekeeping_move_block.py tests/unit/test_housekeeping_helper.py
+```
+All checks passed!
+```
+### CLI smoke contra cópia do backlog/completed REAIS (CRLF), bloco real BLK-OPS-03
+```
+move rc=0 ; --check rc=0 (CHECK_OK) ; ad-hoc BLK-NOPE-99 rc=3 (SKIP, sem traceback)
+byte-identity: moved (2196 bytes) verbatim em completed=True; stub no backlog=True; heading removido=True; completed append-only=True
+```
+
+## Conferência de no-bypass
+Sem `--config /dev/null`, sem mock do caminho crítico. O smoke roda o CLI REAL sobre cópia do
+backlog/completed REAIS (estrutura/CRLF de produção), não fixture sintética. pytest usa fixtures
+legítimas de unidade (prática normal). Validação efetivamente executada.
+
+## Guardrails verificados
+- score_priorizacao/artefatos M1 não alterados: sim (N/A — doc/tooling de orquestração).
+- Escopo respeitado: sim — só os 4 arquivos + bookkeeping; NÃO tocou M1/CLAUDE.md/conteúdo do backlog.
+- Guard de recursão (dry_run: true) intacto: sim (6.c inalterado nesse ponto).
+
+## Decisão recomendada
+Fechar ciclo: commit por path → merge humano → (pós-merge) dry-run autônomo 6.c (ciclo ALTERA a orquestração).

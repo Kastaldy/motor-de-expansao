@@ -39,6 +39,21 @@ Identificar problemas por severidade. Emitir veredito fundamentado.
   H3_RESOLUTION=7, DIST_MIN_ULTRA_KM=1.0, RENDA_MIN=4500.0,
   pesos renda=0.40, pop=0.60.
 
+## Housekeeping de concluídos (fechamento) — obrigatório quando o bloco vem do backlog
+
+Quando o bloco do ciclo origina-se de `tasks/backlog.md`, o veredito final SÓ pode ser APROVADO
+após você confirmar, por conta própria, que o housekeeping (Passo 6.0 do /run-cycle) foi feito via o
+helper versionado `scripts/housekeeping_move_block.py` (NÃO aceitar move manual de `backlog.md`/`completed.md`):
+
+1. **`--check` passa:** `python scripts/housekeeping_move_block.py <BLK-ID> --check` retorna OK
+   (stub presente em `backlog.md`, nenhum heading `### BLK-ID` remanescente, bloco presente em `completed.md`).
+2. **Byte-identidade (zero perda):** o bloco em `completed.md` é byte-idêntico ao original — comparar
+   contra `git show HEAD:tasks/backlog.md`.
+3. **Suíte verde com o teste do helper:** `pytest -q` passa, incluindo `tests/unit/test_housekeeping_helper.py`.
+
+Falha em 1 ou 2 → REPROVAR (housekeeping incompleto/divergente). Para ciclos com tarefa ad-hoc
+(fora do backlog), registre "N/A (tarefa ad-hoc)" — o helper levanta `BlockNotFound` e o move é no-op.
+
 ## Regras de comportamento
 
 - Não implemente features.

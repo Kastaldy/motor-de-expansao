@@ -2,31 +2,31 @@
 
 ## Bloco atual
 
-ID: BLK-OPS-09
-Nome: Housekeeping do backlog.md (mover blocos CONCLUÍDO para completed.md)
-Status: APROVADO (aguardando commit por path + merge humano)
-Tipo: doc / manutenção
-Criticidade: média (doc-only)
-Esteira: Block Orchestrator → Planner → Builder → QA (consolidada no orquestrador; QA independente real)
+ID: BLK-OPS-10
+Nome: Automatizar housekeeping de concluídos no Passo 6 do /run-cycle (helper versionado)
+Status: APROVADO (aguardando commit por path + merge humano + dry-run 6.c pós-merge)
+Tipo: manutenção / orquestração + tooling
+Criticidade: alta (altera a própria orquestração → dispara dry-run autônomo no 6.c)
+Esteira: Block Orchestrator → Planner → [APROVAÇÃO HUMANA: ok] → Builder → QA → (pós-merge: dry-run 6.c)
 Skill atual: run-cycle (fechamento)
 dry_run: false
 
-## Resultado
-- 15 blocos `Status: CONCLUÍDO` movidos íntegros (append-only) para `tasks/completed.md`
-  (6 de "Tarefas pendentes" → stub de 1 linha; 9 da seção "## Concluídos" → seção removida).
-- `tasks/backlog.md`: 860 → 426 linhas (~50%); 13 blocos pendentes preservados verbatim.
-- QA independente: `pytest -q` → 532 passed, 1 skipped, 9 warnings; verificação byte-level
-  contra `git show HEAD:` = TODOS PASS (append-only, 15 blocos verbatim, zero perda, pendentes intactos).
-- Escopo substantivo: SOMENTE `tasks/backlog.md` + `tasks/completed.md`. Bookkeeping: este arquivo +
-  context/handoff*. Não tocou CLAUDE.md/PRD.md/código/M1/prompts/.claude/commands.
-
-## Nota de escopo
-Enunciado citava 9+8 blocos; real era 6+9=15. Regra `Status: CONCLUÍDO` aplicada (inequívoca).
-Redução ~50% (não os ~330 linhas estimados, que assumiam 9 concluídos em "Tarefas pendentes").
+## Resultado (APROVADO pelo QA)
+- Helper versionado scripts/housekeeping_move_block.py (move_block/verify_moved puros + CLI;
+  byte-identity por fatia literal; CRLF preservado via newline=""; EXIT_AD_HOC=3).
+- tests/unit/test_housekeeping_helper.py: 10 testes (inclui idempotência re-entrante + CRLF).
+- .claude/commands/run-cycle.md: Passo 6.0 (move via helper, antes de 6.a) + bullet 6.c (dummy block na
+  branch do dry-run, abandona sem merge) + guardrail permanente. Rótulos 6.a–6.d preservados.
+- prompts/qa_analyzer.md: checklist de housekeeping exigindo o helper (--check + byte-identity + pytest).
+- Validações: pytest -q → 542 passed, 1 skipped; ruff clean; smoke CLI contra conteúdo REAL (CRLF) ok.
+- Defeitos achados no QA e corrigidos: regex do stub em CRLF (verify_moved) + ruff I001 (import sort).
 
 ## Paths do ciclo (commit por path — NUNCA git add -A)
-tasks/backlog.md · tasks/completed.md · tasks/current_task.md · context/handoff.md · context/handoff/
+scripts/housekeeping_move_block.py · tests/unit/test_housekeeping_helper.py ·
+.claude/commands/run-cycle.md · prompts/qa_analyzer.md · tasks/current_task.md ·
+context/handoff.md · context/handoff/
 
 ## Pendência humana
-- Revisar a branch `ciclo/BLK-OPS-09` e fazer o merge em `main` (o orquestrador não faz o merge).
-- Ciclo NÃO altera a orquestração → NÃO dispara dry-run pós-merge.
+- Revisar a branch ciclo/BLK-OPS-10 e fazer o merge em main.
+- PÓS-MERGE: este ciclo ALTERA a orquestração → o orquestrador roda o dry-run autônomo (6.c)
+  exercitando o novo 6.0 num ciclo dummy Baixa (bloco dummy na branch, abandona sem merge).
