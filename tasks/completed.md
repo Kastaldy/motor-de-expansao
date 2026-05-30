@@ -1698,3 +1698,58 @@ zeraria o micro-desempate dos hexes de topo, seria Crítica+DEC e exigiria regen
   (H3=7, dist=1.0, renda_min=4500.0, pesos 0.40/0.60) e 4 artefatos M1 oficiais inalterados.
 - Branch `ciclo/BLK-FIX-01` a partir de `main` já com BLK-OPS-04 mergeado (merge feito pelo humano).
   `CLAUDE.md` (edição do usuário com a nova regra §2) NÃO commitado neste ciclo, conforme decidido.
+
+---
+
+### BLK-FIX-02 — Corrigir MessageSizeError para UFs grandes
+Criticidade: Média (bloqueia usabilidade de alguns estados em produção)
+Esteira: Block Orchestrator → Planner → Builder → QA
+Escopo: (a) aumentar maxMessageSize para 500 no config; (b) identificar qual caminho envia 240 MB e verificar se o downsampling está sendo aplicado corretamente.
+
+#### Fechamento do ciclo (2026-05-30) — VEREDITO QA: APROVADO
+
+##### Diagnóstico (causa-raiz)
+O `MessageSizeError` em UFs grandes NÃO era altura (nº de pontos): o cap de 35k (`MAP_POINT_LIMIT`,
+`_downsample_map_index`) já estava aplicado. Era LARGURA: os builders de mapa passavam o `map_df`
+inteiro (`data=map_df`, ~30/33 colunas-fonte + auxiliares `*_fmt`/`*_label`/`tooltip_residual_*` +
+`tooltip_line_1..14`) ao `H3HexagonLayer`, e o pydeck serializa o DataFrame todo como JSON na spec do
+deck → ~35k linhas × ~50+ colunas de texto verboso ≈ os ~240 MB relatados. O layer consome apenas
+`hex_id`/`fill_color`/`line_color` e o tooltip HTML só referencia `tooltip_title`/`tooltip_line_*`.
+
+##### O que foi entregue
+- `.streamlit/config.toml`: `maxMessageSize = 500` no bloco `[server]` (eleva o teto de transporte;
+  default Streamlit era 200 MB).
+- `src/motor_expansao/dashboard/components.py`: novo helper puro `_deck_layer_frame(map_df)` +
+  `_DECK_RENDER_COLUMNS = ("hex_id","fill_color","line_color")`. Projeta o frame para SOMENTE as
+  colunas de render + `tooltip_title`/`tooltip_line_*` REALMENTE PRESENTES (derivadas por
+  `startswith("tooltip_line_")`, robusto a `_HYBRID_TOOLTIP_SHOW_DETAIL`), dedup preservando ordem,
+  `.loc[:, ordered].copy()` — NÃO muta `map_df`. Aplicado via `data=layer_df` aos 4 builders
+  (`build_map_figure`, `build_hybrid_map_figure`, `build_residual_heatmap_figure` e o builder de
+  domínio — este localizado por grep além da previsão do Planner).
+- `tests/integration/test_streamlit_app.py`: +3 testes que exercitam os builders reais (M1/híbrido/
+  residual) e asseram que `pd.DataFrame(deck.layers[0].data).columns` é subconjunto de
+  `{hex_id,fill_color,line_color,tooltip_title,tooltip_line_1..14}` com auxiliares ausentes; 3 asserts
+  pré-existentes que liam colunas-fonte do payload (`confianca_geografica` ~493 e ~628;
+  `score_oportunidade_residual` ~1154) reescritos preservando a intenção (validam a consequência
+  visível em line_color/fill_color), sem reintroduzir a coluna nem usar `assert True`.
+
+##### Validações (re-executadas pelo QA, sem bypass)
+- `pytest -q tests/integration/test_streamlit_app.py`: 150 passed.
+- `pytest -q` (suíte completa): **570 passed, 1 skipped** (567 baseline + 3 novos; zero falhas).
+- `import streamlit_app`: ok. `ruff check` (components.py + teste): All checks passed. `mypy
+  components.py`: Success.
+
+##### Guardrails verificados
+- `score_priorizacao`/`hex_score_estrutural`/pesos 0.40-0.60 e demais canônicos (H3=7, dist=1.0,
+  renda_min=4500.0) INALTERADOS; nenhum path em `src/motor_expansao/pipelines/`, `core/` ou `data/`
+  tocado; nenhum score recalculado (o helper só PROJETA colunas). `MAP_POINT_LIMIT` (35k) e a chave
+  de ordenação/dedup do downsample intactos; pins de competidor/Ultra e layer de busca não tocados;
+  tooltips visíveis preservados. `map_df` não mutado.
+- Esteira: Block Orchestrator → Planner → Builder → QA (Média, sem gate humano). Branch
+  `ciclo/BLK-FIX-02` a partir de `main` (HEAD com BLK-FIX-01 já mergeado). `CLAUDE.md` (M, edição
+  prévia do usuário) NÃO commitado neste ciclo.
+- Ressalva leve (não bloqueante, QA): sem teste de payload dedicado ao builder de domínio (coberto
+  indiretamente pelo helper compartilhado).
+- Anomalia operacional registrada no fechamento: o arquivo não rastreado `PROMPT-portar-run-cycle.md`
+  (presente como `??` no início do ciclo) desapareceu do worktree durante a execução; por ser
+  untracked e nunca lido, não é recuperável via git. Reportado ao usuário.

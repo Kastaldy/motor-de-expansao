@@ -4,6 +4,7 @@ address = "0.0.0.0"
 port = 8501
 fileWatcherType = "none"
 enableXsrfProtection = true
+maxMessageSize = 500
 
 [browser]
 gatherUsageStats = false
