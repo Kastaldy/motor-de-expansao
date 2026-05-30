@@ -8,6 +8,7 @@ from pandas.testing import assert_frame_equal
 
 from motor_expansao.dashboard.constants import REQUIRED_COLUMNS
 from motor_expansao.dashboard.schemas import (
+    _SCORE_NUMERIC_OPTIONAL,
     _SCORE_RANGE_OPTIONAL,
     _SCORE_RANGE_REQUIRED,
     SchemaValidationError,
@@ -76,9 +77,39 @@ def test_score_opcional_presente_com_nan_tolerado():
 
 def test_score_opcional_fora_de_faixa_levanta():
     df = _valid_frame()
-    df["score_expansao_hibrido"] = [70.0, 200.0, 40.0]
-    with pytest.raises(SchemaValidationError, match="score_expansao_hibrido"):
+    df["score_oportunidade_residual"] = [70.0, 200.0, 40.0]
+    with pytest.raises(SchemaValidationError, match="score_oportunidade_residual"):
         validate_dashboard_frame(df, source="enriquecido")
+
+
+def test_score_expansao_hibrido_acima_de_100_passa():
+    # Teto tecnico de desenho: chave lexicografica = M1 (<=100) + micro-desempate <=0.001.
+    df = _valid_frame()
+    df["score_expansao_hibrido"] = [100.001, 100.0, 99.999]
+    validate_dashboard_frame(df, source="enriquecido")  # nao deve levantar
+
+
+def test_score_expansao_hibrido_nao_conversivel_levanta():
+    df = _valid_frame()
+    df["score_expansao_hibrido"] = ["x", "y", "z"]
+    with pytest.raises(
+        SchemaValidationError, match="nao e conversivel a numerico"
+    ) as exc:
+        validate_dashboard_frame(df, source="enriquecido")
+    assert "score_expansao_hibrido" in str(exc.value)
+
+
+def test_score_expansao_hibrido_com_nan_tolerado():
+    df = _valid_frame()
+    df["score_expansao_hibrido"] = [100.001, np.nan, 99.5]
+    validate_dashboard_frame(df, source="enriquecido")  # NaN tolerado, nao levanta
+
+
+def test_score_expansao_hibrido_fora_de_required():
+    # Sanidade de design: o campo e chave de ordenacao (numerico/sem faixa), nao score [0,100].
+    assert "score_expansao_hibrido" in _SCORE_NUMERIC_OPTIONAL
+    assert "score_expansao_hibrido" not in _SCORE_RANGE_OPTIONAL
+    assert "score_expansao_hibrido" not in _SCORE_RANGE_REQUIRED
 
 
 def test_coluna_obrigatoria_faltante_levanta():

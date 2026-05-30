@@ -1645,3 +1645,56 @@ carga ruim, não recalcula nem muta nada). Sem gate humano.
 ---
 
 - BLK-ARCH-01b (concluído 2026-05-30) — ver tasks/completed.md
+
+---
+
+### BLK-FIX-01 — Corrigir clipping de score_expansao_hibrido e validação com tolerância float
+Criticidade: Alta (bloqueia deploy do OPS-04 no VPS; toca pipeline de score híbrido — leitura M1, não mutação do score M1 oficial)
+Esteira: Block Orchestrator → Planner → [revisão humana] → Builder → QA
+Escopo: (a) schemas.py — adicionar tolerância 1e-2; (b) localizar e corrigir clip no cálculo híbrido; (c) regenerar Parquets afetados; (d) re-validar localmente com Parquets reais.
+
+**Fechamento do ciclo — 2026-05-30. Veredito do QA: APROVADO** (re-execução independente, sem bypass).
+Esteira completa: Block Orchestrator → Planner → [APROVAÇÃO HUMANA: "aprovado" por Felipe Silva em
+2026-05-30] → Builder → QA. Criticidade **Alta** (sem DEC), confirmada pela nova regra §2 do CLAUDE.md:
+a solução final mexe SÓ no validador read-only, sem alterar fórmula/pesos/artefato M1.
+
+### Diagnóstico da causa-raiz
+O validador read-only do BLK-OPS-04 (`schemas.py`) rejeitava `score_expansao_hibrido` porque ele pode
+chegar a ~100.001, estourando a faixa estrita [0,100]. Causa: `calcular_score_expansao_hibrido`
+(`modelo_hibrido_expansao.py:115`) = `score_priorizacao + score_setor_2022_calibrado/LOCAL_BONUS_DIVISOR`
+(`LOCAL_BONUS_DIVISOR=100_000` → bônus ≤0.001). Por DESENHO esse campo é uma **chave de ordenação
+lexicográfica** (M1 primário + micro-desempate censitário), NÃO um score limitado a [0,100] — o
+"estouro" é intencional e carrega o desempate. O bug real foi o campo ter entrado na checagem de faixa.
+
+### Decisão de design (divergiu do escopo palpitado no backlog)
+O escopo inicial do backlog supunha (a) tolerância 1e-2 e (b) clipar a fórmula. O Planner avaliou as 3
+alternativas e o humano APROVOU a **alternativa (iii)**: remover `score_expansao_hibrido` da checagem de
+faixa, validando-o só como numérico/não-nulo. Motivo: honra o contrato de design (chave de ordenação),
+não introduz tolerância "mágica" (rejeitada alt. ii), e NÃO clipa a fórmula (rejeitada alt. i, que
+zeraria o micro-desempate dos hexes de topo, seria Crítica+DEC e exigiria regenerar Parquets). Scope (b),
+(c) e (d) do backlog ficaram desnecessários: nenhuma fórmula tocada, nenhum Parquet regenerado.
+
+### O que foi entregue
+- `src/motor_expansao/dashboard/schemas.py`: `score_expansao_hibrido` removido de `_SCORE_RANGE_OPTIONAL`;
+  criada tupla `_SCORE_NUMERIC_OPTIONAL = ("score_expansao_hibrido",)` com comentário de desenho; helper
+  local `_coerce_numeric` extraído (reaproveita a checagem de conversibilidade, sem duplicar a lógica de
+  faixa); novo laço valida a chave de ordenação só como numérico/não-nulo (sem `between(0,100)`, NaN
+  tolerado). Read-only preservado (coerção em variável local, df não mutado).
+- `tests/unit/test_schema_validation.py`: importa `_SCORE_NUMERIC_OPTIONAL`; teste de fora-de-faixa
+  trocado para `score_oportunidade_residual`; +4 testes (teto técnico ~100.001 passa; não-conversível
+  rejeitado citando o campo; NaN tolerado; sanidade de design das tuplas). Testes de faixa dos scores
+  obrigatórios intactos.
+
+### Validações (re-executadas pelo QA, sem bypass)
+- `pytest -q tests/unit/test_schema_validation.py`: 20 passed.
+- `pytest -q` (suíte completa): **567 passed, 1 skipped** (acima da baseline; nada quebrou).
+- `pytest -q tests/integration/test_streamlit_app.py`: 147 passed.
+- `import streamlit_app`: ok. `ruff check`: All checks passed. `mypy schemas.py`: Success.
+
+### Guardrails verificados
+- Fórmula `calcular_score_expansao_hibrido`, `LOCAL_BONUS_DIVISOR` e `modelo_hibrido_expansao.py`
+  INTACTOS; nenhum Parquet regenerado; `score_dominio_hibrido` intocado (segue faixa estrita).
+- `score_priorizacao`/`hex_score_estrutural` seguem estritos a [0,100]; parâmetros canônicos
+  (H3=7, dist=1.0, renda_min=4500.0, pesos 0.40/0.60) e 4 artefatos M1 oficiais inalterados.
+- Branch `ciclo/BLK-FIX-01` a partir de `main` já com BLK-OPS-04 mergeado (merge feito pelo humano).
+  `CLAUDE.md` (edição do usuário com a nova regra §2) NÃO commitado neste ciclo, conforme decidido.
