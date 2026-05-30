@@ -1750,6 +1750,7 @@ deck → ~35k linhas × ~50+ colunas de texto verboso ≈ os ~240 MB relatados. 
   prévia do usuário) NÃO commitado neste ciclo.
 - Ressalva leve (não bloqueante, QA): sem teste de payload dedicado ao builder de domínio (coberto
   indiretamente pelo helper compartilhado).
-- Anomalia operacional registrada no fechamento: o arquivo não rastreado `PROMPT-portar-run-cycle.md`
-  (presente como `??` no início do ciclo) desapareceu do worktree durante a execução; por ser
-  untracked e nunca lido, não é recuperável via git. Reportado ao usuário.
+- Nota operacional (esclarecida pelo usuário no fechamento): o arquivo não rastreado
+  `PROMPT-portar-run-cycle.md` (presente como `??` no início do ciclo) foi removido pelo PRÓPRIO
+  usuário — era um arquivo temporário criado por um agente para aplicar o run-cycle em outro projeto.
+  Ação intencional e controlada; nenhum sub-agente o tocou. Sem impacto no ciclo.
