@@ -490,7 +490,10 @@ def test_build_map_figure_mostra_todos_os_hexes_validos_da_uf_sem_cap_editorial(
     rendered = pd.DataFrame(deck.layers[0].data)
     assert set(rendered["hex_id"]) == {"sp_granular_1", "sp_granular_2", "sp_granular_3"}
     assert rendered["hex_id"].nunique() == len(rendered)
-    assert rendered["confianca_geografica"].tolist() == ["granular", "granular", "granular"]
+    # confianca_geografica é insumo intermediário (decide line_color/recorte granular),
+    # mas NÃO é serializada ao payload do layer (fix MessageSizeError, BLK-FIX-02).
+    # O recorte dos 3 hexes granulares já é garantido pelas asserts acima.
+    assert "confianca_geografica" not in rendered.columns
 
 
 def test_build_map_figure_adiciona_pins_de_concorrentes_no_recorte():
@@ -622,10 +625,15 @@ def test_build_map_figure_usa_geometria_granular_em_uf_ab_e_fallback_municipal_e
 
     assert deck is not None
     assert points == 2
-    rendered = pd.DataFrame(deck.layers[0].data)
-    assert set(rendered["hex_id"]) == {"sp_granular", "ce_municipal"}
-    assert rendered.set_index("hex_id").loc["sp_granular", "confianca_geografica"] == "granular"
-    assert rendered.set_index("hex_id").loc["ce_municipal", "confianca_geografica"] == "municipal"
+    rendered = pd.DataFrame(deck.layers[0].data).set_index("hex_id")
+    assert set(rendered.index) == {"sp_granular", "ce_municipal"}
+    # confianca_geografica é insumo intermediário (decide a line_color granular vs municipal)
+    # e NÃO é serializada ao payload do layer (fix MessageSizeError, BLK-FIX-02). Validamos
+    # a consequência visível: o hex granular (SP, qual B + censo) e o municipal (CE, qual C)
+    # recebem cores de borda distintas, com o municipal na cor âmbar canônica.
+    assert "confianca_geografica" not in rendered.columns
+    assert rendered.loc["ce_municipal", "line_color"] == [245, 158, 11, 220]
+    assert rendered.loc["sp_granular", "line_color"] != rendered.loc["ce_municipal", "line_color"]
 
 
 def test_sort_carteira_by_m1_preserva_ranking_oficial_antes_do_hibrido():
@@ -940,6 +948,166 @@ def test_build_map_figure_pinta_hex_descartado_por_pop_com_cor_neutra():
     assert "Descartado" not in rendered.loc[hex_ok, "tooltip_title"]
 
 
+_DECK_LAYER_KEEP_SET = {
+    "hex_id",
+    "fill_color",
+    "line_color",
+    "tooltip_title",
+    *[f"tooltip_line_{i}" for i in range(1, 15)],
+}
+
+
+def test_build_map_figure_payload_do_layer_so_tem_colunas_de_render_e_tooltip():
+    """O payload serializado ao H3HexagonLayer (M1) deve conter SOMENTE colunas de
+    render/tooltip — auxiliares e colunas-fonte nao podem vazar (fix MessageSizeError)."""
+    import h3
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([_hex_row(hex_id, lat, lng)])
+
+    deck, points = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+
+    assert deck is not None
+    assert points == 1
+    rendered = pd.DataFrame(deck.layers[0].data)
+    # subconjunto do keep-set
+    assert set(rendered.columns) <= _DECK_LAYER_KEEP_SET
+    # auxiliares AUSENTES
+    for aux in (
+        "score_priorizacao_fmt",
+        "confianca_geografica",
+        "tooltip_residual_1",
+        "faixa_label",
+        "renda_per_capita",
+    ):
+        assert aux not in rendered.columns
+    # render PRESENTES
+    assert {"hex_id", "fill_color", "line_color", "tooltip_title"} <= set(rendered.columns)
+    # tooltip preservado
+    assert isinstance(rendered.loc[0, "tooltip_title"], str)
+    assert rendered.loc[0, "tooltip_title"] != ""
+
+
+def test_build_hybrid_map_figure_payload_do_layer_enxuto():
+    """O payload serializado ao H3HexagonLayer (hibrido) deve conter SOMENTE colunas de
+    render/tooltip — auxiliares e colunas-fonte nao podem vazar (fix MessageSizeError)."""
+    import h3
+
+    def hybrid_row(hex_id: str, lat: float, lng: float) -> dict:
+        return {
+            "hex_id": hex_id,
+            "lat": lat,
+            "lng": lng,
+            "uf": "SP",
+            "nome_municipio": "Sao Paulo",
+            "score_setor_2022_calibrado": 88.0,
+            "score_priorizacao": 80.0,
+            "score_expansao_hibrido": 93.0,
+            "densidade_pop_setor_hab_km2": 8_500,
+            "qualidade_join_uf": "A",
+            "flag_join_uf_restrito": False,
+            "flag_baixa_pop_setor": False,
+            "flag_outlier_espacial": False,
+            "causa_outlier_espacial": pd.NA,
+            "coverage_pct_setor_2022": 96.0,
+            "motivo_nao_elegivel_censo": pd.NA,
+            "elegibilidade_hibrida": "Elegivel",
+            "rank_hex_intraurbano": 1,
+            "top_hex_intraurbano": True,
+            "top_oportunidade_municipio": True,
+            "populacao_proxy": 20_000,
+            "renda_per_capita": 4_200,
+            "pop_total_setor_2022": 21_000,
+            "renda_per_capita_setor_2022_calibrada": 4_500,
+            "flag_pop_min_5k": True,
+            "sam_fitness_potencial": 1000.0,
+            "oferta_consumida_mercado_estimada": 350.0,
+            "oferta_consumida_ultra_real": 150.0,
+            "oferta_efetiva_disponivel": 650.0,
+            "share_ultra_estimado_hex": 0.3,
+            "score_oportunidade_residual": 26.0,
+            "quartil_oportunidade_residual": "Q4_maior_residual",
+        }
+
+    hex_sp = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hdf = pd.DataFrame([hybrid_row(hex_sp, -23.55, -46.63)])
+
+    deck, n = streamlit_app.build_hybrid_map_figure(
+        hdf,
+        selected_ufs=["SP"],
+        selected_cities=[],
+    )
+
+    assert deck is not None
+    assert n == 1
+    rendered = pd.DataFrame(deck.layers[0].data)
+    assert set(rendered.columns) <= _DECK_LAYER_KEEP_SET
+    for aux in (
+        "score_censo_fmt",
+        "densidade_pop_setor_hab_km2",
+        "tooltip_residual_2",
+        "score_expansao_hibrido",
+        "renda_per_capita",
+    ):
+        assert aux not in rendered.columns
+    assert {"hex_id", "fill_color", "line_color", "tooltip_title"} <= set(rendered.columns)
+    assert isinstance(rendered.loc[0, "tooltip_title"], str)
+    assert rendered.loc[0, "tooltip_title"] != ""
+
+
+def test_build_residual_heatmap_figure_payload_do_layer_enxuto():
+    """O payload serializado ao H3HexagonLayer (residual) deve conter SOMENTE colunas de
+    render/tooltip — colunas-fonte (ex.: score_oportunidade_residual) nao podem vazar."""
+    import h3
+
+    def residual_row(hex_id: str, lat: float, lng: float, score_residual: float) -> dict:
+        return {
+            "hex_id": hex_id,
+            "lat": lat,
+            "lng": lng,
+            "uf": "SP",
+            "nome_municipio": "Sao Paulo",
+            "score_setor_2022_calibrado": 75.0,
+            "score_priorizacao": 80.0,
+            "score_expansao_hibrido": 82.0,
+            "densidade_pop_setor_hab_km2": 9_000,
+            "qualidade_join_uf": "A",
+            "coverage_pct_setor_2022": 97.0,
+            "elegibilidade_hibrida": "Elegivel",
+            "populacao_proxy": 30_000,
+            "renda_per_capita": 5_000,
+            "pop_total_setor_2022": 25_000,
+            "flag_pop_min_5k": True,
+            "oferta_efetiva_disponivel": 800.0,
+            "score_oportunidade_residual": score_residual,
+            "quartil_oportunidade_residual": "Q4_maior_residual",
+        }
+
+    hex1 = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hdf = pd.DataFrame([residual_row(hex1, -23.55, -46.63, 85.0)])
+
+    deck, n = streamlit_app.build_residual_heatmap_figure(
+        hdf,
+        selected_ufs=[],
+        selected_cities=[],
+    )
+
+    assert deck is not None
+    assert n == 1
+    rendered = pd.DataFrame(deck.layers[0].data)
+    assert set(rendered.columns) <= _DECK_LAYER_KEEP_SET
+    for aux in (
+        "score_oportunidade_residual",
+        "densidade_pop_setor_hab_km2",
+        "tooltip_residual_1",
+        "renda_per_capita",
+    ):
+        assert aux not in rendered.columns
+    assert {"hex_id", "fill_color", "line_color", "tooltip_title"} <= set(rendered.columns)
+    assert isinstance(rendered.loc[0, "tooltip_title"], str)
+    assert rendered.loc[0, "tooltip_title"] != ""
+
+
 def test_build_map_figure_adiciona_layer_de_destaque_do_hex_pesquisado():
     import h3
     lat, lng = -23.55, -46.63
@@ -1151,7 +1319,10 @@ def test_build_residual_heatmap_figure_retorna_deck_com_hexes():
     assert deck is not None
     assert n_points == 2
     map_layer_data = pd.DataFrame(deck.layers[0].data)
-    assert map_layer_data.iloc[0]["score_oportunidade_residual"] == 85.0
+    # score_oportunidade_residual é insumo (gera fill_color) mas NÃO é serializada ao
+    # payload do layer (fix MessageSizeError, BLK-FIX-02). Validamos a cor resultante:
+    # a linha 0 (residual=85) recebe a cor da faixa alta; a linha 1 (residual=15), a baixa.
+    assert "score_oportunidade_residual" not in map_layer_data.columns
     fill_high = map_layer_data.iloc[0]["fill_color"]
     fill_low = map_layer_data.iloc[1]["fill_color"]
     assert fill_high == streamlit_app.score_band_to_color(85.0)

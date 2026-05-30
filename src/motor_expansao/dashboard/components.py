@@ -983,6 +983,34 @@ def _downsample_map_index(
     return ordered.head(limit).index
 
 
+# Colunas que o H3HexagonLayer/tooltip do pydeck realmente consomem. As demais
+# (auxiliares *_fmt/*_label/tooltip_residual_*, colunas-fonte) sao insumo
+# intermediario e NAO entram no payload serializado ao frontend (corrige
+# MessageSizeError em UFs grandes). Nao recalcula score nem altera artefatos M1.
+_DECK_RENDER_COLUMNS = ("hex_id", "fill_color", "line_color")
+
+
+def _deck_layer_frame(map_df: pd.DataFrame) -> pd.DataFrame:
+    """Projeta map_df para SOMENTE as colunas consumidas pelo H3HexagonLayer
+    (hex_id/fill_color/line_color) + as colunas de tooltip (tooltip_title,
+    tooltip_line_*) realmente presentes. Nao muta map_df (o df completo segue
+    alimentando busca por hex, pins e resolve_map_view). Nao recalcula score."""
+    tooltip_cols = [
+        c
+        for c in map_df.columns
+        if c == "tooltip_title" or c.startswith("tooltip_line_")
+    ]
+    keep = [c for c in (*_DECK_RENDER_COLUMNS, *tooltip_cols) if c in map_df.columns]
+    # dedup preservando ordem
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for c in keep:
+        if c not in seen:
+            seen.add(c)
+            ordered.append(c)
+    return map_df.loc[:, ordered].copy()
+
+
 def build_map_figure(
     df: pd.DataFrame,
     *,
@@ -1089,9 +1117,10 @@ def build_map_figure(
         selected_cities=selected_cities,
     )
 
+    layer_df = _deck_layer_frame(map_df)
     hex_layer = pdk.Layer(
         "H3HexagonLayer",
-        data=map_df,
+        data=layer_df,
         get_hexagon="hex_id",
         get_fill_color="fill_color",
         get_line_color="line_color",
@@ -1355,9 +1384,10 @@ def build_hybrid_map_figure(
 
     center, zoom = resolve_map_view(map_df, selected_ufs=selected_ufs, selected_cities=selected_cities)
 
+    layer_df = _deck_layer_frame(map_df)
     hex_layer = pdk.Layer(
         "H3HexagonLayer",
-        data=map_df,
+        data=layer_df,
         get_hexagon="hex_id",
         get_fill_color="fill_color",
         get_line_color="line_color",
@@ -1472,9 +1502,10 @@ def build_residual_heatmap_figure(
 
     center, zoom = resolve_map_view(map_df, selected_ufs=selected_ufs, selected_cities=selected_cities)
 
+    layer_df = _deck_layer_frame(map_df)
     hex_layer = pdk.Layer(
         "H3HexagonLayer",
-        data=map_df,
+        data=layer_df,
         get_hexagon="hex_id",
         get_fill_color="fill_color",
         get_line_color="line_color",
@@ -1628,9 +1659,10 @@ def build_dominio_map_figure(
         selected_cities=selected_cities or [],
     )
 
+    layer_df = _deck_layer_frame(map_df)
     hex_layer = pdk.Layer(
         "H3HexagonLayer",
-        data=map_df,
+        data=layer_df,
         get_hexagon="hex_id",
         get_fill_color="fill_color",
         get_line_color="line_color",
