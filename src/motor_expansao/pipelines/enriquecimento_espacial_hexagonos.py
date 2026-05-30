@@ -131,7 +131,7 @@ def calc_comp_metrics(
     # Rede dominante com tie-break alfabetico: bluefit < panobianco < smart_fit
     counts_abc = np.column_stack([n_blue, n_pano, n_smart])
     redes_abc = np.array(["bluefit", "panobianco", "smart_fit"])
-    rede_dom = np.where(
+    rede_dom = np.where(  # type: ignore[call-overload]
         n_2km > 0,
         redes_abc[np.argmax(counts_abc, axis=1)],
         None,

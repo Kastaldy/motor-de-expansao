@@ -155,7 +155,12 @@ def _parse_coordinate(value: object, *, axis: str) -> float | None:
 
 
 def _coord_valida(lat: object, lng: object) -> bool:
-    return pd.notna(lat) and pd.notna(lng) and _coord_in_brazil(float(lat), axis="lat") and _coord_in_brazil(float(lng), axis="lng")
+    return (
+        pd.notna(lat)
+        and pd.notna(lng)
+        and _coord_in_brazil(float(lat), axis="lat")  # type: ignore[arg-type]
+        and _coord_in_brazil(float(lng), axis="lng")  # type: ignore[arg-type]
+    )
 
 
 def _latlng_to_h3(lat: float, lng: float) -> str:

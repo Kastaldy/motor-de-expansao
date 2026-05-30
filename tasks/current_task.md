@@ -2,38 +2,34 @@
 
 ## Bloco atual
 
-ID: BLK-ARCH-01a
-Nome: Migrar `jobs/pipelines/*` para `src/` e limpar `pythonpath`
-Status: APROVADO COM RESSALVAS (housekeeping 6.0 feito; aguardando commit por path + merge humano)
+ID: BLK-ARCH-01b
+Nome: Tipar os 14 módulos migrados e remover o override de mypy
+Status: aprovado
 Tipo: refatoração
-Criticidade: alta
-Esteira: Block Orchestrator → Planner → [APROVAÇÃO HUMANA: ok 2026-05-29] → Builder → QA
-Skill atual: run-cycle (fechamento)
-Próxima Skill: —
+Criticidade: média
+Esteira: Block Orchestrator → Planner → Builder → QA
+Skill atual: QA
+Próxima Skill: Fechamento manual (orquestrador: Passo 6.0 + commit por path + merge)
 dry_run: false
 
-## Resultado (APROVADO COM RESSALVAS pelo QA)
-- FATIA-2 (final): os 20 módulos de `jobs/pipelines/*` movidos para `src/motor_expansao/pipelines/`
-  (destino flat, via `git mv`); diretório `jobs/` removido; `pythonpath` `[".", "src"]` → `["src"]`.
-- Única alteração de valor: `parents[2]` → `parents[3]` em 14 módulos (profundidade + `src/`);
-  `sys.path.insert`+`import sys` removidos nos 8 que os tinham; 16 testes reapontados.
-- 4 literais/docstrings cosméticos `jobs/pipelines/...` preservados (um asserido por teste).
-- Validações (QA re-executou, sem bypass): `pytest -q` → 541 passed, 1 skipped, 0 failed;
-  `import streamlit_app` ok; `ruff check .` limpo; `mypy src/` Success (44 arquivos); grep de import
-  de raiz vivo VAZIO; zero `parents[2]` em `src/.../pipelines/`.
-- Prova de não-mutação M1: 4 artefatos oficiais com sha256 byte-idêntico pré/pós. Params canônicos intactos.
-- RESSALVA (não bloqueante): mover os módulos legados (nunca type-checked) para `src/` expôs 50 erros
-  de tipo latentes ao gate `mypy src/`. Resolvido com `[[tool.mypy.overrides]] ignore_errors = true`
-  NOMINAL aos 14 módulos (NÃO glob; QA confirmou que não mascara código antes checado). Dívida de
-  tipagem registrada como BLK-ARCH-01b no backlog.
-- Com BLK-ARCH-01a, a dualidade `src/` vs. legado de raiz está ELIMINADA.
+## Objetivo
+Corrigir os ~50 erros de tipo latentes nos 14 módulos de `src/motor_expansao/pipelines/`
+listados no bloco `[[tool.mypy.overrides]]` de `pyproject.toml` e remover esse override,
+trazendo os módulos ao gate `mypy src/` de verdade — sem alterar comportamento/valores,
+score ou artefatos M1 (não-mutação provada por hash sha256 idêntico pré/pós).
 
 ## Paths do ciclo (commit por path — NUNCA git add -A)
-src/motor_expansao/pipelines/*.py (20 módulos movidos) · pyproject.toml ·
-tests/** (16 reapontados) · tasks/current_task.md · tasks/backlog.md · tasks/completed.md ·
-context/handoff.md · context/handoff/ · (removidos: jobs/pipelines/*.py + jobs/)
+src/motor_expansao/pipelines/{calcular_colunas_mercado, calcular_penetracao_ultra_hex,
+comparar_geofusion_vs_hex, enriquecimento_espacial_hexagonos, normalizar_unidades_ultra,
+gerar_carteira_acionavel, modelo_hibrido_expansao, validar_modelo_ultra,
+validar_penetracao_ultra_hex, materializar_setores_censitarios_geo, fase_a_censo2022_setores,
+validar_fase_a_censo2022, fase_a_piloto_expandido, fase_a_nacional_completo}.py ·
+pyproject.toml (remover override) · (eventuais testes tocados) ·
+tasks/current_task.md · tasks/backlog.md · tasks/completed.md ·
+context/handoff.md · context/handoff/
 
-## Pendência humana
-- Revisar a branch ciclo/BLK-ARCH-01a e fazer o merge em main (Passo 6.b).
-- Este ciclo NÃO altera a orquestração (run-cycle/prompts/esteira) → dry-run 6.c NÃO dispara.
-- Bloco-filho aberto: BLK-ARCH-01b (tipar os 14 módulos + remover o override de mypy).
+## Contexto de abertura
+- Branch isolado: `ciclo/BLK-ARCH-01b` (criado a partir do HEAD de main, que já contém o merge
+  de BLK-ARCH-01a — dependência ✅ satisfeita).
+- Worktree limpo na abertura; commitar SÓ por path.
+- Este ciclo NÃO altera a orquestração → dry-run 6.c NÃO dispara.

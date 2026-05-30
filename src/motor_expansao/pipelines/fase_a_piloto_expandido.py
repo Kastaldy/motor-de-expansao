@@ -139,7 +139,7 @@ def resumir_metricas_uf(
     gate_cobertura = coverage_pct >= MIN_COVERAGE_PCT
     gate_amplitude = cal_stats["amplitude"] > MIN_AMPLITUDE
     join_gate = classe_join in {"A", "B"}
-    spatial_status = "GO" if int(outlier_result["critical_outliers"]) == 0 else "REVIEW"
+    spatial_status = "GO" if int(outlier_result["critical_outliers"]) == 0 else "REVIEW"  # type: ignore[call-overload]
     status_tecnico = "GO" if (gate_cobertura and gate_amplitude and join_gate) else "NO-GO"
 
     return {
@@ -154,9 +154,9 @@ def resumir_metricas_uf(
         "gate_cobertura": gate_cobertura,
         "gate_amplitude": gate_amplitude,
         "status_espacial": spatial_status,
-        "critical_outliers": int(outlier_result["critical_outliers"]),
+        "critical_outliers": int(outlier_result["critical_outliers"]),  # type: ignore[call-overload]
         "threshold_delta": outlier_result["threshold"],
-        "hex_avaliados": int(outlier_result["avaliados"]),
+        "hex_avaliados": int(outlier_result["avaliados"]),  # type: ignore[call-overload]
         "spearman_vs_m1": spearman_modelos,
         "m1_amplitude": m1_stats["amplitude"],
         "m1_std": m1_stats["std"],
@@ -567,7 +567,7 @@ def gerar_relatorio(
     ]
     for row in technical_rows:
         lines.append(
-            "| {uf} | {coverage_pct:.2f} | {amplitude:.2f} | {std:.2f} | {distinct} | "
+            "| {uf} | {coverage_pct:.2f} | {amplitude:.2f} | {std:.2f} | {distinct} | "  # type: ignore[str-format]
             "{mismatch_pct:.2f} | {classe_join} | {critical_outliers} | {status_espacial} | "
             "{status_tecnico} |".format(**row)
         )
@@ -607,7 +607,7 @@ def gerar_relatorio(
                 "| --- | --- | --- | --- | --- |",
             ]
         )
-        for row in ultra_validation["correlacoes"]:
+        for row in ultra_validation["correlacoes"]:  # type: ignore[attr-defined]
             lines.append(
                 f"| {row['uf']} | {row['metrica']} | {row['correlacao_spearman_calibrado']:.4f} | "
                 f"{row['correlacao_spearman_m1']:.4f} | {row['direcao_esperada']} |"
@@ -800,9 +800,9 @@ def main() -> None:
         data_download=args.data_download,
     )
     status = "GO"
-    if not all(row["status_tecnico"] == "GO" for row in metadata["technical_rows"]):
+    if not all(row["status_tecnico"] == "GO" for row in metadata["technical_rows"]):  # type: ignore[attr-defined]
         status = "NO-GO"
-    if metadata["ultra_validation"]["status"] != "GO":
+    if metadata["ultra_validation"]["status"] != "GO":  # type: ignore[index]
         status = "NO-GO"
     print(f"PILOTO EXPANDIDO FASE A: {status}")
 

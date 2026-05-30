@@ -20,6 +20,7 @@ import json
 import time
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import geopandas as gpd
 import h3
@@ -33,7 +34,7 @@ try:
         _percentil_em_distribuicao_referencia,
     )
 except ModuleNotFoundError:
-    from teste_setor_censitario_2010 import (
+    from teste_setor_censitario_2010 import (  # type: ignore[no-redef]
         _percentil_em_distribuicao_referencia,
     )
 
@@ -707,7 +708,7 @@ def gerar_relatorio(
 def descobrir_arquivos_uf(raw_dir: Path, uf: str) -> dict:
     """Descobre automaticamente os arquivos de uma UF no diretorio raw."""
     cod = UFS_PILOTO[uf]
-    resultado = {"basico": None, "renda": None, "shapefile": None}
+    resultado: dict[str, Path | None] = {"basico": None, "renda": None, "shapefile": None}
 
     # Procurar CSVs
     csvs = list(raw_dir.rglob("*.csv")) + list(raw_dir.rglob("*.CSV"))
@@ -775,7 +776,7 @@ def executar_fase_a(
 
     all_results = []
     validacoes = []
-    info_processamento = {"por_uf": {}}
+    info_processamento: dict[str, Any] = {"por_uf": {}}
 
     for uf in ufs:
         log.info("processando_uf", uf=uf)
@@ -1189,7 +1190,7 @@ def executar_fase_a_nacional(
 
     all_results = []
     validacoes = []
-    info_processamento = {"por_uf": {}}
+    info_processamento: dict[str, Any] = {"por_uf": {}}
 
     for uf in ufs:
         log.info("processando_uf_nacional", uf=uf)

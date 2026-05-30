@@ -143,7 +143,7 @@ def _safe_int(value: object, default: int = 0) -> int:
     if pd.isna(value):
         return default
     try:
-        return int(float(value))
+        return int(float(value))  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return default
 
@@ -152,7 +152,7 @@ def _safe_float(value: object) -> float | None:
     if pd.isna(value):
         return None
     try:
-        return float(value)
+        return float(value)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
 

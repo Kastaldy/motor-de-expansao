@@ -120,57 +120,8 @@ pytest -q   # garantir que nada existente quebrou
 
 ---
 
-### BLK-ARCH-01b — Tipar os 14 módulos migrados e remover o override de mypy
+- BLK-ARCH-01b (concluído 2026-05-30) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Média *(dívida de tipagem; toca pipelines de mercado/residual/fase-A, mas é melhoria de qualidade, não mudança de comportamento)* |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Depende de** | **BLK-ARCH-01a** — ✅ SATISFEITA (concluído 2026-05-30). |
-| **Status** | Pendente *(dívida registrada no fechamento de BLK-ARCH-01a; ressalva não bloqueante do QA)* |
-
-**Objetivo:** eliminar a dívida de tipagem criada (registrada, não introduzida) por BLK-ARCH-01a:
-os 14 módulos migrados de `jobs/pipelines/*` para `src/motor_expansao/pipelines/` carregam ~50 erros
-de tipo LATENTES (código legado nunca type-checked). BLK-ARCH-01a os silenciou com um
-`[[tool.mypy.overrides]] ignore_errors = true` nominal para preservar o status quo (CI verde, mesma
-cobertura efetiva). Este bloco corrige os tipos e REMOVE o override, trazendo esses módulos para o
-gate `mypy src/` de verdade.
-
-**Escopo permitido:**
-- Corrigir os erros de tipo nos 14 módulos listados no override de `pyproject.toml`
-  (`float(object)`, anotações de variável faltantes, overloads numpy, `no-redef` de fallback
-  try/except, etc.), em passos pequenos — idealmente um módulo (ou grupo) por vez.
-- Remover do `[[tool.mypy.overrides]]` cada módulo conforme ele fica limpo; ao final, remover o bloco
-  de override inteiro.
-
-**Fora de escopo:** mudar comportamento/lógica/valores; mexer em score/artefatos M1; refatorar além
-do necessário para tipar. Correção de tipo é mecânica/estrutural, não muda runtime.
-
-**Arquivos a ler:** os 14 módulos em `src/motor_expansao/pipelines/` listados no override ·
-`pyproject.toml` (bloco `[[tool.mypy.overrides]]`).
-**Arquivos a alterar:** os 14 módulos · `pyproject.toml` (remover override progressivamente).
-
-**Critérios de aceite:**
-- `mypy src/` limpo SEM o bloco de override (ou com ele já removido).
-- `pytest -q` verde (mesma contagem); `ruff check .` limpo.
-- Prova de não-mutação M1 (hash idêntico pré/pós) dos 4 artefatos oficiais — tipar não muda dados.
-- Bloco `[[tool.mypy.overrides]]` dos 14 módulos REMOVIDO de `pyproject.toml`.
-
-**Validações obrigatórias:**
-```
-mypy src/         # sem o override
-pytest -q
-ruff check .
-python -c "import hashlib,pathlib; [print(hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest(), p) for p in ['data/staging/brasil_priorizados.parquet','data/staging/brasil_estrutural.parquet','data/staging/hexagonos_brasil_oportunidades.parquet','data/outputs/hexagonos_brasil_dashboard.parquet']]"
-```
-
-**Guardrails específicos:** correção de tipo NÃO pode alterar comportamento/valores; cada anotação
-deve refletir o tipo REAL em runtime (não forçar `# type: ignore` em massa — isso só troca um override
-por outro). Preferir anotações corretas; `# type: ignore[código]` pontual e justificado é aceitável
-onde a lib de terceiros não tem stubs.
-
-**Risco:** baixo-médio — volume de erros (~50) mas todos de tipagem, sem mudança de runtime. Risco
-real é "consertar" um tipo de forma que mascare um bug latente; mitigar mantendo `pytest -q` verde.
 
 ---
 
