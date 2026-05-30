@@ -49,7 +49,6 @@ from dashboard.utils import (  # noqa: F401
     hex_to_rgba,
     score_band_to_color,
 )
-from motor_expansao.dashboard.competitors import load_competitor_points, load_ultra_points, preload_logos  # noqa: F401
 from motor_expansao.dashboard.censo_map import render_mapa_censitario_estatico_png  # noqa: F401
 from motor_expansao.dashboard.censo_point import analisar_ponto_censitario_setores  # noqa: F401
 from motor_expansao.dashboard.censo_report import (  # noqa: F401
@@ -57,6 +56,11 @@ from motor_expansao.dashboard.censo_report import (  # noqa: F401
     gerar_payloads_download_relatorio_censitario,
     gerar_pdf_relatorio_pontual_censitario,
     render_downloads_relatorio_censitario,
+)
+from motor_expansao.dashboard.competitors import (  # noqa: F401
+    load_competitor_points,
+    load_ultra_points,
+    preload_logos,
 )
 from motor_expansao.dashboard.components import (  # noqa: F401
     _build_multihex_selection_layer,
@@ -66,7 +70,6 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     _sort_carteira_by_m1,
     apply_exec_layout,
     build_analise_pontual_map,
-    build_multihex_analysis_map,
     build_business_answers,
     build_dominio_map_figure,
     build_faixa_comparison_figure,
@@ -81,6 +84,7 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     build_kpis,
     build_map_figure,
     build_map_scope_caption,
+    build_multihex_analysis_map,
     build_ranking_table,
     build_residual_by_uf_figure,
     build_residual_heatmap_figure,
@@ -151,7 +155,6 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_comparacao_uf,
     render_coord_search_sidebar,
     render_empty_state,
-    render_relatorio_pontual_censitario,
     render_expansao_dominio,
     render_header,
     render_hex_search_result,
@@ -161,6 +164,7 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_modelo_hibrido_v2,
     render_plano_expansao,
     render_ranking_priorizacao,
+    render_relatorio_pontual_censitario,
     render_sidebar_filters,
     render_tab_selector,
     render_uf_selectbox,

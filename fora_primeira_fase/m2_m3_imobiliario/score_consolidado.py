@@ -15,7 +15,6 @@ Uso:
 """
 
 from datetime import datetime
-from typing import Optional
 
 import h3
 import pandas as pd
@@ -28,9 +27,11 @@ except ModuleNotFoundError:
     from config import settings  # estrutura flat (desenvolvimento)
 
 try:
-    from jobs.pipelines.imovel_qualification import processar_lote_imoveis
+    from jobs.pipelines.imovel_qualification import (  # noqa: F401 - probe de disponibilidade (estrutura flat); legado fora_primeira_fase
+        processar_lote_imoveis,
+    )
 except ModuleNotFoundError:
-    from imovel_qualification import processar_lote_imoveis  # estrutura flat
+    pass  # estrutura flat
 
 log = structlog.get_logger()
 
@@ -202,7 +203,7 @@ def gerar_ranking_oportunidades(
     log.info("gerando_ranking_oportunidades")
 
     # Filtrar apenas imóveis qualificados
-    df = df_imoveis[df_imoveis["qualificado"] == True].copy()
+    df = df_imoveis[df_imoveis["qualificado"].eq(True)].copy()  # invariante a `== True`; evita E712
 
     if df.empty:
         log.warning("nenhum_imovel_qualificado")
@@ -283,8 +284,8 @@ def gerar_ranking_oportunidades(
 def imprimir_top_oportunidades(df: pd.DataFrame, n: int = 10) -> None:
     """Imprime as top N oportunidades no terminal com rich formatting."""
     try:
-        from rich.table import Table
         from rich.console import Console
+        from rich.table import Table
 
         console = Console()
         table = Table(title=f"🏆 Top {n} Oportunidades de Expansão — Ultra Academia")

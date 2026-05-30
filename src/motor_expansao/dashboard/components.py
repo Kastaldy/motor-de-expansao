@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -22,8 +24,6 @@ from dashboard.constants import (
     TABLE_ROW_LIMIT,
 )
 from dashboard.utils import (
-    _censo_score_to_color,
-    _residual_score_to_color,
     format_density,
     format_int,
     format_pct,
@@ -359,7 +359,7 @@ def _clean_tooltip_value(value: object, fallback: str = "-") -> str:
     return text if text else fallback
 
 
-def _format_coordinate_pair(lat: object, lng: object) -> str:
+def _format_coordinate_pair(lat: Any, lng: Any) -> str:
     if pd.isna(lat) or pd.isna(lng):
         return "-"
     return f"{float(lat):.5f}, {float(lng):.5f}"
@@ -839,11 +839,11 @@ def _apply_pop_cut_colors(map_df: pd.DataFrame) -> pd.DataFrame:
         return map_df
     map_df["fill_color"] = [
         _DISCARDED_FILL if d else c
-        for d, c in zip(discarded, map_df["fill_color"])
+        for d, c in zip(discarded, map_df["fill_color"], strict=False)
     ]
     map_df["line_color"] = [
         _DISCARDED_LINE if d else c
-        for d, c in zip(discarded, map_df["line_color"])
+        for d, c in zip(discarded, map_df["line_color"], strict=False)
     ]
     return map_df
 
@@ -1299,7 +1299,7 @@ def build_hybrid_map_figure(
     _default_line = hex_to_rgba(COLORS["map_line"], 100)
     map_df["line_color"] = [
         [255, 90, 107, 220] if (r or q) else ([245, 158, 11, 220] if o else _default_line)
-        for r, q, o in zip(_restrito, _quality_c, _outlier)
+        for r, q, o in zip(_restrito, _quality_c, _outlier, strict=False)
     ]
     map_df["score_censo_fmt"] = map_df["score_setor_2022_calibrado"].map(format_score)
     map_df["score_m1_fmt"] = map_df["score_priorizacao"].map(format_score)
@@ -1449,7 +1449,7 @@ def build_residual_heatmap_figure(
     _default_line = hex_to_rgba(COLORS["map_line"], 100)
     map_df["line_color"] = [
         [255, 90, 107, 220] if (r or q) else _default_line
-        for r, q in zip(_restrito, _quality_c)
+        for r, q in zip(_restrito, _quality_c, strict=False)
     ]
     map_df = _prepare_hybrid_tooltip_fields(map_df)
     map_df = _apply_pop_cut_colors(map_df)
@@ -2209,7 +2209,7 @@ def build_hybrid_municipios_table(hdf: pd.DataFrame) -> pd.DataFrame:
     if "top_municipio" not in hdf.columns:
         return pd.DataFrame()
 
-    mun = hdf[hdf["top_municipio"] == True].copy()
+    mun = hdf[hdf["top_municipio"].eq(True)].copy()  # invariante a `== True`; evita E712 preservando semantica pandas/NaN
     if mun.empty:
         return pd.DataFrame()
 
@@ -2309,12 +2309,12 @@ def build_hybrid_kpis(hdf: pd.DataFrame) -> dict[str, str]:
 
     municipio_keys = [column for column in ["uf", "nome_municipio"] if column in hdf.columns]
     municipios_elegiveis = (
-        hdf[hdf["top_municipio_hibrido"] == True][municipio_keys].drop_duplicates().shape[0]
+        hdf[hdf["top_municipio_hibrido"].eq(True)][municipio_keys].drop_duplicates().shape[0]  # invariante a `== True`; evita E712
         if "top_municipio_hibrido" in hdf.columns and municipio_keys
         else 0
     )
     municipios_cobertos = (
-        hdf[hdf["flag_censo_disponivel"] == True][municipio_keys].drop_duplicates().shape[0]
+        hdf[hdf["flag_censo_disponivel"].eq(True)][municipio_keys].drop_duplicates().shape[0]  # invariante a `== True`; evita E712
         if "flag_censo_disponivel" in hdf.columns and municipio_keys
         else 0
     )
@@ -2368,7 +2368,7 @@ def build_hybrid_portfolio_table(hdf: pd.DataFrame) -> pd.DataFrame:
     if hdf.empty or "flag_hex_hibrido_elegivel" not in hdf.columns:
         return pd.DataFrame()
 
-    portfolio = hdf[hdf["flag_hex_hibrido_elegivel"] == True].copy()
+    portfolio = hdf[hdf["flag_hex_hibrido_elegivel"].eq(True)].copy()  # invariante a `== True`; evita E712
     if portfolio.empty:
         return pd.DataFrame()
 

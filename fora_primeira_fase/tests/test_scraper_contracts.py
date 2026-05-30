@@ -11,11 +11,7 @@ Para adicionar novo snapshot:
     3. Escrever o teste validando os campos extraídos
 """
 
-import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
-
-import pytest
 
 # Diretório de fixtures HTML
 FIXTURES_DIR = Path(__file__).parent / "fixtures"

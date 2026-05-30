@@ -19,8 +19,8 @@ import h3
 import numpy as np
 import pandas as pd
 import structlog
-from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
+from geopy.geocoders import Nominatim
 
 try:
     from api.config import settings
@@ -31,7 +31,7 @@ try:
     from jobs.pipelines.ibge_censo import IBGECenso, carregar_lookup_municipios_ibge
     from jobs.pipelines.poi_enrichment import POIEnricher
 except ModuleNotFoundError:
-    from ibge_censo import IBGECenso, carregar_lookup_municipios_ibge      # estrutura flat
+    from ibge_censo import IBGECenso, carregar_lookup_municipios_ibge  # estrutura flat
     from poi_enrichment import POIEnricher
 
 from motor_expansao.core import scoring as _scoring
@@ -42,20 +42,15 @@ from motor_expansao.core.constants import (
     OSM_STATUS_NAO_APLICADO,
     PERCENTIL_CORTE_INFERIOR,
     PERCENTIL_CORTE_SUPERIOR,
-    PESOS_HEX_SCORE,
-    PESOS_HEX_SCORE_ESTRUTURAL,
-    PESOS_HEX_SCORE_FINAL,
 )
 from motor_expansao.core.scoring import (
     _calcular_percentil_nacional,
-    _combinar_scores_proporcionalmente,
-    _normalizar_serie_disponivel,
     _serie_numerica,
     calcular_ajuste_executivo,
     calcular_hex_score,
     calcular_populacao_proxy,
-    normalizar_0_100,
-    normalizar_serie,
+    normalizar_0_100,  # noqa: F401 - re-exportado: tests/wrappers fazem `from hex_enrichment import normalizar_0_100`
+    normalizar_serie,  # noqa: F401 - re-exportado: tests/wrappers fazem `from hex_enrichment import normalizar_serie`
     resumir_distribuicao_score,
 )
 
@@ -126,7 +121,7 @@ def enriquecer_hexagono(hex_id: str, uf: str, censo: IBGECenso, poi: POIEnricher
     }
 
 
-def rodar_pipeline_hex(cidade: str, uf: str, raio_km: float = 20.0, unidades_ultra: list = None) -> pd.DataFrame:
+def rodar_pipeline_hex(cidade: str, uf: str, raio_km: float = 20.0, unidades_ultra: list | None = None) -> pd.DataFrame:
     unidades_ultra = unidades_ultra or []
     log.info("pipeline_hex_iniciado", cidade=cidade, uf=uf, resolucao=settings.H3_RESOLUTION)
 
@@ -230,7 +225,7 @@ def _coletar_cidade(cidade: str, uf: str, raio_km: float, unidades_ultra: list) 
 def rodar_pipeline_batch(
     cidades: list[tuple[str, str]],
     raio_km: float = 15.0,
-    unidades_ultra: list = None,
+    unidades_ultra: list | None = None,
     nome_arquivo: str = "hexagonos_multicidade",
 ) -> pd.DataFrame:
     """
@@ -793,7 +788,7 @@ def resumir_validacao_camada_oportunidade(
         2,
     ) if not top20_brasil.empty else 0.0
 
-    linhas_capitais = []
+    linhas_capitais: list[dict[str, object]] = []
     for uf, meta in CAPITAIS_UF.items():
         capital = df_oportunidades[
             (df_oportunidades["uf"] == uf) & (df_oportunidades["cod_municipio"] == meta["cod_municipio"])
@@ -1060,7 +1055,7 @@ def selecionar_areas_prioritarias(
         ).round(2)
 
     frames = []
-    for uf, grupo in df_estrutural.groupby("uf", sort=True):
+    for _uf, grupo in df_estrutural.groupby("uf", sort=True):
         df_uf = grupo.sort_values(
             ["score_priorizacao", "hex_score_estrutural", "hex_id"],
             ascending=[False, False, True],
@@ -1593,7 +1588,10 @@ def rodar_pipeline_fase1_brasil(
     try:
         from motor_expansao.pipelines.m1.fase1_bi_exports import generate_fase1_bi_artifacts
     except ModuleNotFoundError:
-        from fase1_bi_exports import generate_fase1_bi_artifacts
+        # fallback de import quando rodando fora do pacote (estrutura flat)
+        from fase1_bi_exports import (  # type: ignore[no-redef,attr-defined]
+            generate_fase1_bi_artifacts,
+        )
 
     artefatos_bi = generate_fase1_bi_artifacts(source_path=output_oportunidades_path)
     tempos["bi_exports_s"] = round(time.time() - t0, 2)

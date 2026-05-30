@@ -12,14 +12,11 @@ Uso:
 """
 
 import time
-import functools
-from typing import Optional
 
 import structlog
-from geopy.geocoders import Nominatim, GoogleV3
-from geopy.exc import GeocoderTimedOut, GeocoderServiceError
-
 from api.config import settings
+from geopy.exc import GeocoderServiceError, GeocoderTimedOut
+from geopy.geocoders import GoogleV3, Nominatim
 
 log = structlog.get_logger()
 
@@ -45,7 +42,7 @@ def geocodificar(
     cidade: str = "",
     uf: str = "",
     usar_google: bool = False,
-) -> Optional[tuple[float, float]]:
+) -> tuple[float, float] | None:
     """
     Geocodifica um endereço e retorna (lat, lng).
 

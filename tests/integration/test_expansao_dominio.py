@@ -29,10 +29,10 @@ TESES_VALIDAS = DOMINIO_TESES_VALIDAS
 def plano_sample():
     """Executa pipeline nas top 3 cidades e retorna plano com rankings."""
     from jobs.pipelines.gerar_plano_expansao_dominio import (
+        _top_cidades_por_residual,
         adicionar_rankings,
         carregar_candidatos,
         gerar_plano_dominio,
-        _top_cidades_por_residual,
     )
     df = carregar_candidatos()
     df = _top_cidades_por_residual(df, 3)
@@ -98,8 +98,8 @@ class TestRankings:
 class TestTopCidadesFiltro:
     def test_top1_retorna_apenas_1_cidade(self):
         from jobs.pipelines.gerar_plano_expansao_dominio import (
-            carregar_candidatos,
             _top_cidades_por_residual,
+            carregar_candidatos,
         )
         df = carregar_candidatos()
         top1 = _top_cidades_por_residual(df, 1)
@@ -107,8 +107,8 @@ class TestTopCidadesFiltro:
 
     def test_top_maior_que_total_retorna_tudo(self):
         from jobs.pipelines.gerar_plano_expansao_dominio import (
-            carregar_candidatos,
             _top_cidades_por_residual,
+            carregar_candidatos,
         )
         df = carregar_candidatos()
         total_cidades = df["cod_municipio"].nunique()

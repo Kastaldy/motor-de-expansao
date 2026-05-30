@@ -17,7 +17,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -132,7 +131,7 @@ def escrever_relatorio(df: pd.DataFrame, path: Path = REPORT_PATH) -> None:
 
     a("# Validacao GeoFusion 1km vs Populacao do Hex")
     a("")
-    a(f"**Data:** 2026-05-15  ")
+    a("**Data:** 2026-05-15  ")
     a(f"**Unidades analisadas:** {len(df)}")
     a("")
 

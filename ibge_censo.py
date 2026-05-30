@@ -15,9 +15,8 @@ import re
 import time
 import unicodedata
 import zipfile
-from pathlib import Path
 from functools import lru_cache
-from typing import Optional
+from pathlib import Path
 
 import h3
 import numpy as np
@@ -156,8 +155,8 @@ class IBGECenso:
     def __init__(self):
         self._gdf_setores = None
         self._df_municipios = None
-        self._municipio_padrao: Optional[str] = None
-        self._uf_padrao: Optional[str] = None
+        self._municipio_padrao: str | None = None
+        self._uf_padrao: str | None = None
 
     def baixar_setores_uf(self, uf: str) -> Path:
         uf = uf.upper()
@@ -224,7 +223,7 @@ class IBGECenso:
         self._uf_padrao = uf
         log.info("municipio_padrao_definido", cod=cod_municipio, uf=uf)
 
-    def resolver_municipio(self, cidade: str, uf: str) -> Optional[str]:
+    def resolver_municipio(self, cidade: str, uf: str) -> str | None:
         """
         Resolve o código IBGE de um município pelo nome + UF.
         Usar no início do pipeline para chamar set_municipio_padrao().
@@ -289,7 +288,7 @@ class IBGECenso:
             resultado["motivo_fallback_setor"] = fallback_reason
         return resultado
 
-    @lru_cache(maxsize=1000)
+    @lru_cache(maxsize=1000)  # noqa: B019 - cache de resposta de rede (SIDRA renda/pop); instancia de pipeline efemera, refator a funcao de modulo mudaria despacho de producao M1
     def _sidra_renda_populacao(self, cod_municipio: str) -> dict:
         resultado = self._features_padrao()
         resultado["nivel_geografico_ibge"] = "municipio"
@@ -360,8 +359,8 @@ class IBGECenso:
         resultado["fonte_populacao"] = fonte_populacao
         return resultado
 
-    @lru_cache(maxsize=500)
-    def _geocodigo_municipio(self, lat: float, lng: float) -> Optional[str]:
+    @lru_cache(maxsize=500)  # noqa: B019 - cache de resposta de rede (Nominatim reverse); despacha a self._buscar_cod_ibge_por_nome, instancia efemera, refator mudaria despacho de producao M1
+    def _geocodigo_municipio(self, lat: float, lng: float) -> str | None:
         try:
             url = "https://nominatim.openstreetmap.org/reverse"
             params = {"lat": lat, "lon": lng, "format": "json", "zoom": 10, "addressdetails": 1}
@@ -378,8 +377,8 @@ class IBGECenso:
             log.warning("geocodigo_erro", erro=str(e))
         return None
 
-    @lru_cache(maxsize=500)
-    def _buscar_cod_ibge_por_nome(self, cidade: str, uf: str) -> Optional[str]:
+    @lru_cache(maxsize=500)  # noqa: B019 - cache de busca de codigo IBGE por nome; estado de instancia (_municipio_padrao), instancia efemera de pipeline, refator mudaria despacho de producao M1
+    def _buscar_cod_ibge_por_nome(self, cidade: str, uf: str) -> str | None:
         def normalizar(s: str) -> str:
             """Remove acentos e converte para minúsculas para comparação."""
             return unicodedata.normalize("NFD", s).encode("ascii", "ignore").decode().lower()
@@ -624,7 +623,7 @@ class IBGECenso:
         return df
 
     @staticmethod
-    def _extrair_codigo_municipio_feature(properties: dict) -> Optional[str]:
+    def _extrair_codigo_municipio_feature(properties: dict) -> str | None:
         candidatos = [
             properties.get("codarea"),
             properties.get("id"),
@@ -639,7 +638,7 @@ class IBGECenso:
         return None
 
     @staticmethod
-    def _normalizar_codigo_municipio(valor: object) -> Optional[str]:
+    def _normalizar_codigo_municipio(valor: object) -> str | None:
         if valor is None:
             return None
         texto = re.sub(r"\D", "", str(valor))

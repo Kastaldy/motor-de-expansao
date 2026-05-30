@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -114,7 +115,7 @@ class UFMetrica:
     null_uf: int
 
 
-def _chunks(values: list[str], chunk_size: int) -> list[str]:
+def _chunks(values: list[str], chunk_size: int) -> Iterator[list[str]]:
     for start in range(0, len(values), chunk_size):
         yield values[start : start + chunk_size]
 

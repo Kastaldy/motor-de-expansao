@@ -12,7 +12,6 @@ from jobs.pipelines.calcular_colunas_mercado import (
     CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS,
     HYBRID_TIEBREAK_MAX_SCORE,
     TAXA_FITNESS_CALIBRADA,
-    TAXA_FITNESS_MERCADO_FALLBACK,
     anexar_oferta_ultra_real,
     calcular,
 )

@@ -797,7 +797,7 @@ def draw_table(
         fill=COLORS["brand"],
     )
     cursor_x = table_x0 + 8
-    for width, column in zip(widths, columns):
+    for width, column in zip(widths, columns, strict=False):
         draw.text((cursor_x, table_y0 + 8), column, font=get_font(12, bold=True), fill="#FFFFFF")
         cursor_x += width
 
@@ -808,7 +808,7 @@ def draw_table(
         fill = "#FBFCFD" if idx % 2 == 0 else "#F1F5F9"
         draw.rectangle((table_x0, row_y, x1 - 18, row_y + row_height), fill=fill)
         cursor_x = table_x0 + 8
-        for width, column in zip(widths, columns):
+        for width, column in zip(widths, columns, strict=False):
             value = getattr(row, column)
             fill_color = COLORS["text"]
             if column == score_column:

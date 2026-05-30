@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 
 from dashboard.constants import REQUIRED_COLUMNS
-from motor_expansao.dashboard.data import _prepare_dataframe, enrich_dashboard_data
 from fase1_bi_exports import (
     build_dashboard_dataset,
     build_hexagonos_mapa_sample,
@@ -11,6 +10,7 @@ from fase1_bi_exports import (
     read_enriched_dashboard,
     write_enriched_dashboard_partitioned,
 )
+from motor_expansao.dashboard.data import _prepare_dataframe, enrich_dashboard_data
 
 
 def _sample_source_df() -> pd.DataFrame:
@@ -260,7 +260,6 @@ def test_dataset_enriquecido_particionado_bate_com_runtime_para_uf(tmp_path):
     # contagem de linhas por particao
     assert len(materializado) == len(runtime_sp)
 
-    key_cols = ["hex_id", "score_priorizacao", "rank_brasil", "populacao_proxy", "faixa_oportunidade"]
     mat = materializado.sort_values("hex_id").reset_index(drop=True)
     rt = runtime_sp.sort_values("hex_id").reset_index(drop=True)
 

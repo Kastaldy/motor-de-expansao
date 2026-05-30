@@ -270,7 +270,7 @@ def avaliar_snapshot_ultra(
             h3.latlng_to_cell(float(lat), float(lng), 7)
             if pd.notna(lat) and pd.notna(lng)
             else pd.NA
-            for lat, lng in zip(units[lat_col], units[lng_col])
+            for lat, lng in zip(units[lat_col], units[lng_col], strict=False)
         ]
     else:
         units["hex_id"] = units[hex_col].astype("string")

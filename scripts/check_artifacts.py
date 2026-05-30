@@ -5,8 +5,8 @@ Apenas leitura de metadados — nao modifica nenhum arquivo.
 Uso: python scripts/check_artifacts.py
 Retorna exit code 1 se algum artefato critico estiver ausente.
 """
-from pathlib import Path
 import sys
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 

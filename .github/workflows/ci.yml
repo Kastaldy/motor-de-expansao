@@ -22,21 +22,15 @@ jobs:
       - name: Instalar dependencias
         run: pip install -e ".[dev]"
 
-      # ruff/mypy entram como steps de qualidade. ATENCAO: o repo tem divida de
-      # lint/tipos latente (nunca rodou no CI): 286 erros ruff + 23 mypy em src/,
-      # muitos em codigo de producao M1 (hex_enrichment.py, base_h3_brasil.py) e
-      # em testes de fixtures M1 (test_hex_enrichment_brasil.py). Zera-los exige
-      # refatoracao de producao + tocar semantica de testes M1 — fora do escopo
-      # de BLK-OPS-02 (trivial only) e proibido pelos guardrails. Por isso estes
-      # dois steps sao NAO-BLOQUEANTES (continue-on-error) ate o saneamento
-      # BLK-OPS-02b; sao informativos no log do CI sem reprovar o gate (CLAUDE.md
-      # §2: nenhum PR sobe com CI quebrado). Tornar bloqueante = passo de BLK-OPS-02b.
-      - name: Lint (ruff) — informativo ate BLK-OPS-02b
-        continue-on-error: true
+      # ruff/mypy sao steps de qualidade BLOQUEANTES desde BLK-OPS-02b: a divida
+      # latente de lint/tipos (286 ruff + 23 mypy) foi zerada naquele ciclo, sem
+      # alterar logica de scoring, artefatos M1 nem semantica de testes M1. A
+      # partir daqui qualquer regressao de lint/tipos reprova o gate (CLAUDE.md
+      # §2: nenhum PR sobe com CI quebrado).
+      - name: Lint (ruff)
         run: ruff check .
 
-      - name: Types (mypy src/) — informativo ate BLK-OPS-02b
-        continue-on-error: true
+      - name: Types (mypy src/)
         run: mypy src/
 
       - name: Testes (suite completa)

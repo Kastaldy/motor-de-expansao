@@ -15,8 +15,8 @@ import json
 import math
 import time
 import unicodedata
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import h3
 import numpy as np

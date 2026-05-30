@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import pytest
 
 from motor_expansao.dashboard.data import build_pop_cut_lookup, derive_pop_cut_columns
 

@@ -5,7 +5,6 @@ import pytest
 
 from motor_expansao.dashboard.data import lookup_hex_by_coord, parse_coordinate_input
 
-
 # ── parse_coordinate_input ────────────────────────────────────────────────────
 
 

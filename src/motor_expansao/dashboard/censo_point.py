@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Iterable
+from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
@@ -11,7 +11,6 @@ from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
-
 CRS_ORIGEM_CENSO = "EPSG:4674"
 METODO_RELATORIO_PONTUAL_CENSITARIO = "setor_censitario_intersecao_area_1p5km"
 RAIO_CENSITARIO_DEFAULT_KM = 1.5
@@ -19,9 +18,9 @@ RAIO_CENSITARIO_DEFAULT_KM = 1.5
 
 def _haversine_km(
     lat1: float,
-    lat2: "np.ndarray | float",
+    lat2: np.ndarray | float,
     lng1: float,
-    lng2: "np.ndarray | float",
+    lng2: np.ndarray | float,
 ) -> np.ndarray:
     radius_km = 6371.0
     lat1_r = np.radians(lat1)
@@ -201,7 +200,7 @@ def analisar_ponto_censitario_setores(
 
     geometry_col = "geometry_wkb" if "geometry_wkb" in candidates.columns else "geometry"
     records: list[dict[str, object]] = []
-    for idx, row in candidates.iterrows():
+    for _idx, row in candidates.iterrows():
         geom_wgs84 = _decode_geometry(row[geometry_col])
         if geom_wgs84 is None:
             continue

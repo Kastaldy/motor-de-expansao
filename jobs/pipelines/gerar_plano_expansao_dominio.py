@@ -18,7 +18,6 @@ import math
 import sys
 import unicodedata
 from pathlib import Path
-from typing import Optional
 
 import h3
 import numpy as np
@@ -94,7 +93,7 @@ def construir_clusters(df: pd.DataFrame) -> pd.DataFrame:
         return df.assign(cluster_id=pd.Series(dtype="str"))
 
     hex_ids = df["hex_id"].tolist()
-    muni_map: dict[str, str] = dict(zip(df["hex_id"], df["cod_municipio"]))
+    muni_map: dict[str, str] = dict(zip(df["hex_id"], df["cod_municipio"], strict=False))
     hex_set = set(hex_ids)
 
     parent: dict[str, str] = {h: h for h in hex_ids}
@@ -404,8 +403,8 @@ def gerar_plano_dominio(
 # =============================================================================
 
 def carregar_candidatos(
-    cidade: Optional[str] = None,
-    uf: Optional[str] = None,
+    cidade: str | None = None,
+    uf: str | None = None,
     min_score: float = MIN_SCORE_OPORTUNIDADE_RESIDUAL,
 ) -> pd.DataFrame:
     if not ENTRADA.exists():
