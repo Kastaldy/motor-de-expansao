@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 PLANO = ROOT / "data" / "outputs" / "plano_expansao_dominio.parquet"
 CARTEIRA = ROOT / "data" / "outputs" / "carteira_expansao_acionavel.parquet"
 PLANO_CP = ROOT / "data" / "outputs" / "plano_expansao_curto_prazo.parquet"

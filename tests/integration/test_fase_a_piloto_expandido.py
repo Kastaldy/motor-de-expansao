@@ -5,7 +5,7 @@ import math
 import pandas as pd
 import pytest
 
-from jobs.pipelines.fase_a_piloto_expandido import (
+from motor_expansao.pipelines.fase_a_piloto_expandido import (
     classificar_qualidade_join,
     parse_k_global,
     resumir_metricas_uf,

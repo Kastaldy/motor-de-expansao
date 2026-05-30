@@ -9,15 +9,13 @@ Nao altera nenhum artefato oficial do M1.
 
 from __future__ import annotations
 
-import sys
 from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[3]
 
 MERCADO_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
 CENSO_PATH = ROOT / "data" / "staging" / "censo2022_setores_calibrado.parquet"

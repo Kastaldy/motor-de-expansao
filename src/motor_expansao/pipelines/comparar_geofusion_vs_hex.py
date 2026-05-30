@@ -14,13 +14,11 @@ Nao altera nenhum artefato oficial do M1.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[3]
 
 PERF_HEX_PATH = ROOT / "data" / "staging" / "unidades_ultra_performance_hex.parquet"
 REPORT_PATH = ROOT / "data" / "reports" / "validacao_geofusion_vs_hex.md"

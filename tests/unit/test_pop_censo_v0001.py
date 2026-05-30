@@ -15,7 +15,7 @@ import pandas as pd
 import pytest
 from shapely.geometry import Polygon
 
-from jobs.pipelines.fase_a_censo2022_setores import (
+from motor_expansao.pipelines.fase_a_censo2022_setores import (
     POP_V002_CANDIDATES,
     _resolve_column,
     spatial_join_area_weighted,

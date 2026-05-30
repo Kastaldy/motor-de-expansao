@@ -7,7 +7,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from jobs.pipelines import normalizar_unidades_ultra as modulo
+from motor_expansao.pipelines import normalizar_unidades_ultra as modulo
 
 ROOT = Path(__file__).resolve().parents[2]
 ULTRA_RAW_PATH = ROOT / "data" / "ultra" / "Ultra.csv"

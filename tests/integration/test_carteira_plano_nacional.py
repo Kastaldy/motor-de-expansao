@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from jobs.pipelines import (
+from motor_expansao.pipelines import (
     enriquecer_outputs_residual_mercado,
     gerar_carteira_acionavel,
     gerar_plano_expansao_curto_prazo,

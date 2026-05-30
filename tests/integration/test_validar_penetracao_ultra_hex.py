@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from jobs.pipelines import validar_penetracao_ultra_hex as modulo
+from motor_expansao.pipelines import validar_penetracao_ultra_hex as modulo
 
 ROOT = Path(__file__).resolve().parents[2]
 # gerar_analise() le este parquet (PERF_HEX_PATH em validar_penetracao_ultra_hex.py)

@@ -17,7 +17,7 @@ import pandas as pd
 import psutil
 
 try:
-    from jobs.pipelines.fase_a_censo2022_setores import (
+    from motor_expansao.pipelines.fase_a_censo2022_setores import (
         DEFAULT_BASE_OFICIAL_PATH,
         DEFAULT_HEX_ROOT,
         NACIONAL_BASICO_PATH,

@@ -29,7 +29,7 @@ import h3
 import numpy as np
 import pandas as pd
 
-BASE_DIR = Path(__file__).resolve().parents[2]
+BASE_DIR = Path(__file__).resolve().parents[3]
 DATA_DIR = BASE_DIR / "data"
 
 DEFAULT_DASHBOARD_PATH = DATA_DIR / "outputs" / "hexagonos_brasil_dashboard.parquet"

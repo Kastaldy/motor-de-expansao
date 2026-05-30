@@ -29,7 +29,7 @@ from pathlib import Path
 import pandas as pd
 import pyarrow.parquet as pq
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 INPUT_PATH = ROOT / "data" / "outputs" / "oportunidades_expansao_hibrido.parquet"
 MERCADO_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
 OUTPUT_PARQUET = ROOT / "data" / "outputs" / "carteira_expansao_acionavel.parquet"

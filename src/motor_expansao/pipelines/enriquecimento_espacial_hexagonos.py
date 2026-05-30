@@ -9,15 +9,13 @@ Nao altera nenhum artefato oficial do M1.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from sklearn.neighbors import BallTree
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[3]
 
 HIBRIDO_PATH = ROOT / "data" / "outputs" / "oportunidades_expansao_hibrido.parquet"
 ESTRUTURAL_PATH = ROOT / "data" / "staging" / "brasil_estrutural.parquet"
