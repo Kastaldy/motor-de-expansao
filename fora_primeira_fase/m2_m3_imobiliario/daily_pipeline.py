@@ -17,19 +17,18 @@ Uso Prefect:
     prefect deployment run daily-pipeline/prod
 """
 
-import asyncio
 import argparse
+import asyncio
 from datetime import datetime
 from typing import NamedTuple
 
 import pandas as pd
 import structlog
-
-from jobs.scrapers.base_scraper import WellhubScraper, TotalpassScraper, SmartfitScraper
-from jobs.scrapers.imovel_scraper import rodar_coleta_imoveis
 from jobs.pipelines.geocoding import geocodificar_lote
 from jobs.pipelines.imovel_qualification import processar_lote_imoveis
 from jobs.pipelines.score_consolidado import gerar_ranking_oportunidades, imprimir_top_oportunidades
+from jobs.scrapers.base_scraper import SmartfitScraper, TotalpassScraper, WellhubScraper
+from jobs.scrapers.imovel_scraper import rodar_coleta_imoveis
 
 log = structlog.get_logger()
 

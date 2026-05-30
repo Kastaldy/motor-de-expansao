@@ -2,12 +2,11 @@
 api/main.py — Ponto de entrada da API FastAPI
 """
 
-import structlog
 import sentry_sdk
+import structlog
+from api.config import settings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
-from api.config import settings
 
 # --- Sentry ---
 if settings.SENTRY_DSN:

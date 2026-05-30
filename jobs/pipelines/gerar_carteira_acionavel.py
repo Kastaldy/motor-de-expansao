@@ -306,7 +306,7 @@ def _coerce_types(df: pd.DataFrame) -> pd.DataFrame:
 
 def _selecionar_base_carteira(df: pd.DataFrame) -> pd.DataFrame:
     municipio_keys = _resolve_municipio_keys(df)
-    base = _coerce_types(df[df["top_municipio"] == True].copy())
+    base = _coerce_types(df[df["top_municipio"].eq(True)].copy())  # invariante a `== True`; evita E712
     print(f"[carteira] Apos filtro top_municipio=True: {len(base):,} linhas")
 
     if base.empty:
@@ -402,11 +402,11 @@ def gerar_carteira() -> pd.DataFrame:
     carteira["rank_carteira_uf"] = carteira.groupby("uf", sort=False).cumcount() + 1
 
     n_total = len(carteira)
-    n_fora_top_mun = int((carteira["top_municipio"] != True).sum())
+    n_fora_top_mun = int((carteira["top_municipio"].ne(True)).sum())  # invariante a `!= True`; evita E712
     n_granular_invalido = int(
         (
             (carteira["modo_selecao_carteira"] == "granular_censitario")
-            & (carteira["top_hex_intraurbano"] != True)
+            & (carteira["top_hex_intraurbano"].ne(True))  # invariante a `!= True`; evita E712
         ).sum()
     )
     n_dup = int(carteira["hex_id"].duplicated().sum())

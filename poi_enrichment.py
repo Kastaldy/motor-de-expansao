@@ -9,7 +9,6 @@ Fontes gratuitas:
 import json
 import time
 from pathlib import Path
-from typing import Optional
 
 import h3
 import numpy as np
@@ -52,7 +51,7 @@ GOOGLE_VITALIDADE_TIPOS = {
 class POIEnricher:
     def __init__(self):
         self._google_key = settings.GOOGLE_MAPS_API_KEY
-        self._cache_academias: Optional[list[dict]] = None
+        self._cache_academias: list[dict] | None = None
 
     def _post_overpass(self, query: str, timeout: int, contexto: str) -> requests.Response:
         ultimo_erro = None

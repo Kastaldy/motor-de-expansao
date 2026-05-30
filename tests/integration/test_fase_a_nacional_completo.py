@@ -1,18 +1,15 @@
 from __future__ import annotations
 
-import math
-
 import pandas as pd
 import pytest
 
 from jobs.pipelines.fase_a_nacional_completo import (
-    TARGET_UFS,
     _UFS_JA_COBERTAS,
+    TARGET_UFS,
     calcular_qualidade_join_uf,
     carregar_k_global,
 )
 from jobs.pipelines.fase_a_piloto_expandido import (
-    classificar_qualidade_join,
     parse_k_global,
     resumir_metricas_uf,
 )
@@ -79,5 +76,5 @@ def test_parse_k_global_consistente_com_formato_do_metodo():
 
 def test_carregar_k_global_falha_sem_parquet(tmp_path):
     caminho_inexistente = tmp_path / "nao_existe.parquet"
-    with pytest.raises(Exception):
+    with pytest.raises(FileNotFoundError):
         carregar_k_global(caminho_inexistente)

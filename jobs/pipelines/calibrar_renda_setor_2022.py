@@ -47,7 +47,6 @@ NÃO altera M1 oficial (score_priorizacao, hex_score_estrutural, artefatos M1).
 from __future__ import annotations
 
 import argparse
-import json
 from datetime import date
 from pathlib import Path
 
@@ -316,7 +315,7 @@ def calibrar(
               f"spearman_cal={stats['spearman_calibrado']:.4f} [{'PASS' if stats['spearman_gate_pass'] else 'FAIL'}]")
 
     gates = diag["gates"]
-    print(f"\n=== GATES GLOBAIS ===")
+    print("\n=== GATES GLOBAIS ===")
     print(f"  amplitude > 50 todas capitais: {'PASS' if gates['amplitude_gt_50_todas_capitais'] else 'FAIL'}")
     print(f"  spearman > 0.6 todas capitais: {'PASS' if gates['spearman_gt_06_todas_capitais'] else 'FAIL'}")
     print(f"  coverage: {gates['coverage_calibrado']:.4f} [{'PASS' if gates['coverage_gate_pass'] else 'FAIL'}]")

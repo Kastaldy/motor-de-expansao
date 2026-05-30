@@ -8,8 +8,8 @@ import os
 import uuid
 from pathlib import Path
 
-import pytest
 import pandas as pd
+import pytest
 
 # Garantir modo de teste
 os.environ.setdefault("ENVIRONMENT", "test")

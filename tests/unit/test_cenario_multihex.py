@@ -7,7 +7,6 @@ import pytest
 import streamlit_app
 from motor_expansao.dashboard.data import agregar_cenario_multihex
 
-
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 def _df_base(**overrides) -> pd.DataFrame:

@@ -385,7 +385,7 @@ def _gerar_relatorio(df: pd.DataFrame, corr: dict, quartis: dict,
     linhas += [
         "## 1. Cobertura",
         f"- UFs com score censitário disponível: {', '.join(ufs_censo)}",
-        f"- UFs com score M1: todas as 27 UFs (cobertura nacional)",
+        "- UFs com score M1: todas as 27 UFs (cobertura nacional)",
         "",
     ]
 

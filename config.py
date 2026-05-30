@@ -13,8 +13,8 @@ from functools import lru_cache
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
 except ModuleNotFoundError:  # pragma: no cover - fallback para ambientes sem a dependencia
-    BaseSettings = None
-    SettingsConfigDict = dict
+    BaseSettings = None  # type: ignore[assignment,misc]  # fallback runtime legitimo: sem pydantic-settings, sentinela None
+    SettingsConfigDict = dict  # type: ignore[assignment,misc]  # fallback runtime legitimo: SettingsConfigDict vira dict
 
 
 def _coerce_env_value(raw: str, default):
@@ -96,7 +96,7 @@ if BaseSettings is not None:
 
 else:
 
-    class Settings:
+    class Settings:  # type: ignore[no-redef]  # fallback runtime legitimo: definicao alternativa quando pydantic-settings ausente
         # Banco
         DATABASE_URL = "postgresql+asyncpg://ultra:ultra123@localhost:5432/motor_expansao"
         DATABASE_URL_SYNC = "postgresql+psycopg2://ultra:ultra123@localhost:5432/motor_expansao"

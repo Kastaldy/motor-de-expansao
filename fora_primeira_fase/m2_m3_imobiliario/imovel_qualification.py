@@ -4,7 +4,6 @@ Aplica filtros de elegibilidade e calcula imovel_score para candidatos.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import pandas as pd
 import structlog
@@ -25,8 +24,8 @@ STATUS_DESCARTADO  = "descartado"
 @dataclass
 class ResultadoQualificacao:
     qualificado: bool
-    imovel_score: Optional[float]
-    motivo_desqualificacao: Optional[str]
+    imovel_score: float | None
+    motivo_desqualificacao: str | None
     status: str
     detalhes: dict = field(default_factory=dict)
 

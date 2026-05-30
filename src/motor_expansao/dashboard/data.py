@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
-from pathlib import Path
 
 from dashboard.constants import (
     BOOL_COLUMNS,
@@ -516,9 +517,9 @@ def apply_global_filters(
     if selected_join_quality and "qualidade_camada" in df.columns:
         mask &= df["qualidade_camada"].isin(selected_join_quality)
     if only_top_municipio and "top_municipio" in df.columns:
-        mask &= df["top_municipio"] == True
+        mask &= df["top_municipio"].eq(True)  # invariante a `== True`; evita E712 preservando semantica pandas/NaN
     if only_top_hex_intraurbano and "top_hex_intraurbano" in df.columns:
-        mask &= df["top_hex_intraurbano"] == True
+        mask &= df["top_hex_intraurbano"].eq(True)  # invariante a `== True`; evita E712 preservando semantica pandas/NaN
     return df.loc[mask]
 
 
@@ -730,10 +731,10 @@ _RENDA_RAIO_COLUMNS: tuple[tuple[str, str], ...] = (
 
 def haversine_km(
     lat1: float,
-    lat2: "np.ndarray | float",
+    lat2: np.ndarray | float,
     lng1: float,
-    lng2: "np.ndarray | float",
-) -> "np.ndarray":
+    lng2: np.ndarray | float,
+) -> np.ndarray:
     """Vectorized haversine distance (km) from scalar (lat1, lng1) to array (lat2, lng2)."""
     R = 6371.0
     lat1_r = np.radians(lat1)

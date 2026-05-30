@@ -10,7 +10,6 @@ from dashboard.constants import (
     DOMINIO_SCHEMA_MINIMO,
     HYBRID_LOAD_COLS,
     OVERLAY_IDS,
-    OVERLAYS,
     REQUIRED_COLUMNS,
     color_mode_available,
     overlay_available,
@@ -1490,9 +1489,7 @@ def test_build_unified_map_figure_censitario_vs_hibrido_cor_diferente():
     # No modo censitario hex1 (censo=90) deve ser verde; hex2 (censo=10) deve ser vermelho
     # No modo hibrido hex2 (residual=90) deve ser verde; hex1 (residual=10) deve ser vermelho
     color_hex1_censo = rendered_censo.loc[hex1, "fill_color"]
-    color_hex2_censo = rendered_censo.loc[hex2, "fill_color"]
     color_hex1_hibrido = rendered_hibrido.loc[hex1, "fill_color"]
-    color_hex2_hibrido = rendered_hibrido.loc[hex2, "fill_color"]
     # hex1 deve ser melhor no modo censitario do que no hibrido
     assert color_hex1_censo != color_hex1_hibrido
 
@@ -1505,8 +1502,9 @@ def test_render_mapa_territorial_e_exportado():
 
 
 def test_render_mapa_territorial_modo_m1_renderiza_mapa():
-    import h3
     import unittest.mock as mock
+
+    import h3
 
     hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
     df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
@@ -1557,8 +1555,9 @@ def test_render_mapa_territorial_modo_indisponivel_exibe_aviso():
 
 
 def test_render_mapa_territorial_dominio_sem_dados_exibe_info():
-    import h3
     import unittest.mock as mock
+
+    import h3
 
     hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
     df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
@@ -1617,8 +1616,9 @@ def test_render_carteira_e_plano_e_exportado():
 
 def test_render_mapa_territorial_com_city_summary_renderiza_expanders():
     """Passando city_summary, render_mapa_territorial deve criar expanders abaixo do mapa."""
-    import h3
     import unittest.mock as mock
+
+    import h3
 
     hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
     df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
@@ -1708,8 +1708,9 @@ def test_score_priorizacao_invariante_enrich_e_carteira():
 
 def test_map_point_limit_respeitado_no_mapa_hibrido():
     """build_hybrid_map_figure nao deve renderizar mais de MAP_POINT_LIMIT pontos."""
-    from dashboard.constants import MAP_POINT_LIMIT
     import h3
+
+    from dashboard.constants import MAP_POINT_LIMIT
 
     rows = []
     base_lat, base_lng = -23.55, -46.63
@@ -1831,7 +1832,7 @@ def test_build_ultra_presence_map_nao_usa_h3hexagonlayer():
     assert n == 2
     layer_types = [type(layer).__name__ for layer in deck.layers]
     assert "H3HexagonLayer" not in str(deck.to_json())
-    assert any("IconLayer" in t or "icon" in str(layer.type).lower() for layer, t in zip(deck.layers, layer_types))
+    assert any("IconLayer" in t or "icon" in str(layer.type).lower() for layer, t in zip(deck.layers, layer_types, strict=False))
 
 
 def test_build_ultra_presence_map_filtra_por_uf():
@@ -2210,8 +2211,8 @@ def test_render_analise_pontual_com_coordenada_exibe_kpis():
         streamlit_app.render_analise_pontual((lat, lng), df)
 
     labels = [c.lower() for c in metric_calls]
-    assert any("hex" in l for l in labels)
-    assert any("residual" in l or "score" in l for l in labels)
+    assert any("hex" in label for label in labels)
+    assert any("residual" in label or "score" in label for label in labels)
 
 
 def test_render_analise_pontual_exportado_via_streamlit_app():
@@ -2478,7 +2479,6 @@ def test_analisar_entorno_ponto_sem_colunas_pop_renda_sinaliza_ausente():
 # Testes do Bloco 9: score_band_to_color e padronizacao visual
 
 def test_score_band_to_color_nan_retorna_cinza():
-    import math
     assert streamlit_app.score_band_to_color(float("nan")) == [120, 120, 140, 70]
     assert streamlit_app.score_band_to_color(None) == [120, 120, 140, 70]
 
@@ -2742,6 +2742,7 @@ def test_build_multihex_analysis_map_com_coordenada_adiciona_raio():
 def test_render_analise_pontual_com_multihex_exibe_mapa_e_kpis():
     """render_analise_pontual com multihex_ids deve chamar pydeck_chart e markdown de cabecalho."""
     import unittest.mock as mock
+
     import h3
 
     lat, lng = -23.55, -46.63
@@ -2790,6 +2791,7 @@ def test_render_analise_pontual_multihex_sem_hexes_validos_exibe_info():
 def test_render_analise_pontual_multihex_com_coordenada_ativa_mostra_referencia():
     """Com multihex_ids e search_pin, caption deve mencionar coordenada de referencia."""
     import unittest.mock as mock
+
     import h3
 
     lat, lng = -23.55, -46.63
@@ -2912,6 +2914,7 @@ def test_render_multihex_paste_com_newlines_aceito():
 def test_render_analise_pontual_single_point_exibe_hex_id():
     """render_analise_pontual no modo single-point deve chamar st.code com o hex_id do ponto."""
     import unittest.mock as mock
+
     import h3
 
     lat, lng = -23.55, -46.63
@@ -2946,6 +2949,7 @@ def test_render_analise_pontual_single_point_exibe_hex_id():
 def test_render_analise_pontual_single_point_botao_adicionar_ao_cenario():
     """render_analise_pontual no modo single-point deve chamar st.button para adicionar ao cenario."""
     import unittest.mock as mock
+
     import h3
 
     lat, lng = -23.55, -46.63
@@ -3264,6 +3268,7 @@ def test_render_relatorio_pontual_censitario_sem_coordenada_exibe_info():
 
 def test_render_relatorio_pontual_censitario_sem_base_setorial_exibe_warning():
     import unittest.mock as mock
+
     import h3
 
     lat, lng = -15.7939, -47.8828
@@ -3293,6 +3298,7 @@ def test_render_relatorio_pontual_censitario_sem_base_setorial_exibe_warning():
 
 def test_render_relatorio_pontual_censitario_com_coordenada_gera_mapa_e_downloads():
     import unittest.mock as mock
+
     import h3
 
     lat, lng = -15.7939, -47.8828

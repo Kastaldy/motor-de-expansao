@@ -2,33 +2,45 @@
 
 ## Bloco atual
 
-ID: BLK-OPS-02
-Nome: CI completo + build via registry (fora da prod)
-Status: aprovado com ressalvas (QA 2026-05-29 19:01 — CI completo verde no runner limpo 460 passed/73 skipped/0 failed no commit 4af99de run 26664015146; baseline local 532 passed/1 skipped intacto; M1/score/artefatos NÃO tocados; ressalvas aprovadas: ruff/mypy informativo→BLK-OPS-02b, Docker Publish verificado-na-fusão). Liberado para MERGE humano.
-Tipo: operação / infraestrutura
+ID: BLK-OPS-02b
+Nome: Saneamento ruff/mypy (violações que exigem refatoração)
+Status: em execução
+Tipo: refatoração / qualidade
 Criticidade: alta
-Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA → [merge humano]
-Skill atual: QA (concluído)
-Próxima Skill: MERGE humano (fechamento) — depois acompanhar 1º run docker-publish.yml no push à main
-Gate de aprovação humana: APROVADO POR Felipe Silva EM 2026-05-29 (plano ajustado: PR de ciclo + .gitignore fixtures + ruff/mypy escopo limitado/BLK-OPS-02b)
-Branch do ciclo: ciclo/BLK-OPS-02
+Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
+Skill atual: QA / Quality Analyzer (concluído)
+Status execução: aprovado
+Veredito QA: APROVADO (2026-05-29 20260529-205955) — ruff 0, mypy 0, pytest 532/1, import ok, 4 hashes M1 idênticos, parâmetros canônicos intactos. Handoff em context/handoff.md + snapshot context/handoff/20260529-205955-qa.md.
+Próxima Skill: Fechamento manual (orquestrador commita por path e encerra o ciclo)
+Gate de aprovação humana: APROVADO POR Felipe Silva EM 2026-05-29 (plano de 13 passos como está; F601/F821/mypy corrigidos, B019 suprimido com # noqa documentado, CI bloqueante ao fim; prova anti-regressão pytest 532/1 + hashes M1 a cada passo).
+Branch do ciclo: ciclo/BLK-OPS-02b
 dry_run: false
 
 ## Objetivo
-O gate do `main` deve rodar a suíte completa de testes (hoje só 2 arquivos + smoke import)
-e o deploy deve usar imagem buildada no CI e empurrada para um registry (ex.: GHCR) — o
-servidor faz `pull`, não `build`.
+Zerar as violações ruff/mypy descobertas em BLK-OPS-02 (286 ruff + 23 mypy), preferindo correção
+a supressão, e tornar os steps ruff/mypy bloqueantes no CI — sem alterar lógica de scoring,
+artefatos M1 ou semântica de testes M1, e mantendo `pytest -q` em 532 passed/1 skipped (zero regressão).
 
 ## Paths candidatos do ciclo (commit por path no fechamento)
-- Código/infra: `.github/workflows/ci.yml`, novo workflow de build/push, `tests/fixtures/` (se criadas), `docs/deploy.md`.
-- Controle: `tasks/current_task.md`, `tasks/completed.md`, `tasks/backlog.md` (marcar BLK-OPS-02), `context/handoff.md`, `context/handoff/`.
-- Pré-sujeira `M tasks/backlog.md`: edição interna ao próprio bloco BLK-OPS-02 (nota de verificação externa) — é path do ciclo, será incluída. NÃO arrastar `PRD.md` nem qualquer arquivo não relacionado.
+- Código/infra: a serem listados pelo Planner após mapear as violações (produção `src/`, dashboard,
+  `jobs/`, legado `fora_primeira_fase/`, testes, `pyproject.toml`/config de lint, `.github/workflows/ci.yml`).
+- Controle: `tasks/current_task.md`, `tasks/completed.md`, `tasks/backlog.md` (marcar BLK-OPS-02b),
+  `context/handoff.md`, `context/handoff/`.
+- NÃO arrastar `PRD.md` nem edições não relacionadas.
 
-## Guardrails ativos
-- Fora de escopo: alterar lógica de scoring, alterar artefatos M1, executar deploy no VPS.
-- Fixtures de teste NÃO contêm dados reais de Ultra/Skyfit/Wellhub.
-- Deploy efetivo no VPS é passo humano, fora deste bloco.
-- CLAUDE.md §6: nenhum comando no VPS sem confirmação humana por comando (não aplicável a este bloco, que é CI/build, mas vale como guardrail permanente).
+## Guardrails ativos (CRÍTICOS para este bloco)
+- Toca CÓDIGO DE PRODUÇÃO M1 (`hex_enrichment.py`, `base_h3_brasil.py`) — additivo/mecânico, mas
+  exige prova anti-regressão a cada passo.
+- Fora de escopo: alterar lógica de scoring/pesos, alterar artefatos M1, mudar semântica de testes
+  M1 (F601 só pode ser tocado provando invariância do fixture).
+- Preferir correção a supressão; `# noqa`/`# type: ignore` SEMPRE documentado quando o fix for arriscado.
+- Critério de aceite: `ruff check .` → 0; `mypy src/` → 0; steps bloqueantes no CI; `pytest -q` mantém
+  532 passed/1 skipped; hashes dos Parquets M1 inalterados.
+- CLAUDE.md §6: nenhum comando no VPS.
+
+## Gate de aprovação humana
+OBRIGATÓRIO antes do Builder (criticidade Alta). Planner apresenta plano; orquestrador PARA e aguarda.
 
 ## Nota de orquestração
-Este ciclo NÃO altera a própria orquestração (run-cycle.md / prompts / esteira) → NÃO dispara dry-run pós-merge.
+Este ciclo altera `.github/workflows/ci.yml` (tornar ruff/mypy bloqueantes) mas NÃO altera a própria
+orquestração (run-cycle.md / prompts / esteira) → NÃO dispara dry-run pós-merge.

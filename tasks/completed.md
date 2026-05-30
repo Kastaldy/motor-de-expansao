@@ -648,3 +648,61 @@ Criticidade: alta. Esteira: Block Orchestrator → Planner → [aprovação huma
 ### Nota de orquestração
 Ciclo de infra/CI — NÃO altera a própria orquestração (run-cycle.md / prompts / esteira). `dry_run: false`.
 Portanto NÃO dispara dry-run pós-merge (Passo 6.c).
+
+---
+
+## BLK-OPS-02b — Saneamento ruff/mypy (violações que exigem refatoração)
+
+Data: 2026-05-29
+Veredito: APROVADO pelo QA via /run-cycle (esteira Alta completa: Block Orchestrator → Planner →
+[aprovação humana] → Builder → QA). Gate humano: APROVADO POR Felipe Silva EM 2026-05-29.
+Branch: ciclo/BLK-OPS-02b (a partir de `main` 30237a0).
+
+### Objetivo
+Zerar as 286 violações ruff + 23 mypy descobertas (e rebaixadas a informativas) em BLK-OPS-02,
+preferindo correção a supressão, e tornar os steps ruff/mypy bloqueantes no CI — sem alterar
+scoring, artefatos M1 ou semântica de testes M1, mantendo pytest 532/1.
+
+### O que foi feito (plano de 13 passos, prova anti-regressão a cada toque em M1)
+- PASSO 1: `pyproject.toml` migrou `[tool.ruff]`→`[tool.ruff.lint]` (set de regras IDÊNTICO; nenhuma
+  regra desabilitada, mypy não afrouxado — verificado pelo QA).
+- PASSO 2: `ruff check . --fix` (219 auto-fixes: I001/F401/UP045/UP037/F541/UP035/E401) em ~30+ arquivos.
+  O --fix removeu re-exports usados por testes (`normalizar_0_100`/`normalizar_serie`/`build_map_figure`);
+  reintroduzidos com `# noqa: F401` documentado (consumidos por `mock.patch(...pages.build_map_figure)` etc.).
+- PASSOS 3-4: triviais ruff (E712/B905/F841/B007/E731/E741/B017/B023) e mypy baixo risco fora de M1.
+- PASSO 5: F821 `pdk` em `pages.py` corrigido (import sob TYPE_CHECKING; com `from __future__ import
+  annotations` não havia NameError de runtime, mas o nome era indefinido p/ ruff/mypy).
+- PASSO 6: `base_h3_brasil.py` generator anotado `Iterator[list[str]]` (cede list[str], não str —
+  desvio correto do literal do plano, validado pelo QA).
+- PASSO 7: `hex_enrichment.py` — Optional explícito, anotação de dict, `# type: ignore[no-redef]` no
+  fallback `try/except ModuleNotFoundError` de import (não é duplicação real).
+- PASSO 8: B019 lru_cache em método (`ibge_censo.py` ×3) — `# noqa: B019` documentado (decisão humana:
+  suprimir, não refatorar — caches de rede no grafo de produção M1, refator arriscaria coleta M1).
+- PASSO 9 (isolado, por último): F601 em `tests/integration/test_hex_enrichment_brasil.py` — removida
+  SÓ a 1ª `"pop_total": 0.0,` (código morto sobrescrito) de cada um dos 15 dicts. Prova de invariância:
+  em literal Python a última chave vence, o valor real (2ª ocorrência) já era o entregue → dict idêntico.
+- PASSO 11: removidos os 2 `continue-on-error: true` dos steps ruff/mypy do `ci.yml` (só após 0/0).
+
+### Validações (re-executadas pelo QA, evidência própria — não o log do Builder)
+- `ruff check .` → All checks passed! (0 erros)
+- `mypy src/` → Success: no issues found in 18 source files (0 erros)
+- `python -m pytest -q` → 532 passed, 1 skipped, 9 warnings (zero regressão vs baseline)
+- `python -c "import streamlit_app"` → import ok
+- 4 hashes SHA256 M1 IDÊNTICOS à baseline (não-mutação provada): brasil_priorizados, brasil_estrutural,
+  hexagonos_brasil_oportunidades (data/staging/), hexagonos_brasil_dashboard (data/outputs/).
+
+### Guardrails verificados (QA)
+- Parâmetros canônicos intactos: grep no diff de scoring/constants/config por 0.40/0.60/H3_RESOLUTION/
+  DIST_MIN_ULTRA_KM/RENDA_MIN/score_priorizacao/hex_score_estrutural = VAZIO.
+- `core/scoring.py` e `core/constants.py` NÃO aparecem no diff (lógica de score intocada).
+  Produção M1 (hex_enrichment.py, base_h3_brasil.py) tocada SÓ em anotação/type:ignore — zero runtime.
+- Sem mass-suppress; cada noqa/type:ignore com comentário justificando.
+- Commit isolado por path; nenhum PRD.md/data/secrets arrastado (status verificado limpo).
+- Nenhum comando no VPS (CLAUDE.md §6).
+
+### Nota de orquestração
+Ciclo altera `.github/workflows/ci.yml` (ruff/mypy bloqueantes) mas NÃO altera a própria orquestração
+(run-cycle.md / prompts / esteira). `dry_run: false` → NÃO dispara dry-run pós-merge.
+
+### Pendência de fechamento (passo humano)
+- Merge humano `ciclo/BLK-OPS-02b` → `main`. Pós-merge: o CI agora REPROVA em violação de ruff/mypy.

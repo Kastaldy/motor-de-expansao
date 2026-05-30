@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from io import BytesIO
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -37,10 +38,12 @@ _SECTOR_PALETTE = [
 
 
 def _font(size: int = 12) -> ImageFont.ImageFont:
+    # truetype() devolve FreeTypeFont (nao subclasse de ImageFont nos stubs Pillow);
+    # cast preserva runtime e mantem a assinatura aceita por _draw_text/_text_width.
     try:
-        return ImageFont.truetype("arial.ttf", size)
+        return cast(ImageFont.ImageFont, ImageFont.truetype("arial.ttf", size))
     except OSError:
-        return ImageFont.load_default()
+        return cast(ImageFont.ImageFont, ImageFont.load_default())
 
 
 def _iter_polygons(geom: BaseGeometry) -> Iterable[Polygon]:

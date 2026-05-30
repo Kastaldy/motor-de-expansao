@@ -4,10 +4,10 @@ Criação do schema inicial: hexagonos, concorrentes, imoveis, oportunidades,
 decisoes_imovel, pipeline_runs. Habilita extensão PostGIS.
 """
 
-from alembic import op
 import sqlalchemy as sa
-from geoalchemy2 import Geometry
 import sqlalchemy.dialects.postgresql as pg
+from alembic import op
+from geoalchemy2 import Geometry
 
 revision = "001"
 down_revision = None

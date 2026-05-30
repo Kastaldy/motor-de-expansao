@@ -8,10 +8,10 @@ Valida conectividade e retorno real de:
   4. Nominatim (geocodificação Goiânia)
 """
 
+import json
 import os
 import sys
 import time
-import json
 
 # Forçar UTF-8 no console Windows
 if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
@@ -150,7 +150,8 @@ osm    = resultados.get("osm", {})
 google = resultados.get("google", {})
 nomi   = resultados.get("nominatim", {})
 
-icon = lambda ok: "OK" if ok else "FALHOU"
+def icon(ok):
+    return "OK" if ok else "FALHOU"
 
 if ibge.get("ok"):
     if ibge.get("sigiloso"):

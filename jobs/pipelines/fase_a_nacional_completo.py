@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from datetime import date
 from pathlib import Path
 
@@ -22,9 +21,7 @@ from jobs.pipelines.calibrar_renda_setor_2022 import (
     percentile_in_distribution,
 )
 from jobs.pipelines.fase_a_piloto_expandido import (
-    classificar_qualidade_join,
     parse_k_global,
-    resumir_distribuicao,
     resumir_metricas_uf,
 )
 from jobs.pipelines.validar_fase_a_censo2022 import (

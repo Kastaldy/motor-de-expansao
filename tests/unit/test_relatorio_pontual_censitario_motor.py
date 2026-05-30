@@ -13,7 +13,6 @@ from motor_expansao.dashboard.censo_point import (
     analisar_ponto_censitario_setores,
 )
 
-
 LAT_C = -23.55
 LNG_C = -46.63
 

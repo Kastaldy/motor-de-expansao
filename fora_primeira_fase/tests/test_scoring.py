@@ -8,17 +8,16 @@ Regras testadas:
 - Comportamento com inputs extremos e nulos
 """
 
-import pytest
 import pandas as pd
-
+import pytest
 from imovel_qualification import (
-    qualificar_imovel,
-    processar_lote_imoveis,
-    _score_area,
-    _score_preco_m2,
-    STATUS_QUALIFICADO,
     STATUS_DESCARTADO,
+    STATUS_QUALIFICADO,
+    _score_area,
+    processar_lote_imoveis,
+    qualificar_imovel,
 )
+
 from hex_enrichment import (
     calcular_hex_score,
     normalizar_0_100,
@@ -26,9 +25,10 @@ from hex_enrichment import (
 from motor_expansao.core.scoring import (
     _calcular_percentil_nacional,
     calcular_ajuste_executivo,
+)
+from motor_expansao.core.scoring import (
     calcular_hex_score_estrutural as calcular_hex_score_estrutural_core,
 )
-
 
 # ============================================================
 #  FIXTURES

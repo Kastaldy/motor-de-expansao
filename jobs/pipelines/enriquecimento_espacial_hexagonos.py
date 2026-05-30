@@ -79,7 +79,7 @@ def calc_comp_metrics(
             return_distance=True,
             sort_results=False,
         )
-        for i, (idxs, dr) in enumerate(zip(indices, dists_rad)):
+        for i, (idxs, dr) in enumerate(zip(indices, dists_rad, strict=False)):
             if len(idxs) == 0:
                 continue
             gi = start + i
@@ -188,7 +188,7 @@ def calc_ultra_metrics(
             return_distance=True,
             sort_results=False,
         )
-        for i, (idxs, dr) in enumerate(zip(indices, dists_rad)):
+        for i, (idxs, dr) in enumerate(zip(indices, dists_rad, strict=False)):
             if len(idxs) == 0:
                 continue
             gi = start + i

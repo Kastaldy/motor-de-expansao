@@ -2,9 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import pandas as pd
 import streamlit as st
+
+if TYPE_CHECKING:
+    import pydeck as pdk  # so para type hints (anotacao `deck: "pdk.Deck"`); sem custo de import em runtime
 
 from dashboard.constants import (
     COLOR_MODE_DEFAULT,
@@ -20,11 +24,17 @@ from dashboard.constants import (
     color_mode_available,
 )
 from dashboard.utils import format_int, format_pct, format_score
+from motor_expansao.dashboard.censo_map import render_mapa_censitario_estatico_png
+from motor_expansao.dashboard.censo_point import (
+    RAIO_CENSITARIO_DEFAULT_KM,
+    analisar_ponto_censitario_setores,
+)
+from motor_expansao.dashboard.censo_report import render_downloads_relatorio_censitario
 from motor_expansao.dashboard.components import (
     _build_multihex_selection_layer,
-    _carteira_prioridade_color,
     _category_options,
     _sort_carteira_by_m1,
+    build_analise_pontual_map,
     build_business_answers,
     build_dominio_map_figure,
     build_faixa_comparison_figure,
@@ -37,8 +47,9 @@ from motor_expansao.dashboard.components import (
     build_hybrid_top_hexes_table,
     build_indicator_snapshot,
     build_kpis,
-    build_map_figure,
+    build_map_figure,  # noqa: F401 - re-exportado: testes patcham `pages.build_map_figure`
     build_map_scope_caption,
+    build_multihex_analysis_map,
     build_ranking_table,
     build_residual_by_uf_figure,
     build_residual_heatmap_figure,
@@ -50,21 +61,15 @@ from motor_expansao.dashboard.components import (
     build_top_city_figure,
     build_top_uf_figure,
     build_uf_metric_figure,
-    build_analise_pontual_map,
-    build_multihex_analysis_map,
     build_ultra_network_kpis,
     build_ultra_presence_map,
     build_unified_map_figure,
     filter_points_to_radius,
     render_answer_card,
-    render_censo_score_legend,
     render_competitor_legend,
     render_dominio_tese_legend,
-    render_faixa_legend,
     render_geographic_source_legend,
     render_pop_cut_legend,
-    render_residual_legend,
-    render_residual_score_legend,
     render_score_bands_legend,
     render_ultra_legend,
     style_ranking_table,
@@ -77,13 +82,6 @@ from motor_expansao.dashboard.data import (
     parse_hex_ids_from_text,
     resolve_cod_municipio_from_geo_dir,
 )
-from motor_expansao.dashboard.censo_map import render_mapa_censitario_estatico_png
-from motor_expansao.dashboard.censo_point import (
-    RAIO_CENSITARIO_DEFAULT_KM,
-    analisar_ponto_censitario_setores,
-)
-from motor_expansao.dashboard.censo_report import render_downloads_relatorio_censitario
-
 
 RESIDUAL_SORT_COLUMNS = [
     "oferta_efetiva_disponivel",
@@ -535,8 +533,8 @@ def render_hex_search_result(
         st.success("Hexagono visivel no recorte atual.")
 
     cols = st.columns(4)
-    cols[0].metric("Score M1", format_score(result.get("score_priorizacao")))
-    cols[1].metric("Rank Brasil", format_int(result.get("rank_brasil")) if result.get("rank_brasil") is not None else "-")
+    cols[0].metric("Score M1", format_score(cast(float, result.get("score_priorizacao"))))
+    cols[1].metric("Rank Brasil", format_int(cast("int | float", result.get("rank_brasil"))) if result.get("rank_brasil") is not None else "-")
     pop_val = result.get("pop_total_setor_2022") or result.get("pop_total") or result.get("populacao_proxy")
     cols[2].metric("Populacao", format_int(pop_val) if pop_val is not None else "-")
     renda_val = result.get("renda_per_capita_setor_2022_calibrada") or result.get("renda_per_capita")
@@ -756,7 +754,7 @@ def render_modelo_hibrido(
     card_cols = st.columns(3)
     with card_cols[0]:
         st.markdown(
-            f"""
+            """
             <div class="model-card">
                 <span class="badge" style="background:rgba(25,183,255,0.18);color:#19B7FF;border:1px solid rgba(25,183,255,0.3);">M1 — OFICIAL</span>
                 <h4>Score de Priorizacao Municipal</h4>
@@ -771,7 +769,7 @@ def render_modelo_hibrido(
         )
     with card_cols[1]:
         st.markdown(
-            f"""
+            """
             <div class="model-card">
                 <span class="badge" style="background:rgba(34,197,94,0.18);color:#22C55E;border:1px solid rgba(34,197,94,0.3);">CENSO 2022 — EXPERIMENTAL</span>
                 <h4>Score Intraurbano Censitario</h4>
@@ -786,7 +784,7 @@ def render_modelo_hibrido(
         )
     with card_cols[2]:
         st.markdown(
-            f"""
+            """
             <div class="model-card">
                 <span class="badge" style="background:rgba(255,77,141,0.18);color:#FF4D8D;border:1px solid rgba(255,77,141,0.3);">HIBRIDO — OPERACIONAL</span>
                 <h4>Fila Operacional Combinada</h4>
@@ -880,7 +878,7 @@ def render_modelo_hibrido(
     flag_cols = st.columns(2)
     with flag_cols[0]:
         st.markdown(
-            f"""
+            """
             <div class="section-card">
                 <h4>Flags de qualidade da camada censitaria</h4>
                 <p><strong>qualidade_join_uf</strong>: A (&le;2%), B (2-5%), C (&gt;5% — so M1).</p>
@@ -894,7 +892,7 @@ def render_modelo_hibrido(
         )
     with flag_cols[1]:
         st.markdown(
-            f"""
+            """
             <div class="section-card">
                 <h4>Quando usar cada modelo</h4>
                 <p><strong>Decidir qual municipio abrir</strong>: usar rank_municipio_uf e top_municipio (M1).</p>
@@ -1752,8 +1750,8 @@ def _render_unified_legend(
     color_mode: str,
     enabled_overlays: list[str],
     *,
-    competitors_df: "pd.DataFrame | None" = None,
-    ultra_df: "pd.DataFrame | None" = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
 ) -> None:
     if color_mode == "m1":
         render_score_bands_legend("Score M1 (score_priorizacao)")
@@ -1782,7 +1780,7 @@ def render_carteira_e_plano(
     *,
     selected_ufs: list[str],
     selected_cities: list[str],
-    pop_cut_lookup: "pd.DataFrame | None" = None,
+    pop_cut_lookup: pd.DataFrame | None = None,
 ) -> None:
     """Carteira de Expansao e Plano Curto Prazo em tabs internas."""
     inner = st.tabs(["Carteira de Expansao", "Plano Curto Prazo"])
@@ -1798,12 +1796,12 @@ def render_carteira_e_plano(
 
 
 def _render_analise_pontual_multihex(
-    search_pin: "tuple[float, float] | None",
-    df: "pd.DataFrame",
-    multihex_ids: "list[str]",
+    search_pin: tuple[float, float] | None,
+    df: pd.DataFrame,
+    multihex_ids: list[str],
     *,
-    competitors_df: "pd.DataFrame | None" = None,
-    ultra_df: "pd.DataFrame | None" = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
     raio_km: float = 1.6,
 ) -> None:
     """Renders aggregated multi-hex analysis inside Analise Pontual de Entorno.
@@ -1822,8 +1820,8 @@ def _render_analise_pontual_multihex(
         )
         return
 
-    lat_ref: "float | None" = search_pin[0] if search_pin else None
-    lng_ref: "float | None" = search_pin[1] if search_pin else None
+    lat_ref: float | None = search_pin[0] if search_pin else None
+    lng_ref: float | None = search_pin[1] if search_pin else None
 
     st.markdown(f"**Cenario multi-hex — {n} hex(es) selecionado(s)**")
     if search_pin is not None:
@@ -1842,10 +1840,10 @@ def _render_analise_pontual_multihex(
         "Nao altera score_priorizacao, carteira, plano ou artefatos do M1."
     )
 
-    def _fi(v: "float | None") -> str:
+    def _fi(v: float | None) -> str:
         return format_int(int(v)) if v is not None else "-"
 
-    def _fs(v: "float | None") -> str:
+    def _fs(v: float | None) -> str:
         return f"{v:.1f}" if v is not None else "-"
 
     k1, k2, k3, k4 = st.columns(4)
@@ -1878,12 +1876,14 @@ def _render_analise_pontual_multihex(
         st.pydeck_chart(multihex_map, width="stretch", height=420)
 
     if search_pin is not None:
+        # dentro de `search_pin is not None` lat_ref/lng_ref sao garantidos nao-None (= search_pin[0]/[1]);
+        # cast informa o mypy sem mudar runtime.
         competitors_raio = filter_points_to_radius(
-            competitors_df, lat_ref, lng_ref, raio_km,
+            competitors_df, cast(float, lat_ref), cast(float, lng_ref), raio_km,
             required_columns={"rede", "nome_unidade"},
         )
         ultra_raio = filter_points_to_radius(
-            ultra_df, lat_ref, lng_ref, raio_km,
+            ultra_df, cast(float, lat_ref), cast(float, lng_ref), raio_km,
             required_columns={"nome_unidade"},
         )
         if not competitors_raio.empty:
@@ -2040,7 +2040,9 @@ def render_analise_pontual(
     k7.metric("Concorrentes no raio", resultado["n_concorrentes"])
     k8.metric("Ultra no raio", resultado["n_ultra"])
 
-    _fmt_int_none = lambda v: format_int(int(v)) if v is not None else "-"
+    def _fmt_int_none(v):
+        return format_int(int(v)) if v is not None else "-"
+
     consumo_conc = resultado.get("consumo_concorrentes_raio")
     consumo_ultra_val = resultado.get("consumo_ultra_raio")
     if consumo_conc is not None or consumo_ultra_val is not None:
@@ -2131,8 +2133,8 @@ def render_analise_pontual(
 
 
 def _render_multihex_controls(
-    active_hex_id: "str | None",
-    multihex_ids: "list[str]",
+    active_hex_id: str | None,
+    multihex_ids: list[str],
 ) -> None:
     """Renderiza controles do cenario multi-hex: incluir, remover, limpar e colar lista."""
     st.markdown("##### Cenario Multi-Hex")
@@ -2195,9 +2197,9 @@ def _render_multihex_controls(
                         st.session_state["multihex_cenario"] = [h for h in st.session_state["multihex_cenario"] if h != hid]
 
 
-def _render_multihex_kpis(df: "pd.DataFrame", multihex_ids: "list[str]") -> None:
+def _render_multihex_kpis(df: pd.DataFrame, multihex_ids: list[str]) -> None:
     """Exibe KPIs agregados e tabela dos hexes do cenario multi-hex."""
-    from dashboard.utils import format_int, format_score
+    from dashboard.utils import format_int
 
     agg = agregar_cenario_multihex(df, multihex_ids)
     n = agg["qtd_hexes"]
@@ -2207,13 +2209,13 @@ def _render_multihex_kpis(df: "pd.DataFrame", multihex_ids: "list[str]") -> None
 
     st.markdown(f"**Potencial agregado — {n} hex(es) selecionado(s)**")
 
-    def _fmt_int(v: "float | None") -> str:
+    def _fmt_int(v: float | None) -> str:
         return format_int(int(v)) if v is not None else "-"
 
-    def _fmt_score(v: "float | None") -> str:
+    def _fmt_score(v: float | None) -> str:
         return f"{v:.1f}" if v is not None else "-"
 
-    def _fmt_brl(v: "float | None") -> str:
+    def _fmt_brl(v: float | None) -> str:
         return f"R$ {format_int(int(v))}" if v is not None else "-"
 
     c1, c2, c3 = st.columns(3)
@@ -2289,7 +2291,7 @@ def _render_multihex_kpis(df: "pd.DataFrame", multihex_ids: "list[str]") -> None
         )
 
 
-def _extract_click_coord_from_selection(map_event) -> "tuple[float, float] | None":
+def _extract_click_coord_from_selection(map_event) -> tuple[float, float] | None:
     """Extract (lat, lng) from a pydeck on_select map event.
 
     Returns None when the event is absent, the selection is empty, or the
@@ -2361,7 +2363,8 @@ def _resolve_censo_context(
 
 
 def _format_brl(value: object) -> str:
-    return f"R$ {format_int(int(value))}" if value is not None and pd.notna(value) else "-"
+    # guard `pd.notna(value)` garante valor numerico; cast satisfaz a overload de int() sem mudar runtime.
+    return f"R$ {format_int(int(cast(float, value)))}" if value is not None and pd.notna(value) else "-"
 
 
 def _render_setores_censitarios_table(setores: pd.DataFrame) -> None:
@@ -2515,10 +2518,10 @@ def render_relatorio_pontual_censitario(
 
 @st.fragment
 def render_mapa_pydeck_fragment(
-    deck: "pdk.Deck",
+    deck: pdk.Deck,
     n_points: int,
-    selected_ufs: "list[str]",
-    multihex_ids: "list[str]",
+    selected_ufs: list[str],
+    multihex_ids: list[str],
 ) -> None:
     """Fragmento isolado para renderizacao do pydeck_chart e captura de clique.
 
@@ -2539,11 +2542,11 @@ def render_mapa_pydeck_fragment(
         deck, on_select="rerun", key="main_unified_map", width="stretch", height=600
     )
     _new_click = _extract_click_coord_from_selection(map_event)
-    _prev_click: "tuple[float, float] | None" = st.session_state.get("click_coord")
+    _prev_click: tuple[float, float] | None = st.session_state.get("click_coord")
     if _new_click is not None and _new_click != _prev_click:
         st.session_state["click_coord"] = _new_click
         st.rerun()  # rerun completo da aba para propagar click_coord aos expanders
-    click_coord: "tuple[float, float] | None" = st.session_state.get("click_coord")
+    click_coord: tuple[float, float] | None = st.session_state.get("click_coord")
     if click_coord is not None:
         _col_btn, _cap_col = st.columns([1, 4])
         with _col_btn:
@@ -2560,18 +2563,18 @@ def render_mapa_pydeck_fragment(
 
 
 def render_mapa_territorial(
-    df: "pd.DataFrame",
+    df: pd.DataFrame,
     *,
     selected_ufs: list[str],
     selected_cities: list[str],
-    competitors_df: "pd.DataFrame | None" = None,
-    ultra_df: "pd.DataFrame | None" = None,
-    search_pin: "tuple[float, float] | None" = None,
-    search_hex_id: "str | None" = None,
-    dominio_df: "pd.DataFrame | None" = None,
-    city_summary: "pd.DataFrame | None" = None,
-    uf_summary: "pd.DataFrame | None" = None,
-    selected_faixas: "list[str] | None" = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    search_pin: tuple[float, float] | None = None,
+    search_hex_id: str | None = None,
+    dominio_df: pd.DataFrame | None = None,
+    city_summary: pd.DataFrame | None = None,
+    uf_summary: pd.DataFrame | None = None,
+    selected_faixas: list[str] | None = None,
     censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
     censo_geo_dir: Path | None = None,
 ) -> None:
@@ -2663,11 +2666,11 @@ def render_mapa_territorial(
     render_mapa_pydeck_fragment(deck, n_points, selected_ufs, multihex_ids)
 
     # Leitura de click_coord apos o fragmento (pode ter sido atualizado)
-    click_coord: "tuple[float, float] | None" = st.session_state.get("click_coord")
+    click_coord: tuple[float, float] | None = st.session_state.get("click_coord")
 
     # --- Cenario Multi-Hex ---
     # Determina o hex ativo a partir do clique ou da busca por coordenada
-    active_hex_id: "str | None" = None
+    active_hex_id: str | None = None
     if click_coord is not None:
         _click_result = lookup_hex_by_coord(*click_coord, df)
         if _click_result is not None and not _click_result.get("_not_found"):

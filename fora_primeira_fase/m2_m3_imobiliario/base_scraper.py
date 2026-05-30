@@ -12,8 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-from playwright.async_api import async_playwright, Browser, Page
-from tenacity import retry, stop_after_attempt, wait_exponential
+from playwright.async_api import Browser, Page, async_playwright
 
 log = structlog.get_logger()
 

@@ -60,15 +60,15 @@ def test_calcular_hex_score_estrutural_exclui_hexagonos_sem_populacao():
     resultado = calcular_hex_score_estrutural(df).set_index("hex_id")
 
     # Hexágono urbano: tem população, entra no ranking
-    assert resultado.loc["urbano", "hex_sem_populacao"] is False or resultado.loc["urbano", "hex_sem_populacao"] == False
+    assert not resultado.loc["urbano", "hex_sem_populacao"]
     assert resultado.loc["urbano", "score_priorizacao"] > 0
 
     # Hexágonos sem população: flag True, score forçado a zero
-    assert resultado.loc["agua", "hex_sem_populacao"] == True
+    assert resultado.loc["agua", "hex_sem_populacao"]
     assert resultado.loc["agua", "score_priorizacao"] == 0.0
     assert resultado.loc["agua", "hex_score_estrutural"] == 0.0
 
-    assert resultado.loc["rural", "hex_sem_populacao"] == True
+    assert resultado.loc["rural", "hex_sem_populacao"]
     assert resultado.loc["rural", "score_priorizacao"] == 0.0
 
     # Percentis de água/rural devem ser NaN (excluídos do ranking)
@@ -114,7 +114,6 @@ def test_resumir_validacao_nacional_detecta_anomalias_por_uf():
                 "hex_score": 80.0,
                 "n_academias_osm": 2,
                 "renda_per_capita": 2600.0,
-                "pop_total": 0.0,
                 "pop_total": 1000.0,
                 "lat": -16.67,
                 "lng": -49.25,
@@ -124,7 +123,6 @@ def test_resumir_validacao_nacional_detecta_anomalias_por_uf():
                 "hex_score": 60.0,
                 "n_academias_osm": 1,
                 "renda_per_capita": 2600.0,
-                "pop_total": 0.0,
                 "pop_total": 900.0,
                 "lat": -16.68,
                 "lng": -49.26,
@@ -135,7 +133,6 @@ def test_resumir_validacao_nacional_detecta_anomalias_por_uf():
                 "n_academias_osm": 0,
                 "renda_per_capita": 0.0,
                 "pop_total": 0.0,
-                "pop_total": 0.0,
                 "lat": -9.97,
                 "lng": -67.81,
             },
@@ -144,7 +141,6 @@ def test_resumir_validacao_nacional_detecta_anomalias_por_uf():
                 "hex_score": 50.0,
                 "n_academias_osm": 0,
                 "renda_per_capita": 0.0,
-                "pop_total": 0.0,
                 "pop_total": 0.0,
                 "lat": -9.98,
                 "lng": -67.82,
@@ -163,16 +159,16 @@ def test_resumir_validacao_nacional_detecta_anomalias_por_uf():
 def test_selecionar_areas_prioritarias_top_20_por_uf():
     df = pd.DataFrame(
         [
-            {"hex_id": "go1", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 0, "pop_total": 10, "populacao_proxy": 10, "fonte_demografica": "ibge", "hex_score_estrutural": 10},
-            {"hex_id": "go2", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 0, "pop_total": 20, "populacao_proxy": 20, "fonte_demografica": "ibge", "hex_score_estrutural": 20},
-            {"hex_id": "go3", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 0, "pop_total": 30, "populacao_proxy": 30, "fonte_demografica": "ibge", "hex_score_estrutural": 30},
-            {"hex_id": "go4", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 0, "pop_total": 40, "populacao_proxy": 40, "fonte_demografica": "ibge", "hex_score_estrutural": 40},
-            {"hex_id": "go5", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 0, "pop_total": 50, "populacao_proxy": 50, "fonte_demografica": "ibge", "hex_score_estrutural": 50},
-            {"hex_id": "sp1", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 0, "pop_total": 10, "populacao_proxy": 10, "fonte_demografica": "ibge", "hex_score_estrutural": 15},
-            {"hex_id": "sp2", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 0, "pop_total": 20, "populacao_proxy": 20, "fonte_demografica": "ibge", "hex_score_estrutural": 25},
-            {"hex_id": "sp3", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 0, "pop_total": 30, "populacao_proxy": 30, "fonte_demografica": "ibge", "hex_score_estrutural": 35},
-            {"hex_id": "sp4", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 0, "pop_total": 40, "populacao_proxy": 40, "fonte_demografica": "ibge", "hex_score_estrutural": 45},
-            {"hex_id": "sp5", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 0, "pop_total": 50, "populacao_proxy": 50, "fonte_demografica": "ibge", "hex_score_estrutural": 55},
+            {"hex_id": "go1", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 10, "populacao_proxy": 10, "fonte_demografica": "ibge", "hex_score_estrutural": 10},
+            {"hex_id": "go2", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 20, "populacao_proxy": 20, "fonte_demografica": "ibge", "hex_score_estrutural": 20},
+            {"hex_id": "go3", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 30, "populacao_proxy": 30, "fonte_demografica": "ibge", "hex_score_estrutural": 30},
+            {"hex_id": "go4", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 40, "populacao_proxy": 40, "fonte_demografica": "ibge", "hex_score_estrutural": 40},
+            {"hex_id": "go5", "lat": 0, "lng": 0, "uf": "GO", "regiao": "CO", "cod_municipio": "1", "nome_municipio": "A", "renda_per_capita": 1, "pop_total": 50, "populacao_proxy": 50, "fonte_demografica": "ibge", "hex_score_estrutural": 50},
+            {"hex_id": "sp1", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 10, "populacao_proxy": 10, "fonte_demografica": "ibge", "hex_score_estrutural": 15},
+            {"hex_id": "sp2", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 20, "populacao_proxy": 20, "fonte_demografica": "ibge", "hex_score_estrutural": 25},
+            {"hex_id": "sp3", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 30, "populacao_proxy": 30, "fonte_demografica": "ibge", "hex_score_estrutural": 35},
+            {"hex_id": "sp4", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 40, "populacao_proxy": 40, "fonte_demografica": "ibge", "hex_score_estrutural": 45},
+            {"hex_id": "sp5", "lat": 0, "lng": 0, "uf": "SP", "regiao": "SE", "cod_municipio": "2", "nome_municipio": "B", "renda_per_capita": 1, "pop_total": 50, "populacao_proxy": 50, "fonte_demografica": "ibge", "hex_score_estrutural": 55},
         ]
     )
 
@@ -186,7 +182,7 @@ def test_selecionar_areas_prioritarias_top_20_por_uf():
 def test_selecionar_areas_prioritarias_nao_ultrapassa_top_pct_em_bases_nao_multiplas_de_5():
     df = pd.DataFrame(
         [
-            {"hex_id": f"df{i}", "lat": 0, "lng": 0, "uf": "DF", "regiao": "CO", "cod_municipio": "5300108", "nome_municipio": "Brasilia", "renda_per_capita": 1, "pop_total": 0, "pop_total": i, "populacao_proxy": i, "fonte_demografica": "ibge", "hex_score_estrutural": i}
+            {"hex_id": f"df{i}", "lat": 0, "lng": 0, "uf": "DF", "regiao": "CO", "cod_municipio": "5300108", "nome_municipio": "Brasilia", "renda_per_capita": 1, "pop_total": i, "populacao_proxy": i, "fonte_demografica": "ibge", "hex_score_estrutural": i}
             for i in range(1, 10)
         ]
     )

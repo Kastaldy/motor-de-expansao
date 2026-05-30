@@ -249,13 +249,13 @@ def gerar_relatorio() -> None:
     plano_cp = pd.read_parquet(PLANO_CP)
 
     secoes = [
-        f"# Relatorio executivo — Expansao de Dominio Ultra Academia",
-        f"",
+        "# Relatorio executivo — Expansao de Dominio Ultra Academia",
+        "",
         f"**Gerado em:** {date.today().isoformat()}  ",
-        f"**Fonte:** `data/outputs/plano_expansao_dominio.parquet`  ",
+        "**Fonte:** `data/outputs/plano_expansao_dominio.parquet`  ",
         f"**Ancoras materializadas:** {len(dom)}  ",
-        f"**Ciclo:** Expansao de Dominio (paralelo ao M1 oficial)  ",
-        f"",
+        "**Ciclo:** Expansao de Dominio (paralelo ao M1 oficial)  ",
+        "",
         secao_sumario(dom),
         "",
         secao_top_cidades(dom),

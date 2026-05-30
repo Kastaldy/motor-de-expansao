@@ -10,7 +10,6 @@ from PIL import Image
 
 from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSITARIO
 
-
 PDF_SECTION_HEADERS = (
     "Relatorio Pontual Censitario",
     "KPIs",
@@ -221,7 +220,7 @@ def _jpeg_from_png(png_bytes: bytes) -> tuple[bytes, int, int] | None:
 
 
 def _map_content(image_width: int, image_height: int) -> bytes:
-    page_w, page_h = 595, 842
+    page_w, _page_h = 595, 842
     max_w, max_h = 505, 650
     scale = min(max_w / image_width, max_h / image_height)
     draw_w = image_width * scale

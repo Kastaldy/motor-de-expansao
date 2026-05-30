@@ -7,9 +7,9 @@ import pandas as pd
 import pytest
 
 from motor_expansao.dashboard.competitors import (
+    _ICON_CACHE,
     COMPETITOR_SPECS,
     ULTRA_COLUMNS,
-    _ICON_CACHE,
     _ultra_icon_svg,
     competitor_icon_data,
     load_ultra_points,
@@ -18,7 +18,6 @@ from motor_expansao.dashboard.competitors import (
     ultra_legend_entry,
 )
 from motor_expansao.dashboard.components import _build_ultra_icon_layer
-
 
 # ── helpers ────────────────────────────────────────────────────────────────────
 

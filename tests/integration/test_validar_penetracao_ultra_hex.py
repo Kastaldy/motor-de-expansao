@@ -4,7 +4,6 @@ Teste minimo - Bloco 4: padroes de penetracao Ultra por hex.
 
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 from jobs.pipelines import validar_penetracao_ultra_hex as modulo

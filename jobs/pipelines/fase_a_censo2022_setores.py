@@ -25,7 +25,6 @@ import geopandas as gpd
 import h3
 import numpy as np
 import pandas as pd
-import shapely
 import structlog
 from shapely.geometry import Polygon
 
@@ -50,7 +49,8 @@ except ModuleNotFoundError:
             resumir_distribuicao_score,
         )
     except ModuleNotFoundError:
-        import sys, os
+        import os
+        import sys
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
         from hex_enrichment import (
             _calcular_percentil_nacional,
@@ -352,7 +352,7 @@ def spatial_join_area_weighted(
     )
 
     # Merge com hexagonos originais
-    hex_area_map = dict(zip(gdf_hex["hex_id"], gdf_hex["area_hex"]))
+    hex_area_map = dict(zip(gdf_hex["hex_id"], gdf_hex["area_hex"], strict=False))
     result = df_hex.copy()
     result = result.merge(
         agg[["hex_id", "pop_total_setor_2022", "renda_total_setor_2022",
@@ -562,7 +562,7 @@ def gerar_relatorio(
         "# Fase A — Censo 2022 por Setor Censitario (Piloto GO + SP + RJ)",
         "",
         f"> Data de execucao: {date.today().isoformat()}",
-        f"> Fonte: IBGE Censo Demografico 2022 — Agregados por Setores Censitarios",
+        "> Fonte: IBGE Censo Demografico 2022 — Agregados por Setores Censitarios",
         "",
         "## 1. Setores processados por UF",
         "",
@@ -727,7 +727,6 @@ def descobrir_arquivos_uf(raw_dir: Path, uf: str) -> dict:
     # Procurar CSVs
     csvs = list(raw_dir.rglob("*.csv")) + list(raw_dir.rglob("*.CSV"))
     uf_lower = uf.lower()
-    uf_upper = uf.upper()
 
     for csv_path in csvs:
         nome = csv_path.name.lower()

@@ -6,18 +6,17 @@ Uso:
     python -m jobs.scrapers.imovel_scraper --cidade "São Paulo" --uf SP
 """
 
+import argparse
 import asyncio
 import re
-import argparse
 from datetime import datetime
 from typing import Any
 
-import structlog
 import pandas as pd
-from playwright.async_api import async_playwright, Page
-
-from jobs.scrapers.base_scraper import BaseScraper
+import structlog
 from api.config import settings
+from jobs.scrapers.base_scraper import BaseScraper
+from playwright.async_api import Page, async_playwright
 
 log = structlog.get_logger()
 
@@ -245,7 +244,7 @@ class OlxComercialScraper(BaseScraper):
         uf_lower = uf.lower()
 
         # OLX API endpoint (verificar se ainda ativo)
-        url = f"https://www.olx.com.br/api/ad-search"
+        url = "https://www.olx.com.br/api/ad-search"
         params = {
             "category": "imoveis",
             "subcategory": "comercial",

@@ -8,16 +8,15 @@ Testa:
 - Pipeline completo de ranking
 """
 
-import pytest
 import pandas as pd
-
+import pytest
 from score_consolidado import (
-    calcular_score_competitivo,
+    _normalizar_payback,
     calcular_alunos_estimados,
     calcular_payback_estimado,
     calcular_score_abertura,
+    calcular_score_competitivo,
     gerar_ranking_oportunidades,
-    _normalizar_payback,
 )
 
 

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import geopandas as gpd
 import h3
-import numpy as np
 import pandas as pd
 import pytest
 from shapely.geometry import Polygon
@@ -105,7 +104,6 @@ def hex_com_dois_setores():
     ])
 
     # Area dos setores em degrees^2
-    from shapely.geometry import shape
     area_s1 = setor1_geom.area
     area_s2 = setor2_geom.area
 

@@ -490,6 +490,7 @@ def detectar_outliers_espaciais(
         zip(
             df_city["hex_id"],
             pd.to_numeric(df_city[score_col], errors="coerce"),
+            strict=False,
         )
     )
 
@@ -594,7 +595,7 @@ def perfilar_spatial_join_piloto(
 
         def _sampler() -> None:
             nonlocal peak_rss_mb, stop_flag
-            while not stop_flag:
+            while not stop_flag:  # noqa: B023 - closure usa `nonlocal` p/ escrever de volta; thread criada/join na mesma iteracao (default-arg quebraria o write-back)
                 peak_rss_mb = max(
                     peak_rss_mb,
                     process.memory_info().rss / (1024**2),

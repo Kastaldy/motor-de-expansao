@@ -11,6 +11,7 @@ Cobre:
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
+
 import pandas as pd
 import pytest
 
@@ -458,13 +459,13 @@ class TestVerificarCanibalizacao:
 class TestRodarPipelineHexOtimizado:
     def test_resolver_municipio_chamado_uma_vez(self):
         """rodar_pipeline_hex deve chamar resolver_municipio exatamente 1 vez."""
-        from hex_enrichment import rodar_pipeline_hex
         import hex_enrichment
+        from hex_enrichment import rodar_pipeline_hex
 
         hexagonos_fake = ["87a8c0d03ffffff", "87a8c0d08ffffff", "87a8c0d09ffffff"]
 
         with patch.object(hex_enrichment, "gerar_hexagonos_cidade",
-                          return_value=hexagonos_fake) as mock_gen, \
+                          return_value=hexagonos_fake), \
              patch("hex_enrichment.IBGECenso") as MockCenso, \
              patch("hex_enrichment.POIEnricher") as MockPOI, \
              patch("hex_enrichment.h3.cell_to_latlng",
@@ -496,8 +497,8 @@ class TestRodarPipelineHexOtimizado:
 
     def test_carregar_academias_cidade_chamado_uma_vez(self):
         """carregar_academias_cidade deve ser chamado 1 vez (bulk), não N vezes."""
-        from hex_enrichment import rodar_pipeline_hex
         import hex_enrichment
+        from hex_enrichment import rodar_pipeline_hex
 
         hexagonos_fake = ["87a8c0d03ffffff", "87a8c0d08ffffff"]
 

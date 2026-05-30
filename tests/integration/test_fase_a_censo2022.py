@@ -7,7 +7,6 @@ fallback, rastreabilidade, validacao de gates.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import geopandas as gpd
@@ -31,7 +30,6 @@ from jobs.pipelines.fase_a_censo2022_setores import (
     spatial_join_area_weighted,
     validar_uf,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -232,10 +230,10 @@ class TestFallback:
             "n_setores_contribuintes": [1, 2, 3],
         })
         result = aplicar_fallback(df, threshold=0.10)
-        assert result.loc[0, "fallback_setor_2022"] == True
+        assert result.loc[0, "fallback_setor_2022"]
         assert pd.isna(result.loc[0, "pop_total_setor_2022"])
-        assert result.loc[1, "fallback_setor_2022"] == False
-        assert result.loc[2, "fallback_setor_2022"] == False
+        assert not result.loc[1, "fallback_setor_2022"]
+        assert not result.loc[2, "fallback_setor_2022"]
         assert result.loc[1, "pop_total_setor_2022"] == 200
 
 
@@ -330,12 +328,11 @@ class TestValidarUF:
         })
         result = validar_uf(df, "GO")
         assert result["status"] == "GO"
-        assert result["gate_cobertura"] == True
-        assert result["gate_amplitude"] == True
-        assert result["gate_nulos"] == True
+        assert result["gate_cobertura"]
+        assert result["gate_amplitude"]
+        assert result["gate_nulos"]
 
     def test_falha_cobertura(self):
-        n = 100
         df = pd.DataFrame({
             "n_setores_contribuintes": [3] * 50 + [0] * 50,
             "score_setor_2022_exp": list(range(50)) + [np.nan] * 50,
@@ -345,7 +342,7 @@ class TestValidarUF:
         })
         result = validar_uf(df, "GO")
         assert result["cobertura_pct"] == 50.0
-        assert result["gate_cobertura"] == False
+        assert not result["gate_cobertura"]
 
     def test_vazio(self):
         df = pd.DataFrame(columns=["n_setores_contribuintes", "score_setor_2022_exp",
