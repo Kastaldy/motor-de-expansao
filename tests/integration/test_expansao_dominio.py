@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from dashboard.constants import DOMINIO_SCHEMA_MINIMO, DOMINIO_TESES_VALIDAS
+from motor_expansao.dashboard.constants import DOMINIO_SCHEMA_MINIMO, DOMINIO_TESES_VALIDAS
 
 ROOT = Path(__file__).resolve().parents[2]
 MERCADO_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"

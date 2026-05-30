@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from dashboard.constants import RESIDUAL_SCORE_BANDS
+from motor_expansao.dashboard.constants import RESIDUAL_SCORE_BANDS
 
 
 def format_int(value: int | float) -> str:

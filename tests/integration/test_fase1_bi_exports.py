@@ -1,8 +1,9 @@
 import numpy as np
 import pandas as pd
 
-from dashboard.constants import REQUIRED_COLUMNS
-from fase1_bi_exports import (
+from motor_expansao.dashboard.constants import REQUIRED_COLUMNS
+from motor_expansao.dashboard.data import _prepare_dataframe, enrich_dashboard_data
+from motor_expansao.pipelines.m1.fase1_bi_exports import (
     build_dashboard_dataset,
     build_hexagonos_mapa_sample,
     build_resumo_por_uf,
@@ -10,7 +11,6 @@ from fase1_bi_exports import (
     read_enriched_dashboard,
     write_enriched_dashboard_partitioned,
 )
-from motor_expansao.dashboard.data import _prepare_dataframe, enrich_dashboard_data
 
 
 def _sample_source_df() -> pd.DataFrame:

@@ -8,7 +8,11 @@ import pyarrow as pa
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
-from dashboard.constants import CENSO_TRACE_LOAD_COLS, HYBRID_LOAD_COLS, REQUIRED_COLUMNS
+from motor_expansao.dashboard.constants import (
+    CENSO_TRACE_LOAD_COLS,
+    HYBRID_LOAD_COLS,
+    REQUIRED_COLUMNS,
+)
 from motor_expansao.dashboard.data import (
     _coalesce_columns,
     _prepare_censo_trace,
@@ -17,11 +21,7 @@ from motor_expansao.dashboard.data import (
     _read_parquet_subset,
     enrich_dashboard_data,
 )
-
-try:
-    from jobs.pipelines.ibge_censo import carregar_lookup_municipios_ibge
-except ModuleNotFoundError:
-    from ibge_censo import carregar_lookup_municipios_ibge
+from motor_expansao.pipelines.m1.ibge_censo import carregar_lookup_municipios_ibge
 
 SOURCE_PATH = Path("data/staging/hexagonos_brasil_oportunidades.parquet")
 MUNICIPIOS_LOOKUP_PATH = Path("data/ibge/municipios_nomes_ibge.parquet")

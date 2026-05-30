@@ -26,18 +26,11 @@ import structlog
 from shapely.geometry import shape
 from shapely.strtree import STRtree
 
-try:
-    from jobs.pipelines.hex_enrichment import (
-        _calcular_percentil_nacional,
-        calcular_populacao_proxy,
-        resumir_distribuicao_score,
-    )
-except ModuleNotFoundError:
-    from hex_enrichment import (
-        _calcular_percentil_nacional,
-        calcular_populacao_proxy,
-        resumir_distribuicao_score,
-    )
+from motor_expansao.pipelines.m1.hex_enrichment import (
+    _calcular_percentil_nacional,
+    calcular_populacao_proxy,
+    resumir_distribuicao_score,
+)
 
 log = structlog.get_logger()
 

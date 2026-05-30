@@ -1259,3 +1259,74 @@ concluídos em "Tarefas pendentes", não 6).
 Validações (QA, re-execução independente): `pytest -q` → 532 passed, 1 skipped, 9 warnings;
 verificação byte-level contra `git show HEAD:` confirmou append-only + 15 blocos verbatim + zero perda
 de conteúdo + pendentes preservados. NO-BYPASS (suíte real, sem mock).
+
+---
+
+### BLK-ARCH-01 — Concluir migração `src/` e remover legado
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
+| **Depende de** | **BLK-OPS-02** (CI completo verde como rede de segurança) — ✅ SATISFEITA (BLK-OPS-02 concluído/mergeado em 2026-05-29; suíte completa roda verde no CI). |
+| **Status** | Pendente *(desbloqueado — dependência satisfeita; candidato à fila após BLK-OPS-02b)* |
+
+**Objetivo:** eliminar a dualidade `src/` vs. legado (`dashboard/` flat, `jobs/`, wrappers de
+raiz). Uma única fonte de verdade por função, sem quebrar o dashboard.
+
+**Escopo permitido:**
+- Mapear o que ainda é importado dos caminhos legados (`base_h3_brasil.py` raiz, `dashboard/`,
+  `jobs/`, `ibge_censo.py`, `poi_enrichment.py`).
+- Migrar o que estiver vivo para `src/motor_expansao/`, atualizar imports, remover wrappers e
+  legado morto **em passos pequenos e reversíveis**.
+- Cada passo: testes verdes antes de avançar.
+
+**Fora de escopo:** mudar comportamento de scoring, mudar artefatos M1, refatorar lógica além do
+necessário para mover.
+
+**Arquivos a ler:** árvore completa do repo (`view`), `streamlit_app.py`, todos os imports.
+**Arquivos a alterar:** múltiplos — listados pelo Planner após o mapeamento.
+
+**Critérios de aceite:**
+- Nenhum import aponta para caminhos legados removidos.
+- `import streamlit_app` ok; dashboard sobe localmente.
+- Suíte completa verde; comportamento idêntico (scores e artefatos inalterados).
+
+**Validações obrigatórias:**
+```
+pytest -q
+python -c "import streamlit_app; print('ok')"
+ruff check . && mypy src/
+# Prova de equivalência de M1 (hashes idênticos pré/pós migração):
+sha256sum data/outputs/brasil_priorizados.parquet
+```
+
+**Guardrails específicos:**
+- Migração é **mecânica**, não pode alterar nenhum valor de output M1 (provar por hash).
+- Avançar só com CI verde a cada passo — daí a dependência de BLK-OPS-02.
+
+**Risco:** alto e de variância alta (2–5 dias). Quebrar em sub-blocos por área (pipelines /
+dashboard / acesso a dados) se o mapeamento revelar acoplamento grande.
+
+**RESULTADO DO CICLO (concluído 2026-05-29) — APROVADO pelo QA.**
+Particionado: este ciclo executou a **FATIA-1** (núcleo M1 + dashboard); `jobs/pipelines/*` (21
+módulos, cluster autocontido) virou o bloco-filho **BLK-ARCH-01a** no backlog. O que foi feito:
+(A) removidos os 3 wrappers de raiz (`base_h3_brasil.py`, `hex_enrichment.py`, `fase1_bi_exports.py`)
+e reapontados os imports de teste para `motor_expansao.pipelines.m1.*`; (B) `dashboard/constants.py`
++ `dashboard/utils.py` movidos para `src/motor_expansao/dashboard/`, imports invertidos e pacote
+`dashboard/` flat removido; (D) `ibge_censo.py` + `poi_enrichment.py` movidos para
+`src/motor_expansao/pipelines/m1/` com limpeza dos branches mortos `jobs.pipelines.*`; (E) `config.py`
+movido para `src/motor_expansao/config.py` limpando o branch morto `api.config`. Tudo via `git mv`
+(histórico preservado), sem renomear funções/assinaturas/valores.
+Validações (QA re-executou, sem bypass): `pytest -q` → **541 passed, 1 skipped, 0 failed**;
+`import streamlit_app` ok; `ruff check .` limpo; `mypy src/` Success (23 arquivos). Greps de import
+legado vazios em código vivo. **Prova de não-mutação M1: 4 artefatos oficiais
+(`brasil_priorizados`, `brasil_estrutural`, `hexagonos_brasil_oportunidades` em `data/staging/`;
+`hexagonos_brasil_dashboard` em `data/outputs/`) com sha256 byte-idêntico pré/pós.** Params canônicos
+intactos (H3_RESOLUTION=7, pesos 0.40/0.60, DIST_MIN_ULTRA_KM=1.0, RENDA_MIN=4500.0).
+3 desvios do plano, todos auditados como legítimos pelo QA: (1) remoção do teste obsoleto
+`test_legacy_m1_wrappers_export_modules` (validava wrappers removidos por design); (2) reaponte
+mecânico de strings `patch`/`monkeypatch` em 3 testes; (3) correção de 1 linha de import em 2 módulos
+`jobs/pipelines/*` (`fase_a_censo2022_setores.py`, `teste_setor_censitario_2010.py`) exercidos por
+testes EM ESCOPO — rewiring mínimo forçado pela remoção do wrapper, sem migração estrutural de `jobs/`
+(que segue intocada em BLK-ARCH-01a). `pythonpath` inalterado (jobs/ ainda depende de `"."`).

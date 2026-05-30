@@ -10,20 +10,6 @@ import streamlit as st
 if TYPE_CHECKING:
     import pydeck as pdk  # so para type hints (anotacao `deck: "pdk.Deck"`); sem custo de import em runtime
 
-from dashboard.constants import (
-    COLOR_MODE_DEFAULT,
-    COLOR_MODES,
-    COLORS,
-    COVERAGE_BUCKET_ORDER,
-    FAIXA_ORDEM,
-    HYBRID_ELIGIBILITY_ORDER,
-    JOIN_QUALITY_ORDER,
-    OVERLAYS,
-    POP_MIN_ACIONAVEL,
-    TABLE_ROW_LIMIT,
-    color_mode_available,
-)
-from dashboard.utils import format_int, format_pct, format_score
 from motor_expansao.dashboard.censo_map import render_mapa_censitario_estatico_png
 from motor_expansao.dashboard.censo_point import (
     RAIO_CENSITARIO_DEFAULT_KM,
@@ -74,6 +60,19 @@ from motor_expansao.dashboard.components import (
     render_ultra_legend,
     style_ranking_table,
 )
+from motor_expansao.dashboard.constants import (
+    COLOR_MODE_DEFAULT,
+    COLOR_MODES,
+    COLORS,
+    COVERAGE_BUCKET_ORDER,
+    FAIXA_ORDEM,
+    HYBRID_ELIGIBILITY_ORDER,
+    JOIN_QUALITY_ORDER,
+    OVERLAYS,
+    POP_MIN_ACIONAVEL,
+    TABLE_ROW_LIMIT,
+    color_mode_available,
+)
 from motor_expansao.dashboard.data import (
     agregar_cenario_multihex,
     analisar_entorno_ponto,
@@ -82,6 +81,7 @@ from motor_expansao.dashboard.data import (
     parse_hex_ids_from_text,
     resolve_cod_municipio_from_geo_dir,
 )
+from motor_expansao.dashboard.utils import format_int, format_pct, format_score
 
 RESIDUAL_SORT_COLUMNS = [
     "oferta_efetiva_disponivel",
@@ -2199,7 +2199,7 @@ def _render_multihex_controls(
 
 def _render_multihex_kpis(df: pd.DataFrame, multihex_ids: list[str]) -> None:
     """Exibe KPIs agregados e tabela dos hexes do cenario multi-hex."""
-    from dashboard.utils import format_int
+    from motor_expansao.dashboard.utils import format_int
 
     agg = agregar_cenario_multihex(df, multihex_ids)
     n = agg["qtd_hexes"]
@@ -2532,7 +2532,7 @@ def render_mapa_pydeck_fragment(
     - Nao contem chamadas a st.sidebar (restricao do Streamlit).
     - Nao recalcula score, carteira, plano nem artefatos oficiais do M1.
     """
-    from dashboard.constants import MAP_POINT_LIMIT
+    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT
     st.caption(build_map_scope_caption(n_points, selected_ufs=selected_ufs, capped=n_points >= MAP_POINT_LIMIT))
     st.caption(
         "Clique em um hexagono no mapa para ativar a Analise Pontual de Entorno (raio 1.6 km). "

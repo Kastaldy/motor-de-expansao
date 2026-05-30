@@ -16,10 +16,7 @@ import requests
 import structlog
 from sklearn.neighbors import BallTree
 
-try:
-    from api.config import settings
-except ModuleNotFoundError:
-    from config import settings  # estrutura flat (desenvolvimento)
+from motor_expansao.config import settings
 
 log = structlog.get_logger()
 OSM_CACHE_DIR = Path("data/osm_cache")

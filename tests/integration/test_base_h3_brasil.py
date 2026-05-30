@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pandas as pd
 from shapely.geometry import box
 
-from base_h3_brasil import (
+from motor_expansao.pipelines.m1.base_h3_brasil import (
     REGIAO_POR_UF,
     gerar_hexagonos_validos_uf,
     montar_dataframe_hexagonos,
@@ -65,9 +65,9 @@ def test_gerar_hexagonos_validos_uf_remove_hexagonos_fora_do_brasil():
     feature_uf = {"uf": "RJ", "geometry": {"type": "Polygon", "coordinates": []}}
     brasil_geom = box(0, 0, 10, 10)
 
-    with patch("base_h3_brasil.h3.geo_to_cells", return_value=["hex_in", "hex_out"]):
+    with patch("motor_expansao.pipelines.m1.base_h3_brasil.h3.geo_to_cells", return_value=["hex_in", "hex_out"]):
         with patch(
-            "base_h3_brasil.h3.cell_to_latlng",
+            "motor_expansao.pipelines.m1.base_h3_brasil.h3.cell_to_latlng",
             side_effect=[(5, 5), (11, 11)],  # (lat, lng): hex_in dentro, hex_out fora
         ):
             validos, removidos = gerar_hexagonos_validos_uf(

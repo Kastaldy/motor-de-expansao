@@ -8,47 +8,6 @@ import streamlit as st
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 from streamlit.web import cli as stcli
 
-from dashboard.constants import (  # noqa: F401
-    BOOL_COLUMNS,
-    BRASIL_CENTER,
-    CENSO_SCORE_COLORS,
-    CENSO_TRACE_LOAD_COLS,
-    CENSO_UFS,
-    COLOR_MODE_DEFAULT,
-    COLOR_MODE_IDS,
-    COLOR_MODES,
-    COLORS,
-    COVERAGE_BUCKET_ORDER,
-    FAIXA_COLORS,
-    FAIXA_ORDEM,
-    FLOAT_COLUMNS,
-    HYBRID_ELIGIBILITY_ORDER,
-    HYBRID_LOAD_COLS,
-    JOIN_QUALITY_ORDER,
-    MAP_POINT_LIMIT,
-    MAP_SORT_ASCENDING,
-    MAP_SORT_COLUMNS,
-    OPTIONAL_DATASET_COLUMNS,
-    OVERLAY_IDS,
-    OVERLAYS,
-    REQUIRED_COLUMNS,
-    RESIDUAL_MERCADO_COLS,
-    RESIDUAL_SCORE_BANDS,
-    TABLE_ROW_LIMIT,
-    TEXT_COLUMNS,
-    color_mode_available,
-    overlay_available,
-)
-from dashboard.utils import (  # noqa: F401
-    _censo_score_to_color,
-    _residual_score_to_color,
-    format_density,
-    format_int,
-    format_pct,
-    format_score,
-    hex_to_rgba,
-    score_band_to_color,
-)
 from motor_expansao.dashboard.censo_map import render_mapa_censitario_estatico_png  # noqa: F401
 from motor_expansao.dashboard.censo_point import analisar_ponto_censitario_setores  # noqa: F401
 from motor_expansao.dashboard.censo_report import (  # noqa: F401
@@ -114,6 +73,37 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     resolve_map_view,
     style_ranking_table,
 )
+from motor_expansao.dashboard.constants import (  # noqa: F401
+    BOOL_COLUMNS,
+    BRASIL_CENTER,
+    CENSO_SCORE_COLORS,
+    CENSO_TRACE_LOAD_COLS,
+    CENSO_UFS,
+    COLOR_MODE_DEFAULT,
+    COLOR_MODE_IDS,
+    COLOR_MODES,
+    COLORS,
+    COVERAGE_BUCKET_ORDER,
+    FAIXA_COLORS,
+    FAIXA_ORDEM,
+    FLOAT_COLUMNS,
+    HYBRID_ELIGIBILITY_ORDER,
+    HYBRID_LOAD_COLS,
+    JOIN_QUALITY_ORDER,
+    MAP_POINT_LIMIT,
+    MAP_SORT_ASCENDING,
+    MAP_SORT_COLUMNS,
+    OPTIONAL_DATASET_COLUMNS,
+    OVERLAY_IDS,
+    OVERLAYS,
+    REQUIRED_COLUMNS,
+    RESIDUAL_MERCADO_COLS,
+    RESIDUAL_SCORE_BANDS,
+    TABLE_ROW_LIMIT,
+    TEXT_COLUMNS,
+    color_mode_available,
+    overlay_available,
+)
 from motor_expansao.dashboard.data import (  # noqa: F401
     _coalesce_columns,
     _derive_confianca_geografica,
@@ -169,6 +159,16 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_tab_selector,
     render_uf_selectbox,
     render_visao_executiva,
+)
+from motor_expansao.dashboard.utils import (  # noqa: F401
+    _censo_score_to_color,
+    _residual_score_to_color,
+    format_density,
+    format_int,
+    format_pct,
+    format_score,
+    hex_to_rgba,
+    score_band_to_color,
 )
 
 st.set_page_config(

@@ -24,10 +24,7 @@ import requests
 import shapely
 from shapely.geometry import Polygon, shape
 
-try:
-    from api.config import settings
-except ModuleNotFoundError:
-    from config import settings
+from motor_expansao.config import settings
 
 IBGE_MALHAS_UF_URL = (
     "https://servicodados.ibge.gov.br/api/v3/malhas/paises/BR"

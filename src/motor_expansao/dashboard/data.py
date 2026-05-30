@@ -8,7 +8,7 @@ import pandas as pd
 import pyarrow.dataset as ds
 import pyarrow.parquet as pq
 
-from dashboard.constants import (
+from motor_expansao.dashboard.constants import (
     BOOL_COLUMNS,
     COVERAGE_BUCKET_ORDER,
     FAIXA_ORDEM,

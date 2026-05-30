@@ -8,7 +8,13 @@ import plotly.express as px
 import pydeck as pdk
 import streamlit as st
 
-from dashboard.constants import (
+from motor_expansao.dashboard.competitors import (
+    competitor_icon_data,
+    competitor_legend_entries,
+    ultra_icon_data,
+    ultra_legend_entry,
+)
+from motor_expansao.dashboard.constants import (
     BRASIL_CENTER,
     CENSO_UFS,
     COLORS,
@@ -23,7 +29,8 @@ from dashboard.constants import (
     RESIDUAL_SCORE_BANDS,
     TABLE_ROW_LIMIT,
 )
-from dashboard.utils import (
+from motor_expansao.dashboard.data import _has_censo_signal, _normalized_join_quality, haversine_km
+from motor_expansao.dashboard.utils import (
     format_density,
     format_int,
     format_pct,
@@ -31,13 +38,6 @@ from dashboard.utils import (
     hex_to_rgba,
     score_band_to_color,
 )
-from motor_expansao.dashboard.competitors import (
-    competitor_icon_data,
-    competitor_legend_entries,
-    ultra_icon_data,
-    ultra_legend_entry,
-)
-from motor_expansao.dashboard.data import _has_censo_signal, _normalized_join_quality, haversine_km
 
 
 def build_kpis(
