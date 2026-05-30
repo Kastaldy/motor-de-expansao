@@ -2,36 +2,36 @@
 
 ## Bloco atual
 
-ID: BLK-OPS-03
-Nome: Manifesto de proveniência nos outputs
-Status: aprovado — ciclo fechado (housekeeping + commit por path); aguardando merge humano
+ID: BLK-OPS-04
+Nome: Validação de schema no carregamento
+Status: APROVADO — ciclo fechado (housekeeping --check verde + commit por path); aguardando merge humano
 Tipo: feature
-Criticidade: crítica
-Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
-Skill atual: Fechamento (orquestrador)
-Próxima Skill: Merge humano da branch ciclo/BLK-OPS-03
+Criticidade: Média (confirmada pelo Block Orchestrator — trigger "Crítica" NÃO se aplica: validação é read-only, só lê e rejeita; não recalcula/muta score nem artefato M1)
+Esteira: Block Orchestrator → Planner → Builder → QA (sem gate humano)
+Skill atual: Fechamento (orquestrador) — concluído
+Próxima Skill: Merge humano da branch ciclo/BLK-OPS-04
 dry_run: false
 
 ## Objetivo
-Gerar `data/outputs/_manifest.json` como passo final isolado de `fase1_bi_exports.py`,
-carregando a proveniência dos outputs (vintage IBGE, sha256 do `Ultra.csv`, `code_commit`,
-`generated_at`, parâmetros canônicos: `h3_resolution`, `pesos={renda:0.40, pop:0.60}`,
-`dist_min_ultra_km`, `renda_min`), expor no rodapé do dashboard (read-only) e cobrir com
-teste de presença + schema — SEM tocar nenhum valor dentro dos artefatos M1
-(não-mutação provada por hash sha256 idêntico pré/pós).
+O dashboard deve falhar de forma clara (não mostrar lixo) se um Parquet vier corrompido ou
+com schema/range inesperado: asserções de schema no caminho de load (`data.py`) — colunas
+obrigatórias, dtypes, scores em `[0, 100]`, chaves não-nulas, `h3` válido — com mensagem de
+erro útil. Validação é **read-only**: nunca corrige/preenche dados silenciosamente.
 
 ## Paths do ciclo (commit por path — NUNCA git add -A)
-- src/motor_expansao/pipelines/m1/fase1_bi_exports.py
-- (eventual módulo novo de manifesto, ex.: src/motor_expansao/pipelines/m1/provenance.py)
-- componente de rodapé no dashboard (src/motor_expansao/dashboard/*)
-- tests/unit/test_manifest.py
+- src/motor_expansao/dashboard/schemas.py  (módulo novo de schema)
+- src/motor_expansao/dashboard/data.py  (+import +1 chamada em read_enriched_uf_partition)
+- streamlit_app.py  (+import +1 chamada em _read_m1_frame — plumbing mínimo autorizado pelo BO)
+- tests/unit/test_schema_validation.py  (NOVO)
+- tests/integration/test_streamlit_app.py  (fixtures migrados p/ H3 real — QA julgou desvio aceitável)
 - tasks/current_task.md · tasks/backlog.md · tasks/completed.md
 - context/handoff.md · context/handoff/
 
 ## Contexto de abertura
-- Branch isolado: `ciclo/BLK-OPS-03` (criado a partir do HEAD de main, worktree limpo).
-- Classificação: orchestrator override → Crítica (menciona pesos do score + artefatos M1);
-  backlog marca "Alta". Ambos exigem aprovação humana após o Planner.
-- Commitar SÓ por path; nunca arrastar PRD.md ou edições não relacionadas.
+- Branch isolado: `ciclo/BLK-OPS-04` (criado a partir do HEAD de main, worktree limpo).
+- Backlog classifica como **Média** (esteira sem gate humano). O Block Orchestrator deve
+  avaliar EXPLICITAMENTE se o trigger Crítica do run-cycle/CLAUDE.md ("menção a
+  score_priorizacao / artefato M1") se aplica — sendo a validação estritamente read-only
+  (lê colunas de score dos artefatos M1, não muta nem recalcula nada).
 - Este ciclo NÃO altera a orquestração → dry-run 6.c NÃO dispara.
-- Guardrail: manifesto fica AO LADO dos artefatos, nunca dentro do conteúdo de scoring.
+- Guardrail: validação não pode recalcular/alterar score, carteira, plano ou artefatos M1.

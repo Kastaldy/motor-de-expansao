@@ -22,6 +22,7 @@ from motor_expansao.dashboard.constants import (
     RESIDUAL_MERCADO_COLS,
     TEXT_COLUMNS,
 )
+from motor_expansao.dashboard.schemas import validate_dashboard_frame
 
 
 def _read_parquet_subset(path: Path, columns: list[str]) -> pd.DataFrame:
@@ -80,6 +81,7 @@ def read_enriched_uf_partition(base_dir: Path, uf: str) -> pd.DataFrame:
     frame = dataset.to_table(filter=ds.field("uf") == str(uf)).to_pandas()
     if frame.empty:
         return frame
+    validate_dashboard_frame(frame, source=f"{base} (uf={uf})")
     return _prepare_dataframe(frame)
 
 

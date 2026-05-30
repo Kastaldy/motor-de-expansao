@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import h3
 import pandas as pd
 import pytest
 
@@ -14,6 +15,11 @@ from motor_expansao.dashboard.constants import (
     color_mode_available,
     overlay_available,
 )
+
+# Celulas H3 res-7 reais (a validacao de schema do load rejeita hex_id nao-H3).
+_HEX_SP1 = h3.latlng_to_cell(-23.55, -46.63, 7)
+_HEX_SP2 = h3.latlng_to_cell(-22.90, -47.06, 7)  # Campinas
+_HEX_RJ1 = h3.latlng_to_cell(-22.91, -43.17, 7)
 
 
 def _write_dashboard_parquet(root: Path, rows: list[dict[str, object]]) -> Path:
@@ -34,7 +40,7 @@ def test_load_data_prepara_aliases_e_score_oficial(local_tmp_dir, monkeypatch):
         local_tmp_dir,
         [
             {
-                "hex_id": "a",
+                "hex_id": _HEX_SP1,
                 "lat": -23.55,
                 "lng": -46.63,
                 "uf": "SP",
@@ -3088,9 +3094,9 @@ def _build_lazy_partitions(base_dir: Path) -> Path:
     from motor_expansao.pipelines.m1.fase1_bi_exports import write_enriched_dashboard_partitioned
 
     rows = [
-        ("hSP1", "SP", "Sao Paulo", 1),
-        ("hSP2", "SP", "Campinas", 2),
-        ("hRJ1", "RJ", "Rio de Janeiro", 3),
+        (_HEX_SP1, "SP", "Sao Paulo", 1),
+        (_HEX_SP2, "SP", "Campinas", 2),
+        (_HEX_RJ1, "RJ", "Rio de Janeiro", 3),
     ]
     records = [
         {
