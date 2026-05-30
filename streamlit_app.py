@@ -65,6 +65,7 @@ from motor_expansao.dashboard.components import (  # noqa: F401
     render_dominio_tese_legend,
     render_faixa_legend,
     render_geographic_source_legend,
+    render_manifest_footer,
     render_pop_cut_legend,
     render_residual_legend,
     render_residual_score_legend,
@@ -198,6 +199,7 @@ ENRIQUECIDO_DIR = (
     Path(__file__).resolve().parent / "data" / "outputs" / "hexagonos_dashboard_enriquecido"
 )
 CENSO_GEO_DIR = Path(__file__).resolve().parent / "data" / "outputs" / "setores_censitarios_2022_geo"
+MANIFEST_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "_manifest.json"
 
 preload_logos(CONCORRENTES_DIR, ultra_dir=ULTRA_PATH.parent)
 
@@ -554,6 +556,10 @@ def main() -> None:
             selected_cities=selected_cities,
             pop_cut_lookup=pop_lookup,
         )
+
+    # Rodape read-only de proveniencia (BLK-OPS-03): fora dos branches de aba,
+    # idempotente; ausencia do _manifest.json nao quebra o app.
+    render_manifest_footer(MANIFEST_PATH)
 
 
 if __name__ == "__main__":

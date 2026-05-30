@@ -26,6 +26,7 @@ concorrentes/
 *.csv
 *.xlsx
 *.tmp.md
+data/outputs/_manifest.json
 !tests/contracts/fixtures/*.html
 
 # Fixtures de teste versionadas (sinteticas, sem dado real) - excecao ao ignore de parquet/csv
