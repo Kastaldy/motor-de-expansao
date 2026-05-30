@@ -2,22 +2,31 @@
 
 ## Bloco atual
 
-Sem tarefa ativa.
+ID: BLK-OPS-09
+Nome: Housekeeping do backlog.md (mover blocos CONCLUÍDO para completed.md)
+Status: APROVADO (aguardando commit por path + merge humano)
+Tipo: doc / manutenção
+Criticidade: média (doc-only)
+Esteira: Block Orchestrator → Planner → Builder → QA (consolidada no orquestrador; QA independente real)
+Skill atual: run-cycle (fechamento)
+dry_run: false
 
-Últimos ciclos (ambos CONCLUÍDOS e mergeados no `main` em 2026-05-29):
-- **BLK-OPS-08** — Atualizar actions do CI para Node 24. Esteira Baixa (Block Orchestrator → Builder).
-  Branch `ciclo/BLK-OPS-08`, commit `255785c`, merge `4578e37`. Diff cirúrgico de 3 tags
-  (checkout@v4→v5, setup-python@v5→v6, docker-publish checkout@v4→v5).
-- **BLK-OPS-02b** — Saneamento ruff/mypy + CI bloqueante. Esteira Alta completa
-  (Block Orchestrator → Planner → [aprovação humana: Felipe Silva 2026-05-29] → Builder → QA).
-  Branch `ciclo/BLK-OPS-02b`, commit `18c668a`. APROVADO pelo QA (re-execução independente):
-  ruff 0, mypy 0, pytest 532/1, 4 hashes M1 idênticos, steps ruff/mypy agora bloqueantes no CI.
+## Resultado
+- 15 blocos `Status: CONCLUÍDO` movidos íntegros (append-only) para `tasks/completed.md`
+  (6 de "Tarefas pendentes" → stub de 1 linha; 9 da seção "## Concluídos" → seção removida).
+- `tasks/backlog.md`: 860 → 426 linhas (~50%); 13 blocos pendentes preservados verbatim.
+- QA independente: `pytest -q` → 532 passed, 1 skipped, 9 warnings; verificação byte-level
+  contra `git show HEAD:` = TODOS PASS (append-only, 15 blocos verbatim, zero perda, pendentes intactos).
+- Escopo substantivo: SOMENTE `tasks/backlog.md` + `tasks/completed.md`. Bookkeeping: este arquivo +
+  context/handoff*. Não tocou CLAUDE.md/PRD.md/código/M1/prompts/.claude/commands.
+
+## Nota de escopo
+Enunciado citava 9+8 blocos; real era 6+9=15. Regra `Status: CONCLUÍDO` aplicada (inequívoca).
+Redução ~50% (não os ~330 linhas estimados, que assumiam 9 concluídos em "Tarefas pendentes").
+
+## Paths do ciclo (commit por path — NUNCA git add -A)
+tasks/backlog.md · tasks/completed.md · tasks/current_task.md · context/handoff.md · context/handoff/
 
 ## Pendência humana
-- `git push origin main` (opcional) para publicar os dois merges no GitHub.
-- Pós-merge no CI: confirmar que o aviso "Node.js 20 actions are deprecated" sumiu; o CI agora
-  REPROVA em qualquer violação ruff/mypy.
-
-## Próximo passo recomendado (backlog)
-- **BLK-ARCH-01** — concluir migração `src/` e remover legado (dependência de CI completo verde
-  satisfeita; ruff/mypy bloqueantes agora são rede de segurança extra).
+- Revisar a branch `ciclo/BLK-OPS-09` e fazer o merge em `main` (o orquestrador não faz o merge).
+- Ciclo NÃO altera a orquestração → NÃO dispara dry-run pós-merge.

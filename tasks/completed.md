@@ -760,3 +760,502 @@ não avaliada em runtime; comportamento idêntico). Verificado COM paridade: `pi
 + `mypy src/` → Success (0); `ruff check .` → 0; `import streamlit_app` → ok.
 Lição: para validar `mypy src/` com paridade ao CI, instalar `types-requests` (ou os mesmos stubs do
 runner) antes de rodar; senão o verde local é falso. Hotfix direto no `main` (1 linha, runtime-inerte).
+
+---
+
+## Housekeeping BLK-OPS-09 — blocos migrados do backlog (2026-05-29)
+
+> Movidos íntegros de `tasks/backlog.md` (Status: CONCLUÍDO) pelo ciclo BLK-OPS-09.
+> 6 da seção "Tarefas pendentes" (viraram stub no backlog) + 9 da antiga seção "## Concluídos" (removida do backlog).
+
+### BLK-OPS-06 — Alinhar checkout do VPS via `git pull` — CONCLUÍDO (2026-05-29)
+
+Status: CONCLUÍDO (2026-05-29) — APROVADO. Detalhes em `tasks/completed.md`. Mover para a seção
+Concluídos no próximo housekeeping do backlog. Execução: `git pull --ff-only` no VPS levou
+`/opt/motor-expansao/app` de `64e68b1 → 8218f38` (fast-forward), materializando os 5
+`secrets/*.enc.*` como rastreados; HEAD do VPS == origin/main. VPS ainda sem `4ee9685`/`97195e3`
+(locais não enviados ao GitHub) — alinhamento 100% via `git push` + novo pull é OPCIONAL.
+Criticidade: baixa
+Prioridade: alta (próxima da fila)
+Tipo: operação / infraestrutura
+Skill recomendada: decisão humana + comando direto (per-command no VPS)
+Resumo: Fechamento operacional do FU5. O checkout git em `/opt/motor-expansao/app`
+(origin = github.com/Kastaldy/motor-de-expansao) está atrás do `origin/main` — não tem
+o commit `a2a4cea` que versionou os 5 `secrets/*.enc.*`. No FU5 esses arquivos estavam
+untracked no VPS e foram removidos (`rm`), com as versões canônicas vivendo no repo/origin.
+Um `git pull` no VPS faz fast-forward e materializa os `.enc.*` como arquivos **rastreados**,
+eliminando o estado "atrás do origin" e deixando o checkout limpo/alinhado.
+Passos sugeridos (todos per-command, com confirmação explícita — GUARDRAIL CLAUDE.md §6):
+1. read-only: `git -C /opt/motor-expansao/app status` e `git -C /opt/motor-expansao/app rev-parse HEAD`
+   (confirmar working tree limpo e quão atrás está antes de qualquer pull).
+2. read-only: `git -C /opt/motor-expansao/app fetch --dry-run` (ver o que viria).
+3. `git -C /opt/motor-expansao/app pull --ff-only` (aplicar; abortar se não for fast-forward).
+4. verificar: `secrets/*.enc.*` presentes e tracked; `docker compose` não precisa rebuild
+   (mudança é só de arquivos versionados, não de imagem).
+Observações:
+- Pré-requisito opcional: `git push` do `main` local (hoje `ahead 3` do origin) se quiser que
+  o VPS receba também FU4 + housekeeping. NÃO é necessário para os `.enc.*` (já estão no origin
+  via `a2a4cea`).
+- Não urgente, mas deve ser feita antes do próximo deploy/restore para evitar surpresa de
+  estado divergente no servidor.
+Dependências: aprovação explícita do usuário, comando a comando, antes de qualquer execução no VPS.
+
+---
+
+### BLK-OPS-07 — Sincronizar VPS 100% com o `main` local (git push + pull) — CONCLUÍDO (2026-05-29)
+
+Status: CONCLUÍDO (2026-05-29) — APROVADO. Detalhes em `tasks/completed.md`. VPS sincronizado
+`8218f38 → 76fc89e` via `git pull --ff-only` (fast-forward, gate humano por comando). O `git push`
+do passo 1 era NO-OP (`origin/main` já == `main` == `76fc89e`) e foi pulado por decisão humana.
+Mover para a seção Concluídos no próximo housekeeping do backlog. Texto original abaixo preservado.
+(antes: pendente — executar APÓS concluir BLK-PRD-01)
+Criticidade: baixa
+Prioridade: média (fechamento de sincronização, ao final do ciclo do BLK-PRD-01)
+Tipo: operação / infraestrutura
+Skill recomendada: decisão humana + comando direto (per-command no VPS)
+Resumo: Fechar a sincronização deixada pendente pelo BLK-OPS-06. Depois daquele bloco, o VPS
+(`/opt/motor-expansao/app`) ficou em `8218f38` (origin/main no GitHub no momento), com os 5
+`secrets/*.enc.*` já rastreados — MAS o `main` local está à frente do `origin/main` (ahead ~3:
+inclui `97195e3` FU4, `4ee9685` BLK-OPS-05 e o fechamento do BLK-OPS-06 `f36adfe`). Para o VPS
+refletir 100% o HEAD local, é preciso primeiro publicar o `main` local no GitHub e depois puxar
+no VPS.
+Passos sugeridos (todos per-command, com confirmação explícita — GUARDRAIL CLAUDE.md §6):
+1. local (sua máquina): `git push origin main` (publica FU4 + BLK-OPS-05 + BLK-OPS-06 no GitHub).
+   Pré-checagem read-only opcional: `git log --oneline origin/main..main` para ver o que sobe.
+2. read-only no VPS: `git -C /opt/motor-expansao/app fetch --dry-run` (confirmar o range que viria).
+3. VPS: `git -C /opt/motor-expansao/app pull --ff-only` (abortar se não for fast-forward).
+4. verificar no VPS: `git rev-parse HEAD` == `origin/main`; `git status -s` limpo (só os untracked
+   não relacionados conhecidos: `authelia/`, `Caddyfile.backup.*`, `docker-compose.prod.yml.backup.*`).
+   `docker compose` NÃO precisa rebuild (só arquivos versionados mudam; nenhuma imagem/serviço).
+Observações:
+- Pré-requisito: BLK-PRD-01 concluído e commitado (a reescrita do PRD.md deve estar no `main` local
+  antes do push, para subir tudo de uma vez).
+- Antes do push, garantir que as edições pendentes de `tasks/backlog.md` e `PRD.md` estejam
+  resolvidas/commitadas como se deseja — o push leva o estado do `main` local.
+Dependências: BLK-PRD-01 concluído; aprovação explícita do usuário, comando a comando, antes de
+qualquer execução no VPS.
+
+---
+
+### BLK-PRD-01 — Reescrever PRD.md como PRD padrão do projeto
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média *(doc canônico §2 do CLAUDE.md; Block Orchestrator pode ELEVAR p/ Alta se quiser gate de aprovação do novo formato — nunca rebaixar)* |
+| **Prioridade** | Alta |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana do outline]` → Builder → QA |
+| **Depende de** | — |
+| **Status** | CONCLUÍDO (2026-05-29) — APROVADO pelo QA via /run-cycle (commit `3d1ca1a`, branch `ciclo/BLK-PRD-01`). Detalhes em `tasks/completed.md`. |
+| **Skill** | /run-cycle |
+
+**Contexto:** o `PRD.md` atual contém o "Programa de Melhorias — Referência do Master
+Orchestrator" — conteúdo **temporário** que substituiu o PRD padrão antigo (apagado por estar
+desatualizado). Os 9 blocos desse programa **já foram migrados** para `tasks/backlog.md`
+(2026-05-29). Há também uma edição não-commitada pré-existente em `PRD.md` (`M PRD.md`) que será
+absorvida/substituída pela reescrita.
+
+**Objetivo:** reescrever `PRD.md` como um **PRD padrão do projeto** — documento de produto
+canônico, subordinado ao `CLAUDE.md` (fonte de verdade), sem duplicar o backlog.
+
+**Escopo permitido:**
+- Substituir todo o conteúdo de `PRD.md` por um PRD padrão. Estrutura **sugerida** (o Planner
+  refina e apresenta o outline para revisão humana antes do Builder escrever, por ser doc canônico):
+  - Visão e objetivo do produto (Motor de Expansão Ultra Academia)
+  - Público-alvo (18–45) e contextos de uso
+  - Escopo do produto / fora de escopo
+  - Camadas e trilhas (M1 oficial territorial, censitário, híbrido, mercado/residual, Expansão de Domínio)
+  - Score oficial e guardrails canônicos — **referenciar** o `CLAUDE.md` §3/§5, não redefinir valores
+  - Requisitos funcionais e não-funcionais (dashboard offline, performance, sem API ao vivo)
+  - Métricas de sucesso
+  - Roadmap/fases — **referenciar** `tasks/backlog.md` para o detalhe dos blocos, não copiá-los
+  - Dependências e restrições (infra/VPS)
+- **Commit do `PRD.md` atualizado por path** — este é o entregável final do ciclo (incluído no escopo a pedido do usuário).
+
+**Fora de escopo:**
+- Alterar `CLAUDE.md`, código, `config.py`, score, artefatos M1.
+- Reescrever, mover ou re-duplicar blocos do `tasks/backlog.md`.
+
+**Arquivos a ler:** `PRD.md` (estado atual + histórico git) · `CLAUDE.md` (fonte canônica) · `tasks/backlog.md` (para referenciar, não duplicar).
+**Arquivos a alterar:** `PRD.md`.
+
+**Critérios de aceite:**
+- `PRD.md` é um PRD padrão coerente, subordinado ao `CLAUDE.md`, sem duplicar o backlog.
+- Nenhum valor canônico contradiz o `CLAUDE.md` (PRD referencia, não redefine pesos/parâmetros).
+- `PRD.md` commitado por path (sem arrastar outros arquivos não relacionados).
+
+**Validações obrigatórias:**
+```
+pytest -q            # doc-only: suíte deve seguir verde (nada de código tocado)
+git --no-pager diff --stat -- PRD.md    # escopo: só PRD.md alterado
+```
+
+**Guardrails específicos:**
+- Doc-only: não toca score/M1/código/artefatos. Por ser canônico, recomenda-se `[revisão humana]`
+  do outline proposto pelo Planner antes do Builder escrever.
+- Commit isolado por path (`git add PRD.md`); não arrastar a edição pré-existente de outros arquivos.
+
+**Risco:** baixo (documentação). Variância no alinhamento do formato com a expectativa do usuário —
+mitigado pela revisão humana do outline.
+
+---
+
+### BLK-OPS-02 — CI completo + build via registry (fora da prod)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
+| **Depende de** | — |
+| **Status** | CONCLUÍDO (2026-05-29) — APROVADO COM RESSALVAS pelo QA via /run-cycle; **mergeado no `main`** (merge commit `24aa066`, PR #1). Detalhes em `tasks/completed.md`. CI completo verde no runner limpo (460 passed, 73 skipped); `Docker Publish (GHCR)` rodou no push à `main` e publicou a imagem (run `26664812524`). Ressalvas: ruff/mypy não-bloqueantes → **BLK-OPS-02b**; upgrade de actions Node 20 → **BLK-OPS-08**. Mover para Concluídos no próximo housekeeping. |
+
+**Objetivo:** o gate do `main` deve rodar a suíte completa (hoje só 2 arquivos + smoke import),
+e o deploy deve usar imagem buildada no CI e empurrada para um registry — o servidor faz `pull`,
+não `build`.
+
+**Escopo permitido:**
+- Estender `.github/workflows/ci.yml` para rodar `pytest -q` completo (ou o máximo viável).
+- Resolver dependências de dados dos testes no runner (fixtures sintéticas / amostras pequenas
+  versionadas, **nunca** os Parquets de produção).
+- Workflow de build → push de imagem para registry (ex.: GHCR).
+- Atualizar runbook de deploy para `pull` em vez de `--build` no servidor.
+
+**Fora de escopo:** alterar lógica de scoring, alterar artefatos M1, executar deploy no VPS.
+
+**Arquivos a ler:** `.github/workflows/ci.yml` · `Dockerfile.streamlit` · `docker-compose.prod.yml` ·
+`tests/` (mapear dependências de dados) · `CLAUDE.md` §3.4, §3.5.
+**Arquivos a alterar/criar:** `.github/workflows/ci.yml` · novo workflow de build · `tests/fixtures/` ·
+`docs/deploy.md`.
+
+**Critérios de aceite:**
+- CI roda a suíte completa e fica verde (baseline atual: 532 passed, 1 skipped).
+- Build de imagem publica no registry com tag por commit.
+- Runbook de deploy descreve `pull` + `up -d` sem `--build` no servidor.
+
+**Validações obrigatórias:**
+```
+pytest -q                                  # suíte completa, verde
+ruff check . && mypy src/                   # qualidade
+docker build -f Dockerfile.streamlit -t test:ci .   # build local sanity
+```
+
+**Guardrails específicos:**
+- Fixtures de teste **não** contêm dados reais de Ultra/Skyfit/Wellhub.
+- Deploy efetivo no VPS é passo humano, fora deste bloco.
+
+**Risco:** médio — variância concentrada nas dependências de dados dos 532 testes no runner.
+Se o acoplamento a dados locais for grande, considerar quebrar em sub-bloco de fixtures.
+
+---
+
+### BLK-OPS-02b — Saneamento ruff/mypy (violações que exigem refatoração)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta *(toca código de produção M1: hex_enrichment.py, base_h3_brasil.py — additivo/mecânico, mas exige cuidado anti-regressão)* |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
+| **Depende de** | **BLK-OPS-02** (steps ruff/mypy já existem no CI, hoje não-bloqueantes) |
+| **Status** | CONCLUÍDO (2026-05-29) — APROVADO pelo QA via /run-cycle (re-execução independente). Branch `ciclo/BLK-OPS-02b`. Gate humano: APROVADO POR Felipe Silva EM 2026-05-29. Resultado: `ruff check .`→0, `mypy src/`→0, `pytest -q`→532 passed/1 skipped (zero regressão), steps ruff/mypy BLOQUEANTES no `ci.yml` (continue-on-error removido), 4 hashes M1 idênticos (não-mutação provada). F601 corrigido com prova de invariância (removida só a 1ª `pop_total` morta de 15 dicts); supressões documentadas mínimas (B019×3, type:ignore em fallbacks de import, F401 re-exports usados por testes); `pyproject.toml` só migrou `[tool.ruff]`→`[tool.ruff.lint]` (nenhuma regra desabilitada). Detalhes em `tasks/completed.md`. Mover para Concluídos no próximo housekeeping. |
+
+**Contexto:** `ruff`/`mypy` nunca rodaram no CI. Ao wirá-los em BLK-OPS-02 descobriu-se dívida
+latente muito acima do escopo trivial daquele bloco: **286 erros ruff** (228 auto-fixáveis via
+`ruff check . --fix`, 68 remanescentes não-triviais) e **23 erros mypy** em `src/`. Os
+remanescentes estão espalhados por ~22 arquivos incluindo **código de produção M1**
+(`src/motor_expansao/pipelines/m1/hex_enrichment.py`, `base_h3_brasil.py`), dashboard
+(`pages.py`, `components.py`, `data.py`, `censo_*`), pipelines `jobs/`, legado
+`fora_primeira_fase/` e **testes de fixtures M1** (`tests/integration/test_hex_enrichment_brasil.py`
+com 14× F601 "repeated dict key", `test_fase_a_censo2022.py`). Zerá-los exige refatoração de
+produção e tocar a semântica de testes M1 — **proibido em BLK-OPS-02** (trivial only; guardrail
+"não refatorar produção", "não mass-suppress", "não desabilitar regra no pyproject"). Por isso,
+em BLK-OPS-02 os steps ruff/mypy foram adicionados ao `ci.yml` como **`continue-on-error: true`**
+(informativos), mantendo o gate verde (CLAUDE.md §2).
+
+**Pendências herdadas de BLK-OPS-02 (lista para sanear aqui):**
+- Aplicar `ruff check . --fix` (228 auto-fixes mecânicos: I001 import-sort, F401 unused-import,
+  UP045/UP037 anotações, F541 f-string, UP035) — diff amplo (~52 arquivos), validar com `pytest -q`.
+- 68 ruff remanescentes não-autofixáveis, com destaque para itens que NÃO são triviais:
+  - `src/motor_expansao/dashboard/pages.py:2511 F821 Undefined name pdk` — **bug latente real** em produção (avaliar import/uso de `pydeck as pdk`).
+  - `ibge_censo.py` 3× B019 `lru_cache` em método (risco de memory leak — refatorar, não suprimir cego).
+  - `tests/integration/test_hex_enrichment_brasil.py` 14× F601 `"pop_total"` repetido em dict literal — **M1**: mudar a chave repetida altera qual valor vence; exige entender o fixture antes de tocar (não mexer sem confirmar invariância M1).
+  - Diversos B905 (`zip(strict=)`), E712 (`== True`), F841 (var não usada), B007/B023/B017/E731/E741 em produção e testes — triviais individualmente, mas em volume.
+- 23 mypy em `src/`: `dashboard/pages.py` (8), `pipelines/m1/hex_enrichment.py` (6 — implicit Optional, dict-item, no-redef de `generate_fase1_bi_artifacts`), `config.py` (5 — SettingsConfigDict/no-redef), `dashboard/censo_map.py` (2), `components.py` (1), `pipelines/m1/base_h3_brasil.py` (1 — Generator return type).
+
+**Escopo permitido:** corrigir as violações de verdade (refatoração mecânica/segura), preferindo
+correção a supressão; supressão pontual `# noqa: <code>` / `# type: ignore[<code>]` SEMPRE
+documentada quando o fix for arriscado. Ao final, tornar os steps ruff/mypy **bloqueantes**
+(remover `continue-on-error`) no `ci.yml`.
+
+**Fora de escopo:** alterar lógica de scoring/pesos, alterar artefatos M1, mudar semântica de
+testes M1 (F601 só pode ser tocado provando invariância do fixture).
+
+**Critérios de aceite:** `ruff check .` → 0 erros; `mypy src/` → 0 erros; steps bloqueantes no CI;
+`pytest -q` mantém `532 passed, 1 skipped` (zero regressão); hashes dos Parquets M1 inalterados.
+
+**Risco:** médio-alto — toca produção M1; mitigar com passos pequenos + prova de não-regressão
+(pytest verde + hash dos artefatos M1) a cada passo.
+
+---
+
+### BLK-OPS-08 — Atualizar actions do CI para Node 24 (fim do Node 20)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Baixa |
+| **Esteira** | Block Orchestrator → Builder |
+| **Depende de** | **BLK-OPS-02** (workflows criados) — ✅ satisfeita |
+| **Status** | CONCLUÍDO (2026-05-29) — Builder aplicou o upgrade (esteira Baixa: Block Orchestrator → Builder, sem QA). Branch `ciclo/BLK-OPS-08`. Diff cirúrgico (3 tags): `ci.yml` `actions/checkout@v4→@v5` + `actions/setup-python@v5→@v6`; `docker-publish.yml` `actions/checkout@v4→@v5` (docker/* já nas últimas estáveis, não mudam). Smoke `import streamlit_app` OK. Validação final do aviso some = run verde no GitHub Actions pós-merge humano. Detalhes em `tasks/completed.md`. Mover para Concluídos no próximo housekeeping. |
+
+**Contexto:** os runs do CI/Docker Publish emitem aviso de descontinuação — `actions/checkout@v4`
+e `actions/setup-python@v5` rodam em Node 20, que o GitHub força a Node 24 a partir de 16-jun-2026
+e remove do runner em 16-set-2026. Os `docker/*-action` usados no `docker-publish.yml` (login@v3,
+metadata@v5, build-push@v6) não estão no aviso, mas vale revisar versões no mesmo passo.
+
+**Escopo permitido:**
+- Atualizar `.github/workflows/ci.yml` e `.github/workflows/docker-publish.yml` para as versões de
+  actions que suportam Node 24 (ex.: `actions/checkout@v5`, `actions/setup-python@v6` ou a mais
+  recente estável no momento da execução).
+- Confirmar via run verde no GitHub Actions (push em branch de teste / PR) que o aviso some.
+
+**Fora de escopo:** mudar lógica de CI, steps de teste, scoring, artefatos M1.
+
+**Critérios de aceite:** runs de CI e Docker Publish verdes sem o aviso de Node 20; nenhum step
+de teste/build alterado em comportamento.
+
+**Risco:** baixo — atualização de versão de actions; reversível.
+
+---
+
+### BLK-OPS-01-FU5 — Decidir destino dos `secrets/*.enc.*` no VPS
+
+Status: CONCLUÍDO (2026-05-29)
+Criticidade: baixa
+Prioridade: baixa
+Tipo: operação / decisão
+Resumo: Decisão tomada (usuário): apagar do VPS, repo = single source of truth.
+Durante a execução descobriu-se que `/opt/motor-expansao/app` é um checkout git
+(origin = github.com/Kastaldy/motor-de-expansao) e que os 5 `secrets/*.enc.*` lá
+estavam **untracked** (`??`), com o checkout do VPS atrás do `origin/main` (sem o
+commit `a2a4cea` que os versionou). Antes do `rm`: confirmado que `origin/main`
+contém `a2a4cea` e que os sha256 das 5 cópias no VPS batem byte-a-byte com as
+versões commitadas (recuperáveis via `git pull`). `rm` dos 5 `.enc.*` untracked
+executado no VPS com confirmação comando-a-comando (5 comandos, 1–4 read-only +
+5 destrutivo); `secrets/README.md` (rastreado) preservado. `secrets/` no VPS agora
+só tem `README.md`. Nenhum segredo em claro tocado; chave privada age nunca esteve
+no VPS. Re-criação no deploy/restore via `git pull` (+ `sops -d` quando preciso).
+Dependências: atendidas (aprovação explícita do usuário, dada comando-a-comando).
+
+---
+
+### BLK-OPS-05 — Hardening do sistema de orquestração
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta *(meta: altera o próprio mecanismo de ciclos)* |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
+| **Depende de** | — |
+| **Status** | Concluído (2026-05-29) — APROVADO pelo QA + dry-run pós-merge validado (BLK-OPS-05-DRYRUN, branch `ciclo/BLK-OPS-05-DRYRUN`, gate 6.a OK: commit isolado por path + handoffs versionados c/ segundos). Detalhes em `tasks/completed.md`. |
+
+**Objetivo:** fechar três lacunas de confiabilidade da orquestração: (1) QA re-executa testes em
+vez de confiar no log do Builder; (2) handoffs versionados/auditáveis; (3) disciplina de git por ciclo.
+
+**Escopo permitido:**
+- Atualizar `prompts/qa_analyzer.md`: QA roda `pytest -q` por conta própria e cola a saída;
+  log reportado pelo Builder **não** é aceito como evidência.
+- Handoff versionado: `context/handoff/AAAAMMDD-HHMM-<skill>.md` (append-only) ou log acumulativo,
+  preservando estados intermediários do ciclo.
+- `.claude/commands/run-cycle.md`: cada ciclo cria branch/commit isolado; ao falhar no meio,
+  procedimento de `git reset` documentado e ciclo re-entrante.
+- Portar mudanças equivalentes para `.codex/skills/codex-run-cycle/SKILL.md`.
+
+**Fora de escopo:** Fase 2 completa (Master Orchestrator, +5 Skills) — isso é bloco Estratégico à parte.
+
+**Arquivos a ler:** `prompts/*.md` · `.claude/commands/run-cycle.md` ·
+`.codex/skills/codex-run-cycle/SKILL.md` · `CLAUDE.md` §4.
+**Arquivos a alterar:** os acima.
+
+**Critérios de aceite:**
+- Prompt do QA exige re-execução independente de testes.
+- Handoffs de um ciclo de exemplo ficam preservados e versionados.
+- Ciclo de exemplo gera branch/commit próprio; rollback documentado e testado num dry-run.
+- Versão Claude e Codex consistentes.
+
+**Validações obrigatórias:**
+```
+# Dry-run de um ciclo trivial (ex.: ajuste de doc) end-to-end:
+/run-cycle   # com tarefa dummy de criticidade Baixa
+git log --oneline -3   # confirma commit isolado do ciclo
+ls context/handoff/     # confirma handoffs versionados
+```
+
+**Guardrails específicos:**
+- Como este bloco modifica a própria esteira, rodá-lo com **observação humana atenta** (gate
+  `[revisão humana]`) e validar num ciclo dummy antes de confiar nos ciclos de produção.
+
+**Risco:** médio — alterar o mecanismo enquanto se depende dele. Mitigar com dry-run em tarefa trivial.
+
+---
+
+### BLK-OPS-01 — Backup encriptado de segredos e plano de regeneração
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
+| **Depende de** | — |
+| **Status** | Concluído (2026-05-28) — APROVADO COM RESSALVAS. Detalhes em `tasks/completed.md`. |
+
+**Objetivo:** garantir que a perda do VPS não implique perda de segredos/config, e documentar
+a regeneração completa dos Parquets a partir das fontes brutas.
+
+**Escopo permitido:**
+- Configurar tooling de encriptação de segredos no repo (ex.: SOPS+age ou git-crypt) — apenas a
+  infraestrutura, **sem** versionar valores em claro.
+- Escrever runbook `docs/backup_restore.md`: o que existe só no servidor (`.env`, `Caddyfile`,
+  `authelia/configuration.yml`, `users_database.yml`, `db.sqlite3`), como encriptar/restaurar.
+- Documentar a regeneração dos Parquets: IBGE Censo 2022 raw + `Ultra.csv` → pipeline M1 →
+  `data/outputs/`, com os comandos exatos e tempo esperado.
+
+**Fora de escopo:** alterar pipeline, alterar M1, executar qualquer coisa no VPS.
+
+**Arquivos a ler:** `CLAUDE.md` §3 · estrutura de `/opt/motor-expansao/`.
+**Arquivos a criar:** `docs/backup_restore.md` · `.sops.yaml` (ou equivalente) · `.gitattributes` se git-crypt.
+
+**Critérios de aceite:**
+- Runbook revisado descreve restore ponta a ponta de um servidor zerado.
+- Tooling de encriptação funciona num arquivo de teste (não num segredo real).
+- Nenhum segredo em texto puro entra no git (verificado).
+
+**Validações obrigatórias:**
+```
+git secrets --scan   # ou: gitleaks detect --no-git -v
+# Teste de roundtrip do tooling com arquivo dummy:
+echo "dummy: ok" > /tmp/t.yaml && sops -e /tmp/t.yaml | sops -d /dev/stdin
+```
+
+**Guardrails específicos:**
+- O **Builder NÃO toca o VPS** e NÃO manipula segredos reais. A coleta/encriptação dos segredos
+  reais é passo humano, executado a partir do runbook, com confirmação por comando.
+- Nenhum valor de segredo aparece em handoff, log de teste ou commit.
+
+**Risco:** baixo, desde que a regra "Builder não acessa segredos reais" seja respeitada.
+
+---
+
+### BLK-OPS-01-FU1 — Stage do `secrets_roundtrip_test.ps1` no próximo commit
+
+Status: CONCLUÍDO (2026-05-28, commit 4ed75d8)
+Criticidade: baixa
+Resumo: `git add scripts/secrets_roundtrip_test.ps1` aplicado antes do commit
+de fechamento. Arquivo entrou no repo.
+
+---
+
+### BLK-OPS-01-FU2 — Executar roundtrip SOPS + gitleaks no ambiente do dev
+
+Status: CONCLUÍDO (2026-05-28)
+Criticidade: alta
+Tipo: operação / validação
+Resumo da execução:
+- sops 3.8.1, age 1.1.1 e gitleaks 8.30.1 baixados para `$env:USERPROFILE\tools\`
+  (sem privilégio admin; PATH ajustado só na sessão).
+- Primeira execução revelou 3 defeitos no tooling entregue por BLK-OPS-01:
+  (a) URL do SOPS em `docs/backup_restore.md` §5 incorreta — asset oficial é
+      `sops-v3.8.1.exe`, não `sops-v3.8.1.windows.amd64.exe`.
+  (b) `scripts/secrets_roundtrip_test.{sh,ps1}` falhavam com `no matching creation
+      rules found` porque o `.sops.yaml` tem regras apenas para `secrets/**` e a
+      fixture vive em `tests/fixtures/`. Correção: passar `--config /dev/null`.
+  (c) Comparação `diff -q` byte-a-byte falhava porque sops normaliza YAML
+      (remove aspas redundantes, indentação nested 2→4 espaços). Correção:
+      comparação YAML semântica via Python+PyYAML.
+- Gitleaks sem config scaneou 13.26 GB em 1h57m e encontrou 3 falsos positivos:
+  `.env.example:17 GEOFUSION_API_KEY=` (placeholder), 2x
+  `renda_per_capita_setor_2022_calibrada` (nome de coluna de DataFrame em
+  `jobs/pipelines/calibrar_renda_setor_2022.py:122` e
+  `src/motor_expansao/dashboard/pages.py:2453`). Nenhum segredo real.
+- Após correções: roundtrip `ROUNDTRIP OK` + exit 0; gitleaks 0 leaks em 4.63s.
+Arquivos alterados pelas correções: `.gitleaks.toml` (novo), `.gitleaksignore`
+(novo, 3 FPs registrados), `scripts/secrets_roundtrip_test.{sh,ps1}` (corrigidos),
+`docs/backup_restore.md` (§5 URL SOPS + §15.2 gitleaks com config). Commit
+corretivo separado.
+
+---
+
+### BLK-OPS-01-FU3 — Atualizar baseline de testes no CLAUDE.md §5
+
+Status: CONCLUÍDO (2026-05-28)
+Criticidade: baixa
+Tipo: documentação / housekeeping
+Resumo: Diagnóstico do QA original interpretou o `509 passed` da linha 94 (descrição
+histórica do ciclo Performance e Refatoração de 22-mai) como baseline atual. Decisão:
+NÃO reescrever a história do ciclo Performance — adicionar nova linha no topo de §5
+declarando explicitamente a baseline atual (`532 passed, 1 skipped, 9 warnings` em
+2026-05-28) e marcar que os números menores nos ciclos abaixo são históricos. Também
+acrescentado o registro do ciclo BLK-OPS-01 (incluindo FU1, FU2, FU3) em §5.
+
+---
+
+### BLK-OPS-01-FU4 — Corrigir `encrypt_one` no `setup_secrets_vps.sh`
+
+Status: CONCLUÍDO (2026-05-29) — APROVADO pelo QA via /run-cycle (esteira média completa). Detalhes em `tasks/completed.md`.
+Criticidade: média
+Prioridade: média
+Tipo: bug / tooling
+Skill recomendada: comando direto (sem /run-cycle)
+Resumo: Durante o fechamento real de BLK-OPS-01 em 2026-05-29 (passo 4.5), descobriu-se
+que a função `encrypt_one` do script usa `sops -e SRC > DST` com SRC fora de `secrets/`.
+Isso falha com "no matching creation rules found" pelo mesmo motivo do defeito 3
+(SOPS 3.8.1 não casa `path_regex` com `/`). O workaround manual usado no fechamento
+foi `cp SRC DST && sops -e -i DST`. Corrigir a função `encrypt_one` para usar esse
+padrão. Adicionar tratamento de erro: se `sops -e -i` falhar, fazer `rm DST` para
+não deixar plaintext em `secrets/`.
+Dependências: nenhuma.
+
+---
+
+### BLK-20260528-02 — Eliminar warning jwt_secret via force-recreate
+
+Status: concluído (2026-05-28)
+Criticidade: baixa
+Prioridade: baixa
+Tipo: operação / infraestrutura
+Skill recomendada: /run-cycle
+Resumo: Executar `docker compose up -d --force-recreate authelia` no servidor VPS para
+recriar o container do Authelia com os env vars atualizados do docker-compose.prod.yml.
+O `AUTHELIA_JWT_SECRET` foi renomeado para `AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET`
+no compose file (ciclo BLK-20260528-01), mas `docker compose restart` não recria o
+container — o warning `jwt_secret deprecated` permanece até o force-recreate.
+Downtime esperado: ~10s do Authelia (Caddy e Streamlit não são afetados).
+Dependências: nenhuma bloqueadora
+Observações: não executar sem confirmação explícita do usuário; aguardar janela de
+manutenção conveniente.
+
+---
+
+### BLK-PROD-04 — Avaliar st.fragment para interações do mapa
+
+Status: concluido (2026-05-25)
+Criticidade: média
+Prioridade: baixa
+Tipo: performance / UI
+Skill recomendada: /run-cycle
+Resumo: Implementado render_mapa_pydeck_fragment (@st.fragment) em pages.py. Reduz reruns da aba ao isolar st.pydeck_chart e captura de clique. QA aprovado: 532 passed, 1 skipped.
+Dependências: nenhuma
+
+---
+
+### BLK-OPS-09 — Housekeeping do backlog.md
+
+Data: 2026-05-29 — APROVADO (esteira média doc-only consolidada no orquestrador + QA independente).
+Branch: `ciclo/BLK-OPS-09`.
+Resumo: Movidos 15 blocos `Status: CONCLUÍDO` íntegros de `tasks/backlog.md` para este arquivo
+(append-only, seção "## Housekeeping BLK-OPS-09" acima): 6 da seção "Tarefas pendentes"
+(BLK-OPS-06, -07, BLK-PRD-01, BLK-OPS-02, -02b, -08 → viraram stub de 1 linha no backlog) e 9 da
+seção "## Concluídos" (BLK-OPS-01-FU5, -05, -01, -01-FU1/FU2/FU3/FU4, BLK-20260528-02, BLK-PROD-04
+→ seção removida do backlog). 13 blocos pendentes preservados verbatim.
+Escopo: editou SOMENTE `tasks/backlog.md` + `tasks/completed.md` (substantivo); bookkeeping do ciclo
+em current_task.md/handoffs. NÃO tocou CLAUDE.md, PRD.md, código, M1, prompts/, .claude/commands/.
+Achado: o enunciado citava 9+8 blocos; o real era 6+9=15 (regra `Status: CONCLUÍDO` aplicada).
+Por isso o backlog caiu de 860 → 426 linhas (~50%), não os ~330 estimados (a estimativa assumia 9
+concluídos em "Tarefas pendentes", não 6).
+Validações (QA, re-execução independente): `pytest -q` → 532 passed, 1 skipped, 9 warnings;
+verificação byte-level contra `git show HEAD:` confirmou append-only + 15 blocos verbatim + zero perda
+de conteúdo + pendentes preservados. NO-BYPASS (suíte real, sem mock).
