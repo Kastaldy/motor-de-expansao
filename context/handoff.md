@@ -1,174 +1,32 @@
-# Handoff — QA / Quality Analyzer (BLK-OPS-02b — Saneamento ruff/mypy + CI bloqueante)
+# Handoff (corrente) — BLK-OPS-09 (Housekeeping do backlog.md)
 
-## Skill que gerou este handoff
-QA / Quality Analyzer
+> Cópia corrente; idêntica em conteúdo ao último snapshot versionado
+> `context/handoff/20260529-214655-qa.md`.
 
-## Próxima Skill recomendada
-Fechamento manual (orquestrador commita/encerra por path)
+Ciclo: BLK-OPS-09 — Housekeeping do backlog.md. Branch `ciclo/BLK-OPS-09`. dry_run: false.
 
-## Bloco auditado
-BLK-OPS-02b — Saneamento ruff/mypy (preferindo correção a supressão) + ruff/mypy bloqueantes no CI.
-Branch: `ciclo/BLK-OPS-02b` (não troquei branch; não commitei). Gate humano: APROVADO POR Felipe Silva
-EM 2026-05-29. Estado: working tree não commitado; HEAD == main (`30237a0`), então a baseline de
-comparação é HEAD/main.
+## O que foi feito (Builder)
+- 15 blocos `Status: CONCLUÍDO` movidos íntegros (append-only) para `tasks/completed.md` sob a seção
+  "## Housekeeping BLK-OPS-09 — blocos migrados do backlog (2026-05-29)":
+  - 6 de "Tarefas pendentes": BLK-OPS-06, BLK-OPS-07, BLK-PRD-01, BLK-OPS-02, BLK-OPS-02b, BLK-OPS-08
+    → substituídos por stub de 1 linha no backlog.
+  - 9 da seção "## Concluídos": BLK-OPS-01-FU5, BLK-OPS-05, BLK-OPS-01, BLK-OPS-01-FU1, BLK-OPS-01-FU2,
+    BLK-OPS-01-FU3, BLK-OPS-01-FU4, BLK-20260528-02, BLK-PROD-04 → seção "## Concluídos" removida.
+- `tasks/backlog.md`: 860 → 426 linhas; 13 blocos pendentes preservados verbatim.
+- Método: helper Python sobre os bytes reais → conteúdo movido byte-idêntico ao original.
 
-## VEREDITO
-**APROVADO**
+## Achado de escopo
+Enunciado citava 9+8 blocos; o real era 6+9=15. Regra `Status: CONCLUÍDO` aplicada (inequívoca).
+Redução ~50% (não os ~330 linhas estimados; a estimativa assumia 9 concluídos em "Tarefas pendentes").
 
-## Justificativa
-Re-executei por conta própria as 4 validações de aceite + as 2 provas de guardrail M1 (hashes + diff de
-parâmetros canônicos) + a auditoria anti-mascaramento. Todos os critérios batem:
-- `ruff check .` → `All checks passed!` (0 erros).
-- `mypy src/` → `Success: no issues found in 18 source files` (0 erros).
-- `python -m pytest -q` → `532 passed, 1 skipped, 9 warnings` (ZERO regressão vs baseline).
-- `python -c "import streamlit_app; print('import ok')"` → `import ok`.
-- ci.yml: steps "Lint (ruff)" e "Types (mypy src/)" SEM `continue-on-error` (grep vazio no arquivo vivo).
-- 4 hashes M1 IDÊNTICOS à baseline do Builder (prova de não-mutação do M1).
+## QA (re-execução independente — NO-BYPASS)
+- `pytest -q` → 532 passed, 1 skipped, 9 warnings (exit 0). Igual ao baseline (CLAUDE.md §5).
+- Verificação byte-level contra `git show HEAD:` (suíte/conteúdo reais, sem mock): TODOS PASS —
+  completed.md append-only; 15 blocos verbatim em completed.md; 15 blocos removidos do backlog;
+  6 stubs presentes; "## Concluídos" ausente; 13 pendentes verbatim; "Priorização atual" preservada.
+- Escopo substantivo: SOMENTE `tasks/backlog.md` + `tasks/completed.md`. Não tocou
+  CLAUDE.md/PRD.md/código/M1/artefatos/prompts/.claude/commands.
 
-A correção F601 é cirurgicamente correta (remove só a 1ª `pop_total` morta de cada dict, valor real
-sobrevive; nenhum assert/valor M1 alterado). As supressões são poucas, todas documentadas inline, nenhuma
-desabilita regra ruff nem afrouxa mypy. As mudanças em produção M1 (`hex_enrichment.py`,
-`base_h3_brasil.py`) são puramente anotação de tipo / reorder de import / `type:ignore` — zero mudança de
-lógica runtime. Não é caso de no-bypass (pytest com fixtures legítimas; config de lint não foi enfraquecida).
-
-## Problemas críticos
-Nenhum.
-
-## Problemas médios
-Nenhum.
-
-## Melhorias opcionais (não-bloqueantes)
-- `mypy src/` ainda emite 3 `note: ... annotation-unchecked` em `ibge_censo.py:158/159` e
-  `poi_enrichment.py:54` (corpos de funções não tipadas). São NOTES, não erros — não contam para o gate
-  `Success`. Poderiam virar dívida futura de tipagem completa (`--check-untyped-defs`), fora do escopo deste bloco.
-- As 3 supressões `# noqa: B019` (decisão humana = suprimir) seguem dívida de design: o `@lru_cache` em
-  método de instância segura a instância em memória. Em ciclo futuro, considerar refator para cache em
-  função de módulo — explicitamente fora de escopo aqui (mudaria despacho de produção M1).
-
-## Testes faltantes
-Nenhum exigido por este bloco. É refatoração de lint/tipos; a suíte existente (532) cobre a invariância
-funcional e passou integralmente. A correção F601 é coberta pelos asserts que dependem dos valores reais
-de `pop_total` (que permaneceram intactos).
-
-## Riscos remanescentes
-- Baixos. CI agora bloqueia ruff/mypy: regressões futuras de lint/tipos reprovam o gate (efeito intencional/desejado).
-- As supressões documentadas (B019 ×3, B023 ×1, F401 re-exports, `type:ignore` de fallback/config) não
-  alteram runtime; foram verificadas uma a uma.
-
-## Saída literal das validações re-executadas pelo QA
-
-### 1. `python -m pytest -q` (linha final)
-```
-532 passed, 1 skipped, 9 warnings in 124.51s (0:02:04)
-```
-
-### 2. `ruff check .`
-```
-All checks passed!
-```
-
-### 3. `mypy src/`
-```
-ibge_censo.py:158: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
-ibge_censo.py:159: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
-poi_enrichment.py:54: note: By default the bodies of untyped functions are not checked, consider using --check-untyped-defs  [annotation-unchecked]
-Success: no issues found in 18 source files
-```
-
-### 4. `python -c "import streamlit_app; print('import ok')"`
-```
-import ok
-```
-(precedido apenas por warnings benignos de Streamlit em bare mode: "missing ScriptRunContext" /
-"No runtime found, using MemoryCacheStorageManager" — esperados ao importar fora do runtime Streamlit.)
-
-### 5. Prova de não-mutação M1 por hash (Get-FileHash SHA256, re-executado pelo QA)
-| Artefato | Baseline (Builder) | QA (re-executado) | Bate? |
-|---|---|---|---|
-| `data/staging/brasil_priorizados.parquet` | `C226954945AD0757A0429C84C43F410492C0EA7D15CA1D9B6A15F68727806567` | `C226954945AD0757A0429C84C43F410492C0EA7D15CA1D9B6A15F68727806567` | SIM |
-| `data/staging/brasil_estrutural.parquet` | `7BAA07A2CBC0B7D8F2A8878932CAE0EBF9400FCE00E9C48C366C9903215F131B` | `7BAA07A2CBC0B7D8F2A8878932CAE0EBF9400FCE00E9C48C366C9903215F131B` | SIM |
-| `data/staging/hexagonos_brasil_oportunidades.parquet` | `805C65E28ADFD800C7D5524E73FA9B0A044B992F17D617D0F2C6E40F9BBF61CA` | `805C65E28ADFD800C7D5524E73FA9B0A044B992F17D617D0F2C6E40F9BBF61CA` | SIM |
-| `data/outputs/hexagonos_brasil_dashboard.parquet` | `0CFB1015FC9DF8B63776EB07AE3E666766905F768A4A78A406AE4D6B7CB6F618` | `0CFB1015FC9DF8B63776EB07AE3E666766905F768A4A78A406AE4D6B7CB6F618` | SIM |
-
-Os 4 hashes batem byte-a-byte → M1 NÃO foi mutado.
-
-### 6. Escopo/guardrails M1 via diff
-- `src/motor_expansao/core/scoring.py` e `.../core/constants.py`: NÃO aparecem em `git status` (não modificados).
-- `git --no-pager diff -- scoring.py constants.py config.py | grep -iE "0\.40|0\.60|H3_RESOLUTION|DIST_MIN_ULTRA_KM|RENDA_MIN|score_priorizacao|hex_score_estrutural"`
-  → **VAZIO** (nenhum parâmetro canônico ou peso alterado).
-- `ci.yml` (grep `continue-on-error` no arquivo vivo) → **VAZIO**.
-
-## Auditoria anti-mascaramento (detalhada)
-
-### F601 (`tests/integration/test_hex_enrichment_brasil.py`)
-Inspecionado o diff hunk a hunk. Em CADA um dos 15 dicts, foi removida SOMENTE a 1ª ocorrência de
-`pop_total` (a chave morta sobrescrita: `0.0`/`0`), preservando a 2ª (valor real flagado pelo ruff):
-- Linhas 117/127: removido `"pop_total": 0.0,` → sobrevive `1000.0` / `900.0` (reais).
-- Linhas dos dicts do Acre (água/rural): ambas as ocorrências eram `0.0`; removida a morta, sobrevive `0.0`.
-- Dicts go1..sp5 e `df{i}`: removido `"pop_total": 0,` → sobrevive `pop_total = <valor real>` / `i`.
-Nenhum outro valor de fixture mudou. As mudanças E712 no mesmo arquivo (`== True/False` → asserts
-truthy/falsy escalares) são semanticamente invariantes. NENHUM assert/valor M1 do fixture foi alterado. APROVADO.
-
-### Supressões adicionadas (contagem e justificativa)
-`# noqa` em CÓDIGO (não-doc): `imovel_qualification` import-probe (F401, legado), `ibge_censo.py` ×3
-(B019, decisão humana, justificativa por-método), `validar_fase_a_censo2022.py` (B023, closure/nonlocal),
-`pages.py build_map_figure` (F401 re-export), `hex_enrichment.py normalizar_0_100/normalizar_serie`
-(F401 re-export). O `from ...competitors import (  # noqa: F401` em `streamlit_app.py` é re-export
-PRÉ-EXISTENTE apenas reformatado pelo auto-fix (single→multi-linha), não é supressão nova.
-`# type: ignore` em CÓDIGO: `config.py` ×3 (fallback pydantic-settings, `pragma: no cover`),
-`hex_enrichment.py` ×1 (fallback de import fora do pacote). Todos documentados inline.
-NÃO houve mass-suppress. `pyproject.toml` apenas migrou `select`/`ignore` de `[tool.ruff]` →
-`[tool.ruff.lint]` (set de regras idêntico: `["E","F","I","UP","B"]`, `ignore=["E501"]`); NENHUMA regra
-desabilitada, mypy NÃO afrouxado. APROVADO (não é bypass).
-
-### Re-exports F401 verificados como USADOS (não gratuitos)
-- `normalizar_0_100`/`normalizar_serie` (hex_enrichment): consumidos por `tests/contracts/test_fontes_gratuitas.py`
-  e `tests/unit/test_scoring.py`.
-- `build_map_figure` (pages.py): `streamlit_app.build_map_figure(...)` usado em ~12 testes de
-  `test_streamlit_app.py` + `test_motor_expansao_import.py`; `test_streamlit_app.py:2312` faz
-  `mock.patch("motor_expansao.dashboard.pages.build_map_figure")` — exige o re-export. Legítimos.
-- Os 5 símbolos removidos de hex_enrichment (`PESOS_HEX_SCORE*`, `_combinar_scores_proporcionalmente`,
-  `_normalizar_serie_disponivel`) só aparecem nos docs de handoff, NÃO em imports de código → remoção segura.
-
-### Anotação `Iterator[list[str]]` em `base_h3_brasil._chunks`
-Correta. A função é generator (`yield values[start:start+chunk_size]`), e cada valor cedido é uma
-`list[str]`. Logo `Iterator[list[str]]` é a anotação certa; o `Iterator[str]` literal do plano estaria
-ERRADO (mascararia o tipo real). Desvio do Builder justificado e tecnicamente correto. Runtime idêntico.
-
-## Conferência de no-bypass
-A regra de no-bypass mira TOOLING acoplado a config/produção (ex.: SOPS). Aqui é saneamento de lint/tipos
-sobre pytest com fixtures legítimas + config de lint NÃO enfraquecida (migração de seção, mesmo set de
-regras). Não há bypass. Conferência explícita registrada: ci.yml SEM `continue-on-error`; pyproject SEM
-desabilitar regra; supressões documentadas e verificadas uma a uma.
-
-## Conferência cruzada com o log do Builder
-| Métrica | Builder reportou | QA re-executou | Resultado |
-|---|---|---|---|
-| ruff | 0 (All checks passed) | 0 (All checks passed) | BATE |
-| mypy | 0 (Success, 18 files) | 0 (Success, 18 files) | BATE |
-| pytest | 532 passed / 1 skipped | 532 passed / 1 skipped | BATE |
-| import streamlit_app | ok | ok | BATE |
-| 4 hashes M1 | idênticos à baseline | idênticos à baseline | BATE |
-
-Os 2 desvios mínimos do plano relatados pelo Builder foram VERIFICADOS:
-1. `Iterator[list[str]]` (em vez de `Iterator[str]`): correto — o valor cedido é `list[str]`. Anotação não mascara nada.
-2. Reintrodução dos re-exports `normalizar_0_100`/`normalizar_serie`/`build_map_figure` com `# noqa: F401`:
-   confirmados em uso real por testes/patches (ver seção acima) — não são supressão gratuita.
-Nenhuma divergência numérica ou material entre QA e Builder.
-
-## Guardrails verificados
-- `score_priorizacao` / pesos (0.40/0.60) / parâmetros canônicos (H3=7, DIST_MIN_ULTRA=1.0, RENDA_MIN=4500.0):
-  **NÃO alterados** — scoring.py/constants.py não modificados; grep de parâmetros no diff = vazio.
-- Artefatos M1 preservados: **SIM** — 4 hashes SHA256 idênticos à baseline (tabela acima), re-executados pelo QA.
-- Validações re-executadas pelo QA: **SIM** — ruff/mypy/pytest/import + hashes + diffs, saída literal colada acima.
-- Escopo respeitado: **SIM** — só lint/tipos/anotações + F601 invariante + CI bloqueante; nenhuma lógica
-  de runtime M1 tocada; dashboard segue offline (pdk só sob `TYPE_CHECKING`); VPS não tocado (CLAUDE.md §6).
-
-## Decisão recomendada
-**APROVAR e fechar o bloco BLK-OPS-02b.** Sem ressalvas bloqueantes. Orquestrador pode commitar por path
-(produção/infra + testes + config + ci.yml + controle), marcar BLK-OPS-02b concluído em
-`tasks/completed.md`/`tasks/backlog.md` e encerrar o ciclo. As melhorias opcionais (notes mypy
-annotation-unchecked; refator futuro do `@lru_cache`) podem virar dívida de backlog, não bloqueiam.
-
----
-*Handoff produzido pelo QA / Quality Analyzer em 2026-05-29 (timestamp 20260529-205955).*
+## Veredito
+APROVADO. Commit do ciclo: `d375402` (commit isolado por path; PRD.md não arrastado).
+Próxima etapa: merge humano de `ciclo/BLK-OPS-09` → `main`. Ciclo não altera a orquestração → sem dry-run.
