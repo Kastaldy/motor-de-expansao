@@ -107,20 +107,20 @@ def _bool_to_numeric(series: pd.Series | None, index: pd.Index) -> pd.Series:
 def _fmt(value: object, decimals: int = 1) -> str:
     if pd.isna(value):
         return "-"
-    return f"{float(value):,.{decimals}f}"
+    return f"{float(value):,.{decimals}f}"  # type: ignore[arg-type]
 
 
 def _fmt_corr(value: object) -> str:
     if pd.isna(value):
         return "-"
-    return f"{float(value):.3f}"
+    return f"{float(value):.3f}"  # type: ignore[arg-type]
 
 
 def _fmt_metric_value(metric: str, value: object) -> str:
     if pd.isna(value):
         return "-"
     if metric == "penetracao_ultra_alunos_total":
-        return f"{float(value) * 100:.2f}%"
+        return f"{float(value) * 100:.2f}%"  # type: ignore[arg-type]
     if metric in {"receita_por_habitante_hex", "ticket_medio_aluno"}:
         return _fmt(value, 2)
     return _fmt(value, 0)

@@ -120,7 +120,7 @@ def gerar_comparacao(path: Path = PERF_HEX_PATH) -> pd.DataFrame:
 def _fmt(value: object, decimals: int = 1) -> str:
     if pd.isna(value):
         return "—"
-    return f"{float(value):,.{decimals}f}"
+    return f"{float(value):,.{decimals}f}"  # type: ignore[arg-type]
 
 
 def escrever_relatorio(df: pd.DataFrame, path: Path = REPORT_PATH) -> None:

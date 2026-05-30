@@ -99,7 +99,7 @@ def classificar_motivo_nao_elegivel(
     """Explica por que um hex nao pode usar a camada censitaria no fluxo hibrido."""
     if pd.isna(score_setor_2022_calibrado):
         return "sem_score_censitario"
-    if pd.isna(coverage_pct_setor_2022) or float(coverage_pct_setor_2022) < COVERAGE_MIN_SETOR:
+    if pd.isna(coverage_pct_setor_2022) or float(coverage_pct_setor_2022) < COVERAGE_MIN_SETOR:  # type: ignore[arg-type]
         return "coverage_baixa"
     if str(qualidade_join_uf) not in JOIN_CLASSES_ELEGIVEIS:
         return "join_uf_fora_regra"
@@ -107,7 +107,7 @@ def classificar_motivo_nao_elegivel(
         return "join_uf_restrito"
     if pd.isna(densidade_pop_setor_hab_km2):
         return "densidade_indisponivel"
-    if bool(flag_baixa_pop_setor) or float(densidade_pop_setor_hab_km2) < DENSIDADE_MIN_HAB_KM2:
+    if bool(flag_baixa_pop_setor) or float(densidade_pop_setor_hab_km2) < DENSIDADE_MIN_HAB_KM2:  # type: ignore[arg-type]
         return "densidade_abaixo_piso"
     return "elegivel"
 

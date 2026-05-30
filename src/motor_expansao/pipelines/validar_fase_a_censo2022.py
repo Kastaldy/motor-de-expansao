@@ -31,7 +31,7 @@ try:
         spatial_join_area_weighted,
     )
 except ModuleNotFoundError:
-    from fase_a_censo2022_setores import (
+    from fase_a_censo2022_setores import (  # type: ignore[no-redef]
         DEFAULT_BASE_OFICIAL_PATH,
         DEFAULT_HEX_ROOT,
         NACIONAL_BASICO_PATH,
@@ -979,7 +979,7 @@ def gerar_relatorio_validacao(
             f"- Pico de memoria estimado na maior UF: {stress_summary['peak_rss_estimado_maior_uf_mb']} MB"
             if stress_summary["peak_rss_estimado_maior_uf_mb"] is not None
             else "- Pico de memoria estimado na maior UF: N/A",
-            f"- UFs com alerta de join >5%: {', '.join(stress_summary['ufs_join_alerta_gt_5pct']) or 'nenhuma'}",
+            f"- UFs com alerta de join >5%: {', '.join(stress_summary['ufs_join_alerta_gt_5pct']) or 'nenhuma'}",  # type: ignore[arg-type]
             f"- Gargalo principal: {stress_summary['observacao']}",
             "",
             "## 6. Recomendacao",

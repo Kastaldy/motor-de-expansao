@@ -15,6 +15,7 @@ import re
 import unicodedata
 import warnings
 from pathlib import Path
+from typing import Any
 
 import h3
 import numpy as np
@@ -262,7 +263,7 @@ def _correlacao(df: pd.DataFrame) -> dict:
         "score_setor_2022_calibrado": df[df["score_setor_2022_calibrado"].notna()],
     }
 
-    resultados = {}
+    resultados: dict[str, dict[str, Any]] = {}
     for score_name, sub in scores.items():
         resultados[score_name] = {}
         for metrica in metricas:
@@ -283,7 +284,7 @@ def _correlacao(df: pd.DataFrame) -> dict:
 def _analise_quartis(df: pd.DataFrame) -> dict:
     """Compara performance média nos quartis superior e inferior de cada score."""
     metricas = ["faturamento", "ativos_pag", "alunos_total"]
-    resultado = {}
+    resultado: dict[str, Any] = {}
 
     for score_name in ["score_priorizacao_m1", "score_setor_2022_calibrado"]:
         sub = df[df[score_name].notna()].copy()

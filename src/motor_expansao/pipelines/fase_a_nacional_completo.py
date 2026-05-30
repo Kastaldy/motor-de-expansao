@@ -56,7 +56,7 @@ MIN_SPEARMAN = 0.6
 
 def calcular_qualidade_join_uf(summary: dict[str, object]) -> str:
     """Retorna 'A'/'B' se todos os gates passaram, 'C' caso contrario."""
-    return summary["classe_join"] if summary["status_tecnico"] == "GO" else "C"
+    return summary["classe_join"] if summary["status_tecnico"] == "GO" else "C"  # type: ignore[return-value]
 
 
 def carregar_k_global(reference_path: Path) -> tuple[float, str]:
@@ -182,7 +182,7 @@ def gerar_relatorio(
         "# Fase A - Pipeline Nacional Completo (Bloco 7)",
         "",
         f"> Data: {date.today().isoformat()}",
-        f"> UFs: {', '.join(sorted(r['uf'] for r in technical_rows))}",
+        f"> UFs: {', '.join(sorted(r['uf'] for r in technical_rows))}",  # type: ignore[misc]
         f"> k_global fixo da calibracao validada: {k_global:.4f}",
         "",
         "## 1. Validacao tecnica por UF",
@@ -190,9 +190,9 @@ def gerar_relatorio(
         "| UF | Coverage % | Amp p95-p05 | Std | Mismatch % | Classe join | qualidade_join_uf | Status tecnico |",
         "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
-    for row in sorted(technical_rows, key=lambda r: r["uf"]):
+    for row in sorted(technical_rows, key=lambda r: r["uf"]):  # type: ignore[arg-type, return-value]
         lines.append(
-            "| {uf} | {coverage_pct:.2f} | {amplitude:.2f} | {std:.2f} | "
+            "| {uf} | {coverage_pct:.2f} | {amplitude:.2f} | {std:.2f} | "  # type: ignore[str-format]
             "{mismatch_pct:.2f} | {classe_join} | {qualidade_join_uf} | {status_tecnico} |".format(**row)
         )
 
@@ -204,8 +204,8 @@ def gerar_relatorio(
             "",
             "## 2. Resumo de cobertura",
             "",
-            f"- UFs com gates aprovados (qualidade A/B): {len(go_ufs)} — {', '.join(sorted(go_ufs)) or 'nenhuma'}",
-            f"- UFs com gate degradado (qualidade C): {len(nogo_ufs)} — {', '.join(sorted(nogo_ufs)) or 'nenhuma'}",
+            f"- UFs com gates aprovados (qualidade A/B): {len(go_ufs)} — {', '.join(sorted(go_ufs)) or 'nenhuma'}",  # type: ignore[arg-type]
+            f"- UFs com gate degradado (qualidade C): {len(nogo_ufs)} — {', '.join(sorted(nogo_ufs)) or 'nenhuma'}",  # type: ignore[arg-type]
             "- Nota: gates sao informacionais. Todas as UFs foram incluidas no parquet de saida.",
             "",
             "## 3. Decisao consolidada",
@@ -400,8 +400,8 @@ def main() -> None:
         reference_calibrated_path=Path(args.reference_calibrated_path),
         data_download=args.data_download,
     )
-    go_count = sum(1 for r in metadata["technical_rows"] if r["status_tecnico"] == "GO")
-    total = len(metadata["technical_rows"])
+    go_count = sum(1 for r in metadata["technical_rows"] if r["status_tecnico"] == "GO")  # type: ignore[misc, attr-defined]
+    total = len(metadata["technical_rows"])  # type: ignore[arg-type]
     print(f"PIPELINE NACIONAL COMPLETO: {go_count}/{total} UFs com gates aprovados")
 
 

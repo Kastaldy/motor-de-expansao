@@ -26,7 +26,10 @@ try:
         percentile_in_distribution,
     )
 except ModuleNotFoundError:
-    from calibrar_renda_setor_2022 import ajuste_executivo, percentile_in_distribution
+    from calibrar_renda_setor_2022 import (  # type: ignore[no-redef]
+        ajuste_executivo,
+        percentile_in_distribution,
+    )
 
 
 RAW_CENSO_DIR = Path("data/raw/CENSO 2022")
