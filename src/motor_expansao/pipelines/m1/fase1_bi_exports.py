@@ -22,6 +22,7 @@ from motor_expansao.dashboard.data import (
     enrich_dashboard_data,
 )
 from motor_expansao.pipelines.m1.ibge_censo import carregar_lookup_municipios_ibge
+from motor_expansao.pipelines.m1.provenance import write_manifest
 
 SOURCE_PATH = Path("data/staging/hexagonos_brasil_oportunidades.parquet")
 MUNICIPIOS_LOOKUP_PATH = Path("data/ibge/municipios_nomes_ibge.parquet")
@@ -645,6 +646,12 @@ def main() -> None:
         print(f"Enriquecido particionado: {len(enriched)} linhas em {ENRIQUECIDO_DIR}/uf=*/")
     else:
         print(f"Enriquecido pulado: insumo ausente ({HYBRID_PATH})")
+
+    # Passo FINAL isolado (BLK-OPS-03): manifesto de proveniencia AO LADO dos
+    # artefatos ja materializados. So LE parametros/sha e escreve _manifest.json;
+    # nao recalcula score nem reescreve qualquer artefato M1.
+    manifest_path = write_manifest()
+    print(f"Manifesto de proveniencia gerado: {manifest_path}")
 
 
 if __name__ == "__main__":

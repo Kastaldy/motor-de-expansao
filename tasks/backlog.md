@@ -22,52 +22,8 @@ Próximo ciclo recomendado: validar a estrutura de Skills com uma tarefa real do
 
 ---
 
-### BLK-OPS-03 — Manifesto de proveniência nos outputs
+- BLK-OPS-03 (concluído 2026-05-30) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Alta *(toca o pipeline que gera artefatos M1 — additivo, não-mutante)* |
-| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
-| **Depende de** | — |
-| **Status** | Pendente |
-
-**Objetivo:** todo conjunto de outputs carrega sua origem: vintage IBGE, hash do `Ultra.csv`,
-`code_commit`, `generated_at`, versões de parâmetros canônicos. Permite distinguir "score mudou
-porque o dado mudou" de "mudou porque o código mudou".
-
-**Escopo permitido:**
-- Gerar `data/outputs/_manifest.json` no fim de `fase1_bi_exports.py` com os campos acima.
-- Expor o manifesto no rodapé/aba do dashboard (read-only).
-- Teste validando presença e schema do manifesto.
-
-**Fora de escopo:** **alterar qualquer valor dentro dos artefatos M1.** O manifesto fica ao lado,
-nunca dentro do conteúdo de scoring.
-
-**Arquivos a ler:** `src/motor_expansao/pipelines/m1/fase1_bi_exports.py` · `config.py` ·
-`src/motor_expansao/core/constants.py`.
-**Arquivos a alterar/criar:** `fase1_bi_exports.py` · `_manifest.json` (gerado) ·
-componente de rodapé no dashboard · `tests/unit/test_manifest.py`.
-
-**Critérios de aceite:**
-- Manifesto gerado contém: `ibge_vintage`, `ultra_csv_sha256`, `code_commit`, `generated_at`,
-  `h3_resolution`, `pesos={renda:0.40, pop:0.60}`, `dist_min_ultra_km`, `renda_min`.
-- Dashboard exibe a proveniência.
-
-**Validações obrigatórias:**
-```
-pytest -q tests/unit/test_manifest.py
-# Prova de não-mutação dos artefatos M1 (hashes idênticos pré/pós):
-sha256sum data/outputs/brasil_priorizados.parquet data/outputs/brasil_estrutural.parquet
-# (QA compara com os hashes registrados ANTES da mudança)
-```
-
-**Guardrails específicos:**
-- QA **deve** verificar que os Parquets M1 (`brasil_priorizados`, `brasil_estrutural`,
-  `hexagonos_*_dashboard`) têm hash idêntico antes e depois — provando que só foi **adicionado**
-  um manifesto, sem tocar conteúdo. Se algum hash mudar → REPROVAR.
-
-**Risco:** baixo se a não-mutação for provada por hash; médio se a geração do manifesto for
-acoplada ao cálculo (deve ser passo final, isolado).
 
 ---
 

@@ -1466,3 +1466,89 @@ onde a lib de terceiros não tem stubs.
 
 **Risco:** baixo-médio — volume de erros (~50) mas todos de tipagem, sem mudança de runtime. Risco
 real é "consertar" um tipo de forma que mascare um bug latente; mitigar mantendo `pytest -q` verde.
+
+---
+
+### BLK-OPS-03 — Manifesto de proveniência nos outputs
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta *(toca o pipeline que gera artefatos M1 — additivo, não-mutante)* |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
+| **Depende de** | — |
+| **Status** | Pendente |
+
+**Objetivo:** todo conjunto de outputs carrega sua origem: vintage IBGE, hash do `Ultra.csv`,
+`code_commit`, `generated_at`, versões de parâmetros canônicos. Permite distinguir "score mudou
+porque o dado mudou" de "mudou porque o código mudou".
+
+**Escopo permitido:**
+- Gerar `data/outputs/_manifest.json` no fim de `fase1_bi_exports.py` com os campos acima.
+- Expor o manifesto no rodapé/aba do dashboard (read-only).
+- Teste validando presença e schema do manifesto.
+
+**Fora de escopo:** **alterar qualquer valor dentro dos artefatos M1.** O manifesto fica ao lado,
+nunca dentro do conteúdo de scoring.
+
+**Arquivos a ler:** `src/motor_expansao/pipelines/m1/fase1_bi_exports.py` · `config.py` ·
+`src/motor_expansao/core/constants.py`.
+**Arquivos a alterar/criar:** `fase1_bi_exports.py` · `_manifest.json` (gerado) ·
+componente de rodapé no dashboard · `tests/unit/test_manifest.py`.
+
+**Critérios de aceite:**
+- Manifesto gerado contém: `ibge_vintage`, `ultra_csv_sha256`, `code_commit`, `generated_at`,
+  `h3_resolution`, `pesos={renda:0.40, pop:0.60}`, `dist_min_ultra_km`, `renda_min`.
+- Dashboard exibe a proveniência.
+
+**Validações obrigatórias:**
+```
+pytest -q tests/unit/test_manifest.py
+# Prova de não-mutação dos artefatos M1 (hashes idênticos pré/pós):
+sha256sum data/outputs/brasil_priorizados.parquet data/outputs/brasil_estrutural.parquet
+# (QA compara com os hashes registrados ANTES da mudança)
+```
+
+**Guardrails específicos:**
+- QA **deve** verificar que os Parquets M1 (`brasil_priorizados`, `brasil_estrutural`,
+  `hexagonos_*_dashboard`) têm hash idêntico antes e depois — provando que só foi **adicionado**
+  um manifesto, sem tocar conteúdo. Se algum hash mudar → REPROVAR.
+
+**Risco:** baixo se a não-mutação for provada por hash; médio se a geração do manifesto for
+acoplada ao cálculo (deve ser passo final, isolado).
+
+**Fechamento do ciclo — 2026-05-30. Veredito do QA: APROVADO** (re-execução independente, sem bypass).
+Esteira completa: Block Orchestrator → Planner → [aprovação humana: "Aprovar" por Felipe Silva] →
+Builder → QA. Criticidade elevada a **Crítica** pelo override do orquestrador (menciona pesos do
+score + toca pipeline de artefatos M1).
+
+### O que foi entregue
+- Novo módulo isolado `src/motor_expansao/pipelines/m1/provenance.py`: funções puras
+  `build_manifest(...) -> dict` e `write_manifest(...) -> Path`; helpers `_sha256_file` (hash dos
+  BYTES BRUTOS do `Ultra.csv`, `None` se ausente) e `_git_commit` (`git rev-parse HEAD`, `None` em
+  falha). Pesos lidos de `PESOS_HEX_SCORE_ESTRUTURAL` (renda←renda_per_capita, pop←populacao_proxy),
+  nunca hardcoded. JSON UTF-8 sem BOM, `indent=2`. 9 chaves: `schema_version`, `ibge_vintage`,
+  `ultra_csv_sha256`, `code_commit`, `generated_at` (ISO UTC), `h3_resolution`, `pesos`,
+  `dist_min_ultra_km`, `renda_min`.
+- `fase1_bi_exports.py`: `write_manifest()` acoplado como passo FINAL ISOLADO de `main()`, depois de
+  todos os artefatos já escritos; fora de `write_outputs`/`generate_fase1_bi_artifacts`/funções de score.
+- `dashboard/components.py`: helper read-only `render_manifest_footer(manifest_path)` (expander; não
+  renderiza nem quebra se o JSON falta), chamado no fim de `main()` de `streamlit_app.py` fora dos
+  branches de aba; constante `MANIFEST_PATH` no app.
+- `tests/unit/test_manifest.py` (NOVO): 6 casos — chaves/schema, valores canônicos, sha presente/ausente,
+  voláteis tipados, JSON sem BOM.
+- `.gitignore`: `data/outputs/_manifest.json` ignorado (artefato gerado, consistente com `*.parquet`;
+  evita commit acidental de artefato máquina-específico). Adicionado no fechamento.
+
+### Validações (re-executadas pelo QA, sem bypass)
+- `pytest -q tests/unit/test_manifest.py`: 6 passed.
+- `pytest -q tests/integration/test_streamlit_app.py`: 147 passed.
+- `python -c "import streamlit_app"`: ok.
+- `pytest -q` (suíte completa): **547 passed, 1 skipped** (subiu vs. baseline 532; nada quebrou).
+- `mypy src/.../provenance.py`: Success. `ruff check`: All checks passed.
+
+### Prova de não-mutação (guardrail do bloco)
+SHA256 dos 5 artefatos M1 IDÊNTICO pré/pós a geração do `_manifest.json` real:
+`hexagonos_brasil_dashboard.parquet`, `hexagonos_mapa_sample.parquet`, `brasil_estrutural.parquet`,
+`brasil_priorizados.parquet`, `hexagonos_brasil_oportunidades.parquet` — todos byte-idênticos.
+Manifesto fica AO LADO, nunca dentro do conteúdo de scoring. `score_priorizacao`/`hex_score_estrutural`
+e parâmetros canônicos (H3=7, dist=1.0, renda_min=4500.0, pesos 0.40/0.60) preservados — só lidos.

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -2821,3 +2823,23 @@ def build_multihex_analysis_map(
         ),
         layers=layers,
     )
+
+
+def render_manifest_footer(manifest_path: Path) -> None:
+    """Rodape read-only com a proveniencia dos outputs (BLK-OPS-03)."""
+    if not manifest_path.exists():
+        return  # ausencia nao quebra o app; nao renderiza
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    with st.expander("Proveniencia dos outputs (read-only)", expanded=False):
+        st.caption(
+            f"IBGE: {data.get('ibge_vintage')} | H3 res {data.get('h3_resolution')} | "
+            f"pesos renda {data.get('pesos', {}).get('renda')} / pop {data.get('pesos', {}).get('pop')} | "
+            f"dist_min_ultra_km {data.get('dist_min_ultra_km')} | renda_min {data.get('renda_min')}"
+        )
+        st.caption(
+            f"commit {data.get('code_commit')} | gerado em {data.get('generated_at')} | "
+            f"Ultra.csv sha256 {data.get('ultra_csv_sha256')}"
+        )
