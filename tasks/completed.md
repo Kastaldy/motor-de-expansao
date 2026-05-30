@@ -745,3 +745,18 @@ Ciclo altera `.github/workflows/ci.yml` (ruff/mypy bloqueantes) mas NÃO altera 
 
 ### Pendência de fechamento (passo humano)
 - Merge humano `ciclo/BLK-OPS-02b` → `main`. Pós-merge: o CI agora REPROVA em violação de ruff/mypy.
+
+### BLK-OPS-02b-FU1 — Hotfix mypy no CI (falso verde local por falta de types-requests)
+
+Data: 2026-05-30
+Contexto: ao tornar `mypy src/` bloqueante (BLK-OPS-02b) e fazer push do `main`, o CI REPROVOU em
+`ibge_censo.py:368` — `requests.get(params=...)` recebia um `dict[str, object]` (inferido do literal
+heterogêneo) incompatível com o tipo esperado por `requests.get`. O erro NÃO aparecia no mypy LOCAL
+porque o ambiente local não tinha `types-requests` instalado (com `ignore_missing_imports=true`,
+`requests` virava `Any` → sem erro); o runner do CI resolve os tipos de `requests` e fica mais estrito.
+Foi um **falso verde** na validação local do QA.
+Correção: anotar `params: dict[str, str | int | float] = {...}` (anotação de variável local — PEP 526,
+não avaliada em runtime; comportamento idêntico). Verificado COM paridade: `pip install types-requests`
++ `mypy src/` → Success (0); `ruff check .` → 0; `import streamlit_app` → ok.
+Lição: para validar `mypy src/` com paridade ao CI, instalar `types-requests` (ou os mesmos stubs do
+runner) antes de rodar; senão o verde local é falso. Hotfix direto no `main` (1 linha, runtime-inerte).

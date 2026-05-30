@@ -363,7 +363,7 @@ class IBGECenso:
     def _geocodigo_municipio(self, lat: float, lng: float) -> str | None:
         try:
             url = "https://nominatim.openstreetmap.org/reverse"
-            params = {"lat": lat, "lon": lng, "format": "json", "zoom": 10, "addressdetails": 1}
+            params: dict[str, str | int | float] = {"lat": lat, "lon": lng, "format": "json", "zoom": 10, "addressdetails": 1}
             headers = {"User-Agent": "motor-expansao-ultra/1.0"}
             resp = requests.get(url, params=params, headers=headers, timeout=10)
             time.sleep(1.1)
