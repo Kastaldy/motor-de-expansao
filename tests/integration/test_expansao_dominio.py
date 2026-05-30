@@ -28,7 +28,7 @@ TESES_VALIDAS = DOMINIO_TESES_VALIDAS
 @pytest.fixture(scope="module")
 def plano_sample():
     """Executa pipeline nas top 3 cidades e retorna plano com rankings."""
-    from jobs.pipelines.gerar_plano_expansao_dominio import (
+    from motor_expansao.pipelines.gerar_plano_expansao_dominio import (
         _top_cidades_por_residual,
         adicionar_rankings,
         carregar_candidatos,
@@ -97,7 +97,7 @@ class TestRankings:
 
 class TestTopCidadesFiltro:
     def test_top1_retorna_apenas_1_cidade(self):
-        from jobs.pipelines.gerar_plano_expansao_dominio import (
+        from motor_expansao.pipelines.gerar_plano_expansao_dominio import (
             _top_cidades_por_residual,
             carregar_candidatos,
         )
@@ -106,7 +106,7 @@ class TestTopCidadesFiltro:
         assert top1["cod_municipio"].nunique() == 1
 
     def test_top_maior_que_total_retorna_tudo(self):
-        from jobs.pipelines.gerar_plano_expansao_dominio import (
+        from motor_expansao.pipelines.gerar_plano_expansao_dominio import (
             _top_cidades_por_residual,
             carregar_candidatos,
         )

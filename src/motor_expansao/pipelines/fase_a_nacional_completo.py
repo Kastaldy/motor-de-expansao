@@ -15,16 +15,16 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from jobs.pipelines import fase_a_censo2022_setores as fase_a_module
-from jobs.pipelines.calibrar_renda_setor_2022 import (
+from motor_expansao.pipelines import fase_a_censo2022_setores as fase_a_module
+from motor_expansao.pipelines.calibrar_renda_setor_2022 import (
     calcular_score_calibrado,
     percentile_in_distribution,
 )
-from jobs.pipelines.fase_a_piloto_expandido import (
+from motor_expansao.pipelines.fase_a_piloto_expandido import (
     parse_k_global,
     resumir_metricas_uf,
 )
-from jobs.pipelines.validar_fase_a_censo2022 import (
+from motor_expansao.pipelines.validar_fase_a_censo2022 import (
     UFS_BRASIL,
     auditar_join_posicional,
     carregar_fontes_minimas,

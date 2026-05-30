@@ -35,7 +35,7 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 ENTRADA = ROOT / "data" / "outputs" / "carteira_expansao_acionavel.parquet"
 SAIDA_PARQUET = ROOT / "data" / "outputs" / "plano_expansao_curto_prazo.parquet"
 SAIDA_CSV = ROOT / "data" / "outputs" / "plano_expansao_curto_prazo.csv"

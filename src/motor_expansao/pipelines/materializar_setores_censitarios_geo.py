@@ -21,7 +21,7 @@ from shapely import make_valid
 from shapely.geometry.base import BaseGeometry
 
 try:
-    from jobs.pipelines.calibrar_renda_setor_2022 import (
+    from motor_expansao.pipelines.calibrar_renda_setor_2022 import (
         ajuste_executivo,
         percentile_in_distribution,
     )

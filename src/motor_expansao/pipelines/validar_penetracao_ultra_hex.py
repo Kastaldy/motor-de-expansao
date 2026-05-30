@@ -12,17 +12,15 @@ Nao altera nenhum artefato oficial do M1.
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+from motor_expansao.pipelines import comparar_geofusion_vs_hex
 
-from jobs.pipelines import comparar_geofusion_vs_hex  # noqa: E402
+ROOT = Path(__file__).resolve().parents[3]
 
 PERF_HEX_PATH = ROOT / "data" / "staging" / "unidades_ultra_performance_hex.parquet"
 REPORT_PATH = ROOT / "data" / "reports" / "validacao_penetracao_ultra_hex.md"

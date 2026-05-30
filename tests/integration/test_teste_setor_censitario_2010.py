@@ -4,7 +4,7 @@ from pathlib import Path
 import h3
 import pandas as pd
 
-from jobs.pipelines.teste_setor_censitario_2010 import (
+from motor_expansao.pipelines.teste_setor_censitario_2010 import (
     executar_experimento_setor_2010,
     resolver_cidades_alvo,
 )

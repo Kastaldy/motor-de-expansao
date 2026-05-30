@@ -3,17 +3,17 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from jobs.pipelines.fase_a_nacional_completo import (
+from motor_expansao.pipelines.fase_a_nacional_completo import (
     _UFS_JA_COBERTAS,
     TARGET_UFS,
     calcular_qualidade_join_uf,
     carregar_k_global,
 )
-from jobs.pipelines.fase_a_piloto_expandido import (
+from motor_expansao.pipelines.fase_a_piloto_expandido import (
     parse_k_global,
     resumir_metricas_uf,
 )
-from jobs.pipelines.validar_fase_a_censo2022 import UFS_BRASIL
+from motor_expansao.pipelines.validar_fase_a_censo2022 import UFS_BRASIL
 
 
 def test_target_ufs_tem_21_ufs():

@@ -8,19 +8,17 @@ score_priorizacao, ranks oficiais do M1 ou artefatos oficiais do M1.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
-
-from jobs.pipelines.gerar_carteira_acionavel import (  # noqa: E402
+from motor_expansao.pipelines.gerar_carteira_acionavel import (
     MERCADO_PATH,
     RESIDUAL_MERCADO_COLS,
     carregar_colunas_residual_mercado,
 )
+
+ROOT = Path(__file__).resolve().parents[3]
 
 HIBRIDO_PATH = ROOT / "data" / "outputs" / "oportunidades_expansao_hibrido.parquet"
 CARTEIRA_PATH = ROOT / "data" / "outputs" / "carteira_expansao_acionavel.parquet"

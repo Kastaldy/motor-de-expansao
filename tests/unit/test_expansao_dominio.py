@@ -9,7 +9,7 @@ import h3
 import pandas as pd
 import pytest
 
-from jobs.pipelines.gerar_plano_expansao_dominio import (
+from motor_expansao.pipelines.gerar_plano_expansao_dominio import (
     PESO_CENSO_DOMINIO,
     PESO_RESIDUAL_DOMINIO,
     SAIDA_CSV,

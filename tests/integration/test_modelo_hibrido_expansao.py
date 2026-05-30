@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from jobs.pipelines.modelo_hibrido_expansao import (
+from motor_expansao.pipelines.modelo_hibrido_expansao import (
     TOP_HEX_INTRAURBANO_PCT,
     _load_censo,
     calcular_corte_top,

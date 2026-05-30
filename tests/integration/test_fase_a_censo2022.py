@@ -16,7 +16,7 @@ import pandas as pd
 import pytest
 from shapely.geometry import Polygon, box
 
-from jobs.pipelines.fase_a_censo2022_setores import (
+from motor_expansao.pipelines.fase_a_censo2022_setores import (
     _hex_polygon,
     _resolve_column,
     adicionar_rastreabilidade,

@@ -7,7 +7,7 @@ import pandas as pd
 from shapely import from_wkb
 from shapely.geometry import box
 
-from jobs.pipelines.materializar_setores_censitarios_geo import (
+from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
     COLUNAS_ARTEFATO,
     CRS_ORIGEM,
     escrever_particoes,
@@ -108,7 +108,7 @@ def test_escreve_e_le_particao_por_uf_municipio(tmp_path: Path):
 
 
 def test_relatorio_descreve_artefato_e_guardrail(tmp_path: Path):
-    from jobs.pipelines.materializar_setores_censitarios_geo import UFSummary
+    from motor_expansao.pipelines.materializar_setores_censitarios_geo import UFSummary
 
     report = gerar_relatorio(
         [

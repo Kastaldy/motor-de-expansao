@@ -11,15 +11,13 @@ Nao altera nenhum artefato oficial do M1.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[3]
 
 UNIDADES_PATH = ROOT / "data" / "staging" / "unidades_ultra_performance.parquet"
 HEXAGONOS_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"

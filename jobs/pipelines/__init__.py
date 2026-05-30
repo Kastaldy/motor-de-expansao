@@ -1,1 +1,0 @@
-"""Pipelines auxiliares e experimentais."""

@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from jobs.pipelines import comparar_geofusion_vs_hex as modulo
+from motor_expansao.pipelines import comparar_geofusion_vs_hex as modulo
 
 ROOT = Path(__file__).resolve().parents[2]
 # gerar_comparacao() le este parquet (PERF_HEX_PATH em comparar_geofusion_vs_hex.py)

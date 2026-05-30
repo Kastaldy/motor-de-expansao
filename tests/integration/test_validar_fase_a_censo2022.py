@@ -3,11 +3,11 @@ from __future__ import annotations
 import h3
 import pandas as pd
 
-import jobs.pipelines.fase_a_censo2022_setores as fase_a_module
-from jobs.pipelines.fase_a_censo2022_setores import (
+import motor_expansao.pipelines.fase_a_censo2022_setores as fase_a_module
+from motor_expansao.pipelines.fase_a_censo2022_setores import (
     ler_renda_nacional_uf_preservando_suprimidos,
 )
-from jobs.pipelines.validar_fase_a_censo2022 import (
+from motor_expansao.pipelines.validar_fase_a_censo2022 import (
     aplicar_flags_validacao,
     detectar_outliers_espaciais,
     medir_intraurbano,

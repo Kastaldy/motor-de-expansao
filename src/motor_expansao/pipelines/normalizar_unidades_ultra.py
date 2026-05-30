@@ -11,15 +11,13 @@ Nao altera nenhum artefato oficial do M1.
 from __future__ import annotations
 
 import re
-import sys
 import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT))
+ROOT = Path(__file__).resolve().parents[3]
 
 PERFORMANCE_XLSX = ROOT / "data" / "ultra" / "dados_academias.xlsx"
 ULTRA_CSV = ROOT / "data" / "ultra" / "Ultra.csv"

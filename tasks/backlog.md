@@ -116,60 +116,61 @@ pytest -q   # garantir que nada existente quebrou
 
 ---
 
-### BLK-ARCH-01a — Migrar `jobs/pipelines/*` para `src/` e limpar `pythonpath`
+- BLK-ARCH-01a (concluído 2026-05-30) — ver tasks/completed.md
+
+---
+
+### BLK-ARCH-01b — Tipar os 14 módulos migrados e remover o override de mypy
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | Alta *(toca pipelines de mercado/residual/fase-A; migração mecânica, provada por hash)* |
-| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
-| **Depende de** | **BLK-ARCH-01 (FATIA-1)** — ✅ SATISFEITA (concluído/aprovado 2026-05-29). |
-| **Status** | Pendente *(desbloqueado — sub-bloco remanescente da migração `src/`)* |
+| **Criticidade** | Média *(dívida de tipagem; toca pipelines de mercado/residual/fase-A, mas é melhoria de qualidade, não mudança de comportamento)* |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | **BLK-ARCH-01a** — ✅ SATISFEITA (concluído 2026-05-30). |
+| **Status** | Pendente *(dívida registrada no fechamento de BLK-ARCH-01a; ressalva não bloqueante do QA)* |
 
-**Objetivo:** concluir a migração `src/` movendo os 21 módulos de `jobs/pipelines/*` para
-`src/motor_expansao/pipelines/` e, só então, remover `"."` de `pythonpath` — eliminando a última
-fonte de imports de raiz viva. É a FATIA-2 (e final) de BLK-ARCH-01.
+**Objetivo:** eliminar a dívida de tipagem criada (registrada, não introduzida) por BLK-ARCH-01a:
+os 14 módulos migrados de `jobs/pipelines/*` para `src/motor_expansao/pipelines/` carregam ~50 erros
+de tipo LATENTES (código legado nunca type-checked). BLK-ARCH-01a os silenciou com um
+`[[tool.mypy.overrides]] ignore_errors = true` nominal para preservar o status quo (CI verde, mesma
+cobertura efetiva). Este bloco corrige os tipos e REMOVE o override, trazendo esses módulos para o
+gate `mypy src/` de verdade.
 
 **Escopo permitido:**
-- Mover os 21 módulos de `jobs/pipelines/` para `src/motor_expansao/pipelines/` (sugestão de
-  subpacotes por grupo funcional: `fase_a/`, `mercado/`, `dominio/`, `penetracao/`, `normalizacao/`
-  — o Planner do sub-bloco decide a partição), via `git mv`, em passos pequenos e reversíveis.
-- Atualizar os imports internos `jobs.pipelines.*` (acoplamento entre si) e os testes de
-  integração/unit que consomem esses módulos.
-- Remover `"."` de `pythonpath` em `pyproject.toml` SOMENTE ao final, e SÓ se grep confirmar zero
-  dependência de raiz viva (excluir `fora_primeira_fase/*`, que permanece órfão por design).
+- Corrigir os erros de tipo nos 14 módulos listados no override de `pyproject.toml`
+  (`float(object)`, anotações de variável faltantes, overloads numpy, `no-redef` de fallback
+  try/except, etc.), em passos pequenos — idealmente um módulo (ou grupo) por vez.
+- Remover do `[[tool.mypy.overrides]]` cada módulo conforme ele fica limpo; ao final, remover o bloco
+  de override inteiro.
 
-**Fora de escopo:** mudar comportamento de scoring, artefatos M1, ou lógica além do necessário para
-mover. `fora_primeira_fase/*` (imports órfãos NÃO consertar). `concorrentes/geo_skyfit.py` (script
-standalone isolado).
+**Fora de escopo:** mudar comportamento/lógica/valores; mexer em score/artefatos M1; refatorar além
+do necessário para tipar. Correção de tipo é mecânica/estrutural, não muda runtime.
 
-**Arquivos a ler:** `jobs/pipelines/*.py` (todos), `pyproject.toml` (`pythonpath`, `packages`),
-testes que importam `jobs.pipelines.*`.
-**Arquivos a alterar:** `jobs/pipelines/*` (mover) · imports internos e nos testes · `pyproject.toml`
-(só ao final).
+**Arquivos a ler:** os 14 módulos em `src/motor_expansao/pipelines/` listados no override ·
+`pyproject.toml` (bloco `[[tool.mypy.overrides]]`).
+**Arquivos a alterar:** os 14 módulos · `pyproject.toml` (remover override progressivamente).
 
 **Critérios de aceite:**
-- Nenhum import vivo aponta para `jobs.pipelines.*` nem para raiz removida (grep limpo, excl.
-  `fora_primeira_fase/`).
-- `python -c "import streamlit_app; print('ok')"` ok; `pytest -q` verde; `ruff check .` e `mypy src/`
-  limpos.
-- **Prova de não-mutação M1 (hash idêntico pré/pós)** dos 4 artefatos oficiais.
-- `pythonpath` sem `"."` (se e só se nada vivo depender de raiz).
+- `mypy src/` limpo SEM o bloco de override (ou com ele já removido).
+- `pytest -q` verde (mesma contagem); `ruff check .` limpo.
+- Prova de não-mutação M1 (hash idêntico pré/pós) dos 4 artefatos oficiais — tipar não muda dados.
+- Bloco `[[tool.mypy.overrides]]` dos 14 módulos REMOVIDO de `pyproject.toml`.
 
 **Validações obrigatórias:**
 ```
+mypy src/         # sem o override
 pytest -q
-python -c "import streamlit_app; print('ok')"
-ruff check . && mypy src/
-# Prova de equivalência M1 (caminhos reais):
+ruff check .
 python -c "import hashlib,pathlib; [print(hashlib.sha256(pathlib.Path(p).read_bytes()).hexdigest(), p) for p in ['data/staging/brasil_priorizados.parquet','data/staging/brasil_estrutural.parquet','data/staging/hexagonos_brasil_oportunidades.parquet','data/outputs/hexagonos_brasil_dashboard.parquet']]"
 ```
 
-**Guardrails específicos:** migração mecânica (sem renomear funções/assinaturas/valores); avançar só
-com `pytest -q` verde a cada grupo de módulos movido; `"."` de `pythonpath` é o ÚLTIMO passo.
+**Guardrails específicos:** correção de tipo NÃO pode alterar comportamento/valores; cada anotação
+deve refletir o tipo REAL em runtime (não forçar `# type: ignore` em massa — isso só troca um override
+por outro). Preferir anotações corretas; `# type: ignore[código]` pontual e justificado é aceitável
+onde a lib de terceiros não tem stubs.
 
-**Risco:** médio-alto — volume (21 módulos) + acoplamento interno (`fase_a_*`,
-`validar_penetracao` ↔ `comparar_geofusion`, `enriquecer_outputs_residual` ↔ `gerar_carteira`).
-Mover por grupo funcional, testes verdes a cada grupo, em vez de big-bang.
+**Risco:** baixo-médio — volume de erros (~50) mas todos de tipagem, sem mudança de runtime. Risco
+real é "consertar" um tipo de forma que mascare um bug latente; mitigar mantendo `pytest -q` verde.
 
 ---
 

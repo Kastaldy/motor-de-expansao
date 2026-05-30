@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 import pyarrow.parquet as pq
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[3]
 ENTRADA = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
 SAIDA_PARQUET = ROOT / "data" / "outputs" / "plano_expansao_dominio.parquet"
 SAIDA_CSV = ROOT / "data" / "outputs" / "plano_expansao_dominio.csv"

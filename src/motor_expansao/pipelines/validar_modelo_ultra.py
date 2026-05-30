@@ -23,7 +23,7 @@ from scipy import stats
 
 warnings.filterwarnings("ignore")
 
-BASE = Path(__file__).resolve().parents[2]
+BASE = Path(__file__).resolve().parents[3]
 DATA = BASE / "data"
 
 # ---------------------------------------------------------------------------

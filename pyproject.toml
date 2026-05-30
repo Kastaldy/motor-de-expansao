@@ -99,10 +99,34 @@ python_version = "3.11"
 ignore_missing_imports = true
 strict = false
 
+# BLK-ARCH-01a: os pipelines legados migrados de jobs/pipelines/* para
+# src/motor_expansao/pipelines/* nunca foram type-checked (viviam fora de src/).
+# Para preservar exatamente o comportamento anterior do gate `mypy src/` (limpo)
+# sem alterar nenhuma logica/valor desses modulos, eles ficam fora da checagem de
+# tipos ate uma tipagem dedicada futura. Nao afeta M1 (hashes identicos provados).
+[[tool.mypy.overrides]]
+module = [
+    "motor_expansao.pipelines.calcular_colunas_mercado",
+    "motor_expansao.pipelines.calcular_penetracao_ultra_hex",
+    "motor_expansao.pipelines.comparar_geofusion_vs_hex",
+    "motor_expansao.pipelines.enriquecimento_espacial_hexagonos",
+    "motor_expansao.pipelines.normalizar_unidades_ultra",
+    "motor_expansao.pipelines.gerar_carteira_acionavel",
+    "motor_expansao.pipelines.modelo_hibrido_expansao",
+    "motor_expansao.pipelines.validar_modelo_ultra",
+    "motor_expansao.pipelines.validar_penetracao_ultra_hex",
+    "motor_expansao.pipelines.materializar_setores_censitarios_geo",
+    "motor_expansao.pipelines.fase_a_censo2022_setores",
+    "motor_expansao.pipelines.validar_fase_a_censo2022",
+    "motor_expansao.pipelines.fase_a_piloto_expandido",
+    "motor_expansao.pipelines.fase_a_nacional_completo",
+]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-pythonpath = [".", "src"]
+pythonpath = ["src"]
 python_files = ["test_*.py"]
 
 [tool.hatch.build.targets.wheel]

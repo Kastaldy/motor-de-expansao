@@ -7,15 +7,15 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from jobs.pipelines import calcular_colunas_mercado as mercado_module
-from jobs.pipelines.calcular_colunas_mercado import (
+from motor_expansao.pipelines import calcular_colunas_mercado as mercado_module
+from motor_expansao.pipelines.calcular_colunas_mercado import (
     CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS,
     HYBRID_TIEBREAK_MAX_SCORE,
     TAXA_FITNESS_CALIBRADA,
     anexar_oferta_ultra_real,
     calcular,
 )
-from jobs.pipelines.normalizar_unidades_ultra import carregar_ultra
+from motor_expansao.pipelines.normalizar_unidades_ultra import carregar_ultra
 
 ROOT = Path(__file__).resolve().parents[2]
 MERCADO_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"

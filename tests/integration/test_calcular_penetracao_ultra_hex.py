@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from jobs.pipelines import calcular_penetracao_ultra_hex as modulo
+from motor_expansao.pipelines import calcular_penetracao_ultra_hex as modulo
 
 ROOT = Path(__file__).resolve().parents[2]
 UNIDADES_PATH = ROOT / "data" / "staging" / "unidades_ultra_performance.parquet"

@@ -29,7 +29,7 @@ import structlog
 from shapely.geometry import Polygon
 
 try:
-    from jobs.pipelines.teste_setor_censitario_2010 import (
+    from motor_expansao.pipelines.teste_setor_censitario_2010 import (
         _percentil_em_distribuicao_referencia,
     )
 except ModuleNotFoundError:
