@@ -648,3 +648,42 @@ Criticidade: alta. Esteira: Block Orchestrator → Planner → [aprovação huma
 ### Nota de orquestração
 Ciclo de infra/CI — NÃO altera a própria orquestração (run-cycle.md / prompts / esteira). `dry_run: false`.
 Portanto NÃO dispara dry-run pós-merge (Passo 6.c).
+
+---
+
+## BLK-OPS-08 — Atualizar actions do CI para Node 24 (fim do Node 20)
+
+Data: 2026-05-29
+Veredito: CONCLUÍDO (esteira Baixa: Block Orchestrator → Builder, sem QA/sem gate humano).
+Branch: ciclo/BLK-OPS-08 (a partir de `main` 30237a0).
+
+### Objetivo
+Eliminar o aviso de descontinuação do Node 20 nos runs de CI/Docker Publish, atualizando as tags
+das actions baseadas em Node para versões que rodam em Node 24 — sem alterar comportamento de
+testes/build, scoring ou artefatos M1.
+
+### O que foi feito (diff cirúrgico — 3 linhas, só tags)
+- `.github/workflows/ci.yml`: `actions/checkout@v4 → @v5`; `actions/setup-python@v5 → @v6`
+  (`with:` intactos: `python-version: "3.11"`, `cache: pip`, `cache-dependency-path`).
+- `.github/workflows/docker-publish.yml`: `actions/checkout@v4 → @v5`.
+- `docker/*-action` (login@v3, metadata@v5, setup-buildx@v3, build-push@v6) NÃO mudaram —
+  já são as últimas estáveis e não rodam no runtime Node 20 do runner.
+
+### Validações
+- `python -c "import streamlit_app; print('import ok')"` → `import ok` (warnings de Streamlit bare mode esperados).
+- `git diff` dos workflows = exclusivamente as 3 mudanças de tag; nenhuma outra linha alterada.
+- Suíte pytest completa NÃO re-executada (mudança YAML-only de CI, ortogonal ao código).
+- Prova final do aviso some = run verde no GitHub Actions, que ocorre no push/PR pós-merge humano.
+
+### Guardrails verificados
+- score_priorizacao / hex_score_estrutural / artefatos M1: NÃO tocados (não aplicável a YAML de CI).
+- Commit isolado por path; nenhuma edição não relacionada (`PRD.md` etc.) arrastada.
+- Nenhum comando no VPS (CLAUDE.md §6).
+
+### Nota de orquestração
+Ciclo de infra/CI — NÃO altera a própria orquestração (run-cycle.md / prompts / esteira).
+`dry_run: false` → NÃO dispara dry-run pós-merge.
+
+### Pendência de fechamento (passo humano)
+- Merge humano `ciclo/BLK-OPS-08` → `main`. Pós-merge: confirmar no run de CI/Docker Publish que o
+  aviso "Node.js 20 actions are deprecated" desapareceu.

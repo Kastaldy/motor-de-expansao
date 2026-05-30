@@ -247,7 +247,7 @@ testes M1 (F601 só pode ser tocado provando invariância do fixture).
 | **Criticidade** | Baixa |
 | **Esteira** | Block Orchestrator → Builder |
 | **Depende de** | **BLK-OPS-02** (workflows criados) — ✅ satisfeita |
-| **Status** | Pendente *(aberto por BLK-OPS-02 em 2026-05-29 ao observar o aviso de descontinuação nos runs do CI)* |
+| **Status** | CONCLUÍDO (2026-05-29) — Builder aplicou o upgrade (esteira Baixa: Block Orchestrator → Builder, sem QA). Branch `ciclo/BLK-OPS-08`. Diff cirúrgico (3 tags): `ci.yml` `actions/checkout@v4→@v5` + `actions/setup-python@v5→@v6`; `docker-publish.yml` `actions/checkout@v4→@v5` (docker/* já nas últimas estáveis, não mudam). Smoke `import streamlit_app` OK. Validação final do aviso some = run verde no GitHub Actions pós-merge humano. Detalhes em `tasks/completed.md`. Mover para Concluídos no próximo housekeeping. |
 
 **Contexto:** os runs do CI/Docker Publish emitem aviso de descontinuação — `actions/checkout@v4`
 e `actions/setup-python@v5` rodam em Node 20, que o GitHub força a Node 24 a partir de 16-jun-2026
