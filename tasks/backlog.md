@@ -27,56 +27,8 @@ Próximo ciclo recomendado: validar a estrutura de Skills com uma tarefa real do
 
 ---
 
-### BLK-OPS-04 — Validação de schema no carregamento
+- BLK-OPS-04 (concluído 2026-05-30) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Média |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Depende de** | — |
-| **Status** | Pendente |
-
-**Objetivo:** o dashboard deve falhar de forma clara (não mostrar lixo) se um Parquet vier
-corrompido ou com schema/range inesperado.
-
-**Escopo permitido:**
-- Asserções de schema no caminho de load (`data.py`): colunas obrigatórias, dtypes, scores em
-  `[0, 100]`, chaves não-nulas, `h3` válido. Pandera opcional se já não pesar o deploy.
-- Mensagem de erro útil quando a validação falha.
-
-**Fora de escopo:** alterar fórmulas, alterar artefatos, mudar performance de load de forma
-relevante (validação deve ser barata).
-
-**Arquivos a ler:** `src/motor_expansao/dashboard/data.py` (`load_uf_slice`,
-`read_enriched_uf_partition`, `load_uf_catalog`) · esquema dos outputs.
-**Arquivos a alterar/criar:** `data.py` · módulo de schema (ex.: `dashboard/schemas.py`) ·
-`tests/unit/test_schema_validation.py`.
-
-**Critérios de aceite:**
-- Load rejeita Parquet com coluna faltante, dtype errado ou score fora de `[0,100]`.
-- Caminho feliz continua passando com overhead desprezível.
-
-**Validações obrigatórias:**
-```
-pytest -q tests/unit/test_schema_validation.py
-pytest -q   # garantir que nada existente quebrou
-```
-
-**Guardrails específicos:** validação é **read-only** — nunca corrige/preenche dados silenciosamente.
-
-**Risco:** baixo.
-
----
-
-- BLK-ARCH-01 (concluído 2026-05-29) — ver tasks/completed.md
-
----
-
-- BLK-ARCH-01a (concluído 2026-05-30) — ver tasks/completed.md
-
----
-
-- BLK-ARCH-01b (concluído 2026-05-30) — ver tasks/completed.md
 
 
 ---

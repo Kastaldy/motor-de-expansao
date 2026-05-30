@@ -161,6 +161,7 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_uf_selectbox,
     render_visao_executiva,
 )
+from motor_expansao.dashboard.schemas import validate_dashboard_frame  # noqa: F401
 from motor_expansao.dashboard.utils import (  # noqa: F401
     _censo_score_to_color,
     _residual_score_to_color,
@@ -214,6 +215,7 @@ def _ensure_dataset() -> None:
 def _read_m1_frame() -> pd.DataFrame:
     _ensure_dataset()
     df = _read_parquet_subset(DATASET_PATH, REQUIRED_COLUMNS)
+    validate_dashboard_frame(df, source=str(DATASET_PATH))
     return _prepare_dataframe(df)
 
 

@@ -1552,3 +1552,96 @@ SHA256 dos 5 artefatos M1 IDÊNTICO pré/pós a geração do `_manifest.json` re
 `brasil_priorizados.parquet`, `hexagonos_brasil_oportunidades.parquet` — todos byte-idênticos.
 Manifesto fica AO LADO, nunca dentro do conteúdo de scoring. `score_priorizacao`/`hex_score_estrutural`
 e parâmetros canônicos (H3=7, dist=1.0, renda_min=4500.0, pesos 0.40/0.60) preservados — só lidos.
+
+---
+
+### BLK-OPS-04 — Validação de schema no carregamento
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | — |
+| **Status** | Pendente |
+
+**Objetivo:** o dashboard deve falhar de forma clara (não mostrar lixo) se um Parquet vier
+corrompido ou com schema/range inesperado.
+
+**Escopo permitido:**
+- Asserções de schema no caminho de load (`data.py`): colunas obrigatórias, dtypes, scores em
+  `[0, 100]`, chaves não-nulas, `h3` válido. Pandera opcional se já não pesar o deploy.
+- Mensagem de erro útil quando a validação falha.
+
+**Fora de escopo:** alterar fórmulas, alterar artefatos, mudar performance de load de forma
+relevante (validação deve ser barata).
+
+**Arquivos a ler:** `src/motor_expansao/dashboard/data.py` (`load_uf_slice`,
+`read_enriched_uf_partition`, `load_uf_catalog`) · esquema dos outputs.
+**Arquivos a alterar/criar:** `data.py` · módulo de schema (ex.: `dashboard/schemas.py`) ·
+`tests/unit/test_schema_validation.py`.
+
+**Critérios de aceite:**
+- Load rejeita Parquet com coluna faltante, dtype errado ou score fora de `[0,100]`.
+- Caminho feliz continua passando com overhead desprezível.
+
+**Validações obrigatórias:**
+```
+pytest -q tests/unit/test_schema_validation.py
+pytest -q   # garantir que nada existente quebrou
+```
+
+**Guardrails específicos:** validação é **read-only** — nunca corrige/preenche dados silenciosamente.
+
+**Risco:** baixo.
+
+**Fechamento do ciclo — 2026-05-30. Veredito do QA: APROVADO** (re-execução independente, sem bypass).
+Esteira completa: Block Orchestrator → Planner → Builder → QA. Criticidade **Média** confirmada pelo
+Block Orchestrator: o trigger "Crítica" do CLAUDE.md/run-cycle protege contra MUTAÇÃO/recálculo de
+score/artefatos M1; esta tarefa é a operação dual e oposta — estritamente read-only (lê e rejeita
+carga ruim, não recalcula nem muta nada). Sem gate humano.
+
+### O que foi entregue
+- Novo módulo `src/motor_expansao/dashboard/schemas.py`: `SchemaValidationError(ValueError)` e função pura
+  `validate_dashboard_frame(df, *, source) -> None`, read-only (coerção numérica em variável local, jamais
+  reatribuída ao `df`; no-op para `df is None`/`df.empty`). Invariantes, nesta ordem: (b) colunas
+  obrigatórias presentes via `REQUIRED_COLUMNS` importado de `constants.py` (sem duplicar a lista);
+  (c) chaves `hex_id`/`uf` não-nulas; (d) `hex_id` H3 válido via `h3.is_valid_cell` sobre os únicos;
+  (e) colunas de score conversíveis a numérico + faixa `[0,100]` com NaN tolerado. Toda mensagem nomeia
+  source + coluna + invariante.
+- Integração no caminho real de load, ambas ANTES de `_prepare_dataframe` (que coagiria dtype ruim a NaN):
+  `streamlit_app.py::_read_m1_frame` (frame M1 cru) e `src/motor_expansao/dashboard/data.py::read_enriched_uf_partition`
+  (partição enriquecida crua). +1 import + 1 chamada em cada arquivo; sem ciclo de import (schemas→constants).
+- `tests/unit/test_schema_validation.py` (NOVO, 16 testes): caso feliz; não-mutação (`assert_frame_equal`);
+  NaN tolerado (obrigatório e opcional); coluna faltante; dtype errado; score fora de `[0,100]` (sup/inf);
+  chave nula (`uf` e `hex_id`); `hex_id` inválido; frame vazio/`None` (no-op); coerência
+  `set(_SCORE_RANGE_REQUIRED) <= set(REQUIRED_COLUMNS)`.
+- `tests/integration/test_streamlit_app.py`: 4 fixtures migrados de `hex_id` sintéticos (`"a"`, `"hSP1"`,
+  `"hSP2"`, `"hRJ1"`) para células H3 res-7 reais (`h3.latlng_to_cell`), pois fluíam pelos entry points
+  agora validados. Consequência legítima da validação correta — só dados de fixture, nenhuma lógica/asserção
+  de teste alterada. Path adicionado ao commit por path do ciclo (QA julgou o desvio aceitável).
+
+### Validações (re-executadas pelo QA, sem bypass)
+- `pytest -q tests/unit/test_schema_validation.py`: 16 passed.
+- `pytest -q` (suíte completa): **563 passed, 1 skipped** (subiu vs. baseline 532; nada quebrou).
+- `pytest -q tests/integration/test_streamlit_app.py`: 147 passed.
+- `python -c "import streamlit_app"`: ok. `ruff check`: All checks passed. `mypy schemas.py`: Success.
+
+### Guardrails verificados
+- `score_priorizacao`/`hex_score_estrutural` apenas LIDOS e validados — nunca recalculados nem mutados
+  (prova por teste de não-mutação + leitura do diff). Nenhuma fórmula/peso/artefato M1 tocado.
+- Parâmetros canônicos intactos: H3_RESOLUTION=7, DIST_MIN_ULTRA_KM=1.0, RENDA_MIN=4500.0, pesos 0.40/0.60.
+- `pandera` NÃO adicionado ao core/deploy (validação manual com pandas/numpy/h3, já no core).
+- Risco remanescente: base real de produção não exercitada nesta worktree; se houver `hex_id` legado não-H3
+  ou score fora de `[0,100]` em produção, o app passará a falhar com mensagem clara (comportamento desejado).
+
+---
+
+- BLK-ARCH-01 (concluído 2026-05-29) — ver tasks/completed.md
+
+---
+
+- BLK-ARCH-01a (concluído 2026-05-30) — ver tasks/completed.md
+
+---
+
+- BLK-ARCH-01b (concluído 2026-05-30) — ver tasks/completed.md
