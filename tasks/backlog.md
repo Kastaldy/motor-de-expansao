@@ -31,6 +31,15 @@ Próximo ciclo recomendado: validar a estrutura de Skills com uma tarefa real do
 
 
 
+- BLK-FIX-01 (concluído 2026-05-30) — ver tasks/completed.md
+
+
+
+### BLK-FIX-02 — Corrigir MessageSizeError para UFs grandes
+Criticidade: Média (bloqueia usabilidade de alguns estados em produção)
+Esteira: Block Orchestrator → Planner → Builder → QA
+Escopo: (a) aumentar maxMessageSize para 500 no config; (b) identificar qual caminho envia 240 MB e verificar se o downsampling está sendo aplicado corretamente.
+
 ---
 
 ### BLK-SCORE-01 — Dataset rotulado de validação (Ultra + Skyfit + Wellhub)
