@@ -40,54 +40,73 @@ Próximo ciclo recomendado: validar a estrutura de Skills com uma tarefa real do
 
 ---
 
-### BLK-SCORE-01 — Dataset rotulado de validação (Ultra + Skyfit + Wellhub)
+- BLK-SCORE-01 (concluído 2026-05-31) — ver tasks/completed.md
+
+
+---
+
+### BLK-SCORE-01a — Melhorar match de nome do Engenharia do Corpo
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | Alta *(read-only sobre M1 — ver §2 do PRD; ratificar com usuário)* |
+| **Criticidade** | Alta *(read-only sobre M1 — só leitura/join, mesmo padrão do BLK-SCORE-01)* |
 | **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
-| **Depende de** | — *(pode rodar em paralelo à Frente A)* |
+| **Depende de** | BLK-SCORE-01 (mergeado) |
 | **Status** | Pendente |
 
-**Objetivo:** montar a base que liga cada unidade existente (Ultra, Skyfit e Engenharia do Corpo) ao score do
-hex/setor onde ela caiu (M1, censitário, residual, domínio) e ao desfecho observado (alunos
-recorrentes; Wellhub/Totalpass como proxy de demanda independente). É insumo do backtest.
+**Origem:** no BLK-SCORE-01, o match do Engenharia do Corpo (EngCorpo) ficou em ~31/61 unidades porque
+foi feito por **nome exato normalizado**, mas a planilha de desfecho e o staging usam convenções de nome
+diferentes: a planilha prefixa toda unidade com `EC -`/`ECB -` (ex.: `EC - VACARIA, RS`) enquanto o staging
+usa o nome cru (`Vacaria, RS`). O usuário apontou (2026-05-31) que o nome "vem um pouco diferente, mas ainda
+daria para encontrar" — confirmado por análise: removendo o prefixo `EC`/`ECB` + fuzzy determinístico
+(difflib ≥0.80) a recuperação sobe para ~38/61, e parte do restante é resolvível por sinônimo de
+bairro/cidade (ex.: `EC - FLORIANOPOLIS, SC` ~ `Estreito - Florianópolis, SC`; `EC - BLUMENAU` ~ `Centro - Blumenau`).
+
+**Objetivo:** elevar a cobertura de hex/scores do EngCorpo no `dataset_validacao.parquet` melhorando o
+match de nome (sem inventar correspondências), mantendo tudo read-only sobre o M1 e marcando os não-casados.
 
 **Escopo permitido:**
-- Geocodificar cada unidade → célula H3 (res. 7) e setor IBGE correspondente.
-- Fazer join com os scores existentes (leitura dos outputs M1 e camadas paralelas).
-- Anexar desfechos: `alunos_recorrentes`, sinal Wellhub/Totalpass, `alunos_totais` , `data_abertura` (para maturação).
-- Gravar artefato de análise em `data/analysis/dataset_validacao.parquet` — **fora** de
-  `data/outputs/` (não é artefato de produto, é insumo de análise).
+- Em `analysis/build_validation_dataset.py`, melhorar a etapa de match EngCorpo: normalização que remove
+  prefixo `EC`/`ECB` e ruído; **cascata determinística** nome_exato → nome_fuzzy (difflib, cutoff documentado)
+  → fallback cidade+UF (espelhando o padrão já aprovado para o Skyfit no BLK-SCORE-01).
+- **Avaliar usar `concorrentes/unidades_engenharia_do_corpo.csv`** (e/ou `concorrentes/Unidades/unidades_engenharia_do_corpo.csv`)
+  como fonte de coordenadas direta para resolver hex via `latlng_to_h3`, em vez de depender só do staging
+  `concorrentes_mapeados.parquet` (mesma abordagem coords-por-CSV + match-por-nome do Skyfit). Verificar schema/coords antes.
+- Anexar `hex_origem`/`hex_precisao` ao EngCorpo (já existem no esquema) refletindo a origem do match.
+- Regerar `data/analysis/dataset_validacao.parquet` + `data/analysis/relatorio_auditoria_rotulo.md`.
 
 **Fora de escopo:** **qualquer escrita em artefato M1 ou alteração de score.** Apenas leitura e join.
+Fuzzy não-determinístico (que quebre o CI). Geocodificação de endereço ao vivo (BLK-PROD-05).
 
-**Arquivos a ler:** fontes Ultra/Skyfit/Wellhub · **bases de validação de concorrentes em
-`data/validacao/`** (`Sky Fit dados.xlsx`, `academias_engenharia_do_corpo.xlsx` — alunos/m² + metragem;
-gitignored, ver `data/validacao/README.md`) · `data/outputs/*` (scores) · `core/scoring.py`
-(para entender as colunas) · esquema dos setores censitários.
-**Arquivos a criar:** script de montagem (ex.: `analysis/build_validation_dataset.py`) ·
-`data/analysis/dataset_validacao.parquet` · `tests/unit/test_validation_dataset.py`.
+**Arquivos a ler:** `analysis/build_validation_dataset.py` · `data/validacao/academias_engenharia_do_corpo.xlsx`
+(sheet `Academias`) · `data/staging/concorrentes_mapeados.parquet` (`rede=="engenharia_do_corpo"`) ·
+`concorrentes/unidades_engenharia_do_corpo.csv` · `concorrentes/Unidades/unidades_engenharia_do_corpo.csv` ·
+`context/handoff/20260530-235959-planner.md` (seção REVISÃO 2 Skyfit — padrão de cascata a espelhar).
+**Arquivos a alterar:** `analysis/build_validation_dataset.py` · `tests/unit/test_validation_dataset.py`
+(casos novos de match EngCorpo) · artefatos regerados em `data/analysis/` (gitignored).
 
 **Critérios de aceite:**
-- Cada unidade tem H3/setor resolvidos e os 4 scores anexados.
-- Flag de maturação (ex.: `meses_operacao >= N`) presente — unidades imaturas marcadas, não descartadas silenciosamente.
-- **Auditoria de qualidade de rótulo:** relatório curto de outliers/nulos em `alunos_recorrentes`,
-  com nota explícita sobre a confiabilidade dos números de Skyfit (estimados vs. medidos).
+- Match EngCorpo materialmente acima do baseline (31/61); cada unidade casada tem `hex_origem`/`hex_precisao`
+  coerentes; não-casados **marcados** (`rotulo_casado=False`/`hex_resolvido=False`), nunca descartados nem
+  casados de forma incorreta.
+- Cascata determinística (mesmo input → mesmo output; verde no CI sem dados reais).
+- Relatório de auditoria atualizado com a nova cobertura EngCorpo por `hex_origem` e a lista (agregada, sem PII)
+  de não-casados remanescentes.
+- Nenhum falso-positivo introduzido: validar uma amostra dos pares fuzzy aceitos (cidade/UF batem).
 
 **Validações obrigatórias:**
 ```
 pytest -q tests/unit/test_validation_dataset.py
-# Sanidade do join: contagem de unidades de entrada == unidades com score anexado (ou diff explicado)
+pytest -q                                   # sem regressão
+python -m analysis.build_validation_dataset # regenera dataset + relatório fim a fim
 ```
 
 **Guardrails específicos:**
-- Dados sensíveis de Ultra/Skyfit/Wellhub **não** entram em logs/handoff em texto agregável a PII.
-- Artefato vive em `data/analysis/`, nunca em `data/outputs/`. CSVs com `sep=";"`, `utf-8-sig`;
-  `Ultra.csv` permanece `latin-1`.
+- READ-ONLY sobre o M1; artefato em `data/analysis/`, nunca `data/outputs/`. PII fora de logs/handoff/relatório.
+- CSVs do projeto `sep=";"`, `utf-8-sig`. H3_RESOLUTION=7. Sem fuzzy não-determinístico.
 
-**Risco:** médio — qualidade dos rótulos de concorrente e maturação de unidades novas são as
-maiores fontes de viés. Tratar a auditoria de rótulo como critério de aceite, não opcional.
+**Risco:** médio — fuzzy pode introduzir falso-positivo (casar unidade errada da mesma cidade). Mitigar
+exigindo concordância de cidade+UF no match fuzzy e auditando os pares aceitos.
 
 ---
 
