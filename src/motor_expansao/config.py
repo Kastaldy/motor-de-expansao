@@ -146,6 +146,8 @@ else:
             for name, default in self.__class__.__dict__.items():
                 if not name.isupper():
                     continue
+                if isinstance(default, property):
+                    continue  # properties calculadas (ex.: CORES) nao recebem setattr
                 raw = os.getenv(name)
                 setattr(self, name, _coerce_env_value(raw, default) if raw is not None else default)
 
