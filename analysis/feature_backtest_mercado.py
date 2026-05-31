@@ -54,7 +54,6 @@ from analysis.score_backtest import (  # noqa: E402
     pairwise_valid,
 )
 
-
 # --------------------------------------------------------------------------- #
 # Constantes / contrato de colunas
 # --------------------------------------------------------------------------- #
@@ -290,7 +289,7 @@ def ols_diagnostico(
     sst = float(((yz - yz.mean()) ** 2).sum())
     r2 = float(1.0 - sse / sst) if sst > 0 else None
 
-    coefs = {feat: float(b) for feat, b in zip(presentes, coef[1:])}
+    coefs = {feat: float(b) for feat, b in zip(presentes, coef[1:], strict=False)}
 
     return {
         "n": n,
@@ -421,7 +420,7 @@ def build_feature_report(
     L.append("## 5. Sinal conjunto — OLS diagnostico (NAO e score)")
     L.append("")
     L.append(
-        f"- Regressores (z-scored, intercepto): "
+        "- Regressores (z-scored, intercepto): "
         + ", ".join(f"`{c}`" for c in ols.get("regressors", []))
         + "."
     )
