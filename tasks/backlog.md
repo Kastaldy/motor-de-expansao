@@ -265,6 +265,8 @@ como gate no CI**. Combinado com deps não-pinadas (BLK-OPS-11), o risco de supp
 - Scan da imagem GHCR (Trivy/Grype) no pipeline de publish.
 - `gitleaks` como **step bloqueante** do CI (reusa a config existente do BLK-OPS-01).
 - Definir política de severidade (o que bloqueia vs. o que só alerta) para evitar CI ruidoso.
+- **Pinar as GitHub Actions por SHA** (hoje usam tags móveis, ex.: `actions/checkout@v5`,
+  `actions/setup-python@v6`) — endurece a supply-chain do próprio pipeline de CI/CD.
 
 **Fora de escopo:** remediar toda CVE histórica de uma vez (priorizar por severidade); assinatura de
 imagem (cosign) — follow-up.
@@ -302,6 +304,9 @@ SSH (desabilitar login por senha / limitar root) nem 2FA obrigatório no Autheli
 - `ufw` liberando só 22/80/443; `fail2ban` no SSH; `unattended-upgrades` para patches de segurança.
 - SSH: desabilitar autenticação por senha (manter chave), avaliar usuário não-root para operação.
 - Authelia: avaliar **forçar 2FA** para o grupo `ultra_team`.
+- **Revisão de acesso (least-privilege):** auditar quem está no `ultra_team` em
+  `authelia/users_database.yml`, remover acessos obsoletos e definir processo de offboarding
+  (revogar usuário ao sair). Documentar a periodicidade da revisão.
 - Documentar tudo em `docs/infra_producao.md` (seção de hardening) com rollback de cada item.
 
 **Fora de escopo:** trocar provedor/arquitetura; mudar M1/dashboard.
@@ -346,6 +351,54 @@ máquina de dev" como backup — manual e frágil. Não há snapshot periódico 
 - Sem PII em logs; sem dependência de API ao vivo no dashboard.
 
 **Risco:** baixo. Atenção a custo/espaço do destino e a não competir com usuários (janela noturna).
+
+---
+
+### BLK-SEC-05 — Observabilidade: monitoramento, alertas e runbook de incidente
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (contraparte detectiva dos controles preventivos; não toca M1/score) |
+| **Prioridade** | **Média-Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Origem** | revisão de robustez 2026-05-31 (ponto cego de detecção identificado) |
+
+**Contexto / gap:** os blocos BLK-SEC-01..04 são **preventivos**; falta o lado **detectivo**. Hoje não
+há como saber quando algo dá errado: sem alerta de uptime (queda do dashboard só é vista por
+`docker logs` manual), sem alerta de segurança (tentativas de login no Authelia, disparos do
+fail2ban — ver BLK-SEC-03, uso anômalo de CPU/memória/disco), e sem runbook de resposta a incidente
+geral (o BLK-OPS-01 cobre só regeneração de segredos). Controle preventivo sem detecção é
+meia-segurança: portas trancadas, mas sem alarme.
+
+**Objetivo:** detectar e ser notificado de falhas e eventos de segurança em tempo hábil, e ter um
+plano claro de resposta — proporcional a um dashboard interno (nada de SIEM/enterprise).
+
+**Escopo permitido (leve, sem stack pesada):**
+- **Uptime/health externo** do dashboard (ex.: monitor HTTP simples/UptimeRobot-like ou cron + alerta)
+  com notificação (e-mail/webhook) quando cair.
+- **Alertas de host:** disco cheio, memória/swap saturada, container reiniciando (reusa `docker stats`,
+  `df -h` do runbook; transformar em check agendado com alerta).
+- **Sinais de segurança:** expor/alertar disparos do fail2ban e falhas de login do Authelia
+  (logs já existem; falta o alerta).
+- **Retenção/rotação de logs** dos containers (evitar disco cheio por log infinito).
+- **Runbook de incidente** em `docs/` (VPS comprometido / vazamento / indisponibilidade): passos de
+  contenção, quem aciona, como isolar, e ligação com o DR de segredos (BLK-OPS-01) e o backup de
+  dados (BLK-SEC-04).
+
+**Fora de escopo:** SIEM, APM completo, tracing distribuído, on-call formal — exagero para o contexto.
+
+**Arquivos prováveis:** `docs/infra_producao.md` (seção de monitoramento + runbook de incidente),
+`docker-compose.prod.yml` (logging/retention), eventual script de health-check agendado.
+
+**Critérios de aceite:**
+- Queda do dashboard gera notificação comprovada (teste: derrubar o container num horário combinado).
+- Alertas de disco/memória e de eventos de segurança (fail2ban/Authelia) configurados e testados.
+- Rotação de logs ativa (sem crescimento ilimitado).
+- Runbook de incidente documentado e revisado; zero mudança em M1/artefatos.
+
+**Risco:** baixo. Cuidado para não gerar alarme ruidoso (calibrar limiares) nem expor segredos nos
+canais de alerta.
 
 ---
 
