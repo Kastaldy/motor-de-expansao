@@ -1813,7 +1813,7 @@ maiores fontes de viés. Tratar a auditoria de rótulo como critério de aceite,
 
 **Entregue:**
 - `analysis/build_validation_dataset.py` (+`analysis/__init__.py`): montagem read-only do dataset rotulado, executável via `python -m analysis.build_validation_dataset`.
-- `tests/unit/test_validation_dataset.py`: 23 testes, fixtures sintéticas (CI não usa dados reais gitignored).
+- `tests/unit/test_validation_dataset.py`: 21 testes, fixtures sintéticas (CI não usa dados reais gitignored).
 - `.gitignore`: cobre `data/analysis/` (parquet+md gitignored).
 - Artefatos gerados (gitignored): `data/analysis/dataset_validacao.parquet` (441 linhas: ultra 54 + skyfit 326 + engcorpo 61; 31 colunas) + `data/analysis/relatorio_auditoria_rotulo.md`.
 
@@ -1824,7 +1824,7 @@ maiores fontes de viés. Tratar a auditoria de rótulo como critério de aceite,
 
 **Cobertura (marcada, não silenciosa):** hex resolvido ultra 53/54, skyfit 301/326 (nome_exato 175 / nome_fuzzy 16 / cidade_centroide 110 / nao_resolvido 25), engcorpo 31/61.
 
-**Validação:** `pytest -q` → 591 passed, 1 skipped (baseline 532+1, +23 novos). `--check` housekeeping verde. Nenhum artefato/código oficial do M1 alterado.
+**Validação:** `pytest -q` → 591 passed, 1 skipped (sem regressão; +21 novos testes deste ciclo). `--check` housekeeping verde. Nenhum artefato/código oficial do M1 alterado.
 
 **Ressalvas (não bloqueantes, candidatos a ciclo futuro):** match EngCorpo conservador (31/61 — possível melhoria fuzzy/por cidade se BLK-SCORE-02 precisar de mais N); Skyfit `cidade_centroide` é hex coarse por design; domínio cobertura parcial 42/441 (esperado).
 
