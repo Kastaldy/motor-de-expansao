@@ -50,44 +50,8 @@ Próximo ciclo recomendado: validar a estrutura de Skills com uma tarefa real do
 
 ---
 
-### BLK-SCORE-02 — Poder preditivo dos scores vs. desfecho
+- BLK-SCORE-02 (concluído 2026-05-31) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Alta *(read-only sobre M1 — ver §2 do PRD)* |
-| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
-| **Depende de** | **BLK-SCORE-01** |
-| **Status** | Pendente |
-
-**Objetivo:** medir, sobre o dataset rotulado, quanto cada score (M1, censitário, residual,
-domínio) prevê `alunos_recorrentes` — por rede e no agregado — e onde discordam do real.
-
-**Escopo permitido:**
-- Análise exploratória: correlação score×desfecho, por rede e segmento de maturação.
-- Decomposição do M1: renda vs. pop — qual componente carrega o sinal? (testa empiricamente o 0.40/0.60).
-- Relatório de achados em `data/analysis/` (markdown + figuras), **sem proposta de mudança ainda**.
-
-**Fora de escopo:** alterar pesos, fórmula ou artefatos M1 — isso é o BLK-SCORE-03.
-
-**Arquivos a ler:** `data/analysis/dataset_validacao.parquet` · `core/scoring.py` · `core/constants.py`.
-**Arquivos a criar:** `analysis/score_backtest.py` · relatório `data/analysis/relatorio_backtest.md`.
-
-**Critérios de aceite:**
-- Relatório responde, com números: (a) qual score melhor prevê recorrentes; (b) o 0.40/0.60 se
-  sustenta?; (c) casos onde score alto ≠ desfecho bom (e hipótese do porquê — ex.: saturação de concorrente).
-- Análise controla por maturação (não comparar unidade de 2 meses com uma de 5 anos).
-
-**Validações obrigatórias:**
-```
-pytest -q             # nada quebrado
-python analysis/score_backtest.py   # roda fim a fim e gera o relatório
-```
-
-**Guardrails específicos:**
-- Estritamente **analítico e read-only**. Nenhuma alteração em `scoring.py`/`constants.py`/artefatos.
-
-**Risco:** baixo a médio (qualidade da análise estatística). N pequeno por rede pode limitar
-conclusões — relatar incerteza honestamente, não forçar significância.
 
 ---
 

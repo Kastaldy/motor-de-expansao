@@ -1912,3 +1912,65 @@ exigindo concordância de cidade+UF no match fuzzy e auditando os pares aceitos.
 **Observação (não-defeito):** os 24 não-resolvidos são majoritariamente entradas por bairro (ex.: `EC - ESPLANADA, RS`) cuja cidade real só seria recuperável por mapeamento bairro→cidade — fora do escopo deste bloco (decisão conservadora anti-falso-positivo). Candidato a ciclo futuro se BLK-SCORE-02 precisar de mais N.
 
 **Próximo recomendado:** BLK-SCORE-02 (poder preditivo dos scores vs. desfecho) — usa este dataset.
+
+---
+
+### BLK-SCORE-02 — Poder preditivo dos scores vs. desfecho
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta *(read-only sobre M1 — ver §2 do PRD)* |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
+| **Depende de** | **BLK-SCORE-01** |
+| **Status** | Pendente |
+
+**Objetivo:** medir, sobre o dataset rotulado, quanto cada score (M1, censitário, residual,
+domínio) prevê `alunos_recorrentes` — por rede e no agregado — e onde discordam do real.
+
+**Escopo permitido:**
+- Análise exploratória: correlação score×desfecho, por rede e segmento de maturação.
+- Decomposição do M1: renda vs. pop — qual componente carrega o sinal? (testa empiricamente o 0.40/0.60).
+- Relatório de achados em `data/analysis/` (markdown + figuras), **sem proposta de mudança ainda**.
+
+**Fora de escopo:** alterar pesos, fórmula ou artefatos M1 — isso é o BLK-SCORE-03.
+
+**Arquivos a ler:** `data/analysis/dataset_validacao.parquet` · `core/scoring.py` · `core/constants.py`.
+**Arquivos a criar:** `analysis/score_backtest.py` · relatório `data/analysis/relatorio_backtest.md`.
+
+**Critérios de aceite:**
+- Relatório responde, com números: (a) qual score melhor prevê recorrentes; (b) o 0.40/0.60 se
+  sustenta?; (c) casos onde score alto ≠ desfecho bom (e hipótese do porquê — ex.: saturação de concorrente).
+- Análise controla por maturação (não comparar unidade de 2 meses com uma de 5 anos).
+
+**Validações obrigatórias:**
+```
+pytest -q             # nada quebrado
+python analysis/score_backtest.py   # roda fim a fim e gera o relatório
+```
+
+**Guardrails específicos:**
+- Estritamente **analítico e read-only**. Nenhuma alteração em `scoring.py`/`constants.py`/artefatos.
+
+**Risco:** baixo a médio (qualidade da análise estatística). N pequeno por rede pode limitar
+conclusões — relatar incerteza honestamente, não forçar significância.
+
+
+## Fechamento BLK-SCORE-02 — Poder preditivo dos scores vs. desfecho (concluído 2026-05-31)
+
+**Veredito QA:** APROVADO. Esteira completa (Block Orchestrator -> Planner -> [gate humano: aprovado por Felipe Silva em 2026-05-31] -> Builder -> QA), criticidade Alta, ESTRITAMENTE READ-ONLY sobre o M1.
+
+**Entregue:**
+- `analysis/score_backtest.py` (NOVO): backtest read-only com funcoes puras testaveis (`pairwise_valid`, `correlate` via `scipy.stats`, `correlate_by_cell`, `bootstrap_ci_spearman` seed 42, `join_componentes` read-only por `hex_id`, `decompor_renda_pop`, `find_outliers` within-rede anti-PII, `build_report`, `load_inputs`, `main`). Figuras matplotlib OPCIONAIS sob try/except (Agg) -> script sempre exit 0 e gera o `.md` mesmo sem matplotlib. N_MIN=10, seed 42.
+- `tests/unit/test_score_backtest.py` (NOVO): +15 testes sinteticos em memoria (sem o parquet real gitignored), cobrindo monotonia +-1, N<N_MIN, variancia zero, pairwise, by_cell, join match_rate/anti-sobrescrita, bootstrap deterministico, anti-PII de outliers, smoke de build_report.
+- `data/analysis/relatorio_backtest.md` (gerado, gitignored): responde (a)(b)(c) + Limitacoes.
+
+**Achados (numeros reais, reproduzidos pelo QA):**
+- (a) Ranking AGG por Spearman vs `alunos_recorrentes`: melhor `score_setor_2022_calibrado` rho=+0.148 (p=0.004); `score_oportunidade_residual` rho=-0.257 (p<0.001, sinal NEGATIVO); M1 `score_priorizacao` rho=-0.004 (p=0.948, nulo); `score_dominio_hibrido` esparso (AGG N=43; engcorpo N=4 = insuficiente).
+- (b) Decomposicao renda x pop (join 357/391 = 91.3%): renda_pct rho=+0.067 vs pop_pct rho=+0.095 — sinal fraco em ambos; reportado como ACHADO DESCRITIVO, SEM proposta de novo peso (isso e BLK-SCORE-03).
+- (c) Outliers de ambas as direcoes (score alto x desfecho baixo e inverso), within-rede, anonimizados, com hipotese (saturacao/maturacao ausente/rotulo estimado).
+
+**Validacao (re-executada pelo QA, sem bypass):** `pytest -q tests/unit/test_score_backtest.py` -> 15 passed; `python analysis/score_backtest.py` -> exit 0, relatorio regenerado com (a)(b)(c)+Limitacoes; `pytest -q` -> 617 passed, 1 skipped (602 baseline + 15; sem regressao); `import streamlit_app` ok. Determinismo confirmado (numeros do QA batem com os do Builder). READ-ONLY do M1 confirmado por `git status`/`git diff` (nada em `scoring.py`/`constants.py`/`data/outputs/`/pesos 0.40-0.60/`H3_RESOLUTION=7`); saida so em `data/analysis/` (gitignored). Sem proposta de peso; sem PII; sem dependencia nova (pyproject intocado; matplotlib opcional).
+
+**Observacoes leves (nao-bloqueantes, QA):** (L1) scipy nao declarado em `pyproject.toml` — divida pre-existente do repo, fora de escopo; (L2) frase-template de hipotese generica para o score residual. Nenhuma exige nova rodada.
+
+**Sinal estrategico (para BLK-SCORE-03, NAO acionado aqui):** sobre este dataset rotulado, o M1 `score_priorizacao` nao mostra poder preditivo do desfecho (rho~0), o censitario e o unico com sinal positivo fraco, e o residual correlaciona negativamente. Material empirico para a eventual proposta de recalibracao — que e o escopo CRITICO do BLK-SCORE-03 (gate humano + DEC).
