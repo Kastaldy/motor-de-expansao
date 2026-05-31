@@ -4,7 +4,7 @@
 
 ID: BLK-OPS-11
 Nome: Pinar dependências e restaurar paridade CI/local (CI vermelho nos testes)
-Status: aprovado (APROVADO COM RESSALVAS pelo QA em 2026-05-31; ressalva única não bloqueante: confirmar CI verde de ponta a ponta no GitHub Actions Python 3.11 via `gh run watch` no fechamento)
+Status: APROVADO — ressalva FECHADA. QA deu APROVADO COM RESSALVAS em 2026-05-31; a ressalva única (CI verde de ponta a ponta no GitHub Actions Python 3.11) foi CONFIRMADA no fechamento: run `26722016904` (workflow_dispatch em `ciclo/BLK-OPS-11`) verde — Lint→mypy→Testes→Smoke todos ✓, 554 passed / 73 skipped / 0 falhas / 0 erros de collection (3.11; os 73 skips são testes gated em dados reais gitignored ausentes no CI — não silenciamento). Aguarda apenas o merge humano da branch.
 Tipo: operação / manutenção (ambiente/CI/config — não toca M1)
 Criticidade: Alta
 Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA] → Builder → QA

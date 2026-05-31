@@ -2225,9 +2225,13 @@ adaptar código exige cuidado para não alterar comportamento. O gate humano + Q
   collection).
 - **Guardrails M1:** `score_priorizacao`/pesos 0.40-0.60/H3=7/`scoring.py`/artefatos intactos; só
   `config.py` mudou em `src/`. Commit só por path; `PRD.md` não arrastado.
-- **Ressalva única (não bloqueante):** o critério "CI verde de ponta a ponta no GitHub Actions
-  (Python 3.11)" deve ser confirmado via `gh run watch` no merge — as versões reais resolvidas pelo
-  CI 3.11 dentro das faixas não foram verificadas no ambiente local (Python 3.14). A cura (guard de
+- **Ressalva única (não bloqueante) — FECHADA no fechamento:** o critério "CI verde de ponta a ponta
+  no GitHub Actions (Python 3.11)" foi CONFIRMADO. Run `26722016904` (workflow_dispatch na branch
+  `ciclo/BLK-OPS-11`) ficou verde: Instalar deps → Lint (ruff `--no-cache`) → Types (mypy src/) →
+  Testes (suite completa) → Smoke import, todos ✓ em 2m9s. Pytest no 3.11: **554 passed, 73 skipped,
+  0 falhas, 0 erros de collection** (total 627 coletados = igual ao local; os 73 skips são testes de
+  integração gated em parquets de dados reais gitignored ausentes no CI — comportamento pré-existente
+  do repo, NÃO silenciamento). As faixas pinadas resolveram sem problema no 3.11. A cura (guard de
   property) é independente de versão.
 - **Follow-up sugerido:** agendar a Opção B ampla (deduplicar a `@property CORES` entre os ramos e
   sanear incompatibilidades pandas 3.0) como dívida controlada; pode entrar antes de BLK-SEC-01/02
