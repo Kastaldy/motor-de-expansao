@@ -40,54 +40,8 @@ Próximo ciclo recomendado: validar a estrutura de Skills com uma tarefa real do
 
 ---
 
-### BLK-SCORE-01 — Dataset rotulado de validação (Ultra + Skyfit + Wellhub)
+- BLK-SCORE-01 (concluído 2026-05-31) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Alta *(read-only sobre M1 — ver §2 do PRD; ratificar com usuário)* |
-| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
-| **Depende de** | — *(pode rodar em paralelo à Frente A)* |
-| **Status** | Pendente |
-
-**Objetivo:** montar a base que liga cada unidade existente (Ultra, Skyfit e Engenharia do Corpo) ao score do
-hex/setor onde ela caiu (M1, censitário, residual, domínio) e ao desfecho observado (alunos
-recorrentes; Wellhub/Totalpass como proxy de demanda independente). É insumo do backtest.
-
-**Escopo permitido:**
-- Geocodificar cada unidade → célula H3 (res. 7) e setor IBGE correspondente.
-- Fazer join com os scores existentes (leitura dos outputs M1 e camadas paralelas).
-- Anexar desfechos: `alunos_recorrentes`, sinal Wellhub/Totalpass, `alunos_totais` , `data_abertura` (para maturação).
-- Gravar artefato de análise em `data/analysis/dataset_validacao.parquet` — **fora** de
-  `data/outputs/` (não é artefato de produto, é insumo de análise).
-
-**Fora de escopo:** **qualquer escrita em artefato M1 ou alteração de score.** Apenas leitura e join.
-
-**Arquivos a ler:** fontes Ultra/Skyfit/Wellhub · **bases de validação de concorrentes em
-`data/validacao/`** (`Sky Fit dados.xlsx`, `academias_engenharia_do_corpo.xlsx` — alunos/m² + metragem;
-gitignored, ver `data/validacao/README.md`) · `data/outputs/*` (scores) · `core/scoring.py`
-(para entender as colunas) · esquema dos setores censitários.
-**Arquivos a criar:** script de montagem (ex.: `analysis/build_validation_dataset.py`) ·
-`data/analysis/dataset_validacao.parquet` · `tests/unit/test_validation_dataset.py`.
-
-**Critérios de aceite:**
-- Cada unidade tem H3/setor resolvidos e os 4 scores anexados.
-- Flag de maturação (ex.: `meses_operacao >= N`) presente — unidades imaturas marcadas, não descartadas silenciosamente.
-- **Auditoria de qualidade de rótulo:** relatório curto de outliers/nulos em `alunos_recorrentes`,
-  com nota explícita sobre a confiabilidade dos números de Skyfit (estimados vs. medidos).
-
-**Validações obrigatórias:**
-```
-pytest -q tests/unit/test_validation_dataset.py
-# Sanidade do join: contagem de unidades de entrada == unidades com score anexado (ou diff explicado)
-```
-
-**Guardrails específicos:**
-- Dados sensíveis de Ultra/Skyfit/Wellhub **não** entram em logs/handoff em texto agregável a PII.
-- Artefato vive em `data/analysis/`, nunca em `data/outputs/`. CSVs com `sep=";"`, `utf-8-sig`;
-  `Ultra.csv` permanece `latin-1`.
-
-**Risco:** médio — qualidade dos rótulos de concorrente e maturação de unidades novas são as
-maiores fontes de viés. Tratar a auditoria de rótulo como critério de aceite, não opcional.
 
 ---
 

@@ -90,6 +90,11 @@ authelia/db.sqlite3
 authelia/notification.txt
 usuarios.md
 
+# Artefatos de analise (BLK-SCORE-01): dataset rotulado + relatorio de auditoria.
+# O .parquet ja cai em *.parquet; o relatorio .md contem agregados e nao pode vazar PII.
+data/analysis/
+data/analysis/**
+
 # === Secrets (SOPS+age) ===
 # Plaintext outputs nunca podem ser commitados:
 secrets/*.dec
