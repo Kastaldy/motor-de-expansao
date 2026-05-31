@@ -51,6 +51,11 @@ ULTRA_PARQUET = REPO_ROOT / "data" / "staging" / "unidades_ultra_performance_hex
 SKYFIT_DESFECHO_XLSX = REPO_ROOT / "data" / "validacao" / "Sky Fit dados.xlsx"
 SKYFIT_COORDS_CSV = REPO_ROOT / "concorrentes" / "unidades_skyfit.csv"
 ENGCORPO_XLSX = REPO_ROOT / "data" / "validacao" / "academias_engenharia_do_corpo.xlsx"
+# Fonte canonica de coordenadas EngCorpo (raiz). A copia em
+# ``concorrentes/Unidades/unidades_engenharia_do_corpo.csv`` e byte-identica
+# (replica/fallback documentado) e NAO e lida (evita duplicar/ambiguidade).
+ENGCORPO_COORDS_CSV = REPO_ROOT / "concorrentes" / "unidades_engenharia_do_corpo.csv"
+# Staging: fonte de hex SECUNDARIA/fallback (hex_id_res7 ja resolvido por nome cru).
 ENGCORPO_STAGING = REPO_ROOT / "data" / "staging" / "concorrentes_mapeados.parquet"
 PRIORIZADOS_PARQUET = REPO_ROOT / "data" / "staging" / "brasil_priorizados.parquet"
 MERCADO_PARQUET = REPO_ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
@@ -176,6 +181,51 @@ def _city_uf_from_coord_name(nome: object) -> tuple[str, str]:
         uf = m.group(1).upper()
         raw = raw[: m.start()]
     # separadores possiveis: travessao, hifen
+    parts = re.split(r"[–—\-]", raw)
+    cidade = parts[-1] if parts else raw
+    return normalize_name(cidade), uf
+
+
+def normalize_name_engcorpo(s: object) -> str:
+    """Normaliza nome EngCorpo, removendo o prefixo de marca ``EC``/``ECB``.
+
+    Trata os dois lados do join: planilha (``EC - VACARIA, RS``,
+    ``ECB - DESVIO RIZZO, RS``) vs CSV/staging (``Vacaria, RS``,
+    ``Desvio Rizzo - Caxias do Sul, RS``).
+
+    Regra: NFKD/casefold -> remove o PREFIXO inicial ``ec``/``ecb`` (com/sem
+    hifen/travessao/dois-pontos e com/sem espaco), ancorado em ``^`` para nunca
+    corromper um ``ec`` no meio do nome -> delega ao ``normalize_name`` (que ja
+    dropa o token isolado ``ec``, alem de NFKD/pontuacao/sufixos/colapso).
+    Deterministico.
+    """
+    if s is None or (isinstance(s, float) and pd.isna(s)):
+        return ""
+    text = _strip_accents(str(s)).casefold()
+    # remove SO o prefixo de marca no inicio (ancora ^): ec/ecb com separador opcional
+    text = re.sub(r"^\s*ec[bv]?\s*[-–—:]?\s*", " ", text)
+    return normalize_name(text)
+
+
+def _city_uf_from_engcorpo_name(nome: object) -> tuple[str, str]:
+    """Extrai (cidade_norm, uf) de um ``nome_unidade`` EngCorpo.
+
+    Convencao: ``Cidade, UF`` ou ``Prefixo - Cidade, UF`` (virgula antes da UF),
+    valendo para a planilha (``EC - VACARIA, RS``) e o CSV/staging
+    (``Diamantino - Caxias do Sul, RS``). A UF e o sufixo de 2 letras apos a
+    ultima virgula; a cidade e o ultimo segmento apos hifen/travessao. O prefixo
+    de marca ``EC``/``ECB`` (planilha) vira token isolado e e dropado por
+    ``normalize_name``, entao a cidade normalizada coincide entre os lados.
+    """
+    if nome is None or (isinstance(nome, float) and pd.isna(nome)):
+        return "", ""
+    raw = str(nome)
+    uf = ""
+    m = re.search(r",\s*([A-Za-z]{2})\s*$", raw)
+    if m:
+        uf = m.group(1).upper()
+        raw = raw[: m.start()]
+    # separadores possiveis: travessao, hifen -> cidade e o ultimo segmento
     parts = re.split(r"[–—\-]", raw)
     cidade = parts[-1] if parts else raw
     return normalize_name(cidade), uf
@@ -353,6 +403,113 @@ def match_skyfit_coords(
     return res
 
 
+def match_engcorpo_coords(
+    desfecho: pd.DataFrame,
+    coords: pd.DataFrame,
+    *,
+    fuzzy_cutoff: float = DEFAULT_FUZZY_CUTOFF,
+) -> pd.DataFrame:
+    """Casa desfecho EngCorpo x coords (CSV) por NOME em cascata determinista.
+
+    Espelha ``match_skyfit_coords``, com normalizacao EngCorpo-especifica
+    (``normalize_name_engcorpo`` remove o prefixo ``EC``/``ECB``). Tiers:
+
+    - ``nome_exato``  : nome normalizado bate exatamente -> precisao ``unidade``.
+    - ``nome_fuzzy``  : difflib ``get_close_matches`` (cutoff ``fuzzy_cutoff``,
+      default ``DEFAULT_FUZZY_CUTOFF=0.84``) COM concordancia OBRIGATORIA
+      cidade+UF (rejeita o candidato se cidade OU UF divergirem -> guardrail
+      anti-falso-positivo do bloco) -> precisao ``unidade``.
+    - ``cidade_centroide`` : cidade+UF batem -> precisao ``cidade``.
+
+    Em todos os tiers a coord e validada por ``_coord_in_brazil`` antes de
+    aceitar (protege coords invertidas, ex.: ``CT Areias`` com lat/lng trocados).
+    Sem match (ou coord fora da faixa) -> ``nao_resolvido`` / lat/lng None.
+    Deterministico: lookups por dict na ordem do arquivo (``keep="first"``),
+    sem seed.
+    """
+    res = desfecho.copy().reset_index(drop=True)
+    res["_nome_norm"] = res["nome_unidade"].map(normalize_name_engcorpo)
+    cidade_uf_d = res["nome_unidade"].map(_city_uf_from_engcorpo_name)
+    res["_cidade_norm"] = [c for c, _ in cidade_uf_d]
+    res["_uf"] = [u for _, u in cidade_uf_d]
+
+    cd = coords.copy().reset_index(drop=True)
+    cd["_nome_norm"] = cd["nome_unidade"].map(normalize_name_engcorpo)
+    cidade_uf_c = cd["nome_unidade"].map(_city_uf_from_engcorpo_name)
+    cd["_cidade_norm"] = [c for c, _ in cidade_uf_c]
+    cd["_uf"] = [u for _, u in cidade_uf_c]
+    cd["lat"] = pd.to_numeric(cd["latitude"], errors="coerce")
+    cd["lng"] = pd.to_numeric(cd["longitude"], errors="coerce")
+
+    # indices de lookup (primeira ocorrencia ganha; determinista pela ordem do arquivo)
+    by_name: dict[str, int] = {}
+    for i, nm in enumerate(cd["_nome_norm"]):
+        if nm and nm not in by_name:
+            by_name[nm] = i
+    by_city: dict[tuple[str, str], int] = {}
+    for i, (cc, uu) in enumerate(zip(cd["_cidade_norm"], cd["_uf"])):
+        key = (cc, uu)
+        if cc and key not in by_city:
+            by_city[key] = i
+    coord_name_list = list(by_name.keys())
+
+    lat_out: list[float | None] = []
+    lng_out: list[float | None] = []
+    origem_out: list[str] = []
+    precisao_out: list[str] = []
+
+    for _, row in res.iterrows():
+        nm = row["_nome_norm"]
+        idx: int | None = None
+        origem = "nao_resolvido"
+        precisao = "indisponivel"
+
+        # Tier 1: nome exato
+        if nm and nm in by_name:
+            idx = by_name[nm]
+            origem, precisao = "nome_exato", "unidade"
+        else:
+            # Tier 2: fuzzy deterministico COM concordancia OBRIGATORIA cidade+UF
+            if nm:
+                cand = difflib.get_close_matches(nm, coord_name_list, n=1, cutoff=fuzzy_cutoff)
+                if cand:
+                    cidx = by_name[cand[0]]
+                    if (
+                        cd.at[cidx, "_cidade_norm"] == row["_cidade_norm"]
+                        and cd.at[cidx, "_uf"] == row["_uf"]
+                        and row["_cidade_norm"]
+                    ):
+                        idx = cidx
+                        origem, precisao = "nome_fuzzy", "unidade"
+            # Tier 3: centroide cidade+UF
+            if idx is None:
+                key = (row["_cidade_norm"], row["_uf"])
+                if key in by_city:
+                    idx = by_city[key]
+                    origem, precisao = "cidade_centroide", "cidade"
+
+        if idx is not None:
+            lat_val = cd.at[idx, "lat"]
+            lng_val = cd.at[idx, "lng"]
+            if _coord_in_brazil(lat_val, lng_val):
+                lat_out.append(float(lat_val))
+                lng_out.append(float(lng_val))
+                origem_out.append(origem)
+                precisao_out.append(precisao)
+                continue
+        lat_out.append(None)
+        lng_out.append(None)
+        origem_out.append("nao_resolvido")
+        precisao_out.append("indisponivel")
+
+    res["lat"] = lat_out
+    res["lng"] = lng_out
+    res["hex_origem"] = origem_out
+    res["hex_precisao"] = precisao_out
+    res = res.drop(columns=["_nome_norm", "_uf", "_cidade_norm"])
+    return res
+
+
 def load_skyfit(
     desfecho_xlsx: Path = SKYFIT_DESFECHO_XLSX,
     coords_csv: Path = SKYFIT_COORDS_CSV,
@@ -454,41 +611,70 @@ def join_label_by_name(
 
 def load_engcorpo(
     planilha: Path = ENGCORPO_XLSX,
+    coords_csv: Path = ENGCORPO_COORDS_CSV,
     staging: Path = ENGCORPO_STAGING,
+    *,
+    fuzzy_cutoff: float = DEFAULT_FUZZY_CUTOFF,
 ) -> pd.DataFrame:
-    """Le planilha EngCorpo (desfecho) + staging (hex via nome) -> esquema interno."""
+    """Le planilha EngCorpo (desfecho) + CSV coords (hex primario) -> esquema interno.
+
+    Hex resolvido em cascata determinista por ``match_engcorpo_coords`` sobre o
+    CSV canonico (nome_exato -> nome_fuzzy com cidade+UF -> cidade_centroide).
+    Quando o CSV nao resolve, cai para o ``hex_id_res7`` do staging via join por
+    nome (``normalize_name_engcorpo``) -> ``hex_staging``. Ordem de prioridade de
+    hex: nome_exato/nome_fuzzy/cidade_centroide (CSV) -> hex_staging ->
+    nao_resolvido. Nao-casados sao marcados, nunca descartados.
+    """
     plan = pd.read_excel(planilha, sheet_name="Academias")
     plan_df = pd.DataFrame()
     plan_df["nome_unidade"] = plan.get("Unidade")
     plan_df["metragem_m2"] = pd.to_numeric(plan.get("Metragem M²"), errors="coerce")
     plan_df["alunos_totais"] = pd.to_numeric(plan.get("Alunos Totais"), errors="coerce")
     plan_df["alunos_gympass"] = pd.to_numeric(plan.get("Total Alunos Gympass"), errors="coerce")
-    plan_df["nome_norm"] = plan_df["nome_unidade"].map(normalize_name)
 
+    coords = pd.read_csv(coords_csv, sep=";", encoding="utf-8-sig")
+    matched = match_engcorpo_coords(plan_df, coords, fuzzy_cutoff=fuzzy_cutoff)
+
+    # Staging como fallback de hex por nome (so para os nao resolvidos pelo CSV).
     st = pd.read_parquet(staging)
     st = st[(st["rede"] == "engenharia_do_corpo") & (st["status_registro"] == "valido")].copy()
-    st["nome_norm"] = st["nome_unidade"].map(normalize_name)
-    st_slim = st[["nome_norm", "hex_id_res7", "lat", "lng"]].copy()
-
-    joined = join_label_by_name(
-        plan_df,
-        st_slim,
-        left_key="nome_norm",
-        right_key="nome_norm",
-        value_cols=["hex_id_res7", "lat", "lng"],
-    )
+    st["nome_norm"] = st["nome_unidade"].map(normalize_name_engcorpo)
+    st_slim = st[["nome_norm", "hex_id_res7"]].copy()
+    st_slim = st_slim[st_slim["nome_norm"].astype(bool)]
+    staging_hex: dict[str, object] = {}
+    for nm, hx in zip(st_slim["nome_norm"], st_slim["hex_id_res7"]):
+        if nm and nm not in staging_hex and hx is not None and str(hx).strip():
+            staging_hex[nm] = hx
 
     out = pd.DataFrame()
-    out["rede"] = ["engcorpo"] * len(joined)
-    out["nome_unidade"] = joined["nome_unidade"]
-    out["lat"] = pd.to_numeric(joined["lat"], errors="coerce")
-    out["lng"] = pd.to_numeric(joined["lng"], errors="coerce")
-    out["hex_id"] = joined["hex_id_res7"]
+    out["rede"] = ["engcorpo"] * len(matched)
+    out["nome_unidade"] = matched["nome_unidade"]
+    out["lat"] = pd.to_numeric(matched["lat"], errors="coerce")
+    out["lng"] = pd.to_numeric(matched["lng"], errors="coerce")
+    out["hex_id"] = None  # CSV resolve via lat/lng em resolve_hex
+    out["hex_origem"] = matched["hex_origem"]
+    out["hex_precisao"] = matched["hex_precisao"]
     out["uf"] = None  # derivado do join de score por hex_id
-    out["metragem_m2"] = joined["metragem_m2"]
-    out["alunos_totais"] = joined["alunos_totais"]
-    out["alunos_gympass"] = joined["alunos_gympass"]
-    out["rotulo_casado_staging"] = joined["rotulo_casado"]
+
+    # Fallback staging: so quando o CSV nao resolveu.
+    hex_ids: list[object] = list(out["hex_id"])
+    origens: list[str] = list(out["hex_origem"])
+    precisoes: list[str] = list(out["hex_precisao"])
+    for i, nome in enumerate(matched["nome_unidade"]):
+        if origens[i] == "nao_resolvido":
+            nm = normalize_name_engcorpo(nome)
+            if nm in staging_hex:
+                hex_ids[i] = staging_hex[nm]
+                origens[i] = "hex_staging"
+                precisoes[i] = "unidade"
+    out["hex_id"] = hex_ids
+    out["hex_origem"] = origens
+    out["hex_precisao"] = precisoes
+
+    out["metragem_m2"] = matched["metragem_m2"]
+    out["alunos_totais"] = matched["alunos_totais"]
+    out["alunos_gympass"] = matched["alunos_gympass"]
+    out["rotulo_casado_staging"] = [o != "nao_resolvido" for o in origens]
     out["unidade_id"] = [f"engcorpo__{_slug(n)}__{i}" for i, n in enumerate(out["nome_unidade"])]
     return out
 
@@ -910,6 +1096,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skyfit-desfecho", type=Path, default=SKYFIT_DESFECHO_XLSX)
     parser.add_argument("--skyfit-coords", type=Path, default=SKYFIT_COORDS_CSV)
     parser.add_argument("--engcorpo", type=Path, default=ENGCORPO_XLSX)
+    parser.add_argument("--engcorpo-coords", type=Path, default=ENGCORPO_COORDS_CSV)
     parser.add_argument("--engcorpo-staging", type=Path, default=ENGCORPO_STAGING)
     parser.add_argument("--priorizados", type=Path, default=PRIORIZADOS_PARQUET)
     parser.add_argument("--mercado", type=Path, default=MERCADO_PARQUET)
@@ -921,7 +1108,9 @@ def main(argv: list[str] | None = None) -> int:
 
     ultra = load_ultra(args.ultra)
     skyfit = load_skyfit(args.skyfit_desfecho, args.skyfit_coords, fuzzy_cutoff=args.fuzzy_cutoff)
-    engcorpo = load_engcorpo(args.engcorpo, args.engcorpo_staging)
+    engcorpo = load_engcorpo(
+        args.engcorpo, args.engcorpo_coords, args.engcorpo_staging, fuzzy_cutoff=args.fuzzy_cutoff
+    )
 
     entradas = {"ultra": len(ultra), "skyfit": len(skyfit), "engcorpo": len(engcorpo)}
 
