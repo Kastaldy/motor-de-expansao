@@ -31,11 +31,10 @@ import re
 import sys
 import unicodedata
 import warnings
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
-
 
 H3_RESOLUTION = 7
 
@@ -346,7 +345,7 @@ def match_skyfit_coords(
         if nm and nm not in by_name:
             by_name[nm] = i
     by_city: dict[tuple[str, str], int] = {}
-    for i, (cc, uu) in enumerate(zip(cd["_cidade_norm"], cd["_uf"])):
+    for i, (cc, uu) in enumerate(zip(cd["_cidade_norm"], cd["_uf"], strict=False)):
         key = (cc, uu)
         if cc and key not in by_city:
             by_city[key] = i
@@ -447,7 +446,7 @@ def match_engcorpo_coords(
         if nm and nm not in by_name:
             by_name[nm] = i
     by_city: dict[tuple[str, str], int] = {}
-    for i, (cc, uu) in enumerate(zip(cd["_cidade_norm"], cd["_uf"])):
+    for i, (cc, uu) in enumerate(zip(cd["_cidade_norm"], cd["_uf"], strict=False)):
         key = (cc, uu)
         if cc and key not in by_city:
             by_city[key] = i
@@ -642,7 +641,7 @@ def load_engcorpo(
     st_slim = st[["nome_norm", "hex_id_res7"]].copy()
     st_slim = st_slim[st_slim["nome_norm"].astype(bool)]
     staging_hex: dict[str, object] = {}
-    for nm, hx in zip(st_slim["nome_norm"], st_slim["hex_id_res7"]):
+    for nm, hx in zip(st_slim["nome_norm"], st_slim["hex_id_res7"], strict=False):
         if nm and nm not in staging_hex and hx is not None and str(hx).strip():
             staging_hex[nm] = hx
 
@@ -812,7 +811,7 @@ def join_scores(
     for col in geo_cols:
         existing_series = out[col] if col in out.columns else pd.Series([None] * len(out))
         vals: list[object] = []
-        for hx, ex in zip(out["hex_id"], existing_series):
+        for hx, ex in zip(out["hex_id"], existing_series, strict=False):
             if ex is not None and not (isinstance(ex, float) and pd.isna(ex)) and str(ex).strip():
                 vals.append(ex)
                 continue
@@ -844,7 +843,7 @@ def unify_wellhub(df: pd.DataFrame) -> pd.DataFrame:
 
     n_parc: list[int] = []
     sinal: list[object] = []
-    for gi, ti in zip(g, t):
+    for gi, ti in zip(g, t, strict=False):
         has_g = pd.notna(gi) and gi > 0
         has_t = pd.notna(ti) and ti > 0
         n = int(has_g) + int(has_t)
