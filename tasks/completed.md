@@ -2128,3 +2128,112 @@ além de pop/renda ajudam/são significativas?".
   endogeneidade ao `build_feature_report`, relatório regenerado (determinístico), suíte verde →
   fechado como APROVADO.
 - **Esteira:** Block Orchestrator → Planner → [REVISÃO HUMANA: aprovar] → Builder → QA.
+
+---
+
+### BLK-OPS-11 — Pinar dependências e restaurar paridade CI/local (CI vermelho nos testes)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (CI quebrado mascarava falhas; afeta o gate de qualidade — não toca M1/score) |
+| **Prioridade** | **Alta** (o gate de testes do CI está, na prática, desligado) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Origem** | descoberto em 2026-05-31 ao destravar o lint do ruff (commits `3b022ea`/`48d8eb7`) |
+
+**Contexto / sintoma:** com o lint do ruff corrigido, o passo `Testes (suite completa)` do CI
+rodou pela 1ª vez em dias e **falha na collection** com
+`AttributeError: property 'CORES' of 'Settings' object has no setter` em ~14 testes. **Local passa
+(624 passed, 1 skipped); CI falha.** O lint vermelho vinha *mascarando* que os testes também
+quebravam no ambiente do CI — ou seja, o CI nunca esteve realmente verde. Produção NÃO é afetada
+(roda imagem pré-buildada do GHCR; smoke import OK).
+
+**Causa raiz (CORRIGIDA na execução BLK-OPS-11, 2026-05-31):** a quebra da collection do CI **NÃO**
+vinha do pydantic novo. No CI, `pydantic_settings` está só no extra `api` (não instalado em
+`.[dev]`), então `Settings` roda pelo **RAMO FALLBACK** (`else` em `src/motor_expansao/config.py`). O
+`__init__` desse ramo iterava `self.__class__.__dict__.items()` e fazia `setattr` para todo nome
+`isupper()`; `CORES` é uma `@property` cujo nome é `isupper()` e property sem setter explodia no
+`setattr` (`AttributeError: property 'CORES' ... has no setter`). Isso derrubava o import de
+`config` → `core/constants.py` → 12 módulos de teste na collection. **A cura é no `config.py`**
+(guard `if isinstance(default, property): continue` antes do `setattr`), provada sob fallback forçado
+(`Settings()` instancia, `CORES` resolve, 12/12 módulos importam). Pinar libs (Opção A) é **higiene
+de paridade**, não a cura — o ramo que falhava sequer importa pydantic. Permanece o risco latente de
+breaks por pandas 3.0 / numpy 2.4, mitigado pelos tetos adicionados.
+
+**Sub-achado correlato (lição):** o ruff local deu *falso-verde por cache* durante o 1º fix — só
+`--no-cache` revelou o erro restante. Reforça a necessidade de pinar a versão do linter também.
+
+**Objetivo:** restaurar paridade CI/local e deixar o gate de testes do CI verde de verdade, sem
+mascarar nada.
+
+**Escopo permitido — DECIDIR entre 2 abordagens no Planner (com gate humano):**
+- **Opção A — Pinar dependências** no `pyproject.toml` para um conjunto conhecido-bom (faixas
+  compatíveis: ex. `pandas<3`, `pydantic` em faixa que aceite o padrão atual, `ruff==<versão do CI>`,
+  etc.) + opcionalmente um lockfile. Mais rápido/seguro; é dívida adiada mas controlada.
+- **Opção B — Adaptar o código** para as versões novas: corrigir o padrão `CORES`/`Settings`
+  (remover a duplicação nas linhas 84/153 e o conflito property×field do pydantic novo) e sanear
+  qualquer incompatibilidade com pandas 3.0. Mais trabalho, mais robusto a longo prazo.
+- Recomenda-se o Planner avaliar custo das duas e propor uma (provável: A agora para destravar +
+  B como follow-up). Pinar o **ruff** (paridade de lint) entra em qualquer das opções.
+
+**Fora de escopo (invioláveis):**
+- NÃO tocar M1: `score_priorizacao`/`scoring.py`/pesos/artefatos. Só ambiente/CI/config.
+- NÃO mascarar falha de teste (skip/xfail amplo) para "ficar verde" — isso é bypass proibido.
+- NÃO alterar a lógica de negócio para acomodar versão de lib sem teste que prove equivalência.
+
+**Arquivos prováveis:** `pyproject.toml` (pins/faixas), `src/motor_expansao/config.py` (CORES/Settings,
+se Opção B), `.github/workflows/ci.yml` (se precisar de constraints/lock), eventual `requirements*.txt`/lock.
+
+**Critérios de aceite:**
+- CI **verde de ponta a ponta** (Lint → mypy → Testes → Smoke) no commit de fechamento — comprovado
+  por run do Actions, não por suposição.
+- Paridade: `ruff`/`mypy`/`pytest` reproduzíveis local == CI (mesmas versões; rodar ruff com `--no-cache`).
+- 624 passed (ou contagem ≥) verde no CI; nenhuma falha de collection.
+- Zero mudança em M1/artefatos; zero teste silenciado para forjar verde.
+
+**Validações obrigatórias:**
+```
+ruff check . --no-cache           # paridade de lint (versão pinada)
+mypy src/
+pytest -q                         # local
+# + confirmar run verde no GitHub Actions (gh run watch)
+```
+
+**Risco:** médio. Pinar pode esconder incompatibilidades futuras (mitigado por agendar a Opção B);
+adaptar código exige cuidado para não alterar comportamento. O gate humano + QA com CI real verde
+(sem bypass) são a proteção.
+
+**Fechamento do ciclo (2026-05-31) — VEREDITO QA: APROVADO COM RESSALVAS**
+- **Diagnóstico corrigido na execução:** a quebra da collection do CI **não** vinha de "pydantic novo"
+  e sim do **ramo fallback** de `Settings` (`config.py`): no CI, `pydantic-settings` está só no extra
+  `api` (não instalado em `.[dev]`), então roda o fallback, cujo `__init__` fazia `setattr` em todo
+  nome `isupper()` — inclusive a `@property CORES` (sem setter) → `AttributeError`, derrubando 12
+  módulos na collection. Provado por reprodução read-only (Planner) e re-provado pelo QA.
+- **Abordagem HÍBRIDA aprovada por Felipe Silva (2026-05-31):**
+  - **Cura (B):** guard `if isinstance(default, property): continue` no `__init__` do fallback de
+    `config.py` (2 linhas; ramo pydantic, dict `CORES` e `_coerce_env_value` intocados).
+  - **Paridade (A):** tetos de runtime em `pyproject.toml` (`pandas<3`, `numpy<2.4`, `pyarrow<24`,
+    `scikit-learn<1.8`, `streamlit<2`) e faixas das ferramentas dev (`ruff>=0.15,<0.16`, `mypy<2`,
+    `pytest<10`, `pytest-asyncio<0.25`). Extra `api` NÃO tocado; `mypy` NÃO pinado em `==`.
+  - **CI:** lint passou a `ruff check . --no-cache` (cache dava falso-verde). `api` NÃO adicionado ao
+    CI (o fallback é o caminho suportado e agora testado).
+  - **Teste novo:** `tests/unit/test_config_fallback.py` (2 testes) blinda o ramo fallback (CORES
+    resolve + env-override) — sem skip/xfail, sem bypass.
+- **Validações locais (QA re-executou, sem confiar no Builder):** `ruff --no-cache` limpo; `mypy src/`
+  0 erros; `pytest -q` 626 passed, 1 skipped, 0 erros de collection; streamlit 150 passed; smoke
+  import ok; prova da cura sob fallback forçado (12/12 módulos antes afetados importam; 0 erros de
+  collection).
+- **Guardrails M1:** `score_priorizacao`/pesos 0.40-0.60/H3=7/`scoring.py`/artefatos intactos; só
+  `config.py` mudou em `src/`. Commit só por path; `PRD.md` não arrastado.
+- **Ressalva única (não bloqueante) — FECHADA no fechamento:** o critério "CI verde de ponta a ponta
+  no GitHub Actions (Python 3.11)" foi CONFIRMADO. Run `26722016904` (workflow_dispatch na branch
+  `ciclo/BLK-OPS-11`) ficou verde: Instalar deps → Lint (ruff `--no-cache`) → Types (mypy src/) →
+  Testes (suite completa) → Smoke import, todos ✓ em 2m9s. Pytest no 3.11: **554 passed, 73 skipped,
+  0 falhas, 0 erros de collection** (total 627 coletados = igual ao local; os 73 skips são testes de
+  integração gated em parquets de dados reais gitignored ausentes no CI — comportamento pré-existente
+  do repo, NÃO silenciamento). As faixas pinadas resolveram sem problema no 3.11. A cura (guard de
+  property) é independente de versão.
+- **Follow-up sugerido:** agendar a Opção B ampla (deduplicar a `@property CORES` entre os ramos e
+  sanear incompatibilidades pandas 3.0) como dívida controlada; pode entrar antes de BLK-SEC-01/02
+  (que dependem deste bloco).
+- **Esteira:** Block Orchestrator → Planner → [REVISÃO HUMANA: aprovar] → Builder → QA.

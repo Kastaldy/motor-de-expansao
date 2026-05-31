@@ -28,7 +28,7 @@ jobs:
       # partir daqui qualquer regressao de lint/tipos reprova o gate (CLAUDE.md
       # §2: nenhum PR sobe com CI quebrado).
       - name: Lint (ruff)
-        run: ruff check .
+        run: ruff check . --no-cache
 
       - name: Types (mypy src/)
         run: mypy src/
