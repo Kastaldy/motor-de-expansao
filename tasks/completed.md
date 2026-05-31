@@ -2046,3 +2046,85 @@ python -m motor_expansao.pipelines.m1.fase1_bi_exports   # ou comando canônico 
   Streamlit 150 passed; `import streamlit_app` ok. Sem PII; escopo não excedido.
 - **Esteira:** Block Orchestrator → Planner → [ajuste do humano] → Planner (revisão) →
   [APROVAÇÃO HUMANA] → Builder → QA. Veredito QA: **APROVADO**.
+
+---
+
+### BLK-SCORE-04 — Backtest read-only multivariado das features mercado/censitárias vs. desfecho
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (LEITURA/ANÁLISE read-only, sem escrita em M1) |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | **BLK-SCORE-02** e **BLK-SCORE-03** (DEC-001) |
+| **Status** | Pendente |
+| **Origem** | revisão do BLK-SCORE-03 (resposta à pergunta do usuário "outras variáveis ajudam?") |
+| **Insumo** | `data/analysis/dataset_validacao.parquet` (BLK-SCORE-02) + `data/staging/hexagonos_mercado_mapeado.parquet` (131 cols, populadas) + `score_setor_2022_calibrado` |
+
+**Objetivo:** medir, read-only, o poder preditivo INDIVIDUAL e CONJUNTO das features reais das
+camadas mercado/censitária contra o desfecho `alunos_recorrentes`, para fundamentar (com
+evidência) um eventual enriquecimento dos scores OPERACIONAIS (censitário/mercado) — e, no longo
+prazo e somente após popular as colunas zeradas, do M1. Responde diretamente "outras variáveis
+além de pop/renda ajudam/são significativas?".
+
+**Escopo (read-only, estilo BLK-SCORE-02):**
+- NÃO toca M1: sem editar `scoring.py`/`constants.py`/artefatos oficiais; sem recalcular `score_priorizacao`.
+- Join por `hex_id` do `dataset_validacao` com `hexagonos_mercado_mapeado` (reportar taxa de match).
+- Saída SÓ em `data/analysis/` (gitignored): relatório agregado/anonimizado, sem PII (sem `nome_unidade`).
+
+**Colunas candidatas (verificadas como populadas e variando):**
+- Mercado/competição: `n_concorrentes_mapeados_1km`, `n_concorrentes_mapeados_2km`,
+  `dist_concorrente_mais_proximo_m`, `oferta_efetiva_mapeada_1km`, `oferta_efetiva_mapeada_2km`,
+  `gap_competitivo_2km`, `pressao_concorrencial_score_2km`, `n_unidades_ultra_1km`,
+  `n_unidades_ultra_2km`, `share_*_2km`.
+- Demanda/densidade: `densidade_pop_setor_hab_km2`, `pop_total_setor_2022`, `coverage_pct_setor_2022`.
+- Censitário: `score_setor_2022_calibrado` (baseline positivo já conhecido, +0.148) como âncora.
+
+**Método:**
+- Reusar `analysis/score_backtest.py` (Spearman rho + Pearson r, p-valor; pairwise por célula;
+  `to_numeric` coerce; seed=42).
+- Por feature: correlação por rede (ultra/skyfit/engcorpo) e AGG.
+- Piso N_MIN = 10 (não calcular célula com N<10); IC bootstrap (percentil 2.5/97.5, n_boot=2000,
+  seed 42) para N>=30.
+- Opcional read-only: regressão multivariável simples / importância relativa para ler sinal
+  CONJUNTO (sem produzir um score novo — só diagnóstico de quais features carregam sinal).
+- Reportar limitações herdadas do BLK-SCORE-02 (§5): maturação, heterogeneidade, N pequeno,
+  precisão de hex, EngCorpo estimado.
+
+**Guardrails (invioláveis):**
+- READ-ONLY sobre M1 e sobre todos os artefatos oficiais. Nenhuma escrita fora de `data/analysis/`.
+- Não criar/alterar score; só MEDIR. Sem PII no relatório.
+- Resultado é base de EVIDÊNCIA; qualquer mudança de score posterior é outro bloco (com seu gate).
+
+**Critérios de aceite:**
+- Relatório `data/analysis/relatorio_backtest_mercado.md` com tabela por feature × célula
+  (rho/p/r/p/N/flag), ranking por |rho| AGG, e seção de limitações.
+- Taxa de match do join reportada; features com input constante marcadas "indefinido".
+- Zero escrita em M1/artefatos oficiais; zero PII.
+- Reprodutível (seed fixo; script versionado).
+
+**Resultado do ciclo (concluído 2026-05-31 — APROVADO; revisão humana por Felipe Silva):**
+- **Entregue (read-only; ZERO escrita em M1):** `analysis/feature_backtest_mercado.py` (NOVO; importa
+  as funções puras de `score_backtest.py`, sem alterá-lo), `tests/unit/test_feature_backtest_mercado.py`
+  (NOVO; 7 testes sintéticos em memória), `data/analysis/relatorio_backtest_mercado.md` (gerado,
+  gitignored). 12 features (poda 19→12 de colineares), âncora censitária do dataset, sentinela de
+  distância mantida (Spearman primário), OLS diagnóstico restrito a 4 regressores z-scored (numpy
+  lstsq; nada persistido).
+- **Achados (reproduzidos pelo QA; match join 390/391 = 99,7%):** ranking |rho| AGG liderado por
+  features de REDE PRÓPRIA — `n_unidades_ultra_2km` rho=+0.346 e `gap_rede_propria_1km` rho=-0.312 —
+  porém marcadas com **CAUTELA DE ENDOGENEIDADE** (correlação circular: refletem onde a Ultra já
+  opera, não atributo exógeno; NÃO acionáveis p/ nova expansão, NÃO entram no gate G4). Âncora
+  censitária `score_setor_2022_calibrado` reproduz exatamente o +0.148 do BLK-SCORE-02. Features de
+  mercado/competição de terceiros com sinal individual ~nulo (IC cruza zero). OLS conjunto R²≈+0.034
+  (sinal fraco). Conclusão honesta: nenhuma feature EXÓGENA de mercado mostra sinal preditivo forte
+  no dataset rotulado atual — coerente com a DEC-001 (não recalibrar; reabertura só sob G1–G4).
+- **Validação (re-executada pelo QA, sem bypass):** 7+15 testes verdes; `pytest -q` = **624 passed,
+  1 skipped** (617 base + 7 novos; sem regressão); script EXIT 0 e determinístico (2 execuções
+  byte-idênticas, seed=42); `import streamlit_app` ok; `git diff` em `src/`/`data/outputs/`/
+  `data/staging/`/`config.py`/`scoring.py`/`constants.py`/`score_backtest.py`/relatório do
+  BLK-SCORE-02 = VAZIO; saída só em `data/analysis/` (gitignored); sem PII.
+- **QA: APROVADO COM RESSALVAS** (médio não-bloqueante): a cautela de endogeneidade estava só no
+  handoff, não no relatório (artefato que alimenta o G4). **Ressalva endereçada pelo orquestrador
+  antes do fechamento** (conforme recomendação do próprio QA): adicionados §4 e limitação 8 de
+  endogeneidade ao `build_feature_report`, relatório regenerado (determinístico), suíte verde →
+  fechado como APROVADO.
+- **Esteira:** Block Orchestrator → Planner → [REVISÃO HUMANA: aprovar] → Builder → QA.
