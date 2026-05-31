@@ -55,51 +55,63 @@ Próximo ciclo recomendado: validar a estrutura de Skills com uma tarefa real do
 
 ---
 
-### BLK-SCORE-03 — Proposta de recalibração + DEC
+- BLK-SCORE-03 (concluído 2026-05-31) — ver tasks/completed.md
+
+
+---
+
+### BLK-SCORE-04 — Backtest read-only multivariado das features mercado/censitárias vs. desfecho
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **CRÍTICA** |
-| **Esteira** | Block Orchestrator → Planner → `[APROVAÇÃO HUMANA OBRIGATÓRIA]` → Builder → QA |
-| **Depende de** | **BLK-SCORE-02** |
+| **Criticidade** | **Alta** (LEITURA/ANÁLISE read-only, sem escrita em M1) |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | **BLK-SCORE-02** e **BLK-SCORE-03** (DEC-001) |
 | **Status** | Pendente |
+| **Origem** | revisão do BLK-SCORE-03 (resposta à pergunta do usuário "outras variáveis ajudam?") |
+| **Insumo** | `data/analysis/dataset_validacao.parquet` (BLK-SCORE-02) + `data/staging/hexagonos_mercado_mapeado.parquet` (131 cols, populadas) + `score_setor_2022_calibrado` |
 
-**Objetivo:** *se* o backtest justificar, propor recalibração dos pesos/fórmula e, somente após
-DEC registrada e aprovação humana, implementá-la — preservando reprodutibilidade e versionamento.
+**Objetivo:** medir, read-only, o poder preditivo INDIVIDUAL e CONJUNTO das features reais das
+camadas mercado/censitária contra o desfecho `alunos_recorrentes`, para fundamentar (com
+evidência) um eventual enriquecimento dos scores OPERACIONAIS (censitário/mercado) — e, no longo
+prazo e somente após popular as colunas zeradas, do M1. Responde diretamente "outras variáveis
+além de pop/renda ajudam/são significativas?".
 
-**Escopo permitido (em duas fases separadas pelo gate):**
-- **Antes do gate (Planner):** proposta de recalibração fundamentada no relatório de BLK-SCORE-02,
-  com impacto esperado no ranking, e minuta de DEC (`DEC-00X`).
-- **Depois do gate (Builder, só com DEC aprovada):** alterar pesos/fórmula em `core/scoring.py` /
-  `core/constants.py`, regerar artefatos via pipeline, registrar nova versão de proveniência.
+**Escopo (read-only, estilo BLK-SCORE-02):**
+- NÃO toca M1: sem editar `scoring.py`/`constants.py`/artefatos oficiais; sem recalcular `score_priorizacao`.
+- Join por `hex_id` do `dataset_validacao` com `hexagonos_mercado_mapeado` (reportar taxa de match).
+- Saída SÓ em `data/analysis/` (gitignored): relatório agregado/anonimizado, sem PII (sem `nome_unidade`).
 
-**Fora de escopo:** qualquer escrita em M1 antes da string `APROVADO POR [usuário] EM [data]` no handoff.
+**Colunas candidatas (verificadas como populadas e variando):**
+- Mercado/competição: `n_concorrentes_mapeados_1km`, `n_concorrentes_mapeados_2km`,
+  `dist_concorrente_mais_proximo_m`, `oferta_efetiva_mapeada_1km`, `oferta_efetiva_mapeada_2km`,
+  `gap_competitivo_2km`, `pressao_concorrencial_score_2km`, `n_unidades_ultra_1km`,
+  `n_unidades_ultra_2km`, `share_*_2km`.
+- Demanda/densidade: `densidade_pop_setor_hab_km2`, `pop_total_setor_2022`, `coverage_pct_setor_2022`.
+- Censitário: `score_setor_2022_calibrado` (baseline positivo já conhecido, +0.148) como âncora.
 
-**Arquivos a ler:** `data/analysis/relatorio_backtest.md` · `core/scoring.py` · `core/constants.py` ·
-`CLAUDE.md` (DECs existentes).
-**Arquivos a alterar (só pós-gate):** `core/scoring.py` · `core/constants.py` · `CLAUDE.md` (nova DEC) ·
-regeneração de `data/outputs/` via pipeline.
+**Método:**
+- Reusar `analysis/score_backtest.py` (Spearman rho + Pearson r, p-valor; pairwise por célula;
+  `to_numeric` coerce; seed=42).
+- Por feature: correlação por rede (ultra/skyfit/engcorpo) e AGG.
+- Piso N_MIN = 10 (não calcular célula com N<10); IC bootstrap (percentil 2.5/97.5, n_boot=2000,
+  seed 42) para N>=30.
+- Opcional read-only: regressão multivariável simples / importância relativa para ler sinal
+  CONJUNTO (sem produzir um score novo — só diagnóstico de quais features carregam sinal).
+- Reportar limitações herdadas do BLK-SCORE-02 (§5): maturação, heterogeneidade, N pequeno,
+  precisão de hex, EngCorpo estimado.
+
+**Guardrails (invioláveis):**
+- READ-ONLY sobre M1 e sobre todos os artefatos oficiais. Nenhuma escrita fora de `data/analysis/`.
+- Não criar/alterar score; só MEDIR. Sem PII no relatório.
+- Resultado é base de EVIDÊNCIA; qualquer mudança de score posterior é outro bloco (com seu gate).
 
 **Critérios de aceite:**
-- DEC registrada em `CLAUDE.md` (ou `DECISIONS.md` se já existir) com justificativa e data.
-- Pesos antigos vs. novos documentados; ranking M1 antes/depois comparado e diferenças explicadas.
-- Proveniência (BLK-OPS-03) reflete a nova versão.
-
-**Validações obrigatórias:**
-```
-pytest -q tests/unit/test_scoring.py    # fórmulas — atualizar testes para os novos pesos
-pytest -q                               # suíte completa verde
-# Regeneração controlada (staging primeiro, nunca sobrescrever prod sem staging):
-python -m motor_expansao.pipelines.m1.fase1_bi_exports   # ou comando canônico do repo
-```
-
-**Guardrails específicos (invioláveis):**
-- Builder **não** altera nada de M1 sem `APROVADO POR [usuário] EM [data]` no handoff.
-- Staging primeiro; jamais sobrescrever Parquets de produção sem passo de staging.
-- QA verifica explicitamente que `H3_RESOLUTION=7`, `DIST_MIN_ULTRA_KM=1.0` e demais canônicos
-  **não** foram tocados — só os pesos aprovados na DEC mudam.
-
-**Risco:** crítico por definição. O gate humano + DEC + staging são a proteção. Não pular nenhum.
+- Relatório `data/analysis/relatorio_backtest_mercado.md` com tabela por feature × célula
+  (rho/p/r/p/N/flag), ranking por |rho| AGG, e seção de limitações.
+- Taxa de match do join reportada; features com input constante marcadas "indefinido".
+- Zero escrita em M1/artefatos oficiais; zero PII.
+- Reprodutível (seed fixo; script versionado).
 
 ---
 
