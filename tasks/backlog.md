@@ -201,6 +201,154 @@ adaptar código exige cuidado para não alterar comportamento. O gate humano + Q
 
 ---
 
+### BLK-SEC-01 — Gate de publicação no CI (publish só com CI verde) + pin de imagem e rollback
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (integridade de CI/CD; afeta o artefato de produção — não toca M1/score) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Depende de** | **BLK-OPS-11** (CI precisa estar verde de verdade antes de virar gate) |
+| **Status** | Pendente |
+| **Origem** | descoberto em 2026-05-31 durante a sincronização da VPS |
+
+**Contexto / gap:** `docker-publish.yml` publica `ghcr.io/.../motor-expansao-streamlit:latest` a cada
+push em `main` **sem depender do CI** (sem `needs:`/`workflow_run`). Por dias o CI esteve vermelho e a
+imagem de produção continuou sendo publicada — um build com teste quebrado (ou dependência
+comprometida) chega ao `:latest` que a VPS puxa, sem barreira. Além disso o `docker-compose.prod.yml`
+referencia `:latest` (tag móvel) — não há pin por digest nem rollback trivial.
+
+**Objetivo:** garantir que SÓ imagens de um commit com CI verde sejam publicadas, e tornar o deploy
+reproduzível/reversível.
+
+**Escopo permitido:**
+- Acoplar o publish ao sucesso do CI (`workflow_run` com `conclusion == success`, ou um único
+  workflow com job `publish` que `needs: [test]`).
+- Taguear a imagem também por **SHA do commit** (além de `:latest`) — já há `revision` no label OCI.
+- Pin do `docker-compose.prod.yml` por digest/SHA (não `:latest` cego) + runbook de **rollback**
+  (apontar para a tag/digest anterior e `up -d`), em `docs/infra_producao.md`.
+
+**Fora de escopo:** mudar M1/score/artefatos; assinar imagem (cosign) — pode virar follow-up.
+
+**Arquivos prováveis:** `.github/workflows/docker-publish.yml`, `.github/workflows/ci.yml`,
+`docker-compose.prod.yml`, `docs/infra_producao.md`.
+
+**Critérios de aceite:**
+- Push com CI vermelho **NÃO** publica imagem (comprovado por um run de teste).
+- Imagem publicada com tag por SHA; compose de prod fixa um digest/SHA conhecido.
+- Runbook de rollback testado (voltar para a imagem anterior sem rebuild).
+- Zero mudança em M1/artefatos.
+
+**Risco:** médio. Mitigado por testar o gate num push proposital com falha antes de confiar nele.
+
+---
+
+### BLK-SEC-02 — Varredura de vulnerabilidades (deps + imagem) e gitleaks como gate de CI
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (supply-chain; não toca M1/score) |
+| **Prioridade** | **Média-Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Depende de** | **BLK-OPS-11** (deps pinadas) e idealmente **BLK-SEC-01** |
+| **Status** | Pendente |
+| **Origem** | revisão de robustez 2026-05-31 |
+
+**Contexto / gap:** não há varredura automatizada de vulnerabilidades de dependências nem da imagem
+de produção; o `gitleaks` (com `.gitleaks.toml`/`.gitleaksignore` do BLK-OPS-01) existe mas **não roda
+como gate no CI**. Combinado com deps não-pinadas (BLK-OPS-11), o risco de supply-chain é real.
+
+**Objetivo:** detectar dependências/imagens vulneráveis e segredos vazados ANTES do merge/deploy.
+
+**Escopo permitido:**
+- `pip-audit` (ou Dependabot/`safety`) sobre as deps pinadas, como step do CI.
+- Scan da imagem GHCR (Trivy/Grype) no pipeline de publish.
+- `gitleaks` como **step bloqueante** do CI (reusa a config existente do BLK-OPS-01).
+- Definir política de severidade (o que bloqueia vs. o que só alerta) para evitar CI ruidoso.
+
+**Fora de escopo:** remediar toda CVE histórica de uma vez (priorizar por severidade); assinatura de
+imagem (cosign) — follow-up.
+
+**Arquivos prováveis:** `.github/workflows/ci.yml`, `.github/workflows/docker-publish.yml`,
+`pyproject.toml`/lock, `.gitleaks.toml`.
+
+**Critérios de aceite:**
+- CI roda `pip-audit` + `gitleaks` (bloqueantes por severidade definida) e scan de imagem no publish.
+- Um segredo de teste plantado é pego pelo gitleaks (prova do gate); removido depois.
+- Política de severidade documentada; zero mudança em M1/artefatos.
+
+**Risco:** baixo-médio (ferramental/CI). Cuidado para não tornar o CI instável por CVEs de baixa
+severidade — calibrar o gate.
+
+---
+
+### BLK-SEC-03 — Hardening do VPS (firewall, fail2ban, updates, SSH, 2FA)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (exposição do servidor de produção) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Origem** | revisão de robustez 2026-05-31 (acesso root SSH; sem hardening documentado) |
+
+**Contexto / gap:** o `docs/infra_producao.md` mostra acesso como `root` via SSH e atualização de
+sistema **manual mensal**; não há menção a firewall (ufw), fail2ban, `unattended-upgrades`, política de
+SSH (desabilitar login por senha / limitar root) nem 2FA obrigatório no Authelia (hoje "opcional").
+
+**Objetivo:** reduzir a superfície de ataque do VPS de produção sem quebrar o deploy atual.
+
+**Escopo permitido (cada passo via MCP com confirmação individual — guardrail do projeto):**
+- `ufw` liberando só 22/80/443; `fail2ban` no SSH; `unattended-upgrades` para patches de segurança.
+- SSH: desabilitar autenticação por senha (manter chave), avaliar usuário não-root para operação.
+- Authelia: avaliar **forçar 2FA** para o grupo `ultra_team`.
+- Documentar tudo em `docs/infra_producao.md` (seção de hardening) com rollback de cada item.
+
+**Fora de escopo:** trocar provedor/arquitetura; mudar M1/dashboard.
+
+**Critérios de aceite:**
+- Firewall ativo (regras mínimas), fail2ban e unattended-upgrades rodando; SSH sem senha.
+- Dashboard e deploy continuam funcionando (smoke + login OK após cada mudança).
+- Cada alteração no VPS feita com confirmação individual; documentada com rollback.
+
+**Risco:** médio-alto (mexer em SSH/firewall pode trancar o acesso). Mitigação: alterar um item por vez,
+manter sessão aberta de teste, ter rollback pronto ANTES de aplicar regras de SSH/ufw.
+
+---
+
+### BLK-SEC-04 — Backup automatizado dos dados de produção (parquets) + restore testado
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (continuidade de dados; não toca M1/score) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Origem** | revisão de robustez 2026-05-31 (BLK-OPS-01 cobre segredos, não dados) |
+
+**Contexto / gap:** o BLK-OPS-01 entregou backup/DR dos **segredos**, mas os **dados** de produção
+(`/opt/motor-expansao/data/outputs/`, ~1.6 GB de parquets do M1) hoje só têm "manter cópia local na
+máquina de dev" como backup — manual e frágil. Não há snapshot periódico nem restore testado.
+
+**Objetivo:** garantir recuperação dos parquets de produção após perda/corrupção, com restore provado.
+
+**Escopo permitido:**
+- Definir destino de backup (snapshot do provedor, bucket S3-compatível, ou cópia versionada off-box).
+- Job agendado (cron na janela 2h–5h BRT, fora do pico) que faz snapshot dos `data/outputs/`.
+- Política de retenção (ex.: diários 7d / semanais 4w) e verificação de integridade (checksum).
+- **Restore testado** em pasta limpa (igual ao rigor do BLK-OPS-01) + runbook em `docs/`.
+
+**Fora de escopo:** versionar parquets no git (são grandes/gerados); recalcular M1.
+
+**Critérios de aceite:**
+- Backup automatizado rodando com retenção definida; checksums conferem.
+- Restore validado end-to-end (arquivos íntegros) e documentado.
+- Sem PII em logs; sem dependência de API ao vivo no dashboard.
+
+**Risco:** baixo. Atenção a custo/espaço do destino e a não competir com usuários (janela noturna).
+
+---
+
 ### BLK-ORQ-02 — Implementar estrutura Fase 2
 
 Status: pendente (depende de BLK-ORQ-01 validado)
