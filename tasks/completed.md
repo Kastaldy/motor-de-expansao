@@ -1974,3 +1974,75 @@ conclusões — relatar incerteza honestamente, não forçar significância.
 **Observacoes leves (nao-bloqueantes, QA):** (L1) scipy nao declarado em `pyproject.toml` — divida pre-existente do repo, fora de escopo; (L2) frase-template de hipotese generica para o score residual. Nenhuma exige nova rodada.
 
 **Sinal estrategico (para BLK-SCORE-03, NAO acionado aqui):** sobre este dataset rotulado, o M1 `score_priorizacao` nao mostra poder preditivo do desfecho (rho~0), o censitario e o unico com sinal positivo fraco, e o residual correlaciona negativamente. Material empirico para a eventual proposta de recalibracao — que e o escopo CRITICO do BLK-SCORE-03 (gate humano + DEC).
+
+---
+
+### BLK-SCORE-03 — Proposta de recalibração + DEC
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **CRÍTICA** |
+| **Esteira** | Block Orchestrator → Planner → `[APROVAÇÃO HUMANA OBRIGATÓRIA]` → Builder → QA |
+| **Depende de** | **BLK-SCORE-02** |
+| **Status** | Pendente |
+
+**Objetivo:** *se* o backtest justificar, propor recalibração dos pesos/fórmula e, somente após
+DEC registrada e aprovação humana, implementá-la — preservando reprodutibilidade e versionamento.
+
+**Escopo permitido (em duas fases separadas pelo gate):**
+- **Antes do gate (Planner):** proposta de recalibração fundamentada no relatório de BLK-SCORE-02,
+  com impacto esperado no ranking, e minuta de DEC (`DEC-00X`).
+- **Depois do gate (Builder, só com DEC aprovada):** alterar pesos/fórmula em `core/scoring.py` /
+  `core/constants.py`, regerar artefatos via pipeline, registrar nova versão de proveniência.
+
+**Fora de escopo:** qualquer escrita em M1 antes da string `APROVADO POR [usuário] EM [data]` no handoff.
+
+**Arquivos a ler:** `data/analysis/relatorio_backtest.md` · `core/scoring.py` · `core/constants.py` ·
+`CLAUDE.md` (DECs existentes).
+**Arquivos a alterar (só pós-gate):** `core/scoring.py` · `core/constants.py` · `CLAUDE.md` (nova DEC) ·
+regeneração de `data/outputs/` via pipeline.
+
+**Critérios de aceite:**
+- DEC registrada em `CLAUDE.md` (ou `DECISIONS.md` se já existir) com justificativa e data.
+- Pesos antigos vs. novos documentados; ranking M1 antes/depois comparado e diferenças explicadas.
+- Proveniência (BLK-OPS-03) reflete a nova versão.
+
+**Validações obrigatórias:**
+```
+pytest -q tests/unit/test_scoring.py    # fórmulas — atualizar testes para os novos pesos
+pytest -q                               # suíte completa verde
+# Regeneração controlada (staging primeiro, nunca sobrescrever prod sem staging):
+python -m motor_expansao.pipelines.m1.fase1_bi_exports   # ou comando canônico do repo
+```
+
+**Guardrails específicos (invioláveis):**
+- Builder **não** altera nada de M1 sem `APROVADO POR [usuário] EM [data]` no handoff.
+- Staging primeiro; jamais sobrescrever Parquets de produção sem passo de staging.
+- QA verifica explicitamente que `H3_RESOLUTION=7`, `DIST_MIN_ULTRA_KM=1.0` e demais canônicos
+  **não** foram tocados — só os pesos aprovados na DEC mudam.
+
+**Risco:** crítico por definição. O gate humano + DEC + staging são a proteção. Não pular nenhum.
+
+**Resultado do ciclo (concluído 2026-05-31 — APROVADO):**
+- **Decisão (DEC-001, APROVADO POR Felipe Silva EM 2026-05-31): NÃO recalibrar o M1.** Pesos
+  `renda=0.40`/`pop=0.60` e fórmula do `score_priorizacao` permanecem INALTERADOS; nenhum
+  artefato M1 regerado. O Builder NÃO tocou `scoring.py`/`constants.py`/`config.py`/`data/`.
+- **Fundamento (BLK-SCORE-02 + exploração read-only deste ciclo):** `score_priorizacao` rho=-0.004
+  (IC95% [-0.104,+0.094] atravessa zero → sinal nulo); componentes renda +0.067 (n.s.) e pop +0.095
+  (n.s.), diferença dentro do ruído e peso já favorece pop; **`n_domicilios`/`densidade_dom` em
+  `brasil_estrutural.parquet` estão 100% zerados (placeholders)** → não há feature nova usável
+  dentro do M1; o único preditor positivo é o censitário (+0.148), que é camada paralela.
+- **Reenquadramento (correção de documentação do usuário):** o M1 é a camada EXECUTIVA (municípios/
+  ranking de carteira), NÃO o score operacional do dia a dia — esse papel é da camada CENSITÁRIA.
+  §1 "Norte" do `CLAUDE.md` ajustada cirurgicamente para refletir isso.
+- **Entregue (só documentação/backlog):** (1) §1 do `CLAUDE.md` corrigida; (2) **DEC-001** registrada
+  em nova seção `## 8. Decisoes registradas (DEC)` do `CLAUDE.md`, com evidência, pesos inalterados e
+  plano de reabertura (pré-requisito: popular as colunas zeradas; gatilhos G1–G4 + sinal do
+  BLK-SCORE-04); (3) **BLK-SCORE-04** adicionado ao backlog (backtest read-only multivariado das
+  features mercado/censitárias vs. desfecho — responde à pergunta "outras variáveis ajudam?").
+- **Validação (re-executada pelo QA, sem bypass):** `git diff` em `src/`/`data/`/`config.py`/
+  `test_scoring.py` = VAZIO; pesos `0.40/0.60`, `H3_RESOLUTION=7`, `DIST_MIN_ULTRA_KM=1.0`,
+  `RENDA_MIN=4500.0` intactos; `pytest -q` = **617 passed, 1 skipped** (sem regressão); integração
+  Streamlit 150 passed; `import streamlit_app` ok. Sem PII; escopo não excedido.
+- **Esteira:** Block Orchestrator → Planner → [ajuste do humano] → Planner (revisão) →
+  [APROVAÇÃO HUMANA] → Builder → QA. Veredito QA: **APROVADO**.

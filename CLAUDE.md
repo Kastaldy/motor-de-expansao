@@ -10,11 +10,11 @@
   - `mercado por hexagono`: camada paralela para ler demanda, oferta mapeada, residual fitness e restricao da rede Ultra.
 - Perguntas centrais: onde expandir, quem ja atua ali, qual mercado residual existe e como ocupar regioes com sequencia controlada.
 - Publico-alvo prioritario: 18-45 anos.
-- `score_priorizacao` continua sendo o score oficial do projeto.
+- `score_priorizacao` continua sendo o score oficial do M1 (camada executiva), nao o score operacional do dia a dia.
 - Nenhuma trilha paralela pode alterar o M1 sem aprovacao explicita.
 - Papeis das camadas:
-  - M1 decide municipios e ranking oficial de carteira.
-  - Censitario/hibrido refina leitura intraurbana.
+  - M1 e a camada EXECUTIVA: decide municipios e ranking oficial de carteira no nivel executivo (uma camada entre varias, nao a primaria operacional).
+  - Censitario (`score_setor_2022_calibrado`) e a camada PRIMARIA no uso operacional do dia a dia; hibrido refina leitura intraurbana.
   - Mercado/residual e Expansao de Dominio apoiam estrategia operacional, nao substituem o M1.
 
 ## 2. Regras operacionais
@@ -30,6 +30,9 @@
 - Pins/logos de concorrentes e Ultra no dashboard sao camada visual de apoio; nao alteram score, ranking, carteira nem artefatos oficiais.
 - Variaveis IBGE Censo 2022 Basico: `v0001` = Total de pessoas; `v0002` = Total de Domicilios; `v0007` = Domicilios Particulares Ocupados; `v0005` = media de moradores.
 - O guia operacional do ciclo ativo fica em `PRD.md`; contratos tecnicos detalhados ficam em `docs/`.
+Interpretação operacional da regra de criticidade para score (decidida em 2026-05-30):
+- LEITURA/ANÁLISE de score sem escrita em artefato M1 → Alta (revisão humana antes do Builder)
+- ALTERAÇÃO de fórmula, pesos, ou qualquer artefato M1 → Crítica (aprovação obrigatória + DEC)
 
 ## 3. Nucleo oficial M1
 
@@ -130,3 +133,23 @@ score_oficial = score_priorizacao
 - `data/reports/validacao_geofusion_vs_hex.md`: comparacao GeoFusion 1km vs H3.
 
 Se um detalhe historico nao estiver aqui, procurar primeiro nesses docs antes de expandir novamente este arquivo.
+
+## 8. Decisoes registradas (DEC)
+
+### DEC-001 — Manter pesos/formula do score_priorizacao (M1) apos backtest BLK-SCORE-02
+- ID: DEC-001 | Data: 2026-05-31 | Criticidade: critica (decisao sobre pesos M1)
+- Status: APROVADA por Felipe Silva em 2026-05-31.
+- Decisao: NAO recalibrar. Manter `renda=0.40` / `pop=0.60` (`PESOS_HEX_SCORE_ESTRUTURAL`) e a formula de `score_priorizacao` INALTERADAS; nenhum artefato M1 regerado. O M1 e a camada EXECUTIVA (municipios/ranking de carteira), nao o score operacional primario do dia a dia (esse papel e da camada censitaria).
+- Evidencia-chave (de `data/analysis/relatorio_backtest.md`, BLK-SCORE-02, read-only, gitignored):
+  - `score_priorizacao` (AGG): Spearman rho ≈ -0.004, IC95% [-0.104, +0.094] (atravessa zero) -> poder preditivo nulo, sem direcao a corrigir.
+  - Componentes nao-significativos: `renda_pct_nacional` +0.067 (n.s.) e `pop_pct_nacional` +0.095 (n.s.); diferenca dentro do ruido e o peso atual ja favorece pop (0.60>0.40). Recalibrar seria sobreajuste a ruido.
+  - Sem feature nova usavel DENTRO do M1: `n_domicilios` e `densidade_dom` em `brasil_estrutural.parquet` EXISTEM mas estao 100% ZERADAS (placeholders, nunique=1, min=max=0.0); correlacao indefinida. As unicas features reais do M1 sao `renda_per_capita` e `pop_total`.
+  - Censitario (`score_setor_2022_calibrado`, camada PRIMARIA operacional) e o unico preditor positivo significativo: rho +0.148, IC [+0.052, +0.251].
+- Pesos antigos -> novos: `renda_per_capita` 0.40 -> 0.40 (INALTERADO); `populacao_proxy` 0.60 -> 0.60 (INALTERADO); formula INALTERADA.
+- Plano de reabertura (novo bloco CRITICO; Planner -> gate humano -> Builder): so se TODOS satisfeitos —
+  - PRE-REQUISITO de engenharia de dados: popular `n_domicilios`/`densidade_dom` (hoje 100% zeradas); sem isso nao existe M1 multivariado a calibrar.
+  - G1: `maturacao_status` deixar de ser constante unica (data de abertura por unidade) para controlar maturacao.
+  - G2: desfecho homogeneo e auditavel entre redes (sem estimativa para EngCorpo).
+  - G3: N adequado por celula e hex com precisao de unidade na maioria das linhas.
+  - G4: sob esses controles e/ou com sinal significativo vindo do BLK-SCORE-04, um componente/feature com correlacao significativa (p<0.05, IC sem cruzar zero) e materialmente diferente do peso atual.
+- Referencias: `data/analysis/relatorio_backtest.md` (BLK-SCORE-02); `context/handoff.md` (BLK-SCORE-03); BLK-SCORE-04 (proposta no backlog).
