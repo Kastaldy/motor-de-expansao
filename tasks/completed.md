@@ -1829,3 +1829,86 @@ maiores fontes de viés. Tratar a auditoria de rótulo como critério de aceite,
 **Ressalvas (não bloqueantes, candidatos a ciclo futuro):** match EngCorpo conservador (31/61 — possível melhoria fuzzy/por cidade se BLK-SCORE-02 precisar de mais N); Skyfit `cidade_centroide` é hex coarse por design; domínio cobertura parcial 42/441 (esperado).
 
 **Próximo recomendado:** BLK-SCORE-02 (poder preditivo dos scores vs. desfecho) — depende deste dataset.
+
+---
+
+### BLK-SCORE-01a — Melhorar match de nome do Engenharia do Corpo
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta *(read-only sobre M1 — só leitura/join, mesmo padrão do BLK-SCORE-01)* |
+| **Esteira** | Block Orchestrator → Planner → `[revisão humana]` → Builder → QA |
+| **Depende de** | BLK-SCORE-01 (mergeado) |
+| **Status** | Pendente |
+
+**Origem:** no BLK-SCORE-01, o match do Engenharia do Corpo (EngCorpo) ficou em ~31/61 unidades porque
+foi feito por **nome exato normalizado**, mas a planilha de desfecho e o staging usam convenções de nome
+diferentes: a planilha prefixa toda unidade com `EC -`/`ECB -` (ex.: `EC - VACARIA, RS`) enquanto o staging
+usa o nome cru (`Vacaria, RS`). O usuário apontou (2026-05-31) que o nome "vem um pouco diferente, mas ainda
+daria para encontrar" — confirmado por análise: removendo o prefixo `EC`/`ECB` + fuzzy determinístico
+(difflib ≥0.80) a recuperação sobe para ~38/61, e parte do restante é resolvível por sinônimo de
+bairro/cidade (ex.: `EC - FLORIANOPOLIS, SC` ~ `Estreito - Florianópolis, SC`; `EC - BLUMENAU` ~ `Centro - Blumenau`).
+
+**Objetivo:** elevar a cobertura de hex/scores do EngCorpo no `dataset_validacao.parquet` melhorando o
+match de nome (sem inventar correspondências), mantendo tudo read-only sobre o M1 e marcando os não-casados.
+
+**Escopo permitido:**
+- Em `analysis/build_validation_dataset.py`, melhorar a etapa de match EngCorpo: normalização que remove
+  prefixo `EC`/`ECB` e ruído; **cascata determinística** nome_exato → nome_fuzzy (difflib, cutoff documentado)
+  → fallback cidade+UF (espelhando o padrão já aprovado para o Skyfit no BLK-SCORE-01).
+- **Avaliar usar `concorrentes/unidades_engenharia_do_corpo.csv`** (e/ou `concorrentes/Unidades/unidades_engenharia_do_corpo.csv`)
+  como fonte de coordenadas direta para resolver hex via `latlng_to_h3`, em vez de depender só do staging
+  `concorrentes_mapeados.parquet` (mesma abordagem coords-por-CSV + match-por-nome do Skyfit). Verificar schema/coords antes.
+- Anexar `hex_origem`/`hex_precisao` ao EngCorpo (já existem no esquema) refletindo a origem do match.
+- Regerar `data/analysis/dataset_validacao.parquet` + `data/analysis/relatorio_auditoria_rotulo.md`.
+
+**Fora de escopo:** **qualquer escrita em artefato M1 ou alteração de score.** Apenas leitura e join.
+Fuzzy não-determinístico (que quebre o CI). Geocodificação de endereço ao vivo (BLK-PROD-05).
+
+**Arquivos a ler:** `analysis/build_validation_dataset.py` · `data/validacao/academias_engenharia_do_corpo.xlsx`
+(sheet `Academias`) · `data/staging/concorrentes_mapeados.parquet` (`rede=="engenharia_do_corpo"`) ·
+`concorrentes/unidades_engenharia_do_corpo.csv` · `concorrentes/Unidades/unidades_engenharia_do_corpo.csv` ·
+`context/handoff/20260530-235959-planner.md` (seção REVISÃO 2 Skyfit — padrão de cascata a espelhar).
+**Arquivos a alterar:** `analysis/build_validation_dataset.py` · `tests/unit/test_validation_dataset.py`
+(casos novos de match EngCorpo) · artefatos regerados em `data/analysis/` (gitignored).
+
+**Critérios de aceite:**
+- Match EngCorpo materialmente acima do baseline (31/61); cada unidade casada tem `hex_origem`/`hex_precisao`
+  coerentes; não-casados **marcados** (`rotulo_casado=False`/`hex_resolvido=False`), nunca descartados nem
+  casados de forma incorreta.
+- Cascata determinística (mesmo input → mesmo output; verde no CI sem dados reais).
+- Relatório de auditoria atualizado com a nova cobertura EngCorpo por `hex_origem` e a lista (agregada, sem PII)
+  de não-casados remanescentes.
+- Nenhum falso-positivo introduzido: validar uma amostra dos pares fuzzy aceitos (cidade/UF batem).
+
+**Validações obrigatórias:**
+```
+pytest -q tests/unit/test_validation_dataset.py
+pytest -q                                   # sem regressão
+python -m analysis.build_validation_dataset # regenera dataset + relatório fim a fim
+```
+
+**Guardrails específicos:**
+- READ-ONLY sobre o M1; artefato em `data/analysis/`, nunca `data/outputs/`. PII fora de logs/handoff/relatório.
+- CSVs do projeto `sep=";"`, `utf-8-sig`. H3_RESOLUTION=7. Sem fuzzy não-determinístico.
+
+**Risco:** médio — fuzzy pode introduzir falso-positivo (casar unidade errada da mesma cidade). Mitigar
+exigindo concordância de cidade+UF no match fuzzy e auditando os pares aceitos.
+
+
+## Fechamento BLK-SCORE-01a — Melhorar match de nome do Engenharia do Corpo (concluído 2026-05-31)
+
+**Veredito QA:** APROVADO. Esteira completa (Block Orchestrator → Planner → [gate humano: aprovado por Felipe Silva em 2026-05-31] → Builder → QA), criticidade Alta, READ-ONLY sobre o M1.
+
+**Entregue:**
+- `analysis/build_validation_dataset.py`: match determinístico de coordenadas EngCorpo espelhando o padrão Skyfit. Novos: constante `ENGCORPO_COORDS_CSV` (fonte canônica `concorrentes/unidades_engenharia_do_corpo.csv`; réplica em `Unidades/` é byte-idêntica e não é lida); helper `normalize_name_engcorpo` (remove prefixo `EC`/`ECB` via regex âncorada `^\s*ec[bv]?\s*[-–—:]?\s*`, só no início, delega a `normalize_name`); helper `_city_uf_from_engcorpo_name` (convenção `Cidade, UF`); função `match_engcorpo_coords` (cascata nome_exato → nome_fuzzy difflib cutoff 0.84 COM concordância obrigatória cidade+UF → cidade_centroide, com `_coord_in_brazil`); `load_engcorpo` reescrita com fallback `hex_staging`; flag `--engcorpo-coords` no `main`. `normalize_name`/`normalize_name_skyfit`/`match_skyfit_coords` intocados (anti-regressão).
+- `tests/unit/test_validation_dataset.py`: +11 testes sintéticos (normalize EC/ECB sem corromper `ec` interno, nome_exato, fuzzy-aceito-cidade+UF, **fuzzy-REJEITADO-quando-cidade-ou-UF-divergem** (anti-falso-positivo), cidade_centroide, nao_resolvido, coord-fora-faixa-Brasil, determinismo, fallback-staging, não-casado-marcado-nunca-descartado).
+- Artefatos regenerados (gitignored): `data/analysis/dataset_validacao.parquet` + `data/analysis/relatorio_auditoria_rotulo.md`.
+
+**Resultado (cobertura EngCorpo):** 31/61 → **37/61 (60.7%, +19%)** — materialmente acima do baseline. Por `hex_origem`: nome_exato=34, cidade_centroide=3, nao_resolvido=24. **0 fuzzy acionado nos dados reais → zero falso-positivo.** 61 entrada == 61 saída; os 24 não-resolvidos ficam MARCADOS (`rotulo_casado=False`/`hex_resolvido=False`), nunca descartados. Ultra (53/54) e Skyfit (301/326) idênticos ao baseline (sem regressão).
+
+**Validação (re-executada pelo QA, sem bypass):** `pytest -q tests/unit/test_validation_dataset.py` → 32 passed (21+11; confirmado via `--collect-only`); `pytest -q` → 602 passed, 1 skipped (591 baseline + 11; sem regressão); `python -m analysis.build_validation_dataset` → exit 0, 2 artefatos regenerados; `import streamlit_app` ok. `--check` housekeeping verde. READ-ONLY do M1 confirmado por `git status` (nenhum path M1; `data/analysis/*` gitignored); `H3_RESOLUTION=7` e `DEFAULT_FUZZY_CUTOFF=0.84` preservados.
+
+**Observação (não-defeito):** os 24 não-resolvidos são majoritariamente entradas por bairro (ex.: `EC - ESPLANADA, RS`) cuja cidade real só seria recuperável por mapeamento bairro→cidade — fora do escopo deste bloco (decisão conservadora anti-falso-positivo). Candidato a ciclo futuro se BLK-SCORE-02 precisar de mais N.
+
+**Próximo recomendado:** BLK-SCORE-02 (poder preditivo dos scores vs. desfecho) — usa este dataset.

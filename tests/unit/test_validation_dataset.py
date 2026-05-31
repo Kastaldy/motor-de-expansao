@@ -122,6 +122,132 @@ def test_match_skyfit_coords_fora_da_faixa_brasil_nao_resolve():
 
 
 # --------------------------------------------------------------------------- #
+# normalize_name_engcorpo (BLK-SCORE-01a)
+# --------------------------------------------------------------------------- #
+def test_normalize_name_engcorpo_remove_prefixo_ec_ecb():
+    # EC / ECB (planilha) vs nome cru (CSV/staging) colapsam para a mesma chave
+    a = bvd.normalize_name_engcorpo("EC - VACARIA, RS")
+    b = bvd.normalize_name_engcorpo("ECB - VACARIA, RS")
+    c = bvd.normalize_name_engcorpo("Vacaria, RS")
+    assert a == b == c == "vacaria rs"
+
+
+def test_normalize_name_engcorpo_nao_corrompe_ec_interno():
+    # so o PREFIXO inicial e removido; 'ec' no meio do nome permanece
+    assert bvd.normalize_name_engcorpo("Recife, PE") == "recife pe"
+    # token 'ec' isolado e dropado por normalize_name, mas 'recife' fica intacto
+    assert "recife" in bvd.normalize_name_engcorpo("EC - Recife, PE")
+
+
+# --------------------------------------------------------------------------- #
+# match_engcorpo_coords (BLK-SCORE-01a) — cascata determinista
+# --------------------------------------------------------------------------- #
+def _engcorpo_coords_fixture() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "nome_unidade": [
+                "Vacaria, RS",
+                "Esplanada - Caxias do Sul, RS",
+                "CT Areias - São José, SC",  # coord invertida (lat/lng trocados)
+            ],
+            "latitude": [-28.50, -29.19, -48.63],  # 3a fora da faixa (lat<-34)
+            "longitude": [-50.93, -51.20, -27.56],
+            "data_coleta": ["2026-05-26"] * 3,
+        }
+    )
+
+
+def test_match_engcorpo_coords_nome_exato():
+    desf = pd.DataFrame(
+        {"nome_unidade": ["EC - VACARIA, RS"], "metragem_m2": [1000.0], "alunos_totais": [500.0]}
+    )
+    out = bvd.match_engcorpo_coords(desf, _engcorpo_coords_fixture())
+    assert out.loc[0, "hex_origem"] == "nome_exato"
+    assert out.loc[0, "hex_precisao"] == "unidade"
+    assert out.loc[0, "lat"] == pytest.approx(-28.50)
+    # colunas de desfecho preservadas
+    assert out.loc[0, "metragem_m2"] == 1000.0
+
+
+def test_match_engcorpo_coords_fuzzy_aceito_quando_cidade_uf_batem():
+    # variacao grafica no nome completo + MESMA cidade+UF -> casa por fuzzy.
+    # (cidade extraida = ultimo segmento apos hifen = "caxias do sul" nos dois lados)
+    coords = pd.DataFrame(
+        {
+            "nome_unidade": ["Centro - Caxias do Sul, RS"],
+            "latitude": [-29.14],
+            "longitude": [-51.13],
+            "data_coleta": ["2026-05-26"],
+        }
+    )
+    desf = pd.DataFrame({"nome_unidade": ["EC - Cetro - Caxias do Sul, RS"]})
+    out = bvd.match_engcorpo_coords(desf, coords)
+    assert out.loc[0, "hex_origem"] == "nome_fuzzy"
+    assert out.loc[0, "hex_precisao"] == "unidade"
+
+
+def test_match_engcorpo_coords_fuzzy_rejeitado_quando_cidade_ou_uf_divergem():
+    # nome fuzzy-proximo MAS cidade/UF diferentes -> NAO casa por fuzzy
+    coords = pd.DataFrame(
+        {
+            "nome_unidade": ["Vacariaa, SC"],  # nome quase igual, UF diferente
+            "latitude": [-27.00],
+            "longitude": [-49.00],
+            "data_coleta": ["2026-05-26"],
+        }
+    )
+    desf = pd.DataFrame({"nome_unidade": ["EC - VACARIA, RS"]})
+    out = bvd.match_engcorpo_coords(desf, coords)
+    assert out.loc[0, "hex_origem"] != "nome_fuzzy"
+    assert out.loc[0, "hex_origem"] == "nao_resolvido"
+
+
+def test_match_engcorpo_coords_cidade_centroide():
+    # nome nao casa (nem fuzzy) mas cidade+UF batem -> centroide
+    coords = pd.DataFrame(
+        {
+            "nome_unidade": ["Diamantino - Caxias do Sul, RS"],
+            "latitude": [-29.14],
+            "longitude": [-51.13],
+            "data_coleta": ["2026-05-26"],
+        }
+    )
+    desf = pd.DataFrame({"nome_unidade": ["EC - SHOPPING INEXISTENTE - Caxias do Sul, RS"]})
+    out = bvd.match_engcorpo_coords(desf, coords)
+    assert out.loc[0, "hex_origem"] == "cidade_centroide"
+    assert out.loc[0, "hex_precisao"] == "cidade"
+    assert out.loc[0, "lat"] == pytest.approx(-29.14)
+
+
+def test_match_engcorpo_coords_nao_resolvido():
+    desf = pd.DataFrame({"nome_unidade": ["EC - LUGAR FANTASMA, AC"]})
+    out = bvd.match_engcorpo_coords(desf, _engcorpo_coords_fixture())
+    assert out.loc[0, "hex_origem"] == "nao_resolvido"
+    assert out.loc[0, "hex_precisao"] == "indisponivel"
+    assert pd.isna(out.loc[0, "lat"])
+
+
+def test_match_engcorpo_coords_coord_fora_faixa_brasil():
+    # caso CT Areias: lat/lng invertidos -> lat fora da faixa -> nao resolve
+    desf = pd.DataFrame({"nome_unidade": ["EC - AREIAS, SC"]})
+    # nome bate (CT Areias - São José, SC), mas a coord esta fora da faixa Brasil
+    out = bvd.match_engcorpo_coords(desf, _engcorpo_coords_fixture())
+    assert out.loc[0, "hex_origem"] == "nao_resolvido"
+    assert pd.isna(out.loc[0, "lat"])
+
+
+def test_match_engcorpo_coords_determinismo():
+    desf = pd.DataFrame(
+        {"nome_unidade": ["EC - VACARIA, RS", "EC - LUGAR FANTASMA, AC"]}
+    )
+    coords = _engcorpo_coords_fixture()
+    o1 = bvd.match_engcorpo_coords(desf, coords)
+    o2 = bvd.match_engcorpo_coords(desf, coords)
+    assert o1["hex_origem"].tolist() == o2["hex_origem"].tolist()
+    assert o1["lat"].fillna(-999).tolist() == o2["lat"].fillna(-999).tolist()
+
+
+# --------------------------------------------------------------------------- #
 # resolve_hex
 # --------------------------------------------------------------------------- #
 def test_resolve_hex_valido_e_nulo():
@@ -406,3 +532,90 @@ def test_audit_report_sem_pii():
         assert nome not in report
     assert "hex_origem" in report
     assert "maturacao_indisponivel" in report
+
+
+# --------------------------------------------------------------------------- #
+# load_engcorpo (BLK-SCORE-01a) — fallback staging + nao-descarte
+# --------------------------------------------------------------------------- #
+def _write_engcorpo_sources(tmp_path, *, planilha_nomes, coords, staging_rows):
+    """Materializa xlsx/csv/parquet sinteticos para exercitar ``load_engcorpo``."""
+    xlsx = tmp_path / "academias.xlsx"
+    plan = pd.DataFrame(
+        {
+            "Unidade": planilha_nomes,
+            "Metragem M²": [1000.0] * len(planilha_nomes),
+            "Alunos Totais": [500.0] * len(planilha_nomes),
+            "Total Alunos Gympass": [50.0] * len(planilha_nomes),
+        }
+    )
+    with pd.ExcelWriter(xlsx) as xw:
+        plan.to_excel(xw, sheet_name="Academias", index=False)
+
+    csv = tmp_path / "coords.csv"
+    pd.DataFrame(coords).to_csv(csv, sep=";", encoding="utf-8-sig", index=False)
+
+    pq = tmp_path / "staging.parquet"
+    pd.DataFrame(staging_rows).to_parquet(pq, index=False)
+    return xlsx, csv, pq
+
+
+def test_load_engcorpo_fallback_staging(tmp_path):
+    pytest.importorskip("openpyxl")
+    # CSV nao resolve "EC - SO STAGING, RS"; staging tem o hex por nome.
+    xlsx, csv, pq = _write_engcorpo_sources(
+        tmp_path,
+        planilha_nomes=["EC - VACARIA, RS", "EC - SO STAGING, RS"],
+        coords={
+            "nome_unidade": ["Vacaria, RS"],
+            "latitude": [-28.50],
+            "longitude": [-50.93],
+            "data_coleta": ["2026-05-26"],
+        },
+        staging_rows={
+            "rede": ["engenharia_do_corpo"],
+            "status_registro": ["valido"],
+            "nome_unidade": ["So Staging, RS"],
+            "hex_id_res7": ["87abc0000ffffff"],
+            "lat": [-30.0],
+            "lng": [-51.0],
+        },
+    )
+    out = bvd.load_engcorpo(xlsx, csv, pq)
+    # entrada == saida (nada descartado)
+    assert len(out) == 2
+    by_name = {n: i for i, n in enumerate(out["nome_unidade"])}
+    i_csv = by_name["EC - VACARIA, RS"]
+    i_stg = by_name["EC - SO STAGING, RS"]
+    assert out.loc[i_csv, "hex_origem"] == "nome_exato"
+    assert out.loc[i_stg, "hex_origem"] == "hex_staging"
+    assert out.loc[i_stg, "hex_id"] == "87abc0000ffffff"
+    assert bool(out.loc[i_stg, "rotulo_casado_staging"])
+
+
+def test_load_engcorpo_nao_casado_marcado_nunca_descartado(tmp_path):
+    pytest.importorskip("openpyxl")
+    # unidade sem match no CSV nem no staging -> permanece, marcada nao-casada
+    xlsx, csv, pq = _write_engcorpo_sources(
+        tmp_path,
+        planilha_nomes=["EC - VACARIA, RS", "EC - INEXISTENTE, AC"],
+        coords={
+            "nome_unidade": ["Vacaria, RS"],
+            "latitude": [-28.50],
+            "longitude": [-50.93],
+            "data_coleta": ["2026-05-26"],
+        },
+        staging_rows={
+            "rede": ["engenharia_do_corpo"],
+            "status_registro": ["valido"],
+            "nome_unidade": ["Vacaria, RS"],
+            "hex_id_res7": ["87abc0000ffffff"],
+            "lat": [-28.50],
+            "lng": [-50.93],
+        },
+    )
+    out = bvd.load_engcorpo(xlsx, csv, pq)
+    assert len(out) == 2  # nº entrada == nº saida
+    i_nao = {n: i for i, n in enumerate(out["nome_unidade"])}["EC - INEXISTENTE, AC"]
+    assert out.loc[i_nao, "hex_origem"] == "nao_resolvido"
+    assert not bool(out.loc[i_nao, "rotulo_casado_staging"])
+    assert pd.isna(out.loc[i_nao, "lat"])
