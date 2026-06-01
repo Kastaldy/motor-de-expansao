@@ -96,6 +96,11 @@ FAIXA_ORDEM = [
     "inviavel",
 ]
 MAP_POINT_LIMIT = 35000
+# Cap efetivo reduzido para UFs grandes (recorte que satura MAP_POINT_LIMIT no
+# Mapa Territorial). Mitiga OOM client-side (JS heap/WebGL) ao renderizar ~35k
+# hexagonos H3 em GPU em estados como SP/AM/PA/MT/MG/BA. Nao altera score nem
+# artefatos M1; nao altera MAP_POINT_LIMIT global (UFs pequenas inalteradas).
+MAP_POINT_LIMIT_LARGE = 18000
 TABLE_ROW_LIMIT = 1000
 POP_MIN_ACIONAVEL = 5_000
 BRASIL_CENTER = {"lat": -14.235, "lon": -51.9253}

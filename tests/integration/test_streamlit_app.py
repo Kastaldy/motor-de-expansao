@@ -1884,49 +1884,16 @@ def test_score_priorizacao_invariante_enrich_e_carteira():
 
 
 def test_map_point_limit_respeitado_no_mapa_hibrido():
-    """build_hybrid_map_figure nao deve renderizar mais de MAP_POINT_LIMIT pontos."""
-    import h3
+    """build_hybrid_map_figure: recorte que satura MAP_POINT_LIMIT cai no cap
+    reduzido (MAP_POINT_LIMIT_LARGE) — mitigacao OOM client-side em UF grande."""
+    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT, MAP_POINT_LIMIT_LARGE
 
-    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT
-
-    rows = []
-    base_lat, base_lng = -23.55, -46.63
-    for i in range(MAP_POINT_LIMIT + 5):
-        offset = i * 0.0001
-        lat, lng = base_lat + offset, base_lng + offset
-        hex_id = h3.latlng_to_cell(lat, lng, 7)
-        rows.append({
-            "hex_id": hex_id,
-            "lat": lat, "lng": lng,
-            "uf": "SP", "nome_municipio": "Sao Paulo",
-            "score_setor_2022_calibrado": 75.0,
-            "score_priorizacao": 80.0,
-            "score_expansao_hibrido": 82.0,
-            "densidade_pop_setor_hab_km2": 9_000,
-            "qualidade_join_uf": "A",
-            "flag_join_uf_restrito": False,
-            "flag_baixa_pop_setor": False,
-            "flag_outlier_espacial": False,
-            "causa_outlier_espacial": pd.NA,
-            "coverage_pct_setor_2022": 95.0,
-            "motivo_nao_elegivel_censo": pd.NA,
-            "elegibilidade_hibrida": "Elegivel",
-            "rank_hex_intraurbano": i + 1,
-            "top_hex_intraurbano": True,
-            "top_oportunidade_municipio": True,
-            "populacao_proxy": 12_000,
-            "renda_per_capita": 3_500,
-            "pop_total_setor_2022": 12_345,
-            "renda_per_capita_setor_2022_calibrada": 6_789,
-            "flag_pop_min_5k": True,
-            "score_oportunidade_residual": 55.0,
-            "oferta_efetiva_disponivel": 400.0,
-            "quartil_oportunidade_residual": "Q3",
-        })
-
-    df = pd.DataFrame(rows).drop_duplicates(subset=["hex_id"])
+    df = _hybrid_rows(MAP_POINT_LIMIT + 100)
+    assert df["hex_id"].nunique() > MAP_POINT_LIMIT
     deck, n = streamlit_app.build_hybrid_map_figure(df, selected_ufs=[], selected_cities=[])
     assert deck is not None
+    # Recorte satura o cap global -> cap efetivo reduzido (18k), nao 35k.
+    assert n == MAP_POINT_LIMIT_LARGE
     assert n <= MAP_POINT_LIMIT
 
 
@@ -1950,10 +1917,12 @@ def test_downsample_map_index_respeita_cap_dedup_e_ordem():
 
 
 def test_build_map_figure_downsample_mantem_exatamente_o_top_por_prioridade():
-    """O downsample antes do cap deve manter os mesmos top-MAP_POINT_LIMIT hexes
-    por prioridade do fluxo anterior (sem regressao no cap)."""
+    """O downsample antes do cap deve manter exatamente os top-N hexes por
+    prioridade. Para recorte que satura MAP_POINT_LIMIT, N = cap efetivo reduzido
+    (MAP_POINT_LIMIT_LARGE) — intencao original (top-N por prioridade) preservada."""
     from motor_expansao.dashboard.constants import (
         MAP_POINT_LIMIT,
+        MAP_POINT_LIMIT_LARGE,
         MAP_SORT_ASCENDING,
         MAP_SORT_COLUMNS,
     )
@@ -1972,19 +1941,168 @@ def test_build_map_figure_downsample_mantem_exatamente_o_top_por_prioridade():
     ]
     df = pd.DataFrame(rows)
     assert df["hex_id"].nunique() == total
+    # recorte satura MAP_POINT_LIMIT -> cap efetivo reduzido (18k)
+    assert total > MAP_POINT_LIMIT
 
     deck, n = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
     assert deck is not None
-    assert n == MAP_POINT_LIMIT
+    assert n == MAP_POINT_LIMIT_LARGE
 
     rendered = set(pd.DataFrame(deck.layers[0].data)["hex_id"])
     sort_cols = [c for c in MAP_SORT_COLUMNS if c in df.columns]
     asc = [MAP_SORT_ASCENDING[MAP_SORT_COLUMNS.index(c)] for c in sort_cols]
     expected_top = set(
         df.sort_values(sort_cols, ascending=asc, kind="stable")
-        .head(MAP_POINT_LIMIT)["hex_id"]
+        .head(MAP_POINT_LIMIT_LARGE)["hex_id"]
     )
     assert rendered == expected_top
+
+
+def _hybrid_rows(n: int, *, score: float = 75.0) -> pd.DataFrame:
+    """DataFrame sintetico de n hexes validos para os builders hibrido/residual.
+
+    Espalha os pontos numa grade ampla (~0.05 graus de passo) para garantir n
+    hexes res-7 DISTINTOS — offsets pequenos colapsam multiplos pontos no mesmo hex.
+    """
+    import h3
+
+    rows = []
+    base_lat, base_lng = -23.55, -46.63
+    side = int(n**0.5) + 1
+    for i in range(n):
+        lat = base_lat + (i // side) * 0.05
+        lng = base_lng + (i % side) * 0.05
+        hex_id = h3.latlng_to_cell(lat, lng, 7)
+        rows.append({
+            "hex_id": hex_id,
+            "lat": lat, "lng": lng,
+            "uf": "SP", "nome_municipio": "Sao Paulo",
+            "score_setor_2022_calibrado": score,
+            "score_priorizacao": 80.0,
+            "score_expansao_hibrido": 82.0,
+            "densidade_pop_setor_hab_km2": 9_000,
+            "qualidade_join_uf": "A",
+            "flag_join_uf_restrito": False,
+            "flag_baixa_pop_setor": False,
+            "flag_outlier_espacial": False,
+            "causa_outlier_espacial": pd.NA,
+            "coverage_pct_setor_2022": 95.0,
+            "motivo_nao_elegivel_censo": pd.NA,
+            "elegibilidade_hibrida": "Elegivel",
+            "rank_hex_intraurbano": i + 1,
+            "top_hex_intraurbano": True,
+            "top_oportunidade_municipio": True,
+            "populacao_proxy": 12_000,
+            "renda_per_capita": 3_500,
+            "pop_total_setor_2022": 12_345,
+            "renda_per_capita_setor_2022_calibrada": 6_789,
+            "flag_pop_min_5k": True,
+            "score_oportunidade_residual": 55.0,
+            "oferta_efetiva_disponivel": 400.0,
+            "quartil_oportunidade_residual": "Q3",
+        })
+    return pd.DataFrame(rows).drop_duplicates(subset=["hex_id"])
+
+
+def test_cap_reduzido_para_uf_grande_no_mapa_m1():
+    """BLK-FIX-03: recorte M1 que satura MAP_POINT_LIMIT cai no cap reduzido."""
+    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT, MAP_POINT_LIMIT_LARGE
+
+    total = MAP_POINT_LIMIT + 100
+    rows = [
+        _hex_row(f"sp_{i:06d}", -23.55 + i * 0.0005, -46.63 + i * 0.0005, score_priorizacao=float(total - i))
+        for i in range(total)
+    ]
+    df = pd.DataFrame(rows)
+    assert df["hex_id"].nunique() > MAP_POINT_LIMIT
+
+    deck, n = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+    assert deck is not None
+    assert n <= MAP_POINT_LIMIT_LARGE
+    assert n == MAP_POINT_LIMIT_LARGE
+    assert len(pd.DataFrame(deck.layers[0].data)) <= MAP_POINT_LIMIT_LARGE
+
+
+def test_cap_reduzido_para_uf_grande_no_mapa_hibrido_e_residual():
+    """BLK-FIX-03: cap reduzido tambem nos builders hibrido e residual."""
+    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT, MAP_POINT_LIMIT_LARGE
+
+    df = _hybrid_rows(MAP_POINT_LIMIT + 100)
+    assert df["hex_id"].nunique() > MAP_POINT_LIMIT
+
+    deck_h, n_h = streamlit_app.build_hybrid_map_figure(df, selected_ufs=[], selected_cities=[])
+    assert deck_h is not None
+    assert n_h == MAP_POINT_LIMIT_LARGE
+    assert len(pd.DataFrame(deck_h.layers[0].data)) <= MAP_POINT_LIMIT_LARGE
+
+    deck_r, n_r = streamlit_app.build_residual_heatmap_figure(df, selected_ufs=[], selected_cities=[])
+    assert deck_r is not None
+    assert n_r == MAP_POINT_LIMIT_LARGE
+    assert len(pd.DataFrame(deck_r.layers[0].data)) <= MAP_POINT_LIMIT_LARGE
+
+
+def test_uf_pequena_nao_regride_cap_cheio():
+    """BLK-FIX-03 nao-regressao: recorte entre MAP_POINT_LIMIT_LARGE e
+    MAP_POINT_LIMIT renderiza TODOS os hexes (cap cheio, sem corte novo)."""
+    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT, MAP_POINT_LIMIT_LARGE
+
+    total = 20_000
+    assert MAP_POINT_LIMIT_LARGE < total < MAP_POINT_LIMIT
+    rows = [
+        _hex_row(f"sp_{i:06d}", -23.55 + i * 0.0005, -46.63 + i * 0.0005, score_priorizacao=float(total - i))
+        for i in range(total)
+    ]
+    df = pd.DataFrame(rows)
+    assert df["hex_id"].nunique() == total
+
+    deck, n = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+    assert deck is not None
+    # cap cheio aplicado: sem corte novo, todos os hexes renderizam
+    assert n == total
+
+
+def test_cap_reduzido_simplifica_layer_sem_mudar_cor():
+    """BLK-FIX-03: em UF grande o H3HexagonLayer simplifica (auto_highlight/stroked
+    False) MAS a cor de fill continua vindo de score_band_to_color (cor inalterada)."""
+    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT
+
+    score = 73.0
+    total = MAP_POINT_LIMIT + 100
+    rows = [
+        _hex_row(
+            f"sp_{i:06d}", -23.55 + i * 0.0005, -46.63 + i * 0.0005,
+            score_priorizacao=score, flag_pop_min_5k=True,
+        )
+        for i in range(total)
+    ]
+    df = pd.DataFrame(rows)
+
+    deck, n = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+    assert deck is not None
+    hex_layer = deck.layers[0]
+    assert hex_layer.auto_highlight is False
+    assert hex_layer.stroked is False
+    # cor NAO mudou: fill continua vindo de score_band_to_color
+    expected_color = streamlit_app.score_band_to_color(score)
+    layer_df = pd.DataFrame(hex_layer.data)
+    first_fill = layer_df["fill_color"].iloc[0]
+    assert list(first_fill) == list(expected_color)
+
+
+def test_caption_capped_reflete_cap_efetivo():
+    """BLK-FIX-03: o caption capped exibe o cap efetivo (18k em UF grande, 35k caso contrario)."""
+    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT, MAP_POINT_LIMIT_LARGE
+    from motor_expansao.dashboard.utils import format_int
+
+    cap_large = streamlit_app.build_map_scope_caption(
+        MAP_POINT_LIMIT_LARGE, selected_ufs=["SP"], capped=True, effective_cap=MAP_POINT_LIMIT_LARGE
+    )
+    assert format_int(MAP_POINT_LIMIT_LARGE) in cap_large
+
+    cap_full = streamlit_app.build_map_scope_caption(
+        MAP_POINT_LIMIT, selected_ufs=["SP"], capped=True, effective_cap=MAP_POINT_LIMIT
+    )
+    assert format_int(MAP_POINT_LIMIT) in cap_full
 
 
 def test_build_ultra_presence_map_retorna_none_sem_dados():
