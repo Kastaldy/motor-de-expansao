@@ -136,6 +136,7 @@ from motor_expansao.dashboard.data import (  # noqa: F401
 from motor_expansao.dashboard.pages import (  # noqa: F401
     DASHBOARD_TAB_LABELS,
     _extract_click_coord_from_selection,
+    _hex_id_to_centroid,
     _render_multihex_controls,
     _render_multihex_kpis,
     inject_styles,

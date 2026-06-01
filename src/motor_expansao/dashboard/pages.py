@@ -2293,12 +2293,34 @@ def _render_multihex_kpis(df: pd.DataFrame, multihex_ids: list[str]) -> None:
         )
 
 
+def _hex_id_to_centroid(hex_id: str) -> tuple[float, float] | None:
+    """Resolve o centroide (lat, lng) de um ``hex_id`` H3.
+
+    Usado para reconstruir a coordenada do clique no mapa: o payload do
+    H3HexagonLayer carrega ``hex_id`` mas nao ``lat``/``lng`` (o frame enxuto
+    em ``_deck_layer_frame``/``_DECK_RENDER_COLUMNS`` projeta so hex/cores).
+    Qualquer falha de conversao (hex invalido, h3 indisponivel) -> None.
+    Nao recalcula score nem altera artefatos M1.
+    """
+    try:
+        import h3 as h3lib
+
+        lat, lng = h3lib.cell_to_latlng(str(hex_id))
+        return (float(lat), float(lng))
+    except Exception:
+        return None
+
+
 def _extract_click_coord_from_selection(map_event) -> tuple[float, float] | None:
     """Extract (lat, lng) from a pydeck on_select map event.
 
-    Returns None when the event is absent, the selection is empty, or the
-    selected object does not contain both 'lat' and 'lng' fields.  Robust
-    against MagicMock objects used in unit tests.
+    Branch A (principal): o payload do clique do H3HexagonLayer traz ``hex_id``
+    (e nao ``lat``/``lng``, removidos do frame enxuto); resolvemos o centroide
+    via ``_hex_id_to_centroid``.
+    Branch B (defensivo): se o objeto trouxer ``lat``/``lng`` diretos, usa-os.
+    Returns None quando o evento esta ausente, a selecao e vazia, o hex_id e
+    invalido, ou o objeto nao traz coordenada utilizavel. Robusto contra
+    MagicMock usado nos testes unitarios.
     """
     if map_event is None:
         return None
@@ -2313,7 +2335,14 @@ def _extract_click_coord_from_selection(map_event) -> tuple[float, float] | None
             if not isinstance(rows, list) or not rows:
                 continue
             row = rows[0]
-            if isinstance(row, dict) and "lat" in row and "lng" in row:
+            if not isinstance(row, dict):
+                continue
+            hex_id = row.get("hex_id")
+            if hex_id:
+                centroid = _hex_id_to_centroid(str(hex_id))
+                if centroid is not None:
+                    return centroid
+            if "lat" in row and "lng" in row:
                 return (float(row["lat"]), float(row["lng"]))
     except (TypeError, ValueError, AttributeError):
         pass
@@ -2535,11 +2564,17 @@ def render_mapa_pydeck_fragment(
     - Nao recalcula score, carteira, plano nem artefatos oficiais do M1.
     """
     from motor_expansao.dashboard.constants import MAP_POINT_LIMIT, MAP_POINT_LIMIT_LARGE
-    # Cap efetivo honesto: quando o recorte satura, n_points e exatamente o cap aplicado
-    # (<=18k em UF grande, <=35k caso contrario). Sem isso o caption "capped" sumiria
-    # em UF grande (n_points nunca atinge 35k) e o usuario nao saberia que esta amostrado.
-    capped = n_points >= MAP_POINT_LIMIT_LARGE
-    effective_cap = MAP_POINT_LIMIT_LARGE if n_points >= MAP_POINT_LIMIT_LARGE else MAP_POINT_LIMIT
+    # Caption honesto (FU1): o corte real e calculado nos builders (len(key) > effective_limit)
+    # e propagado via atributos no Deck, sem mudar a assinatura (deck, n). A heuristica
+    # antiga (n_points >= cap) mentia na janela 18k-34.999 em UF grande (sem corte, mas
+    # marcava "amostrado"). Os getattr abaixo mantem o fallback (decks legados sem o
+    # atributo) usando o limite importado.
+    capped = getattr(deck, "_ultra_capped", n_points >= MAP_POINT_LIMIT_LARGE)
+    effective_cap = getattr(
+        deck,
+        "_ultra_effective_cap",
+        MAP_POINT_LIMIT_LARGE if n_points >= MAP_POINT_LIMIT_LARGE else MAP_POINT_LIMIT,
+    )
     st.caption(
         build_map_scope_caption(
             n_points, selected_ufs=selected_ufs, capped=capped, effective_cap=effective_cap
