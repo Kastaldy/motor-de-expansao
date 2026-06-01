@@ -3944,3 +3944,43 @@ def test_load_censo_geo_setores_le_particao_por_municipio(tmp_path, monkeypatch)
     assert len(setores) == 1
     assert setores.loc[0, "uf"] == "DF"
     assert setores.loc[0, "cod_municipio"] == "5300108"
+
+
+# ── BLK-FIX-05: tema escuro travado independente do SO ──────────────────────────
+
+
+def test_config_theme_dark():
+    """`.streamlit/config.toml` deve travar o tema escuro com cores espelhando COLORS
+    (guarda anti-drift: se COLORS mudar, este teste falha e exige sincronizar o toml)."""
+    import tomllib
+
+    from motor_expansao.dashboard.constants import COLORS
+
+    config_path = Path(__file__).resolve().parents[2] / ".streamlit" / "config.toml"
+    config = tomllib.loads(config_path.read_text(encoding="utf-8"))
+
+    assert "theme" in config
+    theme = config["theme"]
+    assert theme["base"] == "dark"
+    assert theme["backgroundColor"] == COLORS["bg"]
+    assert theme["textColor"] == COLORS["text"]
+    assert theme["primaryColor"] == COLORS["brand_alt"]
+    assert theme["secondaryBackgroundColor"] == COLORS["panel_solid"]
+
+
+def test_inject_styles_cobre_componentes_baseweb():
+    """O CSS injetado por inject_styles deve cobrir o seletor de abas real
+    (segmented_control), o popover/menu do dropdown (portal fora do container) e o
+    texto/estado do select — caso contrario o tema escuro vaza quando o SO e claro."""
+    import unittest.mock as mock
+
+    captured: list[str] = []
+    with mock.patch("streamlit.markdown", side_effect=lambda body, **kw: captured.append(body)):
+        streamlit_app.inject_styles()
+
+    assert captured, "inject_styles deveria injetar ao menos um bloco de markdown"
+    css = "".join(captured)
+    assert "stSegmentedControl" in css
+    assert 'data-baseweb="popover"' in css
+    assert 'data-baseweb="select"' in css
+    assert ('aria-checked="true"' in css) or ('aria-selected="true"' in css)

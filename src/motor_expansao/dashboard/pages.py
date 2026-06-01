@@ -288,8 +288,27 @@ def inject_styles() -> None:
                 padding-right: 0.85rem;
             }}
             [data-baseweb="tab"][aria-selected="true"] {{
-                background: rgba(25, 183, 255, 0.08);
+                background: rgba(25, 183, 255, 0.22);
                 color: {COLORS["text"]};
+            }}
+            [data-testid="stSegmentedControl"] button,
+            div[role="radiogroup"] [data-baseweb="button"],
+            [data-baseweb="button-group"] button {{
+                background: rgba(18, 23, 42, 0.92);
+                color: {COLORS["muted"]};
+                border: 1px solid {COLORS["border"]};
+            }}
+            [data-testid="stSegmentedControl"] button:hover,
+            [data-baseweb="button-group"] button:hover {{
+                background: rgba(25, 183, 255, 0.14);
+                color: {COLORS["text"]};
+            }}
+            [data-testid="stSegmentedControl"] button[aria-checked="true"],
+            [data-testid="stSegmentedControl"] button[aria-selected="true"],
+            [data-baseweb="button-group"] button[aria-checked="true"] {{
+                background: rgba(25, 183, 255, 0.22);
+                color: {COLORS["text"]};
+                border-color: {COLORS["brand_alt"]};
             }}
             .stCaption {{
                 color: {COLORS["muted"]};
@@ -305,6 +324,26 @@ def inject_styles() -> None:
                 background: rgba(18, 23, 42, 0.92);
                 border-radius: 12px;
                 border: 1px solid {COLORS["border"]};
+            }}
+            .stMultiSelect [data-baseweb="select"] *, .stSelectbox [data-baseweb="select"] * {{
+                color: {COLORS["text"]};
+            }}
+            .stMultiSelect [data-baseweb="select"] input, .stSelectbox [data-baseweb="select"] input {{
+                color: {COLORS["text"]};
+            }}
+            [data-baseweb="popover"] [data-baseweb="menu"],
+            [data-baseweb="popover"] ul[role="listbox"] {{
+                background: {COLORS["panel_solid"]};
+                border: 1px solid {COLORS["border"]};
+            }}
+            [data-baseweb="popover"] li[role="option"] {{
+                background: {COLORS["panel_solid"]};
+                color: {COLORS["text"]};
+            }}
+            [data-baseweb="popover"] li[role="option"]:hover,
+            [data-baseweb="popover"] li[aria-selected="true"] {{
+                background: rgba(25, 183, 255, 0.18);
+                color: {COLORS["text"]};
             }}
             .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {{
                 font-size: 0.92rem;
