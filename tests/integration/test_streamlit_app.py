@@ -2278,6 +2278,64 @@ def test_caption_capped_reflete_cap_efetivo():
     assert format_int(MAP_POINT_LIMIT) in cap_full
 
 
+def _map_row(hex_id: str, lat: float, lng: float) -> dict:
+    return {
+        "hex_id": hex_id, "lat": lat, "lng": lng, "cidade": "X", "nome_municipio": "X",
+        "uf": "SP", "faixa_oportunidade": "alta", "score_priorizacao": 80.0,
+        "hex_score_estrutural": 75.0, "flag_viavel": True, "flag_prioridade": True,
+        "score_setor_2022_calibrado": 85.0, "coverage_pct_setor_2022": 97.0,
+        "qualidade_join_uf": "A", "flag_censo_disponivel": True, "populacao_proxy": 12_000,
+        "renda_per_capita": 3_500, "pop_total_setor_2022": 12_345,
+        "renda_per_capita_setor_2022_calibrada": 6_789, "flag_pop_min_5k": True,
+        "sam_fitness_potencial": 540.0, "oferta_consumida_mercado_estimada": 200.0,
+        "oferta_consumida_ultra_real": 25.0, "oferta_efetiva_disponivel": 300.0,
+        "share_ultra_estimado_hex": 0.111, "score_oportunidade_residual": 12.0,
+        "quartil_oportunidade_residual": "Q3",
+    }
+
+
+def test_caption_nao_amostrado_em_recorte_18k_a_35k(monkeypatch):
+    """FU1: recorte na janela (LARGE, FULL] nao sofre corte -> _ultra_capped is False.
+
+    A heuristica antiga (n_points >= MAP_POINT_LIMIT_LARGE) marcava "amostrado"
+    nessa janela mesmo sem corte. Usa limites pequenos equivalentes (janela 10<n<=30)
+    para um caso leve e deterministico; o corte real e len(key) > effective_limit.
+    """
+    from motor_expansao.dashboard import components
+
+    monkeypatch.setattr(components, "MAP_POINT_LIMIT_LARGE", 10)
+    monkeypatch.setattr(components, "MAP_POINT_LIMIT", 30)
+
+    center = h3.latlng_to_cell(-23.55, -46.63, 7)
+    cells = list(h3.grid_disk(center, 2))  # 19 hexes distintos, dentro de (10, 30]
+    assert 10 < len(cells) <= 30
+    df = pd.DataFrame([_map_row(c, *h3.cell_to_latlng(c)) for c in cells])
+
+    deck, n = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+
+    assert deck is not None
+    assert n == len(cells)  # nenhum hex cortado
+    assert deck._ultra_capped is False
+    assert deck._ultra_effective_cap == 30
+
+
+def test_caption_amostrado_quando_satura_cap():
+    """FU1: recorte > MAP_POINT_LIMIT (35k) satura o cap -> _ultra_capped True, cap 18k."""
+    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT, MAP_POINT_LIMIT_LARGE
+
+    center = h3.latlng_to_cell(-23.55, -46.63, 7)
+    cells = list(h3.grid_disk(center, 110))  # ~36.6k hexes reais distintos
+    assert len(cells) > MAP_POINT_LIMIT
+    df = pd.DataFrame([_map_row(c, *h3.cell_to_latlng(c)) for c in cells])
+
+    deck, n = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+
+    assert deck is not None
+    assert deck._ultra_capped is True
+    assert deck._ultra_effective_cap == MAP_POINT_LIMIT_LARGE == 18000
+    assert n == MAP_POINT_LIMIT_LARGE
+
+
 def test_build_ultra_presence_map_retorna_none_sem_dados():
     deck, n = streamlit_app.build_ultra_presence_map(
         None, selected_ufs=[], selected_cities=[]
@@ -2706,10 +2764,13 @@ class _MockMapEvent:
         self.selection = _MockSelection(objects)
 
 
-def test_extract_click_coord_retorna_lat_lng_de_selecao():
-    event = _MockMapEvent({"hex_layer": [{"lat": -23.55, "lng": -46.63, "hex_id": "abc"}]})
+def test_extract_click_coord_resolve_centroide_do_hex_id_da_selecao():
+    """Branch A: o payload do H3HexagonLayer traz hex_id; resolve o centroide via h3."""
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    centroide = h3.cell_to_latlng(hex_id)
+    event = _MockMapEvent({"hex_layer": [{"hex_id": hex_id, "score_priorizacao": 80.0}]})
     result = streamlit_app._extract_click_coord_from_selection(event)
-    assert result == pytest.approx((-23.55, -46.63))
+    assert result == pytest.approx(centroide)
 
 
 def test_extract_click_coord_retorna_none_sem_selecao():
@@ -2717,8 +2778,18 @@ def test_extract_click_coord_retorna_none_sem_selecao():
     assert streamlit_app._extract_click_coord_from_selection(event) is None
 
 
-def test_extract_click_coord_retorna_none_quando_row_sem_lat_lng():
-    event = _MockMapEvent({"hex_layer": [{"hex_id": "abc", "score_priorizacao": 80.0}]})
+def test_extract_click_coord_resolve_centroide_quando_payload_so_tem_hex_id():
+    """Payload sem lat/lng (caso real do _deck_layer_frame): resolve centroide do hex_id."""
+    hex_id = h3.latlng_to_cell(-15.79, -47.88, 7)
+    centroide = h3.cell_to_latlng(hex_id)
+    event = _MockMapEvent({"hex_layer": [{"hex_id": hex_id, "score_priorizacao": 80.0}]})
+    result = streamlit_app._extract_click_coord_from_selection(event)
+    assert result == pytest.approx(centroide)
+
+
+def test_extract_click_coord_hex_id_invalido_retorna_none():
+    """hex_id que nao e um indice H3 valido -> None (sem excecao)."""
+    event = _MockMapEvent({"hex_layer": [{"hex_id": "nao_e_hex", "score_priorizacao": 80.0}]})
     assert streamlit_app._extract_click_coord_from_selection(event) is None
 
 
@@ -2738,6 +2809,23 @@ def test_extract_click_coord_e_robusto_contra_mock_object():
 def test_extract_click_coord_exportado_via_streamlit_app():
     assert hasattr(streamlit_app, "_extract_click_coord_from_selection")
     assert callable(streamlit_app._extract_click_coord_from_selection)
+
+
+def test_hex_id_to_centroid_hex_invalido_retorna_none():
+    assert streamlit_app._hex_id_to_centroid("nao_e_hex") is None
+
+
+def test_hex_id_to_centroid_idempotente_com_lookup():
+    """O centroide resolvido reconverte para o MESMO hex via lookup_hex_by_coord (res 7)."""
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    centroide = streamlit_app._hex_id_to_centroid(hex_id)
+    assert centroide is not None
+    lat, lng = centroide
+    df = pd.DataFrame({"hex_id": [hex_id], "lat": [lat], "lng": [lng]})
+    found = streamlit_app.lookup_hex_by_coord(lat, lng, df)
+    assert found is not None
+    assert found["hex_id"] == hex_id
+    assert found["_not_found"] is False
 
 
 def test_render_analise_pontual_vazio_menciona_clique_e_sidebar():
@@ -3053,17 +3141,19 @@ def test_score_band_to_color_exportado():
 # ── Testes do Bloco 12: decisao tecnica clique exato ─────────────────────────
 
 def test_extract_click_coord_retorna_centroide_do_hex_nao_coord_livre():
-    """_extract_click_coord retorna lat/lng do objeto (centroide do hex), nao coordenada exata do clique.
+    """_extract_click_coord retorna o centroide do hex selecionado, nao coordenada exata do clique.
 
-    Comportamento documentado: pydeck on_select passa dados do objeto de camada; para H3HexagonLayer
-    os campos lat/lng sao os centroides dos hexes conforme a coluna do DataFrame.
-    Fallback para coordenada exata: campo lat,lng na barra lateral.
+    Comportamento documentado: pydeck on_select passa dados do objeto de camada; para o
+    H3HexagonLayer o payload traz hex_id (o frame enxuto nao serializa lat/lng), e o
+    centroide e reconstruido via h3.cell_to_latlng. Fallback para coordenada exata:
+    campo lat,lng na barra lateral.
     """
-    centroide_lat, centroide_lng = -23.5505, -46.6333
-    event = _MockMapEvent({"main_unified_map": [{"lat": centroide_lat, "lng": centroide_lng, "hex_id": "abc123"}]})
+    hex_id = h3.latlng_to_cell(-23.5505, -46.6333, 7)
+    centroide = h3.cell_to_latlng(hex_id)
+    event = _MockMapEvent({"main_unified_map": [{"hex_id": hex_id, "score_priorizacao": 80.0}]})
     result = streamlit_app._extract_click_coord_from_selection(event)
     assert result is not None
-    assert result == pytest.approx((centroide_lat, centroide_lng))
+    assert result == pytest.approx(centroide)
 
 
 def test_extract_click_coord_espaco_vazio_nao_dispara_evento():

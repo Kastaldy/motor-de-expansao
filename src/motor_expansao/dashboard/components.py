@@ -1320,6 +1320,10 @@ def build_map_figure(
         layers=layers,
         tooltip=_shared_map_tooltip(),
     )
+    # FU1: corte real = len(key) > effective_limit (nao a heuristica n_points>=cap,
+    # que mentia na janela 18k-34.999 em UF grande). Propaga sem mudar a assinatura.
+    deck._ultra_capped = len(key) > effective_limit
+    deck._ultra_effective_cap = effective_limit
     return deck, len(map_df)
 
 
@@ -1559,6 +1563,9 @@ def build_hybrid_map_figure(
         layers=layers,
         tooltip=_shared_map_tooltip() if _HYBRID_TOOLTIP_SHOW_DETAIL else _hybrid_compact_tooltip(),
     )
+    # FU1: corte real do cap propagado para o caption honesto (vide build_map_figure).
+    deck._ultra_capped = len(key) > effective_limit
+    deck._ultra_effective_cap = effective_limit
     return deck, len(map_df)
 
 
@@ -1682,6 +1689,9 @@ def build_residual_heatmap_figure(
         layers=layers,
         tooltip=_shared_map_tooltip() if _HYBRID_TOOLTIP_SHOW_DETAIL else _hybrid_compact_tooltip(),
     )
+    # FU1: corte real do cap propagado para o caption honesto (vide build_map_figure).
+    deck._ultra_capped = len(key) > effective_limit
+    deck._ultra_effective_cap = effective_limit
     return deck, len(map_df)
 
 
@@ -1833,6 +1843,10 @@ def build_dominio_map_figure(
         layers=layers,
         tooltip=_shared_map_tooltip(),
     )
+    # FU1: o mapa de dominio nao aplica cap dinamico (ancoras, volume baixo);
+    # marca explicitamente nao-amostrado para o caption honesto.
+    deck._ultra_capped = False
+    deck._ultra_effective_cap = MAP_POINT_LIMIT
     return deck, len(map_df)
 
 
