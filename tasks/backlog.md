@@ -381,12 +381,20 @@ como gate no CI**. Combinado com deps não-pinadas (BLK-OPS-11), o risco de supp
 - Definir política de severidade (o que bloqueia vs. o que só alerta) para evitar CI ruidoso.
 - **Pinar as GitHub Actions por SHA** (hoje usam tags móveis, ex.: `actions/checkout@v5`,
   `actions/setup-python@v6`) — endurece a supply-chain do próprio pipeline de CI/CD.
+- **Resolver de uma vez o aviso de Node 20 nas `docker/*-action`** (AUTORIZADO explicitamente por
+  Felipe em 2026-06-01): o BLK-OPS-08 (concluído 2026-05-29) subiu `actions/checkout@v4→v5` e
+  `actions/setup-python@v5→v6` (zerou o aviso no job `test`), mas **deixou** `docker/login-action@v3`,
+  `docker/metadata-action@v5`, `docker/setup-buildx-action@v3` e `docker/build-push-action@v6` (job
+  `publish` de `ci.yml`), que **ainda rodam em Node 20** — aviso de descontinuação persiste no `publish`
+  (GitHub força Node 24 em 16-jun-2026). Ao pinar por SHA, escolher SHAs de versões dessas actions que
+  já rodem em **Node 24**, eliminando o aviso de vez. Validar com um run verde do `publish` sem o aviso.
 
 **Fora de escopo:** remediar toda CVE histórica de uma vez (priorizar por severidade); assinatura de
 imagem (cosign) — follow-up.
 
-**Arquivos prováveis:** `.github/workflows/ci.yml`, `.github/workflows/docker-publish.yml`,
-`pyproject.toml`/lock, `.gitleaks.toml`.
+**Arquivos prováveis:** `.github/workflows/ci.yml` (jobs `test`/`publish`/`build-sanity` —
+o antigo `docker-publish.yml` foi consolidado em `ci.yml` no BLK-SEC-01), `pyproject.toml`/lock,
+`.gitleaks.toml`.
 
 **Critérios de aceite:**
 - CI roda `pip-audit` + `gitleaks` (bloqueantes por severidade definida) e scan de imagem no publish.
