@@ -2508,3 +2508,145 @@ dashboard render + testes + docs). **Merge:** humano, na base.
 
 **Follow-up registrado:** `BLK-FIX-07-B — Clustering server-side por recorte` (Fase B) adicionado ao
 backlog (recomendação do Planner/QA; não-bloqueante — o bound de 40k já está garantido pela Fase A).
+
+---
+
+### BLK-FIX-03-FU1 — Caption "capped" do Mapa Territorial pode dar falso positivo (follow-up opcional)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (cosmético de UX; não toca M1/score) |
+| **Prioridade** | **Baixa** |
+| **Esteira** | Block Orchestrator → Builder |
+| **Depende de** | BLK-FIX-03 (concluído) |
+| **Status** | Pendente |
+| **Origem** | Ressalva do QA no fechamento do BLK-FIX-03 (2026-06-01) |
+
+**Contexto / gap:** após o BLK-FIX-03, o gatilho do caption "capped" em
+`dashboard/pages.py` (`render_mapa_pydeck_fragment`) infere o corte por heurística
+`capped = n_points >= MAP_POINT_LIMIT_LARGE` (18.000). Logo um recorte com **18.000–34.999 hexes
+distintos** — que é renderizado **sem corte** (cap cheio de 35k não foi atingido) — exibiria
+falsamente a mensagem "amostrado / recorte maior que o limite". É um falso positivo cosmético; o
+render e os dados estão corretos.
+
+**Objetivo:** o caption só indica "amostrado" quando houve corte de fato.
+
+**Escopo permitido:** propagar o cap efetivo aplicado (ou o nº de candidatos pré-cap) do builder ao
+fragmento, em vez de inferir por `n_points`, para que `capped`/`effective_cap` reflitam o corte real.
+Sem tocar M1/score/regra de cor.
+
+**Fora de escopo:** M1/artefatos; mudar o cap dinâmico do BLK-FIX-03.
+
+**Arquivos prováveis:** `dashboard/components.py` (retorno dos builders quantitativos),
+`dashboard/pages.py` (`render_mapa_pydeck_fragment`/`render_mapa_territorial`), testes do caption.
+
+**Critérios de aceite:** recorte de 18k–35k hexes não exibe o caption "amostrado"; recorte que satura
+(≥35k) continua exibindo o caption com o cap efetivo (18.000); suíte verde; zero M1.
+
+**Risco:** baixo (UX/caption).
+
+---
+
+### BLK-FIX-04 — Seleção de hex por clique não funciona no Mapa Territorial
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média-Alta** (interação central da aba quebrada; não toca M1/score) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | — |
+| **Status** | Pendente |
+| **Origem** | Felipe, 2026-06-01 |
+
+**Contexto / gap:** clicar num hexágono no Mapa Territorial não dispara a seleção / Análise Pontual.
+O fluxo usa `st.pydeck_chart(..., on_select="rerun")` e `_extract_click_coord_from_selection`
+(`pages.py:2294`), que tenta extrair **lat/lng** do evento de seleção; mas o `H3HexagonLayer` do pydeck
+não emite lat/lng no objeto selecionado (retorna propriedades do hex / `hex_id`) → extração falha →
+`click_coord` fica `None` → `lookup_hex_by_coord` (`data.py:1072`) não roda. CLAUDE.md §5 registra que
+o clique usa o centroide do hex via pydeck; **confirmar se o contrato do evento mudou** com a versão de
+Streamlit/pydeck.
+
+**Objetivo:** restaurar captura de clique → seleção de hex → Análise Pontual, mantendo o fallback de
+`lat,lng` na sidebar.
+
+**Escopo permitido:** corrigir a extração para ler o identificador efetivamente retornado pelo evento
+(índice / `hex_id` / objeto) em vez de assumir lat/lng; mapear de volta ao hex no `df`; garantir
+`pickable=True` na camada. Sem recalcular score.
+
+**Fora de escopo:** M1/score/artefatos; trocar o componente de mapa (decisão do Bloco 12 mantém pydeck).
+
+**Arquivos prováveis:** `dashboard/pages.py` (`_extract_click_coord_from_selection≈2294`, render do Mapa
+Territorial, `st.pydeck_chart`), `dashboard/components.py` (`build_map_figure` / `pickable` da camada),
+`dashboard/data.py` (`lookup_hex_by_coord≈1072`).
+
+**Critérios de aceite:** clique num hex seleciona e dispara a Análise Pontual (repro manual + teste do
+parser de evento com payload representativo); fallback `lat,lng` preservado; zero M1; suíte verde.
+
+**Risco:** baixo-médio (depende do contrato de evento do pydeck/Streamlit).
+
+---
+
+### BLK-FIX-05 — Cores da UI ficam claras em tema claro do SO (botões de aba e caixas de filtro)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (legibilidade/usabilidade; não toca M1/score) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | — |
+| **Status** | Pendente |
+| **Origem** | Felipe, 2026-06-01 |
+
+**Contexto / gap:** em máquinas com **tema claro** do SO/navegador, os botões das abas
+(`render_tab_selector` / `st.segmented_control`) e as caixas de seleção dos filtros (selectbox/
+multiselect) ficam **brancos**, perdendo o fundo escuro do design. Causa provável: `.streamlit/config.toml`
+**não tem bloco `[theme]`** (confirmado — só `[server]`/`[browser]`/`[client]`), então o app segue o
+tema do SO (auto), enquanto o CSS de `inject_styles` (`pages.py:121`) assume fundo escuro → em tema
+claro, componentes baseweb (`[data-baseweb="tab"]`, `[data-baseweb="select"]`) caem no estilo claro do
+Streamlit e/ou o CSS escuro não cobre todos os estados.
+
+**Objetivo:** UI mantém o tema escuro consistente independentemente do tema do SO/navegador.
+
+**Escopo permitido:** fixar o tema escuro no `.streamlit/config.toml` (`[theme] base="dark"` + paleta)
+e/ou endurecer o CSS de `inject_styles` para garantir contraste dos seletores de aba e filtros;
+verificar em tema claro **e** escuro do SO.
+
+**Fora de escopo:** M1/score; redesenho de identidade visual; mexer nas faixas de cor de score
+(`RESIDUAL_SCORE_BANDS` / `score_band_to_color`).
+
+**Arquivos prováveis:** `.streamlit/config.toml` (sem `[theme]`), `dashboard/pages.py`
+(`inject_styles≈121`, `render_tab_selector≈359`), `dashboard/constants.py` (`COLORS`).
+
+**Critérios de aceite:** abas e caixas de filtro mantêm fundo escuro/contraste em SO tema claro
+(evidência visual antes/depois) e seguem ok no escuro; zero M1; suíte verde.
+
+**Risco:** baixo (CSS/config).
+
+---
+
+## Fechamento sprint multi-track FIX (orquestrador, 2026-06-01)
+
+Sprint paralela aprovada por Felipe (paralelizar + pré-autorizar em lote; FIX-06 mantido bloqueado).
+Dois tracks executados em **worktrees git isolados** (Builders e QA em paralelo), merge sequencial na main.
+
+**Track A — `ciclo/BLK-FIX-04` (BLK-FIX-04 + BLK-FIX-03-FU1):** QA APROVADO.
+- FIX-04: clique de hex voltou a funcionar. Causa-raiz real (diferente da hipótese do backlog): o payload
+  do `on_select` do H3HexagonLayer tem `hex_id` mas NÃO `lat/lng` (o `_deck_layer_frame` removeu lat/lng
+  no BLK-FIX-03). Novo `_hex_id_to_centroid` + parser reescrito (hex_id→centróide; branch lat/lng defensivo).
+  Round-trip provado idempotente pelo QA (`87a8100c0ffffff`→centróide→mesmo hex). `pickable` já estava ok.
+- FU1: caption 'amostrado' só quando há corte real (atributo `deck._ultra_capped`/`_ultra_effective_cap`,
+  sem mudar assinatura `(deck,n)`). QA confirmou o falso positivo eliminado na janela 18k–35k.
+
+**Track B — `ciclo/BLK-FIX-05` (tema claro do SO):** QA APROVADO (prova visual final é manual do Felipe).
+- `.streamlit/config.toml` ganhou `[theme] base=dark` ancorado em `COLORS`; `inject_styles` endurecido para
+  segmented_control, `[data-baseweb=tab]` selecionado, texto/input do select e o popover do dropdown.
+
+**Validação na main pós-merge (dados reais):** `646 passed, 1 skipped` (baseline 639 + 7 novos), ruff/mypy
+limpos, `import streamlit_app` ok. Merges A→B auto-mergearam sem conflito (regiões distintas de pages.py).
+
+**Gotcha registrado:** worktrees compartilham o env Python; o pacote é editable instalado da árvore
+principal, então testes no worktree exigiram `PYTHONPATH=<worktree>/src` para não testar o código errado
+(confirmado empiricamente). Builders/QA nunca rodaram `pip install` (env compartilhado).
+
+**Pendência:** verificação visual do FIX-05 em SO tema claro (Felipe). FIX-06 segue bloqueado (DEC).
+BLK-FIX-07-B (clustering, Fase B) permanece como follow-up.
