@@ -461,3 +461,157 @@ def ultra_legend_entry() -> dict[str, str]:
         "bg": ULTRA_BRAND["bg"],
         "fg": ULTRA_BRAND["fg"],
     }
+
+
+# ── atlas de icones (BLK-FIX-07 Fase A) ──────────────────────────────────────────
+# Atlas unico por escopo de redes presentes: rasteriza UMA imagem PNG que concatena
+# os pins (um por rede + Ultra) e devolve um iconMapping. Cada linha da IconLayer
+# passa a carregar SO a string da chave (rede / "__ultra__") em get_icon, em vez de
+# repetir a data-URI base64 do logo por linha. Logos 100% preservados (mesma arte:
+# balao na cor da marca + logo PNG no circulo, ou sigla no fallback), agora empacotada
+# uma vez. Camada visual de apoio (CLAUDE.md §2): nao altera score nem artefatos M1.
+
+ATLAS_TILE = 128
+_ATLAS_ANCHOR_Y = 122
+_ATLAS_CIRCLE_CX = 64
+_ATLAS_CIRCLE_CY = 47
+_ATLAS_CIRCLE_R = 27
+
+# Cache modulo-nivel (analogo a _ICON_CACHE) keyed pelo frozenset de chaves do atlas;
+# evita reconstruir o atlas a cada rerun do Streamlit para o mesmo conjunto de redes.
+# Mantem o modulo livre de Streamlit (sem @st.cache_data).
+_ATLAS_CACHE: dict[frozenset[str], tuple[str, dict[str, dict[str, int | bool]]]] = {}
+
+
+def _extract_embedded_logo_png(icon_url: str) -> bytes | None:
+    """Extrai os bytes da logo PNG embutida no SVG de pin (`_png_to_pin_svg`).
+
+    `_ICON_CACHE[rede]["url"]` e um data:image/svg+xml com a logo PNG embutida em
+    `<image href="data:image/png;base64,...">`. Retorna os bytes da PNG ou None
+    (ex.: fallback de sigla, que e SVG sem PNG embutida)."""
+    try:
+        if "image/svg" not in icon_url or "base64," not in icon_url:
+            return None
+        svg = base64.b64decode(icon_url.split("base64,", 1)[1]).decode("utf-8")
+        match = re.search(r"data:image/png;base64,([A-Za-z0-9+/=]+)", svg)
+        if not match:
+            return None
+        return base64.b64decode(match.group(1))
+    except Exception:
+        return None
+
+
+def _render_pin_tile(key: str) -> object:
+    """Rasteriza um tile 128x128 (RGBA) do pin para `key` (rede ou "__ultra__"),
+    espelhando a geometria de `_png_to_pin_svg` (balao 128x128; circulo branco
+    cx=64,cy=47,r=27; anchorY=122). Usa o logo PNG do _ICON_CACHE quando existe;
+    senao desenha a sigla da marca (mesmo fallback visual de hoje)."""
+    from PIL import Image, ImageDraw, ImageFont
+
+    if key == "__ultra__":
+        brand: dict[str, str] = dict(ULTRA_BRAND)
+    else:
+        brand = dict(
+            COMPETITOR_BRANDS.get(
+                key,
+                {"label": "Concorrente", "short": "C", "bg": "#64748B", "fg": "#FFFFFF"},
+            )
+        )
+    pin_bg = str(brand.get("bg", "#64748B"))
+    fg = str(brand.get("fg", "#FFFFFF"))
+    short = str(brand.get("short", "C"))[:3]
+
+    tile = Image.new("RGBA", (ATLAS_TILE, ATLAS_TILE), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(tile)
+
+    # balao do pin (teardrop) na cor da marca, contorno branco
+    draw.polygon(
+        [
+            (64, 6), (40, 18), (25, 42), (30, 70), (64, 122), (98, 70), (103, 42), (88, 18),
+        ],
+        fill=pin_bg,
+        outline="#FFFFFF",
+    )
+    draw.ellipse([22, 6, 106, 90], fill=pin_bg, outline="#FFFFFF", width=6)
+    # circulo branco interno (onde vai o logo / sigla)
+    cx, cy, r = _ATLAS_CIRCLE_CX, _ATLAS_CIRCLE_CY, _ATLAS_CIRCLE_R
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill="#FFFFFF")
+
+    logo_png = _extract_embedded_logo_png(str(_ICON_CACHE.get(key, {}).get("url", "")))
+    if logo_png is not None:
+        try:
+            import io
+
+            logo = Image.open(io.BytesIO(logo_png)).convert("RGBA")
+            side = r * 2
+            logo = logo.resize((side, side), Image.Resampling.LANCZOS)
+            # mascara circular para clipar o logo no circulo (espelha clipPath do SVG)
+            mask = Image.new("L", (side, side), 0)
+            ImageDraw.Draw(mask).ellipse([0, 0, side - 1, side - 1], fill=255)
+            tile.paste(logo, (cx - r, cy - r), mask)
+            return tile
+        except Exception:
+            pass
+
+    # fallback: sigla da marca centrada no circulo
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont
+    try:
+        font = ImageFont.truetype("arialbd.ttf", 26)
+    except Exception:
+        try:
+            font = ImageFont.truetype("DejaVuSans-Bold.ttf", 26)
+        except Exception:
+            font = ImageFont.load_default()
+    bbox = draw.textbbox((0, 0), short, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text((cx - tw / 2 - bbox[0], cy - th / 2 - bbox[1]), short, fill=fg, font=font)
+    return tile
+
+
+def build_icon_atlas(
+    redes: list[str],
+) -> tuple[str, dict[str, dict[str, int | bool]]]:
+    """Monta um atlas PNG unico com um tile 128x128 por chave em `redes` (redes de
+    concorrentes e/ou "__ultra__") e o iconMapping correspondente.
+
+    Retorna `(atlas_data_uri, icon_mapping)`:
+      - `atlas_data_uri`: `data:image/png;base64,...` (string UNICA do atlas).
+      - `icon_mapping`: `{chave: {"x","y","width","height","anchorY","mask"}}`.
+
+    Cache por `frozenset(redes)`. Preserva os logos (fonte = `_ICON_CACHE`/pins de
+    hoje). Nao altera score nem artefatos M1 (camada visual)."""
+    from PIL import Image
+
+    keys = sorted({str(r) for r in redes})
+    if not keys:
+        keys = ["__ultra__"]
+    cache_key = frozenset(keys)
+    cached = _ATLAS_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    n = len(keys)
+    atlas = Image.new("RGBA", (ATLAS_TILE * n, ATLAS_TILE), (0, 0, 0, 0))
+    mapping: dict[str, dict[str, int | bool]] = {}
+    for i, key in enumerate(keys):
+        tile = _render_pin_tile(key)
+        atlas.paste(tile, (i * ATLAS_TILE, 0))  # type: ignore[arg-type]
+        mapping[key] = {
+            "x": i * ATLAS_TILE,
+            "y": 0,
+            "width": ATLAS_TILE,
+            "height": ATLAS_TILE,
+            "anchorY": _ATLAS_ANCHOR_Y,
+            "mask": False,
+        }
+
+    import io
+
+    buffer = io.BytesIO()
+    atlas.save(buffer, format="PNG")
+    encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
+    atlas_data_uri = f"data:image/png;base64,{encoded}"
+
+    result = (atlas_data_uri, mapping)
+    _ATLAS_CACHE[cache_key] = result
+    return result

@@ -1,6 +1,8 @@
+import json
 from pathlib import Path
 
 import h3
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -8,6 +10,7 @@ import streamlit_app
 from motor_expansao.dashboard.constants import (
     COLOR_MODE_IDS,
     COLOR_MODES,
+    COMPETITOR_PIN_LIMIT,
     DOMINIO_SCHEMA_MINIMO,
     HYBRID_LOAD_COLS,
     OVERLAY_IDS,
@@ -554,10 +557,180 @@ def test_build_map_figure_adiciona_pins_de_concorrentes_no_recorte():
     assert points == 1
     assert len(deck.layers) == 2
     rendered_hex = pd.DataFrame(deck.layers[0].data)
-    rendered_competitors = pd.DataFrame(deck.layers[1].data)
+    competitor_layer = deck.layers[1]
+    rendered_competitors = pd.DataFrame(competitor_layer.data)
     assert "tooltip_title" in rendered_hex.columns
-    assert rendered_competitors["nome_unidade"].tolist() == ["Smart Paulista"]
-    assert rendered_competitors.loc[0, "icon_data"]["url"].startswith("data:image/")
+    # BLK-FIX-07: o logo agora vem do atlas (icon_atlas/icon_mapping em nivel de
+    # layer) e cada linha leva so a chave da rede em get_icon (sem icon_data por
+    # linha). O recorte (apenas Smart Paulista no bbox de SP) e preservado.
+    assert "icon_data" not in rendered_competitors.columns
+    assert rendered_competitors["tooltip_title"].tolist() == ["Smart Fit: Smart Paulista"]
+    # get_icon aponta para a coluna 'rede' (acessor pydeck -> '@@=rede')
+    assert str(competitor_layer.get_icon) in ("rede", "@@=rede")
+    assert "smart_fit" in competitor_layer.icon_mapping
+    # iconAtlas serializado e literal (NAO vira expressao '@@='): trava do pitfall
+    serialized_atlas = json.loads(deck.to_json())["layers"][1]["iconAtlas"]
+    assert serialized_atlas.startswith("data:image/png;base64,")
+    assert not serialized_atlas.startswith("@@=")
+
+
+# ── BLK-FIX-07: camada de pins escalavel (atlas + payload enxuto + cap duro) ─────
+
+_ICON_PAYLOAD_COLS_COMP = {
+    "rede",
+    "lng",
+    "lat",
+    "icon_size",
+    "tooltip_title",
+    "tooltip_line_1",
+    "tooltip_line_2",
+    "tooltip_line_3",
+    "tooltip_line_4",
+    "tooltip_line_5",
+}
+
+
+def _make_synthetic_competitors(n: int) -> pd.DataFrame:
+    """n concorrentes sinteticos no bbox de SP, varias redes, coords validas."""
+    redes = ["smart_fit", "bluefit", "panobianco", "selfit", "bodytech"]
+    rng = np.random.default_rng(7)
+    return pd.DataFrame(
+        {
+            "rede": [redes[i % len(redes)] for i in range(n)],
+            "rede_label": [redes[i % len(redes)].title() for i in range(n)],
+            "nome_unidade": [f"Unidade {i}" for i in range(n)],
+            "lat": rng.uniform(-23.70, -23.40, n),
+            "lng": rng.uniform(-46.80, -46.40, n),
+            "cidade": ["Sao Paulo"] * n,
+            "uf": ["SP"] * n,
+            "arquivo_origem": ["sintetico.csv"] * n,
+        }
+    )
+
+
+def _sp_reference() -> pd.DataFrame:
+    return pd.DataFrame({"lat": [-23.70, -23.40], "lng": [-46.80, -46.40]})
+
+
+def test_atlas_icon_layer_payload_enxuto_40k_concorrentes():
+    """40k concorrentes sinteticos: cap duro aplicado, payload enxuto (sem icon_data
+    por linha nem tooltip_line_6..14) e bytes sob LIMIT_BYTES. Medicao deterministica.
+
+    Margem: payload medido ~2.07 MB (6.000 linhas enxutas com tooltips), vs ~7 MB
+    para as MESMAS 6.000 linhas no modelo antigo (icon_data por linha) e ~47 MB para
+    40k sem cap. LIMIT_BYTES=3_000_000 deixa ~0.9 MB de folga sobre o medido.
+    """
+    from motor_expansao.dashboard.components import _build_competitor_icon_layer
+
+    LIMIT_BYTES = 3_000_000
+    comp = _make_synthetic_competitors(40_000)
+    layer, full = _build_competitor_icon_layer(comp, _sp_reference())
+
+    payload = pd.DataFrame(layer.data)
+    # cap duro aplicado
+    assert len(payload) <= COMPETITOR_PIN_LIMIT
+    assert len(payload) == COMPETITOR_PIN_LIMIT  # 40k >> cap
+    # payload enxuto: conjunto exato de colunas, sem icon_data nem campos vazios
+    assert set(payload.columns) == _ICON_PAYLOAD_COLS_COMP
+    assert "icon_data" not in payload.columns
+    assert not any(c in payload.columns for c in (f"tooltip_line_{i}" for i in range(6, 15)))
+    # bytes sob o limite (com folga documentada)
+    payload_bytes = len(json.dumps(payload.to_dict("records")))
+    assert payload_bytes < LIMIT_BYTES, f"payload_bytes={payload_bytes}"
+    # logo via atlas: literal (sem '@@='), mapping cobre as redes presentes
+    serialized = json.loads(
+        __import__("pydeck").Deck(layers=[layer]).to_json()
+    )["layers"][0]["iconAtlas"]
+    assert serialized.startswith("data:image/png;base64,")
+    assert not serialized.startswith("@@=")
+    for rede in payload["rede"].unique():
+        assert rede in layer.icon_mapping
+
+
+def test_pins_sp_like_1381_sem_regressao():
+    """SP-like (1.381 < cap): nao corta, payload enxuto leve e tooltips com os
+    MESMOS textos de hoje (Tipo/Rede/Cidade-UF/Coordenadas/Fonte)."""
+    from motor_expansao.dashboard.components import _build_competitor_icon_layer
+
+    n = 1381
+    comp = _make_synthetic_competitors(n)
+    # linha conhecida e deterministica para conferir os textos do tooltip
+    comp.loc[0, "rede"] = "smart_fit"
+    comp.loc[0, "rede_label"] = "Smart Fit"
+    comp.loc[0, "nome_unidade"] = "Smart Conhecida"
+    comp.loc[0, "cidade"] = "Sao Paulo"
+    comp.loc[0, "uf"] = "SP"
+    comp.loc[0, "lat"] = -23.55000
+    comp.loc[0, "lng"] = -46.63000
+    comp.loc[0, "arquivo_origem"] = "unidades_smart_fit.csv"
+
+    layer, full = _build_competitor_icon_layer(comp, _sp_reference())
+    payload = pd.DataFrame(layer.data)
+    assert len(payload) == n  # 1.381 < cap, sem corte
+    payload_bytes = len(json.dumps(payload.to_dict("records")))
+    assert payload_bytes < 600_000, f"payload_bytes={payload_bytes}"
+
+    row = payload.loc[payload["tooltip_title"] == "Smart Fit: Smart Conhecida"].iloc[0]
+    assert row["tooltip_line_1"] == "Tipo: Concorrente mapeado"
+    assert row["tooltip_line_2"] == "Rede: Smart Fit"
+    assert row["tooltip_line_3"] == "Cidade/UF: Sao Paulo / SP"
+    assert row["tooltip_line_4"] == "Coordenadas: -23.55000, -46.63000"
+    assert row["tooltip_line_5"] == "Fonte: unidades_smart_fit.csv"
+    # logo via atlas
+    assert "smart_fit" in layer.icon_mapping
+
+
+def test_icon_atlas_nao_vira_expressao_pydeck():
+    """Trava de regressao do pitfall pydeck: iconAtlas serializado deve ser literal
+    (data:image/png;base64,...) e NUNCA comecar com '@@=' (acessor invalido)."""
+    import pydeck as pdk
+
+    from motor_expansao.dashboard.components import (
+        _build_competitor_icon_layer,
+        _build_ultra_icon_layer,
+    )
+
+    comp = _make_synthetic_competitors(50)
+    comp_layer, _ = _build_competitor_icon_layer(comp, _sp_reference())
+    ultra = pd.DataFrame(
+        {
+            "nome_unidade": ["U1", "U2"],
+            "lat": [-23.55, -23.56],
+            "lng": [-46.63, -46.64],
+            "cidade": ["Sao Paulo", "Sao Paulo"],
+            "uf": ["SP", "SP"],
+            "arquivo_origem": ["Ultra.csv", "Ultra.csv"],
+        }
+    )
+    ultra_layer = _build_ultra_icon_layer(ultra, _sp_reference())
+
+    for layer in (comp_layer, ultra_layer):
+        serialized = json.loads(pdk.Deck(layers=[layer]).to_json())["layers"][0]["iconAtlas"]
+        assert serialized.startswith("data:image/png;base64,")
+        assert not serialized.startswith("@@=")
+
+
+def test_pins_amostrados_caption():
+    """count_pins_in_scope/pins_amostrados_caption: frase so quando > cap; None senao."""
+    from motor_expansao.dashboard.components import (
+        count_pins_in_scope,
+        pins_amostrados_caption,
+    )
+
+    ref = _sp_reference()
+    comp_small = _make_synthetic_competitors(100)
+    n_comp, n_ultra = count_pins_in_scope(comp_small, None, ref)
+    assert n_comp == 100
+    assert n_ultra == 0
+    assert pins_amostrados_caption(n_comp, n_ultra) is None
+
+    comp_big = _make_synthetic_competitors(40_000)
+    n_comp_big, _ = count_pins_in_scope(comp_big, None, ref)
+    assert n_comp_big == 40_000
+    caption = pins_amostrados_caption(n_comp_big, 0)
+    assert caption is not None
+    assert "nao afeta score" in caption
+    assert str(COMPETITOR_PIN_LIMIT).startswith("6")
 
 
 def test_build_map_figure_usa_geometria_granular_em_uf_ab_e_fallback_municipal_em_uf_c():
@@ -2418,8 +2591,10 @@ def test_build_analise_pontual_map_inclui_pins_no_raio():
     assert len(icon_layers) == 2
     competitor_data = pd.DataFrame(icon_layers[0].data)
     ultra_data = pd.DataFrame(icon_layers[1].data)
-    assert competitor_data["nome_unidade"].tolist() == ["Smart Paulista"]
-    assert ultra_data["nome_unidade"].tolist() == ["Ultra Paulista"]
+    # BLK-FIX-07: payload enxuto nao carrega nome_unidade cru; o nome vai no
+    # tooltip_title. O recorte por raio (so os pins de SP) e preservado.
+    assert competitor_data["tooltip_title"].tolist() == ["Smart Fit: Smart Paulista"]
+    assert ultra_data["tooltip_title"].tolist() == ["Ultra Academia: Ultra Paulista"]
 
 
 def test_build_analise_pontual_map_nao_inclui_pins_fora_do_raio():

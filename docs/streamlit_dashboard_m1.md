@@ -154,6 +154,25 @@ Tabelas operacionais filtradas pela regua <5k hab. Ordenacao por `rank_brasil` (
 - Camada puramente visual: nao altera scores, ranking nem artefatos oficiais.
 - Cores/iniciais em `COMPETITOR_BRANDS`.
 
+### Atlas de icones e cap de render (BLK-FIX-07 Fase A)
+
+- O logo de cada rede (e da Ultra) entra no mapa via **atlas de icone unico** por recorte
+  (`build_icon_atlas(redes)` em `competitors.py`), nao mais como data-URI base64 repetida por
+  linha. Cada ponto da `IconLayer` carrega so a chave (`rede` / `__ultra__`) em `get_icon`; o
+  atlas + `iconMapping` ficam em nivel de layer. Logos 100% preservados; payload por linha
+  ~3x menor (1.381 pins SP: de ~7 MB para ~0,5 MB; cap de 6.000 fica em ~2 MB independente do
+  total de pins). Atlas cacheado por `frozenset` de redes (`_ATLAS_CACHE`).
+- **Pitfall pydeck:** uma data-URI base64 passada direta em `icon_atlas` vira acessor invalido
+  (`@@=...`) porque `pydeck.types.Image.validate` rejeita data-URIs. Workaround: passar o atlas
+  entre aspas (`icon_atlas='"'+atlas+'"'`). Trava de regressao no teste
+  `test_icon_atlas_nao_vira_expressao_pydeck`.
+- **Cap duro de render:** `COMPETITOR_PIN_LIMIT = 6000` / `ULTRA_PIN_LIMIT = 6000` em
+  `constants.py` limitam o numero de pins por camada (amostragem deterministica: ordenacao
+  estavel + `head(N)`), garantindo o bound de ~40k concorrentes sem OOM client-side. Quando o
+  recorte excede o cap, o Mapa Territorial exibe um caption "amostrado"
+  (`count_pins_in_scope`/`pins_amostrados_caption`) deixando claro que e **limite de render**:
+  nao afeta score, ranking nem carteira. Refine o filtro de municipio para ver todos os pins.
+
 ## Pins das unidades Ultra
 
 - Arquivo: `data/ultra/Ultra.csv` (`sep=";"`, `encoding=latin-1`, 1 linha de metadado).

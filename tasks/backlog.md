@@ -181,71 +181,48 @@ do score). Mitigação: decisão humana + DEC antes de qualquer execução; medi
 
 ---
 
-### BLK-FIX-07 — Camada de pins de academias escalável (manter logos; alvo ~40k concorrentes)
+- BLK-FIX-07 (concluído 2026-06-01) — ver tasks/completed.md
+
+### BLK-FIX-07-B — Clustering server-side por recorte das IconLayers (Fase B, refino de UX)
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Alta** (bug de produção: SP estoura OOM; render/transporte — não toca M1/score) |
-| **Prioridade** | **Alta (topo)** |
+| **Criticidade** | **Média** (refino de UX da camada de pins; não toca M1/score) |
+| **Prioridade** | **Média** (o bound de 40k já está garantido pela Fase A / cap duro) |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Depende de** | BLK-FIX-03 (cap de hexes, concluído 2026-06-01) — complementar, não substitui |
+| **Depende de** | BLK-FIX-07 (Fase A, concluído 2026-06-01) |
 | **Status** | Pendente |
-| **Origem** | Diagnóstico no fechamento/deploy do BLK-FIX-03 (2026-06-01): SP continuou travando após o cap de hexes |
+| **Origem** | Decisão de faseamento do Planner no BLK-FIX-07 (2026-06-01); recomendado pelo QA |
 
-**Contexto / causa-raiz (confirmada com dado real):** mesmo após o cap dinâmico de hexes do BLK-FIX-03
-(18k), **SP continua estourando "Out of Memory" client-side**, enquanto AM (293k hexes) e BA (94k hexes)
-funcionam. O fator não é o nº de hexes (capado e ~idêntico entre UFs grandes), e sim as **camadas de
-pins de academias**, que **não têm cap** e embutem o **logo base64 por linha**:
-- `_build_competitor_icon_layer` ([components.py:695](src/motor_expansao/dashboard/components.py#L695))
-  e `_build_ultra_icon_layer` ([components.py:231](src/motor_expansao/dashboard/components.py#L231))
-  atribuem `icon_data` = data-URI base64 do logo **por pin** (`competitor_icon_data`,
-  [competitors.py:198](src/motor_expansao/dashboard/competitors.py#L198)), repetido no payload por linha.
-- Contagem real por bbox: **SP 1.381** concorrentes vs **BA 133** vs **AM 68** (total 3.296). SP concentra
-  o grosso das academias → outlier de payload, mesmo com poucos hexes.
-- Cada pin monta **15 campos de tooltip** ([components.py:711-732](src/motor_expansao/dashboard/components.py#L711-L732)),
-  custo linear por linha que o BLK-FIX-02 (`_deck_layer_frame`) nunca aplicou às IconLayers.
+**Contexto / gap:** o BLK-FIX-07 (Fase A) já eliminou o OOM e garantiu o bound de ~40k via cap de
+segurança duro (`COMPETITOR_PIN_LIMIT=6000`) + atlas de ícones + payload enxuto. Quando o recorte excede
+o cap, a Fase A **corta** pins (com caption "amostrado" honesta). A Fase B substitui "cortar" por
+"mostrar densidade": agregar pins em clusters por grid/hex na visão de UF inteira e expandir para pins
+individuais com logo quando o recorte é município/filtro.
 
-⚠ **Escala futura:** scrapings em desenvolvimento devem levar o nº de concorrentes a **>40 mil**. Só o
-atlas de ícones (logo uma vez) **não basta** a 40k: sobra o custo `O(N)` de transporte/serialização
-(uma linha por pin + tooltip, serializada a cada rerun e mantida no heap da aba). A correção precisa ser
-dimensionada para 40k desde já.
+**Objetivo:** preservar a leitura de densidade concorrencial em recortes grandes (UF inteira) sem cortar
+pins arbitrariamente, mantendo o bound de payload.
 
-**Objetivo:** tornar a camada de pins escalável a ~40k concorrentes **mantendo os logos**, sem crash de
-memória, sem tocar M1/score/artefatos.
-
-**Escopo permitido (vias a fundamentar pelo Planner):**
-- **Atlas de ícones compartilhado** (`iconAtlas` + `iconMapping`): logo entra **uma vez** no atlas; cada
-  linha carrega só o **nome da rede**. Mantém os logos; elimina a repetição do data-URI por pin.
-- **Gate por recorte + clustering server-side:** na visão de **UF inteira** (muitos pins), enviar
-  **clusters agregados** (contagem por grid/hex), não todos os pins; expandir para **pins individuais
-  com logo** quando o recorte é pequeno (município/filtro). Limita o payload independentemente do total
-  de 40k. (Nota: `st.pydeck_chart` **não** round-trippa zoom/pan ao servidor → o gate é por
-  **recorte/filtro selecionado**, não por zoom client-side ao vivo.)
-- **Payload por linha enxuto:** aplicar o equivalente do `_deck_layer_frame` às IconLayers — tooltip via
-  **template** sobre 2–3 colunas cruas em vez dos 15 campos pré-montados.
-- **Cap de segurança duro** por camada (fail-safe com aviso "amostrado"), análogo ao `MAP_POINT_LIMIT`.
-- **Medição determinística:** teste que conta linhas/bytes do payload das IconLayers por UF, inclusive com
-  **dataset sintético de ~40k concorrentes**, para provar o bound antes de o scraping crescer.
+**Escopo permitido:** clustering server-side por recorte com gate **determinístico por recorte/filtro
+selecionado** (NÃO por zoom — `st.pydeck_chart` não round-trippa zoom/pan ao servidor): UF inteira sem
+filtro ⇒ clusters agregados (contagem por grid/hex); município/filtro selecionado ⇒ pins individuais com
+logo (caminho atual da Fase A). Tooltip de cluster (contagem por rede/total). Reusar o atlas e o payload
+enxuto da Fase A.
 
 **Fora de escopo:** M1/score/artefatos/universo de hexes; trocar o componente de mapa (Bloco 12 mantém
-`st.pydeck_chart`); **culling por zoom client-side ao vivo** (exigiria componente React custom — follow-up
-se quiserem refino depois); refazer o cap de hexes do BLK-FIX-03 (já feito); mexer na regra de cor de score.
+`st.pydeck_chart`); culling por zoom client-side ao vivo (exigiria componente React custom); refazer o cap
+de hexes do BLK-FIX-03 ou o atlas/cap da Fase A; mexer na regra de cor de score.
 
-**Arquivos prováveis:** `dashboard/components.py` (`_build_competitor_icon_layer`, `_build_ultra_icon_layer`,
-`build_*_map_figure`, `_filter_competitors_to_reference`), `dashboard/competitors.py`
-(`competitor_icon_data`/atlas, preload de logos), `dashboard/constants.py` (cap de pins / limites de
-cluster), `dashboard/pages.py` (render do Mapa Territorial), `tests/integration/test_streamlit_app.py`.
+**Arquivos prováveis:** `dashboard/components.py` (`_build_competitor_icon_layer`, builders de mapa, novo
+helper de clustering), `dashboard/constants.py` (limites de cluster/grid), `dashboard/pages.py` (gate por
+recorte + caption de cluster), `tests/integration/test_streamlit_app.py`.
 
-**Critérios de aceite:**
-- Com dataset sintético de **40k concorrentes**, o payload das IconLayers por UF fica **≤ limite definido**
-  (medição determinística de linhas/bytes); sem crash.
-- **SP real (1.381 pins) carrega sem crash** no Mapa Territorial (repro manual + medição).
-- **Logos preservados** (atlas) e **tooltips preservados** (via template); demais UFs não regridem.
-- Zero mudança em M1/score/artefatos; `pickable`/clique preservado; suíte verde.
+**Critérios de aceite:** UF inteira renderiza clusters agregados (sem cortar pins) com payload ≤ limite;
+município/filtro renderiza pins individuais com logo (Fase A); gate determinístico testado; logos e
+`pickable` preservados; zero M1; suíte verde.
 
-**Risco:** médio-alto (refator de render + clustering). **Mitigação/faseamento sugerido:** Fase A (atlas +
-payload enxuto + cap de segurança) já resolve o SP imediato e dá ganho grande; Fase B (clustering por
-recorte) entrega o alvo de 40k. O Planner decide se entrega em um ciclo ou em duas fases.
+**Risco:** médio (novo modelo de dados/UX de cluster). Mitigação: bound já garantido pela Fase A; Fase B é
+melhoria incremental, não correção de bug.
 
 ---
 

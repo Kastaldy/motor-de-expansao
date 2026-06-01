@@ -101,6 +101,13 @@ MAP_POINT_LIMIT = 35000
 # hexagonos H3 em GPU em estados como SP/AM/PA/MT/MG/BA. Nao altera score nem
 # artefatos M1; nao altera MAP_POINT_LIMIT global (UFs pequenas inalteradas).
 MAP_POINT_LIMIT_LARGE = 18000
+# Cap de seguranca DURO por camada de pins (IconLayer de concorrentes/Ultra) no
+# Mapa Territorial. Limita o payload das IconLayers INDEPENDENTE do total de pins
+# (alvo: escalar a ~40k concorrentes sem OOM client-side). Amostragem deterministica
+# por ordenacao estavel + head(N); aviso "amostrado" na UI. Nao altera score nem
+# artefatos M1; pins sao camada visual de apoio (CLAUDE.md §2).
+COMPETITOR_PIN_LIMIT = 6000
+ULTRA_PIN_LIMIT = 6000
 TABLE_ROW_LIMIT = 1000
 POP_MIN_ACIONAVEL = 5_000
 BRASIL_CENTER = {"lat": -14.235, "lon": -51.9253}

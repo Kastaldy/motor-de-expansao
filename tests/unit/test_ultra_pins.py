@@ -7,10 +7,12 @@ import pandas as pd
 import pytest
 
 from motor_expansao.dashboard.competitors import (
+    _ATLAS_CACHE,
     _ICON_CACHE,
     COMPETITOR_SPECS,
     ULTRA_COLUMNS,
     _ultra_icon_svg,
+    build_icon_atlas,
     competitor_icon_data,
     load_ultra_points,
     preload_logos,
@@ -255,3 +257,70 @@ def test_build_ultra_icon_layer_filtra_fora_do_bounding_box():
     })
     layer = _build_ultra_icon_layer(ultra, _make_reference_df())
     assert layer is None
+
+
+# ── BLK-FIX-07: atlas de icones (preserva logos) ────────────────────────────────
+
+
+def test_build_icon_atlas_preserva_logos(tmp_path):
+    """Com _ICON_CACHE populado por preload_logos (logo PNG), build_icon_atlas
+    retorna atlas data-URI PNG nao-vazio e mapping com x/y/width/height/anchorY."""
+    concorrentes_dir = tmp_path / "concorrentes"
+    concorrentes_dir.mkdir()
+    (concorrentes_dir / "logo_smart_fit.png").write_bytes(_MINIMAL_PNG)
+    _ICON_CACHE.pop("smart_fit", None)
+    _ATLAS_CACHE.clear()
+    preload_logos(concorrentes_dir)
+
+    atlas, mapping = build_icon_atlas(["smart_fit"])
+    assert atlas.startswith("data:image/png;base64,")
+    assert len(atlas) > len("data:image/png;base64,")
+    assert set(mapping.keys()) == {"smart_fit"}
+    tile = mapping["smart_fit"]
+    for key in ("x", "y", "width", "height", "anchorY"):
+        assert key in tile
+    assert tile["width"] == 128
+    assert tile["height"] == 128
+    assert tile["anchorY"] == 122
+    _ICON_CACHE.pop("smart_fit", None)
+    _ATLAS_CACHE.clear()
+
+
+def test_build_icon_atlas_ultra(tmp_path):
+    ultra_dir = tmp_path / "ultra"
+    ultra_dir.mkdir()
+    (ultra_dir / "logo_ultra.png").write_bytes(_MINIMAL_PNG)
+    _ICON_CACHE.pop("__ultra__", None)
+    _ATLAS_CACHE.clear()
+    preload_logos(tmp_path / "concorrentes_inexistente", ultra_dir=ultra_dir)
+
+    atlas, mapping = build_icon_atlas(["__ultra__"])
+    assert atlas.startswith("data:image/png;base64,")
+    assert "__ultra__" in mapping
+    assert mapping["__ultra__"]["anchorY"] == 122
+    _ICON_CACHE.pop("__ultra__", None)
+    _ATLAS_CACHE.clear()
+
+
+def test_build_icon_atlas_fallback_sigla_sem_logo():
+    """Rede sem logo PNG no cache: atlas ainda e gerado (balao + sigla)."""
+    _ICON_CACHE.pop("bluefit", None)
+    _ATLAS_CACHE.clear()
+    atlas, mapping = build_icon_atlas(["bluefit"])
+    assert atlas.startswith("data:image/png;base64,")
+    assert "bluefit" in mapping
+    _ATLAS_CACHE.clear()
+
+
+def test_build_ultra_icon_layer_usa_atlas():
+    """_build_ultra_icon_layer produz layer com icon_atlas/icon_mapping e get_icon
+    apontando para a chave (sem icon_data por linha)."""
+    layer = _build_ultra_icon_layer(_make_ultra_df(), _make_reference_df())
+    assert layer is not None
+    assert layer.icon_atlas is not None
+    assert layer.icon_mapping is not None
+    assert "__ultra__" in layer.icon_mapping
+    assert str(layer.get_icon) in ("icon_key", "@@=icon_key")
+    payload = pd.DataFrame(layer.data)
+    assert "icon_data" not in payload.columns
+    assert "icon_key" in payload.columns

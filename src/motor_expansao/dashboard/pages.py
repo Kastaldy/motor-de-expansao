@@ -50,7 +50,9 @@ from motor_expansao.dashboard.components import (
     build_ultra_network_kpis,
     build_ultra_presence_map,
     build_unified_map_figure,
+    count_pins_in_scope,
     filter_points_to_radius,
+    pins_amostrados_caption,
     render_answer_card,
     render_competitor_legend,
     render_dominio_tese_legend,
@@ -2673,6 +2675,24 @@ def render_mapa_territorial(
         deck.layers.append(_build_multihex_selection_layer(multihex_ids))
 
     render_mapa_pydeck_fragment(deck, n_points, selected_ufs, multihex_ids)
+
+    # Caption "amostrado" das camadas de pins: aparece SO quando o recorte excede o
+    # cap de render (COMPETITOR_PIN_LIMIT/ULTRA_PIN_LIMIT). Determinístico, a partir
+    # do recorte visivel; deixa claro que e limite de RENDER e nao afeta score nem
+    # carteira (BLK-FIX-07; CLAUDE.md §2). Nao mexe no cap de hexes do BLK-FIX-03.
+    _pin_ref = df
+    if selected_cities and "cidade" in df.columns:
+        _pin_ref = df.loc[df["cidade"].isin(selected_cities)]
+    elif selected_ufs and "uf" in df.columns:
+        _pin_ref = df.loc[df["uf"].isin(selected_ufs)]
+    if not _pin_ref.empty and {"lat", "lng"} <= set(_pin_ref.columns):
+        _enabled = enabled_overlays
+        _comp_for_caption = competitors_df if "concorrentes" in _enabled else None
+        _ultra_for_caption = ultra_df if "ultra" in _enabled else None
+        _n_comp, _n_ultra = count_pins_in_scope(_comp_for_caption, _ultra_for_caption, _pin_ref)
+        _pins_caption = pins_amostrados_caption(_n_comp, _n_ultra)
+        if _pins_caption is not None:
+            st.caption(_pins_caption)
 
     # Leitura de click_coord apos o fragmento (pode ter sido atualizado)
     click_coord: tuple[float, float] | None = st.session_state.get("click_coord")
