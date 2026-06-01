@@ -11,15 +11,15 @@ import pydeck as pdk
 import streamlit as st
 
 from motor_expansao.dashboard.competitors import (
-    competitor_icon_data,
+    build_icon_atlas,
     competitor_legend_entries,
-    ultra_icon_data,
     ultra_legend_entry,
 )
 from motor_expansao.dashboard.constants import (
     BRASIL_CENTER,
     CENSO_UFS,
     COLORS,
+    COMPETITOR_PIN_LIMIT,
     FAIXA_COLORS,
     FAIXA_ORDEM,
     MAP_POINT_LIMIT,
@@ -31,6 +31,7 @@ from motor_expansao.dashboard.constants import (
     OVERLAYS,
     RESIDUAL_SCORE_BANDS,
     TABLE_ROW_LIMIT,
+    ULTRA_PIN_LIMIT,
 )
 from motor_expansao.dashboard.data import _has_censo_signal, _normalized_join_quality, haversine_km
 from motor_expansao.dashboard.utils import (
@@ -228,6 +229,79 @@ def render_ultra_legend(ultra_df: pd.DataFrame | None = None) -> None:
     st.markdown(f"<div class='legend-row'>{chip}</div>", unsafe_allow_html=True)
 
 
+def _vectorized_cidade_uf_line(df: pd.DataFrame) -> pd.Series:
+    """Linha de tooltip 'Cidade/UF: X / Y' vetorizada (sem .apply(axis=1)),
+    com mesmo texto de hoje: '-' quando cidade e uf ausentes/vazios."""
+    cidade = df.get("cidade", pd.Series([""] * len(df), index=df.index)).map(_clean_tooltip_value)
+    uf = df.get("uf", pd.Series([""] * len(df), index=df.index)).map(_clean_tooltip_value)
+    ambos_vazios = (cidade == "-") & (uf == "-")
+    par = cidade.astype(str) + " / " + uf.astype(str)
+    return "Cidade/UF: " + np.where(ambos_vazios, "-", par)
+
+
+def _vectorized_coord_line(df: pd.DataFrame) -> pd.Series:
+    """Linha de tooltip 'Coordenadas: lat, lng' vetorizada (sem .apply(axis=1)),
+    com mesmo formato de _format_coordinate_pair (.5f, '-' se NaN)."""
+    lat = pd.to_numeric(df["lat"], errors="coerce")
+    lng = pd.to_numeric(df["lng"], errors="coerce")
+    valido = lat.notna() & lng.notna()
+    par = lat.map(lambda v: f"{float(v):.5f}" if pd.notna(v) else "-") + ", " + lng.map(
+        lambda v: f"{float(v):.5f}" if pd.notna(v) else "-"
+    )
+    return "Coordenadas: " + np.where(valido, par, "-")
+
+
+def _ultra_icon_layer_from_frame(ultra: pd.DataFrame):
+    """Constroi a IconLayer de pins Ultra a partir de um frame JA filtrado.
+
+    Aplica cap duro (ULTRA_PIN_LIMIT, amostragem deterministica), monta o atlas
+    de icone (chave unica '__ultra__'), tooltips vetorizados (mesmos textos de
+    hoje) e payload enxuto. Logo preservado via atlas. Camada visual: nao altera
+    score nem artefatos M1."""
+    if ultra.empty:
+        return None
+
+    for column in ["cidade", "uf", "arquivo_origem"]:
+        if column not in ultra.columns:
+            ultra[column] = ""
+
+    # cap duro deterministico
+    if len(ultra) > ULTRA_PIN_LIMIT:
+        ultra = (
+            ultra.sort_values(["nome_unidade", "lat", "lng"], kind="stable")
+            .head(ULTRA_PIN_LIMIT)
+            .reset_index(drop=True)
+        )
+
+    atlas, mapping = build_icon_atlas(["__ultra__"])
+
+    ultra["icon_key"] = "__ultra__"
+    ultra["icon_size"] = 38
+    ultra["tooltip_title"] = "Ultra Academia: " + ultra["nome_unidade"].astype(str)
+    ultra["tooltip_line_1"] = "Tipo: Unidade Ultra Academia"
+    ultra["tooltip_line_2"] = _vectorized_cidade_uf_line(ultra)
+    ultra["tooltip_line_3"] = _vectorized_coord_line(ultra)
+    ultra["tooltip_line_4"] = "Fonte: " + ultra["arquivo_origem"].astype(str)
+
+    frame = _icon_layer_frame(ultra, icon_key_col="icon_key", n_tooltip_lines=4)
+
+    return pdk.Layer(
+        "IconLayer",
+        data=frame,
+        get_icon="icon_key",
+        get_position="[lng, lat]",
+        get_size="icon_size",
+        size_units="pixels",
+        size_scale=1,
+        size_min_pixels=26,
+        size_max_pixels=46,
+        pickable=True,
+        billboard=True,
+        icon_atlas='"' + atlas + '"',
+        icon_mapping=mapping,
+    )
+
+
 def _build_ultra_icon_layer(
     ultra_df: pd.DataFrame | None,
     reference_df: pd.DataFrame,
@@ -254,45 +328,7 @@ def _build_ultra_icon_layer(
     if ultra.empty:
         return None
 
-    for column in ["cidade", "uf", "arquivo_origem"]:
-        if column not in ultra.columns:
-            ultra[column] = ""
-
-    icon = ultra_icon_data()
-    ultra["icon_data"] = [icon] * len(ultra)
-    ultra["icon_size"] = 38
-    ultra["tooltip_title"] = "Ultra Academia: " + ultra["nome_unidade"].astype(str)
-    ultra["tooltip_line_1"] = "Tipo: Unidade Ultra Academia"
-    ultra["tooltip_line_2"] = ultra.apply(
-        lambda row: "Cidade/UF: "
-        + (
-            f"{_clean_tooltip_value(row.get('cidade'))} / {_clean_tooltip_value(row.get('uf'))}"
-            if _clean_tooltip_value(row.get("cidade")) != "-" or _clean_tooltip_value(row.get("uf")) != "-"
-            else "-"
-        ),
-        axis=1,
-    )
-    ultra["tooltip_line_3"] = "Coordenadas: " + ultra.apply(
-        lambda row: _format_coordinate_pair(row["lat"], row["lng"]),
-        axis=1,
-    )
-    ultra["tooltip_line_4"] = "Fonte: " + ultra["arquivo_origem"].astype(str)
-    for idx in range(5, 15):
-        ultra[f"tooltip_line_{idx}"] = ""
-
-    return pdk.Layer(
-        "IconLayer",
-        data=ultra,
-        get_icon="icon_data",
-        get_position="[lng, lat]",
-        get_size="icon_size",
-        size_units="pixels",
-        size_scale=1,
-        size_min_pixels=26,
-        size_max_pixels=46,
-        pickable=True,
-        billboard=True,
-    )
+    return _ultra_icon_layer_from_frame(ultra)
 
 
 def apply_exec_layout(fig, *, title: str, height: int) -> None:
@@ -692,6 +728,74 @@ def _filter_competitors_to_reference(
     ].copy()
 
 
+def _filter_ultra_to_reference(
+    ultra_df: pd.DataFrame | None,
+    reference_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Filtra os pins Ultra ao bbox da referencia (mesma logica de padding de
+    _build_ultra_icon_layer). Usado por count_pins_in_scope para o caption."""
+    if ultra_df is None or ultra_df.empty:
+        return pd.DataFrame()
+    if reference_df.empty or not {"lat", "lng"} <= set(reference_df.columns):
+        return pd.DataFrame()
+    if not {"lat", "lng", "nome_unidade"} <= set(ultra_df.columns):
+        return pd.DataFrame()
+
+    ultra = ultra_df.loc[ultra_df["lat"].notna() & ultra_df["lng"].notna()].copy()
+    if ultra.empty:
+        return ultra
+
+    lat_span = float(reference_df["lat"].max() - reference_df["lat"].min())
+    lng_span = float(reference_df["lng"].max() - reference_df["lng"].min())
+    padding = max(0.05, min(0.8, max(lat_span, lng_span) * 0.08))
+
+    return ultra.loc[
+        ultra["lat"].between(
+            float(reference_df["lat"].min()) - padding,
+            float(reference_df["lat"].max()) + padding,
+        )
+        & ultra["lng"].between(
+            float(reference_df["lng"].min()) - padding,
+            float(reference_df["lng"].max()) + padding,
+        )
+    ].copy()
+
+
+def count_pins_in_scope(
+    competitors_df: pd.DataFrame | None,
+    ultra_df: pd.DataFrame | None,
+    reference_df: pd.DataFrame,
+) -> tuple[int, int]:
+    """Conta concorrentes e pins Ultra dentro do recorte (bbox da referencia),
+    usando os mesmos filtros dos builders das IconLayers. Determinístico; nao
+    depende do retorno dos builders. Camada visual: nao altera score/carteira."""
+    n_comp = len(_filter_competitors_to_reference(competitors_df, reference_df))
+    n_ultra = len(_filter_ultra_to_reference(ultra_df, reference_df))
+    return n_comp, n_ultra
+
+
+def pins_amostrados_caption(n_comp: int, n_ultra: int) -> str | None:
+    """Retorna uma frase honesta de 'amostrado' SE algum total exceder o cap de
+    render (COMPETITOR_PIN_LIMIT/ULTRA_PIN_LIMIT); senao None. Deixa claro que e
+    limite de RENDER e NAO afeta score nem carteira (CLAUDE.md §2)."""
+    partes: list[str] = []
+    if n_comp > COMPETITOR_PIN_LIMIT:
+        partes.append(
+            f"concorrentes: exibindo os primeiros {COMPETITOR_PIN_LIMIT:,} de {n_comp:,}".replace(",", ".")
+        )
+    if n_ultra > ULTRA_PIN_LIMIT:
+        partes.append(
+            f"Ultra: exibindo as primeiras {ULTRA_PIN_LIMIT:,} de {n_ultra:,}".replace(",", ".")
+        )
+    if not partes:
+        return None
+    return (
+        "Pins amostrados por limite de renderizacao (" + "; ".join(partes) + "). "
+        "Refine o filtro de municipio para ver todas. "
+        "Limite apenas visual: nao afeta score, ranking nem carteira."
+    )
+
+
 def _build_competitor_icon_layer(
     competitors_df: pd.DataFrame | None,
     reference_df: pd.DataFrame,
@@ -706,35 +810,38 @@ def _build_competitor_icon_layer(
         if column not in comp.columns:
             comp[column] = ""
 
-    comp["icon_data"] = comp["rede"].astype(str).map(competitor_icon_data)
+    # cap duro deterministico (limita o payload da IconLayer independente do total;
+    # garante o bound de ~40k concorrentes sem OOM client-side).
+    if len(comp) > COMPETITOR_PIN_LIMIT:
+        comp = (
+            comp.sort_values(["rede_label", "nome_unidade", "lat", "lng"], kind="stable")
+            .head(COMPETITOR_PIN_LIMIT)
+            .reset_index(drop=True)
+        )
+
+    # atlas unico para as redes presentes; cada linha leva so a chave 'rede'
+    redes = sorted(comp["rede"].astype(str).unique())
+    atlas, mapping = build_icon_atlas(redes)
+
+    comp["rede"] = comp["rede"].astype(str)
     comp["icon_size"] = 34
-    comp["tooltip_title"] = comp.apply(
-        lambda row: f"{_clean_tooltip_value(row.get('rede_label'))}: {_clean_tooltip_value(row.get('nome_unidade'))}",
-        axis=1,
+    comp["tooltip_title"] = (
+        comp["rede_label"].map(_clean_tooltip_value).astype(str)
+        + ": "
+        + comp["nome_unidade"].map(_clean_tooltip_value).astype(str)
     )
     comp["tooltip_line_1"] = "Tipo: Concorrente mapeado"
     comp["tooltip_line_2"] = "Rede: " + comp["rede_label"].astype(str)
-    comp["tooltip_line_3"] = comp.apply(
-        lambda row: "Cidade/UF: "
-        + (
-            f"{_clean_tooltip_value(row.get('cidade'))} / {_clean_tooltip_value(row.get('uf'))}"
-            if _clean_tooltip_value(row.get("cidade")) != "-" or _clean_tooltip_value(row.get("uf")) != "-"
-            else "-"
-        ),
-        axis=1,
-    )
-    comp["tooltip_line_4"] = "Coordenadas: " + comp.apply(
-        lambda row: _format_coordinate_pair(row["lat"], row["lng"]),
-        axis=1,
-    )
+    comp["tooltip_line_3"] = _vectorized_cidade_uf_line(comp)
+    comp["tooltip_line_4"] = _vectorized_coord_line(comp)
     comp["tooltip_line_5"] = "Fonte: " + comp["arquivo_origem"].astype(str)
-    for idx in range(6, 15):
-        comp[f"tooltip_line_{idx}"] = ""
+
+    frame = _icon_layer_frame(comp, icon_key_col="rede", n_tooltip_lines=5)
 
     layer = pdk.Layer(
         "IconLayer",
-        data=comp,
-        get_icon="icon_data",
+        data=frame,
+        get_icon="rede",
         get_position="[lng, lat]",
         get_size="icon_size",
         size_units="pixels",
@@ -743,6 +850,8 @@ def _build_competitor_icon_layer(
         size_max_pixels=42,
         pickable=True,
         billboard=True,
+        icon_atlas='"' + atlas + '"',
+        icon_mapping=mapping,
     )
     return layer, comp
 
@@ -1018,6 +1127,39 @@ def _deck_layer_frame(map_df: pd.DataFrame) -> pd.DataFrame:
     return map_df.loc[:, ordered].copy()
 
 
+# Colunas minimas que a IconLayer de pins (concorrentes/Ultra) serializa ao
+# frontend (BLK-FIX-07 Fase A). Reduz o payload por linha: sem o dict de data-URI
+# (substituido pelo atlas) e sem os campos vazios tooltip_line_6..14 (o template
+# compartilhado renderiza vazio para chave ausente). Nao recalcula score.
+_ICON_RENDER_COLUMNS = ("lng", "lat", "icon_size", "tooltip_title")
+
+
+def _icon_layer_frame(
+    df: pd.DataFrame, *, icon_key_col: str, n_tooltip_lines: int
+) -> pd.DataFrame:
+    """Projeta o frame de pins para SOMENTE as colunas consumidas pela IconLayer:
+    chave de icone (`icon_key_col`), posicao (lng/lat), tamanho (icon_size),
+    tooltip_title e tooltip_line_1..n REALMENTE preenchidos. Analogo a
+    `_deck_layer_frame`; remove a data-URI por linha e os campos de tooltip vazios.
+    Nao muta o df de origem. Nao recalcula score nem altera artefatos M1."""
+    tooltip_cols = [
+        f"tooltip_line_{i}"
+        for i in range(1, n_tooltip_lines + 1)
+    ]
+    keep = [
+        c
+        for c in (icon_key_col, *_ICON_RENDER_COLUMNS, *tooltip_cols)
+        if c in df.columns
+    ]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for c in keep:
+        if c not in seen:
+            seen.add(c)
+            ordered.append(c)
+    return df.loc[:, ordered].copy()
+
+
 def build_map_figure(
     df: pd.DataFrame,
     *,
@@ -1203,45 +1345,12 @@ def build_ultra_presence_map(
     if ultra.empty:
         return None, 0
 
-    for column in ["cidade", "uf", "arquivo_origem"]:
-        if column not in ultra.columns:
-            ultra[column] = ""
-
-    icon = ultra_icon_data()
-    ultra["icon_data"] = [icon] * len(ultra)
-    ultra["icon_size"] = 38
-    ultra["tooltip_title"] = "Ultra Academia: " + ultra["nome_unidade"].astype(str)
-    ultra["tooltip_line_1"] = "Tipo: Unidade Ultra Academia"
-    ultra["tooltip_line_2"] = ultra.apply(
-        lambda row: "Cidade/UF: "
-        + (
-            f"{_clean_tooltip_value(row.get('cidade'))} / {_clean_tooltip_value(row.get('uf'))}"
-            if _clean_tooltip_value(row.get("cidade")) != "-" or _clean_tooltip_value(row.get("uf")) != "-"
-            else "-"
-        ),
-        axis=1,
-    )
-    ultra["tooltip_line_3"] = "Coordenadas: " + ultra.apply(
-        lambda row: _format_coordinate_pair(row["lat"], row["lng"]),
-        axis=1,
-    )
-    ultra["tooltip_line_4"] = "Fonte: " + ultra["arquivo_origem"].astype(str)
-    for idx in range(5, 15):
-        ultra[f"tooltip_line_{idx}"] = ""
-
-    icon_layer = pdk.Layer(
-        "IconLayer",
-        data=ultra,
-        get_icon="icon_data",
-        get_position="[lng, lat]",
-        get_size="icon_size",
-        size_units="pixels",
-        size_scale=1,
-        size_min_pixels=26,
-        size_max_pixels=46,
-        pickable=True,
-        billboard=True,
-    )
+    # Layer via helper compartilhado (atlas + payload enxuto + cap duro). O
+    # center/zoom local da Visao Executiva e calculado a partir do frame filtrado
+    # (preservado abaixo), independente do cap interno do payload.
+    icon_layer = _ultra_icon_layer_from_frame(ultra.copy())
+    if icon_layer is None:
+        return None, 0
 
     if selected_cities or len(selected_ufs) == 1:
         center = {"lat": float(ultra["lat"].mean()), "lon": float(ultra["lng"].mean())}
