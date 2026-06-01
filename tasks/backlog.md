@@ -137,45 +137,8 @@ o entregável é um GO/NO-GO honesto, não um modelo.
 
 ---
 
-### BLK-SEC-01 — Gate de publicação no CI (publish só com CI verde) + pin de imagem e rollback
+- BLK-SEC-01 (concluído 2026-06-01) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (integridade de CI/CD; afeta o artefato de produção — não toca M1/score) |
-| **Prioridade** | **Alta** |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Depende de** | **BLK-OPS-11** (CI precisa estar verde de verdade antes de virar gate) |
-| **Status** | Pendente |
-| **Origem** | descoberto em 2026-05-31 durante a sincronização da VPS |
-
-**Contexto / gap:** `docker-publish.yml` publica `ghcr.io/.../motor-expansao-streamlit:latest` a cada
-push em `main` **sem depender do CI** (sem `needs:`/`workflow_run`). Por dias o CI esteve vermelho e a
-imagem de produção continuou sendo publicada — um build com teste quebrado (ou dependência
-comprometida) chega ao `:latest` que a VPS puxa, sem barreira. Além disso o `docker-compose.prod.yml`
-referencia `:latest` (tag móvel) — não há pin por digest nem rollback trivial.
-
-**Objetivo:** garantir que SÓ imagens de um commit com CI verde sejam publicadas, e tornar o deploy
-reproduzível/reversível.
-
-**Escopo permitido:**
-- Acoplar o publish ao sucesso do CI (`workflow_run` com `conclusion == success`, ou um único
-  workflow com job `publish` que `needs: [test]`).
-- Taguear a imagem também por **SHA do commit** (além de `:latest`) — já há `revision` no label OCI.
-- Pin do `docker-compose.prod.yml` por digest/SHA (não `:latest` cego) + runbook de **rollback**
-  (apontar para a tag/digest anterior e `up -d`), em `docs/infra_producao.md`.
-
-**Fora de escopo:** mudar M1/score/artefatos; assinar imagem (cosign) — pode virar follow-up.
-
-**Arquivos prováveis:** `.github/workflows/docker-publish.yml`, `.github/workflows/ci.yml`,
-`docker-compose.prod.yml`, `docs/infra_producao.md`.
-
-**Critérios de aceite:**
-- Push com CI vermelho **NÃO** publica imagem (comprovado por um run de teste).
-- Imagem publicada com tag por SHA; compose de prod fixa um digest/SHA conhecido.
-- Runbook de rollback testado (voltar para a imagem anterior sem rebuild).
-- Zero mudança em M1/artefatos.
-
-**Risco:** médio. Mitigado por testar o gate num push proposital com falha antes de confiar nele.
 
 ---
 

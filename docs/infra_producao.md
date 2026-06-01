@@ -30,20 +30,60 @@ Chave privada local: `~/.ssh/id_ultra` (Windows: `C:\Users\Felipe Silva\.ssh\id_
 
 ---
 
-## Atualizar o código do dashboard
+## Atualizar o dashboard (modo PULL, sem build)
 
-Quando houver commits novos no GitHub (`main`):
+> Modelo PULL: o VPS PUXA a imagem publicada no GHCR pelo job `publish` do workflow `CI`
+> (`.github/workflows/ci.yml`). NAO se faz `--build` no servidor. Runbook canonico: `docs/deploy.md`.
+> GUARDRAIL CLAUDE.md §6: execucao no VPS e SEMPRE passo humano, comando a comando.
 
 ```bash
 cd /opt/motor-expansao/app
-git pull
-docker compose -f docker-compose.prod.yml up -d --build streamlit
+
+# 1. Pinar a imagem por DIGEST imutavel (recomendado p/ producao). Obter o digest:
+#    - do output "Digest imutavel publicado:" do job publish no Actions, ou
+#    - via: docker buildx imagetools inspect \
+#        ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit:sha-<commit>
+export STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit@sha256:<digest>
+
+# 2. Pull + up -d SOMENTE do streamlit (SEM --build)
+docker compose -f docker-compose.prod.yml pull streamlit
+docker compose -f docker-compose.prod.yml up -d streamlit
+
+# 3. Conferir saude
+docker compose -f docker-compose.prod.yml ps
+curl -fsS http://127.0.0.1:8501/_stcore/health
 ```
 
-- `git pull` puxa as mudanças do repositório
-- `--build streamlit` reconstrói só o container Streamlit (~1–2 min)
-- Caddy e Authelia **não precisam reiniciar**
-- Dados em `/opt/motor-expansao/data/outputs/` são preservados (bind mount read-only)
+- Caddy e Authelia **nao** reiniciam.
+- Dados em `/opt/motor-expansao/data/outputs/` sao preservados (bind mount read-only).
+- Se o pacote GHCR for privado, autenticar antes: `docker login ghcr.io` com PAT `read:packages`
+  (credencial de runtime do servidor; NUNCA no repo). Ver `docs/deploy.md`.
+
+---
+
+## Rollback (por digest imutavel, SEM rebuild)
+
+Para voltar a imagem anterior conhecida sem reconstruir nada:
+
+```bash
+cd /opt/motor-expansao/app
+
+# 1. Apontar para o DIGEST imutavel do deploy anterior (anote sempre o digest vigente
+#    antes de atualizar; ou recupere via imagetools inspect da tag sha-<commit_anterior>)
+export STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit@sha256:<digest_anterior>
+
+# 2. Pull + up -d (SEM --build)
+docker compose -f docker-compose.prod.yml pull streamlit
+docker compose -f docker-compose.prod.yml up -d streamlit
+
+# 3. Conferir
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs --tail=80 streamlit
+```
+
+- Digest imutavel (`@sha256:...`) garante reproducao byte-identica da imagem anterior; a tag
+  `sha-<commit>` tambem e rastreavel, mas o digest e o pin canonico.
+- Rollback NAO usa `--build` (nada e reconstruido no servidor).
 
 ---
 
