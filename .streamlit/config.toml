@@ -11,3 +11,12 @@ gatherUsageStats = false
 
 [client]
 toolbarMode = "minimal"
+
+[theme]
+# Trava o tema escuro independente do SO (BLK-FIX-05).
+# Valores espelham src/motor_expansao/dashboard/constants.py::COLORS (manter em sincronia; ver test_config_theme_dark).
+base = "dark"
+primaryColor = "#19B7FF"             # COLORS["brand_alt"]
+backgroundColor = "#0A0C18"          # COLORS["bg"]
+secondaryBackgroundColor = "#12172A" # COLORS["panel_solid"]
+textColor = "#F3F7FF"                # COLORS["text"]
