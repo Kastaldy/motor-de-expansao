@@ -2323,3 +2323,82 @@ reproduzível/reversível.
   pin real de produção por digest imutável (`STREAMLIT_IMAGE=...@sha256:<digest>`) ao deployar.
 - **Snapshots de auditoria:** `context/handoff/20260601-091229-block-orchestrator.md`,
   `…-091547-planner.md`, `…-092740-builder.md`, `…-093404-qa.md`.
+
+---
+
+### BLK-FIX-03 — SP estoura "Out of Memory" no Mapa Territorial
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (UF inteira inutilizável em produção; não toca M1/score — só render/transporte) |
+| **Prioridade** | **Alta (topo)** |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | — (relacionado ao **BLK-FIX-02**, já concluído) |
+| **Status** | Pendente |
+| **Origem** | Felipe, 2026-06-01 (print do navegador: "Esta página está com problemas / Código de erro: Out of Memory") |
+
+**Contexto / gap:** selecionar a UF **SP** no Mapa Territorial derruba a aba do navegador com
+"Out of Memory" — erro **client-side** (JS heap do navegador), **distinto** do `MessageSizeError`
+de transporte já curado no BLK-FIX-02. SP é a maior UF (mais hexes/população); mesmo com o cap de
+35k (`MAP_POINT_LIMIT`) e a projeção de colunas do BLK-FIX-02, o render do deck.gl/pydeck de ~35k
+hexágonos H3 + dados para SP parece exceder a memória da aba. Hipótese adicional: pico de memória já
+na carga (`read_enriched_uf_partition` lê a partição `uf=SP` inteira antes do cap).
+
+**Objetivo:** tornar o Mapa Territorial utilizável para SP (e qualquer UF grande) sem crash de memória.
+
+**Escopo permitido (não toca M1):** medir onde o pico ocorre (carga da partição × payload do deck ×
+render client-side); avaliar cap efetivo menor para UFs grandes, simplificar a camada/geometria, ou
+agregar visualmente; reusar `_downsample_map_index` / `MAP_POINT_LIMIT` / `_deck_layer_frame`.
+
+**Fora de escopo:** recalcular score/carteira/plano/artefatos M1; alterar o universo de hexes (é o BLK-FIX-06).
+
+**Arquivos prováveis:** `dashboard/constants.py` (`MAP_POINT_LIMIT≈98`, `MAP_SOURCE_COLUMNS_*`),
+`dashboard/components.py` (`_downsample_map_index`, builders de mapa, `_deck_layer_frame`),
+`dashboard/pages.py` (`st.pydeck_chart`, render do Mapa Territorial), `dashboard/data.py`
+(`read_enriched_uf_partition`, `load_uf_slice`), `.streamlit/config.toml`.
+
+**Critérios de aceite:** SP carrega no Mapa Territorial sem crash (medição de memória/payload ou repro
+manual); demais UFs não regridem; zero mudança em M1/artefatos; suíte verde.
+
+**Risco:** médio (perf/UX; sem tocar dados oficiais).
+
+## Fechamento BLK-FIX-03 (2026-06-01)
+
+**Veredito QA:** APROVADO COM RESSALVAS (QA 2026-06-01). Ciclo fechado pelo orquestrador; aguarda merge
+humano de `ciclo/BLK-FIX-03` na base.
+
+**Esteira executada:** Block Orchestrator → Planner → Builder → QA (Alta; não toca M1 → sem gate humano).
+
+**Causa-raiz confirmada:** OOM **client-side** (JS heap/WebGL) ao renderizar ~35k hexágonos H3 em GPU —
+distinto do `MessageSizeError` de transporte do BLK-FIX-02 (que continua valendo, não regrediu). Achado-
+chave do Block Orchestrator: **SP não é a maior UF** (é a 10ª em hexes, 47k); AM (293k), PA (214k),
+MT (165k), MG (104k), BA (94k) são maiores e também saturavam o cap de 35k → a correção mira "qualquer
+UF grande", não só SP (atende ao pedido explícito de verificar outras UFs).
+
+**Solução implementada:** cap efetivo **dinâmico** `MAP_POINT_LIMIT_LARGE = 18000` aplicado nos 3
+builders quantitativos (M1/híbrido/residual) **só** quando o recorte satura `MAP_POINT_LIMIT` (35k);
+UFs pequenas/recortes ≤35k permanecem byte-idênticos (cap cheio, sem regressão). Layer simplificado
+(`auto_highlight=False`/`stroked=False`) **só** no cap reduzido; `pickable=True`, regra de cor
+(`score_band_to_color`/`RESIDUAL_SCORE_BANDS`) e BLK-FIX-02 intactos. Caption "capped" reflete o cap
+efetivo (18.000 vs 35.000). Passo 7 (projeção de colunas na carga): **não-feito-justificado** — o pico
+dominante é render de geometria, já atacado; `data.py` não tocado.
+
+**Arquivos do ciclo:** `src/motor_expansao/dashboard/constants.py` (nova const `MAP_POINT_LIMIT_LARGE`),
+`src/motor_expansao/dashboard/components.py` (cap dinâmico + simplificação de layer + `effective_cap` no
+caption), `src/motor_expansao/dashboard/pages.py` (cálculo de `capped`/`effective_cap`),
+`tests/integration/test_streamlit_app.py` (novos testes de cap reduzido/cor/caption + revisão dos testes
+de cap existentes preservando a intenção top-N por prioridade), `docs/streamlit_dashboard_m1.md` (nota
+do cap reduzido).
+
+**Validações (re-executadas pelo QA):** `pytest -q` → **631 passed, 1 skipped**; `test_streamlit_app.py`
+→ 155 passed; `import streamlit_app` ok; `ruff` → All checks passed; `mypy components.py` → Success.
+
+**Guardrails:** zero alteração em `score_priorizacao`/`hex_score_estrutural`/carteira/plano/artefatos M1/
+universo de hexes/`MAP_POINT_LIMIT` global/`_downsample_map_index`/regra de cor; parâmetros canônicos
+preservados (H3_RESOLUTION=7, pesos renda=0.40/pop=0.60). Commit só por path.
+
+**Ressalva (média, não-bloqueante):** o gatilho `capped` em `pages.py` infere o corte por
+`n_points >= MAP_POINT_LIMIT_LARGE`; um recorte com 18.000–34.999 hexes distintos (renderizado SEM corte)
+exibiria falsamente o caption "amostrado". Registrada como follow-up opcional **BLK-FIX-03-FU1** no backlog.
+
+**Dry-run de orquestração:** N/A — o ciclo não tocou run-cycle/prompts/esteira (só dashboard render + docs).

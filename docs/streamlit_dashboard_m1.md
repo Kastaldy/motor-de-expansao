@@ -127,6 +127,12 @@ Tabelas operacionais filtradas pela regua <5k hab. Ordenacao por `rank_brasil` (
 - App funciona 100% offline com Parquets locais.
 - Loaders criticos usam `@st.cache_resource`; overlays leves usam `@st.cache_data`.
 - `MAP_POINT_LIMIT = 35.000` aplicado antes do tooltip em todos os builders de mapa.
+- Cap efetivo dinamico (BLK-FIX-03): nos 3 builders quantitativos (M1/hibrido/residual), recortes
+  cujo numero de hexes candidatos satura `MAP_POINT_LIMIT` (UFs grandes: SP/AM/PA/MT/MG/BA) caem no cap
+  reduzido `MAP_POINT_LIMIT_LARGE = 18.000` (mitiga OOM client-side / JS heap+WebGL ao renderizar ~35k
+  hexagonos H3 em GPU); nesse modo a camada simplifica (`auto_highlight=False`/`stroked=False`). Recortes
+  com `<= MAP_POINT_LIMIT` hexes ficam byte-identicos ao comportamento anterior (cap cheio). Nao altera
+  `score_priorizacao`/`MAP_POINT_LIMIT` global/regra de cor; o caption "capped" exibe o cap efetivo aplicado.
 
 ---
 

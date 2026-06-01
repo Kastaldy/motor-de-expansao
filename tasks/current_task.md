@@ -2,38 +2,36 @@
 
 ## Bloco atual
 
-ID: BLK-SEC-01
-Nome: Gate de publicação no CI (publish só com CI verde) + pin de imagem e rollback
-Status: APROVADO COM RESSALVAS (QA 2026-06-01) — ciclo fechado pelo orquestrador; aguarda merge humano de `ciclo/BLK-SEC-01` + prova Nível 3 real no Actions
-Tipo: operação / segurança (CI/CD; afeta artefato de produção — não toca M1/score)
+ID: BLK-FIX-03
+Nome: SP estoura "Out of Memory" no Mapa Territorial (verificar outras UFs grandes)
+Status: APROVADO COM RESSALVAS (QA 2026-06-01) — ciclo fechado pelo orquestrador; aguarda merge humano de `ciclo/BLK-FIX-03`
+Tipo: bug (produção; render do dashboard — não toca M1/score)
 Criticidade: Alta
-Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA] → Builder → QA
+Esteira: Block Orchestrator → Planner → Builder → QA
 Skill atual: run-cycle (fechamento concluído)
-Próxima Skill: (ciclo fechado) — merge humano de `ciclo/BLK-SEC-01` na base; pós-merge, prova Nível 3 no Actions + pin real por digest no deploy
-
-## Fechamento (orquestrador, 2026-06-01)
-- Housekeeping 6.0 FEITO via `scripts/housekeeping_move_block.py BLK-SEC-01 --date 2026-06-01`
-  (stub no backlog + bloco byte-idêntico em completed.md; `--check` OK; suíte `626 passed, 1 skipped`).
-- Resumo de fechamento adicionado a `tasks/completed.md` (## Fechamento BLK-SEC-01).
-- Commit por path na branch `ciclo/BLK-SEC-01` (sem `git add -A`; `PRD.md` não arrastado).
-- Dry-run de orquestração: NÃO se aplica (não tocou run-cycle/prompts/esteira; só CI/CD + docs).
-- RESSALVA p/ o humano: prova Nível 3 real no Actions (quebra proposital → `publish` skipped → reverter, anotar run id) + pin real por digest (`STREAMLIT_IMAGE=...@sha256:<digest>`) no deploy.
+Próxima Skill: (ciclo fechado) — merge humano de `ciclo/BLK-FIX-03` na base
 dry_run: false
 
+## Fechamento (orquestrador, 2026-06-01)
+- Housekeeping 6.0 FEITO via `python scripts/housekeeping_move_block.py BLK-FIX-03 --date 2026-06-01`
+  (stub no backlog + bloco byte-idêntico em completed.md; `--check` OK; suíte `631 passed, 1 skipped`).
+- Resumo de fechamento adicionado a `tasks/completed.md` (## Fechamento BLK-FIX-03).
+- Ressalva do QA registrada como follow-up opcional `BLK-FIX-03-FU1` no backlog (caption "capped" pode
+  dar falso positivo para recortes de 18k–35k hexes; cosmético, não-bloqueante).
+- Commit por path na branch `ciclo/BLK-FIX-03` (sem `git add -A`; `PRD.md` não arrastado). O `backlog.md`
+  já trazia, do worktree pré-sujo, a curadoria do Felipe (blocos BLK-FIX-03..06) — estado legítimo do
+  projeto, entra no commit junto com o stub/FU1; nenhuma edição não relacionada (ex.: PRD.md) arrastada.
+- Dry-run de orquestração: NÃO se aplica (não tocou run-cycle/prompts/esteira; só dashboard render + docs).
+
 ## Objetivo
-Garantir que SÓ imagens de um commit com CI verde sejam publicadas no GHCR e tornar o
-deploy reproduzível/reversível (tag por SHA + pin por digest/SHA no compose de prod + runbook de rollback).
+Tornar o Mapa Territorial utilizável para SP — e qualquer UF grande — sem crash de memória client-side,
+sem recalcular/alterar M1/score/artefatos.
 
-## Paths candidatos do ciclo (commit por path)
-- .github/workflows/docker-publish.yml
-- .github/workflows/ci.yml (se o gate exigir alteração)
-- docker-compose.prod.yml
-- docs/infra_producao.md (runbook de rollback)
-- tasks/current_task.md · tasks/backlog.md · tasks/completed.md · context/handoff.md · context/handoff/
-
-## Contexto de abertura
-- Branch isolado: `ciclo/BLK-SEC-01` criado a partir do HEAD de `main` (worktree limpo).
-- Commit SÓ por path; nunca `git add -A`. NÃO arrastar `PRD.md` nem edições não relacionadas.
-- Criticidade Alta ⇒ gate de REVISÃO HUMANA após o Planner, antes do Builder.
-- Depende de BLK-OPS-11 (CI verde de verdade) — já mergeado em `main` (commit 719b2ae).
-- O ciclo anterior (BLK-OPS-11) foi fechado/aprovado e mergeado; este current_task o sobrescreve.
+## Paths do ciclo (commit por path)
+- src/motor_expansao/dashboard/constants.py
+- src/motor_expansao/dashboard/components.py
+- src/motor_expansao/dashboard/pages.py
+- tests/integration/test_streamlit_app.py
+- docs/streamlit_dashboard_m1.md
+- tasks/current_task.md · tasks/backlog.md · tasks/completed.md
+- context/handoff.md · context/handoff/

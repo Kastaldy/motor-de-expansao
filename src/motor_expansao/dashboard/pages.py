@@ -2532,8 +2532,17 @@ def render_mapa_pydeck_fragment(
     - Nao contem chamadas a st.sidebar (restricao do Streamlit).
     - Nao recalcula score, carteira, plano nem artefatos oficiais do M1.
     """
-    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT
-    st.caption(build_map_scope_caption(n_points, selected_ufs=selected_ufs, capped=n_points >= MAP_POINT_LIMIT))
+    from motor_expansao.dashboard.constants import MAP_POINT_LIMIT, MAP_POINT_LIMIT_LARGE
+    # Cap efetivo honesto: quando o recorte satura, n_points e exatamente o cap aplicado
+    # (<=18k em UF grande, <=35k caso contrario). Sem isso o caption "capped" sumiria
+    # em UF grande (n_points nunca atinge 35k) e o usuario nao saberia que esta amostrado.
+    capped = n_points >= MAP_POINT_LIMIT_LARGE
+    effective_cap = MAP_POINT_LIMIT_LARGE if n_points >= MAP_POINT_LIMIT_LARGE else MAP_POINT_LIMIT
+    st.caption(
+        build_map_scope_caption(
+            n_points, selected_ufs=selected_ufs, capped=capped, effective_cap=effective_cap
+        )
+    )
     st.caption(
         "Clique em um hexagono no mapa para ativar a Analise Pontual de Entorno (raio 1.6 km). "
         "Botao direito nao e suportado pelo componente de mapa."

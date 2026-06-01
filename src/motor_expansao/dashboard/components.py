@@ -23,6 +23,7 @@ from motor_expansao.dashboard.constants import (
     FAIXA_COLORS,
     FAIXA_ORDEM,
     MAP_POINT_LIMIT,
+    MAP_POINT_LIMIT_LARGE,
     MAP_SORT_ASCENDING,
     MAP_SORT_COLUMNS,
     MAP_SOURCE_COLUMNS_HYBRID,
@@ -340,11 +341,17 @@ def resolve_map_view(
     return BRASIL_CENTER, 3.2
 
 
-def build_map_scope_caption(points_used: int, *, selected_ufs: list[str], capped: bool = False) -> str:
+def build_map_scope_caption(
+    points_used: int,
+    *,
+    selected_ufs: list[str],
+    capped: bool = False,
+    effective_cap: int = MAP_POINT_LIMIT,
+) -> str:
     scope_label = "da UF selecionada" if len(selected_ufs) == 1 else "do recorte atual"
     if capped:
         return (
-            f"Mostrando os {format_int(MAP_POINT_LIMIT)} hexagonos de maior prioridade {scope_label} "
+            f"Mostrando os {format_int(effective_cap)} hexagonos de maior prioridade {scope_label} "
             f"(recorte total maior que o limite de renderizacao). "
             "Aplique filtros de municipio para ver o recorte completo."
         )
@@ -1070,10 +1077,15 @@ def build_map_figure(
     if key.empty:
         return None, 0
 
+    # Cap efetivo dinamico: recortes que saturam MAP_POINT_LIMIT (UFs grandes:
+    # SP/AM/PA/MT/MG/BA) caem no cap reduzido p/ mitigar OOM client-side; recortes
+    # com <= MAP_POINT_LIMIT linhas ficam byte-identicos ao comportamento anterior.
+    effective_limit = MAP_POINT_LIMIT_LARGE if len(key) > MAP_POINT_LIMIT else MAP_POINT_LIMIT
     survive_index = _downsample_map_index(
         key,
         sort_columns=MAP_SORT_COLUMNS,
         ascending=MAP_SORT_ASCENDING,
+        limit=effective_limit,
         dedup_column="hex_id",
     )
 
@@ -1117,22 +1129,27 @@ def build_map_figure(
         selected_cities=selected_cities,
     )
 
+    # Simplificacao enxuta da camada SO no cap reduzido (UF grande): desliga
+    # highlight/contorno p/ cortar vertices e custo de GPU. Cor de fill INALTERADA
+    # (score_band_to_color). Em cap cheio mantem parametros identicos aos atuais.
+    _stroked = effective_limit == MAP_POINT_LIMIT
+    _auto_highlight = effective_limit == MAP_POINT_LIMIT
     layer_df = _deck_layer_frame(map_df)
-    hex_layer = pdk.Layer(
-        "H3HexagonLayer",
-        data=layer_df,
+    _hex_layer_kwargs: dict[str, Any] = dict(
         get_hexagon="hex_id",
         get_fill_color="fill_color",
         get_line_color="line_color",
         filled=True,
-        stroked=True,
+        stroked=_stroked,
         extruded=False,
         pickable=True,
-        auto_highlight=True,
+        auto_highlight=_auto_highlight,
         highlight_color=[255, 255, 255, 42],
         opacity=0.78,
-        line_width_min_pixels=1,
     )
+    if _stroked:
+        _hex_layer_kwargs["line_width_min_pixels"] = 1
+    hex_layer = pdk.Layer("H3HexagonLayer", data=layer_df, **_hex_layer_kwargs)
     competitor_layer, _ = _build_competitor_icon_layer(competitors_df, map_df)
     ultra_layer = _build_ultra_icon_layer(ultra_df, map_df)
     layers = [hex_layer]
@@ -1314,10 +1331,12 @@ def build_hybrid_map_figure(
     if key.empty:
         return None, 0
 
+    effective_limit = MAP_POINT_LIMIT_LARGE if len(key) > MAP_POINT_LIMIT else MAP_POINT_LIMIT
     survive_index = _downsample_map_index(
         key,
         sort_columns=_HYBRID_SORT,
         ascending=[False, False, False, False],
+        limit=effective_limit,
     )
 
     map_df = hdf.loc[survive_index, present_columns].copy().reset_index(drop=True)
@@ -1384,22 +1403,25 @@ def build_hybrid_map_figure(
 
     center, zoom = resolve_map_view(map_df, selected_ufs=selected_ufs, selected_cities=selected_cities)
 
+    # Simplificacao enxuta SO no cap reduzido (UF grande); cor de fill inalterada.
+    _stroked = effective_limit == MAP_POINT_LIMIT
+    _auto_highlight = effective_limit == MAP_POINT_LIMIT
     layer_df = _deck_layer_frame(map_df)
-    hex_layer = pdk.Layer(
-        "H3HexagonLayer",
-        data=layer_df,
+    _hex_layer_kwargs: dict[str, Any] = dict(
         get_hexagon="hex_id",
         get_fill_color="fill_color",
         get_line_color="line_color",
         filled=True,
-        stroked=True,
+        stroked=_stroked,
         extruded=False,
         pickable=True,
-        auto_highlight=True,
+        auto_highlight=_auto_highlight,
         highlight_color=[255, 255, 255, 60],
         opacity=0.85,
-        line_width_min_pixels=1,
     )
+    if _stroked:
+        _hex_layer_kwargs["line_width_min_pixels"] = 1
+    hex_layer = pdk.Layer("H3HexagonLayer", data=layer_df, **_hex_layer_kwargs)
     competitor_layer, _ = _build_competitor_icon_layer(competitors_df, map_df)
     ultra_layer = _build_ultra_icon_layer(ultra_df, map_df)
     layers = [hex_layer]
@@ -1465,10 +1487,12 @@ def build_residual_heatmap_figure(
         column for column in ["hex_id", "uf", "score_oportunidade_residual"] if column in hdf.columns
     ]
     key = hdf.loc[scope, key_columns].copy()
+    effective_limit = MAP_POINT_LIMIT_LARGE if len(key) > MAP_POINT_LIMIT else MAP_POINT_LIMIT
     survive_index = _downsample_map_index(
         key,
         sort_columns=["score_oportunidade_residual"],
         ascending=[False],
+        limit=effective_limit,
     )
     map_df = hdf.loc[survive_index, present_columns].copy().reset_index(drop=True)
 
@@ -1502,22 +1526,25 @@ def build_residual_heatmap_figure(
 
     center, zoom = resolve_map_view(map_df, selected_ufs=selected_ufs, selected_cities=selected_cities)
 
+    # Simplificacao enxuta SO no cap reduzido (UF grande); cor de fill inalterada.
+    _stroked = effective_limit == MAP_POINT_LIMIT
+    _auto_highlight = effective_limit == MAP_POINT_LIMIT
     layer_df = _deck_layer_frame(map_df)
-    hex_layer = pdk.Layer(
-        "H3HexagonLayer",
-        data=layer_df,
+    _hex_layer_kwargs: dict[str, Any] = dict(
         get_hexagon="hex_id",
         get_fill_color="fill_color",
         get_line_color="line_color",
         filled=True,
-        stroked=True,
+        stroked=_stroked,
         extruded=False,
         pickable=True,
-        auto_highlight=True,
+        auto_highlight=_auto_highlight,
         highlight_color=[255, 255, 255, 60],
         opacity=0.85,
-        line_width_min_pixels=1,
     )
+    if _stroked:
+        _hex_layer_kwargs["line_width_min_pixels"] = 1
+    hex_layer = pdk.Layer("H3HexagonLayer", data=layer_df, **_hex_layer_kwargs)
     competitor_layer, _ = _build_competitor_icon_layer(competitors_df, map_df)
     ultra_layer = _build_ultra_icon_layer(ultra_df, map_df)
     layers = [hex_layer]

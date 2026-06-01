@@ -2,12 +2,182 @@
 
 ## Priorização atual
 
-Próximo ciclo recomendado: validar a estrutura de Skills com uma tarefa real do projeto.
+Próximo ciclo recomendado: **bugs de produção do dashboard** (BLK-FIX-03..06 abaixo) —
+reportados por Felipe em 2026-06-01; **topo de prioridade**. Atenção: BLK-FIX-06 (hexes do
+litoral) é **Crítica + DEC** (toca a base do M1 e regenera artefatos oficiais).
 
 > Blocos BLK-OPS-02/03/04, BLK-ARCH-01 e BLK-SCORE-01/02/03 originados do "Programa de
 > Melhorias — Referência do Master Orchestrator" (PRD.md), migrados em 2026-05-29.
 > Mapa de dependências e ordem recomendada do programa: ver §3 do PRD.md original.
 > Ordem deste backlog: arquitetura (BLK-ARCH-01) à frente da trilha de score (BLK-SCORE-*).
+
+---
+
+## Bugs de produção do dashboard — TOPO DE PRIORIDADE (2026-06-01)
+
+> Reportados por Felipe a partir do dashboard em produção (`dashboard.ultra-expansao.tech`).
+> Cada bug é um bloco BLK-FIX próprio. Nenhum toca M1/score, **exceto BLK-FIX-06** (litoral),
+> que altera a base de hexes do M1 e regenera artefatos oficiais → **Crítica + DEC**.
+> Causas-raiz abaixo são **hipóteses** ancoradas no código (file:line) a confirmar pelo Planner.
+
+- BLK-FIX-03 (concluído 2026-06-01) — ver tasks/completed.md
+
+### BLK-FIX-03-FU1 — Caption "capped" do Mapa Territorial pode dar falso positivo (follow-up opcional)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (cosmético de UX; não toca M1/score) |
+| **Prioridade** | **Baixa** |
+| **Esteira** | Block Orchestrator → Builder |
+| **Depende de** | BLK-FIX-03 (concluído) |
+| **Status** | Pendente |
+| **Origem** | Ressalva do QA no fechamento do BLK-FIX-03 (2026-06-01) |
+
+**Contexto / gap:** após o BLK-FIX-03, o gatilho do caption "capped" em
+`dashboard/pages.py` (`render_mapa_pydeck_fragment`) infere o corte por heurística
+`capped = n_points >= MAP_POINT_LIMIT_LARGE` (18.000). Logo um recorte com **18.000–34.999 hexes
+distintos** — que é renderizado **sem corte** (cap cheio de 35k não foi atingido) — exibiria
+falsamente a mensagem "amostrado / recorte maior que o limite". É um falso positivo cosmético; o
+render e os dados estão corretos.
+
+**Objetivo:** o caption só indica "amostrado" quando houve corte de fato.
+
+**Escopo permitido:** propagar o cap efetivo aplicado (ou o nº de candidatos pré-cap) do builder ao
+fragmento, em vez de inferir por `n_points`, para que `capped`/`effective_cap` reflitam o corte real.
+Sem tocar M1/score/regra de cor.
+
+**Fora de escopo:** M1/artefatos; mudar o cap dinâmico do BLK-FIX-03.
+
+**Arquivos prováveis:** `dashboard/components.py` (retorno dos builders quantitativos),
+`dashboard/pages.py` (`render_mapa_pydeck_fragment`/`render_mapa_territorial`), testes do caption.
+
+**Critérios de aceite:** recorte de 18k–35k hexes não exibe o caption "amostrado"; recorte que satura
+(≥35k) continua exibindo o caption com o cap efetivo (18.000); suíte verde; zero M1.
+
+**Risco:** baixo (UX/caption).
+
+---
+
+### BLK-FIX-04 — Seleção de hex por clique não funciona no Mapa Territorial
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média-Alta** (interação central da aba quebrada; não toca M1/score) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | — |
+| **Status** | Pendente |
+| **Origem** | Felipe, 2026-06-01 |
+
+**Contexto / gap:** clicar num hexágono no Mapa Territorial não dispara a seleção / Análise Pontual.
+O fluxo usa `st.pydeck_chart(..., on_select="rerun")` e `_extract_click_coord_from_selection`
+(`pages.py:2294`), que tenta extrair **lat/lng** do evento de seleção; mas o `H3HexagonLayer` do pydeck
+não emite lat/lng no objeto selecionado (retorna propriedades do hex / `hex_id`) → extração falha →
+`click_coord` fica `None` → `lookup_hex_by_coord` (`data.py:1072`) não roda. CLAUDE.md §5 registra que
+o clique usa o centroide do hex via pydeck; **confirmar se o contrato do evento mudou** com a versão de
+Streamlit/pydeck.
+
+**Objetivo:** restaurar captura de clique → seleção de hex → Análise Pontual, mantendo o fallback de
+`lat,lng` na sidebar.
+
+**Escopo permitido:** corrigir a extração para ler o identificador efetivamente retornado pelo evento
+(índice / `hex_id` / objeto) em vez de assumir lat/lng; mapear de volta ao hex no `df`; garantir
+`pickable=True` na camada. Sem recalcular score.
+
+**Fora de escopo:** M1/score/artefatos; trocar o componente de mapa (decisão do Bloco 12 mantém pydeck).
+
+**Arquivos prováveis:** `dashboard/pages.py` (`_extract_click_coord_from_selection≈2294`, render do Mapa
+Territorial, `st.pydeck_chart`), `dashboard/components.py` (`build_map_figure` / `pickable` da camada),
+`dashboard/data.py` (`lookup_hex_by_coord≈1072`).
+
+**Critérios de aceite:** clique num hex seleciona e dispara a Análise Pontual (repro manual + teste do
+parser de evento com payload representativo); fallback `lat,lng` preservado; zero M1; suíte verde.
+
+**Risco:** baixo-médio (depende do contrato de evento do pydeck/Streamlit).
+
+---
+
+### BLK-FIX-05 — Cores da UI ficam claras em tema claro do SO (botões de aba e caixas de filtro)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (legibilidade/usabilidade; não toca M1/score) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | — |
+| **Status** | Pendente |
+| **Origem** | Felipe, 2026-06-01 |
+
+**Contexto / gap:** em máquinas com **tema claro** do SO/navegador, os botões das abas
+(`render_tab_selector` / `st.segmented_control`) e as caixas de seleção dos filtros (selectbox/
+multiselect) ficam **brancos**, perdendo o fundo escuro do design. Causa provável: `.streamlit/config.toml`
+**não tem bloco `[theme]`** (confirmado — só `[server]`/`[browser]`/`[client]`), então o app segue o
+tema do SO (auto), enquanto o CSS de `inject_styles` (`pages.py:121`) assume fundo escuro → em tema
+claro, componentes baseweb (`[data-baseweb="tab"]`, `[data-baseweb="select"]`) caem no estilo claro do
+Streamlit e/ou o CSS escuro não cobre todos os estados.
+
+**Objetivo:** UI mantém o tema escuro consistente independentemente do tema do SO/navegador.
+
+**Escopo permitido:** fixar o tema escuro no `.streamlit/config.toml` (`[theme] base="dark"` + paleta)
+e/ou endurecer o CSS de `inject_styles` para garantir contraste dos seletores de aba e filtros;
+verificar em tema claro **e** escuro do SO.
+
+**Fora de escopo:** M1/score; redesenho de identidade visual; mexer nas faixas de cor de score
+(`RESIDUAL_SCORE_BANDS` / `score_band_to_color`).
+
+**Arquivos prováveis:** `.streamlit/config.toml` (sem `[theme]`), `dashboard/pages.py`
+(`inject_styles≈121`, `render_tab_selector≈359`), `dashboard/constants.py` (`COLORS`).
+
+**Critérios de aceite:** abas e caixas de filtro mantêm fundo escuro/contraste em SO tema claro
+(evidência visual antes/depois) e seguem ok no escuro; zero M1; suíte verde.
+
+**Risco:** baixo (CSS/config).
+
+---
+
+### BLK-FIX-06 — Hexágonos do litoral recortados pelo pipeline ⚠ (toca base M1 → Crítica + DEC)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **CRÍTICA** — a correção altera a base de hexes do M1 e **regenera artefatos oficiais** → aprovação obrigatória + **DEC** (CLAUDE.md §2 e §8) |
+| **Prioridade** | **Alta** (cobertura de mercado costeiro), **mas bloqueada por decisão humana** |
+| **Esteira** | Block Orchestrator → Planner → **[REVISÃO/APROVAÇÃO HUMANA + DEC]** → Builder → QA |
+| **Depende de** | decisão humana (DEC) antes de qualquer execução |
+| **Status** | Pendente (bloqueado em decisão) |
+| **Origem** | Felipe, 2026-06-01 (litoral: Praia Grande, Rio de Janeiro etc. sem hexes; print de exemplo) |
+
+**Contexto / gap:** hexágonos sobre faixas litorâneas povoadas (Praia Grande, litoral do RJ, etc.)
+**não aparecem** no mapa. Causa provável: `base_h3_brasil.py` filtra hexes **só por centróide dentro do
+polígono do Brasil** (`shapely.intersects(brasil_geom, chunk_centroids)`, ~linha 189; remoção logada
+como "centroide em mar/fronteira", ~linha 361). Hexes costeiros cujo centróide cai na água — mesmo com
+a maior parte sobre terra povoada — são descartados **na geração da base, antes de qualquer score**.
+
+⚠ **Atenção de criticidade:** corrigir isso **adiciona hexes ao universo do M1**, mudando contagens,
+**percentis nacionais** e, portanto, **regenera os artefatos oficiais** (`brasil_estrutural`,
+`brasil_priorizados`, `hexagonos_*`). Pela regra §2 do CLAUDE.md isso é **ALTERAÇÃO de artefato M1 →
+Crítica (aprovação obrigatória + DEC)**. **Não é** um fix de dashboard trivial e **não pode** ser
+executado pelo Builder sem DEC registrada.
+
+**Objetivo:** incluir hexes litorâneos que sobreponham terra/população real, sem distorcer o M1,
+mediante decisão registrada.
+
+**Escopo permitido (somente APÓS DEC):** trocar o critério de centróide por **interseção do polígono do
+hex com o polígono do Brasil** (ou critério híbrido centróide-ou-interseção com limiar de área);
+**quantificar** quantos hexes entram e o impacto em percentis/score ANTES de aplicar; regenerar
+artefatos de forma auditável e reprodutível.
+
+**Fora de escopo (sem DEC):** qualquer regeneração de artefato M1; mudar pesos/fórmula
+(renda=0.40/pop=0.60); parâmetros canônicos.
+
+**Arquivos prováveis:** `src/motor_expansao/pipelines/m1/base_h3_brasil.py` (filtro de centróide
+~181-194, log ~356-364), `config.py` (`M1_POP_MINIMA_PROXY`), artefatos M1 (regeneração controlada).
+
+**Critérios de aceite:** critério geométrico revisado cobre o litoral povoado (repro: Praia Grande/RJ
+voltam a aparecer); **impacto no M1 quantificado e aprovado em DEC**; artefatos regenerados de forma
+reprodutível; testes do pipeline verdes.
+
+**Risco:** **alto** (mexe na base do M1 e em artefatos oficiais; exige DEC e validação de não-regressão
+do score). Mitigação: decisão humana + DEC antes de qualquer execução; medir delta de hexes/percentis.
 
 ---
 
