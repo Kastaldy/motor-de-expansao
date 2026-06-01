@@ -5,7 +5,15 @@ on:
     branches: [main, codex-dashboard-m1-streamlit]
   pull_request:
     branches: [main]
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      dispatch_build_sanity:
+        description: "Buildar a imagem (SEM publicar) para sanity em branch de ciclo"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -38,3 +46,68 @@ jobs:
 
       - name: Smoke import
         run: python -c "import streamlit_app; print('ok')"
+
+  # Gate de publicacao (BLK-SEC-01): a imagem so e publicada no GHCR quando o job
+  # `test` conclui com sucesso (needs: [test]) E o gatilho e push na default branch.
+  # Sem CI verde, este job (e seus steps de push) e pulado — fecha o gap do antigo
+  # docker-publish.yml (que publicava a cada push em main SEM depender do CI).
+  publish:
+    needs: [test]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Metadata (tags/labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/motor-expansao-streamlit
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build e push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.streamlit
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Exibir digest publicado (pin de prod)
+        run: 'echo "Digest imutavel publicado: ${{ steps.build.outputs.digest }}"'
+
+  # Sanity de build manual (workflow_dispatch em branch de ciclo): builda a imagem
+  # SEM publicar (push: false). Nunca faz login no GHCR nem gera tag :latest.
+  build-sanity:
+    needs: [test]
+    if: github.event_name == 'workflow_dispatch' && inputs.dispatch_build_sanity
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build (sanity, SEM push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.streamlit
+          push: false
+          tags: motor-expansao-streamlit:sanity
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

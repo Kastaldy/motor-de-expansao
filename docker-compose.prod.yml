@@ -15,12 +15,17 @@ services:
 
   # ── Streamlit ──────────────────────────────────────────────────────────────
   streamlit:
-    # Modo PULL: o servidor puxa a imagem publicada no GHCR pelo workflow
-    # Docker Publish (NAO faz build local). Override por commit via STREAMLIT_IMAGE,
-    # ex.: STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit:sha-<sha>
-    # Runbook: docs/deploy.md. Build local de sanity continua via
+    # Modo PULL: o servidor PUXA a imagem publicada no GHCR pelo job `publish` do
+    # workflow CI (.github/workflows/ci.yml); NAO faz build local. O pin e
+    # OBRIGATORIO por digest imutavel via STREAMLIT_IMAGE — nao ha default cego.
+    # Producao DEVE definir, ex.:
+    #   STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit@sha256:<digest>
+    # Fail-closed: `docker compose up` SEM STREAMLIT_IMAGE definido falha de
+    # proposito com mensagem clara (evita puxar imagem errada/:latest movel).
+    # Runbook (Atualizar/Rollback por digest): docs/infra_producao.md e docs/deploy.md.
+    # Build local de sanity continua via
     # `docker build -f Dockerfile.streamlit -t test:ci .` (independe deste compose).
-    image: ${STREAMLIT_IMAGE:-ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit:latest}
+    image: ${STREAMLIT_IMAGE:?defina STREAMLIT_IMAGE com o digest imutavel ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit@sha256:<digest> — ver docs/infra_producao.md (Atualizar/Rollback)}
     container_name: motor_expansao_streamlit
     restart: unless-stopped
     # Porta NÃO exposta no host — acesso apenas via caddy na rede interna

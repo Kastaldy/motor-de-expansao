@@ -2,7 +2,8 @@
 
 Runbook curto para atualizar o dashboard no VPS **puxando** a imagem publicada no
 GitHub Container Registry (GHCR), sem `build` no servidor. A imagem e construida e
-publicada pelo CI (workflow `.github/workflows/docker-publish.yml`); o servidor so
+publicada pelo job `publish` do workflow `CI` (`.github/workflows/ci.yml`), que so
+publica quando o job `test` conclui com sucesso (gate `needs: [test]`); o servidor so
 faz `pull` + `up -d`.
 
 > GUARDRAIL CLAUDE.md §6: nenhum comando e executado no VPS por agente/MCP/SSH sem
@@ -11,13 +12,17 @@ faz `pull` + `up -d`.
 
 ## Visao geral
 
-- O `docker-publish.yml` builda `Dockerfile.streamlit` e publica em
+- O job `publish` do workflow `CI` (`.github/workflows/ci.yml`) builda
+  `Dockerfile.streamlit` e publica em
   `ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit` com:
   - tag `sha-<commit>` (rastreavel por commit) e
   - tag `latest` (apenas em push na `main`).
-- O `docker-compose.prod.yml` referencia a imagem via variavel de override:
-  `image: ${STREAMLIT_IMAGE:-ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit:latest}`.
-  Nao ha mais `build:` ativo no compose de producao.
+  Publica SOMENTE quando o job `test` conclui com sucesso (`needs: [test]`).
+- O `docker-compose.prod.yml` referencia a imagem via variavel de override
+  OBRIGATORIA (fail-closed, sem default cego):
+  `image: ${STREAMLIT_IMAGE:?... ver docs/infra_producao.md}`.
+  Producao DEVE definir `STREAMLIT_IMAGE` por digest imutavel (`@sha256:<digest>`);
+  `up` sem a variavel falha de proposito. Nao ha mais `build:` ativo no compose de producao.
 - A imagem **nao** embute dados nem segredos: `data/`, `concorrentes/`, `.env`,
   `Caddyfile`, `authelia/`, `secrets/` ficam fora do contexto de build (`.dockerignore`)
   e entram em runtime por volume read-only / variavel de ambiente.
@@ -44,9 +49,10 @@ echo "$GHCR_PAT" | docker login ghcr.io -u <usuario-github> --password-stdin
 ## Atualizacao (pull + up -d, SEM --build)
 
 ```bash
-# 1. Definir a imagem alvo (por SHA — recomendado p/ rastreabilidade — ou latest)
-export STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit:sha-<commit>
-#   ou: export STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit:latest
+# 1. Definir a imagem alvo. STREAMLIT_IMAGE e OBRIGATORIO (o compose e fail-closed:
+#    sem essa variavel, `up`/`pull` falha de proposito). Preferir DIGEST imutavel:
+export STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit@sha256:<digest>
+#   alternativa rastreavel por commit: ...motor-expansao-streamlit:sha-<commit>
 
 # 2. Puxar a imagem (sem build)
 docker compose -f docker-compose.prod.yml pull streamlit
@@ -60,11 +66,13 @@ docker compose -f docker-compose.prod.yml logs --tail=80 streamlit
 curl -fsS http://127.0.0.1:8501/_stcore/health
 ```
 
-## Rollback (por SHA)
+## Rollback (por digest imutavel)
 
 ```bash
-# Apontar para o SHA anterior conhecido e refazer pull + up -d
-export STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit:sha-<commit_anterior>
+# Apontar para o DIGEST imutavel do deploy anterior (pin canonico) e refazer pull + up -d.
+# O digest garante reproducao byte-identica da imagem anterior.
+export STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit@sha256:<digest_anterior>
+#   alternativa rastreavel por commit: ...motor-expansao-streamlit:sha-<commit_anterior>
 docker compose -f docker-compose.prod.yml pull streamlit
 docker compose -f docker-compose.prod.yml up -d streamlit
 docker compose -f docker-compose.prod.yml ps

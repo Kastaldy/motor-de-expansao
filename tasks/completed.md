@@ -2237,3 +2237,89 @@ adaptar código exige cuidado para não alterar comportamento. O gate humano + Q
   sanear incompatibilidades pandas 3.0) como dívida controlada; pode entrar antes de BLK-SEC-01/02
   (que dependem deste bloco).
 - **Esteira:** Block Orchestrator → Planner → [REVISÃO HUMANA: aprovar] → Builder → QA.
+
+---
+
+### BLK-SEC-01 — Gate de publicação no CI (publish só com CI verde) + pin de imagem e rollback
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (integridade de CI/CD; afeta o artefato de produção — não toca M1/score) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Depende de** | **BLK-OPS-11** (CI precisa estar verde de verdade antes de virar gate) |
+| **Status** | Pendente |
+| **Origem** | descoberto em 2026-05-31 durante a sincronização da VPS |
+
+**Contexto / gap:** `docker-publish.yml` publica `ghcr.io/.../motor-expansao-streamlit:latest` a cada
+push em `main` **sem depender do CI** (sem `needs:`/`workflow_run`). Por dias o CI esteve vermelho e a
+imagem de produção continuou sendo publicada — um build com teste quebrado (ou dependência
+comprometida) chega ao `:latest` que a VPS puxa, sem barreira. Além disso o `docker-compose.prod.yml`
+referencia `:latest` (tag móvel) — não há pin por digest nem rollback trivial.
+
+**Objetivo:** garantir que SÓ imagens de um commit com CI verde sejam publicadas, e tornar o deploy
+reproduzível/reversível.
+
+**Escopo permitido:**
+- Acoplar o publish ao sucesso do CI (`workflow_run` com `conclusion == success`, ou um único
+  workflow com job `publish` que `needs: [test]`).
+- Taguear a imagem também por **SHA do commit** (além de `:latest`) — já há `revision` no label OCI.
+- Pin do `docker-compose.prod.yml` por digest/SHA (não `:latest` cego) + runbook de **rollback**
+  (apontar para a tag/digest anterior e `up -d`), em `docs/infra_producao.md`.
+
+**Fora de escopo:** mudar M1/score/artefatos; assinar imagem (cosign) — pode virar follow-up.
+
+**Arquivos prováveis:** `.github/workflows/docker-publish.yml`, `.github/workflows/ci.yml`,
+`docker-compose.prod.yml`, `docs/infra_producao.md`.
+
+**Critérios de aceite:**
+- Push com CI vermelho **NÃO** publica imagem (comprovado por um run de teste).
+- Imagem publicada com tag por SHA; compose de prod fixa um digest/SHA conhecido.
+- Runbook de rollback testado (voltar para a imagem anterior sem rebuild).
+- Zero mudança em M1/artefatos.
+
+**Risco:** médio. Mitigado por testar o gate num push proposital com falha antes de confiar nele.
+
+---
+
+## Fechamento BLK-SEC-01 — Gate de publicação no CI + pin de imagem e rollback (concluído 2026-06-01)
+
+- **Veredito QA:** APROVADO COM RESSALVAS. Ressalva única e NÃO bloqueante: a prova dinâmica
+  Nível 3 (run real no GitHub Actions com `test` quebrado proposital numa branch de ciclo,
+  comprovando que `publish` fica skipped) foi DIFERIDA ao fechamento humano — não é viável ao
+  agente local e não dispara runs reais. O gate foi provado por prova estática (Nível 1) +
+  sintaxe de YAML (Nível 2) neste ciclo.
+- **Esteira:** Block Orchestrator → Planner → [REVISÃO HUMANA: aprovado COM ajuste] → Builder → QA.
+- **Aprovação humana (Felipe Silva, 2026-06-01) com 1 ajuste no D2:** o default do `image:` no
+  `docker-compose.prod.yml` deixou de ser `:latest` (e não virou `sha-<commit>` hardcodado como no
+  plano original), passando à forma **fail-closed** `${STREAMLIT_IMAGE:?<mensagem→docs/infra_producao.md>}`.
+  Motivo: ciclos entram na `main` por merge commit, então `sha-<commit-da-branch>` nunca é publicada;
+  um default `sha-<...>` apontaria para tag inexistente. Com `:?`, `docker compose up` sem
+  `STREAMLIT_IMAGE` falha de propósito com mensagem clara. Validação #3 ajustada para checar a forma `:?`.
+- **O que mudou (commit por path na branch `ciclo/BLK-SEC-01`):**
+  - **Opção B (acoplamento ao CI):** publish fundido em `.github/workflows/ci.yml` como job `publish`
+    com `needs: [test]` + `if: github.event_name == 'push' && github.ref == 'refs/heads/main'`,
+    `packages: write` só no job (global `contents: read`); `github.sha` correto, sem a armadilha de
+    `workflow_run`/`head_sha`.
+  - `.github/workflows/docker-publish.yml` **removido** (`git rm`) — eliminado o caminho de publish
+    desacoplado que publicava em todo `push:[main]` sem gate.
+  - Job `build-sanity` (dispatch manual, `push: false`) preserva a sanidade de build do QA sem
+    publicar nada.
+  - `metadata-action` mantém `type=sha` (tag por SHA) + `:latest` só na default branch.
+  - `docs/infra_producao.md`: seção antiga `git pull` + `up -d --build` substituída por
+    "Atualizar (modo PULL, sem build)" + "Rollback (por digest imutável, sem rebuild)";
+    referências passam a apontar para o job `publish` do CI. `docs/deploy.md` alinhado (rollback por
+    digest; pin fail-closed).
+- **Validações (re-executadas pelo QA, sem bypass):** (1) `ci.yml ok`; (2) `removido`; (3) compose
+  fail-closed `${STREAMLIT_IMAGE:?...}` sem `:latest`; (4) integração `150 passed`; (5) `import ok`;
+  (6) suíte completa `626 passed, 1 skipped, 0 failed / 0 collection errors`; (7) diff só em
+  `.github/workflows/*`, `docker-compose.prod.yml`, `docs/*.md`, `tasks/*`, `context/handoff*`.
+- **Zero-M1 confirmado:** nenhum `src/`, `dashboard/`, `*.parquet`, `config.py` ou `PRD.md` tocado;
+  parâmetros canônicos (H3=7, DIST=1.0, RENDA_MIN=4500.0, renda=0.40/pop=0.60) intactos.
+- **Dry-run de orquestração:** NÃO se aplica (o ciclo não alterou `run-cycle`/`prompts`/esteira;
+  só tocou CI/CD, compose e docs).
+- **Pendência para o humano no/após merge:** executar a prova Nível 3 real no GitHub Actions
+  (quebra proposital em branch de ciclo → `publish` skipped → reverter; anotar o run id) e fazer o
+  pin real de produção por digest imutável (`STREAMLIT_IMAGE=...@sha256:<digest>`) ao deployar.
+- **Snapshots de auditoria:** `context/handoff/20260601-091229-block-orchestrator.md`,
+  `…-091547-planner.md`, `…-092740-builder.md`, `…-093404-qa.md`.

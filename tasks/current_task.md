@@ -2,38 +2,38 @@
 
 ## Bloco atual
 
-ID: BLK-OPS-11
-Nome: Pinar dependências e restaurar paridade CI/local (CI vermelho nos testes)
-Status: APROVADO — ressalva FECHADA. QA deu APROVADO COM RESSALVAS em 2026-05-31; a ressalva única (CI verde de ponta a ponta no GitHub Actions Python 3.11) foi CONFIRMADA no fechamento: run `26722016904` (workflow_dispatch em `ciclo/BLK-OPS-11`) verde — Lint→mypy→Testes→Smoke todos ✓, 554 passed / 73 skipped / 0 falhas / 0 erros de collection (3.11; os 73 skips são testes gated em dados reais gitignored ausentes no CI — não silenciamento). Aguarda apenas o merge humano da branch.
-Tipo: operação / manutenção (ambiente/CI/config — não toca M1)
+ID: BLK-SEC-01
+Nome: Gate de publicação no CI (publish só com CI verde) + pin de imagem e rollback
+Status: APROVADO COM RESSALVAS (QA 2026-06-01) — ciclo fechado pelo orquestrador; aguarda merge humano de `ciclo/BLK-SEC-01` + prova Nível 3 real no Actions
+Tipo: operação / segurança (CI/CD; afeta artefato de produção — não toca M1/score)
 Criticidade: Alta
 Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA] → Builder → QA
-Skill atual: run-cycle (fechamento)
-Próxima Skill: (ciclo fechado) — aguarda merge humano de `ciclo/BLK-OPS-11` + confirmação `gh run watch`
+Skill atual: run-cycle (fechamento concluído)
+Próxima Skill: (ciclo fechado) — merge humano de `ciclo/BLK-SEC-01` na base; pós-merge, prova Nível 3 no Actions + pin real por digest no deploy
+
+## Fechamento (orquestrador, 2026-06-01)
+- Housekeeping 6.0 FEITO via `scripts/housekeeping_move_block.py BLK-SEC-01 --date 2026-06-01`
+  (stub no backlog + bloco byte-idêntico em completed.md; `--check` OK; suíte `626 passed, 1 skipped`).
+- Resumo de fechamento adicionado a `tasks/completed.md` (## Fechamento BLK-SEC-01).
+- Commit por path na branch `ciclo/BLK-SEC-01` (sem `git add -A`; `PRD.md` não arrastado).
+- Dry-run de orquestração: NÃO se aplica (não tocou run-cycle/prompts/esteira; só CI/CD + docs).
+- RESSALVA p/ o humano: prova Nível 3 real no Actions (quebra proposital → `publish` skipped → reverter, anotar run id) + pin real por digest (`STREAMLIT_IMAGE=...@sha256:<digest>`) no deploy.
 dry_run: false
 
-## Fechamento (orquestrador, 2026-05-31)
-- Housekeeping 6.0 FEITO via `scripts/housekeeping_move_block.py BLK-OPS-11 --date 2026-05-31`
-  (stub no backlog linha 135 + bloco em completed.md; `--check` OK; helper tests 10 passed).
-- Commit por path FEITO na branch `ciclo/BLK-OPS-11` (sem `git add -A`; `PRD.md` não arrastado).
-- RESSALVA ABERTA p/ o merge: confirmar CI verde de ponta a ponta no GitHub Actions (Python 3.11)
-  via `gh run watch` antes do merge na base. A cura é independente de versão; falta provar o run real.
-- Dry-run de orquestração: NÃO se aplica (ciclo não alterou run-cycle/prompts/esteira).
-
 ## Objetivo
-Restaurar a paridade CI/local e deixar o gate de testes do CI verde de verdade (sem mascarar
-falhas), pinando dependências não-pinadas no `pyproject.toml` (causa raiz: pydantic novo quebra o
-padrão `@property CORES` em `Settings`; pandas 3.0/numpy 2.4 latentes), sem tocar M1/score/artefatos.
+Garantir que SÓ imagens de um commit com CI verde sejam publicadas no GHCR e tornar o
+deploy reproduzível/reversível (tag por SHA + pin por digest/SHA no compose de prod + runbook de rollback).
 
 ## Paths candidatos do ciclo (commit por path)
-- pyproject.toml (pins/faixas)
-- src/motor_expansao/config.py (CORES/Settings — só se Opção B)
-- .github/workflows/ci.yml (constraints/lock, se necessário)
-- eventual requirements*.txt / lockfile
+- .github/workflows/docker-publish.yml
+- .github/workflows/ci.yml (se o gate exigir alteração)
+- docker-compose.prod.yml
+- docs/infra_producao.md (runbook de rollback)
 - tasks/current_task.md · tasks/backlog.md · tasks/completed.md · context/handoff.md · context/handoff/
 
 ## Contexto de abertura
-- Branch isolado: `ciclo/BLK-OPS-11` criado a partir do HEAD de `main` (worktree limpo).
+- Branch isolado: `ciclo/BLK-SEC-01` criado a partir do HEAD de `main` (worktree limpo).
 - Commit SÓ por path; nunca `git add -A`. NÃO arrastar `PRD.md` nem edições não relacionadas.
 - Criticidade Alta ⇒ gate de REVISÃO HUMANA após o Planner, antes do Builder.
-- O ciclo anterior (BLK-SCORE-04) foi fechado/aprovado; este current_task o sobrescreve.
+- Depende de BLK-OPS-11 (CI verde de verdade) — já mergeado em `main` (commit 719b2ae).
+- O ciclo anterior (BLK-OPS-11) foi fechado/aprovado e mergeado; este current_task o sobrescreve.
