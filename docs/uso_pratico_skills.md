@@ -284,6 +284,24 @@ Autonomia total:  apenas crítica e estratégica passam por aprovação humana
 | Crítica | Orchestrator → Planner → **[PAUSA + ALERTA]** → Builder → QA | obrigatória |
 | Estratégica | Orchestrator → Planner → **[ENCERRA]** | sim, sempre |
 
+## Tiering de modelo por agente (custo proporcional à complexidade)
+
+Desde BLK-ORQ-01 (2026-06-02), o orquestrador escolhe o modelo de cada sub-agente pela criticidade
+(proxy de complexidade) × papel — gastando o mínimo em tarefas simples:
+
+| Agente | Baixa | Média | Alta | Crítica/Estratégica |
+|---|---|---|---|---|
+| Block Orchestrator | haiku | sonnet | sonnet | opus |
+| Planner | sonnet | sonnet | opus | opus |
+| Builder | sonnet | sonnet | opus | opus |
+| **QA** | **opus** | **opus** | **opus** | **opus** |
+
+- **QA roda SEMPRE em Opus 4.8** (regra dura, nunca rebaixado).
+- Override ±1 nível só com justificativa de 1 linha; pisos: QA nunca sai de Opus, nunca abaixo de haiku.
+- O dry-run de orquestração (Passo 6.c) usa a coluna Baixa (BO=haiku, Builder=sonnet) → barato/rápido.
+
+Política canônica em `.claude/commands/run-cycle.md` (Passo 4 → "Seleção de modelo por agente").
+
 ## Arquivos do sistema
 
 | Arquivo | Papel | Quem escreve |
