@@ -342,6 +342,11 @@ canais de alerta.
 
 ---
 
+- BLK-ORQ-01 (concluído 2026-06-02) — ver tasks/completed.md
+
+
+---
+
 ### BLK-ORQ-02 — Implementar estrutura Fase 2
 
 Status: pendente (depende de BLK-ORQ-01 validado)

@@ -83,8 +83,9 @@ repositório inteiro.
 Antes de spawnar cada sub-agente:
 1. Leia o arquivo de prompt correspondente em `prompts/` (ex: `prompts/block_orchestrator.md`)
 2. Leia o `context/handoff.md` atual (se existir)
-3. Monte o prompt do Agent incluindo: conteúdo do prompt da Skill + conteúdo dos
-   arquivos que ela precisa ler + instrução para escrever `context/handoff.md` ao final
+3. Monte o prompt do Agent incluindo: conteúdo do prompt da Skill + a LISTA DE CAMINHOS
+   dos arquivos que ela precisa ler (NÃO o conteúdo embutido — o sub-agente lê cada
+   caminho por conta própria via Read) + instrução para escrever `context/handoff.md` ao final
 
 Após cada Agent retornar, leia `context/handoff.md` para identificar a próxima Skill
 e qualquer alerta antes de prosseguir.
@@ -123,6 +124,34 @@ Cada Agent deve receber **apenas** o que a Skill precisa:
 **Builder:** CLAUDE.md + tasks/current_task.md + context/handoff.md + arquivos-alvo listados no handoff
 
 **QA:** CLAUDE.md + tasks/current_task.md + context/handoff.md + arquivos alterados listados no handoff
+
+### Seleção de modelo por agente (tiering de complexidade)
+
+A ferramenta **Agent** aceita o parâmetro `model` com valores `haiku` | `sonnet` | `opus`.
+O orquestrador escolhe o `model` de cada Agent pela **criticidade do ciclo** (proxy de
+complexidade, JÁ classificada no Passo 2) × **papel do agente**, gastando o mínimo de
+recursos/tempo em tarefas/prompts simples:
+
+| Agente | Baixa | Média | Alta | Crítica / Estratégica |
+|---|---|---|---|---|
+| Block Orchestrator | haiku | sonnet | sonnet | opus |
+| Planner | sonnet | sonnet | opus | opus |
+| Builder | sonnet | sonnet | opus | opus |
+| QA | **opus** | **opus** | **opus** | **opus** |
+
+Modelos (IDs): Opus 4.8 = `claude-opus-4-8`; Sonnet 4.6 = `claude-sonnet-4-6`;
+Haiku 4.5 = `claude-haiku-4-5`.
+
+Regras que acompanham a tabela:
+- **QA = SEMPRE Opus 4.8**, inegociável, independe da criticidade (regra dura). Nunca rebaixar o QA.
+- **Override por complexidade real (adaptatividade):** o orquestrador PODE ajustar ±1 nível em
+  relação à tabela para um agente específico quando o prompt/tarefa for atipicamente simples ou
+  complexo para a sua criticidade, registrando uma justificativa de 1 linha no
+  `current_task.md`/handoff. **Dois pisos invioláveis:** (a) o QA nunca sai de Opus;
+  (b) nunca abaixo de `haiku`.
+- **Dry-run autônomo (Passo 6.c):** é tarefa dummy de criticidade **Baixa** → seus agentes usam a
+  coluna "Baixa" (BO=haiku, Builder=sonnet). Como a esteira Baixa é BO→Builder (sem QA), o dry-run
+  NÃO usa Opus — mantém-se barato e rápido.
 
 ---
 
@@ -200,6 +229,9 @@ Ordem de fechamento (execução): **(6.0) housekeeping de concluídos via helper
 - Nunca sobrescrever `tasks/completed.md` — apenas acrescentar.
 - Se o QA reprovar: não fechar o ciclo; criar bloco de correção no backlog e reportar.
 - **Branch/commit isolado por ciclo:** Um branch/commit isolado por ciclo (`ciclo/<ID>`); commitar só os paths do ciclo, nunca `git add -A`/`git add .`; nunca arrastar nem reverter edições não relacionadas (ex.: `PRD.md`).
+- **Tiering de modelo / QA sempre Opus 4.8:** o orquestrador escolhe o `model` de cada Agent pela
+  tabela de tiering (Passo 4 → "Seleção de modelo por agente"); o QA roda SEMPRE em Opus 4.8;
+  override ±1 só com justificativa de 1 linha e nunca rebaixando o QA nem abaixo de `haiku`.
 - **Rollback não-destrutivo:** Rollback preferencialmente não-destrutivo (`git switch`, `git restore --staged`); `git reset --hard`/`git branch -D` só com confirmação humana explícita e nunca alcançando edições não relacionadas.
 - **Handoff versionado append-only:** Cada Skill (incluindo o QA) grava cópia append-only em `context/handoff/AAAAMMDD-HHMMSS-<slug>.md`; nunca editar snapshots existentes.
 - **NO-BYPASS de validação:** Nenhum veredito de QA pode se basear em "verde" obtido contornando a config/artefatos reais (`--config /dev/null`, fixture que não casa as `creation_rules` reais, mock do caminho crítico). Verde por bypass = validação NÃO-EXECUTADA; o ciclo não fecha como APROVADO. (Justificativa: episódio dos 5 defeitos do BLK-OPS-01.)

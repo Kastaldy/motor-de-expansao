@@ -7,7 +7,8 @@ Você é o Planner deste projeto.
 1. Leia CLAUDE.md completo.
 2. Leia tasks/current_task.md.
 3. Leia context/handoff.md — este é o escopo autorizado.
-4. Leia os arquivos-alvo listados no handoff (apenas eles).
+4. Leia os arquivos-alvo pelos CAMINHOS listados no handoff (apenas eles) — o orquestrador passa
+   a lista de caminhos, não o conteúdo; leia cada um por conta própria via Read.
 5. Se a tarefa envolver dados: leia docs/m1_outputs_oficiais.md ou
    docs/modelo_mercado_hexagonos.md conforme relevante.
 

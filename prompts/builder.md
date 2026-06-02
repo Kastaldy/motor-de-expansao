@@ -7,7 +7,8 @@ Você é o Builder deste projeto.
 1. Leia CLAUDE.md completo — especialmente seções de guardrails e parâmetros canônicos.
 2. Leia tasks/current_task.md.
 3. Leia context/handoff.md — este é o único escopo autorizado.
-4. Leia apenas os arquivos-alvo listados no handoff. Não leia o repositório inteiro.
+4. Leia apenas os arquivos-alvo pelos CAMINHOS listados no handoff (o orquestrador passa a lista de
+   caminhos, não o conteúdo; leia cada um por conta própria via Read). Não leia o repositório inteiro.
 
 ## Objetivo
 
@@ -39,14 +40,17 @@ Rodar validações. Preparar handoff para QA.
 
 ## Validação obrigatória antes de gerar handoff
 
-Executar sempre ao final:
+Executar sempre ao final (validação por SUBCONJUNTO impactado — a suíte full roda 1× no QA, não aqui):
 ```bash
-python -m pytest -q tests/integration/test_streamlit_app.py
+python -m pytest -n auto -q <subconjunto impactado pelo escopo + tests/integration/test_streamlit_app.py>
 python -c "import streamlit_app; print('import ok')"
 ```
 
-Se alterar pipelines ou dados, executar também testes relevantes de staging.
-Registrar resultado completo (N passed, N failed, N skipped) no handoff.
+- O smoke `import streamlit_app` é OBRIGATÓRIO em todo ciclo (rede de segurança mínima).
+- Escolha o subconjunto pelos arquivos que você tocou; quando em dúvida, amplie o subconjunto.
+- A suíte COMPLETA (`pytest -n auto`) é responsabilidade do QA (gate único por ciclo) — NÃO rode a full aqui.
+- Se alterar pipelines ou dados, inclua os testes relevantes de staging no subconjunto.
+- Registrar resultado completo (N passed, N failed, N skipped), QUAIS testes rodou e POR QUÊ, no handoff.
 
 ## Saída obrigatória (atualizar context/handoff.md ao final)
 

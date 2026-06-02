@@ -1,26 +1,31 @@
 # Current Task
 
-## Sprint de fixes (multi-track, paralelo) — 2026-06-01 — CONCLUÍDA
+## Bloco atual
 
-Modo: paralelizar + pré-autorizar em lote (decisão de Felipe 2026-06-01).
-Status: **APROVADA** (QA independente por track) — ciclos fechados; mergeados na `main`.
+ID: BLK-ORQ-01
+Nome: Otimização de tempo de execução do /run-cycle (Fase 1 / Tier 1)
+Status: aprovado
+Tipo: performance
+Criticidade: alta
+Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
+Skill atual: QA/Quality Analyzer
+Próxima Skill: Fechamento do orquestrador (6.0 housekeeping move + --check → 6.a commit por path → 6.b merge humano → 6.c dry-run autônomo)
 dry_run: false
 
-### Track A — `ciclo/BLK-FIX-04` (FU1 + FIX-04) — APROVADO, mergeado
-- BLK-FIX-04: clique de hex → seleção/Análise Pontual restaurado (hex_id→centróide).
-- BLK-FIX-03-FU1: caption "amostrado" honesto (atributo de cap real no Deck).
+## Objetivo
+Reduzir o tempo de relógio do /run-cycle (Fase 1: eliminar leitura dupla de contexto, instalar pytest-xdist/-n auto, suíte full uma única vez no QA) E adicionar tiering de modelo por agente × criticidade (QA SEMPRE Opus 4.8) — expansão v2 por instrução humana explícita (Felipe, 2026-06-02) — SEM degradar qualidade nem documentação/handoffs.
 
-### Track B — `ciclo/BLK-FIX-05` (tema claro do SO) — APROVADO, mergeado
-- `[theme] base=dark` no config.toml + CSS baseweb endurecido. Verificação visual final = manual (Felipe).
+## Paths do ciclo (commit por path)
+- .claude/commands/run-cycle.md
+- prompts/block_orchestrator.md
+- prompts/planner.md
+- prompts/builder.md
+- prompts/qa_analyzer.md
+- pyproject.toml
+- tasks/backlog.md (bloco BLK-ORQ-01 + housekeeping de fechamento)
+- tasks/completed.md (housekeeping de fechamento)
+- context/handoff.md + context/handoff/
+- (demais paths conforme o plano do Planner)
 
-## Fechamento (orquestrador, 2026-06-01)
-- Worktrees isolados (Builders+QA em paralelo); merges A→B auto-mergearam sem conflito.
-- Validação na main pós-merge: `646 passed, 1 skipped` (baseline 639 + 7 novos); ruff/mypy ok; import ok.
-- Housekeeping 6.0: BLK-FIX-03-FU1, BLK-FIX-04, BLK-FIX-05 movidos via helper (stubs + `--check` OK).
-- Commit por path por track; housekeeping commit por path na main.
-- Dry-run de orquestração: NÃO se aplica (não tocou run-cycle/prompts/esteira).
-
-## Pendências / próximos
-- Verificação visual do FIX-05 em SO tema claro (Felipe).
-- BLK-FIX-06 (litoral): BLOQUEADO em DEC (fora da sprint).
-- BLK-FIX-07-B (clustering, Fase B): follow-up pendente.
+## Observação de orquestração
+Ciclo ALTERA a própria orquestração → dispara dry-run autônomo pós-merge (Passo 6.c). dry_run desta execução = false (ciclo real).
