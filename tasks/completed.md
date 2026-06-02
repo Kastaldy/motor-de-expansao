@@ -2706,3 +2706,59 @@ então a suíte no worktree exige `PYTHONPATH=<worktree>/src`. No worktree (sem 
 
 **Follow-ups registrados (revisar até 2026-09):** migração `pytest 9` (zera o allowlist do pip-audit);
 imagem **multi-stage** sem build-tools no runtime (zera os 2 CVEs do `.trivyignore` de vez). FIX-06 bloqueado (DEC).
+
+---
+
+### BLK-ORQ-01 — Otimização de tempo de execução do /run-cycle
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — altera a própria orquestração (`.claude/commands/run-cycle.md` + `prompts/*`) → dispara o dry-run autônomo do Passo 6.c. **NÃO** toca M1/score/artefatos. |
+| **Prioridade** | **Média-Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Depende de** | nenhuma (BLK-ORQ-02 depende deste) |
+| **Status** | Pendente |
+| **Origem** | Felipe, 2026-06-02 — ciclos do /run-cycle levando horas; pedido de identificar gargalos e otimizar tempo mantendo qualidade e documentação. |
+
+**Contexto / diagnóstico (medições deste repo, 2026-06-02):**
+- Esteira média/alta é **100% serial**: Orquestrador + Block Orchestrator + Planner + Builder + QA = 4–5 spawns, com round-trip do orquestrador (lê handoff, monta próximo prompt) entre cada estágio. Nada independente roda em paralelo.
+- **Contexto pago em dobro:** o Passo 4 manda o orquestrador embutir o conteúdo dos arquivos no prompt do sub-agente, E cada `prompts/*.md` manda o sub-agente "Leia CLAUDE.md completo" — leitura duplicada (orquestrador embute + sub-agente relê).
+- **Orquestrador incha:** por embutir todo arquivo, o contexto do próprio orquestrador cresce a cada estágio (CLAUDE.md 18 KB relido por 5 agentes; +4 prompts + alvos + handoffs), encarecendo cada turno e disparando compactação em ciclos longos.
+- **QA duplica o Builder:** `prompts/qa_analyzer.md` exige re-executar TODAS as validações por conta própria, incluindo `pytest -q` full (**90 s medidos, 651 testes**) + leitura grau-implementação de todos os arquivos alterados. A maquinaria anti-bypass (8,4 KB, ~toda sobre o episódio BLK-OPS-01) é essencial para tooling/infra contra config real, mas overkill em todo ciclo de código comum.
+- **Suíte sem paralelização:** `pytest-xdist` NÃO instalado; `pytest -q` = 90 s, roda ~2×/ciclo (Builder em alguns casos + QA sempre).
+- **Sem tiering de modelo:** todo sub-agente herda o modelo da sessão (o mais pesado), inclusive trabalho mecânico (delimitar escopo, housekeeping, dry-run).
+- **Block Orchestrator e Planner se sobrepõem** em baixa/média (delimitar escopo vs. plano técnico).
+
+**Objetivo:** reduzir o tempo de relógio do /run-cycle SEM degradar qualidade de entrega nem a documentação/handoffs versionados.
+
+**Escopo permitido — Fase 1 (Tier 1; alvo deste bloco; ganho alto, risco ~zero):**
+1. **Eliminar a leitura dupla:** o orquestrador passa CAMINHOS, não conteúdo; o sub-agente lê. Ajustar Passo 4 do `run-cycle.md` e remover a redundância nos `prompts/*.md`. Mantém isolamento de contexto e os handoffs.
+2. **Instalar `pytest-xdist`** (dependência `[dev]` no `pyproject.toml`) e rodar `pytest -n auto` no Builder e no QA. Não muda cobertura.
+3. **Suíte full uma única vez por ciclo (no QA):** Builder valida com subconjunto impactado + smoke import; a suíte completa roda 1× no gate do QA, não em ambos.
+
+**Candidatos a follow-up (Tier 2/3 — FORA do escopo deste bloco; promover a blocos próprios após medir a Fase 1):**
+- (T2) Escopar a re-validação total anti-bypass do QA por perfil de ciclo (`tooling/infra` = re-execução total contra config real; `código` = re-run direcionado + suíte 1× + auditoria de diff). Preservar o NO-BYPASS onde importa.
+- (T2) Tiering de modelo: agentes mecânicos (Block Orchestrator, housekeeping, dry-run) em modelo rápido; Planner/Builder/QA no modelo pesado.
+- (T2) Fundir Block Orchestrator + Planner em baixa/média; manter separados em alta/crítica/estratégica.
+- (T3) Enxugar `prompts/qa_analyzer.md` (mover narrativa do BLK-OPS-01 para `docs/`, deixar regra + ponteiro); arquivar snapshots antigos de `context/handoff/`.
+
+**Fora de escopo (invioláveis):**
+- Qualquer alteração em M1/score/artefatos oficiais.
+- Remover ou enfraquecer guardrails de processo: handoff versionado append-only, NO-BYPASS de validação (onde aplicável), branch/commit isolado por path, rollback não-destrutivo, dry-run autônomo de orquestração, housekeeping via helper.
+- Reduzir cobertura de teste ou qualidade da documentação/handoffs.
+
+**Arquivos prováveis (Fase 1):** `.claude/commands/run-cycle.md` (Passo 4), `prompts/block_orchestrator.md`, `prompts/planner.md`, `prompts/builder.md`, `prompts/qa_analyzer.md` (instruções de leitura/validação), `pyproject.toml` (dep `pytest-xdist` em `[dev]`).
+
+**Critérios de aceite:**
+- Tempo de relógio de um ciclo de referência cai de forma medível (registrar antes/depois; alvo: redução ≥30% no overhead de orquestração de um ciclo média).
+- `pytest -n auto` verde com a mesma contagem de testes (sem perda de cobertura); suíte full executada ≥1× no gate do QA.
+- Handoffs versionados, NO-BYPASS, commit por path, rollback não-destrutivo e housekeeping via helper PRESERVADOS e demonstrados.
+- **Dry-run autônomo pós-merge (Passo 6.c) EXECUTADO e reportado** — este ciclo altera a orquestração.
+- Documentação atualizada (`run-cycle.md`/`prompts/*` coerentes; nota no CLAUDE.md §5 se a baseline/fluxo mudar).
+
+**Guardrails específicos:**
+- Mudança de orquestração → dry-run autônomo obrigatório (tarefa dummy Baixa + `dry_run: true`, guard de recursão prof. 1) APÓS merge humano.
+- Aprovação humana obrigatória antes do Builder (criticidade Alta).
+- Medir antes/depois com o MESMO ciclo de referência para evitar conclusão por ruído.
+
+**Risco:** médio (mexe no processo, não no produto). Mitigação: faseamento (só Tier 1 aqui), dry-run de orquestração e nenhuma remoção de guardrail. Sem toque em M1/dados.
