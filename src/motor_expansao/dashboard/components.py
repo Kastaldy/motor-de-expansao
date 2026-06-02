@@ -19,6 +19,9 @@ from motor_expansao.dashboard.constants import (
     BRASIL_CENTER,
     CENSO_UFS,
     COLORS,
+    COMPETITOR_CLUSTER_LIMIT,
+    COMPETITOR_CLUSTER_RES,
+    COMPETITOR_CLUSTER_TOP_REDES,
     COMPETITOR_PIN_LIMIT,
     FAIXA_COLORS,
     FAIXA_ORDEM,
@@ -774,6 +777,22 @@ def count_pins_in_scope(
     return n_comp, n_ultra
 
 
+def competitor_cluster_mode(
+    selected_ufs: list[str] | None,
+    selected_cities: list[str] | None,
+    selected_faixas: list[str] | None = None,
+) -> bool:
+    """Gate puro do clustering de concorrentes (BLK-FIX-07-B): True em recortes
+    amplos (Brasil inteiro OU uma unica UF inteira), False assim que ha filtro de
+    municipio ou faixa (volta aos pins individuais com logo da Fase A). Decisao
+    travada; nao altera score, ranking, carteira nem artefatos M1."""
+    return (
+        len(selected_ufs or []) <= 1
+        and not (selected_cities or [])
+        and not (selected_faixas or [])
+    )
+
+
 def pins_amostrados_caption(n_comp: int, n_ultra: int) -> str | None:
     """Retorna uma frase honesta de 'amostrado' SE algum total exceder o cap de
     render (COMPETITOR_PIN_LIMIT/ULTRA_PIN_LIMIT); senao None. Deixa claro que e
@@ -854,6 +873,146 @@ def _build_competitor_icon_layer(
         icon_mapping=mapping,
     )
     return layer, comp
+
+
+def _build_competitor_cluster_layer(
+    competitors_df: pd.DataFrame | None,
+    reference_df: pd.DataFrame,
+) -> tuple[pdk.Layer | None, pd.DataFrame]:
+    """BLK-FIX-07-B: em recortes amplos (UF inteira / Brasil) agrega concorrentes
+    por celula H3 coarse (COMPETITOR_CLUSTER_RES) e renderiza uma bolha de densidade
+    por celula (ScatterplotLayer), em vez de cortar pins (Fase A). Bolha dimensionada
+    por contagem; tooltip mostra total + breakdown por rede. Camada VISUAL apenas:
+    nao recalcula score, ranking, carteira nem altera artefatos M1."""
+    comp = _filter_competitors_to_reference(competitors_df, reference_df)
+    if comp.empty:
+        return None, comp
+
+    import h3
+
+    if "rede_label" not in comp.columns:
+        comp["rede_label"] = comp["rede"].astype(str)
+    comp["rede_label"] = comp["rede_label"].map(_clean_tooltip_value).astype(str)
+
+    comp["cluster_cell"] = [
+        h3.latlng_to_cell(float(lat), float(lng), COMPETITOR_CLUSTER_RES)
+        for lat, lng in zip(comp["lat"], comp["lng"], strict=True)
+    ]
+
+    total_por_cell = comp.groupby("cluster_cell", sort=False).size()
+    rede_counts = comp.groupby(["cluster_cell", "rede_label"], sort=False).size()
+
+    def _breakdown(cell: str) -> str:
+        counts = rede_counts.loc[cell].sort_values(ascending=False, kind="stable")
+        partes = [
+            f"{rede}: {int(n)}"
+            for rede, n in counts.head(COMPETITOR_CLUSTER_TOP_REDES).items()
+        ]
+        extra = len(counts) - COMPETITOR_CLUSTER_TOP_REDES
+        if extra > 0:
+            partes.append(f"+{extra} redes")
+        return "; ".join(partes)
+
+    rows: list[dict[str, Any]] = []
+    for cell, total_raw in total_por_cell.items():
+        total = int(total_raw)
+        cell_lat, cell_lng = h3.cell_to_latlng(cell)
+        rows.append(
+            {
+                "cluster_cell": str(cell),
+                "lat": float(cell_lat),
+                "lng": float(cell_lng),
+                "total": total,
+                "breakdown": _breakdown(cell),
+            }
+        )
+
+    cluster_df = pd.DataFrame(rows)
+    if cluster_df.empty:
+        return None, cluster_df
+
+    # cap duro deterministico: mantem as celulas mais densas (estavel por total desc,
+    # depois cluster_cell). Garante payload << 3MB independente do numero de celulas.
+    if len(cluster_df) > COMPETITOR_CLUSTER_LIMIT:
+        cluster_df = (
+            cluster_df.sort_values(
+                ["total", "cluster_cell"], ascending=[False, True], kind="stable"
+            )
+            .head(COMPETITOR_CLUSTER_LIMIT)
+            .reset_index(drop=True)
+        )
+    else:
+        cluster_df = cluster_df.reset_index(drop=True)
+
+    # raio em pixels proporcional a contagem (raiz p/ achatar caudas longas), preso
+    # entre 8 e 40 px (mesmo bound do radius_min/max_pixels da layer).
+    max_total = int(cluster_df["total"].max())
+    if max_total <= 1:
+        scaled = pd.Series(8.0, index=cluster_df.index)
+    else:
+        frac = np.sqrt(cluster_df["total"].astype(float) / float(max_total))
+        scaled = 8.0 + frac * (40.0 - 8.0)
+    cluster_df["cluster_size"] = scaled.clip(8.0, 40.0).astype(float)
+
+    cluster_df["tooltip_title"] = cluster_df["total"].map(
+        lambda t: f"Cluster: {int(t)} concorrentes"
+    )
+    cluster_df["tooltip_line_1"] = "Densidade de concorrentes (recorte amplo)"
+    cluster_df["tooltip_line_2"] = cluster_df["total"].map(lambda t: f"Total: {int(t)}")
+    cluster_df["tooltip_line_3"] = cluster_df["breakdown"]
+
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=cluster_df,
+        get_position="[lng, lat]",
+        get_radius="cluster_size",
+        radius_units="pixels",
+        radius_min_pixels=8,
+        radius_max_pixels=40,
+        get_fill_color=[148, 163, 184, 170],
+        get_line_color=[226, 232, 240, 230],
+        line_width_min_pixels=1,
+        stroked=True,
+        filled=True,
+        pickable=True,
+    )
+    return layer, cluster_df
+
+
+def _competitor_layer_for_scope(
+    competitors_df: pd.DataFrame | None,
+    reference_df: pd.DataFrame,
+    *,
+    cluster: bool,
+) -> tuple[pdk.Layer | None, pd.DataFrame]:
+    """Seletor fino entre a camada de cluster (recorte amplo) e a IconLayer de pins
+    individuais (Fase A). Nao altera score, ranking, carteira nem artefatos M1."""
+    if cluster:
+        return _build_competitor_cluster_layer(competitors_df, reference_df)
+    return _build_competitor_icon_layer(competitors_df, reference_df)
+
+
+def build_cluster_scope_caption(
+    n_clusters: int,
+    n_comp_total: int,
+    *,
+    capped: bool = False,
+) -> str:
+    """Frase honesta do modo cluster: explica que os concorrentes foram agregados em
+    bolhas de densidade no recorte amplo e como voltar aos pins individuais. Espelha
+    o estilo das demais legendas; camada visual, nao afeta score/ranking/carteira."""
+    base = (
+        f"Concorrentes agregados em {n_clusters:,} clusters de densidade "
+        f"({n_comp_total:,} no recorte). "
+        "Selecione um municipio ou filtro p/ ver pins individuais com logo. "
+        "Camada visual: nao afeta score, ranking nem carteira."
+    ).replace(",", ".")
+    if capped:
+        base += (
+            f" Exibindo as {COMPETITOR_CLUSTER_LIMIT:,} celulas mais densas "
+            "(limite apenas de renderizacao)."
+        ).replace(",", ".")
+    return base
 
 
 def filter_points_to_radius(
@@ -1169,6 +1328,7 @@ def build_map_figure(
     ultra_df: pd.DataFrame | None = None,
     search_pin: tuple[float, float] | None = None,
     search_hex_id: str | None = None,
+    cluster_competitors: bool = False,
 ):
     present_columns = [column for column in MAP_SOURCE_COLUMNS_M1 if column in df.columns]
 
@@ -1292,7 +1452,9 @@ def build_map_figure(
     if _stroked:
         _hex_layer_kwargs["line_width_min_pixels"] = 1
     hex_layer = pdk.Layer("H3HexagonLayer", data=layer_df, **_hex_layer_kwargs)
-    competitor_layer, _ = _build_competitor_icon_layer(competitors_df, map_df)
+    competitor_layer, _ = _competitor_layer_for_scope(
+        competitors_df, map_df, cluster=cluster_competitors
+    )
     ultra_layer = _build_ultra_icon_layer(ultra_df, map_df)
     layers = [hex_layer]
     if competitor_layer is not None:
@@ -1409,6 +1571,7 @@ def build_hybrid_map_figure(
     ultra_df: pd.DataFrame | None = None,
     search_pin: tuple[float, float] | None = None,
     search_hex_id: str | None = None,
+    cluster_competitors: bool = False,
 ):
     if "score_setor_2022_calibrado" not in hdf.columns:
         return None, 0
@@ -1535,7 +1698,9 @@ def build_hybrid_map_figure(
     if _stroked:
         _hex_layer_kwargs["line_width_min_pixels"] = 1
     hex_layer = pdk.Layer("H3HexagonLayer", data=layer_df, **_hex_layer_kwargs)
-    competitor_layer, _ = _build_competitor_icon_layer(competitors_df, map_df)
+    competitor_layer, _ = _competitor_layer_for_scope(
+        competitors_df, map_df, cluster=cluster_competitors
+    )
     ultra_layer = _build_ultra_icon_layer(ultra_df, map_df)
     layers = [hex_layer]
     if competitor_layer is not None:
@@ -1578,6 +1743,7 @@ def build_residual_heatmap_figure(
     ultra_df: pd.DataFrame | None = None,
     search_pin: tuple[float, float] | None = None,
     search_hex_id: str | None = None,
+    cluster_competitors: bool = False,
 ):
     if "score_setor_2022_calibrado" not in hdf.columns:
         return None, 0
@@ -1661,7 +1827,9 @@ def build_residual_heatmap_figure(
     if _stroked:
         _hex_layer_kwargs["line_width_min_pixels"] = 1
     hex_layer = pdk.Layer("H3HexagonLayer", data=layer_df, **_hex_layer_kwargs)
-    competitor_layer, _ = _build_competitor_icon_layer(competitors_df, map_df)
+    competitor_layer, _ = _competitor_layer_for_scope(
+        competitors_df, map_df, cluster=cluster_competitors
+    )
     ultra_layer = _build_ultra_icon_layer(ultra_df, map_df)
     layers = [hex_layer]
     if competitor_layer is not None:
@@ -1731,6 +1899,7 @@ def build_dominio_map_figure(
     selected_cities: list[str] | None = None,
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
+    cluster_competitors: bool = False,
 ):
     """Mapa de ancoras da Expansao de Dominio coloridas por ordem e tese."""
     if plano.empty or not {"hex_id", "lat", "lng"} <= set(plano.columns):
@@ -1821,7 +1990,9 @@ def build_dominio_map_figure(
         opacity=0.88,
         line_width_min_pixels=2,
     )
-    competitor_layer, _ = _build_competitor_icon_layer(competitors_df, map_df)
+    competitor_layer, _ = _competitor_layer_for_scope(
+        competitors_df, map_df, cluster=cluster_competitors
+    )
     ultra_layer = _build_ultra_icon_layer(ultra_df, map_df)
     layers = [hex_layer]
     if competitor_layer is not None:
@@ -2722,6 +2893,7 @@ def build_unified_map_figure(
     enabled_overlays: list[str] | None = None,
     selected_ufs: list[str],
     selected_cities: list[str],
+    selected_faixas: list[str] | None = None,
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     search_pin: tuple[float, float] | None = None,
@@ -2740,6 +2912,10 @@ def build_unified_map_figure(
     _comp = competitors_df if "concorrentes" in enabled_overlays else None
     _ultra = ultra_df if "ultra" in enabled_overlays else None
 
+    # BLK-FIX-07-B: cluster server-side dos concorrentes em recortes amplos (decidido
+    # uma vez aqui e propagado a todos os builders, incl. dominio). Camada visual.
+    cluster = competitor_cluster_mode(selected_ufs, selected_cities, selected_faixas)
+
     if color_mode == "dominio":
         plano = dominio_df if dominio_df is not None else pd.DataFrame()
         return build_dominio_map_figure(
@@ -2748,6 +2924,7 @@ def build_unified_map_figure(
             selected_cities=selected_cities or None,
             competitors_df=_comp,
             ultra_df=_ultra,
+            cluster_competitors=cluster,
         )
 
     if color_mode == "residual":
@@ -2759,6 +2936,7 @@ def build_unified_map_figure(
             ultra_df=_ultra,
             search_pin=search_pin,
             search_hex_id=search_hex_id,
+            cluster_competitors=cluster,
         )
 
     if color_mode in ("hibrido", "censitario"):
@@ -2772,6 +2950,7 @@ def build_unified_map_figure(
             ultra_df=_ultra,
             search_pin=search_pin,
             search_hex_id=search_hex_id,
+            cluster_competitors=cluster,
         )
 
     # Default: m1
@@ -2783,6 +2962,7 @@ def build_unified_map_figure(
         ultra_df=_ultra,
         search_pin=search_pin,
         search_hex_id=search_hex_id,
+        cluster_competitors=cluster,
     )
 
 

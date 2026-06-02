@@ -10,6 +10,9 @@ import streamlit_app
 from motor_expansao.dashboard.constants import (
     COLOR_MODE_IDS,
     COLOR_MODES,
+    COMPETITOR_CLUSTER_LIMIT,
+    COMPETITOR_CLUSTER_RES,
+    COMPETITOR_CLUSTER_TOP_REDES,
     COMPETITOR_PIN_LIMIT,
     DOMINIO_SCHEMA_MINIMO,
     HYBRID_LOAD_COLS,
@@ -731,6 +734,142 @@ def test_pins_amostrados_caption():
     assert caption is not None
     assert "nao afeta score" in caption
     assert str(COMPETITOR_PIN_LIMIT).startswith("6")
+
+
+# ── BLK-FIX-07-B: clustering server-side por recorte ────────────────────────────
+
+
+def test_competitor_cluster_layer_uf_inteira_agrega_sem_cortar():
+    """40k concorrentes -> bolhas de densidade (ScatterplotLayer): conserva o total
+    (sem corte quando celulas ocupadas <= LIMIT), respeita o cap de bolhas e mantem
+    o payload do cluster bem abaixo de 3MB (muito menor que pins individuais)."""
+    from motor_expansao.dashboard.components import _build_competitor_cluster_layer
+
+    comp = _make_synthetic_competitors(40_000)
+    layer, frame = _build_competitor_cluster_layer(comp, _sp_reference())
+
+    assert layer is not None
+    assert str(layer.type) == "ScatterplotLayer"
+    # agrega sem cortar: total preservado (celulas ocupadas << LIMIT no bbox de SP)
+    assert int(frame["total"].sum()) == 40_000
+    assert len(frame) <= COMPETITOR_CLUSTER_LIMIT
+    # payload enxuto: muito abaixo do limite de 3MB
+    payload_bytes = len(json.dumps(pd.DataFrame(layer.data).to_dict("records")))
+    assert payload_bytes < 3_000_000, f"payload_bytes={payload_bytes}"
+
+
+def test_build_map_figure_cluster_false_mantem_iconlayer():
+    """cluster_competitors=False (Fase A) preserva a IconLayer com logo via atlas,
+    mesmo num recorte que o gate consideraria amplo."""
+    import h3
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    competitors = _make_synthetic_competitors(50)
+    deck, _ = streamlit_app.build_map_figure(
+        df,
+        selected_ufs=["SP"],
+        selected_cities=["Sao Paulo"],
+        competitors_df=competitors,
+        cluster_competitors=False,
+    )
+    assert deck is not None
+    competitor_layer = deck.layers[1]
+    assert str(competitor_layer.type) == "IconLayer"
+    assert str(competitor_layer.get_icon) in ("rede", "@@=rede")
+    assert competitor_layer.icon_mapping
+    serialized_atlas = json.loads(deck.to_json())["layers"][1]["iconAtlas"]
+    assert serialized_atlas.startswith("data:image/png;base64,")
+    assert competitor_layer.pickable
+
+
+def test_competitor_cluster_mode_gate():
+    """Gate puro/idempotente: Brasil e UF inteira agregam; municipio/faixa/>1 UF nao."""
+    from motor_expansao.dashboard.components import competitor_cluster_mode
+
+    assert competitor_cluster_mode([], [], []) is True
+    assert competitor_cluster_mode(["SP"], [], []) is True
+    assert competitor_cluster_mode(["SP"], ["Sao Paulo"], []) is False
+    assert competitor_cluster_mode(["SP"], [], ["alta"]) is False
+    assert competitor_cluster_mode(["SP", "RJ"], [], []) is False
+    # idempotente em repeticao (pureza)
+    assert competitor_cluster_mode(["SP"], [], []) is True
+    assert competitor_cluster_mode(["SP"], ["Sao Paulo"], []) is False
+
+
+def test_competitor_cluster_tooltip_counts():
+    """Coords escolhidas para cair na MESMA celula res-4: uma linha de cluster com
+    total correto e breakdown por rede com as contagens certas."""
+    from motor_expansao.dashboard.components import _build_competitor_cluster_layer
+
+    # 3 Smart Fit + 2 Bluefit, todas proximas (mesma celula res-4 no centro de SP)
+    coords = [
+        (-23.550, -46.633),
+        (-23.551, -46.634),
+        (-23.552, -46.635),
+        (-23.553, -46.636),
+        (-23.554, -46.637),
+    ]
+    cells = {h3.latlng_to_cell(la, ln, COMPETITOR_CLUSTER_RES) for la, ln in coords}
+    assert len(cells) == 1, "sanity: coords devem cair na mesma celula res-4"
+
+    comp = pd.DataFrame(
+        {
+            "rede": ["smart_fit", "smart_fit", "smart_fit", "bluefit", "bluefit"],
+            "rede_label": ["Smart Fit", "Smart Fit", "Smart Fit", "Bluefit", "Bluefit"],
+            "nome_unidade": [f"U{i}" for i in range(5)],
+            "lat": [la for la, _ in coords],
+            "lng": [ln for _, ln in coords],
+            "cidade": ["Sao Paulo"] * 5,
+            "uf": ["SP"] * 5,
+            "arquivo_origem": ["sintetico.csv"] * 5,
+        }
+    )
+    layer, frame = _build_competitor_cluster_layer(comp, _sp_reference())
+    assert layer is not None
+    assert len(frame) == 1
+    row = frame.iloc[0]
+    assert int(row["total"]) == 5
+    assert row["tooltip_title"] == "Cluster: 5 concorrentes"
+    assert row["tooltip_line_2"] == "Total: 5"
+    breakdown = row["tooltip_line_3"]
+    assert "Smart Fit: 3" in breakdown
+    assert "Bluefit: 2" in breakdown
+    # 2 redes <= TOP_REDES -> sem sufixo "+N redes"
+    assert COMPETITOR_CLUSTER_TOP_REDES >= 2
+    assert "redes" not in breakdown
+
+
+def test_build_unified_map_figure_cluster_gate():
+    """Dispatcher aplica o gate: UF inteira -> ScatterplotLayer; com municipio ->
+    IconLayer. A contagem de camadas (deck.layers) e identica nos dois modos."""
+    import h3
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    competitors = _make_synthetic_competitors(50)
+
+    deck_uf, _ = streamlit_app.build_unified_map_figure(
+        df,
+        color_mode="m1",
+        selected_ufs=["SP"],
+        selected_cities=[],
+        selected_faixas=[],
+        competitors_df=competitors,
+    )
+    deck_city, _ = streamlit_app.build_unified_map_figure(
+        df,
+        color_mode="m1",
+        selected_ufs=["SP"],
+        selected_cities=["Sao Paulo"],
+        selected_faixas=[],
+        competitors_df=competitors,
+    )
+    assert deck_uf is not None and deck_city is not None
+    assert str(deck_uf.layers[1].type) == "ScatterplotLayer"
+    assert str(deck_city.layers[1].type) == "IconLayer"
+    # contagem de camadas inalterada entre os dois modos
+    assert len(deck_uf.layers) == len(deck_city.layers)
 
 
 def test_build_map_figure_usa_geometria_granular_em_uf_ab_e_fallback_municipal_em_uf_c():

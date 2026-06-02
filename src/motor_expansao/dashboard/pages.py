@@ -17,11 +17,13 @@ from motor_expansao.dashboard.censo_point import (
 )
 from motor_expansao.dashboard.censo_report import render_downloads_relatorio_censitario
 from motor_expansao.dashboard.components import (
+    _build_competitor_cluster_layer,
     _build_multihex_selection_layer,
     _category_options,
     _sort_carteira_by_m1,
     build_analise_pontual_map,
     build_business_answers,
+    build_cluster_scope_caption,
     build_dominio_map_figure,
     build_faixa_comparison_figure,
     build_hybrid_alerts,
@@ -50,6 +52,7 @@ from motor_expansao.dashboard.components import (
     build_ultra_network_kpis,
     build_ultra_presence_map,
     build_unified_map_figure,
+    competitor_cluster_mode,
     count_pins_in_scope,
     filter_points_to_radius,
     pins_amostrados_caption,
@@ -66,6 +69,7 @@ from motor_expansao.dashboard.constants import (
     COLOR_MODE_DEFAULT,
     COLOR_MODES,
     COLORS,
+    COMPETITOR_CLUSTER_LIMIT,
     COVERAGE_BUCKET_ORDER,
     FAIXA_ORDEM,
     HYBRID_ELIGIBILITY_ORDER,
@@ -2730,6 +2734,7 @@ def render_mapa_territorial(
         enabled_overlays=enabled_overlays,
         selected_ufs=selected_ufs,
         selected_cities=selected_cities,
+        selected_faixas=selected_faixas,
         competitors_df=competitors_df,
         ultra_df=ultra_df,
         search_pin=search_pin,
@@ -2764,9 +2769,31 @@ def render_mapa_territorial(
         _comp_for_caption = competitors_df if "concorrentes" in _enabled else None
         _ultra_for_caption = ultra_df if "ultra" in _enabled else None
         _n_comp, _n_ultra = count_pins_in_scope(_comp_for_caption, _ultra_for_caption, _pin_ref)
-        _pins_caption = pins_amostrados_caption(_n_comp, _n_ultra)
-        if _pins_caption is not None:
-            st.caption(_pins_caption)
+        # BLK-FIX-07-B: em recorte amplo (gate verdadeiro) com concorrentes no escopo,
+        # a camada vira clusters de densidade -> caption proprio (NAO o "amostrado").
+        _cluster_caption_shown = False
+        if (
+            competitor_cluster_mode(selected_ufs, selected_cities, selected_faixas)
+            and _comp_for_caption is not None
+            and _n_comp > 0
+        ):
+            _cluster_layer, _cluster_frame = _build_competitor_cluster_layer(
+                _comp_for_caption, _pin_ref
+            )
+            if _cluster_layer is not None and not _cluster_frame.empty:
+                st.caption(
+                    build_cluster_scope_caption(
+                        len(_cluster_frame),
+                        _n_comp,
+                        capped=_n_comp > 0
+                        and len(_cluster_frame) >= COMPETITOR_CLUSTER_LIMIT,
+                    )
+                )
+                _cluster_caption_shown = True
+        if not _cluster_caption_shown:
+            _pins_caption = pins_amostrados_caption(_n_comp, _n_ultra)
+            if _pins_caption is not None:
+                st.caption(_pins_caption)
 
     # Leitura de click_coord apos o fragmento (pode ter sido atualizado)
     click_coord: tuple[float, float] | None = st.session_state.get("click_coord")
