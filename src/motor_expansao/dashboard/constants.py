@@ -108,6 +108,12 @@ MAP_POINT_LIMIT_LARGE = 18000
 # artefatos M1; pins sao camada visual de apoio (CLAUDE.md §2).
 COMPETITOR_PIN_LIMIT = 6000
 ULTRA_PIN_LIMIT = 6000
+# BLK-FIX-07-B: clustering server-side dos pins de concorrente em recortes amplos
+# (UF inteira / Brasil) -> agrega densidade em vez de cortar pins (Fase A). Camada
+# VISUAL apenas: nao altera score, ranking, carteira nem artefatos M1.
+COMPETITOR_CLUSTER_RES = 4            # resolucao H3 coarse (~22km/celula) p/ recorte amplo
+COMPETITOR_CLUSTER_LIMIT = 2000      # cap duro de bolhas de cluster (garante payload << 3MB)
+COMPETITOR_CLUSTER_TOP_REDES = 4     # max redes no breakdown do tooltip antes de "+N redes"
 TABLE_ROW_LIMIT = 1000
 POP_MIN_ACIONAVEL = 5_000
 BRASIL_CENTER = {"lat": -14.235, "lon": -51.9253}
