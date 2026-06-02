@@ -2650,3 +2650,59 @@ principal, então testes no worktree exigiram `PYTHONPATH=<worktree>/src` para n
 
 **Pendência:** verificação visual do FIX-05 em SO tema claro (Felipe). FIX-06 segue bloqueado (DEC).
 BLK-FIX-07-B (clustering, Fase B) permanece como follow-up.
+
+---
+
+## Fechamento sprint multi-track SEC-02 + FIX-07-B (orquestrador, 2026-06-02)
+
+Sprint paralela aprovada por Felipe em lote (planos apresentados juntos; SEC-02 = Alta). Dois tracks em
+**worktrees git isolados** a partir da `main`, Builders + QA independentes em paralelo, commit por path,
+merge sequencial `--no-ff` na `main`, CI verde, deploy comando-a-comando. Guardrails honrados: zero
+M1/score/artefatos/regra de cor; `git add` só por path; sem `pip install` nos worktrees; FIX-06 bloqueado.
+
+**Track A — `ciclo/BLK-FIX-07-B` (clustering server-side, Fase B):** QA APROVADO.
+- Gate puro `competitor_cluster_mode(selected_ufs, selected_cities, selected_faixas)` → cluster quando
+  `len(ufs)<=1 and not cities and not faixas` (UF inteira/Brasil sem filtro); município/filtro ⇒ pins
+  individuais com logo (caminho Fase A **intocado**, default `cluster_competitors=False` em todo lugar).
+- `_build_competitor_cluster_layer`: agrega por H3 res-4 (`COMPETITOR_CLUSTER_RES=4`), centróide via
+  `cell_to_latlng`, `ScatterplotLayer` dimensionado por contagem, tooltip contagem por rede/total,
+  `pickable` preservado, cap duro `COMPETITOR_CLUSTER_LIMIT=2000` (payload **1.849 bytes** p/ 40k ≪ 3 MB,
+  sem cortar). Selector `_competitor_layer_for_scope` + gate fiado em `build_unified_map_figure`.
+- +5 testes (gate, no-cut/payload, tooltip, IconLayer preservado, dispatcher). `len(deck.layers)` inalterado.
+- Arquivos: `src/motor_expansao/dashboard/{components,constants,pages}.py`, `tests/integration/test_streamlit_app.py`.
+
+**Track B — `ciclo/BLK-SEC-02` (pip-audit + gitleaks + Trivy + pin de actions por SHA):** QA APROVADO.
+- Actions todas pinadas por SHA (comentário de versão); `docker/*` subidas p/ Node 24
+  (`using: node24` verificado) → **aviso de descontinuação eliminado** (zero deprecation no run de main, incl. `publish`).
+- **gitleaks** bloqueante (imagem por digest) no job `test`. O 1º run do gate revelou 2 defeitos reais
+  do BLK-OPS-01: `.gitleaksignore` com fingerprints **stale** (refator `jobs/`→`src/` + drift de linha) e
+  invocação em CI divergente (`--source /repo` vs o `--source .` documentado). Corrigido **robusto a drift**:
+  invocação `--source .` (com `-w /repo`) + falsos positivos de conteúdo em `[allowlist].regexes` do
+  `.gitleaks.toml` (`renda_per_capita_setor_2022`, `test_fase_a_censo2022.py`); `.gitleaksignore` esvaziado.
+  **Catch-proof:** AWS key fake plantada em branch descartável → gate reprovou (`leaks found: 1`) → branch
+  deletada (a key óbvia `AKIA...EXAMPLE` é allowlist default do gitleaks; usada uma key realista sem stopword).
+- **pip-audit** bloqueante no `test` (`--desc --skip-editable`; sem `--strict`, incompatível com o pacote
+  local editável). Achou `pytest 8.4.2 GHSA-6w46-j5rx-g56g` (DoS local, **dev-only, fora da imagem de prod** —
+  `Dockerfile.streamlit` roda `pip install .` sem `[dev]`) → `--ignore-vuln` com justificativa + revisão 2026-09.
+- **Trivy** HIGH/CRITICAL (`ignore-unfixed`) no `publish` (reestruturado **build `load:true` → scan → push**,
+  imagem vulnerável nunca publica; digest publicado passa a vir de `steps.push`) e no `build-sanity`. Achou
+  3 HIGH em build-tools da imagem base (`wheel` CVE-2026-24049, `jaraco.context` CVE-2026-23949, também
+  vendored no setuptools), sem runtime no Streamlit → `.trivyignore` (decisão de Felipe) com justificativa + revisão.
+- Política de severidade documentada **inline** no `ci.yml`. Histórico iterativo (6 commits de CI-debug)
+  squashed num commit limpo (`c8bba9e`). Arquivos: `.github/workflows/ci.yml`, `.gitleaks.toml`,
+  `.gitleaksignore`, `.trivyignore`.
+
+**Validação na main pós-merge (dados reais):** `651 passed, 1 skipped, 0 falhas`, ruff/mypy limpos.
+CI verde na `main` (run de push): `test` ✓ + `publish` ✓ (build→Trivy→push). Merges disjuntos sem conflito.
+
+**Deploy (2026-06-02, comando-a-comando, guardrail §6):** pin `.env` `STREAMLIT_IMAGE` →
+`@sha256:6a80d527...b7c4` (commit `779698a`); `pull`+`up -d streamlit`; container `Up (healthy)`,
+`/_stcore/health → ok` (via `docker exec`; porta 8501 não é publicada no host). Rollback de 1 passo:
+`@sha256:2e9ac6c...04f36` (commit `058fd39`, também em `.env.bak`). Ver [[project_deploy_pin_digest_prod]].
+
+**Gotcha de QA reconfirmado:** worktrees compartilham o env Python (pacote editable da árvore principal),
+então a suíte no worktree exige `PYTHONPATH=<worktree>/src`. No worktree (sem dados gitignored) o baseline
+é `574 passed, 73 skipped`; na main com dados reais é `651 passed, 1 skipped` — não comparar contagens entre os dois.
+
+**Follow-ups registrados (revisar até 2026-09):** migração `pytest 9` (zera o allowlist do pip-audit);
+imagem **multi-stage** sem build-tools no runtime (zera os 2 CVEs do `.trivyignore` de vez). FIX-06 bloqueado (DEC).

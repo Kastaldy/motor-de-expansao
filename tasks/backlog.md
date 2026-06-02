@@ -85,46 +85,7 @@ do score). Mitigação: decisão humana + DEC antes de qualquer execução; medi
 
 - BLK-FIX-07 (concluído 2026-06-01) — ver tasks/completed.md
 
-### BLK-FIX-07-B — Clustering server-side por recorte das IconLayers (Fase B, refino de UX)
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (refino de UX da camada de pins; não toca M1/score) |
-| **Prioridade** | **Média** (o bound de 40k já está garantido pela Fase A / cap duro) |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Depende de** | BLK-FIX-07 (Fase A, concluído 2026-06-01) |
-| **Status** | Pendente |
-| **Origem** | Decisão de faseamento do Planner no BLK-FIX-07 (2026-06-01); recomendado pelo QA |
-
-**Contexto / gap:** o BLK-FIX-07 (Fase A) já eliminou o OOM e garantiu o bound de ~40k via cap de
-segurança duro (`COMPETITOR_PIN_LIMIT=6000`) + atlas de ícones + payload enxuto. Quando o recorte excede
-o cap, a Fase A **corta** pins (com caption "amostrado" honesta). A Fase B substitui "cortar" por
-"mostrar densidade": agregar pins em clusters por grid/hex na visão de UF inteira e expandir para pins
-individuais com logo quando o recorte é município/filtro.
-
-**Objetivo:** preservar a leitura de densidade concorrencial em recortes grandes (UF inteira) sem cortar
-pins arbitrariamente, mantendo o bound de payload.
-
-**Escopo permitido:** clustering server-side por recorte com gate **determinístico por recorte/filtro
-selecionado** (NÃO por zoom — `st.pydeck_chart` não round-trippa zoom/pan ao servidor): UF inteira sem
-filtro ⇒ clusters agregados (contagem por grid/hex); município/filtro selecionado ⇒ pins individuais com
-logo (caminho atual da Fase A). Tooltip de cluster (contagem por rede/total). Reusar o atlas e o payload
-enxuto da Fase A.
-
-**Fora de escopo:** M1/score/artefatos/universo de hexes; trocar o componente de mapa (Bloco 12 mantém
-`st.pydeck_chart`); culling por zoom client-side ao vivo (exigiria componente React custom); refazer o cap
-de hexes do BLK-FIX-03 ou o atlas/cap da Fase A; mexer na regra de cor de score.
-
-**Arquivos prováveis:** `dashboard/components.py` (`_build_competitor_icon_layer`, builders de mapa, novo
-helper de clustering), `dashboard/constants.py` (limites de cluster/grid), `dashboard/pages.py` (gate por
-recorte + caption de cluster), `tests/integration/test_streamlit_app.py`.
-
-**Critérios de aceite:** UF inteira renderiza clusters agregados (sem cortar pins) com payload ≤ limite;
-município/filtro renderiza pins individuais com logo (Fase A); gate determinístico testado; logos e
-`pickable` preservados; zero M1; suíte verde.
-
-**Risco:** médio (novo modelo de dados/UX de cluster). Mitigação: bound já garantido pela Fase A; Fase B é
-melhoria incremental, não correção de bug.
+- BLK-FIX-07-B (concluído 2026-06-02) — ver tasks/completed.md
 
 ---
 
@@ -259,52 +220,7 @@ o entregável é um GO/NO-GO honesto, não um modelo.
 
 ---
 
-### BLK-SEC-02 — Varredura de vulnerabilidades (deps + imagem) e gitleaks como gate de CI
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (supply-chain; não toca M1/score) |
-| **Prioridade** | **Média-Alta** |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Depende de** | **BLK-OPS-11** (deps pinadas) e idealmente **BLK-SEC-01** |
-| **Status** | Pendente |
-| **Origem** | revisão de robustez 2026-05-31 |
-
-**Contexto / gap:** não há varredura automatizada de vulnerabilidades de dependências nem da imagem
-de produção; o `gitleaks` (com `.gitleaks.toml`/`.gitleaksignore` do BLK-OPS-01) existe mas **não roda
-como gate no CI**. Combinado com deps não-pinadas (BLK-OPS-11), o risco de supply-chain é real.
-
-**Objetivo:** detectar dependências/imagens vulneráveis e segredos vazados ANTES do merge/deploy.
-
-**Escopo permitido:**
-- `pip-audit` (ou Dependabot/`safety`) sobre as deps pinadas, como step do CI.
-- Scan da imagem GHCR (Trivy/Grype) no pipeline de publish.
-- `gitleaks` como **step bloqueante** do CI (reusa a config existente do BLK-OPS-01).
-- Definir política de severidade (o que bloqueia vs. o que só alerta) para evitar CI ruidoso.
-- **Pinar as GitHub Actions por SHA** (hoje usam tags móveis, ex.: `actions/checkout@v5`,
-  `actions/setup-python@v6`) — endurece a supply-chain do próprio pipeline de CI/CD.
-- **Resolver de uma vez o aviso de Node 20 nas `docker/*-action`** (AUTORIZADO explicitamente por
-  Felipe em 2026-06-01): o BLK-OPS-08 (concluído 2026-05-29) subiu `actions/checkout@v4→v5` e
-  `actions/setup-python@v5→v6` (zerou o aviso no job `test`), mas **deixou** `docker/login-action@v3`,
-  `docker/metadata-action@v5`, `docker/setup-buildx-action@v3` e `docker/build-push-action@v6` (job
-  `publish` de `ci.yml`), que **ainda rodam em Node 20** — aviso de descontinuação persiste no `publish`
-  (GitHub força Node 24 em 16-jun-2026). Ao pinar por SHA, escolher SHAs de versões dessas actions que
-  já rodem em **Node 24**, eliminando o aviso de vez. Validar com um run verde do `publish` sem o aviso.
-
-**Fora de escopo:** remediar toda CVE histórica de uma vez (priorizar por severidade); assinatura de
-imagem (cosign) — follow-up.
-
-**Arquivos prováveis:** `.github/workflows/ci.yml` (jobs `test`/`publish`/`build-sanity` —
-o antigo `docker-publish.yml` foi consolidado em `ci.yml` no BLK-SEC-01), `pyproject.toml`/lock,
-`.gitleaks.toml`.
-
-**Critérios de aceite:**
-- CI roda `pip-audit` + `gitleaks` (bloqueantes por severidade definida) e scan de imagem no publish.
-- Um segredo de teste plantado é pego pelo gitleaks (prova do gate); removido depois.
-- Política de severidade documentada; zero mudança em M1/artefatos.
-
-**Risco:** baixo-médio (ferramental/CI). Cuidado para não tornar o CI instável por CVEs de baixa
-severidade — calibrar o gate.
+- BLK-SEC-02 (concluído 2026-06-02) — ver tasks/completed.md
 
 ---
 
