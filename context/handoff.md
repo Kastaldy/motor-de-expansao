@@ -1,205 +1,61 @@
-# Handoff — QA/Quality Analyzer
+# Handoff — Orquestrador (sprint multi-track SEC-02 + FIX-07-B)
 
 ## Skill que gerou este handoff
-QA/Quality Analyzer
+Orquestração multi-agente **direta** (worktrees git isolados em paralelo), aprovada por Felipe em lote —
+**não** a esteira `/run-cycle`. Por isso não há snapshots `context/handoff/20260602-*` desta sprint
+(decisão do usuário em 2026-06-02: atualizar só este handoff corrente). Data: 2026-06-02.
 
 ## Próxima Skill recomendada
-Fechamento manual (orquestrador executa housekeeping Passo 6.0 `housekeeping_move_block.py BLK-FIX-07
---move` + commit SÓ por path dos 7 arquivos + handoffs/current_task; registrar follow-up BLK-FIX-07-B).
+Nenhum bloco em execução. Próximo risco real de produção = **BLK-SEC-03 (hardening do VPS)** > BLK-SEC-05
+(observabilidade) > BLK-SEC-04 (backup de dados). Follow-ups de higiene registrados (ver abaixo).
+A critério do usuário abrir o próximo ciclo (via `/run-cycle` ou orquestração direta).
 
 ## VEREDITO
-APROVADO
+**CONCLUÍDO E DEPLOYADO** — ambos os tracks mergeados na `main`, CI verde, imagem em produção e saudável.
 
-## Justificativa
-A Fase A do BLK-FIX-07 (atlas de ícones compartilhado + payload enxuto por linha + cap duro por camada
-de pins) foi implementada fielmente ao plano do Planner (passos 2–6), sem tocar M1/score/artefatos/regra
-de cor/cap de hexes do BLK-FIX-03/transporte do BLK-FIX-02. Reexecutei as 5 validações obrigatórias por
-conta própria (todas verdes; suíte completa 639 passed/1 skipped = baseline 631 + 8 novos) E exercitei o
-caminho REAL de render das IconLayers com scripts ad-hoc próprios (não comitados). Confirmei por medição
-independente: (A) o pitfall pydeck `@@=` está neutralizado — `iconAtlas` serializa literal
-`data:image/png;base64,...`; (B) o cap de 40k corta para 6.000 linhas, payload ~2,05 MB; (C) SP-like
-1.381 NÃO é cortado (~484 KB) e mantém os MESMOS textos de tooltip; (D) os logos são realmente
-embutidos no atlas (2.276 px do logo de teste no tile correto via offset do mapping); (E) o caption só
-aparece acima do cap e diz que é limite de render; (F) `build_ultra_presence_map` preserva center/zoom e
-`pickable`. Nenhum bypass: os testes novos exercitam os builders reais, sem skip/xfail/mock do caminho
-crítico. Housekeeping confere o estado esperado (stub ausente = ainda NÃO movido; é Passo 6.0 do
-orquestrador). Sem bloqueadores.
+## Resumo dos tracks (QA independente APROVADO em cada um)
 
-## Problemas críticos (bloqueadores)
-- nenhum
+### Track A — BLK-FIX-07-B — clustering server-side por recorte (Fase B)
+Gate puro `competitor_cluster_mode` (UF inteira/Brasil sem filtro ⇒ clusters H3 res-4 via
+`ScatterplotLayer`, cap 2000, payload ~1,8 KB p/ 40k, sem cortar; município/filtro ⇒ pins individuais
+com logo, caminho Fase A intocado com `cluster_competitors=False` default). +5 testes. Zero
+M1/score/regra de cor. Arquivos: `src/motor_expansao/dashboard/{components,constants,pages}.py`,
+`tests/integration/test_streamlit_app.py`. Commit `5d00163` → merge `adcc1db`.
 
-## Problemas médios (não bloqueadores)
-- nenhum
+### Track B — BLK-SEC-02 — gate de segurança no CI (Alta)
+Actions pinadas por SHA; `docker/*` em Node 24 (`using: node24` verificado) → aviso de descontinuação
+eliminado. gitleaks bloqueante (imagem por digest) — o gate revelou 2 defeitos reais do BLK-OPS-01
+(fingerprints stale + invocação `--source /repo` divergente), corrigidos robusto a drift (`--source .` +
+`[allowlist].regexes` no `.gitleaks.toml`); catch-proof: AWS key fake plantada bloqueou o run, depois
+removida. pip-audit bloqueante (`--skip-editable`, sem `--strict`) — allowlist justificada de
+`GHSA-6w46-j5rx-g56g` (pytest, DoS local dev-only). Trivy HIGH/CRITICAL (`ignore-unfixed`) no publish
+(build→scan→push) e build-sanity — `.trivyignore` para 2 CVEs de build-tools sem runtime. Política de
+severidade inline no `ci.yml`. Arquivos: `.github/workflows/ci.yml`, `.gitleaks.toml`, `.gitleaksignore`,
+`.trivyignore`. Commit (squash) `c8bba9e` → merge `779698a`.
 
-## Melhorias opcionais
-- **`LIMIT_BYTES=3_000_000` no teste 40k é folgado.** Medi 2.146.337 bytes (~2,05 MB) para as 6.000
-  linhas pós-cap; o limite de 3 MB deixa ~0,85 MB de margem. NÃO esconde regressão (o modelo antigo daria
-  ~7 MB para as mesmas 6.000 linhas; 40k sem cap ~47 MB), e o bound real é garantido pelo cap (linhas ≤
-  6.000), não pelos bytes. Mas um limite mais apertado (~2,4 MB) travaria regressões de payload por linha
-  mais cedo. Não-bloqueante; documentado no docstring do teste.
-- **Doc com fraseado impreciso (cosmético).** `docs/streamlit_dashboard_m1.md` diz "payload por linha ~3x
-  menor" e na mesma linha "1.381 pins SP: de ~7 MB para ~0,5 MB" (que é ~14x). O número da tabela do
-  handoff do Builder é o medido/correto; o "~3x" é só fraseado solto. Não afeta código.
-- **Fallback de fonte da sigla depende de fontes do SO** (`arialbd.ttf`→`DejaVuSans-Bold.ttf`→
-  `load_default()`). Em ambientes sem nenhuma das duas TTF, a sigla cai no bitmap default (menor); não
-  quebra (há `try/except` em cada nível) e só afeta redes SEM logo PNG. Aceitável; o critério é "logo
-  preservado", e o caminho de produção (logo PNG presente) não usa a sigla.
+## Validação
+- main pós-merge (dados reais): **651 passed, 1 skipped, 0 falhas**; ruff + mypy limpos.
+- CI verde na `main` (push): `test` ✓ + `publish` ✓ (build→Trivy→push). Zero deprecation Node 20/16.
+- Baseline no worktree (sem dados gitignored): 574 passed, 73 skipped (não comparar com a contagem da main).
 
-## Testes faltantes
-- Não há lacuna bloqueante. Cobertura nova: 40k (cap+bytes+colunas+atlas literal), SP-like 1.381 (sem
-  corte + textos de tooltip), trava do pitfall `@@=` (concorrente E Ultra), caption (>cap e ≤cap), atlas
-  preserva logos (unit), Ultra usa atlas. Opcional: um teste que asserte explicitamente que o logo PNG
-  embutido aparece no tile correto do atlas via offset do `mapping` (hoje o unit garante só atlas
-  não-vazio + chaves do mapping; eu validei o embedding por fora, mas não há trava versionada disso).
-
-## Riscos remanescentes
-- **Fidelidade visual do atlas (baixo).** O pin do atlas é recomposto via Pillow (teardrop + círculo +
-  logo/sigla) espelhando `_png_to_pin_svg` (cx=64,cy=47,r=27; anchorY=122). Pode haver leve diferença de
-  antialiasing/contorno vs o SVG anterior. Critério é "logo PRESERVADO", não pixel-perfect — atendido.
-- **Cache de atlas por `frozenset` de redes (baixo).** Conjunto muito variável recomputa; sem vazamento de
-  estado (key é o conjunto exato). Custo amortizado.
-- **Caption usa o recorte visível como referência (baixo).** Determinístico e informativo; pode divergir
-  marginalmente da contagem exata de pins dentro do bbox do hex layer pós-cap-de-hexes. Não afeta render
-  nem score.
-
-## Saída literal das validações (reexecutadas por mim)
-
-### 1. `python -m pytest -q tests/integration/test_streamlit_app.py`
-```
-........................................................................ [ 45%]
-........................................................................ [ 90%]
-...............                                                          [100%]
-159 passed in 12.48s
-```
-
-### 2. `python -m pytest -q` (suíte completa)
-```
-639 passed, 1 skipped, 9 warnings in 88.14s (0:01:28)
-```
-Baseline de referência 631 passed, 1 skipped; +8 novos (4 integração + 4 unit) = 639. Sem regressão.
-9 warnings pré-existentes (GeoSeries area em CRS geográfico no pipeline da Fase A).
-
-### 3. `python -c "import streamlit_app; print('import ok')"`
-```
-import ok
-```
-(Precedido dos warnings padrão de streamlit em bare mode — esperados ao importar fora do runtime.)
-
-### 4. `ruff check` (6 arquivos tocados)
-```
-All checks passed!
-```
-
-### 5. `mypy src/.../{competitors,components,constants,pages}.py`
-```
-Success: no issues found in 4 source files
-```
-
-## Verificações de RIGOR adicional (medições PRÓPRIAS, caminho real dos builders)
-
-### A) Pitfall pydeck `@@=` neutralizado (CRÍTICO se quebrasse)
-```
-serialized iconAtlas[:30]: 'data:image/png;base64,iVBORw0K'
-serialized startswith @@= : False
-serialized startswith data:image/png;base64, : True
-get_icon serialized: @@=rede   (acessor desejado para a coluna 'rede')
-```
-PASS. O atlas serializa literal; `get_icon` vira `@@=rede` (correto/desejado).
-
-### B) Bound de 40k (medido por mim)
-```
-rows in payload: 6000   COMPETITOR_PIN_LIMIT: 6000   cap respected: True
-payload bytes: 2146337 (~2096 KB / 2.146 MB)
-columns: ['rede','lng','lat','icon_size','tooltip_title','tooltip_line_1'..'tooltip_line_5']
-has icon_data col: False   has tooltip_line_6: False
-```
-PASS. Cap corta 40k→6.000; sem `icon_data` por linha; sem `tooltip_line_6..14`.
-
-### C) SP-like 1.381 sem regressão (medido por mim)
-```
-rows: 1381 (sem corte, 1381<6000): True
-payload bytes: 495751 (~484 KB)
-tooltip_title: 'Smart Fit: Unidade 0'
-line1: 'Tipo: Concorrente mapeado'  line2: 'Rede: Smart Fit'
-line3: 'Cidade/UF: Sao Paulo / SP'  line4: 'Coordenadas: -23.45823, -46.87846'
-line5: 'Fonte: fonte.csv'           competitor pickable: True
-```
-PASS. Sem corte; textos de tooltip idênticos aos de hoje (Tipo/Rede/Cidade-UF/Coordenadas/Fonte);
-`pickable=True` preservado (clique do BLK-FIX-04).
-
-### D) Logos preservados (medido por mim, caminho real com logo PNG vermelho de teste)
-```
-embedded logo PNG extracted from pin SVG: True (184 bytes)
-atlas size: (256,128) para N=2   mapping: smart_fit x=128, bluefit x=0; anchorY=122; mask=False
-smart_fit tile (offset x=128) red_logo_px=2276  opaque_px=6451
-bluefit (fallback sigla, x=0)  red_logo_px=0     opaque_px=6451 (não-vazio)
-```
-PASS. O logo realmente é colado no tile correto (2.276 px do logo no círculo do tile smart_fit, no
-offset do `mapping`). `icon_mapping` cobre cada rede + `__ultra__`; atlas PNG não-vazio. (Nota: a
-verificação inicial deu "0 px" por eu ter olhado o tile errado — os keys são ordenados, então
-bluefit ficou em x=0; corrigido e confirmado.)
-
-### E) Caption "amostrado" honesta (medido por mim)
-```
-(5000,5000) -> None    (6000,6000) -> None    (6001,6001) -> frase
-(7000,100) comp only -> "...concorrentes: exibindo os primeiros 6.000 de 7.000..."
-(100,8000) ultra only -> "...Ultra: exibindo as primeiras 6.000 de 8.000..."
-count_pins_in_scope(8000 comp) -> 8000; caption inclui "nao afeta score, ranking nem carteira"
-```
-PASS. Frase só acima do cap; `None` em `≤ cap` (inclusive exatamente no cap); deixa claro que é limite
-de RENDER e não afeta score/carteira.
-
-### F) Integridade do app + Visão Executiva (medido por mim)
-```
-import streamlit_app -> import ok
-build_ultra_presence_map(GO, 10 unidades): n=10; center=(-16.65,-49.25) == mean; zoom=7.2
-ultra IconLayer pickable: True; ultra iconAtlas no @@=: True
-```
-PASS. Center/zoom da Visão Executiva preservados após refator (chama `_ultra_icon_layer_from_frame`).
-
-## Conferência de no-bypass
-- Os testes novos (40k, SP-like, pitfall, caption, atlas/unit) chamam DIRETAMENTE
-  `_build_competitor_icon_layer`/`_build_ultra_icon_layer`/`build_icon_atlas`/`count_pins_in_scope` —
-  caminho real, sem mock/monkeypatch/skip/xfail no caminho crítico.
-- `test_atlas_..._40k` asserta `len == COMPETITOR_PIN_LIMIT` (cap duro de fato aplicado) e `set(columns)
-  == _ICON_PAYLOAD_COLS_COMP` (igualdade estrita — pega coluna extra acidental).
-- `LIMIT_BYTES=3_000_000`: folga ~0,85 MB sobre o medido (~2,05 MB); NÃO esconde regressão (bound real é
-  por linhas ≤ cap; modelo antigo daria ~7 MB nas mesmas 6.000 linhas). Folgado, porém defensável e
-  documentado. Sugiro aperto opcional (não-bloqueante).
-- Os 277 hits de "mock/monkeypatch" no arquivo de integração são pré-existentes (fixtures de
-  `DATASET_PATH` em testes não relacionados), fora das linhas 557–735 do BLK-FIX-07.
-
-## Conferência cruzada com log do Builder
-- Suíte: Builder 639 passed/1 skipped — EU medi 639 passed/1 skipped. Bate.
-- Integração: Builder 159 passed — eu 159 passed. Bate.
-- Payload 40k: Builder 2.086.212 B; eu 2.146.337 B. Diferença ~3% por seed/coords sintéticas distintas
-  (esperado); mesma ordem de grandeza (~2 MB), cap = 6.000 idêntico. Consistente.
-- SP-like: Builder ~471 KB; eu ~484 KB. Mesma ordem; <600 KB. Consistente.
-- Pitfall: Builder reportou `@@=` em DIRECT e literal em QUOTED; eu confirmei o serializado final sem
-  `@@=`. Bate.
-- ruff/mypy/import: idênticos ao Builder.
+## Deploy (2026-06-02, comando-a-comando, guardrail §6)
+Pin `.env` `STREAMLIT_IMAGE` → `@sha256:6a80d5278acdd213d0f5d0a43ec628c7c577646d2d59cb69cc48eee17712b7c4`
+(commit `779698a`). `pull` + `up -d streamlit`; container `Up (healthy)`, `/_stcore/health → ok`
+(via `docker exec`; porta 8501 não publicada no host). Rollback de 1 passo:
+`@sha256:2e9ac6c...04f36` (commit `058fd39`, também em `.env.bak`). Ver memória `project_deploy_pin_digest_prod`.
 
 ## Guardrails verificados
-- `git diff --name-only`: NENHUM arquivo em `data/`, `config.py`, `scoring.py`,
-  `src/motor_expansao/pipelines/` tocado. Só os 7 arquivos do plano + handoffs + current_task.
-- `tasks/backlog.md`: NÃO tocado (fechamento é do orquestrador). Confirmado.
-- `score_priorizacao`, `hex_score_estrutural`, carteira, plano, artefatos M1, universo de hexes: não
-  tocados (camada visual de apoio, CLAUDE.md §2).
-- Regra de cor canônica (`RESIDUAL_SCORE_BANDS`/`score_band_to_color`): definições NÃO modificadas.
-- Cap de hexes BLK-FIX-03 (`MAP_POINT_LIMIT=35000`/`MAP_POINT_LIMIT_LARGE=18000`): valores intactos; o
-  diff só ADICIONA `COMPETITOR_PIN_LIMIT`/`ULTRA_PIN_LIMIT` após eles.
-- Transporte BLK-FIX-02 (`_deck_layer_frame`/`_DECK_RENDER_COLUMNS`/`maxMessageSize`): NÃO alterados (o
-  hex frame só aparece como referência em docstring/contexto de diff).
-- Parâmetros canônicos (H3_RESOLUTION=7, DIST_MIN_ULTRA_KM=1.0, RENDA_MIN=4500.0, renda=0.40/pop=0.60):
-  `config.py` não tocado.
-- `st.pydeck_chart` mantido (Bloco 12); sem novas dependências (Pillow/pydeck já no ambiente); sem API ao
-  vivo.
-- Housekeeping `python scripts/housekeeping_move_block.py BLK-FIX-07 --check` → "FALHA --check: stub
-  ausente no backlog para BLK-FIX-07" = ainda NÃO movido (estado esperado pré-Passo 6.0 do orquestrador).
+Zero M1/score/artefatos/regra de cor (conferido nos diffs); `git add` só por path; sem `pip install` nos
+worktrees; arquivos disjuntos entre tracks; cada comando no VPS confirmado individualmente; FIX-06 segue
+bloqueado (DEC).
+
+## Follow-ups registrados (revisar até 2026-09; ver tasks/completed.md)
+- **pytest 9**: subir `[dev]` p/ `pytest>=9` e remover o `--ignore-vuln GHSA-6w46-j5rx-g56g` do `ci.yml`.
+- **Imagem multi-stage** sem build-tools no runtime: zera os 2 CVEs do `.trivyignore` (deletável depois).
+- (Opcional) atualizar a linha "Baseline pytest atual" do CLAUDE.md (532 → 651).
+- (Opcional) abrir os 2 follow-ups como blocos no backlog (ex.: BLK-SEC-06 / BLK-SEC-07).
 
 ## Decisão recomendada
-APROVADO. Liberar para fechamento manual do orquestrador: (1) Passo 6.0 — `housekeeping_move_block.py
-BLK-FIX-07 --move`; (2) commit SÓ por path dos 7 arquivos + handoffs + current_task; (3) registrar
-follow-up BLK-FIX-07-B (clustering server-side) no backlog. Considerar (opcional, não-bloqueante)
-apertar `LIMIT_BYTES` e adicionar trava versionada do embedding do logo no offset do atlas em um
-próximo ciclo de hardening.
+Sprint encerrada e em produção. Recomendo priorizar **BLK-SEC-03 (hardening do VPS)** como próximo ciclo —
+é o risco real de produção remanescente (root-SSH, sem firewall/fail2ban documentados, 2FA opcional),
+ordens de magnitude acima dos CVEs de build-tool já allowlistados.
