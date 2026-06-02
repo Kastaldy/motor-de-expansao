@@ -1,0 +1,13 @@
+# BLK-SEC-02 — Allowlist de CVEs em ferramentas de BUILD da imagem.
+#
+# wheel / setuptools(_vendor)/jaraco.context vem da imagem base python:3.11 e NAO sao
+# invocadas em runtime pelo Streamlit (nenhum build/install de wheel ocorre quando o
+# container serve) -> zero exposicao em producao. Os fixes existem mas estao tambem em
+# copias vendored dentro do setuptools; remediar de verdade = imagem multi-stage sem
+# build tools no runtime (follow-up de hardening). Gate Trivy segue BLOQUEANTE para
+# todo o resto (HIGH/CRITICAL, ignore-unfixed). Revisar ate 2026-09.
+
+# wheel <0.46.2: priv-esc / exec de codigo via wheel malicioso (build-time only)
+CVE-2026-24049
+# jaraco.context <6.1.0: path traversal via tar malicioso (setuptools build-time only)
+CVE-2026-23949

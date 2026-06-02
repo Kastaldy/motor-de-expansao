@@ -5,8 +5,10 @@
 #   node_modules/, caches, parquets), evitando que rodar gitleaks leve horas
 #   varrendo 13+ GB de dados estatisticos.
 # - Manter a deteccao default ativa (extends do config embarcado do gitleaks).
-# - Falsos positivos pontuais (nomes de coluna, placeholders de .env.example)
-#   ficam em .gitleaksignore por fingerprint, nao aqui.
+# - Falsos positivos de CONTEUDO (nomes de coluna/arquivo de alta entropia que a
+#   regra generic-api-key marca, mas nao sao segredos) ficam em [allowlist].regexes
+#   AQUI, por conteudo. Robusto a drift de linha/path (ao contrario de fingerprints
+#   linha-a-linha em .gitleaksignore, que quebram a cada refatoracao — BLK-SEC-02).
 #
 # Uso: gitleaks detect --no-git --source . --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore
 
@@ -14,7 +16,7 @@
 useDefault = true
 
 [allowlist]
-description = "Paths excluidos do scan (sem segredos por design)"
+description = "Paths pesados sem segredos + falsos positivos de conteudo (nomes de coluna/arquivo)"
 paths = [
     '''^data/''',
     '''^\.venv/''',
@@ -32,4 +34,12 @@ paths = [
     '''.*\.svg$''',
     '''.*\.geojson$''',
     '''.*\.pdf$''',
+]
+# regexTarget default = "secret": casa contra o valor que a regra captura.
+# Strings legitimas e estaveis (nome de coluna do censo / nome de arquivo de teste)
+# que generic-api-key marca por entropia. NAO sao segredos. Substring match, entao
+# 'renda_per_capita_setor_2022' tambem cobre o sufixo '_calibrada'.
+regexes = [
+    '''renda_per_capita_setor_2022''',
+    '''test_fase_a_censo2022\.py''',
 ]

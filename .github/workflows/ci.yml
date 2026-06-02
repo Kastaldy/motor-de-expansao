@@ -19,9 +19,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: "3.11"
           cache: pip
@@ -47,6 +47,36 @@ jobs:
       - name: Smoke import
         run: python -c "import streamlit_app; print('ok')"
 
+      # BLK-SEC-02: gitleaks como gate BLOQUEANTE (qualquer segredo reprova o CI).
+      # Reusa .gitleaks.toml/.gitleaksignore (BLK-OPS-01). Imagem pinada por digest.
+      # SEVERIDADE: segredo nao tem tiers -> QUALQUER achado bloqueia (exit 1).
+      - name: Secret scan (gitleaks)
+        run: |
+          docker run --rm -v "${{ github.workspace }}:/repo" -w /repo \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            detect --no-git --source . \
+            --config .gitleaks.toml \
+            --gitleaks-ignore-path .gitleaksignore \
+            --redact --exit-code 1 --verbose
+
+      # BLK-SEC-02: pip-audit sobre as deps RESOLVIDAS no env do CI (nao ha lock).
+      # SEVERIDADE: bloqueia QUALQUER vuln nao-allowlistada; LOW/MEDIUM/dev/sem-fix
+      # entram como --ignore-vuln GHSA-xxxx (cada um com justificativa + data revisao).
+      # pip-audit instalado SO no CI (guardrail: worktree compartilha env, sem pip
+      # install local) -> nao entra em [dev].
+      # --skip-editable: o proprio projeto (`pip install -e .`, motor-expansao) nao
+      # esta no PyPI e nao e auditavel; auditamos so as deps de terceiros. Sem
+      # --strict (ele reprova o editavel skipado); pip-audit ja sai !=0 ao achar vuln.
+      # ALLOWLIST (revisar ate 2026-09):
+      #  - GHSA-6w46-j5rx-g56g (pytest<=9.0.2): DoS/priv-esc LOCAL via path previsivel
+      #    /tmp/pytest-of-{user}. Dev/test only — pytest NAO entra na imagem de prod
+      #    (Dockerfile.streamlit roda `pip install .` sem [dev]) -> zero exposicao em
+      #    producao. Fix em pytest 9.0.3 (major 8->9) fica para bloco de migracao proprio.
+      - name: Install pip-audit (CI only)
+        run: pip install "pip-audit==2.7.3"
+      - name: Dependency audit (pip-audit)
+        run: pip-audit --desc --skip-editable --ignore-vuln GHSA-6w46-j5rx-g56g
+
   # Gate de publicacao (BLK-SEC-01): a imagem so e publicada no GHCR quando o job
   # `test` conclui com sucesso (needs: [test]) E o gatilho e push na default branch.
   # Sem CI verde, este job (e seus steps de push) e pulado — fecha o gap do antigo
@@ -59,26 +89,48 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Login no GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Metadata (tags/labels)
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
         with:
           images: ghcr.io/${{ github.repository }}/motor-expansao-streamlit
           tags: |
             type=sha
             type=raw,value=latest,enable={{is_default_branch}}
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build e push
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Build (local, p/ scan antes do push)
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: Dockerfile.streamlit
+          load: true
+          tags: motor-expansao-streamlit:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # BLK-SEC-02: Trivy bloqueia HIGH/CRITICAL antes do push (ignore-unfixed: nao
+      # bloqueia CVE sem patch upstream -> controle de ruido). Imagem vulneravel NAO publica.
+      - name: Image scan (Trivy, HIGH/CRITICAL block)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: motor-expansao-streamlit:scan
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+          trivyignores: .trivyignore
+      - name: Push (apos scan verde)
+        id: push
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: .
           file: Dockerfile.streamlit
@@ -88,10 +140,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Exibir digest publicado (pin de prod)
-        run: 'echo "Digest imutavel publicado: ${{ steps.build.outputs.digest }}"'
+        run: 'echo "Digest imutavel publicado: ${{ steps.push.outputs.digest }}"'
 
   # Sanity de build manual (workflow_dispatch em branch de ciclo): builda a imagem
-  # SEM publicar (push: false). Nunca faz login no GHCR nem gera tag :latest.
+  # SEM publicar (load: true, sem push). Nunca faz login no GHCR nem gera tag :latest.
   build-sanity:
     needs: [test]
     if: github.event_name == 'workflow_dispatch' && inputs.dispatch_build_sanity
@@ -99,15 +151,27 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-      - name: Build (sanity, SEM push)
-        uses: docker/build-push-action@v6
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Build (sanity, load p/ scan)
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: .
           file: Dockerfile.streamlit
-          push: false
+          load: true
           tags: motor-expansao-streamlit:sanity
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      # BLK-SEC-02: mesmo gate de imagem do publish, aqui como sanity bloqueante
+      # (decisao travada) -> build de ciclo com HIGH/CRITICAL reprova antes de virar prod.
+      - name: Image scan (Trivy, HIGH/CRITICAL block)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: motor-expansao-streamlit:sanity
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+          trivyignores: .trivyignore
