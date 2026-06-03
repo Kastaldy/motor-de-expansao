@@ -10,18 +10,18 @@
 - pop p75 nacional: 45448.00
 - pop p25 nacional: 11996.00
 - fator de proxy de renda domiciliar: 3.2128
-- distribuicao do score de priorizacao: count=1537950 | min=0.00 | max=100.00 | media=48.87 | mediana=46.80 | std=23.55 | p90=84.59 | p95=92.80
+- distribuicao do score de priorizacao: count=1538424 | min=0.00 | max=100.00 | media=48.87 | mediana=46.80 | std=23.56 | p90=84.59 | p95=92.80
 
 ## Distribuicao por faixa_oportunidade
 
 | faixa_oportunidade | hexagonos | pct_hexagonos |
 | --- | --- | --- |
 | inviavel | 0 | 0.00000 |
-| descartado | 533971 | 34.72000 |
-| baixa | 234837 | 15.27000 |
-| media | 230570 | 14.99000 |
-| alta | 230403 | 14.98000 |
-| prioridade_maxima | 308169 | 20.04000 |
+| descartado | 534153 | 34.72000 |
+| baixa | 234909 | 15.27000 |
+| media | 230612 | 14.99000 |
+| alta | 230465 | 14.98000 |
+| prioridade_maxima | 308285 | 20.04000 |
 
 ## Top 20 Brasil
 
@@ -67,11 +67,11 @@
 | MG | 3 | Belo Horizonte | 3106200 | 87a881369ffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
 | MG | 4 | Belo Horizonte | 3106200 | 87a88136cffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
 | MG | 5 | Belo Horizonte | 3106200 | 87a88136dffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
-| RJ | 1 | Rio de Janeiro | 3304557 | 87a8a0210ffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
-| RJ | 2 | Rio de Janeiro | 3304557 | 87a8a0211ffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
-| RJ | 3 | Rio de Janeiro | 3304557 | 87a8a0212ffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
-| RJ | 4 | Rio de Janeiro | 3304557 | 87a8a0213ffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
-| RJ | 5 | Rio de Janeiro | 3304557 | 87a8a0218ffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
+| RJ | 1 | Rio de Janeiro | 3304557 | 87a8a020affffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
+| RJ | 2 | Rio de Janeiro | 3304557 | 87a8a0210ffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
+| RJ | 3 | Rio de Janeiro | 3304557 | 87a8a0211ffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
+| RJ | 4 | Rio de Janeiro | 3304557 | 87a8a0212ffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
+| RJ | 5 | Rio de Janeiro | 3304557 | 87a8a0213ffffff | prioridade_maxima | 100.00000 | 99.86000 | 100.00000 | True |
 | PR | 1 | Curitiba | 4106902 | 87a804cb0ffffff | prioridade_maxima | 100.00000 | 99.83000 | 100.00000 | True |
 | PR | 2 | Curitiba | 4106902 | 87a804cb3ffffff | prioridade_maxima | 100.00000 | 99.83000 | 100.00000 | True |
 | PR | 3 | Curitiba | 4106902 | 87a804cb4ffffff | prioridade_maxima | 100.00000 | 99.83000 | 100.00000 | True |
@@ -81,7 +81,7 @@
 | RS | 2 | Porto Alegre | 4314902 | 87a9010caffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
 | RS | 3 | Porto Alegre | 4314902 | 87a9010cbffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
 | RS | 4 | Porto Alegre | 4314902 | 87a9010d9ffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
-| RS | 5 | Porto Alegre | 4314902 | 87a901280ffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
+| RS | 5 | Porto Alegre | 4314902 | 87a901212ffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
 | GO | 1 | Goiânia | 5208707 | 87a8c0186ffffff | prioridade_maxima | 100.00000 | 99.75000 | 100.00000 | True |
 | GO | 2 | Goiânia | 5208707 | 87a8c0190ffffff | prioridade_maxima | 100.00000 | 99.75000 | 100.00000 | True |
 | GO | 3 | Goiânia | 5208707 | 87a8c0192ffffff | prioridade_maxima | 100.00000 | 99.75000 | 100.00000 | True |
@@ -137,11 +137,11 @@
 | BA | 3 | Salvador | 2927408 | 878116a02ffffff | prioridade_maxima | 100.00000 | 97.32000 | 100.00000 | True |
 | BA | 4 | Salvador | 2927408 | 878116a03ffffff | prioridade_maxima | 100.00000 | 97.32000 | 100.00000 | True |
 | BA | 5 | Salvador | 2927408 | 878116a04ffffff | prioridade_maxima | 100.00000 | 97.32000 | 100.00000 | True |
-| CE | 1 | Fortaleza | 2304400 | 87801040affffff | prioridade_maxima | 100.00000 | 96.29000 | 100.00000 | True |
-| CE | 2 | Fortaleza | 2304400 | 87801040bffffff | prioridade_maxima | 100.00000 | 96.29000 | 100.00000 | True |
-| CE | 3 | Fortaleza | 2304400 | 87801040effffff | prioridade_maxima | 100.00000 | 96.29000 | 100.00000 | True |
-| CE | 4 | Fortaleza | 2304400 | 878010418ffffff | prioridade_maxima | 100.00000 | 96.29000 | 100.00000 | True |
-| CE | 5 | Fortaleza | 2304400 | 878010419ffffff | prioridade_maxima | 100.00000 | 96.29000 | 100.00000 | True |
+| CE | 1 | Fortaleza | 2304400 | 87801040affffff | prioridade_maxima | 100.00000 | 96.28000 | 100.00000 | True |
+| CE | 2 | Fortaleza | 2304400 | 87801040bffffff | prioridade_maxima | 100.00000 | 96.28000 | 100.00000 | True |
+| CE | 3 | Fortaleza | 2304400 | 87801040effffff | prioridade_maxima | 100.00000 | 96.28000 | 100.00000 | True |
+| CE | 4 | Fortaleza | 2304400 | 878010418ffffff | prioridade_maxima | 100.00000 | 96.28000 | 100.00000 | True |
+| CE | 5 | Fortaleza | 2304400 | 878010419ffffff | prioridade_maxima | 100.00000 | 96.28000 | 100.00000 | True |
 | PA | 1 | Belém | 1501402 | 878044480ffffff | prioridade_maxima | 100.00000 | 96.17000 | 100.00000 | True |
 | PA | 2 | Belém | 1501402 | 878044481ffffff | prioridade_maxima | 100.00000 | 96.17000 | 100.00000 | True |
 | PA | 3 | Belém | 1501402 | 878044482ffffff | prioridade_maxima | 100.00000 | 96.17000 | 100.00000 | True |
@@ -157,21 +157,21 @@
 | MA | 3 | São Luís | 2111300 | 878008809ffffff | prioridade_maxima | 99.48000 | 94.48000 | 98.20000 | True |
 | MA | 4 | São Luís | 2111300 | 87800880cffffff | prioridade_maxima | 99.48000 | 94.48000 | 98.20000 | True |
 | MA | 5 | São Luís | 2111300 | 87800880dffffff | prioridade_maxima | 99.48000 | 94.48000 | 98.20000 | True |
-| PI | 1 | Teresina | 2211001 | 878005090ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.98000 | True |
-| PI | 2 | Teresina | 2211001 | 878005092ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.98000 | True |
-| PI | 3 | Teresina | 2211001 | 878005093ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.98000 | True |
-| PI | 4 | Teresina | 2211001 | 878005096ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.98000 | True |
-| PI | 5 | Teresina | 2211001 | 878005400ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.98000 | True |
+| PI | 1 | Teresina | 2211001 | 878005090ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.97000 | True |
+| PI | 2 | Teresina | 2211001 | 878005092ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.97000 | True |
+| PI | 3 | Teresina | 2211001 | 878005093ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.97000 | True |
+| PI | 4 | Teresina | 2211001 | 878005096ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.97000 | True |
+| PI | 5 | Teresina | 2211001 | 878005400ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.97000 | True |
 | RO | 1 | Porto Velho | 1100205 | 878a00800ffffff | prioridade_maxima | 96.11000 | 91.11000 | 97.04000 | True |
 | RO | 2 | Porto Velho | 1100205 | 878a00801ffffff | prioridade_maxima | 96.11000 | 91.11000 | 97.04000 | True |
 | RO | 3 | Porto Velho | 1100205 | 878a00802ffffff | prioridade_maxima | 96.11000 | 91.11000 | 97.04000 | True |
 | RO | 4 | Porto Velho | 1100205 | 878a00803ffffff | prioridade_maxima | 96.11000 | 91.11000 | 97.04000 | True |
 | RO | 5 | Porto Velho | 1100205 | 878a00804ffffff | prioridade_maxima | 96.11000 | 91.11000 | 97.04000 | True |
-| AC | 1 | Rio Branco | 1200401 | 878b42200ffffff | prioridade_maxima | 94.93000 | 89.93000 | 96.09000 | True |
-| AC | 2 | Rio Branco | 1200401 | 878b42201ffffff | prioridade_maxima | 94.93000 | 89.93000 | 96.09000 | True |
-| AC | 3 | Rio Branco | 1200401 | 878b42202ffffff | prioridade_maxima | 94.93000 | 89.93000 | 96.09000 | True |
-| AC | 4 | Rio Branco | 1200401 | 878b42203ffffff | prioridade_maxima | 94.93000 | 89.93000 | 96.09000 | True |
-| AC | 5 | Rio Branco | 1200401 | 878b42204ffffff | prioridade_maxima | 94.93000 | 89.93000 | 96.09000 | True |
+| AC | 1 | Rio Branco | 1200401 | 878b42200ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.09000 | True |
+| AC | 2 | Rio Branco | 1200401 | 878b42201ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.09000 | True |
+| AC | 3 | Rio Branco | 1200401 | 878b42202ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.09000 | True |
+| AC | 4 | Rio Branco | 1200401 | 878b42203ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.09000 | True |
+| AC | 5 | Rio Branco | 1200401 | 878b42204ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.09000 | True |
 
 ## Sanity check - Capitais
 
@@ -181,27 +181,27 @@
 | SP | Sao Paulo | 3550308 | 1000 | 1 | prioridade_maxima | True |
 | MG | Belo Horizonte | 3106200 | 1296 | 1 | prioridade_maxima | True |
 | RJ | Rio de Janeiro | 3304557 | 1356 | 1 | prioridade_maxima | True |
-| PR | Curitiba | 4106902 | 1572 | 1 | prioridade_maxima | True |
-| RS | Porto Alegre | 4314902 | 1665 | 1 | prioridade_maxima | True |
-| GO | Goiania | 5208707 | 1770 | 1 | prioridade_maxima | True |
-| SC | Florianopolis | 4205407 | 2047 | 1 | prioridade_maxima | True |
-| PE | Recife | 2611606 | 2216 | 1 | prioridade_maxima | True |
-| MT | Cuiaba | 5103403 | 2394 | 1 | prioridade_maxima | True |
-| MS | Campo Grande | 5002704 | 4843 | 1 | prioridade_maxima | True |
-| SE | Aracaju | 2800308 | 7275 | 1 | prioridade_maxima | True |
-| RN | Natal | 2408102 | 7305 | 1 | prioridade_maxima | True |
-| ES | Vitoria | 3205309 | 7333 | 40 | prioridade_maxima | True |
-| TO | Palmas | 1721000 | 8899 | 1 | prioridade_maxima | True |
-| PB | Joao Pessoa | 2507507 | 9583 | 1 | prioridade_maxima | True |
-| BA | Salvador | 2927408 | 15855 | 1 | prioridade_maxima | True |
-| CE | Fortaleza | 2304400 | 19192 | 1 | prioridade_maxima | True |
-| PA | Belem | 1501402 | 19588 | 1 | prioridade_maxima | True |
-| AL | Maceio | 2704302 | 24462 | 1 | prioridade_maxima | True |
-| MA | Sao Luis | 2111300 | 27624 | 1 | prioridade_maxima | True |
-| PI | Teresina | 2211001 | 31243 | 1 | prioridade_maxima | True |
-| RO | Porto Velho | 1100205 | 45492 | 1 | prioridade_maxima | True |
-| AC | Rio Branco | 1200401 | 60149 | 1 | prioridade_maxima | True |
-| RR | Boa Vista | 1400100 | 94533 | 1 | prioridade_maxima | False |
-| AM | Manaus | 1302603 | 110674 | 1 | prioridade_maxima | False |
-| AP | Macapa | 1600303 | 112918 | 1 | prioridade_maxima | False |
+| PR | Curitiba | 4106902 | 1578 | 1 | prioridade_maxima | True |
+| RS | Porto Alegre | 4314902 | 1671 | 1 | prioridade_maxima | True |
+| GO | Goiania | 5208707 | 1778 | 1 | prioridade_maxima | True |
+| SC | Florianopolis | 4205407 | 2055 | 1 | prioridade_maxima | True |
+| PE | Recife | 2611606 | 2225 | 1 | prioridade_maxima | True |
+| MT | Cuiaba | 5103403 | 2403 | 1 | prioridade_maxima | True |
+| MS | Campo Grande | 5002704 | 4853 | 1 | prioridade_maxima | True |
+| SE | Aracaju | 2800308 | 7285 | 1 | prioridade_maxima | True |
+| RN | Natal | 2408102 | 7315 | 1 | prioridade_maxima | True |
+| ES | Vitoria | 3205309 | 7343 | 41 | prioridade_maxima | True |
+| TO | Palmas | 1721000 | 8909 | 1 | prioridade_maxima | True |
+| PB | Joao Pessoa | 2507507 | 9593 | 1 | prioridade_maxima | True |
+| BA | Salvador | 2927408 | 15869 | 1 | prioridade_maxima | True |
+| CE | Fortaleza | 2304400 | 19207 | 1 | prioridade_maxima | True |
+| PA | Belem | 1501402 | 19605 | 1 | prioridade_maxima | True |
+| AL | Maceio | 2704302 | 24480 | 1 | prioridade_maxima | True |
+| MA | Sao Luis | 2111300 | 27645 | 1 | prioridade_maxima | True |
+| PI | Teresina | 2211001 | 31265 | 1 | prioridade_maxima | True |
+| RO | Porto Velho | 1100205 | 45517 | 1 | prioridade_maxima | True |
+| AC | Rio Branco | 1200401 | 60185 | 1 | prioridade_maxima | True |
+| RR | Boa Vista | 1400100 | 94605 | 1 | prioridade_maxima | False |
+| AM | Manaus | 1302603 | 110753 | 1 | prioridade_maxima | False |
+| AP | Macapa | 1600303 | 112997 | 1 | prioridade_maxima | False |
 

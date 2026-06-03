@@ -37,55 +37,8 @@ litoral) é **Crítica + DEC** (toca a base do M1 e regenera artefatos oficiais)
 
 ---
 
-### BLK-FIX-06 — Hexágonos do litoral recortados pelo pipeline ⚠ (toca base M1 → Crítica + DEC)
+- BLK-FIX-06 (concluído 2026-06-03) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **CRÍTICA** — a correção altera a base de hexes do M1 e **regenera artefatos oficiais** → aprovação obrigatória + **DEC** (CLAUDE.md §2 e §8) |
-| **Prioridade** | **Alta** (cobertura de mercado costeiro), **mas bloqueada por decisão humana** |
-| **Esteira** | Block Orchestrator → Planner → **[REVISÃO/APROVAÇÃO HUMANA + DEC]** → Builder → QA |
-| **Depende de** | decisão humana (DEC) antes de qualquer execução |
-| **Status** | Pendente (bloqueado em decisão) |
-| **Origem** | Felipe, 2026-06-01 (litoral: Praia Grande, Rio de Janeiro etc. sem hexes; print de exemplo) |
-
-**Contexto / gap:** hexágonos sobre faixas litorâneas povoadas (Praia Grande, litoral do RJ, etc.)
-**não aparecem** no mapa. Causa provável: `base_h3_brasil.py` filtra hexes **só por centróide dentro do
-polígono do Brasil** (`shapely.intersects(brasil_geom, chunk_centroids)`, ~linha 189; remoção logada
-como "centroide em mar/fronteira", ~linha 361). Hexes costeiros cujo centróide cai na água — mesmo com
-a maior parte sobre terra povoada — são descartados **na geração da base, antes de qualquer score**.
-
-⚠ **Atenção de criticidade:** corrigir isso **adiciona hexes ao universo do M1**, mudando contagens,
-**percentis nacionais** e, portanto, **regenera os artefatos oficiais** (`brasil_estrutural`,
-`brasil_priorizados`, `hexagonos_*`). Pela regra §2 do CLAUDE.md isso é **ALTERAÇÃO de artefato M1 →
-Crítica (aprovação obrigatória + DEC)**. **Não é** um fix de dashboard trivial e **não pode** ser
-executado pelo Builder sem DEC registrada.
-
-**Objetivo:** incluir hexes litorâneos que sobreponham terra/população real, sem distorcer o M1,
-mediante decisão registrada.
-
-**Escopo permitido (somente APÓS DEC):** trocar o critério de centróide por **interseção do polígono do
-hex com o polígono do Brasil** (ou critério híbrido centróide-ou-interseção com limiar de área);
-**quantificar** quantos hexes entram e o impacto em percentis/score ANTES de aplicar; regenerar
-artefatos de forma auditável e reprodutível.
-
-**Fora de escopo (sem DEC):** qualquer regeneração de artefato M1; mudar pesos/fórmula
-(renda=0.40/pop=0.60); parâmetros canônicos.
-
-**Arquivos prováveis:** `src/motor_expansao/pipelines/m1/base_h3_brasil.py` (filtro de centróide
-~181-194, log ~356-364), `config.py` (`M1_POP_MINIMA_PROXY`), artefatos M1 (regeneração controlada).
-
-**Critérios de aceite:** critério geométrico revisado cobre o litoral povoado (repro: Praia Grande/RJ
-voltam a aparecer); **impacto no M1 quantificado e aprovado em DEC**; artefatos regenerados de forma
-reprodutível; testes do pipeline verdes.
-
-**Risco:** **alto** (mexe na base do M1 e em artefatos oficiais; exige DEC e validação de não-regressão
-do score). Mitigação: decisão humana + DEC antes de qualquer execução; medir delta de hexes/percentis.
-
----
-
-- BLK-FIX-07 (concluído 2026-06-01) — ver tasks/completed.md
-
-- BLK-FIX-07-B (concluído 2026-06-02) — ver tasks/completed.md
 
 ---
 
