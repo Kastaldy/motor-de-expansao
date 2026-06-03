@@ -2,7 +2,7 @@
 
 ## Resumo executivo
 
-- percentual de hexagonos viaveis: 23.62%
+- percentual de hexagonos viaveis: 23.63%
 - fallback explicito de setor censitario: 100.00%
 - top 20 com renda alta ou combinada: 100.00%
 - capitais entre top 10 do proprio estado: 26/27
@@ -10,53 +10,53 @@
 - pop p75 nacional: 45448.00
 - pop p25 nacional: 11996.00
 - fator de proxy de renda domiciliar: 3.2128
-- distribuicao do score de priorizacao: count=1538424 | min=0.00 | max=100.00 | media=48.87 | mediana=46.80 | std=23.56 | p90=84.59 | p95=92.80
+- distribuicao do score de priorizacao: count=1542531 | min=0.00 | max=100.00 | media=48.88 | mediana=46.84 | std=23.56 | p90=84.58 | p95=92.79
 
 ## Distribuicao por faixa_oportunidade
 
 | faixa_oportunidade | hexagonos | pct_hexagonos |
 | --- | --- | --- |
 | inviavel | 0 | 0.00000 |
-| descartado | 534153 | 34.72000 |
-| baixa | 234909 | 15.27000 |
-| media | 230612 | 14.99000 |
-| alta | 230465 | 14.98000 |
-| prioridade_maxima | 308285 | 20.04000 |
+| descartado | 535478 | 34.71000 |
+| baixa | 235622 | 15.28000 |
+| media | 231376 | 15.00000 |
+| alta | 230673 | 14.95000 |
+| prioridade_maxima | 309382 | 20.06000 |
 
 ## Top 20 Brasil
 
 | rank_brasil | uf | municipio_label | cod_municipio | hex_id | faixa_oportunidade | motivo_priorizacao | observacao_estrategica | score_priorizacao | ajuste_executivo | hex_score_estrutural | score_percentil_nacional | renda_target_proxy |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 1 | DF | Brasília | 5300108 | 87a8c2090ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 2 | DF | Brasília | 5300108 | 87a8c2092ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 3 | DF | Brasília | 5300108 | 87a8c2093ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 4 | DF | Brasília | 5300108 | 87a8c2096ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 5 | DF | Brasília | 5300108 | 87a8c2192ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 6 | DF | Brasília | 5300108 | 87a8c2400ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 7 | DF | Brasília | 5300108 | 87a8c2401ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 8 | DF | Brasília | 5300108 | 87a8c2402ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 9 | DF | Brasília | 5300108 | 87a8c2403ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 10 | DF | Brasília | 5300108 | 87a8c2404ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 11 | DF | Brasília | 5300108 | 87a8c2405ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 12 | DF | Brasília | 5300108 | 87a8c2406ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 13 | DF | Brasília | 5300108 | 87a8c2408ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 14 | DF | Brasília | 5300108 | 87a8c2409ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 15 | DF | Brasília | 5300108 | 87a8c240affffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 16 | DF | Brasília | 5300108 | 87a8c240bffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 17 | DF | Brasília | 5300108 | 87a8c240cffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 18 | DF | Brasília | 5300108 | 87a8c240dffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 19 | DF | Brasília | 5300108 | 87a8c240effffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
-| 20 | DF | Brasília | 5300108 | 87a8c2410ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.93000 | 100.00000 | 9635.82 |
+| 1 | DF | Brasília | 5300108 | 87a8c2090ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 2 | DF | Brasília | 5300108 | 87a8c2092ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 3 | DF | Brasília | 5300108 | 87a8c2093ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 4 | DF | Brasília | 5300108 | 87a8c2096ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 5 | DF | Brasília | 5300108 | 87a8c2192ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 6 | DF | Brasília | 5300108 | 87a8c2400ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 7 | DF | Brasília | 5300108 | 87a8c2401ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 8 | DF | Brasília | 5300108 | 87a8c2402ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 9 | DF | Brasília | 5300108 | 87a8c2403ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 10 | DF | Brasília | 5300108 | 87a8c2404ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 11 | DF | Brasília | 5300108 | 87a8c2405ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 12 | DF | Brasília | 5300108 | 87a8c2406ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 13 | DF | Brasília | 5300108 | 87a8c2408ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 14 | DF | Brasília | 5300108 | 87a8c2409ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 15 | DF | Brasília | 5300108 | 87a8c240affffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 16 | DF | Brasília | 5300108 | 87a8c240bffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 17 | DF | Brasília | 5300108 | 87a8c240cffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 18 | DF | Brasília | 5300108 | 87a8c240dffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 19 | DF | Brasília | 5300108 | 87a8c240effffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
+| 20 | DF | Brasília | 5300108 | 87a8c2410ffffff | prioridade_maxima | combinado | Alta renda e alta densidade | 100.00000 | 5.00000 | 99.92000 | 100.00000 | 9635.82 |
 
 ## Top 5 por UF
 
 | uf | rank_uf | municipio_label | cod_municipio | hex_id | faixa_oportunidade | score_priorizacao | hex_score_estrutural | score_percentil_nacional | flag_viavel |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| DF | 1 | Brasília | 5300108 | 87a8c2090ffffff | prioridade_maxima | 100.00000 | 99.93000 | 100.00000 | True |
-| DF | 2 | Brasília | 5300108 | 87a8c2092ffffff | prioridade_maxima | 100.00000 | 99.93000 | 100.00000 | True |
-| DF | 3 | Brasília | 5300108 | 87a8c2093ffffff | prioridade_maxima | 100.00000 | 99.93000 | 100.00000 | True |
-| DF | 4 | Brasília | 5300108 | 87a8c2096ffffff | prioridade_maxima | 100.00000 | 99.93000 | 100.00000 | True |
-| DF | 5 | Brasília | 5300108 | 87a8c2192ffffff | prioridade_maxima | 100.00000 | 99.93000 | 100.00000 | True |
+| DF | 1 | Brasília | 5300108 | 87a8c2090ffffff | prioridade_maxima | 100.00000 | 99.92000 | 100.00000 | True |
+| DF | 2 | Brasília | 5300108 | 87a8c2092ffffff | prioridade_maxima | 100.00000 | 99.92000 | 100.00000 | True |
+| DF | 3 | Brasília | 5300108 | 87a8c2093ffffff | prioridade_maxima | 100.00000 | 99.92000 | 100.00000 | True |
+| DF | 4 | Brasília | 5300108 | 87a8c2096ffffff | prioridade_maxima | 100.00000 | 99.92000 | 100.00000 | True |
+| DF | 5 | Brasília | 5300108 | 87a8c2192ffffff | prioridade_maxima | 100.00000 | 99.92000 | 100.00000 | True |
 | SP | 1 | São Paulo | 3550308 | 87a810000ffffff | prioridade_maxima | 100.00000 | 99.92000 | 100.00000 | True |
 | SP | 2 | São Paulo | 3550308 | 87a810001ffffff | prioridade_maxima | 100.00000 | 99.92000 | 100.00000 | True |
 | SP | 3 | São Paulo | 3550308 | 87a810005ffffff | prioridade_maxima | 100.00000 | 99.92000 | 100.00000 | True |
@@ -80,8 +80,8 @@
 | RS | 1 | Porto Alegre | 4314902 | 87a9010c9ffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
 | RS | 2 | Porto Alegre | 4314902 | 87a9010caffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
 | RS | 3 | Porto Alegre | 4314902 | 87a9010cbffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
-| RS | 4 | Porto Alegre | 4314902 | 87a9010d9ffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
-| RS | 5 | Porto Alegre | 4314902 | 87a901212ffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
+| RS | 4 | Porto Alegre | 4314902 | 87a9010cdffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
+| RS | 5 | Porto Alegre | 4314902 | 87a9010ceffffff | prioridade_maxima | 100.00000 | 99.82000 | 100.00000 | True |
 | GO | 1 | Goiânia | 5208707 | 87a8c0186ffffff | prioridade_maxima | 100.00000 | 99.75000 | 100.00000 | True |
 | GO | 2 | Goiânia | 5208707 | 87a8c0190ffffff | prioridade_maxima | 100.00000 | 99.75000 | 100.00000 | True |
 | GO | 3 | Goiânia | 5208707 | 87a8c0192ffffff | prioridade_maxima | 100.00000 | 99.75000 | 100.00000 | True |
@@ -89,9 +89,9 @@
 | GO | 5 | Goiânia | 5208707 | 87a8c0195ffffff | prioridade_maxima | 100.00000 | 99.75000 | 100.00000 | True |
 | SC | 1 | Florianópolis | 4205407 | 87a834b60ffffff | prioridade_maxima | 100.00000 | 99.60000 | 100.00000 | True |
 | SC | 2 | Florianópolis | 4205407 | 87a834b61ffffff | prioridade_maxima | 100.00000 | 99.60000 | 100.00000 | True |
-| SC | 3 | Florianópolis | 4205407 | 87a834b64ffffff | prioridade_maxima | 100.00000 | 99.60000 | 100.00000 | True |
-| SC | 4 | Florianópolis | 4205407 | 87a834b65ffffff | prioridade_maxima | 100.00000 | 99.60000 | 100.00000 | True |
-| SC | 5 | Florianópolis | 4205407 | 87a91b408ffffff | prioridade_maxima | 100.00000 | 99.60000 | 100.00000 | True |
+| SC | 3 | Florianópolis | 4205407 | 87a834b62ffffff | prioridade_maxima | 100.00000 | 99.60000 | 100.00000 | True |
+| SC | 4 | Florianópolis | 4205407 | 87a834b63ffffff | prioridade_maxima | 100.00000 | 99.60000 | 100.00000 | True |
+| SC | 5 | Florianópolis | 4205407 | 87a834b64ffffff | prioridade_maxima | 100.00000 | 99.60000 | 100.00000 | True |
 | PE | 1 | Recife | 2611606 | 878183812ffffff | prioridade_maxima | 100.00000 | 99.59000 | 100.00000 | True |
 | PE | 2 | Recife | 2611606 | 878183813ffffff | prioridade_maxima | 100.00000 | 99.59000 | 100.00000 | True |
 | PE | 3 | Recife | 2611606 | 878183836ffffff | prioridade_maxima | 100.00000 | 99.59000 | 100.00000 | True |
@@ -104,34 +104,34 @@
 | MT | 5 | Cuiabá | 5103403 | 878ba6404ffffff | prioridade_maxima | 100.00000 | 99.51000 | 100.00000 | True |
 | ES | 1 | Vila Velha | 3205200 | 87a895058ffffff | prioridade_maxima | 100.00000 | 99.22000 | 100.00000 | True |
 | ES | 2 | Vila Velha | 3205200 | 87a895059ffffff | prioridade_maxima | 100.00000 | 99.22000 | 100.00000 | True |
-| ES | 3 | Vila Velha | 3205200 | 87a89505bffffff | prioridade_maxima | 100.00000 | 99.22000 | 100.00000 | True |
-| ES | 4 | Vila Velha | 3205200 | 87a8952b4ffffff | prioridade_maxima | 100.00000 | 99.22000 | 100.00000 | True |
-| ES | 5 | Vila Velha | 3205200 | 87a8952b6ffffff | prioridade_maxima | 100.00000 | 99.22000 | 100.00000 | True |
+| ES | 3 | Vila Velha | 3205200 | 87a89505affffff | prioridade_maxima | 100.00000 | 99.22000 | 100.00000 | True |
+| ES | 4 | Vila Velha | 3205200 | 87a89505bffffff | prioridade_maxima | 100.00000 | 99.22000 | 100.00000 | True |
+| ES | 5 | Vila Velha | 3205200 | 87a8952b4ffffff | prioridade_maxima | 100.00000 | 99.22000 | 100.00000 | True |
 | MS | 1 | Campo Grande | 5002704 | 87a854804ffffff | prioridade_maxima | 100.00000 | 99.00000 | 100.00000 | True |
 | MS | 2 | Campo Grande | 5002704 | 87a854820ffffff | prioridade_maxima | 100.00000 | 99.00000 | 100.00000 | True |
 | MS | 3 | Campo Grande | 5002704 | 87a854821ffffff | prioridade_maxima | 100.00000 | 99.00000 | 100.00000 | True |
 | MS | 4 | Campo Grande | 5002704 | 87a854822ffffff | prioridade_maxima | 100.00000 | 99.00000 | 100.00000 | True |
 | MS | 5 | Campo Grande | 5002704 | 87a854823ffffff | prioridade_maxima | 100.00000 | 99.00000 | 100.00000 | True |
-| SE | 1 | Aracaju | 2800308 | 8781a1046ffffff | prioridade_maxima | 100.00000 | 98.83000 | 100.00000 | True |
-| SE | 2 | Aracaju | 2800308 | 8781a1050ffffff | prioridade_maxima | 100.00000 | 98.83000 | 100.00000 | True |
-| SE | 3 | Aracaju | 2800308 | 8781a1051ffffff | prioridade_maxima | 100.00000 | 98.83000 | 100.00000 | True |
-| SE | 4 | Aracaju | 2800308 | 8781a1052ffffff | prioridade_maxima | 100.00000 | 98.83000 | 100.00000 | True |
-| SE | 5 | Aracaju | 2800308 | 8781a1053ffffff | prioridade_maxima | 100.00000 | 98.83000 | 100.00000 | True |
-| RN | 1 | Natal | 2408102 | 87818a592ffffff | prioridade_maxima | 100.00000 | 98.82000 | 100.00000 | True |
-| RN | 2 | Natal | 2408102 | 87818a593ffffff | prioridade_maxima | 100.00000 | 98.82000 | 100.00000 | True |
-| RN | 3 | Natal | 2408102 | 87818a594ffffff | prioridade_maxima | 100.00000 | 98.82000 | 100.00000 | True |
-| RN | 4 | Natal | 2408102 | 87818a596ffffff | prioridade_maxima | 100.00000 | 98.82000 | 100.00000 | True |
-| RN | 5 | Natal | 2408102 | 87818a59affffff | prioridade_maxima | 100.00000 | 98.82000 | 100.00000 | True |
+| SE | 1 | Aracaju | 2800308 | 8781a1009ffffff | prioridade_maxima | 100.00000 | 98.83000 | 100.00000 | True |
+| SE | 2 | Aracaju | 2800308 | 8781a1046ffffff | prioridade_maxima | 100.00000 | 98.83000 | 100.00000 | True |
+| SE | 3 | Aracaju | 2800308 | 8781a1050ffffff | prioridade_maxima | 100.00000 | 98.83000 | 100.00000 | True |
+| SE | 4 | Aracaju | 2800308 | 8781a1051ffffff | prioridade_maxima | 100.00000 | 98.83000 | 100.00000 | True |
+| SE | 5 | Aracaju | 2800308 | 8781a1052ffffff | prioridade_maxima | 100.00000 | 98.83000 | 100.00000 | True |
+| RN | 1 | Natal | 2408102 | 87818a592ffffff | prioridade_maxima | 100.00000 | 98.81000 | 100.00000 | True |
+| RN | 2 | Natal | 2408102 | 87818a593ffffff | prioridade_maxima | 100.00000 | 98.81000 | 100.00000 | True |
+| RN | 3 | Natal | 2408102 | 87818a594ffffff | prioridade_maxima | 100.00000 | 98.81000 | 100.00000 | True |
+| RN | 4 | Natal | 2408102 | 87818a596ffffff | prioridade_maxima | 100.00000 | 98.81000 | 100.00000 | True |
+| RN | 5 | Natal | 2408102 | 87818a59affffff | prioridade_maxima | 100.00000 | 98.81000 | 100.00000 | True |
 | TO | 1 | Palmas | 1721000 | 878171000ffffff | prioridade_maxima | 100.00000 | 98.46000 | 100.00000 | True |
 | TO | 2 | Palmas | 1721000 | 878171001ffffff | prioridade_maxima | 100.00000 | 98.46000 | 100.00000 | True |
 | TO | 3 | Palmas | 1721000 | 878171002ffffff | prioridade_maxima | 100.00000 | 98.46000 | 100.00000 | True |
 | TO | 4 | Palmas | 1721000 | 878171003ffffff | prioridade_maxima | 100.00000 | 98.46000 | 100.00000 | True |
 | TO | 5 | Palmas | 1721000 | 878171004ffffff | prioridade_maxima | 100.00000 | 98.46000 | 100.00000 | True |
-| PB | 1 | João Pessoa | 2507507 | 878183628ffffff | prioridade_maxima | 100.00000 | 98.29000 | 100.00000 | True |
-| PB | 2 | João Pessoa | 2507507 | 878183629ffffff | prioridade_maxima | 100.00000 | 98.29000 | 100.00000 | True |
-| PB | 3 | João Pessoa | 2507507 | 87818362cffffff | prioridade_maxima | 100.00000 | 98.29000 | 100.00000 | True |
-| PB | 4 | João Pessoa | 2507507 | 87818362dffffff | prioridade_maxima | 100.00000 | 98.29000 | 100.00000 | True |
-| PB | 5 | João Pessoa | 2507507 | 878183654ffffff | prioridade_maxima | 100.00000 | 98.29000 | 100.00000 | True |
+| PB | 1 | João Pessoa | 2507507 | 878183621ffffff | prioridade_maxima | 100.00000 | 98.29000 | 100.00000 | True |
+| PB | 2 | João Pessoa | 2507507 | 878183625ffffff | prioridade_maxima | 100.00000 | 98.29000 | 100.00000 | True |
+| PB | 3 | João Pessoa | 2507507 | 878183628ffffff | prioridade_maxima | 100.00000 | 98.29000 | 100.00000 | True |
+| PB | 4 | João Pessoa | 2507507 | 878183629ffffff | prioridade_maxima | 100.00000 | 98.29000 | 100.00000 | True |
+| PB | 5 | João Pessoa | 2507507 | 87818362affffff | prioridade_maxima | 100.00000 | 98.29000 | 100.00000 | True |
 | BA | 1 | Salvador | 2927408 | 878116a00ffffff | prioridade_maxima | 100.00000 | 97.32000 | 100.00000 | True |
 | BA | 2 | Salvador | 2927408 | 878116a01ffffff | prioridade_maxima | 100.00000 | 97.32000 | 100.00000 | True |
 | BA | 3 | Salvador | 2927408 | 878116a02ffffff | prioridade_maxima | 100.00000 | 97.32000 | 100.00000 | True |
@@ -162,16 +162,16 @@
 | PI | 3 | Teresina | 2211001 | 878005093ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.97000 | True |
 | PI | 4 | Teresina | 2211001 | 878005096ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.97000 | True |
 | PI | 5 | Teresina | 2211001 | 878005400ffffff | prioridade_maxima | 98.64000 | 93.64000 | 97.97000 | True |
-| RO | 1 | Porto Velho | 1100205 | 878a00800ffffff | prioridade_maxima | 96.11000 | 91.11000 | 97.04000 | True |
-| RO | 2 | Porto Velho | 1100205 | 878a00801ffffff | prioridade_maxima | 96.11000 | 91.11000 | 97.04000 | True |
-| RO | 3 | Porto Velho | 1100205 | 878a00802ffffff | prioridade_maxima | 96.11000 | 91.11000 | 97.04000 | True |
-| RO | 4 | Porto Velho | 1100205 | 878a00803ffffff | prioridade_maxima | 96.11000 | 91.11000 | 97.04000 | True |
-| RO | 5 | Porto Velho | 1100205 | 878a00804ffffff | prioridade_maxima | 96.11000 | 91.11000 | 97.04000 | True |
-| AC | 1 | Rio Branco | 1200401 | 878b42200ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.09000 | True |
-| AC | 2 | Rio Branco | 1200401 | 878b42201ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.09000 | True |
-| AC | 3 | Rio Branco | 1200401 | 878b42202ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.09000 | True |
-| AC | 4 | Rio Branco | 1200401 | 878b42203ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.09000 | True |
-| AC | 5 | Rio Branco | 1200401 | 878b42204ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.09000 | True |
+| RO | 1 | Porto Velho | 1100205 | 878a00800ffffff | prioridade_maxima | 96.10000 | 91.10000 | 97.03000 | True |
+| RO | 2 | Porto Velho | 1100205 | 878a00801ffffff | prioridade_maxima | 96.10000 | 91.10000 | 97.03000 | True |
+| RO | 3 | Porto Velho | 1100205 | 878a00802ffffff | prioridade_maxima | 96.10000 | 91.10000 | 97.03000 | True |
+| RO | 4 | Porto Velho | 1100205 | 878a00803ffffff | prioridade_maxima | 96.10000 | 91.10000 | 97.03000 | True |
+| RO | 5 | Porto Velho | 1100205 | 878a00804ffffff | prioridade_maxima | 96.10000 | 91.10000 | 97.03000 | True |
+| AC | 1 | Rio Branco | 1200401 | 878b42200ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.08000 | True |
+| AC | 2 | Rio Branco | 1200401 | 878b42201ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.08000 | True |
+| AC | 3 | Rio Branco | 1200401 | 878b42202ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.08000 | True |
+| AC | 4 | Rio Branco | 1200401 | 878b42203ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.08000 | True |
+| AC | 5 | Rio Branco | 1200401 | 878b42204ffffff | prioridade_maxima | 94.92000 | 89.92000 | 96.08000 | True |
 
 ## Sanity check - Capitais
 
@@ -181,27 +181,27 @@
 | SP | Sao Paulo | 3550308 | 1000 | 1 | prioridade_maxima | True |
 | MG | Belo Horizonte | 3106200 | 1296 | 1 | prioridade_maxima | True |
 | RJ | Rio de Janeiro | 3304557 | 1356 | 1 | prioridade_maxima | True |
-| PR | Curitiba | 4106902 | 1578 | 1 | prioridade_maxima | True |
-| RS | Porto Alegre | 4314902 | 1671 | 1 | prioridade_maxima | True |
-| GO | Goiania | 5208707 | 1778 | 1 | prioridade_maxima | True |
-| SC | Florianopolis | 4205407 | 2055 | 1 | prioridade_maxima | True |
-| PE | Recife | 2611606 | 2225 | 1 | prioridade_maxima | True |
-| MT | Cuiaba | 5103403 | 2403 | 1 | prioridade_maxima | True |
-| MS | Campo Grande | 5002704 | 4853 | 1 | prioridade_maxima | True |
-| SE | Aracaju | 2800308 | 7285 | 1 | prioridade_maxima | True |
-| RN | Natal | 2408102 | 7315 | 1 | prioridade_maxima | True |
-| ES | Vitoria | 3205309 | 7343 | 41 | prioridade_maxima | True |
-| TO | Palmas | 1721000 | 8909 | 1 | prioridade_maxima | True |
-| PB | Joao Pessoa | 2507507 | 9593 | 1 | prioridade_maxima | True |
-| BA | Salvador | 2927408 | 15869 | 1 | prioridade_maxima | True |
-| CE | Fortaleza | 2304400 | 19207 | 1 | prioridade_maxima | True |
-| PA | Belem | 1501402 | 19605 | 1 | prioridade_maxima | True |
-| AL | Maceio | 2704302 | 24480 | 1 | prioridade_maxima | True |
-| MA | Sao Luis | 2111300 | 27645 | 1 | prioridade_maxima | True |
-| PI | Teresina | 2211001 | 31265 | 1 | prioridade_maxima | True |
-| RO | Porto Velho | 1100205 | 45517 | 1 | prioridade_maxima | True |
-| AC | Rio Branco | 1200401 | 60185 | 1 | prioridade_maxima | True |
-| RR | Boa Vista | 1400100 | 94605 | 1 | prioridade_maxima | False |
-| AM | Manaus | 1302603 | 110753 | 1 | prioridade_maxima | False |
-| AP | Macapa | 1600303 | 112997 | 1 | prioridade_maxima | False |
+| PR | Curitiba | 4106902 | 1596 | 1 | prioridade_maxima | True |
+| RS | Porto Alegre | 4314902 | 1689 | 1 | prioridade_maxima | True |
+| GO | Goiania | 5208707 | 1803 | 1 | prioridade_maxima | True |
+| SC | Florianopolis | 4205407 | 2080 | 1 | prioridade_maxima | True |
+| PE | Recife | 2611606 | 2229 | 1 | prioridade_maxima | True |
+| MT | Cuiaba | 5103403 | 2449 | 1 | prioridade_maxima | True |
+| MS | Campo Grande | 5002704 | 4903 | 1 | prioridade_maxima | True |
+| SE | Aracaju | 2800308 | 7335 | 1 | prioridade_maxima | True |
+| RN | Natal | 2408102 | 7369 | 1 | prioridade_maxima | True |
+| ES | Vitoria | 3205309 | 7402 | 44 | prioridade_maxima | True |
+| TO | Palmas | 1721000 | 8972 | 1 | prioridade_maxima | True |
+| PB | Joao Pessoa | 2507507 | 9656 | 1 | prioridade_maxima | True |
+| BA | Salvador | 2927408 | 15960 | 1 | prioridade_maxima | True |
+| CE | Fortaleza | 2304400 | 19314 | 1 | prioridade_maxima | True |
+| PA | Belem | 1501402 | 19575 | 1 | prioridade_maxima | True |
+| AL | Maceio | 2704302 | 24596 | 1 | prioridade_maxima | True |
+| MA | Sao Luis | 2111300 | 27826 | 1 | prioridade_maxima | True |
+| PI | Teresina | 2211001 | 31456 | 1 | prioridade_maxima | True |
+| RO | Porto Velho | 1100205 | 45739 | 1 | prioridade_maxima | True |
+| AC | Rio Branco | 1200401 | 60478 | 1 | prioridade_maxima | True |
+| RR | Boa Vista | 1400100 | 95134 | 1 | prioridade_maxima | False |
+| AM | Manaus | 1302603 | 111388 | 1 | prioridade_maxima | False |
+| AP | Macapa | 1600303 | 113632 | 1 | prioridade_maxima | False |
 
