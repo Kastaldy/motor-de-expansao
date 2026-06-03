@@ -1,6 +1,6 @@
 # Modelo Hibrido de Expansao
 
-> Data: 2026-05-26
+> Data: 2026-06-03
 > Status: GO para uso pratico controlado como camada complementar ao M1
 
 ## Regra final do modelo
@@ -37,14 +37,14 @@
 | RS | 10 | 98.45 |
 | SC | 8 | 100.00 |
 | GO | 8 | 90.74 |
-| PR | 7 | 98.49 |
-| ES | 6 | 95.94 |
-| RN | 4 | 91.60 |
-| MT | 3 | 99.24 |
+| PR | 7 | 98.48 |
+| ES | 6 | 95.93 |
+| RN | 4 | 91.59 |
+| MT | 3 | 99.23 |
 | DF | 1 | 100.00 |
 | MS | 1 | 100.00 |
-| AC | 1 | 94.93 |
-| TO | 1 | 94.36 |
+| AC | 1 | 94.92 |
+| TO | 1 | 94.35 |
 
 ## Top 20 oportunidades Brasil
 
