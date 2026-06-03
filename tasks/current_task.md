@@ -2,36 +2,45 @@
 
 ## Bloco atual
 
-ID: BLK-FIX-06-B
-Nome: Geração de candidatos H3 por overlap (recupera a orla povoada de verdade)
-Status: aprovado (QA verde; oficiais regenerados no limiar 0.05 / DEC-003)
-Tipo: bug (correção do BLK-FIX-06; toca base M1 → regenera artefatos oficiais)
-Criticidade: crítica
-Esteira: Fix → Medição (scratch) → [aprovação humana + DEC-003] → Regeneração → QA → Deploy
-Skill atual: run-cycle (fechamento: commit por path → merge/push → CI → redeploy VPS)
-Próxima Skill: commit/merge/push/CI + redeploy de parquets ao VPS
+ID: BLK-FIX-06-C
+Nome: Orla não renderiza no dashboard apesar dos dados corretos (display/render)
+Status: aprovado (QA, 2026-06-03)
+Tipo: bug
+Criticidade: alta
+Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
+Skill atual: QA (Builder concluído por Felipe em 2026-06-03; handoff em context/handoff.md)
+Próxima Skill: QA
 dry_run: false
-Resultado: limiar 0.20→0.05 (DEC-003); universo 1.538.424→1.542.531 (+4.107 hexes costeiros, 23 UFs); impacto no score ~nulo (máx 0.02); QA 656 passed/1 skipped; ruff+mypy limpos; Mongaguá+PG-Mongaguá recuperados.
+
+## Decisões de produto aprovadas no gate (Felipe, 2026-06-03)
+- (i) Cor descartado <5k: `_DISCARDED_FILL = [150,150,170,150]` (alpha 150, visível).
+- (ii) Score NaN nos modos operacionais: relaxar scope + cor de fallback `_NAN_SCORE_FILL` (orla aparece em todos os modos).
+- (iii) Tabelas de carteira/domínio: NÃO mexer neste ciclo.
+- (iv) Duas cores de exceção DISTINTAS (descartado-<5k ≠ sem-score-NaN).
+
+## Nota de classificação (override de tiering, 1 linha)
+Bloco rotulado "Média" no backlog, mas a esteira do bloco pede [revisão humana] e o fix
+interage com LEITURA de score (cap por `score_priorizacao`, cor por colunas de score) →
+CLAUDE.md §2 "LEITURA/ANÁLISE de score → Alta (revisão humana antes do Builder)". Classificado
+como **Alta**: gate humano + Planner/Builder em Opus (risco de re-misdiagnóstico data-vs-render).
+QA sempre Opus 4.8.
 
 ## Objetivo
-Corrigir o defeito do BLK-FIX-06: a geração de candidatos usa `h3.geo_to_cells` (containment por CENTRO), que nunca produz os hexes da orla cujo centroide cai no mar — então o filtro de fração-de-terra nunca os avalia. Trocar para containment `overlap` (h3 4.4.2) para que a orla povoada (≥ M1_HEX_LAND_FRACTION_MIN de terra) seja de fato recuperada. Medir o impacto ANTES de regenerar/redeploy (DEC-003).
+Fazer os hexes da orla (Praia Grande/Mongaguá/litoral) aparecerem VISIVELMENTE no dashboard
+(M1 e, idealmente, modos operacionais) corrigindo o caminho de RENDER/DISPLAY — sem mexer em
+M1/score/artefatos/dados (já corretos e deployados no VPS).
 
-## Causa-raiz (provada)
-- `gerar_hexagonos_validos_uf` (base_h3_brasil.py:218): `h3.geo_to_cells(UF)` = polyfill por centro → orla de centro-no-mar nunca é candidata.
-- Prova: orla de Mongaguá `87a810998ffffff` tem fração_terra=0.218 (≥0.20) mas está AUSENTE; não é candidata de `geo_to_cells(SP)`; centro fora do polígono de SP/Brasil.
-- Os "+474" do BLK-FIX-06 eram só casos de borda entre malhas UF/Brasil, não a orla.
+## Escopo permitido
+- src/motor_expansao/dashboard/* (render/cor/legenda/cap)
+- testes correspondentes
 
-## Fix
-- `_gerar_candidatos_uf`: usa `h3.h3shape_to_cells_experimental(geo_to_h3shape(UF), res, "overlap")` (fallback robusto: centro + grid_disk k=1). Resto do critério (fração-de-terra ≥ limiar) inalterado.
+## Fora de escopo
+- base_h3_brasil.py / M1 / artefatos oficiais (BLK-FIX-06-B já fechou)
+- regenerar dados / redeploy de parquets
+- mudar pesos/fórmula/score
 
-## Paths do ciclo
-- src/motor_expansao/pipelines/m1/base_h3_brasil.py (geração de candidatos)
-- tests/integration/test_base_h3_brasil.py (teste do overlap)
-- scripts/medir_impacto_litoral_blk_fix_06b.py (medição scratch)
-- data/reports/base_h3_litoral_impacto_06b.md (relatório DEC-003)
-- CLAUDE.md §8 (DEC-003) + §5 — após aprovação
-- artefatos M1 oficiais — regenerados após DEC-003
-- deploy: sync parquets ao VPS após regeneração
-
-## Observação
-Deploy anterior (BLK-FIX-06, +474) permanece live (correto, porém incompleto). Backup em VPS `outputs_bak_blkfix06`. Este ciclo regenera por cima e redeploya.
+## Paths candidatos do ciclo (a confirmar pelo Planner)
+- src/motor_expansao/dashboard/components.py (_apply_pop_cut_colors, build_*_map_figure)
+- src/motor_expansao/dashboard/constants.py (POP_MIN_ACIONAVEL, COLOR_MODES, MAP_POINT_LIMIT_*)
+- src/motor_expansao/dashboard/utils.py (score_band_to_color, se aplicável)
+- tests/ correspondentes

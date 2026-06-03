@@ -1104,8 +1104,13 @@ def _hybrid_compact_tooltip() -> dict[str, object]:
     }
 
 
-_DISCARDED_FILL = [120, 120, 140, 70]
-_DISCARDED_LINE = [120, 120, 140, 180]
+# Cor do hex DESCARTADO pelo corte de pop <5k (visivel, alpha 150) — gate humano
+# (Felipe, 2026-06-03, BLK-FIX-06-C). Distinta das 10 faixas de RESIDUAL_SCORE_BANDS.
+_DISCARDED_FILL = [150, 150, 170, 150]
+_DISCARDED_LINE = [170, 170, 190, 200]
+# Cor de fallback para hex SEM score (score_* NaN) nos modos operacionais — distinta
+# tanto das faixas de score quanto de _DISCARDED_FILL (gate humano, BLK-FIX-06-C).
+_NAN_SCORE_FILL = [110, 116, 140, 150]
 
 
 def _apply_pop_cut_colors(map_df: pd.DataFrame) -> pd.DataFrame:
@@ -1129,7 +1134,7 @@ def render_pop_cut_legend() -> None:
     st.markdown(
         "<div class='legend-row'>"
         "<span class='legend-chip'>"
-        "<span class='legend-dot' style='background:#78788C;opacity:0.7;'></span>"
+        "<span class='legend-dot' style='background:#9696AA;opacity:0.59;'></span>"
         "Descartado &lt;5k hab (mapa)"
         "</span></div>",
         unsafe_allow_html=True,
@@ -1578,8 +1583,11 @@ def build_hybrid_map_figure(
 
     present_columns = [column for column in MAP_SOURCE_COLUMNS_HYBRID if column in hdf.columns]
 
+    # Scope relaxado (BLK-FIX-06-C): exige só geometria valida, NAO setor censitario.
+    # A orla costeira (sem setor censitario, score_* NaN) deixa de sumir do mapa; o
+    # guard de COLUNA ausente acima (return None, 0) e preservado.
     scope = (
-        hdf["score_setor_2022_calibrado"].notna()
+        hdf["hex_id"].notna()
         & hdf["lat"].notna()
         & hdf["lng"].notna()
     )
@@ -1619,6 +1627,17 @@ def build_hybrid_map_figure(
 
     _color_src = map_df[color_col] if color_col in map_df.columns else pd.Series(pd.NA, index=map_df.index)
     map_df["fill_color"] = _color_src.map(score_band_to_color)
+    # Fallback de score NaN (BLK-FIX-06-C): hex sem setor censitario (score_* NaN)
+    # recebe cor visivel distinta em vez do cinza alpha-70 de score_band_to_color.
+    # Atribuicao linha-a-linha p/ preservar lista RGBA por celula (padrao de
+    # _apply_pop_cut_colors). Roda ANTES de _apply_pop_cut_colors: um hex NaN+pop<5k
+    # termina com a cor de "descartado <5k" (precedencia de produto).
+    _nan_color_mask = _color_src.isna()
+    if _nan_color_mask.any():
+        map_df["fill_color"] = [
+            list(_NAN_SCORE_FILL) if nan else c
+            for nan, c in zip(_nan_color_mask, map_df["fill_color"], strict=False)
+        ]
     _restrito = map_df["flag_join_uf_restrito"].fillna(False).astype(bool) if "flag_join_uf_restrito" in map_df.columns else pd.Series(False, index=map_df.index)
     _quality_c = _normalized_join_quality(map_df) == "C"
     _outlier = map_df["flag_outlier_espacial"].fillna(False).astype(bool) if "flag_outlier_espacial" in map_df.columns else pd.Series(False, index=map_df.index)
@@ -1750,8 +1769,11 @@ def build_residual_heatmap_figure(
 
     present_columns = [column for column in MAP_SOURCE_COLUMNS_HYBRID if column in hdf.columns]
 
+    # Scope relaxado (BLK-FIX-06-C): exige só geometria valida, NAO setor censitario.
+    # A orla costeira (score_oportunidade_residual NaN) deixa de sumir do residual; o
+    # guard de COLUNA ausente acima (return None, 0) e preservado.
     scope = (
-        hdf["score_setor_2022_calibrado"].notna()
+        hdf["hex_id"].notna()
         & hdf["lat"].notna()
         & hdf["lng"].notna()
     )
@@ -1778,10 +1800,21 @@ def build_residual_heatmap_figure(
     )
     map_df = hdf.loc[survive_index, present_columns].copy().reset_index(drop=True)
 
+    # Fallback de score NaN (BLK-FIX-06-C): coluna ausente OU valor NaN (orla sem
+    # residual) recebe a cor visivel _NAN_SCORE_FILL em vez do cinza alpha-70.
+    # Atribuicao linha-a-linha p/ preservar lista RGBA por celula. Roda ANTES de
+    # _apply_pop_cut_colors: um hex NaN+pop<5k termina com a cor de "descartado <5k".
     if "score_oportunidade_residual" in map_df.columns:
-        map_df["fill_color"] = map_df["score_oportunidade_residual"].map(score_band_to_color)
+        _residual_src = map_df["score_oportunidade_residual"]
+        map_df["fill_color"] = _residual_src.map(score_band_to_color)
+        _nan_color_mask = _residual_src.isna()
+        if _nan_color_mask.any():
+            map_df["fill_color"] = [
+                list(_NAN_SCORE_FILL) if nan else c
+                for nan, c in zip(_nan_color_mask, map_df["fill_color"], strict=False)
+            ]
     else:
-        map_df["fill_color"] = [[120, 120, 140, 70]] * len(map_df)
+        map_df["fill_color"] = [list(_NAN_SCORE_FILL) for _ in range(len(map_df))]
     _restrito = map_df["flag_join_uf_restrito"].fillna(False).astype(bool) if "flag_join_uf_restrito" in map_df.columns else pd.Series(False, index=map_df.index)
     _quality_c = _normalized_join_quality(map_df) == "C"
     _default_line = hex_to_rgba(COLORS["map_line"], 100)

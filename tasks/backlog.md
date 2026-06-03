@@ -41,64 +41,8 @@ litoral) é **Crítica + DEC** (toca a base do M1 e regenera artefatos oficiais)
 
 ---
 
-### BLK-FIX-06-C — Orla NÃO RENDERIZA no dashboard apesar dos dados corretos (display/render, NÃO é dados)
+- BLK-FIX-06-C (concluído 2026-06-03) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (display/render do dashboard; **NÃO toca M1/score/artefatos** — os dados já estão corretos e deployados) |
-| **Prioridade** | **Alta** (continuação direta do BLK-FIX-06-B; objetivo do usuário ainda não atingido visualmente) |
-| **Esteira** | Block Orchestrator → Planner → [revisão humana] → Builder → QA |
-| **Status** | Pendente (registrado 2026-06-03; Felipe vai resolver a partir de amanhã 2026-06-04) |
-| **Origem** | Felipe, 2026-06-03: "Não funcionou, não está renderizando no dashboard" após o deploy completo do BLK-FIX-06-B |
-
-**Sintoma:** após o BLK-FIX-06-B (universo M1 1.542.531, limiar 0.05, TODAS as camadas paralelas
-regeneradas e **deployadas** ao VPS), os hexes da orla **continuam não aparecendo** no dashboard.
-
-**INSIGHT-CHAVE (economiza tempo amanhã): o problema NÃO é de dados — é de RENDER.** Os hexes da orla
-ESTÃO presentes e corretos nos parquets SERVIDOS em produção (verificado via `docker exec` no container
-live, 2026-06-03): M1 `hexagonos_brasil_dashboard.parquet`=1.542.531; `oportunidades_expansao_hibrido`
-=1.542.531 com `score_oportunidade_residual`/`score_setor_2022_calibrado`/`score_expansao_hibrido`;
-`plano_expansao_dominio`=5.957 com `score_dominio_hibrido`; enriquecido `uf=SP`=47.389. TODOS contêm
-Mongaguá `87a810998ffffff` e PG-Mongaguá `87a810d4cffffff`. Logo o caminho de **render/exibição** está
-descartando ou ocultando esses hexes — não falta dado.
-
-**Hipóteses (ancoradas em código, a confirmar pelo Planner — NÃO confirmadas):**
-1. **Corte de população "<5k hab" pinta de CINZA translúcido** (`_apply_pop_cut_colors`,
-   `dashboard/components.py:1111`; `_DISCARDED_FILL=[120,120,140,70]`, alpha 70). Hexes com
-   `populacao_corte_hex < POP_MIN_ACIONAVEL` (5000) viram cinza quase-invisível na base escura. Muitos
-   hexes de orla têm `populacao_corte_hex` baixo (fonte `setor_2022`, ex.: Mongaguá centro=2.416) →
-   cinza → parece "não renderizar". **HIPÓTESE MAIS FORTE** (eles renderizam, mas invisíveis).
-2. **Score NaN no modo ativo** dropa/descolore o hex: no Censitário, muitos hexes de orla sobre água
-   têm `score_setor_2022_calibrado`=NaN (sem setor censitário) → sem cor. Idem `score_expansao_hibrido`
-   em alguns. Verificar se o builder do mapa filtra `notna()` por modo.
-3. **Cap de display** `MAP_POINT_LIMIT_LARGE=18.000` para UFs grandes (SP tem 47k) — top-N por
-   `score_priorizacao`; hexes costeiros de score baixo ficam fora do recorte. (Mas Felipe relatou que
-   FILTROU poucas cidades e mesmo assim sumiu → o cap não deveria aplicar; reconfirmar.)
-4. Alguma máscara de validade no builder do mapa (`build_*_map_figure` em `components.py`, layers
-   `H3HexagonLayer get_hexagon="hex_id"` ~linhas 1198/1441/1687/1816/1981) que remove os hexes.
-
-**Objetivo:** fazer os hexes da orla **aparecerem visivelmente** no dashboard (em todos os modos, ou ao
-menos M1), sem mexer em M1/score/dados (já corretos). Provável fix de DISPLAY: tornar o corte de 5k
-configurável/com toggle no mapa, ou elevar a opacidade/cor do "descartado", ou tratar NaN de score na
-orla — decisão de produto do Felipe.
-
-**Escopo permitido:** apenas `src/motor_expansao/dashboard/*` (render/cor/legenda/cap), sem recálculo de
-score nem novo deploy de dados (os dados já estão no VPS). Guardrail §5 do CLAUDE.md: visualização não
-recalcula score.
-
-**Fora de escopo:** mexer em `base_h3_brasil.py`/M1/artefatos (BLK-FIX-06-B já fechou isso); regenerar
-dados; mudar pesos/fórmula.
-
-**Critérios de aceite:** Praia Grande/Mongaguá/litoral aparecem visíveis no dashboard (M1 e, idealmente,
-nos modos operacionais) com `Ctrl+Shift+R`; sem alterar score/artefatos; testes verdes.
-
-**Contexto/links:** BLK-FIX-06-B (DEC-003, commits `353b2c1`/`acc9ca4`); deploy live verificado
-(container healthy, dados presentes); backup de rollback no VPS `outputs_bak_blkfix06b` (não precisa
-rollback — dados estão certos); investigação de display em `components.py` (`_apply_pop_cut_colors`,
-`MAP_POINT_LIMIT_LARGE`), `dashboard/constants.py` (`POP_MIN_ACIONAVEL`, `COLOR_MODES`).
-
-**Risco:** baixo (só display; M1/dados intactos). Cuidado: não reintroduzir o falso diagnóstico de
-"dados faltando" — os dados ESTÃO lá; o trabalho é de RENDER.
 
 
 ---

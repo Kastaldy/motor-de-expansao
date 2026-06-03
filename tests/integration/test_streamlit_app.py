@@ -7,6 +7,11 @@ import pandas as pd
 import pytest
 
 import streamlit_app
+from motor_expansao.dashboard.components import (
+    _DISCARDED_FILL,
+    _NAN_SCORE_FILL,
+    _apply_pop_cut_colors,
+)
 from motor_expansao.dashboard.constants import (
     COLOR_MODE_IDS,
     COLOR_MODES,
@@ -1250,14 +1255,153 @@ def test_build_map_figure_pinta_hex_descartado_por_pop_com_cor_neutra():
     assert deck is not None
     assert points == 2
     rendered = pd.DataFrame(deck.layers[0].data).set_index("hex_id")
-    # hex descartado deve ter cor cinza neutra
-    assert rendered.loc[hex_bad, "fill_color"] == [120, 120, 140, 70]
-    # hex nao descartado nao deve ter cor cinza
-    assert rendered.loc[hex_ok, "fill_color"] != [120, 120, 140, 70]
+    # hex descartado deve ter a NOVA cor de "descartado <5k" (visivel, alpha >= 140)
+    assert rendered.loc[hex_bad, "fill_color"] == _DISCARDED_FILL
+    assert _DISCARDED_FILL[3] >= 140
+    assert _DISCARDED_FILL != [120, 120, 140, 70]
+    # hex nao descartado nao deve ter a cor de descartado
+    assert rendered.loc[hex_ok, "fill_color"] != _DISCARDED_FILL
     # tooltip do descartado deve mencionar descarte
     assert "Descartado" in rendered.loc[hex_bad, "tooltip_title"]
     # tooltip do nao descartado nao deve mencionar descarte
     assert "Descartado" not in rendered.loc[hex_ok, "tooltip_title"]
+
+
+def test_build_map_figure_orla_baixa_pop_renderiza_visivel():
+    """BLK-FIX-06-C: hex de orla (pop <5k) com score_priorizacao valido deve aparecer
+    no layer M1 com cor VISIVEL (alpha >= 140), nao o cinza alpha-70 antigo."""
+    import h3
+    lat, lng = -23.99, -46.41  # orla litoral SP (Mongagua/Praia Grande)
+    hex_orla = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([
+        _hex_row(hex_orla, lat, lng, flag_pop_min_5k=False, score_priorizacao=72.0),
+    ])
+
+    deck, points = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+
+    assert deck is not None
+    assert points == 1
+    rendered = pd.DataFrame(deck.layers[0].data).set_index("hex_id")
+    # (a) hex de orla presente no layer (nao descartado do dataset)
+    assert hex_orla in rendered.index
+    fill = rendered.loc[hex_orla, "fill_color"]
+    # (b) cor visivel: alpha >= 140 e != cinza alpha-70 antigo
+    assert fill[3] >= 140
+    assert fill != [120, 120, 140, 70]
+
+
+def test_build_hybrid_map_figure_renderiza_hex_sem_setor_censitario():
+    """BLK-FIX-06-C: hex sem setor censitario (score_* NaN) com geometria valida deve
+    aparecer no layer Hibrido com _NAN_SCORE_FILL (cor de fallback visivel)."""
+    import h3
+    lat, lng = -23.99, -46.41
+    hex_orla = h3.latlng_to_cell(lat, lng, 7)
+    hdf = pd.DataFrame([{
+        "hex_id": hex_orla,
+        "lat": lat,
+        "lng": lng,
+        "uf": "SP",
+        "nome_municipio": "Mongagua",
+        "score_setor_2022_calibrado": pd.NA,
+        "score_priorizacao": 70.0,
+        "score_expansao_hibrido": pd.NA,
+        "densidade_pop_setor_hab_km2": pd.NA,
+        "qualidade_join_uf": "C",
+        "flag_join_uf_restrito": False,
+        "flag_baixa_pop_setor": pd.NA,
+        "flag_outlier_espacial": False,
+        "causa_outlier_espacial": pd.NA,
+        "coverage_pct_setor_2022": pd.NA,
+        "motivo_nao_elegivel_censo": pd.NA,
+        "elegibilidade_hibrida": "-",
+        "rank_hex_intraurbano": pd.NA,
+        "top_hex_intraurbano": pd.NA,
+        "top_oportunidade_municipio": pd.NA,
+        "populacao_proxy": 2_416,
+        "renda_per_capita": 4_000,
+        "pop_total_setor_2022": pd.NA,
+        "renda_per_capita_setor_2022_calibrada": pd.NA,
+        "flag_pop_min_5k": True,  # isola o caso NaN-de-score do corte de 5k
+        "oferta_efetiva_disponivel": pd.NA,
+        "score_oportunidade_residual": pd.NA,
+        "quartil_oportunidade_residual": pd.NA,
+    }])
+
+    deck, n = streamlit_app.build_hybrid_map_figure(
+        hdf,
+        selected_ufs=["SP"],
+        selected_cities=[],
+    )
+
+    assert deck is not None
+    assert n >= 1
+    rendered = pd.DataFrame(deck.layers[0].data).set_index("hex_id")
+    # (a) hex presente no layer (nao mais descartado por NaN de setor)
+    assert hex_orla in rendered.index
+    # (b) cor de fallback de score NaN, visivel
+    assert rendered.loc[hex_orla, "fill_color"] == _NAN_SCORE_FILL
+    assert _NAN_SCORE_FILL[3] >= 140
+
+
+def test_build_residual_heatmap_figure_renderiza_hex_sem_score_residual():
+    """BLK-FIX-06-C: hex sem score_oportunidade_residual (NaN) com geometria valida deve
+    aparecer no layer Residual com _NAN_SCORE_FILL (cor de fallback visivel)."""
+    import h3
+    lat, lng = -23.99, -46.41
+    hex_orla = h3.latlng_to_cell(lat, lng, 7)
+    hdf = pd.DataFrame([{
+        "hex_id": hex_orla,
+        "lat": lat,
+        "lng": lng,
+        "uf": "SP",
+        "nome_municipio": "Mongagua",
+        "score_setor_2022_calibrado": pd.NA,
+        "score_priorizacao": 70.0,
+        "score_expansao_hibrido": pd.NA,
+        "densidade_pop_setor_hab_km2": pd.NA,
+        "qualidade_join_uf": "C",
+        "flag_join_uf_restrito": False,
+        "coverage_pct_setor_2022": pd.NA,
+        "elegibilidade_hibrida": "-",
+        "populacao_proxy": 2_416,
+        "renda_per_capita": 4_000,
+        "pop_total_setor_2022": pd.NA,
+        "flag_pop_min_5k": True,  # isola o caso NaN-de-score do corte de 5k
+        "oferta_efetiva_disponivel": pd.NA,
+        "score_oportunidade_residual": pd.NA,
+        "quartil_oportunidade_residual": pd.NA,
+    }])
+
+    deck, n = streamlit_app.build_residual_heatmap_figure(
+        hdf,
+        selected_ufs=["SP"],
+        selected_cities=[],
+    )
+
+    assert deck is not None
+    assert n >= 1
+    rendered = pd.DataFrame(deck.layers[0].data).set_index("hex_id")
+    # (a) hex presente no layer (nao mais descartado por NaN de setor)
+    assert hex_orla in rendered.index
+    # (b) cor de fallback de score NaN, visivel
+    assert rendered.loc[hex_orla, "fill_color"] == _NAN_SCORE_FILL
+    assert _NAN_SCORE_FILL[3] >= 140
+
+
+def test_apply_pop_cut_colors_usa_alpha_visivel():
+    """BLK-FIX-06-C: _apply_pop_cut_colors deve pintar hex descartado (<5k) com
+    _DISCARDED_FILL de alpha visivel (>= 140), nao o cinza alpha-70 antigo."""
+    df = pd.DataFrame({
+        "flag_pop_min_5k": [False],
+        "fill_color": [[10, 20, 30, 200]],
+        "line_color": [[1, 2, 3, 200]],
+    })
+
+    out = _apply_pop_cut_colors(df)
+
+    assert out.loc[0, "fill_color"] == _DISCARDED_FILL
+    assert _DISCARDED_FILL[3] >= 140
+    assert _DISCARDED_FILL != [120, 120, 140, 70]
 
 
 _DECK_LAYER_KEEP_SET = {
@@ -2070,11 +2214,15 @@ def test_render_mapa_territorial_dominio_sem_dados_exibe_info():
 
 
 def test_render_mapa_territorial_sem_dados_no_mapa_exibe_info():
-    """Quando build_unified_map_figure retorna None, deve mostrar info em vez de erro."""
+    """Quando build_unified_map_figure retorna None, deve mostrar info em vez de erro.
+
+    BLK-FIX-06-C: o scope dos builders relaxou para exigir só geometria valida (nao
+    mais setor censitario), entao o caso "sem dados no mapa" passa a ser geometria
+    ausente (lat/lng NaN), e nao score NaN — score NaN agora RENDERIZA (orla)."""
     import unittest.mock as mock
 
     df = pd.DataFrame([_hybrid_row_unified(
-        "h1", -23.55, -46.63,
+        "h1", float("nan"), float("nan"),
         score_setor_2022_calibrado=pd.NA,
         score_oportunidade_residual=pd.NA,
     )])
