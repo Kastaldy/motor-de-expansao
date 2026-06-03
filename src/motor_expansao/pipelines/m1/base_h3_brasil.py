@@ -3,12 +3,15 @@ Base nacional H3 do Brasil (resolucao 7) pronta para enriquecimento da Fase 1.
 
 Fluxo:
 1. Baixa ou reutiliza a malha oficial do IBGE por UF.
-2. Gera os hexagonos H3 de cada UF.
+2. Gera os candidatos H3 de cada UF por containment OVERLAP (BLK-FIX-06-B): inclui
+   as celulas que SOBREPOEM o poligono da UF, nao so as de centro dentro. Sem isso,
+   a orla de centroide-no-mar nunca era candidata e o filtro de fracao-de-terra do
+   BLK-FIX-06 nao a alcancava (a orla povoada continuava recortada).
 3. Criterio HIBRIDO (BLK-FIX-06 / DEC-002, limiar aprovado 0.20): mantem hexagonos
    cujo CENTROIDE esta dentro do Brasil (fast path) OU, para os de centroide fora,
    cujo poligono sobrepoe terra em fracao de area >= settings.M1_HEX_LAND_FRACTION_MIN
-   (recupera costeiros povoados, ex.: orla de Praia Grande/SP `87a810c02ffffff`,
-   litoral RJ `87a8a078cffffff`). Hexes em mar aberto (fracao < limiar) continuam
+   (recupera costeiros povoados, ex.: orla de Mongagua/SP `87a810998ffffff`,
+   Praia Grande/SP `87a810c02ffffff`). Hexes em mar aberto (fracao < limiar) continuam
    descartados. Substitui o antigo filtro de centroide puro, que recortava o litoral.
 4. Salva parquet particionado por UF em data/staging/brasil/uf=XX/hexagonos.parquet.
 5. Gera relatorio curto de execucao em data/reports/base_h3_brasil.md.
@@ -173,10 +176,39 @@ def construir_geometria_brasil(payload_brasil: dict):
     return shape(features[0]["geometry"])
 
 
-def _fracao_terra_hex(hex_id: str, brasil_geom) -> float:
-    """Fracao da area do poligono do hex que sobrepoe terra (Brasil).
+def _gerar_candidatos_uf(geometry: dict, resolucao: int) -> list[str]:
+    """Candidatos H3 da UF por containment OVERLAP (BLK-FIX-06-B).
 
-    Razao de areas em graus (CRS WGS84/EPSG:4674, consistente com brasil_geom).
+    `h3.geo_to_cells` (polyfill por CENTRO) so produz hexes cujo centroide cai
+    dentro do poligono de terra da UF; hexes da orla com centroide no mar NUNCA
+    eram candidatos, entao o filtro de fracao-de-terra do BLK-FIX-06 nunca os
+    avaliava (orla povoada ficava de fora). `overlap` inclui as celulas que
+    SOBREPOEM o poligono (borda costeira); o filtro de fracao-de-terra depois
+    mantem so as que tem >= M1_HEX_LAND_FRACTION_MIN de terra. O interior nao
+    muda (overlap e superconjunto de center). Fallback robusto a versao do h3:
+    centro + anel de borda (grid_disk k=1), que tambem inclui a orla adjacente.
+    """
+    shape_uf = h3.geo_to_h3shape(geometry)
+    try:
+        cells = h3.h3shape_to_cells_experimental(shape_uf, resolucao, "overlap")
+    except (AttributeError, TypeError, ValueError):
+        center = list(h3.geo_to_cells(geometry, resolucao))
+        candidatos = set(center)
+        for cell in center:
+            candidatos.update(h3.grid_disk(cell, 1))
+        cells = candidatos
+    # Dedup: overlap sobre UF multipolygon (continente + ilhas) pode repetir celulas.
+    return list(dict.fromkeys(cells))
+
+
+def _fracao_terra_hex(hex_id: str, land_geom) -> float:
+    """Fracao da area do poligono do hex que sobrepoe `land_geom` (terra).
+
+    `land_geom` e o poligono de terra de referencia — na recuperacao costeira do
+    BLK-FIX-06-B passamos o poligono da PROPRIA UF (atribuicao correta na borda
+    litoranea entre estados), nao o Brasil inteiro.
+
+    Razao de areas em graus (CRS WGS84/EPSG:4674, consistente com a malha IBGE).
     Para celulas H3 res 7 (pequenas e adjacentes) a razao e aproximadamente
     invariante a projecao; evita reprojetar centenas de milhares de poligonos.
     """
@@ -184,7 +216,7 @@ def _fracao_terra_hex(hex_id: str, brasil_geom) -> float:
     area_hex = hex_poly.area
     if area_hex <= 0:
         return 0.0
-    inter = brasil_geom.intersection(hex_poly)
+    inter = land_geom.intersection(hex_poly)
     return float(inter.area / area_hex)
 
 
@@ -196,44 +228,54 @@ def gerar_hexagonos_validos_uf(
     land_fraction_min: float | None = None,
     coletar_fracao_terra: bool = False,
 ) -> tuple[list[str], int, int, list[tuple[str, float]]]:
-    """Gera os hexagonos validos de uma UF pelo criterio HIBRIDO (BLK-FIX-06).
+    """Gera os hexagonos validos de uma UF pelo criterio HIBRIDO (BLK-FIX-06 / 06-B).
 
-    1. FAST PATH: hexes cujo centroide esta dentro do Brasil sao mantidos (sem custo
-       extra, sem regressao no interior).
-    2. Para os hexes de centroide FORA, constroi o poligono do hex e calcula a fracao
-       de area sobre terra; MANTEM se fracao >= land_fraction_min, senao descarta.
+    Candidatos por containment OVERLAP (`_gerar_candidatos_uf`), entao classifica
+    cada hex pelo seu CENTROIDE para atribuir a UF correta (sem duplicar entre UFs):
 
-    A interseccao poligono x poligono so e calculada para os hexes hoje-descartados
-    (centroide fora) — o universo "centroide-dentro" passa direto.
+    1. FAST PATH: centroide dentro DESTA UF -> mantido (pertence a ela).
+    2. Centroide em terra do Brasil mas fora desta UF -> IGNORADO aqui (pertence a UF
+       vizinha, que o reivindica pelo proprio centro). Evita duplicata entre UFs.
+    3. Centroide NO MAR -> recuperacao costeira: constroi o poligono do hex e calcula a
+       fracao de area sobre terra (Brasil); MANTEM se fracao >= land_fraction_min. Hexes
+       de mar na fronteira entre duas UFs costeiras podem ser recuperados por ambas; o
+       dedup nacional em `executar_base_h3_brasil` garante hex unico por base.
+
+    A interseccao poligono x poligono so e calculada para os hexes de centroide no mar.
 
     Retorna `(validos, removidos, recuperados_costeiros, fracao_terra_vec)`:
-      - `recuperados_costeiros`: nº de hexes mantidos pelo 2º teste (centroide fora).
+      - `removidos`: hexes de centroide no mar com fracao < limiar (mar aberto).
+      - `recuperados_costeiros`: hexes de centroide no mar mantidos pela fracao de terra.
       - `fracao_terra_vec`: quando `coletar_fracao_terra=True`, lista de
-        `(hex_id, fracao_terra)` de TODOS os hexes de centroide-fora que sobrepoem
-        terra (fracao > 0), para re-filtragem barata por limiar (leque). Vazia caso
-        contrario. Independe do limiar aplicado para MANTER/descartar.
+        `(hex_id, fracao_terra)` dos hexes de centroide no mar que sobrepoem terra
+        (fracao > 0), para re-filtragem barata por limiar. Vazia caso contrario.
     """
     if land_fraction_min is None:
         land_fraction_min = settings.M1_HEX_LAND_FRACTION_MIN
-    candidatos = list(h3.geo_to_cells(feature_uf["geometry"], resolucao))
+    # BLK-FIX-06-B: candidatos por OVERLAP (nao por centro) para a orla de
+    # centroide-no-mar entrar na avaliacao de fracao-de-terra.
+    candidatos = _gerar_candidatos_uf(feature_uf["geometry"], resolucao)
+    uf_geom = shape(feature_uf["geometry"])
 
     validos: list[str] = []
     removidos = 0
     recuperados_costeiros = 0
     fracao_terra_vec: list[tuple[str, float]] = []
     for chunk in _chunks(candidatos, chunk_size):
-        # Fast path: centroide do hexágono dentro do Brasil.
         lats_lngs = [h3.cell_to_latlng(hex_id) for hex_id in chunk]
         chunk_centroids = shapely.points(
             [lng for lat, lng in lats_lngs],
             [lat for lat, lng in lats_lngs],
         )
-        mask = shapely.intersects(brasil_geom, chunk_centroids)
-        for hex_id, keep in zip(chunk, mask, strict=True):
-            if keep:
-                validos.append(hex_id)
+        in_uf = shapely.intersects(uf_geom, chunk_centroids)
+        in_brasil = shapely.intersects(brasil_geom, chunk_centroids)
+        for hex_id, c_uf, c_br in zip(chunk, in_uf, in_brasil, strict=True):
+            if c_uf:
+                validos.append(hex_id)  # fast path: pertence a esta UF
                 continue
-            # Centroide fora: segundo teste (interseccao poligono x poligono).
+            if c_br:
+                continue  # centroide em UF vizinha -> evita duplicata entre UFs
+            # Centroide no mar: recuperacao costeira (fracao sobre terra do Brasil).
             fracao_terra = _fracao_terra_hex(hex_id, brasil_geom)
             if coletar_fracao_terra and fracao_terra > 0.0:
                 fracao_terra_vec.append((hex_id, fracao_terra))
@@ -362,6 +404,8 @@ def executar_base_h3_brasil(
 
     metricas: list[UFMetrica] = []
     problemas: list[str] = []
+    hexes_vistos: set[str] = set()
+    total_duplicados_dedup = 0
 
     for feature_uf in features_uf:
         uf_started_at = time.time()
@@ -375,6 +419,16 @@ def executar_base_h3_brasil(
             uf=feature_uf["uf"],
             regiao=feature_uf["regiao"],
         )
+        # BLK-FIX-06-B: dedup. Um hex pode repetir DENTRO da UF (overlap sobre
+        # multipolygon) ou ser recuperado por >1 UF costeira (mar em fronteira). Garante
+        # hex unico por base; em duplicata entre UFs, fica na 1a processada (alfabetica).
+        if not df_uf.empty:
+            antes = len(df_uf)
+            if hexes_vistos:
+                df_uf = df_uf[~df_uf["hex_id"].isin(hexes_vistos)]
+            df_uf = df_uf.drop_duplicates("hex_id").reset_index(drop=True)
+            total_duplicados_dedup += antes - len(df_uf)
+        hexes_vistos.update(df_uf["hex_id"].tolist())
         validacao = validar_dataframe_hexagonos(df_uf)
         salvar_particao_uf(df=df_uf, output_root=output_root, uf=feature_uf["uf"])
 
@@ -425,6 +479,15 @@ def executar_base_h3_brasil(
                 f"{total_recuperados_costeiros} hexagonos costeiros recuperados "
                 f"(centroide fora mas fracao de terra >= "
                 f"{settings.M1_HEX_LAND_FRACTION_MIN}) em {ufs_com_recuperacao} UFs."
+            ),
+        )
+
+    if total_duplicados_dedup:
+        problemas.insert(
+            0,
+            (
+                f"{total_duplicados_dedup} hexagonos de mar duplicados entre UFs costeiras "
+                "removidos pelo dedup nacional (cada hex fica na 1a UF processada)."
             ),
         )
 

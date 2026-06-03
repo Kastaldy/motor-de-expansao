@@ -61,8 +61,9 @@ if BaseSettings is not None:
         RENDA_MIN: float = 4500.0  # renda domiciliar minima (nao per capita)
         # Criterio geometrico hibrido (BLK-FIX-06): alem de centroide-dentro, mantem
         # hexes costeiros cujo poligono sobrepoe terra em fracao >= este limiar (0..1).
-        # Default candidato 0.20 (ajuste humano 2026-06-03); valor final fica na DEC-002.
-        M1_HEX_LAND_FRACTION_MIN: float = 0.20
+        # 0.20 aprovado na DEC-002; reduzido para 0.05 na DEC-003 (BLK-FIX-06-B, ajuste
+        # humano 2026-06-03) p/ cobertura maxima da orla povoada apos o fix de candidatos.
+        M1_HEX_LAND_FRACTION_MIN: float = 0.05
 
         # Fase 1 / M1 nacional
         M1_SCORE_OFICIAL: str = "score_priorizacao"
@@ -130,8 +131,9 @@ else:
         RENDA_MIN = 4500.0  # renda domiciliar minima (nao per capita)
         # Criterio geometrico hibrido (BLK-FIX-06): alem de centroide-dentro, mantem
         # hexes costeiros cujo poligono sobrepoe terra em fracao >= este limiar (0..1).
-        # Default candidato 0.20 (ajuste humano 2026-06-03); valor final fica na DEC-002.
-        M1_HEX_LAND_FRACTION_MIN: float = 0.20
+        # 0.20 aprovado na DEC-002; reduzido para 0.05 na DEC-003 (BLK-FIX-06-B, ajuste
+        # humano 2026-06-03) p/ cobertura maxima da orla povoada apos o fix de candidatos.
+        M1_HEX_LAND_FRACTION_MIN: float = 0.05
 
         # Fase 1 / M1 nacional
         M1_SCORE_OFICIAL = "score_priorizacao"
