@@ -4,7 +4,12 @@ Base nacional H3 do Brasil (resolucao 7) pronta para enriquecimento da Fase 1.
 Fluxo:
 1. Baixa ou reutiliza a malha oficial do IBGE por UF.
 2. Gera os hexagonos H3 de cada UF.
-3. Mantém hexagonos cujo CENTROIDE está dentro do Brasil (inclui costeiros que tocam o mar).
+3. Criterio HIBRIDO (BLK-FIX-06 / DEC-002, limiar aprovado 0.20): mantem hexagonos
+   cujo CENTROIDE esta dentro do Brasil (fast path) OU, para os de centroide fora,
+   cujo poligono sobrepoe terra em fracao de area >= settings.M1_HEX_LAND_FRACTION_MIN
+   (recupera costeiros povoados, ex.: orla de Praia Grande/SP `87a810c02ffffff`,
+   litoral RJ `87a8a078cffffff`). Hexes em mar aberto (fracao < limiar) continuam
+   descartados. Substitui o antigo filtro de centroide puro, que recortava o litoral.
 4. Salva parquet particionado por UF em data/staging/brasil/uf=XX/hexagonos.parquet.
 5. Gera relatorio curto de execucao em data/reports/base_h3_brasil.md.
 """
@@ -105,6 +110,7 @@ class UFMetrica:
     candidatos: int
     validos: int
     removidos: int
+    recuperados_costeiros: int
     tempo_s: float
     null_hex_id: int
     null_lat: int
@@ -167,20 +173,56 @@ def construir_geometria_brasil(payload_brasil: dict):
     return shape(features[0]["geometry"])
 
 
+def _fracao_terra_hex(hex_id: str, brasil_geom) -> float:
+    """Fracao da area do poligono do hex que sobrepoe terra (Brasil).
+
+    Razao de areas em graus (CRS WGS84/EPSG:4674, consistente com brasil_geom).
+    Para celulas H3 res 7 (pequenas e adjacentes) a razao e aproximadamente
+    invariante a projecao; evita reprojetar centenas de milhares de poligonos.
+    """
+    hex_poly = _hex_polygon(hex_id)
+    area_hex = hex_poly.area
+    if area_hex <= 0:
+        return 0.0
+    inter = brasil_geom.intersection(hex_poly)
+    return float(inter.area / area_hex)
+
+
 def gerar_hexagonos_validos_uf(
     feature_uf: dict,
     brasil_geom,
     resolucao: int,
     chunk_size: int = 50_000,
-) -> tuple[list[str], int]:
+    land_fraction_min: float | None = None,
+    coletar_fracao_terra: bool = False,
+) -> tuple[list[str], int, int, list[tuple[str, float]]]:
+    """Gera os hexagonos validos de uma UF pelo criterio HIBRIDO (BLK-FIX-06).
+
+    1. FAST PATH: hexes cujo centroide esta dentro do Brasil sao mantidos (sem custo
+       extra, sem regressao no interior).
+    2. Para os hexes de centroide FORA, constroi o poligono do hex e calcula a fracao
+       de area sobre terra; MANTEM se fracao >= land_fraction_min, senao descarta.
+
+    A interseccao poligono x poligono so e calculada para os hexes hoje-descartados
+    (centroide fora) — o universo "centroide-dentro" passa direto.
+
+    Retorna `(validos, removidos, recuperados_costeiros, fracao_terra_vec)`:
+      - `recuperados_costeiros`: nº de hexes mantidos pelo 2º teste (centroide fora).
+      - `fracao_terra_vec`: quando `coletar_fracao_terra=True`, lista de
+        `(hex_id, fracao_terra)` de TODOS os hexes de centroide-fora que sobrepoem
+        terra (fracao > 0), para re-filtragem barata por limiar (leque). Vazia caso
+        contrario. Independe do limiar aplicado para MANTER/descartar.
+    """
+    if land_fraction_min is None:
+        land_fraction_min = settings.M1_HEX_LAND_FRACTION_MIN
     candidatos = list(h3.geo_to_cells(feature_uf["geometry"], resolucao))
 
     validos: list[str] = []
     removidos = 0
+    recuperados_costeiros = 0
+    fracao_terra_vec: list[tuple[str, float]] = []
     for chunk in _chunks(candidatos, chunk_size):
-        # Critério: centroide do hexágono dentro do Brasil.
-        # Usar o polígono inteiro (covers) descartava hexágonos costeiros cujo
-        # centroide está em terra mas que tocam o oceano na borda.
+        # Fast path: centroide do hexágono dentro do Brasil.
         lats_lngs = [h3.cell_to_latlng(hex_id) for hex_id in chunk]
         chunk_centroids = shapely.points(
             [lng for lat, lng in lats_lngs],
@@ -190,9 +232,17 @@ def gerar_hexagonos_validos_uf(
         for hex_id, keep in zip(chunk, mask, strict=True):
             if keep:
                 validos.append(hex_id)
+                continue
+            # Centroide fora: segundo teste (interseccao poligono x poligono).
+            fracao_terra = _fracao_terra_hex(hex_id, brasil_geom)
+            if coletar_fracao_terra and fracao_terra > 0.0:
+                fracao_terra_vec.append((hex_id, fracao_terra))
+            if fracao_terra >= land_fraction_min:
+                validos.append(hex_id)
+                recuperados_costeiros += 1
             else:
                 removidos += 1
-    return validos, removidos
+    return validos, removidos, recuperados_costeiros, fracao_terra_vec
 
 
 def montar_dataframe_hexagonos(hex_ids: list[str], uf: str, regiao: str) -> pd.DataFrame:
@@ -256,13 +306,14 @@ def gerar_relatorio(
         "",
         "## Distribuicao por UF",
         "",
-        "| UF | Regiao | Hexagonos | Removidos | Tempo (s) |",
-        "|----|--------|-----------|-----------|-----------|",
+        "| UF | Regiao | Hexagonos | Removidos | Recuperados costeiros | Tempo (s) |",
+        "|----|--------|-----------|-----------|-----------------------|-----------|",
     ]
 
     for item in metricas:
         linhas.append(
-            f"| {item.uf} | {item.regiao} | {item.validos} | {item.removidos} | {item.tempo_s:.1f} |"
+            f"| {item.uf} | {item.regiao} | {item.validos} | {item.removidos} "
+            f"| {item.recuperados_costeiros} | {item.tempo_s:.1f} |"
         )
 
     linhas.extend(
@@ -314,7 +365,7 @@ def executar_base_h3_brasil(
 
     for feature_uf in features_uf:
         uf_started_at = time.time()
-        hex_ids_validos, removidos = gerar_hexagonos_validos_uf(
+        hex_ids_validos, removidos, recuperados_costeiros, _ = gerar_hexagonos_validos_uf(
             feature_uf=feature_uf,
             brasil_geom=brasil_geom,
             resolucao=resolucao,
@@ -333,6 +384,7 @@ def executar_base_h3_brasil(
             candidatos=len(hex_ids_validos) + removidos,
             validos=len(df_uf),
             removidos=removidos,
+            recuperados_costeiros=recuperados_costeiros,
             tempo_s=round(time.time() - uf_started_at, 2),
             **validacao,
         )
@@ -343,6 +395,7 @@ def executar_base_h3_brasil(
 
     total_hexagonos = sum(item.validos for item in metricas)
     total_removidos = sum(item.removidos for item in metricas)
+    total_recuperados_costeiros = sum(item.recuperados_costeiros for item in metricas)
     total_nulls = {
         "hex_id": sum(item.null_hex_id for item in metricas),
         "lat": sum(item.null_lat for item in metricas),
@@ -359,7 +412,19 @@ def executar_base_h3_brasil(
             0,
             (
                 f"{total_removidos} hexagonos sem centroide no Brasil removidos "
-                f"(centroide em mar/fronteira) em {ufs_com_remocao} UFs."
+                f"(centroide em mar/fronteira, fracao de terra < "
+                f"{settings.M1_HEX_LAND_FRACTION_MIN}) em {ufs_com_remocao} UFs."
+            ),
+        )
+
+    if total_recuperados_costeiros:
+        ufs_com_recuperacao = sum(1 for item in metricas if item.recuperados_costeiros > 0)
+        problemas.insert(
+            0,
+            (
+                f"{total_recuperados_costeiros} hexagonos costeiros recuperados "
+                f"(centroide fora mas fracao de terra >= "
+                f"{settings.M1_HEX_LAND_FRACTION_MIN}) em {ufs_com_recuperacao} UFs."
             ),
         )
 
@@ -376,6 +441,8 @@ def executar_base_h3_brasil(
     return {
         "total_hexagonos": total_hexagonos,
         "total_removidos": total_removidos,
+        "total_recuperados_costeiros": total_recuperados_costeiros,
+        "land_fraction_min": settings.M1_HEX_LAND_FRACTION_MIN,
         "tempo_execucao_s": round(time.time() - started_at, 2),
         "metricas": [asdict(item) for item in metricas],
         "report_path": str(report_path),

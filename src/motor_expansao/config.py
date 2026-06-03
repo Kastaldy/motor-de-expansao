@@ -59,6 +59,10 @@ if BaseSettings is not None:
         H3_RESOLUTION: int = 7
         DIST_MIN_ULTRA_KM: float = 1.0
         RENDA_MIN: float = 4500.0  # renda domiciliar minima (nao per capita)
+        # Criterio geometrico hibrido (BLK-FIX-06): alem de centroide-dentro, mantem
+        # hexes costeiros cujo poligono sobrepoe terra em fracao >= este limiar (0..1).
+        # Default candidato 0.20 (ajuste humano 2026-06-03); valor final fica na DEC-002.
+        M1_HEX_LAND_FRACTION_MIN: float = 0.20
 
         # Fase 1 / M1 nacional
         M1_SCORE_OFICIAL: str = "score_priorizacao"
@@ -124,6 +128,10 @@ else:
         H3_RESOLUTION = 7
         DIST_MIN_ULTRA_KM = 1.0
         RENDA_MIN = 4500.0  # renda domiciliar minima (nao per capita)
+        # Criterio geometrico hibrido (BLK-FIX-06): alem de centroide-dentro, mantem
+        # hexes costeiros cujo poligono sobrepoe terra em fracao >= este limiar (0..1).
+        # Default candidato 0.20 (ajuste humano 2026-06-03); valor final fica na DEC-002.
+        M1_HEX_LAND_FRACTION_MIN: float = 0.20
 
         # Fase 1 / M1 nacional
         M1_SCORE_OFICIAL = "score_priorizacao"

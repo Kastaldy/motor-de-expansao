@@ -8,49 +8,49 @@ Rotulos de municipio enriquecidos apenas para exibicao via lookup oficial do IBG
 
 ## Indicadores-chave
 
-- total_hexagonos: 1.537.950
-- total_viaveis: 363.229
+- total_hexagonos: 1.538.424
+- total_viaveis: 363.372
 - pct_viaveis: 23.62%
-- amostra_mapa_top_30_pct: 461.385 hexagonos
+- amostra_mapa_top_30_pct: 461.528 hexagonos
 
 ## Top 10 cidades com mais oportunidades viaveis
 
 | uf | cidade | oportunidades_viaveis | score_medio | melhor_rank_brasil |
 | --- | --- | --- | --- | --- |
-| MS | Corumbá | 12561 | 90.08 | 95818 |
-| RO | Porto Velho | 6524 | 96.11 | 45492 |
-| MT | Juína | 4991 | 84.96 | 133106 |
-| MT | Cáceres | 4723 | 90.22 | 89810 |
-| MT | Aripuanã | 4672 | 72.97 | 265258 |
-| MT | Paranatinga | 4338 | 69.09 | 322509 |
-| MT | Juara | 4160 | 77.94 | 218944 |
-| MT | Comodoro | 4138 | 56.83 | 530224 |
-| MT | Apiacás | 3729 | 44.28 | 825983 |
-| MS | Ribas do Rio Pardo | 3337 | 66.78 | 360497 |
+| MS | Corumbá | 12568 | 90.08 | 95890 |
+| RO | Porto Velho | 6533 | 96.11 | 45517 |
+| MT | Juína | 4991 | 84.96 | 133192 |
+| MT | Cáceres | 4729 | 90.21 | 89876 |
+| MT | Aripuanã | 4672 | 72.97 | 265363 |
+| MT | Paranatinga | 4338 | 69.09 | 322532 |
+| MT | Juara | 4160 | 77.94 | 219044 |
+| MT | Comodoro | 4142 | 56.83 | 530398 |
+| MT | Apiacás | 3729 | 44.27 | 826327 |
+| MS | Ribas do Rio Pardo | 3337 | 66.78 | 360615 |
 
 ## Top 10 UFs
 
 | uf | total_viaveis | pct_viaveis | score_medio | qtd_prioridade_maxima |
 | --- | --- | --- | --- | --- |
 | DF | 999 | 100.00 | 100.00 | 999 |
-| RJ | 3300 | 40.80 | 74.03 | 5086 |
-| MS | 42093 | 60.43 | 64.66 | 30202 |
-| ES | 3198 | 38.82 | 63.87 | 2985 |
-| SP | 28871 | 61.07 | 62.13 | 18130 |
-| RS | 46280 | 75.04 | 61.21 | 25443 |
-| RO | 13447 | 29.09 | 59.97 | 14219 |
-| PA | 173 | 0.08 | 59.53 | 67147 |
-| SC | 16841 | 83.21 | 58.04 | 6142 |
-| MT | 113832 | 68.89 | 57.40 | 48546 |
+| RJ | 3319 | 40.91 | 74.07 | 5107 |
+| MS | 42101 | 60.42 | 64.65 | 30210 |
+| ES | 3200 | 38.83 | 63.88 | 2987 |
+| SP | 28883 | 61.08 | 62.14 | 18142 |
+| RS | 46333 | 75.04 | 61.21 | 25480 |
+| RO | 13456 | 29.09 | 59.97 | 14228 |
+| PA | 173 | 0.08 | 59.52 | 67149 |
+| SC | 16857 | 83.22 | 58.04 | 6146 |
+| MT | 113842 | 68.89 | 57.40 | 48552 |
 
 ## Distribuicao por faixa_oportunidade
 
 | faixa_oportunidade | hexagonos | pct_hexagonos |
 | --- | --- | --- |
-| prioridade_maxima | 308169 | 20.04 |
-| alta | 230403 | 14.98 |
-| media | 230570 | 14.99 |
-| baixa | 234837 | 15.27 |
-| descartado | 533971 | 34.72 |
+| prioridade_maxima | 308285 | 20.04 |
+| alta | 230465 | 14.98 |
+| media | 230612 | 14.99 |
+| baixa | 234909 | 15.27 |
+| descartado | 534153 | 34.72 |
 | inviavel | 0 | 0.00 |
 
