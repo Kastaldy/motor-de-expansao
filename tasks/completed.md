@@ -2875,3 +2875,25 @@ rollback — dados estão certos); investigação de display em `components.py` 
 
 **Risco:** baixo (só display; M1/dados intactos). Cuidado: não reintroduzir o falso diagnóstico de
 "dados faltando" — os dados ESTÃO lá; o trabalho é de RENDER.
+
+**FECHAMENTO (2026-06-03) — CONCLUÍDA, deployada e verificada por Felipe.**
+- **BLK-FIX-06-C** (Alta; esteira BO→Planner→[gate humano]→Builder→QA): fix de display em
+  `dashboard/components.py` — `_DISCARDED_FILL` alpha 70→150 (orla <5k visível) + relaxe de scope dos
+  builders Híbrido/Residual (`score_setor_2022_calibrado.notna()`→`hex_id/lat/lng notna()`) + nova cor
+  `_NAN_SCORE_FILL` para score NaN antes do pop-cut. Decisões de produto aprovadas por Felipe no gate
+  (alpha 150 / fallback visível / não mexer nas tabelas / 2 cores distintas). QA APROVADO: suite full
+  660 passed/1 skipped; ruff+mypy limpos. Merge `ab521ec`; deploy de IMAGEM ao VPS (digest
+  `868349e0...a044d`, tag `sha-ab521ec`) — 1º deploy de imagem desde a sprint SEC-02. Housekeeping:
+  bloco movido backlog→completed via helper (commit `ba79502`).
+- **BLK-FIX-06-C-FU1** (follow-up ad-hoc, aprovado por Felipe): o 06-C corrigiu só os modos
+  Híbrido/Residual; o mapa EXECUTIVO M1 (`build_map_figure`) ainda sumia a orla por um filtro
+  intencional/testado (`key.loc[granular_rows | municipal_rows]`) que descartava hex SEM censo em UF
+  granular (SP/RJ) — a orla sobre água caía aí. FU1 transforma granular/municipal em RÓTULO de
+  confiança (não filtro): hexes válidos do M1 sem censo renderizam coloridos pelo `score_priorizacao`
+  real, com borda municipal âmbar (fallback "sem censo" explícito). Impacto ~1.000 hexes/SP (orla +
+  margens de rio/represa; score 22-100). Display-only (M1/score/artefatos intactos). 2 testes do
+  descarte antigo atualizados + 1 novo (orla Mongaguá); suite full 661 passed/1 skipped; ruff+mypy
+  limpos. Merge `2fa93e9`; deploy de imagem (digest `bb5a4558...850c`, tag `sha-2fa93e9`) → `Up
+  (healthy)`, health `ok`.
+- **Verificação do usuário:** Felipe confirmou em 2026-06-03 — "funcionando e deixando explícito quando
+  é fallback" (orla visível na Análise Territorial / M1; sem-censo marcado pela borda âmbar).

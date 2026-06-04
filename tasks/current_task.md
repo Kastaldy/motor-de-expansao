@@ -2,15 +2,26 @@
 
 ## Bloco atual
 
-ID: BLK-FIX-06-C
+ID: BLK-FIX-06-C (+ FU1)
 Nome: Orla não renderiza no dashboard apesar dos dados corretos (display/render)
-Status: aprovado (QA, 2026-06-03)
+Status: CONCLUÍDA — deployada em prod e VERIFICADA visualmente por Felipe (2026-06-03)
 Tipo: bug
 Criticidade: alta
-Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
-Skill atual: QA (Builder concluído por Felipe em 2026-06-03; handoff em context/handoff.md)
-Próxima Skill: QA
+Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA → deploy → FU1 → deploy
+Skill atual: — (ciclo encerrado)
+Próxima Skill: — (nenhuma; sem tarefa ativa)
 dry_run: false
+
+## Fechamento (2026-06-03)
+- **BLK-FIX-06-C** (merge `ab521ec`, img `sha-ab521ec`/`868349e0...a044d`): corrigiu o RENDER nos modos
+  Híbrido/Residual/Censitário (cinza alpha 70→150 + fallback de score NaN). QA APROVADO (660 passed).
+- **BLK-FIX-06-C-FU1** (merge `2fa93e9`, img `sha-2fa93e9`/`bb5a4558...850c`): o 06-C não cobria o mapa
+  EXECUTIVO M1 — `build_map_figure` descartava hex sem censo em UF granular (orla sobre água). FU1
+  transforma granular/municipal em RÓTULO de confiança (não filtro); orla renderiza colorida pelo
+  score com borda âmbar "sem censo". Suite full 661 passed; ruff+mypy limpos. Display-only (M1/score
+  intactos). Deploy de imagem verificado (`Up (healthy)`, health `ok`).
+- **Verificação do usuário:** Felipe confirmou em 2026-06-03 — "funcionando e deixando explícito quando
+  é fallback" (orla visível na Análise Territorial / M1, fallback sem-censo marcado pela borda âmbar).
 
 ## Decisões de produto aprovadas no gate (Felipe, 2026-06-03)
 - (i) Cor descartado <5k: `_DISCARDED_FILL = [150,150,170,150]` (alpha 150, visível).
