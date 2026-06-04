@@ -1378,9 +1378,14 @@ def build_map_figure(
     quality = _normalized_join_quality(key)
     has_censo = _has_censo_signal(key)
     granular_ufs = set(key.loc[quality.isin(["A", "B"]) & has_censo, "uf"].dropna().tolist())
-    granular_rows = key["uf"].isin(granular_ufs) & has_censo
-    municipal_rows = ~key["uf"].isin(granular_ufs)
-    key = key.loc[granular_rows | municipal_rows]
+    # BLK-FIX-06-C-FU (display; aprovado por Felipe em 2026-06-03): NAO descartar hexes
+    # validos do M1 (ja no scope: score_priorizacao.notna()) so por nao terem setor
+    # censitario numa UF granular. A orla costeira e as margens de agua recuperadas no
+    # BLK-FIX-06-B (ex.: Praia Grande/Mongagua, score 78-100, sobre agua sem setor IBGE)
+    # caiam exatamente aqui: o filtro antigo `key.loc[granular_rows | municipal_rows]`
+    # removia `uf in granular_ufs & ~has_censo`, sumindo a orla do mapa executivo M1.
+    # Agora granular/municipal e so ROTULO de confianca (confianca_geografica/line_color
+    # abaixo), nao filtro de exibicao. Nao recalcula score nem altera artefatos M1.
     if key.empty:
         return None, 0
 
@@ -1402,8 +1407,14 @@ def build_map_figure(
     else:
         map_df["nome_municipio"] = map_df["nome_municipio"].fillna(map_df["cidade"])
 
+    # Rotulo de confianca: granular SO quando a UF e granular E a linha tem censo. Hexes
+    # sem censo (orla/margens de agua) numa UF granular ficam "municipal" (borda ambar,
+    # confianca menor) em vez de descartados. Calculado sobre o slice sobrevivente
+    # completo (df.loc[survive_index] tem as colunas de censo, alinhado posicionalmente).
+    _survive_slice = df.loc[survive_index]
     map_df["confianca_geografica"] = np.where(
-        map_df["uf"].isin(granular_ufs),
+        _survive_slice["uf"].isin(granular_ufs).to_numpy()
+        & _has_censo_signal(_survive_slice).to_numpy(),
         "granular",
         "municipal",
     )

@@ -454,7 +454,7 @@ def test_build_map_figure_mostra_todos_os_hexes_validos_da_uf_sem_cap_editorial(
                 "flag_censo_disponivel": True,
             },
             {
-                "hex_id": "sp_municipal_descartado",
+                "hex_id": "sp_sem_censo",
                 "lat": -23.58,
                 "lng": -46.60,
                 "cidade": "Sao Paulo",
@@ -497,13 +497,20 @@ def test_build_map_figure_mostra_todos_os_hexes_validos_da_uf_sem_cap_editorial(
     )
 
     assert deck is not None
-    assert points == 3
+    # BLK-FIX-06-C-FU: o hex SP sem censo (sp_sem_censo) NAO e mais descartado — o mapa
+    # executivo M1 mostra TODOS os hexes validos da UF (orla/margens incluidas). Antes
+    # eram 3 (so os granulares com censo); agora 4 (com o sem-censo, rotulado municipal).
+    assert points == 4
     rendered = pd.DataFrame(deck.layers[0].data)
-    assert set(rendered["hex_id"]) == {"sp_granular_1", "sp_granular_2", "sp_granular_3"}
+    assert set(rendered["hex_id"]) == {
+        "sp_granular_1",
+        "sp_granular_2",
+        "sp_granular_3",
+        "sp_sem_censo",
+    }
     assert rendered["hex_id"].nunique() == len(rendered)
     # confianca_geografica é insumo intermediário (decide line_color/recorte granular),
     # mas NÃO é serializada ao payload do layer (fix MessageSizeError, BLK-FIX-02).
-    # O recorte dos 3 hexes granulares já é garantido pelas asserts acima.
     assert "confianca_geografica" not in rendered.columns
 
 
@@ -898,7 +905,7 @@ def test_build_map_figure_usa_geometria_granular_em_uf_ab_e_fallback_municipal_e
                 "flag_censo_disponivel": True,
             },
             {
-                "hex_id": "sp_municipal_descartado",
+                "hex_id": "sp_sem_censo",
                 "lat": -23.57,
                 "lng": -46.61,
                 "cidade": "Sao Paulo",
@@ -941,16 +948,84 @@ def test_build_map_figure_usa_geometria_granular_em_uf_ab_e_fallback_municipal_e
     )
 
     assert deck is not None
-    assert points == 2
+    # BLK-FIX-06-C-FU: o hex SP sem censo (sp_sem_censo) numa UF granular agora RENDERIZA
+    # (antes era descartado) e recebe o rotulo "municipal" (borda ambar), exatamente como
+    # a orla costeira. SP granular com censo segue "granular".
+    assert points == 3
     rendered = pd.DataFrame(deck.layers[0].data).set_index("hex_id")
-    assert set(rendered.index) == {"sp_granular", "ce_municipal"}
+    assert set(rendered.index) == {"sp_granular", "sp_sem_censo", "ce_municipal"}
     # confianca_geografica é insumo intermediário (decide a line_color granular vs municipal)
     # e NÃO é serializada ao payload do layer (fix MessageSizeError, BLK-FIX-02). Validamos
-    # a consequência visível: o hex granular (SP, qual B + censo) e o municipal (CE, qual C)
-    # recebem cores de borda distintas, com o municipal na cor âmbar canônica.
+    # a consequência visível: o hex granular (SP, qual B + censo) usa a borda granular; o
+    # municipal (CE, qual C) e o SP sem censo (orla) usam a borda âmbar canônica municipal.
     assert "confianca_geografica" not in rendered.columns
     assert rendered.loc["ce_municipal", "line_color"] == [245, 158, 11, 220]
+    assert rendered.loc["sp_sem_censo", "line_color"] == [245, 158, 11, 220]
     assert rendered.loc["sp_granular", "line_color"] != rendered.loc["ce_municipal", "line_color"]
+
+
+def test_build_map_figure_m1_renderiza_orla_sem_censo_em_uf_granular():
+    # Regressao BLK-FIX-06-C-FU: a orla costeira (sem setor censitario) num UF granular (SP)
+    # deve aparecer no mapa executivo M1, colorida pelo score_priorizacao real (NAO descartada,
+    # NAO pintada de cinza pois tem pop>=5k). Reproduz Mongagua (87a810998ffffff, score 78).
+    from motor_expansao.dashboard.components import _DISCARDED_FILL
+    from motor_expansao.dashboard.utils import score_band_to_color
+
+    df = pd.DataFrame(
+        [
+            {  # ancora granular com censo: garante que SP entra em granular_ufs
+                "hex_id": "sp_centro_granular",
+                "lat": -23.55,
+                "lng": -46.63,
+                "cidade": "Sao Paulo",
+                "nome_municipio": "Sao Paulo",
+                "uf": "SP",
+                "faixa_oportunidade": "alta",
+                "score_priorizacao": 95.0,
+                "hex_score_estrutural": 90.0,
+                "flag_viavel": True,
+                "flag_prioridade": True,
+                "score_setor_2022_calibrado": 88.0,
+                "coverage_pct_setor_2022": 97.0,
+                "qualidade_join_uf": "A",
+                "flag_censo_disponivel": True,
+                "flag_pop_min_5k": True,
+                "populacao_corte_hex": 12000.0,
+            },
+            {  # orla sem censo, score alto, pop>=5k -> deve renderizar COLORIDA pelo score
+                "hex_id": "87a810998ffffff",
+                "lat": -24.09,
+                "lng": -46.62,
+                "cidade": "Mongagua",
+                "nome_municipio": "Mongagua",
+                "uf": "SP",
+                "faixa_oportunidade": "alta",
+                "score_priorizacao": 78.0,
+                "hex_score_estrutural": 70.0,
+                "flag_viavel": True,
+                "flag_prioridade": True,
+                "score_setor_2022_calibrado": pd.NA,
+                "coverage_pct_setor_2022": pd.NA,
+                "qualidade_join_uf": "A",
+                "flag_censo_disponivel": False,
+                "flag_pop_min_5k": True,
+                "populacao_corte_hex": 8000.0,
+            },
+        ]
+    )
+
+    deck, points = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+
+    assert deck is not None
+    assert points == 2
+    rendered = pd.DataFrame(deck.layers[0].data).set_index("hex_id")
+    # a orla NAO e mais descartada do mapa executivo M1
+    assert "87a810998ffffff" in rendered.index
+    # colorida pelo score real (78), NAO o cinza de descarte (_DISCARDED_FILL tem pop>=5k aqui)
+    assert list(rendered.loc["87a810998ffffff", "fill_color"]) == list(score_band_to_color(78.0))
+    assert list(rendered.loc["87a810998ffffff", "fill_color"]) != list(_DISCARDED_FILL)
+    # borda municipal (sem censo) ambar canonica
+    assert rendered.loc["87a810998ffffff", "line_color"] == [245, 158, 11, 220]
 
 
 def test_sort_carteira_by_m1_preserva_ranking_oficial_antes_do_hibrido():
