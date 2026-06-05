@@ -2565,7 +2565,7 @@ def render_relatorio_pontual_censitario(
     st.caption(
         f"Metodo: `{result['metodo']}`. Populacao estimada por peso de area; "
         "renda e scores ponderados por populacao estimada, com fallback por area. "
-        "Fundo de ruas: CartoDB Positron (c) OpenStreetMap, (c) CARTO; cache local + fallback offline."
+        "Fundo de ruas: CartoDB Voyager (c) OpenStreetMap, (c) CARTO; cache local + fallback offline."
     )
     st.image(
         mapas["densidade"],

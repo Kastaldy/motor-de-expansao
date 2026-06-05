@@ -7,7 +7,7 @@ from typing import cast
 
 import numpy as np
 import pandas as pd
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFont
 from shapely.geometry import MultiPolygon, Point, Polygon
 from shapely.geometry.base import BaseGeometry
 
@@ -31,6 +31,13 @@ from motor_expansao.dashboard.utils import score_band_to_color
 # Cache local de tiles do basemap (DEC-004). Nunca versionado (.gitignore: data/cache/).
 # Cada ponto cobre ~3 km de lado -> poucos tiles; dedup por-tile do contextily.
 _BASEMAP_CACHE_DIR = Path("data/cache/basemap_tiles")
+
+# Estilo do fundo de ruas (escolha de Felipe 2026-06-05): CartoDB **Voyager** No-Labels
+# (ruas bem mais visiveis que o Positron, mantendo fundo claro) + realce de contraste 1.4
+# para o arruamento aparecer sob o choropleth. O provedor e resolvido lazy em _fetch_basemap
+# (ctx.providers.CartoDB.<_BASEMAP_PROVIDER_ATTR>).
+_BASEMAP_PROVIDER_ATTR = "VoyagerNoLabels"
+_BASEMAP_CONTRAST = 1.4
 
 # Web Mercator (CRS nativo dos tiles). A composicao do mapa novo acontece em 3857;
 # o motor (intersecao setor x circulo 1.5 km) segue intocado em aeqd local (censo_point).
@@ -356,10 +363,11 @@ def _fetch_basemap(
     bounds_3857: tuple[float, float, float, float],
     width: int,
 ) -> tuple[object, tuple[float, float, float, float]] | None:
-    """Busca tiles de basemap claro (CartoDB Positron No-Labels) via contextily.
+    """Busca tiles de basemap claro (CartoDB Voyager No-Labels) via contextily.
 
     Import LAZY sob try/except: se o extra `[basemap]` nao estiver instalado OU o fetch
     falhar (sem internet/timeout), devolve None e o chamador cai no fallback offline.
+    Aplica realce de contraste `_BASEMAP_CONTRAST` p/ as ruas aparecerem sob o choropleth.
     Cache local em data/cache/basemap_tiles/. Retorna (img_array, extent_3857) ou None.
     """
     try:
@@ -374,15 +382,14 @@ def _fetch_basemap(
             pass
         minx, miny, maxx, maxy = bounds_3857
         zoom = _zoom_for_bounds(minx, maxx, width)
-        img, extent = ctx.bounds2img(
-            minx,
-            miny,
-            maxx,
-            maxy,
-            zoom=zoom,
-            source=ctx.providers.CartoDB.PositronNoLabels,
-            ll=False,
-        )
+        source = getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)
+        img, extent = ctx.bounds2img(minx, miny, maxx, maxy, zoom=zoom, source=source, ll=False)
+        if _BASEMAP_CONTRAST != 1.0:
+            base = Image.fromarray(np.asarray(img)).convert("RGB")
+            base = ImageEnhance.Contrast(base).enhance(_BASEMAP_CONTRAST)
+            arr = np.asarray(base)
+            alpha = np.full((arr.shape[0], arr.shape[1], 1), 255, dtype=np.uint8)
+            img = np.concatenate([arr, alpha], axis=2)
         return img, extent
     except Exception:
         return None
@@ -513,7 +520,7 @@ def _render_camada(
     _draw_legend_camada(draw, legend_x, 96, legenda_titulo, legenda_entries)
 
     if drew_basemap:
-        fundo = "Fundo de ruas: CartoDB Positron. (c) OpenStreetMap, (c) CARTO."
+        fundo = "Fundo de ruas: CartoDB Voyager. (c) OpenStreetMap, (c) CARTO."
     else:
         fundo = "Fundo de ruas indisponivel offline (instale o extra [basemap] p/ ruas)."
     footer = (
