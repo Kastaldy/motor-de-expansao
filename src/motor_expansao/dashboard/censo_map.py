@@ -8,7 +8,7 @@ from typing import cast
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont
-from shapely.geometry import MultiPolygon, Point, Polygon
+from shapely.geometry import MultiPolygon, Point, Polygon, box
 from shapely.geometry.base import BaseGeometry
 
 from motor_expansao.dashboard.censo_point import (
@@ -38,6 +38,11 @@ _BASEMAP_CACHE_DIR = Path("data/cache/basemap_tiles")
 # (ctx.providers.CartoDB.<_BASEMAP_PROVIDER_ATTR>).
 _BASEMAP_PROVIDER_ATTR = "VoyagerNoLabels"
 _BASEMAP_CONTRAST = 1.4
+
+# Margem do frame do mapa em torno do circulo de 1.5 km. O choropleth (display) cobre TODO
+# o frame (setores recortados a este quadrado), nao so o circulo — estilo GeoFusion. A analise
+# (KPIs) segue circular/INTOCADA; isto e so RENDER.
+_MAP_FRAME_MARGIN = 0.08
 
 # Web Mercator (CRS nativo dos tiles). A composicao do mapa novo acontece em 3857;
 # o motor (intersecao setor x circulo 1.5 km) segue intocado em aeqd local (censo_point).
@@ -273,39 +278,47 @@ def _decode_intersections(
     lat: float,
     lng: float,
     setores_df: pd.DataFrame,
-    setores_intersectados: pd.DataFrame,
     raio_km: float,
+    clip_box_metric: BaseGeometry,
 ) -> tuple[list[dict[str, object]], BaseGeometry]:
+    """Decodifica os setores que cobrem o FRAME do mapa (quadrado em torno do circulo),
+    recortados ao `clip_box_metric` — NAO ao circulo — p/ o choropleth cobrir o frame todo
+    (estilo GeoFusion). Os valores (densidade/renda/score) vem da PROPRIA linha do setor em
+    `setores_df`, entao setores fora do circulo tambem saem coloridos. Display-only; a analise
+    (KPIs por `analisar_ponto_censitario_setores`) segue circular e INTOCADA.
+    """
     metric_crs = _local_metric_crs(lat, lng)
     to_metric = _transformer(CRS_ORIGEM_CENSO, metric_crs)
     to_wgs84 = _transformer(metric_crs, CRS_ORIGEM_CENSO)
     circle_metric = Point(0, 0).buffer(raio_km * 1000.0, quad_segs=96)
-    circle_wgs84 = _project_geometry(circle_metric, to_wgs84)
+    clip_wgs84 = _project_geometry(clip_box_metric, to_wgs84)
 
-    if setores_df is None or setores_df.empty or setores_intersectados.empty:
+    if setores_df is None or setores_df.empty:
         return [], circle_metric
 
     geometry_col = "geometry_wkb" if "geometry_wkb" in setores_df.columns else "geometry"
     if geometry_col not in setores_df.columns:
         return [], circle_metric
 
-    codigos = set(setores_intersectados.get("cod_setor", pd.Series(dtype=str)).astype(str))
-    candidates = _bbox_prefilter(setores_df, circle_wgs84)
-    if codigos and "cod_setor" in candidates.columns:
-        candidates = candidates.loc[candidates["cod_setor"].astype(str).isin(codigos)]
-
-    metrics = setores_intersectados.set_index(setores_intersectados["cod_setor"].astype(str), drop=False)
+    candidates = _bbox_prefilter(setores_df, clip_wgs84)
     records: list[dict[str, object]] = []
     for _, row in candidates.iterrows():
         geom_wgs84 = _decode_geometry(row[geometry_col])
         if geom_wgs84 is None:
             continue
-        intersection = _project_geometry(geom_wgs84, to_metric).intersection(circle_metric)
-        if intersection.is_empty:
+        clipped = _project_geometry(geom_wgs84, to_metric).intersection(clip_box_metric)
+        if clipped.is_empty:
             continue
-        cod_setor = str(row.get("cod_setor", ""))
-        metric_row = metrics.loc[cod_setor].to_dict() if cod_setor in metrics.index else {}
-        records.append({"cod_setor": cod_setor, "geometry_metric": intersection, **metric_row})
+        records.append(
+            {
+                "cod_setor": str(row.get("cod_setor", "")),
+                "geometry_metric": clipped,
+                "densidade_pop_setor_hab_km2": row.get("densidade_pop_setor_hab_km2"),
+                "renda_per_capita_setor_2022_calibrada": row.get("renda_per_capita_setor_2022_calibrada"),
+                "renda_per_capita_setor_2022": row.get("renda_per_capita_setor_2022"),
+                "score_setor_2022_calibrado": row.get("score_setor_2022_calibrado"),
+            }
+        )
     return records, circle_metric
 
 
@@ -470,13 +483,14 @@ def _render_camada(
     if not drew_basemap:
         draw.rounded_rectangle(map_box, radius=6, fill=(248, 250, 252), outline=(203, 213, 225))
 
-    # choropleth por faixa fixa (alpha 150 -> ruas do basemap aparecem por baixo)
+    # choropleth por faixa fixa (alpha translucido -> ruas do basemap aparecem por baixo).
+    # SEM borda nos setores: transicao suave entre faixas (estilo GeoFusion).
     for geom_3857, idx in sector_records_3857:
         color = color_fn(source_values.iloc[idx])
         for polygon in _iter_polygons(geom_3857):
             points = _polygon_to_pixels(polygon, project)
             if len(points) >= 3:
-                draw.polygon(points, fill=color, outline=(71, 85, 105, 170))
+                draw.polygon(points, fill=color)
                 for interior in polygon.interiors:
                     hole = [
                         (int(round(px)), int(round(py)))
@@ -586,18 +600,22 @@ def render_mapas_censitarios_combinados(
         competitors_df=competitors_df,
         ultra_df=ultra_df,
     )
-    setores_intersectados = result["setores_intersectados"]
+    # Frame do mapa: quadrado em torno do circulo (+margem). O choropleth (display) cobre TODO
+    # o frame; os setores sao recortados a este quadrado (nao ao circulo) -> corners preenchidos.
+    frame_half = raio_km * 1000.0 * (1.0 + _MAP_FRAME_MARGIN)
+    frame_box_metric = box(-frame_half, -frame_half, frame_half, frame_half)
     sector_records, circle_metric = _decode_intersections(
         lat,
         lng,
         setores_df,
-        setores_intersectados,
         raio_km,
+        frame_box_metric,
     )
 
-    # Reprojeta setores + circulo + centro do aeqd local -> 3857 (SO para render).
+    # Reprojeta setores + circulo + centro + frame do aeqd local -> 3857 (SO para render).
     circle_3857 = _to_mercator(circle_metric, lat, lng)
     center_3857 = _point_to_mercator(0.0, 0.0, lat, lng)
+    frame_3857 = _to_mercator(frame_box_metric, lat, lng)
 
     sector_records_3857: list[tuple[BaseGeometry, int]] = []
     densidade_vals: list[float] = []
@@ -626,18 +644,9 @@ def render_mapas_censitarios_combinados(
     renda_series = pd.Series(renda_vals, dtype="float64")
     score_series = pd.Series(score_vals, dtype="float64")
 
-    # bbox do mapa = bounds do circulo 3857 (+ margem 8%) unindo os setores reprojetados.
-    bounds = list(circle_3857.bounds)
-    for geom_3857, _idx in sector_records_3857:
-        b = geom_3857.bounds
-        bounds[0] = min(bounds[0], b[0])
-        bounds[1] = min(bounds[1], b[1])
-        bounds[2] = max(bounds[2], b[2])
-        bounds[3] = max(bounds[3], b[3])
-    minx, miny, maxx, maxy = bounds
-    margin_x = max(maxx - minx, 1.0) * 0.08
-    margin_y = max(maxy - miny, 1.0) * 0.08
-    bounds_t = (minx - margin_x, miny - margin_y, maxx + margin_x, maxy + margin_y)
+    # bbox do mapa = o FRAME (quadrado em 3857). Os setores ja foram recortados a ele, entao
+    # preenchem o frame todo (corners inclusos), sem sobra de margem nem spill na legenda.
+    bounds_t = frame_3857.bounds
 
     basemap_tiles = None
     if basemap:
