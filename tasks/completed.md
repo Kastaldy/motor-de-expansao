@@ -2897,3 +2897,124 @@ rollback — dados estão certos); investigação de display em `components.py` 
   (healthy)`, health `ok`.
 - **Verificação do usuário:** Felipe confirmou em 2026-06-03 — "funcionando e deixando explícito quando
   é fallback" (orla visível na Análise Territorial / M1; sem-censo marcado pela borda âmbar).
+
+---
+
+### BLK-CENSO-01 — Relatório censitário: camadas combinadas + fundo de ruas + faixas GeoFusion + pins com logo
+
+> **FECHAMENTO (2026-06-05) — VEREDITO: APROVADO.** Ciclo Alta executado pela esteira /run-cycle
+> (BO→Planner→[gate humano: DEC-004 APROVADA por Felipe]→Builder→QA). Entregue: orquestradora
+> `render_mapas_censitarios_combinados` gera **3 camadas numa só geração** (densidade / renda per capita /
+> concorrentes) — UI sem dropdown (3 `st.image`) + PDF com N páginas de mapa (writer manual generalizado
+> de 1→N XObjects, retrocompat `bytes`). **Fundo de ruas** via CartoDB Positron No-Labels (`contextily`
+> em extra dedicado `[basemap]`, import lazy try/except), composição em **EPSG:3857** (reproj. setores+
+> círculo do CRS métrico local só p/ render; método de interseção e raio 1.5 km INTOCADOS), **cache local**
+> `data/cache/basemap_tiles/` (gitignored) e **fallback offline gracioso** (sem internet/extra → canvas
+> branco, default em CI, coberto por teste do `try/except`). **Faixas absolutas fixas** (não quartil):
+> `DENSIDADE_POP_BANDS` (Reds, cortes 1k/5k/10k/25k/inf hab/km²) e `RENDA_PER_CAPITA_BANDS` (recalibrada a
+> per capita 1k/2k/3,5k/5k, NÃO copia A/B/C domiciliares do Geo); score mantém `RESIDUAL_SCORE_BANDS`;
+> alpha 150 (vs 225) p/ ruas aparecerem. **Pins com logo** reusando `competitors._render_pin_tile`
+> (logo ou sigla no fallback). **DEC-004** registrada no CLAUDE.md §8 (Status APROVADA); §4 + docs §6/§7/§8
+> atualizados. **READ-ONLY sobre M1 confirmado por QA** (git diff vazio em `pipelines/`, `scoring.py`,
+> `censo_point.py`, `config.py`; pesos 0.40/0.60 e params §3 preservados). QA (Opus 4.8) re-executou tudo
+> SEM bypass: **suite full `667 passed, 1 skipped, 0 failed`** (== serial, sem flakiness), subconjunto
+> 192 passed, `import streamlit_app` ok, ruff limpo, mypy 1.20.2 "no issues". Ressalva leve (não
+> bloqueadora): caminho com tiles REAIS (basemap=True + internet) só verificável em deploy/visual; o ramo
+> fetch-failure do `_fetch_basemap` é coberto por design (teste extra de reforço é opcional). Arquivos do
+> ciclo: `pyproject.toml`, `.gitignore`, `dashboard/{constants,censo_map,pages,censo_report}.py`,
+> `tests/unit/test_relatorio_pontual_censitario_{mapa,export}.py`, `tests/integration/test_streamlit_app.py`,
+> `docs/relatorio_pontual_censitario.md`, `CLAUDE.md`. Sucessor: **BLK-CENSO-02** (template/visual do PDF).
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (toca o guardrail "sem dependência de API ao vivo" → exige DEC + gate humano; READ-ONLY sobre M1/score) |
+| **Prioridade** | **Alta** (pedido direto de Felipe, uso operacional) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA + DEC sobre tiles online]` → Builder → QA |
+| **Depende de** | nenhuma bloqueadora (feature já existe; é repaginação) |
+| **Status** | Pendente |
+| **Origem** | pedido de Felipe (2026-06-05) + PDFs de referência (GeoFusion / exemplo atual) |
+
+**Contexto / estado atual (file:line confirmados):**
+- O relatório roda em `render_relatorio_pontual_censitario` (`src/motor_expansao/dashboard/pages.py:2479`),
+  no expander da aba Mapa Territorial. Hoje ele já gera **1 PDF combinado**, mas o **mapa mostra só
+  UMA métrica por vez** (dropdown: pop / renda / score / peso), e o PDF embute **só esse 1 mapa**.
+- O mapa é PNG desenhado com **Pillow, 100% offline** em `render_mapa_censitario_estatico_png`
+  (`src/motor_expansao/dashboard/censo_map.py:245`) — por isso **não tem fundo de ruas**, só os
+  polígonos dos setores sobre canvas branco.
+- As cores usam **quartis** (`_build_breaks`, `censo_map.py:75`, cortes p20/p40/p60/p80) e paleta
+  `_SECTOR_PALETTE` opaca (alpha 225) → escondem o arruamento.
+- Os "símbolos esquisitos" do exemplo são: concorrentes = círculos laranja, Ultra = quadrados
+  vermelhos, ponto central = círculo azul com cruz — **sem logo**, apesar de os logos das redes e
+  da Ultra **já existirem no repo** e serem usados como pins SVG nos mapas pydeck
+  (`preload_logos`, `src/motor_expansao/dashboard/competitors.py:203`; logos em `concorrentes/logo_*.png`
+  e `data/ultra/logo_ultra.png`).
+- O motor de interseção `analisar_ponto_censitario_setores` (`censo_point.py:145`) já devolve
+  renda, população, densidade, setores e os DataFrames `concorrentes_raio`/`ultra_raio`.
+- CSV/PDF em memória: `censo_report.py` (`gerar_csv_setores_censitarios`,
+  `gerar_pdf_relatorio_pontual_censitario`, `render_downloads_relatorio_censitario`).
+- Testes existentes (10 unit, a atualizar): `tests/unit/test_relatorio_pontual_censitario_motor.py`,
+  `..._mapa.py`, `..._export.py` (referenciam paleta de quartil, símbolos atuais e mapa de 1 métrica).
+
+**Objetivo:** entregar UMA exportação do relatório com (a) **renda, população e concorrentes juntos**
+(sem precisar trocar dropdown e baixar vários PDFs), (b) **fundo de ruas** no mapa, (c) **faixas de
+cor absolutas padronizadas estilo GeoFusion** (mais transparentes, ruas visíveis) e (d) **pins com
+logo** da Ultra e das concorrentes.
+
+**Decisões de produto já aprovadas por Felipe (2026-06-05) — o Planner deve formalizar a DEC dos tiles:**
+1. **Camadas combinadas:** o relatório (UI **e** PDF) passa a apresentar, de uma vez, um mapa de
+   **Renda**, um de **População/Densidade** e um mapa com **todas as concorrentes** (pins) no raio —
+   numa única geração/PDF. Decidir no Planner se são 3 mapas (1 por camada) ou 1 mapa-base + variações
+   de choropleth; o critério é "uma exportação só resolve".
+2. **Fundo de ruas = tiles online SÓ na geração**, com **cache local** para amortizar
+   (ex.: `contextily`/provedor OSM/Carto). Usar um **basemap claro/BRANCO** (ex.: Carto Positron/
+   Light "no labels") — decisão de Felipe (2026-06-05): o fundo precisa ser **branco/claro** para o
+   mapa de calor por cima **não ficar escuro** e as ruas seguirem legíveis. Isso **desvia do guardrail**
+   "não criar dependência de API ao vivo no dashboard de produção" → **exige DEC registrada (§8) + gate
+   humano**. Mitigações obrigatórias: cache local de tiles; **fallback offline gracioso** (se não houver
+   internet/tiles, gera o mapa sobre canvas branco sem ruas, sem quebrar); dependência restrita ao
+   caminho de geração do relatório, não à carga do dashboard.
+3. **Faixas absolutas fixas estilo GeoFusion, com CORES DEFINIDAS** (não quartil) — decisão de Felipe
+   (2026-06-05): cada camada tem paleta própria fixa, parecida com o GeoFusion, **transparente** o
+   bastante para ver as ruas do basemap branco por baixo:
+   - **População/Densidade:** rampa parecida com a do GeoFusion (escala de vermelhos por hab/km²),
+     cortes fixos de referência: até 1.000 / 1.001–5.000 / 5.001–10.000 / 10.001–25.000 / >25.000 hab/km².
+   - **Renda:** rampa parecida com a do GeoFusion, **adaptada para renda PER CAPITA** (não domiciliar) —
+     o Planner recalibra os cortes/classes para a escala per capita (as classes A/B/C do Geo são de renda
+     domiciliar; não copiar os valores, só o estilo de cor/faixas).
+   - **Score censitário:** manter o padrão de projeto (`RESIDUAL_SCORE_BANDS`/`score_band_to_color`).
+   Cortes e cores canônicos centralizados em constantes; comparáveis entre pontos diferentes.
+4. **Pins com logo:** substituir os círculos/quadrados pelos **logos** já existentes (Ultra +
+   concorrentes), reaproveitando `preload_logos`/brand colors; embutir as imagens de logo no PNG
+   Pillow (ponto central, concorrentes, Ultra distinguíveis).
+
+**Escopo permitido:**
+- Editar `censo_map.py` (fundo de tiles + faixas fixas + pins com logo), `pages.py` (UI das camadas
+  combinadas), `censo_report.py` (embutir os mapas combinados no PDF). Adicionar dependência de
+  basemap/tiles (ex.: `contextily`) em `pyproject`/extras + cache local de tiles.
+- Atualizar os 3 arquivos de teste unit + `tests/integration/test_streamlit_app.py` conforme o novo
+  visual; cobrir o **fallback offline** (sem tiles) e a presença das 3 camadas no PDF.
+- Atualizar o contrato `docs/relatorio_pontual_censitario.md` (§6/§7) e o CLAUDE.md §4 (linha do
+  relatório) refletindo tiles+faixas+pins; registrar a **DEC** dos tiles no CLAUDE.md §8.
+
+**Fora de escopo (invioláveis):**
+- Qualquer recálculo/escrita de M1 (`scoring.py`/`constants.py`/pesos/artefatos oficiais) — é visualização.
+- Mudar o método de interseção `setor_censitario_intersecao_area_1p5km` ou o raio fixo de 1.5 km.
+- Tornar o **dashboard interativo** dependente de internet (o desvio de tiles é só no caminho do relatório).
+- Template/diagramação final do PDF (isso é o BLK-CENSO-02).
+
+**Critérios de aceite:**
+- Uma única geração do relatório entrega renda + população + concorrentes (UI e PDF), sem múltiplos downloads.
+- Mapas com fundo de ruas **branco/claro** quando há tiles; **fallback offline** gera mapa sobre canvas
+  branco sem ruas, sem quebrar (testado).
+- Faixas de cor absolutas fixas com **paleta própria por camada** (população = vermelhos estilo Geo;
+  renda = estilo Geo adaptado a renda PER CAPITA; score = padrão do projeto), transparentes o bastante
+  para ver as ruas; legenda condizente.
+- Pins com logo de Ultra e concorrentes (sem os símbolos antigos); ponto central distinguível.
+- Suite verde (`pytest -n auto`), ruff+mypy limpos, smoke `import streamlit_app` ok; DEC registrada; docs atualizados.
+- ZERO mudança em score/carteira/plano/artefatos oficiais do M1.
+
+**Guardrails específicos:** READ-ONLY sobre M1 (§5); o desvio do guardrail de "API ao vivo" é
+**restrito à geração do relatório**, aprovado via DEC + gate humano, com cache + fallback offline.
+
+**Risco:** médio. Pontos de atenção: dependência/limites de rate dos tiles e licença do provedor;
+peso do cache; reprojeção tiles × CRS métrico local do buffer 1.5 km; regressão dos 10 testes existentes.

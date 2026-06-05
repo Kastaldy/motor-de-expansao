@@ -83,6 +83,11 @@ scraping = [
     "lxml>=5.2.0",
     "fake-useragent>=1.5.0",
 ]
+# Fundo de ruas (tiles online) SO na geracao do Relatorio Pontual Censitario.
+# Fora das dependencias base do deploy: import lazy + fallback offline (DEC-004).
+basemap = [
+    "contextily>=1.5.0",
+]
 
 [tool.ruff]
 line-length = 100

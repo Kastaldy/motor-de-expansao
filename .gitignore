@@ -50,6 +50,9 @@ data/outputs/_manifest.json
 logs/
 *.log
 
+# Cache de tiles de basemap (Relatorio Pontual Censitario; DEC-004) - nunca versionar
+data/cache/
+
 # Coverage / pytest
 .coverage
 htmlcov/
@@ -94,6 +97,10 @@ usuarios.md
 # O .parquet ja cai em *.parquet; o relatorio .md contem agregados e nao pode vazar PII.
 data/analysis/
 data/analysis/**
+
+# Referencias de template (BLK-CENSO-02): estudos REAIS contem PII (nome/telefone/email)
+# e dados de concorrentes -> PDFs nunca podem vazar. O .pptx de fundo vazio segue rastreavel.
+data/referencias/*.pdf
 
 # === Secrets (SOPS+age) ===
 # Plaintext outputs nunca podem ser commitados:

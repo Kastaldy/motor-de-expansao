@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from io import BytesIO
+from pathlib import Path
 from typing import cast
 
 import numpy as np
@@ -20,6 +21,20 @@ from motor_expansao.dashboard.censo_point import (
     _transformer,
     analisar_ponto_censitario_setores,
 )
+from motor_expansao.dashboard.competitors import _render_pin_tile
+from motor_expansao.dashboard.constants import (
+    DENSIDADE_POP_BANDS,
+    RENDA_PER_CAPITA_BANDS,
+)
+from motor_expansao.dashboard.utils import score_band_to_color
+
+# Cache local de tiles do basemap (DEC-004). Nunca versionado (.gitignore: data/cache/).
+# Cada ponto cobre ~3 km de lado -> poucos tiles; dedup por-tile do contextily.
+_BASEMAP_CACHE_DIR = Path("data/cache/basemap_tiles")
+
+# Web Mercator (CRS nativo dos tiles). A composicao do mapa novo acontece em 3857;
+# o motor (intersecao setor x circulo 1.5 km) segue intocado em aeqd local (censo_point).
+CRS_WEB_MERCATOR = "EPSG:3857"
 
 MAPA_CENSITARIO_METRICAS = {
     "pop_estimada_intersecao": "Pop. estimada",
@@ -28,6 +43,9 @@ MAPA_CENSITARIO_METRICAS = {
     "peso_area_setor": "Peso de area",
 }
 
+# Chaves canonicas das 3 camadas combinadas.
+CAMADAS_CENSITARIAS = ("densidade", "renda", "concorrentes")
+
 _SECTOR_PALETTE = [
     (232, 242, 255, 225),
     (176, 211, 245, 225),
@@ -35,6 +53,9 @@ _SECTOR_PALETTE = [
     (247, 196, 97, 225),
     (214, 93, 74, 225),
 ]
+
+# Cor de fill para setor sem dado na faixa nova (cinza translucido, alpha 150).
+_FILL_SEM_DADO = (218, 222, 229, 150)
 
 
 def _font(size: int = 12) -> ImageFont.ImageFont:
@@ -80,6 +101,35 @@ def _build_breaks(values: pd.Series) -> list[float]:
     return sorted({round(float(value), 6) for value in quantiles})
 
 
+# ── Cores por faixa absoluta fixa (substitui o quartil no caminho novo) ──────────
+
+
+def _color_for_bands(
+    value: float,
+    bands: list[tuple[float, str, tuple[int, int, int, int]]],
+) -> tuple[int, int, int, int]:
+    if pd.isna(value):
+        return _FILL_SEM_DADO
+    val = float(value)
+    for upper, _label, color in bands:
+        if val <= upper:
+            return color
+    return bands[-1][2]
+
+
+def _color_for_densidade(value: float) -> tuple[int, int, int, int]:
+    return _color_for_bands(value, DENSIDADE_POP_BANDS)
+
+
+def _color_for_renda(value: float) -> tuple[int, int, int, int]:
+    return _color_for_bands(value, RENDA_PER_CAPITA_BANDS)
+
+
+def _color_for_score(value: float) -> tuple[int, int, int, int]:
+    rgba = score_band_to_color(value, alpha=150)
+    return (int(rgba[0]), int(rgba[1]), int(rgba[2]), int(rgba[3]))
+
+
 def _format_value(value: float) -> str:
     if pd.isna(value):
         return "-"
@@ -113,7 +163,7 @@ def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont)
 
 def _polygon_to_pixels(
     polygon: Polygon,
-    project,
+    project: Callable[[float, float], tuple[float, float]],
 ) -> list[tuple[int, int]]:
     coords = [project(x, y) for x, y in polygon.exterior.coords]
     return [(int(round(x)), int(round(y))) for x, y in coords]
@@ -121,7 +171,6 @@ def _polygon_to_pixels(
 
 def _draw_scale_bar(
     draw: ImageDraw.ImageDraw,
-    project,
     map_box: tuple[int, int, int, int],
     meters_per_px: float,
 ) -> None:
@@ -138,50 +187,48 @@ def _draw_scale_bar(
     _draw_text(draw, (x0, y0 + 7), label, font=_font(11))
 
 
-def _draw_legend(
+def _paste_logo_pin(
+    image: Image.Image,
+    px: int,
+    py: int,
+    key: str,
+    *,
+    size: int = 40,
+) -> None:
+    """Cola o pin (balao + logo OU sigla) de `competitors._render_pin_tile` no mapa.
+
+    Ancora a PONTA do balao (anchorY do tile 128x128) no ponto (px, py): o tile e
+    desenhado com a ponta na base, entao posicionamos `(px - w//2, py - h)`. Reusa a
+    mascara alpha do tile RGBA. Logo real quando ha PNG no _ICON_CACHE; sigla no fallback.
+    """
+    tile = cast(Image.Image, _render_pin_tile(key))
+    tile = tile.resize((size, size), Image.Resampling.LANCZOS)
+    image.paste(tile, (int(px) - size // 2, int(py) - size), tile)
+
+
+def _draw_legend_camada(
     draw: ImageDraw.ImageDraw,
     x: int,
     y: int,
-    metric_column: str,
-    values: pd.Series,
-    breaks: list[float],
+    titulo: str,
+    entries: list[tuple[str, tuple[int, int, int, int]]],
 ) -> None:
+    """Legenda por camada: faixas fixas (label + amostra de cor) + pins de referencia."""
     title_font = _font(14)
     body_font = _font(11)
     _draw_text(draw, (x, y), "Legenda", font=title_font)
-    _draw_text(draw, (x, y + 24), _metric_label(metric_column), font=body_font)
-    if values.dropna().empty:
-        draw.rectangle([x, y + 54, x + 24, y + 74], fill=(218, 222, 229), outline=(148, 163, 184))
-        _draw_text(draw, (x + 34, y + 55), "Sem dados", font=body_font)
-        return
+    _draw_text(draw, (x, y + 22), titulo, font=body_font)
 
-    valid = values.dropna()
-    min_value = float(valid.min())
-    max_value = float(valid.max())
-    ranges: list[str] = []
-    if not breaks:
-        ranges = [_format_value(min_value)]
-        colors = [_SECTOR_PALETTE[2]]
-    else:
-        limits = [min_value, *breaks, max_value]
-        ranges = [
-            f"{_format_value(limits[i])} a {_format_value(limits[i + 1])}"
-            for i in range(len(limits) - 1)
-        ]
-        colors = _SECTOR_PALETTE[: len(ranges)]
+    base_y = y + 50
+    for idx, (label, color) in enumerate(entries):
+        yy = base_y + idx * 24
+        draw.rectangle([x, yy, x + 22, yy + 16], fill=color[:3], outline=(148, 163, 184))
+        _draw_text(draw, (x + 32, yy), label, font=body_font)
 
-    for idx, (label, color) in enumerate(zip(ranges, colors, strict=False)):
-        yy = y + 54 + idx * 26
-        draw.rectangle([x, yy, x + 24, yy + 18], fill=color[:3], outline=(148, 163, 184))
-        _draw_text(draw, (x + 34, yy + 1), label, font=body_font)
-
-    yy = y + 68 + len(ranges) * 26
+    yy = base_y + len(entries) * 24 + 12
     draw.ellipse([x + 2, yy, x + 18, yy + 16], fill=(20, 96, 181), outline=(255, 255, 255), width=2)
-    _draw_text(draw, (x + 34, yy), "Ponto central", font=body_font)
-    draw.ellipse([x + 2, yy + 28, x + 18, yy + 44], fill=(245, 158, 11), outline=(31, 41, 55))
-    _draw_text(draw, (x + 34, yy + 28), "Concorrente", font=body_font)
-    draw.rectangle([x + 3, yy + 57, x + 17, yy + 71], fill=(200, 0, 30), outline=(31, 41, 55))
-    _draw_text(draw, (x + 34, yy + 55), "Ultra", font=body_font)
+    _draw_text(draw, (x + 32, yy), "Ponto central", font=body_font)
+    _draw_text(draw, (x + 32, yy + 24), "Pins: Ultra e concorrentes", font=body_font)
 
 
 def _decode_intersections(
@@ -224,42 +271,273 @@ def _decode_intersections(
     return records, circle_metric
 
 
+def _to_mercator(geom: BaseGeometry, lat: float, lng: float) -> BaseGeometry:
+    """Reprojeta uma geometria do aeqd local (CRS do motor) -> EPSG:3857, SO para render."""
+    to_3857 = _transformer(_local_metric_crs(lat, lng), CRS_WEB_MERCATOR)
+    return _project_geometry(geom, to_3857)
+
+
+def _point_to_mercator(x_local: float, y_local: float, lat: float, lng: float) -> tuple[float, float]:
+    to_3857 = _transformer(_local_metric_crs(lat, lng), CRS_WEB_MERCATOR)
+    return to_3857.transform(x_local, y_local)
+
+
 def _project_points(
     points_df: pd.DataFrame,
     lat: float,
     lng: float,
-) -> list[tuple[float, float]]:
+) -> list[tuple[float, float, str]]:
+    """Reprojeta pontos (lat/lng) -> aeqd local. Devolve (x, y, key) para o pin.
+
+    `key` e a rede (concorrente) ou "__ultra__"; resolvido a partir da coluna `rede`.
+    """
     if points_df is None or points_df.empty or not {"lat", "lng"}.issubset(points_df.columns):
         return []
     to_metric = _transformer(CRS_ORIGEM_CENSO, _local_metric_crs(lat, lng))
-    coords: list[tuple[float, float]] = []
+    coords: list[tuple[float, float, str]] = []
     for _, row in points_df.iterrows():
         point_lat = pd.to_numeric(row.get("lat"), errors="coerce")
         point_lng = pd.to_numeric(row.get("lng"), errors="coerce")
         if pd.isna(point_lat) or pd.isna(point_lng):
             continue
-        coords.append(to_metric.transform(float(point_lng), float(point_lat)))
+        x, y = to_metric.transform(float(point_lng), float(point_lat))
+        rede = row.get("rede")
+        key = str(rede) if rede is not None and not pd.isna(rede) and str(rede).strip() else ""
+        coords.append((x, y, key))
     return coords
 
 
-def render_mapa_censitario_estatico_png(
+def _zoom_for_bounds(minx: float, maxx: float, target_px: int) -> int:
+    """Escolhe o menor zoom cujo grid de tiles (256 px) cubra a bbox 3857 com >= target_px.
+
+    A resolucao 3857 no zoom z e (2*pi*R)/(256*2^z) m/px; queremos span/res >= target_px.
+    """
+    earth_circumference = 2.0 * np.pi * 6378137.0
+    span_m = max(maxx - minx, 1.0)
+    for zoom in range(0, 20):
+        res = earth_circumference / (256.0 * (2**zoom))
+        if span_m / res >= target_px:
+            return max(0, min(zoom, 19))
+    return 19
+
+
+def _fetch_basemap(
+    bounds_3857: tuple[float, float, float, float],
+    width: int,
+) -> tuple[object, tuple[float, float, float, float]] | None:
+    """Busca tiles de basemap claro (CartoDB Positron No-Labels) via contextily.
+
+    Import LAZY sob try/except: se o extra `[basemap]` nao estiver instalado OU o fetch
+    falhar (sem internet/timeout), devolve None e o chamador cai no fallback offline.
+    Cache local em data/cache/basemap_tiles/. Retorna (img_array, extent_3857) ou None.
+    """
+    try:
+        import contextily as ctx  # lazy: so existe com o extra [basemap]
+    except ImportError:
+        return None
+    try:
+        _BASEMAP_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            ctx.set_cache_dir(str(_BASEMAP_CACHE_DIR))
+        except Exception:
+            pass
+        minx, miny, maxx, maxy = bounds_3857
+        zoom = _zoom_for_bounds(minx, maxx, width)
+        img, extent = ctx.bounds2img(
+            minx,
+            miny,
+            maxx,
+            maxy,
+            zoom=zoom,
+            source=ctx.providers.CartoDB.PositronNoLabels,
+            ll=False,
+        )
+        return img, extent
+    except Exception:
+        return None
+
+
+def _render_camada(
+    *,
+    titulo: str,
+    legenda_titulo: str,
+    legenda_entries: list[tuple[str, tuple[int, int, int, int]]],
+    color_fn: Callable[[float], tuple[int, int, int, int]],
+    source_values: pd.Series,
+    sector_records_3857: list[tuple[BaseGeometry, int]],
+    circle_3857: BaseGeometry,
+    center_3857: tuple[float, float],
+    pins: list[tuple[float, float, str]],
+    ultra_pins: list[tuple[float, float, str]],
+    basemap: tuple[object, tuple[float, float, float, float]] | None,
+    bounds: tuple[float, float, float, float],
+    lat: float,
+    lng: float,
+    raio_km: float,
+    n_setores: int,
+    width: int,
+    height: int,
+) -> bytes:
+    """Desenha UMA camada (mesmos bbox/projecao/basemap/pins; varia fill + legenda)."""
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image, "RGBA")
+    title_font = _font(20)
+    body_font = _font(12)
+    small_font = _font(11)
+
+    _draw_text(draw, (28, 22), titulo, font=title_font)
+    subtitle = f"Centro: {lat:.6f}, {lng:.6f} | raio {raio_km:.1f} km | setores: {n_setores}"
+    _draw_text(draw, (28, 52), subtitle, font=body_font, fill=(71, 85, 105))
+
+    map_box = (28, 92, width - 285, height - 54)
+    legend_x = width - 252
+    left, top, right, bottom = map_box
+
+    minx, miny, maxx, maxy = bounds
+    span_x = max(maxx - minx, 1.0)
+    span_y = max(maxy - miny, 1.0)
+    inner_w = right - left - 24
+    inner_h = bottom - top - 24
+    scale = min(inner_w / span_x, inner_h / span_y)
+    offset_x = left + 12 + (inner_w - span_x * scale) / 2
+    offset_y = top + 12 + (inner_h - span_y * scale) / 2
+
+    def project(x: float, y: float) -> tuple[float, float]:
+        px = offset_x + (x - minx) * scale
+        py = offset_y + (maxy - y) * scale
+        return px, py
+
+    # Fundo: basemap de ruas (3857) quando disponivel; senao canvas branco (fallback offline).
+    drew_basemap = False
+    if basemap is not None:
+        try:
+            img_array, extent = basemap
+            bm = Image.fromarray(np.asarray(img_array)).convert("RGB")
+            ex_minx, ex_maxx, ex_miny, ex_maxy = extent
+            # mapeia o extent dos tiles (3857) para pixels e cola
+            tx0, ty0 = project(ex_minx, ex_maxy)  # canto superior-esquerdo
+            tx1, ty1 = project(ex_maxx, ex_miny)  # canto inferior-direito
+            box_w = max(1, int(round(tx1 - tx0)))
+            box_h = max(1, int(round(ty1 - ty0)))
+            bm = bm.resize((box_w, box_h), Image.Resampling.LANCZOS)
+            crop = Image.new("RGB", (width, height), (255, 255, 255))
+            crop.paste(bm, (int(round(tx0)), int(round(ty0))))
+            # recorta a area do map_box e cola so ela (mantem moldura)
+            patch = crop.crop((left, top, right, bottom))
+            image.paste(patch, (left, top))
+            draw.rounded_rectangle(map_box, radius=6, outline=(203, 213, 225))
+            drew_basemap = True
+        except Exception:
+            drew_basemap = False
+    if not drew_basemap:
+        draw.rounded_rectangle(map_box, radius=6, fill=(248, 250, 252), outline=(203, 213, 225))
+
+    # choropleth por faixa fixa (alpha 150 -> ruas do basemap aparecem por baixo)
+    for geom_3857, idx in sector_records_3857:
+        color = color_fn(source_values.iloc[idx])
+        for polygon in _iter_polygons(geom_3857):
+            points = _polygon_to_pixels(polygon, project)
+            if len(points) >= 3:
+                draw.polygon(points, fill=color, outline=(71, 85, 105, 170))
+                for interior in polygon.interiors:
+                    hole = [
+                        (int(round(px)), int(round(py)))
+                        for px, py in (project(a, b) for a, b in interior.coords)
+                    ]
+                    if len(hole) >= 3:
+                        draw.polygon(hole, fill=(248, 250, 252, 120))
+
+    circle_points = [
+        (int(round(px)), int(round(py)))
+        for px, py in (project(x, y) for x, y in circle_3857.exterior.coords)
+    ]
+    if len(circle_points) >= 3:
+        draw.line(circle_points + [circle_points[0]], fill=(15, 23, 42, 215), width=3)
+
+    cx, cy = project(*center_3857)
+    draw.ellipse([cx - 7, cy - 7, cx + 7, cy + 7], fill=(20, 96, 181), outline=(255, 255, 255), width=2)
+    draw.line([(cx - 11, cy), (cx + 11, cy)], fill=(20, 96, 181), width=2)
+    draw.line([(cx, cy - 11), (cx, cy + 11)], fill=(20, 96, 181), width=2)
+
+    for x_local, y_local, key in pins:
+        mx, my = _point_to_mercator(x_local, y_local, lat, lng)
+        px, py = project(mx, my)
+        _paste_logo_pin(image, int(round(px)), int(round(py)), key or "")
+    for x_local, y_local, _key in ultra_pins:
+        mx, my = _point_to_mercator(x_local, y_local, lat, lng)
+        px, py = project(mx, my)
+        _paste_logo_pin(image, int(round(px)), int(round(py)), "__ultra__")
+
+    if not sector_records_3857:
+        message = "Sem setores intersectados no raio"
+        msg_w = _text_width(draw, message, body_font)
+        _draw_text(
+            draw,
+            (int((left + right - msg_w) / 2), int((top + bottom) / 2)),
+            message,
+            font=body_font,
+            fill=(71, 85, 105),
+        )
+
+    meters_per_px = 1 / scale
+    _draw_scale_bar(draw, map_box, meters_per_px)
+    _draw_legend_camada(draw, legend_x, 96, legenda_titulo, legenda_entries)
+
+    footer = (
+        "Metodo: intersecao geometrica setor x circulo em CRS metrico local (raio 1.5 km). "
+        "Render em EPSG:3857. (c) OpenStreetMap, (c) CARTO."
+    )
+    _draw_text(draw, (28, height - 34), footer, font=small_font, fill=(71, 85, 105))
+
+    output = BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
+def _bands_legend_entries(
+    bands: list[tuple[float, str, tuple[int, int, int, int]]],
+) -> list[tuple[str, tuple[int, int, int, int]]]:
+    return [(label, color) for _upper, label, color in bands]
+
+
+def _score_legend_entries() -> list[tuple[str, tuple[int, int, int, int]]]:
+    entries: list[tuple[str, tuple[int, int, int, int]]] = []
+    for band in range(0, 100, 20):
+        rgba = score_band_to_color(float(band) + 5.0, alpha=150)
+        entries.append((f"{band}-{band + 20}", (int(rgba[0]), int(rgba[1]), int(rgba[2]), int(rgba[3]))))
+    return entries
+
+
+def render_mapas_censitarios_combinados(
     lat: float,
     lng: float,
     setores_df: pd.DataFrame,
     *,
     raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
-    metric_column: str = "pop_estimada_intersecao",
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     width: int = 1000,
     height: int = 760,
-) -> bytes:
-    """Renderiza PNG offline do relatorio pontual censitario.
+    basemap: bool = True,
+    logos_dir: Path | None = None,
+    ultra_logo_dir: Path | None = None,
+) -> dict[str, bytes]:
+    """Gera as 3 camadas do Relatorio Pontual Censitario numa unica chamada.
 
-    O mapa e estatico para uso em PDF/export. Ele usa setores reais intersectados,
-    circulo metrico de 1.5 km, ponto central e pins opcionais ja filtrados por
-    distancia real pelo motor censitario.
+    Retorna `{"densidade": png, "renda": png, "concorrentes": png}` (chaves canonicas).
+    As 3 camadas compartilham basemap, bbox, projecao (EPSG:3857) e pins; variam so o
+    fill dos setores (faixa absoluta fixa) + a legenda/titulo.
+
+    READ-ONLY sobre o M1: o motor (`analisar_ponto_censitario_setores`,
+    `setor_censitario_intersecao_area_1p5km`, raio 1.5 km) e INTOCADO; toda a mudanca e
+    de RENDER. `basemap=False` forca o caminho offline (canvas branco sem ruas) — default
+    seguro em CI/teste. `import contextily` e lazy: sem o extra `[basemap]` cai no offline.
     """
+    if logos_dir is not None:
+        from motor_expansao.dashboard.competitors import preload_logos
+
+        preload_logos(logos_dir, ultra_dir=ultra_logo_dir)
+
     result = analisar_ponto_censitario_setores(
         lat,
         lng,
@@ -277,113 +555,139 @@ def render_mapa_censitario_estatico_png(
         raio_km,
     )
 
-    image = Image.new("RGB", (width, height), (255, 255, 255))
-    draw = ImageDraw.Draw(image, "RGBA")
-    title_font = _font(20)
-    body_font = _font(12)
-    small_font = _font(11)
+    # Reprojeta setores + circulo + centro do aeqd local -> 3857 (SO para render).
+    circle_3857 = _to_mercator(circle_metric, lat, lng)
+    center_3857 = _point_to_mercator(0.0, 0.0, lat, lng)
 
-    _draw_text(draw, (28, 22), "Relatorio Pontual Censitario - mapa estatico", font=title_font)
-    subtitle = f"Centro: {lat:.6f}, {lng:.6f} | raio {raio_km:.1f} km | setores: {result['n_setores']}"
-    _draw_text(draw, (28, 52), subtitle, font=body_font, fill=(71, 85, 105))
-
-    map_box = (28, 92, width - 285, height - 54)
-    legend_x = width - 252
-    draw.rounded_rectangle(map_box, radius=6, fill=(248, 250, 252), outline=(203, 213, 225))
-
-    bounds = list(circle_metric.bounds)
-    for record in sector_records:
-        geom = record["geometry_metric"]
-        if isinstance(geom, BaseGeometry) and not geom.is_empty:
-            minx, miny, maxx, maxy = geom.bounds
-            bounds[0] = min(bounds[0], minx)
-            bounds[1] = min(bounds[1], miny)
-            bounds[2] = max(bounds[2], maxx)
-            bounds[3] = max(bounds[3], maxy)
-
-    minx, miny, maxx, maxy = bounds
-    span_x = max(maxx - minx, 1.0)
-    span_y = max(maxy - miny, 1.0)
-    margin_x = span_x * 0.08
-    margin_y = span_y * 0.08
-    minx -= margin_x
-    maxx += margin_x
-    miny -= margin_y
-    maxy += margin_y
-    span_x = max(maxx - minx, 1.0)
-    span_y = max(maxy - miny, 1.0)
-
-    left, top, right, bottom = map_box
-    inner_w = right - left - 24
-    inner_h = bottom - top - 24
-    scale = min(inner_w / span_x, inner_h / span_y)
-    offset_x = left + 12 + (inner_w - span_x * scale) / 2
-    offset_y = top + 12 + (inner_h - span_y * scale) / 2
-
-    def project(x: float, y: float) -> tuple[float, float]:
-        px = offset_x + (x - minx) * scale
-        py = offset_y + (maxy - y) * scale
-        return px, py
-
-    metric_values = pd.Series(
-        [pd.to_numeric(record.get(metric_column), errors="coerce") for record in sector_records],
-        dtype="float64",
-    )
-    breaks = _build_breaks(metric_values)
-
+    sector_records_3857: list[tuple[BaseGeometry, int]] = []
+    densidade_vals: list[float] = []
+    renda_vals: list[float] = []
+    score_vals: list[float] = []
     for idx, record in enumerate(sector_records):
-        geom = record["geometry_metric"]
-        color = _color_for_value(metric_values.iloc[idx], breaks)
-        for polygon in _iter_polygons(geom):
-            points = _polygon_to_pixels(polygon, project)
-            if len(points) >= 3:
-                draw.polygon(points, fill=color, outline=(71, 85, 105, 180))
-                for interior in polygon.interiors:
-                    hole = [(int(round(x)), int(round(y))) for x, y in (project(a, b) for a, b in interior.coords)]
-                    if len(hole) >= 3:
-                        draw.polygon(hole, fill=(248, 250, 252, 255))
-
-    circle_points = [
-        (int(round(x)), int(round(y)))
-        for x, y in (project(x, y) for x, y in circle_metric.exterior.coords)
-    ]
-    if len(circle_points) >= 3:
-        draw.line(circle_points + [circle_points[0]], fill=(15, 23, 42, 215), width=3)
-
-    cx, cy = project(0, 0)
-    draw.ellipse([cx - 7, cy - 7, cx + 7, cy + 7], fill=(20, 96, 181), outline=(255, 255, 255), width=2)
-    draw.line([(cx - 11, cy), (cx + 11, cy)], fill=(20, 96, 181), width=2)
-    draw.line([(cx, cy - 11), (cx, cy + 11)], fill=(20, 96, 181), width=2)
-
-    for x, y in _project_points(result["concorrentes_raio"], lat, lng):
-        px, py = project(x, y)
-        draw.ellipse([px - 6, py - 6, px + 6, py + 6], fill=(245, 158, 11), outline=(31, 41, 55))
-
-    for x, y in _project_points(result["ultra_raio"], lat, lng):
-        px, py = project(x, y)
-        draw.rectangle([px - 6, py - 6, px + 6, py + 6], fill=(200, 0, 30), outline=(31, 41, 55))
-
-    if not sector_records:
-        message = "Sem setores intersectados no raio"
-        msg_w = _text_width(draw, message, body_font)
-        _draw_text(
-            draw,
-            (int((left + right - msg_w) / 2), int((top + bottom) / 2)),
-            message,
-            font=body_font,
-            fill=(71, 85, 105),
+        geom = record.get("geometry_metric")
+        if not isinstance(geom, BaseGeometry) or geom.is_empty:
+            densidade_vals.append(float("nan"))
+            renda_vals.append(float("nan"))
+            score_vals.append(float("nan"))
+            continue
+        sector_records_3857.append((_to_mercator(geom, lat, lng), idx))
+        densidade_vals.append(
+            float(pd.to_numeric(record.get("densidade_pop_setor_hab_km2"), errors="coerce"))
+        )
+        renda_raw = pd.to_numeric(record.get("renda_per_capita_setor_2022_calibrada"), errors="coerce")
+        if pd.isna(renda_raw):
+            renda_raw = pd.to_numeric(record.get("renda_per_capita_setor_2022"), errors="coerce")
+        renda_vals.append(float(renda_raw))
+        score_vals.append(
+            float(pd.to_numeric(record.get("score_setor_2022_calibrado"), errors="coerce"))
         )
 
-    meters_per_px = 1 / scale
-    _draw_scale_bar(draw, project, map_box, meters_per_px)
-    _draw_legend(draw, legend_x, 96, metric_column, metric_values, breaks)
+    densidade_series = pd.Series(densidade_vals, dtype="float64")
+    renda_series = pd.Series(renda_vals, dtype="float64")
+    score_series = pd.Series(score_vals, dtype="float64")
 
-    footer = (
-        "Metodo: intersecao geometrica setor x circulo em CRS metrico local. "
-        "Distribuicao intrassetor aproximada por area."
+    # bbox do mapa = bounds do circulo 3857 (+ margem 8%) unindo os setores reprojetados.
+    bounds = list(circle_3857.bounds)
+    for geom_3857, _idx in sector_records_3857:
+        b = geom_3857.bounds
+        bounds[0] = min(bounds[0], b[0])
+        bounds[1] = min(bounds[1], b[1])
+        bounds[2] = max(bounds[2], b[2])
+        bounds[3] = max(bounds[3], b[3])
+    minx, miny, maxx, maxy = bounds
+    margin_x = max(maxx - minx, 1.0) * 0.08
+    margin_y = max(maxy - miny, 1.0) * 0.08
+    bounds_t = (minx - margin_x, miny - margin_y, maxx + margin_x, maxy + margin_y)
+
+    basemap_tiles = None
+    if basemap:
+        basemap_tiles = _fetch_basemap(bounds_t, width)
+
+    pins = _project_points(result["concorrentes_raio"], lat, lng)
+    ultra_pins = _project_points(result["ultra_raio"], lat, lng)
+    n_setores = result["n_setores"]
+
+    common = dict(
+        sector_records_3857=sector_records_3857,
+        circle_3857=circle_3857,
+        center_3857=center_3857,
+        pins=pins,
+        ultra_pins=ultra_pins,
+        basemap=basemap_tiles,
+        bounds=bounds_t,
+        lat=lat,
+        lng=lng,
+        raio_km=raio_km,
+        n_setores=n_setores,
+        width=width,
+        height=height,
     )
-    _draw_text(draw, (28, height - 34), footer, font=small_font, fill=(71, 85, 105))
 
-    output = BytesIO()
-    image.save(output, format="PNG", optimize=True)
-    return output.getvalue()
+    densidade_png = _render_camada(
+        titulo="Relatorio Pontual Censitario - Densidade populacional",
+        legenda_titulo="Densidade (hab/km2)",
+        legenda_entries=_bands_legend_entries(DENSIDADE_POP_BANDS),
+        color_fn=_color_for_densidade,
+        source_values=densidade_series,
+        **common,
+    )
+    renda_png = _render_camada(
+        titulo="Relatorio Pontual Censitario - Renda per capita",
+        legenda_titulo="Renda per capita (R$/pessoa)",
+        legenda_entries=_bands_legend_entries(RENDA_PER_CAPITA_BANDS),
+        color_fn=_color_for_renda,
+        source_values=renda_series,
+        **common,
+    )
+    concorrentes_png = _render_camada(
+        titulo="Relatorio Pontual Censitario - Concorrentes",
+        legenda_titulo="Score censitario (contexto)",
+        legenda_entries=_score_legend_entries(),
+        color_fn=_color_for_score,
+        source_values=score_series,
+        **common,
+    )
+
+    return {
+        "densidade": densidade_png,
+        "renda": renda_png,
+        "concorrentes": concorrentes_png,
+    }
+
+
+def render_mapa_censitario_estatico_png(
+    lat: float,
+    lng: float,
+    setores_df: pd.DataFrame,
+    *,
+    raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
+    metric_column: str = "pop_estimada_intersecao",
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    width: int = 1000,
+    height: int = 760,
+    basemap: bool = False,
+) -> bytes:
+    """LEGADO: wrapper fino sobre `render_mapas_censitarios_combinados`.
+
+    Mantido para imports externos durante a migracao. Devolve UMA das camadas combinadas,
+    mapeando o antigo `metric_column` para a chave canonica mais proxima (renda->"renda",
+    score->"concorrentes", demais->"densidade"). `basemap=False` por padrao (offline) p/
+    nao depender de internet em chamadas legadas. Prefira a orquestradora combinada.
+    """
+    mapas = render_mapas_censitarios_combinados(
+        lat,
+        lng,
+        setores_df,
+        raio_km=raio_km,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+        width=width,
+        height=height,
+        basemap=basemap,
+    )
+    if metric_column == "renda_per_capita_setor_2022_calibrada":
+        return mapas["renda"]
+    if metric_column == "score_setor_2022_calibrado":
+        return mapas["concorrentes"]
+    return mapas["densidade"]
