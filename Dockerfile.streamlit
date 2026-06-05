@@ -10,8 +10,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# curl p/ healthcheck; libexpat1 e lib de sistema exigida em runtime por rasterio
+# (puxado pelo extra [basemap]/contextily) — ausente no python:3.11-slim -> sem ela,
+# `import contextily` falha (libexpat.so.1) e o relatorio cai no fallback sem ruas.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl \
+    && apt-get install -y --no-install-recommends curl libexpat1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . .
