@@ -54,8 +54,18 @@ _SECTOR_PALETTE = [
     (214, 93, 74, 225),
 ]
 
-# Cor de fill para setor sem dado na faixa nova (cinza translucido, alpha 150).
-_FILL_SEM_DADO = (218, 222, 229, 150)
+# Alpha do choropleth (heat map) sobre o basemap. Quanto MENOR, mais transparente o
+# mapa de calor e mais visiveis as ruas do basemap por baixo. A legenda usa RGB solido
+# (ignora este alpha), entao as faixas seguem nitidas mesmo com fill bem translucido.
+_CHOROPLETH_ALPHA = 95
+
+# Cor de fill para setor sem dado na faixa nova (cinza translucido).
+_FILL_SEM_DADO = (218, 222, 229, _CHOROPLETH_ALPHA)
+
+
+def _with_choropleth_alpha(rgba: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """Aplica o alpha canonico do choropleth (mantem RGB da faixa)."""
+    return (int(rgba[0]), int(rgba[1]), int(rgba[2]), _CHOROPLETH_ALPHA)
 
 
 def _font(size: int = 12) -> ImageFont.ImageFont:
@@ -118,15 +128,15 @@ def _color_for_bands(
 
 
 def _color_for_densidade(value: float) -> tuple[int, int, int, int]:
-    return _color_for_bands(value, DENSIDADE_POP_BANDS)
+    return _with_choropleth_alpha(_color_for_bands(value, DENSIDADE_POP_BANDS))
 
 
 def _color_for_renda(value: float) -> tuple[int, int, int, int]:
-    return _color_for_bands(value, RENDA_PER_CAPITA_BANDS)
+    return _with_choropleth_alpha(_color_for_bands(value, RENDA_PER_CAPITA_BANDS))
 
 
 def _color_for_score(value: float) -> tuple[int, int, int, int]:
-    rgba = score_band_to_color(value, alpha=150)
+    rgba = score_band_to_color(value, alpha=_CHOROPLETH_ALPHA)
     return (int(rgba[0]), int(rgba[1]), int(rgba[2]), int(rgba[3]))
 
 

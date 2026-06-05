@@ -10,6 +10,7 @@ from shapely.ops import transform
 
 import motor_expansao.dashboard.censo_map as censo_map
 from motor_expansao.dashboard.censo_map import (
+    _CHOROPLETH_ALPHA,
     _color_for_densidade,
     render_mapas_censitarios_combinados,
 )
@@ -119,8 +120,11 @@ def test_mapa_censitario_faixas_fixas_nao_quartil():
     # Dois setores em faixas de densidade distintas: 800 -> faixa 1 (Reds claro),
     # 12.000 -> faixa 4 (Reds escuro). As cores devem casar com DENSIDADE_POP_BANDS,
     # NAO com quartis relativos dos dois valores.
-    assert _color_for_densidade(800.0) == DENSIDADE_POP_BANDS[0][2]
-    assert _color_for_densidade(12_000.0) == DENSIDADE_POP_BANDS[3][2]
+    # RGB casa a faixa fixa (nao quartil); alpha do FILL e o canonico do choropleth
+    # (mais transparente que a faixa da legenda, para as ruas aparecerem).
+    assert _color_for_densidade(800.0)[:3] == DENSIDADE_POP_BANDS[0][2][:3]
+    assert _color_for_densidade(12_000.0)[:3] == DENSIDADE_POP_BANDS[3][2][:3]
+    assert _color_for_densidade(800.0)[3] == _CHOROPLETH_ALPHA
     assert _color_for_densidade(800.0) != _color_for_densidade(12_000.0)
 
     setores = pd.DataFrame(
