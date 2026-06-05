@@ -137,6 +137,33 @@ def test_mapa_censitario_faixas_fixas_nao_quartil():
     assert DENSIDADE_POP_BANDS[0][2][:3] in colors
 
 
+def test_mapa_censitario_ponto_central_pin_vermelho():
+    # Ponto central = PIN VERMELHO (nao mais bolinha azul). Camada de concorrentes
+    # tem choropleth VERDE (score alto) e nenhum pin de rede -> os unicos pixels
+    # vermelhos na area do mapa vem do pin do ponto central.
+    setores = pd.DataFrame(
+        [_sector_record("355030801000001", box(-700, -700, 700, 700), pop=1000, score=88)]
+    )
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+    )
+    image = Image.open(BytesIO(mapas["concorrentes"])).convert("RGB")
+    # Recorta a area do mapa (exclui a legenda a direita, que tambem tem um pin de amostra).
+    map_area = image.crop((28, 92, 515, 546))
+    reds = sum(
+        count
+        for count, (r, g, b) in (map_area.getcolors(maxcolors=1_000_000) or [])
+        if r > 180 and g < 90 and b < 90
+    )
+    blues_old = sum(
+        count
+        for count, (r, g, b) in (map_area.getcolors(maxcolors=1_000_000) or [])
+        if b > 150 and r < 60 and 70 < g < 130  # cor antiga (20,96,181) do ponto central
+    )
+    assert reds > 0
+    assert blues_old == 0
+
+
 def test_mapa_censitario_pin_com_logo_concorrente_e_ultra():
     setores = pd.DataFrame(
         [_sector_record("355030801000001", box(-700, -700, 700, 700), pop=1000, score=60)]

@@ -226,9 +226,30 @@ def _draw_legend_camada(
         _draw_text(draw, (x + 32, yy), label, font=body_font)
 
     yy = base_y + len(entries) * 24 + 12
-    draw.ellipse([x + 2, yy, x + 18, yy + 16], fill=(20, 96, 181), outline=(255, 255, 255), width=2)
+    _draw_center_pin(draw, x + 10, yy + 18, scale=0.7)
     _draw_text(draw, (x + 32, yy), "Ponto central", font=body_font)
     _draw_text(draw, (x + 32, yy + 24), "Pins: Ultra e concorrentes", font=body_font)
+
+
+def _draw_center_pin(
+    draw: ImageDraw.ImageDraw,
+    cx: int,
+    cy: int,
+    *,
+    scale: float = 1.0,
+) -> None:
+    """Pin VERMELHO de mapa com a PONTA ancorada no ponto central (cx, cy)."""
+    red = (220, 38, 38)
+    white = (255, 255, 255)
+    r = max(4, int(round(9 * scale)))
+    head_cy = cy - int(round(22 * scale))
+    # corpo: triangulo da base da cabeca ate a ponta no ponto
+    draw.polygon([(cx, cy), (cx - r, head_cy), (cx + r, head_cy)], fill=red)
+    # cabeca do pin
+    draw.ellipse([cx - r, head_cy - r, cx + r, head_cy + r], fill=red, outline=white, width=2)
+    # furo central branco
+    hole = max(2, int(round(3 * scale)))
+    draw.ellipse([cx - hole, head_cy - hole, cx + hole, head_cy + hole], fill=white)
 
 
 def _decode_intersections(
@@ -455,9 +476,7 @@ def _render_camada(
         draw.line(circle_points + [circle_points[0]], fill=(15, 23, 42, 215), width=3)
 
     cx, cy = project(*center_3857)
-    draw.ellipse([cx - 7, cy - 7, cx + 7, cy + 7], fill=(20, 96, 181), outline=(255, 255, 255), width=2)
-    draw.line([(cx - 11, cy), (cx + 11, cy)], fill=(20, 96, 181), width=2)
-    draw.line([(cx, cy - 11), (cx, cy + 11)], fill=(20, 96, 181), width=2)
+    _draw_center_pin(draw, int(round(cx)), int(round(cy)))
 
     for x_local, y_local, key in pins:
         mx, my = _point_to_mercator(x_local, y_local, lat, lng)
@@ -483,9 +502,13 @@ def _render_camada(
     _draw_scale_bar(draw, map_box, meters_per_px)
     _draw_legend_camada(draw, legend_x, 96, legenda_titulo, legenda_entries)
 
+    if drew_basemap:
+        fundo = "Fundo de ruas: CartoDB Positron. (c) OpenStreetMap, (c) CARTO."
+    else:
+        fundo = "Fundo de ruas indisponivel offline (instale o extra [basemap] p/ ruas)."
     footer = (
         "Metodo: intersecao geometrica setor x circulo em CRS metrico local (raio 1.5 km). "
-        "Render em EPSG:3857. (c) OpenStreetMap, (c) CARTO."
+        f"Render em EPSG:3857. {fundo}"
     )
     _draw_text(draw, (28, height - 34), footer, font=small_font, fill=(71, 85, 105))
 
