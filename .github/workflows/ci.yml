@@ -73,7 +73,12 @@ jobs:
       #    (Dockerfile.streamlit roda `pip install .` sem [dev]) -> zero exposicao em
       #    producao. Fix em pytest 9.0.3 (major 8->9) fica para bloco de migracao proprio.
       - name: Install pip-audit (CI only)
-        run: pip install "pip-audit==2.7.3"
+        # Upgrade do proprio pip p/ >=26.1.2 REMEDIA PYSEC-2026-196 (pip 26.1.1: entry
+        # points instalados fora do dir de instalacao). Remediacao real (nao allowlist):
+        # o pip-audit audita o env, que inclui o pip do runner.
+        run: |
+          python -m pip install --upgrade "pip>=26.1.2"
+          pip install "pip-audit==2.7.3"
       - name: Dependency audit (pip-audit)
         run: pip-audit --desc --skip-editable --ignore-vuln GHSA-6w46-j5rx-g56g
 
