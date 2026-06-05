@@ -10,7 +10,7 @@ import streamlit as st
 if TYPE_CHECKING:
     import pydeck as pdk  # so para type hints (anotacao `deck: "pdk.Deck"`); sem custo de import em runtime
 
-from motor_expansao.dashboard.censo_map import render_mapa_censitario_estatico_png
+from motor_expansao.dashboard.censo_map import render_mapas_censitarios_combinados
 from motor_expansao.dashboard.censo_point import (
     RAIO_CENSITARIO_DEFAULT_KM,
     analisar_ponto_censitario_setores,
@@ -2525,20 +2525,6 @@ def render_relatorio_pontual_censitario(
         )
         return
 
-    metric_options = {
-        "Populacao estimada": "pop_estimada_intersecao",
-        "Renda per capita": "renda_per_capita_setor_2022_calibrada",
-        "Score censitario": "score_setor_2022_calibrado",
-        "Peso de area": "peso_area_setor",
-    }
-    metric_label = st.selectbox(
-        "Metrica do mapa censitario",
-        options=list(metric_options),
-        index=0,
-        key="relatorio_censitario_metric",
-    )
-    metric_column = metric_options[metric_label]
-
     result = analisar_ponto_censitario_setores(
         lat,
         lng,
@@ -2547,14 +2533,17 @@ def render_relatorio_pontual_censitario(
         competitors_df=competitors_df,
         ultra_df=ultra_df,
     )
-    mapa_png = render_mapa_censitario_estatico_png(
+    # Uma geracao -> 3 camadas combinadas (Densidade/Renda/Concorrentes), sem dropdown.
+    # Fundo de ruas por tiles online (DEC-004) com cache + fallback offline; pins com logo
+    # via _ICON_CACHE ja populado por preload_logos no boot do streamlit_app.
+    mapas = render_mapas_censitarios_combinados(
         lat,
         lng,
         setores_df,
         raio_km=raio_km,
-        metric_column=metric_column,
         competitors_df=competitors_df,
         ultra_df=ultra_df,
+        basemap=True,
     )
 
     st.markdown(f"**Ponto analisado:** `{lat:.5f}, {lng:.5f}` | `{nome_municipio}/{uf}`")
@@ -2575,9 +2564,24 @@ def render_relatorio_pontual_censitario(
 
     st.caption(
         f"Metodo: `{result['metodo']}`. Populacao estimada por peso de area; "
-        "renda e scores ponderados por populacao estimada, com fallback por area."
+        "renda e scores ponderados por populacao estimada, com fallback por area. "
+        "Fundo de ruas: CartoDB Positron (c) OpenStreetMap, (c) CARTO; cache local + fallback offline."
     )
-    st.image(mapa_png, caption=f"Mapa censitario offline por {metric_label.lower()}.", width="stretch")
+    st.image(
+        mapas["densidade"],
+        caption="Densidade populacional (hab/km2) - faixas absolutas.",
+        width="stretch",
+    )
+    st.image(
+        mapas["renda"],
+        caption="Renda per capita (R$/pessoa) - faixas absolutas.",
+        width="stretch",
+    )
+    st.image(
+        mapas["concorrentes"],
+        caption="Concorrentes e Ultra (pins) sobre score censitario de contexto.",
+        width="stretch",
+    )
 
     st.markdown("##### Setores intersectados")
     _render_setores_censitarios_table(result["setores_intersectados"])
@@ -2585,7 +2589,7 @@ def render_relatorio_pontual_censitario(
     render_downloads_relatorio_censitario(
         st,
         result,
-        mapa_png,
+        mapas,
         filename_prefix=f"relatorio_censitario_{uf}_{cod_municipio}_{lat:.5f}_{lng:.5f}".replace("-", "m").replace(".", "p"),
     )
 

@@ -149,37 +149,38 @@ Regras implementadas:
 
 O retorno explicita `metodo = setor_censitario_intersecao_area_1p5km` e permanece paralelo ao M1.
 
-## 6. Mapa estatico do relatorio
+## 6. Mapa do relatorio (camadas combinadas + fundo de ruas)
 
-Implementacao do Bloco 4: `src/motor_expansao/dashboard/censo_map.py`.
+Implementacao: `src/motor_expansao/dashboard/censo_map.py`. Atualizado no ciclo BLK-CENSO-01 (DEC-004).
 
-Funcao principal: `render_mapa_censitario_estatico_png(lat, lng, setores_df, raio_km=1.5, metric_column="pop_estimada_intersecao", competitors_df=None, ultra_df=None)`.
+Funcao principal: `render_mapas_censitarios_combinados(lat, lng, setores_df, *, raio_km=1.5, competitors_df=None, ultra_df=None, width=1000, height=760, basemap=True, logos_dir=None, ultra_logo_dir=None) -> dict[str, bytes]`. Retorna `{"densidade", "renda", "concorrentes"}` (3 camadas numa unica geracao). O legado `render_mapa_censitario_estatico_png(...)` continua como wrapper fino (devolve uma das camadas pelo antigo `metric_column`).
 
 Regras implementadas:
-- PNG gerado offline com `Pillow`, sem screenshot obrigatorio de pydeck.
-- Reutiliza o motor `analisar_ponto_censitario_setores` e redesenha as intersecoes reais setor x circulo em CRS metrico local.
-- Choropleth de setores por metrica selecionada; metricas canonicas iniciais: `pop_estimada_intersecao`, `renda_per_capita_setor_2022_calibrada`, `score_setor_2022_calibrado`, `peso_area_setor`.
-- Exibe circulo de 1.5 km, ponto central, pins de concorrentes/Ultra quando presentes, legenda, escala visual, coordenada central e metodologia no rodape.
-- Estado vazio ou ausencia de concorrentes/Ultra nao quebra a geracao; o mapa ainda mostra circulo, ponto central, escala e aviso.
-- Dependencia direta registrada: `pillow>=10.0.0`.
+- **3 camadas, 1 por mapa** (Densidade populacional, Renda per capita, Concorrentes/Score), geradas numa unica chamada e exibidas/embutidas juntas (UI sem dropdown que esconda camadas; PDF com uma pagina por camada). As 3 compartilham basemap, bbox, projecao e pins; variam so o fill dos setores + a legenda/titulo.
+- **Fundo de ruas por tiles online** (CartoDB Positron No-Labels) SO na geracao, via `contextily` (DEC-004), com **import lazy** sob `try/except ImportError` dentro da funcao de fundo. Cache local em `data/cache/basemap_tiles/` (gitignored). **Fallback offline gracioso**: `basemap=False` OU import/fetch falha (sem internet, sem extra `[basemap]`) -> mapa sobre canvas branco SEM ruas, sem excecao. O dashboard interativo NAO depende de internet.
+- **Composicao em `EPSG:3857`** (CRS nativo dos tiles): os setores e o circulo de 1.5 km sao reprojetados do CRS metrico azimutal local -> 3857 SO para render, reusando o transformer do motor. O motor (`analisar_ponto_censitario_setores`, intersecao setor x circulo, raio 1.5 km) fica INTOCADO. Distorcao Mercator do circulo < 0,5% sobre ~3 km em latitudes brasileiras.
+- **Faixas absolutas fixas por camada** (estilo GeoFusion), substituindo o quartil: `DENSIDADE_POP_BANDS` (rampa de vermelhos; cortes 1k/5k/10k/25k/inf hab/km2), `RENDA_PER_CAPITA_BANDS` (rampa fria->quente adaptada a PER CAPITA; cortes 1k/2k/3,5k/5k/inf R$/pessoa — NAO confundir com renda domiciliar do M1) e `RESIDUAL_SCORE_BANDS` para o score. Alpha 150 em todos os fills para as ruas do basemap aparecerem por baixo.
+- **Pins com logo** via `competitors._render_pin_tile` (`_paste_logo_pin`): Ultra=`"__ultra__"`, concorrente pela coluna `rede`; fallback para sigla da marca quando nao ha logo (ja coberto por `_render_pin_tile`). Os logos sao lidos do `_ICON_CACHE` populado por `preload_logos` no boot do `streamlit_app.py`.
+- Exibe circulo de 1.5 km, ponto central distinguivel (alvo azul), legenda por camada, escala visual, coordenada central, metodologia e atribuicao `(c) OpenStreetMap, (c) CARTO` no rodape.
+- Estado vazio ou ausencia de concorrentes/Ultra nao quebra a geracao.
+- Dependencias: `pillow>=10.0.0` (base), `pyproj`/`shapely` (base) para a reprojecao aeqd->3857; `contextily>=1.5.0` no **extra dedicado `[basemap]`** (fora do deploy base), import lazy.
 
-Validacao minima: `tests/unit/test_relatorio_pontual_censitario_mapa.py` gera PNG com dataset minimo, verifica dimensao/conteudo e cobre estado vazio sem concorrentes.
+Validacao minima: `tests/unit/test_relatorio_pontual_censitario_mapa.py` gera as 3 camadas com `basemap=False`, verifica faixas fixas (nao quartil), pin com logo de concorrente/Ultra e o fallback offline sem tiles, alem do estado vazio.
 
 ## 7. Export CSV e PDF
 
 Implementacao do Bloco 5: `src/motor_expansao/dashboard/censo_report.py`.
 
 Funcoes principais:
-- `gerar_csv_setores_censitarios(result)`: retorna bytes CSV da tabela de setores intersectados, com `sep=";"` e `encoding="utf-8-sig"`, sem incluir geometria bruta.
-- `gerar_pdf_relatorio_pontual_censitario(result, mapa_png_bytes=None)`: retorna bytes PDF executivo em memoria, com capa/KPIs, mapa quando fornecido, concorrencia, tabela resumida, metodologia e limites.
-- `gerar_payloads_download_relatorio_censitario(...)` e `render_downloads_relatorio_censitario(...)`: preparam nomes/bytes e botoes `st.download_button` para CSV/PDF.
+- `gerar_csv_setores_censitarios(result)`: retorna bytes CSV da tabela de setores intersectados, com `sep=";"` e `encoding="utf-8-sig"`, sem incluir geometria bruta. (Inalterado.)
+- `gerar_pdf_relatorio_pontual_censitario(result, mapas=None)`: retorna bytes PDF executivo em memoria, com capa/KPIs, **uma pagina de mapa por camada** (titulos "Mapa - Densidade", "Mapa - Renda per capita", "Mapa - Concorrentes"), concorrencia, tabela resumida, metodologia e limites. O parametro `mapas` aceita o `dict[str,bytes]` das camadas combinadas OU, por retrocompat, `bytes` de um unico mapa legado.
+- `gerar_payloads_download_relatorio_censitario(...)` e `render_downloads_relatorio_censitario(...)`: preparam nomes/bytes e botoes `st.download_button` para CSV/PDF; repassam o dict de mapas ao PDF.
 
 Decisao operacional:
-- O PDF usa writer leve interno + `Pillow` apenas para converter o PNG do mapa em imagem embutida; nenhuma dependencia nova foi adicionada.
+- O PDF usa writer leve interno + `Pillow` apenas para converter cada PNG de mapa em imagem embutida; o writer manual foi generalizado de 1 XObject para N imagens (uma pagina por camada). Nenhuma dependencia nova de PDF.
 - A geracao e sob demanda e retorna bytes; nao escreve artefatos permanentes fora de cache/temp controlado.
-- A UI completa chama estes helpers no Bloco 6, sem escrever artefatos permanentes.
 
-Validacao minima: `tests/unit/test_relatorio_pontual_censitario_export.py` cobre bytes CSV/PDF, secoes obrigatorias, mapa embutido e helper de download.
+Validacao minima: `tests/unit/test_relatorio_pontual_censitario_export.py` cobre bytes CSV/PDF, secoes obrigatorias, as 3 camadas embutidas no PDF, retrocompat de `bytes` unico e helper de download.
 
 ### Implementacao do Bloco 6
 
@@ -196,7 +197,8 @@ Baseline simples DF/Brasilia: `5.418` setores carregados, `34` setores intersect
 - Renda censitaria e proxy/calibrada; exibir metodologia e flags quando ausente, suprimida ou herdada por fallback.
 - Setores com geometria invalida devem ser corrigidos com rotina explicita ou marcados por flag.
 - Os Parquets H3 atuais nao devem ser tratados como base geometrica de setor.
-- Quartis continuam apenas apoio relativo; sizing executivo deve priorizar regua absoluta, populacao estimada, renda, residual, receita esperada perdida e capacidade operacional.
+- O choropleth do mapa usa **faixas absolutas fixas por camada** (`DENSIDADE_POP_BANDS`/`RENDA_PER_CAPITA_BANDS`/`RESIDUAL_SCORE_BANDS`), nao quartis relativos: cores comparaveis entre pontos diferentes. Quartis continuam apoio relativo em outras telas; sizing executivo deve priorizar regua absoluta, populacao estimada, renda, residual, receita esperada perdida e capacidade operacional.
+- O fundo de ruas depende de tiles online so na geracao (CartoDB Positron via `contextily`, extra `[basemap]`); sem internet/extra o mapa cai em canvas branco sem ruas (fallback offline), sem afetar KPIs, CSV nem o motor de intersecao.
 
 ## 9. Decisao operacional
 

@@ -5,7 +5,7 @@ from pyproj import Transformer
 from shapely.geometry import box
 from shapely.ops import transform
 
-from motor_expansao.dashboard.censo_map import render_mapa_censitario_estatico_png
+from motor_expansao.dashboard.censo_map import render_mapas_censitarios_combinados
 from motor_expansao.dashboard.censo_point import (
     CRS_ORIGEM_CENSO,
     _local_metric_crs,
@@ -59,7 +59,9 @@ def _sample_result():
             _sector_record("355030801000002", box(0, -700, 700, 700), pop=1400, renda=2600, score=86),
         ]
     )
-    competitors = pd.DataFrame([{"nome_unidade": "Smart Fit Teste", "lat": LAT_C, "lng": LNG_C + 0.004}])
+    competitors = pd.DataFrame(
+        [{"nome_unidade": "Smart Fit Teste", "lat": LAT_C, "lng": LNG_C + 0.004, "rede": "smart_fit"}]
+    )
     ultra = pd.DataFrame([{"nome_unidade": "Ultra Teste", "lat": LAT_C + 0.003, "lng": LNG_C}])
     result = analisar_ponto_censitario_setores(
         LAT_C,
@@ -68,7 +70,7 @@ def _sample_result():
         competitors_df=competitors,
         ultra_df=ultra,
     )
-    mapa = render_mapa_censitario_estatico_png(
+    mapas = render_mapas_censitarios_combinados(
         LAT_C,
         LNG_C,
         setores,
@@ -76,8 +78,9 @@ def _sample_result():
         ultra_df=ultra,
         width=720,
         height=520,
+        basemap=False,
     )
-    return result, mapa
+    return result, mapas
 
 
 def test_export_csv_setores_censitarios_gera_bytes_utf8_sig_com_sep_ponto_virgula():
@@ -93,24 +96,43 @@ def test_export_csv_setores_censitarios_gera_bytes_utf8_sig_com_sep_ponto_virgul
 
 
 def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
-    result, mapa = _sample_result()
+    result, mapas = _sample_result()
 
-    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapa)
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas)
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
     assert len(pdf_bytes) > 15_000
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
-    assert b"/Subtype /Image" in pdf_bytes
+    # 3 camadas combinadas -> 3 XObjects de imagem no PDF.
+    assert pdf_bytes.count(b"/Subtype /Image") >= 3
     assert b"setor_censitario_intersecao_area_1p5km" in pdf_bytes
 
 
+def test_pdf_embute_tres_camadas():
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas)
+
+    for titulo in ("Densidade", "Renda", "Concorrentes"):
+        assert titulo.encode("latin-1") in pdf_bytes
+
+
+def test_pdf_retrocompat_aceita_bytes_unico_legado():
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas["densidade"])
+
+    assert pdf_bytes.startswith(b"%PDF-1.4")
+    assert pdf_bytes.count(b"/Subtype /Image") == 1
+
+
 def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
-    result, mapa = _sample_result()
+    result, mapas = _sample_result()
 
     payloads = gerar_payloads_download_relatorio_censitario(
         result,
-        mapa,
+        mapas,
         filename_prefix="teste_relatorio",
     )
 
@@ -132,7 +154,7 @@ def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
     rendered = render_downloads_relatorio_censitario(
         dummy,
         result,
-        mapa,
+        mapas,
         filename_prefix="teste_relatorio",
     )
 

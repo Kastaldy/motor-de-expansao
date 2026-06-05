@@ -312,6 +312,33 @@ RESIDUAL_SCORE_BANDS: list[tuple[str, str]] = [
     ("90-100", "#0A8226"),
 ]
 
+# Faixas absolutas de DENSIDADE populacional (hab/km2) — estilo GeoFusion (rampa de vermelhos),
+# alpha 150 (transparente) p/ as ruas do basemap claro aparecerem por baixo. Cortes (limites
+# superiores, hab/km2): 1000 / 5000 / 10000 / 25000 / inf. Paleta = ColorBrewer Reds-5.
+# Camada de VISUALIZACAO do Relatorio Pontual Censitario — NAO altera score/artefatos M1.
+DENSIDADE_POP_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
+    (1_000.0,   "ate 1.000",         (254, 229, 217, 150)),
+    (5_000.0,   "1.001-5.000",       (252, 174, 145, 150)),
+    (10_000.0,  "5.001-10.000",      (251, 106, 74,  150)),
+    (25_000.0,  "10.001-25.000",     (222, 45,  38,  150)),
+    (float("inf"), ">25.000",        (165, 15,  21,  150)),
+]
+
+# Faixas absolutas de RENDA PER CAPITA (R$/pessoa/mes) — estilo GeoFusion adaptado a PER CAPITA
+# (NAO domiciliar). Cortes recalibrados p/ a escala per capita do projeto: 1000 / 2000 / 3500 /
+# 5000 / inf (R$/pessoa). per capita != domiciliar: a classe media urbana-alvo Ultra (18-45) tende
+# a R$2.000-5.000/pessoa; >R$5.000/pessoa marca bolsoes de alta renda. Os 4 cortes per capita NAO
+# equivalem ao teto domiciliar RENDA_MIN=4500 (escalas distintas; nao confundir). Rampa fria->quente
+# (vermelho=baixa, verde=alta) p/ distinguir de densidade (vermelhos). alpha 150 p/ ruas visiveis.
+# Camada de VISUALIZACAO do Relatorio Pontual Censitario — NAO altera score/artefatos M1.
+RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
+    (1_000.0,   "ate R$ 1.000",        (215, 25,  28,  150)),
+    (2_000.0,   "R$ 1.001-2.000",      (253, 174, 97,  150)),
+    (3_500.0,   "R$ 2.001-3.500",      (255, 255, 191, 150)),
+    (5_000.0,   "R$ 3.501-5.000",      (166, 217, 106, 150)),
+    (float("inf"), ">R$ 5.000",        (26,  150, 65,  150)),
+]
+
 # Expansao de Dominio — constantes canonicas
 DOMINIO_SCHEMA_MINIMO: frozenset[str] = frozenset({
     "hex_id", "uf", "cod_municipio", "nome_municipio", "lat", "lng",

@@ -20,6 +20,13 @@ PDF_SECTION_HEADERS = (
     "Qualidade e limites",
 )
 
+# Camadas combinadas (chave canonica -> titulo da pagina de mapa no PDF). Ordem fixa.
+MAP_LAYER_TITLES: tuple[tuple[str, str], ...] = (
+    ("densidade", "Mapa - Densidade"),
+    ("renda", "Mapa - Renda per capita"),
+    ("concorrentes", "Mapa - Concorrentes"),
+)
+
 CSV_SETOR_COLUMNS = [
     "cod_setor",
     "uf",
@@ -219,7 +226,7 @@ def _jpeg_from_png(png_bytes: bytes) -> tuple[bytes, int, int] | None:
     return output.getvalue(), image.width, image.height
 
 
-def _map_content(image_width: int, image_height: int) -> bytes:
+def _map_content(image_width: int, image_height: int, *, title: str, im_name: str) -> bytes:
     page_w, _page_h = 595, 842
     max_w, max_h = 505, 650
     scale = min(max_w / image_width, max_h / image_height)
@@ -230,19 +237,31 @@ def _map_content(image_width: int, image_height: int) -> bytes:
     commands = [
         "BT",
         "/F1 18 Tf",
-        f"54 800 Td ({_pdf_escape('Mapa')}) Tj",
+        f"54 800 Td ({_pdf_escape(title)}) Tj",
         "/F1 10 Tf",
-        f"54 778 Td ({_pdf_escape('Mapa censitario estatico, gerado offline para o relatorio.')}) Tj",
+        f"54 778 Td ({_pdf_escape('Mapa censitario do relatorio (fundo de ruas quando disponivel).')}) Tj",
         "ET",
         "q",
         f"{draw_w:.2f} 0 0 {draw_h:.2f} {x:.2f} {y:.2f} cm",
-        "/Im1 Do",
+        f"/{im_name} Do",
         "Q",
     ]
     return "\n".join(commands).encode("latin-1")
 
 
-def _build_pdf(content_pages: list[bytes], image: tuple[bytes, int, int] | None = None) -> bytes:
+def _build_pdf(
+    content_pages: list[bytes],
+    images: dict[int, tuple[bytes, int, int]] | None = None,
+    page_xobjects: dict[int, tuple[str, int]] | None = None,
+) -> bytes:
+    """Monta um PDF minimo.
+
+    `images`: mapa page-index -> (jpeg_bytes, w, h) para cada pagina que tem imagem.
+    `page_xobjects`: mapa page-index -> (im_name, image_index) ligando a pagina ao XObject.
+    O writer e manual; offsets/xref sao recomputados a partir do `objects`.
+    """
+    images = images or {}
+    page_xobjects = page_xobjects or {}
     objects: dict[int, bytes] = {}
     catalog_num = 1
     pages_num = 2
@@ -250,11 +269,13 @@ def _build_pdf(content_pages: list[bytes], image: tuple[bytes, int, int] | None 
     next_num = 4
     objects[font_num] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
 
-    image_num: int | None = None
-    if image is not None:
-        image_bytes, image_width, image_height = image
+    # Um XObject de imagem por pagina-com-mapa (page_idx -> object number).
+    image_obj_nums: dict[int, int] = {}
+    for page_idx in sorted(images):
+        image_bytes, image_width, image_height = images[page_idx]
         image_num = next_num
         next_num += 1
+        image_obj_nums[page_idx] = image_num
         objects[image_num] = (
             f"<< /Type /XObject /Subtype /Image /Width {image_width} /Height {image_height} "
             f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(image_bytes)} >>\n"
@@ -270,7 +291,10 @@ def _build_pdf(content_pages: list[bytes], image: tuple[bytes, int, int] | None 
         page_num = next_num
         next_num += 1
         page_nums.append(page_num)
-        xobject = f" /XObject << /Im1 {image_num} 0 R >>" if image_num is not None and idx == 1 else ""
+        xobject = ""
+        if idx in page_xobjects and idx in image_obj_nums:
+            im_name, _ = page_xobjects[idx]
+            xobject = f" /XObject << /{im_name} {image_obj_nums[idx]} 0 R >>"
         objects[page_num] = (
             f"<< /Type /Page /Parent {pages_num} 0 R /MediaBox [0 0 595 842] "
             f"/Resources << /Font << /F1 {font_num} 0 R >>{xobject} >> "
@@ -303,22 +327,57 @@ def _build_pdf(content_pages: list[bytes], image: tuple[bytes, int, int] | None 
     return output.getvalue()
 
 
+def _normalize_mapas(mapas: dict[str, bytes] | bytes | None) -> list[tuple[str, str, bytes]]:
+    """Normaliza a entrada de mapas em lista ordenada (chave, titulo, png_bytes).
+
+    Retrocompat: `bytes` (1 mapa legado) -> 1 pagina "Mapa"; `dict` -> 1 pagina por camada
+    canonica presente (densidade/renda/concorrentes), nessa ordem. `None`/vazio -> sem mapa.
+    """
+    if mapas is None:
+        return []
+    if isinstance(mapas, (bytes, bytearray)):
+        return [("mapa", "Mapa", bytes(mapas))] if mapas else []
+    ordered: list[tuple[str, str, bytes]] = []
+    for key, title in MAP_LAYER_TITLES:
+        png = mapas.get(key)
+        if png:
+            ordered.append((key, title, png))
+    return ordered
+
+
 def gerar_pdf_relatorio_pontual_censitario(
     result: dict[str, Any],
-    mapa_png_bytes: bytes | None = None,
+    mapas: dict[str, bytes] | bytes | None = None,
 ) -> bytes:
-    """Gera PDF executivo em memoria, sem criar artefatos permanentes."""
-    pages = [_text_page(_kpi_lines(result))]
-    image = _jpeg_from_png(mapa_png_bytes or b"")
-    if image is not None:
-        pages.append(_map_content(image[1], image[2]))
+    """Gera PDF executivo em memoria, sem criar artefatos permanentes.
+
+    `mapas` aceita o dict de camadas combinadas (`{"densidade","renda","concorrentes"}`)
+    -> uma pagina de mapa por camada, OU `bytes` (1 mapa legado, retrocompat).
+    """
+    pages: list[bytes] = [_text_page(_kpi_lines(result))]
+    images: dict[int, tuple[bytes, int, int]] = {}
+    page_xobjects: dict[int, tuple[str, int]] = {}
+
+    layers = _normalize_mapas(mapas)
+    image_idx = 1
+    for _key, title, png in layers:
+        image = _jpeg_from_png(png)
+        if image is None:
+            continue
+        page_idx = len(pages)
+        im_name = f"Im{image_idx}"
+        pages.append(_map_content(image[1], image[2], title=title, im_name=im_name))
+        images[page_idx] = image
+        page_xobjects[page_idx] = (im_name, image_idx)
+        image_idx += 1
+
     pages.append(_text_page(_details_lines(result)))
-    return _build_pdf(pages, image=image)
+    return _build_pdf(pages, images=images, page_xobjects=page_xobjects)
 
 
 def gerar_payloads_download_relatorio_censitario(
     result: dict[str, Any],
-    mapa_png_bytes: bytes | None = None,
+    mapas: dict[str, bytes] | bytes | None = None,
     *,
     filename_prefix: str | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
@@ -326,7 +385,7 @@ def gerar_payloads_download_relatorio_censitario(
     return RelatorioCensitarioDownloadPayloads(
         csv_bytes=gerar_csv_setores_censitarios(result),
         csv_filename=f"{prefix}_setores.csv",
-        pdf_bytes=gerar_pdf_relatorio_pontual_censitario(result, mapa_png_bytes),
+        pdf_bytes=gerar_pdf_relatorio_pontual_censitario(result, mapas),
         pdf_filename=f"{prefix}.pdf",
     )
 
@@ -334,14 +393,14 @@ def gerar_payloads_download_relatorio_censitario(
 def render_downloads_relatorio_censitario(
     st_module: Any,
     result: dict[str, Any],
-    mapa_png_bytes: bytes | None = None,
+    mapas: dict[str, bytes] | bytes | None = None,
     *,
     filename_prefix: str | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     """Renderiza botoes Streamlit e retorna os mesmos bytes para testes/reuso."""
     payloads = gerar_payloads_download_relatorio_censitario(
         result,
-        mapa_png_bytes,
+        mapas,
         filename_prefix=filename_prefix,
     )
     st_module.download_button(
