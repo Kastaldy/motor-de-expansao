@@ -3018,3 +3018,112 @@ logo** da Ultra e das concorrentes.
 
 **Risco:** médio. Pontos de atenção: dependência/limites de rate dos tiles e licença do provedor;
 peso do cache; reprojeção tiles × CRS métrico local do buffer 1.5 km; regressão dos 10 testes existentes.
+
+---
+
+### BLK-CENSO-02 — Relatório censitário: template e visual padrão do PDF
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (apresentação/diagramação; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** (fase 2 — depois da função) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Depende de** | **BLK-CENSO-01** (camadas/mapas já repaginados) |
+| **Status** | Pendente |
+| **Origem** | pedido de Felipe (2026-06-05): "preparar o PDF para sair com template e visual padrão" |
+
+**Contexto:** hoje o PDF é gerado por writer leve interno em `censo_report.py`
+(`gerar_pdf_relatorio_pontual_censitario`, PDF 1.4 minimalista, sem dependência nova) — funcional,
+mas sem identidade visual. Felipe quer um **template padrão Ultra** (layout + cores) para padronizar
+e agilizar o dia a dia.
+
+**Arquivos de referência (já no repo, em `data/referencias/`):**
+- `Av. Wesley Dias Rodrigues, 1385 - Hortolândia, SP.pdf` — estudo REAL, usar **só como referência de
+  diagramação/layout**. ⚠️ Contém dados de concorrentes e **PII** (nome/telefone/e-mail de pessoa) →
+  **não versionar**: o Planner deve garantir regra de gitignore para este PDF antes de qualquer commit;
+  jamais reproduzir a PII no template.
+- `Teste Modelo.pptx` — **fundo/base vazio** aprovado por Felipe para servir de base do template
+  (extrair o background/identidade e aplicar nas páginas do PDF).
+
+**Estrutura de slides/seções aprovada por Felipe (2026-06-05):**
+- **Remover:** slide de **endereço**, slide de **micro-área**, e (por hora) os slides de **polos de
+  fluxo** (mercado, shoppings, supermercados, transporte, escolas, hospitais etc.).
+- **Manter:** slide(s) de **concorrentes** (mapa + lista das redes no raio).
+- **Slides dedicados (1 cada):**
+  1. **População** (mapa/choropleth de população do BLK-CENSO-01).
+  2. **Renda** (mapa/choropleth de renda do BLK-CENSO-01).
+  3. **Score censitário** (mapa por `score_setor_2022_calibrado`).
+  4. **Big Numbers** — painel de destaques: **pop total**, **renda média**, **scores**,
+     **residual fitness**, **qtd de concorrentes** e **consumo de concorrentes**.
+- **Último slide (realização):** trocar as informações dos estagiários/contato por crédito explícito
+  de que o relatório foi **gerado pelo Motor de Expansão** (sem PII de pessoas).
+- **Estilo:** manter **layout e cores da Ultra** (turquesa/magenta), reusando o fundo do `Teste Modelo.pptx`
+  e os logos já no repo (`data/ultra/logo_ultra.png`).
+
+**Objetivo:** dar ao PDF do relatório um template e visual padrão Ultra, reaproveitando os mapas e
+KPIs já produzidos no BLK-CENSO-01, sem reintroduzir dependência de internet na **geração do PDF**.
+
+**Fonte do Big Numbers (decisão de Felipe, 2026-06-05):** os campos que não saem do motor censitário —
+**residual fitness** e **consumo de concorrentes** — devem ser puxados **do hexágono em que o ponto
+está localizado** (o hex H3 que contém a coordenada). Ou seja: resolver o `hex_id` que contém o ponto
+e ler `score_oportunidade_residual` / `oferta_efetiva_disponivel` (residual fitness) e o consumo de
+concorrentes desse hex na camada de mercado/residual já materializada (`hexagonos_mercado_mapeado` /
+`oportunidades_expansao_hibrido` / `Consumo Conc. (est.)`). É **leitura** do hex — **sem** recalcular
+M1 nem a camada residual. Se o hex não existir/estiver sem o campo, exibir "n/d" com nota; não inventar
+valor. pop total, renda média e scores continuam vindo do próprio relatório censitário do ponto.
+
+**Escopo permitido:** capa/header padrão + branding Ultra (fundo do pptx), as seções fixas acima na
+ordem definida, rodapé e paginação; extrair background/cores do `Teste Modelo.pptx`; avaliar trocar o
+writer interno por gerador de PDF mais capaz **somente se** a dependência for aprovada (senão, estender
+o writer atual). Atualizar testes de export e o contrato em `docs/relatorio_pontual_censitario.md`.
+Garantir gitignore do PDF de referência real.
+
+**Fora de escopo:** qualquer recálculo/escrita de M1; mudar dados/métricas das camadas (só
+apresentação e composição); reintroduzir os polos de fluxo removidos; geocodificação de endereço
+(BLK-PROD-05); slide de endereço e de micro-área (removidos por decisão de Felipe).
+
+**Critérios de aceite:**
+- PDF sai com template/identidade padrão Ultra (fundo do pptx + logos), na estrutura aprovada
+  (sem endereço, sem micro-área, sem polos de fluxo; com concorrentes; slides de população, renda,
+  score censitário e Big Numbers; último slide creditando o Motor de Expansão).
+- Big Numbers traz pop total, renda média, scores, residual fitness, qtd e consumo de concorrentes
+  (ou "n/d" auditável quando a fonte não existir offline).
+- Geração do PDF **offline-segura**; nenhuma PII de pessoas no template; PDF de referência gitignored.
+- Suite verde (`pytest -n auto`), ruff+mypy limpos; docs atualizados; ZERO mudança em artefatos M1.
+
+**Risco:** baixo-médio (apresentação). Atenção a: peso de assets de branding no repo; manter geração
+do PDF sem internet; fonte de residual fitness/consumo para o ponto; não regredir o conteúdo do BLK-CENSO-01.
+
+**Fechamento do ciclo (2026-06-05) — VEREDITO QA: APROVADO (suíte full 672 passed, 1 skipped):**
+Esteira /run-cycle: Block Orchestrator (sonnet) → Planner (opus) → [REVISÃO HUMANA das decisões
+visuais] → Builder (opus) → QA (opus 4.8). **Gate humano (Felipe):** APROVADO com alteração de D1 —
+adotar biblioteca de PDF nova **`fpdf2`** (em vez de estender o writer manual PDF-1.4). O Planner
+descobriu PII real no `Teste Modelo.pptx` (`ppt/media/image24.png` = cartão de contato com
+nome/telefone/e-mail) → guardrail anti-PII: `image24` NUNCA embutido, `.pptx`/PDF nunca versionados,
+teste anti-PII sobre bytes crus obrigatório.
+- **Entrega:** `gerar_pdf_relatorio_pontual_censitario` reescrito sobre **fpdf2** (`fpdf2>=2.7.0,<3`
+  dep BASE no `pyproject.toml`), compressão de stream desativada (`set_compression(False)` +
+  `pdf_version="1.4"`) para auditabilidade anti-PII + asserts de texto cru. Template Ultra de **7
+  páginas**: Capa turquesa → População → Renda → Score censitário → Big Numbers → Concorrentes →
+  Realização/Crédito. Endereço/micro-área/polos REMOVIDOS.
+- **Assets de branding:** 2 fundos LIMPOS extraídos do `.pptx` para `data/ultra/` (gitignored;
+  `relatorio_capa_bg.png` ← `image6.png` turquesa #00A79D; `relatorio_conteudo_bg.png` ← `image1.jpg`
+  claro #F8F8F8). **Fallback gracioso** para cor sólida quando os assets faltam → PDF válido offline
+  (QA provou: 810 KB com assets vs 93 KB fallback — caminho real do writer, não mock).
+- **Big Numbers (6 métricas, READ-ONLY):** pop/renda/score médio/score máx do `result` censitário;
+  residual fitness (`score_oportunidade_residual`) + consumo (`oferta_consumida_mercado_estimada`) via
+  `lookup_hex_by_coord(lat,lng,df,h3_res=7)` — leitura pura do `df` já em escopo, SEM load novo nem
+  recálculo de M1/residual; "n/d" auditável quando hex ausente/NaN.
+- **QA (re-executado, sem confiar no Builder):** `pytest -n auto` 672 passed/1 skipped (idêntico
+  serial → não-flaky); ruff/mypy limpos (fpdf2 ship `py.typed` — mypy não é falso-verde); import ok;
+  anti-PII sobre bytes reais (zero `vinicius`/telefone/e-mail/`image24`); READ-ONLY M1 confirmado por
+  git scope vazio em pipelines/scoring/`censo_point.py`/`censo_map.py`/`config.py`; pesos 0.40/0.60 e
+  H3=7 preservados. Ressalva leve não-bloqueante: documentar qual coluna de mercado é canônica p/ o
+  card "consumo de concorrentes".
+- **Arquivos:** `censo_report.py` (reescrita), `pages.py` (lookup residual + propagação de kwargs),
+  `pyproject.toml` (fpdf2), `tests/unit/test_relatorio_pontual_censitario_export.py`,
+  `docs/relatorio_pontual_censitario.md` §7, `CLAUDE.md` §4. Assets `data/ultra/` gitignored.
+- **PENDÊNCIA DE OPS (pós-merge, guardrail §6 SSH gated):** rebuild da imagem Docker (fpdf2 virou dep
+  base) + redeploy por digest na VPS + copiar os 2 PNGs ao volume `/opt/motor-expansao/data/ultra/`
+  (gitignored → não vão na imagem). Sem os assets, o fallback sólido mantém o PDF válido.
+- Ciclo NÃO altera a orquestração (run-cycle/prompts/esteira) → sem dry-run autônomo.

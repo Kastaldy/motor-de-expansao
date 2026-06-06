@@ -2,29 +2,33 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from io import BytesIO
-from textwrap import wrap
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from fpdf import FPDF
 from PIL import Image
 
 from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSITARIO
 
+# Cabecalhos canonicos das 7 paginas do template Ultra (ASCII, sem acento problematico).
+# Cada string PRECISA aparecer nos bytes crus do PDF (compressao desativada no writer).
 PDF_SECTION_HEADERS = (
     "Relatorio Pontual Censitario",
-    "KPIs",
-    "Mapa",
-    "Concorrencia",
-    "Setores",
-    "Metodologia",
-    "Qualidade e limites",
+    "Populacao",
+    "Renda",
+    "Score censitario",
+    "Big Numbers",
+    "Concorrentes",
+    "Realizacao",
 )
 
 # Camadas combinadas (chave canonica -> titulo da pagina de mapa no PDF). Ordem fixa.
+# A camada `concorrentes` do BLK-CENSO-01 e o mapa de score com pins.
 MAP_LAYER_TITLES: tuple[tuple[str, str], ...] = (
-    ("densidade", "Mapa - Densidade"),
-    ("renda", "Mapa - Renda per capita"),
-    ("concorrentes", "Mapa - Concorrentes"),
+    ("densidade", "Populacao - Densidade"),
+    ("renda", "Renda per capita"),
+    ("concorrentes", "Score censitario de contexto"),
 )
 
 CSV_SETOR_COLUMNS = [
@@ -44,6 +48,27 @@ CSV_SETOR_COLUMNS = [
     "flag_geometria_valida",
     "qualidade_join_uf",
 ]
+
+# Paleta Ultra (RGB 0..255). Turquesa #00A79D, magenta #C23C8E, branco-gelo #F8F8F8.
+ULTRA_TURQUESA = (0, 167, 157)
+ULTRA_MAGENTA = (194, 60, 142)
+ULTRA_BRANCO_GELO = (248, 248, 248)
+_BRANCO = (255, 255, 255)
+_CINZA_TEXTO = (60, 60, 60)
+
+# Atribuicao de tiles (DEC-004) — sempre presente no rodape de cada pagina de mapa/credito.
+_ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
+_CREDITO_ULTRA = "Relatorio gerado pelo Motor de Expansao - Ultra Academia"
+
+# Nomes default dos assets de branding (gitignored; ficam no host/volume `data/ultra`).
+_ASSET_CAPA = "relatorio_capa_bg.png"
+_ASSET_CONTEUDO = "relatorio_conteudo_bg.png"
+_ASSET_LOGO = "logo_ultra.png"
+_DEFAULT_ULTRA_DIR = Path("data/ultra")
+
+# Dimensoes A4 retrato em pontos (fpdf usa pt quando FPDF(unit="pt")).
+_PAGE_W = 595.0
+_PAGE_H = 842.0
 
 
 @dataclass(frozen=True)
@@ -67,14 +92,17 @@ def _setores_from_result(result: dict[str, Any] | pd.DataFrame) -> pd.DataFrame:
 
 
 def gerar_csv_setores_censitarios(result: dict[str, Any] | pd.DataFrame) -> bytes:
-    """Gera CSV em memoria para a tabela auditavel de setores intersectados."""
+    """Gera CSV em memoria para a tabela auditavel de setores intersectados.
+
+    INALTERADO neste ciclo (BLK-CENSO-02): contrato do CSV preservado.
+    """
     setores = _setores_from_result(result)
     return setores.to_csv(index=False, sep=";", encoding="utf-8-sig").encode("utf-8-sig")
 
 
 def _format_number(value: Any, decimals: int = 0, suffix: str = "") -> str:
     if value is None or pd.isna(value):
-        return "-"
+        return "n/d"
     number = float(value)
     if decimals <= 0:
         text = f"{number:,.0f}".replace(",", ".")
@@ -91,252 +119,372 @@ def _point_name(result: dict[str, Any]) -> str:
     return f"{float(lat):.5f}_{float(lng):.5f}".replace("-", "m").replace(".", "p")
 
 
-def _pdf_escape(text: str) -> str:
-    safe = text.encode("latin-1", errors="replace").decode("latin-1")
-    return safe.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+def _ascii(text: str) -> str:
+    """Reduz a latin-1/ASCII seguro para o core font Helvetica do fpdf2."""
+    return text.encode("latin-1", errors="replace").decode("latin-1")
 
 
-def _text_page(lines: list[tuple[str, int]]) -> bytes:
-    commands = ["BT"]
-    y = 800
-    for text, size in lines:
-        if text == "":
-            y -= 10
-            continue
-        commands.append(f"/F1 {size} Tf")
-        commands.append(f"54 {y} Td ({_pdf_escape(text)}) Tj")
-        y -= max(size + 7, 15)
-        if y < 54:
-            break
-    commands.append("ET")
-    return "\n".join(commands).encode("latin-1", errors="replace")
+# ---------------------------------------------------------------------------
+# Assets de branding (offline-safe; fallback gracioso para cor solida)
+# ---------------------------------------------------------------------------
 
 
-def _wrap_text(text: str, width: int = 86) -> list[str]:
-    if not text:
-        return [""]
-    return wrap(text, width=width, break_long_words=False) or [text]
+def _load_branding_assets(ultra_dir: Path | str | None) -> dict[str, bytes | None]:
+    """Carrega assets de branding de ``ultra_dir`` com fallback gracioso.
+
+    Em QUALQUER falha (arquivo ausente, IO, decode) retorna ``None`` para o asset
+    — SEM excecao. Garante PDF valido com fundo de cor solida em CI/deploy limpo.
+    """
+    base = Path(ultra_dir) if ultra_dir is not None else _DEFAULT_ULTRA_DIR
+    assets: dict[str, bytes | None] = {"capa": None, "conteudo": None, "logo": None}
+    for key, filename in (("capa", _ASSET_CAPA), ("conteudo", _ASSET_CONTEUDO), ("logo", _ASSET_LOGO)):
+        path = base / filename
+        try:
+            raw = path.read_bytes()
+            # Valida que e uma imagem decodificavel antes de embutir.
+            Image.open(BytesIO(raw)).verify()
+            assets[key] = raw
+        except Exception:
+            assets[key] = None
+    return assets
 
 
-def _kpi_lines(result: dict[str, Any]) -> list[tuple[str, int]]:
-    lines: list[tuple[str, int]] = [
-        ("Relatorio Pontual Censitario", 20),
-        ("KPIs", 15),
-    ]
+def _png_dimensions(raw: bytes) -> tuple[int, int] | None:
+    try:
+        with Image.open(BytesIO(raw)) as image:
+            return image.width, image.height
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Writer fpdf2
+# ---------------------------------------------------------------------------
+
+
+class _UltraPDF(FPDF):
+    """FPDF com compressao desativada (auditabilidade anti-PII + asserts de texto cru)."""
+
+    def __init__(self) -> None:
+        super().__init__(orientation="P", unit="pt", format="A4")
+        # PDF 1.4 para continuidade com os asserts historicos (%PDF-1.4) e leitores antigos.
+        self.pdf_version = "1.4"
+        self.set_compression(False)
+        self.set_auto_page_break(False)
+        self.set_margins(0, 0, 0)
+
+
+def _draw_full_page_background(
+    pdf: _UltraPDF,
+    image_bytes: bytes | None,
+    solid_rgb: tuple[int, int, int],
+) -> None:
+    """Desenha fundo full-page: imagem se disponivel, senao retangulo de cor solida."""
+    if image_bytes is not None:
+        try:
+            pdf.image(BytesIO(image_bytes), x=0, y=0, w=_PAGE_W, h=_PAGE_H)
+            return
+        except Exception:
+            pass
+    pdf.set_fill_color(*solid_rgb)
+    pdf.rect(0, 0, _PAGE_W, _PAGE_H, style="F")
+
+
+def _draw_title_band(pdf: _UltraPDF, title: str, *, rgb: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
+    """Faixa de titulo turquesa no topo da pagina de conteudo."""
+    band_h = 56.0
+    pdf.set_fill_color(*rgb)
+    pdf.rect(0, 0, _PAGE_W, band_h, style="F")
+    pdf.set_text_color(*_BRANCO)
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_xy(40, 16)
+    pdf.cell(_PAGE_W - 80, 24, _ascii(title))
+
+
+def _draw_footer(pdf: _UltraPDF, *, with_attribution: bool = True) -> None:
+    """Rodape com credito Ultra e atribuicao de tiles."""
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_xy(40, _PAGE_H - 28)
+    text = _CREDITO_ULTRA
+    if with_attribution:
+        text = f"{text}   |   {_ATRIBUICAO_TILES}"
+    pdf.cell(_PAGE_W - 80, 12, _ascii(text))
+
+
+def _draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
+    """Desenha o PNG do mapa centralizado abaixo da faixa de titulo."""
+    dims = _png_dimensions(png_bytes)
+    if dims is None:
+        return
+    img_w, img_h = dims
+    max_w, max_h = 515.0, 640.0
+    scale = min(max_w / img_w, max_h / img_h)
+    draw_w = img_w * scale
+    draw_h = img_h * scale
+    x = (_PAGE_W - draw_w) / 2.0
+    y = 96.0
+    try:
+        pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
+    except Exception:
+        pass
+
+
+def _cover_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None]) -> None:
+    """(a) Capa — fundo turquesa (asset ou solido), titulo, coordenada, raio, logo."""
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("capa"), ULTRA_TURQUESA)
+
+    # Logo Ultra no topo (se disponivel) — fallback: sem logo.
+    logo = assets.get("logo")
+    if logo is not None:
+        dims = _png_dimensions(logo)
+        if dims is not None:
+            lw = 90.0
+            lh = lw * (dims[1] / dims[0])
+            try:
+                pdf.image(BytesIO(logo), x=(_PAGE_W - lw) / 2.0, y=60, w=lw, h=lh)
+            except Exception:
+                pass
+
+    pdf.set_text_color(*_BRANCO)
+    pdf.set_font("Helvetica", "B", 30)
+    pdf.set_xy(40, 300)
+    pdf.cell(_PAGE_W - 80, 36, _ascii("Relatorio Pontual Censitario"), align="C")
+
     lat = result.get("lat")
     lng = result.get("lng")
-    if lat is not None and lng is not None:
-        lines.append((f"Centro: {float(lat):.6f}, {float(lng):.6f}", 11))
-    lines.extend(
-        [
-            (f"Raio analisado: {_format_number(result.get('raio_km'), 1, ' km')}", 11),
-            (f"Area do circulo: {_format_number(result.get('area_km2'), 2, ' km2')}", 11),
-            (f"Setores intersectados: {_format_number(result.get('n_setores'))}", 11),
-            (f"Populacao estimada no raio: {_format_number(result.get('pop_total_raio'))}", 11),
-            (
-                "Renda per capita media: "
-                f"R$ {_format_number(result.get('renda_per_capita_media_raio'), 2)}",
-                11,
-            ),
-            (
-                "Densidade populacional: "
-                f"{_format_number(result.get('densidade_pop_raio_hab_km2'), 1, ' hab/km2')}",
-                11,
-            ),
-            (f"Score censitario medio: {_format_number(result.get('score_setor_medio'), 2)}", 11),
-            (f"Score censitario maximo: {_format_number(result.get('score_setor_max'), 2)}", 11),
-            ("", 11),
-            ("Concorrencia", 15),
-            (f"Concorrentes no raio: {_format_number(result.get('n_concorrentes'))}", 11),
-            (f"Unidades Ultra no raio: {_format_number(result.get('n_ultra'))}", 11),
-        ]
+    coord = f"{float(lat):.5f}, {float(lng):.5f}" if lat is not None and lng is not None else "coordenada n/d"
+    municipio = str(result.get("nome_municipio") or "").strip()
+    uf = str(result.get("uf") or "").strip()
+    local = f"{municipio}/{uf}".strip("/") if (municipio or uf) else ""
+
+    pdf.set_font("Helvetica", "", 14)
+    pdf.set_xy(40, 350)
+    subt = f"Coordenada: {coord}"
+    if local:
+        subt = f"{subt}   |   {local}"
+    pdf.cell(_PAGE_W - 80, 20, _ascii(subt), align="C")
+
+    pdf.set_xy(40, 376)
+    raio = _format_number(result.get("raio_km"), 1, " km")
+    pdf.cell(_PAGE_W - 80, 20, _ascii(f"Raio de analise: {raio}"), align="C")
+
+    _draw_footer(pdf, with_attribution=False)
+
+
+def _map_page(
+    pdf: _UltraPDF,
+    png_bytes: bytes | None,
+    *,
+    title: str,
+    assets: dict[str, bytes | None],
+) -> None:
+    """Pagina de mapa: fundo claro, faixa de titulo turquesa, mapa, rodape com atribuicao."""
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, title)
+    if png_bytes:
+        _draw_map(pdf, png_bytes)
+    else:
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_xy(40, 120)
+        pdf.cell(_PAGE_W - 80, 18, _ascii("Mapa indisponivel para esta camada."))
+    _draw_footer(pdf, with_attribution=True)
+
+
+def _big_numbers_page(
+    pdf: _UltraPDF,
+    result: dict[str, Any],
+    residual: dict[str, Any] | None,
+    assets: dict[str, bytes | None],
+) -> None:
+    """(e) Big Numbers — grid 2x3 das 6 metricas. READ-ONLY; "n/d" auditavel."""
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, "Big Numbers")
+
+    residual = residual or {}
+    n_conc = result.get("n_concorrentes")
+    consumo = residual.get("oferta_consumida_mercado_estimada")
+    if n_conc is None:
+        conc_value = "n/d"
+    else:
+        consumo_txt = _format_number(consumo, 0) if consumo is not None else "n/d"
+        conc_value = f"{_format_number(n_conc, 0)} / consumo {consumo_txt}"
+
+    cards = [
+        ("Populacao total no raio", _format_number(result.get("pop_total_raio"), 0)),
+        ("Renda per capita media", "R$ " + _format_number(result.get("renda_per_capita_media_raio"), 2)),
+        ("Score censitario medio", _format_number(result.get("score_setor_medio"), 2)),
+        ("Score censitario maximo", _format_number(result.get("score_setor_max"), 2)),
+        ("Residual fitness (hex)", _format_number(residual.get("score_oportunidade_residual"), 2)),
+        ("Concorrentes no raio + consumo", conc_value),
+    ]
+
+    margin_x = 40.0
+    top = 96.0
+    gap = 18.0
+    cols, rows = 2, 3
+    card_w = (_PAGE_W - 2 * margin_x - (cols - 1) * gap) / cols
+    card_h = 150.0
+    accents = [ULTRA_TURQUESA, ULTRA_MAGENTA]
+
+    for index, (label, value) in enumerate(cards):
+        col = index % cols
+        row = index // cols
+        x = margin_x + col * (card_w + gap)
+        y = top + row * (card_h + gap)
+        # Cartao branco com barra de destaque.
+        pdf.set_fill_color(*_BRANCO)
+        pdf.rect(x, y, card_w, card_h, style="F")
+        accent = accents[index % len(accents)]
+        pdf.set_fill_color(*accent)
+        pdf.rect(x, y, card_w, 8.0, style="F")
+        # Rotulo.
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_xy(x + 14, y + 22)
+        pdf.multi_cell(card_w - 28, 14, _ascii(label))
+        # Valor grande.
+        pdf.set_text_color(*accent)
+        pdf.set_font("Helvetica", "B", 26)
+        pdf.set_xy(x + 14, y + 78)
+        pdf.multi_cell(card_w - 28, 30, _ascii(value))
+
+    # Nota de fonte auditavel.
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_xy(margin_x, top + rows * (card_h + gap) + 4)
+    metodo = str(result.get("metodo", METODO_RELATORIO_PONTUAL_CENSITARIO))
+    pdf.multi_cell(
+        _PAGE_W - 2 * margin_x,
+        11,
+        _ascii(
+            "Fontes: pop/renda/score = censo (intersecao de setores IBGE 2022 com circulo de 1.5 km, "
+            f"metodo {metodo}); residual fitness e consumo = lookup READ-ONLY do hex H3 (sem recalculo "
+            "do M1). 'n/d' = dado ausente para o ponto."
+        ),
     )
-    return lines
+    _draw_footer(pdf, with_attribution=True)
 
 
 def _point_rows(points: pd.DataFrame, label: str) -> list[str]:
+    """Lista textual de unidades no raio. Usa apenas dados de UNIDADE (sem PII de pessoas)."""
     if points is None or points.empty:
-        return [f"{label}: sem pontos no raio."]
-    name_col = next((column for column in ("nome_unidade", "nome", "brand", "rede") if column in points.columns), None)
+        return [f"{label}: sem unidades no raio."]
+    name_col = next(
+        (column for column in ("rede", "nome_unidade", "nome", "brand") if column in points.columns),
+        None,
+    )
     rows: list[str] = []
-    for _, row in points.head(8).iterrows():
+    for _, row in points.head(10).iterrows():
         name = str(row.get(name_col, label)) if name_col else label
         dist = _format_number(row.get("dist_km"), 2, " km")
         rows.append(f"{label}: {name} ({dist})")
     return rows
 
 
-def _details_lines(result: dict[str, Any]) -> list[tuple[str, int]]:
-    setores = _setores_from_result(result)
-    lines: list[tuple[str, int]] = [("Setores", 15)]
-    if setores.empty:
-        lines.append(("Nenhum setor intersectado no raio.", 11))
-    else:
-        sort_col = "pop_estimada_intersecao" if "pop_estimada_intersecao" in setores.columns else setores.columns[0]
-        table = setores.sort_values(sort_col, ascending=False, kind="stable").head(10)
-        for _, row in table.iterrows():
-            sector = row.get("cod_setor", "-")
-            pop = _format_number(row.get("pop_estimada_intersecao"))
-            peso = _format_number(row.get("peso_area_setor"), 3)
-            renda = _format_number(row.get("renda_per_capita_setor_2022_calibrada"), 2)
-            lines.append((f"{sector} | pop {pop} | peso {peso} | renda R$ {renda}", 10))
-    lines.append(("", 11))
-    for text in _point_rows(result.get("concorrentes_raio", pd.DataFrame()), "Concorrente"):
-        lines.append((text, 10))
-    for text in _point_rows(result.get("ultra_raio", pd.DataFrame()), "Ultra"):
-        lines.append((text, 10))
-    lines.extend(
-        [
-            ("", 11),
-            ("Metodologia", 15),
-            (
-                f"Metodo: {result.get('metodo', METODO_RELATORIO_PONTUAL_CENSITARIO)}.",
-                11,
-            ),
-        ]
+def _competitors_page(
+    pdf: _UltraPDF,
+    result: dict[str, Any],
+    png_bytes: bytes | None,
+    assets: dict[str, bytes | None],
+) -> None:
+    """(f) Concorrentes — mapa + lista textual das redes no raio (sem PII)."""
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, "Concorrentes")
+
+    # Mapa de concorrentes (menor, abre espaco para a lista).
+    if png_bytes:
+        dims = _png_dimensions(png_bytes)
+        if dims is not None:
+            img_w, img_h = dims
+            max_w, max_h = 515.0, 360.0
+            scale = min(max_w / img_w, max_h / img_h)
+            draw_w = img_w * scale
+            draw_h = img_h * scale
+            try:
+                pdf.image(BytesIO(png_bytes), x=(_PAGE_W - draw_w) / 2.0, y=80, w=draw_w, h=draw_h)
+            except Exception:
+                pass
+
+    list_y = 470.0
+    pdf.set_text_color(*ULTRA_MAGENTA)
+    pdf.set_font("Helvetica", "B", 13)
+    pdf.set_xy(40, list_y)
+    pdf.cell(_PAGE_W - 80, 18, _ascii("Redes no raio de 1.5 km"))
+
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 10)
+    y = list_y + 26.0
+    linhas: list[str] = []
+    linhas.extend(_point_rows(result.get("concorrentes_raio", pd.DataFrame()), "Concorrente"))
+    linhas.extend(_point_rows(result.get("ultra_raio", pd.DataFrame()), "Ultra"))
+    for line in linhas:
+        if y > _PAGE_H - 50:
+            break
+        pdf.set_xy(40, y)
+        pdf.cell(_PAGE_W - 80, 13, _ascii(line))
+        y += 14.0
+
+    _draw_footer(pdf, with_attribution=True)
+
+
+def _credit_page(pdf: _UltraPDF, assets: dict[str, bytes | None]) -> None:
+    """(g) Realizacao/Credito — texto fixo Ultra, atribuicao, nota READ-ONLY. SEM PII."""
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("capa"), ULTRA_TURQUESA)
+
+    pdf.set_text_color(*_BRANCO)
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.set_xy(40, 320)
+    pdf.cell(_PAGE_W - 80, 28, _ascii("Realizacao"), align="C")
+
+    pdf.set_font("Helvetica", "", 13)
+    pdf.set_xy(40, 360)
+    pdf.cell(_PAGE_W - 80, 20, _ascii(_CREDITO_ULTRA), align="C")
+
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_xy(40, 392)
+    pdf.multi_cell(
+        _PAGE_W - 80,
+        14,
+        _ascii(
+            "Metodo: intersecao geometrica de setores censitarios reais (IBGE 2022) com circulo de "
+            "1.5 km ao redor da coordenada. Distribuicao intrassetor aproximada por area."
+        ),
+        align="C",
     )
-    method = (
-        "O relatorio cruza setores censitarios reais do IBGE 2022 com um circulo metrico "
-        "de 1.5 km ao redor da coordenada. Populacao estimada usa peso de area "
-        "intersectada; renda e scores sao ponderados por populacao estimada, com fallback "
-        "por area quando necessario."
+
+    pdf.set_xy(40, 440)
+    pdf.multi_cell(
+        _PAGE_W - 80,
+        14,
+        _ascii(
+            "READ-ONLY: este relatorio nao altera score_priorizacao, carteira, plano ou artefatos "
+            "oficiais do M1."
+        ),
+        align="C",
     )
-    for line in _wrap_text(method):
-        lines.append((line, 10))
-    lines.extend([("", 11), ("Qualidade e limites", 15)])
-    limits = (
-        "A distribuicao intrassetor e aproximada por area. O PDF nao promete precisao "
-        "de lote, rua ou quadra e nao altera score_priorizacao, carteira, plano ou "
-        "artefatos oficiais do M1."
-    )
-    for line in _wrap_text(limits):
-        lines.append((line, 10))
-    return lines
 
-
-def _jpeg_from_png(png_bytes: bytes) -> tuple[bytes, int, int] | None:
-    if not png_bytes:
-        return None
-    try:
-        image = Image.open(BytesIO(png_bytes)).convert("RGB")
-    except Exception:
-        return None
-    output = BytesIO()
-    image.save(output, format="JPEG", quality=88, optimize=True)
-    return output.getvalue(), image.width, image.height
-
-
-def _map_content(image_width: int, image_height: int, *, title: str, im_name: str) -> bytes:
-    page_w, _page_h = 595, 842
-    max_w, max_h = 505, 650
-    scale = min(max_w / image_width, max_h / image_height)
-    draw_w = image_width * scale
-    draw_h = image_height * scale
-    x = (page_w - draw_w) / 2
-    y = 96
-    commands = [
-        "BT",
-        "/F1 18 Tf",
-        f"54 800 Td ({_pdf_escape(title)}) Tj",
-        "/F1 10 Tf",
-        f"54 778 Td ({_pdf_escape('Mapa censitario do relatorio (fundo de ruas quando disponivel).')}) Tj",
-        "ET",
-        "q",
-        f"{draw_w:.2f} 0 0 {draw_h:.2f} {x:.2f} {y:.2f} cm",
-        f"/{im_name} Do",
-        "Q",
-    ]
-    return "\n".join(commands).encode("latin-1")
-
-
-def _build_pdf(
-    content_pages: list[bytes],
-    images: dict[int, tuple[bytes, int, int]] | None = None,
-    page_xobjects: dict[int, tuple[str, int]] | None = None,
-) -> bytes:
-    """Monta um PDF minimo.
-
-    `images`: mapa page-index -> (jpeg_bytes, w, h) para cada pagina que tem imagem.
-    `page_xobjects`: mapa page-index -> (im_name, image_index) ligando a pagina ao XObject.
-    O writer e manual; offsets/xref sao recomputados a partir do `objects`.
-    """
-    images = images or {}
-    page_xobjects = page_xobjects or {}
-    objects: dict[int, bytes] = {}
-    catalog_num = 1
-    pages_num = 2
-    font_num = 3
-    next_num = 4
-    objects[font_num] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>"
-
-    # Um XObject de imagem por pagina-com-mapa (page_idx -> object number).
-    image_obj_nums: dict[int, int] = {}
-    for page_idx in sorted(images):
-        image_bytes, image_width, image_height = images[page_idx]
-        image_num = next_num
-        next_num += 1
-        image_obj_nums[page_idx] = image_num
-        objects[image_num] = (
-            f"<< /Type /XObject /Subtype /Image /Width {image_width} /Height {image_height} "
-            f"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length {len(image_bytes)} >>\n"
-        ).encode("ascii") + b"stream\n" + image_bytes + b"\nendstream"
-
-    page_nums: list[int] = []
-    for idx, content in enumerate(content_pages):
-        content_num = next_num
-        next_num += 1
-        objects[content_num] = (
-            f"<< /Length {len(content)} >>\n".encode("ascii") + b"stream\n" + content + b"\nendstream"
-        )
-        page_num = next_num
-        next_num += 1
-        page_nums.append(page_num)
-        xobject = ""
-        if idx in page_xobjects and idx in image_obj_nums:
-            im_name, _ = page_xobjects[idx]
-            xobject = f" /XObject << /{im_name} {image_obj_nums[idx]} 0 R >>"
-        objects[page_num] = (
-            f"<< /Type /Page /Parent {pages_num} 0 R /MediaBox [0 0 595 842] "
-            f"/Resources << /Font << /F1 {font_num} 0 R >>{xobject} >> "
-            f"/Contents {content_num} 0 R >>"
-        ).encode("ascii")
-
-    kids = " ".join(f"{num} 0 R" for num in page_nums)
-    objects[catalog_num] = f"<< /Type /Catalog /Pages {pages_num} 0 R >>".encode("ascii")
-    objects[pages_num] = f"<< /Type /Pages /Kids [{kids}] /Count {len(page_nums)} >>".encode("ascii")
-
-    output = BytesIO()
-    output.write(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
-    offsets: dict[int, int] = {}
-    for num in sorted(objects):
-        offsets[num] = output.tell()
-        output.write(f"{num} 0 obj\n".encode("ascii"))
-        output.write(objects[num])
-        output.write(b"\nendobj\n")
-
-    xref_offset = output.tell()
-    max_num = max(objects)
-    output.write(f"xref\n0 {max_num + 1}\n".encode("ascii"))
-    output.write(b"0000000000 65535 f \n")
-    for num in range(1, max_num + 1):
-        output.write(f"{offsets.get(num, 0):010d} 00000 n \n".encode("ascii"))
-    output.write(
-        f"trailer\n<< /Size {max_num + 1} /Root {catalog_num} 0 R >>\n"
-        f"startxref\n{xref_offset}\n%%EOF\n".encode("ascii")
-    )
-    return output.getvalue()
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(40, _PAGE_H - 60)
+    pdf.cell(_PAGE_W - 80, 12, _ascii(f"Fundo de ruas: {_ATRIBUICAO_TILES}."), align="C")
 
 
 def _normalize_mapas(mapas: dict[str, bytes] | bytes | None) -> list[tuple[str, str, bytes]]:
     """Normaliza a entrada de mapas em lista ordenada (chave, titulo, png_bytes).
 
-    Retrocompat: `bytes` (1 mapa legado) -> 1 pagina "Mapa"; `dict` -> 1 pagina por camada
-    canonica presente (densidade/renda/concorrentes), nessa ordem. `None`/vazio -> sem mapa.
+    Retrocompat: `bytes` (1 mapa legado) -> 1 pagina "Populacao"; `dict` -> 1 pagina por
+    camada canonica presente (densidade/renda/concorrentes), nessa ordem.
     """
     if mapas is None:
         return []
     if isinstance(mapas, (bytes, bytearray)):
-        return [("mapa", "Mapa", bytes(mapas))] if mapas else []
+        return [("densidade", MAP_LAYER_TITLES[0][1], bytes(mapas))] if mapas else []
     ordered: list[tuple[str, str, bytes]] = []
     for key, title in MAP_LAYER_TITLES:
         png = mapas.get(key)
@@ -348,31 +496,39 @@ def _normalize_mapas(mapas: dict[str, bytes] | bytes | None) -> list[tuple[str, 
 def gerar_pdf_relatorio_pontual_censitario(
     result: dict[str, Any],
     mapas: dict[str, bytes] | bytes | None = None,
+    *,
+    residual: dict[str, Any] | None = None,
+    ultra_dir: Path | str | None = None,
 ) -> bytes:
-    """Gera PDF executivo em memoria, sem criar artefatos permanentes.
+    """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
+
+    Estrutura de 7 paginas: Capa -> Populacao -> Renda -> Score censitario ->
+    Big Numbers -> Concorrentes -> Realizacao/Credito.
 
     `mapas` aceita o dict de camadas combinadas (`{"densidade","renda","concorrentes"}`)
-    -> uma pagina de mapa por camada, OU `bytes` (1 mapa legado, retrocompat).
+    ou `bytes` (1 mapa legado, retrocompat). `residual` carrega os campos do lookup hex
+    (READ-ONLY) para o Big Numbers. `ultra_dir` aponta os assets de branding (fallback
+    gracioso para cor solida se ausentes). Geracao 100% offline, sem PII.
     """
-    pages: list[bytes] = [_text_page(_kpi_lines(result))]
-    images: dict[int, tuple[bytes, int, int]] = {}
-    page_xobjects: dict[int, tuple[str, int]] = {}
+    assets = _load_branding_assets(ultra_dir)
+    layers = dict(_normalize_mapas_by_key(mapas))
 
-    layers = _normalize_mapas(mapas)
-    image_idx = 1
-    for _key, title, png in layers:
-        image = _jpeg_from_png(png)
-        if image is None:
-            continue
-        page_idx = len(pages)
-        im_name = f"Im{image_idx}"
-        pages.append(_map_content(image[1], image[2], title=title, im_name=im_name))
-        images[page_idx] = image
-        page_xobjects[page_idx] = (im_name, image_idx)
-        image_idx += 1
+    pdf = _UltraPDF()
+    _cover_page(pdf, result, assets)
+    _map_page(pdf, layers.get("densidade"), title="Populacao - Densidade", assets=assets)
+    _map_page(pdf, layers.get("renda"), title="Renda per capita", assets=assets)
+    _map_page(pdf, layers.get("concorrentes"), title="Score censitario de contexto", assets=assets)
+    _big_numbers_page(pdf, result, residual, assets)
+    _competitors_page(pdf, result, layers.get("concorrentes"), assets)
+    _credit_page(pdf, assets)
 
-    pages.append(_text_page(_details_lines(result)))
-    return _build_pdf(pages, images=images, page_xobjects=page_xobjects)
+    output = pdf.output()
+    return bytes(output)
+
+
+def _normalize_mapas_by_key(mapas: dict[str, bytes] | bytes | None) -> list[tuple[str, bytes]]:
+    """Mapa chave-canonica -> png_bytes (preserva retrocompat de bytes unico)."""
+    return [(key, png) for key, _title, png in _normalize_mapas(mapas)]
 
 
 def gerar_payloads_download_relatorio_censitario(
@@ -380,12 +536,16 @@ def gerar_payloads_download_relatorio_censitario(
     mapas: dict[str, bytes] | bytes | None = None,
     *,
     filename_prefix: str | None = None,
+    residual: dict[str, Any] | None = None,
+    ultra_dir: Path | str | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     prefix = filename_prefix or f"relatorio_pontual_censitario_{_point_name(result)}"
     return RelatorioCensitarioDownloadPayloads(
         csv_bytes=gerar_csv_setores_censitarios(result),
         csv_filename=f"{prefix}_setores.csv",
-        pdf_bytes=gerar_pdf_relatorio_pontual_censitario(result, mapas),
+        pdf_bytes=gerar_pdf_relatorio_pontual_censitario(
+            result, mapas, residual=residual, ultra_dir=ultra_dir
+        ),
         pdf_filename=f"{prefix}.pdf",
     )
 
@@ -396,12 +556,16 @@ def render_downloads_relatorio_censitario(
     mapas: dict[str, bytes] | bytes | None = None,
     *,
     filename_prefix: str | None = None,
+    residual: dict[str, Any] | None = None,
+    ultra_dir: Path | str | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     """Renderiza botoes Streamlit e retorna os mesmos bytes para testes/reuso."""
     payloads = gerar_payloads_download_relatorio_censitario(
         result,
         mapas,
         filename_prefix=filename_prefix,
+        residual=residual,
+        ultra_dir=ultra_dir,
     )
     st_module.download_button(
         "Baixar CSV dos setores",

@@ -2586,11 +2586,27 @@ def render_relatorio_pontual_censitario(
     st.markdown("##### Setores intersectados")
     _render_setores_censitarios_table(result["setores_intersectados"])
 
+    # Big Numbers do PDF: lookup READ-ONLY do hex H3 do ponto (residual fitness + consumo).
+    # Leitura pura do df ja em escopo; NAO recalcula M1/residual. Campo ausente/NaN -> None -> "n/d".
+    residual: dict[str, float | None] = {
+        "score_oportunidade_residual": None,
+        "oferta_efetiva_disponivel": None,
+        "oferta_consumida_mercado_estimada": None,
+    }
+    hex_row = lookup_hex_by_coord(lat, lng, df, h3_res=7)  # 7 = H3_RESOLUTION (M1)
+    if hex_row is not None and not hex_row.get("_not_found", False):
+        for campo in residual:
+            valor = hex_row.get(campo)
+            if valor is not None and not pd.isna(valor):
+                residual[campo] = float(valor)
+
     render_downloads_relatorio_censitario(
         st,
         result,
         mapas,
         filename_prefix=f"relatorio_censitario_{uf}_{cod_municipio}_{lat:.5f}_{lng:.5f}".replace("-", "m").replace(".", "p"),
+        residual=residual,
+        ultra_dir=Path("data/ultra"),
     )
 
 
