@@ -170,20 +170,20 @@ Validacao minima: `tests/unit/test_relatorio_pontual_censitario_mapa.py` gera as
 
 ## 7. Export CSV e PDF
 
-Implementacao: `src/motor_expansao/dashboard/censo_report.py`. **Template Ultra reescrito sobre `fpdf2`** no ciclo BLK-CENSO-02 (gate humano de Felipe em 2026-06-05 aprovou trocar o writer manual PDF-1.4 por `fpdf2`, dependencia BASE em `pyproject.toml`). O writer roda com **compressao de stream desativada** (`set_compression(False)`) para auditabilidade anti-PII e asserts de texto cru — os PDFs sao pequenos.
+Implementacao: `src/motor_expansao/dashboard/censo_report.py`. **Template Ultra reescrito sobre `fpdf2`** no ciclo BLK-CENSO-02 (gate humano de Felipe em 2026-06-05 aprovou trocar o writer manual PDF-1.4 por `fpdf2`, dependencia BASE em `pyproject.toml`). O writer roda com **compressao de stream desativada** (`set_compression(False)`) para auditabilidade anti-PII e asserts de texto cru — os PDFs sao pequenos. **Follow-up BLK-CENSO-02-FU1 (Felipe, 2026-06-06):** paginas em **proporcao 16:9 widescreen (960x540 pt)** em vez de A4 retrato (a capa 16:9 do `.pptx` deixou de distorcer e o titulo foi para a zona limpa inferior-direita, sem colidir com o logo "GRUPO ULTRA" embutido); Big Numbers passou a **grid 4x2 de 8 metricas** e o card de residual passou a exibir **Residual Fitness em alunos** (`oferta_efetiva_disponivel`) + **SAM Fitness em alunos** (`sam_fitness_potencial`) no lugar do `score_oportunidade_residual`.
 
 Funcoes principais:
 - `gerar_csv_setores_censitarios(result)`: retorna bytes CSV da tabela de setores intersectados, com `sep=";"` e `encoding="utf-8-sig"`, sem incluir geometria bruta. **INALTERADO** neste ciclo.
 - `gerar_pdf_relatorio_pontual_censitario(result, mapas=None, *, residual=None, ultra_dir=None)`: retorna bytes PDF em memoria com a **estrutura de 7 paginas** (template Ultra), nesta ordem:
-  1. **Capa** — fundo turquesa `#00A79D`, titulo, coordenada `lat,lng` + `municipio/UF`, raio 1.5 km, logo Ultra (se disponivel).
+  1. **Capa** (16:9) — fundo de marca da capa (`relatorio_capa_bg.png`, ja com logo "GRUPO ULTRA" + faixa de marcas), titulo + coordenada `lat,lng` + `municipio/UF` + raio 1.5 km na **zona turquesa limpa do quadrante inferior-direito** (nao colide com o branding embutido). Sem o asset -> turquesa solido com o bloco centralizado.
   2. **Populacao** — mapa `densidade` (PNG do BLK-CENSO-01) sobre fundo claro `#F8F8F8` + faixa de titulo turquesa.
   3. **Renda** — mapa `renda`.
   4. **Score censitario** — mapa `concorrentes` (mapa de score com pins).
-  5. **Big Numbers** — grid 2x3 das 6 metricas (ver abaixo).
-  6. **Concorrentes** — mapa de concorrentes + lista textual das redes no raio (coluna `rede`/`nome_unidade`, NUNCA dados de pessoas).
-  7. **Realizacao/Credito** — texto fixo "Relatorio gerado pelo Motor de Expansao - Ultra Academia", atribuicao de tiles `(c) OpenStreetMap, (c) CARTO` e nota READ-ONLY. SEM PII.
+  5. **Big Numbers** — grid 4x2 das 8 metricas (ver abaixo).
+  6. **Concorrentes** — mapa de concorrentes a esquerda + lista textual das redes no raio a direita (coluna `rede`/`nome_unidade`, NUNCA dados de pessoas).
+  7. **Realizacao/Credito** — fundo turquesa solido, texto fixo "Relatorio gerado pelo Motor de Expansao - Ultra Academia", atribuicao de tiles `(c) OpenStreetMap, (c) CARTO` e nota READ-ONLY. SEM PII.
   - `mapas` aceita o `dict[str,bytes]` das camadas combinadas OU, por retrocompat, `bytes` de um unico mapa legado (1 mapa na pagina de Populacao). PNGs passados ao fpdf2 via `io.BytesIO`.
-- **Big Numbers (6 metricas, READ-ONLY):** populacao total, renda per capita media, score censitario medio e maximo vem do `result` censitario; **residual fitness** (`score_oportunidade_residual`) e **consumo de concorrentes** (`oferta_consumida_mercado_estimada`) vem de `lookup_hex_by_coord(lat, lng, df, h3_res=7)` lendo o `df` ja em escopo em `pages.py` — leitura pura, SEM load novo de parquet e SEM recalcular M1/residual. Campo ausente/NaN/hex-ausente -> **"n/d"** auditavel, com nota de fonte citando o metodo `setor_censitario_intersecao_area_1p5km`.
+- **Big Numbers (8 metricas, READ-ONLY):** populacao total, renda per capita media, score censitario medio e maximo vem do `result` censitario; **SAM Fitness em alunos** (`sam_fitness_potencial`), **Residual Fitness em alunos** (`oferta_efetiva_disponivel`), **concorrentes no raio** (`n_concorrentes`) e **consumo de concorrentes** (`oferta_consumida_mercado_estimada`) vem de `lookup_hex_by_coord(lat, lng, df, h3_res=7)` lendo o `df` ja em escopo em `pages.py` — leitura pura, SEM load novo de parquet e SEM recalcular M1/residual. NB: SAM e Residual Fitness saem em **numero de alunos** (sizing absoluto da camada de mercado), nao em score. Campo ausente/NaN/hex-ausente -> **"n/d"** auditavel, com nota de fonte citando o metodo `setor_censitario_intersecao_area_1p5km`.
 - `gerar_payloads_download_relatorio_censitario(...)` e `render_downloads_relatorio_censitario(...)`: preparam nomes/bytes e botoes `st.download_button`; propagam os kwargs `residual` e `ultra_dir` ao PDF.
 
 Assets de branding (Fase 0):

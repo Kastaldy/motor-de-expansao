@@ -2591,6 +2591,7 @@ def render_relatorio_pontual_censitario(
     residual: dict[str, float | None] = {
         "score_oportunidade_residual": None,
         "oferta_efetiva_disponivel": None,
+        "sam_fitness_potencial": None,
         "oferta_consumida_mercado_estimada": None,
     }
     hex_row = lookup_hex_by_coord(lat, lng, df, h3_res=7)  # 7 = H3_RESOLUTION (M1)

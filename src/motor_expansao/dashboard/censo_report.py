@@ -66,9 +66,10 @@ _ASSET_CONTEUDO = "relatorio_conteudo_bg.png"
 _ASSET_LOGO = "logo_ultra.png"
 _DEFAULT_ULTRA_DIR = Path("data/ultra")
 
-# Dimensoes A4 retrato em pontos (fpdf usa pt quando FPDF(unit="pt")).
-_PAGE_W = 595.0
-_PAGE_H = 842.0
+# Dimensoes do slide 16:9 widescreen em pontos (13.333in x 7.5in = 960 x 540 pt).
+# Proporcao casa com os fundos do .pptx (capa 1360x763, conteudo 783x437) -> sem distorcao.
+_PAGE_W = 960.0
+_PAGE_H = 540.0
 
 
 @dataclass(frozen=True)
@@ -166,7 +167,8 @@ class _UltraPDF(FPDF):
     """FPDF com compressao desativada (auditabilidade anti-PII + asserts de texto cru)."""
 
     def __init__(self) -> None:
-        super().__init__(orientation="P", unit="pt", format="A4")
+        # Slide 16:9 widescreen (960x540 pt). format=(540,960)+orientation=L -> w=960, h=540.
+        super().__init__(orientation="L", unit="pt", format=(540, 960))
         # PDF 1.4 para continuidade com os asserts historicos (%PDF-1.4) e leitores antigos.
         self.pdf_version = "1.4"
         self.set_compression(False)
@@ -191,39 +193,39 @@ def _draw_full_page_background(
 
 
 def _draw_title_band(pdf: _UltraPDF, title: str, *, rgb: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
-    """Faixa de titulo turquesa no topo da pagina de conteudo."""
-    band_h = 56.0
+    """Faixa de titulo turquesa no topo da pagina de conteudo (largura total 16:9)."""
+    band_h = 48.0
     pdf.set_fill_color(*rgb)
     pdf.rect(0, 0, _PAGE_W, band_h, style="F")
     pdf.set_text_color(*_BRANCO)
     pdf.set_font("Helvetica", "B", 20)
-    pdf.set_xy(40, 16)
-    pdf.cell(_PAGE_W - 80, 24, _ascii(title))
+    pdf.set_xy(36, 13)
+    pdf.cell(_PAGE_W - 72, 24, _ascii(title))
 
 
 def _draw_footer(pdf: _UltraPDF, *, with_attribution: bool = True) -> None:
     """Rodape com credito Ultra e atribuicao de tiles."""
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.set_xy(40, _PAGE_H - 28)
+    pdf.set_xy(36, _PAGE_H - 22)
     text = _CREDITO_ULTRA
     if with_attribution:
         text = f"{text}   |   {_ATRIBUICAO_TILES}"
-    pdf.cell(_PAGE_W - 80, 12, _ascii(text))
+    pdf.cell(_PAGE_W - 72, 12, _ascii(text))
 
 
 def _draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
-    """Desenha o PNG do mapa centralizado abaixo da faixa de titulo."""
+    """Desenha o PNG do mapa centralizado abaixo da faixa de titulo (area 16:9)."""
     dims = _png_dimensions(png_bytes)
     if dims is None:
         return
     img_w, img_h = dims
-    max_w, max_h = 515.0, 640.0
+    max_w, max_h = 900.0, 442.0
     scale = min(max_w / img_w, max_h / img_h)
     draw_w = img_w * scale
     draw_h = img_h * scale
     x = (_PAGE_W - draw_w) / 2.0
-    y = 96.0
+    y = 56.0 + (max_h - draw_h) / 2.0
     try:
         pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
     except Exception:
@@ -231,26 +233,15 @@ def _draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
 
 
 def _cover_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None]) -> None:
-    """(a) Capa — fundo turquesa (asset ou solido), titulo, coordenada, raio, logo."""
+    """(a) Capa — fundo de marca 16:9 (asset ou turquesa solido) + titulo na zona limpa.
+
+    O asset de capa ja embute o logo "GRUPO ULTRA" e a faixa de marcas; o texto do relatorio
+    vai na area turquesa limpa do quadrante inferior-direito para NAO colidir com o branding.
+    Sem fundo (deploy/CI limpo) -> turquesa solido e o texto centralizado e legivel mesmo assim.
+    """
     pdf.add_page()
+    has_bg = assets.get("capa") is not None
     _draw_full_page_background(pdf, assets.get("capa"), ULTRA_TURQUESA)
-
-    # Logo Ultra no topo (se disponivel) — fallback: sem logo.
-    logo = assets.get("logo")
-    if logo is not None:
-        dims = _png_dimensions(logo)
-        if dims is not None:
-            lw = 90.0
-            lh = lw * (dims[1] / dims[0])
-            try:
-                pdf.image(BytesIO(logo), x=(_PAGE_W - lw) / 2.0, y=60, w=lw, h=lh)
-            except Exception:
-                pass
-
-    pdf.set_text_color(*_BRANCO)
-    pdf.set_font("Helvetica", "B", 30)
-    pdf.set_xy(40, 300)
-    pdf.cell(_PAGE_W - 80, 36, _ascii("Relatorio Pontual Censitario"), align="C")
 
     lat = result.get("lat")
     lng = result.get("lng")
@@ -258,19 +249,31 @@ def _cover_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes 
     municipio = str(result.get("nome_municipio") or "").strip()
     uf = str(result.get("uf") or "").strip()
     local = f"{municipio}/{uf}".strip("/") if (municipio or uf) else ""
+    raio = _format_number(result.get("raio_km"), 1, " km")
 
-    pdf.set_font("Helvetica", "", 14)
-    pdf.set_xy(40, 350)
+    # Com fundo de marca: bloco de texto na zona limpa inferior-direita (x>=470).
+    # Sem fundo: bloco centralizado sobre o turquesa solido.
+    if has_bg:
+        block_x, block_w, align = 478.0, 446.0, "L"
+        title_y = 330.0
+    else:
+        block_x, block_w, align = 40.0, _PAGE_W - 80, "C"
+        title_y = 230.0
+
+    pdf.set_text_color(*_BRANCO)
+    pdf.set_font("Helvetica", "B", 26)
+    pdf.set_xy(block_x, title_y)
+    pdf.multi_cell(block_w, 32, _ascii("Relatorio Pontual Censitario"), align=align)
+
+    pdf.set_font("Helvetica", "", 13)
+    pdf.set_xy(block_x, title_y + 70)
     subt = f"Coordenada: {coord}"
     if local:
         subt = f"{subt}   |   {local}"
-    pdf.cell(_PAGE_W - 80, 20, _ascii(subt), align="C")
+    pdf.cell(block_w, 18, _ascii(subt), align=align)
 
-    pdf.set_xy(40, 376)
-    raio = _format_number(result.get("raio_km"), 1, " km")
-    pdf.cell(_PAGE_W - 80, 20, _ascii(f"Raio de analise: {raio}"), align="C")
-
-    _draw_footer(pdf, with_attribution=False)
+    pdf.set_xy(block_x, title_y + 92)
+    pdf.cell(block_w, 18, _ascii(f"Raio de analise: {raio}"), align=align)
 
 
 def _map_page(
@@ -300,33 +303,31 @@ def _big_numbers_page(
     residual: dict[str, Any] | None,
     assets: dict[str, bytes | None],
 ) -> None:
-    """(e) Big Numbers — grid 2x3 das 6 metricas. READ-ONLY; "n/d" auditavel."""
+    """(e) Big Numbers — grid 4x2 das 8 metricas. READ-ONLY; "n/d" auditavel.
+
+    SAM Fitness e Residual Fitness saem em NUMERO DE ALUNOS (sizing absoluto da camada de
+    mercado), nao em score: `sam_fitness_potencial` e `oferta_efetiva_disponivel` do hex H3.
+    """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, "Big Numbers")
 
     residual = residual or {}
-    n_conc = result.get("n_concorrentes")
-    consumo = residual.get("oferta_consumida_mercado_estimada")
-    if n_conc is None:
-        conc_value = "n/d"
-    else:
-        consumo_txt = _format_number(consumo, 0) if consumo is not None else "n/d"
-        conc_value = f"{_format_number(n_conc, 0)} / consumo {consumo_txt}"
-
     cards = [
         ("Populacao total no raio", _format_number(result.get("pop_total_raio"), 0)),
         ("Renda per capita media", "R$ " + _format_number(result.get("renda_per_capita_media_raio"), 2)),
         ("Score censitario medio", _format_number(result.get("score_setor_medio"), 2)),
         ("Score censitario maximo", _format_number(result.get("score_setor_max"), 2)),
-        ("Residual fitness (hex)", _format_number(residual.get("score_oportunidade_residual"), 2)),
-        ("Concorrentes no raio + consumo", conc_value),
+        ("SAM Fitness (alunos)", _format_number(residual.get("sam_fitness_potencial"), 0)),
+        ("Residual Fitness (alunos)", _format_number(residual.get("oferta_efetiva_disponivel"), 0)),
+        ("Concorrentes no raio", _format_number(result.get("n_concorrentes"), 0)),
+        ("Consumo concorrentes (est.)", _format_number(residual.get("oferta_consumida_mercado_estimada"), 0)),
     ]
 
-    margin_x = 40.0
-    top = 96.0
-    gap = 18.0
-    cols, rows = 2, 3
+    margin_x = 36.0
+    top = 70.0
+    gap = 14.0
+    cols, rows = 4, 2
     card_w = (_PAGE_W - 2 * margin_x - (cols - 1) * gap) / cols
     card_h = 150.0
     accents = [ULTRA_TURQUESA, ULTRA_MAGENTA]
@@ -349,22 +350,22 @@ def _big_numbers_page(
         pdf.multi_cell(card_w - 28, 14, _ascii(label))
         # Valor grande.
         pdf.set_text_color(*accent)
-        pdf.set_font("Helvetica", "B", 26)
-        pdf.set_xy(x + 14, y + 78)
-        pdf.multi_cell(card_w - 28, 30, _ascii(value))
+        pdf.set_font("Helvetica", "B", 24)
+        pdf.set_xy(x + 14, y + 84)
+        pdf.multi_cell(card_w - 28, 28, _ascii(value))
 
     # Nota de fonte auditavel.
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 8)
-    pdf.set_xy(margin_x, top + rows * (card_h + gap) + 4)
+    pdf.set_xy(margin_x, top + rows * (card_h + gap) + 2)
     metodo = str(result.get("metodo", METODO_RELATORIO_PONTUAL_CENSITARIO))
     pdf.multi_cell(
         _PAGE_W - 2 * margin_x,
         11,
         _ascii(
             "Fontes: pop/renda/score = censo (intersecao de setores IBGE 2022 com circulo de 1.5 km, "
-            f"metodo {metodo}); residual fitness e consumo = lookup READ-ONLY do hex H3 (sem recalculo "
-            "do M1). 'n/d' = dado ausente para o ponto."
+            f"metodo {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = lookup READ-ONLY "
+            "do hex H3 (sem recalculo do M1). 'n/d' = dado ausente para o ponto."
         ),
     )
     _draw_footer(pdf, with_attribution=True)
@@ -397,61 +398,70 @@ def _competitors_page(
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, "Concorrentes")
 
-    # Mapa de concorrentes (menor, abre espaco para a lista).
+    # Mapa de concorrentes a ESQUERDA (16:9: mapa + lista lado a lado).
     if png_bytes:
         dims = _png_dimensions(png_bytes)
         if dims is not None:
             img_w, img_h = dims
-            max_w, max_h = 515.0, 360.0
+            max_w, max_h = 560.0, 430.0
             scale = min(max_w / img_w, max_h / img_h)
             draw_w = img_w * scale
             draw_h = img_h * scale
+            x = 36.0 + (max_w - draw_w) / 2.0
+            y = 60.0 + (max_h - draw_h) / 2.0
             try:
-                pdf.image(BytesIO(png_bytes), x=(_PAGE_W - draw_w) / 2.0, y=80, w=draw_w, h=draw_h)
+                pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
             except Exception:
                 pass
 
-    list_y = 470.0
+    # Lista de redes a DIREITA.
+    list_x = 620.0
+    list_w = _PAGE_W - list_x - 36.0
     pdf.set_text_color(*ULTRA_MAGENTA)
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.set_xy(40, list_y)
-    pdf.cell(_PAGE_W - 80, 18, _ascii("Redes no raio de 1.5 km"))
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_xy(list_x, 70.0)
+    pdf.cell(list_w, 18, _ascii("Redes no raio de 1.5 km"))
 
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 10)
-    y = list_y + 26.0
+    y = 100.0
     linhas: list[str] = []
     linhas.extend(_point_rows(result.get("concorrentes_raio", pd.DataFrame()), "Concorrente"))
     linhas.extend(_point_rows(result.get("ultra_raio", pd.DataFrame()), "Ultra"))
     for line in linhas:
-        if y > _PAGE_H - 50:
+        if y > _PAGE_H - 40:
             break
-        pdf.set_xy(40, y)
-        pdf.cell(_PAGE_W - 80, 13, _ascii(line))
-        y += 14.0
+        pdf.set_xy(list_x, y)
+        pdf.multi_cell(list_w, 14, _ascii(line))
+        y = pdf.get_y() + 4.0
 
     _draw_footer(pdf, with_attribution=True)
 
 
 def _credit_page(pdf: _UltraPDF, assets: dict[str, bytes | None]) -> None:
-    """(g) Realizacao/Credito — texto fixo Ultra, atribuicao, nota READ-ONLY. SEM PII."""
+    """(g) Realizacao/Credito — fundo turquesa solido, texto Ultra centralizado. SEM PII.
+
+    Usa turquesa solido (nao a foto da capa) para o texto de credito/metodo ficar legivel no
+    formato 16:9; a faixa de marca da capa ja cumpre o papel de branding visual no inicio.
+    """
     pdf.add_page()
-    _draw_full_page_background(pdf, assets.get("capa"), ULTRA_TURQUESA)
+    pdf.set_fill_color(*ULTRA_TURQUESA)
+    pdf.rect(0, 0, _PAGE_W, _PAGE_H, style="F")
 
     pdf.set_text_color(*_BRANCO)
-    pdf.set_font("Helvetica", "B", 22)
-    pdf.set_xy(40, 320)
-    pdf.cell(_PAGE_W - 80, 28, _ascii("Realizacao"), align="C")
+    pdf.set_font("Helvetica", "B", 30)
+    pdf.set_xy(40, 150)
+    pdf.cell(_PAGE_W - 80, 36, _ascii("Realizacao"), align="C")
 
-    pdf.set_font("Helvetica", "", 13)
-    pdf.set_xy(40, 360)
-    pdf.cell(_PAGE_W - 80, 20, _ascii(_CREDITO_ULTRA), align="C")
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_xy(40, 210)
+    pdf.cell(_PAGE_W - 80, 22, _ascii(_CREDITO_ULTRA), align="C")
 
-    pdf.set_font("Helvetica", "", 10)
-    pdf.set_xy(40, 392)
+    pdf.set_font("Helvetica", "", 12)
+    pdf.set_xy(160, 260)
     pdf.multi_cell(
-        _PAGE_W - 80,
-        14,
+        _PAGE_W - 320,
+        16,
         _ascii(
             "Metodo: intersecao geometrica de setores censitarios reais (IBGE 2022) com circulo de "
             "1.5 km ao redor da coordenada. Distribuicao intrassetor aproximada por area."
@@ -459,10 +469,10 @@ def _credit_page(pdf: _UltraPDF, assets: dict[str, bytes | None]) -> None:
         align="C",
     )
 
-    pdf.set_xy(40, 440)
+    pdf.set_xy(160, 320)
     pdf.multi_cell(
-        _PAGE_W - 80,
-        14,
+        _PAGE_W - 320,
+        16,
         _ascii(
             "READ-ONLY: este relatorio nao altera score_priorizacao, carteira, plano ou artefatos "
             "oficiais do M1."
@@ -471,7 +481,7 @@ def _credit_page(pdf: _UltraPDF, assets: dict[str, bytes | None]) -> None:
     )
 
     pdf.set_font("Helvetica", "", 9)
-    pdf.set_xy(40, _PAGE_H - 60)
+    pdf.set_xy(40, _PAGE_H - 40)
     pdf.cell(_PAGE_W - 80, 12, _ascii(f"Fundo de ruas: {_ATRIBUICAO_TILES}."), align="C")
 
 

@@ -98,6 +98,7 @@ def test_export_csv_setores_censitarios_gera_bytes_utf8_sig_com_sep_ponto_virgul
 _RESIDUAL_OK = {
     "score_oportunidade_residual": 42.5,
     "oferta_efetiva_disponivel": 1200.0,
+    "sam_fitness_potencial": 3000.0,
     "oferta_consumida_mercado_estimada": 1800.0,
 }
 
@@ -148,18 +149,23 @@ def test_pdf_big_numbers_com_residual_e_nd():
     result, mapas = _sample_result()
 
     pdf_com = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
-    # Rotulos das 6 metricas presentes.
+    # Rotulos das 8 metricas presentes (4x2). NB: parenteses literais sao escapados (\( \)) no
+    # stream PDF, entao verificamos o prefixo antes do "(alunos)"/"(est.)".
     for rotulo in (
         b"Populacao total no raio",
         b"Renda per capita media",
         b"Score censitario medio",
         b"Score censitario maximo",
-        b"Residual fitness",
+        b"SAM Fitness",
+        b"Residual Fitness",
         b"Concorrentes no raio",
+        b"Consumo concorrentes",
     ):
         assert rotulo in pdf_com
-    # Valor de residual aparece quando fornecido.
-    assert b"42,50" in pdf_com
+    # SAM e Residual Fitness saem em ALUNOS (numero), nao score: sam=3000, residual=1200, consumo=1800.
+    assert b"3.000" in pdf_com
+    assert b"1.200" in pdf_com
+    assert b"1.800" in pdf_com
 
     # Sem residual -> "n/d" auditavel.
     pdf_sem = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=None)
