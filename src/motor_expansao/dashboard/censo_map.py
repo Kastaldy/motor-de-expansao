@@ -37,7 +37,9 @@ _BASEMAP_CACHE_DIR = Path("data/cache/basemap_tiles")
 # para o arruamento aparecer sob o choropleth. O provedor e resolvido lazy em _fetch_basemap
 # (ctx.providers.CartoDB.<_BASEMAP_PROVIDER_ATTR>).
 _BASEMAP_PROVIDER_ATTR = "VoyagerNoLabels"
-_BASEMAP_CONTRAST = 1.4
+_BASEMAP_CONTRAST = 1.6
+# Zoom extra dos tiles (alem do minimo p/ cobrir a bbox) -> ruas mais nitidas/detalhadas.
+_BASEMAP_ZOOM_BUMP = 1
 
 # Margem do frame do mapa em torno do circulo de 1.5 km. O choropleth (display) cobre TODO
 # o frame (setores recortados a este quadrado), nao so o circulo — estilo GeoFusion. A analise
@@ -69,7 +71,7 @@ _SECTOR_PALETTE = [
 # Alpha do choropleth (heat map) sobre o basemap. Quanto MENOR, mais transparente o
 # mapa de calor e mais visiveis as ruas do basemap por baixo. A legenda usa RGB solido
 # (ignora este alpha), entao as faixas seguem nitidas mesmo com fill bem translucido.
-_CHOROPLETH_ALPHA = 95
+_CHOROPLETH_ALPHA = 55
 
 # Cor de fill para setor sem dado na faixa nova (cinza translucido).
 _FILL_SEM_DADO = (218, 222, 229, _CHOROPLETH_ALPHA)
@@ -394,7 +396,7 @@ def _fetch_basemap(
         except Exception:
             pass
         minx, miny, maxx, maxy = bounds_3857
-        zoom = _zoom_for_bounds(minx, maxx, width)
+        zoom = min(19, _zoom_for_bounds(minx, maxx, width) + _BASEMAP_ZOOM_BUMP)
         source = getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)
         img, extent = ctx.bounds2img(minx, miny, maxx, maxy, zoom=zoom, source=source, ll=False)
         if _BASEMAP_CONTRAST != 1.0:
