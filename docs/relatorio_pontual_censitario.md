@@ -170,18 +170,32 @@ Validacao minima: `tests/unit/test_relatorio_pontual_censitario_mapa.py` gera as
 
 ## 7. Export CSV e PDF
 
-Implementacao do Bloco 5: `src/motor_expansao/dashboard/censo_report.py`.
+Implementacao: `src/motor_expansao/dashboard/censo_report.py`. **Template Ultra reescrito sobre `fpdf2`** no ciclo BLK-CENSO-02 (gate humano de Felipe em 2026-06-05 aprovou trocar o writer manual PDF-1.4 por `fpdf2`, dependencia BASE em `pyproject.toml`). O writer roda com **compressao de stream desativada** (`set_compression(False)`) para auditabilidade anti-PII e asserts de texto cru — os PDFs sao pequenos.
 
 Funcoes principais:
-- `gerar_csv_setores_censitarios(result)`: retorna bytes CSV da tabela de setores intersectados, com `sep=";"` e `encoding="utf-8-sig"`, sem incluir geometria bruta. (Inalterado.)
-- `gerar_pdf_relatorio_pontual_censitario(result, mapas=None)`: retorna bytes PDF executivo em memoria, com capa/KPIs, **uma pagina de mapa por camada** (titulos "Mapa - Densidade", "Mapa - Renda per capita", "Mapa - Concorrentes"), concorrencia, tabela resumida, metodologia e limites. O parametro `mapas` aceita o `dict[str,bytes]` das camadas combinadas OU, por retrocompat, `bytes` de um unico mapa legado.
-- `gerar_payloads_download_relatorio_censitario(...)` e `render_downloads_relatorio_censitario(...)`: preparam nomes/bytes e botoes `st.download_button` para CSV/PDF; repassam o dict de mapas ao PDF.
+- `gerar_csv_setores_censitarios(result)`: retorna bytes CSV da tabela de setores intersectados, com `sep=";"` e `encoding="utf-8-sig"`, sem incluir geometria bruta. **INALTERADO** neste ciclo.
+- `gerar_pdf_relatorio_pontual_censitario(result, mapas=None, *, residual=None, ultra_dir=None)`: retorna bytes PDF em memoria com a **estrutura de 7 paginas** (template Ultra), nesta ordem:
+  1. **Capa** — fundo turquesa `#00A79D`, titulo, coordenada `lat,lng` + `municipio/UF`, raio 1.5 km, logo Ultra (se disponivel).
+  2. **Populacao** — mapa `densidade` (PNG do BLK-CENSO-01) sobre fundo claro `#F8F8F8` + faixa de titulo turquesa.
+  3. **Renda** — mapa `renda`.
+  4. **Score censitario** — mapa `concorrentes` (mapa de score com pins).
+  5. **Big Numbers** — grid 2x3 das 6 metricas (ver abaixo).
+  6. **Concorrentes** — mapa de concorrentes + lista textual das redes no raio (coluna `rede`/`nome_unidade`, NUNCA dados de pessoas).
+  7. **Realizacao/Credito** — texto fixo "Relatorio gerado pelo Motor de Expansao - Ultra Academia", atribuicao de tiles `(c) OpenStreetMap, (c) CARTO` e nota READ-ONLY. SEM PII.
+  - `mapas` aceita o `dict[str,bytes]` das camadas combinadas OU, por retrocompat, `bytes` de um unico mapa legado (1 mapa na pagina de Populacao). PNGs passados ao fpdf2 via `io.BytesIO`.
+- **Big Numbers (6 metricas, READ-ONLY):** populacao total, renda per capita media, score censitario medio e maximo vem do `result` censitario; **residual fitness** (`score_oportunidade_residual`) e **consumo de concorrentes** (`oferta_consumida_mercado_estimada`) vem de `lookup_hex_by_coord(lat, lng, df, h3_res=7)` lendo o `df` ja em escopo em `pages.py` — leitura pura, SEM load novo de parquet e SEM recalcular M1/residual. Campo ausente/NaN/hex-ausente -> **"n/d"** auditavel, com nota de fonte citando o metodo `setor_censitario_intersecao_area_1p5km`.
+- `gerar_payloads_download_relatorio_censitario(...)` e `render_downloads_relatorio_censitario(...)`: preparam nomes/bytes e botoes `st.download_button`; propagam os kwargs `residual` e `ultra_dir` ao PDF.
+
+Assets de branding (Fase 0):
+- Dois fundos LIMPOS extraidos do `data/referencias/Teste Modelo.pptx` (zip Office) para `data/ultra/` (gitignored; ficam no host/volume `:ro`): `relatorio_capa_bg.png` (capa turquesa, de `ppt/media/image6.png`) e `relatorio_conteudo_bg.png` (fundo claro, de `ppt/media/image1.jpg` -> PNG). Otimizados com Pillow `optimize=True`.
+- **Anti-PII (guardrail):** `ppt/media/image24.png` (cartao de contato com nome/telefone/e-mail reais) NUNCA e extraido, embutido ou versionado; o `.pptx` e qualquer PDF de saida NUNCA sao versionados. Teste `test_pdf_sem_pii_de_pessoas` e defesa em profundidade.
+- **Fallback gracioso/offline-safe:** `_load_branding_assets` retorna `None` por asset em qualquer falha; o writer desenha entao fundo de cor solida (turquesa na capa, branco-gelo no conteudo). PDF valido SEM excecao mesmo em CI/checkout/deploy limpo (sem os assets). Geracao 100% offline (fpdf2 nao faz fetch; os tiles ficam so na geracao dos PNGs do BLK-CENSO-01/DEC-004).
 
 Decisao operacional:
-- O PDF usa writer leve interno + `Pillow` apenas para converter cada PNG de mapa em imagem embutida; o writer manual foi generalizado de 1 XObject para N imagens (uma pagina por camada). Nenhuma dependencia nova de PDF.
-- A geracao e sob demanda e retorna bytes; nao escreve artefatos permanentes fora de cache/temp controlado.
+- `fpdf2` e pure-Python e offline; a geracao e sob demanda e retorna bytes, sem escrever artefatos permanentes.
+- **Deploy:** adotar `fpdf2` exige rebuild da imagem Docker + redeploy por digest na VPS; os PNGs de `data/ultra/` (gitignored) precisam ser copiados ao volume `/opt/motor-expansao/data/ultra/` para o branding aparecer em producao (sem eles, o fallback solido garante PDF valido). Passo de OPS gated (guardrail §6).
 
-Validacao minima: `tests/unit/test_relatorio_pontual_censitario_export.py` cobre bytes CSV/PDF, secoes obrigatorias, as 3 camadas embutidas no PDF, retrocompat de `bytes` unico e helper de download.
+Validacao minima: `tests/unit/test_relatorio_pontual_censitario_export.py` cobre bytes CSV/PDF, os 7 headers de secao, `/Count 7`, as 3 camadas embutidas no PDF, Big Numbers com/sem residual ("n/d"), fallback offline sem assets, anti-PII, atribuicao de tiles, retrocompat de `bytes` unico e helper de download.
 
 ### Implementacao do Bloco 6
 

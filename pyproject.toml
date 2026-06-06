@@ -20,6 +20,7 @@ dependencies = [
     "plotly>=5.20.0",
     "pydeck>=0.8.1",
     "pillow>=10.0.0",
+    "fpdf2>=2.7.0,<3",
 
     # Geoespacial (pipeline M1 + camadas)
     "h3>=3.7.7",

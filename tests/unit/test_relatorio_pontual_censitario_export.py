@@ -95,16 +95,43 @@ def test_export_csv_setores_censitarios_gera_bytes_utf8_sig_com_sep_ponto_virgul
     assert "geometry_wkb" not in text
 
 
+_RESIDUAL_OK = {
+    "score_oportunidade_residual": 42.5,
+    "oferta_efetiva_disponivel": 1200.0,
+    "oferta_consumida_mercado_estimada": 1800.0,
+}
+
+# Strings de PII reais da lamina de contato do .pptx (image24) — NUNCA podem vazar no PDF.
+_PII_FORBIDDEN = (
+    b"vinicius",
+    b"Vinicius",
+    b"Vin\xedcius",
+    b"96346-2974",
+    b"@ultraacademia.com.br",
+)
+
+
+def _count_layer_titles(pdf_bytes: bytes) -> int:
+    """Conta as 3 camadas de mapa por TITULO (fundos somam XObjects, titulos nao)."""
+    titulos = (b"Populacao - Densidade", b"Renda per capita", b"Score censitario de contexto")
+    return sum(1 for titulo in titulos if titulo in pdf_bytes)
+
+
 def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
     result, mapas = _sample_result()
 
-    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas)
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, residual=_RESIDUAL_OK, ultra_dir="data/ultra"
+    )
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
     assert len(pdf_bytes) > 15_000
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
-    # 3 camadas combinadas -> 3 XObjects de imagem no PDF.
+    # Estrutura de 7 paginas (capa, pop, renda, score, big numbers, concorrentes, credito).
+    assert b"/Count 7" in pdf_bytes
+    # 3 camadas de mapa embutidas (contadas por titulo, nao por XObject).
+    assert _count_layer_titles(pdf_bytes) == 3
     assert pdf_bytes.count(b"/Subtype /Image") >= 3
     assert b"setor_censitario_intersecao_area_1p5km" in pdf_bytes
 
@@ -112,10 +139,65 @@ def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
 def test_pdf_embute_tres_camadas():
     result, mapas = _sample_result()
 
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, ultra_dir="data/ultra")
+
+    assert _count_layer_titles(pdf_bytes) == 3
+
+
+def test_pdf_big_numbers_com_residual_e_nd():
+    result, mapas = _sample_result()
+
+    pdf_com = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
+    # Rotulos das 6 metricas presentes.
+    for rotulo in (
+        b"Populacao total no raio",
+        b"Renda per capita media",
+        b"Score censitario medio",
+        b"Score censitario maximo",
+        b"Residual fitness",
+        b"Concorrentes no raio",
+    ):
+        assert rotulo in pdf_com
+    # Valor de residual aparece quando fornecido.
+    assert b"42,50" in pdf_com
+
+    # Sem residual -> "n/d" auditavel.
+    pdf_sem = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=None)
+    assert b"n/d" in pdf_sem
+
+
+def test_pdf_offline_safe_sem_assets(tmp_path):
+    """Sem os assets de branding -> PDF valido com fundo solido, sem excecao."""
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, residual=_RESIDUAL_OK, ultra_dir=tmp_path
+    )
+
+    assert pdf_bytes.startswith(b"%PDF")
+    assert b"/Count 7" in pdf_bytes
+    for header in PDF_SECTION_HEADERS:
+        assert header.encode("latin-1") in pdf_bytes
+
+
+def test_pdf_sem_pii_de_pessoas():
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, residual=_RESIDUAL_OK, ultra_dir="data/ultra"
+    )
+
+    for needle in _PII_FORBIDDEN:
+        assert needle not in pdf_bytes
+
+
+def test_pdf_atribuicao_de_tiles_no_rodape():
+    result, mapas = _sample_result()
+
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas)
 
-    for titulo in ("Densidade", "Renda", "Concorrentes"):
-        assert titulo.encode("latin-1") in pdf_bytes
+    assert b"OpenStreetMap" in pdf_bytes
+    assert b"CARTO" in pdf_bytes
 
 
 def test_pdf_retrocompat_aceita_bytes_unico_legado():
@@ -124,7 +206,11 @@ def test_pdf_retrocompat_aceita_bytes_unico_legado():
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas["densidade"])
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert pdf_bytes.count(b"/Subtype /Image") == 1
+    # Bytes unico legado -> so a camada de densidade recebe mapa; renda/score ficam sem mapa.
+    assert b"Populacao - Densidade" in pdf_bytes
+    assert b"Mapa indisponivel para esta camada." in pdf_bytes
+    # Apenas 1 mapa real + (capa/credito reusam o asset de capa) -> conta de mapas reais via titulo.
+    assert _count_layer_titles(pdf_bytes) == 3  # titulos das 3 paginas existem; mapas, nao
 
 
 def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
@@ -134,6 +220,7 @@ def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
         result,
         mapas,
         filename_prefix="teste_relatorio",
+        residual=_RESIDUAL_OK,
     )
 
     assert payloads.csv_filename == "teste_relatorio_setores.csv"
