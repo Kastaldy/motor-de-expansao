@@ -7,7 +7,7 @@ from typing import cast
 
 import numpy as np
 import pandas as pd
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont
 from shapely.geometry import MultiPolygon, Point, Polygon, box
 from shapely.geometry.base import BaseGeometry
 
@@ -44,15 +44,20 @@ _BASEMAP_CONTRAST = 1.6
 _BASEMAP_ZOOM_BUMP = 1
 
 # "Ruas por cima do heat" (correcao BLK-CENSO-03 / pedido de Felipe 2026-06-06): o choropleth
-# fica TRANSLUCIDO sobre o basemap e, em seguida, a TINTA do basemap (ruas + labels = pixels
-# escuros) e recolocada POR CIMA do heat via mascara de luminancia. Assim as ruas ficam sempre
-# visiveis mesmo aumentando a opacidade do mapa de calor. Tudo isto e RENDER (READ-ONLY M1).
+# fica TRANSLUCIDO sobre o basemap e, em seguida, recolocamos POR CIMA do heat (a) os LABELS
+# (nomes = pixels escuros) via mascara de luminancia e (b) o DESENHO DAS RUAS via deteccao de
+# BORDAS (as ruas do Voyager sao casings CLAROS -> nao sao "escuros", entao luminancia sozinha
+# nao as pega; FIND_EDGES extrai a geometria das vias e a desenhamos como linhas escuras). Tudo
+# isto e RENDER (READ-ONLY M1).
 _ROADS_ON_TOP = True
-# Pixels do basemap com luminancia < cutoff sao considerados "tinta" (rua/label/feature) e
-# recolocados por cima; >= cutoff (fundo claro) ficam transparentes (deixam o heat aparecer).
+# (a) LABELS: pixels do basemap com luminancia < cutoff = texto/feature escuro -> recolocado por cima.
 _INK_BG_CUTOFF = 232
-# Ganho da rampa de alpha da tinta (quanto mais escuro o pixel, mais opaca a recolocacao).
 _INK_GAIN = 5.0
+# (b) RUAS por bordas: FIND_EDGES sobre o basemap; bordas acima de _EDGE_MIN viram linha escura
+# `_ROAD_INK_RGB` por cima do heat (ganho `_EDGE_GAIN`). Capta o arruamento mesmo sendo claro.
+_EDGE_MIN = 14
+_EDGE_GAIN = 5.0
+_ROAD_INK_RGB = (55, 65, 85)
 
 # Margem do frame do mapa em torno do circulo de 1.5 km. O choropleth (display) cobre TODO
 # o frame (setores recortados a este RETANGULO com a proporcao da area de mapa), nao so o
@@ -528,19 +533,29 @@ def _render_camada(
                     if len(hole) >= 3:
                         draw.polygon(hole, fill=(248, 250, 252, 120))
 
-    # Ruas POR CIMA do heat: recoloca a tinta do basemap (ruas/labels = pixels escuros) sobre
-    # o choropleth via mascara de luminancia. Fundo claro do basemap (>= cutoff) fica
-    # transparente (deixa o heat aparecer); ruas/labels (escuros) punctuam por cima e ficam
-    # sempre visiveis. Feito ANTES do circulo/pins/escala (que ficam no topo). RENDER apenas.
+    # Ruas/labels POR CIMA do heat (feito ANTES do circulo/pins/escala, que ficam no topo):
+    #   (a) labels/feature escura -> recoloca o pixel do basemap via mascara de luminancia;
+    #   (b) DESENHO das vias -> FIND_EDGES extrai a geometria (mesmo de ruas claras) e desenha
+    #       linhas escuras `_ROAD_INK_RGB` por cima do heat. RENDER apenas (READ-ONLY M1).
     if basemap_patch is not None and _ROADS_ON_TOP:
         cutoff = _INK_BG_CUTOFF
-        gain = _INK_GAIN
+        ink_gain = _INK_GAIN
+        edge_min = _EDGE_MIN
+        edge_gain = _EDGE_GAIN
         lum = basemap_patch.convert("L")
-        ink_mask = lum.point(
-            lambda v: 0 if v >= cutoff else min(255, int((cutoff - v) * gain))
-        )
         region = image.crop((left, top, right, bottom))
-        region.paste(basemap_patch, (0, 0), ink_mask)
+        # (a) labels (texto/feature escura)
+        label_mask = lum.point(
+            lambda v: 0 if v >= cutoff else min(255, int((cutoff - v) * ink_gain))
+        )
+        region.paste(basemap_patch, (0, 0), label_mask)
+        # (b) desenho das ruas via bordas
+        edges = lum.filter(ImageFilter.FIND_EDGES)
+        edge_mask = edges.point(
+            lambda v: 0 if v <= edge_min else min(255, int((v - edge_min) * edge_gain))
+        )
+        road_layer = Image.new("RGB", basemap_patch.size, _ROAD_INK_RGB)
+        region.paste(road_layer, (0, 0), edge_mask)
         image.paste(region, (left, top))
 
     circle_points = [
