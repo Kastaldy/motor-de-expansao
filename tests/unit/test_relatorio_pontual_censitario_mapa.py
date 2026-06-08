@@ -20,7 +20,7 @@ from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS
 LAT_C = -23.55
 LNG_C = -46.63
 
-_CAMADAS = {"densidade", "renda", "concorrentes"}
+_CAMADAS = {"densidade", "renda", "score", "concorrentes"}
 
 
 def _to_wgs_geometry(local_geom):
@@ -282,6 +282,30 @@ def test_camada_concorrentes_pins_pura_sem_choropleth():
     assert conc_var < dens_var, (
         "Camada concorrentes deveria ser mais uniforme (sem choropleth) que densidade. "
         f"std concorrentes={conc_var:.1f}, std densidade={dens_var:.1f}"
+    )
+
+
+def test_camada_score_tem_choropleth_e_legenda():
+    # BLK-CENSO-03-FU5: a camada "score" deve ter choropleth (modo de cor ativo), ao contrario
+    # da "concorrentes" (so-pins). A variancia de cor na regiao central deve ser MAIOR na score
+    # que na concorrentes (que nao tem choropleth).
+    import numpy as np
+
+    setores = pd.DataFrame(
+        [
+            _sector_record("355030801000001", box(-700, -700, 0, 700), score=15.0),
+            _sector_record("355030801000002", box(0, -700, 700, 700), score=95.0),
+        ]
+    )
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+    )
+    assert "score" in mapas
+    crop_box = (100, 150, 400, 450)
+    score_arr = np.array(Image.open(BytesIO(mapas["score"])).convert("RGB").crop(crop_box))
+    conc_arr = np.array(Image.open(BytesIO(mapas["concorrentes"])).convert("RGB").crop(crop_box))
+    assert float(score_arr.std()) > float(conc_arr.std()), (
+        "Camada score deveria ter choropleth (mais variada) que a concorrentes (so-pins)."
     )
 
 

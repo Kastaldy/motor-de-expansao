@@ -113,8 +113,13 @@ _PII_FORBIDDEN = (
 
 
 def _count_layer_titles(pdf_bytes: bytes) -> int:
-    """Conta as 3 camadas de mapa por TITULO (fundos somam XObjects, titulos nao)."""
-    titulos = (b"Populacao - Densidade", b"Renda per capita", b"Concorrentes e Ultra")
+    """Conta as 3 paginas de choropleth por TITULO (densidade/renda/score).
+
+    A camada Concorrentes (so-pins) vive na pagina "Concorrentes" (`_competitors_page`),
+    contada a parte. "Score censitario" tambem aparece no Big Numbers, mas o titulo da
+    pagina de choropleth e o mesmo texto — a contagem por titulo segue == 3.
+    """
+    titulos = (b"Populacao - Densidade", b"Renda per capita", b"Score censitario")
     return sum(1 for titulo in titulos if titulo in pdf_bytes)
 
 
@@ -129,11 +134,12 @@ def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
     assert len(pdf_bytes) > 15_000
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
-    # Estrutura de 7 paginas (capa, pop, renda, score, big numbers, concorrentes, credito).
+    # Estrutura de 7 paginas (capa, pop, renda, score, concorrentes, big numbers, credito).
     assert b"/Count 7" in pdf_bytes
-    # 3 camadas de mapa embutidas (contadas por titulo, nao por XObject).
+    # 3 paginas de choropleth (densidade/renda/score) contadas por titulo; a camada
+    # Concorrentes (so-pins) e a 4a imagem de mapa, embutida na pagina de Concorrentes.
     assert _count_layer_titles(pdf_bytes) == 3
-    assert pdf_bytes.count(b"/Subtype /Image") >= 3
+    assert pdf_bytes.count(b"/Subtype /Image") >= 4
     assert b"setor_censitario_intersecao_area_1p5km" in pdf_bytes
 
 

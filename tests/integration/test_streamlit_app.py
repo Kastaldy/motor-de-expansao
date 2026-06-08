@@ -4263,7 +4263,7 @@ def test_render_relatorio_pontual_censitario_com_coordenada_gera_mapa_e_download
         }]),
     }
 
-    mapas_stub = {"densidade": b"PNG", "renda": b"PNG", "concorrentes": b"PNG"}
+    mapas_stub = {"densidade": b"PNG", "renda": b"PNG", "score": b"PNG", "concorrentes": b"PNG"}
     with (
         mock.patch("motor_expansao.dashboard.pages.analisar_ponto_censitario_setores", return_value=result) as analyze_mock,
         mock.patch("motor_expansao.dashboard.pages.render_mapas_censitarios_combinados", return_value=mapas_stub) as map_mock,
@@ -4283,8 +4283,8 @@ def test_render_relatorio_pontual_censitario_com_coordenada_gera_mapa_e_download
     analyze_mock.assert_called_once()
     map_mock.assert_called_once()
     download_mock.assert_called_once()
-    # 3 camadas combinadas exibidas juntas (sem dropdown que esconda camadas).
-    assert image_mock.call_count == 3
+    # 4 camadas combinadas exibidas juntas (densidade/renda/score/concorrentes; sem dropdown).
+    assert image_mock.call_count == 4
 
 
 def test_load_censo_geo_setores_le_particao_por_municipio(tmp_path, monkeypatch):

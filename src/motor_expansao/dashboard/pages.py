@@ -2578,8 +2578,13 @@ def render_relatorio_pontual_censitario(
         width="stretch",
     )
     st.image(
+        mapas["score"],
+        caption="Score censitario (0-100) - faixas de cor com legenda.",
+        width="stretch",
+    )
+    st.image(
         mapas["concorrentes"],
-        caption="Concorrentes e Ultra (pins) sobre score censitario de contexto.",
+        caption="Concorrentes e Ultra (pins) sobre o basemap de ruas, sem mapa de calor.",
         width="stretch",
     )
 

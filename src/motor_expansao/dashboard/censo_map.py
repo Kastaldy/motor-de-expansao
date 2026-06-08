@@ -75,8 +75,9 @@ MAPA_CENSITARIO_METRICAS = {
     "peso_area_setor": "Peso de area",
 }
 
-# Chaves canonicas das 3 camadas combinadas.
-CAMADAS_CENSITARIAS = ("densidade", "renda", "concorrentes")
+# Chaves canonicas das 4 camadas combinadas (BLK-CENSO-03-FU5): `score` e o choropleth de
+# score censitario COM legenda; `concorrentes` e o mapa SO de pins (sem choropleth).
+CAMADAS_CENSITARIAS = ("densidade", "renda", "score", "concorrentes")
 
 _SECTOR_PALETTE = [
     (232, 242, 255, 225),
@@ -640,11 +641,13 @@ def render_mapas_censitarios_combinados(
     logos_dir: Path | None = None,
     ultra_logo_dir: Path | None = None,
 ) -> dict[str, bytes]:
-    """Gera as 3 camadas do Relatorio Pontual Censitario numa unica chamada.
+    """Gera as 4 camadas do Relatorio Pontual Censitario numa unica chamada.
 
-    Retorna `{"densidade": png, "renda": png, "concorrentes": png}` (chaves canonicas).
-    As 3 camadas compartilham basemap, bbox, projecao (EPSG:3857) e pins; variam so o
-    fill dos setores (faixa absoluta fixa) + a legenda/titulo.
+    Retorna `{"densidade": png, "renda": png, "score": png, "concorrentes": png}` (chaves
+    canonicas). `score` e o choropleth de score censitario COM legenda (modo de cor ativo);
+    `concorrentes` e o mapa SO de pins (basemap + pins, sem choropleth). As 3 camadas de
+    choropleth (densidade/renda/score) e a de pins compartilham basemap, bbox, projecao
+    (EPSG:3857) e pins; variam so o fill dos setores + a legenda/titulo.
 
     READ-ONLY sobre o M1: o motor (`analisar_ponto_censitario_setores`,
     `setor_censitario_intersecao_area_1p5km`, raio 1.5 km) e INTOCADO; toda a mudanca e
@@ -760,6 +763,16 @@ def render_mapas_censitarios_combinados(
         source_values=renda_series,
         **common,
     )
+    # Camada Score censitario: choropleth COM legenda (modo de cor ativo) — restaurada no
+    # BLK-CENSO-03-FU5 (Felipe, 2026-06-08). Distinta da camada Concorrentes (so-pins).
+    score_png = _render_camada(
+        titulo="Relatorio Pontual Censitario - Score censitario",
+        legenda_titulo="Score censitario (0-100)",
+        legenda_entries=_score_legend_entries(),
+        color_fn=_color_for_score,
+        source_values=score_series,
+        **common,
+    )
     concorrentes_png = _render_camada(
         titulo="Relatorio Pontual Censitario - Concorrentes e Ultra",
         legenda_titulo="Pins: Ultra e concorrentes",
@@ -773,6 +786,7 @@ def render_mapas_censitarios_combinados(
     return {
         "densidade": densidade_png,
         "renda": renda_png,
+        "score": score_png,
         "concorrentes": concorrentes_png,
     }
 
@@ -794,7 +808,7 @@ def render_mapa_censitario_estatico_png(
 
     Mantido para imports externos durante a migracao. Devolve UMA das camadas combinadas,
     mapeando o antigo `metric_column` para a chave canonica mais proxima (renda->"renda",
-    score->"concorrentes", demais->"densidade"). `basemap=False` por padrao (offline) p/
+    score->"score", demais->"densidade"). `basemap=False` por padrao (offline) p/
     nao depender de internet em chamadas legadas. Prefira a orquestradora combinada.
     """
     mapas = render_mapas_censitarios_combinados(
@@ -811,5 +825,5 @@ def render_mapa_censitario_estatico_png(
     if metric_column == "renda_per_capita_setor_2022_calibrada":
         return mapas["renda"]
     if metric_column == "score_setor_2022_calibrado":
-        return mapas["concorrentes"]
+        return mapas["score"]
     return mapas["densidade"]

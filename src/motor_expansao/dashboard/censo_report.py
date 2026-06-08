@@ -13,22 +13,26 @@ from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSIT
 
 # Cabecalhos canonicos das 7 paginas do template Ultra (ASCII, sem acento problematico).
 # Cada string PRECISA aparecer nos bytes crus do PDF (compressao desativada no writer).
+# Ordem das paginas (BLK-CENSO-03-FU5): Concorrentes ANTES de Big Numbers; pagina de
+# Score censitario (choropleth) restaurada.
 PDF_SECTION_HEADERS = (
     "Relatorio Pontual Censitario",
     "Populacao",
     "Renda",
     "Score censitario",
-    "Big Numbers",
     "Concorrentes",
+    "Big Numbers",
     "Realizacao",
 )
 
-# Camadas combinadas (chave canonica -> titulo da pagina de mapa no PDF). Ordem fixa.
-# A camada `concorrentes` (BLK-CENSO-03) e o mapa SO de pins (basemap + pins Ultra/concorrentes
-# + ponto central), SEM choropleth de score.
+# Camadas de mapa (chave canonica -> titulo da pagina de mapa no PDF). Ordem fixa.
+# `score` (BLK-CENSO-03-FU5) e o choropleth de score censitario COM legenda; a camada
+# `concorrentes` e o mapa SO de pins (basemap + pins Ultra/concorrentes + ponto central),
+# SEM choropleth — renderizada na pagina de Concorrentes (`_competitors_page`).
 MAP_LAYER_TITLES: tuple[tuple[str, str], ...] = (
     ("densidade", "Populacao - Densidade"),
     ("renda", "Renda per capita"),
+    ("score", "Score censitario"),
     ("concorrentes", "Concorrentes e Ultra"),
 )
 
@@ -513,13 +517,15 @@ def gerar_pdf_relatorio_pontual_censitario(
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
-    Estrutura de 7 paginas: Capa -> Populacao -> Renda -> Concorrentes e Ultra ->
-    Big Numbers -> Concorrentes -> Realizacao/Credito.
+    Estrutura de 7 paginas (BLK-CENSO-03-FU5): Capa -> Populacao -> Renda ->
+    Score censitario -> Concorrentes -> Big Numbers -> Realizacao/Credito.
 
-    `mapas` aceita o dict de camadas combinadas (`{"densidade","renda","concorrentes"}`)
-    ou `bytes` (1 mapa legado, retrocompat). `residual` carrega os campos do lookup hex
-    (READ-ONLY) para o Big Numbers. `ultra_dir` aponta os assets de branding (fallback
-    gracioso para cor solida se ausentes). Geracao 100% offline, sem PII.
+    `mapas` aceita o dict de camadas combinadas (`{"densidade","renda","score",
+    "concorrentes"}`) ou `bytes` (1 mapa legado, retrocompat). A pagina de Score censitario
+    usa o choropleth de score (modo de cor + legenda); a de Concorrentes usa o mapa so-pins.
+    `residual` carrega os campos do lookup hex (READ-ONLY) para o Big Numbers. `ultra_dir`
+    aponta os assets de branding (fallback gracioso para cor solida se ausentes). Geracao
+    100% offline, sem PII.
     """
     assets = _load_branding_assets(ultra_dir)
     layers = dict(_normalize_mapas_by_key(mapas))
@@ -528,9 +534,9 @@ def gerar_pdf_relatorio_pontual_censitario(
     _cover_page(pdf, result, assets)
     _map_page(pdf, layers.get("densidade"), title="Populacao - Densidade", assets=assets)
     _map_page(pdf, layers.get("renda"), title="Renda per capita", assets=assets)
-    _map_page(pdf, layers.get("concorrentes"), title="Concorrentes e Ultra", assets=assets)
-    _big_numbers_page(pdf, result, residual, assets)
+    _map_page(pdf, layers.get("score"), title="Score censitario", assets=assets)
     _competitors_page(pdf, result, layers.get("concorrentes"), assets)
+    _big_numbers_page(pdf, result, residual, assets)
     _credit_page(pdf, assets)
 
     output = pdf.output()
