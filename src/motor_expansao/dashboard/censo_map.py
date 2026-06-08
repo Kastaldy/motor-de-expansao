@@ -32,31 +32,32 @@ from motor_expansao.dashboard.utils import score_band_to_color
 # Cada ponto cobre ~3 km de lado -> poucos tiles; dedup por-tile do contextily.
 _BASEMAP_CACHE_DIR = Path("data/cache/basemap_tiles")
 
-# Estilo do fundo de ruas: CartoDB **Dark Matter** COM labels — o MESMO basemap do mapa
-# interativo do dashboard (`pdk.map_styles.CARTO_DARK`), a pedido de Felipe (2026-06-08) para
-# que o relatorio tenha a mesma LEGIBILIDADE de ruas/nomes do mapa do Motor de Expansao,
-# mudando apenas a cor (o choropleth). No fundo escuro as ruas sao linhas CLARAS finas e os
-# nomes claros — nitidos nativamente, sem nenhum realce/edge artificial. O choropleth
-# translucido por cima fornece a cor; as ruas claras aparecem por baixo (claro sob translucido).
+# Estilo do fundo de ruas: CartoDB **Voyager** COM labels (base CLARA estilo GeoFusion) —
+# trocado da Dark Matter pelo gate BLK-CENSO-03 (Felipe, 2026-06-08) para o mapa de calor nao
+# ficar escuro. No Voyager as ruas sao linhas ESCURAS finas e os nomes escuros sobre fundo
+# claro — nitidos nativamente, sem nenhum realce/edge artificial. O choropleth translucido por
+# cima fornece a cor; para a cor nao apagar o arruamento, recolocamos POR CIMA os PROPRIOS
+# pixels ESCUROS do tile (ruas+nomes nativos — NAO e edge-detection; ver _STREET_*).
 # O provedor e resolvido lazy em _fetch_basemap (ctx.providers.CartoDB.<_BASEMAP_PROVIDER_ATTR>).
-_BASEMAP_PROVIDER_ATTR = "DarkMatter"
-_BASEMAP_CONTRAST = 1.35
+_BASEMAP_PROVIDER_ATTR = "Voyager"
+_BASEMAP_CONTRAST = 1.15
 # Zoom extra dos tiles (alem do minimo p/ cobrir a bbox) -> ruas mais nitidas/detalhadas.
 _BASEMAP_ZOOM_BUMP = 1
 
-# Cores dos elementos desenhados DENTRO do mapa escuro (precisam ser claros p/ contrastar):
-# circulo do raio (laranja, como o do dashboard) e barra de escala/labels claros.
+# Cores dos elementos desenhados DENTRO do mapa claro (precisam contrastar com fundo claro):
+# circulo do raio (laranja, como o do dashboard) e barra de escala/labels em tinta ESCURA.
+# _CIRCLE_RGBA: laranja, visivel sobre o fundo claro (decisao gate BLK-CENSO-03).
 _CIRCLE_RGBA = (255, 176, 59, 235)
-_DARK_MAP_INK = (226, 232, 240)
+_DARK_MAP_INK = (31, 41, 55)
 
-# Ruas/nomes do Dark Matter sao pixels CLAROS sobre fundo escuro. Para o choropleth nao apagar
-# o arruamento, recolocamos POR CIMA do heat os PROPRIOS pixels claros do basemap (ruas+nomes
-# nativos do tile — NAO e edge-detection): luminancia > `_STREET_FLOOR` vira opacidade (ganho
-# `_STREET_GAIN`, teto `_STREET_CAP`). Resultado = ruas claras nitidas sobre a cor, igual ao
-# mapa do dashboard. RENDER apenas (READ-ONLY M1).
-_STREET_FLOOR = 52
-_STREET_GAIN = 2.6
-_STREET_CAP = 230
+# Ruas/nomes do Voyager sao pixels ESCUROS sobre fundo claro. Para o choropleth nao apagar
+# o arruamento, recolocamos POR CIMA do heat os PROPRIOS pixels escuros do basemap (ruas+nomes
+# nativos do tile — NAO e edge-detection): luminancia < `_STREET_CEIL` vira opacidade (ganho
+# `_STREET_GAIN`, teto `_STREET_CAP`). Resultado = ruas escuras nitidas sobre a cor, estilo
+# GeoFusion. RENDER apenas (READ-ONLY M1).
+_STREET_CEIL = 160
+_STREET_GAIN = 2.2
+_STREET_CAP = 210
 
 # Margem do frame do mapa em torno do circulo de 1.5 km. O choropleth (display) cobre TODO
 # o frame (setores recortados a este RETANGULO com a proporcao da area de mapa), nao so o
@@ -85,10 +86,11 @@ _SECTOR_PALETTE = [
     (214, 93, 74, 225),
 ]
 
-# Alpha do choropleth (heat) sobre o basemap ESCURO. Pode ser moderado porque as ruas claras do
-# Dark Matter sao RECOLOCADAS por cima depois (_STREET_*), entao o arruamento nao se perde.
-# A legenda usa RGB solido (ignora este alpha), entao as faixas seguem nitidas na legenda.
-_CHOROPLETH_ALPHA = 95
+# Alpha do choropleth (heat) sobre o basemap CLARO Voyager. Mais opaco que no fundo escuro para
+# a cor de faixa ser legivel sobre o claro; as ruas escuras do Voyager sao RECOLOCADAS por cima
+# depois (_STREET_*), entao o arruamento nao se perde. A legenda usa RGB solido (ignora este
+# alpha), entao as faixas seguem nitidas na legenda.
+_CHOROPLETH_ALPHA = 140
 
 # Cor de fill para setor sem dado na faixa nova (cinza translucido).
 _FILL_SEM_DADO = (218, 222, 229, _CHOROPLETH_ALPHA)
@@ -232,7 +234,7 @@ def _draw_scale_bar(
     px_len = max(20, int(round(scale_m / meters_per_px)))
     x0 = left + 18
     y0 = bottom - 28
-    # Barra de escala em tinta CLARA (dentro do mapa escuro Dark Matter).
+    # Barra de escala em tinta ESCURA (dentro do mapa claro Voyager).
     draw.line([(x0, y0), (x0 + px_len, y0)], fill=_DARK_MAP_INK, width=4)
     draw.line([(x0, y0 - 5), (x0, y0 + 5)], fill=_DARK_MAP_INK, width=2)
     draw.line([(x0 + px_len, y0 - 5), (x0 + px_len, y0 + 5)], fill=_DARK_MAP_INK, width=2)
@@ -459,8 +461,14 @@ def _render_camada(
     n_setores: int,
     width: int,
     height: int,
+    pins_only: bool = False,
 ) -> bytes:
-    """Desenha UMA camada (mesmos bbox/projecao/basemap/pins; varia fill + legenda)."""
+    """Desenha UMA camada (mesmos bbox/projecao/basemap/pins; varia fill + legenda).
+
+    Quando `pins_only=True` (camada Concorrentes): pula o choropleth de faixas E o overlay
+    de ruas de pixel; mantem basemap + circulo + ponto central + pins de concorrentes/Ultra +
+    escala + footer + legenda so de pins. BLK-CENSO-03.
+    """
     image = Image.new("RGB", (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(image, "RGBA")
     title_font = _font(20)
@@ -489,9 +497,9 @@ def _render_camada(
         py = offset_y + (maxy - y) * scale
         return px, py
 
-    # Fundo: basemap Dark Matter (3857) quando disponivel; senao canvas escuro (fallback offline).
-    # As ruas/nomes vem NATIVOS do tile (linhas claras finas sobre fundo escuro) — sem realce
-    # artificial: e o mesmo visual do mapa interativo do dashboard (CARTO_DARK).
+    # Fundo: basemap Voyager (3857) quando disponivel; senao canvas claro (fallback offline).
+    # As ruas/nomes vem NATIVOS do tile (linhas escuras finas sobre fundo claro) — sem realce
+    # artificial: base clara estilo GeoFusion.
     drew_basemap = False
     basemap_patch: Image.Image | None = None  # ruas/nomes claros p/ recolocar por cima da cor
     if basemap is not None:
@@ -505,7 +513,7 @@ def _render_camada(
             box_w = max(1, int(round(tx1 - tx0)))
             box_h = max(1, int(round(ty1 - ty0)))
             bm = bm.resize((box_w, box_h), Image.Resampling.LANCZOS)
-            crop = Image.new("RGB", (width, height), (34, 38, 49))
+            crop = Image.new("RGB", (width, height), (245, 245, 245))
             crop.paste(bm, (int(round(tx0)), int(round(ty0))))
             # recorta a area do map_box e cola so ela (mantem moldura)
             patch = crop.crop((left, top, right, bottom))
@@ -517,36 +525,38 @@ def _render_camada(
             drew_basemap = False
             basemap_patch = None
     if not drew_basemap:
-        # Fallback offline: canvas escuro (sem ruas), coerente com o tema do mapa.
-        draw.rounded_rectangle(map_box, radius=6, fill=(34, 38, 49), outline=(71, 85, 105))
+        # Fallback offline: canvas claro (sem ruas), coerente com o tema claro do mapa.
+        draw.rounded_rectangle(map_box, radius=6, fill=(245, 245, 245), outline=(71, 85, 105))
 
-    # choropleth por faixa fixa (alpha translucido -> ruas CLARAS do basemap escuro aparecem por
-    # baixo). SEM borda nos setores: transicao suave entre faixas (estilo GeoFusion).
-    for geom_3857, idx in sector_records_3857:
-        color = color_fn(source_values.iloc[idx])
-        for polygon in _iter_polygons(geom_3857):
-            points = _polygon_to_pixels(polygon, project)
-            if len(points) >= 3:
-                draw.polygon(points, fill=color)
-                for interior in polygon.interiors:
-                    hole = [
-                        (int(round(px)), int(round(py)))
-                        for px, py in (project(a, b) for a, b in interior.coords)
-                    ]
-                    if len(hole) >= 3:
-                        draw.polygon(hole, fill=(34, 38, 49, 120))
+    # choropleth por faixa fixa (alpha translucido -> ruas ESCURAS do basemap claro aparecem por
+    # cima depois). SEM borda nos setores: transicao suave entre faixas (estilo GeoFusion).
+    # Pulado quando pins_only=True (camada Concorrentes = so basemap + pins).
+    if not pins_only:
+        for geom_3857, idx in sector_records_3857:
+            color = color_fn(source_values.iloc[idx])
+            for polygon in _iter_polygons(geom_3857):
+                points = _polygon_to_pixels(polygon, project)
+                if len(points) >= 3:
+                    draw.polygon(points, fill=color)
+                    for interior in polygon.interiors:
+                        hole = [
+                            (int(round(px)), int(round(py)))
+                            for px, py in (project(a, b) for a, b in interior.coords)
+                        ]
+                        if len(hole) >= 3:
+                            draw.polygon(hole, fill=(200, 200, 200, 80))
 
-    # Ruas/nomes do Dark Matter (pixels CLAROS) recolocados POR CIMA da cor, com os PROPRIOS
-    # pixels do tile (nao edge-detection): luminancia alta -> opacidade -> arruamento nitido
-    # sobre o choropleth, igual ao mapa do dashboard. Antes do circulo/pins/escala (que ficam
-    # no topo). RENDER apenas (READ-ONLY M1).
-    if basemap_patch is not None:
-        floor = _STREET_FLOOR
+    # Ruas/nomes do Voyager (pixels ESCUROS) recolocados POR CIMA da cor, com os PROPRIOS
+    # pixels do tile (nao edge-detection): luminancia baixa -> opacidade -> arruamento nitido
+    # sobre o choropleth, estilo GeoFusion. Antes do circulo/pins/escala (que ficam no topo).
+    # Pulado quando pins_only=True (sem choropleth -> nao precisa recolocar ruas). RENDER apenas.
+    if basemap_patch is not None and not pins_only:
+        ceil = _STREET_CEIL
         gain = _STREET_GAIN
         cap = _STREET_CAP
         lum = basemap_patch.convert("L")
         street_mask = lum.point(
-            lambda v: 0 if v <= floor else min(cap, int((v - floor) * gain))
+            lambda v: 0 if v >= ceil else min(cap, int((ceil - v) * gain))
         )
         region = image.crop((left, top, right, bottom))
         region.paste(basemap_patch, (0, 0), street_mask)
@@ -572,7 +582,7 @@ def _render_camada(
         px, py = project(mx, my)
         _paste_logo_pin(image, int(round(px)), int(round(py)), "__ultra__")
 
-    if not sector_records_3857:
+    if not sector_records_3857 and not pins_only:
         message = "Sem setores intersectados no raio"
         msg_w = _text_width(draw, message, body_font)
         _draw_text(
@@ -588,7 +598,7 @@ def _render_camada(
     _draw_legend_camada(draw, legend_x, 96, legenda_titulo, legenda_entries)
 
     if drew_basemap:
-        fundo = "Fundo de ruas: CartoDB Dark Matter. (c) OpenStreetMap, (c) CARTO."
+        fundo = "Fundo de ruas: CartoDB Voyager. (c) OpenStreetMap, (c) CARTO."
     else:
         fundo = "Fundo de ruas indisponivel offline (instale o extra [basemap] p/ ruas)."
     footer = (
@@ -751,11 +761,12 @@ def render_mapas_censitarios_combinados(
         **common,
     )
     concorrentes_png = _render_camada(
-        titulo="Relatorio Pontual Censitario - Concorrentes",
-        legenda_titulo="Score censitario (contexto)",
-        legenda_entries=_score_legend_entries(),
-        color_fn=_color_for_score,
-        source_values=score_series,
+        titulo="Relatorio Pontual Censitario - Concorrentes e Ultra",
+        legenda_titulo="Pins: Ultra e concorrentes",
+        legenda_entries=[],  # sem faixas de choropleth (camada so-pins)
+        color_fn=_color_for_score,  # irrelevante quando pins_only=True
+        source_values=score_series,  # irrelevante quando pins_only=True
+        pins_only=True,
         **common,
     )
 

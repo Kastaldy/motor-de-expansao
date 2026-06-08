@@ -24,11 +24,12 @@ PDF_SECTION_HEADERS = (
 )
 
 # Camadas combinadas (chave canonica -> titulo da pagina de mapa no PDF). Ordem fixa.
-# A camada `concorrentes` do BLK-CENSO-01 e o mapa de score com pins.
+# A camada `concorrentes` (BLK-CENSO-03) e o mapa SO de pins (basemap + pins Ultra/concorrentes
+# + ponto central), SEM choropleth de score.
 MAP_LAYER_TITLES: tuple[tuple[str, str], ...] = (
     ("densidade", "Populacao - Densidade"),
     ("renda", "Renda per capita"),
-    ("concorrentes", "Score censitario de contexto"),
+    ("concorrentes", "Concorrentes e Ultra"),
 )
 
 CSV_SETOR_COLUMNS = [
@@ -512,7 +513,7 @@ def gerar_pdf_relatorio_pontual_censitario(
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
-    Estrutura de 7 paginas: Capa -> Populacao -> Renda -> Score censitario ->
+    Estrutura de 7 paginas: Capa -> Populacao -> Renda -> Concorrentes e Ultra ->
     Big Numbers -> Concorrentes -> Realizacao/Credito.
 
     `mapas` aceita o dict de camadas combinadas (`{"densidade","renda","concorrentes"}`)
@@ -527,7 +528,7 @@ def gerar_pdf_relatorio_pontual_censitario(
     _cover_page(pdf, result, assets)
     _map_page(pdf, layers.get("densidade"), title="Populacao - Densidade", assets=assets)
     _map_page(pdf, layers.get("renda"), title="Renda per capita", assets=assets)
-    _map_page(pdf, layers.get("concorrentes"), title="Score censitario de contexto", assets=assets)
+    _map_page(pdf, layers.get("concorrentes"), title="Concorrentes e Ultra", assets=assets)
     _big_numbers_page(pdf, result, residual, assets)
     _competitors_page(pdf, result, layers.get("concorrentes"), assets)
     _credit_page(pdf, assets)

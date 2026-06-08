@@ -114,7 +114,7 @@ _PII_FORBIDDEN = (
 
 def _count_layer_titles(pdf_bytes: bytes) -> int:
     """Conta as 3 camadas de mapa por TITULO (fundos somam XObjects, titulos nao)."""
-    titulos = (b"Populacao - Densidade", b"Renda per capita", b"Score censitario de contexto")
+    titulos = (b"Populacao - Densidade", b"Renda per capita", b"Concorrentes e Ultra")
     return sum(1 for titulo in titulos if titulo in pdf_bytes)
 
 
@@ -204,6 +204,19 @@ def test_pdf_atribuicao_de_tiles_no_rodape():
 
     assert b"OpenStreetMap" in pdf_bytes
     assert b"CARTO" in pdf_bytes
+
+
+def test_pdf_footer_cita_voyager():
+    # Atribuicao de tiles segue valida no PDF (rodape do credit_page). O nome do provedor
+    # "Voyager" vive no PNG do mapa (embutido como imagem, nao texto raw), entao verificamos
+    # o provedor na constante do modulo de mapa (base CLARA Voyager, BLK-CENSO-03).
+    result, mapas = _sample_result()
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas)
+    assert b"OpenStreetMap" in pdf_bytes
+    assert b"CARTO" in pdf_bytes
+    import motor_expansao.dashboard.censo_map as m
+
+    assert m._BASEMAP_PROVIDER_ATTR == "Voyager"
 
 
 def test_pdf_retrocompat_aceita_bytes_unico_legado():

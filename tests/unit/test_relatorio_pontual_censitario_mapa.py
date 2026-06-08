@@ -142,8 +142,8 @@ def test_mapa_censitario_faixas_fixas_nao_quartil():
 
 
 def test_mapa_censitario_ponto_central_pin_vermelho():
-    # Ponto central = PIN VERMELHO (nao mais bolinha azul). Camada de concorrentes
-    # tem choropleth VERDE (score alto) e nenhum pin de rede -> os unicos pixels
+    # Ponto central = PIN VERMELHO (nao mais bolinha azul). A camada de concorrentes e
+    # so-pins (BLK-CENSO-03: sem choropleth) e nao tem pin de rede aqui -> os unicos pixels
     # vermelhos na area do mapa vem do pin do ponto central.
     setores = pd.DataFrame(
         [_sector_record("355030801000001", box(-700, -700, 700, 700), pop=1000, score=88)]
@@ -228,3 +228,72 @@ def test_mapa_censitario_fallback_offline_sem_tiles(monkeypatch):
     assert set(mapas) == _CAMADAS
     for png in mapas.values():
         assert png.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+# ── BLK-CENSO-03: base CLARA Voyager + camada Concorrentes so-pins ──────────────
+
+
+def test_basemap_provider_attr_e_voyager():
+    import motor_expansao.dashboard.censo_map as m
+
+    assert m._BASEMAP_PROVIDER_ATTR == "Voyager", (
+        f"Esperado 'Voyager' (base clara), obtido '{m._BASEMAP_PROVIDER_ATTR}'"
+    )
+
+
+def test_overlay_usa_pixels_escuros_nao_claros():
+    import motor_expansao.dashboard.censo_map as m
+
+    # STREET_CEIL deve existir (novo) e STREET_FLOOR NAO deve existir (removido).
+    assert hasattr(m, "_STREET_CEIL"), "Falta _STREET_CEIL (overlay pixels escuros)"
+    assert not hasattr(m, "_STREET_FLOOR"), "_STREET_FLOOR deve ser removido (era do Dark Matter)"
+    # Sanidade: CEIL entre 100 e 220 (razoavel para Voyager).
+    assert 100 < m._STREET_CEIL < 220
+
+
+def test_dark_map_ink_e_escuro():
+    import motor_expansao.dashboard.censo_map as m
+
+    r, g, b = m._DARK_MAP_INK[:3]
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    assert lum < 100, f"_DARK_MAP_INK deve ser escuro para tema claro, luminancia={lum:.1f}"
+
+
+def test_camada_concorrentes_pins_pura_sem_choropleth():
+    # A camada "concorrentes" nao deve ter choropleth: na regiao central sem pins, o fundo
+    # deve ser quase uniforme (apenas basemap/canvas), com variancia de cor MENOR que a
+    # camada densidade (que tem choropleth de faixas).
+    import numpy as np
+
+    setores = pd.DataFrame(
+        [
+            _sector_record("355030801000001", box(-700, -700, 0, 700), densidade=10000.0),
+            _sector_record("355030801000002", box(0, -700, 700, 700), densidade=500.0),
+        ]
+    )
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+    )
+    crop_box = (100, 150, 400, 450)
+    dens_arr = np.array(Image.open(BytesIO(mapas["densidade"])).convert("RGB").crop(crop_box))
+    conc_arr = np.array(Image.open(BytesIO(mapas["concorrentes"])).convert("RGB").crop(crop_box))
+    dens_var = float(dens_arr.std())
+    conc_var = float(conc_arr.std())
+    assert conc_var < dens_var, (
+        "Camada concorrentes deveria ser mais uniforme (sem choropleth) que densidade. "
+        f"std concorrentes={conc_var:.1f}, std densidade={dens_var:.1f}"
+    )
+
+
+def test_fallback_offline_canvas_claro(monkeypatch):
+    # Sem basemap (tiles indisponivel): canvas deve ser CLARO, nao escuro.
+    monkeypatch.setattr(censo_map, "_fetch_basemap", lambda *a, **k: None)
+    mapas = censo_map.render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, pd.DataFrame(), width=600, height=400, basemap=True
+    )
+    img = Image.open(BytesIO(mapas["densidade"])).convert("RGB")
+    left, top, right, bottom = censo_map._map_box(600, 400)
+    cx, cy = (left + right) // 2, (top + bottom) // 2
+    r, g, b = img.getpixel((cx, cy))
+    lum = 0.299 * r + 0.587 * g + 0.114 * b
+    assert lum > 180, f"Canvas fallback deveria ser claro, luminancia={lum:.1f} (r={r},g={g},b={b})"

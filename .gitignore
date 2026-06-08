@@ -53,6 +53,9 @@ logs/
 # Cache de tiles de basemap (Relatorio Pontual Censitario; DEC-004) - nunca versionar
 data/cache/
 
+# Scratch de validacao visual (PNGs de inspecao do Builder) - nunca versionar
+data/reports/scratch/
+
 # Coverage / pytest
 .coverage
 htmlcov/
