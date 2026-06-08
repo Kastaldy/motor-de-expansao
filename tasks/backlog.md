@@ -160,6 +160,36 @@ template/branding final do PDF (isso é o **BLK-CENSO-02**).
 (custo/cache); reprojeção do frame retangular × círculo de 1.5 km; garantir que as 4 paletas não
 conflitem entre si nem com o basemap; cada iteração visual exige rebuild de imagem + redeploy por digest.
 
+**Estado atual (2026-06-08) — FU1→FU3 já implementados e deployados:**
+- **FU1/FU2 (DESCARTADOS):** tentativa de desenhar as ruas por `ImageFilter.FIND_EDGES` (linhas
+  escuras sobre base clara Voyager) — **reprovado por Felipe: deixou o mapa ilegível** (malha de
+  linhas pretas em cima de tudo). Não reusar edge-detection.
+- **FU3 (VIGENTE em prod, pin `77a5a983...2bf7`, commit `bc32f68`):** mapa refeito no estilo do
+  mapa interativo do dashboard → **base ESCURA CartoDB Dark Matter** (`_BASEMAP_PROVIDER_ATTR=
+  "DarkMatter"`, = `pdk.map_styles.CARTO_DARK`); ruas/nomes nítidos sobre a cor recolocando os
+  PRÓPRIOS pixels CLAROS do tile (`_STREET_FLOOR=52`/`_STREET_GAIN=2.6`/`_STREET_CAP=230`, NÃO
+  edge-detection); `_CHOROPLETH_ALPHA=95`, contraste 1.35; círculo do raio LARANJA (`_CIRCLE_RGBA`),
+  escala/labels claros (`_DARK_MAP_INK`); frame retangular OK. Tudo em `censo_map.py`, READ-ONLY M1.
+
+**>>> FOLLOW-UP PEDIDO POR FELIPE (2026-06-08) — a ser retomado em NOVA janela de contexto:**
+**Trocar a base ESCURA (Dark Matter) por uma base CLARA, mantendo a MESMA legibilidade** de ruas/
+nomes sobre a cor que o FU3 alcançou (era isto que Felipe queria desde o início; acabou saindo
+escuro). Dicas de implementação (para não repetir o erro do FU1/FU2):
+- Trocar `_BASEMAP_PROVIDER_ATTR` de `DarkMatter` para um provedor CLARO COM labels (ex.: CartoDB
+  `Positron` ou `Voyager`). Re-tunar `_BASEMAP_CONTRAST` e `_CHOROPLETH_ALPHA` para fundo claro.
+- **INVERTER a recolocação de "tinta":** numa base CLARA as ruas/nomes são pixels ESCUROS (não
+  claros). O overlay atual (`_STREET_*` em `_render_camada`) recoloca pixels CLAROS (correto p/ Dark
+  Matter); para base clara, recolocar pixels ESCUROS (luminância < cutoff) — são as ruas/nomes
+  NATIVOS do tile. **Continuar usando os pixels nativos do tile, NUNCA edge-detection** (foi o que
+  deixou ilegível).
+- Reverter os elementos desenhados no mapa para tema claro: barra de escala/labels para tinta
+  ESCURA (hoje `_DARK_MAP_INK` claro); círculo pode seguir laranja ou voltar ao navy; fallback
+  offline = canvas claro (hoje escuro `(34,38,49)`).
+- Validar visualmente com basemap real (contextily) no ponto RJ `-22.87650,-43.34582` antes de
+  deployar; aprovar preview com Felipe; só então rebuild de imagem + redeploy por digest.
+- **Ainda pendente do escopo original:** a **camada/slide SÓ de concorrentes** (basemap + pins, SEM
+  choropleth) — ver critério de aceite acima; não foi feita nos FU1–FU3.
+
 ---
 
 ## Tarefas pendentes
