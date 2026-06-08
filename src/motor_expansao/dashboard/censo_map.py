@@ -50,14 +50,18 @@ _BASEMAP_ZOOM_BUMP = 1
 # nao as pega; FIND_EDGES extrai a geometria das vias e a desenhamos como linhas escuras). Tudo
 # isto e RENDER (READ-ONLY M1).
 _ROADS_ON_TOP = True
-# (a) LABELS: pixels do basemap com luminancia < cutoff = texto/feature escuro -> recolocado por cima.
+# (a) LABELS: pixels do basemap com luminancia < cutoff = texto/feature escuro -> recolocado por
+# cima, com a opacidade LIMITADA por `_LABEL_MAX_ALPHA` (nomes nao podem dominar o mapa).
 _INK_BG_CUTOFF = 232
 _INK_GAIN = 5.0
+_LABEL_MAX_ALPHA = 105
 # (b) RUAS por bordas: FIND_EDGES sobre o basemap; bordas acima de _EDGE_MIN viram linha escura
 # `_ROAD_INK_RGB` por cima do heat (ganho `_EDGE_GAIN`). Capta o arruamento mesmo sendo claro.
-_EDGE_MIN = 14
-_EDGE_GAIN = 5.0
-_ROAD_INK_RGB = (55, 65, 85)
+# `_EDGE_THICKEN` (MaxFilter impar) ENGROSSA as linhas; quanto maior o ganho, mais opacas.
+_EDGE_MIN = 10
+_EDGE_GAIN = 9.0
+_EDGE_THICKEN = 3
+_ROAD_INK_RGB = (45, 55, 72)
 
 # Margem do frame do mapa em torno do circulo de 1.5 km. O choropleth (display) cobre TODO
 # o frame (setores recortados a este RETANGULO com a proporcao da area de mapa), nao so o
@@ -540,20 +544,23 @@ def _render_camada(
     if basemap_patch is not None and _ROADS_ON_TOP:
         cutoff = _INK_BG_CUTOFF
         ink_gain = _INK_GAIN
+        label_cap = _LABEL_MAX_ALPHA
         edge_min = _EDGE_MIN
         edge_gain = _EDGE_GAIN
         lum = basemap_patch.convert("L")
         region = image.crop((left, top, right, bottom))
-        # (a) labels (texto/feature escura)
+        # (a) labels (texto/feature escura) — opacidade limitada por _LABEL_MAX_ALPHA.
         label_mask = lum.point(
-            lambda v: 0 if v >= cutoff else min(255, int((cutoff - v) * ink_gain))
+            lambda v: 0 if v >= cutoff else min(label_cap, int((cutoff - v) * ink_gain))
         )
         region.paste(basemap_patch, (0, 0), label_mask)
-        # (b) desenho das ruas via bordas
+        # (b) desenho das ruas via bordas — engrossadas (MaxFilter) e mais opacas (ganho).
         edges = lum.filter(ImageFilter.FIND_EDGES)
         edge_mask = edges.point(
             lambda v: 0 if v <= edge_min else min(255, int((v - edge_min) * edge_gain))
         )
+        if _EDGE_THICKEN >= 3:
+            edge_mask = edge_mask.filter(ImageFilter.MaxFilter(_EDGE_THICKEN))
         road_layer = Image.new("RGB", basemap_patch.size, _ROAD_INK_RGB)
         region.paste(road_layer, (0, 0), edge_mask)
         image.paste(region, (left, top))
