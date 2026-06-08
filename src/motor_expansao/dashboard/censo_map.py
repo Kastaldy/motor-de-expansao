@@ -36,14 +36,27 @@ _BASEMAP_CACHE_DIR = Path("data/cache/basemap_tiles")
 # (ruas bem mais visiveis que o Positron, mantendo fundo claro) + realce de contraste 1.4
 # para o arruamento aparecer sob o choropleth. O provedor e resolvido lazy em _fetch_basemap
 # (ctx.providers.CartoDB.<_BASEMAP_PROVIDER_ATTR>).
-_BASEMAP_PROVIDER_ATTR = "VoyagerNoLabels"
+# Voyager COM labels (ruas + nomes). As ruas/labels do basemap sao RECOLOCADAS por cima do
+# choropleth via _INK_* (ver _render_camada) -> sempre visiveis, independente do alpha do heat.
+_BASEMAP_PROVIDER_ATTR = "Voyager"
 _BASEMAP_CONTRAST = 1.6
 # Zoom extra dos tiles (alem do minimo p/ cobrir a bbox) -> ruas mais nitidas/detalhadas.
 _BASEMAP_ZOOM_BUMP = 1
 
+# "Ruas por cima do heat" (correcao BLK-CENSO-03 / pedido de Felipe 2026-06-06): o choropleth
+# fica TRANSLUCIDO sobre o basemap e, em seguida, a TINTA do basemap (ruas + labels = pixels
+# escuros) e recolocada POR CIMA do heat via mascara de luminancia. Assim as ruas ficam sempre
+# visiveis mesmo aumentando a opacidade do mapa de calor. Tudo isto e RENDER (READ-ONLY M1).
+_ROADS_ON_TOP = True
+# Pixels do basemap com luminancia < cutoff sao considerados "tinta" (rua/label/feature) e
+# recolocados por cima; >= cutoff (fundo claro) ficam transparentes (deixam o heat aparecer).
+_INK_BG_CUTOFF = 232
+# Ganho da rampa de alpha da tinta (quanto mais escuro o pixel, mais opaca a recolocacao).
+_INK_GAIN = 5.0
+
 # Margem do frame do mapa em torno do circulo de 1.5 km. O choropleth (display) cobre TODO
-# o frame (setores recortados a este quadrado), nao so o circulo — estilo GeoFusion. A analise
-# (KPIs) segue circular/INTOCADA; isto e so RENDER.
+# o frame (setores recortados a este RETANGULO com a proporcao da area de mapa), nao so o
+# circulo — estilo GeoFusion, sem letterbox. A analise (KPIs) segue circular/INTOCADA; e so RENDER.
 _MAP_FRAME_MARGIN = 0.08
 
 # Web Mercator (CRS nativo dos tiles). A composicao do mapa novo acontece em 3857;
@@ -68,10 +81,10 @@ _SECTOR_PALETTE = [
     (214, 93, 74, 225),
 ]
 
-# Alpha do choropleth (heat map) sobre o basemap. Quanto MENOR, mais transparente o
-# mapa de calor e mais visiveis as ruas do basemap por baixo. A legenda usa RGB solido
-# (ignora este alpha), entao as faixas seguem nitidas mesmo com fill bem translucido.
-_CHOROPLETH_ALPHA = 55
+# Alpha do choropleth (heat map) sobre o basemap. Com a TINTA do basemap recolocada por cima
+# (_ROADS_ON_TOP), as ruas ficam visiveis mesmo com o heat mais opaco -> alpha pode ser maior
+# (heat mais visivel, pedido de Felipe 2026-06-06). A legenda usa RGB solido (ignora este alpha).
+_CHOROPLETH_ALPHA = 110
 
 # Cor de fill para setor sem dado na faixa nova (cinza translucido).
 _FILL_SEM_DADO = (218, 222, 229, _CHOROPLETH_ALPHA)
@@ -80,6 +93,17 @@ _FILL_SEM_DADO = (218, 222, 229, _CHOROPLETH_ALPHA)
 def _with_choropleth_alpha(rgba: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     """Aplica o alpha canonico do choropleth (mantem RGB da faixa)."""
     return (int(rgba[0]), int(rgba[1]), int(rgba[2]), _CHOROPLETH_ALPHA)
+
+
+def _map_box(width: int, height: int) -> tuple[int, int, int, int]:
+    """Retangulo (left, top, right, bottom) da area de mapa dentro da figura."""
+    return (28, 92, width - 285, height - 54)
+
+
+def _map_inner_dims(width: int, height: int) -> tuple[float, float]:
+    """Dimensoes uteis (inner_w, inner_h) onde o frame e desenhado (sem o padding de 12px)."""
+    left, top, right, bottom = _map_box(width, height)
+    return (float(right - left - 24), float(bottom - top - 24))
 
 
 def _font(size: int = 12) -> ImageFont.ImageFont:
@@ -442,7 +466,7 @@ def _render_camada(
     subtitle = f"Centro: {lat:.6f}, {lng:.6f} | raio {raio_km:.1f} km | setores: {n_setores}"
     _draw_text(draw, (28, 52), subtitle, font=body_font, fill=(71, 85, 105))
 
-    map_box = (28, 92, width - 285, height - 54)
+    map_box = _map_box(width, height)
     legend_x = width - 252
     left, top, right, bottom = map_box
 
@@ -462,6 +486,7 @@ def _render_camada(
 
     # Fundo: basemap de ruas (3857) quando disponivel; senao canvas branco (fallback offline).
     drew_basemap = False
+    basemap_patch: Image.Image | None = None  # tinta (ruas/labels) p/ recolocar por cima do heat
     if basemap is not None:
         try:
             img_array, extent = basemap
@@ -479,9 +504,11 @@ def _render_camada(
             patch = crop.crop((left, top, right, bottom))
             image.paste(patch, (left, top))
             draw.rounded_rectangle(map_box, radius=6, outline=(203, 213, 225))
+            basemap_patch = patch
             drew_basemap = True
         except Exception:
             drew_basemap = False
+            basemap_patch = None
     if not drew_basemap:
         draw.rounded_rectangle(map_box, radius=6, fill=(248, 250, 252), outline=(203, 213, 225))
 
@@ -500,6 +527,21 @@ def _render_camada(
                     ]
                     if len(hole) >= 3:
                         draw.polygon(hole, fill=(248, 250, 252, 120))
+
+    # Ruas POR CIMA do heat: recoloca a tinta do basemap (ruas/labels = pixels escuros) sobre
+    # o choropleth via mascara de luminancia. Fundo claro do basemap (>= cutoff) fica
+    # transparente (deixa o heat aparecer); ruas/labels (escuros) punctuam por cima e ficam
+    # sempre visiveis. Feito ANTES do circulo/pins/escala (que ficam no topo). RENDER apenas.
+    if basemap_patch is not None and _ROADS_ON_TOP:
+        cutoff = _INK_BG_CUTOFF
+        gain = _INK_GAIN
+        lum = basemap_patch.convert("L")
+        ink_mask = lum.point(
+            lambda v: 0 if v >= cutoff else min(255, int((cutoff - v) * gain))
+        )
+        region = image.crop((left, top, right, bottom))
+        region.paste(basemap_patch, (0, 0), ink_mask)
+        image.paste(region, (left, top))
 
     circle_points = [
         (int(round(px)), int(round(py)))
@@ -602,10 +644,18 @@ def render_mapas_censitarios_combinados(
         competitors_df=competitors_df,
         ultra_df=ultra_df,
     )
-    # Frame do mapa: quadrado em torno do circulo (+margem). O choropleth (display) cobre TODO
-    # o frame; os setores sao recortados a este quadrado (nao ao circulo) -> corners preenchidos.
-    frame_half = raio_km * 1000.0 * (1.0 + _MAP_FRAME_MARGIN)
-    frame_box_metric = box(-frame_half, -frame_half, frame_half, frame_half)
+    # Frame do mapa: RETANGULO com a proporcao da area de mapa (nao mais quadrado), para o
+    # choropleth preencher a figura inteira sem letterbox. O lado MENOR = raio*(1+margem) (o
+    # circulo de 1.5 km cabe e fica redondo, pois x/y tem o mesmo scale). Os setores sao
+    # recortados a este retangulo (nao ao circulo) -> figura toda preenchida. RENDER apenas.
+    base_half = raio_km * 1000.0 * (1.0 + _MAP_FRAME_MARGIN)
+    inner_w, inner_h = _map_inner_dims(width, height)
+    aspect = inner_w / inner_h if inner_h > 0 else 1.0
+    if aspect >= 1.0:
+        frame_half_x, frame_half_y = base_half * aspect, base_half
+    else:
+        frame_half_x, frame_half_y = base_half, base_half / aspect
+    frame_box_metric = box(-frame_half_x, -frame_half_y, frame_half_x, frame_half_y)
     sector_records, circle_metric = _decode_intersections(
         lat,
         lng,
