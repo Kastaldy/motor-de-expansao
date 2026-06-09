@@ -6,7 +6,7 @@ Próximo ciclo recomendado: **BLK-API-01 — Definir arquitetura e contrato da A
 design/decisão **Estratégico** com gate humano para as 6 decisões-chave de contrato (formato de saída,
 auth, escopo de endpoints, entrada, raio, reprodutibilidade). Pré-requisito de G2/G3/G4. Só docs,
 READ-ONLY M1. Ver seção "Projeto — API GeoEspacial".
-Em paralelo (trilha do Vini, dashboard/PDF/UX): BLK-FIX-07..10, BLK-EST-01/02, BLK-UI-01.
+Em paralelo (trilha do Vini, dashboard/PDF/UX): BLK-FIX-07..11, BLK-SAM-01, BLK-EST-01/02, BLK-UI-01.
 BLK-CENSO-01/02/03 (refino do Relatório Pontual Censitário): **concluídos** (ver tasks/completed.md).
 
 - **BLK-CENSO-01** (repaginação do relatório: camadas combinadas + fundo de ruas + faixas GeoFusion +
@@ -94,6 +94,9 @@ BLK-CENSO-01/02/03 (refino do Relatório Pontual Censitário): **concluídos** (
 
 ### BLK-FIX-07 — Overlays do mapa territorial não funcionando
 
+> ⚠️ **SUPERSEADO por BLK-FIX-11 (2026-06-09)** — ver seção "Novos blocos". A tarefa ClickUp `86e1rtefy`
+> passa a ser rastreada pelo **BLK-FIX-11** (Alternativa A: fiar os 3 overlays mortos). Mantido aqui só por histórico.
+
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Média** (display/render; READ-ONLY sobre M1) |
@@ -124,6 +127,10 @@ suíte + ruff + mypy verdes; READ-ONLY M1 comprovado (git scope vazio em pipelin
 ---
 
 ### BLK-FIX-08 — SAM não calcula em alguns hexágonos/municípios (RR, AC e outros)
+
+> ⚠️ **SUPERSEADO por BLK-SAM-01 (2026-06-09)** — ver seção "Novos blocos". A tarefa ClickUp `86e1rte9n`
+> passa a ser rastreada pelo **BLK-SAM-01** (redefine o gate do SAM: Faixa M1 + pop ≥ 5000), que **absorve**
+> a preocupação de cobertura (fallback de pop em RR/AC/AM). Mantido aqui só por histórico.
 
 | Campo | Valor |
 |---|---|
@@ -296,6 +303,127 @@ performance já entregues.
 por Felipe; READ-ONLY M1.
 
 **Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
+
+---
+
+## Novos blocos (2026-06-09, pedido de Felipe)
+
+> Dois blocos derivados da análise de código com Felipe em 2026-06-09: (1) redefinição das condições
+> do SAM (`BLK-SAM-01`) e (2) correção concreta dos overlays mortos do Mapa Territorial (`BLK-FIX-11`,
+> Alternativa A). Ambos têm bloco "irmão" mais antigo/vago no backlog — ver a nota "Relacionado" em cada um.
+> Causas-raiz abaixo estão **ancoradas no código** (file:line), confirmadas em leitura de 2026-06-09.
+
+### BLK-SAM-01 — Redefinir condições de cálculo do SAM (Faixa M1 + população ≥ 5000)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (altera o VALOR da camada PARALELA de mercado/residual; **não** é M1 oficial, mas redefine semântica → exige revisão humana) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA das decisões de produto]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rte9n` — https://app.clickup.com/t/86e1rte9n |
+| **Relacionado** | **Supersede o BLK-FIX-08** (mesma tarefa ClickUp `86e1rte9n`, "SAM não calculando…"): este bloco é a versão precisa/decidida; BLK-FIX-08 marcado como superseado. **Absorve** a preocupação de cobertura do BLK-FIX-08 — fallback de população em UFs de baixa cobertura censitária (RR/AC/AM): rotular SAM como "sem base" em vez de zerar silenciosamente quando não há população auditável (ver decisão #2). |
+
+**Contexto / estado atual (ancorado no código):** hoje o SAM é gateado em
+`src/motor_expansao/pipelines/calcular_colunas_mercado.py` por:
+- `flag_sam = flag_viavel & top_municipio & ~flag_canibalizacao_ultra_1km` (≈ linha 274);
+- `flag_sam_fitness = flag_sam & (tam_populacao_hex > 0)` (≈ linha 279);
+- `sam_fitness_potencial = where(flag_sam_fitness, tam_fitness_potencial, 0.0)` (≈ linha 280).
+
+Consequência observada: hexes com **boa Faixa M1** podem ter `sam_fitness_potencial = 0` por estarem fora do
+top_municipio, canibalizados, ou sem `tam_populacao_hex > 0` (sem limiar mínimo de população).
+
+**Objetivo (pedido de Felipe):** o SAM deve ser calculado **para hexes nas Faixas M1
+`baixa`, `media`, `alta` e `prioridade_maxima`** (ou seja, excluindo `descartado` e `inviavel`), **e** que
+contenham **pelo menos 5000 de população**. Hexes fora dessas faixas ou abaixo de 5000 hab → SAM = 0
+(ou rótulo explícito "sem base"), sem zeragem silenciosa por outras causas.
+
+**Decisões que EXIGEM gate humano** (Planner apresenta opção + recomendação; Felipe decide antes do Builder):
+1. **[RESOLVIDO por Felipe, 2026-06-09]** Gate redefinido assim: **manter** `~flag_canibalizacao_ultra_1km`
+   como filtro; **substituir** `top_municipio` pelos novos critérios — **Faixa M1 ∈ {baixa, media, alta,
+   prioridade_maxima}** *e* **pop ≥ 5000**. Resultado pretendido:
+   `flag_sam = faixa_oportunidade.isin({baixa,media,alta,prioridade_maxima}) & (pop_hex ≥ 5000) & ~flag_canibalizacao_ultra_1km`.
+   **Sub-decisão remanescente p/ o Planner:** `flag_viavel` (que já embute "faixa ∉ {descartado,inviavel}"
+   + `renda` + `população`) permanece como guarda adicional ou é **absorvido** pelos novos critérios
+   explícitos? Evitar dupla contagem / condição redundante. Consequência aceita da remoção do `top_municipio`:
+   o SAM passa a ser calculado **fora do recorte M1** (municípios não-top), desde que faixa+pop satisfaçam.
+2. **Qual campo de população usar para o corte de 5000?** Recomendado: `pop_hex_base`/`tam_populacao_hex`
+   (mesma população que já alimenta o `tam_fitness_potencial`, ≈ linhas 222-255), por consistência com a
+   matemática do SAM. Alternativa: `populacao_corte_hex` (a usada no corte de display "<5k hab",
+   `flag_pop_min_5k`, em `data.py`). Definir um só, para não haver duas noções de "5k".
+3. **Limiar inclusivo:** `≥ 5000` (recomendado, conforme "pelo menos 5000") vs `> 5000`.
+
+**Escopo permitido (camada PARALELA, não M1 oficial):** o gate do SAM em `calcular_colunas_mercado.py`
+(`flag_sam`/`flag_sam_fitness`/`sam_fitness_potencial`) e, se necessário, parâmetro do limiar 5000 em
+`config.py`/`constants.py`. Se houver regeneração de parquets paralelos, seguir a **ordem canônica**:
+híbrido → mercado → `calcular_colunas_mercado` → carteira → plano → domínio → residual → `fase1_bi_exports`.
+
+**Fora de escopo (inviolável):** `score_priorizacao`/`hex_score_estrutural`/pesos/`faixa_oportunidade`/
+artefatos oficiais do M1 (DEC-001 vigente; a Faixa M1 é **lida**, não recalculada); inventar população onde
+não há base auditável.
+
+**Critérios de aceite:**
+- SAM calculado exatamente para Faixa M1 ∈ {baixa, media, alta, prioridade_maxima} **e** população ≥ 5000
+  (campo confirmado no gate); demais hexes com SAM = 0 ou rótulo explícito.
+- As 3 decisões acima resolvidas e registradas (idealmente como nova DEC no CLAUDE.md §8).
+- Repro de ≥1 hex que **passa a calcular** e ≥1 que **passa a zerar** sob a nova regra, com causa documentada.
+- Parquets paralelos regenerados de forma reprodutível, se necessário; **ZERO escrita em M1 oficial**.
+- Suíte + ruff + mypy verdes (incluindo testes novos do gate em `tests/integration/test_modelo_mercado_hexagonos.py`).
+
+**Guardrail:** não toca o M1 oficial; mudança restrita à camada de mercado/residual paralela (§4/§5).
+
+---
+
+### BLK-FIX-11 — Tornar funcionais os 3 overlays "mortos" do Mapa Territorial (Alternativa A)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (display/interação; READ-ONLY sobre M1) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA das decisões visuais]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rtefy` — https://app.clickup.com/t/86e1rtefy |
+| **Relacionado** | **Supersede o BLK-FIX-07** (mesma tarefa ClickUp `86e1rtefy`, "Overlays do mapa territorial não funcionando"). Leitura de 2026-06-09: `concorrentes`/`ultra` **funcionam**; os 3 abaixo é que estão mortos. BLK-FIX-07 marcado como superseado. |
+
+**Contexto / causa-raiz (ancorada no código):** o registro `OVERLAYS` em
+`src/motor_expansao/dashboard/constants.py` (≈ linha 394) declara **5 overlays** e o multiselect
+`render_mapa_territorial` (`pages.py` ≈ linha 2733) os expõe todos. Porém, no dispatcher
+`build_unified_map_figure` (`components.py` ≈ linhas 2953-2957) e na legenda `_render_unified_legend`
+(`pages.py` ≈ linhas 1816-1819) **apenas `"concorrentes"` e `"ultra"`** são lidos de `enabled_overlays`.
+Os outros três aparecem no multiselect mas marcar/desmarcar **não muda nada no mapa**:
+- **`hex_pesquisado`** — `search_pin`/`search_hex_id` são passados **incondicionalmente** aos builders
+  (`pages.py` ≈ linhas 2766-2767); o id `"hex_pesquisado"` nunca é consultado.
+- **`descartados_5k`** — a coloração de descartados é aplicada **sempre** dentro dos builders quando existe
+  `flag_pop_min_5k` (`components.py` ≈ linhas 505, 527, 1117); `"descartados_5k"` nunca é lido. *(Nota: o
+  `absent_behavior` dele é `show_neutral`, indício de que a fiação foi prevista e não concluída.)*
+- **`ancoras_dominio`** — `"ancoras_dominio"` nunca é desenhado como camada de mapa; as únicas ocorrências
+  são um KPI e a contagem radial, não o multiselect.
+
+**Objetivo:** **Alternativa A** — fazer os 3 toggles funcionarem de verdade:
+- `hex_pesquisado`: só passar/renderizar o pin e o hex pesquisado quando `"hex_pesquisado" in enabled_overlays`.
+- `descartados_5k`: propagar a flag aos builders e **pular** a coloração/camada de descartados <5k quando
+  desmarcado (mantendo o comportamento atual quando marcado).
+- `ancoras_dominio`: desenhar de fato uma camada de âncoras de domínio (a partir do `dominio_df`) quando
+  marcado; ocultar quando desmarcado.
+
+**Escopo permitido:** `components.py` (gate de `enabled_overlays` no dispatcher + builders; nova camada de
+âncoras), `pages.py` (passar `enabled_overlays`/`dominio_df` ao caminho de busca e descartados; legenda
+coerente com o que está ligado), `constants.py` se ajustar `OVERLAYS`, e testes em
+`tests/integration/test_streamlit_app.py`. Só display/interação.
+
+**Fora de escopo:** recalcular score/carteira/plano; alterar artefatos M1; mudar o cap de pontos
+(`MAP_POINT_LIMIT*`/`COMPETITOR_PIN_LIMIT`/`ULTRA_PIN_LIMIT`) sem aprovação.
+
+**Critérios de aceite:**
+- Marcar/desmarcar **Hex pesquisado**, **Descartados <5k hab** e **Âncoras Domínio** muda o mapa de forma
+  visível e coerente com a legenda; `concorrentes`/`ultra` seguem funcionando (sem regressão).
+- Teste cobrindo cada um dos 3 overlays antes inertes (ligado vs desligado → camada presente/ausente).
+- Suíte + ruff + mypy verdes; READ-ONLY M1 comprovado (git scope vazio em `pipelines/`/`scoring.py`/`config.py`).
+- Decisão registrada sobre encerrar/superseder **BLK-FIX-07**.
+
+**Guardrail:** visualização não recalcula nem altera M1 (§5).
 
 ---
 
