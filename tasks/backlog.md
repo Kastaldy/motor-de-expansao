@@ -2,11 +2,12 @@
 
 ## Priorização atual
 
-Próximo ciclo recomendado: **BLK-CENSO-03 — refino visual do mapa do Relatório Pontual Censitário**
-(ruas dominantes + resolver conflito verde basemap×heat + aspect retangular + camada só-concorrentes),
-pedido direto de Felipe em 2026-06-05 — **topo de prioridade**. Média + `[REVISÃO HUMANA]` das decisões
-visuais; READ-ONLY sobre M1; cada iteração exige rebuild de imagem + redeploy por digest na VPS.
-Em paralelo/fase 2: **BLK-CENSO-02** (template/visual padrão do PDF).
+Próximo ciclo recomendado: **BLK-API-01 — Definir arquitetura e contrato da API (G1)** — bloco de
+design/decisão **Estratégico** com gate humano para as 6 decisões-chave de contrato (formato de saída,
+auth, escopo de endpoints, entrada, raio, reprodutibilidade). Pré-requisito de G2/G3/G4. Só docs,
+READ-ONLY M1. Ver seção "Projeto — API GeoEspacial".
+Em paralelo (trilha do Vini, dashboard/PDF/UX): BLK-FIX-07..10, BLK-EST-01/02, BLK-UI-01.
+BLK-CENSO-01/02/03 (refino do Relatório Pontual Censitário): **concluídos** (ver tasks/completed.md).
 
 - **BLK-CENSO-01** (repaginação do relatório: camadas combinadas + fundo de ruas + faixas GeoFusion +
   pins com logo) — **concluído** em 2026-06-05 (FU1–FU5 deployados na VPS). Ver tasks/completed.md.
@@ -295,6 +296,101 @@ performance já entregues.
 por Felipe; READ-ONLY M1.
 
 **Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
+
+---
+
+## Projeto — API GeoEspacial (lista ClickUp `API GeoEspacial` / projeto `PROJETOS - DEG`)
+
+> API complementar ao Motor de Expansão para integração com Telegram/WhatsApp, dando autonomia
+> de estudos geoespaciais internos. Tarefa-pai ClickUp `86e1rtfcy`. Subtarefas: G1 (arquitetura/contrato,
+> Felipe), G2 (backend/rotas, Juan), G3 (integração com o motor, Felipe+Juan), G4 (Telegram/WhatsApp, Juan).
+> **Decisão de fonte (Felipe, 2026-06-09):** a API serve o relatório **on-demand a partir do motor**
+> (importa `analisar_ponto_censitario_setores` + geradores de mapa/PDF e lê os Parquets locais de
+> `data/outputs/setores_censitarios_2022_geo/`); **PostGIS fica como evolução futura, fora do MVP**.
+> **Fronteira inegociável:** a API **importa, não edita** a camada `censo_*` (`censo_point.py`/`censo_map.py`/
+> `censo_report.py`) — trata-os como interface estável, para não colidir com a trilha do Vini (dashboard/PDF).
+> Código novo da API mora em `src/motor_expansao/api/` (pasta disjunta); dependências só no extra `[api]`
+> do `pyproject.toml`, fora do deploy base do Streamlit. **READ-ONLY sobre o M1** (§5 guardrail): nada
+> recalcula `score_priorizacao`, pesos, carteira, plano ou artefatos oficiais.
+
+### BLK-API-01 — Definir arquitetura e contrato da API (G1)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Estratégica** (nova fase: stand-up de uma API; redesenho de superfície de consumo do motor) |
+| **Prioridade** | **Alta** (urgent no ClickUp; G1 é pré-requisito de G2/G3/G4) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — decisões-chave de contrato]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Felipe |
+| **ClickUp** | `86e1rtfe3` — https://app.clickup.com/t/86e1rtfe3 (subtarefa de `86e1rtfcy`) |
+| **Toca dados/artefatos** | **Não** (bloco de design; só docs) |
+
+**Contexto:** G1 é a fundação do projeto API. É um bloco **de design/decisão, sem código de produção** —
+produz o contrato e o ADR que destravam G2 (backend) e definem em quantos blocos o resto se quebra. O
+scaffold FastAPI já existe em `fora_primeira_fase/api_postgis/` (`main.py` esqueletado) e o extra `[api]`
+já está no `pyproject.toml`; G1 decide o que dele se aproveita e o layout final em `src/motor_expansao/api/`.
+
+**Objetivo:** entregar um contrato de API aprovado por Felipe, suficiente para o Juan implementar G2 sem
+re-discussão de arquitetura, e um ADR registrando as decisões.
+
+**Entregáveis (Builder escreve, após o gate):**
+- `docs/api_geoespacial_contrato.md` — contrato técnico: layout do pacote `src/motor_expansao/api/`,
+  fronteira "importa-não-edita `censo_*`", lista de endpoints, schemas de request/response, auth, erros,
+  versionamento, e a **decomposição de G2+ em blocos** (`BLK-API-02..0N` com escopo de cada um).
+- Esboço **OpenAPI** dos endpoints do MVP (arquivo `docs/api_geoespacial_openapi.yaml` ou bloco no contrato).
+- **ADR** (estilo das DECs do CLAUDE.md §8) registrando as decisões-chave abaixo, para entrar como nova DEC.
+- Atualização mínima do README/PRD apontando para o contrato (sem implementar a API).
+
+**Escopo permitido:** `docs/` (contrato + OpenAPI + ADR), `tasks/`, e edição de texto do README/PRD.
+**NENHUM** código de produção neste bloco.
+
+**Fora de escopo:** implementar rotas/handlers; subir container; PostGIS; integração Telegram/WhatsApp
+(G4); qualquer escrita em `src/motor_expansao/` (exceto, se decidido no gate, criar a pasta `api/` **vazia**
+com `__init__.py` como marcação de layout — sem lógica); recalcular/alterar M1 (§5).
+
+**Decisões que EXIGEM gate humano** (o Planner apresenta cada uma com as opções e sua recomendação;
+**Felipe decide no Passo 5 antes do Builder**; o Builder só redige o contrato com as escolhas confirmadas):
+
+1. **Formato de saída da API** *(ponto-chave citado por Felipe)*
+   - (a) JSON estruturado com os KPIs do ponto (leve, bot renderiza a mensagem).
+   - (b) PDF binário (o relatório de 7 páginas) inline na resposta.
+   - (c) **[recomendado]** Ambos por negociação — `/analisar` retorna JSON por padrão e `?formato=pdf`
+     (ou `Accept: application/pdf`) devolve o relatório; reaproveita `analisar_ponto_censitario_setores`
+     + `gerar_pdf_relatorio_pontual_censitario`.
+   - (d) JSON + link para o PDF gerado sob demanda.
+
+2. **Autenticação** (uso interno + bots)
+   - (a) API key estática por header (`X-API-Key`) — mais simples.
+   - (b) **[recomendado]** Token por consumidor/bot — permite rastrear **quem** pediu o estudo (casa com
+     BLK-EST-01: marca d'água + solicitante no PDF / logs LGPD).
+   - (c) Reuso do Authelia/JWT já em produção.
+
+3. **Superfície de endpoints do MVP** (define quanto G2 entrega)
+   - (a) **[recomendado]** Mínimo: `GET /health` + `POST /analisar` (ponto censitário 1.5 km).
+   - (b) Acrescentar lookup de hex M1 / camada de mercado já no MVP.
+   - → A escolha alimenta diretamente a decomposição de `BLK-API-02..0N`.
+
+4. **Entrada de coordenada**
+   - (a) Apenas `{lat, lng}`.
+   - (b) **[recomendado]** `{lat, lng}` **e** link do Google Maps (parser extrai a coordenada) — os bots
+     receberão link colado pelo usuário (o roadmap do PDF prevê "parser de links Maps").
+
+5. **Raio de análise no MVP**
+   - (a) **[recomendado]** Fixo 1.5 km (igual ao Relatório Pontual Censitário — motor intocado).
+   - (b) Parametrizável (exige validar limites e revalidar o método de interseção).
+
+6. **Carimbo de versão/reprodutibilidade**
+   - **[recomendado]** Incluir a versão do contrato/score no JSON e no rodapé do PDF (item de
+     reprodutibilidade do PDF estratégico), para estudos antigos seguirem interpretáveis.
+
+**Critérios de aceite:** contrato + OpenAPI + ADR escritos e coerentes entre si; todas as 6 decisões acima
+resolvidas e registradas no ADR com a opção escolhida; decomposição de G2+ em blocos explícita; fronteira
+"importa-não-edita `censo_*`" e "on-demand, PostGIS fora do MVP" registradas; **zero código de produção**
+(git scope só em `docs/`, `tasks/`, `README.md`/`PRD.md`); suíte + ruff + mypy verdes (bloco de docs não
+deve quebrar nada); READ-ONLY M1 comprovado (sem escrita em `pipelines/`/`config.py`/scoring).
+
+**Guardrail:** §2 (fontes canônicas) + §5 (READ-ONLY M1) + §6 (deploy/VPS é humano — não se aplica aqui,
+pois G1 não faz deploy). API ao vivo no dashboard de produção **não** é introduzida por este bloco.
 
 ---
 
