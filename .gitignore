@@ -102,8 +102,9 @@ data/analysis/
 data/analysis/**
 
 # Referencias de template (BLK-CENSO-02): estudos REAIS contem PII (nome/telefone/email)
-# e dados de concorrentes -> PDFs nunca podem vazar. O .pptx de fundo vazio segue rastreavel.
+# e dados de concorrentes -> PDFs/PPTX nunca podem vazar (CLAUDE.md §4: .pptx/PDF nunca versionados).
 data/referencias/*.pdf
+data/referencias/*.pptx
 
 # === Secrets (SOPS+age) ===
 # Plaintext outputs nunca podem ser commitados:
