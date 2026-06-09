@@ -79,6 +79,225 @@ Em paralelo/fase 2: **BLK-CENSO-02** (template/visual padrão do PDF).
 
 ---
 
+## Trilha colaborador (Vini) — dashboard / PDF / UX (2026-06-09)
+
+> Blocos derivados das tarefas pendentes do Vini (Vinícius, ClickUp id 101182135) na lista
+> Motor de Expansão. Trilha de **visualização/relatório/UX**, executável em **paralelo** à trilha
+> M1/infra/score do Felipe (arquivos quase disjuntos). Convenção: 1 bloco = 1 commit = 1 tarefa ClickUp.
+> Fluxo: branch `ciclo/<ID>` → PR para `main` → CI verde → merge+deploy pelo Felipe
+> (ver `docs/handoff_colaborador_run_cycle.md`).
+> **READ-ONLY sobre o M1** em TODOS abaixo: nenhum recalcula `score_priorizacao`, pesos ou artefatos
+> oficiais — é camada de visualização/relatório (§5 guardrail), **exceto BLK-FIX-08** (toca a camada
+> PARALELA de mercado/residual, não o M1 oficial — ver o bloco).
+> Causas-raiz são **hipóteses ancoradas no código** a confirmar pelo Planner.
+
+### BLK-FIX-07 — Overlays do mapa territorial não funcionando
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (display/render; READ-ONLY sobre M1) |
+| **Prioridade** | **Alta** (urgent no ClickUp) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA das decisões visuais]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rtefy` — https://app.clickup.com/t/86e1rtefy |
+
+**Contexto / hipótese:** as camadas de overlay do Mapa Territorial (toggles de concorrentes/Ultra/score)
+não renderizam ou não respondem ao controle. Hipótese: regressão no controle de camadas/`pydeck` em
+`src/motor_expansao/dashboard/pages.py` (`render_mapa_territorial`) ou nos builders de layer em
+`components.py` (filtro de `scope`/cap de pontos descartando o overlay antes do render — eco do
+BLK-FIX-06-C). Planner confirma se é toggle de UI, layer pydeck ou dado ausente.
+
+**Objetivo:** restaurar a exibição e o controle dos overlays no Mapa Territorial.
+
+**Escopo permitido:** `pages.py`/`components.py` (controle e build de camadas), testes de
+`test_streamlit_app.py`. Só display/interação.
+
+**Fora de escopo:** recalcular score/carteira/plano; alterar artefatos M1; mudar o cap de pontos sem aprovação.
+
+**Critérios de aceite:** overlays aparecem e respondem ao toggle; teste cobrindo a camada antes invisível;
+suíte + ruff + mypy verdes; READ-ONLY M1 comprovado (git scope vazio em pipelines/scoring.py/config.py).
+
+**Guardrail:** visualização não recalcula nem altera M1 (§5).
+
+---
+
+### BLK-FIX-08 — SAM não calcula em alguns hexágonos/municípios (RR, AC e outros)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (altera valor da camada PARALELA de mercado/residual; **não** é M1 oficial, mas exige revisão) |
+| **Prioridade** | **Alta** (urgent no ClickUp) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rte9n` — https://app.clickup.com/t/86e1rte9n |
+
+**Contexto / hipótese:** `sam_fitness_potencial` fica vazio/zerado em UFs de baixa cobertura censitária
+(RR, AC, AM — exatamente as de supressão IBGE/classe C). Hipótese: o fallback de `pop_hex_base`
+(`pop_total_setor_2022` → `populacao_proxy / total_hex_municipio`) não cobre esses hexes, ou `cod_municipio`
+ausente quebra o join da camada de mercado. Planner confirma a origem no cálculo do mercado
+(`calcular_colunas_mercado` / `hexagonos_mercado_mapeado.parquet`).
+
+**Objetivo:** SAM calculado (ou marcado explicitamente como "sem base", não silenciosamente vazio) nessas UFs.
+
+**Escopo permitido (camada PARALELA, não M1 oficial):** cálculo de mercado/residual e seu fallback de
+população; se houver regeneração de parquets paralelos, seguir a **ordem canônica** (hibrido → mercado →
+`calcular_colunas_mercado` → carteira → plano → dominio → residual → `fase1_bi_exports`).
+
+**Fora de escopo (inviolável):** `score_priorizacao`/`hex_score_estrutural`/pesos/artefatos oficiais do M1
+(DEC-001 vigente); inventar população onde não há base auditável.
+
+**Critérios de aceite:** SAM presente ou rotulado em RR/AC/AM com causa documentada; repro de ≥1 hex antes
+quebrado; parquets paralelos regenerados de forma reprodutível se necessário; ZERO escrita em M1 oficial;
+suíte + ruff + mypy verdes.
+
+**Guardrail:** não toca o M1 oficial; mudança restrita à camada de mercado/residual paralela.
+
+---
+
+### BLK-FIX-09 — Remover "BYD" do PDF de estudos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (conteúdo do relatório; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rtebk` — https://app.clickup.com/t/86e1rtebk |
+
+**Contexto / hipótese:** entrada espúria "BYD" (marca não-fitness) aparece no PDF de estudos — provavelmente
+um pin/logo de POI ou registro indevido na base de concorrentes (`concorrentes/` logos/Unidades) ou no
+lookup do relatório. Planner localiza a origem (dado vs render).
+
+**Objetivo:** o "BYD" não aparece mais no PDF/relatório.
+
+**Escopo permitido:** `src/motor_expansao/dashboard/censo_report.py` / `censo_map.py` (filtro de render) e/ou
+saneamento da fonte de concorrentes consumida pelo relatório.
+
+**Fora de escopo:** alterar score/artefatos M1; mexer no método de interseção/raio 1.5 km.
+
+**Critérios de aceite:** PDF sem "BYD"; teste cobrindo a exclusão; suíte verde; READ-ONLY M1.
+
+**Guardrail:** relatório é camada de visualização (§5).
+
+---
+
+### BLK-FIX-10 — Diminuir tamanho da pré-visualização dos estudos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (layout/UX; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rteea` — https://app.clickup.com/t/86e1rteea |
+
+**Contexto / hipótese:** a pré-visualização do estudo no dashboard renderiza grande demais. Hipótese:
+`st.image`/container de preview sem largura controlada em `pages.py`.
+
+**Objetivo:** preview em tamanho adequado (largura/altura controladas), sem afetar o PDF exportado.
+
+**Escopo permitido:** layout do preview em `pages.py` + teste de smoke.
+
+**Fora de escopo:** alterar o PDF final; score/artefatos M1.
+
+**Critérios de aceite:** preview menor/legível; export inalterado; suíte verde; READ-ONLY M1.
+
+---
+
+### BLK-EST-01 — Marca d'água + nome do usuário solicitante nos PDFs
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (rastreabilidade/LGPD + identidade do solicitante no documento) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rteq7` — https://app.clickup.com/t/86e1rteq7 |
+| **Relacionado** | ClickUp `86e1rtezm` (logs de rastreio LGPD, do Felipe) |
+
+**Contexto:** anexar marca d'água + nome do usuário que solicitou o estudo no PDF, para rastreabilidade
+(base LGPD). A identidade do solicitante vem da sessão autenticada (Authelia). Coordenar com a tarefa de
+logs LGPD do Felipe para padronizar a fonte do "solicitante".
+
+**Objetivo:** todo PDF gerado carrega marca d'água + nome do solicitante de forma legível e não removível trivialmente.
+
+**Escopo permitido:** `src/motor_expansao/dashboard/censo_report.py` (composição do PDF sobre `fpdf2`);
+passar o identificador do solicitante pelo caminho de geração.
+
+**Fora de escopo:** versionar PDFs reais (PII); embutir o cartão de contato `image24.png` (anti-PII, §4);
+score/artefatos M1.
+
+**Critérios de aceite:** marca d'água + solicitante presentes no PDF; fonte do nome definida e testada;
+sem PII versionada; compressão de stream OFF preservada (auditabilidade anti-PII); suíte verde; READ-ONLY M1.
+
+**Guardrail:** anti-PII do §4 preservado; sem dependência de API ao vivo.
+
+---
+
+### BLK-EST-02 — Melhorar visual e template dos estudos automatizados
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (template/visual; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA das decisões visuais]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rteju` — https://app.clickup.com/t/86e1rteju |
+| **Depende de** | precedência do BLK-CENSO-02/03 (template `fpdf2` 16:9 + 7 páginas já estabelecido) |
+
+**Contexto:** evoluir o template/visual dos estudos (continuação do BLK-CENSO-02/03). Decisões visuais
+**exigem gate humano** do Felipe (precedente dos ciclos CENSO). Cada iteração visual implica rebuild de
+imagem + redeploy por digest na VPS + assets de branding no volume (footgun BLK-CENSO-02).
+
+**Objetivo:** template mais limpo/profissional, mantendo as 7 páginas e o conteúdo READ-ONLY.
+
+**Escopo permitido:** `censo_report.py` / `censo_map.py` + assets de branding em `data/ultra/` (gitignored).
+
+**Fora de escopo:** recalcular qualquer score; método de interseção/raio; PII no PDF.
+
+**Critérios de aceite:** visual aprovado por Felipe (gate); 7 páginas e Big Numbers READ-ONLY preservados;
+suíte verde; READ-ONLY M1; deploy registrado.
+
+**Guardrail:** §5 (visualização) + §4 (anti-PII) + DEC-004 (basemap só na geração).
+
+---
+
+### BLK-UI-01 — Refatoração UX/UI da plataforma Motor de Expansão
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (mexe na navegação/estrutura do dashboard de produção; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** (estratégico — exige planejamento antes de executar) |
+| **Esteira** | Block Orchestrator → Planner (design detalhado) → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente (não iniciar sem plano aprovado) |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rtey2` — https://app.clickup.com/t/86e1rtey2 |
+
+**Contexto:** refatoração ampla de UX/UI das 4 abas (Visão Executiva, Mapa Territorial, Expansão de
+Domínio, Carteira e Plano). Por ser amplo e tocar muitos arquivos do dashboard, requer **plano detalhado +
+gate humano** antes de execução, e fatiamento em sub-blocos para não colidir com os bugs acima.
+
+**Objetivo:** melhorar usabilidade/consistência visual sem regressão de funcionalidade nem do M1.
+
+**Escopo permitido:** `dashboard/` (pages/components/utils/constants visuais), preservando carga lazy por UF,
+render lazy de abas e fonte de mapa enxuta (Blocos 4–6).
+
+**Fora de escopo:** score/pesos/artefatos M1; recolocar dependência de API ao vivo; quebrar os contratos de
+performance já entregues.
+
+**Critérios de aceite:** plano aprovado antes de codar; sem regressão funcional (suíte verde); UX validada
+por Felipe; READ-ONLY M1.
+
+**Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
+
+---
+
 ## Tarefas pendentes
 
 - BLK-OPS-06 (concluído 2026-05-29) — ver tasks/completed.md
