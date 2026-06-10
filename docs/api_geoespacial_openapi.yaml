@@ -1,0 +1,235 @@
+openapi: 3.1.0
+info:
+  title: API GeoEspacial - Motor de Expansao Ultra Academia
+  description: >
+    API complementar on-demand para estudos geoespaciais (Relatorio Pontual Censitario 1.5 km),
+    consumida por bots de Telegram/WhatsApp. MVP minimo: GET /health + POST /analisar.
+    READ-ONLY sobre o M1. Decisoes-chave aprovadas por Felipe Silva em 2026-06-10 (ver DEC-005).
+    Esboco de contrato (BLK-API-01 / G1) - nao e implementacao.
+  version: api-geoespacial/v1
+servers:
+  - url: /api/v1
+    description: Prefixo de versao do contrato.
+
+security:
+  - tokenConsumidor: []
+
+paths:
+  /health:
+    get:
+      summary: Liveness do servico
+      operationId: getHealth
+      security: []
+      responses:
+        "200":
+          description: Servico no ar.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /analisar:
+    post:
+      summary: Analisa um ponto (Relatorio Pontual Censitario 1.5 km)
+      description: >
+        Recebe uma coordenada {lat,lng} OU um link do Google Maps (maps_url) e retorna o estudo
+        do ponto. Por padrao devolve JSON com KPIs; com formato=pdf (ou Accept: application/pdf)
+        devolve o PDF de 7 paginas. Raio fixo 1.5 km. Importa, nao edita, a camada censo_*.
+      operationId: postAnalisar
+      parameters:
+        - in: query
+          name: formato
+          required: false
+          schema:
+            type: string
+            enum: [json, pdf]
+            default: json
+          description: Atalho de negociacao de conteudo (alternativa ao header Accept).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnalisarRequest"
+      responses:
+        "200":
+          description: Estudo do ponto (JSON com KPIs ou PDF de 7 paginas).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalisarResponseJSON"
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        "400":
+          description: Coordenada invalida / maps_url nao parseavel / ponto fora do Brasil.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Token ausente ou invalido.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Token valido sem permissao.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Base geo ausente para a UF/municipio resolvidos.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Falha de validacao (corpo malformado; nem lat/lng nem maps_url).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Erro interno ao gerar o estudo/PDF.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+components:
+  securitySchemes:
+    tokenConsumidor:
+      type: http
+      scheme: bearer
+      description: >
+        Token de portador por consumidor/bot (Decisao 2). MVP = lista estatica token->consumidor;
+        evoluivel para Authelia/JWT. O consumidor resolvido e carimbado no JSON (rastreio LGPD).
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, environment]
+      properties:
+        status:
+          type: string
+          example: ok
+        environment:
+          type: string
+          example: production
+
+    AnalisarRequest:
+      type: object
+      description: Fornecer {lat,lng} OU maps_url. Raio e fixo 1.5 km (nao e parametro).
+      properties:
+        lat:
+          type: number
+          format: double
+          example: -23.95
+        lng:
+          type: number
+          format: double
+          example: -46.33
+        maps_url:
+          type: string
+          description: Link do Google Maps; parser puro extrai (lat,lng).
+          example: "https://maps.google.com/?q=-23.95,-46.33"
+        formato:
+          type: string
+          enum: [json, pdf]
+          default: json
+      anyOf:
+        - required: [lat, lng]
+        - required: [maps_url]
+
+    AnalisarResponseJSON:
+      type: object
+      description: KPIs derivados (READ-ONLY) do result de analisar_ponto_censitario_setores + carimbo de versao.
+      required:
+        - lat
+        - lng
+        - raio_km
+        - metodo
+        - versao_contrato
+        - versao_score
+        - gerado_em
+      properties:
+        lat:
+          type: number
+          format: double
+        lng:
+          type: number
+          format: double
+        raio_km:
+          type: number
+          format: double
+          example: 1.5
+        area_km2:
+          type: number
+          format: double
+          example: 7.07
+        metodo:
+          type: string
+          example: setor_censitario_intersecao_area_1p5km
+        n_setores:
+          type: integer
+          example: 12
+        pop_total_raio:
+          type: number
+          nullable: true
+          example: 18432.0
+        renda_per_capita_media_raio:
+          type: number
+          nullable: true
+          example: 5210.0
+        densidade_pop_raio_hab_km2:
+          type: number
+          nullable: true
+          example: 2607.0
+        score_setor_medio:
+          type: number
+          nullable: true
+          example: 64.2
+        score_setor_max:
+          type: number
+          nullable: true
+          example: 91.0
+        n_concorrentes:
+          type: integer
+          example: 3
+        n_ultra:
+          type: integer
+          example: 1
+        versao_contrato:
+          type: string
+          example: api-geoespacial/v1
+        versao_score:
+          type: string
+          example: score_setor_2022_calibrado
+        gerado_em:
+          type: string
+          format: date-time
+          example: "2026-06-10T12:00:00Z"
+        consumidor:
+          type: string
+          description: Resolvido pelo token (rastreio do solicitante).
+          example: bot-telegram
+
+    ErrorResponse:
+      type: object
+      required: [detail, codigo]
+      properties:
+        detail:
+          type: string
+          example: Coordenada fora do Brasil
+        codigo:
+          type: string
+          enum:
+            - coordenada_invalida
+            - nao_autenticado
+            - sem_permissao
+            - base_geo_ausente
+            - erro_interno
+          example: coordenada_invalida

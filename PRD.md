@@ -25,6 +25,7 @@ Documentos de apoio referenciados ao longo deste PRD:
 - `docs/modelo_mercado_hexagonos.md` — contrato tecnico de mercado/residual.
 - `docs/m1_outputs_oficiais.md` — contrato curto dos outputs do M1.
 - `docs/relatorio_pontual_censitario.md` — contrato do relatorio censitario.
+- `docs/api_geoespacial_contrato.md` — contrato da API GeoEspacial on-demand (G1/BLK-API-01; DEC-005, CLAUDE.md §8); esboco em `docs/api_geoespacial_openapi.yaml`. So contrato; sem codigo de API.
 - `docs/infra_producao.md` — manutencao e deploy.
 - `docs/backup_restore.md` — backup e regeneracao (DR).
 - `data/reports/perf_baseline_dashboard.md` — baseline de performance do dashboard.

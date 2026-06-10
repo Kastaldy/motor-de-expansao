@@ -207,6 +207,7 @@ O contrato de handoff do repositorio esta em `docs/handoff_repositorio.md`.
 - `docs/streamlit_dashboard_m1.md`: governanca e uso do dashboard.
 - `docs/analise_pontual_entorno.md`: contrato de UX, metricas de raio e limites tecnicos da analise pontual e Visao Executiva Ultra.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico da camada de mercado.
+- `docs/api_geoespacial_contrato.md`: contrato da API GeoEspacial on-demand (status G1/BLK-API-01; ver DEC-005 no CLAUDE.md §8 e o esboco `docs/api_geoespacial_openapi.yaml`). Apenas contrato — sem API implementada.
 - `fora_primeira_fase/README.md`: inventario dos codigos, docs e dados separados do deploy inicial.
 
 ## Orquestração de Agentes
