@@ -23,6 +23,18 @@ from motor_expansao.dashboard.constants import (
     TEXT_COLUMNS,
 )
 from motor_expansao.dashboard.schemas import validate_dashboard_frame
+from motor_expansao.pipelines.pop_corte import (
+    derive_confianca_geografica as _derive_confianca_geografica_impl,
+)
+from motor_expansao.pipelines.pop_corte import (
+    derive_pop_cut_columns as _derive_pop_cut_columns_impl,
+)
+from motor_expansao.pipelines.pop_corte import (
+    has_censo_signal as _has_censo_signal_impl,
+)
+from motor_expansao.pipelines.pop_corte import (
+    normalized_join_quality as _normalized_join_quality_impl,
+)
 
 
 def _read_parquet_subset(path: Path, columns: list[str]) -> pd.DataFrame:
@@ -167,45 +179,18 @@ def read_censo_geo_partition(
 
 
 def _normalized_join_quality(df: pd.DataFrame) -> pd.Series:
-    if "qualidade_join_uf" not in df.columns:
-        return pd.Series("", index=df.index, dtype="object")
-    return (
-        df["qualidade_join_uf"]
-        .astype(object)
-        .where(df["qualidade_join_uf"].notna(), "")
-        .astype(str)
-        .str.upper()
-    )
+    # Delega ao helper compartilhado (fonte unica em pipelines/pop_corte.py).
+    return _normalized_join_quality_impl(df)
 
 
 def _has_censo_signal(df: pd.DataFrame) -> pd.Series:
-    signal = pd.Series(False, index=df.index)
-    if "flag_censo_disponivel" in df.columns:
-        signal |= df["flag_censo_disponivel"].fillna(False).astype(bool)
-    if "score_setor_2022_calibrado" in df.columns:
-        signal |= df["score_setor_2022_calibrado"].notna()
-    return signal
+    # Delega ao helper compartilhado (fonte unica em pipelines/pop_corte.py).
+    return _has_censo_signal_impl(df)
 
 
 def _derive_confianca_geografica(df: pd.DataFrame) -> pd.Series:
-    if "confianca_geografica" in df.columns:
-        base = (
-            df["confianca_geografica"]
-            .astype(object)
-            .where(df["confianca_geografica"].notna(), "municipal")
-            .astype(str)
-            .str.lower()
-        )
-        base = base.where(base.isin(["granular", "municipal"]), "municipal")
-    else:
-        base = pd.Series("municipal", index=df.index, dtype="object")
-
-    granular_mask = _normalized_join_quality(df).isin(["A", "B"]) & _has_censo_signal(df)
-    return pd.Series(
-        np.where(granular_mask, "granular", base),
-        index=df.index,
-        dtype="object",
-    )
+    # Delega ao helper compartilhado (fonte unica em pipelines/pop_corte.py).
+    return _derive_confianca_geografica_impl(df)
 
 
 def _prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
@@ -568,45 +553,11 @@ def derive_pop_cut_columns(df: pd.DataFrame, pop_min: int = POP_MIN_ACIONAVEL) -
     - fonte_populacao_corte: origem do valor ("setor_2022", "total_municipal" ou "ausente")
     - flag_pop_min_5k: True quando populacao_corte_hex >= pop_min
     Nao altera score_priorizacao nem artefatos oficiais do M1.
+
+    Delega ao helper compartilhado (fonte unica em pipelines/pop_corte.py); o
+    dashboard mantem o default `POP_MIN_ACIONAVEL`.
     """
-    result = df.copy()
-    is_granular = (
-        result["confianca_geografica"].eq("granular")
-        if "confianca_geografica" in result.columns
-        else pd.Series(False, index=result.index)
-    )
-    has_setor = "pop_total_setor_2022" in result.columns
-    # Preferir pop_total (total real) sobre populacao_proxy legado (proxy 18-45 antigo).
-    has_pop_total = "pop_total" in result.columns
-    has_proxy = "populacao_proxy" in result.columns
-
-    pop_municipal = (
-        result["pop_total"] if has_pop_total else
-        result["populacao_proxy"] if has_proxy else
-        pd.Series(pd.NA, index=result.index, dtype="Float64")
-    )
-    pop_municipal_notna = (
-        result["pop_total"].notna() if has_pop_total else
-        result["populacao_proxy"].notna() if has_proxy else
-        pd.Series(False, index=result.index)
-    )
-
-    if has_setor:
-        use_setor = is_granular & result["pop_total_setor_2022"].notna()
-        pop_val = result["pop_total_setor_2022"].where(use_setor, pop_municipal)
-        fonte = np.where(
-            use_setor,
-            "setor_2022",
-            np.where(pop_municipal_notna, "total_municipal", "ausente"),
-        )
-    else:
-        pop_val = pop_municipal
-        fonte = np.where(pop_municipal_notna, "total_municipal", "ausente")
-
-    result["populacao_corte_hex"] = pd.to_numeric(pop_val, errors="coerce")
-    result["fonte_populacao_corte"] = fonte
-    result["flag_pop_min_5k"] = result["populacao_corte_hex"].ge(pop_min).fillna(False)
-    return result
+    return _derive_pop_cut_columns_impl(df, pop_min=pop_min)
 
 
 def build_pop_cut_lookup(enriched_df: pd.DataFrame) -> pd.DataFrame:

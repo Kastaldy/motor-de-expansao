@@ -15,6 +15,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from motor_expansao.pipelines.pop_corte import (
+    derive_confianca_geografica,
+    derive_pop_cut_columns,
+)
+
 ROOT = Path(__file__).resolve().parents[3]
 
 MERCADO_PATH = ROOT / "data" / "staging" / "hexagonos_mercado_mapeado.parquet"
@@ -32,12 +37,16 @@ TAXA_FITNESS_CALIBRADA = TAXA_FITNESS_MERCADO_FALLBACK  # alias backward-compat;
 CAPACIDADE_MIN_ACADEMIA_ALUNOS = 2_000.0          # lower-bound conservador para calibracao
 CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS = 2_500.0   # proxy por unidade para subtracao do residual
 SCORE_RESIDUAL_CAPACIDADE_REFERENCIA = CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS
+POP_MIN_SAM_GATE = 5_000  # regua operacional de populacao para o gate do SAM (camada paralela de mercado).
+                          # Espelha POP_MIN_ACIONAVEL do dashboard; NAO e parametro do M1 oficial (§3).
 SOURCE_REQUIRED_COLS = {
     "hex_id",
     "flag_censo_elegivel",
     "populacao_proxy",
     "renda_per_capita",
     "score_priorizacao",
+    "faixa_oportunidade",
+    "pop_total",
     "flag_hex_hibrido_elegivel",
     "score_expansao_hibrido",
     "flag_viavel",
@@ -265,21 +274,37 @@ def calcular(df: pd.DataFrame, n_redes: int | None = None) -> pd.DataFrame:
     ).where(df["tam_populacao_hex"].notna(), np.nan)
 
     # 5.4 - SAM
+    # Regua de populacao do corte (DEC-006): replica a regua do dashboard via helper
+    # compartilhado (setor 2022 quando o hex e granular, fallback pop_total municipal).
+    # granular = qualidade_join_uf in {A,B} AND (flag_censo_disponivel OR score_setor_2022_calibrado notna),
+    # NAO e flag_censo_elegivel/mask_hex_censo.
+    df["confianca_geografica"] = derive_confianca_geografica(df)
+    df = derive_pop_cut_columns(df, pop_min=POP_MIN_SAM_GATE)
+
     flag_canibal = df["flag_canibalizacao_ultra_1km"].fillna(False).astype(bool)
     flag_viavel = df["flag_viavel"].fillna(False).astype(bool)
     flag_top_mun = df["top_municipio"].fillna(False).astype(bool)
     flag_white = df["flag_white_space_2km"].fillna(False).astype(bool)
     flag_hibrid_elig = df["flag_hex_hibrido_elegivel"].fillna(False).astype(bool)
 
-    df["flag_sam"] = flag_viavel & flag_top_mun & ~flag_canibal
+    # Gate DEC-006: faixa M1 elegivel AND populacao_corte_hex >= 5000 (substitui top_municipio
+    # e o piso trivial tam_populacao_hex>0); mantem flag_viavel e ~canibalizacao.
+    faixa_elegivel = (
+        df["faixa_oportunidade"].astype("object")
+        .isin({"baixa", "media", "alta", "prioridade_maxima"})
+    )
+    flag_pop_ok = df["flag_pop_min_5k"].fillna(False).astype(bool)
+
+    df["flag_sam"] = flag_viavel & faixa_elegivel & flag_pop_ok & ~flag_canibal
     flag_sam = df["flag_sam"].astype(bool)
 
     df["sam_indice_operavel"] = np.where(flag_sam, df["tam_indice_demanda"], 0.0)
     df["sam_populacao_base"] = np.where(flag_sam, df["tam_populacao_base"], 0.0)
-    df["flag_sam_fitness"] = flag_sam & pd.to_numeric(df["tam_populacao_hex"], errors="coerce").gt(0)
+    # flag_sam_fitness == flag_sam: o piso tam_populacao_hex>0 SAI (redundante com o corte >=5000).
+    df["flag_sam_fitness"] = flag_sam
     df["sam_fitness_potencial"] = np.where(
         df["flag_sam_fitness"],
-        df["tam_fitness_potencial"],
+        pd.to_numeric(df["tam_fitness_potencial"], errors="coerce").fillna(0.0),
         0.0,
     )
 
@@ -388,6 +413,7 @@ def validar(df: pd.DataFrame) -> None:
         "tam_indice_demanda_norm", "tam_pop_total_base",
         "pop_hex_base", "fonte_pop_hex_base", "tam_populacao_hex",
         "taxa_fitness_mercado_calibrada", "taxa_fitness_calibrada", "tam_fitness_potencial",
+        "populacao_corte_hex", "fonte_populacao_corte", "flag_pop_min_5k",
         "flag_sam", "flag_sam_fitness", "sam_indice_operavel",
         "sam_populacao_base", "sam_fitness_potencial", "sam_granularidade",
         "residual_indice_mapeado", "residual_populacao_mapeada",
