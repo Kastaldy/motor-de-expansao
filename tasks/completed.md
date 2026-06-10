@@ -3420,3 +3420,80 @@ coerente com o que está ligado), `constants.py` se ajustar `OVERLAYS`, e testes
 - Decisão registrada sobre encerrar/superseder **BLK-FIX-07**.
 
 **Guardrail:** visualização não recalcula nem altera M1 (§5).
+
+---
+
+### BLK-SAM-01 — Redefinir condições de cálculo do SAM (Faixa M1 + população ≥ 5000)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (altera o VALOR da camada PARALELA de mercado/residual; **não** é M1 oficial, mas redefine semântica → exige revisão humana) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA das decisões de produto]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rte9n` — https://app.clickup.com/t/86e1rte9n |
+| **Relacionado** | **Supersede o BLK-FIX-08** (mesma tarefa ClickUp `86e1rte9n`, "SAM não calculando…"): este bloco é a versão precisa/decidida; BLK-FIX-08 marcado como superseado. **Absorve** a preocupação de cobertura do BLK-FIX-08 — fallback de população em UFs de baixa cobertura censitária (RR/AC/AM): rotular SAM como "sem base" em vez de zerar silenciosamente quando não há população auditável (ver decisão #2). |
+
+**Contexto / estado atual (ancorado no código):** hoje o SAM é gateado em
+`src/motor_expansao/pipelines/calcular_colunas_mercado.py` por:
+- `flag_sam = flag_viavel & top_municipio & ~flag_canibalizacao_ultra_1km` (≈ linha 274);
+- `flag_sam_fitness = flag_sam & (tam_populacao_hex > 0)` (≈ linha 279);
+- `sam_fitness_potencial = where(flag_sam_fitness, tam_fitness_potencial, 0.0)` (≈ linha 280).
+
+Consequência observada: hexes com **boa Faixa M1** podem ter `sam_fitness_potencial = 0` por estarem fora do
+top_municipio, canibalizados, ou sem `tam_populacao_hex > 0` (sem limiar mínimo de população).
+
+**Objetivo (pedido de Felipe):** o SAM deve ser calculado **para hexes nas Faixas M1
+`baixa`, `media`, `alta` e `prioridade_maxima`** (ou seja, excluindo `descartado` e `inviavel`), **e** que
+contenham **pelo menos 5000 de população**. Hexes fora dessas faixas ou abaixo de 5000 hab → SAM = 0
+(ou rótulo explícito "sem base"), sem zeragem silenciosa por outras causas.
+
+**Decisões de produto — TODAS RESOLVIDAS por Felipe em 2026-06-09** (registrar como nova DEC no CLAUDE.md §8 na execução; o Builder implementa direto, sem novo gate de produto):
+1. **[RESOLVIDO por Felipe, 2026-06-09]** Gate redefinido assim: **manter** `~flag_canibalizacao_ultra_1km`
+   como filtro; **substituir** `top_municipio` pelos novos critérios — **Faixa M1 ∈ {baixa, media, alta,
+   prioridade_maxima}** *e* **pop ≥ 5000**. Resultado pretendido:
+   `flag_sam = faixa_oportunidade.isin({baixa,media,alta,prioridade_maxima}) & (pop_corte ≥ 5000) & ~flag_canibalizacao_ultra_1km`
+   (sobre o campo de população decidido em #2). Consequência aceita da remoção do `top_municipio`:
+   o SAM passa a ser calculado **fora do recorte M1** (municípios não-top), desde que faixa+pop satisfaçam.
+   **Sub-decisão do `flag_viavel` — [RESOLVIDA por Felipe, 2026-06-09]:** **manter** `flag_viavel` como guarda
+   adicional. Motivo (verificado nos dados 2026-06-09): `flag_viavel` **não** embute piso de 5000 — sua parte de
+   população é só `hex_sem_populacao=False` (= `populacao_proxy ≥ 1`); logo **não é redundante** com a nova regra
+   e não a entrega sozinho. A **única** sobreposição é a faixa (`flag_viavel` já exige faixa ∉ {descartado,inviavel},
+   = o mesmo conjunto {baixa,media,alta,prioridade_maxima}); mantê-lo é inofensivo e **preserva de brinde o filtro de
+   renda** (`renda_target_proxy ≥ RENDA_MIN`). Gate efetivo: `flag_viavel & faixa∈{…} & (pop_corte ≥ 5000) & ~canibal`.
+2. **[RESOLVIDO por Felipe, 2026-06-09] Campo de população do corte de 5000 = `populacao_corte_hex` / `flag_pop_min_5k`**
+   (a régua operacional `POP_MIN_ACIONAVEL=5000` que o dashboard **já tem**, em `data.py::derive_pop_cut_columns`:
+   setor 2022 quando granular, fallback total municipal `pop_total`). **NÃO** usar `pop_hex_base`/`tam_populacao_hex`.
+   Justificativa (medido nos dados de 2026-06-09): `pop_hex_base` é a população do setor **rateada por hexágono**
+   (mediana nacional ≈ **5** hab; **97,4%** dos 196.715 hexes com SAM>0 têm `pop_hex_base < 5000`) — cortar 5000 sobre
+   ela **aniquilaria ~97% do SAM**. A régua `populacao_corte_hex` é a noção de "5k habitantes" pretendida (no recorte
+   SP, só ~14% dos hexes com SAM>0 a passam — filtro forte, não aniquilador). **Atenção de implementação:**
+   `populacao_corte_hex`/`flag_pop_min_5k` hoje são derivados na **camada do dashboard** (`data.py`), não na de mercado;
+   o Builder precisa torná-los disponíveis em `calcular_colunas_mercado` (mover/compartilhar `derive_pop_cut_columns`
+   ou recomputar a mesma regra no pipeline), sem duplicar a lógica de forma divergente.
+3. **[RESOLVIDO] Limiar inclusivo `≥ 5000`** (conforme "pelo menos 5000"); coerente com `flag_pop_min_5k` (`.ge(5000)`).
+
+**Escopo permitido (camada PARALELA, não M1 oficial):** o gate do SAM em `calcular_colunas_mercado.py`
+(`flag_sam`/`flag_sam_fitness`/`sam_fitness_potencial`) e, se necessário, parâmetro do limiar 5000 em
+`config.py`/`constants.py`. Se houver regeneração de parquets paralelos, seguir a **ordem canônica**:
+híbrido → mercado → `calcular_colunas_mercado` → carteira → plano → domínio → residual → `fase1_bi_exports`.
+
+**Fora de escopo (inviolável):** `score_priorizacao`/`hex_score_estrutural`/pesos/`faixa_oportunidade`/
+artefatos oficiais do M1 (DEC-001 vigente; a Faixa M1 é **lida**, não recalculada); inventar população onde
+não há base auditável.
+
+**Critérios de aceite:**
+- SAM calculado exatamente para Faixa M1 ∈ {baixa, media, alta, prioridade_maxima} **e** população ≥ 5000
+  (campo confirmado no gate); demais hexes com SAM = 0 ou rótulo explícito.
+- As 3 decisões acima resolvidas e registradas (idealmente como nova DEC no CLAUDE.md §8).
+- Repro de ≥1 hex que **passa a calcular** e ≥1 que **passa a zerar** sob a nova regra, com causa documentada.
+  **Repro de referência (verificado nos dados de 2026-06-09)** — hex `87a91b18dffffff` (Santo Amaro da Imperatriz/SC):
+  hoje tem `sam_fitness_potencial ≈ 7,28` (SAM>0) porque passa em tudo (`flag_viavel=True`, `top_municipio=True`,
+  `canibal=False`, faixa `prioridade_maxima`, `score_priorizacao=75,84`) e o gate atual só exige `tam_populacao_hex>0`
+  (= **35,4** hab, setor 2022 rateado). Sob a nova regra, `populacao_corte_hex = 35,4` → `flag_pop_min_5k=False`
+  → **SAM deve passar a 0**. É o caso canônico de "pop < 5000 com SAM" que motivou o bloco.
+- Parquets paralelos regenerados de forma reprodutível, se necessário; **ZERO escrita em M1 oficial**.
+- Suíte + ruff + mypy verdes (incluindo testes novos do gate em `tests/integration/test_modelo_mercado_hexagonos.py`).
+
+**Guardrail:** não toca o M1 oficial; mudança restrita à camada de mercado/residual paralela (§4/§5).

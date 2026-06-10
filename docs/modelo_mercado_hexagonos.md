@@ -232,19 +232,36 @@ Leitura:
 
 ### 5.4 Mercado atendivel (SAM)
 
+Colunas de corte de populacao (materializadas no pipeline via helper compartilhado
+`pipelines/pop_corte.py`, mesma regua do dashboard — DEC-006):
+
 | coluna | tipo | regra exata |
 | --- | --- | --- |
-| `flag_sam` | bool | `flag_viavel.fillna(False) and top_municipio.fillna(False) and not flag_canibalizacao_ultra_1km` |
-| `flag_sam_fitness` | bool | `flag_sam=True` e `tam_populacao_hex > 0` |
+| `populacao_corte_hex` | float | `pop_total_setor_2022` quando o hex e `granular`; senao fallback `pop_total` municipal |
+| `fonte_populacao_corte` | string | `setor_2022` / `total_municipal` / `ausente` |
+| `flag_pop_min_5k` | bool | `populacao_corte_hex >= 5000` (`POP_MIN_SAM_GATE`, espelha `POP_MIN_ACIONAVEL`) |
+
+> **`granular`** (regua do corte) = `qualidade_join_uf in {A,B}` **AND** (`flag_censo_disponivel`
+> OR `score_setor_2022_calibrado` notna). NAO e `flag_censo_elegivel` nem `mask_hex_censo`
+> (`flag_censo_elegivel & pop_total_setor_2022.notna()`). Um hex pode ter
+> `flag_censo_elegivel=False` e ainda ser `granular` — nesse caso o corte usa o setor 2022.
+
+| coluna | tipo | regra exata |
+| --- | --- | --- |
+| `flag_sam` | bool | `flag_viavel and faixa_oportunidade in {baixa,media,alta,prioridade_maxima} and flag_pop_min_5k and not flag_canibalizacao_ultra_1km` |
+| `flag_sam_fitness` | bool | `== flag_sam` (piso `tam_populacao_hex > 0` removido por redundancia com o corte `>= 5000`) |
 | `sam_indice_operavel` | float | `tam_indice_demanda` quando `flag_sam=True`; senao `0` |
 | `sam_populacao_base` | float | `tam_populacao_base` quando `flag_sam=True`; senao `0` |
-| `sam_fitness_potencial` | float | `tam_fitness_potencial` quando `flag_sam_fitness=True`; senao `0` |
+| `sam_fitness_potencial` | float | `tam_fitness_potencial` (coercido, sem NaN, nao-negativo) quando `flag_sam_fitness=True`; senao `0` |
 | `sam_granularidade` | string | `hex_censo` quando `flag_hex_hibrido_elegivel=True`; senao `municipio_priorizado` quando `flag_sam=True`; `bloqueado_rede_ultra` quando `flag_canibalizacao_ultra_1km=True`; senao `fora_escopo_atual` |
 
 Leitura:
 
 - `flag_sam` representa o que o modelo atual considera atendivel agora.
-- O gate escolhido usa apenas variaveis ja disponiveis: viabilidade M1 + municipio no topo da fila atual + restricao de distancia minima para a rede Ultra.
+- O gate (DEC-006) substitui `top_municipio` por Faixa M1 elegivel + populacao `>= 5000`
+  na regua `populacao_corte_hex`, mantendo viabilidade M1 e a restricao de distancia minima
+  para a rede Ultra. O SAM passa a existir fora do recorte top-20%/UF, mas o corte `>= 5000`
+  sobre `populacao_corte_hex` reduz o universo (filtro forte, nao aniquilador).
 
 ### 5.5 Rede propria Ultra e canibalizacao
 
