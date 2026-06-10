@@ -199,3 +199,18 @@ Se um detalhe historico nao estiver aqui, procurar primeiro nesses docs antes de
 - Pesos/formula/artefatos do M1: **INALTERADOS** (`renda=0.40`/`pop=0.60`, `score_priorizacao`, `hex_score_estrutural`, carteira, plano, artefatos oficiais). E camada de visualizacao (§5 guardrail permanente).
 - Parametros canonicos do §3: INALTERADOS (nenhum parametro de score; so adicao de extra de dependencia e constantes de cor/faixa de visualizacao `DENSIDADE_POP_BANDS`/`RENDA_PER_CAPITA_BANDS`).
 - Referencias: `tasks/backlog.md` (BLK-CENSO-01); `context/handoff.md` (Builder); `docs/relatorio_pontual_censitario.md` §6/§7/§8; CLAUDE.md §2/§4/§5.
+
+### DEC-005 — Arquitetura e contrato da API GeoEspacial on-demand (BLK-API-01 / G1)
+- ID: DEC-005 | Data: 2026-06-10 | Criticidade: **Estrategica** (nova fase: stand-up de uma API; redesenho da superficie de consumo do motor). READ-ONLY sobre o M1.
+- Status: **APROVADA por Felipe Silva em 2026-06-10.**
+- Decisao: aprovar o contrato da **API GeoEspacial** (complementar ao Motor, on-demand, para bots de Telegram/WhatsApp; ClickUp `86e1rtfe3`, pai `86e1rtfcy`) com as **6 decisoes-chave** resolvidas no gate:
+  1. **Formato de saida = (c)** JSON por padrao + `?formato=pdf` (ou `Accept: application/pdf`) devolve o PDF. Reusa `analisar_ponto_censitario_setores` (JSON) + `gerar_pdf_relatorio_pontual_censitario` (PDF).
+  2. **Autenticacao = (b)** token por consumidor/bot (rastreia QUEM pediu; casa com BLK-EST-01 marca d'agua/LGPD). MVP = lista estatica `token->consumidor`, evoluivel para Authelia depois.
+  3. **Superficie do MVP = (a)** minimo `GET /health` + `POST /analisar`. Lookup M1/mercado NAO entra no MVP -> bloco sucessor condicional **BLK-API-05** (roadmap pos-MVP).
+  4. **Entrada de coordenada = (b)** `{lat,lng}` E link do Google Maps (parser puro string->coordenada, sem tocar o motor).
+  5. **Raio no MVP = (a)** fixo 1.5 km (metodo de intersecao `setor_censitario_intersecao_area_1p5km` e `RAIO_CENSITARIO_DEFAULT_KM` INTOCADOS).
+  6. **Carimbo de versao = Incluir** versao do contrato/score no JSON e no rodape do PDF (reprodutibilidade).
+- Premissas canonicas fixadas (Felipe, 2026-06-09; reafirmadas aqui, NAO reabrir): (i) **on-demand a partir do motor, PostGIS FORA do MVP**; (ii) fronteira **"importa, nao edita `censo_*`"** (`censo_point.py`/`censo_map.py`/`censo_report.py` sao interface estavel da trilha do Vini); (iii) codigo novo so em **`src/motor_expansao/api/`** (pasta disjunta); (iv) dependencias so no **extra `[api]`** do `pyproject.toml`, fora do deploy base do Streamlit (subset MVP = `fastapi`/`uvicorn[standard]`/`pydantic`/`pydantic-settings`; legado PostGIS `sqlalchemy`/`asyncpg`/`psycopg2`/`alembic`/`geoalchemy2`/`sentry-sdk`/`prefect` NAO arrastado).
+- Escopo deste bloco: **ZERO codigo de producao** — so contrato/OpenAPI/ADR/decomposicao. A pasta `src/motor_expansao/api/` nasce no BLK-API-02. Decomposicao G2+: BLK-API-02 (esqueleto+/health+settings+auth), BLK-API-03 (`POST /analisar` JSON), BLK-API-04 (saida PDF), BLK-API-05 (M1/mercado condicional), BLK-API-06 (integracao G3), BLK-API-07 (G4 Telegram/WhatsApp).
+- Pesos/formula/artefatos do M1: **INALTERADOS** (`renda=0.40`/`pop=0.60`, `score_priorizacao`, `hex_score_estrutural`, carteira, plano, artefatos oficiais). Parametros canonicos do §3: INALTERADOS (a API e camada paralela de consumo; nada de score/pesos/raio/metodo de intersecao alterado).
+- Referencias: `docs/api_geoespacial_contrato.md`; `docs/api_geoespacial_openapi.yaml`; `tasks/backlog.md` (BLK-API-01..07); `fora_primeira_fase/api_postgis/main.py` (scaffold legado); `context/handoff.md` (Builder); CLAUDE.md §2/§4/§5.

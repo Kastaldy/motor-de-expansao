@@ -441,84 +441,95 @@ coerente com o que está ligado), `constants.py` se ajustar `OVERLAYS`, e testes
 > do `pyproject.toml`, fora do deploy base do Streamlit. **READ-ONLY sobre o M1** (§5 guardrail): nada
 > recalcula `score_priorizacao`, pesos, carteira, plano ou artefatos oficiais.
 
-### BLK-API-01 — Definir arquitetura e contrato da API (G1)
+- BLK-API-01 (concluído 2026-06-10) — ver tasks/completed.md
+
+
+### BLK-API-02 — Esqueleto do app + /health + settings + auth (G2 base)
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Estratégica** (nova fase: stand-up de uma API; redesenho de superfície de consumo do motor) |
-| **Prioridade** | **Alta** (urgent no ClickUp; G1 é pré-requisito de G2/G3/G4) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — decisões-chave de contrato]` → Builder → QA |
-| **Status** | Pendente |
-| **Responsável sugerido** | Felipe |
-| **ClickUp** | `86e1rtfe3` — https://app.clickup.com/t/86e1rtfe3 (subtarefa de `86e1rtfcy`) |
-| **Toca dados/artefatos** | **Não** (bloco de design; só docs) |
+| **Criticidade** | Média (stand-up de pacote novo; sem lógica de análise; READ-ONLY M1) |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente (depende de BLK-API-01) |
+| **ClickUp** | G2 (subtarefa de `86e1rtfcy`) |
 
-**Contexto:** G1 é a fundação do projeto API. É um bloco **de design/decisão, sem código de produção** —
-produz o contrato e o ADR que destravam G2 (backend) e definem em quantos blocos o resto se quebra. O
-scaffold FastAPI já existe em `fora_primeira_fase/api_postgis/` (`main.py` esqueletado) e o extra `[api]`
-já está no `pyproject.toml`; G1 decide o que dele se aproveita e o layout final em `src/motor_expansao/api/`.
+**Escopo:** criar `src/motor_expansao/api/` real (`__init__.py`, `main.py`, `settings.py`, `auth.py`),
+app `FastAPI(/api/v1)` + CORS + `GET /health` ({status, environment}), `pydantic-settings`, e
+autenticação por **token→consumidor** (Decisão 2: lista estática, rastreio do solicitante). Sem rota de
+análise. Deps: subset MVP do extra `[api]` (`fastapi`/`uvicorn[standard]`/`pydantic`/`pydantic-settings`).
+**Aproveitar** o esqueleto do scaffold legado `fora_primeira_fase/api_postgis/main.py`; **descartar**
+Sentry/structlog/routers PostGIS/`on_event("startup")`. **Critérios:** app sobe; `/health` 200; token
+inválido → 401; suíte+ruff+mypy verdes; READ-ONLY M1.
 
-**Objetivo:** entregar um contrato de API aprovado por Felipe, suficiente para o Juan implementar G2 sem
-re-discussão de arquitetura, e um ADR registrando as decisões.
+### BLK-API-03 — POST /analisar JSON (G2)
 
-**Entregáveis (Builder escreve, após o gate):**
-- `docs/api_geoespacial_contrato.md` — contrato técnico: layout do pacote `src/motor_expansao/api/`,
-  fronteira "importa-não-edita `censo_*`", lista de endpoints, schemas de request/response, auth, erros,
-  versionamento, e a **decomposição de G2+ em blocos** (`BLK-API-02..0N` com escopo de cada um).
-- Esboço **OpenAPI** dos endpoints do MVP (arquivo `docs/api_geoespacial_openapi.yaml` ou bloco no contrato).
-- **ADR** (estilo das DECs do CLAUDE.md §8) registrando as decisões-chave abaixo, para entrar como nova DEC.
-- Atualização mínima do README/PRD apontando para o contrato (sem implementar a API).
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média (importa `censo_*`, não edita; READ-ONLY M1) |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente (depende de BLK-API-02) |
+| **ClickUp** | G2 |
 
-**Escopo permitido:** `docs/` (contrato + OpenAPI + ADR), `tasks/`, e edição de texto do README/PRD.
-**NENHUM** código de produção neste bloco.
+**Escopo:** `schemas/` (`AnalisarRequest`/`AnalisarResponseJSON`), `routes/analisar.py`, `coord.py`
+(parser de link Google Maps + validação de bounding box do Brasil — Decisão 4, utilitário **puro**),
+`service.py` (resolução coord→partição → `read_censo_geo_partition` → `analisar_ponto_censitario_setores`),
+KPIs do `result` + **carimbo de versão** (Decisão 6: `versao_contrato`/`versao_score`/`gerado_em`/`consumidor`).
+Raio **fixo 1.5 km** (Decisão 5). **Erros:** 400/401/403/404/422/500 do contrato (§9). **Critérios:** ponto
+válido retorna KPIs; `{lat,lng}` e `maps_url` aceitos; base ausente → 404 com mensagem espelhada do
+dashboard; suíte+ruff+mypy verdes; `censo_*` intocado; READ-ONLY M1.
 
-**Fora de escopo:** implementar rotas/handlers; subir container; PostGIS; integração Telegram/WhatsApp
-(G4); qualquer escrita em `src/motor_expansao/` (exceto, se decidido no gate, criar a pasta `api/` **vazia**
-com `__init__.py` como marcação de layout — sem lógica); recalcular/alterar M1 (§5).
+### BLK-API-04 — Saída PDF (G2/G3)
 
-**Decisões que EXIGEM gate humano** (o Planner apresenta cada uma com as opções e sua recomendação;
-**Felipe decide no Passo 5 antes do Builder**; o Builder só redige o contrato com as escolhas confirmadas):
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média (negociação de conteúdo; gera o PDF de 7 páginas; READ-ONLY M1) |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente (depende de BLK-API-03) |
+| **ClickUp** | G2/G3 |
 
-1. **Formato de saída da API** *(ponto-chave citado por Felipe)*
-   - (a) JSON estruturado com os KPIs do ponto (leve, bot renderiza a mensagem).
-   - (b) PDF binário (o relatório de 7 páginas) inline na resposta.
-   - (c) **[recomendado]** Ambos por negociação — `/analisar` retorna JSON por padrão e `?formato=pdf`
-     (ou `Accept: application/pdf`) devolve o relatório; reaproveita `analisar_ponto_censitario_setores`
-     + `gerar_pdf_relatorio_pontual_censitario`.
-   - (d) JSON + link para o PDF gerado sob demanda.
+**Escopo:** negociação `?formato=pdf` / `Accept: application/pdf` (Decisão 1 = (c)) →
+`render_mapas_censitarios_combinados` + `gerar_pdf_relatorio_pontual_censitario` (`application/pdf`).
+**Fallback** `basemap=False` quando offline (DEC-004). Rodapé com **carimbo de versão** (Decisão 6). Sem
+PII. **Critérios:** PDF binário retornado com `Content-Type: application/pdf`; offline cai em fallback
+gracioso; JSON segue default; suíte+ruff+mypy verdes; `censo_*` intocado; READ-ONLY M1.
 
-2. **Autenticação** (uso interno + bots)
-   - (a) API key estática por header (`X-API-Key`) — mais simples.
-   - (b) **[recomendado]** Token por consumidor/bot — permite rastrear **quem** pediu o estudo (casa com
-     BLK-EST-01: marca d'água + solicitante no PDF / logs LGPD).
-   - (c) Reuso do Authelia/JWT já em produção.
+### BLK-API-05 — Endpoints estendidos M1/mercado (CONDICIONAL — roadmap pós-MVP)
 
-3. **Superfície de endpoints do MVP** (define quanto G2 entrega)
-   - (a) **[recomendado]** Mínimo: `GET /health` + `POST /analisar` (ponto censitário 1.5 km).
-   - (b) Acrescentar lookup de hex M1 / camada de mercado já no MVP.
-   - → A escolha alimenta diretamente a decomposição de `BLK-API-02..0N`.
+| Campo | Valor |
+|---|---|
+| **Criticidade** | A definir (depende de reabrir a Decisão 3 para (b)) |
+| **Status** | **Roadmap / condicional** — NÃO faz parte do MVP (Decisão 3 = (a)) |
+| **ClickUp** | G3 (futuro) |
 
-4. **Entrada de coordenada**
-   - (a) Apenas `{lat, lng}`.
-   - (b) **[recomendado]** `{lat, lng}` **e** link do Google Maps (parser extrai a coordenada) — os bots
-     receberão link colado pelo usuário (o roadmap do PDF prevê "parser de links Maps").
+**Escopo (só se materializado):** `POST /lookup-hex` (lookup de hex M1) e/ou `GET /mercado/...` (camada
+de mercado/residual), **READ-ONLY** (apenas leitura de artefatos; nada recalcula score/carteira/plano).
+Permanece como roadmap até nova decisão de Felipe.
 
-5. **Raio de análise no MVP**
-   - (a) **[recomendado]** Fixo 1.5 km (igual ao Relatório Pontual Censitário — motor intocado).
-   - (b) Parametrizável (exige validar limites e revalidar o método de interseção).
+### BLK-API-06 — Integração G3 (Felipe+Juan)
 
-6. **Carimbo de versão/reprodutibilidade**
-   - **[recomendado]** Incluir a versão do contrato/score no JSON e no rodapé do PDF (item de
-     reprodutibilidade do PDF estratégico), para estudos antigos seguirem interpretáveis.
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média-Alta (integração fim-a-fim + deploy doc) |
+| **Esteira** | Block Orchestrator → Planner → [gate humano de deploy] → Builder → QA |
+| **Status** | Pendente (depende de BLK-API-04) |
+| **ClickUp** | G3 |
 
-**Critérios de aceite:** contrato + OpenAPI + ADR escritos e coerentes entre si; todas as 6 decisões acima
-resolvidas e registradas no ADR com a opção escolhida; decomposição de G2+ em blocos explícita; fronteira
-"importa-não-edita `censo_*`" e "on-demand, PostGIS fora do MVP" registradas; **zero código de produção**
-(git scope só em `docs/`, `tasks/`, `README.md`/`PRD.md`); suíte + ruff + mypy verdes (bloco de docs não
-deve quebrar nada); READ-ONLY M1 comprovado (sem escrita em `pipelines/`/`config.py`/scoring).
+**Escopo:** testes de contrato fim-a-fim (`/health` + `/analisar` JSON/PDF), observabilidade mínima
+(logs do solicitante p/ LGPD), documentação de deploy da API (extra `[api]` fora do deploy base do
+Streamlit; §6 deploy/VPS é humano). **Critérios:** fluxo ponta-a-ponta validado; doc de deploy; READ-ONLY M1.
 
-**Guardrail:** §2 (fontes canônicas) + §5 (READ-ONLY M1) + §6 (deploy/VPS é humano — não se aplica aqui,
-pois G1 não faz deploy). API ao vivo no dashboard de produção **não** é introduzida por este bloco.
+### BLK-API-07 — G4 Telegram/WhatsApp (Juan)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média (clientes de bot; consome a API, não a altera) |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente (depende de BLK-API-06) |
+| **ClickUp** | G4 |
+
+**Escopo:** clientes de bot (Telegram/WhatsApp) consumindo `POST /analisar` (recebem link/coordenada do
+usuário, devolvem KPIs e/ou PDF). Usa token→consumidor por bot (Decisão 2). **Critérios:** bot envia
+ponto e recebe estudo; rastreio do consumidor; sem alteração do motor/M1.
 
 ---
 
