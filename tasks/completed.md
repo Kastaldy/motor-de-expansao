@@ -3497,3 +3497,55 @@ não há base auditável.
 - Suíte + ruff + mypy verdes (incluindo testes novos do gate em `tests/integration/test_modelo_mercado_hexagonos.py`).
 
 **Guardrail:** não toca o M1 oficial; mudança restrita à camada de mercado/residual paralela (§4/§5).
+
+---
+
+### BLK-SAM-02 — Afrouxar o gate do SAM: apenas Faixa M1 elegível + população ≥ 5000 (remover flag_viavel e ~canibal)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (altera o VALOR da camada PARALELA de mercado/residual; reverte sub-decisões da DEC-006; **não** é M1 oficial) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA do plano técnico]` → Builder → QA |
+| **Status** | Em execução (Builder concluído → aguardando QA; 2026-06-10) |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | (segue `86e1rte9n`, mesma trilha do SAM) |
+| **Relacionado** | **Reverte 2 sub-decisões da DEC-006** (BLK-SAM-01): a manutenção de `flag_viavel` e de `~flag_canibalizacao_ultra_1km` no gate do SAM. |
+
+**Contexto / estado atual:** após o BLK-SAM-01 (DEC-006), o gate do SAM em
+`src/motor_expansao/pipelines/calcular_colunas_mercado.py` é:
+`flag_sam = flag_viavel & faixa_oportunidade ∈ {baixa,media,alta,prioridade_maxima} & flag_pop_min_5k(≥5000) & ~flag_canibalizacao_ultra_1km`.
+
+**Objetivo (pedido do usuário Vinicius, 2026-06-10):** o SAM deve responder **apenas** a
+`faixa_oportunidade ∈ {baixa,media,alta,prioridade_maxima}` **e** `flag_pop_min_5k (≥5000)`,
+**desconsiderando** `flag_viavel` e `~flag_canibalizacao_ultra_1km`. Gate pretendido:
+`flag_sam = faixa_oportunidade.isin({baixa,media,alta,prioridade_maxima}) & flag_pop_min_5k`.
+
+**Decisão de produto — RESOLVIDA pelo usuário Vinicius em 2026-06-10** (confirmada com ciência do impacto):
+- Remover `flag_viavel` (que embutia o filtro de renda `renda_target_proxy ≥ RENDA_MIN` e o guard pop ≥ 1).
+- Remover `~flag_canibalizacao_ultra_1km` (SAM passa a incluir áreas já canibalizadas por unidade Ultra < 1 km).
+- **Impacto medido (dados reais 2026-06-10):** `flag_sam` True **27.996 → 479.568** (+451.572, ≈ ×17);
+  ~451.496 entram por dropar `flag_viavel` (filtro de renda) e apenas 76 por dropar `~canibal`.
+- **Conflito explícito:** reverte a sub-decisão da DEC-006 em que Felipe manteve de propósito `flag_viavel`
+  (para "preservar de brinde o filtro de renda") e `~flag_canibalizacao_ultra_1km`.
+
+**Escopo permitido (camada PARALELA, não M1 oficial):** o gate do SAM em `calcular_colunas_mercado.py`
+(`flag_sam`/`flag_sam_fitness`/`sam_fitness_potencial`). Se houver regeneração de parquets paralelos, seguir
+a **ordem canônica**: híbrido → mercado → `calcular_colunas_mercado` → carteira → plano → domínio → residual →
+`fase1_bi_exports` (+ enriquecido derivado do dashboard).
+
+**Fora de escopo (inviolável):** `score_priorizacao`/`hex_score_estrutural`/pesos/`faixa_oportunidade`/
+artefatos oficiais do M1 (DEC-001 vigente; a Faixa M1 é **lida**, não recalculada); a régua
+`populacao_corte_hex`/`flag_pop_min_5k` (helper `pop_corte.py` — mantida intacta, só consumida).
+
+**Critérios de aceite:**
+- Gate = `faixa_oportunidade ∈ {baixa,media,alta,prioridade_maxima} & flag_pop_min_5k`, sem `flag_viavel`
+  nem `~flag_canibalizacao_ultra_1km`; verificável por teste.
+- Repro de ≥1 hex que **passa a calcular** por ter sido reprovado só em `flag_viavel` (renda < RENDA_MIN) e
+  ≥1 que **passa a calcular** por ter sido reprovado só em `~canibal`, com causa documentada.
+- Volume `flag_sam` ≈ **479.568** (±pequena variação) confirmado.
+- Nova **DEC-007** no CLAUDE.md §8 registrando a reversão e o novo aprovador (Vinicius, 2026-06-10).
+- Parquets paralelos regenerados de forma reprodutível; **ZERO escrita em M1 oficial**.
+- Suíte + ruff + mypy verdes (atualizar testes do gate em `tests/integration/test_modelo_mercado_hexagonos.py`).
+
+**Guardrail:** não toca o M1 oficial; mudança restrita à camada de mercado/residual paralela (§4/§5).

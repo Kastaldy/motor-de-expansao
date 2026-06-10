@@ -317,6 +317,9 @@ por Felipe; READ-ONLY M1.
 
 - BLK-FIX-11 (concluído 2026-06-10) — ver tasks/completed.md
 
+- BLK-SAM-02 (concluído 2026-06-10) — ver tasks/completed.md
+
+
 
 ---
 

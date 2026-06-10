@@ -274,7 +274,7 @@ def calcular(df: pd.DataFrame, n_redes: int | None = None) -> pd.DataFrame:
     ).where(df["tam_populacao_hex"].notna(), np.nan)
 
     # 5.4 - SAM
-    # Regua de populacao do corte (DEC-006): replica a regua do dashboard via helper
+    # Regua de populacao do corte (DEC-006/DEC-007): replica a regua do dashboard via helper
     # compartilhado (setor 2022 quando o hex e granular, fallback pop_total municipal).
     # granular = qualidade_join_uf in {A,B} AND (flag_censo_disponivel OR score_setor_2022_calibrado notna),
     # NAO e flag_censo_elegivel/mask_hex_censo.
@@ -287,15 +287,15 @@ def calcular(df: pd.DataFrame, n_redes: int | None = None) -> pd.DataFrame:
     flag_white = df["flag_white_space_2km"].fillna(False).astype(bool)
     flag_hibrid_elig = df["flag_hex_hibrido_elegivel"].fillna(False).astype(bool)
 
-    # Gate DEC-006: faixa M1 elegivel AND populacao_corte_hex >= 5000 (substitui top_municipio
-    # e o piso trivial tam_populacao_hex>0); mantem flag_viavel e ~canibalizacao.
+    # Gate DEC-007 (reverte 2 sub-decisoes da DEC-006): apenas faixa M1 elegivel AND
+    # populacao_corte_hex >= 5000. flag_viavel e ~canibalizacao SAIRAM do gate (Vinicius 2026-06-10).
     faixa_elegivel = (
         df["faixa_oportunidade"].astype("object")
         .isin({"baixa", "media", "alta", "prioridade_maxima"})
     )
     flag_pop_ok = df["flag_pop_min_5k"].fillna(False).astype(bool)
 
-    df["flag_sam"] = flag_viavel & faixa_elegivel & flag_pop_ok & ~flag_canibal
+    df["flag_sam"] = faixa_elegivel & flag_pop_ok
     flag_sam = df["flag_sam"].astype(bool)
 
     df["sam_indice_operavel"] = np.where(flag_sam, df["tam_indice_demanda"], 0.0)
@@ -429,12 +429,6 @@ def validar(df: pd.DataFrame) -> None:
     faltam = required - set(df.columns)
     assert not faltam, f"Colunas faltando: {faltam}"
     print("Schema OK")
-
-    n_violacao = int(
-        (df["flag_sam"] & df["flag_canibalizacao_ultra_1km"].fillna(False)).sum()
-    )
-    assert n_violacao == 0, f"flag_sam=True com canibalizacao: {n_violacao} casos"
-    print("Regra canibalizacao OK")
 
     for col in ["tam_indice_demanda", "flag_sam", "tese_entrada", "prioridade_mercado_mapeado"]:
         n_nulos = df[col].isna().sum()
