@@ -476,7 +476,7 @@ def _apply_residual_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
     return map_df
 
 
-def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str) -> pd.DataFrame:
+def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str, show_discarded: bool = True) -> pd.DataFrame:
     map_df = _apply_residual_tooltip_fields(map_df)
     if mode == "hybrid":
         map_df["tooltip_title"] = map_df["nome_municipio"].astype(str) + " / " + map_df["uf"].astype(str)
@@ -502,7 +502,7 @@ def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str) -> pd.DataFram
             map_df["tooltip_line_6"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
             map_df["tooltip_line_7"] = map_df["tooltip_residual_1"]
             map_df["tooltip_line_8"] = map_df["tooltip_residual_2"] + " | " + map_df["tooltip_residual_3"]
-        if "flag_pop_min_5k" in map_df.columns:
+        if "flag_pop_min_5k" in map_df.columns and show_discarded:
             discarded = ~map_df["flag_pop_min_5k"].fillna(True)
             map_df.loc[discarded, "tooltip_title"] = (
                 map_df.loc[discarded, "tooltip_title"].astype(str) + " — Descartado <5k hab"
@@ -524,7 +524,7 @@ def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str) -> pd.DataFram
     map_df["tooltip_line_12"] = map_df["tooltip_residual_1"]
     map_df["tooltip_line_13"] = map_df["tooltip_residual_2"]
     map_df["tooltip_line_14"] = map_df["tooltip_residual_3"]
-    if "flag_pop_min_5k" in map_df.columns:
+    if "flag_pop_min_5k" in map_df.columns and show_discarded:
         discarded = ~map_df["flag_pop_min_5k"].fillna(True)
         map_df.loc[discarded, "tooltip_title"] = (
             map_df.loc[discarded, "tooltip_title"].astype(str) + " — Descartado <5k hab"
@@ -1113,7 +1113,13 @@ _DISCARDED_LINE = [170, 170, 190, 200]
 _NAN_SCORE_FILL = [110, 116, 140, 150]
 
 
-def _apply_pop_cut_colors(map_df: pd.DataFrame) -> pd.DataFrame:
+def _apply_pop_cut_colors(map_df: pd.DataFrame, *, show_discarded: bool = True) -> pd.DataFrame:
+    # BLK-FIX-11 (overlay descartados_5k): quando o overlay esta desligado
+    # (show_discarded=False), nao aplica o cinza _DISCARDED_FILL; os hexes <5k
+    # permanecem visiveis com a cor de score normal (DV-3, aprovado por Felipe
+    # em 2026-06-10). READ-ONLY sobre o M1.
+    if not show_discarded:
+        return map_df
     if "flag_pop_min_5k" not in map_df.columns:
         return map_df
     discarded = ~map_df["flag_pop_min_5k"].fillna(True)
@@ -1136,6 +1142,19 @@ def render_pop_cut_legend() -> None:
         "<span class='legend-chip'>"
         "<span class='legend-dot' style='background:#9696AA;opacity:0.59;'></span>"
         "Descartado &lt;5k hab (mapa)"
+        "</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_ancoras_dominio_legend() -> None:
+    # BLK-FIX-11: legenda do overlay ancoras_dominio (ambar #F59E0B alinhado ao
+    # ScatterplotLayer [245, 158, 11, 220]). DV-4, aprovado por Felipe 2026-06-10.
+    st.markdown(
+        "<div class='legend-row'>"
+        "<span class='legend-chip'>"
+        "<span class='legend-dot' style='background:#F59E0B;opacity:0.86;'></span>"
+        "Ancora Dominio"
         "</span></div>",
         unsafe_allow_html=True,
     )
@@ -1230,6 +1249,56 @@ def _build_search_pin_layer(lat: float, lng: float):
         radius_max_pixels=22,
         get_fill_color=[255, 230, 0, 230],
         get_line_color=[0, 0, 0, 200],
+        line_width_min_pixels=2,
+        stroked=True,
+        filled=True,
+        pickable=True,
+    )
+
+
+def _build_ancoras_dominio_layer(
+    dominio_df: pd.DataFrame | None,
+    selected_ufs: list[str],
+    selected_cities: list[str],
+) -> pdk.Layer | None:
+    """Camada de ancoras de dominio (overlay ancoras_dominio do Mapa Territorial).
+
+    Marca os hexes do plano de dominio com um ScatterplotLayer ambar
+    [245, 158, 11, 220] (DV-1/DV-2, aprovado por Felipe em 2026-06-10).
+    No-op silencioso (retorna None) quando dominio_df e None/vazio ou nao tem as
+    colunas minimas {lat, lng, hex_id}. READ-ONLY sobre o M1: nao recalcula score
+    nem altera artefatos oficiais."""
+    if dominio_df is None or dominio_df.empty:
+        return None
+    if not {"lat", "lng", "hex_id"} <= set(dominio_df.columns):
+        return None
+
+    dom = dominio_df.copy()
+    if selected_ufs and "uf" in dom.columns:
+        dom = dom[dom["uf"].isin(selected_ufs)]
+    if selected_cities:
+        city_col = "nome_municipio" if "nome_municipio" in dom.columns else None
+        if city_col is not None:
+            dom = dom[dom[city_col].isin(selected_cities)]
+    dom = dom.loc[dom["lat"].notna() & dom["lng"].notna()]
+    if dom.empty:
+        return None
+
+    # Tooltip minimo compativel com _shared_map_tooltip (tooltip_title +
+    # tooltip_line_1..14); colunas nao usadas ficam vazias para nao quebrar o html.
+    layer_df = dom[["lat", "lng", "hex_id"]].copy().reset_index(drop=True)
+    layer_df["tooltip_title"] = "Ancora Dominio: " + layer_df["hex_id"].astype(str)
+    for i in range(1, 15):
+        layer_df[f"tooltip_line_{i}"] = ""
+    return pdk.Layer(
+        "ScatterplotLayer",
+        data=layer_df,
+        get_position="[lng, lat]",
+        get_radius=250,
+        radius_min_pixels=8,
+        radius_max_pixels=20,
+        get_fill_color=[245, 158, 11, 220],
+        get_line_color=[255, 255, 255, 200],
         line_width_min_pixels=2,
         stroked=True,
         filled=True,
@@ -1334,6 +1403,7 @@ def build_map_figure(
     search_pin: tuple[float, float] | None = None,
     search_hex_id: str | None = None,
     cluster_competitors: bool = False,
+    show_discarded: bool = True,
 ):
     present_columns = [column for column in MAP_SOURCE_COLUMNS_M1 if column in df.columns]
 
@@ -1427,8 +1497,8 @@ def build_map_figure(
             "municipal": [245, 158, 11, 220],
         }
     )
-    map_df = _apply_pop_cut_colors(map_df)
-    map_df = _apply_hex_tooltip_fields(map_df, mode="m1")
+    map_df = _apply_pop_cut_colors(map_df, show_discarded=show_discarded)
+    map_df = _apply_hex_tooltip_fields(map_df, mode="m1", show_discarded=show_discarded)
     search_tooltip_source = None
     if search_hex_id is not None:
         search_source = df.loc[
@@ -1440,6 +1510,7 @@ def build_map_figure(
             search_tooltip_source = _apply_hex_tooltip_fields(
                 _prepare_m1_tooltip_fields(search_source),
                 mode="m1",
+                show_discarded=show_discarded,
             )
     center, zoom = resolve_map_view(
         map_df,
@@ -1588,6 +1659,7 @@ def build_hybrid_map_figure(
     search_pin: tuple[float, float] | None = None,
     search_hex_id: str | None = None,
     cluster_competitors: bool = False,
+    show_discarded: bool = True,
 ):
     if "score_setor_2022_calibrado" not in hdf.columns:
         return None, 0
@@ -1692,8 +1764,8 @@ def build_hybrid_map_figure(
         renda_val_h = map_df.get("renda_per_capita", _na_float_h)
         renda_suffix_h = np.full(len(map_df), " (municipal)")
     map_df["renda_fmt"] = renda_val_h.map(lambda v: format_int(v) if pd.notna(v) else "-") + renda_suffix_h
-    map_df = _apply_pop_cut_colors(map_df)
-    map_df = _apply_hex_tooltip_fields(map_df, mode="hybrid")
+    map_df = _apply_pop_cut_colors(map_df, show_discarded=show_discarded)
+    map_df = _apply_hex_tooltip_fields(map_df, mode="hybrid", show_discarded=show_discarded)
     search_tooltip_source = None
     if search_hex_id is not None:
         search_source = hdf.loc[
@@ -1705,6 +1777,7 @@ def build_hybrid_map_figure(
             search_tooltip_source = _apply_hex_tooltip_fields(
                 _prepare_hybrid_tooltip_fields(search_source),
                 mode="hybrid",
+                show_discarded=show_discarded,
             )
 
     center, zoom = resolve_map_view(map_df, selected_ufs=selected_ufs, selected_cities=selected_cities)
@@ -1774,6 +1847,7 @@ def build_residual_heatmap_figure(
     search_pin: tuple[float, float] | None = None,
     search_hex_id: str | None = None,
     cluster_competitors: bool = False,
+    show_discarded: bool = True,
 ):
     if "score_setor_2022_calibrado" not in hdf.columns:
         return None, 0
@@ -1834,8 +1908,8 @@ def build_residual_heatmap_figure(
         for r, q in zip(_restrito, _quality_c, strict=False)
     ]
     map_df = _prepare_hybrid_tooltip_fields(map_df)
-    map_df = _apply_pop_cut_colors(map_df)
-    map_df = _apply_hex_tooltip_fields(map_df, mode="hybrid")
+    map_df = _apply_pop_cut_colors(map_df, show_discarded=show_discarded)
+    map_df = _apply_hex_tooltip_fields(map_df, mode="hybrid", show_discarded=show_discarded)
 
     search_tooltip_source = None
     if search_hex_id is not None:
@@ -1848,6 +1922,7 @@ def build_residual_heatmap_figure(
             search_tooltip_source = _apply_hex_tooltip_fields(
                 _prepare_hybrid_tooltip_fields(search_source),
                 mode="hybrid",
+                show_discarded=show_discarded,
             )
 
     center, zoom = resolve_map_view(map_df, selected_ufs=selected_ufs, selected_cities=selected_cities)
@@ -2956,11 +3031,21 @@ def build_unified_map_figure(
     _comp = competitors_df if "concorrentes" in enabled_overlays else None
     _ultra = ultra_df if "ultra" in enabled_overlays else None
 
+    # BLK-FIX-11 (overlays mortos -> funcionais): gates centralizados no dispatcher.
+    # hex_pesquisado controla pin + hex destacado; descartados_5k controla o cinza
+    # _DISCARDED_FILL e o label de tooltip; ancoras_dominio injeta a camada ambar
+    # pos-builder. DV-1..DV-5 aprovados por Felipe em 2026-06-10. READ-ONLY M1.
+    _search_pin = search_pin if "hex_pesquisado" in enabled_overlays else None
+    _search_hex_id = search_hex_id if "hex_pesquisado" in enabled_overlays else None
+    _show_discarded = "descartados_5k" in enabled_overlays
+
     # BLK-FIX-07-B: cluster server-side dos concorrentes em recortes amplos (decidido
     # uma vez aqui e propagado a todos os builders, incl. dominio). Camada visual.
     cluster = competitor_cluster_mode(selected_ufs, selected_cities, selected_faixas)
 
     if color_mode == "dominio":
+        # Modo dominio tem layout proprio; ancoras_dominio NAO sao injetadas aqui
+        # (fora do escopo do BLK-FIX-11; follow-up). Retorna direto.
         plano = dominio_df if dominio_df is not None else pd.DataFrame()
         return build_dominio_map_figure(
             plano,
@@ -2972,42 +3057,51 @@ def build_unified_map_figure(
         )
 
     if color_mode == "residual":
-        return build_residual_heatmap_figure(
+        deck, n_pontos = build_residual_heatmap_figure(
             df,
             selected_ufs=selected_ufs,
             selected_cities=selected_cities,
             competitors_df=_comp,
             ultra_df=_ultra,
-            search_pin=search_pin,
-            search_hex_id=search_hex_id,
+            search_pin=_search_pin,
+            search_hex_id=_search_hex_id,
             cluster_competitors=cluster,
+            show_discarded=_show_discarded,
         )
-
-    if color_mode in ("hibrido", "censitario"):
+    elif color_mode in ("hibrido", "censitario"):
         _color_col = "score_setor_2022_calibrado" if color_mode == "censitario" else "score_expansao_hibrido"
-        return build_hybrid_map_figure(
+        deck, n_pontos = build_hybrid_map_figure(
             df,
             selected_ufs=selected_ufs,
             selected_cities=selected_cities,
             color_col=_color_col,
             competitors_df=_comp,
             ultra_df=_ultra,
-            search_pin=search_pin,
-            search_hex_id=search_hex_id,
+            search_pin=_search_pin,
+            search_hex_id=_search_hex_id,
             cluster_competitors=cluster,
+            show_discarded=_show_discarded,
+        )
+    else:
+        # Default: m1
+        deck, n_pontos = build_map_figure(
+            df,
+            selected_ufs=selected_ufs,
+            selected_cities=selected_cities,
+            competitors_df=_comp,
+            ultra_df=_ultra,
+            search_pin=_search_pin,
+            search_hex_id=_search_hex_id,
+            cluster_competitors=cluster,
+            show_discarded=_show_discarded,
         )
 
-    # Default: m1
-    return build_map_figure(
-        df,
-        selected_ufs=selected_ufs,
-        selected_cities=selected_cities,
-        competitors_df=_comp,
-        ultra_df=_ultra,
-        search_pin=search_pin,
-        search_hex_id=search_hex_id,
-        cluster_competitors=cluster,
-    )
+    if "ancoras_dominio" in enabled_overlays and deck is not None:
+        ancora_layer = _build_ancoras_dominio_layer(dominio_df, selected_ufs, selected_cities)
+        if ancora_layer is not None:
+            deck.layers = [*deck.layers, ancora_layer]
+
+    return deck, n_pontos
 
 
 def build_analise_pontual_map(

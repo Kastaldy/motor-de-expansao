@@ -2163,6 +2163,121 @@ def test_build_unified_map_figure_overlay_concorrentes_desligado():
     assert len(deck_sem.layers) == 1
 
 
+def test_build_unified_map_figure_overlay_hex_pesquisado_ligado_vs_desligado():
+    # BLK-FIX-11 OVERLAY 1: hex_pesquisado liga/desliga o pin + hex destacado.
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    search_pin = (-23.55, -46.63)
+    search_hex_id = hex_id
+
+    deck_on, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=["hex_pesquisado"],
+        selected_ufs=["SP"], selected_cities=[],
+        search_pin=search_pin, search_hex_id=search_hex_id,
+    )
+    assert deck_on is not None
+    # hex_layer + search_pin_layer + search_hex_layer
+    assert len(deck_on.layers) == 3
+
+    deck_off, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=[],
+        selected_ufs=["SP"], selected_cities=[],
+        search_pin=search_pin, search_hex_id=search_hex_id,
+    )
+    assert deck_off is not None
+    # so o hex_layer; pin e hex destacado suprimidos
+    assert len(deck_off.layers) == 1
+
+
+def test_build_unified_map_figure_overlay_descartados_5k_ligado_vs_desligado():
+    # BLK-FIX-11 OVERLAY 2: descartados_5k alterna o cinza _DISCARDED_FILL + label.
+    lat_ok, lng_ok = -23.55, -46.63
+    lat_bad, lng_bad = -23.65, -46.50
+    hex_ok = h3.latlng_to_cell(lat_ok, lng_ok, 7)
+    hex_bad = h3.latlng_to_cell(lat_bad, lng_bad, 7)
+    assert hex_ok != hex_bad
+
+    df = pd.DataFrame([
+        _hex_row(hex_ok, lat_ok, lng_ok, flag_pop_min_5k=True),
+        _hex_row(hex_bad, lat_bad, lng_bad, flag_pop_min_5k=False),
+    ])
+
+    deck_on, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=["descartados_5k"],
+        selected_ufs=["SP"], selected_cities=[],
+    )
+    assert deck_on is not None
+    rendered_on = pd.DataFrame(deck_on.layers[0].data).set_index("hex_id")
+    assert rendered_on.loc[hex_bad, "fill_color"] == _DISCARDED_FILL
+    assert "Descartado" in rendered_on.loc[hex_bad, "tooltip_title"]
+
+    deck_off, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=[],
+        selected_ufs=["SP"], selected_cities=[],
+    )
+    assert deck_off is not None
+    rendered_off = pd.DataFrame(deck_off.layers[0].data).set_index("hex_id")
+    assert rendered_off.loc[hex_bad, "fill_color"] != _DISCARDED_FILL
+    assert "Descartado" not in rendered_off.loc[hex_bad, "tooltip_title"]
+
+
+def test_build_unified_map_figure_overlay_ancoras_dominio_ligado_vs_desligado():
+    # BLK-FIX-11 OVERLAY 3: ancoras_dominio injeta/remove a camada ambar; no-op
+    # silencioso quando dominio_df e None ou vazio.
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hex_dom = h3.latlng_to_cell(-23.56, -46.64, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    dominio_df = pd.DataFrame([{
+        "hex_id": hex_dom,
+        "lat": -23.56,
+        "lng": -46.64,
+        "uf": "SP",
+        "nome_municipio": "Sao Paulo",
+    }])
+
+    deck_on, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=["ancoras_dominio"],
+        selected_ufs=["SP"], selected_cities=[],
+        dominio_df=dominio_df,
+    )
+    assert deck_on is not None
+    assert len(deck_on.layers) == 2  # hex_layer + ancoras_layer
+
+    deck_off, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=[],
+        selected_ufs=["SP"], selected_cities=[],
+        dominio_df=dominio_df,
+    )
+    assert deck_off is not None
+    assert len(deck_off.layers) == 1
+
+    # No-op silencioso quando dominio_df e None
+    deck_none, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=["ancoras_dominio"],
+        selected_ufs=["SP"], selected_cities=[],
+        dominio_df=None,
+    )
+    assert deck_none is not None
+    assert len(deck_none.layers) == 1
+
+    # No-op silencioso quando dominio_df e vazio
+    deck_empty, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=["ancoras_dominio"],
+        selected_ufs=["SP"], selected_cities=[],
+        dominio_df=pd.DataFrame(),
+    )
+    assert deck_empty is not None
+    assert len(deck_empty.layers) == 1
+
+
 def test_build_unified_map_figure_modo_dominio_fallback_sem_dados():
     deck, n = streamlit_app.build_unified_map_figure(
         pd.DataFrame(), color_mode="dominio",

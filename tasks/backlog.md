@@ -390,55 +390,8 @@ não há base auditável.
 
 ---
 
-### BLK-FIX-11 — Tornar funcionais os 3 overlays "mortos" do Mapa Territorial (Alternativa A)
+- BLK-FIX-11 (concluído 2026-06-10) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (display/interação; READ-ONLY sobre M1) |
-| **Prioridade** | **Alta** |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA das decisões visuais]` → Builder → QA |
-| **Status** | Pendente |
-| **Responsável sugerido** | Vini |
-| **ClickUp** | `86e1rtefy` — https://app.clickup.com/t/86e1rtefy |
-| **Relacionado** | **Supersede o BLK-FIX-07** (mesma tarefa ClickUp `86e1rtefy`, "Overlays do mapa territorial não funcionando"). Leitura de 2026-06-09: `concorrentes`/`ultra` **funcionam**; os 3 abaixo é que estão mortos. BLK-FIX-07 marcado como superseado. |
-
-**Contexto / causa-raiz (ancorada no código):** o registro `OVERLAYS` em
-`src/motor_expansao/dashboard/constants.py` (≈ linha 394) declara **5 overlays** e o multiselect
-`render_mapa_territorial` (`pages.py` ≈ linha 2733) os expõe todos. Porém, no dispatcher
-`build_unified_map_figure` (`components.py` ≈ linhas 2953-2957) e na legenda `_render_unified_legend`
-(`pages.py` ≈ linhas 1816-1819) **apenas `"concorrentes"` e `"ultra"`** são lidos de `enabled_overlays`.
-Os outros três aparecem no multiselect mas marcar/desmarcar **não muda nada no mapa**:
-- **`hex_pesquisado`** — `search_pin`/`search_hex_id` são passados **incondicionalmente** aos builders
-  (`pages.py` ≈ linhas 2766-2767); o id `"hex_pesquisado"` nunca é consultado.
-- **`descartados_5k`** — a coloração de descartados é aplicada **sempre** dentro dos builders quando existe
-  `flag_pop_min_5k` (`components.py` ≈ linhas 505, 527, 1117); `"descartados_5k"` nunca é lido. *(Nota: o
-  `absent_behavior` dele é `show_neutral`, indício de que a fiação foi prevista e não concluída.)*
-- **`ancoras_dominio`** — `"ancoras_dominio"` nunca é desenhado como camada de mapa; as únicas ocorrências
-  são um KPI e a contagem radial, não o multiselect.
-
-**Objetivo:** **Alternativa A** — fazer os 3 toggles funcionarem de verdade:
-- `hex_pesquisado`: só passar/renderizar o pin e o hex pesquisado quando `"hex_pesquisado" in enabled_overlays`.
-- `descartados_5k`: propagar a flag aos builders e **pular** a coloração/camada de descartados <5k quando
-  desmarcado (mantendo o comportamento atual quando marcado).
-- `ancoras_dominio`: desenhar de fato uma camada de âncoras de domínio (a partir do `dominio_df`) quando
-  marcado; ocultar quando desmarcado.
-
-**Escopo permitido:** `components.py` (gate de `enabled_overlays` no dispatcher + builders; nova camada de
-âncoras), `pages.py` (passar `enabled_overlays`/`dominio_df` ao caminho de busca e descartados; legenda
-coerente com o que está ligado), `constants.py` se ajustar `OVERLAYS`, e testes em
-`tests/integration/test_streamlit_app.py`. Só display/interação.
-
-**Fora de escopo:** recalcular score/carteira/plano; alterar artefatos M1; mudar o cap de pontos
-(`MAP_POINT_LIMIT*`/`COMPETITOR_PIN_LIMIT`/`ULTRA_PIN_LIMIT`) sem aprovação.
-
-**Critérios de aceite:**
-- Marcar/desmarcar **Hex pesquisado**, **Descartados <5k hab** e **Âncoras Domínio** muda o mapa de forma
-  visível e coerente com a legenda; `concorrentes`/`ultra` seguem funcionando (sem regressão).
-- Teste cobrindo cada um dos 3 overlays antes inertes (ligado vs desligado → camada presente/ausente).
-- Suíte + ruff + mypy verdes; READ-ONLY M1 comprovado (git scope vazio em `pipelines/`/`scoring.py`/`config.py`).
-- Decisão registrada sobre encerrar/superseder **BLK-FIX-07**.
-
-**Guardrail:** visualização não recalcula nem altera M1 (§5).
 
 ---
 
