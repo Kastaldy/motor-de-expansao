@@ -56,6 +56,7 @@ from motor_expansao.dashboard.components import (
     count_pins_in_scope,
     filter_points_to_radius,
     pins_amostrados_caption,
+    render_ancoras_dominio_legend,
     render_answer_card,
     render_competitor_legend,
     render_dominio_tese_legend,
@@ -1798,25 +1799,34 @@ def _render_unified_legend(
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
 ) -> None:
+    # BLK-FIX-11: render_pop_cut_legend so aparece quando o overlay descartados_5k
+    # esta ligado (DV-4, aprovado por Felipe 2026-06-10), coerente com o mapa.
+    _show_pop_cut = "descartados_5k" in enabled_overlays
     if color_mode == "m1":
         render_score_bands_legend("Score M1 (score_priorizacao)")
         render_geographic_source_legend()
-        render_pop_cut_legend()
+        if _show_pop_cut:
+            render_pop_cut_legend()
     elif color_mode == "hibrido":
         render_score_bands_legend("Score Hibrido (score_expansao_hibrido)")
-        render_pop_cut_legend()
+        if _show_pop_cut:
+            render_pop_cut_legend()
     elif color_mode == "censitario":
         render_score_bands_legend("Score Censitario (score_setor_2022_calibrado)")
-        render_pop_cut_legend()
+        if _show_pop_cut:
+            render_pop_cut_legend()
     elif color_mode == "residual":
         render_score_bands_legend("Score Residual (score_oportunidade_residual)")
-        render_pop_cut_legend()
+        if _show_pop_cut:
+            render_pop_cut_legend()
     elif color_mode == "dominio":
         render_dominio_tese_legend()
     if "concorrentes" in enabled_overlays:
         render_competitor_legend(competitors_df)
     if "ultra" in enabled_overlays:
         render_ultra_legend(ultra_df)
+    if "ancoras_dominio" in enabled_overlays:
+        render_ancoras_dominio_legend()
 
 
 def render_carteira_e_plano(
