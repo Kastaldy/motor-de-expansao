@@ -339,20 +339,30 @@ top_municipio, canibalizados, ou sem `tam_populacao_hex > 0` (sem limiar mínimo
 contenham **pelo menos 5000 de população**. Hexes fora dessas faixas ou abaixo de 5000 hab → SAM = 0
 (ou rótulo explícito "sem base"), sem zeragem silenciosa por outras causas.
 
-**Decisões que EXIGEM gate humano** (Planner apresenta opção + recomendação; Felipe decide antes do Builder):
+**Decisões de produto — TODAS RESOLVIDAS por Felipe em 2026-06-09** (registrar como nova DEC no CLAUDE.md §8 na execução; o Builder implementa direto, sem novo gate de produto):
 1. **[RESOLVIDO por Felipe, 2026-06-09]** Gate redefinido assim: **manter** `~flag_canibalizacao_ultra_1km`
    como filtro; **substituir** `top_municipio` pelos novos critérios — **Faixa M1 ∈ {baixa, media, alta,
    prioridade_maxima}** *e* **pop ≥ 5000**. Resultado pretendido:
-   `flag_sam = faixa_oportunidade.isin({baixa,media,alta,prioridade_maxima}) & (pop_hex ≥ 5000) & ~flag_canibalizacao_ultra_1km`.
-   **Sub-decisão remanescente p/ o Planner:** `flag_viavel` (que já embute "faixa ∉ {descartado,inviavel}"
-   + `renda` + `população`) permanece como guarda adicional ou é **absorvido** pelos novos critérios
-   explícitos? Evitar dupla contagem / condição redundante. Consequência aceita da remoção do `top_municipio`:
+   `flag_sam = faixa_oportunidade.isin({baixa,media,alta,prioridade_maxima}) & (pop_corte ≥ 5000) & ~flag_canibalizacao_ultra_1km`
+   (sobre o campo de população decidido em #2). Consequência aceita da remoção do `top_municipio`:
    o SAM passa a ser calculado **fora do recorte M1** (municípios não-top), desde que faixa+pop satisfaçam.
-2. **Qual campo de população usar para o corte de 5000?** Recomendado: `pop_hex_base`/`tam_populacao_hex`
-   (mesma população que já alimenta o `tam_fitness_potencial`, ≈ linhas 222-255), por consistência com a
-   matemática do SAM. Alternativa: `populacao_corte_hex` (a usada no corte de display "<5k hab",
-   `flag_pop_min_5k`, em `data.py`). Definir um só, para não haver duas noções de "5k".
-3. **Limiar inclusivo:** `≥ 5000` (recomendado, conforme "pelo menos 5000") vs `> 5000`.
+   **Sub-decisão do `flag_viavel` — [RESOLVIDA por Felipe, 2026-06-09]:** **manter** `flag_viavel` como guarda
+   adicional. Motivo (verificado nos dados 2026-06-09): `flag_viavel` **não** embute piso de 5000 — sua parte de
+   população é só `hex_sem_populacao=False` (= `populacao_proxy ≥ 1`); logo **não é redundante** com a nova regra
+   e não a entrega sozinho. A **única** sobreposição é a faixa (`flag_viavel` já exige faixa ∉ {descartado,inviavel},
+   = o mesmo conjunto {baixa,media,alta,prioridade_maxima}); mantê-lo é inofensivo e **preserva de brinde o filtro de
+   renda** (`renda_target_proxy ≥ RENDA_MIN`). Gate efetivo: `flag_viavel & faixa∈{…} & (pop_corte ≥ 5000) & ~canibal`.
+2. **[RESOLVIDO por Felipe, 2026-06-09] Campo de população do corte de 5000 = `populacao_corte_hex` / `flag_pop_min_5k`**
+   (a régua operacional `POP_MIN_ACIONAVEL=5000` que o dashboard **já tem**, em `data.py::derive_pop_cut_columns`:
+   setor 2022 quando granular, fallback total municipal `pop_total`). **NÃO** usar `pop_hex_base`/`tam_populacao_hex`.
+   Justificativa (medido nos dados de 2026-06-09): `pop_hex_base` é a população do setor **rateada por hexágono**
+   (mediana nacional ≈ **5** hab; **97,4%** dos 196.715 hexes com SAM>0 têm `pop_hex_base < 5000`) — cortar 5000 sobre
+   ela **aniquilaria ~97% do SAM**. A régua `populacao_corte_hex` é a noção de "5k habitantes" pretendida (no recorte
+   SP, só ~14% dos hexes com SAM>0 a passam — filtro forte, não aniquilador). **Atenção de implementação:**
+   `populacao_corte_hex`/`flag_pop_min_5k` hoje são derivados na **camada do dashboard** (`data.py`), não na de mercado;
+   o Builder precisa torná-los disponíveis em `calcular_colunas_mercado` (mover/compartilhar `derive_pop_cut_columns`
+   ou recomputar a mesma regra no pipeline), sem duplicar a lógica de forma divergente.
+3. **[RESOLVIDO] Limiar inclusivo `≥ 5000`** (conforme "pelo menos 5000"); coerente com `flag_pop_min_5k` (`.ge(5000)`).
 
 **Escopo permitido (camada PARALELA, não M1 oficial):** o gate do SAM em `calcular_colunas_mercado.py`
 (`flag_sam`/`flag_sam_fitness`/`sam_fitness_potencial`) e, se necessário, parâmetro do limiar 5000 em
@@ -368,6 +378,11 @@ não há base auditável.
   (campo confirmado no gate); demais hexes com SAM = 0 ou rótulo explícito.
 - As 3 decisões acima resolvidas e registradas (idealmente como nova DEC no CLAUDE.md §8).
 - Repro de ≥1 hex que **passa a calcular** e ≥1 que **passa a zerar** sob a nova regra, com causa documentada.
+  **Repro de referência (verificado nos dados de 2026-06-09)** — hex `87a91b18dffffff` (Santo Amaro da Imperatriz/SC):
+  hoje tem `sam_fitness_potencial ≈ 7,28` (SAM>0) porque passa em tudo (`flag_viavel=True`, `top_municipio=True`,
+  `canibal=False`, faixa `prioridade_maxima`, `score_priorizacao=75,84`) e o gate atual só exige `tam_populacao_hex>0`
+  (= **35,4** hab, setor 2022 rateado). Sob a nova regra, `populacao_corte_hex = 35,4` → `flag_pop_min_5k=False`
+  → **SAM deve passar a 0**. É o caso canônico de "pop < 5000 com SAM" que motivou o bloco.
 - Parquets paralelos regenerados de forma reprodutível, se necessário; **ZERO escrita em M1 oficial**.
 - Suíte + ruff + mypy verdes (incluindo testes novos do gate em `tests/integration/test_modelo_mercado_hexagonos.py`).
 
