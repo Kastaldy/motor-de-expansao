@@ -216,34 +216,8 @@ saneamento da fonte de concorrentes consumida pelo relatório.
 
 ---
 
-### BLK-EST-01 — Marca d'água + nome do usuário solicitante nos PDFs
+- BLK-EST-01 (concluído 2026-06-11) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (rastreabilidade/LGPD + identidade do solicitante no documento) |
-| **Prioridade** | **Alta** |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Status** | Pendente |
-| **Responsável sugerido** | Vini |
-| **ClickUp** | `86e1rteq7` — https://app.clickup.com/t/86e1rteq7 |
-| **Relacionado** | ClickUp `86e1rtezm` (logs de rastreio LGPD, do Felipe) |
-
-**Contexto:** anexar marca d'água + nome do usuário que solicitou o estudo no PDF, para rastreabilidade
-(base LGPD). A identidade do solicitante vem da sessão autenticada (Authelia). Coordenar com a tarefa de
-logs LGPD do Felipe para padronizar a fonte do "solicitante".
-
-**Objetivo:** todo PDF gerado carrega marca d'água + nome do solicitante de forma legível e não removível trivialmente.
-
-**Escopo permitido:** `src/motor_expansao/dashboard/censo_report.py` (composição do PDF sobre `fpdf2`);
-passar o identificador do solicitante pelo caminho de geração.
-
-**Fora de escopo:** versionar PDFs reais (PII); embutir o cartão de contato `image24.png` (anti-PII, §4);
-score/artefatos M1.
-
-**Critérios de aceite:** marca d'água + solicitante presentes no PDF; fonte do nome definida e testada;
-sem PII versionada; compressão de stream OFF preservada (auditabilidade anti-PII); suíte verde; READ-ONLY M1.
-
-**Guardrail:** anti-PII do §4 preservado; sem dependência de API ao vivo.
 
 ---
 

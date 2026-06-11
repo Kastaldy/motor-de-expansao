@@ -3497,3 +3497,56 @@ não há base auditável.
 - Suíte + ruff + mypy verdes (incluindo testes novos do gate em `tests/integration/test_modelo_mercado_hexagonos.py`).
 
 **Guardrail:** não toca o M1 oficial; mudança restrita à camada de mercado/residual paralela (§4/§5).
+
+---
+
+### BLK-EST-01 — Marca d'água + nome do usuário solicitante nos PDFs
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (rastreabilidade/LGPD + identidade do solicitante no documento) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rteq7` — https://app.clickup.com/t/86e1rteq7 |
+| **Relacionado** | ClickUp `86e1rtezm` (logs de rastreio LGPD, do Felipe) |
+
+**Contexto:** anexar marca d'água + nome do usuário que solicitou o estudo no PDF, para rastreabilidade
+(base LGPD). A identidade do solicitante vem da sessão autenticada (Authelia). Coordenar com a tarefa de
+logs LGPD do Felipe para padronizar a fonte do "solicitante".
+
+**Objetivo:** todo PDF gerado carrega marca d'água + nome do solicitante de forma legível e não removível trivialmente.
+
+**Escopo permitido:** `src/motor_expansao/dashboard/censo_report.py` (composição do PDF sobre `fpdf2`);
+passar o identificador do solicitante pelo caminho de geração.
+
+**Fora de escopo:** versionar PDFs reais (PII); embutir o cartão de contato `image24.png` (anti-PII, §4);
+score/artefatos M1.
+
+**Critérios de aceite:** marca d'água + solicitante presentes no PDF; fonte do nome definida e testada;
+sem PII versionada; compressão de stream OFF preservada (auditabilidade anti-PII); suíte verde; READ-ONLY M1.
+
+**Guardrail:** anti-PII do §4 preservado; sem dependência de API ao vivo.
+
+**Fechamento (concluído 2026-06-11 — esteira /run-cycle BO→Planner→[gate humano]→Builder→QA):**
+APROVADO pelo QA (Opus 4.8). Marca d'água diagonal "Ultra Academia [| {solicitante}]" embutida em TODAS
+as 7 páginas do PDF do Relatório Pontual Censitário, via novo parâmetro opcional `solicitante: str | None
+= None` em cascata nas 3 funções públicas de `censo_report.py` (`gerar_pdf_relatorio_pontual_censitario`,
+`gerar_payloads_download_relatorio_censitario`, `render_downloads_relatorio_censitario`) + helpers
+`_watermark_text` e `_draw_watermark`. **Gate humano (Felipe/usuário, 2026-06-11):** D1 = contrato mínimo
+`solicitante=None` com fallback seguro (None → só "Ultra Academia"); D2 = opção (b), marca d'água em todas
+as 7 páginas. fpdf2 **2.8.7** confirmado por inspeção real: rotação via `pdf.rotation(angle,x,y)` +
+transparência via `local_context(fill_opacity=...)` (`text_opacity`/`set_alpha` NÃO existem nesta versão);
+com `set_compression(False)` o texto sai legível nos bytes crus ("não removível trivialmente"). `pages.py`
+INTOCADO (default `None` propaga). **READ-ONLY M1** confirmado (diff de `pipelines/`+`config.py`+`scoring.py`
+VAZIO; pesos renda=0.40/pop=0.60 e artefatos oficiais intocados). **Anti-PII** preservado (fixtures com nome
+fictício "Analista Teste"; `test_pdf_sem_pii_de_pessoas` verde; nenhum PDF/`image24.png` versionado).
+**Testes:** arquivo do bloco 13 passed (3 novos + `/Count 7` + `_count_layer_titles==3`); suíte full serial
+689 passed / 3 failed / 1 skipped — as 3 falhas (`test_modelo_mercado_hexagonos.py`) PROVADAS pré-existentes
+(idênticas com o bloco stashed; herança do estado SAM/DEC-007, sem relação com o BLK-EST-01); ruff + mypy
+limpos; `import streamlit_app` ok. Arquivos: `src/motor_expansao/dashboard/censo_report.py` +
+`tests/unit/test_relatorio_pontual_censitario_export.py`. Ressalva do QA p/ o orquestrador: as 3 falhas de
+mercado saneiam no merge dos blocos SAM em main + regeneração canônica dos parquets paralelos (não é defeito
+deste bloco). Pendência funcional: integração Authelia/sessão (fonte real do nome) fica para bloco futuro;
+o contrato `solicitante` já está pronto para a API (DEC-005).

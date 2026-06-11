@@ -203,6 +203,47 @@ def test_pdf_sem_pii_de_pessoas():
         assert needle not in pdf_bytes
 
 
+def test_pdf_marca_dagua_com_solicitante():
+    """Com solicitante -> marca d'agua "Ultra Academia | {solicitante}" embutida (stream OFF)."""
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, residual=_RESIDUAL_OK, solicitante="Analista Teste"
+    )
+
+    assert b"Ultra Academia" in pdf_bytes
+    assert b"Analista Teste" in pdf_bytes
+    # 7 paginas preservadas e camadas de choropleth intactas (marca d'agua nao cria paginas).
+    assert b"/Count 7" in pdf_bytes
+    assert _count_layer_titles(pdf_bytes) == 3
+
+
+def test_pdf_marca_dagua_sem_solicitante():
+    """Sem solicitante (None) -> so "Ultra Academia"; default seguro sem nome (anti-PII)."""
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, residual=_RESIDUAL_OK, solicitante=None
+    )
+
+    assert b"Ultra Academia" in pdf_bytes
+    assert b"Analista Teste" not in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
+    assert _count_layer_titles(pdf_bytes) == 3
+
+
+def test_pdf_marca_dagua_em_todas_as_paginas():
+    """D2=todas as 7 paginas: a marca d'agua "Ultra Academia" aparece >= 7x nos bytes crus."""
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, residual=_RESIDUAL_OK, solicitante="Analista Teste"
+    )
+
+    # Uma ocorrencia da marca d'agua por pagina (7) -> contagem minima verificavel >= 7.
+    assert pdf_bytes.count(b"Ultra Academia") >= 7
+
+
 def test_pdf_atribuicao_de_tiles_no_rodape():
     result, mapas = _sample_result()
 

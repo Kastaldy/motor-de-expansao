@@ -76,6 +76,15 @@ _DEFAULT_ULTRA_DIR = Path("data/ultra")
 _PAGE_W = 960.0
 _PAGE_H = 540.0
 
+# Marca d'agua diagonal de rastreabilidade (BLK-EST-01) — embutida em TODAS as 7 paginas com
+# compressao OFF: o texto vai em claro no content stream (BT...ET), nao removivel trivialmente
+# (sem /Annot separavel). `solicitante=None` -> so "Ultra Academia". ASCII-safe (passa por _ascii).
+_WATERMARK_BASE = "Ultra Academia"
+_WATERMARK_RGB = (120, 120, 120)
+_WATERMARK_ALPHA = 0.16
+_WATERMARK_ANGLE = 45.0
+_WATERMARK_FONT_PT = 60
+
 
 @dataclass(frozen=True)
 class RelatorioCensitarioDownloadPayloads:
@@ -128,6 +137,16 @@ def _point_name(result: dict[str, Any]) -> str:
 def _ascii(text: str) -> str:
     """Reduz a latin-1/ASCII seguro para o core font Helvetica do fpdf2."""
     return text.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _watermark_text(solicitante: str | None) -> str:
+    """Texto da marca d'agua: "Ultra Academia" ou "Ultra Academia | {solicitante}".
+
+    `solicitante` None/vazio -> so a base (default seguro, sem PII). ASCII-safe.
+    """
+    if solicitante is None or not solicitante.strip():
+        return _ascii(_WATERMARK_BASE)
+    return _ascii(f"{_WATERMARK_BASE} | {solicitante.strip()}")
 
 
 # ---------------------------------------------------------------------------
@@ -235,6 +254,24 @@ def _draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
         pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
     except Exception:
         pass
+
+
+def _draw_watermark(pdf: _UltraPDF, text: str) -> None:
+    """Desenha a marca d'agua diagonal translucida centralizada (BLK-EST-01).
+
+    READ-ONLY de estado logico: `local_context`/`rotation` restauram o graphics state ao sair.
+    Usa `pdf.text` (baseline) — imune a `set_margins(0,0,0)`/auto_page_break OFF. Deve ser
+    chamada DEPOIS do conteudo da pagina para ficar POR CIMA do fundo/PNG.
+    """
+    pdf.set_font("Helvetica", "B", _WATERMARK_FONT_PT)
+    pdf.set_text_color(*_WATERMARK_RGB)
+    cx, cy = _PAGE_W / 2.0, _PAGE_H / 2.0
+    w = pdf.get_string_width(text)
+    x0 = cx - w / 2.0
+    y0 = cy
+    with pdf.local_context(fill_opacity=_WATERMARK_ALPHA):
+        with pdf.rotation(_WATERMARK_ANGLE, x=cx, y=cy):
+            pdf.text(x0, y0, text)
 
 
 def _cover_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None]) -> None:
@@ -514,6 +551,7 @@ def gerar_pdf_relatorio_pontual_censitario(
     *,
     residual: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
+    solicitante: str | None = None,
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
@@ -524,7 +562,9 @@ def gerar_pdf_relatorio_pontual_censitario(
     "concorrentes"}`) ou `bytes` (1 mapa legado, retrocompat). A pagina de Score censitario
     usa o choropleth de score (modo de cor + legenda); a de Concorrentes usa o mapa so-pins.
     `residual` carrega os campos do lookup hex (READ-ONLY) para o Big Numbers. `ultra_dir`
-    aponta os assets de branding (fallback gracioso para cor solida se ausentes). Geracao
+    aponta os assets de branding (fallback gracioso para cor solida se ausentes). `solicitante`
+    (BLK-EST-01) carimba a marca d'agua diagonal de rastreabilidade em TODAS as 7 paginas:
+    None -> so "Ultra Academia"; preenchido -> "Ultra Academia | {solicitante}". Geracao
     100% offline, sem PII.
     """
     assets = _load_branding_assets(ultra_dir)
@@ -538,6 +578,13 @@ def gerar_pdf_relatorio_pontual_censitario(
     _competitors_page(pdf, result, layers.get("concorrentes"), assets)
     _big_numbers_page(pdf, result, residual, assets)
     _credit_page(pdf, assets)
+
+    # Marca d'agua diagonal POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as 7).
+    # Escrever na pagina `n` via `pdf.page = n` ANEXA ao stream dessa pagina -> sobreposicao.
+    wm_text = _watermark_text(solicitante)
+    for page_number in range(1, pdf.pages_count + 1):
+        pdf.page = page_number
+        _draw_watermark(pdf, wm_text)
 
     output = pdf.output()
     return bytes(output)
@@ -555,13 +602,14 @@ def gerar_payloads_download_relatorio_censitario(
     filename_prefix: str | None = None,
     residual: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
+    solicitante: str | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     prefix = filename_prefix or f"relatorio_pontual_censitario_{_point_name(result)}"
     return RelatorioCensitarioDownloadPayloads(
         csv_bytes=gerar_csv_setores_censitarios(result),
         csv_filename=f"{prefix}_setores.csv",
         pdf_bytes=gerar_pdf_relatorio_pontual_censitario(
-            result, mapas, residual=residual, ultra_dir=ultra_dir
+            result, mapas, residual=residual, ultra_dir=ultra_dir, solicitante=solicitante
         ),
         pdf_filename=f"{prefix}.pdf",
     )
@@ -575,6 +623,7 @@ def render_downloads_relatorio_censitario(
     filename_prefix: str | None = None,
     residual: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
+    solicitante: str | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     """Renderiza botoes Streamlit e retorna os mesmos bytes para testes/reuso."""
     payloads = gerar_payloads_download_relatorio_censitario(
@@ -583,6 +632,7 @@ def render_downloads_relatorio_censitario(
         filename_prefix=filename_prefix,
         residual=residual,
         ultra_dir=ultra_dir,
+        solicitante=solicitante,
     )
     st_module.download_button(
         "Baixar CSV dos setores",
