@@ -218,6 +218,50 @@ saneamento da fonte de concorrentes consumida pelo relatório.
 
 - BLK-EST-01 (concluído 2026-06-11) — ver tasks/completed.md
 
+---
+
+### BLK-EST-03 — Fonte real do solicitante (Authelia/sessão) para a marca d'água do PDF
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (rastreabilidade/LGPD — passa a gravar identidade real no documento; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** (depende de infra de autenticação; o contrato já está pronto) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente (bloqueado: requer Authelia/sessão autenticada existir primeiro) |
+| **Responsável sugerido** | Vini (+ Felipe na padronização da fonte) |
+| **ClickUp** | `86e1rtezm` — https://app.clickup.com/t/86e1rtezm (logs de rastreio LGPD, do Felipe) |
+| **Origem** | follow-up do BLK-EST-01 (ver `tasks/completed.md`); risco R1 do handoff do Planner |
+| **Relacionado** | DEC-005 (API GeoEspacial — token por consumidor/bot); BLK-API-02+ |
+
+**Contexto:** o BLK-EST-01 entregou a marca d'água com o parâmetro `solicitante: str | None = None` e
+fallback seguro (`None` → só "Ultra Academia"). Hoje **não existe Authelia/sessão autenticada no código**
+(verificado em 2026-06-11: busca por `authelia`/`solicitante`/`usuario_logado`/`X-Remote-User`/`identity`
+em `src/` = zero), então o nome real do solicitante nunca é preenchido. Este bloco fecha essa lacuna:
+ligar a fonte real da identidade ao parâmetro `solicitante` já existente, padronizando com os logs de
+rastreio LGPD do Felipe (ClickUp `86e1rtezm`).
+
+**Objetivo:** todo PDF gerado por usuário autenticado carrega o nome real do solicitante na marca d'água,
+com a mesma fonte de identidade usada nos logs LGPD; geração anônima/sem sessão mantém o fallback seguro.
+
+**Escopo permitido:** caminho de geração que chama `render_downloads_relatorio_censitario` /
+`gerar_payloads_download_relatorio_censitario` / `gerar_pdf_relatorio_pontual_censitario` (passar a
+identidade real no parâmetro `solicitante`); leitura da identidade da sessão (dashboard) e/ou do token do
+consumidor (API, DEC-005); padronização da fonte com os logs LGPD. **NÃO altera `censo_report.py`** (a
+assinatura `solicitante` já está pronta) além do estritamente necessário.
+
+**Fora de escopo:** redefinir a marca d'água/template (já entregue no BLK-EST-01); versionar PDFs reais ou
+fixtures com PII real; score/artefatos M1 (READ-ONLY); recolocar dependência de API ao vivo no dashboard.
+
+**Dependências:** infra de autenticação (Authelia ou equivalente) disponível no dashboard de produção;
+padronização da fonte "solicitante" com a tarefa de logs LGPD do Felipe (ClickUp `86e1rtezm`); para a API,
+o token→consumidor da DEC-005 (BLK-API-02+).
+
+**Critérios de aceite:** PDF gerado por sessão autenticada traz o nome real do solicitante; sem sessão →
+fallback "Ultra Academia" (retrocompat preservada); fonte do nome padronizada e testada (com nome
+fictício nas fixtures, sem PII real); suíte verde; ruff + mypy limpos; READ-ONLY M1.
+
+**Guardrail:** anti-PII do §2/§4 preservado (nenhum PDF/PII versionado); sem dependência de API ao vivo no
+dashboard; LEITURA/ANÁLISE sem escrita em artefato M1 = Alta.
 
 ---
 
