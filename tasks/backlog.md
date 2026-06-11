@@ -333,6 +333,7 @@ por Felipe; READ-ONLY M1.
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA leve — estilo do controle de UI]` → Builder → QA |
 | **Status** | Pendente |
 | **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1ut13u` — https://app.clickup.com/t/86e1ut13u |
 | **Relacionado** | BLK-FIX-11 (overlays do Mapa Territorial, Alternativa A); BLK-UI-01 (refator UX amplo) |
 
 **Contexto (ancorado no código, leitura 2026-06-11):** hoje o overlay de concorrentes do Mapa Territorial
