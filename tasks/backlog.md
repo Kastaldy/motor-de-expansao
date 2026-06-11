@@ -92,103 +92,15 @@ BLK-CENSO-01/02/03 (refino do Relatório Pontual Censitário): **concluídos** (
 > PARALELA de mercado/residual, não o M1 oficial — ver o bloco).
 > Causas-raiz são **hipóteses ancoradas no código** a confirmar pelo Planner.
 
-### BLK-FIX-07 — Overlays do mapa territorial não funcionando
+- BLK-FIX-07 (concluído 2026-06-10) — ver tasks/completed.md
 
-> ⚠️ **SUPERSEADO por BLK-FIX-11 (2026-06-09)** — ver seção "Novos blocos". A tarefa ClickUp `86e1rtefy`
-> passa a ser rastreada pelo **BLK-FIX-11** (Alternativa A: fiar os 3 overlays mortos). Mantido aqui só por histórico.
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (display/render; READ-ONLY sobre M1) |
-| **Prioridade** | **Alta** (urgent no ClickUp) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA das decisões visuais]` → Builder → QA |
-| **Status** | Pendente |
-| **Responsável sugerido** | Vini |
-| **ClickUp** | `86e1rtefy` — https://app.clickup.com/t/86e1rtefy |
-
-**Contexto / hipótese:** as camadas de overlay do Mapa Territorial (toggles de concorrentes/Ultra/score)
-não renderizam ou não respondem ao controle. Hipótese: regressão no controle de camadas/`pydeck` em
-`src/motor_expansao/dashboard/pages.py` (`render_mapa_territorial`) ou nos builders de layer em
-`components.py` (filtro de `scope`/cap de pontos descartando o overlay antes do render — eco do
-BLK-FIX-06-C). Planner confirma se é toggle de UI, layer pydeck ou dado ausente.
-
-**Objetivo:** restaurar a exibição e o controle dos overlays no Mapa Territorial.
-
-**Escopo permitido:** `pages.py`/`components.py` (controle e build de camadas), testes de
-`test_streamlit_app.py`. Só display/interação.
-
-**Fora de escopo:** recalcular score/carteira/plano; alterar artefatos M1; mudar o cap de pontos sem aprovação.
-
-**Critérios de aceite:** overlays aparecem e respondem ao toggle; teste cobrindo a camada antes invisível;
-suíte + ruff + mypy verdes; READ-ONLY M1 comprovado (git scope vazio em pipelines/scoring.py/config.py).
-
-**Guardrail:** visualização não recalcula nem altera M1 (§5).
 
 ---
 
-### BLK-FIX-08 — SAM não calcula em alguns hexágonos/municípios (RR, AC e outros)
+- BLK-FIX-08 (concluído 2026-06-10) — ver tasks/completed.md
 
-> ⚠️ **SUPERSEADO por BLK-SAM-01 (2026-06-09)** — ver seção "Novos blocos". A tarefa ClickUp `86e1rte9n`
-> passa a ser rastreada pelo **BLK-SAM-01** (redefine o gate do SAM: Faixa M1 + pop ≥ 5000), que **absorve**
-> a preocupação de cobertura (fallback de pop em RR/AC/AM). Mantido aqui só por histórico.
+- BLK-FIX-09 (concluído 2026-06-11) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (altera valor da camada PARALELA de mercado/residual; **não** é M1 oficial, mas exige revisão) |
-| **Prioridade** | **Alta** (urgent no ClickUp) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Status** | Pendente |
-| **Responsável sugerido** | Vini |
-| **ClickUp** | `86e1rte9n` — https://app.clickup.com/t/86e1rte9n |
-
-**Contexto / hipótese:** `sam_fitness_potencial` fica vazio/zerado em UFs de baixa cobertura censitária
-(RR, AC, AM — exatamente as de supressão IBGE/classe C). Hipótese: o fallback de `pop_hex_base`
-(`pop_total_setor_2022` → `populacao_proxy / total_hex_municipio`) não cobre esses hexes, ou `cod_municipio`
-ausente quebra o join da camada de mercado. Planner confirma a origem no cálculo do mercado
-(`calcular_colunas_mercado` / `hexagonos_mercado_mapeado.parquet`).
-
-**Objetivo:** SAM calculado (ou marcado explicitamente como "sem base", não silenciosamente vazio) nessas UFs.
-
-**Escopo permitido (camada PARALELA, não M1 oficial):** cálculo de mercado/residual e seu fallback de
-população; se houver regeneração de parquets paralelos, seguir a **ordem canônica** (hibrido → mercado →
-`calcular_colunas_mercado` → carteira → plano → dominio → residual → `fase1_bi_exports`).
-
-**Fora de escopo (inviolável):** `score_priorizacao`/`hex_score_estrutural`/pesos/artefatos oficiais do M1
-(DEC-001 vigente); inventar população onde não há base auditável.
-
-**Critérios de aceite:** SAM presente ou rotulado em RR/AC/AM com causa documentada; repro de ≥1 hex antes
-quebrado; parquets paralelos regenerados de forma reprodutível se necessário; ZERO escrita em M1 oficial;
-suíte + ruff + mypy verdes.
-
-**Guardrail:** não toca o M1 oficial; mudança restrita à camada de mercado/residual paralela.
-
----
-
-### BLK-FIX-09 — Remover "BYD" do PDF de estudos
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (conteúdo do relatório; READ-ONLY sobre M1) |
-| **Prioridade** | **Média** |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Status** | Pendente |
-| **Responsável sugerido** | Vini |
-| **ClickUp** | `86e1rtebk` — https://app.clickup.com/t/86e1rtebk |
-
-**Contexto / hipótese:** entrada espúria "BYD" (marca não-fitness) aparece no PDF de estudos — provavelmente
-um pin/logo de POI ou registro indevido na base de concorrentes (`concorrentes/` logos/Unidades) ou no
-lookup do relatório. Planner localiza a origem (dado vs render).
-
-**Objetivo:** o "BYD" não aparece mais no PDF/relatório.
-
-**Escopo permitido:** `src/motor_expansao/dashboard/censo_report.py` / `censo_map.py` (filtro de render) e/ou
-saneamento da fonte de concorrentes consumida pelo relatório.
-
-**Fora de escopo:** alterar score/artefatos M1; mexer no método de interseção/raio 1.5 km.
-
-**Critérios de aceite:** PDF sem "BYD"; teste cobrindo a exclusão; suíte verde; READ-ONLY M1.
-
-**Guardrail:** relatório é camada de visualização (§5).
 
 ---
 
