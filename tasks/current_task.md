@@ -2,52 +2,49 @@
 
 ## Bloco atual
 
-ID: BLK-EST-01
-Nome: Marca d'água + nome do solicitante nos PDFs
-Status: aprovado
+ID: BLK-MAP-01
+Nome: Filtro individual de concorrentes nos overlays do Mapa Territorial
+Status: aprovado (QA 2026-06-11)
 Tipo: feature
-Criticidade: alta
-Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA] → Builder → QA
-Skill atual: QA (concluído — APROVADO 2026-06-11)
-Próxima Skill: Fechamento manual (ciclo pode ser fechado)
+Criticidade: média
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA leve — estilo do controle de UI] → Builder → QA
+Skill atual: QA
+Próxima Skill: —
+
+## Gate humano leve — APROVADO por Felipe/usuário em 2026-06-11
+- D1 = A: st.multiselect separado de redes (condicional ao overlay "concorrentes").
+- D2 = A: seleção vazia esconde todos os concorrentes (competitors_df_filtered=None).
+- D3 = A: lista = todas as redes do competitors_df carregado (estável).
+- Builder executa o plano do Planner com a premissa D1=A/D2=A/D3=A (sem reabertura).
 dry_run: false
 
-## Builder concluído (2026-06-11)
-- Marca d'água diagonal "Ultra Academia [| {solicitante}]" em TODAS as 7 páginas do PDF, via novo
-  parâmetro `solicitante: str | None = None` em cascata nas 3 funções de `censo_report.py`.
-- `pages.py` INTOCADO (D1 = contrato mínimo). Compressão OFF preservada; anti-PII OK.
-- Validações (fallback serial por quebra de xdist no host): pytest impactado+integração 192 passed,
-  0 failed; import streamlit_app ok; ruff All checks passed; mypy Success. READ-ONLY M1 confirmado.
-- Detalhes em context/handoff.md + snapshot context/handoff/20260611-120806-builder.md.
-
-## Gate humano (REVISÃO HUMANA — Alta) — APROVADO por Felipe/usuário em 2026-06-11
-- D1 = contrato mínimo `solicitante: str | None = None` com fallback seguro (None → só "Ultra Academia"). pages.py intocado.
-- D2 = opção (b): marca d'água diagonal em TODAS as 7 páginas, texto "Ultra Academia | {solicitante}".
-- Liberação explícita para o Builder executar o plano do Planner com essas duas escolhas.
-
 ## Objetivo
-Todo PDF gerado pelo Relatório Pontual Censitário carrega marca d'água + nome do
-solicitante de forma legível e não removível trivialmente, para rastreabilidade (base LGPD),
-sem versionar PII e preservando compressão de stream OFF (auditabilidade anti-PII). READ-ONLY M1.
+Permitir filtrar concorrentes individualmente por rede no Mapa Territorial (pins, clusters,
+legenda e tooltips refletindo apenas as redes selecionadas), de forma puramente visual e
+READ-ONLY sobre o M1 (sem recalcular score/carteira/plano/residual nem alterar artefatos oficiais).
 
-## Tiering de modelo (Passo 4) — Alta
+## Tiering de modelo (Passo 4) — Média
 - Block Orchestrator: sonnet
-- Planner: opus
-- Builder: opus
+- Planner: sonnet
+- Builder: sonnet
 - QA: opus 4.8 (sempre)
 
+## Gate humano (REVISÃO HUMANA leve — definido no backlog)
+Após o Planner, PARAR para o humano escolher D1 (estilo do controle), D2 (semântica de seleção
+vazia) e D3 (escopo da lista de redes) antes do Builder.
+
 ## Branch do ciclo
-ciclo/BLK-EST-01 (a partir de main @ 5bb790c)
+ciclo/BLK-MAP-01 (a partir de ciclo/BLK-EST-01 @ d4762d2 — carrega o registro do bloco no backlog)
 
 ## Escopo permitido (do backlog)
-- src/motor_expansao/dashboard/censo_report.py (composição do PDF sobre fpdf2)
-- passar o identificador do solicitante pelo caminho de geração
-- teste(s) correspondente(s)
+- src/motor_expansao/dashboard/pages.py (novo controle de UI em render_mapa_territorial; aplicar filtro em competitors_df antes de build_unified_map_figure)
+- src/motor_expansao/dashboard/components.py (adaptar render_competitor_legend; coerência de pins/clusters/tooltips/legenda)
+- tests/integration/test_streamlit_app.py e/ou unidade de components
 
 ## Fora de escopo (invioláveis)
-- versionar PDFs reais (PII)
-- embutir o cartão de contato image24.png (anti-PII, §4)
-- score/artefatos M1 (READ-ONLY)
+- recálculo/alteração de score_priorizacao, hex_score_estrutural, carteira, plano, residual, SAM, canibalização ou artefatos M1 (READ-ONLY; filtragem puramente visual)
+- overlay de Ultra, âncoras de domínio, overlay descartados_5k (BLK-FIX-11 intocado)
+- quebrar otimizações de performance do mapa (carga lazy por UF, fonte enxuta, caps de pontos)
 - dependência de API ao vivo
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)

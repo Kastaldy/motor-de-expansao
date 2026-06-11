@@ -16,6 +16,7 @@ from motor_expansao.dashboard.censo_point import (
     analisar_ponto_censitario_setores,
 )
 from motor_expansao.dashboard.censo_report import render_downloads_relatorio_censitario
+from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
 from motor_expansao.dashboard.components import (
     _build_competitor_cluster_layer,
     _build_multihex_selection_layer,
@@ -2762,7 +2763,39 @@ def render_mapa_territorial(
         )
         return
 
-    _render_unified_legend(selected_mode, enabled_overlays, competitors_df=competitors_df, ultra_df=ultra_df)
+    # BLK-MAP-01: filtro individual de redes de concorrentes (puramente visual; READ-ONLY M1)
+    _show_rede_filter = (
+        "concorrentes" in enabled_overlays
+        and competitors_df is not None
+        and not competitors_df.empty
+        and "rede" in competitors_df.columns
+    )
+    selected_redes: list[str] = []
+    if _show_rede_filter:
+        # Ordena pela posicao em COMPETITOR_BRANDS; redes sem entrada ficam no final
+        _all_redes_raw = competitors_df["rede"].dropna().unique().tolist()  # type: ignore[index]
+        _brand_order = list(COMPETITOR_BRANDS.keys())
+        _all_redes = sorted(
+            _all_redes_raw,
+            key=lambda r: (_brand_order.index(r) if r in _brand_order else len(_brand_order), r),
+        )
+        selected_redes = st.multiselect(
+            "Redes de concorrentes",
+            options=_all_redes,
+            default=_all_redes,
+            format_func=lambda r: COMPETITOR_BRANDS.get(r, {}).get("label", r),
+            key="mapa_territorial_redes_concorrentes",
+        )
+
+    # BLK-MAP-01: ponto unico de filtragem; D2=A => vazio => None (esconde tudo)
+    if _show_rede_filter and not selected_redes:
+        competitors_df_filtered: pd.DataFrame | None = None
+    elif _show_rede_filter:
+        competitors_df_filtered = competitors_df[competitors_df["rede"].isin(selected_redes)]  # type: ignore[index]
+    else:
+        competitors_df_filtered = competitors_df
+
+    _render_unified_legend(selected_mode, enabled_overlays, competitors_df=competitors_df_filtered, ultra_df=ultra_df)
 
     deck, n_points = build_unified_map_figure(
         df,
@@ -2771,7 +2804,7 @@ def render_mapa_territorial(
         selected_ufs=selected_ufs,
         selected_cities=selected_cities,
         selected_faixas=selected_faixas,
-        competitors_df=competitors_df,
+        competitors_df=competitors_df_filtered,
         ultra_df=ultra_df,
         search_pin=search_pin,
         search_hex_id=search_hex_id,
@@ -2802,7 +2835,7 @@ def render_mapa_territorial(
         _pin_ref = df.loc[df["uf"].isin(selected_ufs)]
     if not _pin_ref.empty and {"lat", "lng"} <= set(_pin_ref.columns):
         _enabled = enabled_overlays
-        _comp_for_caption = competitors_df if "concorrentes" in _enabled else None
+        _comp_for_caption = competitors_df_filtered if "concorrentes" in _enabled else None
         _ultra_for_caption = ultra_df if "ultra" in _enabled else None
         _n_comp, _n_ultra = count_pins_in_scope(_comp_for_caption, _ultra_for_caption, _pin_ref)
         # BLK-FIX-07-B: em recorte amplo (gate verdadeiro) com concorrentes no escopo,

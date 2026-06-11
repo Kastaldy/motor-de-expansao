@@ -3550,3 +3550,68 @@ limpos; `import streamlit_app` ok. Arquivos: `src/motor_expansao/dashboard/censo
 mercado saneiam no merge dos blocos SAM em main + regeneração canônica dos parquets paralelos (não é defeito
 deste bloco). Pendência funcional: integração Authelia/sessão (fonte real do nome) fica para bloco futuro;
 o contrato `solicitante` já está pronto para a API (DEC-005).
+
+---
+
+### BLK-MAP-01 — Filtro individual de concorrentes nos overlays do Mapa Territorial
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (nova função/UI localizada na camada de visualização; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA leve — estilo do controle de UI]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1ut13u` — https://app.clickup.com/t/86e1ut13u |
+| **Relacionado** | BLK-FIX-11 (overlays do Mapa Territorial, Alternativa A); BLK-UI-01 (refator UX amplo) |
+
+**Contexto (ancorado no código, leitura 2026-06-11):** hoje o overlay de concorrentes do Mapa Territorial
+é tudo-ou-nada. O controle de UI é um `st.multiselect` de overlays em `render_mapa_territorial`
+(`src/motor_expansao/dashboard/pages.py:2743-2749`); o builder `build_unified_map_figure`
+(`src/motor_expansao/dashboard/components.py:3008`) liga/desliga o conjunto inteiro via
+`_comp = competitors_df if "concorrentes" in enabled_overlays else None` (`components.py:3031`). Não há como
+escolher **quais redes** aparecem. Os concorrentes são identificados pela coluna **`rede`** (carregados por
+`load_competitor_points()` em `src/motor_expansao/dashboard/competitors.py:323`; estilos/labels em
+`COMPETITOR_BRANDS`, `competitors.py:83`), renderizados como `IconLayer` por
+`_build_competitor_icon_layer` (`components.py:818`, cap `COMPETITOR_PIN_LIMIT=6000`) ou como bolhas de
+densidade por `_build_competitor_cluster_layer` (`components.py:878`).
+
+**Objetivo:** permitir filtrar concorrentes **individualmente por rede** no Mapa Territorial, exibindo
+**apenas as redes selecionadas** (pins, clusters, legenda e tooltips refletindo a seleção), sem afetar
+nenhum cálculo do motor.
+
+**Escopo permitido:**
+- `src/motor_expansao/dashboard/pages.py` — novo controle de UI de seleção de redes em `render_mapa_territorial`
+  (multiselect de `rede`, default = todas; lista de opções derivada das redes presentes em `competitors_df`,
+  ordenada/legível via `COMPETITOR_BRANDS`); aplicar a filtragem em `competitors_df` ANTES de
+  `build_unified_map_figure` (ponto único de aplicação, por volta de `pages.py:2749`).
+- `src/motor_expansao/dashboard/components.py` — adaptar `render_competitor_legend` (`components.py:196`)
+  para refletir só as redes selecionadas; garantir que pins/clusters/tooltips e a legenda fiquem coerentes
+  com a seleção. O cap de pins (`COMPETITOR_PIN_LIMIT`) e o caption de "amostrado" seguem valendo sobre o
+  subconjunto filtrado.
+- Testes de smoke em `tests/integration/test_streamlit_app.py` (e/ou unidade de components) cobrindo:
+  seleção de uma rede → só ela renderiza; seleção vazia → comportamento definido (ver decisão); "todas"
+  selecionadas → idêntico ao comportamento atual (retrocompat).
+
+**Fora de escopo (invioláveis):**
+- Qualquer recálculo/alteração de `score_priorizacao`, `hex_score_estrutural`, carteira, plano, residual,
+  SAM, canibalização ou artefatos oficiais do M1 — a filtragem é **puramente visual** (§5; precedente
+  BLK-FIX-11). O filtro NÃO muda a oferta consumida nem nenhum score; apenas o que é DESENHADO.
+- Mexer no overlay de Ultra, nas âncoras de domínio ou no overlay `descartados_5k` (BLK-FIX-11 intocado).
+- Quebrar as otimizações de performance do mapa (carga lazy por UF, fonte de mapa enxuta, caps de pontos).
+
+**Decisões para o gate humano (leve):**
+- D1 — Estilo do controle: `st.multiselect` de redes (recomendado, simples) vs. checkboxes por rede com
+  logo vs. integração no multiselect de overlays existente.
+- D2 — Semântica de seleção vazia: "nenhuma rede" esconde todos os concorrentes (recomendado) vs. cair de
+  volta para "todas".
+- D3 — Escopo da lista de redes: todas as redes do `competitors_df` carregado vs. apenas as redes
+  presentes no recorte/bbox atual do mapa.
+
+**Critérios de aceite:** selecionar uma ou mais redes exibe **apenas** os concorrentes dessas redes
+(pins/clusters/legenda/tooltips coerentes); "todas" selecionadas = comportamento atual (retrocompat);
+seleção vazia conforme D2; nenhum score/artefato M1 alterado (READ-ONLY); caps e performance preservados;
+suíte verde; ruff + mypy limpos.
+
+**Guardrail:** §5 (visualização não recalcula nem altera M1) + preservar contratos de performance do
+dashboard; sem dependência de API ao vivo.

@@ -4463,3 +4463,109 @@ def test_inject_styles_cobre_componentes_baseweb():
     assert 'data-baseweb="popover"' in css
     assert 'data-baseweb="select"' in css
     assert ('aria-checked="true"' in css) or ('aria-selected="true"' in css)
+
+
+# ── BLK-MAP-01: filtro individual de redes ───────────────────────────────────
+
+def _make_competitors_two_redes() -> pd.DataFrame:
+    """Fixture auxiliar: dois concorrentes em SP, uma smart_fit e uma bluefit."""
+    return pd.DataFrame([
+        {
+            "rede": "smart_fit",
+            "rede_label": "Smart Fit",
+            "nome_unidade": "Smart Paulista",
+            "lat": -23.551,
+            "lng": -46.631,
+            "cidade": "Sao Paulo",
+            "uf": "SP",
+            "arquivo_origem": "unidades_smart_fit.csv",
+        },
+        {
+            "rede": "bluefit",
+            "rede_label": "Bluefit",
+            "nome_unidade": "Blue SP",
+            "lat": -23.552,
+            "lng": -46.632,
+            "cidade": "Sao Paulo",
+            "uf": "SP",
+            "arquivo_origem": "unidades_bluefit.csv",
+        },
+    ])
+
+
+def test_filtro_rede_uma_rede_so_ela_renderiza():
+    """BLK-MAP-01 Cenario A: filtrar para uma rede => somente ela aparece na camada de pins."""
+    import h3
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    competitors = _make_competitors_two_redes()
+
+    # Simula o filtro aplicado por pages.py (D1=A/D2=A): apenas smart_fit selecionada
+    competitors_filtrado = competitors[competitors["rede"].isin(["smart_fit"])]
+
+    deck, _n = streamlit_app.build_unified_map_figure(
+        df,
+        color_mode="m1",
+        enabled_overlays=["concorrentes"],
+        selected_ufs=["SP"],
+        selected_cities=["Sao Paulo"],
+        competitors_df=competitors_filtrado,
+    )
+
+    assert deck is not None
+    # hex_layer + icon_layer (pins de smart_fit)
+    assert len(deck.layers) == 2
+    rendered_competitors = pd.DataFrame(deck.layers[1].data)
+    assert set(rendered_competitors["rede"].unique()) == {"smart_fit"}
+    assert "bluefit" not in rendered_competitors["rede"].values
+
+
+def test_filtro_rede_vazio_esconde_concorrentes():
+    """BLK-MAP-01 Cenario B: seleção vazia => D2=A => competitors_df=None => zero camadas de pins."""
+    import h3
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+
+    # D2=A: seleção vazia => pages.py passa competitors_df=None ao builder
+    deck, _n = streamlit_app.build_unified_map_figure(
+        df,
+        color_mode="m1",
+        enabled_overlays=["concorrentes"],
+        selected_ufs=["SP"],
+        selected_cities=["Sao Paulo"],
+        competitors_df=None,
+    )
+
+    assert deck is not None
+    # Apenas o hex_layer; sem camada de pins de concorrentes
+    assert len(deck.layers) == 1
+
+
+def test_filtro_rede_todas_comportamento_atual():
+    """BLK-MAP-01 Cenario C: todas as redes selecionadas => retrocompatibilidade com comportamento anterior."""
+    import h3
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    competitors = _make_competitors_two_redes()
+
+    # Sem filtro aplicado (todas as redes)
+    deck, _n = streamlit_app.build_unified_map_figure(
+        df,
+        color_mode="m1",
+        enabled_overlays=["concorrentes"],
+        selected_ufs=["SP"],
+        selected_cities=["Sao Paulo"],
+        competitors_df=competitors,
+    )
+
+    assert deck is not None
+    # hex_layer + icon_layer (ambas as redes)
+    assert len(deck.layers) == 2
+    rendered_competitors = pd.DataFrame(deck.layers[1].data)
+    redes_renderizadas = set(rendered_competitors["rede"].unique())
+    # Ambas as redes presentes no bbox de SP devem aparecer
+    assert "smart_fit" in redes_renderizadas
+    assert "bluefit" in redes_renderizadas
