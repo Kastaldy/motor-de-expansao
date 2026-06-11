@@ -3615,3 +3615,32 @@ suíte verde; ruff + mypy limpos.
 
 **Guardrail:** §5 (visualização não recalcula nem altera M1) + preservar contratos de performance do
 dashboard; sem dependência de API ao vivo.
+
+---
+
+### BLK-EST-02 — Melhorar visual e template dos estudos automatizados
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (template/visual; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA das decisões visuais]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rteju` — https://app.clickup.com/t/86e1rteju |
+| **Depende de** | precedência do BLK-CENSO-02/03 (template `fpdf2` 16:9 + 7 páginas já estabelecido) |
+
+**Contexto:** evoluir o template/visual dos estudos (continuação do BLK-CENSO-02/03). Decisões visuais
+**exigem gate humano** do Felipe (precedente dos ciclos CENSO). Cada iteração visual implica rebuild de
+imagem + redeploy por digest na VPS + assets de branding no volume (footgun BLK-CENSO-02).
+
+**Objetivo:** template mais limpo/profissional, mantendo as 7 páginas e o conteúdo READ-ONLY.
+
+**Escopo permitido:** `censo_report.py` / `censo_map.py` + assets de branding em `data/ultra/` (gitignored).
+
+**Fora de escopo:** recalcular qualquer score; método de interseção/raio; PII no PDF.
+
+**Critérios de aceite:** visual aprovado por Felipe (gate); 7 páginas e Big Numbers READ-ONLY preservados;
+suíte verde; READ-ONLY M1; deploy registrado.
+
+**Guardrail:** §5 (visualização) + §4 (anti-PII) + DEC-004 (basemap só na geração).

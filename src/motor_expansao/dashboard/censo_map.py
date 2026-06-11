@@ -40,6 +40,8 @@ _BASEMAP_CACHE_DIR = Path("data/cache/basemap_tiles")
 # pixels ESCUROS do tile (ruas+nomes nativos — NAO e edge-detection; ver _STREET_*).
 # O provedor e resolvido lazy em _fetch_basemap (ctx.providers.CartoDB.<_BASEMAP_PROVIDER_ATTR>).
 _BASEMAP_PROVIDER_ATTR = "Voyager"
+# Atribuicao exigida pela licenca CARTO/OSM (DEC-004); aparece no rodape do PNG quando ha tile.
+_ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
 _BASEMAP_CONTRAST = 1.15
 # Zoom extra dos tiles (alem do minimo p/ cobrir a bbox) -> ruas mais nitidas/detalhadas.
 _BASEMAP_ZOOM_BUMP = 1
@@ -236,10 +238,13 @@ def _draw_scale_bar(
     x0 = left + 18
     y0 = bottom - 28
     # Barra de escala em tinta ESCURA (dentro do mapa claro Voyager).
-    draw.line([(x0, y0), (x0 + px_len, y0)], fill=_DARK_MAP_INK, width=4)
+    # D8=B (BLK-EST-02): linha mais grossa (width 5) e box branco semi-translucido atras do
+    # label, para legibilidade sobre qualquer cor do choropleth.
+    draw.line([(x0, y0), (x0 + px_len, y0)], fill=_DARK_MAP_INK, width=5)
     draw.line([(x0, y0 - 5), (x0, y0 + 5)], fill=_DARK_MAP_INK, width=2)
     draw.line([(x0 + px_len, y0 - 5), (x0 + px_len, y0 + 5)], fill=_DARK_MAP_INK, width=2)
     label = f"{scale_m // 1000} km" if scale_m >= 1000 else f"{scale_m} m"
+    draw.rectangle([x0 - 2, y0 + 5, x0 + px_len, y0 + 22], fill=(255, 255, 255, 180))
     _draw_text(draw, (x0, y0 + 7), label, font=_font(11), fill=_DARK_MAP_INK)
 
 
@@ -278,8 +283,15 @@ def _draw_legend_camada(
     base_y = y + 50
     for idx, (label, color) in enumerate(entries):
         yy = base_y + idx * 24
-        draw.rectangle([x, yy, x + 22, yy + 16], fill=color[:3], outline=(148, 163, 184))
+        # D7=C subset seguro (BLK-EST-02): amostras arredondadas (radius 4).
+        draw.rounded_rectangle(
+            [x, yy, x + 22, yy + 16], radius=4, fill=color[:3], outline=(148, 163, 184)
+        )
         _draw_text(draw, (x + 32, yy), label, font=body_font)
+
+    # D7=C subset seguro: linha separadora fina antes do bloco de pins.
+    sep_y = base_y + len(entries) * 24 + 2
+    draw.line([(x, sep_y), (x + 200, sep_y)], fill=(210, 214, 222), width=1)
 
     yy = base_y + len(entries) * 24 + 12
     _draw_center_pin(draw, x + 10, yy + 18, scale=0.7)
@@ -598,14 +610,12 @@ def _render_camada(
     _draw_scale_bar(draw, map_box, meters_per_px)
     _draw_legend_camada(draw, legend_x, 96, legenda_titulo, legenda_entries)
 
+    # D8=B (BLK-EST-02): rodape enxuto. Atribuicao CARTO (exigida pela licenca DEC-004)
+    # permanece quando ha basemap; some no fallback offline (sem tile, sem atribuicao).
     if drew_basemap:
-        fundo = "Fundo de ruas: CartoDB Voyager. (c) OpenStreetMap, (c) CARTO."
+        footer = f"Raio 1,5 km - EPSG:3857 - {_ATRIBUICAO_TILES}"
     else:
-        fundo = "Fundo de ruas indisponivel offline (instale o extra [basemap] p/ ruas)."
-    footer = (
-        "Metodo: intersecao geometrica setor x circulo em CRS metrico local (raio 1.5 km). "
-        f"Render em EPSG:3857. {fundo}"
-    )
+        footer = "Raio 1,5 km - EPSG:3857 - fundo de ruas offline"
     _draw_text(draw, (28, height - 34), footer, font=small_font, fill=(71, 85, 105))
 
     output = BytesIO()
@@ -748,7 +758,7 @@ def render_mapas_censitarios_combinados(
     )
 
     densidade_png = _render_camada(
-        titulo="Relatorio Pontual Censitario - Densidade populacional",
+        titulo="Densidade populacional",
         legenda_titulo="Densidade (hab/km2)",
         legenda_entries=_bands_legend_entries(DENSIDADE_POP_BANDS),
         color_fn=_color_for_densidade,
@@ -756,7 +766,7 @@ def render_mapas_censitarios_combinados(
         **common,
     )
     renda_png = _render_camada(
-        titulo="Relatorio Pontual Censitario - Renda per capita",
+        titulo="Renda per capita",
         legenda_titulo="Renda per capita (R$/pessoa)",
         legenda_entries=_bands_legend_entries(RENDA_PER_CAPITA_BANDS),
         color_fn=_color_for_renda,
@@ -766,7 +776,7 @@ def render_mapas_censitarios_combinados(
     # Camada Score censitario: choropleth COM legenda (modo de cor ativo) — restaurada no
     # BLK-CENSO-03-FU5 (Felipe, 2026-06-08). Distinta da camada Concorrentes (so-pins).
     score_png = _render_camada(
-        titulo="Relatorio Pontual Censitario - Score censitario",
+        titulo="Score censitario",
         legenda_titulo="Score censitario (0-100)",
         legenda_entries=_score_legend_entries(),
         color_fn=_color_for_score,
@@ -774,7 +784,7 @@ def render_mapas_censitarios_combinados(
         **common,
     )
     concorrentes_png = _render_camada(
-        titulo="Relatorio Pontual Censitario - Concorrentes e Ultra",
+        titulo="Concorrentes e Ultra",
         legenda_titulo="Pins: Ultra e concorrentes",
         legenda_entries=[],  # sem faixas de choropleth (camada so-pins)
         color_fn=_color_for_score,  # irrelevante quando pins_only=True

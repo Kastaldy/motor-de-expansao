@@ -2,51 +2,57 @@
 
 ## Bloco atual
 
-ID: BLK-MAP-01
-Nome: Filtro individual de concorrentes nos overlays do Mapa Territorial
-Status: aprovado (QA 2026-06-11)
-Tipo: feature
+ID: BLK-EST-02
+Nome: Melhorar visual e template dos estudos automatizados
+Status: aprovado
+Tipo: feature (template/visual)
 Criticidade: média
-Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA leve — estilo do controle de UI] → Builder → QA
-Skill atual: QA
-Próxima Skill: —
-
-## Gate humano leve — APROVADO por Felipe/usuário em 2026-06-11
-- D1 = A: st.multiselect separado de redes (condicional ao overlay "concorrentes").
-- D2 = A: seleção vazia esconde todos os concorrentes (competitors_df_filtered=None).
-- D3 = A: lista = todas as redes do competitors_df carregado (estável).
-- Builder executa o plano do Planner com a premissa D1=A/D2=A/D3=A (sem reabertura).
-dry_run: false
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA das decisões visuais] → Builder → QA
+Skill atual: QA (Builder concluído; gate aprovado executado exatamente — D1=B,D2=B,D3=B,D4=B,D5=C,D6=A,D7=C subset,D8=B)
+Próxima Skill: QA
 
 ## Objetivo
-Permitir filtrar concorrentes individualmente por rede no Mapa Territorial (pins, clusters,
-legenda e tooltips refletindo apenas as redes selecionadas), de forma puramente visual e
-READ-ONLY sobre o M1 (sem recalcular score/carteira/plano/residual nem alterar artefatos oficiais).
+Evoluir o template/visual dos estudos automatizados (Relatório Pontual Censitário, continuação
+do BLK-CENSO-02/03): layout mais limpo/profissional mantendo as 7 páginas e o conteúdo Big
+Numbers READ-ONLY sobre o M1, com decisões visuais aprovadas por Felipe em gate humano.
 
-## Tiering de modelo (Passo 4) — Média
+## Tiering de modelo (Passo 4) — Média com gate humano de decisões visuais
 - Block Orchestrator: sonnet
-- Planner: sonnet
-- Builder: sonnet
+- Planner: opus  (override +1: design de template/visual em censo_report.py/censo_map.py é
+  atipicamente complexo p/ Média — precedente CENSO de muitos footguns + gate humano sobre o output)
+- Builder: opus  (override +1: mesma justificativa — edição cirúrgica do template fpdf2 7 páginas)
 - QA: opus 4.8 (sempre)
 
-## Gate humano (REVISÃO HUMANA leve — definido no backlog)
-Após o Planner, PARAR para o humano escolher D1 (estilo do controle), D2 (semântica de seleção
-vazia) e D3 (escopo da lista de redes) antes do Builder.
+## Gate humano (REVISÃO HUMANA das decisões visuais) — APROVADO por Felipe/usuário em 2026-06-11
+Tema recomendado "Ultra Clean / GeoFusion" aprovado EM BLOCO:
+- D1=B (tipografia: capa 30pt / banda conteúdo 22pt / Realização 34·18·12; Helvetica, sem TTF)
+- D2=B (valor do card em cinza-escuro 40,40,40; rótulo 45,45,45; acento só na barra do topo)
+- D3=B (card_h=156, gap=16, barra acento 6pt, valor 26pt, borda fina 225,225,228)
+- D4=B (bullets Ultra=turquesa/concorrente=magenta + contagem total + "... e mais N")
+- D5=C (logo Ultra no topo da Realização + método em 1 frase; offline-safe c/ fallback gracioso)
+- D6=A (títulos de mapa curtos sem prefixo "Relatorio Pontual Censitario -"; manter subtítulo técnico)
+- D7=C SUBSET SEGURO (amostras arredondadas radius 4 + separador faixas×pins; NÃO mexer em
+  _map_box/legend_x — risco G evitado por decisão explícita)
+- D8=B (rodapé enxuto com atribuição CARTO quando drew_basemap=True; escala width 5 + fundo branco)
+Builder executa EXATAMENTE estas letras. Troca de fonte TTF fica fora (sub-bloco futuro).
 
 ## Branch do ciclo
-ciclo/BLK-MAP-01 (a partir de ciclo/BLK-EST-01 @ d4762d2 — carrega o registro do bloco no backlog)
+ciclo/BLK-EST-02 (a partir de ciclo/BLK-MAP-01 @ HEAD)
 
 ## Escopo permitido (do backlog)
-- src/motor_expansao/dashboard/pages.py (novo controle de UI em render_mapa_territorial; aplicar filtro em competitors_df antes de build_unified_map_figure)
-- src/motor_expansao/dashboard/components.py (adaptar render_competitor_legend; coerência de pins/clusters/tooltips/legenda)
-- tests/integration/test_streamlit_app.py e/ou unidade de components
+- src/motor_expansao/dashboard/censo_report.py (template fpdf2, 7 páginas)
+- src/motor_expansao/dashboard/censo_map.py (composição de mapa)
+- assets de branding em data/ultra/ (gitignored)
+- testes correspondentes
 
 ## Fora de escopo (invioláveis)
-- recálculo/alteração de score_priorizacao, hex_score_estrutural, carteira, plano, residual, SAM, canibalização ou artefatos M1 (READ-ONLY; filtragem puramente visual)
-- overlay de Ultra, âncoras de domínio, overlay descartados_5k (BLK-FIX-11 intocado)
-- quebrar otimizações de performance do mapa (carga lazy por UF, fonte enxuta, caps de pontos)
-- dependência de API ao vivo
+- recalcular qualquer score (score_priorizacao, score_setor_2022_calibrado, residual, SAM)
+- método de interseção / raio 1.5 km (setor_censitario_intersecao_area_1p5km INTOCADO)
+- PII no PDF (anti-PII §4: .pptx/PDF nunca versionados; image24.png nunca embutido)
+- dependência de API ao vivo no dashboard (DEC-004: basemap só na geração do relatório)
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
 - data/outputs/setores_censitarios_2022_geo/_metadata.json
 - data/reports/relatorio_pontual_censitario_base_geo.md
+
+dry_run: false

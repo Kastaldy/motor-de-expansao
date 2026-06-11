@@ -279,6 +279,61 @@ def test_pdf_retrocompat_aceita_bytes_unico_legado():
     assert _count_layer_titles(pdf_bytes) == 3  # titulos das 3 paginas existem; mapas, nao
 
 
+def test_pdf_concorrentes_contagem_total_e_mais_n_quando_excede_10():
+    """D4=B (BLK-EST-02): >10 redes no raio -> cabecalho com '(N no total)' e '... e mais N'.
+
+    Sem PII: os nomes vem da coluna de UNIDADE (`rede`/`nome_unidade`), nunca de pessoa.
+    """
+    setores = pd.DataFrame(
+        [
+            _sector_record("355030801000001", box(-700, -700, 0, 700), pop=800, renda=2100, score=64),
+            _sector_record("355030801000002", box(0, -700, 700, 700), pop=1400, renda=2600, score=86),
+        ]
+    )
+    # 12 concorrentes + 1 Ultra = 13 redes (>10) bem dentro do raio de 1.5 km.
+    competitors = pd.DataFrame(
+        [
+            {
+                "nome_unidade": f"Rede Teste {i}",
+                "lat": LAT_C + 0.0001 * i,
+                "lng": LNG_C + 0.0001 * i,
+                "rede": f"rede_{i}",
+            }
+            for i in range(12)
+        ]
+    )
+    ultra = pd.DataFrame([{"nome_unidade": "Ultra Teste", "lat": LAT_C + 0.0002, "lng": LNG_C}])
+    result = analisar_ponto_censitario_setores(
+        LAT_C, LNG_C, setores, competitors_df=competitors, ultra_df=ultra
+    )
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, competitors_df=competitors, ultra_df=ultra,
+        width=720, height=520, basemap=False,
+    )
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
+
+    total = len(result["concorrentes_raio"]) + len(result["ultra_raio"])
+    assert total > 10
+    # NB: parenteses literais sao escapados (\( \)) no stream PDF -> verifica o miolo " no total".
+    assert f"{total} no total".encode("latin-1") in pdf_bytes
+    assert f"... e mais {total - 10}".encode("latin-1") in pdf_bytes
+    # Contrato preservado.
+    assert b"/Count 7" in pdf_bytes
+    for needle in _PII_FORBIDDEN:
+        assert needle not in pdf_bytes
+
+
+def test_pdf_concorrentes_sem_contagem_quando_ate_10():
+    """D4=B: <=10 redes -> cabecalho simples, sem sufixo de total nem '... e mais'."""
+    result, mapas = _sample_result()  # 1 concorrente + 1 Ultra = 2 redes
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
+
+    assert b"Redes no raio de 1.5 km" in pdf_bytes
+    assert b"no total" not in pdf_bytes
+    assert b"... e mais" not in pdf_bytes
+
+
 def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
     result, mapas = _sample_result()
 

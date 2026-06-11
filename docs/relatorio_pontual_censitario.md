@@ -166,7 +166,12 @@ Regras implementadas:
 - Estado vazio ou ausencia de concorrentes/Ultra nao quebra a geracao.
 - Dependencias: `pillow>=10.0.0` (base), `pyproj`/`shapely` (base) para a reprojecao aeqd->3857; `contextily>=1.5.0` no **extra dedicado `[basemap]`** (fora do deploy base), import lazy.
 
-Validacao minima: `tests/unit/test_relatorio_pontual_censitario_mapa.py` gera as 4 camadas com `basemap=False`, verifica faixas fixas (nao quartil), que a camada `score` tem choropleth (modo de cor) e a `concorrentes` nao, pin com logo de concorrente/Ultra e o fallback offline sem tiles, alem do estado vazio.
+- **Refinamento visual BLK-EST-02 (tema "Ultra Clean / GeoFusion", gate Felipe 2026-06-11):**
+  - **Titulos curtos (D6=A):** os 4 mapas perderam o prefixo repetitivo `"Relatorio Pontual Censitario - "` (a camada ja aparece na faixa de titulo do PDF) -> `"Densidade populacional"`, `"Renda per capita"`, `"Score censitario"`, `"Concorrentes e Ultra"`. O **subtitulo tecnico** (coordenada/raio/setores) e mantido para auditoria inline (o PNG tambem serve a UI). Tamanho 20 pt inalterado.
+  - **Legenda (D7=C subset seguro):** amostras de cor agora arredondadas (`draw.rounded_rectangle`, radius 4) + linha separadora fina antes do bloco de pins. `_map_box`/`legend_x`/largura da coluna INTOCADOS (risco de projecao/escala evitado por decisao explicita).
+  - **Escala/rodape (D8=B):** barra de escala mais grossa (`width=5`) com box branco semi-translucido atras do label (legibilidade sobre qualquer cor do choropleth); rodape enxuto `"Raio 1,5 km - EPSG:3857 - {atribuicao}"`. A atribuicao CARTO/OSM (`_ATRIBUICAO_TILES`, constante nova) permanece quando ha basemap (licenca DEC-004) e some no fallback offline.
+
+Validacao minima: `tests/unit/test_relatorio_pontual_censitario_mapa.py` gera as 4 camadas com `basemap=False`, verifica faixas fixas (nao quartil), que a camada `score` tem choropleth (modo de cor) e a `concorrentes` nao, pin com logo de concorrente/Ultra e o fallback offline sem tiles, alem do estado vazio; o teste `test_atribuicao_tiles_constante_e_legenda_arredondada_disponiveis` cobre o refinamento BLK-EST-02 (titulos curtos, legenda arredondada+separador, atribuicao).
 
 ## 7. Export CSV e PDF
 
@@ -195,7 +200,13 @@ Decisao operacional:
 - `fpdf2` e pure-Python e offline; a geracao e sob demanda e retorna bytes, sem escrever artefatos permanentes.
 - **Deploy:** adotar `fpdf2` exige rebuild da imagem Docker + redeploy por digest na VPS; os PNGs de `data/ultra/` (gitignored) precisam ser copiados ao volume `/opt/motor-expansao/data/ultra/` para o branding aparecer em producao (sem eles, o fallback solido garante PDF valido). Passo de OPS gated (guardrail §6).
 
-Validacao minima: `tests/unit/test_relatorio_pontual_censitario_export.py` cobre bytes CSV/PDF, os 7 headers de secao, `/Count 7`, as 4 camadas de mapa embutidas no PDF (3 paginas de choropleth densidade/renda/score contadas por titulo + a de Concorrentes so-pins), Big Numbers com/sem residual ("n/d"), fallback offline sem assets, anti-PII, atribuicao de tiles, retrocompat de `bytes` unico e helper de download.
+**Refinamento visual BLK-EST-02 (tema "Ultra Clean / GeoFusion", gate Felipe 2026-06-11):** so estilo/geometria/strings — as **7 paginas**, a ordem (Capa->Pop->Renda->Score->Concorrentes->Big Numbers->Realizacao), `/Count 7`, `PDF_SECTION_HEADERS`, o grid **4x2 de 8 metricas** READ-ONLY, `set_compression(False)` e `pdf_version="1.4"` permanecem INTOCADOS.
+- **Tipografia (D1=B):** capa titulo 30 pt; faixa de titulo de conteudo 22 pt (banda `band_h` 48->56, `set_xy(36,16)`); Realizacao 34/18/12 pt. Mantida a fonte core Helvetica (sem TTF/asset novo).
+- **Cards Big Numbers (D2=B + D3=B):** rotulo em cinza-escuro `(45,45,45)` e valor grande em cinza-escuro `(40,40,40)` (acento so na barra do topo); `card_h=156`, `gap=16`, barra acento 6 pt, valor 26 pt, **borda fina** `(225,225,228)` via `rect(..., style="D")` apos o fill; rotulo em `y+20`, valor em `y+88`. As 8 metricas/ordem e a nota de fonte abaixo do grid seguem intactas.
+- **Concorrentes (D4=B):** **bullet colorido por tipo** antes de cada linha (Ultra=turquesa, concorrente=magenta, `pdf.ellipse`); cabecalho com **contagem total** `"... (N no total)"` quando `total > 10` (`total = len(concorrentes_raio) + len(ultra_raio)`, guarda None/empty via `_safe_len`); linha `"... e mais {total-10}"` quando a lista trunca em 10. `_point_rows` passou a retornar `(texto, is_ultra)`; `name_col` segue restrito a colunas de UNIDADE (anti-PII).
+- **Realizacao (D5=C):** logo Ultra (`assets["logo"]`) centralizado no topo (`y=90`, `w=160`) com **fallback gracioso** se ausente; metodo encurtado para 1 frase ("Intersecao de setores censitarios IBGE 2022 com circulo de 1,5 km; distribuicao intrassetor por area."); blocos de texto subidos. Nota READ-ONLY e atribuicao de tiles mantidas. Texto novo `_ascii()`-safe (latin-1).
+
+Validacao minima: `tests/unit/test_relatorio_pontual_censitario_export.py` cobre bytes CSV/PDF, os 7 headers de secao, `/Count 7`, as 4 camadas de mapa embutidas no PDF (3 paginas de choropleth densidade/renda/score contadas por titulo + a de Concorrentes so-pins), Big Numbers com/sem residual ("n/d"), fallback offline sem assets, anti-PII, atribuicao de tiles, retrocompat de `bytes` unico e helper de download; os testes `test_pdf_concorrentes_contagem_total_e_mais_n_quando_excede_10` e `test_pdf_concorrentes_sem_contagem_quando_ate_10` cobrem o cabecalho/contagem D4=B do BLK-EST-02 (sem PII).
 
 ### Implementacao do Bloco 6
 
