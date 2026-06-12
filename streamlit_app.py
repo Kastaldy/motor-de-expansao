@@ -177,7 +177,7 @@ from motor_expansao.dashboard.utils import (  # noqa: F401
 st.set_page_config(
     page_title="Ultra Academia | Mapa Territorial",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 DATASET_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "hexagonos_brasil_dashboard.parquet"
@@ -439,7 +439,8 @@ def main() -> None:
         st.stop()
 
     try:
-        df = load_uf_slice(selected_uf)
+        with st.spinner("Carregando dados da UF..."):
+            df = load_uf_slice(selected_uf)
     except (FileNotFoundError, ValueError) as exc:
         st.error(str(exc))
         st.stop()
@@ -486,10 +487,6 @@ def main() -> None:
         f"Recorte atual: {format_int(len(filtered_df))} hexagonos | "
         f"{format_int(filtered_df['uf'].nunique()) if not filtered_df.empty else '0'} UFs | "
         f"{format_int(filtered_df['nome_municipio'].nunique()) if not filtered_df.empty else '0'} cidades"
-    )
-    st.caption(
-        "Base oficial preservada: `data/outputs/hexagonos_brasil_dashboard.parquet` continua sendo a fonte do M1. "
-        "As camadas censitaria e hibrida entram apenas como enriquecimento local."
     )
 
     if search_pin is not None:

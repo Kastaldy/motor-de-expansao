@@ -4282,6 +4282,7 @@ def test_main_renderiza_apenas_a_aba_ativa(tmp_path, monkeypatch):
         mock.patch("streamlit.caption"),
         mock.patch("streamlit.markdown"),
         mock.patch("streamlit.info"),
+        mock.patch("streamlit.spinner"),
     ):
         streamlit_app.main()
 

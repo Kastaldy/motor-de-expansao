@@ -3644,3 +3644,50 @@ imagem + redeploy por digest na VPS + assets de branding no volume (footgun BLK-
 suíte verde; READ-ONLY M1; deploy registrado.
 
 **Guardrail:** §5 (visualização) + §4 (anti-PII) + DEC-004 (basemap só na geração).
+
+---
+
+## BLK-UI-01 (RECORTE) — Sidebar aparente + indicadores de carregamento + limpeza visual
+
+Data: 2026-06-12
+Tipo: feature (UX/UI) | Criticidade: Alta (mexe na navegação do dashboard de produção; READ-ONLY M1)
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA do plano] → Builder → QA
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12.
+
+Resumo: recorte focado do BLK-UI-01 amplo, pedido por Felipe/Vini — três frentes de UX puramente
+visuais (CSS/markdown/spinner/strings), READ-ONLY sobre o M1:
+1. **Sidebar mais aparente** — `initial_sidebar_state="expanded"` (D1=A); realce CSS da sidebar com
+   borda ciano 2px (`brand_alt`) + `box-shadow` de separação (D2=B); cabeçalho estilizado "Filtros
+   globais" + sublinha via `st.sidebar.markdown(unsafe_allow_html=True)` (D3=B). INVARIANTE preservada:
+   `render_uf_selectbox` segue sendo o PRIMEIRO widget/gate da carga lazy por UF.
+2. **Indicadores de carregamento** — 3 `st.spinner` decorativos (D4): troca de UF (`load_uf_slice`,
+   dentro do `try`), construção do Mapa Territorial (`build_unified_map_figure`, só a atribuição) e
+   geração dos mapas censitários (`render_mapas_censitarios_combinados`). Corpo dos builders intocado.
+3. **Limpeza de poluição visual** — removido caption técnico de proveniência (D5=A; rodapé do manifesto
+   já cobre); pills do header simplificadas para 3 sem jargão de coluna ("Onde expandir (M1)" / "Qual
+   bairro (Censitário)" / "Fila operacional (Híbrido)") (D6=A); removido caption de limitações do pydeck
+   no estado vazio, PRESERVADO o caption de centroide H3 (D7=A); 2 captions repetitivos do híbrido
+   consolidados em 1 (D8=A). Legendas em expander deixadas FORA de escopo (D9=A).
+
+Gate humano: D1..D9 aprovados por Felipe/usuário em 2026-06-12 (D1=A, D2=B, D3=B, D4=textos propostos,
+D5=A, D6=A, D7=A, D8=A, D9=A). Builder executou exatamente estas letras.
+
+Arquivos alterados: streamlit_app.py, src/motor_expansao/dashboard/pages.py,
+tests/integration/test_streamlit_app.py.
+
+Validações (re-executadas pelo QA, evidência própria): suíte alvo `182 passed`; suíte full SERIAL
+`695 passed, 1 skipped, 3 failed` — as 3 falhas são PRÉ-EXISTENTES (provadas via `git stash` no tree
+limpo: drift de snapshot de CSVs reais locais gitignored em `concorrentes/` + gate DEC-006 do SAM em
+parquet de mercado pendente de regeneração pós-merge), ZERO regressão deste ciclo. `-n auto` reproduz
+INTERNALERROR de gateway (execnet × Python 3.14, bug de ambiente conhecido) → rodado serial e
+documentado, sem mascarar. ruff limpo; mypy Success; `import streamlit_app` ok.
+
+Guardrails verificados: READ-ONLY M1 (nenhum score/artefato/parâmetro canônico tocado — só
+CSS/markdown/spinner/strings); contratos de performance dos Blocos 4/5/6 com corpo intocado (spinners
+só por fora); sem dependência de API ao vivo; paths pré-sujos não tocados nem commitados.
+
+Housekeeping: N/A neste ciclo — entrega é RECORTE do BLK-UI-01 amplo; o bloco amplo permanece ABERTO
+em `tasks/backlog.md` para as demais frentes de UX das 4 abas (helper de move NÃO executado).
+
+Débito operacional registrado (fora deste ciclo): regenerar parquets paralelos de mercado (gate DEC-006
+do SAM) e refrescar snapshots de validação de concorrentes — passos pós-merge, não requisito de fechamento.

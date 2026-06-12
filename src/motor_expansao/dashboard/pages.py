@@ -147,7 +147,8 @@ def inject_styles() -> None:
                 background:
                     radial-gradient(circle at top, rgba(25, 183, 255, 0.12), transparent 30%),
                     linear-gradient(180deg, #0E1324 0%, #0A0F1F 100%);
-                border-right: 1px solid {COLORS["border"]};
+                border-right: 2px solid rgba(25, 183, 255, 0.45);
+                box-shadow: 4px 0 24px rgba(0, 0, 0, 0.35);
             }}
             [data-testid="stSidebar"] * {{
                 color: {COLORS["text"]};
@@ -367,11 +368,9 @@ def render_header() -> None:
             <h1>Dashboard Executivo M1 + Modelo Hibrido</h1>
             <p>Onde expandir (M1 municipal) · Qual bairro priorizar (Censitario 2022) · Fila operacional combinada (Hibrido).</p>
             <div class="strip">
-                <span class="pill">M1: <strong>&nbsp;score_priorizacao</strong></span>
-                <span class="pill">Censitario: <strong>&nbsp;score_setor_2022_calibrado</strong></span>
-                <span class="pill">Hibrido: <strong>&nbsp;score_expansao_hibrido</strong></span>
-                <span class="pill">UFs censo: <strong>&nbsp;DF GO MG RJ RS SP</strong></span>
-                <span class="pill">Filtros na <strong>&nbsp;sidebar</strong></span>
+                <span class="pill"><strong>Onde expandir (M1)</strong></span>
+                <span class="pill"><strong>Qual bairro (Censitario)</strong></span>
+                <span class="pill"><strong>Fila operacional (Hibrido)</strong></span>
             </div>
         </div>
         """,
@@ -385,7 +384,28 @@ def render_uf_selectbox(uf_options: list[str]) -> str | None:
     A carga lazy por UF (Bloco 4) depende deste valor: o dataset so e lido apos a
     escolha da UF, evitando fundir o Brasil inteiro a frio.
     """
-    st.sidebar.markdown("### Filtros globais")
+    st.sidebar.markdown(
+        f"""
+        <div style="
+            border-left: 3px solid {COLORS["brand_alt"]};
+            padding: 0.35rem 0 0.35rem 0.7rem;
+            margin-bottom: 0.4rem;
+        ">
+            <div style="
+                font-size: 1.05rem;
+                font-weight: 700;
+                color: {COLORS["text"]};
+                letter-spacing: 0.02em;
+            ">Filtros globais</div>
+            <div style="
+                font-size: 0.78rem;
+                color: {COLORS["brand_alt"]};
+                font-weight: 600;
+            ">Recorte executivo M1 + Hibrido</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.sidebar.caption("Refine o recorte executivo do M1 e da camada hibrida sem alterar o score oficial.")
     return st.sidebar.selectbox(
         "UF",
@@ -1026,10 +1046,7 @@ def render_modelo_hibrido_v2(
         st.warning(alert)
 
     st.caption(
-        "M1 continua decidindo o municipio. O Censitario entra como leitura local e o Hibrido organiza a fila operacional combinada."
-    )
-    st.caption(
-        "Dado restrito, densidade setorial abaixo do piso ou outlier espacial devem ser tratados como sinal editorial de cautela, nao como evidencia forte isolada."
+        "M1 decide o municipio; o Censitario e leitura local e o Hibrido organiza a fila operacional."
     )
 
     subtabs = st.tabs(
@@ -2023,11 +2040,6 @@ def render_analise_pontual(
             "Clique em um hexagono no mapa ou digite uma coordenada na barra lateral "
             "(ex: -23.55, -46.63) para ativar a Analise Pontual de Entorno."
         )
-        st.caption(
-            "Clique em objeto de mapa: suportado via `st.pydeck_chart` com `on_select` (Streamlit 1.26+). "
-            "Botao direito: nao suportado pelo componente `st.pydeck_chart`. "
-            "Fallback: campo de coordenada na barra lateral."
-        )
         return
 
     lat, lng = search_pin
@@ -2547,15 +2559,16 @@ def render_relatorio_pontual_censitario(
     # Uma geracao -> 3 camadas combinadas (Densidade/Renda/Concorrentes), sem dropdown.
     # Fundo de ruas por tiles online (DEC-004) com cache + fallback offline; pins com logo
     # via _ICON_CACHE ja populado por preload_logos no boot do streamlit_app.
-    mapas = render_mapas_censitarios_combinados(
-        lat,
-        lng,
-        setores_df,
-        raio_km=raio_km,
-        competitors_df=competitors_df,
-        ultra_df=ultra_df,
-        basemap=True,
-    )
+    with st.spinner("Gerando mapas censitarios..."):
+        mapas = render_mapas_censitarios_combinados(
+            lat,
+            lng,
+            setores_df,
+            raio_km=raio_km,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+            basemap=True,
+        )
 
     st.markdown(f"**Ponto analisado:** `{lat:.5f}, {lng:.5f}` | `{nome_municipio}/{uf}`")
     k1, k2, k3, k4 = st.columns(4)
@@ -2797,19 +2810,20 @@ def render_mapa_territorial(
 
     _render_unified_legend(selected_mode, enabled_overlays, competitors_df=competitors_df_filtered, ultra_df=ultra_df)
 
-    deck, n_points = build_unified_map_figure(
-        df,
-        color_mode=selected_mode,
-        enabled_overlays=enabled_overlays,
-        selected_ufs=selected_ufs,
-        selected_cities=selected_cities,
-        selected_faixas=selected_faixas,
-        competitors_df=competitors_df_filtered,
-        ultra_df=ultra_df,
-        search_pin=search_pin,
-        search_hex_id=search_hex_id,
-        dominio_df=dominio_df,
-    )
+    with st.spinner("Construindo mapa..."):
+        deck, n_points = build_unified_map_figure(
+            df,
+            color_mode=selected_mode,
+            enabled_overlays=enabled_overlays,
+            selected_ufs=selected_ufs,
+            selected_cities=selected_cities,
+            selected_faixas=selected_faixas,
+            competitors_df=competitors_df_filtered,
+            ultra_df=ultra_df,
+            search_pin=search_pin,
+            search_hex_id=search_hex_id,
+            dominio_df=dominio_df,
+        )
 
     if deck is None:
         st.info(
