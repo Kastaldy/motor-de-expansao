@@ -3994,3 +3994,43 @@ Validações (QA): suíte alvo `29 passed` (3 de marca d'água verdes); full SER
 Guardrails: READ-ONLY M1 (só render da marca; nenhum score/peso/artefato); anti-PII §4 (compressão OFF;
 texto/`solicitante` inalterados; default seguro); template/7 páginas/mapas/raio/interseção intocados;
 paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
+
+---
+
+## BLK-EST-01-FU2 (follow-up do BLK-EST-01-FU1) — Marca d'água visível-porém-discreta + branca na capa
+
+Data: 2026-06-12
+Tipo: feature (UX/UI — PDF) | Criticidade: Média (render do PDF; READ-ONLY M1; anti-PII §4)
+Esteira: Block Orchestrator → Planner → Builder → QA (Média, sem gate)
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12 — render confirmado por imagem (capa + conteúdo).
+
+Origem: ao baixar um PDF, Felipe/Vini não viu a marca do FU1. Diagnóstico do orquestrador (render real pelo
+caminho de download): o código do FU1 estava correto (a marca renderiza no canto inferior-direito em todas
+as páginas; NÃO há cache no caminho do relatório), mas a 0.40/9pt/cinza ficou SUTIL DEMAIS — no conteúdo
+passava batida e na CAPA (fundo turquesa) o cinza não contrastava (quase invisível). O servidor usado também
+era anterior ao FU1.
+
+Decisões de produto (Felipe/Vini, 2026-06-12): (1) discreta-porém-visível; (2) texto claro/branco na capa.
+
+Resumo (só `censo_report.py`; texto/`solicitante` INALTERADOS; READ-ONLY M1):
+- `_WATERMARK_ALPHA` 0.40 → 0.65; `_WATERMARK_FONT_PT` 9 → 10 (legível sem deixar de ser discreta).
+- Nova `_WATERMARK_RGB_COVER = (255, 255, 255)`; `_draw_watermark` passou a aceitar `rgb` keyword-only
+  (default `_WATERMARK_RGB` cinza) e usa `set_text_color(*rgb)`.
+- Loop por-página (635-637): página 1 (capa) → branco; páginas 2-7 (conteúdo) → cinza. Posição
+  (canto inferior-direito), horizontal e `local_context` preservados.
+
+Verificação de RENDER (orquestrador): PDF gerado pelo caminho de download (`gerar_payloads_download_...`,
+`solicitante="Analista Teste"`), renderizado com pypdfium2 (instalado só para verificação, NÃO entra no
+projeto). Confirmado por imagem: CAPA com marca BRANCA visível sobre o turquesa; CONTEÚDO com marca CINZA
+legível e discreta a 0.65/10pt.
+
+Arquivos alterados: src/motor_expansao/dashboard/censo_report.py.
+
+Validações (QA): suíte alvo `29 passed` (3 de marca d'água verdes); full SERIAL `696 passed, 1 skipped,
+3 failed` = baseline exato (3 falhas pré-existentes). ruff "All checks passed"; mypy Success; import ok.
+
+Guardrails: READ-ONLY M1 (só render; nenhum score/peso/artefato); anti-PII §4 (stream OFF; texto/`solicitante`
+inalterados); template/mapas/raio intocados; paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
+
+Nota: a marca é desenhada por página via `pdf.page = n` — para o usuário ver a versão nova é preciso um
+servidor Streamlit reiniciado (o anterior precedia o FU1).

@@ -81,9 +81,10 @@ _PAGE_H = 540.0
 # (sem /Annot separavel). `solicitante=None` -> so "Ultra Academia". ASCII-safe (passa por _ascii).
 _WATERMARK_BASE = "Ultra Academia"
 _WATERMARK_RGB = (120, 120, 120)
-_WATERMARK_ALPHA = 0.40
+_WATERMARK_RGB_COVER = (255, 255, 255)
+_WATERMARK_ALPHA = 0.65
 _WATERMARK_ANGLE = 0.0
-_WATERMARK_FONT_PT = 9
+_WATERMARK_FONT_PT = 10
 _WATERMARK_MARGIN = 20.0
 
 
@@ -258,16 +259,21 @@ def _draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
         pass
 
 
-def _draw_watermark(pdf: _UltraPDF, text: str) -> None:
-    """Desenha a marca d'agua no canto inferior-direito, horizontal e discreta (BLK-EST-01-FU1).
+def _draw_watermark(
+    pdf: _UltraPDF, text: str, *, rgb: tuple[int, int, int] = _WATERMARK_RGB
+) -> None:
+    """Desenha a marca d'agua no canto inferior-direito, horizontal e discreta (BLK-EST-01-FU2).
 
     Posicao: baseline em (_PAGE_W - _WATERMARK_MARGIN - largura_texto, _PAGE_H - _WATERMARK_MARGIN).
     READ-ONLY de estado logico: `local_context` restaura o graphics state (fill_opacity) ao sair.
     Usa `pdf.text` (baseline) — imune a `set_margins`/auto_page_break OFF. Deve ser chamada
     DEPOIS do conteudo da pagina para ficar POR CIMA do fundo/PNG.
+
+    O parametro `rgb` permite cor condicional por pagina: capa (pagina 1) usa `_WATERMARK_RGB_COVER`
+    (branco, visivel sobre fundo turquesa); demais paginas usam `_WATERMARK_RGB` (cinza padrao).
     """
     pdf.set_font("Helvetica", "", _WATERMARK_FONT_PT)
-    pdf.set_text_color(*_WATERMARK_RGB)
+    pdf.set_text_color(*rgb)
     w = pdf.get_string_width(text)
     x = _PAGE_W - _WATERMARK_MARGIN - w
     y = _PAGE_H - _WATERMARK_MARGIN
@@ -634,7 +640,8 @@ def gerar_pdf_relatorio_pontual_censitario(
     wm_text = _watermark_text(solicitante)
     for page_number in range(1, pdf.pages_count + 1):
         pdf.page = page_number
-        _draw_watermark(pdf, wm_text)
+        rgb = _WATERMARK_RGB_COVER if page_number == 1 else _WATERMARK_RGB
+        _draw_watermark(pdf, wm_text, rgb=rgb)
 
     output = pdf.output()
     return bytes(output)

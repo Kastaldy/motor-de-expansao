@@ -2,8 +2,8 @@
 
 ## Bloco atual
 
-ID: BLK-EST-01-FU1
-Nome: Marca d'água sutil no canto (rodapé inferior-direito, horizontal) do Relatório Pontual
+ID: BLK-EST-01-FU2
+Nome: Marca d'água visível-porém-discreta + branca na capa (turquesa)
 Status: aprovado
 Tipo: feature (UX/UI — PDF, ajuste visual)
 Criticidade: média
@@ -12,40 +12,44 @@ Skill atual: QA (concluído — APROVADO)
 Próxima Skill: Fechamento manual
 
 ## Objetivo
-Tornar a marca d'água do PDF do Relatório Pontual Censitário MAIS SUTIL e no CANTO, em vez da faixa
-diagonal grande centralizada de hoje. Decisão de produto (Felipe/Vini, 2026-06-12): **rodapé
-inferior-direito, horizontal, pequena e discreta**. NÃO reverter o BLK-EST-01 — só reposicionar/reduzir.
-READ-ONLY M1; só `censo_report.py` (render da marca); o texto e o `solicitante` permanecem iguais.
+A marca d'água do FU1 (canto inferior-direito) ficou SUTIL DEMAIS (0.40/9pt cinza): no conteúdo passa
+batida e na capa (fundo turquesa) some. Ajustar para DISCRETA-PORÉM-VISÍVEL e legível na capa.
+READ-ONLY M1; só `censo_report.py`; texto/`solicitante` INALTERADOS.
+
+## Diagnóstico (render real verificado pelo orquestrador)
+- O código do FU1 está correto e desenha a marca no canto inferior-direito em TODAS as páginas (loop 635-637).
+  NÃO é cache (não há @st.cache_data no caminho do relatório em pages.py).
+- A 0.40/9pt/cinza ela é fraca demais: conteúdo (fundo branco) quase imperceptível; CAPA (fundo turquesa)
+  praticamente invisível porque cinza sobre turquesa não contrasta.
+
+## Decisões de produto aprovadas (Felipe/Vini, 2026-06-12)
+1. **Visibilidade**: discreta porém visível → `_WATERMARK_ALPHA` 0.40 → **0.65**; `_WATERMARK_FONT_PT` 9 → **10**.
+   Cor cinza `_WATERMARK_RGB=(120,120,120)` mantida no conteúdo.
+2. **Capa**: texto **claro/branco** na capa (visível sobre o turquesa); cinza nas demais páginas. Cor
+   condicional por página (página 1 = capa → branco; páginas 2-7 → cinza).
 
 ## Estado atual (censo_report.py)
-- `_draw_watermark(pdf, text)` (linhas 260-275): desenha CENTRALIZADO (`cx=_PAGE_W/2`, `cy=_PAGE_H/2`),
-  rotacionado `_WATERMARK_ANGLE=45.0`, fonte `_WATERMARK_FONT_PT=60`, `_WATERMARK_ALPHA=0.16`,
-  cor `_WATERMARK_RGB=(120,120,120)`. Página 16:9: `_PAGE_W=960.0`, `_PAGE_H=540.0`.
-- Desenhada em TODAS as páginas: loop `for page_number in range(1, pdf.pages_count+1): _draw_watermark(...)`
-  (linhas 635-637). Comportamento por-página DEVE ser preservado (continua em todas as páginas).
-- O texto vem de `_watermark_text(solicitante)` — INALTERADO (continua "Ultra Academia" ou
-  "Ultra Academia | {solicitante}"). A feature do BLK-EST-01 NÃO é revertida.
+- Constantes: `_WATERMARK_FONT_PT=9`, `_WATERMARK_ANGLE=0.0`, `_WATERMARK_ALPHA=0.40`, `_WATERMARK_RGB=(120,120,120)`,
+  `_WATERMARK_MARGIN=20.0`, `_PAGE_W=960`, `_PAGE_H=540`.
+- `_draw_watermark(pdf, text)` (canto inf-direito, horizontal) usa `_WATERMARK_RGB` fixo.
+- Loop por-página (635-637): `for page_number in range(1, pdf.pages_count+1): pdf.page = page_number; _draw_watermark(pdf, wm_text)`.
+  Página 1 = capa.
 
-## Correção (decisão aprovada)
-- Reposicionar para o **canto inferior-direito**, com pequena margem (ex.: ~18-22 pt das bordas):
-  `x = _PAGE_W - margem - get_string_width(text)`, `y = _PAGE_H - margem` (baseline via `pdf.text`).
-- **Horizontal** (sem rotação): remover/zerar o `pdf.rotation(_WATERMARK_ANGLE...)` (ou `_WATERMARK_ANGLE=0`).
-- **Pequena**: reduzir `_WATERMARK_FONT_PT` de 60 → ~9 (peso pode passar de "B" para normal para ficar discreto;
-  Planner decide o valor exato 8-10pt).
-- **Sutil**: manter cor cinza; ajustar opacidade para discreta-porém-legível em fonte pequena
-  (Planner decide: 0.16 pode ficar fraco demais num corpo pequeno — avaliar ~0.30-0.40). Registrar o valor.
-- Manter o desenho em TODAS as páginas, POR CIMA do conteúdo (chamado depois do conteúdo), e a restauração
-  de estado gráfico (`local_context`).
+## Correção (a especificar pelo Planner com valores exatos)
+- `_WATERMARK_ALPHA` 0.40 → 0.65; `_WATERMARK_FONT_PT` 9 → 10.
+- Adicionar `_WATERMARK_RGB_COVER = (255, 255, 255)` (ou claro) para a capa.
+- `_draw_watermark` passa a aceitar a COR por parâmetro (ex.: `rgb: tuple[int,int,int] = _WATERMARK_RGB`),
+  mantendo posição/horizontal/`local_context`. O loop decide: `page_number == 1` → `_WATERMARK_RGB_COVER`,
+  senão `_WATERMARK_RGB`.
+- Posição/canto/horizontal e o desenho em todas as páginas: preservados. Texto/`solicitante`: inalterados.
 
 ## Atenção (testes)
-- `tests/unit/test_relatorio_pontual_censitario_export.py`: `test_pdf_marca_dagua_com_solicitante` e
-  `_sem_solicitante` verificam que o TEXTO da marca está embutido no stream (compressão OFF). NÃO devem
-  asserir posição/ângulo — confirmar que seguem verdes (o texto continua presente). Se algum asserir
-  ângulo/tamanho, ajustar com justificativa.
+- `test_pdf_marca_dagua_*` checam o TEXTO embutido (não cor/posição) → devem seguir verdes. Se algum
+  asserir cor/alpha, ajustar com justificativa.
 
 ## Verificação (com render real)
-- Após o Builder, o ORQUESTRADOR gera um PDF de amostra e LÊ a página (Read de PDF) para confirmar
-  visualmente que a marca está no canto inferior-direito, pequena e sutil — além do pytest.
+- Orquestrador gera PDF de amostra e renderiza a CAPA (marca branca visível sobre turquesa) e uma página
+  de conteúdo (cinza 0.65/10pt legível no canto) — além do pytest.
 
 ## Tiering de modelo (Passo 4) — Média
 - Block Orchestrator: sonnet
@@ -54,17 +58,17 @@ READ-ONLY M1; só `censo_report.py` (render da marca); o texto e o `solicitante`
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-EST-01-FU1 (a partir de ciclo/BLK-UI-06 @ HEAD; stack ainda não mergeado)
+ciclo/BLK-EST-01-FU2 (a partir de ciclo/BLK-EST-01-FU1 @ HEAD; stack não mergeado)
 
 ## Escopo permitido
-- src/motor_expansao/dashboard/censo_report.py — `_draw_watermark` + constantes `_WATERMARK_*`
-- tests/unit/test_relatorio_pontual_censitario_export.py — só se algum teste asserir posição/ângulo
+- src/motor_expansao/dashboard/censo_report.py — constantes `_WATERMARK_*`, `_draw_watermark`, o loop 635-637
+- tests/unit/test_relatorio_pontual_censitario_export.py — só se algum teste asserir cor/alpha
 
 ## Fora de escopo (invioláveis)
 - recalcular qualquer score ou artefato M1
-- reverter a feature da marca d'água / mexer no texto ou no param `solicitante`
-- alterar o template/conteúdo das 7 páginas, raio/interseção, geração de mapas
-- tocar componentes do dashboard (pages/components) — este ciclo é só do PDF
+- mexer no texto/`_watermark_text`/param `solicitante`
+- alterar template/7 páginas/mapas/raio/interseção
+- tocar dashboard (pages/components)
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
 - data/outputs/setores_censitarios_2022_geo/_metadata.json
