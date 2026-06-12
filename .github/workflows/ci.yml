@@ -28,7 +28,9 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Instalar dependencias
-        run: pip install -e ".[dev]"
+        # inclui [api_mvp] (fastapi/uvicorn/pydantic) p/ a suite da API GeoEspacial
+        # rodar no CI. NAO arrasta p/ a imagem: Dockerfile.streamlit usa .[basemap].
+        run: pip install -e ".[dev,api_mvp]"
 
       # ruff/mypy sao steps de qualidade BLOQUEANTES desde BLK-OPS-02b: a divida
       # latente de lint/tipos (286 ruff + 23 mypy) foi zerada naquele ciclo, sem
