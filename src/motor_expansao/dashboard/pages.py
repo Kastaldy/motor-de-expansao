@@ -306,6 +306,13 @@ def inject_styles() -> None:
                 display: flex;
                 gap: 8px !important;
             }}
+            [data-baseweb="button-group"] {{
+                gap: 8px !important;
+            }}
+            [data-testid="stBaseButton-segmented_control"],
+            [data-testid="stBaseButton-segmented_controlActive"] {{
+                margin: 0 !important;
+            }}
             [data-testid="stSegmentedControl"] button,
             [data-testid="stBaseButton-segmented_control"],
             div[role="radiogroup"] [data-baseweb="button"],

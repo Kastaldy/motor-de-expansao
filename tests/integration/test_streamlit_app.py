@@ -4482,6 +4482,10 @@ def test_inject_styles_cobre_componentes_baseweb():
     assert "#19B7FF" in css  # aba ativa ciano sólido (BLK-UI-04)
     assert "stBaseButton-segmented_controlActive" in css  # seletor real Streamlit 1.58 (BLK-UI-05)
     assert "stBaseButton-segmented_control" in css  # seletor inativo real Streamlit 1.58 (BLK-UI-05)
+    # BLK-UI-06: gap no flex-pai real e margin zero nos botões
+    assert 'data-baseweb="button-group"' in css  # flex-pai real do seletor
+    assert "gap: 8px" in css  # gap horizontal efetivo (pode ser em qualquer seletor)
+    assert "margin: 0 !important" in css  # zera o margin-right: -1px do baseweb
 
 
 # ── BLK-MAP-01: filtro individual de redes ───────────────────────────────────

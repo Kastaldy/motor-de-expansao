@@ -2,46 +2,43 @@
 
 ## Bloco atual
 
-ID: BLK-UI-05
-Nome: Corrigir CSS do seletor de telas (seletores reais do st.segmented_control + !important)
-Status: aprovado (QA 2026-06-12; pendente apenas confirmação VISUAL do usuário no navegador)
-Tipo: bug (UX/UI — CSS não aplicava)
+ID: BLK-UI-06
+Nome: Corrigir o GAP do seletor de telas (flex-pai real + zerar margem negativa do baseweb)
+Status: aprovado
+Tipo: bug (UX/UI — CSS gap não aplicava)
 Criticidade: média
-Esteira: Block Orchestrator → Planner → Builder → QA (concluída)
+Esteira: Block Orchestrator → Planner → Builder → QA
 Skill atual: QA (concluído — APROVADO)
-Próxima Skill: Fechamento manual + confirmação visual do usuário
+Próxima Skill: Fechamento manual
 
 ## Objetivo
-Fazer o destaque do seletor de telas (BLK-UI-04) realmente RENDERIZAR: a aba ativa não ficava
-ciano sólido e o gap não aparecia, porque o CSS usava seletores que NÃO casam o DOM real do
-`st.segmented_control` no Streamlit 1.58. READ-ONLY M1; só CSS em `inject_styles()`; Bloco 5 intocado.
+O realce da aba ativa (BLK-UI-05) funcionou, mas o GAP entre os botões do seletor ainda não aparece.
+Corrigir o espaçamento horizontal entre os botões do `st.segmented_control`. READ-ONLY M1; só CSS em
+`inject_styles()`; Bloco 5 (lógica) intocado.
 
-## Diagnóstico (confirmado contra o frontend instalado do Streamlit 1.58.0)
-- O estado ATIVO do `st.segmented_control` é marcado pelo testid `stBaseButton-segmented_controlActive`
-  (NÃO por `aria-checked`/`aria-selected`). Confirmado via grep no bundle JS do Streamlit
-  (`segmented_control` e `segmented_controlActive` presentes).
-- O botão INATIVO é `stBaseButton-segmented_control`.
-- A regra ATIVA atual (pages.py:325-333) usa `button[aria-checked="true"]`/`[aria-selected="true"]` →
-  nunca casa → aba ativa não vira ciano sólido.
-- A regra BASE atual (pages.py:309-319, `[data-testid="stSegmentedControl"] button`) CASA (por isso os
-  botões já têm border-radius/borda), mas o gap (304-308) e o fundo distinto podem ser sobrepostos pelo
-  CSS emotion do Streamlit (especificidade alta) → faltam `!important`.
+## Diagnóstico (DOM REAL renderizado, via playwright contra o app rodando — Streamlit 1.58.0)
+Cadeia de ancestrais a partir de um botão do seletor:
+- botão `stBaseButton-segmented_control[Active]` → `margin-right: -1px` (o baseweb "cola" os botões sobrepondo a borda)
+- pai flex `[data-baseweb="button-group"]` (role="radiogroup", display:flex) → **`gap: 4px 0px`** = 0px de gap HORIZONTAL (o 4px é row-gap, só vale se quebrar linha)
+- avô `[data-testid="stButtonGroup"]` (display:block)
+- **O testid `stSegmentedControl` NÃO EXISTE nessa versão** — por isso a regra de gap do BLK-UI-04/05
+  (em `[data-testid="stSegmentedControl"]`) nunca casou.
 
-## Correção (seletores reais + !important)
-- Aba ATIVA: adicionar regra `[data-testid="stBaseButton-segmented_controlActive"]` com
-  `background:#19B7FF !important; color:#0A0C18 !important; border-color:#19B7FF !important;
-  font-weight:700 !important; box-shadow:0 0 8px rgba(25,183,255,0.35) !important;`
-- Botões INATIVOS: adicionar/garantir `[data-testid="stBaseButton-segmented_control"]` com
-  `background:rgba(30,38,65,0.88) !important; border:1px solid rgba(25,183,255,0.30) !important;
-  color:<muted> !important; border-radius:10px !important;`
-- GAP: `[data-testid="stSegmentedControl"] { gap:8px !important; }` (manter display:flex).
-- MANTER os seletores `aria-checked`/`stSegmentedControl` já presentes (o teste
-  `test_inject_styles_cobre_componentes_baseweb` os verifica) — só ADICIONAR os corretos, não remover.
+## Correção (DOM-verificada)
+1. **Gap horizontal no flex-pai real**: `[data-baseweb="button-group"] { gap: 8px !important; }`
+   (sobrescreve o `gap: 4px 0px` → 8px nos dois eixos; separa os botões horizontalmente).
+2. **Zerar a margem negativa dos botões**: 
+   `[data-testid="stBaseButton-segmented_control"], [data-testid="stBaseButton-segmented_controlActive"] { margin: 0 !important; }`
+   (remove o `margin-right: -1px` que conecta os botões).
+3. Manter as regras de cor já funcionando (ativa ciano sólido, inativo distinto) e os seletores legados
+   `stSegmentedControl`/`aria-checked` (o teste os verifica) — só corrigir o GAP.
+4. **Teste de regressão**: assert de que o CSS contém `[data-baseweb="button-group"]` com `gap` e a regra
+   de `margin: 0` nos botões do seletor.
 
-## Limite de verificação (importante)
-- O `pytest` NÃO detecta se o CSS RENDERIZA no navegador (o teste só checa a string no CSS — passou no
-  BLK-UI-04 mesmo sem aplicar). Adicionar teste de REGRESSÃO asserindo que o CSS contém
-  `stBaseButton-segmented_controlActive`. A confirmação VISUAL final é do usuário (navegador).
+## Verificação (desta vez COM render real)
+- Após o Builder, o ORQUESTRADOR roda playwright contra o app: seleciona uma UF, mede o bounding box dos
+  4 botões do seletor e confirma que há ~8px de distância horizontal entre eles (gap real renderizado).
+- pytest segue valendo para regressão de string, mas a prova é a medição do DOM + confirmação do usuário.
 
 ## Tiering de modelo (Passo 4) — Média
 - Block Orchestrator: sonnet
@@ -50,11 +47,11 @@ ciano sólido e o gap não aparecia, porque o CSS usava seletores que NÃO casam
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-UI-05 (a partir de ciclo/BLK-UI-04 @ HEAD; UI-01..05 ainda não mergeados — stack)
+ciclo/BLK-UI-06 (a partir de ciclo/BLK-UI-05 @ HEAD; UI-01..06 ainda não mergeados — stack)
 
 ## Escopo permitido
-- src/motor_expansao/dashboard/pages.py — SÓ o bloco CSS do `stSegmentedControl` em `inject_styles()` (~304-333)
-- tests/integration/test_streamlit_app.py — assert de regressão dos seletores reais
+- src/motor_expansao/dashboard/pages.py — SÓ o bloco CSS do seletor em `inject_styles()` (~304-335)
+- tests/integration/test_streamlit_app.py — assert de regressão do gap
 
 ## Fora de escopo (invioláveis)
 - recalcular qualquer score ou artefato M1

@@ -3915,3 +3915,45 @@ ruff "All checks passed"; mypy Success; import ok.
 
 Guardrails: Bloco 5 byte-idêntico (`render_tab_selector` ausente do diff); READ-ONLY M1 (só CSS + 2 asserts);
 paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
+
+---
+
+## BLK-UI-06 (bug-fix do BLK-UI-05) — GAP do seletor de telas não renderizava (flex-pai real + margem negativa do baseweb)
+
+Data: 2026-06-12
+Tipo: bug (UX/UI — CSS) | Criticidade: Média (CSS localizado; READ-ONLY M1; Bloco 5 lógica intocada)
+Esteira: Block Orchestrator → Planner → Builder → QA (Média, sem gate)
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12 — render do gap PROVADO por medição DOM.
+
+Origem: após o BLK-UI-05, Felipe/Vini confirmou (com screenshot) que o realce da aba ativa funcionou,
+mas o gap entre os botões ainda não aparecia (botões colados).
+
+Causa-raiz (DOM REAL renderizado, medido pelo orquestrador via playwright contra o app — Streamlit 1.58):
+- O flex-pai dos botões do `st.segmented_control` é `[data-baseweb="button-group"]` (role=radiogroup,
+  display:flex) com `gap: 4px 0px` → **0px de gap horizontal** (o 4px é row-gap, só vale se quebrar linha).
+- Cada botão tinha `margin-right: -1px` (o baseweb "cola" os botões sobrepondo a borda).
+- O testid `stSegmentedControl` NÃO existe nessa versão (o container real é `stButtonGroup`), então a
+  regra de gap do BLK-UI-04/05 (mirando `[data-testid="stSegmentedControl"]`) nunca casava.
+
+Correção (DOM-verificada; 100% CSS em `inject_styles()`; READ-ONLY M1):
+- `[data-baseweb="button-group"] { gap: 8px !important; }` — gap horizontal no flex-pai real.
+- `[data-testid="stBaseButton-segmented_control"], [data-testid="stBaseButton-segmented_controlActive"]
+  { margin: 0 !important; }` — remove a margem negativa que conectava os botões.
+- Regras de cor (ativa ciano `#19B7FF`, inativo `rgba(30,38,65,0.88)`) e seletores legados mantidos.
+- Teste de regressão: asserts de `[data-baseweb="button-group"]`, `gap: 8px` e `margin: 0` nos botões.
+
+Verificação de RENDER (o passo que faltava nos ciclos anteriores): o orquestrador rodou playwright,
+selecionou uma UF, e mediu o bounding box dos 4 botões → gaps horizontais de **8px / 8px / 8px** e
+`margin-right: 0px`; `button-group` com `gap: 8px` (display flex). Gap confirmado no DOM, não só na string.
+
+Lição (reforça a do BLK-UI-05): para componentes de terceiros, NÃO basta o `data-testid` "óbvio" — inspecionar
+o DOM/bundle da versão instalada e MEDIR o render (playwright) antes de declarar pronto. O pytest de
+presença-de-string passou em todos os ciclos mesmo quando o CSS não aplicava.
+
+Arquivos alterados: src/motor_expansao/dashboard/pages.py, tests/integration/test_streamlit_app.py.
+
+Validações (QA): suíte alvo `183 passed`; full SERIAL `696 passed, 1 skipped, 3 failed` = baseline exato
+(3 falhas pré-existentes). ruff "All checks passed"; mypy Success; import ok.
+
+Guardrails: Bloco 5 byte-idêntico (`render_tab_selector` ausente do diff); READ-ONLY M1 (só CSS + asserts);
+paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
