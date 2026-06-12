@@ -53,6 +53,16 @@ dev = [
     "ruff>=0.15,<0.16",
     "mypy>=1.10.0,<2",
 ]
+# Subset MVP da API GeoEspacial on-demand (BLK-API-02+, §11 do contrato).
+# Isolado do bloco `api` legado (PostGIS/Prefect/Sentry) — NAO arrastar aquele.
+# Instalar: pip install -e ".[api_mvp]"
+api_mvp = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "python-multipart>=0.0.9",
+]
 # Legado / fora do deploy Streamlit inicial
 api = [
     "fastapi>=0.111.0",

@@ -463,6 +463,9 @@ def _render_camada(
     width: int,
     height: int,
     pins_only: bool = False,
+    street_ceil: int | None = None,
+    street_gain: float | None = None,
+    street_cap: int | None = None,
 ) -> bytes:
     """Desenha UMA camada (mesmos bbox/projecao/basemap/pins; varia fill + legenda).
 
@@ -552,9 +555,9 @@ def _render_camada(
     # sobre o choropleth, estilo GeoFusion. Antes do circulo/pins/escala (que ficam no topo).
     # Pulado quando pins_only=True (sem choropleth -> nao precisa recolocar ruas). RENDER apenas.
     if basemap_patch is not None and not pins_only:
-        ceil = _STREET_CEIL
-        gain = _STREET_GAIN
-        cap = _STREET_CAP
+        ceil = _STREET_CEIL if street_ceil is None else street_ceil
+        gain = _STREET_GAIN if street_gain is None else street_gain
+        cap = _STREET_CAP if street_cap is None else street_cap
         lum = basemap_patch.convert("L")
         street_mask = lum.point(
             lambda v: 0 if v >= ceil else min(cap, int((ceil - v) * gain))
@@ -640,6 +643,10 @@ def render_mapas_censitarios_combinados(
     basemap: bool = True,
     logos_dir: Path | None = None,
     ultra_logo_dir: Path | None = None,
+    street_ceil: int | None = None,
+    street_gain: float | None = None,
+    street_cap: int | None = None,
+    choropleth_alpha: int | None = None,
 ) -> dict[str, bytes]:
     """Gera as 4 camadas do Relatorio Pontual Censitario numa unica chamada.
 
@@ -653,6 +660,13 @@ def render_mapas_censitarios_combinados(
     `setor_censitario_intersecao_area_1p5km`, raio 1.5 km) e INTOCADO; toda a mudanca e
     de RENDER. `basemap=False` forca o caminho offline (canvas branco sem ruas) — default
     seguro em CI/teste. `import contextily` e lazy: sem o extra `[basemap]` cai no offline.
+
+    Ajuste fino do arruamento (todos `None` = constantes do modulo, render IDENTICO ao
+    dashboard; so a API os sobrescreve): `street_ceil`/`street_gain`/`street_cap` controlam
+    o resgate das ruas sobre o choropleth (luminancia abaixo de `street_ceil` -> opacidade);
+    subir o `ceil` recupera as vias residenciais CINZA-CLARAS do Voyager (lum ~200) que com o
+    teto baixo (160) sumiam sob a cor. `choropleth_alpha` e a opacidade do preenchimento das
+    faixas — menor = ruas aparecem mais. A legenda usa RGB solido, entao nao muda com o alpha.
     """
     if logos_dir is not None:
         from motor_expansao.dashboard.competitors import preload_logos
@@ -731,6 +745,28 @@ def render_mapas_censitarios_combinados(
     ultra_pins = _project_points(result["ultra_raio"], lat, lng)
     n_setores = result["n_setores"]
 
+    # Alpha efetivo do choropleth: None -> constante do modulo (identico ao dashboard). As
+    # color_fn locais reproduzem `_color_for_densidade/renda/score` exatamente quando
+    # eff_alpha == _CHOROPLETH_ALPHA; so a API passa um alpha menor p/ as ruas aparecerem.
+    eff_alpha = _CHOROPLETH_ALPHA if choropleth_alpha is None else int(choropleth_alpha)
+    sem_dado = (_FILL_SEM_DADO[0], _FILL_SEM_DADO[1], _FILL_SEM_DADO[2], eff_alpha)
+
+    def _dens_fn(value: float) -> tuple[int, int, int, int]:
+        if pd.isna(value):
+            return sem_dado
+        r, g, b, _a = _color_for_bands(value, DENSIDADE_POP_BANDS)
+        return (int(r), int(g), int(b), eff_alpha)
+
+    def _renda_fn(value: float) -> tuple[int, int, int, int]:
+        if pd.isna(value):
+            return sem_dado
+        r, g, b, _a = _color_for_bands(value, RENDA_PER_CAPITA_BANDS)
+        return (int(r), int(g), int(b), eff_alpha)
+
+    def _score_fn(value: float) -> tuple[int, int, int, int]:
+        rgba = score_band_to_color(value, alpha=eff_alpha)
+        return (int(rgba[0]), int(rgba[1]), int(rgba[2]), int(rgba[3]))
+
     common = dict(
         sector_records_3857=sector_records_3857,
         circle_3857=circle_3857,
@@ -745,13 +781,16 @@ def render_mapas_censitarios_combinados(
         n_setores=n_setores,
         width=width,
         height=height,
+        street_ceil=street_ceil,
+        street_gain=street_gain,
+        street_cap=street_cap,
     )
 
     densidade_png = _render_camada(
         titulo="Relatorio Pontual Censitario - Densidade populacional",
         legenda_titulo="Densidade (hab/km2)",
         legenda_entries=_bands_legend_entries(DENSIDADE_POP_BANDS),
-        color_fn=_color_for_densidade,
+        color_fn=_dens_fn,
         source_values=densidade_series,
         **common,
     )
@@ -759,7 +798,7 @@ def render_mapas_censitarios_combinados(
         titulo="Relatorio Pontual Censitario - Renda per capita",
         legenda_titulo="Renda per capita (R$/pessoa)",
         legenda_entries=_bands_legend_entries(RENDA_PER_CAPITA_BANDS),
-        color_fn=_color_for_renda,
+        color_fn=_renda_fn,
         source_values=renda_series,
         **common,
     )
@@ -769,7 +808,7 @@ def render_mapas_censitarios_combinados(
         titulo="Relatorio Pontual Censitario - Score censitario",
         legenda_titulo="Score censitario (0-100)",
         legenda_entries=_score_legend_entries(),
-        color_fn=_color_for_score,
+        color_fn=_score_fn,
         source_values=score_series,
         **common,
     )
