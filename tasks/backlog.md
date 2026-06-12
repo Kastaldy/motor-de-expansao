@@ -317,6 +317,94 @@ ponto e recebe estudo; rastreio do consumidor; sem alteração do motor/M1.
 
 ---
 
+### BLK-API-08 — Documentação ponta-a-ponta da API GeoEspacial (uso + manipulação)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média (doc; não toca código/M1) |
+| **Prioridade** | Média |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Origem** | pedido de Felipe 2026-06-12 (pós-deploy API/bot) |
+
+**Contexto / gap:** já existem `docs/api_geoespacial_contrato.md`, `docs/api_geoespacial_openapi.yaml`,
+`docs/api_geoespacial_deploy.md` e `docs/deploy_api_bot.md` — porém espalhados e voltados a
+contrato/deploy. Falta **UM** doc de **uso ponta-a-ponta** para qualquer usuário conseguir **utilizar
+ou manipular** a API sem ter que juntar as peças.
+
+**Escopo:** criar `docs/api_geoespacial_uso.md` (fonte única de USO) cobrindo, no mínimo:
+- Visão geral + arquitetura (api/bot/containers na VPS; api interna 8077; bot long-polling).
+- **Autenticação:** token→consumidor; header `Authorization: Bearer <token>`; como obter/rotacionar o token.
+- **Endpoints:** `GET /health`; `POST /api/v1/analisar` — schema request/response, **JSON e PDF**
+  (`?formato=pdf` / `Accept: application/pdf`), entrada `{lat,lng}` e `maps_url`, raio fixo 1.5 km, carimbo
+  de versão (contrato/score).
+- **Exemplos prontos:** `curl` (JSON e PDF) e o fluxo do **bot Telegram** (senha → menu → localização → PDF).
+- **Erros:** tabela `{detail, codigo}` (400 coordenada_invalida / 401 nao_autenticado / 404 base_geo_ausente
+  / 500 erro_interno).
+- **Operação:** variáveis `API_*`, rodar local (`uvicorn motor_expansao.api.main:app`), e ponteiro p/
+  deploy/atualização (cruzar com `docs/deploy_api_bot.md`). Limitações + roadmap (BLK-API-05).
+
+**Critérios de aceite:** um usuário novo, só com o doc, autentica + chama `/analisar` (JSON e PDF) e usa o
+bot; quem mantém entende env/erros/deploy. Linka (não duplica) os docs existentes. READ-ONLY M1.
+
+---
+
+### BLK-FIX-12 — Logos das concorrentes não aparecem no PDF do Relatório (API/bot; verificar dashboard)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média (qualidade do entregável ao cliente; não toca M1) |
+| **Prioridade** | Média |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Origem** | bug reportado por Felipe 2026-06-12 (PDF do bot/API) |
+
+**Sintoma:** o PDF do Relatório Pontual Censitário (página **Concorrentes**) sai com os pins **sem a logo
+da rede**, caindo no fallback de sigla/texto. Reportado no PDF gerado pelo **bot e pela API**.
+
+**Diagnóstico inicial (do deploy 2026-06-12 — provável raiz, 3 causas somadas):** a logo vem de
+`competitors_logos_dir` (arquivos `logo_<rede>.png`, mapeados em `dashboard/competitors.py`; render via
+`_render_pin_tile`). (1) **`data/Logos/` NÃO existe no VPS** (verificado AUSENTE no deploy); (2) o serviço
+`api` do `docker-compose.prod.yml` **não** define `API_COMPETITORS_LOGOS_DIR` nem monta o volume de logos
+(define só censo/ibge/staging/ultra); (3) como a imagem instala o pacote **não-editável**, o default
+`settings.competitors_logos_dir` resolve para `site-packages/data/Logos` (mesma classe do bug de data dirs
+corrigido no #9). Soma → nenhum diretório de logos válido.
+
+**Escopo provável:** (a) levar os assets `logo_<rede>.png` ao VPS (conferir se o dashboard já os tem no
+volume `/opt/motor-expansao/concorrentes` montado no `streamlit`); (b) montar `:ro` + setar
+`API_COMPETITORS_LOGOS_DIR=/app/data/Logos` (ou caminho escolhido) no serviço `api`; (c) confirmar se o PDF
+do **dashboard** também sofre (mesma `censo_report`/`competitors`) e padronizar o caminho.
+
+**Critérios:** PDF (API e dashboard) mostra a logo correta por rede; sigla só quando a rede não tem asset.
+READ-ONLY M1.
+
+---
+
+### BLK-EST-04 — Trocar a imagem de capa do Relatório Pontual Censitário (dashboard + API)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Baixa (asset de branding; não toca M1) |
+| **Prioridade** | Média |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Origem** | pedido de Felipe 2026-06-12 (nova capa já adicionada em `data/ultra/`) |
+
+**Contexto:** a capa do PDF usa o asset `data/ultra/relatorio_capa_bg.png` (extraído do `Teste Modelo.pptx`,
+**gitignored** — não vai na imagem; lido em runtime do volume `data/ultra`). Felipe **já adicionou a nova
+versão** em `data/ultra/relatorio_capa_bg.png` (local).
+
+**Escopo:** trocar a capa nos **dois** caminhos (dashboard + API). Como o asset é gitignored e lido do
+volume montado, basta **scp** do novo `relatorio_capa_bg.png` para `/opt/motor-expansao/data/ultra/` no
+VPS — `streamlit` e `api` montam `data/ultra`, então **uma cópia atualiza os dois**. Sem rebuild de imagem.
+Se a nova capa mudar de proporção/zona limpa, conferir o layout 16:9 (`_cover_page` em `censo_report.py`)
+para o título/subtítulo não colidirem com o branding.
+
+**Critérios:** PDF do dashboard e da API usa a capa nova; título/subtítulo legíveis sobre ela; sem PII
+versionada (asset segue gitignored).
+
+---
+
 ## Tarefas pendentes
 
 - BLK-OPS-06 (concluído 2026-05-29) — ver tasks/completed.md
