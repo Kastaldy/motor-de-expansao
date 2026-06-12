@@ -63,6 +63,14 @@ api_mvp = [
     "pydantic-settings>=2.2.0",
     "python-multipart>=0.0.9",
 ]
+# Geocoder do bot Telegram (Selenium + Google Chrome). SO o container do bot
+# (telegram-bot) usa; nao entra na imagem do Streamlit nem e necessario no CI
+# (selenium/webdriver sao importados de forma lazy em maps_geocoder).
+# Instalar: pip install -e ".[api_bot]" (exige Google Chrome no host/imagem).
+api_bot = [
+    "selenium>=4.20.0",
+    "webdriver-manager>=4.0.0",
+]
 # Legado / fora do deploy Streamlit inicial
 api = [
     "fastapi>=0.111.0",
