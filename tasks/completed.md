@@ -3833,3 +3833,40 @@ não tocados nem commitados.
 
 Housekeeping: BLK-FIX-10 movido via helper (`--check` OK; teste do helper verde, 10 passed). Itens
 D1/D2/D4 são follow-up ad-hoc (sem bloco próprio no backlog) — resumidos aqui.
+
+---
+
+## BLK-UI-04 (follow-up ad-hoc do BLK-UI-03) — Destaque do seletor de telas (aba ativa ciano sólido, mais espaço, botões distintos dos cartões)
+
+Data: 2026-06-12
+Tipo: feature (UX/UI — CSS) | Criticidade: Média (CSS localizado no seletor de abas; READ-ONLY M1; Bloco 5 lógica intocada)
+Esteira: Block Orchestrator → Planner → Builder → QA (Média, sem gate humano)
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12.
+
+Origem: 3 observações de Felipe/Vini ao testar o BLK-UI-03 — o seletor de telas (st.segmented_control das
+4 abas) se camuflava entre os cartões de valores. Tarefa ad-hoc empilhada sobre ciclo/BLK-UI-03.
+
+Causa-raiz: os botões inativos do seletor usavam `background: rgba(18,23,42,0.92)`, quase idêntico ao
+fundo dos cartões de valores (`stMetric`/`.section-card`/`.model-card` = `rgba(18,23,42,0.96)`); e a aba
+ativa usava só `rgba(25,183,255,0.22)` (tom fraco).
+
+Resumo (3 mudanças CSS, 100% dentro do bloco `<style>` de `inject_styles()` em pages.py; READ-ONLY M1):
+1. **Aba ATIVA = ciano sólido** — `background: #19B7FF` + `color: #0A0C18` (texto escuro, contraste ~9.7:1)
+   + `font-weight: 700`, no lugar do `rgba(25,183,255,0.22)`/`COLORS["text"]`. Decisão de produto de
+   Felipe/Vini (2026-06-12): ciano sólido preenchido.
+2. **Mais espaçamento entre botões** — `display: flex; gap: 8px;` no container `[data-testid="stSegmentedControl"]`.
+3. **Botões INATIVOS distintos dos cartões** — `background: rgba(30,38,65,0.88)` (slate mais claro) +
+   borda ciano suave `rgba(25,183,255,0.30)`, no lugar de `rgba(18,23,42,0.92)`/`COLORS["border"]`.
+
+Arquivos alterados: src/motor_expansao/dashboard/pages.py (bloco CSS do seletor em inject_styles),
+tests/integration/test_streamlit_app.py (+1 assert `"#19B7FF" in css`).
+
+Validações (re-executadas pelo QA, evidência própria): suíte alvo `183 passed`; full SERIAL `696 passed,
+1 skipped, 3 failed` = baseline exato (as 3 falhas são as MESMAS pré-existentes; `-n auto` reproduz o
+INTERNALERROR execnet×Python 3.14 → serial). ruff "All checks passed"; mypy Success; import ok.
+
+Guardrails verificados: **Bloco 5 byte-idêntico** (`render_tab_selector`/`st.segmented_control`/`session_state`
+NÃO aparecem no diff); READ-ONLY M1 (diff é só CSS + 1 assert; nenhum score/peso/fórmula/artefato);
+seletores `stSegmentedControl`/`aria-checked` preservados; paths pré-sujos não tocados nem commitados.
+
+Housekeeping: N/A (tarefa ad-hoc; sem bloco BLK-UI-04 no backlog).

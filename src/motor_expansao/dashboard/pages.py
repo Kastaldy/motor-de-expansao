@@ -301,12 +301,17 @@ def inject_styles() -> None:
                 background: rgba(25, 183, 255, 0.22);
                 color: {COLORS["text"]};
             }}
+            div[data-testid="stSegmentedControl"],
+            div[data-testid="stSegmentedControl"] > div {{
+                display: flex;
+                gap: 8px;
+            }}
             [data-testid="stSegmentedControl"] button,
             div[role="radiogroup"] [data-baseweb="button"],
             [data-baseweb="button-group"] button {{
-                background: rgba(18, 23, 42, 0.92);
+                background: rgba(30, 38, 65, 0.88);
                 color: {COLORS["muted"]};
-                border: 1px solid {COLORS["border"]};
+                border: 1px solid rgba(25, 183, 255, 0.30);
                 border-radius: 10px;
                 font-size: 1rem;
                 font-weight: 600;
@@ -320,8 +325,8 @@ def inject_styles() -> None:
             [data-testid="stSegmentedControl"] button[aria-checked="true"],
             [data-testid="stSegmentedControl"] button[aria-selected="true"],
             [data-baseweb="button-group"] button[aria-checked="true"] {{
-                background: rgba(25, 183, 255, 0.22);
-                color: {COLORS["text"]};
+                background: #19B7FF;
+                color: #0A0C18;
                 border-color: rgba(25, 183, 255, 0.9);
                 box-shadow: 0 0 8px rgba(25, 183, 255, 0.35);
                 font-weight: 700;

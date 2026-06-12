@@ -4479,6 +4479,7 @@ def test_inject_styles_cobre_componentes_baseweb():
     assert 'data-baseweb="popover"' in css
     assert 'data-baseweb="select"' in css
     assert ('aria-checked="true"' in css) or ('aria-selected="true"' in css)
+    assert "#19B7FF" in css  # aba ativa ciano sólido (BLK-UI-04)
 
 
 # ── BLK-MAP-01: filtro individual de redes ───────────────────────────────────
