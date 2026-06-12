@@ -3957,3 +3957,40 @@ Validações (QA): suíte alvo `183 passed`; full SERIAL `696 passed, 1 skipped,
 
 Guardrails: Bloco 5 byte-idêntico (`render_tab_selector` ausente do diff); READ-ONLY M1 (só CSS + asserts);
 paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
+
+---
+
+## BLK-EST-01-FU1 (follow-up do BLK-EST-01) — Marca d'água sutil no canto (rodapé inferior-direito)
+
+Data: 2026-06-12
+Tipo: feature (UX/UI — PDF, ajuste visual) | Criticidade: Média (render do PDF; READ-ONLY M1; anti-PII §4)
+Esteira: Block Orchestrator → Planner → Builder → QA (Média, sem gate)
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12 — render confirmado por imagem.
+
+Origem: Felipe/Vini pediu (após a análise de reversão do BLK-EST-01) NÃO reverter a marca d'água, e sim
+deixá-la MAIS SUTIL e num CANTO. Decisão de produto (2026-06-12): rodapé inferior-direito, horizontal,
+pequena e discreta.
+
+Resumo (só `censo_report.py`, render da marca; READ-ONLY M1; texto/`solicitante` INALTERADOS):
+- `_draw_watermark` deixou de ser faixa diagonal central de 60pt e virou rótulo discreto no canto
+  inferior-direito: posição `x = _PAGE_W - _WATERMARK_MARGIN - get_string_width(text)`,
+  `y = _PAGE_H - _WATERMARK_MARGIN`; sem rotação (horizontal); peso normal.
+- Constantes: `_WATERMARK_FONT_PT` 60→9; `_WATERMARK_ANGLE` 45.0→0.0; `_WATERMARK_ALPHA` 0.16→0.40
+  (em 9pt, 0.16 ficaria invisível — 0.40 é discreto porém auditável); nova `_WATERMARK_MARGIN=20.0`;
+  `_WATERMARK_RGB` inalterado. Desenho em TODAS as páginas (loop 635-637) e `local_context` preservados.
+- O texto `_watermark_text(solicitante)` (BLK-EST-01) NÃO foi alterado — a feature continua; só mudou a
+  aparência. Anti-PII §4 preservado (stream OFF; nada de PII nova).
+
+Verificação de RENDER (orquestrador): gerou um PDF de amostra com `solicitante="Analista Teste"`,
+renderizou as páginas (pypdfium2 — instalado só para a verificação, NÃO entra no projeto) e confirmou por
+imagem que a marca aparece pequena/cinza/horizontal no canto inferior-direito (página 6 com fundo limpo);
+a faixa diagonal central sumiu.
+
+Arquivos alterados: src/motor_expansao/dashboard/censo_report.py.
+
+Validações (QA): suíte alvo `29 passed` (3 de marca d'água verdes); full SERIAL `696 passed, 1 skipped,
+3 failed` = baseline exato (3 falhas pré-existentes). ruff "All checks passed"; mypy Success; import ok.
+
+Guardrails: READ-ONLY M1 (só render da marca; nenhum score/peso/artefato); anti-PII §4 (compressão OFF;
+texto/`solicitante` inalterados; default seguro); template/7 páginas/mapas/raio/interseção intocados;
+paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).

@@ -81,9 +81,10 @@ _PAGE_H = 540.0
 # (sem /Annot separavel). `solicitante=None` -> so "Ultra Academia". ASCII-safe (passa por _ascii).
 _WATERMARK_BASE = "Ultra Academia"
 _WATERMARK_RGB = (120, 120, 120)
-_WATERMARK_ALPHA = 0.16
-_WATERMARK_ANGLE = 45.0
-_WATERMARK_FONT_PT = 60
+_WATERMARK_ALPHA = 0.40
+_WATERMARK_ANGLE = 0.0
+_WATERMARK_FONT_PT = 9
+_WATERMARK_MARGIN = 20.0
 
 
 @dataclass(frozen=True)
@@ -258,21 +259,20 @@ def _draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
 
 
 def _draw_watermark(pdf: _UltraPDF, text: str) -> None:
-    """Desenha a marca d'agua diagonal translucida centralizada (BLK-EST-01).
+    """Desenha a marca d'agua no canto inferior-direito, horizontal e discreta (BLK-EST-01-FU1).
 
-    READ-ONLY de estado logico: `local_context`/`rotation` restauram o graphics state ao sair.
-    Usa `pdf.text` (baseline) — imune a `set_margins(0,0,0)`/auto_page_break OFF. Deve ser
-    chamada DEPOIS do conteudo da pagina para ficar POR CIMA do fundo/PNG.
+    Posicao: baseline em (_PAGE_W - _WATERMARK_MARGIN - largura_texto, _PAGE_H - _WATERMARK_MARGIN).
+    READ-ONLY de estado logico: `local_context` restaura o graphics state (fill_opacity) ao sair.
+    Usa `pdf.text` (baseline) — imune a `set_margins`/auto_page_break OFF. Deve ser chamada
+    DEPOIS do conteudo da pagina para ficar POR CIMA do fundo/PNG.
     """
-    pdf.set_font("Helvetica", "B", _WATERMARK_FONT_PT)
+    pdf.set_font("Helvetica", "", _WATERMARK_FONT_PT)
     pdf.set_text_color(*_WATERMARK_RGB)
-    cx, cy = _PAGE_W / 2.0, _PAGE_H / 2.0
     w = pdf.get_string_width(text)
-    x0 = cx - w / 2.0
-    y0 = cy
+    x = _PAGE_W - _WATERMARK_MARGIN - w
+    y = _PAGE_H - _WATERMARK_MARGIN
     with pdf.local_context(fill_opacity=_WATERMARK_ALPHA):
-        with pdf.rotation(_WATERMARK_ANGLE, x=cx, y=cy):
-            pdf.text(x0, y0, text)
+        pdf.text(x, y, text)
 
 
 def _cover_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None]) -> None:

@@ -2,43 +2,50 @@
 
 ## Bloco atual
 
-ID: BLK-UI-06
-Nome: Corrigir o GAP do seletor de telas (flex-pai real + zerar margem negativa do baseweb)
+ID: BLK-EST-01-FU1
+Nome: Marca d'água sutil no canto (rodapé inferior-direito, horizontal) do Relatório Pontual
 Status: aprovado
-Tipo: bug (UX/UI — CSS gap não aplicava)
+Tipo: feature (UX/UI — PDF, ajuste visual)
 Criticidade: média
 Esteira: Block Orchestrator → Planner → Builder → QA
 Skill atual: QA (concluído — APROVADO)
 Próxima Skill: Fechamento manual
 
 ## Objetivo
-O realce da aba ativa (BLK-UI-05) funcionou, mas o GAP entre os botões do seletor ainda não aparece.
-Corrigir o espaçamento horizontal entre os botões do `st.segmented_control`. READ-ONLY M1; só CSS em
-`inject_styles()`; Bloco 5 (lógica) intocado.
+Tornar a marca d'água do PDF do Relatório Pontual Censitário MAIS SUTIL e no CANTO, em vez da faixa
+diagonal grande centralizada de hoje. Decisão de produto (Felipe/Vini, 2026-06-12): **rodapé
+inferior-direito, horizontal, pequena e discreta**. NÃO reverter o BLK-EST-01 — só reposicionar/reduzir.
+READ-ONLY M1; só `censo_report.py` (render da marca); o texto e o `solicitante` permanecem iguais.
 
-## Diagnóstico (DOM REAL renderizado, via playwright contra o app rodando — Streamlit 1.58.0)
-Cadeia de ancestrais a partir de um botão do seletor:
-- botão `stBaseButton-segmented_control[Active]` → `margin-right: -1px` (o baseweb "cola" os botões sobrepondo a borda)
-- pai flex `[data-baseweb="button-group"]` (role="radiogroup", display:flex) → **`gap: 4px 0px`** = 0px de gap HORIZONTAL (o 4px é row-gap, só vale se quebrar linha)
-- avô `[data-testid="stButtonGroup"]` (display:block)
-- **O testid `stSegmentedControl` NÃO EXISTE nessa versão** — por isso a regra de gap do BLK-UI-04/05
-  (em `[data-testid="stSegmentedControl"]`) nunca casou.
+## Estado atual (censo_report.py)
+- `_draw_watermark(pdf, text)` (linhas 260-275): desenha CENTRALIZADO (`cx=_PAGE_W/2`, `cy=_PAGE_H/2`),
+  rotacionado `_WATERMARK_ANGLE=45.0`, fonte `_WATERMARK_FONT_PT=60`, `_WATERMARK_ALPHA=0.16`,
+  cor `_WATERMARK_RGB=(120,120,120)`. Página 16:9: `_PAGE_W=960.0`, `_PAGE_H=540.0`.
+- Desenhada em TODAS as páginas: loop `for page_number in range(1, pdf.pages_count+1): _draw_watermark(...)`
+  (linhas 635-637). Comportamento por-página DEVE ser preservado (continua em todas as páginas).
+- O texto vem de `_watermark_text(solicitante)` — INALTERADO (continua "Ultra Academia" ou
+  "Ultra Academia | {solicitante}"). A feature do BLK-EST-01 NÃO é revertida.
 
-## Correção (DOM-verificada)
-1. **Gap horizontal no flex-pai real**: `[data-baseweb="button-group"] { gap: 8px !important; }`
-   (sobrescreve o `gap: 4px 0px` → 8px nos dois eixos; separa os botões horizontalmente).
-2. **Zerar a margem negativa dos botões**: 
-   `[data-testid="stBaseButton-segmented_control"], [data-testid="stBaseButton-segmented_controlActive"] { margin: 0 !important; }`
-   (remove o `margin-right: -1px` que conecta os botões).
-3. Manter as regras de cor já funcionando (ativa ciano sólido, inativo distinto) e os seletores legados
-   `stSegmentedControl`/`aria-checked` (o teste os verifica) — só corrigir o GAP.
-4. **Teste de regressão**: assert de que o CSS contém `[data-baseweb="button-group"]` com `gap` e a regra
-   de `margin: 0` nos botões do seletor.
+## Correção (decisão aprovada)
+- Reposicionar para o **canto inferior-direito**, com pequena margem (ex.: ~18-22 pt das bordas):
+  `x = _PAGE_W - margem - get_string_width(text)`, `y = _PAGE_H - margem` (baseline via `pdf.text`).
+- **Horizontal** (sem rotação): remover/zerar o `pdf.rotation(_WATERMARK_ANGLE...)` (ou `_WATERMARK_ANGLE=0`).
+- **Pequena**: reduzir `_WATERMARK_FONT_PT` de 60 → ~9 (peso pode passar de "B" para normal para ficar discreto;
+  Planner decide o valor exato 8-10pt).
+- **Sutil**: manter cor cinza; ajustar opacidade para discreta-porém-legível em fonte pequena
+  (Planner decide: 0.16 pode ficar fraco demais num corpo pequeno — avaliar ~0.30-0.40). Registrar o valor.
+- Manter o desenho em TODAS as páginas, POR CIMA do conteúdo (chamado depois do conteúdo), e a restauração
+  de estado gráfico (`local_context`).
 
-## Verificação (desta vez COM render real)
-- Após o Builder, o ORQUESTRADOR roda playwright contra o app: seleciona uma UF, mede o bounding box dos
-  4 botões do seletor e confirma que há ~8px de distância horizontal entre eles (gap real renderizado).
-- pytest segue valendo para regressão de string, mas a prova é a medição do DOM + confirmação do usuário.
+## Atenção (testes)
+- `tests/unit/test_relatorio_pontual_censitario_export.py`: `test_pdf_marca_dagua_com_solicitante` e
+  `_sem_solicitante` verificam que o TEXTO da marca está embutido no stream (compressão OFF). NÃO devem
+  asserir posição/ângulo — confirmar que seguem verdes (o texto continua presente). Se algum asserir
+  ângulo/tamanho, ajustar com justificativa.
+
+## Verificação (com render real)
+- Após o Builder, o ORQUESTRADOR gera um PDF de amostra e LÊ a página (Read de PDF) para confirmar
+  visualmente que a marca está no canto inferior-direito, pequena e sutil — além do pytest.
 
 ## Tiering de modelo (Passo 4) — Média
 - Block Orchestrator: sonnet
@@ -47,17 +54,17 @@ Cadeia de ancestrais a partir de um botão do seletor:
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-UI-06 (a partir de ciclo/BLK-UI-05 @ HEAD; UI-01..06 ainda não mergeados — stack)
+ciclo/BLK-EST-01-FU1 (a partir de ciclo/BLK-UI-06 @ HEAD; stack ainda não mergeado)
 
 ## Escopo permitido
-- src/motor_expansao/dashboard/pages.py — SÓ o bloco CSS do seletor em `inject_styles()` (~304-335)
-- tests/integration/test_streamlit_app.py — assert de regressão do gap
+- src/motor_expansao/dashboard/censo_report.py — `_draw_watermark` + constantes `_WATERMARK_*`
+- tests/unit/test_relatorio_pontual_censitario_export.py — só se algum teste asserir posição/ângulo
 
 ## Fora de escopo (invioláveis)
 - recalcular qualquer score ou artefato M1
-- tocar `render_tab_selector` ou a lógica de render lazy (Bloco 5) — SÓ CSS
-- alterar outros componentes CSS além do bloco do seletor
-- recolocar dependência de API ao vivo
+- reverter a feature da marca d'água / mexer no texto ou no param `solicitante`
+- alterar o template/conteúdo das 7 páginas, raio/interseção, geração de mapas
+- tocar componentes do dashboard (pages/components) — este ciclo é só do PDF
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
 - data/outputs/setores_censitarios_2022_geo/_metadata.json
