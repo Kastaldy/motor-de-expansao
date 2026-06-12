@@ -1,0 +1,79 @@
+"""Schemas Pydantic de request/response da API (BLK-API-03).
+
+Espelham `docs/api_geoespacial_openapi.yaml`. `AnalisarResponseJSON` deriva os
+KPIs (READ-ONLY) do `result` de `analisar_ponto_censitario_setores` + carimbo de
+versao/reprodutibilidade (Decisao 6).
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field, model_validator
+
+__all__ = [
+    "HealthResponse",
+    "ErrorResponse",
+    "AnalisarRequest",
+    "AnalisarResponseJSON",
+]
+
+
+class HealthResponse(BaseModel):
+    status: str = "ok"
+    environment: str = "development"
+
+
+class ErrorResponse(BaseModel):
+    """Corpo de erro padrao (contrato §9)."""
+
+    detail: str = Field(examples=["Coordenada fora do Brasil"])
+    codigo: str = Field(examples=["coordenada_invalida"])
+
+
+class AnalisarRequest(BaseModel):
+    """Fornecer ``{lat,lng}`` OU ``maps_url``. Raio e fixo 1.5 km (nao e parametro)."""
+
+    lat: float | None = Field(default=None, examples=[-21.9180])
+    lng: float | None = Field(default=None, examples=[-46.6855])
+    maps_url: str | None = Field(
+        default=None,
+        description="Link do Google Maps; parser puro extrai (lat,lng).",
+        examples=["https://maps.google.com/?q=-21.9180,-46.6855"],
+    )
+    formato: Literal["json", "pdf"] = "json"
+    rotulo: str | None = Field(
+        default=None,
+        description="Nome do endereco/estabelecimento; aparece na capa do PDF no lugar da coordenada.",
+        examples=["Pastel da Sueli - Av. Nossa Sra. do Loreto, 927"],
+    )
+
+    @model_validator(mode="after")
+    def _exige_coordenada(self) -> AnalisarRequest:
+        tem_latlng = self.lat is not None and self.lng is not None
+        if not tem_latlng and not self.maps_url:
+            raise ValueError("Forneca {lat,lng} ou maps_url")
+        return self
+
+
+class AnalisarResponseJSON(BaseModel):
+    """KPIs derivados (READ-ONLY) do estudo do ponto + carimbo de versao."""
+
+    lat: float
+    lng: float
+    raio_km: float = Field(examples=[1.5])
+    area_km2: float | None = Field(default=None, examples=[7.07])
+    metodo: str = Field(examples=["setor_censitario_intersecao_area_1p5km"])
+    n_setores: int = 0
+    pop_total_raio: float | None = None
+    renda_per_capita_media_raio: float | None = None
+    densidade_pop_raio_hab_km2: float | None = None
+    score_setor_medio: float | None = None
+    score_setor_max: float | None = None
+    n_concorrentes: int = 0
+    n_ultra: int = 0
+    # Carimbo de reprodutibilidade (Decisao 6).
+    versao_contrato: str = Field(examples=["api-geoespacial/v1"])
+    versao_score: str = Field(examples=["score_setor_2022_calibrado"])
+    gerado_em: str = Field(examples=["2026-06-11T12:00:00Z"])
+    consumidor: str | None = Field(default=None, examples=["bot-telegram"])

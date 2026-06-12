@@ -168,7 +168,11 @@ def test_ultra_loader_lida_com_metadado_e_encoding_legacy():
     assert set(al_rows["uf"].unique()) == {"AL"}
 
 
-def test_calcular_bloqueia_sam_quando_ha_canibalizacao():
+def test_canibalizacao_nao_bloqueia_mais_o_sam():
+    """DEC-007: canibalizacao deixou de bloquear o SAM. h1 (canibal=True, faixa
+    prioridade_maxima, pop_corte=10000) agora entra no SAM. Labels de protecao/
+    granularidade permanecem coerentes (tese=proteger_rede_atual; granularidade
+    =hex_censo pela precedencia hibrida)."""
     df = pd.DataFrame(
         {
             "hex_id": ["h1", "h2"],
@@ -195,15 +199,17 @@ def test_calcular_bloqueia_sam_quando_ha_canibalizacao():
 
     result = calcular(df.copy())
 
-    bloqueado = result.loc[result["hex_id"] == "h1"].iloc[0]
-    assert bool(bloqueado["flag_sam"]) is False
-    assert bloqueado["sam_indice_operavel"] == pytest.approx(0.0)
-    assert bloqueado["sam_populacao_base"] == pytest.approx(0.0)
-    assert bool(bloqueado["flag_sam_fitness"]) is False
-    assert bloqueado["sam_fitness_potencial"] == pytest.approx(0.0)
-    assert bloqueado["oferta_efetiva_disponivel"] == pytest.approx(0.0)
-    assert bloqueado["tese_entrada"] == "proteger_rede_atual"
-    assert bloqueado["prioridade_mercado_mapeado"] == "nula"
+    canibal = result.loc[result["hex_id"] == "h1"].iloc[0]
+    # Antes da DEC-007 este hex era bloqueado por ~canibal; agora entra no SAM.
+    assert bool(canibal["flag_sam"]) is True
+    # tam_indice_demanda = score_expansao_hibrido (mask_hibrido=True, 99.5 notna).
+    assert canibal["sam_indice_operavel"] == pytest.approx(99.5)
+    assert bool(canibal["flag_sam_fitness"]) is True
+    assert canibal["sam_fitness_potencial"] > 0
+    # flag_canibal continua sendo o 1o criterio de tese_entrada.
+    assert canibal["tese_entrada"] == "proteger_rede_atual"
+    # flag_hex_hibrido_elegivel tem precedencia em sam_granularidade (np.select).
+    assert canibal["sam_granularidade"] == "hex_censo"
 
     operavel = result.loc[result["hex_id"] == "h2"].iloc[0]
     assert bool(operavel["flag_sam"]) is True
@@ -429,16 +435,54 @@ def test_sam_calcula_para_faixa_elegivel_pop_corte_acima_5000_fora_top_municipio
         ({}, True),  # tudo ok
         ({"faixa_oportunidade": "descartado"}, False),  # faixa nao elegivel
         ({"pop_total": 4_999.0, "populacao_proxy": 4_999.0}, False),  # pop_corte < 5000
-        ({"flag_canibalizacao_ultra_1km": True}, False),  # canibalizacao
-        ({"flag_viavel": False}, False),  # nao viavel M1
+        ({"flag_canibalizacao_ultra_1km": True}, True),  # canibal NAO bloqueia mais (DEC-007)
+        ({"flag_viavel": False}, True),  # nao-viavel M1 NAO bloqueia mais (DEC-007)
     ],
 )
-def test_flag_sam_e_conjuncao_dos_quatro_criterios(overrides, esperado_sam):
-    """DEC-006: flag_sam e a conjuncao de flag_viavel & faixa elegivel & flag_pop_min_5k & ~canibal.
-    Falhar em qualquer 1 criterio zera o SAM."""
+def test_flag_sam_e_conjuncao_dos_dois_criterios(overrides, esperado_sam):
+    """DEC-007: flag_sam e a conjuncao de faixa M1 elegivel & flag_pop_min_5k(>=5000).
+    flag_viavel e ~canibalizacao SAIRAM do gate; falhar em faixa ou pop zera o SAM."""
     df = _gate_fixture_row(**overrides)
     result = calcular(df).iloc[0]
     assert bool(result["flag_sam"]) is esperado_sam
+
+
+def test_dropar_flag_viavel_admite_hex_no_sam():
+    """DEC-007 repro flag_viavel: antes do BLK-SAM-02 (gate DEC-006) este hex reprovava
+    SO por flag_viavel=False; com a DEC-007 ele entra no SAM (faixa alta + pop_corte>=5000)."""
+    df = _gate_fixture_row(
+        flag_viavel=False,
+        faixa_oportunidade="alta",
+        flag_canibalizacao_ultra_1km=False,
+        pop_total=8_000.0,
+        populacao_proxy=8_000.0,
+        renda_per_capita=100.0,  # renda < RENDA_MIN reprovaria flag_viavel no M1
+    )
+
+    result = calcular(df).iloc[0]
+
+    assert bool(result["flag_sam"]) is True
+    assert result["sam_fitness_potencial"] > 0
+
+
+def test_dropar_canibal_admite_hex_no_sam():
+    """DEC-007 repro ~canibal: antes reprovava SO por ~canibal; a DEC-007 inclui areas
+    Ultra<1km no SAM. Labels coerentes: tese=proteger_rede_atual (canibal 1o criterio),
+    sam_granularidade=municipio_priorizado (flag_sam vence flag_canibal na precedencia)."""
+    df = _gate_fixture_row(
+        flag_canibalizacao_ultra_1km=True,
+        flag_viavel=True,
+        faixa_oportunidade="alta",
+        pop_total=8_000.0,
+        populacao_proxy=8_000.0,
+    )
+
+    result = calcular(df).iloc[0]
+
+    assert bool(result["flag_sam"]) is True
+    assert result["sam_fitness_potencial"] > 0
+    assert result["tese_entrada"] == "proteger_rede_atual"
+    assert result["sam_granularidade"] == "municipio_priorizado"
 
 
 def test_parquet_final_tem_schema_minimo(mercado_guardrails_df: pd.DataFrame):
@@ -454,9 +498,8 @@ def test_parquet_final_tem_schema_minimo(mercado_guardrails_df: pd.DataFrame):
 
 
 def test_parquet_final_respeita_guardrails_do_piloto(mercado_guardrails_df: pd.DataFrame):
-    assert int(
-        (mercado_guardrails_df["flag_sam"] & mercado_guardrails_df["flag_canibalizacao_ultra_1km"]).sum()
-    ) == 0
+    # DEC-007: o invariante (flag_sam & canibalizacao)==0 deixou de valer (SAM agora
+    # coexiste com canibalizacao). Demais guardrails do piloto permanecem.
     assert set(mercado_guardrails_df["fonte_oferta_principal"].dropna().unique()) == {
         "csv_big_players_mapeados"
     }

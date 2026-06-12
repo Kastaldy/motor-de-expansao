@@ -63,7 +63,10 @@ paths:
                 type: string
                 format: binary
         "400":
-          description: Coordenada invalida / maps_url nao parseavel / ponto fora do Brasil.
+          description: >
+            Coordenada invalida / maps_url nao parseavel / ponto fora do Brasil. Inclui
+            o caso de ponto DENTRO do bounding box mas fora de qualquer municipio (ex.:
+            offshore) -> codigo "coordenada_invalida".
           content:
             application/json:
               schema:
@@ -75,7 +78,9 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
-          description: Token valido sem permissao.
+          description: >
+            Token valido sem permissao. RESERVADO: nao emitido no MVP (sem escopos por
+            consumidor; todo token valido tem acesso). Documentado para evolucao futura.
           content:
             application/json:
               schema:
@@ -87,11 +92,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: Falha de validacao (corpo malformado; nem lat/lng nem maps_url).
+          description: >
+            Falha de validacao Pydantic (corpo malformado; nem lat/lng nem maps_url).
+            Usa o corpo PADRAO do FastAPI ({"detail": [<erros>]}), NAO o ErrorResponse
+            {detail, codigo} — `detail` aqui e uma lista de erros de validacao.
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
+                $ref: "#/components/schemas/HTTPValidationError"
         "500":
           description: Erro interno ao gerar o estudo/PDF.
           content:
@@ -140,6 +148,13 @@ components:
           type: string
           enum: [json, pdf]
           default: json
+        rotulo:
+          type: string
+          nullable: true
+          description: >
+            Nome do endereco/estabelecimento (opcional). Quando presente e nao for
+            apenas "lat,lng", aparece na capa do PDF no lugar de "Coordenada: ...".
+          example: "Pastel da Sueli - Av. Nossa Sra. do Loreto, 927"
       anyOf:
         - required: [lat, lng]
         - required: [maps_url]
@@ -233,3 +248,30 @@ components:
             - base_geo_ausente
             - erro_interno
           example: coordenada_invalida
+
+    # Corpo PADRAO de validacao do FastAPI (resposta 422). Diferente do ErrorResponse:
+    # `detail` e uma LISTA de erros e nao ha campo `codigo`.
+    HTTPValidationError:
+      type: object
+      properties:
+        detail:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationError"
+
+    ValidationError:
+      type: object
+      required: [loc, msg, type]
+      properties:
+        loc:
+          type: array
+          items:
+            anyOf:
+              - type: string
+              - type: integer
+        msg:
+          type: string
+          example: "Forneca {lat,lng} ou maps_url"
+        type:
+          type: string
+          example: value_error

@@ -4066,3 +4066,152 @@ tocado; paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
 
 Nota: commitado na MESMA branch `ciclo/BLK-EST-01-FU2` (o PR em montagem) e re-empurrado, para entrar no
 mesmo PR.
+### BLK-SAM-02 — Afrouxar o gate do SAM: apenas Faixa M1 elegível + população ≥ 5000 (remover flag_viavel e ~canibal)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (altera o VALOR da camada PARALELA de mercado/residual; reverte sub-decisões da DEC-006; **não** é M1 oficial) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA do plano técnico]` → Builder → QA |
+| **Status** | Em execução (Builder concluído → aguardando QA; 2026-06-10) |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | (segue `86e1rte9n`, mesma trilha do SAM) |
+| **Relacionado** | **Reverte 2 sub-decisões da DEC-006** (BLK-SAM-01): a manutenção de `flag_viavel` e de `~flag_canibalizacao_ultra_1km` no gate do SAM. |
+
+**Contexto / estado atual:** após o BLK-SAM-01 (DEC-006), o gate do SAM em
+`src/motor_expansao/pipelines/calcular_colunas_mercado.py` é:
+`flag_sam = flag_viavel & faixa_oportunidade ∈ {baixa,media,alta,prioridade_maxima} & flag_pop_min_5k(≥5000) & ~flag_canibalizacao_ultra_1km`.
+
+**Objetivo (pedido do usuário Vinicius, 2026-06-10):** o SAM deve responder **apenas** a
+`faixa_oportunidade ∈ {baixa,media,alta,prioridade_maxima}` **e** `flag_pop_min_5k (≥5000)`,
+**desconsiderando** `flag_viavel` e `~flag_canibalizacao_ultra_1km`. Gate pretendido:
+`flag_sam = faixa_oportunidade.isin({baixa,media,alta,prioridade_maxima}) & flag_pop_min_5k`.
+
+**Decisão de produto — RESOLVIDA pelo usuário Vinicius em 2026-06-10** (confirmada com ciência do impacto):
+- Remover `flag_viavel` (que embutia o filtro de renda `renda_target_proxy ≥ RENDA_MIN` e o guard pop ≥ 1).
+- Remover `~flag_canibalizacao_ultra_1km` (SAM passa a incluir áreas já canibalizadas por unidade Ultra < 1 km).
+- **Impacto medido (dados reais 2026-06-10):** `flag_sam` True **27.996 → 479.568** (+451.572, ≈ ×17);
+  ~451.496 entram por dropar `flag_viavel` (filtro de renda) e apenas 76 por dropar `~canibal`.
+- **Conflito explícito:** reverte a sub-decisão da DEC-006 em que Felipe manteve de propósito `flag_viavel`
+  (para "preservar de brinde o filtro de renda") e `~flag_canibalizacao_ultra_1km`.
+
+**Escopo permitido (camada PARALELA, não M1 oficial):** o gate do SAM em `calcular_colunas_mercado.py`
+(`flag_sam`/`flag_sam_fitness`/`sam_fitness_potencial`). Se houver regeneração de parquets paralelos, seguir
+a **ordem canônica**: híbrido → mercado → `calcular_colunas_mercado` → carteira → plano → domínio → residual →
+`fase1_bi_exports` (+ enriquecido derivado do dashboard).
+
+**Fora de escopo (inviolável):** `score_priorizacao`/`hex_score_estrutural`/pesos/`faixa_oportunidade`/
+artefatos oficiais do M1 (DEC-001 vigente; a Faixa M1 é **lida**, não recalculada); a régua
+`populacao_corte_hex`/`flag_pop_min_5k` (helper `pop_corte.py` — mantida intacta, só consumida).
+
+**Critérios de aceite:**
+- Gate = `faixa_oportunidade ∈ {baixa,media,alta,prioridade_maxima} & flag_pop_min_5k`, sem `flag_viavel`
+  nem `~flag_canibalizacao_ultra_1km`; verificável por teste.
+- Repro de ≥1 hex que **passa a calcular** por ter sido reprovado só em `flag_viavel` (renda < RENDA_MIN) e
+  ≥1 que **passa a calcular** por ter sido reprovado só em `~canibal`, com causa documentada.
+- Volume `flag_sam` ≈ **479.568** (±pequena variação) confirmado.
+- Nova **DEC-007** no CLAUDE.md §8 registrando a reversão e o novo aprovador (Vinicius, 2026-06-10).
+- Parquets paralelos regenerados de forma reprodutível; **ZERO escrita em M1 oficial**.
+- Suíte + ruff + mypy verdes (atualizar testes do gate em `tests/integration/test_modelo_mercado_hexagonos.py`).
+
+**Guardrail:** não toca o M1 oficial; mudança restrita à camada de mercado/residual paralela (§4/§5).
+
+---
+
+### BLK-FIX-09 — Remover "BYD" do PDF de estudos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (conteúdo do relatório; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rtebk` — https://app.clickup.com/t/86e1rtebk |
+
+**Contexto / hipótese:** entrada espúria "BYD" (marca não-fitness) aparece no PDF de estudos — provavelmente
+um pin/logo de POI ou registro indevido na base de concorrentes (`concorrentes/` logos/Unidades) ou no
+lookup do relatório. Planner localiza a origem (dado vs render).
+
+**Objetivo:** o "BYD" não aparece mais no PDF/relatório.
+
+**Escopo permitido:** `src/motor_expansao/dashboard/censo_report.py` / `censo_map.py` (filtro de render) e/ou
+saneamento da fonte de concorrentes consumida pelo relatório.
+
+**Fora de escopo:** alterar score/artefatos M1; mexer no método de interseção/raio 1.5 km.
+
+**Critérios de aceite:** PDF sem "BYD"; teste cobrindo a exclusão; suíte verde; READ-ONLY M1.
+
+**Guardrail:** relatório é camada de visualização (§5).
+
+---
+
+### BLK-FIX-07 — Overlays do mapa territorial não funcionando
+
+> ⚠️ **SUPERSEADO por BLK-FIX-11 (2026-06-09)** — ver seção "Novos blocos". A tarefa ClickUp `86e1rtefy`
+> passa a ser rastreada pelo **BLK-FIX-11** (Alternativa A: fiar os 3 overlays mortos). Mantido aqui só por histórico.
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (display/render; READ-ONLY sobre M1) |
+| **Prioridade** | **Alta** (urgent no ClickUp) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA das decisões visuais]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rtefy` — https://app.clickup.com/t/86e1rtefy |
+
+**Contexto / hipótese:** as camadas de overlay do Mapa Territorial (toggles de concorrentes/Ultra/score)
+não renderizam ou não respondem ao controle. Hipótese: regressão no controle de camadas/`pydeck` em
+`src/motor_expansao/dashboard/pages.py` (`render_mapa_territorial`) ou nos builders de layer em
+`components.py` (filtro de `scope`/cap de pontos descartando o overlay antes do render — eco do
+BLK-FIX-06-C). Planner confirma se é toggle de UI, layer pydeck ou dado ausente.
+
+**Objetivo:** restaurar a exibição e o controle dos overlays no Mapa Territorial.
+
+**Escopo permitido:** `pages.py`/`components.py` (controle e build de camadas), testes de
+`test_streamlit_app.py`. Só display/interação.
+
+**Fora de escopo:** recalcular score/carteira/plano; alterar artefatos M1; mudar o cap de pontos sem aprovação.
+
+**Critérios de aceite:** overlays aparecem e respondem ao toggle; teste cobrindo a camada antes invisível;
+suíte + ruff + mypy verdes; READ-ONLY M1 comprovado (git scope vazio em pipelines/scoring.py/config.py).
+
+**Guardrail:** visualização não recalcula nem altera M1 (§5).
+
+---
+
+### BLK-FIX-08 — SAM não calcula em alguns hexágonos/municípios (RR, AC e outros)
+
+> ⚠️ **SUPERSEADO por BLK-SAM-01 (2026-06-09)** — ver seção "Novos blocos". A tarefa ClickUp `86e1rte9n`
+> passa a ser rastreada pelo **BLK-SAM-01** (redefine o gate do SAM: Faixa M1 + pop ≥ 5000), que **absorve**
+> a preocupação de cobertura (fallback de pop em RR/AC/AM). Mantido aqui só por histórico.
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (altera valor da camada PARALELA de mercado/residual; **não** é M1 oficial, mas exige revisão) |
+| **Prioridade** | **Alta** (urgent no ClickUp) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rte9n` — https://app.clickup.com/t/86e1rte9n |
+
+**Contexto / hipótese:** `sam_fitness_potencial` fica vazio/zerado em UFs de baixa cobertura censitária
+(RR, AC, AM — exatamente as de supressão IBGE/classe C). Hipótese: o fallback de `pop_hex_base`
+(`pop_total_setor_2022` → `populacao_proxy / total_hex_municipio`) não cobre esses hexes, ou `cod_municipio`
+ausente quebra o join da camada de mercado. Planner confirma a origem no cálculo do mercado
+(`calcular_colunas_mercado` / `hexagonos_mercado_mapeado.parquet`).
+
+**Objetivo:** SAM calculado (ou marcado explicitamente como "sem base", não silenciosamente vazio) nessas UFs.
+
+**Escopo permitido (camada PARALELA, não M1 oficial):** cálculo de mercado/residual e seu fallback de
+população; se houver regeneração de parquets paralelos, seguir a **ordem canônica** (hibrido → mercado →
+`calcular_colunas_mercado` → carteira → plano → dominio → residual → `fase1_bi_exports`).
+
+**Fora de escopo (inviolável):** `score_priorizacao`/`hex_score_estrutural`/pesos/artefatos oficiais do M1
+(DEC-001 vigente); inventar população onde não há base auditável.
+
+**Critérios de aceite:** SAM presente ou rotulado em RR/AC/AM com causa documentada; repro de ≥1 hex antes
+quebrado; parquets paralelos regenerados de forma reprodutível se necessário; ZERO escrita em M1 oficial;
+suíte + ruff + mypy verdes.
+
+**Guardrail:** não toca o M1 oficial; mudança restrita à camada de mercado/residual paralela.

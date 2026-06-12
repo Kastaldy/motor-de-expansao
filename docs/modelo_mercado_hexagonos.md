@@ -248,20 +248,28 @@ Colunas de corte de populacao (materializadas no pipeline via helper compartilha
 
 | coluna | tipo | regra exata |
 | --- | --- | --- |
-| `flag_sam` | bool | `flag_viavel and faixa_oportunidade in {baixa,media,alta,prioridade_maxima} and flag_pop_min_5k and not flag_canibalizacao_ultra_1km` |
+| `flag_sam` | bool | `faixa_oportunidade in {baixa,media,alta,prioridade_maxima} and flag_pop_min_5k` (DEC-007: `flag_viavel` e `not flag_canibalizacao_ultra_1km` SAIRAM do gate) |
 | `flag_sam_fitness` | bool | `== flag_sam` (piso `tam_populacao_hex > 0` removido por redundancia com o corte `>= 5000`) |
 | `sam_indice_operavel` | float | `tam_indice_demanda` quando `flag_sam=True`; senao `0` |
 | `sam_populacao_base` | float | `tam_populacao_base` quando `flag_sam=True`; senao `0` |
 | `sam_fitness_potencial` | float | `tam_fitness_potencial` (coercido, sem NaN, nao-negativo) quando `flag_sam_fitness=True`; senao `0` |
 | `sam_granularidade` | string | `hex_censo` quando `flag_hex_hibrido_elegivel=True`; senao `municipio_priorizado` quando `flag_sam=True`; `bloqueado_rede_ultra` quando `flag_canibalizacao_ultra_1km=True`; senao `fora_escopo_atual` |
 
+> Nota DEC-007 sobre `sam_granularidade`: a logica do `np.select` NAO mudou, mas como o
+> gate agora admite hexes canibais no SAM, um hex `flag_sam=True and flag_canibalizacao_ultra_1km=True`
+> (nao hibrido) recebe `municipio_priorizado` (a clausula `flag_sam` vence `flag_canibal` na
+> precedencia), nao `bloqueado_rede_ultra`. O rotulo `bloqueado_rede_ultra` segue valido apenas
+> para hexes canibais que NAO entram no SAM (faixa inelegivel ou populacao `< 5000`).
+
 Leitura:
 
 - `flag_sam` representa o que o modelo atual considera atendivel agora.
-- O gate (DEC-006) substitui `top_municipio` por Faixa M1 elegivel + populacao `>= 5000`
-  na regua `populacao_corte_hex`, mantendo viabilidade M1 e a restricao de distancia minima
-  para a rede Ultra. O SAM passa a existir fora do recorte top-20%/UF, mas o corte `>= 5000`
-  sobre `populacao_corte_hex` reduz o universo (filtro forte, nao aniquilador).
+- O gate (DEC-006/DEC-007) substituiu `top_municipio` por Faixa M1 elegivel + populacao `>= 5000`
+  na regua `populacao_corte_hex`. A DEC-007 reverteu 2 sub-decisoes da DEC-006: o gate deixou de
+  exigir `flag_viavel` (some o filtro de renda `renda_target_proxy >= RENDA_MIN` e o guard `pop >= 1`
+  que vinham de brinde) e deixou de exigir `not flag_canibalizacao_ultra_1km` (o SAM passa a INCLUIR
+  areas Ultra `< 1 km`). O SAM existe fora do recorte top-20%/UF, e o corte `>= 5000` sobre
+  `populacao_corte_hex` e o unico filtro remanescente (forte, nao aniquilador).
 
 ### 5.5 Rede propria Ultra e canibalizacao
 
@@ -327,6 +335,7 @@ Leitura:
 
 Leitura:
 
+- `tese_entrada` NAO muda de logica com a DEC-007: `proteger_rede_atual` (1o criterio, `flag_canibalizacao_ultra_1km`) tem precedencia sobre `flag_sam`, entao um hex canibal que agora entra no SAM continua rotulado `proteger_rede_atual`.
 - `prioridade_mercado_mapeado` usa regua absoluta de `som_indice_mapeado`; quartis e percentis servem apenas como apoio de ranking relativo fora do contrato principal.
 
 ## 6. Ordem de calculo recomendada

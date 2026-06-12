@@ -53,6 +53,18 @@ dev = [
     "ruff>=0.15,<0.16",
     "mypy>=1.10.0,<2",
 ]
+# Subset MVP da API GeoEspacial on-demand (BLK-API-02+, §11 do contrato).
+# Isolado do bloco `api` legado (PostGIS/Prefect/Sentry) — NAO arrastar aquele.
+# Instalar: pip install -e ".[api_mvp]"
+api_mvp = [
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "python-multipart>=0.0.9",
+]
+# (O extra do geocoder do bot — selenium/webdriver-manager — e o `geocoder`,
+# definido abaixo junto de [basemap]; a imagem do bot usa .[basemap,api_mvp,geocoder].)
 # Legado / fora do deploy Streamlit inicial
 api = [
     "fastapi>=0.111.0",
@@ -89,6 +101,13 @@ scraping = [
 basemap = [
     "contextily>=1.5.0",
 ]
+# Geocoder primario de endereco+CEP via Google Maps (Selenium) — api/maps_geocoder.py.
+# Opcional por design: sem ele, geo.py cai no Nominatim (geopy ja esta na base).
+# Import tardio + fallback gracioso; requer Google Chrome instalado no host.
+geocoder = [
+    "selenium>=4.20.0",
+    "webdriver-manager>=4.0.0",
+]
 
 [tool.ruff]
 line-length = 100
@@ -97,6 +116,11 @@ target-version = "py311"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# B008: `Depends(...)`/`Query(...)` em defaults de argumento e o idioma padrao do
+# FastAPI (injecao de dependencia), nao um bug. Escopado so a camada da API.
+"src/motor_expansao/api/**" = ["B008"]
 
 [tool.ruff.format]
 quote-style = "double"

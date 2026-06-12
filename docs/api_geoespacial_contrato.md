@@ -113,11 +113,15 @@ Superficie minima do MVP:
   "lat": -23.95,          // float, opcional se houver maps_url
   "lng": -46.33,          // float, opcional se houver maps_url
   "maps_url": "https://maps.google.com/...",  // string, opcional se houver lat/lng
-  "formato": "json"       // "json" (default) | "pdf" (Decisao 1); ?formato= ou Accept: application/pdf
+  "formato": "json",      // "json" (default) | "pdf" (Decisao 1); ?formato= ou Accept: application/pdf
+  "rotulo": "Pastel da Sueli - Av. ..."  // string, OPCIONAL: nome do local p/ a capa do PDF
 }
 ```
 - Regra de validacao: fornecer `{lat,lng}` OU `maps_url` (nao ambos vazios). Raio e **fixo 1.5 km**
   (Decisao 5) — NAO e parametro de entrada.
+- `rotulo` (aditivo compativel em `v1`, §10): quando presente e nao for apenas `"lat,lng"`, vai para a
+  capa do PDF no lugar de "Coordenada: ...". Ignorado na saida JSON. Adicionado pela trilha do bot
+  (BLK-API-07) para carimbar o nome do local no relatorio.
 
 ### 7.2 `POST /analisar` — response JSON (`AnalisarResponseJSON`, Decisao 6 inclusa)
 KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
@@ -163,8 +167,9 @@ KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
 - **Rastreio:** o token resolve o **consumidor** (ex.: `bot-telegram`, `bot-whatsapp`), que e
   carimbado no JSON (`consumidor`) e disponivel para a marca d'agua/log LGPD do BLK-EST-01
   (quem pediu o estudo).
-- **Aplicacao:** dependencia `auth.py` em todas as rotas exceto `GET /health`. Token invalido -> `401`;
-  token valido mas sem permissao -> `403`.
+- **Aplicacao:** dependencia `auth.py` em todas as rotas exceto `GET /health`. Token invalido -> `401`.
+- **`403` sem_permissao = RESERVADO:** previsto para escopos por consumidor, mas **nao emitido no MVP**
+  (todo token valido tem acesso). O slug fica documentado para evolucao futura; hoje `auth.py` nunca o levanta.
 
 ## 9. Erros — modelo padrao
 
@@ -172,14 +177,17 @@ Corpo de erro padrao (`ErrorResponse`): `{ "detail": "<mensagem>", "codigo": "<s
 
 | HTTP | Quando | Corpo (exemplo) |
 |---|---|---|
-| `400` | Coordenada invalida / `maps_url` nao parseavel / ponto fora do Brasil | `{"detail":"Coordenada fora do Brasil","codigo":"coordenada_invalida"}` |
+| `400` | Coordenada invalida / `maps_url` nao parseavel / ponto fora do Brasil OU dentro do bbox mas fora de qualquer municipio (offshore) | `{"detail":"Coordenada fora do Brasil","codigo":"coordenada_invalida"}` |
 | `401` | Token ausente/invalido | `{"detail":"Token invalido","codigo":"nao_autenticado"}` |
-| `403` | Token valido sem permissao | `{"detail":"Acesso negado","codigo":"sem_permissao"}` |
+| `403` | Token valido sem permissao — **RESERVADO, nao emitido no MVP** (§8) | `{"detail":"Acesso negado","codigo":"sem_permissao"}` |
 | `404` | Base geo ausente para a UF/municipio resolvidos | `{"detail":"Materialize setores_censitarios_2022_geo/ para esta UF/municipio","codigo":"base_geo_ausente"}` |
-| `422` | Falha de validacao Pydantic (corpo malformado / nem lat/lng nem maps_url) | corpo padrao FastAPI de validacao |
+| `422` | Falha de validacao Pydantic (corpo malformado / nem lat/lng nem maps_url) | corpo padrao FastAPI (`{"detail":[<erros>]}`) — **sem** `codigo` |
 | `500` | Erro inesperado na geracao do estudo/PDF | `{"detail":"Erro interno ao gerar o estudo","codigo":"erro_interno"}` |
 
 > A mensagem do `404` espelha a do dashboard ("Materialize `setores_censitarios_2022_geo/`...").
+> O `500` e garantido pelo handler catch-all (`unexpected_error_handler`), que converte QUALQUER
+> excecao nao tratada no corpo `{detail, codigo:"erro_interno"}` — nenhum 500 vaza o corpo cru do FastAPI.
+> Ponto offshore (dentro do bbox, sem municipio na malha IBGE) cai em `400 coordenada_invalida`, nao `404`.
 
 ## 10. Versionamento e carimbo
 
@@ -192,7 +200,14 @@ Corpo de erro padrao (`ErrorResponse`): `{ "detail": "<mensagem>", "codigo": "<s
 
 **Subset MVP (manter):** `fastapi`, `uvicorn[standard]`, `pydantic`, `pydantic-settings`.
 Conforme Decisao 2/4, podem entrar tambem `python-multipart` (formularios/uploads, se necessario);
-o parser de `maps_url` e puro e nao exige `httpx`.
+o parser de `maps_url` e puro e nao exige `httpx`. Implementado no extra `[api_mvp]` do `pyproject.toml`,
+isolado do bloco legado `[api]` (§11 pedia esse isolamento).
+
+**Extras adicionais do runtime (pos-contrato, opcionais e isolados):**
+- `[basemap]` (`contextily`) — fundo de ruas do PDF, import lazy + fallback offline (DEC-004, BLK-API-04).
+- `[geocoder]` (`selenium`, `webdriver-manager`) — geocoder primario de **endereco+CEP** via Google Maps
+  (`api/maps_geocoder.py`, requer Chrome no host). **Opcional por design:** ausente, `geo.py` cai no
+  Nominatim (`geopy`, ja na base). Nasceu apos o contrato (2026-06-12); declarado para deploy reproduzivel.
 
 **Legado PostGIS — FORA do MVP (NAO arrastar):** `sqlalchemy`, `asyncpg`, `psycopg2-binary`,
 `alembic`, `geoalchemy2`, `sentry-sdk[fastapi]`, `prefect`, `httpx`, `aiohttp`, `python-jose`,

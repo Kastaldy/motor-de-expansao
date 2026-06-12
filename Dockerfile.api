@@ -1,0 +1,54 @@
+# Dockerfile.api — imagem unica da API GeoEspacial + bot Telegram (BLK-API-06/07).
+#
+# Um mesmo artefato roda os DOIS servicos (comandos diferentes no compose):
+#   - api:          uvicorn motor_expansao.api.main:app  (HTTP interno, porta 8077)
+#   - telegram-bot: python -m motor_expansao.api.telegram_bot  (long-polling)
+#
+# Inclui Google Chrome porque o geocoder de endereco+CEP do bot usa Selenium
+# (maps_geocoder). A API em si nao usa Chrome, mas reusar a mesma imagem evita
+# manter dois builds. NAO afeta a imagem do Streamlit (Dockerfile.streamlit).
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HOME=/home/appuser
+
+WORKDIR /app
+
+# Deps de sistema:
+#  - curl: healthcheck do /health.
+#  - libexpat1: runtime de rasterio (extra [basemap]/contextily) — render dos mapas do PDF.
+#  - google-chrome-stable: geocoder do bot (Selenium); gnupg/ca-certificates p/ a chave do repo.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates gnupg libexpat1 \
+    && curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+       | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" \
+       > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY . .
+
+# [basemap]=contextily (mapas do PDF); [api_mvp]=FastAPI/uvicorn/pydantic; [geocoder]=Selenium.
+RUN python -m pip install --upgrade pip \
+    && python -m pip install ".[basemap,api_mvp,geocoder]"
+
+# Usuario nao-root com HOME gravavel: cache do webdriver-manager (~/.wdm) e perfil
+# do Chrome headless precisam escrever. /data e o volume de sessoes do bot.
+RUN useradd --create-home --shell /usr/sbin/nologin appuser \
+    && mkdir -p /app/data /data \
+    && chown -R appuser:appuser /app /data /home/appuser
+
+USER appuser
+
+EXPOSE 8077
+
+# Default = API. O servico telegram-bot sobrescreve `command` no compose e
+# desabilita este healthcheck (nao tem HTTP).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8077/health || exit 1
+
+CMD ["uvicorn", "motor_expansao.api.main:app", "--host", "0.0.0.0", "--port", "8077"]
