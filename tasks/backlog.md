@@ -487,6 +487,13 @@ SSH (desabilitar login por senha / limitar root) nem 2FA obrigatório no Autheli
 **Risco:** médio-alto (mexer em SSH/firewall pode trancar o acesso). Mitigação: alterar um item por vez,
 manter sessão aberta de teste, ter rollback pronto ANTES de aplicar regras de SSH/ufw.
 
+**Atualização (2026-06-12, pós-deploy API/bot):** subiram 2 containers novos (`motor_expansao_api`,
+`motor_expansao_telegram_bot`). **NÃO mudam a superfície de firewall:** a API não publica porta no host
+(só rede interna `app_net`); o bot é long-polling (conexão de SAÍDA ao Telegram). A regra `ufw` "só
+22/80/443" segue correta. Considerar no escopo: (i) a imagem da API embute **Google Chrome** (superfície
+maior, porém interna) — manter `unattended-upgrades`/rebuild via CI em dia; (ii) `unattended-upgrades`
+e o alerta de "container reiniciando" (cruza com BLK-SEC-05) agora abrangem também api/bot.
+
 ---
 
 ### BLK-SEC-04 — Backup automatizado dos dados de produção (parquets) + restore testado
@@ -519,6 +526,18 @@ máquina de dev" como backup — manual e frágil. Não há snapshot periódico 
 - Sem PII em logs; sem dependência de API ao vivo no dashboard.
 
 **Risco:** baixo. Atenção a custo/espaço do destino e a não competir com usuários (janela noturna).
+
+**Atualização (2026-06-12, pós-deploy API/bot):** o conjunto de dados de produção cresceu além de
+`data/outputs/`. Estender o escopo de backup para:
+- **`data/ibge/`** (~49 MB, malha municipal) e **`data/staging/`** (~213 MB: `concorrentes_mapeados`,
+  `unidades_ultra_mapeadas`, `hexagonos_mercado_mapeado`) — **obrigatórios para a API** (`data/ibge` é
+  o que resolve lat,lng→município; sem ele a API dá 500). São regeneráveis, mas hoje só existem como
+  cópia manual; incluir no snapshot evita re-scp lento.
+- **Volume `bot_data`** (sessões do bot Telegram) — pequeno; perdê-lo só desloga os usuários (baixa
+  prioridade, mas trivial de incluir).
+- **Secrets do `.env`**: o `.env` ganhou `API_TOKENS`/`API_API_CALL_TOKEN`/`API_TELEGRAM_TOKEN`/
+  `API_BOT_SENHA`/`API_IMAGE`. O backup de segredos é do **BLK-OPS-01** (SOPS+age) — sinalizar lá que o
+  `.env` deve ser **re-encriptado** para capturar os novos segredos (cruza com BLK-OPS-01, não com este).
 
 ---
 
@@ -567,6 +586,21 @@ plano claro de resposta — proporcional a um dashboard interno (nada de SIEM/en
 
 **Risco:** baixo. Cuidado para não gerar alarme ruidoso (calibrar limiares) nem expor segredos nos
 canais de alerta.
+
+**Atualização (2026-06-12, pós-deploy API/bot — ESCOPO ESTENDIDO):** este bloco foi escrito em
+2026-05-31, **antes** da API GeoEspacial e do bot Telegram existirem; o uptime cobria só o dashboard.
+Agora há 3 serviços a monitorar. Incluir no escopo de uptime/health:
+- **Dashboard** (Streamlit): edge `https://dashboard.ultra-expansao.tech` (302→Authelia = vivo) e/ou
+  `docker exec ... /_stcore/health` (porta 8501 não publicada no host).
+- **API GeoEspacial**: `GET /health` na porta **8077** (interna `app_net`) → checar via
+  `docker exec motor_expansao_api curl -fsS http://127.0.0.1:8077/health` (sem porta no host; cron na VPS).
+- **Bot Telegram**: liveness = container `motor_expansao_telegram_bot` Up + log de polling sem erro
+  (sem endpoint HTTP; checar `docker ps`/`docker logs`). Opcional: o cron pode bater no
+  `/api/v1/analisar` com um token interno como smoke fim-a-fim.
+- **Containers reiniciando** (`Restarting`/crash-loop) e o volume `bot_data`/disco — já no escopo de host.
+Critério adicional: queda de **qualquer um dos 3** (dashboard, api, bot) gera notificação testada.
+Nota de implementação: como api/bot não têm porta no host, o check mais simples é um **cron na própria
+VPS** (`docker exec`/`docker ps`) com alerta por webhook/e-mail, em vez de monitor HTTP externo.
 
 ---
 
