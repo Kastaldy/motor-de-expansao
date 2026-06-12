@@ -69,7 +69,15 @@ services:
       API_ENVIRONMENT: "production"
       # token -> consumidor (JSON). Defina no .env, ex.: API_TOKENS='{"tok-bot":"bot-telegram"}'.
       API_TOKENS: ${API_TOKENS:?defina API_TOKENS no .env (JSON token->consumidor)}
-      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-*}
+      # JSON valido: pydantic-settings decodifica o campo de lista como JSON (um "*" cru quebra).
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-["*"]}
+      # Caminhos de dados EXPLICITOS: a imagem instala o pacote NAO-editavel, entao o
+      # default de settings.py (parents[3]) resolveria para site-packages/data — errado.
+      # Apontamos para /app/data/*, onde os volumes :ro abaixo montam os dados do host.
+      API_CENSO_GEO_DIR: "/app/data/outputs/setores_censitarios_2022_geo"
+      API_IBGE_DIR: "/app/data/ibge"
+      API_STAGING_DIR: "/app/data/staging"
+      API_ULTRA_DIR: "/app/data/ultra"
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro   # censo geo (obrigatorio)
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal (obrigatorio)
