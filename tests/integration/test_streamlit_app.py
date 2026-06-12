@@ -11,6 +11,8 @@ from motor_expansao.dashboard.components import (
     _DISCARDED_FILL,
     _NAN_SCORE_FILL,
     _apply_pop_cut_colors,
+    _hybrid_compact_tooltip,
+    _shared_map_tooltip,
 )
 from motor_expansao.dashboard.constants import (
     COLOR_MODE_IDS,
@@ -332,6 +334,19 @@ def test_build_map_scope_caption_reflete_todos_os_hexes_da_uf():
     assert "todos os hexagonos validos da UF selecionada" in caption
     assert "100 melhores" not in caption
     assert "1.234" in caption
+    # BLK-UI-02 (#3a): ramo nao-capped orienta filtrar por municipio para densidade total.
+    assert "municipio" in caption
+
+
+def test_map_tooltips_tem_css_de_tamanho():
+    # BLK-UI-03 (D2): meio-termo entre o 11px do BLK-UI-02 e o default deck.gl;
+    # ambos os tooltips compartilham fontSize/padding/maxWidth/lineHeight no style.
+    for tooltip in (_shared_map_tooltip(), _hybrid_compact_tooltip()):
+        style = tooltip["style"]
+        assert style["fontSize"] == "13px"
+        assert style["padding"] == "8px 10px"
+        assert style["maxWidth"] == "300px"
+        assert style["lineHeight"] == "1.35"
 
 
 def test_censo_score_to_color_delega_para_score_band_to_color():
@@ -4252,6 +4267,7 @@ def test_render_tab_selector_fallback_quando_desmarcado():
 
 def test_main_renderiza_apenas_a_aba_ativa(tmp_path, monkeypatch):
     """main() deve chamar somente o render_* da aba ativa, nao das outras tres."""
+    import contextlib
     import unittest.mock as mock
 
     out = _build_lazy_partitions(tmp_path)
@@ -4260,29 +4276,32 @@ def test_main_renderiza_apenas_a_aba_ativa(tmp_path, monkeypatch):
     streamlit_app.load_uf_slice.clear()
 
     empty = pd.DataFrame()
-    with (
-        mock.patch("streamlit.session_state", {}),
-        mock.patch.object(streamlit_app, "inject_styles"),
-        mock.patch.object(streamlit_app, "render_header"),
-        mock.patch.object(streamlit_app, "render_uf_selectbox", return_value="SP"),
-        mock.patch.object(streamlit_app, "render_sidebar_filters",
-                          return_value=([], [], [], [], [], [], False, False)),
-        mock.patch.object(streamlit_app, "render_coord_search_sidebar", return_value=None),
-        mock.patch.object(streamlit_app, "render_tab_selector", return_value="Expansao de Dominio"),
-        mock.patch.object(streamlit_app, "load_carteira", return_value=empty),
-        mock.patch.object(streamlit_app, "load_plano", return_value=empty),
-        mock.patch.object(streamlit_app, "load_plano_dominio", return_value=empty),
-        mock.patch.object(streamlit_app, "load_competitors", return_value=empty),
-        mock.patch.object(streamlit_app, "load_ultra", return_value=empty),
-        mock.patch.object(streamlit_app, "render_visao_executiva") as visao_mock,
-        mock.patch.object(streamlit_app, "render_mapa_territorial") as mapa_mock,
-        mock.patch.object(streamlit_app, "render_expansao_dominio") as dominio_mock,
-        mock.patch.object(streamlit_app, "render_carteira_e_plano") as carteira_mock,
-        mock.patch.object(streamlit_app, "build_city_summary") as city_mock,
-        mock.patch("streamlit.caption"),
-        mock.patch("streamlit.markdown"),
-        mock.patch("streamlit.info"),
-    ):
+    # ExitStack em vez de `with (m1, ..., m21):` — 21 context managers num unico `with`
+    # estouram o limite de 20 blocos aninhados do compilador no Python 3.11 (CI), embora
+    # compile no 3.12+ (local). enter_context preserva ordem/comportamento.
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(mock.patch("streamlit.session_state", {}))
+        stack.enter_context(mock.patch.object(streamlit_app, "inject_styles"))
+        stack.enter_context(mock.patch.object(streamlit_app, "render_header"))
+        stack.enter_context(mock.patch.object(streamlit_app, "render_uf_selectbox", return_value="SP"))
+        stack.enter_context(mock.patch.object(streamlit_app, "render_sidebar_filters",
+                            return_value=([], [], [], [], [], [], False, False)))
+        stack.enter_context(mock.patch.object(streamlit_app, "render_coord_search_sidebar", return_value=None))
+        stack.enter_context(mock.patch.object(streamlit_app, "render_tab_selector", return_value="Expansao de Dominio"))
+        stack.enter_context(mock.patch.object(streamlit_app, "load_carteira", return_value=empty))
+        stack.enter_context(mock.patch.object(streamlit_app, "load_plano", return_value=empty))
+        stack.enter_context(mock.patch.object(streamlit_app, "load_plano_dominio", return_value=empty))
+        stack.enter_context(mock.patch.object(streamlit_app, "load_competitors", return_value=empty))
+        stack.enter_context(mock.patch.object(streamlit_app, "load_ultra", return_value=empty))
+        visao_mock = stack.enter_context(mock.patch.object(streamlit_app, "render_visao_executiva"))
+        mapa_mock = stack.enter_context(mock.patch.object(streamlit_app, "render_mapa_territorial"))
+        dominio_mock = stack.enter_context(mock.patch.object(streamlit_app, "render_expansao_dominio"))
+        carteira_mock = stack.enter_context(mock.patch.object(streamlit_app, "render_carteira_e_plano"))
+        city_mock = stack.enter_context(mock.patch.object(streamlit_app, "build_city_summary"))
+        stack.enter_context(mock.patch("streamlit.caption"))
+        stack.enter_context(mock.patch("streamlit.markdown"))
+        stack.enter_context(mock.patch("streamlit.info"))
+        stack.enter_context(mock.patch("streamlit.spinner"))
         streamlit_app.main()
 
     assert dominio_mock.called
@@ -4463,3 +4482,116 @@ def test_inject_styles_cobre_componentes_baseweb():
     assert 'data-baseweb="popover"' in css
     assert 'data-baseweb="select"' in css
     assert ('aria-checked="true"' in css) or ('aria-selected="true"' in css)
+    assert "#19B7FF" in css  # aba ativa ciano sólido (BLK-UI-04)
+    assert "stBaseButton-segmented_controlActive" in css  # seletor real Streamlit 1.58 (BLK-UI-05)
+    assert "stBaseButton-segmented_control" in css  # seletor inativo real Streamlit 1.58 (BLK-UI-05)
+    # BLK-UI-06: gap no flex-pai real e margin zero nos botões
+    assert 'data-baseweb="button-group"' in css  # flex-pai real do seletor
+    assert "gap: 8px" in css  # gap horizontal efetivo (pode ser em qualquer seletor)
+    assert "margin: 0 !important" in css  # zera o margin-right: -1px do baseweb
+
+
+# ── BLK-MAP-01: filtro individual de redes ───────────────────────────────────
+
+def _make_competitors_two_redes() -> pd.DataFrame:
+    """Fixture auxiliar: dois concorrentes em SP, uma smart_fit e uma bluefit."""
+    return pd.DataFrame([
+        {
+            "rede": "smart_fit",
+            "rede_label": "Smart Fit",
+            "nome_unidade": "Smart Paulista",
+            "lat": -23.551,
+            "lng": -46.631,
+            "cidade": "Sao Paulo",
+            "uf": "SP",
+            "arquivo_origem": "unidades_smart_fit.csv",
+        },
+        {
+            "rede": "bluefit",
+            "rede_label": "Bluefit",
+            "nome_unidade": "Blue SP",
+            "lat": -23.552,
+            "lng": -46.632,
+            "cidade": "Sao Paulo",
+            "uf": "SP",
+            "arquivo_origem": "unidades_bluefit.csv",
+        },
+    ])
+
+
+def test_filtro_rede_uma_rede_so_ela_renderiza():
+    """BLK-MAP-01 Cenario A: filtrar para uma rede => somente ela aparece na camada de pins."""
+    import h3
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    competitors = _make_competitors_two_redes()
+
+    # Simula o filtro aplicado por pages.py (D1=A/D2=A): apenas smart_fit selecionada
+    competitors_filtrado = competitors[competitors["rede"].isin(["smart_fit"])]
+
+    deck, _n = streamlit_app.build_unified_map_figure(
+        df,
+        color_mode="m1",
+        enabled_overlays=["concorrentes"],
+        selected_ufs=["SP"],
+        selected_cities=["Sao Paulo"],
+        competitors_df=competitors_filtrado,
+    )
+
+    assert deck is not None
+    # hex_layer + icon_layer (pins de smart_fit)
+    assert len(deck.layers) == 2
+    rendered_competitors = pd.DataFrame(deck.layers[1].data)
+    assert set(rendered_competitors["rede"].unique()) == {"smart_fit"}
+    assert "bluefit" not in rendered_competitors["rede"].values
+
+
+def test_filtro_rede_vazio_esconde_concorrentes():
+    """BLK-MAP-01 Cenario B: seleção vazia => D2=A => competitors_df=None => zero camadas de pins."""
+    import h3
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+
+    # D2=A: seleção vazia => pages.py passa competitors_df=None ao builder
+    deck, _n = streamlit_app.build_unified_map_figure(
+        df,
+        color_mode="m1",
+        enabled_overlays=["concorrentes"],
+        selected_ufs=["SP"],
+        selected_cities=["Sao Paulo"],
+        competitors_df=None,
+    )
+
+    assert deck is not None
+    # Apenas o hex_layer; sem camada de pins de concorrentes
+    assert len(deck.layers) == 1
+
+
+def test_filtro_rede_todas_comportamento_atual():
+    """BLK-MAP-01 Cenario C: todas as redes selecionadas => retrocompatibilidade com comportamento anterior."""
+    import h3
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    competitors = _make_competitors_two_redes()
+
+    # Sem filtro aplicado (todas as redes)
+    deck, _n = streamlit_app.build_unified_map_figure(
+        df,
+        color_mode="m1",
+        enabled_overlays=["concorrentes"],
+        selected_ufs=["SP"],
+        selected_cities=["Sao Paulo"],
+        competitors_df=competitors,
+    )
+
+    assert deck is not None
+    # hex_layer + icon_layer (ambas as redes)
+    assert len(deck.layers) == 2
+    rendered_competitors = pd.DataFrame(deck.layers[1].data)
+    redes_renderizadas = set(rendered_competitors["rede"].unique())
+    # Ambas as redes presentes no bbox de SP devem aparecer
+    assert "smart_fit" in redes_renderizadas
+    assert "bluefit" in redes_renderizadas

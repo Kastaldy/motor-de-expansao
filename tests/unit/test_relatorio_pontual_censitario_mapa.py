@@ -309,6 +309,27 @@ def test_camada_score_tem_choropleth_e_legenda():
     )
 
 
+def test_atribuicao_tiles_constante_e_legenda_arredondada_disponiveis():
+    """D7=C subset seguro + D8=B (BLK-EST-02): constante de atribuicao definida e legenda usa
+    amostras arredondadas (rounded_rectangle). Garante o caminho de render limpo sem quebrar.
+    """
+    import inspect
+
+    import motor_expansao.dashboard.censo_map as m
+
+    # D8=B: a atribuicao CARTO/OSM e uma constante reutilizavel no rodape do PNG.
+    assert m._ATRIBUICAO_TILES == "(c) OpenStreetMap, (c) CARTO"
+    # D7=C subset seguro: a legenda passou a desenhar amostras arredondadas + separador.
+    legend_src = inspect.getsource(m._draw_legend_camada)
+    assert "rounded_rectangle" in legend_src
+    assert "draw.line" in legend_src  # separador faixas x pins
+    # D6=A: titulos dos mapas SEM o prefixo repetitivo "Relatorio Pontual Censitario - ".
+    combinador_src = inspect.getsource(m.render_mapas_censitarios_combinados)
+    assert "Relatorio Pontual Censitario - " not in combinador_src
+    assert 'titulo="Densidade populacional"' in combinador_src
+    assert 'titulo="Concorrentes e Ultra"' in combinador_src
+
+
 def test_fallback_offline_canvas_claro(monkeypatch):
     # Sem basemap (tiles indisponivel): canvas deve ser CLARO, nao escuro.
     monkeypatch.setattr(censo_map, "_fetch_basemap", lambda *a, **k: None)

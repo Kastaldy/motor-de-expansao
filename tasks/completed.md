@@ -3500,6 +3500,572 @@ não há base auditável.
 
 ---
 
+### BLK-EST-01 — Marca d'água + nome do usuário solicitante nos PDFs
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (rastreabilidade/LGPD + identidade do solicitante no documento) |
+| **Prioridade** | **Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rteq7` — https://app.clickup.com/t/86e1rteq7 |
+| **Relacionado** | ClickUp `86e1rtezm` (logs de rastreio LGPD, do Felipe) |
+
+**Contexto:** anexar marca d'água + nome do usuário que solicitou o estudo no PDF, para rastreabilidade
+(base LGPD). A identidade do solicitante vem da sessão autenticada (Authelia). Coordenar com a tarefa de
+logs LGPD do Felipe para padronizar a fonte do "solicitante".
+
+**Objetivo:** todo PDF gerado carrega marca d'água + nome do solicitante de forma legível e não removível trivialmente.
+
+**Escopo permitido:** `src/motor_expansao/dashboard/censo_report.py` (composição do PDF sobre `fpdf2`);
+passar o identificador do solicitante pelo caminho de geração.
+
+**Fora de escopo:** versionar PDFs reais (PII); embutir o cartão de contato `image24.png` (anti-PII, §4);
+score/artefatos M1.
+
+**Critérios de aceite:** marca d'água + solicitante presentes no PDF; fonte do nome definida e testada;
+sem PII versionada; compressão de stream OFF preservada (auditabilidade anti-PII); suíte verde; READ-ONLY M1.
+
+**Guardrail:** anti-PII do §4 preservado; sem dependência de API ao vivo.
+
+**Fechamento (concluído 2026-06-11 — esteira /run-cycle BO→Planner→[gate humano]→Builder→QA):**
+APROVADO pelo QA (Opus 4.8). Marca d'água diagonal "Ultra Academia [| {solicitante}]" embutida em TODAS
+as 7 páginas do PDF do Relatório Pontual Censitário, via novo parâmetro opcional `solicitante: str | None
+= None` em cascata nas 3 funções públicas de `censo_report.py` (`gerar_pdf_relatorio_pontual_censitario`,
+`gerar_payloads_download_relatorio_censitario`, `render_downloads_relatorio_censitario`) + helpers
+`_watermark_text` e `_draw_watermark`. **Gate humano (Felipe/usuário, 2026-06-11):** D1 = contrato mínimo
+`solicitante=None` com fallback seguro (None → só "Ultra Academia"); D2 = opção (b), marca d'água em todas
+as 7 páginas. fpdf2 **2.8.7** confirmado por inspeção real: rotação via `pdf.rotation(angle,x,y)` +
+transparência via `local_context(fill_opacity=...)` (`text_opacity`/`set_alpha` NÃO existem nesta versão);
+com `set_compression(False)` o texto sai legível nos bytes crus ("não removível trivialmente"). `pages.py`
+INTOCADO (default `None` propaga). **READ-ONLY M1** confirmado (diff de `pipelines/`+`config.py`+`scoring.py`
+VAZIO; pesos renda=0.40/pop=0.60 e artefatos oficiais intocados). **Anti-PII** preservado (fixtures com nome
+fictício "Analista Teste"; `test_pdf_sem_pii_de_pessoas` verde; nenhum PDF/`image24.png` versionado).
+**Testes:** arquivo do bloco 13 passed (3 novos + `/Count 7` + `_count_layer_titles==3`); suíte full serial
+689 passed / 3 failed / 1 skipped — as 3 falhas (`test_modelo_mercado_hexagonos.py`) PROVADAS pré-existentes
+(idênticas com o bloco stashed; herança do estado SAM/DEC-007, sem relação com o BLK-EST-01); ruff + mypy
+limpos; `import streamlit_app` ok. Arquivos: `src/motor_expansao/dashboard/censo_report.py` +
+`tests/unit/test_relatorio_pontual_censitario_export.py`. Ressalva do QA p/ o orquestrador: as 3 falhas de
+mercado saneiam no merge dos blocos SAM em main + regeneração canônica dos parquets paralelos (não é defeito
+deste bloco). Pendência funcional: integração Authelia/sessão (fonte real do nome) fica para bloco futuro;
+o contrato `solicitante` já está pronto para a API (DEC-005).
+
+---
+
+### BLK-MAP-01 — Filtro individual de concorrentes nos overlays do Mapa Territorial
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (nova função/UI localizada na camada de visualização; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA leve — estilo do controle de UI]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1ut13u` — https://app.clickup.com/t/86e1ut13u |
+| **Relacionado** | BLK-FIX-11 (overlays do Mapa Territorial, Alternativa A); BLK-UI-01 (refator UX amplo) |
+
+**Contexto (ancorado no código, leitura 2026-06-11):** hoje o overlay de concorrentes do Mapa Territorial
+é tudo-ou-nada. O controle de UI é um `st.multiselect` de overlays em `render_mapa_territorial`
+(`src/motor_expansao/dashboard/pages.py:2743-2749`); o builder `build_unified_map_figure`
+(`src/motor_expansao/dashboard/components.py:3008`) liga/desliga o conjunto inteiro via
+`_comp = competitors_df if "concorrentes" in enabled_overlays else None` (`components.py:3031`). Não há como
+escolher **quais redes** aparecem. Os concorrentes são identificados pela coluna **`rede`** (carregados por
+`load_competitor_points()` em `src/motor_expansao/dashboard/competitors.py:323`; estilos/labels em
+`COMPETITOR_BRANDS`, `competitors.py:83`), renderizados como `IconLayer` por
+`_build_competitor_icon_layer` (`components.py:818`, cap `COMPETITOR_PIN_LIMIT=6000`) ou como bolhas de
+densidade por `_build_competitor_cluster_layer` (`components.py:878`).
+
+**Objetivo:** permitir filtrar concorrentes **individualmente por rede** no Mapa Territorial, exibindo
+**apenas as redes selecionadas** (pins, clusters, legenda e tooltips refletindo a seleção), sem afetar
+nenhum cálculo do motor.
+
+**Escopo permitido:**
+- `src/motor_expansao/dashboard/pages.py` — novo controle de UI de seleção de redes em `render_mapa_territorial`
+  (multiselect de `rede`, default = todas; lista de opções derivada das redes presentes em `competitors_df`,
+  ordenada/legível via `COMPETITOR_BRANDS`); aplicar a filtragem em `competitors_df` ANTES de
+  `build_unified_map_figure` (ponto único de aplicação, por volta de `pages.py:2749`).
+- `src/motor_expansao/dashboard/components.py` — adaptar `render_competitor_legend` (`components.py:196`)
+  para refletir só as redes selecionadas; garantir que pins/clusters/tooltips e a legenda fiquem coerentes
+  com a seleção. O cap de pins (`COMPETITOR_PIN_LIMIT`) e o caption de "amostrado" seguem valendo sobre o
+  subconjunto filtrado.
+- Testes de smoke em `tests/integration/test_streamlit_app.py` (e/ou unidade de components) cobrindo:
+  seleção de uma rede → só ela renderiza; seleção vazia → comportamento definido (ver decisão); "todas"
+  selecionadas → idêntico ao comportamento atual (retrocompat).
+
+**Fora de escopo (invioláveis):**
+- Qualquer recálculo/alteração de `score_priorizacao`, `hex_score_estrutural`, carteira, plano, residual,
+  SAM, canibalização ou artefatos oficiais do M1 — a filtragem é **puramente visual** (§5; precedente
+  BLK-FIX-11). O filtro NÃO muda a oferta consumida nem nenhum score; apenas o que é DESENHADO.
+- Mexer no overlay de Ultra, nas âncoras de domínio ou no overlay `descartados_5k` (BLK-FIX-11 intocado).
+- Quebrar as otimizações de performance do mapa (carga lazy por UF, fonte de mapa enxuta, caps de pontos).
+
+**Decisões para o gate humano (leve):**
+- D1 — Estilo do controle: `st.multiselect` de redes (recomendado, simples) vs. checkboxes por rede com
+  logo vs. integração no multiselect de overlays existente.
+- D2 — Semântica de seleção vazia: "nenhuma rede" esconde todos os concorrentes (recomendado) vs. cair de
+  volta para "todas".
+- D3 — Escopo da lista de redes: todas as redes do `competitors_df` carregado vs. apenas as redes
+  presentes no recorte/bbox atual do mapa.
+
+**Critérios de aceite:** selecionar uma ou mais redes exibe **apenas** os concorrentes dessas redes
+(pins/clusters/legenda/tooltips coerentes); "todas" selecionadas = comportamento atual (retrocompat);
+seleção vazia conforme D2; nenhum score/artefato M1 alterado (READ-ONLY); caps e performance preservados;
+suíte verde; ruff + mypy limpos.
+
+**Guardrail:** §5 (visualização não recalcula nem altera M1) + preservar contratos de performance do
+dashboard; sem dependência de API ao vivo.
+
+---
+
+### BLK-EST-02 — Melhorar visual e template dos estudos automatizados
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (template/visual; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA das decisões visuais]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rteju` — https://app.clickup.com/t/86e1rteju |
+| **Depende de** | precedência do BLK-CENSO-02/03 (template `fpdf2` 16:9 + 7 páginas já estabelecido) |
+
+**Contexto:** evoluir o template/visual dos estudos (continuação do BLK-CENSO-02/03). Decisões visuais
+**exigem gate humano** do Felipe (precedente dos ciclos CENSO). Cada iteração visual implica rebuild de
+imagem + redeploy por digest na VPS + assets de branding no volume (footgun BLK-CENSO-02).
+
+**Objetivo:** template mais limpo/profissional, mantendo as 7 páginas e o conteúdo READ-ONLY.
+
+**Escopo permitido:** `censo_report.py` / `censo_map.py` + assets de branding em `data/ultra/` (gitignored).
+
+**Fora de escopo:** recalcular qualquer score; método de interseção/raio; PII no PDF.
+
+**Critérios de aceite:** visual aprovado por Felipe (gate); 7 páginas e Big Numbers READ-ONLY preservados;
+suíte verde; READ-ONLY M1; deploy registrado.
+
+**Guardrail:** §5 (visualização) + §4 (anti-PII) + DEC-004 (basemap só na geração).
+
+---
+
+## BLK-UI-01 (RECORTE) — Sidebar aparente + indicadores de carregamento + limpeza visual
+
+Data: 2026-06-12
+Tipo: feature (UX/UI) | Criticidade: Alta (mexe na navegação do dashboard de produção; READ-ONLY M1)
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA do plano] → Builder → QA
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12.
+
+Resumo: recorte focado do BLK-UI-01 amplo, pedido por Felipe/Vini — três frentes de UX puramente
+visuais (CSS/markdown/spinner/strings), READ-ONLY sobre o M1:
+1. **Sidebar mais aparente** — `initial_sidebar_state="expanded"` (D1=A); realce CSS da sidebar com
+   borda ciano 2px (`brand_alt`) + `box-shadow` de separação (D2=B); cabeçalho estilizado "Filtros
+   globais" + sublinha via `st.sidebar.markdown(unsafe_allow_html=True)` (D3=B). INVARIANTE preservada:
+   `render_uf_selectbox` segue sendo o PRIMEIRO widget/gate da carga lazy por UF.
+2. **Indicadores de carregamento** — 3 `st.spinner` decorativos (D4): troca de UF (`load_uf_slice`,
+   dentro do `try`), construção do Mapa Territorial (`build_unified_map_figure`, só a atribuição) e
+   geração dos mapas censitários (`render_mapas_censitarios_combinados`). Corpo dos builders intocado.
+3. **Limpeza de poluição visual** — removido caption técnico de proveniência (D5=A; rodapé do manifesto
+   já cobre); pills do header simplificadas para 3 sem jargão de coluna ("Onde expandir (M1)" / "Qual
+   bairro (Censitário)" / "Fila operacional (Híbrido)") (D6=A); removido caption de limitações do pydeck
+   no estado vazio, PRESERVADO o caption de centroide H3 (D7=A); 2 captions repetitivos do híbrido
+   consolidados em 1 (D8=A). Legendas em expander deixadas FORA de escopo (D9=A).
+
+Gate humano: D1..D9 aprovados por Felipe/usuário em 2026-06-12 (D1=A, D2=B, D3=B, D4=textos propostos,
+D5=A, D6=A, D7=A, D8=A, D9=A). Builder executou exatamente estas letras.
+
+Arquivos alterados: streamlit_app.py, src/motor_expansao/dashboard/pages.py,
+tests/integration/test_streamlit_app.py.
+
+Validações (re-executadas pelo QA, evidência própria): suíte alvo `182 passed`; suíte full SERIAL
+`695 passed, 1 skipped, 3 failed` — as 3 falhas são PRÉ-EXISTENTES (provadas via `git stash` no tree
+limpo: drift de snapshot de CSVs reais locais gitignored em `concorrentes/` + gate DEC-006 do SAM em
+parquet de mercado pendente de regeneração pós-merge), ZERO regressão deste ciclo. `-n auto` reproduz
+INTERNALERROR de gateway (execnet × Python 3.14, bug de ambiente conhecido) → rodado serial e
+documentado, sem mascarar. ruff limpo; mypy Success; `import streamlit_app` ok.
+
+Guardrails verificados: READ-ONLY M1 (nenhum score/artefato/parâmetro canônico tocado — só
+CSS/markdown/spinner/strings); contratos de performance dos Blocos 4/5/6 com corpo intocado (spinners
+só por fora); sem dependência de API ao vivo; paths pré-sujos não tocados nem commitados.
+
+Housekeeping: N/A neste ciclo — entrega é RECORTE do BLK-UI-01 amplo; o bloco amplo permanece ABERTO
+em `tasks/backlog.md` para as demais frentes de UX das 4 abas (helper de move NÃO executado).
+
+Débito operacional registrado (fora deste ciclo): regenerar parquets paralelos de mercado (gate DEC-006
+do SAM) e refrescar snapshots de validação de concorrentes — passos pós-merge, não requisito de fechamento.
+
+---
+
+## BLK-UI-02 (follow-up ad-hoc do BLK-UI-01) — Coord destacado + tooltip menos cortado + densificação por município
+
+Data: 2026-06-12
+Tipo: feature (UX/UI) | Criticidade: Alta (toca o contrato de performance Bloco 6 anti-OOM e a navegação
+do dashboard de produção; READ-ONLY M1)
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA do plano] → Builder → QA
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12.
+
+Origem: 3 observações de Felipe/Vini ao testar o BLK-UI-01 no dashboard. Tarefa ad-hoc (não há bloco
+BLK-UI-02 no backlog; o bloco amplo BLK-UI-01 permanece aberto). Entrega empilhada sobre ciclo/BLK-UI-01.
+
+Resumo (tudo READ-ONLY M1 — CSS/markdown/strings; cap anti-OOM intocado):
+1. **Campo de busca por coordenada destacado** — `render_coord_search_sidebar` agora usa `st.sidebar.info(...)`
+   (caixa azul) no lugar do heading+caption simples, separando-o dos demais filtros (D1=A). Assinatura,
+   `text_input`, parsing/retorno `(lat,lng)|None` e a chamada única fora-de-aba (`streamlit_app.py:470`,
+   Bloco 5) preservados.
+2. **Tooltip do hexágono menos cortado** — adicionadas 4 chaves ao `style` dos dois tooltips
+   (`_shared_map_tooltip` e `_hybrid_compact_tooltip`): `fontSize:11px`, `padding:6px 8px`, `maxWidth:260px`,
+   `lineHeight:1.25` (D2=A), reduzindo a altura para caber na borda do mapa. O recorte total do tooltip no
+   cursor é limitação nativa do pydeck/deck.gl (iframe) — mitigação por altura é a via realista. HTML/linhas
+   dos tooltips inalterados (Planner confirmou: sem linha vazia a enxugar na config default).
+3. **Densificação por município (comunicação)** — confirmado nos 4 builders que `selected_cities` entra no
+   `scope` ANTES do `_downsample_map_index`, ou seja, selecionar um município já dá densidade total do
+   recorte (mecanismo NATIVO). Decisão de produto pré-fixada por Felipe/Vini = filtro de município/área (NÃO
+   remover/elevar o cap; pydeck não tem zoom-awareness). Fix = só COMUNICAÇÃO: frase "filtre por município →
+   densidade total" anexada ao ramo não-capped de `build_map_scope_caption` e ao caption do
+   `render_mapa_territorial` (D3=(a)+(b)). Substrings testadas do ramo capped preservadas.
+4. **Testes** — `test_build_map_scope_caption_*` ampliado (asserção de "municipio") + novo
+   `test_map_tooltips_tem_css_de_tamanho` (D4=A).
+
+Gate humano: D1=A, D2=A, D3=(a)+(b), D4=A — aprovados por Felipe/usuário em 2026-06-12. Builder executou
+exatamente estas letras.
+
+Arquivos alterados: src/motor_expansao/dashboard/pages.py, src/motor_expansao/dashboard/components.py,
+tests/integration/test_streamlit_app.py.
+
+Validações (re-executadas pelo QA, evidência própria): suíte alvo `183 passed`; suíte full SERIAL
+`696 passed, 1 skipped, 3 failed` — as 3 falhas são as MESMAS PRÉ-EXISTENTES da baseline (drift de CSVs reais
+locais gitignored em `concorrentes/` + gate DEC-006 do SAM em parquet de mercado), comprovadas via `git stash`;
+`passed` subiu 695→696 (exatamente o +1 do teste novo), ZERO regressão. `-n auto` reproduz INTERNALERROR de
+gateway (execnet × Python 3.14) → rodado serial e documentado, sem mascarar. ruff "All checks passed!"; mypy
+sem issues; `import streamlit_app` ok.
+
+Guardrails verificados: **Bloco 6 anti-OOM INTOCADO** (`MAP_POINT_LIMIT`/`MAP_POINT_LIMIT_LARGE` sem diff;
+`_downsample_map_index`/scope/cap fora do diff — o nº3 é só texto); READ-ONLY M1 (nenhum score/cap/downsample
+no diff); Bloco 4 (carga lazy) e Bloco 5 (render lazy) preservados; sem dependência de API ao vivo; paths
+pré-sujos não tocados nem commitados.
+
+Housekeeping: N/A (tarefa ad-hoc; sem bloco BLK-UI-02 no backlog — helper de move NÃO executado).
+
+---
+
+### BLK-FIX-10 — Diminuir tamanho da pré-visualização dos estudos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (layout/UX; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rteea` — https://app.clickup.com/t/86e1rteea |
+
+**Contexto / hipótese:** a pré-visualização do estudo no dashboard renderiza grande demais. Hipótese:
+`st.image`/container de preview sem largura controlada em `pages.py`.
+
+**Objetivo:** preview em tamanho adequado (largura/altura controladas), sem afetar o PDF exportado.
+
+**Escopo permitido:** layout do preview em `pages.py` + teste de smoke.
+
+**Fora de escopo:** alterar o PDF final; score/artefatos M1.
+
+**Critérios de aceite:** preview menor/legível; export inalterado; suíte verde; READ-ONLY M1.
+
+---
+
+- BLK-EST-01 (concluído 2026-06-11) — ver tasks/completed.md
+
+---
+
+## BLK-UI-03 (follow-up ad-hoc do BLK-UI-02; FECHA BLK-FIX-10) — Reverter coord, tooltip meio-termo, preview menor, destaque do seletor de abas
+
+Data: 2026-06-12
+Tipo: feature (UX/UI) | Criticidade: Alta (toca o seletor de abas da produção/Bloco 5 — só CSS — e a
+navegação do dashboard; READ-ONLY M1)
+Esteira: Block Orchestrator → Planner (Opus) → [REVISÃO HUMANA do plano] → Builder → QA
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12.
+
+Origem: 4 observações de Felipe/Vini ao testar o BLK-UI-02 no dashboard. Tarefa ad-hoc empilhada sobre
+ciclo/BLK-UI-02. O item nº3 fecha o bloco real BLK-FIX-10 do backlog (movido via
+scripts/housekeeping_move_block.py — ver a entrada "### BLK-FIX-10" acima neste arquivo).
+
+Resumo (tudo READ-ONLY M1 — CSS/markdown/strings/largura de exibição; Bloco 5 e PDF intocados):
+1. **[D1] Reverter o campo de coordenadas do BLK-UI-02** — `render_coord_search_sidebar` voltou ao
+   `st.sidebar.markdown("### Busca por coordenada")` + `st.sidebar.caption("Localize um hexagono pela
+   coordenada. Offline, sem API externa.")` (texto byte-idêntico ao commit BLK-UI-01 `0862205`),
+   removendo a caixa `st.sidebar.info` que o usuário achou intrusiva. `text_input`/parse/retorno
+   `(lat,lng)|None` e a chamada `streamlit_app.py:470` preservados.
+2. **[D2] Tooltip do hexágono — meio-termo** — `style` dos dois tooltips (`_shared_map_tooltip` e
+   `_hybrid_compact_tooltip`) ajustado de 11px/6px8px/260px/1.25 (BLK-UI-02) para
+   `fontSize:13px`/`padding:8px 10px`/`maxWidth:300px`/`lineHeight:1.35` — meio-termo entre o default
+   deck.gl (~14px) e o 11px, mais legível sem voltar a cortar na borda. HTML/chaves pré-existentes
+   inalterados.
+3. **[D3 = BLK-FIX-10] Preview menor do Relatório Pontual** — constante `_CENSUS_PREVIEW_WIDTH_PX = 720`
+   em pages.py; as 4 `st.image` do preview do censitário trocaram `width="stretch"` por
+   `width=_CENSUS_PREVIEW_WIDTH_PX` (edição uma a uma — `replace_all` PROIBIDO pois há ~39 outras
+   ocorrências de `width="stretch"` no arquivo, todas preservadas). PDF exportado, `censo_report.py`,
+   `censo_map.py` e geração de mapas INTOCADOS — só a largura de exibição na tela diminuiu.
+4. **[D4] Destaque do seletor de abas (SÓ CSS)** — regras do `stSegmentedControl` em `inject_styles()`
+   reforçadas: botões com `font-size:1rem`/`font-weight:600`/`padding:0.5rem 1.15rem`/`border-radius:10px`;
+   aba ativa com `border-color: rgba(25,183,255,0.9)` + `box-shadow: 0 0 8px rgba(25,183,255,0.35)` +
+   `font-weight:700`. **`render_tab_selector` byte-idêntico** (Bloco 5 render lazy intocado — confirmado
+   por QA: não aparece no diff); `:hover` inalterado.
+
+Gate humano: D1..D4 aprovados por Felipe/usuário em 2026-06-12 (preview = 720px). Builder executou
+exatamente estas decisões.
+
+Nota de processo: o primeiro sub-agente de delimitação acumulou BO+Planner em tier sonnet; o orquestrador
+corrigiu registrando o snapshot de BO e re-rodando o Planner em **Opus** (snapshot `20260612-162000-planner.md`),
+que validou o plano e pegou o footgun do `replace_all` no item nº3. Há dois snapshots de BO
+(`125955` do agente + `161000` reconstruído pelo orquestrador) — redundância de auditoria inofensiva
+(append-only, não editados).
+
+Arquivos alterados: src/motor_expansao/dashboard/pages.py, src/motor_expansao/dashboard/components.py,
+tests/integration/test_streamlit_app.py.
+
+Validações (re-executadas pelo QA, evidência própria): suíte alvo `183 passed`; suíte full SERIAL
+`696 passed, 1 skipped, 3 failed` — as 3 falhas (`test_csvs_concorrentes_legiveis` x2 +
+`test_parquet_final_respeita_guardrails_do_piloto`) são as MESMAS PRÉ-EXISTENTES, comprovadas via
+`git stash` em HEAD limpo; ZERO novas falhas. `-n auto` reproduz INTERNALERROR (execnet × Python 3.14)
+→ rodado serial, documentado, sem mascarar. ruff "All checks passed"; mypy sem issues; import ok.
+
+Guardrails verificados: Bloco 5 (`render_tab_selector` byte-idêntico); PDF/geração de mapas do Relatório
+Pontual intocados (item nº3 só preview na tela; 39 `width="stretch"` preservadas); READ-ONLY M1 (nenhum
+score/peso/fórmula/artefato no diff); Bloco 4/6 intocados; sem dependência de API ao vivo; paths pré-sujos
+não tocados nem commitados.
+
+Housekeeping: BLK-FIX-10 movido via helper (`--check` OK; teste do helper verde, 10 passed). Itens
+D1/D2/D4 são follow-up ad-hoc (sem bloco próprio no backlog) — resumidos aqui.
+
+---
+
+## BLK-UI-04 (follow-up ad-hoc do BLK-UI-03) — Destaque do seletor de telas (aba ativa ciano sólido, mais espaço, botões distintos dos cartões)
+
+Data: 2026-06-12
+Tipo: feature (UX/UI — CSS) | Criticidade: Média (CSS localizado no seletor de abas; READ-ONLY M1; Bloco 5 lógica intocada)
+Esteira: Block Orchestrator → Planner → Builder → QA (Média, sem gate humano)
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12.
+
+Origem: 3 observações de Felipe/Vini ao testar o BLK-UI-03 — o seletor de telas (st.segmented_control das
+4 abas) se camuflava entre os cartões de valores. Tarefa ad-hoc empilhada sobre ciclo/BLK-UI-03.
+
+Causa-raiz: os botões inativos do seletor usavam `background: rgba(18,23,42,0.92)`, quase idêntico ao
+fundo dos cartões de valores (`stMetric`/`.section-card`/`.model-card` = `rgba(18,23,42,0.96)`); e a aba
+ativa usava só `rgba(25,183,255,0.22)` (tom fraco).
+
+Resumo (3 mudanças CSS, 100% dentro do bloco `<style>` de `inject_styles()` em pages.py; READ-ONLY M1):
+1. **Aba ATIVA = ciano sólido** — `background: #19B7FF` + `color: #0A0C18` (texto escuro, contraste ~9.7:1)
+   + `font-weight: 700`, no lugar do `rgba(25,183,255,0.22)`/`COLORS["text"]`. Decisão de produto de
+   Felipe/Vini (2026-06-12): ciano sólido preenchido.
+2. **Mais espaçamento entre botões** — `display: flex; gap: 8px;` no container `[data-testid="stSegmentedControl"]`.
+3. **Botões INATIVOS distintos dos cartões** — `background: rgba(30,38,65,0.88)` (slate mais claro) +
+   borda ciano suave `rgba(25,183,255,0.30)`, no lugar de `rgba(18,23,42,0.92)`/`COLORS["border"]`.
+
+Arquivos alterados: src/motor_expansao/dashboard/pages.py (bloco CSS do seletor em inject_styles),
+tests/integration/test_streamlit_app.py (+1 assert `"#19B7FF" in css`).
+
+Validações (re-executadas pelo QA, evidência própria): suíte alvo `183 passed`; full SERIAL `696 passed,
+1 skipped, 3 failed` = baseline exato (as 3 falhas são as MESMAS pré-existentes; `-n auto` reproduz o
+INTERNALERROR execnet×Python 3.14 → serial). ruff "All checks passed"; mypy Success; import ok.
+
+Guardrails verificados: **Bloco 5 byte-idêntico** (`render_tab_selector`/`st.segmented_control`/`session_state`
+NÃO aparecem no diff); READ-ONLY M1 (diff é só CSS + 1 assert; nenhum score/peso/fórmula/artefato);
+seletores `stSegmentedControl`/`aria-checked` preservados; paths pré-sujos não tocados nem commitados.
+
+Housekeeping: N/A (tarefa ad-hoc; sem bloco BLK-UI-04 no backlog).
+
+---
+
+## BLK-UI-05 (bug-fix do BLK-UI-04) — CSS do seletor de telas não renderizava (seletores reais do st.segmented_control)
+
+Data: 2026-06-12
+Tipo: bug (UX/UI — CSS) | Criticidade: Média (CSS localizado; READ-ONLY M1; Bloco 5 lógica intocada)
+Esteira: Block Orchestrator → Planner → Builder → QA (Média, sem gate)
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12 — com confirmação visual pendente do usuário.
+
+Origem: ao testar o BLK-UI-04, Felipe/Vini reportou (com screenshot) que a aba ativa não ficava ciano
+sólido e o gap entre botões não aparecia. O `pytest` do BLK-UI-04 passou mesmo assim (o teste só checa a
+STRING do CSS, não o render).
+
+Causa-raiz (confirmada contra o frontend instalado do Streamlit 1.58.0, via grep no bundle JS): o estado
+ATIVO do `st.segmented_control` é marcado pelo testid `stBaseButton-segmented_controlActive` (NÃO por
+`aria-checked`/`aria-selected`), e o inativo por `stBaseButton-segmented_control`. As regras do BLK-UI-04
+miravam `aria-checked`/`aria-selected` (que não casam o DOM real) → a aba ativa nunca recebia o ciano; e
+faltavam `!important` (o CSS emotion do Streamlit tem especificidade alta e sobrepunha o gap/fundo).
+
+Correção (100% CSS dentro de `inject_styles()`, pages.py ~304-335; READ-ONLY M1):
+- Aba ATIVA: adicionado `[data-testid="stBaseButton-segmented_controlActive"]` à lista de seletores, com
+  `background:#19B7FF !important; color:#0A0C18 !important; border-color:#19B7FF !important;
+  font-weight:700 !important; box-shadow:0 0 8px rgba(25,183,255,0.35) !important`.
+- Botões INATIVOS: adicionado `[data-testid="stBaseButton-segmented_control"]`, com
+  `background:rgba(30,38,65,0.88) !important` + borda ciano `rgba(25,183,255,0.30) !important` +
+  `border-radius:10px !important` (distinto dos cartões de valores).
+- GAP: `gap:8px !important` no container `[data-testid="stSegmentedControl"]`.
+- Seletores legados (`aria-checked`/`aria-selected`/`stSegmentedControl`) MANTIDOS (o teste os verifica);
+  precedência: a regra do ativo vem DEPOIS da inativa, mesma camada `!important` → ciano vence.
+- Teste de REGRESSÃO: assert de `"stBaseButton-segmented_controlActive"` no CSS (guarda contra voltar aos
+  seletores que não casavam).
+
+Lição registrada: o teste de presença-de-string no CSS NÃO garante render no navegador; para componentes
+de terceiros (Streamlit/baseweb), confirmar os seletores reais contra o DOM/bundle da versão instalada e
+fechar com verificação VISUAL do usuário.
+
+Arquivos alterados: src/motor_expansao/dashboard/pages.py, tests/integration/test_streamlit_app.py.
+
+Validações (re-executadas pelo QA): suíte alvo `183 passed`; full SERIAL `696 passed, 1 skipped, 3 failed`
+= baseline exato (3 falhas pré-existentes; `-n auto` reproduz INTERNALERROR execnet×Python 3.14 → serial).
+ruff "All checks passed"; mypy Success; import ok.
+
+Guardrails: Bloco 5 byte-idêntico (`render_tab_selector` ausente do diff); READ-ONLY M1 (só CSS + 2 asserts);
+paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
+
+---
+
+## BLK-UI-06 (bug-fix do BLK-UI-05) — GAP do seletor de telas não renderizava (flex-pai real + margem negativa do baseweb)
+
+Data: 2026-06-12
+Tipo: bug (UX/UI — CSS) | Criticidade: Média (CSS localizado; READ-ONLY M1; Bloco 5 lógica intocada)
+Esteira: Block Orchestrator → Planner → Builder → QA (Média, sem gate)
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12 — render do gap PROVADO por medição DOM.
+
+Origem: após o BLK-UI-05, Felipe/Vini confirmou (com screenshot) que o realce da aba ativa funcionou,
+mas o gap entre os botões ainda não aparecia (botões colados).
+
+Causa-raiz (DOM REAL renderizado, medido pelo orquestrador via playwright contra o app — Streamlit 1.58):
+- O flex-pai dos botões do `st.segmented_control` é `[data-baseweb="button-group"]` (role=radiogroup,
+  display:flex) com `gap: 4px 0px` → **0px de gap horizontal** (o 4px é row-gap, só vale se quebrar linha).
+- Cada botão tinha `margin-right: -1px` (o baseweb "cola" os botões sobrepondo a borda).
+- O testid `stSegmentedControl` NÃO existe nessa versão (o container real é `stButtonGroup`), então a
+  regra de gap do BLK-UI-04/05 (mirando `[data-testid="stSegmentedControl"]`) nunca casava.
+
+Correção (DOM-verificada; 100% CSS em `inject_styles()`; READ-ONLY M1):
+- `[data-baseweb="button-group"] { gap: 8px !important; }` — gap horizontal no flex-pai real.
+- `[data-testid="stBaseButton-segmented_control"], [data-testid="stBaseButton-segmented_controlActive"]
+  { margin: 0 !important; }` — remove a margem negativa que conectava os botões.
+- Regras de cor (ativa ciano `#19B7FF`, inativo `rgba(30,38,65,0.88)`) e seletores legados mantidos.
+- Teste de regressão: asserts de `[data-baseweb="button-group"]`, `gap: 8px` e `margin: 0` nos botões.
+
+Verificação de RENDER (o passo que faltava nos ciclos anteriores): o orquestrador rodou playwright,
+selecionou uma UF, e mediu o bounding box dos 4 botões → gaps horizontais de **8px / 8px / 8px** e
+`margin-right: 0px`; `button-group` com `gap: 8px` (display flex). Gap confirmado no DOM, não só na string.
+
+Lição (reforça a do BLK-UI-05): para componentes de terceiros, NÃO basta o `data-testid` "óbvio" — inspecionar
+o DOM/bundle da versão instalada e MEDIR o render (playwright) antes de declarar pronto. O pytest de
+presença-de-string passou em todos os ciclos mesmo quando o CSS não aplicava.
+
+Arquivos alterados: src/motor_expansao/dashboard/pages.py, tests/integration/test_streamlit_app.py.
+
+Validações (QA): suíte alvo `183 passed`; full SERIAL `696 passed, 1 skipped, 3 failed` = baseline exato
+(3 falhas pré-existentes). ruff "All checks passed"; mypy Success; import ok.
+
+Guardrails: Bloco 5 byte-idêntico (`render_tab_selector` ausente do diff); READ-ONLY M1 (só CSS + asserts);
+paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
+
+---
+
+## BLK-EST-01-FU1 (follow-up do BLK-EST-01) — Marca d'água sutil no canto (rodapé inferior-direito)
+
+Data: 2026-06-12
+Tipo: feature (UX/UI — PDF, ajuste visual) | Criticidade: Média (render do PDF; READ-ONLY M1; anti-PII §4)
+Esteira: Block Orchestrator → Planner → Builder → QA (Média, sem gate)
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12 — render confirmado por imagem.
+
+Origem: Felipe/Vini pediu (após a análise de reversão do BLK-EST-01) NÃO reverter a marca d'água, e sim
+deixá-la MAIS SUTIL e num CANTO. Decisão de produto (2026-06-12): rodapé inferior-direito, horizontal,
+pequena e discreta.
+
+Resumo (só `censo_report.py`, render da marca; READ-ONLY M1; texto/`solicitante` INALTERADOS):
+- `_draw_watermark` deixou de ser faixa diagonal central de 60pt e virou rótulo discreto no canto
+  inferior-direito: posição `x = _PAGE_W - _WATERMARK_MARGIN - get_string_width(text)`,
+  `y = _PAGE_H - _WATERMARK_MARGIN`; sem rotação (horizontal); peso normal.
+- Constantes: `_WATERMARK_FONT_PT` 60→9; `_WATERMARK_ANGLE` 45.0→0.0; `_WATERMARK_ALPHA` 0.16→0.40
+  (em 9pt, 0.16 ficaria invisível — 0.40 é discreto porém auditável); nova `_WATERMARK_MARGIN=20.0`;
+  `_WATERMARK_RGB` inalterado. Desenho em TODAS as páginas (loop 635-637) e `local_context` preservados.
+- O texto `_watermark_text(solicitante)` (BLK-EST-01) NÃO foi alterado — a feature continua; só mudou a
+  aparência. Anti-PII §4 preservado (stream OFF; nada de PII nova).
+
+Verificação de RENDER (orquestrador): gerou um PDF de amostra com `solicitante="Analista Teste"`,
+renderizou as páginas (pypdfium2 — instalado só para a verificação, NÃO entra no projeto) e confirmou por
+imagem que a marca aparece pequena/cinza/horizontal no canto inferior-direito (página 6 com fundo limpo);
+a faixa diagonal central sumiu.
+
+Arquivos alterados: src/motor_expansao/dashboard/censo_report.py.
+
+Validações (QA): suíte alvo `29 passed` (3 de marca d'água verdes); full SERIAL `696 passed, 1 skipped,
+3 failed` = baseline exato (3 falhas pré-existentes). ruff "All checks passed"; mypy Success; import ok.
+
+Guardrails: READ-ONLY M1 (só render da marca; nenhum score/peso/artefato); anti-PII §4 (compressão OFF;
+texto/`solicitante` inalterados; default seguro); template/7 páginas/mapas/raio/interseção intocados;
+paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
+
+---
+
+## BLK-EST-01-FU2 (follow-up do BLK-EST-01-FU1) — Marca d'água visível-porém-discreta + branca na capa
+
+Data: 2026-06-12
+Tipo: feature (UX/UI — PDF) | Criticidade: Média (render do PDF; READ-ONLY M1; anti-PII §4)
+Esteira: Block Orchestrator → Planner → Builder → QA (Média, sem gate)
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12 — render confirmado por imagem (capa + conteúdo).
+
+Origem: ao baixar um PDF, Felipe/Vini não viu a marca do FU1. Diagnóstico do orquestrador (render real pelo
+caminho de download): o código do FU1 estava correto (a marca renderiza no canto inferior-direito em todas
+as páginas; NÃO há cache no caminho do relatório), mas a 0.40/9pt/cinza ficou SUTIL DEMAIS — no conteúdo
+passava batida e na CAPA (fundo turquesa) o cinza não contrastava (quase invisível). O servidor usado também
+era anterior ao FU1.
+
+Decisões de produto (Felipe/Vini, 2026-06-12): (1) discreta-porém-visível; (2) texto claro/branco na capa.
+
+Resumo (só `censo_report.py`; texto/`solicitante` INALTERADOS; READ-ONLY M1):
+- `_WATERMARK_ALPHA` 0.40 → 0.65; `_WATERMARK_FONT_PT` 9 → 10 (legível sem deixar de ser discreta).
+- Nova `_WATERMARK_RGB_COVER = (255, 255, 255)`; `_draw_watermark` passou a aceitar `rgb` keyword-only
+  (default `_WATERMARK_RGB` cinza) e usa `set_text_color(*rgb)`.
+- Loop por-página (635-637): página 1 (capa) → branco; páginas 2-7 (conteúdo) → cinza. Posição
+  (canto inferior-direito), horizontal e `local_context` preservados.
+
+Verificação de RENDER (orquestrador): PDF gerado pelo caminho de download (`gerar_payloads_download_...`,
+`solicitante="Analista Teste"`), renderizado com pypdfium2 (instalado só para verificação, NÃO entra no
+projeto). Confirmado por imagem: CAPA com marca BRANCA visível sobre o turquesa; CONTEÚDO com marca CINZA
+legível e discreta a 0.65/10pt.
+
+Arquivos alterados: src/motor_expansao/dashboard/censo_report.py.
+
+Validações (QA): suíte alvo `29 passed` (3 de marca d'água verdes); full SERIAL `696 passed, 1 skipped,
+3 failed` = baseline exato (3 falhas pré-existentes). ruff "All checks passed"; mypy Success; import ok.
+
+Guardrails: READ-ONLY M1 (só render; nenhum score/peso/artefato); anti-PII §4 (stream OFF; texto/`solicitante`
+inalterados); template/mapas/raio intocados; paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
+
+Nota: a marca é desenhada por página via `pdf.page = n` — para o usuário ver a versão nova é preciso um
+servidor Streamlit reiniciado (o anterior precedia o FU1).
+
+---
+
+## BLK-EST-02-FU1 (follow-up do BLK-EST-02) — Remover logo Ultra atrás do texto "Realizacao"
+
+Data: 2026-06-12
+Tipo: bug (UX/UI — PDF) | Criticidade: Baixa (remoção de bloco visual isolado; READ-ONLY M1)
+Esteira: Block Orchestrator → Builder (Baixa, sem QA; orquestrador fez render + suíte como gate)
+
+Origem: na página 7 (Realização/Crédito) do PDF, o logo Ultra (D5=C do BLK-EST-02, desenhado no topo a
+y=90/w=160) colidia com o título "Realizacao" (y=180) — o texto caía por cima do logo. Felipe/Vini pediu
+para remover o logo dessa página.
+
+Resumo (só `censo_report.py`; READ-ONLY M1): removido o bloco D5=C do logo em `_credit_page`
+(`logo = assets.get("logo")` + `if logo is not None: try: pdf.image(...) except: pass`). Mantidos o fundo
+turquesa, o título "Realizacao" e o crédito. O asset `logo` continua sendo carregado por
+`_load_branding_assets` (só o DESENHO na página de crédito foi removido). Nenhum import alterado.
+
+Verificação de RENDER (orquestrador): renderizou a página 7 (pypdfium2) → o logo sumiu; "Realizacao" +
+crédito ficam limpos sobre o turquesa, sem colisão.
+
+Arquivos alterados: src/motor_expansao/dashboard/censo_report.py.
+
+Validações: suíte alvo `29 passed`; full SERIAL `696 passed, 1 skipped, 3 failed` = baseline exato (3 falhas
+pré-existentes). ruff "All checks passed"; mypy Success; import ok. Nenhum teste dependia do logo na página
+de crédito (verificado).
+
+Guardrails: READ-ONLY M1; anti-PII §4 (texto/`solicitante`/marca d'água inalterados); só `_credit_page`
+tocado; paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
+
+Nota: commitado na MESMA branch `ciclo/BLK-EST-01-FU2` (o PR em montagem) e re-empurrado, para entrar no
+mesmo PR.
 ### BLK-SAM-02 — Afrouxar o gate do SAM: apenas Faixa M1 elegível + população ≥ 5000 (remover flag_viavel e ~canibal)
 
 | Campo | Valor |

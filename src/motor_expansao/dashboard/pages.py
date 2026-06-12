@@ -16,6 +16,7 @@ from motor_expansao.dashboard.censo_point import (
     analisar_ponto_censitario_setores,
 )
 from motor_expansao.dashboard.censo_report import render_downloads_relatorio_censitario
+from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
 from motor_expansao.dashboard.components import (
     _build_competitor_cluster_layer,
     _build_multihex_selection_layer,
@@ -96,6 +97,9 @@ RESIDUAL_SORT_COLUMNS = [
     "rank_brasil",
 ]
 
+# BLK-FIX-10: preview menor que 100% da largura de conteudo
+_CENSUS_PREVIEW_WIDTH_PX = 720
+
 
 def _has_residual_metrics(df: pd.DataFrame) -> bool:
     return "oferta_efetiva_disponivel" in df.columns and df["oferta_efetiva_disponivel"].notna().any()
@@ -146,7 +150,8 @@ def inject_styles() -> None:
                 background:
                     radial-gradient(circle at top, rgba(25, 183, 255, 0.12), transparent 30%),
                     linear-gradient(180deg, #0E1324 0%, #0A0F1F 100%);
-                border-right: 1px solid {COLORS["border"]};
+                border-right: 2px solid rgba(25, 183, 255, 0.45);
+                box-shadow: 4px 0 24px rgba(0, 0, 0, 0.35);
             }}
             [data-testid="stSidebar"] * {{
                 color: {COLORS["text"]};
@@ -296,12 +301,29 @@ def inject_styles() -> None:
                 background: rgba(25, 183, 255, 0.22);
                 color: {COLORS["text"]};
             }}
+            div[data-testid="stSegmentedControl"],
+            div[data-testid="stSegmentedControl"] > div {{
+                display: flex;
+                gap: 8px !important;
+            }}
+            [data-baseweb="button-group"] {{
+                gap: 8px !important;
+            }}
+            [data-testid="stBaseButton-segmented_control"],
+            [data-testid="stBaseButton-segmented_controlActive"] {{
+                margin: 0 !important;
+            }}
             [data-testid="stSegmentedControl"] button,
+            [data-testid="stBaseButton-segmented_control"],
             div[role="radiogroup"] [data-baseweb="button"],
             [data-baseweb="button-group"] button {{
-                background: rgba(18, 23, 42, 0.92);
-                color: {COLORS["muted"]};
-                border: 1px solid {COLORS["border"]};
+                background: rgba(30, 38, 65, 0.88) !important;
+                color: {COLORS["muted"]} !important;
+                border: 1px solid rgba(25, 183, 255, 0.30) !important;
+                border-radius: 10px !important;
+                font-size: 1rem;
+                font-weight: 600;
+                padding: 0.5rem 1.15rem;
             }}
             [data-testid="stSegmentedControl"] button:hover,
             [data-baseweb="button-group"] button:hover {{
@@ -310,10 +332,13 @@ def inject_styles() -> None:
             }}
             [data-testid="stSegmentedControl"] button[aria-checked="true"],
             [data-testid="stSegmentedControl"] button[aria-selected="true"],
-            [data-baseweb="button-group"] button[aria-checked="true"] {{
-                background: rgba(25, 183, 255, 0.22);
-                color: {COLORS["text"]};
-                border-color: {COLORS["brand_alt"]};
+            [data-baseweb="button-group"] button[aria-checked="true"],
+            [data-testid="stBaseButton-segmented_controlActive"] {{
+                background: #19B7FF !important;
+                color: #0A0C18 !important;
+                border-color: #19B7FF !important;
+                box-shadow: 0 0 8px rgba(25, 183, 255, 0.35) !important;
+                font-weight: 700 !important;
             }}
             .stCaption {{
                 color: {COLORS["muted"]};
@@ -366,11 +391,9 @@ def render_header() -> None:
             <h1>Dashboard Executivo M1 + Modelo Hibrido</h1>
             <p>Onde expandir (M1 municipal) · Qual bairro priorizar (Censitario 2022) · Fila operacional combinada (Hibrido).</p>
             <div class="strip">
-                <span class="pill">M1: <strong>&nbsp;score_priorizacao</strong></span>
-                <span class="pill">Censitario: <strong>&nbsp;score_setor_2022_calibrado</strong></span>
-                <span class="pill">Hibrido: <strong>&nbsp;score_expansao_hibrido</strong></span>
-                <span class="pill">UFs censo: <strong>&nbsp;DF GO MG RJ RS SP</strong></span>
-                <span class="pill">Filtros na <strong>&nbsp;sidebar</strong></span>
+                <span class="pill"><strong>Onde expandir (M1)</strong></span>
+                <span class="pill"><strong>Qual bairro (Censitario)</strong></span>
+                <span class="pill"><strong>Fila operacional (Hibrido)</strong></span>
             </div>
         </div>
         """,
@@ -384,7 +407,28 @@ def render_uf_selectbox(uf_options: list[str]) -> str | None:
     A carga lazy por UF (Bloco 4) depende deste valor: o dataset so e lido apos a
     escolha da UF, evitando fundir o Brasil inteiro a frio.
     """
-    st.sidebar.markdown("### Filtros globais")
+    st.sidebar.markdown(
+        f"""
+        <div style="
+            border-left: 3px solid {COLORS["brand_alt"]};
+            padding: 0.35rem 0 0.35rem 0.7rem;
+            margin-bottom: 0.4rem;
+        ">
+            <div style="
+                font-size: 1.05rem;
+                font-weight: 700;
+                color: {COLORS["text"]};
+                letter-spacing: 0.02em;
+            ">Filtros globais</div>
+            <div style="
+                font-size: 0.78rem;
+                color: {COLORS["brand_alt"]};
+                font-weight: 600;
+            ">Recorte executivo M1 + Hibrido</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     st.sidebar.caption("Refine o recorte executivo do M1 e da camada hibrida sem alterar o score oficial.")
     return st.sidebar.selectbox(
         "UF",
@@ -1025,10 +1069,7 @@ def render_modelo_hibrido_v2(
         st.warning(alert)
 
     st.caption(
-        "M1 continua decidindo o municipio. O Censitario entra como leitura local e o Hibrido organiza a fila operacional combinada."
-    )
-    st.caption(
-        "Dado restrito, densidade setorial abaixo do piso ou outlier espacial devem ser tratados como sinal editorial de cautela, nao como evidencia forte isolada."
+        "M1 decide o municipio; o Censitario e leitura local e o Hibrido organiza a fila operacional."
     )
 
     subtabs = st.tabs(
@@ -2022,11 +2063,6 @@ def render_analise_pontual(
             "Clique em um hexagono no mapa ou digite uma coordenada na barra lateral "
             "(ex: -23.55, -46.63) para ativar a Analise Pontual de Entorno."
         )
-        st.caption(
-            "Clique em objeto de mapa: suportado via `st.pydeck_chart` com `on_select` (Streamlit 1.26+). "
-            "Botao direito: nao suportado pelo componente `st.pydeck_chart`. "
-            "Fallback: campo de coordenada na barra lateral."
-        )
         return
 
     lat, lng = search_pin
@@ -2546,15 +2582,16 @@ def render_relatorio_pontual_censitario(
     # Uma geracao -> 3 camadas combinadas (Densidade/Renda/Concorrentes), sem dropdown.
     # Fundo de ruas por tiles online (DEC-004) com cache + fallback offline; pins com logo
     # via _ICON_CACHE ja populado por preload_logos no boot do streamlit_app.
-    mapas = render_mapas_censitarios_combinados(
-        lat,
-        lng,
-        setores_df,
-        raio_km=raio_km,
-        competitors_df=competitors_df,
-        ultra_df=ultra_df,
-        basemap=True,
-    )
+    with st.spinner("Gerando mapas censitarios..."):
+        mapas = render_mapas_censitarios_combinados(
+            lat,
+            lng,
+            setores_df,
+            raio_km=raio_km,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+            basemap=True,
+        )
 
     st.markdown(f"**Ponto analisado:** `{lat:.5f}, {lng:.5f}` | `{nome_municipio}/{uf}`")
     k1, k2, k3, k4 = st.columns(4)
@@ -2580,22 +2617,22 @@ def render_relatorio_pontual_censitario(
     st.image(
         mapas["densidade"],
         caption="Densidade populacional (hab/km2) - faixas absolutas.",
-        width="stretch",
+        width=_CENSUS_PREVIEW_WIDTH_PX,
     )
     st.image(
         mapas["renda"],
         caption="Renda per capita (R$/pessoa) - faixas absolutas.",
-        width="stretch",
+        width=_CENSUS_PREVIEW_WIDTH_PX,
     )
     st.image(
         mapas["score"],
         caption="Score censitario (0-100) - faixas de cor com legenda.",
-        width="stretch",
+        width=_CENSUS_PREVIEW_WIDTH_PX,
     )
     st.image(
         mapas["concorrentes"],
         caption="Concorrentes e Ultra (pins) sobre o basemap de ruas, sem mapa de calor.",
-        width="stretch",
+        width=_CENSUS_PREVIEW_WIDTH_PX,
     )
 
     st.markdown("##### Setores intersectados")
@@ -2716,6 +2753,7 @@ def render_mapa_territorial(
     st.caption(
         "Selecione o modo de cor e os overlays desejados. "
         "Camadas visuais nao alteram score, ranking, carteira nem artefatos oficiais do M1."
+        " Dica: filtre por municipio na barra lateral para ver o recorte com densidade total."
     )
 
     ctrl_col1, ctrl_col2 = st.columns([1.6, 2.4])
@@ -2762,21 +2800,54 @@ def render_mapa_territorial(
         )
         return
 
-    _render_unified_legend(selected_mode, enabled_overlays, competitors_df=competitors_df, ultra_df=ultra_df)
-
-    deck, n_points = build_unified_map_figure(
-        df,
-        color_mode=selected_mode,
-        enabled_overlays=enabled_overlays,
-        selected_ufs=selected_ufs,
-        selected_cities=selected_cities,
-        selected_faixas=selected_faixas,
-        competitors_df=competitors_df,
-        ultra_df=ultra_df,
-        search_pin=search_pin,
-        search_hex_id=search_hex_id,
-        dominio_df=dominio_df,
+    # BLK-MAP-01: filtro individual de redes de concorrentes (puramente visual; READ-ONLY M1)
+    _show_rede_filter = (
+        "concorrentes" in enabled_overlays
+        and competitors_df is not None
+        and not competitors_df.empty
+        and "rede" in competitors_df.columns
     )
+    selected_redes: list[str] = []
+    if _show_rede_filter:
+        # Ordena pela posicao em COMPETITOR_BRANDS; redes sem entrada ficam no final
+        _all_redes_raw = competitors_df["rede"].dropna().unique().tolist()  # type: ignore[index]
+        _brand_order = list(COMPETITOR_BRANDS.keys())
+        _all_redes = sorted(
+            _all_redes_raw,
+            key=lambda r: (_brand_order.index(r) if r in _brand_order else len(_brand_order), r),
+        )
+        selected_redes = st.multiselect(
+            "Redes de concorrentes",
+            options=_all_redes,
+            default=_all_redes,
+            format_func=lambda r: COMPETITOR_BRANDS.get(r, {}).get("label", r),
+            key="mapa_territorial_redes_concorrentes",
+        )
+
+    # BLK-MAP-01: ponto unico de filtragem; D2=A => vazio => None (esconde tudo)
+    if _show_rede_filter and not selected_redes:
+        competitors_df_filtered: pd.DataFrame | None = None
+    elif _show_rede_filter:
+        competitors_df_filtered = competitors_df[competitors_df["rede"].isin(selected_redes)]  # type: ignore[index]
+    else:
+        competitors_df_filtered = competitors_df
+
+    _render_unified_legend(selected_mode, enabled_overlays, competitors_df=competitors_df_filtered, ultra_df=ultra_df)
+
+    with st.spinner("Construindo mapa..."):
+        deck, n_points = build_unified_map_figure(
+            df,
+            color_mode=selected_mode,
+            enabled_overlays=enabled_overlays,
+            selected_ufs=selected_ufs,
+            selected_cities=selected_cities,
+            selected_faixas=selected_faixas,
+            competitors_df=competitors_df_filtered,
+            ultra_df=ultra_df,
+            search_pin=search_pin,
+            search_hex_id=search_hex_id,
+            dominio_df=dominio_df,
+        )
 
     if deck is None:
         st.info(
@@ -2802,7 +2873,7 @@ def render_mapa_territorial(
         _pin_ref = df.loc[df["uf"].isin(selected_ufs)]
     if not _pin_ref.empty and {"lat", "lng"} <= set(_pin_ref.columns):
         _enabled = enabled_overlays
-        _comp_for_caption = competitors_df if "concorrentes" in _enabled else None
+        _comp_for_caption = competitors_df_filtered if "concorrentes" in _enabled else None
         _ultra_for_caption = ultra_df if "ultra" in _enabled else None
         _n_comp, _n_ultra = count_pins_in_scope(_comp_for_caption, _ultra_for_caption, _pin_ref)
         # BLK-FIX-07-B: em recorte amplo (gate verdadeiro) com concorrentes no escopo,

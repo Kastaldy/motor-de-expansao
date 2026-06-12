@@ -76,6 +76,17 @@ _DEFAULT_ULTRA_DIR = Path("data/ultra")
 _PAGE_W = 960.0
 _PAGE_H = 540.0
 
+# Marca d'agua diagonal de rastreabilidade (BLK-EST-01) — embutida em TODAS as 7 paginas com
+# compressao OFF: o texto vai em claro no content stream (BT...ET), nao removivel trivialmente
+# (sem /Annot separavel). `solicitante=None` -> so "Ultra Academia". ASCII-safe (passa por _ascii).
+_WATERMARK_BASE = "Ultra Academia"
+_WATERMARK_RGB = (120, 120, 120)
+_WATERMARK_RGB_COVER = (255, 255, 255)
+_WATERMARK_ALPHA = 0.65
+_WATERMARK_ANGLE = 0.0
+_WATERMARK_FONT_PT = 10
+_WATERMARK_MARGIN = 20.0
+
 
 @dataclass(frozen=True)
 class RelatorioCensitarioDownloadPayloads:
@@ -128,6 +139,16 @@ def _point_name(result: dict[str, Any]) -> str:
 def _ascii(text: str) -> str:
     """Reduz a latin-1/ASCII seguro para o core font Helvetica do fpdf2."""
     return text.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _watermark_text(solicitante: str | None) -> str:
+    """Texto da marca d'agua: "Ultra Academia" ou "Ultra Academia | {solicitante}".
+
+    `solicitante` None/vazio -> so a base (default seguro, sem PII). ASCII-safe.
+    """
+    if solicitante is None or not solicitante.strip():
+        return _ascii(_WATERMARK_BASE)
+    return _ascii(f"{_WATERMARK_BASE} | {solicitante.strip()}")
 
 
 # ---------------------------------------------------------------------------
@@ -199,12 +220,13 @@ def _draw_full_page_background(
 
 def _draw_title_band(pdf: _UltraPDF, title: str, *, rgb: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
     """Faixa de titulo turquesa no topo da pagina de conteudo (largura total 16:9)."""
-    band_h = 48.0
+    # D1=B (BLK-EST-02): banda mais alta (56 pt) e titulo 22 pt p/ hierarquia "executiva".
+    band_h = 56.0
     pdf.set_fill_color(*rgb)
     pdf.rect(0, 0, _PAGE_W, band_h, style="F")
     pdf.set_text_color(*_BRANCO)
-    pdf.set_font("Helvetica", "B", 20)
-    pdf.set_xy(36, 13)
+    pdf.set_font("Helvetica", "B", 22)
+    pdf.set_xy(36, 16)
     pdf.cell(_PAGE_W - 72, 24, _ascii(title))
 
 
@@ -235,6 +257,28 @@ def _draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
         pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
     except Exception:
         pass
+
+
+def _draw_watermark(
+    pdf: _UltraPDF, text: str, *, rgb: tuple[int, int, int] = _WATERMARK_RGB
+) -> None:
+    """Desenha a marca d'agua no canto inferior-direito, horizontal e discreta (BLK-EST-01-FU2).
+
+    Posicao: baseline em (_PAGE_W - _WATERMARK_MARGIN - largura_texto, _PAGE_H - _WATERMARK_MARGIN).
+    READ-ONLY de estado logico: `local_context` restaura o graphics state (fill_opacity) ao sair.
+    Usa `pdf.text` (baseline) — imune a `set_margins`/auto_page_break OFF. Deve ser chamada
+    DEPOIS do conteudo da pagina para ficar POR CIMA do fundo/PNG.
+
+    O parametro `rgb` permite cor condicional por pagina: capa (pagina 1) usa `_WATERMARK_RGB_COVER`
+    (branco, visivel sobre fundo turquesa); demais paginas usam `_WATERMARK_RGB` (cinza padrao).
+    """
+    pdf.set_font("Helvetica", "", _WATERMARK_FONT_PT)
+    pdf.set_text_color(*rgb)
+    w = pdf.get_string_width(text)
+    x = _PAGE_W - _WATERMARK_MARGIN - w
+    y = _PAGE_H - _WATERMARK_MARGIN
+    with pdf.local_context(fill_opacity=_WATERMARK_ALPHA):
+        pdf.text(x, y, text)
 
 
 def _parece_coordenada(texto: str) -> bool:
@@ -288,7 +332,8 @@ def _cover_page(
         title_y = 230.0
 
     pdf.set_text_color(*_BRANCO)
-    pdf.set_font("Helvetica", "B", 26)
+    # D1=B (BLK-EST-02): titulo de capa 30 pt (mais presente).
+    pdf.set_font("Helvetica", "B", 30)
     pdf.set_xy(block_x, title_y)
     pdf.multi_cell(block_w, 32, _ascii("Relatorio Pontual Censitario"), align=align)
 
@@ -356,12 +401,13 @@ def _big_numbers_page(
         ("Consumo concorrentes (est.)", _format_number(residual.get("oferta_consumida_mercado_estimada"), 0)),
     ]
 
+    # D3=B (BLK-EST-02): cards mais altos/arejados (156) com borda fina e barra acento 6 pt.
     margin_x = 36.0
     top = 70.0
-    gap = 14.0
+    gap = 16.0
     cols, rows = 4, 2
     card_w = (_PAGE_W - 2 * margin_x - (cols - 1) * gap) / cols
-    card_h = 150.0
+    card_h = 156.0
     accents = [ULTRA_TURQUESA, ULTRA_MAGENTA]
 
     for index, (label, value) in enumerate(cards):
@@ -369,21 +415,23 @@ def _big_numbers_page(
         row = index // cols
         x = margin_x + col * (card_w + gap)
         y = top + row * (card_h + gap)
-        # Cartao branco com barra de destaque.
+        # Cartao branco com barra de destaque e borda fina (D3=B).
         pdf.set_fill_color(*_BRANCO)
         pdf.rect(x, y, card_w, card_h, style="F")
+        pdf.set_draw_color(225, 225, 228)
+        pdf.rect(x, y, card_w, card_h, style="D")
         accent = accents[index % len(accents)]
         pdf.set_fill_color(*accent)
-        pdf.rect(x, y, card_w, 8.0, style="F")
-        # Rotulo.
-        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.rect(x, y, card_w, 6.0, style="F")
+        # Rotulo (D2=B: cinza-escuro 45,45,45; acento so na barra do topo).
+        pdf.set_text_color(45, 45, 45)
         pdf.set_font("Helvetica", "", 11)
-        pdf.set_xy(x + 14, y + 22)
+        pdf.set_xy(x + 14, y + 20)
         pdf.multi_cell(card_w - 28, 14, _ascii(label))
-        # Valor grande.
-        pdf.set_text_color(*accent)
-        pdf.set_font("Helvetica", "B", 24)
-        pdf.set_xy(x + 14, y + 84)
+        # Valor grande (D2=B: cinza-escuro 40,40,40, nao no acento; D3=B: 26 pt).
+        pdf.set_text_color(40, 40, 40)
+        pdf.set_font("Helvetica", "B", 26)
+        pdf.set_xy(x + 14, y + 88)
         pdf.multi_cell(card_w - 28, 28, _ascii(value))
 
     # Nota de fonte auditavel.
@@ -403,20 +451,34 @@ def _big_numbers_page(
     _draw_footer(pdf, with_attribution=True)
 
 
-def _point_rows(points: pd.DataFrame, label: str) -> list[str]:
-    """Lista textual de unidades no raio. Usa apenas dados de UNIDADE (sem PII de pessoas)."""
+def _point_rows(points: pd.DataFrame, label: str, *, is_ultra: bool) -> list[tuple[str, bool]]:
+    """Lista textual de unidades no raio. Usa apenas dados de UNIDADE (sem PII de pessoas).
+
+    D4=B (BLK-EST-02): retorna `(texto, is_ultra)` para colorir o bullet por tipo
+    (Ultra=turquesa, concorrente=magenta) sem introduzir PII.
+    """
     if points is None or points.empty:
-        return [f"{label}: sem unidades no raio."]
+        return [(f"{label}: sem unidades no raio.", is_ultra)]
     name_col = next(
         (column for column in ("rede", "nome_unidade", "nome", "brand") if column in points.columns),
         None,
     )
-    rows: list[str] = []
+    rows: list[tuple[str, bool]] = []
     for _, row in points.head(10).iterrows():
         name = str(row.get(name_col, label)) if name_col else label
         dist = _format_number(row.get("dist_km"), 2, " km")
-        rows.append(f"{label}: {name} ({dist})")
+        rows.append((f"{label}: {name} ({dist})", is_ultra))
     return rows
+
+
+def _safe_len(points: pd.DataFrame | None) -> int:
+    """Contagem segura de linhas de um DataFrame de unidades (guarda None/empty)."""
+    if points is None:
+        return 0
+    try:
+        return int(len(points))
+    except Exception:
+        return 0
 
 
 def _competitors_page(
@@ -449,23 +511,44 @@ def _competitors_page(
     # Lista de redes a DIREITA.
     list_x = 620.0
     list_w = _PAGE_W - list_x - 36.0
+    bullet_w = 12.0
+    text_x = list_x + bullet_w
+
+    # D4=B (BLK-EST-02): cabecalho com contagem total quando ha mais de 10 redes no raio.
+    concorrentes_df = result.get("concorrentes_raio", pd.DataFrame())
+    ultra_df = result.get("ultra_raio", pd.DataFrame())
+    total = _safe_len(concorrentes_df) + _safe_len(ultra_df)
+    header = "Redes no raio de 1.5 km"
+    if total > 10:
+        header = f"{header} ({total} no total)"
     pdf.set_text_color(*ULTRA_MAGENTA)
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_xy(list_x, 70.0)
-    pdf.cell(list_w, 18, _ascii("Redes no raio de 1.5 km"))
+    pdf.cell(list_w, 18, _ascii(header))
 
-    pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 10)
     y = 100.0
-    linhas: list[str] = []
-    linhas.extend(_point_rows(result.get("concorrentes_raio", pd.DataFrame()), "Concorrente"))
-    linhas.extend(_point_rows(result.get("ultra_raio", pd.DataFrame()), "Ultra"))
-    for line in linhas:
+    # D4=B: cada linha leva um bullet colorido por tipo (Ultra=turquesa, concorrente=magenta).
+    linhas: list[tuple[str, bool]] = []
+    linhas.extend(_point_rows(concorrentes_df, "Concorrente", is_ultra=False))
+    linhas.extend(_point_rows(ultra_df, "Ultra", is_ultra=True))
+    truncated = total > 10
+    for line, is_ultra in linhas:
         if y > _PAGE_H - 40:
             break
-        pdf.set_xy(list_x, y)
-        pdf.multi_cell(list_w, 14, _ascii(line))
+        bullet_rgb = ULTRA_TURQUESA if is_ultra else ULTRA_MAGENTA
+        pdf.set_fill_color(*bullet_rgb)
+        pdf.ellipse(list_x, y + 4, 6, 6, style="F")
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_xy(text_x, y)
+        pdf.multi_cell(list_w - bullet_w, 14, _ascii(line))
         y = pdf.get_y() + 4.0
+
+    # D4=B: rodape da lista "... e mais N" quando truncar em 10 linhas.
+    if truncated and y <= _PAGE_H - 40:
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_xy(text_x, y)
+        pdf.multi_cell(list_w - bullet_w, 14, _ascii(f"... e mais {total - 10}"))
 
     _draw_footer(pdf, with_attribution=True)
 
@@ -480,28 +563,30 @@ def _credit_page(pdf: _UltraPDF, assets: dict[str, bytes | None]) -> None:
     pdf.set_fill_color(*ULTRA_TURQUESA)
     pdf.rect(0, 0, _PAGE_W, _PAGE_H, style="F")
 
+    # D1=B (BLK-EST-02): Realizacao 34/18/12 pt.
     pdf.set_text_color(*_BRANCO)
-    pdf.set_font("Helvetica", "B", 30)
-    pdf.set_xy(40, 150)
-    pdf.cell(_PAGE_W - 80, 36, _ascii("Realizacao"), align="C")
+    pdf.set_font("Helvetica", "B", 34)
+    pdf.set_xy(40, 180)
+    pdf.cell(_PAGE_W - 80, 40, _ascii("Realizacao"), align="C")
 
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.set_xy(40, 210)
-    pdf.cell(_PAGE_W - 80, 22, _ascii(_CREDITO_ULTRA), align="C")
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_xy(40, 232)
+    pdf.cell(_PAGE_W - 80, 24, _ascii(_CREDITO_ULTRA), align="C")
 
+    # D5=C: metodo encurtado para 1 frase (ASCII-safe).
     pdf.set_font("Helvetica", "", 12)
-    pdf.set_xy(160, 260)
+    pdf.set_xy(160, 278)
     pdf.multi_cell(
         _PAGE_W - 320,
         16,
         _ascii(
-            "Metodo: intersecao geometrica de setores censitarios reais (IBGE 2022) com circulo de "
-            "1.5 km ao redor da coordenada. Distribuicao intrassetor aproximada por area."
+            "Intersecao de setores censitarios IBGE 2022 com circulo de 1,5 km; "
+            "distribuicao intrassetor por area."
         ),
         align="C",
     )
 
-    pdf.set_xy(160, 320)
+    pdf.set_xy(160, 322)
     pdf.multi_cell(
         _PAGE_W - 320,
         16,
@@ -541,6 +626,7 @@ def gerar_pdf_relatorio_pontual_censitario(
     *,
     residual: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
+    solicitante: str | None = None,
     rotulo: str | None = None,
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
@@ -552,7 +638,9 @@ def gerar_pdf_relatorio_pontual_censitario(
     "concorrentes"}`) ou `bytes` (1 mapa legado, retrocompat). A pagina de Score censitario
     usa o choropleth de score (modo de cor + legenda); a de Concorrentes usa o mapa so-pins.
     `residual` carrega os campos do lookup hex (READ-ONLY) para o Big Numbers. `ultra_dir`
-    aponta os assets de branding (fallback gracioso para cor solida se ausentes). Geracao
+    aponta os assets de branding (fallback gracioso para cor solida se ausentes). `solicitante`
+    (BLK-EST-01) carimba a marca d'agua diagonal de rastreabilidade em TODAS as 7 paginas:
+    None -> so "Ultra Academia"; preenchido -> "Ultra Academia | {solicitante}". Geracao
     100% offline, sem PII.
     """
     assets = _load_branding_assets(ultra_dir)
@@ -566,6 +654,14 @@ def gerar_pdf_relatorio_pontual_censitario(
     _competitors_page(pdf, result, layers.get("concorrentes"), assets)
     _big_numbers_page(pdf, result, residual, assets)
     _credit_page(pdf, assets)
+
+    # Marca d'agua diagonal POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as 7).
+    # Escrever na pagina `n` via `pdf.page = n` ANEXA ao stream dessa pagina -> sobreposicao.
+    wm_text = _watermark_text(solicitante)
+    for page_number in range(1, pdf.pages_count + 1):
+        pdf.page = page_number
+        rgb = _WATERMARK_RGB_COVER if page_number == 1 else _WATERMARK_RGB
+        _draw_watermark(pdf, wm_text, rgb=rgb)
 
     output = pdf.output()
     return bytes(output)
@@ -583,13 +679,14 @@ def gerar_payloads_download_relatorio_censitario(
     filename_prefix: str | None = None,
     residual: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
+    solicitante: str | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     prefix = filename_prefix or f"relatorio_pontual_censitario_{_point_name(result)}"
     return RelatorioCensitarioDownloadPayloads(
         csv_bytes=gerar_csv_setores_censitarios(result),
         csv_filename=f"{prefix}_setores.csv",
         pdf_bytes=gerar_pdf_relatorio_pontual_censitario(
-            result, mapas, residual=residual, ultra_dir=ultra_dir
+            result, mapas, residual=residual, ultra_dir=ultra_dir, solicitante=solicitante
         ),
         pdf_filename=f"{prefix}.pdf",
     )
@@ -603,6 +700,7 @@ def render_downloads_relatorio_censitario(
     filename_prefix: str | None = None,
     residual: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
+    solicitante: str | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     """Renderiza botoes Streamlit e retorna os mesmos bytes para testes/reuso."""
     payloads = gerar_payloads_download_relatorio_censitario(
@@ -611,6 +709,7 @@ def render_downloads_relatorio_censitario(
         filename_prefix=filename_prefix,
         residual=residual,
         ultra_dir=ultra_dir,
+        solicitante=solicitante,
     )
     st_module.download_button(
         "Baixar CSV dos setores",
