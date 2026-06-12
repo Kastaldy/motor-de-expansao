@@ -4267,6 +4267,7 @@ def test_render_tab_selector_fallback_quando_desmarcado():
 
 def test_main_renderiza_apenas_a_aba_ativa(tmp_path, monkeypatch):
     """main() deve chamar somente o render_* da aba ativa, nao das outras tres."""
+    import contextlib
     import unittest.mock as mock
 
     out = _build_lazy_partitions(tmp_path)
@@ -4275,30 +4276,32 @@ def test_main_renderiza_apenas_a_aba_ativa(tmp_path, monkeypatch):
     streamlit_app.load_uf_slice.clear()
 
     empty = pd.DataFrame()
-    with (
-        mock.patch("streamlit.session_state", {}),
-        mock.patch.object(streamlit_app, "inject_styles"),
-        mock.patch.object(streamlit_app, "render_header"),
-        mock.patch.object(streamlit_app, "render_uf_selectbox", return_value="SP"),
-        mock.patch.object(streamlit_app, "render_sidebar_filters",
-                          return_value=([], [], [], [], [], [], False, False)),
-        mock.patch.object(streamlit_app, "render_coord_search_sidebar", return_value=None),
-        mock.patch.object(streamlit_app, "render_tab_selector", return_value="Expansao de Dominio"),
-        mock.patch.object(streamlit_app, "load_carteira", return_value=empty),
-        mock.patch.object(streamlit_app, "load_plano", return_value=empty),
-        mock.patch.object(streamlit_app, "load_plano_dominio", return_value=empty),
-        mock.patch.object(streamlit_app, "load_competitors", return_value=empty),
-        mock.patch.object(streamlit_app, "load_ultra", return_value=empty),
-        mock.patch.object(streamlit_app, "render_visao_executiva") as visao_mock,
-        mock.patch.object(streamlit_app, "render_mapa_territorial") as mapa_mock,
-        mock.patch.object(streamlit_app, "render_expansao_dominio") as dominio_mock,
-        mock.patch.object(streamlit_app, "render_carteira_e_plano") as carteira_mock,
-        mock.patch.object(streamlit_app, "build_city_summary") as city_mock,
-        mock.patch("streamlit.caption"),
-        mock.patch("streamlit.markdown"),
-        mock.patch("streamlit.info"),
-        mock.patch("streamlit.spinner"),
-    ):
+    # ExitStack em vez de `with (m1, ..., m21):` — 21 context managers num unico `with`
+    # estouram o limite de 20 blocos aninhados do compilador no Python 3.11 (CI), embora
+    # compile no 3.12+ (local). enter_context preserva ordem/comportamento.
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(mock.patch("streamlit.session_state", {}))
+        stack.enter_context(mock.patch.object(streamlit_app, "inject_styles"))
+        stack.enter_context(mock.patch.object(streamlit_app, "render_header"))
+        stack.enter_context(mock.patch.object(streamlit_app, "render_uf_selectbox", return_value="SP"))
+        stack.enter_context(mock.patch.object(streamlit_app, "render_sidebar_filters",
+                            return_value=([], [], [], [], [], [], False, False)))
+        stack.enter_context(mock.patch.object(streamlit_app, "render_coord_search_sidebar", return_value=None))
+        stack.enter_context(mock.patch.object(streamlit_app, "render_tab_selector", return_value="Expansao de Dominio"))
+        stack.enter_context(mock.patch.object(streamlit_app, "load_carteira", return_value=empty))
+        stack.enter_context(mock.patch.object(streamlit_app, "load_plano", return_value=empty))
+        stack.enter_context(mock.patch.object(streamlit_app, "load_plano_dominio", return_value=empty))
+        stack.enter_context(mock.patch.object(streamlit_app, "load_competitors", return_value=empty))
+        stack.enter_context(mock.patch.object(streamlit_app, "load_ultra", return_value=empty))
+        visao_mock = stack.enter_context(mock.patch.object(streamlit_app, "render_visao_executiva"))
+        mapa_mock = stack.enter_context(mock.patch.object(streamlit_app, "render_mapa_territorial"))
+        dominio_mock = stack.enter_context(mock.patch.object(streamlit_app, "render_expansao_dominio"))
+        carteira_mock = stack.enter_context(mock.patch.object(streamlit_app, "render_carteira_e_plano"))
+        city_mock = stack.enter_context(mock.patch.object(streamlit_app, "build_city_summary"))
+        stack.enter_context(mock.patch("streamlit.caption"))
+        stack.enter_context(mock.patch("streamlit.markdown"))
+        stack.enter_context(mock.patch("streamlit.info"))
+        stack.enter_context(mock.patch("streamlit.spinner"))
         streamlit_app.main()
 
     assert dominio_mock.called
