@@ -51,6 +51,69 @@ services:
       retries: 3
       start_period: 45s
 
+  # ── API GeoEspacial (on-demand, interna) ───────────────────────────────────
+  # Container separado, mesma VPS/rede. Consome os MESMOS volumes de dados (:ro)
+  # do servidor — nao tem copia propria. Sem porta no host: so o bot a consome
+  # pela rede interna (http://api:8077). BLK-API-06. Requer dados em
+  # /opt/motor-expansao/data/{outputs,staging,ibge,ultra} (ver docs/deploy_api_bot.md).
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: motor-expansao-api:local
+    container_name: motor_expansao_api
+    restart: unless-stopped
+    expose:
+      - "8077"
+    environment:
+      API_ENVIRONMENT: "production"
+      # token -> consumidor (JSON). Defina no .env, ex.: API_TOKENS='{"tok-bot":"bot-telegram"}'.
+      API_TOKENS: ${API_TOKENS:?defina API_TOKENS no .env (JSON token->consumidor)}
+      API_CORS_ORIGINS: ${API_CORS_ORIGINS:-*}
+    volumes:
+      - /opt/motor-expansao/data/outputs:/app/data/outputs:ro   # censo geo (obrigatorio)
+      - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal (obrigatorio)
+      - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra (opcional)
+      - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF (opcional)
+    networks:
+      - app_net
+    security_opt:
+      - no-new-privileges:true
+
+  # ── Bot Telegram (long-polling; consome a API por HTTP interno) ─────────────
+  # Mesma imagem da API (inclui Google Chrome p/ o geocoder Selenium). Fala com o
+  # Telegram por conexao de SAIDA (long-polling) -> nao precisa de porta publica e
+  # roda 24/7 na VPS independente do PC. BLK-API-07.
+  telegram-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    image: motor-expansao-api:local
+    container_name: motor_expansao_telegram_bot
+    restart: unless-stopped
+    depends_on:
+      - api
+    command: ["python", "-m", "motor_expansao.api.telegram_bot"]
+    environment:
+      API_ENVIRONMENT: "production"
+      API_TELEGRAM_TOKEN: ${API_TELEGRAM_TOKEN:?defina API_TELEGRAM_TOKEN no .env (token do @BotFather)}
+      API_API_BASE_URL: "http://api:8077"
+      # Token com que o bot se autentica na API; DEVE ser uma chave de API_TOKENS.
+      API_API_CALL_TOKEN: ${API_API_CALL_TOKEN:?defina API_API_CALL_TOKEN no .env (chave existente em API_TOKENS)}
+      API_BOT_SENHA: ${API_BOT_SENHA:?defina API_BOT_SENHA no .env (senha de acesso ao bot)}
+      # Opcional: com chave usa Google Geocoding (rapido); sem chave o geocoder
+      # por endereco usa Selenium/Chrome (primario) + Nominatim (fallback).
+      API_GOOGLE_MAPS_API_KEY: ${API_GOOGLE_MAPS_API_KEY:-}
+      API_BOT_SESSOES_PATH: "/data/bot_sessoes.json"
+    volumes:
+      - bot_data:/data
+    networks:
+      - app_net
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      disable: true
+
   # ── Caddy (reverse proxy + TLS automático) ─────────────────────────────────
   caddy:
     image: caddy:2-alpine
@@ -100,3 +163,4 @@ networks:
 volumes:
   caddy_data:
   caddy_config:
+  bot_data:        # sessoes do bot (quem ja logou) — persiste entre restarts

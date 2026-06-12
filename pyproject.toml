@@ -63,6 +63,8 @@ api_mvp = [
     "pydantic-settings>=2.2.0",
     "python-multipart>=0.0.9",
 ]
+# (O extra do geocoder do bot — selenium/webdriver-manager — e o `geocoder`,
+# definido abaixo junto de [basemap]; a imagem do bot usa .[basemap,api_mvp,geocoder].)
 # Legado / fora do deploy Streamlit inicial
 api = [
     "fastapi>=0.111.0",
