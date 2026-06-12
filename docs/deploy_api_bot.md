@@ -4,6 +4,13 @@
 > novos na MESMA VPS** (`root@2.25.137.241`), na mesma rede `app_net`, **sem porta
 > pública**. O bot é long-polling: roda 24/7 na VPS, independente do PC do usuário.
 > GUARDRAIL CLAUDE.md §6: todo comando na VPS é passo humano, comando a comando.
+>
+> **Relação com `docs/api_geoespacial_deploy.md` (BLK-API-06):** aquele doc descreve
+> a API/bot como **processos** (uvicorn + `python -m`) e o contrato/config/observabilidade
+> (variáveis `API_*`, logs, hardening). **Este** doc é a **containerização** (o "como
+> empacotar" do §8 daquele) via `Dockerfile.api` + serviços no compose. Para o detalhe
+> de cada variável de ambiente e do contrato, ver o doc do BLK-API-06; o extra das
+> dependências do geocoder é o **`geocoder`** (`.[basemap,api_mvp,geocoder]`).
 
 ## Arquitetura
 
