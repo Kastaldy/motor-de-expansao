@@ -105,8 +105,9 @@ Verificar:
 curl http://127.0.0.1:8077/health
 # {"status":"ok","environment":"production"}
 
+# defina o token antes: export API_TOKEN="<token-do-API_TOKENS>"
 curl -X POST http://127.0.0.1:8077/api/v1/analisar \
-  -H "Authorization: Bearer tok-bot-telegram-aleatorio" \
+  -H "Authorization: Bearer $API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"lat":-23.5505,"lng":-46.6333}'
 ```
