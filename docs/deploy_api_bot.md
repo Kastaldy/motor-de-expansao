@@ -59,20 +59,23 @@ Acrescentar ao `/opt/motor-expansao/app/.env` (modelo em `.env.example`):
 
 Gerar tokens fortes: `openssl rand -hex 24`.
 
-## Subir/atualizar (build na VPS, comando a comando)
+## Subir/atualizar (PULL por digest, igual ao Streamlit)
 
-A API/bot **não** seguem o modelo PULL-por-digest do Streamlit (sem job de publish ainda);
-a imagem é construída na VPS a partir do código já versionado (`git pull` na pasta `app/`).
+A imagem `motor-expansao-api` é publicada no GHCR pelo job **`publish-api`** do CI
+(`.github/workflows/ci.yml`) — **filtrado por caminho**: só rebuilda/publica quando mudam
+`Dockerfile.api`, `src/motor_expansao/api/**` ou `pyproject.toml`. A VPS **puxa** por digest
+(`API_IMAGE` no `.env`), sem buildar localmente. Execução na VPS é passo humano (§6).
 
 ```bash
 cd /opt/motor-expansao/app
-git pull                                   # traz Dockerfile.api + serviços no compose
-# (preencher os API_* no .env antes — ver acima)
-docker compose -f docker-compose.prod.yml build api          # ~Chrome+deps, alguns minutos
+# 1. Pinar o digest publicado (do job publish-api no Actions, "API digest imutavel publicado"):
+#    edite API_IMAGE no .env:
+#    API_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-api@sha256:<digest>
+# 2. Pull + up -d (SEM build)
+docker compose -f docker-compose.prod.yml pull api telegram-bot
 docker compose -f docker-compose.prod.yml up -d api telegram-bot
 docker compose -f docker-compose.prod.yml ps
-# saúde da API (sem porta no host -> via container):
-docker exec motor_expansao_api curl -fsS http://127.0.0.1:8077/health
+docker exec motor_expansao_api curl -fsS http://127.0.0.1:8077/health   # sem porta no host
 docker compose -f docker-compose.prod.yml logs --tail=50 telegram-bot
 ```
 
@@ -80,6 +83,10 @@ docker compose -f docker-compose.prod.yml logs --tail=50 telegram-bot
 - Sessões do bot persistem no volume `bot_data` (restart não desloga usuários).
 - O primeiro geocode por endereço baixa o chromedriver (webdriver-manager) — precisa de
   internet na VPS (já tem). `lat,lng`/link do Maps não dependem disso.
+- **Bootstrap / republish manual:** Actions → CI → "Run workflow" com `publish_api=true`
+  (ou `gh workflow run ci.yml -f publish_api=true`). **Build local de dev/sanity:**
+  `docker build -f Dockerfile.api -t motor-expansao-api:local .`
+- **Rollback:** aponte `API_IMAGE` para o digest anterior e repita pull + up.
 
 ## Validação rápida do contrato
 

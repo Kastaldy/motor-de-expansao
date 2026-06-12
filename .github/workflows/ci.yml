@@ -11,6 +11,10 @@ on:
         description: "Buildar a imagem (SEM publicar) para sanity em branch de ciclo"
         type: boolean
         default: true
+      publish_api:
+        description: "Forcar build+publish da imagem da API/bot (motor-expansao-api) — bootstrap/manual"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -182,3 +186,95 @@ jobs:
           ignore-unfixed: true
           vuln-type: os,library
           trivyignores: .trivyignore
+
+  # CD da imagem da API/bot: publica `motor-expansao-api` no GHCR p/ deploy por digest
+  # (igual ao Streamlit). FILTRADO POR CAMINHO via git-diff: o build pesado (Google
+  # Chrome) so roda quando mudam Dockerfile.api, src/.../api/** ou pyproject.toml; nos
+  # demais pushes os steps pesados sao PULADOS (so checkout + filtro). Tambem roda via
+  # workflow_dispatch (publish_api=true) p/ bootstrap/republish manual. needs: test.
+  publish-api:
+    needs: [test]
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_api)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Detectar mudancas que afetam a imagem da API
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "forcado por workflow_dispatch"; exit 0
+          fi
+          BASE="${{ github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "sem base comparavel -> publica"; exit 0
+          fi
+          if git diff --name-only "$BASE" "${{ github.sha }}" | grep -qE '^(Dockerfile\.api|src/motor_expansao/api/|pyproject\.toml$)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "arquivos da API mudaram -> publica"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "nada da API mudou -> pula build"
+          fi
+      - name: Login no GHCR
+        if: steps.filter.outputs.changed == 'true'
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Metadata (tags/labels)
+        id: meta
+        if: steps.filter.outputs.changed == 'true'
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        with:
+          images: ghcr.io/${{ github.repository }}/motor-expansao-api
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Set up Buildx
+        if: steps.filter.outputs.changed == 'true'
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Build (local, p/ scan antes do push)
+        if: steps.filter.outputs.changed == 'true'
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: Dockerfile.api
+          load: true
+          tags: motor-expansao-api:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # Trivy em modo REPORT (exit-code 0) p/ a imagem da API: ela embute Google Chrome,
+      # que carrega CVEs HIGH/CRITICAL perpetuas sem fix viavel (upstream fora do nosso
+      # controle). Como a API NAO tem porta no host (so rede interna app_net), reportamos
+      # sem bloquear — diferente do Streamlit (bloqueante). Revisar se for exposta publicamente.
+      - name: Image scan (Trivy, REPORT-only)
+        if: steps.filter.outputs.changed == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: motor-expansao-api:scan
+          format: table
+          exit-code: "0"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+      - name: Push (apos scan)
+        id: push
+        if: steps.filter.outputs.changed == 'true'
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: Dockerfile.api
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Exibir digest publicado (pin da API)
+        if: steps.filter.outputs.changed == 'true'
+        run: 'echo "API digest imutavel publicado: ${{ steps.push.outputs.digest }}"'
