@@ -3870,3 +3870,48 @@ NÃO aparecem no diff); READ-ONLY M1 (diff é só CSS + 1 assert; nenhum score/p
 seletores `stSegmentedControl`/`aria-checked` preservados; paths pré-sujos não tocados nem commitados.
 
 Housekeeping: N/A (tarefa ad-hoc; sem bloco BLK-UI-04 no backlog).
+
+---
+
+## BLK-UI-05 (bug-fix do BLK-UI-04) — CSS do seletor de telas não renderizava (seletores reais do st.segmented_control)
+
+Data: 2026-06-12
+Tipo: bug (UX/UI — CSS) | Criticidade: Média (CSS localizado; READ-ONLY M1; Bloco 5 lógica intocada)
+Esteira: Block Orchestrator → Planner → Builder → QA (Média, sem gate)
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12 — com confirmação visual pendente do usuário.
+
+Origem: ao testar o BLK-UI-04, Felipe/Vini reportou (com screenshot) que a aba ativa não ficava ciano
+sólido e o gap entre botões não aparecia. O `pytest` do BLK-UI-04 passou mesmo assim (o teste só checa a
+STRING do CSS, não o render).
+
+Causa-raiz (confirmada contra o frontend instalado do Streamlit 1.58.0, via grep no bundle JS): o estado
+ATIVO do `st.segmented_control` é marcado pelo testid `stBaseButton-segmented_controlActive` (NÃO por
+`aria-checked`/`aria-selected`), e o inativo por `stBaseButton-segmented_control`. As regras do BLK-UI-04
+miravam `aria-checked`/`aria-selected` (que não casam o DOM real) → a aba ativa nunca recebia o ciano; e
+faltavam `!important` (o CSS emotion do Streamlit tem especificidade alta e sobrepunha o gap/fundo).
+
+Correção (100% CSS dentro de `inject_styles()`, pages.py ~304-335; READ-ONLY M1):
+- Aba ATIVA: adicionado `[data-testid="stBaseButton-segmented_controlActive"]` à lista de seletores, com
+  `background:#19B7FF !important; color:#0A0C18 !important; border-color:#19B7FF !important;
+  font-weight:700 !important; box-shadow:0 0 8px rgba(25,183,255,0.35) !important`.
+- Botões INATIVOS: adicionado `[data-testid="stBaseButton-segmented_control"]`, com
+  `background:rgba(30,38,65,0.88) !important` + borda ciano `rgba(25,183,255,0.30) !important` +
+  `border-radius:10px !important` (distinto dos cartões de valores).
+- GAP: `gap:8px !important` no container `[data-testid="stSegmentedControl"]`.
+- Seletores legados (`aria-checked`/`aria-selected`/`stSegmentedControl`) MANTIDOS (o teste os verifica);
+  precedência: a regra do ativo vem DEPOIS da inativa, mesma camada `!important` → ciano vence.
+- Teste de REGRESSÃO: assert de `"stBaseButton-segmented_controlActive"` no CSS (guarda contra voltar aos
+  seletores que não casavam).
+
+Lição registrada: o teste de presença-de-string no CSS NÃO garante render no navegador; para componentes
+de terceiros (Streamlit/baseweb), confirmar os seletores reais contra o DOM/bundle da versão instalada e
+fechar com verificação VISUAL do usuário.
+
+Arquivos alterados: src/motor_expansao/dashboard/pages.py, tests/integration/test_streamlit_app.py.
+
+Validações (re-executadas pelo QA): suíte alvo `183 passed`; full SERIAL `696 passed, 1 skipped, 3 failed`
+= baseline exato (3 falhas pré-existentes; `-n auto` reproduz INTERNALERROR execnet×Python 3.14 → serial).
+ruff "All checks passed"; mypy Success; import ok.
+
+Guardrails: Bloco 5 byte-idêntico (`render_tab_selector` ausente do diff); READ-ONLY M1 (só CSS + 2 asserts);
+paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).

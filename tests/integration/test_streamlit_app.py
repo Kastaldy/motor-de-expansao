@@ -4480,6 +4480,8 @@ def test_inject_styles_cobre_componentes_baseweb():
     assert 'data-baseweb="select"' in css
     assert ('aria-checked="true"' in css) or ('aria-selected="true"' in css)
     assert "#19B7FF" in css  # aba ativa ciano sólido (BLK-UI-04)
+    assert "stBaseButton-segmented_controlActive" in css  # seletor real Streamlit 1.58 (BLK-UI-05)
+    assert "stBaseButton-segmented_control" in css  # seletor inativo real Streamlit 1.58 (BLK-UI-05)
 
 
 # ── BLK-MAP-01: filtro individual de redes ───────────────────────────────────

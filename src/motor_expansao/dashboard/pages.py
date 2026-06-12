@@ -304,15 +304,16 @@ def inject_styles() -> None:
             div[data-testid="stSegmentedControl"],
             div[data-testid="stSegmentedControl"] > div {{
                 display: flex;
-                gap: 8px;
+                gap: 8px !important;
             }}
             [data-testid="stSegmentedControl"] button,
+            [data-testid="stBaseButton-segmented_control"],
             div[role="radiogroup"] [data-baseweb="button"],
             [data-baseweb="button-group"] button {{
-                background: rgba(30, 38, 65, 0.88);
-                color: {COLORS["muted"]};
-                border: 1px solid rgba(25, 183, 255, 0.30);
-                border-radius: 10px;
+                background: rgba(30, 38, 65, 0.88) !important;
+                color: {COLORS["muted"]} !important;
+                border: 1px solid rgba(25, 183, 255, 0.30) !important;
+                border-radius: 10px !important;
                 font-size: 1rem;
                 font-weight: 600;
                 padding: 0.5rem 1.15rem;
@@ -324,12 +325,13 @@ def inject_styles() -> None:
             }}
             [data-testid="stSegmentedControl"] button[aria-checked="true"],
             [data-testid="stSegmentedControl"] button[aria-selected="true"],
-            [data-baseweb="button-group"] button[aria-checked="true"] {{
-                background: #19B7FF;
-                color: #0A0C18;
-                border-color: rgba(25, 183, 255, 0.9);
-                box-shadow: 0 0 8px rgba(25, 183, 255, 0.35);
-                font-weight: 700;
+            [data-baseweb="button-group"] button[aria-checked="true"],
+            [data-testid="stBaseButton-segmented_controlActive"] {{
+                background: #19B7FF !important;
+                color: #0A0C18 !important;
+                border-color: #19B7FF !important;
+                box-shadow: 0 0 8px rgba(25, 183, 255, 0.35) !important;
+                font-weight: 700 !important;
             }}
             .stCaption {{
                 color: {COLORS["muted"]};

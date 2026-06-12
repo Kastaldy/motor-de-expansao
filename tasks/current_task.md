@@ -2,38 +2,46 @@
 
 ## Bloco atual
 
-ID: BLK-UI-04
-Nome: Destaque do seletor de telas (aba ativa em ciano sólido, mais espaço, botões distintos dos cartões)
-Status: aprovado
-Tipo: feature (UX/UI — CSS)
+ID: BLK-UI-05
+Nome: Corrigir CSS do seletor de telas (seletores reais do st.segmented_control + !important)
+Status: aprovado (QA 2026-06-12; pendente apenas confirmação VISUAL do usuário no navegador)
+Tipo: bug (UX/UI — CSS não aplicava)
 Criticidade: média
-Esteira: Block Orchestrator → Planner → Builder → QA
-Skill atual: QA (concluído)
-Próxima Skill: Fechamento manual (merge da branch ciclo/BLK-UI-04)
+Esteira: Block Orchestrator → Planner → Builder → QA (concluída)
+Skill atual: QA (concluído — APROVADO)
+Próxima Skill: Fechamento manual + confirmação visual do usuário
 
 ## Objetivo
-Refinar SÓ o seletor de telas (`st.segmented_control` das 4 abas) via CSS em `inject_styles()`,
-READ-ONLY M1 e sem tocar a lógica de render lazy (Bloco 5):
-(1) aba ATIVA com cor bem destacada das demais;
-(2) maior espaçamento entre os botões;
-(3) fundo dos botões distinto dos cartões de valores ao redor (hoje quase idênticos, então camuflam).
+Fazer o destaque do seletor de telas (BLK-UI-04) realmente RENDERIZAR: a aba ativa não ficava
+ciano sólido e o gap não aparecia, porque o CSS usava seletores que NÃO casam o DOM real do
+`st.segmented_control` no Streamlit 1.58. READ-ONLY M1; só CSS em `inject_styles()`; Bloco 5 intocado.
 
-## Observações do usuário (origem, 2026-06-12)
-- A tela cujo botão está em exibição deve ficar com cor destacada em relação às outras.
-- O distanciamento entre os botões deve ser um pouco maior.
-- Todos os botões devem ter cor que os destaque dos cartões de valores ao redor (ficam camuflados).
+## Diagnóstico (confirmado contra o frontend instalado do Streamlit 1.58.0)
+- O estado ATIVO do `st.segmented_control` é marcado pelo testid `stBaseButton-segmented_controlActive`
+  (NÃO por `aria-checked`/`aria-selected`). Confirmado via grep no bundle JS do Streamlit
+  (`segmented_control` e `segmented_controlActive` presentes).
+- O botão INATIVO é `stBaseButton-segmented_control`.
+- A regra ATIVA atual (pages.py:325-333) usa `button[aria-checked="true"]`/`[aria-selected="true"]` →
+  nunca casa → aba ativa não vira ciano sólido.
+- A regra BASE atual (pages.py:309-319, `[data-testid="stSegmentedControl"] button`) CASA (por isso os
+  botões já têm border-radius/borda), mas o gap (304-308) e o fundo distinto podem ser sobrepostos pelo
+  CSS emotion do Streamlit (especificidade alta) → faltam `!important`.
 
-## Decisão de produto capturada (Felipe/Vini, 2026-06-12)
-- Aba ATIVA = **ciano sólido preenchido** (fundo ciano cheio `brand_alt`/#19B7FF, texto escuro, bold)
-  — alto contraste. As 3 mudanças serão aplicadas; esta fixa o estilo da ativa.
+## Correção (seletores reais + !important)
+- Aba ATIVA: adicionar regra `[data-testid="stBaseButton-segmented_controlActive"]` com
+  `background:#19B7FF !important; color:#0A0C18 !important; border-color:#19B7FF !important;
+  font-weight:700 !important; box-shadow:0 0 8px rgba(25,183,255,0.35) !important;`
+- Botões INATIVOS: adicionar/garantir `[data-testid="stBaseButton-segmented_control"]` com
+  `background:rgba(30,38,65,0.88) !important; border:1px solid rgba(25,183,255,0.30) !important;
+  color:<muted> !important; border-radius:10px !important;`
+- GAP: `[data-testid="stSegmentedControl"] { gap:8px !important; }` (manter display:flex).
+- MANTER os seletores `aria-checked`/`stSegmentedControl` já presentes (o teste
+  `test_inject_styles_cobre_componentes_baseweb` os verifica) — só ADICIONAR os corretos, não remover.
 
-## Diagnóstico (código real, inject_styles em pages.py)
-- Cartões de valores: `stMetric`/`.section-card`/`.model-card` usam
-  `background: linear-gradient(180deg, rgba(18,23,42,0.96), rgba(14,19,36,0.96))`.
-- Botões INATIVOS do seletor (pages.py:307): `background: rgba(18,23,42,0.92)` — quase IGUAL aos cartões
-  → causa da camuflagem. Trocar por um slate mais claro/distinto + borda visível.
-- Botão ATIVO (pages.py:320-328): hoje `rgba(25,183,255,0.22)` (tom fraco) → trocar por ciano SÓLIDO.
-- Espaçamento: adicionar `gap` ao container do `stSegmentedControl` (Planner confirma o seletor correto).
+## Limite de verificação (importante)
+- O `pytest` NÃO detecta se o CSS RENDERIZA no navegador (o teste só checa a string no CSS — passou no
+  BLK-UI-04 mesmo sem aplicar). Adicionar teste de REGRESSÃO asserindo que o CSS contém
+  `stBaseButton-segmented_controlActive`. A confirmação VISUAL final é do usuário (navegador).
 
 ## Tiering de modelo (Passo 4) — Média
 - Block Orchestrator: sonnet
@@ -42,16 +50,16 @@ READ-ONLY M1 e sem tocar a lógica de render lazy (Bloco 5):
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-UI-04 (a partir de ciclo/BLK-UI-03 @ HEAD; UI-01..04 ainda não mergeados — stack)
+ciclo/BLK-UI-05 (a partir de ciclo/BLK-UI-04 @ HEAD; UI-01..05 ainda não mergeados — stack)
 
 ## Escopo permitido
-- src/motor_expansao/dashboard/pages.py — SÓ o bloco CSS do `stSegmentedControl` em `inject_styles()` (~301-328)
-- tests/integration/test_streamlit_app.py — se necessário (ex.: test_inject_styles_cobre_componentes_baseweb)
+- src/motor_expansao/dashboard/pages.py — SÓ o bloco CSS do `stSegmentedControl` em `inject_styles()` (~304-333)
+- tests/integration/test_streamlit_app.py — assert de regressão dos seletores reais
 
 ## Fora de escopo (invioláveis)
 - recalcular qualquer score ou artefato M1
-- tocar `render_tab_selector` (~426-450) ou a lógica de render lazy de abas (Bloco 5) — SÓ CSS
-- alterar outros componentes visuais além do bloco CSS do seletor
+- tocar `render_tab_selector` ou a lógica de render lazy (Bloco 5) — SÓ CSS
+- alterar outros componentes CSS além do bloco do seletor
 - recolocar dependência de API ao vivo
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
