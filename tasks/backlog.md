@@ -289,34 +289,8 @@ bot; quem mantém entende env/erros/deploy. Linka (não duplica) os docs existen
 
 ---
 
-### BLK-FIX-12 — Logos das concorrentes não aparecem no PDF do Relatório (API/bot; verificar dashboard)
+- BLK-FIX-12 (concluído 2026-06-12) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Média (qualidade do entregável ao cliente; não toca M1) |
-| **Prioridade** | Média |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Status** | Pendente |
-| **Origem** | bug reportado por Felipe 2026-06-12 (PDF do bot/API) |
-
-**Sintoma:** o PDF do Relatório Pontual Censitário (página **Concorrentes**) sai com os pins **sem a logo
-da rede**, caindo no fallback de sigla/texto. Reportado no PDF gerado pelo **bot e pela API**.
-
-**Diagnóstico inicial (do deploy 2026-06-12 — provável raiz, 3 causas somadas):** a logo vem de
-`competitors_logos_dir` (arquivos `logo_<rede>.png`, mapeados em `dashboard/competitors.py`; render via
-`_render_pin_tile`). (1) **`data/Logos/` NÃO existe no VPS** (verificado AUSENTE no deploy); (2) o serviço
-`api` do `docker-compose.prod.yml` **não** define `API_COMPETITORS_LOGOS_DIR` nem monta o volume de logos
-(define só censo/ibge/staging/ultra); (3) como a imagem instala o pacote **não-editável**, o default
-`settings.competitors_logos_dir` resolve para `site-packages/data/Logos` (mesma classe do bug de data dirs
-corrigido no #9). Soma → nenhum diretório de logos válido.
-
-**Escopo provável:** (a) levar os assets `logo_<rede>.png` ao VPS (conferir se o dashboard já os tem no
-volume `/opt/motor-expansao/concorrentes` montado no `streamlit`); (b) montar `:ro` + setar
-`API_COMPETITORS_LOGOS_DIR=/app/data/Logos` (ou caminho escolhido) no serviço `api`; (c) confirmar se o PDF
-do **dashboard** também sofre (mesma `censo_report`/`competitors`) e padronizar o caminho.
-
-**Critérios:** PDF (API e dashboard) mostra a logo correta por rede; sigla só quando a rede não tem asset.
-READ-ONLY M1.
 
 ---
 

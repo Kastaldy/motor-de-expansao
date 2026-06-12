@@ -79,11 +79,13 @@ services:
       API_IBGE_DIR: "/app/data/ibge"
       API_STAGING_DIR: "/app/data/staging"
       API_ULTRA_DIR: "/app/data/ultra"
+      API_COMPETITORS_LOGOS_DIR: "/app/concorrentes"
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro   # censo geo (obrigatorio)
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal (obrigatorio)
       - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra (opcional)
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF (opcional)
+      - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)
     networks:
       - app_net
     security_opt:
