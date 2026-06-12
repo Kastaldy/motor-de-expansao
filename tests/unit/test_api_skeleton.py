@@ -73,3 +73,45 @@ def test_health_endpoint() -> None:
 
 def test_version_carimbo() -> None:
     assert __version__ == "api-geoespacial/v1"
+
+
+# --- handler catch-all de 500 (contrato §9): {detail, codigo:"erro_interno"} ---
+
+
+def test_500_inesperado_usa_corpo_padrao_e_loga_traceback() -> None:
+    """Qualquer excecao nao tratada vira {detail, codigo:"erro_interno"} (nunca o
+    corpo cru do FastAPI) E gera um log de ERROR com o traceback no servidor."""
+    import logging
+
+    pytest.importorskip("httpx")
+    from fastapi.testclient import TestClient
+
+    from motor_expansao.api.main import create_app
+
+    app = create_app()
+
+    @app.get("/api/v1/_boom", include_in_schema=False)
+    async def _boom() -> dict:
+        raise RuntimeError("falha inesperada interna")
+
+    # Captura direta no logger da API (propagate=False quebraria o caplog do pytest).
+    registros: list[logging.LogRecord] = []
+
+    class _Captura(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            registros.append(record)
+
+    api_logger = logging.getLogger("motor_expansao.api")
+    captura = _Captura()
+    api_logger.addHandler(captura)
+    try:
+        # raise_server_exceptions=False: queremos a RESPOSTA 500, nao a excecao propagada.
+        client = TestClient(app, raise_server_exceptions=False)
+        resp = client.get("/api/v1/_boom")
+    finally:
+        api_logger.removeHandler(captura)
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "Erro interno ao gerar o estudo", "codigo": "erro_interno"}
+    # Ha um ERROR com traceback (exc_info) do nosso handler.
+    assert any(r.levelno == logging.ERROR and r.exc_info for r in registros)

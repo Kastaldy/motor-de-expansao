@@ -99,6 +99,13 @@ scraping = [
 basemap = [
     "contextily>=1.5.0",
 ]
+# Geocoder primario de endereco+CEP via Google Maps (Selenium) — api/maps_geocoder.py.
+# Opcional por design: sem ele, geo.py cai no Nominatim (geopy ja esta na base).
+# Import tardio + fallback gracioso; requer Google Chrome instalado no host.
+geocoder = [
+    "selenium>=4.20.0",
+    "webdriver-manager>=4.0.0",
+]
 
 [tool.ruff]
 line-length = 100
