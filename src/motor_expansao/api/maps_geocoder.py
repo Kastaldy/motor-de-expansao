@@ -120,7 +120,7 @@ class MapsGeocoder:
         self.driver = webdriver.Chrome(service=service, options=options)
         self.driver.set_page_load_timeout(timeout + 10)
 
-    def __enter__(self) -> "MapsGeocoder":
+    def __enter__(self) -> MapsGeocoder:
         return self
 
     def __exit__(self, *exc) -> None:
@@ -149,7 +149,7 @@ class MapsGeocoder:
         except Exception:
             pass
         lat, lng = self._extract(self.driver.current_url)
-        if lat is None or not self._within_bounds(lat, lng):
+        if lat is None or lng is None or not self._within_bounds(lat, lng):
             return None, None
         return lat, lng
 

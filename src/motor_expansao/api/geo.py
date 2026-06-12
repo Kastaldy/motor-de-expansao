@@ -134,7 +134,7 @@ def endereco_para_link_maps(endereco: str, pais: str = "Brasil") -> str:
     partes = []
     for byte in texto.encode("utf-8"):
         c = chr(byte)
-        partes.append(c if c in seguros else "%{:02X}".format(byte))
+        partes.append(c if c in seguros else f"%{byte:02X}")
 
     return "https://www.google.com/maps/search/?api=1&query=" + "".join(partes)
 

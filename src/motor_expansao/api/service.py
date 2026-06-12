@@ -15,7 +15,7 @@ LAZY, dentro de `analisar_ponto`, para nao pesar a subida do app.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 
@@ -199,7 +199,7 @@ def analisar_ponto(lat: float, lng: float, consumidor: str | None, settings: Set
         "n_ultra": result.get("n_ultra", 0),
         "versao_contrato": __version__,
         "versao_score": _VERSAO_SCORE,
-        "gerado_em": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "gerado_em": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "consumidor": consumidor,
     }
 

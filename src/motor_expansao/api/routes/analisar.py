@@ -6,6 +6,8 @@ responde ``501`` temporariamente. Auth por token->consumidor em todas as rotas.
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -18,7 +20,7 @@ from motor_expansao.api.settings import Settings, get_settings
 
 router = APIRouter(tags=["analise"])
 
-_ERR = {
+_ERR: dict[int | str, dict[str, Any]] = {
     400: {"model": ErrorResponse},
     401: {"model": ErrorResponse},
     404: {"model": ErrorResponse},

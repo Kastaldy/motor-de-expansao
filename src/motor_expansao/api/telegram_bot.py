@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import socket
 from collections.abc import Callable
+from typing import Any
 
 import requests
 import urllib3.util.connection as _urllib3_cn
@@ -271,7 +272,7 @@ def processar(
 # --- loop de long-polling ---------------------------------------------------
 
 
-def _tg(token: str, method: str, **params: object) -> dict:
+def _tg(token: str, method: str, **params: Any) -> dict:
     resp = _session.post(_TELEGRAM.format(token=token, method=method), json=params, timeout=70)
     resp.raise_for_status()
     return resp.json()
