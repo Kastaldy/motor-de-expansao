@@ -57,10 +57,11 @@ services:
   # pela rede interna (http://api:8077). BLK-API-06. Requer dados em
   # /opt/motor-expansao/data/{outputs,staging,ibge,ultra} (ver docs/deploy_api_bot.md).
   api:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    image: motor-expansao-api:local
+    # Modo PULL por digest (igual ao Streamlit): o CI (job publish-api) publica
+    # `motor-expansao-api` no GHCR; a VPS pina por digest no .env. Fail-closed.
+    #   API_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-api@sha256:<digest>
+    # Build local de dev/sanity: `docker build -f Dockerfile.api -t motor-expansao-api:local .`
+    image: ${API_IMAGE:?defina API_IMAGE com o digest imutavel ghcr.io/kastaldy/motor-de-expansao/motor-expansao-api@sha256:<digest> — ver docs/deploy_api_bot.md}
     container_name: motor_expansao_api
     restart: unless-stopped
     expose:
@@ -93,10 +94,8 @@ services:
   # Telegram por conexao de SAIDA (long-polling) -> nao precisa de porta publica e
   # roda 24/7 na VPS independente do PC. BLK-API-07.
   telegram-bot:
-    build:
-      context: .
-      dockerfile: Dockerfile.api
-    image: motor-expansao-api:local
+    # Mesma imagem da API (pull por digest via API_IMAGE no .env).
+    image: ${API_IMAGE:?defina API_IMAGE com o digest imutavel da imagem motor-expansao-api — ver docs/deploy_api_bot.md}
     container_name: motor_expansao_telegram_bot
     restart: unless-stopped
     depends_on:
