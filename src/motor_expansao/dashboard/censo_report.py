@@ -237,12 +237,34 @@ def _draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
         pass
 
 
-def _cover_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None]) -> None:
+def _parece_coordenada(texto: str) -> bool:
+    """True se o texto for so um par "lat, lng" (entao NAO serve como nome do local)."""
+    partes = str(texto or "").replace(" ", "").split(",")
+    if len(partes) != 2:
+        return False
+    try:
+        float(partes[0])
+        float(partes[1])
+        return True
+    except ValueError:
+        return False
+
+
+def _cover_page(
+    pdf: _UltraPDF,
+    result: dict[str, Any],
+    assets: dict[str, bytes | None],
+    *,
+    rotulo: str | None = None,
+) -> None:
     """(a) Capa — fundo de marca 16:9 (asset ou turquesa solido) + titulo na zona limpa.
 
     O asset de capa ja embute o logo "GRUPO ULTRA" e a faixa de marcas; o texto do relatorio
     vai na area turquesa limpa do quadrante inferior-direito para NAO colidir com o branding.
     Sem fundo (deploy/CI limpo) -> turquesa solido e o texto centralizado e legivel mesmo assim.
+
+    `rotulo`: nome do endereco/estabelecimento (vindo do link/endereco resolvido). Quando
+    presente e nao for so uma coordenada, vira o subtitulo no lugar de "Coordenada: lat,lng".
     """
     pdf.add_page()
     has_bg = assets.get("capa") is not None
@@ -272,9 +294,14 @@ def _cover_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes 
 
     pdf.set_font("Helvetica", "", 13)
     pdf.set_xy(block_x, title_y + 70)
-    subt = f"Coordenada: {coord}"
-    if local:
-        subt = f"{subt}   |   {local}"
+    nome = str(rotulo or "").strip()
+    if nome and not _parece_coordenada(nome):
+        # Nome do endereco/estabelecimento (truncado p/ caber na zona limpa da capa).
+        subt = nome if len(nome) <= 72 else nome[:69] + "..."
+    else:
+        subt = f"Coordenada: {coord}"
+        if local:
+            subt = f"{subt}   |   {local}"
     pdf.cell(block_w, 18, _ascii(subt), align=align)
 
     pdf.set_xy(block_x, title_y + 92)
@@ -514,6 +541,7 @@ def gerar_pdf_relatorio_pontual_censitario(
     *,
     residual: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
+    rotulo: str | None = None,
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
@@ -531,7 +559,7 @@ def gerar_pdf_relatorio_pontual_censitario(
     layers = dict(_normalize_mapas_by_key(mapas))
 
     pdf = _UltraPDF()
-    _cover_page(pdf, result, assets)
+    _cover_page(pdf, result, assets, rotulo=rotulo)
     _map_page(pdf, layers.get("densidade"), title="Populacao - Densidade", assets=assets)
     _map_page(pdf, layers.get("renda"), title="Renda per capita", assets=assets)
     _map_page(pdf, layers.get("score"), title="Score censitario", assets=assets)
