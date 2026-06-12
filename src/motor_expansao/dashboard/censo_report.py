@@ -536,14 +536,6 @@ def _credit_page(pdf: _UltraPDF, assets: dict[str, bytes | None]) -> None:
     pdf.set_fill_color(*ULTRA_TURQUESA)
     pdf.rect(0, 0, _PAGE_W, _PAGE_H, style="F")
 
-    # D5=C (BLK-EST-02): logo Ultra centralizado no topo, fallback gracioso se ausente.
-    logo = assets.get("logo")
-    if logo is not None:
-        try:
-            pdf.image(BytesIO(logo), x=(_PAGE_W - 160) / 2.0, y=90, w=160)
-        except Exception:
-            pass
-
     # D1=B (BLK-EST-02): Realizacao 34/18/12 pt.
     pdf.set_text_color(*_BRANCO)
     pdf.set_font("Helvetica", "B", 34)

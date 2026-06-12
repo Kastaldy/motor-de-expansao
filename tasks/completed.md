@@ -4034,3 +4034,35 @@ inalterados); template/mapas/raio intocados; paths pré-sujos não tocados. Hous
 
 Nota: a marca é desenhada por página via `pdf.page = n` — para o usuário ver a versão nova é preciso um
 servidor Streamlit reiniciado (o anterior precedia o FU1).
+
+---
+
+## BLK-EST-02-FU1 (follow-up do BLK-EST-02) — Remover logo Ultra atrás do texto "Realizacao"
+
+Data: 2026-06-12
+Tipo: bug (UX/UI — PDF) | Criticidade: Baixa (remoção de bloco visual isolado; READ-ONLY M1)
+Esteira: Block Orchestrator → Builder (Baixa, sem QA; orquestrador fez render + suíte como gate)
+
+Origem: na página 7 (Realização/Crédito) do PDF, o logo Ultra (D5=C do BLK-EST-02, desenhado no topo a
+y=90/w=160) colidia com o título "Realizacao" (y=180) — o texto caía por cima do logo. Felipe/Vini pediu
+para remover o logo dessa página.
+
+Resumo (só `censo_report.py`; READ-ONLY M1): removido o bloco D5=C do logo em `_credit_page`
+(`logo = assets.get("logo")` + `if logo is not None: try: pdf.image(...) except: pass`). Mantidos o fundo
+turquesa, o título "Realizacao" e o crédito. O asset `logo` continua sendo carregado por
+`_load_branding_assets` (só o DESENHO na página de crédito foi removido). Nenhum import alterado.
+
+Verificação de RENDER (orquestrador): renderizou a página 7 (pypdfium2) → o logo sumiu; "Realizacao" +
+crédito ficam limpos sobre o turquesa, sem colisão.
+
+Arquivos alterados: src/motor_expansao/dashboard/censo_report.py.
+
+Validações: suíte alvo `29 passed`; full SERIAL `696 passed, 1 skipped, 3 failed` = baseline exato (3 falhas
+pré-existentes). ruff "All checks passed"; mypy Success; import ok. Nenhum teste dependia do logo na página
+de crédito (verificado).
+
+Guardrails: READ-ONLY M1; anti-PII §4 (texto/`solicitante`/marca d'água inalterados); só `_credit_page`
+tocado; paths pré-sujos não tocados. Housekeeping: N/A (ad-hoc).
+
+Nota: commitado na MESMA branch `ciclo/BLK-EST-01-FU2` (o PR em montagem) e re-empurrado, para entrar no
+mesmo PR.
