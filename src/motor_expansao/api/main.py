@@ -45,7 +45,9 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    app.add_exception_handler(APIError, api_error_handler)
+    # Starlette tipa o handler como Callable[[Request, Exception], ...]; o nosso e
+    # preciso (APIError). Limitacao conhecida do stub -> ignore localizado.
+    app.add_exception_handler(APIError, api_error_handler)  # type: ignore[arg-type]
 
     @app.get("/health", tags=["infra"], summary="Liveness do servico")
     async def health() -> dict[str, str]:

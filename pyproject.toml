@@ -108,6 +108,11 @@ target-version = "py311"
 select = ["E", "F", "I", "UP", "B"]
 ignore = ["E501"]
 
+[tool.ruff.lint.per-file-ignores]
+# B008: `Depends(...)`/`Query(...)` em defaults de argumento e o idioma padrao do
+# FastAPI (injecao de dependencia), nao um bug. Escopado so a camada da API.
+"src/motor_expansao/api/**" = ["B008"]
+
 [tool.ruff.format]
 quote-style = "double"
 
