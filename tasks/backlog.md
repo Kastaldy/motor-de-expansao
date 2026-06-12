@@ -228,54 +228,14 @@ por Felipe; READ-ONLY M1.
 - BLK-API-01 (concluído 2026-06-10) — ver tasks/completed.md
 
 
-### BLK-API-02 — Esqueleto do app + /health + settings + auth (G2 base)
+- BLK-API-02 (concluído 2026-06-12) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Média (stand-up de pacote novo; sem lógica de análise; READ-ONLY M1) |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Status** | Pendente (depende de BLK-API-01) |
-| **ClickUp** | G2 (subtarefa de `86e1rtfcy`) |
 
-**Escopo:** criar `src/motor_expansao/api/` real (`__init__.py`, `main.py`, `settings.py`, `auth.py`),
-app `FastAPI(/api/v1)` + CORS + `GET /health` ({status, environment}), `pydantic-settings`, e
-autenticação por **token→consumidor** (Decisão 2: lista estática, rastreio do solicitante). Sem rota de
-análise. Deps: subset MVP do extra `[api]` (`fastapi`/`uvicorn[standard]`/`pydantic`/`pydantic-settings`).
-**Aproveitar** o esqueleto do scaffold legado `fora_primeira_fase/api_postgis/main.py`; **descartar**
-Sentry/structlog/routers PostGIS/`on_event("startup")`. **Critérios:** app sobe; `/health` 200; token
-inválido → 401; suíte+ruff+mypy verdes; READ-ONLY M1.
+- BLK-API-03 (concluído 2026-06-12) — ver tasks/completed.md
 
-### BLK-API-03 — POST /analisar JSON (G2)
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Média (importa `censo_*`, não edita; READ-ONLY M1) |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Status** | Pendente (depende de BLK-API-02) |
-| **ClickUp** | G2 |
+- BLK-API-04 (concluído 2026-06-12) — ver tasks/completed.md
 
-**Escopo:** `schemas/` (`AnalisarRequest`/`AnalisarResponseJSON`), `routes/analisar.py`, `coord.py`
-(parser de link Google Maps + validação de bounding box do Brasil — Decisão 4, utilitário **puro**),
-`service.py` (resolução coord→partição → `read_censo_geo_partition` → `analisar_ponto_censitario_setores`),
-KPIs do `result` + **carimbo de versão** (Decisão 6: `versao_contrato`/`versao_score`/`gerado_em`/`consumidor`).
-Raio **fixo 1.5 km** (Decisão 5). **Erros:** 400/401/403/404/422/500 do contrato (§9). **Critérios:** ponto
-válido retorna KPIs; `{lat,lng}` e `maps_url` aceitos; base ausente → 404 com mensagem espelhada do
-dashboard; suíte+ruff+mypy verdes; `censo_*` intocado; READ-ONLY M1.
-
-### BLK-API-04 — Saída PDF (G2/G3)
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Média (negociação de conteúdo; gera o PDF de 7 páginas; READ-ONLY M1) |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Status** | Pendente (depende de BLK-API-03) |
-| **ClickUp** | G2/G3 |
-
-**Escopo:** negociação `?formato=pdf` / `Accept: application/pdf` (Decisão 1 = (c)) →
-`render_mapas_censitarios_combinados` + `gerar_pdf_relatorio_pontual_censitario` (`application/pdf`).
-**Fallback** `basemap=False` quando offline (DEC-004). Rodapé com **carimbo de versão** (Decisão 6). Sem
-PII. **Critérios:** PDF binário retornado com `Content-Type: application/pdf`; offline cai em fallback
-gracioso; JSON segue default; suíte+ruff+mypy verdes; `censo_*` intocado; READ-ONLY M1.
 
 ### BLK-API-05 — Endpoints estendidos M1/mercado (CONDICIONAL — roadmap pós-MVP)
 
@@ -289,31 +249,11 @@ gracioso; JSON segue default; suíte+ruff+mypy verdes; `censo_*` intocado; READ-
 de mercado/residual), **READ-ONLY** (apenas leitura de artefatos; nada recalcula score/carteira/plano).
 Permanece como roadmap até nova decisão de Felipe.
 
-### BLK-API-06 — Integração G3 (Felipe+Juan)
+- BLK-API-06 (concluído 2026-06-12) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Média-Alta (integração fim-a-fim + deploy doc) |
-| **Esteira** | Block Orchestrator → Planner → [gate humano de deploy] → Builder → QA |
-| **Status** | Pendente (depende de BLK-API-04) |
-| **ClickUp** | G3 |
 
-**Escopo:** testes de contrato fim-a-fim (`/health` + `/analisar` JSON/PDF), observabilidade mínima
-(logs do solicitante p/ LGPD), documentação de deploy da API (extra `[api]` fora do deploy base do
-Streamlit; §6 deploy/VPS é humano). **Critérios:** fluxo ponta-a-ponta validado; doc de deploy; READ-ONLY M1.
+- BLK-API-07 (concluído 2026-06-12) — ver tasks/completed.md
 
-### BLK-API-07 — G4 Telegram/WhatsApp (Juan)
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Média (clientes de bot; consome a API, não a altera) |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Status** | Pendente (depende de BLK-API-06) |
-| **ClickUp** | G4 |
-
-**Escopo:** clientes de bot (Telegram/WhatsApp) consumindo `POST /analisar` (recebem link/coordenada do
-usuário, devolvem KPIs e/ou PDF). Usa token→consumidor por bot (Decisão 2). **Critérios:** bot envia
-ponto e recebe estudo; rastreio do consumidor; sem alteração do motor/M1.
 
 ---
 
