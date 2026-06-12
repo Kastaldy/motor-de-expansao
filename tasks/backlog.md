@@ -192,31 +192,8 @@ saneamento da fonte de concorrentes consumida pelo relatório.
 
 ---
 
-### BLK-FIX-10 — Diminuir tamanho da pré-visualização dos estudos
+- BLK-FIX-10 (concluído 2026-06-12) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Baixa** (layout/UX; READ-ONLY sobre M1) |
-| **Prioridade** | **Média** |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Status** | Pendente |
-| **Responsável sugerido** | Vini |
-| **ClickUp** | `86e1rteea` — https://app.clickup.com/t/86e1rteea |
-
-**Contexto / hipótese:** a pré-visualização do estudo no dashboard renderiza grande demais. Hipótese:
-`st.image`/container de preview sem largura controlada em `pages.py`.
-
-**Objetivo:** preview em tamanho adequado (largura/altura controladas), sem afetar o PDF exportado.
-
-**Escopo permitido:** layout do preview em `pages.py` + teste de smoke.
-
-**Fora de escopo:** alterar o PDF final; score/artefatos M1.
-
-**Critérios de aceite:** preview menor/legível; export inalterado; suíte verde; READ-ONLY M1.
-
----
-
-- BLK-EST-01 (concluído 2026-06-11) — ver tasks/completed.md
 
 ---
 

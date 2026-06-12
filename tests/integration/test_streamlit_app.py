@@ -339,14 +339,14 @@ def test_build_map_scope_caption_reflete_todos_os_hexes_da_uf():
 
 
 def test_map_tooltips_tem_css_de_tamanho():
-    # BLK-UI-02 (#2): ambos os tooltips ganham fontSize/padding/maxWidth/lineHeight
-    # no style para reduzir o recorte na borda inferior do mapa.
+    # BLK-UI-03 (D2): meio-termo entre o 11px do BLK-UI-02 e o default deck.gl;
+    # ambos os tooltips compartilham fontSize/padding/maxWidth/lineHeight no style.
     for tooltip in (_shared_map_tooltip(), _hybrid_compact_tooltip()):
         style = tooltip["style"]
-        assert style["fontSize"] == "11px"
-        assert style["padding"] == "6px 8px"
-        assert style["maxWidth"] == "260px"
-        assert style["lineHeight"] == "1.25"
+        assert style["fontSize"] == "13px"
+        assert style["padding"] == "8px 10px"
+        assert style["maxWidth"] == "300px"
+        assert style["lineHeight"] == "1.35"
 
 
 def test_censo_score_to_color_delega_para_score_band_to_color():

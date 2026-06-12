@@ -1070,10 +1070,10 @@ def _shared_map_tooltip() -> dict[str, object]:
             "border": f"1px solid {COLORS['border']}",
             "borderRadius": "10px",
             "fontFamily": "Bahnschrift, Aptos, Segoe UI, sans-serif",
-            "fontSize": "11px",
-            "padding": "6px 8px",
-            "maxWidth": "260px",
-            "lineHeight": "1.25",
+            "fontSize": "13px",
+            "padding": "8px 10px",
+            "maxWidth": "300px",
+            "lineHeight": "1.35",
         },
     }
 
@@ -1105,10 +1105,10 @@ def _hybrid_compact_tooltip() -> dict[str, object]:
             "border": f"1px solid {COLORS['border']}",
             "borderRadius": "10px",
             "fontFamily": "Bahnschrift, Aptos, Segoe UI, sans-serif",
-            "fontSize": "11px",
-            "padding": "6px 8px",
-            "maxWidth": "260px",
-            "lineHeight": "1.25",
+            "fontSize": "13px",
+            "padding": "8px 10px",
+            "maxWidth": "300px",
+            "lineHeight": "1.35",
         },
     }
 

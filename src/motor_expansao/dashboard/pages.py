@@ -97,6 +97,9 @@ RESIDUAL_SORT_COLUMNS = [
     "rank_brasil",
 ]
 
+# BLK-FIX-10: preview menor que 100% da largura de conteudo
+_CENSUS_PREVIEW_WIDTH_PX = 720
+
 
 def _has_residual_metrics(df: pd.DataFrame) -> bool:
     return "oferta_efetiva_disponivel" in df.columns and df["oferta_efetiva_disponivel"].notna().any()
@@ -304,6 +307,10 @@ def inject_styles() -> None:
                 background: rgba(18, 23, 42, 0.92);
                 color: {COLORS["muted"]};
                 border: 1px solid {COLORS["border"]};
+                border-radius: 10px;
+                font-size: 1rem;
+                font-weight: 600;
+                padding: 0.5rem 1.15rem;
             }}
             [data-testid="stSegmentedControl"] button:hover,
             [data-baseweb="button-group"] button:hover {{
@@ -315,7 +322,9 @@ def inject_styles() -> None:
             [data-baseweb="button-group"] button[aria-checked="true"] {{
                 background: rgba(25, 183, 255, 0.22);
                 color: {COLORS["text"]};
-                border-color: {COLORS["brand_alt"]};
+                border-color: rgba(25, 183, 255, 0.9);
+                box-shadow: 0 0 8px rgba(25, 183, 255, 0.35);
+                font-weight: 700;
             }}
             .stCaption {{
                 color: {COLORS["muted"]};
@@ -523,10 +532,8 @@ def render_empty_state() -> None:
 def render_coord_search_sidebar() -> tuple[float, float] | None:
     """Render coordinate search widget in sidebar. Returns ``(lat, lng)`` or ``None``."""
     st.sidebar.markdown("---")
-    st.sidebar.info(
-        "**Busca por coordenada** — localize um hexagono pela coordenada. "
-        "Offline, sem API externa."
-    )
+    st.sidebar.markdown("### Busca por coordenada")
+    st.sidebar.caption("Localize um hexagono pela coordenada. Offline, sem API externa.")
     raw = st.sidebar.text_input(
         "Coordenada (lat, lng)",
         placeholder="-23.55, -46.63",
@@ -2596,22 +2603,22 @@ def render_relatorio_pontual_censitario(
     st.image(
         mapas["densidade"],
         caption="Densidade populacional (hab/km2) - faixas absolutas.",
-        width="stretch",
+        width=_CENSUS_PREVIEW_WIDTH_PX,
     )
     st.image(
         mapas["renda"],
         caption="Renda per capita (R$/pessoa) - faixas absolutas.",
-        width="stretch",
+        width=_CENSUS_PREVIEW_WIDTH_PX,
     )
     st.image(
         mapas["score"],
         caption="Score censitario (0-100) - faixas de cor com legenda.",
-        width="stretch",
+        width=_CENSUS_PREVIEW_WIDTH_PX,
     )
     st.image(
         mapas["concorrentes"],
         caption="Concorrentes e Ultra (pins) sobre o basemap de ruas, sem mapa de calor.",
-        width="stretch",
+        width=_CENSUS_PREVIEW_WIDTH_PX,
     )
 
     st.markdown("##### Setores intersectados")

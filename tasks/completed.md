@@ -3743,3 +3743,93 @@ no diff); Bloco 4 (carga lazy) e Bloco 5 (render lazy) preservados; sem dependê
 pré-sujos não tocados nem commitados.
 
 Housekeeping: N/A (tarefa ad-hoc; sem bloco BLK-UI-02 no backlog — helper de move NÃO executado).
+
+---
+
+### BLK-FIX-10 — Diminuir tamanho da pré-visualização dos estudos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (layout/UX; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rteea` — https://app.clickup.com/t/86e1rteea |
+
+**Contexto / hipótese:** a pré-visualização do estudo no dashboard renderiza grande demais. Hipótese:
+`st.image`/container de preview sem largura controlada em `pages.py`.
+
+**Objetivo:** preview em tamanho adequado (largura/altura controladas), sem afetar o PDF exportado.
+
+**Escopo permitido:** layout do preview em `pages.py` + teste de smoke.
+
+**Fora de escopo:** alterar o PDF final; score/artefatos M1.
+
+**Critérios de aceite:** preview menor/legível; export inalterado; suíte verde; READ-ONLY M1.
+
+---
+
+- BLK-EST-01 (concluído 2026-06-11) — ver tasks/completed.md
+
+---
+
+## BLK-UI-03 (follow-up ad-hoc do BLK-UI-02; FECHA BLK-FIX-10) — Reverter coord, tooltip meio-termo, preview menor, destaque do seletor de abas
+
+Data: 2026-06-12
+Tipo: feature (UX/UI) | Criticidade: Alta (toca o seletor de abas da produção/Bloco 5 — só CSS — e a
+navegação do dashboard; READ-ONLY M1)
+Esteira: Block Orchestrator → Planner (Opus) → [REVISÃO HUMANA do plano] → Builder → QA
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12.
+
+Origem: 4 observações de Felipe/Vini ao testar o BLK-UI-02 no dashboard. Tarefa ad-hoc empilhada sobre
+ciclo/BLK-UI-02. O item nº3 fecha o bloco real BLK-FIX-10 do backlog (movido via
+scripts/housekeeping_move_block.py — ver a entrada "### BLK-FIX-10" acima neste arquivo).
+
+Resumo (tudo READ-ONLY M1 — CSS/markdown/strings/largura de exibição; Bloco 5 e PDF intocados):
+1. **[D1] Reverter o campo de coordenadas do BLK-UI-02** — `render_coord_search_sidebar` voltou ao
+   `st.sidebar.markdown("### Busca por coordenada")` + `st.sidebar.caption("Localize um hexagono pela
+   coordenada. Offline, sem API externa.")` (texto byte-idêntico ao commit BLK-UI-01 `0862205`),
+   removendo a caixa `st.sidebar.info` que o usuário achou intrusiva. `text_input`/parse/retorno
+   `(lat,lng)|None` e a chamada `streamlit_app.py:470` preservados.
+2. **[D2] Tooltip do hexágono — meio-termo** — `style` dos dois tooltips (`_shared_map_tooltip` e
+   `_hybrid_compact_tooltip`) ajustado de 11px/6px8px/260px/1.25 (BLK-UI-02) para
+   `fontSize:13px`/`padding:8px 10px`/`maxWidth:300px`/`lineHeight:1.35` — meio-termo entre o default
+   deck.gl (~14px) e o 11px, mais legível sem voltar a cortar na borda. HTML/chaves pré-existentes
+   inalterados.
+3. **[D3 = BLK-FIX-10] Preview menor do Relatório Pontual** — constante `_CENSUS_PREVIEW_WIDTH_PX = 720`
+   em pages.py; as 4 `st.image` do preview do censitário trocaram `width="stretch"` por
+   `width=_CENSUS_PREVIEW_WIDTH_PX` (edição uma a uma — `replace_all` PROIBIDO pois há ~39 outras
+   ocorrências de `width="stretch"` no arquivo, todas preservadas). PDF exportado, `censo_report.py`,
+   `censo_map.py` e geração de mapas INTOCADOS — só a largura de exibição na tela diminuiu.
+4. **[D4] Destaque do seletor de abas (SÓ CSS)** — regras do `stSegmentedControl` em `inject_styles()`
+   reforçadas: botões com `font-size:1rem`/`font-weight:600`/`padding:0.5rem 1.15rem`/`border-radius:10px`;
+   aba ativa com `border-color: rgba(25,183,255,0.9)` + `box-shadow: 0 0 8px rgba(25,183,255,0.35)` +
+   `font-weight:700`. **`render_tab_selector` byte-idêntico** (Bloco 5 render lazy intocado — confirmado
+   por QA: não aparece no diff); `:hover` inalterado.
+
+Gate humano: D1..D4 aprovados por Felipe/usuário em 2026-06-12 (preview = 720px). Builder executou
+exatamente estas decisões.
+
+Nota de processo: o primeiro sub-agente de delimitação acumulou BO+Planner em tier sonnet; o orquestrador
+corrigiu registrando o snapshot de BO e re-rodando o Planner em **Opus** (snapshot `20260612-162000-planner.md`),
+que validou o plano e pegou o footgun do `replace_all` no item nº3. Há dois snapshots de BO
+(`125955` do agente + `161000` reconstruído pelo orquestrador) — redundância de auditoria inofensiva
+(append-only, não editados).
+
+Arquivos alterados: src/motor_expansao/dashboard/pages.py, src/motor_expansao/dashboard/components.py,
+tests/integration/test_streamlit_app.py.
+
+Validações (re-executadas pelo QA, evidência própria): suíte alvo `183 passed`; suíte full SERIAL
+`696 passed, 1 skipped, 3 failed` — as 3 falhas (`test_csvs_concorrentes_legiveis` x2 +
+`test_parquet_final_respeita_guardrails_do_piloto`) são as MESMAS PRÉ-EXISTENTES, comprovadas via
+`git stash` em HEAD limpo; ZERO novas falhas. `-n auto` reproduz INTERNALERROR (execnet × Python 3.14)
+→ rodado serial, documentado, sem mascarar. ruff "All checks passed"; mypy sem issues; import ok.
+
+Guardrails verificados: Bloco 5 (`render_tab_selector` byte-idêntico); PDF/geração de mapas do Relatório
+Pontual intocados (item nº3 só preview na tela; 39 `width="stretch"` preservadas); READ-ONLY M1 (nenhum
+score/peso/fórmula/artefato no diff); Bloco 4/6 intocados; sem dependência de API ao vivo; paths pré-sujos
+não tocados nem commitados.
+
+Housekeeping: BLK-FIX-10 movido via helper (`--check` OK; teste do helper verde, 10 passed). Itens
+D1/D2/D4 são follow-up ad-hoc (sem bloco próprio no backlog) — resumidos aqui.
