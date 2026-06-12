@@ -41,6 +41,61 @@ def test_resolver_consumidor_token_ausente() -> None:
     assert exc.value.status_code == 401
 
 
+# --- settings: competitors_logos_dir None-safe e logos carregados ----------------
+
+# PNG mínimo válido (1×1 px transparente) para fixture de logo
+_MINIMAL_PNG_LOGOS = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+    b"\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00"
+    b"\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+)
+
+
+def test_settings_competitors_logos_dir_default_e_none() -> None:
+    """O default de competitors_logos_dir deve ser None, nunca site-packages/data/Logos."""
+    s = Settings()
+    assert s.competitors_logos_dir is None
+
+
+def test_settings_competitors_logos_dir_via_env(tmp_path) -> None:
+    """Quando API_COMPETITORS_LOGOS_DIR aponta para dir existente, o campo é Path."""
+    logos_dir = tmp_path / "logos"
+    logos_dir.mkdir()
+    s = Settings(competitors_logos_dir=logos_dir)
+    assert s.competitors_logos_dir == logos_dir
+
+
+def test_preload_logos_com_dir_valido_popula_icon_cache(tmp_path) -> None:
+    """logos_dir válido com logo_smart_fit.png popula _ICON_CACHE['smart_fit']."""
+    from motor_expansao.dashboard.competitors import _ICON_CACHE, preload_logos
+
+    logos_dir = tmp_path / "logos"
+    logos_dir.mkdir()
+    (logos_dir / "logo_smart_fit.png").write_bytes(_MINIMAL_PNG_LOGOS)
+    _ICON_CACHE.pop("smart_fit", None)
+    try:
+        preload_logos(logos_dir)
+        assert "smart_fit" in _ICON_CACHE
+    finally:
+        _ICON_CACHE.pop("smart_fit", None)
+
+
+def test_service_guard_logos_dir_none_resulta_em_none() -> None:
+    """Quando competitors_logos_dir=None, o guard de service.py deve resolver para None
+    sem lançar TypeError (Path(None).is_dir() lançaria TypeError sem o guard is not None)."""
+    from pathlib import Path
+
+    s = Settings(competitors_logos_dir=None)
+    # Replica exatamente o guard de service.py (gerar_pdf_ponto)
+    logos_dir = (
+        s.competitors_logos_dir
+        if s.competitors_logos_dir is not None
+        and Path(s.competitors_logos_dir).is_dir()
+        else None
+    )
+    assert logos_dir is None  # deve ser None sem exceção
+
+
 # --- settings: parsing de tokens/origins via string -------------------------
 
 

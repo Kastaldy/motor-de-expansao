@@ -4300,3 +4300,51 @@ Streamlit; §6 deploy/VPS é humano). **Critérios:** fluxo ponta-a-ponta valida
 **Escopo:** clientes de bot (Telegram/WhatsApp) consumindo `POST /analisar` (recebem link/coordenada do
 usuário, devolvem KPIs e/ou PDF). Usa token→consumidor por bot (Decisão 2). **Critérios:** bot envia
 ponto e recebe estudo; rastreio do consumidor; sem alteração do motor/M1.
+
+---
+
+### BLK-FIX-12 — Logos das concorrentes não aparecem no PDF do Relatório (API/bot; verificar dashboard)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média (qualidade do entregável ao cliente; não toca M1) |
+| **Prioridade** | Média |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Origem** | bug reportado por Felipe 2026-06-12 (PDF do bot/API) |
+
+**Sintoma:** o PDF do Relatório Pontual Censitário (página **Concorrentes**) sai com os pins **sem a logo
+da rede**, caindo no fallback de sigla/texto. Reportado no PDF gerado pelo **bot e pela API**.
+
+**Diagnóstico inicial (do deploy 2026-06-12 — provável raiz, 3 causas somadas):** a logo vem de
+`competitors_logos_dir` (arquivos `logo_<rede>.png`, mapeados em `dashboard/competitors.py`; render via
+`_render_pin_tile`). (1) **`data/Logos/` NÃO existe no VPS** (verificado AUSENTE no deploy); (2) o serviço
+`api` do `docker-compose.prod.yml` **não** define `API_COMPETITORS_LOGOS_DIR` nem monta o volume de logos
+(define só censo/ibge/staging/ultra); (3) como a imagem instala o pacote **não-editável**, o default
+`settings.competitors_logos_dir` resolve para `site-packages/data/Logos` (mesma classe do bug de data dirs
+corrigido no #9). Soma → nenhum diretório de logos válido.
+
+**Escopo provável:** (a) levar os assets `logo_<rede>.png` ao VPS (conferir se o dashboard já os tem no
+volume `/opt/motor-expansao/concorrentes` montado no `streamlit`); (b) montar `:ro` + setar
+`API_COMPETITORS_LOGOS_DIR=/app/data/Logos` (ou caminho escolhido) no serviço `api`; (c) confirmar se o PDF
+do **dashboard** também sofre (mesma `censo_report`/`competitors`) e padronizar o caminho.
+
+**Critérios:** PDF (API e dashboard) mostra a logo correta por rede; sigla só quando a rede não tem asset.
+READ-ONLY M1.
+
+**Resolução do ciclo (concluído 2026-06-12 — esteira BO→Planner→Builder→QA, criticidade Média):**
+Diagnóstico das 3 causas confirmado por leitura de código (dashboard NÃO sofre o bug — `preload_logos`
+no boot do Streamlit popula o `_ICON_CACHE` global; só a API/bot, processo separado, caía no fallback).
+Correção (5 arquivos, READ-ONLY M1):
+- `src/motor_expansao/api/settings.py`: `competitors_logos_dir` muda de `Path = _DATA_DIR / "Logos"` para
+  `Path | None = None` (default seguro; não resolve mais para `site-packages/data/Logos` em pacote não-editável).
+- `src/motor_expansao/api/service.py` (`gerar_pdf_ponto`): guard `is not None and Path(...).is_dir()` (evita `TypeError`).
+- `docker-compose.prod.yml` (serviço `api`): adiciona env `API_COMPETITORS_LOGOS_DIR: "/app/concorrentes"` e
+  volume `/opt/motor-expansao/concorrentes:/app/concorrentes:ro` (espelha o `streamlit`).
+- `tests/unit/test_api_skeleton.py`: 4 testes novos (default None; env→Path; `preload_logos` popula `_ICON_CACHE`;
+  guard com None resolve para None sem exceção; limpeza de `_ICON_CACHE` em `finally`).
+- `docs/api_geoespacial_deploy.md`: default da env atualizado + tabela de volumes do serviço `api`.
+**QA APROVADO:** suíte FULL `733 passed, 4 skipped` (`-n auto`), ruff/mypy limpos, escopo respeitado, §5/§6/§2 ok.
+**Operação pós-merge (HUMANO, §6 GUARDRAIL VPS):** garantir `/opt/motor-expansao/concorrentes` no host (o
+`streamlit` já o usa), rebuild/pull da imagem `api` e `docker compose up -d --no-deps api`; cada comando exige
+confirmação humana. Assets `logo_*.png` são gitignored — não entram na imagem, vêm do volume.

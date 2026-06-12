@@ -41,8 +41,9 @@ class Settings(BaseSettings):
     ibge_dir: Path = _DATA_DIR / "ibge"
     ultra_dir: Path = _DATA_DIR / "ultra"  # assets de branding do PDF (opcional)
     # Logos das redes concorrentes (logo_<rede>.png) para os pins do mapa de Concorrentes.
-    # Sem isso, os pins caem em sigla de texto. Definir em .env: API_COMPETITORS_LOGOS_DIR=...
-    competitors_logos_dir: Path = _DATA_DIR / "Logos"
+    # None = sem logos (fallback de sigla). Em produção VPS definir via env:
+    # API_COMPETITORS_LOGOS_DIR=/app/concorrentes
+    competitors_logos_dir: Path | None = None
     # Camada de mercado/SAM + concorrentes + unidades Ultra (opcional; enriquece o PDF).
     staging_dir: Path = _DATA_DIR / "staging"
 

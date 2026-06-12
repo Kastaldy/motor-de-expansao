@@ -273,9 +273,11 @@ def gerar_pdf_ponto(
     ultra_dir = settings.ultra_dir if Path(settings.ultra_dir).is_dir() else None
     # Pasta de logos das concorrentes (logo_<rede>.png). Com ela, os pins do mapa de
     # Concorrentes mostram o LOGO da rede; sem ela, caem em sigla de texto.
+    # Guard explícito: evita Path(None).is_dir() que lança TypeError.
     logos_dir = (
         settings.competitors_logos_dir
-        if Path(settings.competitors_logos_dir).is_dir()
+        if settings.competitors_logos_dir is not None
+        and Path(settings.competitors_logos_dir).is_dir()
         else None
     )
 

@@ -48,6 +48,21 @@ Opcionais (enriquecem o PDF; ausência = fallback gracioso): `API_ULTRA_DIR` (br
 > **Importante (performance):** mantenha os dados em **disco local**, não no OneDrive. Medido: PDF de
 > área densa cai de ~211 s (OneDrive) para ~9–27 s (local). Hoje em `C:/APIGeoEspacial-dados/`.
 
+### Volumes do serviço `api` (docker-compose.prod.yml)
+
+O serviço `api` monta os seguintes volumes read-only do host:
+
+| Volume host | Caminho no container | Env correspondente | Obrigatório |
+|---|---|---|---|
+| `/opt/motor-expansao/data/outputs` | `/app/data/outputs` | `API_CENSO_GEO_DIR` | Sim |
+| `/opt/motor-expansao/data/ibge` | `/app/data/ibge` | `API_IBGE_DIR` | Sim |
+| `/opt/motor-expansao/data/staging` | `/app/data/staging` | `API_STAGING_DIR` | Não (SAM/concorrentes) |
+| `/opt/motor-expansao/data/ultra` | `/app/data/ultra` | `API_ULTRA_DIR` | Não (branding PDF) |
+| `/opt/motor-expansao/concorrentes` | `/app/concorrentes` | `API_COMPETITORS_LOGOS_DIR` | Não (logos pins) |
+
+> O diretório `/opt/motor-expansao/concorrentes` já existe no host (usado pelo serviço `streamlit`).
+> Sem este volume, os pins do mapa de Concorrentes caem em sigla de texto (fallback gracioso).
+
 ## 4. Configuração — variáveis de ambiente
 
 Todas têm prefixo `API_` e podem ir no `.env` (gitignored) ou no ambiente do processo. Mapa completo
@@ -62,7 +77,7 @@ Todas têm prefixo `API_` e podem ir no `.env` (gitignored) ou no ambiente do pr
 | `API_IBGE_DIR` | `data/ibge` | Malha municipal. |
 | `API_ULTRA_DIR` | `data/ultra` | Branding do PDF (opcional). |
 | `API_STAGING_DIR` | `data/staging` | SAM/concorrentes/Ultra (opcional). |
-| `API_COMPETITORS_LOGOS_DIR` | `data/Logos` | Logos dos pins (opcional). |
+| `API_COMPETITORS_LOGOS_DIR` | `None` (não definido) | Logos dos pins (opcional). Em produção VPS: `/app/concorrentes` (montado via volume). |
 | `API_GOOGLE_MAPS_API_KEY` | `""` | Se preenchida, geocoding/reverse via Google; senão Nominatim. |
 | **Bot** | | |
 | `API_TELEGRAM_TOKEN` | `""` | Token do @BotFather. **Nunca commitar.** |
