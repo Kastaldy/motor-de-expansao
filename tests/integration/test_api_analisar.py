@@ -57,9 +57,20 @@ def test_analisar_fora_do_brasil_400(client: TestClient) -> None:
     assert resp.json()["codigo"] == "coordenada_invalida"
 
 
-def test_analisar_municipio_sem_base_404(client: TestClient) -> None:
-    # Sao Paulo capital (3550308) nao esta materializado -> 404 base_geo_ausente.
-    resp = client.post("/api/v1/analisar", json={"lat": -23.5505, "lng": -46.6333}, headers=AUTH)
+def test_analisar_municipio_sem_base_404(client: TestClient, tmp_path) -> None:
+    # Hermetico: aponta censo_geo_dir para um dir VAZIO, forcando "base geo ausente"
+    # independente de quais municipios estao materializados no disco (a base completa
+    # de 2026-06-12 cobre o Brasil todo -> nao ha mais municipio que de 404 pela base
+    # real). O ponto ainda resolve o municipio pela malha IBGE real, mas a particao
+    # nao existe no dir vazio -> 404 base_geo_ausente.
+    vazio = tmp_path / "sem_base"
+    vazio.mkdir()
+    override = get_settings().model_copy(update={"censo_geo_dir": vazio})
+    client.app.dependency_overrides[get_settings] = lambda: override
+    try:
+        resp = client.post("/api/v1/analisar", json=AGUAS_DA_PRATA, headers=AUTH)
+    finally:
+        client.app.dependency_overrides.pop(get_settings, None)
     assert resp.status_code == 404
     assert resp.json()["codigo"] == "base_geo_ausente"
 
