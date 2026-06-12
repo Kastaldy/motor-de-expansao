@@ -3691,3 +3691,55 @@ em `tasks/backlog.md` para as demais frentes de UX das 4 abas (helper de move N�
 
 Débito operacional registrado (fora deste ciclo): regenerar parquets paralelos de mercado (gate DEC-006
 do SAM) e refrescar snapshots de validação de concorrentes — passos pós-merge, não requisito de fechamento.
+
+---
+
+## BLK-UI-02 (follow-up ad-hoc do BLK-UI-01) — Coord destacado + tooltip menos cortado + densificação por município
+
+Data: 2026-06-12
+Tipo: feature (UX/UI) | Criticidade: Alta (toca o contrato de performance Bloco 6 anti-OOM e a navegação
+do dashboard de produção; READ-ONLY M1)
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA do plano] → Builder → QA
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-12.
+
+Origem: 3 observações de Felipe/Vini ao testar o BLK-UI-01 no dashboard. Tarefa ad-hoc (não há bloco
+BLK-UI-02 no backlog; o bloco amplo BLK-UI-01 permanece aberto). Entrega empilhada sobre ciclo/BLK-UI-01.
+
+Resumo (tudo READ-ONLY M1 — CSS/markdown/strings; cap anti-OOM intocado):
+1. **Campo de busca por coordenada destacado** — `render_coord_search_sidebar` agora usa `st.sidebar.info(...)`
+   (caixa azul) no lugar do heading+caption simples, separando-o dos demais filtros (D1=A). Assinatura,
+   `text_input`, parsing/retorno `(lat,lng)|None` e a chamada única fora-de-aba (`streamlit_app.py:470`,
+   Bloco 5) preservados.
+2. **Tooltip do hexágono menos cortado** — adicionadas 4 chaves ao `style` dos dois tooltips
+   (`_shared_map_tooltip` e `_hybrid_compact_tooltip`): `fontSize:11px`, `padding:6px 8px`, `maxWidth:260px`,
+   `lineHeight:1.25` (D2=A), reduzindo a altura para caber na borda do mapa. O recorte total do tooltip no
+   cursor é limitação nativa do pydeck/deck.gl (iframe) — mitigação por altura é a via realista. HTML/linhas
+   dos tooltips inalterados (Planner confirmou: sem linha vazia a enxugar na config default).
+3. **Densificação por município (comunicação)** — confirmado nos 4 builders que `selected_cities` entra no
+   `scope` ANTES do `_downsample_map_index`, ou seja, selecionar um município já dá densidade total do
+   recorte (mecanismo NATIVO). Decisão de produto pré-fixada por Felipe/Vini = filtro de município/área (NÃO
+   remover/elevar o cap; pydeck não tem zoom-awareness). Fix = só COMUNICAÇÃO: frase "filtre por município →
+   densidade total" anexada ao ramo não-capped de `build_map_scope_caption` e ao caption do
+   `render_mapa_territorial` (D3=(a)+(b)). Substrings testadas do ramo capped preservadas.
+4. **Testes** — `test_build_map_scope_caption_*` ampliado (asserção de "municipio") + novo
+   `test_map_tooltips_tem_css_de_tamanho` (D4=A).
+
+Gate humano: D1=A, D2=A, D3=(a)+(b), D4=A — aprovados por Felipe/usuário em 2026-06-12. Builder executou
+exatamente estas letras.
+
+Arquivos alterados: src/motor_expansao/dashboard/pages.py, src/motor_expansao/dashboard/components.py,
+tests/integration/test_streamlit_app.py.
+
+Validações (re-executadas pelo QA, evidência própria): suíte alvo `183 passed`; suíte full SERIAL
+`696 passed, 1 skipped, 3 failed` — as 3 falhas são as MESMAS PRÉ-EXISTENTES da baseline (drift de CSVs reais
+locais gitignored em `concorrentes/` + gate DEC-006 do SAM em parquet de mercado), comprovadas via `git stash`;
+`passed` subiu 695→696 (exatamente o +1 do teste novo), ZERO regressão. `-n auto` reproduz INTERNALERROR de
+gateway (execnet × Python 3.14) → rodado serial e documentado, sem mascarar. ruff "All checks passed!"; mypy
+sem issues; `import streamlit_app` ok.
+
+Guardrails verificados: **Bloco 6 anti-OOM INTOCADO** (`MAP_POINT_LIMIT`/`MAP_POINT_LIMIT_LARGE` sem diff;
+`_downsample_map_index`/scope/cap fora do diff — o nº3 é só texto); READ-ONLY M1 (nenhum score/cap/downsample
+no diff); Bloco 4 (carga lazy) e Bloco 5 (render lazy) preservados; sem dependência de API ao vivo; paths
+pré-sujos não tocados nem commitados.
+
+Housekeeping: N/A (tarefa ad-hoc; sem bloco BLK-UI-02 no backlog — helper de move NÃO executado).

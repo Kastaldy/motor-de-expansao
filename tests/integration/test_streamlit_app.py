@@ -11,6 +11,8 @@ from motor_expansao.dashboard.components import (
     _DISCARDED_FILL,
     _NAN_SCORE_FILL,
     _apply_pop_cut_colors,
+    _hybrid_compact_tooltip,
+    _shared_map_tooltip,
 )
 from motor_expansao.dashboard.constants import (
     COLOR_MODE_IDS,
@@ -332,6 +334,19 @@ def test_build_map_scope_caption_reflete_todos_os_hexes_da_uf():
     assert "todos os hexagonos validos da UF selecionada" in caption
     assert "100 melhores" not in caption
     assert "1.234" in caption
+    # BLK-UI-02 (#3a): ramo nao-capped orienta filtrar por municipio para densidade total.
+    assert "municipio" in caption
+
+
+def test_map_tooltips_tem_css_de_tamanho():
+    # BLK-UI-02 (#2): ambos os tooltips ganham fontSize/padding/maxWidth/lineHeight
+    # no style para reduzir o recorte na borda inferior do mapa.
+    for tooltip in (_shared_map_tooltip(), _hybrid_compact_tooltip()):
+        style = tooltip["style"]
+        assert style["fontSize"] == "11px"
+        assert style["padding"] == "6px 8px"
+        assert style["maxWidth"] == "260px"
+        assert style["lineHeight"] == "1.25"
 
 
 def test_censo_score_to_color_delega_para_score_band_to_color():

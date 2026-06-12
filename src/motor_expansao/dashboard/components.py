@@ -397,6 +397,7 @@ def build_map_scope_caption(
     return (
         f"Mostrando todos os hexagonos validos {scope_label} "
         f"({format_int(points_used)} no recorte atual), preservando a geometria granular onde ela e confiavel."
+        " Para densidade total de uma area, selecione um municipio no filtro lateral."
     )
 
 
@@ -1069,6 +1070,10 @@ def _shared_map_tooltip() -> dict[str, object]:
             "border": f"1px solid {COLORS['border']}",
             "borderRadius": "10px",
             "fontFamily": "Bahnschrift, Aptos, Segoe UI, sans-serif",
+            "fontSize": "11px",
+            "padding": "6px 8px",
+            "maxWidth": "260px",
+            "lineHeight": "1.25",
         },
     }
 
@@ -1100,6 +1105,10 @@ def _hybrid_compact_tooltip() -> dict[str, object]:
             "border": f"1px solid {COLORS['border']}",
             "borderRadius": "10px",
             "fontFamily": "Bahnschrift, Aptos, Segoe UI, sans-serif",
+            "fontSize": "11px",
+            "padding": "6px 8px",
+            "maxWidth": "260px",
+            "lineHeight": "1.25",
         },
     }
 

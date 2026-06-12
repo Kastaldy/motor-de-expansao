@@ -523,8 +523,10 @@ def render_empty_state() -> None:
 def render_coord_search_sidebar() -> tuple[float, float] | None:
     """Render coordinate search widget in sidebar. Returns ``(lat, lng)`` or ``None``."""
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### Busca por coordenada")
-    st.sidebar.caption("Localize um hexagono pela coordenada. Offline, sem API externa.")
+    st.sidebar.info(
+        "**Busca por coordenada** — localize um hexagono pela coordenada. "
+        "Offline, sem API externa."
+    )
     raw = st.sidebar.text_input(
         "Coordenada (lat, lng)",
         placeholder="-23.55, -46.63",
@@ -2730,6 +2732,7 @@ def render_mapa_territorial(
     st.caption(
         "Selecione o modo de cor e os overlays desejados. "
         "Camadas visuais nao alteram score, ranking, carteira nem artefatos oficiais do M1."
+        " Dica: filtre por municipio na barra lateral para ver o recorte com densidade total."
     )
 
     ctrl_col1, ctrl_col2 = st.columns([1.6, 2.4])
