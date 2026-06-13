@@ -380,34 +380,8 @@ permanece intacta. Detalhe e decomposição abaixo (epic BLK-DIM).
 
 ---
 
-### BLK-DIM-00 — Fundação de dados: catchment, base de calibração das maduras e ingestão dos insumos externos
+- BLK-DIM-00 (concluído 2026-06-13) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (engenharia de dados nova; READ-ONLY sobre M1) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Depende de** | Felipe disponibilizar os insumos externos (série diária, datas de abertura, .xlsx) |
-| **Status** | Pendente |
-
-**Objetivo:** montar a fundação de dados de TODAS as camadas, sem tocar o M1.
-
-**Escopo permitido:**
-- **Ingestão dos insumos externos** (Felipe disponibiliza): série diária das ~60 maduras
-  (vendas/cancelamentos/churn), datas de abertura por unidade, `ULTRA padrão - Simulador
-  Financeiro.xlsx`. Normalizar para staging Parquet (gitignored se contiver PII).
-- **Catchment materializado:** rodar `analisar_entorno_ponto` em batch para cada unidade Ultra madura
-  e cada hex candidato → `pop_captação`, `renda_per_capita_captação` por raio fixo (começar 1,5 km;
-  parametrizar para 1–2 km). Materializar em `data/staging/` (NÃO sobrescrever artefato M1).
-- **Base de calibração das maduras:** consolidar por unidade — pagantes steady-state, churn,
-  inadimplência, ticket, **curva de maturação** (da série diária), metragem, `pop_captação`.
-- **Derivar maturação real** das datas de abertura (resolve gate G1 da DEC-001) — substituir
-  `maturacao_indisponivel`.
-
-**Critérios de aceite:** base de calibração reprodutível por unidade madura com maturação real e
-`pop_captação`; auditoria do que foi ingerido vs. lacunas remanescentes; ZERO escrita em artefato M1;
-sem PII versionada.
-
-**Risco:** médio (depende dos insumos externos; sem eles, DIM-01/02/04 ficam limitados).
 
 ---
 
