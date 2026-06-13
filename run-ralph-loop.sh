@@ -35,6 +35,12 @@ fi
 # Garante o pacote editavel apontando para o volume montado (deps ja estao na imagem).
 pip install -e . --no-deps >/dev/null 2>&1 || true
 
+# Limpa sinais de RODADAS ANTERIORES antes de comecar. LOOP_DONE e RELATORIO-BLOQUEIO.md sao
+# gitignored e persistem no volume entre rodadas; sem isso, um sinal velho faz a nova rodada
+# encerrar na iteracao 1 (bug observado em 2026-06-13).
+rm -f LOOP_DONE RELATORIO-BLOQUEIO.md
+echo "Sinais de rodada anterior limpos (LOOP_DONE / RELATORIO-BLOQUEIO.md)."
+
 PROMPT='/run-cycle [MODO LOOP AUTONOMO — sem humano no loop]
 Trabalhe UM bloco BLK-* por vez do tasks/backlog.md, SOMENTE blocos marcados "Autonomia: loop-safe".
 Ignore TOTALMENTE qualquer bloco SEM esse marcador (sao trabalho futuro/manual — nao entram no loop).
