@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Guard do ralph loop autonomo (BLK-LOOP-01).
 
-Substitui o gate humano dos blocos Alta no modo loop: inspeciona TODAS as mudancas do loop
-(commitadas entre --base e HEAD + working tree) e ABORTA (exit 1) se qualquer caminho proibido
-for tocado. Caminhos proibidos = nucleo do M1, score/pesos, artefatos oficiais, VPS/deploy,
-CI e segredos. READ-ONLY: nao altera nada; so audita o diff.
+Substitui o gate humano dos blocos Alta no modo loop: inspeciona as mudancas com INTENCAO DE
+MERGE (commitadas entre --base e HEAD + staged/--cached) e ABORTA (exit 1) se qualquer caminho
+proibido for tocado. NAO olha o working tree nao-staged (commit-by-path nao mergeia isso; evita
+falso-positivo de churn de CRLF/__pycache__). Caminhos proibidos = nucleo do M1, score/pesos,
+artefatos oficiais, VPS/deploy, CI e segredos. READ-ONLY: nao altera nada; so audita o diff.
 
 Uso:
     python scripts/loop_guard.py --base <ref>     # ref = HEAD do inicio do loop
@@ -18,12 +19,13 @@ import subprocess
 import sys
 
 # Padroes de caminho PROIBIDOS no modo loop (READ-ONLY sobre o M1; sem VPS/segredo).
-# Comentario de cada regra ao lado.
+# Regras ANCORADAS a caminhos especificos do M1 — NAO casar nomes genericos (ex.: o modulo
+# paralelo legitimo `src/motor_expansao/dimensionamento/config.py` NAO pode ser bloqueado).
 _DENY: list[tuple[str, str]] = [
-    (r"(^|/)config\.py$", "config.py — parametros canonicos do M1"),
+    (r"^src/motor_expansao/config\.py$", "config.py raiz — parametros canonicos do M1"),
     (r"^src/motor_expansao/pipelines/m1/", "pipeline oficial do M1"),
-    (r"scoring", "qualquer arquivo de score (*scoring*)"),
-    (r"(^|/)constants\.py$", "constants.py — pesos/constantes M1/mapa"),
+    (r"(^|/)[^/]*scoring[^/]*\.py$", "arquivo de score (scoring)"),
+    (r"^src/motor_expansao/(core|dashboard)/constants\.py$", "constants.py — pesos/constantes M1/mapa"),
     (r"brasil_(estrutural|priorizados)", "artefato oficial M1 (brasil_*)"),
     (r"hexagonos_brasil", "artefato oficial M1 (hexagonos_brasil*)"),
     (r"top_oportunidades_resumo|resumo_por_uf", "artefato oficial M1 (resumos)"),
@@ -48,21 +50,22 @@ def _git(*args: str) -> str:
 
 
 def _changed_paths(base: str) -> set[str]:
-    """Uniao dos caminhos: commitados (base..HEAD) + working tree (staged/unstaged/untracked)."""
+    """Caminhos com INTENCAO de merge: commitados (base..HEAD) + staged (--cached).
+
+    NAO inclui o working tree nao-staged/untracked de proposito: o loop commita POR PATH, entao
+    so o que esta commitado/staged seria mergeado. Modificacoes transitorias nao-staged (ex.: churn
+    de CRLF do container Linux, __pycache__, artefatos regenerados) NAO representam intencao de
+    merge e davam falso-positivo. O `.gitattributes` (eol=lf) elimina o churn de line-ending.
+    """
     paths: set[str] = set()
     # Commitados desde o inicio do loop.
     for line in _git("diff", "--name-only", f"{base}..HEAD").splitlines():
         if line.strip():
             paths.add(line.strip())
-    # Working tree (porcelain cobre staged, modificados e untracked).
-    for line in _git("status", "--porcelain").splitlines():
-        # formato: "XY <path>"  (rename: "R  old -> new")
-        raw = line[3:] if len(line) > 3 else ""
-        if "->" in raw:
-            raw = raw.split("->", 1)[1]
-        raw = raw.strip().strip('"')
-        if raw:
-            paths.add(raw)
+    # Staged (indexado para o proximo commit).
+    for line in _git("diff", "--cached", "--name-only").splitlines():
+        if line.strip():
+            paths.add(line.strip())
     return paths
 
 
