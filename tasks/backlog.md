@@ -326,66 +326,204 @@ Permanece como roadmap até nova decisão de Felipe.
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Alta** (LEITURA/ANÁLISE + engenharia de dados; READ-ONLY sobre M1) |
+| **Status** | **SUPERSEDED por BLK-DIM-00..04 em 2026-06-12** |
+
+**Supersessão (2026-06-12, decisão de Felipe).** O SCORE-05 era um diagnóstico read-only de
+"existe proxy exógeno de demanda + maturação para tentar modelar?". Essa pergunta é exatamente a
+**Camada 1 (aderência/penetração calibrada)** do novo `modelo_dimensionamento_expansao.md` (CEO),
+que a subsume e melhora: em vez de só diagnosticar, calibra com validação honesta (LOO-CV vs
+baseline) e entrega um motor inverso de 4 camadas (Potencial → Captura → Dimensionamento m² →
+Viabilidade financeira). A **disciplina de GO/NO-GO honesto** e os bloqueios estruturais
+(viés de seleção, alvo pós-maturação, sinal exógeno ≈ nulo) do SCORE-05 foram DOBRADOS no
+**BLK-DIM-01**. Camada paralela, **READ-ONLY sobre o M1** — DEC-001 (não recalibrar `score_priorizacao`)
+permanece intacta. Detalhe e decomposição abaixo (epic BLK-DIM).
+
+---
+
+## Epic BLK-DIM — Motor de Dimensionamento e Viabilidade de Unidades (camada paralela)
+
+> **Origem:** `modelo_dimensionamento_expansao.md` (raiz do repo; spec/handoff do CEO, 2026-06-10),
+> derivado dos testes do projeto externo `Análise Preditiva` (base de 54 academias). Substitui o
+> BLK-SCORE-05.
+>
+> **Tese:** inverter a lógica — partir do potencial de mercado de cada região → dimensionar o imóvel
+> ideal (m²/vagas) → fechar a conta financeira (faturamento, aluguel-teto, margem, payback, ROIC).
+> 4 camadas: **1. Potencial** (hex → alunos potenciais via aderência calibrada) · **2. Captura**
+> (market share via Huff/gravitacional) · **3. Dimensionamento** (alunos-alvo → m² pela curva de
+> densidade) · **4. Unit economics** (determinística). As camadas 3-4 são prototipáveis JÁ; 1-2 são
+> o coração e dependem de calibração nas unidades maduras.
+>
+> **Guardrail do epic (todos os blocos):** camada PARALELA, **READ-ONLY sobre o M1** — não toca
+> `score_priorizacao`/`hex_score_estrutural`/pesos/artefatos oficiais (DEC-001 vigente). Não cria
+> dependência de API ao vivo no dashboard de produção. Sem PII (`nome_unidade`) em relatórios.
+>
+> **Metodologia não-negociável (todos os blocos de modelagem — §7 do spec):** métrica oficial =
+> **LOO-CV ou k-fold repetido SEMPRE contra baseline da média**; BANIR R² in-sample e
+> `fit(X,y)→predict(X)`; começar simples (linear regularizado/GLM), só subir complexidade se ganhar
+> honestamente sobre o baseline; toda saída com **intervalo de predição + flag de extrapolação**.
+>
+> **Sequenciamento recomendado:** **DIM-03 primeiro** (determinístico, usa só dados que já temos,
+> valor imediato e desacoplado) → DIM-00 → DIM-01 (gate GO/NO-GO) → DIM-02 → DIM-04. Camadas 1-2 só
+> avançam se as lacunas de dados fecharem em DIM-00.
+>
+> **Insumos — auditoria de 2026-06-12 (estado real do repo):**
+> - ✅ EXISTE: 54 unidades Ultra com faturamento/pagantes/alunos/**metragem m²**/ticket/alunos-por-m²
+>   (`data/staging/unidades_ultra_performance_hex.parquet`, 57 cols); concorrência OSM 3.296 unidades
+>   ~35 redes com lat/lng (`data/staging/concorrentes_mapeados.parquet`); camada de mercado/residual
+>   (`hexagonos_mercado_mapeado.parquet`, 135 cols); helper de catchment `analisar_entorno_ponto`
+>   (1,5 km); backtest helpers (`analysis/score_backtest.py`, `feature_backtest_mercado.py`).
+> - ❌ FALTA no repo (Felipe vai disponibilizar — 2026-06-12): **série diária das ~60 maduras**
+>   (vendas/cancelamentos/churn/rampa de maturação); **datas de abertura por unidade**
+>   (`maturacao_status` é constante `maturacao_indisponivel` em 100% hoje — gate G1 da DEC-001 segue
+>   aberto); **`ULTRA padrão - Simulador Financeiro.xlsx`**; `modelo_demanda.py`/`teste_densidade.py`
+>   (referência portável). m²/capacidade real de concorrentes (hoje só proxy 2.500 alunos).
+
+---
+
+### BLK-DIM-00 — Fundação de dados: catchment, base de calibração das maduras e ingestão dos insumos externos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (engenharia de dados nova; READ-ONLY sobre M1) |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Depende de** | **BLK-SCORE-02**, **BLK-SCORE-03 (DEC-001)**, **BLK-SCORE-04** |
+| **Depende de** | Felipe disponibilizar os insumos externos (série diária, datas de abertura, .xlsx) |
 | **Status** | Pendente |
-| **Origem** | pergunta do usuário "dá para modelar demanda potencial por hex?" (2026-05-31) |
 
-**Contexto / por que existe:** BLK-SCORE-02/04 mostraram que NÃO é possível, hoje, treinar um modelo
-preditivo confiável de demanda. Três bloqueios estruturais: (1) **viés de seleção** — o único
-desfecho (`alunos_recorrentes`) só existe onde JÁ há unidade; não há observação de demanda em hexes
-vazios (sem contrafactual); (2) **alvo enviesado/ruidoso** — desfecho pós-seleção e pós-maturação,
-sem `maturacao_status` real, heterogêneo entre redes; (3) **sinal exógeno ≈ nulo** — features de
-mercado/competição com IC cruzando zero, OLS conjunto R²≈0.034; o sinal que sobra é endógeno (rede
-própria). Conclusão: o gargalo é de DADOS, não de algoritmo. Este bloco é o **pré-requisito de
-engenharia de dados ANTES de qualquer modelagem** — NÃO é um bloco de ML.
+**Objetivo:** montar a fundação de dados de TODAS as camadas, sem tocar o M1.
 
-**Objetivo:** avaliar, read-only, a VIABILIDADE de obter (a) um sinal de **maturação** por unidade
-(data de abertura ou proxy auditável) e (b) ao menos um **proxy de demanda EXÓGENO** — independente
-da existência de academia no hex. Entregar um diagnóstico de disponibilidade/qualidade de fontes +
-recomendação GO/NO-GO para um futuro bloco de modelagem, SEM construir modelo nem alterar score.
+**Escopo permitido:**
+- **Ingestão dos insumos externos** (Felipe disponibiliza): série diária das ~60 maduras
+  (vendas/cancelamentos/churn), datas de abertura por unidade, `ULTRA padrão - Simulador
+  Financeiro.xlsx`. Normalizar para staging Parquet (gitignored se contiver PII).
+- **Catchment materializado:** rodar `analisar_entorno_ponto` em batch para cada unidade Ultra madura
+  e cada hex candidato → `pop_captação`, `renda_per_capita_captação` por raio fixo (começar 1,5 km;
+  parametrizar para 1–2 km). Materializar em `data/staging/` (NÃO sobrescrever artefato M1).
+- **Base de calibração das maduras:** consolidar por unidade — pagantes steady-state, churn,
+  inadimplência, ticket, **curva de maturação** (da série diária), metragem, `pop_captação`.
+- **Derivar maturação real** das datas de abertura (resolve gate G1 da DEC-001) — substituir
+  `maturacao_indisponivel`.
 
-**Escopo permitido (read-only, diagnóstico):**
-- Inventariar fontes candidatas de demanda exógena e checar cobertura/granularidade por hex/município:
-  - **Penetração Wellhub/Gympass** (já há `sinal_wellhub`, `n_parcerias_wellhub` no dataset de
-    validação — medir cobertura e se é exógeno ou colado a unidades existentes);
-  - dados de **mobilidade/fluxo** ou **busca/intenção** (avaliar se há fonte acessível offline/legal,
-    sem criar dependência de API ao vivo — guardrail do projeto);
-  - sinais demográfico-comportamentais já no censo/IBGE não usados (faixa etária, vínculo formal,
-    renda do trabalho) que correlacionem com propensão a academia.
-- Avaliar viabilidade de **maturação**: existe data de abertura por unidade (Ultra real; concorrentes
-  via mapeamento)? Que proxy auditável (ex.: primeira aparição em snapshot) seria aceitável?
-- Estimar, com o que houver, se algum proxy exógeno tem correlação não-trivial com `alunos_recorrentes`
-  CONTROLANDO maturação (reusar `analysis/score_backtest.py`/`feature_backtest_mercado.py`).
-- Produzir relatório `data/analysis/viabilidade_demanda.md` (gitignored) com: matriz de fontes ×
-  (cobertura, granularidade, exógena S/N, custo/risco de obtenção), achado de correlação controlada
-  (se viável), e **recomendação GO/NO-GO** para um eventual `BLK-SCORE-06 — modelo de demanda`.
+**Critérios de aceite:** base de calibração reprodutível por unidade madura com maturação real e
+`pop_captação`; auditoria do que foi ingerido vs. lacunas remanescentes; ZERO escrita em artefato M1;
+sem PII versionada.
 
-**Fora de escopo (invioláveis):**
-- Construir/treinar qualquer modelo preditivo (isso seria o BLK-SCORE-06, só com GO + seu gate).
-- Qualquer escrita/recálculo de M1 (`scoring.py`/`constants.py`/pesos/artefatos) — DEC-001 vigente.
-- Criar dependência de API ao vivo no dashboard de produção (guardrail do CLAUDE.md).
-- Inventar proxy de maturação/idade sem base auditável (lição do BLK-SCORE-02 §5).
-- Saída fora de `data/analysis/`; qualquer PII (`nome_unidade`) no relatório.
+**Risco:** médio (depende dos insumos externos; sem eles, DIM-01/02/04 ficam limitados).
 
-**Arquivos a ler:** `data/analysis/relatorio_backtest.md`, `data/analysis/relatorio_backtest_mercado.md`,
-`data/analysis/dataset_validacao.parquet` (colunas `sinal_wellhub`/`n_parcerias_wellhub`/`maturacao_status`),
-`CLAUDE.md` §8 (DEC-001) e §4 (camadas), `analysis/feature_backtest_mercado.py` (reuso).
-**Arquivos a alterar (read-only sobre M1):** novo script de diagnóstico em `analysis/` + testes
-sintéticos; relatório em `data/analysis/` (gitignored). NENHUM artefato M1.
+---
 
-**Critérios de aceite:**
-- Relatório `data/analysis/viabilidade_demanda.md` com matriz de fontes + veredito GO/NO-GO fundamentado.
-- Diagnóstico explícito de maturação (disponível? proxy aceitável?) e de pelo menos 1 proxy exógeno.
-- Se houver correlação controlada, reportada com incerteza (IC, N, confounds); sem forçar significância.
-- ZERO escrita em M1/artefatos oficiais; ZERO PII; reprodutível (seed fixo; script versionado).
+### BLK-DIM-01 — Camada 1: aderência/penetração calibrada por hex (absorve o GO/NO-GO do SCORE-05)
 
-**Guardrails específicos:** READ-ONLY sobre M1; diagnóstico de viabilidade, NÃO modelagem; sem
-dependência de API ao vivo; alimenta a decisão sobre os gates G1/G2/+contrafactual da DEC-001.
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (decide ciência vs. ficção do motor; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Depende de** | **BLK-DIM-00** |
+| **Status** | Pendente |
 
-**Risco:** baixo (read-only). O valor é evitar investir em ML sobre dados que não identificam demanda;
-o entregável é um GO/NO-GO honesto, não um modelo.
+**Objetivo:** estimar `aderência_calibrada(hex)` — NÃO usar "20% fixo" (a armadilha fatal do §5).
+
+**Escopo permitido:**
+- `penetração_real = pagantes_steady / pop_captação` por unidade madura.
+- Regredir penetração contra renda per capita (setor/hex, não municipal), densidade urbana, perfil
+  etário — **LOO-CV vs baseline da média**. Número-chave: **R²_penetração positivo e material**.
+- Reusar/adaptar `analysis/score_backtest.py` e a metodologia de `teste_densidade.py`.
+
+**Gate GO/NO-GO (herdado do SCORE-05):** se R²_penetração não for positivo e material, **NO-GO** para
+o downstream dependente de Camada 1 — relatório honesto, sem forçar significância. Os 3 bloqueios do
+SCORE-05 (viés de seleção, alvo pós-maturação, sinal exógeno) seguem como cautelas explícitas.
+
+**Critérios de aceite:** função de aderência calibrada com incerteza (IC, N, confounds) OU NO-GO
+fundamentado; reprodutível (seed fixo); ZERO escrita em M1.
+
+**Risco:** alto (é o elo que pode invalidar o motor — por isso o gate honesto).
+
+---
+
+### BLK-DIM-02 — Camada 2: captura / market share (modelo Huff gravitacional)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Depende de** | **BLK-DIM-01** (GO) |
+| **Status** | Pendente |
+
+**Objetivo:** `alunos_capturáveis = alunos_potenciais × share_local`, com share não-linear e saturante.
+
+**Escopo permitido:**
+- Modelo **Huff**: P(escolher unidade) ∝ atratividade / Σ atratividade_concorrentes, com decaimento
+  por distância; concorrência OSM já mapeada (`concorrentes_mapeados.parquet`). Atratividade ≈
+  f(tamanho, marca, preço) — começar com proxy de capacidade (2.500) por falta de m² real de
+  concorrente; **saturação** (capacidade de pico) e **canibalização** (unidades próprias no catchment).
+- Validar prevendo alunos das maduras a partir de potencial × share (LOO-CV vs baseline).
+
+**Critérios de aceite:** share calibrado e validado honestamente; canibalização descontada; ZERO
+escrita em M1.
+
+**Risco:** altíssimo (captura é o elo mais difícil — não-linear, satura).
+
+---
+
+### BLK-DIM-03 — Camadas 3+4: calculadora de dimensionamento (m²) + simulador financeiro + goal-seek `[PROTOTIPÁVEL JÁ]`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (módulo determinístico isolado; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | nada (usa dados que já existem) — **começar por aqui** |
+| **Status** | Pendente |
+
+**Objetivo:** entregar uma calculadora determinística e dinâmica de dimensionamento + viabilidade,
+desacoplada das camadas 1-2.
+
+**Escopo permitido:**
+- **Curva de densidade × tamanho** (começar com a do §3.2 do spec: 2,06 → 1,45 alunos/m²;
+  recalibrar com as 54 maduras — `alunos_por_m2` já existe). `corr(densidade, metragem) ≈ −0,26`:
+  existe faixa ótima, dimensionar por **m²** (vagas só como restrição operacional — coluna `Vagas`
+  é instável, CV=0,77, não usar como driver).
+- **Camada 3 (problema inverso):** `m²_ideal = alunos_alvo / densidade_esperada(m²)`.
+- **Camada 4 (simulador financeiro em Python — Opção A do §8.5):** replicar só a LINHA DE RESULTADO
+  do DRE (~15 fórmulas, não as 9 abas) → `viabilidade(alunos, m², aluguel, ticket, churn, custos) →
+  (faturamento, margem, payback, ROIC)`; rodar sobre **pagantes líquidos de churn/inadimplência** e
+  com **curva de maturação** (rampa). ~6 coeficientes paramétricos (R$/m² de obra, aluguel/m², custo
+  de ocupação/m², staff/aluno) calibrados das maduras + defaults do §8.2 do spec.
+- **Goal-seek (uma equação):** `aluguel-teto` a uma margem-alvo (e "alunos mínimos viáveis", "m²
+  ótimo") via `scipy.optimize.brentq` sobre a função do simulador.
+- Novo módulo isolado (ex.: `src/motor_expansao/dimensionamento/`), testes unitários determinísticos.
+
+**Fora de escopo:** reconstruir as 9 abas do Excel; dirigir o .xlsx via xlwings (Opção B descartada);
+tocar M1.
+
+**Critérios de aceite:** calculadora roda para inputs manuais e em batch por hex; goal-seek do
+aluguel-teto validado contra o simulador de referência (defaults do §8.2); testes determinísticos
+verdes; ZERO escrita em M1.
+
+**Risco:** baixo (aritmética determinística; dados disponíveis). **Maior ROI imediato do epic.**
+
+---
+
+### BLK-DIM-04 — Integração das 4 camadas + backtesting prospectivo
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Depende de** | **BLK-DIM-01, BLK-DIM-02, BLK-DIM-03** |
+| **Status** | Pendente |
+
+**Objetivo:** encadear hex candidato → potencial → captura → tamanho ideal → viabilidade, e medir
+erro honesto.
+
+**Escopo permitido:**
+- Pipeline end-to-end por hex candidato.
+- **Backtesting "às cegas"** nas ~54-60 maduras: comparar tamanho/alunos/faturamento previstos vs.
+  reais; reportar erro honesto (LOO-CV / out-of-sample).
+- Registrar previsto vs. real para novas unidades (backtesting prospectivo).
+
+**Critérios de aceite:** relatório de backtesting com erro out-of-sample por camada e end-to-end;
+flags de extrapolação; ZERO escrita em M1.
+
+**Risco:** médio (depende da qualidade das camadas 1-2).
 
 ---
 
