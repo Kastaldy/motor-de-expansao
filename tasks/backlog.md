@@ -263,28 +263,8 @@ Permanece como roadmap até nova decisão de Felipe.
 
 ---
 
-### BLK-EST-04 — Trocar a imagem de capa do Relatório Pontual Censitário (dashboard + API)
+- BLK-EST-04 (concluído 2026-06-12) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Baixa (asset de branding; não toca M1) |
-| **Prioridade** | Média |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Status** | Pendente |
-| **Origem** | pedido de Felipe 2026-06-12 (nova capa já adicionada em `data/ultra/`) |
-
-**Contexto:** a capa do PDF usa o asset `data/ultra/relatorio_capa_bg.png` (extraído do `Teste Modelo.pptx`,
-**gitignored** — não vai na imagem; lido em runtime do volume `data/ultra`). Felipe **já adicionou a nova
-versão** em `data/ultra/relatorio_capa_bg.png` (local).
-
-**Escopo:** trocar a capa nos **dois** caminhos (dashboard + API). Como o asset é gitignored e lido do
-volume montado, basta **scp** do novo `relatorio_capa_bg.png` para `/opt/motor-expansao/data/ultra/` no
-VPS — `streamlit` e `api` montam `data/ultra`, então **uma cópia atualiza os dois**. Sem rebuild de imagem.
-Se a nova capa mudar de proporção/zona limpa, conferir o layout 16:9 (`_cover_page` em `censo_report.py`)
-para o título/subtítulo não colidirem com o branding.
-
-**Critérios:** PDF do dashboard e da API usa a capa nova; título/subtítulo legíveis sobre ela; sem PII
-versionada (asset segue gitignored).
 
 ---
 
