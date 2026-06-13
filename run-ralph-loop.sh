@@ -37,7 +37,9 @@ pip install -e . --no-deps >/dev/null 2>&1 || true
 
 PROMPT='/run-cycle [MODO LOOP AUTONOMO — sem humano no loop]
 Trabalhe UM bloco BLK-* por vez do tasks/backlog.md, SOMENTE blocos marcados "Autonomia: loop-safe".
-Ignore qualquer bloco sem esse marcador. Esteira Planner->Builder->QA.
+Ignore TOTALMENTE qualquer bloco SEM esse marcador (sao trabalho futuro/manual — nao entram no loop).
+Respeite "Depende de": so inicie um bloco cujas dependencias JA estao em tasks/completed.md; se uma
+dependencia ainda nao fechou, pule esse bloco nesta passada. Esteira Planner->Builder->QA.
 NESTE MODO o gate de APROVACAO HUMANA dos blocos Alta e SUBSTITUIDO pelo guard automatico:
 o bloco SO pode ser READ-ONLY sobre o M1 e NAO pode tocar VPS/deploy/segredos nem persistir PII.
 Se o plano exigir alterar M1 (config.py/score/pesos/artefatos oficiais/pipelines/m1), VPS/SSH/deploy,

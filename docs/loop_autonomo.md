@@ -36,6 +36,20 @@ vivo na Growth API — o container não tem credencial). Hoje: **BLK-DIM-01, -02
 Para tornar um bloco novo elegível: adicione a linha `Autonomia: loop-safe` à tabela dele — isso é a
 **pré-aprovação humana** que autoriza o loop a rodá-lo sem o gate interativo.
 
+### Controlar quais blocos o loop executa (o loop NÃO roda o backlog inteiro)
+O marcador é o interruptor — por bloco:
+- **Roda agora:** tem `| **Autonomia** | loop-safe ... |`.
+- **Fica para o futuro:** **não** ponha o marcador (ou ponha `| **Autonomia** | futuro |`). O loop
+  ignora totalmente blocos sem `loop-safe` — eles não entram na esteira até você marcá-los.
+- **Tirar do loop:** remova/altere a linha `Autonomia`.
+
+O loop também **respeita `Depende de`**: só inicia um bloco cujas dependências já estão em
+`tasks/completed.md`. Ex.: `BLK-DIM-02` (depende do GO do DIM-01) só roda depois que o DIM-01 fechar;
+`BLK-DIM-04` só depois de 01/02/03. Então, mesmo marcando vários, a ordem é segura.
+
+> Dica: para um primeiro loop conservador, deixe **só `BLK-DIM-03`** com `loop-safe` (Média, sem
+> dependências) e marque os demais quando quiser. Hoje estão marcados DIM-01/02/03/04.
+
 ## As 4 redes de segurança (substituem o humano no loop)
 1. **Container sem credencial** — o `run-ralph-loop.sh` **aborta** se achar `VPS_`, `SSH_PRIVATE_KEY`,
    `CLICKUP_WRITE`, `DEPLOY_KEY`, `GROWTH_API_*` no ambiente. Sem chave de VPS → impossível deployar.
