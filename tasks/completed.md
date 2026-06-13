@@ -4384,3 +4384,44 @@ bot; quem mantém entende env/erros/deploy. Linka (não duplica) os docs existen
 ---
 
 - BLK-FIX-12 (concluído 2026-06-12) — ver tasks/completed.md
+
+---
+
+### BLK-EST-04 — Trocar a imagem de capa do Relatório Pontual Censitário (dashboard + API)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Baixa (asset de branding; não toca M1) |
+| **Prioridade** | Média |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Origem** | pedido de Felipe 2026-06-12 (nova capa já adicionada em `data/ultra/`) |
+
+**Contexto:** a capa do PDF usa o asset `data/ultra/relatorio_capa_bg.png` (extraído do `Teste Modelo.pptx`,
+**gitignored** — não vai na imagem; lido em runtime do volume `data/ultra`). Felipe **já adicionou a nova
+versão** em `data/ultra/relatorio_capa_bg.png` (local).
+
+**Escopo:** trocar a capa nos **dois** caminhos (dashboard + API). Como o asset é gitignored e lido do
+volume montado, basta **scp** do novo `relatorio_capa_bg.png` para `/opt/motor-expansao/data/ultra/` no
+VPS — `streamlit` e `api` montam `data/ultra`, então **uma cópia atualiza os dois**. Sem rebuild de imagem.
+Se a nova capa mudar de proporção/zona limpa, conferir o layout 16:9 (`_cover_page` em `censo_report.py`)
+para o título/subtítulo não colidirem com o branding.
+
+**Critérios:** PDF do dashboard e da API usa a capa nova; título/subtítulo legíveis sobre ela; sem PII
+versionada (asset segue gitignored).
+
+**Fechamento (2026-06-12) — APROVADO.** Esteira efetiva: Block Orchestrator → Builder → fechamento
+(criticidade Baixa; pura troca de asset de branding, READ-ONLY sobre o M1). Nova capa
+`data/ultra/relatorio_capa_bg.png` (1360×763, ratio 1.7824 ≈ 16:9; 76.089 bytes) renderizada e
+**inspecionada visualmente pelo orquestrador** via PyMuPDF nos DOIS estados do subtítulo
+(coordenada e rótulo de endereço): título "Relatorio Pontual Censitario" (30 pt bold branco,
+zona limpa inferior-direita), subtítulo e "Raio de analise: 1,5 km" ficam LEGÍVEIS e SEM colisão
+com o logo "GRUPO ULTRA" (acima) nem com a faixa branca de parceiros Ultra/Spider Kick/The Flame
+(abaixo). **ZERO mudança de código** — `_cover_page`/`censo_report.py` intocados (Caso A do Builder,
+confirmado por render independente). **Deploy VPS executado e verificado** (usuário pré-autorizou):
+`scp` do novo PNG para `/opt/motor-expansao/data/ultra/relatorio_capa_bg.png`; sha256 host
+`f7419fd1…d0b2` == local; **ambos os containers servem o novo asset** (api e streamlit, mesmo hash
+via mount `/app/data/ultra`); sem rebuild de imagem nem restart (lido do volume em runtime). Capa
+antiga substituída (era 423.924 bytes, sha `affdc153…44be`). M1/score/artefatos oficiais e estrutura
+do PDF (7 páginas/ordem/`/Count`/grid 4x2/`set_compression(False)`/raio 1.5 km/método de interseção):
+INALTERADOS. Asset segue gitignored (sem PII versionada; `image24.png` nunca embutida).
