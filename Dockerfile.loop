@@ -1,0 +1,39 @@
+# Dockerfile.loop — container efemero de BUILD para o ralph loop autonomo do Motor de Expansao.
+# NAO e runtime de producao. O repositorio e montado como VOLUME em runtime; o agente escreve
+# SO no volume. Sem credencial de producao (VPS/ClickUp-write/deploy) nem .env da Growth API
+# (o loop consome os parquets ja materializados em data/staging, montados pelo volume).
+#
+# Build:  docker build -t motor-loop -f Dockerfile.loop .
+# (o .dockerignore ja exclui data/ 2.7G, .git/, tests/, etc. -> contexto pequeno)
+FROM python:3.12-slim
+
+# Toolchain: git (commits do loop), node (Claude Code CLI), build-essential (sdists eventuais).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git curl ca-certificates build-essential && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    rm -rf /var/lib/apt/lists/*
+
+# Claude Code CLI (global; precisa de root).
+RUN npm install -g @anthropic-ai/claude-code
+
+# Bake das dependencias do projeto. Instala .[dev,api_mvp] (suite completa = 780 testes) com um
+# editable link apontando para /repo; o volume montado em runtime sobrepoe /repo com o codigo vivo,
+# entao o link resolve para a fonte real (o loop edita src/ e os testes pegam na hora).
+WORKDIR /repo
+COPY pyproject.toml ./
+COPY src ./src
+COPY scripts ./scripts
+RUN pip install --no-cache-dir -e ".[dev,api_mvp]"
+
+# Usuario nao-root: o Claude Code RECUSA --dangerously-skip-permissions rodando como root.
+RUN useradd --create-home --uid 1000 loop && chown -R loop /repo
+USER loop
+ENV HOME=/home/loop
+# Identidade dos commits do loop + libera o git no volume montado (UID do host != container).
+RUN git config --global user.name  "ralph-loop" && \
+    git config --global user.email "ralph-loop@motor-expansao.local" && \
+    git config --global --add safe.directory /repo
+
+WORKDIR /repo
+ENTRYPOINT ["bash", "run-ralph-loop.sh"]

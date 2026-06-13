@@ -4456,3 +4456,20 @@ INALTERADOS. Asset segue gitignored (sem PII versionada; `image24.png` nunca emb
 sem PII versionada.
 
 **Risco:** médio (depende dos insumos externos; sem eles, DIM-01/02/04 ficam limitados).
+
+---
+
+### BLK-LOOP-01 — Loop autônomo (ralph) em container isolado para blocos loop-safe
+
+**Concluído 2026-06-13** (ad-hoc; pedido de Felipe). Porta o padrão "ralph" (laço de `/run-cycle`
+autônomo) do projeto Growth RPG para o Motor, restrito a blocos **`loop-safe`** (READ-ONLY sobre o M1,
+sem VPS/deploy, sem PII, consumindo `data/staging`). Roda em **container Docker isolado** (`Dockerfile.loop`,
+non-root), repo montado como volume, autenticado pela **assinatura Max** (`CLAUDE_CODE_OAUTH_TOKEN`,
+não API key). Decisões de Felipe: (D1) **guard automático substitui o gate humano** dos blocos Alta;
+(D2) **container sem credencial** (consome só dados já staged; ingestão ao vivo continua passo humano).
+
+**Entregue:** `Dockerfile.loop`, `run-ralph-loop.sh` (laço com 4 redes de segurança), `scripts/loop_guard.py`
+(aborta se o diff tocar M1/score/config/pipelines m1/VPS/deploy/segredo/CI — testado), `docs/loop_autonomo.md`
+(runbook Windows+Docker), marcador `Autonomia: loop-safe` em BLK-DIM-01/02/03/04, e `LOOP_DONE`/
+`RELATORIO-BLOQUEIO.md` no `.gitignore`. O loop commita por path no branch e **nunca** faz merge/push/deploy.
+Validações: ruff/mypy limpos no guard; `bash -n` ok; guard testado (positivo e negativo). READ-ONLY sobre o M1.

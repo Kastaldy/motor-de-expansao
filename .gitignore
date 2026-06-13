@@ -84,6 +84,12 @@ out/
 # Docker
 .docker/
 
+# Ralph loop autonomo (BLK-LOOP-01) - sinais transitorios do loop, nunca versionar
+LOOP_DONE
+RELATORIO-BLOQUEIO.md
+# Pasta de runtime do lancador (mascara do .env p/ o container credential-free)
+.loop/
+
 # OS
 .DS_Store
 Thumbs.db

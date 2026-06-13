@@ -128,6 +128,12 @@ score_oficial = score_priorizacao
 - Nao encadear multiplos comandos no servidor sem aprovacao intermediaria.
 - Detalhes de manutencao e deploy em `docs/infra_producao.md`.
 
+## 6.1 Loop autonomo (ralph) — BLK-LOOP-01
+- Padrao "ralph" portado do Growth RPG: um laco roda `/run-cycle` 100% autonomo num **container Docker isolado** (`Dockerfile.loop`, non-root, repo como volume), auth pela assinatura Max (`CLAUDE_CODE_OAUTH_TOKEN`, NAO API key). Lancador de 1 clique: **`iniciar-loop.cmd`** -> `scripts/iniciar_loop.ps1` (le so o token do `.env`, MASCARA o `.env` no container, builda a imagem, cria branch `ciclo/loop-*`, roda). Runbook: `docs/loop_autonomo.md`.
+- **REGRA CRITICA — opt-in por marcador:** o loop SO executa blocos que tenham a linha **`| **Autonomia** | loop-safe ... |`** na tabela do bloco em `tasks/backlog.md`. **Bloco SEM esse marcador e TOTALMENTE ignorado pelo loop.** Logo: para um backlog novo entrar no loop, ALGUEM (humano) precisa adicionar essa linha — e isso e a pre-aprovacao que substitui o gate humano interativo. Trabalho futuro/manual: nao marcar (ou `Autonomia: futuro`). O loop tambem respeita `Depende de` (so inicia bloco com dependencias ja em `completed.md`). Hoje marcados: BLK-DIM-01/02/03/04.
+- **Criterio para um bloco PODER ser `loop-safe`:** READ-ONLY sobre o M1, NAO toca VPS/deploy/segredos, NAO persiste PII, consome `data/staging` (sem ingestao ao vivo). Blocos que tocam M1/score/pesos/artefatos/VPS NUNCA sao loop-safe.
+- **Redes de seguranca que substituem o humano no loop:** (1) `run-ralph-loop.sh` aborta se houver credencial sensivel no ambiente (`VPS_/SSH_PRIVATE_KEY/CLICKUP_WRITE/DEPLOY_KEY/GROWTH_API_`); (2) `scripts/loop_guard.py` roda apos cada bloco e aborta + escreve `RELATORIO-BLOQUEIO.md` se o diff tocar `config.py`/`pipelines/m1`/`*scoring*`/artefatos M1/`deploy/`/`Dockerfile.{streamlit,api}`/compose/Caddy/authelia/`.env`/`secrets/`/CI; (3) testes (ruff+pytest) como gate sem bypass; (4) container sem chave de VPS -> nao deploya. O loop **commita por path** no branch e **NUNCA** faz merge/push/deploy — revisao + merge sao passos humanos.
+
 ## 7. Onde aprofundar
 - `PRD.md`: guia operacional em blocos do ciclo ativo.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico de colunas e calculos de mercado/residual.
