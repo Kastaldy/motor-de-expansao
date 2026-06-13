@@ -39,7 +39,12 @@ paths = [
 # Strings legitimas e estaveis (nome de coluna do censo / nome de arquivo de teste)
 # que generic-api-key marca por entropia. NAO sao segredos. Substring match, entao
 # 'renda_per_capita_setor_2022' tambem cobre o sufixo '_calibrada'.
+# 'dev-token' = token PLACEHOLDER documentado da API (default de API_TOKENS =
+# {"dev-token": "dev-local"}); aparece nos exemplos `curl -H "Authorization:
+# Bearer dev-token"` da doc de uso e dos handoffs. NAO e segredo real (a regra
+# default curl-auth-header captura o valor do header). Robusto a drift de linha.
 regexes = [
     '''renda_per_capita_setor_2022''',
     '''test_fase_a_censo2022\.py''',
+    '''dev-token''',
 ]

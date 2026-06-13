@@ -257,39 +257,8 @@ Permanece como roadmap até nova decisão de Felipe.
 
 ---
 
-### BLK-API-08 — Documentação ponta-a-ponta da API GeoEspacial (uso + manipulação)
+- BLK-API-08 (concluído 2026-06-12) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | Média (doc; não toca código/M1) |
-| **Prioridade** | Média |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Status** | Pendente |
-| **Origem** | pedido de Felipe 2026-06-12 (pós-deploy API/bot) |
-
-**Contexto / gap:** já existem `docs/api_geoespacial_contrato.md`, `docs/api_geoespacial_openapi.yaml`,
-`docs/api_geoespacial_deploy.md` e `docs/deploy_api_bot.md` — porém espalhados e voltados a
-contrato/deploy. Falta **UM** doc de **uso ponta-a-ponta** para qualquer usuário conseguir **utilizar
-ou manipular** a API sem ter que juntar as peças.
-
-**Escopo:** criar `docs/api_geoespacial_uso.md` (fonte única de USO) cobrindo, no mínimo:
-- Visão geral + arquitetura (api/bot/containers na VPS; api interna 8077; bot long-polling).
-- **Autenticação:** token→consumidor; header `Authorization: Bearer <token>`; como obter/rotacionar o token.
-- **Endpoints:** `GET /health`; `POST /api/v1/analisar` — schema request/response, **JSON e PDF**
-  (`?formato=pdf` / `Accept: application/pdf`), entrada `{lat,lng}` e `maps_url`, raio fixo 1.5 km, carimbo
-  de versão (contrato/score).
-- **Exemplos prontos:** `curl` (JSON e PDF) e o fluxo do **bot Telegram** (senha → menu → localização → PDF).
-- **Erros:** tabela `{detail, codigo}` (400 coordenada_invalida / 401 nao_autenticado / 404 base_geo_ausente
-  / 500 erro_interno).
-- **Operação:** variáveis `API_*`, rodar local (`uvicorn motor_expansao.api.main:app`), e ponteiro p/
-  deploy/atualização (cruzar com `docs/deploy_api_bot.md`). Limitações + roadmap (BLK-API-05).
-
-**Critérios de aceite:** um usuário novo, só com o doc, autentica + chama `/analisar` (JSON e PDF) e usa o
-bot; quem mantém entende env/erros/deploy. Linka (não duplica) os docs existentes. READ-ONLY M1.
-
----
-
-- BLK-FIX-12 (concluído 2026-06-12) — ver tasks/completed.md
 
 
 ---
