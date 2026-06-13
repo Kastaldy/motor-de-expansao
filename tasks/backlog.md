@@ -393,6 +393,7 @@ permanece intacta. Detalhe e decomposição abaixo (epic BLK-DIM).
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
 | **Depende de** | **BLK-DIM-00** |
 | **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; no modo loop o gate humano é substituído pelo guard automático (`scripts/loop_guard.py`); ver `docs/loop_autonomo.md` |
 
 **Objetivo:** estimar `aderência_calibrada(hex)` — NÃO usar "20% fixo" (a armadilha fatal do §5).
 
@@ -421,6 +422,7 @@ fundamentado; reprodutível (seed fixo); ZERO escrita em M1.
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
 | **Depende de** | **BLK-DIM-01** (GO) |
 | **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; no modo loop o gate humano é substituído pelo guard automático (`scripts/loop_guard.py`); ver `docs/loop_autonomo.md` |
 
 **Objetivo:** `alunos_capturáveis = alunos_potenciais × share_local`, com share não-linear e saturante.
 
@@ -446,6 +448,7 @@ escrita em M1.
 | **Esteira** | Block Orchestrator → Planner → Builder → QA |
 | **Depende de** | nada (usa dados que já existem) — **começar por aqui** |
 | **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, determinístico, consome `data/staging`; **ideal para o 1º loop** (Média, sem dependências); ver `docs/loop_autonomo.md` |
 
 **Objetivo:** entregar uma calculadora determinística e dinâmica de dimensionamento + viabilidade,
 desacoplada das camadas 1-2.
@@ -484,6 +487,7 @@ verdes; ZERO escrita em M1.
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
 | **Depende de** | **BLK-DIM-01, BLK-DIM-02, BLK-DIM-03** |
 | **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; no modo loop o gate humano é substituído pelo guard automático (`scripts/loop_guard.py`); ver `docs/loop_autonomo.md` |
 
 **Objetivo:** encadear hex candidato → potencial → captura → tamanho ideal → viabilidade, e medir
 erro honesto.
