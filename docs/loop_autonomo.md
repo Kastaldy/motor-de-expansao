@@ -8,6 +8,25 @@ você revisar — **nunca** faz merge, push nem deploy, e **nunca** toca o M1, a
 > guardrails: container sem credencial, testes como gate, e um **guard automático** que substitui o
 > gate humano dos blocos Alta.
 
+## ⚡ Início rápido (1 clique)
+**Uma vez:** abra o Docker Desktop e adicione ao `.env` da raiz a linha
+`CLAUDE_CODE_OAUTH_TOKEN=<token>` (gere com `claude setup-token`).
+
+**Depois, sempre que quiser rodar:** dê **duplo-clique em `iniciar-loop.cmd`** (na raiz do projeto).
+Ou, no terminal, qualquer um destes:
+```powershell
+.\iniciar-loop.cmd
+# ou
+powershell -ExecutionPolicy Bypass -File scripts\iniciar_loop.ps1
+```
+O lançador faz tudo sozinho: confere o Docker, lê **só o token** do `.env`, **cria um branch de
+trabalho** se você estiver na `main`, **builda a imagem** na primeira vez, **mascara o `.env`** dentro
+do container (as credenciais Growth/UX **nunca entram** — fica credential-free) e **roda o loop**. Ao
+terminar, ele te diz o branch e como revisar. Para ajustar o nº de iterações: `$env:MAX_ITERS = 20`
+antes de rodar (default 10).
+
+> O resto deste documento é a referência detalhada (o que o lançador faz por baixo e como operar manual).
+
 ## O que é "loop-safe"
 Um bloco do backlog marcado `| **Autonomia** | loop-safe ... |`. Critério: **READ-ONLY sobre o M1**,
 **não toca VPS/deploy/segredos**, **não persiste PII**, e **consome `data/staging`** (sem ingestão ao
