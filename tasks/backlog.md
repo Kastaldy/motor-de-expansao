@@ -505,6 +505,58 @@ flags de extrapolação; ZERO escrita em M1.
 
 ---
 
+### BLK-DIM-01R — Calibração REAL da Camada 1 (aderência) + correção da endogeneidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (decide ciência vs. ficção do motor; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-00** (base de calibração materializada em `data/staging/`) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; no modo loop o gate humano é substituído pelo guard automático (`scripts/loop_guard.py`); ver `docs/loop_autonomo.md` |
+
+**Contexto / por que existe:** a 1ª rodada do loop (spike DIM-01..04, branches `ciclo/BLK-DIM-01..04`,
+NÃO mergeados) entregou bom esqueleto de engenharia, mas a auditoria (2026-06-13) achou que o
+**R²_LOO=0.897 é ARTEFATO** de fixture sintética (o teste gera os dados da própria equação do modelo)
+e que há **endogeneidade**: o alvo `penetração = pagantes/pop_captação` tem a feature `log(pop)` no
+denominador → anti-correlação mecânica (`log penet = log pagantes − log pop`), que pode gerar **GO
+espúrio**. Nenhuma calibração em dado REAL foi feita. Este bloco faz a Camada 1 **de verdade**.
+
+**Objetivo:** estimar e VALIDAR honestamente a aderência/penetração usando os **maduros reais** de
+`data/staging/base_calibracao_maduras.parquet` (DIM-00), tratando a endogeneidade, e reportar o
+**R²_LOO verdadeiro** com veredito GO/NO-GO. (Pode reaproveitar o ESQUELETO de engenharia do branch
+`ciclo/BLK-DIM-01` — LOO/Ridge/anti-PII estão corretos — mas a estatística deve ser refeita honesta.)
+
+**Escopo permitido:**
+- **Rodar sobre dado REAL** (`base_calibracao_maduras.parquet`): nada de fixture sintética como
+  resultado. Reportar N de unidades, faixa de penetração observada, e o **R²_LOO no espaço de alunos**
+  (não no log) **contra baseline da média** (§7 do spec).
+- **Corrigir a endogeneidade** (escolher e justificar): (a) modelar `pagantes_steady_state`
+  DIRETAMENTE com `pop`/`renda`/features de perfil como preditores (sem a razão no alvo); e/ou
+  (b) regredir penetração contra features que NÃO derivam de pop/renda do mesmo catchment (perfil
+  etário, densidade urbana — spec §4). Documentar que `coef_log_pop≈−1` é em parte artefato algébrico.
+- **Teste de controle negativo (anti-circular):** com `pagantes` independente de `pop` (identidade
+  pura), o gate **NÃO** pode dar GO espúrio — virar teste de regressão explícito (o spike só notava
+  isso em rodapé). Remover/substituir os testes circulares (R²>0.5 sobre dados auto-gerados).
+- Saída: relatório `data/analysis/aderencia_real.md` (gitignored) com R²_LOO honesto, IC, N, confounds
+  e veredito; flags de extrapolação. Módulo em `src/motor_expansao/dimensionamento/`.
+
+**Gate GO/NO-GO:** se o R²_LOO real não for positivo e material contra a média, **NO-GO honesto** —
+relatório sem forçar significância (coerente com a DEC-001, que achou sinal ~nulo). Um NO-GO aqui é
+um resultado VÁLIDO do bloco, não uma falha.
+
+**Fora de escopo (invioláveis):** score/pesos/artefatos M1 (READ-ONLY; DEC-001); ingestão ao vivo na
+Growth API (consome só `data/staging`); persistir PII; VPS/deploy; reaproveitar o R²=0.897 do spike.
+
+**Critérios de aceite:** R²_LOO calculado em dado REAL (espaço de alunos, vs baseline) com IC/N; alvo
+sem endogeneidade trivial (justificado); teste de controle negativo verde; ZERO fixture-sintética como
+resultado; ZERO escrita em M1; reprodutível (seed fixo).
+
+**Risco:** o resultado pode ser NO-GO (sinal fraco) — e está tudo bem: é o "número que decide tudo"
+medido com honestidade. **Ótimo bloco para testar o loop corrigido (BLK-LOOP-02).**
+
+---
+
 - BLK-OPS-11 (concluído 2026-05-31) — ver tasks/completed.md
 
 
