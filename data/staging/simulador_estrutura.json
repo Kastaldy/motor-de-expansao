@@ -1,0 +1,242 @@
+{
+  "fonte": "ULTRA padrão   - Simulador Financeiro (1).xlsx",
+  "regime_tributario": "presumido",
+  "drivers": {
+    "alunos_inicial": {
+      "aba": "Simulador",
+      "celula": "E9",
+      "valor_default": 500,
+      "formula": null,
+      "unidade": "alunos",
+      "natureza": "demanda"
+    },
+    "alunos_balcao_maturidade": {
+      "aba": "Simulador",
+      "celula": "E10",
+      "valor_default": 938,
+      "formula": null,
+      "unidade": "alunos",
+      "natureza": "demanda"
+    },
+    "alunos_agregadores_maturidade": {
+      "aba": "Simulador",
+      "celula": "E11",
+      "valor_default": 651,
+      "formula": null,
+      "unidade": "alunos",
+      "natureza": "demanda"
+    },
+    "churn": {
+      "aba": "Simulador",
+      "celula": "E12",
+      "valor_default": 0.06,
+      "formula": null,
+      "unidade": "fracao",
+      "natureza": "premissa"
+    },
+    "maturacao_meses": {
+      "aba": "Simulador",
+      "celula": "E13",
+      "valor_default": 8,
+      "formula": null,
+      "unidade": "meses",
+      "natureza": "premissa"
+    },
+    "mensalidade": {
+      "aba": "Simulador",
+      "celula": "J9",
+      "valor_default": null,
+      "formula": "=IF(N12=0,137,IF(N12=1,147,IF(N12=2,157,IF(N12=3,167,0))))",
+      "unidade": "reais",
+      "natureza": "premissa"
+    },
+    "manutencao_anuidade": {
+      "aba": "Simulador",
+      "celula": "J10",
+      "valor_default": 99,
+      "formula": null,
+      "unidade": "reais",
+      "natureza": "premissa"
+    },
+    "matricula": {
+      "aba": "Simulador",
+      "celula": "J11",
+      "valor_default": 0,
+      "formula": null,
+      "unidade": "reais",
+      "natureza": "premissa"
+    },
+    "mes_inicio_cobranca_taxas": {
+      "aba": "Simulador",
+      "celula": "J12",
+      "valor_default": 12,
+      "formula": null,
+      "unidade": "mes",
+      "natureza": "premissa"
+    },
+    "aluguel_mes": {
+      "aba": "Simulador",
+      "celula": "N9",
+      "valor_default": 20000,
+      "formula": null,
+      "unidade": "reais",
+      "natureza": "fisico"
+    },
+    "carencia_aluguel_meses": {
+      "aba": "Simulador",
+      "celula": "N10",
+      "valor_default": 0,
+      "formula": null,
+      "unidade": "meses",
+      "natureza": "premissa"
+    },
+    "royalties_pct": {
+      "aba": "Simulador",
+      "celula": "N11",
+      "valor_default": 0.08,
+      "formula": null,
+      "unidade": "fracao",
+      "natureza": "contrato"
+    },
+    "cenario_estudios": {
+      "aba": "Simulador",
+      "celula": "N12",
+      "valor_default": 0,
+      "formula": null,
+      "unidade": "indice",
+      "natureza": "premissa"
+    },
+    "capex_total": {
+      "aba": "Simulador",
+      "celula": "R9",
+      "valor_default": null,
+      "formula": "=IF(N12=0,SUM(FC!C11:C16)*-1,IF(N12=1,SUM(FC!C11:C16)*-1,IF(N12=2,(SUM(FC!C11:C16)*-1)+150000,IF(N12=3,(SUM(FC!C11:C16)*-1)+250000,0))))",
+      "unidade": "reais",
+      "natureza": "fisico"
+    },
+    "taxa_franquia": {
+      "aba": "Simulador",
+      "celula": "R10",
+      "valor_default": 140000,
+      "formula": null,
+      "unidade": "reais",
+      "natureza": "contrato"
+    },
+    "multiplo_valuation": {
+      "aba": "Simulador",
+      "celula": "R11",
+      "valor_default": 1.5,
+      "formula": null,
+      "unidade": "multiplo",
+      "natureza": "premissa"
+    },
+    "regime_tributario": {
+      "aba": "Simulador",
+      "celula": "R12",
+      "valor_default": "presumido",
+      "formula": null,
+      "unidade": "texto",
+      "natureza": "premissa"
+    },
+    "escolha_cenario": {
+      "aba": "Simulador",
+      "celula": "G7",
+      "valor_default": 4,
+      "formula": null,
+      "unidade": "indice",
+      "natureza": "toggle"
+    },
+    "toggle_financiamento": {
+      "aba": "Simulador",
+      "celula": "I7",
+      "valor_default": 1,
+      "formula": null,
+      "unidade": "indice",
+      "natureza": "toggle"
+    }
+  },
+  "ratios_dre": {
+    "devolucoes_pct_receita": {
+      "aba": "DRE",
+      "celula": "F30",
+      "valor_default": 0.005,
+      "formula": null,
+      "unidade": null,
+      "natureza": "ratio"
+    },
+    "royalties_pct_receita": {
+      "aba": "DRE",
+      "celula": "F61",
+      "valor_default": null,
+      "formula": "=Simulador!N11",
+      "unidade": null,
+      "natureza": "ratio"
+    },
+    "marketing_pct_receita": {
+      "aba": "DRE",
+      "celula": "F63",
+      "valor_default": 0.02,
+      "formula": null,
+      "unidade": null,
+      "natureza": "ratio"
+    },
+    "manutencao_pct_receita": {
+      "aba": "DRE",
+      "celula": "F67",
+      "valor_default": 0.02,
+      "formula": null,
+      "unidade": null,
+      "natureza": "ratio"
+    },
+    "cartoes_pct_receita": {
+      "aba": "DRE",
+      "celula": "F79",
+      "valor_default": 0.0105,
+      "formula": null,
+      "unidade": null,
+      "natureza": "ratio"
+    }
+  },
+  "impostos_presumido": {
+    "pis": {
+      "aba": "Tributos",
+      "celula": "E38",
+      "valor_default": 0.0065,
+      "formula": null,
+      "unidade": null,
+      "natureza": "imposto"
+    },
+    "cofins": {
+      "aba": "Tributos",
+      "celula": "E40",
+      "valor_default": 0.03,
+      "formula": null,
+      "unidade": null,
+      "natureza": "imposto"
+    },
+    "iss": {
+      "aba": "Tributos",
+      "celula": "E42",
+      "valor_default": 0.03,
+      "formula": null,
+      "unidade": null,
+      "natureza": "imposto"
+    },
+    "ir_aliquota": {
+      "aba": "Tributos",
+      "celula": "E44",
+      "valor_default": null,
+      "formula": "=32%*25%",
+      "unidade": null,
+      "natureza": "imposto"
+    },
+    "csll_aliquota": {
+      "aba": "Tributos",
+      "celula": "E46",
+      "valor_default": null,
+      "formula": "=32%*9%",
+      "unidade": null,
+      "natureza": "imposto"
+    }
+  }
+}

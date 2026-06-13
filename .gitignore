@@ -15,7 +15,7 @@ build/
 
 # Dados sensiveis e staging (nunca commitar)
 data/raw/
-data/staging/
+data/staging/*
 data/snapshots/
 data/ultra/
 data/osm_cache/
@@ -28,6 +28,11 @@ concorrentes/
 *.tmp.md
 data/outputs/_manifest.json
 !tests/contracts/fixtures/*.html
+
+# Excecao (BLK-DIM-00, decisao D2): estrutura parametrica do simulador financeiro
+# e metadado COMMITABLE (mapeamento celula->driver / defaults / ratios %), sem PII
+# de aluno nem dado financeiro real de unidade. Versionado por path.
+!data/staging/simulador_estrutura.json
 
 # Fixtures de teste versionadas (sinteticas, sem dado real) - excecao ao ignore de parquet/csv
 !tests/fixtures/
