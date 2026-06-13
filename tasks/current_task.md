@@ -4,13 +4,20 @@
 
 ID: BLK-EST-04
 Nome: Trocar a imagem de capa do Relatorio Pontual Censitario (dashboard + API)
-Status: APROVADO — deploy VPS pendente (scp, confirmação humana antes de executar)
+Status: CONCLUÍDO — APROVADO + deploy VPS executado e verificado (2026-06-12)
 Tipo: operação (asset de branding + deploy VPS)
 Criticidade: baixa
 Esteira: Block Orchestrator → Builder → fechamento
-Skill atual: run-cycle (fechamento)
-Próxima Skill: deploy VPS (scp manual pelo usuário)
+Skill atual: run-cycle (ciclo fechado)
+Próxima Skill: merge ciclo/BLK-EST-04 → main (PR pelo humano)
 dry_run: false
+
+## Deploy VPS (executado, usuário pré-autorizou — GUARDRAIL §6)
+- scp do novo data/ultra/relatorio_capa_bg.png → /opt/motor-expansao/data/ultra/ (Jun 13 02:20)
+- sha256 host f7419fd1…d0b2 == local; api E streamlit servem o mesmo hash (mount /app/data/ultra)
+- sem rebuild/restart (lido do volume em runtime); capa antiga (423.924 B, affdc153…) substituída
+- render inspecionado pelo orquestrador (PyMuPDF): título/subtítulo legíveis, sem colisão de branding
+- ZERO mudança de código (censo_report.py intocado)
 
 ## Tiering de modelo (Passo 4) — Baixa
 - Block Orchestrator: sonnet (override +1 vs haiku — precisa raciocinar sobre risco de colisão de layout + escopo do deploy VPS)
