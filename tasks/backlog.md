@@ -393,7 +393,7 @@ permanece intacta. Detalhe e decomposição abaixo (epic BLK-DIM).
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
 | **Depende de** | **BLK-DIM-00** |
 | **Status** | Pendente |
-| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; no modo loop o gate humano é substituído pelo guard automático (`scripts/loop_guard.py`); ver `docs/loop_autonomo.md` |
+| **Autonomia** | **manual (NÃO loop-safe)** — spike auditado em 2026-06-13 (branch `ciclo/BLK-DIM-01`); R²=0.897 era artefato de fixture. Substituído por **BLK-DIM-01R** (calibração real). Mantido como referência de engenharia. |
 
 **Objetivo:** estimar `aderência_calibrada(hex)` — NÃO usar "20% fixo" (a armadilha fatal do §5).
 
@@ -422,7 +422,7 @@ fundamentado; reprodutível (seed fixo); ZERO escrita em M1.
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
 | **Depende de** | **BLK-DIM-01** (GO) |
 | **Status** | Pendente |
-| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; no modo loop o gate humano é substituído pelo guard automático (`scripts/loop_guard.py`); ver `docs/loop_autonomo.md` |
+| **Autonomia** | **manual (NÃO loop-safe)** — spike auditado em 2026-06-13 (branch `ciclo/BLK-DIM-02`); fallback `pot=y` (previsor=alvo) tem vazamento. Substituído por **BLK-DIM-02R**. Mantido como referência. |
 
 **Objetivo:** `alunos_capturáveis = alunos_potenciais × share_local`, com share não-linear e saturante.
 
@@ -446,9 +446,9 @@ escrita em M1.
 |---|---|
 | **Criticidade** | **Média** (módulo determinístico isolado; READ-ONLY sobre M1) |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Depende de** | nada (usa dados que já existem) — **começar por aqui** |
+| **Depende de** | nada (usa dados que já existem) |
 | **Status** | Pendente |
-| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, determinístico, consome `data/staging`; **ideal para o 1º loop** (Média, sem dependências); ver `docs/loop_autonomo.md` |
+| **Autonomia** | **manual (NÃO loop-safe)** — spike auditado em 2026-06-13 (branch `ciclo/BLK-DIM-03`); números mágicos (`pessoal_pct`/`custo_fixo_base_mes`) calibrados ao teste. Substituído por **BLK-DIM-03R**. Mantido como referência. |
 
 **Objetivo:** entregar uma calculadora determinística e dinâmica de dimensionamento + viabilidade,
 desacoplada das camadas 1-2.
@@ -485,9 +485,9 @@ verdes; ZERO escrita em M1.
 |---|---|
 | **Criticidade** | **Alta** (READ-ONLY sobre M1) |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Depende de** | **BLK-DIM-01, BLK-DIM-02, BLK-DIM-03** |
+| **Depende de** | **BLK-DIM-01R, BLK-DIM-02R, BLK-DIM-03R** (versões reais) |
 | **Status** | Pendente |
-| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; no modo loop o gate humano é substituído pelo guard automático (`scripts/loop_guard.py`); ver `docs/loop_autonomo.md` |
+| **Autonomia** | **manual (NÃO loop-safe)** — spike auditado em 2026-06-13 (branch `ciclo/BLK-DIM-04`); backtest era in-sample disfarçado. Refazer após as versões "R"; substituído por **BLK-DIM-06** (backtest honesto). Mantido como referência. |
 
 **Objetivo:** encadear hex candidato → potencial → captura → tamanho ideal → viabilidade, e medir
 erro honesto.
@@ -554,6 +554,118 @@ resultado; ZERO escrita em M1; reprodutível (seed fixo).
 
 **Risco:** o resultado pode ser NO-GO (sinal fraco) — e está tudo bem: é o "número que decide tudo"
 medido com honestidade. **Ótimo bloco para testar o loop corrigido (BLK-LOOP-02).**
+
+---
+
+### BLK-DIM-05 — Features exógenas na aderência (perfil etário, densidade urbana, vínculo formal)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (modelagem que informa expansão; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-01R** (alvo sem endogeneidade) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`/censo; gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md` |
+
+**Contexto:** o spike usou só `pop`+`renda` (que geram a endogeneidade). O spec §4 pede features
+demográfico-comportamentais. Estas são EXÓGENAS (não derivam de pop/renda do catchment) e podem
+trazer o sinal real que a DEC-001 não achou no M1.
+
+**Objetivo:** enriquecer o X da aderência com features exógenas do censo 2022 por catchment: **faixa
+etária 18-45** (público-alvo do projeto), densidade urbana, vínculo formal/renda do trabalho — e medir
+se o R²_LOO honesto melhora materialmente sobre o baseline e sobre o modelo só-pop/renda.
+
+**Escopo permitido:** derivar as features por catchment (reuso do helper censitário, READ-ONLY);
+acrescentar ao modelo do BLK-DIM-01R; LOO-CV vs baseline; reportar ganho/perda honesto. Relatório em
+`data/analysis/` (gitignored).
+
+**Critérios de aceite:** features exógenas materializadas por unidade; comparação honesta (com/sem) por
+LOO-CV; ZERO escrita em M1; reprodutível.
+
+**Risco:** baixo (read-only/diagnóstico). Pode concluir que não há ganho — resultado válido.
+
+---
+
+### BLK-DIM-06 — Backtest honesto out-of-sample (substitui o backtest in-sample do spike)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (é o que dá/retira confiança no motor; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-01R** (e idealmente DIM-02R/03R) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md` |
+
+**Contexto:** o backtest do spike (`pipeline.py`) usava `faturamento` gerado pela PRÓPRIA fórmula do
+simulador → in-sample disfarçado de honesto. Precisamos do erro REAL.
+
+**Objetivo:** harness que roda o motor "às cegas" nos maduros reais (faturamento/alunos REAIS de
+`base_calibracao_maduras`/Growth API já staged) e reporta **MAPE e R² out-of-sample** por camada e
+end-to-end, com flags de extrapolação. A `nota_honesta` deve refletir o erro medido, não afirmar.
+
+**Escopo permitido:** LOO/out-of-sample sobre dados reais; comparação previsto×real por unidade;
+relatório `data/analysis/backtest_dim.md` (gitignored). Sem escrita em M1.
+
+**Critérios de aceite:** erro out-of-sample real (MAPE/R²) por camada e end-to-end; flags de
+extrapolação; nenhum dado auto-gerado como resultado; ZERO escrita em M1.
+
+**Risco:** o erro real pode ser alto — e é exatamente o que precisamos saber antes de qualquer decisão.
+
+---
+
+### BLK-DIM-03R — Simulador financeiro fundamentado no DRE real (remove os números mágicos)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (módulo determinístico isolado; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | **BLK-DIM-00** (`simulador_estrutura.json` já existe) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, determinístico, consome `data/staging`; gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md` |
+
+**Contexto:** o simulador do spike (`simulador.py`) inventou `pessoal_pct=0.30`, `outros_custos_pct=0.05`,
+`custo_fixo_base_mes=5000` para fazer o teste de margem (~24%) passar — circular. Os coeficientes reais
+estão no `data/staging/simulador_estrutura.json` (BLK-DIM-00) e no `.xlsx`.
+
+**Objetivo:** trocar os números mágicos por coeficientes derivados do DRE real (`simulador_estrutura.json`),
+e **des-circularizar** o teste: validar a margem/ROIC contra o Excel de referência (defaults §8.2), não
+contra constantes ajustadas para passar.
+
+**Escopo permitido:** ler `simulador_estrutura.json`; parametrizar a "linha de resultado" do DRE com os
+ratios reais; goal-seek (`brentq`) preservado; teste valida contra o Excel/§8.2. Sem escrita em M1.
+
+**Critérios de aceite:** zero número mágico não-fundamentado; margem/ROIC batem o Excel de referência
+(não constantes auto-ajustadas); goal-seek do aluguel-teto validado; ZERO escrita em M1.
+
+**Risco:** baixo (determinístico). Substitui o `simulador.py` do spike.
+
+---
+
+### BLK-DIM-02R — Huff com validação real (OSM, saturação, sem vazamento)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (elo mais difícil; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-01R** (GO) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md` |
+
+**Contexto:** o Huff do spike (`huff.py`) tem `pot = np.where(isnan(pot), y, pot)` — usa o ALVO
+(`pagantes`) como fallback do previsor → vazamento latente; e o β foi calibrado com sinal possivelmente
+indistinguível (maioria das maduras sem concorrente no raio → share≈1).
+
+**Objetivo:** calibrar o share gravitacional com concorrência **OSM real** (`concorrentes_mapeados.parquet`),
+tratar saturação/canibalização, **remover o fallback previsor=alvo**, e validar prevendo alunos dos
+maduros (LOO-CV vs baseline). Reportar se o β é distinguível de zero.
+
+**Escopo permitido:** Huff com distância real; β por LOO sem vazamento; saturação por capacidade;
+canibalização de unidades próprias; validação out-of-sample. Sem escrita em M1.
+
+**Critérios de aceite:** sem `previsor=alvo`; β reportado com IC (ou "indistinguível"); validação honesta
+nos maduros; ZERO escrita em M1.
+
+**Risco:** alto (captura é não-linear e satura). Substitui o `huff.py` do spike.
 
 ---
 
