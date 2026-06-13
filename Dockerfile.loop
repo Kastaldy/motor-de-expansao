@@ -31,8 +31,11 @@ RUN useradd --create-home --uid 1000 loop && chown -R loop /repo
 USER loop
 ENV HOME=/home/loop
 # Identidade dos commits do loop + libera o git no volume montado (UID do host != container).
+# core.autocrlf=false: o container Linux NAO converte line endings -> evita churn de CRLF nos
+# commits e falso-positivo do guard (BLK-LOOP-02).
 RUN git config --global user.name  "ralph-loop" && \
     git config --global user.email "ralph-loop@motor-expansao.local" && \
+    git config --global core.autocrlf false && \
     git config --global --add safe.directory /repo
 
 WORKDIR /repo

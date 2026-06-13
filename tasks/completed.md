@@ -4473,3 +4473,23 @@ não API key). Decisões de Felipe: (D1) **guard automático substitui o gate hu
 (runbook Windows+Docker), marcador `Autonomia: loop-safe` em BLK-DIM-01/02/03/04, e `LOOP_DONE`/
 `RELATORIO-BLOQUEIO.md` no `.gitignore`. O loop commita por path no branch e **nunca** faz merge/push/deploy.
 Validações: ruff/mypy limpos no guard; `bash -n` ok; guard testado (positivo e negativo). READ-ONLY sobre o M1.
+
+---
+
+### BLK-LOOP-02 — Robustez do guard do loop (falso-positivo de CRLF) + container sem churn
+
+**Concluído 2026-06-13** (ad-hoc; pós-mortem da 1ª rodada do loop). A 1ª rodada autônoma (epic
+BLK-DIM) entregou as 4 camadas com testes verdes, mas o guard ABORTOU por **falso-positivo**: o
+container Linux normalizou line endings (CRLF→LF) e isso fez arquivos do M1 **aparecerem
+"modificados"** no working tree (`git status`), embora o **commit por path** os tenha mantido fora
+dos commits (diff commitado 100% limpo, zero arquivo M1/VPS). Correções:
+- **`scripts/loop_guard.py`**: passa a avaliar a **intenção de merge** = diff **commitado (base..HEAD)
+  + staged (`--cached`)**, NÃO o working tree não-staged (que trazia o churn de CRLF/`__pycache__`).
+  Regex de M1 **ancorado** a caminhos específicos (`^src/motor_expansao/config.py$`,
+  `^.../(core|dashboard)/constants.py$`) — não casa mais o `dimensionamento/config.py` legítimo.
+- **`Dockerfile.loop`**: `git config core.autocrlf false` no container (não converte line endings).
+- **`tests/unit/test_loop_guard.py`**: 26 testes trancam a matriz proibido/permitido (M1/score/VPS/
+  segredo bloqueados; módulo paralelo `dimensionamento/` e docs permitidos).
+READ-ONLY sobre o M1. Validações: 26 passed, ruff/mypy limpos. O trabalho DIM-01..04 da 1ª rodada
+ficou nos branches `ciclo/BLK-DIM-01..04` para auditoria humana (R²=0.897 identificado como artefato
+de fixture sintética — ver parecer; calibração em dado real ainda pendente).
