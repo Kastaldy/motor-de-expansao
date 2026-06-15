@@ -9,6 +9,13 @@ READ-ONLY M1. Ver seção "Projeto — API GeoEspacial".
 Em paralelo (trilha do Vini, dashboard/PDF/UX): BLK-FIX-07..11, BLK-SAM-01, BLK-EST-01/02, BLK-UI-01.
 BLK-CENSO-01/02/03 (refino do Relatório Pontual Censitário): **concluídos** (ver tasks/completed.md).
 
+**Trilha BLK-DIM — PONTO DE DECISÃO (2026-06-15):** a sub-trilha de "estressar o dado interno"
+(DIM-07→08) está **concluída** e deu **três NO-GOs honestos** — a demanda/viabilidade NÃO é previsível
+pela geografia de mercado que temos. O dimensionamento por m² (DIM-03R/06) é a parte que funciona, mas
+consome demanda, não a produz. **Próximo passo = decisão de Felipe na bifurcação `BLK-DIM-10`**: Caminho A
+(repaginar o motor para viabilidade/break-even, ROI imediato) e/ou Caminho B (BLK-DIM-DATA, a aposta de
+buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-10.
+
 - **BLK-CENSO-01** (repaginação do relatório: camadas combinadas + fundo de ruas + faixas GeoFusion +
   pins com logo) — **concluído** em 2026-06-05 (FU1–FU5 deployados na VPS). Ver tasks/completed.md.
 - Bugs de produção do dashboard (BLK-FIX-03..06) — todos **concluídos** em 2026-06-03.
@@ -110,17 +117,38 @@ BLK-CENSO-01/02/03 (refino do Relatório Pontual Censitário): **concluídos** (
 ---
 
 - BLK-EST-03 (concluído 2026-06-15) — ver tasks/completed.md
-
-
----
-
 - BLK-FIX-13 (concluído 2026-06-15) — ver tasks/completed.md
-
-
----
-
 - BLK-EST-05 (concluído 2026-06-15) — ver tasks/completed.md
 
+
+---
+
+### BLK-FIX-07 — Data-drift em `test_csvs_concorrentes_legiveis` (2 falhas pré-existentes na suíte full)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (teste de dados desatualizado vs CSVs reais regenerados; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** (deixa a suíte full vermelha — 2 falhas — mascarando regressões futuras) |
+| **Esteira** | Block Orchestrator → Builder |
+| **Status** | Pendente |
+| **Origem** | ressalva não-bloqueadora do QA do BLK-EST-03 (2026-06-15); falhas comprovadamente independentes do bloco (reproduzem com o BLK-EST-03 em `git stash`) |
+
+**Contexto:** o QA do BLK-EST-03 rodou a suíte full e encontrou `2 failed, 816 passed, 1 skipped`
+(serial; xdist trava em ~96% no ambiente Python 3.14 local). As 2 falhas estão em
+`test_csvs_concorrentes_legiveis` e são **data-drift**: os CSVs reais de concorrentes foram
+regenerados com contagens diferentes das fixadas no teste (226 vs 223 linhas; 455 vs 472 linhas).
+Nada a ver com a API/marca d'água — reproduzem idênticas com o BLK-EST-03 fora da árvore.
+
+**Objetivo:** restaurar a suíte full 100% verde, reconciliando o teste com os CSVs reais atuais
+(atualizar as contagens esperadas OU tornar o teste robusto a drift, conforme o BO/Builder decidir),
+sem mascarar regressão real.
+
+**Escopo permitido:** o teste `test_csvs_concorrentes_legiveis` e, se necessário, a verificação dos
+CSVs de concorrentes em `data/`. **Fora de escopo:** score/pesos/artefatos M1 (READ-ONLY); regenerar
+artefatos M1.
+
+**Critérios de aceite:** `pytest` full verde (0 failed); a mudança documenta por que as contagens
+mudaram (regeneração legítima vs regressão); READ-ONLY M1.
 
 ---
 
@@ -350,123 +378,14 @@ permanece intacta. Detalhe e decomposição abaixo (epic BLK-DIM).
 
 ---
 
-### BLK-DIM-01 — Camada 1: aderência/penetração calibrada por hex (absorve o GO/NO-GO do SCORE-05)
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (decide ciência vs. ficção do motor; READ-ONLY sobre M1) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Depende de** | **BLK-DIM-00** |
-| **Status** | Pendente |
-| **Autonomia** | **manual (NÃO loop-safe)** — spike auditado em 2026-06-13 (branch `ciclo/BLK-DIM-01`); R²=0.897 era artefato de fixture. Substituído por **BLK-DIM-01R** (calibração real). Mantido como referência de engenharia. |
-
-**Objetivo:** estimar `aderência_calibrada(hex)` — NÃO usar "20% fixo" (a armadilha fatal do §5).
-
-**Escopo permitido:**
-- `penetração_real = pagantes_steady / pop_captação` por unidade madura.
-- Regredir penetração contra renda per capita (setor/hex, não municipal), densidade urbana, perfil
-  etário — **LOO-CV vs baseline da média**. Número-chave: **R²_penetração positivo e material**.
-- Reusar/adaptar `analysis/score_backtest.py` e a metodologia de `teste_densidade.py`.
-
-**Gate GO/NO-GO (herdado do SCORE-05):** se R²_penetração não for positivo e material, **NO-GO** para
-o downstream dependente de Camada 1 — relatório honesto, sem forçar significância. Os 3 bloqueios do
-SCORE-05 (viés de seleção, alvo pós-maturação, sinal exógeno) seguem como cautelas explícitas.
-
-**Critérios de aceite:** função de aderência calibrada com incerteza (IC, N, confounds) OU NO-GO
-fundamentado; reprodutível (seed fixo); ZERO escrita em M1.
-
-**Risco:** alto (é o elo que pode invalidar o motor — por isso o gate honesto).
-
----
-
-### BLK-DIM-02 — Camada 2: captura / market share (modelo Huff gravitacional)
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (READ-ONLY sobre M1) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Depende de** | **BLK-DIM-01** (GO) |
-| **Status** | Pendente |
-| **Autonomia** | **manual (NÃO loop-safe)** — spike auditado em 2026-06-13 (branch `ciclo/BLK-DIM-02`); fallback `pot=y` (previsor=alvo) tem vazamento. Substituído por **BLK-DIM-02R**. Mantido como referência. |
-
-**Objetivo:** `alunos_capturáveis = alunos_potenciais × share_local`, com share não-linear e saturante.
-
-**Escopo permitido:**
-- Modelo **Huff**: P(escolher unidade) ∝ atratividade / Σ atratividade_concorrentes, com decaimento
-  por distância; concorrência OSM já mapeada (`concorrentes_mapeados.parquet`). Atratividade ≈
-  f(tamanho, marca, preço) — começar com proxy de capacidade (2.500) por falta de m² real de
-  concorrente; **saturação** (capacidade de pico) e **canibalização** (unidades próprias no catchment).
-- Validar prevendo alunos das maduras a partir de potencial × share (LOO-CV vs baseline).
-
-**Critérios de aceite:** share calibrado e validado honestamente; canibalização descontada; ZERO
-escrita em M1.
-
-**Risco:** altíssimo (captura é o elo mais difícil — não-linear, satura).
-
----
-
-### BLK-DIM-03 — Camadas 3+4: calculadora de dimensionamento (m²) + simulador financeiro + goal-seek `[PROTOTIPÁVEL JÁ]`
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (módulo determinístico isolado; READ-ONLY sobre M1) |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Depende de** | nada (usa dados que já existem) |
-| **Status** | Pendente |
-| **Autonomia** | **manual (NÃO loop-safe)** — spike auditado em 2026-06-13 (branch `ciclo/BLK-DIM-03`); números mágicos (`pessoal_pct`/`custo_fixo_base_mes`) calibrados ao teste. Substituído por **BLK-DIM-03R**. Mantido como referência. |
-
-**Objetivo:** entregar uma calculadora determinística e dinâmica de dimensionamento + viabilidade,
-desacoplada das camadas 1-2.
-
-**Escopo permitido:**
-- **Curva de densidade × tamanho** (começar com a do §3.2 do spec: 2,06 → 1,45 alunos/m²;
-  recalibrar com as 54 maduras — `alunos_por_m2` já existe). `corr(densidade, metragem) ≈ −0,26`:
-  existe faixa ótima, dimensionar por **m²** (vagas só como restrição operacional — coluna `Vagas`
-  é instável, CV=0,77, não usar como driver).
-- **Camada 3 (problema inverso):** `m²_ideal = alunos_alvo / densidade_esperada(m²)`.
-- **Camada 4 (simulador financeiro em Python — Opção A do §8.5):** replicar só a LINHA DE RESULTADO
-  do DRE (~15 fórmulas, não as 9 abas) → `viabilidade(alunos, m², aluguel, ticket, churn, custos) →
-  (faturamento, margem, payback, ROIC)`; rodar sobre **pagantes líquidos de churn/inadimplência** e
-  com **curva de maturação** (rampa). ~6 coeficientes paramétricos (R$/m² de obra, aluguel/m², custo
-  de ocupação/m², staff/aluno) calibrados das maduras + defaults do §8.2 do spec.
-- **Goal-seek (uma equação):** `aluguel-teto` a uma margem-alvo (e "alunos mínimos viáveis", "m²
-  ótimo") via `scipy.optimize.brentq` sobre a função do simulador.
-- Novo módulo isolado (ex.: `src/motor_expansao/dimensionamento/`), testes unitários determinísticos.
-
-**Fora de escopo:** reconstruir as 9 abas do Excel; dirigir o .xlsx via xlwings (Opção B descartada);
-tocar M1.
-
-**Critérios de aceite:** calculadora roda para inputs manuais e em batch por hex; goal-seek do
-aluguel-teto validado contra o simulador de referência (defaults do §8.2); testes determinísticos
-verdes; ZERO escrita em M1.
-
-**Risco:** baixo (aritmética determinística; dados disponíveis). **Maior ROI imediato do epic.**
-
----
-
-### BLK-DIM-04 — Integração das 4 camadas + backtesting prospectivo
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (READ-ONLY sobre M1) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Depende de** | **BLK-DIM-01R, BLK-DIM-02R, BLK-DIM-03R** (versões reais) |
-| **Status** | Pendente |
-| **Autonomia** | **manual (NÃO loop-safe)** — spike auditado em 2026-06-13 (branch `ciclo/BLK-DIM-04`); backtest era in-sample disfarçado. Refazer após as versões "R"; substituído por **BLK-DIM-06** (backtest honesto). Mantido como referência. |
-
-**Objetivo:** encadear hex candidato → potencial → captura → tamanho ideal → viabilidade, e medir
-erro honesto.
-
-**Escopo permitido:**
-- Pipeline end-to-end por hex candidato.
-- **Backtesting "às cegas"** nas ~54-60 maduras: comparar tamanho/alunos/faturamento previstos vs.
-  reais; reportar erro honesto (LOO-CV / out-of-sample).
-- Registrar previsto vs. real para novas unidades (backtesting prospectivo).
-
-**Critérios de aceite:** relatório de backtesting com erro out-of-sample por camada e end-to-end;
-flags de extrapolação; ZERO escrita em M1.
-
-**Risco:** médio (depende da qualidade das camadas 1-2).
+> **Spikes BLK-DIM-01..04** (1ª rodada do loop, 2026-06-13): **auditados e SUPERSEDED**, mantidos
+> como referência nos branches `ciclo/BLK-DIM-01..04` (não mergeados — ver BLK-LOOP-02). Detalhe e
+> motivo de cada um em `tasks/completed.md`.
+>
+> - BLK-DIM-01 → superseded por **BLK-DIM-01R** (R²=0.897 era artefato de fixture).
+> - BLK-DIM-02 → superseded por **BLK-DIM-02R** (fallback previsor=alvo, vazamento).
+> - BLK-DIM-03 → superseded por **BLK-DIM-03R** (números mágicos calibrados ao teste).
+> - BLK-DIM-04 → superseded por **BLK-DIM-06** (backtest in-sample disfarçado).
 
 ---
 
@@ -486,31 +405,160 @@ flags de extrapolação; ZERO escrita em M1.
 
 ---
 
-### BLK-DIM-02R — Huff com validação real (OSM, saturação, sem vazamento)
+- BLK-DIM-07 (concluído 2026-06-15) — ver tasks/completed.md
+- BLK-DIM-08 (concluído 2026-06-15) — ver tasks/completed.md
+- BLK-DIM-02R (concluído 2026-06-15) — ver tasks/completed.md
+
+
+
+---
+
+### BLK-DIM-10 — Bifurcação estratégica da epic: demanda não é previsível pela geografia de mercado (decisão de Felipe)
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Alta** (elo mais difícil; READ-ONLY sobre M1) |
+| **Criticidade** | **Estratégica** (define o rumo da epic BLK-DIM; READ-ONLY sobre M1) |
+| **Esteira** | `[DECISÃO HUMANA — Felipe]` — NÃO loop-safe (escolha de produto/rota) |
+| **Status** | **RESOLVIDO pela evidência (2026-06-15)** — registro de decisão; não é mais trabalho aberto |
+| **Origem** | síntese dos resultados DIM-01R / DIM-05 / DIM-08 / DIM-02R + spike de densidade (2026-06-15) |
+
+> **RESOLUÇÃO (2026-06-15):** o spike de densidade (`data/analysis/densidade_contexto.md`) fechou a
+> dúvida — a geografia **também** não prevê a densidade (alunos/m²) (4º NO-GO; R²_LOO −0,01), e o único
+> sinal usável é a **curva tamanho→densidade** (metragem, R²_LOO +0,10). A base geográfica interna está
+> **esgotada**. Decisão tomada: **Caminho A vira o rumo agora** → materializado no **BLK-DIM-11** (esteira
+> property-first / viabilidade). **Caminho B (BLK-DIM-DATA) é REDEFINIDO**: só faz sentido atrás de
+> **atributos de imóvel** (visibilidade, fluxo, esquina) — NÃO de mais dado demográfico, que 4 NO-GOs já
+> provaram não carregar sinal. Falta só o aval formal de Felipe para virar **DEC-009**. Este bloco fica
+> como **registro de decisão** (não loop-safe, não é tarefa); a execução é o BLK-DIM-11.
+
+**Onde chegamos (evidência):** depois de **estressar ao máximo o dado interno** (sub-trilha DIM-07→08 + spike de densidade),
+temos **três NO-GOs honestos** convergindo: a demanda/viabilidade de um ponto **NÃO é previsível a partir
+da geografia de mercado** que temos (pop, renda, concorrência, residual), em raio nenhum, com feature
+nenhuma disponível.
+
+| Camada | Veredito |
+|---|---|
+| 1 — Potencial (pop+renda, DIM-01R) | NO-GO (R²_LOO −0,01) |
+| 1 — + features exógenas (DIM-05) | NO-GO |
+| 1 — residual discrimina viabilidade? (DIM-08) | **NO-GO (AUC 0,48 ≈ acaso)** |
+| 2 — Captura/Huff (DIM-02R) | GO técnico, mas não agrega (LOO −0,25) |
+| 3+4 — Dimensionamento m² + DRE (DIM-03R/06) | **GO** (R²=+0,23, bate baseline) |
+
+A metade que **funciona** é o dimensionamento por m² — mas ele **consome** demanda como entrada, não a
+produz. O sinal que separa uma Carapicuíba (1.299) de uma vencedora (6.251) está provavelmente em
+**execução/operação, micro-localização ou variáveis demográficas que faltam** (idade 18-45, vínculo CLT),
+não na geografia agregada.
+
+**A bifurcação (escolher o rumo):**
+
+- **Caminho A — Repaginar o motor para VIABILIDADE / BREAK-EVEN (ROI imediato, usa o que funciona):**
+  inverter a pergunta de *"quantos alunos este ponto terá?"* (sem resposta) para *"quantos alunos este
+  imóvel **precisa** para ser viável, e isso é plausível aqui?"*. Usa o goal-seek que o DIM-03R já tem
+  (alunos mínimos viáveis, aluguel-teto). A demanda entra como **premissa explícita** (input humano ou
+  faixa de comparáveis), nunca como previsão cravada. Entregável sem dado novo. → viraria um bloco
+  sucessor (ex.: BLK-DIM-11).
+- **Caminho B — BLK-DIM-DATA (a aposta):** buscar o sinal que falta (microdados IBGE idade 18-45 / CLT, ou
+  proxy Gympass/Wellhub) e re-rodar a calibração. É o único caminho que poderia **restaurar previsão de
+  verdade** — mas pode dar NO-GO de novo (§5/DEC-001 avisaram que o sinal pode ser intrinsecamente fraco).
+  Bloco já existe (BLK-DIM-DATA), manual/não loop-safe.
+
+**Cautela registrada:** o método de **comparáveis/análogos** NÃO é um atalho — o DIM-08 mostrou que os
+eixos atuais (pop/renda/concorrência) não separam viável de inviável, então "pontos parecidos" nesses
+eixos teriam resultados igualmente dispersos. Só ajudaria com eixos novos (tipo de cidade, visibilidade,
+imóvel) — o que recai na questão de dado (Caminho B).
+
+**Recomendação (Claude):** fazer os dois em ordem — **A agora** (entrega valor sem dado novo e repaginia o
+papel do motor de "prever alunos" para "stress-testar viabilidade") e **B como aposta** (o teste honesto de
+"é dado ou é intrínseco?"). Se B vier NO-GO, encerra-se a questão com evidência e fica-se com o motor de
+viabilidade — que já é valioso.
+
+**Guardrail:** READ-ONLY sobre o M1 (DEC-001/DEC-008) em qualquer caminho; a priorização de **onde** olhar
+segue com o M1/censitário (camada executiva, intacta) — o que se perde é só a contagem fina de alunos por
+ponto, não a triagem regional. Após a escolha de Felipe, formalizar como **DEC-009** (CLAUDE.md §8).
+
+---
+
+### BLK-DIM-11 — Esteira property-first: motor de viabilidade do imóvel (break-even, aluguel-teto, sensibilidade)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (nova esteira de produto da epic; READ-ONLY sobre M1) |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
-| **Depende de** | **BLK-DIM-01R** (GO) |
+| **Depende de** | **BLK-DIM-03R** (simulador DRE + goal-seek + curva de densidade) e **BLK-DIM-07** (catchment/contexto) — ambos concluídos |
 | **Status** | Pendente |
-| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md` |
+| **Autonomia** | **loop-safe** — motor determinístico, READ-ONLY M1, sem VPS, consome `data/staging` + censo local (sem ingestão ao vivo); gate humano substituído pelo guard; ver `docs/loop_autonomo.md` |
 
-**Contexto:** o Huff do spike (`huff.py`) tem `pot = np.where(isnan(pot), y, pot)` — usa o ALVO
-(`pagantes`) como fallback do previsor → vazamento latente; e o β foi calibrado com sinal possivelmente
-indistinguível (maioria das maduras sem concorrente no raio → share≈1).
+**Contexto (materializa o Caminho A do BLK-DIM-10):** 4 NO-GOs honestos (DIM-01R/05/08 + spike de densidade)
+provaram que **a geografia não prevê demanda nem densidade**. O único sinal usável é a **curva
+tamanho→densidade** (DIM-03R, corr −0,37). Logo a esteira **inverte**: em vez de *prever o melhor lugar*,
+o operador traz um **imóvel real** e a ferramenta **stress-testa a viabilidade** — software faz a conta,
+humano decide o imóvel (os ~90% não-modeláveis = micro-localização/execução são o faro dele).
 
-**Objetivo:** calibrar o share gravitacional com concorrência **OSM real** (`concorrentes_mapeados.parquet`),
-tratar saturação/canibalização, **remover o fallback previsor=alvo**, e validar prevendo alunos dos
-maduros (LOO-CV vs baseline). Reportar se o β é distinguível de zero.
+**Objetivo:** dado um imóvel real (`lat,lng` + `m²` + `aluguel pedido`), devolver contexto + break-even +
+aluguel-teto + ROI + grade de sensibilidade + faixa de plausibilidade — **sem nunca prever demanda pela
+geografia**.
 
-**Escopo permitido:** Huff com distância real; β por LOO sem vazamento; saturação por capacidade;
-canibalização de unidades próprias; validação out-of-sample. Sem escrita em M1.
+**Escopo permitido (ORQUESTRA o que já existe; pouca lógica nova):**
+- **Contexto / filtro de zona morta:** catchment no raio variável (BLK-DIM-07) → pop/renda/consumo
+  concorrente do entorno; sinaliza "zona sem demanda" (exclusão), NÃO prevê alunos.
+- **Curva tamanho→densidade (DIM-03R):** dado o `m²`, densidade esperada → **faixa** de alunos (intervalo,
+  não ponto — refletindo os ~90% de variância não-modelável).
+- **Break-even / viabilidade (simulador DIM-03R + goal-seek):** alunos mínimos viáveis, **aluguel-teto** a
+  uma margem-alvo, margem/payback/ROIC no aluguel pedido.
+- **Demanda = PREMISSA EXPLÍCITA:** entra por input do operador OU faixa de comparáveis de densidade
+  (por marca/faixa de m²); **NUNCA** uma previsão geográfica (proibido — 4 NO-GOs).
+- **Grade de sensibilidade demanda × aluguel** (o "equilíbrio aluguel↔demanda"): onde o ponto vira/não vira.
+- Módulo novo isolado (ex.: `src/motor_expansao/dimensionamento/viabilidade_ponto.py`), função pura +
+  testes determinísticos. Saída estruturada (dict/relatório), sem UI.
 
-**Critérios de aceite:** sem `previsor=alvo`; β reportado com IC (ou "indistinguível"); validação honesta
-nos maduros; ZERO escrita em M1.
+**Fora de escopo (invioláveis):** prever demanda/alunos pela geografia (NO-GO provado — só premissa
+explícita); **UI/plotagem no dashboard** (bloco sucessor separado, toca dashboard → NÃO loop-safe);
+atributos externos de imóvel (é o BLK-DIM-DATA redefinido); score/pesos/artefatos M1; PII.
 
-**Risco:** alto (captura é não-linear e satura). Substitui o `huff.py` do spike.
+**Critérios de aceite:** dado `(lat,lng,m²,aluguel)` retorna break-even/aluguel-teto/ROI + sensibilidade +
+faixa de alunos por densidade + flag de zona morta; demanda SEMPRE premissa explícita (teste garante que
+nenhuma saída deriva alunos da geografia); usa a curva de densidade real do DIM-03R; testes determinísticos
+verdes; READ-ONLY M1; sem PII.
+
+**Risco:** baixo (determinístico, reusa peças validadas). **Sucessor (não-loop):** BLK-DIM-12 — camada de
+UI/plotagem do imóvel no dashboard (toca `dashboard/`, gate humano; cruza BLK-UI-01).
+
+---
+
+### BLK-DIM-09 — Crosswalk manual das unidades não-casadas (CONDICIONAL — só se o match do 07 deixar lacuna material)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (recupera N perdido no join; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Depende de** | **BLK-DIM-07** (lista de não-casadas + taxa de match) |
+| **Status** | Pendente (condicional — só dispara se o match automático do 07 ficar abaixo do aceitável) |
+| **Autonomia** | **manual (NÃO loop-safe)** — resolver nomes ambíguos (várias unidades por cidade, nome interno vs. cidade) exige julgamento humano; NÃO marcar loop-safe. |
+
+**Contexto:** o geocoding online deixou de ser necessário — SkyFit (`concorrentes/Unidades/unidades_skyfit.csv`,
+481 coords) e Engenharia (`.../unidades_engenharia_do_corpo.csv`, 62 coords) **já têm lat/lng locais**. O
+problema real não é coordenada, é o **join por nome**: match exato normalizado = **0%** (convenções
+divergentes — ver caveat do BLK-DIM-07). O 07 resolve o grosso por chave cidade+UF (SkyFit) e crosswalk
+fuzzy (Engenharia); este bloco só existe para a **cauda de unidades ambíguas** que sobrar (ex.: várias
+SkyFit na mesma cidade; nome interno da Engenharia sem cidade explícita).
+
+**Objetivo:** se a taxa de match automático do 07 ficar abaixo do aceitável, construir um **crosswalk
+revisado por humano** (`unidade_alunos ↔ unidade_coords`) para as não-casadas, anexar à base multi-rede e
+**re-rodar o BLK-DIM-08** com N recuperado, reportando o ganho/perda honesto.
+
+**Escopo permitido (só se acionado):** crosswalk manual auditável (CSV de-para versionável SEM PII —
+só identificadores de unidade); reanexar à base; re-rodar discriminação/variância; reportar quantas
+unidades foram recuperadas e o impacto no veredito.
+
+**Fora de escopo (invioláveis):** geocoding online (desnecessário); persistir PII/endereço bruto;
+score/pesos/artefatos M1; dependência de API ao vivo no dashboard; "casar por centroide de cidade" quando
+há várias unidades na mesma cidade (ambiguidade tem que ser resolvida, não chutada).
+
+**Critérios de aceite:** crosswalk revisado e auditável; nº de unidades recuperadas reportado;
+BLK-DIM-08 re-rodado com veredito honesto de ganho/perda; ZERO PII em disco; ZERO M1.
+
+**Risco:** baixo (trabalho manual pequeno). Pode concluir que a cauda não-casada é imaterial → a sub-trilha
+encerra com o N do 07 (resultado válido).
 
 ---
 

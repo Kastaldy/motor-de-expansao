@@ -2,42 +2,41 @@
 
 ## Bloco atual
 
-ID: BLK-EST-05
-Nome: PDF "Apresentação Clássica Ultra" (template GeoFusion) do Relatório Pontual Censitário
-Status: aprovado (QA APROVADO em 2026-06-15; suite full serial 891 passed, 1 skipped)
-Tipo: feature (variante de render PDF; READ-ONLY sobre M1)
+ID: BLK-DIM-02R
+Nome: Huff com validação real (OSM, saturação, sem vazamento)
+Status: aprovado (APROVADO)
+Tipo: modelagem estatística (calibração gravitacional; READ-ONLY sobre M1)
 Criticidade: alta
-Esteira: Block Orchestrator → Planner → [gate humano / revisão visual Felipe+Vini] → Builder → QA
-Skill atual: Fechamento (orquestrador) — concluído
-Próxima Skill: nenhuma (merge pelo humano da branch ciclo/BLK-EST-05). Sem dry-run (ciclo não tocou orquestração).
-Fechamento: housekeeping 6.0 via helper OK (stub no backlog + bloco em completed.md, --check verde); commit por path 35ed3ec (10 arquivos; alheios não arrastados)
-dry_run: false
+Esteira: Block Orchestrator → Planner → [no loop: guard automático] → Builder → QA
+Skill atual: QA (concluído)
+Próxima Skill: Fechamento (Passo 6.0)
+
+## Veredito QA (2026-06-15)
+APROVADO. Suíte FULL 919 passed, 4 skipped; ruff/mypy limpos; import streamlit_app ok.
+Anti-vazamento confirmado (share_huff sem alvo na assinatura; LOO exclui a unidade-alvo;
+sem `where(isnan,y,...)` no código). Correlação LOO NEGATIVA (-0.254, IC [-0.357,-0.143]):
+"GO" técnico gerado por gate simétrico |corr|>=0.15 conforme plano aprovado e backlog (sem
+regra de direção positiva); direção anti-intuitiva está explicitada e qualificada na §3/§5 do
+relatório (baseline empatado -0.244, AUC 0.383). Ressalva média: não é endosso da geometria Huff.
 
 ## Objetivo
-Implementar em produção a variante "Apresentação Clássica Ultra" do PDF do Relatório Pontual
-Censitário (estrutura/dados do motor novo + estética GeoFusion antiga), como variante em
-`censo_report.py`, sem alterar o template recente e sem tocar o M1.
+Calibrar o modelo gravitacional de Huff com concorrência OSM real, remover o fallback
+previsor=alvo (vazamento latente do spike), e validar LOO se o β gravitacional é
+distinguível de zero. READ-ONLY sobre o M1.
 
 ## Tiering de modelo (Passo 4) — Alta
 - Block Orchestrator: sonnet
 - Planner: opus
 - Builder: opus
-- QA: opus (sempre)
+- QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-EST-05 (a partir do HEAD atual = 10eb641, que contém o bloco BLK-EST-05 no backlog;
-BLK-FIX-13 ainda não mergeado em main — merge pelo humano pendente)
+ciclo/loop-20260615-124342 (branch autônomo do loop)
 
-## Gate humano
-Após o Planner: PARAR e apresentar o plano técnico + gate visual (Felipe+Vini) antes do Builder.
+## Contexto de antecedente
+- BLK-DIM-08 completado (2026-06-15): NO-GO honesto da tese residual (AUC 0.48, IC [0.42, 0.54])
+- BLK-DIM-07: raio_variavel_aceito_para_estabilidade (CV penetração 1.15→0.47)
+- Gate de sequência: BLK-DIM-08 agora em completed.md → BLK-DIM-02R elegível
 
-## Paths pré-sujos / alheios que ACOMPANHAM o working tree (NÃO commitar)
-- data/outputs/setores_censitarios_2022_geo/_metadata.json (M) — alheio
-- data/reports/relatorio_pontual_censitario_base_geo.md (M) — alheio
-- data/outputs/SIMULACAO_relatorio_caiubi_classico.pdf (untracked) — simulação descartável; NÃO commitar
-
-## Fora de escopo (invioláveis)
-- score/pesos/artefatos M1 (READ-ONLY; DEC-001)
-- método de interseção e raio 1,5 km (INTOCADOS)
-- alterar o template recente (comportamento preservado byte-a-byte sem o param)
-- versionar PDF/PII real; dependência de API ao vivo no dashboard; selo GO/NO-GO
+## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
+- PRD.md, CLAUDE.md, README.md, .env.example, .github/workflows/ci.yml e outros arquivos do worktree
