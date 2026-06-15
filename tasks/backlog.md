@@ -417,10 +417,19 @@ permanece intacta. Detalhe e decomposição abaixo (epic BLK-DIM).
 |---|---|
 | **Criticidade** | **Estratégica** (define o rumo da epic BLK-DIM; READ-ONLY sobre M1) |
 | **Esteira** | `[DECISÃO HUMANA — Felipe]` — NÃO loop-safe (escolha de produto/rota) |
-| **Status** | **Aguardando decisão de Felipe** |
-| **Origem** | síntese dos resultados DIM-01R / DIM-05 / DIM-08 / DIM-02R (2026-06-15) |
+| **Status** | **RESOLVIDO pela evidência (2026-06-15)** — registro de decisão; não é mais trabalho aberto |
+| **Origem** | síntese dos resultados DIM-01R / DIM-05 / DIM-08 / DIM-02R + spike de densidade (2026-06-15) |
 
-**Onde chegamos (evidência):** depois de **estressar ao máximo o dado interno** (sub-trilha DIM-07→08),
+> **RESOLUÇÃO (2026-06-15):** o spike de densidade (`data/analysis/densidade_contexto.md`) fechou a
+> dúvida — a geografia **também** não prevê a densidade (alunos/m²) (4º NO-GO; R²_LOO −0,01), e o único
+> sinal usável é a **curva tamanho→densidade** (metragem, R²_LOO +0,10). A base geográfica interna está
+> **esgotada**. Decisão tomada: **Caminho A vira o rumo agora** → materializado no **BLK-DIM-11** (esteira
+> property-first / viabilidade). **Caminho B (BLK-DIM-DATA) é REDEFINIDO**: só faz sentido atrás de
+> **atributos de imóvel** (visibilidade, fluxo, esquina) — NÃO de mais dado demográfico, que 4 NO-GOs já
+> provaram não carregar sinal. Falta só o aval formal de Felipe para virar **DEC-009**. Este bloco fica
+> como **registro de decisão** (não loop-safe, não é tarefa); a execução é o BLK-DIM-11.
+
+**Onde chegamos (evidência):** depois de **estressar ao máximo o dado interno** (sub-trilha DIM-07→08 + spike de densidade),
 temos **três NO-GOs honestos** convergindo: a demanda/viabilidade de um ponto **NÃO é previsível a partir
 da geografia de mercado** que temos (pop, renda, concorrência, residual), em raio nenhum, com feature
 nenhuma disponível.
@@ -464,6 +473,53 @@ viabilidade — que já é valioso.
 **Guardrail:** READ-ONLY sobre o M1 (DEC-001/DEC-008) em qualquer caminho; a priorização de **onde** olhar
 segue com o M1/censitário (camada executiva, intacta) — o que se perde é só a contagem fina de alunos por
 ponto, não a triagem regional. Após a escolha de Felipe, formalizar como **DEC-009** (CLAUDE.md §8).
+
+---
+
+### BLK-DIM-11 — Esteira property-first: motor de viabilidade do imóvel (break-even, aluguel-teto, sensibilidade)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (nova esteira de produto da epic; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-03R** (simulador DRE + goal-seek + curva de densidade) e **BLK-DIM-07** (catchment/contexto) — ambos concluídos |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — motor determinístico, READ-ONLY M1, sem VPS, consome `data/staging` + censo local (sem ingestão ao vivo); gate humano substituído pelo guard; ver `docs/loop_autonomo.md` |
+
+**Contexto (materializa o Caminho A do BLK-DIM-10):** 4 NO-GOs honestos (DIM-01R/05/08 + spike de densidade)
+provaram que **a geografia não prevê demanda nem densidade**. O único sinal usável é a **curva
+tamanho→densidade** (DIM-03R, corr −0,37). Logo a esteira **inverte**: em vez de *prever o melhor lugar*,
+o operador traz um **imóvel real** e a ferramenta **stress-testa a viabilidade** — software faz a conta,
+humano decide o imóvel (os ~90% não-modeláveis = micro-localização/execução são o faro dele).
+
+**Objetivo:** dado um imóvel real (`lat,lng` + `m²` + `aluguel pedido`), devolver contexto + break-even +
+aluguel-teto + ROI + grade de sensibilidade + faixa de plausibilidade — **sem nunca prever demanda pela
+geografia**.
+
+**Escopo permitido (ORQUESTRA o que já existe; pouca lógica nova):**
+- **Contexto / filtro de zona morta:** catchment no raio variável (BLK-DIM-07) → pop/renda/consumo
+  concorrente do entorno; sinaliza "zona sem demanda" (exclusão), NÃO prevê alunos.
+- **Curva tamanho→densidade (DIM-03R):** dado o `m²`, densidade esperada → **faixa** de alunos (intervalo,
+  não ponto — refletindo os ~90% de variância não-modelável).
+- **Break-even / viabilidade (simulador DIM-03R + goal-seek):** alunos mínimos viáveis, **aluguel-teto** a
+  uma margem-alvo, margem/payback/ROIC no aluguel pedido.
+- **Demanda = PREMISSA EXPLÍCITA:** entra por input do operador OU faixa de comparáveis de densidade
+  (por marca/faixa de m²); **NUNCA** uma previsão geográfica (proibido — 4 NO-GOs).
+- **Grade de sensibilidade demanda × aluguel** (o "equilíbrio aluguel↔demanda"): onde o ponto vira/não vira.
+- Módulo novo isolado (ex.: `src/motor_expansao/dimensionamento/viabilidade_ponto.py`), função pura +
+  testes determinísticos. Saída estruturada (dict/relatório), sem UI.
+
+**Fora de escopo (invioláveis):** prever demanda/alunos pela geografia (NO-GO provado — só premissa
+explícita); **UI/plotagem no dashboard** (bloco sucessor separado, toca dashboard → NÃO loop-safe);
+atributos externos de imóvel (é o BLK-DIM-DATA redefinido); score/pesos/artefatos M1; PII.
+
+**Critérios de aceite:** dado `(lat,lng,m²,aluguel)` retorna break-even/aluguel-teto/ROI + sensibilidade +
+faixa de alunos por densidade + flag de zona morta; demanda SEMPRE premissa explícita (teste garante que
+nenhuma saída deriva alunos da geografia); usa a curva de densidade real do DIM-03R; testes determinísticos
+verdes; READ-ONLY M1; sem PII.
+
+**Risco:** baixo (determinístico, reusa peças validadas). **Sucessor (não-loop):** BLK-DIM-12 — camada de
+UI/plotagem do imóvel no dashboard (toca `dashboard/`, gate humano; cruza BLK-UI-01).
 
 ---
 
