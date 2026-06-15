@@ -82,6 +82,7 @@ from motor_expansao.dashboard.constants import (
     color_mode_available,
 )
 from motor_expansao.dashboard.data import (
+    _validate_brazil_bbox,
     agregar_cenario_multihex,
     analisar_entorno_ponto,
     lookup_hex_by_coord,
@@ -90,6 +91,8 @@ from motor_expansao.dashboard.data import (
     resolve_cod_municipio_from_geo_dir,
 )
 from motor_expansao.dashboard.utils import format_int, format_pct, format_score
+from motor_expansao.dimensionamento.config import RAIO_CATCHMENT_KM, SIM_MENSALIDADE_BALCAO
+from motor_expansao.dimensionamento.viabilidade_ponto import analisar_viabilidade_ponto
 
 RESIDUAL_SORT_COLUMNS = [
     "oferta_efetiva_disponivel",
@@ -443,6 +446,7 @@ DASHBOARD_TAB_LABELS = [
     "Mapa Territorial",
     "Expansao de Dominio",
     "Carteira e Plano",
+    "Viabilidade do Imovel",
 ]
 
 
@@ -2661,6 +2665,291 @@ def render_relatorio_pontual_censitario(
         residual=residual,
         ultra_dir=Path("data/ultra"),
         template="classico",
+    )
+
+
+def _resolve_viab_ponto(
+    search_pin: tuple[float, float] | None,
+) -> tuple[float, float] | None:
+    """Resolve o ponto do imovel para a aba de viabilidade.
+
+    Cascata 100% offline (string pura, sem rede):
+      1. Campo `viab_ponto_coord_raw` (coordenada `lat,lng` OU link do Google Maps).
+         - `parse_coordinate_input` (numerico/string BR) e, se falhar, `extract_any_coord`
+           (link Maps via regex/unquote) + `_validate_brazil_bbox`.
+      2. Fallback para `search_pin` (coordenada da sidebar/clique), se houver.
+
+    GUARDRAIL: NAO faz geocoding ao vivo nem usa a rede. O parser de link Maps e
+    string pura (Selenium so e importado em MapsGeocoder.__init__, nunca aqui).
+    Retorna `(lat, lng)` ou `None`.
+    """
+    raw = str(st.session_state.get("viab_ponto_coord_raw") or "").strip()
+    if raw:
+        parsed = parse_coordinate_input(raw)
+        if parsed is not None:
+            return parsed
+        # Import lazy do parser de link Maps (modulo `api`): puro, sem selenium no topo.
+        from motor_expansao.api.maps_geocoder import extract_any_coord
+
+        lat, lng = extract_any_coord(raw)
+        if lat is not None and lng is not None:
+            validated = _validate_brazil_bbox(float(lat), float(lng))
+            if validated is not None:
+                return validated
+        st.error(
+            "Coordenada ou link nao reconhecido. Exemplos: `-23.55,-46.63` "
+            "ou um link do Google Maps com o pino do imovel."
+        )
+        return None
+    return search_pin
+
+
+def render_viabilidade_ponto(
+    search_pin: tuple[float, float] | None,
+    df: pd.DataFrame,
+    *,
+    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
+    censo_geo_dir: Path | None = None,
+    base_calibracao_df: pd.DataFrame | None = None,
+) -> None:
+    """Ferramenta property-first: stress-test de viabilidade de um imovel real.
+
+    O operador traz um imovel (`lat,lng` + `m2` + aluguel pedido + DEMANDA como
+    premissa explicita) e le a viabilidade (break-even, aluguel-teto, ROI/payback/ROIC,
+    sensibilidade, faixa de alunos pela curva tamanho->densidade, contexto do entorno).
+
+    GUARDRAIL CENTRAL (DEC-009): a demanda e SEMPRE premissa do operador, NUNCA
+    prevista pela geografia. O toggle "usar p50" apenas PREENCHE o valor visivel/editavel
+    do campo; o engine recebe sempre o numero da caixa. READ-ONLY sobre o M1: nao
+    recalcula score, carteira, plano nem artefatos oficiais.
+    """
+    st.caption(
+        "Stress-test de viabilidade de um imovel real. A demanda e PREMISSA do operador, "
+        "nunca prevista pela geografia. Nao altera M1, carteira, plano ou artefatos oficiais."
+    )
+
+    # --- Secao 1: localizacao do imovel (captura de ponto, 100% offline) ---
+    st.text_input(
+        "Ponto do imovel: coordenada (`lat,lng`) OU link do Google Maps",
+        key="viab_ponto_coord_raw",
+        placeholder="-23.55,-46.63 ou cole um link do Maps",
+    )
+    ponto = _resolve_viab_ponto(search_pin)
+    if ponto is None:
+        if not str(st.session_state.get("viab_ponto_coord_raw") or "").strip():
+            st.info(
+                "Informe a coordenada do imovel (`lat,lng`) ou cole um link do Google Maps acima. "
+                "Tambem vale a coordenada/clique ativo no Mapa Territorial."
+            )
+        return
+    lat, lng = ponto
+    st.markdown(f"**Ponto do imovel:** `{lat:.5f}, {lng:.5f}`")
+
+    # --- Faixa por densidade pre-calculada (so para sugerir o p50 no toggle) ---
+    # GUARDRAIL: depende SO de m2 + comparaveis (curva tamanho->densidade), nunca de lat/lng.
+    m2_atual = float(st.session_state.get("viab_ponto_m2", 1500.0) or 1500.0)
+    faixa_p50_preview: float | None = None
+    if base_calibracao_df is not None and len(base_calibracao_df) > 0:
+        try:
+            from motor_expansao.dimensionamento.viabilidade_ponto import (
+                faixa_alunos_por_densidade,
+            )
+
+            preview = faixa_alunos_por_densidade(m2_atual, base_calibracao_df)
+            faixa_p50_preview = preview.get("faixa_alunos_p50")
+        except Exception:  # pragma: no cover - preview e best-effort
+            faixa_p50_preview = None
+
+    # --- Secao 2: parametros do imovel (formulario; engine roda so on-submit) ---
+    with st.form(key="viab_ponto_form"):
+        c1, c2 = st.columns(2)
+        with c1:
+            m2 = st.number_input(
+                "Metragem (m2)", min_value=100.0, value=1500.0, step=50.0, key="viab_ponto_m2"
+            )
+        with c2:
+            aluguel_pedido = st.number_input(
+                "Aluguel pedido (R$/mes)",
+                min_value=0.0,
+                value=20000.0,
+                step=500.0,
+                key="viab_ponto_aluguel",
+            )
+
+        usar_p50 = st.checkbox(
+            "Usar p50 dos comparaveis como ponto de partida da demanda",
+            key="viab_ponto_usar_p50",
+        )
+        if usar_p50 and faixa_p50_preview is not None:
+            demanda_default = float(faixa_p50_preview)
+        elif usar_p50:
+            st.caption("p50 indisponivel (sem comparaveis); informe a demanda manualmente.")
+            demanda_default = float(st.session_state.get("viab_ponto_demanda", 800.0) or 800.0)
+        else:
+            demanda_default = float(st.session_state.get("viab_ponto_demanda", 800.0) or 800.0)
+        demanda_premissa = st.number_input(
+            "Demanda assumida (alunos balcao na maturidade)",
+            min_value=0.0,
+            value=demanda_default,
+            step=10.0,
+            key="viab_ponto_demanda",
+        )
+        st.caption(
+            "A demanda e uma premissa SUA. A ferramenta calcula a viabilidade do numero que "
+            "voce assumir — ela NAO preve demanda pela localizacao."
+        )
+
+        with st.expander("Parametros avancados", expanded=False):
+            ticket_medio = st.number_input(
+                "Ticket medio balcao (R$/aluno/mes)",
+                min_value=0.0,
+                value=float(SIM_MENSALIDADE_BALCAO),
+                step=1.0,
+                key="viab_ponto_ticket",
+            )
+            margem_alvo_pct = st.number_input(
+                "Margem-alvo (%)",
+                min_value=0.0,
+                max_value=100.0,
+                value=10.0,
+                step=1.0,
+                key="viab_ponto_margem_pct",
+            )
+        submitted = st.form_submit_button("Calcular viabilidade")
+
+    if not submitted:
+        st.info("Ajuste os parametros e clique em **Calcular viabilidade**.")
+        return
+
+    # --- Catchment (contexto): resolve setores do municipio do ponto, se houver base ---
+    setores_df: pd.DataFrame | None = None
+    if censo_geo_loader is not None:
+        context = _resolve_censo_context((lat, lng), df, censo_geo_dir=censo_geo_dir)
+        if context is not None:
+            candidato = censo_geo_loader(context["uf"], context["cod_municipio"])
+            if candidato is not None and not candidato.empty:
+                setores_df = candidato
+    if setores_df is None:
+        st.caption(
+            "Catchment indisponivel (base setorial ausente para o municipio do ponto). "
+            "A viabilidade financeira NAO depende do entorno; segue sem o contexto pop/renda."
+        )
+
+    # --- Roda o engine property-first (demanda = valor da caixa, sempre) ---
+    with st.spinner("Calculando viabilidade..."):
+        result = analisar_viabilidade_ponto(
+            lat,
+            lng,
+            float(m2),
+            float(aluguel_pedido),
+            float(demanda_premissa),
+            ticket_medio=float(ticket_medio),
+            margem_alvo=float(margem_alvo_pct) / 100.0,
+            base_calibracao_df=base_calibracao_df,
+            setores_df=setores_df,
+        )
+
+    viab = result.viabilidade
+
+    # --- Secao 3: guardrail visivel ---
+    st.caption(
+        f"Fonte da demanda: **{result.demanda_fonte}** (= valor informado pelo operador, "
+        f"{format_int(int(result.demanda_premissa))} alunos)."
+    )
+
+    # --- Secao 4: cards do cenario pedido ---
+    st.markdown("##### Viabilidade no cenario pedido")
+    m1, m2c, m3, m4 = st.columns(4)
+    breakeven = result.alunos_breakeven
+    m1.metric(
+        "Alunos break-even",
+        format_int(int(breakeven)) if breakeven not in (None, float("inf")) else "inviavel",
+    )
+    m2c.metric("Aluguel-teto (margem alvo)", _format_brl(result.aluguel_teto_calculado))
+    m3.metric("Margem EBITDA", format_pct(viab.margem_ebitda_pct * 100))
+    payback = viab.payback_meses
+    m4.metric(
+        "Payback",
+        f"{format_int(int(payback))} meses" if payback != float("inf") else "> 60 / nunca",
+    )
+
+    n1, n2, n3, n4 = st.columns(4)
+    n1.metric("ROIC anual", format_pct(viab.roic_anual * 100))
+    n2.metric("Faturamento/mes", _format_brl(viab.faturamento_mensal_steady))
+    n3.metric("EBITDA/mes", _format_brl(viab.ebitda_mensal))
+    n4.metric("Viavel?", "Sim" if viab.flag_viavel else "Nao")
+
+    teto = result.aluguel_teto_calculado
+    relacao = "abaixo" if float(aluguel_pedido) <= teto else "acima"
+    st.caption(
+        f"Aluguel pedido {_format_brl(float(aluguel_pedido))} esta **{relacao}** do teto "
+        f"{_format_brl(teto)} para margem {format_pct(float(margem_alvo_pct))}."
+    )
+
+    # --- Secao 5: faixa de alunos por densidade (curva m2->densidade; NAO geografica) ---
+    st.markdown(
+        "##### Faixa de alunos plausivel pela metragem (comparaveis, nao pela localizacao)"
+    )
+    if (
+        result.faixa_alunos_p50 is not None
+        and result.n_comparaveis is not None
+        and result.n_comparaveis > 0
+    ):
+        f1, f2, f3 = st.columns(3)
+        f1.metric("p10", format_int(int(result.faixa_alunos_p10)) if result.faixa_alunos_p10 is not None else "-")
+        f2.metric("p50", format_int(int(result.faixa_alunos_p50)))
+        f3.metric("p90", format_int(int(result.faixa_alunos_p90)) if result.faixa_alunos_p90 is not None else "-")
+        st.caption(
+            f"Baseado em {format_int(int(result.n_comparaveis))} unidades de metragem similar. "
+            "NAO e previsao de demanda — e a capacidade fisica tipica para este m2."
+        )
+    else:
+        st.info(
+            "Faixa por densidade indisponivel (sem comparaveis de metragem similar). "
+            "Informe a demanda manualmente."
+        )
+
+    # --- Secao 6: contexto do entorno (catchment) + zona morta ---
+    st.markdown("##### Contexto do entorno")
+    if result.pop_captacao is not None and result.renda_per_capita_captacao is not None:
+        e1, e2 = st.columns(2)
+        e1.metric(
+            f"Populacao no raio {RAIO_CATCHMENT_KM:.1f} km",
+            format_int(int(result.pop_captacao)),
+        )
+        e2.metric("Renda per capita do entorno", _format_brl(result.renda_per_capita_captacao))
+        st.caption(
+            "Contexto pop/renda do entorno — usado so para sinalizar zona morta, "
+            "NUNCA para estimar alunos."
+        )
+    if result.flag_zona_morta is True:
+        st.warning(f"Zona morta: {result.motivo_zona_morta}")
+    elif result.flag_zona_morta is False:
+        st.success("Entorno acima dos pisos de pop/renda.")
+    else:
+        st.caption("Catchment indisponivel (base setorial ausente para o municipio).")
+
+    # --- Secao 7: grade de sensibilidade (alunos x aluguel) ---
+    st.markdown("##### Sensibilidade demanda x aluguel")
+    grade = result.grade_sensibilidade
+    if grade is not None and not grade.empty:
+        pivot = grade.pivot_table(
+            index="alunos", columns="fator_aluguel", values="margem_liq", aggfunc="first"
+        )
+        st.dataframe(
+            pivot.style.format("{:.1%}").background_gradient(cmap="RdYlGn", axis=None),
+            width="stretch",
+        )
+        st.caption(
+            "Linhas = alunos absolutos na maturidade; colunas = fator x aluguel pedido. "
+            "Valores = margem EBITDA. Sensibilidade, nao previsao."
+        )
+    else:
+        st.info("Grade de sensibilidade indisponivel.")
+
+    # --- Secao 8: pino do imovel ---
+    st.caption(
+        "O ponto analisado e a coordenada/link informado acima (ou o pino ativo no Mapa Territorial)."
     )
 
 
