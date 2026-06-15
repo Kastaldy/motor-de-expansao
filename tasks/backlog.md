@@ -123,32 +123,7 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
-### BLK-FIX-07 — Data-drift em `test_csvs_concorrentes_legiveis` (2 falhas pré-existentes na suíte full)
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Baixa** (teste de dados desatualizado vs CSVs reais regenerados; READ-ONLY sobre M1) |
-| **Prioridade** | **Média** (deixa a suíte full vermelha — 2 falhas — mascarando regressões futuras) |
-| **Esteira** | Block Orchestrator → Builder |
-| **Status** | Pendente |
-| **Origem** | ressalva não-bloqueadora do QA do BLK-EST-03 (2026-06-15); falhas comprovadamente independentes do bloco (reproduzem com o BLK-EST-03 em `git stash`) |
-
-**Contexto:** o QA do BLK-EST-03 rodou a suíte full e encontrou `2 failed, 816 passed, 1 skipped`
-(serial; xdist trava em ~96% no ambiente Python 3.14 local). As 2 falhas estão em
-`test_csvs_concorrentes_legiveis` e são **data-drift**: os CSVs reais de concorrentes foram
-regenerados com contagens diferentes das fixadas no teste (226 vs 223 linhas; 455 vs 472 linhas).
-Nada a ver com a API/marca d'água — reproduzem idênticas com o BLK-EST-03 fora da árvore.
-
-**Objetivo:** restaurar a suíte full 100% verde, reconciliando o teste com os CSVs reais atuais
-(atualizar as contagens esperadas OU tornar o teste robusto a drift, conforme o BO/Builder decidir),
-sem mascarar regressão real.
-
-**Escopo permitido:** o teste `test_csvs_concorrentes_legiveis` e, se necessário, a verificação dos
-CSVs de concorrentes em `data/`. **Fora de escopo:** score/pesos/artefatos M1 (READ-ONLY); regenerar
-artefatos M1.
-
-**Critérios de aceite:** `pytest` full verde (0 failed); a mudança documenta por que as contagens
-mudaram (regeneração legítima vs regressão); READ-ONLY M1.
+- BLK-FIX-07 (SUPERSEDED por BLK-FIX-13 em 2026-06-15) — o data-drift de `test_csvs_concorrentes_legiveis` foi resolvido pelo teste robusto a drift do BLK-FIX-13 (Vini); suíte verde confirmada no merge do PR #28 (3/3 passed). Ver tasks/completed.md (BLK-FIX-13).
 
 ---
 
