@@ -2,27 +2,27 @@
 
 ## Bloco atual
 
-ID: BLK-DIM-02R
-Nome: Huff com validação real (OSM, saturação, sem vazamento)
+ID: BLK-DIM-11
+Nome: Esteira property-first: motor de viabilidade do imóvel (break-even, aluguel-teto, sensibilidade)
 Status: aprovado (APROVADO)
-Tipo: modelagem estatística (calibração gravitacional; READ-ONLY sobre M1)
+Tipo: feature (nova esteira de produto; módulo isolado; READ-ONLY sobre M1)
 Criticidade: alta
 Esteira: Block Orchestrator → Planner → [no loop: guard automático] → Builder → QA
 Skill atual: QA (concluído)
 Próxima Skill: Fechamento (Passo 6.0)
 
 ## Veredito QA (2026-06-15)
-APROVADO. Suíte FULL 919 passed, 4 skipped; ruff/mypy limpos; import streamlit_app ok.
-Anti-vazamento confirmado (share_huff sem alvo na assinatura; LOO exclui a unidade-alvo;
-sem `where(isnan,y,...)` no código). Correlação LOO NEGATIVA (-0.254, IC [-0.357,-0.143]):
-"GO" técnico gerado por gate simétrico |corr|>=0.15 conforme plano aprovado e backlog (sem
-regra de direção positiva); direção anti-intuitiva está explicitada e qualificada na §3/§5 do
-relatório (baseline empatado -0.244, AUC 0.383). Ressalva média: não é endosso da geometria Huff.
+APROVADO. Suíte FULL 936 passed, 4 skipped; ruff/mypy limpos; import ok.
+Guardrails todos verificados: READ-ONLY M1, demanda sempre premissa explícita
+(demanda_fonte="premissa_explicita"), faixa_alunos_por_densidade sem lat/lng,
+catchment como dict, sem I/O parquet, sem PII, commit isolado (83e9727).
+10 testes do módulo passaram; test_faixa_usa_curva_densidade_nao_geo verde (anti-geográfico).
 
 ## Objetivo
-Calibrar o modelo gravitacional de Huff com concorrência OSM real, remover o fallback
-previsor=alvo (vazamento latente do spike), e validar LOO se o β gravitacional é
-distinguível de zero. READ-ONLY sobre o M1.
+Dado um imóvel real (lat,lng + m² + aluguel pedido), devolver contexto + break-even +
+aluguel-teto + ROI + grade de sensibilidade + faixa de plausibilidade — sem nunca prever
+demanda pela geografia. Módulo isolado `viabilidade_ponto.py`, função pura + testes
+determinísticos. Saída estruturada (dict/relatório), sem UI.
 
 ## Tiering de modelo (Passo 4) — Alta
 - Block Orchestrator: sonnet
@@ -31,12 +31,7 @@ distinguível de zero. READ-ONLY sobre o M1.
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/loop-20260615-124342 (branch autônomo do loop)
-
-## Contexto de antecedente
-- BLK-DIM-08 completado (2026-06-15): NO-GO honesto da tese residual (AUC 0.48, IC [0.42, 0.54])
-- BLK-DIM-07: raio_variavel_aceito_para_estabilidade (CV penetração 1.15→0.47)
-- Gate de sequência: BLK-DIM-08 agora em completed.md → BLK-DIM-02R elegível
+ciclo/loop-20260615-163258 (branch autônomo do loop)
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
 - PRD.md, CLAUDE.md, README.md, .env.example, .github/workflows/ci.yml e outros arquivos do worktree
