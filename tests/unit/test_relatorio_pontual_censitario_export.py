@@ -16,6 +16,7 @@ from motor_expansao.dashboard.censo_report import (
     gerar_csv_setores_censitarios,
     gerar_payloads_download_relatorio_censitario,
     gerar_pdf_relatorio_pontual_censitario,
+    gerar_pdf_relatorio_pontual_classico,
     render_downloads_relatorio_censitario,
 )
 
@@ -372,3 +373,111 @@ def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
         "teste_relatorio_setores.csv",
         "teste_relatorio.pdf",
     ]
+
+
+# ---------------------------------------------------------------------------
+# BLK-EST-05 — variante "Apresentacao Classica Ultra"
+# ---------------------------------------------------------------------------
+
+
+def test_classico_gera_7_paginas_e_secoes():
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        result, mapas, residual=_RESIDUAL_OK, ultra_dir="data/ultra"
+    )
+
+    assert pdf_bytes.startswith(b"%PDF-1.4")
+    assert b"/Count 7" in pdf_bytes
+    for header in PDF_SECTION_HEADERS:
+        assert header.encode("latin-1") in pdf_bytes
+    assert _count_layer_titles(pdf_bytes) == 3
+    assert pdf_bytes.count(b"/Subtype /Image") >= 4
+
+
+def test_classico_link_clicavel_na_realizacao():
+    result, mapas = _sample_result()
+
+    # Com endereco real -> a query do link e o proprio endereco.
+    pdf_com_end = gerar_pdf_relatorio_pontual_classico(
+        result, mapas, residual=_RESIDUAL_OK, rotulo="Av Teste, 100"
+    )
+    assert b"https://www.google.com/maps/search/" in pdf_com_end
+    assert b"Link para localizacao do ponto:" in pdf_com_end
+    assert b"Av%20Teste" in pdf_com_end or b"Av Teste" in pdf_com_end
+
+    # Sem rotulo -> a query cai na coordenada do result.
+    pdf_sem_end = gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
+    assert b"https://www.google.com/maps/search/" in pdf_sem_end
+
+
+def test_classico_offline_safe_sem_assets(tmp_path):
+    """Sem qualquer asset (incl. icone_ultra.png) -> PDF valido, sem excecao."""
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        result, mapas, residual=_RESIDUAL_OK, ultra_dir=tmp_path
+    )
+
+    assert pdf_bytes.startswith(b"%PDF")
+    assert b"/Count 7" in pdf_bytes
+    for header in PDF_SECTION_HEADERS:
+        assert header.encode("latin-1") in pdf_bytes
+
+
+def test_classico_sem_pii_de_pessoas():
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        result, mapas, residual=_RESIDUAL_OK, ultra_dir="data/ultra"
+    )
+
+    for needle in _PII_FORBIDDEN:
+        assert needle not in pdf_bytes
+
+
+def test_classico_marca_dagua_solicitante():
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        result, mapas, residual=_RESIDUAL_OK, solicitante="Analista Teste"
+    )
+
+    assert b"Ultra Academia | Analista Teste" in pdf_bytes
+    assert pdf_bytes.count(b"Ultra Academia") >= 7
+
+
+def test_classico_template_recente_inalterado():
+    """Gerar o classico NAO altera os bytes do template recente (isolamento)."""
+    result, mapas = _sample_result()
+
+    antes = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, residual=_RESIDUAL_OK, ultra_dir="data/ultra"
+    )
+    _ = gerar_pdf_relatorio_pontual_classico(
+        result, mapas, residual=_RESIDUAL_OK, ultra_dir="data/ultra"
+    )
+    depois = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, residual=_RESIDUAL_OK, ultra_dir="data/ultra"
+    )
+
+    assert antes == depois
+
+
+def test_downloads_roteia_template_classico():
+    """`template="classico"` roteia ao gerador classico; sem template = recente (default)."""
+    result, mapas = _sample_result()
+
+    p_classico = gerar_payloads_download_relatorio_censitario(
+        result, mapas, filename_prefix="t", residual=_RESIDUAL_OK, template="classico"
+    )
+    p_recente = gerar_payloads_download_relatorio_censitario(
+        result, mapas, filename_prefix="t", residual=_RESIDUAL_OK
+    )
+
+    assert p_classico.pdf_bytes.startswith(b"%PDF")
+    assert p_recente.pdf_bytes.startswith(b"%PDF")
+    # O classico tem a banda magenta de rodape + link clicavel -> bytes diferentes do recente.
+    assert p_classico.pdf_bytes != p_recente.pdf_bytes
+    assert b"Link para localizacao do ponto:" in p_classico.pdf_bytes
+    assert b"Link para localizacao do ponto:" not in p_recente.pdf_bytes

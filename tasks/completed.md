@@ -4750,3 +4750,73 @@ detecta CSV vazio/truncado. `CSV_SOURCES` agora mapeia floors (100/100/100) e o 
 **Validação (Builder, gate final):** suíte FULL `884 passed, 1 skipped, 0 failed`; `import streamlit_app`
 ok; ruff limpo no arquivo. READ-ONLY M1 (DEC-001): só o arquivo de teste mudou; score/pesos/artefatos
 intocados. Escopo só `tests/integration/test_modelo_mercado_hexagonos.py`.
+
+---
+
+### BLK-EST-05 — PDF "Apresentação Clássica Ultra" (template GeoFusion) do Relatório Pontual Censitário
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (caminho de geração do PDF de produção; branding/LGPD; READ-ONLY sobre o M1) |
+| **Prioridade** | **Alta** (template aprovado pelo Vini; é o formato de apresentação que os PDFs devem seguir) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / gate visual Felipe+Vini]` → Builder → QA |
+| **Status** | Pendente |
+| **Responsável sugerido** | Vini (+ Felipe no gate visual) |
+| **Origem** | sessão de design com Vinicius em 2026-06-15 (simulação iterada em script descartável); spec consolidada na memória `template-pdf-apresentacao` |
+| **Relacionado** | BLK-CENSO-02/03 (template recente `fpdf2`), BLK-EST-02 (refino visual), BLK-EST-03/FU1 (marca d'água/solicitante), DEC-004 (basemap) |
+
+**Contexto:** existe hoje o template **recente** do Relatório Pontual Censitário (`censo_report.py`, 7 páginas
+"Ultra Clean"). Em 2026-06-15 o Vini desenhou, iterando sobre uma **simulação descartável**
+(`data/outputs/SIMULACAO_relatorio_caiubi_classico.pdf`, script em temp — NÃO versionado), um template de
+**apresentação** que mistura a **estrutura/fonte de dados do modelo novo** (motor censitário) com a
+**estética do modelo antigo** (`Teste Modelo` / GeoFusion). Este bloco porta esse template para produção
+como uma **variante** (não substitui o template recente).
+
+**Objetivo:** implementar em produção a variante "Apresentação Clássica Ultra" do PDF, reutilizando o motor
+real (`analisar_ponto_censitario_setores` + `render_mapas_censitarios_combinados` + lookup residual), sem
+tocar o M1.
+
+**Especificação do template (CONTRATO — fonte: memória `template-pdf-apresentacao`):**
+- **Base:** 16:9 (960×540 pt), `pdf_version=1.4`, `set_compression(False)`. Cores: turquesa `(0,159,160)`,
+  magenta `(199,32,120)`, laranja `(237,125,49)`, branco, cinza-texto `(45,45,45)`.
+- **Assets** (`data/ultra/`): `relatorio_capa_bg.png` (capa), `relatorio_conteudo_bg.png` (fundo claro),
+  **`icone_ultra.png`** (marca ▶ BRANCA → bandas), `logo_ultra.png` (TURQUESA → só sobre fundo colorido).
+- **Bandas turquesa (páginas de mapa):** margem de **20 px de todas as bordas**, **todos os cantos
+  arredondados** (raio ~16), altura ~58; endereço (esq.) + **ícone Ultra branco (dir.)**; título de seção
+  ABAIXO da banda.
+- **Banda magenta (rodapé de dados, ex. Big Numbers):** preenche o **canto inferior** (full-width, flush),
+  porém **baixa (~13 px)** para **não cobrir a marca d'água**.
+- **Marca d'água (modelo recente `_draw_watermark`):** todas as páginas, inferior-direita, 10 pt, alpha
+  0,65, cinza `(120,120,120)` exceto **capa branca**; texto `"Ultra Academia"` ou `"Ultra Academia |
+  {solicitante}"`.
+- **Estrutura (7 páginas):** Capa → População/Densidade → Renda → Score censitário → **Concorrentes (mapa à
+  ESQUERDA + LISTA nome+distância ao pin à direita, ordenada, "... e mais N" ao truncar; lista Ultra
+  também)** → **Big Numbers (grid 4×2 READ-ONLY, SEM selo de aprovação)** → Realização.
+- **Capa (slide 1):** texto branco transparente na zona limpa inferior-direita (x≥478); **endereço ACIMA**
+  do subtítulo; o fundo tem uma **linha branca horizontal sólida em ~y 460** — o texto fica **ACIMA da
+  linha**, com a **base do bloco 5 px acima dela** (base ~y 455). Posicionar por **baseline** (`pdf.text`),
+  não `cell`.
+- **Realização (slide 7) = modelo recente (`_credit_page`):** fundo turquesa, "Realizacao" 34 pt + crédito +
+  método + linha READ-ONLY; bloco **"Link para localizacao do ponto:"** com o **endereço sendo o link
+  clicável** (link consulta o ENDEREÇO → geocoding preciso) + data; rodapé atribuição CARTO. SEM logo, SEM
+  cartão de contato (anti-PII).
+- **Dados/precisão:** dados/mapas do motor real na **coordenada fornecida**; o LINK consulta o endereço
+  (`query=<endereço>`). Coordenada exata via link do Maps com pin (`maps_geocoder.extract_any_coord`, regex,
+  sem Selenium) deixa dados+link precisos.
+
+**Escopo permitido:** nova variante de render em `src/motor_expansao/dashboard/censo_report.py` (ex.: param
+`template="classico"` ou função/módulo dedicado), reusando os helpers existentes; adicionar `icone_ultra.png`
+como asset de branding; testes da nova variante. **NÃO** alterar o template recente (comportamento
+preservado byte-a-byte quando o param não é passado).
+
+**Fora de escopo:** score/pesos/artefatos M1 (READ-ONLY; DEC-001); método de interseção e raio 1,5 km
+(INTOCADOS); versionar PDF/PII real; dependência de API ao vivo no dashboard; selo GO/NO-GO (é território
+do BLK-DIM); fontes de dados que o motor não produz (fotos do imóvel, GeoFusion fluxo/verticalização, POIs
+OSM).
+
+**Critérios de aceite:** PDF da variante reproduz o template acima (bandas com margem/raio, ícone branco,
+capa com texto acima da linha branca, concorrentes com mapa+lista de distâncias, Big Numbers sem selo,
+Realização recente com link no endereço, marca d'água recente); template recente INALTERADO (testes
+existentes verdes); fixtures com nome fictício, sem PII; ruff + mypy limpos; READ-ONLY M1.
+
+**Guardrail:** anti-PII §2/§4; READ-ONLY M1 (DEC-001); gate visual humano antes do Builder (esteira Alta).

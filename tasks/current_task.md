@@ -2,59 +2,41 @@
 
 ## Bloco atual
 
-ID: BLK-FIX-13
-Nome: Data-drift em `test_csvs_concorrentes_legiveis` (2 falhas pré-existentes na suíte full)
-Status: concluído (APROVADO — ciclo Baixa, gate final do orquestrador; suíte full 884 passed, 1 skipped, 0 failed)
-Tipo: bug (teste/manutenção; READ-ONLY sobre M1)
-Criticidade: baixa
-Esteira: Block Orchestrator → Builder (sem QA; Builder é o último gate)
-Skill atual: Fechamento (orquestrador) — concluído
-Próxima Skill: nenhuma (merge pelo humano)
+ID: BLK-EST-05
+Nome: PDF "Apresentação Clássica Ultra" (template GeoFusion) do Relatório Pontual Censitário
+Status: aprovado (QA APROVADO em 2026-06-15; suite full serial 891 passed, 1 skipped)
+Tipo: feature (variante de render PDF; READ-ONLY sobre M1)
+Criticidade: alta
+Esteira: Block Orchestrator → Planner → [gate humano / revisão visual Felipe+Vini] → Builder → QA
+Skill atual: QA/Quality Analyzer (auditoria concluída — APROVADO)
+Próxima Skill: Fechamento manual (orquestrador: housekeeping BLK-EST-05 + commit por path; merge humano)
 dry_run: false
 
 ## Objetivo
-Reconciliar `test_csvs_concorrentes_legiveis` (em `tests/integration/test_modelo_mercado_hexagonos.py`)
-com os CSVs reais de concorrentes regenerados, deixando a suíte full 100% verde, sem mascarar regressão.
+Implementar em produção a variante "Apresentação Clássica Ultra" do PDF do Relatório Pontual
+Censitário (estrutura/dados do motor novo + estética GeoFusion antiga), como variante em
+`censo_report.py`, sem alterar o template recente e sem tocar o M1.
 
-## Fatos confirmados (pré-ciclo, pelo orquestrador)
-- O teste é parametrizado por `CSV_SOURCES` (linhas ~26-29) com contagens FIXAS de linhas:
-  `unidades_smart_fit.csv: 1000`, `unidades_bluefit.csv: 223`, `unidades_panobianco.csv: 472`.
-  Assert: `len(df) == expected_rows` (linha 153).
-- Contagens REAIS atuais: smart_fit **1000** (OK), bluefit **226** (drift +3), panobianco **455** (drift −17).
-- Os CSVs em `concorrentes/` são **GITIGNORED** (dados locais reais, regenerados pelo pipeline de
-  mapeamento) → mudança é refresh legítimo de dados, NÃO regressão de código.
-- Em CI os CSVs não existem → o teste dá `pytest.skip` (linha 149-150); o VERMELHO é só no run LOCAL.
-  CI não está quebrado; o objetivo é o run local 100% verde.
-
-## Decisão de abordagem (a confirmar pelo BO)
-- (A) Atualizar as contagens em `CSV_SOURCES` (223→226, 472→455). Simples; volta a driftar se os dados
-  forem regenerados de novo.
-- (B) Tornar o teste robusto a drift (manter colunas/parseabilidade + trocar `==` exato por piso/sanidade,
-  ex. `len(df) > 0`). Mais robusto; perde o "snapshot" exato.
-BO recomenda a abordagem; Builder implementa.
-
-## Tiering de modelo (Passo 4) — Baixa
-- Block Orchestrator: haiku
-- Builder: sonnet
-- (Baixa: sem Planner/QA. O Builder DEVE rodar a SUÍTE FULL para confirmar 0 falhas — critério de aceite
-  explícito e não há gate de QA.)
+## Tiering de modelo (Passo 4) — Alta
+- Block Orchestrator: sonnet
+- Planner: opus
+- Builder: opus
+- QA: opus (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-FIX-13 (a partir de main)
+ciclo/BLK-EST-05 (a partir do HEAD atual = 10eb641, que contém o bloco BLK-EST-05 no backlog;
+BLK-FIX-13 ainda não mergeado em main — merge pelo humano pendente)
 
-## Paths do ciclo (commit por path no fechamento)
-- tests/integration/test_modelo_mercado_hexagonos.py (o fix)
-- tasks/backlog.md, tasks/completed.md (housekeeping 6.0 — move BLK-FIX-13)
-- context/handoff.md + context/handoff/
+## Gate humano
+Após o Planner: PARAR e apresentar o plano técnico + gate visual (Felipe+Vini) antes do Builder.
 
-## Paths pré-sujos / pendentes que ACOMPANHAM o working tree (documentar; NÃO são deste fix)
-- tasks/backlog.md / tasks/completed.md já contêm edições pendentes não-commitadas: o bloco NOVO
-  **BLK-EST-05** + o **rename FIX-07→FIX-13** (correção de colisão de ID). Como vivem no MESMO arquivo,
-  entrarão no commit de backlog/completed deste ciclo — documentar no fechamento.
+## Paths pré-sujos / alheios que ACOMPANHAM o working tree (NÃO commitar)
 - data/outputs/setores_censitarios_2022_geo/_metadata.json (M) — alheio
 - data/reports/relatorio_pontual_censitario_base_geo.md (M) — alheio
 - data/outputs/SIMULACAO_relatorio_caiubi_classico.pdf (untracked) — simulação descartável; NÃO commitar
 
 ## Fora de escopo (invioláveis)
-- score/pesos/artefatos M1 (READ-ONLY; DEC-001); regenerar artefatos M1
-- regenerar os próprios CSVs de concorrentes (dado real local)
+- score/pesos/artefatos M1 (READ-ONLY; DEC-001)
+- método de interseção e raio 1,5 km (INTOCADOS)
+- alterar o template recente (comportamento preservado byte-a-byte sem o param)
+- versionar PDF/PII real; dependência de API ao vivo no dashboard; selo GO/NO-GO
