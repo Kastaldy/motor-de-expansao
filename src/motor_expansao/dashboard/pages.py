@@ -2660,6 +2660,7 @@ def render_relatorio_pontual_censitario(
         filename_prefix=f"relatorio_censitario_{uf}_{cod_municipio}_{lat:.5f}_{lng:.5f}".replace("-", "m").replace(".", "p"),
         residual=residual,
         ultra_dir=Path("data/ultra"),
+        template="classico",
     )
 
 

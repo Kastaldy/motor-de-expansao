@@ -295,6 +295,32 @@ def _draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
         pass
 
 
+def _classico_draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
+    """Desenha o PNG do mapa na area do template CLASSICO (ABAIXO da banda + titulo de secao).
+
+    Diferente de `_draw_map` (calibrado para a banda flush do template recente, que comeca em
+    y=56): aqui o topo respeita a banda classica (margem 20 + altura ~58) e o titulo da secao
+    logo abaixo (~y114), e o rodape em y~518. Mantem proporcao (sem distorcer) e centraliza.
+    """
+    dims = _png_dimensions(png_bytes)
+    if dims is None:
+        return
+    img_w, img_h = dims
+    top = _CLASSICO_MARGIN + _CLASSICO_BAND_H + 12.0 + 24.0 + 8.0  # banda + gap + titulo + folga (~122)
+    bottom = _PAGE_H - 30.0  # acima do rodape (y~518)
+    max_w = _PAGE_W - 2.0 * _CLASSICO_MARGIN  # respeita a margem lateral de 20px
+    max_h = bottom - top
+    scale = min(max_w / img_w, max_h / img_h)
+    draw_w = img_w * scale
+    draw_h = img_h * scale
+    x = (_PAGE_W - draw_w) / 2.0
+    y = top + (max_h - draw_h) / 2.0
+    try:
+        pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
+    except Exception:
+        pass
+
+
 def _draw_watermark(
     pdf: _UltraPDF, text: str, *, rgb: tuple[int, int, int] = _WATERMARK_RGB
 ) -> None:
@@ -773,7 +799,7 @@ def _classico_map_page(
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _classico_title_band(pdf, banda_texto, titulo_secao, assets)
     if png_bytes:
-        _draw_map(pdf, png_bytes)
+        _classico_draw_map(pdf, png_bytes)
     else:
         pdf.set_text_color(*_CINZA_TEXTO)
         pdf.set_font("Helvetica", "", 12)
