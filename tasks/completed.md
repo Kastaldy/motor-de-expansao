@@ -4560,7 +4560,8 @@ não-bloqueadora:** a suíte full (serial; xdist trava ~96% no ambiente Python 3
 `2 failed, 816 passed, 1 skipped` — as 2 falhas são **data-drift PRÉ-EXISTENTE** em
 `test_csvs_concorrentes_legiveis` (CSVs reais de concorrentes regenerados: 226 vs 223 e 455 vs 472 linhas),
 comprovadamente independentes do bloco (reproduzem idênticas com o BLK-EST-03 em `git stash`). Aberto
-**BLK-FIX-07** (Baixa) no backlog para reconciliar o teste com os CSVs reais. Housekeeping via
+**BLK-FIX-13** (Baixa) no backlog para reconciliar o teste com os CSVs reais (renomeado de BLK-FIX-07 para
+evitar colisão de ID com o BLK-FIX-07 concluído em 2026-06-01). Housekeeping via
 `scripts/housekeeping_move_block.py` (`--check` verde); paths do ciclo: `src/motor_expansao/api/service.py`,
 `tests/integration/test_api_analisar.py`, `tasks/*`, `context/handoff*`.
 
@@ -4707,3 +4708,45 @@ extrapolação; nenhum dado auto-gerado como resultado; ZERO escrita em M1.
 ---
 
 - BLK-DIM-03R (concluído 2026-06-13) — ver tasks/completed.md
+
+---
+
+### BLK-FIX-13 — Data-drift em `test_csvs_concorrentes_legiveis` (2 falhas pré-existentes na suíte full)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (teste de dados desatualizado vs CSVs reais regenerados; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** (deixa a suíte full vermelha — 2 falhas — mascarando regressões futuras) |
+| **Esteira** | Block Orchestrator → Builder |
+| **Status** | Pendente |
+| **Origem** | ressalva não-bloqueadora do QA do BLK-EST-03 (2026-06-15); falhas comprovadamente independentes do bloco (reproduzem com o BLK-EST-03 em `git stash`) |
+
+**Contexto:** o QA do BLK-EST-03 rodou a suíte full e encontrou `2 failed, 816 passed, 1 skipped`
+(serial; xdist trava em ~96% no ambiente Python 3.14 local). As 2 falhas estão em
+`test_csvs_concorrentes_legiveis` e são **data-drift**: os CSVs reais de concorrentes foram
+regenerados com contagens diferentes das fixadas no teste (226 vs 223 linhas; 455 vs 472 linhas).
+Nada a ver com a API/marca d'água — reproduzem idênticas com o BLK-EST-03 fora da árvore.
+
+**Objetivo:** restaurar a suíte full 100% verde, reconciliando o teste com os CSVs reais atuais
+(atualizar as contagens esperadas OU tornar o teste robusto a drift, conforme o BO/Builder decidir),
+sem mascarar regressão real.
+
+**Escopo permitido:** o teste `test_csvs_concorrentes_legiveis` e, se necessário, a verificação dos
+CSVs de concorrentes em `data/`. **Fora de escopo:** score/pesos/artefatos M1 (READ-ONLY); regenerar
+artefatos M1.
+
+**Critérios de aceite:** `pytest` full verde (0 failed); a mudança documenta por que as contagens
+mudaram (regeneração legítima vs regressão); READ-ONLY M1.
+
+**Fechamento do ciclo (2026-06-15) — VEREDITO: APROVADO** (esteira Baixa: BO → Builder; sem QA — o
+orquestrador é o gate final). Diagnóstico confirmado: `CSV_SOURCES` (em
+`tests/integration/test_modelo_mercado_hexagonos.py`) fixava contagens exatas (bluefit 223, panobianco
+472) mas os CSVs reais de `concorrentes/` (GITIGNORED, regenerados pelo pipeline) drifteram para 226/455;
+smart_fit segue 1000. Como em CI os CSVs não existem (`pytest.skip`), o vermelho era só no run LOCAL — não
+era regressão de código, e sim refresh legítimo de dado. **Fix (abordagem B, recomendada pelo BO):**
+trocar `assert len(df) == expected_rows` por **piso de sanidade** `assert len(df) >= min_rows` (floor 100
+por CSV), mantendo a checagem de `CSV_REQUIRED_COLS` e parseabilidade — robusto a drift legítimo, mas
+detecta CSV vazio/truncado. `CSV_SOURCES` agora mapeia floors (100/100/100) e o param virou `min_rows`.
+**Validação (Builder, gate final):** suíte FULL `884 passed, 1 skipped, 0 failed`; `import streamlit_app`
+ok; ruff limpo no arquivo. READ-ONLY M1 (DEC-001): só o arquivo de teste mudou; score/pesos/artefatos
+intocados. Escopo só `tests/integration/test_modelo_mercado_hexagonos.py`.
