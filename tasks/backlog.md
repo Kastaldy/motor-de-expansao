@@ -477,59 +477,8 @@ nos maduros; ZERO escrita em M1.
 
 ---
 
-### BLK-DIM-08 — Teste discriminativo do mercado residual (performers × underperformers) + estrutura regional
+- BLK-DIM-08 (concluído 2026-06-15) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (é o teste que dá/retira confiança na tese residual; READ-ONLY sobre M1) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
-| **Depende de** | **BLK-DIM-07** (base multi-rede + raio escolhido) |
-| **Status** | Pendente |
-| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`/`data/analysis`; guard no loop |
-
-**Contexto / hipótese central (falsificável):** "o **mercado residual endereçável** (`pop(raio variável)
-× penetração_regional − consumo_concorrencial_gravitacional`) **separa** as unidades que performam (≥2k)
-das que não performam (<2k, ex.: Carapicuíba) — melhor que `pop+renda` em raio fixo". Reformula o
-problema mal-posto do 01R (predição absoluta → R² negativo) numa **discriminação com limiar acionável**.
-
-**Objetivo:** medir, honestamente, se o residual discrimina viabilidade e se sobra estrutura regional de
-penetração depois de **separar região × marca × domínio**.
-
-**GUARDRAIL DE INTERPRETAÇÃO (obrigatório — Felipe 2026-06-15):** o residual é sinal de **RANKING/triagem**
-(discriminar viável × inviável), **NÃO previsão pontual de alunos**. O BLK-DIM-07 mediu `R²_LOO≈0`: pop não
-prevê o nº absoluto de alunos em raio nenhum. Logo, reportar a saída como **score de oportunidade / piso de
-demanda com intervalo**, NUNCA como "este hex terá N alunos". O uso do residual para dimensionar (virar
-alunos-alvo → m²) é downstream (DIM-04/integração), fora deste bloco.
-
-**Escopo permitido:**
-- **Teste B (discriminação):** o residual rankeia as <2k abaixo das ≥2k? Reportar separação/AUC **LOO**,
-  comparando contra o baseline `pop+renda` em raio fixo. Reusar `score_oportunidade_residual` /
-  `oferta_efetiva_disponivel` (já existentes) recalculados no raio do BLK-DIM-07.
-- **Teste C (estrutura, decomposição de 3 efeitos):** componentes de variância da penetração separando
-  **região** (mercado intrínseco) × **marca** (efeito de nível — pull de marca, NÃO ticket; confirmado
-  similar entre redes) × **domínio** (`n_unidades_mesma_marca`/densidade de marca própria do BLK-DIM-07).
-  Partial pooling / efeitos aleatórios; penetração por cluster sempre **leave-one-unit-out** (anti-circular).
-  **Por que importa (Felipe 2026-06-15):** sem o termo de domínio, a penetração alta da Engenharia no Sul
-  (Caxias do Sul "fechada") vaza para o efeito "região" e o modelo conclui falsamente "o Sul é alto-mercado"
-  quando foi **estratégia de domínio**. Para site selection, reportar a penetração-base **líquida de
-  domínio** (1 unidade nova, sem saturação própria).
-- **Bônus — domínio como SINAL (valida a tese Expansão de Domínio com dado de concorrente):** estimar e
-  reportar o uplift de penetração por unidade adicional de marca própria no catchment (efeito domínio),
-  usando a Engenharia-Sul como caso. Diagnóstico READ-ONLY; se material, vira insumo de um bloco futuro de
-  estratégia de domínio (não recalibra M1 aqui).
-- **Sanidade dos casos:** Carapicuíba e as outras <2k caem mesmo em hex de baixo residual? (true
-  negative). Se o residual NÃO separa, **NO-GO honesto** da tese residual — resultado válido.
-- Saída: relatório `data/analysis/residual_discriminacao.md` (gitignored).
-
-**Fora de escopo:** Huff completo (é o BLK-DIM-02R); score/pesos/artefatos M1; PII; recalibrar a camada
-Expansão de Domínio (o efeito domínio aqui é só diagnóstico/insumo).
-
-**Critérios de aceite:** AUC/separação LOO do residual vs. baseline; decomposição de variância
-região×marca×domínio; penetração-base líquida de domínio reportada; uplift de domínio estimado (com IC);
-veredito GO/NO-GO da tese residual com IC/N/confounds; ZERO escrita em M1; reprodutível.
-
-**Risco:** médio (N~440 ajuda, mas células região×marca×domínio ficam ralas; partial pooling mitiga, não
-elimina; separar domínio de região com poucos casos de domínio real é o ponto delicado).
 
 ---
 
