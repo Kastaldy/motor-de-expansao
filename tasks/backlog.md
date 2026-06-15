@@ -403,8 +403,9 @@ permanece intacta. Detalhe e decomposição abaixo (epic BLK-DIM).
 > **esgotada**. Decisão tomada: **Caminho A vira o rumo agora** → materializado no **BLK-DIM-11** (esteira
 > property-first / viabilidade). **Caminho B (BLK-DIM-DATA) é REDEFINIDO**: só faz sentido atrás de
 > **atributos de imóvel** (visibilidade, fluxo, esquina) — NÃO de mais dado demográfico, que 4 NO-GOs já
-> provaram não carregar sinal. Falta só o aval formal de Felipe para virar **DEC-009**. Este bloco fica
-> como **registro de decisão** (não loop-safe, não é tarefa); a execução é o BLK-DIM-11.
+> provaram não carregar sinal. **Formalizado como DEC-009** (CLAUDE.md §8, aprovada por Felipe em
+> 2026-06-15). Este bloco fica como **registro de decisão** (não loop-safe, não é tarefa); a execução
+> é o BLK-DIM-11 (engine, concluído) + BLK-DIM-12 (UI).
 
 **Onde chegamos (evidência):** depois de **estressar ao máximo o dado interno** (sub-trilha DIM-07→08 + spike de densidade),
 temos **três NO-GOs honestos** convergindo: a demanda/viabilidade de um ponto **NÃO é previsível a partir
