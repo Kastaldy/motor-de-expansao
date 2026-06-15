@@ -304,5 +304,6 @@ def gerar_pdf_ponto(
 
     residual = _residual_do_ponto(lat, lng, settings)
     return gerar_pdf_relatorio_pontual_censitario(
-        result, mapas, residual=residual, ultra_dir=ultra_dir, rotulo=rotulo
+        result, mapas, residual=residual, ultra_dir=ultra_dir,
+        solicitante=consumidor, rotulo=rotulo,
     )

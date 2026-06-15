@@ -4493,3 +4493,77 @@ dos commits (diff commitado 100% limpo, zero arquivo M1/VPS). Correções:
 READ-ONLY sobre o M1. Validações: 26 passed, ruff/mypy limpos. O trabalho DIM-01..04 da 1ª rodada
 ficou nos branches `ciclo/BLK-DIM-01..04` para auditoria humana (R²=0.897 identificado como artefato
 de fixture sintética — ver parecer; calibração em dado real ainda pendente).
+
+---
+
+### BLK-EST-03 — Fonte real do solicitante (Authelia/sessão) para a marca d'água do PDF
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (rastreabilidade/LGPD — passa a gravar identidade real no documento; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** (depende de infra de autenticação; o contrato já está pronto) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente (bloqueado: requer Authelia/sessão autenticada existir primeiro) |
+| **Responsável sugerido** | Vini (+ Felipe na padronização da fonte) |
+| **ClickUp** | `86e1rtezm` — https://app.clickup.com/t/86e1rtezm (logs de rastreio LGPD, do Felipe) |
+| **Origem** | follow-up do BLK-EST-01 (ver `tasks/completed.md`); risco R1 do handoff do Planner |
+| **Relacionado** | DEC-005 (API GeoEspacial — token por consumidor/bot); BLK-API-02+ |
+
+**Contexto:** o BLK-EST-01 entregou a marca d'água com o parâmetro `solicitante: str | None = None` e
+fallback seguro (`None` → só "Ultra Academia"). Hoje **não existe Authelia/sessão autenticada no código**
+(verificado em 2026-06-11: busca por `authelia`/`solicitante`/`usuario_logado`/`X-Remote-User`/`identity`
+em `src/` = zero), então o nome real do solicitante nunca é preenchido. Este bloco fecha essa lacuna:
+ligar a fonte real da identidade ao parâmetro `solicitante` já existente, padronizando com os logs de
+rastreio LGPD do Felipe (ClickUp `86e1rtezm`).
+
+**Objetivo:** todo PDF gerado por usuário autenticado carrega o nome real do solicitante na marca d'água,
+com a mesma fonte de identidade usada nos logs LGPD; geração anônima/sem sessão mantém o fallback seguro.
+
+**Escopo permitido:** caminho de geração que chama `render_downloads_relatorio_censitario` /
+`gerar_payloads_download_relatorio_censitario` / `gerar_pdf_relatorio_pontual_censitario` (passar a
+identidade real no parâmetro `solicitante`); leitura da identidade da sessão (dashboard) e/ou do token do
+consumidor (API, DEC-005); padronização da fonte com os logs LGPD. **NÃO altera `censo_report.py`** (a
+assinatura `solicitante` já está pronta) além do estritamente necessário.
+
+**Fora de escopo:** redefinir a marca d'água/template (já entregue no BLK-EST-01); versionar PDFs reais ou
+fixtures com PII real; score/artefatos M1 (READ-ONLY); recolocar dependência de API ao vivo no dashboard.
+
+**Dependências:** infra de autenticação (Authelia ou equivalente) disponível no dashboard de produção;
+padronização da fonte "solicitante" com a tarefa de logs LGPD do Felipe (ClickUp `86e1rtezm`); para a API,
+o token→consumidor da DEC-005 (BLK-API-02+).
+
+**Critérios de aceite:** PDF gerado por sessão autenticada traz o nome real do solicitante; sem sessão →
+fallback "Ultra Academia" (retrocompat preservada); fonte do nome padronizada e testada (com nome
+fictício nas fixtures, sem PII real); suíte verde; ruff + mypy limpos; READ-ONLY M1.
+
+**Guardrail:** anti-PII do §2/§4 preservado (nenhum PDF/PII versionado); sem dependência de API ao vivo no
+dashboard; LEITURA/ANÁLISE sem escrita em artefato M1 = Alta.
+
+**Fechamento do ciclo (2026-06-15) — VEREDITO: APROVADO COM RESSALVAS** (esteira BO → Planner →
+[aprovação humana de Vinicius] → Builder → QA). Entregue o **recorte da trilha da API (Fase 1)**: o
+Block Orchestrator descobriu que a API GeoEspacial (DEC-005 / BLK-API-02+) já mergeou com
+`auth.resolver_consumidor` (token→consumidor) e a rota `POST /analisar?formato=pdf` já leva o
+`consumidor` até `service.gerar_pdf_ponto` — a ÚNICA lacuna era que `gerar_pdf_ponto` chamava
+`gerar_pdf_relatorio_pontual_censitario(...)` **sem repassar `solicitante=consumidor`**. Fix cirúrgico de
+**1 linha** em `src/motor_expansao/api/service.py` (linhas ~306-308: `+ solicitante=consumidor`) + **2 testes**
+em `tests/integration/test_api_analisar.py` (spy na origem `censo_report.gerar_pdf_relatorio_pontual_censitario`
+captura o kwarg `solicitante`: rota carimba o consumidor; chamada direta com `consumidor=None` → fallback
+"Ultra Academia"). `censo_report.py` (assinatura `solicitante: str | None = None` e `_watermark_text`),
+`pages.py`, `AnalisarResponseJSON` e a assinatura `consumidor: str | None` de `gerar_pdf_ponto` INTOCADOS.
+Anti-PII: fixtures com nome fictício, nenhum PDF/PII real versionado. READ-ONLY M1 confirmado
+(score/pesos `0.40`/`0.60`/artefatos INALTERADOS; DEC-001). **Trilha do dashboard permanece BLOQUEADA**
+(Authelia/identidade ausente no Streamlit — `pages.py` segue com fallback seguro) → Fase 2 futura.
+Premissa R3 (logs LGPD ClickUp `86e1rtezm` já leem `consumidor` do JSON; sem logging novo) confirmada no
+gate humano. Validações do QA (Opus 4.8, gate único): ruff limpo, `import streamlit_app` ok, mypy só com
+1 erro PRÉ-EXISTENTE de stub `requests` (linha intocada), os 2 testes novos PASSAM não-skipped. **Ressalva
+não-bloqueadora:** a suíte full (serial; xdist trava ~96% no ambiente Python 3.14 local) deu
+`2 failed, 816 passed, 1 skipped` — as 2 falhas são **data-drift PRÉ-EXISTENTE** em
+`test_csvs_concorrentes_legiveis` (CSVs reais de concorrentes regenerados: 226 vs 223 e 455 vs 472 linhas),
+comprovadamente independentes do bloco (reproduzem idênticas com o BLK-EST-03 em `git stash`). Aberto
+**BLK-FIX-07** (Baixa) no backlog para reconciliar o teste com os CSVs reais. Housekeeping via
+`scripts/housekeeping_move_block.py` (`--check` verde); paths do ciclo: `src/motor_expansao/api/service.py`,
+`tests/integration/test_api_analisar.py`, `tasks/*`, `context/handoff*`.
+
+---
+
+- BLK-EST-02 (concluído 2026-06-11) — ver tasks/completed.md

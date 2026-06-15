@@ -108,3 +108,44 @@ def test_analisar_accept_pdf_header(client: TestClient) -> None:
     assert resp.status_code == 200, resp.text
     assert resp.headers["content-type"] == "application/pdf"
     assert resp.content[:4] == b"%PDF"
+
+
+def test_analisar_pdf_carimba_consumidor(client: TestClient, monkeypatch) -> None:
+    # Wiring consumidor->solicitante (BLK-EST-03). Spy curto-circuita a geracao final
+    # do PDF capturando o kwarg `solicitante`. O import em `gerar_pdf_ponto` e local
+    # por-nome a partir de `censo_report`, entao o alvo do patch e o MODULO de origem.
+    capturado: dict[str, object] = {}
+
+    def _spy(*args, **kwargs) -> bytes:
+        capturado["solicitante"] = kwargs.get("solicitante")
+        return b"%PDF-1.4 fake"  # bytes sinteticos: nenhum PDF real em disco (anti-PII)
+
+    monkeypatch.setattr(
+        "motor_expansao.dashboard.censo_report.gerar_pdf_relatorio_pontual_censitario", _spy
+    )
+    resp = client.post("/api/v1/analisar?formato=pdf", json=AGUAS_DA_PRATA, headers=AUTH)
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "application/pdf"
+    # consumidor resolvido pelo token (nome FICTICIO `dev-local`) chega como solicitante.
+    assert capturado["solicitante"] == get_settings().tokens["dev-token"]
+
+
+def test_analisar_pdf_solicitante_none_fallback(monkeypatch) -> None:
+    # Fallback retrocompativel: consumidor=None -> solicitante=None (so "Ultra Academia"),
+    # independente da rota. Chama gerar_pdf_ponto DIRETAMENTE com o mesmo spy.
+    from motor_expansao.api import service
+
+    capturado: dict[str, object] = {}
+
+    def _spy(*args, **kwargs) -> bytes:
+        capturado["solicitante"] = kwargs.get("solicitante")
+        return b"%PDF-1.4 fake"
+
+    monkeypatch.setattr(
+        "motor_expansao.dashboard.censo_report.gerar_pdf_relatorio_pontual_censitario", _spy
+    )
+    out = service.gerar_pdf_ponto(
+        AGUAS_DA_PRATA["lat"], AGUAS_DA_PRATA["lng"], None, get_settings(), rotulo=None
+    )
+    assert out == b"%PDF-1.4 fake"
+    assert capturado["solicitante"] is None
