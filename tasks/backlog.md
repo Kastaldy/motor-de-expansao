@@ -117,6 +117,8 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 ---
 
 - BLK-EST-03 (concluído 2026-06-15) — ver tasks/completed.md
+- BLK-FIX-13 (concluído 2026-06-15) — ver tasks/completed.md
+- BLK-EST-05 (concluído 2026-06-15) — ver tasks/completed.md
 
 
 ---

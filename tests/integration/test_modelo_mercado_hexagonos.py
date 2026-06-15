@@ -23,10 +23,13 @@ HIBRIDO_PATH = ROOT / "data" / "outputs" / "oportunidades_expansao_hibrido.parqu
 ULTRA_RAW_PATH = ROOT / "data" / "ultra" / "Ultra.csv"
 
 CSV_REQUIRED_COLS = {"nome_unidade", "latitude", "longitude", "data_coleta"}
+# Pisos de sanidade por CSV (não contagens exatas): dado real gitignored é frágil a regenerações
+# legítimas do pipeline de mapeamento; piso conservador detecta CSV vazio/truncado sem rebote a
+# cada refresh de dados sem ser uma regressão de código.
 CSV_SOURCES = {
-    ROOT / "concorrentes" / "unidades_smart_fit.csv": 1000,
-    ROOT / "concorrentes" / "unidades_bluefit.csv": 223,
-    ROOT / "concorrentes" / "unidades_panobianco.csv": 472,
+    ROOT / "concorrentes" / "unidades_smart_fit.csv": 100,
+    ROOT / "concorrentes" / "unidades_bluefit.csv": 100,
+    ROOT / "concorrentes" / "unidades_panobianco.csv": 100,
 }
 
 MERCADO_REQUIRED_COLS = {
@@ -144,13 +147,14 @@ def hibrido_score_df():
     return pd.read_parquet(HIBRIDO_PATH, columns=["hex_id", "score_priorizacao"])
 
 
-@pytest.mark.parametrize(("csv_path", "expected_rows"), CSV_SOURCES.items())
-def test_csvs_concorrentes_legiveis(csv_path: Path, expected_rows: int):
+@pytest.mark.parametrize(("csv_path", "min_rows"), CSV_SOURCES.items())
+def test_csvs_concorrentes_legiveis(csv_path: Path, min_rows: int):
     if not csv_path.exists():
         pytest.skip(f"CSV concorrente real ausente: {csv_path}")
     df = pd.read_csv(csv_path, sep=";", dtype=str)
     assert CSV_REQUIRED_COLS <= set(df.columns)
-    assert len(df) == expected_rows
+    # Piso de sanidade: detecta CSV vazio/truncado sem rebote a cada refresh legítimo de dados.
+    assert len(df) >= min_rows, f"{csv_path.name}: esperado >= {min_rows} linhas, encontrado {len(df)}"
 
 
 def test_ultra_loader_lida_com_metadado_e_encoding_legacy():

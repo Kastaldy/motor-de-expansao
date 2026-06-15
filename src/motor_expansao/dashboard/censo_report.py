@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -9,6 +10,7 @@ import pandas as pd
 from fpdf import FPDF
 from PIL import Image
 
+from motor_expansao.api.maps_geocoder import build_search_url
 from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSITARIO
 
 # Cabecalhos canonicos das 7 paginas do template Ultra (ASCII, sem acento problematico).
@@ -69,6 +71,7 @@ _CREDITO_ULTRA = "Relatorio gerado pelo Motor de Expansao - Ultra Academia"
 _ASSET_CAPA = "relatorio_capa_bg.png"
 _ASSET_CONTEUDO = "relatorio_conteudo_bg.png"
 _ASSET_LOGO = "logo_ultra.png"
+_ASSET_ICONE = "icone_ultra.png"
 _DEFAULT_ULTRA_DIR = Path("data/ultra")
 
 # Dimensoes do slide 16:9 widescreen em pontos (13.333in x 7.5in = 960 x 540 pt).
@@ -86,6 +89,34 @@ _WATERMARK_ALPHA = 0.65
 _WATERMARK_ANGLE = 0.0
 _WATERMARK_FONT_PT = 10
 _WATERMARK_MARGIN = 20.0
+
+# ---------------------------------------------------------------------------
+# Variante "Apresentacao Classica Ultra" (BLK-EST-05): estetica GeoFusion antiga
+# sobre o motor censitario novo. Funcao publica DEDICADA
+# (`gerar_pdf_relatorio_pontual_classico`) — NAO ramifica o gerador recente.
+# Cores: REUSAR ULTRA_TURQUESA/ULTRA_MAGENTA (decisao do gate humano Q1).
+# ---------------------------------------------------------------------------
+_CLASSICO_MARGIN = 20.0
+_CLASSICO_CORNER_RADIUS = 16.0
+_CLASSICO_BAND_H = 58.0
+# Banda magenta de rodape full-width, levemente acima da marca d'agua (Q3, calibrado).
+_CLASSICO_MAGENTA_BANDA_H = 13.0
+_CLASSICO_MAGENTA_OFFSET = 13.0
+# Meses por extenso (ASCII-safe) para a data de geracao e o mes/ano da capa classica.
+_MESES_PT = (
+    "janeiro",
+    "fevereiro",
+    "marco",
+    "abril",
+    "maio",
+    "junho",
+    "julho",
+    "agosto",
+    "setembro",
+    "outubro",
+    "novembro",
+    "dezembro",
+)
 
 
 @dataclass(frozen=True)
@@ -163,8 +194,13 @@ def _load_branding_assets(ultra_dir: Path | str | None) -> dict[str, bytes | Non
     — SEM excecao. Garante PDF valido com fundo de cor solida em CI/deploy limpo.
     """
     base = Path(ultra_dir) if ultra_dir is not None else _DEFAULT_ULTRA_DIR
-    assets: dict[str, bytes | None] = {"capa": None, "conteudo": None, "logo": None}
-    for key, filename in (("capa", _ASSET_CAPA), ("conteudo", _ASSET_CONTEUDO), ("logo", _ASSET_LOGO)):
+    assets: dict[str, bytes | None] = {"capa": None, "conteudo": None, "logo": None, "icone": None}
+    for key, filename in (
+        ("capa", _ASSET_CAPA),
+        ("conteudo", _ASSET_CONTEUDO),
+        ("logo", _ASSET_LOGO),
+        ("icone", _ASSET_ICONE),
+    ):
         path = base / filename
         try:
             raw = path.read_bytes()
@@ -253,6 +289,32 @@ def _draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
     draw_h = img_h * scale
     x = (_PAGE_W - draw_w) / 2.0
     y = 56.0 + (max_h - draw_h) / 2.0
+    try:
+        pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
+    except Exception:
+        pass
+
+
+def _classico_draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
+    """Desenha o PNG do mapa na area do template CLASSICO (ABAIXO da banda + titulo de secao).
+
+    Diferente de `_draw_map` (calibrado para a banda flush do template recente, que comeca em
+    y=56): aqui o topo respeita a banda classica (margem 20 + altura ~58) e o titulo da secao
+    logo abaixo (~y114), e o rodape em y~518. Mantem proporcao (sem distorcer) e centraliza.
+    """
+    dims = _png_dimensions(png_bytes)
+    if dims is None:
+        return
+    img_w, img_h = dims
+    top = _CLASSICO_MARGIN + _CLASSICO_BAND_H + 12.0 + 24.0 + 8.0  # banda + gap + titulo + folga (~122)
+    bottom = _PAGE_H - 30.0  # acima do rodape (y~518)
+    max_w = _PAGE_W - 2.0 * _CLASSICO_MARGIN  # respeita a margem lateral de 20px
+    max_h = bottom - top
+    scale = min(max_w / img_w, max_h / img_h)
+    draw_w = img_w * scale
+    draw_h = img_h * scale
+    x = (_PAGE_W - draw_w) / 2.0
+    y = top + (max_h - draw_h) / 2.0
     try:
         pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
     except Exception:
@@ -602,6 +664,367 @@ def _credit_page(pdf: _UltraPDF, assets: dict[str, bytes | None]) -> None:
     pdf.cell(_PAGE_W - 80, 12, _ascii(f"Fundo de ruas: {_ATRIBUICAO_TILES}."), align="C")
 
 
+# ---------------------------------------------------------------------------
+# Variante "Apresentacao Classica Ultra" (BLK-EST-05) — helpers e gerador.
+# READ-ONLY sobre o M1; reusa o motor/helpers do template recente. NAO altera
+# nenhuma funcao usada pelo template recente (byte-a-byte preservado).
+# ---------------------------------------------------------------------------
+
+
+def _classico_data_extenso(now: datetime | None = None) -> str:
+    """Data por extenso ASCII-safe, ex.: "15 de junho de 2026" (injetavel p/ teste)."""
+    moment = now or datetime.now()
+    mes = _MESES_PT[moment.month - 1]
+    return f"{moment.day} de {mes} de {moment.year}"
+
+
+def _classico_mes_ano(now: datetime | None = None) -> str:
+    """Mes/ano por extenso para o subtitulo da capa, ex.: "Junho de 2026"."""
+    moment = now or datetime.now()
+    mes = _MESES_PT[moment.month - 1]
+    return f"{mes.capitalize()} de {moment.year}"
+
+
+def _classico_title_band(
+    pdf: _UltraPDF,
+    texto_banda: str,
+    titulo_secao: str,
+    assets: dict[str, bytes | None],
+    *,
+    rgb: tuple[int, int, int] = ULTRA_TURQUESA,
+) -> None:
+    """Banda turquesa "classica": margem lateral 20px, cantos arredondados r~16, altura ~58.
+
+    Endereco/nome (branco) a esquerda + icone Ultra a direita (fallback gracioso quando
+    `assets["icone"]` e None). O titulo da SECAO e desenhado ABAIXO da banda.
+    """
+    band_w = _PAGE_W - 2 * _CLASSICO_MARGIN
+    pdf.set_fill_color(*rgb)
+    pdf.set_line_width(0)
+    pdf.rect(
+        _CLASSICO_MARGIN,
+        _CLASSICO_MARGIN,
+        band_w,
+        _CLASSICO_BAND_H,
+        style="F",
+        round_corners=True,
+        corner_radius=_CLASSICO_CORNER_RADIUS,
+    )
+
+    # Icone Ultra a direita, dentro da banda (fallback gracioso se ausente/invalido).
+    icone = assets.get("icone")
+    icone_w = 0.0
+    if icone is not None:
+        dims = _png_dimensions(icone)
+        if dims is not None:
+            iw, ih = dims
+            target_h = _CLASSICO_BAND_H - 20.0
+            scale = target_h / ih if ih else 1.0
+            icone_w = iw * scale
+            ix = _PAGE_W - _CLASSICO_MARGIN - 18.0 - icone_w
+            iy = _CLASSICO_MARGIN + (_CLASSICO_BAND_H - target_h) / 2.0
+            try:
+                pdf.image(BytesIO(icone), x=ix, y=iy, w=icone_w, h=target_h)
+            except Exception:
+                icone_w = 0.0
+
+    # Endereco/nome a esquerda (branco), sem colidir com o icone.
+    pdf.set_text_color(*_BRANCO)
+    pdf.set_font("Helvetica", "B", 18)
+    text_w = band_w - 36.0 - (icone_w + 24.0 if icone_w else 0.0)
+    pdf.set_xy(_CLASSICO_MARGIN + 18.0, _CLASSICO_MARGIN + 18.0)
+    pdf.cell(text_w, 22, _ascii(texto_banda))
+
+    # Titulo da secao ABAIXO da banda (cor de marca, sobre fundo claro).
+    pdf.set_text_color(*ULTRA_TURQUESA)
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_xy(_CLASSICO_MARGIN, _CLASSICO_MARGIN + _CLASSICO_BAND_H + 12.0)
+    pdf.cell(band_w, 24, _ascii(titulo_secao))
+
+
+def _classico_banda_texto(result: dict[str, Any], rotulo: str | None) -> str:
+    """Texto da banda turquesa: endereco/nome quando ha rotulo real, senao a coordenada."""
+    nome = str(rotulo or "").strip()
+    if nome and not _parece_coordenada(nome):
+        return nome if len(nome) <= 80 else nome[:77] + "..."
+    lat = result.get("lat")
+    lng = result.get("lng")
+    if lat is not None and lng is not None:
+        return f"Coordenada: {float(lat):.5f}, {float(lng):.5f}"
+    return "Relatorio Pontual Censitario"
+
+
+def _classico_cover_page(
+    pdf: _UltraPDF,
+    result: dict[str, Any],
+    assets: dict[str, bytes | None],
+    *,
+    rotulo: str | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Capa classica: endereco ACIMA do subtitulo, texto por baseline (base ~y455)."""
+    pdf.add_page()
+    has_bg = assets.get("capa") is not None
+    _draw_full_page_background(pdf, assets.get("capa"), ULTRA_TURQUESA)
+
+    lat = result.get("lat")
+    lng = result.get("lng")
+    coord = f"{float(lat):.5f}, {float(lng):.5f}" if lat is not None and lng is not None else "coordenada n/d"
+    nome = str(rotulo or "").strip()
+    endereco = nome if (nome and not _parece_coordenada(nome)) else f"Coordenada: {coord}"
+    if len(endereco) > 72:
+        endereco = endereco[:69] + "..."
+    subtitulo = f"Relatorio Pontual Censitario - Raio 1,5 km | {_classico_mes_ano(now)}"
+
+    # Zona limpa inferior-direita quando ha fundo de marca; centro quando nao ha.
+    base_x = 478.0 if has_bg else 80.0
+    pdf.set_text_color(*_BRANCO)
+    # Endereco ACIMA (baseline ~y430), subtitulo ABAIXO (baseline ~y455, acima da linha ~y460).
+    pdf.set_font("Helvetica", "B", 26)
+    pdf.text(base_x, 430.0, _ascii(endereco))
+    pdf.set_font("Helvetica", "", 13)
+    pdf.text(base_x, 455.0, _ascii(subtitulo))
+
+
+def _classico_map_page(
+    pdf: _UltraPDF,
+    png_bytes: bytes | None,
+    *,
+    banda_texto: str,
+    titulo_secao: str,
+    assets: dict[str, bytes | None],
+) -> None:
+    """Pagina de mapa classica: fundo claro + banda classica + mapa (reuso) + rodape."""
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _classico_title_band(pdf, banda_texto, titulo_secao, assets)
+    if png_bytes:
+        _classico_draw_map(pdf, png_bytes)
+    else:
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_xy(40, 160)
+        pdf.cell(_PAGE_W - 80, 18, _ascii("Mapa indisponivel para esta camada."))
+    _draw_footer(pdf, with_attribution=True)
+
+
+def _classico_competitors_page(
+    pdf: _UltraPDF,
+    result: dict[str, Any],
+    png_bytes: bytes | None,
+    assets: dict[str, bytes | None],
+    *,
+    banda_texto: str,
+) -> None:
+    """Concorrentes classica: banda classica + mapa a esquerda + lista a direita (reuso)."""
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _classico_title_band(pdf, banda_texto, "Concorrentes", assets)
+
+    # Mapa de concorrentes a ESQUERDA (abaixo da banda + titulo de secao).
+    if png_bytes:
+        dims = _png_dimensions(png_bytes)
+        if dims is not None:
+            img_w, img_h = dims
+            max_w, max_h = 540.0, 380.0
+            scale = min(max_w / img_w, max_h / img_h)
+            draw_w = img_w * scale
+            draw_h = img_h * scale
+            x = _CLASSICO_MARGIN + (max_w - draw_w) / 2.0
+            y = 130.0 + (max_h - draw_h) / 2.0
+            try:
+                pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
+            except Exception:
+                pass
+
+    # Lista de redes a DIREITA (mesma logica de `_competitors_page`, reusa _point_rows/_safe_len).
+    list_x = 600.0
+    list_w = _PAGE_W - list_x - _CLASSICO_MARGIN
+    bullet_w = 12.0
+    text_x = list_x + bullet_w
+
+    concorrentes_df = result.get("concorrentes_raio", pd.DataFrame())
+    ultra_df = result.get("ultra_raio", pd.DataFrame())
+    total = _safe_len(concorrentes_df) + _safe_len(ultra_df)
+    header = "Redes no raio de 1.5 km"
+    if total > 10:
+        header = f"{header} ({total} no total)"
+    pdf.set_text_color(*ULTRA_MAGENTA)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_xy(list_x, 130.0)
+    pdf.cell(list_w, 18, _ascii(header))
+
+    pdf.set_font("Helvetica", "", 10)
+    y = 160.0
+    linhas: list[tuple[str, bool]] = []
+    linhas.extend(_point_rows(concorrentes_df, "Concorrente", is_ultra=False))
+    linhas.extend(_point_rows(ultra_df, "Ultra", is_ultra=True))
+    truncated = total > 10
+    for line, is_ultra in linhas:
+        if y > _PAGE_H - 40:
+            break
+        bullet_rgb = ULTRA_TURQUESA if is_ultra else ULTRA_MAGENTA
+        pdf.set_fill_color(*bullet_rgb)
+        pdf.ellipse(list_x, y + 4, 6, 6, style="F")
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_xy(text_x, y)
+        pdf.multi_cell(list_w - bullet_w, 14, _ascii(line))
+        y = pdf.get_y() + 4.0
+
+    if truncated and y <= _PAGE_H - 40:
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_xy(text_x, y)
+        pdf.multi_cell(list_w - bullet_w, 14, _ascii(f"... e mais {total - 10}"))
+
+    _draw_footer(pdf, with_attribution=True)
+
+
+def _classico_banda_magenta_rodape(pdf: _UltraPDF) -> None:
+    """Banda magenta full-width, flush-baixo, levemente acima da marca d'agua."""
+    pdf.set_fill_color(*ULTRA_MAGENTA)
+    pdf.set_line_width(0)
+    y = _PAGE_H - _CLASSICO_MAGENTA_BANDA_H - _CLASSICO_MAGENTA_OFFSET
+    pdf.rect(0.0, y, _PAGE_W, _CLASSICO_MAGENTA_BANDA_H, style="F")
+
+
+def _classico_credit_page(
+    pdf: _UltraPDF,
+    result: dict[str, Any],
+    assets: dict[str, bytes | None],
+    *,
+    rotulo: str | None = None,
+    now: datetime | None = None,
+) -> None:
+    """Realizacao classica: corpo do `_credit_page` + link clicavel do ponto + data por extenso.
+
+    SEM logo, SEM cartao de contato (anti-PII). Reusa visual de credito/metodo/READ-ONLY.
+    """
+    pdf.add_page()
+    pdf.set_fill_color(*ULTRA_TURQUESA)
+    pdf.rect(0, 0, _PAGE_W, _PAGE_H, style="F")
+
+    pdf.set_text_color(*_BRANCO)
+    pdf.set_font("Helvetica", "B", 34)
+    pdf.set_xy(40, 120)
+    pdf.cell(_PAGE_W - 80, 40, _ascii("Realizacao"), align="C")
+
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_xy(40, 172)
+    pdf.cell(_PAGE_W - 80, 24, _ascii(_CREDITO_ULTRA), align="C")
+
+    pdf.set_font("Helvetica", "", 12)
+    pdf.set_xy(160, 218)
+    pdf.multi_cell(
+        _PAGE_W - 320,
+        16,
+        _ascii(
+            "Intersecao de setores censitarios IBGE 2022 com circulo de 1,5 km; "
+            "distribuicao intrassetor por area."
+        ),
+        align="C",
+    )
+
+    pdf.set_xy(160, 262)
+    pdf.multi_cell(
+        _PAGE_W - 320,
+        16,
+        _ascii(
+            "READ-ONLY: este relatorio nao altera score_priorizacao, carteira, plano ou artefatos "
+            "oficiais do M1."
+        ),
+        align="C",
+    )
+
+    # Bloco "Link para localizacao do ponto:" + endereco como link clicavel.
+    nome = str(rotulo or "").strip()
+    if nome and not _parece_coordenada(nome):
+        link_query = nome
+        link_label = nome if len(nome) <= 80 else nome[:77] + "..."
+    else:
+        lat = result.get("lat")
+        lng = result.get("lng")
+        link_query = f"{float(lat):.6f},{float(lng):.6f}" if lat is not None and lng is not None else ""
+        link_label = link_query or "n/d"
+    url = build_search_url(link_query) if link_query else build_search_url("")
+
+    pdf.set_text_color(*_BRANCO)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_xy(40, 330)
+    pdf.cell(_PAGE_W - 80, 16, _ascii("Link para localizacao do ponto:"), align="C")
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_xy(40, 350)
+    pdf.cell(_PAGE_W - 80, 16, _ascii(link_label), align="C", link=url)
+
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_xy(40, 380)
+    pdf.cell(
+        _PAGE_W - 80,
+        16,
+        _ascii(f"Data de geracao: {_classico_data_extenso(now)}"),
+        align="C",
+    )
+
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(40, _PAGE_H - 40)
+    pdf.cell(_PAGE_W - 80, 12, _ascii(f"Fundo de ruas: {_ATRIBUICAO_TILES}."), align="C")
+
+
+def gerar_pdf_relatorio_pontual_classico(
+    result: dict[str, Any],
+    mapas: dict[str, bytes] | bytes | None = None,
+    *,
+    residual: dict[str, Any] | None = None,
+    ultra_dir: Path | str | None = None,
+    solicitante: str | None = None,
+    rotulo: str | None = None,
+    now: datetime | None = None,
+) -> bytes:
+    """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
+
+    7 paginas na ordem canonica (Capa -> Populacao -> Renda -> Score censitario ->
+    Concorrentes -> Big Numbers -> Realizacao), reusando o motor/helpers do template
+    recente. Difere do recente na ESTETICA: banda turquesa com margem/cantos arredondados
+    e icone Ultra, capa com endereco acima do subtitulo, banda magenta de rodape e
+    Realizacao com link clicavel + data por extenso. READ-ONLY sobre o M1.
+
+    `rotulo` e o nome/endereco do ponto (capa + banda + texto do link). `now` e injetavel
+    para data determinista em teste. Geracao 100% offline, sem PII. Marca d'agua identica
+    ao gerador recente (`solicitante`).
+    """
+    assets = _load_branding_assets(ultra_dir)
+    layers = dict(_normalize_mapas_by_key(mapas))
+    banda_texto = _classico_banda_texto(result, rotulo)
+
+    pdf = _UltraPDF()
+    _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
+    _classico_map_page(
+        pdf, layers.get("densidade"), banda_texto=banda_texto,
+        titulo_secao="Populacao - Densidade", assets=assets,
+    )
+    _classico_map_page(
+        pdf, layers.get("renda"), banda_texto=banda_texto,
+        titulo_secao="Renda per capita", assets=assets,
+    )
+    _classico_map_page(
+        pdf, layers.get("score"), banda_texto=banda_texto,
+        titulo_secao="Score censitario", assets=assets,
+    )
+    _classico_competitors_page(pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto)
+    _big_numbers_page(pdf, result, residual, assets)
+    _classico_banda_magenta_rodape(pdf)
+    _classico_credit_page(pdf, result, assets, rotulo=rotulo, now=now)
+
+    # Marca d'agua identica ao gerador recente: capa branca, demais cinza.
+    wm_text = _watermark_text(solicitante)
+    for page_number in range(1, pdf.pages_count + 1):
+        pdf.page = page_number
+        rgb = _WATERMARK_RGB_COVER if page_number == 1 else _WATERMARK_RGB
+        _draw_watermark(pdf, wm_text, rgb=rgb)
+
+    output = pdf.output()
+    return bytes(output)
+
+
 def _normalize_mapas(mapas: dict[str, bytes] | bytes | None) -> list[tuple[str, str, bytes]]:
     """Normaliza a entrada de mapas em lista ordenada (chave, titulo, png_bytes).
 
@@ -680,14 +1103,24 @@ def gerar_payloads_download_relatorio_censitario(
     residual: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
+    template: str | None = None,
+    rotulo: str | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     prefix = filename_prefix or f"relatorio_pontual_censitario_{_point_name(result)}"
+    if template == "classico":
+        pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+            result, mapas, residual=residual, ultra_dir=ultra_dir,
+            solicitante=solicitante, rotulo=rotulo,
+        )
+    else:
+        pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
+            result, mapas, residual=residual, ultra_dir=ultra_dir,
+            solicitante=solicitante, rotulo=rotulo,
+        )
     return RelatorioCensitarioDownloadPayloads(
         csv_bytes=gerar_csv_setores_censitarios(result),
         csv_filename=f"{prefix}_setores.csv",
-        pdf_bytes=gerar_pdf_relatorio_pontual_censitario(
-            result, mapas, residual=residual, ultra_dir=ultra_dir, solicitante=solicitante
-        ),
+        pdf_bytes=pdf_bytes,
         pdf_filename=f"{prefix}.pdf",
     )
 
@@ -701,6 +1134,8 @@ def render_downloads_relatorio_censitario(
     residual: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
+    template: str | None = None,
+    rotulo: str | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     """Renderiza botoes Streamlit e retorna os mesmos bytes para testes/reuso."""
     payloads = gerar_payloads_download_relatorio_censitario(
@@ -710,6 +1145,8 @@ def render_downloads_relatorio_censitario(
         residual=residual,
         ultra_dir=ultra_dir,
         solicitante=solicitante,
+        template=template,
+        rotulo=rotulo,
     )
     st_module.download_button(
         "Baixar CSV dos setores",
