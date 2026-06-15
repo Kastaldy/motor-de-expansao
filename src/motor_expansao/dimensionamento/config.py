@@ -63,3 +63,44 @@ RAIO_CATCHMENT_KM = 1.5
 ENDPOINT_HISTORICO_VIEW = "/historico-dash-view"
 ENDPOINT_HISTORICO = "/historico-dash"
 ENDPOINT_LOGIN = "/auth/login"
+
+# ---------------------------------------------------------------------------
+# Simulador financeiro — coeficientes do DRE real (BLK-DIM-03R)
+# Fonte: data/staging/simulador_estrutura.json (BLK-DIM-00) +
+#        custos fixos absolutos extraidos manualmente do Excel (handoff BO BLK-DIM-03R)
+# ---------------------------------------------------------------------------
+
+# Ratios % do DRE (ratios_dre do JSON)
+SIM_DEVOLUCOES_PCT = 0.005   # DRE F30
+SIM_MARKETING_PCT = 0.02     # DRE F63
+SIM_MANUTENCAO_PCT = 0.02    # DRE F67
+SIM_CARTOES_PCT = 0.0105     # DRE F79
+# royalties vem do driver Simulador!N11 (= 0.08); exposto como SIM_ROYALTIES_PCT
+SIM_ROYALTIES_PCT = 0.08     # Simulador N11
+
+# Impostos — regime Lucro Presumido (impostos_presumido do JSON)
+SIM_PIS = 0.0065             # Tributos E38
+SIM_COFINS = 0.03            # Tributos E40
+SIM_ISS = 0.03               # Tributos E42
+SIM_IR_EFETIVO = 0.08        # Tributos E44 (=32%*25%)
+SIM_CSLL_EFETIVO = 0.0288    # Tributos E46 (=32%*9%)
+
+# Drivers de demanda (Simulador — celulas E9..E13)
+SIM_ALUNOS_BALCAO_MATURIDADE = 938      # E10
+SIM_ALUNOS_AGREGADORES_MATURIDADE = 651  # E11
+SIM_ALUNOS_INICIAL = 500                 # E9
+SIM_CHURN = 0.06                         # E12
+SIM_MATURACAO_MESES = 8                  # E13
+
+# Drivers financeiros (Simulador — celulas J9, N9, N11, R9)
+SIM_MENSALIDADE_BALCAO = 137             # J9 cenario 0 (=IF(N12=0,137,...))
+SIM_TICKET_AGREGADOR = 82                # aba Simulador linha 11 (~R$82/aluno/mes)
+SIM_PERSONAL_MES_RECEITA = 5_000         # DRE linha 24 (receita fixa personal)
+SIM_ALUGUEL_MES = 20_000                 # N9
+SIM_CAPEX_DEFAULT = 2_340_000            # R9 formula cenario 0 (FC!C11:C16)
+
+# Custos fixos ABSOLUTOS mensais (nao no JSON — extraidos do Excel; DRE linhas 52-59,69 + Fopag 44)
+SIM_PESSOAL_MES = 50_128.16     # Fopag total c/ encargos (linha DRE 55)
+SIM_OUTROS_FIXOS_MES = 38_150.00  # IPTU(2000)+Agua/Luz(17000)+Tel(500)+
+                                   # Limpeza(14000)+Tec(2150)+Assess(2500)+Outros(2000)
+                                   # DRE linhas 52-59,69
