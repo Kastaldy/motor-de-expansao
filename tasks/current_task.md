@@ -8,8 +8,9 @@ Status: aprovado (QA APROVADO em 2026-06-15; suite full serial 891 passed, 1 ski
 Tipo: feature (variante de render PDF; READ-ONLY sobre M1)
 Criticidade: alta
 Esteira: Block Orchestrator → Planner → [gate humano / revisão visual Felipe+Vini] → Builder → QA
-Skill atual: QA/Quality Analyzer (auditoria concluída — APROVADO)
-Próxima Skill: Fechamento manual (orquestrador: housekeeping BLK-EST-05 + commit por path; merge humano)
+Skill atual: Fechamento (orquestrador) — concluído
+Próxima Skill: nenhuma (merge pelo humano da branch ciclo/BLK-EST-05). Sem dry-run (ciclo não tocou orquestração).
+Fechamento: housekeeping 6.0 via helper OK (stub no backlog + bloco em completed.md, --check verde); commit por path 35ed3ec (10 arquivos; alheios não arrastados)
 dry_run: false
 
 ## Objetivo
