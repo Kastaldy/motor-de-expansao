@@ -1,9 +1,0 @@
-Loop autônomo concluído em 2026-06-15.
-
-Blocos executados nesta rodada:
-- BLK-DIM-11 (APROVADO 2026-06-15): motor property-first de viabilidade do imóvel
-  (viabilidade_ponto.py — break-even, aluguel-teto, grade de sensibilidade, faixa de
-  alunos por densidade; suite 936 passed, 4 skipped; READ-ONLY M1)
-
-Todos os blocos marcados "loop-safe" no tasks/backlog.md estão concluídos.
-Não há mais trabalho autônomo pendente. Revisão + merge + próximas decisões = humano.
