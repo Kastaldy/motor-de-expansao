@@ -4828,6 +4828,19 @@ veredito GO/NO-GO da tese residual com IC/N/confounds; ZERO escrita em M1; repro
 **Risco:** médio (N~440 ajuda, mas células região×marca×domínio ficam ralas; partial pooling mitiga, não
 elimina; separar domínio de região com poucos casos de domínio real é o ponto delicado).
 
+**Concluído 2026-06-15** (loop autônomo `ciclo/loop-20260615-124342`, mergeado PR #26; auditado no merge).
+**VEREDITO: NO-GO honesto.** O residual **não discrimina** unidades viáveis (≥2.000 alunos) de inviáveis
+(<2.000) melhor que o acaso. AUC do `score_oportunidade_residual` = **0,480**, IC95 [0,42; 0,54] cruza 0,5,
+p-perm 0,74; **abaixo** do baseline pop×renda (AUC 0,531); TNR 0,22 (pior que os 25% do acaso). Os três
+rankers (residual / pop×renda / penetração regional LOO) ficam no acaso. LOO anti-circular verificado
+numericamente (`_penetracao_loo_por_grupo` exclui a unidade-alvo); IC bootstrap + p de permutação; saída
+só AUC/IC/variância (sem previsão pontual). Teste C (decomposição região×marca×domínio) e sanidade de
+casos em `data/analysis/residual_discriminacao.md` (gitignored, 5 seções). Entregue:
+`src/motor_expansao/dimensionamento/residual_discriminacao.py` + 13 testes; suíte 919 passed. READ-ONLY M1
+(DEC-001/DEC-008). **Leitura:** terceiro NO-GO honesto da Camada 1/2 — a viabilidade de um ponto **não está
+na geografia de mercado** que temos (pop, renda, concorrência, residual) em raio nenhum. Insumo da
+bifurcação estratégica da epic (ver **BLK-DIM-10** no backlog).
+
 ---
 
 ### BLK-DIM-02R — Huff com validação real (OSM, saturação, sem vazamento)
@@ -4862,6 +4875,14 @@ canibalização de unidades próprias; validação out-of-sample. Sem escrita em
 nos maduros; ZERO escrita em M1.
 
 **Risco:** alto (captura é não-linear e satura). Substitui o `huff.py` do spike.
+
+**Concluído 2026-06-15** (loop autônomo `ciclo/loop-20260615-124342`, mergeado PR #26).
+**VEREDITO: GO técnico, mas NÃO agrega.** β=1,845 identificável (IC estreito) e o fallback `previsor=alvo`
+do spike foi **removido** (sem vazamento). Porém a correlação LOO = **−0,254** (negativa — qualificada como
+confound de cobertura urbana): a geometria Huff **não bate o baseline simples**. Coerente com o NO-GO da
+Camada 1 (BLK-DIM-01R) e do residual (BLK-DIM-08) — empilhar captura sobre um potencial não-calibrável não
+resgata. Entregue: `src/motor_expansao/dimensionamento/huff.py` + testes; suíte 919 passed. READ-ONLY M1.
+Fica como módulo **validado mas não-acionável** até a Camada 1 ter sinal (ver BLK-DIM-10 / BLK-DIM-DATA).
 
 ---
 
