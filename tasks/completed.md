@@ -4771,3 +4771,138 @@ região×marca×domínio) — loop-safe, agora com dependência satisfeita.
 > - **BLK-DIM-02** → superseded por **BLK-DIM-02R** (fallback `pot=y` previsor=alvo, vazamento).
 > - **BLK-DIM-03** → superseded por **BLK-DIM-03R** (números mágicos calibrados ao teste).
 > - **BLK-DIM-04** → superseded por **BLK-DIM-06** (backtest era in-sample disfarçado).
+
+---
+
+### BLK-DIM-08 — Teste discriminativo do mercado residual (performers × underperformers) + estrutura regional
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (é o teste que dá/retira confiança na tese residual; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-07** (base multi-rede + raio escolhido) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`/`data/analysis`; guard no loop |
+
+**Contexto / hipótese central (falsificável):** "o **mercado residual endereçável** (`pop(raio variável)
+× penetração_regional − consumo_concorrencial_gravitacional`) **separa** as unidades que performam (≥2k)
+das que não performam (<2k, ex.: Carapicuíba) — melhor que `pop+renda` em raio fixo". Reformula o
+problema mal-posto do 01R (predição absoluta → R² negativo) numa **discriminação com limiar acionável**.
+
+**Objetivo:** medir, honestamente, se o residual discrimina viabilidade e se sobra estrutura regional de
+penetração depois de **separar região × marca × domínio**.
+
+**GUARDRAIL DE INTERPRETAÇÃO (obrigatório — Felipe 2026-06-15):** o residual é sinal de **RANKING/triagem**
+(discriminar viável × inviável), **NÃO previsão pontual de alunos**. O BLK-DIM-07 mediu `R²_LOO≈0`: pop não
+prevê o nº absoluto de alunos em raio nenhum. Logo, reportar a saída como **score de oportunidade / piso de
+demanda com intervalo**, NUNCA como "este hex terá N alunos". O uso do residual para dimensionar (virar
+alunos-alvo → m²) é downstream (DIM-04/integração), fora deste bloco.
+
+**Escopo permitido:**
+- **Teste B (discriminação):** o residual rankeia as <2k abaixo das ≥2k? Reportar separação/AUC **LOO**,
+  comparando contra o baseline `pop+renda` em raio fixo. Reusar `score_oportunidade_residual` /
+  `oferta_efetiva_disponivel` (já existentes) recalculados no raio do BLK-DIM-07.
+- **Teste C (estrutura, decomposição de 3 efeitos):** componentes de variância da penetração separando
+  **região** (mercado intrínseco) × **marca** (efeito de nível — pull de marca, NÃO ticket; confirmado
+  similar entre redes) × **domínio** (`n_unidades_mesma_marca`/densidade de marca própria do BLK-DIM-07).
+  Partial pooling / efeitos aleatórios; penetração por cluster sempre **leave-one-unit-out** (anti-circular).
+  **Por que importa (Felipe 2026-06-15):** sem o termo de domínio, a penetração alta da Engenharia no Sul
+  (Caxias do Sul "fechada") vaza para o efeito "região" e o modelo conclui falsamente "o Sul é alto-mercado"
+  quando foi **estratégia de domínio**. Para site selection, reportar a penetração-base **líquida de
+  domínio** (1 unidade nova, sem saturação própria).
+- **Bônus — domínio como SINAL (valida a tese Expansão de Domínio com dado de concorrente):** estimar e
+  reportar o uplift de penetração por unidade adicional de marca própria no catchment (efeito domínio),
+  usando a Engenharia-Sul como caso. Diagnóstico READ-ONLY; se material, vira insumo de um bloco futuro de
+  estratégia de domínio (não recalibra M1 aqui).
+- **Sanidade dos casos:** Carapicuíba e as outras <2k caem mesmo em hex de baixo residual? (true
+  negative). Se o residual NÃO separa, **NO-GO honesto** da tese residual — resultado válido.
+- Saída: relatório `data/analysis/residual_discriminacao.md` (gitignored).
+
+**Fora de escopo:** Huff completo (é o BLK-DIM-02R); score/pesos/artefatos M1; PII; recalibrar a camada
+Expansão de Domínio (o efeito domínio aqui é só diagnóstico/insumo).
+
+**Critérios de aceite:** AUC/separação LOO do residual vs. baseline; decomposição de variância
+região×marca×domínio; penetração-base líquida de domínio reportada; uplift de domínio estimado (com IC);
+veredito GO/NO-GO da tese residual com IC/N/confounds; ZERO escrita em M1; reprodutível.
+
+**Risco:** médio (N~440 ajuda, mas células região×marca×domínio ficam ralas; partial pooling mitiga, não
+elimina; separar domínio de região com poucos casos de domínio real é o ponto delicado).
+
+---
+
+### BLK-DIM-02R — Huff com validação real (OSM, saturação, sem vazamento)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (elo mais difícil; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-08** (gate de sequência — ver nota) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md` |
+
+> **Gate de sequência (Felipe 2026-06-15):** dependência mudada de `BLK-DIM-01R` para **`BLK-DIM-08`**.
+> O DIM-01R deu **NO-GO** (pop+renda não preveem demanda); modelar captura (Huff = potencial × share)
+> em cima de uma Camada 1 NO-GO é prematuro. O **DIM-08** (discriminação do residual + estrutura
+> região×marca×domínio) é quem informa se vale perseguir captura. Logo o loop só fica elegível para o
+> DIM-02R **depois** do DIM-08 estar em `completed.md`. (Pré-requisito técnico de não-vazamento — remover
+> `previsor=alvo` do `huff.py` — permanece igual.)
+
+**Contexto:** o Huff do spike (`huff.py`) tem `pot = np.where(isnan(pot), y, pot)` — usa o ALVO
+(`pagantes`) como fallback do previsor → vazamento latente; e o β foi calibrado com sinal possivelmente
+indistinguível (maioria das maduras sem concorrente no raio → share≈1).
+
+**Objetivo:** calibrar o share gravitacional com concorrência **OSM real** (`concorrentes_mapeados.parquet`),
+tratar saturação/canibalização, **remover o fallback previsor=alvo**, e validar prevendo alunos dos
+maduros (LOO-CV vs baseline). Reportar se o β é distinguível de zero.
+
+**Escopo permitido:** Huff com distância real; β por LOO sem vazamento; saturação por capacidade;
+canibalização de unidades próprias; validação out-of-sample. Sem escrita em M1.
+
+**Critérios de aceite:** sem `previsor=alvo`; β reportado com IC (ou "indistinguível"); validação honesta
+nos maduros; ZERO escrita em M1.
+
+**Risco:** alto (captura é não-linear e satura). Substitui o `huff.py` do spike.
+
+---
+
+> ## Sub-trilha BLK-DIM-07..09 — "Estressar ao máximo o dado que já temos" (ANTES do BLK-DIM-DATA)
+>
+> **Origem:** análise de produto com Felipe em 2026-06-15. O `BLK-DIM-01R` deu NO-GO prevendo
+> demanda **absoluta** (`pagantes ~ pop+renda`) em **raio fixo 1,5 km**, com **uma penetração global**,
+> sobre **53 unidades só-Ultra** enviesadas. Antes de buscar dado externo (BLK-DIM-DATA — microdados
+> IBGE/Gympass), exaurir o dado interno reformulando o problema em 4 frentes que a auditoria dos dados
+> (2026-06-15) confirmou serem viáveis: **(1)** trocar predição absoluta por **mercado residual ≥ piso
+> de viabilidade** (decisão, não predição pontual); **(2)** **raio de captação variável** por contexto
+> urbano (capital densa = raio curto; interior = raio largo) — a penetração a 1,5 km tem máx **110%**,
+> provando que o raio fixo quebra; **(3)** **penetração regional/por marca** (partial pooling), não
+> global; **(4)** ampliar N com **Engenharia do Corpo** e **SkyFit** (ambas com alunos reais + coords
+> LOCAIS em `concorrentes/Unidades/*.csv` — sem geocoding online) e usar os **underperformers <2k**
+> (20 unidades; Carapicuíba=1.299) como **rótulo discriminativo**. Potencial de N: 53 → **~440**.
+> Caveat medido: o join alunos↔coords por nome dá **0% exato** (convenções divergentes) → reconciliação
+> por cidade+UF / crosswalk é tarefa de 1ª classe do BLK-DIM-07; 09 só pega a cauda ambígua.
+>
+> **Piso de viabilidade:** ~2.000 alunos (média observada em Ultra/SkyFit/Engenharia). Distinguir do
+> proxy de **capacidade** já existente (`capacidade_default_concorrente_alunos` = 2.500 = o que uma
+> unidade *comporta*); 2.000 = o que ela *precisa para ser viável*.
+>
+> **Decomposição região × marca × domínio (Felipe, 2026-06-15):** o ticket das 3 redes é semelhante
+> (low-cost, ±10-15%), então o efeito de marca NÃO é preço — é pull de marca + **estratégia de domínio
+> de área** (ex.: Engenharia "fechou" Caxias do Sul). A penetração precisa separar **região** (mercado
+> intrínseco), **marca** (nível) e **domínio** (densidade de marca própria no catchment) — senão o domínio
+> da Engenharia-Sul vaza para "região" e mente sobre o mercado. Bônus: vira validação real da tese
+> Expansão de Domínio com dado de concorrente.
+>
+> **Guardrail (toda a sub-trilha):** camada PARALELA, **READ-ONLY sobre o M1** (DEC-001/DEC-008) — não
+> toca `score_priorizacao`/pesos/artefatos oficiais. **Anti-circularidade (lição do 01R):** penetração
+> SEMPRE estimada no nível de cluster/região com a unidade-alvo deixada de fora (LOO); nunca derivar o
+> raio do próprio desfecho. **Anti-PII:** `data/validacao/*.xlsx` e nomes de unidade nunca em disco/saída
+> agregável; relatórios em `data/analysis/` (gitignored). **Metodologia §7 do spec:** LOO-CV vs baseline
+> da média; banir R² in-sample; IC + flag de extrapolação.
+
+---
+
+- BLK-DIM-07 (concluído 2026-06-15) — ver tasks/completed.md
+
+---
+
+- BLK-DIM-08 (concluído 2026-06-15) — ver tasks/completed.md

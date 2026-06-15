@@ -2,33 +2,27 @@
 
 ## Bloco atual
 
-ID: BLK-EST-03
-Nome: Fonte real do solicitante (token→consumidor da API) para a marca d'água do PDF
-Status: aprovado (APROVADO COM RESSALVAS)
-Tipo: feature (rastreabilidade/LGPD; READ-ONLY sobre M1)
+ID: BLK-DIM-02R
+Nome: Huff com validação real (OSM, saturação, sem vazamento)
+Status: aprovado (APROVADO)
+Tipo: modelagem estatística (calibração gravitacional; READ-ONLY sobre M1)
 Criticidade: alta
-Esteira: Block Orchestrator → Planner → [APROVAÇÃO HUMANA] → Builder → QA
-Skill atual: QA concluído
-Próxima Skill: Fechamento manual (orquestrador Passo 6.0) + abrir BLK-FIX-07 (data-drift CSVs concorrentes)
+Esteira: Block Orchestrator → Planner → [no loop: guard automático] → Builder → QA
+Skill atual: QA (concluído)
+Próxima Skill: Fechamento (Passo 6.0)
 
-## Veredito do QA (2026-06-15)
-APROVADO COM RESSALVAS. Wiring consumidor→solicitante correto, mínimo, READ-ONLY M1, anti-PII,
-provado por 2 testes novos que PASSAM (não skipped). Ressalva (não bloqueadora): suíte full tem 2
-falhas PRÉ-EXISTENTES (`test_csvs_concorrentes_legiveis`, data-drift dos CSVs reais 226≠223 / 455≠472),
-provadas independentes do bloco via git stash. Recomendo BLK-FIX-07 separado. xdist instável no
-ambiente (Py 3.14) → gate rodado serial.
+## Veredito QA (2026-06-15)
+APROVADO. Suíte FULL 919 passed, 4 skipped; ruff/mypy limpos; import streamlit_app ok.
+Anti-vazamento confirmado (share_huff sem alvo na assinatura; LOO exclui a unidade-alvo;
+sem `where(isnan,y,...)` no código). Correlação LOO NEGATIVA (-0.254, IC [-0.357,-0.143]):
+"GO" técnico gerado por gate simétrico |corr|>=0.15 conforme plano aprovado e backlog (sem
+regra de direção positiva); direção anti-intuitiva está explicitada e qualificada na §3/§5 do
+relatório (baseline empatado -0.244, AUC 0.383). Ressalva média: não é endosso da geometria Huff.
 
 ## Objetivo
-Passar o `consumidor` já autenticado (token→consumidor, `auth.py`) ao parâmetro `solicitante` do PDF gerado
-pela API (`service.py::gerar_pdf_ponto`), de modo que todo PDF emitido via `POST /analisar?formato=pdf`
-carregue o nome real do consumidor na marca d'água, com fallback seguro ("Ultra Academia") para geração
-anônima. READ-ONLY sobre o M1.
-
-## Decisão do Block Orchestrator
-- Bloco é **executável AGORA** na trilha da API (recorte A).
-- Trilha do dashboard (pages.py) permanece **bloqueada**: zero infraestrutura de autenticação no Streamlit.
-- Lacuna confirmada: `gerar_pdf_ponto` em `service.py` (linha ~306-308) não passa `solicitante=consumidor`
-  para `gerar_pdf_relatorio_pontual_censitario`, embora `consumidor` já esteja disponível no escopo.
+Calibrar o modelo gravitacional de Huff com concorrência OSM real, remover o fallback
+previsor=alvo (vazamento latente do spike), e validar LOO se o β gravitacional é
+distinguível de zero. READ-ONLY sobre o M1.
 
 ## Tiering de modelo (Passo 4) — Alta
 - Block Orchestrator: sonnet
@@ -37,8 +31,12 @@ anônima. READ-ONLY sobre o M1.
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-EST-03 (a partir de main atualizada)
+ciclo/loop-20260615-124342 (branch autônomo do loop)
+
+## Contexto de antecedente
+- BLK-DIM-08 completado (2026-06-15): NO-GO honesto da tese residual (AUC 0.48, IC [0.42, 0.54])
+- BLK-DIM-07: raio_variavel_aceito_para_estabilidade (CV penetração 1.15→0.47)
+- Gate de sequência: BLK-DIM-08 agora em completed.md → BLK-DIM-02R elegível
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
-- data/outputs/setores_censitarios_2022_geo/_metadata.json
-- data/reports/relatorio_pontual_censitario_base_geo.md
+- PRD.md, CLAUDE.md, README.md, .env.example, .github/workflows/ci.yml e outros arquivos do worktree
