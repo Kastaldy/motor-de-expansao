@@ -4707,3 +4707,67 @@ extrapolação; nenhum dado auto-gerado como resultado; ZERO escrita em M1.
 ---
 
 - BLK-DIM-03R (concluído 2026-06-13) — ver tasks/completed.md
+
+---
+
+### BLK-DIM-07 — Base de calibração multi-rede + raio de captação variável (fundação da sub-trilha "estressar o dado interno")
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (fundação que decide a sub-trilha; READ-ONLY sobre M1) |
+| **Esteira** | Felipe (foreground, com revisão humana) — NÃO via loop |
+| **Depende de** | **BLK-DIM-00** |
+| **Status** | **Concluído 2026-06-15** |
+| **Autonomia** | loop-safe (mas executado no foreground por decisão de Felipe; o loop assume o DIM-08+) |
+
+**Concluído 2026-06-15** (Felipe + Claude, foreground). Primeira frente da sub-trilha que **estressa ao
+máximo o dado interno** antes do BLK-DIM-DATA (microdados/proxy externos). Reformula o problema que deu
+NO-GO no BLK-DIM-01R em 4 frentes: (1) decisão por **mercado residual ≥ piso de viabilidade** em vez de
+predição absoluta; (2) **raio de captação variável** por contexto urbano; (3) penetração **regional/por
+marca** (estrutura, não global); (4) **N ampliado** com Engenharia do Corpo + SkyFit + os underperformers
+<2k como rótulo.
+
+**Descoberta-chave (auditoria de dados 2026-06-15):** as 3 redes têm alunos reais **E coordenadas LOCAIS**
+(sem geocoding online) — Ultra (`unidades_ultra_performance_hex.parquet`), Engenharia
+(`data/validacao/academias_engenharia_do_corpo.xlsx` + `concorrentes/Unidades/unidades_engenharia_do_corpo.csv`),
+SkyFit (`data/validacao/Sky Fit dados.xlsx` + `concorrentes/Unidades/unidades_skyfit.csv`, 481 coords). O
+match ingênuo por nome dá **0%** (convenções divergentes) → reconciliação por chave correta: Ultra direto,
+SkyFit por **cidade+UF**, Engenharia por **crosswalk fuzzy** (`difflib`, stdlib — sem dependência nova;
+corte limpo ~0,95). A SkyFit deixou de precisar de geocoding → o BLK-DIM-09 virou só o crosswalk da cauda ambígua.
+
+**Entregue:** `src/motor_expansao/dimensionamento/base_multirede.py` (loaders das 3 redes + reconciliação
+auditada; `raio_variavel_km` exógeno; `derivar_densidade_marca_propria` = controle de domínio via haversine
+same-brand; `validar_raio_variavel` reusando o catchment censitário do DIM-00 INTOCADO; `montar_base_multirede`,
+`salvar_base` com guard anti-PII, `escrever_relatorio`). Testes: `tests/unit/dimensionamento/test_base_multirede.py`
+(17 testes offline, fixtures sintéticas — não tocam os xlsx reais nem o censo). Artefatos (gitignored):
+`data/staging/base_calibracao_multirede.parquet` (426 unidades, **275 com coord**, sem PII) e
+`data/analysis/catchment_variavel.md`.
+
+**Resultados reais (275 unidades com coord):**
+- Taxa de match: Ultra 98%, Engenharia 62% (38 fuzzy / 23 → DIM-09), SkyFit 59% (184 cidade+UF / 127 → DIM-09).
+- **CV da penetração: 1,15 (fixo 1,5 km) → 0,47 (variável) — redução de 59%.** Raio mediano 1,66 km.
+- R²_LOO de log(alunos)~log(pop): −0,005 (fixo) → −0,009 (variável) — ambos ≈ 0.
+- **Veredito: `raio_variavel_aceito_para_estabilidade`** — o raio variável torna a penetração COMPARÁVEL
+  entre regiões (corrige o artefato de penetração >100% do raio fixo, que o BLK-DIM-01R sofria), MAS não
+  conserta a previsão pop→alunos (pop sozinha não carrega o sinal de demanda em raio nenhum — consistente
+  com o NO-GO do BLK-DIM-01R/DEC-001). O raio é melhor **medição**, não um preditor de demanda.
+
+**Validações:** ruff limpo, mypy limpo (`base_multirede.py`), **130 testes do módulo `dimensionamento/`
+passam** (17 novos + 113 existentes); pipeline ponta-a-ponta reproduzida (≈75–156 s, conforme cache de
+partições censitárias). **READ-ONLY sobre o M1** (DEC-001/DEC-008): não recalcula `score_priorizacao`/pesos,
+não toca artefatos oficiais; catchment usa o helper geométrico do DIM-00 (raio/método de interseção
+INTOCADOS). **Anti-PII:** `assert_sem_pii` antes de persistir; relatório só com contagens agregadas; nenhum
+xlsx/nome em disco de saída. **Sucessor:** BLK-DIM-08 (teste discriminativo do residual + estrutura
+região×marca×domínio) — loop-safe, agora com dependência satisfeita.
+
+---
+
+> ## Spikes BLK-DIM-01..04 (1ª rodada do loop, 2026-06-13) — SUPERSEDED, mantidos como referência
+>
+> Os 4 spikes da 1ª rodada autônoma do loop foram **auditados e substituídos** (não mergeados; ficaram nos
+> branches `ciclo/BLK-DIM-01..04` para auditoria — ver fechamento do **BLK-LOOP-02**). São referência de
+> engenharia, não trabalho de produto vigente:
+> - **BLK-DIM-01** → superseded por **BLK-DIM-01R** (R²=0.897 era artefato de fixture sintética).
+> - **BLK-DIM-02** → superseded por **BLK-DIM-02R** (fallback `pot=y` previsor=alvo, vazamento).
+> - **BLK-DIM-03** → superseded por **BLK-DIM-03R** (números mágicos calibrados ao teste).
+> - **BLK-DIM-04** → superseded por **BLK-DIM-06** (backtest era in-sample disfarçado).
