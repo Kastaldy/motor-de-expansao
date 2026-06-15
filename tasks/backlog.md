@@ -9,11 +9,12 @@ READ-ONLY M1. Ver seção "Projeto — API GeoEspacial".
 Em paralelo (trilha do Vini, dashboard/PDF/UX): BLK-FIX-07..11, BLK-SAM-01, BLK-EST-01/02, BLK-UI-01.
 BLK-CENSO-01/02/03 (refino do Relatório Pontual Censitário): **concluídos** (ver tasks/completed.md).
 
-**Trilha BLK-DIM (decidido com Felipe em 2026-06-15):** antes de buscar dado externo (BLK-DIM-DATA),
-**estressar ao máximo o dado interno** com a sub-trilha **BLK-DIM-07 → 08 → 09** (base multi-rede +
-raio variável → teste discriminativo do residual → crosswalk residual). As 3 redes têm coords LOCAIS
-(sem geocoding); 07 e 08 são **loop-safe**, 09 é manual (só a cauda de nomes ambíguos). Só ir ao
-BLK-DIM-DATA se 07/08 esgotarem o sinal interno.
+**Trilha BLK-DIM — PONTO DE DECISÃO (2026-06-15):** a sub-trilha de "estressar o dado interno"
+(DIM-07→08) está **concluída** e deu **três NO-GOs honestos** — a demanda/viabilidade NÃO é previsível
+pela geografia de mercado que temos. O dimensionamento por m² (DIM-03R/06) é a parte que funciona, mas
+consome demanda, não a produz. **Próximo passo = decisão de Felipe na bifurcação `BLK-DIM-10`**: Caminho A
+(repaginar o motor para viabilidade/break-even, ROI imediato) e/ou Caminho B (BLK-DIM-DATA, a aposta de
+buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-10.
 
 - **BLK-CENSO-01** (repaginação do relatório: camadas combinadas + fundo de ruas + faixas GeoFusion +
   pins com logo) — **concluído** em 2026-06-05 (FU1–FU5 deployados na VPS). Ver tasks/completed.md.
@@ -402,9 +403,67 @@ permanece intacta. Detalhe e decomposição abaixo (epic BLK-DIM).
 
 ---
 
+- BLK-DIM-07 (concluído 2026-06-15) — ver tasks/completed.md
+- BLK-DIM-08 (concluído 2026-06-15) — ver tasks/completed.md
 - BLK-DIM-02R (concluído 2026-06-15) — ver tasks/completed.md
 
 
+
+---
+
+### BLK-DIM-10 — Bifurcação estratégica da epic: demanda não é previsível pela geografia de mercado (decisão de Felipe)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Estratégica** (define o rumo da epic BLK-DIM; READ-ONLY sobre M1) |
+| **Esteira** | `[DECISÃO HUMANA — Felipe]` — NÃO loop-safe (escolha de produto/rota) |
+| **Status** | **Aguardando decisão de Felipe** |
+| **Origem** | síntese dos resultados DIM-01R / DIM-05 / DIM-08 / DIM-02R (2026-06-15) |
+
+**Onde chegamos (evidência):** depois de **estressar ao máximo o dado interno** (sub-trilha DIM-07→08),
+temos **três NO-GOs honestos** convergindo: a demanda/viabilidade de um ponto **NÃO é previsível a partir
+da geografia de mercado** que temos (pop, renda, concorrência, residual), em raio nenhum, com feature
+nenhuma disponível.
+
+| Camada | Veredito |
+|---|---|
+| 1 — Potencial (pop+renda, DIM-01R) | NO-GO (R²_LOO −0,01) |
+| 1 — + features exógenas (DIM-05) | NO-GO |
+| 1 — residual discrimina viabilidade? (DIM-08) | **NO-GO (AUC 0,48 ≈ acaso)** |
+| 2 — Captura/Huff (DIM-02R) | GO técnico, mas não agrega (LOO −0,25) |
+| 3+4 — Dimensionamento m² + DRE (DIM-03R/06) | **GO** (R²=+0,23, bate baseline) |
+
+A metade que **funciona** é o dimensionamento por m² — mas ele **consome** demanda como entrada, não a
+produz. O sinal que separa uma Carapicuíba (1.299) de uma vencedora (6.251) está provavelmente em
+**execução/operação, micro-localização ou variáveis demográficas que faltam** (idade 18-45, vínculo CLT),
+não na geografia agregada.
+
+**A bifurcação (escolher o rumo):**
+
+- **Caminho A — Repaginar o motor para VIABILIDADE / BREAK-EVEN (ROI imediato, usa o que funciona):**
+  inverter a pergunta de *"quantos alunos este ponto terá?"* (sem resposta) para *"quantos alunos este
+  imóvel **precisa** para ser viável, e isso é plausível aqui?"*. Usa o goal-seek que o DIM-03R já tem
+  (alunos mínimos viáveis, aluguel-teto). A demanda entra como **premissa explícita** (input humano ou
+  faixa de comparáveis), nunca como previsão cravada. Entregável sem dado novo. → viraria um bloco
+  sucessor (ex.: BLK-DIM-11).
+- **Caminho B — BLK-DIM-DATA (a aposta):** buscar o sinal que falta (microdados IBGE idade 18-45 / CLT, ou
+  proxy Gympass/Wellhub) e re-rodar a calibração. É o único caminho que poderia **restaurar previsão de
+  verdade** — mas pode dar NO-GO de novo (§5/DEC-001 avisaram que o sinal pode ser intrinsecamente fraco).
+  Bloco já existe (BLK-DIM-DATA), manual/não loop-safe.
+
+**Cautela registrada:** o método de **comparáveis/análogos** NÃO é um atalho — o DIM-08 mostrou que os
+eixos atuais (pop/renda/concorrência) não separam viável de inviável, então "pontos parecidos" nesses
+eixos teriam resultados igualmente dispersos. Só ajudaria com eixos novos (tipo de cidade, visibilidade,
+imóvel) — o que recai na questão de dado (Caminho B).
+
+**Recomendação (Claude):** fazer os dois em ordem — **A agora** (entrega valor sem dado novo e repaginia o
+papel do motor de "prever alunos" para "stress-testar viabilidade") e **B como aposta** (o teste honesto de
+"é dado ou é intrínseco?"). Se B vier NO-GO, encerra-se a questão com evidência e fica-se com o motor de
+viabilidade — que já é valioso.
+
+**Guardrail:** READ-ONLY sobre o M1 (DEC-001/DEC-008) em qualquer caminho; a priorização de **onde** olhar
+segue com o M1/censitário (camada executiva, intacta) — o que se perde é só a contagem fina de alunos por
+ponto, não a triagem regional. Após a escolha de Felipe, formalizar como **DEC-009** (CLAUDE.md §8).
 
 ---
 
