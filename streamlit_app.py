@@ -160,6 +160,7 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_sidebar_filters,
     render_tab_selector,
     render_uf_selectbox,
+    render_viabilidade_ponto,
     render_visao_executiva,
 )
 from motor_expansao.dashboard.schemas import validate_dashboard_frame  # noqa: F401
@@ -201,6 +202,9 @@ ENRIQUECIDO_DIR = (
     Path(__file__).resolve().parent / "data" / "outputs" / "hexagonos_dashboard_enriquecido"
 )
 CENSO_GEO_DIR = Path(__file__).resolve().parent / "data" / "outputs" / "setores_censitarios_2022_geo"
+BASE_CALIBRACAO_PATH = (
+    Path(__file__).resolve().parent / "data" / "staging" / "base_calibracao_multirede.parquet"
+)
 MANIFEST_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "_manifest.json"
 
 preload_logos(CONCORRENTES_DIR, ultra_dir=ULTRA_PATH.parent)
@@ -333,6 +337,24 @@ def load_censo_geo_municipios(uf: str) -> list[str]:
 @st.cache_data(show_spinner=False)
 def load_censo_geo_setores(uf: str, cod_municipio: str | None = None) -> pd.DataFrame:
     return read_censo_geo_partition(CENSO_GEO_DIR, uf, cod_municipio)
+
+
+@st.cache_data(show_spinner=False)
+def load_base_calibracao() -> pd.DataFrame:
+    """Comparaveis multirede (alunos/m2) para a faixa por densidade (BLK-DIM-12).
+
+    Deriva `alunos_por_m2 = alunos_reais / metragem` (ausente no parquet) para que o
+    engine `faixa_alunos_por_densidade` retorne a faixa p10/p50/p90. Sem essa coluna a
+    faixa sairia sempre "n/d". Injecao do chamador — o engine permanece INTOCADO.
+    READ-ONLY: nao recalcula score M1 nem grava artefatos.
+    """
+    if not BASE_CALIBRACAO_PATH.exists():
+        return pd.DataFrame()
+    df = pd.read_parquet(BASE_CALIBRACAO_PATH)
+    alunos = pd.to_numeric(df.get("alunos_reais"), errors="coerce")
+    metragem = pd.to_numeric(df.get("metragem"), errors="coerce")
+    df["alunos_por_m2"] = (alunos / metragem).where((alunos > 0) & (metragem > 0))
+    return df
 
 
 @st.cache_data(show_spinner=False)
@@ -555,6 +577,14 @@ def main() -> None:
             selected_ufs=selected_ufs,
             selected_cities=selected_cities,
             pop_cut_lookup=pop_lookup,
+        )
+    elif active_tab == "Viabilidade do Imovel":
+        render_viabilidade_ponto(
+            search_pin,
+            filtered_df,
+            censo_geo_loader=load_censo_geo_setores,
+            censo_geo_dir=CENSO_GEO_DIR,
+            base_calibracao_df=load_base_calibracao(),
         )
 
     # Rodape read-only de proveniencia (BLK-OPS-03): fora dos branches de aba,

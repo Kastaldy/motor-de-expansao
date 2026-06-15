@@ -2,27 +2,38 @@
 
 ## Bloco atual
 
-ID: BLK-DIM-11
-Nome: Esteira property-first: motor de viabilidade do imóvel (break-even, aluguel-teto, sensibilidade)
-Status: aprovado (APROVADO)
-Tipo: feature (nova esteira de produto; módulo isolado; READ-ONLY sobre M1)
+ID: BLK-DIM-12
+Nome: UI da esteira property-first: ferramenta de viabilidade do imóvel no dashboard
+Status: aprovado
+Tipo: feature (nova tela no dashboard de produção; READ-ONLY sobre M1)
 Criticidade: alta
-Esteira: Block Orchestrator → Planner → [no loop: guard automático] → Builder → QA
-Skill atual: QA (concluído)
-Próxima Skill: Fechamento (Passo 6.0)
+Esteira: Block Orchestrator → Planner → [aprovação humana — Felipe/Vini] → Builder → QA
+Skill atual: QA
+Próxima Skill: Fechamento manual (Passo 6.0 — housekeeping move BLK-DIM-12 via helper + merge)
 
-## Veredito QA (2026-06-15)
-APROVADO. Suíte FULL 936 passed, 4 skipped; ruff/mypy limpos; import ok.
-Guardrails todos verificados: READ-ONLY M1, demanda sempre premissa explícita
-(demanda_fonte="premissa_explicita"), faixa_alunos_por_densidade sem lat/lng,
-catchment como dict, sem I/O parquet, sem PII, commit isolado (83e9727).
-10 testes do módulo passaram; test_faixa_usa_curva_densidade_nao_geo verde (anti-geográfico).
+## Veredito do QA (2026-06-15)
+APROVADO. Suíte full `955 passed, 1 skipped` (exit 0); ruff/mypy limpos; import ok;
+7 novos testes verdes. READ-ONLY M1 confirmado (só pages.py/streamlit_app.py/test
+mudaram em 871d3db; engine BLK-DIM-11 e config M1 intocados). DEC-009 anti-geográfico
+verificado por código e por teste. Offline/performance preservados. Housekeeping --check
+falha PRÉ-move como esperado; move a executar no fechamento. Detalhe em context/handoff.md.
+
+## Resultado do Builder (aguardando QA)
+- Implementado Opção B (5ª aba "Viabilidade do Imovel"); engine BLK-DIM-11 reusado e INTOCADO.
+- Subconjunto: ruff OK, mypy OK, `import streamlit_app` OK, `tests/integration/test_streamlit_app.py` 190 passed (-n auto), 7 novos testes verdes.
+- Handoff: context/handoff.md + snapshot context/handoff/20260615-174958-builder.md.
+
+## Gate humano (APROVADO)
+APROVADO POR Felipe Silva EM 2026-06-15.
+Decisão de UX: **Opção B — nova aba "Viabilidade do Imóvel"** (5ª aba via render_tab_selector).
+Plano técnico do Planner aprovado integralmente, com o delta da Opção B (passos 3 e 5).
 
 ## Objetivo
-Dado um imóvel real (lat,lng + m² + aluguel pedido), devolver contexto + break-even +
-aluguel-teto + ROI + grade de sensibilidade + faixa de plausibilidade — sem nunca prever
-demanda pela geografia. Módulo isolado `viabilidade_ponto.py`, função pura + testes
-determinísticos. Saída estruturada (dict/relatório), sem UI.
+Tela no dashboard onde o operador insere um imóvel real (lat,lng + m² + aluguel
+pedido + demanda como premissa explícita) e lê a viabilidade (break-even, aluguel-teto,
+ROI, sensibilidade, faixa de alunos, contexto do entorno), reusando o engine
+`analisar_viabilidade_ponto` (BLK-DIM-11). Sem nunca prever demanda pela geografia.
+READ-ONLY M1; offline; preserva performance do dashboard.
 
 ## Tiering de modelo (Passo 4) — Alta
 - Block Orchestrator: sonnet
@@ -31,7 +42,8 @@ determinísticos. Saída estruturada (dict/relatório), sem UI.
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/loop-20260615-163258 (branch autônomo do loop)
+ciclo/BLK-DIM-12
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
-- PRD.md, CLAUDE.md, README.md, .env.example, .github/workflows/ci.yml e outros arquivos do worktree
+- data/raw/ibge/malha_brasil.geojson (deletado no worktree)
+- data/raw/ibge/malha_uf_brasil.geojson (deletado no worktree)

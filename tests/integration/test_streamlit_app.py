@@ -4228,6 +4228,7 @@ def test_render_tab_selector_e_exportado():
         "Mapa Territorial",
         "Expansao de Dominio",
         "Carteira e Plano",
+        "Viabilidade do Imovel",
     ]
 
 
@@ -4595,3 +4596,320 @@ def test_filtro_rede_todas_comportamento_atual():
     # Ambas as redes presentes no bbox de SP devem aparecer
     assert "smart_fit" in redes_renderizadas
     assert "bluefit" in redes_renderizadas
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BLK-DIM-12 — Aba "Viabilidade do Imovel" (property-first)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _ctx_mgr():
+    """Devolve um MagicMock usavel como context manager (st.form / st.expander / st.spinner)."""
+    import unittest.mock as mock
+
+    cm = mock.MagicMock()
+    cm.__enter__ = lambda s: s
+    cm.__exit__ = mock.MagicMock(return_value=False)
+    return cm
+
+
+def _viab_ponto_patches(
+    stack,
+    *,
+    number_values: dict,
+    checkbox: bool = False,
+    submitted: bool = True,
+    text_value: str = "",
+):
+    """Aplica os patches de streamlit comuns aos testes de render_viabilidade_ponto.
+
+    `number_values` mapeia a `key` do number_input -> valor retornado.
+    """
+    import unittest.mock as mock
+
+    def _number_input(label, *, key=None, value=None, **kw):
+        if key in number_values:
+            return number_values[key]
+        return value
+
+    stack.enter_context(mock.patch("streamlit.caption"))
+    stack.enter_context(mock.patch("streamlit.markdown"))
+    stack.enter_context(mock.patch("streamlit.info"))
+    stack.enter_context(mock.patch("streamlit.warning"))
+    stack.enter_context(mock.patch("streamlit.success"))
+    stack.enter_context(mock.patch("streamlit.error"))
+    stack.enter_context(mock.patch("streamlit.metric"))
+    stack.enter_context(mock.patch("streamlit.dataframe"))
+    stack.enter_context(mock.patch("streamlit.columns", side_effect=_mock_columns))
+    stack.enter_context(mock.patch("streamlit.text_input", return_value=text_value))
+    stack.enter_context(mock.patch("streamlit.number_input", side_effect=_number_input))
+    stack.enter_context(mock.patch("streamlit.checkbox", return_value=checkbox))
+    stack.enter_context(mock.patch("streamlit.form", side_effect=lambda *a, **k: _ctx_mgr()))
+    stack.enter_context(mock.patch("streamlit.expander", side_effect=lambda *a, **k: _ctx_mgr()))
+    stack.enter_context(mock.patch("streamlit.spinner", side_effect=lambda *a, **k: _ctx_mgr()))
+    stack.enter_context(mock.patch("streamlit.form_submit_button", return_value=submitted))
+
+
+def _viab_ponto_df(lat=-23.55, lng=-46.63):
+    return pd.DataFrame([{
+        "hex_id": h3.latlng_to_cell(lat, lng, 7),
+        "lat": lat,
+        "lng": lng,
+        "uf": "SP",
+        "cidade": "Sao Paulo",
+        "nome_municipio": "SAO PAULO",
+        "cod_municipio": "3550308",
+    }])
+
+
+def test_viabilidade_ponto_demanda_e_sempre_premissa_do_operador():
+    """Guardrail DEC-009: a demanda passada ao engine e SEMPRE o valor da caixa,
+    nunca derivada de lat/lng nem de coluna do df."""
+    import contextlib
+    import unittest.mock as mock
+
+    captured = {}
+
+    def _fake_engine(lat, lng, m2, aluguel, demanda, **kw):
+        captured["demanda"] = demanda
+        captured["lat"] = lat
+        captured["lng"] = lng
+        return _fake_viab_result(demanda)
+
+    df = _viab_ponto_df()
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(mock.patch("streamlit.session_state", {}))
+        stack.enter_context(
+            mock.patch(
+                "motor_expansao.dashboard.pages.analisar_viabilidade_ponto",
+                side_effect=_fake_engine,
+            )
+        )
+        _viab_ponto_patches(
+            stack,
+            number_values={
+                "viab_ponto_m2": 1500.0,
+                "viab_ponto_aluguel": 20000.0,
+                "viab_ponto_demanda": 777.0,
+                "viab_ponto_ticket": 137.0,
+                "viab_ponto_margem_pct": 10.0,
+            },
+            checkbox=False,
+            submitted=True,
+        )
+        streamlit_app.render_viabilidade_ponto((-23.55, -46.63), df)
+
+    assert captured["demanda"] == 777.0  # valor da caixa, nao da geografia
+
+
+def test_viabilidade_ponto_toggle_p50_preenche_campo_editavel():
+    """Toggle 'usar p50' so PREENCHE o value= do number_input; o engine recebe o
+    valor da caixa (editavel), nunca um valor silencioso derivado de geo."""
+    import contextlib
+    import unittest.mock as mock
+
+    captured = {}
+    seen_values = {}
+
+    def _fake_engine(lat, lng, m2, aluguel, demanda, **kw):
+        captured["demanda"] = demanda
+        return _fake_viab_result(demanda)
+
+    def _number_input(label, *, key=None, value=None, **kw):
+        seen_values[key] = value
+        # operador editou o campo de demanda para 900 (prevalece sobre o p50 sugerido)
+        if key == "viab_ponto_demanda":
+            return 900.0
+        return value
+
+    base = pd.DataFrame([
+        {"marca": "ultra", "alunos_reais": 3000.0, "metragem": 1500.0, "alunos_por_m2": 2.0},
+        {"marca": "ultra", "alunos_reais": 2250.0, "metragem": 1500.0, "alunos_por_m2": 1.5},
+        {"marca": "ultra", "alunos_reais": 3750.0, "metragem": 1500.0, "alunos_por_m2": 2.5},
+    ])
+    df = _viab_ponto_df()
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(mock.patch("streamlit.session_state", {"viab_ponto_m2": 1500.0}))
+        stack.enter_context(
+            mock.patch(
+                "motor_expansao.dashboard.pages.analisar_viabilidade_ponto",
+                side_effect=_fake_engine,
+            )
+        )
+        stack.enter_context(mock.patch("streamlit.caption"))
+        stack.enter_context(mock.patch("streamlit.markdown"))
+        stack.enter_context(mock.patch("streamlit.info"))
+        stack.enter_context(mock.patch("streamlit.warning"))
+        stack.enter_context(mock.patch("streamlit.success"))
+        stack.enter_context(mock.patch("streamlit.error"))
+        stack.enter_context(mock.patch("streamlit.metric"))
+        stack.enter_context(mock.patch("streamlit.dataframe"))
+        stack.enter_context(mock.patch("streamlit.columns", side_effect=_mock_columns))
+        stack.enter_context(mock.patch("streamlit.text_input", return_value=""))
+        stack.enter_context(mock.patch("streamlit.number_input", side_effect=_number_input))
+        stack.enter_context(mock.patch("streamlit.checkbox", return_value=True))
+        stack.enter_context(mock.patch("streamlit.form", side_effect=lambda *a, **k: _ctx_mgr()))
+        stack.enter_context(mock.patch("streamlit.expander", side_effect=lambda *a, **k: _ctx_mgr()))
+        stack.enter_context(mock.patch("streamlit.spinner", side_effect=lambda *a, **k: _ctx_mgr()))
+        stack.enter_context(mock.patch("streamlit.form_submit_button", return_value=True))
+        streamlit_app.render_viabilidade_ponto((-23.55, -46.63), df, base_calibracao_df=base)
+
+    # o value= sugerido para a demanda veio do p50 dos comparaveis (2.0 alunos/m2 * 1500 = 3000)
+    assert seen_values["viab_ponto_demanda"] == pytest.approx(3000.0)
+    # mas o engine recebeu o valor EDITADO da caixa, nao o sugerido
+    assert captured["demanda"] == 900.0
+
+
+def test_viabilidade_ponto_faixa_nd_sem_alunos_por_m2():
+    """Sem base de comparaveis -> faixa p50 None e UI nao levanta excecao."""
+    import contextlib
+    import unittest.mock as mock
+
+    df = _viab_ponto_df()
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(mock.patch("streamlit.session_state", {}))
+        _viab_ponto_patches(
+            stack,
+            number_values={
+                "viab_ponto_m2": 1500.0,
+                "viab_ponto_aluguel": 20000.0,
+                "viab_ponto_demanda": 800.0,
+                "viab_ponto_ticket": 137.0,
+                "viab_ponto_margem_pct": 10.0,
+            },
+            submitted=True,
+        )
+        # base_calibracao_df=None -> engine real roda, faixa fica None; sem excecao
+        streamlit_app.render_viabilidade_ponto((-23.55, -46.63), df, base_calibracao_df=None)
+
+
+def test_load_base_calibracao_deriva_alunos_por_m2(tmp_path, monkeypatch):
+    """O loader cacheado deriva alunos_por_m2 = alunos_reais/metragem (achado 1)."""
+    p = tmp_path / "base_calibracao_multirede.parquet"
+    pd.DataFrame([
+        {"marca": "ultra", "alunos_reais": 3000.0, "metragem": 1500.0},
+        {"marca": "skyfit", "alunos_reais": 0.0, "metragem": 1000.0},   # invalido -> NaN
+        {"marca": "engenharia_do_corpo", "alunos_reais": 2000.0, "metragem": 0.0},  # invalido
+    ]).to_parquet(p, index=False)
+
+    monkeypatch.setattr(streamlit_app, "BASE_CALIBRACAO_PATH", p)
+    streamlit_app.load_base_calibracao.clear()
+
+    out = streamlit_app.load_base_calibracao()
+    assert "alunos_por_m2" in out.columns
+    assert out.loc[0, "alunos_por_m2"] == pytest.approx(2.0)
+    assert pd.isna(out.loc[1, "alunos_por_m2"])
+    assert pd.isna(out.loc[2, "alunos_por_m2"])
+    streamlit_app.load_base_calibracao.clear()
+
+
+def test_render_viabilidade_ponto_smoke_sem_pino():
+    """Sem pino e sem campo de coordenada -> info, sem chamar o engine, sem excecao."""
+    import contextlib
+    import unittest.mock as mock
+
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(mock.patch("streamlit.session_state", {}))
+        engine = stack.enter_context(
+            mock.patch("motor_expansao.dashboard.pages.analisar_viabilidade_ponto")
+        )
+        info_mock = stack.enter_context(mock.patch("streamlit.info"))
+        stack.enter_context(mock.patch("streamlit.caption"))
+        stack.enter_context(mock.patch("streamlit.markdown"))
+        stack.enter_context(mock.patch("streamlit.text_input", return_value=""))
+        streamlit_app.render_viabilidade_ponto(None, pd.DataFrame())
+
+    engine.assert_not_called()
+    assert info_mock.called
+
+
+def test_viabilidade_ponto_parse_link_google_maps():
+    """Campo com link do Maps -> extract_any_coord resolve (string pura, sem rede)."""
+    import contextlib
+    import unittest.mock as mock
+
+    captured = {}
+
+    def _fake_engine(lat, lng, m2, aluguel, demanda, **kw):
+        captured["lat"] = lat
+        captured["lng"] = lng
+        return _fake_viab_result(demanda)
+
+    link = "https://www.google.com/maps/place/Ultra/@-23.5,-46.6,17z/data=!3d-23.55!4d-46.63"
+    df = _viab_ponto_df()
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(mock.patch("streamlit.session_state", {"viab_ponto_coord_raw": link}))
+        stack.enter_context(
+            mock.patch(
+                "motor_expansao.dashboard.pages.analisar_viabilidade_ponto",
+                side_effect=_fake_engine,
+            )
+        )
+        _viab_ponto_patches(
+            stack,
+            number_values={
+                "viab_ponto_m2": 1500.0,
+                "viab_ponto_aluguel": 20000.0,
+                "viab_ponto_demanda": 800.0,
+                "viab_ponto_ticket": 137.0,
+                "viab_ponto_margem_pct": 10.0,
+            },
+            submitted=True,
+            text_value=link,
+        )
+        streamlit_app.render_viabilidade_ponto(None, df)
+
+    # !3d=lat !4d=lng -> pino resolvido do place no Brasil
+    assert captured["lat"] == pytest.approx(-23.55)
+    assert captured["lng"] == pytest.approx(-46.63)
+
+
+def test_render_viabilidade_ponto_aba_no_dashboard_tab_labels():
+    """A 5a aba property-first esta registrada em DASHBOARD_TAB_LABELS (Opcao B)."""
+    assert "Viabilidade do Imovel" in streamlit_app.DASHBOARD_TAB_LABELS
+    assert len(streamlit_app.DASHBOARD_TAB_LABELS) == 5
+
+
+def _fake_viab_result(demanda):
+    """Constroi um ViabilidadePontoResult minimo e valido para os testes de UI."""
+    from motor_expansao.dimensionamento.simulador import ViabilidadeResult
+    from motor_expansao.dimensionamento.viabilidade_ponto import ViabilidadePontoResult
+
+    viab = ViabilidadeResult(
+        faturamento_mensal_steady=100000.0,
+        receita_liquida=99000.0,
+        receita_pos_impostos=92000.0,
+        ebitda_mensal=15000.0,
+        margem_ebitda_pct=0.15,
+        payback_meses=24.0,
+        roic_anual=0.18,
+        lucro_liquido_mensal=10000.0,
+        flag_viavel=True,
+    )
+    grade = pd.DataFrame(
+        [
+            {"alunos": 200.0, "aluguel": 12000.0, "fator_aluguel": 0.6,
+             "margem_liq": 0.05, "viavel": False, "payback": float("inf")},
+            {"alunos": 1000.0, "aluguel": 20000.0, "fator_aluguel": 1.0,
+             "margem_liq": 0.20, "viavel": True, "payback": 18.0},
+        ]
+    )
+    return ViabilidadePontoResult(
+        lat=-23.55,
+        lng=-46.63,
+        m2=1500.0,
+        aluguel_pedido=20000.0,
+        demanda_premissa=float(demanda),
+        faixa_alunos_p10=2000.0,
+        faixa_alunos_p50=3000.0,
+        faixa_alunos_p90=4000.0,
+        n_comparaveis=12,
+        flag_zona_morta=False,
+        motivo_zona_morta="ok",
+        pop_captacao=30000.0,
+        renda_per_capita_captacao=4500.0,
+        viabilidade=viab,
+        aluguel_teto_calculado=25000.0,
+        alunos_breakeven=600.0,
+        grade_sensibilidade=grade,
+    )
