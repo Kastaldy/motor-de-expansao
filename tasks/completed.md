@@ -5086,3 +5086,17 @@ verdes; READ-ONLY M1; sem PII.
 
 **Risco:** baixo (determinístico, reusa peças validadas). **Sucessor (não-loop):** BLK-DIM-12 — camada de
 UI/plotagem do imóvel no dashboard (toca `dashboard/`, gate humano; cruza BLK-UI-01).
+
+**Concluído 2026-06-15** (loop autônomo `ciclo/loop-20260615-163258`; auditado no merge). **VEREDITO:
+APROVADO.** Entregue `src/motor_expansao/dimensionamento/viabilidade_ponto.py` (366 linhas, função pura,
+DataFrames injetados, sem I/O interno) + `tests/unit/dimensionamento/test_viabilidade_ponto.py`.
+`analisar_viabilidade_ponto(lat, lng, m², aluguel, demanda_premissa, ...)` devolve: faixa de alunos por
+**curva tamanho→densidade** (p10/p50/p90 × m², via comparáveis — NÃO geográfica), flag de zona morta +
+contexto do entorno (catchment), viabilidade no cenário pedido (margem/payback/ROIC), **aluguel-teto**,
+**break-even** (alunos mínimos viáveis) e **grade de sensibilidade demanda×aluguel**. Reusa o simulador
+DRE/goal-seek do BLK-DIM-03R. **Guardrail central verificado no merge (não só documentado):** a demanda
+é entrada EXPLÍCITA (`demanda_fonte == "premissa_explicita"`); lat/lng só alimentam catchment + zona morta,
+nunca a demanda/faixa — travado por teste de regressão `test_faixa_usa_curva_densidade_nao_geo` (lat/lng
+diferentes → mesma faixa/demanda/margem) + `test_demanda_fonte_sempre_premissa_explicita`. Validações:
+**936 passed, 4 skipped**; ruff/mypy limpos; READ-ONLY M1 (DEC-001/DEC-008). UI/plotagem fica para o
+BLK-DIM-12 (gate humano). `LOOP_DONE` (sinal local do runner) removido do versionamento no merge.
