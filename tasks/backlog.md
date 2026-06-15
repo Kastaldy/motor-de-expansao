@@ -549,6 +549,51 @@ nos maduros; ZERO escrita em M1.
 
 ---
 
+### BLK-DIM-DATA — Aquisição de dado para destravar a Camada 1 (demanda) — o gargalo real
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (engenharia de dados pesada/aquisição externa; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA]` → Builder → QA |
+| **Depende de** | **BLK-DIM-01R** (estabeleceu o NO-GO e a estrutura de calibração) |
+| **Status** | Pendente |
+| **Autonomia** | **manual (NÃO loop-safe)** — downloads grandes/fontes externas; NÃO se limita a `data/staging`; exige gate humano. NÃO marcar loop-safe. |
+
+**Contexto / por que existe:** o BLK-DIM-01R provou, com dado real (n=53, alvo `log(pagantes)` absoluto,
+LOO honesto), que a demanda **NÃO é calibrável** com pop+renda (`R²_LOO=−0,013`, NO-GO) e o BLK-DIM-05
+mostrou que as features disponíveis no Censo 2022 **Básico** não ajudam. As features que decidiriam a
+demanda (**faixa etária 18-45**, vínculo formal/CLT, % ocupados) **não existem no Censo Básico por
+setor** — exigem microdados/amostra do IBGE (~10 GB) ou um proxy exógeno. **O gargalo é DADO, não
+algoritmo** (exatamente o que a DEC-001 e o §5 do spec avisaram). Este bloco ataca o gargalo.
+
+**Objetivo:** avaliar (viabilidade/custo/legalidade) e, se viável, **materializar** ao menos um sinal
+novo que possa virar a Camada 1 de NO-GO → GO, e **re-rodar a calibração do BLK-DIM-01R** com ele,
+reportando honestamente se o `R²_LOO` melhora materialmente.
+
+**Escopo permitido (candidatos — diagnosticar antes de baixar tudo):**
+- **Microdados/amostra Censo 2022 IBGE**: faixa etária 18-45, vínculo formal, renda do trabalho por
+  setor/área de ponderação. Avaliar cobertura, granularidade (área de ponderação ≠ setor), tamanho e
+  licença antes de baixar. Materializar features por catchment (reuso do helper censitário).
+- **Proxy exógeno de demanda**: penetração Wellhub/Gympass (já há `sinal_wellhub`/`n_parcerias_wellhub`
+  no dataset de validação) — medir cobertura e se é exógeno ou colado a unidades existentes.
+- **Reduzir viés de seleção**: a rede já tem ~88 unidades na Growth API (vs 53 maduras) — incorporar
+  mais unidades (incl. em rampa, com `inauguracao`) para ampliar N e a variação de contexto.
+- Re-rodar `aderencia.py` (BLK-DIM-01R) com a(s) feature(s) nova(s); LOO-CV vs baseline; veredito.
+
+**Fora de escopo (invioláveis):** score/pesos/artefatos M1 (READ-ONLY; DEC-001); dependência de API ao
+vivo no dashboard; persistir PII (microdados podem ter PII — agregar na borda, nunca em disco);
+inventar feature sem fonte auditável; alterar o método/raio censitário.
+
+**Critérios de aceite:** diagnóstico de disponibilidade/custo/legalidade das fontes; se houver fonte
+viável, feature materializada por catchment + re-calibração honesta com veredito GO/NO-GO documentado
+(IC/N/confounds); ZERO PII em disco; ZERO escrita em M1; reprodutível.
+
+**Risco:** médio-alto de esforço (download/limpeza de microdados é pesado). O resultado pode seguir
+NO-GO — e isso encerra honestamente a questão "dá para modelar demanda por hex hoje?". **Não loop-safe:
+exige decisão humana sobre quais fontes baixar e validação de licença/LGPD.**
+
+---
+
 - BLK-OPS-11 (concluído 2026-05-31) — ver tasks/completed.md
 
 
