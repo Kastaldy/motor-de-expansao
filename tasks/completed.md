@@ -4567,3 +4567,143 @@ comprovadamente independentes do bloco (reproduzem idênticas com o BLK-EST-03 e
 ---
 
 - BLK-EST-02 (concluído 2026-06-11) — ver tasks/completed.md
+
+---
+
+### BLK-DIM-03R — Simulador financeiro fundamentado no DRE real (remove os números mágicos)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (módulo determinístico isolado; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Depende de** | **BLK-DIM-00** (`simulador_estrutura.json` já existe) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, determinístico, consome `data/staging`; gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md` |
+
+**Contexto:** o simulador do spike (`simulador.py`) inventou `pessoal_pct=0.30`, `outros_custos_pct=0.05`,
+`custo_fixo_base_mes=5000` para fazer o teste de margem (~24%) passar — circular. Os coeficientes reais
+estão no `data/staging/simulador_estrutura.json` (BLK-DIM-00) e no `.xlsx`.
+
+**Objetivo:** trocar os números mágicos por coeficientes derivados do DRE real (`simulador_estrutura.json`),
+e **des-circularizar** o teste: validar a margem/ROIC contra o Excel de referência (defaults §8.2), não
+contra constantes ajustadas para passar.
+
+**Escopo permitido:** ler `simulador_estrutura.json`; parametrizar a "linha de resultado" do DRE com os
+ratios reais; goal-seek (`brentq`) preservado; teste valida contra o Excel/§8.2. Sem escrita em M1.
+
+**Critérios de aceite:** zero número mágico não-fundamentado; margem/ROIC batem o Excel de referência
+(não constantes auto-ajustadas); goal-seek do aluguel-teto validado; ZERO escrita em M1.
+
+**Risco:** baixo (determinístico). Substitui o `simulador.py` do spike.
+
+---
+
+### BLK-DIM-01R — Calibração REAL da Camada 1 (aderência) + correção da endogeneidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (decide ciência vs. ficção do motor; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-00** (base de calibração materializada em `data/staging/`) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; no modo loop o gate humano é substituído pelo guard automático (`scripts/loop_guard.py`); ver `docs/loop_autonomo.md` |
+
+**Contexto / por que existe:** a 1ª rodada do loop (spike DIM-01..04, branches `ciclo/BLK-DIM-01..04`,
+NÃO mergeados) entregou bom esqueleto de engenharia, mas a auditoria (2026-06-13) achou que o
+**R²_LOO=0.897 é ARTEFATO** de fixture sintética (o teste gera os dados da própria equação do modelo)
+e que há **endogeneidade**: o alvo `penetração = pagantes/pop_captação` tem a feature `log(pop)` no
+denominador → anti-correlação mecânica (`log penet = log pagantes − log pop`), que pode gerar **GO
+espúrio**. Nenhuma calibração em dado REAL foi feita. Este bloco faz a Camada 1 **de verdade**.
+
+**Objetivo:** estimar e VALIDAR honestamente a aderência/penetração usando os **maduros reais** de
+`data/staging/base_calibracao_maduras.parquet` (DIM-00), tratando a endogeneidade, e reportar o
+**R²_LOO verdadeiro** com veredito GO/NO-GO. (Pode reaproveitar o ESQUELETO de engenharia do branch
+`ciclo/BLK-DIM-01` — LOO/Ridge/anti-PII estão corretos — mas a estatística deve ser refeita honesta.)
+
+**Escopo permitido:**
+- **Rodar sobre dado REAL** (`base_calibracao_maduras.parquet`): nada de fixture sintética como
+  resultado. Reportar N de unidades, faixa de penetração observada, e o **R²_LOO no espaço de alunos**
+  (não no log) **contra baseline da média** (§7 do spec).
+- **Corrigir a endogeneidade** (escolher e justificar): (a) modelar `pagantes_steady_state`
+  DIRETAMENTE com `pop`/`renda`/features de perfil como preditores (sem a razão no alvo); e/ou
+  (b) regredir penetração contra features que NÃO derivam de pop/renda do mesmo catchment (perfil
+  etário, densidade urbana — spec §4). Documentar que `coef_log_pop≈−1` é em parte artefato algébrico.
+- **Teste de controle negativo (anti-circular):** com `pagantes` independente de `pop` (identidade
+  pura), o gate **NÃO** pode dar GO espúrio — virar teste de regressão explícito (o spike só notava
+  isso em rodapé). Remover/substituir os testes circulares (R²>0.5 sobre dados auto-gerados).
+- Saída: relatório `data/analysis/aderencia_real.md` (gitignored) com R²_LOO honesto, IC, N, confounds
+  e veredito; flags de extrapolação. Módulo em `src/motor_expansao/dimensionamento/`.
+
+**Gate GO/NO-GO:** se o R²_LOO real não for positivo e material contra a média, **NO-GO honesto** —
+relatório sem forçar significância (coerente com a DEC-001, que achou sinal ~nulo). Um NO-GO aqui é
+um resultado VÁLIDO do bloco, não uma falha.
+
+**Fora de escopo (invioláveis):** score/pesos/artefatos M1 (READ-ONLY; DEC-001); ingestão ao vivo na
+Growth API (consome só `data/staging`); persistir PII; VPS/deploy; reaproveitar o R²=0.897 do spike.
+
+**Critérios de aceite:** R²_LOO calculado em dado REAL (espaço de alunos, vs baseline) com IC/N; alvo
+sem endogeneidade trivial (justificado); teste de controle negativo verde; ZERO fixture-sintética como
+resultado; ZERO escrita em M1; reprodutível (seed fixo).
+
+**Risco:** o resultado pode ser NO-GO (sinal fraco) — e está tudo bem: é o "número que decide tudo"
+medido com honestidade. **Ótimo bloco para testar o loop corrigido (BLK-LOOP-02).**
+
+---
+
+### BLK-DIM-05 — Features exógenas na aderência (perfil etário, densidade urbana, vínculo formal)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (modelagem que informa expansão; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-01R** (alvo sem endogeneidade) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`/censo; gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md` |
+
+**Contexto:** o spike usou só `pop`+`renda` (que geram a endogeneidade). O spec §4 pede features
+demográfico-comportamentais. Estas são EXÓGENAS (não derivam de pop/renda do catchment) e podem
+trazer o sinal real que a DEC-001 não achou no M1.
+
+**Objetivo:** enriquecer o X da aderência com features exógenas do censo 2022 por catchment: **faixa
+etária 18-45** (público-alvo do projeto), densidade urbana, vínculo formal/renda do trabalho — e medir
+se o R²_LOO honesto melhora materialmente sobre o baseline e sobre o modelo só-pop/renda.
+
+**Escopo permitido:** derivar as features por catchment (reuso do helper censitário, READ-ONLY);
+acrescentar ao modelo do BLK-DIM-01R; LOO-CV vs baseline; reportar ganho/perda honesto. Relatório em
+`data/analysis/` (gitignored).
+
+**Critérios de aceite:** features exógenas materializadas por unidade; comparação honesta (com/sem) por
+LOO-CV; ZERO escrita em M1; reprodutível.
+
+**Risco:** baixo (read-only/diagnóstico). Pode concluir que não há ganho — resultado válido.
+
+---
+
+### BLK-DIM-06 — Backtest honesto out-of-sample (substitui o backtest in-sample do spike)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (é o que dá/retira confiança no motor; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-01R** (e idealmente DIM-02R/03R) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, consome `data/staging`; gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md` |
+
+**Contexto:** o backtest do spike (`pipeline.py`) usava `faturamento` gerado pela PRÓPRIA fórmula do
+simulador → in-sample disfarçado de honesto. Precisamos do erro REAL.
+
+**Objetivo:** harness que roda o motor "às cegas" nos maduros reais (faturamento/alunos REAIS de
+`base_calibracao_maduras`/Growth API já staged) e reporta **MAPE e R² out-of-sample** por camada e
+end-to-end, com flags de extrapolação. A `nota_honesta` deve refletir o erro medido, não afirmar.
+
+**Escopo permitido:** LOO/out-of-sample sobre dados reais; comparação previsto×real por unidade;
+relatório `data/analysis/backtest_dim.md` (gitignored). Sem escrita em M1.
+
+**Critérios de aceite:** erro out-of-sample real (MAPE/R²) por camada e end-to-end; flags de
+extrapolação; nenhum dado auto-gerado como resultado; ZERO escrita em M1.
+
+**Risco:** o erro real pode ser alto — e é exatamente o que precisamos saber antes de qualquer decisão.
+
+---
+
+- BLK-DIM-03R (concluído 2026-06-13) — ver tasks/completed.md

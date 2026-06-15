@@ -31,6 +31,7 @@ dependencies = [
 
     # Analise
     "scikit-learn>=1.5.0,<1.8",
+    "scipy>=1.10.0,<2",  # camada de dimensionamento (goal-seek brentq do simulador)
 
     # Utilitarios
     "python-dotenv>=1.0.0",
