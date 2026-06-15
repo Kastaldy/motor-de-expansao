@@ -5100,3 +5100,53 @@ nunca a demanda/faixa — travado por teste de regressão `test_faixa_usa_curva_
 diferentes → mesma faixa/demanda/margem) + `test_demanda_fonte_sempre_premissa_explicita`. Validações:
 **936 passed, 4 skipped**; ruff/mypy limpos; READ-ONLY M1 (DEC-001/DEC-008). UI/plotagem fica para o
 BLK-DIM-12 (gate humano). `LOOP_DONE` (sinal local do runner) removido do versionamento no merge.
+
+---
+
+### BLK-DIM-12 — UI da esteira property-first: ferramenta de viabilidade do imóvel no dashboard
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (toca o dashboard de produção; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner (design UX) → `[REVISÃO HUMANA — Felipe/Vini]` → Builder → QA |
+| **Depende de** | **BLK-DIM-11** (engine `viabilidade_ponto.py`, concluído) |
+| **Status** | Pendente (não iniciar sem plano de UX aprovado) |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca `dashboard/`, exige design de UX + gate humano; cruza BLK-UI-01. NÃO marcar loop-safe. |
+| **Responsável sugerido** | Vini (dashboard/UX) + Felipe (decisão de produto) |
+
+**Contexto:** o engine `analisar_viabilidade_ponto` (BLK-DIM-11) está pronto — função pura, READ-ONLY M1,
+DataFrames injetados, com guardrail anti-geográfico testado. Falta a **tela** que o operador usa para trazer
+um imóvel real e ler a viabilidade. É o materializador final da esteira property-first do BLK-DIM-10.
+
+**Objetivo:** uma UI no dashboard onde o operador insere um imóvel real e vê a viabilidade (break-even,
+aluguel-teto, ROI, sensibilidade, faixa de alunos, contexto do entorno), com a **demanda como premissa
+explícita** — software faz a conta, humano decide o imóvel. Sem prever demanda pela geografia.
+
+**Escopo permitido (wiring concreto — Planner detalha o UX no gate):**
+- **Nova função `render_viabilidade_ponto`** em `dashboard/pages.py`, plugada como **expander no Mapa
+  Territorial** (ao lado de `render_relatorio_pontual_censitario`, linha ~2525) OU como nova aba via
+  `render_tab_selector` (linha ~449) — escolha de UX no gate.
+- **Entrada:** `lat,lng` (campo, ou link do Google Maps via parser puro — sem geocoding ao vivo) + `m²` +
+  aluguel pedido + **demanda premissa** (input numérico OU toggle "usar p50 dos comparáveis"); ticket/
+  margem-alvo opcionais.
+- **Injeção de dados (lazy, padrão do censo report):** carregar `data/staging/base_calibracao_multirede.parquet`
+  (comparáveis do BLK-DIM-07) com cache; setores via `read_censo_geo_partition(uf)` +
+  `resolve_cod_municipio_from_geo_dir` (mesmo padrão de `render_relatorio_pontual_censitario`); passar
+  `base_calibracao_df` + `setores_df` ao engine.
+- **Render:** cards (alunos break-even / aluguel-teto / margem-payback-ROIC); `grade_sensibilidade` como
+  heatmap demanda×aluguel; faixa de alunos p10/p50/p90; pop/renda do entorno; **aviso de zona morta**
+  (`flag_zona_morta`); pin do imóvel no mapa (pydeck, reusar componente existente) com o entorno.
+- Carga lazy/cache por `(uf, cod_municipio)`; mensagem clara quando a base geo não existe (igual ao censo).
+
+**Fora de escopo (invioláveis):** prever demanda/alunos pela geografia (o engine proíbe; a UI **não pode
+burlar** — demanda sempre premissa explícita); recalcular M1/score/artefatos; geocoding de endereço ao vivo;
+quebrar as otimizações de performance (carga lazy por UF, render lazy de abas, fonte de mapa enxuta).
+
+**Critérios de aceite:** tela funcional (input → result renderizado + sensibilidade + mapa); teste garante
+que a UI **nunca deriva demanda da geografia** (demanda sempre premissa explícita); carga lazy preservada;
+suíte verde + `test_streamlit_app` cobrindo a nova tela; UX validada por Felipe/Vini; READ-ONLY M1; funciona
+**offline** (sem API ao vivo).
+
+**Guardrail:** §5 (visualização não recalcula M1) + preservar performance do dashboard (Blocos 4–6).
+
+**Risco:** médio (mexe no dashboard de produção; cuidado para não regredir perf nem o fluxo das 4 abas).
