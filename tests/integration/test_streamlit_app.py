@@ -4432,6 +4432,152 @@ def test_render_relatorio_pontual_censitario_com_coordenada_gera_mapa_e_download
     assert image_mock.call_count == 4
 
 
+# --- Item Vini 2026-06-16: seletor de Modo de cor expoe so 3 modos (m1/hibrido ocultos) ---
+
+def test_mapa_color_modes_oculta_m1_e_hibrido():
+    """O seletor do Mapa Territorial expoe apenas Censitario/Residual/Dominio.
+
+    m1 e hibrido seguem em COLOR_MODES (builder intacto), apenas ocultos do selectbox.
+    """
+    from motor_expansao.dashboard.constants import COLOR_MODES
+    from motor_expansao.dashboard.pages import (
+        MAPA_COLOR_MODE_DEFAULT_VISIVEL,
+        MAPA_COLOR_MODES_OCULTOS,
+    )
+
+    assert "m1" in MAPA_COLOR_MODES_OCULTOS
+    assert "hibrido" in MAPA_COLOR_MODES_OCULTOS
+    assert MAPA_COLOR_MODE_DEFAULT_VISIVEL == "censitario"
+    # builder preservado: m1/hibrido continuam suportados em COLOR_MODES
+    assert "m1" in COLOR_MODES
+    assert "hibrido" in COLOR_MODES
+    # o que o seletor expoe (ordem de COLOR_MODES, menos os ocultos)
+    visiveis = [m for m in COLOR_MODES if m not in MAPA_COLOR_MODES_OCULTOS]
+    assert visiveis == ["censitario", "residual", "dominio"]
+
+
+# --- Item Vini 2026-06-16: 2o botao de download de PDF abaixo do seletor de abas ---
+
+def test_render_pdf_download_topo_sem_coordenada_nao_renderiza():
+    """Sem coordenada pesquisada, nada e renderizado (nem botao gerar)."""
+    import unittest.mock as mock
+
+    with mock.patch("streamlit.button") as button_mock:
+        streamlit_app.render_pdf_download_topo(None, pd.DataFrame())
+    button_mock.assert_not_called()
+
+
+def test_render_pdf_download_topo_clique_gera_e_oferece_download():
+    """Com coordenada e clique no botao: gera sob demanda (spinner) e mostra download."""
+    import unittest.mock as mock
+
+    class _Payloads:
+        pdf_bytes = b"%PDF-1.4 fake"
+        pdf_filename = "relatorio.pdf"
+
+    session: dict = {}
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch("streamlit.button", return_value=True),
+        mock.patch("streamlit.spinner"),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_relatorio_pontual_para_pin",
+            return_value=_Payloads(),
+        ) as gen_mock,
+        mock.patch("streamlit.download_button") as dl_mock,
+    ):
+        streamlit_app.render_pdf_download_topo(
+            (-15.7939, -47.8828), pd.DataFrame(), censo_geo_loader=lambda uf, cod: None
+        )
+
+    gen_mock.assert_called_once()
+    dl_mock.assert_called_once()
+    # os bytes ficam cacheados por coordenada para sobreviver ao rerun do download
+    assert any(k.startswith("pdf_topo_payload::") for k in session)
+
+
+def test_render_pdf_download_topo_payload_none_avisa_e_nao_baixa():
+    """Coordenada fora da base setorial: aviso e nenhum botao de download."""
+    import unittest.mock as mock
+
+    session: dict = {}
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch("streamlit.button", return_value=True),
+        mock.patch("streamlit.spinner"),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_relatorio_pontual_para_pin",
+            return_value=None,
+        ),
+        mock.patch("streamlit.warning") as warn_mock,
+        mock.patch("streamlit.download_button") as dl_mock,
+    ):
+        streamlit_app.render_pdf_download_topo(
+            (-15.7939, -47.8828), pd.DataFrame(), censo_geo_loader=lambda uf, cod: None
+        )
+
+    warn_mock.assert_called_once()
+    dl_mock.assert_not_called()
+
+
+def test_gerar_payloads_relatorio_pontual_para_pin_sem_base_retorna_none():
+    """Helper retorna None quando o loader nao traz setores (sem base setorial)."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import gerar_payloads_relatorio_pontual_para_pin
+
+    df = pd.DataFrame([{
+        "hex_id": "abc", "lat": -15.79, "lng": -47.88,
+        "uf": "DF", "nome_municipio": "BRASILIA", "cod_municipio": "5300108",
+    }])
+    with mock.patch(
+        "motor_expansao.dashboard.pages._resolve_censo_context",
+        return_value={"uf": "DF", "cod_municipio": "5300108", "nome_municipio": "BRASILIA", "hex_id": "abc"},
+    ):
+        out = gerar_payloads_relatorio_pontual_para_pin(
+            (-15.79, -47.88), df, censo_geo_loader=lambda uf, cod: pd.DataFrame()
+        )
+    assert out is None
+
+
+def test_render_hex_search_result_compacto_usa_expander_colapsado():
+    """Item Vini 2026-06-16: o card de hex pesquisado vai num expander COLAPSADO,
+    para nao empurrar o conteudo das abas. Verifica expanded=False e que as metricas
+    sao renderizadas DENTRO do expander."""
+    import unittest.mock as mock
+
+    import h3
+
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    full_df = pd.DataFrame([{
+        "hex_id": hex_id, "lat": lat, "lng": lng, "uf": "SP",
+        "nome_municipio": "SAO PAULO", "score_priorizacao": 80.0,
+        "rank_brasil": 10, "pop_total": 9000.0, "renda_per_capita": 5000.0,
+    }])
+
+    expander_cm = mock.MagicMock()
+    expander_cm.__enter__ = mock.Mock(return_value=None)
+    expander_cm.__exit__ = mock.Mock(return_value=False)
+    with (
+        mock.patch("streamlit.expander", return_value=expander_cm) as exp_mock,
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.markdown") as md_mock,
+        mock.patch("streamlit.success"),
+        mock.patch("streamlit.warning"),
+    ):
+        streamlit_app.render_hex_search_result(
+            (lat, lng), full_df=full_df, filtered_df=full_df, pop_cut_lookup=None
+        )
+
+    # expander chamado e colapsado por padrao
+    exp_mock.assert_called_once()
+    assert exp_mock.call_args.kwargs.get("expanded") is False
+    # nao usa mais o divider/heading "####" que empurrava o conteudo
+    for call in md_mock.call_args_list:
+        assert "Hexagono pesquisado para" not in str(call)
+
+
 def test_load_censo_geo_setores_le_particao_por_municipio(tmp_path, monkeypatch):
     base = tmp_path / "setores_censitarios_2022_geo"
     part = base / "uf=DF" / "cod_municipio=5300108"
@@ -4500,6 +4646,10 @@ def test_inject_styles_cobre_componentes_baseweb():
     assert 'data-baseweb="button-group"' in css  # flex-pai real do seletor
     assert "gap: 8px" in css  # gap horizontal efetivo (pode ser em qualquer seletor)
     assert "margin: 0 !important" in css  # zera o margin-right: -1px do baseweb
+    # Item Vini 2026-06-16: largura padrao dos botoes de download + gerar-PDF (consistencia)
+    assert 'data-testid="stDownloadButton"' in css
+    assert ".st-key-btn_gerar_pdf_topo" in css
+    assert "width: 260px" in css
 
 
 # ── BLK-MAP-01: filtro individual de redes ───────────────────────────────────

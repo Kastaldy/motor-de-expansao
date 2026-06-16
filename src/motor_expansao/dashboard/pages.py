@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 import streamlit as st
@@ -15,7 +15,10 @@ from motor_expansao.dashboard.censo_point import (
     RAIO_CENSITARIO_DEFAULT_KM,
     analisar_ponto_censitario_setores,
 )
-from motor_expansao.dashboard.censo_report import render_downloads_relatorio_censitario
+from motor_expansao.dashboard.censo_report import (
+    gerar_payloads_download_relatorio_censitario,
+    render_downloads_relatorio_censitario,
+)
 from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
 from motor_expansao.dashboard.components import (
     _build_competitor_cluster_layer,
@@ -68,7 +71,6 @@ from motor_expansao.dashboard.components import (
     style_ranking_table,
 )
 from motor_expansao.dashboard.constants import (
-    COLOR_MODE_DEFAULT,
     COLOR_MODES,
     COLORS,
     COMPETITOR_CLUSTER_LIMIT,
@@ -93,6 +95,13 @@ from motor_expansao.dashboard.data import (
 from motor_expansao.dashboard.utils import format_int, format_pct, format_score
 from motor_expansao.dimensionamento.config import RAIO_CATCHMENT_KM, SIM_MENSALIDADE_BALCAO
 from motor_expansao.dimensionamento.viabilidade_ponto import analisar_viabilidade_ponto
+
+# UI: modos de cor ESCONDIDOS do seletor do Mapa Territorial Unificado (pedido de Vini 2026-06-16).
+# READ-ONLY/visual: m1 e hibrido permanecem em COLOR_MODES e seguem suportados pelo builder
+# (`build_unified_map_figure`/`render_mapa_pydeck_fragment`); apenas NAO sao oferecidos no selectbox.
+MAPA_COLOR_MODES_OCULTOS: tuple[str, ...] = ("m1", "hibrido")
+# Default visivel do seletor depois de ocultar m1/hibrido (cai para o 1o disponivel se ausente).
+MAPA_COLOR_MODE_DEFAULT_VISIVEL = "censitario"
 
 RESIDUAL_SORT_COLUMNS = [
     "oferta_efetiva_disponivel",
@@ -349,6 +358,15 @@ def inject_styles() -> None:
                 box-shadow: 0 0 8px rgba(25, 183, 255, 0.35) !important;
                 font-weight: 700 !important;
             }}
+            /* Largura padrao para os botoes de acao/download (consistencia visual,
+               pedido de Vini 2026-06-16): cobre os download_button (CSV/PDF do relatorio
+               e "Baixar PDF do ponto") e o "Gerar PDF do ponto" (por st-key). NAO afeta
+               os botoes inline pequenos do multihex (+/-/x) nem o seletor de abas. */
+            [data-testid="stDownloadButton"] button,
+            .st-key-btn_gerar_pdf_topo button {{
+                width: 260px;
+                max-width: 100%;
+            }}
             .stCaption {{
                 color: {COLORS["muted"]};
             }}
@@ -596,20 +614,24 @@ def render_hex_search_result(
     lat, lng = search_coord
     result = lookup_hex_by_coord(lat, lng, full_df)
 
-    st.markdown("---")
-    st.markdown(f"#### Hexagono pesquisado para `{lat:.5f}, {lng:.5f}`")
+    # Compacto (pedido de Vini 2026-06-16): tudo num expander COLAPSADO para nao
+    # empurrar o conteudo das abas e atrapalhar a troca de abas. Funcionalidade
+    # identica (a info segue acessivel ao expandir). READ-ONLY sobre o M1.
+    coord_txt = f"{lat:.5f}, {lng:.5f}"
 
     if result is None:
-        st.warning("Nao foi possivel converter a coordenada para um hexagono H3.")
+        with st.expander(f"Hexagono pesquisado: {coord_txt}", expanded=False):
+            st.warning("Nao foi possivel converter a coordenada para um hexagono H3.")
         return
 
     hex_id = result["hex_id"]
 
     if result.get("_not_found"):
-        st.info(
-            f"Hexagono `{hex_id}` nao encontrado na base oficial M1. "
-            "Pode ser uma area rural, maritima ou fora dos municipios mapeados."
-        )
+        with st.expander(f"Hexagono pesquisado: {coord_txt} — fora da base M1", expanded=False):
+            st.info(
+                f"Hexagono `{hex_id}` nao encontrado na base oficial M1. "
+                "Pode ser uma area rural, maritima ou fora dos municipios mapeados."
+            )
         return
 
     # Check visibility in current filters
@@ -635,30 +657,33 @@ def render_hex_search_result(
     if not pop_flag:
         status_lines.append(f"Descartado pela regua de populacao minima ({format_int(POP_MIN_ACIONAVEL)} hab).")
 
-    if status_lines:
-        st.warning("  ".join(status_lines))
-    else:
-        st.success("Hexagono visivel no recorte atual.")
+    status_short = "fora do recorte" if status_lines else "visivel no recorte"
 
-    cols = st.columns(4)
-    cols[0].metric("Score M1", format_score(cast(float, result.get("score_priorizacao"))))
-    cols[1].metric("Rank Brasil", format_int(cast("int | float", result.get("rank_brasil"))) if result.get("rank_brasil") is not None else "-")
-    pop_val = result.get("pop_total_setor_2022") or result.get("pop_total") or result.get("populacao_proxy")
-    cols[2].metric("Populacao", format_int(pop_val) if pop_val is not None else "-")
-    renda_val = result.get("renda_per_capita_setor_2022_calibrada") or result.get("renda_per_capita")
-    cols[3].metric("Renda per capita", f"R$ {format_int(renda_val)}" if renda_val is not None else "-")
+    with st.expander(f"Hexagono pesquisado: {coord_txt} — {status_short}", expanded=False):
+        if status_lines:
+            st.warning("  ".join(status_lines))
+        else:
+            st.success("Hexagono visivel no recorte atual.")
 
-    detail_cols = st.columns(3)
-    detail_cols[0].metric("Hex ID", hex_id)
-    detail_cols[1].metric("UF / Cidade", f"{result.get('uf', '-')} / {result.get('nome_municipio') or result.get('cidade', '-')}")
-    detail_cols[2].metric("Fonte geografica", str(result.get("confianca_geografica", "municipal")))
+        cols = st.columns(4)
+        cols[0].metric("Score M1", format_score(cast(float, result.get("score_priorizacao"))))
+        cols[1].metric("Rank Brasil", format_int(cast("int | float", result.get("rank_brasil"))) if result.get("rank_brasil") is not None else "-")
+        pop_val = result.get("pop_total_setor_2022") or result.get("pop_total") or result.get("populacao_proxy")
+        cols[2].metric("Populacao", format_int(pop_val) if pop_val is not None else "-")
+        renda_val = result.get("renda_per_capita_setor_2022_calibrada") or result.get("renda_per_capita")
+        cols[3].metric("Renda per capita", f"R$ {format_int(renda_val)}" if renda_val is not None else "-")
 
-    score_censo = result.get("score_setor_2022_calibrado")
-    if score_censo is not None and not pd.isna(score_censo):
-        extra_cols = st.columns(3)
-        extra_cols[0].metric("Score Censitario", format_score(score_censo))
-        extra_cols[1].metric("Elegibilidade hibrida", str(result.get("elegibilidade_hibrida", "-")))
-        extra_cols[2].metric("Qualidade join", str(result.get("qualidade_join_uf", "-")))
+        detail_cols = st.columns(3)
+        detail_cols[0].metric("Hex ID", hex_id)
+        detail_cols[1].metric("UF / Cidade", f"{result.get('uf', '-')} / {result.get('nome_municipio') or result.get('cidade', '-')}")
+        detail_cols[2].metric("Fonte geografica", str(result.get("confianca_geografica", "municipal")))
+
+        score_censo = result.get("score_setor_2022_calibrado")
+        if score_censo is not None and not pd.isna(score_censo):
+            extra_cols = st.columns(3)
+            extra_cols[0].metric("Score Censitario", format_score(score_censo))
+            extra_cols[1].metric("Elegibilidade hibrida", str(result.get("elegibilidade_hibrida", "-")))
+            extra_cols[2].metric("Qualidade join", str(result.get("qualidade_join_uf", "-")))
 
 
 def render_visao_executiva(
@@ -2597,6 +2622,121 @@ def _render_setores_censitarios_table(setores: pd.DataFrame) -> None:
     )
 
 
+def gerar_payloads_relatorio_pontual_para_pin(
+    search_pin: tuple[float, float] | None,
+    df: pd.DataFrame,
+    *,
+    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
+    censo_geo_dir: Path | None = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
+) -> Any | None:
+    """Caminho pesado -> payloads de download (PDF/CSV) do Relatorio Pontual Censitario.
+
+    READ-ONLY sobre o M1 (reusa o mesmo metodo de intersecao/raio do dashboard). Retorna
+    `None` quando a coordenada nao resolve UF/municipio ou nao ha base setorial carregada.
+    Usado pelo 2o botao de download (topo, abaixo do seletor de abas).
+    """
+    if search_pin is None or censo_geo_loader is None:
+        return None
+    context = _resolve_censo_context(search_pin, df, censo_geo_dir=censo_geo_dir)
+    if context is None:
+        return None
+    lat, lng = search_pin
+    uf = context["uf"]
+    cod_municipio = context["cod_municipio"]
+    setores_df = censo_geo_loader(uf, cod_municipio)
+    if setores_df is None or setores_df.empty:
+        return None
+    result = analisar_ponto_censitario_setores(
+        lat, lng, setores_df, raio_km=raio_km,
+        competitors_df=competitors_df, ultra_df=ultra_df,
+    )
+    mapas = render_mapas_censitarios_combinados(
+        lat, lng, setores_df, raio_km=raio_km,
+        competitors_df=competitors_df, ultra_df=ultra_df, basemap=True,
+    )
+    residual: dict[str, float | None] = {
+        "score_oportunidade_residual": None,
+        "oferta_efetiva_disponivel": None,
+        "sam_fitness_potencial": None,
+        "oferta_consumida_mercado_estimada": None,
+    }
+    hex_row = lookup_hex_by_coord(lat, lng, df, h3_res=7)  # 7 = H3_RESOLUTION (M1)
+    if hex_row is not None and not hex_row.get("_not_found", False):
+        for campo in residual:
+            valor = hex_row.get(campo)
+            if valor is not None and not pd.isna(valor):
+                residual[campo] = float(valor)
+    return gerar_payloads_download_relatorio_censitario(
+        result,
+        mapas,
+        filename_prefix=f"relatorio_censitario_{uf}_{cod_municipio}_{lat:.5f}_{lng:.5f}".replace("-", "m").replace(".", "p"),
+        residual=residual,
+        ultra_dir=Path("data/ultra"),
+        template="classico",
+    )
+
+
+def render_pdf_download_topo(
+    search_pin: tuple[float, float] | None,
+    df: pd.DataFrame,
+    *,
+    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
+    censo_geo_dir: Path | None = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
+) -> None:
+    """2o botao de baixar o PDF do ponto, logo abaixo do seletor de abas.
+
+    So aparece quando ha coordenada pesquisada (`search_pin`); gera o PDF SOB DEMANDA
+    (clique no botao), com indicador de carregamento (`st.spinner`). Os bytes ficam em
+    `session_state` por coordenada para sobreviver ao rerun do download. READ-ONLY M1.
+    """
+    if search_pin is None:
+        return
+    lat, lng = search_pin
+    cache_key = f"pdf_topo_payload::{lat:.6f},{lng:.6f}"
+    gerar = st.button(
+        "Gerar PDF do relatorio do ponto",
+        key="btn_gerar_pdf_topo",
+        help="Gera o Relatorio Pontual Censitario (1,5 km) da coordenada pesquisada.",
+    )
+    if gerar:
+        with st.spinner("Gerando PDF..."):
+            payloads = gerar_payloads_relatorio_pontual_para_pin(
+                search_pin,
+                df,
+                censo_geo_loader=censo_geo_loader,
+                censo_geo_dir=censo_geo_dir,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
+                raio_km=raio_km,
+            )
+        if payloads is None:
+            st.session_state.pop(cache_key, None)
+            st.warning(
+                "Nao foi possivel gerar o PDF para esta coordenada. Verifique se ha base "
+                "setorial carregada para o municipio (coordenada urbana dentro do recorte)."
+            )
+            return
+        st.session_state[cache_key] = {
+            "pdf_bytes": payloads.pdf_bytes,
+            "pdf_filename": payloads.pdf_filename,
+        }
+    cached = st.session_state.get(cache_key)
+    if cached:
+        st.download_button(
+            "Baixar PDF do ponto",
+            data=cached["pdf_bytes"],
+            file_name=cached["pdf_filename"],
+            mime="application/pdf",
+            key="dl_pdf_topo",
+        )
+
+
 def render_relatorio_pontual_censitario(
     search_pin: tuple[float, float] | None,
     df: pd.DataFrame,
@@ -3123,13 +3263,20 @@ def render_mapa_territorial(
 
     with ctrl_col1:
         mode_labels = {mode_id: cfg["label"] for mode_id, cfg in COLOR_MODES.items()}
+        # Item Vini 2026-06-16: o seletor expoe apenas Censitario / Residual Fitness /
+        # Expansao de Dominio (m1 e hibrido ocultos via MAPA_COLOR_MODES_OCULTOS).
         available_modes = [
             mode_id for mode_id in COLOR_MODES
-            if mode_id == "dominio" or color_mode_available(df, mode_id)
+            if mode_id not in MAPA_COLOR_MODES_OCULTOS
+            and (mode_id == "dominio" or color_mode_available(df, mode_id))
         ]
         if not available_modes:
-            available_modes = [COLOR_MODE_DEFAULT]
-        default_idx = available_modes.index(COLOR_MODE_DEFAULT) if COLOR_MODE_DEFAULT in available_modes else 0
+            available_modes = [MAPA_COLOR_MODE_DEFAULT_VISIVEL]
+        default_idx = (
+            available_modes.index(MAPA_COLOR_MODE_DEFAULT_VISIVEL)
+            if MAPA_COLOR_MODE_DEFAULT_VISIVEL in available_modes
+            else 0
+        )
         selected_mode = st.selectbox(
             "Modo de cor",
             options=available_modes,

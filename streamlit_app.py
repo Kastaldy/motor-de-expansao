@@ -154,6 +154,7 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_mapa_territorial,
     render_modelo_hibrido,
     render_modelo_hibrido_v2,
+    render_pdf_download_topo,
     render_plano_expansao,
     render_ranking_priorizacao,
     render_relatorio_pontual_censitario,
@@ -515,6 +516,17 @@ def main() -> None:
     # frame vazio. Render lazy por aba (Bloco 5): so a aba ativa e construida por
     # rerun; os summaries so sao calculados para as abas que os consomem.
     active_tab = render_tab_selector(DASHBOARD_TAB_LABELS)
+
+    # 2o botao de baixar o PDF do ponto, logo abaixo do seletor de abas (pedido de Vini
+    # 2026-06-16): so aparece com coordenada pesquisada; gera sob demanda com spinner.
+    render_pdf_download_topo(
+        search_pin,
+        df,
+        censo_geo_loader=load_censo_geo_setores,
+        censo_geo_dir=CENSO_GEO_DIR,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+    )
 
     st.caption(
         f"Recorte atual: {format_int(len(filtered_df))} hexagonos | "
