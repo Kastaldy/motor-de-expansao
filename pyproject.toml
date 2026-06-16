@@ -113,6 +113,9 @@ geocoder = [
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# `data/` nao e codigo-fonte: contem dados + scripts de reprodutibilidade de estudos
+# (ex.: data/reports/estudo_escala_alunos/gerar_estudo.py). Fora do gate de lint.
+extend-exclude = ["data"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
