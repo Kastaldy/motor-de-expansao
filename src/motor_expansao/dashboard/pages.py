@@ -149,6 +149,12 @@ def inject_styles() -> None:
                 padding-top: 1.4rem;
                 padding-bottom: 2rem;
             }}
+            /* F2-G: reforco offline (CSS puro, sem JS/rede) para a sidebar nascer
+               com largura visivel no load/reload, complementando
+               initial_sidebar_state="expanded". */
+            [data-testid="stSidebar"][aria-expanded="true"] {{
+                min-width: 20rem;
+            }}
             [data-testid="stSidebar"] {{
                 background:
                     radial-gradient(circle at top, rgba(25, 183, 255, 0.12), transparent 30%),
@@ -442,12 +448,19 @@ def render_uf_selectbox(uf_options: list[str]) -> str | None:
 
 
 DASHBOARD_TAB_LABELS = [
-    "Visao Executiva",
-    "Mapa Territorial",
-    "Expansao de Dominio",
+    "Mapa",
+    "Executivo",
+    "Expansão de Domínio",
     "Carteira e Plano",
-    "Viabilidade do Imovel",
+    "Viabilidade",
 ]
+
+# F1-C: disclaimer de centroide centralizado num unico lugar (substitui as 2
+# ocorrencias literais na Analise Pontual multihex/simples).
+_CENTROID_DISCLAIMER = (
+    "Leitura por centroide H3 res-7: precisao aproximada ~0.5-1 km. "
+    "Nao altera score_priorizacao, carteira, plano ou artefatos do M1."
+)
 
 
 def render_tab_selector(
@@ -501,36 +514,37 @@ def render_sidebar_filters(
         placeholder="Selecione faixas",
     )
 
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### Camada Hibrida")
-    st.sidebar.caption("Esses filtros refinam M1 + Censitario + Hibrido no recorte visivel.")
-    selected_hybrid_eligibility = st.sidebar.multiselect(
-        "Elegibilidade hibrida",
-        options=HYBRID_ELIGIBILITY_ORDER,
-        placeholder="Elegivel, nao elegivel ou sem camada",
-    )
-    selected_coverage_buckets = st.sidebar.multiselect(
-        "Cobertura censitaria",
-        options=COVERAGE_BUCKET_ORDER,
-        placeholder="Faixas de coverage da camada",
-    )
-    selected_join_quality = st.sidebar.multiselect(
-        "Qualidade da camada",
-        options=JOIN_QUALITY_ORDER,
-        placeholder="Classes A, B, C ou sem camada",
-    )
-    only_top_municipio = st.sidebar.checkbox(
-        "Apenas top_municipio",
-        value=False,
-    )
-    only_top_hex_intraurbano = st.sidebar.checkbox(
-        "Apenas top_hex_intraurbano",
-        value=False,
-    )
-
-    st.sidebar.caption(
-        "M1 = decisao municipal. Censitario = decisao intraurbana. Hibrido = uso combinado."
-    )
+    # F2-C: filtros avancados colapsados num expander (Municipio/Faixa ficam na
+    # primeira dobra; render_uf_selectbox segue como 1o elemento da sidebar).
+    with st.sidebar.expander("Filtros avancados", expanded=False):
+        st.markdown("### Camada Hibrida")
+        st.caption("Esses filtros refinam M1 + Censitario + Hibrido no recorte visivel.")
+        selected_hybrid_eligibility = st.multiselect(
+            "Elegibilidade hibrida",
+            options=HYBRID_ELIGIBILITY_ORDER,
+            placeholder="Elegivel, nao elegivel ou sem camada",
+        )
+        selected_coverage_buckets = st.multiselect(
+            "Cobertura censitaria",
+            options=COVERAGE_BUCKET_ORDER,
+            placeholder="Faixas de coverage da camada",
+        )
+        selected_join_quality = st.multiselect(
+            "Qualidade da camada",
+            options=JOIN_QUALITY_ORDER,
+            placeholder="Classes A, B, C ou sem camada",
+        )
+        only_top_municipio = st.checkbox(
+            "Apenas top_municipio",
+            value=False,
+        )
+        only_top_hex_intraurbano = st.checkbox(
+            "Apenas top_hex_intraurbano",
+            value=False,
+        )
+        st.caption(
+            "M1 = decisao municipal. Censitario = decisao intraurbana. Hibrido = uso combinado."
+        )
     return (
         selected_ufs,
         selected_cities,
@@ -1220,8 +1234,8 @@ def render_carteira_expansao(
 ) -> None:
     if carteira.empty:
         st.warning(
-            "Carteira acionavel nao disponivel. Execute "
-            "`python -m jobs.pipelines.gerar_carteira_acionavel` para gerar o arquivo."
+            "Carteira acionavel indisponivel neste recorte. Ela e gerada no ciclo de regeneracao "
+            "dos parquets — contate o time de dados se esta tela estiver vazia em producao."
         )
         return
 
@@ -1441,8 +1455,29 @@ def render_carteira_expansao(
             tbl[col] = tbl[col].map(lambda v: int(v) if pd.notna(v) else "-")
     tbl = _format_residual_display_columns(tbl)
 
+    # F1-A: tabela primaria reduzida (≤12 cols); secundarias num expander. Nenhuma
+    # coluna sai do DataFrame, apenas do set exibido por padrao.
+    primary_labels = [
+        "Rank Brasil",
+        "Rank UF",
+        "Score M1",
+        "Prioridade",
+        "UF",
+        "Municipio",
+        "Hex ID",
+        "Modo Hex",
+        "Score Censo",
+        "SAM Fitness",
+        "Oferta Residual",
+        "Motivo",
+    ]
+    primary_cols = [c for c in primary_labels if c in tbl.columns]
+
     height_tbl = min(620, 38 + 35 * min(len(tbl), 100))
-    st.dataframe(tbl.head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
+    st.dataframe(tbl[primary_cols].head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
+
+    with st.expander("Mostrar colunas detalhadas (residual, ranks, censo)", expanded=False):
+        st.dataframe(tbl.head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
 
     st.markdown("---")
     note_cols = st.columns(2)
@@ -1487,8 +1522,8 @@ def render_expansao_dominio(
 ) -> None:
     if plano.empty:
         st.warning(
-            "Plano de Expansao de Dominio nao disponivel. Execute "
-            "`python jobs/pipelines/gerar_plano_expansao_dominio.py` para gerar o arquivo."
+            "Plano de Expansao de Dominio indisponivel neste recorte. Ele e gerado no ciclo de "
+            "regeneracao dos parquets — contate o time de dados se esta tela estiver vazia em producao."
         )
         return
 
@@ -1608,8 +1643,28 @@ def render_expansao_dominio(
         if col in tbl.columns:
             tbl[col] = tbl[col].map(lambda v: int(v) if pd.notna(v) else "-")
 
+    # F1-A: tabela primaria reduzida (≤12 cols); secundarias num expander. Nenhuma
+    # coluna sai do DataFrame, apenas do set exibido por padrao.
+    primary_labels = [
+        "Rank Brasil",
+        "Rank UF",
+        "UF",
+        "Cidade",
+        "Hex Ancora",
+        "Ordem na Cidade",
+        "Score Residual",
+        "Residual Capturado",
+        "Oferta Disponivel",
+        "Tese",
+        "Dist. Ultra (m)",
+    ]
+    primary_cols = [c for c in primary_labels if c in tbl.columns]
+
     height_tbl = min(700, 38 + 35 * min(len(tbl), 100))
-    st.dataframe(tbl.head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
+    st.dataframe(tbl[primary_cols].head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
+
+    with st.expander("Mostrar colunas detalhadas (consumo, cluster, ranks)", expanded=False):
+        st.dataframe(tbl.head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
 
     st.markdown("---")
     note_cols = st.columns(2)
@@ -1645,8 +1700,8 @@ def render_expansao_dominio(
 def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame | None = None) -> None:
     if plano.empty:
         st.warning(
-            "Plano de curto prazo nao disponivel. Execute "
-            "`python -m jobs.pipelines.gerar_plano_expansao_curto_prazo` para gerar o arquivo."
+            "Plano de curto prazo indisponivel neste recorte. Ele e gerado no ciclo de regeneracao "
+            "dos parquets — contate o time de dados se esta tela estiver vazia em producao."
         )
         return
 
@@ -1803,8 +1858,28 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
             tbl[col] = tbl[col].map(lambda v: int(v) if pd.notna(v) else "-")
     tbl = _format_residual_display_columns(tbl)
 
+    # F1-A: tabela primaria reduzida (≤11 cols); secundarias num expander. Nenhuma
+    # coluna sai do DataFrame, apenas do set exibido por padrao.
+    primary_labels = [
+        "Rank Brasil",
+        "Rank UF",
+        "Nivel",
+        "UF",
+        "Municipio",
+        "Hex ID",
+        "Score Hibrido",
+        "Score M1",
+        "Score Censo",
+        "SAM Fitness",
+        "Oferta Residual",
+    ]
+    primary_cols = [c for c in primary_labels if c in tbl.columns]
+
     height_tbl = min(700, 38 + 35 * min(len(tbl), 100))
-    st.dataframe(tbl, width="stretch", hide_index=True, height=height_tbl)
+    st.dataframe(tbl[primary_cols], width="stretch", hide_index=True, height=height_tbl)
+
+    with st.expander("Mostrar colunas detalhadas (residual, consumo, censo, status)", expanded=False):
+        st.dataframe(tbl, width="stretch", hide_index=True, height=height_tbl)
 
     st.markdown("---")
     nc1, nc2 = st.columns(2)
@@ -1935,10 +2010,7 @@ def _render_analise_pontual_multihex(
             "Sem ponto ativo. KPIs do conjunto de hexes selecionados. "
             "Clique em um hex ou informe coordenada na sidebar para ativar referencia de raio."
         )
-    st.caption(
-        "Leitura por centroide H3 res-7: precisao aproximada ~0.5-1 km. "
-        "Nao altera score_priorizacao, carteira, plano ou artefatos do M1."
-    )
+    st.caption(_CENTROID_DISCLAIMER)
 
     def _fi(v: float | None) -> str:
         return format_int(int(v)) if v is not None else "-"
@@ -1946,6 +2018,7 @@ def _render_analise_pontual_multihex(
     def _fs(v: float | None) -> str:
         return f"{v:.1f}" if v is not None else "-"
 
+    # F1-B: 2 linhas, <=9 KPIs. Consumo instalado vira 1 caption consolidado abaixo.
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Hexes selecionados", str(n))
     k2.metric("Habitantes", _fi(agg["pop_total"]))
@@ -1953,16 +2026,16 @@ def _render_analise_pontual_multihex(
     k4.metric("Residual fitness", _fi(agg["residual_total"]))
 
     k5, k6, k7, k8, k9 = st.columns(5)
-    k5.metric("Consumo concorrentes", _fi(agg["consumo_concorrentes_total"]))
-    k6.metric("Consumo Ultra", _fi(agg["consumo_ultra_total"]))
-    k7.metric("Consumo total instalado", _fi(agg["consumo_total_instalado"]))
+    k5.metric("Score M1 med.", _fs(agg["score_m1_medio"]), delta=f"max {_fs(agg['score_m1_max'])}", delta_color="off")
+    k6.metric("Score Residual med.", _fs(agg["score_residual_medio"]), delta=f"max {_fs(agg['score_residual_max'])}", delta_color="off")
+    k7.metric("Score Dominio Hibrido med.", _fs(agg["score_dominio_hibrido_medio"]), delta=f"max {_fs(agg['score_dominio_hibrido_max'])}", delta_color="off")
     k8.metric("Presenca Ultra", "Sim" if agg["presenca_ultra"] else "Nao")
     k9.metric("Concorrentes (hexes)", _fi(agg["n_concorrentes_total"]))
 
-    k9, k10, k11 = st.columns(3)
-    k9.metric("Score M1 med.", _fs(agg["score_m1_medio"]), delta=f"max {_fs(agg['score_m1_max'])}", delta_color="off")
-    k10.metric("Score Residual med.", _fs(agg["score_residual_medio"]), delta=f"max {_fs(agg['score_residual_max'])}", delta_color="off")
-    k11.metric("Score Dominio Hibrido med.", _fs(agg["score_dominio_hibrido_medio"]), delta=f"max {_fs(agg['score_dominio_hibrido_max'])}", delta_color="off")
+    st.caption(
+        f"Consumo instalado no cenario — concorrentes: {_fi(agg['consumo_concorrentes_total'])} | "
+        f"Ultra: {_fi(agg['consumo_ultra_total'])} | total: {_fi(agg['consumo_total_instalado'])} alunos."
+    )
 
     multihex_map = build_multihex_analysis_map(
         multihex_ids,
@@ -2085,10 +2158,7 @@ def render_analise_pontual(
     st.caption(
         f"Ponto: `{lat:.5f}, {lng:.5f}` | Raio: {raio_km} km | Area aproximada: {area_km2} km²"
     )
-    st.caption(
-        "Leitura por centroide de hexagono H3 res-7: precisao aproximada ~0.5-1 km. "
-        "Nao altera score_priorizacao, carteira, plano ou artefatos do M1."
-    )
+    st.caption(_CENTROID_DISCLAIMER)
 
     coord_gmaps = f"{lat:.6f},{lng:.6f}"
     st.markdown(f"**Coordenada para Google Maps / GPS:** `{coord_gmaps}`")
@@ -2141,12 +2211,13 @@ def render_analise_pontual(
     consumo_conc = resultado.get("consumo_concorrentes_raio")
     consumo_ultra_val = resultado.get("consumo_ultra_raio")
     if consumo_conc is not None or consumo_ultra_val is not None:
-        ka, kb, kc = st.columns(3)
-        ka.metric("Consumo concorrentes", _fmt_int_none(consumo_conc))
-        kb.metric("Consumo Ultra", _fmt_int_none(consumo_ultra_val))
+        # F1-B: consumo instalado consolidado em 1 caption (substitui 3 st.metric).
         consumo_tot = (consumo_conc or 0.0) + (consumo_ultra_val or 0.0)
-        kc.metric("Consumo total instalado", format_int(int(consumo_tot)))
-        st.caption("Consumo fitness instalado: leitura de mercado (alunos estimados ocupando capacidade), nao score oficial.")
+        st.caption(
+            f"Consumo instalado no raio — concorrentes: {_fmt_int_none(consumo_conc)} | "
+            f"Ultra: {_fmt_int_none(consumo_ultra_val)} | total: {format_int(int(consumo_tot))} alunos. "
+            "Leitura de mercado (alunos estimados ocupando capacidade), nao score oficial."
+        )
 
     hexes_entorno = resultado["hexes_entorno"]
     pontual_map = build_analise_pontual_map(
@@ -2597,6 +2668,33 @@ def render_relatorio_pontual_censitario(
             basemap=True,
         )
 
+    # Big Numbers do PDF: lookup READ-ONLY do hex H3 do ponto (residual fitness + consumo).
+    # Leitura pura do df ja em escopo; NAO recalcula M1/residual. Campo ausente/NaN -> None -> "n/d".
+    residual: dict[str, float | None] = {
+        "score_oportunidade_residual": None,
+        "oferta_efetiva_disponivel": None,
+        "sam_fitness_potencial": None,
+        "oferta_consumida_mercado_estimada": None,
+    }
+    hex_row = lookup_hex_by_coord(lat, lng, df, h3_res=7)  # 7 = H3_RESOLUTION (M1)
+    if hex_row is not None and not hex_row.get("_not_found", False):
+        for campo in residual:
+            valor = hex_row.get(campo)
+            if valor is not None and not pd.isna(valor):
+                residual[campo] = float(valor)
+
+    # F2-F: botao de download no TOPO da secao do relatorio (antes das 4 imagens).
+    # So a CHAMADA de UI foi reposicionada; censo_report.py/censo_map.py INTOCADOS.
+    render_downloads_relatorio_censitario(
+        st,
+        result,
+        mapas,
+        filename_prefix=f"relatorio_censitario_{uf}_{cod_municipio}_{lat:.5f}_{lng:.5f}".replace("-", "m").replace(".", "p"),
+        residual=residual,
+        ultra_dir=Path("data/ultra"),
+        template="classico",
+    )
+
     st.markdown(f"**Ponto analisado:** `{lat:.5f}, {lng:.5f}` | `{nome_municipio}/{uf}`")
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Setores", format_int(result["n_setores"]))
@@ -2641,31 +2739,6 @@ def render_relatorio_pontual_censitario(
 
     st.markdown("##### Setores intersectados")
     _render_setores_censitarios_table(result["setores_intersectados"])
-
-    # Big Numbers do PDF: lookup READ-ONLY do hex H3 do ponto (residual fitness + consumo).
-    # Leitura pura do df ja em escopo; NAO recalcula M1/residual. Campo ausente/NaN -> None -> "n/d".
-    residual: dict[str, float | None] = {
-        "score_oportunidade_residual": None,
-        "oferta_efetiva_disponivel": None,
-        "sam_fitness_potencial": None,
-        "oferta_consumida_mercado_estimada": None,
-    }
-    hex_row = lookup_hex_by_coord(lat, lng, df, h3_res=7)  # 7 = H3_RESOLUTION (M1)
-    if hex_row is not None and not hex_row.get("_not_found", False):
-        for campo in residual:
-            valor = hex_row.get(campo)
-            if valor is not None and not pd.isna(valor):
-                residual[campo] = float(valor)
-
-    render_downloads_relatorio_censitario(
-        st,
-        result,
-        mapas,
-        filename_prefix=f"relatorio_censitario_{uf}_{cod_municipio}_{lat:.5f}_{lng:.5f}".replace("-", "m").replace(".", "p"),
-        residual=residual,
-        ultra_dir=Path("data/ultra"),
-        template="classico",
-    )
 
 
 def _resolve_viab_ponto(
@@ -3213,6 +3286,7 @@ def render_mapa_territorial(
 
     if city_summary is not None:
         st.markdown("---")
+        st.markdown("#### Detalhamento territorial")
         with st.expander("Analise Territorial", expanded=False):
             render_analise_territorial(df, city_summary)
         with st.expander("Ranking de Priorizacao", expanded=False):

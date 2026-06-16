@@ -4115,6 +4115,13 @@ def test_render_expansao_dominio_exibe_consumo_quando_colunas_presentes(tmp_path
         n = spec if isinstance(spec, int) else len(spec)
         return [mock.MagicMock() for _ in range(n)]
 
+    class _Ctx:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
     with mock.patch("streamlit.markdown"), \
          mock.patch("streamlit.caption"), \
          mock.patch("streamlit.columns", side_effect=_cols), \
@@ -4122,11 +4129,14 @@ def test_render_expansao_dominio_exibe_consumo_quando_colunas_presentes(tmp_path
          mock.patch("streamlit.multiselect", return_value=[]), \
          mock.patch("streamlit.info"), \
          mock.patch("streamlit.pydeck_chart"), \
+         mock.patch("streamlit.expander", side_effect=lambda *a, **k: _Ctx()), \
          mock.patch("streamlit.dataframe", side_effect=lambda df, **kw: rendered_dfs.append(df)):
         streamlit_app.render_expansao_dominio(plano)
 
     assert rendered_dfs, "dataframe nao renderizado"
-    tbl = rendered_dfs[0]
+    # F1-A: o set primario nao contem Consumo; o frame COMPLETO e o ultimo
+    # (renderizado dentro do expander de colunas detalhadas).
+    tbl = rendered_dfs[-1]
     assert "Consumo Conc. (est.)" in tbl.columns
     assert "Consumo Ultra (real)" in tbl.columns
     assert tbl["Consumo Conc. (est.)"].iloc[0] == "3.000"
@@ -4224,11 +4234,11 @@ def test_render_tab_selector_e_exportado():
     assert hasattr(streamlit_app, "render_tab_selector")
     assert callable(streamlit_app.render_tab_selector)
     assert streamlit_app.DASHBOARD_TAB_LABELS == [
-        "Visao Executiva",
-        "Mapa Territorial",
-        "Expansao de Dominio",
+        "Mapa",
+        "Executivo",
+        "Expansão de Domínio",
         "Carteira e Plano",
-        "Viabilidade do Imovel",
+        "Viabilidade",
     ]
 
 
@@ -4237,12 +4247,12 @@ def test_render_tab_selector_retorna_aba_ativa():
     import unittest.mock as mock
 
     with (
-        mock.patch("streamlit.segmented_control", return_value="Mapa Territorial"),
+        mock.patch("streamlit.segmented_control", return_value="Mapa"),
         mock.patch("streamlit.session_state", {}),
     ):
         result = streamlit_app.render_tab_selector()
 
-    assert result == "Mapa Territorial"
+    assert result == "Mapa"
 
 
 def test_render_tab_selector_fallback_quando_desmarcado():
@@ -4255,7 +4265,7 @@ def test_render_tab_selector_fallback_quando_desmarcado():
         mock.patch("streamlit.session_state", {}),
     ):
         result = streamlit_app.render_tab_selector()
-    assert result == "Visao Executiva"
+    assert result == "Mapa"
 
     # Com ultima aba registrada -> preserva a aba previa.
     with (
@@ -4288,7 +4298,7 @@ def test_main_renderiza_apenas_a_aba_ativa(tmp_path, monkeypatch):
         stack.enter_context(mock.patch.object(streamlit_app, "render_sidebar_filters",
                             return_value=([], [], [], [], [], [], False, False)))
         stack.enter_context(mock.patch.object(streamlit_app, "render_coord_search_sidebar", return_value=None))
-        stack.enter_context(mock.patch.object(streamlit_app, "render_tab_selector", return_value="Expansao de Dominio"))
+        stack.enter_context(mock.patch.object(streamlit_app, "render_tab_selector", return_value="Expansão de Domínio"))
         stack.enter_context(mock.patch.object(streamlit_app, "load_carteira", return_value=empty))
         stack.enter_context(mock.patch.object(streamlit_app, "load_plano", return_value=empty))
         stack.enter_context(mock.patch.object(streamlit_app, "load_plano_dominio", return_value=empty))
@@ -4866,7 +4876,7 @@ def test_viabilidade_ponto_parse_link_google_maps():
 
 def test_render_viabilidade_ponto_aba_no_dashboard_tab_labels():
     """A 5a aba property-first esta registrada em DASHBOARD_TAB_LABELS (Opcao B)."""
-    assert "Viabilidade do Imovel" in streamlit_app.DASHBOARD_TAB_LABELS
+    assert "Viabilidade" in streamlit_app.DASHBOARD_TAB_LABELS
     assert len(streamlit_app.DASHBOARD_TAB_LABELS) == 5
 
 

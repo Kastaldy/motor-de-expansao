@@ -505,12 +505,26 @@ def main() -> None:
         only_top_hex_intraurbano=only_top_hex_intraurbano,
     )
 
+    if filtered_df.empty:
+        render_empty_state()
+        return
+
+    # F2-H: o seletor de abas vem SEMPRE no topo do corpo principal, acima de
+    # qualquer conteudo condicional (caption de recorte e card de busca). Mantido
+    # APOS o guard `if filtered_df.empty: return` para nao computar summaries em
+    # frame vazio. Render lazy por aba (Bloco 5): so a aba ativa e construida por
+    # rerun; os summaries so sao calculados para as abas que os consomem.
+    active_tab = render_tab_selector(DASHBOARD_TAB_LABELS)
+
     st.caption(
         f"Recorte atual: {format_int(len(filtered_df))} hexagonos | "
         f"{format_int(filtered_df['uf'].nunique()) if not filtered_df.empty else '0'} UFs | "
         f"{format_int(filtered_df['nome_municipio'].nunique()) if not filtered_df.empty else '0'} cidades"
     )
 
+    # F2-I: info da coordenada pesquisada reposicionada para DEPOIS do seletor de
+    # abas, para nao ofuscar a navegacao. Funcionalidade identica (segue no corpo,
+    # acessivel em qualquer aba); so muda a posicao vertical.
     if search_pin is not None:
         render_hex_search_result(
             search_pin,
@@ -519,20 +533,20 @@ def main() -> None:
             pop_cut_lookup=pop_lookup,
         )
 
-    if filtered_df.empty:
-        render_empty_state()
-        return
+    # F2-A: dispatch em lockstep com DASHBOARD_TAB_LABELS (nova ordem/labels com
+    # acentos). Referenciar por indice evita divergencia byte-a-byte entre o label
+    # e a comparacao.
+    tab_mapa = DASHBOARD_TAB_LABELS[0]
+    tab_executivo = DASHBOARD_TAB_LABELS[1]
+    tab_dominio = DASHBOARD_TAB_LABELS[2]
+    tab_carteira = DASHBOARD_TAB_LABELS[3]
+    tab_viabilidade = DASHBOARD_TAB_LABELS[4]
 
-    # Render lazy por aba (Bloco 5): so a aba ativa e construida por rerun, em vez
-    # de `st.tabs` executar o corpo das 4 abas a cada interacao. Os summaries so sao
-    # calculados para as abas que os consomem.
-    active_tab = render_tab_selector(DASHBOARD_TAB_LABELS)
-
-    if active_tab in ("Visao Executiva", "Mapa Territorial"):
+    if active_tab in (tab_executivo, tab_mapa):
         city_summary = build_city_summary(filtered_df)
         uf_summary = build_uf_summary(filtered_df)
 
-    if active_tab == "Visao Executiva":
+    if active_tab == tab_executivo:
         render_visao_executiva(
             filtered_df,
             city_summary,
@@ -546,7 +560,7 @@ def main() -> None:
             search_pin=search_pin,
             search_hex_id=search_hex_id,
         )
-    elif active_tab == "Mapa Territorial":
+    elif active_tab == tab_mapa:
         render_mapa_territorial(
             filtered_df,
             selected_ufs=selected_ufs,
@@ -562,7 +576,7 @@ def main() -> None:
             censo_geo_loader=load_censo_geo_setores,
             censo_geo_dir=CENSO_GEO_DIR,
         )
-    elif active_tab == "Expansao de Dominio":
+    elif active_tab == tab_dominio:
         render_expansao_dominio(
             plano_dominio_df,
             selected_ufs=selected_ufs,
@@ -570,7 +584,7 @@ def main() -> None:
             competitors_df=competitors_df,
             ultra_df=ultra_df,
         )
-    elif active_tab == "Carteira e Plano":
+    elif active_tab == tab_carteira:
         render_carteira_e_plano(
             carteira_df,
             plano_df,
@@ -578,7 +592,7 @@ def main() -> None:
             selected_cities=selected_cities,
             pop_cut_lookup=pop_lookup,
         )
-    elif active_tab == "Viabilidade do Imovel":
+    elif active_tab == tab_viabilidade:
         render_viabilidade_ponto(
             search_pin,
             filtered_df,

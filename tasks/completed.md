@@ -5150,3 +5150,68 @@ suíte verde + `test_streamlit_app` cobrindo a nova tela; UX validada por Felipe
 **Guardrail:** §5 (visualização não recalcula M1) + preservar performance do dashboard (Blocos 4–6).
 
 **Risco:** médio (mexe no dashboard de produção; cuidado para não regredir perf nem o fluxo das 4 abas).
+
+---
+
+## BLK-UI-01 (RECORTE 2) — Densidade/clareza de dados + Navegação e fluxo
+
+Data: 2026-06-16
+Tipo: feature (UX/UI) | Criticidade: Alta (mexe na navegação/apresentação do dashboard de produção; READ-ONLY M1)
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA do plano] → Builder → QA
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-16.
+
+Resumo: 2º recorte focado do BLK-UI-01 amplo, pedido por Vinicius — duas frentes (densidade/clareza de
+dados e navegação/fluxo), tudo READ-ONLY sobre o M1 e offline. 11 itens entregues (`pages.py`,
+`streamlit_app.py`, `tests/integration/test_streamlit_app.py`):
+
+**Frente 1 — Densidade/clareza de dados**
+1. **F1-A** — tabelas Carteira (set primário 12 cols), Plano (11) e Domínio (11) reduzem o set EXIBIDO
+   por padrão; colunas secundárias movidas para `st.expander("Mostrar colunas detalhadas", expanded=False)`
+   que renderiza um 2º `st.dataframe` com o frame COMPLETO. ZERO coluna removida do DataFrame/parquet.
+2. **F1-B** — Análise Pontual: multihex 12→9 KPIs (2 linhas) e simples 11→8 KPIs; blocos de consumo
+   consolidados em 1 `st.caption` cada.
+3. **F1-C** — disclaimer de centroide H3 extraído para a constante única `_CENTROID_DISCLAIMER` (2 literais
+   levemente divergentes → 1 fonte).
+4. **F1-D** — SEM AÇÃO (evidência: `format_int` já é uniforme; `utils.py` não tocado).
+
+**Frente 2 — Navegação e fluxo**
+5. **F2-A** — REORDENAÇÃO + relabel das abas: `DASHBOARD_TAB_LABELS = ["Mapa","Executivo","Expansão de
+   Domínio","Carteira e Plano","Viabilidade"]`; **"Mapa" passa a ser a 1ª aba e o default**. Dispatch em
+   `main()` atualizado em lockstep (por índice, evitando mismatch de acento). 5 testes de label atualizados.
+6. **F2-B** — 3 estados-vazio (Carteira/Plano/Domínio) deixam de expor `python -m jobs...`; viram texto de
+   produto em 1 frase.
+7. **F2-C** — 5 filtros avançados (elegibilidade híbrida, cobertura censitária, qualidade da camada,
+   top_municipio, top_hex_intraurbano) movidos para `st.sidebar.expander("Filtros avancados", expanded=False)`.
+   INVARIANTE preservada: `render_uf_selectbox` segue o PRIMEIRO elemento da sidebar (gate carga lazy Bloco 4).
+8. **F2-D** — heading "#### Detalhamento territorial" antes dos expanders do Mapa Territorial.
+9. **F2-F** (ajuste novo de Vini) — botão de download do Relatório Pontual Censitário reposicionado para o
+   TOPO da seção do mapa; só a chamada de UI movida (`censo_report.py`/`censo_map.py` INTOCADOS).
+10. **F2-G** (ajuste novo) — sidebar sempre aberta no load/reload: `initial_sidebar_state="expanded"` mantido
+    + reforço por CSS puro offline (sem JS de auto-clique/rede).
+11. **F2-H/F2-I** (ajustes novos) — `render_tab_selector` movido para o TOPO do corpo de `main()`, acima da
+    caption "Recorte atual" e do card de coordenada pesquisada (`render_hex_search_result`), que passou para
+    DEPOIS do seletor — info da coordenada não ofusca mais o seletor. Seletor mantido após o guard
+    `if filtered_df.empty: return` (não dispara `build_city_summary`/`build_uf_summary` em frame vazio).
+    **F2-E** (hero header contextual com UF) deixado para RECORTE FUTURO.
+
+Gate humano: aprovado COM AJUSTES por Felipe/Vini em 2026-06-16 — F2-A com REORDENAÇÃO (Mapa 1ª) +
+relabel, F1-A com sets propostos (humano revisa colunas antes do merge), F2-C colapsar filtros, e os 4
+ajustes novos F2-F/G/H/I. Builder executou exatamente o plano consolidado.
+
+Arquivos alterados: streamlit_app.py, src/motor_expansao/dashboard/pages.py,
+tests/integration/test_streamlit_app.py.
+
+Validações (re-executadas pelo QA, evidência própria): suíte alvo `190 passed`; suíte full SERIAL
+`955 passed, 1 skipped, 0 failed` — neste tree os 3 débitos herdados (drift de CSV de concorrentes +
+gate DEC-006 do SAM) NÃO falharam (re-executados explicitamente: passam). ZERO regressão. `-n auto`
+reproduz INTERNALERROR de gateway (execnet × Python 3.14, bug de ambiente conhecido) → rodado serial e
+documentado, sem mascarar com `-p no:xdist`. ruff limpo; mypy Success; `import streamlit_app` ok.
+
+Guardrails verificados: READ-ONLY M1 (nenhum score/peso/artefato/parâmetro canônico §3 tocado — as únicas
+menções a `score_priorizacao` no diff são a constante `_CENTROID_DISCLAIMER` e um comentário); escopo só
+`pages.py`/`streamlit_app.py`/`test_streamlit_app.py`; `censo_*`/`components.py`/`constants.py`/`utils.py`/
+`config.py`/`pipelines/m1` INTOCADOS; Blocos 4/5/6 de performance preservados; offline mantido; paths
+pré-sujos não tocados nem commitados.
+
+Housekeeping: N/A neste ciclo — entrega é RECORTE do BLK-UI-01 amplo; o bloco amplo permanece ABERTO em
+`tasks/backlog.md` para as demais frentes (helper de move NÃO executado).
