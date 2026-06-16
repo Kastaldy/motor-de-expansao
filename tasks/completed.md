@@ -5213,5 +5213,63 @@ menções a `score_priorizacao` no diff são a constante `_CENTROID_DISCLAIMER` 
 `config.py`/`pipelines/m1` INTOCADOS; Blocos 4/5/6 de performance preservados; offline mantido; paths
 pré-sujos não tocados nem commitados.
 
-Housekeeping: N/A neste ciclo — entrega é RECORTE do BLK-UI-01 amplo; o bloco amplo permanece ABERTO em
-`tasks/backlog.md` para as demais frentes (helper de move NÃO executado).
+Housekeeping: o bloco amplo BLK-UI-01 foi FECHADO em 2026-06-16 por decisão do usuário (Vini), após este
+2º recorte + os 4 ajustes ad-hoc abaixo. Movido de `tasks/backlog.md` para cá via
+`scripts/housekeeping_move_block.py BLK-UI-01 --date 2026-06-16`. Frentes futuras (ex.: F2-E hero header
+contextual com UF) seguem no novo bloco BLK-UI-07 (placeholder no backlog).
+
+### Ajustes ad-hoc pós-recorte (validação ao vivo com Vini, 2026-06-16)
+
+Quatro refinamentos de UX aplicados durante a visualização ao vivo do dashboard (mesma branch
+`ciclo/BLK-UI-01`), todos READ-ONLY M1 e offline, validados por suíte alvo + ruff/mypy/import (sem o
+giro completo da esteira por serem ajustes visuais incrementais e dirigidos pelo usuário):
+1. **2º botão de PDF no topo** (`streamlit_app.py` `main()` + `pages.py` `render_pdf_download_topo` +
+   helper `gerar_payloads_relatorio_pontual_para_pin`): logo abaixo do seletor de abas, aparece SÓ quando
+   há coordenada pesquisada; gera o Relatório Pontual Censitário SOB DEMANDA (clique → `st.spinner`
+   "Gerando PDF..." → download), com bytes cacheados em `session_state` por coordenada. Reusa o mesmo
+   caminho do relatório da seção do mapa; `censo_*` INTOCADO.
+2. **"Modo de cor" do Mapa Territorial reduzido** (`pages.py`): o seletor expõe apenas
+   Censitário / Residual Fitness / Expansão de Domínio (m1 e híbrido ocultos via
+   `MAPA_COLOR_MODES_OCULTOS`; default visível = `censitario`). m1/híbrido permanecem em `COLOR_MODES`
+   e seguem suportados pelo builder do mapa — só saíram das opções do selectbox.
+3. **Largura padrão dos botões** (`pages.py` `inject_styles`): CSS dá 260px (max-width 100%) aos
+   `stDownloadButton` + o "Gerar PDF do ponto" (por `.st-key-`), para consistência visual. Não afeta os
+   botões inline pequenos do multi-hex nem o seletor de abas.
+4. **Seção "Hexágono pesquisado" compactada** (`pages.py` `render_hex_search_result`): de um card com
+   divider + heading + até 10 métricas em 3 linhas para um `st.expander(expanded=False)` colapsado (status
+   no rótulo), para não empurrar o conteúdo das abas e atrapalhar a troca de abas.
+
+Validações dos ajustes ad-hoc: suíte alvo `tests/integration/test_streamlit_app.py` `196 passed`
+(190 → +6 testes novos cobrindo os 4 ajustes); ruff "All checks passed!"; mypy "Success"; `import
+streamlit_app` ok. READ-ONLY M1 confirmado (sem toque em score/pesos/artefatos/`config.py`/`pipelines/m1`;
+`censo_*`/`components.py` intocados).
+
+---
+
+### BLK-UI-01 — Refatoração UX/UI da plataforma Motor de Expansão
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (mexe na navegação/estrutura do dashboard de produção; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** (estratégico — exige planejamento antes de executar) |
+| **Esteira** | Block Orchestrator → Planner (design detalhado) → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente (não iniciar sem plano aprovado) |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rtey2` — https://app.clickup.com/t/86e1rtey2 |
+
+**Contexto:** refatoração ampla de UX/UI das 4 abas (Visão Executiva, Mapa Territorial, Expansão de
+Domínio, Carteira e Plano). Por ser amplo e tocar muitos arquivos do dashboard, requer **plano detalhado +
+gate humano** antes de execução, e fatiamento em sub-blocos para não colidir com os bugs acima.
+
+**Objetivo:** melhorar usabilidade/consistência visual sem regressão de funcionalidade nem do M1.
+
+**Escopo permitido:** `dashboard/` (pages/components/utils/constants visuais), preservando carga lazy por UF,
+render lazy de abas e fonte de mapa enxuta (Blocos 4–6).
+
+**Fora de escopo:** score/pesos/artefatos M1; recolocar dependência de API ao vivo; quebrar os contratos de
+performance já entregues.
+
+**Critérios de aceite:** plano aprovado antes de codar; sem regressão funcional (suíte verde); UX validada
+por Felipe; READ-ONLY M1.
+
+**Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
