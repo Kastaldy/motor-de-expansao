@@ -2,47 +2,48 @@
 
 ## Bloco atual
 
-ID: BLK-UI-01
-Nome: Refatoração UX/UI da plataforma Motor de Expansão (2º recorte deste ciclo — Densidade/Navegação)
-Status: APROVADO (RECORTE) — bloco amplo BLK-UI-01 permanece ABERTO
+ID: BLK-UI-07
+Nome: Refinos de UX/UI do dashboard (2x2 do Relatório Censitário + filtros/busca na tela principal)
+Status: APROVADO COM RESSALVAS (recorte) — ciclo fechado; bloco amplo BLK-UI-07 permanece ABERTO
 Tipo: feature (UX/UI no dashboard de produção; READ-ONLY sobre M1)
 Criticidade: alta
-Esteira: Block Orchestrator → Planner → [aprovação humana — Felipe/Vini ✅ APROVADO COM AJUSTES] → Builder ✅ → QA ✅ APROVADO
-Skill atual: QA/Quality Analyzer (auditoria concluída; veredito APROVADO)
-Próxima Skill: Fechamento manual (registrar em completed.md como entrega de RECORTE, sem mover/fechar o bloco amplo)
+Esteira: Block Orchestrator → Planner → [aprovação humana ✅ D1–D4] → Builder ✅ → QA ✅ APROVADO COM RESSALVAS
+Skill atual: Fechamento (commit por path na branch ciclo/BLK-UI-07 + PR para main)
+Próxima Skill: Merge (passo humano)
 
-## Veredito do QA (2026-06-16 10:03:34)
-APROVADO. Suíte FULL serial 955 passed / 1 skipped / 0 failed (xdist `-n auto` indisponível por bug
-de ambiente Py3.14 — INTERNALERROR execnet, NÃO mascarado com `-p no:xdist`). Alvo 190 passed; ruff
-"All checks passed!"; mypy "Success: no issues found"; import ok. Os 3 débitos herdados re-executados
-e VERDES neste tree (resultado melhor que a tolerância "só esses 3"). Escopo respeitado (só
-`pages.py`/`streamlit_app.py`/`test_streamlit_app.py`); READ-ONLY M1 confirmado; `censo_*`/`components`/
-`constants`/`utils`/`config.py`/`pipelines/m1` INTOCADOS; parâmetros canônicos §3 intactos. Detalhe em
-`context/handoff.md` e snapshot `context/handoff/20260616-100334-qa.md`. Housekeeping: N/A (recorte —
-bloco amplo permanece aberto, sem move/close).
+## Veredito do QA (2026-06-16, Opus 4.8)
+APROVADO COM RESSALVAS. Validações re-executadas sem bypass: import ok; ruff All checks passed; mypy Success (2 arquivos);
+alvo test_streamlit_app.py 199 passed; suíte full 963 passed / 1 skipped / 1 flaky pré-existente
+(test_classico_template_recente_inalterado — passa isolado e após os testes alterados; censo_report.py intocado →
+NÃO é regressão deste ciclo; follow-up BLK-FIX-14 criado). Escopo respeitado (só pages.py/streamlit_app.py/
+test_streamlit_app.py); READ-ONLY M1 confirmado. Housekeeping: N/A (recorte — bloco amplo permanece aberto, sem move/close).
+Detalhe em context/handoff.md e snapshot context/handoff/20260616-161446-qa.md. Sucessor placeholder BLK-UI-08 criado.
 
-## GATE APROVADO COM AJUSTES (Felipe/Vini, 2026-06-16)
-As 3 decisões de produto (F1-A sets, F2-A labels, F2-C expander) foram aprovadas, MAIS:
-- **F2-A REVISADO — REORDER das abas:** nova ordem/labels `["Mapa", "Executivo", "Expansão de Domínio", "Carteira e Plano", "Viabilidade"]` (Mapa = 1ª aba/padrão ao carregar). Muda ordem de `DASHBOARD_TAB_LABELS`, default do `render_tab_selector` e o dispatch em `main()` (lockstep). Acentos UTF-8.
-- **F2-F (NOVO):** mover o botão de download do relatório pontual censitário para o TOPO da seção do mapa (só reposicionar a chamada de UI em `render_relatorio_pontual_censitario`; `censo_*` INTOCADO).
-- **F2-G (NOVO):** sidebar SEMPRE aberta no load/reload (manter `initial_sidebar_state="expanded"` + reforço CSS opcional offline; sem JS de auto-clique).
-- **F2-H (NOVO):** `render_tab_selector` SEMPRE no topo do corpo principal de `main()`, acima de qualquer conteúdo condicional.
-- **F2-I (NOVO):** info da coordenada pesquisada (`render_hex_search_result`) reposicionada para DEPOIS do seletor de abas (consistente com F2-H).
-- F1-D: SEM AÇÃO (evidência registrada). F2-E: FUTURO (fora deste ciclo).
-Plano consolidado em `context/handoff.md` (revisado pós-gate). Próximo passo: Builder.
+## Estado da auditoria READ-ONLY do QA (orquestrador, sem Bash)
+- F1 ✓ grade 2x2 (pages.py L2871-2892), ordem densidade/renda→score/concorrentes, captions byte-a-byte, use_container_width=True.
+- F2 ✓ via st.* (zero st.sidebar.* em pages.py); carga lazy por UF intacta (UF L458 antes de load_uf_slice L466; st.stop() L460-462; st.info sem "na barra lateral"); contrato de 8 retornos preservado; Município+Faixa em st.columns(2); avançados em st.expander no corpo.
+- F3 ✓ key="coord_search_input" preservada; trio search_pin L515-517 antes de render_tab_selector L524.
+- D2 ✓ initial_sidebar_state="collapsed" (streamlit_app.py L182).
+- Testes ✓ assert reescrito (col.image==4, st.image==0, ≥2 st.columns(2)) + 3 testes de namespace-corpo.
+- PENDENTE (precisa de Bash): suíte full, ruff, mypy, import smoke, git diff. Builder reportou 199 passed/0 em test_streamlit_app.py, import ok, ruff+mypy limpos.
 
-## Foco do 1º recorte (decisão do usuário Vinicius, 2026-06-16)
-Priorizar duas frentes no primeiro recorte deste bloco amplo:
-1. **Densidade/clareza de dados** — reduzir poluição visual de tabelas/KPIs/tooltips e melhorar leitura de números.
-2. **Navegação e fluxo** — seletor de abas, sidebar, ordem de seções, descoberta de funcionalidades.
-O Planner deve propor um fatiamento concreto dentro destas duas frentes e marcar o que fica para recortes futuros.
-O bloco amplo BLK-UI-01 PERMANECE ABERTO; este ciclo entrega apenas o 1º recorte.
+## Decisões de produto aprovadas (Vinicius, 2026-06-16)
+- D1 = Expander "Filtros avancados" no CORPO (st.expander, expanded=False).
+- D2 = initial_sidebar_state "collapsed" (streamlit_app.py).
+- D3 = UF (selectbox) sozinho no corpo antes do load_uf_slice; Município+Faixa numa st.columns(2) abaixo; busca por coordenada imediatamente acima de render_tab_selector.
+- D4 = use_container_width=True nas 4 imagens do grid 2x2.
 
 ## Objetivo
-Melhorar usabilidade/consistência visual das 4 abas (Visão Executiva, Mapa Territorial,
-Expansão de Domínio, Carteira e Plano) sem regressão funcional nem do M1, focando densidade/clareza
-de dados e navegação/fluxo. Preservar carga lazy por UF, render lazy de abas e fonte de mapa enxuta
-(Blocos 4–6). READ-ONLY M1; offline; sem dependência de API ao vivo.
+Aplicar três mudanças de UX/UI no dashboard de produção, sem regressão funcional nem do M1:
+1. As 4 imagens do Relatório Pontual Censitário em arranjo 2x2 (ocupar menos espaço vertical).
+2. Filtros UF / município / faixa de oportunidade: remover do menu lateral e integrar na tela principal.
+3. Busca por coordenada: remover do menu lateral e aplicar como barra de pesquisa na tela principal,
+   próxima ao seletor de abas.
+
+## Escopo citado pelo usuário (Vinicius, 2026-06-16)
+- 4 imagens do Relatório Pontual Censitário organizadas em 2x2.
+- Seletores de UF, município e faixa de oportunidade saem do menu lateral → tela principal.
+- Busca sai do menu lateral → barra de pesquisa na tela principal, perto do seletor de tabs.
 
 ## Tiering de modelo (Passo 4) — Alta
 - Block Orchestrator: sonnet
@@ -51,13 +52,13 @@ de dados e navegação/fluxo. Preservar carga lazy por UF, render lazy de abas e
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-UI-01 (fast-forwarded para main c39ed17 no início deste ciclo)
+ciclo/BLK-UI-07 (criada a partir de main / HEAD db53cad)
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
 - data/outputs/setores_censitarios_2022_geo/_metadata.json
 - data/reports/relatorio_pontual_censitario_base_geo.md
 
-## Dívida operacional herdada (NÃO é regressão deste ciclo — ver QA do recorte anterior)
+## Dívida operacional herdada (NÃO é regressão deste ciclo)
 3 failures pré-existentes na suíte full, comprovados em tree limpo:
 - test_csvs_concorrentes_legiveis[csv_path1-223] e [csv_path2-472] — drift de snapshot de CSV real local.
 - test_parquet_final_respeita_guardrails_do_piloto — gate DEC-006 (regeneração de parquets paralelos é passo pós-merge).

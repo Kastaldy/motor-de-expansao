@@ -109,10 +109,6 @@ RESIDUAL_SORT_COLUMNS = [
     "rank_brasil",
 ]
 
-# BLK-FIX-10: preview menor que 100% da largura de conteudo
-_CENSUS_PREVIEW_WIDTH_PX = 720
-
-
 def _has_residual_metrics(df: pd.DataFrame) -> bool:
     return "oferta_efetiva_disponivel" in df.columns and df["oferta_efetiva_disponivel"].notna().any()
 
@@ -433,8 +429,12 @@ def render_uf_selectbox(uf_options: list[str]) -> str | None:
 
     A carga lazy por UF (Bloco 4) depende deste valor: o dataset so e lido apos a
     escolha da UF, evitando fundir o Brasil inteiro a frio.
+
+    BLK-UI-07 (F2): o seletor agora vive no CORPO principal (nao na sidebar). Segue
+    sendo a 1a chamada significativa de ``main()`` para gatilhar o ``st.stop()``
+    antes de ``load_uf_slice`` (carga lazy preservada).
     """
-    st.sidebar.markdown(
+    st.markdown(
         f"""
         <div style="
             border-left: 3px solid {COLORS["brand_alt"]};
@@ -456,8 +456,8 @@ def render_uf_selectbox(uf_options: list[str]) -> str | None:
         """,
         unsafe_allow_html=True,
     )
-    st.sidebar.caption("Refine o recorte executivo do M1 e da camada hibrida sem alterar o score oficial.")
-    return st.sidebar.selectbox(
+    st.caption("Refine o recorte executivo do M1 e da camada hibrida sem alterar o score oficial.")
+    return st.selectbox(
         "UF",
         options=uf_options,
         index=None,
@@ -514,27 +514,31 @@ def render_sidebar_filters(
 ) -> tuple[list[str], list[str], list[str], list[str], list[str], list[str], bool, bool]:
     # `df` ja chega como o slice da UF selecionada (carga lazy do Bloco 4); o
     # seletor de UF e renderizado antes, por `render_uf_selectbox`.
+    #
+    # BLK-UI-07 (F2): Municipio + Faixa agora vivem no CORPO (nao na sidebar),
+    # lado a lado numa `st.columns(2)`; o nome da funcao e o contrato de 8
+    # retornos sao preservados. UF segue resolvido antes (render_uf_selectbox).
     selected_ufs = [selected_uf] if selected_uf else []
 
     all_cities = _category_options(df["nome_municipio"], observed=True)
-    selected_cities = st.sidebar.multiselect(
+    faixas_presentes = [
+        faixa for faixa in FAIXA_ORDEM if faixa in set(_category_options(df["faixa_oportunidade"]))
+    ]
+    mcol1, mcol2 = st.columns(2)
+    selected_cities = mcol1.multiselect(
         "Municipio",
         options=all_cities,
         placeholder="Selecione municipios",
     )
-
-    faixas_presentes = [
-        faixa for faixa in FAIXA_ORDEM if faixa in set(_category_options(df["faixa_oportunidade"]))
-    ]
-    selected_faixas = st.sidebar.multiselect(
+    selected_faixas = mcol2.multiselect(
         "Faixa de oportunidade",
         options=faixas_presentes,
         placeholder="Selecione faixas",
     )
 
-    # F2-C: filtros avancados colapsados num expander (Municipio/Faixa ficam na
-    # primeira dobra; render_uf_selectbox segue como 1o elemento da sidebar).
-    with st.sidebar.expander("Filtros avancados", expanded=False):
+    # F2-C / BLK-UI-07 (D1): filtros avancados colapsados num expander NO CORPO
+    # (logo abaixo da linha Municipio/Faixa). O conteudo interno ja usa `st.*`.
+    with st.expander("Filtros avancados", expanded=False):
         st.markdown("### Camada Hibrida")
         st.caption("Esses filtros refinam M1 + Censitario + Hibrido no recorte visivel.")
         selected_hybrid_eligibility = st.multiselect(
@@ -580,11 +584,16 @@ def render_empty_state() -> None:
 
 
 def render_coord_search_sidebar() -> tuple[float, float] | None:
-    """Render coordinate search widget in sidebar. Returns ``(lat, lng)`` or ``None``."""
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### Busca por coordenada")
-    st.sidebar.caption("Localize um hexagono pela coordenada. Offline, sem API externa.")
-    raw = st.sidebar.text_input(
+    """Render coordinate search widget. Returns ``(lat, lng)`` or ``None``.
+
+    BLK-UI-07 (F3): o widget agora vive no CORPO principal (perto do seletor de
+    abas), nao mais na sidebar. O nome da funcao e a `key="coord_search_input"`
+    sao preservados (consumidos por testes e session_state).
+    """
+    st.markdown("---")
+    st.markdown("### Busca por coordenada")
+    st.caption("Localize um hexagono pela coordenada. Offline, sem API externa.")
+    raw = st.text_input(
         "Coordenada (lat, lng)",
         placeholder="-23.55, -46.63",
         key="coord_search_input",
@@ -593,7 +602,7 @@ def render_coord_search_sidebar() -> tuple[float, float] | None:
         return None
     result = parse_coordinate_input(raw)
     if result is None:
-        st.sidebar.error(
+        st.error(
             "Formato invalido ou fora dos limites do Brasil. "
             "Use: -23.55, -46.63  ou  -23,55; -46,63  ou  -23.55 -46.63"
         )
@@ -2856,25 +2865,30 @@ def render_relatorio_pontual_censitario(
         "renda e scores ponderados por populacao estimada, com fallback por area. "
         "Fundo de ruas: CartoDB Voyager (c) OpenStreetMap, (c) CARTO; cache local + fallback offline."
     )
-    st.image(
+    # BLK-UI-07 (F1): as 4 imagens em grade 2x2 (ocupam menos espaco vertical).
+    # Ordem preservada: linha1 = densidade/renda; linha2 = score/concorrentes.
+    # Cada imagem se ajusta a largura da coluna (~50% do corpo) via use_container_width.
+    row1_col1, row1_col2 = st.columns(2)
+    row1_col1.image(
         mapas["densidade"],
         caption="Densidade populacional (hab/km2) - faixas absolutas.",
-        width=_CENSUS_PREVIEW_WIDTH_PX,
+        use_container_width=True,
     )
-    st.image(
+    row1_col2.image(
         mapas["renda"],
         caption="Renda per capita (R$/pessoa) - faixas absolutas.",
-        width=_CENSUS_PREVIEW_WIDTH_PX,
+        use_container_width=True,
     )
-    st.image(
+    row2_col1, row2_col2 = st.columns(2)
+    row2_col1.image(
         mapas["score"],
         caption="Score censitario (0-100) - faixas de cor com legenda.",
-        width=_CENSUS_PREVIEW_WIDTH_PX,
+        use_container_width=True,
     )
-    st.image(
+    row2_col2.image(
         mapas["concorrentes"],
         caption="Concorrentes e Ultra (pins) sobre o basemap de ruas, sem mapa de calor.",
-        width=_CENSUS_PREVIEW_WIDTH_PX,
+        use_container_width=True,
     )
 
     st.markdown("##### Setores intersectados")

@@ -5273,3 +5273,42 @@ performance já entregues.
 por Felipe; READ-ONLY M1.
 
 **Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
+
+---
+
+## BLK-UI-07 (RECORTE) — 2x2 do Relatório Censitário + filtros/busca na tela principal
+
+Data: 2026-06-16
+Veredito QA: **APROVADO COM RESSALVAS** (Opus 4.8).
+Tipo: feature (UX/UI no dashboard de produção; READ-ONLY sobre M1). Criticidade: Alta.
+Esteira: Block Orchestrator (sonnet) → Planner (opus) → [gate humano: Vinicius aprovou D1–D4] → Builder (opus) → QA (opus 4.8).
+Branch: `ciclo/BLK-UI-07` (a partir de `main`/HEAD `db53cad`).
+
+**Nota de fechamento:** entrega de RECORTE — o bloco amplo **BLK-UI-07 permanece ABERTO** no backlog (frentes
+futuras herdadas: F2-E hero header por UF; limpeza do CSS legado F2-G da sidebar). Espelha o padrão do recorte
+BLK-UI-01. Housekeeping via helper = N/A (sem move/close). Sucessor placeholder **BLK-UI-08** criado.
+
+**O que foi entregue (3 frentes, decisões D1–D4 aprovadas por Vinicius):**
+- **F1** — As 4 imagens do Relatório Pontual Censitário em grade **2x2** (`pages.py` `render_relatorio_pontual_censitario`,
+  `st.columns(2)`×2; ordem densidade/renda → score/concorrentes preservada; captions byte-a-byte; `use_container_width=True`
+  [D4]). Constante `_CENSUS_PREVIEW_WIDTH_PX` removida (uso único). `censo_map.py`/`censo_report.py`/`censo_point.py`,
+  método de interseção e raio 1,5 km INTOCADOS.
+- **F2** — Seletores **UF / Município / Faixa de oportunidade** migrados de `st.sidebar.*` para o CORPO (`st.*`):
+  UF sozinho antes de `load_uf_slice` (carga lazy por UF preservada, `st.stop()` intacto, `st.info` sem "na barra lateral");
+  Município+Faixa numa `st.columns(2)` [D3]; filtros avançados num `st.expander` no corpo [D1]; contrato de 8 retornos de
+  `render_sidebar_filters` preservado; `initial_sidebar_state="collapsed"` [D2].
+- **F3** — Busca por coordenada migrada para o CORPO, imediatamente acima de `render_tab_selector` [D3];
+  `key="coord_search_input"` e o contrato (`search_pin`) preservados; `render_hex_search_result`/`render_relatorio_pontual_censitario` inalterados.
+
+**Arquivos alterados:** `src/motor_expansao/dashboard/pages.py`, `streamlit_app.py`, `tests/integration/test_streamlit_app.py`.
+
+**Validações (re-executadas pelo QA, sem bypass):** import ok; `ruff` All checks passed; `mypy` Success (2 arquivos);
+alvo `test_streamlit_app.py` **199 passed** (inclui assert do 2x2 reescrito p/ `col.image` agregado + 3 testes novos de
+namespace-corpo); suíte full **963 passed, 1 skipped, 1 flaky pré-existente**.
+
+**Ressalva (não-bloqueante):** `tests/unit/test_relatorio_pontual_censitario_export.py::test_classico_template_recente_inalterado`
+falha na suíte full serial mas passa isolado e passa logo após os testes alterados → poluição de estado de outro teste
+NÃO alterado (debt de isolamento PRÉ-EXISTENTE; `censo_report.py` intocado por este ciclo). Follow-up **BLK-FIX-14** criado.
+
+**Guardrails:** READ-ONLY M1 confirmado (score/pesos/artefatos/`config.py`/`pipelines/m1` intocados); carga lazy por UF,
+render lazy de abas e fonte de mapa enxuta preservados; offline; sem API ao vivo. DEC-001 (pesos 0.40/0.60) intacta.

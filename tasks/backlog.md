@@ -163,6 +163,72 @@ UX validada pelo usuário; READ-ONLY M1.
 
 ---
 
+### BLK-UI-08 — Refinos de UX/UI do dashboard (escopo a detalhar pelo usuário)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (provável — mexe no dashboard de produção; READ-ONLY sobre M1). A confirmar no Block Orchestrator conforme o escopo citado. |
+| **Prioridade** | A definir pelo usuário ao iniciar o ciclo. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA (ajustar para Baixa/Média se o escopo citado for trivial). |
+| **Status** | **Pendente — escopo a ser citado pelo usuário (Vini) ao iniciar o ciclo** (`/run-cycle BLK-UI-08`). |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | — (criar se necessário) |
+
+**Contexto:** novo bloco de melhorias de UX/UI do dashboard, sucessor do bloco BLK-UI-07. O conjunto exato de
+mudanças será **descrito pelo usuário no início do ciclo**; este bloco existe apenas como alvo do `/run-cycle`.
+Não iniciar execução sem o escopo citado e o plano aprovado no gate humano. Frentes futuras herdadas (ex.: F2-E
+hero header contextual com UF; limpeza do CSS legado F2-G da sidebar agora que o default é `collapsed`) cabem aqui.
+
+**Objetivo:** aplicar as mudanças de interface que o usuário citará, sem regressão funcional nem do M1.
+
+**Escopo permitido (provável):** `src/motor_expansao/dashboard/` (pages/components/utils/constants visuais) +
+`streamlit_app.py` + `tests/integration/test_streamlit_app.py`, preservando carga lazy por UF, render lazy de
+abas e fonte de mapa enxuta (Blocos 4–6). Ajustar conforme o escopo real citado.
+
+**Fora de escopo:** score/pesos/artefatos M1; dependência de API ao vivo; quebrar contratos de performance.
+
+**Critérios de aceite:** escopo citado e plano aprovado antes de codar; sem regressão (suíte verde);
+UX validada pelo usuário; READ-ONLY M1.
+
+**Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
+
+---
+
+### BLK-FIX-14 — Isolamento do teste flaky `test_classico_template_recente_inalterado`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (debt de isolamento de teste; READ-ONLY sobre M1; não afeta produção). |
+| **Prioridade** | Baixa (não bloqueia ciclos; surge só na suíte full serial). |
+| **Esteira** | Block Orchestrator → Builder → QA (Média se virar investigação ampla de isolamento da suíte). |
+| **Status** | Pendente — aberto pelo QA do BLK-UI-07 (2026-06-16). |
+| **Responsável sugerido** | Vini |
+
+**Contexto:** durante o gate do BLK-UI-07, a suíte full serial acusou
+`tests/unit/test_relatorio_pontual_censitario_export.py::test_classico_template_recente_inalterado` como
+**1 failed**. Investigação do QA provou que **NÃO é regressão do BLK-UI-07**: o teste passa isolado (1 passed),
+o arquivo inteiro passa (22 passed) e ele passa logo após os testes alterados (`test_streamlit_app.py` + o teste
+= 200 passed). O módulo que governa os bytes do PDF (`censo_report.py`) não foi tocado pelo ciclo. Logo, é
+**poluição de estado por OUTRO teste não alterado** (debt de isolamento pré-existente da suíte), surfada pela
+ordem de coleta. As 3 dívidas herdadas conhecidas têm comportamento ordem-dependente parecido, reforçando que a
+suíte tem fragilidade de isolamento geral.
+
+**Objetivo:** identificar o teste poluidor (bisseção por ordem de coleta, ex.: `pytest -p no:randomly` +
+`--cache-clear`, ou rodar pares progressivos até reproduzir) e corrigir o vazamento de estado global
+(provável registro/monkeypatch de fonte/template em `fpdf`/`censo_report` não revertido, ou cache de módulo).
+
+**Escopo permitido:** `tests/**` (fixtures/teardown/`conftest.py`); no máximo um ajuste de teardown/reset em
+helper de teste. **NÃO** alterar a lógica de produção de `censo_report.py` sem nova decisão.
+
+**Fora de escopo:** score/pesos/artefatos M1; mudar a geração de PDF; mascarar com `-p no:xdist` ou skip.
+
+**Critérios de aceite:** poluidor identificado e documentado; `python -m pytest -q` (full serial) verde de forma
+**reproduzível** (sem o failure); teste segue passando isolado; READ-ONLY M1.
+
+**Guardrail:** não mascarar flakiness; corrigir a causa (isolamento), não o sintoma.
+
+---
+
 - BLK-MAP-01 (concluído 2026-06-11) — ver tasks/completed.md
 
 
