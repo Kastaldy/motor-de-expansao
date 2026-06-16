@@ -127,31 +127,37 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
-### BLK-UI-01 — Refatoração UX/UI da plataforma Motor de Expansão
+- BLK-UI-01 (concluído 2026-06-16) — ver tasks/completed.md
+
+
+---
+
+### BLK-UI-07 — Refinos de UX/UI do dashboard (escopo a detalhar pelo usuário)
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Alta** (mexe na navegação/estrutura do dashboard de produção; READ-ONLY sobre M1) |
-| **Prioridade** | **Média** (estratégico — exige planejamento antes de executar) |
-| **Esteira** | Block Orchestrator → Planner (design detalhado) → `[REVISÃO HUMANA]` → Builder → QA |
-| **Status** | Pendente (não iniciar sem plano aprovado) |
+| **Criticidade** | **Alta** (provável — mexe no dashboard de produção; READ-ONLY sobre M1). A confirmar no Block Orchestrator conforme o escopo citado. |
+| **Prioridade** | A definir pelo usuário ao iniciar o ciclo. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA (ajustar para Baixa/Média se o escopo citado for trivial). |
+| **Status** | **Pendente — escopo a ser citado pelo usuário (Vini) ao iniciar o ciclo** (`/run-cycle BLK-UI-07`). |
 | **Responsável sugerido** | Vini |
-| **ClickUp** | `86e1rtey2` — https://app.clickup.com/t/86e1rtey2 |
+| **ClickUp** | — (criar se necessário) |
 
-**Contexto:** refatoração ampla de UX/UI das 4 abas (Visão Executiva, Mapa Territorial, Expansão de
-Domínio, Carteira e Plano). Por ser amplo e tocar muitos arquivos do dashboard, requer **plano detalhado +
-gate humano** antes de execução, e fatiamento em sub-blocos para não colidir com os bugs acima.
+**Contexto:** novo bloco de melhorias de UX/UI do dashboard, sucessor do bloco BLK-UI-01 (FECHADO em
+2026-06-16 após os recortes entregues). O conjunto exato de mudanças será **descrito pelo usuário no início
+do ciclo**; este bloco existe apenas como alvo do `/run-cycle`. Não iniciar execução sem o escopo citado e o
+plano aprovado no gate humano. Frentes futuras herdadas (ex.: F2-E hero header contextual com UF) cabem aqui.
 
-**Objetivo:** melhorar usabilidade/consistência visual sem regressão de funcionalidade nem do M1.
+**Objetivo:** aplicar as mudanças de interface que o usuário citará, sem regressão funcional nem do M1.
 
-**Escopo permitido:** `dashboard/` (pages/components/utils/constants visuais), preservando carga lazy por UF,
-render lazy de abas e fonte de mapa enxuta (Blocos 4–6).
+**Escopo permitido (provável):** `src/motor_expansao/dashboard/` (pages/components/utils/constants visuais) +
+`streamlit_app.py` + `tests/integration/test_streamlit_app.py`, preservando carga lazy por UF, render lazy de
+abas e fonte de mapa enxuta (Blocos 4–6). Ajustar conforme o escopo real citado.
 
-**Fora de escopo:** score/pesos/artefatos M1; recolocar dependência de API ao vivo; quebrar os contratos de
-performance já entregues.
+**Fora de escopo:** score/pesos/artefatos M1; dependência de API ao vivo; quebrar contratos de performance.
 
-**Critérios de aceite:** plano aprovado antes de codar; sem regressão funcional (suíte verde); UX validada
-por Felipe; READ-ONLY M1.
+**Critérios de aceite:** escopo citado e plano aprovado antes de codar; sem regressão (suíte verde);
+UX validada pelo usuário; READ-ONLY M1.
 
 **Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
 

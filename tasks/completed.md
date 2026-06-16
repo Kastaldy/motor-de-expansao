@@ -5150,3 +5150,126 @@ suíte verde + `test_streamlit_app` cobrindo a nova tela; UX validada por Felipe
 **Guardrail:** §5 (visualização não recalcula M1) + preservar performance do dashboard (Blocos 4–6).
 
 **Risco:** médio (mexe no dashboard de produção; cuidado para não regredir perf nem o fluxo das 4 abas).
+
+---
+
+## BLK-UI-01 (RECORTE 2) — Densidade/clareza de dados + Navegação e fluxo
+
+Data: 2026-06-16
+Tipo: feature (UX/UI) | Criticidade: Alta (mexe na navegação/apresentação do dashboard de produção; READ-ONLY M1)
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA do plano] → Builder → QA
+Veredito QA: APROVADO (Opus 4.8) em 2026-06-16.
+
+Resumo: 2º recorte focado do BLK-UI-01 amplo, pedido por Vinicius — duas frentes (densidade/clareza de
+dados e navegação/fluxo), tudo READ-ONLY sobre o M1 e offline. 11 itens entregues (`pages.py`,
+`streamlit_app.py`, `tests/integration/test_streamlit_app.py`):
+
+**Frente 1 — Densidade/clareza de dados**
+1. **F1-A** — tabelas Carteira (set primário 12 cols), Plano (11) e Domínio (11) reduzem o set EXIBIDO
+   por padrão; colunas secundárias movidas para `st.expander("Mostrar colunas detalhadas", expanded=False)`
+   que renderiza um 2º `st.dataframe` com o frame COMPLETO. ZERO coluna removida do DataFrame/parquet.
+2. **F1-B** — Análise Pontual: multihex 12→9 KPIs (2 linhas) e simples 11→8 KPIs; blocos de consumo
+   consolidados em 1 `st.caption` cada.
+3. **F1-C** — disclaimer de centroide H3 extraído para a constante única `_CENTROID_DISCLAIMER` (2 literais
+   levemente divergentes → 1 fonte).
+4. **F1-D** — SEM AÇÃO (evidência: `format_int` já é uniforme; `utils.py` não tocado).
+
+**Frente 2 — Navegação e fluxo**
+5. **F2-A** — REORDENAÇÃO + relabel das abas: `DASHBOARD_TAB_LABELS = ["Mapa","Executivo","Expansão de
+   Domínio","Carteira e Plano","Viabilidade"]`; **"Mapa" passa a ser a 1ª aba e o default**. Dispatch em
+   `main()` atualizado em lockstep (por índice, evitando mismatch de acento). 5 testes de label atualizados.
+6. **F2-B** — 3 estados-vazio (Carteira/Plano/Domínio) deixam de expor `python -m jobs...`; viram texto de
+   produto em 1 frase.
+7. **F2-C** — 5 filtros avançados (elegibilidade híbrida, cobertura censitária, qualidade da camada,
+   top_municipio, top_hex_intraurbano) movidos para `st.sidebar.expander("Filtros avancados", expanded=False)`.
+   INVARIANTE preservada: `render_uf_selectbox` segue o PRIMEIRO elemento da sidebar (gate carga lazy Bloco 4).
+8. **F2-D** — heading "#### Detalhamento territorial" antes dos expanders do Mapa Territorial.
+9. **F2-F** (ajuste novo de Vini) — botão de download do Relatório Pontual Censitário reposicionado para o
+   TOPO da seção do mapa; só a chamada de UI movida (`censo_report.py`/`censo_map.py` INTOCADOS).
+10. **F2-G** (ajuste novo) — sidebar sempre aberta no load/reload: `initial_sidebar_state="expanded"` mantido
+    + reforço por CSS puro offline (sem JS de auto-clique/rede).
+11. **F2-H/F2-I** (ajustes novos) — `render_tab_selector` movido para o TOPO do corpo de `main()`, acima da
+    caption "Recorte atual" e do card de coordenada pesquisada (`render_hex_search_result`), que passou para
+    DEPOIS do seletor — info da coordenada não ofusca mais o seletor. Seletor mantido após o guard
+    `if filtered_df.empty: return` (não dispara `build_city_summary`/`build_uf_summary` em frame vazio).
+    **F2-E** (hero header contextual com UF) deixado para RECORTE FUTURO.
+
+Gate humano: aprovado COM AJUSTES por Felipe/Vini em 2026-06-16 — F2-A com REORDENAÇÃO (Mapa 1ª) +
+relabel, F1-A com sets propostos (humano revisa colunas antes do merge), F2-C colapsar filtros, e os 4
+ajustes novos F2-F/G/H/I. Builder executou exatamente o plano consolidado.
+
+Arquivos alterados: streamlit_app.py, src/motor_expansao/dashboard/pages.py,
+tests/integration/test_streamlit_app.py.
+
+Validações (re-executadas pelo QA, evidência própria): suíte alvo `190 passed`; suíte full SERIAL
+`955 passed, 1 skipped, 0 failed` — neste tree os 3 débitos herdados (drift de CSV de concorrentes +
+gate DEC-006 do SAM) NÃO falharam (re-executados explicitamente: passam). ZERO regressão. `-n auto`
+reproduz INTERNALERROR de gateway (execnet × Python 3.14, bug de ambiente conhecido) → rodado serial e
+documentado, sem mascarar com `-p no:xdist`. ruff limpo; mypy Success; `import streamlit_app` ok.
+
+Guardrails verificados: READ-ONLY M1 (nenhum score/peso/artefato/parâmetro canônico §3 tocado — as únicas
+menções a `score_priorizacao` no diff são a constante `_CENTROID_DISCLAIMER` e um comentário); escopo só
+`pages.py`/`streamlit_app.py`/`test_streamlit_app.py`; `censo_*`/`components.py`/`constants.py`/`utils.py`/
+`config.py`/`pipelines/m1` INTOCADOS; Blocos 4/5/6 de performance preservados; offline mantido; paths
+pré-sujos não tocados nem commitados.
+
+Housekeeping: o bloco amplo BLK-UI-01 foi FECHADO em 2026-06-16 por decisão do usuário (Vini), após este
+2º recorte + os 4 ajustes ad-hoc abaixo. Movido de `tasks/backlog.md` para cá via
+`scripts/housekeeping_move_block.py BLK-UI-01 --date 2026-06-16`. Frentes futuras (ex.: F2-E hero header
+contextual com UF) seguem no novo bloco BLK-UI-07 (placeholder no backlog).
+
+### Ajustes ad-hoc pós-recorte (validação ao vivo com Vini, 2026-06-16)
+
+Quatro refinamentos de UX aplicados durante a visualização ao vivo do dashboard (mesma branch
+`ciclo/BLK-UI-01`), todos READ-ONLY M1 e offline, validados por suíte alvo + ruff/mypy/import (sem o
+giro completo da esteira por serem ajustes visuais incrementais e dirigidos pelo usuário):
+1. **2º botão de PDF no topo** (`streamlit_app.py` `main()` + `pages.py` `render_pdf_download_topo` +
+   helper `gerar_payloads_relatorio_pontual_para_pin`): logo abaixo do seletor de abas, aparece SÓ quando
+   há coordenada pesquisada; gera o Relatório Pontual Censitário SOB DEMANDA (clique → `st.spinner`
+   "Gerando PDF..." → download), com bytes cacheados em `session_state` por coordenada. Reusa o mesmo
+   caminho do relatório da seção do mapa; `censo_*` INTOCADO.
+2. **"Modo de cor" do Mapa Territorial reduzido** (`pages.py`): o seletor expõe apenas
+   Censitário / Residual Fitness / Expansão de Domínio (m1 e híbrido ocultos via
+   `MAPA_COLOR_MODES_OCULTOS`; default visível = `censitario`). m1/híbrido permanecem em `COLOR_MODES`
+   e seguem suportados pelo builder do mapa — só saíram das opções do selectbox.
+3. **Largura padrão dos botões** (`pages.py` `inject_styles`): CSS dá 260px (max-width 100%) aos
+   `stDownloadButton` + o "Gerar PDF do ponto" (por `.st-key-`), para consistência visual. Não afeta os
+   botões inline pequenos do multi-hex nem o seletor de abas.
+4. **Seção "Hexágono pesquisado" compactada** (`pages.py` `render_hex_search_result`): de um card com
+   divider + heading + até 10 métricas em 3 linhas para um `st.expander(expanded=False)` colapsado (status
+   no rótulo), para não empurrar o conteúdo das abas e atrapalhar a troca de abas.
+
+Validações dos ajustes ad-hoc: suíte alvo `tests/integration/test_streamlit_app.py` `196 passed`
+(190 → +6 testes novos cobrindo os 4 ajustes); ruff "All checks passed!"; mypy "Success"; `import
+streamlit_app` ok. READ-ONLY M1 confirmado (sem toque em score/pesos/artefatos/`config.py`/`pipelines/m1`;
+`censo_*`/`components.py` intocados).
+
+---
+
+### BLK-UI-01 — Refatoração UX/UI da plataforma Motor de Expansão
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (mexe na navegação/estrutura do dashboard de produção; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** (estratégico — exige planejamento antes de executar) |
+| **Esteira** | Block Orchestrator → Planner (design detalhado) → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente (não iniciar sem plano aprovado) |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1rtey2` — https://app.clickup.com/t/86e1rtey2 |
+
+**Contexto:** refatoração ampla de UX/UI das 4 abas (Visão Executiva, Mapa Territorial, Expansão de
+Domínio, Carteira e Plano). Por ser amplo e tocar muitos arquivos do dashboard, requer **plano detalhado +
+gate humano** antes de execução, e fatiamento em sub-blocos para não colidir com os bugs acima.
+
+**Objetivo:** melhorar usabilidade/consistência visual sem regressão de funcionalidade nem do M1.
+
+**Escopo permitido:** `dashboard/` (pages/components/utils/constants visuais), preservando carga lazy por UF,
+render lazy de abas e fonte de mapa enxuta (Blocos 4–6).
+
+**Fora de escopo:** score/pesos/artefatos M1; recolocar dependência de API ao vivo; quebrar os contratos de
+performance já entregues.
+
+**Critérios de aceite:** plano aprovado antes de codar; sem regressão funcional (suíte verde); UX validada
+por Felipe; READ-ONLY M1.
+
+**Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.

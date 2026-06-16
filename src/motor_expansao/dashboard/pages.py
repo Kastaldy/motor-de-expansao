@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 import streamlit as st
@@ -15,7 +15,10 @@ from motor_expansao.dashboard.censo_point import (
     RAIO_CENSITARIO_DEFAULT_KM,
     analisar_ponto_censitario_setores,
 )
-from motor_expansao.dashboard.censo_report import render_downloads_relatorio_censitario
+from motor_expansao.dashboard.censo_report import (
+    gerar_payloads_download_relatorio_censitario,
+    render_downloads_relatorio_censitario,
+)
 from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
 from motor_expansao.dashboard.components import (
     _build_competitor_cluster_layer,
@@ -68,7 +71,6 @@ from motor_expansao.dashboard.components import (
     style_ranking_table,
 )
 from motor_expansao.dashboard.constants import (
-    COLOR_MODE_DEFAULT,
     COLOR_MODES,
     COLORS,
     COMPETITOR_CLUSTER_LIMIT,
@@ -93,6 +95,13 @@ from motor_expansao.dashboard.data import (
 from motor_expansao.dashboard.utils import format_int, format_pct, format_score
 from motor_expansao.dimensionamento.config import RAIO_CATCHMENT_KM, SIM_MENSALIDADE_BALCAO
 from motor_expansao.dimensionamento.viabilidade_ponto import analisar_viabilidade_ponto
+
+# UI: modos de cor ESCONDIDOS do seletor do Mapa Territorial Unificado (pedido de Vini 2026-06-16).
+# READ-ONLY/visual: m1 e hibrido permanecem em COLOR_MODES e seguem suportados pelo builder
+# (`build_unified_map_figure`/`render_mapa_pydeck_fragment`); apenas NAO sao oferecidos no selectbox.
+MAPA_COLOR_MODES_OCULTOS: tuple[str, ...] = ("m1", "hibrido")
+# Default visivel do seletor depois de ocultar m1/hibrido (cai para o 1o disponivel se ausente).
+MAPA_COLOR_MODE_DEFAULT_VISIVEL = "censitario"
 
 RESIDUAL_SORT_COLUMNS = [
     "oferta_efetiva_disponivel",
@@ -148,6 +157,12 @@ def inject_styles() -> None:
             .block-container {{
                 padding-top: 1.4rem;
                 padding-bottom: 2rem;
+            }}
+            /* F2-G: reforco offline (CSS puro, sem JS/rede) para a sidebar nascer
+               com largura visivel no load/reload, complementando
+               initial_sidebar_state="expanded". */
+            [data-testid="stSidebar"][aria-expanded="true"] {{
+                min-width: 20rem;
             }}
             [data-testid="stSidebar"] {{
                 background:
@@ -343,6 +358,15 @@ def inject_styles() -> None:
                 box-shadow: 0 0 8px rgba(25, 183, 255, 0.35) !important;
                 font-weight: 700 !important;
             }}
+            /* Largura padrao para os botoes de acao/download (consistencia visual,
+               pedido de Vini 2026-06-16): cobre os download_button (CSV/PDF do relatorio
+               e "Baixar PDF do ponto") e o "Gerar PDF do ponto" (por st-key). NAO afeta
+               os botoes inline pequenos do multihex (+/-/x) nem o seletor de abas. */
+            [data-testid="stDownloadButton"] button,
+            .st-key-btn_gerar_pdf_topo button {{
+                width: 260px;
+                max-width: 100%;
+            }}
             .stCaption {{
                 color: {COLORS["muted"]};
             }}
@@ -442,12 +466,19 @@ def render_uf_selectbox(uf_options: list[str]) -> str | None:
 
 
 DASHBOARD_TAB_LABELS = [
-    "Visao Executiva",
-    "Mapa Territorial",
-    "Expansao de Dominio",
+    "Mapa",
+    "Executivo",
+    "Expansão de Domínio",
     "Carteira e Plano",
-    "Viabilidade do Imovel",
+    "Viabilidade",
 ]
+
+# F1-C: disclaimer de centroide centralizado num unico lugar (substitui as 2
+# ocorrencias literais na Analise Pontual multihex/simples).
+_CENTROID_DISCLAIMER = (
+    "Leitura por centroide H3 res-7: precisao aproximada ~0.5-1 km. "
+    "Nao altera score_priorizacao, carteira, plano ou artefatos do M1."
+)
 
 
 def render_tab_selector(
@@ -501,36 +532,37 @@ def render_sidebar_filters(
         placeholder="Selecione faixas",
     )
 
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### Camada Hibrida")
-    st.sidebar.caption("Esses filtros refinam M1 + Censitario + Hibrido no recorte visivel.")
-    selected_hybrid_eligibility = st.sidebar.multiselect(
-        "Elegibilidade hibrida",
-        options=HYBRID_ELIGIBILITY_ORDER,
-        placeholder="Elegivel, nao elegivel ou sem camada",
-    )
-    selected_coverage_buckets = st.sidebar.multiselect(
-        "Cobertura censitaria",
-        options=COVERAGE_BUCKET_ORDER,
-        placeholder="Faixas de coverage da camada",
-    )
-    selected_join_quality = st.sidebar.multiselect(
-        "Qualidade da camada",
-        options=JOIN_QUALITY_ORDER,
-        placeholder="Classes A, B, C ou sem camada",
-    )
-    only_top_municipio = st.sidebar.checkbox(
-        "Apenas top_municipio",
-        value=False,
-    )
-    only_top_hex_intraurbano = st.sidebar.checkbox(
-        "Apenas top_hex_intraurbano",
-        value=False,
-    )
-
-    st.sidebar.caption(
-        "M1 = decisao municipal. Censitario = decisao intraurbana. Hibrido = uso combinado."
-    )
+    # F2-C: filtros avancados colapsados num expander (Municipio/Faixa ficam na
+    # primeira dobra; render_uf_selectbox segue como 1o elemento da sidebar).
+    with st.sidebar.expander("Filtros avancados", expanded=False):
+        st.markdown("### Camada Hibrida")
+        st.caption("Esses filtros refinam M1 + Censitario + Hibrido no recorte visivel.")
+        selected_hybrid_eligibility = st.multiselect(
+            "Elegibilidade hibrida",
+            options=HYBRID_ELIGIBILITY_ORDER,
+            placeholder="Elegivel, nao elegivel ou sem camada",
+        )
+        selected_coverage_buckets = st.multiselect(
+            "Cobertura censitaria",
+            options=COVERAGE_BUCKET_ORDER,
+            placeholder="Faixas de coverage da camada",
+        )
+        selected_join_quality = st.multiselect(
+            "Qualidade da camada",
+            options=JOIN_QUALITY_ORDER,
+            placeholder="Classes A, B, C ou sem camada",
+        )
+        only_top_municipio = st.checkbox(
+            "Apenas top_municipio",
+            value=False,
+        )
+        only_top_hex_intraurbano = st.checkbox(
+            "Apenas top_hex_intraurbano",
+            value=False,
+        )
+        st.caption(
+            "M1 = decisao municipal. Censitario = decisao intraurbana. Hibrido = uso combinado."
+        )
     return (
         selected_ufs,
         selected_cities,
@@ -582,20 +614,24 @@ def render_hex_search_result(
     lat, lng = search_coord
     result = lookup_hex_by_coord(lat, lng, full_df)
 
-    st.markdown("---")
-    st.markdown(f"#### Hexagono pesquisado para `{lat:.5f}, {lng:.5f}`")
+    # Compacto (pedido de Vini 2026-06-16): tudo num expander COLAPSADO para nao
+    # empurrar o conteudo das abas e atrapalhar a troca de abas. Funcionalidade
+    # identica (a info segue acessivel ao expandir). READ-ONLY sobre o M1.
+    coord_txt = f"{lat:.5f}, {lng:.5f}"
 
     if result is None:
-        st.warning("Nao foi possivel converter a coordenada para um hexagono H3.")
+        with st.expander(f"Hexagono pesquisado: {coord_txt}", expanded=False):
+            st.warning("Nao foi possivel converter a coordenada para um hexagono H3.")
         return
 
     hex_id = result["hex_id"]
 
     if result.get("_not_found"):
-        st.info(
-            f"Hexagono `{hex_id}` nao encontrado na base oficial M1. "
-            "Pode ser uma area rural, maritima ou fora dos municipios mapeados."
-        )
+        with st.expander(f"Hexagono pesquisado: {coord_txt} — fora da base M1", expanded=False):
+            st.info(
+                f"Hexagono `{hex_id}` nao encontrado na base oficial M1. "
+                "Pode ser uma area rural, maritima ou fora dos municipios mapeados."
+            )
         return
 
     # Check visibility in current filters
@@ -621,30 +657,33 @@ def render_hex_search_result(
     if not pop_flag:
         status_lines.append(f"Descartado pela regua de populacao minima ({format_int(POP_MIN_ACIONAVEL)} hab).")
 
-    if status_lines:
-        st.warning("  ".join(status_lines))
-    else:
-        st.success("Hexagono visivel no recorte atual.")
+    status_short = "fora do recorte" if status_lines else "visivel no recorte"
 
-    cols = st.columns(4)
-    cols[0].metric("Score M1", format_score(cast(float, result.get("score_priorizacao"))))
-    cols[1].metric("Rank Brasil", format_int(cast("int | float", result.get("rank_brasil"))) if result.get("rank_brasil") is not None else "-")
-    pop_val = result.get("pop_total_setor_2022") or result.get("pop_total") or result.get("populacao_proxy")
-    cols[2].metric("Populacao", format_int(pop_val) if pop_val is not None else "-")
-    renda_val = result.get("renda_per_capita_setor_2022_calibrada") or result.get("renda_per_capita")
-    cols[3].metric("Renda per capita", f"R$ {format_int(renda_val)}" if renda_val is not None else "-")
+    with st.expander(f"Hexagono pesquisado: {coord_txt} — {status_short}", expanded=False):
+        if status_lines:
+            st.warning("  ".join(status_lines))
+        else:
+            st.success("Hexagono visivel no recorte atual.")
 
-    detail_cols = st.columns(3)
-    detail_cols[0].metric("Hex ID", hex_id)
-    detail_cols[1].metric("UF / Cidade", f"{result.get('uf', '-')} / {result.get('nome_municipio') or result.get('cidade', '-')}")
-    detail_cols[2].metric("Fonte geografica", str(result.get("confianca_geografica", "municipal")))
+        cols = st.columns(4)
+        cols[0].metric("Score M1", format_score(cast(float, result.get("score_priorizacao"))))
+        cols[1].metric("Rank Brasil", format_int(cast("int | float", result.get("rank_brasil"))) if result.get("rank_brasil") is not None else "-")
+        pop_val = result.get("pop_total_setor_2022") or result.get("pop_total") or result.get("populacao_proxy")
+        cols[2].metric("Populacao", format_int(pop_val) if pop_val is not None else "-")
+        renda_val = result.get("renda_per_capita_setor_2022_calibrada") or result.get("renda_per_capita")
+        cols[3].metric("Renda per capita", f"R$ {format_int(renda_val)}" if renda_val is not None else "-")
 
-    score_censo = result.get("score_setor_2022_calibrado")
-    if score_censo is not None and not pd.isna(score_censo):
-        extra_cols = st.columns(3)
-        extra_cols[0].metric("Score Censitario", format_score(score_censo))
-        extra_cols[1].metric("Elegibilidade hibrida", str(result.get("elegibilidade_hibrida", "-")))
-        extra_cols[2].metric("Qualidade join", str(result.get("qualidade_join_uf", "-")))
+        detail_cols = st.columns(3)
+        detail_cols[0].metric("Hex ID", hex_id)
+        detail_cols[1].metric("UF / Cidade", f"{result.get('uf', '-')} / {result.get('nome_municipio') or result.get('cidade', '-')}")
+        detail_cols[2].metric("Fonte geografica", str(result.get("confianca_geografica", "municipal")))
+
+        score_censo = result.get("score_setor_2022_calibrado")
+        if score_censo is not None and not pd.isna(score_censo):
+            extra_cols = st.columns(3)
+            extra_cols[0].metric("Score Censitario", format_score(score_censo))
+            extra_cols[1].metric("Elegibilidade hibrida", str(result.get("elegibilidade_hibrida", "-")))
+            extra_cols[2].metric("Qualidade join", str(result.get("qualidade_join_uf", "-")))
 
 
 def render_visao_executiva(
@@ -1220,8 +1259,8 @@ def render_carteira_expansao(
 ) -> None:
     if carteira.empty:
         st.warning(
-            "Carteira acionavel nao disponivel. Execute "
-            "`python -m jobs.pipelines.gerar_carteira_acionavel` para gerar o arquivo."
+            "Carteira acionavel indisponivel neste recorte. Ela e gerada no ciclo de regeneracao "
+            "dos parquets — contate o time de dados se esta tela estiver vazia em producao."
         )
         return
 
@@ -1441,8 +1480,29 @@ def render_carteira_expansao(
             tbl[col] = tbl[col].map(lambda v: int(v) if pd.notna(v) else "-")
     tbl = _format_residual_display_columns(tbl)
 
+    # F1-A: tabela primaria reduzida (≤12 cols); secundarias num expander. Nenhuma
+    # coluna sai do DataFrame, apenas do set exibido por padrao.
+    primary_labels = [
+        "Rank Brasil",
+        "Rank UF",
+        "Score M1",
+        "Prioridade",
+        "UF",
+        "Municipio",
+        "Hex ID",
+        "Modo Hex",
+        "Score Censo",
+        "SAM Fitness",
+        "Oferta Residual",
+        "Motivo",
+    ]
+    primary_cols = [c for c in primary_labels if c in tbl.columns]
+
     height_tbl = min(620, 38 + 35 * min(len(tbl), 100))
-    st.dataframe(tbl.head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
+    st.dataframe(tbl[primary_cols].head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
+
+    with st.expander("Mostrar colunas detalhadas (residual, ranks, censo)", expanded=False):
+        st.dataframe(tbl.head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
 
     st.markdown("---")
     note_cols = st.columns(2)
@@ -1487,8 +1547,8 @@ def render_expansao_dominio(
 ) -> None:
     if plano.empty:
         st.warning(
-            "Plano de Expansao de Dominio nao disponivel. Execute "
-            "`python jobs/pipelines/gerar_plano_expansao_dominio.py` para gerar o arquivo."
+            "Plano de Expansao de Dominio indisponivel neste recorte. Ele e gerado no ciclo de "
+            "regeneracao dos parquets — contate o time de dados se esta tela estiver vazia em producao."
         )
         return
 
@@ -1608,8 +1668,28 @@ def render_expansao_dominio(
         if col in tbl.columns:
             tbl[col] = tbl[col].map(lambda v: int(v) if pd.notna(v) else "-")
 
+    # F1-A: tabela primaria reduzida (≤12 cols); secundarias num expander. Nenhuma
+    # coluna sai do DataFrame, apenas do set exibido por padrao.
+    primary_labels = [
+        "Rank Brasil",
+        "Rank UF",
+        "UF",
+        "Cidade",
+        "Hex Ancora",
+        "Ordem na Cidade",
+        "Score Residual",
+        "Residual Capturado",
+        "Oferta Disponivel",
+        "Tese",
+        "Dist. Ultra (m)",
+    ]
+    primary_cols = [c for c in primary_labels if c in tbl.columns]
+
     height_tbl = min(700, 38 + 35 * min(len(tbl), 100))
-    st.dataframe(tbl.head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
+    st.dataframe(tbl[primary_cols].head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
+
+    with st.expander("Mostrar colunas detalhadas (consumo, cluster, ranks)", expanded=False):
+        st.dataframe(tbl.head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
 
     st.markdown("---")
     note_cols = st.columns(2)
@@ -1645,8 +1725,8 @@ def render_expansao_dominio(
 def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame | None = None) -> None:
     if plano.empty:
         st.warning(
-            "Plano de curto prazo nao disponivel. Execute "
-            "`python -m jobs.pipelines.gerar_plano_expansao_curto_prazo` para gerar o arquivo."
+            "Plano de curto prazo indisponivel neste recorte. Ele e gerado no ciclo de regeneracao "
+            "dos parquets — contate o time de dados se esta tela estiver vazia em producao."
         )
         return
 
@@ -1803,8 +1883,28 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
             tbl[col] = tbl[col].map(lambda v: int(v) if pd.notna(v) else "-")
     tbl = _format_residual_display_columns(tbl)
 
+    # F1-A: tabela primaria reduzida (≤11 cols); secundarias num expander. Nenhuma
+    # coluna sai do DataFrame, apenas do set exibido por padrao.
+    primary_labels = [
+        "Rank Brasil",
+        "Rank UF",
+        "Nivel",
+        "UF",
+        "Municipio",
+        "Hex ID",
+        "Score Hibrido",
+        "Score M1",
+        "Score Censo",
+        "SAM Fitness",
+        "Oferta Residual",
+    ]
+    primary_cols = [c for c in primary_labels if c in tbl.columns]
+
     height_tbl = min(700, 38 + 35 * min(len(tbl), 100))
-    st.dataframe(tbl, width="stretch", hide_index=True, height=height_tbl)
+    st.dataframe(tbl[primary_cols], width="stretch", hide_index=True, height=height_tbl)
+
+    with st.expander("Mostrar colunas detalhadas (residual, consumo, censo, status)", expanded=False):
+        st.dataframe(tbl, width="stretch", hide_index=True, height=height_tbl)
 
     st.markdown("---")
     nc1, nc2 = st.columns(2)
@@ -1935,10 +2035,7 @@ def _render_analise_pontual_multihex(
             "Sem ponto ativo. KPIs do conjunto de hexes selecionados. "
             "Clique em um hex ou informe coordenada na sidebar para ativar referencia de raio."
         )
-    st.caption(
-        "Leitura por centroide H3 res-7: precisao aproximada ~0.5-1 km. "
-        "Nao altera score_priorizacao, carteira, plano ou artefatos do M1."
-    )
+    st.caption(_CENTROID_DISCLAIMER)
 
     def _fi(v: float | None) -> str:
         return format_int(int(v)) if v is not None else "-"
@@ -1946,6 +2043,7 @@ def _render_analise_pontual_multihex(
     def _fs(v: float | None) -> str:
         return f"{v:.1f}" if v is not None else "-"
 
+    # F1-B: 2 linhas, <=9 KPIs. Consumo instalado vira 1 caption consolidado abaixo.
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Hexes selecionados", str(n))
     k2.metric("Habitantes", _fi(agg["pop_total"]))
@@ -1953,16 +2051,16 @@ def _render_analise_pontual_multihex(
     k4.metric("Residual fitness", _fi(agg["residual_total"]))
 
     k5, k6, k7, k8, k9 = st.columns(5)
-    k5.metric("Consumo concorrentes", _fi(agg["consumo_concorrentes_total"]))
-    k6.metric("Consumo Ultra", _fi(agg["consumo_ultra_total"]))
-    k7.metric("Consumo total instalado", _fi(agg["consumo_total_instalado"]))
+    k5.metric("Score M1 med.", _fs(agg["score_m1_medio"]), delta=f"max {_fs(agg['score_m1_max'])}", delta_color="off")
+    k6.metric("Score Residual med.", _fs(agg["score_residual_medio"]), delta=f"max {_fs(agg['score_residual_max'])}", delta_color="off")
+    k7.metric("Score Dominio Hibrido med.", _fs(agg["score_dominio_hibrido_medio"]), delta=f"max {_fs(agg['score_dominio_hibrido_max'])}", delta_color="off")
     k8.metric("Presenca Ultra", "Sim" if agg["presenca_ultra"] else "Nao")
     k9.metric("Concorrentes (hexes)", _fi(agg["n_concorrentes_total"]))
 
-    k9, k10, k11 = st.columns(3)
-    k9.metric("Score M1 med.", _fs(agg["score_m1_medio"]), delta=f"max {_fs(agg['score_m1_max'])}", delta_color="off")
-    k10.metric("Score Residual med.", _fs(agg["score_residual_medio"]), delta=f"max {_fs(agg['score_residual_max'])}", delta_color="off")
-    k11.metric("Score Dominio Hibrido med.", _fs(agg["score_dominio_hibrido_medio"]), delta=f"max {_fs(agg['score_dominio_hibrido_max'])}", delta_color="off")
+    st.caption(
+        f"Consumo instalado no cenario — concorrentes: {_fi(agg['consumo_concorrentes_total'])} | "
+        f"Ultra: {_fi(agg['consumo_ultra_total'])} | total: {_fi(agg['consumo_total_instalado'])} alunos."
+    )
 
     multihex_map = build_multihex_analysis_map(
         multihex_ids,
@@ -2085,10 +2183,7 @@ def render_analise_pontual(
     st.caption(
         f"Ponto: `{lat:.5f}, {lng:.5f}` | Raio: {raio_km} km | Area aproximada: {area_km2} km²"
     )
-    st.caption(
-        "Leitura por centroide de hexagono H3 res-7: precisao aproximada ~0.5-1 km. "
-        "Nao altera score_priorizacao, carteira, plano ou artefatos do M1."
-    )
+    st.caption(_CENTROID_DISCLAIMER)
 
     coord_gmaps = f"{lat:.6f},{lng:.6f}"
     st.markdown(f"**Coordenada para Google Maps / GPS:** `{coord_gmaps}`")
@@ -2141,12 +2236,13 @@ def render_analise_pontual(
     consumo_conc = resultado.get("consumo_concorrentes_raio")
     consumo_ultra_val = resultado.get("consumo_ultra_raio")
     if consumo_conc is not None or consumo_ultra_val is not None:
-        ka, kb, kc = st.columns(3)
-        ka.metric("Consumo concorrentes", _fmt_int_none(consumo_conc))
-        kb.metric("Consumo Ultra", _fmt_int_none(consumo_ultra_val))
+        # F1-B: consumo instalado consolidado em 1 caption (substitui 3 st.metric).
         consumo_tot = (consumo_conc or 0.0) + (consumo_ultra_val or 0.0)
-        kc.metric("Consumo total instalado", format_int(int(consumo_tot)))
-        st.caption("Consumo fitness instalado: leitura de mercado (alunos estimados ocupando capacidade), nao score oficial.")
+        st.caption(
+            f"Consumo instalado no raio — concorrentes: {_fmt_int_none(consumo_conc)} | "
+            f"Ultra: {_fmt_int_none(consumo_ultra_val)} | total: {format_int(int(consumo_tot))} alunos. "
+            "Leitura de mercado (alunos estimados ocupando capacidade), nao score oficial."
+        )
 
     hexes_entorno = resultado["hexes_entorno"]
     pontual_map = build_analise_pontual_map(
@@ -2526,6 +2622,121 @@ def _render_setores_censitarios_table(setores: pd.DataFrame) -> None:
     )
 
 
+def gerar_payloads_relatorio_pontual_para_pin(
+    search_pin: tuple[float, float] | None,
+    df: pd.DataFrame,
+    *,
+    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
+    censo_geo_dir: Path | None = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
+) -> Any | None:
+    """Caminho pesado -> payloads de download (PDF/CSV) do Relatorio Pontual Censitario.
+
+    READ-ONLY sobre o M1 (reusa o mesmo metodo de intersecao/raio do dashboard). Retorna
+    `None` quando a coordenada nao resolve UF/municipio ou nao ha base setorial carregada.
+    Usado pelo 2o botao de download (topo, abaixo do seletor de abas).
+    """
+    if search_pin is None or censo_geo_loader is None:
+        return None
+    context = _resolve_censo_context(search_pin, df, censo_geo_dir=censo_geo_dir)
+    if context is None:
+        return None
+    lat, lng = search_pin
+    uf = context["uf"]
+    cod_municipio = context["cod_municipio"]
+    setores_df = censo_geo_loader(uf, cod_municipio)
+    if setores_df is None or setores_df.empty:
+        return None
+    result = analisar_ponto_censitario_setores(
+        lat, lng, setores_df, raio_km=raio_km,
+        competitors_df=competitors_df, ultra_df=ultra_df,
+    )
+    mapas = render_mapas_censitarios_combinados(
+        lat, lng, setores_df, raio_km=raio_km,
+        competitors_df=competitors_df, ultra_df=ultra_df, basemap=True,
+    )
+    residual: dict[str, float | None] = {
+        "score_oportunidade_residual": None,
+        "oferta_efetiva_disponivel": None,
+        "sam_fitness_potencial": None,
+        "oferta_consumida_mercado_estimada": None,
+    }
+    hex_row = lookup_hex_by_coord(lat, lng, df, h3_res=7)  # 7 = H3_RESOLUTION (M1)
+    if hex_row is not None and not hex_row.get("_not_found", False):
+        for campo in residual:
+            valor = hex_row.get(campo)
+            if valor is not None and not pd.isna(valor):
+                residual[campo] = float(valor)
+    return gerar_payloads_download_relatorio_censitario(
+        result,
+        mapas,
+        filename_prefix=f"relatorio_censitario_{uf}_{cod_municipio}_{lat:.5f}_{lng:.5f}".replace("-", "m").replace(".", "p"),
+        residual=residual,
+        ultra_dir=Path("data/ultra"),
+        template="classico",
+    )
+
+
+def render_pdf_download_topo(
+    search_pin: tuple[float, float] | None,
+    df: pd.DataFrame,
+    *,
+    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
+    censo_geo_dir: Path | None = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
+) -> None:
+    """2o botao de baixar o PDF do ponto, logo abaixo do seletor de abas.
+
+    So aparece quando ha coordenada pesquisada (`search_pin`); gera o PDF SOB DEMANDA
+    (clique no botao), com indicador de carregamento (`st.spinner`). Os bytes ficam em
+    `session_state` por coordenada para sobreviver ao rerun do download. READ-ONLY M1.
+    """
+    if search_pin is None:
+        return
+    lat, lng = search_pin
+    cache_key = f"pdf_topo_payload::{lat:.6f},{lng:.6f}"
+    gerar = st.button(
+        "Gerar PDF do relatorio do ponto",
+        key="btn_gerar_pdf_topo",
+        help="Gera o Relatorio Pontual Censitario (1,5 km) da coordenada pesquisada.",
+    )
+    if gerar:
+        with st.spinner("Gerando PDF..."):
+            payloads = gerar_payloads_relatorio_pontual_para_pin(
+                search_pin,
+                df,
+                censo_geo_loader=censo_geo_loader,
+                censo_geo_dir=censo_geo_dir,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
+                raio_km=raio_km,
+            )
+        if payloads is None:
+            st.session_state.pop(cache_key, None)
+            st.warning(
+                "Nao foi possivel gerar o PDF para esta coordenada. Verifique se ha base "
+                "setorial carregada para o municipio (coordenada urbana dentro do recorte)."
+            )
+            return
+        st.session_state[cache_key] = {
+            "pdf_bytes": payloads.pdf_bytes,
+            "pdf_filename": payloads.pdf_filename,
+        }
+    cached = st.session_state.get(cache_key)
+    if cached:
+        st.download_button(
+            "Baixar PDF do ponto",
+            data=cached["pdf_bytes"],
+            file_name=cached["pdf_filename"],
+            mime="application/pdf",
+            key="dl_pdf_topo",
+        )
+
+
 def render_relatorio_pontual_censitario(
     search_pin: tuple[float, float] | None,
     df: pd.DataFrame,
@@ -2597,6 +2808,33 @@ def render_relatorio_pontual_censitario(
             basemap=True,
         )
 
+    # Big Numbers do PDF: lookup READ-ONLY do hex H3 do ponto (residual fitness + consumo).
+    # Leitura pura do df ja em escopo; NAO recalcula M1/residual. Campo ausente/NaN -> None -> "n/d".
+    residual: dict[str, float | None] = {
+        "score_oportunidade_residual": None,
+        "oferta_efetiva_disponivel": None,
+        "sam_fitness_potencial": None,
+        "oferta_consumida_mercado_estimada": None,
+    }
+    hex_row = lookup_hex_by_coord(lat, lng, df, h3_res=7)  # 7 = H3_RESOLUTION (M1)
+    if hex_row is not None and not hex_row.get("_not_found", False):
+        for campo in residual:
+            valor = hex_row.get(campo)
+            if valor is not None and not pd.isna(valor):
+                residual[campo] = float(valor)
+
+    # F2-F: botao de download no TOPO da secao do relatorio (antes das 4 imagens).
+    # So a CHAMADA de UI foi reposicionada; censo_report.py/censo_map.py INTOCADOS.
+    render_downloads_relatorio_censitario(
+        st,
+        result,
+        mapas,
+        filename_prefix=f"relatorio_censitario_{uf}_{cod_municipio}_{lat:.5f}_{lng:.5f}".replace("-", "m").replace(".", "p"),
+        residual=residual,
+        ultra_dir=Path("data/ultra"),
+        template="classico",
+    )
+
     st.markdown(f"**Ponto analisado:** `{lat:.5f}, {lng:.5f}` | `{nome_municipio}/{uf}`")
     k1, k2, k3, k4 = st.columns(4)
     k1.metric("Setores", format_int(result["n_setores"]))
@@ -2641,31 +2879,6 @@ def render_relatorio_pontual_censitario(
 
     st.markdown("##### Setores intersectados")
     _render_setores_censitarios_table(result["setores_intersectados"])
-
-    # Big Numbers do PDF: lookup READ-ONLY do hex H3 do ponto (residual fitness + consumo).
-    # Leitura pura do df ja em escopo; NAO recalcula M1/residual. Campo ausente/NaN -> None -> "n/d".
-    residual: dict[str, float | None] = {
-        "score_oportunidade_residual": None,
-        "oferta_efetiva_disponivel": None,
-        "sam_fitness_potencial": None,
-        "oferta_consumida_mercado_estimada": None,
-    }
-    hex_row = lookup_hex_by_coord(lat, lng, df, h3_res=7)  # 7 = H3_RESOLUTION (M1)
-    if hex_row is not None and not hex_row.get("_not_found", False):
-        for campo in residual:
-            valor = hex_row.get(campo)
-            if valor is not None and not pd.isna(valor):
-                residual[campo] = float(valor)
-
-    render_downloads_relatorio_censitario(
-        st,
-        result,
-        mapas,
-        filename_prefix=f"relatorio_censitario_{uf}_{cod_municipio}_{lat:.5f}_{lng:.5f}".replace("-", "m").replace(".", "p"),
-        residual=residual,
-        ultra_dir=Path("data/ultra"),
-        template="classico",
-    )
 
 
 def _resolve_viab_ponto(
@@ -3050,13 +3263,20 @@ def render_mapa_territorial(
 
     with ctrl_col1:
         mode_labels = {mode_id: cfg["label"] for mode_id, cfg in COLOR_MODES.items()}
+        # Item Vini 2026-06-16: o seletor expoe apenas Censitario / Residual Fitness /
+        # Expansao de Dominio (m1 e hibrido ocultos via MAPA_COLOR_MODES_OCULTOS).
         available_modes = [
             mode_id for mode_id in COLOR_MODES
-            if mode_id == "dominio" or color_mode_available(df, mode_id)
+            if mode_id not in MAPA_COLOR_MODES_OCULTOS
+            and (mode_id == "dominio" or color_mode_available(df, mode_id))
         ]
         if not available_modes:
-            available_modes = [COLOR_MODE_DEFAULT]
-        default_idx = available_modes.index(COLOR_MODE_DEFAULT) if COLOR_MODE_DEFAULT in available_modes else 0
+            available_modes = [MAPA_COLOR_MODE_DEFAULT_VISIVEL]
+        default_idx = (
+            available_modes.index(MAPA_COLOR_MODE_DEFAULT_VISIVEL)
+            if MAPA_COLOR_MODE_DEFAULT_VISIVEL in available_modes
+            else 0
+        )
         selected_mode = st.selectbox(
             "Modo de cor",
             options=available_modes,
@@ -3213,6 +3433,7 @@ def render_mapa_territorial(
 
     if city_summary is not None:
         st.markdown("---")
+        st.markdown("#### Detalhamento territorial")
         with st.expander("Analise Territorial", expanded=False):
             render_analise_territorial(df, city_summary)
         with st.expander("Ranking de Priorizacao", expanded=False):
