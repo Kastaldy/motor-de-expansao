@@ -470,6 +470,83 @@ ponto, não a triagem regional. Após a escolha de Felipe, formalizar como **DEC
 
 ---
 
+### BLK-DIM-13 — Correção do split de ticket (balcão/agregador) no engine de viabilidade — superestimação de receita
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (corrige superestimação de ~33% na receita que alimenta a aba de produção; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-12** (aba existe) + estudo `data/reports/estudo_escala_alunos/` (§8) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, determinístico, sem VPS/deploy/segredos, sem PII, consome `data/staging`; toca `dimensionamento/` + wiring da aba (NÃO toca M1/score/pesos/artefatos); gate humano substituído pelo guard automático no loop (`scripts/loop_guard.py`). |
+
+**Contexto (achado da auditoria, estudo §8):** o motor de DRE (`simulador.viabilidade`) está CORRETO — já
+separa balcão (R$137) + agregadores (R$82 ≈ 60%) + personal. **O wiring está errado:**
+`analisar_viabilidade_ponto` passa `demanda_premissa` (que a aba pré-preenche com `faixa_alunos_p50` = alunos
+**TOTAIS**) como `alunos_maturidade` (balcão) a ticket cheio E o engine ainda soma **651 agregadores fixos** por
+cima → **double-count**. Impacto medido: exemplo p50=2.350 / 1.500 m² dá ~R$375k vs correto ~R$282k (**+33%**).
+
+**Objetivo:** dividir a demanda-premissa em **balcão (~69%) + agregadores (~31%)** com seus respectivos tickets,
+com agregadores **escalando junto da premissa** (não constante fixa). Eliminar o double-count.
+
+**Escopo permitido:** em `viabilidade_ponto.py` (e onde o wiring exigir), derivar `balcao = premissa ×
+share_balcao` e `agregadores = premissa × (1 − share_balcao)`; passar `alunos_agregadores` ao `viabilidade()`
+em vez do default fixo; `share_balcao` como parâmetro (default = composição Ultra observada, ~0,69; configurável).
+Ajustar o rótulo do input da aba para refletir que a premissa é de alunos TOTAIS (ou separar balcão/agregadores).
+Teste de regressão de valor (o exemplo passa a dar ~R$282k, não ~R$375k) + teste anti-double-count.
+
+**Fora de escopo (invioláveis):** M1/score/pesos/artefatos (DEC-001/008/009); alterar o DRE (`simulador.py` já
+correto); UX nova além do rótulo; deploy/VPS; geocoding ao vivo.
+
+**Critérios de aceite:** receita usa split balcão/agregador com 2 tickets; agregadores escala com a premissa;
+zero double-count; teste de regressão do valor; suíte verde + ruff/mypy; READ-ONLY M1.
+
+**Risco:** baixo (correção determinística pontual). **Bloqueante para subir o modelo de viabilidade a produção.**
+
+---
+
+### BLK-DIM-14 — Engine de risco (break-even + P(viável) + classe GO/ATENÇÃO/NÃO) + ranking DORMENTE
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (reorienta o produto de "faixa de alunos" para classificação de risco; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-13** (receita correta — senão o P(viável) herda a superestimação) + estudo `data/reports/estudo_escala_alunos/` (§6/§7) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — engine determinístico + testes, READ-ONLY M1, sem VPS/deploy/segredos, sem PII, consome `data/staging`; **ranking INATIVO** (sem render, sem ingestão ao vivo). Toca `dimensionamento/` (e, no máximo, o headline spec-locked da aba). A ATIVAÇÃO futura (busca imobiliária web) é epic separada e **NÃO loop-safe**. |
+
+**Contexto (estudo §6/§7):** a faixa p10–p90 é **calibrada** (cobertura 76–78%, PIT 0,50) e o **P(viável)
+discrimina** (AUC 0,60 Ultra / 0,68 Eng). O produto deve deixar de cravar alunos e passar a entregar **risco**:
+break-even determinístico + probabilidade honesta de cobrir a conta + classe.
+
+**Objetivo:** funções **puras** em `src/motor_expansao/dimensionamento/`:
+- `p_viavel(m2, break_even, base_calibracao_df, formato)` = fração dos comparáveis (× m², condicionada ao
+  **formato/marca**) que superam o break-even. **Anti-geográfico:** sem lat/lng.
+- `classe_risco(p)` → `GO`/`ATENCAO`/`NAO` (cutoffs 0,70 / 0,40).
+- `ranking_oportunidades(lista_imoveis)` → ordena por P(viável)/margem de segurança. **CONSTRUÍDA MAS INATIVA**
+  (feature flag desligada; **sem exposição na UI**; servirá a fase futura de **busca imobiliária ativa na web
+  com APIs/scrapers** — epic separada).
+
+**UI:** opcional e **spec-locked** — pode expor o **headline de risco** (classe + P(viável) + break-even) na aba
+de viabilidade SE seguir exatamente o desenho do estudo §7; a **troca visual completa da aba** (UX aberta) fica
+para um bloco de UI gated (precedente BLK-DIM-12). **O ranking NUNCA é renderizado neste bloco.**
+
+**Fora de escopo (invioláveis):** ativar/renderizar o ranking; busca imobiliária web / APIs / scrapers (epic
+futura, NÃO loop-safe — ingestão ao vivo); M1/score/pesos/artefatos; deploy/VPS; prever demanda pela geografia
+(DEC-009).
+
+**Critérios de aceite:** `p_viavel`/`classe_risco`/`ranking_oportunidades` puras + testes (calibração/monotonicidade;
+**anti-geográfico** = sem lat/lng; teste provando que o ranking NÃO é chamado pelo render); P(viável) consome a
+receita já corrigida (BLK-DIM-13); suíte verde + ruff/mypy; READ-ONLY M1.
+
+**Risco:** médio (lógica nova) — mitigado por manter o ranking **dormente** (zero superfície de produção).
+
+> **Sucessor (NÃO loop-safe, futuro):** **BLK-DIM-15 — Busca imobiliária ativa (web APIs/scrapers) + ativação do
+> ranking.** Ingestão ao vivo de imóveis (portais/APIs), normalização, e ativação do `ranking_oportunidades` sobre
+> o pool buscado. Manual/gated (viola loop-safe: ingestão ao vivo + fontes externas). Só abrir após BLK-DIM-14.
+
+---
+
 ### BLK-DIM-09 — Crosswalk manual das unidades não-casadas (CONDICIONAL — só se o match do 07 deixar lacuna material)
 
 | Campo | Valor |
