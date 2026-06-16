@@ -47,4 +47,9 @@ regexes = [
     '''renda_per_capita_setor_2022''',
     '''test_fase_a_censo2022\.py''',
     '''dev-token''',
+    # BLK-DIM-12: chaves de widget Streamlit `key="viab_ponto_*"` da aba
+    # "Viabilidade do Imovel" (ex.: 'viab_ponto_usar_p50', entropia 3.68). A regra
+    # generic-api-key marca o valor por entropia, mas e um identificador de widget,
+    # nao segredo. Cobre pages.py e as copias nos handoffs. Robusto a drift de linha.
+    '''viab_ponto_''',
 ]
