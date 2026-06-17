@@ -4409,11 +4409,24 @@ def test_render_relatorio_pontual_censitario_com_coordenada_gera_mapa_e_download
     }
 
     mapas_stub = {"densidade": b"PNG", "renda": b"PNG", "score": b"PNG", "concorrentes": b"PNG"}
+    # BLK-UI-07 (F1): as 4 imagens viram `col.image(...)` num arranjo 2x2; o mock de
+    # `streamlit.image` NAO dispara mais. Capturamos os MagicMocks de coluna e somamos
+    # `col.image.call_count` de todas as colunas criadas.
+    created_cols = []
+    col_args = []
+
+    def _capture_columns(n_or_list, **kw):
+        n = n_or_list if isinstance(n_or_list, int) else len(n_or_list)
+        col_args.append(n_or_list)
+        cols = [mock.MagicMock() for _ in range(n)]
+        created_cols.extend(cols)
+        return cols
+
     with (
         mock.patch("motor_expansao.dashboard.pages.analisar_ponto_censitario_setores", return_value=result) as analyze_mock,
         mock.patch("motor_expansao.dashboard.pages.render_mapas_censitarios_combinados", return_value=mapas_stub) as map_mock,
         mock.patch("motor_expansao.dashboard.pages.render_downloads_relatorio_censitario") as download_mock,
-        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.columns", side_effect=_capture_columns),
         mock.patch("streamlit.markdown"),
         mock.patch("streamlit.caption"),
         mock.patch("streamlit.image") as image_mock,
@@ -4428,8 +4441,104 @@ def test_render_relatorio_pontual_censitario_com_coordenada_gera_mapa_e_download
     analyze_mock.assert_called_once()
     map_mock.assert_called_once()
     download_mock.assert_called_once()
-    # 4 camadas combinadas exibidas juntas (densidade/renda/score/concorrentes; sem dropdown).
-    assert image_mock.call_count == 4
+    # 4 camadas combinadas exibidas juntas (densidade/renda/score/concorrentes; sem dropdown),
+    # agora via col.image nas colunas do grid 2x2 — st.image direto nao e usado.
+    assert image_mock.call_count == 0
+    total_images = sum(c.image.call_count for c in created_cols)
+    assert total_images == 4
+    # Arranjo 2x2: ao menos 2 chamadas st.columns(2) (uma por linha do grid de imagens),
+    # distintas das st.columns(4) dos KPIs.
+    assert col_args.count(2) >= 2
+
+
+# --- BLK-UI-07: filtros e busca migram da sidebar para o CORPO ---
+
+def test_render_uf_selectbox_no_corpo_nao_usa_sidebar():
+    """render_uf_selectbox usa st.selectbox (corpo), nao st.sidebar.selectbox."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard import pages
+
+    with (
+        mock.patch("streamlit.selectbox", return_value="SP") as selectbox_mock,
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.sidebar") as sidebar_mock,
+    ):
+        out = pages.render_uf_selectbox(["SP", "RJ"])
+
+    assert out == "SP"
+    selectbox_mock.assert_called_once()
+    assert selectbox_mock.call_args.args[0] == "UF"
+    assert selectbox_mock.call_args.kwargs.get("index") is None
+    # nada via sidebar
+    assert not sidebar_mock.selectbox.called
+    assert not sidebar_mock.markdown.called
+    assert not sidebar_mock.caption.called
+
+
+def test_render_sidebar_filters_municipio_e_faixa_no_corpo():
+    """Municipio e Faixa via st.multiselect (corpo, em colunas), nao st.sidebar.*; retorno de 8 valores."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard import pages
+
+    df = pd.DataFrame({
+        "nome_municipio": pd.Categorical(["SAO PAULO", "CAMPINAS"]),
+        "faixa_oportunidade": pd.Categorical(["alta", "media"]),
+    })
+
+    created_cols = []
+
+    def _capture_columns(n_or_list, **kw):
+        n = n_or_list if isinstance(n_or_list, int) else len(n_or_list)
+        cols = [mock.MagicMock() for _ in range(n)]
+        for c in cols:
+            c.multiselect.return_value = []
+        created_cols.extend(cols)
+        return cols
+
+    with (
+        mock.patch("streamlit.columns", side_effect=_capture_columns),
+        mock.patch("streamlit.multiselect", return_value=[]),
+        mock.patch("streamlit.expander"),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.checkbox", return_value=False),
+        mock.patch("streamlit.sidebar") as sidebar_mock,
+    ):
+        out = pages.render_sidebar_filters(df, "SP")
+
+    # contrato de 8 retornos preservado
+    assert isinstance(out, tuple)
+    assert len(out) == 8
+    # Municipio + Faixa via col.multiselect (corpo, em st.columns(2)); sem sidebar
+    total_col_multiselect = sum(c.multiselect.call_count for c in created_cols)
+    assert total_col_multiselect >= 2
+    assert not sidebar_mock.multiselect.called
+    assert not sidebar_mock.expander.called
+
+
+def test_render_coord_search_no_corpo_preserva_key():
+    """render_coord_search_sidebar usa st.text_input (corpo) com key preservada, nao st.sidebar.*."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard import pages
+
+    with (
+        mock.patch("streamlit.text_input", return_value="") as text_input_mock,
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.sidebar") as sidebar_mock,
+    ):
+        out = pages.render_coord_search_sidebar()
+
+    assert out is None
+    text_input_mock.assert_called_once()
+    assert text_input_mock.call_args.kwargs.get("key") == "coord_search_input"
+    assert not sidebar_mock.text_input.called
+    assert not sidebar_mock.markdown.called
+    assert not sidebar_mock.caption.called
 
 
 # --- Item Vini 2026-06-16: seletor de Modo de cor expoe so 3 modos (m1/hibrido ocultos) ---

@@ -179,7 +179,7 @@ from motor_expansao.dashboard.utils import (  # noqa: F401
 st.set_page_config(
     page_title="Ultra Academia | Mapa Territorial",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
 
 DATASET_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "hexagonos_brasil_dashboard.parquet"
@@ -458,7 +458,7 @@ def main() -> None:
     selected_uf = render_uf_selectbox(uf_catalog)
 
     if not selected_uf:
-        st.info("Selecione uma UF na barra lateral para iniciar a analise do dashboard.")
+        st.info("Selecione uma UF para iniciar a analise do dashboard.")
         st.stop()
 
     try:
@@ -490,10 +490,6 @@ def main() -> None:
         only_top_hex_intraurbano,
     ) = render_sidebar_filters(df, selected_uf)
 
-    search_pin = render_coord_search_sidebar()
-    _search_result = lookup_hex_by_coord(*search_pin, df) if search_pin is not None else None
-    search_hex_id = _search_result["hex_id"] if _search_result is not None else None
-
     filtered_df = apply_global_filters(
         df,
         selected_ufs=selected_ufs,
@@ -509,6 +505,16 @@ def main() -> None:
     if filtered_df.empty:
         render_empty_state()
         return
+
+    # BLK-UI-07 (F3): a busca por coordenada agora aparece NO CORPO, imediatamente
+    # acima do seletor de abas ("proxima ao seletor de abas"). O trio
+    # search_pin/_search_result/search_hex_id e resolvido aqui (df ja carregado em
+    # load_uf_slice; search_pin nao depende dos filtros), garantindo que todos os
+    # consumidores (render_pdf_download_topo, render_hex_search_result, dispatches
+    # de aba) recebam search_pin/search_hex_id ja definidos.
+    search_pin = render_coord_search_sidebar()
+    _search_result = lookup_hex_by_coord(*search_pin, df) if search_pin is not None else None
+    search_hex_id = _search_result["hex_id"] if _search_result is not None else None
 
     # F2-H: o seletor de abas vem SEMPRE no topo do corpo principal, acima de
     # qualquer conteudo condicional (caption de recorte e card de busca). Mantido
