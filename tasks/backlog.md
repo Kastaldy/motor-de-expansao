@@ -613,6 +613,55 @@ receita já corrigida (BLK-DIM-13); suíte verde + ruff/mypy; READ-ONLY M1.
 
 ---
 
+### BLK-DIM-16 — Correção de cálculo: break-even (margem 0%) e limite do aluguel-teto
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (corrige números financeiros mostrados na aba de viabilidade em produção; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
+| **Depende de** | **BLK-DIM-13** (split de ticket — break-even/teto consomem o DRE; corrigir DEPOIS que a receita estiver certa, e os dois blocos tocam `viabilidade_ponto.py`) |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — engine determinístico + testes, READ-ONLY M1, sem VPS/deploy/segredos, sem PII, consome `data/staging`; toca só `dimensionamento/{viabilidade_ponto,simulador}.py` + testes (NÃO toca M1/score/pesos/artefatos); gate humano substituído pelo guard automático no loop (`scripts/loop_guard.py`). |
+
+**Contexto (achados ancorados no código):** dois erros pequenos de cálculo nos números de break-even e
+aluguel-teto da aba de viabilidade:
+
+1. **Break-even não é break-even (margem 0%):** em `viabilidade_ponto.analisar_viabilidade_ponto` (L313-314),
+   `alunos_breakeven` é calculado via `alunos_minimos_viaveis(..., margem_alvo=margem_alvo)` com
+   `margem_alvo` = **0,10** (default da assinatura, L263). Resultado: o "break-even" exibido é, na verdade,
+   **"alunos para atingir 10% de margem EBITDA"** — sempre **maior** que o break-even real (margem 0). O próprio
+   `alunos_minimos_viaveis` tem default `margem_alvo=0.0` (simulador.py L374), mas o chamador o sobrescreve.
+2. **Limite superior do aluguel-teto ignora receita de agregadores + personal:** em `simulador.aluguel_teto`
+   (L360), o teto do `brentq` é `alug_sup = alunos_maturidade * ticket_medio * 2.0` — só considera a receita de
+   **balcão**. Quando agregadores (R$82 × alunos) + personal (R$5k) são materiais, o aluguel-teto verdadeiro pode
+   ficar **acima** desse bound e a função retorna o próprio `alug_sup` (ramo defensivo L364-365) → **teto
+   subestimado/capado**.
+
+**Objetivo:** (a) computar `alunos_breakeven` como o **break-even real (margem EBITDA = 0%)**, mantendo, se útil,
+um campo separado `alunos_para_margem_alvo` (margem-alvo) — sem perder informação; (b) corrigir o `alug_sup` do
+`aluguel_teto` para um bound baseado na **receita TOTAL** (balcão + agregadores + personal), eliminando o cap.
+
+> **Pré-decisão de produto (para ser loop-safe, sem gate): break-even = margem EBITDA 0%** (definição canônica).
+> Felipe: se quiser outra definição (ex.: break-even = ponto de payback/caixa, ou manter no margem-alvo),
+> ajuste esta linha ANTES de rodar — é o que o loop vai implementar.
+
+**Escopo permitido:** `src/motor_expansao/dimensionamento/viabilidade_ponto.py` (chamada do break-even +,
+se aprovado, novo campo `alunos_para_margem_alvo` no `ViabilidadePontoResult`) e
+`src/motor_expansao/dimensionamento/simulador.py` (`aluguel_teto`: `alug_sup` pela receita total) + testes em
+`tests/unit/dimensionamento/`. Atualizar a aba só se um rótulo/campo novo exigir (mínimo, spec-locked).
+
+**Fora de escopo (invioláveis):** M1/score/pesos/artefatos (DEC-001/008/009); alterar a fórmula do DRE
+(`viabilidade()` em si está correta); o split de ticket (é o BLK-DIM-13); UX aberta; deploy/VPS.
+
+**Critérios de aceite:** `alunos_breakeven` = alunos p/ margem EBITDA **0%** (teste: margem no break-even ≈ 0;
+break-even < alunos para 10% de margem); `aluguel_teto` não capa quando agregador+personal são materiais (teste
+de unidade com receita total >> balcão prova teto > `2×balcão`); P(viável) e a aba consomem o break-even
+corrigido; suíte verde + ruff/mypy; READ-ONLY M1.
+
+**Risco:** baixo (correções determinísticas pontuais, cobertas por teste).
+
+---
+
 ### BLK-DIM-09 — Crosswalk manual das unidades não-casadas (CONDICIONAL — só se o match do 07 deixar lacuna material)
 
 | Campo | Valor |
