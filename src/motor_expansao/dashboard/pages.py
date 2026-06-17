@@ -3015,7 +3015,7 @@ def render_viabilidade_ponto(
         else:
             demanda_default = float(st.session_state.get("viab_ponto_demanda", 800.0) or 800.0)
         demanda_premissa = st.number_input(
-            "Demanda assumida (alunos balcao na maturidade)",
+            "Demanda assumida (alunos TOTAIS na maturidade)",
             min_value=0.0,
             value=demanda_default,
             step=10.0,
@@ -3024,6 +3024,10 @@ def render_viabilidade_ponto(
         st.caption(
             "A demanda e uma premissa SUA. A ferramenta calcula a viabilidade do numero que "
             "voce assumir — ela NAO preve demanda pela localizacao."
+        )
+        st.caption(
+            "Total = balcao (~69%, ticket cheio) + agregadores (~31%, ticket reduzido). "
+            "O split e aplicado automaticamente; o DRE roda com os dois tickets."
         )
 
         with st.expander("Parametros avancados", expanded=False):

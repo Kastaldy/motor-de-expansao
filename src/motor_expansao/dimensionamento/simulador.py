@@ -357,7 +357,12 @@ def aluguel_teto(
         return 0.0  # nem com aluguel zero atinge a margem
 
     # Limite superior: aluguel absurdamente alto (maior que qualquer receita possivel)
-    alug_sup = alunos_maturidade * ticket_medio * 2.0
+    # Usa receita TOTAL (balcao + agregadores + personal) para nao capar quando eles sao materiais
+    _alunos_agr = float(kwargs.get("alunos_agregadores", SIM_ALUNOS_AGREGADORES_MATURIDADE))  # type: ignore[arg-type]
+    _ticket_agr = float(kwargs.get("ticket_agregador", SIM_TICKET_AGREGADOR))  # type: ignore[arg-type]
+    _personal = float(kwargs.get("personal_mes", SIM_PERSONAL_MES_RECEITA))  # type: ignore[arg-type]
+    _receita_total = alunos_maturidade * ticket_medio + _alunos_agr * _ticket_agr + _personal
+    alug_sup = _receita_total * 2.0
     if alug_sup <= 0:
         return 0.0
 
