@@ -5312,3 +5312,49 @@ NÃO alterado (debt de isolamento PRÉ-EXISTENTE; `censo_report.py` intocado por
 
 **Guardrails:** READ-ONLY M1 confirmado (score/pesos/artefatos/`config.py`/`pipelines/m1` intocados); carga lazy por UF,
 render lazy de abas e fonte de mapa enxuta preservados; offline; sem API ao vivo. DEC-001 (pesos 0.40/0.60) intacta.
+
+---
+
+### BLK-FIX-14 — Isolamento do teste flaky `test_classico_template_recente_inalterado`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (debt de isolamento de teste; READ-ONLY sobre M1; não afeta produção). |
+| **Prioridade** | Baixa (não bloqueia ciclos; surge só na suíte full serial). |
+| **Esteira** | Block Orchestrator → Builder → QA (Média se virar investigação ampla de isolamento da suíte). |
+| **Status** | Pendente — aberto pelo QA do BLK-UI-07 (2026-06-16). |
+| **Responsável sugerido** | Vini |
+
+**Contexto:** durante o gate do BLK-UI-07, a suíte full serial acusou
+`tests/unit/test_relatorio_pontual_censitario_export.py::test_classico_template_recente_inalterado` como
+**1 failed**. Investigação do QA provou que **NÃO é regressão do BLK-UI-07**: o teste passa isolado (1 passed),
+o arquivo inteiro passa (22 passed) e ele passa logo após os testes alterados (`test_streamlit_app.py` + o teste
+= 200 passed). O módulo que governa os bytes do PDF (`censo_report.py`) não foi tocado pelo ciclo. Logo, é
+**poluição de estado por OUTRO teste não alterado** (debt de isolamento pré-existente da suíte), surfada pela
+ordem de coleta. As 3 dívidas herdadas conhecidas têm comportamento ordem-dependente parecido, reforçando que a
+suíte tem fragilidade de isolamento geral.
+
+**Objetivo:** identificar o teste poluidor (bisseção por ordem de coleta, ex.: `pytest -p no:randomly` +
+`--cache-clear`, ou rodar pares progressivos até reproduzir) e corrigir o vazamento de estado global
+(provável registro/monkeypatch de fonte/template em `fpdf`/`censo_report` não revertido, ou cache de módulo).
+
+**Escopo permitido:** `tests/**` (fixtures/teardown/`conftest.py`); no máximo um ajuste de teardown/reset em
+helper de teste. **NÃO** alterar a lógica de produção de `censo_report.py` sem nova decisão.
+
+**Fora de escopo:** score/pesos/artefatos M1; mudar a geração de PDF; mascarar com `-p no:xdist` ou skip.
+
+**Critérios de aceite:** poluidor identificado e documentado; `python -m pytest -q` (full serial) verde de forma
+**reproduzível** (sem o failure); teste segue passando isolado; READ-ONLY M1.
+
+**Guardrail:** não mascarar flakiness; corrigir a causa (isolamento), não o sintoma.
+
+**RESULTADO DO CICLO (2026-06-17) — Veredito QA: APROVADO (Opus 4.8).**
+Esteira: Block Orchestrator (sonnet) → Planner (sonnet) → Builder (opus, override +1) → QA (opus 4.8). Sem gate humano (Média). Branch `ciclo/BLK-FIX-14` (a partir de `main`/`e7b0f94`).
+- **Causa real (refutou a hipótese inicial de estado global):** NÃO era poluição de `_ICON_CACHE`/`_ATLAS_CACHE` de `competitors.py`. O flaky vem do **timestamp `/CreationDate` (e `/ID` derivado) que o fpdf2 carimba a partir de `datetime.now()` por instância**. As duas gerações de PDF do teste (`antes`/`depois`) diferem em exatos **61 bytes** (dígito de segundos + hash do `/ID`) quando a geração cruza a fronteira de 1 segundo — o que acontece sob a suíte full (mais lenta), não isolado.
+- **Correção (só em tests/):** novo `tests/conftest.py` com fixture **autouse scope=function** que congela o símbolo `datetime` dentro de `fpdf.fpdf`/`fpdf.output` (auto-revertido). Torna a comparação byte-a-byte determinística sem mascarar — SEM `skip`/`xfail`/`-p no:xdist`/reordenar. Produção (`censo_report.py`/`competitors.py`/`config.py`/`pipelines/m1`) **byte-intacta**.
+- **Prova (QA, evidência própria):** FALHA com `--noconftest`, PASSA com o conftest, inclusive pelo caminho real `gerar_pdf_relatorio_pontual_censitario`. Suíte **full serial 964 passed / 1 skipped / 0 failed em 2 runs independentes**; alvo isolado verde; `ruff`/`mypy`/import ok. READ-ONLY M1 confirmado.
+- **Arquivo alterado:** `tests/conftest.py` (novo).
+
+---
+
+- BLK-MAP-01 (concluído 2026-06-11) — ver tasks/completed.md
