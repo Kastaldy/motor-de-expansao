@@ -536,129 +536,18 @@ ponto, não a triagem regional. Após a escolha de Felipe, formalizar como **DEC
 
 ---
 
-### BLK-DIM-13 — Correção do split de ticket (balcão/agregador) no engine de viabilidade — superestimação de receita
+- BLK-DIM-13 (concluído 2026-06-17) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (corrige superestimação de ~33% na receita que alimenta a aba de produção; READ-ONLY sobre M1) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
-| **Depende de** | **BLK-DIM-12** (aba existe) + estudo `data/reports/estudo_escala_alunos/` (§8) |
-| **Status** | Pendente |
-| **Autonomia** | **loop-safe** — READ-ONLY M1, determinístico, sem VPS/deploy/segredos, sem PII, consome `data/staging`; toca `dimensionamento/` + wiring da aba (NÃO toca M1/score/pesos/artefatos); gate humano substituído pelo guard automático no loop (`scripts/loop_guard.py`). |
-
-**Contexto (achado da auditoria, estudo §8):** o motor de DRE (`simulador.viabilidade`) está CORRETO — já
-separa balcão (R$137) + agregadores (R$82 ≈ 60%) + personal. **O wiring está errado:**
-`analisar_viabilidade_ponto` passa `demanda_premissa` (que a aba pré-preenche com `faixa_alunos_p50` = alunos
-**TOTAIS**) como `alunos_maturidade` (balcão) a ticket cheio E o engine ainda soma **651 agregadores fixos** por
-cima → **double-count**. Impacto medido: exemplo p50=2.350 / 1.500 m² dá ~R$375k vs correto ~R$282k (**+33%**).
-
-**Objetivo:** dividir a demanda-premissa em **balcão (~69%) + agregadores (~31%)** com seus respectivos tickets,
-com agregadores **escalando junto da premissa** (não constante fixa). Eliminar o double-count.
-
-**Escopo permitido:** em `viabilidade_ponto.py` (e onde o wiring exigir), derivar `balcao = premissa ×
-share_balcao` e `agregadores = premissa × (1 − share_balcao)`; passar `alunos_agregadores` ao `viabilidade()`
-em vez do default fixo; `share_balcao` como parâmetro (default = composição Ultra observada, ~0,69; configurável).
-Ajustar o rótulo do input da aba para refletir que a premissa é de alunos TOTAIS (ou separar balcão/agregadores).
-Teste de regressão de valor (o exemplo passa a dar ~R$282k, não ~R$375k) + teste anti-double-count.
-
-**Fora de escopo (invioláveis):** M1/score/pesos/artefatos (DEC-001/008/009); alterar o DRE (`simulador.py` já
-correto); UX nova além do rótulo; deploy/VPS; geocoding ao vivo.
-
-**Critérios de aceite:** receita usa split balcão/agregador com 2 tickets; agregadores escala com a premissa;
-zero double-count; teste de regressão do valor; suíte verde + ruff/mypy; READ-ONLY M1.
-
-**Risco:** baixo (correção determinística pontual). **Bloqueante para subir o modelo de viabilidade a produção.**
 
 ---
 
-### BLK-DIM-14 — Engine de risco (break-even + P(viável) + classe GO/ATENÇÃO/NÃO) + ranking DORMENTE
+- BLK-DIM-14 (concluído 2026-06-17) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (reorienta o produto de "faixa de alunos" para classificação de risco; READ-ONLY sobre M1) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
-| **Depende de** | **BLK-DIM-13** (receita correta — senão o P(viável) herda a superestimação) + estudo `data/reports/estudo_escala_alunos/` (§6/§7) |
-| **Status** | Pendente |
-| **Autonomia** | **loop-safe** — engine determinístico + testes, READ-ONLY M1, sem VPS/deploy/segredos, sem PII, consome `data/staging`; **ranking INATIVO** (sem render, sem ingestão ao vivo). Toca `dimensionamento/` (e, no máximo, o headline spec-locked da aba). A ATIVAÇÃO futura (busca imobiliária web) é epic separada e **NÃO loop-safe**. |
-
-**Contexto (estudo §6/§7):** a faixa p10–p90 é **calibrada** (cobertura 76–78%, PIT 0,50) e o **P(viável)
-discrimina** (AUC 0,60 Ultra / 0,68 Eng). O produto deve deixar de cravar alunos e passar a entregar **risco**:
-break-even determinístico + probabilidade honesta de cobrir a conta + classe.
-
-**Objetivo:** funções **puras** em `src/motor_expansao/dimensionamento/`:
-- `p_viavel(m2, break_even, base_calibracao_df, formato)` = fração dos comparáveis (× m², condicionada ao
-  **formato/marca**) que superam o break-even. **Anti-geográfico:** sem lat/lng.
-- `classe_risco(p)` → `GO`/`ATENCAO`/`NAO` (cutoffs 0,70 / 0,40).
-- `ranking_oportunidades(lista_imoveis)` → ordena por P(viável)/margem de segurança. **CONSTRUÍDA MAS INATIVA**
-  (feature flag desligada; **sem exposição na UI**; servirá a fase futura de **busca imobiliária ativa na web
-  com APIs/scrapers** — epic separada).
-
-**UI:** opcional e **spec-locked** — pode expor o **headline de risco** (classe + P(viável) + break-even) na aba
-de viabilidade SE seguir exatamente o desenho do estudo §7; a **troca visual completa da aba** (UX aberta) fica
-para um bloco de UI gated (precedente BLK-DIM-12). **O ranking NUNCA é renderizado neste bloco.**
-
-**Fora de escopo (invioláveis):** ativar/renderizar o ranking; busca imobiliária web / APIs / scrapers (epic
-futura, NÃO loop-safe — ingestão ao vivo); M1/score/pesos/artefatos; deploy/VPS; prever demanda pela geografia
-(DEC-009).
-
-**Critérios de aceite:** `p_viavel`/`classe_risco`/`ranking_oportunidades` puras + testes (calibração/monotonicidade;
-**anti-geográfico** = sem lat/lng; teste provando que o ranking NÃO é chamado pelo render); P(viável) consome a
-receita já corrigida (BLK-DIM-13); suíte verde + ruff/mypy; READ-ONLY M1.
-
-**Risco:** médio (lógica nova) — mitigado por manter o ranking **dormente** (zero superfície de produção).
-
-> **Sucessor (NÃO loop-safe, futuro):** **BLK-DIM-15 — Busca imobiliária ativa (web APIs/scrapers) + ativação do
-> ranking.** Ingestão ao vivo de imóveis (portais/APIs), normalização, e ativação do `ranking_oportunidades` sobre
-> o pool buscado. Manual/gated (viola loop-safe: ingestão ao vivo + fontes externas). Só abrir após BLK-DIM-14.
 
 ---
 
-### BLK-DIM-16 — Correção de cálculo: break-even (margem 0%) e limite do aluguel-teto
+- BLK-DIM-16 (concluído 2026-06-17) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (corrige números financeiros mostrados na aba de viabilidade em produção; READ-ONLY sobre M1) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA / no loop: guard]` → Builder → QA |
-| **Depende de** | **BLK-DIM-13** (split de ticket — break-even/teto consomem o DRE; corrigir DEPOIS que a receita estiver certa, e os dois blocos tocam `viabilidade_ponto.py`) |
-| **Status** | Pendente |
-| **Autonomia** | **loop-safe** — engine determinístico + testes, READ-ONLY M1, sem VPS/deploy/segredos, sem PII, consome `data/staging`; toca só `dimensionamento/{viabilidade_ponto,simulador}.py` + testes (NÃO toca M1/score/pesos/artefatos); gate humano substituído pelo guard automático no loop (`scripts/loop_guard.py`). |
-
-**Contexto (achados ancorados no código):** dois erros pequenos de cálculo nos números de break-even e
-aluguel-teto da aba de viabilidade:
-
-1. **Break-even não é break-even (margem 0%):** em `viabilidade_ponto.analisar_viabilidade_ponto` (L313-314),
-   `alunos_breakeven` é calculado via `alunos_minimos_viaveis(..., margem_alvo=margem_alvo)` com
-   `margem_alvo` = **0,10** (default da assinatura, L263). Resultado: o "break-even" exibido é, na verdade,
-   **"alunos para atingir 10% de margem EBITDA"** — sempre **maior** que o break-even real (margem 0). O próprio
-   `alunos_minimos_viaveis` tem default `margem_alvo=0.0` (simulador.py L374), mas o chamador o sobrescreve.
-2. **Limite superior do aluguel-teto ignora receita de agregadores + personal:** em `simulador.aluguel_teto`
-   (L360), o teto do `brentq` é `alug_sup = alunos_maturidade * ticket_medio * 2.0` — só considera a receita de
-   **balcão**. Quando agregadores (R$82 × alunos) + personal (R$5k) são materiais, o aluguel-teto verdadeiro pode
-   ficar **acima** desse bound e a função retorna o próprio `alug_sup` (ramo defensivo L364-365) → **teto
-   subestimado/capado**.
-
-**Objetivo:** (a) computar `alunos_breakeven` como o **break-even real (margem EBITDA = 0%)**, mantendo, se útil,
-um campo separado `alunos_para_margem_alvo` (margem-alvo) — sem perder informação; (b) corrigir o `alug_sup` do
-`aluguel_teto` para um bound baseado na **receita TOTAL** (balcão + agregadores + personal), eliminando o cap.
-
-> **Pré-decisão de produto (para ser loop-safe, sem gate): break-even = margem EBITDA 0%** (definição canônica).
-> Felipe: se quiser outra definição (ex.: break-even = ponto de payback/caixa, ou manter no margem-alvo),
-> ajuste esta linha ANTES de rodar — é o que o loop vai implementar.
-
-**Escopo permitido:** `src/motor_expansao/dimensionamento/viabilidade_ponto.py` (chamada do break-even +,
-se aprovado, novo campo `alunos_para_margem_alvo` no `ViabilidadePontoResult`) e
-`src/motor_expansao/dimensionamento/simulador.py` (`aluguel_teto`: `alug_sup` pela receita total) + testes em
-`tests/unit/dimensionamento/`. Atualizar a aba só se um rótulo/campo novo exigir (mínimo, spec-locked).
-
-**Fora de escopo (invioláveis):** M1/score/pesos/artefatos (DEC-001/008/009); alterar a fórmula do DRE
-(`viabilidade()` em si está correta); o split de ticket (é o BLK-DIM-13); UX aberta; deploy/VPS.
-
-**Critérios de aceite:** `alunos_breakeven` = alunos p/ margem EBITDA **0%** (teste: margem no break-even ≈ 0;
-break-even < alunos para 10% de margem); `aluguel_teto` não capa quando agregador+personal são materiais (teste
-de unidade com receita total >> balcão prova teto > `2×balcão`); P(viável) e a aba consomem o break-even
-corrigido; suíte verde + ruff/mypy; READ-ONLY M1.
-
-**Risco:** baixo (correções determinísticas pontuais, cobertas por teste).
 
 ---
 

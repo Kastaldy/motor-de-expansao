@@ -49,6 +49,11 @@ ALUGUEL_RANGE_FATOR: tuple[float, ...] = (0.6, 0.8, 1.0, 1.2, 1.5)  # x aluguel_
 # --- Guardrail explicito -----------------------------------------------------
 DEMANDA_FONTE_PREMISSA: str = "premissa_explicita"
 
+# --- Composicao balcao/agregadores (estudo §5; Ultra ~69% balcao / ~31% agregadores) ---
+# A demanda_premissa representa alunos TOTAIS; o split alimenta o DRE com 2 tickets
+# (balcao a ticket cheio + agregadores ~60% do ticket). NAO altera o simulador (DRE).
+SHARE_BALCAO_DEFAULT: float = 0.69
+
 
 @dataclass
 class ViabilidadePontoResult:
@@ -86,6 +91,13 @@ class ViabilidadePontoResult:
 
     # --- Grade de sensibilidade ---
     grade_sensibilidade: pd.DataFrame
+
+    # --- Split da premissa (auditabilidade; derivados de demanda_premissa * share) ---
+    alunos_balcao_premissa: float = 0.0
+    alunos_agregadores_premissa: float = 0.0
+
+    # --- Break-even com margem_alvo explícita (NAO break-even real) ---
+    alunos_para_margem_alvo: float = 0.0
 
     # --- Guardrail: demanda NUNCA derivada de geo ---
     demanda_fonte: str = DEMANDA_FONTE_PREMISSA
@@ -213,12 +225,15 @@ def grade_sensibilidade(
     n_alunos_range: tuple[float, ...] = ALUNOS_RANGE_DEFAULT,
     n_aluguel_range: tuple[float, ...] = ALUGUEL_RANGE_FATOR,
     margem_alvo: float = 0.10,
+    share_balcao: float = SHARE_BALCAO_DEFAULT,
     **kwargs: object,
 ) -> pd.DataFrame:
     """Varredura cartesiana alunos x aluguel -> viabilidade() por par.
 
-    `n_alunos_range` e uma grade ABSOLUTA de alunos (nao inclui `demanda_premissa`
-    automaticamente; o orquestrador a usa como referencia separada).
+    `n_alunos_range` e uma grade ABSOLUTA de alunos TOTAIS (nao inclui
+    `demanda_premissa` automaticamente; o orquestrador a usa como referencia
+    separada). Cada celula aplica o split interno via `share_balcao`:
+    balcao = alunos*share_balcao + agregadores = alunos*(1-share_balcao).
     `n_aluguel_range` sao FATORES multiplicados por `aluguel_ref`.
 
     `margem_alvo` fica na assinatura por simetria; nao gera coluna dependente aqui.
@@ -233,9 +248,14 @@ def grade_sensibilidade(
     _ = (demanda_premissa, margem_alvo)  # referencia explicita; nao varridos
     linhas: list[dict] = []
     for alunos in n_alunos_range:
+        balcao_cel = float(alunos) * share_balcao
+        agr_cel = float(alunos) * (1.0 - share_balcao)
         for fator in n_aluguel_range:
             aluguel = float(aluguel_ref) * float(fator)
-            r = viabilidade(float(alunos), m2, aluguel, ticket_medio, **kwargs)  # type: ignore[arg-type]
+            r = viabilidade(
+                balcao_cel, m2, aluguel, ticket_medio,
+                alunos_agregadores=agr_cel, **kwargs,  # type: ignore[arg-type]
+            )
             linhas.append(
                 {
                     "alunos": float(alunos),
@@ -261,6 +281,7 @@ def analisar_viabilidade_ponto(
     *,
     ticket_medio: float = SIM_MENSALIDADE_BALCAO,
     margem_alvo: float = 0.10,
+    share_balcao: float = SHARE_BALCAO_DEFAULT,
     raio_km: float = RAIO_CATCHMENT_KM,
     base_calibracao_df: pd.DataFrame | None = None,
     setores_df: pd.DataFrame | None = None,
@@ -305,13 +326,31 @@ def analisar_viabilidade_ponto(
     else:
         faixa = faixa_alunos_por_densidade(m2, base_calibracao_df)
 
+    # 3b. Split da premissa em balcao + agregadores (composicao; estudo §5).
+    # A demanda_premissa e SEMPRE alunos TOTAIS; o DRE roda com 2 tickets.
+    alunos_balcao = float(demanda_premissa) * share_balcao
+    alunos_agregadores = float(demanda_premissa) * (1.0 - share_balcao)
+
     # 4. Viabilidade no cenario pedido (demanda = premissa explicita).
-    viab = viabilidade(demanda_premissa, m2, aluguel_pedido, ticket_medio, **kwargs)  # type: ignore[arg-type]
+    viab = viabilidade(
+        alunos_balcao, m2, aluguel_pedido, ticket_medio,
+        alunos_agregadores=alunos_agregadores, **kwargs,  # type: ignore[arg-type]
+    )
 
     # 5. Aluguel-teto e break-even.
-    teto = aluguel_teto(demanda_premissa, m2, ticket_medio, margem_alvo=margem_alvo, **kwargs)  # type: ignore[arg-type]
-    breakeven = alunos_minimos_viaveis(  # type: ignore[arg-type]
-        m2, aluguel_pedido, ticket_medio, margem_alvo=margem_alvo, **kwargs
+    teto = aluguel_teto(
+        alunos_balcao, m2, ticket_medio, margem_alvo=margem_alvo,
+        alunos_agregadores=alunos_agregadores, **kwargs,  # type: ignore[arg-type]
+    )
+    # Break-even REAL: margem EBITDA = 0% (definicao canonica; DEC-009)
+    breakeven = alunos_minimos_viaveis(
+        m2, aluguel_pedido, ticket_medio, margem_alvo=0.0,
+        alunos_agregadores=alunos_agregadores, **kwargs,  # type: ignore[arg-type]
+    )
+    # Alunos para a margem-alvo (informativo; sempre >= breakeven)
+    alunos_margem_alvo = alunos_minimos_viaveis(
+        m2, aluguel_pedido, ticket_medio, margem_alvo=margem_alvo,
+        alunos_agregadores=alunos_agregadores, **kwargs,  # type: ignore[arg-type]
     )
 
     # 6. Grade de sensibilidade.
@@ -323,6 +362,7 @@ def analisar_viabilidade_ponto(
         n_alunos_range=alunos_range,
         n_aluguel_range=aluguel_range_fator,
         margem_alvo=margem_alvo,
+        share_balcao=share_balcao,
         **kwargs,
     )
 
@@ -345,6 +385,9 @@ def analisar_viabilidade_ponto(
         aluguel_teto_calculado=float(teto),
         alunos_breakeven=float(breakeven),
         grade_sensibilidade=grade,
+        alunos_balcao_premissa=float(alunos_balcao),
+        alunos_agregadores_premissa=float(alunos_agregadores),
+        alunos_para_margem_alvo=float(alunos_margem_alvo),
         demanda_fonte=DEMANDA_FONTE_PREMISSA,
     )
 
@@ -363,4 +406,5 @@ __all__ = [
     "ALUNOS_RANGE_DEFAULT",
     "ALUGUEL_RANGE_FATOR",
     "DEMANDA_FONTE_PREMISSA",
+    "SHARE_BALCAO_DEFAULT",
 ]
