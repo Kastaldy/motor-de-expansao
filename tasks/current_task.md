@@ -2,56 +2,60 @@
 
 ## Bloco atual
 
-ID: BLK-FIX-14
-Nome: Isolamento do teste flaky test_classico_template_recente_inalterado
-Status: APROVADO (QA 2026-06-17 11:54) — ciclo pronto para fechamento manual
-Tipo: bug (isolamento de teste; READ-ONLY sobre M1)
-Criticidade: média
-Esteira: Block Orchestrator → Planner → Builder → QA (concluído)
-Skill atual: QA (concluído)
-Próxima Skill: Fechamento manual (merge humano)
+ID: BLK-UI-08
+Nome: Refinos de UX/UI do dashboard (paleta Renda, tab sticky, busca por endereço)
+Status: APROVADO (QA — gate único da suíte full)
+Tipo: feature (UX/UI; READ-ONLY sobre M1)
+Criticidade: alta
+Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA (concluído)
+Skill atual: QA (concluído — VEREDITO APROVADO)
+Próxima Skill: Fechamento manual (orquestrador: housekeeping move BLK-UI-08 + commit por path + PR/merge humano)
+
+## Veredito do QA (2026-06-17)
+APROVADO. Suíte FULL serial = 975 passed, 1 skipped, 0 failed (xdist `-n auto` abortou com INTERNALERROR do execnet no Python 3.14 — contorno serial autorizado, não bypass). ruff/mypy/import limpos. READ-ONLY M1 confirmado (git diff -- src/ não toca config/pipelines-m1/scoring/artefatos; §3 intacto). 3 mudanças + DEC-010 conforme plano. Nenhum teste bate na rede real (mock urllib legítimo, DEC-010(c)). Housekeeping --check em estado pré-move esperado (exit 1, stub ausente); move é passo do orquestrador. Paths pré-sujos NÃO staged. Sem problemas críticos/médios.
+Gate humano: D1 = Alternativa B (fetch HTTP) + DEC-010 APROVADA por Vinicius em 2026-06-17.
 
 ## Objetivo
-Identificar o teste poluidor que faz `test_classico_template_recente_inalterado` falhar na suíte
-full serial (vazamento de estado global, provável em fpdf/censo_report ou cache de módulo) e corrigir
-o ISOLAMENTO (só em tests/), deixando `python -m pytest -q` verde de forma reproduzível — sem mascarar.
+Aplicar três refinos de interface no dashboard: (1) nova paleta de cores absoluta para o mapa de
+Renda Média, (2) tab selector fixo (sticky) ao rolar a página, e (3) busca por endereço na barra de
+pesquisa (endereço → coordenada), sem regressão funcional nem do M1.
+
+## Escopo citado pelo usuário (Vini, 2026-06-17)
+1. **Paleta da Renda Média** — alterar a paleta do mapa gerado a partir da análise de Renda Média para
+   5 faixas absolutas:
+   - #00CC00  (> 5000)
+   - #A8FFA8  (3500–5000)
+   - #FFD21C  (2000–3500)
+   - #FFFF00  (1000–2000)
+   - #F7F48B  (≤ 1000)
+2. **Tab selector sticky** — o seletor de abas deve fixar no topo da tela quando o scroll passar por ele.
+3. **Busca por endereço** — a barra de pesquisa deve aceitar endereço, convertido para coordenada durante
+   a busca. Código de referência fornecido: `endereco_para_link_maps` (limpeza textual + percent-encoding,
+   sem imports/regex/urllib; produz link do Google Maps). Já existe `api/maps_geocoder` (URL Maps → coordenada).
 
 ## Classificação (Passo 2)
-Bloco é Baixa no backlog, mas a própria nota prevê "Média se virar investigação ampla de isolamento
-da suíte". O núcleo do trabalho É uma bisseção suite-wide + correção de vazamento de estado, e o
-critério de aceite exige um gate de QA que re-rode a suíte full reproduzível → classificado MÉDIA.
-Sem gate humano (Média não exige).
+Alta — mexe no dashboard de produção; READ-ONLY sobre M1. Confirmado pelo Block Orchestrator.
 
-## Tiering de modelo (Passo 4) — Média + override
-- Block Orchestrator: sonnet
-- Planner: sonnet
-- Builder: opus  (OVERRIDE +1 vs tabela Média: investigação de isolamento — bisseção + vazamento de
-  estado global em fpdf/cache — é atipicamente sutil e há risco de "mascarar flakiness" se mal feita)
+## Tiering de modelo (Passo 4) — Alta
+- Block Orchestrator: sonnet (concluído)
+- Planner: opus
+- Builder: opus
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-FIX-14 (criada a partir de main / HEAD e7b0f94)
+ciclo/BLK-UI-08 (criada a partir do HEAD atual = ciclo/BLK-FIX-14, por escolha explícita do usuário).
+Consequência aceita pelo usuário: carrega o commit f89fc41 (BLK-FIX-14) até este ser mergeado.
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
 - data/outputs/setores_censitarios_2022_geo/_metadata.json
 - data/reports/relatorio_pontual_censitario_base_geo.md
 
-## Escopo permitido
-- tests/** (fixtures/teardown/conftest.py); no máximo um ajuste de teardown/reset em helper de teste.
-- NÃO alterar a lógica de produção de censo_report.py sem nova decisão.
+## Riscos / pontos sensíveis a tratar no Planner + gate humano
+- Endereço → coordenada normalmente exige chamada online → tensiona o guardrail §2 ("não criar dependência
+  de API ao vivo no dashboard de produção"). Pode exigir uma DEC (precedente: DEC-004 do basemap).
+- Confirmar se a "imagem do mapa de Renda Média" é o relatório censitário (PDF, `RENDA_PER_CAPITA_BANDS`) ou
+  o choropleth do dashboard — pinar o(s) arquivo(s) exato(s) e a constante de faixas.
 
 ## Fora de escopo
-- score/pesos/artefatos M1; mudar a geração de PDF; mascarar com -p no:xdist ou skip.
-
-## Diagnóstico Block Orchestrator (2026-06-17)
-- Poluidor: externo ao arquivo (teste em posição 847; arquivo começa em 827; arquivo inteiro passa em 22)
-- Vetor principal de estado global: `_ICON_CACHE` e `_ATLAS_CACHE` em `competitors.py` + `@functools.cache` em `_competitor_icon_svg`/`_ultra_icon_svg`
-- `censo_report.py` confirmado sem lru_cache / variáveis mutáveis / estado de módulo
-- Poluidor na faixa 1-826 (antes do arquivo export); test_streamlit_app.py (208-406) não usa preload_logos
-- Candidato prioritário a investigar: test_api_analisar.py (scope=module, gera PDFs, posições 31-40) e test_api_geo.py
-- Handoff: context/handoff/20260617-111443-block-orchestrator.md
-
-## Resultado Builder (2026-06-17 11:42)
-- Causa REAL confirmada empiricamente: NÃO era estado global (`_ICON_CACHE`/`_ATLAS_CACHE` ficam VAZIOS antes/depois; teste falha até ISOLADO). Era a hipótese ALTERNATIVA do Planner: `fpdf2` 2.8.7 carimba `/CreationDate` (+ `/ID` derivado) com `datetime.now()` por instância → `antes != depois` quando as 2 gerações cruzam a virada de segundo.
-- Fix (só tests/): `tests/conftest.py` novo com fixture autouse scope=function `_freeze_fpdf_clock` que congela `datetime.now()` em `fpdf.fpdf`/`fpdf.output`. Produção intocada; sem skip/xfail/no:xdist.
-- Validação: target isolado 1 passed; export file 22 passed; repro determinístico falha sem fixture e passa com; FULL serial 964 passed, 1 skipped, 0 failed; import ok; ruff+mypy limpos.
+- score/pesos/artefatos M1; quebrar contratos de performance (carga lazy por UF, render lazy de abas, fonte
+  de mapa enxuta — Blocos 4–6).

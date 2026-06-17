@@ -14,6 +14,7 @@ Dependencias: selenium, webdriver-manager, Google Chrome instalado.
 from __future__ import annotations
 
 import re
+import urllib.request
 from urllib.parse import quote, unquote
 
 # Padroes de coordenada nas variantes de URL do Maps. ORDEM importa: !2d/!3d/!4d
@@ -81,6 +82,99 @@ def build_search_url(query: str) -> str:
     """URL de busca navegavel do Maps a partir de texto livre."""
     normalized = " ".join(str(query or "").split())
     return f"https://www.google.com/maps/search/?api=1&query={quote(normalized)}"
+
+
+# Bounding box do Brasil (mesmos limites de data._validate_brazil_bbox; duplicados aqui
+# para manter este modulo `api` sem depender da camada dashboard).
+_BR_LAT_MIN, _BR_LAT_MAX = -33.75, 5.27
+_BR_LNG_MIN, _BR_LNG_MAX = -73.99, -28.65
+
+
+def _cache_key(query: str) -> str:
+    """Chave de cache estavel (sha1 do texto normalizado) p/ nome de arquivo seguro."""
+    import hashlib
+
+    normalized = " ".join(str(query or "").split()).lower()
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+
+
+def resolve_endereco_http(
+    query: str,
+    *,
+    timeout: float = 6.0,
+    cache_dir: object | None = None,
+) -> tuple[float, float] | None:
+    """Resolve texto livre (endereco) -> (lat, lng) por fetch HTTP PURO (urllib).
+
+    Faz UMA requisicao leve a URL de busca do Google Maps, segue o redirect e le a
+    coordenada da URL final via `extract_any_coord`. SEM Selenium, SEM navegador.
+
+    GUARDRAIL (DEC-010): I/O de rede isolado neste helper da camada `api` (NAO no
+    dashboard); o import de `resolve_endereco_http` no dashboard e lazy e a rede so
+    ocorre quando ESTA funcao e chamada (caminho de busca por endereco). `try/except`
+    amplo + timeout curto garantem que qualquer falha/ausencia de rede retorne `None`
+    (o chamador cai no fallback offline). O texto da consulta e enviado ao Google
+    (nota anti-PII na DEC-010).
+
+    Valida o resultado contra o bounding box do Brasil; fora dele -> `None`.
+    `cache_dir` (opcional, ex.: `data/cache/geocode/`): cacheia o par lat,lng resolvido
+    em arquivo texto por consulta, minimizando requisicoes repetidas.
+    """
+    normalized = " ".join(str(query or "").split())
+    if not normalized:
+        return None
+
+    # 1) Cache local (gitignored). Leitura tolerante a falha.
+    cache_path = None
+    if cache_dir is not None:
+        try:
+            from pathlib import Path
+
+            cache_path = Path(str(cache_dir)) / f"{_cache_key(normalized)}.txt"
+            if cache_path.exists():
+                raw = cache_path.read_text(encoding="utf-8").strip()
+                lat_s, _, lng_s = raw.partition(",")
+                c_lat, c_lng = float(lat_s), float(lng_s)
+                if _BR_LAT_MIN <= c_lat <= _BR_LAT_MAX and _BR_LNG_MIN <= c_lng <= _BR_LNG_MAX:
+                    return c_lat, c_lng
+        except Exception:
+            pass  # cache ausente/ilegivel -> ignora e refaz o fetch (cache_path segue valido p/ regravar)
+
+    # 2) Fetch HTTP puro (urllib), seguindo redirect ate a URL final do place.
+    #    `urllib.request` e importado no topo do modulo (stdlib, sem custo / sem rede no
+    #    import) para ser facilmente mockavel em teste; a rede so ocorre no urlopen abaixo.
+    try:
+        req = urllib.request.Request(
+            build_search_url(normalized),
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                )
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - URL fixa do Maps
+            final_url = resp.geturl()
+            body = resp.read(200_000).decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+
+    lat, lng = extract_any_coord(final_url)
+    if lat is None or lng is None:
+        lat, lng = extract_any_coord(body)
+    if lat is None or lng is None:
+        return None
+    if not (_BR_LAT_MIN <= lat <= _BR_LAT_MAX and _BR_LNG_MIN <= lng <= _BR_LNG_MAX):
+        return None
+
+    # 3) Persiste no cache (best-effort).
+    if cache_path is not None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(f"{lat},{lng}", encoding="utf-8")
+        except Exception:
+            pass
+    return lat, lng
 
 
 class MapsGeocoder:

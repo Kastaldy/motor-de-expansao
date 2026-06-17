@@ -5358,3 +5358,38 @@ Esteira: Block Orchestrator (sonnet) → Planner (sonnet) → Builder (opus, ove
 ---
 
 - BLK-MAP-01 (concluído 2026-06-11) — ver tasks/completed.md
+
+---
+
+### BLK-UI-08 — Refinos de UX/UI do dashboard (escopo a detalhar pelo usuário)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (provável — mexe no dashboard de produção; READ-ONLY sobre M1). A confirmar no Block Orchestrator conforme o escopo citado. |
+| **Prioridade** | A definir pelo usuário ao iniciar o ciclo. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA (ajustar para Baixa/Média se o escopo citado for trivial). |
+| **Status** | **Pendente — escopo a ser citado pelo usuário (Vini) ao iniciar o ciclo** (`/run-cycle BLK-UI-08`). |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | — (criar se necessário) |
+
+**Contexto:** novo bloco de melhorias de UX/UI do dashboard, sucessor do bloco BLK-UI-07. O conjunto exato de
+mudanças será **descrito pelo usuário no início do ciclo**; este bloco existe apenas como alvo do `/run-cycle`.
+Não iniciar execução sem o escopo citado e o plano aprovado no gate humano. Frentes futuras herdadas (ex.: F2-E
+hero header contextual com UF; limpeza do CSS legado F2-G da sidebar agora que o default é `collapsed`) cabem aqui.
+
+**Objetivo:** aplicar as mudanças de interface que o usuário citará, sem regressão funcional nem do M1.
+
+**Escopo permitido (provável):** `src/motor_expansao/dashboard/` (pages/components/utils/constants visuais) +
+`streamlit_app.py` + `tests/integration/test_streamlit_app.py`, preservando carga lazy por UF, render lazy de
+abas e fonte de mapa enxuta (Blocos 4–6). Ajustar conforme o escopo real citado.
+
+**Fora de escopo:** score/pesos/artefatos M1; dependência de API ao vivo; quebrar contratos de performance.
+
+**Critérios de aceite:** escopo citado e plano aprovado antes de codar; sem regressão (suíte verde);
+UX validada pelo usuário; READ-ONLY M1.
+
+**Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
+
+---
+
+- BLK-FIX-14 (concluído 2026-06-17) — ver tasks/completed.md

@@ -329,15 +329,16 @@ DENSIDADE_POP_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
 # 5000 / inf (R$/pessoa). per capita != domiciliar: a classe media urbana-alvo Ultra (18-45) tende
 # a R$2.000-5.000/pessoa; >R$5.000/pessoa marca bolsoes de alta renda. Os 4 cortes per capita NAO
 # equivalem ao teto domiciliar RENDA_MIN=4500 (escalas distintas; nao confundir).
-# Rampa (escolha de Felipe 2026-06-05): amarelo (baixa) -> laranja escuro (meio) -> verde (alta),
-# em vez de vermelho->verde. alpha 150 = cor da LEGENDA; o FILL no mapa usa _CHOROPLETH_ALPHA.
+# Rampa (escolha de Vini 2026-06-17, BLK-UI-08): amarelo-claro (renda baixa) -> amarelo -> dourado
+# -> verde-claro -> verde solido (renda alta). Cores absolutas pedidas: #F7F48B / #FFFF00 /
+# #FFD21C / #A8FFA8 / #00CC00. alpha 150 = cor da LEGENDA; o FILL no mapa usa _CHOROPLETH_ALPHA.
 # Camada de VISUALIZACAO do Relatorio Pontual Censitario — NAO altera score/artefatos M1.
 RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
-    (1_000.0,   "ate R$ 1.000",        (255, 255, 178, 150)),
-    (2_000.0,   "R$ 1.001-2.000",      (254, 204, 92,  150)),
-    (3_500.0,   "R$ 2.001-3.500",      (217, 95,  14,  150)),
-    (5_000.0,   "R$ 3.501-5.000",      (120, 198, 121, 150)),
-    (float("inf"), ">R$ 5.000",        (35,  132, 67,  150)),
+    (1_000.0,   "ate R$ 1.000",        (247, 244, 139, 150)),   # #F7F48B
+    (2_000.0,   "R$ 1.001-2.000",      (255, 255, 0,   150)),   # #FFFF00
+    (3_500.0,   "R$ 2.001-3.500",      (255, 210, 28,  150)),   # #FFD21C
+    (5_000.0,   "R$ 3.501-5.000",      (168, 255, 168, 150)),   # #A8FFA8
+    (float("inf"), ">R$ 5.000",        (0,   204, 0,   150)),   # #00CC00
 ]
 
 # Expansao de Dominio — constantes canonicas

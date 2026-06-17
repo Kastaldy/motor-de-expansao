@@ -320,6 +320,22 @@ def inject_styles() -> None:
                 display: flex;
                 gap: 8px !important;
             }}
+            /* BLK-UI-08: tab selector fixo no topo ao rolar. `position: sticky` depende
+               de NENHUM ancestral entre o elemento e o viewport ter overflow!=visible;
+               reforcamos `overflow: visible` no proprio container. Fundo opaco (mesmo
+               gradiente do stApp/sidebar) evita que o conteudo role POR TRAS e vaze.
+               FALLBACK (NAO ativado): se algum tema/versao cortar o scroll e o sticky
+               nao fixar, trocar `position: sticky` por `position: fixed` aqui e somar um
+               padding-top compensatorio no .block-container (o fixed desloca o corpo). */
+            div[data-testid="stSegmentedControl"] {{
+                position: sticky;
+                top: 0;
+                z-index: 999;
+                background: linear-gradient(180deg, #0E1324 0%, #0A0F1F 100%);
+                padding-top: 0.4rem;
+                padding-bottom: 0.4rem;
+                overflow: visible;
+            }}
             [data-baseweb="button-group"] {{
                 gap: 8px !important;
             }}
@@ -583,30 +599,77 @@ def render_empty_state() -> None:
     st.warning("Nenhum dado encontrado para o recorte atual. Ajuste os filtros globais.")
 
 
-def render_coord_search_sidebar() -> tuple[float, float] | None:
-    """Render coordinate search widget. Returns ``(lat, lng)`` or ``None``.
+# BLK-UI-08 / DEC-010: cache local (gitignored) das resolucoes endereco->coordenada.
+_GEOCODE_CACHE_DIR = Path("data/cache/geocode")
 
-    BLK-UI-07 (F3): o widget agora vive no CORPO principal (perto do seletor de
-    abas), nao mais na sidebar. O nome da funcao e a `key="coord_search_input"`
-    sao preservados (consumidos por testes e session_state).
+
+def _render_endereco_fallback_link(raw: str) -> None:
+    """Fallback offline gracioso (DEC-010 (c)): link clicavel do Google Maps.
+
+    Usado quando o fetch HTTP falha/timeout/sem rede. NAO faz rede (`build_search_url`
+    e funcao PURA). `st.link_button` existe no Streamlit usado; fallback markdown se nao.
+    """
+    from motor_expansao.api.maps_geocoder import build_search_url
+
+    url = build_search_url(raw)
+    link_button = getattr(st, "link_button", None)
+    if callable(link_button):
+        link_button("Abrir no Google Maps", url)
+    else:
+        st.markdown(f"[Abrir no Google Maps]({url})")
+    st.caption(
+        "Nao foi possivel resolver o endereco automaticamente (offline ou indisponivel). "
+        "Abra no Maps, copie a coordenada do pino e cole de volta no campo acima."
+    )
+
+
+def render_coord_search_sidebar() -> tuple[float, float] | None:
+    """Render coordinate/address search widget. Returns ``(lat, lng)`` or ``None``.
+
+    BLK-UI-07 (F3): o widget vive no CORPO principal (perto do seletor de abas), nao
+    na sidebar. O nome da funcao e a `key="coord_search_input"` sao preservados
+    (consumidos por testes e session_state).
+
+    BLK-UI-08 / DEC-010: o campo passa a aceitar tambem ENDERECO livre. O caminho
+    numerico (`parse_coordinate_input`) e SEMPRE tentado primeiro e fica intacto. So
+    quando ele falha o texto e tratado como endereco e resolvido por fetch HTTP puro
+    (`resolve_endereco_http`, isolado em `api/maps_geocoder.py`, urllib, sem Selenium),
+    com fallback gracioso para link clicavel se faltar rede/falhar/timeout.
     """
     st.markdown("---")
-    st.markdown("### Busca por coordenada")
-    st.caption("Localize um hexagono pela coordenada. Offline, sem API externa.")
+    st.markdown("### Busca por coordenada ou endereco")
+    st.caption(
+        "Digite uma coordenada (lat, lng) ou um endereco. O endereco e enviado ao "
+        "Google Maps para resolver a coordenada; sem rede, mostramos um link para abrir."
+    )
     raw = st.text_input(
-        "Coordenada (lat, lng)",
-        placeholder="-23.55, -46.63",
+        "Coordenada (lat, lng) ou endereco",
+        placeholder="-23.55, -46.63  ou  Av. Paulista 1000, Sao Paulo",
         key="coord_search_input",
     )
     if not raw or not raw.strip():
         return None
+    raw = raw.strip()
+
+    # 1) Caminho numerico (intacto): coordenada lat,lng em qualquer formato BR/US.
     result = parse_coordinate_input(raw)
-    if result is None:
-        st.error(
-            "Formato invalido ou fora dos limites do Brasil. "
-            "Use: -23.55, -46.63  ou  -23,55; -46,63  ou  -23.55 -46.63"
-        )
-    return result
+    if result is not None:
+        return result
+
+    # 2) Texto nao-numerico -> trata como ENDERECO LIVRE (DEC-010, Alternativa B).
+    #    Fetch HTTP puro, isolado em camada `api`, com try/except amplo. Falha/sem
+    #    rede -> fallback offline (link clicavel), sem excecao.
+    try:
+        from motor_expansao.api.maps_geocoder import resolve_endereco_http
+
+        resolved = resolve_endereco_http(raw, timeout=6.0, cache_dir=_GEOCODE_CACHE_DIR)
+    except Exception:
+        resolved = None
+    if resolved is not None:
+        return resolved
+
+    _render_endereco_fallback_link(raw)
+    return None
 
 
 def render_hex_search_result(

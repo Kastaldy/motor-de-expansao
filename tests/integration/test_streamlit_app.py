@@ -4541,6 +4541,131 @@ def test_render_coord_search_no_corpo_preserva_key():
     assert not sidebar_mock.caption.called
 
 
+# --- BLK-UI-08: Mudanca 1 — paleta absoluta de Renda Media ---
+
+def test_renda_per_capita_bands_cores_absolutas():
+    """RENDA_PER_CAPITA_BANDS = 5 faixas ascendentes com as cores pedidas (alpha 150)."""
+    from motor_expansao.dashboard.constants import (
+        DENSIDADE_POP_BANDS,
+        RENDA_PER_CAPITA_BANDS,
+        RESIDUAL_SCORE_BANDS,
+    )
+
+    cutoffs = [b[0] for b in RENDA_PER_CAPITA_BANDS]
+    cores = [b[2] for b in RENDA_PER_CAPITA_BANDS]
+    assert cutoffs == [1_000.0, 2_000.0, 3_500.0, 5_000.0, float("inf")]
+    assert cores == [
+        (247, 244, 139, 150),   # #F7F48B  ate 1.000
+        (255, 255, 0, 150),     # #FFFF00  1.001-2.000
+        (255, 210, 28, 150),    # #FFD21C  2.001-3.500
+        (168, 255, 168, 150),   # #A8FFA8  3.501-5.000
+        (0, 204, 0, 150),       # #00CC00  >5.000
+    ]
+    # ordem ascendente de cutoff (semantica de _color_for_bands)
+    finite = cutoffs[:-1]
+    assert finite == sorted(finite)
+    # vizinhos intocados
+    assert DENSIDADE_POP_BANDS[0][2] == (254, 229, 217, 150)
+    assert len(RESIDUAL_SCORE_BANDS) == 10
+
+
+def test_censo_map_consome_renda_bands_atualizada():
+    """censo_map colore renda via as cores novas (propagacao por import, sem override)."""
+    from motor_expansao.dashboard import censo_map
+    from motor_expansao.dashboard.constants import RENDA_PER_CAPITA_BANDS
+
+    assert censo_map.RENDA_PER_CAPITA_BANDS is RENDA_PER_CAPITA_BANDS
+    # faixa >5.000 -> #00CC00 (com alpha de choropleth, nao 150 de legenda)
+    r, g, b, _a = censo_map._color_for_renda(9_000.0)
+    assert (r, g, b) == (0, 204, 0)
+
+
+# --- BLK-UI-08: Mudanca 2 — tab selector sticky ---
+
+def test_inject_styles_tab_selector_sticky():
+    """inject_styles fixa o stSegmentedControl no topo (position: sticky + top: 0)."""
+    import unittest.mock as mock
+
+    captured: list[str] = []
+    with mock.patch("streamlit.markdown", side_effect=lambda body, **kw: captured.append(body)):
+        streamlit_app.inject_styles()
+
+    css = "".join(captured)
+    assert "stSegmentedControl" in css
+    assert ("position: sticky" in css) or ("position:sticky" in css)
+    assert ("top: 0" in css) or ("top:0" in css)
+    assert "z-index: 999" in css
+
+
+# --- BLK-UI-08: Mudanca 3 (Alt. B) — busca por endereco via fetch HTTP mockado ---
+
+def test_render_coord_search_endereco_resolve_via_http_mock():
+    """Texto nao-numerico -> resolve_endereco_http (MOCK) retorna (lat,lng); sem rede real."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard import pages
+
+    with (
+        mock.patch("streamlit.text_input", return_value="Av. Paulista 1000, Sao Paulo"),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch(
+            "motor_expansao.api.maps_geocoder.resolve_endereco_http",
+            return_value=(-23.5613, -46.6565),
+        ) as resolve_mock,
+    ):
+        out = pages.render_coord_search_sidebar()
+
+    assert out == (-23.5613, -46.6565)
+    resolve_mock.assert_called_once()
+    # caminho numerico nao deve ter resolvido (era endereco)
+
+
+def test_render_coord_search_endereco_fallback_link_quando_http_falha():
+    """Fetch falha/sem rede -> fallback offline: link clicavel + retorna None (sem excecao)."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard import pages
+
+    with (
+        mock.patch("streamlit.text_input", return_value="Rua Sem Resultado 999"),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.link_button") as link_button_mock,
+        mock.patch(
+            "motor_expansao.api.maps_geocoder.resolve_endereco_http",
+            side_effect=RuntimeError("sem rede"),
+        ),
+    ):
+        out = pages.render_coord_search_sidebar()
+
+    assert out is None
+    link_button_mock.assert_called_once()
+    url = link_button_mock.call_args.args[1]
+    assert "google.com/maps/search" in url
+
+
+def test_render_coord_search_coordenada_numerica_nao_chama_http():
+    """Entrada lat,lng valida resolve pelo caminho numerico, sem tocar o helper HTTP."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard import pages
+
+    with (
+        mock.patch("streamlit.text_input", return_value="-23.55, -46.63"),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch(
+            "motor_expansao.api.maps_geocoder.resolve_endereco_http",
+        ) as resolve_mock,
+    ):
+        out = pages.render_coord_search_sidebar()
+
+    assert out is not None
+    assert out[0] == pytest.approx(-23.55, abs=1e-4)
+    resolve_mock.assert_not_called()
+
+
 # --- Item Vini 2026-06-16: seletor de Modo de cor expoe so 3 modos (m1/hibrido ocultos) ---
 
 def test_mapa_color_modes_oculta_m1_e_hibrido():
