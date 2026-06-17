@@ -47,9 +47,9 @@ _BASEMAP_CONTRAST = 1.15
 _BASEMAP_ZOOM_BUMP = 1
 
 # Cores dos elementos desenhados DENTRO do mapa claro (precisam contrastar com fundo claro):
-# circulo do raio (laranja, como o do dashboard) e barra de escala/labels em tinta ESCURA.
-# _CIRCLE_RGBA: laranja, visivel sobre o fundo claro (decisao gate BLK-CENSO-03).
-_CIRCLE_RGBA = (255, 176, 59, 235)
+# circulo do raio (AZUL, pedido de Vini 2026-06-17) e barra de escala/labels em tinta ESCURA.
+# _CIRCLE_RGBA: azul vivido, visivel sobre o fundo claro do basemap.
+_CIRCLE_RGBA = (0, 102, 255, 235)
 _DARK_MAP_INK = (31, 41, 55)
 
 # Ruas/nomes do Voyager sao pixels ESCUROS sobre fundo claro. Para o choropleth nao apagar
@@ -583,7 +583,7 @@ def _render_camada(
         for px, py in (project(x, y) for x, y in circle_3857.exterior.coords)
     ]
     if len(circle_points) >= 3:
-        # Circulo do raio em LARANJA (como o do mapa do dashboard), visivel sobre o fundo escuro.
+        # Circulo do raio em AZUL (pedido de Vini 2026-06-17), visivel sobre o fundo claro.
         draw.line(circle_points + [circle_points[0]], fill=_CIRCLE_RGBA, width=3)
 
     cx, cy = project(*center_3857)

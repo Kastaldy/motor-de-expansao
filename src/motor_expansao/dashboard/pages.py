@@ -320,21 +320,41 @@ def inject_styles() -> None:
                 display: flex;
                 gap: 8px !important;
             }}
-            /* BLK-UI-08: tab selector fixo no topo ao rolar. `position: sticky` depende
-               de NENHUM ancestral entre o elemento e o viewport ter overflow!=visible;
-               reforcamos `overflow: visible` no proprio container. Fundo opaco (mesmo
-               gradiente do stApp/sidebar) evita que o conteudo role POR TRAS e vaze.
-               FALLBACK (NAO ativado): se algum tema/versao cortar o scroll e o sticky
-               nao fixar, trocar `position: sticky` por `position: fixed` aqui e somar um
-               padding-top compensatorio no .block-container (o fixed desloca o corpo). */
-            div[data-testid="stSegmentedControl"] {{
+            /* BLK-UI-08 (FU1 2026-06-17): tab selector fixo no topo ao rolar.
+               CAUSA RAIZ do bug: na Streamlit 1.58 o testid do segmented control e
+               `stButtonGroup` (NAO `stSegmentedControl`), entao todo CSS que mirava
+               `stSegmentedControl` nunca casava. Usamos o seletor ESTAVEL da user-key
+               do widget: `render_tab_selector` passa `key="dashboard_active_tab"`, e o
+               Streamlit aplica a classe `.st-key-dashboard_active_tab` no container do
+               elemento — fixamos essa classe (mesmo padrao do `.st-key-btn_gerar_pdf_topo`).
+               Reforco: `overflow: visible` nos wrappers de layout (um deles com
+               `overflow`!=visible vira o "scroll ancestor" e desliga o sticky); NAO
+               tocamos `section.stMain`, que e o scroller real. `top` compensa o stHeader
+               (~3.25rem). FALLBACK (NAO ativado): `position: fixed` + padding compensatorio. */
+            [data-testid="stMainBlockContainer"],
+            [data-testid="stVerticalBlock"] {{
+                overflow: visible !important;
+            }}
+            .st-key-dashboard_active_tab {{
                 position: sticky;
                 top: 0;
-                z-index: 999;
-                background: linear-gradient(180deg, #0E1324 0%, #0A0F1F 100%);
-                padding-top: 0.4rem;
-                padding-bottom: 0.4rem;
+                z-index: 998;
+                width: 100%;
+                /* barra colada no topo, translucida com blur cobrindo a largura toda
+                   (sem vazar conteudo por tras) + acento inferior turquesa e sombra,
+                   no tema do app. Padding generoso = mais "margem" em volta dos botoes. */
+                background: rgba(10, 15, 31, 0.94);
+                backdrop-filter: blur(6px);
+                -webkit-backdrop-filter: blur(6px);
+                border-bottom: 1px solid rgba(25, 183, 255, 0.28);
+                box-shadow: 0 8px 20px rgba(0, 0, 0, 0.38);
+                padding: 0.9rem 0.6rem;
+                margin-bottom: 0.5rem;
                 overflow: visible;
+            }}
+            /* mais espaco entre os botoes do seletor (testid real na 1.58 = stButtonGroup). */
+            .st-key-dashboard_active_tab [data-baseweb="button-group"] {{
+                gap: 0.6rem;
             }}
             [data-baseweb="button-group"] {{
                 gap: 8px !important;
@@ -520,8 +540,63 @@ def render_tab_selector(
     # selection_mode="single" permite desmarcar (None); manter a ultima aba ativa.
     if not selected:
         selected = st.session_state.get(last_key) or opts[0]
+    previous = st.session_state.get(last_key)
     st.session_state[last_key] = selected
+    # BLK-UI-08 (FU1): ao TROCAR de aba, rolar a tela ATE a barra de abas. So dispara
+    # quando havia uma aba previa e ela mudou — nao no 1o load nem em reruns sem troca.
+    # O nonce incremental garante HTML unico por troca, forcando o re-mount do iframe do
+    # components.html (sem ele, conteudo identico nao re-executa o script — so rolava 1x).
+    if previous is not None and previous != selected:
+        nonce_key = f"{key}_scroll_nonce"
+        nonce = int(st.session_state.get(nonce_key, 0)) + 1
+        st.session_state[nonce_key] = nonce
+        scroll_main_to_top(nonce)
     return selected
+
+
+def scroll_main_to_top(nonce: int = 0) -> None:
+    """Rola a area principal ATE o seletor de abas (usado ao trocar de aba).
+
+    O Streamlit nao expoe scroll nativo; injetamos um `<script>` via `components.html`
+    (que roda dentro de um iframe) alcancando o documento PAI e dando `scrollIntoView`
+    no container do seletor de abas (`.st-key-dashboard_active_tab`) — leva ate a barra
+    de abas, nao ao topo absoluto. Fallback: rola o scroller real (`section.stMain`) ao
+    topo. O `nonce` torna o HTML unico a cada troca, forcando o iframe a re-montar e o
+    script a re-executar SEMPRE (senao Streamlit reaproveita o iframe e o scroll so roda
+    1x). `height=0` mantem o componente invisivel. NAO toca score/artefatos M1.
+    """
+    import streamlit.components.v1 as components
+
+    components.html(
+        f"""
+        <script>
+        // nonce={nonce}
+        (function () {{
+            const doc = window.parent && window.parent.document;
+            if (!doc) return;
+            function go() {{
+                const main = doc.querySelector('section[data-testid="stMain"]')
+                    || doc.querySelector('section.stMain')
+                    || doc.scrollingElement;
+                if (!main) return;
+                const target = doc.querySelector('.st-key-dashboard_active_tab');
+                if (!target) {{ main.scrollTo({{ top: 0, behavior: 'smooth' }}); return; }}
+                // A barra e sticky (top:0): rolado pra baixo, o rect dela ja esta no topo
+                // e scrollIntoView nao faz nada. Medimos a posicao de FLUXO zerando o
+                // scroll temporariamente e restaurando ANTES do paint (sem flash).
+                const cur = main.scrollTop;
+                main.scrollTop = 0;
+                const dest = target.getBoundingClientRect().top - main.getBoundingClientRect().top;
+                main.scrollTop = cur;
+                main.scrollTo({{ top: Math.max(0, dest - 4), behavior: 'smooth' }});
+            }}
+            // espera o layout do rerun estabilizar antes de medir/rolar.
+            setTimeout(go, 80);
+        }})();
+        </script>
+        """,
+        height=0,
+    )
 
 
 def render_sidebar_filters(
@@ -640,7 +715,8 @@ def render_coord_search_sidebar() -> tuple[float, float] | None:
     st.markdown("### Busca por coordenada ou endereco")
     st.caption(
         "Digite uma coordenada (lat, lng) ou um endereco. O endereco e enviado ao "
-        "Google Maps para resolver a coordenada; sem rede, mostramos um link para abrir."
+        "OpenStreetMap/Nominatim para resolver a coordenada; sem rede ou sem resultado, "
+        "mostramos um link do Google Maps para abrir e copiar a coordenada."
     )
     raw = st.text_input(
         "Coordenada (lat, lng) ou endereco",

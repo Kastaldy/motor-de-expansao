@@ -13,9 +13,10 @@ Dependencias: selenium, webdriver-manager, Google Chrome instalado.
 
 from __future__ import annotations
 
+import json
 import re
 import urllib.request
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlencode
 
 # Padroes de coordenada nas variantes de URL do Maps. ORDEM importa: !2d/!3d/!4d
 # sao o PINO RESOLVIDO do place; @lat,lng e so o centro da camera (impreciso).
@@ -98,6 +99,15 @@ def _cache_key(query: str) -> str:
     return hashlib.sha1(normalized.encode("utf-8")).hexdigest()
 
 
+# Endpoint de geocoding por HTTP puro (DEC-010, emenda 2026-06-17 — provedor = OSM):
+# o fetch contra o Google Maps via urllib NAO resolve coordenada (a pagina e renderizada
+# por JS; sem navegador a URL final nao traz o pino). O Nominatim/OpenStreetMap devolve
+# lat/lon em JSON com um GET simples, sem navegador.
+_NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+# Usage Policy do Nominatim exige User-Agent identificavel (max 1 req/s, sem uso em massa).
+_GEOCODE_USER_AGENT = "motor-expansao-ultra/1.0 (+https://ultraacademia.com.br)"
+
+
 def resolve_endereco_http(
     query: str,
     *,
@@ -106,15 +116,19 @@ def resolve_endereco_http(
 ) -> tuple[float, float] | None:
     """Resolve texto livre (endereco) -> (lat, lng) por fetch HTTP PURO (urllib).
 
-    Faz UMA requisicao leve a URL de busca do Google Maps, segue o redirect e le a
-    coordenada da URL final via `extract_any_coord`. SEM Selenium, SEM navegador.
+    Usa o Nominatim/OpenStreetMap (DEC-010, emenda 2026-06-17): UMA requisicao GET leve
+    ao endpoint de busca, que devolve lat/lon em JSON. SEM Selenium, SEM navegador (o
+    fetch contra o Google Maps NAO resolve coordenada sem JS — por isso a troca de
+    provedor).
 
     GUARDRAIL (DEC-010): I/O de rede isolado neste helper da camada `api` (NAO no
     dashboard); o import de `resolve_endereco_http` no dashboard e lazy e a rede so
     ocorre quando ESTA funcao e chamada (caminho de busca por endereco). `try/except`
     amplo + timeout curto garantem que qualquer falha/ausencia de rede retorne `None`
-    (o chamador cai no fallback offline). O texto da consulta e enviado ao Google
-    (nota anti-PII na DEC-010).
+    (o chamador cai no fallback offline). O texto da consulta e enviado ao
+    OpenStreetMap/Nominatim (nota anti-PII na DEC-010); enviamos um User-Agent
+    identificavel conforme a Usage Policy (max 1 req/s, sem uso em massa) e cacheamos
+    localmente para nao repetir requisicoes.
 
     Valida o resultado contra o bounding box do Brasil; fora dele -> `None`.
     `cache_dir` (opcional, ex.: `data/cache/geocode/`): cacheia o par lat,lng resolvido
@@ -140,29 +154,39 @@ def resolve_endereco_http(
         except Exception:
             pass  # cache ausente/ilegivel -> ignora e refaz o fetch (cache_path segue valido p/ regravar)
 
-    # 2) Fetch HTTP puro (urllib), seguindo redirect ate a URL final do place.
-    #    `urllib.request` e importado no topo do modulo (stdlib, sem custo / sem rede no
-    #    import) para ser facilmente mockavel em teste; a rede so ocorre no urlopen abaixo.
+    # 2) Fetch HTTP puro (urllib) ao Nominatim, lendo lat/lon do JSON.
+    #    `urllib.request` e importado no topo do modulo (stdlib, sem rede no import) para
+    #    ser facilmente mockavel em teste; a rede so ocorre no urlopen abaixo.
+    url = f"{_NOMINATIM_URL}?" + urlencode(
+        {
+            "q": normalized,
+            "format": "jsonv2",
+            "limit": "1",
+            "countrycodes": "br",
+            "addressdetails": "0",
+        }
+    )
     try:
         req = urllib.request.Request(
-            build_search_url(normalized),
+            url,
             headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-                )
+                "User-Agent": _GEOCODE_USER_AGENT,
+                "Accept": "application/json",
+                "Accept-Language": "pt-BR",
             },
         )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - URL fixa do Maps
-            final_url = resp.geturl()
-            body = resp.read(200_000).decode("utf-8", errors="ignore")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - URL fixa do Nominatim
+            payload = resp.read(200_000).decode("utf-8", errors="ignore")
+        data = json.loads(payload)
     except Exception:
         return None
 
-    lat, lng = extract_any_coord(final_url)
-    if lat is None or lng is None:
-        lat, lng = extract_any_coord(body)
-    if lat is None or lng is None:
+    if not isinstance(data, list) or not data:
+        return None
+    try:
+        lat = float(data[0]["lat"])
+        lng = float(data[0]["lon"])
+    except (KeyError, ValueError, TypeError, IndexError):
         return None
     if not (_BR_LAT_MIN <= lat <= _BR_LAT_MAX and _BR_LNG_MIN <= lng <= _BR_LNG_MAX):
         return None

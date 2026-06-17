@@ -4276,6 +4276,46 @@ def test_render_tab_selector_fallback_quando_desmarcado():
     assert result == "Carteira e Plano"
 
 
+def test_render_tab_selector_rola_ao_topo_ao_trocar_de_aba():
+    """BLK-UI-08 FU1: trocar de aba dispara scroll_main_to_top (components.html)."""
+    import unittest.mock as mock
+
+    with (
+        mock.patch("streamlit.segmented_control", return_value="Executivo"),
+        mock.patch("streamlit.session_state", {"dashboard_active_tab_last": "Mapa"}),
+        mock.patch("streamlit.components.v1.html") as html_mock,
+    ):
+        result = streamlit_app.render_tab_selector()
+
+    assert result == "Executivo"
+    html_mock.assert_called_once()
+
+
+def test_render_tab_selector_nao_rola_sem_trocar_de_aba():
+    """Sem troca de aba (mesma aba ou 1o load) NAO deve rolar a tela."""
+    import unittest.mock as mock
+
+    # Mesma aba que a previa -> sem scroll.
+    with (
+        mock.patch("streamlit.segmented_control", return_value="Mapa"),
+        mock.patch("streamlit.session_state", {"dashboard_active_tab_last": "Mapa"}),
+        mock.patch("streamlit.components.v1.html") as html_mock,
+    ):
+        result = streamlit_app.render_tab_selector()
+    assert result == "Mapa"
+    html_mock.assert_not_called()
+
+    # 1o load (sem aba previa) -> sem scroll.
+    with (
+        mock.patch("streamlit.segmented_control", return_value="Mapa"),
+        mock.patch("streamlit.session_state", {}),
+        mock.patch("streamlit.components.v1.html") as html_mock2,
+    ):
+        result = streamlit_app.render_tab_selector()
+    assert result == "Mapa"
+    html_mock2.assert_not_called()
+
+
 def test_main_renderiza_apenas_a_aba_ativa(tmp_path, monkeypatch):
     """main() deve chamar somente o render_* da aba ativa, nao das outras tres."""
     import contextlib
@@ -4583,7 +4623,12 @@ def test_censo_map_consome_renda_bands_atualizada():
 # --- BLK-UI-08: Mudanca 2 — tab selector sticky ---
 
 def test_inject_styles_tab_selector_sticky():
-    """inject_styles fixa o stSegmentedControl no topo (position: sticky + top: 0)."""
+    """inject_styles fixa o tab selector no topo via sticky no CONTAINER do elemento.
+
+    FU1 (2026-06-17): o sticky e aplicado no stElementContainer (via :has), nao no
+    widget interno — senao nao gruda. Por isso o teste exige o seletor :has e o offset
+    de header (top: 3.25rem), nao mais top: 0 no proprio stSegmentedControl.
+    """
     import unittest.mock as mock
 
     captured: list[str] = []
@@ -4591,10 +4636,13 @@ def test_inject_styles_tab_selector_sticky():
         streamlit_app.inject_styles()
 
     css = "".join(captured)
-    assert "stSegmentedControl" in css
     assert ("position: sticky" in css) or ("position:sticky" in css)
-    assert ("top: 0" in css) or ("top:0" in css)
-    assert "z-index: 999" in css
+    # FU1: o sticky usa a user-key estavel do segmented control (.st-key-dashboard_active_tab),
+    # nao o testid `stSegmentedControl` (que NAO existe na Streamlit 1.58 — e `stButtonGroup`).
+    assert ".st-key-dashboard_active_tab" in css
+    assert "top: 0" in css
+    # Fix do "scroll ancestor": overflow: visible nos wrappers de layout do Streamlit.
+    assert "stMainBlockContainer" in css
 
 
 # --- BLK-UI-08: Mudanca 3 (Alt. B) — busca por endereco via fetch HTTP mockado ---

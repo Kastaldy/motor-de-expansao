@@ -5390,6 +5390,33 @@ UX validada pelo usuário; READ-ONLY M1.
 
 **Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
 
+**Resultado do ciclo (concluído 2026-06-17):** escopo citado por Vini = 3 mudanças de UX/UI, todas READ-ONLY
+sobre o M1, esteira Alta com gate humano (D1 + DEC-010). Entregue:
+1. **Paleta da Renda Média** — `RENDA_PER_CAPITA_BANDS` (`constants.py`) trocada por 5 faixas absolutas RGBA
+   alpha=150, ordem ascendente: `#F7F48B` (≤1000) → `#FFFF00` (1000–2000) → `#FFD21C` (2000–3500) →
+   `#A8FFA8` (3500–5000) → `#00CC00` (>5000). `DENSIDADE_POP_BANDS`/`RESIDUAL_SCORE_BANDS` intocados.
+2. **Tab selector sticky** — barra de abas fixa no topo ao rolar (`inject_styles` em `pages.py`).
+3. **Busca por endereço** — `render_coord_search_sidebar` passa a aceitar endereço livre (caminho numérico
+   `parse_coordinate_input` tentado primeiro); resolução por fetch HTTP isolado em `api/maps_geocoder.py`.
+   Gate humano: D1 = Alternativa B (fetch automático); **DEC-010** registrada (CLAUDE.md §8).
+
+**FU1 (2026-06-17, correções na validação visual; aprovadas por Vini passo a passo):**
+- **Geocoder: Google → Nominatim/OpenStreetMap.** O fetch `urllib` puro contra o Google Maps NÃO resolvia
+  coordenada (página renderizada por JS; sem navegador a URL final não traz o pino). `resolve_endereco_http`
+  passou a usar o Nominatim (`format=jsonv2&countrycodes=br`), HTTP puro que funciona; User-Agent identificável
+  + cache local `data/cache/geocode/`. **Emenda à DEC-010** registrada (provedor OSM, atribuição e anti-PII ao OSM).
+- **Sticky de fato funcional + polido.** Causa raiz: na Streamlit 1.58 o testid do segmented control é
+  `stButtonGroup` (não `stSegmentedControl`), então o CSS original nunca casava. Passou a usar a user-key estável
+  `.st-key-dashboard_active_tab` + `overflow: visible` nos wrappers de layout; barra colada no topo (`top: 0`),
+  full-width translúcida com blur, borda inferior turquesa e padding generoso.
+- **Scroll ao trocar de aba.** `scroll_main_to_top` via `components.html` (script que alcança o doc pai e mede a
+  posição de fluxo real da barra, rolando até o seletor de abas); nonce incremental força o re-mount a cada troca
+  (dispara SEMPRE, não só 1x). Cobertura por testes (dispara na troca / não dispara sem troca).
+- **Círculo do raio AZUL** nos mapas do Relatório Pontual Censitário — `_CIRCLE_RGBA = (0,102,255,235)` em
+  `censo_map.py` (era laranja). Teste de cor ajustado para isolar a bolinha antiga do círculo novo.
+- Sucessor placeholder **BLK-UI-09** criado no backlog.
+- **Validação:** suíte completa verde; ruff + mypy + `import streamlit_app` limpos. READ-ONLY M1 confirmado.
+
 ---
 
 - BLK-FIX-14 (concluído 2026-06-17) — ver tasks/completed.md

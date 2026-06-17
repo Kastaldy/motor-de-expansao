@@ -4,12 +4,13 @@
 
 ID: BLK-UI-08
 Nome: Refinos de UX/UI do dashboard (paleta Renda, tab sticky, busca por endereço)
-Status: APROVADO (QA — gate único da suíte full)
+Status: CONCLUÍDO (ciclo + FU1) — commit por path + PR nesta branch (2026-06-17)
 Tipo: feature (UX/UI; READ-ONLY sobre M1)
 Criticidade: alta
-Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA (concluído)
-Skill atual: QA (concluído — VEREDITO APROVADO)
-Próxima Skill: Fechamento manual (orquestrador: housekeeping move BLK-UI-08 + commit por path + PR/merge humano)
+Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA (concluído) + FU1 interativo (aprovado por Vini)
+Skill atual: Fechamento (commit + PR)
+Próxima Skill: Revisão/merge humano do PR
+FU1: geocoder Nominatim, sticky funcional+polido, scroll ao trocar de aba, círculo do raio azul; DEC-010 com emenda OSM.
 
 ## Veredito do QA (2026-06-17)
 APROVADO. Suíte FULL serial = 975 passed, 1 skipped, 0 failed (xdist `-n auto` abortou com INTERNALERROR do execnet no Python 3.14 — contorno serial autorizado, não bypass). ruff/mypy/import limpos. READ-ONLY M1 confirmado (git diff -- src/ não toca config/pipelines-m1/scoring/artefatos; §3 intacto). 3 mudanças + DEC-010 conforme plano. Nenhum teste bate na rede real (mock urllib legítimo, DEC-010(c)). Housekeeping --check em estado pré-move esperado (exit 1, stub ausente); move é passo do orquestrador. Paths pré-sujos NÃO staged. Sem problemas críticos/médios.
