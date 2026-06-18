@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 
 import pandas as pd
+import pytest
 
 from motor_expansao.dimensionamento.simulador import ViabilidadeResult
 from motor_expansao.dimensionamento.viabilidade_ponto import (
@@ -146,3 +147,150 @@ def test_grade_sensibilidade_margem_decresce_com_aluguel() -> None:
     linha = g[g["alunos"] == 800.0].sort_values("fator_aluguel")
     margens = linha["margem_liq"].to_numpy()
     assert (margens[:-1] >= margens[1:]).all()
+
+
+def test_split_corrige_superestimacao_receita() -> None:
+    """BLK-DIM-13: split 69/31 corrige o double-count; faturamento ~R$268-282k (nao ~R$375k)."""
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 2350.0,
+        share_balcao=0.69, base_calibracao_df=None, setores_df=None,
+    )
+    fat = r.viabilidade.faturamento_mensal_steady
+    assert 260_000.0 <= fat <= 290_000.0, f"faturamento={fat:.0f} (esperado 268-282k)"
+    assert fat < 300_000.0, f"double-count nao eliminado: {fat:.0f}"
+
+
+def test_anti_double_count_agregadores_escalam() -> None:
+    """Premissa total nao aparece como balcao cheio + 651 agregadores fixos simultaneamente."""
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 2000.0,
+        share_balcao=0.69, base_calibracao_df=None, setores_df=None,
+    )
+    assert r.alunos_balcao_premissa == pytest.approx(2000.0 * 0.69)
+    assert r.alunos_agregadores_premissa == pytest.approx(2000.0 * 0.31)
+    assert r.alunos_agregadores_premissa != 651.0
+    assert r.alunos_balcao_premissa != 2000.0
+
+
+def test_grade_aplica_split_internamente() -> None:
+    """A grade varre alunos TOTAIS; cada celula usa balcao=alunos*share + agr=alunos*(1-share)."""
+    from motor_expansao.dimensionamento.config import SIM_MENSALIDADE_BALCAO
+    from motor_expansao.dimensionamento.simulador import viabilidade as _viabilidade
+
+    share = 0.69
+    alunos_total = 800.0
+    fator = 1.0
+    aluguel_ref = 20000.0
+
+    g = grade_sensibilidade(1500.0, aluguel_ref, 938.0, share_balcao=share)
+    esperado = _viabilidade(
+        alunos_total * share,
+        1500.0,
+        aluguel_ref * fator,
+        SIM_MENSALIDADE_BALCAO,
+        alunos_agregadores=alunos_total * (1.0 - share),
+    )
+    linha = g[(g["alunos"] == alunos_total) & (g["fator_aluguel"] == fator)].iloc[0]
+    assert linha["margem_liq"] == pytest.approx(esperado.margem_ebitda_pct)
+
+
+def test_share_balcao_default_aplicado() -> None:
+    from motor_expansao.dimensionamento.viabilidade_ponto import SHARE_BALCAO_DEFAULT
+
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 1000.0, base_calibracao_df=None, setores_df=None,
+    )
+    assert r.alunos_balcao_premissa == pytest.approx(1000.0 * SHARE_BALCAO_DEFAULT)
+    assert r.alunos_agregadores_premissa == pytest.approx(1000.0 * (1.0 - SHARE_BALCAO_DEFAULT))
+
+
+# ---------------------------------------------------------------------------
+# BLK-DIM-16 — Testes de critério de aceite (break-even + aluguel-teto)
+# ---------------------------------------------------------------------------
+
+def test_breakeven_menor_que_alunos_para_margem_alvo() -> None:
+    """Break-even (EBITDA=0%) deve ser menor que alunos para a margem-alvo (10%)."""
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 938.0,
+        base_calibracao_df=_base_comparaveis(), setores_df=None,
+    )
+    assert math.isfinite(r.alunos_breakeven), "break-even deve ser finito"
+    assert math.isfinite(r.alunos_para_margem_alvo), "alunos_para_margem_alvo deve ser finito"
+    assert r.alunos_breakeven < r.alunos_para_margem_alvo, (
+        f"break-even ({r.alunos_breakeven:.1f}) deve ser < alunos para 10% EBITDA "
+        f"({r.alunos_para_margem_alvo:.1f})"
+    )
+
+
+def test_breakeven_resulta_ebitda_zero() -> None:
+    """Reinjetar alunos_breakeven em viabilidade() deve dar EBITDA ≈ 0%."""
+    from motor_expansao.dimensionamento.config import SIM_MENSALIDADE_BALCAO
+    from motor_expansao.dimensionamento.simulador import viabilidade as _viabilidade
+    from motor_expansao.dimensionamento.viabilidade_ponto import SHARE_BALCAO_DEFAULT
+
+    m2, aluguel, demanda = 1500.0, 20000.0, 938.0
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, m2, aluguel, demanda,
+        base_calibracao_df=None, setores_df=None,
+    )
+    # alunos_breakeven e em alunos de BALCAO; agregadores ficam FIXOS em demanda*(1-share)
+    # (idem ao que analisar_viabilidade_ponto passa para alunos_minimos_viaveis)
+    alunos_agr_fixo = demanda * (1.0 - SHARE_BALCAO_DEFAULT)
+    v = _viabilidade(
+        r.alunos_breakeven, m2, aluguel, SIM_MENSALIDADE_BALCAO,
+        alunos_agregadores=alunos_agr_fixo,
+    )
+    # tolerancia generosa para acomodar xtol=0.5 do brentq (rounding em alunos discretos)
+    assert abs(v.margem_ebitda_pct) < 0.05, (
+        f"EBITDA no break-even deveria ser ~0%; got {v.margem_ebitda_pct:.4f}"
+    )
+
+
+def test_aluguel_teto_considera_agregadores_materiais() -> None:
+    """Com agregadores/personal muito materiais, teto supera o bound antigo (2x balcao)."""
+    from motor_expansao.dimensionamento.simulador import aluguel_teto
+
+    # Cenario: poucos alunos de balcao mas muitos agregadores e personal alto
+    # -> receita total >> receita de balcao -> teto verdadeiro > 2*balcao*ticket
+    alunos_balcao = 100.0
+    ticket_medio = 99.0
+    m2 = 1500.0
+    alunos_agr = 3000.0
+    ticket_agr = 82.0
+    personal = 200000.0
+
+    bound_so_balcao = alunos_balcao * ticket_medio * 2.0  # = 19800; bound antigo subestimado
+
+    teto_com_agr = aluguel_teto(
+        alunos_balcao, m2, ticket_medio,
+        alunos_agregadores=alunos_agr,
+        ticket_agregador=ticket_agr,
+        personal_mes=personal,
+    )
+    assert teto_com_agr > bound_so_balcao, (
+        f"aluguel_teto com agregadores ({teto_com_agr:.0f}) deve ser > "
+        f"bound so-balcao ({bound_so_balcao:.0f})"
+    )
+
+
+def test_aluguel_teto_sem_agregadores_nao_regride() -> None:
+    """Com agregadores/personal zerados, teto deve ser finito e positivo (nao-regressao)."""
+    from motor_expansao.dimensionamento.simulador import aluguel_teto
+
+    # Cenario viavel mesmo sem agregadores: alta base de alunos e ticket alto
+    teto = aluguel_teto(
+        1200.0, 1500.0, 200.0,
+        alunos_agregadores=0.0, ticket_agregador=0.0, personal_mes=0.0,
+    )
+    assert teto > 0.0, "teto deve ser positivo em cenario viavel sem agregadores"
+    assert math.isfinite(teto), "teto deve ser finito"
+
+
+def test_alunos_para_margem_alvo_campo_presente() -> None:
+    """Campo alunos_para_margem_alvo existe no dataclass e tem valor nao-negativo."""
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 938.0,
+        base_calibracao_df=None, setores_df=None,
+    )
+    assert hasattr(r, "alunos_para_margem_alvo")
+    assert r.alunos_para_margem_alvo >= 0.0

@@ -10,3 +10,8 @@ secrets/*.enc.txt   binary
 # Scripts bash devem manter LF mesmo em working tree Windows — line endings
 # CRLF quebram o shebang e o parser em VPS Linux.
 *.sh                text eol=lf
+
+# Fontes Python sempre em LF nos blobs (independente da plataforma). Evita que
+# o loop autonomo (container Linux montando o working tree Windows em CRLF via
+# core.autocrlf) commite arquivos inteiros como CRLF, poluindo diff/blame.
+*.py                text eol=lf
