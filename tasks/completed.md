@@ -5315,6 +5315,114 @@ render lazy de abas e fonte de mapa enxuta preservados; offline; sem API ao vivo
 
 ---
 
+### BLK-FIX-14 — Isolamento do teste flaky `test_classico_template_recente_inalterado`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (debt de isolamento de teste; READ-ONLY sobre M1; não afeta produção). |
+| **Prioridade** | Baixa (não bloqueia ciclos; surge só na suíte full serial). |
+| **Esteira** | Block Orchestrator → Builder → QA (Média se virar investigação ampla de isolamento da suíte). |
+| **Status** | Pendente — aberto pelo QA do BLK-UI-07 (2026-06-16). |
+| **Responsável sugerido** | Vini |
+
+**Contexto:** durante o gate do BLK-UI-07, a suíte full serial acusou
+`tests/unit/test_relatorio_pontual_censitario_export.py::test_classico_template_recente_inalterado` como
+**1 failed**. Investigação do QA provou que **NÃO é regressão do BLK-UI-07**: o teste passa isolado (1 passed),
+o arquivo inteiro passa (22 passed) e ele passa logo após os testes alterados (`test_streamlit_app.py` + o teste
+= 200 passed). O módulo que governa os bytes do PDF (`censo_report.py`) não foi tocado pelo ciclo. Logo, é
+**poluição de estado por OUTRO teste não alterado** (debt de isolamento pré-existente da suíte), surfada pela
+ordem de coleta. As 3 dívidas herdadas conhecidas têm comportamento ordem-dependente parecido, reforçando que a
+suíte tem fragilidade de isolamento geral.
+
+**Objetivo:** identificar o teste poluidor (bisseção por ordem de coleta, ex.: `pytest -p no:randomly` +
+`--cache-clear`, ou rodar pares progressivos até reproduzir) e corrigir o vazamento de estado global
+(provável registro/monkeypatch de fonte/template em `fpdf`/`censo_report` não revertido, ou cache de módulo).
+
+**Escopo permitido:** `tests/**` (fixtures/teardown/`conftest.py`); no máximo um ajuste de teardown/reset em
+helper de teste. **NÃO** alterar a lógica de produção de `censo_report.py` sem nova decisão.
+
+**Fora de escopo:** score/pesos/artefatos M1; mudar a geração de PDF; mascarar com `-p no:xdist` ou skip.
+
+**Critérios de aceite:** poluidor identificado e documentado; `python -m pytest -q` (full serial) verde de forma
+**reproduzível** (sem o failure); teste segue passando isolado; READ-ONLY M1.
+
+**Guardrail:** não mascarar flakiness; corrigir a causa (isolamento), não o sintoma.
+
+**RESULTADO DO CICLO (2026-06-17) — Veredito QA: APROVADO (Opus 4.8).**
+Esteira: Block Orchestrator (sonnet) → Planner (sonnet) → Builder (opus, override +1) → QA (opus 4.8). Sem gate humano (Média). Branch `ciclo/BLK-FIX-14` (a partir de `main`/`e7b0f94`).
+- **Causa real (refutou a hipótese inicial de estado global):** NÃO era poluição de `_ICON_CACHE`/`_ATLAS_CACHE` de `competitors.py`. O flaky vem do **timestamp `/CreationDate` (e `/ID` derivado) que o fpdf2 carimba a partir de `datetime.now()` por instância**. As duas gerações de PDF do teste (`antes`/`depois`) diferem em exatos **61 bytes** (dígito de segundos + hash do `/ID`) quando a geração cruza a fronteira de 1 segundo — o que acontece sob a suíte full (mais lenta), não isolado.
+- **Correção (só em tests/):** novo `tests/conftest.py` com fixture **autouse scope=function** que congela o símbolo `datetime` dentro de `fpdf.fpdf`/`fpdf.output` (auto-revertido). Torna a comparação byte-a-byte determinística sem mascarar — SEM `skip`/`xfail`/`-p no:xdist`/reordenar. Produção (`censo_report.py`/`competitors.py`/`config.py`/`pipelines/m1`) **byte-intacta**.
+- **Prova (QA, evidência própria):** FALHA com `--noconftest`, PASSA com o conftest, inclusive pelo caminho real `gerar_pdf_relatorio_pontual_censitario`. Suíte **full serial 964 passed / 1 skipped / 0 failed em 2 runs independentes**; alvo isolado verde; `ruff`/`mypy`/import ok. READ-ONLY M1 confirmado.
+- **Arquivo alterado:** `tests/conftest.py` (novo).
+
+---
+
+- BLK-MAP-01 (concluído 2026-06-11) — ver tasks/completed.md
+
+---
+
+### BLK-UI-08 — Refinos de UX/UI do dashboard (escopo a detalhar pelo usuário)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (provável — mexe no dashboard de produção; READ-ONLY sobre M1). A confirmar no Block Orchestrator conforme o escopo citado. |
+| **Prioridade** | A definir pelo usuário ao iniciar o ciclo. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA (ajustar para Baixa/Média se o escopo citado for trivial). |
+| **Status** | **Pendente — escopo a ser citado pelo usuário (Vini) ao iniciar o ciclo** (`/run-cycle BLK-UI-08`). |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | — (criar se necessário) |
+
+**Contexto:** novo bloco de melhorias de UX/UI do dashboard, sucessor do bloco BLK-UI-07. O conjunto exato de
+mudanças será **descrito pelo usuário no início do ciclo**; este bloco existe apenas como alvo do `/run-cycle`.
+Não iniciar execução sem o escopo citado e o plano aprovado no gate humano. Frentes futuras herdadas (ex.: F2-E
+hero header contextual com UF; limpeza do CSS legado F2-G da sidebar agora que o default é `collapsed`) cabem aqui.
+
+**Objetivo:** aplicar as mudanças de interface que o usuário citará, sem regressão funcional nem do M1.
+
+**Escopo permitido (provável):** `src/motor_expansao/dashboard/` (pages/components/utils/constants visuais) +
+`streamlit_app.py` + `tests/integration/test_streamlit_app.py`, preservando carga lazy por UF, render lazy de
+abas e fonte de mapa enxuta (Blocos 4–6). Ajustar conforme o escopo real citado.
+
+**Fora de escopo:** score/pesos/artefatos M1; dependência de API ao vivo; quebrar contratos de performance.
+
+**Critérios de aceite:** escopo citado e plano aprovado antes de codar; sem regressão (suíte verde);
+UX validada pelo usuário; READ-ONLY M1.
+
+**Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
+
+**Resultado do ciclo (concluído 2026-06-17):** escopo citado por Vini = 3 mudanças de UX/UI, todas READ-ONLY
+sobre o M1, esteira Alta com gate humano (D1 + DEC-010). Entregue:
+1. **Paleta da Renda Média** — `RENDA_PER_CAPITA_BANDS` (`constants.py`) trocada por 5 faixas absolutas RGBA
+   alpha=150, ordem ascendente: `#F7F48B` (≤1000) → `#FFFF00` (1000–2000) → `#FFD21C` (2000–3500) →
+   `#A8FFA8` (3500–5000) → `#00CC00` (>5000). `DENSIDADE_POP_BANDS`/`RESIDUAL_SCORE_BANDS` intocados.
+2. **Tab selector sticky** — barra de abas fixa no topo ao rolar (`inject_styles` em `pages.py`).
+3. **Busca por endereço** — `render_coord_search_sidebar` passa a aceitar endereço livre (caminho numérico
+   `parse_coordinate_input` tentado primeiro); resolução por fetch HTTP isolado em `api/maps_geocoder.py`.
+   Gate humano: D1 = Alternativa B (fetch automático); **DEC-010** registrada (CLAUDE.md §8).
+
+**FU1 (2026-06-17, correções na validação visual; aprovadas por Vini passo a passo):**
+- **Geocoder: Google → Nominatim/OpenStreetMap.** O fetch `urllib` puro contra o Google Maps NÃO resolvia
+  coordenada (página renderizada por JS; sem navegador a URL final não traz o pino). `resolve_endereco_http`
+  passou a usar o Nominatim (`format=jsonv2&countrycodes=br`), HTTP puro que funciona; User-Agent identificável
+  + cache local `data/cache/geocode/`. **Emenda à DEC-010** registrada (provedor OSM, atribuição e anti-PII ao OSM).
+- **Sticky de fato funcional + polido.** Causa raiz: na Streamlit 1.58 o testid do segmented control é
+  `stButtonGroup` (não `stSegmentedControl`), então o CSS original nunca casava. Passou a usar a user-key estável
+  `.st-key-dashboard_active_tab` + `overflow: visible` nos wrappers de layout; barra colada no topo (`top: 0`),
+  full-width translúcida com blur, borda inferior turquesa e padding generoso.
+- **Scroll ao trocar de aba.** `scroll_main_to_top` via `components.html` (script que alcança o doc pai e mede a
+  posição de fluxo real da barra, rolando até o seletor de abas); nonce incremental força o re-mount a cada troca
+  (dispara SEMPRE, não só 1x). Cobertura por testes (dispara na troca / não dispara sem troca).
+- **Círculo do raio AZUL** nos mapas do Relatório Pontual Censitário — `_CIRCLE_RGBA = (0,102,255,235)` em
+  `censo_map.py` (era laranja). Teste de cor ajustado para isolar a bolinha antiga do círculo novo.
+- Sucessor placeholder **BLK-UI-09** criado no backlog.
+- **Validação:** suíte completa verde; ruff + mypy + `import streamlit_app` limpos. READ-ONLY M1 confirmado.
+
+---
+
+- BLK-FIX-14 (concluído 2026-06-17) — ver tasks/completed.md
+
+---
+
 ### BLK-DIM-13 — Correção do split de ticket (balcão/agregador) no engine de viabilidade — superestimação de receita
 
 | Campo | Valor |

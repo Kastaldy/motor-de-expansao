@@ -105,3 +105,104 @@ def test_lookup_nao_altera_score_priorizacao():
     result = lookup_hex_by_coord(lat, lng, df)
     assert result is not None
     assert result.get("score_priorizacao") == 80.0
+
+
+# ── resolve_endereco_http (BLK-UI-08 / DEC-010) — SEMPRE com urllib mockado ────
+
+
+class _FakeResp:
+    """Stub de resposta urllib: expõe read() (JSON do Nominatim) + context manager."""
+
+    def __init__(self, body: bytes = b""):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self, _n=None):
+        return self._body
+
+
+def _nominatim_body(lat: float, lng: float) -> bytes:
+    """Corpo JSON minimo no formato jsonv2 do Nominatim (lat/lon como string)."""
+    return f'[{{"lat": "{lat}", "lon": "{lng}"}}]'.encode()
+
+
+def test_resolve_endereco_http_resolve_coordenada_do_redirect(monkeypatch):
+    """Sucesso: o JSON do Nominatim (mock) traz lat/lon -> retorna (lat, lng) no Brasil."""
+    from motor_expansao.api import maps_geocoder
+
+    monkeypatch.setattr(
+        maps_geocoder.urllib.request,
+        "urlopen",
+        lambda *a, **k: _FakeResp(_nominatim_body(-23.5613, -46.6565)),
+    )
+    out = maps_geocoder.resolve_endereco_http("Av. Paulista 1000, Sao Paulo", timeout=1.0)
+    assert out is not None
+    assert out == pytest.approx((-23.5613, -46.6565), abs=1e-4)
+
+
+def test_resolve_endereco_http_falha_de_rede_retorna_none(monkeypatch):
+    """Exceção de rede/timeout -> None (sem propagar exceção); CI nunca bate na rede."""
+    from motor_expansao.api import maps_geocoder
+
+    def _boom(*a, **k):
+        raise TimeoutError("sem rede")
+
+    monkeypatch.setattr(maps_geocoder.urllib.request, "urlopen", _boom)
+    assert maps_geocoder.resolve_endereco_http("Rua Inexistente 999", timeout=0.1) is None
+
+
+def test_resolve_endereco_http_sem_resultado_retorna_none(monkeypatch):
+    """JSON vazio do Nominatim (endereco sem match) -> None."""
+    from motor_expansao.api import maps_geocoder
+
+    monkeypatch.setattr(
+        maps_geocoder.urllib.request,
+        "urlopen",
+        lambda *a, **k: _FakeResp(b"[]"),
+    )
+    assert maps_geocoder.resolve_endereco_http("zzzzz nao existe", timeout=1.0) is None
+
+
+def test_resolve_endereco_http_fora_do_brasil_retorna_none(monkeypatch):
+    """Coordenada resolvida fora do bounding box do Brasil -> None."""
+    from motor_expansao.api import maps_geocoder
+
+    monkeypatch.setattr(
+        maps_geocoder.urllib.request,
+        "urlopen",
+        lambda *a, **k: _FakeResp(_nominatim_body(48.8566, 2.3522)),  # Paris
+    )
+    assert maps_geocoder.resolve_endereco_http("Tour Eiffel", timeout=1.0) is None
+
+
+def test_resolve_endereco_http_vazio_retorna_none():
+    from motor_expansao.api import maps_geocoder
+
+    assert maps_geocoder.resolve_endereco_http("   ") is None
+
+
+def test_resolve_endereco_http_usa_cache_sem_rede(tmp_path, monkeypatch):
+    """Cache local gitignored: 1º hit grava; 2º hit lê do disco sem chamar urlopen."""
+    from motor_expansao.api import maps_geocoder
+
+    calls = {"n": 0}
+
+    def _urlopen(*a, **k):
+        calls["n"] += 1
+        return _FakeResp(_nominatim_body(-23.5613, -46.6565))
+
+    monkeypatch.setattr(maps_geocoder.urllib.request, "urlopen", _urlopen)
+
+    first = maps_geocoder.resolve_endereco_http("Av. Paulista 1000", cache_dir=tmp_path)
+    assert first is not None
+    assert calls["n"] == 1
+
+    # Segunda chamada com a MESMA query lê do cache, sem nova requisição.
+    second = maps_geocoder.resolve_endereco_http("Av. Paulista 1000", cache_dir=tmp_path)
+    assert second == first
+    assert calls["n"] == 1

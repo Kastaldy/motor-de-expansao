@@ -159,10 +159,13 @@ def test_mapa_censitario_ponto_central_pin_vermelho():
         for count, (r, g, b) in (map_area.getcolors(maxcolors=1_000_000) or [])
         if r > 180 and g < 90 and b < 90
     )
+    # cor antiga (20,96,181) do ponto central: b ~181. NAO confundir com o circulo do
+    # raio, que passou a ser AZUL VIVIDO (0,102,255 -> ~(19,113,254), b~254) por pedido
+    # de Vini 2026-06-17; por isso o teto b < 215 isola a bolinha antiga do circulo novo.
     blues_old = sum(
         count
         for count, (r, g, b) in (map_area.getcolors(maxcolors=1_000_000) or [])
-        if b > 150 and r < 60 and 70 < g < 130  # cor antiga (20,96,181) do ponto central
+        if 150 < b < 215 and r < 60 and 70 < g < 130
     )
     assert reds > 0
     assert blues_old == 0

@@ -320,6 +320,42 @@ def inject_styles() -> None:
                 display: flex;
                 gap: 8px !important;
             }}
+            /* BLK-UI-08 (FU1 2026-06-17): tab selector fixo no topo ao rolar.
+               CAUSA RAIZ do bug: na Streamlit 1.58 o testid do segmented control e
+               `stButtonGroup` (NAO `stSegmentedControl`), entao todo CSS que mirava
+               `stSegmentedControl` nunca casava. Usamos o seletor ESTAVEL da user-key
+               do widget: `render_tab_selector` passa `key="dashboard_active_tab"`, e o
+               Streamlit aplica a classe `.st-key-dashboard_active_tab` no container do
+               elemento — fixamos essa classe (mesmo padrao do `.st-key-btn_gerar_pdf_topo`).
+               Reforco: `overflow: visible` nos wrappers de layout (um deles com
+               `overflow`!=visible vira o "scroll ancestor" e desliga o sticky); NAO
+               tocamos `section.stMain`, que e o scroller real. `top` compensa o stHeader
+               (~3.25rem). FALLBACK (NAO ativado): `position: fixed` + padding compensatorio. */
+            [data-testid="stMainBlockContainer"],
+            [data-testid="stVerticalBlock"] {{
+                overflow: visible !important;
+            }}
+            .st-key-dashboard_active_tab {{
+                position: sticky;
+                top: 0;
+                z-index: 998;
+                width: 100%;
+                /* barra colada no topo, translucida com blur cobrindo a largura toda
+                   (sem vazar conteudo por tras) + acento inferior turquesa e sombra,
+                   no tema do app. Padding generoso = mais "margem" em volta dos botoes. */
+                background: rgba(10, 15, 31, 0.94);
+                backdrop-filter: blur(6px);
+                -webkit-backdrop-filter: blur(6px);
+                border-bottom: 1px solid rgba(25, 183, 255, 0.28);
+                box-shadow: 0 8px 20px rgba(0, 0, 0, 0.38);
+                padding: 0.9rem 0.6rem;
+                margin-bottom: 0.5rem;
+                overflow: visible;
+            }}
+            /* mais espaco entre os botoes do seletor (testid real na 1.58 = stButtonGroup). */
+            .st-key-dashboard_active_tab [data-baseweb="button-group"] {{
+                gap: 0.6rem;
+            }}
             [data-baseweb="button-group"] {{
                 gap: 8px !important;
             }}
@@ -504,8 +540,63 @@ def render_tab_selector(
     # selection_mode="single" permite desmarcar (None); manter a ultima aba ativa.
     if not selected:
         selected = st.session_state.get(last_key) or opts[0]
+    previous = st.session_state.get(last_key)
     st.session_state[last_key] = selected
+    # BLK-UI-08 (FU1): ao TROCAR de aba, rolar a tela ATE a barra de abas. So dispara
+    # quando havia uma aba previa e ela mudou — nao no 1o load nem em reruns sem troca.
+    # O nonce incremental garante HTML unico por troca, forcando o re-mount do iframe do
+    # components.html (sem ele, conteudo identico nao re-executa o script — so rolava 1x).
+    if previous is not None and previous != selected:
+        nonce_key = f"{key}_scroll_nonce"
+        nonce = int(st.session_state.get(nonce_key, 0)) + 1
+        st.session_state[nonce_key] = nonce
+        scroll_main_to_top(nonce)
     return selected
+
+
+def scroll_main_to_top(nonce: int = 0) -> None:
+    """Rola a area principal ATE o seletor de abas (usado ao trocar de aba).
+
+    O Streamlit nao expoe scroll nativo; injetamos um `<script>` via `components.html`
+    (que roda dentro de um iframe) alcancando o documento PAI e dando `scrollIntoView`
+    no container do seletor de abas (`.st-key-dashboard_active_tab`) — leva ate a barra
+    de abas, nao ao topo absoluto. Fallback: rola o scroller real (`section.stMain`) ao
+    topo. O `nonce` torna o HTML unico a cada troca, forcando o iframe a re-montar e o
+    script a re-executar SEMPRE (senao Streamlit reaproveita o iframe e o scroll so roda
+    1x). `height=0` mantem o componente invisivel. NAO toca score/artefatos M1.
+    """
+    import streamlit.components.v1 as components
+
+    components.html(
+        f"""
+        <script>
+        // nonce={nonce}
+        (function () {{
+            const doc = window.parent && window.parent.document;
+            if (!doc) return;
+            function go() {{
+                const main = doc.querySelector('section[data-testid="stMain"]')
+                    || doc.querySelector('section.stMain')
+                    || doc.scrollingElement;
+                if (!main) return;
+                const target = doc.querySelector('.st-key-dashboard_active_tab');
+                if (!target) {{ main.scrollTo({{ top: 0, behavior: 'smooth' }}); return; }}
+                // A barra e sticky (top:0): rolado pra baixo, o rect dela ja esta no topo
+                // e scrollIntoView nao faz nada. Medimos a posicao de FLUXO zerando o
+                // scroll temporariamente e restaurando ANTES do paint (sem flash).
+                const cur = main.scrollTop;
+                main.scrollTop = 0;
+                const dest = target.getBoundingClientRect().top - main.getBoundingClientRect().top;
+                main.scrollTop = cur;
+                main.scrollTo({{ top: Math.max(0, dest - 4), behavior: 'smooth' }});
+            }}
+            // espera o layout do rerun estabilizar antes de medir/rolar.
+            setTimeout(go, 80);
+        }})();
+        </script>
+        """,
+        height=0,
+    )
 
 
 def render_sidebar_filters(
@@ -583,30 +674,78 @@ def render_empty_state() -> None:
     st.warning("Nenhum dado encontrado para o recorte atual. Ajuste os filtros globais.")
 
 
-def render_coord_search_sidebar() -> tuple[float, float] | None:
-    """Render coordinate search widget. Returns ``(lat, lng)`` or ``None``.
+# BLK-UI-08 / DEC-010: cache local (gitignored) das resolucoes endereco->coordenada.
+_GEOCODE_CACHE_DIR = Path("data/cache/geocode")
 
-    BLK-UI-07 (F3): o widget agora vive no CORPO principal (perto do seletor de
-    abas), nao mais na sidebar. O nome da funcao e a `key="coord_search_input"`
-    sao preservados (consumidos por testes e session_state).
+
+def _render_endereco_fallback_link(raw: str) -> None:
+    """Fallback offline gracioso (DEC-010 (c)): link clicavel do Google Maps.
+
+    Usado quando o fetch HTTP falha/timeout/sem rede. NAO faz rede (`build_search_url`
+    e funcao PURA). `st.link_button` existe no Streamlit usado; fallback markdown se nao.
+    """
+    from motor_expansao.api.maps_geocoder import build_search_url
+
+    url = build_search_url(raw)
+    link_button = getattr(st, "link_button", None)
+    if callable(link_button):
+        link_button("Abrir no Google Maps", url)
+    else:
+        st.markdown(f"[Abrir no Google Maps]({url})")
+    st.caption(
+        "Nao foi possivel resolver o endereco automaticamente (offline ou indisponivel). "
+        "Abra no Maps, copie a coordenada do pino e cole de volta no campo acima."
+    )
+
+
+def render_coord_search_sidebar() -> tuple[float, float] | None:
+    """Render coordinate/address search widget. Returns ``(lat, lng)`` or ``None``.
+
+    BLK-UI-07 (F3): o widget vive no CORPO principal (perto do seletor de abas), nao
+    na sidebar. O nome da funcao e a `key="coord_search_input"` sao preservados
+    (consumidos por testes e session_state).
+
+    BLK-UI-08 / DEC-010: o campo passa a aceitar tambem ENDERECO livre. O caminho
+    numerico (`parse_coordinate_input`) e SEMPRE tentado primeiro e fica intacto. So
+    quando ele falha o texto e tratado como endereco e resolvido por fetch HTTP puro
+    (`resolve_endereco_http`, isolado em `api/maps_geocoder.py`, urllib, sem Selenium),
+    com fallback gracioso para link clicavel se faltar rede/falhar/timeout.
     """
     st.markdown("---")
-    st.markdown("### Busca por coordenada")
-    st.caption("Localize um hexagono pela coordenada. Offline, sem API externa.")
+    st.markdown("### Busca por coordenada ou endereco")
+    st.caption(
+        "Digite uma coordenada (lat, lng) ou um endereco. O endereco e enviado ao "
+        "OpenStreetMap/Nominatim para resolver a coordenada; sem rede ou sem resultado, "
+        "mostramos um link do Google Maps para abrir e copiar a coordenada."
+    )
     raw = st.text_input(
-        "Coordenada (lat, lng)",
-        placeholder="-23.55, -46.63",
+        "Coordenada (lat, lng) ou endereco",
+        placeholder="-23.55, -46.63  ou  Av. Paulista 1000, Sao Paulo",
         key="coord_search_input",
     )
     if not raw or not raw.strip():
         return None
+    raw = raw.strip()
+
+    # 1) Caminho numerico (intacto): coordenada lat,lng em qualquer formato BR/US.
     result = parse_coordinate_input(raw)
-    if result is None:
-        st.error(
-            "Formato invalido ou fora dos limites do Brasil. "
-            "Use: -23.55, -46.63  ou  -23,55; -46,63  ou  -23.55 -46.63"
-        )
-    return result
+    if result is not None:
+        return result
+
+    # 2) Texto nao-numerico -> trata como ENDERECO LIVRE (DEC-010, Alternativa B).
+    #    Fetch HTTP puro, isolado em camada `api`, com try/except amplo. Falha/sem
+    #    rede -> fallback offline (link clicavel), sem excecao.
+    try:
+        from motor_expansao.api.maps_geocoder import resolve_endereco_http
+
+        resolved = resolve_endereco_http(raw, timeout=6.0, cache_dir=_GEOCODE_CACHE_DIR)
+    except Exception:
+        resolved = None
+    if resolved is not None:
+        return resolved
+
+    _render_endereco_fallback_link(raw)
+    return None
 
 
 def render_hex_search_result(
