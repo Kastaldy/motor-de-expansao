@@ -5614,3 +5614,24 @@ abas e fonte de mapa enxuta (Blocos 4–6). Ajustar conforme o escopo real citad
 UX validada pelo usuário; READ-ONLY M1.
 
 **Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
+
+**FECHAMENTO REAL (ciclo /run-cycle BLK-UI-09 — concluído 2026-06-19, esteira BO→Planner→[gate humano]→Builder→QA):**
+Escopo citado por Vini: a barra de busca passa a aceitar **3 formatos** (coordenada, endereço, **link do Maps**);
+coordenada e endereço já existiam (BLK-UI-08/DEC-010), faltava o **link**. Entregue:
+- `render_coord_search_sidebar` (`pages.py`): cascata `numérico (INTOCADO) → link Maps (NOVO) → endereço Nominatim
+  (INTOCADO)`, com helpers de módulo `_parece_link`/`_e_link_curto_maps` (puros, testáveis). URL longa (`!3d/!4d` ou
+  `@lat,lng`) resolvida **offline por regex** (`extract_any_coord`); link curto (`maps.app.goo.gl`/`goo.gl/maps`)
+  resolvido seguindo o **redirect HTTP** (Opção B). Resultado de qualquer link validado por `_validate_brazil_bbox`;
+  fallback gracioso por `st.warning`. Caption/label/placeholder citam os 3 formatos; `key="coord_search_input"` preservada.
+- `api/maps_geocoder.py`: novo helper `resolve_short_link(url, *, timeout=6.0) -> str | None` (urllib puro, segue
+  redirect, `None` em qualquer falha; importável sem rede; import lazy no dashboard).
+- `tests/unit/test_coord_search.py`: nova seção (regex pura de `extract_any_coord`, helpers de roteamento,
+  `resolve_short_link` SEMPRE com urllib **mockado**). Nenhum teste bate na rede real.
+- **Gate humano (Vinicius, 2026-06-19): Opção B aprovada** (link curto via rede). **Emenda à DEC-010 (2026-06-19)**
+  registrada em CLAUDE.md §8 (3º sub-caminho de rede da busca, mitigações (a)/(c)/(d)/(e)/(f) vigentes).
+- **QA APROVADO:** suíte full serial **1030 passed, 1 skipped, 0 failed** (xdist `-n auto` abortou com INTERNALERROR
+  de execnet no Python 3.14 — contorno de ambiente documentado, não bypass); ruff/mypy/`import streamlit_app` limpos.
+  **READ-ONLY M1** confirmado (`git diff src/` toca só `api/maps_geocoder.py` + `dashboard/pages.py`; config/score/pesos/
+  artefatos INALTERADOS; H3=7, DIST_MIN=1.0, RENDA_MIN=4500, renda=0.40/pop=0.60). Caminhos numérico/endereço
+  byte-a-byte preservados; Blocos 4–6 intocados.
+- Commit por path `9a57206` no branch `ciclo/BLK-UI-09` (precedido por `571681f`, housekeeping BLK-UI-07). Merge = passo humano.
