@@ -335,26 +335,57 @@ def inject_styles() -> None:
             [data-testid="stVerticalBlock"] {{
                 overflow: visible !important;
             }}
-            .st-key-dashboard_active_tab {{
+            /* BLK-UI-09-FU1 (2026-06-19): a navegacao e a busca viram UMA barra sticky.
+               O `st.container(key="nav_search_bar")` do main() contem o seletor de abas e
+               a barra de busca lado a lado (st.columns). O sticky NAO pode ir no proprio
+               `.st-key-nav_search_bar`: na Streamlit 1.58 a key cai num stVerticalBlock
+               cujo PAI imediato e um `stLayoutWrapper` que o envolve justo — e um sticky e
+               limitado a caixa do pai, entao ele rolaria junto. Por isso fixamos o
+               PROPRIO stLayoutWrapper que contem o nosso container (`:has(> .st-key-...)`);
+               o pai DELE e o bloco principal (altura da pagina toda), dando espaco para
+               grudar. Verificado por scroll real (top_after_scroll=0). Mantem o visual
+               translucido com blur/acento/sombra. */
+            [data-testid="stLayoutWrapper"]:has(> .st-key-nav_search_bar) {{
                 position: sticky;
                 top: 0;
                 z-index: 998;
                 width: 100%;
-                /* barra colada no topo, translucida com blur cobrindo a largura toda
-                   (sem vazar conteudo por tras) + acento inferior turquesa e sombra,
-                   no tema do app. Padding generoso = mais "margem" em volta dos botoes. */
                 background: rgba(10, 15, 31, 0.94);
                 backdrop-filter: blur(6px);
                 -webkit-backdrop-filter: blur(6px);
                 border-bottom: 1px solid rgba(25, 183, 255, 0.28);
                 box-shadow: 0 8px 20px rgba(0, 0, 0, 0.38);
-                padding: 0.9rem 0.6rem;
+                padding: 0.7rem 0.8rem;
                 margin-bottom: 0.5rem;
+                overflow: visible;
+            }}
+            /* container interno do seletor de abas: so layout/overflow, SEM sticky
+               (o sticky agora vive no wrapper nav_search_bar). O scrollIntoView ao trocar
+               de aba continua mirando esta classe (scroll_main_to_top). */
+            .st-key-dashboard_active_tab {{
                 overflow: visible;
             }}
             /* mais espaco entre os botoes do seletor (testid real na 1.58 = stButtonGroup). */
             .st-key-dashboard_active_tab [data-baseweb="button-group"] {{
                 gap: 0.6rem;
+            }}
+            /* BLK-UI-09-FU1 alinhamento vertical: os botoes das abas e o campo de busca
+               recebem a MESMA altura (40px). Os centros ja coincidem (st.columns com
+               vertical_alignment="center"); igualar a altura faz as BORDAS de cima/baixo
+               se alinharem, deixando a barra visualmente uniforme (o input padrao tem
+               ~38px e os botoes ~32px, por isso as duas regras de altura). */
+            .st-key-nav_search_bar [data-testid="stTextInput"] {{
+                margin-bottom: 0;
+            }}
+            .st-key-nav_search_bar [data-baseweb="button-group"] button {{
+                min-height: 40px;
+            }}
+            .st-key-nav_search_bar [data-testid="stTextInput"] [data-baseweb="base-input"] {{
+                height: 40px;
+                min-height: 40px;
+            }}
+            .st-key-nav_search_bar [data-testid="stTextInput"] input {{
+                height: 40px;
             }}
             [data-baseweb="button-group"] {{
                 gap: 8px !important;
@@ -717,6 +748,17 @@ def _e_link_curto_maps(raw: str) -> bool:
     return ("maps.app.goo.gl" in low) or ("goo.gl/maps" in low)
 
 
+def _e_plus_code(raw: str) -> bool:
+    """True se o texto contem um token com cara de Plus Code (Open Location Code).
+
+    BLK-UI-09-FU2: roteia a cascata de busca para `resolve_plus_code`. Delega ao
+    detector puro do modulo `api` (regex do alfabeto OLC), sem I/O.
+    """
+    from motor_expansao.api.maps_geocoder import looks_like_plus_code
+
+    return looks_like_plus_code(raw)
+
+
 def render_coord_search_sidebar() -> tuple[float, float] | None:
     """Render coordinate/address search widget. Returns ``(lat, lng)`` or ``None``.
 
@@ -736,19 +778,27 @@ def render_coord_search_sidebar() -> tuple[float, float] | None:
     (`extract_any_coord`); link curto (`maps.app.goo.gl`/`goo.gl/maps`) segue o redirect
     HTTP (`resolve_short_link`) para obter a URL longa e entao extrai a coordenada. Todo
     resultado de link e validado contra o bounding box do Brasil; falha -> mensagem clara.
+
+    BLK-UI-09-FU1 (2026-06-19): o widget passa a ser uma BARRA DE PESQUISA compacta
+    integrada ao seletor de abas (o `main()` posiciona ambos lado a lado dentro do
+    container sticky `nav_search_bar`). Por isso o titulo `###`, o divisor `---` e a
+    caption foram removidos; a explicacao dos 3 formatos vive no tooltip (`help`) do
+    campo e o rotulo fica colapsado. A `key="coord_search_input"` e a cascata de
+    parsing seguem INTOCADAS (consumidas por testes/session_state).
     """
-    st.markdown("---")
-    st.markdown("### Busca por coordenada, endereco ou link do Maps")
-    st.caption(
-        "Digite uma coordenada (lat, lng), um endereco OU cole um link do Google Maps. "
-        "URL longa e lida offline (sem rede); link curto (maps.app.goo.gl) segue o redirect "
-        "para obter a coordenada; o endereco e enviado ao OpenStreetMap/Nominatim. Sem rede ou "
-        "sem resultado, mostramos um link do Google Maps para abrir e copiar a coordenada."
-    )
     raw = st.text_input(
-        "Coordenada (lat, lng), endereco ou link do Maps",
-        placeholder="-23.55, -46.63  |  Av. Paulista 1000, Sao Paulo  |  link do Google Maps",
+        "Buscar local",
+        placeholder="Coordenada, endereco, link ou Plus Code do Google Maps",
         key="coord_search_input",
+        label_visibility="collapsed",
+        help=(
+            "Quatro formatos aceitos: (1) coordenada lat,lng; (2) endereco livre "
+            "(resolvido via OpenStreetMap/Nominatim); (3) link do Google Maps — URL longa "
+            "lida offline, link curto (maps.app.goo.gl) segue o redirect; (4) Plus Code do "
+            "Maps (ex.: '6M7J+GQ Duque de Caxias - RJ' — codigo curto precisa da cidade/UF; "
+            "codigo completo decodifica offline). Sem rede ou sem resultado, mostramos um "
+            "link do Google Maps para abrir e copiar a coordenada."
+        ),
     )
     if not raw or not raw.strip():
         return None
@@ -796,7 +846,27 @@ def render_coord_search_sidebar() -> tuple[float, float] | None:
         )
         return None
 
-    # 3) Texto nao-numerico e nao-link -> trata como ENDERECO LIVRE (DEC-010, Alternativa B).
+    # 3) Plus Code / Open Location Code (NOVO — BLK-UI-09-FU2). Codigo COMPLETO decodifica
+    #    OFFLINE; codigo CURTO (ex.: "6M7J+GQ Duque de Caxias - RJ") usa a localidade que o
+    #    segue como referencia (Nominatim, DEC-010), recupera o codigo completo e decodifica.
+    #    Resultado validado no bbox do Brasil. Ramo terminal: nao cai no endereco (passo 4).
+    if _e_plus_code(raw):
+        from motor_expansao.api.maps_geocoder import resolve_plus_code
+
+        try:
+            pc = resolve_plus_code(raw, timeout=6.0, cache_dir=_GEOCODE_CACHE_DIR)
+        except Exception:
+            pc = None
+        if pc is not None:
+            return pc
+        st.warning(
+            "Nao foi possivel resolver o Plus Code. Para um codigo CURTO (ex.: 6M7J+GQ), "
+            "inclua a cidade/UF (ex.: '6M7J+GQ Duque de Caxias - RJ'); ou cole o codigo "
+            "completo, a coordenada lat,lng ou um link do Google Maps."
+        )
+        return None
+
+    # 4) Texto nao-numerico, nao-link e nao-plus-code -> ENDERECO LIVRE (DEC-010, Alternativa B).
     #    Fetch HTTP puro, isolado em camada `api`, com try/except amplo. Falha/sem
     #    rede -> fallback offline (link clicavel), sem excecao.
     try:

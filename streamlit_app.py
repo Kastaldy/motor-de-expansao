@@ -506,22 +506,27 @@ def main() -> None:
         render_empty_state()
         return
 
-    # BLK-UI-07 (F3): a busca por coordenada agora aparece NO CORPO, imediatamente
-    # acima do seletor de abas ("proxima ao seletor de abas"). O trio
-    # search_pin/_search_result/search_hex_id e resolvido aqui (df ja carregado em
+    # BLK-UI-09-FU1 (2026-06-19): a busca e o seletor de abas formam UMA barra unica,
+    # integrada e sticky. Ambos vivem lado a lado dentro do container `nav_search_bar`
+    # (st.columns: abas a esquerda, barra de busca a direita), que o CSS de inject_styles
+    # fixa no topo ao rolar. Antes (BLK-UI-07/08) a busca era uma secao separada ACIMA do
+    # seletor; agora e uma "barra de pesquisa" no mesmo bloco da navegacao.
+    #
+    # O trio search_pin/_search_result/search_hex_id e resolvido aqui (df ja carregado em
     # load_uf_slice; search_pin nao depende dos filtros), garantindo que todos os
-    # consumidores (render_pdf_download_topo, render_hex_search_result, dispatches
-    # de aba) recebam search_pin/search_hex_id ja definidos.
-    search_pin = render_coord_search_sidebar()
+    # consumidores (render_pdf_download_topo, render_hex_search_result, dispatches de aba)
+    # recebam search_pin/search_hex_id ja definidos. Render lazy por aba (Bloco 5)
+    # preservado: render_tab_selector so devolve a aba ativa; os summaries so sao
+    # calculados para as abas que os consomem (abaixo).
+    with st.container(key="nav_search_bar"):
+        nav_col, search_col = st.columns([3, 2], vertical_alignment="center")
+        with nav_col:
+            active_tab = render_tab_selector(DASHBOARD_TAB_LABELS)
+        with search_col:
+            search_pin = render_coord_search_sidebar()
+
     _search_result = lookup_hex_by_coord(*search_pin, df) if search_pin is not None else None
     search_hex_id = _search_result["hex_id"] if _search_result is not None else None
-
-    # F2-H: o seletor de abas vem SEMPRE no topo do corpo principal, acima de
-    # qualquer conteudo condicional (caption de recorte e card de busca). Mantido
-    # APOS o guard `if filtered_df.empty: return` para nao computar summaries em
-    # frame vazio. Render lazy por aba (Bloco 5): so a aba ativa e construida por
-    # rerun; os summaries so sao calculados para as abas que os consomem.
-    active_tab = render_tab_selector(DASHBOARD_TAB_LABELS)
 
     # 2o botao de baixar o PDF do ponto, logo abaixo do seletor de abas (pedido de Vini
     # 2026-06-16): so aparece com coordenada pesquisada; gera sob demanda com spinner.

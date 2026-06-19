@@ -11,6 +11,25 @@ Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA — gate obrigatór
 Skill atual: QA (CONCLUÍDO — APROVADO)
 Próxima Skill: Fechamento manual (orquestrador: housekeeping Passo 6.0 + merge humano)
 
+## Follow-ups interativos pós-QA (Vini, 2026-06-19 — diretos, fora da esteira formal; READ-ONLY M1)
+- **FU1 — Busca integrada ao seletor de abas:** a busca virou uma barra de pesquisa única
+  com o seletor de abas (`st.container(key="nav_search_bar")` + `st.columns` em `main()`),
+  barra **sticky** no topo (corrigida: o sticky vive no `stLayoutWrapper` que envolve o
+  container — fixar o `.st-key-nav_search_bar` direto não gruda na Streamlit 1.58 porque o
+  pai o limita; verificado por scroll real top→0) e **alinhamento vertical** (botões e campo
+  com 40px, centros coincidem). Arquivos: `streamlit_app.py`, `dashboard/pages.py`,
+  `tests/integration/test_streamlit_app.py` (teste do sticky atualizado p/ o novo seletor).
+- **FU2 — Plus Code (Open Location Code) na busca:** 4º formato da barra. Cascata final:
+  `coordenada → link Maps → Plus Code → endereço`. Código COMPLETO decodifica offline; código
+  CURTO (ex.: "6M7J+GQ Duque de Caxias - RJ") resolve a localidade via Nominatim (DEC-010),
+  recupera o código completo e decodifica; resultado validado no bbox do Brasil. Dependência
+  BASE nova: `openlocationcode>=1.0.1` (lib oficial, pura — escolha do gate de Vini). Arquivos:
+  `pyproject.toml`, `api/maps_geocoder.py` (`resolve_plus_code`/`extract_plus_code`/
+  `looks_like_plus_code`), `dashboard/pages.py` (`_e_plus_code` + ramo), testes unit+integração.
+- Validação FU1+FU2: `262 passed` (subconjunto impactado), ruff+mypy limpos, `import streamlit_app`
+  ok, e verificação headless no app real (sticky top→0; "6M7J+GQ Duque de Caxias - RJ" →
+  -22.78619,-43.31806 "visível no recorte"). READ-ONLY M1; Blocos 4–6 intocados.
+
 ## QA (CONCLUÍDO 2026-06-19) — VEREDITO: APROVADO
 - Suíte FULL SERIAL (gate): **1030 passed, 1 skipped, 0 failed** (`-n auto` abortou com
   INTERNALERROR de execnet no Python 3.14 — contorno de ambiente autorizado, NÃO bypass).

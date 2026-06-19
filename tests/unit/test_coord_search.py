@@ -208,6 +208,87 @@ def test_resolve_endereco_http_usa_cache_sem_rede(tmp_path, monkeypatch):
     assert calls["n"] == 1
 
 
+# ── Plus Code / Open Location Code (BLK-UI-09-FU2) ────────────────────────────
+
+
+def test_looks_like_plus_code_deteccao():
+    from motor_expansao.api.maps_geocoder import looks_like_plus_code
+
+    assert looks_like_plus_code("6M7J+GQ Centro, Duque de Caxias - RJ") is True
+    assert looks_like_plus_code("589R6M7J+GQ") is True           # codigo completo
+    assert looks_like_plus_code("849VCWC8+R9") is True
+    # nao-plus-code: endereco, coordenada, link
+    assert looks_like_plus_code("Av. Paulista 1000, Sao Paulo") is False
+    assert looks_like_plus_code("-23.55, -46.63") is False
+    assert looks_like_plus_code("https://maps.app.goo.gl/abc") is False
+
+
+def test_extract_plus_code_separa_codigo_e_localidade():
+    from motor_expansao.api.maps_geocoder import extract_plus_code
+
+    code, locality = extract_plus_code("6M7J+GQ Centro, Duque de Caxias - RJ")
+    assert code == "6M7J+GQ"
+    assert locality == "Centro, Duque de Caxias - RJ"
+    # token minusculo é normalizado para maiusculo; sem localidade -> ''
+    code2, loc2 = extract_plus_code("589r6m7j+gq")
+    assert code2 == "589R6M7J+GQ"
+    assert loc2 == ""
+
+
+def test_resolve_plus_code_completo_decodifica_offline():
+    """Codigo COMPLETO no Brasil decodifica sem rede (lib pura)."""
+    from motor_expansao.api.maps_geocoder import resolve_plus_code
+
+    out = resolve_plus_code("589R6M7J+GQ")   # Duque de Caxias - RJ
+    assert out is not None
+    assert out == pytest.approx((-22.786187, -43.318062), abs=1e-3)
+
+
+def test_resolve_plus_code_completo_fora_do_brasil_retorna_none():
+    """Codigo completo valido mas fora do bbox do Brasil (Google HQ) -> None."""
+    from motor_expansao.api.maps_geocoder import resolve_plus_code
+
+    assert resolve_plus_code("849VCWC8+R9") is None
+
+
+def test_resolve_plus_code_curto_usa_localidade_mockada(monkeypatch):
+    """Codigo CURTO resolve a localidade via resolve_endereco_http (MOCK) e decodifica."""
+    from motor_expansao.api import maps_geocoder
+
+    # referencia de Duque de Caxias - RJ, sem tocar a rede real.
+    monkeypatch.setattr(
+        maps_geocoder, "resolve_endereco_http", lambda *a, **k: (-22.7858, -43.3119)
+    )
+    out = maps_geocoder.resolve_plus_code("6M7J+GQ Centro, Duque de Caxias - RJ")
+    assert out is not None
+    assert out == pytest.approx((-22.786187, -43.318062), abs=1e-3)
+
+
+def test_resolve_plus_code_curto_sem_localidade_retorna_none(monkeypatch):
+    """Codigo CURTO sem localidade nao tem referencia -> None (nao chama a rede)."""
+    from motor_expansao.api import maps_geocoder
+
+    def _boom(*a, **k):
+        raise AssertionError("nao deveria geocodificar sem localidade")
+
+    monkeypatch.setattr(maps_geocoder, "resolve_endereco_http", _boom)
+    assert maps_geocoder.resolve_plus_code("6M7J+GQ") is None
+
+
+def test_resolve_plus_code_curto_localidade_sem_match_retorna_none(monkeypatch):
+    """Localidade nao resolvida (Nominatim devolve None) -> None."""
+    from motor_expansao.api import maps_geocoder
+
+    monkeypatch.setattr(maps_geocoder, "resolve_endereco_http", lambda *a, **k: None)
+    assert maps_geocoder.resolve_plus_code("6M7J+GQ Cidade Inexistente ZZ") is None
+
+
+def test_resolve_plus_code_texto_sem_codigo_retorna_none():
+    from motor_expansao.api.maps_geocoder import resolve_plus_code
+
+    assert resolve_plus_code("Av. Paulista 1000, Sao Paulo") is None
+
+
 # ── extract_any_coord (BLK-UI-09: link do Maps, regex pura, sem rede) ──────────
 
 

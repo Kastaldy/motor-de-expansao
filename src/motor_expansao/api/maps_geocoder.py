@@ -28,6 +28,11 @@ CAMERA_AT = re.compile(r"@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)")          # centr
 # CEP brasileiro: 8 digitos, com ou sem hifen.
 CEP_RE = re.compile(r"\b(\d{5})-?(\d{3})\b")
 
+# Plus Code / Open Location Code. Alfabeto OLC = "23456789CFGHJMPQRVWX" (sem 0/1 e sem
+# A/B/D/E/...). Codigo CURTO: 4 ou 6 chars antes do "+"; codigo COMPLETO: 8 antes. 2-3
+# depois do "+". Ex.: "6M7J+GQ" (curto), "589R6M7J+GQ" (completo). Case-insensitive.
+PLUS_CODE_RE = re.compile(r"\b([2-9CFGHJMPQRVWX]{2,8}\+[2-9CFGHJMPQRVWX]{2,3})\b", re.IGNORECASE)
+
 
 def normalize_cep(cep: str) -> str:
     """Normaliza um CEP para '00000-000'. Retorna '' se nao houver 8 digitos."""
@@ -198,6 +203,76 @@ def resolve_endereco_http(
             cache_path.write_text(f"{lat},{lng}", encoding="utf-8")
         except Exception:
             pass
+    return lat, lng
+
+
+def extract_plus_code(text: str) -> tuple[str, str]:
+    """Extrai o token Plus Code (OLC) e a LOCALIDADE que o segue. ('', '') se nao houver.
+
+    Ex.: "6M7J+GQ Centro, Duque de Caxias - RJ" -> ("6M7J+GQ", "Centro, Duque de Caxias - RJ").
+    O codigo e normalizado para maiusculas (o alfabeto OLC e maiusculo).
+    """
+    s = str(text or "")
+    m = PLUS_CODE_RE.search(s)
+    if not m:
+        return "", ""
+    code = m.group(1).upper()
+    locality = s[m.end() :].strip(" ,;-\t").strip()
+    return code, locality
+
+
+def looks_like_plus_code(text: str) -> bool:
+    """True se o texto contem um token com cara de Plus Code (roteia a cascata de busca)."""
+    return bool(PLUS_CODE_RE.search(str(text or "")))
+
+
+def resolve_plus_code(
+    text: str, *, timeout: float = 6.0, cache_dir: object | None = None
+) -> tuple[float, float] | None:
+    """Plus Code (Open Location Code) -> (lat, lng), validado no bounding box do Brasil.
+
+    BLK-UI-09-FU2: usa a biblioteca oficial `openlocationcode` (pura, sem deps
+    transitivas), importada de forma LAZY (o modulo segue importavel sem ela).
+    - Codigo COMPLETO (ex.: "589R6M7J+GQ"): decodifica OFFLINE (sem rede).
+    - Codigo CURTO (ex.: "6M7J+GQ Duque de Caxias - RJ"): usa a LOCALIDADE que segue o
+      codigo como referencia, resolvida por `resolve_endereco_http` (Nominatim, DEC-010);
+      recupera o codigo completo (`recoverNearest`) e decodifica.
+
+    Qualquer falha / sem rede / fora do Brasil -> None (o chamador cai no fallback).
+    """
+    try:
+        from openlocationcode import openlocationcode as olc
+    except Exception:
+        return None
+
+    code, locality = extract_plus_code(text)
+    if not code or not olc.isValid(code):
+        return None
+
+    full = code
+    if olc.isShort(code):
+        # Codigo curto precisa de uma referencia: geocodifica a localidade (Nominatim).
+        if not locality:
+            return None
+        ref = resolve_endereco_http(locality, timeout=timeout, cache_dir=cache_dir)
+        if ref is None:
+            return None
+        try:
+            full = olc.recoverNearest(code, ref[0], ref[1])
+        except Exception:
+            return None
+    elif not olc.isFull(code):
+        return None
+
+    try:
+        area = olc.decode(full)
+        lat = float(area.latitudeCenter)
+        lng = float(area.longitudeCenter)
+    except Exception:
+        return None
+
+    if not (_BR_LAT_MIN <= lat <= _BR_LAT_MAX and _BR_LNG_MIN <= lng <= _BR_LNG_MAX):
+        return None
     return lat, lng
 
 
