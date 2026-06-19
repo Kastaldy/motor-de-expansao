@@ -4623,11 +4623,15 @@ def test_censo_map_consome_renda_bands_atualizada():
 # --- BLK-UI-08: Mudanca 2 — tab selector sticky ---
 
 def test_inject_styles_tab_selector_sticky():
-    """inject_styles fixa o tab selector no topo via sticky no CONTAINER do elemento.
+    """inject_styles fixa a barra de navegacao+busca no topo via sticky no wrapper.
 
-    FU1 (2026-06-17): o sticky e aplicado no stElementContainer (via :has), nao no
-    widget interno — senao nao gruda. Por isso o teste exige o seletor :has e o offset
-    de header (top: 3.25rem), nao mais top: 0 no proprio stSegmentedControl.
+    FU1 (2026-06-17): o sticky e aplicado no container do elemento (user-key estavel),
+    nao no widget interno — senao nao gruda.
+    BLK-UI-09-FU1 (2026-06-19): o sticky migrou do container do seletor de abas
+    (`.st-key-dashboard_active_tab`) para o wrapper `.st-key-nav_search_bar`, que agora
+    contem o seletor de abas E a barra de busca lado a lado (st.columns) — a barra inteira
+    gruda no topo como um unico bloco. O `.st-key-dashboard_active_tab` segue no CSS so
+    para layout/estilo dos botoes (sem sticky proprio).
     """
     import unittest.mock as mock
 
@@ -4637,8 +4641,12 @@ def test_inject_styles_tab_selector_sticky():
 
     css = "".join(captured)
     assert ("position: sticky" in css) or ("position:sticky" in css)
-    # FU1: o sticky usa a user-key estavel do segmented control (.st-key-dashboard_active_tab),
-    # nao o testid `stSegmentedControl` (que NAO existe na Streamlit 1.58 — e `stButtonGroup`).
+    # BLK-UI-09-FU1: o sticky vive no stLayoutWrapper que CONTEM o container da barra
+    # (navegacao + busca juntas) — fixar o `.st-key-nav_search_bar` direto nao gruda na
+    # 1.58 porque seu pai (stLayoutWrapper) o envolve justo e limita o sticky.
+    assert '[data-testid="stLayoutWrapper"]:has(> .st-key-nav_search_bar)' in css
+    # o container do seletor de abas continua referenciado (estilo dos botoes + alvo do
+    # scrollIntoView ao trocar de aba), mesmo sem sticky proprio.
     assert ".st-key-dashboard_active_tab" in css
     assert "top: 0" in css
     # Fix do "scroll ancestor": overflow: visible nos wrappers de layout do Streamlit.
@@ -4712,6 +4720,49 @@ def test_render_coord_search_coordenada_numerica_nao_chama_http():
     assert out is not None
     assert out[0] == pytest.approx(-23.55, abs=1e-4)
     resolve_mock.assert_not_called()
+
+
+def test_render_coord_search_plus_code_completo_offline():
+    """BLK-UI-09-FU2: Plus Code COMPLETO resolve offline e NAO cai no caminho de endereco."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard import pages
+
+    with (
+        mock.patch("streamlit.text_input", return_value="589R6M7J+GQ"),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch(
+            "motor_expansao.api.maps_geocoder.resolve_endereco_http",
+        ) as resolve_mock,
+    ):
+        out = pages.render_coord_search_sidebar()
+
+    assert out is not None
+    assert out == pytest.approx((-22.786187, -43.318062), abs=1e-3)
+    resolve_mock.assert_not_called()  # codigo completo nao geocodifica localidade
+
+
+def test_render_coord_search_plus_code_curto_usa_localidade_mock():
+    """Plus Code CURTO resolve a localidade via Nominatim (MOCK) e decodifica; sem rede real."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard import pages
+
+    with (
+        mock.patch("streamlit.text_input", return_value="6M7J+GQ Duque de Caxias - RJ"),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch(
+            "motor_expansao.api.maps_geocoder.resolve_endereco_http",
+            return_value=(-22.7858, -43.3119),
+        ) as resolve_mock,
+    ):
+        out = pages.render_coord_search_sidebar()
+
+    assert out is not None
+    assert out == pytest.approx((-22.786187, -43.318062), abs=1e-3)
+    resolve_mock.assert_called_once()
 
 
 # --- Item Vini 2026-06-16: seletor de Modo de cor expoe so 3 modos (m1/hibrido ocultos) ---

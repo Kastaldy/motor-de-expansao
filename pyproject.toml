@@ -28,6 +28,7 @@ dependencies = [
     "shapely>=2.0.4",
     "pyproj>=3.6.1",
     "geopy>=2.4.1",
+    "openlocationcode>=1.0.1",  # BLK-UI-09-FU2: Plus Code (Open Location Code) na busca
 
     # Analise
     "scikit-learn>=1.5.0,<1.8",

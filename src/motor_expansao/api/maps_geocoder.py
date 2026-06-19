@@ -28,6 +28,11 @@ CAMERA_AT = re.compile(r"@(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)")          # centr
 # CEP brasileiro: 8 digitos, com ou sem hifen.
 CEP_RE = re.compile(r"\b(\d{5})-?(\d{3})\b")
 
+# Plus Code / Open Location Code. Alfabeto OLC = "23456789CFGHJMPQRVWX" (sem 0/1 e sem
+# A/B/D/E/...). Codigo CURTO: 4 ou 6 chars antes do "+"; codigo COMPLETO: 8 antes. 2-3
+# depois do "+". Ex.: "6M7J+GQ" (curto), "589R6M7J+GQ" (completo). Case-insensitive.
+PLUS_CODE_RE = re.compile(r"\b([2-9CFGHJMPQRVWX]{2,8}\+[2-9CFGHJMPQRVWX]{2,3})\b", re.IGNORECASE)
+
 
 def normalize_cep(cep: str) -> str:
     """Normaliza um CEP para '00000-000'. Retorna '' se nao houver 8 digitos."""
@@ -199,6 +204,114 @@ def resolve_endereco_http(
         except Exception:
             pass
     return lat, lng
+
+
+def extract_plus_code(text: str) -> tuple[str, str]:
+    """Extrai o token Plus Code (OLC) e a LOCALIDADE que o segue. ('', '') se nao houver.
+
+    Ex.: "6M7J+GQ Centro, Duque de Caxias - RJ" -> ("6M7J+GQ", "Centro, Duque de Caxias - RJ").
+    O codigo e normalizado para maiusculas (o alfabeto OLC e maiusculo).
+    """
+    s = str(text or "")
+    m = PLUS_CODE_RE.search(s)
+    if not m:
+        return "", ""
+    code = m.group(1).upper()
+    locality = s[m.end() :].strip(" ,;-\t").strip()
+    return code, locality
+
+
+def looks_like_plus_code(text: str) -> bool:
+    """True se o texto contem um token com cara de Plus Code (roteia a cascata de busca)."""
+    return bool(PLUS_CODE_RE.search(str(text or "")))
+
+
+def resolve_plus_code(
+    text: str, *, timeout: float = 6.0, cache_dir: object | None = None
+) -> tuple[float, float] | None:
+    """Plus Code (Open Location Code) -> (lat, lng), validado no bounding box do Brasil.
+
+    BLK-UI-09-FU2: usa a biblioteca oficial `openlocationcode` (pura, sem deps
+    transitivas), importada de forma LAZY (o modulo segue importavel sem ela).
+    - Codigo COMPLETO (ex.: "589R6M7J+GQ"): decodifica OFFLINE (sem rede).
+    - Codigo CURTO (ex.: "6M7J+GQ Duque de Caxias - RJ"): usa a LOCALIDADE que segue o
+      codigo como referencia, resolvida por `resolve_endereco_http` (Nominatim, DEC-010);
+      recupera o codigo completo (`recoverNearest`) e decodifica.
+
+    Qualquer falha / sem rede / fora do Brasil -> None (o chamador cai no fallback).
+    """
+    try:
+        from openlocationcode import openlocationcode as olc
+    except Exception:
+        return None
+
+    code, locality = extract_plus_code(text)
+    if not code or not olc.isValid(code):
+        return None
+
+    full = code
+    if olc.isShort(code):
+        # Codigo curto precisa de uma referencia: geocodifica a localidade (Nominatim).
+        if not locality:
+            return None
+        ref = resolve_endereco_http(locality, timeout=timeout, cache_dir=cache_dir)
+        if ref is None:
+            return None
+        try:
+            full = olc.recoverNearest(code, ref[0], ref[1])
+        except Exception:
+            return None
+    elif not olc.isFull(code):
+        return None
+
+    try:
+        area = olc.decode(full)
+        lat = float(area.latitudeCenter)
+        lng = float(area.longitudeCenter)
+    except Exception:
+        return None
+
+    if not (_BR_LAT_MIN <= lat <= _BR_LAT_MAX and _BR_LNG_MIN <= lng <= _BR_LNG_MAX):
+        return None
+    return lat, lng
+
+
+def resolve_short_link(url: str, *, timeout: float = 6.0) -> str | None:
+    """Segue o redirect HTTP de um link CURTO do Maps -> URL longa final (ou None).
+
+    BLK-UI-09 / DEC-010 (emenda 2026-06-19, Opcao B): links curtos do Google Maps
+    (`maps.app.goo.gl`, `goo.gl/maps`) NAO trazem a coordenada na propria string. Este
+    helper faz UMA requisicao HTTP PURA (`urllib.request`, sem Selenium/navegador) so
+    para seguir o(s) redirect(s) e ler a URL final (`resp.geturl()`), que costuma trazer
+    o pino `!3d/!4d` ou `@lat,lng` — o chamador extrai a coordenada com `extract_any_coord`.
+
+    GUARDRAIL (DEC-010): I/O de rede isolado nesta camada `api` (o import no dashboard e
+    lazy; a rede so ocorre quando ESTA funcao e chamada, no sub-caminho de link curto da
+    busca). `try/except` amplo + timeout curto: qualquer falha/ausencia de rede retorna
+    `None` (o chamador cai no fallback gracioso). Enviamos um User-Agent identificavel
+    (mesmo de `resolve_endereco_http`); a URL curta e enviada ao Google SO para seguir o
+    redirect — nada e persistido (nota anti-PII da DEC-010).
+
+    Retorna a URL longa final (str) ou `None` se faltar rede/falhar/timeout/URL vazia.
+    """
+    normalized = " ".join(str(url or "").split())
+    if not normalized:
+        return None
+    try:
+        req = urllib.request.Request(
+            normalized,
+            headers={
+                "User-Agent": _GEOCODE_USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "pt-BR",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - URL do usuario (link Maps)
+            final_url = resp.geturl() or getattr(resp, "url", None)
+    except Exception:
+        return None
+    final_url = str(final_url or "").strip()
+    return final_url or None
 
 
 class MapsGeocoder:

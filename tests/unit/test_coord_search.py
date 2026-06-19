@@ -206,3 +206,221 @@ def test_resolve_endereco_http_usa_cache_sem_rede(tmp_path, monkeypatch):
     second = maps_geocoder.resolve_endereco_http("Av. Paulista 1000", cache_dir=tmp_path)
     assert second == first
     assert calls["n"] == 1
+
+
+# ── Plus Code / Open Location Code (BLK-UI-09-FU2) ────────────────────────────
+
+
+def test_looks_like_plus_code_deteccao():
+    from motor_expansao.api.maps_geocoder import looks_like_plus_code
+
+    assert looks_like_plus_code("6M7J+GQ Centro, Duque de Caxias - RJ") is True
+    assert looks_like_plus_code("589R6M7J+GQ") is True           # codigo completo
+    assert looks_like_plus_code("849VCWC8+R9") is True
+    # nao-plus-code: endereco, coordenada, link
+    assert looks_like_plus_code("Av. Paulista 1000, Sao Paulo") is False
+    assert looks_like_plus_code("-23.55, -46.63") is False
+    assert looks_like_plus_code("https://maps.app.goo.gl/abc") is False
+
+
+def test_extract_plus_code_separa_codigo_e_localidade():
+    from motor_expansao.api.maps_geocoder import extract_plus_code
+
+    code, locality = extract_plus_code("6M7J+GQ Centro, Duque de Caxias - RJ")
+    assert code == "6M7J+GQ"
+    assert locality == "Centro, Duque de Caxias - RJ"
+    # token minusculo é normalizado para maiusculo; sem localidade -> ''
+    code2, loc2 = extract_plus_code("589r6m7j+gq")
+    assert code2 == "589R6M7J+GQ"
+    assert loc2 == ""
+
+
+def test_resolve_plus_code_completo_decodifica_offline():
+    """Codigo COMPLETO no Brasil decodifica sem rede (lib pura)."""
+    from motor_expansao.api.maps_geocoder import resolve_plus_code
+
+    out = resolve_plus_code("589R6M7J+GQ")   # Duque de Caxias - RJ
+    assert out is not None
+    assert out == pytest.approx((-22.786187, -43.318062), abs=1e-3)
+
+
+def test_resolve_plus_code_completo_fora_do_brasil_retorna_none():
+    """Codigo completo valido mas fora do bbox do Brasil (Google HQ) -> None."""
+    from motor_expansao.api.maps_geocoder import resolve_plus_code
+
+    assert resolve_plus_code("849VCWC8+R9") is None
+
+
+def test_resolve_plus_code_curto_usa_localidade_mockada(monkeypatch):
+    """Codigo CURTO resolve a localidade via resolve_endereco_http (MOCK) e decodifica."""
+    from motor_expansao.api import maps_geocoder
+
+    # referencia de Duque de Caxias - RJ, sem tocar a rede real.
+    monkeypatch.setattr(
+        maps_geocoder, "resolve_endereco_http", lambda *a, **k: (-22.7858, -43.3119)
+    )
+    out = maps_geocoder.resolve_plus_code("6M7J+GQ Centro, Duque de Caxias - RJ")
+    assert out is not None
+    assert out == pytest.approx((-22.786187, -43.318062), abs=1e-3)
+
+
+def test_resolve_plus_code_curto_sem_localidade_retorna_none(monkeypatch):
+    """Codigo CURTO sem localidade nao tem referencia -> None (nao chama a rede)."""
+    from motor_expansao.api import maps_geocoder
+
+    def _boom(*a, **k):
+        raise AssertionError("nao deveria geocodificar sem localidade")
+
+    monkeypatch.setattr(maps_geocoder, "resolve_endereco_http", _boom)
+    assert maps_geocoder.resolve_plus_code("6M7J+GQ") is None
+
+
+def test_resolve_plus_code_curto_localidade_sem_match_retorna_none(monkeypatch):
+    """Localidade nao resolvida (Nominatim devolve None) -> None."""
+    from motor_expansao.api import maps_geocoder
+
+    monkeypatch.setattr(maps_geocoder, "resolve_endereco_http", lambda *a, **k: None)
+    assert maps_geocoder.resolve_plus_code("6M7J+GQ Cidade Inexistente ZZ") is None
+
+
+def test_resolve_plus_code_texto_sem_codigo_retorna_none():
+    from motor_expansao.api.maps_geocoder import resolve_plus_code
+
+    assert resolve_plus_code("Av. Paulista 1000, Sao Paulo") is None
+
+
+# ── extract_any_coord (BLK-UI-09: link do Maps, regex pura, sem rede) ──────────
+
+
+def test_extract_any_coord_url_longa_pino_brasil():
+    """URL longa com !3d/!4d (pino do place no Brasil) -> (lat, lng) do pino."""
+    from motor_expansao.api.maps_geocoder import extract_any_coord
+
+    url = (
+        "https://www.google.com/maps/place/Av.+Paulista/"
+        "@-23.5613,-46.6565,17z/data=...!3d-23.5613!4d-46.6565"
+    )
+    lat, lng = extract_any_coord(url)
+    assert (lat, lng) == pytest.approx((-23.5613, -46.6565), abs=1e-4)
+
+
+def test_extract_any_coord_url_camera_at_brasil():
+    """URL com @lat,lng (sem !3d/!4d) -> centro da câmera no Brasil."""
+    from motor_expansao.api.maps_geocoder import extract_any_coord
+
+    url = "https://www.google.com/maps/@-15.7797,-47.9297,15z"
+    lat, lng = extract_any_coord(url)
+    assert (lat, lng) == pytest.approx((-15.7797, -47.9297), abs=1e-4)
+
+
+def test_extract_any_coord_fora_do_brasil_rejeitado_pelo_bbox():
+    """URL fora do Brasil (Paris) -> extrai par bruto, mas _validate_brazil_bbox -> None."""
+    from motor_expansao.api.maps_geocoder import extract_any_coord
+    from motor_expansao.dashboard.data import _validate_brazil_bbox
+
+    url = "https://www.google.com/maps/place/Tour+Eiffel/data=...!3d48.8566!4d2.3522"
+    lat, lng = extract_any_coord(url)
+    assert lat is not None and lng is not None
+    assert _validate_brazil_bbox(float(lat), float(lng)) is None
+
+
+def test_extract_any_coord_url_sem_coordenada():
+    """URL longa sem coordenada extraível -> (None, None)."""
+    from motor_expansao.api.maps_geocoder import extract_any_coord
+
+    url = "https://www.google.com/maps/search/?api=1&query=academia"
+    assert extract_any_coord(url) == (None, None)
+
+
+def test_extract_any_coord_link_curto_nao_resolve_offline():
+    """Link curto (maps.app.goo.gl) não traz coordenada na string -> (None, None)."""
+    from motor_expansao.api.maps_geocoder import extract_any_coord
+
+    assert extract_any_coord("https://maps.app.goo.gl/abc123") == (None, None)
+
+
+# ── helpers de roteamento da cascata (BLK-UI-09, funções de módulo puras) ──────
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("https://www.google.com/maps/@-23.55,-46.63,15z", True),
+        ("http://maps.app.goo.gl/abc", True),
+        ("Av. Paulista 1000, Sao Paulo", False),
+        ("-23.55,-46.63", False),
+        ("", False),
+    ],
+)
+def test_parece_link(raw, expected):
+    from motor_expansao.dashboard.pages import _parece_link
+
+    assert _parece_link(raw) is expected
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("https://maps.app.goo.gl/abc123", True),
+        ("https://goo.gl/maps/xyz", True),
+        ("https://www.google.com/maps/place/x/@-23.5,-46.6,17z", False),
+        ("Av. Paulista 1000", False),
+    ],
+)
+def test_e_link_curto_maps(raw, expected):
+    from motor_expansao.dashboard.pages import _e_link_curto_maps
+
+    assert _e_link_curto_maps(raw) is expected
+
+
+# ── resolve_short_link (BLK-UI-09 / DEC-010 emenda Opção B) — urllib MOCKADO ───
+
+
+class _FakeRedirectResp:
+    """Stub de resposta urllib que expõe geturl() (URL final após redirects)."""
+
+    def __init__(self, final_url: str):
+        self._final_url = final_url
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def geturl(self):
+        return self._final_url
+
+
+def test_resolve_short_link_segue_redirect_para_url_longa(monkeypatch):
+    """Sucesso: geturl() (mock) devolve URL longa com !3d/!4d -> string retornada."""
+    from motor_expansao.api import maps_geocoder
+
+    longa = "https://www.google.com/maps/place/x/@-23.5613,-46.6565,17z/data=...!3d-23.5613!4d-46.6565"
+    monkeypatch.setattr(
+        maps_geocoder.urllib.request,
+        "urlopen",
+        lambda *a, **k: _FakeRedirectResp(longa),
+    )
+    out = maps_geocoder.resolve_short_link("https://maps.app.goo.gl/abc123", timeout=1.0)
+    assert out == longa
+    # E a URL longa resolvida deve render coordenada do Brasil ao passar por extract_any_coord.
+    lat, lng = maps_geocoder.extract_any_coord(out)
+    assert (lat, lng) == pytest.approx((-23.5613, -46.6565), abs=1e-4)
+
+
+def test_resolve_short_link_falha_de_rede_retorna_none(monkeypatch):
+    """Exceção de rede/timeout -> None (sem propagar exceção); CI nunca bate na rede."""
+    from motor_expansao.api import maps_geocoder
+
+    def _boom(*a, **k):
+        raise TimeoutError("sem rede")
+
+    monkeypatch.setattr(maps_geocoder.urllib.request, "urlopen", _boom)
+    assert maps_geocoder.resolve_short_link("https://maps.app.goo.gl/abc", timeout=0.1) is None
+
+
+def test_resolve_short_link_vazio_retorna_none():
+    from motor_expansao.api import maps_geocoder
+
+    assert maps_geocoder.resolve_short_link("   ") is None

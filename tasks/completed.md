@@ -5546,3 +5546,92 @@ de unidade com receita total >> balcão prova teto > `2×balcão`); P(viável) e
 corrigido; suíte verde + ruff/mypy; READ-ONLY M1.
 
 **Risco:** baixo (correções determinísticas pontuais, cobertas por teste).
+
+---
+
+### BLK-UI-07 — Refinos de UX/UI do dashboard (escopo a detalhar pelo usuário)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (provável — mexe no dashboard de produção; READ-ONLY sobre M1). A confirmar no Block Orchestrator conforme o escopo citado. |
+| **Prioridade** | A definir pelo usuário ao iniciar o ciclo. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA (ajustar para Baixa/Média se o escopo citado for trivial). |
+| **Status** | **Pendente — escopo a ser citado pelo usuário (Vini) ao iniciar o ciclo** (`/run-cycle BLK-UI-07`). |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | — (criar se necessário) |
+
+**Contexto:** novo bloco de melhorias de UX/UI do dashboard, sucessor do bloco BLK-UI-01 (FECHADO em
+2026-06-16 após os recortes entregues). O conjunto exato de mudanças será **descrito pelo usuário no início
+do ciclo**; este bloco existe apenas como alvo do `/run-cycle`. Não iniciar execução sem o escopo citado e o
+plano aprovado no gate humano. Frentes futuras herdadas (ex.: F2-E hero header contextual com UF) cabem aqui.
+
+**Objetivo:** aplicar as mudanças de interface que o usuário citará, sem regressão funcional nem do M1.
+
+**Escopo permitido (provável):** `src/motor_expansao/dashboard/` (pages/components/utils/constants visuais) +
+`streamlit_app.py` + `tests/integration/test_streamlit_app.py`, preservando carga lazy por UF, render lazy de
+abas e fonte de mapa enxuta (Blocos 4–6). Ajustar conforme o escopo real citado.
+
+**Fora de escopo:** score/pesos/artefatos M1; dependência de API ao vivo; quebrar contratos de performance.
+
+**Critérios de aceite:** escopo citado e plano aprovado antes de codar; sem regressão (suíte verde);
+UX validada pelo usuário; READ-ONLY M1.
+
+**Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
+
+---
+
+- BLK-UI-08 (concluído 2026-06-17) — ver tasks/completed.md
+
+---
+
+### BLK-UI-09 — Refinos de UX/UI do dashboard (escopo a detalhar pelo usuário)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (provável — mexe no dashboard de produção; READ-ONLY sobre M1). A confirmar no Block Orchestrator conforme o escopo citado. |
+| **Prioridade** | A definir pelo usuário ao iniciar o ciclo. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA (ajustar para Baixa/Média se o escopo citado for trivial). |
+| **Status** | **Pendente — escopo a ser citado pelo usuário (Vini) ao iniciar o ciclo** (`/run-cycle BLK-UI-09`). |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | — (criar se necessário) |
+
+**Contexto:** novo bloco de melhorias de UX/UI do dashboard, sucessor do bloco BLK-UI-08 (concluído em
+2026-06-17, com FU1 de correções visuais: paleta Renda absoluta, tab selector sticky+scroll ao trocar de aba,
+busca por endereço via Nominatim e círculo do raio azul). O conjunto exato de mudanças será **descrito pelo
+usuário no início do ciclo**; este bloco existe apenas como alvo do `/run-cycle`. Não iniciar execução sem o
+escopo citado e o plano aprovado no gate humano. Frentes futuras herdadas (ex.: F2-E hero header contextual
+com UF; limpeza do CSS legado F2-G da sidebar) cabem aqui.
+
+**Objetivo:** aplicar as mudanças de interface que o usuário citará, sem regressão funcional nem do M1.
+
+**Escopo permitido (provável):** `src/motor_expansao/dashboard/` (pages/components/utils/constants visuais) +
+`streamlit_app.py` + `tests/integration/test_streamlit_app.py`, preservando carga lazy por UF, render lazy de
+abas e fonte de mapa enxuta (Blocos 4–6). Ajustar conforme o escopo real citado.
+
+**Fora de escopo:** score/pesos/artefatos M1; dependência de API ao vivo não aprovada; quebrar contratos de performance.
+
+**Critérios de aceite:** escopo citado e plano aprovado antes de codar; sem regressão (suíte verde);
+UX validada pelo usuário; READ-ONLY M1.
+
+**Guardrail:** §5 (visualização) + preservar otimizações de performance do dashboard.
+
+**FECHAMENTO REAL (ciclo /run-cycle BLK-UI-09 — concluído 2026-06-19, esteira BO→Planner→[gate humano]→Builder→QA):**
+Escopo citado por Vini: a barra de busca passa a aceitar **3 formatos** (coordenada, endereço, **link do Maps**);
+coordenada e endereço já existiam (BLK-UI-08/DEC-010), faltava o **link**. Entregue:
+- `render_coord_search_sidebar` (`pages.py`): cascata `numérico (INTOCADO) → link Maps (NOVO) → endereço Nominatim
+  (INTOCADO)`, com helpers de módulo `_parece_link`/`_e_link_curto_maps` (puros, testáveis). URL longa (`!3d/!4d` ou
+  `@lat,lng`) resolvida **offline por regex** (`extract_any_coord`); link curto (`maps.app.goo.gl`/`goo.gl/maps`)
+  resolvido seguindo o **redirect HTTP** (Opção B). Resultado de qualquer link validado por `_validate_brazil_bbox`;
+  fallback gracioso por `st.warning`. Caption/label/placeholder citam os 3 formatos; `key="coord_search_input"` preservada.
+- `api/maps_geocoder.py`: novo helper `resolve_short_link(url, *, timeout=6.0) -> str | None` (urllib puro, segue
+  redirect, `None` em qualquer falha; importável sem rede; import lazy no dashboard).
+- `tests/unit/test_coord_search.py`: nova seção (regex pura de `extract_any_coord`, helpers de roteamento,
+  `resolve_short_link` SEMPRE com urllib **mockado**). Nenhum teste bate na rede real.
+- **Gate humano (Vinicius, 2026-06-19): Opção B aprovada** (link curto via rede). **Emenda à DEC-010 (2026-06-19)**
+  registrada em CLAUDE.md §8 (3º sub-caminho de rede da busca, mitigações (a)/(c)/(d)/(e)/(f) vigentes).
+- **QA APROVADO:** suíte full serial **1030 passed, 1 skipped, 0 failed** (xdist `-n auto` abortou com INTERNALERROR
+  de execnet no Python 3.14 — contorno de ambiente documentado, não bypass); ruff/mypy/`import streamlit_app` limpos.
+  **READ-ONLY M1** confirmado (`git diff src/` toca só `api/maps_geocoder.py` + `dashboard/pages.py`; config/score/pesos/
+  artefatos INALTERADOS; H3=7, DIST_MIN=1.0, RENDA_MIN=4500, renda=0.40/pop=0.60). Caminhos numérico/endereço
+  byte-a-byte preservados; Blocos 4–6 intocados.
+- Commit por path `9a57206` no branch `ciclo/BLK-UI-09` (precedido por `571681f`, housekeeping BLK-UI-07). Merge = passo humano.
