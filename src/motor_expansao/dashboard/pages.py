@@ -698,6 +698,25 @@ def _render_endereco_fallback_link(raw: str) -> None:
     )
 
 
+def _parece_link(raw: str) -> bool:
+    """True se o texto comeca com http:// ou https:// (heuristica de 'isto e uma URL').
+
+    BLK-UI-09: rota a cascata de busca — quando True, o texto e tratado como link do
+    Maps (nunca como endereco literal enviado ao Nominatim). Funcao pura, sem I/O.
+    """
+    return str(raw or "").lower().startswith(("http://", "https://"))
+
+
+def _e_link_curto_maps(raw: str) -> bool:
+    """True para encurtadores do Maps (maps.app.goo.gl, goo.gl/maps).
+
+    BLK-UI-09: links curtos NAO trazem a coordenada na string -> exigem seguir o
+    redirect HTTP (`resolve_short_link`, DEC-010 emenda 2026-06-19). Funcao pura, sem I/O.
+    """
+    low = str(raw or "").lower()
+    return ("maps.app.goo.gl" in low) or ("goo.gl/maps" in low)
+
+
 def render_coord_search_sidebar() -> tuple[float, float] | None:
     """Render coordinate/address search widget. Returns ``(lat, lng)`` or ``None``.
 
@@ -710,17 +729,25 @@ def render_coord_search_sidebar() -> tuple[float, float] | None:
     quando ele falha o texto e tratado como endereco e resolvido por fetch HTTP puro
     (`resolve_endereco_http`, isolado em `api/maps_geocoder.py`, urllib, sem Selenium),
     com fallback gracioso para link clicavel se faltar rede/falhar/timeout.
+
+    BLK-UI-09 / DEC-010 (emenda 2026-06-19, Opcao B): o campo aceita TRES formatos —
+    coordenada `lat,lng` (numerico, INTOCADO) -> link do Maps (NOVO) -> endereco
+    (Nominatim, INTOCADO). URL longa (`!3d/!4d` ou `@lat,lng`) e lida OFFLINE por regex
+    (`extract_any_coord`); link curto (`maps.app.goo.gl`/`goo.gl/maps`) segue o redirect
+    HTTP (`resolve_short_link`) para obter a URL longa e entao extrai a coordenada. Todo
+    resultado de link e validado contra o bounding box do Brasil; falha -> mensagem clara.
     """
     st.markdown("---")
-    st.markdown("### Busca por coordenada ou endereco")
+    st.markdown("### Busca por coordenada, endereco ou link do Maps")
     st.caption(
-        "Digite uma coordenada (lat, lng) ou um endereco. O endereco e enviado ao "
-        "OpenStreetMap/Nominatim para resolver a coordenada; sem rede ou sem resultado, "
-        "mostramos um link do Google Maps para abrir e copiar a coordenada."
+        "Digite uma coordenada (lat, lng), um endereco OU cole um link do Google Maps. "
+        "URL longa e lida offline (sem rede); link curto (maps.app.goo.gl) segue o redirect "
+        "para obter a coordenada; o endereco e enviado ao OpenStreetMap/Nominatim. Sem rede ou "
+        "sem resultado, mostramos um link do Google Maps para abrir e copiar a coordenada."
     )
     raw = st.text_input(
-        "Coordenada (lat, lng) ou endereco",
-        placeholder="-23.55, -46.63  ou  Av. Paulista 1000, Sao Paulo",
+        "Coordenada (lat, lng), endereco ou link do Maps",
+        placeholder="-23.55, -46.63  |  Av. Paulista 1000, Sao Paulo  |  link do Google Maps",
         key="coord_search_input",
     )
     if not raw or not raw.strip():
@@ -732,7 +759,44 @@ def render_coord_search_sidebar() -> tuple[float, float] | None:
     if result is not None:
         return result
 
-    # 2) Texto nao-numerico -> trata como ENDERECO LIVRE (DEC-010, Alternativa B).
+    # 2) Link do Google Maps (NOVO — BLK-UI-09 / DEC-010 emenda 2026-06-19, Opcao B).
+    #    URL longa: regex pura OFFLINE. Link curto: segue o redirect HTTP (urllib puro,
+    #    isolado em camada `api`) para obter a URL longa e entao extrai por regex. Um link
+    #    NUNCA cai no caminho de endereco (passo 3); falha -> mensagem clara + None.
+    if _parece_link(raw):
+        from motor_expansao.api.maps_geocoder import extract_any_coord
+
+        target_url: str = raw
+        if _e_link_curto_maps(raw):
+            # Link curto nao traz coordenada na string -> seguir o redirect (rede).
+            resolved_url: str | None
+            try:
+                from motor_expansao.api.maps_geocoder import resolve_short_link
+
+                resolved_url = resolve_short_link(raw, timeout=6.0)
+            except Exception:
+                resolved_url = None
+            if not resolved_url:
+                st.warning(
+                    "Nao foi possivel resolver o link curto do Google Maps (offline, "
+                    "indisponivel ou expirado). Abra o link, copie a URL longa (que contem "
+                    "a coordenada) ou cole a coordenada lat,lng diretamente."
+                )
+                return None
+            target_url = resolved_url
+
+        lat, lng = extract_any_coord(target_url)
+        if lat is not None and lng is not None:
+            validated = _validate_brazil_bbox(float(lat), float(lng))
+            if validated is not None:
+                return validated
+        st.warning(
+            "Nao foi possivel extrair uma coordenada do Brasil deste link do Maps. "
+            "Use a URL longa (com o pino do place) ou cole a coordenada lat,lng."
+        )
+        return None
+
+    # 3) Texto nao-numerico e nao-link -> trata como ENDERECO LIVRE (DEC-010, Alternativa B).
     #    Fetch HTTP puro, isolado em camada `api`, com try/except amplo. Falha/sem
     #    rede -> fallback offline (link clicavel), sem excecao.
     try:

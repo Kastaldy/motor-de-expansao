@@ -201,6 +201,44 @@ def resolve_endereco_http(
     return lat, lng
 
 
+def resolve_short_link(url: str, *, timeout: float = 6.0) -> str | None:
+    """Segue o redirect HTTP de um link CURTO do Maps -> URL longa final (ou None).
+
+    BLK-UI-09 / DEC-010 (emenda 2026-06-19, Opcao B): links curtos do Google Maps
+    (`maps.app.goo.gl`, `goo.gl/maps`) NAO trazem a coordenada na propria string. Este
+    helper faz UMA requisicao HTTP PURA (`urllib.request`, sem Selenium/navegador) so
+    para seguir o(s) redirect(s) e ler a URL final (`resp.geturl()`), que costuma trazer
+    o pino `!3d/!4d` ou `@lat,lng` — o chamador extrai a coordenada com `extract_any_coord`.
+
+    GUARDRAIL (DEC-010): I/O de rede isolado nesta camada `api` (o import no dashboard e
+    lazy; a rede so ocorre quando ESTA funcao e chamada, no sub-caminho de link curto da
+    busca). `try/except` amplo + timeout curto: qualquer falha/ausencia de rede retorna
+    `None` (o chamador cai no fallback gracioso). Enviamos um User-Agent identificavel
+    (mesmo de `resolve_endereco_http`); a URL curta e enviada ao Google SO para seguir o
+    redirect — nada e persistido (nota anti-PII da DEC-010).
+
+    Retorna a URL longa final (str) ou `None` se faltar rede/falhar/timeout/URL vazia.
+    """
+    normalized = " ".join(str(url or "").split())
+    if not normalized:
+        return None
+    try:
+        req = urllib.request.Request(
+            normalized,
+            headers={
+                "User-Agent": _GEOCODE_USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml",
+                "Accept-Language": "pt-BR",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - URL do usuario (link Maps)
+            final_url = resp.geturl() or getattr(resp, "url", None)
+    except Exception:
+        return None
+    final_url = str(final_url or "").strip()
+    return final_url or None
+
+
 class MapsGeocoder:
     """Abre um Chrome headless e resolve endereco+CEP. Reutilize a MESMA instancia."""
 
