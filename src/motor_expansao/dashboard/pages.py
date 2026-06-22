@@ -3676,6 +3676,23 @@ def render_viabilidade_ponto(
     )
     st.plotly_chart(_fig4, use_container_width=True)
 
+    # --- Secao 8b: exportar Excel ---
+    try:
+        from motor_expansao.dimensionamento.excel_export import (
+            gerar_excel_viabilidade,  # noqa: PLC0415
+        )
+        _nome_ponto = f"{lat:.6f}, {lng:.6f}"
+        _excel_bytes = gerar_excel_viabilidade(result, _serie, nome_ponto=_nome_ponto)
+        st.download_button(
+            label="Exportar Excel",
+            data=_excel_bytes,
+            file_name=f"viabilidade_{lat:.4f}_{lng:.4f}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Baixar simulador de viabilidade em formato Excel (.xlsx) com 4 abas: Resumo, DRE, Sensibilidade e Curva.",
+        )
+    except Exception:
+        st.caption("Export Excel indisponivel.")
+
     # --- Secao 9: pino do imovel ---
     st.caption(
         "O ponto analisado e a coordenada/link informado acima (ou o pino ativo no Mapa Territorial)."

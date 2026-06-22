@@ -2,17 +2,22 @@
 
 ## Bloco atual
 
-ID: BLK-DIM-21
-Nome: UI: gráficos financeiros e curva de maturidade na aba de viabilidade
+ID: BLK-DIM-22
+Nome: UI: exportar simulador de viabilidade como Excel
 Status: em execução
-Tipo: enriquecimento visual (READ-ONLY sobre M1)
+Tipo: novo entregável UI (READ-ONLY sobre M1)
 Criticidade: média
-Esteira: Block Orchestrator → Planner → Builder → QA
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA] → Builder → QA
 Skill atual: Builder
 Próxima Skill: QA
 
 ## Objetivo
-Adicionar 4 gráficos Plotly à seção de resultados da viabilidade no dashboard (`pages.py`), com nova função `gerar_serie_mensal()` em `simulador.py` que extrai a lógica do loop interno de maturação e retorna a série temporal mensal. Gráficos: curva de maturidade, faturamento+EBITDA, FCF acumulado, DRE breakdown (steady-state). Cards existentes preservados.
+Adicionar botão `st.download_button` em `pages.py` que gera, em memória, um `.xlsx` com 4 abas (Resumo, DRE, Sensibilidade, Curva) com visual Ultra (turquesa/branco/cinza-escuro), usando `openpyxl` (já dep). Novo módulo `src/motor_expansao/dimensionamento/excel_export.py` com função `gerar_excel_viabilidade(result, *, nome_ponto) -> bytes`. Sem escrita em disco no servidor (BytesIO), sem PII, sem tocar M1.
+
+## Dependências confirmadas
+- BLK-DIM-19 (concluído 2026-06-22): payback/flag corretos
+- BLK-DIM-20 (concluído 2026-06-22): parâmetros de fluxo de caixa
+- BLK-DIM-21 (concluído 2026-06-22): `gerar_serie_mensal()` disponível em `simulador.py`
 
 ## Modo
 LOOP AUTÔNOMO — sem gate humano (bloco loop-safe, READ-ONLY sobre M1)
@@ -24,4 +29,4 @@ LOOP AUTÔNOMO — sem gate humano (bloco loop-safe, READ-ONLY sobre M1)
 - QA: opus (sempre)
 
 ## Handoff disponível
-`context/handoff.md` — gerado pelo Planner em 2026-06-22-152512
+`context/handoff.md` — gerado pelo Block Orchestrator em 2026-06-22-153850
