@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 if TYPE_CHECKING:
@@ -96,8 +97,10 @@ from motor_expansao.dashboard.utils import format_int, format_pct, format_score
 from motor_expansao.dimensionamento.config import (
     RAIO_CATCHMENT_KM,
     SIM_CAPEX_DEFAULT,
+    SIM_MATURACAO_MESES,
     SIM_MENSALIDADE_BALCAO,
 )
+from motor_expansao.dimensionamento.simulador import gerar_serie_mensal
 from motor_expansao.dimensionamento.viabilidade_ponto import analisar_viabilidade_ponto
 
 # UI: modos de cor ESCONDIDOS do seletor do Mapa Territorial Unificado (pedido de Vini 2026-06-16).
@@ -3500,7 +3503,180 @@ def render_viabilidade_ponto(
     else:
         st.info("Grade de sensibilidade indisponivel.")
 
-    # --- Secao 8: pino do imovel ---
+    # --- Secao 8: graficos financeiros (projecao 60 meses) ---
+    st.markdown("##### Projecao financeira (60 meses)")
+
+    _serie = gerar_serie_mensal(
+        result.alunos_balcao_premissa,
+        float(m2),
+        float(aluguel_pedido),
+        float(ticket_medio),
+        alunos_agregadores=result.alunos_agregadores_premissa,
+        capex=float(capex_total),
+        capex_financiado_pct=float(pct_financiado) / 100.0,
+        prazo_financiamento_meses=int(prazo_financiamento_meses),
+        juros_financiamento_am=float(juros_am_pct) / 100.0,
+    )
+    _df_serie = pd.DataFrame(_serie)
+    _meses = _df_serie["mes"].tolist()
+
+    # Paleta Ultra
+    _TURQUESA = "#00BFB3"
+    _CINZA = "#2E3040"
+    _VERDE = "#2ECC71"
+    _VERMELHO = "#E74C3C"
+    _BG = "white"
+
+    # --- Grafico 1: Curva de maturidade de alunos ---
+    _steady = float(result.alunos_balcao_premissa)
+    _fig1 = go.Figure()
+    _fig1.add_trace(go.Scatter(
+        x=_meses,
+        y=_df_serie["alunos_balcao"].tolist(),
+        mode="lines",
+        name="Alunos balcao",
+        line=dict(color=_TURQUESA, width=2.5),
+    ))
+    _fig1.add_hline(
+        y=_steady,
+        line_dash="dash",
+        line_color=_CINZA,
+        annotation_text=f"Steady-state: {int(_steady)}",
+        annotation_position="top right",
+        annotation_font_color=_CINZA,
+    )
+    _mes_mat = min(SIM_MATURACAO_MESES, 60)
+    _fig1.add_vline(
+        x=_mes_mat,
+        line_dash="dot",
+        line_color=_CINZA,
+        annotation_text=f"Maturacao: mes {_mes_mat}",
+        annotation_position="top left",
+        annotation_font_color=_CINZA,
+    )
+    _fig1.update_layout(
+        title="Rampa de alunos (balcao)",
+        xaxis_title="Mes",
+        yaxis_title="Alunos",
+        plot_bgcolor=_BG,
+        paper_bgcolor=_BG,
+        font=dict(color=_CINZA),
+        margin=dict(l=40, r=20, t=50, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    st.plotly_chart(_fig1, use_container_width=True)
+
+    # --- Grafico 2: Faturamento e EBITDA mensal ---
+    _fig2 = go.Figure()
+    _fig2.add_trace(go.Bar(
+        x=_meses,
+        y=_df_serie["faturamento_mensal"].tolist(),
+        name="Faturamento bruto",
+        marker_color=_TURQUESA,
+        opacity=0.85,
+    ))
+    _ebitda_colors = [_VERDE if v >= 0 else _VERMELHO for v in _df_serie["ebitda_mensal"]]
+    _fig2.add_trace(go.Scatter(
+        x=_meses,
+        y=_df_serie["ebitda_mensal"].tolist(),
+        mode="lines+markers",
+        name="EBITDA",
+        line=dict(color=_CINZA, width=2),
+        marker=dict(color=_ebitda_colors, size=4),
+    ))
+    _fig2.update_layout(
+        title="Faturamento e EBITDA mensal",
+        xaxis_title="Mes",
+        yaxis_title="R$",
+        plot_bgcolor=_BG,
+        paper_bgcolor=_BG,
+        font=dict(color=_CINZA),
+        margin=dict(l=40, r=20, t=50, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        barmode="overlay",
+    )
+    st.plotly_chart(_fig2, use_container_width=True)
+
+    # --- Grafico 3: FCF acumulado (area bicolor + linha de payback) ---
+    _fcf_vals = _df_serie["fcf_acumulado"].tolist()
+    _fcf_pos = [v if v >= 0 else 0.0 for v in _fcf_vals]
+    _fcf_neg = [v if v < 0 else 0.0 for v in _fcf_vals]
+    _fig3 = go.Figure()
+    _fig3.add_trace(go.Scatter(
+        x=_meses, y=_fcf_neg,
+        fill="tozeroy",
+        fillcolor="rgba(231,76,60,0.25)",
+        line=dict(color="rgba(231,76,60,0)", width=0),
+        name="FCF acumulado (negativo)",
+        showlegend=False,
+    ))
+    _fig3.add_trace(go.Scatter(
+        x=_meses, y=_fcf_pos,
+        fill="tozeroy",
+        fillcolor="rgba(0,191,179,0.25)",
+        line=dict(color="rgba(0,191,179,0)", width=0),
+        name="FCF acumulado (positivo)",
+        showlegend=False,
+    ))
+    _fig3.add_trace(go.Scatter(
+        x=_meses, y=_fcf_vals,
+        mode="lines",
+        name="FCF acumulado",
+        line=dict(color=_TURQUESA, width=2.5),
+    ))
+    _payback = viab.payback_meses
+    if _payback != float("inf"):
+        _fig3.add_vline(
+            x=int(_payback),
+            line_dash="dash",
+            line_color=_VERDE,
+            annotation_text=f"Payback: mes {int(_payback)}",
+            annotation_position="top left",
+            annotation_font_color=_VERDE,
+        )
+    _fig3.add_hline(y=0, line_color=_CINZA, line_width=1)
+    _fig3.update_layout(
+        title="FCF acumulado",
+        xaxis_title="Mes",
+        yaxis_title="R$",
+        plot_bgcolor=_BG,
+        paper_bgcolor=_BG,
+        font=dict(color=_CINZA),
+        margin=dict(l=40, r=20, t=50, b=40),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    st.plotly_chart(_fig3, use_container_width=True)
+
+    # --- Grafico 4: DRE breakdown steady-state (waterfall) ---
+    _fat = viab.faturamento_mensal_steady
+    _ded = _fat - viab.receita_liquida
+    _imp = viab.receita_liquida - viab.receita_pos_impostos
+    _total_custos = viab.receita_pos_impostos - viab.ebitda_mensal
+    _fig4 = go.Figure(go.Waterfall(
+        orientation="v",
+        measure=["absolute", "relative", "relative", "relative", "total"],
+        x=["Faturamento bruto", "Deducoes", "Impostos", "Custos operacionais", "EBITDA"],
+        y=[_fat, -_ded, -_imp, -_total_custos, viab.ebitda_mensal],
+        text=[f"R${v/1000:.0f}k" for v in [_fat, -_ded, -_imp, -_total_custos, viab.ebitda_mensal]],
+        textposition="outside",
+        connector=dict(line=dict(color=_CINZA, width=1, dash="dot")),
+        increasing=dict(marker=dict(color=_TURQUESA)),
+        decreasing=dict(marker=dict(color=_VERMELHO)),
+        totals=dict(marker=dict(color=_VERDE if viab.ebitda_mensal >= 0 else _VERMELHO)),
+    ))
+    _fig4.update_layout(
+        title="DRE breakdown (steady-state)",
+        xaxis_title="",
+        yaxis_title="R$",
+        plot_bgcolor=_BG,
+        paper_bgcolor=_BG,
+        font=dict(color=_CINZA),
+        margin=dict(l=40, r=20, t=50, b=40),
+        showlegend=False,
+    )
+    st.plotly_chart(_fig4, use_container_width=True)
+
+    # --- Secao 9: pino do imovel ---
     st.caption(
         "O ponto analisado e a coordenada/link informado acima (ou o pino ativo no Mapa Territorial)."
     )

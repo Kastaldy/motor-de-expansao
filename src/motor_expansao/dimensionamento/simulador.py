@@ -275,51 +275,43 @@ def viabilidade(
         capex_efetivo = float(capex)
 
     # -----------------------------------------------------------------------
-    # 11. Rampa de maturacao (payback)
+    # 11. Rampa de maturacao (payback) — delegada a gerar_serie_mensal()
     # A rampa afeta SOMENTE o balcao (alunos_inicial -> alunos_maturidade).
     # Agregadores e personal mantêm valor constante durante a rampa (fiel ao Excel).
     # -----------------------------------------------------------------------
-    fcf_acum = -capex_efetivo
+    serie = gerar_serie_mensal(
+        alunos_maturidade, m2, aluguel_mes, ticket_medio,
+        alunos_agregadores=alunos_agregadores,
+        ticket_agregador=ticket_agregador,
+        personal_mes=personal_mes,
+        churn=churn,
+        inadimplencia=inadimplencia,
+        capex=capex,
+        coef_capex_m2=coef_capex_m2,
+        capex_financiado_pct=capex_financiado_pct,
+        prazo_financiamento_meses=prazo_financiamento_meses,
+        juros_financiamento_am=juros_financiamento_am,
+        royalties_pct=royalties_pct,
+        marketing_pct=marketing_pct,
+        manutencao_pct=manutencao_pct,
+        cartoes_pct=cartoes_pct,
+        devolucoes_pct=devolucoes_pct,
+        pis=pis,
+        cofins=cofins,
+        iss=iss,
+        ir_efetivo=ir_efetivo,
+        csll_efetivo=csll_efetivo,
+        pessoal_mes=pessoal_mes,
+        outros_fixos_mes=outros_fixos_mes,
+        maturacao_meses=maturacao_meses,
+        alunos_inicial=alunos_inicial,
+    )
+    # Extrair payback da serie (primeiro mes com fcf_acumulado >= 0)
     payback_meses: float = float("inf")
-    _maturacao_meses = max(maturacao_meses, 1)  # evitar divisao por zero
-
-    # -----------------------------------------------------------------------
-    # 11a. PMT de financiamento (calculada UMA VEZ, antes do loop)
-    # Afeta SOMENTE o fcf_t no loop (custo financeiro pos-EBITDA).
-    # margem_ebitda_pct e ebitda_mensal NAO sao alterados pela PMT.
-    # -----------------------------------------------------------------------
-    _C = capex_efetivo * capex_financiado_pct
-    if _C > 0 and juros_financiamento_am > 0:
-        _r = juros_financiamento_am
-        _n = prazo_financiamento_meses
-        _pmt = _C * _r * (1.0 + _r) ** _n / ((1.0 + _r) ** _n - 1.0)
-    elif _C > 0:
-        # juros zero: parcela simples (sem encargos)
-        _pmt = _C / max(prazo_financiamento_meses, 1)
-    else:
-        _pmt = 0.0
-
-    for t in range(1, 61):
-        frac = min(t / _maturacao_meses, 1.0)
-        al_t = alunos_inicial + (alunos_maturidade - alunos_inicial) * frac
-        pag_t = al_t * (1.0 - churn)
-        fat_balcao_t = pag_t * ticket_medio * (1.0 - inadimplencia)
-        fat_agr_t = alunos_agregadores * ticket_agregador * (1.0 - inadimplencia)
-        fat_t = fat_balcao_t + fat_agr_t + personal_mes
-        dev_t = fat_t * devolucoes_pct
-        rl_t = fat_t - dev_t
-        imp_t = rl_t * (pis + cofins + iss)
-        rpi_t = rl_t - imp_t
-        cvar_t = rl_t * (royalties_pct + marketing_pct + manutencao_pct + cartoes_pct)
-        cfix_t = pessoal_mes + outros_fixos_mes + aluguel_mes
-        eb_t = rpi_t - cvar_t - cfix_t
-        ir_t = rl_t * (ir_efetivo + csll_efetivo)
-        fcf_t = eb_t - ir_t
-        if _pmt > 0 and t <= prazo_financiamento_meses:
-            fcf_t -= _pmt
-        fcf_acum += fcf_t
-        if payback_meses == float("inf") and fcf_acum >= 0:
-            payback_meses = float(t)
+    for row in serie:
+        if row["fcf_acumulado"] >= 0:
+            payback_meses = float(row["mes"])
+            break
 
     # -----------------------------------------------------------------------
     # 12. ROIC anual (sobre steady-state)
@@ -343,6 +335,102 @@ def viabilidade(
         lucro_liquido_mensal=float(lucro_liquido),
         flag_viavel=bool(flag_viavel),
     )
+
+
+def gerar_serie_mensal(
+    alunos_maturidade: float,
+    m2: float,
+    aluguel_mes: float,
+    ticket_medio: float,
+    *,
+    alunos_agregadores: float = SIM_ALUNOS_AGREGADORES_MATURIDADE,
+    ticket_agregador: float = SIM_TICKET_AGREGADOR,
+    personal_mes: float = SIM_PERSONAL_MES_RECEITA,
+    churn: float = SIM_CHURN,
+    inadimplencia: float = 0.02,
+    capex: float | None = None,
+    coef_capex_m2: float | None = None,
+    capex_financiado_pct: float = 0.0,
+    prazo_financiamento_meses: int = 36,
+    juros_financiamento_am: float = 0.018,
+    royalties_pct: float = SIM_ROYALTIES_PCT,
+    marketing_pct: float = SIM_MARKETING_PCT,
+    manutencao_pct: float = SIM_MANUTENCAO_PCT,
+    cartoes_pct: float = SIM_CARTOES_PCT,
+    devolucoes_pct: float = SIM_DEVOLUCOES_PCT,
+    pis: float = SIM_PIS,
+    cofins: float = SIM_COFINS,
+    iss: float = SIM_ISS,
+    ir_efetivo: float = SIM_IR_EFETIVO,
+    csll_efetivo: float = SIM_CSLL_EFETIVO,
+    pessoal_mes: float = SIM_PESSOAL_MES,
+    outros_fixos_mes: float = SIM_OUTROS_FIXOS_MES,
+    maturacao_meses: int = SIM_MATURACAO_MESES,
+    alunos_inicial: float = float(SIM_ALUNOS_INICIAL),
+) -> list[dict]:
+    """Retorna a serie mensal de 60 meses do simulador.
+
+    Campos por mes: mes, alunos_balcao, faturamento_mensal, ebitda_mensal, fcf_acumulado.
+    Esta funcao e a fonte unica de verdade do loop de maturacao; viabilidade() delega para ela.
+
+    A assinatura e identica a viabilidade(), exceto pelo tipo de retorno (list[dict]).
+
+    READ-ONLY sobre o M1: nao recalcula score_priorizacao nem artefatos oficiais (DEC-001).
+    """
+    # Capex efetivo (mesma logica de viabilidade())
+    capex_efetivo: float
+    if capex is None and coef_capex_m2 is not None:
+        capex_efetivo = coef_capex_m2 * m2
+    elif capex is None:
+        capex_efetivo = float(SIM_CAPEX_DEFAULT)
+    else:
+        capex_efetivo = float(capex)
+
+    # PMT de financiamento (calculada UMA VEZ, antes do loop)
+    # Afeta SOMENTE o fcf_t no loop (custo financeiro pos-EBITDA).
+    # margem_ebitda_pct e ebitda_mensal NAO sao alterados pela PMT.
+    _C = capex_efetivo * capex_financiado_pct
+    if _C > 0 and juros_financiamento_am > 0:
+        _r = juros_financiamento_am
+        _n = prazo_financiamento_meses
+        _pmt = _C * _r * (1.0 + _r) ** _n / ((1.0 + _r) ** _n - 1.0)
+    elif _C > 0:
+        _pmt = _C / max(prazo_financiamento_meses, 1)
+    else:
+        _pmt = 0.0
+
+    _maturacao_meses = max(maturacao_meses, 1)
+    fcf_acum = -capex_efetivo
+    serie: list[dict] = []
+
+    for t in range(1, 61):
+        frac = min(t / _maturacao_meses, 1.0)
+        al_t = alunos_inicial + (alunos_maturidade - alunos_inicial) * frac
+        pag_t = al_t * (1.0 - churn)
+        fat_balcao_t = pag_t * ticket_medio * (1.0 - inadimplencia)
+        fat_agr_t = alunos_agregadores * ticket_agregador * (1.0 - inadimplencia)
+        fat_t = fat_balcao_t + fat_agr_t + personal_mes
+        dev_t = fat_t * devolucoes_pct
+        rl_t = fat_t - dev_t
+        imp_t = rl_t * (pis + cofins + iss)
+        rpi_t = rl_t - imp_t
+        cvar_t = rl_t * (royalties_pct + marketing_pct + manutencao_pct + cartoes_pct)
+        cfix_t = pessoal_mes + outros_fixos_mes + aluguel_mes
+        eb_t = rpi_t - cvar_t - cfix_t
+        ir_t = rl_t * (ir_efetivo + csll_efetivo)
+        fcf_t = eb_t - ir_t
+        if _pmt > 0 and t <= prazo_financiamento_meses:
+            fcf_t -= _pmt
+        fcf_acum += fcf_t
+        serie.append({
+            "mes": t,
+            "alunos_balcao": float(al_t),
+            "faturamento_mensal": float(fat_t),
+            "ebitda_mensal": float(eb_t),
+            "fcf_acumulado": float(fcf_acum),
+        })
+
+    return serie
 
 
 def aluguel_teto(

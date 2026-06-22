@@ -21,6 +21,7 @@ from motor_expansao.dimensionamento.simulador import (
     ViabilidadeResult,
     aluguel_teto,
     alunos_minimos_viaveis,
+    gerar_serie_mensal,
     viabilidade,
 )
 
@@ -426,3 +427,89 @@ def test_pmt_formula_correta() -> None:
         juros_financiamento_am=0.018,
     )
     assert r_com.payback_meses >= r_sem.payback_meses
+
+
+# ---------------------------------------------------------------------------
+# CA-11: gerar_serie_mensal() (BLK-DIM-21)
+# ---------------------------------------------------------------------------
+
+
+def test_serie_mensal_comprimento_60() -> None:
+    """CA-11a: gerar_serie_mensal() retorna exatamente 60 registros."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    assert len(serie) == 60
+
+
+def test_serie_mensal_campos_presentes() -> None:
+    """CA-11b: todos os campos obrigatorios presentes em cada registro."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    campos = {"mes", "alunos_balcao", "faturamento_mensal", "ebitda_mensal", "fcf_acumulado"}
+    for row in serie:
+        assert campos == set(row.keys()), f"Campos faltando: {campos - set(row.keys())}"
+
+
+def test_serie_mensal_sem_nan() -> None:
+    """CA-11c: nenhum campo contem NaN ou None."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    for row in serie:
+        for k, v in row.items():
+            assert v is not None, f"Campo {k} e None no mes {row['mes']}"
+            if isinstance(v, float):
+                assert math.isfinite(v), f"Campo {k} e nao-finito no mes {row['mes']}"
+
+
+def test_serie_mensal_meses_sequenciais() -> None:
+    """CA-11d: campo 'mes' vai de 1 a 60 em sequencia."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    assert [row["mes"] for row in serie] == list(range(1, 61))
+
+
+def test_serie_mensal_fcf_acumulado_negativo_inicio() -> None:
+    """CA-11e: FCF acumulado no mes 1 e negativo (capex a vista e alto)."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    assert serie[0]["fcf_acumulado"] < 0, (
+        "FCF acumulado no mes 1 deve ser negativo (capex padrao R$2.34M nao e coberto em 1 mes)"
+    )
+
+
+def test_serie_mensal_payback_consistente_com_viabilidade() -> None:
+    """CA-11f: payback detectado na serie corresponde ao payback de viabilidade().
+
+    Usa VIAVEL (capex=600k) onde payback ocorre dentro de 60 meses.
+    """
+    r = viabilidade(**VIAVEL)
+    serie = gerar_serie_mensal(**VIAVEL)
+    # Encontrar payback na serie: primeiro mes com fcf_acumulado >= 0
+    payback_serie = next(
+        (row["mes"] for row in serie if row["fcf_acumulado"] >= 0),
+        float("inf"),
+    )
+    assert payback_serie == r.payback_meses, (
+        f"Payback da serie ({payback_serie}) difere de viabilidade() ({r.payback_meses})"
+    )
+
+
+def test_serie_mensal_alunos_cresce_ate_maturidade() -> None:
+    """CA-11g: alunos_balcao cresce monotonicamente ate o steady-state."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    alunos = [row["alunos_balcao"] for row in serie]
+    # Deve crescer ou manter (nunca decresce durante a rampa)
+    for i in range(1, len(alunos)):
+        assert alunos[i] >= alunos[i - 1] - 0.01, (
+            f"Alunos decresceu no mes {i + 1}: {alunos[i]} < {alunos[i - 1]}"
+        )
+    # Deve atingir o steady-state (938 com churn 0.06) ao final
+    assert abs(alunos[-1] - DEFAULTS["alunos_maturidade"]) < 0.01, (
+        f"Alunos no mes 60 ({alunos[-1]:.2f}) deveria ser proximo de {DEFAULTS['alunos_maturidade']}"
+    )
+
+
+def test_serie_mensal_com_financiamento_payback_pior_ou_igual() -> None:
+    """CA-11h: com financiamento, o payback e pior ou igual ao sem financiamento (PMT drena FCF)."""
+    serie_sem = gerar_serie_mensal(**VIAVEL)
+    serie_com = gerar_serie_mensal(**VIAVEL, capex_financiado_pct=1.0, prazo_financiamento_meses=36)
+    payback_sem = next((row["mes"] for row in serie_sem if row["fcf_acumulado"] >= 0), float("inf"))
+    payback_com = next((row["mes"] for row in serie_com if row["fcf_acumulado"] >= 0), float("inf"))
+    assert payback_com >= payback_sem, (
+        f"Payback com financiamento ({payback_com}) deveria ser >= sem ({payback_sem})"
+    )

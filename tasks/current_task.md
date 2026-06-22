@@ -2,17 +2,17 @@
 
 ## Bloco atual
 
-ID: BLK-DIM-20
-Nome: UI: parâmetros de fluxo de caixa editáveis (capex parcelado — equipamentos e tecnologia)
-Status: aguardando QA
-Tipo: enriquecimento do simulador financeiro (READ-ONLY sobre M1)
+ID: BLK-DIM-21
+Nome: UI: gráficos financeiros e curva de maturidade na aba de viabilidade
+Status: em execução
+Tipo: enriquecimento visual (READ-ONLY sobre M1)
 Criticidade: média
 Esteira: Block Orchestrator → Planner → Builder → QA
 Skill atual: Builder
 Próxima Skill: QA
 
 ## Objetivo
-Adicionar três parâmetros de financiamento de capex (`capex_financiado_pct`, `prazo_financiamento_meses`, `juros_financiamento_am`) em `viabilidade()` (`simulador.py`), calcular PMT mensal e subtrair do FCF no loop de payback (sem afetar EBITDA), e expor os novos campos no expander "Parametros avancados" do dashboard (`pages.py`).
+Adicionar 4 gráficos Plotly à seção de resultados da viabilidade no dashboard (`pages.py`), com nova função `gerar_serie_mensal()` em `simulador.py` que extrai a lógica do loop interno de maturação e retorna a série temporal mensal. Gráficos: curva de maturidade, faturamento+EBITDA, FCF acumulado, DRE breakdown (steady-state). Cards existentes preservados.
 
 ## Modo
 LOOP AUTÔNOMO — sem gate humano (bloco loop-safe, READ-ONLY sobre M1)
@@ -24,4 +24,4 @@ LOOP AUTÔNOMO — sem gate humano (bloco loop-safe, READ-ONLY sobre M1)
 - QA: opus (sempre)
 
 ## Handoff disponível
-`context/handoff.md` — gerado pelo Block Orchestrator em 2026-06-22 15:02:29
+`context/handoff.md` — gerado pelo Planner em 2026-06-22-152512
