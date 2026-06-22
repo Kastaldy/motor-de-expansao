@@ -3374,7 +3374,7 @@ def render_viabilidade_ponto(
     payback = viab.payback_meses
     m4.metric(
         "Payback",
-        f"{format_int(int(payback))} meses" if payback != float("inf") else "> 60 / nunca",
+        f"{format_int(int(payback))} meses" if payback != float("inf") else "> 60 meses",
     )
 
     n1, n2, n3, n4 = st.columns(4)

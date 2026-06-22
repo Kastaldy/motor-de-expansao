@@ -212,9 +212,29 @@ def test_roic_positivo_steady_state() -> None:
 
 
 def test_flag_viavel_verdadeiro_com_capex_menor() -> None:
-    """CA-07d: com capex=600k, margem ~18% e payback ~57 meses => flag_viavel=True."""
+    """CA-07d: com capex=600k, margem ~18% e payback ~57 meses => flag_viavel=False (57 > 36)."""
     r = viabilidade(**VIAVEL)
+    assert r.flag_viavel is False
+
+
+def test_flag_viavel_com_payback_menor_igual_36() -> None:
+    """CA-07e: payback <= 36 meses => flag_viavel=True (fronteira do novo limite).
+
+    capex=150_000 com FCF steady ~13k/mes cobre em ~22 meses, bem dentro de 36.
+    """
+    r = viabilidade(**{**VIAVEL, "capex": 150_000})
+    assert r.payback_meses <= 36
     assert r.flag_viavel is True
+
+
+def test_flag_nao_viavel_com_payback_entre_37_e_60() -> None:
+    """CA-07f: payback entre 37 e 60 meses => flag_viavel=False (zona antes 'viavel', agora nao).
+
+    capex=600_000 => payback ~57 meses (> 36, <= 60) => flag_viavel=False com novo limite.
+    """
+    r = viabilidade(**VIAVEL)
+    assert 36 < r.payback_meses <= 60
+    assert r.flag_viavel is False
 
 
 # ---------------------------------------------------------------------------
@@ -297,3 +317,29 @@ def test_personal_mes_e_constante_sim() -> None:
 def test_aluguel_default_constante_sim() -> None:
     """SIM_ALUGUEL_MES deve ser R$20.000 (Simulador N9)."""
     assert SIM_ALUGUEL_MES == 20_000
+
+
+# ---------------------------------------------------------------------------
+# CA-09: display de payback (logica pura, sem Streamlit)
+# ---------------------------------------------------------------------------
+
+
+def _format_payback_display(payback: float) -> str:
+    """Replica a logica de pages.py:3377 de forma pura para teste."""
+    if payback != float("inf"):
+        return f"{int(payback)} meses"
+    return "> 60 meses"
+
+
+def test_payback_inf_exibe_60_meses_sem_nunca() -> None:
+    """CA-09a: payback=inf => display '> 60 meses', sem 'Nunca' nem '/'."""
+    display = _format_payback_display(float("inf"))
+    assert display == "> 60 meses"
+    assert "Nunca" not in display
+    assert "/" not in display
+
+
+def test_payback_finito_exibe_numero_meses() -> None:
+    """CA-09b: payback finito (ex: 57) => display '57 meses'."""
+    display = _format_payback_display(57.0)
+    assert display == "57 meses"

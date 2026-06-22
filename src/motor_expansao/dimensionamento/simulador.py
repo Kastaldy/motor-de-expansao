@@ -71,7 +71,7 @@ class ViabilidadeResult:
     lucro_liquido_mensal:
         ebitda_mensal - IR - CSLL (steady-state).
     flag_viavel:
-        True se margem_ebitda_pct >= 0.10 E payback_meses <= 60.
+        True se margem_ebitda_pct >= 0.10 E payback_meses <= 36.
     """
 
     faturamento_mensal_steady: float
@@ -299,7 +299,7 @@ def viabilidade(
     # -----------------------------------------------------------------------
     # 13. flag_viavel
     # -----------------------------------------------------------------------
-    flag_viavel = (margem_ebitda_pct >= 0.10) and (payback_meses <= 60)
+    flag_viavel = (margem_ebitda_pct >= 0.10) and (payback_meses <= 36)
 
     return ViabilidadeResult(
         faturamento_mensal_steady=float(faturamento),

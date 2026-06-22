@@ -2,17 +2,17 @@
 
 ## Bloco atual
 
-ID: BLK-DIM-17
-Nome: Fix: limiar de renda da zona morta (3.000 → 1.600)
-Status: aprovado
-Tipo: bug fix (constante de alerta; READ-ONLY sobre M1)
+ID: BLK-DIM-19
+Nome: Fix: flag de viável (payback 60 → 36 meses) e exibir payback real (remover "Nunca")
+Status: em andamento
+Tipo: bug fix (constante de viabilidade e display; READ-ONLY sobre M1)
 Criticidade: média
 Esteira: Block Orchestrator → Planner → Builder → QA
-Skill atual: QA (concluída)
-Próxima Skill: Fechamento manual (housekeeping pós-merge)
+Skill atual: Builder (concluída)
+Próxima Skill: QA
 
 ## Objetivo
-Corrigir `RENDA_ZONA_MORTA_MIN` de 3.000 para 1.600 em `viabilidade_ponto.py` e adicionar testes de fronteira do novo limiar (os testes existentes não asseriam o valor 3000 explicitamente).
+Corrigir `payback_meses <= 60` para `<= 36` em `simulador.py` (flag_viavel), atualizar docstring, substituir `"> 60 / nunca"` por `"> 60 meses"` em `pages.py`, e atualizar os testes afetados (CA-07d: flag_viavel agora False para payback ~57 meses).
 
 ## Modo
 LOOP AUTÔNOMO — sem gate humano (bloco loop-safe, READ-ONLY sobre M1)
@@ -24,4 +24,4 @@ LOOP AUTÔNOMO — sem gate humano (bloco loop-safe, READ-ONLY sobre M1)
 - QA: opus (sempre)
 
 ## Handoff disponível
-`context/handoff.md` — gerado pelo Builder em 2026-06-22 14:14:38
+`context/handoff.md` — gerado pelo Builder em 2026-06-22 14:45:32
