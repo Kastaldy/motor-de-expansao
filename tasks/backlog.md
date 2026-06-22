@@ -576,33 +576,8 @@ exige decisão humana sobre quais fontes baixar e validação de licença/LGPD.*
 
 ---
 
-### BLK-DIM-19 — Fix: flag de viável (payback 60 → 36 meses) e exibir payback real (remover "Nunca")
+- BLK-DIM-19 (concluído 2026-06-22) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (altera semântica do flag de viabilidade na camada DIM; READ-ONLY sobre M1 oficial) |
-| **Prioridade** | **Alta** — mudança de produto aprovada por Felipe (2026-06-22) |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Status** | Pendente |
-| **Autonomia** | **loop-safe** — READ-ONLY sobre M1; toca só `simulador.py` + `pages.py` + testes; sem VPS/deploy/segredos/PII/ingestão ao vivo. NÃO toca `config.py` do M1 nem `dimensionamento/config.py`. |
-| **Depende de** | — |
-
-**Contexto / por que existe:** duas correções de produto:
-1. `flag_viavel` em `ViabilidadeResult` usa `payback_meses <= 60` (`simulador.py` linha 302). Felipe aprovou trocar para **36 meses** (3 anos) como teto aceitável.
-2. A UI exibe `"> 60 / nunca"` quando `payback == float("inf")` (`pages.py` linha 3377). Remover o texto "Nunca" — mostrar o número real (ex.: "87 meses") mesmo que ultrapasse o teto de viabilidade.
-
-**Escopo permitido:**
-- `simulador.py`: `flag_viavel = (margem_ebitda_pct >= 0.10) and (payback_meses <= 60)` → `<= 36`.
-- `pages.py` (`render_viabilidade_ponto`): o card "Payback" deve sempre exibir o número em meses, sem texto "Nunca". Se `payback == float("inf")` após 60 meses de simulação, exibir `"> 60 meses"` (limite da janela do loop, não "nunca"). Remover o ramo `else "> 60 / nunca"`.
-- Atualizar testes que asseriam `flag_viavel = True` com payback entre 36 e 60 (agora passam a ser `False`), e testes do display de payback.
-
-**Fora de escopo (invioláveis):** `config.py` do M1, `RENDA_MIN`, pesos/formula M1, `flag_viavel` dos hexágonos M1 (campo diferente, nos datasets de hexágonos — não confundir com `ViabilidadeResult.flag_viavel`), artefatos oficiais.
-
-**Critérios de aceite:** `flag_viavel` vira `False` para payback entre 37 e 60 meses; UI sempre exibe número (nunca o texto "Nunca"); suite verde.
-
-**Arquivos prováveis:** `src/motor_expansao/dimensionamento/simulador.py`, `src/motor_expansao/dashboard/pages.py`, `tests/`.
-
-**Risco:** baixo — altera só a constante de teto e o texto de display. O `flag_viavel` dos hexágonos M1 é campo completamente distinto e não é tocado.
 
 ---
 
