@@ -35,7 +35,7 @@ from motor_expansao.dimensionamento.simulador import (
 
 # --- Thresholds de zona morta (exogenos; NAO preveem alunos) -----------------
 POP_ZONA_MORTA_MIN: float = 5_000.0       # alinhado com POP_MIN_ACIONAVEL do dashboard
-RENDA_ZONA_MORTA_MIN: float = 3_000.0     # renda per capita minima do entorno
+RENDA_ZONA_MORTA_MIN: float = 1_600.0     # renda per capita minima do entorno
 
 # --- Faixa de comparaveis por densidade (curva tamanho->densidade) -----------
 FAIXA_M2_TOLERANCIA: float = 0.20         # +/-20% do m2 do imovel
