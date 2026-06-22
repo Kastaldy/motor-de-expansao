@@ -92,6 +92,11 @@ from motor_expansao.dashboard.data import (
     parse_hex_ids_from_text,
     resolve_cod_municipio_from_geo_dir,
 )
+from motor_expansao.dashboard.relatorio_municipal import (
+    agregar_municipio,
+    render_download_relatorio_municipal,
+    render_mapas_municipio,
+)
 from motor_expansao.dashboard.utils import format_int, format_pct, format_score
 from motor_expansao.dimensionamento.config import RAIO_CATCHMENT_KM, SIM_MENSALIDADE_BALCAO
 from motor_expansao.dimensionamento.viabilidade_ponto import analisar_viabilidade_ponto
@@ -3518,6 +3523,72 @@ def render_mapa_pydeck_fragment(
                 )
 
 
+def render_relatorio_municipal_expander(
+    df: pd.DataFrame,
+    *,
+    selected_cities: list[str],
+    selected_ufs: list[str],
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    dominio_df: pd.DataFrame | None = None,
+) -> None:
+    """Relatorio Municipal (BLK-RELMUN-01): habilitado so com EXATAMENTE 1 municipio.
+
+    READ-ONLY sobre o M1; reusa o `df`/`dominio_df` ja em escopo (sem carga nova de parquet).
+    Mapas com tiles online (DEC-011) sob spinner; PDF de 8 paginas baixavel.
+    """
+    st.caption(
+        "Relatorio consolidado por municipio (8 paginas). Camada complementar: "
+        "nao altera M1, carteira ou plano."
+    )
+    if len(selected_cities) != 1:
+        st.info(
+            "Selecione exatamente um municipio no filtro lateral para gerar o Relatorio Municipal."
+        )
+        return
+
+    nome_municipio = selected_cities[0]
+    uf = selected_ufs[0] if len(selected_ufs) == 1 else None
+    with st.spinner("Gerando Relatorio Municipal..."):
+        municipio_result = agregar_municipio(
+            df,
+            nome_municipio=nome_municipio,
+            uf=uf,
+            dominio_df=dominio_df,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+        )
+        if municipio_result["n_hex_total"] == 0:
+            st.warning(
+                f"Nenhum hexagono encontrado para '{nome_municipio}' no recorte carregado."
+            )
+            return
+        df_muni = df.loc[
+            df.get("nome_municipio", pd.Series("", index=df.index))
+            .astype(str).str.strip().str.casefold()
+            == str(nome_municipio).strip().casefold()
+        ]
+        if df_muni.empty and "cidade" in df.columns:
+            df_muni = df.loc[
+                df["cidade"].astype(str).str.strip().str.casefold()
+                == str(nome_municipio).strip().casefold()
+            ]
+        mapas = render_mapas_municipio(
+            df_muni,
+            municipio_result,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+            basemap=True,
+        )
+
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Unidades Ultra", municipio_result["n_ultra"])
+    col2.metric("Concorrentes", municipio_result["n_concorrentes"])
+    col3.metric("Espaco p/ academias", municipio_result["espaco_para_academias"])
+
+    render_download_relatorio_municipal(st, municipio_result, mapas)
+
+
 def render_mapa_territorial(
     df: pd.DataFrame,
     *,
@@ -3765,4 +3836,16 @@ def render_mapa_territorial(
                 censo_geo_dir=censo_geo_dir,
                 competitors_df=competitors_df,
                 ultra_df=ultra_df,
+            )
+        with st.expander(
+            "Relatorio Municipal",
+            expanded=False,
+        ):
+            render_relatorio_municipal_expander(
+                df,
+                selected_cities=selected_cities,
+                selected_ufs=selected_ufs,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
+                dominio_df=dominio_df,
             )

@@ -2,107 +2,49 @@
 
 ## Bloco atual
 
-ID: BLK-UI-09
-Nome: Busca por link do Google Maps na barra de pesquisa (3 opções: coordenada, endereço, link)
-Status: aprovado
-Tipo: feature (UX/UI; READ-ONLY sobre M1)
-Criticidade: alta (confirmada pelo Block Orchestrator em 2026-06-19)
-Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA — gate obrigatório] → Builder → QA
-Skill atual: QA (CONCLUÍDO — APROVADO)
-Próxima Skill: Fechamento manual (orquestrador: housekeeping Passo 6.0 + merge humano)
+ID: BLK-RELMUN-01
+Nome: Relatório Municipal (novo formato, por município selecionado)
+Status: aprovado (QA — 2026-06-22; suíte completa 1055 passed / 1 skipped / 0 failed)
+Tipo: feature (novo relatório no dashboard; READ-ONLY sobre M1)
+Criticidade: Alta (confirmada — Block Orchestrator 2026-06-22)
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA — gate obrigatório] → Builder → QA (CONCLUÍDO)
+Skill atual: QA/Quality Analyzer (CONCLUÍDO — 2026-06-22; VEREDITO APROVADO)
+Próxima Skill: Fechamento manual / orquestrador (Passo 6.0 housekeeping_move_block BLK-RELMUN-01 + commit por path)
 
-## Follow-ups interativos pós-QA (Vini, 2026-06-19 — diretos, fora da esteira formal; READ-ONLY M1)
-- **FU1 — Busca integrada ao seletor de abas:** a busca virou uma barra de pesquisa única
-  com o seletor de abas (`st.container(key="nav_search_bar")` + `st.columns` em `main()`),
-  barra **sticky** no topo (corrigida: o sticky vive no `stLayoutWrapper` que envolve o
-  container — fixar o `.st-key-nav_search_bar` direto não gruda na Streamlit 1.58 porque o
-  pai o limita; verificado por scroll real top→0) e **alinhamento vertical** (botões e campo
-  com 40px, centros coincidem). Arquivos: `streamlit_app.py`, `dashboard/pages.py`,
-  `tests/integration/test_streamlit_app.py` (teste do sticky atualizado p/ o novo seletor).
-- **FU2 — Plus Code (Open Location Code) na busca:** 4º formato da barra. Cascata final:
-  `coordenada → link Maps → Plus Code → endereço`. Código COMPLETO decodifica offline; código
-  CURTO (ex.: "6M7J+GQ Duque de Caxias - RJ") resolve a localidade via Nominatim (DEC-010),
-  recupera o código completo e decodifica; resultado validado no bbox do Brasil. Dependência
-  BASE nova: `openlocationcode>=1.0.1` (lib oficial, pura — escolha do gate de Vini). Arquivos:
-  `pyproject.toml`, `api/maps_geocoder.py` (`resolve_plus_code`/`extract_plus_code`/
-  `looks_like_plus_code`), `dashboard/pages.py` (`_e_plus_code` + ramo), testes unit+integração.
-- Validação FU1+FU2: `262 passed` (subconjunto impactado), ruff+mypy limpos, `import streamlit_app`
-  ok, e verificação headless no app real (sticky top→0; "6M7J+GQ Duque de Caxias - RJ" →
-  -22.78619,-43.31806 "visível no recorte"). READ-ONLY M1; Blocos 4–6 intocados.
-
-## QA (CONCLUÍDO 2026-06-19) — VEREDITO: APROVADO
-- Suíte FULL SERIAL (gate): **1030 passed, 1 skipped, 0 failed** (`-n auto` abortou com
-  INTERNALERROR de execnet no Python 3.14 — contorno de ambiente autorizado, NÃO bypass).
-- Subset impactado: **252 passed, 0 failed**. import streamlit_app **ok**. ruff **All checks
-  passed**. mypy **Success: no issues found in 2 source files**.
-- NO-BYPASS de rede confirmado: todos os `urlopen` nos testes são monkeypatched; `extract_any_coord`
-  é regex pura. Nenhum teste bate na rede real.
-- READ-ONLY M1: `git diff src/` toca só `api/maps_geocoder.py` + `dashboard/pages.py`; config.py
-  intocado (H3=7, DIST_MIN=1.0, RENDA_MIN=4500.0, renda=0.40/pop=0.60). Caminhos numérico e de
-  endereço preservados byte-a-byte; bbox Brasil aplicado a link longo e curto; cascata link antes de
-  endereço. Blocos 4–6/basemap intocados. Escopo respeitado (3 arquivos + handoffs).
-- Housekeeping `--check` = pré-move (exit 1, esperado); move é responsabilidade do orquestrador.
-- Handoff: `context/handoff.md` (+ cópia `context/handoff/20260619-123106-qa.md`).
-
-## Builder (CONCLUÍDO 2026-06-19) — Opção B implementada
-- `maps_geocoder.py`: novo helper `resolve_short_link` (urllib puro, segue redirect de link
-  curto → URL longa; None em qualquer falha; importável sem rede).
-- `pages.py`: helpers `_parece_link`/`_e_link_curto_maps` (módulo, puros) + ramo de link na
-  cascata de `render_coord_search_sidebar` (numérico INTOCADO → link Maps NOVO → endereço
-  INTOCADO); URL longa offline via `extract_any_coord`, link curto via `resolve_short_link`,
-  ambos + `_validate_brazil_bbox`; fallback gracioso por `st.warning`. Título/caption/label/
-  placeholder mencionam os 3 formatos; `key="coord_search_input"` preservada.
-- `tests/unit/test_coord_search.py`: nova seção (extract_any_coord regex pura, helpers de
-  roteamento, resolve_short_link com urllib MOCKADO). Nenhum teste bate na rede real.
-- Validações: pytest SERIAL (subconjunto + integração) **252 passed, 0 failed, 0 skipped**
-  (xdist `-n auto` abortou com INTERNALERROR de execnet no Python 3.14 — fallback serial
-  autorizado, não é bypass); import streamlit_app **ok**; ruff **OK**; mypy **OK**.
-- READ-ONLY M1: score/pesos/artefatos/carteira/plano INALTERADOS. Blocos 4–6 intocados.
-- Handoff: `context/handoff.md` (+ cópia `context/handoff/20260619-122528-builder.md`).
-
-## Gate humano (2026-06-19) — APROVADO por Vinicius
-Plano técnico do Planner APROVADO. Decisão de links curtos = **Opção B** (seguir redirect HTTP
-de `maps.app.goo.gl`/`goo.gl/maps` via rede). Emenda à DEC-010 (2026-06-19) JÁ REGISTRADA em
-CLAUDE.md §8 antes do Builder. Consequência: `maps_geocoder.py` fica editável (novo helper
-`resolve_short_link`). URL longa segue offline (regex). READ-ONLY M1 em ambas as opções.
-
-## Plano técnico do Planner (2026-06-19)
-- Handoff completo: `context/handoff.md` (cópia append-only: `context/handoff/20260619-121937-planner.md`).
-- Cascata em `render_coord_search_sidebar`: 1) numérico (intocado) → 2) link Maps NOVO (offline,
-  `_parece_link` http/https → `extract_any_coord` + `_validate_brazil_bbox`; link curto cai em
-  `_e_link_curto_maps` com mensagem clara) → 3) endereço Nominatim (intocado).
-- DECISÃO DE GATE pendente: **Opção A** (só URL longa offline, recomendada, sem nova DEC) vs
-  **Opção B** (seguir redirect de link curto → exige emenda à DEC-010 + edição de `maps_geocoder.py`).
-  O Builder só implementa a opção que o humano aprovar.
-- Escopo de edição: `pages.py` (`render_coord_search_sidebar` + 2 helpers + caption) e
-  `tests/unit/test_coord_search.py`. READ-ONLY M1; Blocos 4–6 intocados.
+## Gate humano (APROVADO — Vinicius, 2026-06-22) — decisões D1–D9 TRAVADAS
+- **D1 (hexágonos destacados/"amarelos") — AJUSTE DO HUMANO:** hex destacado ⇔
+  `sam_fitness_potencial >= 3000` **E** `oferta_efetiva_disponivel >= 2000` (ambas em alunos).
+  **Rótulo sobre o hexágono** = `oferta_efetiva_disponivel` (Residual Fitness do hex).
+  **Espaço para academias** = `round( Σ oferta_efetiva_disponivel dos hexes destacados ÷ 2500 )`.
+  (substitui a recomendação original do Planner para D1.) Registrado em DEC-011 (parte 2).
+- **D2:** zonas via `dominio_df` agrupado por `cluster_id` do município; fallback gracioso se vazio.
+- **D3 (tiles) — AJUSTE DO HUMANO:** **TILES ONLINE** (fiel ao template), NÃO Pillow puro.
+  → registrado em **DEC-011** (parte 1): estende a DEC-004 ao Relatório Municipal, com TODAS as
+  mitigações (cache `data/cache/basemap_tiles/`, fallback offline gracioso/canvas claro, import
+  lazy de `contextily`, EPSG:3857, atribuição © OSM/© CARTO, default `basemap=False` em CI/teste).
+- **D4:** "Mercado disponível"/Residual = `Σ oferta_efetiva_disponivel` do município (alunos).
+- **D5:** faixas do Score Censitário: Alto ≥70 / Médio-alto 50–70 / Médio 30–50 / Baixo <30
+  (via `RESIDUAL_SCORE_BANDS`).
+- **D6:** contagem de pins Ultra/concorrentes por filtro geográfico H3 res-7.
+- **D7:** redação normalizada das zonas: 1 Âncora central / 2 Flancos laterais / 3 Cerco.
+- **D8:** Página 8 só com as redes de concorrentes realmente mapeadas + carimbo de versão no rodapé.
+- **D9:** Página 6 (bairros) SIMPLIFICADA temporariamente (por zona/cluster + nota "bairros
+  indisponíveis na base atual"); Vini resolverá a fonte de `NM_BAIRRO` depois.
+- DEC criada neste gate: **DEC-011** (CLAUDE.md §8).
 
 ## Objetivo
-Permitir que a barra de busca principal do dashboard aceite TRÊS formatos de entrada —
-(1) coordenada lat,lng, (2) endereço livre e (3) link do Google Maps — resolvendo cada
-um para coordenada, sem regressão funcional nem do M1.
+Entregar um relatório consolidado por município (gerável e baixável após selecionar um
+município no dashboard), seguindo o template enviado por Vini (8 seções), reaproveitando o
+motor censitário/mercado/residual/domínio e a malha real IBGE 2022, sem regressão do
+Relatório Pontual Censitário (coexistência) nem do M1.
 
-## Escopo citado pelo usuário (Vini, 2026-06-19)
-> "Eu quero que a opção de busca permita 3 opções de busca: coordenada; endereço; link do maps.
-> Coordenada e endereço já são possíveis, mas o link ainda precisa ser incluído."
-
-Foco: adicionar o caminho **link do Maps → coordenada** à busca principal. Coordenada e
-endereço já funcionam (BLK-UI-08 / DEC-010) e devem ficar INTOCADOS.
-
-## Pré-investigação do orquestrador (pinagem de arquivos)
-- Busca principal: `render_coord_search_sidebar` em `src/motor_expansao/dashboard/pages.py:701`
-  (campo `key="coord_search_input"`). Hoje: (1) `parse_coordinate_input` (numérico, intacto);
-  (2) `resolve_endereco_http` (endereço → Nominatim, DEC-010). NÃO trata link do Maps.
-- Building block JÁ EXISTE: `extract_any_coord(url)` / `extract_place_pin(url)` em
-  `src/motor_expansao/api/maps_geocoder.py:71` (regex sobre URL do Maps → coordenada, sem rede).
-- Precedente NO PRÓPRIO REPO: a Análise Pontual já usa esse padrão em
-  `src/motor_expansao/dashboard/pages.py:3054-3060` (`parse_coordinate_input` → `extract_any_coord`).
-- Ponto sensível p/ o Planner: links curtos (`maps.app.goo.gl`, `goo.gl/maps`) NÃO contêm a
-  coordenada na própria string → exigem seguir o redirect HTTP para obter a URL final com `!3d/!4d`.
-  Isso tensiona o §2 (API ao vivo) — pode reutilizar a cobertura da DEC-010 ou exigir emenda/DEC nova.
-
-## Classificação (Passo 2)
-Alta — mexe no dashboard de produção; READ-ONLY sobre M1. A confirmar no Block Orchestrator.
+## Template de referência (recebido 2026-06-22)
+- Transcrição canônica: `docs/relatorio_municipal_template.md`.
+- Original NÃO versionado (anti-PII): `C:\Users\Vinicius Cruz\Downloads\Template_Relatorio_Municipo.{pdf,pptx}`.
+- 8 páginas: (1) Capa "Potencial de Entrada de Novas Unidades" → (2) Resumo da Região
+  (Ultra/Concorrentes/Espaço = Σ hex amarelos ÷ 2.500) → (3) Score Censitário (H3 res 7,
+  4 faixas) → (4) Residual Fitness (mercado disponível) → (5) Expansão de Domínio (zonas +
+  estratégia) → (6) Bairros por zona → (7) Síntese (3 cards) → (8) Espaço e academias (logos).
 
 ## Tiering de modelo (Passo 4) — Alta
 - Block Orchestrator: sonnet
@@ -111,13 +53,14 @@ Alta — mexe no dashboard de produção; READ-ONLY sobre M1. A confirmar no Blo
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-UI-09 (criada a partir de main @ b0f846e). Inclui commit 571681f (housekeeping
-BLK-UI-07 → completed, pedido do Vini antes de iniciar o ciclo).
+ciclo/BLK-RELMUN-01 (criada a partir de main @ a65381f).
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
 - data/outputs/setores_censitarios_2022_geo/_metadata.json
 - data/reports/relatorio_pontual_censitario_base_geo.md
+- tasks/backlog.md (estado anterior; o ciclo regrava conforme necessário)
 
 ## Fora de escopo
-- score/pesos/artefatos M1; quebrar contratos de performance (carga lazy por UF, render lazy
-  de abas, fonte de mapa enxuta — Blocos 4–6); alterar o caminho de coordenada/endereço existente.
+- score/pesos/artefatos M1; alterar o Relatório Pontual Censitário existente (coexistência);
+  dependência de API ao vivo não aprovada; quebrar contratos de performance do dashboard
+  (carga lazy por UF, render lazy de abas, fonte de mapa enxuta — Blocos 4–6).

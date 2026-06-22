@@ -87,6 +87,20 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
+## Relatório Municipal — novo formato (2026-06-19, pedido de Vini)
+
+> Novo formato de relatório que **coexiste** com o Relatório Pontual Censitário atual (que analisa
+> uma região a partir do **raio de um ponto central**). O novo é um **relatório de município**:
+> fica disponível para **geração e download após a seleção de um município** no dashboard. O escopo
+> exato dos dados sai de um **template** que o Vini enviará e que será analisado como base, com
+> ajustes ao longo do ciclo. Família do Relatório Censitário (malha real IBGE 2022), camada de
+> visualização/relatório — **READ-ONLY sobre o M1** (§5 guardrail).
+
+- BLK-RELMUN-01 (concluído 2026-06-22) — ver tasks/completed.md
+
+
+---
+
 ## Trilha colaborador (Vini) — dashboard / PDF / UX (2026-06-09)
 
 > Blocos derivados das tarefas pendentes do Vini (Vinícius, ClickUp id 101182135) na lista
