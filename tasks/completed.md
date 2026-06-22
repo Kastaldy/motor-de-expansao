@@ -5635,3 +5635,33 @@ coordenada e endereço já existiam (BLK-UI-08/DEC-010), faltava o **link**. Ent
   artefatos INALTERADOS; H3=7, DIST_MIN=1.0, RENDA_MIN=4500, renda=0.40/pop=0.60). Caminhos numérico/endereço
   byte-a-byte preservados; Blocos 4–6 intocados.
 - Commit por path `9a57206` no branch `ciclo/BLK-UI-09` (precedido por `571681f`, housekeeping BLK-UI-07). Merge = passo humano.
+
+---
+
+### BLK-DIM-17 — Fix: limiar de renda da zona morta (3.000 → 1.600)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (afeta só o sinal de alerta de zona morta; READ-ONLY sobre M1) |
+| **Prioridade** | **Alta** — corte atual de R$3.000 per capita elimina oportunidades viáveis |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY sobre M1; toca só `viabilidade_ponto.py` + testes; sem VPS/deploy/segredos/PII/ingestão ao vivo |
+| **Depende de** | — |
+
+**Contexto / por que existe:** `RENDA_ZONA_MORTA_MIN = 3_000.0` em `src/motor_expansao/dimensionamento/viabilidade_ponto.py` está alto demais — acende alerta de "zona morta" em entornos com renda per capita entre R$1.600 e R$3.000 que são operacionalmente viáveis para o modelo Ultra. O pedido é baixar o limiar para R$1.600 (máx aceitável para não bloquear).
+
+**Objetivo:** corrigir a constante e atualizar qualquer teste que asserte sobre o valor antigo.
+
+**Escopo permitido:**
+- `viabilidade_ponto.py`: `RENDA_ZONA_MORTA_MIN: float = 3_000.0` → `1_600.0`.
+- Atualizar testes que comparam o limiar (mínimo: buscar `3_000` / `3000` nos testes do módulo).
+- Nada mais.
+
+**Fora de escopo (invioláveis):** `config.py` do M1 (`src/motor_expansao/config.py`), `RENDA_MIN = 4_500.0` (M1, intocado), `dimensionamento/config.py`, pipelines, score, artefatos oficiais.
+
+**Critérios de aceite:** `RENDA_ZONA_MORTA_MIN == 1600.0` no módulo; suite verde sem alteração de score/M1; `flag_zona_morta` dispara apenas abaixo de R$1.600 per capita.
+
+**Arquivos prováveis:** `src/motor_expansao/dimensionamento/viabilidade_ponto.py`, `tests/` (ajustar asserts do limiar antigo).
+
+**Risco:** baixo — é uma constante de exibição/alerta; não altera cálculo de margem/payback/ROIC.
