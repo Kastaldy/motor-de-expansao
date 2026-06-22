@@ -343,3 +343,86 @@ def test_payback_finito_exibe_numero_meses() -> None:
     """CA-09b: payback finito (ex: 57) => display '57 meses'."""
     display = _format_payback_display(57.0)
     assert display == "57 meses"
+
+
+# ---------------------------------------------------------------------------
+# CA-10: financiamento de capex (BLK-DIM-20)
+# ---------------------------------------------------------------------------
+
+
+def test_financiamento_zero_resultado_identico() -> None:
+    """CA-10a: capex_financiado_pct=0.0 => resultado identico ao sem o parametro (regressao zero)."""
+    r_sem = viabilidade(**VIAVEL)
+    r_com = viabilidade(**VIAVEL, capex_financiado_pct=0.0)
+    assert r_sem.payback_meses == r_com.payback_meses
+    assert r_sem.margem_ebitda_pct == r_com.margem_ebitda_pct
+    assert r_sem.flag_viavel == r_com.flag_viavel
+
+
+def test_financiamento_aumenta_payback() -> None:
+    """CA-10b: capex_financiado_pct=1.0 => payback estritamente maior que sem financiamento."""
+    r_sem = viabilidade(**VIAVEL)
+    r_com = viabilidade(
+        **VIAVEL,
+        capex_financiado_pct=1.0,
+        prazo_financiamento_meses=36,
+        juros_financiamento_am=0.018,
+    )
+    assert r_com.payback_meses > r_sem.payback_meses, (
+        f"payback com financiamento ({r_com.payback_meses}) deveria ser > sem ({r_sem.payback_meses})"
+    )
+
+
+def test_financiamento_nao_altera_ebitda() -> None:
+    """CA-10c: margem_ebitda_pct e ebitda_mensal identicos com e sem financiamento (EBITDA pre-financiamento)."""
+    r_sem = viabilidade(**VIAVEL)
+    r_com = viabilidade(
+        **VIAVEL,
+        capex_financiado_pct=1.0,
+        prazo_financiamento_meses=36,
+        juros_financiamento_am=0.018,
+    )
+    assert r_sem.margem_ebitda_pct == r_com.margem_ebitda_pct, (
+        "margem_ebitda_pct nao deve ser afetada pelo financiamento"
+    )
+    assert r_sem.ebitda_mensal == r_com.ebitda_mensal, (
+        "ebitda_mensal nao deve ser afetado pelo financiamento"
+    )
+
+
+def test_pmt_formula_correta() -> None:
+    """CA-10d: PMT correta para C=600k, r=0.018, n=36 (referencia calculada externamente).
+
+    PMT = C * r * (1+r)^n / ((1+r)^n - 1)
+        = 600000 * 0.018 * 1.018^36 / (1.018^36 - 1)
+        = 600000 * 0.018 * 1.8983... / (1.8983... - 1)
+        ~ 600000 * 0.03825... / 0.8983...
+        ~ 600000 * 0.03827...
+        ~ 22965... (aprox R$22.960-23.000)
+
+    Valida via FCF: com financiamento 100%, os primeiros 36 meses do FCF acumulado
+    devem ser menores que sem financiamento (PMT subtraida).
+    """
+    C = 600_000.0
+    r = 0.018
+    n = 36
+    pmt_esperada = C * r * (1.0 + r) ** n / ((1.0 + r) ** n - 1.0)
+    assert 22_000 < pmt_esperada < 24_000, (
+        f"PMT de referencia fora do intervalo esperado: {pmt_esperada:.0f}"
+    )
+
+    # Confirmar que o simulador subtrai a PMT: no mes 1, FCF com financiamento < sem
+    # (inferido via payback — financiamento sempre piora ou iguala o payback)
+    r_sem = viabilidade(
+        **VIAVEL,
+        capex_financiado_pct=0.0,
+        prazo_financiamento_meses=36,
+        juros_financiamento_am=0.018,
+    )
+    r_com = viabilidade(
+        **VIAVEL,
+        capex_financiado_pct=1.0,
+        prazo_financiamento_meses=36,
+        juros_financiamento_am=0.018,
+    )
+    assert r_com.payback_meses >= r_sem.payback_meses

@@ -65,7 +65,8 @@ class ViabilidadeResult:
     margem_ebitda_pct:
         ebitda_mensal / faturamento_mensal_steady (sobre bruto, consistente com spec §8.2).
     payback_meses:
-        Meses ate FCF acumulado zerar (com rampa de maturacao); float('inf') se nunca.
+        Meses ate FCF acumulado zerar (com rampa de maturacao e PMT de financiamento
+        se capex_financiado_pct > 0); float('inf') se nunca dentro de 60 meses.
     roic_anual:
         NOPAT anual / capex total (em fracao; 0.0 se capex == 0).
     lucro_liquido_mensal:
@@ -101,6 +102,10 @@ def viabilidade(
     # Parametros de capex
     capex: float | None = None,
     coef_capex_m2: float | None = None,
+    # Parametros de financiamento de capex (capex parcelado — equipamentos/tecnologia)
+    capex_financiado_pct: float = 0.0,   # fracao do capex financiado (0.0 = pagamento a vista; sem PMT)
+    prazo_financiamento_meses: int = 36,  # prazo do parcelamento em meses (default planilha)
+    juros_financiamento_am: float = 0.018,  # taxa de juros mensal (default 1,8% a.m.)
     # Ratios % do DRE (defaults do JSON via constantes config.py)
     royalties_pct: float = SIM_ROYALTIES_PCT,
     marketing_pct: float = SIM_MARKETING_PCT,
@@ -160,6 +165,14 @@ def viabilidade(
         se ambos None, usa SIM_CAPEX_DEFAULT (R$2.340.000; Simulador R9 cenario 0).
     coef_capex_m2:
         Coeficiente de capex por m2 (R$/m2). Usado se capex=None e coef_capex_m2 fornecido.
+    capex_financiado_pct:
+        Fracao do capex efetivo financiado (0.0 a 1.0; default 0.0 = pagamento a vista).
+        Com 0.0, o comportamento e identico ao atual (nenhuma PMT gerada).
+    prazo_financiamento_meses:
+        Prazo do parcelamento em meses (default 36). So usado se capex_financiado_pct > 0.
+    juros_financiamento_am:
+        Taxa de juros mensal do financiamento em fracao (default 0.018 = 1,8% a.m.).
+        Se 0.0, a PMT e calculada como parcela simples (C / n), sem juros.
     royalties_pct:
         Royalties sobre receita liquida (fracao; default 0.08; Simulador N11).
     marketing_pct:
@@ -270,6 +283,22 @@ def viabilidade(
     payback_meses: float = float("inf")
     _maturacao_meses = max(maturacao_meses, 1)  # evitar divisao por zero
 
+    # -----------------------------------------------------------------------
+    # 11a. PMT de financiamento (calculada UMA VEZ, antes do loop)
+    # Afeta SOMENTE o fcf_t no loop (custo financeiro pos-EBITDA).
+    # margem_ebitda_pct e ebitda_mensal NAO sao alterados pela PMT.
+    # -----------------------------------------------------------------------
+    _C = capex_efetivo * capex_financiado_pct
+    if _C > 0 and juros_financiamento_am > 0:
+        _r = juros_financiamento_am
+        _n = prazo_financiamento_meses
+        _pmt = _C * _r * (1.0 + _r) ** _n / ((1.0 + _r) ** _n - 1.0)
+    elif _C > 0:
+        # juros zero: parcela simples (sem encargos)
+        _pmt = _C / max(prazo_financiamento_meses, 1)
+    else:
+        _pmt = 0.0
+
     for t in range(1, 61):
         frac = min(t / _maturacao_meses, 1.0)
         al_t = alunos_inicial + (alunos_maturidade - alunos_inicial) * frac
@@ -286,6 +315,8 @@ def viabilidade(
         eb_t = rpi_t - cvar_t - cfix_t
         ir_t = rl_t * (ir_efetivo + csll_efetivo)
         fcf_t = eb_t - ir_t
+        if _pmt > 0 and t <= prazo_financiamento_meses:
+            fcf_t -= _pmt
         fcf_acum += fcf_t
         if payback_meses == float("inf") and fcf_acum >= 0:
             payback_meses = float(t)

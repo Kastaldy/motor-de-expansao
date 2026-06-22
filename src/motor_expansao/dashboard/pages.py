@@ -93,7 +93,11 @@ from motor_expansao.dashboard.data import (
     resolve_cod_municipio_from_geo_dir,
 )
 from motor_expansao.dashboard.utils import format_int, format_pct, format_score
-from motor_expansao.dimensionamento.config import RAIO_CATCHMENT_KM, SIM_MENSALIDADE_BALCAO
+from motor_expansao.dimensionamento.config import (
+    RAIO_CATCHMENT_KM,
+    SIM_CAPEX_DEFAULT,
+    SIM_MENSALIDADE_BALCAO,
+)
 from motor_expansao.dimensionamento.viabilidade_ponto import analisar_viabilidade_ponto
 
 # UI: modos de cor ESCONDIDOS do seletor do Mapa Territorial Unificado (pedido de Vini 2026-06-16).
@@ -3319,6 +3323,47 @@ def render_viabilidade_ponto(
                 step=1.0,
                 key="viab_ponto_margem_pct",
             )
+            st.markdown("**Capex e financiamento**")
+            capex_total = st.number_input(
+                "Capex total (R$)",
+                min_value=0.0,
+                value=float(SIM_CAPEX_DEFAULT),
+                step=10_000.0,
+                key="viab_ponto_capex",
+            )
+            pct_financiado = st.slider(
+                "% do capex financiado",
+                min_value=0,
+                max_value=100,
+                value=0,
+                step=5,
+                key="viab_ponto_pct_financiado",
+            )
+            if pct_financiado > 0:
+                prazo_financiamento_meses = st.number_input(
+                    "Prazo (meses)",
+                    min_value=6,
+                    max_value=60,
+                    value=36,
+                    step=6,
+                    key="viab_ponto_prazo",
+                )
+                juros_am_pct = st.number_input(
+                    "Juros a.m. (%)",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=1.8,
+                    step=0.1,
+                    key="viab_ponto_juros",
+                )
+                st.caption(
+                    "Equipamentos e tecnologia parcelados conforme planilha padrao "
+                    "(36 meses, 1,8% a.m.). A PMT entra como custo financeiro no FCF "
+                    "(nao altera EBITDA)."
+                )
+            else:
+                prazo_financiamento_meses = 36
+                juros_am_pct = 1.8
         submitted = st.form_submit_button("Calcular viabilidade")
 
     if not submitted:
@@ -3351,6 +3396,10 @@ def render_viabilidade_ponto(
             margem_alvo=float(margem_alvo_pct) / 100.0,
             base_calibracao_df=base_calibracao_df,
             setores_df=setores_df,
+            capex=float(capex_total),
+            capex_financiado_pct=float(pct_financiado) / 100.0,
+            prazo_financiamento_meses=int(prazo_financiamento_meses),
+            juros_financiamento_am=float(juros_am_pct) / 100.0,
         )
 
     viab = result.viabilidade
