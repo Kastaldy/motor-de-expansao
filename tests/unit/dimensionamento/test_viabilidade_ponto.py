@@ -294,3 +294,21 @@ def test_alunos_para_margem_alvo_campo_presente() -> None:
     )
     assert hasattr(r, "alunos_para_margem_alvo")
     assert r.alunos_para_margem_alvo >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# BLK-DIM-17 — Testes de fronteira do novo limiar RENDA_ZONA_MORTA_MIN = 1600
+# ---------------------------------------------------------------------------
+
+def test_flag_zona_morta_renda_abaixo_novo_limiar() -> None:
+    """renda=1500 < 1600 -> flag_zona_morta=True (fronteira inferior)."""
+    out = flag_zona_morta({"pop_captacao": 50000.0, "renda_per_capita_captacao": 1500.0})
+    assert out["flag_zona_morta"] is True
+    assert "renda<1600" in out["motivo_zona_morta"]
+
+
+def test_flag_zona_morta_renda_no_limiar_nao_dispara() -> None:
+    """renda=1600 == limiar -> flag_zona_morta=False (limiar inclusivo: < dispara, >= nao dispara)."""
+    out = flag_zona_morta({"pop_captacao": 50000.0, "renda_per_capita_captacao": 1600.0})
+    assert out["flag_zona_morta"] is False
+    assert out["motivo_zona_morta"] == "ok"

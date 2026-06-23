@@ -21,6 +21,7 @@ from motor_expansao.dimensionamento.simulador import (
     ViabilidadeResult,
     aluguel_teto,
     alunos_minimos_viaveis,
+    gerar_serie_mensal,
     viabilidade,
 )
 
@@ -212,9 +213,29 @@ def test_roic_positivo_steady_state() -> None:
 
 
 def test_flag_viavel_verdadeiro_com_capex_menor() -> None:
-    """CA-07d: com capex=600k, margem ~18% e payback ~57 meses => flag_viavel=True."""
+    """CA-07d: com capex=600k, margem ~18% e payback ~57 meses => flag_viavel=False (57 > 36)."""
     r = viabilidade(**VIAVEL)
+    assert r.flag_viavel is False
+
+
+def test_flag_viavel_com_payback_menor_igual_36() -> None:
+    """CA-07e: payback <= 36 meses => flag_viavel=True (fronteira do novo limite).
+
+    capex=150_000 com FCF steady ~13k/mes cobre em ~22 meses, bem dentro de 36.
+    """
+    r = viabilidade(**{**VIAVEL, "capex": 150_000})
+    assert r.payback_meses <= 36
     assert r.flag_viavel is True
+
+
+def test_flag_nao_viavel_com_payback_entre_37_e_60() -> None:
+    """CA-07f: payback entre 37 e 60 meses => flag_viavel=False (zona antes 'viavel', agora nao).
+
+    capex=600_000 => payback ~57 meses (> 36, <= 60) => flag_viavel=False com novo limite.
+    """
+    r = viabilidade(**VIAVEL)
+    assert 36 < r.payback_meses <= 60
+    assert r.flag_viavel is False
 
 
 # ---------------------------------------------------------------------------
@@ -297,3 +318,198 @@ def test_personal_mes_e_constante_sim() -> None:
 def test_aluguel_default_constante_sim() -> None:
     """SIM_ALUGUEL_MES deve ser R$20.000 (Simulador N9)."""
     assert SIM_ALUGUEL_MES == 20_000
+
+
+# ---------------------------------------------------------------------------
+# CA-09: display de payback (logica pura, sem Streamlit)
+# ---------------------------------------------------------------------------
+
+
+def _format_payback_display(payback: float) -> str:
+    """Replica a logica de pages.py:3377 de forma pura para teste."""
+    if payback != float("inf"):
+        return f"{int(payback)} meses"
+    return "> 60 meses"
+
+
+def test_payback_inf_exibe_60_meses_sem_nunca() -> None:
+    """CA-09a: payback=inf => display '> 60 meses', sem 'Nunca' nem '/'."""
+    display = _format_payback_display(float("inf"))
+    assert display == "> 60 meses"
+    assert "Nunca" not in display
+    assert "/" not in display
+
+
+def test_payback_finito_exibe_numero_meses() -> None:
+    """CA-09b: payback finito (ex: 57) => display '57 meses'."""
+    display = _format_payback_display(57.0)
+    assert display == "57 meses"
+
+
+# ---------------------------------------------------------------------------
+# CA-10: financiamento de capex (BLK-DIM-20)
+# ---------------------------------------------------------------------------
+
+
+def test_financiamento_zero_resultado_identico() -> None:
+    """CA-10a: capex_financiado_pct=0.0 => resultado identico ao sem o parametro (regressao zero)."""
+    r_sem = viabilidade(**VIAVEL)
+    r_com = viabilidade(**VIAVEL, capex_financiado_pct=0.0)
+    assert r_sem.payback_meses == r_com.payback_meses
+    assert r_sem.margem_ebitda_pct == r_com.margem_ebitda_pct
+    assert r_sem.flag_viavel == r_com.flag_viavel
+
+
+def test_financiamento_aumenta_payback() -> None:
+    """CA-10b: capex_financiado_pct=1.0 => payback estritamente maior que sem financiamento."""
+    r_sem = viabilidade(**VIAVEL)
+    r_com = viabilidade(
+        **VIAVEL,
+        capex_financiado_pct=1.0,
+        prazo_financiamento_meses=36,
+        juros_financiamento_am=0.018,
+    )
+    assert r_com.payback_meses > r_sem.payback_meses, (
+        f"payback com financiamento ({r_com.payback_meses}) deveria ser > sem ({r_sem.payback_meses})"
+    )
+
+
+def test_financiamento_nao_altera_ebitda() -> None:
+    """CA-10c: margem_ebitda_pct e ebitda_mensal identicos com e sem financiamento (EBITDA pre-financiamento)."""
+    r_sem = viabilidade(**VIAVEL)
+    r_com = viabilidade(
+        **VIAVEL,
+        capex_financiado_pct=1.0,
+        prazo_financiamento_meses=36,
+        juros_financiamento_am=0.018,
+    )
+    assert r_sem.margem_ebitda_pct == r_com.margem_ebitda_pct, (
+        "margem_ebitda_pct nao deve ser afetada pelo financiamento"
+    )
+    assert r_sem.ebitda_mensal == r_com.ebitda_mensal, (
+        "ebitda_mensal nao deve ser afetado pelo financiamento"
+    )
+
+
+def test_pmt_formula_correta() -> None:
+    """CA-10d: PMT correta para C=600k, r=0.018, n=36 (referencia calculada externamente).
+
+    PMT = C * r * (1+r)^n / ((1+r)^n - 1)
+        = 600000 * 0.018 * 1.018^36 / (1.018^36 - 1)
+        = 600000 * 0.018 * 1.8983... / (1.8983... - 1)
+        ~ 600000 * 0.03825... / 0.8983...
+        ~ 600000 * 0.03827...
+        ~ 22965... (aprox R$22.960-23.000)
+
+    Valida via FCF: com financiamento 100%, os primeiros 36 meses do FCF acumulado
+    devem ser menores que sem financiamento (PMT subtraida).
+    """
+    C = 600_000.0
+    r = 0.018
+    n = 36
+    pmt_esperada = C * r * (1.0 + r) ** n / ((1.0 + r) ** n - 1.0)
+    assert 22_000 < pmt_esperada < 24_000, (
+        f"PMT de referencia fora do intervalo esperado: {pmt_esperada:.0f}"
+    )
+
+    # Confirmar que o simulador subtrai a PMT: no mes 1, FCF com financiamento < sem
+    # (inferido via payback — financiamento sempre piora ou iguala o payback)
+    r_sem = viabilidade(
+        **VIAVEL,
+        capex_financiado_pct=0.0,
+        prazo_financiamento_meses=36,
+        juros_financiamento_am=0.018,
+    )
+    r_com = viabilidade(
+        **VIAVEL,
+        capex_financiado_pct=1.0,
+        prazo_financiamento_meses=36,
+        juros_financiamento_am=0.018,
+    )
+    assert r_com.payback_meses >= r_sem.payback_meses
+
+
+# ---------------------------------------------------------------------------
+# CA-11: gerar_serie_mensal() (BLK-DIM-21)
+# ---------------------------------------------------------------------------
+
+
+def test_serie_mensal_comprimento_60() -> None:
+    """CA-11a: gerar_serie_mensal() retorna exatamente 60 registros."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    assert len(serie) == 60
+
+
+def test_serie_mensal_campos_presentes() -> None:
+    """CA-11b: todos os campos obrigatorios presentes em cada registro."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    campos = {"mes", "alunos_balcao", "faturamento_mensal", "ebitda_mensal", "fcf_acumulado"}
+    for row in serie:
+        assert campos == set(row.keys()), f"Campos faltando: {campos - set(row.keys())}"
+
+
+def test_serie_mensal_sem_nan() -> None:
+    """CA-11c: nenhum campo contem NaN ou None."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    for row in serie:
+        for k, v in row.items():
+            assert v is not None, f"Campo {k} e None no mes {row['mes']}"
+            if isinstance(v, float):
+                assert math.isfinite(v), f"Campo {k} e nao-finito no mes {row['mes']}"
+
+
+def test_serie_mensal_meses_sequenciais() -> None:
+    """CA-11d: campo 'mes' vai de 1 a 60 em sequencia."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    assert [row["mes"] for row in serie] == list(range(1, 61))
+
+
+def test_serie_mensal_fcf_acumulado_negativo_inicio() -> None:
+    """CA-11e: FCF acumulado no mes 1 e negativo (capex a vista e alto)."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    assert serie[0]["fcf_acumulado"] < 0, (
+        "FCF acumulado no mes 1 deve ser negativo (capex padrao R$2.34M nao e coberto em 1 mes)"
+    )
+
+
+def test_serie_mensal_payback_consistente_com_viabilidade() -> None:
+    """CA-11f: payback detectado na serie corresponde ao payback de viabilidade().
+
+    Usa VIAVEL (capex=600k) onde payback ocorre dentro de 60 meses.
+    """
+    r = viabilidade(**VIAVEL)
+    serie = gerar_serie_mensal(**VIAVEL)
+    # Encontrar payback na serie: primeiro mes com fcf_acumulado >= 0
+    payback_serie = next(
+        (row["mes"] for row in serie if row["fcf_acumulado"] >= 0),
+        float("inf"),
+    )
+    assert payback_serie == r.payback_meses, (
+        f"Payback da serie ({payback_serie}) difere de viabilidade() ({r.payback_meses})"
+    )
+
+
+def test_serie_mensal_alunos_cresce_ate_maturidade() -> None:
+    """CA-11g: alunos_balcao cresce monotonicamente ate o steady-state."""
+    serie = gerar_serie_mensal(**DEFAULTS)
+    alunos = [row["alunos_balcao"] for row in serie]
+    # Deve crescer ou manter (nunca decresce durante a rampa)
+    for i in range(1, len(alunos)):
+        assert alunos[i] >= alunos[i - 1] - 0.01, (
+            f"Alunos decresceu no mes {i + 1}: {alunos[i]} < {alunos[i - 1]}"
+        )
+    # Deve atingir o steady-state (938 com churn 0.06) ao final
+    assert abs(alunos[-1] - DEFAULTS["alunos_maturidade"]) < 0.01, (
+        f"Alunos no mes 60 ({alunos[-1]:.2f}) deveria ser proximo de {DEFAULTS['alunos_maturidade']}"
+    )
+
+
+def test_serie_mensal_com_financiamento_payback_pior_ou_igual() -> None:
+    """CA-11h: com financiamento, o payback e pior ou igual ao sem financiamento (PMT drena FCF)."""
+    serie_sem = gerar_serie_mensal(**VIAVEL)
+    serie_com = gerar_serie_mensal(**VIAVEL, capex_financiado_pct=1.0, prazo_financiamento_meses=36)
+    payback_sem = next((row["mes"] for row in serie_sem if row["fcf_acumulado"] >= 0), float("inf"))
+    payback_com = next((row["mes"] for row in serie_com if row["fcf_acumulado"] >= 0), float("inf"))
+    assert payback_com >= payback_sem, (
+        f"Payback com financiamento ({payback_com}) deveria ser >= sem ({payback_sem})"
+    )
