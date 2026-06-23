@@ -3520,12 +3520,29 @@ def render_viabilidade_ponto(
     _df_serie = pd.DataFrame(_serie)
     _meses = _df_serie["mes"].tolist()
 
-    # Paleta Ultra
+    # Paleta Ultra (tema escuro — espelha apply_exec_layout de components.py)
     _TURQUESA = "#00BFB3"
-    _CINZA = "#2E3040"
-    _VERDE = "#2ECC71"
-    _VERMELHO = "#E74C3C"
-    _BG = "white"
+    _VERDE = "#22C55E"
+    _VERMELHO = "#FF5A6B"
+    _BG = COLORS["panel_solid"]       # "#12172A"
+    _TEXT = COLORS["text"]            # "#F3F7FF"
+    _GRID = "rgba(167, 179, 209, 0.12)"
+    _FONT = "Aptos, Bahnschrift, Segoe UI, sans-serif"
+
+    def _dark_axes(fig: go.Figure) -> None:
+        fig.update_xaxes(
+            showgrid=True,
+            gridcolor=_GRID,
+            zeroline=False,
+            tickfont=dict(color=_TEXT, size=11),
+            title_font=dict(color=_TEXT, size=12),
+        )
+        fig.update_yaxes(
+            showgrid=False,
+            zeroline=False,
+            tickfont=dict(color=_TEXT, size=11),
+            title_font=dict(color=_TEXT, size=12),
+        )
 
     # --- Grafico 1: Curva de maturidade de alunos ---
     _steady = float(result.alunos_balcao_premissa)
@@ -3540,31 +3557,39 @@ def render_viabilidade_ponto(
     _fig1.add_hline(
         y=_steady,
         line_dash="dash",
-        line_color=_CINZA,
+        line_color=COLORS["muted"],
         annotation_text=f"Steady-state: {int(_steady)}",
         annotation_position="top right",
-        annotation_font_color=_CINZA,
+        annotation_font_color=_TEXT,
     )
     _mes_mat = min(SIM_MATURACAO_MESES, 60)
     _fig1.add_vline(
         x=_mes_mat,
         line_dash="dot",
-        line_color=_CINZA,
+        line_color=COLORS["muted"],
         annotation_text=f"Maturacao: mes {_mes_mat}",
         annotation_position="top left",
-        annotation_font_color=_CINZA,
+        annotation_font_color=_TEXT,
     )
+    _CHART_H = 300
+    _MARGIN = dict(l=44, r=16, t=44, b=36)
+    _LEGEND = dict(
+        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+        font=dict(color=_TEXT, size=11),
+    )
+
     _fig1.update_layout(
-        title="Rampa de alunos (balcao)",
+        title=dict(text="Rampa de alunos (balcao)", font=dict(color=_TEXT, size=14, family=_FONT)),
         xaxis_title="Mes",
         yaxis_title="Alunos",
         plot_bgcolor=_BG,
         paper_bgcolor=_BG,
-        font=dict(color=_CINZA),
-        margin=dict(l=40, r=20, t=50, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        font=dict(color=_TEXT, size=11, family=_FONT),
+        margin=_MARGIN,
+        legend=_LEGEND,
+        height=_CHART_H,
     )
-    st.plotly_chart(_fig1, use_container_width=True)
+    _dark_axes(_fig1)
 
     # --- Grafico 2: Faturamento e EBITDA mensal ---
     _fig2 = go.Figure()
@@ -3581,21 +3606,22 @@ def render_viabilidade_ponto(
         y=_df_serie["ebitda_mensal"].tolist(),
         mode="lines+markers",
         name="EBITDA",
-        line=dict(color=_CINZA, width=2),
+        line=dict(color=COLORS["muted"], width=2),
         marker=dict(color=_ebitda_colors, size=4),
     ))
     _fig2.update_layout(
-        title="Faturamento e EBITDA mensal",
+        title=dict(text="Faturamento e EBITDA mensal", font=dict(color=_TEXT, size=14, family=_FONT)),
         xaxis_title="Mes",
         yaxis_title="R$",
         plot_bgcolor=_BG,
         paper_bgcolor=_BG,
-        font=dict(color=_CINZA),
-        margin=dict(l=40, r=20, t=50, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        font=dict(color=_TEXT, size=11, family=_FONT),
+        margin=_MARGIN,
+        legend=_LEGEND,
         barmode="overlay",
+        height=_CHART_H,
     )
-    st.plotly_chart(_fig2, use_container_width=True)
+    _dark_axes(_fig2)
 
     # --- Grafico 3: FCF acumulado (area bicolor + linha de payback) ---
     _fcf_vals = _df_serie["fcf_acumulado"].tolist()
@@ -3605,15 +3631,15 @@ def render_viabilidade_ponto(
     _fig3.add_trace(go.Scatter(
         x=_meses, y=_fcf_neg,
         fill="tozeroy",
-        fillcolor="rgba(231,76,60,0.25)",
-        line=dict(color="rgba(231,76,60,0)", width=0),
+        fillcolor="rgba(255,90,107,0.20)",
+        line=dict(color="rgba(255,90,107,0)", width=0),
         name="FCF acumulado (negativo)",
         showlegend=False,
     ))
     _fig3.add_trace(go.Scatter(
         x=_meses, y=_fcf_pos,
         fill="tozeroy",
-        fillcolor="rgba(0,191,179,0.25)",
+        fillcolor="rgba(0,191,179,0.20)",
         line=dict(color="rgba(0,191,179,0)", width=0),
         name="FCF acumulado (positivo)",
         showlegend=False,
@@ -3634,18 +3660,19 @@ def render_viabilidade_ponto(
             annotation_position="top left",
             annotation_font_color=_VERDE,
         )
-    _fig3.add_hline(y=0, line_color=_CINZA, line_width=1)
+    _fig3.add_hline(y=0, line_color=COLORS["muted"], line_width=1)
     _fig3.update_layout(
-        title="FCF acumulado",
+        title=dict(text="FCF acumulado", font=dict(color=_TEXT, size=14, family=_FONT)),
         xaxis_title="Mes",
         yaxis_title="R$",
         plot_bgcolor=_BG,
         paper_bgcolor=_BG,
-        font=dict(color=_CINZA),
-        margin=dict(l=40, r=20, t=50, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        font=dict(color=_TEXT, size=11, family=_FONT),
+        margin=_MARGIN,
+        legend=_LEGEND,
+        height=_CHART_H,
     )
-    st.plotly_chart(_fig3, use_container_width=True)
+    _dark_axes(_fig3)
 
     # --- Grafico 4: DRE breakdown steady-state (waterfall) ---
     _fat = viab.faturamento_mensal_steady
@@ -3655,26 +3682,40 @@ def render_viabilidade_ponto(
     _fig4 = go.Figure(go.Waterfall(
         orientation="v",
         measure=["absolute", "relative", "relative", "relative", "total"],
-        x=["Faturamento bruto", "Deducoes", "Impostos", "Custos operacionais", "EBITDA"],
+        x=["Fat. bruto", "Deducoes", "Impostos", "Custos op.", "EBITDA"],
         y=[_fat, -_ded, -_imp, -_total_custos, viab.ebitda_mensal],
         text=[f"R${v/1000:.0f}k" for v in [_fat, -_ded, -_imp, -_total_custos, viab.ebitda_mensal]],
         textposition="outside",
-        connector=dict(line=dict(color=_CINZA, width=1, dash="dot")),
+        textfont=dict(color=_TEXT),
+        connector=dict(line=dict(color=COLORS["muted"], width=1, dash="dot")),
         increasing=dict(marker=dict(color=_TURQUESA)),
         decreasing=dict(marker=dict(color=_VERMELHO)),
         totals=dict(marker=dict(color=_VERDE if viab.ebitda_mensal >= 0 else _VERMELHO)),
     ))
     _fig4.update_layout(
-        title="DRE breakdown (steady-state)",
+        title=dict(text="DRE breakdown (steady-state)", font=dict(color=_TEXT, size=14, family=_FONT)),
         xaxis_title="",
         yaxis_title="R$",
         plot_bgcolor=_BG,
         paper_bgcolor=_BG,
-        font=dict(color=_CINZA),
-        margin=dict(l=40, r=20, t=50, b=40),
+        font=dict(color=_TEXT, size=11, family=_FONT),
+        margin=_MARGIN,
         showlegend=False,
+        height=_CHART_H,
     )
-    st.plotly_chart(_fig4, use_container_width=True)
+    _dark_axes(_fig4)
+
+    # Grid 2x2: alunos + DRE (linha 1) / faturamento + FCF (linha 2)
+    _col_l, _col_r = st.columns(2)
+    with _col_l:
+        st.plotly_chart(_fig1, use_container_width=True)
+    with _col_r:
+        st.plotly_chart(_fig4, use_container_width=True)
+    _col_l2, _col_r2 = st.columns(2)
+    with _col_l2:
+        st.plotly_chart(_fig2, use_container_width=True)
+    with _col_r2:
+        st.plotly_chart(_fig3, use_container_width=True)
 
     # --- Secao 8b: exportar Excel ---
     try:
