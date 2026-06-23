@@ -94,6 +94,7 @@ from motor_expansao.dashboard.data import (
 )
 from motor_expansao.dashboard.relatorio_municipal import (
     agregar_municipio,
+    gerar_payloads_download_relatorio_municipal,
     render_download_relatorio_municipal,
     render_mapas_municipio,
 )
@@ -428,10 +429,13 @@ def inject_styles() -> None:
             }}
             /* Largura padrao para os botoes de acao/download (consistencia visual,
                pedido de Vini 2026-06-16): cobre os download_button (CSV/PDF do relatorio
-               e "Baixar PDF do ponto") e o "Gerar PDF do ponto" (por st-key). NAO afeta
-               os botoes inline pequenos do multihex (+/-/x) nem o seletor de abas. */
+               e "Baixar PDF do ponto"/"Baixar PDF do Relatorio Municipal") e os botoes
+               "Gerar PDF do ponto" e "Gerar PDF do Relatorio Municipal" (BLK-RELMUN-01-FU1),
+               por st-key. NAO afeta os botoes inline pequenos do multihex (+/-/x) nem o
+               seletor de abas. */
             [data-testid="stDownloadButton"] button,
-            .st-key-btn_gerar_pdf_topo button {{
+            .st-key-btn_gerar_pdf_topo button,
+            .st-key-btn_gerar_relmun_topo button {{
                 width: 260px;
                 max-width: 100%;
             }}
@@ -3024,6 +3028,82 @@ def render_pdf_download_topo(
         )
 
 
+def render_relatorio_municipal_download_topo(
+    df: pd.DataFrame,
+    *,
+    selected_cities: list[str],
+    selected_ufs: list[str],
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    dominio_df: pd.DataFrame | None = None,
+) -> None:
+    """2o ponto de geracao do Relatorio Municipal, perto do menu superior (espelha
+    `render_pdf_download_topo` do Relatorio Pontual).
+
+    So aparece com EXATAMENTE 1 municipio selecionado; gera SOB DEMANDA (clique no botao)
+    com indicador de carregamento (`st.spinner`). Os bytes ficam em `session_state` por
+    municipio para sobreviver ao rerun do download. A seção inferior (`render_relatorio_
+    municipal_expander`, no Mapa Territorial) segue carregando automaticamente. READ-ONLY M1.
+    """
+    if len(selected_cities) != 1:
+        return
+    nome_municipio = selected_cities[0]
+    uf = selected_ufs[0] if len(selected_ufs) == 1 else None
+    cache_key = f"relmun_topo_payload::{nome_municipio}"
+    gerar = st.button(
+        "Gerar PDF do Relatorio Municipal",
+        key="btn_gerar_relmun_topo",
+        help=f"Gera o Relatorio Municipal (9 paginas) de {nome_municipio}.",
+    )
+    if gerar:
+        with st.spinner("Gerando Relatorio Municipal..."):
+            municipio_result = agregar_municipio(
+                df,
+                nome_municipio=nome_municipio,
+                uf=uf,
+                dominio_df=dominio_df,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
+            )
+            if municipio_result["n_hex_total"] == 0:
+                st.session_state.pop(cache_key, None)
+                st.warning(
+                    f"Nenhum hexagono encontrado para '{nome_municipio}' no recorte carregado."
+                )
+                return
+            df_muni = df.loc[
+                df.get("nome_municipio", pd.Series("", index=df.index))
+                .astype(str).str.strip().str.casefold()
+                == str(nome_municipio).strip().casefold()
+            ]
+            if df_muni.empty and "cidade" in df.columns:
+                df_muni = df.loc[
+                    df["cidade"].astype(str).str.strip().str.casefold()
+                    == str(nome_municipio).strip().casefold()
+                ]
+            mapas = render_mapas_municipio(
+                df_muni,
+                municipio_result,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
+                basemap=True,
+            )
+            payloads = gerar_payloads_download_relatorio_municipal(municipio_result, mapas)
+        st.session_state[cache_key] = {
+            "pdf_bytes": payloads.pdf_bytes,
+            "pdf_filename": payloads.pdf_filename,
+        }
+    cached = st.session_state.get(cache_key)
+    if cached:
+        st.download_button(
+            "Baixar PDF do Relatorio Municipal",
+            data=cached["pdf_bytes"],
+            file_name=cached["pdf_filename"],
+            mime="application/pdf",
+            key="dl_relmun_topo",
+        )
+
+
 def render_relatorio_pontual_censitario(
     search_pin: tuple[float, float] | None,
     df: pd.DataFrame,
@@ -3535,10 +3615,10 @@ def render_relatorio_municipal_expander(
     """Relatorio Municipal (BLK-RELMUN-01): habilitado so com EXATAMENTE 1 municipio.
 
     READ-ONLY sobre o M1; reusa o `df`/`dominio_df` ja em escopo (sem carga nova de parquet).
-    Mapas com tiles online (DEC-011) sob spinner; PDF de 8 paginas baixavel.
+    Mapas com tiles online (DEC-011) sob spinner; PDF de 9 paginas baixavel.
     """
     st.caption(
-        "Relatorio consolidado por municipio (8 paginas). Camada complementar: "
+        "Relatorio consolidado por municipio (9 paginas). Camada complementar: "
         "nao altera M1, carteira ou plano."
     )
     if len(selected_cities) != 1:
