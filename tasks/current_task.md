@@ -4,7 +4,7 @@
 
 ID: BLK-RELMUN-02
 Nome: "Bairros por Zona" com nomes reais de bairro (resolve o D9 do BLK-RELMUN-01)
-Status: APROVADO COM RESSALVAS (QA 2026-06-24) — pronto para fechamento (housekeeping + merge humano)
+Status: APROVADO COM RESSALVAS (QA 2026-06-24) — CICLO FECHADO (housekeeping feito via helper; commit d6f259f na branch ciclo/BLK-RELMUN-02); aguardando merge humano
 Tipo: feature (enriquecimento da base geo + mudança de página do Relatório Municipal; READ-ONLY sobre M1)
 Criticidade: alta (confirmada pelo Block Orchestrator — READ-ONLY M1; enriquecimento de base geo + mudança de página do relatório exigem gate humano)
 Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA — gate: escolha da direção A/B/C] → Builder → QA
