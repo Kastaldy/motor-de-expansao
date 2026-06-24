@@ -321,21 +321,90 @@ def test_pdf_municipal_offline_safe_sem_assets(tmp_path):
         assert header.encode("latin-1") in pdf_bytes
 
 
+def _df_3_aprovados() -> pd.DataFrame:
+    """3 hexes APROVADOS (sam>=3000 & oferta>=2000) em celulas res-7 DISTINTAS e bem separadas
+    (~7 km entre si) -> 3 zonas geometricas (Ancora/Flancos/Cerco). Mais 1 reprovado com score
+    (prova que a estrategia NAO se espalha para nao-aprovados — decisao de produto 2026-06-24)."""
+    coords = [(-23.50, -46.60), (-23.55, -46.65), (-23.60, -46.70)]
+    rows = []
+    for la, lo in coords:
+        rows.append(
+            {
+                "hex_id": _hex(la, lo),
+                "lat": la,
+                "lng": lo,
+                "nome_municipio": "SAO PAULO",
+                "cidade": "SAO PAULO",
+                "uf": "SP",
+                "sam_fitness_potencial": 4000.0,
+                "oferta_efetiva_disponivel": 4451.0,
+                "score_setor_2022_calibrado": 72.0,
+                "score_oportunidade_residual": 60.0,
+                "pop_total_setor_2022": 1500.0,
+                "pop_total": 2000.0,
+                "renda_per_capita": 3000.0,
+                "penetracao_fitness_mercado_estimada": 12.5,
+                "oferta_consumida_mercado_estimada": 1000.0,
+            }
+        )
+    # 1 reprovado (sam/oferta baixos) com score notna, em celula distinta.
+    rows.append(
+        {
+            "hex_id": _hex(-23.40, -46.50),
+            "lat": -23.40,
+            "lng": -46.50,
+            "nome_municipio": "SAO PAULO",
+            "cidade": "SAO PAULO",
+            "uf": "SP",
+            "sam_fitness_potencial": 1000.0,
+            "oferta_efetiva_disponivel": 500.0,
+            "score_setor_2022_calibrado": 60.0,
+            "score_oportunidade_residual": 40.0,
+            "pop_total_setor_2022": 1500.0,
+            "pop_total": 2000.0,
+            "renda_per_capita": 3000.0,
+            "penetracao_fitness_mercado_estimada": 12.5,
+            "oferta_consumida_mercado_estimada": 200.0,
+        }
+    )
+    return pd.DataFrame(rows)
+
+
 def test_pdf_municipal_fallback_sem_dominio_pagina_6():
-    """Sem dominio_df -> Paginas 5-6 usam as zonas GEOMETRICAS (FU1), sem excecao."""
-    df = _sample_df()
+    """Sem dominio_df -> Paginas 5-6 usam as zonas GEOMETRICAS (FU1), sem excecao.
+
+    Decisao de produto (2026-06-24): as zonas sao formadas SOMENTE pelos hexes APROVADOS
+    (sem fallback para todo o municipio). 3 aprovados em celulas distintas -> 3 zonas.
+    """
+    df = _df_3_aprovados()
     res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=None)
     mapas = render_mapas_municipio(df, res, basemap=False)
 
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
 
     assert b"/Count 9" in pdf_bytes
-    # Nota D9 (bairros indisponiveis) sempre presente.
-    assert b"Bairros indisponiveis na base atual" in pdf_bytes
-    # FU1: as 3 estrategias geometricas aparecem mesmo sem dominio_df.
+    # BLK-RELMUN-02: sem fonte de bairro, a Pagina 6 cai no fallback gracioso por zona
+    # geometrica (sem a antiga nota "indisponivel" como texto principal).
+    assert b"Bairros indisponiveis na base atual" not in pdf_bytes
+    assert b"Bairros nao mapeados na base IBGE 2022" in pdf_bytes
+    # FU1: as 3 estrategias geometricas aparecem (3 aprovados em celulas distintas).
     assert b"Ancora central" in pdf_bytes
     assert b"Flancos laterais" in pdf_bytes
     assert b"Cerco" in pdf_bytes
+
+
+def test_zonas_geometricas_so_aprovados_sem_fallback():
+    """Decisao de produto (2026-06-24): com 1 unico hex aprovado, forma-se SO 1 zona
+    (Ancora) — a estrategia NAO se espalha para os hexes nao-aprovados do municipio."""
+    df = _df_3_aprovados().copy()
+    # Rebaixa 2 dos 3 aprovados -> sobra 1 aprovado; os rebaixados tem score notna.
+    df.loc[df.index[1:3], "sam_fitness_potencial"] = 1000.0
+    df.loc[df.index[1:3], "oferta_efetiva_disponivel"] = 500.0
+    out = _zonas_geometricas(df)
+    assert len(out["zonas"]) == 1
+    assert out["zonas"][0]["rotulo"] == "Ancora central"
+    assert out["zonas"][0]["n_hex"] == 1
+    assert len(out["hex_zona"]) == 1
 
 
 def test_pdf_municipal_fallback_sem_hexes_relevantes_pagina_5():
@@ -350,13 +419,78 @@ def test_pdf_municipal_fallback_sem_hexes_relevantes_pagina_5():
     assert b"Hexes relevantes insuficientes" in pdf_bytes
 
 
-def test_pdf_municipal_pagina_6_nota_bairro_sempre_presente():
+def test_pdf_municipal_pagina_6_fallback_sem_bairro():
+    """BLK-RELMUN-02: sem `bairros_por_hex` -> Pagina 6 cai no fallback por zona, sem excecao
+    e sem a antiga nota 'indisponivel' como texto principal."""
     df = _sample_df()
     res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio())
+    assert res["bairros_por_zona"] == [] or all(
+        not z.get("bairros") for z in res["bairros_por_zona"]
+    )
     mapas = render_mapas_municipio(df, res, basemap=False)
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
-    # D9: a nota de bairros simplificada esta sempre presente (sem fonte de NM_BAIRRO).
-    assert b"Bairros indisponiveis na base atual" in pdf_bytes
+    assert b"/Count 9" in pdf_bytes
+    assert b"Bairros indisponiveis na base atual" not in pdf_bytes
+    assert b"Bairros nao mapeados na base IBGE 2022" in pdf_bytes
+    # Sem PII no fallback.
+    for needle in _PII_FORBIDDEN:
+        assert needle not in pdf_bytes
+
+
+def _bairros_por_hex_sample(df: pd.DataFrame) -> dict[str, str]:
+    """Mapa hex_id -> bairro REAL (nomes IBGE-like) para os 4 hexes do _sample_df."""
+    hexes = list(df["hex_id"])
+    nomes = ["Centro", "Bela Vista", "Cidade Nova", "Cascata"]
+    return {str(h): nomes[i % len(nomes)] for i, h in enumerate(hexes)}
+
+
+def test_agregar_municipio_bairros_por_zona_com_fonte():
+    """A2: com `bairros_por_hex`, agregar popula `bairros_por_zona` agrupado por zona."""
+    df = _sample_df()
+    bairros = _bairros_por_hex_sample(df)
+    res = agregar_municipio(
+        df, nome_municipio="SAO PAULO", uf="SP", bairros_por_hex=bairros
+    )
+    bpz = res["bairros_por_zona"]
+    assert isinstance(bpz, list) and bpz
+    # Cada zona presente reporta os bairros distintos dela.
+    todos = {b for z in bpz for b in z["bairros"]}
+    assert todos  # pelo menos 1 bairro real agrupado
+    assert todos.issubset({"Centro", "Bela Vista", "Cidade Nova", "Cascata"})
+    assert res["n_bairros_total"] == sum(z["n_bairros"] for z in bpz)
+    # Default None preserva comportamento anterior (sem bairros).
+    res_sem = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP")
+    assert all(not z.get("bairros") for z in res_sem["bairros_por_zona"])
+
+
+def test_pdf_municipal_pagina_6_com_bairros_reais():
+    """A2: nomes de bairro REAIS aparecem nos bytes do PDF, /Count 9 mantido, sem PII."""
+    df = _sample_df()
+    bairros = _bairros_por_hex_sample(df)
+    res = agregar_municipio(
+        df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio(),
+        bairros_por_hex=bairros,
+    )
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
+
+    assert b"/Count 9" in pdf_bytes
+    # Pelo menos um bairro real impresso na Pagina 6.
+    assert any(nome.encode("latin-1") in pdf_bytes for nome in ("Centro", "Bela Vista", "Cidade Nova", "Cascata"))
+    # Nota de fonte IBGE quando ha bairros (cascata bairro -> subdistrito -> distrito).
+    assert b"bairro do setor" in pdf_bytes
+    # Sem a nota de fallback nem PII.
+    assert b"Bairros indisponiveis na base atual" not in pdf_bytes
+    for needle in _PII_FORBIDDEN:
+        assert needle not in pdf_bytes
+
+
+def test_carregar_bairros_por_hex_fallback_sem_dir():
+    """A2.3: helper de leitura retorna {} sem censo_geo_dir/cod (offline, sem excecao)."""
+    from motor_expansao.dashboard.relatorio_municipal import _carregar_bairros_por_hex
+
+    assert _carregar_bairros_por_hex(None, None, None) == {}
+    assert _carregar_bairros_por_hex("SP", "3550308", None) == {}
 
 
 def test_pdf_municipal_marca_dagua_solicitante():

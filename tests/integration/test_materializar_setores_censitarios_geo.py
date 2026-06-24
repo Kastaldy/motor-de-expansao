@@ -25,6 +25,9 @@ def _malha_fake() -> gpd.GeoDataFrame:
             "cod_uf": ["35", "35", "35"],
             "cod_municipio": ["3550308", "3550308", "3550308"],
             "nome_municipio": ["SAO PAULO", "SAO PAULO", "SAO PAULO"],
+            # BLK-RELMUN-02: NM_BAIRRO materializado (cobertura heterogenea: 1 setor sem bairro).
+            "nome_bairro": ["Bela Vista", "Centro", pd.NA],
+            "cod_bairro": ["3550308001", "3550308002", pd.NA],
             "situacao_setor": ["Urbana", "Urbana", "Urbana"],
             "area_setor_km2_ibge": [1.0, 1.0, 1.0],
             "geometry": [
@@ -88,6 +91,9 @@ def test_monta_base_setorial_geo_com_schema_crs_e_metricas():
     assert result["flag_score_calibrado_disponivel"].all()
     assert result["score_setor_2022_calibrado"].between(0, 100).all()
     assert from_wkb(result.loc[0, "geometry_wkb"]).is_valid
+    # BLK-RELMUN-02: nome_bairro flui ao artefato (com NA preservado no setor sem bairro).
+    assert "nome_bairro" in result.columns
+    assert list(result["nome_bairro"].fillna("<NA>")) == ["Bela Vista", "Centro", "<NA>"]
 
 
 def test_escreve_e_le_particao_por_uf_municipio(tmp_path: Path):

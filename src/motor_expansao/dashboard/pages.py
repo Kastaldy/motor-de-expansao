@@ -94,6 +94,7 @@ from motor_expansao.dashboard.data import (
     resolve_cod_municipio_from_geo_dir,
 )
 from motor_expansao.dashboard.relatorio_municipal import (
+    _carregar_bairros_por_hex,
     agregar_municipio,
     gerar_payloads_download_relatorio_municipal,
     render_download_relatorio_municipal,
@@ -2880,6 +2881,44 @@ def _resolve_censo_context(
     }
 
 
+def _resolve_bairros_por_hex_municipio(
+    df: pd.DataFrame,
+    nome_municipio: str,
+    uf: str | None,
+    censo_geo_dir: Path | None,
+) -> dict[str, str]:
+    """BLK-RELMUN-02 (A2.5): resolve `bairros_por_hex` para o Relatorio Municipal.
+
+    Resolve `cod_municipio` (coluna do `df` ou fallback `resolve_cod_municipio_from_geo_dir`) e
+    le a particao geo on-demand (`_carregar_bairros_por_hex`). Fallback gracioso e OFFLINE: sem
+    `censo_geo_dir`/cod/particao -> `{}` (Pagina 6 cai nas zonas geometricas, sem excecao).
+    """
+    if censo_geo_dir is None or not nome_municipio:
+        return {}
+    uf_value = str(uf).strip().upper() if uf else ""
+    cod_municipio: str | None = None
+    if "cod_municipio" in df.columns:
+        alvo = str(nome_municipio).strip().casefold()
+        for col in ("nome_municipio", "cidade"):
+            if col not in df.columns:
+                continue
+            rows = df.loc[df[col].astype(str).str.strip().str.casefold() == alvo]
+            if not rows.empty:
+                cod_municipio = _normalizar_cod_municipio(rows.iloc[0].get("cod_municipio"))
+                if not uf_value and "uf" in rows.columns:
+                    uf_value = str(rows.iloc[0].get("uf") or "").strip().upper()
+                if cod_municipio:
+                    break
+    if not cod_municipio and uf_value:
+        cod_municipio = resolve_cod_municipio_from_geo_dir(censo_geo_dir, uf_value, nome_municipio)
+    if not cod_municipio or not uf_value:
+        return {}
+    try:
+        return _carregar_bairros_por_hex(uf_value, cod_municipio, censo_geo_dir)
+    except Exception:
+        return {}
+
+
 def _format_brl(value: object) -> str:
     # guard `pd.notna(value)` garante valor numerico; cast satisfaz a overload de int() sem mudar runtime.
     return f"R$ {format_int(int(cast(float, value)))}" if value is not None and pd.notna(value) else "-"
@@ -3043,6 +3082,7 @@ def render_relatorio_municipal_download_topo(
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     dominio_df: pd.DataFrame | None = None,
+    censo_geo_dir: Path | None = None,
 ) -> None:
     """2o ponto de geracao do Relatorio Municipal, perto do menu superior (espelha
     `render_pdf_download_topo` do Relatorio Pontual).
@@ -3064,6 +3104,9 @@ def render_relatorio_municipal_download_topo(
     )
     if gerar:
         with st.spinner("Gerando Relatorio Municipal..."):
+            bairros_por_hex = _resolve_bairros_por_hex_municipio(
+                df, nome_municipio, uf, censo_geo_dir
+            )
             municipio_result = agregar_municipio(
                 df,
                 nome_municipio=nome_municipio,
@@ -3071,6 +3114,7 @@ def render_relatorio_municipal_download_topo(
                 dominio_df=dominio_df,
                 competitors_df=competitors_df,
                 ultra_df=ultra_df,
+                bairros_por_hex=bairros_por_hex,
             )
             if municipio_result["n_hex_total"] == 0:
                 st.session_state.pop(cache_key, None)
@@ -3894,6 +3938,7 @@ def render_relatorio_municipal_expander(
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     dominio_df: pd.DataFrame | None = None,
+    censo_geo_dir: Path | None = None,
 ) -> None:
     """Relatorio Municipal (BLK-RELMUN-01): habilitado so com EXATAMENTE 1 municipio.
 
@@ -3913,6 +3958,9 @@ def render_relatorio_municipal_expander(
     nome_municipio = selected_cities[0]
     uf = selected_ufs[0] if len(selected_ufs) == 1 else None
     with st.spinner("Gerando Relatorio Municipal..."):
+        bairros_por_hex = _resolve_bairros_por_hex_municipio(
+            df, nome_municipio, uf, censo_geo_dir
+        )
         municipio_result = agregar_municipio(
             df,
             nome_municipio=nome_municipio,
@@ -3920,6 +3968,7 @@ def render_relatorio_municipal_expander(
             dominio_df=dominio_df,
             competitors_df=competitors_df,
             ultra_df=ultra_df,
+            bairros_por_hex=bairros_por_hex,
         )
         if municipio_result["n_hex_total"] == 0:
             st.warning(
@@ -4211,4 +4260,5 @@ def render_mapa_territorial(
                 competitors_df=competitors_df,
                 ultra_df=ultra_df,
                 dominio_df=dominio_df,
+                censo_geo_dir=censo_geo_dir,
             )
