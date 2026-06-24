@@ -87,6 +87,8 @@ COLUNAS_ARTEFATO = [
     "cod_uf",
     "cod_municipio",
     "nome_municipio",
+    "cod_bairro",
+    "nome_bairro",
     "situacao_setor",
     "area_setor_km2_ibge",
     "area_setor_m2",
@@ -149,6 +151,25 @@ def _normalizar_codigo_ibge(value: object, digits: int) -> str | None:
 
 def _to_number(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series.astype(str).str.replace(",", ".", regex=False), errors="coerce")
+
+
+# Valores que representam ausencia de bairro no shapefile IBGE (NA, vazio, "nan").
+_BAIRRO_NULOS = {"", "nan", "none", "<na>", "null"}
+
+
+def _normalizar_nome_bairro(value: object) -> object:
+    """Limpa o NM_BAIRRO do shapefile: vazio/'nan'/mojibake irrecuperavel -> NA.
+
+    O `.cpg` da malha IBGE 2022 diz UTF-8, mas amostras mostraram mojibake quando o driver
+    decodifica como latin-1. A leitura forca `encoding="utf-8"` (ver `carregar_malha_uf`); aqui
+    so descartamos sentinelas de ausencia (NA/""/"nan") preservando os acentos UTF-8 validos.
+    """
+    if value is None or pd.isna(value):
+        return pd.NA
+    text = str(value).strip()
+    if text.casefold() in _BAIRRO_NULOS:
+        return pd.NA
+    return text
 
 
 def _read_csv_with_encoding(path: Path, **kwargs) -> pd.DataFrame:
@@ -216,19 +237,34 @@ def carregar_renda(path: Path = RENDA_PATH) -> pd.DataFrame:
 def carregar_malha_uf(path: Path, uf: str) -> gpd.GeoDataFrame:
     uf = uf.upper()
     cod_uf = UFS_BRASIL[uf]
-    gdf = gpd.read_file(path, where=f"CD_UF='{cod_uf}'")
+    # `encoding="utf-8"` forca o driver (pyogrio/fiona) a respeitar o .cpg UTF-8 da malha IBGE
+    # 2022 e preservar os acentos do NM_BAIRRO (sem isso houve mojibake na amostra do Planner).
+    gdf = gpd.read_file(path, where=f"CD_UF='{cod_uf}'", encoding="utf-8")
     if gdf.crs is None:
         gdf = gdf.set_crs(CRS_ORIGEM)
     elif gdf.crs.to_string() != CRS_ORIGEM:
         gdf = gdf.to_crs(CRS_ORIGEM)
 
-    cols = ["CD_SETOR", "CD_UF", "CD_MUN", "NM_MUN", "SITUACAO", "AREA_KM2", "geometry"]
+    cols = [
+        "CD_SETOR", "CD_UF", "CD_MUN", "NM_MUN", "CD_BAIRRO", "NM_BAIRRO",
+        "SITUACAO", "AREA_KM2", "geometry",
+    ]
     gdf = gdf[[col for col in cols if col in gdf.columns]].copy()
     gdf["cod_setor"] = gdf["CD_SETOR"].map(lambda value: _normalizar_codigo_ibge(value, 15))
     gdf["cod_uf"] = gdf["CD_UF"].astype(str).str.zfill(2)
     gdf["uf"] = gdf["cod_uf"].map(UF_POR_CODIGO)
     gdf["cod_municipio"] = gdf["CD_MUN"].astype(str).str.zfill(7)
     gdf["nome_municipio"] = gdf["NM_MUN"].astype(str)
+    # NM_BAIRRO existe no DBF IBGE 2022 mas cobertura e HETEROGENEA (capitais/grandes têm; muitos
+    # municipios pequenos e o DF nao têm) -> NA quando ausente. cod_bairro opcional p/ rastreio.
+    if "NM_BAIRRO" in gdf.columns:
+        gdf["nome_bairro"] = gdf["NM_BAIRRO"].map(_normalizar_nome_bairro)
+    else:
+        gdf["nome_bairro"] = pd.NA
+    if "CD_BAIRRO" in gdf.columns:
+        gdf["cod_bairro"] = gdf["CD_BAIRRO"].map(lambda value: _normalizar_codigo_ibge(value, 13))
+    else:
+        gdf["cod_bairro"] = pd.NA
     gdf["situacao_setor"] = gdf.get("SITUACAO", pd.Series(pd.NA, index=gdf.index))
     gdf["area_setor_km2_ibge"] = _to_number(gdf.get("AREA_KM2", pd.Series(np.nan, index=gdf.index)))
     return gdf.reset_index(drop=True)
@@ -320,6 +356,12 @@ def montar_base_setorial_uf(
         )
 
     result = gdf_malha.copy()
+    # `carregar_malha_uf` ja produz `nome_bairro`/`cod_bairro` (IBGE NM_BAIRRO/CD_BAIRRO); para
+    # qualquer outro caller (ex.: malha sintetica em teste) garante a presenca das colunas como NA
+    # antes da selecao final de `COLUNAS_ARTEFATO`. READ-ONLY sobre o M1.
+    for opt_col in ("nome_bairro", "cod_bairro"):
+        if opt_col not in result.columns:
+            result[opt_col] = pd.NA
     basic_cols = [
         "area_setor_km2_ibge",
         "pop_total_setor_2022",

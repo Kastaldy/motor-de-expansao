@@ -330,8 +330,10 @@ def test_pdf_municipal_fallback_sem_dominio_pagina_6():
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
 
     assert b"/Count 9" in pdf_bytes
-    # Nota D9 (bairros indisponiveis) sempre presente.
-    assert b"Bairros indisponiveis na base atual" in pdf_bytes
+    # BLK-RELMUN-02: sem fonte de bairro, a Pagina 6 cai no fallback gracioso por zona
+    # geometrica (sem a antiga nota "indisponivel" como texto principal).
+    assert b"Bairros indisponiveis na base atual" not in pdf_bytes
+    assert b"Bairros nao mapeados na base IBGE 2022" in pdf_bytes
     # FU1: as 3 estrategias geometricas aparecem mesmo sem dominio_df.
     assert b"Ancora central" in pdf_bytes
     assert b"Flancos laterais" in pdf_bytes
@@ -350,13 +352,78 @@ def test_pdf_municipal_fallback_sem_hexes_relevantes_pagina_5():
     assert b"Hexes relevantes insuficientes" in pdf_bytes
 
 
-def test_pdf_municipal_pagina_6_nota_bairro_sempre_presente():
+def test_pdf_municipal_pagina_6_fallback_sem_bairro():
+    """BLK-RELMUN-02: sem `bairros_por_hex` -> Pagina 6 cai no fallback por zona, sem excecao
+    e sem a antiga nota 'indisponivel' como texto principal."""
     df = _sample_df()
     res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio())
+    assert res["bairros_por_zona"] == [] or all(
+        not z.get("bairros") for z in res["bairros_por_zona"]
+    )
     mapas = render_mapas_municipio(df, res, basemap=False)
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
-    # D9: a nota de bairros simplificada esta sempre presente (sem fonte de NM_BAIRRO).
-    assert b"Bairros indisponiveis na base atual" in pdf_bytes
+    assert b"/Count 9" in pdf_bytes
+    assert b"Bairros indisponiveis na base atual" not in pdf_bytes
+    assert b"Bairros nao mapeados na base IBGE 2022" in pdf_bytes
+    # Sem PII no fallback.
+    for needle in _PII_FORBIDDEN:
+        assert needle not in pdf_bytes
+
+
+def _bairros_por_hex_sample(df: pd.DataFrame) -> dict[str, str]:
+    """Mapa hex_id -> bairro REAL (nomes IBGE-like) para os 4 hexes do _sample_df."""
+    hexes = list(df["hex_id"])
+    nomes = ["Centro", "Bela Vista", "Cidade Nova", "Cascata"]
+    return {str(h): nomes[i % len(nomes)] for i, h in enumerate(hexes)}
+
+
+def test_agregar_municipio_bairros_por_zona_com_fonte():
+    """A2: com `bairros_por_hex`, agregar popula `bairros_por_zona` agrupado por zona."""
+    df = _sample_df()
+    bairros = _bairros_por_hex_sample(df)
+    res = agregar_municipio(
+        df, nome_municipio="SAO PAULO", uf="SP", bairros_por_hex=bairros
+    )
+    bpz = res["bairros_por_zona"]
+    assert isinstance(bpz, list) and bpz
+    # Cada zona presente reporta os bairros distintos dela.
+    todos = {b for z in bpz for b in z["bairros"]}
+    assert todos  # pelo menos 1 bairro real agrupado
+    assert todos.issubset({"Centro", "Bela Vista", "Cidade Nova", "Cascata"})
+    assert res["n_bairros_total"] == sum(z["n_bairros"] for z in bpz)
+    # Default None preserva comportamento anterior (sem bairros).
+    res_sem = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP")
+    assert all(not z.get("bairros") for z in res_sem["bairros_por_zona"])
+
+
+def test_pdf_municipal_pagina_6_com_bairros_reais():
+    """A2: nomes de bairro REAIS aparecem nos bytes do PDF, /Count 9 mantido, sem PII."""
+    df = _sample_df()
+    bairros = _bairros_por_hex_sample(df)
+    res = agregar_municipio(
+        df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio(),
+        bairros_por_hex=bairros,
+    )
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
+
+    assert b"/Count 9" in pdf_bytes
+    # Pelo menos um bairro real impresso na Pagina 6.
+    assert any(nome.encode("latin-1") in pdf_bytes for nome in ("Centro", "Bela Vista", "Cidade Nova", "Cascata"))
+    # Cabecalho de fonte IBGE quando ha bairros.
+    assert b"NM_BAIRRO do setor" in pdf_bytes
+    # Sem a nota de fallback nem PII.
+    assert b"Bairros indisponiveis na base atual" not in pdf_bytes
+    for needle in _PII_FORBIDDEN:
+        assert needle not in pdf_bytes
+
+
+def test_carregar_bairros_por_hex_fallback_sem_dir():
+    """A2.3: helper de leitura retorna {} sem censo_geo_dir/cod (offline, sem excecao)."""
+    from motor_expansao.dashboard.relatorio_municipal import _carregar_bairros_por_hex
+
+    assert _carregar_bairros_por_hex(None, None, None) == {}
+    assert _carregar_bairros_por_hex("SP", "3550308", None) == {}
 
 
 def test_pdf_municipal_marca_dagua_solicitante():

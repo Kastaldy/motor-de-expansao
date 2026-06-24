@@ -19,6 +19,11 @@ Decisoes do gate humano (Vinicius, 2026-06-22 — DEC-011):
 - D7: redacao zonas: 1 Ancora central / 2 Flancos laterais / 3 Cerco.
 - D8: Pagina 8 so com redes mapeadas + carimbo de versao no rodape.
 - D9: Pagina 6 (bairros) SIMPLIFICADA por zona/cluster + nota (sem NM_BAIRRO).
+
+BLK-RELMUN-02 (resolve D9): a Pagina 6 lista bairros REAIS (IBGE 2022 `NM_BAIRRO`) agrupados
+pelas 3 zonas geometricas quando `bairros_por_hex` e resolvido (via `_carregar_bairros_por_hex`,
+leitura OFFLINE da particao geo do municipio); fallback gracioso por zona geometrica quando o
+municipio nao tem bairro mapeado (cobertura IBGE heterogenea). READ-ONLY sobre o M1.
 """
 
 from __future__ import annotations
@@ -289,6 +294,124 @@ def _zonas_do_municipio(
     return zonas
 
 
+# Cap de bairros listados por zona na Pagina 6 (template D9: 8-12). "... e mais N" ao truncar.
+_BAIRROS_CAP_POR_ZONA = 10
+
+
+def _carregar_bairros_por_hex(
+    uf: str | None,
+    cod_municipio: str | None,
+    censo_geo_dir: Path | None,
+) -> dict[str, str]:
+    """A2.3: le a particao geo do municipio e mapeia `hex_id` res-7 -> bairro dominante.
+
+    READ-ONLY e OFFLINE: usa `ler_particao_setores` (parquet local) para obter, por setor,
+    `nome_bairro` + bbox + pop; deriva o centroide do setor (do bbox), mapeia a `hex_id` res-7
+    via h3 (import lazy) e resolve o bairro DOMINANTE por hex (mais populoso vence). Fallback
+    gracioso: sem `censo_geo_dir`/particao/coluna `nome_bairro` -> `{}` (Pagina 6 simplificada).
+    """
+    if censo_geo_dir is None or not uf or not cod_municipio:
+        return {}
+    try:
+        from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
+            ler_particao_setores,
+        )
+
+        setores = ler_particao_setores(
+            root=Path(censo_geo_dir),
+            uf=str(uf),
+            cod_municipio=str(cod_municipio),
+            columns=[
+                "nome_bairro",
+                "bbox_minx",
+                "bbox_miny",
+                "bbox_maxx",
+                "bbox_maxy",
+                "pop_total_setor_2022",
+            ],
+        )
+    except Exception:
+        return {}
+    if setores is None or setores.empty or "nome_bairro" not in setores.columns:
+        return {}
+
+    import h3
+
+    # Para cada hex, soma a populacao por bairro; o bairro mais populoso vence (dominante).
+    pop_por_hex_bairro: dict[str, dict[str, float]] = {}
+    for _, row in setores.iterrows():
+        bairro = row.get("nome_bairro")
+        if bairro is None or pd.isna(bairro):
+            continue
+        nome = str(bairro).strip()
+        if not nome:
+            continue
+        minx = _safe_float(row.get("bbox_minx"))
+        miny = _safe_float(row.get("bbox_miny"))
+        maxx = _safe_float(row.get("bbox_maxx"))
+        maxy = _safe_float(row.get("bbox_maxy"))
+        if any(math.isnan(v) for v in (minx, miny, maxx, maxy)):
+            continue
+        lat_c = (miny + maxy) / 2.0
+        lon_c = (minx + maxx) / 2.0
+        try:
+            hid = str(h3.latlng_to_cell(float(lat_c), float(lon_c), H3_RES))
+        except Exception:
+            continue
+        peso = _safe_float(row.get("pop_total_setor_2022"))
+        if math.isnan(peso) or peso < 0:
+            peso = 0.0
+        # Garante presenca do bairro mesmo com pop 0 (peso minimo de desempate).
+        bucket = pop_por_hex_bairro.setdefault(hid, {})
+        bucket[nome] = bucket.get(nome, 0.0) + peso + 1e-6
+
+    bairros_por_hex: dict[str, str] = {}
+    for hid, bucket in pop_por_hex_bairro.items():
+        # Bairro dominante: maior pop; desempate estavel por nome.
+        nome_dom = max(sorted(bucket), key=lambda n: bucket[n])
+        bairros_por_hex[hid] = nome_dom
+    return bairros_por_hex
+
+
+def _bairros_por_zona(
+    hex_zona_geo: dict[str, int],
+    bairros_por_hex: dict[str, str] | None,
+) -> list[dict[str, Any]]:
+    """Agrupa bairros distintos por zona (0/1/2), ordenados por frequencia desc. PURO/offline.
+
+    `hex_zona_geo`: mapa hex_id -> 0|1|2 (mesma zonificacao da Pagina 5). `bairros_por_hex`:
+    hex_id -> bairro dominante. Retorna lista alinhada as zonas presentes (1..3), com a lista
+    de bairros e o total. Fallback gracioso: sem fonte de bairro -> listas vazias por zona.
+    """
+    if not hex_zona_geo:
+        return []
+    freq: dict[int, dict[str, int]] = {0: {}, 1: {}, 2: {}}
+    if bairros_por_hex:
+        for hid, zona in hex_zona_geo.items():
+            if zona not in freq:
+                continue
+            bairro = bairros_por_hex.get(str(hid))
+            if not bairro:
+                continue
+            freq[zona][bairro] = freq[zona].get(bairro, 0) + 1
+
+    zonas: list[dict[str, Any]] = []
+    zonas_presentes = sorted({z for z in hex_zona_geo.values() if z in (0, 1, 2)})
+    for zona in zonas_presentes:
+        contagem = freq[zona]
+        # Ordena por frequencia desc, desempate estavel por nome.
+        ordenados = sorted(contagem, key=lambda n: (-contagem[n], n))
+        zonas.append(
+            {
+                "zona_n": zona + 1,
+                "rotulo": _ZONA_GEO_ROTULOS[zona],
+                "bairros": ordenados,
+                "n_bairros": len(ordenados),
+            }
+        )
+    return zonas
+
+
 def _zonas_geometricas(df_muni: pd.DataFrame) -> dict[str, Any]:
     """FU1 (estende D2 SO para o display do mapa, READ-ONLY M1): classifica os hexes
     RELEVANTES do municipio em 3 zonas geometricas por DISTANCIA ao centroide.
@@ -424,11 +547,17 @@ def agregar_municipio(
     dominio_df: pd.DataFrame | None = None,
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
+    bairros_por_hex: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Agrega o dicionario canonico de metricas do municipio. READ-ONLY (so le colunas).
 
     Filtra `df` por `nome_municipio` (fallback `cidade`) e computa as metricas das 9 paginas
     conforme as decisoes do gate (D1/D4/D5/D6). NUNCA recalcula score ou artefatos do M1.
+
+    `bairros_por_hex` (BLK-RELMUN-02, A2): mapa OPCIONAL `hex_id -> bairro dominante` (fonte
+    IBGE `NM_BAIRRO` da particao geo, via `_carregar_bairros_por_hex`). `None` (default) =
+    comportamento IDENTICO ao anterior (Pagina 6 simplificada por zona geometrica). Quando dado,
+    popula `result["bairros_por_zona"]` com os bairros REAIS agrupados pelas 3 zonas geometricas.
     """
     mask = _municipio_mask(df, nome_municipio)
     df_muni = df.loc[mask].copy()
@@ -484,6 +613,9 @@ def agregar_municipio(
 
     zonas = _zonas_do_municipio(dominio_df, nome_municipio)
     zonas_geo = _zonas_geometricas(df_muni)
+    # A2: bairros REAIS por zona quando `bairros_por_hex` foi resolvido (particao geo IBGE).
+    # Fallback gracioso: None/{} -> listas vazias (Pagina 6 cai nas zonas geometricas + tese).
+    bairros_por_zona = _bairros_por_zona(zonas_geo.get("hex_zona", {}), bairros_por_hex)
     n_ultra, n_concorrentes, concorrentes_por_rede = _pins_no_municipio(
         df_muni, competitors_df, ultra_df
     )
@@ -513,6 +645,8 @@ def agregar_municipio(
         "zonas_geo": zonas_geo.get("zonas", []),
         "hex_zona_geo": zonas_geo.get("hex_zona", {}),
         "n_zonas_geo": len(zonas_geo.get("zonas", [])),
+        "bairros_por_zona": bairros_por_zona,
+        "n_bairros_total": sum(int(z.get("n_bairros", 0)) for z in bairros_por_zona),
         "n_ultra": n_ultra,
         "n_concorrentes": n_concorrentes,
         "concorrentes_por_rede": concorrentes_por_rede,
@@ -1606,30 +1740,46 @@ def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
 
 
 def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None]) -> None:
-    """D9: Pagina 6 SIMPLIFICADA (por zona/cluster + nota; sem NM_BAIRRO)."""
+    """Pagina 6 — Bairros por Zona (BLK-RELMUN-02 / resolve D9).
+
+    Quando ha bairros REAIS resolvidos (`result["bairros_por_zona"]`, fonte IBGE `NM_BAIRRO`
+    da particao geo), lista os bairros distintos agrupados pelas 3 zonas geometricas (cap
+    `_BAIRROS_CAP_POR_ZONA` + "... e mais N" ao truncar). Fallback gracioso (municipio sem
+    bairro mapeado — DF, pequenos): cai nas zonas geometricas + tese, SEM excecao e sem a nota
+    de "indisponivel" como texto principal. READ-ONLY sobre o M1; display-only.
+    """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, "Bairros por Zona")
+
+    bairros_por_zona = result.get("bairros_por_zona") or []
+    tem_bairros = any(z.get("bairros") for z in bairros_por_zona)
+    zonas_geo = result.get("zonas_geo") or []
+    desc_por_zona = {int(z.get("zona_n", 0)): str(z.get("descricao", "")) for z in zonas_geo}
+    nhex_por_zona = {int(z.get("zona_n", 0)): z.get("n_hex") for z in zonas_geo}
+
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 11)
     pdf.set_xy(36, 70.0)
-    pdf.multi_cell(
-        _PAGE_W - 72, 14,
-        _ascii(
-            "Bairros indisponiveis na base atual; listagem por zona/hexes de dominio. "
-            "A malha geo IBGE 2022 materializada nao inclui NM_BAIRRO."
-        ),
-    )
-    # FU1: reflete as 3 zonas GEOMETRICAS (mesma classificacao da Pagina 5; display-only).
-    zonas = result.get("zonas_geo") or []
-    yy = 120.0
-    if not zonas:
+    if tem_bairros:
+        pdf.multi_cell(
+            _PAGE_W - 72, 14,
+            _ascii("Bairros (IBGE 2022) agrupados pelas zonas de dominio do municipio."),
+        )
+    else:
+        pdf.multi_cell(
+            _PAGE_W - 72, 14,
+            _ascii("Zonas de dominio do municipio por distancia ao centroide."),
+        )
+
+    yy = 116.0
+    if not zonas_geo:
         pdf.set_xy(36, yy)
         pdf.set_font("Helvetica", "", 11)
         pdf.set_text_color(45, 45, 45)
         pdf.multi_cell(_PAGE_W - 72, 14, _ascii("Sem zonas geometricas disponiveis para este municipio."))
     else:
-        for zona in zonas:
+        for zona in zonas_geo:
             zn = int(zona.get("zona_n", 0))
             cor = zona.get("cor_rgb", ULTRA_TURQUESA)
             rotulo = str(zona.get("rotulo", f"Zona {zn}"))
@@ -1640,18 +1790,40 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
             pdf.set_xy(56, yy)
             pdf.cell(_PAGE_W - 92, 16, _ascii(f"Zona {zn} - {rotulo}"))
             yy += 20
+
+            # Bairros REAIS desta zona (quando houver) ou linha de hexes/tese (fallback).
+            bairros = next(
+                (z.get("bairros") or [] for z in bairros_por_zona if int(z.get("zona_n", 0)) == zn),
+                [],
+            )
             pdf.set_text_color(45, 45, 45)
             pdf.set_font("Helvetica", "", 11)
             pdf.set_xy(56, yy)
-            pdf.multi_cell(
-                _PAGE_W - 112, 14,
-                _ascii(f"{zona.get('n_hex')} hexes - {zona.get('descricao', '')}"),
-            )
+            if bairros:
+                mostrados = bairros[:_BAIRROS_CAP_POR_ZONA]
+                texto = ", ".join(mostrados)
+                restantes = len(bairros) - len(mostrados)
+                if restantes > 0:
+                    texto += f", ... e mais {restantes}"
+                pdf.multi_cell(_PAGE_W - 112, 14, _ascii(texto))
+            else:
+                pdf.multi_cell(
+                    _PAGE_W - 112, 14,
+                    _ascii(f"{nhex_por_zona.get(zn)} hexes - {desc_por_zona.get(zn, '')}"),
+                )
             yy = pdf.get_y() + 12
-        _draw_note(
-            pdf, 36, yy + 2, _PAGE_W - 72,
-            "Zonas por distancia ao centroide (display); nao alteram dominio_df nem o M1.",
-        )
+        if tem_bairros:
+            _draw_note(
+                pdf, 36, yy + 2, _PAGE_W - 72,
+                "Fonte: IBGE Censo 2022 (NM_BAIRRO do setor). Cobertura de bairro e heterogenea "
+                "entre municipios; zonas por distancia ao centroide (display, nao altera o M1).",
+            )
+        else:
+            _draw_note(
+                pdf, 36, yy + 2, _PAGE_W - 72,
+                "Bairros nao mapeados na base IBGE 2022 para este municipio; exibicao por zona "
+                "geometrica (display); nao altera dominio_df nem o M1.",
+            )
     pdf.set_xy(36, _PAGE_H - 36)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*_CINZA_TEXTO)
