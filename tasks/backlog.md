@@ -87,6 +87,75 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
+## Relatório Municipal — novo formato (2026-06-19, pedido de Vini)
+
+> Novo formato de relatório que **coexiste** com o Relatório Pontual Censitário atual (que analisa
+> uma região a partir do **raio de um ponto central**). O novo é um **relatório de município**:
+> fica disponível para **geração e download após a seleção de um município** no dashboard. O escopo
+> exato dos dados sai de um **template** que o Vini enviará e que será analisado como base, com
+> ajustes ao longo do ciclo. Família do Relatório Censitário (malha real IBGE 2022), camada de
+> visualização/relatório — **READ-ONLY sobre o M1** (§5 guardrail).
+
+- BLK-RELMUN-01 (concluído 2026-06-22) — ver tasks/completed.md
+
+### BLK-RELMUN-02 — "Bairros por Zona" com nomes reais de bairro (resolve o D9 do BLK-RELMUN-01)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (provável — enriquecimento/re-materialização da base geo + mudança de página do relatório; **READ-ONLY sobre o M1**). A confirmar no Block Orchestrator. |
+| **Prioridade** | Alta (foco da próxima sessão). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — gate]` → Builder → QA. |
+| **Status** | **Pendente — próxima sessão** (`/run-cycle BLK-RELMUN-02`). |
+| **Responsável sugerido** | Vini |
+| **Depende de** | BLK-RELMUN-01 (concluído 2026-06-22). |
+
+**Contexto / problema:** a página **"Bairros por Zona"** do Relatório Municipal (slide 7 das 9
+páginas) está **SIMPLIFICADA** por decisão temporária (D9 / DEC-011): hoje lista as 3 zonas
+geométricas (Âncora central / Flancos laterais / Cerco) com contagem de hexes + tese e a nota
+*"Bairros indisponiveis na base atual; ... a malha geo IBGE 2022 materializada nao inclui
+NM_BAIRRO."* O **template** (`docs/relatorio_municipal_template.md`, Página 6) pede a listagem
+dos **nomes reais de bairro por zona** (ex.: Parque Roosevelt, Jardim Petrópolis, Vila Nipônica…).
+
+**Causa-raiz (confirmada no BLK-RELMUN-01):** a malha materializada
+`data/outputs/setores_censitarios_2022_geo/uf=XX/cod_municipio=N/part-000.parquet` só tem
+`CD_SETOR, CD_UF, CD_MUN, NM_MUN, SITUACAO, AREA_KM2, geometry` — **sem `NM_BAIRRO`** (ver
+`materializar_setores_censitarios_geo.py`). Não há fonte de nome de bairro no dataset do dashboard
+nem na base geo; por isso a página foi simplificada.
+
+**Objetivo:** dar à página "Bairros por Zona" a lista de **bairros reais por zona**, fiel ao
+template, sem regressão do restante do relatório nem do Relatório Pontual, READ-ONLY sobre o M1.
+
+**Direções candidatas (a decidir no gate — NÃO pré-fixar):**
+1. **Re-materializar a malha geo IBGE 2022 incluindo bairro/subdistrito** (`NM_BAIRRO`/`CD_BAIRRO`
+   ou subdistrito do agregado de setores 2022) e propagar a coluna até o trace do censo / hex
+   (`enrich_dashboard_data`). Mais robusto e offline; é um job de dados sobre 5.571 municípios (~1,17 GB).
+2. **Cruzar com uma camada externa de bairros** (polígonos de bairro IBGE/OSM `admin`) por
+   interseção espacial setor×bairro, materializando o nome dominante por setor/hex.
+3. **Reverse-geocode** do centróide dos hexes de zona (Nominatim, precedente DEC-010) — só como
+   fallback pontual; inviável em lote (rede por hex, lento; contra o offline da carga).
+
+**Escopo provável (a confirmar):** `materializar_setores_censitarios_geo.py` (+ pipeline de
+enriquecimento que leva `cod_municipio`/censo trace ao hex), `src/motor_expansao/dashboard/
+relatorio_municipal.py` (a página "Bairros por Zona" deixa de ser simplificada e passa a listar
+bairros por zona, com a `_zonas_geometricas` já existente), `docs/relatorio_municipal_template.md`,
+testes. Reuso da base geo existente.
+
+**Fora de escopo:** score/pesos/artefatos M1; alterar o Relatório Pontual (coexistência);
+dependência de API ao vivo em lote na carga do dashboard; quebrar contratos de performance
+(Blocos 4–6) e a coexistência byte-a-byte do Pontual.
+
+**Critérios de aceite:** fonte de `NM_BAIRRO` (ou equivalente) disponível por hex/setor; a página
+"Bairros por Zona" lista bairros reais agrupados por zona, **com fallback gracioso** quando um
+município não tiver bairro mapeado; o relatório segue com **9 páginas**; suíte verde; READ-ONLY M1;
+Relatório Pontual intocado.
+
+**Guardrail:** §5 (visualização/relatório) + preservar performance do dashboard. Relaciona-se à
+**DEC-011** (D9, simplificação temporária) e ao **BLK-RELMUN-01**.
+**Próximo passo:** `/run-cycle BLK-RELMUN-02` na próxima sessão.
+
+
+---
+
 ## Trilha colaborador (Vini) — dashboard / PDF / UX (2026-06-09)
 
 > Blocos derivados das tarefas pendentes do Vini (Vinícius, ClickUp id 101182135) na lista

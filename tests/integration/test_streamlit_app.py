@@ -4853,6 +4853,60 @@ def test_render_pdf_download_topo_payload_none_avisa_e_nao_baixa():
     dl_mock.assert_not_called()
 
 
+# --- BLK-RELMUN-01-FU1: 2a opcao de geracao do Relatorio Municipal (perto do menu superior) ---
+
+def test_render_relatorio_municipal_topo_sem_municipio_unico_nao_renderiza():
+    """Sem EXATAMENTE 1 municipio selecionado, nada e renderizado (nem botao gerar)."""
+    import unittest.mock as mock
+
+    with mock.patch("streamlit.button") as button_mock:
+        streamlit_app.render_relatorio_municipal_download_topo(
+            pd.DataFrame(), selected_cities=[], selected_ufs=[]
+        )
+        streamlit_app.render_relatorio_municipal_download_topo(
+            pd.DataFrame(), selected_cities=["A", "B"], selected_ufs=["SP"]
+        )
+    button_mock.assert_not_called()
+
+
+def test_render_relatorio_municipal_topo_clique_gera_e_oferece_download():
+    """Com 1 municipio e clique: gera sob demanda (spinner) e oferece o download, cacheado."""
+    import unittest.mock as mock
+
+    class _Payloads:
+        pdf_bytes = b"%PDF-1.4 fake"
+        pdf_filename = "relatorio_municipal_sp_sao_paulo.pdf"
+
+    session: dict = {}
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch("streamlit.button", return_value=True),
+        mock.patch("streamlit.spinner"),
+        mock.patch(
+            "motor_expansao.dashboard.pages.agregar_municipio",
+            return_value={"n_hex_total": 5},
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_mapas_municipio",
+            return_value={},
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_download_relatorio_municipal",
+            return_value=_Payloads(),
+        ) as gen_mock,
+        mock.patch("streamlit.download_button") as dl_mock,
+    ):
+        streamlit_app.render_relatorio_municipal_download_topo(
+            pd.DataFrame({"nome_municipio": ["SAO PAULO"]}),
+            selected_cities=["SAO PAULO"],
+            selected_ufs=["SP"],
+        )
+
+    gen_mock.assert_called_once()
+    dl_mock.assert_called_once()
+    assert any(k.startswith("relmun_topo_payload::") for k in session)
+
+
 def test_gerar_payloads_relatorio_pontual_para_pin_sem_base_retorna_none():
     """Helper retorna None quando o loader nao traz setores (sem base setorial)."""
     import unittest.mock as mock

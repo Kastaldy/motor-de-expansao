@@ -157,6 +157,7 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_pdf_download_topo,
     render_plano_expansao,
     render_ranking_priorizacao,
+    render_relatorio_municipal_download_topo,
     render_relatorio_pontual_censitario,
     render_sidebar_filters,
     render_tab_selector,
@@ -528,8 +529,11 @@ def main() -> None:
     _search_result = lookup_hex_by_coord(*search_pin, df) if search_pin is not None else None
     search_hex_id = _search_result["hex_id"] if _search_result is not None else None
 
-    # 2o botao de baixar o PDF do ponto, logo abaixo do seletor de abas (pedido de Vini
-    # 2026-06-16): so aparece com coordenada pesquisada; gera sob demanda com spinner.
+    # Botoes de geracao/download de PDF no topo (logo abaixo do seletor de abas). A largura
+    # uniforme dos quatro (gerar/baixar do ponto e do municipio) vem do CSS de inject_styles
+    # (260px por st-key/stDownloadButton), nao de use_container_width/colunas.
+    # 2o botao de baixar o PDF do ponto (pedido de Vini 2026-06-16): so aparece com
+    # coordenada pesquisada; gera sob demanda com spinner.
     render_pdf_download_topo(
         search_pin,
         df,
@@ -537,6 +541,18 @@ def main() -> None:
         censo_geo_dir=CENSO_GEO_DIR,
         competitors_df=competitors_df,
         ultra_df=ultra_df,
+    )
+
+    # 2a opcao de geracao do Relatorio Municipal, perto do menu superior (espelha o botao de
+    # topo do Relatorio Pontual). So aparece com EXATAMENTE 1 municipio selecionado; a secao
+    # inferior (Mapa Territorial) segue carregando o relatorio automaticamente.
+    render_relatorio_municipal_download_topo(
+        df,
+        selected_cities=selected_cities,
+        selected_ufs=selected_ufs,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+        dominio_df=plano_dominio_df,
     )
 
     st.caption(

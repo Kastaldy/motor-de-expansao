@@ -5638,6 +5638,77 @@ coordenada e endereço já existiam (BLK-UI-08/DEC-010), faltava o **link**. Ent
 
 ---
 
+### BLK-RELMUN-01 — Relatório Municipal (novo formato, por município selecionado)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (provável — novo relatório no dashboard de produção; READ-ONLY sobre M1). A confirmar no Block Orchestrator conforme o template/escopo. |
+| **Prioridade** | Alta (nova iniciativa ativa). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — gate]` → Builder → QA (ajustar conforme o escopo do template). |
+| **Status** | **Pendente — aguardando o template de referência do Vini** para detalhar os dados necessários (`/run-cycle BLK-RELMUN-01` após o template). |
+| **Responsável sugerido** | Vini |
+| **ClickUp** | `86e1zdw3u` — https://app.clickup.com/t/86e1zdw3u (lista *Motor de Expansão*, tags `alta`/`projeto`, Frente=Projeto, Complexidade=Alta) |
+
+**Contexto:** o relatório atual (*Relatório Pontual Censitário - Raio de Estudo*) cruza setores
+censitários reais com um círculo de raio fixo ao redor de uma coordenada. O novo relatório muda a
+unidade de análise para o **município inteiro**: o usuário **seleciona um município** e gera/baixa um
+relatório consolidado dele. Os dois relatórios **convivem** — o pontual não é substituído nem alterado.
+
+**Objetivo:** entregar um relatório por município, gerável e baixável após a seleção de um município,
+reaproveitando o motor censitário e a malha real de setores IBGE 2022 onde fizer sentido, sem regressão
+do relatório pontual nem do M1.
+
+**Escopo permitido (provável, a confirmar com o template):** `src/motor_expansao/dashboard/`
+(`censo_report.py`/`censo_map.py`/`pages.py` e afins) + testes; reuso da base geo
+`data/outputs/setores_censitarios_2022_geo/...`. O conjunto de métricas/seções sai do **template**.
+
+**Fora de escopo:** score/pesos/artefatos M1; alterar o relatório pontual existente; dependência de API
+ao vivo não aprovada; quebrar contratos de performance do dashboard (Blocos 4–6).
+
+**Critérios de aceite:** template analisado e plano aprovado no gate humano antes de codar; o relatório
+pontual segue intocado (coexistência); geração + download por município funcionando; suíte verde;
+READ-ONLY M1.
+
+**Guardrail:** §5 (visualização/relatório) + preservar as otimizações de performance do dashboard.
+**Próximo passo:** Vini envia o template → análise dos dados necessários → `/run-cycle BLK-RELMUN-01`.
+
+#### Fechamento (2026-06-22) — APROVADO pelo QA
+
+Ciclo `/run-cycle BLK-RELMUN-01` concluído pela esteira Alta (Block Orchestrator → Planner →
+**[gate humano APROVADO por Vinicius]** → Builder → QA). Template recebido de Vini em 2026-06-22
+(`docs/relatorio_municipal_template.md`, 8 páginas). **VEREDITO QA: APROVADO** — suíte completa
+**1055 passed, 1 skipped, 0 failed** (serial; `-n auto` aborta com INTERNALERROR conhecido de
+execnet no Python 3.14 Windows — contorno de ambiente, não bypass); ruff/mypy/`import streamlit_app`
+limpos. **READ-ONLY sobre o M1** confirmado (config.py e `pipelines/m1/` intocados; pesos
+`renda=0.40`/`pop=0.60`, `score_priorizacao`, artefatos oficiais INALTERADOS).
+
+**Entregue:** módulo NOVO e disjunto `src/motor_expansao/dashboard/relatorio_municipal.py`
+(`agregar_municipio` READ-ONLY + `render_mapas_municipio` + `gerar_pdf_relatorio_municipal` 8 páginas
+16:9 `%PDF-1.4`/`/Count 8`/`set_compression(False)`/marca d'água + payloads/helper Streamlit);
+toque pontual em `pages.py` (expander "Relatório Municipal" habilitado só com **exatamente 1
+município** selecionado; nenhuma assinatura existente mudou; sem carga nova de parquet — Blocos 4–6
+preservados); `tests/unit/test_relatorio_municipal.py` (25 testes, incl. **CA2 coexistência
+byte-a-byte do Relatório Pontual**). Relatório Pontual Censitário **byte-a-byte intocado**
+(`censo_report.py`/`censo_map.py`/`censo_point.py` sem diff).
+
+**Decisões do gate (D1–D9) — DEC-011 (CLAUDE.md §8):**
+- D1: hex destacado ⇔ `sam_fitness_potencial>=3000` E `oferta_efetiva_disponivel>=2000`; rótulo do
+  hex = `oferta_efetiva_disponivel`; Espaço p/ academias = `round(Σ oferta dos destacados / 2500)`.
+- D2: zonas via `dominio_df`/`cluster_id` (fallback gracioso). D3: **mapas com tiles online**
+  (DEC-011 estende a DEC-004; cache local + fallback offline + import lazy + `basemap=False` em
+  CI/teste; nenhum teste bate na rede). D4: mercado/residual = `Σ oferta_efetiva_disponivel`.
+  D5: faixas Alto≥70/Médio-alto 50–70/Médio 30–50/Baixo<30. D6: pins por H3 res-7.
+  D7: redação 1 Âncora central / 2 Flancos laterais / 3 Cerco. D8: logos só das redes mapeadas +
+  carimbo de versão. D9: Página 6 (bairros) **simplificada temporariamente** (sem `NM_BAIRRO` na
+  malha geo; Vini resolverá a fonte de bairro depois).
+
+**Ressalvas leves do QA (não bloqueadoras, follow-up opcional):** (1) a camada "domínio" do mapa
+não colore por zona 1/2/3 (só painel textual); (2) título da capa em linha única pode transbordar
+visualmente em municípios de nome longo. **Pendência de produto:** fonte de `NM_BAIRRO` para a
+Página 6 (decisão de Vini após avaliar o PDF base). Validação VISUAL do PDF pelo humano pendente.
+
+---
+
 ### BLK-DIM-17 — Fix: limiar de renda da zona morta (3.000 → 1.600)
 
 | Campo | Valor |
