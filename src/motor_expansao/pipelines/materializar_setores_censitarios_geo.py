@@ -89,6 +89,8 @@ COLUNAS_ARTEFATO = [
     "nome_municipio",
     "cod_bairro",
     "nome_bairro",
+    "nome_subdistrito",
+    "nome_distrito",
     "situacao_setor",
     "area_setor_km2_ibge",
     "area_setor_m2",
@@ -247,7 +249,7 @@ def carregar_malha_uf(path: Path, uf: str) -> gpd.GeoDataFrame:
 
     cols = [
         "CD_SETOR", "CD_UF", "CD_MUN", "NM_MUN", "CD_BAIRRO", "NM_BAIRRO",
-        "SITUACAO", "AREA_KM2", "geometry",
+        "NM_SUBDIST", "NM_DIST", "SITUACAO", "AREA_KM2", "geometry",
     ]
     gdf = gdf[[col for col in cols if col in gdf.columns]].copy()
     gdf["cod_setor"] = gdf["CD_SETOR"].map(lambda value: _normalizar_codigo_ibge(value, 15))
@@ -257,6 +259,9 @@ def carregar_malha_uf(path: Path, uf: str) -> gpd.GeoDataFrame:
     gdf["nome_municipio"] = gdf["NM_MUN"].astype(str)
     # NM_BAIRRO existe no DBF IBGE 2022 mas cobertura e HETEROGENEA (capitais/grandes têm; muitos
     # municipios pequenos e o DF nao têm) -> NA quando ausente. cod_bairro opcional p/ rastreio.
+    # NM_SUBDIST/NM_DIST sao niveis mais GROSSOS (distrito/subdistrito) usados como FALLBACK em
+    # cascata pelo relatorio (bairro -> subdistrito -> distrito) p/ municipios sem bairro (ex.: SP
+    # usa distritos; DF nao tem bairro). Normalizados com o mesmo helper (vazio/"nan"/mojibake->NA).
     if "NM_BAIRRO" in gdf.columns:
         gdf["nome_bairro"] = gdf["NM_BAIRRO"].map(_normalizar_nome_bairro)
     else:
@@ -265,6 +270,14 @@ def carregar_malha_uf(path: Path, uf: str) -> gpd.GeoDataFrame:
         gdf["cod_bairro"] = gdf["CD_BAIRRO"].map(lambda value: _normalizar_codigo_ibge(value, 13))
     else:
         gdf["cod_bairro"] = pd.NA
+    if "NM_SUBDIST" in gdf.columns:
+        gdf["nome_subdistrito"] = gdf["NM_SUBDIST"].map(_normalizar_nome_bairro)
+    else:
+        gdf["nome_subdistrito"] = pd.NA
+    if "NM_DIST" in gdf.columns:
+        gdf["nome_distrito"] = gdf["NM_DIST"].map(_normalizar_nome_bairro)
+    else:
+        gdf["nome_distrito"] = pd.NA
     gdf["situacao_setor"] = gdf.get("SITUACAO", pd.Series(pd.NA, index=gdf.index))
     gdf["area_setor_km2_ibge"] = _to_number(gdf.get("AREA_KM2", pd.Series(np.nan, index=gdf.index)))
     return gdf.reset_index(drop=True)
@@ -359,7 +372,7 @@ def montar_base_setorial_uf(
     # `carregar_malha_uf` ja produz `nome_bairro`/`cod_bairro` (IBGE NM_BAIRRO/CD_BAIRRO); para
     # qualquer outro caller (ex.: malha sintetica em teste) garante a presenca das colunas como NA
     # antes da selecao final de `COLUNAS_ARTEFATO`. READ-ONLY sobre o M1.
-    for opt_col in ("nome_bairro", "cod_bairro"):
+    for opt_col in ("nome_bairro", "cod_bairro", "nome_subdistrito", "nome_distrito"):
         if opt_col not in result.columns:
             result[opt_col] = pd.NA
     basic_cols = [

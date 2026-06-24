@@ -79,19 +79,35 @@ _BRANCO = (255, 255, 255)
 _CINZA_TEXTO = (60, 60, 60)
 _NAVY_CAPA = (30, 28, 58)
 
-# Cor do hexagono destacado ("amarelo") e do nao-destacado (cinza), na camada Resumo.
-_HEX_DESTAQUE_RGBA = (255, 210, 28, 200)
+# Cores dos hexagonos APROVADOS por PROCEDENCIA do dado de populacao (realce; pedido de
+# Vinicius 2026-06-24): dado PROPRIO do hex (setor censitario 2022, `fonte_populacao_corte ==
+# "setor_2022"`) = dourado forte; aprovado via FALLBACK MUNICIPAL (`total_municipal`/`ausente`)
+# = laranja. Reprovado/neutro = cinza. Camada de DISPLAY; nao toca M1.
+_COR_APROVADO_PROPRIO = (255, 210, 28)
+_COR_APROVADO_MUNICIPAL = (245, 140, 30)
+_COR_REPROVADO = (150, 156, 170)
+
+# Camada Resumo (alpha 200): destacado por procedencia + neutro (nao-destacado).
+_HEX_DESTAQUE_RGBA = (*_COR_APROVADO_PROPRIO, 200)
+_HEX_DESTAQUE_MUNICIPAL_RGBA = (*_COR_APROVADO_MUNICIPAL, 200)
 _HEX_NEUTRO_RGBA = (176, 182, 196, 110)
 _CIRCLE_INK = (31, 41, 55)
 
-# Slide "Visao Geral do Municipio" (FU1): 2 categorias de hexagono do MUNICIPIO.
-# Aprovado = destacado (amarelo); Reprovado = no municipio sem criterio (cinza-azulado).
+# Slide "Visao Geral do Municipio" (FU1): hexagonos do MUNICIPIO em 3 categorias.
+# Aprovado dado proprio (dourado) / Aprovado fallback municipal (laranja) / Reprovado (cinza).
 # Camada de DISPLAY; nao toca M1.
-_HEX_APROVADO_RGBA = (255, 210, 28, 210)
-_HEX_REPROVADO_RGBA = (150, 156, 170, 170)
+_HEX_APROVADO_RGBA = (*_COR_APROVADO_PROPRIO, 210)
+_HEX_APROVADO_MUNICIPAL_RGBA = (*_COR_APROVADO_MUNICIPAL, 210)
+_HEX_REPROVADO_RGBA = (*_COR_REPROVADO, 170)
 _COBERTURA_LEGENDA = (
-    ("Aprovado", (255, 210, 28)),
-    ("Reprovado", (150, 156, 170)),
+    ("Aprovado (dado proprio)", _COR_APROVADO_PROPRIO),
+    ("Aprovado (fallback municipal)", _COR_APROVADO_MUNICIPAL),
+    ("Reprovado", _COR_REPROVADO),
+)
+# Camada Resumo: legenda so das 2 categorias de aprovado (o neutro e contexto).
+_RESUMO_LEGENDA = (
+    ("Aprovado (dado proprio)", _COR_APROVADO_PROPRIO),
+    ("Aprovado (fallback municipal)", _COR_APROVADO_MUNICIPAL),
 )
 
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
@@ -248,6 +264,16 @@ def _hex_destacado_mask(df_muni: pd.DataFrame) -> pd.Series:
     return (sam >= SAM_DESTAQUE_MIN) & (oferta >= OFERTA_DESTAQUE_MIN)
 
 
+def _fonte_propria_mask(df_muni: pd.DataFrame) -> pd.Series:
+    """True quando o hex usa DADO PROPRIO (setor censitario 2022) na regua de populacao do
+    corte (`fonte_populacao_corte == "setor_2022"`); False = aprovado via FALLBACK MUNICIPAL
+    (`total_municipal`/`ausente`). Sem a coluna (ex.: df sintetico de teste), assume dado
+    proprio -> preserva o realce historico de cor unica (sem regressao)."""
+    if df_muni.empty or "fonte_populacao_corte" not in df_muni.columns:
+        return pd.Series(True, index=df_muni.index)
+    return df_muni["fonte_populacao_corte"].astype(str).eq("setor_2022")
+
+
 def _zonas_do_municipio(
     dominio_df: pd.DataFrame | None, nome_municipio: str
 ) -> list[dict[str, Any]]:
@@ -294,8 +320,6 @@ def _zonas_do_municipio(
     return zonas
 
 
-# Cap de bairros listados por zona na Pagina 6 (template D9: 8-12). "... e mais N" ao truncar.
-_BAIRROS_CAP_POR_ZONA = 10
 
 
 def _carregar_bairros_por_hex(
@@ -303,33 +327,37 @@ def _carregar_bairros_por_hex(
     cod_municipio: str | None,
     censo_geo_dir: Path | None,
 ) -> dict[str, str]:
-    """A2.3: le a particao geo do municipio e mapeia `hex_id` res-7 -> bairro dominante.
+    """A2.3: le a particao geo do municipio e mapeia `hex_id` res-7 -> localidade dominante.
 
-    READ-ONLY e OFFLINE: usa `ler_particao_setores` (parquet local) para obter, por setor,
-    `nome_bairro` + bbox + pop; deriva o centroide do setor (do bbox), mapeia a `hex_id` res-7
-    via h3 (import lazy) e resolve o bairro DOMINANTE por hex (mais populoso vence). Fallback
-    gracioso: sem `censo_geo_dir`/particao/coluna `nome_bairro` -> `{}` (Pagina 6 simplificada).
+    READ-ONLY e OFFLINE: usa `ler_particao_setores` (parquet local) para obter, por setor, o
+    nome da localidade em CASCATA `nome_bairro` -> `nome_subdistrito` -> `nome_distrito` (decisao
+    de produto 2026-06-24: bairros reais onde existem; lacunas usam o nivel mais grosso, ex.: SP
+    usa distritos, DF idem), ignorando subdistrito/distrito que seja so o nome do municipio
+    (redundante). Deriva o centroide do setor (do bbox), mapeia a `hex_id` res-7 via h3 (import
+    lazy) e resolve a localidade DOMINANTE por hex (mais populosa vence). Fallback gracioso: sem
+    `censo_geo_dir`/particao/coluna -> `{}` (Pagina 6 simplificada).
     """
     if censo_geo_dir is None or not uf or not cod_municipio:
         return {}
+    _bbox_pop = ["bbox_minx", "bbox_miny", "bbox_maxx", "bbox_maxy", "pop_total_setor_2022"]
     try:
         from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
             ler_particao_setores,
         )
 
-        setores = ler_particao_setores(
-            root=Path(censo_geo_dir),
-            uf=str(uf),
-            cod_municipio=str(cod_municipio),
-            columns=[
-                "nome_bairro",
-                "bbox_minx",
-                "bbox_miny",
-                "bbox_maxx",
-                "bbox_maxy",
-                "pop_total_setor_2022",
-            ],
-        )
+        # Tenta a cascata completa (bairro/subdistrito/distrito + nome_municipio p/ o guard); se a
+        # particao for de um schema antigo sem essas colunas, cai para so `nome_bairro`.
+        try:
+            setores = ler_particao_setores(
+                root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
+                columns=["nome_bairro", "nome_subdistrito", "nome_distrito", "nome_municipio",
+                         *_bbox_pop],
+            )
+        except Exception:
+            setores = ler_particao_setores(
+                root=Path(censo_geo_dir), uf=str(uf), cod_municipio=str(cod_municipio),
+                columns=["nome_bairro", *_bbox_pop],
+            )
     except Exception:
         return {}
     if setores is None or setores.empty or "nome_bairro" not in setores.columns:
@@ -337,13 +365,26 @@ def _carregar_bairros_por_hex(
 
     import h3
 
-    # Para cada hex, soma a populacao por bairro; o bairro mais populoso vence (dominante).
+    def _localidade(row: pd.Series) -> str | None:
+        """Cascata bairro -> subdistrito -> distrito; ignora niveis grossos == nome do municipio."""
+        muni = row.get("nome_municipio")
+        muni_norm = str(muni).strip().casefold() if muni is not None and not pd.isna(muni) else ""
+        for col in ("nome_bairro", "nome_subdistrito", "nome_distrito"):
+            val = row.get(col)
+            if val is None or pd.isna(val):
+                continue
+            nome = str(val).strip()
+            if not nome or nome.casefold() == "nan":
+                continue
+            if col != "nome_bairro" and muni_norm and nome.casefold() == muni_norm:
+                continue
+            return nome
+        return None
+
+    # Para cada hex, soma a populacao por localidade; a mais populosa vence (dominante).
     pop_por_hex_bairro: dict[str, dict[str, float]] = {}
     for _, row in setores.iterrows():
-        bairro = row.get("nome_bairro")
-        if bairro is None or pd.isna(bairro):
-            continue
-        nome = str(bairro).strip()
+        nome = _localidade(row)
         if not nome:
             continue
         minx = _safe_float(row.get("bbox_minx"))
@@ -419,11 +460,14 @@ def _zonas_geometricas(df_muni: pd.DataFrame) -> dict[str, Any]:
     Esta zonificacao e CAMADA DE DISPLAY: NAO altera `dominio_df`, `flag_sam`, score nem
     qualquer artefato do M1 — apenas colore o mapa da Pagina 5 e alimenta o painel/Pagina 6.
 
-    Hexes relevantes = hexes DESTACADOS (`_hex_destacado_mask`); se poucos (<3), cai para os
-    hexes com `score_setor_2022_calibrado` notna. Particiona por tercis de distancia ao
-    centroide: terco central = zona 1 (Ancora), intermediario = zona 2 (Flancos), externo =
-    zona 3 (Cerco). Retorna `{"hex_zona": {hex_id: 0|1|2}, "zonas": [ {...}, ... ]}`.
-    Fallback gracioso: sem hexes relevantes/sem `hex_id` -> `{"hex_zona": {}, "zonas": []}`.
+    Hexes relevantes = SOMENTE os hexes DESTACADOS/aprovados (`_hex_destacado_mask`:
+    sam_fitness_potencial>=3000 E oferta_efetiva_disponivel>=2000). Decisao do produto
+    (Vinicius, 2026-06-24): so quem foi APROVADO recebe estrategia de expansao — sem fallback
+    para todos os hexes do municipio (antes, com <3 aprovados, a estrategia se espalhava por
+    todo o municipio). Particiona por tercis de distancia ao centroide: terco central = zona 1
+    (Ancora), intermediario = zona 2 (Flancos), externo = zona 3 (Cerco); com 1 aprovado ->
+    1 zona (Ancora). Retorna `{"hex_zona": {hex_id: 0|1|2}, "zonas": [ {...}, ... ]}`.
+    Fallback gracioso: sem hexes aprovados/sem `hex_id` -> `{"hex_zona": {}, "zonas": []}`.
     """
     vazio: dict[str, Any] = {"hex_zona": {}, "zonas": []}
     if df_muni.empty or "hex_id" not in df_muni.columns:
@@ -431,10 +475,6 @@ def _zonas_geometricas(df_muni: pd.DataFrame) -> dict[str, Any]:
 
     destaque = _hex_destacado_mask(df_muni)
     rel = df_muni.loc[destaque]
-    if len(rel) < 3 and "score_setor_2022_calibrado" in df_muni.columns:
-        score_notna = pd.to_numeric(df_muni["score_setor_2022_calibrado"], errors="coerce").notna()
-        if int(score_notna.sum()) >= len(rel):
-            rel = df_muni.loc[score_notna]
     rel = rel[rel["hex_id"].notna()]
     if rel.empty:
         return vazio
@@ -945,6 +985,7 @@ def _render_mapa_municipio(
 
     # Pre-computa flags/valores por camada.
     destaque_mask = _hex_destacado_mask(rows).to_numpy()
+    fonte_propria = _fonte_propria_mask(rows).to_numpy()
     oferta_hex = pd.to_numeric(rows.get("oferta_efetiva_disponivel"), errors="coerce").to_numpy()
     score_hex = pd.to_numeric(rows.get("score_setor_2022_calibrado"), errors="coerce").to_numpy()
     residual_hex = pd.to_numeric(rows.get("score_oportunidade_residual"), errors="coerce").to_numpy()
@@ -967,10 +1008,16 @@ def _render_mapa_municipio(
         if len(pixels) < 3:
             continue
         if camada == "cobertura":
-            color = _HEX_APROVADO_RGBA if destaque_mask[pos] else _HEX_REPROVADO_RGBA
+            if destaque_mask[pos]:
+                color = _HEX_APROVADO_RGBA if fonte_propria[pos] else _HEX_APROVADO_MUNICIPAL_RGBA
+            else:
+                color = _HEX_REPROVADO_RGBA
             odraw.polygon(pixels, fill=color, outline=(255, 255, 255, 90))
         elif camada == "resumo":
-            color = _HEX_DESTAQUE_RGBA if destaque_mask[pos] else _HEX_NEUTRO_RGBA
+            if destaque_mask[pos]:
+                color = _HEX_DESTAQUE_RGBA if fonte_propria[pos] else _HEX_DESTAQUE_MUNICIPAL_RGBA
+            else:
+                color = _HEX_NEUTRO_RGBA
             odraw.polygon(pixels, fill=color, outline=(255, 255, 255, 90))
             if destaque_mask[pos] and not math.isnan(oferta_hex[pos]):
                 cx = int(sum(p[0] for p in pixels) / len(pixels))
@@ -994,17 +1041,10 @@ def _render_mapa_municipio(
             else:
                 odraw.polygon(pixels, fill=_HEX_NEUTRO_RGBA, outline=(255, 255, 255, 90))
 
-    # Rotulos de oferta sobre hexes amarelos (camada resumo). AJUSTE 1: rotulos so dos
-    # MAIORES valores quando ha muitos amarelos no quadro (reduz sobreposicao), com fonte
-    # ligeiramente menor. Os demais hexes amarelos seguem coloridos, so sem numero impresso.
-    _MAX_LABELS = 14
-    if len(label_pins) > _MAX_LABELS:
-        # Prioriza os maiores valores (ordena pelo numero formatado -> reconverte).
-        def _val(txt: str) -> float:
-            return _safe_float(txt.replace(".", "").replace(",", "."))
-
-        label_pins = sorted(label_pins, key=lambda t: _val(t[2]), reverse=True)[:_MAX_LABELS]
-    label_font = _font(10)
+    # Rotulos de oferta sobre hexes amarelos (camada resumo). Decisao do produto (Vinicius,
+    # 2026-06-24): exibir o Residual em TODOS os hexes aprovados (sem cap), com fonte menor
+    # para mitigar a sobreposicao quando ha muitos amarelos no quadro.
+    label_font = _font(8)
     for cx, cy, txt in label_pins:
         w = _text_width(odraw, txt, label_font)
         odraw.rectangle([cx - w // 2 - 2, cy - 8, cx + w // 2 + 2, cy + 8], fill=(255, 255, 255, 200))
@@ -1028,17 +1068,22 @@ def _render_mapa_municipio(
     _draw_pins(draw, image, competitors_df, project, "", minx, maxx, miny, maxy)
     _draw_pins(draw, image, ultra_df, project, "__ultra__", minx, maxx, miny, maxy)
 
-    # Camada "cobertura": legenda das 3 categorias no canto superior direito do mapa.
-    if camada == "cobertura":
-        leg_font = _font(12)
-        box_w = 176
-        box_h = 18 * len(_COBERTURA_LEGENDA) + 14
+    # Legenda no canto superior direito: cobertura mostra as 3 categorias (aprovado proprio /
+    # aprovado fallback municipal / reprovado); resumo mostra so as 2 de aprovado (realce de
+    # procedencia do dado - pedido de Vinicius 2026-06-24).
+    legenda = _COBERTURA_LEGENDA if camada == "cobertura" else (
+        _RESUMO_LEGENDA if camada == "resumo" else None
+    )
+    if legenda is not None:
+        leg_font = _font(11)
+        box_w = 248
+        box_h = 18 * len(legenda) + 14
         lx = right - box_w - 14
         ly = top + 14
         draw.rounded_rectangle([lx, ly, lx + box_w, ly + box_h], radius=6,
                                fill=(255, 255, 255, 235), outline=(120, 120, 120))
         yy = ly + 9
-        for rotulo, col in _COBERTURA_LEGENDA:
+        for rotulo, col in legenda:
             draw.rectangle([lx + 12, yy + 2, lx + 28, yy + 14], fill=col, outline=(120, 120, 120))
             _draw_text(draw, (lx + 36, yy), rotulo, font=leg_font, fill=_CINZA_TEXTO)
             yy += 18
@@ -1743,8 +1788,8 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
     """Pagina 6 — Bairros por Zona (BLK-RELMUN-02 / resolve D9).
 
     Quando ha bairros REAIS resolvidos (`result["bairros_por_zona"]`, fonte IBGE `NM_BAIRRO`
-    da particao geo), lista os bairros distintos agrupados pelas 3 zonas geometricas (cap
-    `_BAIRROS_CAP_POR_ZONA` + "... e mais N" ao truncar). Fallback gracioso (municipio sem
+    da particao geo), lista TODOS os bairros distintos agrupados pelas 3 zonas geometricas
+    (sem cap; multi_cell quebra em linhas). Fallback gracioso (municipio sem
     bairro mapeado — DF, pequenos): cai nas zonas geometricas + tese, SEM excecao e sem a nota
     de "indisponivel" como texto principal. READ-ONLY sobre o M1; display-only.
     """
@@ -1797,26 +1842,28 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
                 [],
             )
             pdf.set_text_color(45, 45, 45)
-            pdf.set_font("Helvetica", "", 11)
             pdf.set_xy(56, yy)
             if bairros:
-                mostrados = bairros[:_BAIRROS_CAP_POR_ZONA]
-                texto = ", ".join(mostrados)
-                restantes = len(bairros) - len(mostrados)
-                if restantes > 0:
-                    texto += f", ... e mais {restantes}"
-                pdf.multi_cell(_PAGE_W - 112, 14, _ascii(texto))
+                # Lista TODOS os bairros da zona (sem cap). Fonte/entrelinha compactas para que
+                # ate municipios densos (Rio ~100 bairros) caibam na pagina sem auto_page_break
+                # (off) cortar texto; multi_cell quebra em linhas e yy acompanha a altura real.
+                pdf.set_font("Helvetica", "", 9)
+                texto = ", ".join(bairros)
+                pdf.multi_cell(_PAGE_W - 112, 11, _ascii(texto))
+                yy = pdf.get_y() + 8
             else:
+                pdf.set_font("Helvetica", "", 11)
                 pdf.multi_cell(
                     _PAGE_W - 112, 14,
                     _ascii(f"{nhex_por_zona.get(zn)} hexes - {desc_por_zona.get(zn, '')}"),
                 )
-            yy = pdf.get_y() + 12
+                yy = pdf.get_y() + 12
         if tem_bairros:
             _draw_note(
                 pdf, 36, yy + 2, _PAGE_W - 72,
-                "Fonte: IBGE Censo 2022 (NM_BAIRRO do setor). Cobertura de bairro e heterogenea "
-                "entre municipios; zonas por distancia ao centroide (display, nao altera o M1).",
+                "Fonte: IBGE Censo 2022 (bairro do setor; sem bairro, usa subdistrito/distrito). "
+                "Cobertura heterogenea entre municipios; zonas por distancia ao centroide "
+                "(display, nao altera o M1).",
             )
         else:
             _draw_note(
