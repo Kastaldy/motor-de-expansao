@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 if TYPE_CHECKING:
@@ -99,7 +100,13 @@ from motor_expansao.dashboard.relatorio_municipal import (
     render_mapas_municipio,
 )
 from motor_expansao.dashboard.utils import format_int, format_pct, format_score
-from motor_expansao.dimensionamento.config import RAIO_CATCHMENT_KM, SIM_MENSALIDADE_BALCAO
+from motor_expansao.dimensionamento.config import (
+    RAIO_CATCHMENT_KM,
+    SIM_CAPEX_DEFAULT,
+    SIM_MATURACAO_MESES,
+    SIM_MENSALIDADE_BALCAO,
+)
+from motor_expansao.dimensionamento.simulador import gerar_serie_mensal
 from motor_expansao.dimensionamento.viabilidade_ponto import analisar_viabilidade_ponto
 
 # UI: modos de cor ESCONDIDOS do seletor do Mapa Territorial Unificado (pedido de Vini 2026-06-16).
@@ -3404,6 +3411,47 @@ def render_viabilidade_ponto(
                 step=1.0,
                 key="viab_ponto_margem_pct",
             )
+            st.markdown("**Capex e financiamento**")
+            capex_total = st.number_input(
+                "Capex total (R$)",
+                min_value=0.0,
+                value=float(SIM_CAPEX_DEFAULT),
+                step=10_000.0,
+                key="viab_ponto_capex",
+            )
+            pct_financiado = st.slider(
+                "% do capex financiado",
+                min_value=0,
+                max_value=100,
+                value=0,
+                step=5,
+                key="viab_ponto_pct_financiado",
+            )
+            if pct_financiado > 0:
+                prazo_financiamento_meses = st.number_input(
+                    "Prazo (meses)",
+                    min_value=6,
+                    max_value=60,
+                    value=36,
+                    step=6,
+                    key="viab_ponto_prazo",
+                )
+                juros_am_pct = st.number_input(
+                    "Juros a.m. (%)",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=1.8,
+                    step=0.1,
+                    key="viab_ponto_juros",
+                )
+                st.caption(
+                    "Equipamentos e tecnologia parcelados conforme planilha padrao "
+                    "(36 meses, 1,8% a.m.). A PMT entra como custo financeiro no FCF "
+                    "(nao altera EBITDA)."
+                )
+            else:
+                prazo_financiamento_meses = 36
+                juros_am_pct = 1.8
         submitted = st.form_submit_button("Calcular viabilidade")
 
     if not submitted:
@@ -3436,6 +3484,10 @@ def render_viabilidade_ponto(
             margem_alvo=float(margem_alvo_pct) / 100.0,
             base_calibracao_df=base_calibracao_df,
             setores_df=setores_df,
+            capex=float(capex_total),
+            capex_financiado_pct=float(pct_financiado) / 100.0,
+            prazo_financiamento_meses=int(prazo_financiamento_meses),
+            juros_financiamento_am=float(juros_am_pct) / 100.0,
         )
 
     viab = result.viabilidade
@@ -3459,7 +3511,7 @@ def render_viabilidade_ponto(
     payback = viab.payback_meses
     m4.metric(
         "Payback",
-        f"{format_int(int(payback))} meses" if payback != float("inf") else "> 60 / nunca",
+        f"{format_int(int(payback))} meses" if payback != float("inf") else "> 60 meses",
     )
 
     n1, n2, n3, n4 = st.columns(4)
@@ -3536,7 +3588,238 @@ def render_viabilidade_ponto(
     else:
         st.info("Grade de sensibilidade indisponivel.")
 
-    # --- Secao 8: pino do imovel ---
+    # --- Secao 8: graficos financeiros (projecao 60 meses) ---
+    st.markdown("##### Projecao financeira (60 meses)")
+
+    _serie = gerar_serie_mensal(
+        result.alunos_balcao_premissa,
+        float(m2),
+        float(aluguel_pedido),
+        float(ticket_medio),
+        alunos_agregadores=result.alunos_agregadores_premissa,
+        capex=float(capex_total),
+        capex_financiado_pct=float(pct_financiado) / 100.0,
+        prazo_financiamento_meses=int(prazo_financiamento_meses),
+        juros_financiamento_am=float(juros_am_pct) / 100.0,
+    )
+    _df_serie = pd.DataFrame(_serie)
+    _meses = _df_serie["mes"].tolist()
+
+    # Paleta Ultra (tema escuro — espelha apply_exec_layout de components.py)
+    _TURQUESA = "#00BFB3"
+    _VERDE = "#22C55E"
+    _VERMELHO = "#FF5A6B"
+    _BG = COLORS["panel_solid"]       # "#12172A"
+    _TEXT = COLORS["text"]            # "#F3F7FF"
+    _GRID = "rgba(167, 179, 209, 0.12)"
+    _FONT = "Aptos, Bahnschrift, Segoe UI, sans-serif"
+
+    def _dark_axes(fig: go.Figure) -> None:
+        fig.update_xaxes(
+            showgrid=True,
+            gridcolor=_GRID,
+            zeroline=False,
+            tickfont=dict(color=_TEXT, size=11),
+            title_font=dict(color=_TEXT, size=12),
+        )
+        fig.update_yaxes(
+            showgrid=False,
+            zeroline=False,
+            tickfont=dict(color=_TEXT, size=11),
+            title_font=dict(color=_TEXT, size=12),
+        )
+
+    # --- Grafico 1: Curva de maturidade de alunos ---
+    _steady = float(result.alunos_balcao_premissa)
+    _fig1 = go.Figure()
+    _fig1.add_trace(go.Scatter(
+        x=_meses,
+        y=_df_serie["alunos_balcao"].tolist(),
+        mode="lines",
+        name="Alunos balcao",
+        line=dict(color=_TURQUESA, width=2.5),
+    ))
+    _fig1.add_hline(
+        y=_steady,
+        line_dash="dash",
+        line_color=COLORS["muted"],
+        annotation_text=f"Steady-state: {int(_steady)}",
+        annotation_position="top right",
+        annotation_font_color=_TEXT,
+    )
+    _mes_mat = min(SIM_MATURACAO_MESES, 60)
+    _fig1.add_vline(
+        x=_mes_mat,
+        line_dash="dot",
+        line_color=COLORS["muted"],
+        annotation_text=f"Maturacao: mes {_mes_mat}",
+        annotation_position="top left",
+        annotation_font_color=_TEXT,
+    )
+    _CHART_H = 300
+    _MARGIN = dict(l=44, r=16, t=44, b=36)
+    _LEGEND = dict(
+        orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+        font=dict(color=_TEXT, size=11),
+    )
+
+    _fig1.update_layout(
+        title=dict(text="Rampa de alunos (balcao)", font=dict(color=_TEXT, size=14, family=_FONT)),
+        xaxis_title="Mes",
+        yaxis_title="Alunos",
+        plot_bgcolor=_BG,
+        paper_bgcolor=_BG,
+        font=dict(color=_TEXT, size=11, family=_FONT),
+        margin=_MARGIN,
+        legend=_LEGEND,
+        height=_CHART_H,
+    )
+    _dark_axes(_fig1)
+
+    # --- Grafico 2: Faturamento e EBITDA mensal ---
+    _fig2 = go.Figure()
+    _fig2.add_trace(go.Bar(
+        x=_meses,
+        y=_df_serie["faturamento_mensal"].tolist(),
+        name="Faturamento bruto",
+        marker_color=_TURQUESA,
+        opacity=0.85,
+    ))
+    _ebitda_colors = [_VERDE if v >= 0 else _VERMELHO for v in _df_serie["ebitda_mensal"]]
+    _fig2.add_trace(go.Scatter(
+        x=_meses,
+        y=_df_serie["ebitda_mensal"].tolist(),
+        mode="lines+markers",
+        name="EBITDA",
+        line=dict(color=COLORS["muted"], width=2),
+        marker=dict(color=_ebitda_colors, size=4),
+    ))
+    _fig2.update_layout(
+        title=dict(text="Faturamento e EBITDA mensal", font=dict(color=_TEXT, size=14, family=_FONT)),
+        xaxis_title="Mes",
+        yaxis_title="R$",
+        plot_bgcolor=_BG,
+        paper_bgcolor=_BG,
+        font=dict(color=_TEXT, size=11, family=_FONT),
+        margin=_MARGIN,
+        legend=_LEGEND,
+        barmode="overlay",
+        height=_CHART_H,
+    )
+    _dark_axes(_fig2)
+
+    # --- Grafico 3: FCF acumulado (area bicolor + linha de payback) ---
+    _fcf_vals = _df_serie["fcf_acumulado"].tolist()
+    _fcf_pos = [v if v >= 0 else 0.0 for v in _fcf_vals]
+    _fcf_neg = [v if v < 0 else 0.0 for v in _fcf_vals]
+    _fig3 = go.Figure()
+    _fig3.add_trace(go.Scatter(
+        x=_meses, y=_fcf_neg,
+        fill="tozeroy",
+        fillcolor="rgba(255,90,107,0.20)",
+        line=dict(color="rgba(255,90,107,0)", width=0),
+        name="FCF acumulado (negativo)",
+        showlegend=False,
+    ))
+    _fig3.add_trace(go.Scatter(
+        x=_meses, y=_fcf_pos,
+        fill="tozeroy",
+        fillcolor="rgba(0,191,179,0.20)",
+        line=dict(color="rgba(0,191,179,0)", width=0),
+        name="FCF acumulado (positivo)",
+        showlegend=False,
+    ))
+    _fig3.add_trace(go.Scatter(
+        x=_meses, y=_fcf_vals,
+        mode="lines",
+        name="FCF acumulado",
+        line=dict(color=_TURQUESA, width=2.5),
+    ))
+    _payback = viab.payback_meses
+    if _payback != float("inf"):
+        _fig3.add_vline(
+            x=int(_payback),
+            line_dash="dash",
+            line_color=_VERDE,
+            annotation_text=f"Payback: mes {int(_payback)}",
+            annotation_position="top left",
+            annotation_font_color=_VERDE,
+        )
+    _fig3.add_hline(y=0, line_color=COLORS["muted"], line_width=1)
+    _fig3.update_layout(
+        title=dict(text="FCF acumulado", font=dict(color=_TEXT, size=14, family=_FONT)),
+        xaxis_title="Mes",
+        yaxis_title="R$",
+        plot_bgcolor=_BG,
+        paper_bgcolor=_BG,
+        font=dict(color=_TEXT, size=11, family=_FONT),
+        margin=_MARGIN,
+        legend=_LEGEND,
+        height=_CHART_H,
+    )
+    _dark_axes(_fig3)
+
+    # --- Grafico 4: DRE breakdown steady-state (waterfall) ---
+    _fat = viab.faturamento_mensal_steady
+    _ded = _fat - viab.receita_liquida
+    _imp = viab.receita_liquida - viab.receita_pos_impostos
+    _total_custos = viab.receita_pos_impostos - viab.ebitda_mensal
+    _fig4 = go.Figure(go.Waterfall(
+        orientation="v",
+        measure=["absolute", "relative", "relative", "relative", "total"],
+        x=["Fat. bruto", "Deducoes", "Impostos", "Custos op.", "EBITDA"],
+        y=[_fat, -_ded, -_imp, -_total_custos, viab.ebitda_mensal],
+        text=[f"R${v/1000:.0f}k" for v in [_fat, -_ded, -_imp, -_total_custos, viab.ebitda_mensal]],
+        textposition="outside",
+        textfont=dict(color=_TEXT),
+        connector=dict(line=dict(color=COLORS["muted"], width=1, dash="dot")),
+        increasing=dict(marker=dict(color=_TURQUESA)),
+        decreasing=dict(marker=dict(color=_VERMELHO)),
+        totals=dict(marker=dict(color=_VERDE if viab.ebitda_mensal >= 0 else _VERMELHO)),
+    ))
+    _fig4.update_layout(
+        title=dict(text="DRE breakdown (steady-state)", font=dict(color=_TEXT, size=14, family=_FONT)),
+        xaxis_title="",
+        yaxis_title="R$",
+        plot_bgcolor=_BG,
+        paper_bgcolor=_BG,
+        font=dict(color=_TEXT, size=11, family=_FONT),
+        margin=_MARGIN,
+        showlegend=False,
+        height=_CHART_H,
+    )
+    _dark_axes(_fig4)
+
+    # Grid 2x2: alunos + DRE (linha 1) / faturamento + FCF (linha 2)
+    _col_l, _col_r = st.columns(2)
+    with _col_l:
+        st.plotly_chart(_fig1, use_container_width=True)
+    with _col_r:
+        st.plotly_chart(_fig4, use_container_width=True)
+    _col_l2, _col_r2 = st.columns(2)
+    with _col_l2:
+        st.plotly_chart(_fig2, use_container_width=True)
+    with _col_r2:
+        st.plotly_chart(_fig3, use_container_width=True)
+
+    # --- Secao 8b: exportar Excel ---
+    try:
+        from motor_expansao.dimensionamento.excel_export import (
+            gerar_excel_viabilidade,  # noqa: PLC0415
+        )
+        _nome_ponto = f"{lat:.6f}, {lng:.6f}"
+        _excel_bytes = gerar_excel_viabilidade(result, _serie, nome_ponto=_nome_ponto)
+        st.download_button(
+            label="Exportar Excel",
+            data=_excel_bytes,
+            file_name=f"viabilidade_{lat:.4f}_{lng:.4f}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            help="Baixar simulador de viabilidade em formato Excel (.xlsx) com 4 abas: Resumo, DRE, Sensibilidade e Curva.",
+        )
+    except Exception:
+        st.caption("Export Excel indisponivel.")
+
+    # --- Secao 9: pino do imovel ---
     st.caption(
         "O ponto analisado e a coordenada/link informado acima (ou o pino ativo no Mapa Territorial)."
     )

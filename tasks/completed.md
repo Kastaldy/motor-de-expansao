@@ -5706,3 +5706,199 @@ byte-a-byte do Relatório Pontual**). Relatório Pontual Censitário **byte-a-by
 não colore por zona 1/2/3 (só painel textual); (2) título da capa em linha única pode transbordar
 visualmente em municípios de nome longo. **Pendência de produto:** fonte de `NM_BAIRRO` para a
 Página 6 (decisão de Vini após avaliar o PDF base). Validação VISUAL do PDF pelo humano pendente.
+
+---
+
+### BLK-DIM-17 — Fix: limiar de renda da zona morta (3.000 → 1.600)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (afeta só o sinal de alerta de zona morta; READ-ONLY sobre M1) |
+| **Prioridade** | **Alta** — corte atual de R$3.000 per capita elimina oportunidades viáveis |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY sobre M1; toca só `viabilidade_ponto.py` + testes; sem VPS/deploy/segredos/PII/ingestão ao vivo |
+| **Depende de** | — |
+
+**Contexto / por que existe:** `RENDA_ZONA_MORTA_MIN = 3_000.0` em `src/motor_expansao/dimensionamento/viabilidade_ponto.py` está alto demais — acende alerta de "zona morta" em entornos com renda per capita entre R$1.600 e R$3.000 que são operacionalmente viáveis para o modelo Ultra. O pedido é baixar o limiar para R$1.600 (máx aceitável para não bloquear).
+
+**Objetivo:** corrigir a constante e atualizar qualquer teste que asserte sobre o valor antigo.
+
+**Escopo permitido:**
+- `viabilidade_ponto.py`: `RENDA_ZONA_MORTA_MIN: float = 3_000.0` → `1_600.0`.
+- Atualizar testes que comparam o limiar (mínimo: buscar `3_000` / `3000` nos testes do módulo).
+- Nada mais.
+
+**Fora de escopo (invioláveis):** `config.py` do M1 (`src/motor_expansao/config.py`), `RENDA_MIN = 4_500.0` (M1, intocado), `dimensionamento/config.py`, pipelines, score, artefatos oficiais.
+
+**Critérios de aceite:** `RENDA_ZONA_MORTA_MIN == 1600.0` no módulo; suite verde sem alteração de score/M1; `flag_zona_morta` dispara apenas abaixo de R$1.600 per capita.
+
+**Arquivos prováveis:** `src/motor_expansao/dimensionamento/viabilidade_ponto.py`, `tests/` (ajustar asserts do limiar antigo).
+
+**Risco:** baixo — é uma constante de exibição/alerta; não altera cálculo de margem/payback/ROIC.
+
+---
+
+### BLK-DIM-19 — Fix: flag de viável (payback 60 → 36 meses) e exibir payback real (remover "Nunca")
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (altera semântica do flag de viabilidade na camada DIM; READ-ONLY sobre M1 oficial) |
+| **Prioridade** | **Alta** — mudança de produto aprovada por Felipe (2026-06-22) |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY sobre M1; toca só `simulador.py` + `pages.py` + testes; sem VPS/deploy/segredos/PII/ingestão ao vivo. NÃO toca `config.py` do M1 nem `dimensionamento/config.py`. |
+| **Depende de** | — |
+
+**Contexto / por que existe:** duas correções de produto:
+1. `flag_viavel` em `ViabilidadeResult` usa `payback_meses <= 60` (`simulador.py` linha 302). Felipe aprovou trocar para **36 meses** (3 anos) como teto aceitável.
+2. A UI exibe `"> 60 / nunca"` quando `payback == float("inf")` (`pages.py` linha 3377). Remover o texto "Nunca" — mostrar o número real (ex.: "87 meses") mesmo que ultrapasse o teto de viabilidade.
+
+**Escopo permitido:**
+- `simulador.py`: `flag_viavel = (margem_ebitda_pct >= 0.10) and (payback_meses <= 60)` → `<= 36`.
+- `pages.py` (`render_viabilidade_ponto`): o card "Payback" deve sempre exibir o número em meses, sem texto "Nunca". Se `payback == float("inf")` após 60 meses de simulação, exibir `"> 60 meses"` (limite da janela do loop, não "nunca"). Remover o ramo `else "> 60 / nunca"`.
+- Atualizar testes que asseriam `flag_viavel = True` com payback entre 36 e 60 (agora passam a ser `False`), e testes do display de payback.
+
+**Fora de escopo (invioláveis):** `config.py` do M1, `RENDA_MIN`, pesos/formula M1, `flag_viavel` dos hexágonos M1 (campo diferente, nos datasets de hexágonos — não confundir com `ViabilidadeResult.flag_viavel`), artefatos oficiais.
+
+**Critérios de aceite:** `flag_viavel` vira `False` para payback entre 37 e 60 meses; UI sempre exibe número (nunca o texto "Nunca"); suite verde.
+
+**Arquivos prováveis:** `src/motor_expansao/dimensionamento/simulador.py`, `src/motor_expansao/dashboard/pages.py`, `tests/`.
+
+**Risco:** baixo — altera só a constante de teto e o texto de display. O `flag_viavel` dos hexágonos M1 é campo completamente distinto e não é tocado.
+
+---
+
+### BLK-DIM-20 — UI: parâmetros de fluxo de caixa editáveis (capex parcelado — equipamentos e tecnologia)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (enriquece o simulador financeiro; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY sobre M1; toca só `simulador.py`, `viabilidade_ponto.py`, `pages.py`, testes; sem VPS/deploy/segredos/PII/ingestão ao vivo. NÃO toca `config.py` do M1 nem `dimensionamento/config.py` (constantes novas ficam nos próprios módulos). |
+| **Depende de** | **BLK-DIM-19** (teto de payback e display corretos antes de expandir parâmetros) |
+
+**Contexto / por que existe:** hoje o investimento inicial (capex) entra como lump-sum no mês 0, e o payback é calculado contra o FCF acumulado. Na prática, equipamentos e tecnologia são **parcelados** (planilha Ultra: 36 meses, juros 1,8% a.m.). O simulador atual não tem esse custo mensal de financiamento, então o payback simulado é otimista. Felipe quer que o operador possa configurar esses parâmetros.
+
+**Objetivo:** adicionar ao simulador financeiro e à UI os parâmetros de financiamento do capex, calculando a PMT mensal como custo adicional durante o prazo de parcelamento.
+
+**Escopo permitido:**
+
+*`simulador.py` — novos parâmetros em `viabilidade()`:*
+- `capex_financiado_pct: float = 0.0` — % do capex financiado (0 = tudo próprio, padrão atual).
+- `prazo_financiamento_meses: int = 36` — prazo de parcelamento (default da planilha).
+- `juros_financiamento_am: float = 0.018` — taxa mensal (default 1,8% a.m.).
+- PMT mensal calculada via `pmt = C * r * (1+r)^n / ((1+r)^n - 1)` onde `C = capex_efetivo * capex_financiado_pct`. A PMT entra no loop de payback como custo financeiro nos meses `1..prazo_financiamento_meses` (abaixo da linha do EBITDA — não altera `margem_ebitda_pct`, só o `fcf_t` e o payback).
+
+*`viabilidade_ponto.py`:* pass-through dos 3 novos parâmetros em `analisar_viabilidade_ponto()` e em `grade_sensibilidade()`.
+
+*`pages.py` — expander "Parâmetros avançados":*
+- `capex_total` (`st.number_input`, default `SIM_CAPEX_DEFAULT = 2.340.000`).
+- `pct_financiado` (`st.slider`, 0–100%, default 0%).
+- `prazo_financiamento_meses` (`st.number_input`, default 36, visível só se `pct_financiado > 0`).
+- `juros_am_pct` (`st.number_input`, default 1,8%, visível só se `pct_financiado > 0`).
+- Caption explicando: "Equipamentos e tecnologia parcelados conforme planilha padrão (36 meses, 1,8% a.m.). A PMT entra como custo financeiro no FCF (não altera EBITDA)."
+
+**Fora de escopo (invioláveis):** `config.py` do M1, `dimensionamento/config.py`, pesos/formula/artefatos M1, cálculo de `margem_ebitda_pct` (EBITDA é pré-financiamento, conforme spec §8.2).
+
+**Critérios de aceite:** com `pct_financiado > 0`, o payback aumenta em relação ao cenário sem financiamento (efeito esperado); `margem_ebitda_pct` inalterada entre os dois cenários (a PMT não entra no EBITDA); grade de sensibilidade propagada corretamente; suite verde.
+
+**Arquivos prováveis:** `src/motor_expansao/dimensionamento/simulador.py`, `src/motor_expansao/dimensionamento/viabilidade_ponto.py`, `src/motor_expansao/dashboard/pages.py`, `tests/`.
+
+**Risco:** baixo-médio — a PMT é cálculo determinístico; o risco é introduzir regressão no payback sem financiamento (deve ficar idêntico ao atual quando `pct_financiado = 0`).
+
+---
+
+### BLK-DIM-21 — UI: gráficos financeiros e curva de maturidade na aba de viabilidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (enriquecimento visual; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY sobre M1; toca só `simulador.py`, `pages.py`, testes; usa `plotly` já dep (`plotly>=5.20.0`); sem VPS/deploy/segredos/PII/ingestão ao vivo. NÃO toca `config.py` do M1 nem `dimensionamento/config.py`. |
+| **Depende de** | **BLK-DIM-19** (payback/flag corretos), **BLK-DIM-20** (parâmetros de fluxo de caixa disponíveis para refletir nos gráficos) |
+
+**Contexto / por que existe:** a aba de viabilidade hoje exibe só métricas estáticas (cards). Felipe quer visualizações financeiras — curva de maturidade, faturamento projetado e payback visual — para facilitar a leitura do cenário. Felipe tem um exemplo visual de referência (compartilhar antes da execução do Builder para calibrar layout/cores).
+
+**Objetivo:** adicionar 4 gráficos Plotly à seção de resultados da viabilidade, mantendo os cards existentes e usando cores Ultra (turquesa `#00BFB3`, cinza-escuro `#2E3040`, branco, com vermelho para negativo).
+
+**Escopo permitido:**
+
+*`simulador.py` — nova função `gerar_serie_mensal()`:*
+Extrai a lógica do loop interno de maturação e retorna `list[dict]` com campos:
+`mes`, `alunos_balcao`, `faturamento_mensal`, `ebitda_mensal`, `fcf_acumulado`.
+A assinatura espelha a de `viabilidade()` para receber os mesmos parâmetros (incluindo os novos do BLK-DIM-20). NÃO duplica lógica — o loop existente em `viabilidade()` pode delegar para esta função.
+
+*`pages.py` — 4 gráficos via `st.plotly_chart(..., use_container_width=True)` após os cards:*
+1. **Curva de maturidade**: linha `alunos_balcao` por mês (1–60), com linha tracejada de steady-state e anotação do ponto de maturação. Título: "Rampa de alunos (balcão)".
+2. **Faturamento e EBITDA mensal**: barras empilhadas por mês (faturamento bruto) + linha sobreposição de EBITDA. Faturamento em turquesa; EBITDA positivo em verde, negativo em vermelho.
+3. **FCF acumulado**: área preenchida por mês; linha horizontal em 0; anotação do payback (ponto onde FCF ≥ 0). Área positiva em turquesa translúcido, negativa em vermelho translúcido.
+4. **DRE breakdown (steady-state)**: barras horizontais empilhadas mostrando: faturamento → deduções → impostos → custos variáveis → custos fixos (pessoal + outros) → aluguel → EBITDA. Útil para entender onde vai a margem.
+
+Todos os gráficos com fundo branco/cinza-claro, fonte legível, sem borda excessiva — padrão Ultra Clean (referência: BLK-EST-02 do relatório censitário).
+
+**Fora de escopo (invioláveis):** `config.py` do M1, `dimensionamento/config.py`, score/pesos/artefatos M1, alterar os cards existentes (preservar métricas numéricas), adicionar dependências além do plotly já disponível.
+
+**Critérios de aceite:** 4 gráficos renderizados sem erro para qualquer combinação válida de inputs; FCF acumulado mostra visualmente o ponto de payback; curva de maturidade termina no steady-state; suite verde (testes de smoke do módulo `simulador.py` para `gerar_serie_mensal`).
+
+**Arquivos prováveis:** `src/motor_expansao/dimensionamento/simulador.py` (nova função), `src/motor_expansao/dashboard/pages.py`, `tests/`.
+
+**Risco:** baixo — plotly disponível; o risco principal é regressão de performance (carregar 4 charts no Streamlit). Mitigação: renderizar só após submit do formulário (já é o comportamento atual dos cards).
+
+---
+
+### BLK-DIM-22 — UI: exportar simulador de viabilidade como Excel
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (novo entregável; READ-ONLY sobre M1) |
+| **Prioridade** | **Média** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Autonomia** | **loop-safe** — READ-ONLY sobre M1; toca só `pages.py` + novo módulo `dimensionamento/excel_export.py`; usa `openpyxl` já dep (`openpyxl>=3.1.0`); sem VPS/deploy/segredos/PII/ingestão ao vivo. NÃO toca `config.py` do M1 nem `dimensionamento/config.py`. |
+| **Depende de** | **BLK-DIM-19** (payback/flag corretos), **BLK-DIM-20** (parâmetros de fluxo de caixa), **BLK-DIM-21** (série mensal disponível em `ViabilidadeResult` para exportar a curva) |
+
+**Contexto / por que existe:** o operador precisa levar o resultado do simulador para reuniões/decisões fora do dashboard. Felipe quer o export no template padrão Ultra (cores turquesa/branco/cinza-escuro), equivalente ao "ULTRA padrão - Simulador Financeiro.xlsx" mas preenchido com os dados do ponto analisado.
+
+**Objetivo:** botão `st.download_button` que gera, em memória, um `.xlsx` com 4 abas com visual Ultra, sem tocar artefatos M1 nem persistir em disco no servidor.
+
+**Escopo permitido:**
+
+*Novo arquivo `src/motor_expansao/dimensionamento/excel_export.py`:*
+- Função `gerar_excel_viabilidade(result: ViabilidadePontoResult, *, nome_ponto: str = "") -> bytes`.
+- 4 abas com `openpyxl`:
+  - **"Resumo"**: cabeçalho com logo/nome Ultra (texto), ponto analisado (lat/lng/m²/aluguel/demanda), KPIs (break-even, aluguel-teto, margem EBITDA, payback, ROIC, faturamento, EBITDA, flag viável). Fundo de cabeçalho turquesa `#00BFB3`, texto branco; linhas de dado em branco/cinza-claro alternados.
+  - **"DRE"**: tabela linha-a-linha do DRE no steady-state (faturamento bruto → deduções → receita líquida → impostos → custos variáveis → custos fixos → EBITDA → IR/CSLL → lucro líquido). Formatação monetária `R$ #.##0,00`. Fonte dos valores: campos do `ViabilidadeResult`.
+  - **"Sensibilidade"**: grade alunos × aluguel com `margem_liq` — células coloridas (verde para margem ≥ 10%, amarelo para 0–10%, vermelho para negativo). Reproduz a tabela que já existe no dashboard.
+  - **"Curva"**: série mensal (meses 1–60) com colunas `Mês`, `Alunos Balcão`, `Faturamento`, `EBITDA`, `FCF Acumulado`. Dados de `gerar_serie_mensal()` (BLK-DIM-21). Se a série não estiver disponível, omitir a aba com nota.
+- Retorna `bytes` (não escreve em disco no servidor — LGPD/anti-PII).
+
+*`pages.py` — após os gráficos:*
+- `st.download_button("⬇ Exportar Excel", data=excel_bytes, file_name=f"viabilidade_{lat:.4f}_{lng:.4f}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")`.
+- Gerar os bytes via `gerar_excel_viabilidade(result, nome_ponto=endereco_resolv_se_disponivel)`.
+
+**Fora de escopo (invioláveis):** `config.py` do M1, score/pesos/artefatos M1, escrever em disco no servidor (`to_excel(path)` proibido — usar `BytesIO`), incluir dados PII de alunos reais.
+
+**Critérios de aceite:** download gera arquivo `.xlsx` válido abrível no Excel/LibreOffice; 4 abas presentes; cores Ultra aplicadas; valor da grade de sensibilidade idêntico ao exibido no dashboard; suite verde (teste de smoke: `len(gerar_excel_viabilidade(result)) > 0`).
+
+**Arquivos prováveis:** `src/motor_expansao/dimensionamento/excel_export.py` (novo), `src/motor_expansao/dashboard/pages.py`, `tests/`.
+
+**Risco:** baixo — openpyxl disponível; risco de formatação complexa (colorir células condicional). Mitigação: começar com formatação simples e refinar após validação visual de Felipe.
+
+---
+
+- BLK-OPS-11 (concluído 2026-05-31) — ver tasks/completed.md
+
+
+---
+
+- BLK-SEC-01 (concluído 2026-06-01) — ver tasks/completed.md
+
+
+---
+
+- BLK-SEC-02 (concluído 2026-06-02) — ver tasks/completed.md
