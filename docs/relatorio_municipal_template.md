@@ -121,8 +121,16 @@ EXATAMENTE 1 município selecionado. READ-ONLY sobre o M1.
 - **D7 — redação das zonas:** 1 Âncora central / 2 Flancos laterais / 3 Cerco.
 - **D8 — Página 8:** breakdown só das redes de concorrentes realmente mapeadas + carimbo de versão
   do contrato no rodapé (`VERSAO_CONTRATO_MUNICIPAL`).
-- **D9 — Página 6 (bairros) SIMPLIFICADA:** por zona/cluster + tese + nota "Bairros indisponíveis
-  na base atual" (a malha geo IBGE 2022 materializada não inclui `NM_BAIRRO`).
+- **D9 — Página 6 (bairros) IMPLEMENTADA (BLK-RELMUN-02):** lista os bairros REAIS agrupados pelas
+  3 zonas geométricas (Âncora central / Flancos laterais / Cerco), fonte **IBGE Censo 2022
+  `NM_BAIRRO` do setor** (coluna `nome_bairro` agora materializada em
+  `data/outputs/setores_censitarios_2022_geo/`). O relatório lê a partição geo do município
+  on-demand (`_carregar_bairros_por_hex` → bairro dominante por `hex_id` res-7, por população do
+  setor) e agrupa por zona (`_bairros_por_zona`), cap de ~10 bairros/zona + "... e mais N" ao
+  truncar. **Cobertura de bairro é HETEROGÊNEA** entre municípios (capitais/grandes têm; muitos
+  municípios pequenos e o DF não têm `NM_BAIRRO`). **Fallback gracioso mandatório:** município sem
+  bairro mapeado cai nas zonas geométricas + descrição/tese, sem exceção e sem a nota "indisponível"
+  como texto principal. READ-ONLY sobre o M1; camada de display (não altera score/artefatos/M1).
 
 ## Notas de mapeamento dados → motor (a confirmar pelo Planner)
 - "Espaço para academias" = Σ (vagas/consumo dos hexágonos amarelos) ÷ **2.500** (capacidade

@@ -553,6 +553,7 @@ def main() -> None:
         competitors_df=competitors_df,
         ultra_df=ultra_df,
         dominio_df=plano_dominio_df,
+        censo_geo_dir=CENSO_GEO_DIR,
     )
 
     st.caption(
