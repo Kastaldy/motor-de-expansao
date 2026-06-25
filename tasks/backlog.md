@@ -888,23 +888,8 @@ Dependências: decisão de produto sobre evolução para web interno.
 
 ---
 
-### BLK-TP-02 — Validação: Demanda Revelada × Residual Fitness (relatório)
+- BLK-TP-02 (concluído 2026-06-25) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (relatório/análise read-only; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir. |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-TP-01** (camada em `data/staging`). |
-| **Autonomia** | candidato a **loop-safe** *após* o TP-01 (consome só `data/staging`, sem PII, sem VPS) — confirmar no Block Orchestrator. |
-
-**Objetivo.** Reproduzir e documentar a correlação demanda × `score_oportunidade_residual` (Spearman
-~+0,52), mapa de quadrantes (residual+ & demanda+), e divergências vs. o recorte top-20%/UF do M1.
-**Não** altera score/artefatos — saída é relatório + (opcional) parquet de quadrantes.
-
-**Critérios de aceite.** Relatório com correlação reproduzida + quadrantes; READ-ONLY M1; suíte verde.
-**Guardrail.** §5; DEC-001.
 
 ---
 

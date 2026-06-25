@@ -2,54 +2,66 @@
 
 ## Bloco atual
 
-ID: BLK-TP-01
-Nome: Ingestão e contrato da camada de Demanda Revelada (H3, sem PII)
-Status: aprovado (QA APROVADO em 2026-06-24)
-Tipo: feature (nova camada paralela de dados; READ-ONLY sobre M1)
-Criticidade: Alta
-Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA — APROVADA por Felipe Silva 2026-06-24] → Builder → QA (APROVADO)
-Skill atual: QA/Quality Analyzer (concluído)
-Próxima Skill: Fechamento manual — orquestrador commita por path (housekeeping já feito via helper)
+ID: BLK-TP-02
+Nome: Validação: Demanda Revelada × Residual Fitness (relatório)
+Status: APROVADO pelo QA (2026-06-25) — pronto para fechamento/merge humano
+Tipo: análise/relatório (READ-ONLY sobre o M1)
+Criticidade: média
+Esteira: Block Orchestrator → Planner → Builder → QA
+Skill atual: QA (concluído)
+Próxima Skill: Fechamento manual (merge humano da branch ciclo/BLK-TP-02)
 
 ## Objetivo
-Materializar uma camada paralela, READ-ONLY sobre o M1, agregada em H3 e SEM PII
-(`data/staging/demanda_revelada_h3.parquet`), casável por `hex_id` com
-`hexagonos_mercado_mapeado.parquet`, base para os blocos sucessores (BLK-TP-02..05).
-Anti-PII por construção: consome apenas dados já agregados; identificadores/coordenadas
-individuais nunca são lidos para o staging nem persistidos; a agregação para H3 ocorre na entrada.
+Reproduzir e documentar a correlação demanda × `score_oportunidade_residual` (Spearman ~+0,52),
+mapa de quadrantes (residual+ & demanda+) e divergências vs. o recorte top-20%/UF do M1.
+Saída = relatório + (opcional) parquet de quadrantes. NÃO altera score/artefatos.
 
-## Dependência / DEC
-- **DEC-012 APROVADA por Felipe Silva em 2026-06-24** (adoção da camada de Demanda Revelada;
-  licença plenamente liberada). Registrada em CLAUDE.md §8 pelo Builder.
-
-## Tiering de modelo (Passo 4) — Alta
+## Tiering de modelo (Passo 4) — Média
 - Block Orchestrator: sonnet
-- Planner: opus
-- Builder: opus
+- Planner: sonnet
+- Builder: sonnet
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-TP-01 (criada a partir de main @ 3c128c1).
+ciclo/BLK-TP-02 (criada a partir de main @ deb8f95).
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
-- .gitignore (M), CLAUDE.md (M), tasks/backlog.md (M)
 - data/raw/ibge/malha_brasil.geojson (D), data/raw/ibge/malha_uf_brasil.geojson (D)
 - scripts/backtest_smartfit_scores.py (??)
 
+## Dependência
+- BLK-TP-01 (camada `data/staging/demanda_revelada_h3.parquet`) — concluído e merged (PR #47).
+
 ## Fora de escopo
-- score/pesos/artefatos M1; persistir qualquer PII; ingestão ao vivo na carga do dashboard;
-  deploy ao VPS; as análises em si (sucessores BLK-TP-02..05).
+- score/pesos/artefatos M1; persistir PII; ingestão ao vivo na carga do dashboard; deploy VPS;
+  os blocos sucessores BLK-TP-03..05.
 
-## Handoff do Block Orchestrator
-- Gerado em: 2026-06-24 21:59:35
-- Snapshot: context/handoff/20260624-215935-block-orchestrator.md
-- Handoff corrente: context/handoff.md
+## Estado do Builder (2026-06-25)
 
-## Handoff do Planner
-- Gerado em: 2026-06-24 22:07:08
-- Snapshot: context/handoff/20260624-220708-planner.md
-- Handoff corrente: context/handoff.md
-- ALERTA: tarefa Alta — REVISÃO HUMANA OBRIGATÓRIA antes do Builder (LGPD/anonimização + DEC-012).
-  Humano deve responder às 6 perguntas do gate e aprovar a DEC-012 rascunhada no handoff.
-- R2 RESOLVIDO na investigação: fonte = dump HTML (vars JS CELLS/GYMS_PTS/SF/BANDS, já agregado,
-  em NAO_ABRA/, gitignored); h3=v4.4.2 (latlng_to_cell); R6 resolvido (concorrentes_mapeados.parquet).
+### Arquivos novos
+- `src/motor_expansao/demanda_revelada/validacao.py` — 7 funções públicas + constantes
+- `tests/unit/test_demanda_revelada_validacao.py` — 11 testes unitários (todos verde)
+- `data/reports/demanda_revelada_validacao.md` — relatório gerado com dados reais
+
+### Arquivos modificados
+- `src/motor_expansao/demanda_revelada/__init__.py` — exporta `executar_validacao_completa`
+
+### Resultados reais (N=16.411 hexes no inner join)
+- Spearman primário: rho = 0.517, IC [0.506, 0.529], p ≈ 0 ***
+- Spearman secundário: rho = 0.525, IC [0.513, 0.536], p ≈ 0 ***
+- nota: score_oportunidade_residual tem mediana=0.0 no join → Q1+Q2 apenas (todos residual ≥ 0)
+
+### Validações Builder
+- pytest 19 passed, 0 failed (subconjunto impactado)
+- ruff: All checks passed
+- mypy: no issues found
+- smoke import streamlit_app: OK
+
+## Veredito QA (2026-06-25)
+- VEREDITO: **APROVADO**
+- Suíte full (gate único): **1115 passed, 1 skipped, 0 failed** (após instalar a dep BASE `openlocationcode`, ausente no ambiente local — 4 falhas de plus-code eram ambientais, fora do escopo do BLK-TP-02; provado instalando a lib).
+- Subset impactado: 19 passed; ruff clean; mypy clean; import streamlit_app + módulo OK.
+- READ-ONLY M1 confirmado: disjunção DEC-012 OK, artefatos M1/config intocados, DEC-001/009/012 intactas, anti-PII clean (relatório + parquet de quadrantes).
+- Housekeeping: helper `--check` OK; `test_housekeeping_helper.py` 10 passed; backlog stub + bloco em completed.md; Autonomia marcada **loop-safe**.
+- Próximo passo: fechamento/merge humano da branch ciclo/BLK-TP-02.
+- Recomendação operacional não-bloqueante: re-rodar `pip install -e ".[dev]"` local.
