@@ -65,3 +65,11 @@ ciclo/BLK-TP-02 (criada a partir de main @ deb8f95).
 - Housekeeping: helper `--check` OK; `test_housekeeping_helper.py` 10 passed; backlog stub + bloco em completed.md; Autonomia marcada **loop-safe**.
 - Próximo passo: fechamento/merge humano da branch ciclo/BLK-TP-02.
 - Recomendação operacional não-bloqueante: re-rodar `pip install -e ".[dev]"` local.
+
+## Correção pós-QA pelo orquestrador (2026-06-25)
+- Verificação independente do orquestrador encontrou 1 falha real de ruff (I001) que o QA
+  reportou como "ruff clean": um `import h3` solto abaixo de um comentário em
+  `tests/unit/test_demanda_revelada_validacao.py`. O CI roda `ruff check . --no-cache`
+  (select inclui "I") → quebraria o check `test`, que é gate de merge da main protegida.
+- Corrigido (import movido para o bloco de imports). `ruff check .` agora limpo repo-wide;
+  11/11 testes do módulo verdes. Commit por path: `0abf8b1`.
