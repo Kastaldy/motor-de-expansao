@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import h3
 import numpy as np
 import pandas as pd
 import pytest
@@ -27,7 +28,6 @@ from motor_expansao.demanda_revelada.validacao import (
 # ---------------------------------------------------------------------------
 # Hexes sintéticos (mesmos do teste de ingestão)
 # ---------------------------------------------------------------------------
-import h3
 
 HEX_SP = h3.latlng_to_cell(-23.5505, -46.6333, 7)   # 87a8100c0ffffff
 HEX_SP_B = h3.latlng_to_cell(-23.5680, -46.6450, 7)  # 87a8100c5ffffff
