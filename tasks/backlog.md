@@ -860,3 +860,109 @@ Resumo: Apenas se o dashboard evoluir para produto web interno com múltiplos us
 Dependências: decisão de produto sobre evolução para web interno.
 
 ---
+
+## Epic BLK-TP — Camada de Demanda Revelada (camada paralela, READ-ONLY sobre o M1)
+
+> Epic que incorpora ao Motor um **sinal externo, georreferenciado e anônimo de demanda paga por
+> academia** (membros pagantes por região), agregado em H3. Motivação: a DEC-009 encerrou a previsão
+> de *magnitude de demanda* pela geografia interna (renda/pop têm sinal nulo no M1 — DEC-001); faltava
+> um sinal de **demanda observada**. Uma **análise exploratória interna (2026-06-24)** indicou que essa
+> demanda paga por hex correlaciona forte com a nossa camada residual (Spearman **+0,52** vs.
+> `score_oportunidade_residual`) e com alunos efetivamente capturados (**+0,75**) — primeira validação
+> externa positiva forte de uma camada do Motor.
+> **READ-ONLY sobre o M1 em TODOS os blocos:** nenhum recalcula `score_priorizacao`, pesos, carteira,
+> plano ou artefatos oficiais (§5 guardrail). A **demanda entra como insumo observado, NUNCA como
+> preditor geográfico de magnitude** (DEC-009 intacta).
+> **Anti-PII por construção:** o insumo bruto tem PII na origem; a ingestão consome **apenas dados já
+> agregados** e descarta qualquer identificador/coordenada individual na fronteira de entrada (§4).
+> Sugere registrar **DEC-012** (adoção da camada) ao iniciar o BLK-TP-01.
+
+- BLK-TP-01 (concluído 2026-06-24) — ver tasks/completed.md
+
+
+---
+
+### BLK-TP-02 — Validação: Demanda Revelada × Residual Fitness (relatório)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (relatório/análise read-only; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01** (camada em `data/staging`). |
+| **Autonomia** | candidato a **loop-safe** *após* o TP-01 (consome só `data/staging`, sem PII, sem VPS) — confirmar no Block Orchestrator. |
+
+**Objetivo.** Reproduzir e documentar a correlação demanda × `score_oportunidade_residual` (Spearman
+~+0,52), mapa de quadrantes (residual+ & demanda+), e divergências vs. o recorte top-20%/UF do M1.
+**Não** altera score/artefatos — saída é relatório + (opcional) parquet de quadrantes.
+
+**Critérios de aceite.** Relatório com correlação reproduzida + quadrantes; READ-ONLY M1; suíte verde.
+**Guardrail.** §5; DEC-001.
+
+---
+
+### BLK-TP-03 — Vazio competitivo do concorrente low-cost (feature/overlay)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (camada de visualização/análise; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — produto/UX]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01**. |
+| **Autonomia** | candidato a **loop-safe** se restrito a análise/parquet; **manual** se virar overlay no dashboard (decisão de produto). |
+
+**Objetivo.** Identificar hexes com demanda paga relevante a >5km do concorrente low-cost de referência
+e **sem** unidade dele no hex — tese de entrada low-cost mais limpa (demanda comprovada, concorrente
+direto ausente). Protótipo exploratório apontou ~231 hexes res-7 candidatos. Possível overlay no Mapa
+Territorial (§5, camada visual de apoio — não altera score/ranking/carteira).
+
+**Critérios de aceite.** Lista/camada de vazios competitivos reproduzível; READ-ONLY M1; suíte verde.
+**Guardrail.** §5; pins/camadas de concorrente são apoio visual (CLAUDE.md §2).
+
+---
+
+### BLK-TP-04 — Calibração da curva tamanho→densidade do BLK-DIM com alunos/unidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (alimenta a modelagem de viabilidade; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01** + epic **BLK-DIM** (DIM-03R/06). |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem. |
+
+**Objetivo.** Usar `alunos_parceiras` (amostra real de alunos/unidade por tier; n≈27 mil no protótipo)
+como insumo para calibrar/validar a curva tamanho→densidade do `viabilidade_ponto.py` (BLK-DIM), com a
+disciplina metodológica da DEC-008 (LOO vs baseline; banir R² in-sample; intervalos + flag de
+extrapolação). Liga-se à DEC-009 (dimensionamento é a parte que funciona; consome demanda, não a prevê).
+
+**Critérios de aceite.** Curva calibrada/validada por LOO vs baseline, documentada; READ-ONLY M1.
+**Guardrail.** §5; DEC-008/DEC-009.
+
+---
+
+### BLK-TP-05 — Re-teste honesto do elo demanda→captura (LOO vs baseline)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (modelagem; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem. |
+
+**Objetivo.** Re-testar a regressão/Huff `alunos ~ demanda + dist_concorrente + concorrência` agora com
+**demanda observada** (não imputada), usando **LOO/k-fold repetido vs baseline da média** (DEC-008;
+proibido R² in-sample). O protótipo deu Spearman demanda×alunos +0,75 e OLS R²_in-sample 0,45 — promissor,
+mas a validação séria é este bloco. É o re-teste honesto do que a DEC-009 marcou como NO-GO **com demanda
+imputada**: se passar no LOO, reabre (sob gate) a Camada de captura da epic BLK-DIM.
+
+**Critérios de aceite.** R²_LOO vs baseline reportado com intervalos + flag de extrapolação; veredito
+GO/NO-GO honesto; READ-ONLY M1.
+**Guardrail.** §5; DEC-008/DEC-009 (demanda como insumo observado, nunca preditor geográfico).
+
+---

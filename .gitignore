@@ -14,6 +14,7 @@ dist/
 build/
 
 # Dados sensiveis e staging (nunca commitar)
+NAO_ABRA/
 data/raw/
 data/staging/*
 data/snapshots/

@@ -1,0 +1,34 @@
+<!doctype html>
+<!--
+  FIXTURE SINTÉTICA — Demanda Revelada (BLK-TP-01). SEM PII e SEM dado real.
+  Células JÁ AGREGADAS (membros por célula), coords públicas de SP/RJ.
+  Estruturas no formato do dump: CELLS / GYMS_PTS / SF / BANDS.
+  Há uma var de RUÍDO (RAW_FAKE) que o parser NÃO deve ler (rede anti-PII).
+  Aggregação esperada (res-7):
+    87a8100c0ffffff -> membros 100+40=140; gt5km(idx5)=40; dist_min=900; n_celulas=2;
+                       parceiras: 1 acad (q=300); SF: 1 unidade
+    87a8100c5ffffff -> membros 70; gt5km=0; dist_min=300; n_celulas=1; parceiras 0; SF 0
+    87a8a06a0ffffff -> membros 25; gt5km=25 (idx5); dist_min=8000; n_celulas=1; parceiras 1(q=80); SF 0
+-->
+<html><head><meta charset="utf-8"></head><body>
+<script>
+var BANDS = ["lte500","lte1k","lte1k5","lte2k","lte5k","gt5k"];
+var CELLS = [
+  [-23.5505, -46.6333, 100, 2, 900, " unidade-x "],
+  [-23.5512, -46.6340, 40, 5, 6000, "unidade-y"],
+  [-23.5680, -46.6450, 70, 1, 300, "unidade-z"],
+  [-22.9068, -43.1729, 25, 5, 8000, "unidade-w"]
+];
+var GYMS_PTS = [
+  {"n": "parceira-1", "lat": -23.5506, "lng": -46.6334, "p": "tp3", "q": 300},
+  {"n": "parceira-2", "lat": -22.9069, "lng": -43.1730, "p": "tp1", "q": 80},
+  {"n": "sf-as-gym", "lat": -23.5507, "lng": -46.6335, "p": "sf", "q": 999}
+];
+var SF = [
+  {"n": "SF unidade central", "a": -23.5505, "o": -46.6333}
+];
+var RAW_FAKE = [
+  {"employee_id": 123, "cpf": "000.000.000-00", "lat_residencial": -23.5, "lng_residencial": -46.6}
+];
+</script>
+</body></html>
