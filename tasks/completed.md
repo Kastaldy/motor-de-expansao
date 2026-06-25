@@ -5902,3 +5902,63 @@ Todos os gráficos com fundo branco/cinza-claro, fonte legível, sem borda exces
 ---
 
 - BLK-SEC-02 (concluído 2026-06-02) — ver tasks/completed.md
+
+---
+
+### BLK-TP-01 — Ingestão e contrato da camada de Demanda Revelada (H3, sem PII)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (engenharia de dados + **LGPD/anonimização**; cria nova camada PARALELA; **READ-ONLY sobre o M1**). Exige **gate humano** + registro de **DEC-012**. |
+| **Prioridade** | A definir por Felipe (candidato a alta — destrava validação externa e o elo demanda→captura da DEC-009). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA — LGPD/anonimização + DEC-012]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Responsável sugerido** | Felipe (engenharia de dados / camada paralela). |
+| **Depende de** | DEC-012 aprovada. |
+| **Autonomia** | **manual (NÃO loop-safe)** — ingere insumo externo, não se limita a `data/staging`, toca anonimização/PII; NÃO marcar loop-safe. |
+
+**Objetivo.** Materializar uma camada paralela, **READ-ONLY sobre o M1, agregada em H3 e SEM PII**,
+casável por `hex_id` com `hexagonos_mercado_mapeado.parquet`, base para os blocos de análise sucessores.
+
+**Princípios não-negociáveis (escopo).**
+1. **Anti-PII por construção:** consome apenas dados **já agregados**; identificadores e coordenadas
+   individuais nunca são lidos para o staging nem persistidos; a agregação para H3 acontece na entrada.
+2. **READ-ONLY sobre o M1:** zero escrita em `score_priorizacao`/pesos/`hex_score_estrutural`/carteira/
+   plano/artefatos oficiais (§5).
+3. **Isolamento:** código novo em pasta disjunta (ex.: `src/motor_expansao/demanda_revelada/`);
+   dependências (se houver) em extra próprio do `pyproject.toml`, fora do deploy base do Streamlit;
+   sem dependência de API ao vivo na carga do dashboard (§2).
+
+**Contrato de saída (proposto — a confirmar no Planner).** `data/staging/demanda_revelada_h3.parquet`
+(cai em `*.parquet` do gitignore; **não** entra na lista de artefatos oficiais do M1):
+
+| coluna | tipo | descrição |
+|---|---|---|
+| `hex_id` | str | H3 res-7 (chave de join com o Motor). |
+| `membros` | int | membros (demanda paga) agregados ao hex. |
+| `membros_gt5km_concorrente_lc` | int | subconjunto a >5km do concorrente low-cost de referência (Smart Fit). |
+| `dist_concorrente_lc_min_m` | float | menor distância ao concorrente low-cost no hex (metros). |
+| `n_celulas_agregadas` | int | nº de células de origem agregadas. |
+| `n_acad_parceiras` | int | academias parceiras no hex. |
+| `alunos_parceiras` | int | soma de alunos das parceiras (amostra p/ BLK-DIM). |
+| `n_concorrente_lc` | int | unidades do concorrente low-cost de referência no hex. |
+| `versao_contrato` | str | carimbo de reprodutibilidade. |
+
+Opcional: versão res-8 para leitura intraurbana fina.
+
+**Caveats de dado (documentar no relatório do bloco).** coords de célula arredondadas (~1 km) → ruído
+no join res-7 (ok p/ densidade, não p/ ponto exato); cobertura geográfica enviesada (concentração em
+SP); a demanda casa com **~1% do universo de hexes do Motor** → camada de *refino* sobre metrópoles,
+não cobertura nacional (não substitui M1/censitário, §1).
+
+**Escopo provável.** Pipeline ingestão+agregação (parser → H3 → drop PII → parquet), módulo em pasta
+disjunta, testes com **fixture sintético sem PII** (nunca dado real), relatório de qualidade/cobertura.
+Reuso de `h3` (já dependência).
+
+**Fora de escopo.** Score/pesos/artefatos M1; persistir qualquer PII; ingestão ao vivo na carga do
+dashboard; deploy ao VPS; as análises em si (sucessores BLK-TP-02..05).
+
+**Critérios de aceite.** Parquet H3 sem PII reprodutível; join por `hex_id` demonstrado; **zero** linha
+individual/PII no artefato (verificado por teste); READ-ONLY M1; suíte verde.
+
+**Guardrail.** §2, §4/§5; DEC-001/DEC-009 (não reabrir M1; demanda como insumo observado).
