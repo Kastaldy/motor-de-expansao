@@ -6,6 +6,8 @@ from motor_expansao.dashboard.constants import RESIDUAL_SCORE_BANDS
 
 
 def format_int(value: int | float) -> str:
+    if value is None or pd.isna(value):
+        return "-"
     return f"{int(round(float(value))):,}".replace(",", ".")
 
 

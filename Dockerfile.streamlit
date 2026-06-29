@@ -15,6 +15,10 @@ WORKDIR /app
 # `import contextily` falha (libexpat.so.1) e o relatorio cai no fallback sem ruas.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl libexpat1 \
+    # Security: aplica o update do libssh2 (CVE-2026-55200 CRITICAL + 55199/7598 HIGH;
+    # fix 1.11.1-1+deb13u1). E lib transitiva, mas tem fix disponivel -> remediar, nao
+    # ignorar (politica .trivyignore: ignore so build-tools sem fix). Gate Trivy bloqueante.
+    && apt-get install -y --only-upgrade libssh2-1t64 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . .
