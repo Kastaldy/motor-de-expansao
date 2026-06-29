@@ -178,7 +178,7 @@ from motor_expansao.dashboard.utils import (  # noqa: F401
 )
 
 st.set_page_config(
-    page_title="Ultra Academia | Mapa Territorial",
+    page_title="Ultra Academia | Expansão",
     layout="wide",
     initial_sidebar_state="collapsed",
 )

@@ -157,15 +157,13 @@ def inject_styles() -> None:
         <style>
             .stApp {{
                 background:
-                    radial-gradient(circle at 12% 18%, rgba(25, 183, 255, 0.18), transparent 28%),
-                    radial-gradient(circle at 82% 12%, rgba(255, 77, 141, 0.18), transparent 26%),
-                    radial-gradient(circle at 58% 72%, rgba(124, 92, 255, 0.14), transparent 30%),
+                    radial-gradient(circle at 16% 16%, rgba(25, 183, 255, 0.12), transparent 30%),
                     linear-gradient(180deg, {COLORS["bg"]} 0%, {COLORS["bg_alt"]} 100%);
                 color: {COLORS["text"]};
                 font-family: "Bahnschrift", "Aptos", "Segoe UI", sans-serif;
             }}
             .block-container {{
-                padding-top: 1.4rem;
+                padding-top: 0.8rem;
                 padding-bottom: 2rem;
             }}
             /* F2-G: reforco offline (CSS puro, sem JS/rede) para a sidebar nascer
@@ -189,7 +187,7 @@ def inject_styles() -> None:
                 border: 1px solid {COLORS["border"]};
                 border-radius: 18px;
                 padding: 1rem 1.1rem;
-                box-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
+                box-shadow: 0 8px 20px rgba(0, 0, 0, 0.24);
             }}
             div[data-testid="stMetricLabel"] {{
                 color: {COLORS["muted"]};
@@ -203,15 +201,14 @@ def inject_styles() -> None:
             }}
             .hero {{
                 background:
-                    radial-gradient(circle at left top, rgba(255, 77, 141, 0.24), transparent 22%),
-                    radial-gradient(circle at right center, rgba(25, 183, 255, 0.24), transparent 26%),
+                    radial-gradient(circle at right center, rgba(25, 183, 255, 0.20), transparent 28%),
                     linear-gradient(135deg, rgba(29, 16, 58, 0.98) 0%, rgba(19, 23, 48, 0.98) 52%, rgba(7, 55, 112, 0.96) 100%);
                 color: #FFFFFF;
-                padding: 1.35rem 1.5rem;
-                border-radius: 22px;
-                margin-bottom: 1rem;
+                padding: 0.95rem 1.3rem;
+                border-radius: 18px;
+                margin-bottom: 0.6rem;
                 border: 1px solid rgba(133, 151, 228, 0.2);
-                box-shadow: 0 22px 48px rgba(0, 0, 0, 0.34);
+                box-shadow: 0 8px 22px rgba(0, 0, 0, 0.28);
             }}
             .hero h1 {{
                 margin: 0;
@@ -243,9 +240,8 @@ def inject_styles() -> None:
                 background: linear-gradient(180deg, rgba(18, 23, 42, 0.96) 0%, rgba(14, 19, 36, 0.96) 100%);
                 border: 1px solid {COLORS["border"]};
                 border-radius: 18px;
-                padding: 1rem 1.1rem;
-                min-height: 160px;
-                box-shadow: 0 16px 36px rgba(0, 0, 0, 0.22);
+                padding: 1.1rem 1.2rem;
+                box-shadow: 0 8px 20px rgba(0, 0, 0, 0.20);
             }}
             .section-card h4 {{
                 margin: 0 0 0.55rem;
@@ -266,7 +262,7 @@ def inject_styles() -> None:
                 border: 1px solid {COLORS["border"]};
                 border-radius: 18px;
                 padding: 1rem 1.1rem;
-                box-shadow: 0 16px 36px rgba(0, 0, 0, 0.22);
+                box-shadow: 0 8px 20px rgba(0, 0, 0, 0.20);
             }}
             .model-card h4 {{
                 margin: 0 0 0.45rem;
@@ -313,7 +309,7 @@ def inject_styles() -> None:
                 border: 1px solid {COLORS["border"]};
                 border-radius: 18px;
                 overflow: hidden;
-                box-shadow: 0 16px 36px rgba(0, 0, 0, 0.22);
+                box-shadow: 0 8px 20px rgba(0, 0, 0, 0.20);
             }}
             [data-baseweb="tab-list"] {{
                 gap: 0.35rem;
@@ -495,12 +491,12 @@ def render_header() -> None:
     st.markdown(
         """
         <div class="hero">
-            <h1>Dashboard Executivo M1 + Modelo Hibrido</h1>
-            <p>Onde expandir (M1 municipal) · Qual bairro priorizar (Censitario 2022) · Fila operacional combinada (Hibrido).</p>
+            <h1>Ultra Academia — Inteligência de Expansão</h1>
+            <p>Onde abrir, qual bairro priorizar e em que ordem ocupar o território.</p>
             <div class="strip">
                 <span class="pill"><strong>Onde expandir (M1)</strong></span>
-                <span class="pill"><strong>Qual bairro (Censitario)</strong></span>
-                <span class="pill"><strong>Fila operacional (Hibrido)</strong></span>
+                <span class="pill"><strong>Qual bairro (Censitário)</strong></span>
+                <span class="pill"><strong>Fila operacional (Híbrido)</strong></span>
             </div>
         </div>
         """,
@@ -531,16 +527,10 @@ def render_uf_selectbox(uf_options: list[str]) -> str | None:
                 color: {COLORS["text"]};
                 letter-spacing: 0.02em;
             ">Filtros globais</div>
-            <div style="
-                font-size: 0.78rem;
-                color: {COLORS["brand_alt"]};
-                font-weight: 600;
-            ">Recorte executivo M1 + Hibrido</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
-    st.caption("Refine o recorte executivo do M1 e da camada hibrida sem alterar o score oficial.")
     return st.selectbox(
         "UF",
         options=uf_options,
@@ -677,9 +667,9 @@ def render_sidebar_filters(
 
     # F2-C / BLK-UI-07 (D1): filtros avancados colapsados num expander NO CORPO
     # (logo abaixo da linha Municipio/Faixa). O conteudo interno ja usa `st.*`.
-    with st.expander("Filtros avancados", expanded=False):
-        st.markdown("### Camada Hibrida")
-        st.caption("Esses filtros refinam M1 + Censitario + Hibrido no recorte visivel.")
+    with st.expander("Filtros avançados", expanded=False):
+        st.markdown("### Camada Híbrida")
+        st.caption("Esses filtros refinam M1 + Censitário + Híbrido no recorte visível.")
         selected_hybrid_eligibility = st.multiselect(
             "Elegibilidade hibrida",
             options=HYBRID_ELIGIBILITY_ORDER,
@@ -702,9 +692,6 @@ def render_sidebar_filters(
         only_top_hex_intraurbano = st.checkbox(
             "Apenas top_hex_intraurbano",
             value=False,
-        )
-        st.caption(
-            "M1 = decisao municipal. Censitario = decisao intraurbana. Hibrido = uso combinado."
         )
     return (
         selected_ufs,
@@ -809,12 +796,8 @@ def render_coord_search_sidebar() -> tuple[float, float] | None:
         key="coord_search_input",
         label_visibility="collapsed",
         help=(
-            "Quatro formatos aceitos: (1) coordenada lat,lng; (2) endereco livre "
-            "(resolvido via OpenStreetMap/Nominatim); (3) link do Google Maps — URL longa "
-            "lida offline, link curto (maps.app.goo.gl) segue o redirect; (4) Plus Code do "
-            "Maps (ex.: '6M7J+GQ Duque de Caxias - RJ' — codigo curto precisa da cidade/UF; "
-            "codigo completo decodifica offline). Sem rede ou sem resultado, mostramos um "
-            "link do Google Maps para abrir e copiar a coordenada."
+            "Aceita coordenada lat,lng, endereço, link do Google Maps ou Plus Code. "
+            "Sem resultado, mostramos um link do Maps para copiar a coordenada."
         ),
     )
     if not raw or not raw.strip():
@@ -1024,12 +1007,12 @@ def render_visao_executiva(
     with answer_cols[1]:
         render_answer_card("Quais cidades priorizar", answers["priorizar"])
     with answer_cols[2]:
-        render_answer_card("Onde evitar expansao", answers["evitar"])
+        render_answer_card("Onde evitar expansão", answers["evitar"])
 
-    st.markdown("#### Presenca Ultra Academia")
+    st.markdown("#### Presença Ultra Academia")
     st.caption(
-        "Mapa institucional da rede propria. Exibe apenas unidades Ultra com filtros de UF/cidade. "
-        "Para analise de hexagonos, scores e residual, use a aba Mapa Territorial."
+        "Mapa institucional da rede própria (só unidades Ultra). "
+        "Para hexágonos, scores e residual, use a aba Mapa."
     )
     render_ultra_legend(ultra_df)
     ultra_map, ultra_count = build_ultra_presence_map(
@@ -1048,6 +1031,7 @@ def render_visao_executiva(
 
     st.markdown("---")
     st.markdown("#### Rede Ultra e Mercado")
+    st.caption("Rede própria e mercado: presença, score médio e residual disponível no recorte.")
     net_kpis = build_ultra_network_kpis(
         df,
         ultra_df,
@@ -1080,7 +1064,8 @@ def render_visao_executiva(
         st.plotly_chart(top_res_fig, width="stretch")
 
     st.markdown("---")
-    st.markdown("#### Analise Comparativa por UF")
+    st.markdown("#### Comparativo por UF")
+    st.caption("Cidades e UFs líderes, oportunidades viáveis e melhores/piores estados.")
     chart_col_1, chart_col_2 = st.columns(2)
     with chart_col_1:
         top_city_fig = build_top_city_figure(city_summary)
@@ -1091,13 +1076,10 @@ def render_visao_executiva(
         if top_uf_fig is not None:
             st.plotly_chart(top_uf_fig, width="stretch")
 
-    answers_uf = build_business_answers(city_summary, uf_summary)
-    uf_col1, uf_col2, uf_col3 = st.columns(3)
-    with uf_col1:
-        render_answer_card("UFs a priorizar", answers_uf["ufs_priorizar"])
+    uf_col2, uf_col3 = st.columns(2)
     with uf_col2:
         fig_opps = build_uf_metric_figure(
-            uf_summary, metric="oportunidades_viaveis", label="Oportunidades viaveis", color=COLORS["brand_alt"]
+            uf_summary, metric="oportunidades_viaveis", label="Oportunidades viáveis", color=COLORS["brand_alt"]
         )
         if fig_opps is not None:
             st.plotly_chart(fig_opps, width="stretch")
@@ -1121,7 +1103,7 @@ def render_analise_territorial(df: pd.DataFrame, city_summary: pd.DataFrame) -> 
         if faixa_fig is not None:
             st.plotly_chart(faixa_fig, width="stretch")
 
-    st.markdown("#### Indicadores medios")
+    st.markdown("#### Indicadores médios")
     st.dataframe(
         build_indicator_snapshot(df),
         width="stretch",
@@ -1364,18 +1346,16 @@ def render_modelo_hibrido_v2(
         st.warning("Dataset hibrido nao disponivel. Verifique `data/outputs/oportunidades_expansao_hibrido.parquet`.")
         return
 
-    st.markdown("#### Como interpretar os tres modelos")
+    st.markdown("#### Como interpretar os três modelos")
     card_cols = st.columns(3)
     with card_cols[0]:
         st.markdown(
             """
             <div class="model-card">
                 <span class="badge" style="background:rgba(25,183,255,0.18);color:#19B7FF;border:1px solid rgba(25,183,255,0.3);">M1 - OFICIAL</span>
-                <h4>Score de Priorizacao Municipal</h4>
-                <p><strong>score_priorizacao</strong></p>
-                <p>M1 = decisao municipal.</p>
-                <p>Decide quais municipios entram na fila de expansao.</p>
-                <p>Continua sendo o score oficial e nao foi alterado.</p>
+                <h4>Score de Priorização Municipal</h4>
+                <p>Decide <strong>quais municípios</strong> entram na fila de expansão.</p>
+                <p>É o score oficial, inalterado.</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1384,12 +1364,10 @@ def render_modelo_hibrido_v2(
         st.markdown(
             """
             <div class="model-card">
-                <span class="badge" style="background:rgba(34,197,94,0.18);color:#22C55E;border:1px solid rgba(34,197,94,0.3);">CENSITARIO - LOCAL</span>
-                <h4>Score Intraurbano Censitario</h4>
-                <p><strong>score_setor_2022_calibrado</strong></p>
-                <p>Censitario = decisao intraurbana.</p>
-                <p>Ajuda a escolher bairro e hex dentro de municipios aprovados.</p>
-                <p>Uso editorial local, sempre com rastreabilidade de coverage e join.</p>
+                <span class="badge" style="background:rgba(34,197,94,0.18);color:#22C55E;border:1px solid rgba(34,197,94,0.3);">CENSITÁRIO - LOCAL</span>
+                <h4>Score Intraurbano Censitário</h4>
+                <p>Decide <strong>o bairro/hex</strong> dentro de municípios aprovados.</p>
+                <p>Uso local, com rastreabilidade de coverage e join.</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1398,12 +1376,10 @@ def render_modelo_hibrido_v2(
         st.markdown(
             """
             <div class="model-card">
-                <span class="badge" style="background:rgba(255,77,141,0.18);color:#FF4D8D;border:1px solid rgba(255,77,141,0.3);">HIBRIDO - COMBINADO</span>
+                <span class="badge" style="background:rgba(255,77,141,0.18);color:#FF4D8D;border:1px solid rgba(255,77,141,0.3);">HÍBRIDO - COMBINADO</span>
                 <h4>Fila Operacional Combinada</h4>
-                <p><strong>score_expansao_hibrido</strong></p>
-                <p>Hibrido = uso combinado.</p>
-                <p>Primeiro o M1 aprova o municipio; depois o Censitario refina os melhores hexes.</p>
-                <p>Serve para ordenar a carteira operacional, sem substituir o M1.</p>
+                <p>M1 aprova o município; o Censitário refina os melhores hexes.</p>
+                <p>Ordena a carteira operacional, sem substituir o M1.</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1441,7 +1417,7 @@ def render_modelo_hibrido_v2(
             "Mapa colorido por `score_oportunidade_residual` (potencial residual apos desconto da oferta instalada). "
             "Linhas vermelhas indicam join restrito ou qualidade C."
         )
-        render_score_bands_legend("Score Residual (score_oportunidade_residual)")
+        render_score_bands_legend("Score Residual")
         render_pop_cut_legend()
         render_ultra_legend(ultra_df)
         hybrid_map, n_points = build_hybrid_map_figure(
@@ -1538,7 +1514,7 @@ def render_modelo_hibrido_v2(
             "da oferta ja instalada (concorrentes + Ultra). Verde escuro = alta oportunidade residual; "
             "vermelho escuro = mercado ja ocupado ou potencial pequeno."
         )
-        render_score_bands_legend("Score Residual (score_oportunidade_residual)")
+        render_score_bands_legend("Score Residual")
         render_pop_cut_legend()
         render_ultra_legend(ultra_df)
         residual_map, n_residual = build_residual_heatmap_figure(
@@ -1590,18 +1566,18 @@ def render_carteira_expansao(
         else 0
     )
 
-    st.markdown("#### Carteira de Expansao — Decisao pratica de onde abrir")
+    st.markdown("#### Carteira de Expansão — Decisão prática de onde abrir")
     st.caption(
-        f"M1 continua sendo a ancora oficial da carteira. Base atual: {len(carteira)} oportunidades, "
-        f"{total_municipios_carteira} municipios e {total_ufs_carteira} UFs. "
-        "Quando ha camada granular, o Censitario refina o hex; quando nao ha, a carteira usa fallback municipal/M1."
+        f"M1 é a âncora oficial. Base atual: {len(carteira)} oportunidades, "
+        f"{total_municipios_carteira} municípios e {total_ufs_carteira} UFs. "
+        "Com camada granular, o Censitário refina o hex; sem ela, usa fallback municipal/M1."
     )
 
     residual_disponivel = _has_residual_metrics(carteira)
     ufs_disponiveis = sorted(carteira["uf"].dropna().unique().tolist())
     municipios_disponiveis = sorted(carteira["nome_municipio"].dropna().unique().tolist())
 
-    fc1, fc2, fc3, fc4, fc5 = st.columns([1.4, 2.2, 1.2, 1.8, 1.8])
+    fc1, fc2, fc3 = st.columns([1.4, 2.4, 1.2])
     with fc1:
         ufs_sel = st.multiselect(
             "UF",
@@ -1628,27 +1604,30 @@ def render_carteira_expansao(
             default=prioridades_opcoes,
             key="carteira_prior",
         )
-    with fc4:
-        if residual_disponivel and "quartil_oportunidade_residual" in carteira.columns:
-            quartis_opcoes = sorted(carteira["quartil_oportunidade_residual"].dropna().unique().tolist())
-            quartis_sel = st.multiselect(
-                "Quartil residual",
-                options=quartis_opcoes,
-                default=quartis_opcoes,
-                key="carteira_quartil_residual",
-            )
-        else:
-            quartis_sel = []
-    with fc5:
-        if residual_disponivel:
-            ordenacao = st.selectbox(
-                "Ordenacao",
-                options=["M1 oficial", "Oportunidade residual"],
-                index=0,
-                key="carteira_ordenacao",
-            )
-        else:
-            ordenacao = "M1 oficial"
+
+    with st.expander("Opções avançadas", expanded=False):
+        adv1, adv2 = st.columns(2)
+        with adv1:
+            if residual_disponivel and "quartil_oportunidade_residual" in carteira.columns:
+                quartis_opcoes = sorted(carteira["quartil_oportunidade_residual"].dropna().unique().tolist())
+                quartis_sel = st.multiselect(
+                    "Quartil residual",
+                    options=quartis_opcoes,
+                    default=quartis_opcoes,
+                    key="carteira_quartil_residual",
+                )
+            else:
+                quartis_sel = []
+        with adv2:
+            if residual_disponivel:
+                ordenacao = st.selectbox(
+                    "Ordenação",
+                    options=["M1 oficial", "Oportunidade residual"],
+                    index=0,
+                    key="carteira_ordenacao",
+                )
+            else:
+                ordenacao = "M1 oficial"
 
     view = carteira.copy()
     if ufs_sel:
@@ -1756,7 +1735,7 @@ def render_carteira_expansao(
         "modo_selecao_carteira": "Modo Hex",
         "rank_hex_intraurbano": "Rank Intraurbano",
         "score_setor_2022_calibrado": "Score Censo",
-        "score_expansao_hibrido": "Score Hibrido (apoio)",
+        "score_expansao_hibrido": "Score Híbrido (apoio)",
         "sam_fitness_potencial": "SAM Fitness",
         "oferta_efetiva_disponivel": "Oferta Residual",
         "score_oportunidade_residual": "Score Residual",
@@ -1776,7 +1755,7 @@ def render_carteira_expansao(
     tbl = view[[c for c in display_cols_order if c in view.columns]].rename(
         columns={k: v for k, v in display_cols_order.items() if k in view.columns}
     )
-    for col in ["Score M1", "Score Censo", "Score Hibrido (apoio)"]:
+    for col in ["Score M1", "Score Censo", "Score Híbrido (apoio)"]:
         if col in tbl.columns:
             tbl[col] = tbl[col].map(lambda v: f"{v:.1f}" if pd.notna(v) else "-")
     for col in ["Coverage %"]:
@@ -1821,11 +1800,10 @@ def render_carteira_expansao(
             """
             <div class="section-card">
                 <h4>Como usar esta carteira</h4>
-                <p><strong>Rank Brasil</strong>: ordem oficial do M1 para leitura executiva da carteira.</p>
-                <p><strong>Prioridade Alta</strong>: municipio no top 5 da UF ou top 50 nacional.</p>
-                <p><strong>Score M1</strong>: ancora oficial para decidir quais municipios entram na fila.</p>
-                <p><strong>Rank Intraurbano + Score Censo</strong>: ajudam a escolher o melhor ponto dentro da cidade.</p>
-                <p><strong>Motivo</strong>: resumo auditavel dos sinais que formam a prioridade.</p>
+                <p><strong>Rank Brasil + Score M1</strong>: âncora oficial de quais municípios entram na fila.</p>
+                <p><strong>Prioridade Alta</strong>: município no top 5 da UF ou top 50 nacional.</p>
+                <p><strong>Rank Intraurbano + Score Censo</strong>: escolhem o melhor ponto dentro da cidade.</p>
+                <p><strong>Motivo</strong>: resumo auditável dos sinais que formam a prioridade.</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1834,13 +1812,11 @@ def render_carteira_expansao(
         st.markdown(
             f"""
             <div class="section-card">
-                <h4>Restricoes e rastreabilidade</h4>
-                <p><strong>UFs cobertas</strong>: base nacional com {total_ufs_carteira} UFs e {total_municipios_carteira} municipios.</p>
-                <p><strong>Fallback municipal/M1</strong>: usado quando nao ha hex granular elegivel; hoje aparece em {ufs_com_fallback} UFs na carteira.</p>
-                <p><strong>Join A</strong>: confiavel; <strong>Join B</strong>: aceitavel com cautela.</p>
-                <p><strong>Join C</strong>: mantido na carteira apenas via fallback municipal/M1, sem usar o score local como ancora.</p>
-                <p><strong>Outlier espacial</strong>: fenomeno real, nao erro; ler contexto antes de agir.</p>
-                <p><strong>score_priorizacao</strong> M1 nao foi alterado e continua sendo a base da carteira.</p>
+                <h4>Restrições e rastreabilidade</h4>
+                <p><strong>UFs cobertas</strong>: base nacional com {total_ufs_carteira} UFs e {total_municipios_carteira} municípios.</p>
+                <p><strong>Fallback municipal/M1</strong>: usado sem hex granular elegível; hoje em {ufs_com_fallback} UFs.</p>
+                <p><strong>Join</strong>: A confiável, B com cautela, C só via fallback (sem âncora local).</p>
+                <p><strong>score_priorizacao</strong> do M1 não foi alterado e segue sendo a base.</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -1862,11 +1838,10 @@ def render_expansao_dominio(
         )
         return
 
-    st.markdown("#### Expansao de Dominio — Plano sequencial de ocupacao territorial")
+    st.markdown("#### Expansão de Domínio — Plano sequencial de ocupação territorial")
     st.caption(
-        "Camada paralela ao M1: transforma o ranking de hexes em sequencia de aberturas coordenadas "
-        "por cidade, priorizando residual fitness, cobertura espacial e protecao contra canibalizacao. "
-        "Nao substitui o M1, a carteira acionavel nem o plano de curto prazo."
+        "Transforma o ranking de hexes em sequência de aberturas por cidade. "
+        "Camada paralela: não substitui o M1, a carteira nem o plano de curto prazo."
     )
 
     ufs_disp = sorted(plano["uf"].dropna().unique().tolist())
@@ -1913,11 +1888,8 @@ def render_expansao_dominio(
         st.info("Nenhuma ancora no recorte selecionado.")
         return
 
-    st.markdown("##### Mapa de dominio — ancoras e clusters recomendados")
-    st.caption(
-        "Ancoras coloridas por ordem de abertura (cyan = primeira, azul = posterior). "
-        "Borda indica a tese estrategica. Pins Ultra e concorrentes como camada de contexto."
-    )
+    st.markdown("##### Mapa de domínio — âncoras e clusters recomendados")
+    st.caption("Pins Ultra e concorrentes como camada de contexto. Cores e bordas: ver legenda.")
     render_dominio_tese_legend()
     dominio_map, n_ancoras_mapa = build_dominio_map_figure(
         view,
@@ -1933,10 +1905,10 @@ def render_expansao_dominio(
         st.pydeck_chart(dominio_map, width="stretch", height=560)
 
     st.markdown("---")
-    st.markdown("##### Tabela operacional — sequencia de aberturas")
+    st.markdown("##### Tabela operacional — sequência de aberturas")
     st.caption(
-        "Ordenada por `rank_dominio_brasil`. "
-        "Cada linha e um hex ancora recomendado com ordem de abertura na cidade, tese estrategica e residual capturado estimado."
+        "Ordenada por `rank_dominio_brasil`. Cada linha é um hex âncora com ordem de "
+        "abertura na cidade, tese estratégica e residual capturado estimado."
     )
 
     display_cols = {
@@ -2002,34 +1974,19 @@ def render_expansao_dominio(
         st.dataframe(tbl.head(TABLE_ROW_LIMIT), width="stretch", hide_index=True, height=height_tbl)
 
     st.markdown("---")
-    note_cols = st.columns(2)
-    with note_cols[0]:
-        st.markdown(
-            """
-            <div class="section-card">
-                <h4>Como ler o plano de dominio</h4>
-                <p><strong>Ordem na Cidade</strong>: sequencia de abertura greedy por residual capturado.</p>
-                <p><strong>Residual Capturado</strong>: potencial incremental estimado para o hex ancora considerando decaimento espacial de 2 km.</p>
-                <p><strong>Dist. Ultra (m)</strong>: distancia da unidade Ultra mais proxima — piso de 1 km por guardrail.</p>
-                <p><strong>Tese</strong>: classificacao estrategica do hex ancora.</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    with note_cols[1]:
-        st.markdown(
-            """
-            <div class="section-card">
-                <h4>Teses de dominio</h4>
-                <p><strong>dominar_white_space</strong>: area sem oferta — captura rapida e baixo risco.</p>
-                <p><strong>abrir_com_disputa</strong>: concorrente presente — precisa de vantagem diferencial.</p>
-                <p><strong>proteger_corredor_ultra</strong>: entre 1-2 km de Ultra existente — fortalece marca.</p>
-                <p><strong>adensar_cluster</strong>: segunda ancora ou mais no cluster — maior cobertura local.</p>
-                <p><strong>monitorar</strong>: oportunidade presente mas sem sinal forte o suficiente ainda.</p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    st.markdown(
+        """
+        <div class="section-card">
+            <h4>Teses de domínio</h4>
+            <p><strong>dominar_white_space</strong>: área sem oferta — captura rápida e baixo risco.</p>
+            <p><strong>abrir_com_disputa</strong>: concorrente presente — precisa de vantagem diferencial.</p>
+            <p><strong>proteger_corredor_ultra</strong>: entre 1-2 km de Ultra existente — fortalece marca.</p>
+            <p><strong>adensar_cluster</strong>: segunda âncora ou mais no cluster — maior cobertura local.</p>
+            <p><strong>monitorar</strong>: oportunidade presente, mas sem sinal forte o suficiente ainda.</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame | None = None) -> None:
@@ -2056,11 +2013,11 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
         else 0
     )
 
-    st.markdown("#### Plano de Expansao — Curto Prazo")
+    st.markdown("#### Plano de Expansão — Curto Prazo")
     st.caption(
         f"Shortlist executiva: Top 50 Brasil + Top 10 por UF ({len(plano)} oportunidades, "
-        f"{total_municipios_plano} municipios, {total_ufs_plano} UFs). "
-        "Nivel Estrategico = top 20 Brasil | Alta = top 21-50 | Tatica = top 10 UF fora do top 50."
+        f"{total_municipios_plano} municípios, {total_ufs_plano} UFs). "
+        "Estratégico = top 20 Brasil | Alta = top 21-50 | Tática = top 10 UF fora do top 50."
     )
 
     residual_disponivel = _has_residual_metrics(plano)
@@ -2223,10 +2180,10 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
             """
             <div class="section-card">
                 <h4>Como usar o Plano</h4>
-                <p><strong>Estrategico</strong>: top 20 Brasil — decisao imediata da diretoria.</p>
-                <p><strong>Alta</strong>: top 21-50 Brasil — prospecao prioritaria no trimestre.</p>
-                <p><strong>Tatica</strong>: top 10 por UF fora do top 50 — pipeline regional.</p>
-                <p><strong>Status</strong>: "Novo" indica que ainda nao entrou no pipeline de prospecao.</p>
+                <p><strong>Estratégico</strong>: top 20 Brasil — decisão imediata da diretoria.</p>
+                <p><strong>Alta</strong>: top 21-50 Brasil — prospecção prioritária no trimestre.</p>
+                <p><strong>Tática</strong>: top 10 por UF fora do top 50 — pipeline regional.</p>
+                <p><strong>Status</strong>: "Novo" = ainda não entrou no pipeline de prospecção.</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2235,12 +2192,11 @@ def render_plano_expansao(plano: pd.DataFrame, *, pop_cut_lookup: pd.DataFrame |
         st.markdown(
             f"""
             <div class="section-card">
-                <h4>Restricoes e rastreabilidade</h4>
-                <p><strong>score_priorizacao M1</strong> nao foi alterado — serve de ancora municipal.</p>
-                <p><strong>Score Censo</strong> refina o hex dentro do municipio aprovado pelo M1 quando ha camada granular.</p>
-                <p><strong>Fallback municipal/M1</strong>: mantem a shortlist nacional ativa mesmo sem camada local; hoje aparece em {ufs_com_fallback_plano} UFs do plano.</p>
-                <p><strong>Outlier espacial</strong>: fenomeno real; ler contexto antes de agir.</p>
-                <p><strong>UFs cobertas</strong>: base nacional com {total_ufs_plano} UFs e {total_municipios_plano} municipios.</p>
+                <h4>Restrições e rastreabilidade</h4>
+                <p><strong>score_priorizacao M1</strong> não foi alterado — é a âncora municipal.</p>
+                <p><strong>Score Censo</strong> refina o hex no município aprovado quando há camada granular.</p>
+                <p><strong>Fallback municipal/M1</strong>: mantém a shortlist ativa sem camada local; hoje em {ufs_com_fallback_plano} UFs.</p>
+                <p><strong>UFs cobertas</strong>: base nacional com {total_ufs_plano} UFs e {total_municipios_plano} municípios.</p>
             </div>
             """,
             unsafe_allow_html=True,
@@ -2258,20 +2214,20 @@ def _render_unified_legend(
     # esta ligado (DV-4, aprovado por Felipe 2026-06-10), coerente com o mapa.
     _show_pop_cut = "descartados_5k" in enabled_overlays
     if color_mode == "m1":
-        render_score_bands_legend("Score M1 (score_priorizacao)")
+        render_score_bands_legend("Score M1")
         render_geographic_source_legend()
         if _show_pop_cut:
             render_pop_cut_legend()
     elif color_mode == "hibrido":
-        render_score_bands_legend("Score Hibrido (score_expansao_hibrido)")
+        render_score_bands_legend("Score Híbrido")
         if _show_pop_cut:
             render_pop_cut_legend()
     elif color_mode == "censitario":
-        render_score_bands_legend("Score Censitario (score_setor_2022_calibrado)")
+        render_score_bands_legend("Score Censitário")
         if _show_pop_cut:
             render_pop_cut_legend()
     elif color_mode == "residual":
-        render_score_bands_legend("Score Residual (score_oportunidade_residual)")
+        render_score_bands_legend("Score Residual")
         if _show_pop_cut:
             render_pop_cut_legend()
     elif color_mode == "dominio":
@@ -3371,8 +3327,8 @@ def render_viabilidade_ponto(
     recalcula score, carteira, plano nem artefatos oficiais.
     """
     st.caption(
-        "Stress-test de viabilidade de um imovel real. A demanda e PREMISSA do operador, "
-        "nunca prevista pela geografia. Nao altera M1, carteira, plano ou artefatos oficiais."
+        "Stress-test de viabilidade de um imóvel real. "
+        "Não altera M1, carteira, plano ou artefatos oficiais."
     )
 
     # --- Secao 1: localizacao do imovel (captura de ponto, 100% offline) ---
@@ -3554,7 +3510,7 @@ def render_viabilidade_ponto(
     )
 
     # --- Secao 4: cards do cenario pedido ---
-    st.markdown("##### Viabilidade no cenario pedido")
+    st.markdown("##### Viabilidade no cenário pedido")
     m1, m2c, m3, m4 = st.columns(4)
     breakeven = result.alunos_breakeven
     m1.metric(
@@ -3583,9 +3539,7 @@ def render_viabilidade_ponto(
     )
 
     # --- Secao 5: faixa de alunos por densidade (curva m2->densidade; NAO geografica) ---
-    st.markdown(
-        "##### Faixa de alunos plausivel pela metragem (comparaveis, nao pela localizacao)"
-    )
+    st.markdown("##### Faixa de alunos pela metragem")
     if (
         result.faixa_alunos_p50 is not None
         and result.n_comparaveis is not None
@@ -3626,7 +3580,7 @@ def render_viabilidade_ponto(
         st.caption("Catchment indisponivel (base setorial ausente para o municipio).")
 
     # --- Secao 7: grade de sensibilidade (alunos x aluguel) ---
-    st.markdown("##### Sensibilidade demanda x aluguel")
+    st.markdown("##### Sensibilidade demanda × aluguel")
     grade = result.grade_sensibilidade
     if grade is not None and not grade.empty:
         pivot = grade.pivot_table(
@@ -3644,7 +3598,7 @@ def render_viabilidade_ponto(
         st.info("Grade de sensibilidade indisponivel.")
 
     # --- Secao 8: graficos financeiros (projecao 60 meses) ---
-    st.markdown("##### Projecao financeira (60 meses)")
+    st.markdown("##### Projeção financeira (60 meses)")
 
     _serie = gerar_serie_mensal(
         result.alunos_balcao_premissa,
@@ -4038,10 +3992,10 @@ def render_mapa_territorial(
     multihex_ids: list[str] = list(st.session_state["multihex_cenario"])
 
     st.markdown("#### Mapa Territorial Unificado")
+    st.caption("Escolha o modo de cor e os overlays.")
     st.caption(
-        "Selecione o modo de cor e os overlays desejados. "
-        "Camadas visuais nao alteram score, ranking, carteira nem artefatos oficiais do M1."
-        " Dica: filtre por municipio na barra lateral para ver o recorte com densidade total."
+        "Dica: filtre por município para ver o recorte com densidade total. "
+        "As camadas visuais não alteram score, ranking, carteira nem artefatos do M1."
     )
 
     ctrl_col1, ctrl_col2 = st.columns([1.6, 2.4])
@@ -4219,12 +4173,13 @@ def render_mapa_territorial(
     if city_summary is not None:
         st.markdown("---")
         st.markdown("#### Detalhamento territorial")
+        st.markdown("**Leitura territorial**")
         with st.expander("Analise Territorial", expanded=False):
             render_analise_territorial(df, city_summary)
-        with st.expander("Ranking de Priorizacao", expanded=False):
+        with st.expander("Ranking de Priorização", expanded=False):
             render_ranking_priorizacao(df)
         if "score_expansao_hibrido" in df.columns and df["score_expansao_hibrido"].notna().any():
-            with st.expander("Camada Hibrida — Detalhe", expanded=False):
+            with st.expander("Camada Híbrida — Detalhe", expanded=False):
                 render_modelo_hibrido_v2(
                     df,
                     selected_ufs=selected_ufs,
@@ -4236,6 +4191,7 @@ def render_mapa_territorial(
                     search_hex_id=search_hex_id,
                 )
         effective_pin = click_coord or search_pin
+        st.markdown("**Análise de ponto**")
         with st.expander(
             "Analise Pontual de Entorno",
             expanded=bool(multihex_ids) or effective_pin is not None,
@@ -4249,7 +4205,7 @@ def render_mapa_territorial(
                 multihex_ids=multihex_ids,
             )
         with st.expander(
-            "Relatorio Pontual Censitario",
+            "Relatório Pontual Censitário",
             expanded=effective_pin is not None,
         ):
             render_relatorio_pontual_censitario(
@@ -4261,7 +4217,7 @@ def render_mapa_territorial(
                 ultra_df=ultra_df,
             )
         with st.expander(
-            "Relatorio Municipal",
+            "Relatório Municipal",
             expanded=False,
         ):
             render_relatorio_municipal_expander(
