@@ -967,9 +967,20 @@ def render_hex_search_result(
         cols = st.columns(4)
         cols[0].metric("Score M1", format_score(cast(float, result.get("score_priorizacao"))))
         cols[1].metric("Rank Brasil", format_int(cast("int | float", result.get("rank_brasil"))) if result.get("rank_brasil") is not None else "-")
-        pop_val = result.get("pop_total_setor_2022") or result.get("pop_total") or result.get("populacao_proxy")
+        # Primeiro valor real da cascata: pula None E NaN (litoral BLK-FIX-06 tem hex
+        # costeiro sem setor censitario -> pop_total_setor_2022 = NaN; e NaN e "truthy",
+        # entao o antigo `A or B` nao caia no fallback municipal e ainda quebrava format_int).
+        pop_val = next(
+            (v for v in (result.get("pop_total_setor_2022"), result.get("pop_total"), result.get("populacao_proxy"))
+             if v is not None and not pd.isna(v)),
+            None,
+        )
         cols[2].metric("Populacao", format_int(pop_val) if pop_val is not None else "-")
-        renda_val = result.get("renda_per_capita_setor_2022_calibrada") or result.get("renda_per_capita")
+        renda_val = next(
+            (v for v in (result.get("renda_per_capita_setor_2022_calibrada"), result.get("renda_per_capita"))
+             if v is not None and not pd.isna(v)),
+            None,
+        )
         cols[3].metric("Renda per capita", f"R$ {format_int(renda_val)}" if renda_val is not None else "-")
 
         detail_cols = st.columns(3)
