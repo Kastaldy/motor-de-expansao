@@ -121,7 +121,7 @@ def test_analisar_pdf_carimba_consumidor(client: TestClient, monkeypatch) -> Non
         return b"%PDF-1.4 fake"  # bytes sinteticos: nenhum PDF real em disco (anti-PII)
 
     monkeypatch.setattr(
-        "motor_expansao.dashboard.censo_report.gerar_pdf_relatorio_pontual_censitario", _spy
+        "motor_expansao.dashboard.censo_report.gerar_pdf_relatorio_pontual_classico", _spy
     )
     resp = client.post("/api/v1/analisar?formato=pdf", json=AGUAS_DA_PRATA, headers=AUTH)
     assert resp.status_code == 200, resp.text
@@ -142,7 +142,7 @@ def test_analisar_pdf_solicitante_none_fallback(monkeypatch) -> None:
         return b"%PDF-1.4 fake"
 
     monkeypatch.setattr(
-        "motor_expansao.dashboard.censo_report.gerar_pdf_relatorio_pontual_censitario", _spy
+        "motor_expansao.dashboard.censo_report.gerar_pdf_relatorio_pontual_classico", _spy
     )
     out = service.gerar_pdf_ponto(
         AGUAS_DA_PRATA["lat"], AGUAS_DA_PRATA["lng"], None, get_settings(), rotulo=None

@@ -261,7 +261,7 @@ def gerar_pdf_ponto(
         RAIO_CENSITARIO_DEFAULT_KM,
         analisar_ponto_censitario_setores,
     )
-    from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_censitario
+    from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_classico
 
     _uf, _cod, setores_df = _resolver_e_carregar(lat, lng, settings)
     comp_df, ultra_df = _competitors_ultra(settings)
@@ -303,7 +303,10 @@ def gerar_pdf_ponto(
             mapas = None
 
     residual = _residual_do_ponto(lat, lng, settings)
-    return gerar_pdf_relatorio_pontual_censitario(
+    # Variante "Apresentacao Classica Ultra" (BLK-EST-05): a API/bot espelha o
+    # MESMO modelo que o dashboard passou a gerar por padrao (pages.py usa
+    # template="classico"). Drop-in: mesma assinatura do gerador recente.
+    return gerar_pdf_relatorio_pontual_classico(
         result, mapas, residual=residual, ultra_dir=ultra_dir,
         solicitante=consumidor, rotulo=rotulo,
     )
