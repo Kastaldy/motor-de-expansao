@@ -2,60 +2,62 @@
 
 ## Bloco atual
 
-ID: BLK-UI-11
-Nome: Aprimoramento estético e clareza de conteúdo do dashboard (caminho de produção)
-Status: aguardando QA
-Tipo: feature (visualização/UX; READ-ONLY sobre M1)
-Criticidade: Alta (confirmada — Block Orchestrator, 2026-06-29)
-Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA — gate] → Builder → QA
-Skill atual: QA/Quality Analyzer (concluído — APROVADO)
-Próxima Skill: Fechamento / Housekeeping (ciclo aprovado)
+ID: BLK-TP-05
+Nome: Re-teste honesto do elo demanda→captura (LOO vs baseline)
+Status: aprovado (QA — 2026-06-30)
+Tipo: modelagem/análise (READ-ONLY sobre o M1)
+Criticidade: alta
+Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
+Skill atual: QA/Quality Analyzer (concluído — APROVADO; handoff em context/handoff.md + snapshot 20260630-153845-qa.md)
+Próxima Skill: Fechamento manual (move backlog→completed via scripts/housekeeping_move_block.py + commit pelo humano)
 
-## Gate humano
-APROVADO por Vinicius em 2026-06-29 (todos QW + Médio + Viabilidade; G1 subset seguro;
-E5/M3 em components.py autorizado).
+## Veredito do QA (2026-06-30)
+APROVADO. GO honesto reproduzido independentemente do parquet real: R²_oof_log=+0,5750,
+IC95 [+0,5576, +0,5959], n=5.341, zeros=11.234, alpha=10, kfold_5x5. Auditoria do GO honesto OK
+(R² in-sample só rotulado; n_acad_parceiras excluído do modelo principal; métrica OOF sem
+vazamento vs baseline da média; 6 confounds na nota; sem reabertura da Camada 2/Huff).
+Suíte full: 1117 passed, 1 skipped, 0 failed (-n auto, sem bug de xdist). ruff (escopo+repo) /
+mypy / import streamlit_app limpos. READ-ONLY M1 confirmado; pacote disjunto (DEC-012);
+anti-PII por construção. Housekeeping verificado pré-fechamento (helper sadio, bloco íntegro no
+backlog linha 953). Nenhum commit feito (fechamento humano).
 
-## Resultado do Builder
-Todos os IDs aprovados implementados (G1-G6, S1-S3, M1-M5, E1-E5, D1-D2, C1-C4, V1-V3).
-Validações: ruff OK, mypy OK, import OK, 211 passed em test_streamlit_app.py (serial).
-Nenhum assert de teste precisou ser atualizado. Detalhe em context/handoff.md.
-
-## Resultado do QA (gate único) — APROVADO (2026-06-29)
-- Suíte FULL: 1107 passed, 1 skipped, 0 failed (serial `-p no:xdist`, exit 0).
-- ruff: All checks passed. mypy: Success (12 files). import streamlit_app: ok.
-- Auditoria de guardrails por git diff: só CSS/texto/markdown/layout + title=/labels de figuras.
-  ZERO mudança em lógica/dados/score/pesos/escrita de parquet/contratos Blocos 4–6/rede.
-- Tokens travados (#19B7FF, position:sticky, DASHBOARD_TAB_LABELS, tooltip "Score Censitario 2022:",
-  substring "Analise", rótulos de tabela travados): preservados.
-- Branch sem commit: mudanças do Builder estão na working tree (commitar por path no fechamento,
-  excluindo paths pré-sujos _metadata.json/_report.md).
-- Detalhe completo em context/handoff.md e context/handoff/20260629-133645-qa.md.
+## Resultado do Builder (2026-06-30)
+- VEREDITO REAL = **GO** (R²_oof_log=+0,5750; IC95 [+0,5576, +0,5959]; n=5.341; alpha=10; kfold_5x5).
+- Validações: pytest 18 passed/0 failed/0 skipped (test_backtest_tp05 + test_demanda_revelada_ingestao);
+  ruff 0 erros; mypy 0 erros; import streamlit_app ok. Relatório real gerado em
+  data/analysis/backtest_tp05.md (gitignored).
+- READ-ONLY sobre o M1 mantido; pacote disjunto; anti-PII por construção. Reabertura da Camada 2
+  (Huff) é gate humano, FORA deste bloco.
 
 ## Objetivo
-Aprimorar a estética das telas do dashboard Streamlit e simplificar/clarificar o conteúdo
-mostrado nas 4 abas (Visão Executiva, Mapa Territorial, Expansão de Domínio, Carteira e Plano),
-no caminho de produção atual. Polimento geral: o Planner propõe os ajustes; o humano aprova no gate.
+Re-testar a regressão/Huff `alunos ~ demanda + dist_concorrente + concorrência` com **demanda
+observada** (camada BLK-TP-01, não imputada), usando **LOO/k-fold repetido vs baseline da média**
+(DEC-008; proibido R² in-sample). Reportar R²_LOO vs baseline com intervalos + flag de extrapolação
+e emitir veredito GO/NO-GO honesto. Re-teste do que a DEC-009 marcou como NO-GO com demanda imputada.
+NÃO altera score/pesos/artefatos M1.
 
-## Decisões de produto (Vinicius, 2026-06-24)
-- Superfície: Dashboard Streamlit (as 4 abas).
-- Escopo: polimento geral (Planner levanta/propõe; gate humano aprova antes do Builder).
-
-## Tiering de modelo (Passo 4) — Alta (provisório)
+## Tiering de modelo (Passo 4) — Alta
 - Block Orchestrator: sonnet
 - Planner: opus
 - Builder: opus
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-UI-11 (criada a partir de main @ cf9939f).
+ciclo/BLK-TP-05 (criada a partir de main @ c99bbff, escolha do humano: base = main limpo).
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
-- data/outputs/setores_censitarios_2022_geo/_metadata.json (M)
+- data/raw/ibge/malha_brasil.geojson (D), data/raw/ibge/malha_uf_brasil.geojson (D)
 - data/outputs/setores_censitarios_2022_geo/_report.md (??)
+- scripts/backtest_smartfit_scores.py (??)
 
-## ClickUp
-- Tarefa a criar na lista "Motor de Expansão" (servidor MCP estava desconectado na abertura; criar ao reconectar).
+## Dependência
+- BLK-TP-01 (camada `data/staging/demanda_revelada_h3.parquet`) — concluído e merged.
 
 ## Fora de escopo
-- score/pesos/artefatos M1; lógica de cálculo (`build_map_figure` etc.); contratos de performance
-  Blocos 4–6; dependência de API ao vivo nova; o PoC BLK-UI-10 (trilha separada).
+- score/pesos/artefatos M1; recalibrar M1; usar demanda como preditor geográfico de magnitude
+  (DEC-009); persistir PII; deploy VPS.
+
+## Guardrails
+- §5 (READ-ONLY M1); DEC-008 (LOO/k-fold vs baseline, banir R² in-sample, intervalos + flag de
+  extrapolação); DEC-009 (demanda = insumo observado, NUNCA preditor geográfico de magnitude);
+  DEC-012 (camada demanda revelada, anti-PII por construção, pacote disjunto).

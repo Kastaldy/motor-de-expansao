@@ -6075,3 +6075,61 @@ preservado; performance dos Blocos 4–6 não regredida.
 
 **Guardrail:** §5 (visualização não recalcula/altera M1) + preservar performance do dashboard.
 **Relaciona-se a:** BLK-UI-10 (PoC opt-in — distinto), BLK-EST-01..05 (estética do PDF — outra superfície).
+
+---
+
+### BLK-TP-05 — Re-teste honesto do elo demanda→captura (LOO vs baseline)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (modelagem; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem. |
+
+**Objetivo.** Re-testar a regressão/Huff `alunos ~ demanda + dist_concorrente + concorrência` agora com
+**demanda observada** (não imputada), usando **LOO/k-fold repetido vs baseline da média** (DEC-008;
+proibido R² in-sample). O protótipo deu Spearman demanda×alunos +0,75 e OLS R²_in-sample 0,45 — promissor,
+mas a validação séria é este bloco. É o re-teste honesto do que a DEC-009 marcou como NO-GO **com demanda
+imputada**: se passar no LOO, reabre (sob gate) a Camada de captura da epic BLK-DIM.
+
+**Critérios de aceite.** R²_LOO vs baseline reportado com intervalos + flag de extrapolação; veredito
+GO/NO-GO honesto; READ-ONLY M1.
+**Guardrail.** §5; DEC-008/DEC-009 (demanda como insumo observado, nunca preditor geográfico).
+
+**Resultado do ciclo (2026-06-30) — APROVADO pelo QA. Esteira: Block Orchestrator → Planner →
+[gate humano: A1–A8 aprovadas por Felipe em 2026-06-30] → Builder → QA (Opus 4.8).** Branch
+`ciclo/BLK-TP-05` a partir de `main` @ c99bbff (escolha do humano: base = main limpo, BLK-TP-02
+fica aguardando seu próprio merge).
+
+- **VEREDITO HONESTO = GO** (primeiro GO da trilha de modelagem demanda→captura). Diferente da
+  DEC-009, que marcou NO-GO com demanda **imputada**, aqui a demanda é **OBSERVADA** (`membros`,
+  camada BLK-TP-01). Reproduzido de forma independente pelo QA contra o parquet real.
+- **Números-chave** (k-fold repetido 5×5 vs baseline da média, `Ridge` alpha=10):
+  `R²_oof_log = +0,5750`, IC95 bootstrap [+0,5576, +0,5959] (não cruza zero) → GO (> `LIMIAR_R2_GO=0,05`
+  E IC_inf > 0). N modelado = **5.341** hexes (subset `alunos_parceiras > 0`); descartados zeros =
+  **11.234**; inválidos = 0; range alunos [1, 14.332]. R²_oof_alunos = +0,4218; pct_extrapolação = 0%.
+- **Decisões de modelagem (A1–A8, aprovadas no gate):** alvo `log1p(alunos_parceiras)` no subset >0;
+  features `[log1p(membros), log1p(dist_concorrente_lc_min_m), n_concorrente_lc]`; **`n_acad_parceiras`
+  EXCLUÍDO** do principal por circularidade (soma↔contagem; Spearman +0,94) — só em modelo de auditoria
+  rotulado, que sobe para R²_oof_log +0,6388 e evidencia o vazamento estrutural evitado; k-fold 5×5;
+  IC por bootstrap (≥500); limiar GO=0,05+IC; Huff/Camada 2 FORA do MVP.
+- **Honestidade auditada (DEC-008):** R² in-sample só como campo rotulado "apenas auditoria — NÃO usar
+  como desempenho", fora do gate; métrica de desempenho é out-of-fold sem vazamento treino→teste;
+  6 confounds na nota honesta (cobertura ~1%, concentração SP, ruído de coords ~1 km, viés de seleção
+  das parceiras, multicolinearidade membros↔alunos_parceiras, circularidade de n_acad_parceiras).
+- **Entregáveis:** `src/motor_expansao/demanda_revelada/backtest_tp05.py` (módulo novo, pacote disjunto
+  DEC-012; reusa `dimensionamento/` — `LIMIAR_R2_GO`/`ALPHA_GRID`/`_r2`/`_rmse`), 10 testes sintéticos
+  em `tests/unit/test_backtest_tp05.py`, exports em `demanda_revelada/__init__.py`, relatório
+  `data/analysis/backtest_tp05.md` (gitignored, regenerável via `__main__`).
+- **Validações (re-executadas pelo QA, sem bypass):** suíte FULL `1117 passed, 1 skipped, 0 failed`
+  (`-n auto`); subset 18 passed; ruff (escopo + repo) limpo; mypy 0 issues; `import streamlit_app` ok;
+  helper de housekeeping 10 passed.
+- **READ-ONLY M1 confirmado:** pesos `renda=0.40`/`pop=0.60`, `score_priorizacao`, artefatos oficiais
+  e parâmetros canônicos do §3 INALTERADOS; pacote `demanda_revelada/` não importa de `pipelines/m1`,
+  `censo_*`, `dashboard` nem `config.py` raiz; anti-PII por construção; fixture 100% sintética.
+- **Próximo passo (gate humano, fora deste bloco):** o GO honesto **habilita** — sob decisão explícita
+  de Felipe — a reabertura da Camada 2 (captura/Huff) da epic BLK-DIM. O Builder NÃO implementou a
+  reabertura; é decisão de produto/modelagem a registrar como DEC própria se Felipe optar por avançar.

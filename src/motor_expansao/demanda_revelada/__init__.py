@@ -7,6 +7,10 @@ A demanda é insumo OBSERVADO (DEC-009), NUNCA preditor geográfico de magnitude
 
 from __future__ import annotations
 
+from .backtest_tp05 import (
+    BacktestTP05Result,
+    backtest_demanda_captura,
+)
 from .contrato import (
     COLUNAS_PII_PROIBIDAS,
     CONTRATO_COLUNAS,
@@ -23,4 +27,6 @@ __all__ = [
     "COLUNAS_PII_PROIBIDAS",
     "VERSAO_CONTRATO",
     "H3_RES_CONTRATO",
+    "backtest_demanda_captura",
+    "BacktestTP05Result",
 ]
