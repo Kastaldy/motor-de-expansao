@@ -28,6 +28,13 @@ concorrentes/
 *.xlsx
 *.tmp.md
 data/outputs/_manifest.json
+# Malha geo de setores censitarios 2022 (artefato pesado ~1.2 GB; vai por scp, nao por git).
+# Os *.parquet ja sao ignorados acima; aqui pegamos o _report.md e demais nao-parquet,
+# preservando so o _metadata.json (marcador versionado do artefato).
+data/outputs/setores_censitarios_2022_geo/**
+!data/outputs/setores_censitarios_2022_geo/_metadata.json
+# Pasta de staging do duplo-aninhamento (caso o pipeline volte a materializar aqui).
+data/setores_censitarios_2022_geo/
 !tests/contracts/fixtures/*.html
 
 # Excecao (BLK-DIM-00, decisao D2): estrutura parametrica do simulador financeiro
