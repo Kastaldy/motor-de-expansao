@@ -950,26 +950,8 @@ extrapolação). Liga-se à DEC-009 (dimensionamento é a parte que funciona; co
 
 ---
 
-### BLK-TP-05 — Re-teste honesto do elo demanda→captura (LOO vs baseline)
+- BLK-TP-05 (concluído 2026-06-30) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (modelagem; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir. |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-TP-01**. |
-| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem. |
-
-**Objetivo.** Re-testar a regressão/Huff `alunos ~ demanda + dist_concorrente + concorrência` agora com
-**demanda observada** (não imputada), usando **LOO/k-fold repetido vs baseline da média** (DEC-008;
-proibido R² in-sample). O protótipo deu Spearman demanda×alunos +0,75 e OLS R²_in-sample 0,45 — promissor,
-mas a validação séria é este bloco. É o re-teste honesto do que a DEC-009 marcou como NO-GO **com demanda
-imputada**: se passar no LOO, reabre (sob gate) a Camada de captura da epic BLK-DIM.
-
-**Critérios de aceite.** R²_LOO vs baseline reportado com intervalos + flag de extrapolação; veredito
-GO/NO-GO honesto; READ-ONLY M1.
-**Guardrail.** §5; DEC-008/DEC-009 (demanda como insumo observado, nunca preditor geográfico).
 
 ---
 
