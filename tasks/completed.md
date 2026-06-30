@@ -6039,3 +6039,39 @@ Relatório Pontual intocado.
 
 **Critérios de aceite.** Relatório com correlação reproduzida + quadrantes; READ-ONLY M1; suíte verde.
 **Guardrail.** §5; DEC-001.
+
+---
+
+### BLK-UI-11 — Aprimoramento estético e clareza de conteúdo do dashboard (caminho de produção)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (a confirmar no Block Orchestrator). Camada de **visualização/UX**; **READ-ONLY sobre o M1**. Superfície ampla (as 4 abas) + **gate humano** para aprovar os ajustes propostos antes da execução. |
+| **Prioridade** | Alta (pedido de Vinicius, 2026-06-24). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — gate]` → Builder → QA. |
+| **Status** | **Pendente — em abertura** (`/run-cycle BLK-UI-11`). |
+| **Responsável sugerido** | Vini |
+| **Depende de** | — (consome o que já existe; não depende de novos dados). |
+
+**Contexto / objetivo:** aprimorar a **estética** das telas do dashboard Streamlit e **simplificar/clarificar
+o conteúdo mostrado** nas 4 abas (Visão Executiva, Mapa Territorial, Expansão de Domínio, Carteira e Plano),
+no **caminho de produção atual** (pydeck/abas existentes). **Polimento geral** (decisão de produto, Vinicius
+2026-06-24): o **Planner levanta e propõe** os ajustes concretos de layout, textos, legendas, hierarquia
+visual e redução de ruído/redundância; o **humano aprova no gate** antes do Builder.
+
+**Escopo permitido (display-only):** estilo/layout (CSS injetado, organização de containers, espaçamento,
+tipografia), textos/rótulos/legendas, ordem e densidade de informação, remoção de conteúdo redundante ou
+confuso, tooltips e mensagens de ajuda. **Zero** mudança em dados, score, ranking, carteira, plano ou
+qualquer função de cálculo do M1.
+
+**Fora de escopo:** score/pesos/artefatos M1; mudança em `build_map_figure`/lógica de cálculo; quebrar os
+contratos de performance dos Blocos 4–6 (carga lazy por UF, render lazy de abas, fonte de mapa enxuta);
+dependência de API ao vivo nova; o PoC de repaginação (**BLK-UI-10**, que é trilha separada opt-in atrás de
+flag — este bloco NÃO é PoC, é refino do caminho de produção).
+
+**Critérios de aceite:** as 4 abas seguem funcionais; melhorias de estética e clareza aplicadas conforme o
+plano aprovado no gate; suíte verde (ruff/mypy/pytest, incl. `test_streamlit_app.py`); READ-ONLY M1
+preservado; performance dos Blocos 4–6 não regredida.
+
+**Guardrail:** §5 (visualização não recalcula/altera M1) + preservar performance do dashboard.
+**Relaciona-se a:** BLK-UI-10 (PoC opt-in — distinto), BLK-EST-01..05 (estética do PDF — outra superfície).

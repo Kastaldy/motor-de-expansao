@@ -1353,6 +1353,21 @@ def _ciclo_cor(idx: int) -> tuple[int, int, int]:
     return _FRAME_CICLO[idx % len(_FRAME_CICLO)]
 
 
+def _tema_bicolor(ordinal: int) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """(primary, secondary) por pagina de CONTEUDO (ordinal >= 1), alternando o tom principal.
+
+    Pedido Vinicius (2026-06-29): as paginas alternam entre turquesa e magenta como cor
+    principal. Pagina impar -> turquesa primaria / magenta acento; par -> magenta primaria /
+    turquesa acento. Aplica-se SO ao chrome decorativo da pagina (faixa de titulo, moldura do
+    mapa e painel/cabecalho decorativo principal). Cores SEMANTICAS (zonas, faixas de score,
+    Ultra=turquesa / concorrente=magenta, laranja como 3o tom dos cards) NAO entram na troca.
+    READ-ONLY sobre o M1.
+    """
+    if ordinal % 2 == 1:
+        return ULTRA_TURQUESA, ULTRA_MAGENTA
+    return ULTRA_MAGENTA, ULTRA_TURQUESA
+
+
 def _rounded_panel(
     pdf: _UltraPDF,
     x: float,
@@ -1501,15 +1516,17 @@ def _cover_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes 
 
 
 def _cobertura_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
-                    assets: dict[str, bytes | None]) -> None:
+                    assets: dict[str, bytes | None], *,
+                    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+                    secondary: tuple[int, int, int] = ULTRA_MAGENTA) -> None:
     """Slide novo (FU1), logo apos a capa: visao geral do municipio inteiro com aprovados/
     reprovados/fora-do-municipio + bloco "REGIOES CONSIDERADAS" (quantas entram nas paginas
     seguintes e quantas ficaram de fora). READ-ONLY sobre o M1."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, f"Visao Geral do Municipio - {_local_label(result)}")
+    _draw_title_band(pdf, f"Visao Geral do Municipio - {_local_label(result)}", rgb=primary)
     _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
-                     border_rgb=_ciclo_cor(0))
+                     border_rgb=primary)
 
     n_aprov = int(result.get("n_aprovados", 0) or 0)
     n_muni = int(result.get("n_hex_municipio", 0) or 0)
@@ -1522,8 +1539,8 @@ def _cobertura_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     bloco_h = head_h + 12.0 + panel_h
     py0 = _centered_y(bloco_h)
 
-    # Headline: o NUMERO de regioes consideradas casa com a cor do CONTORNO do bloco.
-    cor_bloco = _ciclo_cor(1)
+    # Headline: o NUMERO de regioes consideradas casa com a cor do CONTORNO do bloco (acento).
+    cor_bloco = secondary
     _rounded_panel(pdf, px, py0, pw, head_h, border_rgb=cor_bloco)
     pdf.set_text_color(*cor_bloco)
     pdf.set_font("Helvetica", "B", 12)
@@ -1559,13 +1576,15 @@ def _cobertura_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
 
 
 def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
-                 assets: dict[str, bytes | None]) -> None:
+                 assets: dict[str, bytes | None], *,
+                 primary: tuple[int, int, int] = ULTRA_TURQUESA,
+                 secondary: tuple[int, int, int] = ULTRA_MAGENTA) -> None:
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, f"Resumo da Regiao - {_local_label(result)}")
-    # AJUSTE 1: contorno colorido por bloco, ciclo turquesa -> magenta -> laranja.
+    _draw_title_band(pdf, f"Resumo da Regiao - {_local_label(result)}", rgb=primary)
+    # Moldura do mapa acompanha o tom principal da pagina.
     _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
-                     border_rgb=_ciclo_cor(0))
+                     border_rgb=primary)
 
     px = 610.0
     pw = _PAGE_W - px - 36.0
@@ -1581,7 +1600,7 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
             ("Unidades Concorrentes", _format_number(result.get("n_concorrentes"), 0)),
             ("Espaco para academias", _format_number(result.get("espaco_para_academias"), 0)),
         ],
-        accent=ULTRA_MAGENTA, border_rgb=_ciclo_cor(1),
+        accent=secondary, border_rgb=secondary,
     )
     # Box "Como calculamos o espaco" (3o bloco: contorno laranja).
     _rounded_panel(pdf, px, y_end + 12, pw, box_h, border_rgb=_ciclo_cor(2))
@@ -1614,20 +1633,22 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
 
 
 def _score_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
-                assets: dict[str, bytes | None]) -> None:
+                assets: dict[str, bytes | None], *,
+                primary: tuple[int, int, int] = ULTRA_TURQUESA,
+                secondary: tuple[int, int, int] = ULTRA_MAGENTA) -> None:
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Score Censitario")
-    # AJUSTE 1: mapa = turquesa, legenda de score = magenta.
+    _draw_title_band(pdf, "Score Censitario", rgb=primary)
+    # Moldura do mapa = tom principal; painel de legenda = acento. Faixas de score INALTERADAS.
     _draw_framed_map(pdf, mapa, max_w=560.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
-                     border_rgb=_ciclo_cor(0))
+                     border_rgb=primary)
     # Legenda 4 faixas (D5) com cor representativa via RESIDUAL_SCORE_BANDS, em painel centrado.
     px = 626.0
     pw = _PAGE_W - px - 36.0
     panel_h = 34.0 + len(SCORE_FAIXAS_TEMPLATE) * 28.0 + 42.0
     py0 = _centered_y(panel_h)
-    _rounded_panel(pdf, px, py0, pw, panel_h, border_rgb=_ciclo_cor(1))
-    pdf.set_text_color(*ULTRA_MAGENTA)
+    _rounded_panel(pdf, px, py0, pw, panel_h, border_rgb=secondary)
+    pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_xy(px + 14, py0 + 16)
     pdf.cell(pw - 28, 16, _ascii("Potencial socioeconomico"))
@@ -1662,23 +1683,25 @@ def _score_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
 
 
 def _residual_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
-                   assets: dict[str, bytes | None]) -> None:
+                   assets: dict[str, bytes | None], *,
+                   primary: tuple[int, int, int] = ULTRA_TURQUESA,
+                   secondary: tuple[int, int, int] = ULTRA_MAGENTA) -> None:
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Residual Fitness")
-    # AJUSTE 1: mapa = turquesa, painel MERCADO = magenta.
+    _draw_title_band(pdf, "Residual Fitness", rgb=primary)
+    # Moldura do mapa = tom principal; painel MERCADO = acento.
     _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
-                     border_rgb=_ciclo_cor(0))
+                     border_rgb=primary)
     px = 610.0
     pw = _PAGE_W - px - 36.0
     panel_h = 230.0
     py0 = _centered_y(panel_h)
-    _rounded_panel(pdf, px, py0, pw, panel_h, border_rgb=_ciclo_cor(1))
-    pdf.set_text_color(*ULTRA_MAGENTA)
+    _rounded_panel(pdf, px, py0, pw, panel_h, border_rgb=secondary)
+    pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_xy(px + 14, py0 + 16)
     pdf.cell(pw - 28, 16, _ascii("MERCADO DISPONIVEL"))
-    pdf.set_text_color(*ULTRA_MAGENTA)
+    pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 34)
     pdf.set_xy(px + 14, py0 + 46)
     pdf.cell(pw - 28, 36, _ascii(f"{_format_number(result.get('mercado_disponivel_pessoas'), 0)}"))
@@ -1716,7 +1739,9 @@ _ZONA_TEXTOS = {
 
 
 def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
-                  assets: dict[str, bytes | None]) -> None:
+                  assets: dict[str, bytes | None], *,
+                  primary: tuple[int, int, int] = ULTRA_TURQUESA,
+                  secondary: tuple[int, int, int] = ULTRA_MAGENTA) -> None:
     """Pagina 5 — 3 estrategias de dominio.
 
     FU1: a zonificacao das 3 estrategias e GEOMETRICA (tercis de distancia ao centroide;
@@ -1725,10 +1750,10 @@ def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Expansao de Dominio")
-    # AJUSTE 1: mapa = turquesa, painel ESTRATEGIA = magenta.
+    _draw_title_band(pdf, "Expansao de Dominio", rgb=primary)
+    # Moldura do mapa = tom principal; painel ESTRATEGIA = acento. Cores de ZONA inalteradas.
     _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
-                     border_rgb=_ciclo_cor(0))
+                     border_rgb=primary)
     px = 610.0
     pw = _PAGE_W - px - 36.0
 
@@ -1736,8 +1761,8 @@ def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     # Painel ESTRATEGIA centrado verticalmente.
     panel_h = 60.0 + max(1, len(zonas_geo)) * 64.0
     py0 = _centered_y(panel_h)
-    _rounded_panel(pdf, px, py0, pw, panel_h, border_rgb=_ciclo_cor(1))
-    pdf.set_text_color(*ULTRA_MAGENTA)
+    _rounded_panel(pdf, px, py0, pw, panel_h, border_rgb=secondary)
+    pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_xy(px + 14, py0 + 16)
     pdf.cell(pw - 28, 18, _ascii("ESTRATEGIA"))
@@ -1784,7 +1809,8 @@ def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
-def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None]) -> None:
+def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None], *,
+                  primary: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
     """Pagina 6 — Bairros por Zona (BLK-RELMUN-02 / resolve D9).
 
     Quando ha bairros REAIS resolvidos (`result["bairros_por_zona"]`, fonte IBGE `NM_BAIRRO`
@@ -1795,7 +1821,7 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
     """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Bairros por Zona")
+    _draw_title_band(pdf, "Bairros por Zona", rgb=primary)
 
     bairros_por_zona = result.get("bairros_por_zona") or []
     tem_bairros = any(z.get("bairros") for z in bairros_por_zona)
@@ -1878,10 +1904,11 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
-def _sintese_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None]) -> None:
+def _sintese_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None], *,
+                  primary: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Sintese - Diagnostico & Recomendacao")
+    _draw_title_band(pdf, "Sintese - Diagnostico & Recomendacao", rgb=primary)
     cards = [
         (
             ULTRA_MAGENTA,
@@ -1927,11 +1954,12 @@ def _sintese_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
-def _espaco_academias_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None]) -> None:
+def _espaco_academias_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes | None], *,
+                           primary: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
     """Pagina 8 — big numbers + breakdown de concorrentes por rede (D8) + carimbo de versao."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Espaco e academias")
+    _draw_title_band(pdf, "Espaco e academias", rgb=primary)
     big = [
         (ULTRA_TURQUESA, _format_number(result.get("n_ultra"), 0), "Unidades Ultra mapeadas"),
         (ULTRA_MAGENTA, _format_number(result.get("n_concorrentes"), 0), "Unidades concorrentes mapeadas"),
@@ -2023,16 +2051,26 @@ def gerar_pdf_relatorio_municipal(
     if versao:
         municipio_result = {**municipio_result, "versao_contrato": versao}
 
+    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta).
+    p1, s1 = _tema_bicolor(1)
+    p2, s2 = _tema_bicolor(2)
+    p3, s3 = _tema_bicolor(3)
+    p4, s4 = _tema_bicolor(4)
+    p5, s5 = _tema_bicolor(5)
+    p6, _ = _tema_bicolor(6)
+    p7, _ = _tema_bicolor(7)
+    p8, _ = _tema_bicolor(8)
+
     pdf = _UltraPDF()
     _cover_page(pdf, municipio_result, assets)
-    _cobertura_page(pdf, municipio_result, mapas.get("cobertura"), assets)
-    _resumo_page(pdf, municipio_result, mapas.get("resumo"), assets)
-    _score_page(pdf, municipio_result, mapas.get("score"), assets)
-    _residual_page(pdf, municipio_result, mapas.get("residual"), assets)
-    _dominio_page(pdf, municipio_result, mapas.get("dominio"), assets)
-    _bairros_page(pdf, municipio_result, assets)
-    _sintese_page(pdf, municipio_result, assets)
-    _espaco_academias_page(pdf, municipio_result, assets)
+    _cobertura_page(pdf, municipio_result, mapas.get("cobertura"), assets, primary=p1, secondary=s1)
+    _resumo_page(pdf, municipio_result, mapas.get("resumo"), assets, primary=p2, secondary=s2)
+    _score_page(pdf, municipio_result, mapas.get("score"), assets, primary=p3, secondary=s3)
+    _residual_page(pdf, municipio_result, mapas.get("residual"), assets, primary=p4, secondary=s4)
+    _dominio_page(pdf, municipio_result, mapas.get("dominio"), assets, primary=p5, secondary=s5)
+    _bairros_page(pdf, municipio_result, assets, primary=p6)
+    _sintese_page(pdf, municipio_result, assets, primary=p7)
+    _espaco_academias_page(pdf, municipio_result, assets, primary=p8)
 
     wm_text = _watermark_text(solicitante)
     for page_number in range(1, pdf.pages_count + 1):

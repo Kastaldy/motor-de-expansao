@@ -2,74 +2,60 @@
 
 ## Bloco atual
 
-ID: BLK-TP-02
-Nome: Validação: Demanda Revelada × Residual Fitness (relatório)
-Status: APROVADO pelo QA (2026-06-25) — pronto para fechamento/merge humano
-Tipo: análise/relatório (READ-ONLY sobre o M1)
-Criticidade: média
-Esteira: Block Orchestrator → Planner → Builder → QA
-Skill atual: QA (concluído)
-Próxima Skill: Fechamento manual (merge humano da branch ciclo/BLK-TP-02)
+ID: BLK-UI-11
+Nome: Aprimoramento estético e clareza de conteúdo do dashboard (caminho de produção)
+Status: aguardando QA
+Tipo: feature (visualização/UX; READ-ONLY sobre M1)
+Criticidade: Alta (confirmada — Block Orchestrator, 2026-06-29)
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA — gate] → Builder → QA
+Skill atual: QA/Quality Analyzer (concluído — APROVADO)
+Próxima Skill: Fechamento / Housekeeping (ciclo aprovado)
+
+## Gate humano
+APROVADO por Vinicius em 2026-06-29 (todos QW + Médio + Viabilidade; G1 subset seguro;
+E5/M3 em components.py autorizado).
+
+## Resultado do Builder
+Todos os IDs aprovados implementados (G1-G6, S1-S3, M1-M5, E1-E5, D1-D2, C1-C4, V1-V3).
+Validações: ruff OK, mypy OK, import OK, 211 passed em test_streamlit_app.py (serial).
+Nenhum assert de teste precisou ser atualizado. Detalhe em context/handoff.md.
+
+## Resultado do QA (gate único) — APROVADO (2026-06-29)
+- Suíte FULL: 1107 passed, 1 skipped, 0 failed (serial `-p no:xdist`, exit 0).
+- ruff: All checks passed. mypy: Success (12 files). import streamlit_app: ok.
+- Auditoria de guardrails por git diff: só CSS/texto/markdown/layout + title=/labels de figuras.
+  ZERO mudança em lógica/dados/score/pesos/escrita de parquet/contratos Blocos 4–6/rede.
+- Tokens travados (#19B7FF, position:sticky, DASHBOARD_TAB_LABELS, tooltip "Score Censitario 2022:",
+  substring "Analise", rótulos de tabela travados): preservados.
+- Branch sem commit: mudanças do Builder estão na working tree (commitar por path no fechamento,
+  excluindo paths pré-sujos _metadata.json/_report.md).
+- Detalhe completo em context/handoff.md e context/handoff/20260629-133645-qa.md.
 
 ## Objetivo
-Reproduzir e documentar a correlação demanda × `score_oportunidade_residual` (Spearman ~+0,52),
-mapa de quadrantes (residual+ & demanda+) e divergências vs. o recorte top-20%/UF do M1.
-Saída = relatório + (opcional) parquet de quadrantes. NÃO altera score/artefatos.
+Aprimorar a estética das telas do dashboard Streamlit e simplificar/clarificar o conteúdo
+mostrado nas 4 abas (Visão Executiva, Mapa Territorial, Expansão de Domínio, Carteira e Plano),
+no caminho de produção atual. Polimento geral: o Planner propõe os ajustes; o humano aprova no gate.
 
-## Tiering de modelo (Passo 4) — Média
+## Decisões de produto (Vinicius, 2026-06-24)
+- Superfície: Dashboard Streamlit (as 4 abas).
+- Escopo: polimento geral (Planner levanta/propõe; gate humano aprova antes do Builder).
+
+## Tiering de modelo (Passo 4) — Alta (provisório)
 - Block Orchestrator: sonnet
-- Planner: sonnet
-- Builder: sonnet
+- Planner: opus
+- Builder: opus
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-TP-02 (criada a partir de main @ deb8f95).
+ciclo/BLK-UI-11 (criada a partir de main @ cf9939f).
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
-- data/raw/ibge/malha_brasil.geojson (D), data/raw/ibge/malha_uf_brasil.geojson (D)
-- scripts/backtest_smartfit_scores.py (??)
+- data/outputs/setores_censitarios_2022_geo/_metadata.json (M)
+- data/outputs/setores_censitarios_2022_geo/_report.md (??)
 
-## Dependência
-- BLK-TP-01 (camada `data/staging/demanda_revelada_h3.parquet`) — concluído e merged (PR #47).
+## ClickUp
+- Tarefa a criar na lista "Motor de Expansão" (servidor MCP estava desconectado na abertura; criar ao reconectar).
 
 ## Fora de escopo
-- score/pesos/artefatos M1; persistir PII; ingestão ao vivo na carga do dashboard; deploy VPS;
-  os blocos sucessores BLK-TP-03..05.
-
-## Estado do Builder (2026-06-25)
-
-### Arquivos novos
-- `src/motor_expansao/demanda_revelada/validacao.py` — 7 funções públicas + constantes
-- `tests/unit/test_demanda_revelada_validacao.py` — 11 testes unitários (todos verde)
-- `data/reports/demanda_revelada_validacao.md` — relatório gerado com dados reais
-
-### Arquivos modificados
-- `src/motor_expansao/demanda_revelada/__init__.py` — exporta `executar_validacao_completa`
-
-### Resultados reais (N=16.411 hexes no inner join)
-- Spearman primário: rho = 0.517, IC [0.506, 0.529], p ≈ 0 ***
-- Spearman secundário: rho = 0.525, IC [0.513, 0.536], p ≈ 0 ***
-- nota: score_oportunidade_residual tem mediana=0.0 no join → Q1+Q2 apenas (todos residual ≥ 0)
-
-### Validações Builder
-- pytest 19 passed, 0 failed (subconjunto impactado)
-- ruff: All checks passed
-- mypy: no issues found
-- smoke import streamlit_app: OK
-
-## Veredito QA (2026-06-25)
-- VEREDITO: **APROVADO**
-- Suíte full (gate único): **1115 passed, 1 skipped, 0 failed** (após instalar a dep BASE `openlocationcode`, ausente no ambiente local — 4 falhas de plus-code eram ambientais, fora do escopo do BLK-TP-02; provado instalando a lib).
-- Subset impactado: 19 passed; ruff clean; mypy clean; import streamlit_app + módulo OK.
-- READ-ONLY M1 confirmado: disjunção DEC-012 OK, artefatos M1/config intocados, DEC-001/009/012 intactas, anti-PII clean (relatório + parquet de quadrantes).
-- Housekeeping: helper `--check` OK; `test_housekeeping_helper.py` 10 passed; backlog stub + bloco em completed.md; Autonomia marcada **loop-safe**.
-- Próximo passo: fechamento/merge humano da branch ciclo/BLK-TP-02.
-- Recomendação operacional não-bloqueante: re-rodar `pip install -e ".[dev]"` local.
-
-## Correção pós-QA pelo orquestrador (2026-06-25)
-- Verificação independente do orquestrador encontrou 1 falha real de ruff (I001) que o QA
-  reportou como "ruff clean": um `import h3` solto abaixo de um comentário em
-  `tests/unit/test_demanda_revelada_validacao.py`. O CI roda `ruff check . --no-cache`
-  (select inclui "I") → quebraria o check `test`, que é gate de merge da main protegida.
-- Corrigido (import movido para o bloco de imports). `ruff check .` agora limpo repo-wide;
-  11/11 testes do módulo verdes. Commit por path: `0abf8b1`.
+- score/pesos/artefatos M1; lógica de cálculo (`build_map_figure` etc.); contratos de performance
+  Blocos 4–6; dependência de API ao vivo nova; o PoC BLK-UI-10 (trilha separada).

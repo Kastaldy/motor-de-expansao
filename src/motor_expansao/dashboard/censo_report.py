@@ -99,9 +99,10 @@ _WATERMARK_MARGIN = 20.0
 _CLASSICO_MARGIN = 20.0
 _CLASSICO_CORNER_RADIUS = 16.0
 _CLASSICO_BAND_H = 58.0
-# Banda magenta de rodape full-width, levemente acima da marca d'agua (Q3, calibrado).
+# Banda magenta de rodape full-width, encostada na borda inferior da pagina
+# (offset 0 = flush-baixo; estava 13 pt acima e subia sobre o credito do rodape).
 _CLASSICO_MAGENTA_BANDA_H = 13.0
-_CLASSICO_MAGENTA_OFFSET = 13.0
+_CLASSICO_MAGENTA_OFFSET = 0.0
 # Meses por extenso (ASCII-safe) para a data de geracao e o mes/ano da capa classica.
 _MESES_PT = (
     "janeiro",
@@ -252,6 +253,20 @@ def _draw_full_page_background(
             pass
     pdf.set_fill_color(*solid_rgb)
     pdf.rect(0, 0, _PAGE_W, _PAGE_H, style="F")
+
+
+def _tema_bicolor(ordinal: int) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    """(primary, secondary) por pagina de CONTEUDO (ordinal >= 1), alternando o tom principal.
+
+    Pedido Vinicius (2026-06-29): as paginas devem alternar entre turquesa e magenta como cor
+    principal. Pagina impar -> turquesa primaria / magenta acento; par -> magenta primaria /
+    turquesa acento. Aplica-se SO ao chrome decorativo (faixa de titulo + cabecalho/acento
+    decorativo principal). Cores SEMANTICAS (Ultra=turquesa, concorrente=magenta nos bullets)
+    NAO entram nessa troca. READ-ONLY sobre o M1.
+    """
+    if ordinal % 2 == 1:
+        return ULTRA_TURQUESA, ULTRA_MAGENTA
+    return ULTRA_MAGENTA, ULTRA_TURQUESA
 
 
 def _draw_title_band(pdf: _UltraPDF, title: str, *, rgb: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
@@ -421,11 +436,12 @@ def _map_page(
     *,
     title: str,
     assets: dict[str, bytes | None],
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
 ) -> None:
-    """Pagina de mapa: fundo claro, faixa de titulo turquesa, mapa, rodape com atribuicao."""
+    """Pagina de mapa: fundo claro, faixa de titulo (tom da pagina), mapa, rodape com atribuicao."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, title)
+    _draw_title_band(pdf, title, rgb=primary)
     if png_bytes:
         _draw_map(pdf, png_bytes)
     else:
@@ -441,6 +457,9 @@ def _big_numbers_page(
     result: dict[str, Any],
     residual: dict[str, Any] | None,
     assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
 ) -> None:
     """(e) Big Numbers — grid 4x2 das 8 metricas. READ-ONLY; "n/d" auditavel.
 
@@ -449,7 +468,7 @@ def _big_numbers_page(
     """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Big Numbers")
+    _draw_title_band(pdf, "Big Numbers", rgb=primary)
 
     residual = residual or {}
     cards = [
@@ -470,7 +489,8 @@ def _big_numbers_page(
     cols, rows = 4, 2
     card_w = (_PAGE_W - 2 * margin_x - (cols - 1) * gap) / cols
     card_h = 156.0
-    accents = [ULTRA_TURQUESA, ULTRA_MAGENTA]
+    # Barras de destaque dos cards seguem o tom da pagina (primaria + acento).
+    accents = [primary, secondary]
 
     for index, (label, value) in enumerate(cards):
         col = index % cols
@@ -548,11 +568,14 @@ def _competitors_page(
     result: dict[str, Any],
     png_bytes: bytes | None,
     assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
 ) -> None:
     """(f) Concorrentes — mapa + lista textual das redes no raio (sem PII)."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Concorrentes")
+    _draw_title_band(pdf, "Concorrentes", rgb=primary)
 
     # Mapa de concorrentes a ESQUERDA (16:9: mapa + lista lado a lado).
     if png_bytes:
@@ -583,7 +606,7 @@ def _competitors_page(
     header = "Redes no raio de 1.5 km"
     if total > 10:
         header = f"{header} ({total} no total)"
-    pdf.set_text_color(*ULTRA_MAGENTA)
+    pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_xy(list_x, 70.0)
     pdf.cell(list_w, 18, _ascii(header))
@@ -735,8 +758,8 @@ def _classico_title_band(
     pdf.set_xy(_CLASSICO_MARGIN + 18.0, _CLASSICO_MARGIN + 18.0)
     pdf.cell(text_w, 22, _ascii(texto_banda))
 
-    # Titulo da secao ABAIXO da banda (cor de marca, sobre fundo claro).
-    pdf.set_text_color(*ULTRA_TURQUESA)
+    # Titulo da secao ABAIXO da banda (acompanha o tom da banda, sobre fundo claro).
+    pdf.set_text_color(*rgb)
     pdf.set_font("Helvetica", "B", 20)
     pdf.set_xy(_CLASSICO_MARGIN, _CLASSICO_MARGIN + _CLASSICO_BAND_H + 12.0)
     pdf.cell(band_w, 24, _ascii(titulo_secao))
@@ -793,11 +816,12 @@ def _classico_map_page(
     banda_texto: str,
     titulo_secao: str,
     assets: dict[str, bytes | None],
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
 ) -> None:
     """Pagina de mapa classica: fundo claro + banda classica + mapa (reuso) + rodape."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _classico_title_band(pdf, banda_texto, titulo_secao, assets)
+    _classico_title_band(pdf, banda_texto, titulo_secao, assets, rgb=primary)
     if png_bytes:
         _classico_draw_map(pdf, png_bytes)
     else:
@@ -815,11 +839,13 @@ def _classico_competitors_page(
     assets: dict[str, bytes | None],
     *,
     banda_texto: str,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
 ) -> None:
     """Concorrentes classica: banda classica + mapa a esquerda + lista a direita (reuso)."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _classico_title_band(pdf, banda_texto, "Concorrentes", assets)
+    _classico_title_band(pdf, banda_texto, "Concorrentes", assets, rgb=primary)
 
     # Mapa de concorrentes a ESQUERDA (abaixo da banda + titulo de secao).
     if png_bytes:
@@ -849,7 +875,7 @@ def _classico_competitors_page(
     header = "Redes no raio de 1.5 km"
     if total > 10:
         header = f"{header} ({total} no total)"
-    pdf.set_text_color(*ULTRA_MAGENTA)
+    pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_xy(list_x, 130.0)
     pdf.cell(list_w, 18, _ascii(header))
@@ -995,22 +1021,32 @@ def gerar_pdf_relatorio_pontual_classico(
     layers = dict(_normalize_mapas_by_key(mapas))
     banda_texto = _classico_banda_texto(result, rotulo)
 
+    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta).
+    p1, _ = _tema_bicolor(1)
+    p2, _ = _tema_bicolor(2)
+    p3, _ = _tema_bicolor(3)
+    p4, s4 = _tema_bicolor(4)
+    p5, s5 = _tema_bicolor(5)
+
     pdf = _UltraPDF()
     _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
     _classico_map_page(
         pdf, layers.get("densidade"), banda_texto=banda_texto,
-        titulo_secao="Populacao - Densidade", assets=assets,
+        titulo_secao="Populacao - Densidade", assets=assets, primary=p1,
     )
     _classico_map_page(
         pdf, layers.get("renda"), banda_texto=banda_texto,
-        titulo_secao="Renda per capita", assets=assets,
+        titulo_secao="Renda per capita", assets=assets, primary=p2,
     )
     _classico_map_page(
         pdf, layers.get("score"), banda_texto=banda_texto,
-        titulo_secao="Score censitario", assets=assets,
+        titulo_secao="Score censitario", assets=assets, primary=p3,
     )
-    _classico_competitors_page(pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto)
-    _big_numbers_page(pdf, result, residual, assets)
+    _classico_competitors_page(
+        pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto,
+        primary=p4, secondary=s4,
+    )
+    _big_numbers_page(pdf, result, residual, assets, primary=p5, secondary=s5)
     _classico_banda_magenta_rodape(pdf)
     _classico_credit_page(pdf, result, assets, rotulo=rotulo, now=now)
 
@@ -1069,13 +1105,20 @@ def gerar_pdf_relatorio_pontual_censitario(
     assets = _load_branding_assets(ultra_dir)
     layers = dict(_normalize_mapas_by_key(mapas))
 
+    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta).
+    p1, _ = _tema_bicolor(1)
+    p2, _ = _tema_bicolor(2)
+    p3, _ = _tema_bicolor(3)
+    p4, s4 = _tema_bicolor(4)
+    p5, s5 = _tema_bicolor(5)
+
     pdf = _UltraPDF()
     _cover_page(pdf, result, assets, rotulo=rotulo)
-    _map_page(pdf, layers.get("densidade"), title="Populacao - Densidade", assets=assets)
-    _map_page(pdf, layers.get("renda"), title="Renda per capita", assets=assets)
-    _map_page(pdf, layers.get("score"), title="Score censitario", assets=assets)
-    _competitors_page(pdf, result, layers.get("concorrentes"), assets)
-    _big_numbers_page(pdf, result, residual, assets)
+    _map_page(pdf, layers.get("densidade"), title="Populacao - Densidade", assets=assets, primary=p1)
+    _map_page(pdf, layers.get("renda"), title="Renda per capita", assets=assets, primary=p2)
+    _map_page(pdf, layers.get("score"), title="Score censitario", assets=assets, primary=p3)
+    _competitors_page(pdf, result, layers.get("concorrentes"), assets, primary=p4, secondary=s4)
+    _big_numbers_page(pdf, result, residual, assets, primary=p5, secondary=s5)
     _credit_page(pdf, assets)
 
     # Marca d'agua diagonal POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as 7).

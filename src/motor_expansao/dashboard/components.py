@@ -2191,7 +2191,7 @@ def build_top_city_figure(city_summary: pd.DataFrame):
         text="score_medio",
     )
     fig.update_traces(texttemplate="%{text:.2f}", textposition="outside")
-    apply_exec_layout(fig, title="Top cidades por score medio", height=430)
+    apply_exec_layout(fig, title="Top cidades por score médio", height=430)
     fig.update_layout(coloraxis_showscale=False)
     return fig
 
@@ -2216,7 +2216,7 @@ def build_top_uf_figure(uf_summary: pd.DataFrame):
         text="oportunidades_viaveis",
     )
     fig.update_traces(texttemplate="%{text:.0f}", textposition="outside")
-    apply_exec_layout(fig, title="Top UFs por oportunidades viaveis", height=430)
+    apply_exec_layout(fig, title="Top UFs por oportunidades viáveis", height=430)
     fig.update_layout(showlegend=False)
     return fig
 
@@ -2252,12 +2252,12 @@ def build_scatter_figure(city_summary: pd.DataFrame):
         },
         labels={
             "renda_per_capita": "Renda per capita",
-            "populacao_proxy": "Populacao proxy",
-            "score_medio": "Score medio",
+            "populacao_proxy": "População",
+            "score_medio": "Score médio",
         },
         color_continuous_scale="Blues",
     )
-    apply_exec_layout(fig, title="Renda per capita x populacao proxy", height=520)
+    apply_exec_layout(fig, title="Renda × população", height=520)
     return fig
 
 
@@ -2271,9 +2271,9 @@ def build_score_distribution_figure(df: pd.DataFrame):
         x="score_priorizacao",
         nbins=20,
         color_discrete_sequence=[COLORS["brand_alt"]],
-        labels={"score_priorizacao": "Score priorizacao", "count": "Hexagonos"},
+        labels={"score_priorizacao": "Score de priorização", "count": "Hexágonos"},
     )
-    apply_exec_layout(fig, title="Distribuicao de score_priorizacao", height=340)
+    apply_exec_layout(fig, title="Distribuição de score", height=340)
     return fig
 
 
@@ -2299,11 +2299,11 @@ def build_faixa_comparison_figure(df: pd.DataFrame):
         y="score_medio",
         color="faixa_label",
         color_discrete_map=FAIXA_COLORS,
-        labels={"faixa_label": "Faixa", "score_medio": "Score medio"},
+        labels={"faixa_label": "Faixa", "score_medio": "Score médio"},
         text="score_medio",
     )
     fig.update_traces(texttemplate="%{text:.2f}", textposition="outside")
-    apply_exec_layout(fig, title="Score medio por faixa_oportunidade", height=340)
+    apply_exec_layout(fig, title="Score médio por faixa de oportunidade", height=340)
     fig.update_layout(showlegend=False)
     return fig
 
@@ -2377,7 +2377,7 @@ def build_top_bottom_uf_figure(uf_summary: pd.DataFrame):
         text="score_medio",
     )
     fig.update_traces(texttemplate="%{text:.2f}", textposition="outside")
-    apply_exec_layout(fig, title="Top e bottom UFs por score medio", height=620)
+    apply_exec_layout(fig, title="Melhores e piores UFs por score médio", height=620)
     return fig
 
 
@@ -2470,7 +2470,7 @@ def build_residual_by_uf_figure(carteira_df: pd.DataFrame | None):
         text="oferta_efetiva_disponivel",
     )
     fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
-    apply_exec_layout(fig, title="Residual potencial por UF", height=430)
+    apply_exec_layout(fig, title="Residual potencial por UF (alunos)", height=430)
     return fig
 
 
@@ -2490,7 +2490,7 @@ def build_residual_score_dist_figure(carteira_df: pd.DataFrame | None):
         color_discrete_sequence=[COLORS["brand"]],
         labels={"score_oportunidade_residual": "Score residual"},
     )
-    apply_exec_layout(fig, title="Distribuicao do score residual", height=320)
+    apply_exec_layout(fig, title="Distribuição do score residual", height=320)
     return fig
 
 
@@ -2530,7 +2530,7 @@ def build_top_cities_residual_figure(carteira_df: pd.DataFrame | None):
         text="oferta_efetiva_disponivel",
     )
     fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
-    apply_exec_layout(fig, title="Top cidades: alto residual, baixa presenca Ultra", height=430)
+    apply_exec_layout(fig, title="Top cidades: alto residual, baixa presença Ultra", height=430)
     return fig
 
 
@@ -2837,13 +2837,13 @@ def build_hybrid_score_comparison_figure(hdf: pd.DataFrame):
         color="uf_label",
         labels={
             "score_priorizacao": "Score M1 (municipal)",
-            "score_setor_2022_calibrado": "Score Censitario 2022 (intraurbano)",
+            "score_setor_2022_calibrado": "Score Censitário 2022 (intraurbano)",
             "uf_label": "UF",
         },
         opacity=0.55,
-        title="M1 vs Censitario 2022 — cada ponto e um hex",
+        title="M1 vs Censitário 2022 — cada ponto é um hex",
     )
-    apply_exec_layout(fig, title="Comparativo M1 vs Censitario 2022 por hex", height=420)
+    apply_exec_layout(fig, title="Comparativo M1 vs Censitário 2022 por hex", height=420)
     return fig
 
 
