@@ -121,24 +121,70 @@ O Streamlit lê do volume na próxima requisição — **não é necessário rei
 
 ## Integração com gymscraping (repo separado)
 
-Quando o pipeline de gymscraping gerar novos parquets de concorrentes:
+> **Status (2026-06):** a coleta de concorrentes roda **automatizada e semanal na própria VPS**
+> (a antiga "Opção B" foi implementada). É camada paralela mercado/residual, **READ-ONLY sobre o M1**
+> (não recalcula `score_priorizacao`, `hex_score_estrutural` nem regenera artefatos M1 oficiais). Ver
+> **DEC-013** em `CLAUDE.md` §8.
 
-### Opção A — transferir do Windows (pipeline roda localmente)
+### Arquitetura (o que roda toda semana)
 
-```powershell
-scp -i "$env:USERPROFILE\.ssh\id_ultra" CAMINHO\DO\ARQUIVO.parquet root@2.25.137.241:/opt/motor-expansao/data/outputs/
+- **Repo do scraper:** `VinhoAbencoado/GymScraping` (privado; 90 coletores centrais + agregadores WellHub/TotalPass).
+  Clonado em **`/opt/gymscraping`** via **deploy key read-only** (`/root/.ssh/gymscraping_deploy`, host SSH
+  `github-gymscraping` em `/root/.ssh/config`). O `git pull` semanal traz coletores novos automaticamente.
+- **Imagem:** `gymscraping:local` — `Dockerfile` no próprio repo do scraper (Chrome + webdriver-manager +
+  Chromium do Playwright). Reconstruída a cada run (cache acelera).
+- **Runner:** **`/opt/gymscraping-infra/run_weekly_90.sh`** (infra na VPS, fora do repo). Faz, em sequência:
+  1. `git pull` + `docker build`;
+  2. **Coleta** dos 90 (`executar_coletores.py --workers 3 --scheduler-policy weighted`, container `--user 0:0`);
+  3. **Relatório de crescimento por rede** (`/opt/gymscraping-infra/relatorio_crescimento.py`): snapshot
+     `contagem_atual.csv`, diff vs. `contagem_anterior.csv` (delta por rede), histórico `historico_contagem.csv`
+     e `relatorio_crescimento_<data>.txt`;
+  4. **Integração ao motor** (regen camada paralela, READ-ONLY M1 — ver abaixo);
+  5. **Restart** de `streamlit`/`api`/`telegram-bot`.
+- **Cron:** `0 6 * * 0` (domingo **06:00 UTC = 03:00 BRT**; o servidor é UTC). `crontab -l` no root.
+- **Logs:** `/var/log/gymscraping/weekly_<TS>.log` (+ symlink `weekly_latest.log`).
+
+### Integração ao motor (regen mercado/residual — READ-ONLY M1)
+
+A coleta atualiza só os CSVs `Unidades/unidades_<rede>.csv`. A propagação para o dashboard roda a cadeia
+**paralela** via o checkout do motor em **`/opt/motor-expansao/app`** (imagem do `streamlit`, `PYTHONPATH=/app/src`,
+`ROOT=/app`, dados em `/app/data`):
+
+```
+normalizar_concorrentes → calcular_colunas_mercado → gerar_carteira_acionavel →
+gerar_plano_expansao_curto_prazo → gerar_plano_expansao_dominio →
+enriquecer_outputs_residual_mercado → fase1_bi_exports.materialize_enriched_dashboard()
 ```
 
-### Opção B — pipeline roda direto no servidor (recomendado a longo prazo)
+Usa-se **`materialize_enriched_dashboard()`** (só o artefato enriquecido derivado), **não** o `main()` do
+`fase1_bi_exports` — assim **não recompõe** os artefatos oficiais do M1 (`hexagonos_brasil_dashboard.parquet`
+permanece intocado). Insumos de staging M1/censitário necessários à cadeia foram enviados **uma vez** por `scp`
+para `/opt/motor-expansao/data/staging/` (`censo2022_setores_calibrado` + variantes, `brasil_estrutural`,
+`unidades_ultra_performance_hex`; ~68 MB).
 
-Instalar o repo de gymscraping em `/opt/gymscraping/` no mesmo servidor. O pipeline grava diretamente em `/opt/motor-expansao/data/outputs/`. Agendar via cron para rodadas noturnas (2h–5h BRT):
+**Gotcha de permissão:** os containers de coleta/regen rodam como **`--user 0:0` (root)** — os CSVs/parquets no
+host são de root e o usuário não-root da imagem não consegue sobrescrevê-los; o Chrome já usa `--no-sandbox`.
+
+### Operação manual / troubleshooting
 
 ```bash
-# Exemplo de cron (crontab -e no servidor)
-0 2 * * * cd /opt/gymscraping && python scraper.py >> /var/log/gymscraping.log 2>&1
+# rodar o ciclo semanal sob demanda (cuidado: ~2h de coleta)
+/opt/gymscraping-infra/run_weekly_90.sh
+
+# acompanhar
+tail -f /var/log/gymscraping/weekly_latest.log
+
+# ver o crescimento por rede da última execução
+cat /opt/gymscraping-infra/relatorio_crescimento_*.txt | tail -100
 ```
 
-Verificar logs: `tail -f /var/log/gymscraping.log`
+Falhas individuais de coletor **não** abortam o lote; redes que falham mantêm o CSV anterior e aparecem como
+"defasadas" no relatório de crescimento. Se o regen falhar, o dashboard mantém os dados anteriores (sem restart).
+**Nota:** o runner **não** faz `git pull` do checkout do motor (`/opt/motor-expansao/app`) para não conflitar
+com o deploy; se os pipelines da cadeia mudarem, re-sincronizar o checkout manualmente.
+
+> **Pendentes (futuro):** cron **mensal** dos agregadores WellHub/TotalPass (~20h, invocação separada);
+> integração deles ao residual com remodelagem (Huff por tipo de rede + dedup) usando as bases `NAO_ABRA/`.
 
 ### Transferir data/ultra (base Ultra)
 
