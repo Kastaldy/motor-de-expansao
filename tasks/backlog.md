@@ -975,6 +975,11 @@ GO/NO-GO honesto; READ-ONLY M1.
 
 ## Projeto — Repaginação visual do dashboard (UX/UI)
 
+- BLK-UI-11 (concluído 2026-06-29) — ver tasks/completed.md
+
+
+---
+
 ### BLK-UI-10 — PoC de repaginação do dashboard: tema denso (baixo) + mapa Leaflet client-side (médio)
 
 | Campo | Valor |
