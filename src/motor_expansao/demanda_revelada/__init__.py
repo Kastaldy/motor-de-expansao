@@ -18,9 +18,11 @@ from .contrato import (
     VERSAO_CONTRATO,
 )
 from .ingestao import ingerir_demanda_revelada
+from .validacao import executar_validacao_completa
 
 __all__ = [
     "ingerir_demanda_revelada",
+    "executar_validacao_completa",
     "CONTRATO_COLUNAS",
     "COLUNAS_PII_PROIBIDAS",
     "VERSAO_CONTRATO",

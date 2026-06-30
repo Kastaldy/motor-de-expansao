@@ -6022,6 +6022,26 @@ Relatório Pontual intocado.
 
 ---
 
+### BLK-TP-02 — Validação: Demanda Revelada × Residual Fitness (relatório)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (relatório/análise read-only; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01** (camada em `data/staging`). |
+| **Autonomia** | **loop-safe** — READ-ONLY sobre o M1, consome só `data/staging`, sem PII (anti-PII por construção, teste verde), sem VPS/deploy/segredos, sem ingestão ao vivo. |
+
+**Objetivo.** Reproduzir e documentar a correlação demanda × `score_oportunidade_residual` (Spearman
+~+0,52), mapa de quadrantes (residual+ & demanda+), e divergências vs. o recorte top-20%/UF do M1.
+**Não** altera score/artefatos — saída é relatório + (opcional) parquet de quadrantes.
+
+**Critérios de aceite.** Relatório com correlação reproduzida + quadrantes; READ-ONLY M1; suíte verde.
+**Guardrail.** §5; DEC-001.
+
+---
+
 ### BLK-UI-11 — Aprimoramento estético e clareza de conteúdo do dashboard (caminho de produção)
 
 | Campo | Valor |
