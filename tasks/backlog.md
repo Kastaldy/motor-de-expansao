@@ -928,28 +928,8 @@ declarado no relatório.
 
 ---
 
-### BLK-LTV-01 — Tabela-ponte `unidade_hex` (geocodificar unidades → H3 res-7)
+- BLK-LTV-01 (concluído 2026-07-01) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (preparação de dados; **READ-ONLY sobre o M1**). |
-| **Prioridade** | Alta (destrava o epic). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (insumos já no repo). |
-| **Autonomia** | candidato **loop-safe** (READ-ONLY M1, sem VPS/deploy/segredos, sem PII, consome `data/ultra`+`data/staging`). |
-
-**Objetivo.** Produzir `data/staging/unidade_hex.parquet` mapeando cada `COD_UNIDADE`/`UNIDADE` do
-Lifetime → `lat`/`lng` → `hex_id` (H3 res-7, `H3_RESOLUTION=7`). Geocodificar por nome contra
-`Ultra.csv` (147) com fallback ao `unidades_ultra_performance_hex.parquet` (54); fuzzy match com
-verificação; emitir **relatório de qualidade de match** (casados exato/fuzzy/sem match, por UF e por
-`CONFIABILIDADE_UNIDADE`). **Critérios de aceite.** Ponte reproduzível; % de cobertura reportado (não
-silenciar não-casados); READ-ONLY M1; suíte verde. **Guardrail.** `Ultra.csv` = `sep=";"`,
-`latin-1`, 1 linha de metadado (CLAUDE.md §2).
-
----
-
-- BLK-LTV-02 (concluído 2026-07-01) — ver tasks/completed.md
 
 
 ---
