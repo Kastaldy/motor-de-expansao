@@ -594,52 +594,8 @@ exige decisão humana sobre quais fontes baixar e validação de licença/LGPD.*
 
 ---
 
-### BLK-DIM-18 — Fix: faixa de alunos pela metragem ausente em produção (fallback para parquet de unidades)
+- BLK-DIM-18 (concluído 2026-07-01) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (feature completamente invisível em prod; sem dado exibido no campo) |
-| **Prioridade** | **Alta** — fix de produção |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA |
-| **Status** | Pendente |
-| **Autonomia** | NAO LOOP SAFE, Mexe em Produção e VPS
-| **Depende de** | — |
-
-**Contexto / por que existe:** `load_base_calibracao()` em `streamlit_app.py` lê `data/staging/base_calibracao_multirede.parquet` — arquivo gerado pelo pipeline `base_multirede.py` (BLK-DIM-07/08) que **não existe em produção** (não foi regenerado após o pivô DEC-009). Por isso a seção "Faixa de alunos plausível pela metragem" sempre cai no `st.info("indisponível")`. O arquivo `data/staging/unidades_ultra_performance_hex.parquet` (54 unidades Ultra com `metragem` e `alunos_reais`) **sempre existe** e serve como fallback direto.
-
-**Objetivo:** adicionar fallback na `load_base_calibracao()` para, quando o multirede não existir, tentar o `unidades_ultra_performance_hex.parquet` (que tem as mesmas colunas `metragem` e `alunos_reais` já consumidas pela função).
-
-**Escopo permitido:**
-- `streamlit_app.py`, função `load_base_calibracao()`: após verificar `BASE_CALIBRACAO_PATH.exists()`, tentar `STAGING_DIR / "unidades_ultra_performance_hex.parquet"` como fallback antes de retornar `pd.DataFrame()`.
-- Derivar `alunos_por_m2` no fallback (mesma lógica já existente).
-- Atualizar ou adicionar 1 teste cobrindo o caminho de fallback.
-
-**Fora de escopo (invioláveis):** regenerar o multirede (outro ciclo), tocar `viabilidade_ponto.py`/`simulador.py`, M1, artefatos oficiais.
-
-**Critérios de aceite:** com apenas `unidades_ultra_performance_hex.parquet` presente, a faixa p10/p50/p90 é exibida no dashboard; suite verde; nenhuma coluna M1 alterada.
-
-**Arquivos prováveis:** `streamlit_app.py` (função `load_base_calibracao`), `tests/`.
-
-**Risco:** baixo — READ-ONLY; só adiciona um path de fallback sem remover o caminho atual.
-
----
-
-- BLK-DIM-19 (concluído 2026-06-22) — ver tasks/completed.md
-
-
----
-
-- BLK-DIM-20 (concluído 2026-06-22) — ver tasks/completed.md
-
-
----
-
-- BLK-DIM-21 (concluído 2026-06-22) — ver tasks/completed.md
-
-
----
-
-- BLK-DIM-22 (concluído 2026-06-22) — ver tasks/completed.md
 
 
 ---
@@ -961,6 +917,54 @@ extrapolação). Liga-se à DEC-009 (dimensionamento é a parte que funciona; co
 ---
 
 - BLK-TP-05 (concluído 2026-06-30) — ver tasks/completed.md
+
+
+---
+
+## Epic BLK-LTV — Integração Lifetime × Motor de Expansão (eixo retenção territorial, camada paralela READ-ONLY sobre o M1)
+
+**Objetivo do epic.** Validar se o perfil do território prevê a retenção/LTV da carteira, para a
+expansão passar a priorizar "onde a demanda **permanece**", não só "onde há demanda". Se validado,
+compor um eixo de score paralelo (M2) que pondere captação + retenção/LTV territorial. **READ-ONLY
+sobre o M1** (não recalibra `score_priorizacao`/`hex_score_estrutural`/pesos nem regenera artefatos
+oficiais; DEC-001 intacta). Metodologia obrigatória DEC-008: Spearman + **bootstrap/IC** (N pequeno),
+sem R² in-sample; controlar por maturidade quando houver dado.
+
+**Insumo (Lifetime).** `data/ultra/unidade_para_motor.parquet` — 88 unidades com `PROB_CANCEL_90D_*`,
+`LTV_PROSPECTIVO_12M_*`, `CONFIABILIDADE_UNIDADE`, `USAR_PROB_ABSOLUTA`, `USAR_RANKING`
+(dicionário em `unidade_para_motor_DICIONARIO.md`). Chave lógica: `COD_UNIDADE`; chave de join real
+disponível: **nome da unidade** (`UNIDADE`), pois nem o Lifetime nem as bases geo têm `COD_UNIDADE`.
+
+**Fonte de geocodificação (confirmada no repo).** `data/ultra/Ultra.csv` (legado: `sep=";"`,
+`encoding="latin-1"`, 1 linha de metadado) — 147 unidades com `UNIDADE`/`ESTADO`/`CIDADE`/`Latitude`/
+`Longitude`. Complemento: `data/staging/unidades_ultra_performance_hex.parquet` (54 unidades já com
+`hex_id`/features territoriais). Cobertura medida (2026-07-01): match exato de nome Lifetime↔Ultra.csv
+= 34/88; fuzzy ≥0.8 recupera mais (≈43 contra o perf-hex) — fechar cobertura é trabalho do BLK-LTV-01.
+
+**Regras (do pedido, canônicas para o epic).** Usar `LTV_PROSPECTIVO_12M_*` só no **agregado por
+unidade** (validado); respeitar `USAR_PROB_ABSOLUTA` por unidade (unidades sem prob. absoluta confiável
+entram só no eixo de ranking); aplicar **haircut ~20%** em volume absoluto; **N=88 exige bootstrap/IC**.
+
+**Caveat estrutural (registrar, não bloqueia LTV-01/02).** `unidade_para_motor.parquet` **não tem data
+de abertura / idade da unidade** (as métricas de tempo são tenure de aluno, não idade da unidade) → o
+"controlar por maturidade" do BLK-LTV-03 esbarra no **mesmo gap do gate G1 da DEC-001**. Sem esse
+controle, a correlação território×retenção fica confundida por maturidade; tratar como confound
+declarado no relatório.
+
+---
+
+- BLK-LTV-01 (concluído 2026-07-01) — ver tasks/completed.md
+
+
+
+---
+
+- BLK-LTV-03 (concluído 2026-07-01) — ver tasks/completed.md
+
+
+---
+
+- BLK-LTV-04 (concluído 2026-07-01) — ver tasks/completed.md
 
 
 ---
