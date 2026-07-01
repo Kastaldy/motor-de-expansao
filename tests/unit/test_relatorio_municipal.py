@@ -13,10 +13,13 @@ from __future__ import annotations
 
 import h3
 import pandas as pd
+import pytest
 
 from motor_expansao.dashboard.relatorio_municipal import (
     CAPACIDADE_UNIDADE,
     PDF_SECTION_HEADERS,
+    _fit_contain,
+    _png_dimensions,
     _prettify_rede,
     _zonas_geometricas,
     agregar_municipio,
@@ -255,6 +258,45 @@ def test_mapas_municipio_offline_sem_rede():
     for png in mapas.values():
         assert png.startswith(b"\x89PNG")
         assert len(png) > 1000
+
+
+# ---------------------------------------------------------------------------
+# BLK-RELPON-03 — sem letterbox (barra cinza) nos mapas do PDF
+# ---------------------------------------------------------------------------
+
+
+def test_fit_contain_pnl_1000x704_no_painel_540x380_sem_letterbox():
+    """PNG re-proporcionado 1000x704 (aspect 1,4205) no painel padronizado 540x380 (1,4211):
+    o encaixe CONTAIN cobre o painel nos DOIS eixos com sobra <= 1 pt (barra cinza eliminada)."""
+    draw_w, draw_h, x, y = _fit_contain(1000, 704, 540.0, 380.0, x_anchor=34.0, y_anchor=100.0)
+    assert abs(draw_h - 380.0) <= 1.0
+    assert abs(draw_w - 540.0) <= 1.0
+    # Centralizado a partir das ancoras.
+    assert abs(x - (34.0 + (540.0 - draw_w) / 2.0)) < 1e-6
+    assert abs(y - (100.0 + (380.0 - draw_h) / 2.0)) < 1e-6
+
+
+def test_fit_contain_documenta_painel_560x380_sobra_lateral():
+    """Painel NAO padronizado 560x380 (fallback do gate, NAO usado em producao): com o PNG
+    1000x704 a altura domina o `min`, sobrando ~20 pt de largura (barra lateral fina). Este
+    teste documenta o trade-off descrito no handoff; a producao usa 540 (sem sobra)."""
+    draw_w, draw_h, _x, _y = _fit_contain(1000, 704, 560.0, 380.0)
+    assert abs(draw_h - 380.0) <= 1.0  # altura preenchida
+    assert (560.0 - draw_w) > 15.0  # sobra horizontal perceptivel (~20 pt) -> por isso 540
+
+
+@pytest.mark.parametrize("camada", ["resumo", "score", "residual", "dominio", "cobertura"])
+def test_render_mapas_municipio_png_altura_704(camada):
+    """Smoke: por padrao os 5 PNGs sao gerados com altura 704 (aspect 1,4205 do painel),
+    garantindo que o gerador acompanhou a mudanca do encaixe (sem letterbox)."""
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", dominio_df=_sample_dominio())
+    mapas = render_mapas_municipio(
+        df, res, competitors_df=_sample_competitors(), ultra_df=_sample_ultra(), basemap=False
+    )
+    dims = _png_dimensions(mapas[camada])
+    assert dims is not None
+    assert dims == (1000, 704)
 
 
 # ---------------------------------------------------------------------------

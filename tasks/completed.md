@@ -6133,3 +6133,42 @@ fica aguardando seu próprio merge).
 - **Próximo passo (gate humano, fora deste bloco):** o GO honesto **habilita** — sob decisão explícita
   de Felipe — a reabertura da Camada 2 (captura/Huff) da epic BLK-DIM. O Builder NÃO implementou a
   reabertura; é decisão de produto/modelagem a registrar como DEC própria se Felipe optar por avançar.
+
+---
+
+### BLK-RELPON-03 — Eliminar a barra cinza (letterbox) dos mapas do Relatório Municipal
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (altera o RENDER/encaixe dos mapas de um template PDF gated (DEC-011); **READ-ONLY sobre o M1**; exige revisão visual humana). |
+| **Prioridade** | Definida por Vini (2º dos 2 pedidos de layout de 2026-07-01). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — produto/visual]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (toca só `relatorio_municipal.py`; independe de BLK-RELPON-01/02). |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de produto/visual (como encaixar o mapa no painel); precisa de olho humano no PDF. NÃO marcar loop-safe. |
+
+**Contexto (ancorado no código, `src/motor_expansao/dashboard/relatorio_municipal.py`).**
+- Causa-raiz medida: o PNG do mapa é gerado em **1000×620** (`render_mapas_municipio`/`_render_mapa_municipio`,
+  `width=1000, height=620` → aspect ≈ **1,613**). Os painéis do PDF chamam `_draw_framed_map`/`_draw_map`
+  com `max_w=540, max_h=380` (aspect ≈ **1,421**; um usa `560×380` ≈ 1,474). `_draw_map` (linha ~1308) usa
+  `scale = min(max_w/img_w, max_h/img_h)` = **contain** → ajusta pela largura (0,54) e a altura fica 334,8 <
+  380 → **letterbox de ~22,6px em cima e embaixo** = a barra cinza (fundo do painel `_rounded_panel`).
+
+**Objetivo.** Os mapas do Relatório Municipal preenchem o painel sem barra cinza (topo/base), mantendo
+proporção sem distorção grosseira, sem sobrepor a moldura/título/rodapé, e preservando a moldura Ultra Clean.
+
+**Escopo permitido (READ-ONLY M1, só RENDER).** Casar a proporção do mapa ao painel — via (a) gerar o PNG
+na proporção do painel (ajustar `width/height` de `render_mapas_municipio`/`_render_mapa_municipio` e/ou o
+viewport/bbox para o aspect ~1,42), e/ou (b) `_draw_map` preencher o painel por **cover** (escala `max` +
+recorte do excedente) em vez de **contain**, e/ou (c) desenhar o fundo do painel com a cor do mapa. Testes
+que fixem a ausência de letterbox (mapa cobre o painel). Parâmetro opcional segue precedente DEC-005 (default = atual).
+
+**Fora de escopo.** Gate do SAM/`flag_sam` (DEC-006/007), score, M1, artefatos oficiais (INTOCADOS);
+Relatório Pontual (`censo_map.py`/`censo_report.py`, BLK-RELPON-01/02); método de intersecção e raio.
+
+**Guardrails.** READ-ONLY sobre o M1 (§5). Sem dependência de rede nova (DEC-011 inalterada — tiles seguem
+como estão). Marca d'água anti-PII + `set_compression(False)` + estrutura de 8 páginas do template mantidos.
+
+**Critério de aceite.** Mapas do Relatório Municipal sem barra cinza (cobrem o painel), sem distorção
+grosseira nem sobreposição de moldura/título/rodapé; suíte do relatório municipal verde; ruff+mypy limpos;
+revisão visual humana aprovada no gate.

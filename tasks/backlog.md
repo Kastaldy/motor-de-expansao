@@ -107,6 +107,17 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 - BLK-RELMUN-02 (concluído 2026-06-24) — ver tasks/completed.md
 
 
+---
+
+## Relatório Municipal — mapas com barra cinza (2026-07-01, pedido de Vini)
+
+> Pedido de Vinicius a partir do uso real do Relatório Municipal: os mapas não preenchem todo o
+> espaço disponível do painel, sobrando uma **barra cinza** (fundo do painel) acima/abaixo do mapa.
+> Quer o mapa estendido para cobrir essa área cinza. Camada de visualização/relatório — **READ-ONLY
+> sobre o M1** (§5 guardrail): nada recalcula score, gate do SAM, faixas ou artefatos oficiais.
+
+- BLK-RELPON-03 (concluído 2026-07-01) — ver tasks/completed.md
+
 
 ---
 

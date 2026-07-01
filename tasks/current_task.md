@@ -2,39 +2,23 @@
 
 ## Bloco atual
 
-ID: BLK-TP-05
-Nome: Re-teste honesto do elo demanda→captura (LOO vs baseline)
-Status: aprovado (QA — 2026-06-30)
-Tipo: modelagem/análise (READ-ONLY sobre o M1)
+ID: BLK-RELPON-03
+Nome: Eliminar a barra cinza (letterbox) dos mapas do Relatório Municipal
+Status: aprovado (QA em 2026-07-01 — APROVADO COM RESSALVAS; ressalva = gate VISUAL humano do PDF, requisito de fechamento, NÃO bloqueia testes)
+Tipo: feature (visualização/render — READ-ONLY sobre o M1)
 Criticidade: alta
 Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
-Skill atual: QA/Quality Analyzer (concluído — APROVADO; handoff em context/handoff.md + snapshot 20260630-153845-qa.md)
-Próxima Skill: Fechamento manual (move backlog→completed via scripts/housekeeping_move_block.py + commit pelo humano)
-
-## Veredito do QA (2026-06-30)
-APROVADO. GO honesto reproduzido independentemente do parquet real: R²_oof_log=+0,5750,
-IC95 [+0,5576, +0,5959], n=5.341, zeros=11.234, alpha=10, kfold_5x5. Auditoria do GO honesto OK
-(R² in-sample só rotulado; n_acad_parceiras excluído do modelo principal; métrica OOF sem
-vazamento vs baseline da média; 6 confounds na nota; sem reabertura da Camada 2/Huff).
-Suíte full: 1117 passed, 1 skipped, 0 failed (-n auto, sem bug de xdist). ruff (escopo+repo) /
-mypy / import streamlit_app limpos. READ-ONLY M1 confirmado; pacote disjunto (DEC-012);
-anti-PII por construção. Housekeeping verificado pré-fechamento (helper sadio, bloco íntegro no
-backlog linha 953). Nenhum commit feito (fechamento humano).
-
-## Resultado do Builder (2026-06-30)
-- VEREDITO REAL = **GO** (R²_oof_log=+0,5750; IC95 [+0,5576, +0,5959]; n=5.341; alpha=10; kfold_5x5).
-- Validações: pytest 18 passed/0 failed/0 skipped (test_backtest_tp05 + test_demanda_revelada_ingestao);
-  ruff 0 erros; mypy 0 erros; import streamlit_app ok. Relatório real gerado em
-  data/analysis/backtest_tp05.md (gitignored).
-- READ-ONLY sobre o M1 mantido; pacote disjunto; anti-PII por construção. Reabertura da Camada 2
-  (Huff) é gate humano, FORA deste bloco.
+Skill atual: Ciclo fechado (housekeeping 6.0 OK; commit por path na branch ciclo/BLK-RELPON-03)
+Próxima Skill: Merge pelo humano (revisar branch ciclo/BLK-RELPON-03 + gate visual humano do PDF antes do merge)
 
 ## Objetivo
-Re-testar a regressão/Huff `alunos ~ demanda + dist_concorrente + concorrência` com **demanda
-observada** (camada BLK-TP-01, não imputada), usando **LOO/k-fold repetido vs baseline da média**
-(DEC-008; proibido R² in-sample). Reportar R²_LOO vs baseline com intervalos + flag de extrapolação
-e emitir veredito GO/NO-GO honesto. Re-teste do que a DEC-009 marcou como NO-GO com demanda imputada.
-NÃO altera score/pesos/artefatos M1.
+Os mapas do Relatório Municipal passam a preencher o painel sem a barra cinza (letterbox top/base),
+casando a proporção do mapa ao painel, sem distorção grosseira nem sobreposição de moldura/título/
+rodapé. Ajuste de RENDER em `relatorio_municipal.py`. READ-ONLY sobre o M1.
+
+## Causa-raiz (medida)
+PNG gerado em 1000×620 (aspect 1,613) vs. painel 540×380 (aspect 1,421); `_draw_map` usa contain
+(`scale=min`) → letterbox de ~22,6px em cima/embaixo = a barra cinza do painel.
 
 ## Tiering de modelo (Passo 4) — Alta
 - Block Orchestrator: sonnet
@@ -43,21 +27,18 @@ NÃO altera score/pesos/artefatos M1.
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-TP-05 (criada a partir de main @ c99bbff, escolha do humano: base = main limpo).
+ciclo/BLK-RELPON-03 (criada a partir de main @ c890eb8; independente de RELPON-01/02).
 
-## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
-- data/raw/ibge/malha_brasil.geojson (D), data/raw/ibge/malha_uf_brasil.geojson (D)
-- data/outputs/setores_censitarios_2022_geo/_report.md (??)
-- scripts/backtest_smartfit_scores.py (??)
-
-## Dependência
-- BLK-TP-01 (camada `data/staging/demanda_revelada_h3.parquet`) — concluído e merged.
+## Paths do ciclo (commitar só estes por path)
+- src/motor_expansao/dashboard/relatorio_municipal.py
+- tests/unit/test_relatorio_municipal.py (e testes impactados)
+- tasks/backlog.md (bloco BLK-RELPON-03), tasks/current_task.md, tasks/completed.md
+- context/handoff.md, context/handoff/
 
 ## Fora de escopo
-- score/pesos/artefatos M1; recalibrar M1; usar demanda como preditor geográfico de magnitude
-  (DEC-009); persistir PII; deploy VPS.
+- Gate do SAM/`flag_sam` (DEC-006/007), score, M1, artefatos oficiais (INTOCADOS);
+  Relatório Pontual (`censo_map.py`/`censo_report.py`); método de intersecção e raio.
 
 ## Guardrails
-- §5 (READ-ONLY M1); DEC-008 (LOO/k-fold vs baseline, banir R² in-sample, intervalos + flag de
-  extrapolação); DEC-009 (demanda = insumo observado, NUNCA preditor geográfico de magnitude);
-  DEC-012 (camada demanda revelada, anti-PII por construção, pacote disjunto).
+- §5 (READ-ONLY M1): zero recálculo de score/pesos/carteira/plano/artefatos. Só RENDER.
+- Sem dependência de rede nova (DEC-011 inalterada). Marca d'água anti-PII + `set_compression(False)` + 8 páginas mantidos.

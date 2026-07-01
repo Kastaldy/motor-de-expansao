@@ -859,7 +859,7 @@ def _render_mapa_municipio(
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     width: int = 1000,
-    height: int = 620,
+    height: int = 704,
     basemap: bool = False,
     focus_bounds: tuple[float, float, float, float] | None = None,
 ) -> bytes:
@@ -1163,7 +1163,7 @@ def render_mapas_municipio(
     ultra_df: pd.DataFrame | None = None,
     basemap: bool = False,
     width: int = 1000,
-    height: int = 620,
+    height: int = 704,
 ) -> dict[str, bytes]:
     """Gera as camadas de mapa do relatorio (cobertura/resumo/score/residual/dominio).
 
@@ -1293,7 +1293,26 @@ def _draw_footer(pdf: _UltraPDF, *, versao: str | None = None, with_attribution:
     pdf.cell(_PAGE_W - 72, 12, _ascii(text))
 
 
-def _draw_map(pdf: _UltraPDF, png_bytes: bytes | None, *, max_w: float = 600.0, max_h: float = 430.0,
+def _fit_contain(
+    img_w: float, img_h: float, max_w: float, max_h: float,
+    *, x_anchor: float = 0.0, y_anchor: float = 0.0,
+) -> tuple[float, float, float, float]:
+    """Encaixe CONTAIN (scale=min) de uma imagem `img_w x img_h` no retangulo `max_w x max_h`,
+    centralizado a partir de (x_anchor, y_anchor). Funcao PURA (sem I/O de PDF), extraida de
+    `_draw_map` byte-a-byte para tornar a ausencia de letterbox testavel deterministicamente.
+
+    Retorna `(draw_w, draw_h, x, y)`. Quando o aspect da imagem casa o do retangulo, a sobra em
+    ambos os eixos tende a zero (sem barra cinza). READ-ONLY sobre o M1 (so geometria de render).
+    """
+    scale = min(max_w / img_w, max_h / img_h)
+    draw_w = img_w * scale
+    draw_h = img_h * scale
+    x = x_anchor + (max_w - draw_w) / 2.0
+    y = y_anchor + (max_h - draw_h) / 2.0
+    return draw_w, draw_h, x, y
+
+
+def _draw_map(pdf: _UltraPDF, png_bytes: bytes | None, *, max_w: float = 540.0, max_h: float = 380.0,
               x_anchor: float = 36.0, y_anchor: float = 70.0) -> None:
     if not png_bytes:
         pdf.set_text_color(*_CINZA_TEXTO)
@@ -1305,11 +1324,9 @@ def _draw_map(pdf: _UltraPDF, png_bytes: bytes | None, *, max_w: float = 600.0, 
     if dims is None:
         return
     img_w, img_h = dims
-    scale = min(max_w / img_w, max_h / img_h)
-    draw_w = img_w * scale
-    draw_h = img_h * scale
-    x = x_anchor + (max_w - draw_w) / 2.0
-    y = y_anchor + (max_h - draw_h) / 2.0
+    draw_w, draw_h, x, y = _fit_contain(
+        img_w, img_h, max_w, max_h, x_anchor=x_anchor, y_anchor=y_anchor
+    )
     try:
         pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
     except Exception:
@@ -1640,7 +1657,8 @@ def _score_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, "Score Censitario", rgb=primary)
     # Moldura do mapa = tom principal; painel de legenda = acento. Faixas de score INALTERADAS.
-    _draw_framed_map(pdf, mapa, max_w=560.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
+    # BLK-RELPON-03: max_w padronizado 560->540 (aspect 1,4211) p/ eliminar letterbox no PNG 1000x704.
+    _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
                      border_rgb=primary)
     # Legenda 4 faixas (D5) com cor representativa via RESIDUAL_SCORE_BANDS, em painel centrado.
     px = 626.0
