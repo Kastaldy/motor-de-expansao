@@ -896,6 +896,118 @@ extrapolação). Liga-se à DEC-009 (dimensionamento é a parte que funciona; co
 
 ---
 
+## Epic BLK-LTV — Integração Lifetime × Motor de Expansão (eixo retenção territorial, camada paralela READ-ONLY sobre o M1)
+
+**Objetivo do epic.** Validar se o perfil do território prevê a retenção/LTV da carteira, para a
+expansão passar a priorizar "onde a demanda **permanece**", não só "onde há demanda". Se validado,
+compor um eixo de score paralelo (M2) que pondere captação + retenção/LTV territorial. **READ-ONLY
+sobre o M1** (não recalibra `score_priorizacao`/`hex_score_estrutural`/pesos nem regenera artefatos
+oficiais; DEC-001 intacta). Metodologia obrigatória DEC-008: Spearman + **bootstrap/IC** (N pequeno),
+sem R² in-sample; controlar por maturidade quando houver dado.
+
+**Insumo (Lifetime).** `data/ultra/unidade_para_motor.parquet` — 88 unidades com `PROB_CANCEL_90D_*`,
+`LTV_PROSPECTIVO_12M_*`, `CONFIABILIDADE_UNIDADE`, `USAR_PROB_ABSOLUTA`, `USAR_RANKING`
+(dicionário em `unidade_para_motor_DICIONARIO.md`). Chave lógica: `COD_UNIDADE`; chave de join real
+disponível: **nome da unidade** (`UNIDADE`), pois nem o Lifetime nem as bases geo têm `COD_UNIDADE`.
+
+**Fonte de geocodificação (confirmada no repo).** `data/ultra/Ultra.csv` (legado: `sep=";"`,
+`encoding="latin-1"`, 1 linha de metadado) — 147 unidades com `UNIDADE`/`ESTADO`/`CIDADE`/`Latitude`/
+`Longitude`. Complemento: `data/staging/unidades_ultra_performance_hex.parquet` (54 unidades já com
+`hex_id`/features territoriais). Cobertura medida (2026-07-01): match exato de nome Lifetime↔Ultra.csv
+= 34/88; fuzzy ≥0.8 recupera mais (≈43 contra o perf-hex) — fechar cobertura é trabalho do BLK-LTV-01.
+
+**Regras (do pedido, canônicas para o epic).** Usar `LTV_PROSPECTIVO_12M_*` só no **agregado por
+unidade** (validado); respeitar `USAR_PROB_ABSOLUTA` por unidade (unidades sem prob. absoluta confiável
+entram só no eixo de ranking); aplicar **haircut ~20%** em volume absoluto; **N=88 exige bootstrap/IC**.
+
+**Caveat estrutural (registrar, não bloqueia LTV-01/02).** `unidade_para_motor.parquet` **não tem data
+de abertura / idade da unidade** (as métricas de tempo são tenure de aluno, não idade da unidade) → o
+"controlar por maturidade" do BLK-LTV-03 esbarra no **mesmo gap do gate G1 da DEC-001**. Sem esse
+controle, a correlação território×retenção fica confundida por maturidade; tratar como confound
+declarado no relatório.
+
+---
+
+### BLK-LTV-01 — Tabela-ponte `unidade_hex` (geocodificar unidades → H3 res-7)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (preparação de dados; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta (destrava o epic). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (insumos já no repo). |
+| **Autonomia** | candidato **loop-safe** (READ-ONLY M1, sem VPS/deploy/segredos, sem PII, consome `data/ultra`+`data/staging`). |
+
+**Objetivo.** Produzir `data/staging/unidade_hex.parquet` mapeando cada `COD_UNIDADE`/`UNIDADE` do
+Lifetime → `lat`/`lng` → `hex_id` (H3 res-7, `H3_RESOLUTION=7`). Geocodificar por nome contra
+`Ultra.csv` (147) com fallback ao `unidades_ultra_performance_hex.parquet` (54); fuzzy match com
+verificação; emitir **relatório de qualidade de match** (casados exato/fuzzy/sem match, por UF e por
+`CONFIABILIDADE_UNIDADE`). **Critérios de aceite.** Ponte reproduzível; % de cobertura reportado (não
+silenciar não-casados); READ-ONLY M1; suíte verde. **Guardrail.** `Ultra.csv` = `sep=";"`,
+`latin-1`, 1 linha de metadado (CLAUDE.md §2).
+
+---
+
+### BLK-LTV-02 — Join territorial (pendurar retenção/LTV no hexágono da unidade)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (join de dados; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-LTV-01**. |
+| **Autonomia** | candidato **loop-safe**. |
+
+**Objetivo.** Via `hex_id` da ponte, anexar a cada unidade as features territoriais do Motor
+(`renda_per_capita`, densidade, `score_priorizacao`, `score_expansao_hibrido`,
+`n_concorrentes_mapeados_1km/2km`, `pop_total_setor_2022`…) e as métricas de retenção agregadas
+(`PROB_CANCEL_90D_MEDIA`, `LTV_PROSPECTIVO_12M_MEDIANO`), respeitando `USAR_PROB_ABSOLUTA`/haircut.
+Entregável: `data/staging/unidade_territorio_retencao.parquet`. **Critérios de aceite.** 100% das
+linhas do M1 preservadas nas leituras; nenhuma escrita em artefato M1; suíte verde.
+
+---
+
+### BLK-LTV-03 — Análise de correlação território × retenção/LTV `[GATE DE DECISÃO]`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (gate de decisão do eixo; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — decisão do eixo]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-LTV-02**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — gate de decisão humano. |
+
+**Objetivo.** Correlacionar território (renda, densidade, `score_priorizacao`, concorrência) ×
+`PROB_CANCEL_90D_MEDIA` e `LTV_PROSPECTIVO_12M_MEDIANO`, **controlando por maturidade quando houver
+dado** (ver caveat estrutural do epic). Método DEC-008: **Spearman + bootstrap/IC**, sem R² in-sample;
+scatter + significância. **Gate de decisão:** correlação **fraca** → o epic vira consolidação de dados
+(entrega LTV-01/02 como ativo, sem score); **forte** → avança para BLK-LTV-04. **Critérios de aceite.**
+rho + IC bootstrap por par de variáveis, confounds declarados (maturidade, N, seleção de sobreviventes),
+veredito GO/NO-GO honesto; READ-ONLY M1.
+
+---
+
+### BLK-LTV-04 — Score M2 territorial de retenção (SÓ se BLK-LTV-03 = GO) `[requer DEC + gate humano]`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica/Estratégica** (cria um eixo de score novo). |
+| **Prioridade** | Condicional ao GO do LTV-03. |
+| **Esteira** | Block Orchestrator → Planner → `[APROVAÇÃO HUMANA + DEC]` → Builder → QA. |
+| **Status** | Bloqueado (depende do gate de LTV-03). |
+| **Depende de** | **BLK-LTV-03 = GO**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — cria score; exige DEC registrada. |
+
+**Objetivo.** Compor um score de expansão paralelo (M2) ponderando captação + LTV/retenção territorial,
+como **camada paralela READ-ONLY sobre o M1** (não altera `score_priorizacao`/pesos/artefatos; exige
+**DEC** própria antes do Builder, análoga à disciplina da DEC-001/DEC-008). **Critérios de aceite.**
+Definição de pesos aprovada em DEC; validação LOO/k-fold vs baseline; READ-ONLY M1; suíte verde.
+
+---
+
 ## Projeto — Repaginação visual do dashboard (UX/UI)
 
 - BLK-UI-11 (concluído 2026-06-29) — ver tasks/completed.md
