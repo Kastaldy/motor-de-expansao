@@ -207,6 +207,9 @@ CENSO_GEO_DIR = Path(__file__).resolve().parent / "data" / "outputs" / "setores_
 BASE_CALIBRACAO_PATH = (
     Path(__file__).resolve().parent / "data" / "staging" / "base_calibracao_multirede.parquet"
 )
+UNIDADES_ULTRA_PERF_PATH = (
+    BASE_CALIBRACAO_PATH.parent / "unidades_ultra_performance_hex.parquet"
+)
 MANIFEST_PATH = Path(__file__).resolve().parent / "data" / "outputs" / "_manifest.json"
 
 preload_logos(CONCORRENTES_DIR, ultra_dir=ULTRA_PATH.parent)
@@ -349,9 +352,21 @@ def load_base_calibracao() -> pd.DataFrame:
     engine `faixa_alunos_por_densidade` retorne a faixa p10/p50/p90. Sem essa coluna a
     faixa sairia sempre "n/d". Injecao do chamador — o engine permanece INTOCADO.
     READ-ONLY: nao recalcula score M1 nem grava artefatos.
+
+    Fallback: se o multirede nao existir, usa `unidades_ultra_performance_hex.parquet`
+    derivando `alunos_por_m2 = alunos_total / metragem` com o mesmo guard.
     """
     if not BASE_CALIBRACAO_PATH.exists():
-        return pd.DataFrame()
+        # Fallback: parquet de unidades Ultra (BLK-DIM-18)
+        if not UNIDADES_ULTRA_PERF_PATH.exists():
+            return pd.DataFrame()
+        df_fb = pd.read_parquet(UNIDADES_ULTRA_PERF_PATH)
+        alunos = pd.to_numeric(df_fb.get("alunos_total"), errors="coerce")
+        metragem = pd.to_numeric(df_fb.get("metragem"), errors="coerce")
+        df_fb["alunos_por_m2"] = (alunos / metragem).where(
+            (alunos > 0) & (metragem > 0)
+        )
+        return df_fb
     df = pd.read_parquet(BASE_CALIBRACAO_PATH)
     alunos = pd.to_numeric(df.get("alunos_reais"), errors="coerce")
     metragem = pd.to_numeric(df.get("metragem"), errors="coerce")
