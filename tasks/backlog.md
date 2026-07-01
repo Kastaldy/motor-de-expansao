@@ -939,21 +939,8 @@ declarado no relatório.
 
 ---
 
-### BLK-LTV-04 — Score M2 territorial de retenção (SÓ se BLK-LTV-03 = GO) `[requer DEC + gate humano]`
+- BLK-LTV-04 (concluído 2026-07-01) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Crítica/Estratégica** (cria um eixo de score novo). |
-| **Prioridade** | Condicional ao GO do LTV-03. |
-| **Esteira** | Block Orchestrator → Planner → `[APROVAÇÃO HUMANA + DEC]` → Builder → QA. |
-| **Status** | Bloqueado (depende do gate de LTV-03). |
-| **Depende de** | **BLK-LTV-03 = GO**. |
-| **Autonomia** | **manual (NÃO loop-safe)** — cria score; exige DEC registrada. |
-
-**Objetivo.** Compor um score de expansão paralelo (M2) ponderando captação + LTV/retenção territorial,
-como **camada paralela READ-ONLY sobre o M1** (não altera `score_priorizacao`/pesos/artefatos; exige
-**DEC** própria antes do Builder, análoga à disciplina da DEC-001/DEC-008). **Critérios de aceite.**
-Definição de pesos aprovada em DEC; validação LOO/k-fold vs baseline; READ-ONLY M1; suíte verde.
 
 ---
 
