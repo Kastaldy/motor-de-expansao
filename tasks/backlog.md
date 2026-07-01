@@ -93,6 +93,20 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
+## Relatório Pontual Censitário — polimento de layout (2026-07-01, pedido de Vini)
+
+> Pedido de Vinicius a partir do uso real do Relatório Pontual (variante **classico**, em produção
+> via dashboard e API). Hoje os três mapas de calor censitários — **População/Densidade, Renda e
+> Score** — ocupam **um slide cada** (páginas 2, 3 e 4 do PDF de 7 páginas). Objetivo: **consolidá-los
+> em UM único slide**, lado a lado, **sem sobreposição** entre eles nem sobre o restante do conteúdo
+> (faixa de título, rodapé, marca d'água). READ-ONLY sobre o M1 (§5 guardrail): nada recalcula score,
+> intersecção de setores, raio de 1,5 km ou artefatos oficiais.
+
+- BLK-RELPON-01 (concluído 2026-07-01) — ver tasks/completed.md
+
+
+---
+
 ## Relatório Municipal — novo formato (2026-06-19, pedido de Vini)
 
 > Novo formato de relatório que **coexiste** com o Relatório Pontual Censitário atual (que analisa

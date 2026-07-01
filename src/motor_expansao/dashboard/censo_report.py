@@ -13,15 +13,14 @@ from PIL import Image
 from motor_expansao.api.maps_geocoder import build_search_url
 from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSITARIO
 
-# Cabecalhos canonicos das 7 paginas do template Ultra (ASCII, sem acento problematico).
+# Cabecalhos canonicos das 5 paginas do template Ultra (ASCII, sem acento problematico).
 # Cada string PRECISA aparecer nos bytes crus do PDF (compressao desativada no writer).
-# Ordem das paginas (BLK-CENSO-03-FU5): Concorrentes ANTES de Big Numbers; pagina de
-# Score censitario (choropleth) restaurada.
+# Ordem das paginas (BLK-RELPON-01): os 3 choropleths (Densidade/Renda/Score) foram
+# CONSOLIDADOS em um unico slide "Mapas de calor" (tira 1x3 lado a lado), reduzindo o PDF
+# de 7 para 5 paginas: Capa -> Mapas de calor -> Concorrentes -> Big Numbers -> Realizacao.
 PDF_SECTION_HEADERS = (
     "Relatorio Pontual Censitario",
-    "Populacao",
-    "Renda",
-    "Score censitario",
+    "Mapas de calor",
     "Concorrentes",
     "Big Numbers",
     "Realizacao",
@@ -79,7 +78,7 @@ _DEFAULT_ULTRA_DIR = Path("data/ultra")
 _PAGE_W = 960.0
 _PAGE_H = 540.0
 
-# Marca d'agua diagonal de rastreabilidade (BLK-EST-01) — embutida em TODAS as 7 paginas com
+# Marca d'agua diagonal de rastreabilidade (BLK-EST-01) — embutida em TODAS as paginas com
 # compressao OFF: o texto vai em claro no content stream (BT...ET), nao removivel trivialmente
 # (sem /Annot separavel). `solicitante=None` -> so "Ultra Academia". ASCII-safe (passa por _ascii).
 _WATERMARK_BASE = "Ultra Academia"
@@ -292,48 +291,99 @@ def _draw_footer(pdf: _UltraPDF, *, with_attribution: bool = True) -> None:
     pdf.cell(_PAGE_W - 72, 12, _ascii(text))
 
 
-def _draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
-    """Desenha o PNG do mapa centralizado abaixo da faixa de titulo (area 16:9)."""
-    dims = _png_dimensions(png_bytes)
-    if dims is None:
-        return
-    img_w, img_h = dims
-    max_w, max_h = 900.0, 442.0
-    scale = min(max_w / img_w, max_h / img_h)
-    draw_w = img_w * scale
-    draw_h = img_h * scale
-    x = (_PAGE_W - draw_w) / 2.0
-    y = 56.0 + (max_h - draw_h) / 2.0
-    try:
-        pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
-    except Exception:
-        pass
+# ---------------------------------------------------------------------------
+# Slide consolidado "Mapas de calor" (BLK-RELPON-01): os 3 choropleths
+# (densidade/renda/score) em UMA tira horizontal 1x3, lado a lado, sem
+# sobreposicao. Cada PNG e embutido SEPARADAMENTE (nao pre-composto), com
+# legenda embutida (D3). Fallback textual por camada ausente (offline-safe).
+# ---------------------------------------------------------------------------
+# Mensagem literal de fallback por camada de mapa faltante (usada pelas grades 1x3).
+_MAPA_INDISPONIVEL = "Mapa indisponivel para esta camada."
 
 
-def _classico_draw_map(pdf: _UltraPDF, png_bytes: bytes) -> None:
-    """Desenha o PNG do mapa na area do template CLASSICO (ABAIXO da banda + titulo de secao).
+def _map_grid_cells(
+    top: float, bottom: float, margin_x: float, gap: float
+) -> list[tuple[float, float, float, float]]:
+    """Geometria PURA das 3 celulas da tira 1x3 (x, y, w, h). Testavel sem gerar PDF.
 
-    Diferente de `_draw_map` (calibrado para a banda flush do template recente, que comeca em
-    y=56): aqui o topo respeita a banda classica (margem 20 + altura ~58) e o titulo da secao
-    logo abaixo (~y114), e o rodape em y~518. Mantem proporcao (sem distorcer) e centraliza.
+    Divide a largura util (`_PAGE_W - 2*margin_x - 2*gap`) em 3 colunas iguais; altura da
+    celula = `bottom - top`. Nao desenha nada; so calcula as caixas das celulas.
     """
-    dims = _png_dimensions(png_bytes)
-    if dims is None:
-        return
-    img_w, img_h = dims
-    top = _CLASSICO_MARGIN + _CLASSICO_BAND_H + 12.0 + 24.0 + 8.0  # banda + gap + titulo + folga (~122)
-    bottom = _PAGE_H - 30.0  # acima do rodape (y~518)
-    max_w = _PAGE_W - 2.0 * _CLASSICO_MARGIN  # respeita a margem lateral de 20px
-    max_h = bottom - top
-    scale = min(max_w / img_w, max_h / img_h)
-    draw_w = img_w * scale
-    draw_h = img_h * scale
-    x = (_PAGE_W - draw_w) / 2.0
-    y = top + (max_h - draw_h) / 2.0
-    try:
-        pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
-    except Exception:
-        pass
+    usable_w = _PAGE_W - 2.0 * margin_x - 2.0 * gap
+    cell_w = usable_w / 3.0
+    cell_h = bottom - top
+    cells: list[tuple[float, float, float, float]] = []
+    for i in range(3):
+        x = margin_x + i * (cell_w + gap)
+        cells.append((x, top, cell_w, cell_h))
+    return cells
+
+
+def _draw_maps_grid(
+    pdf: _UltraPDF,
+    pngs: list[bytes | None],
+    *,
+    top: float,
+    bottom: float,
+    margin_x: float,
+    gap: float,
+) -> list[tuple[float, float, float, float]]:
+    """Desenha os 3 PNGs [densidade, renda, score] numa tira 1x3 sem sobreposicao.
+
+    Cada PNG e escalado para caber na sua celula preservando proporcao (`min(w,h)`) e
+    centralizado dentro dela; camada `None` -> texto de fallback centralizado na celula.
+    Os 3 PNGs sao embutidos SEPARADAMENTE (nao pre-compostos) para preservar a contagem
+    de `/Subtype /Image`. Retorna os bounding boxes efetivamente ocupados por cada mapa
+    (imagem desenhada) ou a propria celula quando cai no fallback — usado pelo teste de
+    nao-sobreposicao.
+    """
+    cells = _map_grid_cells(top, bottom, margin_x, gap)
+    boxes: list[tuple[float, float, float, float]] = []
+    for png, (cx, cy, cw, ch) in zip(pngs, cells, strict=False):
+        dims = _png_dimensions(png) if png else None
+        if png and dims is not None:
+            img_w, img_h = dims
+            scale = min(cw / img_w, ch / img_h)
+            draw_w = img_w * scale
+            draw_h = img_h * scale
+            x = cx + (cw - draw_w) / 2.0
+            y = cy + (ch - draw_h) / 2.0
+            try:
+                pdf.image(BytesIO(png), x=x, y=y, w=draw_w, h=draw_h)
+                boxes.append((x, y, draw_w, draw_h))
+                continue
+            except Exception:
+                pass
+        # Fallback: camada ausente ou imagem invalida -> texto centralizado na celula.
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_xy(cx, cy + ch / 2.0 - 8.0)
+        pdf.multi_cell(cw, 14, _ascii(_MAPA_INDISPONIVEL), align="C")
+        boxes.append((cx, cy, cw, ch))
+    return boxes
+
+
+def _mapas_calor_page(
+    pdf: _UltraPDF,
+    layers: dict[str, bytes],
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+) -> list[tuple[float, float, float, float]]:
+    """Slide unico "Mapas de calor" (template recente): faixa de titulo + tira 1x3 + rodape."""
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, "Mapas de calor", rgb=primary)
+    boxes = _draw_maps_grid(
+        pdf,
+        [layers.get("densidade"), layers.get("renda"), layers.get("score")],
+        top=56.0,
+        bottom=_PAGE_H - 30.0,
+        margin_x=20.0,
+        gap=12.0,
+    )
+    _draw_footer(pdf, with_attribution=True)
+    return boxes
 
 
 def _draw_watermark(
@@ -428,28 +478,6 @@ def _cover_page(
 
     pdf.set_xy(block_x, title_y + 92)
     pdf.cell(block_w, 18, _ascii(f"Raio de analise: {raio}"), align=align)
-
-
-def _map_page(
-    pdf: _UltraPDF,
-    png_bytes: bytes | None,
-    *,
-    title: str,
-    assets: dict[str, bytes | None],
-    primary: tuple[int, int, int] = ULTRA_TURQUESA,
-) -> None:
-    """Pagina de mapa: fundo claro, faixa de titulo (tom da pagina), mapa, rodape com atribuicao."""
-    pdf.add_page()
-    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, title, rgb=primary)
-    if png_bytes:
-        _draw_map(pdf, png_bytes)
-    else:
-        pdf.set_text_color(*_CINZA_TEXTO)
-        pdf.set_font("Helvetica", "", 12)
-        pdf.set_xy(40, 120)
-        pdf.cell(_PAGE_W - 80, 18, _ascii("Mapa indisponivel para esta camada."))
-    _draw_footer(pdf, with_attribution=True)
 
 
 def _big_numbers_page(
@@ -809,27 +837,47 @@ def _classico_cover_page(
     pdf.text(base_x, 455.0, _ascii(subtitulo))
 
 
-def _classico_map_page(
+# Topo da area de conteudo do template CLASSICO (abaixo da banda + titulo de secao ~y122).
+_CLASSICO_MAPS_TOP = _CLASSICO_MARGIN + _CLASSICO_BAND_H + 12.0 + 24.0 + 8.0
+
+
+def _classico_draw_maps_grid(
     pdf: _UltraPDF,
-    png_bytes: bytes | None,
+    pngs: list[bytes | None],
+) -> list[tuple[float, float, float, float]]:
+    """Tira 1x3 dos 3 choropleths na geometria do template CLASSICO (BLK-RELPON-01).
+
+    Mesma logica de `_draw_maps_grid`, mas com o topo respeitando a banda classica + titulo
+    de secao (`_CLASSICO_MAPS_TOP` ~122) e a margem lateral classica (20).
+    """
+    return _draw_maps_grid(
+        pdf,
+        pngs,
+        top=_CLASSICO_MAPS_TOP,
+        bottom=_PAGE_H - 30.0,
+        margin_x=_CLASSICO_MARGIN,
+        gap=12.0,
+    )
+
+
+def _classico_mapas_calor_page(
+    pdf: _UltraPDF,
+    layers: dict[str, bytes],
+    assets: dict[str, bytes | None],
     *,
     banda_texto: str,
-    titulo_secao: str,
-    assets: dict[str, bytes | None],
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
-) -> None:
-    """Pagina de mapa classica: fundo claro + banda classica + mapa (reuso) + rodape."""
+) -> list[tuple[float, float, float, float]]:
+    """Slide unico "Mapas de calor" (template classico): banda classica + tira 1x3 + rodape."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _classico_title_band(pdf, banda_texto, titulo_secao, assets, rgb=primary)
-    if png_bytes:
-        _classico_draw_map(pdf, png_bytes)
-    else:
-        pdf.set_text_color(*_CINZA_TEXTO)
-        pdf.set_font("Helvetica", "", 12)
-        pdf.set_xy(40, 160)
-        pdf.cell(_PAGE_W - 80, 18, _ascii("Mapa indisponivel para esta camada."))
+    _classico_title_band(pdf, banda_texto, "Mapas de calor", assets, rgb=primary)
+    boxes = _classico_draw_maps_grid(
+        pdf,
+        [layers.get("densidade"), layers.get("renda"), layers.get("score")],
+    )
     _draw_footer(pdf, with_attribution=True)
+    return boxes
 
 
 def _classico_competitors_page(
@@ -1007,11 +1055,13 @@ def gerar_pdf_relatorio_pontual_classico(
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
-    7 paginas na ordem canonica (Capa -> Populacao -> Renda -> Score censitario ->
-    Concorrentes -> Big Numbers -> Realizacao), reusando o motor/helpers do template
-    recente. Difere do recente na ESTETICA: banda turquesa com margem/cantos arredondados
-    e icone Ultra, capa com endereco acima do subtitulo, banda magenta de rodape e
-    Realizacao com link clicavel + data por extenso. READ-ONLY sobre o M1.
+    5 paginas na ordem canonica (Capa -> Mapas de calor -> Concorrentes -> Big Numbers ->
+    Realizacao), reusando o motor/helpers do template recente. Os 3 choropleths
+    (Densidade/Renda/Score) foram consolidados em um unico slide "Mapas de calor"
+    (tira 1x3 lado a lado) no BLK-RELPON-01. Difere do recente na ESTETICA: banda turquesa
+    com margem/cantos arredondados e icone Ultra, capa com endereco acima do subtitulo,
+    banda magenta de rodape e Realizacao com link clicavel + data por extenso. READ-ONLY
+    sobre o M1.
 
     `rotulo` e o nome/endereco do ponto (capa + banda + texto do link). `now` e injetavel
     para data determinista em teste. Geracao 100% offline, sem PII. Marca d'agua identica
@@ -1021,32 +1071,20 @@ def gerar_pdf_relatorio_pontual_classico(
     layers = dict(_normalize_mapas_by_key(mapas))
     banda_texto = _classico_banda_texto(result, rotulo)
 
-    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta).
+    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01:
+    # 3 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Big Numbers=3).
     p1, _ = _tema_bicolor(1)
-    p2, _ = _tema_bicolor(2)
-    p3, _ = _tema_bicolor(3)
-    p4, s4 = _tema_bicolor(4)
-    p5, s5 = _tema_bicolor(5)
+    p2, s2 = _tema_bicolor(2)
+    p3, s3 = _tema_bicolor(3)
 
     pdf = _UltraPDF()
     _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
-    _classico_map_page(
-        pdf, layers.get("densidade"), banda_texto=banda_texto,
-        titulo_secao="Populacao - Densidade", assets=assets, primary=p1,
-    )
-    _classico_map_page(
-        pdf, layers.get("renda"), banda_texto=banda_texto,
-        titulo_secao="Renda per capita", assets=assets, primary=p2,
-    )
-    _classico_map_page(
-        pdf, layers.get("score"), banda_texto=banda_texto,
-        titulo_secao="Score censitario", assets=assets, primary=p3,
-    )
+    _classico_mapas_calor_page(pdf, layers, assets, banda_texto=banda_texto, primary=p1)
     _classico_competitors_page(
         pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto,
-        primary=p4, secondary=s4,
+        primary=p2, secondary=s2,
     )
-    _big_numbers_page(pdf, result, residual, assets, primary=p5, secondary=s5)
+    _big_numbers_page(pdf, result, residual, assets, primary=p3, secondary=s3)
     _classico_banda_magenta_rodape(pdf)
     _classico_credit_page(pdf, result, assets, rotulo=rotulo, now=now)
 
@@ -1090,38 +1128,36 @@ def gerar_pdf_relatorio_pontual_censitario(
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
-    Estrutura de 7 paginas (BLK-CENSO-03-FU5): Capa -> Populacao -> Renda ->
-    Score censitario -> Concorrentes -> Big Numbers -> Realizacao/Credito.
+    Estrutura de 5 paginas (BLK-RELPON-01): Capa -> Mapas de calor -> Concorrentes ->
+    Big Numbers -> Realizacao/Credito. Os 3 choropleths (Densidade/Renda/Score) — antes
+    1 pagina cada — foram consolidados em UM slide "Mapas de calor" (tira 1x3 lado a lado).
 
     `mapas` aceita o dict de camadas combinadas (`{"densidade","renda","score",
-    "concorrentes"}`) ou `bytes` (1 mapa legado, retrocompat). A pagina de Score censitario
-    usa o choropleth de score (modo de cor + legenda); a de Concorrentes usa o mapa so-pins.
-    `residual` carrega os campos do lookup hex (READ-ONLY) para o Big Numbers. `ultra_dir`
-    aponta os assets de branding (fallback gracioso para cor solida se ausentes). `solicitante`
-    (BLK-EST-01) carimba a marca d'agua diagonal de rastreabilidade em TODAS as 7 paginas:
-    None -> so "Ultra Academia"; preenchido -> "Ultra Academia | {solicitante}". Geracao
-    100% offline, sem PII.
+    "concorrentes"}`) ou `bytes` (1 mapa legado, retrocompat). O slide "Mapas de calor" embute
+    os 3 choropleths (score usa modo de cor + legenda); a pagina de Concorrentes usa o mapa
+    so-pins. `residual` carrega os campos do lookup hex (READ-ONLY) para o Big Numbers.
+    `ultra_dir` aponta os assets de branding (fallback gracioso para cor solida se ausentes).
+    `solicitante` (BLK-EST-01) carimba a marca d'agua diagonal de rastreabilidade em TODAS as
+    5 paginas: None -> so "Ultra Academia"; preenchido -> "Ultra Academia | {solicitante}".
+    Geracao 100% offline, sem PII.
     """
     assets = _load_branding_assets(ultra_dir)
     layers = dict(_normalize_mapas_by_key(mapas))
 
-    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta).
+    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01:
+    # 3 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Big Numbers=3).
     p1, _ = _tema_bicolor(1)
-    p2, _ = _tema_bicolor(2)
-    p3, _ = _tema_bicolor(3)
-    p4, s4 = _tema_bicolor(4)
-    p5, s5 = _tema_bicolor(5)
+    p2, s2 = _tema_bicolor(2)
+    p3, s3 = _tema_bicolor(3)
 
     pdf = _UltraPDF()
     _cover_page(pdf, result, assets, rotulo=rotulo)
-    _map_page(pdf, layers.get("densidade"), title="Populacao - Densidade", assets=assets, primary=p1)
-    _map_page(pdf, layers.get("renda"), title="Renda per capita", assets=assets, primary=p2)
-    _map_page(pdf, layers.get("score"), title="Score censitario", assets=assets, primary=p3)
-    _competitors_page(pdf, result, layers.get("concorrentes"), assets, primary=p4, secondary=s4)
-    _big_numbers_page(pdf, result, residual, assets, primary=p5, secondary=s5)
+    _mapas_calor_page(pdf, layers, assets, primary=p1)
+    _competitors_page(pdf, result, layers.get("concorrentes"), assets, primary=p2, secondary=s2)
+    _big_numbers_page(pdf, result, residual, assets, primary=p3, secondary=s3)
     _credit_page(pdf, assets)
 
-    # Marca d'agua diagonal POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as 7).
+    # Marca d'agua diagonal POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as 5).
     # Escrever na pagina `n` via `pdf.page = n` ANEXA ao stream dessa pagina -> sobreposicao.
     wm_text = _watermark_text(solicitante)
     for page_number in range(1, pdf.pages_count + 1):
