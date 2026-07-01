@@ -844,8 +844,17 @@ def _fetch_basemap_municipio(
                 zoom = max(0, min(z, 19))
                 break
         source = getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)
-        img, extent = ctx.bounds2img(minx, miny, maxx, maxy, zoom=zoom, source=source, ll=False)
-        return img, extent
+        # Retry: a 1a busca (rede fria) pode dar timeout e deixar so essa camada offline (ex.:
+        # Resumo, a 1a das 4 de foco) enquanto as demais ja pegam o cache. Tenta ate 3x antes de
+        # cair no fallback offline (que segue valido se a rede realmente faltar).
+        for attempt in range(3):
+            try:
+                img, extent = ctx.bounds2img(minx, miny, maxx, maxy, zoom=zoom, source=source, ll=False)
+                return img, extent
+            except Exception:
+                if attempt == 2:
+                    return None
+        return None
     except Exception:
         return None
 
@@ -949,6 +958,21 @@ def _render_mapa_municipio(
     span_y = max(maxy - miny, 1.0)
     inner_w = right - left - 16
     inner_h = bottom - top - 16
+    # Casa o aspect dos bounds ao do map_box (overscan simetrico do eixo curto) ANTES de buscar/
+    # projetar os tiles, para o basemap preencher TODO o map_box sem deixar faixa cinza de
+    # letterbox no interior do contorno. So amplia a EXTENSAO (nao a escala por eixo): a
+    # geografia/hexes seguem sem distorcao, so ganham margem de basemap no eixo curto.
+    target_aspect = inner_w / inner_h if inner_h > 0 else 1.0
+    if span_x / span_y < target_aspect:
+        new_span_x = span_y * target_aspect
+        cx = (minx + maxx) / 2.0
+        minx, maxx = cx - new_span_x / 2.0, cx + new_span_x / 2.0
+        span_x = new_span_x
+    else:
+        new_span_y = span_x / target_aspect
+        cy = (miny + maxy) / 2.0
+        miny, maxy = cy - new_span_y / 2.0, cy + new_span_y / 2.0
+        span_y = new_span_y
     scale = min(inner_w / span_x, inner_h / span_y)
     offset_x = left + 8 + (inner_w - span_x * scale) / 2
     offset_y = top + 8 + (inner_h - span_y * scale) / 2
