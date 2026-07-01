@@ -6182,3 +6182,110 @@ fica aguardando seu próprio merge).
 ---
 
 - BLK-DIM-22 (concluído 2026-06-22) — ver tasks/completed.md
+
+---
+
+### BLK-LTV-02 — Join territorial (pendurar retenção/LTV no hexágono da unidade)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (join de dados; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-LTV-01**. |
+| **Autonomia** | candidato **loop-safe**. |
+
+**Objetivo.** Via `hex_id` da ponte, anexar a cada unidade as features territoriais do Motor
+(`renda_per_capita`, densidade, `score_priorizacao`, `score_expansao_hibrido`,
+`n_concorrentes_mapeados_1km/2km`, `pop_total_setor_2022`…) e as métricas de retenção agregadas
+(`PROB_CANCEL_90D_MEDIA`, `LTV_PROSPECTIVO_12M_MEDIANO`), respeitando `USAR_PROB_ABSOLUTA`/haircut.
+Entregável: `data/staging/unidade_territorio_retencao.parquet`. **Critérios de aceite.** 100% das
+linhas do M1 preservadas nas leituras; nenhuma escrita em artefato M1; suíte verde.
+
+---
+
+### BLK-LTV-01 — Tabela-ponte `unidade_hex` (geocodificar unidades → H3 res-7)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (preparação de dados; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta (destrava o epic). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (insumos já no repo). |
+| **Autonomia** | candidato **loop-safe** (READ-ONLY M1, sem VPS/deploy/segredos, sem PII, consome `data/ultra`+`data/staging`). |
+
+**Objetivo.** Produzir `data/staging/unidade_hex.parquet` mapeando cada `COD_UNIDADE`/`UNIDADE` do
+Lifetime → `lat`/`lng` → `hex_id` (H3 res-7, `H3_RESOLUTION=7`). Geocodificar por nome contra
+`Ultra.csv` (147) com fallback ao `unidades_ultra_performance_hex.parquet` (54); fuzzy match com
+verificação; emitir **relatório de qualidade de match** (casados exato/fuzzy/sem match, por UF e por
+`CONFIABILIDADE_UNIDADE`). **Critérios de aceite.** Ponte reproduzível; % de cobertura reportado (não
+silenciar não-casados); READ-ONLY M1; suíte verde. **Guardrail.** `Ultra.csv` = `sep=";"`,
+`latin-1`, 1 linha de metadado (CLAUDE.md §2).
+
+---
+
+- BLK-LTV-02 (concluído 2026-07-01) — ver tasks/completed.md
+
+---
+
+### BLK-LTV-03 — Análise de correlação território × retenção/LTV `[GATE DE DECISÃO]`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (gate de decisão do eixo; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — decisão do eixo]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-LTV-02**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — gate de decisão humano. |
+
+**Objetivo.** Correlacionar território (renda, densidade, `score_priorizacao`, concorrência) ×
+`PROB_CANCEL_90D_MEDIA` e `LTV_PROSPECTIVO_12M_MEDIANO`, **controlando por maturidade quando houver
+dado** (ver caveat estrutural do epic). Método DEC-008: **Spearman + bootstrap/IC**, sem R² in-sample;
+scatter + significância. **Gate de decisão:** correlação **fraca** → o epic vira consolidação de dados
+(entrega LTV-01/02 como ativo, sem score); **forte** → avança para BLK-LTV-04. **Critérios de aceite.**
+rho + IC bootstrap por par de variáveis, confounds declarados (maturidade, N, seleção de sobreviventes),
+veredito GO/NO-GO honesto; READ-ONLY M1.
+
+---
+
+### BLK-LTV-04 — Score M2 territorial de retenção (SÓ se BLK-LTV-03 = GO) `[requer DEC + gate humano]`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica/Estratégica** (cria um eixo de score novo). |
+| **Prioridade** | Condicional ao GO do LTV-03. |
+| **Esteira** | Block Orchestrator → Planner → `[APROVAÇÃO HUMANA + DEC]` → Builder → QA. |
+| **Status** | Bloqueado (depende do gate de LTV-03). |
+| **Depende de** | **BLK-LTV-03 = GO**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — cria score; exige DEC registrada. |
+
+**Objetivo.** Compor um score de expansão paralelo (M2) ponderando captação + LTV/retenção territorial,
+como **camada paralela READ-ONLY sobre o M1** (não altera `score_priorizacao`/pesos/artefatos; exige
+**DEC** própria antes do Builder, análoga à disciplina da DEC-001/DEC-008). **Critérios de aceite.**
+Definição de pesos aprovada em DEC; validação LOO/k-fold vs baseline; READ-ONLY M1; suíte verde.
+
+**Desfecho (2026-07-01) — ciclo /run-cycle (BO→Planner→[gate humano + DEC-014]→Builder→QA). VEREDITO
+QA = APROVADO; VEREDITO DO SCORE = NO-GO honesto (desfecho legítimo DEC-008/DEC-014 decisão 2).**
+Gate humano (Felipe, 2026-07-01) fechou 4 decisões de produto → **DEC-014** (CLAUDE.md §8): (1) pesos
+variante A `w_cap=0.50`/`w_ret=0.50`; (2) fallback em NO-GO = **encerrar sem score** (não degradar para
+proxy); (3) modelo do eixo retenção em **numpy puro** (Ridge, sem `scikit-learn`); (4) nome `score_retencao`.
+Fórmula aprovada: `score_retencao = clip(0.50·score_priorizacao + 0.50·retencao_norm, 0, 100)`, eixo
+captação = `score_priorizacao` LIDO, eixo retenção = modelo territorial calibrado **fora-de-fold**
+(k-fold 5×5 + LOO, IC95 bootstrap seed=42, **sem R² in-sample**) contra `LTV_PROSPECTIVO_12M_MEDIANO`
+(agregado por unidade, N=56), maturidade só como covariável de controle. **Resultado real:** o melhor
+modelo (`score_priorizacao` sozinho) deu R²_oof=+0.040 com **IC [-0.101,+0.120] cruzando zero** e
+rho_oof=-0.073 (< piso 0.30, IC cruza zero) → **NO-GO mecânico**. O sinal bivariado +0.391 do BLK-LTV-03
+era rank-correlation in-sample da feature bruta; o Ridge não generaliza fora-de-fold sob N=56 +
+colinearidade captação↔retenção. **Parquet de score NÃO gerado** (decisão 2); escrito só o relatório
+`data/analysis/relatorio_score_retencao.md` (gitignored) documentando o NO-GO + 5 confounds. **QA
+re-executou o gate (NO-BYPASS):** suíte full `1193 passed / 1 skipped / 0 failed`; módulo rodado 2×
+sobre parquets REAIS → NO-GO reproduzível, relatório byte-estável (SHA1 idêntico), **mtime dos 4
+artefatos M1 INALTERADO** e nenhum path M1 escrito; ruff clean; mypy Success (88 files);
+`import streamlit_app` ok; imports proibidos (incl. `sklearn`) ausentes. **READ-ONLY M1 comprovado;
+DEC-001/DEC-008/DEC-009 intactas.** Módulo `src/motor_expansao/lifetime/score_retencao_territorial.py`
++ testes `tests/unit/test_score_retencao_territorial.py` (13 testes, NO-GO alcançável e testado). O epic
+BLK-LTV encerra com LTV-01/02/03 como ativo de dados + o gate honesto do LTV-04 (território prevê
+retenção in-sample, mas NÃO com poder preditivo out-of-fold que justifique um score paralelo).

@@ -52,4 +52,9 @@ regexes = [
     # generic-api-key marca o valor por entropia, mas e um identificador de widget,
     # nao segredo. Cobre pages.py e as copias nos handoffs. Robusto a drift de linha.
     '''viab_ponto_''',
+    # BLK-LTV-04: nome de coluna territorial `n_concorrentes_mapeados_1km`
+    # (feature candidata do eixo retencao em score_retencao_territorial.py; entropia
+    # 3.68). generic-api-key marca o literal por entropia, mas e nome de coluna, nao
+    # segredo. Substring match cobre todas as ocorrencias. Robusto a drift de linha.
+    '''n_concorrentes_mapeados_1km''',
 ]

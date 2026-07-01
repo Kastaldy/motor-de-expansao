@@ -896,6 +896,54 @@ extrapolação). Liga-se à DEC-009 (dimensionamento é a parte que funciona; co
 
 ---
 
+## Epic BLK-LTV — Integração Lifetime × Motor de Expansão (eixo retenção territorial, camada paralela READ-ONLY sobre o M1)
+
+**Objetivo do epic.** Validar se o perfil do território prevê a retenção/LTV da carteira, para a
+expansão passar a priorizar "onde a demanda **permanece**", não só "onde há demanda". Se validado,
+compor um eixo de score paralelo (M2) que pondere captação + retenção/LTV territorial. **READ-ONLY
+sobre o M1** (não recalibra `score_priorizacao`/`hex_score_estrutural`/pesos nem regenera artefatos
+oficiais; DEC-001 intacta). Metodologia obrigatória DEC-008: Spearman + **bootstrap/IC** (N pequeno),
+sem R² in-sample; controlar por maturidade quando houver dado.
+
+**Insumo (Lifetime).** `data/ultra/unidade_para_motor.parquet` — 88 unidades com `PROB_CANCEL_90D_*`,
+`LTV_PROSPECTIVO_12M_*`, `CONFIABILIDADE_UNIDADE`, `USAR_PROB_ABSOLUTA`, `USAR_RANKING`
+(dicionário em `unidade_para_motor_DICIONARIO.md`). Chave lógica: `COD_UNIDADE`; chave de join real
+disponível: **nome da unidade** (`UNIDADE`), pois nem o Lifetime nem as bases geo têm `COD_UNIDADE`.
+
+**Fonte de geocodificação (confirmada no repo).** `data/ultra/Ultra.csv` (legado: `sep=";"`,
+`encoding="latin-1"`, 1 linha de metadado) — 147 unidades com `UNIDADE`/`ESTADO`/`CIDADE`/`Latitude`/
+`Longitude`. Complemento: `data/staging/unidades_ultra_performance_hex.parquet` (54 unidades já com
+`hex_id`/features territoriais). Cobertura medida (2026-07-01): match exato de nome Lifetime↔Ultra.csv
+= 34/88; fuzzy ≥0.8 recupera mais (≈43 contra o perf-hex) — fechar cobertura é trabalho do BLK-LTV-01.
+
+**Regras (do pedido, canônicas para o epic).** Usar `LTV_PROSPECTIVO_12M_*` só no **agregado por
+unidade** (validado); respeitar `USAR_PROB_ABSOLUTA` por unidade (unidades sem prob. absoluta confiável
+entram só no eixo de ranking); aplicar **haircut ~20%** em volume absoluto; **N=88 exige bootstrap/IC**.
+
+**Caveat estrutural (registrar, não bloqueia LTV-01/02).** `unidade_para_motor.parquet` **não tem data
+de abertura / idade da unidade** (as métricas de tempo são tenure de aluno, não idade da unidade) → o
+"controlar por maturidade" do BLK-LTV-03 esbarra no **mesmo gap do gate G1 da DEC-001**. Sem esse
+controle, a correlação território×retenção fica confundida por maturidade; tratar como confound
+declarado no relatório.
+
+---
+
+- BLK-LTV-01 (concluído 2026-07-01) — ver tasks/completed.md
+
+
+
+---
+
+- BLK-LTV-03 (concluído 2026-07-01) — ver tasks/completed.md
+
+
+---
+
+- BLK-LTV-04 (concluído 2026-07-01) — ver tasks/completed.md
+
+
+---
+
 ## Projeto — Repaginação visual do dashboard (UX/UI)
 
 - BLK-UI-11 (concluído 2026-06-29) — ver tasks/completed.md
