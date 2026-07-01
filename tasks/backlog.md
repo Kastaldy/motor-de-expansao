@@ -934,24 +934,8 @@ declarado no relatório.
 
 ---
 
-### BLK-LTV-03 — Análise de correlação território × retenção/LTV `[GATE DE DECISÃO]`
+- BLK-LTV-03 (concluído 2026-07-01) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (gate de decisão do eixo; **READ-ONLY sobre o M1**). |
-| **Prioridade** | Alta. |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — decisão do eixo]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-LTV-02**. |
-| **Autonomia** | **manual (NÃO loop-safe)** — gate de decisão humano. |
-
-**Objetivo.** Correlacionar território (renda, densidade, `score_priorizacao`, concorrência) ×
-`PROB_CANCEL_90D_MEDIA` e `LTV_PROSPECTIVO_12M_MEDIANO`, **controlando por maturidade quando houver
-dado** (ver caveat estrutural do epic). Método DEC-008: **Spearman + bootstrap/IC**, sem R² in-sample;
-scatter + significância. **Gate de decisão:** correlação **fraca** → o epic vira consolidação de dados
-(entrega LTV-01/02 como ativo, sem score); **forte** → avança para BLK-LTV-04. **Critérios de aceite.**
-rho + IC bootstrap por par de variáveis, confounds declarados (maturidade, N, seleção de sobreviventes),
-veredito GO/NO-GO honesto; READ-ONLY M1.
 
 ---
 
