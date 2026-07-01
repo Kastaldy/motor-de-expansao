@@ -2,42 +2,39 @@
 
 ## Bloco atual
 
-ID: BLK-DIM-18
-Nome: Fix — faixa de alunos pela metragem ausente em produção (fallback para parquet de unidades)
-Status: aprovado (QA APROVADO — 2026-07-01)
-Tipo: bug (fix de produção; READ-ONLY sobre o M1)
-Criticidade: alta
-Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
+ID: BLK-LTV-02
+Nome: Join territorial (pendurar retenção/LTV no hexágono da unidade)
+Status: aprovado (QA — APROVADO, suíte full 1169 passed/1 skipped, M1 READ-ONLY confirmado)
+Tipo: feature (join de dados; camada paralela READ-ONLY sobre o M1)
+Criticidade: média
+Esteira: Block Orchestrator → Planner → Builder → QA
 Skill atual: Builder (concluído)
-Próxima Skill: QA (Opus 4.8)
+Próxima Skill: QA
 
 ## Objetivo
-Adicionar fallback em `load_base_calibracao()` (streamlit_app.py) para usar
-`data/staging/unidades_ultra_performance_hex.parquet` (colunas `metragem`/`alunos_reais`) quando
-`data/staging/base_calibracao_multirede.parquet` não existir em produção, restaurando a exibição da
-faixa de alunos p10/p50/p90 pela metragem no dashboard. Sem tocar M1/score/artefatos oficiais.
+Via `hex_id` da ponte `data/staging/unidade_hex.parquet` (BLK-LTV-01), anexar a cada unidade as
+features territoriais do Motor (`renda_per_capita`, densidade, `score_priorizacao`,
+`score_expansao_hibrido`, `n_concorrentes_mapeados_1km/2km`, `pop_total_setor_2022`…) e as métricas
+de retenção agregadas do Lifetime (`PROB_CANCEL_90D_MEDIA`, `LTV_PROSPECTIVO_12M_MEDIANO`),
+respeitando `USAR_PROB_ABSOLUTA`/haircut. Entregável: `data/staging/unidade_territorio_retencao.parquet`.
 
-## Tiering de modelo (Passo 4) — Alta
+## Tiering de modelo (Passo 4) — Média
 - Block Orchestrator: sonnet
-- Planner: sonnet (override −1: fallback único totalmente especificado no backlog; design mínimo)
-- Builder: opus (mantém tabela — mudança em código de produção streamlit_app.py)
+- Planner: sonnet
+- Builder: sonnet
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-DIM-18 (criada a partir de main @ HEAD).
+ciclo/BLK-LTV-02 (criada a partir de ciclo/BLK-LTV @ HEAD, que contém BLK-LTV-01 commit 068b5fe).
 
 ## Paths pré-sujos (NÃO commitar — alheios ao ciclo)
 - data/raw/ibge/malha_brasil.geojson (D), data/raw/ibge/malha_uf_brasil.geojson (D)
 - scripts/backtest_smartfit_scores.py (??)
 
-## Escopo permitido
-- streamlit_app.py → função `load_base_calibracao()`: fallback para
-  `STAGING_DIR / "unidades_ultra_performance_hex.parquet"` antes de retornar DataFrame vazio;
-  derivar `alunos_por_m2` no fallback (mesma lógica existente).
-- 1 teste cobrindo o caminho de fallback.
-
-## Fora de escopo (invioláveis)
-- regenerar o multirede; tocar viabilidade_ponto.py/simulador.py; M1; artefatos oficiais.
+## Critérios de aceite (do backlog)
+- 100% das linhas do M1 preservadas nas leituras; nenhuma escrita em artefato M1 oficial; suíte verde.
 
 ## Guardrails
-- §5 (READ-ONLY M1); DEC-009 (dimensionamento consome demanda, não a prevê). Nenhuma coluna M1 alterada.
+- §5 (READ-ONLY M1); DEC-001 intacta. Nenhuma coluna/artefato M1 alterado.
+- LTV_PROSPECTIVO_12M_* só no agregado por unidade; respeitar USAR_PROB_ABSOLUTA; haircut ~20%; N=88.
+- Ultra.csv legado: sep=";", latin-1, 1 linha de metadado (se lido).

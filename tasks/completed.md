@@ -6182,3 +6182,23 @@ fica aguardando seu próprio merge).
 ---
 
 - BLK-DIM-22 (concluído 2026-06-22) — ver tasks/completed.md
+
+---
+
+### BLK-LTV-02 — Join territorial (pendurar retenção/LTV no hexágono da unidade)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (join de dados; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-LTV-01**. |
+| **Autonomia** | candidato **loop-safe**. |
+
+**Objetivo.** Via `hex_id` da ponte, anexar a cada unidade as features territoriais do Motor
+(`renda_per_capita`, densidade, `score_priorizacao`, `score_expansao_hibrido`,
+`n_concorrentes_mapeados_1km/2km`, `pop_total_setor_2022`…) e as métricas de retenção agregadas
+(`PROB_CANCEL_90D_MEDIA`, `LTV_PROSPECTIVO_12M_MEDIANO`), respeitando `USAR_PROB_ABSOLUTA`/haircut.
+Entregável: `data/staging/unidade_territorio_retencao.parquet`. **Critérios de aceite.** 100% das
+linhas do M1 preservadas nas leituras; nenhuma escrita em artefato M1; suíte verde.
