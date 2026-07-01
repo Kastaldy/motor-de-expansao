@@ -6136,6 +6136,116 @@ fica aguardando seu próprio merge).
 
 ---
 
+### BLK-RELPON-03 — Eliminar a barra cinza (letterbox) dos mapas do Relatório Municipal
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (altera o RENDER/encaixe dos mapas de um template PDF gated (DEC-011); **READ-ONLY sobre o M1**; exige revisão visual humana). |
+| **Prioridade** | Definida por Vini (2º dos 2 pedidos de layout de 2026-07-01). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — produto/visual]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (toca só `relatorio_municipal.py`; independe de BLK-RELPON-01/02). |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de produto/visual (como encaixar o mapa no painel); precisa de olho humano no PDF. NÃO marcar loop-safe. |
+
+**Contexto (ancorado no código, `src/motor_expansao/dashboard/relatorio_municipal.py`).**
+- Causa-raiz medida: o PNG do mapa é gerado em **1000×620** (`render_mapas_municipio`/`_render_mapa_municipio`,
+  `width=1000, height=620` → aspect ≈ **1,613**). Os painéis do PDF chamam `_draw_framed_map`/`_draw_map`
+  com `max_w=540, max_h=380` (aspect ≈ **1,421**; um usa `560×380` ≈ 1,474). `_draw_map` (linha ~1308) usa
+  `scale = min(max_w/img_w, max_h/img_h)` = **contain** → ajusta pela largura (0,54) e a altura fica 334,8 <
+  380 → **letterbox de ~22,6px em cima e embaixo** = a barra cinza (fundo do painel `_rounded_panel`).
+
+**Objetivo.** Os mapas do Relatório Municipal preenchem o painel sem barra cinza (topo/base), mantendo
+proporção sem distorção grosseira, sem sobrepor a moldura/título/rodapé, e preservando a moldura Ultra Clean.
+
+**Escopo permitido (READ-ONLY M1, só RENDER).** Casar a proporção do mapa ao painel — via (a) gerar o PNG
+na proporção do painel (ajustar `width/height` de `render_mapas_municipio`/`_render_mapa_municipio` e/ou o
+viewport/bbox para o aspect ~1,42), e/ou (b) `_draw_map` preencher o painel por **cover** (escala `max` +
+recorte do excedente) em vez de **contain**, e/ou (c) desenhar o fundo do painel com a cor do mapa. Testes
+que fixem a ausência de letterbox (mapa cobre o painel). Parâmetro opcional segue precedente DEC-005 (default = atual).
+
+**Fora de escopo.** Gate do SAM/`flag_sam` (DEC-006/007), score, M1, artefatos oficiais (INTOCADOS);
+Relatório Pontual (`censo_map.py`/`censo_report.py`, BLK-RELPON-01/02); método de intersecção e raio.
+
+**Guardrails.** READ-ONLY sobre o M1 (§5). Sem dependência de rede nova (DEC-011 inalterada — tiles seguem
+como estão). Marca d'água anti-PII + `set_compression(False)` + estrutura de 8 páginas do template mantidos.
+
+**Critério de aceite.** Mapas do Relatório Municipal sem barra cinza (cobrem o painel), sem distorção
+grosseira nem sobreposição de moldura/título/rodapé; suíte do relatório municipal verde; ruff+mypy limpos;
+revisão visual humana aprovada no gate.
+
+**Follow-up direto (BLK-RELPON-03 FU1, 2026-07-01, sem ciclo — pedido de Vinicius):** corrigidos 2 defeitos
+de RENDER remanescentes no Relatório Municipal (READ-ONLY M1): (1) **zona cinza dentro do contorno** — os
+bounds dos tiles passam a ser casados ao aspect do `map_box` (overscan simétrico do eixo curto) antes de
+buscar/projetar, eliminando a faixa de letterbox cinza `(245,245,245)`; (2) **Resumo sem basemap** — retry
+(até 3x) na busca de tiles para a 1ª camada de foco não ficar offline por timeout de rede fria. Validação:
+`test_relatorio_municipal.py` 35 passed; ruff/mypy limpos; import ok.
+
+---
+
+### BLK-RELPON-01 — Três mapas de calor (população/renda/score) num único slide do Relatório Pontual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (altera a ESTRUTURA de um template de PDF já aprovado em gate — muda `/Count` e mexe em asserts de teste travados; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir por Vini. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — produto/visual]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (consome os mesmos `layers` de mapa já gerados pelo caminho do relatório). |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de produto/visual (layout dos 3 mapas + mudança de `/Count` de um template gated); precisa de olho humano no PDF. NÃO marcar loop-safe. |
+
+**Contexto (ancorado no código).**
+- Gerador em produção: `gerar_pdf_relatorio_pontual_classico` (`src/motor_expansao/dashboard/censo_report.py`),
+  usado pelo dashboard (`pages.py`, `template="classico"`) e pela API (`api/service.py`). Há também o
+  gerador legado `gerar_pdf_relatorio_pontual_censitario` (mesma estrutura de 7 páginas).
+- Ordem atual das 7 páginas (ambas variantes): Capa → **Densidade** → **Renda** → **Score** →
+  Concorrentes → Big Numbers → Realização. Cada mapa é um slide próprio via `_classico_map_page`/
+  `_map_page`, que desenha 1 PNG grande (`_classico_draw_map`/`_draw_map`) sob a banda de título.
+- Os PNGs vêm do dict `layers` (`densidade`/`renda`/`score`/`concorrentes`), gerados por
+  `render_mapas_censitarios_combinados` (`censo_map.py`) — cada choropleth **já traz a própria legenda
+  embutida** (faixas GeoFusion) e é ~16:9.
+- **Travas de teste:** `tests/unit/test_relatorio_pontual_censitario_export.py` afirma `b"/Count 7"` e
+  `%PDF-1.4` em vários testes; o gate BLK-EST-02 fixou 7 páginas / ordem / `set_compression(False)` /
+  `pdf_version="1.4"`. Consolidar 3 páginas em 1 leva o PDF a **5 páginas** (`/Count 5`) → esses asserts
+  PRECISAM ser atualizados (parte do escopo, com aprovação no gate).
+
+**Objetivo.** Um único slide "Mapas de calor" com os 3 choropleths (População/Densidade, Renda, Score)
+lado a lado, cada um com mini-título, legíveis, **sem sobrepor** um ao outro nem a faixa de título /
+rodapé / marca d'água, mantendo a estética bicolor e GeoFusion atual. Concorrentes e Big Numbers seguem
+como slides próprios.
+
+**Escopo permitido (READ-ONLY M1).**
+- Novo montador de página (ex.: `_classico_mapas_calor_page` / `_mapas_calor_page`) que recebe os 3 PNGs
+  e os posiciona numa grade dentro da área de conteúdo (abaixo da banda de título, acima do rodapé),
+  respeitando margens; substitui as 3 chamadas de densidade/renda/score por 1. Igual na variante censitário.
+- Atualizar as orquestrações (`_classico` + `_censitario`) e os asserts de `/Count` nos testes (7→5),
+  preservando `%PDF-1.4`, `set_compression(False)`, marca d'água em todas as páginas e atribuição de tiles.
+- Se a legibilidade exigir, um parâmetro OPCIONAL em `render_mapas_censitarios_combinados` para render
+  compacto / sem legenda individual + UMA legenda compartilhada no slide (default = comportamento atual do
+  dashboard, byte-a-byte). A emenda da DEC-005 já permite params opcionais de render em `censo_map.py`.
+- Testes novos: o slide único contém os 3 mapas, sem sobreposição (checagem de bounding boxes no montador),
+  `/Count` novo, geração offline-safe (fallback "mapa indisponível" por camada).
+
+**Decisões para o gate humano (Planner propõe, Vini aprova).**
+1. **Consolidação vs. adição:** consolidar os 3 num slide (7→5 páginas, muda `/Count`) — leitura direta de
+   "no mesmo slide" — **ou** manter os 3 individuais e ADICIONAR um slide-resumo (cresce o `/Count`)?
+   (Recomendação: consolidar.)
+2. **Layout:** 3 lado a lado (tira horizontal) · 2 em cima + 1 embaixo · 1 linha de 3 com legenda
+   compartilhada (trade-off tamanho×legibilidade em 960×540).
+3. **Legendas:** manter a legenda embutida de cada mapa (mais poluído) · uma legenda compartilhada (exige o
+   param de render compacto).
+4. **Mini-títulos** por mapa (População / Renda / Score) e posição.
+5. **Tom bicolor:** o slide consolidado entra na alternância turquesa/magenta — definir o tom da faixa dele.
+
+**Fora de escopo.** Concorrentes e Big Numbers (slides próprios); método `setor_censitario_intersecao_area_1p5km`,
+raio 1,5 km, score, M1 e artefatos oficiais (INTOCADOS); Relatório Municipal (outro template).
+
+**Guardrails.** READ-ONLY sobre o M1 (§5): zero recálculo de score/pesos/carteira/plano/artefatos. Caminho do
+dashboard sem os params novos preservado byte-a-byte. Sem dependência de rede nova (DEC-004 inalterada). Marca
+d'água anti-PII e `set_compression(False)` mantidos.
+
+**Critério de aceite.** PDF do pontual (classico + censitário) com 1 slide contendo os 3 choropleths legíveis e
+sem sobreposição; `/Count` novo consistente nos testes; suíte dos relatórios verde; ruff+mypy limpos; revisão
+visual humana aprovada no gate.
 ### BLK-DIM-18 — Fix: faixa de alunos pela metragem ausente em produção (fallback para parquet de unidades)
 
 | Campo | Valor |

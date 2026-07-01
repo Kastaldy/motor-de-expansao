@@ -275,28 +275,29 @@ def _draw_legend_camada(
     entries: list[tuple[str, tuple[int, int, int, int]]],
 ) -> None:
     """Legenda por camada: faixas fixas (label + amostra de cor) + pins de referencia."""
-    title_font = _font(14)
-    body_font = _font(11)
+    title_font = _font(17)
+    body_font = _font(13)
     _draw_text(draw, (x, y), "Legenda", font=title_font)
-    _draw_text(draw, (x, y + 22), titulo, font=body_font)
+    _draw_text(draw, (x, y + 26), titulo, font=body_font)
 
-    base_y = y + 50
+    base_y = y + 58
+    row_h = 30
     for idx, (label, color) in enumerate(entries):
-        yy = base_y + idx * 24
-        # D7=C subset seguro (BLK-EST-02): amostras arredondadas (radius 4).
+        yy = base_y + idx * row_h
+        # D7=C subset seguro (BLK-EST-02): amostras arredondadas (radius 5).
         draw.rounded_rectangle(
-            [x, yy, x + 22, yy + 16], radius=4, fill=color[:3], outline=(148, 163, 184)
+            [x, yy, x + 30, yy + 22], radius=5, fill=color[:3], outline=(148, 163, 184)
         )
-        _draw_text(draw, (x + 32, yy), label, font=body_font)
+        _draw_text(draw, (x + 42, yy + 3), label, font=body_font)
 
     # D7=C subset seguro: linha separadora fina antes do bloco de pins.
-    sep_y = base_y + len(entries) * 24 + 2
-    draw.line([(x, sep_y), (x + 200, sep_y)], fill=(210, 214, 222), width=1)
+    sep_y = base_y + len(entries) * row_h + 4
+    draw.line([(x, sep_y), (x + 210, sep_y)], fill=(210, 214, 222), width=1)
 
-    yy = base_y + len(entries) * 24 + 12
-    _draw_center_pin(draw, x + 10, yy + 18, scale=0.7)
-    _draw_text(draw, (x + 32, yy), "Ponto central", font=body_font)
-    _draw_text(draw, (x + 32, yy + 24), "Pins: Ultra e concorrentes", font=body_font)
+    yy = base_y + len(entries) * row_h + 14
+    _draw_center_pin(draw, x + 12, yy + 20, scale=0.8)
+    _draw_text(draw, (x + 42, yy), "Ponto central", font=body_font)
+    _draw_text(draw, (x + 42, yy + 26), "Pins: Ultra e concorrentes", font=body_font)
 
 
 def _draw_center_pin(
@@ -492,8 +493,6 @@ def _render_camada(
     small_font = _font(11)
 
     _draw_text(draw, (28, 22), titulo, font=title_font)
-    subtitle = f"Centro: {lat:.6f}, {lng:.6f} | raio {raio_km:.1f} km | setores: {n_setores}"
-    _draw_text(draw, (28, 52), subtitle, font=body_font, fill=(71, 85, 105))
 
     map_box = _map_box(width, height)
     legend_x = width - 252
