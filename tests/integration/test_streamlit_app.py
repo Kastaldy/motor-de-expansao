@@ -5350,6 +5350,55 @@ def test_load_base_calibracao_deriva_alunos_por_m2(tmp_path, monkeypatch):
     streamlit_app.load_base_calibracao.clear()
 
 
+def test_load_base_calibracao_fallback_unidades_ultra(tmp_path, monkeypatch):
+    """Fallback usa unidades_ultra_performance_hex.parquet quando multirede ausente (BLK-DIM-18).
+
+    - BASE_CALIBRACAO_PATH aponta para path inexistente.
+    - UNIDADES_ULTRA_PERF_PATH aponta para parquet sintetico com alunos_total/metragem.
+    - Retorno deve ter alunos_por_m2 sem NaN nos registros validos.
+    - Registro invalido (alunos_total=0) deve ter alunos_por_m2 NaN.
+    - O teste existente test_load_base_calibracao_deriva_alunos_por_m2 nao e alterado.
+    """
+    # Fixture sintetica — nunca usa o parquet real
+    fallback_path = tmp_path / "unidades_ultra_performance_hex.parquet"
+    pd.DataFrame([
+        {"alunos_total": 3000, "metragem": 1500},        # valido -> 2.0
+        {"alunos_total": 0,    "metragem": 1000},         # invalido -> NaN
+        {"alunos_total": 2000, "metragem": 0},            # invalido -> NaN
+        {"alunos_total": 2500, "metragem": 1000},         # valido -> 2.5
+    ]).to_parquet(fallback_path, index=False)
+
+    # Multirede inexistente
+    monkeypatch.setattr(streamlit_app, "BASE_CALIBRACAO_PATH", tmp_path / "nao_existe.parquet")
+    # Fallback aponta para a fixture sintetica
+    monkeypatch.setattr(streamlit_app, "UNIDADES_ULTRA_PERF_PATH", fallback_path)
+    streamlit_app.load_base_calibracao.clear()
+
+    out = streamlit_app.load_base_calibracao()
+
+    assert not out.empty, "Fallback deve retornar DataFrame nao-vazio"
+    assert "alunos_por_m2" in out.columns
+    assert out.loc[0, "alunos_por_m2"] == pytest.approx(2.0)
+    assert pd.isna(out.loc[1, "alunos_por_m2"])
+    assert pd.isna(out.loc[2, "alunos_por_m2"])
+    assert out.loc[3, "alunos_por_m2"] == pytest.approx(2.5)
+
+    streamlit_app.load_base_calibracao.clear()
+
+
+def test_load_base_calibracao_fallback_ambos_ausentes(tmp_path, monkeypatch):
+    """Quando nenhum dos dois parquets existe, retorna DataFrame vazio (sem excecao)."""
+    monkeypatch.setattr(streamlit_app, "BASE_CALIBRACAO_PATH", tmp_path / "nao_existe.parquet")
+    monkeypatch.setattr(streamlit_app, "UNIDADES_ULTRA_PERF_PATH", tmp_path / "nao_existe2.parquet")
+    streamlit_app.load_base_calibracao.clear()
+
+    out = streamlit_app.load_base_calibracao()
+    assert isinstance(out, pd.DataFrame)
+    assert out.empty
+
+    streamlit_app.load_base_calibracao.clear()
+
+
 def test_render_viabilidade_ponto_smoke_sem_pino():
     """Sem pino e sem campo de coordenada -> info, sem chamar o engine, sem excecao."""
     import contextlib

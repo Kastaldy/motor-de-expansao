@@ -6133,3 +6133,52 @@ fica aguardando seu próprio merge).
 - **Próximo passo (gate humano, fora deste bloco):** o GO honesto **habilita** — sob decisão explícita
   de Felipe — a reabertura da Camada 2 (captura/Huff) da epic BLK-DIM. O Builder NÃO implementou a
   reabertura; é decisão de produto/modelagem a registrar como DEC própria se Felipe optar por avançar.
+
+---
+
+### BLK-DIM-18 — Fix: faixa de alunos pela metragem ausente em produção (fallback para parquet de unidades)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (feature completamente invisível em prod; sem dado exibido no campo) |
+| **Prioridade** | **Alta** — fix de produção |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA |
+| **Status** | Pendente |
+| **Autonomia** | NAO LOOP SAFE, Mexe em Produção e VPS
+| **Depende de** | — |
+
+**Contexto / por que existe:** `load_base_calibracao()` em `streamlit_app.py` lê `data/staging/base_calibracao_multirede.parquet` — arquivo gerado pelo pipeline `base_multirede.py` (BLK-DIM-07/08) que **não existe em produção** (não foi regenerado após o pivô DEC-009). Por isso a seção "Faixa de alunos plausível pela metragem" sempre cai no `st.info("indisponível")`. O arquivo `data/staging/unidades_ultra_performance_hex.parquet` (54 unidades Ultra com `metragem` e `alunos_reais`) **sempre existe** e serve como fallback direto.
+
+**Objetivo:** adicionar fallback na `load_base_calibracao()` para, quando o multirede não existir, tentar o `unidades_ultra_performance_hex.parquet` (que tem as mesmas colunas `metragem` e `alunos_reais` já consumidas pela função).
+
+**Escopo permitido:**
+- `streamlit_app.py`, função `load_base_calibracao()`: após verificar `BASE_CALIBRACAO_PATH.exists()`, tentar `STAGING_DIR / "unidades_ultra_performance_hex.parquet"` como fallback antes de retornar `pd.DataFrame()`.
+- Derivar `alunos_por_m2` no fallback (mesma lógica já existente).
+- Atualizar ou adicionar 1 teste cobrindo o caminho de fallback.
+
+**Fora de escopo (invioláveis):** regenerar o multirede (outro ciclo), tocar `viabilidade_ponto.py`/`simulador.py`, M1, artefatos oficiais.
+
+**Critérios de aceite:** com apenas `unidades_ultra_performance_hex.parquet` presente, a faixa p10/p50/p90 é exibida no dashboard; suite verde; nenhuma coluna M1 alterada.
+
+**Arquivos prováveis:** `streamlit_app.py` (função `load_base_calibracao`), `tests/`.
+
+**Risco:** baixo — READ-ONLY; só adiciona um path de fallback sem remover o caminho atual.
+
+---
+
+- BLK-DIM-19 (concluído 2026-06-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-DIM-20 (concluído 2026-06-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-DIM-21 (concluído 2026-06-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-DIM-22 (concluído 2026-06-22) — ver tasks/completed.md
