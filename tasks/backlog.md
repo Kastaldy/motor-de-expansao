@@ -120,57 +120,8 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 - BLK-RELMUN-02 (concluído 2026-06-24) — ver tasks/completed.md
 
-### BLK-RELMUN-03 — Validar hexágono só por Residual Fitness (remover o filtro de SAM Fitness)
+- BLK-RELMUN-03 (concluído 2026-07-02) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (altera o CRITÉRIO de "hexágono válido/destacado" fixado na **DEC-011** — muda os números do relatório (destacados, "Espaço para academias", aprovados/reprovados); **READ-ONLY sobre o M1**; exige aprovação humana + emenda à DEC-011). |
-| **Prioridade** | A definir por Vini. |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — produto + emenda DEC-011]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (toca só `relatorio_municipal.py`). |
-| **Autonomia** | **manual (NÃO loop-safe)** — muda um critério registrado em DEC e os números do relatório; precisa de decisão humana. NÃO marcar loop-safe. |
-
-**✅ Relatório-alvo confirmado por Vinicius (2026-07-02): Relatório MUNICIPAL.** O critério
-"SAM Fitness ≥ 3.000 **E** Residual Fitness ≥ 2.000" existe HOJE **apenas no Relatório Municipal**
-(DEC-011) — o pedido inicial citou "pontual", mas Vinicius confirmou que é o Municipal. Evidência: o
-PDF do Relatório Municipal de Nova Iguaçu imprime literalmente "Hexagono considerado quando SAM Fitness
->= 3.000 e Residual Fitness >= 2.000 (alunos)" (páginas Resumo e "Espaço e academias"). O Relatório
-Pontual (raio 1,5 km) NÃO tem esse filtro e está fora do escopo.
-
-**Contexto (ancorado no código, `src/motor_expansao/dashboard/relatorio_municipal.py`).**
-- Critério de "hexágono destacado/válido" em `_hex_destacado_mask` (linha ~258):
-  `(sam_fitness_potencial >= SAM_DESTAQUE_MIN) & (oferta_efetiva_disponivel >= OFERTA_DESTAQUE_MIN)`,
-  com constantes `SAM_DESTAQUE_MIN = 3000.0` (linha 50) e `OFERTA_DESTAQUE_MIN = 2000.0` (linha 51).
-- Esse mask alimenta: os hexágonos amarelos do mapa; a contagem "Aprovados/Reprovados"; o
-  "Espaço para academias" = `round( Σ oferta_efetiva_disponivel dos destacados / 2500 )`; e os textos
-  de rodapé/legenda que citam o critério.
-
-**Objetivo.** Remover o filtro de **SAM Fitness (≥ 3.000)** de `_hex_destacado_mask`, mantendo **apenas
-Residual Fitness (`oferta_efetiva_disponivel` ≥ 2.000)** como critério de validação do hexágono.
-Consequência esperada: passam a valer também os hexes com `oferta_efetiva_disponivel ≥ 2000` mas
-`sam_fitness_potencial < 3000` → mais hexágonos destacados e "Espaço para academias" maior.
-
-**Escopo permitido (READ-ONLY M1, só relatório).**
-- `_hex_destacado_mask` passa a ser `oferta_efetiva_disponivel >= OFERTA_DESTAQUE_MIN` (drop do termo
-  de SAM). Decidir com o gate se `SAM_DESTAQUE_MIN` é removida ou mantida como constante inerte.
-- Atualizar TODOS os textos que citam o critério (rodapés/legendas/subtítulos das páginas Resumo e
-  "Espaço e academias", docstring D1 do módulo) para refletir "somente Residual Fitness ≥ 2.000".
-- Atualizar os testes que fixam o critério/números (ex.: `test_agregar_municipio_formula_espaco_d1`
-  e afins em `tests/unit/test_relatorio_municipal.py`).
-- **Registrar emenda à DEC-011** (o critério dos "hexágonos destacados" foi decidido lá).
-
-**Fora de escopo.** `flag_sam`/gate do SAM no pipeline de mercado (DEC-006/DEC-007) — NÃO tocar (o
-critério do relatório é DISPLAY local, separado do `flag_sam`); `score_priorizacao`, M1, artefatos
-oficiais, método de intersecção/raio; Relatório Pontual (confirmado fora do escopo).
-
-**Guardrails.** READ-ONLY sobre o M1 (§5): zero recálculo de score/pesos/carteira/plano/artefatos.
-Sem dependência de rede nova. Marca d'água anti-PII + `set_compression(False)` + 8 páginas mantidos.
-
-**Critério de aceite.** Hexágonos destacados e "Espaço para academias" passam a considerar só
-`oferta_efetiva_disponivel ≥ 2.000`; textos/legendas do relatório coerentes com o novo critério;
-suíte do relatório municipal verde; ruff+mypy limpos; emenda à DEC-011 registrada; revisão visual
-humana aprovada.
 
 
 ---
