@@ -18,6 +18,12 @@ from .contrato import (
     VERSAO_CONTRATO,
 )
 from .ingestao import ingerir_demanda_revelada
+from .oferta_academias_menores import (
+    CONTRATO_COLUNAS_OFERTA_MENORES,
+    VERSAO_CONTRATO_OFERTA_MENORES,
+    gerar_relatorio_qualidade,
+    ingerir_oferta_academias_menores,
+)
 from .validacao import executar_validacao_completa
 from .vazios_competitivos import (
     CONTRATO_COLUNAS_VAZIOS,
@@ -42,4 +48,9 @@ __all__ = [
     "LIMIAR_MEMBROS_GT5KM",
     "VERSAO_CONTRATO_VAZIOS",
     "CONTRATO_COLUNAS_VAZIOS",
+    # BLK-TP-08: oferta de academias menores (WellHub/TotalPass)
+    "ingerir_oferta_academias_menores",
+    "gerar_relatorio_qualidade",
+    "CONTRATO_COLUNAS_OFERTA_MENORES",
+    "VERSAO_CONTRATO_OFERTA_MENORES",
 ]
