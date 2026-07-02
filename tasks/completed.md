@@ -6474,3 +6474,53 @@ Sem dependência de rede nova. Marca d'água anti-PII + `set_compression(False)`
 `oferta_efetiva_disponivel ≥ 2.000`; textos/legendas do relatório coerentes com o novo critério;
 suíte do relatório municipal verde; ruff+mypy limpos; emenda à DEC-011 registrada; revisão visual
 humana aprovada.
+
+---
+
+### BLK-RELMUN-04 — Relatório Municipal em lote (um relatório por município selecionado)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (nova função de UI no fluxo de geração do Relatório Municipal; **READ-ONLY sobre o M1**; sem DEC nova; reusa a geração existente do PDF). |
+| **Prioridade** | Pedido direto de Vinicius (2026-07-02). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (toca só `src/motor_expansao/dashboard/pages.py`; reusa `relatorio_municipal.py` sem alterá-lo). |
+| **Autonomia** | manual (não loop-safe) — feature de UI com decisões de produto já coletadas; não é loop-safe por padrão da trilha do Vini. |
+
+**Pedido de Vinicius (2026-07-02).** Hoje o Relatório Municipal só é gerável com **exatamente 1
+município** selecionado (gate `len(selected_cities) != 1` em `render_relatorio_municipal_download_topo`
+~linha 3062 e `render_relatorio_municipal_expander` ~linha 3917 de `pages.py`). Vinicius quer: ao
+selecionar **mais de um município**, a função de gerar relatório deve gerar **um relatório PDF para
+CADA município selecionado**, com os **botões de download aparecendo após a geração**, cada botão
+**rotulado com o município** a que se refere.
+
+**Decisões de produto (coletadas de Vinicius antes do ciclo).**
+- **Gatilho:** geração SOB DEMANDA por **botão** ("Gerar Relatórios (N)"), com indicador de
+  progresso; os botões de download aparecem DEPOIS. Evita regenerar N PDFs a cada rerun (a geração
+  com mapas/tiles é pesada).
+- **Onde:** **AMBOS** os pontos de geração (topo `render_relatorio_municipal_download_topo` e
+  expander `render_relatorio_municipal_expander` do Mapa Territorial).
+- **1 município:** comportamento atual PRESERVADO (sem regressão).
+
+**Escopo permitido (READ-ONLY M1, só UI).**
+- Estender os 2 pontos de geração para o caso `len(selected_cities) > 1`: botão "Gerar
+  Relatórios (N)" → loop por município (reusando `agregar_municipio` + `render_mapas_municipio` +
+  `gerar_payloads_download_relatorio_municipal`) → cache dos payloads por município em
+  `session_state` → **um `st.download_button` por município, rotulado com o nome** (ex.: "Baixar
+  PDF — <Município>"), com `key` único por município.
+- Tratar município sem hexágonos (n_hex_total == 0) individualmente (aviso por município, não
+  aborta o lote).
+- Progresso do lote (ex.: `st.progress`/`st.spinner` com contador "gerando i/N").
+- Testes do novo fluxo multi-município (gating, rótulos por município, contagem de botões).
+
+**Fora de escopo.** `relatorio_municipal.py` (motor do PDF — NÃO alterar; só consumir); critério de
+hexágono destacado (DEC-011/BLK-RELMUN-03); `score_priorizacao`, M1, artefatos oficiais, pipeline de
+mercado (`flag_sam`); Relatório Pontual Censitário; estrutura/páginas do PDF; marca d'água anti-PII.
+
+**Guardrails.** READ-ONLY sobre o M1 (§5). Sem dependência de rede nova (tiles já existentes,
+DEC-011). Preservar o fluxo de 1 município byte-a-byte no comportamento.
+
+**Critério de aceite.** Com >1 município selecionado, um botão gera N relatórios sob demanda e
+aparece 1 botão de download por município, rotulado; com 1 município, comportamento inalterado;
+suíte de testes verde; ruff+mypy limpos; revisão visual humana aprovada.

@@ -122,6 +122,8 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 - BLK-RELMUN-03 (concluído 2026-07-02) — ver tasks/completed.md
 
+- BLK-RELMUN-04 (concluído 2026-07-02) — ver tasks/completed.md
+
 
 
 ---
