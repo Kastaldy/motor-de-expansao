@@ -2,52 +2,60 @@
 
 ## Bloco atual
 
-ID: BLK-TP-08
-Nome: Ingestão anti-PII das academias menores (WellHub/TotalPass) na camada de oferta
-Status: aprovado (QA 2026-07-02 15:02:01 — APROVADO; suíte full 1251 passed, 1 skipped; anti-PII confirmado no parquet real 15 cols ZERO PII; mtime M1 intacto; isolamento AST ok). Pendente: Passo 6.0 do orquestrador (housekeeping_move_block.py BLK-TP-08 + commit por path).
-Tipo: engenharia de dados / ingestão (camada paralela — READ-ONLY sobre o M1)
+ID: BLK-TP-06-FU1
+Nome: Re-validação do residual com candidatos de recalibração (seleção que alimenta o TP-09)
+Status: PAUSADO (gate humano 2026-07-02) — bloqueado por dependência de dado
+Tipo: modelagem (análise/seleção de candidatos — READ-ONLY sobre o M1)
 Criticidade: alta
-Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA OBRIGATÓRIA — anti-PII + dedup] → Builder → QA
-Skill atual: QA
-Próxima Skill: QA
+Esteira: Block Orchestrator → Planner → [PAUSADO no gate] → (retomar após BLK-TP-08-FU) → Builder → QA
+Skill atual: Planner (concluído; ciclo pausado)
+Próxima Skill: RETOMAR após BLK-TP-08-FU
 
-## Resultado do Builder (2026-07-02)
-- Módulo novo `src/motor_expansao/demanda_revelada/oferta_academias_menores.py` (isolado; contrato `oferta_menores_v1` + ingestão anti-PII + relatório DEDUP).
-- Parquet REAL gerado (gitignored): 24.045 academias / 1.920.955 alunos → 6.785 hexes res-7; 99,2% casam com o universo; DEDUP vs concorrentes = 1.425 hexes overlap (39,4% acad / 62,7% alunos em hex coberto).
-- Prova anti-PII: parquet com 15 colunas, ZERO PII (sem lat/lng/nome/cluster/total_alunos_cluster).
-- Testes: 241 passed (subconjunto demanda_revelada + streamlit); ruff/mypy limpos; import ok.
-- mtime dos 4 artefatos M1 INALTERADO (antes/depois). READ-ONLY sobre o M1 confirmado.
-Gate humano: APROVADO pelo usuário em 2026-07-02 — D1–D4 = recomendações do Planner (dedup por hex só-relatório; aceitar coords ~1km; contrato com distribuição por Plano; só ingere, não integra ao residual)
+## Motivo da pausa (decisão de Felipe no gate, 2026-07-02)
+O plano revisado (candidatos A = incluir academias menores na saturação + dedup de rede; C = capacidade
+POR REDE) esbarrou em 2 lacunas de dado confirmadas pelo Planner:
+1. **Sem rótulo de rede** nas academias menores (o `Nome_Academia` foi dropado no anti-PII do TP-08) →
+   dedup FINO por rede é impossível hoje.
+2. **Médias por rede só para 2 de 28** (SkyFit 2.295, Engenharia 3.283 em base_calibracao_multirede);
+   Smart Fit / Blue Fit / Panobianco NÃO estão no repo.
+Decisão: PAUSAR o FU1 e **fechar o dado primeiro** via BLK-TP-08-FU (re-ingestão do 03_Competidores.xlsx
+com `rede_menor` classificado na fronteira anti-PII → habilita dedup fino E médias por rede a partir de
+`Alunos_Academia` das filiais classificadas). Retomar o FU1 (A+C completos) depois.
+Plano detalhado preservado em context/handoff/20260702-154210-planner.md (snapshot).
 
 ## Objetivo
-Ingerir `03_Competidores.xlsx` (24.045 academias menores WellHub/TotalPass, em NAO_ABRA/) como camada de
-OFERTA agregada por hex (res-7), anti-PII na fronteira (drop Lat/Lng/Nome), materializando
-`data/staging/oferta_academias_menores_h3.parquet` (gitignored/NÃO oficial) + relatório de qualidade e
-DEDUP vs `concorrentes_mapeados.parquet`. NÃO recompõe `score_oportunidade_residual` nem regenera parquets
-de mercado (follow-up). READ-ONLY sobre o M1.
+Reproduzir o baseline do TP-06 (residual atual vs demanda observada, +0,31 out-of-fold) e construir/validar
+CANDIDATOS de residual — (A) residual descontando a oferta das academias menores do TP-08 COM dedup;
+(B) residual com a recalibração proposta no TP-06 — cada um validado out-of-fold vs baseline (DEC-008),
+comparando se algum candidato BATE o +0,31 de forma robusta e sem depender do caveat de ~1% metropolitano.
+É o gate honesto (READ-ONLY, sem DEC) que decide SE o TP-09 se justifica e QUAL candidato aplicar.
 
-## Autorização do usuário (2026-07-02)
-- "dispare tp-08, está autorizado a editar e rodar o que precisar" → prosseguir a esteira; rodar comandos
-  (pandas/pytest/etc.) sem pedir permissão por ação. O gate humano de anti-PII/dedup do Planner permanece
-  (decisão de método) — apresentar decisões compactas antes do Builder.
+## Contexto crítico
+- TP-08 INGERIU a oferta das academias menores (`data/staging/oferta_academias_menores_h3.parquet`,
+  `oferta_menores_v1`), mas NÃO a integrou ao residual → a fórmula do residual hoje é IDÊNTICA à validada
+  no TP-06. Um rerun ingênuo daria o mesmo +0,31 (inútil) — por isso este bloco testa CANDIDATOS.
+- Dedup do TP-08: 62,7% dos alunos das academias menores já caem em hex coberto por rede mapeada →
+  integrar a oferta SEM dedup dupla-conta. O candidato (A) precisa tratar isso.
+- READ-ONLY: NÃO altera a fórmula do residual em produção nem regenera parquets de mercado. Aplicar o
+  vencedor = BLK-TP-09 (DEC + gate). Este bloco só MEDE e RECOMENDA.
 
 ## Tiering de modelo (Passo 4) — Alta
-- Block Orchestrator: opus (override +1: forense anti-PII do schema de uma planilha externa nova + escopo de DEDUP)
+- Block Orchestrator: opus (override +1: escopo dos candidatos de residual + dedup da oferta TP-08 é não-trivial)
 - Planner: opus
 - Builder: opus
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-TP-08 (criada a partir de main @ HEAD 8a7cfb8).
+ciclo/BLK-TP-06-FU1 (criada a partir de main @ HEAD 3ab5e8c).
 
-## Paths do ciclo (commitar só estes por path)
-- a definir pelo Planner (candidatos: src/motor_expansao/demanda_revelada/*, scripts/*, tests/*, data/analysis/* ou data/reports/*, docs/*)
-- tasks/backlog.md (bloco BLK-TP-08), tasks/current_task.md, tasks/completed.md
-- context/handoff.md, context/handoff/
+## Bloco ad-hoc
+Derivado da conversa (não vem do backlog). No fechamento: Passo 6.0 é no-op (ad-hoc) → resumo vai a
+completed.md via Passo 6.2; ao final, atualizar o "Depende de" do BLK-TP-09 no backlog para citar este FU1.
 
 ## Guardrails
-- §5 (READ-ONLY M1): zero recálculo de score/pesos/carteira/plano/artefatos oficiais; NÃO recompor o residual.
-- DEC-012 (anti-PII POR CONSTRUÇÃO): consumir só agregado por hex; drop Lat/Lng/Nome individual na fronteira;
-  zero PII em artefato/log/teste (`COLUNAS_PII_PROIBIDAS` + teste `test_zero_pii`); fonte real em NAO_ABRA/ (gitignored, nunca versionada); fixtures sintéticas.
-- DEC-013 (parte 3): dedup + capacidade por tipo ANTES de qualquer integração ao residual; este bloco só INGERE + relatório de dedup.
-- Isolamento: pacote da camada paralela NÃO importa de pipelines/m1, dashboard, censo_*, api.
+- §5 (READ-ONLY M1): zero recálculo de score_priorizacao/hex_score_estrutural/pesos/carteira/plano/artefatos oficiais.
+- NÃO alterar a fórmula de `score_oportunidade_residual` em produção nem regenerar `hexagonos_mercado_mapeado.parquet`.
+- DEC-008: LOO/k-fold vs baseline da média; R² in-sample BANIDO; IC95 bootstrap seed fixa; intervalos + flag de extrapolação; comparação de candidatos out-of-fold; NO-GO é resultado válido.
+- DEC-009: demanda OBSERVADA como alvo; PROIBIDO usar como preditor geográfico de magnitude.
+- DEC-012 (anti-PII): só camadas agregadas; zero PII; fixtures sintéticas; fonte real nunca versionada.
+- Isolamento: módulo da camada paralela NÃO importa de pipelines/m1, dashboard, censo_*, api.
