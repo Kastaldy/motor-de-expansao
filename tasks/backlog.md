@@ -957,6 +957,82 @@ seria **follow-up com gate próprio**, não este bloco.
 
 ---
 
+### BLK-TP-08 — Ingestão anti-PII das academias menores (WellHub/TotalPass) na camada de oferta
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (nova ingestão de fonte externa com **PII na origem**; enriquece a camada de OFERTA/residual; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA — anti-PII + dedup]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01** (contrato/ingestão da Demanda Revelada + princípios anti-PII DEC-012) + planilha `03_Competidores.xlsx` (em `NAO_ABRA/`, gitignored — 24.045 academias, `Alunos_Academia`/`Plano`/`Cluster`/`Município`) + `concorrentes_mapeados.parquet` (para o cross-check de DEDUP). |
+| **Autonomia** | **manual (NÃO loop-safe)** — nova fonte externa + PII na origem + DEDUP exigem julgamento humano; NÃO marcar loop-safe. |
+
+**Contexto.** Hoje a camada de mercado/residual consome como OFERTA instalada apenas os **concorrentes
+de rede mapeados + a própria Ultra**. As **academias menores (não-rede)** — mapeadas pelos scrapers de
+WellHub/TotalPass e consolidadas na planilha `03_Competidores.xlsx` (24.045 unidades com `Alunos_Academia`)
+— **NÃO** entram no cálculo. Elas são oferta real que hoje o Motor ignora, o que pode **subestimar a
+saturação** de bairros densos. Alinha com a **DEC-013 (parte 3)**: agregadores WellHub/TotalPass (>25 mil
+academias de bairro) devem ser coletados/armazenados e integrados ao residual **numa epic futura com
+DEDUP + Huff por tipo de rede**, sob gate humano. Este bloco é o primeiro passo dessa integração: a
+**ingestão anti-PII agregada**, sem ainda recompor o residual.
+
+**Objetivo.** Ingerir `03_Competidores.xlsx` como camada de OFERTA adicional, agregando por `hex_id`
+(res-7) na **fronteira de entrada** e **descartando toda PII** (Lat/Lng individuais, Nome do
+estabelecimento) — só contagens/capacidades agregadas por hex. Produzir um parquet de staging
+(`data/staging/oferta_academias_menores_h3.parquet`, gitignored/NÃO oficial) + **relatório de qualidade e
+DEDUP** (quantas dessas academias já estão em `concorrentes_mapeados.parquet` para não contar oferta em
+dobro; capacidade variável por tipo/plano). **NÃO** recompõe `score_oportunidade_residual` nem regenera os
+parquets de mercado — isso é follow-up (parte da recalibração / BLK-TP-09 ou epic de dedup+Huff).
+
+**Critérios de aceite.** Ingestão isolada da camada paralela (`src/motor_expansao/demanda_revelada/` ou
+pacote disjunto; sem import de `pipelines/m1`, `dashboard`, `censo_*`, `api`); **zero PII** no artefato/
+log/teste (`COLUNAS_PII_PROIBIDAS`; teste `test_zero_pii`); fonte real nunca versionada (`NAO_ABRA/`);
+fixtures sintéticas; relatório de DEDUP vs `concorrentes_mapeados.parquet` documentado; mtime dos 4
+artefatos oficiais M1 inalterado; suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-012 (anti-PII por construção); DEC-013 (parte 3 — dedup + capacidade
+por tipo antes de qualquer integração ao residual). Integrar a oferta ao `score_oportunidade_residual` =
+follow-up com gate próprio.
+
+---
+
+### BLK-TP-09 — Aplicação da recalibração do `score_oportunidade_residual` validada no BLK-TP-06 (DEC + gate)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta/Crítica** (altera a **FÓRMULA de um score ATIVO** da camada paralela de mercado/residual e **regenera** os parquets que alimentam dashboard/API; **READ-ONLY sobre o M1 OFICIAL**). **Exige DEC registrada + gate humano obrigatório** antes do Builder. |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA + DEC]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-06** (GO out-of-fold R²_oof_log=+0,3119 IC95[+0,298,+0,325] + **proposta de recalibração documentada** em `data/analysis/calibracao_residual_demanda.md`). |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda um score em produção; NUNCA loop-safe. |
+
+**Contexto.** O **BLK-TP-06** provou, out-of-fold e honestamente (DEC-008), que o
+`score_oportunidade_residual` já prevê a demanda observada (`membros`) no recorte metropolitano do join
+(~1,06% do universo) — e produziu uma **proposta de recalibração** dos componentes do residual (ex.:
+capacidade default 2.500, peso de `oferta_efetiva_disponivel`, faixa de corte) que melhora o alinhamento.
+O TP-06 **validou e documentou, mas NÃO aplicou** (guardrail §5). Este bloco é a **aplicação** dessa
+proposta — e por isso exige DEC + gate.
+
+**Objetivo.** Aplicar a recalibração validada à fórmula de `score_oportunidade_residual` em
+`src/motor_expansao/pipelines/calcular_colunas_mercado.py`, **medindo o impacto** (antes/depois: quantos
+hexes mudam de faixa, deslocamento de distribuição) e **regenerando** a camada de mercado/residual pela
+**ordem canônica** (`híbrido → mercado → calcular_colunas_mercado → carteira → plano → domínio → residual
+→ fase1_bi_exports`). **READ-ONLY sobre o M1 OFICIAL**: `score_priorizacao`, `hex_score_estrutural`,
+pesos (renda 0.40/pop 0.60), carteira/plano do M1 e os 4 artefatos oficiais permanecem **INTOCADOS**
+(mtime inalterado) — muda-se apenas a camada paralela de mercado/residual.
+
+**Critérios de aceite.** DEC registrada e aprovada ANTES do Builder; medição de impacto documentada
+(antes/depois, hexes que mudam de faixa); regeneração reprodutível pela ordem canônica; **cobertura/viés
+do TP-06 (~1% metropolitano) explicitamente considerado** — recalibrar com sinal de 1% do universo exige
+cautela (a proposta não pode piorar os 99% sem sinal); artefatos oficiais do M1 com **mtime inalterado**;
+suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1 OFICIAL — só a camada paralela muda, e com DEC); DEC-008 (a recalibração
+tem de ser justificada pela validação out-of-fold, não pelo +0,52 in-sample); DEC-009 (demanda não vira
+preditor geográfico de magnitude); DEC-012 (anti-PII).
+
+---
+
 ## Epic BLK-LTV — Integração Lifetime × Motor de Expansão (eixo retenção territorial, camada paralela READ-ONLY sobre o M1)
 
 **Objetivo do epic.** Validar se o perfil do território prevê a retenção/LTV da carteira, para a
