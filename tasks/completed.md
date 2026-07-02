@@ -6665,3 +6665,33 @@ oficiais: (a) oferta por `hex_id × rede_menor` (formato LONGO, habilita dedup F
 média/mediana de alunos por rede. Fecha as 2 lacunas de dado que pausaram o BLK-TP-06-FU1. Gate humano
 APROVADO por Felipe Silva em 2026-07-02 (A token word-boundary + lista curada; B N<3→independente; C formato
 longo; D capacidade=mediana, flag_confiavel N≥10). READ-ONLY M1 (DEC-012 anti-PII por construção).
+
+---
+
+### BLK-TP-06-FU1 (ad-hoc) — Re-validação do residual com candidatos (concluído 2026-07-02) — Candidato A = NO-GO honesto
+
+Bloco AD-HOC (derivado da conversa) que testou, out-of-fold e honestamente (DEC-008), se ENRIQUECER a
+oferta consumida do `score_oportunidade_residual` com as academias menores (WellHub/TotalPass) melhora o
+ajuste à demanda observada (`membros`). Esteira: BO → Planner → [gate humano: SÓ Candidato A; Candidato C
+adiado] → Builder → QA. **READ-ONLY sobre o M1** (não altera fórmula em produção nem regenera parquets de
+mercado; mtime dos oficiais + `hexagonos_mercado_mapeado.parquet` inalterado).
+
+**Histórico:** o FU1 foi PAUSADO em 2026-07-02 no 1º gate por falta de dado (sem rótulo de rede nas menores;
+médias por rede só p/ 2 de 28) → **BLK-TP-08-FU** fechou o dado (classificação de rede anti-PII + capacidade
+por rede) → FU1 RETOMADO com dedup FINO por par `(hex_id, rede_menor)`.
+
+**VEREDITO = NO-GO (NAO_APLICAR):** com o harness do TP-06 (k-fold 5×5 seed=42, IC95 bootstrap, **R²
+in-sample banido**, alvo `log1p(membros)`, n=16.411): Baseline (residual atual) reproduz +0,3119
+IC95[+0,2977,+0,3250]; **Candidato A** = +0,2692 IC95[+0,2553,+0,2819] — PIOR. **Δ pareado (A−baseline):
+completo −0,0427 IC95[−0,0477,−0,0379]; FORA de SP/MG/RJ −0,0193 IC95[−0,0232,−0,0157]** → não vence em
+nenhum recorte. **Leitura:** as academias menores co-localizam com a demanda (mercado fitness ativo), então
+tratá-las como oferta consumida a subtrair joga fora sinal e PIORA a predição. O residual ATUAL segue o
+melhor. **Recomendação: NÃO aplicar o Candidato A ao BLK-TP-09.** O **Candidato C** (capacidade de clube por
+rede) fica pendente de dado real em `data/validacao/` (Sky Fit / Engenharia / Smart Fit KPIs) — as medianas
+~340 do TP-08-FU são footprint de bairro, não de clube.
+
+**Entregáveis:** `src/motor_expansao/demanda_revelada/revalidacao_residual_candidatos.py` (baseline + A;
+dedup fino em função própria = extensível para o C futuro), `tests/unit/demanda_revelada/test_revalidacao_residual_candidatos.py`
+(18 testes sintéticos), `data/analysis/revalidacao_residual_candidatos.md` (gitignored). QA APROVADO (suíte
+full `1290 passed, 1 skipped`; NO-GO reproduzido byte-a-byte; anti-PII/isolamento OK). DEC-008 (NO-GO válido),
+DEC-009 (demanda só como alvo), DEC-012 (fixtures sintéticas) respeitadas.

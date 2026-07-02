@@ -978,8 +978,8 @@ seria **follow-up com gate próprio**, não este bloco.
 | **Criticidade** | **Alta/Crítica** (altera a **FÓRMULA de um score ATIVO** da camada paralela de mercado/residual e **regenera** os parquets que alimentam dashboard/API; **READ-ONLY sobre o M1 OFICIAL**). **Exige DEC registrada + gate humano obrigatório** antes do Builder. |
 | **Prioridade** | A definir (Felipe/Vini). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA + DEC]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-TP-06** (GO out-of-fold R²_oof_log=+0,3119 IC95[+0,298,+0,325] + **proposta de recalibração documentada** em `data/analysis/calibracao_residual_demanda.md`). |
+| **Status** | **Em espera (sem candidato vencedor ainda).** O **BLK-TP-06-FU1** (concluído 2026-07-02) testou o **Candidato A** (enriquecer a oferta consumida com as academias menores, dedup fino por rede) e deu **NO-GO honesto** — piora o out-of-fold (Δ pareado −0,0427; fora de SP/MG/RJ −0,0193; IC abaixo de zero). Ou seja, o residual ATUAL segue sendo o melhor; **não há recalibração a aplicar por ora**. O **Candidato C** (capacidade por rede) fica **PENDENTE** de capacidades de CLUBE reais (`data/validacao/`: `Sky Fit dados.xlsx`, `academias_engenharia_do_corpo.xlsx`, `KPIs_Smart_2025_02 (1).xlsx`) — as medianas ~340 do TP-08-FU são footprint de bairro, não de clube. TP-09 só dispara quando um candidato **vencer** o baseline out-of-fold. |
+| **Depende de** | **BLK-TP-06** (GO +0,3119) **+ um candidato vencedor** (BLK-TP-06-FU1 Candidato A = NO-GO; Candidato C pendente de dado de capacidade de clube). |
 | **Autonomia** | **manual (NÃO loop-safe)** — muda um score em produção; NUNCA loop-safe. |
 
 **Contexto.** O **BLK-TP-06** provou, out-of-fold e honestamente (DEC-008), que o
