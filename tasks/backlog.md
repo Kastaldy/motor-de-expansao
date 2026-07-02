@@ -131,13 +131,12 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 | **Depende de** | — (toca só `relatorio_municipal.py`). |
 | **Autonomia** | **manual (NÃO loop-safe)** — muda um critério registrado em DEC e os números do relatório; precisa de decisão humana. NÃO marcar loop-safe. |
 
-**⚠ Confirmar o relatório-alvo.** O pedido veio como "no relatório **pontual**", mas o critério
-"SAM Fitness ≥ 3.000 **E** Residual Fitness ≥ 2.000" existe HOJE **apenas no Relatório MUNICIPAL**
-(DEC-011), não no Pontual (raio 1,5 km, que não filtra hexágonos por SAM/Residual). Evidência: o PDF
-do Relatório Municipal de Nova Iguaçu imprime literalmente "Hexagono considerado quando SAM Fitness
->= 3.000 e Residual Fitness >= 2.000 (alunos)" (páginas Resumo e "Espaço e academias"). **O BO deve
-confirmar com Vini que o alvo é o Relatório Municipal** antes de planejar; se ele realmente quiser o
-Pontual, o escopo muda (não há esse filtro lá hoje).
+**✅ Relatório-alvo confirmado por Vinicius (2026-07-02): Relatório MUNICIPAL.** O critério
+"SAM Fitness ≥ 3.000 **E** Residual Fitness ≥ 2.000" existe HOJE **apenas no Relatório Municipal**
+(DEC-011) — o pedido inicial citou "pontual", mas Vinicius confirmou que é o Municipal. Evidência: o
+PDF do Relatório Municipal de Nova Iguaçu imprime literalmente "Hexagono considerado quando SAM Fitness
+>= 3.000 e Residual Fitness >= 2.000 (alunos)" (páginas Resumo e "Espaço e academias"). O Relatório
+Pontual (raio 1,5 km) NÃO tem esse filtro e está fora do escopo.
 
 **Contexto (ancorado no código, `src/motor_expansao/dashboard/relatorio_municipal.py`).**
 - Critério de "hexágono destacado/válido" em `_hex_destacado_mask` (linha ~258):
@@ -163,7 +162,7 @@ Consequência esperada: passam a valer também os hexes com `oferta_efetiva_disp
 
 **Fora de escopo.** `flag_sam`/gate do SAM no pipeline de mercado (DEC-006/DEC-007) — NÃO tocar (o
 critério do relatório é DISPLAY local, separado do `flag_sam`); `score_priorizacao`, M1, artefatos
-oficiais, método de intersecção/raio; Relatório Pontual (a menos que a confirmação acima o inclua).
+oficiais, método de intersecção/raio; Relatório Pontual (confirmado fora do escopo).
 
 **Guardrails.** READ-ONLY sobre o M1 (§5): zero recálculo de score/pesos/carteira/plano/artefatos.
 Sem dependência de rede nova. Marca d'água anti-PII + `set_compression(False)` + 8 páginas mantidos.
