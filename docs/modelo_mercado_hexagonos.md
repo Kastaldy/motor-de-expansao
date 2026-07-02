@@ -370,6 +370,8 @@ Consequencia pratica:
 - a camada atual modela `oferta mapeada de grandes players`, nao a oferta total do mercado;
 - `mudanca de bandeira` ainda nao deve ser calculada nesta etapa.
 
+Nota (BLK-TP-08 / DEC-012 / DEC-013 parte 3): a oferta de academias menores agregadoras (WellHub/TotalPass) foi ingerida ANTI-PII e materializada como camada SEPARADA `data/staging/oferta_academias_menores_h3.parquet` (contrato `oferta_menores_v1`, H3 res-7, gitignored, NAO oficial). Ela ainda **NAO** esta integrada ao residual (`oferta_efetiva_disponivel`/`score_oportunidade_residual` inalterados) — o DEDUP vs `concorrentes_mapeados` (medido ~1.425 hexes em comum, 39% das academias / 63% dos alunos em hex ja coberto) e apenas QUANTIFICADO no relatorio `data/reports/scratch/oferta_academias_menores_qualidade.md`. A subtracao de oferta / capacidade por tipo (Huff) e follow-up sob gate (BLK-TP-09).
+
 ## 8. Recomendacao de uso executivo
 
 Para a diretoria:
