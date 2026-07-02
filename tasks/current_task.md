@@ -4,12 +4,28 @@
 
 ID: BLK-TP-06-FU1
 Nome: Re-validação do residual com candidatos de recalibração (seleção que alimenta o TP-09)
-Status: PAUSADO (gate humano 2026-07-02) — bloqueado por dependência de dado
+Status: APROVADO PELO QA (2026-07-02) — bloco entrega veredito HONESTO e REPRODUZÍVEL. Candidato A = NAO_APLICAR (NO-GO válido, DEC-008); NÃO aplicar ao BLK-TP-09. QA reproduziu o NO-GO contra os parquets reais (números batem EXATO: baseline +0,3119, A +0,2692, Δ pareado completo −0,0427 IC95[−0,0477,−0,0379], fora −0,0193); suíte full 1290 passed/1 skipped/0 falhas; READ-ONLY M1 (mtimes intactos). Próximo: Fechamento manual (completed.md via 6.2 [ad-hoc no-op] + commit por path; atualizar "Depende de" do BLK-TP-09). Snapshot QA: context/handoff/20260702-180732-qa.md
 Tipo: modelagem (análise/seleção de candidatos — READ-ONLY sobre o M1)
 Criticidade: alta
-Esteira: Block Orchestrator → Planner → [PAUSADO no gate] → (retomar após BLK-TP-08-FU) → Builder → QA
-Skill atual: Planner (concluído; ciclo pausado)
-Próxima Skill: RETOMAR após BLK-TP-08-FU
+Esteira: Block Orchestrator → Planner (REVISAR c/ novos artefatos) → [REVISÃO HUMANA] → Builder → QA
+Skill atual: QA (próxima)
+Próxima Skill: QA
+
+## VEREDITO do Builder (2026-07-02) — Candidato A = NAO_APLICAR (NO-GO honesto)
+- Baseline (completo) reproduz o TP-06: R²_oof_log +0,3119, IC95 [+0,2977, +0,3250], rho_oof +0,4615, n=16.411.
+- Candidato A (completo): R²_oof_log +0,2692, IC95 [+0,2553, +0,2819] — PIOR que o baseline.
+- Δ pareado (A − baseline): COMPLETO −0,0427 IC95 [−0,0477, −0,0379]; FORA (não-metro) −0,0193 IC95 [−0,0232, −0,0157]. Ambos inteiramente abaixo de zero → NÃO vence em nenhum recorte.
+- Dedup fino no join: +1.748.710 somados / −157.840 dedupados. Enriquecer a oferta consumida DERRUBA o poder preditivo out-of-fold → NÃO recomendar ao BLK-TP-09 aplicar o Candidato A. NO-GO válido (DEC-008).
+- Artefatos: `src/motor_expansao/demanda_revelada/revalidacao_residual_candidatos.py` (NOVO), `tests/unit/demanda_revelada/test_revalidacao_residual_candidatos.py` (NOVO, 18 passed), `data/analysis/revalidacao_residual_candidatos.md` (NOVO, gitignored). READ-ONLY M1: mtime dos 4 oficiais + hexagonos_mercado_mapeado.parquet inalterado.
+Gate humano: APROVADO pelo usuário em 2026-07-02 — SÓ Candidato A agora (baseline + A, dedup fino por (hex,rede)); Candidato C ADIADO.
+Candidato C (futuro): usar capacidade de CLUBE real de data/validacao/ — `Sky Fit dados.xlsx` (SkyFit), `academias_engenharia_do_corpo.xlsx` (Engenharia), `KPIs_Smart_2025_02 (1).xlsx` (Smart Fit) [gitignored, dados reais, anti-PII]. As medianas ~340 do TP-08-FU são footprint de bairro, NÃO capacidade de clube.
+
+## Retomada (2026-07-02) — plano REVISADO pelo Planner com os artefatos reais (snapshot context/handoff/20260702-170214-planner.md)
+- `data/staging/oferta_academias_menores_rede_h3.parquet` (LONGO hex_id×rede_menor; 7.250 linhas, 14 redes, Σ 1.920.955 alunos) → dedup FINO por par (hex,rede). **Medido no join (16.411 hexes): 91,7% (1.748.710 alunos) são adição legítima; 8,3% (157.840) duplicados.**
+- `data/staging/capacidade_media_por_rede.parquet` (13 redes; 10 com flag_confiavel N≥10) → capacidade POR REDE do Candidato C. **CORREÇÃO: medianas reais são baixas (13–723, global ~340) e para academias de BAIRRO (panobianco/velocity/bio_ritmo/...), NÃO Smart/Sky/Engenharia; as grandes numerosas caem no fallback.**
+- Estrutura da oferta consumida verificada por recompute (max abs diff 0.0): `oferta_consumida_mercado = oferta_efetiva_mapeada_2km·2500` (Σ concorrentes 2 km distância-decaída). Candidato C exige reproduzir o 2 km-decay via BallTree local ponderando por capacidade da rede (o `n_unid_rede_por_hex` do plano pausado estava geometricamente errado).
+- Módulo novo: `src/motor_expansao/demanda_revelada/revalidacao_residual_candidatos.py` (baseline + A + C + [A+C]); relatório `data/analysis/revalidacao_residual_candidatos.md`; testes `tests/unit/demanda_revelada/test_revalidacao_residual_candidatos.py`.
+- Decisões ao gate: (A) regra do dedup fino por (hex,rede); (C) fallback de capacidade das redes sem N≥10 = 2.500 (recomendado); (D) rodar A+C combinado (recomendado sim); (E) critério de vence = IC95 do Δ pareado sem cruzar zero + sobreviver fora de SP/MG/RJ.
 
 ## Motivo da pausa (decisão de Felipe no gate, 2026-07-02)
 O plano revisado (candidatos A = incluir academias menores na saturação + dedup de rede; C = capacidade
