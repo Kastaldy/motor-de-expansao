@@ -19,6 +19,7 @@ from motor_expansao.dashboard.relatorio_municipal import (
     CAPACIDADE_UNIDADE,
     PDF_SECTION_HEADERS,
     _fit_contain,
+    _hex_destacado_mask,
     _png_dimensions,
     _prettify_rede,
     _zonas_geometricas,
@@ -44,7 +45,7 @@ def _hex(lat: float, lng: float) -> str:
 
 
 def _sample_df() -> pd.DataFrame:
-    """4 hexes em SAO PAULO; 2 destacados (sam>=3000 & oferta>=2000), 2 nao."""
+    """4 hexes em SAO PAULO; 2 destacados (oferta>=2000), 2 nao (oferta<2000)."""
     base = [(-23.55, -46.63), (-23.56, -46.64), (-23.54, -46.62), (-23.57, -46.65)]
     rows = []
     for i, (la, lo) in enumerate(base):
@@ -125,6 +126,42 @@ def test_agregar_municipio_formula_espaco_d1():
     assert res["espaco_para_academias"] == 4
     assert res["n_hex_total"] == 4
     assert res["uf"] == "SP"
+
+
+def test_hex_destacado_criterio_so_residual_sem_sam():
+    """BLK-RELMUN-03: destacado <=> oferta_efetiva_disponivel>=2000, INDEPENDENTE de SAM.
+    Prova que o filtro de SAM foi REMOVIDO: hex com sam<3000 mas oferta>=2000 agora conta
+    (antes NAO contava); hex com oferta<2000 NAO conta mesmo com sam alto."""
+    df = pd.DataFrame(
+        [
+            {"sam_fitness_potencial": 1000.0, "oferta_efetiva_disponivel": 2500.0},  # NOVO -> True
+            {"sam_fitness_potencial": 9000.0, "oferta_efetiva_disponivel": 500.0},   # -> False
+            {"sam_fitness_potencial": 4000.0, "oferta_efetiva_disponivel": 4451.0},  # -> True
+        ]
+    )
+    assert list(_hex_destacado_mask(df)) == [True, False, True]
+
+
+def test_agregar_municipio_conta_hex_sam_baixo_oferta_alta():
+    """BLK-RELMUN-03: hex com sam<3000 e oferta>=2000 entra em n_hex_amarelos e no espaco
+    (antes do drop do SAM ele NAO entrava)."""
+    df = pd.DataFrame(
+        [
+            {
+                "hex_id": _hex(-23.55, -46.63), "lat": -23.55, "lng": -46.63,
+                "nome_municipio": "SAO PAULO", "cidade": "SAO PAULO", "uf": "SP",
+                "sam_fitness_potencial": 1000.0, "oferta_efetiva_disponivel": 3000.0,
+                "score_setor_2022_calibrado": 50.0, "score_oportunidade_residual": 40.0,
+                "pop_total_setor_2022": 1500.0, "pop_total": 2000.0, "renda_per_capita": 3000.0,
+                "penetracao_fitness_mercado_estimada": 12.5,
+                "oferta_consumida_mercado_estimada": 200.0,
+            }
+        ]
+    )
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP")
+    assert res["n_hex_amarelos"] == 1
+    assert res["soma_oferta_amarelos"] == 3000.0
+    assert res["espaco_para_academias"] == round(3000.0 / CAPACIDADE_UNIDADE)  # == 1
 
 
 def test_agregar_municipio_mercado_residual_d4_e_score_d5():
@@ -321,9 +358,9 @@ def test_pdf_municipal_8_paginas_e_secoes():
     # Atribuicao de tiles (DEC-011) no rodape.
     assert b"OpenStreetMap" in pdf_bytes
     assert b"CARTO" in pdf_bytes
-    # AJUSTE 2 (FU1): legenda do criterio de inclusao do hexagono no Slide 2, com os
-    # limiares REAIS do _hex_destacado_mask (SAM>=3000 & oferta>=2000).
-    assert b"SAM Fitness >= 3.000" in pdf_bytes
+    # BLK-RELMUN-03: legenda do criterio de inclusao do hexagono, com o limiar REAL do
+    # _hex_destacado_mask (SO Residual Fitness >= 2.000; termo de SAM removido).
+    assert b"SAM Fitness" not in pdf_bytes
     assert b"Residual Fitness >= 2.000" in pdf_bytes
     # FU1 (slide novo, pos-capa): "Visao Geral do Municipio" com bloco de regioes consideradas.
     assert b"Visao Geral do Municipio" in pdf_bytes
@@ -364,7 +401,7 @@ def test_pdf_municipal_offline_safe_sem_assets(tmp_path):
 
 
 def _df_3_aprovados() -> pd.DataFrame:
-    """3 hexes APROVADOS (sam>=3000 & oferta>=2000) em celulas res-7 DISTINTAS e bem separadas
+    """3 hexes APROVADOS (oferta>=2000) em celulas res-7 DISTINTAS e bem separadas
     (~7 km entre si) -> 3 zonas geometricas (Ancora/Flancos/Cerco). Mais 1 reprovado com score
     (prova que a estrategia NAO se espalha para nao-aprovados — decisao de produto 2026-06-24)."""
     coords = [(-23.50, -46.60), (-23.55, -46.65), (-23.60, -46.70)]

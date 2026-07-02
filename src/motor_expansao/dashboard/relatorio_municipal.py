@@ -7,8 +7,9 @@ para isolamento total). READ-ONLY sobre o M1: nao recalcula `score_priorizacao`,
 `hex_score_estrutural`, pesos, carteira, plano, plano de dominio nem artefatos oficiais.
 
 Decisoes do gate humano (Vinicius, 2026-06-22 — DEC-011):
-- D1: hex DESTACADO ("amarelo") <=> `sam_fitness_potencial >= 3000` E
-  `oferta_efetiva_disponivel >= 2000`. Rotulo sobre o hex = `oferta_efetiva_disponivel`.
+- D1 (emenda BLK-RELMUN-03, 2026-07-02): hex DESTACADO ("amarelo") <=>
+  `oferta_efetiva_disponivel >= 2000` (Residual Fitness; termo de SAM removido).
+  Rotulo sobre o hex = `oferta_efetiva_disponivel`.
   "Espaco para academias" = round( sum(oferta_efetiva_disponivel destacados) / 2500 ).
 - D2: zonas via `dominio_df` agrupado por `cluster_id` (fallback gracioso).
 - D3: mapas COM TILES ONLINE (contextily/EPSG:3857, cache `data/cache/basemap_tiles/`,
@@ -46,8 +47,8 @@ from motor_expansao.dashboard.utils import score_band_to_color
 # ---------------------------------------------------------------------------
 # Constantes de DISPLAY do relatorio (DEC-011 parte 2). Locais a este modulo;
 # NAO mexem em flag_sam/DEC-006/DEC-007 (pipeline de mercado) nem no M1.
+# BLK-RELMUN-03 (DEC-011 emenda): criterio de destaque passou a ser SO Residual Fitness (>=2000).
 # ---------------------------------------------------------------------------
-SAM_DESTAQUE_MIN = 3000.0
 OFERTA_DESTAQUE_MIN = 2000.0
 CAPACIDADE_UNIDADE = 2500.0
 H3_RES = 7
@@ -256,12 +257,11 @@ def _municipio_mask(df: pd.DataFrame, nome_municipio: str) -> pd.Series:
 
 
 def _hex_destacado_mask(df_muni: pd.DataFrame) -> pd.Series:
-    """D1: destacado <=> sam_fitness_potencial>=3000 E oferta_efetiva_disponivel>=2000."""
+    """D1 (emenda BLK-RELMUN-03): destacado <=> oferta_efetiva_disponivel>=2000 (Residual Fitness; termo de SAM removido)."""
     if df_muni.empty:
         return pd.Series(False, index=df_muni.index)
-    sam = pd.to_numeric(df_muni.get("sam_fitness_potencial"), errors="coerce")
     oferta = pd.to_numeric(df_muni.get("oferta_efetiva_disponivel"), errors="coerce")
-    return (sam >= SAM_DESTAQUE_MIN) & (oferta >= OFERTA_DESTAQUE_MIN)
+    return oferta >= OFERTA_DESTAQUE_MIN
 
 
 def _fonte_propria_mask(df_muni: pd.DataFrame) -> pd.Series:
@@ -461,7 +461,7 @@ def _zonas_geometricas(df_muni: pd.DataFrame) -> dict[str, Any]:
     qualquer artefato do M1 — apenas colore o mapa da Pagina 5 e alimenta o painel/Pagina 6.
 
     Hexes relevantes = SOMENTE os hexes DESTACADOS/aprovados (`_hex_destacado_mask`:
-    sam_fitness_potencial>=3000 E oferta_efetiva_disponivel>=2000). Decisao do produto
+    oferta_efetiva_disponivel>=2000; termo de SAM removido em BLK-RELMUN-03). Decisao do produto
     (Vinicius, 2026-06-24): so quem foi APROVADO recebe estrategia de expansao — sem fallback
     para todos os hexes do municipio (antes, com <3 aprovados, a estrategia se espalhava por
     todo o municipio). Particiona por tercis de distancia ao centroide: terco central = zona 1
@@ -1610,8 +1610,7 @@ def _cobertura_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     _draw_note(
         pdf, 34.0, 490.0, 540.0,
         f"As paginas seguintes consideram apenas as {_format_number(n_aprov, 0)} regioes aprovadas "
-        f"(SAM Fitness >= {_format_number(SAM_DESTAQUE_MIN, 0)} e "
-        f"Residual Fitness >= {_format_number(OFERTA_DESTAQUE_MIN, 0)}).",
+        f"(Residual Fitness >= {_format_number(OFERTA_DESTAQUE_MIN, 0)} alunos).",
     )
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
@@ -1663,12 +1662,11 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
         pdf.multi_cell(pw - 24, 13, _ascii(f"{expr} = {_format_number(soma, 0)}"))
     pdf.set_xy(px + 12, y_end + 88)
     pdf.cell(pw - 24, 14, _ascii(f"/ 2.500 -> {_format_number(result.get('espaco_para_academias'), 0)}"))
-    # AJUSTE 2: legenda BREVE do criterio de inclusao do hexagono (limiares reais do
-    # _hex_destacado_mask: SAM_DESTAQUE_MIN / OFERTA_DESTAQUE_MIN — fonte unica, nao diverge).
+    # AJUSTE 2 (BLK-RELMUN-03): legenda BREVE do criterio de inclusao do hexagono (limiar real
+    # do _hex_destacado_mask: OFERTA_DESTAQUE_MIN — SO Residual Fitness, termo de SAM removido).
     _draw_note(
         pdf, 34.0, 490.0, 540.0,
-        f"Hexagono considerado quando SAM Fitness >= {_format_number(SAM_DESTAQUE_MIN, 0)} "
-        f"e Residual Fitness >= {_format_number(OFERTA_DESTAQUE_MIN, 0)} (alunos).",
+        f"Hexagono considerado quando Residual Fitness >= {_format_number(OFERTA_DESTAQUE_MIN, 0)} (alunos).",
     )
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 

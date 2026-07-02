@@ -4856,15 +4856,15 @@ def test_render_pdf_download_topo_payload_none_avisa_e_nao_baixa():
 # --- BLK-RELMUN-01-FU1: 2a opcao de geracao do Relatorio Municipal (perto do menu superior) ---
 
 def test_render_relatorio_municipal_topo_sem_municipio_unico_nao_renderiza():
-    """Sem EXATAMENTE 1 municipio selecionado, nada e renderizado (nem botao gerar)."""
+    """Sem NENHUM municipio selecionado, nada e renderizado (nem botao gerar).
+
+    (O caso `> 1` migrou para o teste de lote, que agora ESPERA o botao "Gerar Relatorios (N)".)
+    """
     import unittest.mock as mock
 
     with mock.patch("streamlit.button") as button_mock:
         streamlit_app.render_relatorio_municipal_download_topo(
             pd.DataFrame(), selected_cities=[], selected_ufs=[]
-        )
-        streamlit_app.render_relatorio_municipal_download_topo(
-            pd.DataFrame(), selected_cities=["A", "B"], selected_ufs=["SP"]
         )
     button_mock.assert_not_called()
 
@@ -4905,6 +4905,271 @@ def test_render_relatorio_municipal_topo_clique_gera_e_oferece_download():
     gen_mock.assert_called_once()
     dl_mock.assert_called_once()
     assert any(k.startswith("relmun_topo_payload::") for k in session)
+
+
+# --- BLK-RELMUN-04: Relatorio Municipal em lote (> 1 municipio) ---
+
+def test_relmun_lote_helper_gera_payload_e_none():
+    """Helper de geracao por municipio: dict quando ha hex; None quando n_hex_total == 0."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import _gerar_payload_relatorio_municipal
+
+    class _Payloads:
+        pdf_bytes = b"%PDF-1.4 fake"
+        pdf_filename = "relatorio_municipal_sp_a.pdf"
+
+    df = pd.DataFrame({"nome_municipio": ["A"]})
+    with (
+        mock.patch(
+            "motor_expansao.dashboard.pages.agregar_municipio",
+            return_value={"n_hex_total": 3},
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_mapas_municipio",
+            return_value={},
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_download_relatorio_municipal",
+            return_value=_Payloads(),
+        ),
+    ):
+        payload = _gerar_payload_relatorio_municipal(df, "A", "SP")
+    assert payload == {
+        "pdf_bytes": b"%PDF-1.4 fake",
+        "pdf_filename": "relatorio_municipal_sp_a.pdf",
+    }
+
+    # n_hex_total == 0 -> None (o chamador emite o aviso individual)
+    with (
+        mock.patch(
+            "motor_expansao.dashboard.pages.agregar_municipio",
+            return_value={"n_hex_total": 0},
+        ),
+        mock.patch("motor_expansao.dashboard.pages.render_mapas_municipio") as map_mock,
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_download_relatorio_municipal"
+        ) as gen_mock,
+    ):
+        assert _gerar_payload_relatorio_municipal(df, "A", "SP") is None
+        map_mock.assert_not_called()
+        gen_mock.assert_not_called()
+
+
+def test_render_relatorio_municipal_topo_lote_botao_e_downloads():
+    """> 1 municipio: um botao "Gerar Relatorios (N)"; ao clicar, gera N PDFs e N downloads."""
+    import unittest.mock as mock
+
+    class _Payloads:
+        pdf_bytes = b"%PDF-1.4 fake"
+        pdf_filename = "rel.pdf"
+
+    session: dict = {}
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch("streamlit.button", return_value=True) as button_mock,
+        mock.patch("streamlit.progress"),
+        mock.patch("streamlit.warning"),
+        mock.patch(
+            "motor_expansao.dashboard.pages.agregar_municipio",
+            return_value={"n_hex_total": 5},
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_mapas_municipio", return_value={}
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_download_relatorio_municipal",
+            return_value=_Payloads(),
+        ) as gen_mock,
+        mock.patch("streamlit.download_button") as dl_mock,
+    ):
+        streamlit_app.render_relatorio_municipal_download_topo(
+            pd.DataFrame({"nome_municipio": ["A", "B", "C"]}),
+            selected_cities=["A", "B", "C"],
+            selected_ufs=["SP"],
+        )
+
+    assert any(
+        "Gerar Relatorios (3)" in str(c.args[0]) for c in button_mock.call_args_list if c.args
+    )
+    assert gen_mock.call_count == 3
+    assert dl_mock.call_count == 3
+    labels = [str(c.args[0]) for c in dl_mock.call_args_list if c.args]
+    assert any("— A" in lb for lb in labels)
+    assert any("— B" in lb for lb in labels)
+    assert any("— C" in lb for lb in labels)
+    assert "relmun_lote_topo_payloads" in session
+    assert len(session["relmun_lote_topo_payloads"]) == 3
+
+
+def test_render_relatorio_municipal_topo_lote_municipio_sem_hex_nao_aborta():
+    """Um municipio sem hexagono avisa 1x pelo nome e NAO aborta o lote (demais geram download)."""
+    import unittest.mock as mock
+
+    class _Payloads:
+        pdf_bytes = b"x"
+        pdf_filename = "r.pdf"
+
+    def _agg(*args, **kwargs):
+        nome = kwargs.get("nome_municipio")
+        return {"n_hex_total": 0 if nome == "B" else 4}
+
+    session: dict = {}
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch("streamlit.button", return_value=True),
+        mock.patch("streamlit.progress"),
+        mock.patch(
+            "motor_expansao.dashboard.pages.agregar_municipio", side_effect=_agg
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_mapas_municipio", return_value={}
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_download_relatorio_municipal",
+            return_value=_Payloads(),
+        ),
+        mock.patch("streamlit.warning") as warn_mock,
+        mock.patch("streamlit.download_button") as dl_mock,
+    ):
+        streamlit_app.render_relatorio_municipal_download_topo(
+            pd.DataFrame({"nome_municipio": ["A", "B", "C"]}),
+            selected_cities=["A", "B", "C"],
+            selected_ufs=["SP"],
+        )
+
+    warn_mock.assert_called_once()
+    assert "B" in str(warn_mock.call_args.args[0])
+    assert dl_mock.call_count == 2
+
+
+def test_render_relatorio_municipal_topo_gate_zero_e_um():
+    """Reforca o gate: [] nao renderiza botao; ["X"] segue no fluxo de 1 municipio."""
+    import unittest.mock as mock
+
+    with mock.patch("streamlit.button") as button_mock:
+        streamlit_app.render_relatorio_municipal_download_topo(
+            pd.DataFrame(), selected_cities=[], selected_ufs=[]
+        )
+    button_mock.assert_not_called()
+
+    class _Payloads:
+        pdf_bytes = b"x"
+        pdf_filename = "r.pdf"
+
+    session: dict = {}
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch("streamlit.button", return_value=True) as button_mock,
+        mock.patch("streamlit.spinner"),
+        mock.patch(
+            "motor_expansao.dashboard.pages.agregar_municipio",
+            return_value={"n_hex_total": 2},
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_mapas_municipio", return_value={}
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_download_relatorio_municipal",
+            return_value=_Payloads(),
+        ),
+        mock.patch("streamlit.download_button"),
+    ):
+        streamlit_app.render_relatorio_municipal_download_topo(
+            pd.DataFrame({"nome_municipio": ["X"]}),
+            selected_cities=["X"],
+            selected_ufs=["SP"],
+        )
+
+    assert any(
+        c.kwargs.get("key") == "btn_gerar_relmun_topo" for c in button_mock.call_args_list
+    )
+    assert any(k.startswith("relmun_topo_payload::") for k in session)
+
+
+def test_render_relatorio_municipal_expander_lote_downloads():
+    """Expander com > 1 municipio: botao "Gerar Relatorios (N)" + N downloads sob demanda."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import render_relatorio_municipal_expander
+
+    class _Payloads:
+        pdf_bytes = b"x"
+        pdf_filename = "r.pdf"
+
+    session: dict = {}
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.button", return_value=True) as button_mock,
+        mock.patch("streamlit.progress"),
+        mock.patch("streamlit.warning"),
+        mock.patch(
+            "motor_expansao.dashboard.pages.agregar_municipio",
+            return_value={"n_hex_total": 5},
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_mapas_municipio", return_value={}
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_download_relatorio_municipal",
+            return_value=_Payloads(),
+        ),
+        mock.patch("streamlit.download_button") as dl_mock,
+    ):
+        render_relatorio_municipal_expander(
+            pd.DataFrame({"nome_municipio": ["A", "B"]}),
+            selected_cities=["A", "B"],
+            selected_ufs=["SP"],
+        )
+
+    assert any(
+        "Gerar Relatorios (2)" in str(c.args[0]) for c in button_mock.call_args_list if c.args
+    )
+    assert dl_mock.call_count == 2
+    assert "relmun_lote_expander_payloads" in session
+
+
+def test_render_relatorio_municipal_expander_um_municipio_auto_gera():
+    """Expander com 1 municipio: AUTO-GERA (sem botao) e chama render_download_relatorio_municipal."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import render_relatorio_municipal_expander
+
+    session: dict = {}
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.spinner"),
+        mock.patch(
+            "streamlit.columns",
+            return_value=(mock.MagicMock(), mock.MagicMock(), mock.MagicMock()),
+        ),
+        mock.patch("streamlit.button") as button_mock,
+        mock.patch(
+            "motor_expansao.dashboard.pages.agregar_municipio",
+            return_value={
+                "n_hex_total": 3,
+                "n_ultra": 1,
+                "n_concorrentes": 2,
+                "espaco_para_academias": 4,
+            },
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_mapas_municipio", return_value={}
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_download_relatorio_municipal"
+        ) as dl_mock,
+    ):
+        render_relatorio_municipal_expander(
+            pd.DataFrame({"nome_municipio": ["X"]}),
+            selected_cities=["X"],
+            selected_ufs=["SP"],
+        )
+
+    dl_mock.assert_called_once()
+    button_mock.assert_not_called()
 
 
 def test_gerar_payloads_relatorio_pontual_para_pin_sem_base_retorna_none():
