@@ -916,6 +916,75 @@ integração cobre o toggle/layer; suíte verde; `import streamlit_app` ok.
 
 ---
 
+### BLK-TP-06 — Calibração/validação do score residual com demanda revelada observada
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (valida/propõe calibração de um campo ATIVO da camada de mercado/residual — `score_oportunidade_residual`; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01** (parquet `data/staging/demanda_revelada_h3.parquet`, 16.575 hexes, colunas `membros`/`alunos_parceiras`) + camada de mercado/residual (`score_oportunidade_residual` em `hexagonos_mercado_mapeado.parquet`). |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem; pode propor recalibração de um score ativo. |
+
+**Contexto.** A análise exploratória da DEC-012 (2026-06-24) mediu **Spearman +0,52** entre a demanda paga
+por hex (camada Demanda Revelada) e o `score_oportunidade_residual`. Isso é a primeira validação externa
+forte do residual — mas foi exploratório, **in-sample**, e nunca passou pela disciplina da DEC-008. Este
+bloco transforma esse sinal em uma validação/calibração **honesta**.
+
+**Objetivo.** Medir, fora-de-amostra, quanto o `score_oportunidade_residual` prevê a **demanda observada**
+(`membros` / `alunos_parceiras` da Demanda Revelada, casadas por `hex_id`), quantificando o +0,52 de forma
+honesta e produzindo veredito GO/NO-GO. Se GO, propor (sem aplicar) uma calibração dos componentes do
+residual que melhore o alinhamento com demanda observada. A demanda entra como **alvo/validação observada**,
+NUNCA como preditor geográfico de magnitude (DEC-009).
+
+**Critérios de aceite.** Módulo READ-ONLY na camada paralela (não importa de `pipelines/m1`, `dashboard`,
+`censo_*`, `api`); validação por LOO/k-fold vs baseline da média com **IC95 bootstrap (seed fixa)**, **R²
+in-sample banido** dos outputs, intervalos + flag de extrapolação (DEC-008); join por `hex_id` com caveat
+de cobertura (~1% do universo, concentração SP — DEC-012); veredito GO/NO-GO documentado em
+`data/analysis/` (gitignored); anti-PII (só camada agregada; fixtures sintéticas); mtime dos 4 artefatos
+oficiais M1 inalterado; suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1 — recalibrar a FÓRMULA do residual em produção é **follow-up com gate
+próprio**, não este bloco); DEC-008 / DEC-009 / DEC-012.
+
+---
+
+### BLK-TP-07 — Huff/gravitacional de captura de concorrentes com demanda observada (reabertura da Camada 2 do BLK-DIM)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (reabre uma camada de modelagem da epic BLK-DIM — captura/share; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-05** (GO da trilha demanda→captura, R²_oof_log +0,575, concluído 2026-06-30 — **destrava explicitamente a reabertura da Camada 2/Huff**) + `concorrentes_mapeados.parquet` + helper de catchment `analisar_entorno_ponto`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem. |
+
+**Contexto.** A DEC-009 encerrou a previsão de *magnitude* de demanda pela geografia, e a Camada 2 (Huff)
+da epic BLK-DIM ficou como NO-GO enquanto o insumo era demanda **imputada**. O **BLK-TP-05** virou esse
+jogo: com demanda **observada** (não imputada), a trilha demanda→captura deu o **primeiro GO** honesto
+(R²_oof_log +0,575, k-fold 5×5 vs baseline) e sua conclusão foi, textualmente, habilitar a reabertura da
+**Camada 2/Huff** sob gate de Felipe. Este bloco é essa reabertura.
+
+**Objetivo.** Modelar a **captura/share gravitacional (Huff)** de um ponto candidato — atratividade ×
+distância aos concorrentes mapeados, com saturação e canibalização da rede Ultra — e **validá-la contra a
+demanda observada** da Demanda Revelada (`membros`/`alunos_parceiras`), sob a disciplina DEC-008. A demanda
+observada é o **alvo de validação**, nunca preditor geográfico de magnitude (DEC-009). Alinha com a
+DEC-009 (dimensionamento consome demanda, não a prevê) e com a estrutura de catchment já existente.
+
+**Critérios de aceite.** Módulo READ-ONLY isolado da camada paralela (sem import de `pipelines/m1`,
+`dashboard`, `censo_*`, `api`); função de Huff parametrizável (β de distância, atratividade por
+metragem/rede) calibrada/validada **out-of-fold vs baseline** com IC95 bootstrap, R² in-sample banido,
+intervalos + flag de extrapolação; validação contra demanda observada por `hex_id` com caveat de cobertura
+DEC-012; veredito GO/NO-GO em `data/analysis/` (gitignored); anti-PII (camada agregada; fixtures
+sintéticas); sem dependência nova de rede/base pesada; mtime dos 4 artefatos oficiais M1 inalterado; suíte
+verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-008 / DEC-009 (demanda observada como insumo, nunca preditor de
+magnitude) / DEC-012 (anti-PII). Integrar o resultado ao `score_oportunidade_residual` ou à carteira/plano
+seria **follow-up com gate próprio**, não este bloco.
+
+---
+
 ## Epic BLK-LTV — Integração Lifetime × Motor de Expansão (eixo retenção territorial, camada paralela READ-ONLY sobre o M1)
 
 **Objetivo do epic.** Validar se o perfil do território prevê a retenção/LTV da carteira, para a
