@@ -19,6 +19,13 @@ from .contrato import (
 )
 from .ingestao import ingerir_demanda_revelada
 from .validacao import executar_validacao_completa
+from .vazios_competitivos import (
+    CONTRATO_COLUNAS_VAZIOS,
+    LIMIAR_MEMBROS_GT5KM,
+    VERSAO_CONTRATO_VAZIOS,
+    flag_vazio_competitivo,
+    gerar_vazios_competitivos,
+)
 
 __all__ = [
     "ingerir_demanda_revelada",
@@ -29,4 +36,10 @@ __all__ = [
     "H3_RES_CONTRATO",
     "backtest_demanda_captura",
     "BacktestTP05Result",
+    # BLK-TP-03: vazios competitivos
+    "flag_vazio_competitivo",
+    "gerar_vazios_competitivos",
+    "LIMIAR_MEMBROS_GT5KM",
+    "VERSAO_CONTRATO_VAZIOS",
+    "CONTRATO_COLUNAS_VAZIOS",
 ]

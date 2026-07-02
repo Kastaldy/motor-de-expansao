@@ -2,43 +2,36 @@
 
 ## Bloco atual
 
-ID: BLK-RELPON-03
-Nome: Eliminar a barra cinza (letterbox) dos mapas do Relatório Municipal
-Status: aprovado (QA em 2026-07-01 — APROVADO COM RESSALVAS; ressalva = gate VISUAL humano do PDF, requisito de fechamento, NÃO bloqueia testes)
-Tipo: feature (visualização/render — READ-ONLY sobre o M1)
-Criticidade: alta
-Esteira: Block Orchestrator → Planner → [aprovação humana] → Builder → QA
-Skill atual: Ciclo fechado (housekeeping 6.0 OK; commit por path na branch ciclo/BLK-RELPON-03)
-Próxima Skill: Merge pelo humano (revisar branch ciclo/BLK-RELPON-03 + gate visual humano do PDF antes do merge)
+ID: BLK-TP-03
+Nome: Vazio competitivo do concorrente low-cost (feature/overlay)
+Status: aprovado (QA em 2026-07-02 — APROVADO; housekeeping 6.0 OK; commit por path na branch ciclo/BLK-TP-03)
+Tipo: feature (visualização/análise — READ-ONLY sobre o M1)
+Criticidade: média
+Esteira: Block Orchestrator → Planner → [REVISÃO HUMANA — produto/UX: Opção A aprovada] → Builder → QA
+Skill atual: Ciclo fechado (housekeeping 6.0 OK; commit por path na branch ciclo/BLK-TP-03)
+Próxima Skill: Merge pelo humano (revisar branch ciclo/BLK-TP-03)
 
 ## Objetivo
-Os mapas do Relatório Municipal passam a preencher o painel sem a barra cinza (letterbox top/base),
-casando a proporção do mapa ao painel, sem distorção grosseira nem sobreposição de moldura/título/
-rodapé. Ajuste de RENDER em `relatorio_municipal.py`. READ-ONLY sobre o M1.
+Identificar hexes com demanda paga relevante a >5km do concorrente low-cost de referência e SEM
+unidade dele no hex — tese de entrada low-cost mais limpa (demanda comprovada, concorrente direto
+ausente). Reproduzível, READ-ONLY sobre o M1. Decisão de produto no gate: lista/parquet apenas vs.
+overlay no Mapa Territorial.
 
-## Causa-raiz (medida)
-PNG gerado em 1000×620 (aspect 1,613) vs. painel 540×380 (aspect 1,421); `_draw_map` usa contain
-(`scale=min`) → letterbox de ~22,6px em cima/embaixo = a barra cinza do painel.
-
-## Tiering de modelo (Passo 4) — Alta
+## Tiering de modelo (Passo 4) — Média
 - Block Orchestrator: sonnet
-- Planner: opus
-- Builder: opus
+- Planner: opus (override +1: gate de produto/UX overlay-vs-parquet + guardrails anti-PII DEC-012)
+- Builder: sonnet
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-RELPON-03 (criada a partir de main @ c890eb8; independente de RELPON-01/02).
+ciclo/BLK-TP-03 (criada a partir de main @ HEAD).
 
 ## Paths do ciclo (commitar só estes por path)
-- src/motor_expansao/dashboard/relatorio_municipal.py
-- tests/unit/test_relatorio_municipal.py (e testes impactados)
-- tasks/backlog.md (bloco BLK-RELPON-03), tasks/current_task.md, tasks/completed.md
+- a definir pelo Planner (candidatos: src/motor_expansao/demanda_revelada/*, scripts/*, tests/*)
+- tasks/backlog.md (bloco BLK-TP-03), tasks/current_task.md, tasks/completed.md
 - context/handoff.md, context/handoff/
 
-## Fora de escopo
-- Gate do SAM/`flag_sam` (DEC-006/007), score, M1, artefatos oficiais (INTOCADOS);
-  Relatório Pontual (`censo_map.py`/`censo_report.py`); método de intersecção e raio.
-
 ## Guardrails
-- §5 (READ-ONLY M1): zero recálculo de score/pesos/carteira/plano/artefatos. Só RENDER.
-- Sem dependência de rede nova (DEC-011 inalterada). Marca d'água anti-PII + `set_compression(False)` + 8 páginas mantidos.
+- §5 (READ-ONLY M1): zero recálculo de score/pesos/carteira/plano/artefatos oficiais.
+- DEC-012 (anti-PII): consumir só camada agregada; zero PII em artefato/log/teste; fonte real em NAO_ABRA/ (gitignored).
+- Sem dependência de rede nova; camada paralela isolada (não importa de pipelines/m1, censo_*, dashboard core do M1).
