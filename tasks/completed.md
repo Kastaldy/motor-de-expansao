@@ -6420,3 +6420,28 @@ Territorial (§5, camada visual de apoio — não altera score/ranking/carteira)
 
 **Critérios de aceite.** Lista/camada de vazios competitivos reproduzível; READ-ONLY M1; suíte verde.
 **Guardrail.** §5; pins/camadas de concorrente são apoio visual (CLAUDE.md §2).
+
+---
+
+### BLK-TP-04 — Calibração da curva tamanho→densidade do BLK-DIM com alunos/unidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (alimenta a modelagem de viabilidade; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01** + epic **BLK-DIM** (DIM-03R/06). |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem. |
+
+**Objetivo.** Usar `alunos_parceiras` (amostra real de alunos/unidade por tier; n≈27 mil no protótipo)
+como insumo para calibrar/validar a curva tamanho→densidade do `viabilidade_ponto.py` (BLK-DIM), com a
+disciplina metodológica da DEC-008 (LOO vs baseline; banir R² in-sample; intervalos + flag de
+extrapolação). Liga-se à DEC-009 (dimensionamento é a parte que funciona; consome demanda, não a prevê).
+
+**Critérios de aceite.** Curva calibrada/validada por LOO vs baseline, documentada; READ-ONLY M1.
+**Guardrail.** §5; DEC-008/DEC-009.
+
+---
+
+- BLK-TP-05 (concluído 2026-06-30) — ver tasks/completed.md
