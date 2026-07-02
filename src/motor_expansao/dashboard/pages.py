@@ -434,12 +434,15 @@ def inject_styles() -> None:
             /* Largura padrao para os botoes de acao/download (consistencia visual,
                pedido de Vini 2026-06-16): cobre os download_button (CSV/PDF do relatorio
                e "Baixar PDF do ponto"/"Baixar PDF do Relatorio Municipal") e os botoes
-               "Gerar PDF do ponto" e "Gerar PDF do Relatorio Municipal" (BLK-RELMUN-01-FU1),
+               "Gerar PDF do ponto" e "Gerar PDF do Relatorio Municipal" (BLK-RELMUN-01-FU1)
+               e os botoes de lote "Gerar Relatorios (N)" (BLK-RELMUN-04-FU1, topo+expander),
                por st-key. NAO afeta os botoes inline pequenos do multihex (+/-/x) nem o
                seletor de abas. */
             [data-testid="stDownloadButton"] button,
             .st-key-btn_gerar_pdf_topo button,
-            .st-key-btn_gerar_relmun_topo button {{
+            .st-key-btn_gerar_relmun_topo button,
+            .st-key-btn_gerar_relmun_lote_topo button,
+            .st-key-btn_gerar_relmun_lote_expander button {{
                 width: 260px;
                 max-width: 100%;
             }}
@@ -3041,6 +3044,66 @@ def render_pdf_download_topo(
         )
 
 
+def _relmun_key_slug(text: str) -> str:
+    """Slug minimalista para compor `key`s de widget unicos (sem novo import)."""
+    return "".join(c if c.isalnum() else "-" for c in str(text).casefold())
+
+
+def _gerar_payload_relatorio_municipal(
+    df: pd.DataFrame,
+    nome_municipio: str,
+    uf: str | None,
+    *,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    dominio_df: pd.DataFrame | None = None,
+    censo_geo_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    """Gera o payload (pdf_bytes/pdf_filename) de UM municipio reusando exatamente as MESMAS
+    chamadas do fluxo de 1 municipio. Retorna None quando o municipio nao tem hexagonos
+    (n_hex_total == 0) — o chamador emite o aviso individual. READ-ONLY M1.
+
+    Nao chama `st.*` (progresso/warning/session ficam no chamador); e a unidade testavel
+    do miolo de geracao, compartilhada pelo ramo de lote (> 1 municipio) dos dois pontos.
+    """
+    bairros_por_hex = _resolve_bairros_por_hex_municipio(
+        df, nome_municipio, uf, censo_geo_dir
+    )
+    municipio_result = agregar_municipio(
+        df,
+        nome_municipio=nome_municipio,
+        uf=uf,
+        dominio_df=dominio_df,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+        bairros_por_hex=bairros_por_hex,
+    )
+    if municipio_result["n_hex_total"] == 0:
+        return None
+    df_muni = df.loc[
+        df.get("nome_municipio", pd.Series("", index=df.index))
+        .astype(str).str.strip().str.casefold()
+        == str(nome_municipio).strip().casefold()
+    ]
+    if df_muni.empty and "cidade" in df.columns:
+        df_muni = df.loc[
+            df["cidade"].astype(str).str.strip().str.casefold()
+            == str(nome_municipio).strip().casefold()
+        ]
+    mapas = render_mapas_municipio(
+        df_muni,
+        municipio_result,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+        basemap=True,
+    )
+    payloads = gerar_payloads_download_relatorio_municipal(municipio_result, mapas)
+    return {
+        "pdf_bytes": payloads.pdf_bytes,
+        "pdf_filename": payloads.pdf_filename,
+    }
+
+
 def render_relatorio_municipal_download_topo(
     df: pd.DataFrame,
     *,
@@ -3054,71 +3117,119 @@ def render_relatorio_municipal_download_topo(
     """2o ponto de geracao do Relatorio Municipal, perto do menu superior (espelha
     `render_pdf_download_topo` do Relatorio Pontual).
 
-    So aparece com EXATAMENTE 1 municipio selecionado; gera SOB DEMANDA (clique no botao)
-    com indicador de carregamento (`st.spinner`). Os bytes ficam em `session_state` por
-    municipio para sobreviver ao rerun do download. A seção inferior (`render_relatorio_
-    municipal_expander`, no Mapa Territorial) segue carregando automaticamente. READ-ONLY M1.
+    Com EXATAMENTE 1 municipio selecionado gera SOB DEMANDA (clique no botao) com
+    indicador de carregamento (`st.spinner`); os bytes ficam em `session_state` por
+    municipio para sobreviver ao rerun do download. Com MAIS DE 1 municipio, um unico
+    botao "Gerar Relatorios (N)" gera um PDF por municipio (com progresso i/N) e oferece
+    um `st.download_button` por municipio. A seção inferior (`render_relatorio_municipal_
+    expander`, no Mapa Territorial) segue carregando 1 municipio automaticamente. READ-ONLY M1.
     """
-    if len(selected_cities) != 1:
+    if not selected_cities:
         return
-    nome_municipio = selected_cities[0]
-    uf = selected_ufs[0] if len(selected_ufs) == 1 else None
-    cache_key = f"relmun_topo_payload::{nome_municipio}"
-    gerar = st.button(
-        "Gerar PDF do Relatorio Municipal",
-        key="btn_gerar_relmun_topo",
-        help=f"Gera o Relatorio Municipal (9 paginas) de {nome_municipio}.",
-    )
-    if gerar:
-        with st.spinner("Gerando Relatorio Municipal..."):
-            bairros_por_hex = _resolve_bairros_por_hex_municipio(
-                df, nome_municipio, uf, censo_geo_dir
-            )
-            municipio_result = agregar_municipio(
-                df,
-                nome_municipio=nome_municipio,
-                uf=uf,
-                dominio_df=dominio_df,
-                competitors_df=competitors_df,
-                ultra_df=ultra_df,
-                bairros_por_hex=bairros_por_hex,
-            )
-            if municipio_result["n_hex_total"] == 0:
-                st.session_state.pop(cache_key, None)
-                st.warning(
-                    f"Nenhum hexagono encontrado para '{nome_municipio}' no recorte carregado."
+    if len(selected_cities) == 1:
+        nome_municipio = selected_cities[0]
+        uf = selected_ufs[0] if len(selected_ufs) == 1 else None
+        cache_key = f"relmun_topo_payload::{nome_municipio}"
+        gerar = st.button(
+            "Gerar PDF do Relatorio Municipal",
+            key="btn_gerar_relmun_topo",
+            help=f"Gera o Relatorio Municipal (9 paginas) de {nome_municipio}.",
+        )
+        if gerar:
+            with st.spinner("Gerando Relatorio Municipal..."):
+                bairros_por_hex = _resolve_bairros_por_hex_municipio(
+                    df, nome_municipio, uf, censo_geo_dir
                 )
-                return
-            df_muni = df.loc[
-                df.get("nome_municipio", pd.Series("", index=df.index))
-                .astype(str).str.strip().str.casefold()
-                == str(nome_municipio).strip().casefold()
-            ]
-            if df_muni.empty and "cidade" in df.columns:
+                municipio_result = agregar_municipio(
+                    df,
+                    nome_municipio=nome_municipio,
+                    uf=uf,
+                    dominio_df=dominio_df,
+                    competitors_df=competitors_df,
+                    ultra_df=ultra_df,
+                    bairros_por_hex=bairros_por_hex,
+                )
+                if municipio_result["n_hex_total"] == 0:
+                    st.session_state.pop(cache_key, None)
+                    st.warning(
+                        f"Nenhum hexagono encontrado para '{nome_municipio}' no recorte carregado."
+                    )
+                    return
                 df_muni = df.loc[
-                    df["cidade"].astype(str).str.strip().str.casefold()
+                    df.get("nome_municipio", pd.Series("", index=df.index))
+                    .astype(str).str.strip().str.casefold()
                     == str(nome_municipio).strip().casefold()
                 ]
-            mapas = render_mapas_municipio(
-                df_muni,
-                municipio_result,
+                if df_muni.empty and "cidade" in df.columns:
+                    df_muni = df.loc[
+                        df["cidade"].astype(str).str.strip().str.casefold()
+                        == str(nome_municipio).strip().casefold()
+                    ]
+                mapas = render_mapas_municipio(
+                    df_muni,
+                    municipio_result,
+                    competitors_df=competitors_df,
+                    ultra_df=ultra_df,
+                    basemap=True,
+                )
+                payloads = gerar_payloads_download_relatorio_municipal(municipio_result, mapas)
+            st.session_state[cache_key] = {
+                "pdf_bytes": payloads.pdf_bytes,
+                "pdf_filename": payloads.pdf_filename,
+            }
+        cached = st.session_state.get(cache_key)
+        if cached:
+            st.download_button(
+                "Baixar PDF do Relatorio Municipal",
+                data=cached["pdf_bytes"],
+                file_name=cached["pdf_filename"],
+                mime="application/pdf",
+                key="dl_relmun_topo",
+            )
+        return
+
+    # > 1 municipio: geracao em lote sob demanda (um PDF por municipio).
+    uf = selected_ufs[0] if len(selected_ufs) == 1 else None
+    n = len(selected_cities)
+    gerar = st.button(
+        f"Gerar Relatorios ({n})",
+        key="btn_gerar_relmun_lote_topo",
+        help="Gera um Relatorio Municipal (9 paginas) para cada municipio selecionado.",
+    )
+    if gerar:
+        prog = st.progress(0.0, text=f"Gerando 0/{n}...")
+        payloads_by_muni: dict[str, dict[str, Any]] = {}
+        for i, nome in enumerate(selected_cities, start=1):
+            prog.progress((i - 1) / n, text=f"Gerando {i}/{n}: {nome}...")
+            payload = _gerar_payload_relatorio_municipal(
+                df,
+                nome,
+                uf,
                 competitors_df=competitors_df,
                 ultra_df=ultra_df,
-                basemap=True,
+                dominio_df=dominio_df,
+                censo_geo_dir=censo_geo_dir,
             )
-            payloads = gerar_payloads_download_relatorio_municipal(municipio_result, mapas)
-        st.session_state[cache_key] = {
-            "pdf_bytes": payloads.pdf_bytes,
-            "pdf_filename": payloads.pdf_filename,
-        }
-    cached = st.session_state.get(cache_key)
-    if cached:
+            if payload is None:
+                st.warning(
+                    f"Nenhum hexagono encontrado para '{nome}' no recorte carregado."
+                )
+                continue
+            payloads_by_muni[f"{uf or ''}::{nome}"] = payload
+        prog.progress(1.0, text=f"{n}/{n} concluido")
+        prog.empty()
+        st.session_state["relmun_lote_topo_payloads"] = payloads_by_muni
+    cached_lote = st.session_state.get("relmun_lote_topo_payloads", {})
+    for i, nome in enumerate(selected_cities):
+        payload = cached_lote.get(f"{uf or ''}::{nome}")
+        if not payload:
+            continue
         st.download_button(
-            "Baixar PDF do Relatorio Municipal",
-            data=cached["pdf_bytes"],
-            file_name=cached["pdf_filename"],
+            f"Baixar PDF — {nome}",
+            data=payload["pdf_bytes"],
+            file_name=payload["pdf_filename"],
             mime="application/pdf",
-            key="dl_relmun_topo",
+            key=f"dl_relmun_lote_topo_{i}_{_relmun_key_slug(uf or '')}_{_relmun_key_slug(nome)}",
         )
 
 
@@ -3905,65 +4016,117 @@ def render_relatorio_municipal_expander(
     dominio_df: pd.DataFrame | None = None,
     censo_geo_dir: Path | None = None,
 ) -> None:
-    """Relatorio Municipal (BLK-RELMUN-01): habilitado so com EXATAMENTE 1 municipio.
+    """Relatorio Municipal (BLK-RELMUN-01): com 1 municipio, AUTO-GERA e oferece o download.
 
-    READ-ONLY sobre o M1; reusa o `df`/`dominio_df` ja em escopo (sem carga nova de parquet).
+    Com MAIS DE 1 municipio, um unico botao "Gerar Relatorios (N)" gera SOB DEMANDA um PDF por
+    municipio (com progresso i/N) e oferece um `st.download_button` por municipio. READ-ONLY
+    sobre o M1; reusa o `df`/`dominio_df` ja em escopo (sem carga nova de parquet).
     Mapas com tiles online (DEC-011) sob spinner; PDF de 9 paginas baixavel.
     """
     st.caption(
         "Relatorio consolidado por municipio (9 paginas). Camada complementar: "
         "nao altera M1, carteira ou plano."
     )
-    if len(selected_cities) != 1:
+    if len(selected_cities) == 0:
         st.info(
-            "Selecione exatamente um municipio no filtro lateral para gerar o Relatorio Municipal."
+            "Selecione um ou mais municipios no filtro lateral para gerar o(s) "
+            "Relatorio(s) Municipal(is)."
         )
         return
 
-    nome_municipio = selected_cities[0]
-    uf = selected_ufs[0] if len(selected_ufs) == 1 else None
-    with st.spinner("Gerando Relatorio Municipal..."):
-        bairros_por_hex = _resolve_bairros_por_hex_municipio(
-            df, nome_municipio, uf, censo_geo_dir
-        )
-        municipio_result = agregar_municipio(
-            df,
-            nome_municipio=nome_municipio,
-            uf=uf,
-            dominio_df=dominio_df,
-            competitors_df=competitors_df,
-            ultra_df=ultra_df,
-            bairros_por_hex=bairros_por_hex,
-        )
-        if municipio_result["n_hex_total"] == 0:
-            st.warning(
-                f"Nenhum hexagono encontrado para '{nome_municipio}' no recorte carregado."
+    if len(selected_cities) == 1:
+        nome_municipio = selected_cities[0]
+        uf = selected_ufs[0] if len(selected_ufs) == 1 else None
+        with st.spinner("Gerando Relatorio Municipal..."):
+            bairros_por_hex = _resolve_bairros_por_hex_municipio(
+                df, nome_municipio, uf, censo_geo_dir
             )
-            return
-        df_muni = df.loc[
-            df.get("nome_municipio", pd.Series("", index=df.index))
-            .astype(str).str.strip().str.casefold()
-            == str(nome_municipio).strip().casefold()
-        ]
-        if df_muni.empty and "cidade" in df.columns:
+            municipio_result = agregar_municipio(
+                df,
+                nome_municipio=nome_municipio,
+                uf=uf,
+                dominio_df=dominio_df,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
+                bairros_por_hex=bairros_por_hex,
+            )
+            if municipio_result["n_hex_total"] == 0:
+                st.warning(
+                    f"Nenhum hexagono encontrado para '{nome_municipio}' no recorte carregado."
+                )
+                return
             df_muni = df.loc[
-                df["cidade"].astype(str).str.strip().str.casefold()
+                df.get("nome_municipio", pd.Series("", index=df.index))
+                .astype(str).str.strip().str.casefold()
                 == str(nome_municipio).strip().casefold()
             ]
-        mapas = render_mapas_municipio(
-            df_muni,
-            municipio_result,
-            competitors_df=competitors_df,
-            ultra_df=ultra_df,
-            basemap=True,
+            if df_muni.empty and "cidade" in df.columns:
+                df_muni = df.loc[
+                    df["cidade"].astype(str).str.strip().str.casefold()
+                    == str(nome_municipio).strip().casefold()
+                ]
+            mapas = render_mapas_municipio(
+                df_muni,
+                municipio_result,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
+                basemap=True,
+            )
+
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Unidades Ultra", municipio_result["n_ultra"])
+        col2.metric("Concorrentes", municipio_result["n_concorrentes"])
+        col3.metric("Espaco p/ academias", municipio_result["espaco_para_academias"])
+
+        render_download_relatorio_municipal(st, municipio_result, mapas)
+        return
+
+    # > 1 municipio: geracao em lote sob demanda (um PDF por municipio).
+    uf = selected_ufs[0] if len(selected_ufs) == 1 else None
+    n = len(selected_cities)
+    gerar = st.button(
+        f"Gerar Relatorios ({n})",
+        key="btn_gerar_relmun_lote_expander",
+        help="Gera um Relatorio Municipal (9 paginas) para cada municipio selecionado.",
+    )
+    if gerar:
+        prog = st.progress(0.0, text=f"Gerando 0/{n}...")
+        payloads_by_muni: dict[str, dict[str, Any]] = {}
+        for i, nome in enumerate(selected_cities, start=1):
+            prog.progress((i - 1) / n, text=f"Gerando {i}/{n}: {nome}...")
+            payload = _gerar_payload_relatorio_municipal(
+                df,
+                nome,
+                uf,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
+                dominio_df=dominio_df,
+                censo_geo_dir=censo_geo_dir,
+            )
+            if payload is None:
+                st.warning(
+                    f"Nenhum hexagono encontrado para '{nome}' no recorte carregado."
+                )
+                continue
+            payloads_by_muni[f"{uf or ''}::{nome}"] = payload
+        prog.progress(1.0, text=f"{n}/{n} concluido")
+        prog.empty()
+        st.session_state["relmun_lote_expander_payloads"] = payloads_by_muni
+    cached_lote = st.session_state.get("relmun_lote_expander_payloads", {})
+    for i, nome in enumerate(selected_cities):
+        payload = cached_lote.get(f"{uf or ''}::{nome}")
+        if not payload:
+            continue
+        st.download_button(
+            f"Baixar PDF — {nome}",
+            data=payload["pdf_bytes"],
+            file_name=payload["pdf_filename"],
+            mime="application/pdf",
+            key=(
+                f"dl_relmun_lote_expander_{i}_"
+                f"{_relmun_key_slug(uf or '')}_{_relmun_key_slug(nome)}"
+            ),
         )
-
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Unidades Ultra", municipio_result["n_ultra"])
-    col2.metric("Concorrentes", municipio_result["n_concorrentes"])
-    col3.metric("Espaco p/ academias", municipio_result["espaco_para_academias"])
-
-    render_download_relatorio_municipal(st, municipio_result, mapas)
 
 
 def render_mapa_territorial(

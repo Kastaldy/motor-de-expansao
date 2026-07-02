@@ -6423,6 +6423,110 @@ Territorial (§5, camada visual de apoio — não altera score/ranking/carteira)
 
 ---
 
+### BLK-RELMUN-03 — Validar hexágono só por Residual Fitness (remover o filtro de SAM Fitness)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (altera o CRITÉRIO de "hexágono válido/destacado" fixado na **DEC-011** — muda os números do relatório (destacados, "Espaço para academias", aprovados/reprovados); **READ-ONLY sobre o M1**; exige aprovação humana + emenda à DEC-011). |
+| **Prioridade** | A definir por Vini. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — produto + emenda DEC-011]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (toca só `relatorio_municipal.py`). |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda um critério registrado em DEC e os números do relatório; precisa de decisão humana. NÃO marcar loop-safe. |
+
+**✅ Relatório-alvo confirmado por Vinicius (2026-07-02): Relatório MUNICIPAL.** O critério
+"SAM Fitness ≥ 3.000 **E** Residual Fitness ≥ 2.000" existe HOJE **apenas no Relatório Municipal**
+(DEC-011) — o pedido inicial citou "pontual", mas Vinicius confirmou que é o Municipal. Evidência: o
+PDF do Relatório Municipal de Nova Iguaçu imprime literalmente "Hexagono considerado quando SAM Fitness
+>= 3.000 e Residual Fitness >= 2.000 (alunos)" (páginas Resumo e "Espaço e academias"). O Relatório
+Pontual (raio 1,5 km) NÃO tem esse filtro e está fora do escopo.
+
+**Contexto (ancorado no código, `src/motor_expansao/dashboard/relatorio_municipal.py`).**
+- Critério de "hexágono destacado/válido" em `_hex_destacado_mask` (linha ~258):
+  `(sam_fitness_potencial >= SAM_DESTAQUE_MIN) & (oferta_efetiva_disponivel >= OFERTA_DESTAQUE_MIN)`,
+  com constantes `SAM_DESTAQUE_MIN = 3000.0` (linha 50) e `OFERTA_DESTAQUE_MIN = 2000.0` (linha 51).
+- Esse mask alimenta: os hexágonos amarelos do mapa; a contagem "Aprovados/Reprovados"; o
+  "Espaço para academias" = `round( Σ oferta_efetiva_disponivel dos destacados / 2500 )`; e os textos
+  de rodapé/legenda que citam o critério.
+
+**Objetivo.** Remover o filtro de **SAM Fitness (≥ 3.000)** de `_hex_destacado_mask`, mantendo **apenas
+Residual Fitness (`oferta_efetiva_disponivel` ≥ 2.000)** como critério de validação do hexágono.
+Consequência esperada: passam a valer também os hexes com `oferta_efetiva_disponivel ≥ 2000` mas
+`sam_fitness_potencial < 3000` → mais hexágonos destacados e "Espaço para academias" maior.
+
+**Escopo permitido (READ-ONLY M1, só relatório).**
+- `_hex_destacado_mask` passa a ser `oferta_efetiva_disponivel >= OFERTA_DESTAQUE_MIN` (drop do termo
+  de SAM). Decidir com o gate se `SAM_DESTAQUE_MIN` é removida ou mantida como constante inerte.
+- Atualizar TODOS os textos que citam o critério (rodapés/legendas/subtítulos das páginas Resumo e
+  "Espaço e academias", docstring D1 do módulo) para refletir "somente Residual Fitness ≥ 2.000".
+- Atualizar os testes que fixam o critério/números (ex.: `test_agregar_municipio_formula_espaco_d1`
+  e afins em `tests/unit/test_relatorio_municipal.py`).
+- **Registrar emenda à DEC-011** (o critério dos "hexágonos destacados" foi decidido lá).
+
+**Fora de escopo.** `flag_sam`/gate do SAM no pipeline de mercado (DEC-006/DEC-007) — NÃO tocar (o
+critério do relatório é DISPLAY local, separado do `flag_sam`); `score_priorizacao`, M1, artefatos
+oficiais, método de intersecção/raio; Relatório Pontual (confirmado fora do escopo).
+
+**Guardrails.** READ-ONLY sobre o M1 (§5): zero recálculo de score/pesos/carteira/plano/artefatos.
+Sem dependência de rede nova. Marca d'água anti-PII + `set_compression(False)` + 8 páginas mantidos.
+
+**Critério de aceite.** Hexágonos destacados e "Espaço para academias" passam a considerar só
+`oferta_efetiva_disponivel ≥ 2.000`; textos/legendas do relatório coerentes com o novo critério;
+suíte do relatório municipal verde; ruff+mypy limpos; emenda à DEC-011 registrada; revisão visual
+humana aprovada.
+
+---
+
+### BLK-RELMUN-04 — Relatório Municipal em lote (um relatório por município selecionado)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (nova função de UI no fluxo de geração do Relatório Municipal; **READ-ONLY sobre o M1**; sem DEC nova; reusa a geração existente do PDF). |
+| **Prioridade** | Pedido direto de Vinicius (2026-07-02). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (toca só `src/motor_expansao/dashboard/pages.py`; reusa `relatorio_municipal.py` sem alterá-lo). |
+| **Autonomia** | manual (não loop-safe) — feature de UI com decisões de produto já coletadas; não é loop-safe por padrão da trilha do Vini. |
+
+**Pedido de Vinicius (2026-07-02).** Hoje o Relatório Municipal só é gerável com **exatamente 1
+município** selecionado (gate `len(selected_cities) != 1` em `render_relatorio_municipal_download_topo`
+~linha 3062 e `render_relatorio_municipal_expander` ~linha 3917 de `pages.py`). Vinicius quer: ao
+selecionar **mais de um município**, a função de gerar relatório deve gerar **um relatório PDF para
+CADA município selecionado**, com os **botões de download aparecendo após a geração**, cada botão
+**rotulado com o município** a que se refere.
+
+**Decisões de produto (coletadas de Vinicius antes do ciclo).**
+- **Gatilho:** geração SOB DEMANDA por **botão** ("Gerar Relatórios (N)"), com indicador de
+  progresso; os botões de download aparecem DEPOIS. Evita regenerar N PDFs a cada rerun (a geração
+  com mapas/tiles é pesada).
+- **Onde:** **AMBOS** os pontos de geração (topo `render_relatorio_municipal_download_topo` e
+  expander `render_relatorio_municipal_expander` do Mapa Territorial).
+- **1 município:** comportamento atual PRESERVADO (sem regressão).
+
+**Escopo permitido (READ-ONLY M1, só UI).**
+- Estender os 2 pontos de geração para o caso `len(selected_cities) > 1`: botão "Gerar
+  Relatórios (N)" → loop por município (reusando `agregar_municipio` + `render_mapas_municipio` +
+  `gerar_payloads_download_relatorio_municipal`) → cache dos payloads por município em
+  `session_state` → **um `st.download_button` por município, rotulado com o nome** (ex.: "Baixar
+  PDF — <Município>"), com `key` único por município.
+- Tratar município sem hexágonos (n_hex_total == 0) individualmente (aviso por município, não
+  aborta o lote).
+- Progresso do lote (ex.: `st.progress`/`st.spinner` com contador "gerando i/N").
+- Testes do novo fluxo multi-município (gating, rótulos por município, contagem de botões).
+
+**Fora de escopo.** `relatorio_municipal.py` (motor do PDF — NÃO alterar; só consumir); critério de
+hexágono destacado (DEC-011/BLK-RELMUN-03); `score_priorizacao`, M1, artefatos oficiais, pipeline de
+mercado (`flag_sam`); Relatório Pontual Censitário; estrutura/páginas do PDF; marca d'água anti-PII.
+
+**Guardrails.** READ-ONLY sobre o M1 (§5). Sem dependência de rede nova (tiles já existentes,
+DEC-011). Preservar o fluxo de 1 município byte-a-byte no comportamento.
+
+**Critério de aceite.** Com >1 município selecionado, um botão gera N relatórios sob demanda e
+aparece 1 botão de download por município, rotulado; com 1 município, comportamento inalterado;
+suíte de testes verde; ruff+mypy limpos; revisão visual humana aprovada.
+
+---
+
 ### BLK-TP-04 — Calibração da curva tamanho→densidade do BLK-DIM com alunos/unidade
 
 | Campo | Valor |
@@ -6481,6 +6585,31 @@ próprio**, não este bloco); DEC-008 / DEC-009 / DEC-012.
 
 ---
 
+### BLK-TP-08-FU — Re-ingestão das academias menores com rótulo de rede (fecha o dado do BLK-TP-06-FU1)
+
+Data: 2026-07-02
+Resumo: Estende a ingestão anti-PII do TP-08 com um passo de CLASSIFICAÇÃO de REDE na FRONTEIRA
+(módulo novo `demanda_revelada/classificacao_rede_menor.py`): deriva `rede_menor` do `Nome_Academia` cru
+por matching de TOKEN com word-boundary contra a lista curada das 28 redes de `concorrentes_mapeados` e
+DROPA nome/coords/cluster imediatamente. Produz 2 artefatos gitignored/NÃO oficiais — (a)
+`oferta_academias_menores_rede_h3.parquet` (formato LONGO `hex_id × rede_menor`, contrato
+`oferta_menores_rede_v1`) e (b) `capacidade_media_por_rede.parquet` (média/mediana de alunos por rede,
+contrato `capacidade_media_rede_v1`). Gate humano APROVADO por Felipe Silva em 2026-07-02 (A token
+word-boundary + lista curada; B N<3→independente; C formato longo; D capacidade=mediana, flag_confiavel N≥10).
+Cobertura real (24.045 academias): 2,2% classificada / 97,8% `independente`; 13 redes na tabela, 10
+confiáveis (N≥10). DEDUP FINO por `(hex_id, rede_menor)` corrige a super-dedução grosseira do TP-08: de
+62,7% → **8,3%** dos alunos realmente duplicados. Fecha as 2 lacunas de dado que pausaram o BLK-TP-06-FU1.
+Arquivos: `src/motor_expansao/demanda_revelada/classificacao_rede_menor.py` (novo), `__init__.py` (aditivo),
+`tests/unit/demanda_revelada/test_classificacao_rede_menor.py` (novo), `tests/fixtures/rede_menor_fake.xlsx`
+(sintética), `docs/modelo_mercado_hexagonos.md` (aditivo), relatório
+`data/reports/scratch/rede_menor_classificacao_qualidade.md` (gitignored).
+Validações: subconjunto `demanda_revelada/` + `test_streamlit_app.py` 254 passed / 0 failed; ruff+mypy limpos;
+import ok; mtime dos 4 artefatos M1 INALTERADO; anti-PII provada nos 2 parquets reais (zero coluna de PII).
+Decisões: DEC-012 (anti-PII por construção) / DEC-013 parte 3 (dedup+capacidade habilitados, sem integrar ao
+residual). READ-ONLY M1.
+
+---
+
 ### BLK-TP-08 — Ingestão anti-PII das academias menores (WellHub/TotalPass) na camada de oferta
 
 | Campo | Valor |
@@ -6517,3 +6646,22 @@ artefatos oficiais M1 inalterado; suíte verde; `import streamlit_app` ok.
 **Guardrail.** §5 (READ-ONLY M1); DEC-012 (anti-PII por construção); DEC-013 (parte 3 — dedup + capacidade
 por tipo antes de qualquer integração ao residual). Integrar a oferta ao `score_oportunidade_residual` =
 follow-up com gate próprio.
+
+---
+
+### BLK-TP-08-FU — Re-ingestão das academias menores com rótulo de rede (fecha o dado para o BLK-TP-06-FU1)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (classifica rede a partir de nome cru sob anti-PII/DEC-012; **READ-ONLY sobre o M1**). Gate humano obrigatório (anti-reidentificação + vocabulário de matching). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA — anti-PII]` → Builder → QA. |
+| **Status** | Concluído 2026-07-02. |
+| **Depende de** | BLK-TP-08 (concluído). |
+| **Autonomia** | **manual (NÃO loop-safe)** — envolve gate humano anti-PII sobre nome cru. |
+
+**Objetivo.** Re-ingerir `NAO_ABRA/03_Competidores.xlsx` classificando cada academia numa CATEGORIA de rede
+(`rede_menor`) na FRONTEIRA (antes do drop do `Nome_Academia`), produzindo 2 artefatos gitignored/NÃO
+oficiais: (a) oferta por `hex_id × rede_menor` (formato LONGO, habilita dedup FINO por rede) e (b) capacidade
+média/mediana de alunos por rede. Fecha as 2 lacunas de dado que pausaram o BLK-TP-06-FU1. Gate humano
+APROVADO por Felipe Silva em 2026-07-02 (A token word-boundary + lista curada; B N<3→independente; C formato
+longo; D capacidade=mediana, flag_confiavel N≥10). READ-ONLY M1 (DEC-012 anti-PII por construção).
