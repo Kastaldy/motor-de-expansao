@@ -11,6 +11,16 @@ from .backtest_tp05 import (
     BacktestTP05Result,
     backtest_demanda_captura,
 )
+from .classificacao_rede_menor import (
+    CONTRATO_COLUNAS_CAP_REDE,
+    CONTRATO_COLUNAS_OFERTA_MENORES_REDE,
+    VERSAO_CONTRATO_CAP_REDE,
+    VERSAO_CONTRATO_OFERTA_MENORES_REDE,
+    classificar_rede,
+    gerar_capacidade_media_por_rede,
+    gerar_relatorio_classificacao,
+    ingerir_oferta_menores_por_rede,
+)
 from .contrato import (
     COLUNAS_PII_PROIBIDAS,
     CONTRATO_COLUNAS,
@@ -53,4 +63,13 @@ __all__ = [
     "gerar_relatorio_qualidade",
     "CONTRATO_COLUNAS_OFERTA_MENORES",
     "VERSAO_CONTRATO_OFERTA_MENORES",
+    # BLK-TP-08-FU: classificação de rede das academias menores
+    "classificar_rede",
+    "ingerir_oferta_menores_por_rede",
+    "gerar_capacidade_media_por_rede",
+    "gerar_relatorio_classificacao",
+    "CONTRATO_COLUNAS_OFERTA_MENORES_REDE",
+    "CONTRATO_COLUNAS_CAP_REDE",
+    "VERSAO_CONTRATO_OFERTA_MENORES_REDE",
+    "VERSAO_CONTRATO_CAP_REDE",
 ]
