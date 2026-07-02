@@ -874,24 +874,8 @@ Dependências: decisão de produto sobre evolução para web interno.
 
 ---
 
-### BLK-TP-03 — Vazio competitivo do concorrente low-cost (feature/overlay)
+- BLK-TP-03 (concluído 2026-07-02) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (camada de visualização/análise; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir. |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — produto/UX]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-TP-01**. |
-| **Autonomia** | candidato a **loop-safe** se restrito a análise/parquet; **manual** se virar overlay no dashboard (decisão de produto). |
-
-**Objetivo.** Identificar hexes com demanda paga relevante a >5km do concorrente low-cost de referência
-e **sem** unidade dele no hex — tese de entrada low-cost mais limpa (demanda comprovada, concorrente
-direto ausente). Protótipo exploratório apontou ~231 hexes res-7 candidatos. Possível overlay no Mapa
-Territorial (§5, camada visual de apoio — não altera score/ranking/carteira).
-
-**Critérios de aceite.** Lista/camada de vazios competitivos reproduzível; READ-ONLY M1; suíte verde.
-**Guardrail.** §5; pins/camadas de concorrente são apoio visual (CLAUDE.md §2).
 
 ---
 
