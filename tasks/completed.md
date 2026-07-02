@@ -6524,3 +6524,100 @@ DEC-011). Preservar o fluxo de 1 município byte-a-byte no comportamento.
 **Critério de aceite.** Com >1 município selecionado, um botão gera N relatórios sob demanda e
 aparece 1 botão de download por município, rotulado; com 1 município, comportamento inalterado;
 suíte de testes verde; ruff+mypy limpos; revisão visual humana aprovada.
+
+---
+
+### BLK-TP-04 — Calibração da curva tamanho→densidade do BLK-DIM com alunos/unidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (alimenta a modelagem de viabilidade; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01** + epic **BLK-DIM** (DIM-03R/06). |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem. |
+
+**Objetivo.** Usar `alunos_parceiras` (amostra real de alunos/unidade por tier; n≈27 mil no protótipo)
+como insumo para calibrar/validar a curva tamanho→densidade do `viabilidade_ponto.py` (BLK-DIM), com a
+disciplina metodológica da DEC-008 (LOO vs baseline; banir R² in-sample; intervalos + flag de
+extrapolação). Liga-se à DEC-009 (dimensionamento é a parte que funciona; consome demanda, não a prevê).
+
+**Critérios de aceite.** Curva calibrada/validada por LOO vs baseline, documentada; READ-ONLY M1.
+**Guardrail.** §5; DEC-008/DEC-009.
+
+---
+
+- BLK-TP-05 (concluído 2026-06-30) — ver tasks/completed.md
+
+---
+
+### BLK-TP-06 — Calibração/validação do score residual com demanda revelada observada
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (valida/propõe calibração de um campo ATIVO da camada de mercado/residual — `score_oportunidade_residual`; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01** (parquet `data/staging/demanda_revelada_h3.parquet`, 16.575 hexes, colunas `membros`/`alunos_parceiras`) + camada de mercado/residual (`score_oportunidade_residual` em `hexagonos_mercado_mapeado.parquet`). |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem; pode propor recalibração de um score ativo. |
+
+**Contexto.** A análise exploratória da DEC-012 (2026-06-24) mediu **Spearman +0,52** entre a demanda paga
+por hex (camada Demanda Revelada) e o `score_oportunidade_residual`. Isso é a primeira validação externa
+forte do residual — mas foi exploratório, **in-sample**, e nunca passou pela disciplina da DEC-008. Este
+bloco transforma esse sinal em uma validação/calibração **honesta**.
+
+**Objetivo.** Medir, fora-de-amostra, quanto o `score_oportunidade_residual` prevê a **demanda observada**
+(`membros` / `alunos_parceiras` da Demanda Revelada, casadas por `hex_id`), quantificando o +0,52 de forma
+honesta e produzindo veredito GO/NO-GO. Se GO, propor (sem aplicar) uma calibração dos componentes do
+residual que melhore o alinhamento com demanda observada. A demanda entra como **alvo/validação observada**,
+NUNCA como preditor geográfico de magnitude (DEC-009).
+
+**Critérios de aceite.** Módulo READ-ONLY na camada paralela (não importa de `pipelines/m1`, `dashboard`,
+`censo_*`, `api`); validação por LOO/k-fold vs baseline da média com **IC95 bootstrap (seed fixa)**, **R²
+in-sample banido** dos outputs, intervalos + flag de extrapolação (DEC-008); join por `hex_id` com caveat
+de cobertura (~1% do universo, concentração SP — DEC-012); veredito GO/NO-GO documentado em
+`data/analysis/` (gitignored); anti-PII (só camada agregada; fixtures sintéticas); mtime dos 4 artefatos
+oficiais M1 inalterado; suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1 — recalibrar a FÓRMULA do residual em produção é **follow-up com gate
+próprio**, não este bloco); DEC-008 / DEC-009 / DEC-012.
+
+---
+
+### BLK-TP-08 — Ingestão anti-PII das academias menores (WellHub/TotalPass) na camada de oferta
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (nova ingestão de fonte externa com **PII na origem**; enriquece a camada de OFERTA/residual; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA — anti-PII + dedup]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-01** (contrato/ingestão da Demanda Revelada + princípios anti-PII DEC-012) + planilha `03_Competidores.xlsx` (em `NAO_ABRA/`, gitignored — 24.045 academias, `Alunos_Academia`/`Plano`/`Cluster`/`Município`) + `concorrentes_mapeados.parquet` (para o cross-check de DEDUP). |
+| **Autonomia** | **manual (NÃO loop-safe)** — nova fonte externa + PII na origem + DEDUP exigem julgamento humano; NÃO marcar loop-safe. |
+
+**Contexto.** Hoje a camada de mercado/residual consome como OFERTA instalada apenas os **concorrentes
+de rede mapeados + a própria Ultra**. As **academias menores (não-rede)** — mapeadas pelos scrapers de
+WellHub/TotalPass e consolidadas na planilha `03_Competidores.xlsx` (24.045 unidades com `Alunos_Academia`)
+— **NÃO** entram no cálculo. Elas são oferta real que hoje o Motor ignora, o que pode **subestimar a
+saturação** de bairros densos. Alinha com a **DEC-013 (parte 3)**: agregadores WellHub/TotalPass (>25 mil
+academias de bairro) devem ser coletados/armazenados e integrados ao residual **numa epic futura com
+DEDUP + Huff por tipo de rede**, sob gate humano. Este bloco é o primeiro passo dessa integração: a
+**ingestão anti-PII agregada**, sem ainda recompor o residual.
+
+**Objetivo.** Ingerir `03_Competidores.xlsx` como camada de OFERTA adicional, agregando por `hex_id`
+(res-7) na **fronteira de entrada** e **descartando toda PII** (Lat/Lng individuais, Nome do
+estabelecimento) — só contagens/capacidades agregadas por hex. Produzir um parquet de staging
+(`data/staging/oferta_academias_menores_h3.parquet`, gitignored/NÃO oficial) + **relatório de qualidade e
+DEDUP** (quantas dessas academias já estão em `concorrentes_mapeados.parquet` para não contar oferta em
+dobro; capacidade variável por tipo/plano). **NÃO** recompõe `score_oportunidade_residual` nem regenera os
+parquets de mercado — isso é follow-up (parte da recalibração / BLK-TP-09 ou epic de dedup+Huff).
+
+**Critérios de aceite.** Ingestão isolada da camada paralela (`src/motor_expansao/demanda_revelada/` ou
+pacote disjunto; sem import de `pipelines/m1`, `dashboard`, `censo_*`, `api`); **zero PII** no artefato/
+log/teste (`COLUNAS_PII_PROIBIDAS`; teste `test_zero_pii`); fonte real nunca versionada (`NAO_ABRA/`);
+fixtures sintéticas; relatório de DEDUP vs `concorrentes_mapeados.parquet` documentado; mtime dos 4
+artefatos oficiais M1 inalterado; suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-012 (anti-PII por construção); DEC-013 (parte 3 — dedup + capacidade
+por tipo antes de qualquer integração ao residual). Integrar a oferta ao `score_oportunidade_residual` =
+follow-up com gate próprio.

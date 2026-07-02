@@ -915,29 +915,92 @@ integração cobre o toggle/layer; suíte verde; `import streamlit_app` ok.
 
 ---
 
-### BLK-TP-04 — Calibração da curva tamanho→densidade do BLK-DIM com alunos/unidade
+- BLK-TP-04 (concluído 2026-07-02) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (alimenta a modelagem de viabilidade; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir. |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-TP-01** + epic **BLK-DIM** (DIM-03R/06). |
-| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem. |
 
-**Objetivo.** Usar `alunos_parceiras` (amostra real de alunos/unidade por tier; n≈27 mil no protótipo)
-como insumo para calibrar/validar a curva tamanho→densidade do `viabilidade_ponto.py` (BLK-DIM), com a
-disciplina metodológica da DEC-008 (LOO vs baseline; banir R² in-sample; intervalos + flag de
-extrapolação). Liga-se à DEC-009 (dimensionamento é a parte que funciona; consome demanda, não a prevê).
-
-**Critérios de aceite.** Curva calibrada/validada por LOO vs baseline, documentada; READ-ONLY M1.
-**Guardrail.** §5; DEC-008/DEC-009.
 
 ---
 
-- BLK-TP-05 (concluído 2026-06-30) — ver tasks/completed.md
+- BLK-TP-06 (concluído 2026-07-02) — ver tasks/completed.md
 
+
+---
+
+### BLK-TP-07 — Huff/gravitacional de captura de concorrentes com demanda observada (reabertura da Camada 2 do BLK-DIM)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (reabre uma camada de modelagem da epic BLK-DIM — captura/share; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-05** (GO da trilha demanda→captura, R²_oof_log +0,575, concluído 2026-06-30 — **destrava explicitamente a reabertura da Camada 2/Huff**) + `concorrentes_mapeados.parquet` + helper de catchment `analisar_entorno_ponto`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem. |
+
+**Contexto.** A DEC-009 encerrou a previsão de *magnitude* de demanda pela geografia, e a Camada 2 (Huff)
+da epic BLK-DIM ficou como NO-GO enquanto o insumo era demanda **imputada**. O **BLK-TP-05** virou esse
+jogo: com demanda **observada** (não imputada), a trilha demanda→captura deu o **primeiro GO** honesto
+(R²_oof_log +0,575, k-fold 5×5 vs baseline) e sua conclusão foi, textualmente, habilitar a reabertura da
+**Camada 2/Huff** sob gate de Felipe. Este bloco é essa reabertura.
+
+**Objetivo.** Modelar a **captura/share gravitacional (Huff)** de um ponto candidato — atratividade ×
+distância aos concorrentes mapeados, com saturação e canibalização da rede Ultra — e **validá-la contra a
+demanda observada** da Demanda Revelada (`membros`/`alunos_parceiras`), sob a disciplina DEC-008. A demanda
+observada é o **alvo de validação**, nunca preditor geográfico de magnitude (DEC-009). Alinha com a
+DEC-009 (dimensionamento consome demanda, não a prevê) e com a estrutura de catchment já existente.
+
+**Critérios de aceite.** Módulo READ-ONLY isolado da camada paralela (sem import de `pipelines/m1`,
+`dashboard`, `censo_*`, `api`); função de Huff parametrizável (β de distância, atratividade por
+metragem/rede) calibrada/validada **out-of-fold vs baseline** com IC95 bootstrap, R² in-sample banido,
+intervalos + flag de extrapolação; validação contra demanda observada por `hex_id` com caveat de cobertura
+DEC-012; veredito GO/NO-GO em `data/analysis/` (gitignored); anti-PII (camada agregada; fixtures
+sintéticas); sem dependência nova de rede/base pesada; mtime dos 4 artefatos oficiais M1 inalterado; suíte
+verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-008 / DEC-009 (demanda observada como insumo, nunca preditor de
+magnitude) / DEC-012 (anti-PII). Integrar o resultado ao `score_oportunidade_residual` ou à carteira/plano
+seria **follow-up com gate próprio**, não este bloco.
+
+---
+
+- BLK-TP-08 (concluído 2026-07-02) — ver tasks/completed.md
+
+
+---
+
+### BLK-TP-09 — Aplicação da recalibração do `score_oportunidade_residual` validada no BLK-TP-06 (DEC + gate)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta/Crítica** (altera a **FÓRMULA de um score ATIVO** da camada paralela de mercado/residual e **regenera** os parquets que alimentam dashboard/API; **READ-ONLY sobre o M1 OFICIAL**). **Exige DEC registrada + gate humano obrigatório** antes do Builder. |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA + DEC]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-06** (GO out-of-fold R²_oof_log=+0,3119 IC95[+0,298,+0,325] + **proposta de recalibração documentada** em `data/analysis/calibracao_residual_demanda.md`). |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda um score em produção; NUNCA loop-safe. |
+
+**Contexto.** O **BLK-TP-06** provou, out-of-fold e honestamente (DEC-008), que o
+`score_oportunidade_residual` já prevê a demanda observada (`membros`) no recorte metropolitano do join
+(~1,06% do universo) — e produziu uma **proposta de recalibração** dos componentes do residual (ex.:
+capacidade default 2.500, peso de `oferta_efetiva_disponivel`, faixa de corte) que melhora o alinhamento.
+O TP-06 **validou e documentou, mas NÃO aplicou** (guardrail §5). Este bloco é a **aplicação** dessa
+proposta — e por isso exige DEC + gate.
+
+**Objetivo.** Aplicar a recalibração validada à fórmula de `score_oportunidade_residual` em
+`src/motor_expansao/pipelines/calcular_colunas_mercado.py`, **medindo o impacto** (antes/depois: quantos
+hexes mudam de faixa, deslocamento de distribuição) e **regenerando** a camada de mercado/residual pela
+**ordem canônica** (`híbrido → mercado → calcular_colunas_mercado → carteira → plano → domínio → residual
+→ fase1_bi_exports`). **READ-ONLY sobre o M1 OFICIAL**: `score_priorizacao`, `hex_score_estrutural`,
+pesos (renda 0.40/pop 0.60), carteira/plano do M1 e os 4 artefatos oficiais permanecem **INTOCADOS**
+(mtime inalterado) — muda-se apenas a camada paralela de mercado/residual.
+
+**Critérios de aceite.** DEC registrada e aprovada ANTES do Builder; medição de impacto documentada
+(antes/depois, hexes que mudam de faixa); regeneração reprodutível pela ordem canônica; **cobertura/viés
+do TP-06 (~1% metropolitano) explicitamente considerado** — recalibrar com sinal de 1% do universo exige
+cautela (a proposta não pode piorar os 99% sem sinal); artefatos oficiais do M1 com **mtime inalterado**;
+suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1 OFICIAL — só a camada paralela muda, e com DEC); DEC-008 (a recalibração
+tem de ser justificada pela validação out-of-fold, não pelo +0,52 in-sample); DEC-009 (demanda não vira
+preditor geográfico de magnitude); DEC-012 (anti-PII).
 
 ---
 
