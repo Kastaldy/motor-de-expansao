@@ -916,36 +916,8 @@ integração cobre o toggle/layer; suíte verde; `import streamlit_app` ok.
 
 ---
 
-### BLK-TP-06 — Calibração/validação do score residual com demanda revelada observada
+- BLK-TP-06 (concluído 2026-07-02) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (valida/propõe calibração de um campo ATIVO da camada de mercado/residual — `score_oportunidade_residual`; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-TP-01** (parquet `data/staging/demanda_revelada_h3.parquet`, 16.575 hexes, colunas `membros`/`alunos_parceiras`) + camada de mercado/residual (`score_oportunidade_residual` em `hexagonos_mercado_mapeado.parquet`). |
-| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem; pode propor recalibração de um score ativo. |
-
-**Contexto.** A análise exploratória da DEC-012 (2026-06-24) mediu **Spearman +0,52** entre a demanda paga
-por hex (camada Demanda Revelada) e o `score_oportunidade_residual`. Isso é a primeira validação externa
-forte do residual — mas foi exploratório, **in-sample**, e nunca passou pela disciplina da DEC-008. Este
-bloco transforma esse sinal em uma validação/calibração **honesta**.
-
-**Objetivo.** Medir, fora-de-amostra, quanto o `score_oportunidade_residual` prevê a **demanda observada**
-(`membros` / `alunos_parceiras` da Demanda Revelada, casadas por `hex_id`), quantificando o +0,52 de forma
-honesta e produzindo veredito GO/NO-GO. Se GO, propor (sem aplicar) uma calibração dos componentes do
-residual que melhore o alinhamento com demanda observada. A demanda entra como **alvo/validação observada**,
-NUNCA como preditor geográfico de magnitude (DEC-009).
-
-**Critérios de aceite.** Módulo READ-ONLY na camada paralela (não importa de `pipelines/m1`, `dashboard`,
-`censo_*`, `api`); validação por LOO/k-fold vs baseline da média com **IC95 bootstrap (seed fixa)**, **R²
-in-sample banido** dos outputs, intervalos + flag de extrapolação (DEC-008); join por `hex_id` com caveat
-de cobertura (~1% do universo, concentração SP — DEC-012); veredito GO/NO-GO documentado em
-`data/analysis/` (gitignored); anti-PII (só camada agregada; fixtures sintéticas); mtime dos 4 artefatos
-oficiais M1 inalterado; suíte verde; `import streamlit_app` ok.
-**Guardrail.** §5 (READ-ONLY M1 — recalibrar a FÓRMULA do residual em produção é **follow-up com gate
-próprio**, não este bloco); DEC-008 / DEC-009 / DEC-012.
 
 ---
 
