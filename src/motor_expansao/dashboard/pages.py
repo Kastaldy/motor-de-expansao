@@ -434,12 +434,15 @@ def inject_styles() -> None:
             /* Largura padrao para os botoes de acao/download (consistencia visual,
                pedido de Vini 2026-06-16): cobre os download_button (CSV/PDF do relatorio
                e "Baixar PDF do ponto"/"Baixar PDF do Relatorio Municipal") e os botoes
-               "Gerar PDF do ponto" e "Gerar PDF do Relatorio Municipal" (BLK-RELMUN-01-FU1),
+               "Gerar PDF do ponto" e "Gerar PDF do Relatorio Municipal" (BLK-RELMUN-01-FU1)
+               e os botoes de lote "Gerar Relatorios (N)" (BLK-RELMUN-04-FU1, topo+expander),
                por st-key. NAO afeta os botoes inline pequenos do multihex (+/-/x) nem o
                seletor de abas. */
             [data-testid="stDownloadButton"] button,
             .st-key-btn_gerar_pdf_topo button,
-            .st-key-btn_gerar_relmun_topo button {{
+            .st-key-btn_gerar_relmun_topo button,
+            .st-key-btn_gerar_relmun_lote_topo button,
+            .st-key-btn_gerar_relmun_lote_expander button {{
                 width: 260px;
                 max-width: 100%;
             }}
