@@ -6481,6 +6481,31 @@ próprio**, não este bloco); DEC-008 / DEC-009 / DEC-012.
 
 ---
 
+### BLK-TP-08-FU — Re-ingestão das academias menores com rótulo de rede (fecha o dado do BLK-TP-06-FU1)
+
+Data: 2026-07-02
+Resumo: Estende a ingestão anti-PII do TP-08 com um passo de CLASSIFICAÇÃO de REDE na FRONTEIRA
+(módulo novo `demanda_revelada/classificacao_rede_menor.py`): deriva `rede_menor` do `Nome_Academia` cru
+por matching de TOKEN com word-boundary contra a lista curada das 28 redes de `concorrentes_mapeados` e
+DROPA nome/coords/cluster imediatamente. Produz 2 artefatos gitignored/NÃO oficiais — (a)
+`oferta_academias_menores_rede_h3.parquet` (formato LONGO `hex_id × rede_menor`, contrato
+`oferta_menores_rede_v1`) e (b) `capacidade_media_por_rede.parquet` (média/mediana de alunos por rede,
+contrato `capacidade_media_rede_v1`). Gate humano APROVADO por Felipe Silva em 2026-07-02 (A token
+word-boundary + lista curada; B N<3→independente; C formato longo; D capacidade=mediana, flag_confiavel N≥10).
+Cobertura real (24.045 academias): 2,2% classificada / 97,8% `independente`; 13 redes na tabela, 10
+confiáveis (N≥10). DEDUP FINO por `(hex_id, rede_menor)` corrige a super-dedução grosseira do TP-08: de
+62,7% → **8,3%** dos alunos realmente duplicados. Fecha as 2 lacunas de dado que pausaram o BLK-TP-06-FU1.
+Arquivos: `src/motor_expansao/demanda_revelada/classificacao_rede_menor.py` (novo), `__init__.py` (aditivo),
+`tests/unit/demanda_revelada/test_classificacao_rede_menor.py` (novo), `tests/fixtures/rede_menor_fake.xlsx`
+(sintética), `docs/modelo_mercado_hexagonos.md` (aditivo), relatório
+`data/reports/scratch/rede_menor_classificacao_qualidade.md` (gitignored).
+Validações: subconjunto `demanda_revelada/` + `test_streamlit_app.py` 254 passed / 0 failed; ruff+mypy limpos;
+import ok; mtime dos 4 artefatos M1 INALTERADO; anti-PII provada nos 2 parquets reais (zero coluna de PII).
+Decisões: DEC-012 (anti-PII por construção) / DEC-013 parte 3 (dedup+capacidade habilitados, sem integrar ao
+residual). READ-ONLY M1.
+
+---
+
 ### BLK-TP-08 — Ingestão anti-PII das academias menores (WellHub/TotalPass) na camada de oferta
 
 | Campo | Valor |
@@ -6517,3 +6542,22 @@ artefatos oficiais M1 inalterado; suíte verde; `import streamlit_app` ok.
 **Guardrail.** §5 (READ-ONLY M1); DEC-012 (anti-PII por construção); DEC-013 (parte 3 — dedup + capacidade
 por tipo antes de qualquer integração ao residual). Integrar a oferta ao `score_oportunidade_residual` =
 follow-up com gate próprio.
+
+---
+
+### BLK-TP-08-FU — Re-ingestão das academias menores com rótulo de rede (fecha o dado para o BLK-TP-06-FU1)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (classifica rede a partir de nome cru sob anti-PII/DEC-012; **READ-ONLY sobre o M1**). Gate humano obrigatório (anti-reidentificação + vocabulário de matching). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA — anti-PII]` → Builder → QA. |
+| **Status** | Concluído 2026-07-02. |
+| **Depende de** | BLK-TP-08 (concluído). |
+| **Autonomia** | **manual (NÃO loop-safe)** — envolve gate humano anti-PII sobre nome cru. |
+
+**Objetivo.** Re-ingerir `NAO_ABRA/03_Competidores.xlsx` classificando cada academia numa CATEGORIA de rede
+(`rede_menor`) na FRONTEIRA (antes do drop do `Nome_Academia`), produzindo 2 artefatos gitignored/NÃO
+oficiais: (a) oferta por `hex_id × rede_menor` (formato LONGO, habilita dedup FINO por rede) e (b) capacidade
+média/mediana de alunos por rede. Fecha as 2 lacunas de dado que pausaram o BLK-TP-06-FU1. Gate humano
+APROVADO por Felipe Silva em 2026-07-02 (A token word-boundary + lista curada; B N<3→independente; C formato
+longo; D capacidade=mediana, flag_confiavel N≥10). READ-ONLY M1 (DEC-012 anti-PII por construção).

@@ -959,6 +959,10 @@ seria **follow-up com gate próprio**, não este bloco.
 
 - BLK-TP-08 (concluído 2026-07-02) — ver tasks/completed.md
 
+- BLK-TP-08-FU (concluído 2026-07-02) — ver tasks/completed.md
+
+- BLK-TP-08-FU (concluído 2026-07-02) — ver tasks/completed.md
+
 
 ---
 
