@@ -879,6 +879,37 @@ Dependências: decisão de produto sobre evolução para web interno.
 
 ---
 
+### BLK-TP-03-FU1 — Overlay dos vazios competitivos no Mapa Territorial (Opção B)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (camada de visualização/overlay no dashboard; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX: cor/toggle/tooltip]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-03** (concluído — parquet `data/staging/vazios_competitivos_lc.parquet`, 229 hexes). |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca `src/motor_expansao/dashboard/` (decisão de produto/UX). |
+
+**Objetivo.** Expor os hexes de "vazio competitivo" (parquet gerado no BLK-TP-03) como **overlay visual
+READ-ONLY** no Mapa Territorial: toggle na sidebar (default OFF) + camada de realce (contorno/cor
+distinta) sobre os 229 hexes, com tooltip de `membros_gt5km_concorrente_lc`/`uf`/`nome_municipio`/
+`score_priorizacao`. É a **Opção B** deferida no gate humano do BLK-TP-03 (Opção A = só parquet foi a
+escolhida). Camada visual de apoio (§2) — não altera score/ranking/carteira/plano/artefatos.
+
+**Plano técnico já detalhado** no handoff do Planner do BLK-TP-03 (passos 6–9):
+`context/handoff/20260702-104651-planner.md` — inclui a exigência de LER `constants.py`
+(`MAP_POINT_LIMIT`, `MAP_SOURCE_COLUMNS_*`) e `_downsample_map_index` ANTES de codar, para não
+regredir o cap dos 4 modos do mapa (M1/Híbrido/Censitário/Residual).
+
+**Critérios de aceite.** Toggle default OFF; layer só desenha os hexes do parquet; leitura lazy/cacheada
+offline (sem rede — §2); parquet ausente → toggle oculto/desabilitado com mensagem clara; score/
+carteira/plano do dashboard inalterados com overlay ON; cap dos 4 modos inalterado; teste de
+integração cobre o toggle/layer; suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); §2 (sem API ao vivo); pins/camadas de concorrente são apoio visual
+(CLAUDE.md §2). NÃO tocar `_downsample_map_index`/`MAP_POINT_LIMIT`/`MAP_SOURCE_COLUMNS_*`.
+
+---
+
 ### BLK-TP-04 — Calibração da curva tamanho→densidade do BLK-DIM com alunos/unidade
 
 | Campo | Valor |
