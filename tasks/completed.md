@@ -6695,3 +6695,39 @@ dedup fino em função própria = extensível para o C futuro), `tests/unit/dema
 (18 testes sintéticos), `data/analysis/revalidacao_residual_candidatos.md` (gitignored). QA APROVADO (suíte
 full `1290 passed, 1 skipped`; NO-GO reproduzido byte-a-byte; anti-PII/isolamento OK). DEC-008 (NO-GO válido),
 DEC-009 (demanda só como alvo), DEC-012 (fixtures sintéticas) respeitadas.
+
+---
+
+### BLK-TP-06-FU2 (ad-hoc) — Candidato C do residual (capacidade de clube real + decay 2 km) — concluído 2026-07-03
+
+Bloco AD-HOC que rodou o **Candidato C** (adiado no FU1) BEM-FEITO, para separar "hipótese errada" de
+"execução crua" no NO-GO do Candidato A. Corrigiu as 2 crudezas do A: **(1)** ponderou a oferta consumida
+por **capacidade de CLUBE real por rede** — lida ANTI-PII de `data/validacao/` (leitor irmão
+`capacidade_clube_validacao.py` → só `{rede: float}`): Smart Fit **2363,0**, Engenharia do Corpo **3106,5**,
+Sky âncora ~944,5; fallback **2.500** para as ~26 redes sem dado (cobertura real ~33% dos pontos); **(2)**
+aplicou **decay** consistente: point-level `max(0,1−dist/2000)` para concorrentes (têm lat/lng) e **k-ring
+H3 k=1 ponderado por anel (1,0/0,5) normalizado (conserva massa)** para as academias de bairro (só hex_id).
+Decompôs em **C1** (só capacidade por rede, sem bairro) e **C2** (C1 + bairro decaído) para atribuir causa.
+Esteira: BO → Planner → [gate: decisão AUTÔNOMA do orquestrador, usuário delegou os gates da sessão] →
+Builder → QA. **READ-ONLY M1** (mtime dos oficiais + `hexagonos_mercado_mapeado` inalterado; fórmula do
+residual/`calcular_colunas_mercado` intocados).
+
+**VEREDITO (out-of-fold, harness do TP-06, n=16.411, baseline R²_oof=+0,3119):**
+- **C1 = "vence" porém RUÍDO → NÃO aplicar.** Δ pareado completo **+0,0019** IC95[+0,0015,+0,0023]; fora
+  de SP/MG/RJ +0,0013 IC95[+0,0007,+0,0019]. O IC não cruza zero só por causa do N grande: **C1 é IDÊNTICO
+  ao baseline em 97,3% dos hexes** (só 438 de 16.411 diferem; ganho localizado nos ~33% perto de
+  Smart/Engenharia). Aplicar em produção (nova DEC + dependência de `data/validacao/` no pipeline + regen
+  completa) por +0,002 de R² = sobreajuste a ruído (DEC-008).
+- **C2 = NO-GO.** Δ completo −0,0312; fora −0,0120 — piora, repete a co-localização bairro↔demanda do
+  Candidato A. Incluir bairro como oferta consumida — mesmo com decay fino e capacidade real — não ajuda.
+
+**Conclusão da trilha do residual:** o **residual ATUAL é o melhor** que temos. Re-capacitar as grandes
+quase não move (capacidade de clube real ≈ 2.500 flat atual) e incluir as academias de bairro na oferta
+consumida piora. **BLK-TP-09 NÃO disparado** (nenhum candidato materialmente vencedor). Caminho ainda vivo,
+não testado: bairro como **competição no Huff por ponto candidato (BLK-TP-07)**, não subtração global do
+residual. **Entregáveis:** `capacidade_clube_validacao.py` (novo, leitor anti-PII), extensão de
+`revalidacao_residual_candidatos.py` (C1/C2; baseline+A do FU1 preservados byte-a-byte),
+`tests/unit/demanda_revelada/test_revalidacao_residual_candidato_c.py` (novo), relatório
+`data/analysis/revalidacao_residual_candidato_c.md` (gitignored). QA APROVADO: suíte full
+`1316 passed, 1 skipped`; C1/C2 reproduzidos byte-a-byte; anti-PII (só `{rede:float}`) + isolamento + k-ring
+conserva massa verificados; mtime M1 intacto. DEC-008/009/012/013 respeitadas.
