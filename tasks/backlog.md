@@ -926,47 +926,8 @@ integração cobre o toggle/layer; suíte verde; `import streamlit_app` ok.
 
 ---
 
-### BLK-TP-07 — Huff/gravitacional de captura de concorrentes com demanda observada (reabertura da Camada 2 do BLK-DIM)
+- BLK-TP-07 (concluído 2026-07-03) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (reabre uma camada de modelagem da epic BLK-DIM — captura/share; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — modelagem]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-TP-05** (GO da trilha demanda→captura, R²_oof_log +0,575, concluído 2026-06-30 — **destrava explicitamente a reabertura da Camada 2/Huff**) + `concorrentes_mapeados.parquet` + helper de catchment `analisar_entorno_ponto`. |
-| **Autonomia** | **manual (NÃO loop-safe)** — decisão de modelagem. |
-
-**Contexto.** A DEC-009 encerrou a previsão de *magnitude* de demanda pela geografia, e a Camada 2 (Huff)
-da epic BLK-DIM ficou como NO-GO enquanto o insumo era demanda **imputada**. O **BLK-TP-05** virou esse
-jogo: com demanda **observada** (não imputada), a trilha demanda→captura deu o **primeiro GO** honesto
-(R²_oof_log +0,575, k-fold 5×5 vs baseline) e sua conclusão foi, textualmente, habilitar a reabertura da
-**Camada 2/Huff** sob gate de Felipe. Este bloco é essa reabertura.
-
-**Objetivo.** Modelar a **captura/share gravitacional (Huff)** de um ponto candidato — atratividade ×
-distância aos concorrentes mapeados, com saturação e canibalização da rede Ultra — e **validá-la contra a
-demanda observada** da Demanda Revelada (`membros`/`alunos_parceiras`), sob a disciplina DEC-008. A demanda
-observada é o **alvo de validação**, nunca preditor geográfico de magnitude (DEC-009). Alinha com a
-DEC-009 (dimensionamento consome demanda, não a prevê) e com a estrutura de catchment já existente.
-
-**Critérios de aceite.** Módulo READ-ONLY isolado da camada paralela (sem import de `pipelines/m1`,
-`dashboard`, `censo_*`, `api`); função de Huff parametrizável (β de distância, atratividade por
-metragem/rede) calibrada/validada **out-of-fold vs baseline** com IC95 bootstrap, R² in-sample banido,
-intervalos + flag de extrapolação; validação contra demanda observada por `hex_id` com caveat de cobertura
-DEC-012; veredito GO/NO-GO em `data/analysis/` (gitignored); anti-PII (camada agregada; fixtures
-sintéticas); sem dependência nova de rede/base pesada; mtime dos 4 artefatos oficiais M1 inalterado; suíte
-verde; `import streamlit_app` ok.
-**Guardrail.** §5 (READ-ONLY M1); DEC-008 / DEC-009 (demanda observada como insumo, nunca preditor de
-magnitude) / DEC-012 (anti-PII). Integrar o resultado ao `score_oportunidade_residual` ou à carteira/plano
-seria **follow-up com gate próprio**, não este bloco.
-
----
-
-- BLK-TP-08 (concluído 2026-07-02) — ver tasks/completed.md
-
-- BLK-TP-08-FU (concluído 2026-07-02) — ver tasks/completed.md
-
-- BLK-TP-08-FU (concluído 2026-07-02) — ver tasks/completed.md
 
 
 ---
@@ -978,7 +939,7 @@ seria **follow-up com gate próprio**, não este bloco.
 | **Criticidade** | **Alta/Crítica** (altera a **FÓRMULA de um score ATIVO** da camada paralela de mercado/residual e **regenera** os parquets que alimentam dashboard/API; **READ-ONLY sobre o M1 OFICIAL**). **Exige DEC registrada + gate humano obrigatório** antes do Builder. |
 | **Prioridade** | A definir (Felipe/Vini). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA + DEC]` → Builder → QA. |
-| **Status** | **Em espera — nenhum candidato entrega ganho MATERIAL (trilha do residual esgotada por ora).** Dois follow-ups testaram out-of-fold, honestamente (DEC-008), e nenhum justifica mexer no residual: **BLK-TP-06-FU1** (2026-07-02) — Candidato A (somar as academias menores cru à oferta consumida, dedup fino) = **NO-GO** (Δ pareado completo −0,0427; fora −0,0193). **BLK-TP-06-FU2** (2026-07-03) — Candidato C com capacidade de CLUBE real (`data/validacao/`: Smart 2363 / Engenharia 3106,5, fallback 2.500) + decay 2 km: **C1** (só capacidade por rede) "vence" mas o ganho é **RUÍDO** (Δ +0,0019; idêntico ao baseline em **97,3% dos hexes**, só 438 diferem) → **não aplicar**; **C2** (capacidade + bairro com decay k-ring) = **NO-GO** (Δ −0,0312). Conclusão: o **residual ATUAL é o melhor**; re-capacitar quase não move (capacidade real ≈ 2.500) e incluir bairro como oferta consumida piora (co-localização bairro↔demanda). TP-09 só dispara se um candidato NOVO **vencer materialmente** o baseline. Caminho ainda vivo, não testado: as academias de bairro como **competição no Huff por ponto candidato (BLK-TP-07)**, não como subtração global do residual. |
+| **Status** | **Em espera — nenhum candidato entrega ganho MATERIAL (trilha do residual esgotada por ora).** Dois follow-ups testaram out-of-fold, honestamente (DEC-008), e nenhum justifica mexer no residual: **BLK-TP-06-FU1** (2026-07-02) — Candidato A (somar as academias menores cru à oferta consumida, dedup fino) = **NO-GO** (Δ pareado completo −0,0427; fora −0,0193). **BLK-TP-06-FU2** (2026-07-03) — Candidato C com capacidade de CLUBE real (`data/validacao/`: Smart 2363 / Engenharia 3106,5, fallback 2.500) + decay 2 km: **C1** (só capacidade por rede) "vence" mas o ganho é **RUÍDO** (Δ +0,0019; idêntico ao baseline em **97,3% dos hexes**, só 438 diferem) → **não aplicar**; **C2** (capacidade + bairro com decay k-ring) = **NO-GO** (Δ −0,0312). Conclusão: o **residual ATUAL é o melhor**; re-capacitar quase não move (capacidade real ≈ 2.500) e incluir bairro como oferta consumida piora (co-localização bairro↔demanda). TP-09 só dispara se um candidato NOVO **vencer materialmente** o baseline. **Atualização 2026-07-03 — BLK-TP-07 = GO honesto** (Huff/gravitacional de captura por hexágono vs demanda observada `membros`: R²_oof_log +0,4391 IC95 [+0,4251, +0,4523], β=0,5, supera o baseline geométrico +0,2922 ⇒ a distância AGREGA; n_join 16.575, ~1% do universo, viés Sudeste): o caminho "concorrência no Huff por ponto candidato" está **validado como sinal**, MAS o TP-07 explicitamente **NÃO integrou** nada ao residual/carteira/plano. A integração dessa captura Huff à fórmula/artefatos é justamente **este bloco (TP-09)** — segue exigindo **DEC + gate humano** e medição de impacto/cobertura (o GO do TP-07 é metropolitano ~1%; recalibrar os 99% sem sinal exige a mesma cautela dos candidatos anteriores). |
 | **Depende de** | **BLK-TP-06** (GO +0,3119) **+ um candidato vencedor** (BLK-TP-06-FU1 Candidato A = NO-GO; Candidato C pendente de dado de capacidade de clube). |
 | **Autonomia** | **manual (NÃO loop-safe)** — muda um score em produção; NUNCA loop-safe. |
 
