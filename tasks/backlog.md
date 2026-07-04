@@ -932,40 +932,44 @@ integração cobre o toggle/layer; suíte verde; `import streamlit_app` ok.
 
 ---
 
-### BLK-TP-09 — Aplicação da recalibração do `score_oportunidade_residual` validada no BLK-TP-06 (DEC + gate)
+### BLK-TP-09 — Integração do sinal de captura validado à camada de mercado/residual (agnóstico de mecanismo; DEC + gate)
 
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Alta/Crítica** (altera a **FÓRMULA de um score ATIVO** da camada paralela de mercado/residual e **regenera** os parquets que alimentam dashboard/API; **READ-ONLY sobre o M1 OFICIAL**). **Exige DEC registrada + gate humano obrigatório** antes do Builder. |
 | **Prioridade** | A definir (Felipe/Vini). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA + DEC]` → Builder → QA. |
-| **Status** | **Em espera — nenhum candidato entrega ganho MATERIAL (trilha do residual esgotada por ora).** Dois follow-ups testaram out-of-fold, honestamente (DEC-008), e nenhum justifica mexer no residual: **BLK-TP-06-FU1** (2026-07-02) — Candidato A (somar as academias menores cru à oferta consumida, dedup fino) = **NO-GO** (Δ pareado completo −0,0427; fora −0,0193). **BLK-TP-06-FU2** (2026-07-03) — Candidato C com capacidade de CLUBE real (`data/validacao/`: Smart 2363 / Engenharia 3106,5, fallback 2.500) + decay 2 km: **C1** (só capacidade por rede) "vence" mas o ganho é **RUÍDO** (Δ +0,0019; idêntico ao baseline em **97,3% dos hexes**, só 438 diferem) → **não aplicar**; **C2** (capacidade + bairro com decay k-ring) = **NO-GO** (Δ −0,0312). Conclusão: o **residual ATUAL é o melhor**; re-capacitar quase não move (capacidade real ≈ 2.500) e incluir bairro como oferta consumida piora (co-localização bairro↔demanda). TP-09 só dispara se um candidato NOVO **vencer materialmente** o baseline. **Atualização 2026-07-03 — BLK-TP-07 = GO honesto** (Huff/gravitacional de captura por hexágono vs demanda observada `membros`: R²_oof_log +0,4391 IC95 [+0,4251, +0,4523], β=0,5, supera o baseline geométrico +0,2922 ⇒ a distância AGREGA; n_join 16.575, ~1% do universo, viés Sudeste): o caminho "concorrência no Huff por ponto candidato" está **validado como sinal**, MAS o TP-07 explicitamente **NÃO integrou** nada ao residual/carteira/plano. A integração dessa captura Huff à fórmula/artefatos é justamente **este bloco (TP-09)** — segue exigindo **DEC + gate humano** e medição de impacto/cobertura (o GO do TP-07 é metropolitano ~1%; recalibrar os 99% sem sinal exige a mesma cautela dos candidatos anteriores). |
-| **Depende de** | **BLK-TP-06** (GO +0,3119) **+ um candidato vencedor** (BLK-TP-06-FU1 Candidato A = NO-GO; Candidato C pendente de dado de capacidade de clube). |
+| **Status** | **Habilitado por um candidato vencedor (BLK-TP-07 = GO) — pendente de DEC + gate.** RE-ESCOPADO em 2026-07-04: era "aplicar a recalibração do residual do TP-06"; passou a ser **agnóstico de mecanismo — integrar o SINAL DE CAPTURA VALIDADO** à camada de mercado/residual. Motivo: a via original (mexer na *oferta consumida* do residual) foi **testada e esgotada** out-of-fold, honestamente (DEC-008), sem candidato material — **BLK-TP-06-FU1** Candidato A (somar as menores cru, dedup fino) = **NO-GO** (Δ −0,0427); **BLK-TP-06-FU2** Candidato C (capacidade de clube real `data/validacao/` + decay 2 km) = **C1 RUÍDO** (Δ +0,0019, idêntico ao baseline em 97,3% dos hexes) / **C2 NO-GO** (Δ −0,0312). O candidato que **venceu materialmente** veio por OUTRO mecanismo: **BLK-TP-07 (GO)** — Huff/gravitacional de captura por hexágono vs demanda observada `membros` (R²_oof_log +0,4391 IC95 [+0,4251,+0,4523], β=0,5, **supera o baseline geométrico +0,2922 ⇒ a distância AGREGA**; n_join 16.575, ~1% do universo, viés Sudeste). O TP-07 **validou o sinal, mas NÃO integrou nada**. Este bloco é essa **integração** — segue exigindo **DEC + gate humano** e medição de impacto/cobertura. |
+| **Depende de** | **BLK-TP-07** (candidato vencedor = GO honesto out-of-fold, concluído 2026-07-03 — `demanda_revelada/huff_captura.py`). Histórico da via esgotada (contexto, não bloqueio): BLK-TP-06 (GO +0,3119), BLK-TP-06-FU1 (A NO-GO), BLK-TP-06-FU2 (C ruído/NO-GO). |
 | **Autonomia** | **manual (NÃO loop-safe)** — muda um score em produção; NUNCA loop-safe. |
 
-**Contexto.** O **BLK-TP-06** provou, out-of-fold e honestamente (DEC-008), que o
-`score_oportunidade_residual` já prevê a demanda observada (`membros`) no recorte metropolitano do join
-(~1,06% do universo) — e produziu uma **proposta de recalibração** dos componentes do residual (ex.:
-capacidade default 2.500, peso de `oferta_efetiva_disponivel`, faixa de corte) que melhora o alinhamento.
-O TP-06 **validou e documentou, mas NÃO aplicou** (guardrail §5). Este bloco é a **aplicação** dessa
-proposta — e por isso exige DEC + gate.
+**Contexto.** A trilha de melhorar o `score_oportunidade_residual` **pela oferta consumida** (subtrair/recapacitar
+concorrência no próprio residual) foi exaurida sem ganho material (TP-06-FU1/FU2, acima). O sinal que **venceu**
+apareceu por um mecanismo diferente: tratar a concorrência como **captura gravitacional (Huff) no ponto/hex
+candidato**, validada contra a demanda **observada** (`membros`) — o **BLK-TP-07** deu o **GO honesto** (out-of-fold,
+supera o baseline geométrico ⇒ a geometria de distância agrega, não é só "contar concorrente perto"). O TP-07
+implementou e validou o motor de captura (`demanda_revelada/huff_captura.py`, READ-ONLY, sem integrar), mas **não
+tocou** `score_oportunidade_residual`/carteira/plano. Este bloco é a **aplicação/integração** desse sinal — e por
+isso exige DEC + gate.
 
-**Objetivo.** Aplicar a recalibração validada à fórmula de `score_oportunidade_residual` em
-`src/motor_expansao/pipelines/calcular_colunas_mercado.py`, **medindo o impacto** (antes/depois: quantos
-hexes mudam de faixa, deslocamento de distribuição) e **regenerando** a camada de mercado/residual pela
-**ordem canônica** (`híbrido → mercado → calcular_colunas_mercado → carteira → plano → domínio → residual
-→ fase1_bi_exports`). **READ-ONLY sobre o M1 OFICIAL**: `score_priorizacao`, `hex_score_estrutural`,
-pesos (renda 0.40/pop 0.60), carteira/plano do M1 e os 4 artefatos oficiais permanecem **INTOCADOS**
-(mtime inalterado) — muda-se apenas a camada paralela de mercado/residual.
+**Objetivo.** Integrar o sinal de captura Huff validado (TP-07) à **camada paralela de mercado/residual** — seja
+como componente/ajuste de `score_oportunidade_residual`, seja como coluna acionável nova casada por `hex_id` (a
+forma exata é decisão do Planner + gate/DEC) — em `src/motor_expansao/pipelines/calcular_colunas_mercado.py`,
+**medindo o impacto** (antes/depois: quantos hexes mudam de faixa, deslocamento de distribuição) e **regenerando**
+a camada pela **ordem canônica** (`híbrido → mercado → calcular_colunas_mercado → carteira → plano → domínio →
+residual → fase1_bi_exports`). **READ-ONLY sobre o M1 OFICIAL**: `score_priorizacao`, `hex_score_estrutural`,
+pesos (renda 0.40/pop 0.60), carteira/plano do M1 e os 4 artefatos oficiais permanecem **INTOCADOS** (mtime
+inalterado) — muda-se apenas a camada paralela de mercado/residual.
 
-**Critérios de aceite.** DEC registrada e aprovada ANTES do Builder; medição de impacto documentada
-(antes/depois, hexes que mudam de faixa); regeneração reprodutível pela ordem canônica; **cobertura/viés
-do TP-06 (~1% metropolitano) explicitamente considerado** — recalibrar com sinal de 1% do universo exige
-cautela (a proposta não pode piorar os 99% sem sinal); artefatos oficiais do M1 com **mtime inalterado**;
-suíte verde; `import streamlit_app` ok.
-**Guardrail.** §5 (READ-ONLY M1 OFICIAL — só a camada paralela muda, e com DEC); DEC-008 (a recalibração
-tem de ser justificada pela validação out-of-fold, não pelo +0,52 in-sample); DEC-009 (demanda não vira
-preditor geográfico de magnitude); DEC-012 (anti-PII).
+**Critérios de aceite.** DEC registrada e aprovada ANTES do Builder (a DEC define a FORMA de integração e a
+função exata); medição de impacto documentada (antes/depois, hexes que mudam de faixa); regeneração reprodutível
+pela ordem canônica; **cobertura/viés do sinal (~1% metropolitano, viés Sudeste — herdado do TP-07/TP-06)
+explicitamente tratado** — o GO é de ~1% do universo, então a integração **não pode piorar/enviesar os 99% sem
+sinal** (ex.: aplicar só onde há cobertura, ou como camada acionável separada em vez de sobrescrever o residual
+nacional); artefatos oficiais do M1 com **mtime inalterado**; suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1 OFICIAL — só a camada paralela muda, e com DEC); DEC-008 (a integração tem de ser
+justificada pela validação **out-of-fold** do TP-07, não por R² in-sample); DEC-009 (demanda `membros` é ALVO de
+validação, NUNCA vira preditor geográfico de magnitude no artefato de produção); DEC-012 (anti-PII).
 
 ---
 
