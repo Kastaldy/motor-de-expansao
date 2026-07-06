@@ -460,6 +460,12 @@ def load_plano() -> pd.DataFrame:
 
 
 def main() -> None:
+    from motor_expansao.dashboard.ui_proto import is_proto_enabled, render_proto_page
+
+    if is_proto_enabled():
+        render_proto_page()
+        return
+
     inject_styles()
     render_header()
 
