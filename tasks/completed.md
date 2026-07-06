@@ -6869,3 +6869,72 @@ mtime dos 4 oficiais M1 inalterado; suíte verde; `import streamlit_app` ok.
 ---
 
 - BLK-ATR-02 (concluído 2026-07-06) — ver tasks/completed.md
+
+---
+
+### BLK-ATR-03 — Testar a estrutura de leitura: matriz de eixos vs score composto (GO/NO-GO)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (decide a arquitetura do funil; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-ATR-01** (Huff densificado + GO re-validado) + **BLK-ATR-02** (gate). |
+| **Autonomia** | **loop-safe** — GO/NO-GO out-of-fold, READ-ONLY M1, veredito em `data/analysis`; sem mudança de produção (padrão dos BLK-DIM que já rodaram no loop). |
+
+**Contexto.** Os três eixos (sociodemografia via `score_priorizacao`/`score_setor_2022_calibrado`; mercado via
+`score_oportunidade_residual`; disputa via `share_captura_huff` densificado) são ortogonais (rho residual×share
+−0,42 no metrô — não redundantes). A pergunta em aberto: para ranquear os hexes viáveis, um **score composto**
+(um número) agrega valor preditivo sobre ler os eixos como **matriz** (o humano/operador integra)? Preferência
+declarada de Felipe = **matriz**, sem descartar o teste do composto.
+
+**Objetivo.** Dentro do conjunto viável (gate BLK-ATR-02), **validar out-of-fold** (k-fold 5×5 seed=42/IC95 vs
+demanda observada `membros`) se um **score composto** dos 3 eixos prevê a demanda **melhor que cada eixo
+isolado** e melhor que a **matriz** (baseline = eixos separados). **Default = matriz**; o composto só é
+recomendado se **vencer materialmente** o melhor eixo isolado E não for redundante. Tratar a cobertura
+metro-only do eixo Huff com **degradação graciosa** (fora do metrô o composto cai para sociodemo + residual).
+Veredito GO/NO-GO + pesos validados (se composto GO) em `data/analysis/` (gitignored). **Não materializa nada
+em produção.**
+
+**Critérios de aceite.** Validação out-of-fold vs baseline (média + eixos isolados + matriz), IC95 bootstrap
+seed=42, **R² in-sample banido do veredito**, flag de extrapolação; **`membros`/demanda só como ALVO**, nunca
+como preditor (DEC-009); degradação graciosa fora do metrô documentada; veredito honesto (NO-GO = matriz é
+resultado VÁLIDO) em `data/analysis`; caveat de cobertura ~1% explícito; mtime dos 4 oficiais M1 inalterado;
+suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-008 (out-of-fold, R² in-sample banido, NO-GO válido); DEC-009 (demanda é
+ALVO); DEC-012 (dado pessoal protegido).
+
+**Conclusão (2026-07-06).** Builder implementou `src/motor_expansao/demanda_revelada/estrutura_funil.py`
+(módulo novo, pacote disjunto) + `tests/unit/demanda_revelada/test_estrutura_funil.py` (15 testes, fixtures
+sintéticas). O módulo aplica o gate ATR-02 REPLICADO inline (`populacao_corte_hex >= 5000` E
+`renda_per_capita >= 1500`, sem importar de `pipelines/`), normaliza os 3 eixos em percentil nacional 0–100
+(disputa = `1 - share_captura_huff` invertido, `flag_huff_disponivel` para degradação graciosa onde
+share=1.0), roda modelos out-of-fold (k-fold 5×5 seed=42, IC95 bootstrap, fallback k=10/LOO) — baseline,
+3 eixos isolados, censitário-auditoria, composto-Ridge, composto-pesos-iguais — e decide veredito honesto
+GO-composto vs MATRIZ (default): GO só se `R²_oof > 0.05` E `IC95_inf > 0` E `ganho > 0.01` sobre o melhor
+eixo E não-redundante (`pearson(pred) < 0.95`). R² in-sample é campo de auditoria rotulado, BANIDO do
+veredito. `membros` só como ALVO (`log1p`). Relatório markdown gitignored em `data/analysis/estrutura_funil.md`
+(caminho `executar()`/`__main__` sob `# pragma: no cover`; NÃO rodado nos testes — é passo operacional
+pós-merge).
+
+**QA — APROVADO (2026-07-06).** Validação independente:
+- **Suíte FULL** (`pytest -q`): `1344 passed, 4 skipped, 4 failed` em 454s. As 4 falhas são
+  PRÉ-EXISTENTES e do `openlocationcode` (não instalado → `resolve_plus_code` retorna `None`): todas em
+  `test_coord_search.py`/`test_streamlit_app.py` (plus_code), fora do escopo BLK-ATR-03. **Regressões novas = 0.**
+  Os 15 testes novos passaram dentro da suíte full.
+- **ruff**: `All checks passed` no escopo (módulo + teste).
+- **Isolamento (DEC-012)**: grep de `pipelines`/`dashboard`/`censo_`/`api`/`import config` → VAZIO. Imports só
+  de `dimensionamento/` (camada irmã, precedente `backtest_tp05.py`) + `.contrato` + stdlib/numpy/pandas/
+  scipy/sklearn. `loop_guard.py --base ciclo/loop-20260706-152137` → **GUARD OK** (21 caminhos, nenhum proibido).
+- **READ-ONLY M1 (§5)**: mtime dos 4 oficiais inalterado (estrutural/priorizados/oportunidades 2026-06-03;
+  dashboard 2026-06-12); `git status` limpo neles. `import streamlit_app` → ok.
+- **Corretude (leitura do código)**: gate ATR-02 replicado inline via constantes locais `POP_MIN_GATE_ATR`/
+  `RENDA_PC_MIN_GATE_ATR` (linha 249); R² in-sample AUSENTE de `_decidir_veredito` (só auditoria rotulada);
+  `membros` nunca é feature (só `y = log1p(membros)`; teste `test_membros_nunca_feature` blinda); degradação
+  graciosa em share=1.0 (disputa vira percentil baixo, nenhuma linha perdida; sub-análise de competitivos
+  separada).
+- **Housekeeping**: `housekeeping_move_block.py BLK-ATR-03 --check` → OK (stub no backlog + bloco em completed).
+
+Veredito QA: **APROVADO.** Nada materializado em produção; veredito real do funil é passo operacional
+pós-merge (`python -m motor_expansao.demanda_revelada.estrutura_funil`), não gate de teste.

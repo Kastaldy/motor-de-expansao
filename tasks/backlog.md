@@ -1004,38 +1004,8 @@ produção e exige DEC + gate humano.
 
 ---
 
-### BLK-ATR-03 — Testar a estrutura de leitura: matriz de eixos vs score composto (GO/NO-GO)
+- BLK-ATR-03 (concluído 2026-07-06) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (decide a arquitetura do funil; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-ATR-01** (Huff densificado + GO re-validado) + **BLK-ATR-02** (gate). |
-| **Autonomia** | **loop-safe** — GO/NO-GO out-of-fold, READ-ONLY M1, veredito em `data/analysis`; sem mudança de produção (padrão dos BLK-DIM que já rodaram no loop). |
-
-**Contexto.** Os três eixos (sociodemografia via `score_priorizacao`/`score_setor_2022_calibrado`; mercado via
-`score_oportunidade_residual`; disputa via `share_captura_huff` densificado) são ortogonais (rho residual×share
-−0,42 no metrô — não redundantes). A pergunta em aberto: para ranquear os hexes viáveis, um **score composto**
-(um número) agrega valor preditivo sobre ler os eixos como **matriz** (o humano/operador integra)? Preferência
-declarada de Felipe = **matriz**, sem descartar o teste do composto.
-
-**Objetivo.** Dentro do conjunto viável (gate BLK-ATR-02), **validar out-of-fold** (k-fold 5×5 seed=42/IC95 vs
-demanda observada `membros`) se um **score composto** dos 3 eixos prevê a demanda **melhor que cada eixo
-isolado** e melhor que a **matriz** (baseline = eixos separados). **Default = matriz**; o composto só é
-recomendado se **vencer materialmente** o melhor eixo isolado E não for redundante. Tratar a cobertura
-metro-only do eixo Huff com **degradação graciosa** (fora do metrô o composto cai para sociodemo + residual).
-Veredito GO/NO-GO + pesos validados (se composto GO) em `data/analysis/` (gitignored). **Não materializa nada
-em produção.**
-
-**Critérios de aceite.** Validação out-of-fold vs baseline (média + eixos isolados + matriz), IC95 bootstrap
-seed=42, **R² in-sample banido do veredito**, flag de extrapolação; **`membros`/demanda só como ALVO**, nunca
-como preditor (DEC-009); degradação graciosa fora do metrô documentada; veredito honesto (NO-GO = matriz é
-resultado VÁLIDO) em `data/analysis`; caveat de cobertura ~1% explícito; mtime dos 4 oficiais M1 inalterado;
-suíte verde; `import streamlit_app` ok.
-**Guardrail.** §5 (READ-ONLY M1); DEC-008 (out-of-fold, R² in-sample banido, NO-GO válido); DEC-009 (demanda é
-ALVO); DEC-012 (dado pessoal protegido).
 
 ---
 
