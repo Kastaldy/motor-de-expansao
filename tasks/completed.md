@@ -6796,3 +6796,35 @@ seria **follow-up com gate próprio**, não este bloco.
 - BLK-TP-08-FU (concluído 2026-07-02) — ver tasks/completed.md
 
 - BLK-TP-08-FU (concluído 2026-07-02) — ver tasks/completed.md
+
+---
+
+### BLK-ATR-02 — Gate de viabilidade absoluto (população ≥ 5.000 E renda per capita ≥ 1.500) na camada de mercado
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (define o gate de entrada do funil; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (usa colunas de população e renda per capita já existentes na camada de mercado/censitária). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; o gate vive na **camada de mercado/paralela** (NÃO em `config.py` nem `pipelines/m1`, senão o `loop_guard` aborta); só materializa uma flag/coluna paralela; sem VPS. |
+
+**Contexto.** Régua absoluta (CLAUDE.md §2) para decisão. O piso de **população = 5.000** é válido (nem 100%
+da população treina). O piso de **renda** hoje no código é **domiciliar** (`RENDA_MIN=4500`, via
+`renda_target_proxy` escalado); o funil deve usar a régua **per capita** que o IBGE entrega direto, com corte
+inicial **≥ 1.500 per capita** (decisão de Felipe, 2026-07-06; valor de partida, calibrável depois).
+
+**Objetivo.** Materializar uma **flag de gate de viabilidade** na camada de mercado (coluna nova, ex.
+`flag_gate_atratividade = populacao_corte_hex ≥ 5.000 AND renda_per_capita ≥ 1.500`), **sem tocar** o
+`flag_viavel` existente (que segue com a régua domiciliar 4.500) nem `config.py`/M1. Reportar quantos hexes
+passam no gate e a distribuição por UF. É o filtro binário da Etapa 1 do funil (abaixo do piso → fora do
+ranking).
+
+**Critérios de aceite.** Gate materializado como coluna paralela na camada de mercado (fora de `config.py` e
+`pipelines/m1`); reutiliza a régua de população do `pop_corte.py` (`populacao_corte_hex`) e a `renda_per_capita`
+existente; contagem de hexes aprovados + distribuição por UF documentada; `flag_viavel`/`RENDA_MIN`/M1
+**INTOCADOS** (mtime dos 4 oficiais inalterado); suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); o gate é parâmetro da **camada paralela** (não canônico §3); DEC-001 intacta
+(pisos do funil ≠ pesos do M1). loop-safe só enquanto NÃO tocar `config.py`/`pipelines/m1` (o `loop_guard`
+aborta se tocar).

@@ -2,56 +2,49 @@
 
 ## Bloco atual
 
-ID: BLK-TP-07
-Nome: Huff/gravitacional de captura de concorrentes com demanda observada (reabertura da Camada 2 do BLK-DIM)
+ID: BLK-ATR-02
+Nome: Gate de viabilidade absoluto (população ≥ 5.000 E renda per capita ≥ 1.500) na camada de mercado
 Status: CICLO FECHADO — APROVADO COM RESSALVAS (housekeeping OK + commit por path feito; merge = humano)
-Tipo: modelagem (captura/share gravitacional — validação out-of-fold, READ-ONLY sobre o M1)
+Tipo: feature (flag paralela na camada de mercado)
 Criticidade: alta
-Esteira: Block Orchestrator → Planner → [APROVAÇÃO HUMANA — modelagem] → Builder → QA
-Skill atual: Fechamento (orquestrador) CONCLUÍDO
-Próxima Skill: revisão + merge da branch ciclo/BLK-TP-07 pelo humano (6.b). Sem dry-run (não tocou orquestração).
+Esteira: Block Orchestrator → Planner → Builder → QA (autônoma no loop)
+Skill atual: QA (concluído)
+Próxima Skill: Block Orchestrator (fechamento)
 
-## Veredito REAL do Builder (out-of-fold, seed=42)
-GO (âncora R²): R²_oof_log = +0.4391 IC95 [+0.4251, +0.4523] (> 0.05, IC > 0) E supera o baseline
-geométrico (R²_base_geo = +0.2922) ⇒ a distância agrega. β_selecionado = 0.5 (out-of-fold);
-rho_oof = +0.4354 IC95 [+0.4213, +0.4491]; R²_insample (auditoria, banido) = +0.4392; n_join =
-16.575 (~1.07% do universo, viés SP/MG/RJ). Sensibilidades D1b (capacidade, +0.357) e D4c (Ultra,
-+0.4755) reportadas FORA do gate. Integração ao residual/carteira = BLK-TP-09 (fora deste bloco).
-Validações: novos testes 11 passed; subset demanda_revelada 96 passed; import streamlit ok; ruff+mypy
-limpos; mtime dos 4 oficiais M1 inalterado; isolamento AST sem imports proibidos. READ-ONLY M1.
+## Veredito do QA (2026-07-06 18:50:08)
+APROVADO COM RESSALVA. Subconjunto impactado 50/50 verde; ruff limpo; guardrails confirmados
+(config.py sem a constante; RENDA_PER_CAPITA_MIN_ATR só em calcular_colunas_mercado.py; m1/
+config intocados; loop_guard OK; mtime dos oficiais M1 inalterado); corretude confirmada
+(NaN→False, limiar inclusivo >=1500, coluna paralela). import streamlit_app ok.
+RESSALVA: full suite = 1318 passed / 4 failed / 4 skipped — as 4 falhas são de AMBIENTE
+(pacote `openlocationcode` declarado no pyproject.toml mas não instalado; caminho Plus Code do
+BLK-UI-09-FU2), sem qualquer relação com este bloco. Detalhe em context/handoff.md.
 
 ## Objetivo
-Modelar a captura/share gravitacional (Huff) de um ponto candidato — atratividade × distância aos
-concorrentes mapeados, com saturação e canibalização da rede Ultra — e validá-la out-of-fold contra a
-demanda OBSERVADA da Demanda Revelada (`membros`/`alunos_parceiras`) sob a disciplina DEC-008. Veredito
-honesto GO/NO-GO em `data/analysis/` (gitignored). READ-ONLY sobre o M1.
+Materializar uma flag de gate de viabilidade absoluto (`flag_gate_atratividade = populacao_corte_hex >= 5000 AND renda_per_capita >= 1500`) na camada de mercado/paralela, sem tocar flag_viavel existente, config.py nem M1.
 
 ## Tiering de modelo (Passo 4) — Alta
-- Block Orchestrator: opus (override +1: forense de viabilidade do insumo Huff + isolamento anti-PII/DEC-012)
+- Block Orchestrator: sonnet
 - Planner: opus
 - Builder: opus
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-TP-07 (criada a partir de main @ HEAD af9c9ec).
+ciclo/BLK-ATR-02 (criada a partir de ciclo/loop-20260706-152137)
 
 ## Paths do ciclo (commit por path — NUNCA git add -A)
-- src/motor_expansao/demanda_revelada/ (módulo novo do Huff)
-- tests/unit/ (testes do módulo)
-- data/analysis/ (relatório gitignored — não versionado)
+- src/motor_expansao/pipelines/calcular_colunas_mercado.py (ou módulo paralelo para a flag)
+- src/motor_expansao/pipelines/pop_corte.py (reutilizar)
+- tests/unit/ (testes do novo gate)
 - tasks/current_task.md, tasks/completed.md, tasks/backlog.md (fechamento)
 - context/handoff.md, context/handoff/
 
 ## Guardrails
-- §5 (READ-ONLY M1): zero recálculo de score/pesos/carteira/plano/artefatos oficiais; mtime dos 4 oficiais
-  M1 inalterado. Integrar ao residual/carteira/plano = follow-up com gate próprio (NÃO este bloco).
-- DEC-008: out-of-fold vs baseline; R² in-sample BANIDO; IC95 seed=42; intervalos + flag de extrapolação.
-- DEC-009: demanda (`membros`/`alunos_parceiras`) é ALVO OBSERVADO de validação; NUNCA preditor geográfico
-  de magnitude.
-- DEC-012 (anti-PII): camada agregada; fixtures sintéticas; zero PII em artefato/log/teste; fonte real
-  nunca versionada.
-- Isolamento: módulo NÃO importa de pipelines/m1, dashboard, censo_*, api.
+- §5 (READ-ONLY M1): zero recálculo de score/pesos/carteira/plano/artefatos oficiais; mtime dos 4 oficiais M1 inalterado.
+- flag_viavel/RENDA_MIN/M1 INTOCADOS.
+- Gate vive na camada de mercado/paralela (NÃO em config.py nem pipelines/m1).
+- loop_guard.py não pode acusar toque em caminho proibido.
+- DEC-001 intacta (pisos do funil ≠ pesos do M1).
 
 ## Depende de (satisfeito)
-- BLK-TP-05 (GO demanda→captura, R²_oof_log +0,575, concluído 2026-06-30) — destrava a reabertura da Camada 2/Huff.
-- concorrentes_mapeados.parquet + helper de catchment analisar_entorno_ponto.
+- Sem dependências (usa colunas pop e renda já existentes na camada de mercado/censitária).
