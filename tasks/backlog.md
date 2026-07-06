@@ -1144,3 +1144,159 @@ nem altera M1); §6.1 (critérios loop-safe). Precedente de desvio cosmético re
 
 
 ---
+
+## Epic BLK-ACENTO — Correção de acentuação e escrita (plataforma + relatórios)
+
+> Origem: tarefa ClickUp **"Resolver Problemas de Escrita e Acentuação no Motor"** (`86e26mtn5`,
+> lista *Motor de Expansão*, prioridade **urgente**, criador Felipe Castaldi, responsável Vinicius).
+> Descrição: *"Resolva todos os problemas de gramática e escrita no site e nos relatórios gerados
+> pelo Motor de Expansão."* Esclarecimento de Vinicius (2026-07-06): o problema é a **acentuação de
+> TUDO** — tanto a plataforma (dashboard Streamlit) quanto os relatórios gerados (PDF/CSV); **muitas
+> palavras não contêm acento** (ex.: "Relatorio", "Analise", "Nao", "concluido", "endereco",
+> "ultimo", "Populacao", "municipio", "regiao", "voce", "opcao").
+>
+> **Diagnóstico técnico (auditoria 2026-07-06, ancorado no código):** a ausência de acento é
+> majoritariamente **estilo/hábito herdado**, NÃO uma exigência técnica. No PDF, o core font
+> `Helvetica` do `fpdf2` codifica em **`latin-1`**, que **cobre integralmente** os acentos
+> portugueses (á â ã à ç é ê í ó ô õ ú ü); o helper `_ascii()` (`censo_report.py:170-172`,
+> `relatorio_municipal.py:211-213`) reduz a latin-1 com `errors="replace"` e seu comentário-fonte
+> (`censo_report.py:16-17`) generalizou incorretamente para "ASCII sem acento". Logo, **acentuar o
+> texto-fonte é seguro hoje, sem trocar fonte/biblioteca.** O CSV é `utf-8-sig`
+> (`censo_report.py:148`) — acentos seguros. Estado atual JÁ é misto (ex.: `pages.py:551`
+> "Expansão de Domínio" já acentuado), reforçando que é descuido, não regra.
+>
+> **A ARMADILHA REAL não é o acento** e sim a **tipografia "esperta"**: travessão `—`/`–`, bullet
+> `•`, seta `→`, reticências `…`, aspas curvas `" " ' '` e `©` estão FORA de latin-1 e viram `"?"`
+> **silenciosamente** via `errors="replace"` no PDF. Todo texto-fonte de PDF deve usar ASCII simples
+> para pontuação (hífen `-`, aspas retas `"`, "(c)") mesmo tendo acento nas letras.
+>
+> **READ-ONLY sobre o M1 (§5):** esta epic corrige APENAS texto voltado ao usuário. NÃO toca
+> `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/plano/artefatos oficiais, nem a lógica.
+> É um trabalho de **display**, com a disciplina crítica de **jamais acentuar identificadores**.
+>
+> **Guardrail permanente (não regredir depois):** a regra de acentuação foi promovida a **CLAUDE.md
+> §2** (fonte canônica lida antes de qualquer tarefa, inclusive pelos sub-agentes do `/run-cycle`),
+> para que TODO trabalho POSTERIOR a esta epic mantenha a acentuação correta em strings novas/editadas
+> e respeite a lista de proibições (identificadores). Esta epic é a correção retroativa; a §2 é a
+> prevenção contínua.
+
+**NÃO ACENTUAR (quebra lógica) — lista canônica de proibições (todos os sub-blocos):**
+- `key=` de widgets Streamlit e chaves de `st.session_state` (ex.: `coord_search_input`,
+  `dashboard_active_tab`, `relpon_lote_fila`, `btn_gerar_pdf_topo`, `multihex_cenario`) —
+  `pages.py:802,1592,2472-2660,3096-3368`.
+- Seletores CSS `.st-key-*` em `inject_styles` (`pages.py:154,358-448`) — ecoam as `key=` acima.
+- **Valores brutos de enum/categoria** comparados em lógica E produzidos pelo pipeline core:
+  `FAIXA_ORDEM = ["prioridade_maxima","alta","media","baixa","descartado","inviavel"]`
+  (`constants.py:90-97`), exibido CRU no `st.multiselect` (`pages.py:668-671`), usado em
+  `.isin(selected_faixas)` (`data.py:499`, `components.py:1706`) e como chave do dict de cores
+  (`constants.py:289-292`); origem em `src/motor_expansao/core/constants.py`,
+  `pipelines/calcular_colunas_mercado.py`, `pipelines/m1/*`. Também `HYBRID_ELIGIBILITY_ORDER`,
+  `COVERAGE_BUCKET_ORDER`, `JOIN_QUALITY_ORDER` (`constants.py:86-88`), `template="classico"`,
+  `METODO_RELATORIO_*` (`censo_point.py:15`, `relatorio_municipal.py:58`). **Solução: camada de
+  LABEL DE EXIBIÇÃO (`{valor_bruto: "Texto Acentuado"}`) — nunca tocar o literal usado na lógica.**
+- Nomes de coluna de DataFrame (`score_priorizacao`, `nome_municipio`, `renda_per_capita`,
+  `faixa_oportunidade`, `cod_municipio`, ...) — schema compartilhado com o M1/pipeline.
+- Slugs/nomes de arquivo — JÁ protegidos por `_slug()`/`unicodedata` (`relatorio_municipal.py:216-221`)
+  e `_relmun_key_slug` (`pages.py:3194`); não mexer.
+
+**Decomposição (sequência recomendada):** BLK-ACENTO-01 (UI dashboard) -> BLK-ACENTO-02 (relatórios
+PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seus próprios testes.
+
+---
+
+### BLK-ACENTO-01 — Acentuação da UI do dashboard (Streamlit)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (correção ampla de texto de UI; READ-ONLY sobre o M1; sem DEC; envolve 1 decisão de produto — label de exibição das faixas — e risco de acentuar identificador por engano, mitigado por lista de proibições). |
+| **Prioridade** | **Urgente** (herda da tarefa ClickUp `86e26mtn5`). |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 (label de exibição das faixas)]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (toca só a camada `dashboard/`; não depende de outros blocos). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mudança visual ampla que exige revisão humana; toca strings próximas a identificadores. NÃO marcar loop-safe. |
+
+**Objetivo.** Acentuar corretamente TODO o texto voltado ao usuário na plataforma (abas, labels de
+botão, `help=`, `st.caption/markdown/info/warning/success/error`, `st.metric`, `column_config`,
+legendas), preservando 100% dos identificadores.
+
+**Escopo permitido (READ-ONLY M1, só display).**
+- `src/motor_expansao/dashboard/pages.py` (~359 ocorrências) e `components.py` (~161): acentuar
+  strings de exibição. `pages.py` + `components.py` concentram ~90% da massa de texto.
+- `streamlit_app.py` (~38), `data.py` (labels/mensagens de exibição; NÃO valores de categoria salvo
+  via label layer), `constants.py` (só onde a string é EXIBIDA e não usada como chave/valor lógico).
+- **D1 — camada de label de exibição das faixas:** criar `FAIXA_LABELS = {"prioridade_maxima":
+  "Prioridade máxima","alta":"Alta","media":"Média","baixa":"Baixa","descartado":"Descartado",
+  "inviavel":"Inviável"}` e usar `format_func` no `st.multiselect` (`pages.py:668-671`) e nas
+  legendas/tabelas, mantendo o VALOR bruto intocado no filtro/`.isin`/dict de cores. Idem, se
+  aplicável, `HYBRID_ELIGIBILITY_ORDER`/`COVERAGE_BUCKET_ORDER`/`JOIN_QUALITY_ORDER`. O fallback
+  `"Nao informado"` (`data.py:211,219,223`, `components.py:572,589`) pode virar "Não informado"
+  DESDE QUE trocado em TODAS as ocorrências juntas (é literal repetido, não comparado a dado externo)
+  — validar que continua casando `pd.Categorical(...)`.
+- Banir tipografia "esperta" também na UI por consistência (usar hífen simples e aspas retas).
+- Atualizar `tests/integration/test_streamlit_app.py` (6232 linhas; dezenas de asserts de string de
+  UI — ex. linhas 334,338,762,1112-1117,1355-1357,3199,3238-3239,3664-3666,4650-4653) e
+  `tests/unit/test_dashboard_format_utils.py`.
+
+**Fora de escopo.** Relatórios PDF/CSV (BLK-ACENTO-02). Qualquer valor bruto de enum/coluna/`key=`/
+`.st-key-*`/slug (ver lista canônica de proibições da epic). `score_priorizacao`/M1/artefatos
+oficiais. Sem dependência de rede nova.
+
+**Critério de aceite.** Texto de UI do dashboard acentuado corretamente (varredura por amostra de
+palavras sem acento retorna ~0 em texto de exibição); faixas exibidas com label acentuado mas
+filtrando pelo valor bruto (comportamento de filtro idêntico); nenhum `key=`/`.st-key-*`/coluna/
+enum bruto alterado; suíte verde; ruff+mypy limpos; revisão visual humana aprovada.
+
+---
+
+### BLK-ACENTO-02 — Acentuação dos relatórios gerados (PDF/CSV)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (texto dos relatórios; READ-ONLY sobre o M1; núcleo `censo_*` só nas STRINGS de exibição, sem tocar método de interseção/raio/estrutura de páginas/marca d'água; sem DEC). |
+| **Prioridade** | **Urgente** (herda da tarefa ClickUp `86e26mtn5`). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (independente do BLK-ACENTO-01; pode ir em PR separado). |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera texto de relatório auditável (compressão OFF) e exige revisão visual do PDF. NÃO marcar loop-safe. |
+
+**Objetivo.** Acentuar corretamente o texto dos relatórios (Relatório Pontual Censitário 1,5 km e
+Relatório Municipal), sem trocar fonte/biblioteca e sem introduzir caracteres que virem `"?"`.
+
+**Escopo permitido (READ-ONLY M1, só texto de relatório).**
+- `src/motor_expansao/dashboard/censo_report.py` (~50 chamadas `_ascii(...)`) e
+  `relatorio_municipal.py` (~142 ocorrências / ~55 `set_font` + `_ascii`): escrever os textos-fonte
+  COM acento (títulos, `PDF_SECTION_HEADERS` — `censo_report.py:16-17`, `relatorio_municipal.py:60-61`,
+  rótulos de Big Numbers, legendas, rodapé). `latin-1` renderiza os acentos; **manter `_ascii()`**
+  como salvaguarda para caracteres exóticos.
+- Corrigir o comentário-fonte enganoso ("ASCII, sem acento") para refletir que latin-1 cobre acento
+  e que o que se proíbe é a tipografia fora de latin-1.
+- **BANIR tipografia "esperta"** no texto de PDF (travessão `—`/`–`, bullet `•`, seta `→`,
+  reticências `…`, aspas curvas, `©`): trocar por ASCII (`-`, `"`, "(c)", "...") — senão viram `"?"`
+  silenciosamente via `errors="replace"`.
+- **Teste de regressão anti-`"?"`:** adicionar teste que gere os PDFs e assert que **nenhum byte
+  `b"?"` inesperado** aparece (ou rodar `_ascii` com `errors="strict"` num modo de auditoria/CI para
+  pegar tipografia fora de latin-1 cedo). Aproveita a compressão OFF (`set_compression(False)`,
+  `censo_report.py:228-236`) que já expõe o texto cru.
+- Atualizar `tests/unit/test_relatorio_municipal.py` (~26 asserts `assert b"..."`, ex. linhas
+  354-368,467-472,498,558-583) e `tests/unit/test_relatorio_pontual_censitario_export.py` (~40
+  asserts, ex. linhas 125-126,268-269,311-326,382-416,554-556) para as strings acentuadas em
+  `latin-1` (`b"Visao"` -> `"Visão".encode("latin-1")`). O laço
+  `for header in PDF_SECTION_HEADERS: assert header.encode("latin-1") in pdf_bytes` NÃO quebra (lê a
+  constante), mas os `assert b"literal"` isolados precisam ser atualizados um a um.
+
+**Fora de escopo.** Núcleo funcional `censo_*`: `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
+`RAIO_CENSITARIO_DEFAULT_KM`, contagem/ordem/estrutura das páginas, grid de Big Numbers, marca d'água
+anti-PII (BLK-EST-03), `set_compression(False)`, `pdf_version` — SÓ as STRINGS mudam. UI do dashboard
+(BLK-ACENTO-01). `score_priorizacao`/M1/artefatos oficiais. Trocar core font por TTF Unicode (não é
+necessário; latin-1 basta).
+
+**Guardrails.** READ-ONLY sobre o M1 (§5). Anti-PII inalterado (compressão OFF, marca d'água do
+solicitante BLK-EST-03, `.pptx`/PDF nunca versionados, `image24.png` nunca embutido). Sem dependência
+de rede nova.
+
+**Critério de aceite.** PDFs (pontual + municipal) com acentuação correta renderizando em `latin-1`;
+teste anti-`"?"` verde (zero caractere perdido); método de interseção/raio/estrutura/marca d'água
+INTOCADOS; suíte verde (asserts de PDF atualizados); ruff+mypy limpos; revisão visual humana do PDF
+aprovada.
+
+---
