@@ -4,12 +4,18 @@
 
 ID: BLK-ATR-04
 Nome: Visualização dos resultados do funil (gráficos + números concretos para decisão)
-Status: em execução
+Status: CICLO FECHADO — APROVADO (housekeeping OK + commit por path feito; merge = humano)
 Tipo: análise visual (relatório estático — READ-ONLY M1)
 Criticidade: média
 Esteira: Block Orchestrator → Planner → Builder → QA (autônoma no loop)
-Skill atual: Builder
-Próxima Skill: QA
+Skill atual: QA (concluído)
+Próxima Skill: Fechamento manual (sucessor BLK-ATR-05 é manual/gate humano)
+
+## Veredito QA
+APROVADO. Suíte FULL 1354 passed / 4 failed (openlocationcode pré-existente, não relacionado);
+ruff limpo; imports proibidos vazio; matplotlib declarada no pyproject; loop_guard OK;
+import streamlit_app ok; mtime dos 4 oficiais M1 inalterado; housekeeping executado pelo helper
+versionado (bloco byte-idêntico movido para completed.md, stub no backlog). Regressões novas = 0.
 
 ## Objetivo
 Gerar relatório visual completo (gráficos PNG + markdown-resumo) em data/analysis/viz_atratividade/,

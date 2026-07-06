@@ -1009,38 +1009,8 @@ produção e exige DEC + gate humano.
 
 ---
 
-### BLK-ATR-04 — Visualização dos resultados do funil (gráficos + números concretos para decisão)
+- BLK-ATR-04 (concluído 2026-07-06) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (relatório visual de apoio à decisão; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-ATR-01**, **BLK-ATR-02**, **BLK-ATR-03** (consome os outputs de análise dos três). |
-| **Autonomia** | **loop-safe** — READ-ONLY M1; só lê os artefatos de `data/analysis`/`data/staging` e gera imagens numa pasta separada; sem produção/VPS. |
-
-**Contexto.** Felipe quer **ver os resultados no fim** para decidir a estrutura (matriz vs composto) e o
-BLK-ATR-05 com número concreto na mão, em vez de só ler o veredito textual.
-
-**Objetivo.** Gerar um **relatório visual completo** (gráficos + números concretos) a partir dos outputs de
-BLK-ATR-01/02/03, salvo em **pasta separada** (ex.: `data/analysis/viz_atratividade/`), usando **Plotly ou
-Matplotlib** para materializar **imagens (PNG)** + um markdown-resumo que as referencia. Conteúdo mínimo:
-(a) **cobertura do Huff antes/depois** da densificação (mapa/nº de hexes com share < 1,0, por UF);
-(b) **re-validação do GO** (R²_oof antes/depois com IC95, RMSE por β);
-(c) **impacto do gate** (quantos hexes passam pop ≥ 5.000 E renda_pc ≥ 1.500, por UF);
-(d) **matriz de quadrantes residual × disputa** (os 4 quadrantes com contagens reais — o "prêmio grande mas
-disputado" vs "nicho defensável" etc.);
-(e) **comparação matriz vs composto** (R²_oof de cada eixo isolado, da matriz e do composto, com IC95);
-(f) distribuições dos 3 eixos e correlações entre eles.
-Tudo com números absolutos legíveis, sem PII pessoal.
-
-**Critérios de aceite.** Imagens (PNG) + markdown-resumo em pasta separada dedicada; Plotly **ou** Matplotlib
-(sem dependência de rede ao vivo — se Plotly, exportar PNG via kaleido ou HTML self-contained); números
-concretos e legíveis; sem PII pessoal em nenhuma imagem/legenda; READ-ONLY M1 (mtime dos 4 oficiais inalterado);
-suíte verde; `import streamlit_app` ok.
-**Guardrail.** §5 (READ-ONLY M1); consome análises existentes, não recalcula score; DEC-012 (dado pessoal
-protegido — só agregados/negócio nas imagens). Ver skill `dataviz` para padrão visual.
 
 ---
 
