@@ -998,44 +998,8 @@ produção e exige DEC + gate humano.
 
 ---
 
-### BLK-ATR-01 — Densificar a base de concorrentes do Huff (TotalPass/WellHub/Unidades) + re-validar o GO
+- BLK-ATR-01 (concluído 2026-07-06) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (amplia a base de um sinal de modelagem; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-TP-07** (motor `demanda_revelada/huff_captura.py`) + **BLK-TP-08/FU** (padrão de ingestão anti-PII e dedup por rede, `oferta_academias_menores.py`/`classificacao_rede_menor.py`). |
-| **Autonomia** | **loop-safe** — READ-ONLY M1; escreve só `data/staging` (camada paralela) + `data/analysis`; ingestão de CSV LOCAL (sem API ao vivo); dado de concorrente é público/estabelecimento (não-PII pessoal); sem VPS/deploy/segredos. |
-
-**Contexto.** Hoje o Huff (`share_captura_huff`) usa ~3,3 mil concorrentes "big players" de
-`concorrentes_mapeados.parquet` → informativo em só ~0,3–1% dos hexes (99,65% viram monopólio share=1,0).
-A pasta `concorrentes/` (gitignored) traz **~132 CSVs** com `latitude;longitude;nome;endereco;cidade;uf;...`:
-`totalpass/` (27 UF, ~16 mil unidades), `wellhub/` (27 UF, ~13 mil) e `Unidades/` (39, por rede — dezenas de
-redes além das "28" já classificadas). Densificar a base amplia a zona onde o eixo de disputa fala.
-
-**Objetivo.** Ingerir as ~132 CSVs de `concorrentes/` (lat/long → `hex_id` res-7), **deduplicar** por
-**nome+rede** entre as fontes (TotalPass ∩ WellHub ∩ Unidades) e contra `concorrentes_mapeados` (3,3k),
-**cruzar com as unidades reais do `NAO_ABRA/`** (`01_SmartFit.xlsx`/`03_Competidores.xlsx`, nível
-estabelecimento) para aferir precisão/overlap, materializar uma **base densa de concorrentes** em
-`data/staging/` (camada paralela, NÃO oficial) e **re-computar `share_captura_huff`** sobre ela.
-**Re-validar o GO do BLK-TP-07** (mesmo harness k-fold 5×5 seed=42/IC95 vs demanda observada `membros`):
-confirmar se o R²_oof +0,4391 **se mantém ou melhora** com a base densa, e **quanto cresce a cobertura útil**
-(hexes com share < 1,0). Veredito em `data/analysis/` (gitignored).
-
-**Critérios de aceite.** Ingestão isolada na camada paralela (`demanda_revelada/`), sem import de
-`pipelines/m1`/`dashboard`/`censo_*`/`api`/`config.py`; **nome de estabelecimento PODE ser usado** (dedup por
-rede) — NÃO é PII pessoal; dado pessoal da Demanda Revelada permanece intocado (DEC-012); dedup documentado
-(quantos duplicados por fonte); base densa materializada em `data/staging`; `share_captura_huff` recomputado;
-**re-validação out-of-fold do GO** com números antes/depois (cobertura, R²_oof, IC95) em `data/analysis`;
-mtime dos 4 oficiais M1 inalterado; suíte verde; `import streamlit_app` ok.
-**Guardrail.** §5 (READ-ONLY M1); DEC-008 (re-validação out-of-fold, R² in-sample banido); DEC-009 (`membros`
-é ALVO, nunca preditor); DEC-012 (só o dado PESSOAL da demanda é protegido — dado de estabelecimento é público).
-
----
-
-- BLK-ATR-02 (concluído 2026-07-06) — ver tasks/completed.md
 
 
 ---

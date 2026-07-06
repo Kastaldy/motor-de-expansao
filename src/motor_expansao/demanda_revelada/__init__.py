@@ -21,6 +21,15 @@ from .classificacao_rede_menor import (
     gerar_relatorio_classificacao,
     ingerir_oferta_menores_por_rede,
 )
+from .concorrentes_densos import (
+    CONTRATO_COLUNAS_CONCORRENTES_DENSOS,
+    VERSAO_CONTRATO_CONCORRENTES_DENSOS,
+    deduplicar,
+    gerar_relatorio_huff_densa,
+    ingerir_csvs_concorrentes,
+    materializar,
+    revalidar_huff_densa,
+)
 from .contrato import (
     COLUNAS_PII_PROIBIDAS,
     CONTRATO_COLUNAS,
@@ -72,4 +81,12 @@ __all__ = [
     "CONTRATO_COLUNAS_CAP_REDE",
     "VERSAO_CONTRATO_OFERTA_MENORES_REDE",
     "VERSAO_CONTRATO_CAP_REDE",
+    # BLK-ATR-01: base densa de concorrentes do Huff
+    "materializar",
+    "ingerir_csvs_concorrentes",
+    "deduplicar",
+    "revalidar_huff_densa",
+    "gerar_relatorio_huff_densa",
+    "CONTRATO_COLUNAS_CONCORRENTES_DENSOS",
+    "VERSAO_CONTRATO_CONCORRENTES_DENSOS",
 ]

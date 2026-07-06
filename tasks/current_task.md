@@ -2,26 +2,30 @@
 
 ## Bloco atual
 
-ID: BLK-ATR-02
-Nome: Gate de viabilidade absoluto (população ≥ 5.000 E renda per capita ≥ 1.500) na camada de mercado
+ID: BLK-ATR-01
+Nome: Densificar a base de concorrentes do Huff (TotalPass/WellHub/Unidades) + re-validar o GO
 Status: CICLO FECHADO — APROVADO COM RESSALVAS (housekeeping OK + commit por path feito; merge = humano)
-Tipo: feature (flag paralela na camada de mercado)
+Tipo: modelagem (ingestão CSV local, dedup, re-validação out-of-fold — READ-ONLY M1)
 Criticidade: alta
 Esteira: Block Orchestrator → Planner → Builder → QA (autônoma no loop)
 Skill atual: QA (concluído)
-Próxima Skill: Block Orchestrator (fechamento)
+Próxima Skill: Fechamento (converter BLK-ATR-01 em stub no backlog + mover para completed.md)
 
-## Veredito do QA (2026-07-06 18:50:08)
-APROVADO COM RESSALVA. Subconjunto impactado 50/50 verde; ruff limpo; guardrails confirmados
-(config.py sem a constante; RENDA_PER_CAPITA_MIN_ATR só em calcular_colunas_mercado.py; m1/
-config intocados; loop_guard OK; mtime dos oficiais M1 inalterado); corretude confirmada
-(NaN→False, limiar inclusivo >=1500, coluna paralela). import streamlit_app ok.
-RESSALVA: full suite = 1318 passed / 4 failed / 4 skipped — as 4 falhas são de AMBIENTE
-(pacote `openlocationcode` declarado no pyproject.toml mas não instalado; caminho Plus Code do
-BLK-UI-09-FU2), sem qualquer relação com este bloco. Detalhe em context/handoff.md.
+## Veredito QA (2026-07-06 19:34)
+APROVADO COM RESSALVAS.
+- Suíte FULL: 1329 passed, 4 failed (PRÉ-EXISTENTES openlocationcode), 4 skipped. Regressões novas = 0.
+- ruff limpo; import streamlit_app ok; loop_guard GUARD OK; isolamento (AST) OK.
+- READ-ONLY M1 confirmado: mtime dos 4 oficiais + concorrentes_mapeados.parquet + huff_captura.py intocados.
+- Ressalvas (completude de escopo, não corretude): (1) re-validação com DADOS REAIS não rodada
+  (parquet denso + relatorio_huff_densa.md não materializados; executar() deferido); (2) cruzamento com
+  NAO_ABRA/ (01_SmartFit/03_Competidores) não implementado; (3) housekeeping stub pendente.
+- Detalhe em context/handoff/20260706-193402-qa.md.
 
 ## Objetivo
-Materializar uma flag de gate de viabilidade absoluto (`flag_gate_atratividade = populacao_corte_hex >= 5000 AND renda_per_capita >= 1500`) na camada de mercado/paralela, sem tocar flag_viavel existente, config.py nem M1.
+Ingerir as ~132 CSVs de concorrentes/ (lat/long → hex_id res-7), deduplicar por nome+rede entre fontes
+e contra concorrentes_mapeados (3,3k), materializar base densa em data/staging/ (camada paralela),
+recomputar share_captura_huff sobre ela e re-validar o GO do BLK-TP-07 (mesmo harness k-fold 5x5
+seed=42/IC95 vs membros). READ-ONLY M1.
 
 ## Tiering de modelo (Passo 4) — Alta
 - Block Orchestrator: sonnet
@@ -30,21 +34,25 @@ Materializar uma flag de gate de viabilidade absoluto (`flag_gate_atratividade =
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-ATR-02 (criada a partir de ciclo/loop-20260706-152137)
+ciclo/BLK-ATR-01 (criada a partir de ciclo/BLK-ATR-02 @ HEAD 83d67aa)
 
 ## Paths do ciclo (commit por path — NUNCA git add -A)
-- src/motor_expansao/pipelines/calcular_colunas_mercado.py (ou módulo paralelo para a flag)
-- src/motor_expansao/pipelines/pop_corte.py (reutilizar)
-- tests/unit/ (testes do novo gate)
+- src/motor_expansao/demanda_revelada/ (módulos de ingestão + dedup + re-validação)
+- tests/unit/ (testes do módulo)
+- data/staging/ (parquets da camada paralela — gitignored)
+- data/analysis/ (relatório gitignored)
 - tasks/current_task.md, tasks/completed.md, tasks/backlog.md (fechamento)
 - context/handoff.md, context/handoff/
 
 ## Guardrails
 - §5 (READ-ONLY M1): zero recálculo de score/pesos/carteira/plano/artefatos oficiais; mtime dos 4 oficiais M1 inalterado.
-- flag_viavel/RENDA_MIN/M1 INTOCADOS.
-- Gate vive na camada de mercado/paralela (NÃO em config.py nem pipelines/m1).
-- loop_guard.py não pode acusar toque em caminho proibido.
-- DEC-001 intacta (pisos do funil ≠ pesos do M1).
+- DEC-008: out-of-fold vs baseline; R² in-sample BANIDO; IC95 seed=42; intervalos + flag de extrapolação.
+- DEC-009: membros/alunos_parceiras é ALVO OBSERVADO; NUNCA preditor geográfico de magnitude.
+- DEC-012 (anti-PII): nome de estabelecimento PODE ser usado (é dado público); dado PESSOAL da Demanda Revelada permanece intocado.
+- Isolamento: módulo NÃO importa de pipelines/m1, dashboard, censo_*, api.
+- Ingestão de CSV LOCAL (sem API ao vivo); dado de concorrente é público/estabelecimento.
 
 ## Depende de (satisfeito)
-- Sem dependências (usa colunas pop e renda já existentes na camada de mercado/censitária).
+- BLK-TP-07 (motor demanda_revelada/huff_captura.py — concluído)
+- BLK-TP-08/FU (padrão anti-PII e dedup, oferta_academias_menores.py/classificacao_rede_menor.py — concluído)
+- BLK-ATR-02 (concluído no ciclo anterior)
