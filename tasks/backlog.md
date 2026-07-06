@@ -973,6 +973,201 @@ validação, NUNCA vira preditor geográfico de magnitude no artefato de produç
 
 ---
 
+## Epic BLK-ATR — Funil de Atratividade de Hexágonos (gate de viabilidade + leitura multi-eixo; camada paralela READ-ONLY sobre o M1)
+
+**Objetivo do epic.** Formalizar a decisão de "onde entrar" como um **funil de duas etapas**, paralelo e
+READ-ONLY sobre o M1: **(1) um gate absoluto de viabilidade** (piso fixo de população e renda per capita —
+abaixo dele nem entra na conversa) e **(2) uma leitura multi-eixo dentro do viável** que cruza os três eixos
+ortogonais de atratividade — **sociodemografia** (renda/densidade), **tamanho de mercado** (residual/demanda
+observada) e **disputa competitiva** (share de captura Huff do BLK-TP-07). Nenhuma camada bate o martelo
+sozinha; todas informam. Motivação: o residual sozinho "desiste" de regiões ricas-mas-saturadas (competição
+alta zera a demanda não atendida) e o Huff sozinho também penaliza saturação — falta o eixo de **atração**
+sociodemográfica para contrabalançar as duas lentes de competição. Este epic testa, honestamente, se combinar
+os eixos agrega valor preditivo real sobre a demanda observada, e só então materializa.
+**READ-ONLY sobre o M1** (não recalibra `score_priorizacao`/`hex_score_estrutural`/pesos nem regenera
+artefatos oficiais; DEC-001 intacta). Metodologia obrigatória DEC-008 (out-of-fold vs baseline, R² in-sample
+banido, IC95, flag de extrapolação). DEC-009 (demanda observada é ALVO de validação, nunca preditor de
+magnitude). DEC-012 aplica-se **só ao dado pessoal** da Demanda Revelada; o dado de **estabelecimento**
+concorrente (nome/endereço/lat-long de academia — público, coletado por scraper) **não é PII pessoal** e é
+usado normalmente, inclusive o nome para dedup por rede.
+
+**Sequência:** BLK-ATR-01 (densifica o Huff) + BLK-ATR-02 (gate) → BLK-ATR-03 (testa a estrutura) →
+BLK-ATR-04 (visualiza os resultados) → **[revisão humana]** → BLK-ATR-05 (materializa em produção; NÃO
+loop-safe). Os quatro primeiros são de **análise/validação, 100% autônomos (loop-safe)**; o último toca
+produção e exige DEC + gate humano.
+
+---
+
+### BLK-ATR-01 — Densificar a base de concorrentes do Huff (TotalPass/WellHub/Unidades) + re-validar o GO
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (amplia a base de um sinal de modelagem; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-07** (motor `demanda_revelada/huff_captura.py`) + **BLK-TP-08/FU** (padrão de ingestão anti-PII e dedup por rede, `oferta_academias_menores.py`/`classificacao_rede_menor.py`). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; escreve só `data/staging` (camada paralela) + `data/analysis`; ingestão de CSV LOCAL (sem API ao vivo); dado de concorrente é público/estabelecimento (não-PII pessoal); sem VPS/deploy/segredos. |
+
+**Contexto.** Hoje o Huff (`share_captura_huff`) usa ~3,3 mil concorrentes "big players" de
+`concorrentes_mapeados.parquet` → informativo em só ~0,3–1% dos hexes (99,65% viram monopólio share=1,0).
+A pasta `concorrentes/` (gitignored) traz **~132 CSVs** com `latitude;longitude;nome;endereco;cidade;uf;...`:
+`totalpass/` (27 UF, ~16 mil unidades), `wellhub/` (27 UF, ~13 mil) e `Unidades/` (39, por rede — dezenas de
+redes além das "28" já classificadas). Densificar a base amplia a zona onde o eixo de disputa fala.
+
+**Objetivo.** Ingerir as ~132 CSVs de `concorrentes/` (lat/long → `hex_id` res-7), **deduplicar** por
+**nome+rede** entre as fontes (TotalPass ∩ WellHub ∩ Unidades) e contra `concorrentes_mapeados` (3,3k),
+**cruzar com as unidades reais do `NAO_ABRA/`** (`01_SmartFit.xlsx`/`03_Competidores.xlsx`, nível
+estabelecimento) para aferir precisão/overlap, materializar uma **base densa de concorrentes** em
+`data/staging/` (camada paralela, NÃO oficial) e **re-computar `share_captura_huff`** sobre ela.
+**Re-validar o GO do BLK-TP-07** (mesmo harness k-fold 5×5 seed=42/IC95 vs demanda observada `membros`):
+confirmar se o R²_oof +0,4391 **se mantém ou melhora** com a base densa, e **quanto cresce a cobertura útil**
+(hexes com share < 1,0). Veredito em `data/analysis/` (gitignored).
+
+**Critérios de aceite.** Ingestão isolada na camada paralela (`demanda_revelada/`), sem import de
+`pipelines/m1`/`dashboard`/`censo_*`/`api`/`config.py`; **nome de estabelecimento PODE ser usado** (dedup por
+rede) — NÃO é PII pessoal; dado pessoal da Demanda Revelada permanece intocado (DEC-012); dedup documentado
+(quantos duplicados por fonte); base densa materializada em `data/staging`; `share_captura_huff` recomputado;
+**re-validação out-of-fold do GO** com números antes/depois (cobertura, R²_oof, IC95) em `data/analysis`;
+mtime dos 4 oficiais M1 inalterado; suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-008 (re-validação out-of-fold, R² in-sample banido); DEC-009 (`membros`
+é ALVO, nunca preditor); DEC-012 (só o dado PESSOAL da demanda é protegido — dado de estabelecimento é público).
+
+---
+
+### BLK-ATR-02 — Gate de viabilidade absoluto (população ≥ 5.000 E renda per capita ≥ 1.500) na camada de mercado
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (define o gate de entrada do funil; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (usa colunas de população e renda per capita já existentes na camada de mercado/censitária). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; o gate vive na **camada de mercado/paralela** (NÃO em `config.py` nem `pipelines/m1`, senão o `loop_guard` aborta); só materializa uma flag/coluna paralela; sem VPS. |
+
+**Contexto.** Régua absoluta (CLAUDE.md §2) para decisão. O piso de **população = 5.000** é válido (nem 100%
+da população treina). O piso de **renda** hoje no código é **domiciliar** (`RENDA_MIN=4500`, via
+`renda_target_proxy` escalado); o funil deve usar a régua **per capita** que o IBGE entrega direto, com corte
+inicial **≥ 1.500 per capita** (decisão de Felipe, 2026-07-06; valor de partida, calibrável depois).
+
+**Objetivo.** Materializar uma **flag de gate de viabilidade** na camada de mercado (coluna nova, ex.
+`flag_gate_atratividade = populacao_corte_hex ≥ 5.000 AND renda_per_capita ≥ 1.500`), **sem tocar** o
+`flag_viavel` existente (que segue com a régua domiciliar 4.500) nem `config.py`/M1. Reportar quantos hexes
+passam no gate e a distribuição por UF. É o filtro binário da Etapa 1 do funil (abaixo do piso → fora do
+ranking).
+
+**Critérios de aceite.** Gate materializado como coluna paralela na camada de mercado (fora de `config.py` e
+`pipelines/m1`); reutiliza a régua de população do `pop_corte.py` (`populacao_corte_hex`) e a `renda_per_capita`
+existente; contagem de hexes aprovados + distribuição por UF documentada; `flag_viavel`/`RENDA_MIN`/M1
+**INTOCADOS** (mtime dos 4 oficiais inalterado); suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); o gate é parâmetro da **camada paralela** (não canônico §3); DEC-001 intacta
+(pisos do funil ≠ pesos do M1). loop-safe só enquanto NÃO tocar `config.py`/`pipelines/m1` (o `loop_guard`
+aborta se tocar).
+
+---
+
+### BLK-ATR-03 — Testar a estrutura de leitura: matriz de eixos vs score composto (GO/NO-GO)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (decide a arquitetura do funil; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-ATR-01** (Huff densificado + GO re-validado) + **BLK-ATR-02** (gate). |
+| **Autonomia** | **loop-safe** — GO/NO-GO out-of-fold, READ-ONLY M1, veredito em `data/analysis`; sem mudança de produção (padrão dos BLK-DIM que já rodaram no loop). |
+
+**Contexto.** Os três eixos (sociodemografia via `score_priorizacao`/`score_setor_2022_calibrado`; mercado via
+`score_oportunidade_residual`; disputa via `share_captura_huff` densificado) são ortogonais (rho residual×share
+−0,42 no metrô — não redundantes). A pergunta em aberto: para ranquear os hexes viáveis, um **score composto**
+(um número) agrega valor preditivo sobre ler os eixos como **matriz** (o humano/operador integra)? Preferência
+declarada de Felipe = **matriz**, sem descartar o teste do composto.
+
+**Objetivo.** Dentro do conjunto viável (gate BLK-ATR-02), **validar out-of-fold** (k-fold 5×5 seed=42/IC95 vs
+demanda observada `membros`) se um **score composto** dos 3 eixos prevê a demanda **melhor que cada eixo
+isolado** e melhor que a **matriz** (baseline = eixos separados). **Default = matriz**; o composto só é
+recomendado se **vencer materialmente** o melhor eixo isolado E não for redundante. Tratar a cobertura
+metro-only do eixo Huff com **degradação graciosa** (fora do metrô o composto cai para sociodemo + residual).
+Veredito GO/NO-GO + pesos validados (se composto GO) em `data/analysis/` (gitignored). **Não materializa nada
+em produção.**
+
+**Critérios de aceite.** Validação out-of-fold vs baseline (média + eixos isolados + matriz), IC95 bootstrap
+seed=42, **R² in-sample banido do veredito**, flag de extrapolação; **`membros`/demanda só como ALVO**, nunca
+como preditor (DEC-009); degradação graciosa fora do metrô documentada; veredito honesto (NO-GO = matriz é
+resultado VÁLIDO) em `data/analysis`; caveat de cobertura ~1% explícito; mtime dos 4 oficiais M1 inalterado;
+suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-008 (out-of-fold, R² in-sample banido, NO-GO válido); DEC-009 (demanda é
+ALVO); DEC-012 (dado pessoal protegido).
+
+---
+
+### BLK-ATR-04 — Visualização dos resultados do funil (gráficos + números concretos para decisão)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (relatório visual de apoio à decisão; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-ATR-01**, **BLK-ATR-02**, **BLK-ATR-03** (consome os outputs de análise dos três). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; só lê os artefatos de `data/analysis`/`data/staging` e gera imagens numa pasta separada; sem produção/VPS. |
+
+**Contexto.** Felipe quer **ver os resultados no fim** para decidir a estrutura (matriz vs composto) e o
+BLK-ATR-05 com número concreto na mão, em vez de só ler o veredito textual.
+
+**Objetivo.** Gerar um **relatório visual completo** (gráficos + números concretos) a partir dos outputs de
+BLK-ATR-01/02/03, salvo em **pasta separada** (ex.: `data/analysis/viz_atratividade/`), usando **Plotly ou
+Matplotlib** para materializar **imagens (PNG)** + um markdown-resumo que as referencia. Conteúdo mínimo:
+(a) **cobertura do Huff antes/depois** da densificação (mapa/nº de hexes com share < 1,0, por UF);
+(b) **re-validação do GO** (R²_oof antes/depois com IC95, RMSE por β);
+(c) **impacto do gate** (quantos hexes passam pop ≥ 5.000 E renda_pc ≥ 1.500, por UF);
+(d) **matriz de quadrantes residual × disputa** (os 4 quadrantes com contagens reais — o "prêmio grande mas
+disputado" vs "nicho defensável" etc.);
+(e) **comparação matriz vs composto** (R²_oof de cada eixo isolado, da matriz e do composto, com IC95);
+(f) distribuições dos 3 eixos e correlações entre eles.
+Tudo com números absolutos legíveis, sem PII pessoal.
+
+**Critérios de aceite.** Imagens (PNG) + markdown-resumo em pasta separada dedicada; Plotly **ou** Matplotlib
+(sem dependência de rede ao vivo — se Plotly, exportar PNG via kaleido ou HTML self-contained); números
+concretos e legíveis; sem PII pessoal em nenhuma imagem/legenda; READ-ONLY M1 (mtime dos 4 oficiais inalterado);
+suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); consome análises existentes, não recalcula score; DEC-012 (dado pessoal
+protegido — só agregados/negócio nas imagens). Ver skill `dataviz` para padrão visual.
+
+---
+
+### BLK-ATR-05 — Materializar a estrutura escolhida (gate + matriz/composto) em produção (DEC + gate humano)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (materializa o funil na camada de um score ATIVO e regenera parquets de dashboard/API; **READ-ONLY sobre o M1 OFICIAL**). **Exige DEC registrada + gate humano obrigatório** antes do Builder. |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA + DEC]` → Builder → QA. |
+| **Status** | Em espera (condicional ao veredito do BLK-ATR-03 + decisão humana). |
+| **Depende de** | **BLK-ATR-03** (estrutura decidida: matriz ou composto GO) + **BLK-ATR-04** (visualização para a decisão). |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda a camada de um score em produção e exige gate humano; NUNCA loop-safe (o loop não tem gate). |
+
+**Contexto.** Após BLK-ATR-03 decidir a estrutura e BLK-ATR-04 dar os números, este bloco a materializa na
+camada paralela de mercado — o gate de viabilidade (BLK-ATR-02) + a leitura escolhida (matriz de eixos
+normalizados na mesma régua **ou** score composto validado) — para consumo no dashboard/API.
+
+**Objetivo.** Materializar o funil na camada de mercado (`calcular_colunas_mercado.py` ou módulo paralelo),
+medindo impacto (antes/depois: hexes por faixa/quadrante) e regenerando a camada pela **ordem canônica**
+(`híbrido → mercado → calcular_colunas_mercado → carteira → plano → domínio → residual → fase1_bi_exports`).
+**READ-ONLY sobre o M1 OFICIAL**: `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/plano/4 artefatos
+oficiais **INTOCADOS** (mtime inalterado).
+
+**Critérios de aceite.** DEC registrada e aprovada ANTES do Builder; medição de impacto documentada;
+regeneração reprodutível pela ordem canônica; cobertura/viés ~1% metropolitano explicitamente tratado (não
+enviesar os 99% sem sinal de disputa); artefatos oficiais do M1 com **mtime inalterado**; suíte verde;
+`import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1 OFICIAL — só a camada paralela muda, e com DEC); DEC-008 (justificado pela
+validação out-of-fold do BLK-ATR-03); DEC-009 (demanda não vira preditor de magnitude); DEC-012 (dado pessoal
+protegido).
+
+---
+
 ## Epic BLK-LTV — Integração Lifetime × Motor de Expansão (eixo retenção territorial, camada paralela READ-ONLY sobre o M1)
 
 **Objetivo do epic.** Validar se o perfil do território prevê a retenção/LTV da carteira, para a
