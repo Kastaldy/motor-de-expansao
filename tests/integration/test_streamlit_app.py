@@ -5192,6 +5192,457 @@ def test_gerar_payloads_relatorio_pontual_para_pin_sem_base_retorna_none():
     assert out is None
 
 
+# --- BLK-RELPON-04: Relatorio Pontual em lote (fila de enderecos pesquisados) ---
+
+def test_gerar_payloads_relatorio_pontual_para_pin_repassa_rotulo():
+    """`rotulo` e opcional (default None, chamadores existentes inalterados) e repassado
+    a `gerar_payloads_download_relatorio_censitario` quando informado (emenda DEC-005)."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import gerar_payloads_relatorio_pontual_para_pin
+
+    df = pd.DataFrame([{
+        "hex_id": "abc", "lat": -15.79, "lng": -47.88,
+        "uf": "DF", "nome_municipio": "BRASILIA", "cod_municipio": "5300108",
+    }])
+
+    class _Payloads:
+        pdf_bytes = b"%PDF-1.4 fake"
+        pdf_filename = "rel.pdf"
+
+    with (
+        mock.patch(
+            "motor_expansao.dashboard.pages._resolve_censo_context",
+            return_value={
+                "uf": "DF", "cod_municipio": "5300108",
+                "nome_municipio": "BRASILIA", "hex_id": "abc",
+            },
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.analisar_ponto_censitario_setores",
+            return_value={},
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_mapas_censitarios_combinados",
+            return_value={},
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.lookup_hex_by_coord", return_value=None
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_download_relatorio_censitario",
+            return_value=_Payloads(),
+        ) as gen_mock,
+    ):
+        # Com rotulo explicito.
+        gerar_payloads_relatorio_pontual_para_pin(
+            (-15.79, -47.88), df,
+            censo_geo_loader=lambda uf, cod: pd.DataFrame({"a": [1]}),
+            rotulo="Av. Teste, 123",
+        )
+        assert gen_mock.call_args.kwargs.get("rotulo") == "Av. Teste, 123"
+
+        # Sem rotulo (comportamento atual do chamador existente `render_pdf_download_topo`).
+        gerar_payloads_relatorio_pontual_para_pin(
+            (-15.79, -47.88), df,
+            censo_geo_loader=lambda uf, cod: pd.DataFrame({"a": [1]}),
+        )
+        assert gen_mock.call_args.kwargs.get("rotulo") is None
+
+
+def _relpon_button_only(*keys_esperadas: str):
+    """Side effect de `st.button`: retorna True so para as `key`s informadas."""
+    def _side_effect(*args, **kwargs):
+        return kwargs.get("key") in keys_esperadas
+    return _side_effect
+
+
+def _relpon_expander_cm():
+    import unittest.mock as mock
+    cm = mock.MagicMock()
+    cm.__enter__ = mock.Mock(return_value=cm)
+    cm.__exit__ = mock.Mock(return_value=False)
+    return cm
+
+
+def test_render_relatorio_pontual_lote_fila_vazia_nao_renderiza():
+    """Fila vazia (sem session_state previo, sem search_pin): nenhum botao de lote e
+    renderizado; fluxo de 1 ponto (render_pdf_download_topo) fica intocado por este bloco."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import render_relatorio_pontual_lote
+
+    session: dict = {}
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch("streamlit.button") as button_mock,
+    ):
+        render_relatorio_pontual_lote(None, pd.DataFrame(), key_suffix="topo")
+
+    button_mock.assert_not_called()
+    assert "relpon_lote_fila" not in session
+
+
+def test_relpon_lote_controls_adicionar_item():
+    """Clique em '+ Adicionar a fila' inclui 1 item com o rotulo do texto DIGITADO
+    (coord_search_input), id=0 e incrementa relpon_lote_next_id para 1."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import _render_relpon_lote_controls
+
+    session: dict = {"coord_search_input": "Av. Teste, 123"}
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch(
+            "streamlit.button",
+            side_effect=_relpon_button_only("btn_relpon_lote_add_topo"),
+        ),
+        mock.patch("streamlit.expander", return_value=_relpon_expander_cm()),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.caption"),
+    ):
+        _render_relpon_lote_controls((-23.55, -46.63), key_suffix="topo")
+
+    fila = session["relpon_lote_fila"]
+    assert len(fila) == 1
+    assert fila[0] == {
+        "id": 0, "rotulo": "Av. Teste, 123", "lat": -23.55, "lng": -46.63,
+    }
+    assert session["relpon_lote_next_id"] == 1
+
+
+def test_relpon_lote_controls_adicionar_item_fallback_coordenada():
+    """Sem texto no campo de busca (campo vazio/ausente), o rotulo cai no fallback
+    'lat, lng' formatado."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import _render_relpon_lote_controls
+
+    session: dict = {}
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch(
+            "streamlit.button",
+            side_effect=_relpon_button_only("btn_relpon_lote_add_topo"),
+        ),
+        mock.patch("streamlit.expander", return_value=_relpon_expander_cm()),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.caption"),
+    ):
+        _render_relpon_lote_controls((-23.55, -46.63), key_suffix="topo")
+
+    fila = session["relpon_lote_fila"]
+    assert fila[0]["rotulo"] == "-23.55000, -46.63000"
+
+
+def test_render_relatorio_pontual_lote_um_item_gera_e_baixa():
+    """Fila com 1 item -> "Gerar Relatorios Pontuais (1)" gera 1 PDF; o download por item
+    e o atalho "ultimo" aparecem, ambos apontando para o mesmo (unico) item."""
+    import unittest.mock as mock
+
+    class _Result:
+        pdf_bytes = b"%PDF-1.4 fake"
+        pdf_filename = "relatorio_a.pdf"
+
+    session: dict = {
+        "relpon_lote_fila": [
+            {"id": 0, "rotulo": "Av. Teste, 123", "lat": -23.55, "lng": -46.63},
+        ],
+        "relpon_lote_next_id": 1,
+    }
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch(
+            "streamlit.button",
+            side_effect=_relpon_button_only("btn_gerar_relpon_lote_topo"),
+        ),
+        mock.patch("streamlit.expander", return_value=_relpon_expander_cm()),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.progress", return_value=mock.MagicMock()),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_relatorio_pontual_para_pin",
+            return_value=_Result(),
+        ) as gen_mock,
+        mock.patch("streamlit.download_button") as dl_mock,
+    ):
+        streamlit_app.render_relatorio_pontual_lote(
+            None, pd.DataFrame(), key_suffix="topo"
+        )
+
+    gen_mock.assert_called_once()
+    assert gen_mock.call_args.kwargs.get("rotulo") == "Av. Teste, 123"
+    # 1 download do item + 1 do atalho "ultimo" (mesmo item, ver criterios de aceite do plano).
+    assert dl_mock.call_count == 2
+    keys = [c.kwargs.get("key") for c in dl_mock.call_args_list]
+    assert "dl_relpon_lote_topo_0_0" in keys
+    assert "dl_relpon_lote_ultimo_topo" in keys
+    labels = [c.args[0] for c in dl_mock.call_args_list if c.args]
+    assert any("Av. Teste, 123" in lb for lb in labels)
+
+
+def test_render_relatorio_pontual_lote_multiplos_itens_progresso_e_atalho_ultimo():
+    """Fila com N>1: progresso i/N visivel; N downloads por item; atalho "ultimo"
+    referencia o ULTIMO item da fila (nao o primeiro)."""
+    import unittest.mock as mock
+
+    class _Result:
+        def __init__(self, rotulo: str):
+            self.pdf_bytes = f"pdf-{rotulo}".encode()
+            self.pdf_filename = f"{rotulo}.pdf"
+
+    session: dict = {
+        "relpon_lote_fila": [
+            {"id": 0, "rotulo": "A", "lat": -1.0, "lng": -1.0},
+            {"id": 1, "rotulo": "B", "lat": -2.0, "lng": -2.0},
+            {"id": 2, "rotulo": "C", "lat": -3.0, "lng": -3.0},
+        ],
+        "relpon_lote_next_id": 3,
+    }
+    progress_mock = mock.MagicMock()
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch(
+            "streamlit.button",
+            side_effect=_relpon_button_only("btn_gerar_relpon_lote_topo"),
+        ),
+        mock.patch("streamlit.expander", return_value=_relpon_expander_cm()),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.progress", return_value=progress_mock),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_relatorio_pontual_para_pin",
+            side_effect=lambda pin, df, **kw: _Result(kw["rotulo"]),
+        ) as gen_mock,
+        mock.patch("streamlit.download_button") as dl_mock,
+    ):
+        streamlit_app.render_relatorio_pontual_lote(
+            None, pd.DataFrame(), key_suffix="topo"
+        )
+
+    assert gen_mock.call_count == 3
+    # progresso i/N: 3 chamadas intermediarias (0/3,1/3,2/3) + 1 final (3/3).
+    progress_texts = [c.kwargs.get("text") for c in progress_mock.progress.call_args_list]
+    assert any("Gerando 1/3" in t for t in progress_texts if t)
+    assert any("Gerando 2/3" in t for t in progress_texts if t)
+    assert any("Gerando 3/3" in t for t in progress_texts if t)
+    assert any("3/3 concluido" in t for t in progress_texts if t)
+    # 3 downloads por item + 1 atalho "ultimo" == 4.
+    assert dl_mock.call_count == 4
+    keys = [c.kwargs.get("key") for c in dl_mock.call_args_list]
+    assert "dl_relpon_lote_ultimo_topo" in keys
+    ultimo_call = next(c for c in dl_mock.call_args_list if c.kwargs.get("key") == "dl_relpon_lote_ultimo_topo")
+    assert "C" in ultimo_call.args[0]  # atalho aponta para o ULTIMO item (C), nao o primeiro (A)
+
+
+def test_render_relatorio_pontual_lote_item_falha_geracao_nao_aborta():
+    """Um item que falha a geracao (retorna None) avisa pelo rotulo; os demais itens
+    seguem gerando download normalmente (lote nao aborta)."""
+    import unittest.mock as mock
+
+    class _Result:
+        pdf_bytes = b"ok"
+        pdf_filename = "ok.pdf"
+
+    def _gen_side_effect(pin, df, **kw):
+        if kw["rotulo"] == "falha":
+            return None
+        return _Result()
+
+    session: dict = {
+        "relpon_lote_fila": [
+            {"id": 0, "rotulo": "falha", "lat": -1.0, "lng": -1.0},
+            {"id": 1, "rotulo": "ok", "lat": -2.0, "lng": -2.0},
+        ],
+        "relpon_lote_next_id": 2,
+    }
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch(
+            "streamlit.button",
+            side_effect=_relpon_button_only("btn_gerar_relpon_lote_topo"),
+        ),
+        mock.patch("streamlit.expander", return_value=_relpon_expander_cm()),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.progress", return_value=mock.MagicMock()),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_relatorio_pontual_para_pin",
+            side_effect=_gen_side_effect,
+        ),
+        mock.patch("streamlit.warning") as warn_mock,
+        mock.patch("streamlit.download_button") as dl_mock,
+    ):
+        streamlit_app.render_relatorio_pontual_lote(
+            None, pd.DataFrame(), key_suffix="topo"
+        )
+
+    warn_mock.assert_called_once()
+    assert "falha" in str(warn_mock.call_args.args[0])
+    # item "ok" (ultimo da fila) gera 1 download normal + 1 atalho "ultimo" == 2;
+    # item "falha" nao gera nenhum.
+    assert dl_mock.call_count == 2
+
+
+def test_relpon_lote_controls_remover_item():
+    """Clique no 'x' de um item remove-o da fila; os demais permanecem."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import _render_relpon_lote_controls
+
+    session: dict = {
+        "relpon_lote_fila": [
+            {"id": 0, "rotulo": "A", "lat": -1.0, "lng": -1.0},
+            {"id": 1, "rotulo": "B", "lat": -2.0, "lng": -2.0},
+        ],
+        "relpon_lote_next_id": 2,
+    }
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch(
+            "streamlit.button",
+            side_effect=_relpon_button_only("btn_relpon_lote_rem_topo_0"),
+        ),
+        mock.patch("streamlit.expander", return_value=_relpon_expander_cm()),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.caption"),
+    ):
+        _render_relpon_lote_controls(None, key_suffix="topo")
+
+    fila_ids = [item["id"] for item in session["relpon_lote_fila"]]
+    assert fila_ids == [1]
+
+
+def test_relpon_lote_controls_limpar_fila():
+    """Clique em 'Limpar fila' esvazia relpon_lote_fila; o contador next_id nao precisa
+    resetar (nao e requisito)."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import _render_relpon_lote_controls
+
+    session: dict = {
+        "relpon_lote_fila": [
+            {"id": 0, "rotulo": "A", "lat": -1.0, "lng": -1.0},
+        ],
+        "relpon_lote_next_id": 1,
+    }
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch(
+            "streamlit.button",
+            side_effect=_relpon_button_only("btn_relpon_lote_clear_topo"),
+        ),
+        mock.patch("streamlit.expander", return_value=_relpon_expander_cm()),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.caption"),
+    ):
+        _render_relpon_lote_controls(None, key_suffix="topo")
+
+    assert session["relpon_lote_fila"] == []
+
+
+def test_relpon_lote_fila_compartilhada_entre_topo_e_expander():
+    """D3: a fila (`relpon_lote_fila`) e UMA SO chave de session_state, lida identicamente
+    por qualquer key_suffix -- nao ha `relpon_lote_fila_topo`/`_expander` separadas."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import _render_relpon_lote_controls
+
+    session: dict = {
+        "relpon_lote_fila": [
+            {"id": 0, "rotulo": "Adicionado pelo topo", "lat": -1.0, "lng": -1.0},
+        ],
+        "relpon_lote_next_id": 1,
+    }
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch("streamlit.button", return_value=False),
+        mock.patch("streamlit.expander", return_value=_relpon_expander_cm()),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.caption") as caption_mock,
+    ):
+        _render_relpon_lote_controls(None, key_suffix="expander")
+
+    assert "relpon_lote_fila_topo" not in session
+    assert "relpon_lote_fila_expander" not in session
+    assert len(session["relpon_lote_fila"]) == 1
+    assert any(
+        "Adicionado pelo topo" in str(c.args[0]) for c in caption_mock.call_args_list if c.args
+    )
+
+
+def test_relpon_lote_anti_pii_sem_io_disco():
+    """A fila/lote NUNCA persiste em disco/log (so session_state): add, gerar, remover e
+    limpar nao chamam `open` em nenhum momento (verificado com `builtins.open` instrumentado
+    para levantar excecao se chamado; a suite tambem passa por revisao de codigo do QA)."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import _render_relpon_lote_controls
+
+    class _Result:
+        pdf_bytes = b"ok"
+        pdf_filename = "ok.pdf"
+
+    session: dict = {
+        "coord_search_input": "Av. Teste, 999",
+        "relpon_lote_fila": [
+            {"id": 0, "rotulo": "A", "lat": -1.0, "lng": -1.0},
+            {"id": 1, "rotulo": "B", "lat": -2.0, "lng": -2.0},
+        ],
+        "relpon_lote_next_id": 2,
+    }
+
+    def _forbid_open(*args, **kwargs):
+        raise AssertionError(f"I/O de arquivo nao esperado: open({args!r}, {kwargs!r})")
+
+    with (
+        mock.patch("streamlit.session_state", session),
+        mock.patch("builtins.open", side_effect=_forbid_open),
+        mock.patch("streamlit.expander", return_value=_relpon_expander_cm()),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.progress", return_value=mock.MagicMock()),
+        mock.patch(
+            "motor_expansao.dashboard.pages.gerar_payloads_relatorio_pontual_para_pin",
+            return_value=_Result(),
+        ),
+        mock.patch("streamlit.download_button"),
+    ):
+        # add (novo ponto, lat/lng diferentes dos ja presentes na fila)
+        with mock.patch(
+            "streamlit.button",
+            side_effect=_relpon_button_only("btn_relpon_lote_add_topo"),
+        ):
+            _render_relpon_lote_controls((-23.55, -46.63), key_suffix="topo")
+        assert len(session["relpon_lote_fila"]) == 3
+
+        # gerar (lote completo, 3 itens)
+        with mock.patch(
+            "streamlit.button",
+            side_effect=_relpon_button_only("btn_gerar_relpon_lote_topo"),
+        ):
+            streamlit_app.render_relatorio_pontual_lote(
+                None, pd.DataFrame(), key_suffix="topo"
+            )
+
+        # remover 1 item
+        with mock.patch(
+            "streamlit.button",
+            side_effect=_relpon_button_only("btn_relpon_lote_rem_topo_0"),
+        ):
+            _render_relpon_lote_controls(None, key_suffix="topo")
+        assert len(session["relpon_lote_fila"]) == 2
+
+        # limpar o restante
+        with mock.patch(
+            "streamlit.button",
+            side_effect=_relpon_button_only("btn_relpon_lote_clear_topo"),
+        ):
+            _render_relpon_lote_controls(None, key_suffix="topo")
+
+    assert session["relpon_lote_fila"] == []
+
+
 def test_render_hex_search_result_compacto_usa_expander_colapsado():
     """Item Vini 2026-06-16: o card de hex pesquisado vai num expander COLAPSADO,
     para nao empurrar o conteudo das abas. Verifica expanded=False e que as metricas
@@ -5302,6 +5753,11 @@ def test_inject_styles_cobre_componentes_baseweb():
     assert 'data-testid="stDownloadButton"' in css
     assert ".st-key-btn_gerar_pdf_topo" in css
     assert "width: 260px" in css
+    # BLK-RELPON-04: botoes de GERAR/atalho do lote do Relatorio Pontual tambem em 260px.
+    assert ".st-key-btn_gerar_relpon_lote_topo" in css
+    assert ".st-key-btn_gerar_relpon_lote_expander" in css
+    assert ".st-key-btn_relpon_lote_ultimo_topo" in css
+    assert ".st-key-btn_relpon_lote_ultimo_expander" in css
 
 
 # ── BLK-MAP-01: filtro individual de redes ───────────────────────────────────

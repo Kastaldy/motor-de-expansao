@@ -6796,3 +6796,86 @@ seria **follow-up com gate próprio**, não este bloco.
 - BLK-TP-08-FU (concluído 2026-07-02) — ver tasks/completed.md
 
 - BLK-TP-08-FU (concluído 2026-07-02) — ver tasks/completed.md
+
+---
+
+### BLK-RELPON-04 — Relatório Pontual em lote (fila de endereços pesquisados)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (nova função de UI no fluxo de geração do Relatório Pontual; **READ-ONLY sobre o M1**; sem DEC nova; reusa a geração existente do PDF pontual e a busca de endereço já existente). |
+| **Prioridade** | Pedido direto de Vinicius (2026-07-06). |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: modo de "baixar em lote" + gatilho de acúmulo]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (toca só `src/motor_expansao/dashboard/pages.py`; reusa `gerar_payloads_relatorio_pontual_para_pin` e `render_coord_search_sidebar` sem alterá-los no núcleo). Precedente direto: BLK-RELMUN-04 (padrão de lote) e BLK-RELMUN-04-FU1 (largura). |
+| **Autonomia** | **manual (NÃO loop-safe)** — feature de UI com decisões de produto; trilha do Vini. NÃO marcar loop-safe. |
+
+**Pedido de Vinicius (2026-07-06).** Os Relatórios Pontuais também devem poder ser gerados **em lote**.
+Como não há multiselect de pontos, o lote se forma **armazenando os endereços pesquisados** antes de
+iniciar a geração. Requisitos explícitos:
+- **Acumular** os endereços/coordenadas pesquisados numa fila (antes de gerar).
+- **Gerar em lote** um Relatório Pontual por endereço da fila.
+- **Dois modos de download:** **baixar em lote** (todos) **ou** **baixar apenas o último solicitado**.
+- **Padrão de tamanho de botão** igual aos demais (reusar a regra CSS de 260px do `inject_styles`,
+  como no BLK-RELMUN-04-FU1 — adicionar as novas `st-key` à mesma regra).
+- **Dois pontos na página:** a opção deve ficar **na parte superior** (perto do menu, junto de
+  `render_pdf_download_topo`) **e na inferior** (fluxo do Mapa Territorial,
+  `render_relatorio_pontual_censitario`).
+
+**Contexto (ancorado em `src/motor_expansao/dashboard/pages.py`).**
+- Busca de endereço/coordenada/link Maps → `render_coord_search_sidebar` (~linha 769) devolve UM
+  `search_pin=(lat,lng)` por vez (DEC-010: coord / endereço via Nominatim / link Maps). O texto
+  digitado é o rótulo natural de cada ponto.
+- Geração do PDF pontual: `gerar_payloads_relatorio_pontual_para_pin` (~2932) para um pin.
+- Ponto de geração **superior**: `render_pdf_download_topo` (~2989) — botão `btn_gerar_pdf_topo`
+  (~3011), download `dl_pdf_topo` (~3043), rótulos "Gerar PDF do ponto"/"Baixar PDF do ponto".
+- Ponto de geração **inferior**: `render_relatorio_pontual_censitario` (~3236), no Mapa Territorial.
+- Regra CSS de largura (260px) em `inject_styles` (~442): hoje cobre `stDownloadButton` +
+  `btn_gerar_pdf_topo` + `btn_gerar_relmun_topo` + `btn_gerar_relmun_lote_topo/_expander`.
+- Precedente de acúmulo em fila via `session_state` já existe no multihex (`btn_multihex_add`/`_remove`/
+  `_clear`, lista copiável) — reusar o padrão de UX de fila.
+
+**Escopo permitido (READ-ONLY M1, só UI).**
+- **Fila de endereços** em `session_state` (chave dedicada, distinta das do municipal): cada item guarda
+  `(rotulo_endereço, lat, lng)`; UI para **adicionar o ponto pesquisado atual**, **remover** e **limpar**
+  (espelhando o multihex). Sobrevive a rerun.
+- **Botão "Gerar Relatorios Pontuais (N)"** nos dois pontos (topo + inferior): loop pela fila
+  reusando `gerar_payloads_relatorio_pontual_para_pin`, com **progresso i/N**; cache dos payloads por
+  ponto em `session_state`.
+- **Downloads:** modo **lote** (um `st.download_button` por endereço, rotulado "Baixar PDF — <endereço>",
+  `key` único — como no municipal) **e** atalho **"Baixar apenas o último solicitado"** (o ponto mais
+  recente). Ver decisão D1 sobre "lote = N botões vs. um .zip".
+- **Rótulo na capa:** passar o endereço como `rotulo` do PDF pontual (a interface já aceita `rotulo`
+  opcional — emenda da DEC-005), para cada relatório do lote sair identificado.
+- **Largura dos botões:** adicionar as novas `st-key` à regra de 260px do `inject_styles` (NÃO usar
+  `use_container_width`, que estica o botão — lição do BLK-RELMUN-04-FU1).
+- **Fluxo de 1 ponto:** preservado (o botão "Gerar PDF do ponto"/"Baixar PDF do ponto" atual continua
+  funcionando para o ponto pesquisado avulso).
+
+**Decisões a confirmar (produto).**
+- **D1 — "Baixar em lote" = N botões rotulados (como o municipal) ou um único `.zip`?** Recomendação:
+  manter consistência com o BLK-RELMUN-04 (**N botões rotulados**) e, se houver apetite, **adicionar**
+  um `.zip` como conveniência de "baixar tudo". Confirmar no gate.
+- **D2 — Gatilho de acúmulo:** botão explícito "Adicionar à fila" do ponto pesquisado (recomendado,
+  espelha o multihex) vs. acumular automaticamente cada busca. Recomendação: **botão explícito** (evita
+  poluir a fila com buscas exploratórias).
+- **D3 — Escopo dos dois pontos:** a fila é **compartilhada** entre topo e inferior (mesma
+  `session_state`), com os botões espelhados nos dois lugares (recomendado), para o operador gerar de
+  onde estiver.
+
+**Fora de escopo.** Núcleo do relatório pontual (`censo_point.py`/`censo_map.py`/`censo_report.py`:
+método de intersecção `setor_censitario_intersecao_area_1p5km`, raio 1,5 km, `RAIO_CENSITARIO_DEFAULT_KM`,
+páginas/estrutura do PDF, marca d'água anti-PII) — **só consumir**; `score_priorizacao`/M1/artefatos
+oficiais; `flag_sam`; Relatório Municipal (já feito no BLK-RELMUN-04). Sem dependência de rede nova
+(geocoding Nominatim/DEC-010 e tiles/DEC-004 já existentes).
+
+**Guardrails.** READ-ONLY sobre o M1 (§5). Reusa a geração e a busca existentes; não altera o núcleo
+`censo_*`. Anti-PII: a fila de endereços vive só em `session_state` (efêmera), **não é persistida** em
+disco/log; a marca d'água que carimba o solicitante (BLK-EST-03) e o `set_compression(False)` seguem.
+Sem dependência de rede nova (§2 preservado; geocoding/tiles já cobertos por DEC-010/DEC-004).
+
+**Critério de aceite.** Com a fila com >1 endereço, um botão gera N relatórios pontuais sob demanda
+(progresso i/N) e oferece download **em lote** (1 por endereço, rotulado) **e** "baixar só o último";
+com fila vazia/1 ponto o fluxo atual é preservado; os botões têm a mesma largura (260px) dos demais; a
+opção aparece no topo **e** na parte inferior; suíte de testes verde; ruff+mypy limpos; revisão visual
+humana aprovada.

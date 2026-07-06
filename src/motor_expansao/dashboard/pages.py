@@ -436,13 +436,18 @@ def inject_styles() -> None:
                e "Baixar PDF do ponto"/"Baixar PDF do Relatorio Municipal") e os botoes
                "Gerar PDF do ponto" e "Gerar PDF do Relatorio Municipal" (BLK-RELMUN-01-FU1)
                e os botoes de lote "Gerar Relatorios (N)" (BLK-RELMUN-04-FU1, topo+expander),
+               e os botoes de lote/ultimo do Relatorio Pontual (BLK-RELPON-04, topo+expander),
                por st-key. NAO afeta os botoes inline pequenos do multihex (+/-/x) nem o
                seletor de abas. */
             [data-testid="stDownloadButton"] button,
             .st-key-btn_gerar_pdf_topo button,
             .st-key-btn_gerar_relmun_topo button,
             .st-key-btn_gerar_relmun_lote_topo button,
-            .st-key-btn_gerar_relmun_lote_expander button {{
+            .st-key-btn_gerar_relmun_lote_expander button,
+            .st-key-btn_gerar_relpon_lote_topo button,
+            .st-key-btn_gerar_relpon_lote_expander button,
+            .st-key-btn_relpon_lote_ultimo_topo button,
+            .st-key-btn_relpon_lote_ultimo_expander button {{
                 width: 260px;
                 max-width: 100%;
             }}
@@ -2938,12 +2943,19 @@ def gerar_payloads_relatorio_pontual_para_pin(
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
+    rotulo: str | None = None,
 ) -> Any | None:
     """Caminho pesado -> payloads de download (PDF/CSV) do Relatorio Pontual Censitario.
 
     READ-ONLY sobre o M1 (reusa o mesmo metodo de intersecao/raio do dashboard). Retorna
     `None` quando a coordenada nao resolve UF/municipio ou nao ha base setorial carregada.
-    Usado pelo 2o botao de download (topo, abaixo do seletor de abas).
+    Usado pelo 2o botao de download (topo, abaixo do seletor de abas) e pelo lote de
+    enderecos pesquisados (BLK-RELPON-04, `render_relatorio_pontual_lote`).
+
+    `rotulo` e opcional (default `None`, comportamento identico aos chamadores existentes
+    que nao o passam): repassado a `gerar_payloads_download_relatorio_censitario` (parametro
+    ja existente em `censo_report.py`, emenda DEC-005) para exibir o endereco pesquisado na
+    capa do PDF em vez da coordenada crua.
     """
     if search_pin is None or censo_geo_loader is None:
         return None
@@ -2983,6 +2995,7 @@ def gerar_payloads_relatorio_pontual_para_pin(
         residual=residual,
         ultra_dir=Path("data/ultra"),
         template="classico",
+        rotulo=rotulo,
     )
 
 
@@ -3041,6 +3054,181 @@ def render_pdf_download_topo(
             file_name=cached["pdf_filename"],
             mime="application/pdf",
             key="dl_pdf_topo",
+        )
+
+
+# --- BLK-RELPON-04: Relatorio Pontual em lote (fila de enderecos pesquisados) ---
+
+def _relpon_lote_rotulo_atual(lat: float, lng: float) -> str:
+    """Rotulo do item de fila: texto DIGITADO pela busca (nao o resultado resolvido).
+
+    Fallback para a coordenada formatada quando o campo de busca esta vazio (ex.: operador
+    limpou o campo apos buscar). Funcao pura, sem `st.*` de renderizacao, so leitura de
+    `session_state` — testavel isolada.
+    """
+    raw = str(st.session_state.get("coord_search_input", "") or "").strip()
+    return raw or f"{lat:.5f}, {lng:.5f}"
+
+
+def _render_relpon_lote_controls(
+    search_pin: tuple[float, float] | None,
+    *,
+    key_suffix: str,
+) -> None:
+    """Fila de enderecos pesquisados para o lote do Relatorio Pontual (session_state, efemera).
+
+    Espelha o padrao de fila do multihex (`_render_multihex_controls`): incluir, remover,
+    limpar. NAO persiste em disco/log — vive so em `st.session_state`. READ-ONLY sobre o M1.
+    A fila (`relpon_lote_fila`/`relpon_lote_next_id`) e COMPARTILHADA entre os dois pontos de
+    renderizacao (topo/expander, D3); so os `key` dos widgets distinguem por `key_suffix`.
+    """
+    fila: list[dict[str, Any]] = list(st.session_state.get("relpon_lote_fila", []))
+
+    if search_pin is not None:
+        lat, lng = search_pin
+        rotulo_atual = _relpon_lote_rotulo_atual(lat, lng)
+        ja_na_fila = any(
+            item["lat"] == lat and item["lng"] == lng and item["rotulo"] == rotulo_atual
+            for item in fila
+        )
+        if not ja_na_fila:
+            if st.button("+ Adicionar a fila", key=f"btn_relpon_lote_add_{key_suffix}"):
+                next_id = int(st.session_state.get("relpon_lote_next_id", 0))
+                fila = fila + [{"id": next_id, "rotulo": rotulo_atual, "lat": lat, "lng": lng}]
+                st.session_state["relpon_lote_fila"] = fila
+                st.session_state["relpon_lote_next_id"] = next_id + 1
+
+    if not fila:
+        return
+
+    with st.expander(f"Fila de relatorios pontuais ({len(fila)})", expanded=len(fila) <= 10):
+        for item in list(fila):
+            col_txt, col_btn = st.columns([8, 1])
+            with col_txt:
+                st.caption(f"{item['rotulo']} — ({item['lat']:.5f}, {item['lng']:.5f})")
+            with col_btn:
+                if st.button("x", key=f"btn_relpon_lote_rem_{key_suffix}_{item['id']}"):
+                    st.session_state["relpon_lote_fila"] = [
+                        h for h in st.session_state["relpon_lote_fila"] if h["id"] != item["id"]
+                    ]
+        if st.button("Limpar fila", key=f"btn_relpon_lote_clear_{key_suffix}"):
+            st.session_state["relpon_lote_fila"] = []
+
+
+def render_relatorio_pontual_lote(
+    search_pin: tuple[float, float] | None,
+    df: pd.DataFrame,
+    *,
+    key_suffix: str,
+    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
+    censo_geo_dir: Path | None = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
+) -> None:
+    """Fila + geracao em lote do Relatorio Pontual Censitario (BLK-RELPON-04).
+
+    Espelha `render_relatorio_municipal_download_topo`/`render_relatorio_municipal_expander`:
+    progresso i/N, cache de payloads em `session_state` por item da fila, N `download_button`
+    (rotulados pelo endereco pesquisado) + atalho "baixar so o ultimo solicitado". READ-ONLY
+    sobre o M1; nao chama nenhuma funcao do nucleo `censo_*` diretamente (so via o wrapper
+    `gerar_payloads_relatorio_pontual_para_pin`, ja usado pelo fluxo de 1 ponto).
+
+    O cache de payloads gerados (`relpon_lote_{key_suffix}_payloads`) e POR PONTO (topo/
+    expander nao compartilham payload cacheado, mesmo padrao de `relmun_lote_topo_payloads`
+    vs `relmun_lote_expander_payloads`); a fila em si (`relpon_lote_fila`) e compartilhada (D3).
+    """
+    _render_relpon_lote_controls(search_pin, key_suffix=key_suffix)
+
+    fila: list[dict[str, Any]] = list(st.session_state.get("relpon_lote_fila", []))
+    if not fila:
+        return
+
+    n = len(fila)
+    cache_state_key = f"relpon_lote_{key_suffix}_payloads"
+    gerar = st.button(
+        f"Gerar Relatorios Pontuais ({n})",
+        key=f"btn_gerar_relpon_lote_{key_suffix}",
+        help="Gera um Relatorio Pontual Censitario (1,5 km) para cada endereco da fila.",
+    )
+    if gerar:
+        prog = st.progress(0.0, text=f"Gerando 0/{n}...")
+        payloads: dict[int, dict[str, Any]] = dict(st.session_state.get(cache_state_key, {}))
+        for i, item in enumerate(fila, start=1):
+            prog.progress((i - 1) / n, text=f"Gerando {i}/{n}: {item['rotulo']}...")
+            result = gerar_payloads_relatorio_pontual_para_pin(
+                (item["lat"], item["lng"]),
+                df,
+                censo_geo_loader=censo_geo_loader,
+                censo_geo_dir=censo_geo_dir,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
+                raio_km=raio_km,
+                rotulo=item["rotulo"],
+            )
+            if result is None:
+                st.warning(f"Nao foi possivel gerar o relatorio para '{item['rotulo']}'.")
+                continue
+            payloads[item["id"]] = {
+                "rotulo": item["rotulo"],
+                "pdf_bytes": result.pdf_bytes,
+                "pdf_filename": result.pdf_filename,
+            }
+        prog.progress(1.0, text=f"{n}/{n} concluido")
+        prog.empty()
+        st.session_state[cache_state_key] = payloads
+
+    cached = st.session_state.get(cache_state_key, {})
+    for i, item in enumerate(fila):
+        payload = cached.get(item["id"])
+        if not payload:
+            continue
+        st.download_button(
+            f"Baixar PDF — {payload['rotulo']}",
+            data=payload["pdf_bytes"],
+            file_name=payload["pdf_filename"],
+            mime="application/pdf",
+            key=f"dl_relpon_lote_{key_suffix}_{i}_{item['id']}",
+        )
+
+    # Atalho: baixar apenas o ultimo solicitado (item mais recente da fila).
+    last_item = fila[-1]
+    last_cached = cached.get(last_item["id"])
+    if last_cached is None:
+        if st.button(
+            "Gerar PDF do ultimo solicitado",
+            key=f"btn_relpon_lote_ultimo_{key_suffix}",
+            help=f"Gera so o relatorio de '{last_item['rotulo']}' (item mais recente da fila).",
+        ):
+            with st.spinner("Gerando PDF..."):
+                result = gerar_payloads_relatorio_pontual_para_pin(
+                    (last_item["lat"], last_item["lng"]),
+                    df,
+                    censo_geo_loader=censo_geo_loader,
+                    censo_geo_dir=censo_geo_dir,
+                    competitors_df=competitors_df,
+                    ultra_df=ultra_df,
+                    raio_km=raio_km,
+                    rotulo=last_item["rotulo"],
+                )
+            if result is None:
+                st.warning("Nao foi possivel gerar o PDF do ultimo ponto solicitado.")
+            else:
+                cached = dict(cached)
+                cached[last_item["id"]] = {
+                    "rotulo": last_item["rotulo"],
+                    "pdf_bytes": result.pdf_bytes,
+                    "pdf_filename": result.pdf_filename,
+                }
+                st.session_state[cache_state_key] = cached
+                last_cached = cached[last_item["id"]]
+    if last_cached:
+        st.download_button(
+            f"Baixar PDF do ultimo — {last_cached['rotulo']}",
+            data=last_cached["pdf_bytes"],
+            file_name=last_cached["pdf_filename"],
+            mime="application/pdf",
+            key=f"dl_relpon_lote_ultimo_{key_suffix}",
         )
 
 
@@ -4374,6 +4562,16 @@ def render_mapa_territorial(
             render_relatorio_pontual_censitario(
                 effective_pin,
                 df,
+                censo_geo_loader=censo_geo_loader,
+                censo_geo_dir=censo_geo_dir,
+                competitors_df=competitors_df,
+                ultra_df=ultra_df,
+            )
+            st.markdown("---")
+            render_relatorio_pontual_lote(
+                search_pin,  # NAO effective_pin/click_coord — so buscas com endereco (BLK-RELPON-04)
+                df,
+                key_suffix="expander",
                 censo_geo_loader=censo_geo_loader,
                 censo_geo_dir=censo_geo_dir,
                 competitors_df=competitors_df,

@@ -1131,3 +1131,16 @@ PoC opt-in, com fallback gracioso, espelhando a mitigação da DEC-004); §5 (vi
 nem altera M1); §6.1 (critérios loop-safe). Precedente de desvio cosmético restrito a um caminho: DEC-004.
 
 ---
+
+## Relatório Pontual Censitário — geração em lote (2026-07-06, pedido de Vini)
+
+> Espelha o **BLK-RELMUN-04** (Relatório Municipal em lote), agora para o **Relatório Pontual
+> Censitário** (raio 1,5 km). Diferença estrutural: o municipal itera sobre um *multiselect* de
+> municípios já existente; o pontual é dirigido por **um endereço/coordenada pesquisado por vez** →
+> o mecanismo de lote é **acumular os endereços pesquisados** numa fila antes de gerar. Camada de
+> visualização/relatório — **READ-ONLY sobre o M1** (§5).
+
+- BLK-RELPON-04 (concluído 2026-07-06) — ver tasks/completed.md
+
+
+---
