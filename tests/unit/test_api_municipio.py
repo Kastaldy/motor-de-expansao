@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from motor_expansao.api import service, telegram_bot as bot
+from motor_expansao.api import service
+from motor_expansao.api import telegram_bot as bot
 from motor_expansao.api.settings import Settings
 
 _S = Settings(bot_senha="abre", telegram_token="x")
