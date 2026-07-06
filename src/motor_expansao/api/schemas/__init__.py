@@ -16,6 +16,8 @@ __all__ = [
     "ErrorResponse",
     "AnalisarRequest",
     "AnalisarResponseJSON",
+    "AnalisarMunicipioRequest",
+    "MunicipiosResponse",
 ]
 
 
@@ -54,6 +56,32 @@ class AnalisarRequest(BaseModel):
         if not tem_latlng and not self.maps_url:
             raise ValueError("Forneca {lat,lng} ou maps_url")
         return self
+
+
+class AnalisarMunicipioRequest(BaseModel):
+    """Relatorio Municipal: UF + nome do municipio (aceita sem acento)."""
+
+    uf: str = Field(examples=["TO"], description="Sigla da UF (2 letras).")
+    municipio: str = Field(examples=["Palmas"], description="Nome do municipio (sem acento tolerado).")
+    formato: Literal["pdf"] = "pdf"
+    solicitante: str | None = Field(
+        default=None,
+        description="Nome de quem pediu; carimba a marca d'agua do PDF.",
+        examples=["Juan"],
+    )
+
+    @model_validator(mode="after")
+    def _exige_campos(self) -> AnalisarMunicipioRequest:
+        if not (self.uf or "").strip() or not (self.municipio or "").strip():
+            raise ValueError("Forneca uf e municipio")
+        return self
+
+
+class MunicipiosResponse(BaseModel):
+    """Lista de municipios de uma UF (para escolha no bot)."""
+
+    uf: str = Field(examples=["TO"])
+    municipios: list[str] = Field(examples=[["Palmas", "Araguaina", "Gurupi"]])
 
 
 class AnalisarResponseJSON(BaseModel):

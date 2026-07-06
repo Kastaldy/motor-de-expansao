@@ -111,6 +111,11 @@ def create_app() -> FastAPI:
 
     app.include_router(analisar.router, prefix=settings.api_prefix)
 
+    # BLK-RELMUN: GET /ufs, GET /municipios/{uf}, POST /analisar-municipio
+    from motor_expansao.api.routes import analisar_municipio
+
+    app.include_router(analisar_municipio.router, prefix=settings.api_prefix)
+
     return app
 
 
