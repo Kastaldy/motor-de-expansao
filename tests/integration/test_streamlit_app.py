@@ -5336,8 +5336,8 @@ def test_relpon_lote_controls_adicionar_item_fallback_coordenada():
 
 
 def test_render_relatorio_pontual_lote_um_item_gera_e_baixa():
-    """Fila com 1 item -> "Gerar Relatorios Pontuais (1)" gera 1 PDF; o download por item
-    e o atalho "ultimo" aparecem, ambos apontando para o mesmo (unico) item."""
+    """Fila com 1 item -> "Gerar Relatorios Pontuais (1)" gera 1 PDF; 1 download por item.
+    O atalho "ultimo" foi removido (BLK-RELPON-04-FU1)."""
     import unittest.mock as mock
 
     class _Result:
@@ -5372,18 +5372,18 @@ def test_render_relatorio_pontual_lote_um_item_gera_e_baixa():
 
     gen_mock.assert_called_once()
     assert gen_mock.call_args.kwargs.get("rotulo") == "Av. Teste, 123"
-    # 1 download do item + 1 do atalho "ultimo" (mesmo item, ver criterios de aceite do plano).
-    assert dl_mock.call_count == 2
+    # 1 download do unico item (atalho "ultimo" removido no FU1).
+    assert dl_mock.call_count == 1
     keys = [c.kwargs.get("key") for c in dl_mock.call_args_list]
     assert "dl_relpon_lote_topo_0_0" in keys
-    assert "dl_relpon_lote_ultimo_topo" in keys
+    assert not any(k == "dl_relpon_lote_ultimo_topo" for k in keys)
     labels = [c.args[0] for c in dl_mock.call_args_list if c.args]
     assert any("Av. Teste, 123" in lb for lb in labels)
 
 
-def test_render_relatorio_pontual_lote_multiplos_itens_progresso_e_atalho_ultimo():
-    """Fila com N>1: progresso i/N visivel; N downloads por item; atalho "ultimo"
-    referencia o ULTIMO item da fila (nao o primeiro)."""
+def test_render_relatorio_pontual_lote_multiplos_itens_progresso():
+    """Fila com N>1: progresso i/N visivel; N downloads (um por item), rotulados pelo
+    endereco. Atalho "ultimo" removido no BLK-RELPON-04-FU1."""
     import unittest.mock as mock
 
     class _Result:
@@ -5427,12 +5427,12 @@ def test_render_relatorio_pontual_lote_multiplos_itens_progresso_e_atalho_ultimo
     assert any("Gerando 2/3" in t for t in progress_texts if t)
     assert any("Gerando 3/3" in t for t in progress_texts if t)
     assert any("3/3 concluido" in t for t in progress_texts if t)
-    # 3 downloads por item + 1 atalho "ultimo" == 4.
-    assert dl_mock.call_count == 4
+    # 3 downloads (um por item); sem atalho "ultimo" (removido no FU1).
+    assert dl_mock.call_count == 3
     keys = [c.kwargs.get("key") for c in dl_mock.call_args_list]
-    assert "dl_relpon_lote_ultimo_topo" in keys
-    ultimo_call = next(c for c in dl_mock.call_args_list if c.kwargs.get("key") == "dl_relpon_lote_ultimo_topo")
-    assert "C" in ultimo_call.args[0]  # atalho aponta para o ULTIMO item (C), nao o primeiro (A)
+    assert not any(k == "dl_relpon_lote_ultimo_topo" for k in keys)
+    labels = [c.args[0] for c in dl_mock.call_args_list if c.args]
+    assert sorted(labels) == ["Baixar PDF A", "Baixar PDF B", "Baixar PDF C"]
 
 
 def test_render_relatorio_pontual_lote_item_falha_geracao_nao_aborta():
@@ -5479,9 +5479,8 @@ def test_render_relatorio_pontual_lote_item_falha_geracao_nao_aborta():
 
     warn_mock.assert_called_once()
     assert "falha" in str(warn_mock.call_args.args[0])
-    # item "ok" (ultimo da fila) gera 1 download normal + 1 atalho "ultimo" == 2;
-    # item "falha" nao gera nenhum.
-    assert dl_mock.call_count == 2
+    # item "ok" gera 1 download; item "falha" nao gera nenhum (atalho "ultimo" removido no FU1).
+    assert dl_mock.call_count == 1
 
 
 def test_relpon_lote_controls_remover_item():
@@ -5753,11 +5752,12 @@ def test_inject_styles_cobre_componentes_baseweb():
     assert 'data-testid="stDownloadButton"' in css
     assert ".st-key-btn_gerar_pdf_topo" in css
     assert "width: 260px" in css
-    # BLK-RELPON-04: botoes de GERAR/atalho do lote do Relatorio Pontual tambem em 260px.
+    # BLK-RELPON-04: botoes de GERAR do lote do Relatorio Pontual tambem em 260px.
     assert ".st-key-btn_gerar_relpon_lote_topo" in css
     assert ".st-key-btn_gerar_relpon_lote_expander" in css
-    assert ".st-key-btn_relpon_lote_ultimo_topo" in css
-    assert ".st-key-btn_relpon_lote_ultimo_expander" in css
+    # FU1: atalho "ultimo" removido -> seus seletores nao devem mais existir.
+    assert ".st-key-btn_relpon_lote_ultimo_topo" not in css
+    assert ".st-key-btn_relpon_lote_ultimo_expander" not in css
 
 
 # ── BLK-MAP-01: filtro individual de redes ───────────────────────────────────

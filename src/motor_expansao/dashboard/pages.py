@@ -445,9 +445,7 @@ def inject_styles() -> None:
             .st-key-btn_gerar_relmun_lote_topo button,
             .st-key-btn_gerar_relmun_lote_expander button,
             .st-key-btn_gerar_relpon_lote_topo button,
-            .st-key-btn_gerar_relpon_lote_expander button,
-            .st-key-btn_relpon_lote_ultimo_topo button,
-            .st-key-btn_relpon_lote_ultimo_expander button {{
+            .st-key-btn_gerar_relpon_lote_expander button {{
                 width: 260px;
                 max-width: 100%;
             }}
@@ -3129,10 +3127,11 @@ def render_relatorio_pontual_lote(
     """Fila + geracao em lote do Relatorio Pontual Censitario (BLK-RELPON-04).
 
     Espelha `render_relatorio_municipal_download_topo`/`render_relatorio_municipal_expander`:
-    progresso i/N, cache de payloads em `session_state` por item da fila, N `download_button`
-    (rotulados pelo endereco pesquisado) + atalho "baixar so o ultimo solicitado". READ-ONLY
-    sobre o M1; nao chama nenhuma funcao do nucleo `censo_*` diretamente (so via o wrapper
-    `gerar_payloads_relatorio_pontual_para_pin`, ja usado pelo fluxo de 1 ponto).
+    progresso i/N, cache de payloads em `session_state` por item da fila e N `download_button`
+    (rotulados pelo endereco pesquisado). READ-ONLY sobre o M1; nao chama nenhuma funcao do
+    nucleo `censo_*` diretamente (so via o wrapper `gerar_payloads_relatorio_pontual_para_pin`,
+    ja usado pelo fluxo de 1 ponto). O atalho "baixar so o ultimo solicitado" foi removido
+    (BLK-RELPON-04-FU1): duplicava o "Gerar/Baixar PDF do ponto" do fluxo de 1 ponto.
 
     O cache de payloads gerados (`relpon_lote_{key_suffix}_payloads`) e POR PONTO (topo/
     expander nao compartilham payload cacheado, mesmo padrao de `relmun_lote_topo_payloads`
@@ -3184,51 +3183,11 @@ def render_relatorio_pontual_lote(
         if not payload:
             continue
         st.download_button(
-            f"Baixar PDF — {payload['rotulo']}",
+            f"Baixar PDF {payload['rotulo']}",
             data=payload["pdf_bytes"],
             file_name=payload["pdf_filename"],
             mime="application/pdf",
             key=f"dl_relpon_lote_{key_suffix}_{i}_{item['id']}",
-        )
-
-    # Atalho: baixar apenas o ultimo solicitado (item mais recente da fila).
-    last_item = fila[-1]
-    last_cached = cached.get(last_item["id"])
-    if last_cached is None:
-        if st.button(
-            "Gerar PDF do ultimo solicitado",
-            key=f"btn_relpon_lote_ultimo_{key_suffix}",
-            help=f"Gera so o relatorio de '{last_item['rotulo']}' (item mais recente da fila).",
-        ):
-            with st.spinner("Gerando PDF..."):
-                result = gerar_payloads_relatorio_pontual_para_pin(
-                    (last_item["lat"], last_item["lng"]),
-                    df,
-                    censo_geo_loader=censo_geo_loader,
-                    censo_geo_dir=censo_geo_dir,
-                    competitors_df=competitors_df,
-                    ultra_df=ultra_df,
-                    raio_km=raio_km,
-                    rotulo=last_item["rotulo"],
-                )
-            if result is None:
-                st.warning("Nao foi possivel gerar o PDF do ultimo ponto solicitado.")
-            else:
-                cached = dict(cached)
-                cached[last_item["id"]] = {
-                    "rotulo": last_item["rotulo"],
-                    "pdf_bytes": result.pdf_bytes,
-                    "pdf_filename": result.pdf_filename,
-                }
-                st.session_state[cache_state_key] = cached
-                last_cached = cached[last_item["id"]]
-    if last_cached:
-        st.download_button(
-            f"Baixar PDF do ultimo — {last_cached['rotulo']}",
-            data=last_cached["pdf_bytes"],
-            file_name=last_cached["pdf_filename"],
-            mime="application/pdf",
-            key=f"dl_relpon_lote_ultimo_{key_suffix}",
         )
 
 
@@ -4559,19 +4518,22 @@ def render_mapa_territorial(
             "Relatório Pontual Censitário",
             expanded=effective_pin is not None,
         ):
-            render_relatorio_pontual_censitario(
-                effective_pin,
+            # BLK-RELPON-04-FU1: fila/lote renderizada ANTES do relatorio de 1 ponto para
+            # manter TODOS os botoes juntos no topo da secao (antes eram separados pelas 4
+            # imagens do relatorio + um "---"). search_pin (NAO effective_pin/click_coord):
+            # so buscas com endereco entram na fila.
+            render_relatorio_pontual_lote(
+                search_pin,
                 df,
+                key_suffix="expander",
                 censo_geo_loader=censo_geo_loader,
                 censo_geo_dir=censo_geo_dir,
                 competitors_df=competitors_df,
                 ultra_df=ultra_df,
             )
-            st.markdown("---")
-            render_relatorio_pontual_lote(
-                search_pin,  # NAO effective_pin/click_coord — so buscas com endereco (BLK-RELPON-04)
+            render_relatorio_pontual_censitario(
+                effective_pin,
                 df,
-                key_suffix="expander",
                 censo_geo_loader=censo_geo_loader,
                 censo_geo_dir=censo_geo_dir,
                 competitors_df=competitors_df,
