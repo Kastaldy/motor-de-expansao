@@ -31,6 +31,7 @@ dependencies = [
     "openlocationcode>=1.0.1",  # BLK-UI-09-FU2: Plus Code (Open Location Code) na busca
 
     # Analise
+    "matplotlib>=3.7.0",
     "scikit-learn>=1.5.0,<1.8",
     "scipy>=1.10.0,<2",  # camada de dimensionamento (goal-seek brentq do simulador)
 
