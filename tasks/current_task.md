@@ -4,14 +4,24 @@
 
 ID: BLK-UI-10
 Nome: PoC de repaginação do dashboard — tema denso (baixo) + mapa Leaflet client-side (médio)
-Status: CORREÇÃO APLICADA pelo Builder — aguarda QA (segunda tentativa)
+Status: CONCLUÍDO — QA APROVADO (segunda tentativa) + housekeeping executado
 Tipo: feature (PoC opt-in atrás de flag — visualização, READ-ONLY M1)
 Criticidade: baixa
-Esteira: Block Orchestrator (✓ concluído) → Builder (✗ incompleto) → QA (✗ reprovado) → Builder (✓ correção) → QA (segunda tentativa)
-Skill atual: Builder (✓ correção concluída)
-Próxima Skill: QA (segunda tentativa — suite FULL como gate único)
+Esteira: Block Orchestrator (✓) → Builder (✗ incompleto) → QA (✗ reprovado) → Builder (✓ correção) → QA (✓ APROVADO)
+Skill atual: QA (✓ APROVADO — ciclo concluído)
+Próxima Skill: nenhuma — merge + revisão humana são passos externos ao loop
 
-## Veredito do QA (2026-07-06 21:43 UTC)
+## Veredito do QA (2026-07-06 21:59 UTC) — SEGUNDA TENTATIVA
+APROVADO. O opt-in de 6 linhas agora existe em `main()` de `streamlit_app.py` (import lazy +
+`is_proto_enabled()`/`render_proto_page()` + `return`); caminho de produção byte-a-byte sem a flag.
+Os 5 entregáveis (ui_proto.py, ui_theme.py, streamlit_app.py, test_ui_proto.py, ui_poc_leaflet.md)
+COMMITADOS por path. 37 testes do ciclo verdes (35 + 2 wiring). Suíte FULL 1391 passed / 4 failed
+(plus_code/openlocationcode pré-existentes, não relacionados). ruff limpo; loop_guard OK (38 caminhos,
+nenhum proibido); READ-ONLY M1 (diff config/pipelines/constants vazio, mtime oficiais inalterado).
+Ruído fora de escopo (CRLF dimensionamento/config.py, script solto) mantido fora do commit. Housekeeping
+executado. Detalhes em context/handoff.md e context/handoff/20260706-215947-qa.md.
+
+## Veredito do QA (2026-07-06 21:43 UTC) — PRIMEIRA TENTATIVA
 REPROVADO. Bloqueador: `streamlit_app.py` está byte-idêntico à base do branch — o opt-in de 7 linhas
 em `main()` (deliverable e critério de aceite da Fase A) NUNCA foi aplicado; `render_proto_page()` é
 inatingível. O handoff do Builder afirma falsamente ter modificado `streamlit_app.py` e `.gitignore`.

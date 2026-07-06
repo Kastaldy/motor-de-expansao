@@ -6973,3 +6973,107 @@ concretos e legíveis; sem PII pessoal em nenhuma imagem/legenda; READ-ONLY M1 (
 suíte verde; `import streamlit_app` ok.
 **Guardrail.** §5 (READ-ONLY M1); consome análises existentes, não recalcula score; DEC-012 (dado pessoal
 protegido — só agregados/negócio nas imagens). Ver skill `dataviz` para padrão visual.
+
+---
+
+### BLK-UI-10 — PoC de repaginação do dashboard: tema denso (baixo) + mapa Leaflet client-side (médio)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (camada de **visualização/PoC**; **READ-ONLY sobre o M1**; não substitui o caminho de produção). |
+| **Prioridade** | A definir por Felipe/Vini. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. No modo loop, o gate humano é substituído pelo guard automático (`scripts/loop_guard.py`). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome parquets já existentes em `data/outputs`/`data/staging`). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS/deploy/segredos, sem PII, **sem dependência nova de base** (Leaflet/h3-js por CDN via `st.components.v1.html`, igual ao `NAO_ABRA/totalpass_final*.html`), consome só `data/outputs`/`data/staging`; ver `docs/loop_autonomo.md`. |
+
+**Contexto.** Comparação feita em 2026-06-24 (Felipe): o HTML `NAO_ABRA/totalpass_final (72) (1).html`
+é um SPA estático (Leaflet + h3-js por CDN, ~1.500 linhas, dados embutidos como arrays JS, 100%
+client-side) — leve e bonito porque é *vitrine* de um recorte pré-cozido. O nosso Streamlit é o *motor*
+(server-side, base nacional de 1,54 M hexes + malha censitária, re-roda o script a cada clique, pydeck
+re-renderizado). O objetivo deste bloco é **provar**, sem reescrever o motor, dois ganhos do HTML:
+(A) layout denso + tema escuro coeso e (B) mapa interativo client-side fluido. NÃO é migração para SPA;
+é PoC opt-in atrás de flag, com o caminho de produção (pydeck/abas atuais) **intacto e default**.
+
+**Objetivo.** Entregar um protótipo navegável e testado que demonstre:
+- **Fase A (esforço baixo — tema/layout):** uma camada de tema (CSS injetado) + layout 3-painéis
+  (faixa superior + painel esquerdo de KPIs/filtros + mapa + painel direito de resultado), com a
+  densidade do HTML mas seguindo a **"Direção visual"** abaixo (NÃO copiar a paleta/tipografia do
+  totalpass cru — ver porquê). Só estilo/estrutura de container — **zero** mudança em dados, score,
+  ranking ou nas funções de cálculo.
+- **Fase B (esforço médio — mapa client-side):** um mapa **Leaflet** renderizado via
+  `st.components.v1.html` (CDN, sem pip novo) que consome um **recorte JSON enxuto por UF/cidade**
+  pré-agregado a partir dos parquets existentes (padrão "dados embutidos" do HTML), com pan/zoom/clique
+  fluidos **sem rerun do servidor**. Comparar peso percebido e responsividade vs. o pydeck atual num
+  pequeno relatório (`data/reports/ui_poc_leaflet.md`).
+
+**Escopo permitido (estritamente loop-safe).**
+- Código novo isolado em `src/motor_expansao/dashboard/` (ex.: `ui_proto.py` + helper de tema), exposto
+  como **página/aba OPT-IN atrás de um flag** (env/`session_state`), nunca como substituto do render
+  atual. As funções de produção (`build_map_figure`, abas, pydeck) ficam **byte-a-byte preservadas**.
+- O recorte JSON é uma **VIEW derivada read-only** dos parquets; gravar, se necessário, em
+  `data/outputs/ui_proto/` (ou cache `data/cache/`), **nunca** como artefato oficial do M1 (não entra na
+  lista do §3/`docs/m1_outputs_oficiais.md`) e **sem PII**.
+- Testes novos (render do tema sem erro, geração do recorte JSON determinística, fallback quando o
+  parquet/UF não existe). Suíte verde.
+
+**Direção visual (destilada da skill `frontend-design` — embutida aqui para o loop NÃO depender do
+plugin; o container do loop tem `$HOME` próprio e não enxerga o `~/.claude` do host).**
+O agente deve seguir estes tokens como decisão tomada, não reinventar. O `totalpass` é referência de
+**densidade e ergonomia** (3 painéis, cards compactos, mono nos números), **não** de paleta: o "dark +
+verde-ácido" dele é um dos defaults genéricos de IA. Ancore na **identidade real da Ultra** e no motivo
+do produto (o hexágono H3).
+
+- **Subject / tese.** Não é "mais um dashboard escuro": é a **sala de controle da expansão territorial**
+  de uma rede low-cost/massa (CLAUDE.md §1). O herói da tela é o **mapa**, não um número grande.
+- **Paleta (4–6 tokens; dark por legibilidade de mapa, mas NÃO o verde do totalpass).** Use a cor da
+  marca Ultra como acento único e reserve magenta para semântica de concorrente — convenção que o
+  projeto **já** usa (`Ultra=turquesa, conc.=magenta`, BLK-EST-02). Sugestão de tokens (o agente pode
+  refinar a partir dos assets em `data/ultra/`, mas mantendo a semântica):
+  `--bg:#0b1016` (fundo carvão-azulado, mais quente que o `#080c14` do totalpass) ·
+  `--panel:#121a24` · `--line:#1f2c3a` · `--ultra:#1fd1c4` (turquesa Ultra = acento/ações/ativo) ·
+  `--conc:#ff3d8b` (magenta = SÓ concorrente) · `--text:#dce6f0` / `--muted:#7d97ad`.
+  Score/faixas de mapa continuam usando `RESIDUAL_SCORE_BANDS`/faixas GeoFusion já canônicas — a
+  paleta de UI é a moldura, não recolore dado.
+- **Tipografia (par deliberado, NÃO o Inter/JetBrains default do totalpass; tudo via Google Fonts CDN,
+  loop-safe).** Display/títulos: **Space Grotesk** (caráter técnico/cartográfico, combina com "motor").
+  Corpo/UI: **IBM Plex Sans** (pedigree de engenharia, distinto do Inter). Dados (hex_id, lat/lng,
+  scores, m²): **IBM Plex Mono** — mono é justificável aqui porque o dado **é** o subject. Escala de
+  tipo clara (ex.: 11/13/18/30) com pesos intencionais.
+- **Signature (a UMA coisa memorável).** O **hexágono H3** é o motivo do produto inteiro — use-o como
+  assinatura: cards de KPI com canto/recorte hexagonal sutil ou um marcador hex no lugar do "dot"
+  genérico de legenda. Gaste a ousadia só aqui; o resto fica quieto e disciplinado (conselho "tire um
+  acessório antes de sair").
+- **Estrutura é informação, não decoração.** Nada de numeração 01/02/03 decorativa — só se houver
+  sequência real. Eyebrows/labels devem codificar algo verdadeiro (UF, faixa, tese de entrada).
+- **Cópia (microcopy) na voz do operador.** Rótulos pelo que a pessoa controla ("Filtrar por UF",
+  "Gerar relatório"), voz ativa, sentence case, mesmo verbo do início ao fim do fluxo. Estado vazio é
+  convite à ação ("Selecione um município no mapa"), erro diz o que houve e como resolver — sem
+  apologia nem mood.
+- **Piso de qualidade (sem alarde).** Responsivo até telas estreitas, foco de teclado visível,
+  `prefers-reduced-motion` respeitado (anima no máximo a carga inicial/hover — excesso de animação
+  cheira a "gerado por IA"). Contraste AA no texto sobre os painéis.
+- **Anti-default checklist (rodar antes de fechar a Fase A).** (1) A paleta NÃO é o verde-ácido do
+  totalpass nem cream+serif+terracota nem broadsheet hairline? (2) O par tipográfico não é o que eu
+  usaria em qualquer projeto? (3) Existe UMA assinatura (hex) e o resto é contido? (4) Algum elemento
+  decora sem significar? Se sim, corte. Anotar o que foi escolhido e por quê no relatório do bloco.
+
+**Fora de escopo (NÃO fazer — manteria fora do loop-safe).** Tocar `config.py`, `pipelines/m1`,
+qualquer `*scoring*`/artefato oficial do M1, `Dockerfile.streamlit`/compose/Caddy/CI/`.env`/`secrets/`;
+**adicionar dependência de base** ao `pyproject.toml` (Leaflet/h3-js vêm de CDN no HTML embutido);
+deploy ao VPS; recalcular score/ranking/carteira/plano; persistir qualquer PII; substituir o caminho de
+produção do dashboard. Promover o PoC a default é **decisão humana** num bloco sucessor.
+
+**Critérios de aceite.**
+- Fase A: tema + layout 3-painéis renderizam numa página opt-in; produção (pydeck/abas) inalterada e
+  ainda default; teste de smoke do render verde. A **"Direção visual"** foi seguida (paleta turquesa
+  Ultra + magenta só-concorrente, par Space Grotesk/IBM Plex, assinatura hexagonal) e o **anti-default
+  checklist** está respondido no relatório do bloco.
+- Fase B: mapa Leaflet client-side carrega um recorte JSON de ≥1 UF, com clique→detalhe sem round-trip;
+  recorte gerado de forma reprodutível e sem PII; relatório curto comparando peso/responsividade.
+- READ-ONLY M1 comprovado (zero diff em score/pesos/artefatos oficiais); **nenhuma** dep nova de base;
+  suíte verde; `loop_guard.py` não acusa toque em caminho proibido.
+
+**Guardrail.** §2 (sem dependência de API ao vivo na carga do dashboard — o CDN do Leaflet só carrega no
+PoC opt-in, com fallback gracioso, espelhando a mitigação da DEC-004); §5 (visualização não recalcula
+nem altera M1); §6.1 (critérios loop-safe). Precedente de desvio cosmético restrito a um caminho: DEC-004.
