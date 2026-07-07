@@ -7227,3 +7227,29 @@ veredito**; `membros` só como ALVO (DEC-009); degradação graciosa onde o Huff
 `import streamlit_app` ok.
 **Guardrail.** §5 (READ-ONLY M1); DEC-008 (out-of-fold, R² in-sample banido, NO-GO válido); DEC-009 (`membros`
 só ALVO); DEC-012 (sem PII pessoal).
+
+---
+
+### BLK-PROD-02 — Limpar leftovers de staging
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (manutenção; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Baixa. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (nenhuma). |
+| **Autonomia** | **loop-safe** (paths PRÉ-APROVADOS) — READ-ONLY M1; deleção restrita a lixo temporário com glob FIXO; sem VPS. A lista fixa abaixo substitui a "confirmação explícita" original. |
+
+**Contexto.** Sobras de execução ocupam espaço e poluem buscas: `tmp_codex_runtime/` (artefatos de teste) e
+`*.tmp.parquet` temporários.
+
+**Objetivo.** Remover EXCLUSIVAMENTE os caminhos pré-aprovados abaixo e nada além.
+
+**Decisões PRÉ-FIXADAS (a única ação destrutiva do loop — escopo travado):**
+- Remover o diretório `tmp_codex_runtime/` (inteiro).
+- Remover arquivos que casem **exatamente** `data/outputs/*.tmp.parquet` (NUNCA `.parquet` sem o sufixo `.tmp` — os oficiais tipo `hexagonos_brasil_dashboard.parquet` ficam INTOCADOS).
+- **Nenhum outro caminho.** Qualquer glob fora desses dois → abortar.
+
+**Critérios de aceite.** Só os 2 globs removidos; artefatos oficiais em `data/outputs/` intactos (mtime dos 4 oficiais
+inalterado); `loop_guard` limpo (não toca `config.py`/`pipelines/m1`/artefatos M1); suíte verde.
