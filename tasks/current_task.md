@@ -4,12 +4,12 @@
 
 ID: BLK-VIAB-03
 Nome: Batch de viabilidade sobre candidatos limpos (coordless) + ranking por margem de segurança
-Status: aguardando QA
+Status: aprovado
 Tipo: feature (entrega o coração do produto de viabilidade)
 Criticidade: alta
 Esteira: Block Orchestrator → Planner → Builder → QA (autônoma no loop)
-Skill atual: Builder (concluído)
-Próxima Skill: QA
+Skill atual: QA (concluído)
+Próxima Skill: Block Orchestrator (fechamento)
 
 ## Objetivo
 Rodar `analisar_viabilidade_ponto` para cada candidato limpo (VIAB-01) com a faixa de

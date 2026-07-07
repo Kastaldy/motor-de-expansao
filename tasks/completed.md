@@ -7355,3 +7355,35 @@ materializando `data/staging/demanda_premissa_por_tier.parquet` (a `base_calibra
 
 **Critérios de aceite.** Parquet de faixas por tier; N de comparáveis por tier documentado; sem PII (só contagens
 agregadas); determinístico; `loop_guard` limpo. **Guardrail.** §5 READ-ONLY M1; DEC-009 intacta (premissa, não predição).
+
+---
+
+### BLK-VIAB-03 — Batch de viabilidade sobre candidatos limpos (coordless) + ranking por margem de segurança
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (entrega o coração do produto de viabilidade; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-VIAB-01** (candidatos limpos) + **BLK-VIAB-02** (faixa de demanda-premissa). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; reusa `dimensionamento/viabilidade_ponto.analisar_viabilidade_ponto` (PURO, determinístico); modo COORDLESS (`setores_df=None` → sem rede/catchment); saída `data/staging`+`data/analysis` gitignored; sem VPS. |
+
+**Contexto.** O motor property-first já existe (`analisar_viabilidade_ponto(lat, lng, m2, aluguel_pedido,
+demanda_premissa, ...)`) e degrada graciosamente sem coordenada (`setores_df=None` → não roda catchment/zona-morta,
+mas entrega faixa de alunos + break-even + aluguel-teto). Falta o batch que roda isso sobre os candidatos reais.
+
+**Objetivo.** Rodar o motor para CADA candidato limpo (VIAB-01) com a faixa de demanda-premissa (VIAB-02), em modo
+coordless, e materializar `data/staging/viabilidade_candidatos.parquet` + relatório
+`data/analysis/viabilidade_candidatos.md` ranqueado por **margem de segurança**.
+
+**Decisões PRÉ-FIXADAS:**
+- **Ranking = margem de segurança = `aluguel_teto(demanda=p50) − aluguel_pedido`**, reportando a banda p10..p90. Candidato ROBUSTO = aluguel pedido < teto em TODA a faixa (p10..p90).
+- **NO-GO honesto:** aluguel pedido > teto já em p50 → NO-GO; entre `teto(p50)` e `teto(p10)` → condicional/negociar; `flag_extrapolacao` quando m² fora do envelope de calibração.
+- **Ticket/margem:** usar os defaults do motor (`SIM_MENSALIDADE_BALCAO`, `margem_alvo=0.10`) — não inventar.
+- **Sensibilidade:** materializar a grade `demanda × aluguel` de `grade_sensibilidade` por candidato.
+
+**Critérios de aceite.** Parquet + relatório ranqueado; cada candidato com faixa de alunos, break-even, aluguel-teto,
+margem, sensibilidade e `flag_extrapolacao`; **demanda SÓ como premissa** (nunca `lat/lng`); **reusa o motor SEM
+modificá-lo** (`git diff` de `viabilidade_ponto.py` vazio); determinístico; `loop_guard` limpo. **Guardrail.** §5
+READ-ONLY M1; DEC-009 (premissa explícita).
