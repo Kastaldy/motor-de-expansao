@@ -7,6 +7,23 @@ A demanda é insumo OBSERVADO (DEC-009), NUNCA preditor geográfico de magnitude
 
 from __future__ import annotations
 
+from .aferir_overlap_nao_abra import (
+    COMPETIDORES_DEFAULT,
+    DENSOS_DEFAULT,
+    SMARTFIT_DEFAULT,
+    VERSAO_CONTRATO_OVERLAP,
+    calcular_metricas_competidores,
+    calcular_metricas_smartfit,
+)
+from .aferir_overlap_nao_abra import (
+    RELATORIO_DEFAULT as RELATORIO_OVERLAP_DEFAULT,
+)
+from .aferir_overlap_nao_abra import (
+    executar as executar_overlap_nao_abra,
+)
+from .aferir_overlap_nao_abra import (
+    gerar_relatorio as gerar_relatorio_overlap,
+)
 from .backtest_tp05 import (
     BacktestTP05Result,
     backtest_demanda_captura,
@@ -81,6 +98,16 @@ __all__ = [
     "CONTRATO_COLUNAS_CAP_REDE",
     "VERSAO_CONTRATO_OFERTA_MENORES_REDE",
     "VERSAO_CONTRATO_CAP_REDE",
+    # BLK-ATR-01-FU1: aferição de overlap base densa vs NAO_ABRA
+    "calcular_metricas_smartfit",
+    "calcular_metricas_competidores",
+    "gerar_relatorio_overlap",
+    "executar_overlap_nao_abra",
+    "RELATORIO_OVERLAP_DEFAULT",
+    "SMARTFIT_DEFAULT",
+    "COMPETIDORES_DEFAULT",
+    "DENSOS_DEFAULT",
+    "VERSAO_CONTRATO_OVERLAP",
     # BLK-ATR-01: base densa de concorrentes do Huff
     "materializar",
     "ingerir_csvs_concorrentes",
