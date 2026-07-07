@@ -481,7 +481,7 @@ def main() -> None:
     selected_uf = render_uf_selectbox(uf_catalog)
 
     if not selected_uf:
-        st.info("Selecione uma UF para iniciar a analise do dashboard.")
+        st.info("Selecione uma UF para iniciar a análise do dashboard.")
         st.stop()
 
     try:
@@ -592,7 +592,7 @@ def main() -> None:
     )
 
     st.caption(
-        f"Recorte atual: {format_int(len(filtered_df))} hexagonos | "
+        f"Recorte atual: {format_int(len(filtered_df))} hexágonos | "
         f"{format_int(filtered_df['uf'].nunique()) if not filtered_df.empty else '0'} UFs | "
         f"{format_int(filtered_df['nome_municipio'].nunique()) if not filtered_df.empty else '0'} cidades"
     )

@@ -99,7 +99,7 @@ def test_load_data_falha_sem_colunas_obrigatorias(local_tmp_dir, monkeypatch):
     monkeypatch.setattr(streamlit_app, "DATASET_PATH", path)
     streamlit_app.load_data.clear()
 
-    with pytest.raises(ValueError, match="colunas obrigatorias"):
+    with pytest.raises(ValueError, match="colunas obrigatórias"):
         streamlit_app.load_data()
 
 
@@ -331,11 +331,11 @@ def test_enrich_dashboard_data_preserva_base_oficial_e_sobrepoe_rastreabilidade(
 def test_build_map_scope_caption_reflete_todos_os_hexes_da_uf():
     caption = streamlit_app.build_map_scope_caption(1234, selected_ufs=["SP"])
 
-    assert "todos os hexagonos validos da UF selecionada" in caption
+    assert "todos os hexágonos válidos da UF selecionada" in caption
     assert "100 melhores" not in caption
     assert "1.234" in caption
     # BLK-UI-02 (#3a): ramo nao-capped orienta filtrar por municipio para densidade total.
-    assert "municipio" in caption
+    assert "município" in caption
 
 
 def test_map_tooltips_tem_css_de_tamanho():
@@ -759,7 +759,7 @@ def test_pins_amostrados_caption():
     assert n_comp_big == 40_000
     caption = pins_amostrados_caption(n_comp_big, 0)
     assert caption is not None
-    assert "nao afeta score" in caption
+    assert "não afeta score" in caption
     assert str(COMPETITOR_PIN_LIMIT).startswith("6")
 
 
@@ -1796,9 +1796,9 @@ def test_build_hybrid_map_figure_destaque_hex_usa_tooltip_completo():
     assert len(deck.layers) == 2
     highlight = pd.DataFrame(deck.layers[-1].data).iloc[0]
     assert highlight["tooltip_title"] == "Brasilia / DF"
-    assert highlight["tooltip_line_1"] == "Score Censitario 2022: 88.00"
+    assert highlight["tooltip_line_1"] == "Score Censitário 2022: 88.00"
     assert highlight["tooltip_line_2"] == "Score M1: 91.00"
-    assert highlight["tooltip_line_3"] == "Score Hibrido: 93.00"
+    assert highlight["tooltip_line_3"] == "Score Híbrido: 93.00"
     # Quando _HYBRID_TOOLTIP_SHOW_DETAIL=False (compacto): linhas 5-8 sao Habitantes/Renda/Residual.
     # Para restaurar os campos de detalhe (Rank, Top, Elegibilidade, Qualidade, Outlier, Motivo),
     # setar _HYBRID_TOOLTIP_SHOW_DETAIL=True em components.py e ajustar as assertions abaixo
@@ -1900,7 +1900,7 @@ def test_render_expansao_dominio_exibe_warning_sem_dados():
         streamlit_app.render_expansao_dominio(pd.DataFrame())
     warn_mock.assert_called_once()
     msg = warn_mock.call_args[0][0]
-    assert "Expansao de Dominio" in msg or "plano" in msg.lower()
+    assert "Expansão de Domínio" in msg or "plano" in msg.lower()
 
 
 def _dominio_row(hex_id: str, uf: str, cidade: str, ordem: int, tese: str) -> dict:
@@ -1973,7 +1973,7 @@ def test_render_expansao_dominio_filtro_por_tese():
     rendered_frames = []
 
     def fake_multiselect(label, options, **kw):
-        if label == "Tese de dominio":
+        if label == "Tese de domínio":
             return ["dominar_white_space"]
         return options
 
@@ -2389,7 +2389,7 @@ def test_render_mapa_territorial_modo_indisponivel_exibe_aviso():
         streamlit_app.render_mapa_territorial(df, selected_ufs=["SP"], selected_cities=[])
 
     assert len(warnings_captured) >= 1
-    assert any("Hibrido" in w or "disponivel" in w for w in warnings_captured)
+    assert any("Híbrido" in w or "disponível" in w for w in warnings_captured)
 
 
 def test_render_mapa_territorial_dominio_sem_dados_exibe_info():
@@ -2506,7 +2506,7 @@ def test_render_mapa_territorial_com_city_summary_renderiza_expanders():
             uf_summary=uf_summary,
         )
 
-    assert any("Analise" in e for e in expanders_created), f"Expanders criados: {expanders_created}"
+    assert any("Análise" in e for e in expanders_created), f"Expanders criados: {expanders_created}"
     assert any("Ranking" in e for e in expanders_created), f"Expanders criados: {expanders_created}"
 
 
@@ -4559,6 +4559,106 @@ def test_render_sidebar_filters_municipio_e_faixa_no_corpo():
     assert not sidebar_mock.expander.called
 
 
+def test_faixa_e_elegibilidade_labels_via_format_func():
+    """BLK-ACENTO-01 (D1/D1-bis): os multiselects de Faixa e Elegibilidade exibem labels
+    acentuadas via format_func, sem alterar os valores brutos das options (usados em .isin).
+    """
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard import pages
+    from motor_expansao.dashboard.constants import (
+        FAIXA_LABELS,
+        HYBRID_ELIGIBILITY_LABELS,
+    )
+
+    # Camada de label: mapeia valor bruto -> texto acentuado (valor bruto INTOCADO).
+    assert FAIXA_LABELS["prioridade_maxima"] == "Prioridade máxima"
+    assert FAIXA_LABELS["media"] == "Média"
+    assert FAIXA_LABELS["inviavel"] == "Inviável"
+    assert HYBRID_ELIGIBILITY_LABELS["Nao elegivel"] == "Não elegível"
+    assert HYBRID_ELIGIBILITY_LABELS["Elegivel"] == "Elegível"
+
+    df = pd.DataFrame({
+        "nome_municipio": pd.Categorical(["SAO PAULO", "CAMPINAS"]),
+        "faixa_oportunidade": pd.Categorical(["alta", "media"]),
+    })
+
+    created_cols = []
+
+    def _capture_columns(n_or_list, **kw):
+        n = n_or_list if isinstance(n_or_list, int) else len(n_or_list)
+        cols = [mock.MagicMock() for _ in range(n)]
+        for c in cols:
+            c.multiselect.return_value = []
+        created_cols.extend(cols)
+        return cols
+
+    with (
+        mock.patch("streamlit.columns", side_effect=_capture_columns),
+        mock.patch("streamlit.multiselect", return_value=[]) as body_multiselect,
+        mock.patch("streamlit.expander"),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.checkbox", return_value=False),
+        mock.patch("streamlit.sidebar"),
+    ):
+        pages.render_sidebar_filters(df, "SP")
+
+    # Multiselect de Faixa (em coluna do corpo): options continuam valores brutos, mas
+    # o format_func devolve o label acentuado.
+    faixa_call = next(
+        call
+        for c in created_cols
+        for call in c.multiselect.call_args_list
+        if call.args and call.args[0] == "Faixa de oportunidade"
+    )
+    faixa_fmt = faixa_call.kwargs["format_func"]
+    assert faixa_fmt("baixa") == "Baixa"
+    assert faixa_fmt("prioridade_maxima") == "Prioridade máxima"
+    assert list(faixa_call.kwargs["options"]) == ["alta", "media"]  # brutos, sem acento
+
+    # Multiselect de Elegibilidade hibrida (st.multiselect no expander).
+    elig_call = next(
+        call
+        for call in body_multiselect.call_args_list
+        if call.args and call.args[0] == "Elegibilidade híbrida"
+    )
+    elig_fmt = elig_call.kwargs["format_func"]
+    assert elig_fmt("Nao elegivel") == "Não elegível"
+    assert list(elig_call.kwargs["options"]) == ["Elegivel", "Nao elegivel", "Sem camada"]
+
+
+def test_build_faixa_comparison_figure_eixo_e_cores_acentuados():
+    """BLK-ACENTO-01 FU (item 2.2c): o grafico de comparacao por faixa exibe os LABELS
+    acentuados no eixo x / legenda, sem slugs brutos, preservando a MESMA cor por faixa.
+    """
+    from motor_expansao.dashboard.constants import FAIXA_COLORS, FAIXA_LABELS
+
+    df = pd.DataFrame([
+        {"faixa_oportunidade": "prioridade_maxima", "score_priorizacao": 95.0},
+        {"faixa_oportunidade": "media", "score_priorizacao": 50.0},
+        {"faixa_oportunidade": "baixa", "score_priorizacao": 30.0},
+    ])
+
+    fig = streamlit_app.build_faixa_comparison_figure(df)
+    assert fig is not None
+
+    seen: dict[str, str] = {}
+    for tr in fig.data:
+        # nome do trace / legenda = label acentuado
+        assert tr.name in FAIXA_LABELS.values()
+        # eixo x nunca mostra o slug bruto do enum
+        for xv in tr.x:
+            assert xv in FAIXA_LABELS.values()
+            assert xv not in ("prioridade_maxima", "media", "baixa", "alta", "descartado", "inviavel")
+        seen[tr.name] = tr.marker.color
+
+    # cor por faixa identica a de antes (label -> cor == FAIXA_COLORS[valor_bruto])
+    assert seen["Prioridade máxima"] == FAIXA_COLORS["prioridade_maxima"]
+    assert seen["Média"] == FAIXA_COLORS["media"]
+    assert seen["Baixa"] == FAIXA_COLORS["baixa"]
+
+
 def test_render_coord_search_no_corpo_preserva_key():
     """render_coord_search_sidebar usa st.text_input (corpo) com key preservada, nao st.sidebar.*."""
     import unittest.mock as mock
@@ -4990,14 +5090,14 @@ def test_render_relatorio_municipal_topo_lote_botao_e_downloads():
         )
 
     assert any(
-        "Gerar Relatorios (3)" in str(c.args[0]) for c in button_mock.call_args_list if c.args
+        "Gerar Relatórios (3)" in str(c.args[0]) for c in button_mock.call_args_list if c.args
     )
     assert gen_mock.call_count == 3
     assert dl_mock.call_count == 3
     labels = [str(c.args[0]) for c in dl_mock.call_args_list if c.args]
-    assert any("— A" in lb for lb in labels)
-    assert any("— B" in lb for lb in labels)
-    assert any("— C" in lb for lb in labels)
+    assert any("- A" in lb for lb in labels)
+    assert any("- B" in lb for lb in labels)
+    assert any("- C" in lb for lb in labels)
     assert "relmun_lote_topo_payloads" in session
     assert len(session["relmun_lote_topo_payloads"]) == 3
 
@@ -5124,7 +5224,7 @@ def test_render_relatorio_municipal_expander_lote_downloads():
         )
 
     assert any(
-        "Gerar Relatorios (2)" in str(c.args[0]) for c in button_mock.call_args_list if c.args
+        "Gerar Relatórios (2)" in str(c.args[0]) for c in button_mock.call_args_list if c.args
     )
     assert dl_mock.call_count == 2
     assert "relmun_lote_expander_payloads" in session
@@ -5426,7 +5526,7 @@ def test_render_relatorio_pontual_lote_multiplos_itens_progresso():
     assert any("Gerando 1/3" in t for t in progress_texts if t)
     assert any("Gerando 2/3" in t for t in progress_texts if t)
     assert any("Gerando 3/3" in t for t in progress_texts if t)
-    assert any("3/3 concluido" in t for t in progress_texts if t)
+    assert any("3/3 concluído" in t for t in progress_texts if t)
     # 3 downloads (um por item); sem atalho "ultimo" (removido no FU1).
     assert dl_mock.call_count == 3
     keys = [c.kwargs.get("key") for c in dl_mock.call_args_list]

@@ -2,82 +2,58 @@
 
 ## Bloco atual
 
-ID: BLK-RELPON-04
-Nome: Relatório Pontual em lote (fila de endereços pesquisados)
-Status: CICLO FECHADO — APROVADO. A ressalva do QA foi RESOLVIDA: após reboot da máquina o
-  bloqueio Smart App Control do DLL do h3 sumiu; a suíte rodou de verdade. Housekeeping OK +
-  commit por path feito; merge = humano (6.b).
-Tipo: feature (UI)
+ID: BLK-ACENTO-01
+Nome: Acentuação da UI do dashboard (Streamlit)
+Status: APROVADO (QA 2026-07-07, re-verificação do follow-up) — ressalva anterior RESOLVIDA: build_faixa_comparison_figure agora exibe labels acentuados no eixo x/legenda via FAIXA_COLORS_POR_LABEL derivado, cor e ordem por faixa preservadas, valor bruto intocado. Suíte serial 1431 passed / 2 skipped / 1 falha pré-existente ambiental (M2 lifetime, gitignored). Pronto para fechamento (housekeeping move + commit por path pelo orquestrador).
+Tipo: manutenção (correção ampla de texto de UI)
 Criticidade: média
-Esteira: Block Orchestrator → Planner → [confirmação humana — produto: D1/D2/D3] → Builder → QA (concluído)
+Esteira: Block Orchestrator → Planner → [confirmação humana — produto: D1 (label de exibição das faixas)] → Builder → QA
 Skill atual: Fechamento (orquestrador) CONCLUÍDO
-Skill anterior: QA (concluído em 2026-07-06)
-Próxima Skill: revisão + merge da branch ciclo/BLK-RELPON-04 pelo humano (6.b). Sem dry-run (não tocou orquestração).
+Skill anterior: QA (re-verificação — APROVADO em 2026-07-07)
+Próxima Skill: revisão visual da UI + merge da branch ciclo/BLK-ACENTO-01 pelo humano (6.b). Sem dry-run (não tocou orquestração). Housekeeping move OK (--check verde) + commit por path feito.
 
-## Resultado da suíte (pós-reboot, execução REAL — 2026-07-06)
-- `import h3` OK (v4.5.0) e `import streamlit_app` OK após reinício da máquina (Smart App Control
-  deixou de bloquear o DLL nativo do h3).
-- Focado: `pytest -q tests/integration/test_streamlit_app.py` → **230 passed**.
-- Suíte cheia: `pytest -q` → **1337 passed, 1 skipped, 1 failed**.
-- A ÚNICA falha (`tests/unit/test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime`) é
-  PRÉ-EXISTENTE e ALHEIA a este bloco: `FileNotFoundError data/staging/unidade_territorio_retencao.parquet`
-  (dado gitignored ausente da camada M2/BLK-LTV-04). Confirmado por `git stash` dos 3 arquivos do ciclo:
-  a falha PERSISTE em árvore limpa → não é regressão do BLK-RELPON-04. NO-BYPASS honrado.
-- housekeeping: bloco movido para completed.md (stub no backlog) + `--check` OK; test_housekeeping_helper 10 passed.
-
-## Resultado do QA (2026-07-06)
-- VEREDITO: APROVADO COM RESSALVA. ruff/mypy/py_compile limpos; READ-ONLY M1 confirmado (git diff
-  vazio em censo_*/pipelines/config.py; 4 artefatos oficiais intactos); anti-PII OK (só session_state,
-  sem persistência em disco/log); D1/D2/D3 = Opção A implementados; CSS 260px + isolamento de keys OK;
-  12 testes novos bem-formados por INSPEÇÃO (não executados aqui).
-- RESSALVA: `pytest`/`import streamlit_app` bloqueados por Smart App Control (DLL do h3), reproduzido
-  identicamente ao Builder (incl. `import h3` isolado). NO-BYPASS honrado — sem verde fabricado.
-- housekeeping --check: falha esperada pré-move ("stub ausente"), helper reconhece o bloco; move é do
-  orquestrador no fechamento.
-
-## Bloqueio de ambiente sinalizado pelo Builder (ler antes de rodar a suite)
-`pytest`/`import streamlit_app` NÃO puderam ser executados de fato nesta máquina: uma política
-de Controle de Aplicativo (WDAC/Smart App Control) em nível de SO está bloqueando o carregamento
-do binário nativo do pacote `h3` (evidência: `import h3` isolado já falha; log de eventos do
-Windows mostra o MESMO tipo de bloqueio atingindo um DLL de terceiros alheio ao projeto nos
-mesmos minutos da sessão — não é causado por este bloco). `ruff`/`mypy`/`py_compile` rodaram
-limpos nos arquivos tocados. O QA deve tentar `pytest -n auto` no seu próprio ambiente; se o
-mesmo bloqueio ocorrer, escalar para o usuário antes de fechar o ciclo (NO-BYPASS).
-
-## Gate humano (produto) — CONFIRMADO em 2026-07-06
-- D1 = N botões rotulados por endereço (Opção A, recomendada). Sem `.zip`.
-- D2 = botão explícito "+ Adicionar à fila" (Opção A, recomendada).
-- D3 = fila única compartilhada entre topo e inferior (Opção A, recomendada).
-Plano do Planner segue sem alterações.
+## Gate humano (produto) — CONFIRMADO em 2026-07-07
+- D1 = mapeamento FAIXA_LABELS proposto APROVADO (prioridade_maxima→"Prioridade máxima",
+  alta→"Alta", media→"Média", baixa→"Baixa", descartado→"Descartado", inviavel→"Inviável").
+  Criar em src/motor_expansao/dashboard/constants.py (correção do Planner; core/constants.py NÃO tocar).
+- D1-bis = Opção A (label layer HYBRID_ELIGIBILITY_LABELS + format_func; valor bruto
+  "Elegivel"/"Nao elegivel" INTOCADO; zero fixture de teste alterada).
+- Fallback = trocar "Nao informado"→"Não informado" nas 5 ocorrências juntas.
 
 ## Objetivo
-Permitir gerar Relatórios Pontuais em lote acumulando os endereços pesquisados numa fila de
-`session_state`, com geração N-a-N (progresso i/N) e dois modos de download (lote + só o último),
-nos dois pontos da página (topo e inferior), READ-ONLY sobre o M1.
+Acentuar corretamente TODO o texto voltado ao usuário na UI do dashboard Streamlit
+(abas, labels, help=, st.caption/markdown/info/warning/success/error, st.metric,
+column_config, legendas), preservando 100% dos identificadores (key=, .st-key-*, enums
+brutos, nomes de coluna, slugs), READ-ONLY sobre o M1.
+
+## Gate humano obrigatório
+Apesar de criticidade Média, o bloco exige confirmação humana de PRODUTO na decisão D1
+(camada de label de exibição das faixas: FAIXA_LABELS + format_func). Orquestrador PARA
+após o Planner e aguarda aprovação explícita antes de spawnar o Builder.
 
 ## Tiering de modelo (Passo 4) — Média
 - Block Orchestrator: sonnet
 - Planner: sonnet
-- Builder: sonnet
+- Builder: opus (override +1: volume ~560 strings de UI + arquivo de teste de 6232 linhas + risco alto de acentuar identificador por engano — atipicamente complexo/arriscado para Média)
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-RELPON-04 (criada a partir de main @ HEAD 1466040).
+ciclo/BLK-ACENTO-01 (criada a partir de main @ HEAD, working tree limpo).
 
 ## Paths do ciclo (commit por path — NUNCA git add -A)
-- src/motor_expansao/dashboard/pages.py (fila, botões de lote, CSS width)
-- tests/ (testes da fila/lote de UI)
+- src/motor_expansao/dashboard/pages.py
+- src/motor_expansao/dashboard/components.py
+- src/motor_expansao/dashboard/data.py
+- src/motor_expansao/core/constants.py (só onde string é EXIBIDA; D1 FAIXA_LABELS)
+- streamlit_app.py
+- tests/integration/test_streamlit_app.py, tests/unit/test_dashboard_format_utils.py
 - tasks/current_task.md, tasks/completed.md, tasks/backlog.md (fechamento)
 - context/handoff.md, context/handoff/
 
 ## Guardrails
-- §5 READ-ONLY M1: zero recálculo de score/pesos/carteira/plano/artefatos oficiais.
-- Núcleo `censo_*` (`setor_censitario_intersecao_area_1p5km`, raio 1,5 km, páginas do PDF, marca d'água
-  anti-PII, `set_compression(False)`) — só CONSUMIR, não alterar.
-- Anti-PII: fila de endereços vive só em `session_state` (efêmera); NUNCA persistida em disco/log.
-- Reusar `gerar_payloads_relatorio_pontual_para_pin` e `render_coord_search_sidebar` sem alterar núcleo.
-- Largura de botão via regra CSS 260px do `inject_styles` (adicionar novas `st-key`), NÃO `use_container_width`.
-- Sem dependência de rede nova (§2; geocoding/tiles já cobertos por DEC-010/DEC-004).
-
-## Worktree pré-sujo
-- ` M tasks/backlog.md` já existia antes do ciclo; commitar apenas paths do ciclo por path.
+- §5 READ-ONLY M1: zero recálculo/alteração de score/pesos/carteira/plano/artefatos oficiais.
+- NUNCA acentuar identificadores: key=/st.session_state, .st-key-* CSS, valores brutos de
+  enum/categoria (FAIXA_ORDEM etc.), nomes de coluna de DataFrame, slugs/nomes de arquivo.
+- D1: label de exibição via {valor_bruto: "Texto Acentuado"} + format_func; valor bruto INTOCADO.
+- Banir tipografia "esperta" na UI (hífen simples, aspas retas).
+- Fora de escopo: relatórios PDF/CSV (BLK-ACENTO-02).

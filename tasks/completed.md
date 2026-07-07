@@ -7160,3 +7160,73 @@ produção do dashboard. Promover o PoC a default é **decisão humana** num blo
 **Guardrail.** §2 (sem dependência de API ao vivo na carga do dashboard — o CDN do Leaflet só carrega no
 PoC opt-in, com fallback gracioso, espelhando a mitigação da DEC-004); §5 (visualização não recalcula
 nem altera M1); §6.1 (critérios loop-safe). Precedente de desvio cosmético restrito a um caminho: DEC-004.
+
+---
+
+### BLK-ACENTO-01 — Acentuação da UI do dashboard (Streamlit)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (correção ampla de texto de UI; READ-ONLY sobre o M1; sem DEC; envolve 1 decisão de produto — label de exibição das faixas — e risco de acentuar identificador por engano, mitigado por lista de proibições). |
+| **Prioridade** | **Urgente** (herda da tarefa ClickUp `86e26mtn5`). |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 (label de exibição das faixas)]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (toca só a camada `dashboard/`; não depende de outros blocos). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mudança visual ampla que exige revisão humana; toca strings próximas a identificadores. NÃO marcar loop-safe. |
+
+**Objetivo.** Acentuar corretamente TODO o texto voltado ao usuário na plataforma (abas, labels de
+botão, `help=`, `st.caption/markdown/info/warning/success/error`, `st.metric`, `column_config`,
+legendas), preservando 100% dos identificadores.
+
+**Escopo permitido (READ-ONLY M1, só display).**
+- `src/motor_expansao/dashboard/pages.py` (~359 ocorrências) e `components.py` (~161): acentuar
+  strings de exibição. `pages.py` + `components.py` concentram ~90% da massa de texto.
+- `streamlit_app.py` (~38), `data.py` (labels/mensagens de exibição; NÃO valores de categoria salvo
+  via label layer), `constants.py` (só onde a string é EXIBIDA e não usada como chave/valor lógico).
+- **D1 — camada de label de exibição das faixas:** criar `FAIXA_LABELS = {"prioridade_maxima":
+  "Prioridade máxima","alta":"Alta","media":"Média","baixa":"Baixa","descartado":"Descartado",
+  "inviavel":"Inviável"}` e usar `format_func` no `st.multiselect` (`pages.py:668-671`) e nas
+  legendas/tabelas, mantendo o VALOR bruto intocado no filtro/`.isin`/dict de cores. Idem, se
+  aplicável, `HYBRID_ELIGIBILITY_ORDER`/`COVERAGE_BUCKET_ORDER`/`JOIN_QUALITY_ORDER`. O fallback
+  `"Nao informado"` (`data.py:211,219,223`, `components.py:572,589`) pode virar "Não informado"
+  DESDE QUE trocado em TODAS as ocorrências juntas (é literal repetido, não comparado a dado externo)
+  — validar que continua casando `pd.Categorical(...)`.
+- Banir tipografia "esperta" também na UI por consistência (usar hífen simples e aspas retas).
+- Atualizar `tests/integration/test_streamlit_app.py` (6232 linhas; dezenas de asserts de string de
+  UI — ex. linhas 334,338,762,1112-1117,1355-1357,3199,3238-3239,3664-3666,4650-4653) e
+  `tests/unit/test_dashboard_format_utils.py`.
+
+**Fora de escopo.** Relatórios PDF/CSV (BLK-ACENTO-02). Qualquer valor bruto de enum/coluna/`key=`/
+`.st-key-*`/slug (ver lista canônica de proibições da epic). `score_priorizacao`/M1/artefatos
+oficiais. Sem dependência de rede nova.
+
+**Critério de aceite.** Texto de UI do dashboard acentuado corretamente (varredura por amostra de
+palavras sem acento retorna ~0 em texto de exibição); faixas exibidas com label acentuado mas
+filtrando pelo valor bruto (comportamento de filtro idêntico); nenhum `key=`/`.st-key-*`/coluna/
+enum bruto alterado; suíte verde; ruff+mypy limpos; revisão visual humana aprovada.
+
+**Fechamento do ciclo BLK-ACENTO-01 (2026-07-07) — VEREDITO: APROVADO.** Esteira Média com gate
+humano de produto: Block Orchestrator -> Planner -> [gate humano CONFIRMADO por Vinicius] ->
+Builder (Opus, override +1 por volume/risco) -> QA (Opus 4.8). Gate: D1 = FAIXA_LABELS em
+`dashboard/constants.py` (mapeamento aprovado; valor bruto FAIXA_ORDEM/FAIXA_COLORS intocado);
+D1-bis = Opção A (HYBRID_ELIGIBILITY_LABELS + format_func; valor bruto "Elegivel"/"Nao elegivel" e
+HYBRID_ELIGIBILITY_ORDER intocados; zero fixture de elegibilidade alterada); fallback
+"Nao informado" -> "Não informado" nas 5 ocorrências juntas (pd.Categorical segue casando).
+Feito: ~340 strings de exibição acentuadas em pages.py + acentuação em components.py (tooltips,
+legendas, KPIs, títulos/labels Plotly, cabeçalhos renomeados em lockstep com os consumidores),
+streamlit_app.py e data.py; COLOR_MODES/OVERLAYS labels acentuados; travessões `—` -> hífen ` - `
+em strings de exibição (comentários intocados); nenhuma tipografia esperta introduzida. Follow-up
+(ressalva do QA, item 2.2c do Planner): `build_faixa_comparison_figure` passou a exibir labels
+acentuados no eixo x/legenda via `FAIXA_COLORS_POR_LABEL` derivado — cor e ordem por faixa
+preservadas. Testes novos: format_func de faixa/elegibilidade (label acentuado exibido, options
+brutas) + preservação de cor do gráfico. Validações (QA, NO-BYPASS): ruff limpo; import ok; mypy só
+os 7 erros PRÉ-EXISTENTES de types-requests em arquivos não tocados (zero novo); suíte serial
+`1431 passed, 2 skipped, 1 failed`, a única falha
+(`test_score_retencao_territorial::test_run_readonly_m1_por_mtime`, FileNotFoundError de parquet M2
+gitignored) é PRÉ-EXISTENTE/ambiental, alheia ao bloco (herdada do ciclo BLK-RELPON-04); `-n auto`
+instável no Python 3.14 (execnet EOFError no setup do worker, não falha de teste). READ-ONLY M1
+confirmado: git diff só em dashboard/{constants,components,data,pages}.py + streamlit_app.py + test
++ bookkeeping; zero em core/constants.py, censo_*, relatorio_municipal.py, pipelines/m1, config.py,
+calcular_colunas_mercado.py; nenhum parquet oficial tocado; pesos renda=0.40/pop=0.60 e
+H3_RESOLUTION=7 preservados. Sucessor: BLK-ACENTO-02 (relatórios PDF/CSV). Pendência humana:
+revisão visual da UI + merge da branch ciclo/BLK-ACENTO-01 (6.b). Sem dry-run (não tocou orquestração).
