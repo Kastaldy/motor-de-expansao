@@ -2,56 +2,82 @@
 
 ## Bloco atual
 
-ID: BLK-TP-07
-Nome: Huff/gravitacional de captura de concorrentes com demanda observada (reabertura da Camada 2 do BLK-DIM)
-Status: CICLO FECHADO — APROVADO COM RESSALVAS (housekeeping OK + commit por path feito; merge = humano)
-Tipo: modelagem (captura/share gravitacional — validação out-of-fold, READ-ONLY sobre o M1)
-Criticidade: alta
-Esteira: Block Orchestrator → Planner → [APROVAÇÃO HUMANA — modelagem] → Builder → QA
+ID: BLK-RELPON-04
+Nome: Relatório Pontual em lote (fila de endereços pesquisados)
+Status: CICLO FECHADO — APROVADO. A ressalva do QA foi RESOLVIDA: após reboot da máquina o
+  bloqueio Smart App Control do DLL do h3 sumiu; a suíte rodou de verdade. Housekeeping OK +
+  commit por path feito; merge = humano (6.b).
+Tipo: feature (UI)
+Criticidade: média
+Esteira: Block Orchestrator → Planner → [confirmação humana — produto: D1/D2/D3] → Builder → QA (concluído)
 Skill atual: Fechamento (orquestrador) CONCLUÍDO
-Próxima Skill: revisão + merge da branch ciclo/BLK-TP-07 pelo humano (6.b). Sem dry-run (não tocou orquestração).
+Skill anterior: QA (concluído em 2026-07-06)
+Próxima Skill: revisão + merge da branch ciclo/BLK-RELPON-04 pelo humano (6.b). Sem dry-run (não tocou orquestração).
 
-## Veredito REAL do Builder (out-of-fold, seed=42)
-GO (âncora R²): R²_oof_log = +0.4391 IC95 [+0.4251, +0.4523] (> 0.05, IC > 0) E supera o baseline
-geométrico (R²_base_geo = +0.2922) ⇒ a distância agrega. β_selecionado = 0.5 (out-of-fold);
-rho_oof = +0.4354 IC95 [+0.4213, +0.4491]; R²_insample (auditoria, banido) = +0.4392; n_join =
-16.575 (~1.07% do universo, viés SP/MG/RJ). Sensibilidades D1b (capacidade, +0.357) e D4c (Ultra,
-+0.4755) reportadas FORA do gate. Integração ao residual/carteira = BLK-TP-09 (fora deste bloco).
-Validações: novos testes 11 passed; subset demanda_revelada 96 passed; import streamlit ok; ruff+mypy
-limpos; mtime dos 4 oficiais M1 inalterado; isolamento AST sem imports proibidos. READ-ONLY M1.
+## Resultado da suíte (pós-reboot, execução REAL — 2026-07-06)
+- `import h3` OK (v4.5.0) e `import streamlit_app` OK após reinício da máquina (Smart App Control
+  deixou de bloquear o DLL nativo do h3).
+- Focado: `pytest -q tests/integration/test_streamlit_app.py` → **230 passed**.
+- Suíte cheia: `pytest -q` → **1337 passed, 1 skipped, 1 failed**.
+- A ÚNICA falha (`tests/unit/test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime`) é
+  PRÉ-EXISTENTE e ALHEIA a este bloco: `FileNotFoundError data/staging/unidade_territorio_retencao.parquet`
+  (dado gitignored ausente da camada M2/BLK-LTV-04). Confirmado por `git stash` dos 3 arquivos do ciclo:
+  a falha PERSISTE em árvore limpa → não é regressão do BLK-RELPON-04. NO-BYPASS honrado.
+- housekeeping: bloco movido para completed.md (stub no backlog) + `--check` OK; test_housekeeping_helper 10 passed.
+
+## Resultado do QA (2026-07-06)
+- VEREDITO: APROVADO COM RESSALVA. ruff/mypy/py_compile limpos; READ-ONLY M1 confirmado (git diff
+  vazio em censo_*/pipelines/config.py; 4 artefatos oficiais intactos); anti-PII OK (só session_state,
+  sem persistência em disco/log); D1/D2/D3 = Opção A implementados; CSS 260px + isolamento de keys OK;
+  12 testes novos bem-formados por INSPEÇÃO (não executados aqui).
+- RESSALVA: `pytest`/`import streamlit_app` bloqueados por Smart App Control (DLL do h3), reproduzido
+  identicamente ao Builder (incl. `import h3` isolado). NO-BYPASS honrado — sem verde fabricado.
+- housekeeping --check: falha esperada pré-move ("stub ausente"), helper reconhece o bloco; move é do
+  orquestrador no fechamento.
+
+## Bloqueio de ambiente sinalizado pelo Builder (ler antes de rodar a suite)
+`pytest`/`import streamlit_app` NÃO puderam ser executados de fato nesta máquina: uma política
+de Controle de Aplicativo (WDAC/Smart App Control) em nível de SO está bloqueando o carregamento
+do binário nativo do pacote `h3` (evidência: `import h3` isolado já falha; log de eventos do
+Windows mostra o MESMO tipo de bloqueio atingindo um DLL de terceiros alheio ao projeto nos
+mesmos minutos da sessão — não é causado por este bloco). `ruff`/`mypy`/`py_compile` rodaram
+limpos nos arquivos tocados. O QA deve tentar `pytest -n auto` no seu próprio ambiente; se o
+mesmo bloqueio ocorrer, escalar para o usuário antes de fechar o ciclo (NO-BYPASS).
+
+## Gate humano (produto) — CONFIRMADO em 2026-07-06
+- D1 = N botões rotulados por endereço (Opção A, recomendada). Sem `.zip`.
+- D2 = botão explícito "+ Adicionar à fila" (Opção A, recomendada).
+- D3 = fila única compartilhada entre topo e inferior (Opção A, recomendada).
+Plano do Planner segue sem alterações.
 
 ## Objetivo
-Modelar a captura/share gravitacional (Huff) de um ponto candidato — atratividade × distância aos
-concorrentes mapeados, com saturação e canibalização da rede Ultra — e validá-la out-of-fold contra a
-demanda OBSERVADA da Demanda Revelada (`membros`/`alunos_parceiras`) sob a disciplina DEC-008. Veredito
-honesto GO/NO-GO em `data/analysis/` (gitignored). READ-ONLY sobre o M1.
+Permitir gerar Relatórios Pontuais em lote acumulando os endereços pesquisados numa fila de
+`session_state`, com geração N-a-N (progresso i/N) e dois modos de download (lote + só o último),
+nos dois pontos da página (topo e inferior), READ-ONLY sobre o M1.
 
-## Tiering de modelo (Passo 4) — Alta
-- Block Orchestrator: opus (override +1: forense de viabilidade do insumo Huff + isolamento anti-PII/DEC-012)
-- Planner: opus
-- Builder: opus
+## Tiering de modelo (Passo 4) — Média
+- Block Orchestrator: sonnet
+- Planner: sonnet
+- Builder: sonnet
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-TP-07 (criada a partir de main @ HEAD af9c9ec).
+ciclo/BLK-RELPON-04 (criada a partir de main @ HEAD 1466040).
 
 ## Paths do ciclo (commit por path — NUNCA git add -A)
-- src/motor_expansao/demanda_revelada/ (módulo novo do Huff)
-- tests/unit/ (testes do módulo)
-- data/analysis/ (relatório gitignored — não versionado)
+- src/motor_expansao/dashboard/pages.py (fila, botões de lote, CSS width)
+- tests/ (testes da fila/lote de UI)
 - tasks/current_task.md, tasks/completed.md, tasks/backlog.md (fechamento)
 - context/handoff.md, context/handoff/
 
 ## Guardrails
-- §5 (READ-ONLY M1): zero recálculo de score/pesos/carteira/plano/artefatos oficiais; mtime dos 4 oficiais
-  M1 inalterado. Integrar ao residual/carteira/plano = follow-up com gate próprio (NÃO este bloco).
-- DEC-008: out-of-fold vs baseline; R² in-sample BANIDO; IC95 seed=42; intervalos + flag de extrapolação.
-- DEC-009: demanda (`membros`/`alunos_parceiras`) é ALVO OBSERVADO de validação; NUNCA preditor geográfico
-  de magnitude.
-- DEC-012 (anti-PII): camada agregada; fixtures sintéticas; zero PII em artefato/log/teste; fonte real
-  nunca versionada.
-- Isolamento: módulo NÃO importa de pipelines/m1, dashboard, censo_*, api.
+- §5 READ-ONLY M1: zero recálculo de score/pesos/carteira/plano/artefatos oficiais.
+- Núcleo `censo_*` (`setor_censitario_intersecao_area_1p5km`, raio 1,5 km, páginas do PDF, marca d'água
+  anti-PII, `set_compression(False)`) — só CONSUMIR, não alterar.
+- Anti-PII: fila de endereços vive só em `session_state` (efêmera); NUNCA persistida em disco/log.
+- Reusar `gerar_payloads_relatorio_pontual_para_pin` e `render_coord_search_sidebar` sem alterar núcleo.
+- Largura de botão via regra CSS 260px do `inject_styles` (adicionar novas `st-key`), NÃO `use_container_width`.
+- Sem dependência de rede nova (§2; geocoding/tiles já cobertos por DEC-010/DEC-004).
 
-## Depende de (satisfeito)
-- BLK-TP-05 (GO demanda→captura, R²_oof_log +0,575, concluído 2026-06-30) — destrava a reabertura da Camada 2/Huff.
-- concorrentes_mapeados.parquet + helper de catchment analisar_entorno_ponto.
+## Worktree pré-sujo
+- ` M tasks/backlog.md` já existia antes do ciclo; commitar apenas paths do ciclo por path.

@@ -66,6 +66,9 @@ logs/
 # Cache de tiles de basemap (Relatorio Pontual Censitario; DEC-004) - nunca versionar
 data/cache/
 
+# PoC de repaginacao (BLK-UI-10) - outputs e cache do proto, nunca versionar
+data/outputs/ui_proto/
+
 # Scratch de validacao visual (PNGs de inspecao do Builder) - nunca versionar
 data/reports/scratch/
 

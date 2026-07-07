@@ -973,6 +973,145 @@ validação, NUNCA vira preditor geográfico de magnitude no artefato de produç
 
 ---
 
+## Epic BLK-ATR — Funil de Atratividade de Hexágonos (gate de viabilidade + leitura multi-eixo; camada paralela READ-ONLY sobre o M1)
+
+**Objetivo do epic.** Formalizar a decisão de "onde entrar" como um **funil de duas etapas**, paralelo e
+READ-ONLY sobre o M1: **(1) um gate absoluto de viabilidade** (piso fixo de população e renda per capita —
+abaixo dele nem entra na conversa) e **(2) uma leitura multi-eixo dentro do viável** que cruza os três eixos
+ortogonais de atratividade — **sociodemografia** (renda/densidade), **tamanho de mercado** (residual/demanda
+observada) e **disputa competitiva** (share de captura Huff do BLK-TP-07). Nenhuma camada bate o martelo
+sozinha; todas informam. Motivação: o residual sozinho "desiste" de regiões ricas-mas-saturadas (competição
+alta zera a demanda não atendida) e o Huff sozinho também penaliza saturação — falta o eixo de **atração**
+sociodemográfica para contrabalançar as duas lentes de competição. Este epic testa, honestamente, se combinar
+os eixos agrega valor preditivo real sobre a demanda observada, e só então materializa.
+**READ-ONLY sobre o M1** (não recalibra `score_priorizacao`/`hex_score_estrutural`/pesos nem regenera
+artefatos oficiais; DEC-001 intacta). Metodologia obrigatória DEC-008 (out-of-fold vs baseline, R² in-sample
+banido, IC95, flag de extrapolação). DEC-009 (demanda observada é ALVO de validação, nunca preditor de
+magnitude). DEC-012 aplica-se **só ao dado pessoal** da Demanda Revelada; o dado de **estabelecimento**
+concorrente (nome/endereço/lat-long de academia — público, coletado por scraper) **não é PII pessoal** e é
+usado normalmente, inclusive o nome para dedup por rede.
+
+**Sequência:** BLK-ATR-01 (densifica o Huff) + BLK-ATR-02 (gate) → BLK-ATR-03 (testa a estrutura) →
+BLK-ATR-04 (visualiza os resultados) → **[revisão humana]** → BLK-ATR-05 (materializa em produção; NÃO
+loop-safe). Os quatro primeiros são de **análise/validação, 100% autônomos (loop-safe)**; o último toca
+produção e exige DEC + gate humano.
+
+---
+
+- BLK-ATR-01 (concluído 2026-07-06) — ver tasks/completed.md
+
+
+
+---
+
+- BLK-ATR-03 (concluído 2026-07-06) — ver tasks/completed.md
+
+
+---
+
+- BLK-ATR-04 (concluído 2026-07-06) — ver tasks/completed.md
+
+
+---
+
+### BLK-ATR-01-FU1 — Cruzar a base densa de concorrentes com as unidades reais do NAO_ABRA (aferição de precisão/overlap)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (aferição de qualidade da base densa do Huff; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-ATR-01** (base densa `concorrentes_densos` + dedup por `(hex, rede)`, concluído 2026-07-06). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; lê SÓ dado de **estabelecimento** de negócio (lat/long/rede/nome de unidade) do `NAO_ABRA/`; **NÃO** toca o dump pessoal (`totalpass_final*.html`); persiste ZERO PII; escreve só `data/analysis`; sem VPS/deploy/segredos/API ao vivo. |
+
+**Contexto.** O BLK-ATR-01 fechou com um **gap de escopo declarado**: o dedup da base densa foi inter-fonte
+(TotalPass/WellHub/Unidades) + contra `concorrentes_mapeados`, mas o **cruzamento com as unidades reais do
+`NAO_ABRA/`** (pedido de Felipe) NÃO foi implementado. Este FU fecha esse gap.
+
+**Objetivo.** Aferir a **precisão/cobertura** da base densa de concorrentes contra as unidades reais de
+**estabelecimento** do `NAO_ABRA/` (`01_SmartFit.xlsx` = unidades SmartFit; `03_Competidores.xlsx` = ~24 mil
+academias): quantas das unidades reais **casam** por `(hex_id_res7, rede)` com a base densa (recall), quantas
+da base densa **não têm correspondência** (possíveis falsos/duplicatas residuais), e o overlap por rede. Só
+campos de **negócio** são lidos (lat/long → hex, nome/rede para casar); qualquer PII é dropada na fronteira e
+**nada de PII é persistido** (o dump pessoal `totalpass_final*.html` NÃO é lido). Relatório em `data/analysis/`
+(gitignored), com contagens agregadas — recall, precisão-proxy, overlap por rede, e recomendação (a base densa
+é suficiente, ou precisa de ajuste de dedup).
+
+**Critérios de aceite.** Isolamento (`demanda_revelada/`, sem import de `pipelines/m1`/`dashboard`/`censo_*`/
+`api`/`config.py`); lê só `01_SmartFit.xlsx`/`03_Competidores.xlsx` (estabelecimento), NUNCA o dump pessoal;
+`test_zero_pii`/equivalente + fixtures sintéticas; relatório com métricas agregadas (recall/overlap por rede);
+mtime dos 4 oficiais M1 inalterado; `concorrentes_densos.parquet` só LIDO (não reescrito sem necessidade);
+suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-012 (dado de estabelecimento é público; só o **pessoal** é protegido —
+dump pessoal não lido; zero PII persistida); DEC-013 (concorrentes só na camada de mercado/residual).
+
+---
+
+### BLK-ATR-03-FU1 — Re-rodar o teste de estrutura (matriz vs composto) sobre o Huff DENSO
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (fecha o número da decisão de arquitetura do funil; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-ATR-01** (base densa + `share` denso) + **BLK-ATR-03** (harness `estrutura_funil`), ambos concluídos 2026-07-06. |
+| **Autonomia** | **loop-safe** — GO/NO-GO out-of-fold, READ-ONLY M1, veredito em `data/analysis`; sem mudança de produção. |
+
+**Contexto.** O BLK-ATR-03 deu **GO-composto** (composto R²_oof +0,48 vence o melhor eixo isolado +0,37), MAS
+usou o `share_captura_huff` **original** (base de ~3,3 mil concorrentes; `% huff disponível ≈ 62%`), não o
+Huff da **base densa** do ATR-01 (cobertura útil 28%→73%, R²_oof +0,44→+0,46, rho +0,44→+0,71). O eixo de
+disputa denso é mais forte, então o composto provavelmente **sobe** — mas o número precisa ser recomputado
+honestamente para embasar a decisão do BLK-ATR-05.
+
+**Objetivo.** Re-rodar `estrutura_funil` (matriz vs composto, mesmo harness k-fold 5×5 seed=42/IC95 vs demanda
+observada) **fiando o eixo de disputa no `share_captura_huff` DENSO** (da base do ATR-01) em vez do original.
+Reportar o número atualizado do composto (R²_oof + IC95), o melhor eixo isolado, o ganho material e a
+redundância — e re-emitir o veredito **matriz vs composto** com a base densa. Veredito em `data/analysis/`
+(gitignored). **Não materializa nada em produção** (isso é BLK-ATR-05).
+
+**Critérios de aceite.** Usa o `share` denso do ATR-01 (documentar a fonte exata do eixo de disputa);
+validação out-of-fold vs baseline (média + eixos isolados + matriz), IC95 seed=42, **R² in-sample banido do
+veredito**; `membros` só como ALVO (DEC-009); degradação graciosa onde o Huff não fala; veredito honesto
+(NO-GO/matriz é válido); caveat de cobertura ~1% explícito; mtime dos 4 oficiais M1 inalterado; suíte verde;
+`import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-008 (out-of-fold, R² in-sample banido, NO-GO válido); DEC-009 (`membros`
+só ALVO); DEC-012 (sem PII pessoal).
+
+---
+
+### BLK-ATR-05 — Materializar a estrutura escolhida (gate + matriz/composto) em produção (DEC + gate humano)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (materializa o funil na camada de um score ATIVO e regenera parquets de dashboard/API; **READ-ONLY sobre o M1 OFICIAL**). **Exige DEC registrada + gate humano obrigatório** antes do Builder. |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA + DEC]` → Builder → QA. |
+| **Status** | Em espera (condicional ao veredito do BLK-ATR-03 + decisão humana). |
+| **Depende de** | **BLK-ATR-03** (estrutura decidida: matriz ou composto GO) + **BLK-ATR-04** (visualização para a decisão). |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda a camada de um score em produção e exige gate humano; NUNCA loop-safe (o loop não tem gate). |
+
+**Contexto.** Após BLK-ATR-03 decidir a estrutura e BLK-ATR-04 dar os números, este bloco a materializa na
+camada paralela de mercado — o gate de viabilidade (BLK-ATR-02) + a leitura escolhida (matriz de eixos
+normalizados na mesma régua **ou** score composto validado) — para consumo no dashboard/API.
+
+**Objetivo.** Materializar o funil na camada de mercado (`calcular_colunas_mercado.py` ou módulo paralelo),
+medindo impacto (antes/depois: hexes por faixa/quadrante) e regenerando a camada pela **ordem canônica**
+(`híbrido → mercado → calcular_colunas_mercado → carteira → plano → domínio → residual → fase1_bi_exports`).
+**READ-ONLY sobre o M1 OFICIAL**: `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/plano/4 artefatos
+oficiais **INTOCADOS** (mtime inalterado).
+
+**Critérios de aceite.** DEC registrada e aprovada ANTES do Builder; medição de impacto documentada;
+regeneração reprodutível pela ordem canônica; cobertura/viés ~1% metropolitano explicitamente tratado (não
+enviesar os 99% sem sinal de disputa); artefatos oficiais do M1 com **mtime inalterado**; suíte verde;
+`import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1 OFICIAL — só a camada paralela muda, e com DEC); DEC-008 (justificado pela
+validação out-of-fold do BLK-ATR-03); DEC-009 (demanda não vira preditor de magnitude); DEC-012 (dado pessoal
+protegido).
+
+---
+
 ## Epic BLK-LTV — Integração Lifetime × Motor de Expansão (eixo retenção territorial, camada paralela READ-ONLY sobre o M1)
 
 **Objetivo do epic.** Validar se o perfil do território prevê a retenção/LTV da carteira, para a
@@ -1028,106 +1167,176 @@ declarado no relatório.
 
 ---
 
-### BLK-UI-10 — PoC de repaginação do dashboard: tema denso (baixo) + mapa Leaflet client-side (médio)
+- BLK-UI-10 (concluído 2026-07-06) — ver tasks/completed.md
+
+
+---
+
+## Relatório Pontual Censitário — geração em lote (2026-07-06, pedido de Vini)
+
+> Espelha o **BLK-RELMUN-04** (Relatório Municipal em lote), agora para o **Relatório Pontual
+> Censitário** (raio 1,5 km). Diferença estrutural: o municipal itera sobre um *multiselect* de
+> municípios já existente; o pontual é dirigido por **um endereço/coordenada pesquisado por vez** →
+> o mecanismo de lote é **acumular os endereços pesquisados** numa fila antes de gerar. Camada de
+> visualização/relatório — **READ-ONLY sobre o M1** (§5).
+
+- BLK-RELPON-04 (concluído 2026-07-06) — ver tasks/completed.md
+
+
+---
+
+## Epic BLK-ACENTO — Correção de acentuação e escrita (plataforma + relatórios)
+
+> Origem: tarefa ClickUp **"Resolver Problemas de Escrita e Acentuação no Motor"** (`86e26mtn5`,
+> lista *Motor de Expansão*, prioridade **urgente**, criador Felipe Castaldi, responsável Vinicius).
+> Descrição: *"Resolva todos os problemas de gramática e escrita no site e nos relatórios gerados
+> pelo Motor de Expansão."* Esclarecimento de Vinicius (2026-07-06): o problema é a **acentuação de
+> TUDO** — tanto a plataforma (dashboard Streamlit) quanto os relatórios gerados (PDF/CSV); **muitas
+> palavras não contêm acento** (ex.: "Relatorio", "Analise", "Nao", "concluido", "endereco",
+> "ultimo", "Populacao", "municipio", "regiao", "voce", "opcao").
+>
+> **Diagnóstico técnico (auditoria 2026-07-06, ancorado no código):** a ausência de acento é
+> majoritariamente **estilo/hábito herdado**, NÃO uma exigência técnica. No PDF, o core font
+> `Helvetica` do `fpdf2` codifica em **`latin-1`**, que **cobre integralmente** os acentos
+> portugueses (á â ã à ç é ê í ó ô õ ú ü); o helper `_ascii()` (`censo_report.py:170-172`,
+> `relatorio_municipal.py:211-213`) reduz a latin-1 com `errors="replace"` e seu comentário-fonte
+> (`censo_report.py:16-17`) generalizou incorretamente para "ASCII sem acento". Logo, **acentuar o
+> texto-fonte é seguro hoje, sem trocar fonte/biblioteca.** O CSV é `utf-8-sig`
+> (`censo_report.py:148`) — acentos seguros. Estado atual JÁ é misto (ex.: `pages.py:551`
+> "Expansão de Domínio" já acentuado), reforçando que é descuido, não regra.
+>
+> **A ARMADILHA REAL não é o acento** e sim a **tipografia "esperta"**: travessão `—`/`–`, bullet
+> `•`, seta `→`, reticências `…`, aspas curvas `" " ' '` e `©` estão FORA de latin-1 e viram `"?"`
+> **silenciosamente** via `errors="replace"` no PDF. Todo texto-fonte de PDF deve usar ASCII simples
+> para pontuação (hífen `-`, aspas retas `"`, "(c)") mesmo tendo acento nas letras.
+>
+> **READ-ONLY sobre o M1 (§5):** esta epic corrige APENAS texto voltado ao usuário. NÃO toca
+> `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/plano/artefatos oficiais, nem a lógica.
+> É um trabalho de **display**, com a disciplina crítica de **jamais acentuar identificadores**.
+>
+> **Guardrail permanente (não regredir depois):** a regra de acentuação foi promovida a **CLAUDE.md
+> §2** (fonte canônica lida antes de qualquer tarefa, inclusive pelos sub-agentes do `/run-cycle`),
+> para que TODO trabalho POSTERIOR a esta epic mantenha a acentuação correta em strings novas/editadas
+> e respeite a lista de proibições (identificadores). Esta epic é a correção retroativa; a §2 é a
+> prevenção contínua.
+
+**NÃO ACENTUAR (quebra lógica) — lista canônica de proibições (todos os sub-blocos):**
+- `key=` de widgets Streamlit e chaves de `st.session_state` (ex.: `coord_search_input`,
+  `dashboard_active_tab`, `relpon_lote_fila`, `btn_gerar_pdf_topo`, `multihex_cenario`) —
+  `pages.py:802,1592,2472-2660,3096-3368`.
+- Seletores CSS `.st-key-*` em `inject_styles` (`pages.py:154,358-448`) — ecoam as `key=` acima.
+- **Valores brutos de enum/categoria** comparados em lógica E produzidos pelo pipeline core:
+  `FAIXA_ORDEM = ["prioridade_maxima","alta","media","baixa","descartado","inviavel"]`
+  (`constants.py:90-97`), exibido CRU no `st.multiselect` (`pages.py:668-671`), usado em
+  `.isin(selected_faixas)` (`data.py:499`, `components.py:1706`) e como chave do dict de cores
+  (`constants.py:289-292`); origem em `src/motor_expansao/core/constants.py`,
+  `pipelines/calcular_colunas_mercado.py`, `pipelines/m1/*`. Também `HYBRID_ELIGIBILITY_ORDER`,
+  `COVERAGE_BUCKET_ORDER`, `JOIN_QUALITY_ORDER` (`constants.py:86-88`), `template="classico"`,
+  `METODO_RELATORIO_*` (`censo_point.py:15`, `relatorio_municipal.py:58`). **Solução: camada de
+  LABEL DE EXIBIÇÃO (`{valor_bruto: "Texto Acentuado"}`) — nunca tocar o literal usado na lógica.**
+- Nomes de coluna de DataFrame (`score_priorizacao`, `nome_municipio`, `renda_per_capita`,
+  `faixa_oportunidade`, `cod_municipio`, ...) — schema compartilhado com o M1/pipeline.
+- Slugs/nomes de arquivo — JÁ protegidos por `_slug()`/`unicodedata` (`relatorio_municipal.py:216-221`)
+  e `_relmun_key_slug` (`pages.py:3194`); não mexer.
+
+**Decomposição (sequência recomendada):** BLK-ACENTO-01 (UI dashboard) -> BLK-ACENTO-02 (relatórios
+PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seus próprios testes.
+
+---
+
+### BLK-ACENTO-01 — Acentuação da UI do dashboard (Streamlit)
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Baixa** (camada de **visualização/PoC**; **READ-ONLY sobre o M1**; não substitui o caminho de produção). |
-| **Prioridade** | A definir por Felipe/Vini. |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA. No modo loop, o gate humano é substituído pelo guard automático (`scripts/loop_guard.py`). |
+| **Criticidade** | **Média** (correção ampla de texto de UI; READ-ONLY sobre o M1; sem DEC; envolve 1 decisão de produto — label de exibição das faixas — e risco de acentuar identificador por engano, mitigado por lista de proibições). |
+| **Prioridade** | **Urgente** (herda da tarefa ClickUp `86e26mtn5`). |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 (label de exibição das faixas)]` → Builder → QA. |
 | **Status** | Pendente. |
-| **Depende de** | — (consome parquets já existentes em `data/outputs`/`data/staging`). |
-| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS/deploy/segredos, sem PII, **sem dependência nova de base** (Leaflet/h3-js por CDN via `st.components.v1.html`, igual ao `NAO_ABRA/totalpass_final*.html`), consome só `data/outputs`/`data/staging`; ver `docs/loop_autonomo.md`. |
+| **Depende de** | — (toca só a camada `dashboard/`; não depende de outros blocos). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mudança visual ampla que exige revisão humana; toca strings próximas a identificadores. NÃO marcar loop-safe. |
 
-**Contexto.** Comparação feita em 2026-06-24 (Felipe): o HTML `NAO_ABRA/totalpass_final (72) (1).html`
-é um SPA estático (Leaflet + h3-js por CDN, ~1.500 linhas, dados embutidos como arrays JS, 100%
-client-side) — leve e bonito porque é *vitrine* de um recorte pré-cozido. O nosso Streamlit é o *motor*
-(server-side, base nacional de 1,54 M hexes + malha censitária, re-roda o script a cada clique, pydeck
-re-renderizado). O objetivo deste bloco é **provar**, sem reescrever o motor, dois ganhos do HTML:
-(A) layout denso + tema escuro coeso e (B) mapa interativo client-side fluido. NÃO é migração para SPA;
-é PoC opt-in atrás de flag, com o caminho de produção (pydeck/abas atuais) **intacto e default**.
+**Objetivo.** Acentuar corretamente TODO o texto voltado ao usuário na plataforma (abas, labels de
+botão, `help=`, `st.caption/markdown/info/warning/success/error`, `st.metric`, `column_config`,
+legendas), preservando 100% dos identificadores.
 
-**Objetivo.** Entregar um protótipo navegável e testado que demonstre:
-- **Fase A (esforço baixo — tema/layout):** uma camada de tema (CSS injetado) + layout 3-painéis
-  (faixa superior + painel esquerdo de KPIs/filtros + mapa + painel direito de resultado), com a
-  densidade do HTML mas seguindo a **"Direção visual"** abaixo (NÃO copiar a paleta/tipografia do
-  totalpass cru — ver porquê). Só estilo/estrutura de container — **zero** mudança em dados, score,
-  ranking ou nas funções de cálculo.
-- **Fase B (esforço médio — mapa client-side):** um mapa **Leaflet** renderizado via
-  `st.components.v1.html` (CDN, sem pip novo) que consome um **recorte JSON enxuto por UF/cidade**
-  pré-agregado a partir dos parquets existentes (padrão "dados embutidos" do HTML), com pan/zoom/clique
-  fluidos **sem rerun do servidor**. Comparar peso percebido e responsividade vs. o pydeck atual num
-  pequeno relatório (`data/reports/ui_poc_leaflet.md`).
+**Escopo permitido (READ-ONLY M1, só display).**
+- `src/motor_expansao/dashboard/pages.py` (~359 ocorrências) e `components.py` (~161): acentuar
+  strings de exibição. `pages.py` + `components.py` concentram ~90% da massa de texto.
+- `streamlit_app.py` (~38), `data.py` (labels/mensagens de exibição; NÃO valores de categoria salvo
+  via label layer), `constants.py` (só onde a string é EXIBIDA e não usada como chave/valor lógico).
+- **D1 — camada de label de exibição das faixas:** criar `FAIXA_LABELS = {"prioridade_maxima":
+  "Prioridade máxima","alta":"Alta","media":"Média","baixa":"Baixa","descartado":"Descartado",
+  "inviavel":"Inviável"}` e usar `format_func` no `st.multiselect` (`pages.py:668-671`) e nas
+  legendas/tabelas, mantendo o VALOR bruto intocado no filtro/`.isin`/dict de cores. Idem, se
+  aplicável, `HYBRID_ELIGIBILITY_ORDER`/`COVERAGE_BUCKET_ORDER`/`JOIN_QUALITY_ORDER`. O fallback
+  `"Nao informado"` (`data.py:211,219,223`, `components.py:572,589`) pode virar "Não informado"
+  DESDE QUE trocado em TODAS as ocorrências juntas (é literal repetido, não comparado a dado externo)
+  — validar que continua casando `pd.Categorical(...)`.
+- Banir tipografia "esperta" também na UI por consistência (usar hífen simples e aspas retas).
+- Atualizar `tests/integration/test_streamlit_app.py` (6232 linhas; dezenas de asserts de string de
+  UI — ex. linhas 334,338,762,1112-1117,1355-1357,3199,3238-3239,3664-3666,4650-4653) e
+  `tests/unit/test_dashboard_format_utils.py`.
 
-**Escopo permitido (estritamente loop-safe).**
-- Código novo isolado em `src/motor_expansao/dashboard/` (ex.: `ui_proto.py` + helper de tema), exposto
-  como **página/aba OPT-IN atrás de um flag** (env/`session_state`), nunca como substituto do render
-  atual. As funções de produção (`build_map_figure`, abas, pydeck) ficam **byte-a-byte preservadas**.
-- O recorte JSON é uma **VIEW derivada read-only** dos parquets; gravar, se necessário, em
-  `data/outputs/ui_proto/` (ou cache `data/cache/`), **nunca** como artefato oficial do M1 (não entra na
-  lista do §3/`docs/m1_outputs_oficiais.md`) e **sem PII**.
-- Testes novos (render do tema sem erro, geração do recorte JSON determinística, fallback quando o
-  parquet/UF não existe). Suíte verde.
+**Fora de escopo.** Relatórios PDF/CSV (BLK-ACENTO-02). Qualquer valor bruto de enum/coluna/`key=`/
+`.st-key-*`/slug (ver lista canônica de proibições da epic). `score_priorizacao`/M1/artefatos
+oficiais. Sem dependência de rede nova.
 
-**Direção visual (destilada da skill `frontend-design` — embutida aqui para o loop NÃO depender do
-plugin; o container do loop tem `$HOME` próprio e não enxerga o `~/.claude` do host).**
-O agente deve seguir estes tokens como decisão tomada, não reinventar. O `totalpass` é referência de
-**densidade e ergonomia** (3 painéis, cards compactos, mono nos números), **não** de paleta: o "dark +
-verde-ácido" dele é um dos defaults genéricos de IA. Ancore na **identidade real da Ultra** e no motivo
-do produto (o hexágono H3).
+**Critério de aceite.** Texto de UI do dashboard acentuado corretamente (varredura por amostra de
+palavras sem acento retorna ~0 em texto de exibição); faixas exibidas com label acentuado mas
+filtrando pelo valor bruto (comportamento de filtro idêntico); nenhum `key=`/`.st-key-*`/coluna/
+enum bruto alterado; suíte verde; ruff+mypy limpos; revisão visual humana aprovada.
 
-- **Subject / tese.** Não é "mais um dashboard escuro": é a **sala de controle da expansão territorial**
-  de uma rede low-cost/massa (CLAUDE.md §1). O herói da tela é o **mapa**, não um número grande.
-- **Paleta (4–6 tokens; dark por legibilidade de mapa, mas NÃO o verde do totalpass).** Use a cor da
-  marca Ultra como acento único e reserve magenta para semântica de concorrente — convenção que o
-  projeto **já** usa (`Ultra=turquesa, conc.=magenta`, BLK-EST-02). Sugestão de tokens (o agente pode
-  refinar a partir dos assets em `data/ultra/`, mas mantendo a semântica):
-  `--bg:#0b1016` (fundo carvão-azulado, mais quente que o `#080c14` do totalpass) ·
-  `--panel:#121a24` · `--line:#1f2c3a` · `--ultra:#1fd1c4` (turquesa Ultra = acento/ações/ativo) ·
-  `--conc:#ff3d8b` (magenta = SÓ concorrente) · `--text:#dce6f0` / `--muted:#7d97ad`.
-  Score/faixas de mapa continuam usando `RESIDUAL_SCORE_BANDS`/faixas GeoFusion já canônicas — a
-  paleta de UI é a moldura, não recolore dado.
-- **Tipografia (par deliberado, NÃO o Inter/JetBrains default do totalpass; tudo via Google Fonts CDN,
-  loop-safe).** Display/títulos: **Space Grotesk** (caráter técnico/cartográfico, combina com "motor").
-  Corpo/UI: **IBM Plex Sans** (pedigree de engenharia, distinto do Inter). Dados (hex_id, lat/lng,
-  scores, m²): **IBM Plex Mono** — mono é justificável aqui porque o dado **é** o subject. Escala de
-  tipo clara (ex.: 11/13/18/30) com pesos intencionais.
-- **Signature (a UMA coisa memorável).** O **hexágono H3** é o motivo do produto inteiro — use-o como
-  assinatura: cards de KPI com canto/recorte hexagonal sutil ou um marcador hex no lugar do "dot"
-  genérico de legenda. Gaste a ousadia só aqui; o resto fica quieto e disciplinado (conselho "tire um
-  acessório antes de sair").
-- **Estrutura é informação, não decoração.** Nada de numeração 01/02/03 decorativa — só se houver
-  sequência real. Eyebrows/labels devem codificar algo verdadeiro (UF, faixa, tese de entrada).
-- **Cópia (microcopy) na voz do operador.** Rótulos pelo que a pessoa controla ("Filtrar por UF",
-  "Gerar relatório"), voz ativa, sentence case, mesmo verbo do início ao fim do fluxo. Estado vazio é
-  convite à ação ("Selecione um município no mapa"), erro diz o que houve e como resolver — sem
-  apologia nem mood.
-- **Piso de qualidade (sem alarde).** Responsivo até telas estreitas, foco de teclado visível,
-  `prefers-reduced-motion` respeitado (anima no máximo a carga inicial/hover — excesso de animação
-  cheira a "gerado por IA"). Contraste AA no texto sobre os painéis.
-- **Anti-default checklist (rodar antes de fechar a Fase A).** (1) A paleta NÃO é o verde-ácido do
-  totalpass nem cream+serif+terracota nem broadsheet hairline? (2) O par tipográfico não é o que eu
-  usaria em qualquer projeto? (3) Existe UMA assinatura (hex) e o resto é contido? (4) Algum elemento
-  decora sem significar? Se sim, corte. Anotar o que foi escolhido e por quê no relatório do bloco.
+---
 
-**Fora de escopo (NÃO fazer — manteria fora do loop-safe).** Tocar `config.py`, `pipelines/m1`,
-qualquer `*scoring*`/artefato oficial do M1, `Dockerfile.streamlit`/compose/Caddy/CI/`.env`/`secrets/`;
-**adicionar dependência de base** ao `pyproject.toml` (Leaflet/h3-js vêm de CDN no HTML embutido);
-deploy ao VPS; recalcular score/ranking/carteira/plano; persistir qualquer PII; substituir o caminho de
-produção do dashboard. Promover o PoC a default é **decisão humana** num bloco sucessor.
+### BLK-ACENTO-02 — Acentuação dos relatórios gerados (PDF/CSV)
 
-**Critérios de aceite.**
-- Fase A: tema + layout 3-painéis renderizam numa página opt-in; produção (pydeck/abas) inalterada e
-  ainda default; teste de smoke do render verde. A **"Direção visual"** foi seguida (paleta turquesa
-  Ultra + magenta só-concorrente, par Space Grotesk/IBM Plex, assinatura hexagonal) e o **anti-default
-  checklist** está respondido no relatório do bloco.
-- Fase B: mapa Leaflet client-side carrega um recorte JSON de ≥1 UF, com clique→detalhe sem round-trip;
-  recorte gerado de forma reprodutível e sem PII; relatório curto comparando peso/responsividade.
-- READ-ONLY M1 comprovado (zero diff em score/pesos/artefatos oficiais); **nenhuma** dep nova de base;
-  suíte verde; `loop_guard.py` não acusa toque em caminho proibido.
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (texto dos relatórios; READ-ONLY sobre o M1; núcleo `censo_*` só nas STRINGS de exibição, sem tocar método de interseção/raio/estrutura de páginas/marca d'água; sem DEC). |
+| **Prioridade** | **Urgente** (herda da tarefa ClickUp `86e26mtn5`). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (independente do BLK-ACENTO-01; pode ir em PR separado). |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera texto de relatório auditável (compressão OFF) e exige revisão visual do PDF. NÃO marcar loop-safe. |
 
-**Guardrail.** §2 (sem dependência de API ao vivo na carga do dashboard — o CDN do Leaflet só carrega no
-PoC opt-in, com fallback gracioso, espelhando a mitigação da DEC-004); §5 (visualização não recalcula
-nem altera M1); §6.1 (critérios loop-safe). Precedente de desvio cosmético restrito a um caminho: DEC-004.
+**Objetivo.** Acentuar corretamente o texto dos relatórios (Relatório Pontual Censitário 1,5 km e
+Relatório Municipal), sem trocar fonte/biblioteca e sem introduzir caracteres que virem `"?"`.
+
+**Escopo permitido (READ-ONLY M1, só texto de relatório).**
+- `src/motor_expansao/dashboard/censo_report.py` (~50 chamadas `_ascii(...)`) e
+  `relatorio_municipal.py` (~142 ocorrências / ~55 `set_font` + `_ascii`): escrever os textos-fonte
+  COM acento (títulos, `PDF_SECTION_HEADERS` — `censo_report.py:16-17`, `relatorio_municipal.py:60-61`,
+  rótulos de Big Numbers, legendas, rodapé). `latin-1` renderiza os acentos; **manter `_ascii()`**
+  como salvaguarda para caracteres exóticos.
+- Corrigir o comentário-fonte enganoso ("ASCII, sem acento") para refletir que latin-1 cobre acento
+  e que o que se proíbe é a tipografia fora de latin-1.
+- **BANIR tipografia "esperta"** no texto de PDF (travessão `—`/`–`, bullet `•`, seta `→`,
+  reticências `…`, aspas curvas, `©`): trocar por ASCII (`-`, `"`, "(c)", "...") — senão viram `"?"`
+  silenciosamente via `errors="replace"`.
+- **Teste de regressão anti-`"?"`:** adicionar teste que gere os PDFs e assert que **nenhum byte
+  `b"?"` inesperado** aparece (ou rodar `_ascii` com `errors="strict"` num modo de auditoria/CI para
+  pegar tipografia fora de latin-1 cedo). Aproveita a compressão OFF (`set_compression(False)`,
+  `censo_report.py:228-236`) que já expõe o texto cru.
+- Atualizar `tests/unit/test_relatorio_municipal.py` (~26 asserts `assert b"..."`, ex. linhas
+  354-368,467-472,498,558-583) e `tests/unit/test_relatorio_pontual_censitario_export.py` (~40
+  asserts, ex. linhas 125-126,268-269,311-326,382-416,554-556) para as strings acentuadas em
+  `latin-1` (`b"Visao"` -> `"Visão".encode("latin-1")`). O laço
+  `for header in PDF_SECTION_HEADERS: assert header.encode("latin-1") in pdf_bytes` NÃO quebra (lê a
+  constante), mas os `assert b"literal"` isolados precisam ser atualizados um a um.
+
+**Fora de escopo.** Núcleo funcional `censo_*`: `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
+`RAIO_CENSITARIO_DEFAULT_KM`, contagem/ordem/estrutura das páginas, grid de Big Numbers, marca d'água
+anti-PII (BLK-EST-03), `set_compression(False)`, `pdf_version` — SÓ as STRINGS mudam. UI do dashboard
+(BLK-ACENTO-01). `score_priorizacao`/M1/artefatos oficiais. Trocar core font por TTF Unicode (não é
+necessário; latin-1 basta).
+
+**Guardrails.** READ-ONLY sobre o M1 (§5). Anti-PII inalterado (compressão OFF, marca d'água do
+solicitante BLK-EST-03, `.pptx`/PDF nunca versionados, `image24.png` nunca embutido). Sem dependência
+de rede nova.
+
+**Critério de aceite.** PDFs (pontual + municipal) com acentuação correta renderizando em `latin-1`;
+teste anti-`"?"` verde (zero caractere perdido); método de interseção/raio/estrutura/marca d'água
+INTOCADOS; suíte verde (asserts de PDF atualizados); ruff+mypy limpos; revisão visual humana do PDF
+aprovada.
 
 ---
