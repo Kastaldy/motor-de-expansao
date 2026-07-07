@@ -36,12 +36,54 @@ _session = requests.Session()
 
 _TELEGRAM = "https://api.telegram.org/bot{token}/{method}"
 
-_KB_MENU = [["Relatorio"], ["Ajuda"]]
+# Dois tipos de relatorio no menu.
+_BTN_PONTUAL = "Relatorio Pontual"
+_BTN_MUNICIPAL = "Relatorio Municipal"
+_KB_MENU = [[_BTN_PONTUAL], [_BTN_MUNICIPAL], ["Ajuda"]]
+_KB_VOLTAR = [["⬅️ Voltar"]]
+
+# UFs para o teclado de escolha do estado (Relatorio Municipal).
+_UFS = [
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA",
+    "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
+]
+
+
+def _kb_ufs() -> list[list[str]]:
+    """Teclado com as 27 UFs em grade (linhas de 5) + Voltar."""
+    linhas = [_UFS[i:i + 5] for i in range(0, len(_UFS), 5)]
+    linhas.append(["⬅️ Voltar"])
+    return linhas
+
+
+_MENU = (
+    "📋 *Menu* — o que voce quer gerar?\n\n"
+    "• *Relatorio Pontual* — estudo de um ponto (raio 1.5 km)\n"
+    "• *Relatorio Municipal* — estudo de um municipio inteiro\n"
+    "• *Ajuda* — como funciona\n\n"
+    "Toque em uma opcao abaixo. 👇"
+)
+
+_PEDIR_UF = "🗺️ *Relatorio Municipal* — primeiro, escolha o *estado (UF)*:"
+
+
+def _pedir_municipio(uf: str) -> str:
+    return (
+        f"✍️ Agora *digite o nome do municipio* em *{uf}*.\n"
+        "Ex.: `Palmas`, `Ribeirao Preto` (pode ser sem acento).\n\n"
+        "Ou toque em *⬅️ Voltar* para trocar a UF."
+    )
+
+
+_GERANDO_MUNI = (
+    "⏳ Gerando o *Relatorio Municipal* em PDF. Isso agrega o municipio inteiro e "
+    "monta os mapas — pode levar cerca de 1 minuto. Ja te aviso aqui. 📄"
+)
 
 _SAUDACAO = (
     "👋 Olá! Eu sou o *Paulo*, assistente de estudos geoespaciais da *Ultra*.\n\n"
-    "Eu gero o *Relatorio Pontual Censitario* (raio de 1.5 km) de qualquer ponto — "
-    "com populacao, renda, densidade e score do entorno, em PDF.\n\n"
+    "Eu gero dois estudos em PDF: o *Relatorio Pontual Censitario* (raio de 1.5 km de um "
+    "ponto) e o *Relatorio Municipal* (um municipio inteiro).\n\n"
     "🔒 Este bot e de uso restrito.\n"
     "Para continuar, envie a *senha* de acesso."
 )
@@ -71,14 +113,15 @@ _GERANDO = (
 
 _AJUDA = (
     "ℹ️ *Sobre o Paulo*\n\n"
-    "Sou o assistente de estudos geoespaciais da *Ultra*. A partir de um ponto, gero "
-    "o *Relatorio Pontual Censitario* (raio de 1.5 km) em PDF — com populacao, renda, "
-    "densidade e score do entorno.\n\n"
+    "Sou o assistente de estudos geoespaciais da *Ultra*. Gero dois estudos em PDF:\n\n"
+    "📍 *Relatorio Pontual* — a partir de um ponto (link do Maps, `lat,lng` ou "
+    "endereco+CEP), estuda o entorno num raio de 1.5 km.\n"
+    "🏙️ *Relatorio Municipal* — a partir de um *estado* + *municipio*, estuda o "
+    "municipio inteiro (cobertura, score, residual, dominio, bairros).\n\n"
     "*Comandos:*\n"
-    "• *Relatorio* — me peca para gerar um estudo\n"
+    "• *Relatorio Pontual* / *Relatorio Municipal* — escolhe o estudo\n"
     "• *Ajuda* — mostra esta descricao\n"
-    "• /start — recomeca\n\n"
-    "As 3 formas de localizacao estao no passo de *Relatorio*."
+    "• /start — volta ao menu"
 )
 
 
@@ -136,6 +179,29 @@ def consultar_pdf(payload: dict, settings: Settings) -> bytes | None:
     if resp.status_code == 200 and resp.content[:4] == b"%PDF":
         return resp.content
     return None
+
+
+def consultar_pdf_municipio(
+    uf: str, municipio: str, solicitante: str | None, settings: Settings
+) -> tuple[bytes | None, str | None]:
+    """POST /analisar-municipio -> (pdf_bytes, None) ou (None, mensagem_de_erro).
+
+    Em 404 a API devolve `detail` ja com sugestoes de nome — repassamos ao usuario.
+    """
+    url = f"{settings.api_base_url}{settings.api_prefix}/analisar-municipio"
+    payload = {"uf": uf, "municipio": municipio, "solicitante": solicitante or ""}
+    try:
+        # 300s: 1a geracao carrega a base de mercado (~1,9 GB) + baixa tiles.
+        resp = _session.post(url, json=payload, headers=_headers(settings), timeout=300)
+    except requests.RequestException:
+        return None, "Nao consegui falar com a API."
+    if resp.status_code == 200 and resp.content[:4] == b"%PDF":
+        return resp.content, None
+    try:
+        detail = resp.json().get("detail", f"Erro {resp.status_code}")
+    except ValueError:
+        detail = f"Erro {resp.status_code}"
+    return None, detail
 
 
 def _erro_api(payload: dict, settings: Settings) -> str:
@@ -237,17 +303,55 @@ def processar(
             _msg(_PEDIR_LOCAL, _KB_MENU),
         ]
 
-    # 2. Comandos.
-    if low in ("/start", "menu", "/menu", "relatorio", "relatório", "/relatorio"):
-        return [_msg(_PEDIR_LOCAL, _KB_MENU)]
+    # 2. Comandos globais (sempre escapam de qualquer etapa do fluxo municipal).
+    if low in ("/start", "menu", "/menu"):
+        s["etapa"] = None
+        return [_msg(_MENU, _KB_MENU)]
     if low in ("ajuda", "/ajuda", "/help"):
+        s["etapa"] = None
         return [_msg(_AJUDA, _KB_MENU)]
+    if low in (_BTN_PONTUAL.lower(), "pontual", "relatorio", "relatório", "/relatorio"):
+        s["etapa"] = None
+        return [_msg(_PEDIR_LOCAL, _KB_MENU)]
+    if low in (_BTN_MUNICIPAL.lower(), "municipal", "/municipal"):
+        s["etapa"] = "muni_uf"
+        return [_msg(_PEDIR_UF, _kb_ufs())]
     # "Analisar" foi removido — trata um toque no botao fantasma (teclado antigo
     # em cache no Telegram) de forma limpa e ja troca o teclado para o atual.
     if low in ("analisar", "/analisar"):
-        return [_msg("Esse botao saiu. 🙂 Toque em *Relatorio* para gerar um estudo.", _KB_MENU)]
+        return [_msg("Esse botao saiu. 🙂 Toque em *Relatorio Pontual* ou *Relatorio Municipal*.", _KB_MENU)]
 
-    # 3. Qualquer outra mensagem = localizacao -> PDF.
+    # 3. Fluxo do Relatorio Municipal: escolha da UF -> digitar o municipio.
+    if s.get("etapa") == "muni_uf":
+        if low in ("⬅️ voltar", "voltar", "cancelar"):
+            s["etapa"] = None
+            return [_msg(_MENU, _KB_MENU)]
+        uf = t.strip().upper()
+        if uf not in _UFS:
+            return [_msg("❓ UF invalida. Toque em um dos botoes de estado abaixo.", _kb_ufs())]
+        s["muni_uf"] = uf
+        s["etapa"] = "muni_nome"
+        return [_msg(_pedir_municipio(uf), _KB_VOLTAR)]
+
+    if s.get("etapa") == "muni_nome":
+        if low in ("⬅️ voltar", "voltar", "cancelar"):
+            s["etapa"] = "muni_uf"
+            return [_msg(_PEDIR_UF, _kb_ufs())]
+        uf = s.get("muni_uf", "")
+        if notify is not None:
+            notify(_GERANDO_MUNI)
+        pdf, err = consultar_pdf_municipio(uf, t, s.get("login"), settings)
+        if pdf is None:
+            return [_msg(f"⚠️ {err}\n\nDigite outro nome ou toque em *⬅️ Voltar*.", _KB_VOLTAR)]
+        s["etapa"] = None
+        print(f"[ESTUDO-MUNI] login={s.get('login', '?')} chat={chat_id} uf={uf} municipio={t}")
+        return [
+            _msg(f"📄 *Relatorio Municipal* — {t.strip()} - {uf}\n_Solicitado por {s.get('login', '?')}_"),
+            {"pdf": pdf, "filename": f"relatorio_municipal_{uf.lower()}.pdf"},
+            _msg("Pronto! Escolha outra opcao no menu. 👇", _KB_MENU),
+        ]
+
+    # 4. Qualquer outra mensagem = localizacao -> PDF (Relatorio Pontual).
     # Avisa ANTES do trabalho pesado (geocoding ~14s + PDF) pra nao parecer travado.
     if notify is not None:
         notify(_GERANDO)
@@ -280,10 +384,11 @@ def _tg(token: str, method: str, **params: Any) -> dict:
 
 def _enviar(token: str, chat_id: int, acao: dict) -> None:
     if "pdf" in acao:
+        fname = acao.get("filename", "relatorio_pontual_censitario.pdf")
         _session.post(
             _TELEGRAM.format(token=token, method="sendDocument"),
             data={"chat_id": chat_id},
-            files={"document": ("relatorio_pontual_censitario.pdf", acao["pdf"], "application/pdf")},
+            files={"document": (fname, acao["pdf"], "application/pdf")},
             timeout=120,
         )
         return
@@ -310,8 +415,9 @@ def _enviar(token: str, chat_id: int, acao: dict) -> None:
 def _configurar_menu_comandos(token: str) -> None:
     """Define o menu de comandos do bot (substitui qualquer lista antiga, ex.: /analisar)."""
     comandos = [
-        {"command": "start", "description": "Iniciar / pedir acesso"},
-        {"command": "relatorio", "description": "Gerar um relatorio"},
+        {"command": "start", "description": "Menu / pedir acesso"},
+        {"command": "relatorio", "description": "Relatorio Pontual (raio 1.5 km)"},
+        {"command": "municipal", "description": "Relatorio Municipal (municipio inteiro)"},
         {"command": "ajuda", "description": "Sobre o bot"},
     ]
     try:

@@ -15,6 +15,7 @@ LAZY, dentro de `analisar_ponto`, para nao pesar a subida do app.
 from __future__ import annotations
 
 import json
+import unicodedata
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -310,3 +311,207 @@ def gerar_pdf_ponto(
         result, mapas, residual=residual, ultra_dir=ultra_dir,
         solicitante=consumidor, rotulo=rotulo,
     )
+
+
+# ===========================================================================
+# Relatorio Municipal (BLK-RELMUN) — PDF de 9 paginas por municipio.
+#
+# Diferente do Pontual: agrega TODOS os hexes de UM municipio (nao um raio de
+# ponto). Fonte = `hexagonos_mercado_mapeado.parquet` (1,5M hexes). Opcao A de
+# RAM: a base inteira e carregada 1x por processo (~1,9 GB residente) e as
+# consultas por municipio sao fatias baratas. READ-ONLY sobre o M1 — reusa o
+# gerador do dashboard (`relatorio_municipal`), sem recalcular score/mercado.
+# ===========================================================================
+
+_MERCADO_PARQUET = "hexagonos_mercado_mapeado.parquet"
+
+
+def _norm(texto: object) -> str:
+    """Normaliza para casar municipio: sem acento, sem espaco nas pontas, casefold."""
+    s = unicodedata.normalize("NFKD", str(texto))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return s.strip().casefold()
+
+
+def _normalizar_cod(valor: object) -> str | None:
+    """cod_municipio pode vir como float/int/str; devolve string de digitos ou None."""
+    if valor is None:
+        return None
+    s = str(valor).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s or None
+
+
+@lru_cache(maxsize=8)
+def _carregar_parquet_full(path_str: str):
+    """Le um parquet INTEIRO (pequeno: concorrentes/ultra/dominio). None se ausente."""
+    import pandas as pd
+
+    path = Path(path_str)
+    if not path.is_file():
+        return None
+    try:
+        return pd.read_parquet(path)
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=1)
+def _carregar_mercado_full(path_str: str):
+    """Carrega a base de mercado (hexagonos) INTEIRA, 1x por processo (~1,9 GB).
+
+    Lazy: so materializa na 1a chamada municipal — o fluxo Pontual nunca paga isso.
+    """
+    import pandas as pd
+
+    return pd.read_parquet(path_str)
+
+
+def _mercado_df(settings: Settings):
+    return _carregar_mercado_full(str(settings.staging_dir / _MERCADO_PARQUET))
+
+
+def _dominio_df(settings: Settings):
+    """`plano_expansao_dominio.parquet` (opcional; melhora as zonas D2). None se ausente."""
+    for p in (
+        settings.staging_dir / "plano_expansao_dominio.parquet",
+        Path(settings.censo_geo_dir).parent / "plano_expansao_dominio.parquet",
+    ):
+        df = _carregar_parquet_full(str(p))
+        if df is not None:
+            return df
+    return None
+
+
+@lru_cache(maxsize=2)
+def _indice_municipios(path_str: str) -> dict[str, dict[str, dict]]:
+    """Indexa `uf -> {nome_normalizado -> {nome, cod}}` lendo SO 3 colunas (barato).
+
+    Nao carrega a base de 1,9 GB — le `uf/nome_municipio/cod_municipio` (~50 MB) e
+    deduplica para ~5.300 municipios. Usado para listar/validar municipio no bot.
+    """
+    import pandas as pd
+
+    df = pd.read_parquet(path_str, columns=["uf", "nome_municipio", "cod_municipio"])
+    df = df.dropna(subset=["uf", "nome_municipio"])
+    df["uf"] = df["uf"].astype(str).str.strip().str.upper()
+    df["nome_municipio"] = df["nome_municipio"].astype(str).str.strip()
+    df = df[df["nome_municipio"].str.len() > 0].drop_duplicates(["uf", "nome_municipio"])
+    idx: dict[str, dict[str, dict]] = {}
+    for uf, nome, cod in zip(df["uf"], df["nome_municipio"], df["cod_municipio"], strict=False):
+        idx.setdefault(uf, {}).setdefault(_norm(nome), {"nome": nome, "cod": cod})
+    return idx
+
+
+def listar_ufs(settings: Settings) -> list[str]:
+    """UFs disponiveis na base de mercado (ordenadas)."""
+    idx = _indice_municipios(str(settings.staging_dir / _MERCADO_PARQUET))
+    return sorted(idx.keys())
+
+
+def listar_municipios(uf: str, settings: Settings) -> list[str]:
+    """Municipios de uma UF (nomes reais, ordenados)."""
+    idx = _indice_municipios(str(settings.staging_dir / _MERCADO_PARQUET))
+    d = idx.get(str(uf).strip().upper(), {})
+    return sorted({v["nome"] for v in d.values()})
+
+
+def resolver_municipio(uf: str, texto: str, settings: Settings) -> tuple[str | None, list[str]]:
+    """Casa o texto digitado a um municipio da UF (sem acento/caso).
+
+    Retorna `(nome_exato | None, candidatos)`:
+      - match exato normalizado  -> (nome, [nome])
+      - 1 candidato por substring -> (nome, [nome])
+      - ambiguo / nao encontrado  -> (None, ate 10 sugestoes)
+    """
+    idx = _indice_municipios(str(settings.staging_dir / _MERCADO_PARQUET))
+    d = idx.get(str(uf).strip().upper(), {})
+    if not d:
+        return None, []
+    alvo = _norm(texto)
+    if not alvo:
+        return None, []
+    if alvo in d:
+        return d[alvo]["nome"], [d[alvo]["nome"]]
+    cands = sorted({v["nome"] for k, v in d.items() if alvo in k or k.startswith(alvo)})
+    if len(cands) == 1:
+        return cands[0], cands
+    return None, cands[:10]
+
+
+def gerar_pdf_municipio(
+    uf: str,
+    municipio: str,
+    consumidor: str | None,
+    settings: Settings,
+    *,
+    solicitante: str | None = None,
+) -> bytes:
+    """Gera o PDF de 9 paginas do Relatorio Municipal (BLK-RELMUN). READ-ONLY.
+
+    Resolve o municipio (aceita nome sem acento), agrega os hexes, renderiza os 5
+    mapas (basemap online com fallback offline) e monta o PDF pelo gerador do
+    dashboard. Levanta 404 se o municipio nao existe/nao tem hexes na UF.
+    """
+    _reuse_contextily_session()  # mesma aceleracao de tiles do Pontual
+
+    from motor_expansao.dashboard.relatorio_municipal import (
+        _carregar_bairros_por_hex,
+        agregar_municipio,
+        gerar_payloads_download_relatorio_municipal,
+        render_mapas_municipio,
+    )
+
+    uf = str(uf).strip().upper()
+    nome_exato, cands = resolver_municipio(uf, municipio, settings)
+    if nome_exato is None:
+        msg = f"Municipio '{municipio}' nao encontrado em {uf}"
+        if cands:
+            msg += ". Voce quis dizer: " + ", ".join(cands[:6]) + "?"
+        raise APIError(404, msg, "municipio_nao_encontrado")
+
+    df = _mercado_df(settings)
+    col = "nome_municipio" if "nome_municipio" in df.columns else "cidade"
+    df_muni = df.loc[df[col].astype(str).str.strip().str.casefold() == nome_exato.casefold()]
+    if df_muni.empty:
+        raise APIError(404, f"Municipio '{nome_exato}' ({uf}) sem hexagonos", "municipio_sem_dados")
+
+    comp_df = _carregar_parquet_full(str(settings.staging_dir / "concorrentes_mapeados.parquet"))
+    ultra_df = _carregar_parquet_full(str(settings.staging_dir / "unidades_ultra_mapeadas.parquet"))
+    dominio_df = _dominio_df(settings)
+
+    # Bairros reais (best-effort): usa cod_municipio da propria linha + particao geo.
+    bairros: dict | None = None
+    try:
+        cod = _normalizar_cod(df_muni.iloc[0].get("cod_municipio"))
+        if cod:
+            bairros = _carregar_bairros_por_hex(uf, cod, settings.censo_geo_dir)
+    except Exception:
+        bairros = None
+
+    result = agregar_municipio(
+        df, nome_municipio=nome_exato, uf=uf, dominio_df=dominio_df,
+        competitors_df=comp_df, ultra_df=ultra_df, bairros_por_hex=bairros,
+    )
+    if result.get("n_hex_total", 0) == 0:
+        raise APIError(404, f"Municipio '{nome_exato}' ({uf}) sem hexagonos", "municipio_sem_dados")
+
+    def _mapas(basemap: bool):
+        return render_mapas_municipio(
+            df_muni, result, competitors_df=comp_df, ultra_df=ultra_df, basemap=basemap,
+        )
+
+    try:
+        mapas = _mapas(True)
+    except Exception:
+        try:
+            mapas = _mapas(False)
+        except Exception:
+            mapas = None
+
+    ultra_dir = settings.ultra_dir if Path(settings.ultra_dir).is_dir() else None
+    payloads = gerar_payloads_download_relatorio_municipal(
+        result, mapas, ultra_dir=ultra_dir, solicitante=solicitante or consumidor,
+    )
+    return payloads.pdf_bytes
