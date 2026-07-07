@@ -250,7 +250,7 @@ def aplicar_gate_atratividade(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str,
     flag = flag.fillna(False)
     df_pos = df.loc[flag].copy()
     n_pos = int(len(df_pos))
-    meta = {
+    meta: dict[str, object] = {
         "n_pre_gate": n_pre,
         "n_pos_gate": n_pos,
         "pct_retido": float(100.0 * n_pos / n_pre) if n_pre else float("nan"),
@@ -666,7 +666,7 @@ def avaliar_estrutura_funil(df_join: pd.DataFrame) -> EstruturaFunilResult:
 
     n_join = int(len(df_join))
     df_pos, meta_gate = aplicar_gate_atratividade(df_join)
-    n_pos = int(meta_gate["n_pos_gate"])  # type: ignore[arg-type]
+    n_pos = int(meta_gate["n_pos_gate"])  # type: ignore[call-overload]
     if n_pos == 0:
         raise ValueError("Nenhum hex viavel apos o gate de atratividade -- nada a modelar.")
 

@@ -166,7 +166,7 @@ def gerar_grafico_gate_por_uf(
     for xi, aprov, total in zip(x, aprovados, stats["total"].tolist(), strict=True):
         if total > 0:
             pct = 100.0 * aprov / total
-            ax.text(xi, total + 0.5, f"{pct:.0f}%", ha="center", va="bottom", fontsize=7)
+            ax.text(float(xi), total + 0.5, f"{pct:.0f}%", ha="center", va="bottom", fontsize=7)
 
     del bar_aprov  # nao usado mais
     fig.tight_layout()
