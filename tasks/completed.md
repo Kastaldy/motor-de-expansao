@@ -7285,3 +7285,45 @@ Precisa de uma camada de validação permanente antes de qualquer conta de viabi
 regra; determinístico (mesmas regras → mesma saída); nenhuma escrita em `config.py`/`pipelines/m1`/artefatos oficiais;
 suíte verde. **Guardrail.** §5 READ-ONLY M1; regras de limpeza são parâmetros da camada paralela (não §3); loop-safe só
 enquanto não tocar `config.py`/`pipelines/m1` (o `loop_guard` aborta).
+
+---
+
+## BLK-VIAB-02 — Faixa de demanda-premissa por tier de metragem (comparáveis reais)
+
+Data: 2026-07-07
+Criticidade: Média (camada paralela de premissa; READ-ONLY sobre o M1)
+Status: CONCLUÍDO
+
+### O que foi feito
+Criados 2 arquivos:
+- `src/motor_expansao/dimensionamento/demanda_premissa.py` — módulo puro com funções
+  `carregar_ultra`, `carregar_eng_corpo`, `combinar_bases`, `calcular_tiers`, `materializar`, `run`.
+- `tests/unit/dimensionamento/test_demanda_premissa.py` — 28 testes unitários (fixture sintética).
+
+### Artefatos gerados (gitignored)
+- `data/staging/demanda_premissa_por_tier.parquet` (5 linhas)
+- `data/analysis/demanda_premissa_qualidade.md`
+
+### N por tier (dados reais)
+| Tier (m²)  | N  | p10   | p50   | p90   | flag_extrapolacao |
+|---|---|---|---|---|---|
+| <1000      | 17 | 1467  | 2063  | 3589  | False |
+| 1000-1499  | 46 | 1559  | 2532  | 3889  | False |
+| 1500-1999  | 36 | 1763  | 2748  | 4578  | False |
+| 2000-2999  | 11 | 2870  | 3888  | 4752  | False |
+| >=3000     |  2 | 2578  | 5706  | 8833  | True  |
+Total: 112 unidades (Ultra 54 + Eng Corpo 58)
+
+### Validações
+- ruff: limpo (0 erros)
+- mypy: limpo (0 erros)
+- pytest subset: 28/28 passed (testes novos)
+- pytest impactado (dimensionamento/ + streamlit): 500 passed, 2 failed (pré-existentes Plus Code)
+- smoke import: ok
+- loop_guard: GUARD OK, 0 caminhos proibidos
+- viabilidade_ponto.py: INTOCADO (git diff vazio)
+- mtimes M1: brasil_estrutural.parquet=1780501621, brasil_priorizados.parquet=1780501631 (INALTERADOS)
+
+### Referências
+- `context/handoff/20260707-HHMMSS-builder.md`
+- `tasks/backlog.md` (linha "~1.100" corrigida para "~112 unidades")

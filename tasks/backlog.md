@@ -902,11 +902,11 @@ Dependências: decisão de produto sobre evolução para web interno.
 | **Prioridade** | A definir (Felipe/Vini). |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
 | **Status** | Pendente. |
-| **Depende de** | — (consome as bases reais de alunos: `unidades_ultra_performance_hex.parquet` + `data/validacao/` Smart/Eng/Sky, coords em `concorrentes/Unidades/`). |
+| **Depende de** | — (consome `unidades_ultra_performance_hex.parquet` + `data/validacao/academias_engenharia_do_corpo.xlsx`; Smart Fit e Sky Fit não têm metragem disponível). |
 | **Autonomia** | **loop-safe** — READ-ONLY M1; consome `data/staging` + `data/validacao` (xlsx LOCAL) + `concorrentes/` (CSV LOCAL); saída `data/staging`+`data/analysis` gitignored; sem rede; sem VPS. |
 
 **Contexto.** O motor `analisar_viabilidade_ponto` recebe `base_calibracao_df` para derivar a faixa de alunos por m²
-(p10/p50/p90). Hoje essa faixa é frágil; temos ~1.100 academias REAIS com metragem+alunos totais para calibrá-la.
+(p10/p50/p90). Hoje essa faixa é frágil; temos ~112 unidades reais (Ultra 54 + Eng Corpo 58) com metragem+alunos totais para calibrá-la.
 
 **Objetivo.** Derivar uma **faixa de demanda-premissa (p10/p50/p90 de alunos por unidade) POR TIER de metragem** a
 partir dos comparáveis reais (Ultra `ALUNOS_TOTAL` + Smart `Alunos Totais SF` + Eng `Alunos Totais` + Sky `Alunos EVO`),
