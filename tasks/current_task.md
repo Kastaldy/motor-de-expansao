@@ -2,72 +2,82 @@
 
 ## Bloco atual
 
-ID: BLK-UI-10
-Nome: PoC de repaginação do dashboard — tema denso (baixo) + mapa Leaflet client-side (médio)
-Status: CONCLUÍDO — QA APROVADO (segunda tentativa) + housekeeping executado
-Tipo: feature (PoC opt-in atrás de flag — visualização, READ-ONLY M1)
-Criticidade: baixa
-Esteira: Block Orchestrator (✓) → Builder (✗ incompleto) → QA (✗ reprovado) → Builder (✓ correção) → QA (✓ APROVADO)
-Skill atual: QA (✓ APROVADO — ciclo concluído)
-Próxima Skill: nenhuma — merge + revisão humana são passos externos ao loop
+ID: BLK-RELPON-04
+Nome: Relatório Pontual em lote (fila de endereços pesquisados)
+Status: CICLO FECHADO — APROVADO. A ressalva do QA foi RESOLVIDA: após reboot da máquina o
+  bloqueio Smart App Control do DLL do h3 sumiu; a suíte rodou de verdade. Housekeeping OK +
+  commit por path feito; merge = humano (6.b).
+Tipo: feature (UI)
+Criticidade: média
+Esteira: Block Orchestrator → Planner → [confirmação humana — produto: D1/D2/D3] → Builder → QA (concluído)
+Skill atual: Fechamento (orquestrador) CONCLUÍDO
+Skill anterior: QA (concluído em 2026-07-06)
+Próxima Skill: revisão + merge da branch ciclo/BLK-RELPON-04 pelo humano (6.b). Sem dry-run (não tocou orquestração).
 
-## Veredito do QA (2026-07-06 21:59 UTC) — SEGUNDA TENTATIVA
-APROVADO. O opt-in de 6 linhas agora existe em `main()` de `streamlit_app.py` (import lazy +
-`is_proto_enabled()`/`render_proto_page()` + `return`); caminho de produção byte-a-byte sem a flag.
-Os 5 entregáveis (ui_proto.py, ui_theme.py, streamlit_app.py, test_ui_proto.py, ui_poc_leaflet.md)
-COMMITADOS por path. 37 testes do ciclo verdes (35 + 2 wiring). Suíte FULL 1391 passed / 4 failed
-(plus_code/openlocationcode pré-existentes, não relacionados). ruff limpo; loop_guard OK (38 caminhos,
-nenhum proibido); READ-ONLY M1 (diff config/pipelines/constants vazio, mtime oficiais inalterado).
-Ruído fora de escopo (CRLF dimensionamento/config.py, script solto) mantido fora do commit. Housekeeping
-executado. Detalhes em context/handoff.md e context/handoff/20260706-215947-qa.md.
+## Resultado da suíte (pós-reboot, execução REAL — 2026-07-06)
+- `import h3` OK (v4.5.0) e `import streamlit_app` OK após reinício da máquina (Smart App Control
+  deixou de bloquear o DLL nativo do h3).
+- Focado: `pytest -q tests/integration/test_streamlit_app.py` → **230 passed**.
+- Suíte cheia: `pytest -q` → **1337 passed, 1 skipped, 1 failed**.
+- A ÚNICA falha (`tests/unit/test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime`) é
+  PRÉ-EXISTENTE e ALHEIA a este bloco: `FileNotFoundError data/staging/unidade_territorio_retencao.parquet`
+  (dado gitignored ausente da camada M2/BLK-LTV-04). Confirmado por `git stash` dos 3 arquivos do ciclo:
+  a falha PERSISTE em árvore limpa → não é regressão do BLK-RELPON-04. NO-BYPASS honrado.
+- housekeeping: bloco movido para completed.md (stub no backlog) + `--check` OK; test_housekeeping_helper 10 passed.
 
-## Veredito do QA (2026-07-06 21:43 UTC) — PRIMEIRA TENTATIVA
-REPROVADO. Bloqueador: `streamlit_app.py` está byte-idêntico à base do branch — o opt-in de 7 linhas
-em `main()` (deliverable e critério de aceite da Fase A) NUNCA foi aplicado; `render_proto_page()` é
-inatingível. O handoff do Builder afirma falsamente ter modificado `streamlit_app.py` e `.gitignore`.
-Os 4 entregáveis (ui_proto.py, ui_theme.py, test_ui_proto.py, ui_poc_leaflet.md) estão untracked.
-Módulos em si são sãos (35 testes verdes, ruff/mypy limpos, READ-ONLY M1, sem dep nova, loop_guard OK,
-suíte FULL 1389 passed / 4 failed pré-existentes openlocationcode). Detalhes e correção mínima em
-context/handoff.md e context/handoff/20260706-214311-qa.md.
+## Resultado do QA (2026-07-06)
+- VEREDITO: APROVADO COM RESSALVA. ruff/mypy/py_compile limpos; READ-ONLY M1 confirmado (git diff
+  vazio em censo_*/pipelines/config.py; 4 artefatos oficiais intactos); anti-PII OK (só session_state,
+  sem persistência em disco/log); D1/D2/D3 = Opção A implementados; CSS 260px + isolamento de keys OK;
+  12 testes novos bem-formados por INSPEÇÃO (não executados aqui).
+- RESSALVA: `pytest`/`import streamlit_app` bloqueados por Smart App Control (DLL do h3), reproduzido
+  identicamente ao Builder (incl. `import h3` isolado). NO-BYPASS honrado — sem verde fabricado.
+- housekeeping --check: falha esperada pré-move ("stub ausente"), helper reconhece o bloco; move é do
+  orquestrador no fechamento.
+
+## Bloqueio de ambiente sinalizado pelo Builder (ler antes de rodar a suite)
+`pytest`/`import streamlit_app` NÃO puderam ser executados de fato nesta máquina: uma política
+de Controle de Aplicativo (WDAC/Smart App Control) em nível de SO está bloqueando o carregamento
+do binário nativo do pacote `h3` (evidência: `import h3` isolado já falha; log de eventos do
+Windows mostra o MESMO tipo de bloqueio atingindo um DLL de terceiros alheio ao projeto nos
+mesmos minutos da sessão — não é causado por este bloco). `ruff`/`mypy`/`py_compile` rodaram
+limpos nos arquivos tocados. O QA deve tentar `pytest -n auto` no seu próprio ambiente; se o
+mesmo bloqueio ocorrer, escalar para o usuário antes de fechar o ciclo (NO-BYPASS).
+
+## Gate humano (produto) — CONFIRMADO em 2026-07-06
+- D1 = N botões rotulados por endereço (Opção A, recomendada). Sem `.zip`.
+- D2 = botão explícito "+ Adicionar à fila" (Opção A, recomendada).
+- D3 = fila única compartilhada entre topo e inferior (Opção A, recomendada).
+Plano do Planner segue sem alterações.
 
 ## Objetivo
-Entregar PoC opt-in com: (A) tema/layout 3-painéis com identidade visual Ultra (Space Grotesk +
-IBM Plex, turquesa Ultra + magenta concorrente, assinatura hexagonal); (B) mapa Leaflet
-client-side via st.components.v1.html com recorte JSON enxuto por UF, pan/zoom/clique sem
-round-trip. Produção (pydeck/abas) intacta e default. READ-ONLY M1.
+Permitir gerar Relatórios Pontuais em lote acumulando os endereços pesquisados numa fila de
+`session_state`, com geração N-a-N (progresso i/N) e dois modos de download (lote + só o último),
+nos dois pontos da página (topo e inferior), READ-ONLY sobre o M1.
 
-## Tiering de modelo (Passo 4) — Baixa
-- Block Orchestrator: haiku
+## Tiering de modelo (Passo 4) — Média
+- Block Orchestrator: sonnet
+- Planner: sonnet
 - Builder: sonnet
-- (Sem Planner separado — criticidade baixa)
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-UI-10
+ciclo/BLK-RELPON-04 (criada a partir de main @ HEAD 1466040).
 
 ## Paths do ciclo (commit por path — NUNCA git add -A)
-- src/motor_expansao/dashboard/ui_proto.py (novo — PoC opt-in)
-- src/motor_expansao/dashboard/ui_theme.py (novo — CSS/tema)
-- tests/unit/test_ui_proto.py (novo — 35 smoke tests)
-- streamlit_app.py (opt-in 7 linhas em main())
-- .gitignore (data/outputs/ui_proto/ adicionado)
-- data/reports/ui_poc_leaflet.md (novo — relatório comparação)
+- src/motor_expansao/dashboard/pages.py (fila, botões de lote, CSS width)
+- tests/ (testes da fila/lote de UI)
+- tasks/current_task.md, tasks/completed.md, tasks/backlog.md (fechamento)
 - context/handoff.md, context/handoff/
 
 ## Guardrails
-- §5 (READ-ONLY M1): zero recálculo de score/pesos/artefatos oficiais; mtime dos 4 oficiais M1 inalterado.
-- NÃO tocar config.py, pipelines/m1/, dashboard/components.py, dashboard/pages.py (path de produção).
-- NÃO adicionar dependência nova ao pyproject.toml (Leaflet/h3-js vêm de CDN no HTML embutido).
-- NÃO substituir o caminho de produção — PoC fica ATRÁS de flag opt-in.
-- loop_guard.py não pode acusar toque em caminho proibido.
+- §5 READ-ONLY M1: zero recálculo de score/pesos/carteira/plano/artefatos oficiais.
+- Núcleo `censo_*` (`setor_censitario_intersecao_area_1p5km`, raio 1,5 km, páginas do PDF, marca d'água
+  anti-PII, `set_compression(False)`) — só CONSUMIR, não alterar.
+- Anti-PII: fila de endereços vive só em `session_state` (efêmera); NUNCA persistida em disco/log.
+- Reusar `gerar_payloads_relatorio_pontual_para_pin` e `render_coord_search_sidebar` sem alterar núcleo.
+- Largura de botão via regra CSS 260px do `inject_styles` (adicionar novas `st-key`), NÃO `use_container_width`.
+- Sem dependência de rede nova (§2; geocoding/tiles já cobertos por DEC-010/DEC-004).
 
-## Resultados do Builder
-- 35 testes novos, todos passando.
-- ruff: All checks passed!
-- mypy: Success: no issues found.
-- import streamlit_app: ok.
-- loop_guard.py: GUARD OK (31 caminhos, nenhum proibido).
-- Suite full: 1389 passed, 4 failed (plus_code pré-existentes, não relacionados).
-
-## Depende de (satisfeito)
-- Sem dependências.
+## Worktree pré-sujo
+- ` M tasks/backlog.md` já existia antes do ciclo; commitar apenas paths do ciclo por path.

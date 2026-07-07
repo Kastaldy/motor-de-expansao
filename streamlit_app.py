@@ -159,6 +159,7 @@ from motor_expansao.dashboard.pages import (  # noqa: F401
     render_ranking_priorizacao,
     render_relatorio_municipal_download_topo,
     render_relatorio_pontual_censitario,
+    render_relatorio_pontual_lote,
     render_sidebar_filters,
     render_tab_selector,
     render_uf_selectbox,
@@ -558,6 +559,19 @@ def main() -> None:
     render_pdf_download_topo(
         search_pin,
         df,
+        censo_geo_loader=load_censo_geo_setores,
+        censo_geo_dir=CENSO_GEO_DIR,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+    )
+
+    # Fila de enderecos pesquisados + geracao em lote do Relatorio Pontual Censitario
+    # (BLK-RELPON-04): mesmos argumentos ja usados por render_pdf_download_topo acima,
+    # sem carga nova de dado. READ-ONLY M1.
+    render_relatorio_pontual_lote(
+        search_pin,
+        df,
+        key_suffix="topo",
         censo_geo_loader=load_censo_geo_setores,
         censo_geo_dir=CENSO_GEO_DIR,
         competitors_df=competitors_df,
