@@ -7414,3 +7414,17 @@ necessidade de recalibração (follow-up com gate), **não silenciar**.
 
 **Critérios de aceite.** Relatório com erro por unidade + agregado; identificação de vieses; **nenhum ajuste do motor**
 (`git diff` de `viabilidade_ponto.py` vazio); determinístico; `loop_guard` limpo. **Guardrail.** §5 READ-ONLY M1.
+
+---
+
+## BLK-PROD-03 — Avaliar hex_id como category com benchmark
+
+Data: 2026-07-07
+Resumo: Benchmark reprodutível de string vs category no pandas para a coluna hex_id.
+Conclusão: NÃO aplicar category — coluna é 100% única (cardinalidade = N linhas);
+category é 12.9% mais lento no merge e usa +38.1 MB a mais de memória. Critério de ganho
+≥ 15% NÃO atingido (pior em ambas as métricas). Código de produção INALTERADO.
+Arquivos alterados: scripts/benchmark_hexid_category.py, tasks/completed.md
+Artefatos gerados: data/analysis/benchmark_hexid_category.md (gitignored)
+Validações: loop_guard limpo; ruff check limpo; pytest smoke verde (2 falhas pré-existentes Plus Code)
+Decisões relacionadas: nenhuma (NO-GO confirmado pelo benchmark)
