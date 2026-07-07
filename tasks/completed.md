@@ -7417,14 +7417,31 @@ necessidade de recalibração (follow-up com gate), **não silenciar**.
 
 ---
 
-## BLK-PROD-03 — Avaliar hex_id como category com benchmark
+---
 
-Data: 2026-07-07
-Resumo: Benchmark reprodutível de string vs category no pandas para a coluna hex_id.
-Conclusão: NÃO aplicar category — coluna é 100% única (cardinalidade = N linhas);
-category é 12.9% mais lento no merge e usa +38.1 MB a mais de memória. Critério de ganho
-≥ 15% NÃO atingido (pior em ambas as métricas). Código de produção INALTERADO.
-Arquivos alterados: scripts/benchmark_hexid_category.py, tasks/completed.md
-Artefatos gerados: data/analysis/benchmark_hexid_category.md (gitignored)
-Validações: loop_guard limpo; ruff check limpo; pytest smoke verde (2 falhas pré-existentes Plus Code)
-Decisões relacionadas: nenhuma (NO-GO confirmado pelo benchmark)
+### BLK-PROD-03 — Avaliar hex_id como category com benchmark
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (performance de carga; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Baixa. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (nenhuma). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; perf/medição determinística; consome `data/staging`; escreve só `data/analysis` (relatório); sem VPS. |
+
+**Contexto.** `hex_id` é chave de join em vários lugares; converter para `category` PODE ajudar ou prejudicar (memória/tempo).
+Requer benchmark antes de qualquer mudança.
+
+**Objetivo.** Medir o impacto de `hex_id` como `category` vs `string` em carga/join sobre os parquets de staging, com
+relatório em `data/analysis/benchmark_hexid_category.md`.
+
+**Decisão PRÉ-FIXADA.** Só APLICAR a mudança se o benchmark mostrar **ganho ≥ 15%** em tempo OU memória **sem regressão
+de teste**; caso contrário, só materializar o relatório e NÃO alterar código de produção. Nunca tocar `config.py`/`pipelines/m1`.
+
+**Critérios de aceite.** Relatório de benchmark reprodutível; se aplicada, mudança restrita a leitura/carga (não recalcula
+score); suíte verde; `loop_guard` limpo.
+
+---
+
+- BLK-PROD-02 (concluído 2026-07-07) — ver tasks/completed.md

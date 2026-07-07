@@ -4,12 +4,12 @@
 
 ID: BLK-PROD-03
 Nome: Avaliar hex_id como category com benchmark
-Status: aguardando QA
+Status: aprovado
 Tipo: benchmark/relatório (READ-ONLY sobre o M1)
 Criticidade: Média
-Esteira: Block Orchestrator (concluído) → Builder (concluído) → QA
-Skill atual: Builder (concluído)
-Próxima Skill: QA
+Esteira: Block Orchestrator (concluído) → Builder (concluído) → QA (concluído/APROVADO)
+Skill atual: QA (concluído)
+Próxima Skill: Block Orchestrator (fechamento)
 
 ## Objetivo
 Materializar relatório `data/analysis/benchmark_hexid_category.md` com benchmark reprodutível
