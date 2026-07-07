@@ -4,12 +4,12 @@
 
 ID: BLK-VIAB-02
 Nome: Faixa de demanda-premissa por tier de metragem (comparáveis reais)
-Status: aguardando QA
+Status: aprovado
 Tipo: feature (insumo de premissa do motor)
 Criticidade: média
 Esteira: Block Orchestrator -> Planner -> Builder -> QA (autônoma no loop)
-Skill atual: Builder (concluído)
-Próxima Skill: QA
+Skill atual: fechamento (housekeeping concluído)
+Próxima Skill: — (ciclo encerrado)
 
 ## Objetivo
 Derivar faixa de demanda-premissa (p10/p50/p90 de alunos por unidade) POR TIER de metragem

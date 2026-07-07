@@ -894,31 +894,8 @@ Dependências: decisão de produto sobre evolução para web interno.
 
 ---
 
-### BLK-VIAB-02 — Faixa de demanda-premissa por tier de metragem (comparáveis reais)
+- BLK-VIAB-02 (concluído 2026-07-07) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (insumo de premissa do motor; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | — (consome `unidades_ultra_performance_hex.parquet` + `data/validacao/academias_engenharia_do_corpo.xlsx`; Smart Fit e Sky Fit não têm metragem disponível). |
-| **Autonomia** | **loop-safe** — READ-ONLY M1; consome `data/staging` + `data/validacao` (xlsx LOCAL) + `concorrentes/` (CSV LOCAL); saída `data/staging`+`data/analysis` gitignored; sem rede; sem VPS. |
-
-**Contexto.** O motor `analisar_viabilidade_ponto` recebe `base_calibracao_df` para derivar a faixa de alunos por m²
-(p10/p50/p90). Hoje essa faixa é frágil; temos ~112 unidades reais (Ultra 54 + Eng Corpo 58) com metragem+alunos totais para calibrá-la.
-
-**Objetivo.** Derivar uma **faixa de demanda-premissa (p10/p50/p90 de alunos por unidade) POR TIER de metragem** a
-partir dos comparáveis reais (Ultra `ALUNOS_TOTAL` + Smart `Alunos Totais SF` + Eng `Alunos Totais` + Sky `Alunos EVO`),
-materializando `data/staging/demanda_premissa_por_tier.parquet` (a `base_calibracao_df` que o VIAB-03 consome).
-
-**Decisões PRÉ-FIXADAS (guardrail DEC-009 — crítico):**
-- A premissa vem da relação **metragem→alunos de comparáveis REAIS** (curva de capacidade), **NUNCA de renda/pop/geografia** do ponto. **PROIBIDO** usar `lat/lng` do candidato como preditor de demanda.
-- **Alvo = alunos_totais REAIS**, NUNCA `membros`/agregador (achado da circularidade 2026-07-07; memória `huff-membros-circularidade-teto-demanda`).
-- Tiers de metragem pré-fixados (m²): `[<1.000, 1.000–1.499, 1.500–1.999, 2.000–2.999, ≥3.000]`.
-
-**Critérios de aceite.** Parquet de faixas por tier; N de comparáveis por tier documentado; sem PII (só contagens
-agregadas); determinístico; `loop_guard` limpo. **Guardrail.** §5 READ-ONLY M1; DEC-009 intacta (premissa, não predição).
 
 ---
 
