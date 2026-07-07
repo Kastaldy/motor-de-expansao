@@ -2,48 +2,45 @@
 
 ## Bloco atual
 
-ID: BLK-VIAB-02
-Nome: Faixa de demanda-premissa por tier de metragem (comparáveis reais)
-Status: aprovado
-Tipo: feature (insumo de premissa do motor)
-Criticidade: média
-Esteira: Block Orchestrator -> Planner -> Builder -> QA (autônoma no loop)
-Skill atual: fechamento (housekeeping concluído)
-Próxima Skill: — (ciclo encerrado)
+ID: BLK-VIAB-03
+Nome: Batch de viabilidade sobre candidatos limpos (coordless) + ranking por margem de segurança
+Status: aguardando QA
+Tipo: feature (entrega o coração do produto de viabilidade)
+Criticidade: alta
+Esteira: Block Orchestrator → Planner → Builder → QA (autônoma no loop)
+Skill atual: Builder (concluído)
+Próxima Skill: QA
 
 ## Objetivo
-Derivar faixa de demanda-premissa (p10/p50/p90 de alunos por unidade) POR TIER de metragem
-a partir dos comparáveis reais, materializando `data/staging/demanda_premissa_por_tier.parquet`.
+Rodar `analisar_viabilidade_ponto` para cada candidato limpo (VIAB-01) com a faixa de
+demanda-premissa (VIAB-02), em modo coordless (setores_df=None), e materializar
+`data/staging/viabilidade_candidatos.parquet` + relatório ranqueado por margem de segurança.
 
-## Resultado do Builder
-- `src/motor_expansao/dimensionamento/demanda_premissa.py` criado (6 funções públicas)
-- `tests/unit/dimensionamento/test_demanda_premissa.py` criado (28 testes, fixture sintética)
-- 28/28 testes passaram; ruff 0 erros; mypy 0 erros; smoke import ok
-- Parquet materializado: 5 linhas (1 por tier), N por tier = 17/46/36/11/2 (total 112)
-- Relatório de qualidade gerado em data/analysis/demanda_premissa_qualidade.md
-- 2 testes pré-existentes falham em test_streamlit_app.py (Plus Code geocoder — não regressões deste bloco)
-- Artefatos M1 (brasil_estrutural, brasil_priorizados): mtime INALTERADO (1780501621 / 1780501631)
+## Dependências (ambas concluídas)
+- BLK-VIAB-01: data/staging/imoveis_candidatos_limpos.parquet (23 candidatos)
+- BLK-VIAB-02: data/staging/demanda_premissa_por_tier.parquet (5 tiers, N=112)
 
 ## Branch do ciclo
-ciclo/loop-20260707-123809 (branch do loop autônomo atual)
+ciclo/loop-20260707-123809
 
 ## Paths do ciclo
-- src/motor_expansao/dimensionamento/demanda_premissa.py (novo módulo)
-- tests/unit/dimensionamento/test_demanda_premissa.py (testes novos)
-- data/staging/demanda_premissa_por_tier.parquet (gitignored — NÃO commitado)
-- data/analysis/demanda_premissa_qualidade.md (gitignored — NÃO commitado)
+- src/motor_expansao/dimensionamento/batch_viabilidade.py (novo módulo)
+- tests/unit/dimensionamento/test_batch_viabilidade.py (testes novos)
+- data/staging/viabilidade_candidatos.parquet (gitignored — NÃO commitado)
+- data/analysis/viabilidade_candidatos.md (gitignored — NÃO commitado)
 - tasks/current_task.md, tasks/completed.md, tasks/backlog.md (fechamento)
 - context/handoff.md, context/handoff/
 
 ## Guardrails
 - §5 READ-ONLY M1: nenhuma escrita em config.py/pipelines/m1/artefatos oficiais.
-- DEC-009: alvo = alunos_totais REAIS (Ultra alunos_total / Eng Alunos Totais), NUNCA membros/preditor geográfico.
-- viabilidade_ponto.py INTOCADO.
-- Saída em data/staging/ + data/analysis/ (gitignored).
+- DEC-009: demanda SÓ como premissa explícita (faixa p10/p50/p90 por tier) — NUNCA prevista por lat/lng.
+- viabilidade_ponto.py INTOCADO (reusa sem modificar).
+- Modo COORDLESS: setores_df=None → sem rede/catchment, sem fetch HTTP.
+- Saída gitignored.
 - Sem rede, sem VPS.
 
-## Tiering de modelo — Média
+## Tiering de modelo — Alta
 - Block Orchestrator: sonnet
-- Planner: sonnet
-- Builder: sonnet
+- Planner: opus
+- Builder: opus
 - QA: opus 4.8 (sempre)
