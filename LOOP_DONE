@@ -1,1 +1,17 @@
-Loop autônomo concluído em 2026-06-22T16:01:09Z. Todos os blocos loop-safe executados.
+Loop autônomo concluído em 2026-07-06T00:00:00Z. Todos os blocos loop-safe executados.
+
+Blocos entregues nesta sessão (2026-07-06):
+- BLK-ATR-01 — Densificação do Huff (concorrentes densos)
+- BLK-ATR-02 — Gate de viabilidade absoluto (pop >= 5.000 E renda >= 1.500)
+- BLK-ATR-03 — Estrutura do funil de atratividade (validação out-of-fold)
+- BLK-ATR-04 — Visualizações do funil (matplotlib, relatório markdown)
+- BLK-UI-10 — PoC de repaginação do dashboard (tema + Leaflet, opt-in ULTRA_PROTO=1)
+
+Suite: 1391 passed, 4 failed pre-existentes (openlocationcode — não relacionadas).
+M1 READ-ONLY: score_priorizacao, pesos (renda=0.40/pop=0.60), artefatos oficiais INALTERADOS.
+Loop guard: GUARD OK em todos os ciclos.
+
+Proximos passos (humano):
+1. Revisar e mergear ciclo/BLK-ATR-{01,02,03,04} e ciclo/BLK-UI-10 na main.
+2. BLK-ATR-05: materializar estrutura escolhida (gate humano + DEC necessaria).
+3. Instalar openlocationcode para corrigir as 4 falhas pre-existentes.

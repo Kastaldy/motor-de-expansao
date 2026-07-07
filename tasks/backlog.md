@@ -973,6 +973,145 @@ validação, NUNCA vira preditor geográfico de magnitude no artefato de produç
 
 ---
 
+## Epic BLK-ATR — Funil de Atratividade de Hexágonos (gate de viabilidade + leitura multi-eixo; camada paralela READ-ONLY sobre o M1)
+
+**Objetivo do epic.** Formalizar a decisão de "onde entrar" como um **funil de duas etapas**, paralelo e
+READ-ONLY sobre o M1: **(1) um gate absoluto de viabilidade** (piso fixo de população e renda per capita —
+abaixo dele nem entra na conversa) e **(2) uma leitura multi-eixo dentro do viável** que cruza os três eixos
+ortogonais de atratividade — **sociodemografia** (renda/densidade), **tamanho de mercado** (residual/demanda
+observada) e **disputa competitiva** (share de captura Huff do BLK-TP-07). Nenhuma camada bate o martelo
+sozinha; todas informam. Motivação: o residual sozinho "desiste" de regiões ricas-mas-saturadas (competição
+alta zera a demanda não atendida) e o Huff sozinho também penaliza saturação — falta o eixo de **atração**
+sociodemográfica para contrabalançar as duas lentes de competição. Este epic testa, honestamente, se combinar
+os eixos agrega valor preditivo real sobre a demanda observada, e só então materializa.
+**READ-ONLY sobre o M1** (não recalibra `score_priorizacao`/`hex_score_estrutural`/pesos nem regenera
+artefatos oficiais; DEC-001 intacta). Metodologia obrigatória DEC-008 (out-of-fold vs baseline, R² in-sample
+banido, IC95, flag de extrapolação). DEC-009 (demanda observada é ALVO de validação, nunca preditor de
+magnitude). DEC-012 aplica-se **só ao dado pessoal** da Demanda Revelada; o dado de **estabelecimento**
+concorrente (nome/endereço/lat-long de academia — público, coletado por scraper) **não é PII pessoal** e é
+usado normalmente, inclusive o nome para dedup por rede.
+
+**Sequência:** BLK-ATR-01 (densifica o Huff) + BLK-ATR-02 (gate) → BLK-ATR-03 (testa a estrutura) →
+BLK-ATR-04 (visualiza os resultados) → **[revisão humana]** → BLK-ATR-05 (materializa em produção; NÃO
+loop-safe). Os quatro primeiros são de **análise/validação, 100% autônomos (loop-safe)**; o último toca
+produção e exige DEC + gate humano.
+
+---
+
+- BLK-ATR-01 (concluído 2026-07-06) — ver tasks/completed.md
+
+
+
+---
+
+- BLK-ATR-03 (concluído 2026-07-06) — ver tasks/completed.md
+
+
+---
+
+- BLK-ATR-04 (concluído 2026-07-06) — ver tasks/completed.md
+
+
+---
+
+### BLK-ATR-01-FU1 — Cruzar a base densa de concorrentes com as unidades reais do NAO_ABRA (aferição de precisão/overlap)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (aferição de qualidade da base densa do Huff; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-ATR-01** (base densa `concorrentes_densos` + dedup por `(hex, rede)`, concluído 2026-07-06). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; lê SÓ dado de **estabelecimento** de negócio (lat/long/rede/nome de unidade) do `NAO_ABRA/`; **NÃO** toca o dump pessoal (`totalpass_final*.html`); persiste ZERO PII; escreve só `data/analysis`; sem VPS/deploy/segredos/API ao vivo. |
+
+**Contexto.** O BLK-ATR-01 fechou com um **gap de escopo declarado**: o dedup da base densa foi inter-fonte
+(TotalPass/WellHub/Unidades) + contra `concorrentes_mapeados`, mas o **cruzamento com as unidades reais do
+`NAO_ABRA/`** (pedido de Felipe) NÃO foi implementado. Este FU fecha esse gap.
+
+**Objetivo.** Aferir a **precisão/cobertura** da base densa de concorrentes contra as unidades reais de
+**estabelecimento** do `NAO_ABRA/` (`01_SmartFit.xlsx` = unidades SmartFit; `03_Competidores.xlsx` = ~24 mil
+academias): quantas das unidades reais **casam** por `(hex_id_res7, rede)` com a base densa (recall), quantas
+da base densa **não têm correspondência** (possíveis falsos/duplicatas residuais), e o overlap por rede. Só
+campos de **negócio** são lidos (lat/long → hex, nome/rede para casar); qualquer PII é dropada na fronteira e
+**nada de PII é persistido** (o dump pessoal `totalpass_final*.html` NÃO é lido). Relatório em `data/analysis/`
+(gitignored), com contagens agregadas — recall, precisão-proxy, overlap por rede, e recomendação (a base densa
+é suficiente, ou precisa de ajuste de dedup).
+
+**Critérios de aceite.** Isolamento (`demanda_revelada/`, sem import de `pipelines/m1`/`dashboard`/`censo_*`/
+`api`/`config.py`); lê só `01_SmartFit.xlsx`/`03_Competidores.xlsx` (estabelecimento), NUNCA o dump pessoal;
+`test_zero_pii`/equivalente + fixtures sintéticas; relatório com métricas agregadas (recall/overlap por rede);
+mtime dos 4 oficiais M1 inalterado; `concorrentes_densos.parquet` só LIDO (não reescrito sem necessidade);
+suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-012 (dado de estabelecimento é público; só o **pessoal** é protegido —
+dump pessoal não lido; zero PII persistida); DEC-013 (concorrentes só na camada de mercado/residual).
+
+---
+
+### BLK-ATR-03-FU1 — Re-rodar o teste de estrutura (matriz vs composto) sobre o Huff DENSO
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (fecha o número da decisão de arquitetura do funil; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-ATR-01** (base densa + `share` denso) + **BLK-ATR-03** (harness `estrutura_funil`), ambos concluídos 2026-07-06. |
+| **Autonomia** | **loop-safe** — GO/NO-GO out-of-fold, READ-ONLY M1, veredito em `data/analysis`; sem mudança de produção. |
+
+**Contexto.** O BLK-ATR-03 deu **GO-composto** (composto R²_oof +0,48 vence o melhor eixo isolado +0,37), MAS
+usou o `share_captura_huff` **original** (base de ~3,3 mil concorrentes; `% huff disponível ≈ 62%`), não o
+Huff da **base densa** do ATR-01 (cobertura útil 28%→73%, R²_oof +0,44→+0,46, rho +0,44→+0,71). O eixo de
+disputa denso é mais forte, então o composto provavelmente **sobe** — mas o número precisa ser recomputado
+honestamente para embasar a decisão do BLK-ATR-05.
+
+**Objetivo.** Re-rodar `estrutura_funil` (matriz vs composto, mesmo harness k-fold 5×5 seed=42/IC95 vs demanda
+observada) **fiando o eixo de disputa no `share_captura_huff` DENSO** (da base do ATR-01) em vez do original.
+Reportar o número atualizado do composto (R²_oof + IC95), o melhor eixo isolado, o ganho material e a
+redundância — e re-emitir o veredito **matriz vs composto** com a base densa. Veredito em `data/analysis/`
+(gitignored). **Não materializa nada em produção** (isso é BLK-ATR-05).
+
+**Critérios de aceite.** Usa o `share` denso do ATR-01 (documentar a fonte exata do eixo de disputa);
+validação out-of-fold vs baseline (média + eixos isolados + matriz), IC95 seed=42, **R² in-sample banido do
+veredito**; `membros` só como ALVO (DEC-009); degradação graciosa onde o Huff não fala; veredito honesto
+(NO-GO/matriz é válido); caveat de cobertura ~1% explícito; mtime dos 4 oficiais M1 inalterado; suíte verde;
+`import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-008 (out-of-fold, R² in-sample banido, NO-GO válido); DEC-009 (`membros`
+só ALVO); DEC-012 (sem PII pessoal).
+
+---
+
+### BLK-ATR-05 — Materializar a estrutura escolhida (gate + matriz/composto) em produção (DEC + gate humano)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (materializa o funil na camada de um score ATIVO e regenera parquets de dashboard/API; **READ-ONLY sobre o M1 OFICIAL**). **Exige DEC registrada + gate humano obrigatório** antes do Builder. |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA + DEC]` → Builder → QA. |
+| **Status** | Em espera (condicional ao veredito do BLK-ATR-03 + decisão humana). |
+| **Depende de** | **BLK-ATR-03** (estrutura decidida: matriz ou composto GO) + **BLK-ATR-04** (visualização para a decisão). |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda a camada de um score em produção e exige gate humano; NUNCA loop-safe (o loop não tem gate). |
+
+**Contexto.** Após BLK-ATR-03 decidir a estrutura e BLK-ATR-04 dar os números, este bloco a materializa na
+camada paralela de mercado — o gate de viabilidade (BLK-ATR-02) + a leitura escolhida (matriz de eixos
+normalizados na mesma régua **ou** score composto validado) — para consumo no dashboard/API.
+
+**Objetivo.** Materializar o funil na camada de mercado (`calcular_colunas_mercado.py` ou módulo paralelo),
+medindo impacto (antes/depois: hexes por faixa/quadrante) e regenerando a camada pela **ordem canônica**
+(`híbrido → mercado → calcular_colunas_mercado → carteira → plano → domínio → residual → fase1_bi_exports`).
+**READ-ONLY sobre o M1 OFICIAL**: `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/plano/4 artefatos
+oficiais **INTOCADOS** (mtime inalterado).
+
+**Critérios de aceite.** DEC registrada e aprovada ANTES do Builder; medição de impacto documentada;
+regeneração reprodutível pela ordem canônica; cobertura/viés ~1% metropolitano explicitamente tratado (não
+enviesar os 99% sem sinal de disputa); artefatos oficiais do M1 com **mtime inalterado**; suíte verde;
+`import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1 OFICIAL — só a camada paralela muda, e com DEC); DEC-008 (justificado pela
+validação out-of-fold do BLK-ATR-03); DEC-009 (demanda não vira preditor de magnitude); DEC-012 (dado pessoal
+protegido).
+
+---
+
 ## Epic BLK-LTV — Integração Lifetime × Motor de Expansão (eixo retenção territorial, camada paralela READ-ONLY sobre o M1)
 
 **Objetivo do epic.** Validar se o perfil do território prevê a retenção/LTV da carteira, para a
@@ -1028,107 +1167,8 @@ declarado no relatório.
 
 ---
 
-### BLK-UI-10 — PoC de repaginação do dashboard: tema denso (baixo) + mapa Leaflet client-side (médio)
+- BLK-UI-10 (concluído 2026-07-06) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Baixa** (camada de **visualização/PoC**; **READ-ONLY sobre o M1**; não substitui o caminho de produção). |
-| **Prioridade** | A definir por Felipe/Vini. |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA. No modo loop, o gate humano é substituído pelo guard automático (`scripts/loop_guard.py`). |
-| **Status** | Pendente. |
-| **Depende de** | — (consome parquets já existentes em `data/outputs`/`data/staging`). |
-| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS/deploy/segredos, sem PII, **sem dependência nova de base** (Leaflet/h3-js por CDN via `st.components.v1.html`, igual ao `NAO_ABRA/totalpass_final*.html`), consome só `data/outputs`/`data/staging`; ver `docs/loop_autonomo.md`. |
-
-**Contexto.** Comparação feita em 2026-06-24 (Felipe): o HTML `NAO_ABRA/totalpass_final (72) (1).html`
-é um SPA estático (Leaflet + h3-js por CDN, ~1.500 linhas, dados embutidos como arrays JS, 100%
-client-side) — leve e bonito porque é *vitrine* de um recorte pré-cozido. O nosso Streamlit é o *motor*
-(server-side, base nacional de 1,54 M hexes + malha censitária, re-roda o script a cada clique, pydeck
-re-renderizado). O objetivo deste bloco é **provar**, sem reescrever o motor, dois ganhos do HTML:
-(A) layout denso + tema escuro coeso e (B) mapa interativo client-side fluido. NÃO é migração para SPA;
-é PoC opt-in atrás de flag, com o caminho de produção (pydeck/abas atuais) **intacto e default**.
-
-**Objetivo.** Entregar um protótipo navegável e testado que demonstre:
-- **Fase A (esforço baixo — tema/layout):** uma camada de tema (CSS injetado) + layout 3-painéis
-  (faixa superior + painel esquerdo de KPIs/filtros + mapa + painel direito de resultado), com a
-  densidade do HTML mas seguindo a **"Direção visual"** abaixo (NÃO copiar a paleta/tipografia do
-  totalpass cru — ver porquê). Só estilo/estrutura de container — **zero** mudança em dados, score,
-  ranking ou nas funções de cálculo.
-- **Fase B (esforço médio — mapa client-side):** um mapa **Leaflet** renderizado via
-  `st.components.v1.html` (CDN, sem pip novo) que consome um **recorte JSON enxuto por UF/cidade**
-  pré-agregado a partir dos parquets existentes (padrão "dados embutidos" do HTML), com pan/zoom/clique
-  fluidos **sem rerun do servidor**. Comparar peso percebido e responsividade vs. o pydeck atual num
-  pequeno relatório (`data/reports/ui_poc_leaflet.md`).
-
-**Escopo permitido (estritamente loop-safe).**
-- Código novo isolado em `src/motor_expansao/dashboard/` (ex.: `ui_proto.py` + helper de tema), exposto
-  como **página/aba OPT-IN atrás de um flag** (env/`session_state`), nunca como substituto do render
-  atual. As funções de produção (`build_map_figure`, abas, pydeck) ficam **byte-a-byte preservadas**.
-- O recorte JSON é uma **VIEW derivada read-only** dos parquets; gravar, se necessário, em
-  `data/outputs/ui_proto/` (ou cache `data/cache/`), **nunca** como artefato oficial do M1 (não entra na
-  lista do §3/`docs/m1_outputs_oficiais.md`) e **sem PII**.
-- Testes novos (render do tema sem erro, geração do recorte JSON determinística, fallback quando o
-  parquet/UF não existe). Suíte verde.
-
-**Direção visual (destilada da skill `frontend-design` — embutida aqui para o loop NÃO depender do
-plugin; o container do loop tem `$HOME` próprio e não enxerga o `~/.claude` do host).**
-O agente deve seguir estes tokens como decisão tomada, não reinventar. O `totalpass` é referência de
-**densidade e ergonomia** (3 painéis, cards compactos, mono nos números), **não** de paleta: o "dark +
-verde-ácido" dele é um dos defaults genéricos de IA. Ancore na **identidade real da Ultra** e no motivo
-do produto (o hexágono H3).
-
-- **Subject / tese.** Não é "mais um dashboard escuro": é a **sala de controle da expansão territorial**
-  de uma rede low-cost/massa (CLAUDE.md §1). O herói da tela é o **mapa**, não um número grande.
-- **Paleta (4–6 tokens; dark por legibilidade de mapa, mas NÃO o verde do totalpass).** Use a cor da
-  marca Ultra como acento único e reserve magenta para semântica de concorrente — convenção que o
-  projeto **já** usa (`Ultra=turquesa, conc.=magenta`, BLK-EST-02). Sugestão de tokens (o agente pode
-  refinar a partir dos assets em `data/ultra/`, mas mantendo a semântica):
-  `--bg:#0b1016` (fundo carvão-azulado, mais quente que o `#080c14` do totalpass) ·
-  `--panel:#121a24` · `--line:#1f2c3a` · `--ultra:#1fd1c4` (turquesa Ultra = acento/ações/ativo) ·
-  `--conc:#ff3d8b` (magenta = SÓ concorrente) · `--text:#dce6f0` / `--muted:#7d97ad`.
-  Score/faixas de mapa continuam usando `RESIDUAL_SCORE_BANDS`/faixas GeoFusion já canônicas — a
-  paleta de UI é a moldura, não recolore dado.
-- **Tipografia (par deliberado, NÃO o Inter/JetBrains default do totalpass; tudo via Google Fonts CDN,
-  loop-safe).** Display/títulos: **Space Grotesk** (caráter técnico/cartográfico, combina com "motor").
-  Corpo/UI: **IBM Plex Sans** (pedigree de engenharia, distinto do Inter). Dados (hex_id, lat/lng,
-  scores, m²): **IBM Plex Mono** — mono é justificável aqui porque o dado **é** o subject. Escala de
-  tipo clara (ex.: 11/13/18/30) com pesos intencionais.
-- **Signature (a UMA coisa memorável).** O **hexágono H3** é o motivo do produto inteiro — use-o como
-  assinatura: cards de KPI com canto/recorte hexagonal sutil ou um marcador hex no lugar do "dot"
-  genérico de legenda. Gaste a ousadia só aqui; o resto fica quieto e disciplinado (conselho "tire um
-  acessório antes de sair").
-- **Estrutura é informação, não decoração.** Nada de numeração 01/02/03 decorativa — só se houver
-  sequência real. Eyebrows/labels devem codificar algo verdadeiro (UF, faixa, tese de entrada).
-- **Cópia (microcopy) na voz do operador.** Rótulos pelo que a pessoa controla ("Filtrar por UF",
-  "Gerar relatório"), voz ativa, sentence case, mesmo verbo do início ao fim do fluxo. Estado vazio é
-  convite à ação ("Selecione um município no mapa"), erro diz o que houve e como resolver — sem
-  apologia nem mood.
-- **Piso de qualidade (sem alarde).** Responsivo até telas estreitas, foco de teclado visível,
-  `prefers-reduced-motion` respeitado (anima no máximo a carga inicial/hover — excesso de animação
-  cheira a "gerado por IA"). Contraste AA no texto sobre os painéis.
-- **Anti-default checklist (rodar antes de fechar a Fase A).** (1) A paleta NÃO é o verde-ácido do
-  totalpass nem cream+serif+terracota nem broadsheet hairline? (2) O par tipográfico não é o que eu
-  usaria em qualquer projeto? (3) Existe UMA assinatura (hex) e o resto é contido? (4) Algum elemento
-  decora sem significar? Se sim, corte. Anotar o que foi escolhido e por quê no relatório do bloco.
-
-**Fora de escopo (NÃO fazer — manteria fora do loop-safe).** Tocar `config.py`, `pipelines/m1`,
-qualquer `*scoring*`/artefato oficial do M1, `Dockerfile.streamlit`/compose/Caddy/CI/`.env`/`secrets/`;
-**adicionar dependência de base** ao `pyproject.toml` (Leaflet/h3-js vêm de CDN no HTML embutido);
-deploy ao VPS; recalcular score/ranking/carteira/plano; persistir qualquer PII; substituir o caminho de
-produção do dashboard. Promover o PoC a default é **decisão humana** num bloco sucessor.
-
-**Critérios de aceite.**
-- Fase A: tema + layout 3-painéis renderizam numa página opt-in; produção (pydeck/abas) inalterada e
-  ainda default; teste de smoke do render verde. A **"Direção visual"** foi seguida (paleta turquesa
-  Ultra + magenta só-concorrente, par Space Grotesk/IBM Plex, assinatura hexagonal) e o **anti-default
-  checklist** está respondido no relatório do bloco.
-- Fase B: mapa Leaflet client-side carrega um recorte JSON de ≥1 UF, com clique→detalhe sem round-trip;
-  recorte gerado de forma reprodutível e sem PII; relatório curto comparando peso/responsividade.
-- READ-ONLY M1 comprovado (zero diff em score/pesos/artefatos oficiais); **nenhuma** dep nova de base;
-  suíte verde; `loop_guard.py` não acusa toque em caminho proibido.
-
-**Guardrail.** §2 (sem dependência de API ao vivo na carga do dashboard — o CDN do Leaflet só carrega no
-PoC opt-in, com fallback gracioso, espelhando a mitigação da DEC-004); §5 (visualização não recalcula
-nem altera M1); §6.1 (critérios loop-safe). Precedente de desvio cosmético restrito a um caminho: DEC-004.
 
 ---
 
