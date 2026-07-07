@@ -7160,3 +7160,37 @@ produção do dashboard. Promover o PoC a default é **decisão humana** num blo
 **Guardrail.** §2 (sem dependência de API ao vivo na carga do dashboard — o CDN do Leaflet só carrega no
 PoC opt-in, com fallback gracioso, espelhando a mitigação da DEC-004); §5 (visualização não recalcula
 nem altera M1); §6.1 (critérios loop-safe). Precedente de desvio cosmético restrito a um caminho: DEC-004.
+
+---
+
+### BLK-ATR-01-FU1 — Cruzar a base densa de concorrentes com as unidades reais do NAO_ABRA (aferição de precisão/overlap)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (aferição de qualidade da base densa do Huff; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | **Concluído** (2026-07-07). |
+| **Depende de** | **BLK-ATR-01** (base densa `concorrentes_densos` + dedup por `(hex, rede)`, concluído 2026-07-06). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; lê SÓ dado de **estabelecimento** de negócio (lat/long/rede/nome de unidade) do `NAO_ABRA/`; **NÃO** toca o dump pessoal (`totalpass_final*.html`); persiste ZERO PII; escreve só `data/analysis`; sem VPS/deploy/segredos/API ao vivo. |
+
+**Contexto.** O BLK-ATR-01 fechou com um **gap de escopo declarado**: o dedup da base densa foi inter-fonte
+(TotalPass/WellHub/Unidades) + contra `concorrentes_mapeados`, mas o **cruzamento com as unidades reais do
+`NAO_ABRA/`** (pedido de Felipe) NÃO foi implementado. Este FU fecha esse gap.
+
+**Objetivo.** Aferir a **precisão/cobertura** da base densa de concorrentes contra as unidades reais de
+**estabelecimento** do `NAO_ABRA/` (`01_SmartFit.xlsx` = unidades SmartFit; `03_Competidores.xlsx` = ~24 mil
+academias): quantas das unidades reais **casam** por `(hex_id_res7, rede)` com a base densa (recall), quantas
+da base densa **não têm correspondência** (possíveis falsos/duplicatas residuais), e o overlap por rede. Só
+campos de **negócio** são lidos (lat/long → hex, nome/rede para casar); qualquer PII é dropada na fronteira e
+**nada de PII é persistido** (o dump pessoal `totalpass_final*.html` NÃO é lido). Relatório em `data/analysis/`
+(gitignored), com contagens agregadas — recall, precisão-proxy, overlap por rede, e recomendação (a base densa
+é suficiente, ou precisa de ajuste de dedup).
+
+**Critérios de aceite.** Isolamento (`demanda_revelada/`, sem import de `pipelines/m1`/`dashboard`/`censo_*`/
+`api`/`config.py`); lê só `01_SmartFit.xlsx`/`03_Competidores.xlsx` (estabelecimento), NUNCA o dump pessoal;
+`test_zero_pii`/equivalente + fixtures sintéticas; relatório com métricas agregadas (recall/overlap por rede);
+mtime dos 4 oficiais M1 inalterado; `concorrentes_densos.parquet` só LIDO (não reescrito sem necessidade);
+suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-012 (dado de estabelecimento é público; só o **pessoal** é protegido —
+dump pessoal não lido; zero PII persistida); DEC-013 (concorrentes só na camada de mercado/residual).
