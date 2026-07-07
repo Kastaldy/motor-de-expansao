@@ -7387,3 +7387,30 @@ coordless, e materializar `data/staging/viabilidade_candidatos.parquet` + relat�
 margem, sensibilidade e `flag_extrapolacao`; **demanda SÓ como premissa** (nunca `lat/lng`); **reusa o motor SEM
 modificá-lo** (`git diff` de `viabilidade_ponto.py` vazio); determinístico; `loop_guard` limpo. **Guardrail.** §5
 READ-ONLY M1; DEC-009 (premissa explícita).
+
+---
+
+### BLK-VIAB-04 — Backtest do motor de viabilidade contra as 54 unidades Ultra reais
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (valida o motor antes de confiar nele; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome `unidades_ultra_performance_hex.parquet`: m²/faturamento/alunos/ticket reais das 54 unidades). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; validação sobre dado interno já em `data/staging`; saída `data/analysis` gitignored; reusa harness DEC-008; sem rede; sem VPS. |
+
+**Contexto.** Antes de ranquear imóveis com o motor, é preciso saber se ele erra. As 54 unidades Ultra maduras têm
+m²/faturamento/alunos/ticket REAIS — dá pra medir predito vs realizado.
+
+**Objetivo.** Rodar o motor com o m² real de cada unidade Ultra e a demanda real (`ALUNOS_TOTAL`) como premissa, e
+comparar break-even/aluguel-teto/faixa-de-alunos PREVISTOS vs REALIZADOS. Relatório
+`data/analysis/viabilidade_backtest_ultra.md` com erro (MAE/viés) e os casos onde o motor erra feio.
+
+**Decisões PRÉ-FIXADAS (DEC-008):** validação honesta predito vs realizado por unidade; reportar erro absoluto e viés;
+**NÃO ajustar o motor neste bloco** (só medir); se o motor errar de forma material e sistemática → registrar como
+necessidade de recalibração (follow-up com gate), **não silenciar**.
+
+**Critérios de aceite.** Relatório com erro por unidade + agregado; identificação de vieses; **nenhum ajuste do motor**
+(`git diff` de `viabilidade_ponto.py` vazio); determinístico; `loop_guard` limpo. **Guardrail.** §5 READ-ONLY M1.

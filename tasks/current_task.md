@@ -8,9 +8,9 @@ Status: delimitado
 Tipo: validação (mede erro do motor; READ-ONLY sobre o M1)
 Criticidade: Alta
 Esteira: Block Orchestrator → Planner → Builder → QA (autônoma no loop)
-Skill atual: Builder (concluído)
-Status: aguardando QA
-Próxima Skill: QA
+Skill atual: QA (concluído)
+Status: aprovado
+Próxima Skill: Block Orchestrator (fechamento)
 
 ## Objetivo
 Rodar `analisar_viabilidade_ponto` em modo LOO sobre as 54 unidades Ultra maduras,
