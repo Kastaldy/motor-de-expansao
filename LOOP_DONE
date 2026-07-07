@@ -1,8 +1,0 @@
-loop concluído em 2026-07-07
-
-Blocos loop-safe executados nesta sessão:
-- BLK-ATR-01-FU1 (2026-07-07): aferir overlap base densa vs NAO_ABRA — recall SmartFit 98%, 03_Competidores 70.4%
-- BLK-ATR-03-FU1 (2026-07-07): estrutura funil DENSA — GO-composto, R²_oof=+0.5653, cobertura Huff 96% vs 62%
-
-Nenhum bloco loop-safe remanescente em tasks/backlog.md.
-Próximos passos exigem gate humano (BLK-ATR-05, BLK-TP-08, BLK-ATR-05, BLK-ACENTO-*, etc.).
