@@ -7194,3 +7194,36 @@ mtime dos 4 oficiais M1 inalterado; `concorrentes_densos.parquet` só LIDO (não
 suíte verde; `import streamlit_app` ok.
 **Guardrail.** §5 (READ-ONLY M1); DEC-012 (dado de estabelecimento é público; só o **pessoal** é protegido —
 dump pessoal não lido; zero PII persistida); DEC-013 (concorrentes só na camada de mercado/residual).
+
+---
+
+### BLK-ATR-03-FU1 — Re-rodar o teste de estrutura (matriz vs composto) sobre o Huff DENSO
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (fecha o número da decisão de arquitetura do funil; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-ATR-01** (base densa + `share` denso) + **BLK-ATR-03** (harness `estrutura_funil`), ambos concluídos 2026-07-06. |
+| **Autonomia** | **loop-safe** — GO/NO-GO out-of-fold, READ-ONLY M1, veredito em `data/analysis`; sem mudança de produção. |
+
+**Contexto.** O BLK-ATR-03 deu **GO-composto** (composto R²_oof +0,48 vence o melhor eixo isolado +0,37), MAS
+usou o `share_captura_huff` **original** (base de ~3,3 mil concorrentes; `% huff disponível ≈ 62%`), não o
+Huff da **base densa** do ATR-01 (cobertura útil 28%→73%, R²_oof +0,44→+0,46, rho +0,44→+0,71). O eixo de
+disputa denso é mais forte, então o composto provavelmente **sobe** — mas o número precisa ser recomputado
+honestamente para embasar a decisão do BLK-ATR-05.
+
+**Objetivo.** Re-rodar `estrutura_funil` (matriz vs composto, mesmo harness k-fold 5×5 seed=42/IC95 vs demanda
+observada) **fiando o eixo de disputa no `share_captura_huff` DENSO** (da base do ATR-01) em vez do original.
+Reportar o número atualizado do composto (R²_oof + IC95), o melhor eixo isolado, o ganho material e a
+redundância — e re-emitir o veredito **matriz vs composto** com a base densa. Veredito em `data/analysis/`
+(gitignored). **Não materializa nada em produção** (isso é BLK-ATR-05).
+
+**Critérios de aceite.** Usa o `share` denso do ATR-01 (documentar a fonte exata do eixo de disputa);
+validação out-of-fold vs baseline (média + eixos isolados + matriz), IC95 seed=42, **R² in-sample banido do
+veredito**; `membros` só como ALVO (DEC-009); degradação graciosa onde o Huff não fala; veredito honesto
+(NO-GO/matriz é válido); caveat de cobertura ~1% explícito; mtime dos 4 oficiais M1 inalterado; suíte verde;
+`import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-008 (out-of-fold, R² in-sample banido, NO-GO válido); DEC-009 (`membros`
+só ALVO); DEC-012 (sem PII pessoal).
