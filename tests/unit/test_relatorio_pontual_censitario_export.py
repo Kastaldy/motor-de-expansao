@@ -149,10 +149,10 @@ def test_pdf_big_numbers_com_residual_e_nd():
     # Rotulos das 8 metricas presentes (4x2). NB: parenteses literais sao escapados (\( \)) no
     # stream PDF, entao verificamos o prefixo antes do "(alunos)"/"(est.)".
     for rotulo in (
-        b"Populacao total no raio",
-        b"Renda per capita media",
-        b"Score censitario medio",
-        b"Score censitario maximo",
+        "População total no raio".encode("latin-1"),
+        "Renda per capita média".encode("latin-1"),
+        "Score censitário médio".encode("latin-1"),
+        "Score censitário máximo".encode("latin-1"),
         b"SAM Fitness",
         b"Residual Fitness",
         b"Concorrentes no raio",
@@ -266,7 +266,7 @@ def test_pdf_retrocompat_aceita_bytes_unico_legado():
     # Bytes unico legado -> so a camada de densidade recebe mapa; renda/score caem no fallback.
     # O slide unico "Mapas de calor" existe e as 2 celulas sem PNG mostram a mensagem de fallback.
     assert b"Mapas de calor" in pdf_bytes
-    assert b"Mapa indisponivel para esta camada." in pdf_bytes
+    assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
     # Estrutura de 5 paginas preservada.
     assert b"/Count 5" in pdf_bytes
 
@@ -394,7 +394,7 @@ def test_classico_link_clicavel_na_realizacao():
         result, mapas, residual=_RESIDUAL_OK, rotulo="Av Teste, 100"
     )
     assert b"https://www.google.com/maps/search/" in pdf_com_end
-    assert b"Link para localizacao do ponto:" in pdf_com_end
+    assert "Link para localização do ponto:".encode("latin-1") in pdf_com_end
     assert b"Av%20Teste" in pdf_com_end or b"Av Teste" in pdf_com_end
 
     # Sem rotulo -> a query cai na coordenada do result.
@@ -470,8 +470,8 @@ def test_downloads_roteia_template_classico():
     assert p_recente.pdf_bytes.startswith(b"%PDF")
     # O classico tem a banda magenta de rodape + link clicavel -> bytes diferentes do recente.
     assert p_classico.pdf_bytes != p_recente.pdf_bytes
-    assert b"Link para localizacao do ponto:" in p_classico.pdf_bytes
-    assert b"Link para localizacao do ponto:" not in p_recente.pdf_bytes
+    assert "Link para localização do ponto:".encode("latin-1") in p_classico.pdf_bytes
+    assert "Link para localização do ponto:".encode("latin-1") not in p_recente.pdf_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +553,7 @@ def test_slide_unico_offline_safe_por_camada():
     assert pdf_bytes.startswith(b"%PDF-1.4")
     assert b"/Count 5" in pdf_bytes
     assert b"Mapas de calor" in pdf_bytes
-    assert b"Mapa indisponivel para esta camada." in pdf_bytes
+    assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
 
 
 def test_slide_unico_tres_imagens_embutidas():

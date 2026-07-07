@@ -1249,55 +1249,7 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 
 ---
 
-### BLK-ACENTO-02 — Acentuação dos relatórios gerados (PDF/CSV)
+- BLK-ACENTO-02 (concluído 2026-07-07) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (texto dos relatórios; READ-ONLY sobre o M1; núcleo `censo_*` só nas STRINGS de exibição, sem tocar método de interseção/raio/estrutura de páginas/marca d'água; sem DEC). |
-| **Prioridade** | **Urgente** (herda da tarefa ClickUp `86e26mtn5`). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (independente do BLK-ACENTO-01; pode ir em PR separado). |
-| **Autonomia** | **manual (NÃO loop-safe)** — altera texto de relatório auditável (compressão OFF) e exige revisão visual do PDF. NÃO marcar loop-safe. |
-
-**Objetivo.** Acentuar corretamente o texto dos relatórios (Relatório Pontual Censitário 1,5 km e
-Relatório Municipal), sem trocar fonte/biblioteca e sem introduzir caracteres que virem `"?"`.
-
-**Escopo permitido (READ-ONLY M1, só texto de relatório).**
-- `src/motor_expansao/dashboard/censo_report.py` (~50 chamadas `_ascii(...)`) e
-  `relatorio_municipal.py` (~142 ocorrências / ~55 `set_font` + `_ascii`): escrever os textos-fonte
-  COM acento (títulos, `PDF_SECTION_HEADERS` — `censo_report.py:16-17`, `relatorio_municipal.py:60-61`,
-  rótulos de Big Numbers, legendas, rodapé). `latin-1` renderiza os acentos; **manter `_ascii()`**
-  como salvaguarda para caracteres exóticos.
-- Corrigir o comentário-fonte enganoso ("ASCII, sem acento") para refletir que latin-1 cobre acento
-  e que o que se proíbe é a tipografia fora de latin-1.
-- **BANIR tipografia "esperta"** no texto de PDF (travessão `—`/`–`, bullet `•`, seta `→`,
-  reticências `…`, aspas curvas, `©`): trocar por ASCII (`-`, `"`, "(c)", "...") — senão viram `"?"`
-  silenciosamente via `errors="replace"`.
-- **Teste de regressão anti-`"?"`:** adicionar teste que gere os PDFs e assert que **nenhum byte
-  `b"?"` inesperado** aparece (ou rodar `_ascii` com `errors="strict"` num modo de auditoria/CI para
-  pegar tipografia fora de latin-1 cedo). Aproveita a compressão OFF (`set_compression(False)`,
-  `censo_report.py:228-236`) que já expõe o texto cru.
-- Atualizar `tests/unit/test_relatorio_municipal.py` (~26 asserts `assert b"..."`, ex. linhas
-  354-368,467-472,498,558-583) e `tests/unit/test_relatorio_pontual_censitario_export.py` (~40
-  asserts, ex. linhas 125-126,268-269,311-326,382-416,554-556) para as strings acentuadas em
-  `latin-1` (`b"Visao"` -> `"Visão".encode("latin-1")`). O laço
-  `for header in PDF_SECTION_HEADERS: assert header.encode("latin-1") in pdf_bytes` NÃO quebra (lê a
-  constante), mas os `assert b"literal"` isolados precisam ser atualizados um a um.
-
-**Fora de escopo.** Núcleo funcional `censo_*`: `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
-`RAIO_CENSITARIO_DEFAULT_KM`, contagem/ordem/estrutura das páginas, grid de Big Numbers, marca d'água
-anti-PII (BLK-EST-03), `set_compression(False)`, `pdf_version` — SÓ as STRINGS mudam. UI do dashboard
-(BLK-ACENTO-01). `score_priorizacao`/M1/artefatos oficiais. Trocar core font por TTF Unicode (não é
-necessário; latin-1 basta).
-
-**Guardrails.** READ-ONLY sobre o M1 (§5). Anti-PII inalterado (compressão OFF, marca d'água do
-solicitante BLK-EST-03, `.pptx`/PDF nunca versionados, `image24.png` nunca embutido). Sem dependência
-de rede nova.
-
-**Critério de aceite.** PDFs (pontual + municipal) com acentuação correta renderizando em `latin-1`;
-teste anti-`"?"` verde (zero caractere perdido); método de interseção/raio/estrutura/marca d'água
-INTOCADOS; suíte verde (asserts de PDF atualizados); ruff+mypy limpos; revisão visual humana do PDF
-aprovada.
 
 ---

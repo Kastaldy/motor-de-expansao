@@ -13,17 +13,20 @@ from PIL import Image
 from motor_expansao.api.maps_geocoder import build_search_url
 from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSITARIO
 
-# Cabecalhos canonicos das 5 paginas do template Ultra (ASCII, sem acento problematico).
+# Cabecalhos canonicos das 5 paginas do template Ultra. Renderizam em latin-1 (core font
+# Helvetica do fpdf2), que cobre integralmente os acentos portugueses -- o que e PROIBIDO e
+# tipografia fora de latin-1 (travessao/bullet/seta/reticencias/aspas curvas/(c)), que vira
+# "?" silenciosamente via _ascii(..., errors="replace").
 # Cada string PRECISA aparecer nos bytes crus do PDF (compressao desativada no writer).
 # Ordem das paginas (BLK-RELPON-01): os 3 choropleths (Densidade/Renda/Score) foram
 # CONSOLIDADOS em um unico slide "Mapas de calor" (tira 1x3 lado a lado), reduzindo o PDF
 # de 7 para 5 paginas: Capa -> Mapas de calor -> Concorrentes -> Big Numbers -> Realizacao.
 PDF_SECTION_HEADERS = (
-    "Relatorio Pontual Censitario",
+    "Relatório Pontual Censitário",
     "Mapas de calor",
     "Concorrentes",
     "Big Numbers",
-    "Realizacao",
+    "Realização",
 )
 
 # Camadas de mapa (chave canonica -> titulo da pagina de mapa no PDF). Ordem fixa.
@@ -31,9 +34,9 @@ PDF_SECTION_HEADERS = (
 # `concorrentes` e o mapa SO de pins (basemap + pins Ultra/concorrentes + ponto central),
 # SEM choropleth — renderizada na pagina de Concorrentes (`_competitors_page`).
 MAP_LAYER_TITLES: tuple[tuple[str, str], ...] = (
-    ("densidade", "Populacao - Densidade"),
+    ("densidade", "População - Densidade"),
     ("renda", "Renda per capita"),
-    ("score", "Score censitario"),
+    ("score", "Score censitário"),
     ("concorrentes", "Concorrentes e Ultra"),
 )
 
@@ -64,7 +67,7 @@ _CINZA_TEXTO = (60, 60, 60)
 
 # Atribuicao de tiles (DEC-004) — sempre presente no rodape de cada pagina de mapa/credito.
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
-_CREDITO_ULTRA = "Relatorio gerado pelo Motor de Expansao - Ultra Academia"
+_CREDITO_ULTRA = "Relatório gerado pelo Motor de Expansão - Ultra Academia"
 
 # Nomes default dos assets de branding (gitignored; ficam no host/volume `data/ultra`).
 _ASSET_CAPA = "relatorio_capa_bg.png"
@@ -106,7 +109,7 @@ _CLASSICO_MAGENTA_OFFSET = 0.0
 _MESES_PT = (
     "janeiro",
     "fevereiro",
-    "marco",
+    "março",
     "abril",
     "maio",
     "junho",
@@ -298,7 +301,7 @@ def _draw_footer(pdf: _UltraPDF, *, with_attribution: bool = True) -> None:
 # legenda embutida (D3). Fallback textual por camada ausente (offline-safe).
 # ---------------------------------------------------------------------------
 # Mensagem literal de fallback por camada de mapa faltante (usada pelas grades 1x3).
-_MAPA_INDISPONIVEL = "Mapa indisponivel para esta camada."
+_MAPA_INDISPONIVEL = "Mapa indisponível para esta camada."
 
 
 def _map_grid_cells(
@@ -462,7 +465,7 @@ def _cover_page(
     # D1=B (BLK-EST-02): titulo de capa 30 pt (mais presente).
     pdf.set_font("Helvetica", "B", 30)
     pdf.set_xy(block_x, title_y)
-    pdf.multi_cell(block_w, 32, _ascii("Relatorio Pontual Censitario"), align=align)
+    pdf.multi_cell(block_w, 32, _ascii("Relatório Pontual Censitário"), align=align)
 
     pdf.set_font("Helvetica", "", 13)
     pdf.set_xy(block_x, title_y + 70)
@@ -477,7 +480,7 @@ def _cover_page(
     pdf.cell(block_w, 18, _ascii(subt), align=align)
 
     pdf.set_xy(block_x, title_y + 92)
-    pdf.cell(block_w, 18, _ascii(f"Raio de analise: {raio}"), align=align)
+    pdf.cell(block_w, 18, _ascii(f"Raio de análise: {raio}"), align=align)
 
 
 def _big_numbers_page(
@@ -500,10 +503,10 @@ def _big_numbers_page(
 
     residual = residual or {}
     cards = [
-        ("Populacao total no raio", _format_number(result.get("pop_total_raio"), 0)),
-        ("Renda per capita media", "R$ " + _format_number(result.get("renda_per_capita_media_raio"), 2)),
-        ("Score censitario medio", _format_number(result.get("score_setor_medio"), 2)),
-        ("Score censitario maximo", _format_number(result.get("score_setor_max"), 2)),
+        ("População total no raio", _format_number(result.get("pop_total_raio"), 0)),
+        ("Renda per capita média", "R$ " + _format_number(result.get("renda_per_capita_media_raio"), 2)),
+        ("Score censitário médio", _format_number(result.get("score_setor_medio"), 2)),
+        ("Score censitário máximo", _format_number(result.get("score_setor_max"), 2)),
         ("SAM Fitness (alunos)", _format_number(residual.get("sam_fitness_potencial"), 0)),
         ("Residual Fitness (alunos)", _format_number(residual.get("oferta_efetiva_disponivel"), 0)),
         ("Concorrentes no raio", _format_number(result.get("n_concorrentes"), 0)),
@@ -553,9 +556,9 @@ def _big_numbers_page(
         _PAGE_W - 2 * margin_x,
         11,
         _ascii(
-            "Fontes: pop/renda/score = censo (intersecao de setores IBGE 2022 com circulo de 1.5 km, "
-            f"metodo {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = lookup READ-ONLY "
-            "do hex H3 (sem recalculo do M1). 'n/d' = dado ausente para o ponto."
+            "Fontes: pop/renda/score = censo (interseção de setores IBGE 2022 com círculo de 1.5 km, "
+            f"método {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = lookup READ-ONLY "
+            "do hex H3 (sem recálculo do M1). 'n/d' = dado ausente para o ponto."
         ),
     )
     _draw_footer(pdf, with_attribution=True)
@@ -680,7 +683,7 @@ def _credit_page(pdf: _UltraPDF, assets: dict[str, bytes | None]) -> None:
     pdf.set_text_color(*_BRANCO)
     pdf.set_font("Helvetica", "B", 34)
     pdf.set_xy(40, 180)
-    pdf.cell(_PAGE_W - 80, 40, _ascii("Realizacao"), align="C")
+    pdf.cell(_PAGE_W - 80, 40, _ascii("Realização"), align="C")
 
     pdf.set_font("Helvetica", "B", 18)
     pdf.set_xy(40, 232)
@@ -693,8 +696,8 @@ def _credit_page(pdf: _UltraPDF, assets: dict[str, bytes | None]) -> None:
         _PAGE_W - 320,
         16,
         _ascii(
-            "Intersecao de setores censitarios IBGE 2022 com circulo de 1,5 km; "
-            "distribuicao intrassetor por area."
+            "Interseção de setores censitários IBGE 2022 com círculo de 1,5 km; "
+            "distribuição intrassetor por área."
         ),
         align="C",
     )
@@ -704,7 +707,7 @@ def _credit_page(pdf: _UltraPDF, assets: dict[str, bytes | None]) -> None:
         _PAGE_W - 320,
         16,
         _ascii(
-            "READ-ONLY: este relatorio nao altera score_priorizacao, carteira, plano ou artefatos "
+            "READ-ONLY: este relatório não altera score_priorizacao, carteira, plano ou artefatos "
             "oficiais do M1."
         ),
         align="C",
@@ -802,7 +805,7 @@ def _classico_banda_texto(result: dict[str, Any], rotulo: str | None) -> str:
     lng = result.get("lng")
     if lat is not None and lng is not None:
         return f"Coordenada: {float(lat):.5f}, {float(lng):.5f}"
-    return "Relatorio Pontual Censitario"
+    return "Relatório Pontual Censitário"
 
 
 def _classico_cover_page(
@@ -825,7 +828,7 @@ def _classico_cover_page(
     endereco = nome if (nome and not _parece_coordenada(nome)) else f"Coordenada: {coord}"
     if len(endereco) > 72:
         endereco = endereco[:69] + "..."
-    subtitulo = f"Relatorio Pontual Censitario - Raio 1,5 km | {_classico_mes_ano(now)}"
+    subtitulo = f"Relatório Pontual Censitário - Raio 1,5 km | {_classico_mes_ano(now)}"
 
     # Zona limpa inferior-direita quando ha fundo de marca; centro quando nao ha.
     base_x = 478.0 if has_bg else 80.0
@@ -980,7 +983,7 @@ def _classico_credit_page(
     pdf.set_text_color(*_BRANCO)
     pdf.set_font("Helvetica", "B", 34)
     pdf.set_xy(40, 120)
-    pdf.cell(_PAGE_W - 80, 40, _ascii("Realizacao"), align="C")
+    pdf.cell(_PAGE_W - 80, 40, _ascii("Realização"), align="C")
 
     pdf.set_font("Helvetica", "B", 18)
     pdf.set_xy(40, 172)
@@ -992,8 +995,8 @@ def _classico_credit_page(
         _PAGE_W - 320,
         16,
         _ascii(
-            "Intersecao de setores censitarios IBGE 2022 com circulo de 1,5 km; "
-            "distribuicao intrassetor por area."
+            "Interseção de setores censitários IBGE 2022 com círculo de 1,5 km; "
+            "distribuição intrassetor por área."
         ),
         align="C",
     )
@@ -1003,7 +1006,7 @@ def _classico_credit_page(
         _PAGE_W - 320,
         16,
         _ascii(
-            "READ-ONLY: este relatorio nao altera score_priorizacao, carteira, plano ou artefatos "
+            "READ-ONLY: este relatório não altera score_priorizacao, carteira, plano ou artefatos "
             "oficiais do M1."
         ),
         align="C",
@@ -1024,7 +1027,7 @@ def _classico_credit_page(
     pdf.set_text_color(*_BRANCO)
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_xy(40, 330)
-    pdf.cell(_PAGE_W - 80, 16, _ascii("Link para localizacao do ponto:"), align="C")
+    pdf.cell(_PAGE_W - 80, 16, _ascii("Link para localização do ponto:"), align="C")
     pdf.set_font("Helvetica", "", 11)
     pdf.set_xy(40, 350)
     pdf.cell(_PAGE_W - 80, 16, _ascii(link_label), align="C", link=url)
@@ -1034,7 +1037,7 @@ def _classico_credit_page(
     pdf.cell(
         _PAGE_W - 80,
         16,
-        _ascii(f"Data de geracao: {_classico_data_extenso(now)}"),
+        _ascii(f"Data de geração: {_classico_data_extenso(now)}"),
         align="C",
     )
 

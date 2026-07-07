@@ -57,18 +57,20 @@ H3_RES = 7
 VERSAO_CONTRATO_MUNICIPAL = "BLK-RELMUN-01 | contrato v1 | score M1 INALTERADO"
 METODO_RELATORIO_MUNICIPAL = "agregacao_municipal_h3_res7"
 
-# Cabecalhos canonicos das 9 paginas (ASCII; cada string aparece nos bytes crus do PDF,
-# pois a compressao do stream esta desativada).
+# Cabecalhos canonicos das 9 paginas. Renderizam em latin-1 (core font Helvetica do fpdf2),
+# que cobre integralmente os acentos portugueses -- o que e PROIBIDO e tipografia fora de
+# latin-1 (travessao/bullet/seta/reticencias/aspas curvas/(c)), que vira "?" silenciosamente
+# via _ascii(..., errors="replace"). Cada string aparece nos bytes crus do PDF (compressao OFF).
 PDF_SECTION_HEADERS = (
     "Potencial de Entrada de Novas Unidades",
-    "Visao Geral do Municipio",
-    "Resumo da Regiao",
-    "Score Censitario",
+    "Visão Geral do Município",
+    "Resumo da Região",
+    "Score Censitário",
     "Residual Fitness",
-    "Expansao de Dominio",
+    "Expansão de Domínio",
     "Bairros por Zona",
-    "Sintese",
-    "Espaco e academias",
+    "Síntese",
+    "Espaço e academias",
 )
 
 # Paleta Ultra (RGB 0..255). Espelha censo_report (cores canonicas), reimplementado local.
@@ -101,18 +103,18 @@ _HEX_APROVADO_RGBA = (*_COR_APROVADO_PROPRIO, 210)
 _HEX_APROVADO_MUNICIPAL_RGBA = (*_COR_APROVADO_MUNICIPAL, 210)
 _HEX_REPROVADO_RGBA = (*_COR_REPROVADO, 170)
 _COBERTURA_LEGENDA = (
-    ("Aprovado (dado proprio)", _COR_APROVADO_PROPRIO),
+    ("Aprovado (dado próprio)", _COR_APROVADO_PROPRIO),
     ("Aprovado (fallback municipal)", _COR_APROVADO_MUNICIPAL),
     ("Reprovado", _COR_REPROVADO),
 )
 # Camada Resumo: legenda so das 2 categorias de aprovado (o neutro e contexto).
 _RESUMO_LEGENDA = (
-    ("Aprovado (dado proprio)", _COR_APROVADO_PROPRIO),
+    ("Aprovado (dado próprio)", _COR_APROVADO_PROPRIO),
     ("Aprovado (fallback municipal)", _COR_APROVADO_MUNICIPAL),
 )
 
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
-_CREDITO_ULTRA = "Relatorio gerado pelo Motor de Expansao - Ultra Academia"
+_CREDITO_ULTRA = "Relatório gerado pelo Motor de Expansão - Ultra Academia"
 
 _ASSET_CAPA = "relatorio_capa_bg.png"
 _ASSET_CONTEUDO = "relatorio_conteudo_bg.png"
@@ -145,8 +147,8 @@ CRS_WGS84 = "EPSG:4326"
 # Baixo <30. Cor representativa via RESIDUAL_SCORE_BANDS (centro da banda de score).
 SCORE_FAIXAS_TEMPLATE: tuple[tuple[str, float, float], ...] = (
     ("Alto potencial", 70.0, 100.0),
-    ("Medio-alto", 50.0, 70.0),
-    ("Medio", 30.0, 50.0),
+    ("Médio-alto", 50.0, 70.0),
+    ("Médio", 30.0, 50.0),
     ("Baixo potencial", 0.0, 30.0),
 )
 
@@ -157,11 +159,11 @@ _ZONA_CORES_RGBA = (
     (194, 60, 142, 205),   # 2 Flancos laterais — magenta
     (240, 148, 30, 205),   # 3 Cerco — laranja
 )
-_ZONA_GEO_ROTULOS = ("Ancora central", "Flancos laterais", "Cerco")
+_ZONA_GEO_ROTULOS = ("Âncora central", "Flancos laterais", "Cerco")
 _ZONA_GEO_DESC = (
-    "Adensar o nucleo central da regiao.",
+    "Adensar o núcleo central da região.",
     "Capturar residuais nas laterais.",
-    "Ocupar as bordas antes da concorrencia.",
+    "Ocupar as bordas antes da concorrência.",
 )
 
 # Prettify de nomes de rede para a Pagina 8 (Slide 8). Overrides conhecidos + fallback
@@ -292,7 +294,7 @@ def _zonas_do_municipio(
     if sub.empty:
         return []
 
-    rotulos = ("Ancora central", "Flancos laterais", "Cerco")
+    rotulos = ("Âncora central", "Flancos laterais", "Cerco")
     zonas: list[dict[str, Any]] = []
     for cluster_id, grupo in sub.groupby("cluster_id", dropna=True):
         residual = _safe_float(grupo.get("residual_total_cluster", pd.Series(dtype=float)).max())
@@ -893,11 +895,11 @@ def _render_mapa_municipio(
     image = Image.new("RGB", (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(image, "RGBA")
     titulo = {
-        "resumo": "Resumo da regiao",
-        "score": "Score censitario",
+        "resumo": "Resumo da região",
+        "score": "Score censitário",
         "residual": "Residual fitness",
-        "dominio": "Expansao de dominio",
-        "cobertura": "Visao geral do municipio",
+        "dominio": "Expansão de domínio",
+        "cobertura": "Visão geral do município",
     }.get(camada, camada)
     _draw_text(draw, (24, 18), titulo, font=_font(20))
 
@@ -907,7 +909,7 @@ def _render_mapa_municipio(
     rows = df_muni.copy()
     if "hex_id" not in rows.columns or rows.empty:
         draw.rounded_rectangle(map_box, radius=6, fill=(245, 245, 245), outline=(120, 120, 120))
-        _draw_text(draw, (left + 16, (top + bottom) // 2), "Mapa indisponivel para este municipio.", font=_font(13))
+        _draw_text(draw, (left + 16, (top + bottom) // 2), "Mapa indisponível para este município.", font=_font(13))
         out = BytesIO()
         image.save(out, format="PNG", optimize=True)
         return out.getvalue()
@@ -940,7 +942,7 @@ def _render_mapa_municipio(
 
     if not geometrias or not math.isfinite(minx):
         draw.rounded_rectangle(map_box, radius=6, fill=(245, 245, 245), outline=(120, 120, 120))
-        _draw_text(draw, (left + 16, (top + bottom) // 2), "Mapa indisponivel para este municipio.", font=_font(13))
+        _draw_text(draw, (left + 16, (top + bottom) // 2), "Mapa indisponível para este município.", font=_font(13))
         out = BytesIO()
         image.save(out, format="PNG", optimize=True)
         return out.getvalue()
@@ -1114,9 +1116,9 @@ def _render_mapa_municipio(
 
     # Rodape com atribuicao quando ha basemap.
     footer = (
-        f"Agregacao H3 res 7 - EPSG:3857 - {_ATRIBUICAO_TILES}"
+        f"Agregação H3 res 7 - EPSG:3857 - {_ATRIBUICAO_TILES}"
         if drew_basemap
-        else "Agregacao H3 res 7 - fundo de ruas offline"
+        else "Agregação H3 res 7 - fundo de ruas offline"
     )
     _draw_text(draw, (24, height - 28), footer, font=_font(11), fill=(71, 85, 105))
 
@@ -1342,7 +1344,7 @@ def _draw_map(pdf: _UltraPDF, png_bytes: bytes | None, *, max_w: float = 540.0, 
         pdf.set_text_color(*_CINZA_TEXTO)
         pdf.set_font("Helvetica", "", 12)
         pdf.set_xy(x_anchor, y_anchor + 40)
-        pdf.cell(max_w, 18, _ascii("Mapa indisponivel para esta camada."))
+        pdf.cell(max_w, 18, _ascii("Mapa indisponível para esta camada."))
         return
     dims = _png_dimensions(png_bytes)
     if dims is None:
@@ -1376,7 +1378,7 @@ def _watermark_text(solicitante: str | None) -> str:
 def _local_label(result: dict[str, Any]) -> str:
     municipio = str(result.get("nome_municipio") or "").strip()
     uf = str(result.get("uf") or "").strip()
-    return f"{municipio} - {uf}".strip(" -") if (municipio or uf) else "Municipio"
+    return f"{municipio} - {uf}".strip(" -") if (municipio or uf) else "Município"
 
 
 # ===========================================================================
@@ -1537,7 +1539,7 @@ def _cover_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes 
     pdf.set_text_color(*_BRANCO)
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_xy(block_x, eyebrow_y)
-    pdf.cell(block_w, 16, _ascii("ANALISE DE EXPANSAO"), align=align)
+    pdf.cell(block_w, 16, _ascii("ANÁLISE DE EXPANSÃO"), align=align)
     # Titulo em UMA linha (cell, nao multi_cell) p/ a string canonica aparecer contigua nos
     # bytes crus do PDF (compressao OFF). Fonte ajustada ao bloco; quebra visual em duas
     # linhas via subtitulo curto abaixo, mantendo a hierarquia do template.
@@ -1548,7 +1550,7 @@ def _cover_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, bytes 
     pdf.set_xy(block_x, subtitle_y)
     pdf.multi_cell(
         block_w, 18,
-        _ascii("Mapeamento competitivo por regiao - Ultra e espaco disponivel para novas academias"),
+        _ascii("Mapeamento competitivo por região - Ultra e espaço disponível para novas academias"),
         align=align,
     )
     pdf.set_font("Helvetica", "B", 16)
@@ -1565,7 +1567,7 @@ def _cobertura_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     seguintes e quantas ficaram de fora). READ-ONLY sobre o M1."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, f"Visao Geral do Municipio - {_local_label(result)}", rgb=primary)
+    _draw_title_band(pdf, f"Visão Geral do Município - {_local_label(result)}", rgb=primary)
     _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
                      border_rgb=primary)
 
@@ -1586,7 +1588,7 @@ def _cobertura_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_text_color(*cor_bloco)
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_xy(px + 14, py0 + 12)
-    pdf.cell(pw - 28, 14, _ascii("REGIOES CONSIDERADAS"))
+    pdf.cell(pw - 28, 14, _ascii("REGIÕES CONSIDERADAS"))
     pdf.set_text_color(*cor_bloco)
     pdf.set_font("Helvetica", "B", 40)
     pdf.set_xy(px + 14, py0 + 32)
@@ -1594,13 +1596,13 @@ def _cobertura_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "", 11)
     pdf.set_xy(px + 14, py0 + 80)
-    pdf.cell(pw - 28, 14, _ascii("regioes consideradas nas paginas seguintes"))
+    pdf.cell(pw - 28, 14, _ascii("regiões consideradas nas páginas seguintes"))
 
     # Detalhamento: total no municipio, aprovados, reprovados (fora do recorte).
     _info_panel(
         pdf, px, py0 + head_h + 12, pw, "DETALHAMENTO",
         [
-            ("Hexagonos no municipio", _format_number(n_muni, 0)),
+            ("Hexágonos no município", _format_number(n_muni, 0)),
             ("Aprovados (considerados)", _format_number(n_aprov, 0)),
             ("Reprovados (fora do recorte)", _format_number(n_reprov, 0)),
         ],
@@ -1609,7 +1611,7 @@ def _cobertura_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
 
     _draw_note(
         pdf, 34.0, 490.0, 540.0,
-        f"As paginas seguintes consideram apenas as {_format_number(n_aprov, 0)} regioes aprovadas "
+        f"As páginas seguintes consideram apenas as {_format_number(n_aprov, 0)} regiões aprovadas "
         f"(Residual Fitness >= {_format_number(OFERTA_DESTAQUE_MIN, 0)} alunos).",
     )
     _draw_footer(pdf, versao=result.get("versao_contrato"))
@@ -1621,7 +1623,7 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
                  secondary: tuple[int, int, int] = ULTRA_MAGENTA) -> None:
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, f"Resumo da Regiao - {_local_label(result)}", rgb=primary)
+    _draw_title_band(pdf, f"Resumo da Região - {_local_label(result)}", rgb=primary)
     # Moldura do mapa acompanha o tom principal da pagina.
     _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
                      border_rgb=primary)
@@ -1634,11 +1636,11 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     bloco_h = panel_h + 12.0 + box_h
     py0 = _centered_y(bloco_h)
     y_end = _info_panel(
-        pdf, px, py0, pw, "RESUMO DA REGIAO",
+        pdf, px, py0, pw, "RESUMO DA REGIÃO",
         [
             ("Unidades Ultra", _format_number(result.get("n_ultra"), 0)),
             ("Unidades Concorrentes", _format_number(result.get("n_concorrentes"), 0)),
-            ("Espaco para academias", _format_number(result.get("espaco_para_academias"), 0)),
+            ("Espaço para academias", _format_number(result.get("espaco_para_academias"), 0)),
         ],
         accent=secondary, border_rgb=secondary,
     )
@@ -1647,11 +1649,11 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_text_color(*ULTRA_LARANJA)
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_xy(px + 12, y_end + 22)
-    pdf.cell(pw - 24, 14, _ascii("Como calculamos o espaco"))
+    pdf.cell(pw - 24, 14, _ascii("Como calculamos o espaço"))
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "", 10)
     pdf.set_xy(px + 12, y_end + 42)
-    pdf.multi_cell(pw - 24, 13, _ascii("Soma dos hexagonos amarelos / 2.500"))
+    pdf.multi_cell(pw - 24, 13, _ascii("Soma dos hexágonos amarelos / 2.500"))
     parcelas = result.get("parcelas_amarelos") or []
     soma = result.get("soma_oferta_amarelos", 0.0)
     if parcelas:
@@ -1666,7 +1668,7 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     # do _hex_destacado_mask: OFERTA_DESTAQUE_MIN — SO Residual Fitness, termo de SAM removido).
     _draw_note(
         pdf, 34.0, 490.0, 540.0,
-        f"Hexagono considerado quando Residual Fitness >= {_format_number(OFERTA_DESTAQUE_MIN, 0)} (alunos).",
+        f"Hexágono considerado quando Residual Fitness >= {_format_number(OFERTA_DESTAQUE_MIN, 0)} (alunos).",
     )
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
@@ -1677,7 +1679,7 @@ def _score_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
                 secondary: tuple[int, int, int] = ULTRA_MAGENTA) -> None:
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Score Censitario", rgb=primary)
+    _draw_title_band(pdf, "Score Censitário", rgb=primary)
     # Moldura do mapa = tom principal; painel de legenda = acento. Faixas de score INALTERADAS.
     # BLK-RELPON-03: max_w padronizado 560->540 (aspect 1,4211) p/ eliminar letterbox no PNG 1000x704.
     _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
@@ -1691,7 +1693,7 @@ def _score_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_xy(px + 14, py0 + 16)
-    pdf.cell(pw - 28, 16, _ascii("Potencial socioeconomico"))
+    pdf.cell(pw - 28, 16, _ascii("Potencial socioeconômico"))
     yy = py0 + 44.0
     for label, _lo, hi in SCORE_FAIXAS_TEMPLATE:
         rgba = score_band_to_color(min(hi - 1.0, 95.0), alpha=255)
@@ -1706,19 +1708,19 @@ def _score_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_font("Helvetica", "", 9)
     pdf.set_xy(px + 14, yy + 6)
     pdf.multi_cell(pw - 28, 12, _ascii(
-        f"Score medio {_format_number(result.get('score_censo_medio'), 1)} | "
-        f"max {_format_number(result.get('score_censo_max'), 1)}"
+        f"Score médio {_format_number(result.get('score_censo_medio'), 1)} | "
+        f"máx {_format_number(result.get('score_censo_max'), 1)}"
     ))
     # FU1: nota curta explicando as faixas do score (D5).
     _draw_note(
         pdf, px, py0 + panel_h + 10, pw,
-        "Score censitario H3 res 7 (IBGE 2022): faixas Alto>=70 / Medio-alto 50-70 / "
-        "Medio 30-50 / Baixo <30.",
+        "Score censitário H3 res 7 (IBGE 2022): faixas Alto>=70 / Médio-alto 50-70 / "
+        "Médio 30-50 / Baixo <30.",
     )
     pdf.set_xy(36, _PAGE_H - 36)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.cell(_PAGE_W - 72, 12, _ascii("Fonte: IBGE Censo 2022 - Agregacao H3 resolucao 7"))
+    pdf.cell(_PAGE_W - 72, 12, _ascii("Fonte: IBGE Censo 2022 - Agregação H3 resolução 7"))
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
@@ -1740,7 +1742,7 @@ def _residual_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 13)
     pdf.set_xy(px + 14, py0 + 16)
-    pdf.cell(pw - 28, 16, _ascii("MERCADO DISPONIVEL"))
+    pdf.cell(pw - 28, 16, _ascii("MERCADO DISPONÍVEL"))
     pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 34)
     pdf.set_xy(px + 14, py0 + 46)
@@ -1748,12 +1750,12 @@ def _residual_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "", 11)
     pdf.set_xy(px + 14, py0 + 88)
-    pdf.cell(pw - 28, 16, _ascii("alunos elegiveis sem academia"))
+    pdf.cell(pw - 28, 16, _ascii("alunos elegíveis sem academia"))
     yy = py0 + 116
     for rotulo, valor in (
         ("Hab. totais", _format_number(result.get("pop_total_municipio"), 0)),
         ("Renda per capita", "R$ " + _format_number(result.get("renda_per_capita_media"), 2)),
-        ("Penetracao fitness", _format_number(result.get("penetracao_fitness_pct"), 1, "%")),
+        ("Penetração fitness", _format_number(result.get("penetracao_fitness_pct"), 1, "%")),
     ):
         pdf.set_text_color(45, 45, 45)
         pdf.set_font("Helvetica", "", 12)
@@ -1766,15 +1768,15 @@ def _residual_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     # FU1: nota curta explicando o residual.
     _draw_note(
         pdf, px, py0 + panel_h + 10, pw,
-        "Residual = pop. elegivel - alunos ja atendidos (camada de mercado).",
+        "Residual = pop. elegível - alunos já atendidos (camada de mercado).",
     )
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
 _ZONA_TEXTOS = {
-    "Ancora central": "Hexagonos centrais / posicionamento principal.",
-    "Flancos laterais": "Captura dos hexagonos residuais e consolidacao.",
-    "Cerco": "Bairros de alta renda / hexagonos mais afastados.",
+    "Âncora central": "Hexágonos centrais / posicionamento principal.",
+    "Flancos laterais": "Captura dos hexágonos residuais e consolidação.",
+    "Cerco": "Bairros de alta renda / hexágonos mais afastados.",
 }
 
 
@@ -1790,7 +1792,7 @@ def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Expansao de Dominio", rgb=primary)
+    _draw_title_band(pdf, "Expansão de Domínio", rgb=primary)
     # Moldura do mapa = tom principal; painel ESTRATEGIA = acento. Cores de ZONA inalteradas.
     _draw_framed_map(pdf, mapa, max_w=540.0, max_h=380.0, x_anchor=34.0, y_anchor=100.0,
                      border_rgb=primary)
@@ -1805,11 +1807,11 @@ def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_text_color(*secondary)
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_xy(px + 14, py0 + 16)
-    pdf.cell(pw - 28, 18, _ascii("ESTRATEGIA"))
+    pdf.cell(pw - 28, 18, _ascii("ESTRATÉGIA"))
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 9)
     pdf.set_xy(px + 14, py0 + 36)
-    pdf.multi_cell(pw - 28, 12, _ascii("Cercar e dominar a regiao por zonas geometricas."))
+    pdf.multi_cell(pw - 28, 12, _ascii("Cercar e dominar a região por zonas geométricas."))
 
     yy = py0 + 60.0
     if not zonas_geo:
@@ -1817,7 +1819,7 @@ def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
         pdf.set_font("Helvetica", "", 10)
         pdf.set_xy(px + 14, yy)
         pdf.multi_cell(pw - 28, 14, _ascii(
-            "Hexes relevantes insuficientes para zonas neste municipio."
+            "Hexes relevantes insuficientes para zonas neste município."
         ))
     else:
         # D7: ordem 1 Ancora central / 2 Flancos laterais / 3 Cerco — cada zona com sua cor.
@@ -1845,7 +1847,7 @@ def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_xy(36, _PAGE_H - 36)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.cell(_PAGE_W - 72, 12, _ascii("Motor de Expansao Ultra - IBGE + OSM"))
+    pdf.cell(_PAGE_W - 72, 12, _ascii("Motor de Expansão Ultra - IBGE + OSM"))
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
@@ -1875,12 +1877,12 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
     if tem_bairros:
         pdf.multi_cell(
             _PAGE_W - 72, 14,
-            _ascii("Bairros (IBGE 2022) agrupados pelas zonas de dominio do municipio."),
+            _ascii("Bairros (IBGE 2022) agrupados pelas zonas de domínio do município."),
         )
     else:
         pdf.multi_cell(
             _PAGE_W - 72, 14,
-            _ascii("Zonas de dominio do municipio por distancia ao centroide."),
+            _ascii("Zonas de domínio do município por distância ao centroide."),
         )
 
     yy = 116.0
@@ -1888,7 +1890,7 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
         pdf.set_xy(36, yy)
         pdf.set_font("Helvetica", "", 11)
         pdf.set_text_color(45, 45, 45)
-        pdf.multi_cell(_PAGE_W - 72, 14, _ascii("Sem zonas geometricas disponiveis para este municipio."))
+        pdf.multi_cell(_PAGE_W - 72, 14, _ascii("Sem zonas geométricas disponíveis para este município."))
     else:
         for zona in zonas_geo:
             zn = int(zona.get("zona_n", 0))
@@ -1928,19 +1930,19 @@ def _bairros_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
             _draw_note(
                 pdf, 36, yy + 2, _PAGE_W - 72,
                 "Fonte: IBGE Censo 2022 (bairro do setor; sem bairro, usa subdistrito/distrito). "
-                "Cobertura heterogenea entre municipios; zonas por distancia ao centroide "
-                "(display, nao altera o M1).",
+                "Cobertura heterogênea entre municípios; zonas por distância ao centroide "
+                "(display, não altera o M1).",
             )
         else:
             _draw_note(
                 pdf, 36, yy + 2, _PAGE_W - 72,
-                "Bairros nao mapeados na base IBGE 2022 para este municipio; exibicao por zona "
-                "geometrica (display); nao altera dominio_df nem o M1.",
+                "Bairros não mapeados na base IBGE 2022 para este município; exibição por zona "
+                "geométrica (display); não altera dominio_df nem o M1.",
             )
     pdf.set_xy(36, _PAGE_H - 36)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.cell(_PAGE_W - 72, 12, _ascii("Motor de Expansao Ultra - IBGE + OSM"))
+    pdf.cell(_PAGE_W - 72, 12, _ascii("Motor de Expansão Ultra - IBGE + OSM"))
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
@@ -1948,22 +1950,22 @@ def _sintese_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
                   primary: tuple[int, int, int] = ULTRA_TURQUESA) -> None:
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Sintese - Diagnostico & Recomendacao", rgb=primary)
+    _draw_title_band(pdf, "Síntese - Diagnóstico & Recomendação", rgb=primary)
     cards = [
         (
             ULTRA_MAGENTA,
-            _format_number(result.get("penetracao_fitness_pct"), 1, "% de penetracao"),
-            "Mercado com Oportunidade: penetracao fitness atual baixa, grande espaco para crescimento.",
+            _format_number(result.get("penetracao_fitness_pct"), 1, "% de penetração"),
+            "Mercado com Oportunidade: penetração fitness atual baixa, grande espaço para crescimento.",
         ),
         (
             ULTRA_TURQUESA,
             f"{_format_number(result.get('residual_total_alunos'), 0)} alunos",
-            "Residual Significativo: elegiveis sem academia regular, concentrados nas bordas/periferia.",
+            "Residual Significativo: elegíveis sem academia regular, concentrados nas bordas/periferia.",
         ),
         (
             ULTRA_LARANJA,
-            f"{_format_number(result.get('n_zonas_geo'), 0)} zonas de atuacao",
-            "Movimento Recomendado: posicionamento periferico, cercar o nucleo pelos flancos antes da concorrencia.",
+            f"{_format_number(result.get('n_zonas_geo'), 0)} zonas de atuação",
+            "Movimento Recomendado: posicionamento periférico, cercar o núcleo pelos flancos antes da concorrência.",
         ),
     ]
     margin_x = 36.0
@@ -1990,7 +1992,7 @@ def _sintese_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
     pdf.set_xy(36, _PAGE_H - 36)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.cell(_PAGE_W - 72, 12, _ascii("Estrategia e Growth - Ultra Academia - Motor de Expansao - 2026"))
+    pdf.cell(_PAGE_W - 72, 12, _ascii("Estratégia e Growth - Ultra Academia - Motor de Expansão - 2026"))
     _draw_footer(pdf, versao=result.get("versao_contrato"))
 
 
@@ -1999,11 +2001,11 @@ def _espaco_academias_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[
     """Pagina 8 — big numbers + breakdown de concorrentes por rede (D8) + carimbo de versao."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
-    _draw_title_band(pdf, "Espaco e academias", rgb=primary)
+    _draw_title_band(pdf, "Espaço e academias", rgb=primary)
     big = [
         (ULTRA_TURQUESA, _format_number(result.get("n_ultra"), 0), "Unidades Ultra mapeadas"),
         (ULTRA_MAGENTA, _format_number(result.get("n_concorrentes"), 0), "Unidades concorrentes mapeadas"),
-        (ULTRA_LARANJA, _format_number(result.get("espaco_para_academias"), 0), "Espaco total p/ novas academias"),
+        (ULTRA_LARANJA, _format_number(result.get("espaco_para_academias"), 0), "Espaço total p/ novas academias"),
     ]
     margin_x = 36.0
     gap = 18.0
@@ -2038,7 +2040,7 @@ def _espaco_academias_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[
         pdf.set_text_color(45, 45, 45)
         pdf.set_font("Helvetica", "", 11)
         pdf.set_xy(margin_x + 14, yy)
-        pdf.cell(bd_w - 28, 14, _ascii("Nenhuma rede concorrente mapeada no municipio."))
+        pdf.cell(bd_w - 28, 14, _ascii("Nenhuma rede concorrente mapeada no município."))
     else:
         col_w = (bd_w - 28) / 3.0
         for idx, (rede, cnt) in enumerate(sorted(por_rede.items(), key=lambda kv: kv[1], reverse=True)):
@@ -2064,9 +2066,9 @@ def _espaco_academias_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[
     pdf.multi_cell(
         _PAGE_W - 72, 11,
         _ascii(
-            "Metodo: contagem de pins dentro do territorio (H3 res 7) - "
-            "Espaco = soma dos hexagonos amarelos / 2.500. "
-            f"Versao: {result.get('versao_contrato')}"
+            "Método: contagem de pins dentro do território (H3 res 7) - "
+            "Espaço = soma dos hexágonos amarelos / 2.500. "
+            f"Versão: {result.get('versao_contrato')}"
         ),
     )
 

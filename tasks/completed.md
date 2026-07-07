@@ -7230,3 +7230,85 @@ confirmado: git diff só em dashboard/{constants,components,data,pages}.py + str
 calcular_colunas_mercado.py; nenhum parquet oficial tocado; pesos renda=0.40/pop=0.60 e
 H3_RESOLUTION=7 preservados. Sucessor: BLK-ACENTO-02 (relatórios PDF/CSV). Pendência humana:
 revisão visual da UI + merge da branch ciclo/BLK-ACENTO-01 (6.b). Sem dry-run (não tocou orquestração).
+
+---
+
+### BLK-ACENTO-02 — Acentuação dos relatórios gerados (PDF/CSV)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (texto dos relatórios; READ-ONLY sobre o M1; núcleo `censo_*` só nas STRINGS de exibição, sem tocar método de interseção/raio/estrutura de páginas/marca d'água; sem DEC). |
+| **Prioridade** | **Urgente** (herda da tarefa ClickUp `86e26mtn5`). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (independente do BLK-ACENTO-01; pode ir em PR separado). |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera texto de relatório auditável (compressão OFF) e exige revisão visual do PDF. NÃO marcar loop-safe. |
+
+**Objetivo.** Acentuar corretamente o texto dos relatórios (Relatório Pontual Censitário 1,5 km e
+Relatório Municipal), sem trocar fonte/biblioteca e sem introduzir caracteres que virem `"?"`.
+
+**Escopo permitido (READ-ONLY M1, só texto de relatório).**
+- `src/motor_expansao/dashboard/censo_report.py` (~50 chamadas `_ascii(...)`) e
+  `relatorio_municipal.py` (~142 ocorrências / ~55 `set_font` + `_ascii`): escrever os textos-fonte
+  COM acento (títulos, `PDF_SECTION_HEADERS` — `censo_report.py:16-17`, `relatorio_municipal.py:60-61`,
+  rótulos de Big Numbers, legendas, rodapé). `latin-1` renderiza os acentos; **manter `_ascii()`**
+  como salvaguarda para caracteres exóticos.
+- Corrigir o comentário-fonte enganoso ("ASCII, sem acento") para refletir que latin-1 cobre acento
+  e que o que se proíbe é a tipografia fora de latin-1.
+- **BANIR tipografia "esperta"** no texto de PDF (travessão `—`/`–`, bullet `•`, seta `→`,
+  reticências `…`, aspas curvas, `©`): trocar por ASCII (`-`, `"`, "(c)", "...") — senão viram `"?"`
+  silenciosamente via `errors="replace"`.
+- **Teste de regressão anti-`"?"`:** adicionar teste que gere os PDFs e assert que **nenhum byte
+  `b"?"` inesperado** aparece (ou rodar `_ascii` com `errors="strict"` num modo de auditoria/CI para
+  pegar tipografia fora de latin-1 cedo). Aproveita a compressão OFF (`set_compression(False)`,
+  `censo_report.py:228-236`) que já expõe o texto cru.
+- Atualizar `tests/unit/test_relatorio_municipal.py` (~26 asserts `assert b"..."`, ex. linhas
+  354-368,467-472,498,558-583) e `tests/unit/test_relatorio_pontual_censitario_export.py` (~40
+  asserts, ex. linhas 125-126,268-269,311-326,382-416,554-556) para as strings acentuadas em
+  `latin-1` (`b"Visao"` -> `"Visão".encode("latin-1")`). O laço
+  `for header in PDF_SECTION_HEADERS: assert header.encode("latin-1") in pdf_bytes` NÃO quebra (lê a
+  constante), mas os `assert b"literal"` isolados precisam ser atualizados um a um.
+
+**Fora de escopo.** Núcleo funcional `censo_*`: `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
+`RAIO_CENSITARIO_DEFAULT_KM`, contagem/ordem/estrutura das páginas, grid de Big Numbers, marca d'água
+anti-PII (BLK-EST-03), `set_compression(False)`, `pdf_version` — SÓ as STRINGS mudam. UI do dashboard
+(BLK-ACENTO-01). `score_priorizacao`/M1/artefatos oficiais. Trocar core font por TTF Unicode (não é
+necessário; latin-1 basta).
+
+**Guardrails.** READ-ONLY sobre o M1 (§5). Anti-PII inalterado (compressão OFF, marca d'água do
+solicitante BLK-EST-03, `.pptx`/PDF nunca versionados, `image24.png` nunca embutido). Sem dependência
+de rede nova.
+
+**Critério de aceite.** PDFs (pontual + municipal) com acentuação correta renderizando em `latin-1`;
+teste anti-`"?"` verde (zero caractere perdido); método de interseção/raio/estrutura/marca d'água
+INTOCADOS; suíte verde (asserts de PDF atualizados); ruff+mypy limpos; revisão visual humana do PDF
+aprovada.
+
+**Fechamento do ciclo BLK-ACENTO-02 (2026-07-07) — VEREDITO: APROVADO.** Esteira Média sem gate
+humano: Block Orchestrator -> Planner -> Builder (Opus, override +1 por volume/risco latin-1) ->
+QA (Opus 4.8). Rodou na MESMA branch ciclo/BLK-ACENTO-01 (decisão de Vinicius: acumular os dois
+blocos para UM PR). Feito: acentuação latin-1 de todo o texto-fonte dos 2 relatórios PDF
+(censo_report.py ~50 _ascii + relatorio_municipal.py ~53 _ascii — PDF_SECTION_HEADERS, títulos,
+Big Numbers, legendas, rodapés, blocos recente+classico), correção dos 2 comentários-fonte
+enganosos ("ASCII, sem acento" -> latin-1 cobre acento; proibido é tipografia fora de latin-1),
+banimento de tipografia esperta (só `-` `"` `(c)` `...`), preservando identificadores em prosa
+(score_priorizacao, dominio_df), carimbos de contrato (VERSAO_CONTRATO_*/METODO_RELATORIO_*),
+separadores decimais e marcas (_REDE_NOME_OVERRIDES). Núcleo censo_* INTOCADO (interseção 1,5 km,
+RAIO_CENSITARIO_DEFAULT_KM, /Count 5 e /Count 9, grid Big Numbers, marca d'água BLK-EST-03,
+set_compression(False), pdf_version, _ascii()). Teste novo tests/unit/test_relatorio_acentuacao_
+regressao.py: camada 5.1 (auditoria errors="strict" via monkeypatch de _ascii nos 2 módulos,
+gera os 3 PDFs, assert falhas==[]) + camada 5.2 (byte-scan anti-"?" com allowlist mínima do
+`/maps/search/?api=1&query=` da URL do Maps no template classico — achado empírico: gerando SEM
+imagens, recente=0/municipal=0/classico=1 "?" exatamente desse padrão; PNG binário contém 0x3F
+legítimos, por isso o scan roda sem imagens). Asserts de bytes atualizados em lockstep
+(test_relatorio_municipal.py e test_relatorio_pontual_censitario_export.py). Follow-up (ressalva do
+QA): 2 legendas PIL do mapa municipal `_COBERTURA_LEGENDA`/`_RESUMO_LEGENDA` (l.106/112)
+"Aprovado (dado proprio)" -> "Aprovado (dado próprio)", consistente com o mesmo caminho PIL já
+acentuado (titulo/"Agregação H3"). Validações (QA, NO-BYPASS): ruff limpo; import ok; mypy só os 6
+erros PRÉ-EXISTENTES de types-requests em arquivos não tocados (0 novo); suíte serial completa
+`1434 passed, 2 skipped, 1 failed` — a única falha (test_score_retencao_territorial::
+test_run_readonly_m1_por_mtime, parquet M2 gitignored) é PRÉ-EXISTENTE/ambiental, alheia ao bloco;
+`-n auto` instável no Python 3.14 (execnet EOFError). READ-ONLY M1 confirmado; pesos
+renda=0.40/pop=0.60 e H3_RESOLUTION=7 preservados; nenhum parquet oficial tocado. Pendência humana:
+revisão visual dos 3 PDFs (pontual recente + classico + municipal) + merge/PR conjunto
+BLK-ACENTO-01 + BLK-ACENTO-02 (branch ciclo/BLK-ACENTO-01). Sem dry-run (não tocou orquestração).
