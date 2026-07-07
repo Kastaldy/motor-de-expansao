@@ -10,12 +10,18 @@ from __future__ import annotations
 from .aferir_overlap_nao_abra import (
     COMPETIDORES_DEFAULT,
     DENSOS_DEFAULT,
-    RELATORIO_DEFAULT as RELATORIO_OVERLAP_DEFAULT,
     SMARTFIT_DEFAULT,
     VERSAO_CONTRATO_OVERLAP,
     calcular_metricas_competidores,
     calcular_metricas_smartfit,
+)
+from .aferir_overlap_nao_abra import (
+    RELATORIO_DEFAULT as RELATORIO_OVERLAP_DEFAULT,
+)
+from .aferir_overlap_nao_abra import (
     executar as executar_overlap_nao_abra,
+)
+from .aferir_overlap_nao_abra import (
     gerar_relatorio as gerar_relatorio_overlap,
 )
 from .backtest_tp05 import (
