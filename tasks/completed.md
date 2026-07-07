@@ -7253,3 +7253,35 @@ só ALVO); DEC-012 (sem PII pessoal).
 
 **Critérios de aceite.** Só os 2 globs removidos; artefatos oficiais em `data/outputs/` intactos (mtime dos 4 oficiais
 inalterado); `loop_guard` limpo (não toca `config.py`/`pipelines/m1`/artefatos M1); suíte verde.
+
+---
+
+### BLK-VIAB-01 — Validação/limpeza da base de imóveis candidatos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (camada paralela de dados de entrada; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome `data/ultra/Imoveis_*.xlsx` LOCAL, gitignored). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; lê xlsx LOCAL (sem API ao vivo); escreve só `data/staging` (paralela) + `data/analysis`; endereço de imóvel comercial é não-PII pessoal; saída gitignored; sem VPS. |
+
+**Contexto.** A base de imóveis (28 candidatos no snapshot 16/06, cresce pelo CRM) tem sujeira REAL medida: aluguel
+placeholder (`11.111,11`), 4 metragens implausíveis (`14,9`/`25,63`/`190`/`200` m²), e as 28 linhas SEM `lat/lng`.
+Precisa de uma camada de validação permanente antes de qualquer conta de viabilidade.
+
+**Objetivo.** Ler a base, aplicar as regras de limpeza PRÉ-FIXADAS e materializar
+`data/staging/imoveis_candidatos_limpos.parquet` (paralela, gitignored) + relatório
+`data/analysis/imoveis_qualidade.md` (o que entrou, o que caiu e por qual regra).
+
+**Decisões PRÉ-FIXADAS (substituem o gate humano no loop):**
+- **Metragem:** descartar `ÁREA < 500 m²` (filtro de ERRO/não-academia — remove os 4 lixos; NÃO é filtro de viabilidade, o motor julga tamanho depois).
+- **Aluguel:** manter só `10.000 ≤ ALUGUEL ≤ 500.000` E descartar o placeholder repdigit `11.111,11`.
+- **Coordenada:** NÃO descartar linha sem `lat/lng` — só carimbar `flag_sem_coord=True` (o batch VIAB-03 roda coordless; o geocoding é bloco humano).
+- **Status:** manter todos (PROSPECÇÃO/APROVADOS/HISTÓRICO) preservando a coluna `STATUS` para filtro posterior.
+
+**Critérios de aceite.** Parquet limpo materializado (paralela, gitignored); relatório com contagem entrou/caiu por
+regra; determinístico (mesmas regras → mesma saída); nenhuma escrita em `config.py`/`pipelines/m1`/artefatos oficiais;
+suíte verde. **Guardrail.** §5 READ-ONLY M1; regras de limpeza são parâmetros da camada paralela (não §3); loop-safe só
+enquanto não tocar `config.py`/`pipelines/m1` (o `loop_guard` aborta).

@@ -4,12 +4,12 @@
 
 ID: BLK-VIAB-01
 Nome: Validação/limpeza da base de imóveis candidatos
-Status: aguardando QA
+Status: aprovado
 Tipo: feature (camada paralela de dados)
 Criticidade: média
 Esteira: Block Orchestrator → Planner → Builder → QA (autônoma no loop)
-Skill atual: Builder (concluído)
-Próxima Skill: QA
+Skill atual: fechamento (housekeeping concluído)
+Próxima Skill: — (ciclo encerrado)
 
 ## Objetivo
 Ler `data/ultra/Imoveis_*.xlsx`, aplicar as 4 regras PRÉ-FIXADAS (metragem/aluguel/coordenada/status)
