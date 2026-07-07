@@ -4,12 +4,12 @@
 
 ID: BLK-PROD-06
 Nome: Relatório de movimentação concorrencial (a partir de staging)
-Status: aguardando QA
+Status: aprovado
 Tipo: analytics (READ-ONLY sobre o M1; loop-safe)
 Criticidade: Média
-Esteira: Block Orchestrator (concluído) → Planner → Builder (concluído) → QA
-Skill atual: Builder (concluído)
-Próxima Skill: QA
+Esteira: Block Orchestrator (concluído) → Planner → Builder (concluído) → QA (APROVADO)
+Skill atual: QA (concluído)
+Próxima Skill: Block Orchestrator (fechamento)
 
 ## Objetivo
 Materializar `data/analysis/movimentacao_concorrencial.md` a partir dos parquets de concorrentes

@@ -7445,3 +7445,32 @@ score); suíte verde; `loop_guard` limpo.
 ---
 
 - BLK-PROD-02 (concluído 2026-07-07) — ver tasks/completed.md
+
+---
+
+### BLK-PROD-06 — Relatório de movimentação concorrencial (a partir de staging)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (analytics; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Baixa. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome os parquets de concorrentes JÁ em `data/staging`). |
+| **Autonomia** | **loop-safe** (com escopo) — READ-ONLY M1; analítico sobre concorrentes JÁ em `data/staging`; **NÃO** faz a coleta ao vivo (essa é DEC-013/VPS, fora do loop); saída `data/analysis` gitignored; sem rede; sem VPS. |
+
+**Contexto.** Queremos ler a movimentação da concorrência (contagem por rede/cidade, oferta consumida, impacto no
+residual). A **coleta** semanal roda na VPS (DEC-013) — este bloco é só a **geração do relatório** a partir do que já
+está em staging, sem tocar rede.
+
+**Objetivo.** Gerar `data/analysis/movimentacao_concorrencial.md` com: contagem por rede/UF/cidade, oferta consumida e
+impacto nas oportunidades residuais, a partir de `concorrentes_mapeados.parquet`/`concorrentes_densos.parquet` e da
+camada de mercado.
+
+**Decisões PRÉ-FIXADAS:**
+- **Fonte = parquets de concorrentes em `data/staging`** (não a coleta ao vivo).
+- Se houver ≥ 2 snapshots temporais em staging → calcular deltas (rede/cidade); se houver só 1 → gerar a estrutura + o retrato atual (sem delta), documentando a limitação.
+- **READ-ONLY:** não altera `score`/residual/artefatos — só LÊ e reporta.
+
+**Critérios de aceite.** Relatório materializado a partir de staging (sem rede); determinístico; nenhuma escrita em
+score/artefatos M1; `loop_guard` limpo; suíte verde.
