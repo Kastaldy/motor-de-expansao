@@ -39,6 +39,10 @@ CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS = 2_500.0   # proxy por unidade para subtr
 SCORE_RESIDUAL_CAPACIDADE_REFERENCIA = CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS
 POP_MIN_SAM_GATE = 5_000  # regua operacional de populacao para o gate do SAM (camada paralela de mercado).
                           # Espelha POP_MIN_ACIONAVEL do dashboard; NAO e parametro do M1 oficial (§3).
+RENDA_PER_CAPITA_MIN_ATR = 1_500  # piso absoluto de renda per capita do gate de atratividade
+                                  # (Etapa 1 do funil BLK-ATR). Constante LOCAL da camada de mercado;
+                                  # NAO e parametro do M1 (§3) nem substitui RENDA_MIN (4500) do flag_viavel.
+                                  # Calibravel depois (ponto de partida, Felipe 2026-07-06).
 SOURCE_REQUIRED_COLS = {
     "hex_id",
     "flag_censo_elegivel",
@@ -281,6 +285,16 @@ def calcular(df: pd.DataFrame, n_redes: int | None = None) -> pd.DataFrame:
     df["confianca_geografica"] = derive_confianca_geografica(df)
     df = derive_pop_cut_columns(df, pop_min=POP_MIN_SAM_GATE)
 
+    # Gate de viabilidade absoluto (Etapa 1 do funil de atratividade, BLK-ATR-02).
+    # Coluna PARALELA e independente do gate flag_sam (DEC-006/DEC-007): NAO altera flag_sam,
+    # tese_entrada, prioridade_mercado_mapeado nem qualquer artefato do M1 (READ-ONLY, §5).
+    # flag_gate_atratividade = populacao_corte_hex >= 5000 AND renda_per_capita >= 1500.
+    _renda_pc = pd.to_numeric(df["renda_per_capita"], errors="coerce")
+    df["flag_gate_atratividade"] = (
+        df["flag_pop_min_5k"].fillna(False).astype(bool)
+        & _renda_pc.ge(RENDA_PER_CAPITA_MIN_ATR).fillna(False)
+    )
+
     flag_canibal = df["flag_canibalizacao_ultra_1km"].fillna(False).astype(bool)
     flag_viavel = df["flag_viavel"].fillna(False).astype(bool)
     flag_top_mun = df["top_municipio"].fillna(False).astype(bool)
@@ -414,7 +428,7 @@ def validar(df: pd.DataFrame) -> None:
         "pop_hex_base", "fonte_pop_hex_base", "tam_populacao_hex",
         "taxa_fitness_mercado_calibrada", "taxa_fitness_calibrada", "tam_fitness_potencial",
         "populacao_corte_hex", "fonte_populacao_corte", "flag_pop_min_5k",
-        "flag_sam", "flag_sam_fitness", "sam_indice_operavel",
+        "flag_sam", "flag_sam_fitness", "flag_gate_atratividade", "sam_indice_operavel",
         "sam_populacao_base", "sam_fitness_potencial", "sam_granularidade",
         "residual_indice_mapeado", "residual_populacao_mapeada",
         "capacidade_captura_mapeada", "som_indice_mapeado", "som_populacao_mapeada",
@@ -477,6 +491,14 @@ def validar(df: pd.DataFrame) -> None:
           f"max={df['tam_fitness_potencial'].max():.1f}  "
           f"mean={df['tam_fitness_potencial'].mean():.1f}")
     print(f"flag_sam=True: {df['flag_sam'].sum():,} ({100*df['flag_sam'].mean():.1f}%)")
+    n_gate = int(df["flag_gate_atratividade"].sum())
+    print(f"flag_gate_atratividade=True: {n_gate:,} "
+          f"({100 * df['flag_gate_atratividade'].mean():.1f}%)")
+    if "uf" in df.columns:
+        por_uf = (
+            df.groupby("uf")["flag_gate_atratividade"].sum().sort_values(ascending=False)
+        )
+        print(f"flag_gate_atratividade por UF (top 10):\n{por_uf.head(10).to_string()}")
     print(f"oferta_efetiva_disponivel soma: {df['oferta_efetiva_disponivel'].sum():,.0f}")
     print(f"\ntese_entrada:\n{df['tese_entrada'].value_counts().to_string()}")
     print(f"\nprioridade_mercado_mapeado:\n{df['prioridade_mercado_mapeado'].value_counts().to_string()}")

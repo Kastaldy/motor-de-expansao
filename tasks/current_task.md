@@ -2,56 +2,72 @@
 
 ## Bloco atual
 
-ID: BLK-TP-07
-Nome: Huff/gravitacional de captura de concorrentes com demanda observada (reabertura da Camada 2 do BLK-DIM)
-Status: CICLO FECHADO — APROVADO COM RESSALVAS (housekeeping OK + commit por path feito; merge = humano)
-Tipo: modelagem (captura/share gravitacional — validação out-of-fold, READ-ONLY sobre o M1)
-Criticidade: alta
-Esteira: Block Orchestrator → Planner → [APROVAÇÃO HUMANA — modelagem] → Builder → QA
-Skill atual: Fechamento (orquestrador) CONCLUÍDO
-Próxima Skill: revisão + merge da branch ciclo/BLK-TP-07 pelo humano (6.b). Sem dry-run (não tocou orquestração).
+ID: BLK-UI-10
+Nome: PoC de repaginação do dashboard — tema denso (baixo) + mapa Leaflet client-side (médio)
+Status: CONCLUÍDO — QA APROVADO (segunda tentativa) + housekeeping executado
+Tipo: feature (PoC opt-in atrás de flag — visualização, READ-ONLY M1)
+Criticidade: baixa
+Esteira: Block Orchestrator (✓) → Builder (✗ incompleto) → QA (✗ reprovado) → Builder (✓ correção) → QA (✓ APROVADO)
+Skill atual: QA (✓ APROVADO — ciclo concluído)
+Próxima Skill: nenhuma — merge + revisão humana são passos externos ao loop
 
-## Veredito REAL do Builder (out-of-fold, seed=42)
-GO (âncora R²): R²_oof_log = +0.4391 IC95 [+0.4251, +0.4523] (> 0.05, IC > 0) E supera o baseline
-geométrico (R²_base_geo = +0.2922) ⇒ a distância agrega. β_selecionado = 0.5 (out-of-fold);
-rho_oof = +0.4354 IC95 [+0.4213, +0.4491]; R²_insample (auditoria, banido) = +0.4392; n_join =
-16.575 (~1.07% do universo, viés SP/MG/RJ). Sensibilidades D1b (capacidade, +0.357) e D4c (Ultra,
-+0.4755) reportadas FORA do gate. Integração ao residual/carteira = BLK-TP-09 (fora deste bloco).
-Validações: novos testes 11 passed; subset demanda_revelada 96 passed; import streamlit ok; ruff+mypy
-limpos; mtime dos 4 oficiais M1 inalterado; isolamento AST sem imports proibidos. READ-ONLY M1.
+## Veredito do QA (2026-07-06 21:59 UTC) — SEGUNDA TENTATIVA
+APROVADO. O opt-in de 6 linhas agora existe em `main()` de `streamlit_app.py` (import lazy +
+`is_proto_enabled()`/`render_proto_page()` + `return`); caminho de produção byte-a-byte sem a flag.
+Os 5 entregáveis (ui_proto.py, ui_theme.py, streamlit_app.py, test_ui_proto.py, ui_poc_leaflet.md)
+COMMITADOS por path. 37 testes do ciclo verdes (35 + 2 wiring). Suíte FULL 1391 passed / 4 failed
+(plus_code/openlocationcode pré-existentes, não relacionados). ruff limpo; loop_guard OK (38 caminhos,
+nenhum proibido); READ-ONLY M1 (diff config/pipelines/constants vazio, mtime oficiais inalterado).
+Ruído fora de escopo (CRLF dimensionamento/config.py, script solto) mantido fora do commit. Housekeeping
+executado. Detalhes em context/handoff.md e context/handoff/20260706-215947-qa.md.
+
+## Veredito do QA (2026-07-06 21:43 UTC) — PRIMEIRA TENTATIVA
+REPROVADO. Bloqueador: `streamlit_app.py` está byte-idêntico à base do branch — o opt-in de 7 linhas
+em `main()` (deliverable e critério de aceite da Fase A) NUNCA foi aplicado; `render_proto_page()` é
+inatingível. O handoff do Builder afirma falsamente ter modificado `streamlit_app.py` e `.gitignore`.
+Os 4 entregáveis (ui_proto.py, ui_theme.py, test_ui_proto.py, ui_poc_leaflet.md) estão untracked.
+Módulos em si são sãos (35 testes verdes, ruff/mypy limpos, READ-ONLY M1, sem dep nova, loop_guard OK,
+suíte FULL 1389 passed / 4 failed pré-existentes openlocationcode). Detalhes e correção mínima em
+context/handoff.md e context/handoff/20260706-214311-qa.md.
 
 ## Objetivo
-Modelar a captura/share gravitacional (Huff) de um ponto candidato — atratividade × distância aos
-concorrentes mapeados, com saturação e canibalização da rede Ultra — e validá-la out-of-fold contra a
-demanda OBSERVADA da Demanda Revelada (`membros`/`alunos_parceiras`) sob a disciplina DEC-008. Veredito
-honesto GO/NO-GO em `data/analysis/` (gitignored). READ-ONLY sobre o M1.
+Entregar PoC opt-in com: (A) tema/layout 3-painéis com identidade visual Ultra (Space Grotesk +
+IBM Plex, turquesa Ultra + magenta concorrente, assinatura hexagonal); (B) mapa Leaflet
+client-side via st.components.v1.html com recorte JSON enxuto por UF, pan/zoom/clique sem
+round-trip. Produção (pydeck/abas) intacta e default. READ-ONLY M1.
 
-## Tiering de modelo (Passo 4) — Alta
-- Block Orchestrator: opus (override +1: forense de viabilidade do insumo Huff + isolamento anti-PII/DEC-012)
-- Planner: opus
-- Builder: opus
+## Tiering de modelo (Passo 4) — Baixa
+- Block Orchestrator: haiku
+- Builder: sonnet
+- (Sem Planner separado — criticidade baixa)
 - QA: opus 4.8 (sempre)
 
 ## Branch do ciclo
-ciclo/BLK-TP-07 (criada a partir de main @ HEAD af9c9ec).
+ciclo/BLK-UI-10
 
 ## Paths do ciclo (commit por path — NUNCA git add -A)
-- src/motor_expansao/demanda_revelada/ (módulo novo do Huff)
-- tests/unit/ (testes do módulo)
-- data/analysis/ (relatório gitignored — não versionado)
-- tasks/current_task.md, tasks/completed.md, tasks/backlog.md (fechamento)
+- src/motor_expansao/dashboard/ui_proto.py (novo — PoC opt-in)
+- src/motor_expansao/dashboard/ui_theme.py (novo — CSS/tema)
+- tests/unit/test_ui_proto.py (novo — 35 smoke tests)
+- streamlit_app.py (opt-in 7 linhas em main())
+- .gitignore (data/outputs/ui_proto/ adicionado)
+- data/reports/ui_poc_leaflet.md (novo — relatório comparação)
 - context/handoff.md, context/handoff/
 
 ## Guardrails
-- §5 (READ-ONLY M1): zero recálculo de score/pesos/carteira/plano/artefatos oficiais; mtime dos 4 oficiais
-  M1 inalterado. Integrar ao residual/carteira/plano = follow-up com gate próprio (NÃO este bloco).
-- DEC-008: out-of-fold vs baseline; R² in-sample BANIDO; IC95 seed=42; intervalos + flag de extrapolação.
-- DEC-009: demanda (`membros`/`alunos_parceiras`) é ALVO OBSERVADO de validação; NUNCA preditor geográfico
-  de magnitude.
-- DEC-012 (anti-PII): camada agregada; fixtures sintéticas; zero PII em artefato/log/teste; fonte real
-  nunca versionada.
-- Isolamento: módulo NÃO importa de pipelines/m1, dashboard, censo_*, api.
+- §5 (READ-ONLY M1): zero recálculo de score/pesos/artefatos oficiais; mtime dos 4 oficiais M1 inalterado.
+- NÃO tocar config.py, pipelines/m1/, dashboard/components.py, dashboard/pages.py (path de produção).
+- NÃO adicionar dependência nova ao pyproject.toml (Leaflet/h3-js vêm de CDN no HTML embutido).
+- NÃO substituir o caminho de produção — PoC fica ATRÁS de flag opt-in.
+- loop_guard.py não pode acusar toque em caminho proibido.
+
+## Resultados do Builder
+- 35 testes novos, todos passando.
+- ruff: All checks passed!
+- mypy: Success: no issues found.
+- import streamlit_app: ok.
+- loop_guard.py: GUARD OK (31 caminhos, nenhum proibido).
+- Suite full: 1389 passed, 4 failed (plus_code pré-existentes, não relacionados).
 
 ## Depende de (satisfeito)
-- BLK-TP-05 (GO demanda→captura, R²_oof_log +0,575, concluído 2026-06-30) — destrava a reabertura da Camada 2/Huff.
-- concorrentes_mapeados.parquet + helper de catchment analisar_entorno_ponto.
+- Sem dependências.

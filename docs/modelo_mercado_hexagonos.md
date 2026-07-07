@@ -271,6 +271,24 @@ Leitura:
   areas Ultra `< 1 km`). O SAM existe fora do recorte top-20%/UF, e o corte `>= 5000` sobre
   `populacao_corte_hex` e o unico filtro remanescente (forte, nao aniquilador).
 
+Gate de viabilidade absoluto (Etapa 1 do funil de atratividade, BLK-ATR-02) — coluna
+PARALELA e independente de `flag_sam`:
+
+| coluna | tipo | regra exata |
+| --- | --- | --- |
+| `flag_gate_atratividade` | bool | `flag_pop_min_5k` (`populacao_corte_hex >= 5000`) **AND** `renda_per_capita >= 1500` (`RENDA_PER_CAPITA_MIN_ATR`, constante LOCAL de `calcular_colunas_mercado.py`) |
+
+> `flag_gate_atratividade` e o filtro da **Etapa 1 do funil de atratividade** (epic BLK-ATR).
+> Reutiliza `flag_pop_min_5k` (mesma regua do corte, DEC-006/DEC-007) e le `renda_per_capita`
+> direto do M1 (nao `renda_target_proxy` nem a renda censitaria calibrada). `renda_per_capita`
+> NaN ou `0.0` (hex sem dado IBGE) -> `renda < 1500` -> `False` (conservador). Tipo `bool` puro,
+> sem NaN, dominio `{True, False}`.
+>
+> **NAO substitui** `flag_viavel` (que usa `RENDA_MIN = 4500`, config.py) **nem** `flag_sam`
+> (gate DEC-007). E coluna paralela: NAO entra no `np.select` de `tese_entrada`/
+> `prioridade_mercado_mapeado`. READ-ONLY sobre o M1 — o piso `1500` e da camada de mercado,
+> **nao** e parametro do M1 (§3) e **nao** e `RENDA_MIN`.
+
 ### 5.5 Rede propria Ultra e canibalizacao
 
 Parametro canonico ja existente em `config.py`:
