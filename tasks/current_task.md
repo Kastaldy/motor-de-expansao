@@ -2,49 +2,36 @@
 
 ## Bloco atual
 
-ID: BLK-VIAB-04
-Nome: Backtest do motor de viabilidade contra as 54 unidades Ultra reais
-Status: delimitado
-Tipo: validação (mede erro do motor; READ-ONLY sobre o M1)
+ID: BLK-VIAB-05
+Nome: Recalibrar/validar a curva m²→densidade com a base ampliada (out-of-fold)
+Status: BLOQUEADO — base ampliada não existe (N=112, idêntico ao BLK-TP-04 já concluído)
+Tipo: validação da curva de densidade (READ-ONLY sobre o M1)
 Criticidade: Alta
-Esteira: Block Orchestrator → Planner → Builder → QA (autônoma no loop)
-Skill atual: QA (concluído)
-Status: aprovado
-Próxima Skill: Block Orchestrator (fechamento)
+Esteira: Block Orchestrator → BLOQUEADO
+Skill atual: Block Orchestrator (concluído — veredito BLOQUEADO)
+Próxima Skill: NENHUMA (bloco bloqueado por falta de dados)
 
 ## Objetivo
-Rodar `analisar_viabilidade_ponto` em modo LOO sobre as 54 unidades Ultra maduras,
-usando m² e alunos reais como entradas, e medir o erro da curva de densidade
-(faixa_alunos_p50 predito vs alunos_total real) e do aluguel-teto calculado.
-Relatório `data/analysis/viabilidade_backtest_ultra.md` com MAE/vies e casos de erro material.
+Revalidar/recalibrar a curva metragem→densidade (alunos/m²) sobre base ampliada.
+BLOQUEADO: a "base ampliada" mencionada no backlog não existe — a base disponível
+com metragem+alunos é N=112 (Ultra 54 + Eng Corpo 58), idêntica à já usada no
+BLK-TP-04 (concluído 2026-07-02).
 
-## Dependências
-- data/staging/unidades_ultra_performance_hex.parquet (N=54, metragem/alunos_total/ticket todos disponíveis)
-- data/staging/base_calibracao_maduras.parquet (base de calibração da curva de densidade)
-- viabilidade_ponto.py (motor — INTOCADO)
+## Razão do bloqueio
+- Smart Fit: sem coluna de metragem em nenhuma fonte (KPIs_Smart_2025_02.xlsx, 7 cols apenas)
+- Sky Fit: sem coluna de metragem (Sky Fit dados.xlsx, tem alunos mas não m²)
+- base_calibracao_multirede.parquet: 426 linhas mas apenas 112 com metragem > 0
+  (skyfit 311 linhas, todas sem metragem)
+- BLK-TP-04 já executou validação honesta da curva com N=112 (mesmo conjunto)
+
+## Condição para reabertura
+Nova fonte com metragem+alunos reais de academias além de Ultra e Eng Corpo.
 
 ## Branch do ciclo
 ciclo/loop-20260707-123809
 
-## Paths do ciclo
-- src/motor_expansao/dimensionamento/backtest_viabilidade.py (CRIAR NOVO)
-- tests/unit/dimensionamento/test_backtest_viabilidade.py (CRIAR NOVO, mínimo 8 testes)
-- data/analysis/viabilidade_backtest_ultra.md (gitignored — NÃO commitado)
-- tasks/current_task.md, tasks/completed.md, tasks/backlog.md (fechamento)
-- context/handoff.md, context/handoff/
-
 ## Guardrails
 - §5 READ-ONLY M1: nenhuma escrita em config.py/pipelines/m1/artefatos oficiais.
-- DEC-008: out-of-fold vs baseline; NÃO ajustar o motor neste bloco (só medir).
-- DEC-009: demanda SÓ como premissa explícita (alunos_total_real) — NUNCA prevista pela geo.
+- DEC-008: out-of-fold vs baseline; R² in-sample BANIDO.
+- DEC-009: alvo = alunos_totais REAIS, nunca membros/agregador.
 - viabilidade_ponto.py INTOCADO.
-- Modo COORDLESS: setores_df=None — sem rede/catchment, sem fetch HTTP.
-- LOO obrigatório: para cada unidade i, base_calibracao = todas as 54 EXCETO a unidade i.
-- Saída gitignored (data/analysis/).
-- Sem rede, sem VPS.
-
-## Tiering de modelo — Alta
-- Block Orchestrator: sonnet (concluído)
-- Planner: opus
-- Builder: opus
-- QA: opus (sempre)

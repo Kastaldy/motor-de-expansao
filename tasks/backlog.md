@@ -916,12 +916,19 @@ Dependências: decisão de produto sobre evolução para web interno.
 | **Criticidade** | **Alta** (fortalece o único sinal real do motor; **READ-ONLY sobre o M1**). |
 | **Prioridade** | A definir (Felipe/Vini). |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
+| **Status** | **BLOQUEADO** — base ampliada não existe (2026-07-07, Block Orchestrator). |
 | **Depende de** | — (reusa `demanda_revelada/calibracao_curva.py` + base ampliada de alunos_totais Ultra+Smart+Eng+Sky). |
 | **Autonomia** | **loop-safe** — READ-ONLY M1; reusa harness DEC-008 (k-fold 5×5 seed=42); saída `data/analysis`+`data/staging` gitignored; sem rede; sem VPS. |
 
-**Contexto.** A curva metragem→densidade (DIM-03R) foi calibrada em ~112 unidades e é sinal de TIER. Agora temos
-~1.100 academias reais com metragem+alunos (Ultra+Smart+Eng+Sky) — dá pra revalidar com muito mais N.
+**Contexto.** A curva metragem→densidade (DIM-03R) foi calibrada em ~112 unidades e é sinal de TIER. O backlog
+estimava "~1.100 academias reais com metragem+alunos (Ultra+Smart+Eng+Sky)" — mas essa estimativa estava errada.
+
+**BLOQUEIO (2026-07-07 — Block Orchestrator):** A base disponível com `metragem > 0` é **N=112** (Ultra 54 + Eng
+Corpo 58), idêntica à base do BLK-TP-04 (concluído 2026-07-02). Smart Fit e Sky Fit não possuem coluna de
+metragem em nenhuma fonte disponível (`KPIs_Smart_2025_02.xlsx` e `Sky Fit dados.xlsx` confirmados). O
+`base_calibracao_multirede.parquet` tem 426 linhas mas os 311 SkyFit têm metragem=NaN em 100% das linhas. O
+BLK-TP-04 já executou a validação honesta da curva com essa mesma base N=112 e o mesmo harness DEC-008.
+**Condição de reabertura:** nova fonte com metragem+alunos reais além de Ultra e Eng Corpo.
 
 **Objetivo.** Revalidar/recalibrar a curva metragem→densidade (alunos/m²) sobre a base ampliada, **out-of-fold**
 (k-fold 5×5 seed=42 vs baseline da média, DEC-008), reportar se a curva melhora (R²_oof, IC95) e se continua sinal de
