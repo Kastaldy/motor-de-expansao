@@ -977,22 +977,8 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 
 ---
 
-### BLK-REV-04 — Diagnóstico de gargalo: troca de modos de cor / heat maps
+- BLK-REV-04 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (dor #2; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-REV-01**. |
-| **Autonomia** | **loop-safe** — mede o recompute do rerun; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
-
-**Contexto.** Dor #2. Suspeita central: o **rerun do Streamlit recomputa e re-serializa o mapa inteiro** ao trocar
-M1/Censitário/Residual, mesmo mudando só a cor.
-**Objetivo.** Medir o custo de troca de modo; testar hipóteses (pré-computar as N camadas de cor, **recolor
-client-side**, cache por modo). Relatório com opções e ganho estimado.
-**Decisões PRÉ-FIXADAS.** Só diagnostica. **Guardrail.** §5 READ-ONLY M1.
 
 ---
 
