@@ -7742,3 +7742,21 @@ M1/Censitário/Residual, mesmo mudando só a cor.
 **Objetivo.** Medir o custo de troca de modo; testar hipóteses (pré-computar as N camadas de cor, **recolor
 client-side**, cache por modo). Relatório com opções e ganho estimado.
 **Decisões PRÉ-FIXADAS.** Só diagnostica. **Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-REV-05 — Diagnóstico de gargalo: seleção de hex + cenário múltiplo
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média/Alta** (dor #3; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-01**. |
+| **Autonomia** | **loop-safe** — mede o recompute de cenário; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
+
+**Contexto.** Dor #3. O ciclo **clique→rerun→recompute do cenário** a cada hex adicionado.
+**Objetivo.** Medir a latência de add/remove hex e o recompute de `agregar_cenario_multihex`; opções (estado
+client-side, **deltas** em vez de recompute total, debounce). Relatório.
+**Decisões PRÉ-FIXADAS.** Só diagnostica; latência de interação no browser = nota manual. **Guardrail.** §5.
