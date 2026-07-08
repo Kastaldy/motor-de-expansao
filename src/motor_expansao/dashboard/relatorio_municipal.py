@@ -83,11 +83,12 @@ _CINZA_TEXTO = (60, 60, 60)
 _NAVY_CAPA = (30, 28, 58)
 
 # Cores dos hexagonos APROVADOS por PROCEDENCIA do dado de populacao (realce; pedido de
-# Vinicius 2026-06-24): dado PROPRIO do hex (setor censitario 2022, `fonte_populacao_corte ==
-# "setor_2022"`) = dourado forte; aprovado via FALLBACK MUNICIPAL (`total_municipal`/`ausente`)
-# = laranja. Reprovado/neutro = cinza. Camada de DISPLAY; nao toca M1.
-_COR_APROVADO_PROPRIO = (255, 210, 28)
-_COR_APROVADO_MUNICIPAL = (245, 140, 30)
+# Vinicius 2026-06-24; cor otimista verde por Vinicius 2026-07-08, BLK-RELMUN-05): dado
+# PROPRIO do hex (setor censitario 2022, `fonte_populacao_corte == "setor_2022"`) = verde
+# forte; aprovado via FALLBACK MUNICIPAL (`total_municipal`/`ausente`) = verde medio
+# (fallback municipal). Reprovado/neutro = cinza. Camada de DISPLAY; nao toca M1.
+_COR_APROVADO_PROPRIO = (20, 170, 80)
+_COR_APROVADO_MUNICIPAL = (90, 190, 120)
 _COR_REPROVADO = (150, 156, 170)
 
 # Camada Resumo (alpha 200): destacado por procedencia + neutro (nao-destacado).
@@ -97,7 +98,7 @@ _HEX_NEUTRO_RGBA = (176, 182, 196, 110)
 _CIRCLE_INK = (31, 41, 55)
 
 # Slide "Visao Geral do Municipio" (FU1): hexagonos do MUNICIPIO em 3 categorias.
-# Aprovado dado proprio (dourado) / Aprovado fallback municipal (laranja) / Reprovado (cinza).
+# Aprovado dado proprio (verde forte) / Aprovado fallback municipal (verde medio) / Reprovado (cinza).
 # Camada de DISPLAY; nao toca M1.
 _HEX_APROVADO_RGBA = (*_COR_APROVADO_PROPRIO, 210)
 _HEX_APROVADO_MUNICIPAL_RGBA = (*_COR_APROVADO_MUNICIPAL, 210)
@@ -876,11 +877,11 @@ def _render_mapa_municipio(
 ) -> bytes:
     """Renderiza um PNG do municipio. `camada` define o esquema de cor dos hexes:
 
-    - "resumo": destacados em amarelo (rotulo = oferta_efetiva_disponivel), demais cinza.
+    - "resumo": destacados em verde (rotulo = oferta_efetiva_disponivel), demais cinza.
     - "score": choropleth por `score_setor_2022_calibrado` (D5).
     - "residual": choropleth por `score_oportunidade_residual`.
     - "dominio": hexes coloridos por zona (1/2/3) das zonas do `dominio_df` (fallback amarelo).
-    - "cobertura": municipio INTEIRO; aprovados (destacados) em amarelo, reprovados em cinza.
+    - "cobertura": municipio INTEIRO; aprovados (destacados) em verde, reprovados em cinza.
       Usa o municipio inteiro (passe `focus_bounds=None`); sem rotulos de valor e sem pins.
 
     `basemap=True` busca tiles online (DEC-011) com fallback offline. Em CI/teste default
@@ -1067,9 +1068,9 @@ def _render_mapa_municipio(
             else:
                 odraw.polygon(pixels, fill=_HEX_NEUTRO_RGBA, outline=(255, 255, 255, 90))
 
-    # Rotulos de oferta sobre hexes amarelos (camada resumo). Decisao do produto (Vinicius,
+    # Rotulos de oferta sobre hexes destacados (camada resumo). Decisao do produto (Vinicius,
     # 2026-06-24): exibir o Residual em TODOS os hexes aprovados (sem cap), com fonte menor
-    # para mitigar a sobreposicao quando ha muitos amarelos no quadro.
+    # para mitigar a sobreposicao quando ha muitos destacados no quadro.
     label_font = _font(8)
     for cx, cy, txt in label_pins:
         w = _text_width(odraw, txt, label_font)
@@ -1199,7 +1200,7 @@ def render_mapas_municipio(
     os hexes (comportamento anterior).
 
     FU1 (slide novo): a camada "cobertura" mostra o municipio INTEIRO (sem foco) com aprovados
-    (destacados, amarelo) e reprovados (cinza), sem pins.
+    (destacados, verde) e reprovados (cinza), sem pins.
     """
     zonas = municipio_result.get("zonas", [])
     focus_bounds = _focus_bounds_mercator(
@@ -1653,7 +1654,7 @@ def _resumo_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "", 10)
     pdf.set_xy(px + 12, y_end + 42)
-    pdf.multi_cell(pw - 24, 13, _ascii("Soma dos hexágonos amarelos / 2.500"))
+    pdf.multi_cell(pw - 24, 13, _ascii("Soma dos hexágonos destacados / 2.500"))
     parcelas = result.get("parcelas_amarelos") or []
     soma = result.get("soma_oferta_amarelos", 0.0)
     if parcelas:
@@ -2067,7 +2068,7 @@ def _espaco_academias_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[
         _PAGE_W - 72, 11,
         _ascii(
             "Método: contagem de pins dentro do território (H3 res 7) - "
-            "Espaço = soma dos hexágonos amarelos / 2.500. "
+            "Espaço = soma dos hexágonos destacados / 2.500. "
             f"Versão: {result.get('versao_contrato')}"
         ),
     )

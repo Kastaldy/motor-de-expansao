@@ -1338,48 +1338,8 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 
 ---
 
-### BLK-RELMUN-05 — Cores otimistas (verde) para aprovados na Visão Geral do Município
+- BLK-RELMUN-05 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (mudança visual de um relatório + acoplamento de terminologia "amarelo"; READ-ONLY sobre o M1; envolve 1 decisão de produto — tons de verde, JÁ pré-aprovada por Vinicius, ver D1). |
-| **Prioridade** | Normal. |
-| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 tons de verde (pré-aprovada)]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (toca só `relatorio_municipal.py` display). Relaciona-se à DEC-011 (terminologia "amarelo"/hexágono destacado). |
-| **Autonomia** | **manual (NÃO loop-safe)** — altera texto/cor de relatório auditável; exige revisão visual do PDF. |
-
-**Objetivo.** Trocar as cores dos hexágonos **aprovados** na página "Visão Geral do Município" (camada
-`cobertura`) e no Resumo (camada `resumo`) de amarelo/laranja — que passam tom negativo/de alerta —
-para **tons de verde** (otimismo), mantendo "Reprovado" em cinza.
-
-**Escopo permitido (READ-ONLY M1, só display).**
-- `src/motor_expansao/dashboard/relatorio_municipal.py:89–91`: `_COR_APROVADO_PROPRIO` (hoje
-  `(255,210,28)` dourado) e `_COR_APROVADO_MUNICIPAL` (hoje `(245,140,30)` laranja) → **verdes** (D1).
-  A troca propaga sozinha para `_HEX_DESTAQUE_RGBA`, `_HEX_DESTAQUE_MUNICIPAL_RGBA`, `_HEX_APROVADO_RGBA`,
-  `_HEX_APROVADO_MUNICIPAL_RGBA`, `_COBERTURA_LEGENDA`, `_RESUMO_LEGENDA` e o choropleth das camadas
-  `cobertura`/`resumo`. `_COR_REPROVADO` (cinza) INALTERADO.
-- **Terminologia (acoplamento):** atualizar SOMENTE o **texto visível** que diz "amarelo(s)" e ficaria
-  inconsistente com a cor verde — `"Soma dos hexágonos amarelos / 2.500"` (`:1656`) e
-  `"Espaço = soma dos hexágonos amarelos / 2.500"` (`:2070`) → wording neutro por cor (ex.: "hexágonos
-  destacados"). Legendas já usam "Aprovado (dado próprio)/(fallback municipal)".
-
-**Fora de escopo (NÃO tocar).** **Identificadores** com "amarelo" — `n_hex_amarelos`,
-`soma_oferta_amarelos`, `parcelas_amarelos` e chaves de `result` (consumidas por `render`/testes): só
-TEXTO/cores mudam, os NOMES não. Cores de **ZONA** da página Domínio (`:155–160`, turquesa/…/laranja) —
-outra semântica, não mexer. Critério de "hexágono destacado" (DEC-011: `oferta_efetiva_disponivel >=
-2000`), `flag_sam`, score, artefatos oficiais do M1.
-
-**Decisão de produto (D1 — pré-aprovada por Vinicius em 2026-07-08).** RGB verdes: aprovado próprio =
-verde forte `(20,170,80)`; aprovado fallback municipal = verde médio `(90,190,120)` (dois tons
-distinguíveis entre si e do cinza `_COR_REPROVADO`, legíveis sobre o basemap claro). O Planner só
-reconfirma no gate.
-
-**Critério de aceite.** PDF municipal com aprovados em verde (2 tons) + reprovado cinza; nenhuma
-menção textual "amarelo" remanescente no texto de exibição; identificadores e critério de destaque
-(DEC-011) intactos; DEC-011 recebe emenda de terminologia (cor ≠ critério); testes de
-`tests/unit/test_relatorio_municipal.py` atualizados (tuplas de cor/labels); ruff+mypy limpos; revisão
-visual do PDF aprovada.
 
 ---
 

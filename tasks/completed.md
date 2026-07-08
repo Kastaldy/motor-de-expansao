@@ -7655,3 +7655,67 @@ test_run_readonly_m1_por_mtime, parquet M2 gitignored) é PRÉ-EXISTENTE/ambient
 READ-ONLY M1 confirmado (git diff só em pages.py; zero pipelines/config/censo/artefatos). Sem
 dry-run (não tocou orquestração). Mergeado em integracao/map02-relmun05-06 pelo orquestrador
 (fluxo de integração aprovado por Vinicius); PR para main só após os 3 ciclos.
+
+---
+
+### BLK-RELMUN-05 — Cores otimistas (verde) para aprovados na Visão Geral do Município
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (mudança visual de um relatório + acoplamento de terminologia "amarelo"; READ-ONLY sobre o M1; envolve 1 decisão de produto — tons de verde, JÁ pré-aprovada por Vinicius, ver D1). |
+| **Prioridade** | Normal. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 tons de verde (pré-aprovada)]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (toca só `relatorio_municipal.py` display). Relaciona-se à DEC-011 (terminologia "amarelo"/hexágono destacado). |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera texto/cor de relatório auditável; exige revisão visual do PDF. |
+
+**Objetivo.** Trocar as cores dos hexágonos **aprovados** na página "Visão Geral do Município" (camada
+`cobertura`) e no Resumo (camada `resumo`) de amarelo/laranja — que passam tom negativo/de alerta —
+para **tons de verde** (otimismo), mantendo "Reprovado" em cinza.
+
+**Escopo permitido (READ-ONLY M1, só display).**
+- `src/motor_expansao/dashboard/relatorio_municipal.py:89–91`: `_COR_APROVADO_PROPRIO` (hoje
+  `(255,210,28)` dourado) e `_COR_APROVADO_MUNICIPAL` (hoje `(245,140,30)` laranja) → **verdes** (D1).
+  A troca propaga sozinha para `_HEX_DESTAQUE_RGBA`, `_HEX_DESTAQUE_MUNICIPAL_RGBA`, `_HEX_APROVADO_RGBA`,
+  `_HEX_APROVADO_MUNICIPAL_RGBA`, `_COBERTURA_LEGENDA`, `_RESUMO_LEGENDA` e o choropleth das camadas
+  `cobertura`/`resumo`. `_COR_REPROVADO` (cinza) INALTERADO.
+- **Terminologia (acoplamento):** atualizar SOMENTE o **texto visível** que diz "amarelo(s)" e ficaria
+  inconsistente com a cor verde — `"Soma dos hexágonos amarelos / 2.500"` (`:1656`) e
+  `"Espaço = soma dos hexágonos amarelos / 2.500"` (`:2070`) → wording neutro por cor (ex.: "hexágonos
+  destacados"). Legendas já usam "Aprovado (dado próprio)/(fallback municipal)".
+
+**Fora de escopo (NÃO tocar).** **Identificadores** com "amarelo" — `n_hex_amarelos`,
+`soma_oferta_amarelos`, `parcelas_amarelos` e chaves de `result` (consumidas por `render`/testes): só
+TEXTO/cores mudam, os NOMES não. Cores de **ZONA** da página Domínio (`:155–160`, turquesa/…/laranja) —
+outra semântica, não mexer. Critério de "hexágono destacado" (DEC-011: `oferta_efetiva_disponivel >=
+2000`), `flag_sam`, score, artefatos oficiais do M1.
+
+**Decisão de produto (D1 — pré-aprovada por Vinicius em 2026-07-08).** RGB verdes: aprovado próprio =
+verde forte `(20,170,80)`; aprovado fallback municipal = verde médio `(90,190,120)` (dois tons
+distinguíveis entre si e do cinza `_COR_REPROVADO`, legíveis sobre o basemap claro). O Planner só
+reconfirma no gate.
+
+**Critério de aceite.** PDF municipal com aprovados em verde (2 tons) + reprovado cinza; nenhuma
+menção textual "amarelo" remanescente no texto de exibição; identificadores e critério de destaque
+(DEC-011) intactos; DEC-011 recebe emenda de terminologia (cor ≠ critério); testes de
+`tests/unit/test_relatorio_municipal.py` atualizados (tuplas de cor/labels); ruff+mypy limpos; revisão
+visual do PDF aprovada.
+
+**Fechamento do ciclo BLK-RELMUN-05 (2026-07-08) — VEREDITO: APROVADO.** Esteira Média (BO sonnet
+-> Planner sonnet -> [gate D1 verdes PRÉ-APROVADO por Vinicius] -> Builder opus -> QA opus 4.8).
+Rodou na branch ciclo/BLK-RELMUN-05 (ramificada da secundária integracao/map02-relmun05-06). Feito:
+cores dos aprovados na Visão Geral do Município (camada cobertura) e Resumo de amarelo/laranja para
+VERDE — `_COR_APROVADO_PROPRIO (255,210,28)->(20,170,80)` e `_COR_APROVADO_MUNICIPAL
+(245,140,30)->(90,190,120)`; `_COR_REPROVADO` cinza inalterado; derivados/legendas herdam por
+referência. Texto visível "amarelos"->"destacados" nas 2 únicas strings de PDF (_resumo_page ~1656
+e rodapé de _espaco_academias_page ~2070). Identificadores com "amarelo" (n_hex_amarelos,
+soma_oferta_amarelos, parcelas_amarelos, chaves de result) INTOCADOS. Emenda BLK-RELMUN-05 na
+DEC-011 (cor verde é DISPLAY; critério de destaque oferta_efetiva_disponivel>=2000, flag_sam, score,
+artefatos M1 intactos). Cores de ZONA da página Domínio intocadas. Teste novo
+test_cores_aprovados_verdes_blk_relmun_05 + asserts de wording. Validações (QA, NO-BYPASS): ruff
+limpo; import ok; mypy só 6 pré-existentes de types-requests (0 novo); suíte serial completa
+`1536 passed, 2 skipped, 1 failed` — única falha pré-existente/ambiental do M2. READ-ONLY M1
+confirmado (git diff só relatorio_municipal.py + test + CLAUDE.md + bookkeeping; zero
+pipelines/config/censo/artefatos). Sem dry-run. Mergeado em integracao/map02-relmun05-06 pelo
+orquestrador; PR para main só após os 3 ciclos E verificação humana (Vinicius pediu para revisar
+antes do PR).
