@@ -7227,3 +7227,250 @@ veredito**; `membros` só como ALVO (DEC-009); degradação graciosa onde o Huff
 `import streamlit_app` ok.
 **Guardrail.** §5 (READ-ONLY M1); DEC-008 (out-of-fold, R² in-sample banido, NO-GO válido); DEC-009 (`membros`
 só ALVO); DEC-012 (sem PII pessoal).
+
+---
+
+### BLK-PROD-02 — Limpar leftovers de staging
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (manutenção; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Baixa. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (nenhuma). |
+| **Autonomia** | **loop-safe** (paths PRÉ-APROVADOS) — READ-ONLY M1; deleção restrita a lixo temporário com glob FIXO; sem VPS. A lista fixa abaixo substitui a "confirmação explícita" original. |
+
+**Contexto.** Sobras de execução ocupam espaço e poluem buscas: `tmp_codex_runtime/` (artefatos de teste) e
+`*.tmp.parquet` temporários.
+
+**Objetivo.** Remover EXCLUSIVAMENTE os caminhos pré-aprovados abaixo e nada além.
+
+**Decisões PRÉ-FIXADAS (a única ação destrutiva do loop — escopo travado):**
+- Remover o diretório `tmp_codex_runtime/` (inteiro).
+- Remover arquivos que casem **exatamente** `data/outputs/*.tmp.parquet` (NUNCA `.parquet` sem o sufixo `.tmp` — os oficiais tipo `hexagonos_brasil_dashboard.parquet` ficam INTOCADOS).
+- **Nenhum outro caminho.** Qualquer glob fora desses dois → abortar.
+
+**Critérios de aceite.** Só os 2 globs removidos; artefatos oficiais em `data/outputs/` intactos (mtime dos 4 oficiais
+inalterado); `loop_guard` limpo (não toca `config.py`/`pipelines/m1`/artefatos M1); suíte verde.
+
+---
+
+### BLK-VIAB-01 — Validação/limpeza da base de imóveis candidatos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (camada paralela de dados de entrada; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome `data/ultra/Imoveis_*.xlsx` LOCAL, gitignored). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; lê xlsx LOCAL (sem API ao vivo); escreve só `data/staging` (paralela) + `data/analysis`; endereço de imóvel comercial é não-PII pessoal; saída gitignored; sem VPS. |
+
+**Contexto.** A base de imóveis (28 candidatos no snapshot 16/06, cresce pelo CRM) tem sujeira REAL medida: aluguel
+placeholder (`11.111,11`), 4 metragens implausíveis (`14,9`/`25,63`/`190`/`200` m²), e as 28 linhas SEM `lat/lng`.
+Precisa de uma camada de validação permanente antes de qualquer conta de viabilidade.
+
+**Objetivo.** Ler a base, aplicar as regras de limpeza PRÉ-FIXADAS e materializar
+`data/staging/imoveis_candidatos_limpos.parquet` (paralela, gitignored) + relatório
+`data/analysis/imoveis_qualidade.md` (o que entrou, o que caiu e por qual regra).
+
+**Decisões PRÉ-FIXADAS (substituem o gate humano no loop):**
+- **Metragem:** descartar `ÁREA < 500 m²` (filtro de ERRO/não-academia — remove os 4 lixos; NÃO é filtro de viabilidade, o motor julga tamanho depois).
+- **Aluguel:** manter só `10.000 ≤ ALUGUEL ≤ 500.000` E descartar o placeholder repdigit `11.111,11`.
+- **Coordenada:** NÃO descartar linha sem `lat/lng` — só carimbar `flag_sem_coord=True` (o batch VIAB-03 roda coordless; o geocoding é bloco humano).
+- **Status:** manter todos (PROSPECÇÃO/APROVADOS/HISTÓRICO) preservando a coluna `STATUS` para filtro posterior.
+
+**Critérios de aceite.** Parquet limpo materializado (paralela, gitignored); relatório com contagem entrou/caiu por
+regra; determinístico (mesmas regras → mesma saída); nenhuma escrita em `config.py`/`pipelines/m1`/artefatos oficiais;
+suíte verde. **Guardrail.** §5 READ-ONLY M1; regras de limpeza são parâmetros da camada paralela (não §3); loop-safe só
+enquanto não tocar `config.py`/`pipelines/m1` (o `loop_guard` aborta).
+
+---
+
+## BLK-VIAB-02 — Faixa de demanda-premissa por tier de metragem (comparáveis reais)
+
+Data: 2026-07-07
+Criticidade: Média (camada paralela de premissa; READ-ONLY sobre o M1)
+Status: CONCLUÍDO
+
+### O que foi feito
+Criados 2 arquivos:
+- `src/motor_expansao/dimensionamento/demanda_premissa.py` — módulo puro com funções
+  `carregar_ultra`, `carregar_eng_corpo`, `combinar_bases`, `calcular_tiers`, `materializar`, `run`.
+- `tests/unit/dimensionamento/test_demanda_premissa.py` — 28 testes unitários (fixture sintética).
+
+### Artefatos gerados (gitignored)
+- `data/staging/demanda_premissa_por_tier.parquet` (5 linhas)
+- `data/analysis/demanda_premissa_qualidade.md`
+
+### N por tier (dados reais)
+| Tier (m²)  | N  | p10   | p50   | p90   | flag_extrapolacao |
+|---|---|---|---|---|---|
+| <1000      | 17 | 1467  | 2063  | 3589  | False |
+| 1000-1499  | 46 | 1559  | 2532  | 3889  | False |
+| 1500-1999  | 36 | 1763  | 2748  | 4578  | False |
+| 2000-2999  | 11 | 2870  | 3888  | 4752  | False |
+| >=3000     |  2 | 2578  | 5706  | 8833  | True  |
+Total: 112 unidades (Ultra 54 + Eng Corpo 58)
+
+### Validações
+- ruff: limpo (0 erros)
+- mypy: limpo (0 erros)
+- pytest subset: 28/28 passed (testes novos)
+- pytest impactado (dimensionamento/ + streamlit): 500 passed, 2 failed (pré-existentes Plus Code)
+- smoke import: ok
+- loop_guard: GUARD OK, 0 caminhos proibidos
+- viabilidade_ponto.py: INTOCADO (git diff vazio)
+- mtimes M1: brasil_estrutural.parquet=1780501621, brasil_priorizados.parquet=1780501631 (INALTERADOS)
+
+### Referências
+- `context/handoff/20260707-HHMMSS-builder.md`
+- `tasks/backlog.md` (linha "~1.100" corrigida para "~112 unidades")
+
+---
+
+### BLK-VIAB-02 — Faixa de demanda-premissa por tier de metragem (comparáveis reais)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (insumo de premissa do motor; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome `unidades_ultra_performance_hex.parquet` + `data/validacao/academias_engenharia_do_corpo.xlsx`; Smart Fit e Sky Fit não têm metragem disponível). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; consome `data/staging` + `data/validacao` (xlsx LOCAL) + `concorrentes/` (CSV LOCAL); saída `data/staging`+`data/analysis` gitignored; sem rede; sem VPS. |
+
+**Contexto.** O motor `analisar_viabilidade_ponto` recebe `base_calibracao_df` para derivar a faixa de alunos por m²
+(p10/p50/p90). Hoje essa faixa é frágil; temos ~112 unidades reais (Ultra 54 + Eng Corpo 58) com metragem+alunos totais para calibrá-la.
+
+**Objetivo.** Derivar uma **faixa de demanda-premissa (p10/p50/p90 de alunos por unidade) POR TIER de metragem** a
+partir dos comparáveis reais (Ultra `ALUNOS_TOTAL` + Smart `Alunos Totais SF` + Eng `Alunos Totais` + Sky `Alunos EVO`),
+materializando `data/staging/demanda_premissa_por_tier.parquet` (a `base_calibracao_df` que o VIAB-03 consome).
+
+**Decisões PRÉ-FIXADAS (guardrail DEC-009 — crítico):**
+- A premissa vem da relação **metragem→alunos de comparáveis REAIS** (curva de capacidade), **NUNCA de renda/pop/geografia** do ponto. **PROIBIDO** usar `lat/lng` do candidato como preditor de demanda.
+- **Alvo = alunos_totais REAIS**, NUNCA `membros`/agregador (achado da circularidade 2026-07-07; memória `huff-membros-circularidade-teto-demanda`).
+- Tiers de metragem pré-fixados (m²): `[<1.000, 1.000–1.499, 1.500–1.999, 2.000–2.999, ≥3.000]`.
+
+**Critérios de aceite.** Parquet de faixas por tier; N de comparáveis por tier documentado; sem PII (só contagens
+agregadas); determinístico; `loop_guard` limpo. **Guardrail.** §5 READ-ONLY M1; DEC-009 intacta (premissa, não predição).
+
+---
+
+### BLK-VIAB-03 — Batch de viabilidade sobre candidatos limpos (coordless) + ranking por margem de segurança
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (entrega o coração do produto de viabilidade; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-VIAB-01** (candidatos limpos) + **BLK-VIAB-02** (faixa de demanda-premissa). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; reusa `dimensionamento/viabilidade_ponto.analisar_viabilidade_ponto` (PURO, determinístico); modo COORDLESS (`setores_df=None` → sem rede/catchment); saída `data/staging`+`data/analysis` gitignored; sem VPS. |
+
+**Contexto.** O motor property-first já existe (`analisar_viabilidade_ponto(lat, lng, m2, aluguel_pedido,
+demanda_premissa, ...)`) e degrada graciosamente sem coordenada (`setores_df=None` → não roda catchment/zona-morta,
+mas entrega faixa de alunos + break-even + aluguel-teto). Falta o batch que roda isso sobre os candidatos reais.
+
+**Objetivo.** Rodar o motor para CADA candidato limpo (VIAB-01) com a faixa de demanda-premissa (VIAB-02), em modo
+coordless, e materializar `data/staging/viabilidade_candidatos.parquet` + relatório
+`data/analysis/viabilidade_candidatos.md` ranqueado por **margem de segurança**.
+
+**Decisões PRÉ-FIXADAS:**
+- **Ranking = margem de segurança = `aluguel_teto(demanda=p50) − aluguel_pedido`**, reportando a banda p10..p90. Candidato ROBUSTO = aluguel pedido < teto em TODA a faixa (p10..p90).
+- **NO-GO honesto:** aluguel pedido > teto já em p50 → NO-GO; entre `teto(p50)` e `teto(p10)` → condicional/negociar; `flag_extrapolacao` quando m² fora do envelope de calibração.
+- **Ticket/margem:** usar os defaults do motor (`SIM_MENSALIDADE_BALCAO`, `margem_alvo=0.10`) — não inventar.
+- **Sensibilidade:** materializar a grade `demanda × aluguel` de `grade_sensibilidade` por candidato.
+
+**Critérios de aceite.** Parquet + relatório ranqueado; cada candidato com faixa de alunos, break-even, aluguel-teto,
+margem, sensibilidade e `flag_extrapolacao`; **demanda SÓ como premissa** (nunca `lat/lng`); **reusa o motor SEM
+modificá-lo** (`git diff` de `viabilidade_ponto.py` vazio); determinístico; `loop_guard` limpo. **Guardrail.** §5
+READ-ONLY M1; DEC-009 (premissa explícita).
+
+---
+
+### BLK-VIAB-04 — Backtest do motor de viabilidade contra as 54 unidades Ultra reais
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (valida o motor antes de confiar nele; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome `unidades_ultra_performance_hex.parquet`: m²/faturamento/alunos/ticket reais das 54 unidades). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; validação sobre dado interno já em `data/staging`; saída `data/analysis` gitignored; reusa harness DEC-008; sem rede; sem VPS. |
+
+**Contexto.** Antes de ranquear imóveis com o motor, é preciso saber se ele erra. As 54 unidades Ultra maduras têm
+m²/faturamento/alunos/ticket REAIS — dá pra medir predito vs realizado.
+
+**Objetivo.** Rodar o motor com o m² real de cada unidade Ultra e a demanda real (`ALUNOS_TOTAL`) como premissa, e
+comparar break-even/aluguel-teto/faixa-de-alunos PREVISTOS vs REALIZADOS. Relatório
+`data/analysis/viabilidade_backtest_ultra.md` com erro (MAE/viés) e os casos onde o motor erra feio.
+
+**Decisões PRÉ-FIXADAS (DEC-008):** validação honesta predito vs realizado por unidade; reportar erro absoluto e viés;
+**NÃO ajustar o motor neste bloco** (só medir); se o motor errar de forma material e sistemática → registrar como
+necessidade de recalibração (follow-up com gate), **não silenciar**.
+
+**Critérios de aceite.** Relatório com erro por unidade + agregado; identificação de vieses; **nenhum ajuste do motor**
+(`git diff` de `viabilidade_ponto.py` vazio); determinístico; `loop_guard` limpo. **Guardrail.** §5 READ-ONLY M1.
+
+---
+
+---
+
+### BLK-PROD-03 — Avaliar hex_id como category com benchmark
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (performance de carga; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Baixa. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (nenhuma). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; perf/medição determinística; consome `data/staging`; escreve só `data/analysis` (relatório); sem VPS. |
+
+**Contexto.** `hex_id` é chave de join em vários lugares; converter para `category` PODE ajudar ou prejudicar (memória/tempo).
+Requer benchmark antes de qualquer mudança.
+
+**Objetivo.** Medir o impacto de `hex_id` como `category` vs `string` em carga/join sobre os parquets de staging, com
+relatório em `data/analysis/benchmark_hexid_category.md`.
+
+**Decisão PRÉ-FIXADA.** Só APLICAR a mudança se o benchmark mostrar **ganho ≥ 15%** em tempo OU memória **sem regressão
+de teste**; caso contrário, só materializar o relatório e NÃO alterar código de produção. Nunca tocar `config.py`/`pipelines/m1`.
+
+**Critérios de aceite.** Relatório de benchmark reprodutível; se aplicada, mudança restrita a leitura/carga (não recalcula
+score); suíte verde; `loop_guard` limpo.
+
+---
+
+- BLK-PROD-02 (concluído 2026-07-07) — ver tasks/completed.md
+
+---
+
+### BLK-PROD-06 — Relatório de movimentação concorrencial (a partir de staging)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (analytics; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Baixa. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome os parquets de concorrentes JÁ em `data/staging`). |
+| **Autonomia** | **loop-safe** (com escopo) — READ-ONLY M1; analítico sobre concorrentes JÁ em `data/staging`; **NÃO** faz a coleta ao vivo (essa é DEC-013/VPS, fora do loop); saída `data/analysis` gitignored; sem rede; sem VPS. |
+
+**Contexto.** Queremos ler a movimentação da concorrência (contagem por rede/cidade, oferta consumida, impacto no
+residual). A **coleta** semanal roda na VPS (DEC-013) — este bloco é só a **geração do relatório** a partir do que já
+está em staging, sem tocar rede.
+
+**Objetivo.** Gerar `data/analysis/movimentacao_concorrencial.md` com: contagem por rede/UF/cidade, oferta consumida e
+impacto nas oportunidades residuais, a partir de `concorrentes_mapeados.parquet`/`concorrentes_densos.parquet` e da
+camada de mercado.
+
+**Decisões PRÉ-FIXADAS:**
+- **Fonte = parquets de concorrentes em `data/staging`** (não a coleta ao vivo).
+- Se houver ≥ 2 snapshots temporais em staging → calcular deltas (rede/cidade); se houver só 1 → gerar a estrutura + o retrato atual (sem delta), documentando a limitação.
+- **READ-ONLY:** não altera `score`/residual/artefatos — só LÊ e reporta.
+
+**Critérios de aceite.** Relatório materializado a partir de staging (sem rede); determinístico; nenhuma escrita em
+score/artefatos M1; `loop_guard` limpo; suíte verde.
