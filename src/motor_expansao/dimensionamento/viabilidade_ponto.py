@@ -49,6 +49,18 @@ ALUGUEL_RANGE_FATOR: tuple[float, ...] = (0.6, 0.8, 1.0, 1.2, 1.5)  # x aluguel_
 # --- Guardrail explicito -----------------------------------------------------
 DEMANDA_FONTE_PREMISSA: str = "premissa_explicita"
 
+# --- Mapeamento marca -> formato de operacao (BLK-VIAB-07) -------------------
+# Rotula comparaveis por formato para permitir filtrar a curva tamanho->densidade
+# aos pares do MESMO formato (low_cost_massa nao mistura com boutique_premium).
+# NAO vai para config.py (fonte canonica do M1, intocavel). READ-ONLY sobre o M1.
+FORMATO_LOW_COST_MASSA: str = "low_cost_massa"
+FORMATO_BOUTIQUE_PREMIUM: str = "boutique_premium"
+FORMATO_POR_MARCA: dict[str, str] = {
+    "ultra": FORMATO_LOW_COST_MASSA,          # posicionamento explicito §1 (low-cost/massa)
+    "skyfit": FORMATO_LOW_COST_MASSA,          # concorrente low-cost direto (§1); metragem nula -> nao entra na curva
+    "engenharia_do_corpo": FORMATO_BOUTIQUE_PREMIUM,  # premium/personal; densidade e porte distintos
+}
+
 # --- Composicao balcao/agregadores (estudo §5; Ultra ~69% balcao / ~31% agregadores) ---
 # A demanda_premissa representa alunos TOTAIS; o split alimenta o DRE com 2 tickets
 # (balcao a ticket cheio + agregadores ~60% do ticket). NAO altera o simulador (DRE).
@@ -117,6 +129,7 @@ def faixa_alunos_por_densidade(
     tolerancia: float = FAIXA_M2_TOLERANCIA,
     tolerancia_alargada: float = FAIXA_M2_TOLERANCIA_ALARGADA,
     n_min: int = N_MIN_COMPARAVEIS,
+    formato: str | None = None,
 ) -> dict:
     """Faixa de alunos plausivel derivada da curva tamanho->densidade (NAO geografica).
 
@@ -129,6 +142,11 @@ def faixa_alunos_por_densidade(
       1. +/-`tolerancia` (20%) do m2 do imovel.
       2. Se N < `n_min`: alarga para +/-`tolerancia_alargada` (50%).
       3. Se ainda N < `n_min`: usa a base inteira valida.
+
+    formato (opcional): quando != None, restringe os comparaveis ao mesmo formato
+    de operacao (via coluna 'formato' ou 'marca'->FORMATO_POR_MARCA). Se o filtro
+    deixar < n_min linhas, faz fallback para a base completa. formato=None mantem
+    o comportamento historico byte-a-byte.
 
     Retorna dict:
       {"faixa_alunos_p10": float, "faixa_alunos_p50": float, "faixa_alunos_p90": float,
@@ -148,6 +166,24 @@ def faixa_alunos_por_densidade(
         return vazio
 
     df = base_calibracao_df.copy()
+
+    # Filtro OPCIONAL por formato (BLK-VIAB-07): mantem so comparaveis do mesmo
+    # formato de operacao. formato=None => byte-identico ao comportamento antigo.
+    # Coluna 'formato' e derivada de 'marca' via FORMATO_POR_MARCA quando ausente.
+    # Fallback gracioso: se apos o filtro sobrarem < n_min linhas (ou a coluna nao
+    # for derivavel), usa a base completa (nao filtrada) — evita degradar a faixa.
+    if formato is not None:
+        col_formato: pd.Series | None = None
+        if "formato" in df.columns:
+            col_formato = df["formato"].astype("string")
+        elif "marca" in df.columns:
+            col_formato = df["marca"].astype("string").map(FORMATO_POR_MARCA)
+        if col_formato is not None:
+            df_filtrado = df[col_formato == formato]
+            if len(df_filtrado) >= n_min:
+                df = df_filtrado
+            # else: fallback silencioso para a base completa (df inalterado)
+
     df["__apm"] = pd.to_numeric(df["alunos_por_m2"], errors="coerce")
     df = df[np.isfinite(df["__apm"]) & (df["__apm"] > 0)]
     if df.empty:
@@ -294,6 +330,7 @@ def analisar_viabilidade_ponto(
     setores_df: pd.DataFrame | None = None,
     alunos_range: tuple[float, ...] = ALUNOS_RANGE_DEFAULT,
     aluguel_range_fator: tuple[float, ...] = ALUGUEL_RANGE_FATOR,
+    formato: str | None = None,
     **kwargs: object,
 ) -> ViabilidadePontoResult:
     """Orquestrador property-first.
@@ -305,6 +342,11 @@ def analisar_viabilidade_ponto(
       - setores_df is None  -> catchment NAO roda; flag_zona_morta=None,
         pop_captacao/renda_per_capita_captacao=None.
       - base_calibracao_df is None -> faixa_alunos_p10/p50/p90=None, n_comparaveis=None.
+
+    formato (opcional, BLK-VIAB-07): quando != None, restringe a curva
+    tamanho->densidade aos comparaveis do mesmo formato de operacao (fallback
+    gracioso p/ base completa se < n_min). formato=None (default) mantem o
+    comportamento historico byte-a-byte (dashboard nao passa formato).
     """
     # 1. Catchment (contexto) — so roda se setores_df foi injetado.
     catch: dict | None
@@ -336,7 +378,7 @@ def analisar_viabilidade_ponto(
             "n_comparaveis": None,
         }
     else:
-        faixa = faixa_alunos_por_densidade(m2, base_calibracao_df)
+        faixa = faixa_alunos_por_densidade(m2, base_calibracao_df, formato=formato)
 
     # 3b. Split da premissa em balcao + agregadores (composicao; estudo §5).
     # A demanda_premissa e SEMPRE alunos TOTAIS; o DRE roda com 2 tickets.
@@ -419,6 +461,9 @@ __all__ = [
     "ALUNOS_RANGE_DEFAULT",
     "ALUGUEL_RANGE_FATOR",
     "DEMANDA_FONTE_PREMISSA",
+    "FORMATO_POR_MARCA",
+    "FORMATO_LOW_COST_MASSA",
+    "FORMATO_BOUTIQUE_PREMIUM",
     "SHARE_BALCAO_DEFAULT",
     "ENVELOPE_MIN",
     "ENVELOPE_MAX",

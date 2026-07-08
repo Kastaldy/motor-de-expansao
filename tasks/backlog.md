@@ -873,32 +873,8 @@ Dependências: decisão de produto sobre evolução para web interno.
 
 ---
 
-### BLK-VIAB-07 — Curva de densidade por formato (rótulo opcional) — validação out-of-fold + parâmetro
+- BLK-VIAB-07 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (única alavanca de precisão restante do motor; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-VIAB-04** (diagnóstico rede-aware = teto ~+1,7 p.p. de MAPE). |
-| **Autonomia** | **loop-safe** — READ-ONLY M1; parâmetro OPCIONAL (default `None` = comportamento byte-idêntico); validação out-of-fold (DEC-008); sem VPS/rede; NO-GO é resultado VÁLIDO. |
-
-**Contexto.** Varremos a curva (BLK-VIAB-04-FU): afinar a faixa de METRAGEM não move a precisão (~30% MAPE é o
-piso); o único ganho real (~1,7 p.p.) veio de **homogeneidade de FORMATO/rede** (comparáveis da mesma rede). Duas
-academias do mesmo m² têm densidades diferentes se uma é low-cost de massa e a outra boutique.
-
-**Objetivo.** (1) Rotular os comparáveis por `formato` (ex.: `low_cost_massa` / `boutique`); (2) adicionar param
-OPCIONAL `formato` em `faixa_alunos_por_densidade` que filtra comparáveis do mesmo formato; (3) **VALIDAR
-out-of-fold** (k-fold vs baseline, DEC-008) se o ganho de precisão se sustenta. Se GO, materializar; se NO-GO,
-não expor.
-
-**Decisões PRÉ-FIXADAS.** Param default `None` → comportamento **byte-idêntico** ao atual (dashboard/VIAB-03
-preservados); **alvo = alunos totais REAIS** (nunca `membros`/agregador — memória `huff-membros-circularidade`);
-validação k-fold 5×5 seed=42; **R² in-sample banido do veredito**; NO-GO honesto encerra sem expor.
-
-**Critérios de aceite.** Relatório out-of-fold com veredito; param opcional testado (`None` = idêntico byte-a-byte);
-motor não recalcula M1; ruff/mypy/suíte verde. **Guardrail.** §5 READ-ONLY M1; DEC-008.
 
 ---
 

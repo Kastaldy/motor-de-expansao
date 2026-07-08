@@ -394,3 +394,100 @@ def test_flag_fora_envelope_falso_dentro_envelope() -> None:
         base_calibracao_df=_base_comparaveis(), setores_df=None,
     )
     assert r.flag_fora_envelope is False
+
+
+# ---------------------------------------------------------------------------
+# BLK-VIAB-07 — Filtro opcional por formato na curva tamanho->densidade
+# ---------------------------------------------------------------------------
+
+
+def _base_mista_formato() -> pd.DataFrame:
+    """Base mista: 4 low_cost_massa (apm ~0.5) + 4 boutique_premium (apm ~2.3), mesma metragem."""
+    return pd.DataFrame(
+        {
+            "unidade": [f"L{i}" for i in range(4)] + [f"B{i}" for i in range(4)],
+            "marca": ["ultra"] * 4 + ["engenharia_do_corpo"] * 4,
+            "formato": ["low_cost_massa"] * 4 + ["boutique_premium"] * 4,
+            "metragem": [1400.0, 1500.0, 1600.0, 1500.0, 1400.0, 1500.0, 1600.0, 1500.0],
+            "alunos_por_m2": [0.48, 0.50, 0.52, 0.50, 2.20, 2.30, 2.40, 2.30],
+        }
+    )
+
+
+def test_formato_none_byte_identico() -> None:
+    """formato=None -> resultado IDENTICO ao comportamento historico (sem filtro)."""
+    base = _base_mista_formato()
+    out_none = faixa_alunos_por_densidade(1500.0, base, formato=None)
+    # Chamada sem o kwarg (default) deve ser identica a formato=None.
+    out_default = faixa_alunos_por_densidade(1500.0, base)
+    assert out_none == out_default
+    # E deve refletir a base MISTA (mediana entre low_cost e boutique -> alta).
+    assert out_none["n_comparaveis"] == out_default["n_comparaveis"]
+
+
+def test_formato_filtra_comparaveis() -> None:
+    """formato='low_cost_massa' usa SO os pares low_cost -> p50 menor que a base mista."""
+    base = _base_mista_formato()
+    out_mista = faixa_alunos_por_densidade(1500.0, base, formato=None)
+    out_lc = faixa_alunos_por_densidade(1500.0, base, formato="low_cost_massa")
+    # Com filtro, apm ~0.50 -> p50 ~ 0.50*1500 = 750; sem filtro a mediana sobe.
+    assert out_lc["faixa_alunos_p50"] is not None
+    assert out_lc["faixa_alunos_p50"] < out_mista["faixa_alunos_p50"]
+    # 4 comparaveis low_cost, todos na janela +/-20% de 1500.
+    assert out_lc["n_comparaveis"] == 4
+
+
+def test_formato_deriva_de_marca_sem_coluna_formato() -> None:
+    """Sem coluna 'formato', o filtro deriva de 'marca' via FORMATO_POR_MARCA."""
+    base = _base_mista_formato().drop(columns=["formato"])
+    out_lc = faixa_alunos_por_densidade(1500.0, base, formato="low_cost_massa")
+    assert out_lc["n_comparaveis"] == 4
+    assert out_lc["faixa_alunos_p50"] is not None
+    assert out_lc["faixa_alunos_p50"] < 1500.0  # ~750, nao a mediana mista
+
+
+def test_formato_fallback_n_min() -> None:
+    """Formato com < n_min comparaveis -> fallback para a base completa (nao filtra)."""
+    base = _base_mista_formato()
+    # 'boutique_premium' tem 4; pedimos um formato inexistente -> 0 -> fallback completo.
+    out_inexistente = faixa_alunos_por_densidade(1500.0, base, formato="formato_zumbi")
+    out_none = faixa_alunos_por_densidade(1500.0, base, formato=None)
+    assert out_inexistente == out_none  # fallback == base completa
+
+
+def test_mapeamento_formato_por_marca() -> None:
+    """FORMATO_POR_MARCA contem as marcas esperadas com os formatos corretos."""
+    from motor_expansao.dimensionamento.viabilidade_ponto import (
+        FORMATO_BOUTIQUE_PREMIUM,
+        FORMATO_LOW_COST_MASSA,
+        FORMATO_POR_MARCA,
+    )
+
+    assert FORMATO_POR_MARCA["ultra"] == FORMATO_LOW_COST_MASSA
+    assert FORMATO_POR_MARCA["skyfit"] == FORMATO_LOW_COST_MASSA
+    assert FORMATO_POR_MARCA["engenharia_do_corpo"] == FORMATO_BOUTIQUE_PREMIUM
+
+
+def test_formato_exportado_em_all() -> None:
+    """FORMATO_POR_MARCA, FORMATO_LOW_COST_MASSA, FORMATO_BOUTIQUE_PREMIUM em __all__."""
+    from motor_expansao.dimensionamento import viabilidade_ponto as vp
+
+    assert "FORMATO_POR_MARCA" in vp.__all__
+    assert "FORMATO_LOW_COST_MASSA" in vp.__all__
+    assert "FORMATO_BOUTIQUE_PREMIUM" in vp.__all__
+
+
+def test_analisar_viabilidade_ponto_propaga_formato() -> None:
+    """[GO] formato chega ao orquestrador e filtra a faixa; None = byte-identico."""
+    base = _base_mista_formato()
+    r_none = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 938.0,
+        base_calibracao_df=base, setores_df=None,
+    )
+    r_lc = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 938.0,
+        base_calibracao_df=base, setores_df=None, formato="low_cost_massa",
+    )
+    assert r_lc.faixa_alunos_p50 is not None
+    assert r_none.faixa_alunos_p50 is not None
+    assert r_lc.faixa_alunos_p50 < r_none.faixa_alunos_p50
