@@ -863,6 +863,129 @@ Dependências: decisão de produto sobre evolução para web interno.
 
 - BLK-VIAB-05 (concluído 2026-07-08) — ver tasks/completed.md
 
+> **Roadmap de produto (síntese 2026-07-08, `docs/estado_dos_modelos.md`).** Os blocos abaixo
+> operacionalizam o produto property-first. Ordem de valor: **VIAB-09 (UI end-to-end)** é o de maior
+> impacto; VIAB-06/07 são loop-safe (guardrail + alavanca de precisão); VIAB-08/10 são humanos
+> (rede/dado externo). READ-ONLY sobre o M1 em todos.
+
+### BLK-VIAB-06 — Guardrail de envelope de metragem no motor de viabilidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (guardrail no motor de viabilidade; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-VIAB-04** (mediu MAPE 85% na extrapolação > 2.800 m²). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; muda SÓ `dimensionamento/viabilidade_ponto.py` (não `config.py`/`pipelines/m1`); determinístico + testável; sem VPS/rede. |
+
+**Contexto.** O backtest BLK-VIAB-04-FU provou que fora do envelope calibrado (Ultra 636–2.800 m²; a base
+tem 112 unidades) a curva EXTRAPOLA mal (MAPE 85% acima de 2.800 m²). O motor deve SINALIZAR isso.
+
+**Objetivo.** Adicionar uma flag `flag_fora_envelope` em `analisar_viabilidade_ponto` (e no resultado) quando
+o `m2` do imóvel cai fora de `[ENVELOPE_MIN, ENVELOPE_MAX]`, para a UI avisar "extrapolação não confiável".
+
+**Decisões PRÉ-FIXADAS.** Envelope = **[600, 3.000] m²** (cobre a base de calibração 636–2.800 + folga);
+**só FLAG, NÃO recusa** por padrão (a decisão de exibir/bloquear fica na UI); comportamento existente do motor
+**byte-idêntico** exceto a flag nova (default de faixa/DRE inalterado).
+
+**Critérios de aceite.** `flag_fora_envelope` materializada; teste (m² > 3.000 → True; dentro → False);
+comportamento atual preservado (regressão dos testes VIAB-03/04); ruff/mypy/suíte verde. **Guardrail.** §5
+READ-ONLY M1; `viabilidade_ponto` não recalcula score/M1.
+
+---
+
+### BLK-VIAB-07 — Curva de densidade por formato (rótulo opcional) — validação out-of-fold + parâmetro
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (única alavanca de precisão restante do motor; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-VIAB-04** (diagnóstico rede-aware = teto ~+1,7 p.p. de MAPE). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; parâmetro OPCIONAL (default `None` = comportamento byte-idêntico); validação out-of-fold (DEC-008); sem VPS/rede; NO-GO é resultado VÁLIDO. |
+
+**Contexto.** Varremos a curva (BLK-VIAB-04-FU): afinar a faixa de METRAGEM não move a precisão (~30% MAPE é o
+piso); o único ganho real (~1,7 p.p.) veio de **homogeneidade de FORMATO/rede** (comparáveis da mesma rede). Duas
+academias do mesmo m² têm densidades diferentes se uma é low-cost de massa e a outra boutique.
+
+**Objetivo.** (1) Rotular os comparáveis por `formato` (ex.: `low_cost_massa` / `boutique`); (2) adicionar param
+OPCIONAL `formato` em `faixa_alunos_por_densidade` que filtra comparáveis do mesmo formato; (3) **VALIDAR
+out-of-fold** (k-fold vs baseline, DEC-008) se o ganho de precisão se sustenta. Se GO, materializar; se NO-GO,
+não expor.
+
+**Decisões PRÉ-FIXADAS.** Param default `None` → comportamento **byte-idêntico** ao atual (dashboard/VIAB-03
+preservados); **alvo = alunos totais REAIS** (nunca `membros`/agregador — memória `huff-membros-circularidade`);
+validação k-fold 5×5 seed=42; **R² in-sample banido do veredito**; NO-GO honesto encerra sem expor.
+
+**Critérios de aceite.** Relatório out-of-fold com veredito; param opcional testado (`None` = idêntico byte-a-byte);
+motor não recalcula M1; ruff/mypy/suíte verde. **Guardrail.** §5 READ-ONLY M1; DEC-008.
+
+---
+
+### BLK-VIAB-08 — Geocoding + catchment dos imóveis candidatos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (rede ao vivo — precedente DEC-010; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — rede/anti-PII]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-VIAB-01** (candidatos limpos com `flag_sem_coord`). |
+| **Autonomia** | **manual (NÃO loop-safe)** — geocoding é rede ao vivo (DEC-010/Nominatim); loop não faz ingestão ao vivo; exige gate humano. NÃO marcar loop-safe. |
+
+**Contexto.** Os 23 candidatos limpos (BLK-VIAB-01) estão **100% sem coordenada**; o catchment do motor
+(pop/renda do entorno, flag de zona-morta) só roda com `lat/lng` (hoje o batch VIAB-03 roda coordless).
+
+**Objetivo.** Geocodificar os endereços (reusando `maps_geocoder`/Nominatim, DEC-010: cache local, fallback,
+anti-PII) e ligar o `setores_df` (catchment) no batch de viabilidade, ativando pop/renda do entorno + zona-morta.
+
+**Guardrail.** DEC-010 (cache `data/cache/geocode/`, fallback offline gracioso, timeout, anti-PII); §5 READ-ONLY M1.
+
+---
+
+### BLK-VIAB-09 — UI de Viabilidade de Imóvel no dashboard (produto end-to-end)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (superfície do produto property-first; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini) — **maior impacto do roadmap**. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX/visual]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-VIAB-03** (batch/ranking) + **BLK-VIAB-06** (guardrail de envelope). BLK-VIAB-08 (catchment) opcional/aditivo. |
+| **Autonomia** | **manual (NÃO loop-safe)** — UI exige revisão visual humana (lição do BLK-UI-10: loop marca verde por teste, mas UX precisa de olho). NÃO marcar loop-safe. |
+
+**Contexto.** Motor (`viabilidade_ponto`), batch e ranking por margem de segurança já existem e estão validados
+(BLK-VIAB-03/04). Falta a **tela do operador** — o "produto completo" property-first da DEC-009.
+
+**Objetivo.** Aba/seção no dashboard onde o operador traz um imóvel (m² + aluguel + endereço) — ou seleciona da
+base — e recebe: faixa de alunos (p10/p50/p90), break-even, **aluguel-teto vs pedido (margem de segurança)**,
+grade de sensibilidade demanda×aluguel, e o **aviso de envelope** (BLK-VIAB-06). Demanda SÓ como premissa (DEC-009).
+
+**Guardrail.** §5 READ-ONLY M1 (visualização não recalcula score/carteira/plano/artefatos); usa faixas, não pontos.
+
+---
+
+### BLK-VIAB-10 — Aquisição de metragem externa para ampliar a curva
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (destrava a melhoria da curva; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — aquisição/licença de dado]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (relacionado a **BLK-DIM-DATA**; e ao NO-GO do **BLK-VIAB-05**). |
+| **Autonomia** | **manual (NÃO loop-safe)** — aquisição de dado externo (fora de `data/staging`); exige gate humano. NÃO marcar loop-safe. |
+
+**Contexto.** A curva de densidade só tem **112 unidades com metragem** (Ultra 54 + Eng Corpo 58). Smart Fit e
+Sky Fit têm alunos totais mas **nenhuma coluna de metragem** — por isso o BLK-VIAB-05 bloqueou. O gargalo para
+melhorar a curva é **metragem por unidade**, não alunos.
+
+**Objetivo.** Adquirir metragem por unidade de mais redes low-cost (fonte externa a disponibilizar) para ampliar
+a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-VIAB-05 sob DEC-008).
+
+**Guardrail.** §5 READ-ONLY M1; procedência/licença do dado no gate humano.
 
 ---
 

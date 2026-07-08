@@ -137,6 +137,7 @@ score_oficial = score_priorizacao
 - **Redes de seguranca que substituem o humano no loop:** (1) `run-ralph-loop.sh` aborta se houver credencial sensivel no ambiente (`VPS_/SSH_PRIVATE_KEY/CLICKUP_WRITE/DEPLOY_KEY/GROWTH_API_`); (2) `scripts/loop_guard.py` roda apos cada bloco e aborta + escreve `RELATORIO-BLOQUEIO.md` se o diff tocar `config.py`/`pipelines/m1`/`*scoring*`/artefatos M1/`deploy/`/`Dockerfile.{streamlit,api}`/compose/Caddy/authelia/`.env`/`secrets/`/CI; (3) testes (ruff+pytest) como gate sem bypass; (4) container sem chave de VPS -> nao deploya. O loop **commita por path** no branch e **NUNCA** faz merge/push/deploy — revisao + merge sao passos humanos.
 
 ## 7. Onde aprofundar
+- `docs/estado_dos_modelos.md`: sintese de desempenho, arquitetura e uso dos modelos + roadmap de produto (2026-07-08). Ler para entender o que cada camada preve e como usar.
 - `PRD.md`: guia operacional em blocos do ciclo ativo.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico de colunas e calculos de mercado/residual.
 - `docs/m1_outputs_oficiais.md`: contrato curto dos outputs do M1.
