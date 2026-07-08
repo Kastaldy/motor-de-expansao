@@ -1332,3 +1332,122 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 
 
 ---
+
+### BLK-MAP-02 — Filtro de marcas de concorrentes do mapa em menu expansível (fechado por padrão)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (mudança de UI localizada no Mapa Territorial; READ-ONLY sobre o M1; sem decisão de produto). |
+| **Prioridade** | Normal. |
+| **Esteira** | Block Orchestrator → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (herda BLK-MAP-01, que já é o ponto único de filtragem de concorrentes). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mudança de UX visível; exige revisão humana. |
+
+**Objetivo.** Envolver o filtro de marcas de concorrentes do Mapa Territorial (`st.multiselect("Redes de
+concorrentes", …)`, `pages.py:4382`, dentro de `render_mapa_territorial`) num `st.expander(...,
+expanded=False)`, para o filtro nascer **fechado** e não empurrar o mapa para baixo.
+
+**Escopo permitido (READ-ONLY M1, só display).**
+- Só `src/motor_expansao/dashboard/pages.py`, bloco `_show_rede_filter` (~4373–4396): mover o
+  `st.multiselect` para dentro de `with st.expander("Redes de concorrentes", expanded=False):`.
+- Preservar integralmente: `key="mapa_territorial_redes_concorrentes"`, `options=_all_redes`,
+  `default=_all_redes`, `format_func` (label via `COMPETITOR_BRANDS`), e a lógica BLK-MAP-01 (seleção
+  vazia ⇒ `competitors_df_filtered = None` ⇒ esconde concorrentes). `_render_unified_legend` e
+  `build_unified_map_figure` seguem lendo `competitors_df_filtered` como hoje.
+
+**Fora de escopo.** Lógica de filtragem/legenda/cluster de concorrentes; `key`/estado de sessão;
+`COMPETITOR_BRANDS`; qualquer artefato/score/pesos do M1.
+
+**Critério de aceite.** O filtro renderiza dentro de um expander **fechado por padrão**; abrir,
+selecionar, limpar e reselecionar mantêm o comportamento atual do mapa e da legenda (inclusive
+seleção vazia ⇒ esconde concorrentes); suíte verde (atualizar assert de
+`tests/integration/test_streamlit_app.py` se algum travar o label/posição do widget); ruff+mypy limpos.
+
+---
+
+### BLK-RELMUN-05 — Cores otimistas (verde) para aprovados na Visão Geral do Município
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (mudança visual de um relatório + acoplamento de terminologia "amarelo"; READ-ONLY sobre o M1; envolve 1 decisão de produto — tons de verde, JÁ pré-aprovada por Vinicius, ver D1). |
+| **Prioridade** | Normal. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 tons de verde (pré-aprovada)]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (toca só `relatorio_municipal.py` display). Relaciona-se à DEC-011 (terminologia "amarelo"/hexágono destacado). |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera texto/cor de relatório auditável; exige revisão visual do PDF. |
+
+**Objetivo.** Trocar as cores dos hexágonos **aprovados** na página "Visão Geral do Município" (camada
+`cobertura`) e no Resumo (camada `resumo`) de amarelo/laranja — que passam tom negativo/de alerta —
+para **tons de verde** (otimismo), mantendo "Reprovado" em cinza.
+
+**Escopo permitido (READ-ONLY M1, só display).**
+- `src/motor_expansao/dashboard/relatorio_municipal.py:89–91`: `_COR_APROVADO_PROPRIO` (hoje
+  `(255,210,28)` dourado) e `_COR_APROVADO_MUNICIPAL` (hoje `(245,140,30)` laranja) → **verdes** (D1).
+  A troca propaga sozinha para `_HEX_DESTAQUE_RGBA`, `_HEX_DESTAQUE_MUNICIPAL_RGBA`, `_HEX_APROVADO_RGBA`,
+  `_HEX_APROVADO_MUNICIPAL_RGBA`, `_COBERTURA_LEGENDA`, `_RESUMO_LEGENDA` e o choropleth das camadas
+  `cobertura`/`resumo`. `_COR_REPROVADO` (cinza) INALTERADO.
+- **Terminologia (acoplamento):** atualizar SOMENTE o **texto visível** que diz "amarelo(s)" e ficaria
+  inconsistente com a cor verde — `"Soma dos hexágonos amarelos / 2.500"` (`:1656`) e
+  `"Espaço = soma dos hexágonos amarelos / 2.500"` (`:2070`) → wording neutro por cor (ex.: "hexágonos
+  destacados"). Legendas já usam "Aprovado (dado próprio)/(fallback municipal)".
+
+**Fora de escopo (NÃO tocar).** **Identificadores** com "amarelo" — `n_hex_amarelos`,
+`soma_oferta_amarelos`, `parcelas_amarelos` e chaves de `result` (consumidas por `render`/testes): só
+TEXTO/cores mudam, os NOMES não. Cores de **ZONA** da página Domínio (`:155–160`, turquesa/…/laranja) —
+outra semântica, não mexer. Critério de "hexágono destacado" (DEC-011: `oferta_efetiva_disponivel >=
+2000`), `flag_sam`, score, artefatos oficiais do M1.
+
+**Decisão de produto (D1 — pré-aprovada por Vinicius em 2026-07-08).** RGB verdes: aprovado próprio =
+verde forte `(20,170,80)`; aprovado fallback municipal = verde médio `(90,190,120)` (dois tons
+distinguíveis entre si e do cinza `_COR_REPROVADO`, legíveis sobre o basemap claro). O Planner só
+reconfirma no gate.
+
+**Critério de aceite.** PDF municipal com aprovados em verde (2 tons) + reprovado cinza; nenhuma
+menção textual "amarelo" remanescente no texto de exibição; identificadores e critério de destaque
+(DEC-011) intactos; DEC-011 recebe emenda de terminologia (cor ≠ critério); testes de
+`tests/unit/test_relatorio_municipal.py` atualizados (tuplas de cor/labels); ruff+mypy limpos; revisão
+visual do PDF aprovada.
+
+---
+
+### BLK-RELMUN-06 — Texto dinâmico das zonas de atuação no slide Síntese (quadros finais)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (lógica de composição de texto de relatório; READ-ONLY sobre o M1; 1 decisão de produto — regras do texto por combinação de zonas). |
+| **Prioridade** | Normal. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 regras do texto]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (`relatorio_municipal.py` display; usa `zonas_geo`/`n_zonas_geo` já presentes em `result`). |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera texto de relatório auditável; exige revisão visual do PDF. |
+
+**Objetivo.** No slide **Síntese** (`_sintese_page`, `relatorio_municipal.py:1949` — 3 quadros/cards
+finais; card 3 "Movimento Recomendado"), substituir o **texto constante**
+`"posicionamento periférico, cercar o núcleo pelos flancos antes da concorrência."` por um texto
+**gerado a partir dos tipos de zona efetivamente encontrados** no município (`zonas_geo` /
+`_ZONA_GEO_ROTULOS` = Âncora central / Flancos laterais / Cerco), para municípios com 1, 2 ou 3 zonas
+não receberem uma recomendação genérica que pode não se aplicar.
+
+**Escopo permitido (READ-ONLY M1, só display).**
+- `_sintese_page` (`relatorio_municipal.py:1949–1991`): compor o texto do card de zonas (card 3) a
+  partir de `result["zonas_geo"]` (rótulos das zonas presentes), reusando `_ZONA_GEO_DESC` (`:163`) e/ou
+  `_ZONA_TEXTOS` (`:1776`) como blocos de frase. Fallback para 0 zonas (mensagem de "hexes
+  insuficientes …", análoga à já usada na página Domínio).
+- Manter os outros 2 cards (penetração fitness, residual) e o VALOR do card ("N zonas de atuação")
+  inalterados.
+
+**Fora de escopo.** `zonas_geo`/`_zonas_geometricas` / `_zonas_do_municipio` (a zonificação em si — só
+LEITURA); `dominio_df`, `flag_sam`, score, artefatos oficiais do M1. Página Domínio (`:1783`) já é
+dinâmica por zona — confirmar no gate se entra no escopo ou não.
+
+**Decisão de produto (D1 — gate).** As regras do texto por combinação de zonas (ex.: só "Âncora
+central" → adensar o núcleo; +"Flancos laterais" → cercar pelos flancos; +"Cerco" → estratégia
+completa de cerco). O Planner propõe o mapeamento; humano aprova antes do Builder.
+
+**Critério de aceite.** Card de zonas do slide Síntese reflete os tipos de zona presentes no município
+(testar combinações 1/2/3 zonas + 0 zonas); demais cards inalterados; `zonas_geo`/score/artefatos
+intactos; testes de `tests/unit/test_relatorio_municipal.py` cobrindo as combinações; ruff+mypy limpos;
+revisão visual do PDF aprovada.
+
+---
