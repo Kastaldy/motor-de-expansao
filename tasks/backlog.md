@@ -861,38 +861,8 @@ Dependências: decisão de produto sobre evolução para web interno.
 
 ---
 
-### BLK-VIAB-05 — Recalibrar/validar a curva m²→densidade com a base ampliada (out-of-fold)
+- BLK-VIAB-05 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (fortalece o único sinal real do motor; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | **BLOQUEADO** — base ampliada não existe (2026-07-07, Block Orchestrator). |
-| **Depende de** | — (reusa `demanda_revelada/calibracao_curva.py` + base ampliada de alunos_totais Ultra+Smart+Eng+Sky). |
-| **Autonomia** | **loop-safe** — READ-ONLY M1; reusa harness DEC-008 (k-fold 5×5 seed=42); saída `data/analysis`+`data/staging` gitignored; sem rede; sem VPS. |
-
-**Contexto.** A curva metragem→densidade (DIM-03R) foi calibrada em ~112 unidades e é sinal de TIER. O backlog
-estimava "~1.100 academias reais com metragem+alunos (Ultra+Smart+Eng+Sky)" — mas essa estimativa estava errada.
-
-**BLOQUEIO (2026-07-07 — Block Orchestrator):** A base disponível com `metragem > 0` é **N=112** (Ultra 54 + Eng
-Corpo 58), idêntica à base do BLK-TP-04 (concluído 2026-07-02). Smart Fit e Sky Fit não possuem coluna de
-metragem em nenhuma fonte disponível (`KPIs_Smart_2025_02.xlsx` e `Sky Fit dados.xlsx` confirmados). O
-`base_calibracao_multirede.parquet` tem 426 linhas mas os 311 SkyFit têm metragem=NaN em 100% das linhas. O
-BLK-TP-04 já executou a validação honesta da curva com essa mesma base N=112 e o mesmo harness DEC-008.
-**Condição de reabertura:** nova fonte com metragem+alunos reais além de Ultra e Eng Corpo.
-
-**Objetivo.** Revalidar/recalibrar a curva metragem→densidade (alunos/m²) sobre a base ampliada, **out-of-fold**
-(k-fold 5×5 seed=42 vs baseline da média, DEC-008), reportar se a curva melhora (R²_oof, IC95) e se continua sinal de
-TIER ou vira curva suave. Se GO, materializar a curva validada em `data/staging` (paralela) para VIAB-02/03 adotarem;
-relatório honesto em `data/analysis/curva_densidade_ampliada.md`.
-
-**Decisões PRÉ-FIXADAS (DEC-008):** out-of-fold vs baseline da média; **R² in-sample BANIDO do veredito**; IC95 seed=42;
-**NO-GO é resultado VÁLIDO** (se a base ampliada não melhorar, manter a curva atual e registrar); **alvo = alunos_totais
-REAIS**, nunca `membros`/agregador (achado da circularidade 2026-07-07).
-
-**Critérios de aceite.** Relatório out-of-fold com veredito honesto; curva validada materializada só se GO; se NO-GO,
-curva atual mantida e documentado; determinístico; `loop_guard` limpo. **Guardrail.** §5 READ-ONLY M1; DEC-008 honrada.
 
 ---
 
@@ -1230,99 +1200,12 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 
 ---
 
-### BLK-ACENTO-01 — Acentuação da UI do dashboard (Streamlit)
+- BLK-ACENTO-01 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (correção ampla de texto de UI; READ-ONLY sobre o M1; sem DEC; envolve 1 decisão de produto — label de exibição das faixas — e risco de acentuar identificador por engano, mitigado por lista de proibições). |
-| **Prioridade** | **Urgente** (herda da tarefa ClickUp `86e26mtn5`). |
-| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 (label de exibição das faixas)]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (toca só a camada `dashboard/`; não depende de outros blocos). |
-| **Autonomia** | **manual (NÃO loop-safe)** — mudança visual ampla que exige revisão humana; toca strings próximas a identificadores. NÃO marcar loop-safe. |
-
-**Objetivo.** Acentuar corretamente TODO o texto voltado ao usuário na plataforma (abas, labels de
-botão, `help=`, `st.caption/markdown/info/warning/success/error`, `st.metric`, `column_config`,
-legendas), preservando 100% dos identificadores.
-
-**Escopo permitido (READ-ONLY M1, só display).**
-- `src/motor_expansao/dashboard/pages.py` (~359 ocorrências) e `components.py` (~161): acentuar
-  strings de exibição. `pages.py` + `components.py` concentram ~90% da massa de texto.
-- `streamlit_app.py` (~38), `data.py` (labels/mensagens de exibição; NÃO valores de categoria salvo
-  via label layer), `constants.py` (só onde a string é EXIBIDA e não usada como chave/valor lógico).
-- **D1 — camada de label de exibição das faixas:** criar `FAIXA_LABELS = {"prioridade_maxima":
-  "Prioridade máxima","alta":"Alta","media":"Média","baixa":"Baixa","descartado":"Descartado",
-  "inviavel":"Inviável"}` e usar `format_func` no `st.multiselect` (`pages.py:668-671`) e nas
-  legendas/tabelas, mantendo o VALOR bruto intocado no filtro/`.isin`/dict de cores. Idem, se
-  aplicável, `HYBRID_ELIGIBILITY_ORDER`/`COVERAGE_BUCKET_ORDER`/`JOIN_QUALITY_ORDER`. O fallback
-  `"Nao informado"` (`data.py:211,219,223`, `components.py:572,589`) pode virar "Não informado"
-  DESDE QUE trocado em TODAS as ocorrências juntas (é literal repetido, não comparado a dado externo)
-  — validar que continua casando `pd.Categorical(...)`.
-- Banir tipografia "esperta" também na UI por consistência (usar hífen simples e aspas retas).
-- Atualizar `tests/integration/test_streamlit_app.py` (6232 linhas; dezenas de asserts de string de
-  UI — ex. linhas 334,338,762,1112-1117,1355-1357,3199,3238-3239,3664-3666,4650-4653) e
-  `tests/unit/test_dashboard_format_utils.py`.
-
-**Fora de escopo.** Relatórios PDF/CSV (BLK-ACENTO-02). Qualquer valor bruto de enum/coluna/`key=`/
-`.st-key-*`/slug (ver lista canônica de proibições da epic). `score_priorizacao`/M1/artefatos
-oficiais. Sem dependência de rede nova.
-
-**Critério de aceite.** Texto de UI do dashboard acentuado corretamente (varredura por amostra de
-palavras sem acento retorna ~0 em texto de exibição); faixas exibidas com label acentuado mas
-filtrando pelo valor bruto (comportamento de filtro idêntico); nenhum `key=`/`.st-key-*`/coluna/
-enum bruto alterado; suíte verde; ruff+mypy limpos; revisão visual humana aprovada.
 
 ---
 
-### BLK-ACENTO-02 — Acentuação dos relatórios gerados (PDF/CSV)
+- BLK-ACENTO-02 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (texto dos relatórios; READ-ONLY sobre o M1; núcleo `censo_*` só nas STRINGS de exibição, sem tocar método de interseção/raio/estrutura de páginas/marca d'água; sem DEC). |
-| **Prioridade** | **Urgente** (herda da tarefa ClickUp `86e26mtn5`). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (independente do BLK-ACENTO-01; pode ir em PR separado). |
-| **Autonomia** | **manual (NÃO loop-safe)** — altera texto de relatório auditável (compressão OFF) e exige revisão visual do PDF. NÃO marcar loop-safe. |
-
-**Objetivo.** Acentuar corretamente o texto dos relatórios (Relatório Pontual Censitário 1,5 km e
-Relatório Municipal), sem trocar fonte/biblioteca e sem introduzir caracteres que virem `"?"`.
-
-**Escopo permitido (READ-ONLY M1, só texto de relatório).**
-- `src/motor_expansao/dashboard/censo_report.py` (~50 chamadas `_ascii(...)`) e
-  `relatorio_municipal.py` (~142 ocorrências / ~55 `set_font` + `_ascii`): escrever os textos-fonte
-  COM acento (títulos, `PDF_SECTION_HEADERS` — `censo_report.py:16-17`, `relatorio_municipal.py:60-61`,
-  rótulos de Big Numbers, legendas, rodapé). `latin-1` renderiza os acentos; **manter `_ascii()`**
-  como salvaguarda para caracteres exóticos.
-- Corrigir o comentário-fonte enganoso ("ASCII, sem acento") para refletir que latin-1 cobre acento
-  e que o que se proíbe é a tipografia fora de latin-1.
-- **BANIR tipografia "esperta"** no texto de PDF (travessão `—`/`–`, bullet `•`, seta `→`,
-  reticências `…`, aspas curvas, `©`): trocar por ASCII (`-`, `"`, "(c)", "...") — senão viram `"?"`
-  silenciosamente via `errors="replace"`.
-- **Teste de regressão anti-`"?"`:** adicionar teste que gere os PDFs e assert que **nenhum byte
-  `b"?"` inesperado** aparece (ou rodar `_ascii` com `errors="strict"` num modo de auditoria/CI para
-  pegar tipografia fora de latin-1 cedo). Aproveita a compressão OFF (`set_compression(False)`,
-  `censo_report.py:228-236`) que já expõe o texto cru.
-- Atualizar `tests/unit/test_relatorio_municipal.py` (~26 asserts `assert b"..."`, ex. linhas
-  354-368,467-472,498,558-583) e `tests/unit/test_relatorio_pontual_censitario_export.py` (~40
-  asserts, ex. linhas 125-126,268-269,311-326,382-416,554-556) para as strings acentuadas em
-  `latin-1` (`b"Visao"` -> `"Visão".encode("latin-1")`). O laço
-  `for header in PDF_SECTION_HEADERS: assert header.encode("latin-1") in pdf_bytes` NÃO quebra (lê a
-  constante), mas os `assert b"literal"` isolados precisam ser atualizados um a um.
-
-**Fora de escopo.** Núcleo funcional `censo_*`: `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
-`RAIO_CENSITARIO_DEFAULT_KM`, contagem/ordem/estrutura das páginas, grid de Big Numbers, marca d'água
-anti-PII (BLK-EST-03), `set_compression(False)`, `pdf_version` — SÓ as STRINGS mudam. UI do dashboard
-(BLK-ACENTO-01). `score_priorizacao`/M1/artefatos oficiais. Trocar core font por TTF Unicode (não é
-necessário; latin-1 basta).
-
-**Guardrails.** READ-ONLY sobre o M1 (§5). Anti-PII inalterado (compressão OFF, marca d'água do
-solicitante BLK-EST-03, `.pptx`/PDF nunca versionados, `image24.png` nunca embutido). Sem dependência
-de rede nova.
-
-**Critério de aceite.** PDFs (pontual + municipal) com acentuação correta renderizando em `latin-1`;
-teste anti-`"?"` verde (zero caractere perdido); método de interseção/raio/estrutura/marca d'água
-INTOCADOS; suíte verde (asserts de PDF atualizados); ruff+mypy limpos; revisão visual humana do PDF
-aprovada.
 
 ---

@@ -179,6 +179,60 @@ def carregar_ultra(parquet_path: Path | str) -> pd.DataFrame:
     return out
 
 
+#: Base Engenharia do Corpo (aba 'Academias'): metragem + alunos totais reais.
+ENG_CORPO_XLSX_DEFAULT: Path = Path("data/validacao/academias_engenharia_do_corpo.xlsx")
+#: Ticket ausente na fonte Eng Corpo; placeholder que NAO afeta a metrica de alunos
+#: (a predicao vem da curva de densidade metragem->alunos_por_m2; ticket so entra no
+#: aluguel-teto, metrica secundaria/nao validada contra mercado).
+TICKET_PLACEHOLDER_ENG: float = 137.0
+
+
+def carregar_eng_corpo(xlsx_path: Path | str = ENG_CORPO_XLSX_DEFAULT) -> pd.DataFrame:
+    """Le a base Engenharia do Corpo no MESMO schema de `carregar_ultra` (indice RESETADO).
+
+    Mapeia (por substring, robusto a acento/²) 'Unidade'->unidade, 'Metragem M²'->metragem,
+    'Alunos Totais'->alunos_total; `alunos_por_m2` = alunos_total/metragem; ticket = placeholder
+    (ausente na fonte; nao afeta a predicao de alunos pela curva). NAO propaga geo/PII.
+
+    Permite backtest cross-rede (VIAB-04-FU): valida se o motor generaliza para uma rede
+    de porte diferente (Eng Corpo vai acima de 3.500 m²; Ultra max ~2.800).
+    """
+    df = pd.read_excel(Path(xlsx_path), sheet_name="Academias")
+
+    def _col(sub: str) -> str:
+        for c in df.columns:
+            if sub.lower() in str(c).lower():
+                return c
+        raise ValueError(f"coluna com '{sub}' ausente na base Eng Corpo")
+
+    metragem = pd.to_numeric(df[_col("metragem")], errors="coerce").astype(float)
+    alunos = pd.to_numeric(df[_col("alunos totais")], errors="coerce").astype(float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        apm = alunos / metragem
+
+    out = pd.DataFrame(
+        {
+            "unidade": df[_col("unidade")].astype(str),
+            "metragem": metragem,
+            "alunos_total": alunos,
+            "ticket_medio_aluno": float(TICKET_PLACEHOLDER_ENG),
+            "alunos_por_m2": apm,
+        }
+    )
+    mask = (
+        np.isfinite(out["metragem"])
+        & (out["metragem"] > 0)
+        & np.isfinite(out["alunos_total"])
+        & (out["alunos_total"] > 0)
+        & np.isfinite(out["alunos_por_m2"])
+        & (out["alunos_por_m2"] > 0)
+    )
+    out = out[mask].reset_index(drop=True)
+    if out.empty:
+        raise ValueError("base Eng Corpo vazia apos limpeza")
+    return out
+
+
 def calcular_loo_base(df_ultra: pd.DataFrame, idx: int) -> pd.DataFrame:
     """Base de calibracao LEAVE-ONE-OUT: todas as unidades MENOS `idx`.
 

@@ -18,10 +18,12 @@ import pytest
 import motor_expansao.dimensionamento.backtest_viabilidade as bkt
 from motor_expansao.dimensionamento.backtest_viabilidade import (
     COLUNAS_SAIDA,
+    TICKET_PLACEHOLDER_ENG,
     VERSAO_CONTRATO,
     analisar_viabilidade_ponto,
     calcular_loo_base,
     calcular_metricas_agregadas,
+    carregar_eng_corpo,
     carregar_ultra,
     materializar,
     rodar_backtest,
@@ -289,3 +291,63 @@ def test_gerar_relatorio_cria_arquivo_com_MAE(tmp_path, monkeypatch):
     assert md.exists()
     texto = md.read_text(encoding="utf-8")
     assert "MAE" in texto
+
+
+# ---------------------------------------------------------------------------
+# carregar_eng_corpo (BLK-VIAB-04-FU) — fixture xlsx sintetica em tmp_path
+# ---------------------------------------------------------------------------
+
+
+def test_carregar_eng_corpo_mapeia_schema_e_aplica_mask(tmp_path):
+    """Loader casa colunas por substring (acento/²), computa apm, ticket=placeholder e dropa lixo."""
+    # Colunas com decoys ('Total Alunos Ativos') para provar o match nao-ambiguo de 'Alunos Totais'.
+    raw = pd.DataFrame(
+        {
+            "ID": [1, 2, 3, 4],
+            "Unidade": ["EC Alfa", "EC Beta", "EC Gama", "EC Ruim"],
+            "Metragem M²": [1000.0, 2000.0, 3600.0, 0.0],  # ultima invalida (metragem 0)
+            "Total Alunos Ativos": [1800, 4000, 7000, 10],
+            "Alunos Totais": [2000, 4400, 7200, 12],
+        }
+    )
+    caminho = tmp_path / "eng.xlsx"
+    raw.to_excel(caminho, sheet_name="Academias", index=False)
+
+    out = carregar_eng_corpo(caminho)
+
+    # A linha invalida (metragem 0) foi dropada; indice resetado 0..2.
+    assert len(out) == 3
+    assert list(out.index) == [0, 1, 2]
+    assert set(out.columns) == {
+        "unidade",
+        "metragem",
+        "alunos_total",
+        "ticket_medio_aluno",
+        "alunos_por_m2",
+    }
+    # Mapeou 'Alunos Totais' (nao 'Total Alunos Ativos') e computou apm = alunos/metragem.
+    assert out.loc[0, "alunos_total"] == 2000.0
+    assert out.loc[0, "alunos_por_m2"] == pytest.approx(2.0)
+    # Ticket e o placeholder (ausente na fonte).
+    assert (out["ticket_medio_aluno"] == TICKET_PLACEHOLDER_ENG).all()
+    # Nenhuma coluna de geo/PII propagada.
+    assert not {"lat", "lng", "latitude", "longitude"} & set(out.columns)
+
+
+def test_carregar_eng_corpo_saida_e_compativel_com_rodar_backtest(tmp_path, monkeypatch):
+    """A base Eng entra em rodar_backtest sem colisao de schema (mesmas colunas de carregar_ultra)."""
+    raw = pd.DataFrame(
+        {
+            "Unidade": [f"EC {i}" for i in range(6)],
+            "Metragem M²": np.linspace(1000.0, 2500.0, 6),
+            "Alunos Totais": np.linspace(1000.0, 2500.0, 6) * 2.2,
+        }
+    )
+    caminho = tmp_path / "eng.xlsx"
+    raw.to_excel(caminho, sheet_name="Academias", index=False)
+    df_eng = carregar_eng_corpo(caminho)
+
+    _mock_motor_captura(monkeypatch)
+    out = rodar_backtest(df_eng)
+    assert len(out) == len(df_eng)
+    assert list(out.columns) == COLUNAS_SAIDA
