@@ -7662,3 +7662,25 @@ validação k-fold 5×5 seed=42; **R² in-sample banido do veredito**; NO-GO hon
 
 **Critérios de aceite.** Relatório out-of-fold com veredito; param opcional testado (`None` = idêntico byte-a-byte);
 motor não recalcula M1; ruff/mypy/suíte verde. **Guardrail.** §5 READ-ONLY M1; DEC-008.
+
+---
+
+### BLK-REV-01 — Baseline de performance ponta-a-ponta (instrumentação + medição)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (base factual de toda a otimização; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome o app + `data/staging`/`data/outputs`). |
+| **Autonomia** | **loop-safe** — instrumentação headless determinística; READ-ONLY M1; escreve só `data/analysis`; sem VPS/rede de produção. |
+
+**Contexto.** Sem número, otimização é palpite. O ciclo de perf de mai/2026 atacou carga por UF/aba, mas não há
+baseline dos 4 caminhos que o Felipe sente lentos.
+**Objetivo.** Instrumentar timing por caminho e medir (frio/quente, por tamanho de UF): carga inicial, troca de
+UF/município, render do mapa (lado Python), troca de modo de cor, seleção/cenário múltiplo, PDF Pontual/Municipal.
+Relatório `data/analysis/perf_baseline_app_2026.md`.
+**Decisões PRÉ-FIXADAS.** Mede o lado Python/servidor (data prep, serialização pydeck, recompute do rerun,
+geometria/tiles/fpdf2); paint/interação no browser = complemento MANUAL (nota no relatório, não bloqueia).
+Determinístico. **Guardrail.** §5 READ-ONLY M1; não altera app/artefatos.
