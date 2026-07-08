@@ -967,22 +967,8 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 
 ---
 
-### BLK-REV-02 — Inventário arquitetural e mapa de dependências do app atual
+- BLK-REV-02 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (retrato honesto antes de refatorar vs refazer; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | — (leitura de código). |
-| **Autonomia** | **loop-safe** — leitura de código/artefatos; READ-ONLY M1; escreve só `docs/`/`data/analysis`; sem VPS. |
-
-**Contexto.** Precisamos de um retrato honesto da arquitetura atual antes de decidir refatorar vs refazer.
-**Objetivo.** Mapear camadas (carga parquet, pydeck, `session_state`, fpdf2/matplotlib, tiles), o **modelo de rerun**
-do Streamlit, o que é cacheado (`@st.cache_data`) vs recomputado por rerun, tamanho dos artefatos carregados, grafo
-de deps e pontos de acoplamento. Entrega diagrama + inventário em `docs/arquitetura_app_atual.md`.
-**Decisões PRÉ-FIXADAS.** Só leitura; nenhuma alteração. **Guardrail.** §5 READ-ONLY M1.
 
 ---
 
