@@ -7163,152 +7163,314 @@ nem altera M1); §6.1 (critérios loop-safe). Precedente de desvio cosmético re
 
 ---
 
-### BLK-ACENTO-01 — Acentuação da UI do dashboard (Streamlit)
+### BLK-ATR-01-FU1 — Cruzar a base densa de concorrentes com as unidades reais do NAO_ABRA (aferição de precisão/overlap)
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Média** (correção ampla de texto de UI; READ-ONLY sobre o M1; sem DEC; envolve 1 decisão de produto — label de exibição das faixas — e risco de acentuar identificador por engano, mitigado por lista de proibições). |
-| **Prioridade** | **Urgente** (herda da tarefa ClickUp `86e26mtn5`). |
-| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 (label de exibição das faixas)]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (toca só a camada `dashboard/`; não depende de outros blocos). |
-| **Autonomia** | **manual (NÃO loop-safe)** — mudança visual ampla que exige revisão humana; toca strings próximas a identificadores. NÃO marcar loop-safe. |
+| **Criticidade** | **Média** (aferição de qualidade da base densa do Huff; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | **Concluído** (2026-07-07). |
+| **Depende de** | **BLK-ATR-01** (base densa `concorrentes_densos` + dedup por `(hex, rede)`, concluído 2026-07-06). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; lê SÓ dado de **estabelecimento** de negócio (lat/long/rede/nome de unidade) do `NAO_ABRA/`; **NÃO** toca o dump pessoal (`totalpass_final*.html`); persiste ZERO PII; escreve só `data/analysis`; sem VPS/deploy/segredos/API ao vivo. |
 
-**Objetivo.** Acentuar corretamente TODO o texto voltado ao usuário na plataforma (abas, labels de
-botão, `help=`, `st.caption/markdown/info/warning/success/error`, `st.metric`, `column_config`,
-legendas), preservando 100% dos identificadores.
+**Contexto.** O BLK-ATR-01 fechou com um **gap de escopo declarado**: o dedup da base densa foi inter-fonte
+(TotalPass/WellHub/Unidades) + contra `concorrentes_mapeados`, mas o **cruzamento com as unidades reais do
+`NAO_ABRA/`** (pedido de Felipe) NÃO foi implementado. Este FU fecha esse gap.
 
-**Escopo permitido (READ-ONLY M1, só display).**
-- `src/motor_expansao/dashboard/pages.py` (~359 ocorrências) e `components.py` (~161): acentuar
-  strings de exibição. `pages.py` + `components.py` concentram ~90% da massa de texto.
-- `streamlit_app.py` (~38), `data.py` (labels/mensagens de exibição; NÃO valores de categoria salvo
-  via label layer), `constants.py` (só onde a string é EXIBIDA e não usada como chave/valor lógico).
-- **D1 — camada de label de exibição das faixas:** criar `FAIXA_LABELS = {"prioridade_maxima":
-  "Prioridade máxima","alta":"Alta","media":"Média","baixa":"Baixa","descartado":"Descartado",
-  "inviavel":"Inviável"}` e usar `format_func` no `st.multiselect` (`pages.py:668-671`) e nas
-  legendas/tabelas, mantendo o VALOR bruto intocado no filtro/`.isin`/dict de cores. Idem, se
-  aplicável, `HYBRID_ELIGIBILITY_ORDER`/`COVERAGE_BUCKET_ORDER`/`JOIN_QUALITY_ORDER`. O fallback
-  `"Nao informado"` (`data.py:211,219,223`, `components.py:572,589`) pode virar "Não informado"
-  DESDE QUE trocado em TODAS as ocorrências juntas (é literal repetido, não comparado a dado externo)
-  — validar que continua casando `pd.Categorical(...)`.
-- Banir tipografia "esperta" também na UI por consistência (usar hífen simples e aspas retas).
-- Atualizar `tests/integration/test_streamlit_app.py` (6232 linhas; dezenas de asserts de string de
-  UI — ex. linhas 334,338,762,1112-1117,1355-1357,3199,3238-3239,3664-3666,4650-4653) e
-  `tests/unit/test_dashboard_format_utils.py`.
+**Objetivo.** Aferir a **precisão/cobertura** da base densa de concorrentes contra as unidades reais de
+**estabelecimento** do `NAO_ABRA/` (`01_SmartFit.xlsx` = unidades SmartFit; `03_Competidores.xlsx` = ~24 mil
+academias): quantas das unidades reais **casam** por `(hex_id_res7, rede)` com a base densa (recall), quantas
+da base densa **não têm correspondência** (possíveis falsos/duplicatas residuais), e o overlap por rede. Só
+campos de **negócio** são lidos (lat/long → hex, nome/rede para casar); qualquer PII é dropada na fronteira e
+**nada de PII é persistido** (o dump pessoal `totalpass_final*.html` NÃO é lido). Relatório em `data/analysis/`
+(gitignored), com contagens agregadas — recall, precisão-proxy, overlap por rede, e recomendação (a base densa
+é suficiente, ou precisa de ajuste de dedup).
 
-**Fora de escopo.** Relatórios PDF/CSV (BLK-ACENTO-02). Qualquer valor bruto de enum/coluna/`key=`/
-`.st-key-*`/slug (ver lista canônica de proibições da epic). `score_priorizacao`/M1/artefatos
-oficiais. Sem dependência de rede nova.
-
-**Critério de aceite.** Texto de UI do dashboard acentuado corretamente (varredura por amostra de
-palavras sem acento retorna ~0 em texto de exibição); faixas exibidas com label acentuado mas
-filtrando pelo valor bruto (comportamento de filtro idêntico); nenhum `key=`/`.st-key-*`/coluna/
-enum bruto alterado; suíte verde; ruff+mypy limpos; revisão visual humana aprovada.
-
-**Fechamento do ciclo BLK-ACENTO-01 (2026-07-07) — VEREDITO: APROVADO.** Esteira Média com gate
-humano de produto: Block Orchestrator -> Planner -> [gate humano CONFIRMADO por Vinicius] ->
-Builder (Opus, override +1 por volume/risco) -> QA (Opus 4.8). Gate: D1 = FAIXA_LABELS em
-`dashboard/constants.py` (mapeamento aprovado; valor bruto FAIXA_ORDEM/FAIXA_COLORS intocado);
-D1-bis = Opção A (HYBRID_ELIGIBILITY_LABELS + format_func; valor bruto "Elegivel"/"Nao elegivel" e
-HYBRID_ELIGIBILITY_ORDER intocados; zero fixture de elegibilidade alterada); fallback
-"Nao informado" -> "Não informado" nas 5 ocorrências juntas (pd.Categorical segue casando).
-Feito: ~340 strings de exibição acentuadas em pages.py + acentuação em components.py (tooltips,
-legendas, KPIs, títulos/labels Plotly, cabeçalhos renomeados em lockstep com os consumidores),
-streamlit_app.py e data.py; COLOR_MODES/OVERLAYS labels acentuados; travessões `—` -> hífen ` - `
-em strings de exibição (comentários intocados); nenhuma tipografia esperta introduzida. Follow-up
-(ressalva do QA, item 2.2c do Planner): `build_faixa_comparison_figure` passou a exibir labels
-acentuados no eixo x/legenda via `FAIXA_COLORS_POR_LABEL` derivado — cor e ordem por faixa
-preservadas. Testes novos: format_func de faixa/elegibilidade (label acentuado exibido, options
-brutas) + preservação de cor do gráfico. Validações (QA, NO-BYPASS): ruff limpo; import ok; mypy só
-os 7 erros PRÉ-EXISTENTES de types-requests em arquivos não tocados (zero novo); suíte serial
-`1431 passed, 2 skipped, 1 failed`, a única falha
-(`test_score_retencao_territorial::test_run_readonly_m1_por_mtime`, FileNotFoundError de parquet M2
-gitignored) é PRÉ-EXISTENTE/ambiental, alheia ao bloco (herdada do ciclo BLK-RELPON-04); `-n auto`
-instável no Python 3.14 (execnet EOFError no setup do worker, não falha de teste). READ-ONLY M1
-confirmado: git diff só em dashboard/{constants,components,data,pages}.py + streamlit_app.py + test
-+ bookkeeping; zero em core/constants.py, censo_*, relatorio_municipal.py, pipelines/m1, config.py,
-calcular_colunas_mercado.py; nenhum parquet oficial tocado; pesos renda=0.40/pop=0.60 e
-H3_RESOLUTION=7 preservados. Sucessor: BLK-ACENTO-02 (relatórios PDF/CSV). Pendência humana:
-revisão visual da UI + merge da branch ciclo/BLK-ACENTO-01 (6.b). Sem dry-run (não tocou orquestração).
+**Critérios de aceite.** Isolamento (`demanda_revelada/`, sem import de `pipelines/m1`/`dashboard`/`censo_*`/
+`api`/`config.py`); lê só `01_SmartFit.xlsx`/`03_Competidores.xlsx` (estabelecimento), NUNCA o dump pessoal;
+`test_zero_pii`/equivalente + fixtures sintéticas; relatório com métricas agregadas (recall/overlap por rede);
+mtime dos 4 oficiais M1 inalterado; `concorrentes_densos.parquet` só LIDO (não reescrito sem necessidade);
+suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-012 (dado de estabelecimento é público; só o **pessoal** é protegido —
+dump pessoal não lido; zero PII persistida); DEC-013 (concorrentes só na camada de mercado/residual).
 
 ---
 
-### BLK-ACENTO-02 — Acentuação dos relatórios gerados (PDF/CSV)
+### BLK-ATR-03-FU1 — Re-rodar o teste de estrutura (matriz vs composto) sobre o Huff DENSO
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Média** (texto dos relatórios; READ-ONLY sobre o M1; núcleo `censo_*` só nas STRINGS de exibição, sem tocar método de interseção/raio/estrutura de páginas/marca d'água; sem DEC). |
-| **Prioridade** | **Urgente** (herda da tarefa ClickUp `86e26mtn5`). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Criticidade** | **Alta** (fecha o número da decisão de arquitetura do funil; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
 | **Status** | Pendente. |
-| **Depende de** | — (independente do BLK-ACENTO-01; pode ir em PR separado). |
-| **Autonomia** | **manual (NÃO loop-safe)** — altera texto de relatório auditável (compressão OFF) e exige revisão visual do PDF. NÃO marcar loop-safe. |
+| **Depende de** | **BLK-ATR-01** (base densa + `share` denso) + **BLK-ATR-03** (harness `estrutura_funil`), ambos concluídos 2026-07-06. |
+| **Autonomia** | **loop-safe** — GO/NO-GO out-of-fold, READ-ONLY M1, veredito em `data/analysis`; sem mudança de produção. |
 
-**Objetivo.** Acentuar corretamente o texto dos relatórios (Relatório Pontual Censitário 1,5 km e
-Relatório Municipal), sem trocar fonte/biblioteca e sem introduzir caracteres que virem `"?"`.
+**Contexto.** O BLK-ATR-03 deu **GO-composto** (composto R²_oof +0,48 vence o melhor eixo isolado +0,37), MAS
+usou o `share_captura_huff` **original** (base de ~3,3 mil concorrentes; `% huff disponível ≈ 62%`), não o
+Huff da **base densa** do ATR-01 (cobertura útil 28%→73%, R²_oof +0,44→+0,46, rho +0,44→+0,71). O eixo de
+disputa denso é mais forte, então o composto provavelmente **sobe** — mas o número precisa ser recomputado
+honestamente para embasar a decisão do BLK-ATR-05.
 
-**Escopo permitido (READ-ONLY M1, só texto de relatório).**
-- `src/motor_expansao/dashboard/censo_report.py` (~50 chamadas `_ascii(...)`) e
-  `relatorio_municipal.py` (~142 ocorrências / ~55 `set_font` + `_ascii`): escrever os textos-fonte
-  COM acento (títulos, `PDF_SECTION_HEADERS` — `censo_report.py:16-17`, `relatorio_municipal.py:60-61`,
-  rótulos de Big Numbers, legendas, rodapé). `latin-1` renderiza os acentos; **manter `_ascii()`**
-  como salvaguarda para caracteres exóticos.
-- Corrigir o comentário-fonte enganoso ("ASCII, sem acento") para refletir que latin-1 cobre acento
-  e que o que se proíbe é a tipografia fora de latin-1.
-- **BANIR tipografia "esperta"** no texto de PDF (travessão `—`/`–`, bullet `•`, seta `→`,
-  reticências `…`, aspas curvas, `©`): trocar por ASCII (`-`, `"`, "(c)", "...") — senão viram `"?"`
-  silenciosamente via `errors="replace"`.
-- **Teste de regressão anti-`"?"`:** adicionar teste que gere os PDFs e assert que **nenhum byte
-  `b"?"` inesperado** aparece (ou rodar `_ascii` com `errors="strict"` num modo de auditoria/CI para
-  pegar tipografia fora de latin-1 cedo). Aproveita a compressão OFF (`set_compression(False)`,
-  `censo_report.py:228-236`) que já expõe o texto cru.
-- Atualizar `tests/unit/test_relatorio_municipal.py` (~26 asserts `assert b"..."`, ex. linhas
-  354-368,467-472,498,558-583) e `tests/unit/test_relatorio_pontual_censitario_export.py` (~40
-  asserts, ex. linhas 125-126,268-269,311-326,382-416,554-556) para as strings acentuadas em
-  `latin-1` (`b"Visao"` -> `"Visão".encode("latin-1")`). O laço
-  `for header in PDF_SECTION_HEADERS: assert header.encode("latin-1") in pdf_bytes` NÃO quebra (lê a
-  constante), mas os `assert b"literal"` isolados precisam ser atualizados um a um.
+**Objetivo.** Re-rodar `estrutura_funil` (matriz vs composto, mesmo harness k-fold 5×5 seed=42/IC95 vs demanda
+observada) **fiando o eixo de disputa no `share_captura_huff` DENSO** (da base do ATR-01) em vez do original.
+Reportar o número atualizado do composto (R²_oof + IC95), o melhor eixo isolado, o ganho material e a
+redundância — e re-emitir o veredito **matriz vs composto** com a base densa. Veredito em `data/analysis/`
+(gitignored). **Não materializa nada em produção** (isso é BLK-ATR-05).
 
-**Fora de escopo.** Núcleo funcional `censo_*`: `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
-`RAIO_CENSITARIO_DEFAULT_KM`, contagem/ordem/estrutura das páginas, grid de Big Numbers, marca d'água
-anti-PII (BLK-EST-03), `set_compression(False)`, `pdf_version` — SÓ as STRINGS mudam. UI do dashboard
-(BLK-ACENTO-01). `score_priorizacao`/M1/artefatos oficiais. Trocar core font por TTF Unicode (não é
-necessário; latin-1 basta).
+**Critérios de aceite.** Usa o `share` denso do ATR-01 (documentar a fonte exata do eixo de disputa);
+validação out-of-fold vs baseline (média + eixos isolados + matriz), IC95 seed=42, **R² in-sample banido do
+veredito**; `membros` só como ALVO (DEC-009); degradação graciosa onde o Huff não fala; veredito honesto
+(NO-GO/matriz é válido); caveat de cobertura ~1% explícito; mtime dos 4 oficiais M1 inalterado; suíte verde;
+`import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); DEC-008 (out-of-fold, R² in-sample banido, NO-GO válido); DEC-009 (`membros`
+só ALVO); DEC-012 (sem PII pessoal).
 
-**Guardrails.** READ-ONLY sobre o M1 (§5). Anti-PII inalterado (compressão OFF, marca d'água do
-solicitante BLK-EST-03, `.pptx`/PDF nunca versionados, `image24.png` nunca embutido). Sem dependência
-de rede nova.
+---
 
-**Critério de aceite.** PDFs (pontual + municipal) com acentuação correta renderizando em `latin-1`;
-teste anti-`"?"` verde (zero caractere perdido); método de interseção/raio/estrutura/marca d'água
-INTOCADOS; suíte verde (asserts de PDF atualizados); ruff+mypy limpos; revisão visual humana do PDF
-aprovada.
+### BLK-PROD-02 — Limpar leftovers de staging
 
-**Fechamento do ciclo BLK-ACENTO-02 (2026-07-07) — VEREDITO: APROVADO.** Esteira Média sem gate
-humano: Block Orchestrator -> Planner -> Builder (Opus, override +1 por volume/risco latin-1) ->
-QA (Opus 4.8). Rodou na MESMA branch ciclo/BLK-ACENTO-01 (decisão de Vinicius: acumular os dois
-blocos para UM PR). Feito: acentuação latin-1 de todo o texto-fonte dos 2 relatórios PDF
-(censo_report.py ~50 _ascii + relatorio_municipal.py ~53 _ascii — PDF_SECTION_HEADERS, títulos,
-Big Numbers, legendas, rodapés, blocos recente+classico), correção dos 2 comentários-fonte
-enganosos ("ASCII, sem acento" -> latin-1 cobre acento; proibido é tipografia fora de latin-1),
-banimento de tipografia esperta (só `-` `"` `(c)` `...`), preservando identificadores em prosa
-(score_priorizacao, dominio_df), carimbos de contrato (VERSAO_CONTRATO_*/METODO_RELATORIO_*),
-separadores decimais e marcas (_REDE_NOME_OVERRIDES). Núcleo censo_* INTOCADO (interseção 1,5 km,
-RAIO_CENSITARIO_DEFAULT_KM, /Count 5 e /Count 9, grid Big Numbers, marca d'água BLK-EST-03,
-set_compression(False), pdf_version, _ascii()). Teste novo tests/unit/test_relatorio_acentuacao_
-regressao.py: camada 5.1 (auditoria errors="strict" via monkeypatch de _ascii nos 2 módulos,
-gera os 3 PDFs, assert falhas==[]) + camada 5.2 (byte-scan anti-"?" com allowlist mínima do
-`/maps/search/?api=1&query=` da URL do Maps no template classico — achado empírico: gerando SEM
-imagens, recente=0/municipal=0/classico=1 "?" exatamente desse padrão; PNG binário contém 0x3F
-legítimos, por isso o scan roda sem imagens). Asserts de bytes atualizados em lockstep
-(test_relatorio_municipal.py e test_relatorio_pontual_censitario_export.py). Follow-up (ressalva do
-QA): 2 legendas PIL do mapa municipal `_COBERTURA_LEGENDA`/`_RESUMO_LEGENDA` (l.106/112)
-"Aprovado (dado proprio)" -> "Aprovado (dado próprio)", consistente com o mesmo caminho PIL já
-acentuado (titulo/"Agregação H3"). Validações (QA, NO-BYPASS): ruff limpo; import ok; mypy só os 6
-erros PRÉ-EXISTENTES de types-requests em arquivos não tocados (0 novo); suíte serial completa
-`1434 passed, 2 skipped, 1 failed` — a única falha (test_score_retencao_territorial::
-test_run_readonly_m1_por_mtime, parquet M2 gitignored) é PRÉ-EXISTENTE/ambiental, alheia ao bloco;
-`-n auto` instável no Python 3.14 (execnet EOFError). READ-ONLY M1 confirmado; pesos
-renda=0.40/pop=0.60 e H3_RESOLUTION=7 preservados; nenhum parquet oficial tocado. Pendência humana:
-revisão visual dos 3 PDFs (pontual recente + classico + municipal) + merge/PR conjunto
-BLK-ACENTO-01 + BLK-ACENTO-02 (branch ciclo/BLK-ACENTO-01). Sem dry-run (não tocou orquestração).
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (manutenção; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Baixa. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (nenhuma). |
+| **Autonomia** | **loop-safe** (paths PRÉ-APROVADOS) — READ-ONLY M1; deleção restrita a lixo temporário com glob FIXO; sem VPS. A lista fixa abaixo substitui a "confirmação explícita" original. |
+
+**Contexto.** Sobras de execução ocupam espaço e poluem buscas: `tmp_codex_runtime/` (artefatos de teste) e
+`*.tmp.parquet` temporários.
+
+**Objetivo.** Remover EXCLUSIVAMENTE os caminhos pré-aprovados abaixo e nada além.
+
+**Decisões PRÉ-FIXADAS (a única ação destrutiva do loop — escopo travado):**
+- Remover o diretório `tmp_codex_runtime/` (inteiro).
+- Remover arquivos que casem **exatamente** `data/outputs/*.tmp.parquet` (NUNCA `.parquet` sem o sufixo `.tmp` — os oficiais tipo `hexagonos_brasil_dashboard.parquet` ficam INTOCADOS).
+- **Nenhum outro caminho.** Qualquer glob fora desses dois → abortar.
+
+**Critérios de aceite.** Só os 2 globs removidos; artefatos oficiais em `data/outputs/` intactos (mtime dos 4 oficiais
+inalterado); `loop_guard` limpo (não toca `config.py`/`pipelines/m1`/artefatos M1); suíte verde.
+
+---
+
+### BLK-VIAB-01 — Validação/limpeza da base de imóveis candidatos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (camada paralela de dados de entrada; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome `data/ultra/Imoveis_*.xlsx` LOCAL, gitignored). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; lê xlsx LOCAL (sem API ao vivo); escreve só `data/staging` (paralela) + `data/analysis`; endereço de imóvel comercial é não-PII pessoal; saída gitignored; sem VPS. |
+
+**Contexto.** A base de imóveis (28 candidatos no snapshot 16/06, cresce pelo CRM) tem sujeira REAL medida: aluguel
+placeholder (`11.111,11`), 4 metragens implausíveis (`14,9`/`25,63`/`190`/`200` m²), e as 28 linhas SEM `lat/lng`.
+Precisa de uma camada de validação permanente antes de qualquer conta de viabilidade.
+
+**Objetivo.** Ler a base, aplicar as regras de limpeza PRÉ-FIXADAS e materializar
+`data/staging/imoveis_candidatos_limpos.parquet` (paralela, gitignored) + relatório
+`data/analysis/imoveis_qualidade.md` (o que entrou, o que caiu e por qual regra).
+
+**Decisões PRÉ-FIXADAS (substituem o gate humano no loop):**
+- **Metragem:** descartar `ÁREA < 500 m²` (filtro de ERRO/não-academia — remove os 4 lixos; NÃO é filtro de viabilidade, o motor julga tamanho depois).
+- **Aluguel:** manter só `10.000 ≤ ALUGUEL ≤ 500.000` E descartar o placeholder repdigit `11.111,11`.
+- **Coordenada:** NÃO descartar linha sem `lat/lng` — só carimbar `flag_sem_coord=True` (o batch VIAB-03 roda coordless; o geocoding é bloco humano).
+- **Status:** manter todos (PROSPECÇÃO/APROVADOS/HISTÓRICO) preservando a coluna `STATUS` para filtro posterior.
+
+**Critérios de aceite.** Parquet limpo materializado (paralela, gitignored); relatório com contagem entrou/caiu por
+regra; determinístico (mesmas regras → mesma saída); nenhuma escrita em `config.py`/`pipelines/m1`/artefatos oficiais;
+suíte verde. **Guardrail.** §5 READ-ONLY M1; regras de limpeza são parâmetros da camada paralela (não §3); loop-safe só
+enquanto não tocar `config.py`/`pipelines/m1` (o `loop_guard` aborta).
+
+---
+
+## BLK-VIAB-02 — Faixa de demanda-premissa por tier de metragem (comparáveis reais)
+
+Data: 2026-07-07
+Criticidade: Média (camada paralela de premissa; READ-ONLY sobre o M1)
+Status: CONCLUÍDO
+
+### O que foi feito
+Criados 2 arquivos:
+- `src/motor_expansao/dimensionamento/demanda_premissa.py` — módulo puro com funções
+  `carregar_ultra`, `carregar_eng_corpo`, `combinar_bases`, `calcular_tiers`, `materializar`, `run`.
+- `tests/unit/dimensionamento/test_demanda_premissa.py` — 28 testes unitários (fixture sintética).
+
+### Artefatos gerados (gitignored)
+- `data/staging/demanda_premissa_por_tier.parquet` (5 linhas)
+- `data/analysis/demanda_premissa_qualidade.md`
+
+### N por tier (dados reais)
+| Tier (m²)  | N  | p10   | p50   | p90   | flag_extrapolacao |
+|---|---|---|---|---|---|
+| <1000      | 17 | 1467  | 2063  | 3589  | False |
+| 1000-1499  | 46 | 1559  | 2532  | 3889  | False |
+| 1500-1999  | 36 | 1763  | 2748  | 4578  | False |
+| 2000-2999  | 11 | 2870  | 3888  | 4752  | False |
+| >=3000     |  2 | 2578  | 5706  | 8833  | True  |
+Total: 112 unidades (Ultra 54 + Eng Corpo 58)
+
+### Validações
+- ruff: limpo (0 erros)
+- mypy: limpo (0 erros)
+- pytest subset: 28/28 passed (testes novos)
+- pytest impactado (dimensionamento/ + streamlit): 500 passed, 2 failed (pré-existentes Plus Code)
+- smoke import: ok
+- loop_guard: GUARD OK, 0 caminhos proibidos
+- viabilidade_ponto.py: INTOCADO (git diff vazio)
+- mtimes M1: brasil_estrutural.parquet=1780501621, brasil_priorizados.parquet=1780501631 (INALTERADOS)
+
+### Referências
+- `context/handoff/20260707-HHMMSS-builder.md`
+- `tasks/backlog.md` (linha "~1.100" corrigida para "~112 unidades")
+
+---
+
+### BLK-VIAB-02 — Faixa de demanda-premissa por tier de metragem (comparáveis reais)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (insumo de premissa do motor; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome `unidades_ultra_performance_hex.parquet` + `data/validacao/academias_engenharia_do_corpo.xlsx`; Smart Fit e Sky Fit não têm metragem disponível). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; consome `data/staging` + `data/validacao` (xlsx LOCAL) + `concorrentes/` (CSV LOCAL); saída `data/staging`+`data/analysis` gitignored; sem rede; sem VPS. |
+
+**Contexto.** O motor `analisar_viabilidade_ponto` recebe `base_calibracao_df` para derivar a faixa de alunos por m²
+(p10/p50/p90). Hoje essa faixa é frágil; temos ~112 unidades reais (Ultra 54 + Eng Corpo 58) com metragem+alunos totais para calibrá-la.
+
+**Objetivo.** Derivar uma **faixa de demanda-premissa (p10/p50/p90 de alunos por unidade) POR TIER de metragem** a
+partir dos comparáveis reais (Ultra `ALUNOS_TOTAL` + Smart `Alunos Totais SF` + Eng `Alunos Totais` + Sky `Alunos EVO`),
+materializando `data/staging/demanda_premissa_por_tier.parquet` (a `base_calibracao_df` que o VIAB-03 consome).
+
+**Decisões PRÉ-FIXADAS (guardrail DEC-009 — crítico):**
+- A premissa vem da relação **metragem→alunos de comparáveis REAIS** (curva de capacidade), **NUNCA de renda/pop/geografia** do ponto. **PROIBIDO** usar `lat/lng` do candidato como preditor de demanda.
+- **Alvo = alunos_totais REAIS**, NUNCA `membros`/agregador (achado da circularidade 2026-07-07; memória `huff-membros-circularidade-teto-demanda`).
+- Tiers de metragem pré-fixados (m²): `[<1.000, 1.000–1.499, 1.500–1.999, 2.000–2.999, ≥3.000]`.
+
+**Critérios de aceite.** Parquet de faixas por tier; N de comparáveis por tier documentado; sem PII (só contagens
+agregadas); determinístico; `loop_guard` limpo. **Guardrail.** §5 READ-ONLY M1; DEC-009 intacta (premissa, não predição).
+
+---
+
+### BLK-VIAB-03 — Batch de viabilidade sobre candidatos limpos (coordless) + ranking por margem de segurança
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (entrega o coração do produto de viabilidade; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-VIAB-01** (candidatos limpos) + **BLK-VIAB-02** (faixa de demanda-premissa). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; reusa `dimensionamento/viabilidade_ponto.analisar_viabilidade_ponto` (PURO, determinístico); modo COORDLESS (`setores_df=None` → sem rede/catchment); saída `data/staging`+`data/analysis` gitignored; sem VPS. |
+
+**Contexto.** O motor property-first já existe (`analisar_viabilidade_ponto(lat, lng, m2, aluguel_pedido,
+demanda_premissa, ...)`) e degrada graciosamente sem coordenada (`setores_df=None` → não roda catchment/zona-morta,
+mas entrega faixa de alunos + break-even + aluguel-teto). Falta o batch que roda isso sobre os candidatos reais.
+
+**Objetivo.** Rodar o motor para CADA candidato limpo (VIAB-01) com a faixa de demanda-premissa (VIAB-02), em modo
+coordless, e materializar `data/staging/viabilidade_candidatos.parquet` + relatório
+`data/analysis/viabilidade_candidatos.md` ranqueado por **margem de segurança**.
+
+**Decisões PRÉ-FIXADAS:**
+- **Ranking = margem de segurança = `aluguel_teto(demanda=p50) − aluguel_pedido`**, reportando a banda p10..p90. Candidato ROBUSTO = aluguel pedido < teto em TODA a faixa (p10..p90).
+- **NO-GO honesto:** aluguel pedido > teto já em p50 → NO-GO; entre `teto(p50)` e `teto(p10)` → condicional/negociar; `flag_extrapolacao` quando m² fora do envelope de calibração.
+- **Ticket/margem:** usar os defaults do motor (`SIM_MENSALIDADE_BALCAO`, `margem_alvo=0.10`) — não inventar.
+- **Sensibilidade:** materializar a grade `demanda × aluguel` de `grade_sensibilidade` por candidato.
+
+**Critérios de aceite.** Parquet + relatório ranqueado; cada candidato com faixa de alunos, break-even, aluguel-teto,
+margem, sensibilidade e `flag_extrapolacao`; **demanda SÓ como premissa** (nunca `lat/lng`); **reusa o motor SEM
+modificá-lo** (`git diff` de `viabilidade_ponto.py` vazio); determinístico; `loop_guard` limpo. **Guardrail.** §5
+READ-ONLY M1; DEC-009 (premissa explícita).
+
+---
+
+### BLK-VIAB-04 — Backtest do motor de viabilidade contra as 54 unidades Ultra reais
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (valida o motor antes de confiar nele; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome `unidades_ultra_performance_hex.parquet`: m²/faturamento/alunos/ticket reais das 54 unidades). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; validação sobre dado interno já em `data/staging`; saída `data/analysis` gitignored; reusa harness DEC-008; sem rede; sem VPS. |
+
+**Contexto.** Antes de ranquear imóveis com o motor, é preciso saber se ele erra. As 54 unidades Ultra maduras têm
+m²/faturamento/alunos/ticket REAIS — dá pra medir predito vs realizado.
+
+**Objetivo.** Rodar o motor com o m² real de cada unidade Ultra e a demanda real (`ALUNOS_TOTAL`) como premissa, e
+comparar break-even/aluguel-teto/faixa-de-alunos PREVISTOS vs REALIZADOS. Relatório
+`data/analysis/viabilidade_backtest_ultra.md` com erro (MAE/viés) e os casos onde o motor erra feio.
+
+**Decisões PRÉ-FIXADAS (DEC-008):** validação honesta predito vs realizado por unidade; reportar erro absoluto e viés;
+**NÃO ajustar o motor neste bloco** (só medir); se o motor errar de forma material e sistemática → registrar como
+necessidade de recalibração (follow-up com gate), **não silenciar**.
+
+**Critérios de aceite.** Relatório com erro por unidade + agregado; identificação de vieses; **nenhum ajuste do motor**
+(`git diff` de `viabilidade_ponto.py` vazio); determinístico; `loop_guard` limpo. **Guardrail.** §5 READ-ONLY M1.
+
+---
+
+---
+
+### BLK-PROD-03 — Avaliar hex_id como category com benchmark
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (performance de carga; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Baixa. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (nenhuma). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; perf/medição determinística; consome `data/staging`; escreve só `data/analysis` (relatório); sem VPS. |
+
+**Contexto.** `hex_id` é chave de join em vários lugares; converter para `category` PODE ajudar ou prejudicar (memória/tempo).
+Requer benchmark antes de qualquer mudança.
+
+**Objetivo.** Medir o impacto de `hex_id` como `category` vs `string` em carga/join sobre os parquets de staging, com
+relatório em `data/analysis/benchmark_hexid_category.md`.
+
+**Decisão PRÉ-FIXADA.** Só APLICAR a mudança se o benchmark mostrar **ganho ≥ 15%** em tempo OU memória **sem regressão
+de teste**; caso contrário, só materializar o relatório e NÃO alterar código de produção. Nunca tocar `config.py`/`pipelines/m1`.
+
+**Critérios de aceite.** Relatório de benchmark reprodutível; se aplicada, mudança restrita a leitura/carga (não recalcula
+score); suíte verde; `loop_guard` limpo.
+
+---
+
+- BLK-PROD-02 (concluído 2026-07-07) — ver tasks/completed.md
+
+---
+
+### BLK-PROD-06 — Relatório de movimentação concorrencial (a partir de staging)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (analytics; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Baixa. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome os parquets de concorrentes JÁ em `data/staging`). |
+| **Autonomia** | **loop-safe** (com escopo) — READ-ONLY M1; analítico sobre concorrentes JÁ em `data/staging`; **NÃO** faz a coleta ao vivo (essa é DEC-013/VPS, fora do loop); saída `data/analysis` gitignored; sem rede; sem VPS. |
+
+**Contexto.** Queremos ler a movimentação da concorrência (contagem por rede/cidade, oferta consumida, impacto no
+residual). A **coleta** semanal roda na VPS (DEC-013) — este bloco é só a **geração do relatório** a partir do que já
+está em staging, sem tocar rede.
+
+**Objetivo.** Gerar `data/analysis/movimentacao_concorrencial.md` com: contagem por rede/UF/cidade, oferta consumida e
+impacto nas oportunidades residuais, a partir de `concorrentes_mapeados.parquet`/`concorrentes_densos.parquet` e da
+camada de mercado.
+
+**Decisões PRÉ-FIXADAS:**
+- **Fonte = parquets de concorrentes em `data/staging`** (não a coleta ao vivo).
+- Se houver ≥ 2 snapshots temporais em staging → calcular deltas (rede/cidade); se houver só 1 → gerar a estrutura + o retrato atual (sem delta), documentando a limitação.
+- **READ-ONLY:** não altera `score`/residual/artefatos — só LÊ e reporta.
+
+**Critérios de aceite.** Relatório materializado a partir de staging (sem rede); determinístico; nenhuma escrita em
+score/artefatos M1; `loop_guard` limpo; suíte verde.

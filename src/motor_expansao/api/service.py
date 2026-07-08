@@ -497,6 +497,23 @@ def gerar_pdf_municipio(
     if result.get("n_hex_total", 0) == 0:
         raise APIError(404, f"Municipio '{nome_exato}' ({uf}) sem hexagonos", "municipio_sem_dados")
 
+    # Popula o cache de logos das redes (_ICON_CACHE) ANTES de renderizar os mapas e o PDF.
+    # Sem isto, tanto os pins do mapa quanto o breakdown "Concorrentes por rede" (slide 8)
+    # caem na sigla de texto — as logos das academias nao aparecem. Espelha o fluxo Pontual,
+    # onde render_mapas_censitarios_combinados chama preload_logos (censo_map.py). Idempotente
+    # e cacheado por processo.
+    from motor_expansao.dashboard.competitors import preload_logos
+
+    logos_dir = (
+        settings.competitors_logos_dir
+        if settings.competitors_logos_dir is not None
+        and Path(settings.competitors_logos_dir).is_dir()
+        else None
+    )
+    ultra_dir = settings.ultra_dir if Path(settings.ultra_dir).is_dir() else None
+    if logos_dir is not None:
+        preload_logos(logos_dir, ultra_dir=ultra_dir)
+
     def _mapas(basemap: bool):
         return render_mapas_municipio(
             df_muni, result, competitors_df=comp_df, ultra_df=ultra_df, basemap=basemap,
@@ -510,7 +527,6 @@ def gerar_pdf_municipio(
         except Exception:
             mapas = None
 
-    ultra_dir = settings.ultra_dir if Path(settings.ultra_dir).is_dir() else None
     payloads = gerar_payloads_download_relatorio_municipal(
         result, mapas, ultra_dir=ultra_dir, solicitante=solicitante or consumidor,
     )
