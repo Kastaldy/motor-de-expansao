@@ -2,31 +2,41 @@
 
 ## Bloco atual
 
-ID: BLK-PROD-06
-Nome: Relatório de movimentação concorrencial (a partir de staging)
-Status: aprovado
-Tipo: analytics (READ-ONLY sobre o M1; loop-safe)
-Criticidade: Média
-Esteira: Block Orchestrator (concluído) → Planner → Builder (concluído) → QA (APROVADO)
-Skill atual: QA (concluído)
-Próxima Skill: Block Orchestrator (fechamento)
+ID: BLK-MAP-02
+Nome: Filtro de marcas de concorrentes do mapa em menu expansível (fechado por padrão)
+Status: aprovado (QA)
+Tipo: feature (UI)
+Criticidade: baixa
+Esteira: Block Orchestrator → Builder → QA (APROVADO)
+Skill atual: Fechamento (orquestrador) CONCLUÍDO
+Skill anterior: QA (APROVADO 2026-07-08)
+Próxima Skill: merge ciclo/BLK-MAP-02 -> integracao/map02-relmun05-06 (orquestrador), depois ciclo BLK-RELMUN-05
 
 ## Objetivo
-Materializar `data/analysis/movimentacao_concorrencial.md` a partir dos parquets de concorrentes
-em `data/staging/`, com contagem por rede/UF/cidade, oferta consumida e impacto no residual.
-READ-ONLY sobre o M1. Sem coleta ao vivo.
+Envolver o st.multiselect("Redes de concorrentes", ...) (pages.py:4382, em render_mapa_territorial)
+num st.expander(..., expanded=False) para o filtro nascer fechado, preservando a lógica BLK-MAP-01
+(seleção vazia => esconde concorrentes), key, default e format_func. READ-ONLY sobre o M1.
 
-## Dados confirmados pelo BO
-- `data/staging/concorrentes_mapeados.parquet`: 3.296 linhas, 28 redes, 3.179 válidos; snapshot único (2026-04-22..05-04)
-- `data/staging/concorrentes_densos.parquet`: 10.165 linhas, 40 redes (inclui TotalPass/Wellhub)
-- `data/staging/hexagonos_mercado_mapeado.parquet`: join via `hex_id_res7` p/ uf/cidade/oferta; data_snapshot '2026-06-11'
-- SNAPSHOT ÚNICO — retrato atual sem delta (conforme decisão pré-fixada do backlog)
+## Fluxo de branch (integração — decisão de Vinicius 2026-07-08)
+- Branch do ciclo: ciclo/BLK-MAP-02, ramificada da SECUNDÁRIA integracao/map02-relmun05-06 (não da main).
+- Ao fechar (QA aprovado + commit por path), o orquestrador MERGEIA ciclo/BLK-MAP-02 -> integracao/map02-relmun05-06.
+- PR para main só após os 3 ciclos (MAP-02, RELMUN-05, RELMUN-06) aprovados e mergeados na secundária.
 
-## Branch do ciclo
-ciclo/loop-20260707-123809
+## Tiering de modelo (Passo 4) — Baixa
+- Block Orchestrator: haiku
+- Builder: sonnet
+- QA: opus 4.8 (sempre)
+- Nota: incluo QA mesmo sendo Baixa (a esteira padrão Baixa é BO->Builder) porque no fluxo de
+  integração não há revisão humana por ciclo até o PR final — QA é o gate de qualidade.
+
+## Paths do ciclo (commit por path — NUNCA git add -A)
+- src/motor_expansao/dashboard/pages.py
+- tests/integration/test_streamlit_app.py (se algum assert travar label/posição)
+- tasks/current_task.md, tasks/completed.md, tasks/backlog.md (fechamento)
+- context/handoff.md, context/handoff/
 
 ## Guardrails
-- §5 READ-ONLY M1: nenhuma escrita em config.py/pipelines/m1/artefatos oficiais.
-- §6.1 loop-safe: sem VPS, sem rede, escreve só data/analysis (gitignored).
-- loop_guard.py limpo obrigatório.
-- DEC-013: coleta de concorrentes é VPS/cron — este bloco só LÊ staging.
+- §5 READ-ONLY M1: zero recálculo/alteração de score/pesos/carteira/plano/artefatos.
+- Preservar key="mapa_territorial_redes_concorrentes", options/default=_all_redes, format_func,
+  e a lógica BLK-MAP-01 (seleção vazia => competitors_df_filtered=None => esconde concorrentes).
+- Não tocar lógica de filtragem/legenda/cluster; COMPETITOR_BRANDS; nenhum artefato M1.
