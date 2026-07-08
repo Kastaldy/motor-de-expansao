@@ -7703,3 +7703,23 @@ Determinístico. **Guardrail.** §5 READ-ONLY M1; não altera app/artefatos.
 do Streamlit, o que é cacheado (`@st.cache_data`) vs recomputado por rerun, tamanho dos artefatos carregados, grafo
 de deps e pontos de acoplamento. Entrega diagrama + inventário em `docs/arquitetura_app_atual.md`.
 **Decisões PRÉ-FIXADAS.** Só leitura; nenhuma alteração. **Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-REV-03 — Diagnóstico de gargalo: render do mapa (pydeck)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (dor #1; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-01** (harness de baseline). |
+| **Autonomia** | **loop-safe** — mede o lado Python; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
+
+**Contexto.** Dor #1. Suspeitos: nº de pontos servidos, **serialização pydeck→browser a cada rerun**, tesselação H3,
+cap `MAP_POINT_LIMIT`.
+**Objetivo.** Medir a contribuição Python (montagem do layer, serialização, downsample) e formular causa-raiz;
+levantar opções (downsample mais agressivo, **tiles vetoriais/MVT**, render **client-side deck.gl/MapLibre** servido
+por API) com ganho estimado. Relatório.
+**Decisões PRÉ-FIXADAS.** Só diagnostica (NÃO implementa); paint no browser = medição manual (nota). **Guardrail.** §5.

@@ -972,23 +972,8 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 
 ---
 
-### BLK-REV-03 — Diagnóstico de gargalo: render do mapa (pydeck)
+- BLK-REV-03 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (dor #1; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-REV-01** (harness de baseline). |
-| **Autonomia** | **loop-safe** — mede o lado Python; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
-
-**Contexto.** Dor #1. Suspeitos: nº de pontos servidos, **serialização pydeck→browser a cada rerun**, tesselação H3,
-cap `MAP_POINT_LIMIT`.
-**Objetivo.** Medir a contribuição Python (montagem do layer, serialização, downsample) e formular causa-raiz;
-levantar opções (downsample mais agressivo, **tiles vetoriais/MVT**, render **client-side deck.gl/MapLibre** servido
-por API) com ganho estimado. Relatório.
-**Decisões PRÉ-FIXADAS.** Só diagnostica (NÃO implementa); paint no browser = medição manual (nota). **Guardrail.** §5.
 
 ---
 
