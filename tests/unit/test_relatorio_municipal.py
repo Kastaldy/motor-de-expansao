@@ -16,6 +16,9 @@ import pandas as pd
 import pytest
 
 from motor_expansao.dashboard.relatorio_municipal import (
+    _COR_APROVADO_MUNICIPAL,
+    _COR_APROVADO_PROPRIO,
+    _COR_REPROVADO,
     CAPACIDADE_UNIDADE,
     PDF_SECTION_HEADERS,
     _fit_contain,
@@ -126,6 +129,14 @@ def test_agregar_municipio_formula_espaco_d1():
     assert res["espaco_para_academias"] == 4
     assert res["n_hex_total"] == 4
     assert res["uf"] == "SP"
+
+
+def test_cores_aprovados_verdes_blk_relmun_05():
+    """BLK-RELMUN-05: aprovados em verde (2 tons distinguiveis); reprovado cinza inalterado."""
+    assert _COR_APROVADO_PROPRIO == (20, 170, 80)
+    assert _COR_APROVADO_MUNICIPAL == (90, 190, 120)
+    assert _COR_REPROVADO == (150, 156, 170)
+    assert _COR_APROVADO_PROPRIO != _COR_APROVADO_MUNICIPAL != _COR_REPROVADO
 
 
 def test_hex_destacado_criterio_so_residual_sem_sam():
@@ -362,6 +373,9 @@ def test_pdf_municipal_8_paginas_e_secoes():
     # _hex_destacado_mask (SO Residual Fitness >= 2.000; termo de SAM removido).
     assert b"SAM Fitness" not in pdf_bytes
     assert b"Residual Fitness >= 2.000" in pdf_bytes
+    # BLK-RELMUN-05: wording neutro - PDF nao deve mais mencionar "amarelo(s)" como texto exibido.
+    assert b"amarelo" not in pdf_bytes.lower()
+    assert "hexágonos destacados".encode("latin-1") in pdf_bytes
     # FU1 (slide novo, pos-capa): "Visao Geral do Municipio" com bloco de regioes consideradas.
     assert "Visão Geral do Município".encode("latin-1") in pdf_bytes
     assert "REGIÕES CONSIDERADAS".encode("latin-1") in pdf_bytes
