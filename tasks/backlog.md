@@ -989,6 +989,260 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 
 ---
 
+## Epic BLK-REV — Revisão séria do app: pesquisa e planejamento (Desempenho + Arquitetura + UX/UI)
+
+> **Objetivo:** revisar a estrutura INTEIRA do app para achar pontos fortes/fracos e planejar o produto mais
+> otimizado e completo possível — **incluindo avaliar refazer o app noutra stack web** (sair do Streamlit se a
+> evidência justificar). **Épico 100% de PESQUISA e PLANEJAMENTO: nenhum bloco implementa produção.** Cada bloco
+> entrega um RELATÓRIO/PROPOSTA (gitignored em `data/analysis/` ou em `docs/`). As DECISÕES (rebuild vs refactor,
+> stack alvo, direção de UX) são **gate humano + DEC** no bloco de síntese (BLK-REV-12). **READ-ONLY sobre o M1**
+> em todos os blocos.
+>
+> **Dores relatadas por Felipe (2026-07-08), que ancoram a pesquisa:** (1) lag ao **renderizar o mapa**; (2) lag
+> na **troca de modos de cor/heat maps** (M1/Censitário/Residual…); (3) lag na **seleção de hexes + inclusão no
+> cenário múltiplo**; (4) lag ao **gerar PDF Pontual e Municipal**; (5) app **poluído e pouco usual para leigos**.
+>
+> **Divisão de autonomia:** MEDIÇÃO/DIAGNÓSTICO/pesquisa de arquitetura (REV-01..07) é **loop-safe** (headless,
+> determinística, READ-ONLY, entrega relatório). O que exige **ver o app renderizado, julgamento de design ou
+> decisão** (spike visual, UX, síntese) é **humano** (lição BLK-UI-10: o loop não enxerga a UI). **Caveat honesto:**
+> o loop mede o lado **Python/servidor** (data prep, serialização, recompute do rerun, geometria, tiles); a medição
+> de **paint/interação no browser** é complemento **manual**, anotado no relatório.
+
+### BLK-REV-01 — Baseline de performance ponta-a-ponta (instrumentação + medição)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (base factual de toda a otimização; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (consome o app + `data/staging`/`data/outputs`). |
+| **Autonomia** | **loop-safe** — instrumentação headless determinística; READ-ONLY M1; escreve só `data/analysis`; sem VPS/rede de produção. |
+
+**Contexto.** Sem número, otimização é palpite. O ciclo de perf de mai/2026 atacou carga por UF/aba, mas não há
+baseline dos 4 caminhos que o Felipe sente lentos.
+**Objetivo.** Instrumentar timing por caminho e medir (frio/quente, por tamanho de UF): carga inicial, troca de
+UF/município, render do mapa (lado Python), troca de modo de cor, seleção/cenário múltiplo, PDF Pontual/Municipal.
+Relatório `data/analysis/perf_baseline_app_2026.md`.
+**Decisões PRÉ-FIXADAS.** Mede o lado Python/servidor (data prep, serialização pydeck, recompute do rerun,
+geometria/tiles/fpdf2); paint/interação no browser = complemento MANUAL (nota no relatório, não bloqueia).
+Determinístico. **Guardrail.** §5 READ-ONLY M1; não altera app/artefatos.
+
+---
+
+### BLK-REV-02 — Inventário arquitetural e mapa de dependências do app atual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (retrato honesto antes de refatorar vs refazer; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (leitura de código). |
+| **Autonomia** | **loop-safe** — leitura de código/artefatos; READ-ONLY M1; escreve só `docs/`/`data/analysis`; sem VPS. |
+
+**Contexto.** Precisamos de um retrato honesto da arquitetura atual antes de decidir refatorar vs refazer.
+**Objetivo.** Mapear camadas (carga parquet, pydeck, `session_state`, fpdf2/matplotlib, tiles), o **modelo de rerun**
+do Streamlit, o que é cacheado (`@st.cache_data`) vs recomputado por rerun, tamanho dos artefatos carregados, grafo
+de deps e pontos de acoplamento. Entrega diagrama + inventário em `docs/arquitetura_app_atual.md`.
+**Decisões PRÉ-FIXADAS.** Só leitura; nenhuma alteração. **Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-REV-03 — Diagnóstico de gargalo: render do mapa (pydeck)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (dor #1; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-01** (harness de baseline). |
+| **Autonomia** | **loop-safe** — mede o lado Python; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
+
+**Contexto.** Dor #1. Suspeitos: nº de pontos servidos, **serialização pydeck→browser a cada rerun**, tesselação H3,
+cap `MAP_POINT_LIMIT`.
+**Objetivo.** Medir a contribuição Python (montagem do layer, serialização, downsample) e formular causa-raiz;
+levantar opções (downsample mais agressivo, **tiles vetoriais/MVT**, render **client-side deck.gl/MapLibre** servido
+por API) com ganho estimado. Relatório.
+**Decisões PRÉ-FIXADAS.** Só diagnostica (NÃO implementa); paint no browser = medição manual (nota). **Guardrail.** §5.
+
+---
+
+### BLK-REV-04 — Diagnóstico de gargalo: troca de modos de cor / heat maps
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (dor #2; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-01**. |
+| **Autonomia** | **loop-safe** — mede o recompute do rerun; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
+
+**Contexto.** Dor #2. Suspeita central: o **rerun do Streamlit recomputa e re-serializa o mapa inteiro** ao trocar
+M1/Censitário/Residual, mesmo mudando só a cor.
+**Objetivo.** Medir o custo de troca de modo; testar hipóteses (pré-computar as N camadas de cor, **recolor
+client-side**, cache por modo). Relatório com opções e ganho estimado.
+**Decisões PRÉ-FIXADAS.** Só diagnostica. **Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-REV-05 — Diagnóstico de gargalo: seleção de hex + cenário múltiplo
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média/Alta** (dor #3; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-01**. |
+| **Autonomia** | **loop-safe** — mede o recompute de cenário; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
+
+**Contexto.** Dor #3. O ciclo **clique→rerun→recompute do cenário** a cada hex adicionado.
+**Objetivo.** Medir a latência de add/remove hex e o recompute de `agregar_cenario_multihex`; opções (estado
+client-side, **deltas** em vez de recompute total, debounce). Relatório.
+**Decisões PRÉ-FIXADAS.** Só diagnostica; latência de interação no browser = nota manual. **Guardrail.** §5.
+
+---
+
+### BLK-REV-06 — Diagnóstico de gargalo: geração de PDF (Pontual + Municipal)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (dor #4; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-01**. |
+| **Autonomia** | **loop-safe** — geração de PDF é headless e mensurável ponta-a-ponta; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
+
+**Contexto.** Dor #4. Suspeito forte: o **fetch de tiles do basemap pela rede** (DEC-004/011) dentro da geração —
+I/O de rede é lento e variável.
+**Objetivo.** Medir cada etapa headless (intersecção geométrica de setores, **fetch/cache de tiles**, render
+matplotlib, montagem fpdf2) e isolar o gargalo; opções (cache de tiles mais agressivo, pré-render, geometria
+simplificada, paralelismo). Relatório.
+**Decisões PRÉ-FIXADAS.** Só diagnostica; raio 1,5 km e método de intersecção INTOCADOS (só medidos). **Guardrail.** §5.
+
+---
+
+### BLK-REV-07 — Avaliação de fundação: Streamlit vs. alternativas (matriz de decisão)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Estratégica** (embasa rebuild vs refactor; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-02** + **BLK-REV-03..06** (precisa do inventário + dos achados de perf). |
+| **Autonomia** | **loop-safe** — pesquisa/relatório (a DECISÃO fica no REV-12); READ-ONLY M1; sem VPS/rede de produção. |
+
+**Contexto.** A pergunta séria do Felipe — o **modelo de rerun do Streamlit é o teto** de performance/UX deste
+produto? Vale refazer noutra stack?
+**Objetivo.** Pesquisa estruturada das opções — (a) manter Streamlit + otimizar; (b) **frontend React/Next.js + a
+FastAPI que já existe** (`src/motor_expansao/api/`); (c) Dash/Panel; (d) frontend custom com **deck.gl/MapLibre
+client-side** + API Python. Critérios: performance (esp. mapa), controle de UX, **requisito offline** (§2), reuso da
+camada de dados Python, velocidade/custo de dev e manutenção, risco de migração. Entrega **matriz de decisão +
+recomendação PRELIMINAR**.
+**Decisões PRÉ-FIXADAS.** NÃO decide — a decisão é do BLK-REV-12 (gate humano + DEC). **Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-REV-08 — Spike técnico: mapa client-side (deck.gl/MapLibre) servido por API — teto de performance
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (embasa empiricamente o REV-07; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — visual/perf]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-07** (ou BLK-REV-03). |
+| **Autonomia** | **manual (NÃO loop-safe)** — protótipo VISUAL throwaway; exige VER o render e medir FPS/interação no browser (lição BLK-UI-10). NÃO marcar loop-safe. |
+
+**Contexto.** Para embasar o REV-07, medir empiricamente o teto de performance do mapa client-side vs pydeck/Streamlit.
+**Objetivo.** Spike **descartável**: servir os hexes H3 por um endpoint e renderizar client-side (deck.gl
+`H3HexagonLayer` / MapLibre), medindo FPS, latência de troca de cor e de seleção vs o app atual. Protótipo, **NÃO
+produção**.
+**Guardrail.** §5 READ-ONLY M1; código de spike isolado, descartado após medir.
+
+---
+
+### BLK-REV-09 — Avaliação heurística de UX + estudo de "clutter" para leigos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (dor #5; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (avaliação do app renderizado). |
+| **Autonomia** | **manual (NÃO loop-safe)** — exige VER o app renderizado + julgamento humano de UX; o loop não enxerga a UI. NÃO marcar loop-safe. |
+
+**Contexto.** Dor #5 — app "poluído e pouco usual para leigos".
+**Objetivo.** Heuristic evaluation (Nielsen), inventário de poluição visual/densidade/jargão, e **jobs-to-be-done
+por persona** (executivo, operador, leigo). Relatório de problemas priorizados por severidade × esforço.
+**Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-REV-10 — Arquitetura de informação e fluxos-alvo (proposta de redesign)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (reduz complexidade sem perder poder; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — design]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-09** (dores de UX priorizadas). |
+| **Autonomia** | **manual (NÃO loop-safe)** — design/UX; exige julgamento humano. NÃO marcar loop-safe. |
+
+**Contexto.** Reduzir a complexidade para leigos sem perder poder para power users.
+**Objetivo.** Redesenhar a **arquitetura de informação** em torno dos fluxos core (triagem→viabilidade, per
+`docs/estado_dos_modelos.md`); **progressive disclosure** (modo simples p/ leigo vs avançado); wireframes de baixa
+fidelidade por persona. Usar o guia `frontend-design`.
+**Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-REV-11 — Sistema visual / design language (research)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (linguagem visual coerente; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — design]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (pode ir em paralelo à trilha de UX). |
+| **Autonomia** | **manual (NÃO loop-safe)** — design; exige julgamento visual humano. NÃO marcar loop-safe. |
+
+**Contexto.** Consolidar a linguagem visual (a direção **turquesa Ultra + magenta concorrente** do BLK-UI-10;
+tipografia; componentes) e o sistema de dataviz dos mapas/gráficos.
+**Objetivo.** Proposta de **design system** (tokens, componentes, paletas acessíveis light/dark) reusando os guias
+`frontend-design` e `dataviz`.
+**Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-REV-12 — Síntese executiva + decisão de rumo (rebuild vs refactor) + roadmap faseado (DEC + gate)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Estratégica** (decide o rumo do produto; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO + DEC]` → (implementação vira epic próprio). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-01..11** (todos os relatórios de perf, arquitetura e UX). |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão estratégica; gate humano obrigatório + DEC. NÃO marcar loop-safe. |
+
+**Contexto.** Consolidar tudo numa recomendação acionável.
+**Objetivo.** Relatório executivo que junta **perf** (REV-01..06), **arquitetura** (REV-07/08) e **UX** (REV-09..11)
+numa **recomendação de rumo** (rebuild vs refactor incremental), **stack alvo**, direção de UX e **roadmap faseado**
+(esforço × risco × valor por fase). Registrar **DEC** com a decisão. A implementação vira **epic próprio** (fora deste
+épico de pesquisa).
+**Guardrail.** §5 READ-ONLY M1; este bloco decide o PLANO, não implementa.
+
+---
+
 ## Epic BLK-TP — Camada de Demanda Revelada (camada paralela, READ-ONLY sobre o M1)
 
 > Epic que incorpora ao Motor um **sinal externo, georreferenciado e anônimo de demanda paga por
