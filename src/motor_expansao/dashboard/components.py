@@ -24,6 +24,8 @@ from motor_expansao.dashboard.constants import (
     COMPETITOR_CLUSTER_TOP_REDES,
     COMPETITOR_PIN_LIMIT,
     FAIXA_COLORS,
+    FAIXA_COLORS_POR_LABEL,
+    FAIXA_LABELS,
     FAIXA_ORDEM,
     MAP_POINT_LIMIT,
     MAP_POINT_LIMIT_LARGE,
@@ -116,7 +118,7 @@ def build_business_answers(
 
     return {
         "expandir": [
-            f"{row.uf}: {format_int(row.oportunidades_viaveis)} viaveis | score medio {format_score(row.score_medio)}"
+            f"{row.uf}: {format_int(row.oportunidades_viaveis)} viáveis | score médio {format_score(row.score_medio)}"
             for row in top_expandir.itertuples(index=False)
         ],
         "priorizar": [
@@ -124,11 +126,11 @@ def build_business_answers(
             for row in top_priorizar.itertuples(index=False)
         ],
         "ufs_priorizar": [
-            f"{row.uf}: score medio {format_score(row.score_medio)} | {format_int(row.oportunidades_viaveis)} viaveis"
+            f"{row.uf}: score médio {format_score(row.score_medio)} | {format_int(row.oportunidades_viaveis)} viáveis"
             for row in top_ufs_priorizar.itertuples(index=False)
         ],
         "evitar": [
-            f"{row.uf}: {format_int(row.oportunidades_viaveis)} viaveis | score medio {format_score(row.score_medio)}"
+            f"{row.uf}: {format_int(row.oportunidades_viaveis)} viáveis | score médio {format_score(row.score_medio)}"
             for row in top_evitar.itertuples(index=False)
         ],
     }
@@ -153,7 +155,7 @@ def render_faixa_legend() -> None:
             (
                 f"<span class='legend-chip'>"
                 f"<span class='legend-dot' style='background:{FAIXA_COLORS[faixa]};'></span>"
-                f"{faixa}"
+                f"{FAIXA_LABELS.get(faixa, faixa)}"
                 f"</span>"
             )
             for faixa in FAIXA_ORDEM
@@ -164,7 +166,7 @@ def render_faixa_legend() -> None:
 
 def render_geographic_source_legend() -> None:
     entries = [
-        ("#C8D3EA", "Setor censitario (qualidade A/B)"),
+        ("#C8D3EA", "Setor censitário (qualidade A/B)"),
         ("#F59E0B", "Dado municipal (fallback M1)"),
     ]
     chips = "".join(
@@ -390,14 +392,14 @@ def build_map_scope_caption(
     scope_label = "da UF selecionada" if len(selected_ufs) == 1 else "do recorte atual"
     if capped:
         return (
-            f"Mostrando os {format_int(effective_cap)} hexagonos de maior prioridade {scope_label} "
-            f"(recorte total maior que o limite de renderizacao). "
-            "Aplique filtros de municipio para ver o recorte completo."
+            f"Mostrando os {format_int(effective_cap)} hexágonos de maior prioridade {scope_label} "
+            f"(recorte total maior que o limite de renderização). "
+            "Aplique filtros de município para ver o recorte completo."
         )
     return (
-        f"Mostrando todos os hexagonos validos {scope_label} "
-        f"({format_int(points_used)} no recorte atual), preservando a geometria granular onde ela e confiavel."
-        " Para densidade total de uma area, selecione um municipio no filtro lateral."
+        f"Mostrando todos os hexágonos válidos {scope_label} "
+        f"({format_int(points_used)} no recorte atual), preservando a geometria granular onde ela é confiável."
+        " Para densidade total de uma área, selecione um município no filtro lateral."
     )
 
 
@@ -481,9 +483,9 @@ def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str, show_discarded
     map_df = _apply_residual_tooltip_fields(map_df)
     if mode == "hybrid":
         map_df["tooltip_title"] = map_df["nome_municipio"].astype(str) + " / " + map_df["uf"].astype(str)
-        map_df["tooltip_line_1"] = "Score Censitario 2022: " + map_df["score_censo_fmt"].astype(str)
+        map_df["tooltip_line_1"] = "Score Censitário 2022: " + map_df["score_censo_fmt"].astype(str)
         map_df["tooltip_line_2"] = "Score M1: " + map_df["score_m1_fmt"].astype(str)
-        map_df["tooltip_line_3"] = "Score Hibrido: " + map_df["score_hibrido_fmt"].astype(str)
+        map_df["tooltip_line_3"] = "Score Híbrido: " + map_df["score_hibrido_fmt"].astype(str)
         map_df["tooltip_line_4"] = "Densidade setorial: " + map_df["densidade_fmt"].astype(str) + " hab/km2"
         if _HYBRID_TOOLTIP_SHOW_DETAIL:
             # Campos de detalhe tecnico — ocultos quando _HYBRID_TOOLTIP_SHOW_DETAIL=False.
@@ -506,19 +508,19 @@ def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str, show_discarded
         if "flag_pop_min_5k" in map_df.columns and show_discarded:
             discarded = ~map_df["flag_pop_min_5k"].fillna(True)
             map_df.loc[discarded, "tooltip_title"] = (
-                map_df.loc[discarded, "tooltip_title"].astype(str) + " — Descartado <5k hab"
+                map_df.loc[discarded, "tooltip_title"].astype(str) + " - Descartado <5k hab"
             )
         return map_df
 
     map_df["tooltip_title"] = map_df["nome_municipio"].astype(str) + " / " + map_df["uf"].astype(str)
-    map_df["tooltip_line_1"] = "Fonte geografica: " + map_df["fonte_geografica_label"].astype(str)
+    map_df["tooltip_line_1"] = "Fonte geográfica: " + map_df["fonte_geografica_label"].astype(str)
     map_df["tooltip_line_2"] = "Faixa M1: " + map_df["faixa_label"].astype(str)
     map_df["tooltip_line_3"] = "Score M1: " + map_df["score_priorizacao_fmt"].astype(str)
     map_df["tooltip_line_4"] = "Score estrutural: " + map_df["hex_score_estrutural_fmt"].astype(str)
-    map_df["tooltip_line_5"] = "Score censitario: " + map_df["score_censo_fmt"].astype(str)
+    map_df["tooltip_line_5"] = "Score censitário: " + map_df["score_censo_fmt"].astype(str)
     map_df["tooltip_line_6"] = "Qualidade join: " + map_df["qualidade_join_label"].astype(str)
-    map_df["tooltip_line_7"] = "Coverage censitario: " + map_df["coverage_fmt"].astype(str)
-    map_df["tooltip_line_8"] = "Viavel: " + map_df["flag_viavel_label"].astype(str)
+    map_df["tooltip_line_7"] = "Coverage censitário: " + map_df["coverage_fmt"].astype(str)
+    map_df["tooltip_line_8"] = "Viável: " + map_df["flag_viavel_label"].astype(str)
     map_df["tooltip_line_9"] = "Prioridade: " + map_df["flag_prioridade_label"].astype(str)
     map_df["tooltip_line_10"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
     map_df["tooltip_line_11"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
@@ -528,7 +530,7 @@ def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str, show_discarded
     if "flag_pop_min_5k" in map_df.columns and show_discarded:
         discarded = ~map_df["flag_pop_min_5k"].fillna(True)
         map_df.loc[discarded, "tooltip_title"] = (
-            map_df.loc[discarded, "tooltip_title"].astype(str) + " — Descartado <5k hab"
+            map_df.loc[discarded, "tooltip_title"].astype(str) + " - Descartado <5k hab"
         )
     return map_df
 
@@ -569,7 +571,7 @@ def _prepare_m1_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
             "cidade": "-",
             "nome_municipio": pd.NA,
             "uf": "-",
-            "faixa_oportunidade": "Nao informado",
+            "faixa_oportunidade": "Não informado",
             "score_priorizacao": pd.NA,
             "hex_score_estrutural": pd.NA,
             "flag_viavel": pd.NA,
@@ -586,12 +588,12 @@ def _prepare_m1_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
     map_df["faixa_label"] = (
         map_df["faixa_oportunidade"]
         .astype(object)
-        .where(map_df["faixa_oportunidade"].notna(), "Nao informado")
+        .where(map_df["faixa_oportunidade"].notna(), "Não informado")
         .astype(str)
     )
     map_df["fonte_geografica_label"] = map_df["confianca_geografica"].map(
         {
-            "granular": "Setor censitario (qualidade A/B)",
+            "granular": "Setor censitário (qualidade A/B)",
             "municipal": "Dado municipal (fallback M1)",
         }
     )
@@ -605,8 +607,8 @@ def _prepare_m1_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
         .where(map_df["qualidade_join_uf"].notna(), "Sem camada")
         .astype(str)
     )
-    map_df["flag_viavel_label"] = map_df["flag_viavel"].map({True: "Sim", False: "Nao"}).fillna("-")
-    map_df["flag_prioridade_label"] = map_df["flag_prioridade"].map({True: "Sim", False: "Nao"}).fillna("-")
+    map_df["flag_viavel_label"] = map_df["flag_viavel"].map({True: "Sim", False: "Não"}).fillna("-")
+    map_df["flag_prioridade_label"] = map_df["flag_prioridade"].map({True: "Sim", False: "Não"}).fillna("-")
 
     is_granular = map_df["confianca_geografica"].eq("granular")
     na_float = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
@@ -664,11 +666,11 @@ def _prepare_hybrid_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
     map_df["score_m1_fmt"] = map_df["score_priorizacao"].map(format_score)
     map_df["score_hibrido_fmt"] = map_df["score_expansao_hibrido"].map(format_score)
     map_df["densidade_fmt"] = map_df["densidade_pop_setor_hab_km2"].map(format_density)
-    map_df["outlier_label"] = map_df["flag_outlier_espacial"].map({True: "Sim (revisar)", False: "Nao"}).fillna("-")
+    map_df["outlier_label"] = map_df["flag_outlier_espacial"].map({True: "Sim (revisar)", False: "Não"}).fillna("-")
     map_df["rank_hex_fmt"] = map_df["rank_hex_intraurbano"].map(
         lambda v: str(int(v)) if not pd.isna(v) else "-"
     )
-    map_df["top_hex_label"] = map_df["top_hex_intraurbano"].map({True: "Sim", False: "Nao"}).fillna("-")
+    map_df["top_hex_label"] = map_df["top_hex_intraurbano"].map({True: "Sim", False: "Não"}).fillna("-")
     map_df["motivo_label"] = map_df["motivo_nao_elegivel_censo"].astype(object).fillna("-").astype(str)
 
     na_float = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
@@ -810,9 +812,9 @@ def pins_amostrados_caption(n_comp: int, n_ultra: int) -> str | None:
     if not partes:
         return None
     return (
-        "Pins amostrados por limite de renderizacao (" + "; ".join(partes) + "). "
-        "Refine o filtro de municipio para ver todas. "
-        "Limite apenas visual: nao afeta score, ranking nem carteira."
+        "Pins amostrados por limite de renderização (" + "; ".join(partes) + "). "
+        "Refine o filtro de município para ver todas. "
+        "Limite apenas visual: não afeta score, ranking nem carteira."
     )
 
 
@@ -1005,13 +1007,13 @@ def build_cluster_scope_caption(
     base = (
         f"Concorrentes agregados em {n_clusters:,} clusters de densidade "
         f"({n_comp_total:,} no recorte). "
-        "Selecione um municipio ou filtro p/ ver pins individuais com logo. "
-        "Camada visual: nao afeta score, ranking nem carteira."
+        "Selecione um município ou filtro p/ ver pins individuais com logo. "
+        "Camada visual: não afeta score, ranking nem carteira."
     ).replace(",", ".")
     if capped:
         base += (
-            f" Exibindo as {COMPETITOR_CLUSTER_LIMIT:,} celulas mais densas "
-            "(limite apenas de renderizacao)."
+            f" Exibindo as {COMPETITOR_CLUSTER_LIMIT:,} células mais densas "
+            "(limite apenas de renderização)."
         ).replace(",", ".")
     return base
 
@@ -1163,7 +1165,7 @@ def render_ancoras_dominio_legend() -> None:
         "<div class='legend-row'>"
         "<span class='legend-chip'>"
         "<span class='legend-dot' style='background:#F59E0B;opacity:0.86;'></span>"
-        "Ancora Dominio"
+        "Âncora Domínio"
         "</span></div>",
         unsafe_allow_html=True,
     )
@@ -1180,7 +1182,7 @@ def render_residual_legend(df: pd.DataFrame | None = None) -> None:
         "<span class='legend-dot' style='background:#22C55E;opacity:0.85;'></span>"
         "Oferta residual: leitura auxiliar absoluta"
         "</span>"
-        "<span class='legend-chip'>Quartis: apoio visual, nao ranking oficial</span>"
+        "<span class='legend-chip'>Quartis: apoio visual, não ranking oficial</span>"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -1296,7 +1298,7 @@ def _build_ancoras_dominio_layer(
     # Tooltip minimo compativel com _shared_map_tooltip (tooltip_title +
     # tooltip_line_1..14); colunas nao usadas ficam vazias para nao quebrar o html.
     layer_df = dom[["lat", "lng", "hex_id"]].copy().reset_index(drop=True)
-    layer_df["tooltip_title"] = "Ancora Dominio: " + layer_df["hex_id"].astype(str)
+    layer_df["tooltip_title"] = "Âncora Domínio: " + layer_df["hex_id"].astype(str)
     for i in range(1, 15):
         layer_df[f"tooltip_line_{i}"] = ""
     return pdk.Layer(
@@ -1743,14 +1745,14 @@ def build_hybrid_map_figure(
     map_df["score_hibrido_fmt"] = map_df["score_expansao_hibrido"].map(format_score)
     map_df["densidade_fmt"] = map_df["densidade_pop_setor_hab_km2"].map(format_density)
     map_df["coverage_fmt"] = map_df["coverage_pct_setor_2022"].map(format_pct)
-    map_df["outlier_label"] = map_df["flag_outlier_espacial"].map({True: "Sim (revisar)", False: "Nao"})
-    map_df["join_restrito_label"] = map_df["flag_join_uf_restrito"].map({True: "Sim", False: "Nao"})
-    map_df["baixa_pop_label"] = map_df["flag_baixa_pop_setor"].map({True: "Sim (<5.000 hab/km2)", False: "Nao"})
+    map_df["outlier_label"] = map_df["flag_outlier_espacial"].map({True: "Sim (revisar)", False: "Não"})
+    map_df["join_restrito_label"] = map_df["flag_join_uf_restrito"].map({True: "Sim", False: "Não"})
+    map_df["baixa_pop_label"] = map_df["flag_baixa_pop_setor"].map({True: "Sim (<5.000 hab/km2)", False: "Não"})
     map_df["causa_outlier_label"] = map_df["causa_outlier_espacial"].astype(object).fillna("-").astype(str)
     map_df["rank_hex_fmt"] = map_df["rank_hex_intraurbano"].map(
         lambda v: str(int(v)) if not pd.isna(v) else "-"
     )
-    map_df["top_hex_label"] = map_df["top_hex_intraurbano"].map({True: "Sim", False: "Nao"})
+    map_df["top_hex_label"] = map_df["top_hex_intraurbano"].map({True: "Sim", False: "Não"})
     map_df["motivo_label"] = map_df["motivo_nao_elegivel_censo"].astype(object).fillna("-").astype(str)
     _na_float_h = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
     # Fallback municipal: preferir pop_total (população total) sobre populacao_proxy legado (18-45).
@@ -2187,7 +2189,7 @@ def build_top_city_figure(city_summary: pd.DataFrame):
         orientation="h",
         color="score_medio",
         color_continuous_scale=[COLORS["brand"], COLORS["brand_alt"]],
-        labels={"score_medio": "Score medio", "cidade_label": "Cidade"},
+        labels={"score_medio": "Score médio", "cidade_label": "Cidade"},
         text="score_medio",
     )
     fig.update_traces(texttemplate="%{text:.2f}", textposition="outside")
@@ -2212,7 +2214,7 @@ def build_top_uf_figure(uf_summary: pd.DataFrame):
         y="uf",
         orientation="h",
         color_discrete_sequence=[COLORS["good"]],
-        labels={"oportunidades_viaveis": "Oportunidades viaveis", "uf": "UF"},
+        labels={"oportunidades_viaveis": "Oportunidades viáveis", "uf": "UF"},
         text="oportunidades_viaveis",
     )
     fig.update_traces(texttemplate="%{text:.0f}", textposition="outside")
@@ -2292,13 +2294,22 @@ def build_faixa_comparison_figure(df: pd.DataFrame):
     if faixa_df.empty:
         return None
 
-    faixa_df["faixa_label"] = faixa_df["faixa_oportunidade"].astype(str)
+    # Coluna de EXIBICAO acentuada (valor bruto de faixa_oportunidade INTOCADO). A ordem
+    # categorica segue FAIXA_ORDEM mapeado pelos labels, para o eixo x nao desordenar; a cor
+    # por faixa e preservada via FAIXA_COLORS_POR_LABEL (keyed pelo mesmo label).
+    _faixa_label_order = [FAIXA_LABELS.get(f, f) for f in FAIXA_ORDEM]
+    faixa_df["faixa_label"] = pd.Categorical(
+        [FAIXA_LABELS.get(f, f) for f in faixa_df["faixa_oportunidade"].astype(str)],
+        categories=_faixa_label_order,
+        ordered=True,
+    )
     fig = px.bar(
         faixa_df,
         x="faixa_label",
         y="score_medio",
         color="faixa_label",
-        color_discrete_map=FAIXA_COLORS,
+        color_discrete_map=FAIXA_COLORS_POR_LABEL,
+        category_orders={"faixa_label": _faixa_label_order},
         labels={"faixa_label": "Faixa", "score_medio": "Score médio"},
         text="score_medio",
     )
@@ -2373,7 +2384,7 @@ def build_top_bottom_uf_figure(uf_summary: pd.DataFrame):
             "Top 5 score": COLORS["good"],
             "Bottom 5 score": COLORS["bad"],
         },
-        labels={"score_medio": "Score medio", "uf": "UF"},
+        labels={"score_medio": "Score médio", "uf": "UF"},
         text="score_medio",
     )
     fig.update_traces(texttemplate="%{text:.2f}", textposition="outside")
@@ -2539,10 +2550,10 @@ def build_indicator_snapshot(df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(
             {
                 "Indicador": [
-                    "Score medio",
-                    "Renda per capita media",
-                    "Populacao proxy media",
-                    "% viavel",
+                    "Score médio",
+                    "Renda per capita média",
+                    "População proxy média",
+                    "% viável",
                     "% priorizado",
                 ],
                 "Valor": ["-", "-", "-", "-", "-"],
@@ -2552,10 +2563,10 @@ def build_indicator_snapshot(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "Indicador": [
-                "Score medio",
-                "Renda per capita media",
-                "Populacao proxy media",
-                "% viavel",
+                "Score médio",
+                "Renda per capita média",
+                "População proxy média",
+                "% viável",
                 "% priorizado",
             ],
             "Valor": [
@@ -2596,18 +2607,18 @@ def build_ranking_table(df: pd.DataFrame) -> pd.DataFrame:
     )
     table_df = table_df.rename(
         columns={
-            "score_priorizacao": "Score Priorizacao",
+            "score_priorizacao": "Score Priorização",
             "rank_brasil": "Rank Brasil",
             "rank_uf": "Rank UF",
             "rank_cidade": "Rank Cidade",
             "faixa_oportunidade": "Faixa",
             "flag_prioridade": "Prioridade",
-            "flag_viavel": "Viavel",
+            "flag_viavel": "Viável",
             "nome_municipio": "Cidade",
         }
     )
-    table_df["Prioridade"] = table_df["Prioridade"].map({True: "Sim", False: "Nao"})
-    table_df["Viavel"] = table_df["Viavel"].map({True: "Sim", False: "Nao"})
+    table_df["Prioridade"] = table_df["Prioridade"].map({True: "Sim", False: "Não"})
+    table_df["Viável"] = table_df["Viável"].map({True: "Sim", False: "Não"})
     return table_df
 
 
@@ -2664,15 +2675,15 @@ def build_hybrid_top_hexes_table(hdf: pd.DataFrame) -> pd.DataFrame:
     )
     rename_map = {
         "uf": "UF",
-        "nome_municipio": "Municipio",
+        "nome_municipio": "Município",
         "hex_id": "Hex ID",
         "score_setor_2022_calibrado": "Score Censo 2022",
         "score_priorizacao": "Score M1",
-        "score_expansao_hibrido": "Score Hibrido",
+        "score_expansao_hibrido": "Score Híbrido",
         "rank_hex_intraurbano": "Rank Intraurbano",
-        "rank_hibrido_brasil": "Rank Hibrido Brasil",
+        "rank_hibrido_brasil": "Rank Híbrido Brasil",
         "top_hex_intraurbano": "Top Hex",
-        "top_oportunidade_municipio": "Carteira Municipio",
+        "top_oportunidade_municipio": "Carteira Município",
         "qualidade_join_uf": "Qualidade Join",
         "coverage_pct_setor_2022": "Coverage %",
         "flag_join_uf_restrito": "Join Restrito",
@@ -2682,9 +2693,9 @@ def build_hybrid_top_hexes_table(hdf: pd.DataFrame) -> pd.DataFrame:
         "motivo_nao_elegivel_censo": "Status Editorial",
     }
     top = top.rename(columns={k: v for k, v in rename_map.items() if k in top.columns})
-    for col in ["Top Hex", "Carteira Municipio", "Join Restrito", "Dens. < 5k", "Outlier Espacial"]:
+    for col in ["Top Hex", "Carteira Município", "Join Restrito", "Dens. < 5k", "Outlier Espacial"]:
         if col in top.columns:
-            top[col] = top[col].map({True: "Sim", False: "Nao"})
+            top[col] = top[col].map({True: "Sim", False: "Não"})
     return top
 
 
@@ -2747,18 +2758,18 @@ def build_hybrid_municipios_table(hdf: pd.DataFrame) -> pd.DataFrame:
 
     rename_map = {
         "uf": "UF",
-        "nome_municipio": "Municipio",
+        "nome_municipio": "Município",
         "score_priorizacao": "Score M1",
         "rank_municipio_uf": "Rank Mun UF",
         "rank_municipio_brasil": "Rank Mun Brasil",
-        "flag_censo_disponivel": "Censo Disponivel",
-        "top_municipio_hibrido": "Municipio Elegivel Hibrido",
+        "flag_censo_disponivel": "Censo Disponível",
+        "top_municipio_hibrido": "Município Elegível Híbrido",
         "top_municipio": "Top M1",
         "melhor_hex_id": "Melhor Hex",
         "melhor_score_setor_2022_calibrado": "Melhor Score Censo",
-        "melhor_score_expansao_hibrido": "Melhor Score Hibrido",
+        "melhor_score_expansao_hibrido": "Melhor Score Híbrido",
         "melhor_rank_hex_intraurbano": "Rank Melhor Hex",
-        "melhor_top_oportunidade_municipio": "Carteira Municipio",
+        "melhor_top_oportunidade_municipio": "Carteira Município",
         "melhor_coverage_pct_setor_2022": "Coverage %",
         "melhor_qualidade_join_uf": "Qualidade Join",
         "melhor_flag_baixa_pop_setor": "Melhor Hex Dens. < 5k",
@@ -2768,15 +2779,15 @@ def build_hybrid_municipios_table(hdf: pd.DataFrame) -> pd.DataFrame:
         [column for column in rename_map if column in mun.columns]
     ].rename(columns={k: v for k, v in rename_map.items() if k in mun.columns})
     for col in [
-        "Censo Disponivel",
-        "Municipio Elegivel Hibrido",
+        "Censo Disponível",
+        "Município Elegível Híbrido",
         "Top M1",
-        "Carteira Municipio",
+        "Carteira Município",
         "Melhor Hex Dens. < 5k",
         "Melhor Hex Outlier",
     ]:
         if col in mun.columns:
-            mun[col] = mun[col].map({True: "Sim", False: "Nao"})
+            mun[col] = mun[col].map({True: "Sim", False: "Não"})
     return mun
 
 
@@ -2841,7 +2852,7 @@ def build_hybrid_score_comparison_figure(hdf: pd.DataFrame):
             "uf_label": "UF",
         },
         opacity=0.55,
-        title="M1 vs Censitário 2022 — cada ponto é um hex",
+        title="M1 vs Censitário 2022 - cada ponto é um hex",
     )
     apply_exec_layout(fig, title="Comparativo M1 vs Censitário 2022 por hex", height=420)
     return fig
@@ -2878,14 +2889,14 @@ def build_hybrid_portfolio_table(hdf: pd.DataFrame) -> pd.DataFrame:
 
     rename_map = {
         "uf": "UF",
-        "nome_municipio": "Municipio",
+        "nome_municipio": "Município",
         "hex_id": "Hex ID",
-        "rank_hibrido_brasil": "Rank Hibrido Brasil",
-        "rank_hibrido_uf": "Rank Hibrido UF",
+        "rank_hibrido_brasil": "Rank Híbrido Brasil",
+        "rank_hibrido_uf": "Rank Híbrido UF",
         "rank_hex_intraurbano": "Rank Intraurbano",
         "score_priorizacao": "Score M1",
         "score_setor_2022_calibrado": "Score Censo 2022",
-        "score_expansao_hibrido": "Score Hibrido",
+        "score_expansao_hibrido": "Score Híbrido",
         "coverage_pct_setor_2022": "Coverage %",
         "qualidade_join_uf": "Qualidade Join",
         "flag_join_uf_restrito": "Join Restrito",
@@ -2898,7 +2909,7 @@ def build_hybrid_portfolio_table(hdf: pd.DataFrame) -> pd.DataFrame:
     ].rename(columns={k: v for k, v in rename_map.items() if k in portfolio.columns})
     for column in ["Join Restrito", "Dens. < 5k", "Outlier", "Monitorar"]:
         if column in portfolio.columns:
-            portfolio[column] = portfolio[column].map({True: "Sim", False: "Nao"})
+            portfolio[column] = portfolio[column].map({True: "Sim", False: "Não"})
     return portfolio
 
 
@@ -2917,11 +2928,11 @@ def build_hybrid_alerts(hdf: pd.DataFrame) -> list[str]:
 
     if join_restrito > 0:
         alerts.append(
-            f"{format_int(join_restrito)} hexes no recorte estao com join restrito. Trate o Censitario como leitura exploratoria e mantenha o M1 como evidencia principal."
+            f"{format_int(join_restrito)} hexes no recorte estão com join restrito. Trate o Censitário como leitura exploratória e mantenha o M1 como evidência principal."
         )
     if coverage_baixa > 0:
         alerts.append(
-            f"{format_int(coverage_baixa)} hexes estao abaixo do gate de 85% de coverage censitario. Evite usar esse sinal como evidencia forte."
+            f"{format_int(coverage_baixa)} hexes estão abaixo do gate de 85% de coverage censitário. Evite usar esse sinal como evidência forte."
         )
     if outliers > 0:
         alerts.append(
@@ -2945,8 +2956,8 @@ def style_ranking_table(table_df: pd.DataFrame):
     if table_df.empty:
         return table_df
 
-    score_min = float(table_df["Score Priorizacao"].min())
-    score_max = float(table_df["Score Priorizacao"].max())
+    score_min = float(table_df["Score Priorização"].min())
+    score_max = float(table_df["Score Priorização"].max())
 
     def faixa_style(value: str) -> str:
         bg = FAIXA_COLORS.get(str(value), "#FFFFFF")
@@ -2982,15 +2993,15 @@ def style_ranking_table(table_df: pd.DataFrame):
     return (
         table_df.style.format(
             {
-                "Score Priorizacao": "{:.2f}",
+                "Score Priorização": "{:.2f}",
                 "Rank Brasil": "{:.0f}",
                 "Rank UF": "{:.0f}",
                 "Rank Cidade": "{:.0f}",
             }
         )
-        .map(score_style, subset=["Score Priorizacao"])
+        .map(score_style, subset=["Score Priorização"])
         .map(faixa_style, subset=["Faixa"])
-        .map(flag_style, subset=["Prioridade", "Viavel"])
+        .map(flag_style, subset=["Prioridade", "Viável"])
     )
 
 
@@ -3342,7 +3353,7 @@ def render_manifest_footer(manifest_path: Path) -> None:
         data = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return
-    with st.expander("Proveniencia dos outputs (read-only)", expanded=False):
+    with st.expander("Proveniência dos outputs (read-only)", expanded=False):
         st.caption(
             f"IBGE: {data.get('ibge_vintage')} | H3 res {data.get('h3_resolution')} | "
             f"pesos renda {data.get('pesos', {}).get('renda')} / pop {data.get('pesos', {}).get('pop')} | "

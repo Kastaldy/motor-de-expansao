@@ -184,7 +184,7 @@ def test_agregar_municipio_zonas_d2_d7():
     zonas = res["zonas"]
     assert res["n_zonas"] == 2
     # Ordenado por residual desc -> c1 (900) e Zona 1 = Ancora central; c2 (500) = Flancos.
-    assert zonas[0]["zona_n"] == 1 and zonas[0]["rotulo"] == "Ancora central"
+    assert zonas[0]["zona_n"] == 1 and zonas[0]["rotulo"] == "Âncora central"
     assert zonas[0]["cluster_id"] == "c1"
     assert zonas[1]["zona_n"] == 2 and zonas[1]["rotulo"] == "Flancos laterais"
 
@@ -246,7 +246,7 @@ def test_zonas_geometricas_ate_3_zonas_com_contagens():
     zonas = out["zonas"]
     assert 1 <= len(zonas) <= 3
     rotulos = {z["rotulo"] for z in zonas}
-    assert rotulos.issubset({"Ancora central", "Flancos laterais", "Cerco"})
+    assert rotulos.issubset({"Âncora central", "Flancos laterais", "Cerco"})
     # Soma das contagens == nro de hexes mapeados em hex_zona.
     assert sum(z["n_hex"] for z in zonas) == len(out["hex_zona"])
     # Numeracao sequencial 1..N.
@@ -363,9 +363,9 @@ def test_pdf_municipal_8_paginas_e_secoes():
     assert b"SAM Fitness" not in pdf_bytes
     assert b"Residual Fitness >= 2.000" in pdf_bytes
     # FU1 (slide novo, pos-capa): "Visao Geral do Municipio" com bloco de regioes consideradas.
-    assert b"Visao Geral do Municipio" in pdf_bytes
-    assert b"REGIOES CONSIDERADAS" in pdf_bytes
-    assert b"regioes consideradas nas paginas seguintes" in pdf_bytes
+    assert "Visão Geral do Município".encode("latin-1") in pdf_bytes
+    assert "REGIÕES CONSIDERADAS".encode("latin-1") in pdf_bytes
+    assert "regiões consideradas nas páginas seguintes".encode("latin-1") in pdf_bytes
 
 
 def test_agregar_municipio_cobertura_aprovados_reprovados():
@@ -465,9 +465,9 @@ def test_pdf_municipal_fallback_sem_dominio_pagina_6():
     # BLK-RELMUN-02: sem fonte de bairro, a Pagina 6 cai no fallback gracioso por zona
     # geometrica (sem a antiga nota "indisponivel" como texto principal).
     assert b"Bairros indisponiveis na base atual" not in pdf_bytes
-    assert b"Bairros nao mapeados na base IBGE 2022" in pdf_bytes
+    assert "Bairros não mapeados na base IBGE 2022".encode("latin-1") in pdf_bytes
     # FU1: as 3 estrategias geometricas aparecem (3 aprovados em celulas distintas).
-    assert b"Ancora central" in pdf_bytes
+    assert "Âncora central".encode("latin-1") in pdf_bytes
     assert b"Flancos laterais" in pdf_bytes
     assert b"Cerco" in pdf_bytes
 
@@ -481,7 +481,7 @@ def test_zonas_geometricas_so_aprovados_sem_fallback():
     df.loc[df.index[1:3], "oferta_efetiva_disponivel"] = 500.0
     out = _zonas_geometricas(df)
     assert len(out["zonas"]) == 1
-    assert out["zonas"][0]["rotulo"] == "Ancora central"
+    assert out["zonas"][0]["rotulo"] == "Âncora central"
     assert out["zonas"][0]["n_hex"] == 1
     assert len(out["hex_zona"]) == 1
 
@@ -510,7 +510,7 @@ def test_pdf_municipal_pagina_6_fallback_sem_bairro():
     pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
     assert b"/Count 9" in pdf_bytes
     assert b"Bairros indisponiveis na base atual" not in pdf_bytes
-    assert b"Bairros nao mapeados na base IBGE 2022" in pdf_bytes
+    assert "Bairros não mapeados na base IBGE 2022".encode("latin-1") in pdf_bytes
     # Sem PII no fallback.
     for needle in _PII_FORBIDDEN:
         assert needle not in pdf_bytes

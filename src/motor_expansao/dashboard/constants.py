@@ -84,6 +84,13 @@ CENSO_TRACE_LOAD_COLS = [
 
 CENSO_UFS = ["DF", "GO", "MG", "RJ", "RS", "SP"]
 HYBRID_ELIGIBILITY_ORDER = ["Elegivel", "Nao elegivel", "Sem camada"]
+# Camada de LABEL de exibicao (D1-bis): exibe a elegibilidade hibrida acentuada sem
+# tocar o valor bruto gravado em `elegibilidade_hibrida` (comparado em `.isin`).
+HYBRID_ELIGIBILITY_LABELS = {
+    "Elegivel": "Elegível",
+    "Nao elegivel": "Não elegível",
+    "Sem camada": "Sem camada",
+}
 COVERAGE_BUCKET_ORDER = ["100%", "95-99,9%", "85-94,9%", "<85%", "Sem camada"]
 JOIN_QUALITY_ORDER = ["A", "B", "C", "Sem camada"]
 
@@ -95,6 +102,16 @@ FAIXA_ORDEM = [
     "descartado",
     "inviavel",
 ]
+# Camada de LABEL de exibicao (D1): exibe as faixas acentuadas via format_func sem
+# tocar o valor bruto de FAIXA_ORDEM (usado em `.isin`) nem as chaves de FAIXA_COLORS.
+FAIXA_LABELS = {
+    "prioridade_maxima": "Prioridade máxima",
+    "alta": "Alta",
+    "media": "Média",
+    "baixa": "Baixa",
+    "descartado": "Descartado",
+    "inviavel": "Inviável",
+}
 MAP_POINT_LIMIT = 35000
 # Cap efetivo reduzido para UFs grandes (recorte que satura MAP_POINT_LIMIT no
 # Mapa Territorial). Mitiga OOM client-side (JS heap/WebGL) ao renderizar ~35k
@@ -293,6 +310,10 @@ FAIXA_COLORS = {
     "descartado": "#78788C",
     "inviavel": "#2E3040",
 }
+# Mapa de cores keyed pelo LABEL de exibicao acentuado (derivado de FAIXA_COLORS + FAIXA_LABELS).
+# Uso: graficos que exibem a faixa acentuada no eixo/legenda (build_faixa_comparison_figure)
+# preservam a MESMA cor por faixa sem tocar o valor bruto. Se FAIXA_COLORS mudar, este acompanha.
+FAIXA_COLORS_POR_LABEL = {FAIXA_LABELS.get(k, k): v for k, v in FAIXA_COLORS.items()}
 CENSO_SCORE_COLORS = {
     "0-25": [180, 30, 30, 140],
     "25-50": [220, 50, 50, 140],
@@ -365,13 +386,13 @@ COLOR_MODES: dict[str, dict] = {
         "optional_cols": [],
     },
     "hibrido": {
-        "label": "Hibrido",
+        "label": "Híbrido",
         "parquet": "oportunidades_expansao_hibrido.parquet",
         "required_cols": ["score_expansao_hibrido"],
         "optional_cols": ["score_setor_2022_calibrado"],
     },
     "censitario": {
-        "label": "Censitario",
+        "label": "Censitário",
         "parquet": "oportunidades_expansao_hibrido.parquet",
         "required_cols": ["score_setor_2022_calibrado"],
         "optional_cols": [],
@@ -383,7 +404,7 @@ COLOR_MODES: dict[str, dict] = {
         "optional_cols": ["oferta_efetiva_disponivel"],
     },
     "dominio": {
-        "label": "Expansao de Dominio",
+        "label": "Expansão de Domínio",
         "parquet": "plano_expansao_dominio.parquet",
         "required_cols": ["ordem_expansao_cidade", "tese_dominio"],
         "optional_cols": ["residual_incremental_capturado"],
@@ -406,7 +427,7 @@ OVERLAYS: dict[str, dict] = {
         "absent_behavior": "hide_silently",
     },
     "ancoras_dominio": {
-        "label": "Ancoras Dominio",
+        "label": "Âncoras Domínio",
         "default": False,
         "required_cols": ["lat", "lng", "hex_id"],
         "absent_behavior": "hide_silently",

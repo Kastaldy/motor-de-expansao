@@ -42,7 +42,7 @@ def _read_parquet_subset(path: Path, columns: list[str]) -> pd.DataFrame:
     missing = [column for column in columns if column not in available_columns]
     if missing:
         raise ValueError(
-            "O dataset oficial nao contem todas as colunas obrigatorias do dashboard: "
+            "O dataset oficial não contém todas as colunas obrigatórias do dashboard: "
             + ", ".join(missing)
         )
     optional_columns = [
@@ -208,7 +208,7 @@ def _prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
             prepared[column] = (
                 prepared[column]
                 .astype(object)
-                .where(prepared[column].notna(), "Nao informado")
+                .where(prepared[column].notna(), "Não informado")
                 .astype("category")
             )
 
@@ -216,11 +216,11 @@ def _prepare_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         prepared["faixa_oportunidade"] = (
             prepared["faixa_oportunidade"]
             .astype(object)
-            .where(prepared["faixa_oportunidade"].notna(), "Nao informado")
+            .where(prepared["faixa_oportunidade"].notna(), "Não informado")
         )
         prepared["faixa_oportunidade"] = pd.Categorical(
             prepared["faixa_oportunidade"],
-            categories=FAIXA_ORDEM + ["Nao informado"],
+            categories=FAIXA_ORDEM + ["Não informado"],
             ordered=True,
         )
 
