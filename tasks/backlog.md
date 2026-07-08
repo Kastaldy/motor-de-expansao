@@ -1333,36 +1333,8 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 
 ---
 
-### BLK-MAP-02 — Filtro de marcas de concorrentes do mapa em menu expansível (fechado por padrão)
+- BLK-MAP-02 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Baixa** (mudança de UI localizada no Mapa Territorial; READ-ONLY sobre o M1; sem decisão de produto). |
-| **Prioridade** | Normal. |
-| **Esteira** | Block Orchestrator → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (herda BLK-MAP-01, que já é o ponto único de filtragem de concorrentes). |
-| **Autonomia** | **manual (NÃO loop-safe)** — mudança de UX visível; exige revisão humana. |
-
-**Objetivo.** Envolver o filtro de marcas de concorrentes do Mapa Territorial (`st.multiselect("Redes de
-concorrentes", …)`, `pages.py:4382`, dentro de `render_mapa_territorial`) num `st.expander(...,
-expanded=False)`, para o filtro nascer **fechado** e não empurrar o mapa para baixo.
-
-**Escopo permitido (READ-ONLY M1, só display).**
-- Só `src/motor_expansao/dashboard/pages.py`, bloco `_show_rede_filter` (~4373–4396): mover o
-  `st.multiselect` para dentro de `with st.expander("Redes de concorrentes", expanded=False):`.
-- Preservar integralmente: `key="mapa_territorial_redes_concorrentes"`, `options=_all_redes`,
-  `default=_all_redes`, `format_func` (label via `COMPETITOR_BRANDS`), e a lógica BLK-MAP-01 (seleção
-  vazia ⇒ `competitors_df_filtered = None` ⇒ esconde concorrentes). `_render_unified_legend` e
-  `build_unified_map_figure` seguem lendo `competitors_df_filtered` como hoje.
-
-**Fora de escopo.** Lógica de filtragem/legenda/cluster de concorrentes; `key`/estado de sessão;
-`COMPETITOR_BRANDS`; qualquer artefato/score/pesos do M1.
-
-**Critério de aceite.** O filtro renderiza dentro de um expander **fechado por padrão**; abrir,
-selecionar, limpar e reselecionar mantêm o comportamento atual do mapa e da legenda (inclusive
-seleção vazia ⇒ esconde concorrentes); suíte verde (atualizar assert de
-`tests/integration/test_streamlit_app.py` se algum travar o label/posição do widget); ruff+mypy limpos.
 
 ---
 
