@@ -7606,3 +7606,30 @@ REAIS**, nunca `membros`/agregador (achado da circularidade 2026-07-07).
 
 **Critérios de aceite.** Relatório out-of-fold com veredito honesto; curva validada materializada só se GO; se NO-GO,
 curva atual mantida e documentado; determinístico; `loop_guard` limpo. **Guardrail.** §5 READ-ONLY M1; DEC-008 honrada.
+
+---
+
+### BLK-VIAB-06 — Guardrail de envelope de metragem no motor de viabilidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (guardrail no motor de viabilidade; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-VIAB-04** (mediu MAPE 85% na extrapolação > 2.800 m²). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1; muda SÓ `dimensionamento/viabilidade_ponto.py` (não `config.py`/`pipelines/m1`); determinístico + testável; sem VPS/rede. |
+
+**Contexto.** O backtest BLK-VIAB-04-FU provou que fora do envelope calibrado (Ultra 636–2.800 m²; a base
+tem 112 unidades) a curva EXTRAPOLA mal (MAPE 85% acima de 2.800 m²). O motor deve SINALIZAR isso.
+
+**Objetivo.** Adicionar uma flag `flag_fora_envelope` em `analisar_viabilidade_ponto` (e no resultado) quando
+o `m2` do imóvel cai fora de `[ENVELOPE_MIN, ENVELOPE_MAX]`, para a UI avisar "extrapolação não confiável".
+
+**Decisões PRÉ-FIXADAS.** Envelope = **[600, 3.000] m²** (cobre a base de calibração 636–2.800 + folga);
+**só FLAG, NÃO recusa** por padrão (a decisão de exibir/bloquear fica na UI); comportamento existente do motor
+**byte-idêntico** exceto a flag nova (default de faixa/DRE inalterado).
+
+**Critérios de aceite.** `flag_fora_envelope` materializada; teste (m² > 3.000 → True; dentro → False);
+comportamento atual preservado (regressão dos testes VIAB-03/04); ruff/mypy/suíte verde. **Guardrail.** §5
+READ-ONLY M1; `viabilidade_ponto` não recalcula score/M1.

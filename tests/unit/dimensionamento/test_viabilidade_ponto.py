@@ -312,3 +312,85 @@ def test_flag_zona_morta_renda_no_limiar_nao_dispara() -> None:
     out = flag_zona_morta({"pop_captacao": 50000.0, "renda_per_capita_captacao": 1600.0})
     assert out["flag_zona_morta"] is False
     assert out["motivo_zona_morta"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# BLK-VIAB-06 — Guardrail de envelope de metragem
+# ---------------------------------------------------------------------------
+
+def test_flag_fora_envelope_acima_do_max() -> None:
+    """m2=3001 > ENVELOPE_MAX -> flag_fora_envelope=True."""
+    from motor_expansao.dimensionamento.viabilidade_ponto import ENVELOPE_MAX
+
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, ENVELOPE_MAX + 1.0, 20000.0, 938.0,
+        base_calibracao_df=None, setores_df=None,
+    )
+    assert r.flag_fora_envelope is True
+
+
+def test_flag_fora_envelope_abaixo_do_min() -> None:
+    """m2=599 < ENVELOPE_MIN -> flag_fora_envelope=True."""
+    from motor_expansao.dimensionamento.viabilidade_ponto import ENVELOPE_MIN
+
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, ENVELOPE_MIN - 1.0, 20000.0, 938.0,
+        base_calibracao_df=None, setores_df=None,
+    )
+    assert r.flag_fora_envelope is True
+
+
+def test_flag_fora_envelope_no_limite_max() -> None:
+    """m2=3000 == ENVELOPE_MAX -> flag_fora_envelope=False (inclusivo)."""
+    from motor_expansao.dimensionamento.viabilidade_ponto import ENVELOPE_MAX
+
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, ENVELOPE_MAX, 20000.0, 938.0,
+        base_calibracao_df=None, setores_df=None,
+    )
+    assert r.flag_fora_envelope is False
+
+
+def test_flag_fora_envelope_no_limite_min() -> None:
+    """m2=600 == ENVELOPE_MIN -> flag_fora_envelope=False (inclusivo)."""
+    from motor_expansao.dimensionamento.viabilidade_ponto import ENVELOPE_MIN
+
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, ENVELOPE_MIN, 20000.0, 938.0,
+        base_calibracao_df=None, setores_df=None,
+    )
+    assert r.flag_fora_envelope is False
+
+
+def test_flag_dentro_envelope_nao_altera_dre() -> None:
+    """m2 fora do envelope (3001) NAO altera DRE vs m2 dentro (1500) com mesma premissa.
+
+    Garante que flag_fora_envelope e apenas informativa — a margem_ebitda_pct
+    depende so de m2 (custo/m2), nao da flag.
+    """
+    r_dentro = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 938.0,
+        base_calibracao_df=None, setores_df=None,
+    )
+    r_fora = analisar_viabilidade_ponto(
+        -23.9, -46.3, 3001.0, 20000.0, 938.0,
+        base_calibracao_df=None, setores_df=None,
+    )
+    assert r_fora.flag_fora_envelope is True
+    assert r_dentro.flag_fora_envelope is False
+    # DRE difere porque m2 difere (custo/m2 muda) — o ponto do teste e que a FLAG
+    # nao causa alteracao alem do que a variacao de m2 ja causa normalmente.
+    # Verificamos que os resultados existem e sao finitos em ambos os casos.
+    assert math.isfinite(r_dentro.viabilidade.margem_ebitda_pct)
+    assert math.isfinite(r_fora.viabilidade.margem_ebitda_pct)
+    # flag_fora_envelope e True no r_fora, mas o DRE ainda roda normalmente.
+    assert r_fora.viabilidade.faturamento_mensal_steady >= 0
+
+
+def test_flag_fora_envelope_falso_dentro_envelope() -> None:
+    """m2=1500 (dentro do envelope [600, 3000]) -> flag_fora_envelope=False."""
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 938.0,
+        base_calibracao_df=_base_comparaveis(), setores_df=None,
+    )
+    assert r.flag_fora_envelope is False

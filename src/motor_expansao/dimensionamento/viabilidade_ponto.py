@@ -54,6 +54,10 @@ DEMANDA_FONTE_PREMISSA: str = "premissa_explicita"
 # (balcao a ticket cheio + agregadores ~60% do ticket). NAO altera o simulador (DRE).
 SHARE_BALCAO_DEFAULT: float = 0.69
 
+# --- Guardrail de envelope de metragem (BLK-VIAB-06) -------------------------
+ENVELOPE_MIN: float = 600.0   # m2 mínimo da base de calibração Ultra (636 m2 - folga)
+ENVELOPE_MAX: float = 3000.0  # m2 máximo (base calibrada até 2800 m2 + folga; MAPE 85% além)
+
 
 @dataclass
 class ViabilidadePontoResult:
@@ -101,6 +105,9 @@ class ViabilidadePontoResult:
 
     # --- Guardrail: demanda NUNCA derivada de geo ---
     demanda_fonte: str = DEMANDA_FONTE_PREMISSA
+
+    # --- Guardrail de envelope de metragem (BLK-VIAB-06) ---
+    flag_fora_envelope: bool = False
 
 
 def faixa_alunos_por_densidade(
@@ -315,6 +322,11 @@ def analisar_viabilidade_ponto(
     # 2. Flag de zona morta.
     zm = flag_zona_morta(catch, pop_min=POP_ZONA_MORTA_MIN, renda_min=RENDA_ZONA_MORTA_MIN)
 
+    # 2b. Flag de envelope de metragem (BLK-VIAB-06).
+    # Sinaliza extrapolação quando m2 cai fora de [ENVELOPE_MIN, ENVELOPE_MAX].
+    # Apenas informativa: NÃO recusa o cálculo nem altera DRE/faixa/grade.
+    flag_envelope = not (ENVELOPE_MIN <= m2 <= ENVELOPE_MAX)
+
     # 3. Faixa de alunos por densidade (curva tamanho->densidade; NAO geografica).
     if base_calibracao_df is None:
         faixa: dict = {
@@ -389,6 +401,7 @@ def analisar_viabilidade_ponto(
         alunos_agregadores_premissa=float(alunos_agregadores),
         alunos_para_margem_alvo=float(alunos_margem_alvo),
         demanda_fonte=DEMANDA_FONTE_PREMISSA,
+        flag_fora_envelope=flag_envelope,
     )
 
 
@@ -407,4 +420,6 @@ __all__ = [
     "ALUGUEL_RANGE_FATOR",
     "DEMANDA_FONTE_PREMISSA",
     "SHARE_BALCAO_DEFAULT",
+    "ENVELOPE_MIN",
+    "ENVELOPE_MAX",
 ]
