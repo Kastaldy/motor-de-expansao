@@ -1343,43 +1343,7 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 
 ---
 
-### BLK-RELMUN-06 — Texto dinâmico das zonas de atuação no slide Síntese (quadros finais)
+- BLK-RELMUN-06 (concluído 2026-07-10) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (lógica de composição de texto de relatório; READ-ONLY sobre o M1; 1 decisão de produto — regras do texto por combinação de zonas). |
-| **Prioridade** | Normal. |
-| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 regras do texto]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (`relatorio_municipal.py` display; usa `zonas_geo`/`n_zonas_geo` já presentes em `result`). |
-| **Autonomia** | **manual (NÃO loop-safe)** — altera texto de relatório auditável; exige revisão visual do PDF. |
-
-**Objetivo.** No slide **Síntese** (`_sintese_page`, `relatorio_municipal.py:1949` — 3 quadros/cards
-finais; card 3 "Movimento Recomendado"), substituir o **texto constante**
-`"posicionamento periférico, cercar o núcleo pelos flancos antes da concorrência."` por um texto
-**gerado a partir dos tipos de zona efetivamente encontrados** no município (`zonas_geo` /
-`_ZONA_GEO_ROTULOS` = Âncora central / Flancos laterais / Cerco), para municípios com 1, 2 ou 3 zonas
-não receberem uma recomendação genérica que pode não se aplicar.
-
-**Escopo permitido (READ-ONLY M1, só display).**
-- `_sintese_page` (`relatorio_municipal.py:1949–1991`): compor o texto do card de zonas (card 3) a
-  partir de `result["zonas_geo"]` (rótulos das zonas presentes), reusando `_ZONA_GEO_DESC` (`:163`) e/ou
-  `_ZONA_TEXTOS` (`:1776`) como blocos de frase. Fallback para 0 zonas (mensagem de "hexes
-  insuficientes …", análoga à já usada na página Domínio).
-- Manter os outros 2 cards (penetração fitness, residual) e o VALOR do card ("N zonas de atuação")
-  inalterados.
-
-**Fora de escopo.** `zonas_geo`/`_zonas_geometricas` / `_zonas_do_municipio` (a zonificação em si — só
-LEITURA); `dominio_df`, `flag_sam`, score, artefatos oficiais do M1. Página Domínio (`:1783`) já é
-dinâmica por zona — confirmar no gate se entra no escopo ou não.
-
-**Decisão de produto (D1 — gate).** As regras do texto por combinação de zonas (ex.: só "Âncora
-central" → adensar o núcleo; +"Flancos laterais" → cercar pelos flancos; +"Cerco" → estratégia
-completa de cerco). O Planner propõe o mapeamento; humano aprova antes do Builder.
-
-**Critério de aceite.** Card de zonas do slide Síntese reflete os tipos de zona presentes no município
-(testar combinações 1/2/3 zonas + 0 zonas); demais cards inalterados; `zonas_geo`/score/artefatos
-intactos; testes de `tests/unit/test_relatorio_municipal.py` cobrindo as combinações; ruff+mypy limpos;
-revisão visual do PDF aprovada.
 
 ---

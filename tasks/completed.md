@@ -7719,3 +7719,62 @@ confirmado (git diff só relatorio_municipal.py + test + CLAUDE.md + bookkeeping
 pipelines/config/censo/artefatos). Sem dry-run. Mergeado em integracao/map02-relmun05-06 pelo
 orquestrador; PR para main só após os 3 ciclos E verificação humana (Vinicius pediu para revisar
 antes do PR).
+
+---
+
+### BLK-RELMUN-06 — Texto dinâmico das zonas de atuação no slide Síntese (quadros finais)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (lógica de composição de texto de relatório; READ-ONLY sobre o M1; 1 decisão de produto — regras do texto por combinação de zonas). |
+| **Prioridade** | Normal. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 regras do texto]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (`relatorio_municipal.py` display; usa `zonas_geo`/`n_zonas_geo` já presentes em `result`). |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera texto de relatório auditável; exige revisão visual do PDF. |
+
+**Objetivo.** No slide **Síntese** (`_sintese_page`, `relatorio_municipal.py:1949` — 3 quadros/cards
+finais; card 3 "Movimento Recomendado"), substituir o **texto constante**
+`"posicionamento periférico, cercar o núcleo pelos flancos antes da concorrência."` por um texto
+**gerado a partir dos tipos de zona efetivamente encontrados** no município (`zonas_geo` /
+`_ZONA_GEO_ROTULOS` = Âncora central / Flancos laterais / Cerco), para municípios com 1, 2 ou 3 zonas
+não receberem uma recomendação genérica que pode não se aplicar.
+
+**Escopo permitido (READ-ONLY M1, só display).**
+- `_sintese_page` (`relatorio_municipal.py:1949–1991`): compor o texto do card de zonas (card 3) a
+  partir de `result["zonas_geo"]` (rótulos das zonas presentes), reusando `_ZONA_GEO_DESC` (`:163`) e/ou
+  `_ZONA_TEXTOS` (`:1776`) como blocos de frase. Fallback para 0 zonas (mensagem de "hexes
+  insuficientes …", análoga à já usada na página Domínio).
+- Manter os outros 2 cards (penetração fitness, residual) e o VALOR do card ("N zonas de atuação")
+  inalterados.
+
+**Fora de escopo.** `zonas_geo`/`_zonas_geometricas` / `_zonas_do_municipio` (a zonificação em si — só
+LEITURA); `dominio_df`, `flag_sam`, score, artefatos oficiais do M1. Página Domínio (`:1783`) já é
+dinâmica por zona — confirmar no gate se entra no escopo ou não.
+
+**Decisão de produto (D1 — gate).** As regras do texto por combinação de zonas (ex.: só "Âncora
+central" → adensar o núcleo; +"Flancos laterais" → cercar pelos flancos; +"Cerco" → estratégia
+completa de cerco). O Planner propõe o mapeamento; humano aprova antes do Builder.
+
+**Critério de aceite.** Card de zonas do slide Síntese reflete os tipos de zona presentes no município
+(testar combinações 1/2/3 zonas + 0 zonas); demais cards inalterados; `zonas_geo`/score/artefatos
+intactos; testes de `tests/unit/test_relatorio_municipal.py` cobrindo as combinações; ruff+mypy limpos;
+revisão visual do PDF aprovada.
+
+**Fechamento do ciclo BLK-RELMUN-06 (2026-07-10) — VEREDITO: APROVADO.** Esteira Média (BO sonnet
+-> Planner sonnet -> [gate D1 REAL: 4 textos por combinação de zona APROVADOS por Vinicius;
+_dominio_page FORA de escopo] -> Builder sonnet -> QA opus 4.8). Rodou na branch ciclo/BLK-RELMUN-06
+(ramificada da secundária integracao/map02-relmun05-06). Feito: novo helper puro
+`_texto_zonas_sintese(zonas_geo)` em relatorio_municipal.py (~1784) que compõe o texto do card 3
+"Movimento Recomendado" do slide Síntese (_sintese_page ~1998) a partir dos tipos de zona presentes
+em result["zonas_geo"] (SÓ LEITURA), checando por pertencimento de rótulo (Cerco > Flancos laterais
+> Âncora central > fallback 0 zonas), com os 4 textos exatos do gate D1. A COR (ULTRA_LARANJA) e o
+VALOR ("N zonas de atuação") do card 3 e os cards 1/2 inalterados. 9 testes novos (5 unit do helper
+incl. caso defensivo só-Flancos -> texto de 2 zonas; 4 integração PDF checando linhas wrapeadas +
+regressão dos cards 1/2 e do VALOR). Validações (QA, NO-BYPASS): ruff limpo; import ok; mypy só 6
+pré-existentes de types-requests (0 novo); suíte serial completa `1545 passed, 2 skipped, 1 failed`
+— única falha pré-existente/ambiental do M2. READ-ONLY M1 confirmado: zonas_geo só lido;
+_zonas_geometricas/_zonas_do_municipio/agregar_municipio/_hex_destacado_mask/dominio_df/flag_sam/
+score intocados; _dominio_page intocada; git diff só relatorio_municipal.py + test + bookkeeping.
+Sem dry-run. Mergeado em integracao/map02-relmun05-06 pelo orquestrador. FIM DOS 3 CICLOS: PR para
+main NÃO aberto (Vinicius pediu para verificar o resultado primeiro).
