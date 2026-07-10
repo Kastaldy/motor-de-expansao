@@ -25,6 +25,7 @@ from motor_expansao.dashboard.components import (
     _build_competitor_cluster_layer,
     _build_multihex_selection_layer,
     _category_options,
+    _map_frame_token,
     _sort_carteira_by_m1,
     build_analise_pontual_map,
     build_business_answers,
@@ -56,7 +57,8 @@ from motor_expansao.dashboard.components import (
     build_uf_metric_figure,
     build_ultra_network_kpis,
     build_ultra_presence_map,
-    build_unified_map_figure,
+    build_unified_map_figure,  # noqa: F401 - re-exportado: testes usam streamlit_app.build_unified_map_figure
+    build_unified_map_figure_cached,
     competitor_cluster_mode,
     count_pins_in_scope,
     filter_points_to_radius,
@@ -4260,37 +4262,27 @@ def render_relatorio_municipal_expander(
         )
 
 
-def render_mapa_territorial(
+@st.fragment
+def _render_mapa_fragment(
     df: pd.DataFrame,
     *,
+    competitors_df: pd.DataFrame | None,
+    ultra_df: pd.DataFrame | None,
+    dominio_df: pd.DataFrame | None,
     selected_ufs: list[str],
     selected_cities: list[str],
-    competitors_df: pd.DataFrame | None = None,
-    ultra_df: pd.DataFrame | None = None,
-    search_pin: tuple[float, float] | None = None,
-    search_hex_id: str | None = None,
-    dominio_df: pd.DataFrame | None = None,
-    city_summary: pd.DataFrame | None = None,
-    uf_summary: pd.DataFrame | None = None,
-    selected_faixas: list[str] | None = None,
-    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
-    censo_geo_dir: Path | None = None,
+    selected_faixas: list[str] | None,
+    search_pin: tuple[float, float] | None,
+    search_hex_id: str | None,
 ) -> None:
-    """Mapa Territorial Unificado: modo de cor selecionavel com overlays opcionais.
+    """Fragmento do mapa: seletor de modo de cor + overlays + deck cacheado + render.
 
-    Camada visual: nao altera score_priorizacao, carteira, plano nem artefatos oficiais do M1.
+    BLK-PERF-01b: trocar de modo de cor / overlay reroda SÓ este fragmento; o deck é
+    memoizado por build_unified_map_figure_cached (chave por tokens), então revisitar um
+    modo já visto no recorte é HIT (≈0). O destaque multi-hex é anexado pós-cache (cópia por
+    chamada do cache_data). READ-ONLY M1: não altera score, carteira, plano nem artefatos.
     """
-    # Inicializa estado do cenario multi-hex
-    if "multihex_cenario" not in st.session_state:
-        st.session_state["multihex_cenario"] = []
-    multihex_ids: list[str] = list(st.session_state["multihex_cenario"])
-
-    st.markdown("#### Mapa Territorial Unificado")
-    st.caption("Escolha o modo de cor e os overlays.")
-    st.caption(
-        "Dica: filtre por município para ver o recorte com densidade total. "
-        "As camadas visuais não alteram score, ranking, carteira nem artefatos do M1."
-    )
+    multihex_ids: list[str] = list(st.session_state.get("multihex_cenario", []))
 
     ctrl_col1, ctrl_col2 = st.columns([1.6, 2.4])
 
@@ -4380,18 +4372,24 @@ def render_mapa_territorial(
         _render_unified_legend(selected_mode, enabled_overlays, competitors_df=competitors_df_filtered, ultra_df=ultra_df)
 
     with st.spinner("Construindo mapa..."):
-        deck, n_points = build_unified_map_figure(
+        # BLK-PERF-01b: wrapper cacheado. Frames como args underscore (fora do hash);
+        # a identidade do recorte entra pelos *_token. multihex_cenario NÃO entra na chave.
+        deck, n_points = build_unified_map_figure_cached(
             df,
+            competitors_df_filtered,
+            ultra_df,
+            dominio_df,
             color_mode=selected_mode,
-            enabled_overlays=enabled_overlays,
-            selected_ufs=selected_ufs,
-            selected_cities=selected_cities,
-            selected_faixas=selected_faixas,
-            competitors_df=competitors_df_filtered,
-            ultra_df=ultra_df,
+            enabled_overlays=tuple(sorted(enabled_overlays)),
+            selected_ufs=tuple(selected_ufs),
+            selected_cities=tuple(selected_cities),
+            selected_faixas=tuple(selected_faixas or []),
             search_pin=search_pin,
             search_hex_id=search_hex_id,
-            dominio_df=dominio_df,
+            df_token=_map_frame_token(df, ["hex_id"]),
+            competitors_token=_map_frame_token(competitors_df_filtered, ["rede", "lat", "lng"]),
+            ultra_token=_map_frame_token(ultra_df, ["lat", "lng"]),
+            dominio_token=_map_frame_token(dominio_df, ["hex_id"]),
         )
 
     if deck is None:
@@ -4401,7 +4399,8 @@ def render_mapa_territorial(
         )
         return
 
-    # Adiciona camada de destaque multi-hex sem alterar cores dos modos existentes
+    # Adiciona camada de destaque multi-hex sem alterar cores dos modos existentes.
+    # cache_data devolve cópia por chamada -> este append NÃO vaza para o deck cacheado.
     if multihex_ids:
         deck.layers.append(_build_multihex_selection_layer(multihex_ids))
 
@@ -4447,6 +4446,82 @@ def render_mapa_territorial(
             if _pins_caption is not None:
                 st.caption(_pins_caption)
 
+
+@st.fragment
+def _render_multihex_panel(
+    df: pd.DataFrame,
+    active_hex_id: str | None,
+    multihex_ids: list[str],
+) -> None:
+    """Painel multi-hex isolado num fragmento (BLK-PERF-01b / D1).
+
+    Incluir/remover hex reroda SÓ este fragmento e atualiza os KPIs imediatamente; o mapa
+    NÃO é reconstruído. O destaque laranja no mapa é propagado só ao clicar "Atualizar mapa"
+    (st.rerun scope="app"). READ-ONLY M1: não altera score, carteira, plano nem artefatos.
+    """
+    _render_multihex_controls(active_hex_id, multihex_ids)
+
+    # Relê o estado após possíveis mutações dos botões de incluir/remover
+    multihex_ids_atual = list(st.session_state.get("multihex_cenario", []))
+    if multihex_ids_atual:
+        _render_multihex_kpis(df, multihex_ids_atual)
+
+    # D1 (Felipe 2026-07-10): botão explícito para propagar o destaque do cenário ao mapa.
+    if st.button("Atualizar mapa", key="btn_multihex_refresh_map"):
+        st.rerun(scope="app")
+    st.caption(
+        "Os indicadores acima já refletem o cenário atual. O destaque no mapa é atualizado ao "
+        'clicar em "Atualizar mapa" (ou ao trocar de aba, buscar por coordenada ou clicar no mapa).'
+    )
+
+
+def render_mapa_territorial(
+    df: pd.DataFrame,
+    *,
+    selected_ufs: list[str],
+    selected_cities: list[str],
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
+    search_pin: tuple[float, float] | None = None,
+    search_hex_id: str | None = None,
+    dominio_df: pd.DataFrame | None = None,
+    city_summary: pd.DataFrame | None = None,
+    uf_summary: pd.DataFrame | None = None,
+    selected_faixas: list[str] | None = None,
+    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
+    censo_geo_dir: Path | None = None,
+) -> None:
+    """Mapa Territorial Unificado: modo de cor selecionavel com overlays opcionais.
+
+    Camada visual: nao altera score_priorizacao, carteira, plano nem artefatos oficiais do M1.
+    """
+    # Inicializa estado do cenario multi-hex
+    if "multihex_cenario" not in st.session_state:
+        st.session_state["multihex_cenario"] = []
+    multihex_ids: list[str] = list(st.session_state["multihex_cenario"])
+
+    st.markdown("#### Mapa Territorial Unificado")
+    st.caption("Escolha o modo de cor e os overlays.")
+    st.caption(
+        "Dica: filtre por município para ver o recorte com densidade total. "
+        "As camadas visuais não alteram score, ranking, carteira nem artefatos do M1."
+    )
+
+    # BLK-PERF-01b: o seletor de modo de cor + overlays + build do deck + render vivem num
+    # fragmento próprio. Trocar de modo/overlay reroda só o fragmento (deck memoizado por
+    # build_unified_map_figure_cached). READ-ONLY M1 preservado.
+    _render_mapa_fragment(
+        df,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+        dominio_df=dominio_df,
+        selected_ufs=selected_ufs,
+        selected_cities=selected_cities,
+        selected_faixas=selected_faixas,
+        search_pin=search_pin,
+        search_hex_id=search_hex_id,
+    )
+
     # Leitura de click_coord apos o fragmento (pode ter sido atualizado)
     click_coord: tuple[float, float] | None = st.session_state.get("click_coord")
 
@@ -4461,7 +4536,9 @@ def render_mapa_territorial(
         active_hex_id = str(search_hex_id)
 
     st.markdown("---")
-    _render_multihex_controls(active_hex_id, multihex_ids)
+    # BLK-PERF-01b: painel multi-hex isolado num fragmento (incluir/remover não reconstrói
+    # o mapa; botão "Atualizar mapa" propaga o destaque — D1).
+    _render_multihex_panel(df, active_hex_id, multihex_ids)
 
     # Re-le estado apos possiveis mutacoes dos botoes
     multihex_ids = list(st.session_state.get("multihex_cenario", []))

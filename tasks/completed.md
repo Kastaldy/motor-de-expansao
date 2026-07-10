@@ -8054,3 +8054,46 @@ semanticamente idênticos (mesmo conteúdo/páginas); harness B6 re-rodado com g
 teste cobrindo o caminho municipal pré-filtrado; suíte verde; ruff/mypy limpos; `loop_guard` limpo;
 1 validação visual humana de 1 PDF de cada tipo pós-merge (não bloqueia o ciclo).
 **Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-PERF-01b — Cache dos builders de mapa + @st.fragment no painel multi-hex + seletor de cor no fragment
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (muda o comportamento interativo do mapa — o coração do dashboard; **READ-ONLY sobre o M1**). |
+| **Prioridade** | **Alta** (dores #1/#2/#3 do Felipe). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — decisões de produto + validação visual]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (diagnósticos BLK-REV-04/05 concluídos). Recomendado APÓS o BLK-PERF-01a (PRs independentes). |
+| **Autonomia** | **manual (NÃO loop-safe)** — comportamento interativo exige validação visual humana (invalidação de cache, destaque multi-hex; lição BLK-UI-10). NÃO marcar loop-safe. |
+
+**Contexto (REV-04/05).** Os builders de mapa NÃO têm cache e reconstroem+re-serializam o deck inteiro
+(payload 21–24 MB) a cada rerun: troca de modo de cor custa 0,7–3,3 s sendo que **91,5% do payload é
+invariante entre modos** (só `fill_color` muda); add/remove hex no cenário custa 700–900 ms de rebuild
+sendo que `agregar_cenario_multihex` custa 10–21 ms. O seletor `mapa_territorial_color_mode`
+(`pages.py:4333-4339`) está FORA do `@st.fragment` do mapa → rerun da aba inteira.
+
+**Objetivo.** (1) Memoizar os builders (via `build_unified_map_figure`, `components.py:3028`) por
+(df, modo, filtros, overlays, search) — atenção do REV-05 H3: validar picklabilidade do `pdk.Deck` para
+`@st.cache_data`, senão `@st.cache_resource` com chave manual; a layer de destaque multi-hex já é
+anexada DEPOIS do deck (`pages.py:4423-4424`), compatível com cache. (2) Envolver
+`_render_multihex_controls` + `_render_multihex_kpis` num `@st.fragment` (esboço pronto no relatório
+REV-05) — add/remove hex deixa de reconstruir o mapa. (3) Mover o seletor de modo de cor para dentro do
+fragment do mapa (complemento do cache, REV-04).
+
+**Decisões de produto — RESOLVIDAS UPFRONT por Felipe (2026-07-10; substituem o gate interativo,
+permanece a validação visual humana pós-build):**
+- **D1 = Botão "Atualizar mapa":** KPIs atualizam na hora dentro do fragment; o destaque laranja do
+  mapa NÃO força rerun automático — o painel ganha um botão explícito "Atualizar mapa" que dispara o
+  rerun completo quando o operador quiser ver o destaque novo (+ caption curto explicando). Ganho de
+  −700–900 ms por add/remove preservado.
+- **D2 = Cache SEM TTL:** mesmo padrão dos loaders atuais (vive enquanto o processo estiver de pé;
+  parquets são `:ro` e só mudam em deploy, que recria o container e zera o cache). Invalidação por
+  parâmetros (UF/cidade/modo/overlays/busca) obrigatória e testada; mudar `multihex_cenario` NÃO invalida.
+
+**Critérios de aceite.** Harness B3/B4 antes/depois (meta: troca de cor ≈ 0 em cache hit; add/remove hex
+sem rebuild do mapa); teste de integração da invalidação (trocar UF/cidade/modo/overlay/busca INVALIDA;
+mudar `multihex_cenario` NÃO); mapa nunca exibe dado de UF/filtro errado (teste explícito); suíte verde;
+ruff/mypy limpos; **validação visual humana aprovada** (cache + fragment + destaque).
+**Guardrail.** §5 READ-ONLY M1 (display only; caps `MAP_POINT_LIMIT*` e `_downsample_map_index` INTOCADOS).

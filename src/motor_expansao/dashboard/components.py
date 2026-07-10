@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -47,6 +48,72 @@ from motor_expansao.dashboard.utils import (
     hex_to_rgba,
     score_band_to_color,
 )
+
+# BLK-PERF-01b: bound de memória do cache do deck do Mapa Territorial. NÃO é expiração por
+# tempo (D2 proíbe TTL); apenas limita quantas entradas de deck ficam memoizadas por processo
+# (~6 recortes × 4 modos). Vive aqui (path do ciclo), não em constants.py.
+MAP_FIGURE_CACHE_MAX_ENTRIES = 24
+
+
+def _map_frame_token(df: pd.DataFrame | None, cols: list[str]) -> str:
+    """Token leve e determinístico do conteúdo de um DataFrame para chave de cache.
+
+    None -> "none"; vazio -> "n0"; senão f"n{len}:{sha1(hash_pandas_object(cols presentes))[:16]}".
+    hash_pandas_object é vetorizado em C e sensível ao CONTEÚDO (inclui dtype object como hex_id).
+    Recorte com conjunto de linhas/valores diferente -> token diferente -> MISS correto; conjuntos
+    distintos nunca colidem (impossível false-hit entre UFs). READ-ONLY: só deriva identidade.
+    """
+    if df is None:
+        return "none"
+    if len(df) == 0:
+        return "n0"
+    present = [c for c in cols if c in df.columns]
+    if not present:
+        return f"n{len(df)}:nocols"
+    hashed = pd.util.hash_pandas_object(df[present], index=False).to_numpy().tobytes()
+    return f"n{len(df)}:{hashlib.sha1(hashed).hexdigest()[:16]}"
+
+
+@st.cache_data(show_spinner=False, max_entries=MAP_FIGURE_CACHE_MAX_ENTRIES)  # sem expiracao por tempo (D2)
+def build_unified_map_figure_cached(
+    _df: pd.DataFrame,
+    _competitors_df: pd.DataFrame | None,
+    _ultra_df: pd.DataFrame | None,
+    _dominio_df: pd.DataFrame | None,
+    *,
+    color_mode: str,
+    enabled_overlays: tuple[str, ...],
+    selected_ufs: tuple[str, ...],
+    selected_cities: tuple[str, ...],
+    selected_faixas: tuple[str, ...],
+    search_pin: tuple[float, float] | None,
+    search_hex_id: str | None,
+    df_token: str,
+    competitors_token: str,
+    ultra_token: str,
+    dominio_token: str,
+):
+    """Wrapper cacheado (@st.cache_data, SEM ttl) do dispatcher do Mapa Territorial.
+
+    Os DataFrames entram como parâmetros underscore (IGNORADOS no hash do Streamlit); a
+    identidade do recorte vem dos *_token calculados por _map_frame_token. multihex_cenario
+    FICA FORA da chave (a layer de destaque é anexada pós-cache no render). cache_data devolve
+    uma cópia por chamada -> anexar layer ao deck retornado não vaza para outros hits.
+    READ-ONLY M1: não recalcula score, carteira, plano nem artefatos oficiais.
+    """
+    return build_unified_map_figure(
+        _df,
+        color_mode=color_mode,
+        enabled_overlays=list(enabled_overlays),
+        selected_ufs=list(selected_ufs),
+        selected_cities=list(selected_cities),
+        selected_faixas=(list(selected_faixas) or None),
+        competitors_df=_competitors_df,
+        ultra_df=_ultra_df,
+        search_pin=search_pin,
+        search_hex_id=search_hex_id,
+        dominio_df=_dominio_df,
+    )
 
 
 def build_kpis(
