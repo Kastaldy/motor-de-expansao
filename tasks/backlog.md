@@ -1152,33 +1152,8 @@ numa **recomendação de rumo** (rebuild vs refactor incremental), **stack alvo*
 
 ---
 
-### BLK-PERF-01c — Tooltip enxuto do mapa (14 → 5-6 campos por hexágono)
+- BLK-PERF-01c (concluído 2026-07-10) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (display; **READ-ONLY sobre o M1**; envolve 1 decisão de produto — quais campos ficam). |
-| **Prioridade** | Média (complementa o 01b; maior corte de payload no PRIMEIRO render de cada modo). |
-| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — Felipe: campos do tooltip]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (diagnóstico BLK-REV-03 concluído). Independente do 01a/01b (PR separado). |
-| **Autonomia** | **manual (NÃO loop-safe)** — decisão de produto (campos) + validação visual do tooltip. NÃO marcar loop-safe. |
-
-**Contexto (REV-03).** **~65% do payload de 21–24 MB** (15,7 MB em SC) são as 14 strings de tooltip por
-hexágono (`_prepare_m1_tooltip_fields` + `_apply_hex_tooltip_fields`, ~1,7 s de preparação em RO). A
-geometria é só ~8,5%. Reduzir para 5-6 campos corta −50/−65% do payload e ~metade da preparação.
-
-**Objetivo.** Reduzir os campos do tooltip nos builders para o conjunto APROVADO POR FELIPE
-(2026-07-10, gate resolvido upfront — **D4 = "Enxuto + Score censitário", 7 linhas**): Título
-(Município/UF) + Faixa M1 + Score do modo ativo + **Score censitário** + Habitantes + Renda per
-capita + Residual Fitness (1 linha). Cortam-se: fonte geográfica, score estrutural, qualidade join,
-coverage, viável, prioridade, 2ª linha de residual (detalhe completo continua a 1 clique, na Análise
-Pontual). Aplicar aos 4 modos (mesma infraestrutura; o Híbrido já tem padrão compacto via
-`_HYBRID_TOOLTIP_SHOW_DETAIL` — alinhar ao conjunto de 7). ~−55% de payload estimado.
-
-**Critérios de aceite.** Campos aprovados por Felipe ANTES do Builder; payload `deck.to_json()` medido
-antes/depois (meta: −50% ou mais) + harness B3/B4; acentuação correta nas labels novas (§2); suíte verde
-(asserts de tooltip atualizados); validação visual humana do tooltip nos 4 modos.
-**Guardrail.** §5 READ-ONLY M1 (display only; nenhum dado é removido do df — só do payload do mapa).
 
 ---
 
