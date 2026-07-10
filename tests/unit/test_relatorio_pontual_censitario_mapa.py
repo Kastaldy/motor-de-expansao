@@ -345,3 +345,19 @@ def test_fallback_offline_canvas_claro(monkeypatch):
     r, g, b = img.getpixel((cx, cy))
     lum = 0.299 * r + 0.587 * g + 0.114 * b
     assert lum > 180, f"Canvas fallback deveria ser claro, luminancia={lum:.1f} (r={r},g={g},b={b})"
+
+
+def test_shared_transformer_bytes_identicos():
+    """Fix 1 BLK-PERF-01a: transformer compartilhado — PNGs identicos em 2 chamadas consecutivas."""
+    setores = pd.DataFrame([
+        _sector_record("355030801000001", box(-700, -700, 0, 700), pop=800, score=40),
+        _sector_record("355030801000002", box(0, -700, 700, 700), pop=1400, score=85),
+    ])
+    mapas_a = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=600, height=460, basemap=False
+    )
+    mapas_b = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=600, height=460, basemap=False
+    )
+    for camada in ("densidade", "renda", "score", "concorrentes"):
+        assert mapas_a[camada] == mapas_b[camada], f"PNG nao-deterministico na camada {camada}"

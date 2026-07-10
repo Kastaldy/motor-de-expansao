@@ -8009,3 +8009,48 @@ dos 3 ciclos) — READ-ONLY M1, display-only. Aprovados por Vinicius após revis
   `test_relatorio_municipal.py` + `test_streamlit_app.py` = 279 passed; suíte completa como gate.
 - Sucessor registrado no backlog: **BLK-RELPON-05** (legenda superior por mapa no Relatório Pontual
   com o valor do dado no setor do ponto) — feature com Planner + gate, ciclo próprio depois.
+
+---
+
+### BLK-PERF-01a — Shared transformer no render censitário + pré-filtro do agregar_municipio (PDFs 86×)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (performance de relatório; **READ-ONLY sobre o M1**; zero mudança de lógica/estrutura de páginas). |
+| **Prioridade** | **Alta** (dor #4 do Felipe; maior ganho/esforço do epic). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (diagnóstico BLK-REV-06 concluído). |
+| **Autonomia** | **loop-safe** — determinístico/headless (PNG/PDF byte-comparável + harness B6 como aceite); toca SÓ o caminho de render/agregação de relatório (`censo_map.py`, `relatorio_municipal.py`/`pages.py`); READ-ONLY M1; sem VPS/rede; NÃO toca `config.py`/`pipelines/m1`. |
+
+**Contexto (REV-06).** Root cause do PDF Pontual: `_to_mercator` (`censo_map.py:372-375`) cria um
+transformer pyproj NOVO **por setor** no loop aeqd→3857 de `render_mapas_censitarios_combinados`
+(`censo_map.py`, loop ~l.729) — 141 setores × 24,4 ms = **3,4 s desperdiçados (77% dos 4,5 s totais)**;
+escala linear com N de setores (SP/Rio piores). No Municipal, `agregar_municipio`
+(`relatorio_municipal.py:584`) escaneia o df nacional (1,5 M hexes, 2,1 s) sendo que o chamador em
+`pages.py` já tem o `df_muni` filtrado.
+
+**Objetivo.** (1) Criar o transformer UMA vez antes do loop (`crs_local = _local_metric_crs(lat, lng)`;
+`to_3857 = _transformer(crs_local, CRS_WEB_MERCATOR)`) e reusar via `_project_geometry(geom, to_3857)`
+no lugar de `_to_mercator(geom, lat, lng)` por setor — ganho medido: Fase 2b 3,4 s → 0,04 s (86×),
+**PDF Pontual 4,5 s → ~0,7 s**. (2) Eliminar o full-scan do `agregar_municipio` para **TODOS os
+callers** — preferir o filtro por município como PRIMEIRA operação DENTRO de `agregar_municipio`
+(beneficia dashboard **e** API automaticamente, byte-idêntico) ou, se caller-side, cobrir os DOIS
+caminhos: `pages.py` (dashboard) **e** `api/service.py:gerar_pdf_municipio` (API/bot carrega o
+parquet nacional full) — **−2,1 s locais / mais na VPS** sem mudança de lógica.
+
+**Baseline de PRODUÇÃO (2026-07-10, medido no container da VPS pré-fix — referência do
+antes/depois; detalhe em `data/analysis/baseline_prod_pdf_20260710.md`, gitignored):** Pontual
+**28,3 s frio / 9,5 s quente**; Municipal **32,7 s frio / 4,5 s quente** (frio dominado por fetch
+de tiles na rede da VPS). Meta pós-fix em produção: Pontual quente ≤3 s; Municipal quente ≤2,5 s.
+
+**Decisões PRÉ-FIXADAS.** Raio 1,5 km e `setor_censitario_intersecao_area_1p5km` INTOCADOS (só o render
+reprojeta mais rápido); mesma matemática de projeção (mesmos parâmetros de transformer) → saída visual
+IDÊNTICA; NÃO incluir neste bloco as opções O2 (ThreadPool) e O4 (pre-fetch de tiles) do REV-06 —
+ganho marginal pós-fix, avaliar depois se a UX exigir.
+
+**Critérios de aceite.** PNGs dos mapas byte-idênticos aos atuais (teste de regressão) e PDFs
+semanticamente idênticos (mesmo conteúdo/páginas); harness B6 re-rodado com ganho documentado no PR;
+teste cobrindo o caminho municipal pré-filtrado; suíte verde; ruff/mypy limpos; `loop_guard` limpo;
+1 validação visual humana de 1 PDF de cada tipo pós-merge (não bloqueia o ciclo).
+**Guardrail.** §5 READ-ONLY M1.

@@ -861,3 +861,39 @@ def test_coexistencia_relatorio_pontual_intocado():
     depois = gerar_pdf_relatorio_pontual_censitario(result, mapas_pontual, ultra_dir="data/ultra")
 
     assert antes == depois
+
+
+# ---------------------------------------------------------------------------
+# Fix 2 BLK-PERF-01a: df_pre_filtrado produz resultado identico ao full-scan
+# ---------------------------------------------------------------------------
+
+
+def test_agregar_municipio_prefiltrado_identico_ao_nacional():
+    """Fix 2 BLK-PERF-01a: df_pre_filtrado produz resultado identico ao full-scan nacional."""
+    df_sp = _sample_df()  # 4 linhas de SAO PAULO
+    outras = pd.DataFrame([
+        {
+            "hex_id": _hex(-3.0, -60.0), "lat": -3.0, "lng": -60.0,
+            "nome_municipio": "MANAUS", "cidade": "MANAUS", "uf": "AM",
+            "sam_fitness_potencial": 100.0, "oferta_efetiva_disponivel": 100.0,
+            "score_setor_2022_calibrado": 30.0, "score_oportunidade_residual": 20.0,
+            "pop_total_setor_2022": 500.0, "pop_total": 800.0, "renda_per_capita": 1500.0,
+            "penetracao_fitness_mercado_estimada": 5.0,
+            "oferta_consumida_mercado_estimada": 50.0,
+        }
+    ] * 100)  # 100 linhas de outro municipio
+    df_nacional = pd.concat([df_sp, outras], ignore_index=True)
+
+    result_full = agregar_municipio(df_nacional, nome_municipio="SAO PAULO", uf="SP")
+    df_muni = df_nacional.loc[
+        df_nacional["nome_municipio"].astype(str).str.strip().str.casefold() == "sao paulo"
+    ].copy()
+    result_pre = agregar_municipio(
+        df_nacional, nome_municipio="SAO PAULO", uf="SP", df_pre_filtrado=df_muni
+    )
+
+    for key in (
+        "n_hex_total", "n_hex_amarelos", "soma_oferta_amarelos", "espaco_para_academias",
+        "mercado_disponivel_pessoas", "score_censo_max",
+    ):
+        assert result_full[key] == result_pre[key], f"Divergencia em {key!r}"
