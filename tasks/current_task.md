@@ -2,31 +2,36 @@
 
 ## Bloco atual
 
-ID: BLK-PROD-06
-Nome: Relatório de movimentação concorrencial (a partir de staging)
-Status: aprovado
-Tipo: analytics (READ-ONLY sobre o M1; loop-safe)
-Criticidade: Média
-Esteira: Block Orchestrator (concluído) → Planner → Builder (concluído) → QA (APROVADO)
+ID: BLK-REV-07
+Nome: Avaliação de fundação — Streamlit vs. alternativas (matriz de decisão)
+Status: APROVADO (QA) — ciclo concluído, bloco movido para completed.md
+Tipo: pesquisa/análise (READ-ONLY sobre o M1; loop-safe)
+Criticidade: Estratégica
+Esteira: Block Orchestrator → Planner → Builder → QA (autônoma no loop)
 Skill atual: QA (concluído)
-Próxima Skill: Block Orchestrator (fechamento)
+Próxima Skill: Fechamento manual (sucessor de decisão = BLK-REV-12, gate humano)
+
+## Veredito QA (2026-07-10)
+APROVADO. Relatório `data/analysis/avaliacao_stack.md` (gitignored) entregue no escopo:
+matriz 4×7 + espectro incremental→cirúrgico→rebuild + recomendação preliminar que difere a
+decisão ao REV-12. READ-ONLY M1 confirmado (loop_guard GUARD OK; diff M1/config canônico vazio;
+zero código de produção alterado). Suíte full: 1524 passed, 4 skipped; as 4 falhas + 1 erro são
+deps opcionais ausentes (openlocationcode/matplotlib), pré-existentes, NÃO regressão deste ciclo.
+Housekeeping via helper versionado: --check EXIT=1 antes → move → EXIT=0 depois. ruff clean,
+import ok, helper tests 10 passed.
 
 ## Objetivo
-Materializar `data/analysis/movimentacao_concorrencial.md` a partir dos parquets de concorrentes
-em `data/staging/`, com contagem por rede/UF/cidade, oferta consumida e impacto no residual.
-READ-ONLY sobre o M1. Sem coleta ao vivo.
-
-## Dados confirmados pelo BO
-- `data/staging/concorrentes_mapeados.parquet`: 3.296 linhas, 28 redes, 3.179 válidos; snapshot único (2026-04-22..05-04)
-- `data/staging/concorrentes_densos.parquet`: 10.165 linhas, 40 redes (inclui TotalPass/Wellhub)
-- `data/staging/hexagonos_mercado_mapeado.parquet`: join via `hex_id_res7` p/ uf/cidade/oferta; data_snapshot '2026-06-11'
-- SNAPSHOT ÚNICO — retrato atual sem delta (conforme decisão pré-fixada do backlog)
+Pesquisa estruturada das opções de stack (a: Streamlit + otimizar / b: React SPA + FastAPI
+existente / c: Dash-Panel / d: deck.gl+MapLibre + api) com critérios: performance de mapa e
+troca de cor, controle de UX, preservação offline §2, reuso da api/Caddy/volumes já existentes,
+velocidade de dev por perfil de time. Entrega: matriz de decisão + recomendação preliminar.
+A DECISÃO final fica no REV-12. Relatório em `data/analysis/avaliacao_stack.md`. READ-ONLY M1.
 
 ## Branch do ciclo
-ciclo/loop-20260707-123809
+ciclo/BLK-REV-07
 
 ## Guardrails
-- §5 READ-ONLY M1: nenhuma escrita em config.py/pipelines/m1/artefatos oficiais.
-- §6.1 loop-safe: sem VPS, sem rede, escreve só data/analysis (gitignored).
-- loop_guard.py limpo obrigatório.
-- DEC-013: coleta de concorrentes é VPS/cron — este bloco só LÊ staging.
+- §5 READ-ONLY M1; §6.1 loop-safe; data/analysis (gitignored).
+- A DECISÃO de rebuild vs refactor é do REV-12 (gate humano); este bloco só pesquisa.
+- Partir da topologia REAL de produção (multi-container: streamlit + api + caddy + authelia).
+- NÃO re-litigar o requisito offline §2 (já esclarecido na descrição do bloco).

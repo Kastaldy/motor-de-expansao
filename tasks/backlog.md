@@ -868,59 +868,13 @@ Dependências: decisão de produto sobre evolução para web interno.
 > impacto; VIAB-06/07 são loop-safe (guardrail + alavanca de precisão); VIAB-08/10 são humanos
 > (rede/dado externo). READ-ONLY sobre o M1 em todos.
 
-### BLK-VIAB-06 — Guardrail de envelope de metragem no motor de viabilidade
+- BLK-VIAB-06 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (guardrail no motor de viabilidade; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-VIAB-04** (mediu MAPE 85% na extrapolação > 2.800 m²). |
-| **Autonomia** | **loop-safe** — READ-ONLY M1; muda SÓ `dimensionamento/viabilidade_ponto.py` (não `config.py`/`pipelines/m1`); determinístico + testável; sem VPS/rede. |
-
-**Contexto.** O backtest BLK-VIAB-04-FU provou que fora do envelope calibrado (Ultra 636–2.800 m²; a base
-tem 112 unidades) a curva EXTRAPOLA mal (MAPE 85% acima de 2.800 m²). O motor deve SINALIZAR isso.
-
-**Objetivo.** Adicionar uma flag `flag_fora_envelope` em `analisar_viabilidade_ponto` (e no resultado) quando
-o `m2` do imóvel cai fora de `[ENVELOPE_MIN, ENVELOPE_MAX]`, para a UI avisar "extrapolação não confiável".
-
-**Decisões PRÉ-FIXADAS.** Envelope = **[600, 3.000] m²** (cobre a base de calibração 636–2.800 + folga);
-**só FLAG, NÃO recusa** por padrão (a decisão de exibir/bloquear fica na UI); comportamento existente do motor
-**byte-idêntico** exceto a flag nova (default de faixa/DRE inalterado).
-
-**Critérios de aceite.** `flag_fora_envelope` materializada; teste (m² > 3.000 → True; dentro → False);
-comportamento atual preservado (regressão dos testes VIAB-03/04); ruff/mypy/suíte verde. **Guardrail.** §5
-READ-ONLY M1; `viabilidade_ponto` não recalcula score/M1.
 
 ---
 
-### BLK-VIAB-07 — Curva de densidade por formato (rótulo opcional) — validação out-of-fold + parâmetro
+- BLK-VIAB-07 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (única alavanca de precisão restante do motor; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-VIAB-04** (diagnóstico rede-aware = teto ~+1,7 p.p. de MAPE). |
-| **Autonomia** | **loop-safe** — READ-ONLY M1; parâmetro OPCIONAL (default `None` = comportamento byte-idêntico); validação out-of-fold (DEC-008); sem VPS/rede; NO-GO é resultado VÁLIDO. |
-
-**Contexto.** Varremos a curva (BLK-VIAB-04-FU): afinar a faixa de METRAGEM não move a precisão (~30% MAPE é o
-piso); o único ganho real (~1,7 p.p.) veio de **homogeneidade de FORMATO/rede** (comparáveis da mesma rede). Duas
-academias do mesmo m² têm densidades diferentes se uma é low-cost de massa e a outra boutique.
-
-**Objetivo.** (1) Rotular os comparáveis por `formato` (ex.: `low_cost_massa` / `boutique`); (2) adicionar param
-OPCIONAL `formato` em `faixa_alunos_por_densidade` que filtra comparáveis do mesmo formato; (3) **VALIDAR
-out-of-fold** (k-fold vs baseline, DEC-008) se o ganho de precisão se sustenta. Se GO, materializar; se NO-GO,
-não expor.
-
-**Decisões PRÉ-FIXADAS.** Param default `None` → comportamento **byte-idêntico** ao atual (dashboard/VIAB-03
-preservados); **alvo = alunos totais REAIS** (nunca `membros`/agregador — memória `huff-membros-circularidade`);
-validação k-fold 5×5 seed=42; **R² in-sample banido do veredito**; NO-GO honesto encerra sem expor.
-
-**Critérios de aceite.** Relatório out-of-fold com veredito; param opcional testado (`None` = idêntico byte-a-byte);
-motor não recalcula M1; ruff/mypy/suíte verde. **Guardrail.** §5 READ-ONLY M1; DEC-008.
 
 ---
 
@@ -1008,162 +962,38 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 > o loop mede o lado **Python/servidor** (data prep, serialização, recompute do rerun, geometria, tiles); a medição
 > de **paint/interação no browser** é complemento **manual**, anotado no relatório.
 
-### BLK-REV-01 — Baseline de performance ponta-a-ponta (instrumentação + medição)
+- BLK-REV-01 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (base factual de toda a otimização; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | — (consome o app + `data/staging`/`data/outputs`). |
-| **Autonomia** | **loop-safe** — instrumentação headless determinística; READ-ONLY M1; escreve só `data/analysis`; sem VPS/rede de produção. |
-
-**Contexto.** Sem número, otimização é palpite. O ciclo de perf de mai/2026 atacou carga por UF/aba, mas não há
-baseline dos 4 caminhos que o Felipe sente lentos.
-**Objetivo.** Instrumentar timing por caminho e medir (frio/quente, por tamanho de UF): carga inicial, troca de
-UF/município, render do mapa (lado Python), troca de modo de cor, seleção/cenário múltiplo, PDF Pontual/Municipal.
-Relatório `data/analysis/perf_baseline_app_2026.md`.
-**Decisões PRÉ-FIXADAS.** Mede o lado Python/servidor (data prep, serialização pydeck, recompute do rerun,
-geometria/tiles/fpdf2); paint/interação no browser = complemento MANUAL (nota no relatório, não bloqueia).
-Determinístico. **Guardrail.** §5 READ-ONLY M1; não altera app/artefatos.
 
 ---
 
-### BLK-REV-02 — Inventário arquitetural e mapa de dependências do app atual
+- BLK-REV-02 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (retrato honesto antes de refatorar vs refazer; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | — (leitura de código). |
-| **Autonomia** | **loop-safe** — leitura de código/artefatos; READ-ONLY M1; escreve só `docs/`/`data/analysis`; sem VPS. |
-
-**Contexto.** Precisamos de um retrato honesto da arquitetura atual antes de decidir refatorar vs refazer.
-**Objetivo.** Mapear camadas (carga parquet, pydeck, `session_state`, fpdf2/matplotlib, tiles), o **modelo de rerun**
-do Streamlit, o que é cacheado (`@st.cache_data`) vs recomputado por rerun, tamanho dos artefatos carregados, grafo
-de deps e pontos de acoplamento. Entrega diagrama + inventário em `docs/arquitetura_app_atual.md`.
-**Decisões PRÉ-FIXADAS.** Só leitura; nenhuma alteração. **Guardrail.** §5 READ-ONLY M1.
 
 ---
 
-### BLK-REV-03 — Diagnóstico de gargalo: render do mapa (pydeck)
+- BLK-REV-03 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (dor #1; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-REV-01** (harness de baseline). |
-| **Autonomia** | **loop-safe** — mede o lado Python; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
-
-**Contexto.** Dor #1. Suspeitos: nº de pontos servidos, **serialização pydeck→browser a cada rerun**, tesselação H3,
-cap `MAP_POINT_LIMIT`.
-**Objetivo.** Medir a contribuição Python (montagem do layer, serialização, downsample) e formular causa-raiz;
-levantar opções (downsample mais agressivo, **tiles vetoriais/MVT**, render **client-side deck.gl/MapLibre** servido
-por API) com ganho estimado. Relatório.
-**Decisões PRÉ-FIXADAS.** Só diagnostica (NÃO implementa); paint no browser = medição manual (nota). **Guardrail.** §5.
 
 ---
 
-### BLK-REV-04 — Diagnóstico de gargalo: troca de modos de cor / heat maps
+- BLK-REV-04 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (dor #2; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-REV-01**. |
-| **Autonomia** | **loop-safe** — mede o recompute do rerun; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
-
-**Contexto.** Dor #2. Suspeita central: o **rerun do Streamlit recomputa e re-serializa o mapa inteiro** ao trocar
-M1/Censitário/Residual, mesmo mudando só a cor.
-**Objetivo.** Medir o custo de troca de modo; testar hipóteses (pré-computar as N camadas de cor, **recolor
-client-side**, cache por modo). Relatório com opções e ganho estimado.
-**Decisões PRÉ-FIXADAS.** Só diagnostica. **Guardrail.** §5 READ-ONLY M1.
 
 ---
 
-### BLK-REV-05 — Diagnóstico de gargalo: seleção de hex + cenário múltiplo
+- BLK-REV-05 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média/Alta** (dor #3; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-REV-01**. |
-| **Autonomia** | **loop-safe** — mede o recompute de cenário; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
-
-**Contexto.** Dor #3. O ciclo **clique→rerun→recompute do cenário** a cada hex adicionado.
-**Objetivo.** Medir a latência de add/remove hex e o recompute de `agregar_cenario_multihex`; opções (estado
-client-side, **deltas** em vez de recompute total, debounce). Relatório.
-**Decisões PRÉ-FIXADAS.** Só diagnostica; latência de interação no browser = nota manual. **Guardrail.** §5.
 
 ---
 
-### BLK-REV-06 — Diagnóstico de gargalo: geração de PDF (Pontual + Municipal)
+- BLK-REV-06 (concluído 2026-07-10) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (dor #4; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-REV-01**. |
-| **Autonomia** | **loop-safe** — geração de PDF é headless e mensurável ponta-a-ponta; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
-
-**Contexto.** Dor #4. Suspeito forte: o **fetch de tiles do basemap pela rede** (DEC-004/011) dentro da geração —
-I/O de rede é lento e variável.
-**Objetivo.** Medir cada etapa headless (intersecção geométrica de setores, **fetch/cache de tiles**, render
-matplotlib, montagem fpdf2) e isolar o gargalo; opções (cache de tiles mais agressivo, pré-render, geometria
-simplificada, paralelismo). Relatório.
-**Decisões PRÉ-FIXADAS.** Só diagnostica; raio 1,5 km e método de intersecção INTOCADOS (só medidos). **Guardrail.** §5.
 
 ---
 
-### BLK-REV-07 — Avaliação de fundação: Streamlit vs. alternativas (matriz de decisão)
+- BLK-REV-07 (concluído 2026-07-10) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Estratégica** (embasa rebuild vs refactor; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-REV-02** + **BLK-REV-03..06** (precisa do inventário + dos achados de perf). |
-| **Autonomia** | **loop-safe** — pesquisa/relatório (a DECISÃO fica no REV-12); READ-ONLY M1; sem VPS/rede de produção. |
-
-**Contexto.** A pergunta séria do Felipe — o **modelo de rerun do Streamlit é o teto** de performance/UX deste
-produto? Vale refazer noutra stack?
-
-**PONTO DE PARTIDA — topologia real de produção (confirmada 2026-07-08 no `docker-compose.prod.yml`; NÃO
-re-descobrir, partir daqui):** a produção **já é multi-container**, não um processo monolítico:
-`streamlit` + **`api` (FastAPI, `src/motor_expansao/api/`)** + `telegram-bot` + **`caddy` (reverse proxy 80/443)** +
-`authelia`. Os **dados vivem na VPS como volumes `:ro`** (`/opt/motor-expansao/data/outputs|staging|ibge|ultra`,
-`concorrentes`) — **NÃO estão dentro de nenhum container** — e o `streamlit` E a `api` já consomem **os mesmos
-volumes read-only**. Consequências para a avaliação:
-- O **"requisito offline" (§2) NÃO significa "sem backend"** — significa **sem dependência de serviço EXTERNO ao
-  vivo** (tiles de basemap/geocoding são exceções DEC-004/010/011). A **própria `api` na VPS lendo arquivos locais
-  já é o modelo atual** e NÃO viola o §2. Um frontend web servido pela mesma VPS, chamando a `api` que lê os
-  mesmos volumes, preserva o offline 100%.
-- O **custo de migração cai**: **backend (`api`) e reverse proxy (`caddy`) já existem**. A opção (d)/(b) vira, na
-  prática, **"trocar o container `streamlit` por um frontend estático (SPA) servido pelo Caddy que já roda"**,
-  reusando/estendendo a `api` e mantendo dados/Caddy/Authelia/rede intactos — não é reescrever do zero.
-
-**Objetivo.** Pesquisa estruturada das opções — (a) manter Streamlit + otimizar (`st.fragment`/cache/downsample);
-(b) **frontend React/Next.js (SPA estático servido pelo Caddy) + a `api` FastAPI existente**; (c) Dash/Panel;
-(d) frontend custom com **deck.gl/MapLibre client-side** + a `api`. Critérios: performance (esp. mapa e troca de
-cor/seleção sob o modelo de rerun), controle de UX (progressive disclosure p/ leigos), **preservação do offline §2**
-(dado local na VPS), **reuso da `api`/Caddy/volumes já existentes**, velocidade/custo de dev e manutenção **por
-perfil de time** (Python-only vs com frontend), risco de migração. **Mapear o espectro incremental→cirúrgico→rebuild**
-(cache+fragment → trocar SÓ o mapa por componente client-side → rebuild do frontend sobre a `api`). Entrega **matriz
-de decisão + recomendação PRELIMINAR**.
-**Decisões PRÉ-FIXADAS.** NÃO decide — a decisão é do BLK-REV-12 (gate humano + DEC). Parte da topologia real acima
-(não re-litigar o offline). **Guardrail.** §5 READ-ONLY M1.
 
 ---
 
