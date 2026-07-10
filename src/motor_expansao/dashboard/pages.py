@@ -2607,6 +2607,9 @@ def _render_multihex_controls(
     multihex_ids: list[str],
 ) -> None:
     """Renderiza controles do cenario multi-hex: incluir, remover, limpar e colar lista."""
+    # BLK-PERF-01b-FU1: sob rerun de fragment, o arg multihex_ids pode estar stale
+    # (capturado no último run completo); a fonte de verdade é o session_state.
+    multihex_ids = list(st.session_state.get("multihex_cenario", multihex_ids))
     st.markdown("##### Cenário Multi-Hex")
 
     if active_hex_id is not None:
@@ -4085,19 +4088,25 @@ def render_viabilidade_ponto(
     )
 
 
-@st.fragment
 def render_mapa_pydeck_fragment(
     deck: pdk.Deck,
     n_points: int,
     selected_ufs: list[str],
     multihex_ids: list[str],
 ) -> None:
-    """Fragmento isolado para renderizacao do pydeck_chart e captura de clique.
+    """Renderiza o pydeck_chart e captura o clique — corpo PURO, sem @st.fragment.
 
-    - on_select="rerun" dentro do fragmento dispara rerun so do fragmento (comportamento esperado).
-    - Ao detectar clique novo: escreve em session_state["click_coord"] e chama st.rerun()
-      (rerun completo da aba) para propagar o novo ponto para os expanders dependentes.
-    - Sem clique novo: fragmento reroda a si mesmo sem propagar rerun da aba.
+    BLK-PERF-01b-FU1 (2026-07-10, fix da validação visual de Felipe): este corpo ERA um
+    @st.fragment próprio; o BLK-PERF-01b passou a chamá-lo dentro de `_render_mapa_fragment`
+    (também fragment), criando fragment ANINHADO — e o clique no mapa deixou de propagar a
+    coordenada para o resto da aba (Análise Pontual/Relatório Pontual/cenário multi-hex).
+    O decorator foi removido: o corpo roda INLINE no fragment do mapa, e o widget pydeck
+    volta a ser filho direto de UM único fragment (topologia pré-01b, que funcionava).
+
+    - on_select="rerun" dispara rerun do fragment do mapa (`_render_mapa_fragment`) —
+      barato pós-01b (deck em cache HIT).
+    - Ao detectar clique novo: escreve session_state["click_coord"] e chama
+      st.rerun(scope="app") para propagar o ponto aos expanders fora do fragment.
     - Nao contem chamadas a st.sidebar (restricao do Streamlit).
     - Nao recalcula score, carteira, plano nem artefatos oficiais do M1.
     """
@@ -4129,14 +4138,14 @@ def render_mapa_pydeck_fragment(
     _prev_click: tuple[float, float] | None = st.session_state.get("click_coord")
     if _new_click is not None and _new_click != _prev_click:
         st.session_state["click_coord"] = _new_click
-        st.rerun()  # rerun completo da aba para propagar click_coord aos expanders
+        st.rerun(scope="app")  # rerun completo da aba para propagar click_coord aos expanders
     click_coord: tuple[float, float] | None = st.session_state.get("click_coord")
     if click_coord is not None:
         _col_btn, _cap_col = st.columns([1, 4])
         with _col_btn:
             if st.button("Limpar seleção do mapa", key="clear_click_coord"):
                 st.session_state.pop("click_coord", None)
-                st.rerun()  # rerun completo para limpar estado dos expanders
+                st.rerun(scope="app")  # rerun completo para limpar estado dos expanders
         if st.session_state.get("click_coord") is not None:
             with _cap_col:
                 st.caption(
@@ -4404,6 +4413,8 @@ def _render_mapa_fragment(
     if multihex_ids:
         deck.layers.append(_build_multihex_selection_layer(multihex_ids))
 
+    # FU1: chamada INLINE (corpo puro) — o widget pydeck pertence a ESTE fragment;
+    # fragment aninhado quebrava a propagação do clique (validação visual 2026-07-10).
     render_mapa_pydeck_fragment(deck, n_points, selected_ufs, multihex_ids)
 
     # Caption "amostrado" das camadas de pins: aparece SO quando o recorte excede o

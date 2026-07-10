@@ -1,17 +1,18 @@
 """Testes unitarios para render_mapa_pydeck_fragment.
 
 Cobre:
-- importabilidade e presenca do decorador @st.fragment
+- importabilidade e AUSENCIA do decorador @st.fragment (BLK-PERF-01b-FU1: o corpo e
+  PURO e roda inline dentro de `_render_mapa_fragment`; fragment ANINHADO quebrava a
+  propagacao do clique — regressao visual reportada por Felipe em 2026-07-10)
 - ausencia de rerun sem clique novo
-- escrita em session_state e st.rerun() ao detectar clique novo
+- escrita em session_state e st.rerun(scope="app") ao detectar clique novo
 - ausencia de rerun em clique identico
 - ausencia de st.sidebar (chamada real, nao apenas mencao em comentario/docstring)
 - assinatura da funcao nao aceita df nem acessa artefatos M1
 
-Nota: os testes de comportamento (2-4) chamam `render_mapa_pydeck_fragment.__wrapped__`
-diretamente, pois o decorator @st.fragment intercepta st.session_state em contexto de
-app Streamlit. Chamar __wrapped__ garante que a logica de negocio seja testada
-sem interferencia do runtime do fragmento.
+Nota: desde o FU1 a funcao NAO tem wrapper @st.fragment — os testes de comportamento
+chamam a funcao diretamente (o helper _get_unwrapped mantem fallback a __wrapped__
+por robustez, caso o decorator volte um dia).
 """
 from __future__ import annotations
 
@@ -31,9 +32,26 @@ def test_render_mapa_pydeck_fragment_importavel():
     assert hasattr(streamlit_app, "render_mapa_pydeck_fragment")
     fn = streamlit_app.render_mapa_pydeck_fragment
     assert callable(fn)
-    # @st.fragment aplica um wrapper que preserva __wrapped__ e __name__
     assert fn.__name__ == "render_mapa_pydeck_fragment"
-    assert hasattr(fn, "__wrapped__")
+    # BLK-PERF-01b-FU1: o corpo e PURO (SEM @st.fragment). Se este assert falhar,
+    # alguem re-decorou a funcao — o que reintroduz fragment ANINHADO dentro de
+    # _render_mapa_fragment e QUEBRA a propagacao do clique do mapa (bug 2026-07-10).
+    assert not hasattr(fn, "__wrapped__"), (
+        "render_mapa_pydeck_fragment NAO deve ter @st.fragment: o corpo roda inline "
+        "dentro de _render_mapa_fragment (fragment aninhado quebra o clique do mapa)"
+    )
+
+
+def test_render_mapa_fragment_e_o_unico_fragment_do_mapa():
+    """_render_mapa_fragment e o UNICO @st.fragment do caminho do mapa (anti-aninhamento)."""
+    from motor_expansao.dashboard import pages
+
+    # O fragment externo existe e e de fato um fragment (wrapper com __wrapped__)
+    assert hasattr(pages, "_render_mapa_fragment")
+    assert hasattr(pages._render_mapa_fragment, "__wrapped__")
+    # E o corpo dele chama o corpo PURO do chart (nao um segundo fragment)
+    src = inspect.getsource(pages._render_mapa_fragment.__wrapped__)
+    assert "render_mapa_pydeck_fragment(" in src
 
 
 # ---------------------------------------------------------------------------
@@ -67,9 +85,9 @@ def _mock_columns(sizes):
 
 
 def _get_unwrapped():
-    """Retorna o corpo original da funcao, sem o wrapper @st.fragment."""
+    """Retorna o corpo da funcao (puro desde o FU1; fallback a __wrapped__ por robustez)."""
     from motor_expansao.dashboard.pages import render_mapa_pydeck_fragment
-    return render_mapa_pydeck_fragment.__wrapped__
+    return getattr(render_mapa_pydeck_fragment, "__wrapped__", render_mapa_pydeck_fragment)
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +122,7 @@ def test_render_mapa_pydeck_fragment_sem_clique_nao_altera_session_state():
 
 
 def test_render_mapa_pydeck_fragment_clique_novo_escreve_click_coord_e_chama_rerun():
-    """Clique novo deve gravar click_coord em session_state e chamar st.rerun() (sem scope)."""
+    """Clique novo deve gravar click_coord e chamar st.rerun(scope="app") (rerun completo)."""
     fn = _get_unwrapped()
     session = {}
     deck = mock.MagicMock()
@@ -122,10 +140,10 @@ def test_render_mapa_pydeck_fragment_clique_novo_escreve_click_coord_e_chama_rer
 
     assert session.get("click_coord") == (-23.55, -46.63)
     mock_rerun.assert_called_once()
-    # Garantir que nao foi chamado com scope="fragment"
-    call_args = mock_rerun.call_args
-    assert call_args is None or call_args == mock.call(), (
-        "st.rerun() deve ser chamado sem argumentos (rerun completo), nao com scope='fragment'"
+    # FU1: scope="app" EXPLICITO — rerun completo para propagar o clique aos expanders;
+    # scope="fragment" reintroduziria o bug de clique preso no fragment (2026-07-10).
+    assert mock_rerun.call_args == mock.call(scope="app"), (
+        'st.rerun deve ser chamado com scope="app" (rerun completo), nunca scope="fragment"'
     )
 
 
