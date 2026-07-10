@@ -50,6 +50,11 @@ artefatos M1 oficiais → classificar como **Crítica** obrigatoriamente.
 
 ## Passo 3 — Registrar em tasks/current_task.md
 
+> **Arquivo LOCAL (gitignored desde 2026-07-10, anti-conflito):** `tasks/current_task.md` é o
+> registro do ciclo NA MÁQUINA — não é versionado nem entra em commit (com ciclos paralelos,
+> um "current task" global gerava conflito em todo merge). O rastro versionado do que foi
+> feito é `tasks/completed.md` + os snapshots de `context/handoff/`.
+
 Escreva o arquivo com este formato:
 
 ```
@@ -90,7 +95,7 @@ Antes de spawnar cada sub-agente:
 Após cada Agent retornar, leia `context/handoff.md` para identificar a próxima Skill
 e qualquer alerta antes de prosseguir.
 
-**Handoff versionado (append-only).** Cada Agent (Block Orchestrator, Planner, Builder **e QA**) grava DUAS cópias com conteúdo idêntico: (1) `context/handoff.md` (corrente) e (2) `context/handoff/AAAAMMDD-HHMMSS-<slug>.md` (snapshot append-only, COM segundos no carimbo; slugs: `block-orchestrator`, `planner`, `builder`, `qa`). Ver a convenção em `context/handoff/README.md`. O orquestrador verifica que a cópia versionada foi criada antes de prosseguir; se faltar, cria a partir do `context/handoff.md` corrente com o slug correto (inclui `qa`). Nunca edite snapshots já existentes.
+**Handoff versionado (append-only).** Cada Agent (Block Orchestrator, Planner, Builder **e QA**) grava DUAS cópias com conteúdo idêntico: (1) `context/handoff.md` (corrente — **arquivo LOCAL/gitignored desde 2026-07-10**, é o bastão de revezamento entre Skills na máquina, NUNCA entra em commit) e (2) `context/handoff/AAAAMMDD-HHMMSS-<slug>.md` (snapshot append-only VERSIONADO, COM segundos no carimbo; slugs: `block-orchestrator`, `planner`, `builder`, `qa`). Ver a convenção em `context/handoff/README.md`. O orquestrador verifica que a cópia versionada foi criada antes de prosseguir; se faltar, cria a partir do `context/handoff.md` corrente com o slug correto (inclui `qa`). Nunca edite snapshots já existentes. Na retomada de um ciclo (re-entrante) sem `context/handoff.md` local, reconstrua o estado pelo snapshot mais recente de `context/handoff/` (ordenação lexicográfica do nome = ordem cronológica).
 
 ### Sequência por criticidade
 
@@ -207,7 +212,7 @@ Ordem de fechamento (execução): **(6.0) housekeeping de concluídos via helper
    - **Validar antes do 6.a:** `python scripts/housekeeping_move_block.py <BLK-ID> --check` (stub presente + heading ausente no backlog + bloco em completed) **e** `pytest -q` verde.
    - **Em caso de falha:** NÃO commitar; reverter não-destrutivo (`git restore tasks/backlog.md tasks/completed.md`) e reportar (ver 6.d).
    - As mudanças de `tasks/backlog.md` + `tasks/completed.md` entram no MESMO commit por path do 6.a.
-6. **(6.a) Commit isolado por path.** Commite apenas os arquivos do ciclo + os handoffs versionados: `git add <paths> context/handoff.md context/handoff/`, mensagem com o ID do bloco. NÃO inclua `PRD.md` ou outros arquivos não relacionados. Este commit é o que viabiliza o merge e o dry-run dos passos seguintes.
+6. **(6.a) Commit isolado por path.** Commite apenas os arquivos do ciclo + os handoffs versionados: `git add <paths> context/handoff/`, mensagem com o ID do bloco. **NÃO commite `context/handoff.md` nem `tasks/current_task.md`** (locais/gitignored desde 2026-07-10 — anti-conflito de ciclos paralelos). NÃO inclua `PRD.md` ou outros arquivos não relacionados. Este commit é o que viabiliza o merge e o dry-run dos passos seguintes.
 7. **(6.b) Merge — ator: humano.** O **humano** revisa a branch `ciclo/<ID>` e faz o merge na branch base. O orquestrador NÃO faz o merge sozinho. Após o merge, segue-se o dry-run autônomo (6.c).
 8. **(6.c) Dry-run autônomo pós-merge (gate — só para ciclos que alteram a orquestração).**
    - **Escopo (quando dispara):** o dry-run SÓ dispara quando o ciclo recém-fechado alterou a própria orquestração — `.claude/commands/run-cycle.md`, `prompts/*.md`, `.codex/skills/codex-run-cycle/SKILL.md` ou a esteira. Ciclos normais (que não tocam a orquestração) NÃO disparam dry-run.
@@ -226,7 +231,8 @@ Ordem de fechamento (execução): **(6.0) housekeeping de concluídos via helper
 - Nunca spawnar Builder sem handoff do Planner (exceto criticidade baixa).
 - Nunca spawnar Builder em tarefa Crítica/Estratégica sem aprovação explícita do usuário.
 - Se qualquer Agent retornar erro ou handoff malformado: parar, reportar ao usuário e aguardar instrução.
-- Nunca sobrescrever `tasks/completed.md` — apenas acrescentar.
+- Nunca sobrescrever `tasks/completed.md` — apenas acrescentar, e **sempre AO FINAL do arquivo** (o merge dele é `union` via `.gitattributes`: appends concorrentes de ciclos paralelos se resolvem sozinhos, mas SÓ se forem appends no fim). **NUNCA reorganizar/reordenar `completed.md` com ciclos em voo** — reorganização quebra o union e recria o conflito de arquivo inteiro.
+- **Bookkeeping local vs versionado (anti-conflito, 2026-07-10):** `context/handoff.md` e `tasks/current_task.md` são LOCAIS (gitignored) — nunca entram em commit. Versionados: `context/handoff/` (snapshots) e `tasks/completed.md` (append-only union).
 - Se o QA reprovar: não fechar o ciclo; criar bloco de correção no backlog e reportar.
 - **Branch/commit isolado por ciclo:** Um branch/commit isolado por ciclo (`ciclo/<ID>`); commitar só os paths do ciclo, nunca `git add -A`/`git add .`; nunca arrastar nem reverter edições não relacionadas (ex.: `PRD.md`).
 - **Tiering de modelo / QA sempre Opus 4.8:** o orquestrador escolhe o `model` de cada Agent pela

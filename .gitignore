@@ -136,3 +136,11 @@ secrets/*.plain.*
 *.age.key
 key.txt
 keys.txt
+
+# Bookkeeping LOCAL da esteira run-cycle (2026-07-10, anti-conflito):
+# handoff.md corrente e current_task.md sao "bastao de revezamento" mutavel
+# de CADA maquina/ciclo — versiona-los gerava conflito em todo merge de
+# ciclos paralelos. O rastro versionado permanece: snapshots append-only em
+# context/handoff/AAAAMMDD-HHMMSS-<slug>.md + tasks/completed.md.
+context/handoff.md
+tasks/current_task.md

@@ -15,3 +15,11 @@ secrets/*.enc.txt   binary
 # o loop autonomo (container Linux montando o working tree Windows em CRLF via
 # core.autocrlf) commite arquivos inteiros como CRLF, poluindo diff/blame.
 *.py                text eol=lf
+
+# Anti-conflito de bookkeeping (2026-07-10): tasks/completed.md e um log
+# APPEND-ONLY (helper housekeeping_move_block.py + Passo 6.2 do run-cycle
+# sempre acrescentam AO FINAL). Com ciclos paralelos (loop + humanos), os
+# appends concorrentes conflitavam a cada merge; merge=union concatena as
+# duas pontas automaticamente. REGRA: nunca reorganizar/reordenar o arquivo
+# com ciclos em voo — reorganizacao quebra o union e recria conflito.
+tasks/completed.md  merge=union
