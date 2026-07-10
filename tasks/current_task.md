@@ -2,35 +2,36 @@
 
 ## Bloco atual
 
-ID: BLK-REV-06
-Nome: Diagnóstico de gargalo: geração de PDF (Pontual + Municipal)
-Status: APROVADO (QA 2026-07-10) — ciclo concluído, housekeeping feito (bloco em completed.md)
-Tipo: diagnóstico/análise (READ-ONLY sobre o M1; loop-safe)
-Criticidade: Alta
+ID: BLK-REV-07
+Nome: Avaliação de fundação — Streamlit vs. alternativas (matriz de decisão)
+Status: APROVADO (QA) — ciclo concluído, bloco movido para completed.md
+Tipo: pesquisa/análise (READ-ONLY sobre o M1; loop-safe)
+Criticidade: Estratégica
 Esteira: Block Orchestrator → Planner → Builder → QA (autônoma no loop)
-Skill atual: QA (concluída)
-Próxima Skill: Fechamento manual / merge humano
+Skill atual: QA (concluído)
+Próxima Skill: Fechamento manual (sucessor de decisão = BLK-REV-12, gate humano)
 
-## Veredito do QA
-APROVADO. Diagnóstico puro READ-ONLY: zero código de produção alterado; root cause
-confirmado por spot-check (`_to_mercator` cria `_transformer` por setor no loop,
-censo_map.py l.372-375 → l.729); artefato `data/analysis/diagnostico_pdf.md`
-gitignored; loop_guard GUARD OK; diff M1 vazio; housekeeping via helper (bloco
-byte-idêntico em completed.md). Suíte: 1524 passed / 4 skipped; 4 failed + 1 error
-são deps opcionais ausentes no ambiente (openlocationcode, matplotlib), NÃO deste
-ciclo. Recomendação: bloco sucessor de IMPLEMENTAÇÃO para a Opção O1 (shared
-transformer, ganho 86×).
+## Veredito QA (2026-07-10)
+APROVADO. Relatório `data/analysis/avaliacao_stack.md` (gitignored) entregue no escopo:
+matriz 4×7 + espectro incremental→cirúrgico→rebuild + recomendação preliminar que difere a
+decisão ao REV-12. READ-ONLY M1 confirmado (loop_guard GUARD OK; diff M1/config canônico vazio;
+zero código de produção alterado). Suíte full: 1524 passed, 4 skipped; as 4 falhas + 1 erro são
+deps opcionais ausentes (openlocationcode/matplotlib), pré-existentes, NÃO regressão deste ciclo.
+Housekeeping via helper versionado: --check EXIT=1 antes → move → EXIT=0 depois. ruff clean,
+import ok, helper tests 10 passed.
 
 ## Objetivo
-Medir cada etapa headless (intersecção geométrica de setores, fetch/cache de tiles,
-render matplotlib, montagem fpdf2) e isolar o gargalo. Opções: cache de tiles mais
-agressivo, pré-render, geometria simplificada, paralelismo.
-Relatório `data/analysis/diagnostico_pdf.md`. Raio 1.5km e método de intersecção
-INTOCADOS (só medidos). READ-ONLY M1.
+Pesquisa estruturada das opções de stack (a: Streamlit + otimizar / b: React SPA + FastAPI
+existente / c: Dash-Panel / d: deck.gl+MapLibre + api) com critérios: performance de mapa e
+troca de cor, controle de UX, preservação offline §2, reuso da api/Caddy/volumes já existentes,
+velocidade de dev por perfil de time. Entrega: matriz de decisão + recomendação preliminar.
+A DECISÃO final fica no REV-12. Relatório em `data/analysis/avaliacao_stack.md`. READ-ONLY M1.
 
 ## Branch do ciclo
-ciclo/BLK-REV-06
+ciclo/BLK-REV-07
 
 ## Guardrails
 - §5 READ-ONLY M1; §6.1 loop-safe; data/analysis (gitignored).
-- Raio 1,5 km e método de intersecção INTOCADOS.
+- A DECISÃO de rebuild vs refactor é do REV-12 (gate humano); este bloco só pesquisa.
+- Partir da topologia REAL de produção (multi-container: streamlit + api + caddy + authelia).
+- NÃO re-litigar o requisito offline §2 (já esclarecido na descrição do bloco).

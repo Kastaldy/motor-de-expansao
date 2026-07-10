@@ -7780,3 +7780,44 @@ I/O de rede é lento e variável.
 matplotlib, montagem fpdf2) e isolar o gargalo; opções (cache de tiles mais agressivo, pré-render, geometria
 simplificada, paralelismo). Relatório.
 **Decisões PRÉ-FIXADAS.** Só diagnostica; raio 1,5 km e método de intersecção INTOCADOS (só medidos). **Guardrail.** §5.
+
+---
+
+### BLK-REV-07 — Avaliação de fundação: Streamlit vs. alternativas (matriz de decisão)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Estratégica** (embasa rebuild vs refactor; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-02** + **BLK-REV-03..06** (precisa do inventário + dos achados de perf). |
+| **Autonomia** | **loop-safe** — pesquisa/relatório (a DECISÃO fica no REV-12); READ-ONLY M1; sem VPS/rede de produção. |
+
+**Contexto.** A pergunta séria do Felipe — o **modelo de rerun do Streamlit é o teto** de performance/UX deste
+produto? Vale refazer noutra stack?
+
+**PONTO DE PARTIDA — topologia real de produção (confirmada 2026-07-08 no `docker-compose.prod.yml`; NÃO
+re-descobrir, partir daqui):** a produção **já é multi-container**, não um processo monolítico:
+`streamlit` + **`api` (FastAPI, `src/motor_expansao/api/`)** + `telegram-bot` + **`caddy` (reverse proxy 80/443)** +
+`authelia`. Os **dados vivem na VPS como volumes `:ro`** (`/opt/motor-expansao/data/outputs|staging|ibge|ultra`,
+`concorrentes`) — **NÃO estão dentro de nenhum container** — e o `streamlit` E a `api` já consomem **os mesmos
+volumes read-only**. Consequências para a avaliação:
+- O **"requisito offline" (§2) NÃO significa "sem backend"** — significa **sem dependência de serviço EXTERNO ao
+  vivo** (tiles de basemap/geocoding são exceções DEC-004/010/011). A **própria `api` na VPS lendo arquivos locais
+  já é o modelo atual** e NÃO viola o §2. Um frontend web servido pela mesma VPS, chamando a `api` que lê os
+  mesmos volumes, preserva o offline 100%.
+- O **custo de migração cai**: **backend (`api`) e reverse proxy (`caddy`) já existem**. A opção (d)/(b) vira, na
+  prática, **"trocar o container `streamlit` por um frontend estático (SPA) servido pelo Caddy que já roda"**,
+  reusando/estendendo a `api` e mantendo dados/Caddy/Authelia/rede intactos — não é reescrever do zero.
+
+**Objetivo.** Pesquisa estruturada das opções — (a) manter Streamlit + otimizar (`st.fragment`/cache/downsample);
+(b) **frontend React/Next.js (SPA estático servido pelo Caddy) + a `api` FastAPI existente**; (c) Dash/Panel;
+(d) frontend custom com **deck.gl/MapLibre client-side** + a `api`. Critérios: performance (esp. mapa e troca de
+cor/seleção sob o modelo de rerun), controle de UX (progressive disclosure p/ leigos), **preservação do offline §2**
+(dado local na VPS), **reuso da `api`/Caddy/volumes já existentes**, velocidade/custo de dev e manutenção **por
+perfil de time** (Python-only vs com frontend), risco de migração. **Mapear o espectro incremental→cirúrgico→rebuild**
+(cache+fragment → trocar SÓ o mapa por componente client-side → rebuild do frontend sobre a `api`). Entrega **matriz
+de decisão + recomendação PRELIMINAR**.
+**Decisões PRÉ-FIXADAS.** NÃO decide — a decisão é do BLK-REV-12 (gate humano + DEC). Parte da topologia real acima
+(não re-litigar o offline). **Guardrail.** §5 READ-ONLY M1.
