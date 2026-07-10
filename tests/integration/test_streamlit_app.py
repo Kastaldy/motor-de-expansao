@@ -2339,6 +2339,27 @@ def test_render_mapa_territorial_e_exportado():
     assert callable(streamlit_app.render_mapa_territorial)
 
 
+def _call_mapa_fragment(df, **over):
+    """Chama o corpo (sem wrapper @st.fragment) de _render_mapa_fragment.
+
+    BLK-PERF-01b: o build/render do mapa migrou para _render_mapa_fragment (um @st.fragment,
+    cujo corpo NAO roda em bare mode). Testa-se o corpo via __wrapped__, como test_mapa_fragment.
+    """
+    from motor_expansao.dashboard import pages
+    kwargs = dict(
+        competitors_df=None,
+        ultra_df=None,
+        dominio_df=None,
+        selected_ufs=["SP"],
+        selected_cities=[],
+        selected_faixas=None,
+        search_pin=None,
+        search_hex_id=None,
+    )
+    kwargs.update(over)
+    return pages._render_mapa_fragment.__wrapped__(df, **kwargs)
+
+
 def test_render_mapa_territorial_modo_m1_renderiza_mapa():
     import unittest.mock as mock
 
@@ -2355,14 +2376,19 @@ def test_render_mapa_territorial_modo_m1_renderiza_mapa():
         mock.patch("streamlit.columns", side_effect=_mock_columns),
         mock.patch("streamlit.markdown"),
         mock.patch("streamlit.caption"),
+        mock.patch("streamlit.spinner"),
+        mock.patch("streamlit.expander") as exp_mock,
         mock.patch("streamlit.info"),
         mock.patch("streamlit.warning"),
+        mock.patch("streamlit.session_state", {"multihex_cenario": []}),
         mock.patch(
             "motor_expansao.dashboard.pages.render_mapa_pydeck_fragment",
             side_effect=lambda deck, n_points, selected_ufs, multihex_ids: fragment_calls.append(deck),
         ),
     ):
-        streamlit_app.render_mapa_territorial(df, selected_ufs=["SP"], selected_cities=[])
+        exp_mock.return_value.__enter__ = lambda s: s
+        exp_mock.return_value.__exit__ = mock.MagicMock(return_value=False)
+        _call_mapa_fragment(df)
 
     assert len(fragment_calls) == 1
     assert fragment_calls[0] is not None
@@ -2384,9 +2410,10 @@ def test_render_mapa_territorial_modo_indisponivel_exibe_aviso():
         mock.patch("streamlit.columns", side_effect=_mock_columns),
         mock.patch("streamlit.markdown"),
         mock.patch("streamlit.caption"),
+        mock.patch("streamlit.session_state", {"multihex_cenario": []}),
         mock.patch("streamlit.warning", side_effect=lambda msg, **kw: warnings_captured.append(msg)),
     ):
-        streamlit_app.render_mapa_territorial(df, selected_ufs=["SP"], selected_cities=[])
+        _call_mapa_fragment(df)
 
     assert len(warnings_captured) >= 1
     assert any("Híbrido" in w or "disponível" in w for w in warnings_captured)
@@ -2408,12 +2435,11 @@ def test_render_mapa_territorial_dominio_sem_dados_exibe_info():
         mock.patch("streamlit.columns", side_effect=_mock_columns),
         mock.patch("streamlit.markdown"),
         mock.patch("streamlit.caption"),
+        mock.patch("streamlit.session_state", {"multihex_cenario": []}),
         mock.patch("streamlit.info", side_effect=lambda msg, **kw: infos_captured.append(msg)),
         mock.patch("streamlit.warning"),
     ):
-        streamlit_app.render_mapa_territorial(
-            df, selected_ufs=["SP"], selected_cities=[], dominio_df=pd.DataFrame()
-        )
+        _call_mapa_fragment(df, dominio_df=pd.DataFrame())
 
     assert len(infos_captured) >= 1
 
@@ -2440,10 +2466,15 @@ def test_render_mapa_territorial_sem_dados_no_mapa_exibe_info():
         mock.patch("streamlit.columns", side_effect=_mock_columns),
         mock.patch("streamlit.markdown"),
         mock.patch("streamlit.caption"),
+        mock.patch("streamlit.spinner"),
+        mock.patch("streamlit.expander") as exp_mock,
+        mock.patch("streamlit.session_state", {"multihex_cenario": []}),
         mock.patch("streamlit.info", side_effect=lambda msg, **kw: infos_captured.append(msg)),
         mock.patch("streamlit.warning"),
     ):
-        streamlit_app.render_mapa_territorial(df, selected_ufs=["SP"], selected_cities=[])
+        exp_mock.return_value.__enter__ = lambda s: s
+        exp_mock.return_value.__exit__ = mock.MagicMock(return_value=False)
+        _call_mapa_fragment(df)
 
     assert len(infos_captured) >= 1
 
@@ -6330,3 +6361,260 @@ def _fake_viab_result(demanda):
         alunos_breakeven=600.0,
         grade_sensibilidade=grade,
     )
+
+
+# ── BLK-PERF-01b: cache do deck do Mapa Territorial + fragment do painel multi-hex ──
+
+
+def _perf_df_sp() -> pd.DataFrame:
+    """Recorte sintetico SP (conjunto de hex_id A)."""
+    center = h3.latlng_to_cell(-23.55, -46.63, 7)
+    cells = list(h3.grid_disk(center, 1))
+    return pd.DataFrame(
+        [_hex_row(c, *h3.cell_to_latlng(c), uf="SP", cidade="Sao Paulo") for c in cells]
+    )
+
+
+def _perf_df_rj() -> pd.DataFrame:
+    """Recorte sintetico RJ (conjunto de hex_id B, disjunto de A)."""
+    center = h3.latlng_to_cell(-22.91, -43.20, 7)
+    cells = list(h3.grid_disk(center, 1))
+    return pd.DataFrame(
+        [_hex_row(c, *h3.cell_to_latlng(c), uf="RJ", cidade="Rio de Janeiro") for c in cells]
+    )
+
+
+def _cached_key_defaults(df: pd.DataFrame) -> dict:
+    from motor_expansao.dashboard import components
+    return dict(
+        color_mode="m1",
+        enabled_overlays=(),
+        selected_ufs=("SP",),
+        selected_cities=(),
+        selected_faixas=(),
+        search_pin=None,
+        search_hex_id=None,
+        df_token=components._map_frame_token(df, ["hex_id"]),
+        competitors_token="none",
+        ultra_token="none",
+        dominio_token="none",
+    )
+
+
+def _install_map_cache_spy(monkeypatch):
+    """Limpa o cache do wrapper e instala um spy de contagem no dispatcher real."""
+    from motor_expansao.dashboard import components
+    components.build_unified_map_figure_cached.clear()
+    calls = {"n": 0}
+    real = components.build_unified_map_figure
+
+    def _spy(*a, **k):
+        calls["n"] += 1
+        return real(*a, **k)
+
+    monkeypatch.setattr(components, "build_unified_map_figure", _spy)
+    return components, calls
+
+
+def test_map_frame_token_none_vazio_e_sensivel_ao_conteudo():
+    from motor_expansao.dashboard import components
+    assert components._map_frame_token(None, ["hex_id"]) == "none"
+    assert components._map_frame_token(pd.DataFrame({"hex_id": []}), ["hex_id"]) == "n0"
+    t1 = components._map_frame_token(pd.DataFrame({"hex_id": ["a", "b"]}), ["hex_id"])
+    t2 = components._map_frame_token(pd.DataFrame({"hex_id": ["a", "c"]}), ["hex_id"])
+    assert t1 != t2  # conjunto diferente -> token diferente (impede false-hit entre UFs)
+    t3 = components._map_frame_token(pd.DataFrame({"hex_id": ["a", "b"]}), ["hex_id"])
+    assert t1 == t3  # deterministico
+
+
+def test_map_cache_invalidacao_por_parametro(monkeypatch):
+    """Cada parametro relevante invalida o cache (MISS); revisitar mesmo modo/chave = HIT."""
+    components, calls = _install_map_cache_spy(monkeypatch)
+    df = _perf_df_sp()
+
+    def call(**over):
+        k = _cached_key_defaults(df)
+        k.update(over)
+        return components.build_unified_map_figure_cached(df, None, None, None, **k)
+
+    call()  # MISS
+    assert calls["n"] == 1
+    call()  # HIT (mesma chave)
+    assert calls["n"] == 1
+
+    # troca de UF + df_token (recorte diferente) -> MISS
+    df2 = _perf_df_rj()
+    k2 = _cached_key_defaults(df2)
+    k2["selected_ufs"] = ("RJ",)
+    components.build_unified_map_figure_cached(df2, None, None, None, **k2)
+    assert calls["n"] == 2
+
+    call(selected_cities=("Sao Paulo",))  # MISS
+    assert calls["n"] == 3
+    call(color_mode="residual")  # MISS (1a vez desse modo)
+    assert calls["n"] == 4
+    call(color_mode="m1")  # HIT (modo ja visto no recorte)
+    assert calls["n"] == 4
+    call(enabled_overlays=("concorrentes",))  # MISS (tupla diferente)
+    assert calls["n"] == 5
+    call(search_hex_id="87abc")  # MISS (nova busca)
+    assert calls["n"] == 6
+    call(competitors_token="n5:deadbeef0000")  # MISS (filtro de rede muda o token)
+    assert calls["n"] == 7
+
+
+def test_map_cache_anti_vazamento_A_B_A(monkeypatch):
+    """Sequencia A->B->A: hex_id no deck pertencem SO ao recorte corrente (sem vazamento)."""
+    components, calls = _install_map_cache_spy(monkeypatch)
+    df_a = _perf_df_sp()
+    df_b = _perf_df_rj()
+    set_a = set(df_a["hex_id"])
+    set_b = set(df_b["hex_id"])
+    assert set_a.isdisjoint(set_b)
+
+    def call(df, uf):
+        k = _cached_key_defaults(df)
+        k["selected_ufs"] = (uf,)
+        return components.build_unified_map_figure_cached(df, None, None, None, **k)
+
+    deck_a, _ = call(df_a, "SP")
+    hexes_a = set(pd.DataFrame(deck_a.layers[0].data)["hex_id"])
+    assert hexes_a <= set_a
+
+    deck_b, _ = call(df_b, "RJ")
+    hexes_b = set(pd.DataFrame(deck_b.layers[0].data)["hex_id"])
+    assert hexes_b <= set_b
+
+    deck_a2, _ = call(df_a, "SP")  # HIT (nao recomputa)
+    assert calls["n"] == 2
+    hexes_a2 = set(pd.DataFrame(deck_a2.layers[0].data)["hex_id"])
+    assert hexes_a2 <= set_a
+    assert hexes_a2.isdisjoint(set_b)
+
+
+def test_map_cache_multihex_fora_da_chave_e_copia_segura(monkeypatch):
+    """multihex nao entra na chave -> HIT; anexar layer ao deck retornado nao vaza (copia)."""
+    components, calls = _install_map_cache_spy(monkeypatch)
+    df = _perf_df_sp()
+
+    def call():
+        return components.build_unified_map_figure_cached(
+            df, None, None, None, **_cached_key_defaults(df)
+        )
+
+    deck1, _ = call()
+    assert calls["n"] == 1
+    n_layers = len(deck1.layers)
+    deck1.layers.append(components._build_multihex_selection_layer(list(df["hex_id"])[:1]))
+
+    deck2, _ = call()  # mesma chave -> HIT
+    assert calls["n"] == 1
+    assert deck1 is not deck2  # cache_data devolve copia por chamada
+    assert len(deck2.layers) == n_layers  # a layer anexada ao deck1 NAO vazou
+
+
+def test_map_cache_wrapper_decorator_sem_ttl():
+    """D2: o decorator do wrapper usa st.cache_data e NAO contem ttl=."""
+    from pathlib import Path as _P
+
+    import motor_expansao.dashboard.components as comp_mod
+    lines = _P(comp_mod.__file__).read_text(encoding="utf-8").splitlines()
+    idx = next(
+        i for i, ln in enumerate(lines)
+        if ln.startswith("def build_unified_map_figure_cached")
+    )
+    deco = lines[idx - 1]
+    assert "st.cache_data" in deco
+    assert "ttl=" not in deco
+
+
+def test_deck_picklavel_preserva_atributos_cap():
+    """Picklability guard do cache_data: pickle roundtrip preserva to_json e atributos de cap."""
+    import pickle
+    df = _perf_df_sp()
+    deck, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1", selected_ufs=["SP"], selected_cities=[]
+    )
+    assert deck is not None
+    deck2 = pickle.loads(pickle.dumps(deck))
+    assert deck2.to_json() == deck.to_json()
+    assert getattr(deck2, "_ultra_capped", None) == getattr(deck, "_ultra_capped", None)
+    assert getattr(deck2, "_ultra_effective_cap", None) == getattr(deck, "_ultra_effective_cap", None)
+
+
+def _mock_cols_by_spec(spec, **_kwargs):
+    import unittest.mock as mock
+    n = len(spec) if isinstance(spec, (list, tuple)) else int(spec)
+    return [mock.MagicMock() for _ in range(n)]
+
+
+def test_render_multihex_panel_botao_atualizar_mapa_chama_rerun_scope_app():
+    """D1: clicar 'Atualizar mapa' chama st.rerun(scope='app')."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import _render_multihex_panel
+    fn = _render_multihex_panel.__wrapped__
+    df = pd.DataFrame([
+        {"hex_id": "h1", "populacao_proxy": 10_000.0, "score_priorizacao": 80.0,
+         "renda_per_capita": 5_000.0},
+    ])
+    with (
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.code"),
+        mock.patch("streamlit.text_area", return_value=""),
+        mock.patch("streamlit.columns", side_effect=_mock_cols_by_spec),
+        mock.patch("streamlit.metric"),
+        mock.patch("streamlit.dataframe"),
+        mock.patch("streamlit.expander") as exp_mock,
+        mock.patch("streamlit.button") as btn_mock,
+        mock.patch("streamlit.rerun") as rerun_mock,
+        mock.patch("streamlit.session_state", {"multihex_cenario": []}),
+    ):
+        exp_mock.return_value.__enter__ = lambda s: s
+        exp_mock.return_value.__exit__ = mock.MagicMock(return_value=False)
+        btn_mock.side_effect = lambda *a, **k: k.get("key") == "btn_multihex_refresh_map"
+        fn(df, None, [])
+
+    rerun_mock.assert_called_once_with(scope="app")
+
+
+def test_render_multihex_panel_sem_clique_nao_chama_rerun_renderiza_kpis():
+    """Sem clique no botao: nao chama rerun; com cenario nao-vazio, renderiza KPIs (st.metric)."""
+    import unittest.mock as mock
+
+    from motor_expansao.dashboard.pages import _render_multihex_panel
+    fn = _render_multihex_panel.__wrapped__
+    df = pd.DataFrame([
+        {"hex_id": "h1", "populacao_proxy": 10_000.0, "score_priorizacao": 80.0,
+         "renda_per_capita": 5_000.0},
+    ])
+    with (
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.code"),
+        mock.patch("streamlit.text_area", return_value=""),
+        mock.patch("streamlit.columns", side_effect=_mock_cols_by_spec),
+        mock.patch("streamlit.metric") as metric_mock,
+        mock.patch("streamlit.dataframe"),
+        mock.patch("streamlit.expander") as exp_mock,
+        mock.patch("streamlit.button", return_value=False),
+        mock.patch("streamlit.rerun") as rerun_mock,
+        mock.patch("streamlit.session_state", {"multihex_cenario": ["h1"]}),
+    ):
+        exp_mock.return_value.__enter__ = lambda s: s
+        exp_mock.return_value.__exit__ = mock.MagicMock(return_value=False)
+        fn(df, None, ["h1"])
+
+    rerun_mock.assert_not_called()
+    assert metric_mock.called
+
+
+def test_map_fragment_e_painel_multihex_sao_fragments():
+    """_render_mapa_fragment e _render_multihex_panel devem existir e ser @st.fragment."""
+    from motor_expansao.dashboard import pages
+    assert hasattr(pages, "_render_mapa_fragment")
+    assert hasattr(pages, "_render_multihex_panel")
+    # @st.fragment preserva __wrapped__ (corpo original acessivel para teste)
+    assert hasattr(pages._render_mapa_fragment, "__wrapped__")
+    assert hasattr(pages._render_multihex_panel, "__wrapped__")
