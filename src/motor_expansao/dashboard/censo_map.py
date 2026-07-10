@@ -532,7 +532,9 @@ def _render_camada(
     _draw_text(draw, (28, 22), titulo, font=title_font)
     if valor_ponto is not None:
         # BLK-RELPON-05: 2a linha entre o titulo (termina ~y=46) e o topo do map_box (y=92).
-        _draw_text(draw, (28, 52), valor_ponto, font=_font(14), fill=_DARK_MAP_INK)
+        # Fonte 17 (BLK-RELPON-05-FU1, pedido de Vinicius 2026-07-10 para mais visibilidade;
+        # ainda menor que o titulo 20pt e com folga ate o map_box).
+        _draw_text(draw, (28, 51), valor_ponto, font=_font(17), fill=_DARK_MAP_INK)
 
     map_box = _map_box(width, height)
     legend_x = width - 252
