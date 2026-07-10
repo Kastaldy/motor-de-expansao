@@ -1172,9 +1172,15 @@ anexada DEPOIS do deck (`pages.py:4423-4424`), compatível com cache. (2) Envolv
 REV-05) — add/remove hex deixa de reconstruir o mapa. (3) Mover o seletor de modo de cor para dentro do
 fragment do mapa (complemento do cache, REV-04).
 
-**Decisões de produto no gate humano:** (D1) comportamento do destaque laranja do multi-hex — atualizar
-só no próximo rerun completo (ganho máximo) vs `st.rerun()` explícito (feedback imediato, cancela o
-ganho) vs aviso "mapa atualiza na próxima interação"; (D2) política de invalidação/TTL do cache.
+**Decisões de produto — RESOLVIDAS UPFRONT por Felipe (2026-07-10; substituem o gate interativo,
+permanece a validação visual humana pós-build):**
+- **D1 = Botão "Atualizar mapa":** KPIs atualizam na hora dentro do fragment; o destaque laranja do
+  mapa NÃO força rerun automático — o painel ganha um botão explícito "Atualizar mapa" que dispara o
+  rerun completo quando o operador quiser ver o destaque novo (+ caption curto explicando). Ganho de
+  −700–900 ms por add/remove preservado.
+- **D2 = Cache SEM TTL:** mesmo padrão dos loaders atuais (vive enquanto o processo estiver de pé;
+  parquets são `:ro` e só mudam em deploy, que recria o container e zera o cache). Invalidação por
+  parâmetros (UF/cidade/modo/overlays/busca) obrigatória e testada; mudar `multihex_cenario` NÃO invalida.
 
 **Critérios de aceite.** Harness B3/B4 antes/depois (meta: troca de cor ≈ 0 em cache hit; add/remove hex
 sem rebuild do mapa); teste de integração da invalidação (trocar UF/cidade/modo/overlay/busca INVALIDA;
@@ -1199,9 +1205,13 @@ ruff/mypy limpos; **validação visual humana aprovada** (cache + fragment + des
 hexágono (`_prepare_m1_tooltip_fields` + `_apply_hex_tooltip_fields`, ~1,7 s de preparação em RO). A
 geometria é só ~8,5%. Reduzir para 5-6 campos corta −50/−65% do payload e ~metade da preparação.
 
-**Objetivo.** Reduzir os campos do tooltip nos builders para o conjunto aprovado no gate (sugestão de
-partida: município/UF, score do modo ativo, população, renda, residual — o detalhe completo continua a
-1 clique, na Análise Pontual). Aplicar aos 4 modos (mesma infraestrutura de tooltip).
+**Objetivo.** Reduzir os campos do tooltip nos builders para o conjunto APROVADO POR FELIPE
+(2026-07-10, gate resolvido upfront — **D4 = "Enxuto + Score censitário", 7 linhas**): Título
+(Município/UF) + Faixa M1 + Score do modo ativo + **Score censitário** + Habitantes + Renda per
+capita + Residual Fitness (1 linha). Cortam-se: fonte geográfica, score estrutural, qualidade join,
+coverage, viável, prioridade, 2ª linha de residual (detalhe completo continua a 1 clique, na Análise
+Pontual). Aplicar aos 4 modos (mesma infraestrutura; o Híbrido já tem padrão compacto via
+`_HYBRID_TOOLTIP_SHOW_DETAIL` — alinhar ao conjunto de 7). ~−55% de payload estimado.
 
 **Critérios de aceite.** Campos aprovados por Felipe ANTES do Builder; payload `deck.to_json()` medido
 antes/depois (meta: −50% ou mais) + harness B3/B4; acentuação correta nas labels novas (§2); suíte verde
