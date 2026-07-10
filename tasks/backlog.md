@@ -1,19 +1,18 @@
 # Backlog
 
-## Priorização atual
+## Priorização atual (2026-07-10)
 
-Próximo ciclo recomendado: **BLK-API-01 — Definir arquitetura e contrato da API (G1)** — bloco de
-design/decisão **Estratégico** com gate humano para as 6 decisões-chave de contrato (formato de saída,
-auth, escopo de endpoints, entrada, raio, reprodutibilidade). Pré-requisito de G2/G3/G4. Só docs,
-READ-ONLY M1. Ver seção "Projeto — API GeoEspacial".
-Em paralelo (trilha do Vini, dashboard/PDF/UX): BLK-FIX-07..11, BLK-SAM-01, BLK-EST-01/02, BLK-UI-01.
-BLK-CENSO-01/02/03 (refino do Relatório Pontual Censitário): **concluídos** (ver tasks/completed.md).
+Próximo ciclo recomendado: **epic BLK-PERF (quick wins de performance do dashboard)** — implementação
+dos fixes já diagnosticados pelo épico BLK-REV (REV-01..07 concluídos, mergeados na main via PR #81).
+Ordem: **BLK-PERF-01a** (loop-safe, PDF 86×) → **BLK-PERF-01b** (cache/fragment, manual) →
+**BLK-PERF-01c** (tooltip enxuto, manual, decisão de produto). Em paralelo (humanos): BLK-REV-08 (spike
+deck.gl, Juan) e BLK-REV-09 (UX, Vini) — insumos do gate BLK-REV-12. Ver seção "Epic BLK-PERF".
 
-**Candidato ao loop autônomo (2026-06-24): `BLK-UI-10` — PoC de repaginação visual do dashboard**
-(tema denso + mapa Leaflet client-side, inspirado no `NAO_ABRA/totalpass_final*.html`). É o único bloco
-novo **`loop-safe`** disponível: Baixa criticidade, READ-ONLY M1, sem VPS/deploy/dependência nova de base,
-PoC opt-in que não substitui produção. Sem dependências pendentes — pode ser pego pelo loop a qualquer
-momento. Ver seção "Projeto — Repaginação visual do dashboard (UX/UI)".
+**Candidato ao loop autônomo (2026-07-10): `BLK-PERF-01a` — shared transformer no render censitário +
+pré-filtro do municipal.** Único bloco novo **`loop-safe`** disponível: determinístico/headless
+(saída byte-comparável + harness `scripts/perf_baseline_app.py` como instrumento de aceite), READ-ONLY
+M1, sem VPS/rede/dependência nova. Sem dependências pendentes — pode ser pego pelo loop a qualquer
+momento. Ver seção "Epic BLK-PERF".
 
 **Trilha BLK-DIM — PONTO DE DECISÃO (2026-06-15):** a sub-trilha de "estressar o dado interno"
 (DIM-07→08) está **concluída** e deu **três NO-GOs honestos** — a demanda/viabilidade NÃO é previsível
@@ -868,59 +867,13 @@ Dependências: decisão de produto sobre evolução para web interno.
 > impacto; VIAB-06/07 são loop-safe (guardrail + alavanca de precisão); VIAB-08/10 são humanos
 > (rede/dado externo). READ-ONLY sobre o M1 em todos.
 
-### BLK-VIAB-06 — Guardrail de envelope de metragem no motor de viabilidade
+- BLK-VIAB-06 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (guardrail no motor de viabilidade; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-VIAB-04** (mediu MAPE 85% na extrapolação > 2.800 m²). |
-| **Autonomia** | **loop-safe** — READ-ONLY M1; muda SÓ `dimensionamento/viabilidade_ponto.py` (não `config.py`/`pipelines/m1`); determinístico + testável; sem VPS/rede. |
-
-**Contexto.** O backtest BLK-VIAB-04-FU provou que fora do envelope calibrado (Ultra 636–2.800 m²; a base
-tem 112 unidades) a curva EXTRAPOLA mal (MAPE 85% acima de 2.800 m²). O motor deve SINALIZAR isso.
-
-**Objetivo.** Adicionar uma flag `flag_fora_envelope` em `analisar_viabilidade_ponto` (e no resultado) quando
-o `m2` do imóvel cai fora de `[ENVELOPE_MIN, ENVELOPE_MAX]`, para a UI avisar "extrapolação não confiável".
-
-**Decisões PRÉ-FIXADAS.** Envelope = **[600, 3.000] m²** (cobre a base de calibração 636–2.800 + folga);
-**só FLAG, NÃO recusa** por padrão (a decisão de exibir/bloquear fica na UI); comportamento existente do motor
-**byte-idêntico** exceto a flag nova (default de faixa/DRE inalterado).
-
-**Critérios de aceite.** `flag_fora_envelope` materializada; teste (m² > 3.000 → True; dentro → False);
-comportamento atual preservado (regressão dos testes VIAB-03/04); ruff/mypy/suíte verde. **Guardrail.** §5
-READ-ONLY M1; `viabilidade_ponto` não recalcula score/M1.
 
 ---
 
-### BLK-VIAB-07 — Curva de densidade por formato (rótulo opcional) — validação out-of-fold + parâmetro
+- BLK-VIAB-07 (concluído 2026-07-08) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (única alavanca de precisão restante do motor; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-VIAB-04** (diagnóstico rede-aware = teto ~+1,7 p.p. de MAPE). |
-| **Autonomia** | **loop-safe** — READ-ONLY M1; parâmetro OPCIONAL (default `None` = comportamento byte-idêntico); validação out-of-fold (DEC-008); sem VPS/rede; NO-GO é resultado VÁLIDO. |
-
-**Contexto.** Varremos a curva (BLK-VIAB-04-FU): afinar a faixa de METRAGEM não move a precisão (~30% MAPE é o
-piso); o único ganho real (~1,7 p.p.) veio de **homogeneidade de FORMATO/rede** (comparáveis da mesma rede). Duas
-academias do mesmo m² têm densidades diferentes se uma é low-cost de massa e a outra boutique.
-
-**Objetivo.** (1) Rotular os comparáveis por `formato` (ex.: `low_cost_massa` / `boutique`); (2) adicionar param
-OPCIONAL `formato` em `faixa_alunos_por_densidade` que filtra comparáveis do mesmo formato; (3) **VALIDAR
-out-of-fold** (k-fold vs baseline, DEC-008) se o ganho de precisão se sustenta. Se GO, materializar; se NO-GO,
-não expor.
-
-**Decisões PRÉ-FIXADAS.** Param default `None` → comportamento **byte-idêntico** ao atual (dashboard/VIAB-03
-preservados); **alvo = alunos totais REAIS** (nunca `membros`/agregador — memória `huff-membros-circularidade`);
-validação k-fold 5×5 seed=42; **R² in-sample banido do veredito**; NO-GO honesto encerra sem expor.
-
-**Critérios de aceite.** Relatório out-of-fold com veredito; param opcional testado (`None` = idêntico byte-a-byte);
-motor não recalcula M1; ruff/mypy/suíte verde. **Guardrail.** §5 READ-ONLY M1; DEC-008.
 
 ---
 
@@ -965,6 +918,16 @@ grade de sensibilidade demanda×aluguel, e o **aviso de envelope** (BLK-VIAB-06)
 
 **Guardrail.** §5 READ-ONLY M1 (visualização não recalcula score/carteira/plano/artefatos); usa faixas, não pontos.
 
+> **RE-ESCOPO (2026-07-10, varredura de código — aprovado por Felipe):** a tela do operador **JÁ EXISTE**
+> (`render_viabilidade_ponto`, `pages.py:3572`, aba "Viabilidade" — entregue nos BLK-DIM-12..16): faixa
+> p10/p50/p90, break-even, aluguel-teto vs pedido, grade de sensibilidade, contexto de catchment/zona-morta,
+> projeção 60 meses e export Excel já renderizam. **Escopo restante deste bloco:** (i) exibir o aviso de
+> extrapolação quando `resultado.flag_fora_envelope` (BLK-VIAB-06 — hoje a UI NÃO lê a flag; zero matches
+> de "envelope" em `dashboard/`); (ii) expor o param opcional `formato` (BLK-VIAB-07, GO −9,1 p.p. MAPE)
+> na chamada de `pages.py:3750-3764` (selectbox opcional, default None = comportamento atual);
+> (iii) OPCIONAL: seletor "carregar candidato da base" lendo `imoveis_candidatos_limpos.parquet`;
+> (iv) testes de integração da tela (hoje zero). **Complexidade revista: Baixa** (Média só se incluir iii).
+
 ---
 
 ### BLK-VIAB-10 — Aquisição de metragem externa para ampliar a curva
@@ -986,6 +949,296 @@ melhorar a curva é **metragem por unidade**, não alunos.
 a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-VIAB-05 sob DEC-008).
 
 **Guardrail.** §5 READ-ONLY M1; procedência/licença do dado no gate humano.
+
+---
+
+## Epic BLK-REV — Revisão séria do app: pesquisa e planejamento (Desempenho + Arquitetura + UX/UI)
+
+> **Objetivo:** revisar a estrutura INTEIRA do app para achar pontos fortes/fracos e planejar o produto mais
+> otimizado e completo possível — **incluindo avaliar refazer o app noutra stack web** (sair do Streamlit se a
+> evidência justificar). **Épico 100% de PESQUISA e PLANEJAMENTO: nenhum bloco implementa produção.** Cada bloco
+> entrega um RELATÓRIO/PROPOSTA (gitignored em `data/analysis/` ou em `docs/`). As DECISÕES (rebuild vs refactor,
+> stack alvo, direção de UX) são **gate humano + DEC** no bloco de síntese (BLK-REV-12). **READ-ONLY sobre o M1**
+> em todos os blocos.
+>
+> **Dores relatadas por Felipe (2026-07-08), que ancoram a pesquisa:** (1) lag ao **renderizar o mapa**; (2) lag
+> na **troca de modos de cor/heat maps** (M1/Censitário/Residual…); (3) lag na **seleção de hexes + inclusão no
+> cenário múltiplo**; (4) lag ao **gerar PDF Pontual e Municipal**; (5) app **poluído e pouco usual para leigos**.
+>
+> **Divisão de autonomia:** MEDIÇÃO/DIAGNÓSTICO/pesquisa de arquitetura (REV-01..07) é **loop-safe** (headless,
+> determinística, READ-ONLY, entrega relatório). O que exige **ver o app renderizado, julgamento de design ou
+> decisão** (spike visual, UX, síntese) é **humano** (lição BLK-UI-10: o loop não enxerga a UI). **Caveat honesto:**
+> o loop mede o lado **Python/servidor** (data prep, serialização, recompute do rerun, geometria, tiles); a medição
+> de **paint/interação no browser** é complemento **manual**, anotado no relatório.
+
+- BLK-REV-01 (concluído 2026-07-08) — ver tasks/completed.md
+
+
+---
+
+- BLK-REV-02 (concluído 2026-07-08) — ver tasks/completed.md
+
+
+---
+
+- BLK-REV-03 (concluído 2026-07-08) — ver tasks/completed.md
+
+
+---
+
+- BLK-REV-04 (concluído 2026-07-08) — ver tasks/completed.md
+
+
+---
+
+- BLK-REV-05 (concluído 2026-07-08) — ver tasks/completed.md
+
+
+---
+
+- BLK-REV-06 (concluído 2026-07-10) — ver tasks/completed.md
+
+
+---
+
+- BLK-REV-07 (concluído 2026-07-10) — ver tasks/completed.md
+
+
+---
+
+### BLK-REV-08 — Spike técnico: mapa client-side (deck.gl/MapLibre) servido por API — teto de performance
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (embasa empiricamente o REV-07; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — visual/perf]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-07** (ou BLK-REV-03). |
+| **Autonomia** | **manual (NÃO loop-safe)** — protótipo VISUAL throwaway; exige VER o render e medir FPS/interação no browser (lição BLK-UI-10). NÃO marcar loop-safe. |
+
+**Contexto.** Para embasar o REV-07, medir empiricamente o teto de performance do mapa client-side vs pydeck/Streamlit.
+**Objetivo.** Spike **descartável**: servir os hexes H3 por um endpoint e renderizar client-side (deck.gl
+`H3HexagonLayer` / MapLibre), medindo FPS, latência de troca de cor e de seleção vs o app atual. Protótipo, **NÃO
+produção**.
+**Guardrail.** §5 READ-ONLY M1; código de spike isolado, descartado após medir.
+
+> **Emenda (2026-07-10, Felipe):** (a) **partir do padrão já provado do `ui_proto.py`** (BLK-UI-10:
+> `st.components.v1.html` + dados embutidos + recorte por UF em `data/cache/ui_proto/`), trocando Leaflet
+> por deck.gl `H3HexagonLayer`/MapLibre e **escalando ao volume real do cap (18–35k hexes)** — a pergunta
+> que o PoC Leaflet (~500 hexes) não respondeu; `H3HexagonLayer` aceita `hex_id` cru (sem enviar geometria).
+> (b) **Incluir a medição VPS↔cliente como sub-entregável:** (i) DevTools contra a produção — tamanho real
+> dos frames WebSocket por rerun e tempo clique→paint (fecha o caveat iii dos REV-01..06); (ii) script
+> Playwright (dep já no extra `[scraping]`) cronometrando os 4 fluxos de dor ponta-a-ponta contra
+> `dashboard.ultra-expansao.tech`; (iii) A/B final: spike servido pelo Caddy da VPS, medido pelo mesmo
+> script — comparação Streamlit vs client-side na mesma rede real. Prioridade ELEVADA (2026-07-10): com o
+> time poliglota (ver emenda do REV-12), este é o número que decide o rumo no REV-12.
+
+---
+
+### BLK-REV-09 — Avaliação heurística de UX + estudo de "clutter" para leigos
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (dor #5; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (avaliação do app renderizado). |
+| **Autonomia** | **manual (NÃO loop-safe)** — exige VER o app renderizado + julgamento humano de UX; o loop não enxerga a UI. NÃO marcar loop-safe. |
+
+**Contexto.** Dor #5 — app "poluído e pouco usual para leigos".
+**Objetivo.** Heuristic evaluation (Nielsen), inventário de poluição visual/densidade/jargão, e **jobs-to-be-done
+por persona** (executivo, operador, leigo). Relatório de problemas priorizados por severidade × esforço.
+**Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-REV-10 — Arquitetura de informação e fluxos-alvo (proposta de redesign)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (reduz complexidade sem perder poder; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — design]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-09** (dores de UX priorizadas). |
+| **Autonomia** | **manual (NÃO loop-safe)** — design/UX; exige julgamento humano. NÃO marcar loop-safe. |
+
+**Contexto.** Reduzir a complexidade para leigos sem perder poder para power users.
+**Objetivo.** Redesenhar a **arquitetura de informação** em torno dos fluxos core (triagem→viabilidade, per
+`docs/estado_dos_modelos.md`); **progressive disclosure** (modo simples p/ leigo vs avançado); wireframes de baixa
+fidelidade por persona. Usar o guia `frontend-design`.
+**Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-REV-11 — Sistema visual / design language (research)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (linguagem visual coerente; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — design]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (pode ir em paralelo à trilha de UX). |
+| **Autonomia** | **manual (NÃO loop-safe)** — design; exige julgamento visual humano. NÃO marcar loop-safe. |
+
+**Contexto.** Consolidar a linguagem visual (a direção **turquesa Ultra + magenta concorrente** do BLK-UI-10;
+tipografia; componentes) e o sistema de dataviz dos mapas/gráficos.
+**Objetivo.** Proposta de **design system** (tokens, componentes, paletas acessíveis light/dark) reusando os guias
+`frontend-design` e `dataviz`.
+**Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-REV-12 — Síntese executiva + decisão de rumo (rebuild vs refactor) + roadmap faseado (DEC + gate)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Estratégica** (decide o rumo do produto; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO + DEC]` → (implementação vira epic próprio). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-01..11** (todos os relatórios de perf, arquitetura e UX). |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão estratégica; gate humano obrigatório + DEC. NÃO marcar loop-safe. |
+
+**Contexto.** Consolidar tudo numa recomendação acionável.
+**Objetivo.** Relatório executivo que junta **perf** (REV-01..06), **arquitetura** (REV-07/08) e **UX** (REV-09..11)
+numa **recomendação de rumo** (rebuild vs refactor incremental), **stack alvo**, direção de UX e **roadmap faseado**
+(esforço × risco × valor por fase). Registrar **DEC** com a decisão. A implementação vira **epic próprio** (fora deste
+épico de pesquisa).
+**Guardrail.** §5 READ-ONLY M1; este bloco decide o PLANO, não implementa.
+
+> **Emenda (2026-07-10, Felipe):** o critério 5 da matriz do BLK-REV-07 ("custo de dev por perfil de
+> time") foi avaliado assumindo time **Python-only** — premissa INCORRETA: o time é **poliglota** (JS/TS
+> inclusive; Vini fez os scrapers e o PoC HTML/Leaflet do BLK-UI-10, Juan mantém bot + API). Na decisão,
+> **reponderar o "−" das opções (b)/(d) para "0/+"** nesse critério — o que aproxima o rebuild sobre a
+> infra existente (SPA servida pelo Caddy + `api` FastAPI já em produção). Insumos adicionais exigidos
+> para decidir: o teto empírico do client-side em escala real e a latência VPS↔cliente medida (ambos do
+> BLK-REV-08 emendado). Os quick wins (epic BLK-PERF) NÃO conflitam com nenhum rumo: 01a é server-side
+> permanente; 01b/c mantêm a produção usável durante a eventual migração e viram a régua de comparação da SPA.
+
+---
+
+## Epic BLK-PERF — Quick wins de performance do dashboard (implementação dos fixes diagnosticados no BLK-REV)
+
+> **Origem (2026-07-10, aprovado por Felipe):** implementação dos fixes com causa-raiz isolada e ganho
+> estimado pelos diagnósticos **BLK-REV-03/04/05/06** (concluídos; relatórios em `data/analysis/`,
+> inventário em `docs/arquitetura_app_atual.md`). Diferente do épico BLK-REV (pesquisa-only), este epic
+> **IMPLEMENTA** — mas SÓ na camada de display/render do dashboard e relatórios. **READ-ONLY sobre o M1
+> em todos os blocos** (§5): nenhum recalcula `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/
+> plano/artefatos oficiais; raio 1,5 km e método de intersecção INTOCADOS.
+>
+> **Instrumento de aceite (todos os blocos):** re-rodar `scripts/perf_baseline_app.py` (harness do
+> BLK-REV-01) ANTES/DEPOIS e registrar a comparação no PR — o ganho tem de aparecer no número, não na
+> narrativa. Baseline de referência: `data/analysis/perf_baseline_app_2026.md`.
+>
+> **Relação com a trilha web (REV-07/08/12):** o BLK-PERF-01a é **permanente** (server-side; os PDFs
+> continuam no backend em qualquer stack). O 01b/01c são específicos do Streamlit — o custo (dias) compra
+> produção usável durante a trilha web e a régua honesta de comparação para a eventual SPA.
+> **Estratégia de branch:** 1 bloco = 1 branch `ciclo/<ID>` = 1 PR — independentes entre si e da trilha
+> web (superfícies disjuntas; a SPA viverá em diretório novo + extensões da `api/`).
+
+---
+
+### BLK-PERF-01a — Shared transformer no render censitário + pré-filtro do agregar_municipio (PDFs 86×)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (performance de relatório; **READ-ONLY sobre o M1**; zero mudança de lógica/estrutura de páginas). |
+| **Prioridade** | **Alta** (dor #4 do Felipe; maior ganho/esforço do epic). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
+| **Status** | Pendente. |
+| **Depende de** | — (diagnóstico BLK-REV-06 concluído). |
+| **Autonomia** | **loop-safe** — determinístico/headless (PNG/PDF byte-comparável + harness B6 como aceite); toca SÓ o caminho de render/agregação de relatório (`censo_map.py`, `relatorio_municipal.py`/`pages.py`); READ-ONLY M1; sem VPS/rede; NÃO toca `config.py`/`pipelines/m1`. |
+
+**Contexto (REV-06).** Root cause do PDF Pontual: `_to_mercator` (`censo_map.py:372-375`) cria um
+transformer pyproj NOVO **por setor** no loop aeqd→3857 de `render_mapas_censitarios_combinados`
+(`censo_map.py`, loop ~l.729) — 141 setores × 24,4 ms = **3,4 s desperdiçados (77% dos 4,5 s totais)**;
+escala linear com N de setores (SP/Rio piores). No Municipal, `agregar_municipio`
+(`relatorio_municipal.py:584`) escaneia o df nacional (1,5 M hexes, 2,1 s) sendo que o chamador em
+`pages.py` já tem o `df_muni` filtrado.
+
+**Objetivo.** (1) Criar o transformer UMA vez antes do loop (`crs_local = _local_metric_crs(lat, lng)`;
+`to_3857 = _transformer(crs_local, CRS_WEB_MERCATOR)`) e reusar via `_project_geometry(geom, to_3857)`
+no lugar de `_to_mercator(geom, lat, lng)` por setor — ganho medido: Fase 2b 3,4 s → 0,04 s (86×),
+**PDF Pontual 4,5 s → ~0,7 s**. (2) Passar o df pré-filtrado ao `agregar_municipio` — **−2,1 s no
+Municipal** sem mudança de lógica.
+
+**Decisões PRÉ-FIXADAS.** Raio 1,5 km e `setor_censitario_intersecao_area_1p5km` INTOCADOS (só o render
+reprojeta mais rápido); mesma matemática de projeção (mesmos parâmetros de transformer) → saída visual
+IDÊNTICA; NÃO incluir neste bloco as opções O2 (ThreadPool) e O4 (pre-fetch de tiles) do REV-06 —
+ganho marginal pós-fix, avaliar depois se a UX exigir.
+
+**Critérios de aceite.** PNGs dos mapas byte-idênticos aos atuais (teste de regressão) e PDFs
+semanticamente idênticos (mesmo conteúdo/páginas); harness B6 re-rodado com ganho documentado no PR;
+teste cobrindo o caminho municipal pré-filtrado; suíte verde; ruff/mypy limpos; `loop_guard` limpo;
+1 validação visual humana de 1 PDF de cada tipo pós-merge (não bloqueia o ciclo).
+**Guardrail.** §5 READ-ONLY M1.
+
+---
+
+### BLK-PERF-01b — Cache dos builders de mapa + @st.fragment no painel multi-hex + seletor de cor no fragment
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (muda o comportamento interativo do mapa — o coração do dashboard; **READ-ONLY sobre o M1**). |
+| **Prioridade** | **Alta** (dores #1/#2/#3 do Felipe). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — decisões de produto + validação visual]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (diagnósticos BLK-REV-04/05 concluídos). Recomendado APÓS o BLK-PERF-01a (PRs independentes). |
+| **Autonomia** | **manual (NÃO loop-safe)** — comportamento interativo exige validação visual humana (invalidação de cache, destaque multi-hex; lição BLK-UI-10). NÃO marcar loop-safe. |
+
+**Contexto (REV-04/05).** Os builders de mapa NÃO têm cache e reconstroem+re-serializam o deck inteiro
+(payload 21–24 MB) a cada rerun: troca de modo de cor custa 0,7–3,3 s sendo que **91,5% do payload é
+invariante entre modos** (só `fill_color` muda); add/remove hex no cenário custa 700–900 ms de rebuild
+sendo que `agregar_cenario_multihex` custa 10–21 ms. O seletor `mapa_territorial_color_mode`
+(`pages.py:4333-4339`) está FORA do `@st.fragment` do mapa → rerun da aba inteira.
+
+**Objetivo.** (1) Memoizar os builders (via `build_unified_map_figure`, `components.py:3028`) por
+(df, modo, filtros, overlays, search) — atenção do REV-05 H3: validar picklabilidade do `pdk.Deck` para
+`@st.cache_data`, senão `@st.cache_resource` com chave manual; a layer de destaque multi-hex já é
+anexada DEPOIS do deck (`pages.py:4423-4424`), compatível com cache. (2) Envolver
+`_render_multihex_controls` + `_render_multihex_kpis` num `@st.fragment` (esboço pronto no relatório
+REV-05) — add/remove hex deixa de reconstruir o mapa. (3) Mover o seletor de modo de cor para dentro do
+fragment do mapa (complemento do cache, REV-04).
+
+**Decisões de produto no gate humano:** (D1) comportamento do destaque laranja do multi-hex — atualizar
+só no próximo rerun completo (ganho máximo) vs `st.rerun()` explícito (feedback imediato, cancela o
+ganho) vs aviso "mapa atualiza na próxima interação"; (D2) política de invalidação/TTL do cache.
+
+**Critérios de aceite.** Harness B3/B4 antes/depois (meta: troca de cor ≈ 0 em cache hit; add/remove hex
+sem rebuild do mapa); teste de integração da invalidação (trocar UF/cidade/modo/overlay/busca INVALIDA;
+mudar `multihex_cenario` NÃO); mapa nunca exibe dado de UF/filtro errado (teste explícito); suíte verde;
+ruff/mypy limpos; **validação visual humana aprovada** (cache + fragment + destaque).
+**Guardrail.** §5 READ-ONLY M1 (display only; caps `MAP_POINT_LIMIT*` e `_downsample_map_index` INTOCADOS).
+
+---
+
+### BLK-PERF-01c — Tooltip enxuto do mapa (14 → 5-6 campos por hexágono)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (display; **READ-ONLY sobre o M1**; envolve 1 decisão de produto — quais campos ficam). |
+| **Prioridade** | Média (complementa o 01b; maior corte de payload no PRIMEIRO render de cada modo). |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — Felipe: campos do tooltip]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (diagnóstico BLK-REV-03 concluído). Independente do 01a/01b (PR separado). |
+| **Autonomia** | **manual (NÃO loop-safe)** — decisão de produto (campos) + validação visual do tooltip. NÃO marcar loop-safe. |
+
+**Contexto (REV-03).** **~65% do payload de 21–24 MB** (15,7 MB em SC) são as 14 strings de tooltip por
+hexágono (`_prepare_m1_tooltip_fields` + `_apply_hex_tooltip_fields`, ~1,7 s de preparação em RO). A
+geometria é só ~8,5%. Reduzir para 5-6 campos corta −50/−65% do payload e ~metade da preparação.
+
+**Objetivo.** Reduzir os campos do tooltip nos builders para o conjunto aprovado no gate (sugestão de
+partida: município/UF, score do modo ativo, população, renda, residual — o detalhe completo continua a
+1 clique, na Análise Pontual). Aplicar aos 4 modos (mesma infraestrutura de tooltip).
+
+**Critérios de aceite.** Campos aprovados por Felipe ANTES do Builder; payload `deck.to_json()` medido
+antes/depois (meta: −50% ou mais) + harness B3/B4; acentuação correta nas labels novas (§2); suíte verde
+(asserts de tooltip atualizados); validação visual humana do tooltip nos 4 modos.
+**Guardrail.** §5 READ-ONLY M1 (display only; nenhum dado é removido do df — só do payload do mapa).
 
 ---
 
