@@ -135,3 +135,69 @@ def test_motor_censitario_nao_muta_dataframe_de_entrada():
     analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
 
     pd.testing.assert_frame_equal(df, original)
+
+
+# ── BLK-RELPON-05: lookup do setor que CONTEM o ponto ────────────────────────────
+
+
+def test_lookup_setor_do_ponto_dentro_da_malha():
+    # Setor A cobre o ponto (0,0 no CRS metrico local) por completo. Setor B fica fora do
+    # ambito de A (nao compartilha fronteira com o ponto) mas ainda dentro do raio de
+    # 1.5 km, com renda/score bem diferentes -- serve para provar que o valor do ponto
+    # NAO e reciclagem do agregado ponderado do raio (que combina A+B).
+    setor_a = box(-700, -700, 700, 700)
+    setor_b = box(1000, -200, 1400, 200)
+    df = pd.DataFrame(
+        [
+            _sector_record("355030801000010", setor_a, pop=800, renda=1900, score=55),
+            _sector_record("355030801000011", setor_b, pop=1400, renda=4200, score=95),
+        ]
+    )
+
+    result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
+
+    assert result["flag_setor_ponto_encontrado"] is True
+    assert result["cod_setor_ponto"] == "355030801000010"
+    assert result["renda_per_capita_setor_ponto"] == pytest.approx(1900)
+    assert result["score_setor_2022_calibrado_ponto"] == pytest.approx(55)
+    assert result["densidade_pop_setor_ponto"] == pytest.approx(
+        round(800 / (setor_a.area / 1_000_000.0), 2)
+    )
+    # Difere do agregado ponderado do raio (A+B combinados) -- prova que nao e reciclagem.
+    assert result["renda_per_capita_setor_ponto"] != result["renda_per_capita_media_raio"]
+    assert result["score_setor_2022_calibrado_ponto"] != result["score_setor_medio"]
+
+
+def test_lookup_setor_do_ponto_fora_da_malha():
+    # Setor que intersecta o raio mas NAO cobre o ponto (0,0): geometria de
+    # test_motor_censitario_setor_parcialmente_dentro_do_raio.
+    setor = box(1000, -500, 2500, 500)
+    df = pd.DataFrame([_sector_record("355030801000012", setor)])
+
+    result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
+
+    assert result["flag_setor_ponto_encontrado"] is False
+    assert result["cod_setor_ponto"] is None
+    assert result["renda_per_capita_setor_ponto"] is None
+    assert result["densidade_pop_setor_ponto"] is None
+    assert result["score_setor_2022_calibrado_ponto"] is None
+
+
+def test_lookup_setor_ponto_setor_geometria_invalida_fica_ausente():
+    # Setor cobre o ponto mas tem flag_geometria_valida=False -> ja excluido de
+    # `candidates` antes do laco de intersecao (linha 196-197): nunca chega a ser
+    # avaliado para conter o ponto, caindo em "n/d" por design (mesmo padrao do resto
+    # da funcao).
+    setor = box(-700, -700, 700, 700)
+    record = _sector_record("355030801000013", setor)
+    record["flag_geometria_valida"] = False
+    df = pd.DataFrame([record])
+
+    result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
+
+    assert result["n_setores"] == 0
+    assert result["flag_setor_ponto_encontrado"] is False
+    assert result["cod_setor_ponto"] is None
+    assert result["renda_per_capita_setor_ponto"] is None
+    assert result["densidade_pop_setor_ponto"] is None
+    assert result["score_setor_2022_calibrado_ponto"] is None

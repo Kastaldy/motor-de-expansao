@@ -8009,3 +8009,64 @@ dos 3 ciclos) — READ-ONLY M1, display-only. Aprovados por Vinicius após revis
   `test_relatorio_municipal.py` + `test_streamlit_app.py` = 279 passed; suíte completa como gate.
 - Sucessor registrado no backlog: **BLK-RELPON-05** (legenda superior por mapa no Relatório Pontual
   com o valor do dado no setor do ponto) — feature com Planner + gate, ciclo próprio depois.
+
+---
+
+### BLK-RELPON-05 — Legenda superior por mapa com o valor do dado no setor do ponto (Relatório Pontual)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (novo recurso de render no Relatório Pontual Censitário; READ-ONLY sobre o M1; núcleo `censo_*` só ESTENDE render/strings, sem tocar interseção/raio/estrutura de páginas/marca d'água; envolve decisões de produto). |
+| **Prioridade** | Normal. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 (quais mapas/variáveis), D2 (formato/unidade por variável), D3 (fonte do valor = setor que contém o ponto)]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (Relatório Pontual Censitário já existente; usa a malha de setores IBGE 2022 já carregada). |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera relatório auditável e exige revisão visual do PDF. |
+
+**Objetivo.** Em cada mapa do Relatório Pontual Censitário (1,5 km), exibir uma **legenda superior**
+informando o **valor da variável daquele mapa no setor censitário que CONTÉM o ponto pesquisado**
+(onde o pin está) — ex.: no mapa de Renda, `"Renda: R$ 2.567"`; no de Densidade, `"Densidade:
+X hab/km²"`; no de Score censitário, `"Score: NN"`. Objetivo de UX: dar o número exato do ponto,
+não só o gradiente/agregado do raio.
+
+**Escopo permitido (READ-ONLY M1, só display/relatório).**
+- `censo_point.py` (`analisar_ponto_censitario_setores`): EXPÔR o valor de cada variável no **setor
+  que contém o ponto** (renda_per_capita, densidade, `score_setor_2022_calibrado`). Hoje o resultado
+  traz agregados do raio 1,5 km — este bloco adiciona o lookup do setor do ponto (SÓ LEITURA; não
+  altera o método de interseção `setor_censitario_intersecao_area_1p5km` nem o raio).
+- `censo_map.py` (`render_mapas_censitarios_combinados`/`_render_camada`): desenhar a faixa/legenda
+  superior por camada com o valor recebido (parâmetro opcional novo, default `None` = comportamento
+  atual — padrão da emenda 2026-06-12 da DEC-005 para extensão de render de `censo_*`).
+- `censo_report.py`: passar os valores por camada ao render e (se aplicável) ao PDF.
+- Tratar **dado ausente** ("n/d" quando o ponto cai fora de setor/sem valor) e formatação por
+  variável (moeda, hab/km², score inteiro).
+
+**Fora de escopo.** Método de interseção `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
+`RAIO_CENSITARIO_DEFAULT_KM`, contagem/ordem/estrutura das páginas, grid de Big Numbers, marca d'água
+anti-PII, `set_compression(False)`. `score_priorizacao`/pesos/artefatos oficiais do M1. Relatório
+Municipal e UI do dashboard. Dependência de rede nova.
+
+**Decisões de produto (gate).** D1: em QUAIS mapas entra a legenda (todos os 4, ou só
+Densidade/Renda/Score?); o mapa de Concorrentes tem "valor" análogo (ex.: nº de concorrentes no
+setor) ou fica sem legenda? D2: formato/unidade exibido por variável. D3: confirmar que o valor é o
+do **setor que contém o ponto** (não o agregado do raio nem o hex).
+
+**Critério de aceite.** Cada mapa alvo do Relatório Pontual exibe a legenda superior com o valor
+correto da variável no setor do ponto (formatado por D2), "n/d" quando ausente; método de
+interseção/raio/estrutura/marca d'água INTOCADOS; READ-ONLY M1 (sem recálculo de score/artefatos);
+testes cobrindo lookup do setor + presença da legenda no PDF; ruff+mypy limpos; revisão visual do PDF
+aprovada.
+
+---
+
+## Fechamento de ciclo — BLK-RELPON-05 (2026-07-10)
+
+Veredito QA: **APROVADO** (Opus 4.8). Esteira executada: Block Orchestrator (sonnet) -> Planner (sonnet) -> [gate humano de produto D1/D2/D3 — confirmado por Vinicius em 2026-07-10] -> Builder (sonnet) -> QA (opus).
+
+Decisoes de produto confirmadas no gate: D1 = so os 3 choropleths (Densidade/Renda/Score) recebem a faixa superior; a camada "Concorrentes e Ultra" fica byte-a-byte igual (sem faixa). D2 = rotulo "X no ponto: <valor>" (renda R$ sem centavos, densidade inteira `hab/km2`, score inteiro, "n/d" quando ausente). D3 = valor do setor que CONTEM o ponto (`covers`, tie-break por `peso_area_setor`, "n/d" fora da malha) — distinto do agregado do raio e do valor por hex.
+
+Entregue: 5 campos novos no `result` de `analisar_ponto_censitario_setores` (`cod_setor_ponto`, `renda_per_capita_setor_ponto`, `densidade_pop_setor_ponto`, `score_setor_2022_calibrado_ponto`, `flag_setor_ponto_encontrado`); parametro opcional `valor_ponto` (default None) em `_render_camada`; faixa nos 3 choropleths via `render_mapas_censitarios_combinados`; `censo_report.py` so docstring; 7 testes novos; docs atualizados. READ-ONLY M1: `setor_censitario_intersecao_area_1p5km`/raio 1,5 km/estrutura de paginas/marca d'agua/`set_compression(False)` INTOCADOS; `score_priorizacao`/pesos/artefatos oficiais inalterados.
+
+Validacoes (re-executadas pelo QA, evidencia propria): ruff limpo; mypy limpo; `import streamlit_app` ok; 284 passed nos arquivos do bloco + `test_streamlit_app`; suite serial completa 1565 passed / 2 skipped / 1 failed. A unica falha (`test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime`, camada M2/lifetime, fora de escopo) foi provada PRE-EXISTENTE/ambiental (staging gitignored `unidade_territorio_retencao.parquet` ausente) via stash+re-run no baseline — nao e regressao. `pytest -n auto` (xdist) quebra por infra do worker execnet neste ambiente Windows/Python 3.14 (nao introduzido por este bloco); gate efetivo rodado serial.
+
+Arquivos: `src/motor_expansao/dashboard/censo_point.py`, `censo_map.py`, `censo_report.py`, `tests/unit/test_relatorio_pontual_censitario_motor.py`, `test_relatorio_pontual_censitario_mapa.py`, `test_relatorio_pontual_censitario_export.py`, `docs/relatorio_pontual_censitario.md`. Housekeeping via `scripts/housekeeping_move_block.py BLK-RELPON-05` (`--check` OK). Ciclo NAO altera a orquestracao -> sem dry-run. Merge = passo humano.
