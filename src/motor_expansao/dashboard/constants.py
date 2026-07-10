@@ -254,6 +254,7 @@ MAP_SOURCE_COLUMNS_HYBRID = [
     "lng",
     "uf",
     "nome_municipio",
+    "faixa_oportunidade",
     "score_setor_2022_calibrado",
     "score_priorizacao",
     "score_expansao_hibrido",

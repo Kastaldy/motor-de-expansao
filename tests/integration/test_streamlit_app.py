@@ -11,7 +11,7 @@ from motor_expansao.dashboard.components import (
     _DISCARDED_FILL,
     _NAN_SCORE_FILL,
     _apply_pop_cut_colors,
-    _hybrid_compact_tooltip,
+    _hex_map_tooltip,
     _shared_map_tooltip,
 )
 from motor_expansao.dashboard.constants import (
@@ -341,7 +341,7 @@ def test_build_map_scope_caption_reflete_todos_os_hexes_da_uf():
 def test_map_tooltips_tem_css_de_tamanho():
     # BLK-UI-03 (D2): meio-termo entre o 11px do BLK-UI-02 e o default deck.gl;
     # ambos os tooltips compartilham fontSize/padding/maxWidth/lineHeight no style.
-    for tooltip in (_shared_map_tooltip(), _hybrid_compact_tooltip()):
+    for tooltip in (_shared_map_tooltip(), _hex_map_tooltip()):
         style = tooltip["style"]
         assert style["fontSize"] == "13px"
         assert style["padding"] == "8px 10px"
@@ -1532,6 +1532,9 @@ def test_build_map_figure_payload_do_layer_so_tem_colunas_de_render_e_tooltip():
     # tooltip preservado
     assert isinstance(rendered.loc[0, "tooltip_title"], str)
     assert rendered.loc[0, "tooltip_title"] != ""
+    # BLK-PERF-01c (D4): campos cortados (linhas 7-14) confirmadamente ausentes
+    for i in range(7, 15):
+        assert f"tooltip_line_{i}" not in rendered.columns
 
 
 def test_build_hybrid_map_figure_payload_do_layer_enxuto():
@@ -1599,6 +1602,9 @@ def test_build_hybrid_map_figure_payload_do_layer_enxuto():
     assert {"hex_id", "fill_color", "line_color", "tooltip_title"} <= set(rendered.columns)
     assert isinstance(rendered.loc[0, "tooltip_title"], str)
     assert rendered.loc[0, "tooltip_title"] != ""
+    # BLK-PERF-01c (D4): campos cortados (linhas 7-14) confirmadamente ausentes
+    for i in range(7, 15):
+        assert f"tooltip_line_{i}" not in rendered.columns
 
 
 def test_build_residual_heatmap_figure_payload_do_layer_enxuto():
@@ -1652,6 +1658,9 @@ def test_build_residual_heatmap_figure_payload_do_layer_enxuto():
     assert {"hex_id", "fill_color", "line_color", "tooltip_title"} <= set(rendered.columns)
     assert isinstance(rendered.loc[0, "tooltip_title"], str)
     assert rendered.loc[0, "tooltip_title"] != ""
+    # BLK-PERF-01c (D4): campos cortados (linhas 7-14) confirmadamente ausentes
+    for i in range(7, 15):
+        assert f"tooltip_line_{i}" not in rendered.columns
 
 
 def test_build_map_figure_adiciona_layer_de_destaque_do_hex_pesquisado():
@@ -1693,12 +1702,12 @@ def test_build_map_figure_adiciona_layer_de_destaque_do_hex_pesquisado():
     assert hex_id in highlight_data["hex_id"].values
     highlight = highlight_data.iloc[0]
     assert highlight["tooltip_title"] == "Sao Paulo / SP"
-    assert highlight["tooltip_line_3"] == "Score M1: 80.00"
-    assert highlight["tooltip_line_10"] == "Habitantes: 12.345"
-    assert highlight["tooltip_line_11"] == "Renda per capita: R$ 6.789"
-    assert highlight["tooltip_line_12"] == "Residual fitness: 300 | Score residual: 12.00 | Q3"
-    assert highlight["tooltip_line_13"] == "SAM fitness: 540 | Consumo concorrentes: 200"
-    assert highlight["tooltip_line_14"] == "Consumo Ultra: 25 | Share Ultra: 11.1%"
+    assert highlight["tooltip_line_1"] == "Faixa M1: Alta"
+    assert highlight["tooltip_line_2"] == "Score M1: 80.00"
+    assert highlight["tooltip_line_3"] == "Score Censitário: 85.00"
+    assert highlight["tooltip_line_4"] == "Habitantes: 12.345"
+    assert highlight["tooltip_line_5"] == "Renda per capita: R$ 6.789"
+    assert highlight["tooltip_line_6"] == "Residual Fitness: 300"
 
 
 def test_build_map_figure_destaque_hex_aparece_mesmo_fora_dos_filtros():
@@ -1735,11 +1744,15 @@ def test_build_map_figure_destaque_hex_aparece_mesmo_fora_dos_filtros():
     assert hex_brasilia in highlight_data["hex_id"].values
     highlight = highlight_data.iloc[0]
     assert highlight["tooltip_title"] == "Brasilia / DF"
-    assert highlight["tooltip_line_3"] == "Score M1: 91.00"
-    assert highlight["tooltip_line_10"] == "Habitantes: 21.000"
+    assert highlight["tooltip_line_1"] == "Faixa M1: Alta"
+    assert highlight["tooltip_line_2"] == "Score M1: 91.00"
+    assert highlight["tooltip_line_3"] == "Score Censitário: 85.00"
+    assert highlight["tooltip_line_4"] == "Habitantes: 21.000"
+    assert highlight["tooltip_line_5"] == "Renda per capita: R$ 4.500"
+    assert highlight["tooltip_line_6"] == "Residual Fitness: 300"
 
 
-def test_build_hybrid_map_figure_destaque_hex_usa_tooltip_completo():
+def test_build_hybrid_map_figure_destaque_hex_usa_tooltip_enxuto():
     import h3
 
     def hybrid_row(hex_id: str, lat: float, lng: float, uf: str, cidade: str, score_m1: float) -> dict:
@@ -1749,6 +1762,7 @@ def test_build_hybrid_map_figure_destaque_hex_usa_tooltip_completo():
             "lng": lng,
             "uf": uf,
             "nome_municipio": cidade,
+            "faixa_oportunidade": "alta",
             "score_setor_2022_calibrado": 88.0,
             "score_priorizacao": score_m1,
             "score_expansao_hibrido": 93.0,
@@ -1796,17 +1810,201 @@ def test_build_hybrid_map_figure_destaque_hex_usa_tooltip_completo():
     assert len(deck.layers) == 2
     highlight = pd.DataFrame(deck.layers[-1].data).iloc[0]
     assert highlight["tooltip_title"] == "Brasilia / DF"
-    assert highlight["tooltip_line_1"] == "Score Censitário 2022: 88.00"
-    assert highlight["tooltip_line_2"] == "Score M1: 91.00"
-    assert highlight["tooltip_line_3"] == "Score Híbrido: 93.00"
-    # Quando _HYBRID_TOOLTIP_SHOW_DETAIL=False (compacto): linhas 5-8 sao Habitantes/Renda/Residual.
-    # Para restaurar os campos de detalhe (Rank, Top, Elegibilidade, Qualidade, Outlier, Motivo),
-    # setar _HYBRID_TOOLTIP_SHOW_DETAIL=True em components.py e ajustar as assertions abaixo
-    # para tooltip_line_11/12/13/14.
-    assert highlight["tooltip_line_5"] == "Habitantes: 21.000"
-    assert highlight["tooltip_line_6"] == "Renda per capita: R$ 4.500"
-    assert highlight["tooltip_line_7"] == "Residual fitness: 650 | Score residual: 26.00 | Q4_maior_residual"
-    assert highlight["tooltip_line_8"] == "SAM fitness: 1.000 | Consumo concorrentes: 350 | Consumo Ultra: 150 | Share Ultra: 30.0%"
+    assert highlight["tooltip_line_1"] == "Faixa M1: Alta"
+    assert highlight["tooltip_line_2"] == "Score Híbrido: 93.00"
+    assert highlight["tooltip_line_3"] == "Score Censitário: 88.00"
+    assert highlight["tooltip_line_4"] == "Habitantes: 21.000"
+    assert highlight["tooltip_line_5"] == "Renda per capita: R$ 4.500"
+    assert highlight["tooltip_line_6"] == "Residual Fitness: 650"
+    # Nota: tooltip_line_7..14 NAO sao verificados como ausentes aqui — este layer
+    # de DESTAQUE (busca por hex_id) vem de `_search_hex_payload`/`_build_search_hex_layer`,
+    # que ainda preenche `range(1,15)` (secao F do plano, limpeza opcional/nao
+    # bloqueante); as colunas extras existem como string vazia "". A ausencia
+    # confirmada de 7..14 e testada no layer PRINCIPAL (ver testes
+    # `test_tooltip_conjunto_d4_modo_*` abaixo).
+
+
+# BLK-PERF-01c (D4): conjunto enxuto de 7 linhas (Titulo + tooltip_line_1..6),
+# validado nos 4 modos de hexagono do Mapa Territorial no layer PRINCIPAL (nao so
+# no fallback de busca, ja coberto pelos testes de destaque acima).
+
+_HIBRIDO_ROW_D4 = {
+    "uf": "SP",
+    "nome_municipio": "Sao Paulo",
+    "faixa_oportunidade": "alta",
+    "score_setor_2022_calibrado": 88.0,
+    "score_priorizacao": 80.0,
+    "score_expansao_hibrido": 93.0,
+    "qualidade_join_uf": "A",
+    "flag_join_uf_restrito": False,
+    "flag_outlier_espacial": False,
+    "pop_total_setor_2022": 21_000,
+    "renda_per_capita_setor_2022_calibrada": 4_500,
+    "flag_pop_min_5k": True,
+    "oferta_efetiva_disponivel": 650.0,
+    "score_oportunidade_residual": 26.0,
+}
+
+
+def test_tooltip_conjunto_d4_modo_m1():
+    import h3
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([_hex_row(hex_id, lat, lng)])
+
+    deck, _ = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+
+    rendered = pd.DataFrame(deck.layers[0].data).iloc[0]
+    assert rendered["tooltip_title"] == "Sao Paulo / SP"
+    assert rendered["tooltip_line_1"] == "Faixa M1: Alta"
+    assert rendered["tooltip_line_2"] == "Score M1: 80.00"
+    assert rendered["tooltip_line_3"] == "Score Censitário: 85.00"
+    assert rendered["tooltip_line_4"] == "Habitantes: 12.345"
+    assert rendered["tooltip_line_5"] == "Renda per capita: R$ 6.789"
+    assert rendered["tooltip_line_6"] == "Residual Fitness: 300"
+    for i in range(7, 15):
+        assert f"tooltip_line_{i}" not in rendered.index
+
+
+def test_tooltip_conjunto_d4_modo_hibrido():
+    import h3
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hdf = pd.DataFrame([{"hex_id": hex_id, "lat": -23.55, "lng": -46.63, **_HIBRIDO_ROW_D4}])
+
+    deck, _ = streamlit_app.build_hybrid_map_figure(hdf, selected_ufs=["SP"], selected_cities=[])
+
+    rendered = pd.DataFrame(deck.layers[0].data).iloc[0]
+    assert rendered["tooltip_title"] == "Sao Paulo / SP"
+    assert rendered["tooltip_line_1"] == "Faixa M1: Alta"
+    assert rendered["tooltip_line_2"] == "Score Híbrido: 93.00"
+    assert rendered["tooltip_line_3"] == "Score Censitário: 88.00"
+    assert rendered["tooltip_line_4"] == "Habitantes: 21.000"
+    assert rendered["tooltip_line_5"] == "Renda per capita: R$ 4.500"
+    assert rendered["tooltip_line_6"] == "Residual Fitness: 650"
+    for i in range(7, 15):
+        assert f"tooltip_line_{i}" not in rendered.index
+
+
+def test_tooltip_conjunto_d4_modo_censitario():
+    import h3
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hdf = pd.DataFrame([{"hex_id": hex_id, "lat": -23.55, "lng": -46.63, **_HIBRIDO_ROW_D4}])
+
+    deck, _ = streamlit_app.build_hybrid_map_figure(
+        hdf, selected_ufs=["SP"], selected_cities=[], color_col="score_setor_2022_calibrado"
+    )
+
+    rendered = pd.DataFrame(deck.layers[0].data).iloc[0]
+    assert rendered["tooltip_title"] == "Sao Paulo / SP"
+    assert rendered["tooltip_line_1"] == "Faixa M1: Alta"
+    assert rendered["tooltip_line_2"] == "Score Censitário: 88.00"
+    assert rendered["tooltip_line_3"] == "Score Censitário: 88.00"
+    # Duplicacao aceita no gate D4: no modo Censitario, a linha 2 (Score do modo
+    # ativo) e a linha 3 (Score Censitario) mostram o MESMO valor — nao e bug.
+    assert rendered["tooltip_line_2"] == rendered["tooltip_line_3"]
+    assert rendered["tooltip_line_4"] == "Habitantes: 21.000"
+    assert rendered["tooltip_line_5"] == "Renda per capita: R$ 4.500"
+    assert rendered["tooltip_line_6"] == "Residual Fitness: 650"
+    for i in range(7, 15):
+        assert f"tooltip_line_{i}" not in rendered.index
+
+
+def test_tooltip_conjunto_d4_modo_residual():
+    import h3
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hdf = pd.DataFrame([{"hex_id": hex_id, "lat": -23.55, "lng": -46.63, **_HIBRIDO_ROW_D4}])
+
+    deck, _ = streamlit_app.build_residual_heatmap_figure(hdf, selected_ufs=["SP"], selected_cities=[])
+
+    rendered = pd.DataFrame(deck.layers[0].data).iloc[0]
+    assert rendered["tooltip_title"] == "Sao Paulo / SP"
+    assert rendered["tooltip_line_1"] == "Faixa M1: Alta"
+    assert rendered["tooltip_line_2"] == "Score Residual: 26.00"
+    assert rendered["tooltip_line_3"] == "Score Censitário: 88.00"
+    assert rendered["tooltip_line_4"] == "Habitantes: 21.000"
+    assert rendered["tooltip_line_5"] == "Renda per capita: R$ 4.500"
+    assert rendered["tooltip_line_6"] == "Residual Fitness: 650"
+    for i in range(7, 15):
+        assert f"tooltip_line_{i}" not in rendered.index
+
+
+_TOOLTIP_CORTADOS_D4 = (
+    "Fonte geográfica",
+    "Qualidade join",
+    "Coverage",
+    "Viável",
+    "Prioridade",
+    "Densidade setorial",
+    "Rank Intraurbano",
+    "Elegibilidade",
+    "Outlier espacial",
+    "Motivo editorial",
+    "SAM fitness",
+    "Consumo concorrentes",
+    "Consumo Ultra",
+    "Share Ultra",
+    "Score estrutural",
+)
+
+
+def _tooltip_full_text(rendered_row: pd.Series) -> str:
+    return str(rendered_row["tooltip_title"]) + "".join(
+        str(rendered_row.get(f"tooltip_line_{i}", "")) for i in range(1, 7)
+    )
+
+
+def test_tooltip_nao_contem_campos_cortados_modo_m1():
+    import h3
+    lat, lng = -23.55, -46.63
+    hex_id = h3.latlng_to_cell(lat, lng, 7)
+    df = pd.DataFrame([_hex_row(hex_id, lat, lng)])
+    deck, _ = streamlit_app.build_map_figure(df, selected_ufs=["SP"], selected_cities=[])
+    rendered = pd.DataFrame(deck.layers[0].data).iloc[0]
+    full_text = _tooltip_full_text(rendered)
+    for cortado in _TOOLTIP_CORTADOS_D4:
+        assert cortado not in full_text
+
+
+def test_tooltip_nao_contem_campos_cortados_modo_hibrido():
+    import h3
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hdf = pd.DataFrame([{"hex_id": hex_id, "lat": -23.55, "lng": -46.63, **_HIBRIDO_ROW_D4}])
+    deck, _ = streamlit_app.build_hybrid_map_figure(hdf, selected_ufs=["SP"], selected_cities=[])
+    rendered = pd.DataFrame(deck.layers[0].data).iloc[0]
+    full_text = _tooltip_full_text(rendered)
+    for cortado in _TOOLTIP_CORTADOS_D4:
+        assert cortado not in full_text
+
+
+def test_tooltip_faixa_nao_informado_quando_ausente_nos_4_modos():
+    """Prova o fallback de _compute_faixa_label e que _ensure_columns do hibrido
+    cobre o caso de faixa_oportunidade ausente/None nos 4 modos de hexagono."""
+    import h3
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+
+    df_m1 = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63, faixa_oportunidade=None)])
+    deck_m1, _ = streamlit_app.build_map_figure(df_m1, selected_ufs=["SP"], selected_cities=[])
+    rendered_m1 = pd.DataFrame(deck_m1.layers[0].data).iloc[0]
+    assert rendered_m1["tooltip_line_1"] == "Faixa M1: Não informado"
+
+    base_hybrid = {k: v for k, v in _HIBRIDO_ROW_D4.items() if k != "faixa_oportunidade"}
+
+    hdf_hib = pd.DataFrame([{"hex_id": hex_id, "lat": -23.55, "lng": -46.63, **base_hybrid}])
+    deck_hib, _ = streamlit_app.build_hybrid_map_figure(hdf_hib, selected_ufs=["SP"], selected_cities=[])
+    rendered_hib = pd.DataFrame(deck_hib.layers[0].data).iloc[0]
+    assert rendered_hib["tooltip_line_1"] == "Faixa M1: Não informado"
+
+    hdf_censo = pd.DataFrame([{"hex_id": hex_id, "lat": -23.55, "lng": -46.63, **base_hybrid}])
+    deck_censo, _ = streamlit_app.build_hybrid_map_figure(
+        hdf_censo, selected_ufs=["SP"], selected_cities=[], color_col="score_setor_2022_calibrado"
+    )
+    rendered_censo = pd.DataFrame(deck_censo.layers[0].data).iloc[0]
+    assert rendered_censo["tooltip_line_1"] == "Faixa M1: Não informado"
+
+    hdf_res = pd.DataFrame([{"hex_id": hex_id, "lat": -23.55, "lng": -46.63, **base_hybrid}])
+    deck_res, _ = streamlit_app.build_residual_heatmap_figure(hdf_res, selected_ufs=["SP"], selected_cities=[])
+    rendered_res = pd.DataFrame(deck_res.layers[0].data).iloc[0]
+    assert rendered_res["tooltip_line_1"] == "Faixa M1: Não informado"
 
 
 def test_residual_score_to_color_faixas():
