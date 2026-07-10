@@ -1781,6 +1781,35 @@ _ZONA_TEXTOS = {
 }
 
 
+def _texto_zonas_sintese(zonas_geo: list[dict[str, Any]] | None) -> str:
+    """Compoe o texto do card 3 (Movimento Recomendado) da Sintese a partir dos tipos de
+    zona geometrica PRESENTES em result["zonas_geo"] (SO LEITURA; nao recalcula zonas).
+    Ordem canonica de checagem: Cerco > Flancos laterais > Ancora central > fallback vazio
+    (a zonificacao so produz PREFIXOS contiguos comecando em Ancora — ver _zonas_geometricas
+    linhas 506-513 — checar por pertencimento de rotulo, nao por indice, e defensivo a
+    mudancas futuras no algoritmo)."""
+    rotulos = {str(z.get("rotulo", "")) for z in (zonas_geo or [])}
+    if "Cerco" in rotulos:
+        return (
+            "Movimento Recomendado: posicionamento periférico, cercar o núcleo pelos "
+            "flancos antes da concorrência."
+        )
+    if "Flancos laterais" in rotulos:
+        return (
+            "Movimento Recomendado: adensar o núcleo central e avançar pelos flancos, "
+            "capturando os residuais laterais."
+        )
+    if "Âncora central" in rotulos:
+        return (
+            "Movimento Recomendado: adensar o núcleo central, concentrando a expansão "
+            "na região de maior aprovação."
+        )
+    return (
+        "Movimento Recomendado: hexágonos aprovados insuficientes para zonas de atuação "
+        "neste município."
+    )
+
+
 def _dominio_page(pdf: _UltraPDF, result: dict[str, Any], mapa: bytes | None,
                   assets: dict[str, bytes | None], *,
                   primary: tuple[int, int, int] = ULTRA_TURQUESA,
@@ -1966,7 +1995,7 @@ def _sintese_page(pdf: _UltraPDF, result: dict[str, Any], assets: dict[str, byte
         (
             ULTRA_LARANJA,
             f"{_format_number(result.get('n_zonas_geo'), 0)} zonas de atuação",
-            "Movimento Recomendado: posicionamento periférico, cercar o núcleo pelos flancos antes da concorrência.",
+            _texto_zonas_sintese(result.get("zonas_geo")),
         ),
     ]
     margin_x = 36.0

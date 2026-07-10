@@ -25,6 +25,7 @@ from motor_expansao.dashboard.relatorio_municipal import (
     _hex_destacado_mask,
     _png_dimensions,
     _prettify_rede,
+    _texto_zonas_sintese,
     _zonas_geometricas,
     agregar_municipio,
     gerar_payloads_download_relatorio_municipal,
@@ -498,6 +499,171 @@ def test_zonas_geometricas_so_aprovados_sem_fallback():
     assert out["zonas"][0]["rotulo"] == "Âncora central"
     assert out["zonas"][0]["n_hex"] == 1
     assert len(out["hex_zona"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# BLK-RELMUN-06 — texto dinamico do card 3 (Movimento Recomendado) da Sintese.
+# ---------------------------------------------------------------------------
+
+
+def test_texto_zonas_sintese_0_zonas():
+    assert _texto_zonas_sintese(None) == (
+        "Movimento Recomendado: hexágonos aprovados insuficientes para zonas de atuação "
+        "neste município."
+    )
+    assert _texto_zonas_sintese([]) == (
+        "Movimento Recomendado: hexágonos aprovados insuficientes para zonas de atuação "
+        "neste município."
+    )
+
+
+def test_texto_zonas_sintese_1_zona_ancora():
+    zonas = [{"rotulo": "Âncora central"}]
+    assert _texto_zonas_sintese(zonas) == (
+        "Movimento Recomendado: adensar o núcleo central, concentrando a expansão "
+        "na região de maior aprovação."
+    )
+
+
+def test_texto_zonas_sintese_2_zonas_ancora_flancos():
+    zonas = [{"rotulo": "Âncora central"}, {"rotulo": "Flancos laterais"}]
+    assert _texto_zonas_sintese(zonas) == (
+        "Movimento Recomendado: adensar o núcleo central e avançar pelos flancos, "
+        "capturando os residuais laterais."
+    )
+
+
+def test_texto_zonas_sintese_3_zonas_completas():
+    zonas = [
+        {"rotulo": "Âncora central"},
+        {"rotulo": "Flancos laterais"},
+        {"rotulo": "Cerco"},
+    ]
+    assert _texto_zonas_sintese(zonas) == (
+        "Movimento Recomendado: posicionamento periférico, cercar o núcleo pelos "
+        "flancos antes da concorrência."
+    )
+
+
+def test_texto_zonas_sintese_presenca_parcial_defensivo():
+    """Caso fora da invariante (so Flancos, sem Ancora) — nao lanca excecao; cai no texto
+    de 2 zonas por pertencimento de rotulo (comportamento aceito, nao e bug)."""
+    zonas = [{"rotulo": "Flancos laterais"}]
+    assert _texto_zonas_sintese(zonas) == (
+        "Movimento Recomendado: adensar o núcleo central e avançar pelos flancos, "
+        "capturando os residuais laterais."
+    )
+
+
+def _assert_card3_wrapped_lines(pdf_bytes: bytes, linhas: list[str]) -> None:
+    """Confere o texto do card 3 quebrado nas MESMAS linhas que `multi_cell` produz.
+
+    `multi_cell` emite um comando de texto (Tj) por linha quebrada no content stream do
+    PDF; a sentenca INTEIRA (com todas as palavras) NAO aparece como um unico run de bytes
+    contiguo quando ela ocupa mais de 1 linha (a largura do card, card_w-32 a 12pt, forca a
+    quebra). Por isso o assert e por LINHA (cada uma cabe inteira em 1 Tj), nao pela frase
+    completa - caso contrario o teste falharia mesmo com o texto certo renderizado.
+    """
+    for linha in linhas:
+        assert linha.encode("latin-1") in pdf_bytes, linha
+
+
+def test_pdf_municipal_sintese_texto_zonas_3_zonas():
+    """Integracao: 3 aprovados em celulas distintas -> 3 zonas -> texto completo no card 3."""
+    df = _df_3_aprovados()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=None)
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
+
+    assert res["n_zonas_geo"] == 3
+    _assert_card3_wrapped_lines(
+        pdf_bytes,
+        [
+            "Movimento Recomendado: posicionamento",
+            "periférico, cercar o núcleo pelos flancos antes",
+            "da concorrência.",
+        ],
+    )
+    # Regressao: cards 1 e 2 e o VALOR do card 3 seguem intocados.
+    # Notas: os textos completos dos cards 1/2 tambem quebram em linha (mesma razao do
+    # helper acima); usa-se um trecho contido em UMA linha so (nao cruza o wrap).
+    assert "fitness atual baixa".encode("latin-1") in pdf_bytes
+    assert "academia regular".encode("latin-1") in pdf_bytes
+    assert f"{res['n_zonas_geo']} zonas de atuação".encode("latin-1") in pdf_bytes
+
+
+def test_pdf_municipal_sintese_texto_zonas_2_zonas():
+    """Integracao: rebaixa o 3o aprovado -> sobram 2 aprovados -> 2 zonas -> texto de 2 zonas."""
+    df = _df_3_aprovados().copy()
+    df.loc[df.index[2:3], "sam_fitness_potencial"] = 1000.0
+    df.loc[df.index[2:3], "oferta_efetiva_disponivel"] = 500.0
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=None)
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
+
+    assert res["n_zonas_geo"] == 2
+    _assert_card3_wrapped_lines(
+        pdf_bytes,
+        [
+            "Movimento Recomendado: adensar o núcleo",
+            "central e avançar pelos flancos, capturando",
+            "os residuais laterais.",
+        ],
+    )
+    # Notas: os textos completos dos cards 1/2 tambem quebram em linha (mesma razao do
+    # helper acima); usa-se um trecho contido em UMA linha so (nao cruza o wrap).
+    assert "fitness atual baixa".encode("latin-1") in pdf_bytes
+    assert "academia regular".encode("latin-1") in pdf_bytes
+    assert f"{res['n_zonas_geo']} zonas de atuação".encode("latin-1") in pdf_bytes
+
+
+def test_pdf_municipal_sintese_texto_zonas_1_zona():
+    """Integracao: so 1 aprovado (padrao de test_zonas_geometricas_so_aprovados_sem_fallback)
+    -> 1 zona -> texto de 1 zona (Ancora central)."""
+    df = _df_3_aprovados().copy()
+    df.loc[df.index[1:3], "sam_fitness_potencial"] = 1000.0
+    df.loc[df.index[1:3], "oferta_efetiva_disponivel"] = 500.0
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=None)
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
+
+    assert res["n_zonas_geo"] == 1
+    _assert_card3_wrapped_lines(
+        pdf_bytes,
+        [
+            "Movimento Recomendado: adensar o núcleo",
+            "central, concentrando a expansão na região",
+            "de maior aprovação.",
+        ],
+    )
+    # Notas: os textos completos dos cards 1/2 tambem quebram em linha (mesma razao do
+    # helper acima); usa-se um trecho contido em UMA linha so (nao cruza o wrap).
+    assert "fitness atual baixa".encode("latin-1") in pdf_bytes
+    assert "academia regular".encode("latin-1") in pdf_bytes
+    assert f"{res['n_zonas_geo']} zonas de atuação".encode("latin-1") in pdf_bytes
+
+
+def test_pdf_municipal_sintese_texto_zonas_0_zonas():
+    """Integracao: sem hexes relevantes/aprovados -> 0 zonas -> texto de fallback no card 3."""
+    df = _sample_df().drop(columns=["hex_id"])
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=None)
+    mapas = render_mapas_municipio(df, res, basemap=False)
+    pdf_bytes = gerar_pdf_relatorio_municipal(res, mapas)
+
+    assert res["n_zonas_geo"] == 0
+    _assert_card3_wrapped_lines(
+        pdf_bytes,
+        [
+            "Movimento Recomendado: hexágonos",
+            "aprovados insuficientes para zonas de",
+            "atuação neste município.",
+        ],
+    )
+    # Notas: os textos completos dos cards 1/2 tambem quebram em linha (mesma razao do
+    # helper acima); usa-se um trecho contido em UMA linha so (nao cruza o wrap).
+    assert "fitness atual baixa".encode("latin-1") in pdf_bytes
+    assert "academia regular".encode("latin-1") in pdf_bytes
+    assert f"{res['n_zonas_geo']} zonas de atuação".encode("latin-1") in pdf_bytes
 
 
 def test_pdf_municipal_fallback_sem_hexes_relevantes_pagina_5():
