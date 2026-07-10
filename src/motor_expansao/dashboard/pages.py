@@ -4096,17 +4096,14 @@ def render_mapa_pydeck_fragment(
 ) -> None:
     """Renderiza o pydeck_chart e captura o clique — corpo PURO, sem @st.fragment.
 
-    BLK-PERF-01b-FU1 (2026-07-10, fix da validação visual de Felipe): este corpo ERA um
-    @st.fragment próprio; o BLK-PERF-01b passou a chamá-lo dentro de `_render_mapa_fragment`
-    (também fragment), criando fragment ANINHADO — e o clique no mapa deixou de propagar a
-    coordenada para o resto da aba (Análise Pontual/Relatório Pontual/cenário multi-hex).
-    O decorator foi removido: o corpo roda INLINE no fragment do mapa, e o widget pydeck
-    volta a ser filho direto de UM único fragment (topologia pré-01b, que funcionava).
+    BLK-PERF-01b-FU1 (2026-07-10, root cause por repro mínima): `st.pydeck_chart` com
+    `on_select="rerun"` DENTRO de qualquer `@st.fragment` NÃO entrega o evento de seleção
+    (bug do Streamlit 1.56/1.59). Este corpo e o bloco que o chama (`_render_mapa_fragment`)
+    rodam ambos INLINE na aba — o widget pydeck NÃO pode ficar dentro de fragment enquanto
+    o bug upstream existir; NÃO re-decorar nenhum dos dois.
 
-    - on_select="rerun" dispara rerun do fragment do mapa (`_render_mapa_fragment`) —
-      barato pós-01b (deck em cache HIT).
     - Ao detectar clique novo: escreve session_state["click_coord"] e chama
-      st.rerun(scope="app") para propagar o ponto aos expanders fora do fragment.
+      st.rerun(scope="app") para propagar o ponto aos expanders.
     - Nao contem chamadas a st.sidebar (restricao do Streamlit).
     - Nao recalcula score, carteira, plano nem artefatos oficiais do M1.
     """
@@ -4271,7 +4268,6 @@ def render_relatorio_municipal_expander(
         )
 
 
-@st.fragment
 def _render_mapa_fragment(
     df: pd.DataFrame,
     *,
@@ -4284,12 +4280,20 @@ def _render_mapa_fragment(
     search_pin: tuple[float, float] | None,
     search_hex_id: str | None,
 ) -> None:
-    """Fragmento do mapa: seletor de modo de cor + overlays + deck cacheado + render.
+    """Bloco do mapa: seletor de modo de cor + overlays + deck cacheado + render (INLINE).
 
-    BLK-PERF-01b: trocar de modo de cor / overlay reroda SÓ este fragmento; o deck é
-    memoizado por build_unified_map_figure_cached (chave por tokens), então revisitar um
-    modo já visto no recorte é HIT (≈0). O destaque multi-hex é anexado pós-cache (cópia por
-    chamada do cache_data). READ-ONLY M1: não altera score, carteira, plano nem artefatos.
+    BLK-PERF-01b-FU1 (2026-07-10, root cause CONFIRMADO por repro mínima):
+    `st.pydeck_chart(on_select="rerun")` DENTRO de `@st.fragment` NÃO entrega o evento
+    de seleção — bug do Streamlit (reproduzido nos 1.56.0 e 1.59.1 com app de 25 linhas:
+    o MESMO chart fora do fragment seleciona; dentro, o clique morre em silêncio).
+    Por isso este bloco NÃO é mais um fragment: roda inline na aba. NÃO re-decorar com
+    @st.fragment enquanto o bug upstream existir — isso mata o clique do mapa (a captura
+    do ponto para Análise Pontual/Relatório Pontual e o hex ativo do cenário multi-hex).
+
+    O ganho de performance do BLK-PERF-01b NÃO depende do fragment: o deck vem de
+    build_unified_map_figure_cached (cache HIT ~0,14 s vs ~2 s de rebuild) em qualquer
+    rerun. O painel multi-hex (sem pydeck) continua fragment (D1 preservado).
+    READ-ONLY M1: não altera score, carteira, plano nem artefatos.
     """
     multihex_ids: list[str] = list(st.session_state.get("multihex_cenario", []))
 
@@ -4518,9 +4522,9 @@ def render_mapa_territorial(
         "As camadas visuais não alteram score, ranking, carteira nem artefatos do M1."
     )
 
-    # BLK-PERF-01b: o seletor de modo de cor + overlays + build do deck + render vivem num
-    # fragmento próprio. Trocar de modo/overlay reroda só o fragmento (deck memoizado por
-    # build_unified_map_figure_cached). READ-ONLY M1 preservado.
+    # BLK-PERF-01b-FU1: o bloco do mapa roda INLINE (SEM @st.fragment) — pydeck on_select
+    # dentro de fragment não entrega o clique (bug do Streamlit, repro mínima 2026-07-10).
+    # O ganho de perf vem do CACHE do deck (build_unified_map_figure_cached), não do fragment.
     _render_mapa_fragment(
         df,
         competitors_df=competitors_df,

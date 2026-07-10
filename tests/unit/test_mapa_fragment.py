@@ -42,16 +42,29 @@ def test_render_mapa_pydeck_fragment_importavel():
     )
 
 
-def test_render_mapa_fragment_e_o_unico_fragment_do_mapa():
-    """_render_mapa_fragment e o UNICO @st.fragment do caminho do mapa (anti-aninhamento)."""
+def test_caminho_do_chart_pydeck_nao_tem_fragment():
+    """NENHUM @st.fragment no caminho do chart pydeck (regressao do clique).
+
+    Root cause confirmado por repro minima (2026-07-10): st.pydeck_chart com
+    on_select="rerun" DENTRO de @st.fragment NAO entrega o evento de selecao
+    (bug do Streamlit 1.56/1.59). O bloco do mapa e o corpo do chart devem rodar
+    INLINE na aba. Se este teste falhar, alguem re-decorou uma das funcoes e o
+    CLIQUE DO MAPA MORRE (ponto da Analise Pontual + hex ativo do multi-hex).
+    O painel multi-hex (sem pydeck) PODE continuar fragment.
+    """
     from motor_expansao.dashboard import pages
 
-    # O fragment externo existe e e de fato um fragment (wrapper com __wrapped__)
     assert hasattr(pages, "_render_mapa_fragment")
-    assert hasattr(pages._render_mapa_fragment, "__wrapped__")
-    # E o corpo dele chama o corpo PURO do chart (nao um segundo fragment)
-    src = inspect.getsource(pages._render_mapa_fragment.__wrapped__)
+    assert not hasattr(pages._render_mapa_fragment, "__wrapped__"), (
+        "_render_mapa_fragment NAO pode ser @st.fragment: pydeck on_select dentro "
+        "de fragment nao entrega o clique (bug Streamlit; repro minima 2026-07-10)"
+    )
+    assert not hasattr(pages.render_mapa_pydeck_fragment, "__wrapped__")
+    # O corpo do bloco do mapa chama o corpo puro do chart
+    src = inspect.getsource(pages._render_mapa_fragment)
     assert "render_mapa_pydeck_fragment(" in src
+    # O painel multi-hex segue como fragment (D1 do 01b preservado)
+    assert hasattr(pages._render_multihex_panel, "__wrapped__")
 
 
 # ---------------------------------------------------------------------------
