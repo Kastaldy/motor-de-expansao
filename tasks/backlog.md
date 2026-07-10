@@ -1163,8 +1163,16 @@ escala linear com N de setores (SP/Rio piores). No Municipal, `agregar_municipio
 **Objetivo.** (1) Criar o transformer UMA vez antes do loop (`crs_local = _local_metric_crs(lat, lng)`;
 `to_3857 = _transformer(crs_local, CRS_WEB_MERCATOR)`) e reusar via `_project_geometry(geom, to_3857)`
 no lugar de `_to_mercator(geom, lat, lng)` por setor — ganho medido: Fase 2b 3,4 s → 0,04 s (86×),
-**PDF Pontual 4,5 s → ~0,7 s**. (2) Passar o df pré-filtrado ao `agregar_municipio` — **−2,1 s no
-Municipal** sem mudança de lógica.
+**PDF Pontual 4,5 s → ~0,7 s**. (2) Eliminar o full-scan do `agregar_municipio` para **TODOS os
+callers** — preferir o filtro por município como PRIMEIRA operação DENTRO de `agregar_municipio`
+(beneficia dashboard **e** API automaticamente, byte-idêntico) ou, se caller-side, cobrir os DOIS
+caminhos: `pages.py` (dashboard) **e** `api/service.py:gerar_pdf_municipio` (API/bot carrega o
+parquet nacional full) — **−2,1 s locais / mais na VPS** sem mudança de lógica.
+
+**Baseline de PRODUÇÃO (2026-07-10, medido no container da VPS pré-fix — referência do
+antes/depois; detalhe em `data/analysis/baseline_prod_pdf_20260710.md`, gitignored):** Pontual
+**28,3 s frio / 9,5 s quente**; Municipal **32,7 s frio / 4,5 s quente** (frio dominado por fetch
+de tiles na rede da VPS). Meta pós-fix em produção: Pontual quente ≤3 s; Municipal quente ≤2,5 s.
 
 **Decisões PRÉ-FIXADAS.** Raio 1,5 km e `setor_censitario_intersecao_area_1p5km` INTOCADOS (só o render
 reprojeta mais rápido); mesma matemática de projeção (mesmos parâmetros de transformer) → saída visual
