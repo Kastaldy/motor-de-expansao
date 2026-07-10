@@ -85,10 +85,11 @@ _NAVY_CAPA = (30, 28, 58)
 # Cores dos hexagonos APROVADOS por PROCEDENCIA do dado de populacao (realce; pedido de
 # Vinicius 2026-06-24; cor otimista verde por Vinicius 2026-07-08, BLK-RELMUN-05): dado
 # PROPRIO do hex (setor censitario 2022, `fonte_populacao_corte == "setor_2022"`) = verde
-# forte; aprovado via FALLBACK MUNICIPAL (`total_municipal`/`ausente`) = verde medio
-# (fallback municipal). Reprovado/neutro = cinza. Camada de DISPLAY; nao toca M1.
+# forte; aprovado via FALLBACK MUNICIPAL (`total_municipal`/`ausente`) = amarelo-ambar
+# (tom mais amarelado p/ distinguir do dado proprio; Vinicius 2026-07-10, BLK-RELMUN-05-FU1).
+# Reprovado/neutro = cinza. Camada de DISPLAY; nao toca M1.
 _COR_APROVADO_PROPRIO = (20, 170, 80)
-_COR_APROVADO_MUNICIPAL = (90, 190, 120)
+_COR_APROVADO_MUNICIPAL = (215, 200, 60)
 _COR_REPROVADO = (150, 156, 170)
 
 # Camada Resumo (alpha 200): destacado por procedencia + neutro (nao-destacado).

@@ -1347,3 +1347,50 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 
 
 ---
+
+### BLK-RELPON-05 — Legenda superior por mapa com o valor do dado no setor do ponto (Relatório Pontual)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (novo recurso de render no Relatório Pontual Censitário; READ-ONLY sobre o M1; núcleo `censo_*` só ESTENDE render/strings, sem tocar interseção/raio/estrutura de páginas/marca d'água; envolve decisões de produto). |
+| **Prioridade** | Normal. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 (quais mapas/variáveis), D2 (formato/unidade por variável), D3 (fonte do valor = setor que contém o ponto)]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (Relatório Pontual Censitário já existente; usa a malha de setores IBGE 2022 já carregada). |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera relatório auditável e exige revisão visual do PDF. |
+
+**Objetivo.** Em cada mapa do Relatório Pontual Censitário (1,5 km), exibir uma **legenda superior**
+informando o **valor da variável daquele mapa no setor censitário que CONTÉM o ponto pesquisado**
+(onde o pin está) — ex.: no mapa de Renda, `"Renda: R$ 2.567"`; no de Densidade, `"Densidade:
+X hab/km²"`; no de Score censitário, `"Score: NN"`. Objetivo de UX: dar o número exato do ponto,
+não só o gradiente/agregado do raio.
+
+**Escopo permitido (READ-ONLY M1, só display/relatório).**
+- `censo_point.py` (`analisar_ponto_censitario_setores`): EXPÔR o valor de cada variável no **setor
+  que contém o ponto** (renda_per_capita, densidade, `score_setor_2022_calibrado`). Hoje o resultado
+  traz agregados do raio 1,5 km — este bloco adiciona o lookup do setor do ponto (SÓ LEITURA; não
+  altera o método de interseção `setor_censitario_intersecao_area_1p5km` nem o raio).
+- `censo_map.py` (`render_mapas_censitarios_combinados`/`_render_camada`): desenhar a faixa/legenda
+  superior por camada com o valor recebido (parâmetro opcional novo, default `None` = comportamento
+  atual — padrão da emenda 2026-06-12 da DEC-005 para extensão de render de `censo_*`).
+- `censo_report.py`: passar os valores por camada ao render e (se aplicável) ao PDF.
+- Tratar **dado ausente** ("n/d" quando o ponto cai fora de setor/sem valor) e formatação por
+  variável (moeda, hab/km², score inteiro).
+
+**Fora de escopo.** Método de interseção `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
+`RAIO_CENSITARIO_DEFAULT_KM`, contagem/ordem/estrutura das páginas, grid de Big Numbers, marca d'água
+anti-PII, `set_compression(False)`. `score_priorizacao`/pesos/artefatos oficiais do M1. Relatório
+Municipal e UI do dashboard. Dependência de rede nova.
+
+**Decisões de produto (gate).** D1: em QUAIS mapas entra a legenda (todos os 4, ou só
+Densidade/Renda/Score?); o mapa de Concorrentes tem "valor" análogo (ex.: nº de concorrentes no
+setor) ou fica sem legenda? D2: formato/unidade exibido por variável. D3: confirmar que o valor é o
+do **setor que contém o ponto** (não o agregado do raio nem o hex).
+
+**Critério de aceite.** Cada mapa alvo do Relatório Pontual exibe a legenda superior com o valor
+correto da variável no setor do ponto (formatado por D2), "n/d" quando ausente; método de
+interseção/raio/estrutura/marca d'água INTOCADOS; READ-ONLY M1 (sem recálculo de score/artefatos);
+testes cobrindo lookup do setor + presença da legenda no PDF; ruff+mypy limpos; revisão visual do PDF
+aprovada.
+
+---

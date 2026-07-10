@@ -4396,7 +4396,8 @@ def render_mapa_territorial(
     else:
         competitors_df_filtered = competitors_df
 
-    _render_unified_legend(selected_mode, enabled_overlays, competitors_df=competitors_df_filtered, ultra_df=ultra_df)
+    with st.expander("Legenda", expanded=False):
+        _render_unified_legend(selected_mode, enabled_overlays, competitors_df=competitors_df_filtered, ultra_df=ultra_df)
 
     with st.spinner("Construindo mapa..."):
         deck, n_points = build_unified_map_figure(

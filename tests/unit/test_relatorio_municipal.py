@@ -133,9 +133,11 @@ def test_agregar_municipio_formula_espaco_d1():
 
 
 def test_cores_aprovados_verdes_blk_relmun_05():
-    """BLK-RELMUN-05: aprovados em verde (2 tons distinguiveis); reprovado cinza inalterado."""
+    """BLK-RELMUN-05: aprovado proprio em verde forte; reprovado cinza inalterado.
+    BLK-RELMUN-05-FU1 (Vinicius 2026-07-10): fallback municipal ajustado para
+    amarelo-ambar (tom mais amarelado), ainda distinguivel do proprio e do cinza."""
     assert _COR_APROVADO_PROPRIO == (20, 170, 80)
-    assert _COR_APROVADO_MUNICIPAL == (90, 190, 120)
+    assert _COR_APROVADO_MUNICIPAL == (215, 200, 60)
     assert _COR_REPROVADO == (150, 156, 170)
     assert _COR_APROVADO_PROPRIO != _COR_APROVADO_MUNICIPAL != _COR_REPROVADO
 

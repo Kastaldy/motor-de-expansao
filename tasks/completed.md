@@ -7778,3 +7778,20 @@ _zonas_geometricas/_zonas_do_municipio/agregar_municipio/_hex_destacado_mask/dom
 score intocados; _dominio_page intocada; git diff só relatorio_municipal.py + test + bookkeeping.
 Sem dry-run. Mergeado em integracao/map02-relmun05-06 pelo orquestrador. FIM DOS 3 CICLOS: PR para
 main NÃO aberto (Vinicius pediu para verificar o resultado primeiro).
+
+**Fixes práticos pós-verificação (2026-07-10, na secundária integracao/map02-relmun05-06, mesmo PR
+dos 3 ciclos) — READ-ONLY M1, display-only. Aprovados por Vinicius após revisão visual.**
+- **BLK-MAP-02-FU1 — Legenda do mapa retrátil.** A chamada de `_render_unified_legend(...)` em
+  `render_mapa_territorial` (`pages.py:4399`) passou a ficar dentro de `st.expander("Legenda",
+  expanded=False)` — a legenda grande (faixas de Score + chips de todas as marcas + Ultra + descarte)
+  nasce fechada, como o filtro de marcas do BLK-MAP-02. Só `pages.py`; nenhum identificador/lógica
+  de legenda alterada.
+- **BLK-RELMUN-05-FU1 — Fallback municipal mais amarelado.** `_COR_APROVADO_MUNICIPAL` em
+  `relatorio_municipal.py` mudou de (90,190,120) verde médio para (215,200,60) amarelo-âmbar (escolha
+  de Vinicius entre verde-amarelado e amarelo-âmbar), para distinguir melhor do dado próprio
+  (20,170,80 verde forte); `_COR_APROVADO_PROPRIO` e `_COR_REPROVADO` inalterados. Emenda registrada
+  na DEC-011 (CLAUDE.md) e teste `test_cores_aprovados_verdes_blk_relmun_05` atualizado.
+- Validações: ruff limpo; import ok; mypy só 6 pré-existentes de types-requests (0 novo); focados
+  `test_relatorio_municipal.py` + `test_streamlit_app.py` = 279 passed; suíte completa como gate.
+- Sucessor registrado no backlog: **BLK-RELPON-05** (legenda superior por mapa no Relatório Pontual
+  com o valor do dado no setor do ponto) — feature com Planner + gate, ciclo próprio depois.
