@@ -4379,13 +4379,14 @@ def render_mapa_territorial(
             _all_redes_raw,
             key=lambda r: (_brand_order.index(r) if r in _brand_order else len(_brand_order), r),
         )
-        selected_redes = st.multiselect(
-            "Redes de concorrentes",
-            options=_all_redes,
-            default=_all_redes,
-            format_func=lambda r: COMPETITOR_BRANDS.get(r, {}).get("label", r),
-            key="mapa_territorial_redes_concorrentes",
-        )
+        with st.expander("Redes de concorrentes", expanded=False):
+            selected_redes = st.multiselect(
+                "Redes de concorrentes",
+                options=_all_redes,
+                default=_all_redes,
+                format_func=lambda r: COMPETITOR_BRANDS.get(r, {}).get("label", r),
+                key="mapa_territorial_redes_concorrentes",
+            )
 
     # BLK-MAP-01: ponto unico de filtragem; D2=A => vazio => None (esconde tudo)
     if _show_rede_filter and not selected_redes:
@@ -4395,7 +4396,8 @@ def render_mapa_territorial(
     else:
         competitors_df_filtered = competitors_df
 
-    _render_unified_legend(selected_mode, enabled_overlays, competitors_df=competitors_df_filtered, ultra_df=ultra_df)
+    with st.expander("Legenda", expanded=False):
+        _render_unified_legend(selected_mode, enabled_overlays, competitors_df=competitors_df_filtered, ultra_df=ultra_df)
 
     with st.spinner("Construindo mapa..."):
         deck, n_points = build_unified_map_figure(

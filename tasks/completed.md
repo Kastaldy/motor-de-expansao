@@ -7821,3 +7821,191 @@ perfil de time** (Python-only vs com frontend), risco de migração. **Mapear o 
 de decisão + recomendação PRELIMINAR**.
 **Decisões PRÉ-FIXADAS.** NÃO decide — a decisão é do BLK-REV-12 (gate humano + DEC). Parte da topologia real acima
 (não re-litigar o offline). **Guardrail.** §5 READ-ONLY M1.
+---
+
+### BLK-MAP-02 — Filtro de marcas de concorrentes do mapa em menu expansível (fechado por padrão)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (mudança de UI localizada no Mapa Territorial; READ-ONLY sobre o M1; sem decisão de produto). |
+| **Prioridade** | Normal. |
+| **Esteira** | Block Orchestrator → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (herda BLK-MAP-01, que já é o ponto único de filtragem de concorrentes). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mudança de UX visível; exige revisão humana. |
+
+**Objetivo.** Envolver o filtro de marcas de concorrentes do Mapa Territorial (`st.multiselect("Redes de
+concorrentes", …)`, `pages.py:4382`, dentro de `render_mapa_territorial`) num `st.expander(...,
+expanded=False)`, para o filtro nascer **fechado** e não empurrar o mapa para baixo.
+
+**Escopo permitido (READ-ONLY M1, só display).**
+- Só `src/motor_expansao/dashboard/pages.py`, bloco `_show_rede_filter` (~4373–4396): mover o
+  `st.multiselect` para dentro de `with st.expander("Redes de concorrentes", expanded=False):`.
+- Preservar integralmente: `key="mapa_territorial_redes_concorrentes"`, `options=_all_redes`,
+  `default=_all_redes`, `format_func` (label via `COMPETITOR_BRANDS`), e a lógica BLK-MAP-01 (seleção
+  vazia ⇒ `competitors_df_filtered = None` ⇒ esconde concorrentes). `_render_unified_legend` e
+  `build_unified_map_figure` seguem lendo `competitors_df_filtered` como hoje.
+
+**Fora de escopo.** Lógica de filtragem/legenda/cluster de concorrentes; `key`/estado de sessão;
+`COMPETITOR_BRANDS`; qualquer artefato/score/pesos do M1.
+
+**Critério de aceite.** O filtro renderiza dentro de um expander **fechado por padrão**; abrir,
+selecionar, limpar e reselecionar mantêm o comportamento atual do mapa e da legenda (inclusive
+seleção vazia ⇒ esconde concorrentes); suíte verde (atualizar assert de
+`tests/integration/test_streamlit_app.py` se algum travar o label/posição do widget); ruff+mypy limpos.
+
+**Fechamento do ciclo BLK-MAP-02 (2026-07-08) — VEREDITO: APROVADO.** Esteira Baixa (BO haiku ->
+Builder sonnet -> QA opus 4.8; QA incluído apesar de Baixa por causa do fluxo de integração sem
+revisão humana por ciclo). Rodou na branch ciclo/BLK-MAP-02, ramificada da SECUNDÁRIA
+integracao/map02-relmun05-06. Feito: `st.multiselect("Redes de concorrentes", ...)` em
+render_mapa_territorial (pages.py) envolvido em `st.expander("Redes de concorrentes",
+expanded=False)` -> filtro nasce fechado. Preservados key="mapa_territorial_redes_concorrentes",
+options/default=_all_redes, format_func e a lógica BLK-MAP-01 (seleção vazia => competitors_df_
+filtered=None => esconde concorrentes), fora do `with`. Nenhum identificador acentuado/renomeado;
+COMPETITOR_BRANDS/legenda/cluster intocados. Validações (QA, NO-BYPASS): ruff limpo; import ok;
+mypy só 7 erros pré-existentes de types-requests (0 novo em pages.py); suíte serial completa
+`1535 passed, 2 skipped, 1 failed` — a única falha (test_score_retencao_territorial::
+test_run_readonly_m1_por_mtime, parquet M2 gitignored) é PRÉ-EXISTENTE/ambiental, alheia ao bloco.
+READ-ONLY M1 confirmado (git diff só em pages.py; zero pipelines/config/censo/artefatos). Sem
+dry-run (não tocou orquestração). Mergeado em integracao/map02-relmun05-06 pelo orquestrador
+(fluxo de integração aprovado por Vinicius); PR para main só após os 3 ciclos.
+
+---
+
+### BLK-RELMUN-05 — Cores otimistas (verde) para aprovados na Visão Geral do Município
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (mudança visual de um relatório + acoplamento de terminologia "amarelo"; READ-ONLY sobre o M1; envolve 1 decisão de produto — tons de verde, JÁ pré-aprovada por Vinicius, ver D1). |
+| **Prioridade** | Normal. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 tons de verde (pré-aprovada)]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (toca só `relatorio_municipal.py` display). Relaciona-se à DEC-011 (terminologia "amarelo"/hexágono destacado). |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera texto/cor de relatório auditável; exige revisão visual do PDF. |
+
+**Objetivo.** Trocar as cores dos hexágonos **aprovados** na página "Visão Geral do Município" (camada
+`cobertura`) e no Resumo (camada `resumo`) de amarelo/laranja — que passam tom negativo/de alerta —
+para **tons de verde** (otimismo), mantendo "Reprovado" em cinza.
+
+**Escopo permitido (READ-ONLY M1, só display).**
+- `src/motor_expansao/dashboard/relatorio_municipal.py:89–91`: `_COR_APROVADO_PROPRIO` (hoje
+  `(255,210,28)` dourado) e `_COR_APROVADO_MUNICIPAL` (hoje `(245,140,30)` laranja) → **verdes** (D1).
+  A troca propaga sozinha para `_HEX_DESTAQUE_RGBA`, `_HEX_DESTAQUE_MUNICIPAL_RGBA`, `_HEX_APROVADO_RGBA`,
+  `_HEX_APROVADO_MUNICIPAL_RGBA`, `_COBERTURA_LEGENDA`, `_RESUMO_LEGENDA` e o choropleth das camadas
+  `cobertura`/`resumo`. `_COR_REPROVADO` (cinza) INALTERADO.
+- **Terminologia (acoplamento):** atualizar SOMENTE o **texto visível** que diz "amarelo(s)" e ficaria
+  inconsistente com a cor verde — `"Soma dos hexágonos amarelos / 2.500"` (`:1656`) e
+  `"Espaço = soma dos hexágonos amarelos / 2.500"` (`:2070`) → wording neutro por cor (ex.: "hexágonos
+  destacados"). Legendas já usam "Aprovado (dado próprio)/(fallback municipal)".
+
+**Fora de escopo (NÃO tocar).** **Identificadores** com "amarelo" — `n_hex_amarelos`,
+`soma_oferta_amarelos`, `parcelas_amarelos` e chaves de `result` (consumidas por `render`/testes): só
+TEXTO/cores mudam, os NOMES não. Cores de **ZONA** da página Domínio (`:155–160`, turquesa/…/laranja) —
+outra semântica, não mexer. Critério de "hexágono destacado" (DEC-011: `oferta_efetiva_disponivel >=
+2000`), `flag_sam`, score, artefatos oficiais do M1.
+
+**Decisão de produto (D1 — pré-aprovada por Vinicius em 2026-07-08).** RGB verdes: aprovado próprio =
+verde forte `(20,170,80)`; aprovado fallback municipal = verde médio `(90,190,120)` (dois tons
+distinguíveis entre si e do cinza `_COR_REPROVADO`, legíveis sobre o basemap claro). O Planner só
+reconfirma no gate.
+
+**Critério de aceite.** PDF municipal com aprovados em verde (2 tons) + reprovado cinza; nenhuma
+menção textual "amarelo" remanescente no texto de exibição; identificadores e critério de destaque
+(DEC-011) intactos; DEC-011 recebe emenda de terminologia (cor ≠ critério); testes de
+`tests/unit/test_relatorio_municipal.py` atualizados (tuplas de cor/labels); ruff+mypy limpos; revisão
+visual do PDF aprovada.
+
+**Fechamento do ciclo BLK-RELMUN-05 (2026-07-08) — VEREDITO: APROVADO.** Esteira Média (BO sonnet
+-> Planner sonnet -> [gate D1 verdes PRÉ-APROVADO por Vinicius] -> Builder opus -> QA opus 4.8).
+Rodou na branch ciclo/BLK-RELMUN-05 (ramificada da secundária integracao/map02-relmun05-06). Feito:
+cores dos aprovados na Visão Geral do Município (camada cobertura) e Resumo de amarelo/laranja para
+VERDE — `_COR_APROVADO_PROPRIO (255,210,28)->(20,170,80)` e `_COR_APROVADO_MUNICIPAL
+(245,140,30)->(90,190,120)`; `_COR_REPROVADO` cinza inalterado; derivados/legendas herdam por
+referência. Texto visível "amarelos"->"destacados" nas 2 únicas strings de PDF (_resumo_page ~1656
+e rodapé de _espaco_academias_page ~2070). Identificadores com "amarelo" (n_hex_amarelos,
+soma_oferta_amarelos, parcelas_amarelos, chaves de result) INTOCADOS. Emenda BLK-RELMUN-05 na
+DEC-011 (cor verde é DISPLAY; critério de destaque oferta_efetiva_disponivel>=2000, flag_sam, score,
+artefatos M1 intactos). Cores de ZONA da página Domínio intocadas. Teste novo
+test_cores_aprovados_verdes_blk_relmun_05 + asserts de wording. Validações (QA, NO-BYPASS): ruff
+limpo; import ok; mypy só 6 pré-existentes de types-requests (0 novo); suíte serial completa
+`1536 passed, 2 skipped, 1 failed` — única falha pré-existente/ambiental do M2. READ-ONLY M1
+confirmado (git diff só relatorio_municipal.py + test + CLAUDE.md + bookkeeping; zero
+pipelines/config/censo/artefatos). Sem dry-run. Mergeado em integracao/map02-relmun05-06 pelo
+orquestrador; PR para main só após os 3 ciclos E verificação humana (Vinicius pediu para revisar
+antes do PR).
+
+---
+
+### BLK-RELMUN-06 — Texto dinâmico das zonas de atuação no slide Síntese (quadros finais)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (lógica de composição de texto de relatório; READ-ONLY sobre o M1; 1 decisão de produto — regras do texto por combinação de zonas). |
+| **Prioridade** | Normal. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: D1 regras do texto]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (`relatorio_municipal.py` display; usa `zonas_geo`/`n_zonas_geo` já presentes em `result`). |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera texto de relatório auditável; exige revisão visual do PDF. |
+
+**Objetivo.** No slide **Síntese** (`_sintese_page`, `relatorio_municipal.py:1949` — 3 quadros/cards
+finais; card 3 "Movimento Recomendado"), substituir o **texto constante**
+`"posicionamento periférico, cercar o núcleo pelos flancos antes da concorrência."` por um texto
+**gerado a partir dos tipos de zona efetivamente encontrados** no município (`zonas_geo` /
+`_ZONA_GEO_ROTULOS` = Âncora central / Flancos laterais / Cerco), para municípios com 1, 2 ou 3 zonas
+não receberem uma recomendação genérica que pode não se aplicar.
+
+**Escopo permitido (READ-ONLY M1, só display).**
+- `_sintese_page` (`relatorio_municipal.py:1949–1991`): compor o texto do card de zonas (card 3) a
+  partir de `result["zonas_geo"]` (rótulos das zonas presentes), reusando `_ZONA_GEO_DESC` (`:163`) e/ou
+  `_ZONA_TEXTOS` (`:1776`) como blocos de frase. Fallback para 0 zonas (mensagem de "hexes
+  insuficientes …", análoga à já usada na página Domínio).
+- Manter os outros 2 cards (penetração fitness, residual) e o VALOR do card ("N zonas de atuação")
+  inalterados.
+
+**Fora de escopo.** `zonas_geo`/`_zonas_geometricas` / `_zonas_do_municipio` (a zonificação em si — só
+LEITURA); `dominio_df`, `flag_sam`, score, artefatos oficiais do M1. Página Domínio (`:1783`) já é
+dinâmica por zona — confirmar no gate se entra no escopo ou não.
+
+**Decisão de produto (D1 — gate).** As regras do texto por combinação de zonas (ex.: só "Âncora
+central" → adensar o núcleo; +"Flancos laterais" → cercar pelos flancos; +"Cerco" → estratégia
+completa de cerco). O Planner propõe o mapeamento; humano aprova antes do Builder.
+
+**Critério de aceite.** Card de zonas do slide Síntese reflete os tipos de zona presentes no município
+(testar combinações 1/2/3 zonas + 0 zonas); demais cards inalterados; `zonas_geo`/score/artefatos
+intactos; testes de `tests/unit/test_relatorio_municipal.py` cobrindo as combinações; ruff+mypy limpos;
+revisão visual do PDF aprovada.
+
+**Fechamento do ciclo BLK-RELMUN-06 (2026-07-10) — VEREDITO: APROVADO.** Esteira Média (BO sonnet
+-> Planner sonnet -> [gate D1 REAL: 4 textos por combinação de zona APROVADOS por Vinicius;
+_dominio_page FORA de escopo] -> Builder sonnet -> QA opus 4.8). Rodou na branch ciclo/BLK-RELMUN-06
+(ramificada da secundária integracao/map02-relmun05-06). Feito: novo helper puro
+`_texto_zonas_sintese(zonas_geo)` em relatorio_municipal.py (~1784) que compõe o texto do card 3
+"Movimento Recomendado" do slide Síntese (_sintese_page ~1998) a partir dos tipos de zona presentes
+em result["zonas_geo"] (SÓ LEITURA), checando por pertencimento de rótulo (Cerco > Flancos laterais
+> Âncora central > fallback 0 zonas), com os 4 textos exatos do gate D1. A COR (ULTRA_LARANJA) e o
+VALOR ("N zonas de atuação") do card 3 e os cards 1/2 inalterados. 9 testes novos (5 unit do helper
+incl. caso defensivo só-Flancos -> texto de 2 zonas; 4 integração PDF checando linhas wrapeadas +
+regressão dos cards 1/2 e do VALOR). Validações (QA, NO-BYPASS): ruff limpo; import ok; mypy só 6
+pré-existentes de types-requests (0 novo); suíte serial completa `1545 passed, 2 skipped, 1 failed`
+— única falha pré-existente/ambiental do M2. READ-ONLY M1 confirmado: zonas_geo só lido;
+_zonas_geometricas/_zonas_do_municipio/agregar_municipio/_hex_destacado_mask/dominio_df/flag_sam/
+score intocados; _dominio_page intocada; git diff só relatorio_municipal.py + test + bookkeeping.
+Sem dry-run. Mergeado em integracao/map02-relmun05-06 pelo orquestrador. FIM DOS 3 CICLOS: PR para
+main NÃO aberto (Vinicius pediu para verificar o resultado primeiro).
+
+**Fixes práticos pós-verificação (2026-07-10, na secundária integracao/map02-relmun05-06, mesmo PR
+dos 3 ciclos) — READ-ONLY M1, display-only. Aprovados por Vinicius após revisão visual.**
+- **BLK-MAP-02-FU1 — Legenda do mapa retrátil.** A chamada de `_render_unified_legend(...)` em
+  `render_mapa_territorial` (`pages.py:4399`) passou a ficar dentro de `st.expander("Legenda",
+  expanded=False)` — a legenda grande (faixas de Score + chips de todas as marcas + Ultra + descarte)
+  nasce fechada, como o filtro de marcas do BLK-MAP-02. Só `pages.py`; nenhum identificador/lógica
+  de legenda alterada.
+- **BLK-RELMUN-05-FU1 — Fallback municipal mais amarelado.** `_COR_APROVADO_MUNICIPAL` em
+  `relatorio_municipal.py` mudou de (90,190,120) verde médio para (215,200,60) amarelo-âmbar (escolha
+  de Vinicius entre verde-amarelado e amarelo-âmbar), para distinguir melhor do dado próprio
+  (20,170,80 verde forte); `_COR_APROVADO_PROPRIO` e `_COR_REPROVADO` inalterados. Emenda registrada
+  na DEC-011 (CLAUDE.md) e teste `test_cores_aprovados_verdes_blk_relmun_05` atualizado.
+- Validações: ruff limpo; import ok; mypy só 6 pré-existentes de types-requests (0 novo); focados
+  `test_relatorio_municipal.py` + `test_streamlit_app.py` = 279 passed; suíte completa como gate.
+- Sucessor registrado no backlog: **BLK-RELPON-05** (legenda superior por mapa no Relatório Pontual
+  com o valor do dado no setor do ponto) — feature com Planner + gate, ciclo próprio depois.
