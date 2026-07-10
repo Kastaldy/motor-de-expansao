@@ -987,23 +987,8 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 
 ---
 
-### BLK-REV-06 — Diagnóstico de gargalo: geração de PDF (Pontual + Municipal)
+- BLK-REV-06 (concluído 2026-07-10) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (dor #4; **READ-ONLY sobre o M1**). |
-| **Prioridade** | A definir (Felipe/Vini). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-REV-01**. |
-| **Autonomia** | **loop-safe** — geração de PDF é headless e mensurável ponta-a-ponta; READ-ONLY M1; relatório em `data/analysis`; sem VPS. |
-
-**Contexto.** Dor #4. Suspeito forte: o **fetch de tiles do basemap pela rede** (DEC-004/011) dentro da geração —
-I/O de rede é lento e variável.
-**Objetivo.** Medir cada etapa headless (intersecção geométrica de setores, **fetch/cache de tiles**, render
-matplotlib, montagem fpdf2) e isolar o gargalo; opções (cache de tiles mais agressivo, pré-render, geometria
-simplificada, paralelismo). Relatório.
-**Decisões PRÉ-FIXADAS.** Só diagnostica; raio 1,5 km e método de intersecção INTOCADOS (só medidos). **Guardrail.** §5.
 
 ---
 
