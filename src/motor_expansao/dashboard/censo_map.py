@@ -761,10 +761,15 @@ def render_mapas_censitarios_combinados(
         frame_box_metric,
     )
 
+    # Transformer compartilhado: criado UMA vez para todos os setores e geometrias
+    # do mesmo render (mesmo lat/lng -> mesmo CRS aeqd local -> mesmo 3857). Fix 1 BLK-PERF-01a.
+    _crs_local = _local_metric_crs(lat, lng)
+    _to_3857 = _transformer(_crs_local, CRS_WEB_MERCATOR)
+
     # Reprojeta setores + circulo + centro + frame do aeqd local -> 3857 (SO para render).
-    circle_3857 = _to_mercator(circle_metric, lat, lng)
-    center_3857 = _point_to_mercator(0.0, 0.0, lat, lng)
-    frame_3857 = _to_mercator(frame_box_metric, lat, lng)
+    circle_3857 = _project_geometry(circle_metric, _to_3857)
+    center_3857 = _to_3857.transform(0.0, 0.0)
+    frame_3857 = _project_geometry(frame_box_metric, _to_3857)
 
     sector_records_3857: list[tuple[BaseGeometry, int]] = []
     densidade_vals: list[float] = []
@@ -777,7 +782,7 @@ def render_mapas_censitarios_combinados(
             renda_vals.append(float("nan"))
             score_vals.append(float("nan"))
             continue
-        sector_records_3857.append((_to_mercator(geom, lat, lng), idx))
+        sector_records_3857.append((_project_geometry(geom, _to_3857), idx))
         densidade_vals.append(
             float(pd.to_numeric(record.get("densidade_pop_setor_hab_km2"), errors="coerce"))
         )

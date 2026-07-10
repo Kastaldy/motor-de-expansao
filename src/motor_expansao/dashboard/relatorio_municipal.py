@@ -592,6 +592,7 @@ def agregar_municipio(
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
     bairros_por_hex: dict[str, str] | None = None,
+    df_pre_filtrado: pd.DataFrame | None = None,
 ) -> dict[str, Any]:
     """Agrega o dicionario canonico de metricas do municipio. READ-ONLY (so le colunas).
 
@@ -602,9 +603,17 @@ def agregar_municipio(
     IBGE `NM_BAIRRO` da particao geo, via `_carregar_bairros_por_hex`). `None` (default) =
     comportamento IDENTICO ao anterior (Pagina 6 simplificada por zona geometrica). Quando dado,
     popula `result["bairros_por_zona"]` com os bairros REAIS agrupados pelas 3 zonas geometricas.
+
+    `df_pre_filtrado` (Fix 2 BLK-PERF-01a): DataFrame ja filtrado para o municipio (evita
+    full-scan de 1,5 M hexes). Quando fornecido, substitui a filtragem interna por `_municipio_mask`.
+    `df` continua obrigatorio na assinatura para compatibilidade, mas nao e usado para filtragem
+    quando `df_pre_filtrado` esta presente.
     """
-    mask = _municipio_mask(df, nome_municipio)
-    df_muni = df.loc[mask].copy()
+    if df_pre_filtrado is not None:
+        df_muni = df_pre_filtrado.copy()
+    else:
+        mask = _municipio_mask(df, nome_municipio)
+        df_muni = df.loc[mask].copy()
 
     uf_value = str(uf).strip().upper() if uf else ""
     if not uf_value and "uf" in df_muni.columns and not df_muni["uf"].dropna().empty:

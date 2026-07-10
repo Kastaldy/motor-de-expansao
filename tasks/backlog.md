@@ -1142,103 +1142,18 @@ numa **recomendação de rumo** (rebuild vs refactor incremental), **stack alvo*
 
 ---
 
-### BLK-PERF-01a — Shared transformer no render censitário + pré-filtro do agregar_municipio (PDFs 86×)
+- BLK-PERF-01a (concluído 2026-07-10) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (performance de relatório; **READ-ONLY sobre o M1**; zero mudança de lógica/estrutura de páginas). |
-| **Prioridade** | **Alta** (dor #4 do Felipe; maior ganho/esforço do epic). |
-| **Esteira** | Block Orchestrator → Planner → Builder → QA (autônoma no loop). |
-| **Status** | Pendente. |
-| **Depende de** | — (diagnóstico BLK-REV-06 concluído). |
-| **Autonomia** | **loop-safe** — determinístico/headless (PNG/PDF byte-comparável + harness B6 como aceite); toca SÓ o caminho de render/agregação de relatório (`censo_map.py`, `relatorio_municipal.py`/`pages.py`); READ-ONLY M1; sem VPS/rede; NÃO toca `config.py`/`pipelines/m1`. |
-
-**Contexto (REV-06).** Root cause do PDF Pontual: `_to_mercator` (`censo_map.py:372-375`) cria um
-transformer pyproj NOVO **por setor** no loop aeqd→3857 de `render_mapas_censitarios_combinados`
-(`censo_map.py`, loop ~l.729) — 141 setores × 24,4 ms = **3,4 s desperdiçados (77% dos 4,5 s totais)**;
-escala linear com N de setores (SP/Rio piores). No Municipal, `agregar_municipio`
-(`relatorio_municipal.py:584`) escaneia o df nacional (1,5 M hexes, 2,1 s) sendo que o chamador em
-`pages.py` já tem o `df_muni` filtrado.
-
-**Objetivo.** (1) Criar o transformer UMA vez antes do loop (`crs_local = _local_metric_crs(lat, lng)`;
-`to_3857 = _transformer(crs_local, CRS_WEB_MERCATOR)`) e reusar via `_project_geometry(geom, to_3857)`
-no lugar de `_to_mercator(geom, lat, lng)` por setor — ganho medido: Fase 2b 3,4 s → 0,04 s (86×),
-**PDF Pontual 4,5 s → ~0,7 s**. (2) Passar o df pré-filtrado ao `agregar_municipio` — **−2,1 s no
-Municipal** sem mudança de lógica.
-
-**Decisões PRÉ-FIXADAS.** Raio 1,5 km e `setor_censitario_intersecao_area_1p5km` INTOCADOS (só o render
-reprojeta mais rápido); mesma matemática de projeção (mesmos parâmetros de transformer) → saída visual
-IDÊNTICA; NÃO incluir neste bloco as opções O2 (ThreadPool) e O4 (pre-fetch de tiles) do REV-06 —
-ganho marginal pós-fix, avaliar depois se a UX exigir.
-
-**Critérios de aceite.** PNGs dos mapas byte-idênticos aos atuais (teste de regressão) e PDFs
-semanticamente idênticos (mesmo conteúdo/páginas); harness B6 re-rodado com ganho documentado no PR;
-teste cobrindo o caminho municipal pré-filtrado; suíte verde; ruff/mypy limpos; `loop_guard` limpo;
-1 validação visual humana de 1 PDF de cada tipo pós-merge (não bloqueia o ciclo).
-**Guardrail.** §5 READ-ONLY M1.
 
 ---
 
-### BLK-PERF-01b — Cache dos builders de mapa + @st.fragment no painel multi-hex + seletor de cor no fragment
+- BLK-PERF-01b (concluído 2026-07-10) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (muda o comportamento interativo do mapa — o coração do dashboard; **READ-ONLY sobre o M1**). |
-| **Prioridade** | **Alta** (dores #1/#2/#3 do Felipe). |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — decisões de produto + validação visual]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (diagnósticos BLK-REV-04/05 concluídos). Recomendado APÓS o BLK-PERF-01a (PRs independentes). |
-| **Autonomia** | **manual (NÃO loop-safe)** — comportamento interativo exige validação visual humana (invalidação de cache, destaque multi-hex; lição BLK-UI-10). NÃO marcar loop-safe. |
-
-**Contexto (REV-04/05).** Os builders de mapa NÃO têm cache e reconstroem+re-serializam o deck inteiro
-(payload 21–24 MB) a cada rerun: troca de modo de cor custa 0,7–3,3 s sendo que **91,5% do payload é
-invariante entre modos** (só `fill_color` muda); add/remove hex no cenário custa 700–900 ms de rebuild
-sendo que `agregar_cenario_multihex` custa 10–21 ms. O seletor `mapa_territorial_color_mode`
-(`pages.py:4333-4339`) está FORA do `@st.fragment` do mapa → rerun da aba inteira.
-
-**Objetivo.** (1) Memoizar os builders (via `build_unified_map_figure`, `components.py:3028`) por
-(df, modo, filtros, overlays, search) — atenção do REV-05 H3: validar picklabilidade do `pdk.Deck` para
-`@st.cache_data`, senão `@st.cache_resource` com chave manual; a layer de destaque multi-hex já é
-anexada DEPOIS do deck (`pages.py:4423-4424`), compatível com cache. (2) Envolver
-`_render_multihex_controls` + `_render_multihex_kpis` num `@st.fragment` (esboço pronto no relatório
-REV-05) — add/remove hex deixa de reconstruir o mapa. (3) Mover o seletor de modo de cor para dentro do
-fragment do mapa (complemento do cache, REV-04).
-
-**Decisões de produto no gate humano:** (D1) comportamento do destaque laranja do multi-hex — atualizar
-só no próximo rerun completo (ganho máximo) vs `st.rerun()` explícito (feedback imediato, cancela o
-ganho) vs aviso "mapa atualiza na próxima interação"; (D2) política de invalidação/TTL do cache.
-
-**Critérios de aceite.** Harness B3/B4 antes/depois (meta: troca de cor ≈ 0 em cache hit; add/remove hex
-sem rebuild do mapa); teste de integração da invalidação (trocar UF/cidade/modo/overlay/busca INVALIDA;
-mudar `multihex_cenario` NÃO); mapa nunca exibe dado de UF/filtro errado (teste explícito); suíte verde;
-ruff/mypy limpos; **validação visual humana aprovada** (cache + fragment + destaque).
-**Guardrail.** §5 READ-ONLY M1 (display only; caps `MAP_POINT_LIMIT*` e `_downsample_map_index` INTOCADOS).
 
 ---
 
-### BLK-PERF-01c — Tooltip enxuto do mapa (14 → 5-6 campos por hexágono)
+- BLK-PERF-01c (concluído 2026-07-10) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (display; **READ-ONLY sobre o M1**; envolve 1 decisão de produto — quais campos ficam). |
-| **Prioridade** | Média (complementa o 01b; maior corte de payload no PRIMEIRO render de cada modo). |
-| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — Felipe: campos do tooltip]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | — (diagnóstico BLK-REV-03 concluído). Independente do 01a/01b (PR separado). |
-| **Autonomia** | **manual (NÃO loop-safe)** — decisão de produto (campos) + validação visual do tooltip. NÃO marcar loop-safe. |
-
-**Contexto (REV-03).** **~65% do payload de 21–24 MB** (15,7 MB em SC) são as 14 strings de tooltip por
-hexágono (`_prepare_m1_tooltip_fields` + `_apply_hex_tooltip_fields`, ~1,7 s de preparação em RO). A
-geometria é só ~8,5%. Reduzir para 5-6 campos corta −50/−65% do payload e ~metade da preparação.
-
-**Objetivo.** Reduzir os campos do tooltip nos builders para o conjunto aprovado no gate (sugestão de
-partida: município/UF, score do modo ativo, população, renda, residual — o detalhe completo continua a
-1 clique, na Análise Pontual). Aplicar aos 4 modos (mesma infraestrutura de tooltip).
-
-**Critérios de aceite.** Campos aprovados por Felipe ANTES do Builder; payload `deck.to_json()` medido
-antes/depois (meta: −50% ou mais) + harness B3/B4; acentuação correta nas labels novas (§2); suíte verde
-(asserts de tooltip atualizados); validação visual humana do tooltip nos 4 modos.
-**Guardrail.** §5 READ-ONLY M1 (display only; nenhum dado é removido do df — só do payload do mapa).
 
 ---
 

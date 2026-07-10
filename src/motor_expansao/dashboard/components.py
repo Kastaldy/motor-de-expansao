@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -40,13 +41,78 @@ from motor_expansao.dashboard.constants import (
 )
 from motor_expansao.dashboard.data import _has_censo_signal, _normalized_join_quality, haversine_km
 from motor_expansao.dashboard.utils import (
-    format_density,
     format_int,
     format_pct,
     format_score,
     hex_to_rgba,
     score_band_to_color,
 )
+
+# BLK-PERF-01b: bound de memória do cache do deck do Mapa Territorial. NÃO é expiração por
+# tempo (D2 proíbe TTL); apenas limita quantas entradas de deck ficam memoizadas por processo
+# (~6 recortes × 4 modos). Vive aqui (path do ciclo), não em constants.py.
+MAP_FIGURE_CACHE_MAX_ENTRIES = 24
+
+
+def _map_frame_token(df: pd.DataFrame | None, cols: list[str]) -> str:
+    """Token leve e determinístico do conteúdo de um DataFrame para chave de cache.
+
+    None -> "none"; vazio -> "n0"; senão f"n{len}:{sha1(hash_pandas_object(cols presentes))[:16]}".
+    hash_pandas_object é vetorizado em C e sensível ao CONTEÚDO (inclui dtype object como hex_id).
+    Recorte com conjunto de linhas/valores diferente -> token diferente -> MISS correto; conjuntos
+    distintos nunca colidem (impossível false-hit entre UFs). READ-ONLY: só deriva identidade.
+    """
+    if df is None:
+        return "none"
+    if len(df) == 0:
+        return "n0"
+    present = [c for c in cols if c in df.columns]
+    if not present:
+        return f"n{len(df)}:nocols"
+    hashed = pd.util.hash_pandas_object(df[present], index=False).to_numpy().tobytes()
+    return f"n{len(df)}:{hashlib.sha1(hashed).hexdigest()[:16]}"
+
+
+@st.cache_data(show_spinner=False, max_entries=MAP_FIGURE_CACHE_MAX_ENTRIES)  # sem expiracao por tempo (D2)
+def build_unified_map_figure_cached(
+    _df: pd.DataFrame,
+    _competitors_df: pd.DataFrame | None,
+    _ultra_df: pd.DataFrame | None,
+    _dominio_df: pd.DataFrame | None,
+    *,
+    color_mode: str,
+    enabled_overlays: tuple[str, ...],
+    selected_ufs: tuple[str, ...],
+    selected_cities: tuple[str, ...],
+    selected_faixas: tuple[str, ...],
+    search_pin: tuple[float, float] | None,
+    search_hex_id: str | None,
+    df_token: str,
+    competitors_token: str,
+    ultra_token: str,
+    dominio_token: str,
+):
+    """Wrapper cacheado (@st.cache_data, SEM ttl) do dispatcher do Mapa Territorial.
+
+    Os DataFrames entram como parâmetros underscore (IGNORADOS no hash do Streamlit); a
+    identidade do recorte vem dos *_token calculados por _map_frame_token. multihex_cenario
+    FICA FORA da chave (a layer de destaque é anexada pós-cache no render). cache_data devolve
+    uma cópia por chamada -> anexar layer ao deck retornado não vaza para outros hits.
+    READ-ONLY M1: não recalcula score, carteira, plano nem artefatos oficiais.
+    """
+    return build_unified_map_figure(
+        _df,
+        color_mode=color_mode,
+        enabled_overlays=list(enabled_overlays),
+        selected_ufs=list(selected_ufs),
+        selected_cities=list(selected_cities),
+        selected_faixas=(list(selected_faixas) or None),
+        competitors_df=_competitors_df,
+        ultra_df=_ultra_df,
+        search_pin=search_pin,
+        search_hex_id=search_hex_id,
+        dominio_df=_dominio_df,
+    )
 
 
 def build_kpis(
@@ -425,108 +491,45 @@ def _has_residual_signal(map_df: pd.DataFrame) -> bool:
 
 def _apply_residual_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
     if not _has_residual_signal(map_df):
-        map_df["tooltip_residual_1"] = ""
-        map_df["tooltip_residual_2"] = ""
-        map_df["tooltip_residual_3"] = ""
+        map_df["score_residual_fmt"] = "-"
+        map_df["tooltip_residual_1"] = "Residual Fitness: -"
         return map_df
 
     na_float = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
     oferta = pd.to_numeric(map_df.get("oferta_efetiva_disponivel", na_float), errors="coerce")
-    sam = pd.to_numeric(map_df.get("sam_fitness_potencial", na_float), errors="coerce")
     score = pd.to_numeric(map_df.get("score_oportunidade_residual", na_float), errors="coerce")
-    consumo_mercado = pd.to_numeric(map_df.get("oferta_consumida_mercado_estimada", na_float), errors="coerce")
-    consumo_ultra = pd.to_numeric(map_df.get("oferta_consumida_ultra_real", na_float), errors="coerce")
-    share_ultra = pd.to_numeric(map_df.get("share_ultra_estimado_hex", na_float), errors="coerce")
-    quartil = (
-        map_df["quartil_oportunidade_residual"].astype(object).where(
-            map_df["quartil_oportunidade_residual"].notna(), "-"
-        ).astype(str)
-        if "quartil_oportunidade_residual" in map_df.columns
-        else pd.Series("-", index=map_df.index)
-    )
-
-    fonte_pop = (
-        map_df["fonte_pop_hex_base"].astype(str)
-        if "fonte_pop_hex_base" in map_df.columns
-        else pd.Series("", index=map_df.index)
-    )
-    proxy_suffix = pd.Series(
-        np.where(fonte_pop.eq("m1_municipal_proxy_per_hex"), " (est. proxy)", ""),
-        index=map_df.index,
-    )
-
+    map_df["score_residual_fmt"] = score.map(format_score)
     map_df["tooltip_residual_1"] = (
-        "Residual fitness: "
-        + oferta.map(lambda v: format_int(v) if pd.notna(v) else "-")
-        + " | Score residual: "
-        + score.map(format_score)
-        + " | "
-        + quartil
-    )
-    map_df["tooltip_residual_2"] = (
-        "SAM fitness: "
-        + sam.map(lambda v: format_int(v) if pd.notna(v) else "-")
-        + proxy_suffix
-        + " | Consumo concorrentes: "
-        + consumo_mercado.map(lambda v: format_int(v) if pd.notna(v) else "-")
-    )
-    map_df["tooltip_residual_3"] = (
-        "Consumo Ultra: "
-        + consumo_ultra.map(lambda v: format_int(v) if pd.notna(v) else "-")
-        + " | Share Ultra: "
-        + (share_ultra * 100).map(format_pct)
+        "Residual Fitness: " + oferta.map(lambda v: format_int(v) if pd.notna(v) else "-")
     )
     return map_df
 
 
+# BLK-PERF-01c (D4): rotulo + coluna ja formatada do "Score do modo ativo" (2a das 6
+# linhas do tooltip enxuto), por modo. Em mode="censitario" a linha 2 (Score do modo
+# ativo) e a linha 3 (Score Censitario) mostram o MESMO valor — aceito no gate D4
+# (ver Riscos), nao e bug.
+_ACTIVE_SCORE_SPEC: dict[str, tuple[str, str]] = {
+    "m1": ("Score M1", "score_priorizacao_fmt"),
+    "hibrido": ("Score Híbrido", "score_hibrido_fmt"),
+    "censitario": ("Score Censitário", "score_censo_fmt"),
+    "residual": ("Score Residual", "score_residual_fmt"),
+}
+
+
 def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str, show_discarded: bool = True) -> pd.DataFrame:
     map_df = _apply_residual_tooltip_fields(map_df)
-    if mode == "hybrid":
-        map_df["tooltip_title"] = map_df["nome_municipio"].astype(str) + " / " + map_df["uf"].astype(str)
-        map_df["tooltip_line_1"] = "Score Censitário 2022: " + map_df["score_censo_fmt"].astype(str)
-        map_df["tooltip_line_2"] = "Score M1: " + map_df["score_m1_fmt"].astype(str)
-        map_df["tooltip_line_3"] = "Score Híbrido: " + map_df["score_hibrido_fmt"].astype(str)
-        map_df["tooltip_line_4"] = "Densidade setorial: " + map_df["densidade_fmt"].astype(str) + " hab/km2"
-        if _HYBRID_TOOLTIP_SHOW_DETAIL:
-            # Campos de detalhe tecnico — ocultos quando _HYBRID_TOOLTIP_SHOW_DETAIL=False.
-            # Para restaurar: mudar a constante para True (acima de _hybrid_compact_tooltip).
-            map_df["tooltip_line_5"] = "Rank Intraurbano: " + map_df["rank_hex_fmt"].astype(str)
-            map_df["tooltip_line_6"] = "Top intraurbano: " + map_df["top_hex_label"].astype(str)
-            map_df["tooltip_line_7"] = "Elegibilidade: " + map_df["elegibilidade_hibrida"].astype(str)
-            map_df["tooltip_line_8"] = "Qualidade join: " + map_df["qualidade_join_uf"].astype(str)
-            map_df["tooltip_line_9"] = "Outlier espacial: " + map_df["outlier_label"].astype(str)
-            map_df["tooltip_line_10"] = "Motivo editorial: " + map_df["motivo_label"].astype(str)
-            map_df["tooltip_line_11"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
-            map_df["tooltip_line_12"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
-            map_df["tooltip_line_13"] = map_df["tooltip_residual_1"]
-            map_df["tooltip_line_14"] = map_df["tooltip_residual_2"] + " | " + map_df["tooltip_residual_3"]
-        else:
-            map_df["tooltip_line_5"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
-            map_df["tooltip_line_6"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
-            map_df["tooltip_line_7"] = map_df["tooltip_residual_1"]
-            map_df["tooltip_line_8"] = map_df["tooltip_residual_2"] + " | " + map_df["tooltip_residual_3"]
-        if "flag_pop_min_5k" in map_df.columns and show_discarded:
-            discarded = ~map_df["flag_pop_min_5k"].fillna(True)
-            map_df.loc[discarded, "tooltip_title"] = (
-                map_df.loc[discarded, "tooltip_title"].astype(str) + " - Descartado <5k hab"
-            )
-        return map_df
-
     map_df["tooltip_title"] = map_df["nome_municipio"].astype(str) + " / " + map_df["uf"].astype(str)
-    map_df["tooltip_line_1"] = "Fonte geográfica: " + map_df["fonte_geografica_label"].astype(str)
-    map_df["tooltip_line_2"] = "Faixa M1: " + map_df["faixa_label"].astype(str)
-    map_df["tooltip_line_3"] = "Score M1: " + map_df["score_priorizacao_fmt"].astype(str)
-    map_df["tooltip_line_4"] = "Score estrutural: " + map_df["hex_score_estrutural_fmt"].astype(str)
-    map_df["tooltip_line_5"] = "Score censitário: " + map_df["score_censo_fmt"].astype(str)
-    map_df["tooltip_line_6"] = "Qualidade join: " + map_df["qualidade_join_label"].astype(str)
-    map_df["tooltip_line_7"] = "Coverage censitário: " + map_df["coverage_fmt"].astype(str)
-    map_df["tooltip_line_8"] = "Viável: " + map_df["flag_viavel_label"].astype(str)
-    map_df["tooltip_line_9"] = "Prioridade: " + map_df["flag_prioridade_label"].astype(str)
-    map_df["tooltip_line_10"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
-    map_df["tooltip_line_11"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
-    map_df["tooltip_line_12"] = map_df["tooltip_residual_1"]
-    map_df["tooltip_line_13"] = map_df["tooltip_residual_2"]
-    map_df["tooltip_line_14"] = map_df["tooltip_residual_3"]
+
+    active_label, active_col = _ACTIVE_SCORE_SPEC[mode]
+    active_fmt = map_df[active_col] if active_col in map_df.columns else pd.Series("-", index=map_df.index)
+    map_df["tooltip_line_1"] = "Faixa M1: " + map_df["faixa_label"].astype(str)
+    map_df["tooltip_line_2"] = f"{active_label}: " + active_fmt.astype(str)
+    map_df["tooltip_line_3"] = "Score Censitário: " + map_df["score_censo_fmt"].astype(str)
+    map_df["tooltip_line_4"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
+    map_df["tooltip_line_5"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
+    map_df["tooltip_line_6"] = map_df["tooltip_residual_1"]
+
     if "flag_pop_min_5k" in map_df.columns and show_discarded:
         discarded = ~map_df["flag_pop_min_5k"].fillna(True)
         map_df.loc[discarded, "tooltip_title"] = (
@@ -563,6 +566,16 @@ def _infer_confianca_geografica(map_df: pd.DataFrame) -> pd.Series:
     return current.where(current.isin(["granular", "municipal"]), inferred)
 
 
+def _compute_faixa_label(faixa: pd.Series) -> pd.Series:
+    def _label(v: object) -> str:
+        if pd.isna(v):
+            return "Não informado"
+        key = str(v)
+        return FAIXA_LABELS.get(key, key)
+
+    return faixa.map(_label).astype(str)
+
+
 def _prepare_m1_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
     map_df = map_df.copy()
     _ensure_columns(
@@ -585,30 +598,9 @@ def _prepare_m1_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
     )
     map_df["nome_municipio"] = map_df["nome_municipio"].fillna(map_df["cidade"])
     map_df["confianca_geografica"] = _infer_confianca_geografica(map_df)
-    map_df["faixa_label"] = (
-        map_df["faixa_oportunidade"]
-        .astype(object)
-        .where(map_df["faixa_oportunidade"].notna(), "Não informado")
-        .astype(str)
-    )
-    map_df["fonte_geografica_label"] = map_df["confianca_geografica"].map(
-        {
-            "granular": "Setor censitário (qualidade A/B)",
-            "municipal": "Dado municipal (fallback M1)",
-        }
-    )
+    map_df["faixa_label"] = _compute_faixa_label(map_df["faixa_oportunidade"])
     map_df["score_priorizacao_fmt"] = map_df["score_priorizacao"].map(format_score)
-    map_df["hex_score_estrutural_fmt"] = map_df["hex_score_estrutural"].map(format_score)
     map_df["score_censo_fmt"] = map_df["score_setor_2022_calibrado"].map(format_score)
-    map_df["coverage_fmt"] = map_df["coverage_pct_setor_2022"].map(format_pct)
-    map_df["qualidade_join_label"] = (
-        map_df["qualidade_join_uf"]
-        .astype(object)
-        .where(map_df["qualidade_join_uf"].notna(), "Sem camada")
-        .astype(str)
-    )
-    map_df["flag_viavel_label"] = map_df["flag_viavel"].map({True: "Sim", False: "Não"}).fillna("-")
-    map_df["flag_prioridade_label"] = map_df["flag_prioridade"].map({True: "Sim", False: "Não"}).fillna("-")
 
     is_granular = map_df["confianca_geografica"].eq("granular")
     na_float = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
@@ -648,6 +640,7 @@ def _prepare_hybrid_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
         {
             "nome_municipio": "-",
             "uf": "-",
+            "faixa_oportunidade": pd.NA,
             "score_setor_2022_calibrado": pd.NA,
             "score_priorizacao": pd.NA,
             "score_expansao_hibrido": pd.NA,
@@ -662,16 +655,15 @@ def _prepare_hybrid_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
             "renda_per_capita": pd.NA,
         },
     )
+    map_df["faixa_label"] = _compute_faixa_label(map_df["faixa_oportunidade"])
     map_df["score_censo_fmt"] = map_df["score_setor_2022_calibrado"].map(format_score)
-    map_df["score_m1_fmt"] = map_df["score_priorizacao"].map(format_score)
+    # score_hibrido_fmt: mantido (nao removido, apesar do passo A/4 do plano do Planner
+    # listar sua remocao) porque e o "Score do modo ativo" (_ACTIVE_SCORE_SPEC["hibrido"])
+    # consumido pelo fallback de busca de build_hybrid_map_figure quando mode="hibrido"
+    # (hex pesquisado fora do recorte filtrado usa este caminho, nao o calculo inline);
+    # removê-lo quebraria esse fallback (ver teste
+    # test_build_hybrid_map_figure_destaque_hex_usa_tooltip_enxuto, linha "Score Híbrido: 93.00").
     map_df["score_hibrido_fmt"] = map_df["score_expansao_hibrido"].map(format_score)
-    map_df["densidade_fmt"] = map_df["densidade_pop_setor_hab_km2"].map(format_density)
-    map_df["outlier_label"] = map_df["flag_outlier_espacial"].map({True: "Sim (revisar)", False: "Não"}).fillna("-")
-    map_df["rank_hex_fmt"] = map_df["rank_hex_intraurbano"].map(
-        lambda v: str(int(v)) if not pd.isna(v) else "-"
-    )
-    map_df["top_hex_label"] = map_df["top_hex_intraurbano"].map({True: "Sim", False: "Não"}).fillna("-")
-    map_df["motivo_label"] = map_df["motivo_nao_elegivel_censo"].astype(object).fillna("-").astype(str)
 
     na_float = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
     pop_municipal = map_df["pop_total"] if "pop_total" in map_df.columns else map_df.get("populacao_proxy", na_float)
@@ -1080,15 +1072,10 @@ def _shared_map_tooltip() -> dict[str, object]:
     }
 
 
-# Controla a exibicao de campos de detalhe tecnico no tooltip do mapa hibrido.
-# False = tooltip compacto (oculta Rank Intraurbano, Top Intraurbano, Elegibilidade,
-#         Qualidade Join, Outlier Espacial, Motivo Editorial).
-# True  = tooltip completo com todos os 14 campos (restaura os campos acima).
-_HYBRID_TOOLTIP_SHOW_DETAIL = False
-
-
-def _hybrid_compact_tooltip() -> dict[str, object]:
-    """Tooltip de 8 linhas para mapas hibridos quando _HYBRID_TOOLTIP_SHOW_DETAIL=False."""
+def _hex_map_tooltip() -> dict[str, object]:
+    """Tooltip enxuto (Título + 6 linhas, D4 BLK-PERF-01c) compartilhado pelos 4 modos
+    de hexágono do Mapa Territorial (M1/Híbrido/Censitário/Residual). Deixou de ser
+    exclusivo do modo Híbrido — ver `_apply_hex_tooltip_fields`/`_ACTIVE_SCORE_SPEC`."""
     return {
         "html": (
             "<b>{tooltip_title}</b><br/>"
@@ -1097,9 +1084,7 @@ def _hybrid_compact_tooltip() -> dict[str, object]:
             "{tooltip_line_3}<br/>"
             "{tooltip_line_4}<br/>"
             "{tooltip_line_5}<br/>"
-            "{tooltip_line_6}<br/>"
-            "{tooltip_line_7}<br/>"
-            "{tooltip_line_8}"
+            "{tooltip_line_6}"
         ),
         "style": {
             "backgroundColor": "rgba(10, 15, 31, 0.94)",
@@ -1578,7 +1563,7 @@ def build_map_figure(
             bearing=0,
         ),
         layers=layers,
-        tooltip=_shared_map_tooltip(),
+        tooltip=_hex_map_tooltip(),
     )
     # FU1: corte real = len(key) > effective_limit (nao a heuristica n_points>=cap,
     # que mentia na janela 18k-34.999 em UF grande). Propaga sem mudar a assinatura.
@@ -1741,19 +1726,10 @@ def build_hybrid_map_figure(
         for r, q, o in zip(_restrito, _quality_c, _outlier, strict=False)
     ]
     map_df["score_censo_fmt"] = map_df["score_setor_2022_calibrado"].map(format_score)
-    map_df["score_m1_fmt"] = map_df["score_priorizacao"].map(format_score)
     map_df["score_hibrido_fmt"] = map_df["score_expansao_hibrido"].map(format_score)
-    map_df["densidade_fmt"] = map_df["densidade_pop_setor_hab_km2"].map(format_density)
-    map_df["coverage_fmt"] = map_df["coverage_pct_setor_2022"].map(format_pct)
-    map_df["outlier_label"] = map_df["flag_outlier_espacial"].map({True: "Sim (revisar)", False: "Não"})
-    map_df["join_restrito_label"] = map_df["flag_join_uf_restrito"].map({True: "Sim", False: "Não"})
-    map_df["baixa_pop_label"] = map_df["flag_baixa_pop_setor"].map({True: "Sim (<5.000 hab/km2)", False: "Não"})
-    map_df["causa_outlier_label"] = map_df["causa_outlier_espacial"].astype(object).fillna("-").astype(str)
-    map_df["rank_hex_fmt"] = map_df["rank_hex_intraurbano"].map(
-        lambda v: str(int(v)) if not pd.isna(v) else "-"
-    )
-    map_df["top_hex_label"] = map_df["top_hex_intraurbano"].map({True: "Sim", False: "Não"})
-    map_df["motivo_label"] = map_df["motivo_nao_elegivel_censo"].astype(object).fillna("-").astype(str)
+    if "faixa_oportunidade" not in map_df.columns:
+        map_df["faixa_oportunidade"] = pd.NA
+    map_df["faixa_label"] = _compute_faixa_label(map_df["faixa_oportunidade"])
     _na_float_h = pd.Series(pd.NA, index=map_df.index, dtype="Float64")
     # Fallback municipal: preferir pop_total (população total) sobre populacao_proxy legado (18-45).
     pop_municipal_h = map_df.get("pop_total", map_df.get("populacao_proxy", _na_float_h))
@@ -1776,7 +1752,8 @@ def build_hybrid_map_figure(
         renda_suffix_h = np.full(len(map_df), " (municipal)")
     map_df["renda_fmt"] = renda_val_h.map(lambda v: format_int(v) if pd.notna(v) else "-") + renda_suffix_h
     map_df = _apply_pop_cut_colors(map_df, show_discarded=show_discarded)
-    map_df = _apply_hex_tooltip_fields(map_df, mode="hybrid", show_discarded=show_discarded)
+    _active_mode = "censitario" if color_col == "score_setor_2022_calibrado" else "hibrido"
+    map_df = _apply_hex_tooltip_fields(map_df, mode=_active_mode, show_discarded=show_discarded)
     search_tooltip_source = None
     if search_hex_id is not None:
         search_source = hdf.loc[
@@ -1787,7 +1764,7 @@ def build_hybrid_map_figure(
             search_source = search_source.drop_duplicates(subset=["hex_id"], keep="first")
             search_tooltip_source = _apply_hex_tooltip_fields(
                 _prepare_hybrid_tooltip_fields(search_source),
-                mode="hybrid",
+                mode=_active_mode,
                 show_discarded=show_discarded,
             )
 
@@ -1840,7 +1817,7 @@ def build_hybrid_map_figure(
             bearing=0,
         ),
         layers=layers,
-        tooltip=_shared_map_tooltip() if _HYBRID_TOOLTIP_SHOW_DETAIL else _hybrid_compact_tooltip(),
+        tooltip=_hex_map_tooltip(),
     )
     # FU1: corte real do cap propagado para o caption honesto (vide build_map_figure).
     deck._ultra_capped = len(key) > effective_limit
@@ -1920,7 +1897,7 @@ def build_residual_heatmap_figure(
     ]
     map_df = _prepare_hybrid_tooltip_fields(map_df)
     map_df = _apply_pop_cut_colors(map_df, show_discarded=show_discarded)
-    map_df = _apply_hex_tooltip_fields(map_df, mode="hybrid", show_discarded=show_discarded)
+    map_df = _apply_hex_tooltip_fields(map_df, mode="residual", show_discarded=show_discarded)
 
     search_tooltip_source = None
     if search_hex_id is not None:
@@ -1932,7 +1909,7 @@ def build_residual_heatmap_figure(
             search_source = search_source.drop_duplicates(subset=["hex_id"], keep="first")
             search_tooltip_source = _apply_hex_tooltip_fields(
                 _prepare_hybrid_tooltip_fields(search_source),
-                mode="hybrid",
+                mode="residual",
                 show_discarded=show_discarded,
             )
 
@@ -1985,7 +1962,7 @@ def build_residual_heatmap_figure(
             bearing=0,
         ),
         layers=layers,
-        tooltip=_shared_map_tooltip() if _HYBRID_TOOLTIP_SHOW_DETAIL else _hybrid_compact_tooltip(),
+        tooltip=_hex_map_tooltip(),
     )
     # FU1: corte real do cap propagado para o caption honesto (vide build_map_figure).
     deck._ultra_capped = len(key) > effective_limit
