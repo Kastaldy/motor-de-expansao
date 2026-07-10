@@ -97,6 +97,7 @@ from motor_expansao.dashboard.data import (
 )
 from motor_expansao.dashboard.relatorio_municipal import (
     _carregar_bairros_por_hex,
+    _municipio_mask,
     agregar_municipio,
     gerar_payloads_download_relatorio_municipal,
     render_download_relatorio_municipal,
@@ -3217,6 +3218,8 @@ def _gerar_payload_relatorio_municipal(
     Nao chama `st.*` (progresso/warning/session ficam no chamador); e a unidade testavel
     do miolo de geracao, compartilhada pelo ramo de lote (> 1 municipio) dos dois pontos.
     """
+    _mask = _municipio_mask(df, nome_municipio)
+    df_muni = df.loc[_mask].copy()
     bairros_por_hex = _resolve_bairros_por_hex_municipio(
         df, nome_municipio, uf, censo_geo_dir
     )
@@ -3228,19 +3231,10 @@ def _gerar_payload_relatorio_municipal(
         competitors_df=competitors_df,
         ultra_df=ultra_df,
         bairros_por_hex=bairros_por_hex,
+        df_pre_filtrado=df_muni,
     )
     if municipio_result["n_hex_total"] == 0:
         return None
-    df_muni = df.loc[
-        df.get("nome_municipio", pd.Series("", index=df.index))
-        .astype(str).str.strip().str.casefold()
-        == str(nome_municipio).strip().casefold()
-    ]
-    if df_muni.empty and "cidade" in df.columns:
-        df_muni = df.loc[
-            df["cidade"].astype(str).str.strip().str.casefold()
-            == str(nome_municipio).strip().casefold()
-        ]
     mapas = render_mapas_municipio(
         df_muni,
         municipio_result,
@@ -3288,6 +3282,8 @@ def render_relatorio_municipal_download_topo(
         )
         if gerar:
             with st.spinner("Gerando Relatório Municipal..."):
+                _mask = _municipio_mask(df, nome_municipio)
+                df_muni = df.loc[_mask].copy()
                 bairros_por_hex = _resolve_bairros_por_hex_municipio(
                     df, nome_municipio, uf, censo_geo_dir
                 )
@@ -3299,6 +3295,7 @@ def render_relatorio_municipal_download_topo(
                     competitors_df=competitors_df,
                     ultra_df=ultra_df,
                     bairros_por_hex=bairros_por_hex,
+                    df_pre_filtrado=df_muni,
                 )
                 if municipio_result["n_hex_total"] == 0:
                     st.session_state.pop(cache_key, None)
@@ -3306,16 +3303,6 @@ def render_relatorio_municipal_download_topo(
                         f"Nenhum hexágono encontrado para '{nome_municipio}' no recorte carregado."
                     )
                     return
-                df_muni = df.loc[
-                    df.get("nome_municipio", pd.Series("", index=df.index))
-                    .astype(str).str.strip().str.casefold()
-                    == str(nome_municipio).strip().casefold()
-                ]
-                if df_muni.empty and "cidade" in df.columns:
-                    df_muni = df.loc[
-                        df["cidade"].astype(str).str.strip().str.casefold()
-                        == str(nome_municipio).strip().casefold()
-                    ]
                 mapas = render_mapas_municipio(
                     df_muni,
                     municipio_result,
@@ -4189,6 +4176,8 @@ def render_relatorio_municipal_expander(
         nome_municipio = selected_cities[0]
         uf = selected_ufs[0] if len(selected_ufs) == 1 else None
         with st.spinner("Gerando Relatório Municipal..."):
+            _mask = _municipio_mask(df, nome_municipio)
+            df_muni = df.loc[_mask].copy()
             bairros_por_hex = _resolve_bairros_por_hex_municipio(
                 df, nome_municipio, uf, censo_geo_dir
             )
@@ -4200,22 +4189,13 @@ def render_relatorio_municipal_expander(
                 competitors_df=competitors_df,
                 ultra_df=ultra_df,
                 bairros_por_hex=bairros_por_hex,
+                df_pre_filtrado=df_muni,
             )
             if municipio_result["n_hex_total"] == 0:
                 st.warning(
                     f"Nenhum hexágono encontrado para '{nome_municipio}' no recorte carregado."
                 )
                 return
-            df_muni = df.loc[
-                df.get("nome_municipio", pd.Series("", index=df.index))
-                .astype(str).str.strip().str.casefold()
-                == str(nome_municipio).strip().casefold()
-            ]
-            if df_muni.empty and "cidade" in df.columns:
-                df_muni = df.loc[
-                    df["cidade"].astype(str).str.strip().str.casefold()
-                    == str(nome_municipio).strip().casefold()
-                ]
             mapas = render_mapas_municipio(
                 df_muni,
                 municipio_result,

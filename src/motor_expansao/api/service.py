@@ -493,6 +493,7 @@ def gerar_pdf_municipio(
     result = agregar_municipio(
         df, nome_municipio=nome_exato, uf=uf, dominio_df=dominio_df,
         competitors_df=comp_df, ultra_df=ultra_df, bairros_por_hex=bairros,
+        df_pre_filtrado=df_muni,
     )
     if result.get("n_hex_total", 0) == 0:
         raise APIError(404, f"Municipio '{nome_exato}' ({uf}) sem hexagonos", "municipio_sem_dados")
