@@ -8189,3 +8189,28 @@ Pontual). Aplicar aos 4 modos (mesma infraestrutura; o Híbrido já tem padrão 
 antes/depois (meta: −50% ou mais) + harness B3/B4; acentuação correta nas labels novas (§2); suíte verde
 (asserts de tooltip atualizados); validação visual humana do tooltip nos 4 modos.
 **Guardrail.** §5 READ-ONLY M1 (display only; nenhum dado é removido do df — só do payload do mapa).
+
+---
+
+### BLK-PERF-01d — Remover o expander "Camada Híbrida - Detalhe" (2 decks fantasmas de ~14 MB por rerun)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (remoção de feature de display sem uso; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta (decisão de Felipe 2026-07-10 — "ninguém utiliza; aliviará ainda mais"). |
+| **Esteira** | Direta (decisão de produto do Felipe + implementação + suíte), na sessão de 2026-07-10. |
+| **Status** | Pendente. |
+| **Depende de** | — (achado do harness Playwright do BLK-PERF-01b-FU1). |
+| **Autonomia** | **manual** — remoção de feature visível exige decisão de produto (JÁ dada por Felipe). |
+
+**Contexto (achado do FU1, 2026-07-10).** A aba Mapa Territorial enviava **~42 MB de deck JSON por
+rerun**: o mapa principal (~14 MB) + **2 decks de ~14 MB** construídos pelo corpo do expander
+RECOLHIDO "Camada Híbrida - Detalhe" (`render_modelo_hibrido_v2` → tabs "Oportunidades Híbridas" e
+"Mapa Residual Fitness") — corpo de expander executa a cada rerun mesmo fechado. Ninguém usa o
+detalhe híbrido; a leitura híbrida/residual segue disponível nos MODOS DE COR do mapa principal.
+
+**Objetivo.** Remover a chamada do expander em `render_mapa_territorial` (pages.py), mantendo
+`render_modelo_hibrido_v2` exportada (sem caller). Ganho: ~2/3 do payload da aba (~28 MB/rerun) e
+o custo Python de construir 2 decks por rerun. Teste de regressão garante que o expander não volta.
+
+**Guardrail.** §5 READ-ONLY M1 (display only); modos de cor do mapa principal INTOCADOS.

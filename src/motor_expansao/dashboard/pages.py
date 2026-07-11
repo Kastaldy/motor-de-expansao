@@ -4566,18 +4566,12 @@ def render_mapa_territorial(
             render_analise_territorial(df, city_summary)
         with st.expander("Ranking de Priorização", expanded=False):
             render_ranking_priorizacao(df)
-        if "score_expansao_hibrido" in df.columns and df["score_expansao_hibrido"].notna().any():
-            with st.expander("Camada Híbrida - Detalhe", expanded=False):
-                render_modelo_hibrido_v2(
-                    df,
-                    selected_ufs=selected_ufs,
-                    selected_cities=selected_cities,
-                    selected_faixas=selected_faixas,
-                    competitors_df=competitors_df,
-                    ultra_df=ultra_df,
-                    search_pin=search_pin,
-                    search_hex_id=search_hex_id,
-                )
+        # BLK-PERF-01d (Felipe, 2026-07-10): o expander "Camada Híbrida - Detalhe" foi
+        # REMOVIDO — ninguém usava e, mesmo recolhido, seu corpo executava a cada rerun
+        # construindo 2 decks de ~14 MB (tabs Oportunidades Híbridas + Mapa Residual
+        # Fitness), ~2/3 dos ~42 MB de payload da aba (achado do harness do FU1).
+        # A leitura híbrida segue disponível no MODO DE COR do mapa principal.
+        # `render_modelo_hibrido_v2` permanece exportada (sem caller no dashboard).
         effective_pin = click_coord or search_pin
         st.markdown("**Análise de ponto**")
         with st.expander(
