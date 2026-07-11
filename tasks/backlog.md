@@ -1157,6 +1157,11 @@ numa **recomendação de rumo** (rebuild vs refactor incremental), **stack alvo*
 
 ---
 
+- BLK-PERF-01d (concluído 2026-07-10) — ver tasks/completed.md
+
+
+---
+
 ## Epic BLK-TP — Camada de Demanda Revelada (camada paralela, READ-ONLY sobre o M1)
 
 > Epic que incorpora ao Motor um **sinal externo, georreferenciado e anônimo de demanda paga por

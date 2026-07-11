@@ -6810,6 +6810,20 @@ def test_render_multihex_panel_sem_clique_nao_chama_rerun_renderiza_kpis():
     assert metric_mock.called
 
 
+def test_expander_camada_hibrida_detalhe_removido():
+    """BLK-PERF-01d: o expander 'Camada Híbrida - Detalhe' foi REMOVIDO (decisão Felipe
+    2026-07-10). Seu corpo construía 2 decks de ~14 MB a cada rerun mesmo recolhido
+    (~2/3 do payload da aba). Se este teste falhar, alguém o reintroduziu — a leitura
+    híbrida deve viver nos MODOS DE COR do mapa principal, não num expander."""
+    import inspect
+
+    from motor_expansao.dashboard import pages
+    src = inspect.getsource(pages.render_mapa_territorial)
+    # padrões de CÓDIGO (o comentário explicativo cita o nome do expander, e tudo bem)
+    assert 'st.expander("Camada Híbrida' not in src
+    assert "render_modelo_hibrido_v2(" not in src
+
+
 def test_map_inline_e_painel_multihex_fragment():
     """Caminho do chart pydeck INLINE (sem fragment); painel multi-hex segue fragment.
 
