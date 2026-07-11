@@ -155,6 +155,15 @@ def analisar_ponto_censitario_setores(
     A entrada esperada e uma base setorial ja recortada/carregada com `geometry_wkb`
     em EPSG:4674. A funcao e pura: nao muta os DataFrames recebidos e nao recalcula
     nenhum artefato oficial do M1.
+
+    BLK-RELPON-05: alem dos agregados ponderados do raio de 1.5 km, o `result` expoe
+    5 campos com o valor BRUTO do setor que CONTEM o ponto pesquisado (`covers()` no
+    CRS metrico local, tie-break por maior `peso_area_setor`): `cod_setor_ponto`,
+    `renda_per_capita_setor_ponto`, `densidade_pop_setor_ponto`,
+    `score_setor_2022_calibrado_ponto` e `flag_setor_ponto_encontrado`. Reaproveita a
+    geometria ja decodificada/projetada no laco de intersecao (sem novo `_decode_geometry`
+    nem novo transformer). Quando o ponto cai fora de qualquer setor da malha (agua/orla,
+    setor com geometria invalida, etc.), os 5 campos ficam `None`/`False`, sem excecao.
     """
     area_km2 = math.pi * raio_km**2
     concorrentes_raio = _points_in_radius(lat, lng, competitors_df, raio_km)
@@ -178,6 +187,12 @@ def analisar_ponto_censitario_setores(
         "concorrentes_raio": concorrentes_raio,
         "ultra_raio": ultra_raio,
         "setores_intersectados": _empty_setores_frame(),
+        # BLK-RELPON-05: valor BRUTO do setor que CONTEM o ponto (nao o agregado do raio).
+        "cod_setor_ponto": None,
+        "renda_per_capita_setor_ponto": None,
+        "densidade_pop_setor_ponto": None,
+        "score_setor_2022_calibrado_ponto": None,
+        "flag_setor_ponto_encontrado": False,
     }
 
     if setores_df is None or setores_df.empty:
@@ -221,6 +236,9 @@ def analisar_ponto_censitario_setores(
         record["area_setor_m2"] = float(area_setor_m2)
         record["area_intersecao_m2"] = area_intersecao_m2
         record["peso_area_setor"] = peso_area
+        # BLK-RELPON-05: `covers()` (inclusivo de fronteira) sobre a mesma geometria
+        # metrica ja projetada acima -- sem recalcular malha nem raio.
+        record["contains_ponto"] = bool(geom_metric.covers(center_metric))
         records.append(record)
 
     if not records:
@@ -245,6 +263,41 @@ def analisar_ponto_censitario_setores(
     result["setores_intersectados"] = intersectados[display_cols].copy()
     result["n_setores"] = len(intersectados)
     result["area_intersecao_total_m2"] = round(float(area_weights.sum()), 2)
+
+    # BLK-RELPON-05: lookup do setor que CONTEM o ponto (usa `intersectados` completa,
+    # antes do corte de `display_cols`, pois `contains_ponto` nao esta em
+    # `_empty_setores_frame()`). Tie-break por maior `peso_area_setor` (mais
+    # "solidamente" dentro) quando mais de um setor "cobre" o ponto por ruido de
+    # ponto flutuante na reprojecao.
+    contains_mask = (
+        intersectados.get("contains_ponto", pd.Series(False, index=intersectados.index))
+        .fillna(False)
+        .astype(bool)
+    )
+    ponto_candidatos = intersectados.loc[contains_mask]
+    if not ponto_candidatos.empty:
+        ponto_row = ponto_candidatos.sort_values("peso_area_setor", ascending=False).iloc[0]
+        result["flag_setor_ponto_encontrado"] = True
+        cod_setor_val = ponto_row.get("cod_setor")
+        result["cod_setor_ponto"] = None if pd.isna(cod_setor_val) else str(cod_setor_val)
+        renda_ponto = pd.to_numeric(
+            ponto_row.get("renda_per_capita_setor_2022_calibrada"), errors="coerce"
+        )
+        if pd.isna(renda_ponto):
+            renda_ponto = pd.to_numeric(ponto_row.get("renda_per_capita_setor_2022"), errors="coerce")
+        result["renda_per_capita_setor_ponto"] = (
+            None if pd.isna(renda_ponto) else round(float(renda_ponto), 2)
+        )
+        densidade_ponto = pd.to_numeric(
+            ponto_row.get("densidade_pop_setor_hab_km2"), errors="coerce"
+        )
+        result["densidade_pop_setor_ponto"] = (
+            None if pd.isna(densidade_ponto) else round(float(densidade_ponto), 2)
+        )
+        score_ponto = pd.to_numeric(ponto_row.get("score_setor_2022_calibrado"), errors="coerce")
+        result["score_setor_2022_calibrado_ponto"] = (
+            None if pd.isna(score_ponto) else round(float(score_ponto), 2)
+        )
 
     if pop_weights.notna().any():
         pop_total = float(pop_weights.fillna(0).sum())

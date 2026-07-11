@@ -271,6 +271,24 @@ def test_pdf_retrocompat_aceita_bytes_unico_legado():
     assert b"/Count 5" in pdf_bytes
 
 
+def test_pdf_estrutura_inalterada_com_faixa_valor_ponto_blk_relpon_05():
+    """BLK-RELPON-05: a faixa "<variavel> no ponto" nos PNGs de mapa e assada no PNG (Pillow),
+    sem tocar o fluxo fpdf2 -- estrutura de paginas/imagens/headers do PDF permanece
+    IDENTICA (regressao leve de estrutura)."""
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, residual=_RESIDUAL_OK, ultra_dir="data/ultra"
+    )
+
+    assert pdf_bytes.startswith(b"%PDF-1.4")
+    assert b"/Count 5" in pdf_bytes
+    assert pdf_bytes.count(b"/Subtype /Image") >= 4
+    for header in PDF_SECTION_HEADERS:
+        assert header.encode("latin-1") in pdf_bytes
+    assert b"setor_censitario_intersecao_area_1p5km" in pdf_bytes
+
+
 def test_pdf_concorrentes_contagem_total_e_mais_n_quando_excede_10():
     """D4=B (BLK-EST-02): >10 redes no raio -> cabecalho com '(N no total)' e '... e mais N'.
 

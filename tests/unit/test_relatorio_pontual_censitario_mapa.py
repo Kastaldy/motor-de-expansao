@@ -333,6 +333,93 @@ def test_atribuicao_tiles_constante_e_legenda_arredondada_disponiveis():
     assert 'titulo="Concorrentes e Ultra"' in combinador_src
 
 
+# ── BLK-RELPON-05: faixa "<variavel> no ponto" por camada ───────────────────────
+
+
+def test_valor_ponto_repassado_aos_3_choropleths_nao_a_concorrentes(monkeypatch):
+    # O ponto (0,0) cai dentro do setor A (renda/score distintos do B) -> os 3
+    # choropleths devem receber `valor_ponto` nao-None com o rotulo correspondente;
+    # a camada Concorrentes deve receber `valor_ponto=None` (byte-a-byte igual).
+    setores = pd.DataFrame(
+        [
+            _sector_record("355030801000001", box(-700, -700, 0, 700), renda=1900, score=55),
+            _sector_record("355030801000002", box(0, -700, 700, 700), renda=4200, score=95),
+        ]
+    )
+
+    capturado: dict[str, dict] = {}
+    original = censo_map._render_camada
+
+    def _spy(*, titulo, **kwargs):
+        capturado[titulo] = kwargs
+        return original(titulo=titulo, **kwargs)
+
+    monkeypatch.setattr(censo_map, "_render_camada", _spy)
+
+    censo_map.render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+    )
+
+    assert capturado["Densidade populacional"]["valor_ponto"] is not None
+    assert "Densidade" in capturado["Densidade populacional"]["valor_ponto"]
+    assert capturado["Renda per capita"]["valor_ponto"] is not None
+    assert "Renda" in capturado["Renda per capita"]["valor_ponto"]
+    assert capturado["Score censitario"]["valor_ponto"] is not None
+    assert "Score" in capturado["Score censitario"]["valor_ponto"]
+    # A camada Concorrentes nunca recebe o kwarg `valor_ponto` (fica no default None de
+    # `_render_camada`, ver assinatura) -- byte-a-byte igual ao render antigo.
+    assert capturado["Concorrentes e Ultra"].get("valor_ponto") is None
+
+
+def test_valor_ponto_nd_quando_ponto_fora_da_malha(monkeypatch):
+    # Unico setor NAO cobre o ponto central (0,0) -- so intersecta parcialmente o raio.
+    setores = pd.DataFrame(
+        [_sector_record("355030801000003", box(1000, -500, 2500, 500), renda=2000, score=60)]
+    )
+
+    capturado: dict[str, dict] = {}
+    original = censo_map._render_camada
+
+    def _spy(*, titulo, **kwargs):
+        capturado[titulo] = kwargs
+        return original(titulo=titulo, **kwargs)
+
+    monkeypatch.setattr(censo_map, "_render_camada", _spy)
+
+    censo_map.render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+    )
+
+    assert "n/d" in capturado["Densidade populacional"]["valor_ponto"]
+    assert "n/d" in capturado["Renda per capita"]["valor_ponto"]
+    assert "n/d" in capturado["Score censitario"]["valor_ponto"]
+    assert capturado["Concorrentes e Ultra"].get("valor_ponto") is None
+
+
+def test_valor_ponto_muda_pixels_do_png():
+    # Mesmo setores_df, exceto a renda do setor que cobre o ponto: os bytes do PNG
+    # "renda" devem diferir (a faixa nova chega a imagem); os bytes do "concorrentes"
+    # devem ser IDENTICOS (essa camada nao e afetada por `valor_ponto`).
+    setor_cobre_ponto = box(-700, -700, 700, 700)
+
+    setores_a = pd.DataFrame(
+        [_sector_record("355030801000004", setor_cobre_ponto, renda=1800.0, score=50)]
+    )
+    setores_b = pd.DataFrame(
+        [_sector_record("355030801000004", setor_cobre_ponto, renda=5200.0, score=50)]
+    )
+
+    mapas_a = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores_a, width=800, height=600, basemap=False
+    )
+    mapas_b = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores_b, width=800, height=600, basemap=False
+    )
+
+    assert mapas_a["renda"] != mapas_b["renda"]
+    assert mapas_a["concorrentes"] == mapas_b["concorrentes"]
+
+
 def test_fallback_offline_canvas_claro(monkeypatch):
     # Sem basemap (tiles indisponivel): canvas deve ser CLARO, nao escuro.
     monkeypatch.setattr(censo_map, "_fetch_basemap", lambda *a, **k: None)

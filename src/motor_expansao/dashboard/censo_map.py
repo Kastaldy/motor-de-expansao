@@ -202,6 +202,38 @@ def _metric_label(metric_column: str) -> str:
     return MAPA_CENSITARIO_METRICAS.get(metric_column, metric_column)
 
 
+# ── Faixa superior "<variavel> no ponto" por camada (BLK-RELPON-05) ──────────────
+# Formata o valor BRUTO do setor que CONTEM o ponto pesquisado (nao o agregado ponderado
+# do raio de 1.5 km). "n/d" para None/NaN (ponto fora da malha) -- sem excecao. Texto so
+# com pontuacao ASCII por consistencia com o restante do relatorio.
+
+
+def _format_valor_ponto_renda(value: float | None) -> str:
+    """Renda per capita do setor do ponto: moeda, separador de milhar '.', sem centavos."""
+    if value is None or pd.isna(value):
+        return "n/d"
+    return f"R$ {float(value):,.0f}".replace(",", ".")
+
+
+def _format_valor_ponto_densidade(value: float | None) -> str:
+    """Densidade populacional do setor do ponto: inteiro, unidade ASCII 'hab/km2'."""
+    if value is None or pd.isna(value):
+        return "n/d"
+    return f"{float(value):,.0f}".replace(",", ".") + " hab/km2"
+
+
+def _format_valor_ponto_score(value: float | None) -> str:
+    """Score censitario do setor do ponto: inteiro 0-100."""
+    if value is None or pd.isna(value):
+        return "n/d"
+    return f"{float(value):.0f}"
+
+
+def _legenda_valor_ponto(rotulo: str, texto: str) -> str:
+    """Monta o texto da faixa superior do mapa: "<Rotulo> no ponto: <texto>" (D2)."""
+    return f"{rotulo} no ponto: {texto}"
+
+
 def _draw_text(
     draw: ImageDraw.ImageDraw,
     xy: tuple[int, int],
@@ -479,12 +511,17 @@ def _render_camada(
     street_ceil: int | None = None,
     street_gain: float | None = None,
     street_cap: int | None = None,
+    valor_ponto: str | None = None,
 ) -> bytes:
     """Desenha UMA camada (mesmos bbox/projecao/basemap/pins; varia fill + legenda).
 
     Quando `pins_only=True` (camada Concorrentes): pula o choropleth de faixas E o overlay
     de ruas de pixel; mantem basemap + circulo + ponto central + pins de concorrentes/Ultra +
     escala + footer + legenda so de pins. BLK-CENSO-03.
+
+    `valor_ponto` (BLK-RELPON-05): texto opcional da faixa superior ("<Variavel> no ponto:
+    <valor>"), desenhado numa 2a linha entre o titulo e o `map_box`. Default `None` preserva
+    o render IDENTICO desta funcao para qualquer chamador que nao passe o parametro.
     """
     image = Image.new("RGB", (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(image, "RGBA")
@@ -493,6 +530,11 @@ def _render_camada(
     small_font = _font(11)
 
     _draw_text(draw, (28, 22), titulo, font=title_font)
+    if valor_ponto is not None:
+        # BLK-RELPON-05: 2a linha entre o titulo (termina ~y=46) e o topo do map_box (y=92).
+        # Fonte 17 (BLK-RELPON-05-FU1, pedido de Vinicius 2026-07-10 para mais visibilidade;
+        # ainda menor que o titulo 20pt e com folga ate o map_box).
+        _draw_text(draw, (28, 51), valor_ponto, font=_font(17), fill=_DARK_MAP_INK)
 
     map_box = _map_box(width, height)
     legend_x = width - 252
@@ -676,6 +718,15 @@ def render_mapas_censitarios_combinados(
     subir o `ceil` recupera as vias residenciais CINZA-CLARAS do Voyager (lum ~200) que com o
     teto baixo (160) sumiam sob a cor. `choropleth_alpha` e a opacidade do preenchimento das
     faixas — menor = ruas aparecem mais. A legenda usa RGB solido, entao nao muda com o alpha.
+
+    BLK-RELPON-05: os 3 choropleths (densidade/renda/score) recebem uma faixa superior com
+    o valor do setor que CONTEM o ponto (nao o agregado ponderado do raio), computada a
+    partir do PROPRIO `result` interno desta funcao (mesma chamada de
+    `analisar_ponto_censitario_setores` que ja existia antes desta mudanca) -- nenhum
+    caller em `pages.py` precisa mudar para o recurso aparecer, tanto no PNG interativo do
+    dashboard quanto no PDF (que embute os mesmos PNGs). A camada `concorrentes` NAO
+    recebe a faixa (fica byte-a-byte igual): e um mapa so-pins, sem variavel continua por
+    setor.
     """
     if logos_dir is not None:
         from motor_expansao.dashboard.competitors import preload_logos
@@ -800,12 +851,26 @@ def render_mapas_censitarios_combinados(
         street_cap=street_cap,
     )
 
+    # BLK-RELPON-05: faixa superior por camada, com o valor BRUTO do setor que CONTEM o
+    # ponto (5 campos novos ja expostos por `result`, computados no proprio `analisar_
+    # ponto_censitario_setores` acima). "n/d" quando o ponto cai fora da malha.
+    valor_ponto_densidade = _legenda_valor_ponto(
+        "Densidade", _format_valor_ponto_densidade(result.get("densidade_pop_setor_ponto"))
+    )
+    valor_ponto_renda = _legenda_valor_ponto(
+        "Renda", _format_valor_ponto_renda(result.get("renda_per_capita_setor_ponto"))
+    )
+    valor_ponto_score = _legenda_valor_ponto(
+        "Score", _format_valor_ponto_score(result.get("score_setor_2022_calibrado_ponto"))
+    )
+
     densidade_png = _render_camada(
         titulo="Densidade populacional",
         legenda_titulo="Densidade (hab/km2)",
         legenda_entries=_bands_legend_entries(DENSIDADE_POP_BANDS),
         color_fn=_dens_fn,
         source_values=densidade_series,
+        valor_ponto=valor_ponto_densidade,
         **common,
     )
     renda_png = _render_camada(
@@ -814,6 +879,7 @@ def render_mapas_censitarios_combinados(
         legenda_entries=_bands_legend_entries(RENDA_PER_CAPITA_BANDS),
         color_fn=_renda_fn,
         source_values=renda_series,
+        valor_ponto=valor_ponto_renda,
         **common,
     )
     # Camada Score censitario: choropleth COM legenda (modo de cor ativo) — restaurada no
@@ -824,6 +890,7 @@ def render_mapas_censitarios_combinados(
         legenda_entries=_score_legend_entries(),
         color_fn=_score_fn,
         source_values=score_series,
+        valor_ponto=valor_ponto_score,
         **common,
     )
     concorrentes_png = _render_camada(
