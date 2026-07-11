@@ -2538,10 +2538,11 @@ def test_render_mapa_territorial_e_exportado():
 
 
 def _call_mapa_fragment(df, **over):
-    """Chama o corpo (sem wrapper @st.fragment) de _render_mapa_fragment.
+    """Chama o bloco do mapa (_render_mapa_fragment).
 
-    BLK-PERF-01b: o build/render do mapa migrou para _render_mapa_fragment (um @st.fragment,
-    cujo corpo NAO roda em bare mode). Testa-se o corpo via __wrapped__, como test_mapa_fragment.
+    BLK-PERF-01b-FU1: a funcao NAO e mais @st.fragment (pydeck on_select dentro de
+    fragment nao entrega o clique — bug do Streamlit; repro minima 2026-07-10), entao
+    chama-se direto. getattr(__wrapped__) mantem compat se o decorator voltar um dia.
     """
     from motor_expansao.dashboard import pages
     kwargs = dict(
@@ -2555,7 +2556,8 @@ def _call_mapa_fragment(df, **over):
         search_hex_id=None,
     )
     kwargs.update(over)
-    return pages._render_mapa_fragment.__wrapped__(df, **kwargs)
+    fn = getattr(pages._render_mapa_fragment, "__wrapped__", pages._render_mapa_fragment)
+    return fn(df, **kwargs)
 
 
 def test_render_mapa_territorial_modo_m1_renderiza_mapa():
@@ -6808,11 +6810,17 @@ def test_render_multihex_panel_sem_clique_nao_chama_rerun_renderiza_kpis():
     assert metric_mock.called
 
 
-def test_map_fragment_e_painel_multihex_sao_fragments():
-    """_render_mapa_fragment e _render_multihex_panel devem existir e ser @st.fragment."""
+def test_map_inline_e_painel_multihex_fragment():
+    """Caminho do chart pydeck INLINE (sem fragment); painel multi-hex segue fragment.
+
+    BLK-PERF-01b-FU1: st.pydeck_chart(on_select) dentro de @st.fragment NAO entrega o
+    evento de selecao (bug Streamlit 1.56/1.59; repro minima 2026-07-10). Se
+    _render_mapa_fragment voltar a ser fragment, o CLIQUE DO MAPA MORRE.
+    """
     from motor_expansao.dashboard import pages
     assert hasattr(pages, "_render_mapa_fragment")
     assert hasattr(pages, "_render_multihex_panel")
-    # @st.fragment preserva __wrapped__ (corpo original acessivel para teste)
-    assert hasattr(pages._render_mapa_fragment, "__wrapped__")
+    assert not hasattr(pages._render_mapa_fragment, "__wrapped__"), (
+        "_render_mapa_fragment NAO pode ser @st.fragment (mata o clique do pydeck)"
+    )
     assert hasattr(pages._render_multihex_panel, "__wrapped__")

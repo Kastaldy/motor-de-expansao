@@ -2607,6 +2607,9 @@ def _render_multihex_controls(
     multihex_ids: list[str],
 ) -> None:
     """Renderiza controles do cenario multi-hex: incluir, remover, limpar e colar lista."""
+    # BLK-PERF-01b-FU1: sob rerun de fragment, o arg multihex_ids pode estar stale
+    # (capturado no último run completo); a fonte de verdade é o session_state.
+    multihex_ids = list(st.session_state.get("multihex_cenario", multihex_ids))
     st.markdown("##### Cenário Multi-Hex")
 
     if active_hex_id is not None:
@@ -4085,19 +4088,22 @@ def render_viabilidade_ponto(
     )
 
 
-@st.fragment
 def render_mapa_pydeck_fragment(
     deck: pdk.Deck,
     n_points: int,
     selected_ufs: list[str],
     multihex_ids: list[str],
 ) -> None:
-    """Fragmento isolado para renderizacao do pydeck_chart e captura de clique.
+    """Renderiza o pydeck_chart e captura o clique — corpo PURO, sem @st.fragment.
 
-    - on_select="rerun" dentro do fragmento dispara rerun so do fragmento (comportamento esperado).
-    - Ao detectar clique novo: escreve em session_state["click_coord"] e chama st.rerun()
-      (rerun completo da aba) para propagar o novo ponto para os expanders dependentes.
-    - Sem clique novo: fragmento reroda a si mesmo sem propagar rerun da aba.
+    BLK-PERF-01b-FU1 (2026-07-10, root cause por repro mínima): `st.pydeck_chart` com
+    `on_select="rerun"` DENTRO de qualquer `@st.fragment` NÃO entrega o evento de seleção
+    (bug do Streamlit 1.56/1.59). Este corpo e o bloco que o chama (`_render_mapa_fragment`)
+    rodam ambos INLINE na aba — o widget pydeck NÃO pode ficar dentro de fragment enquanto
+    o bug upstream existir; NÃO re-decorar nenhum dos dois.
+
+    - Ao detectar clique novo: escreve session_state["click_coord"] e chama
+      st.rerun(scope="app") para propagar o ponto aos expanders.
     - Nao contem chamadas a st.sidebar (restricao do Streamlit).
     - Nao recalcula score, carteira, plano nem artefatos oficiais do M1.
     """
@@ -4129,14 +4135,14 @@ def render_mapa_pydeck_fragment(
     _prev_click: tuple[float, float] | None = st.session_state.get("click_coord")
     if _new_click is not None and _new_click != _prev_click:
         st.session_state["click_coord"] = _new_click
-        st.rerun()  # rerun completo da aba para propagar click_coord aos expanders
+        st.rerun(scope="app")  # rerun completo da aba para propagar click_coord aos expanders
     click_coord: tuple[float, float] | None = st.session_state.get("click_coord")
     if click_coord is not None:
         _col_btn, _cap_col = st.columns([1, 4])
         with _col_btn:
             if st.button("Limpar seleção do mapa", key="clear_click_coord"):
                 st.session_state.pop("click_coord", None)
-                st.rerun()  # rerun completo para limpar estado dos expanders
+                st.rerun(scope="app")  # rerun completo para limpar estado dos expanders
         if st.session_state.get("click_coord") is not None:
             with _cap_col:
                 st.caption(
@@ -4262,7 +4268,6 @@ def render_relatorio_municipal_expander(
         )
 
 
-@st.fragment
 def _render_mapa_fragment(
     df: pd.DataFrame,
     *,
@@ -4275,12 +4280,20 @@ def _render_mapa_fragment(
     search_pin: tuple[float, float] | None,
     search_hex_id: str | None,
 ) -> None:
-    """Fragmento do mapa: seletor de modo de cor + overlays + deck cacheado + render.
+    """Bloco do mapa: seletor de modo de cor + overlays + deck cacheado + render (INLINE).
 
-    BLK-PERF-01b: trocar de modo de cor / overlay reroda SÓ este fragmento; o deck é
-    memoizado por build_unified_map_figure_cached (chave por tokens), então revisitar um
-    modo já visto no recorte é HIT (≈0). O destaque multi-hex é anexado pós-cache (cópia por
-    chamada do cache_data). READ-ONLY M1: não altera score, carteira, plano nem artefatos.
+    BLK-PERF-01b-FU1 (2026-07-10, root cause CONFIRMADO por repro mínima):
+    `st.pydeck_chart(on_select="rerun")` DENTRO de `@st.fragment` NÃO entrega o evento
+    de seleção — bug do Streamlit (reproduzido nos 1.56.0 e 1.59.1 com app de 25 linhas:
+    o MESMO chart fora do fragment seleciona; dentro, o clique morre em silêncio).
+    Por isso este bloco NÃO é mais um fragment: roda inline na aba. NÃO re-decorar com
+    @st.fragment enquanto o bug upstream existir — isso mata o clique do mapa (a captura
+    do ponto para Análise Pontual/Relatório Pontual e o hex ativo do cenário multi-hex).
+
+    O ganho de performance do BLK-PERF-01b NÃO depende do fragment: o deck vem de
+    build_unified_map_figure_cached (cache HIT ~0,14 s vs ~2 s de rebuild) em qualquer
+    rerun. O painel multi-hex (sem pydeck) continua fragment (D1 preservado).
+    READ-ONLY M1: não altera score, carteira, plano nem artefatos.
     """
     multihex_ids: list[str] = list(st.session_state.get("multihex_cenario", []))
 
@@ -4404,6 +4417,8 @@ def _render_mapa_fragment(
     if multihex_ids:
         deck.layers.append(_build_multihex_selection_layer(multihex_ids))
 
+    # FU1: chamada INLINE (corpo puro) — o widget pydeck pertence a ESTE fragment;
+    # fragment aninhado quebrava a propagação do clique (validação visual 2026-07-10).
     render_mapa_pydeck_fragment(deck, n_points, selected_ufs, multihex_ids)
 
     # Caption "amostrado" das camadas de pins: aparece SO quando o recorte excede o
@@ -4507,9 +4522,9 @@ def render_mapa_territorial(
         "As camadas visuais não alteram score, ranking, carteira nem artefatos do M1."
     )
 
-    # BLK-PERF-01b: o seletor de modo de cor + overlays + build do deck + render vivem num
-    # fragmento próprio. Trocar de modo/overlay reroda só o fragmento (deck memoizado por
-    # build_unified_map_figure_cached). READ-ONLY M1 preservado.
+    # BLK-PERF-01b-FU1: o bloco do mapa roda INLINE (SEM @st.fragment) — pydeck on_select
+    # dentro de fragment não entrega o clique (bug do Streamlit, repro mínima 2026-07-10).
+    # O ganho de perf vem do CACHE do deck (build_unified_map_figure_cached), não do fragment.
     _render_mapa_fragment(
         df,
         competitors_df=competitors_df,

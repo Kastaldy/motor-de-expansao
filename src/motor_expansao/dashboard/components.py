@@ -3044,7 +3044,7 @@ def build_unified_map_figure(
         # Modo dominio tem layout proprio; ancoras_dominio NAO sao injetadas aqui
         # (fora do escopo do BLK-FIX-11; follow-up). Retorna direto.
         plano = dominio_df if dominio_df is not None else pd.DataFrame()
-        return build_dominio_map_figure(
+        deck_dom, n_dom = build_dominio_map_figure(
             plano,
             selected_ufs=selected_ufs or None,
             selected_cities=selected_cities or None,
@@ -3052,6 +3052,8 @@ def build_unified_map_figure(
             ultra_df=_ultra,
             cluster_competitors=cluster,
         )
+        _stabilize_layer_ids(deck_dom, prefix=f"{color_mode}")
+        return deck_dom, n_dom
 
     if color_mode == "residual":
         deck, n_pontos = build_residual_heatmap_figure(
@@ -3098,7 +3100,26 @@ def build_unified_map_figure(
         if ancora_layer is not None:
             deck.layers = [*deck.layers, ancora_layer]
 
+    _stabilize_layer_ids(deck, prefix=f"{color_mode}")
     return deck, n_pontos
+
+
+def _stabilize_layer_ids(deck: pdk.Deck | None, *, prefix: str) -> None:
+    """Atribui ids ESTÁVEIS e determinísticos às layers do deck (in-place).
+
+    O pydeck gera `Layer.id` como uuid4 NOVO a cada construção; a doc do
+    `st.pydeck_chart` exige que, com `on_select` ativo, "all layers must have a
+    declared id to keep the chart stateful across reruns". Com ids mudando a cada
+    rerun, o Streamlit >= 1.56 perde o vínculo de seleção e o CLIQUE no mapa morre
+    silenciosamente (regressão observada em 2026-07-10; independe do cache do
+    BLK-PERF-01b — reproduzida também no código pré-01b). Ordem das layers é
+    determinística nos builders -> `{prefix}_layer_{i}` é estável entre reruns.
+    Display-only; READ-ONLY M1.
+    """
+    if deck is None:
+        return
+    for i, layer in enumerate(getattr(deck, "layers", []) or []):
+        layer.id = f"{prefix}_layer_{i}"
 
 
 def build_analise_pontual_map(
@@ -3208,6 +3229,7 @@ def _build_multihex_selection_layer(hex_ids: list[str]) -> pdk.Layer:
     return pdk.Layer(
         "H3HexagonLayer",
         data=pd.DataFrame({"hex_id": hex_ids}),
+        id="multihex_destaque",  # id ESTÁVEL (ver _stabilize_layer_ids)
         get_hexagon="hex_id",
         get_fill_color=[255, 165, 0, 50],
         get_line_color=[255, 165, 0, 255],
