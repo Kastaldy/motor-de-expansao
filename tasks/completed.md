@@ -8402,3 +8402,86 @@ como pendência do BLK-OPS-01.
 ---
 
 - BLK-SEC-05 (concluído 2026-07-13) — ver tasks/completed.md
+
+---
+
+### BLK-OPS-12 — Pinar dependências (lockfile) e restaurar paridade CI/local
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (reprodutibilidade de build; não toca M1/score) |
+| **Prioridade** | **Alta** (tarefa ClickUp "Pinar dependências e restaurar paridade CI/local") |
+| **Esteira** | interativa (Felipe presente) — toca Dockerfiles/CI, **NÃO loop-safe** (loop_guard bloqueia) |
+| **Status** | Concluído 2026-07-13 (PR #95) |
+| **Origem** | ClickUp (FC, prioridade Alta); auditoria 2026-07-13: NENHUM pin existia (só faixas no `pyproject.toml`, zero lockfile) e local=3.14 vs CI/prod=3.11 |
+
+**Problema:** sem lockfile, cada rebuild de imagem/CI re-resolve as versões — dois builds do mesmo
+commit podem divergir; o pin por digest protege a produção RODANDO, não a reprodutibilidade do BUILD.
+E a suíte local (Python 3.14) diverge da CI/prod (3.11) — contagens de teste diferentes já observadas
+(BLK-ORQ-01).
+
+**Solução:** `constraints.txt` na raiz — lockfile UNIVERSAL (markers por versão de Python, válido
+p/ >=3.11) gerado por `uv pip compile pyproject.toml --all-extras --universal --python-version 3.11`,
+consumido via `-c constraints.txt` nos 3 pontos de instalação: CI (`.github/workflows/ci.yml`, também
+no cache key), `Dockerfile.streamlit` e `Dockerfile.api`. `pyproject.toml` INALTERADO (faixas seguem
+como intenção; o lock é a resolução exata). Refresh do lock = re-rodar o comando acima (documentado
+no header do arquivo e no ci.yml). Paridade de interpretador (local 3.11) fica como recomendação
+documentada — o lock universal já garante as MESMAS VERSÕES de libs em qualquer >=3.11.
+
+**Aceite:** CI verde com constraints; dry-run local `pip install --dry-run -e ".[dev,api_mvp]" -c
+constraints.txt` resolve limpo (validado, exit 0 inclusive sob 3.14); pins dentro das faixas do
+pyproject (streamlit 1.59.2, pandas 2.3.3, numpy 2.3.5, h3 4.5.0); zero mudança em M1/score.
+
+**Nota:** o rebuild seguinte das imagens usará os pins (ex.: streamlit 1.59.1→1.59.2 no container);
+os guards de regressão do bug pydeck/fragment (PR #91) estão na suíte e validam no CI.
+
+**CONCLUSÃO (2026-07-13, PR #95):** entregue e validado em 3 camadas — (1) CI verde instalando com
+`-c constraints.txt` (ubuntu/3.11, suíte completa); (2) dry-run local resolve limpo sob 3.14 (markers
+universais funcionando); (3) **build REAL da imagem `Dockerfile.streamlit` com o lock (docker exit 0)
+e versões conferidas DENTRO da imagem** = exatamente as do lockfile (streamlit 1.59.2, pandas 2.3.3,
+numpy 2.3.5, h3 4.5.0, pydeck 0.9.3, fpdf2 2.8.7). Nota de processo: a 1ª tentativa de build falhou
+SILENCIOSAMENTE (daemon parado; exit 0 era do `tail` no pipe) — refeita com exit code real do docker.
+Pendência aceita: paridade de INTERPRETADOR local (instalar Python 3.11 na máquina de dev) fica como
+recomendação; o lock universal já garante as mesmas versões de libs em qualquer >=3.11. READ-ONLY M1.
+
+---
+
+- BLK-OPS-03 (concluído 2026-05-30) — ver tasks/completed.md
+
+
+---
+
+- BLK-OPS-04 (concluído 2026-05-30) — ver tasks/completed.md
+
+
+
+- BLK-FIX-01 (concluído 2026-05-30) — ver tasks/completed.md
+
+
+
+- BLK-FIX-02 (concluído 2026-05-30) — ver tasks/completed.md
+
+
+---
+
+- BLK-SCORE-01 (concluído 2026-05-31) — ver tasks/completed.md
+
+
+---
+
+- BLK-SCORE-01a (concluído 2026-05-31) — ver tasks/completed.md
+
+
+---
+
+- BLK-SCORE-02 (concluído 2026-05-31) — ver tasks/completed.md
+
+
+---
+
+- BLK-SCORE-03 (concluído 2026-05-31) — ver tasks/completed.md
+
+
+---
+
+- BLK-SCORE-04 (concluído 2026-05-31) — ver tasks/completed.md
