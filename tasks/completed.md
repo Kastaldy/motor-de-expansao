@@ -8280,3 +8280,62 @@ domingo). READ-ONLY M1; zero segredo em log/git.
 ---
 
 - BLK-ORQ-01 (concluído 2026-06-02) — ver tasks/completed.md
+
+---
+
+### BLK-SEC-03 — Hardening do VPS: fechar SSH por senha, fail2ban e 2FA (re-escopado 2026-07-13)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (exposição do servidor de produção) |
+| **Prioridade** | **Alta** (subiu 2026-07-13: SSH root+senha aberto à internet é o maior risco atual) |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Origem** | revisão de robustez 2026-05-31; **re-escopado por inventário read-only da VPS em 2026-07-13** |
+| **Autonomia** | **manual (NÃO loop-safe)** — cada comando na VPS exige confirmação individual (§6) |
+
+**Inventário real (2026-07-13, read-only na VPS):** parte do bloco original JÁ ESTÁ FEITA —
+`ufw` **ATIVO** liberando só 22/80/443 (v4+v6); `unattended-upgrades` **INSTALADO** (falta confirmar a
+config periódica ativa); rotação de log do Docker já configurada (`daemon.json`, 10m×3 — era escopo do
+SEC-05). **Gaps reais que restam:** `sshd` com `passwordauthentication yes` + `permitrootlogin yes`
+(**root por SENHA aberto à internet — o maior risco do servidor hoje**); `fail2ban` **INATIVO**
+(brute-force de senha nem é banido); 2FA do Authelia opcional; revisão de acesso do `ultra_team` nunca
+feita; deploy key `gymscraping_deploy` em `/root/.ssh/` (auditar que segue read-only no repo do scraper).
+
+**Objetivo:** fechar os gaps restantes sem quebrar deploy, coleta semanal nem o acesso do time.
+
+**Escopo re-priorizado (cada passo via MCP com confirmação individual — §6):**
+1. **P1 — SSH sem senha:** `PasswordAuthentication no` + `PermitRootLogin prohibit-password` (o acesso
+   real já é por chave). ANTES de aplicar: validar console web da Hostinger como porta dos fundos e
+   manter uma 2ª sessão SSH aberta durante a mudança.
+2. **P2 — `fail2ban` ativo** no sshd (jail default; banir brute-force).
+3. **P3 — confirmar `unattended-upgrades`** aplicando patches de segurança (APT::Periodic + dry-run).
+4. **P4 — Authelia:** avaliar forçar 2FA no grupo `ultra_team` + revisão de acesso em
+   `authelia/users_database.yml` (remover obsoletos; definir offboarding e periodicidade da revisão).
+5. Documentar em `docs/infra_producao.md` (seção hardening) com rollback de cada item.
+
+**Fora de escopo:** trocar provedor/arquitetura; mudar M1/dashboard; superfície de rede dos containers
+(API/bot não publicam porta no host — já correto); ufw (já feito).
+
+**Critérios de aceite:**
+- Login por senha REJEITADO (teste real de fora) e login por chave OK; fail2ban banindo (teste).
+- unattended-upgrades comprovadamente aplicando security patches.
+- Dashboard, deploy, API/bot e coleta semanal seguem funcionando após cada mudança.
+- Cada alteração com confirmação individual; documentada com rollback.
+
+**Risco:** médio-alto (lockout de SSH). Mitigação: um item por vez, 2ª sessão aberta, console web da
+Hostinger validado ANTES do P1, rollback documentado antes de cada passo.
+
+**CONCLUSÃO (2026-07-13, executado interativamente com Felipe — §6 comando a comando):** P1-P3
+entregues no mesmo dia do re-escopo; P4 (2FA Authelia + revisão de acesso) desmembrado no follow-up
+**BLK-SEC-03-FU1** (exige time presente). **P1:** console web da Hostinger validado por Felipe ANTES
+(login root funcionando); `/etc/ssh/sshd_config.d/00-hardening.conf` (prefixo 00- vence o
+`PasswordAuthentication yes` do 50-cloud-init.conf — sshd usa o PRIMEIRO valor); testes reais: chave
+entra ✅ / `Permission denied (publickey)` sem chave ✅ (senha nem é oferecida). **P2:** fail2ban
+instalado + jail sshd (30min/5 tent./systemd) ativa. **P3:** unattended-upgrades confirmado aplicando
+security patches (log diário); achado: 3 kernels pendentes de reboot → **reboot executado** (kernel
+5.15.0-177→185, ~2 min), TODA a stack voltou sozinha (5 containers, fail2ban, ufw, crons, monitor) —
+resiliência a desligamento comprovada pela 1ª vez. Bateria de aceite 10/10: containers healthy, API
+ok, edge 302, monitor 8/8, scan externo só 22/80/443 (8501/8077 fechadas), dashboard+bot validados
+por Felipe no navegador/Telegram. Docs: seção "Hardening do servidor" em `docs/infra_producao.md`
+(estado + rollback por item + política de reboot + acesso de emergência). READ-ONLY M1.
