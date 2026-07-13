@@ -277,6 +277,59 @@ df -h /
 du -sh /opt/motor-expansao/data/outputs/
 ```
 
+### Alertas automáticos (BLK-SEC-05)
+
+Monitoramento leve por cron + bot Telegram (reusa o bot de produção; alertas vão para o
+grupo de ops — `MONITOR_TELEGRAM_CHAT_ID` no `.env`). Script versionado no repo em
+`scripts/healthcheck_vps.sh`, instalado em `/opt/motor-monitoring/healthcheck_vps.sh`.
+
+O que é vigiado e a cadência (crontab do root):
+
+```cron
+*/5 * * * * /opt/motor-monitoring/healthcheck_vps.sh containers  # 5 containers + edge HTTPS
+0 * * * *   /opt/motor-monitoring/healthcheck_vps.sh host        # disco >80% / memória <10%
+0 11 * * *  /opt/motor-monitoring/healthcheck_vps.sh authelia    # resumo diário de falhas de login (08h BRT)
+0 18 * * 0  /opt/motor-monitoring/healthcheck_vps.sh coleta      # domingo 15h BRT: resumo/falha da coleta semanal
+```
+
+Comportamento anti-spam: alerta na transição OK→FAIL, lembrete a cada 1h enquanto durar,
+e aviso de recuperação no FAIL→OK (estado em `/var/lib/motor-monitoring/`). Logs em
+`/var/log/motor-monitoring/healthcheck.log`. Teste manual: `healthcheck_vps.sh test`.
+
+Segredos: o script lê `API_TELEGRAM_TOKEN` e `MONITOR_TELEGRAM_CHAT_ID` do `.env` em
+runtime; token nunca aparece em log/alerta. A rotação de logs do Docker já é feita pelo
+daemon (`/etc/docker/daemon.json`, json-file 10m×3) — não é papel deste script.
+
+---
+
+## Runbook de incidente
+
+Proporcional a um dashboard interno — 3 cenários. Em todos: **quem aciona é quem viu o
+alerta primeiro** (grupo de ops); Felipe é o dono da decisão de contenção.
+
+**1. Indisponibilidade (dashboard/API/bot fora do ar).**
+Diagnóstico: `docker compose -f docker-compose.prod.yml ps` + logs do serviço caído.
+Ação: restart do serviço (seção acima). Se o restart não segurar (crash-loop), rollback
+de imagem por digest (seção "Rollback"). Se o host estiver sem recurso (disco/memória do
+alerta de host): liberar espaço (`docker system prune`, logs antigos) antes de reiniciar.
+
+**2. Suspeita de comprometimento (login anômalo no Authelia, processo estranho, tráfego
+inesperado).**
+Contenção imediata: `ufw deny 80 && ufw deny 443` (derruba o edge, preserva SSH para
+forense) — decisão de Felipe. Coletar evidência ANTES de reiniciar qualquer coisa:
+`docker logs` dos containers, `last`, `journalctl -u ssh --since "-48h"`.
+Se houver risco de credencial vazada: rotacionar segredos pelo runbook de DR do
+BLK-OPS-01 (`docs/backup_restore.md`) — todos os segredos têm regeneração documentada.
+Reinstalar/recriar containers só a partir de imagens do GHCR (pinadas por digest).
+
+**3. Perda/corrupção de dados (parquets).**
+Enquanto o BLK-SEC-04 não entrega o backup automatizado: restaurar por `scp` da cópia
+local da máquina de dev (seção "Atualizar parquets de dados") ou regenerar pelos
+pipelines. Sessões do bot (`bot_data`) são descartáveis (usuários apenas deslogam).
+
+Ligações: DR de segredos = `docs/backup_restore.md` (BLK-OPS-01); backup de dados =
+BLK-SEC-04 (pendente); hardening preventivo = BLK-SEC-03.
+
 ---
 
 ## Renovação de certificados TLS

@@ -604,159 +604,98 @@ exige decisão humana sobre quais fontes baixar e validação de licença/LGPD.*
 
 ---
 
-### BLK-SEC-03 — Hardening do VPS (firewall, fail2ban, updates, SSH, 2FA)
+### BLK-SEC-03 — Hardening do VPS: fechar SSH por senha, fail2ban e 2FA (re-escopado 2026-07-13)
 
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Alta** (exposição do servidor de produção) |
-| **Prioridade** | **Média** |
+| **Prioridade** | **Alta** (subiu 2026-07-13: SSH root+senha aberto à internet é o maior risco atual) |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
 | **Status** | Pendente |
-| **Origem** | revisão de robustez 2026-05-31 (acesso root SSH; sem hardening documentado) |
+| **Origem** | revisão de robustez 2026-05-31; **re-escopado por inventário read-only da VPS em 2026-07-13** |
+| **Autonomia** | **manual (NÃO loop-safe)** — cada comando na VPS exige confirmação individual (§6) |
 
-**Contexto / gap:** o `docs/infra_producao.md` mostra acesso como `root` via SSH e atualização de
-sistema **manual mensal**; não há menção a firewall (ufw), fail2ban, `unattended-upgrades`, política de
-SSH (desabilitar login por senha / limitar root) nem 2FA obrigatório no Authelia (hoje "opcional").
+**Inventário real (2026-07-13, read-only na VPS):** parte do bloco original JÁ ESTÁ FEITA —
+`ufw` **ATIVO** liberando só 22/80/443 (v4+v6); `unattended-upgrades` **INSTALADO** (falta confirmar a
+config periódica ativa); rotação de log do Docker já configurada (`daemon.json`, 10m×3 — era escopo do
+SEC-05). **Gaps reais que restam:** `sshd` com `passwordauthentication yes` + `permitrootlogin yes`
+(**root por SENHA aberto à internet — o maior risco do servidor hoje**); `fail2ban` **INATIVO**
+(brute-force de senha nem é banido); 2FA do Authelia opcional; revisão de acesso do `ultra_team` nunca
+feita; deploy key `gymscraping_deploy` em `/root/.ssh/` (auditar que segue read-only no repo do scraper).
 
-**Objetivo:** reduzir a superfície de ataque do VPS de produção sem quebrar o deploy atual.
+**Objetivo:** fechar os gaps restantes sem quebrar deploy, coleta semanal nem o acesso do time.
 
-**Escopo permitido (cada passo via MCP com confirmação individual — guardrail do projeto):**
-- `ufw` liberando só 22/80/443; `fail2ban` no SSH; `unattended-upgrades` para patches de segurança.
-- SSH: desabilitar autenticação por senha (manter chave), avaliar usuário não-root para operação.
-- Authelia: avaliar **forçar 2FA** para o grupo `ultra_team`.
-- **Revisão de acesso (least-privilege):** auditar quem está no `ultra_team` em
-  `authelia/users_database.yml`, remover acessos obsoletos e definir processo de offboarding
-  (revogar usuário ao sair). Documentar a periodicidade da revisão.
-- Documentar tudo em `docs/infra_producao.md` (seção de hardening) com rollback de cada item.
+**Escopo re-priorizado (cada passo via MCP com confirmação individual — §6):**
+1. **P1 — SSH sem senha:** `PasswordAuthentication no` + `PermitRootLogin prohibit-password` (o acesso
+   real já é por chave). ANTES de aplicar: validar console web da Hostinger como porta dos fundos e
+   manter uma 2ª sessão SSH aberta durante a mudança.
+2. **P2 — `fail2ban` ativo** no sshd (jail default; banir brute-force).
+3. **P3 — confirmar `unattended-upgrades`** aplicando patches de segurança (APT::Periodic + dry-run).
+4. **P4 — Authelia:** avaliar forçar 2FA no grupo `ultra_team` + revisão de acesso em
+   `authelia/users_database.yml` (remover obsoletos; definir offboarding e periodicidade da revisão).
+5. Documentar em `docs/infra_producao.md` (seção hardening) com rollback de cada item.
 
-**Fora de escopo:** trocar provedor/arquitetura; mudar M1/dashboard.
+**Fora de escopo:** trocar provedor/arquitetura; mudar M1/dashboard; superfície de rede dos containers
+(API/bot não publicam porta no host — já correto); ufw (já feito).
 
 **Critérios de aceite:**
-- Firewall ativo (regras mínimas), fail2ban e unattended-upgrades rodando; SSH sem senha.
-- Dashboard e deploy continuam funcionando (smoke + login OK após cada mudança).
-- Cada alteração no VPS feita com confirmação individual; documentada com rollback.
+- Login por senha REJEITADO (teste real de fora) e login por chave OK; fail2ban banindo (teste).
+- unattended-upgrades comprovadamente aplicando security patches.
+- Dashboard, deploy, API/bot e coleta semanal seguem funcionando após cada mudança.
+- Cada alteração com confirmação individual; documentada com rollback.
 
-**Risco:** médio-alto (mexer em SSH/firewall pode trancar o acesso). Mitigação: alterar um item por vez,
-manter sessão aberta de teste, ter rollback pronto ANTES de aplicar regras de SSH/ufw.
-
-**Atualização (2026-06-12, pós-deploy API/bot):** subiram 2 containers novos (`motor_expansao_api`,
-`motor_expansao_telegram_bot`). **NÃO mudam a superfície de firewall:** a API não publica porta no host
-(só rede interna `app_net`); o bot é long-polling (conexão de SAÍDA ao Telegram). A regra `ufw` "só
-22/80/443" segue correta. Considerar no escopo: (i) a imagem da API embute **Google Chrome** (superfície
-maior, porém interna) — manter `unattended-upgrades`/rebuild via CI em dia; (ii) `unattended-upgrades`
-e o alerta de "container reiniciando" (cruza com BLK-SEC-05) agora abrangem também api/bot.
+**Risco:** médio-alto (lockout de SSH). Mitigação: um item por vez, 2ª sessão aberta, console web da
+Hostinger validado ANTES do P1, rollback documentado antes de cada passo.
 
 ---
 
-### BLK-SEC-04 — Backup automatizado dos dados de produção (parquets) + restore testado
+### BLK-SEC-04 — Backup automatizado dos dados de produção + restore testado (re-escopado 2026-07-13)
 
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Média** (continuidade de dados; não toca M1/score) |
 | **Prioridade** | **Média** |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Status** | Pendente |
+| **Esteira** | Block Orchestrator → Planner → `[DECISÃO HUMANA: destino/custo]` → Builder → QA |
+| **Status** | Pendente — **bloqueado por 1 decisão de Felipe: o DESTINO do backup** |
 | **Origem** | revisão de robustez 2026-05-31 (BLK-OPS-01 cobre segredos, não dados) |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS + decisão de custo |
 
-**Contexto / gap:** o BLK-OPS-01 entregou backup/DR dos **segredos**, mas os **dados** de produção
-(`/opt/motor-expansao/data/outputs/`, ~1.6 GB de parquets do M1) hoje só têm "manter cópia local na
-máquina de dev" como backup — manual e frágil. Não há snapshot periódico nem restore testado.
+**Gap (confirmado no inventário 2026-07-13):** continua NÃO existindo backup dos dados de produção —
+só a cópia manual na máquina de dev. Disco da VPS folgado (34G/194G usados), mas backup no MESMO disco
+não é DR (perde-se junto).
 
-**Objetivo:** garantir recuperação dos parquets de produção após perda/corrupção, com restore provado.
+**Decisão que trava o bloco (Felipe):** o destino — (a) **snapshot/backup nativo da Hostinger** (mais
+simples, custo do plano, restore do disco inteiro), (b) **bucket S3-compatível** via rclone/restic
+(custo baixo/mês, restore granular por arquivo), ou (c) **cópia agendada off-box** para máquina do time
+(custo zero, depende da máquina estar ligada). Definido o destino, o resto é execução de 1 sessão.
 
-**Escopo permitido:**
-- Definir destino de backup (snapshot do provedor, bucket S3-compatível, ou cópia versionada off-box).
-- Job agendado (cron na janela 2h–5h BRT, fora do pico) que faz snapshot dos `data/outputs/`.
-- Política de retenção (ex.: diários 7d / semanais 4w) e verificação de integridade (checksum).
-- **Restore testado** em pasta limpa (igual ao rigor do BLK-OPS-01) + runbook em `docs/`.
+**Escopo (ordem de prioridade do que copiar):**
+1. `/opt/motor-expansao/data/outputs/` (~1,6 GB, parquets servidos ao dashboard) — crítico.
+2. `data/ibge/` (~49 MB) + `data/staging/` (~213 MB) — obrigatórios para a API (sem `data/ibge` a API
+   dá 500); regeneráveis, mas o re-scp é lento.
+3. Volume `bot_data` (sessões do bot Telegram) — trivial; perder = usuários deslogados.
+4. `/opt/gymscraping-infra/` (runner + **relatórios de crescimento históricos** — pequenos e NÃO
+   regeneráveis: são a série temporal da concorrência; DEC-013). Os dados coletados em si são
+   regeneráveis pela coleta semanal (baixa prioridade).
+5. NÃO versionar parquet no git; NÃO copiar `NAO_ABRA/`/PII para o destino.
 
-**Fora de escopo:** versionar parquets no git (são grandes/gerados); recalcular M1.
+**Mecânica:** job cron na janela 2h–5h BRT (não colidir com a coleta de domingo 06:00 UTC); retenção
+diários 7d / semanais 4w; checksum; **restore testado em pasta limpa** (rigor do BLK-OPS-01) + runbook
+em `docs/`.
 
-**Critérios de aceite:**
-- Backup automatizado rodando com retenção definida; checksums conferem.
-- Restore validado end-to-end (arquivos íntegros) e documentado.
-- Sem PII em logs; sem dependência de API ao vivo no dashboard.
+**Cruzamento com BLK-OPS-01 (segredos):** o `.env` ganhou segredos novos desde o backup original
+(`API_TOKENS`/`API_API_CALL_TOKEN`/`API_TELEGRAM_TOKEN`/`API_BOT_SENHA`/`API_IMAGE`) → **re-encriptar o
+`.env` no SOPS+age como passo deste ciclo** (atualização do OPS-01, não processo novo).
 
-**Risco:** baixo. Atenção a custo/espaço do destino e a não competir com usuários (janela noturna).
+**Critérios de aceite:** backup automático com retenção; checksums conferem; restore validado
+end-to-end e documentado; `.env` re-encriptado; zero PII no destino.
 
-**Atualização (2026-06-12, pós-deploy API/bot):** o conjunto de dados de produção cresceu além de
-`data/outputs/`. Estender o escopo de backup para:
-- **`data/ibge/`** (~49 MB, malha municipal) e **`data/staging/`** (~213 MB: `concorrentes_mapeados`,
-  `unidades_ultra_mapeadas`, `hexagonos_mercado_mapeado`) — **obrigatórios para a API** (`data/ibge` é
-  o que resolve lat,lng→município; sem ele a API dá 500). São regeneráveis, mas hoje só existem como
-  cópia manual; incluir no snapshot evita re-scp lento.
-- **Volume `bot_data`** (sessões do bot Telegram) — pequeno; perdê-lo só desloga os usuários (baixa
-  prioridade, mas trivial de incluir).
-- **Secrets do `.env`**: o `.env` ganhou `API_TOKENS`/`API_API_CALL_TOKEN`/`API_TELEGRAM_TOKEN`/
-  `API_BOT_SENHA`/`API_IMAGE`. O backup de segredos é do **BLK-OPS-01** (SOPS+age) — sinalizar lá que o
-  `.env` deve ser **re-encriptado** para capturar os novos segredos (cruza com BLK-OPS-01, não com este).
-
----
-
-### BLK-SEC-05 — Observabilidade: monitoramento, alertas e runbook de incidente
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (contraparte detectiva dos controles preventivos; não toca M1/score) |
-| **Prioridade** | **Média-Alta** |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
-| **Status** | Pendente |
-| **Origem** | revisão de robustez 2026-05-31 (ponto cego de detecção identificado) |
-
-**Contexto / gap:** os blocos BLK-SEC-01..04 são **preventivos**; falta o lado **detectivo**. Hoje não
-há como saber quando algo dá errado: sem alerta de uptime (queda do dashboard só é vista por
-`docker logs` manual), sem alerta de segurança (tentativas de login no Authelia, disparos do
-fail2ban — ver BLK-SEC-03, uso anômalo de CPU/memória/disco), e sem runbook de resposta a incidente
-geral (o BLK-OPS-01 cobre só regeneração de segredos). Controle preventivo sem detecção é
-meia-segurança: portas trancadas, mas sem alarme.
-
-**Objetivo:** detectar e ser notificado de falhas e eventos de segurança em tempo hábil, e ter um
-plano claro de resposta — proporcional a um dashboard interno (nada de SIEM/enterprise).
-
-**Escopo permitido (leve, sem stack pesada):**
-- **Uptime/health externo** do dashboard (ex.: monitor HTTP simples/UptimeRobot-like ou cron + alerta)
-  com notificação (e-mail/webhook) quando cair.
-- **Alertas de host:** disco cheio, memória/swap saturada, container reiniciando (reusa `docker stats`,
-  `df -h` do runbook; transformar em check agendado com alerta).
-- **Sinais de segurança:** expor/alertar disparos do fail2ban e falhas de login do Authelia
-  (logs já existem; falta o alerta).
-- **Retenção/rotação de logs** dos containers (evitar disco cheio por log infinito).
-- **Runbook de incidente** em `docs/` (VPS comprometido / vazamento / indisponibilidade): passos de
-  contenção, quem aciona, como isolar, e ligação com o DR de segredos (BLK-OPS-01) e o backup de
-  dados (BLK-SEC-04).
-
-**Fora de escopo:** SIEM, APM completo, tracing distribuído, on-call formal — exagero para o contexto.
-
-**Arquivos prováveis:** `docs/infra_producao.md` (seção de monitoramento + runbook de incidente),
-`docker-compose.prod.yml` (logging/retention), eventual script de health-check agendado.
-
-**Critérios de aceite:**
-- Queda do dashboard gera notificação comprovada (teste: derrubar o container num horário combinado).
-- Alertas de disco/memória e de eventos de segurança (fail2ban/Authelia) configurados e testados.
-- Rotação de logs ativa (sem crescimento ilimitado).
-- Runbook de incidente documentado e revisado; zero mudança em M1/artefatos.
-
-**Risco:** baixo. Cuidado para não gerar alarme ruidoso (calibrar limiares) nem expor segredos nos
-canais de alerta.
-
-**Atualização (2026-06-12, pós-deploy API/bot — ESCOPO ESTENDIDO):** este bloco foi escrito em
-2026-05-31, **antes** da API GeoEspacial e do bot Telegram existirem; o uptime cobria só o dashboard.
-Agora há 3 serviços a monitorar. Incluir no escopo de uptime/health:
-- **Dashboard** (Streamlit): edge `https://dashboard.ultra-expansao.tech` (302→Authelia = vivo) e/ou
-  `docker exec ... /_stcore/health` (porta 8501 não publicada no host).
-- **API GeoEspacial**: `GET /health` na porta **8077** (interna `app_net`) → checar via
-  `docker exec motor_expansao_api curl -fsS http://127.0.0.1:8077/health` (sem porta no host; cron na VPS).
-- **Bot Telegram**: liveness = container `motor_expansao_telegram_bot` Up + log de polling sem erro
-  (sem endpoint HTTP; checar `docker ps`/`docker logs`). Opcional: o cron pode bater no
-  `/api/v1/analisar` com um token interno como smoke fim-a-fim.
-- **Containers reiniciando** (`Restarting`/crash-loop) e o volume `bot_data`/disco — já no escopo de host.
-Critério adicional: queda de **qualquer um dos 3** (dashboard, api, bot) gera notificação testada.
-Nota de implementação: como api/bot não têm porta no host, o check mais simples é um **cron na própria
-VPS** (`docker exec`/`docker ps`) com alerta por webhook/e-mail, em vez de monitor HTTP externo.
+**Risco:** baixo. Atenção ao custo do destino e à janela noturna.
 
 ---
 
-- BLK-ORQ-01 (concluído 2026-06-02) — ver tasks/completed.md
+- BLK-SEC-05 (concluído 2026-07-13) — ver tasks/completed.md
+
 
 
 ---
