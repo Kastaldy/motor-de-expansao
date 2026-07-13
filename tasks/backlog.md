@@ -279,6 +279,38 @@ Permanece como roadmap até nova decisão de Felipe.
 
 ---
 
+### BLK-OPS-12 — Pinar dependências (lockfile) e restaurar paridade CI/local
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (reprodutibilidade de build; não toca M1/score) |
+| **Prioridade** | **Alta** (tarefa ClickUp "Pinar dependências e restaurar paridade CI/local") |
+| **Esteira** | interativa (Felipe presente) — toca Dockerfiles/CI, **NÃO loop-safe** (loop_guard bloqueia) |
+| **Status** | Em execução 2026-07-13 |
+| **Origem** | ClickUp (FC, prioridade Alta); auditoria 2026-07-13: NENHUM pin existia (só faixas no `pyproject.toml`, zero lockfile) e local=3.14 vs CI/prod=3.11 |
+
+**Problema:** sem lockfile, cada rebuild de imagem/CI re-resolve as versões — dois builds do mesmo
+commit podem divergir; o pin por digest protege a produção RODANDO, não a reprodutibilidade do BUILD.
+E a suíte local (Python 3.14) diverge da CI/prod (3.11) — contagens de teste diferentes já observadas
+(BLK-ORQ-01).
+
+**Solução:** `constraints.txt` na raiz — lockfile UNIVERSAL (markers por versão de Python, válido
+p/ >=3.11) gerado por `uv pip compile pyproject.toml --all-extras --universal --python-version 3.11`,
+consumido via `-c constraints.txt` nos 3 pontos de instalação: CI (`.github/workflows/ci.yml`, também
+no cache key), `Dockerfile.streamlit` e `Dockerfile.api`. `pyproject.toml` INALTERADO (faixas seguem
+como intenção; o lock é a resolução exata). Refresh do lock = re-rodar o comando acima (documentado
+no header do arquivo e no ci.yml). Paridade de interpretador (local 3.11) fica como recomendação
+documentada — o lock universal já garante as MESMAS VERSÕES de libs em qualquer >=3.11.
+
+**Aceite:** CI verde com constraints; dry-run local `pip install --dry-run -e ".[dev,api_mvp]" -c
+constraints.txt` resolve limpo (validado, exit 0 inclusive sob 3.14); pins dentro das faixas do
+pyproject (streamlit 1.59.2, pandas 2.3.3, numpy 2.3.5, h3 4.5.0); zero mudança em M1/score.
+
+**Nota:** o rebuild seguinte das imagens usará os pins (ex.: streamlit 1.59.1→1.59.2 no container);
+os guards de regressão do bug pydeck/fragment (PR #91) estão na suíte e validam no CI.
+
+---
+
 - BLK-OPS-03 (concluído 2026-05-30) — ver tasks/completed.md
 
 
@@ -631,52 +663,8 @@ de 1 edit.
 
 ---
 
-### BLK-SEC-04 — Backup automatizado dos dados de produção + restore testado (re-escopado 2026-07-13)
+- BLK-SEC-04 (concluído 2026-07-13) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (continuidade de dados; não toca M1/score) |
-| **Prioridade** | **Média** |
-| **Esteira** | Block Orchestrator → Planner → `[DECISÃO HUMANA: destino/custo]` → Builder → QA |
-| **Status** | Pendente — **bloqueado por 1 decisão de Felipe: o DESTINO do backup** |
-| **Origem** | revisão de robustez 2026-05-31 (BLK-OPS-01 cobre segredos, não dados) |
-| **Autonomia** | **manual (NÃO loop-safe)** — VPS + decisão de custo |
-
-**Gap (confirmado no inventário 2026-07-13):** continua NÃO existindo backup dos dados de produção —
-só a cópia manual na máquina de dev. Disco da VPS folgado (34G/194G usados), mas backup no MESMO disco
-não é DR (perde-se junto).
-
-**Decisão que trava o bloco (Felipe):** o destino — (a) **snapshot/backup nativo da Hostinger** (mais
-simples, custo do plano, restore do disco inteiro), (b) **bucket S3-compatível** via rclone/restic
-(custo baixo/mês, restore granular por arquivo), ou (c) **cópia agendada off-box** para máquina do time
-(custo zero, depende da máquina estar ligada). Definido o destino, o resto é execução de 1 sessão.
-
-**Escopo (ordem de prioridade do que copiar):**
-1. `/opt/motor-expansao/data/outputs/` (~1,6 GB, parquets servidos ao dashboard) — crítico.
-2. `data/ibge/` (~49 MB) + `data/staging/` (~213 MB) — obrigatórios para a API (sem `data/ibge` a API
-   dá 500); regeneráveis, mas o re-scp é lento.
-3. Volume `bot_data` (sessões do bot Telegram) — trivial; perder = usuários deslogados.
-4. `/opt/gymscraping-infra/` (runner + **relatórios de crescimento históricos** — pequenos e NÃO
-   regeneráveis: são a série temporal da concorrência; DEC-013). Os dados coletados em si são
-   regeneráveis pela coleta semanal (baixa prioridade).
-5. NÃO versionar parquet no git; NÃO copiar `NAO_ABRA/`/PII para o destino.
-
-**Mecânica:** job cron na janela 2h–5h BRT (não colidir com a coleta de domingo 06:00 UTC); retenção
-diários 7d / semanais 4w; checksum; **restore testado em pasta limpa** (rigor do BLK-OPS-01) + runbook
-em `docs/`.
-
-**Cruzamento com BLK-OPS-01 (segredos):** o `.env` ganhou segredos novos desde o backup original
-(`API_TOKENS`/`API_API_CALL_TOKEN`/`API_TELEGRAM_TOKEN`/`API_BOT_SENHA`/`API_IMAGE`) → **re-encriptar o
-`.env` no SOPS+age como passo deste ciclo** (atualização do OPS-01, não processo novo).
-
-**Critérios de aceite:** backup automático com retenção; checksums conferem; restore validado
-end-to-end e documentado; `.env` re-encriptado; zero PII no destino.
-
-**Risco:** baixo. Atenção ao custo do destino e à janela noturna.
-
----
-
-- BLK-SEC-05 (concluído 2026-07-13) — ver tasks/completed.md
 
 
 

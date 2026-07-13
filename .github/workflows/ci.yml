@@ -29,12 +29,18 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
 
       - name: Instalar dependencias
         # inclui [api_mvp] (fastapi/uvicorn/pydantic) p/ a suite da API GeoEspacial
         # rodar no CI. NAO arrasta p/ a imagem: Dockerfile.streamlit usa .[basemap].
-        run: pip install -e ".[dev,api_mvp]"
+        # BLK-OPS-12: -c constraints.txt PINA todas as deps transitivas (lockfile
+        # universal gerado por uv p/ >=3.11; mesmo arquivo usado nos Dockerfiles) ->
+        # CI, imagens e local instalam as MESMAS versoes. Refresh do lock:
+        #   uv pip compile pyproject.toml --all-extras --universal --python-version 3.11 -o constraints.txt
+        run: pip install -e ".[dev,api_mvp]" -c constraints.txt
 
       # ruff/mypy sao steps de qualidade BLOQUEANTES desde BLK-OPS-02b: a divida
       # latente de lint/tipos (286 ruff + 23 mypy) foi zerada naquele ciclo, sem
@@ -65,7 +71,8 @@ jobs:
             --gitleaks-ignore-path .gitleaksignore \
             --redact --exit-code 1 --verbose
 
-      # BLK-SEC-02: pip-audit sobre as deps RESOLVIDAS no env do CI (nao ha lock).
+      # BLK-SEC-02: pip-audit sobre as deps do env do CI (desde BLK-OPS-12,
+      # instaladas via constraints.txt -> audita exatamente o que roda em prod).
       # SEVERIDADE: bloqueia QUALQUER vuln nao-allowlistada; LOW/MEDIUM/dev/sem-fix
       # entram como --ignore-vuln GHSA-xxxx (cada um com justificativa + data revisao).
       # pip-audit instalado SO no CI (guardrail: worktree compartilha env, sem pip

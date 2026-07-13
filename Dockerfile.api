@@ -34,7 +34,7 @@ COPY . .
 
 # [basemap]=contextily (mapas do PDF); [api_mvp]=FastAPI/uvicorn/pydantic; [geocoder]=Selenium.
 RUN python -m pip install --upgrade pip \
-    && python -m pip install ".[basemap,api_mvp,geocoder]"
+    && python -m pip install ".[basemap,api_mvp,geocoder]" -c constraints.txt
 
 # Usuario nao-root com HOME gravavel: cache do webdriver-manager (~/.wdm) e perfil
 # do Chrome headless precisam escrever. /data e o volume de sessoes do bot.
