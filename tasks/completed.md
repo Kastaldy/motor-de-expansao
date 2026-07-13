@@ -8214,3 +8214,69 @@ detalhe híbrido; a leitura híbrida/residual segue disponível nos MODOS DE COR
 o custo Python de construir 2 decks por rerun. Teste de regressão garante que o expander não volta.
 
 **Guardrail.** §5 READ-ONLY M1 (display only); modos de cor do mapa principal INTOCADOS.
+
+---
+
+### BLK-SEC-05 — Observabilidade: alertas via bot Telegram + runbook de incidente (re-escopado 2026-07-13)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (hoje NINGUÉM é avisado quando algo cai ou falha) |
+| **Prioridade** | **Média-Alta** |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Status** | Pendente |
+| **Origem** | revisão de robustez 2026-05-31; **re-escopado por inventário read-only da VPS em 2026-07-13** |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS |
+
+**Inventário (2026-07-13):** a rotação de logs do Docker **JÁ ESTÁ FEITA** (`daemon.json`, json-file
+10m×3) — **sai do escopo**. O que segue 100% faltando é o lado DETECTIVO: queda de container, disco,
+falha de login — e, novo desde a DEC-013, a **coleta semanal GymScraping falha SILENCIOSAMENTE** (ex.:
+na execução de 2026-07-05, 10 coletores falharam e 2 redes estão zeradas — ninguém foi notificado; o
+relatório só é visto quando alguém pede).
+
+**Canal de alerta (decidido pela realidade atual): o BOT TELEGRAM que JÁ RODA em produção** — reusar o
+token/infra existente com um chat de ops (zero dependência nova, zero custo). E-mail/webhook só como
+fallback. Guardrail: o script de alerta NÃO loga token nem segredo.
+
+**Escopo (cron simples na VPS + script; sem stack de monitoramento):**
+1. **Health dos 5 containers** (caddy, authelia, streamlit, api, bot): `docker ps` (Restarting/Exited/
+   crash-loop) + health interno via `docker exec` (`/_stcore/health` do Streamlit; `GET /health` da API
+   na 8077 — portas não publicadas no host). Edge externo: `https://dashboard.ultra-expansao.tech`
+   respondendo (302→Authelia = vivo).
+2. **Host:** disco >80%, memória/swap saturada.
+3. **Coleta semanal (DEC-013):** exit code do `run_weekly_90.sh` + push do resumo do relatório de
+   crescimento no chat (delta por rede + lista de coletores falhos/redes zeradas) — transforma o
+   relatório que hoje ninguém lê em notificação de domingo.
+4. **Segurança:** falhas de login do Authelia e (pós BLK-SEC-03) disparos do fail2ban.
+5. **Runbook de incidente** em `docs/` (VPS comprometido / vazamento / indisponibilidade): contenção,
+   quem aciona, isolamento, ligação com DR de segredos (BLK-OPS-01) e backup de dados (BLK-SEC-04).
+
+**Fora de escopo:** SIEM, APM, tracing, on-call formal; rotação de logs (já feita).
+
+**Arquivos prováveis:** script de health-check + cron na VPS; `docs/infra_producao.md` (seção
+monitoramento + runbook de incidente).
+
+**Critérios de aceite:**
+- Derrubar um container em horário combinado gera alerta no Telegram (teste real, qualquer um dos 5).
+- Alerta de disco testado (limiar sintético).
+- No domingo seguinte à implantação, o resumo da coleta chega no chat (com falhos listados).
+- Runbook revisado; zero segredo nos alertas; zero mudança em M1/artefatos.
+
+**Risco:** baixo. Calibrar limiares para não virar ruído (alerta demais = alerta ignorado).
+
+**CONCLUSÃO (2026-07-13, executado interativamente com Felipe — §6 comando a comando):** entregue no
+mesmo dia do re-escopo. `scripts/healthcheck_vps.sh` (novo, versionado) instalado em
+`/opt/motor-monitoring/` + 4 crons no root (containers */5, host 1x/h, Authelia diário 08h BRT, coleta
+domingo 15h BRT); `MONITOR_TELEGRAM_CHAT_ID` (grupo de ops) adicionado ao `.env` com backup
+(`.env.bak-20260713-monitor`); rotação de logs JÁ existia (fora do escopo). Docs: seção "Alertas
+automáticos" + "## Runbook de incidente" em `docs/infra_producao.md`. **Aceite REAL comprovado:**
+mensagem de teste recebida no grupo; `docker stop` proposital do streamlit às 13:10 BRT → alerta 🔴
+autônomo do cron às 13:15 (confirmado por Felipe) → restart 13:16 → alerta 🟢 de recuperação às 13:20
+(confirmado por Felipe). Nota honesta: o check de edge NÃO dispara com app morto atrás do proxy (Caddy/
+Authelia respondem 302 = camada viva; quem pega é o check de container — comportamento correto e
+documentado). Alerta de disco por limiar sintético e resumo de coleta ficam validados no uso (próximo
+domingo). READ-ONLY M1; zero segredo em log/git.
+
+---
+
+- BLK-ORQ-01 (concluído 2026-06-02) — ver tasks/completed.md
