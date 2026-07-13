@@ -279,45 +279,8 @@ Permanece como roadmap até nova decisão de Felipe.
 
 ---
 
-- BLK-OPS-03 (concluído 2026-05-30) — ver tasks/completed.md
+- BLK-OPS-12 (concluído 2026-07-13) — ver tasks/completed.md
 
-
----
-
-- BLK-OPS-04 (concluído 2026-05-30) — ver tasks/completed.md
-
-
-
-- BLK-FIX-01 (concluído 2026-05-30) — ver tasks/completed.md
-
-
-
-- BLK-FIX-02 (concluído 2026-05-30) — ver tasks/completed.md
-
-
----
-
-- BLK-SCORE-01 (concluído 2026-05-31) — ver tasks/completed.md
-
-
----
-
-- BLK-SCORE-01a (concluído 2026-05-31) — ver tasks/completed.md
-
-
----
-
-- BLK-SCORE-02 (concluído 2026-05-31) — ver tasks/completed.md
-
-
----
-
-- BLK-SCORE-03 (concluído 2026-05-31) — ver tasks/completed.md
-
-
----
-
-- BLK-SCORE-04 (concluído 2026-05-31) — ver tasks/completed.md
 
 
 ---
@@ -631,52 +594,8 @@ de 1 edit.
 
 ---
 
-### BLK-SEC-04 — Backup automatizado dos dados de produção + restore testado (re-escopado 2026-07-13)
+- BLK-SEC-04 (concluído 2026-07-13) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (continuidade de dados; não toca M1/score) |
-| **Prioridade** | **Média** |
-| **Esteira** | Block Orchestrator → Planner → `[DECISÃO HUMANA: destino/custo]` → Builder → QA |
-| **Status** | Pendente — **bloqueado por 1 decisão de Felipe: o DESTINO do backup** |
-| **Origem** | revisão de robustez 2026-05-31 (BLK-OPS-01 cobre segredos, não dados) |
-| **Autonomia** | **manual (NÃO loop-safe)** — VPS + decisão de custo |
-
-**Gap (confirmado no inventário 2026-07-13):** continua NÃO existindo backup dos dados de produção —
-só a cópia manual na máquina de dev. Disco da VPS folgado (34G/194G usados), mas backup no MESMO disco
-não é DR (perde-se junto).
-
-**Decisão que trava o bloco (Felipe):** o destino — (a) **snapshot/backup nativo da Hostinger** (mais
-simples, custo do plano, restore do disco inteiro), (b) **bucket S3-compatível** via rclone/restic
-(custo baixo/mês, restore granular por arquivo), ou (c) **cópia agendada off-box** para máquina do time
-(custo zero, depende da máquina estar ligada). Definido o destino, o resto é execução de 1 sessão.
-
-**Escopo (ordem de prioridade do que copiar):**
-1. `/opt/motor-expansao/data/outputs/` (~1,6 GB, parquets servidos ao dashboard) — crítico.
-2. `data/ibge/` (~49 MB) + `data/staging/` (~213 MB) — obrigatórios para a API (sem `data/ibge` a API
-   dá 500); regeneráveis, mas o re-scp é lento.
-3. Volume `bot_data` (sessões do bot Telegram) — trivial; perder = usuários deslogados.
-4. `/opt/gymscraping-infra/` (runner + **relatórios de crescimento históricos** — pequenos e NÃO
-   regeneráveis: são a série temporal da concorrência; DEC-013). Os dados coletados em si são
-   regeneráveis pela coleta semanal (baixa prioridade).
-5. NÃO versionar parquet no git; NÃO copiar `NAO_ABRA/`/PII para o destino.
-
-**Mecânica:** job cron na janela 2h–5h BRT (não colidir com a coleta de domingo 06:00 UTC); retenção
-diários 7d / semanais 4w; checksum; **restore testado em pasta limpa** (rigor do BLK-OPS-01) + runbook
-em `docs/`.
-
-**Cruzamento com BLK-OPS-01 (segredos):** o `.env` ganhou segredos novos desde o backup original
-(`API_TOKENS`/`API_API_CALL_TOKEN`/`API_TELEGRAM_TOKEN`/`API_BOT_SENHA`/`API_IMAGE`) → **re-encriptar o
-`.env` no SOPS+age como passo deste ciclo** (atualização do OPS-01, não processo novo).
-
-**Critérios de aceite:** backup automático com retenção; checksums conferem; restore validado
-end-to-end e documentado; `.env` re-encriptado; zero PII no destino.
-
-**Risco:** baixo. Atenção ao custo do destino e à janela noturna.
-
----
-
-- BLK-SEC-05 (concluído 2026-07-13) — ver tasks/completed.md
 
 
 

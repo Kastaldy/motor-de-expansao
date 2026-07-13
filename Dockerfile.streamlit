@@ -26,7 +26,7 @@ COPY . .
 # [basemap] (contextily) embutido na imagem de producao para o fundo de ruas do
 # Relatorio Pontual Censitario funcionar na VPS (DEC-004, escolha de Felipe 2026-06-05).
 RUN python -m pip install --upgrade pip \
-    && python -m pip install ".[basemap]"
+    && python -m pip install ".[basemap]" -c constraints.txt
 
 RUN useradd --create-home --shell /usr/sbin/nologin streamlit \
     && mkdir -p /app/data/outputs /app/data/staging \
