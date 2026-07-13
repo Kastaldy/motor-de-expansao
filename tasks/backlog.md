@@ -604,48 +604,30 @@ exige decisão humana sobre quais fontes baixar e validação de licença/LGPD.*
 
 ---
 
-### BLK-SEC-03 — Hardening do VPS: fechar SSH por senha, fail2ban e 2FA (re-escopado 2026-07-13)
+- BLK-SEC-03 (concluído 2026-07-13) — ver tasks/completed.md
+
+
+---
+
+### BLK-SEC-03-FU1 — Forçar 2FA no Authelia + revisão de acesso do dashboard (P4 do SEC-03)
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Alta** (exposição do servidor de produção) |
-| **Prioridade** | **Alta** (subiu 2026-07-13: SSH root+senha aberto à internet é o maior risco atual) |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA]` → Builder → QA |
+| **Criticidade** | **Média** (acesso ao dashboard; não toca M1/score) |
+| **Prioridade** | Média |
+| **Esteira** | interativa com gate humano (VPS §6) — **agendar com o TIME AVISADO** |
 | **Status** | Pendente |
-| **Origem** | revisão de robustez 2026-05-31; **re-escopado por inventário read-only da VPS em 2026-07-13** |
-| **Autonomia** | **manual (NÃO loop-safe)** — cada comando na VPS exige confirmação individual (§6) |
+| **Origem** | P4 do BLK-SEC-03 (concluído 2026-07-13), adiado por decisão de Felipe para não trancar o time |
+| **Autonomia** | **manual (NÃO loop-safe)** — VPS + coordenação de pessoas |
 
-**Inventário real (2026-07-13, read-only na VPS):** parte do bloco original JÁ ESTÁ FEITA —
-`ufw` **ATIVO** liberando só 22/80/443 (v4+v6); `unattended-upgrades` **INSTALADO** (falta confirmar a
-config periódica ativa); rotação de log do Docker já configurada (`daemon.json`, 10m×3 — era escopo do
-SEC-05). **Gaps reais que restam:** `sshd` com `passwordauthentication yes` + `permitrootlogin yes`
-(**root por SENHA aberto à internet — o maior risco do servidor hoje**); `fail2ban` **INATIVO**
-(brute-force de senha nem é banido); 2FA do Authelia opcional; revisão de acesso do `ultra_team` nunca
-feita; deploy key `gymscraping_deploy` em `/root/.ssh/` (auditar que segue read-only no repo do scraper).
+**Escopo:** (1) avaliar/forçar `two_factor` para o grupo `ultra_team` no Authelia
+(`authelia/configuration.yml`), com prazo prévio para o time cadastrar TOTP e virada em horário
+combinado com todos disponíveis; rollback = voltar a policy a `one_factor` (1 edit). (2) Revisão de
+acesso em `authelia/users_database.yml`: remover usuários obsoletos, definir offboarding (revogar ao
+sair) e periodicidade da revisão. Documentar em `docs/infra_producao.md`.
 
-**Objetivo:** fechar os gaps restantes sem quebrar deploy, coleta semanal nem o acesso do time.
-
-**Escopo re-priorizado (cada passo via MCP com confirmação individual — §6):**
-1. **P1 — SSH sem senha:** `PasswordAuthentication no` + `PermitRootLogin prohibit-password` (o acesso
-   real já é por chave). ANTES de aplicar: validar console web da Hostinger como porta dos fundos e
-   manter uma 2ª sessão SSH aberta durante a mudança.
-2. **P2 — `fail2ban` ativo** no sshd (jail default; banir brute-force).
-3. **P3 — confirmar `unattended-upgrades`** aplicando patches de segurança (APT::Periodic + dry-run).
-4. **P4 — Authelia:** avaliar forçar 2FA no grupo `ultra_team` + revisão de acesso em
-   `authelia/users_database.yml` (remover obsoletos; definir offboarding e periodicidade da revisão).
-5. Documentar em `docs/infra_producao.md` (seção hardening) com rollback de cada item.
-
-**Fora de escopo:** trocar provedor/arquitetura; mudar M1/dashboard; superfície de rede dos containers
-(API/bot não publicam porta no host — já correto); ufw (já feito).
-
-**Critérios de aceite:**
-- Login por senha REJEITADO (teste real de fora) e login por chave OK; fail2ban banindo (teste).
-- unattended-upgrades comprovadamente aplicando security patches.
-- Dashboard, deploy, API/bot e coleta semanal seguem funcionando após cada mudança.
-- Cada alteração com confirmação individual; documentada com rollback.
-
-**Risco:** médio-alto (lockout de SSH). Mitigação: um item por vez, 2ª sessão aberta, console web da
-Hostinger validado ANTES do P1, rollback documentado antes de cada passo.
+**Risco:** trancar o time fora do dashboard se virar sem aviso — mitigado por agendamento + rollback
+de 1 edit.
 
 ---
 

@@ -233,6 +233,37 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra" -r data/ultra/ root@2.25.137.241:/opt/mo
 
 ---
 
+## Hardening do servidor (BLK-SEC-03, aplicado 2026-07-13)
+
+Estado após o hardening — cada item com seu rollback:
+
+| Controle | Estado | Onde / rollback |
+|---|---|---|
+| Firewall | `ufw` ativo, só 22/80/443 (v4+v6) | já existia; `ufw status` |
+| SSH sem senha | `PasswordAuthentication no` + `PermitRootLogin prohibit-password` | `/etc/ssh/sshd_config.d/00-hardening.conf` (prefixo `00-` vence os demais — sshd usa o PRIMEIRO valor). Rollback: remover o arquivo + `systemctl reload ssh` (pelo console web da Hostinger se preciso) |
+| fail2ban | jail `sshd` ativa (ban 30 min / 5 tentativas / 10 min, backend systemd) | `/etc/fail2ban/jail.local`; `fail2ban-client status sshd` |
+| Patches automáticos | `unattended-upgrades` diário (só security) | `/etc/apt/apt.conf.d/20auto-upgrades`; log em `/var/log/unattended-upgrades/` |
+| Kernel | reboot aplicado em 2026-07-13 (5.15.0-177 → 185) | ver política abaixo |
+
+**Acesso de emergência (porta dos fundos):** hPanel Hostinger → VPS → Gerenciar → **"Terminal do
+navegador"** — login `root` + senha root (login de console, NÃO passa pelo sshd; continua aceitando
+senha mesmo com o SSH endurecido). Senha root redefinível em VPS → Configurações. Validado em
+2026-07-13. **Sempre validar esse acesso ANTES de mexer em SSH/firewall.**
+
+**Chaves SSH autorizadas:** somente a chave `ed25519` da máquina do Felipe (`silva@Ultra-2025-032`).
+Para dar acesso a alguém: adicionar a chave pública da pessoa em `/root/.ssh/authorized_keys`
+(senha NÃO volta a ser opção). Offboarding: remover a linha da chave.
+
+**Política de reboot (kernel):** o `unattended-upgrades` instala kernels de segurança mas NÃO
+reinicia sozinho. Quando o banner/`/var/run/reboot-required` acusar, agendar reboot manual (~2 min de
+indisponibilidade; containers voltam sozinhos — comprovado em 2026-07-13). O monitoramento
+(BLK-SEC-05) alerta se algo não voltar.
+
+**Pendente (follow-up BLK-SEC-03-FU1):** forçar 2FA no Authelia para o `ultra_team` + revisão de
+acesso — exige o time presente para cadastrar TOTP; agendar com aviso prévio.
+
+---
+
 ## Monitoramento e manutenção
 
 ### Ver status dos containers
