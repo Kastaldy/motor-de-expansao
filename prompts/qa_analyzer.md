@@ -43,11 +43,13 @@ Identificar problemas por severidade. Emitir veredito fundamentado.
   H3_RESOLUTION=7, DIST_MIN_ULTRA_KM=1.0, RENDA_MIN=4500.0,
   pesos renda=0.40, pop=0.60.
 
-## Housekeeping de concluídos (fechamento) — obrigatório quando o bloco vem do backlog
+## Housekeeping de concluídos (fechamento) — depende do MODO de merge (DEC-016 / BLK-ORQ-24)
 
-Quando o bloco do ciclo origina-se de `tasks/backlog.md`, o veredito final SÓ pode ser APROVADO
-após você confirmar, por conta própria, que o housekeeping (Passo 6.0 do /run-cycle) foi feito via o
-helper versionado `scripts/housekeeping_move_block.py` (NÃO aceitar move manual de `backlog.md`/`completed.md`):
+Quando o bloco do ciclo origina-se de `tasks/backlog.md`, valide o housekeeping (Passo 6.0 do
+/run-cycle) conforme o **modo de merge**. Não aceitar move manual de `backlog.md`/`completed.md`.
+
+**Modo MERGE-HUMANO** (ciclo interativo mergeado por humano com revisão de code owner) — o bloco é
+movido via helper no MESMO PR; o veredito final SÓ pode ser APROVADO após você confirmar:
 
 1. **`--check` passa:** `python scripts/housekeeping_move_block.py <BLK-ID> --check` retorna OK
    (stub presente em `backlog.md`, nenhum heading `### BLK-ID` remanescente, bloco presente em `completed.md`).
@@ -55,8 +57,23 @@ helper versionado `scripts/housekeeping_move_block.py` (NÃO aceitar move manual
    contra `git show HEAD:tasks/backlog.md`.
 3. **Suíte verde com o teste do helper:** `pytest -n auto` passa, incluindo `tests/unit/test_housekeeping_helper.py`.
 
-Falha em 1 ou 2 → REPROVAR (housekeeping incompleto/divergente). Para ciclos com tarefa ad-hoc
-(fora do backlog), registre "N/A (tarefa ad-hoc)" — o helper levanta `BlockNotFound` e o move é no-op.
+Falha em 1 ou 2 → REPROVAR (housekeeping incompleto/divergente).
+
+**Modo AUTO-MERGE** (Baixa/Média sem revisor humano — loop/Garimpeiro) — o stub do backlog é
+DIFERIDO de propósito (BLK-ORQ-24), então **`--check` NÃO é gate de fechamento aqui** (ele falharia
+por o stub ainda não existir, o que é o comportamento esperado, não um defeito). Valide, em vez disso:
+
+1. **O bloco está DONE:** o resumo do ciclo foi acrescentado a `tasks/completed.md` (append ao FINAL)
+   com um **heading de fechamento** (`## Fechamento de ciclo — <BLK-ID>`) — confirme com
+   `python scripts/housekeeping_move_block.py <BLK-ID> --is-done` (sai 0). É o marcador que a seleção
+   do loop usa para NÃO re-selecionar o bloco; sem o heading (só prosa) o `--is-done` falha.
+2. **O PR de ciclo NÃO tocou `tasks/backlog.md`:** `git diff --name-only <base>...HEAD` não lista
+   `tasks/backlog.md` (senão o `guard` cairia em governança e o PR não auto-mergearia). O bloco
+   permanece íntegro no backlog — a defasagem é esperada; será reconciliada pelo PR de lote (6.0-lote).
+3. **Suíte verde:** `pytest -n auto` passa.
+
+Falha em 1 ou 2 → REPROVAR. Para ciclos com tarefa ad-hoc (fora do backlog, qualquer modo), registre
+"N/A (tarefa ad-hoc)" — o helper levanta `BlockNotFound` e o move é no-op.
 
 ## Regras de comportamento
 

@@ -73,6 +73,50 @@ def move_block(
     return new_backlog, new_completed, moved
 
 
+#: Token de ID de bloco. ``findall`` devolve o token INTEIRO, então comparação por igualdade
+#: distingue ``BLK-FIX-06`` de ``BLK-FIX-06-C`` (o furo de colisão de prefixo de um ``grep``).
+_BLK_TOKEN = re.compile(r"BLK-[A-Za-z0-9-]+")
+
+
+def is_done(completed: str, block_id: str) -> bool:
+    """True se ``completed.md`` marca ``block_id`` como concluído — por HEADING, não por prosa.
+
+    BLK-ORQ-24: a conclusão é medida SÓ em linhas de heading (``## `` ou ``### ``) que contenham o
+    ID como **token exato**. Cobre os dois marcadores reais de fechamento:
+
+    * ``### BLK-X — título`` (bloco íntegro movido pelo helper, modo merge-humano); e
+    * ``## Fechamento de ciclo — BLK-X (data)`` (resumo do ciclo, modo auto-merge, em que o move é
+      diferido e este é o ÚNICO marcador).
+
+    NÃO conta menção em PROSA: ``completed.md`` está cheio de forward-references a blocos que
+    estavam ABERTOS quando o resumo foi escrito ("Sucessor: BLK-X", "Próximo recomendado: BLK-Y",
+    "depende de BLK-Z") — um teste de substring faria a seleção do loop PULAR para sempre um bloco
+    loop-safe ainda aberto. A igualdade de token (não substring) evita a colisão de prefixo.
+    """
+    for line in completed.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith(("## ", "### ")) and block_id in _BLK_TOKEN.findall(stripped):
+            return True
+    return False
+
+
+def emit_delta(backlog: str, completed: str) -> list[str]:
+    """IDs a stubar no PR de housekeeping em lote (BLK-ORQ-24 / modo auto-merge).
+
+    O delta é DETERMINÍSTICO: cada bloco que (i) ainda tem heading ``### BLK-X`` ABERTO no
+    ``backlog.md`` E (ii) já tem heading de conclusão em ``completed.md``. Ambos os lados usam
+    ``_heading_pattern`` (fronteira de palavra), então ``BLK-FIX-06`` aberto no backlog não é
+    arrastado por ``BLK-FIX-06-C`` concluído em completed — o furo de colisão de prefixo que um
+    ``grep`` de substring teria. Retorna a lista na ordem em que os headings aparecem no backlog.
+    """
+    ids: list[str] = []
+    for m in re.finditer(r"(?m)^### +(BLK-[A-Za-z0-9-]+?)(?=\s|$)", backlog):
+        block_id = m.group(1)
+        if is_done(completed, block_id) and block_id not in ids:
+            ids.append(block_id)
+    return ids
+
+
 def verify_moved(backlog: str, completed: str, block_id: str) -> None:
     """Confirma o estado pós-move. Levanta ``AssertionError`` se algo falhar."""
     stub_re = re.compile(
@@ -102,7 +146,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Housekeeping: move bloco concluído do backlog para completed (byte-idêntico)."
     )
-    ap.add_argument("block_id", help="ID do bloco, ex.: BLK-OPS-09")
+    ap.add_argument(
+        "block_id",
+        nargs="?",
+        help="ID do bloco, ex.: BLK-OPS-09 (dispensável só no modo --emit-delta)",
+    )
     ap.add_argument("--date", help="data de conclusão AAAA-MM-DD (obrigatória no modo move)")
     ap.add_argument("--backlog", default="tasks/backlog.md")
     ap.add_argument("--completed", default="tasks/completed.md")
@@ -111,10 +159,35 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="apenas verifica (verify_moved); não escreve nada",
     )
+    ap.add_argument(
+        "--is-done",
+        action="store_true",
+        help="sai 0 se o bloco tem heading de conclusão em completed.md (fronteira de palavra), "
+        "1 caso contrário; não escreve nada. Consumido pela seleção do loop (BLK-ORQ-24).",
+    )
+    ap.add_argument(
+        "--emit-delta",
+        action="store_true",
+        help="lista (um ID por linha) os blocos ainda com heading no backlog E já concluídos em "
+        "completed.md — a lista a stubar no PR de housekeeping em lote (BLK-ORQ-24). block_id é ignorado.",
+    )
     args = ap.parse_args(argv)
 
     backlog = _read(args.backlog)
     completed = _read(args.completed)
+
+    if args.emit_delta:
+        for bid in emit_delta(backlog, completed):
+            print(bid)
+        return 0
+
+    if not args.block_id:
+        ap.error("block_id é obrigatório (exceto no modo --emit-delta)")
+
+    if args.is_done:
+        done = is_done(completed, args.block_id)
+        print(f"{args.block_id}: {'DONE' if done else 'ABERTO'} em {args.completed}")
+        return 0 if done else 1
 
     if args.check:
         try:
