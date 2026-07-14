@@ -1748,3 +1748,33 @@ ORDEM/EMPACOTAMENTO do housekeeping, não na proteção.
 
 
 ---
+
+### BLK-ORQ-25 — Testes de regressão CRLF para `is_done`/`emit_delta` (demonstrador do auto-merge)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (só testes; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Baixa (demonstrador do auto-merge da DEC-016 + 1º bloco loop-safe pós-ORQ-24). |
+| **Esteira** | Builder → QA (bloco mecânico, sem gate de produto/UX). |
+| **Status** | Pendente. |
+| **Depende de** | — (nenhuma; usa `is_done`/`emit_delta`, já na `main` via BLK-ORQ-24). |
+| **Autonomia** | **loop-safe** — toca só `tests/`, READ-ONLY sobre o M1, não toca VPS/deploy/segredos, não persiste PII, sem ingestão ao vivo. |
+
+**Contexto.** O BLK-ORQ-24 adicionou `is_done`/`emit_delta` em `scripts/housekeeping_move_block.py` (seleção do
+loop por conclusão + delta do PR de housekeeping em lote). No Windows (plataforma de dev), `tasks/completed.md` e
+`tasks/backlog.md` são CRLF; um refactor futuro que troque `splitlines()` por regex ou que mude o padrão de heading
+poderia quebrar a detecção em CRLF **silenciosamente** e fazer o loop mis-selecionar um bloco.
+
+**Objetivo.** Travar o comportamento CRLF com testes de regressão em `tests/unit/test_housekeeping_helper.py`:
+`is_done` detecta `### BLK-X
+` e `## Fechamento de ciclo — BLK-X
+`; ignora menção em prosa mesmo em CRLF;
+`emit_delta` não captura o `` no ID e não colide prefixo (`BLK-FIX-06` vs `BLK-FIX-06-C`) em entrada CRLF.
+
+**Critérios de aceite.** Testes novos cobrem `is_done` + `emit_delta` em entrada CRLF; suíte verde (`pytest -n auto`);
+o PR toca SÓ `tests/` (mais o append de fechamento em `tasks/completed.md` no modo auto-merge). NENHUM código de
+produção alterado; `is_done`/`emit_delta` inalterados (são testes de regressão, não mudança de comportamento).
+
+**Guardrail.** §5 **READ-ONLY M1**; toca só `tests/`; sem rede, VPS, deploy, segredos ou PII.
+
+---
