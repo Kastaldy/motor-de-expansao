@@ -1754,23 +1754,7 @@ ORDEM/EMPACOTAMENTO do housekeeping, não na proteção.
 
 ---
 
-### BLK-RELPON-06-FU1 — Corrigir o piso do Pillow no pyproject (código exige >=10.1)
+- BLK-RELPON-06-FU1 (concluído 2026-07-14) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Crítica** — não pelo risco funcional (nulo), mas porque `pyproject.toml` é **path CRÍTICO do `loop_guard`** (DEC-016) e exige label `critica-aprovada` do Felipe. |
-| **Prioridade** | Baixa (sem risco em produção nem em CI). |
-| **Esteira** | Block Orchestrator → Builder (mudança de 1 linha) → QA. |
-| **Status** | Pendente. |
-| **Depende de** | BLK-RELPON-06 (concluído 2026-07-14). |
-| **Autonomia** | **manual (NÃO loop-safe)** — toca `pyproject.toml`, path crítico do `loop_guard`. |
-
-**Contexto.** O BLK-RELPON-06 (D3) trocou `_font()` para `ImageFont.load_default(size=size)`, que **só existe a partir do Pillow 10.1**. Mas o `pyproject.toml` declara `pillow>=10.0.0`.
-
-**Risco real: NULO hoje.** Produção e CI instalam com `-c constraints.txt`, que pina `pillow==12.3.0`. A divergência só apareceria para quem instalasse o pacote SEM o `constraints.txt` e resolvesse o Pillow em 10.0.x — aí `load_default(size=)` levantaria `TypeError` em runtime, no render do mapa.
-
-**Objetivo.** Subir o piso de `pillow>=10.0.0` para `pillow>=10.1` no `pyproject.toml`, alinhando a declaração ao que o código de fato exige. Levantado pelo QA do BLK-RELPON-06.
-
-**Critério de aceite.** `pyproject.toml` declara `pillow>=10.1`; `constraints.txt` INALTERADO (já em 12.3.0); suíte verde; ruff/mypy limpos.
 
 ---

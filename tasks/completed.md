@@ -8609,3 +8609,49 @@ Veredito QA: **APROVADO COM RESSALVAS** (Opus 4.8). Esteira: Block Orchestrator 
 **READ-ONLY M1:** `score_priorizacao`/pesos/`hex_score_estrutural`/carteira/plano/artefatos oficiais INALTERADOS. Intocados tambem: `setor_censitario_intersecao_area_1p5km`, raio 1,5 km, estrutura das 5 paginas, grid de Big Numbers, marca d'agua, `set_compression(False)`, choropleth e faixas de cor (so texto/fonte/layout mudou). `pages.py` e `Dockerfile.streamlit` NAO tocados.
 
 **Arquivos:** `src/motor_expansao/dashboard/{censo_point,censo_map,censo_report}.py`; `tests/unit/test_relatorio_pontual_censitario_{motor,mapa}.py`; `docs/relatorio_pontual_censitario.md`. Sucessor aberto: **BLK-RELPON-06-FU1** (piso do Pillow no `pyproject.toml`). Merge = passo humano.
+
+---
+
+### BLK-RELPON-06-FU1 — Corrigir o piso do Pillow no pyproject (código exige >=10.1)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — não pelo risco funcional (nulo), mas porque `pyproject.toml` é **path CRÍTICO do `loop_guard`** (DEC-016) e exige label `critica-aprovada` do Felipe. |
+| **Prioridade** | Baixa (sem risco em produção nem em CI). |
+| **Esteira** | Block Orchestrator → Builder (mudança de 1 linha) → QA. |
+| **Status** | Pendente. |
+| **Depende de** | BLK-RELPON-06 (concluído 2026-07-14). |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca `pyproject.toml`, path crítico do `loop_guard`. |
+
+**Contexto.** O BLK-RELPON-06 (D3) trocou `_font()` para `ImageFont.load_default(size=size)`, que **só existe a partir do Pillow 10.1**. Mas o `pyproject.toml` declara `pillow>=10.0.0`.
+
+**Risco real: NULO hoje.** Produção e CI instalam com `-c constraints.txt`, que pina `pillow==12.3.0`. A divergência só apareceria para quem instalasse o pacote SEM o `constraints.txt` e resolvesse o Pillow em 10.0.x — aí `load_default(size=)` levantaria `TypeError` em runtime, no render do mapa.
+
+**Objetivo.** Subir o piso de `pillow>=10.0.0` para `pillow>=10.1` no `pyproject.toml`, alinhando a declaração ao que o código de fato exige. Levantado pelo QA do BLK-RELPON-06.
+
+**Critério de aceite.** `pyproject.toml` declara `pillow>=10.1`; `constraints.txt` INALTERADO (já em 12.3.0); suíte verde; ruff/mypy limpos.
+
+---
+
+## Fechamento de ciclo — BLK-RELPON-06-FU1 (2026-07-14)
+
+Correcao de 1 linha levantada pelo QA do BLK-RELPON-06: `pyproject.toml` declarava
+`pillow>=10.0.0`, mas o `_font()` de `censo_map.py` passou a usar
+`ImageFont.load_default(size=)` (D3 do BLK-RELPON-06), que **so existe a partir do Pillow
+10.1**. Em 10.0.x levantaria `TypeError` no render do mapa.
+
+Risco em producao/CI era NULO (ambos instalam com `-c constraints.txt`, que pina
+`pillow==12.3.0`) — a divergencia so apareceria para quem instalasse o pacote SEM o
+constraints e resolvesse o Pillow em 10.0.x. Mas o piso estava mentindo sobre o que o codigo
+exige.
+
+**Feito:** `pillow>=10.0.0` -> `pillow>=10.1` em `pyproject.toml` (com comentario explicando o
+porque). `constraints.txt` INTOCADO (ja em 12.3.0).
+
+**Validado:** 61 passed na trilha do relatorio pontual; `import streamlit_app` ok; `ruff` limpo;
+`pyproject.toml` parseia e resolve `pillow>=10.1`.
+
+**Governanca (DEC-016):** `pyproject.toml` e path CRITICO do `loop_guard` -> o merge deste PR
+exige a label `critica-aprovada` do proprio Felipe (login Kastaldy), nao basta
+`aprovado-humano`. E por isso que o bloco foi classificado Critico, apesar de ser 1 linha.
+Nenhum artefato/score/peso do M1 tocado.
