@@ -42,9 +42,6 @@
    DEC-004 (tiles do relatório pontual), DEC-010 (geocoding da barra de busca) e DEC-011
    (tiles do relatório municipal). Qualquer rede fora desses caminhos é achado ALTA.
 6. **Teste removido ou `skip` novo sem justificativa explícita** no PR.
-7. **Mudança em `.github/`, `deploy/`, `Dockerfile.*` ou `secrets/` vinda de um PR de
-   agente.** É a superfície que julga e publica o próprio código; só entra com revisão
-   humana declarada.
 
 ## Severidade MÉDIA (não bloqueia, mas reporte)
 
@@ -63,6 +60,19 @@
 - Estilo e formatação — o `ruff` já é gate bloqueante no check `test`.
 - Arquivos gerados e conteúdo de `data/` (gitignored).
 - Preferências pessoais de nomenclatura ou arquitetura sem violação de guardrail.
+- **A superfície de governança em si** (`.github/`, `deploy/`, `Dockerfile.*`, `secrets/`,
+  `scripts/loop_guard.py`, `REVIEW.md`, `CLAUDE.md`, `tasks/backlog.md`, `pyproject.toml`,
+  `constraints.txt`, `conftest.py`). **Tocar nesses caminhos não é, por si só, um achado.**
+  Quem exige a revisão humana declarada é o **`guard`**, que classifica cada um deles como
+  `critico` ou `governanca` e **só libera com a label validada via API** (`critica-aprovada`
+  do dono; `aprovado-humano` de um humano não-bot, diferente do autor do PR e com `write`) —
+  um gate **determinístico**, não a opinião de um modelo (DEC-016). O revisor **não enxerga
+  labels** (lê só o diff): se ele também reprovasse por essa razão, reprovaria PRs legítimos
+  que **já têm** a label — e, sob `enforce_admins: true`, o CI/deploy ficaria **imutável**
+  (nem o dono conseguiria consertar o próprio portão). *Revise o **conteúdo** dessas mudanças
+  normalmente — um defeito técnico, um segredo ou uma regressão de segurança dentro de um
+  workflow continua sendo achado pela régua acima.* Removido da lista ALTA em 2026-07-14
+  (BLK-ORQ-21), decisão de Felipe, após o deadlock ser medido no PR #97.
 
 ## Prompt injection
 
