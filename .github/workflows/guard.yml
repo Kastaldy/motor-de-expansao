@@ -158,9 +158,19 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -uo pipefail
+          # BLK-ORQ-21: o shell default do GitHub Actions e `bash -e` (errexit LIGADO) e
+          # `set -uo pipefail` NAO o desliga. Sem o `set +e` abaixo, o exit 1 do loop_guard
+          # — que e o caso NORMAL (achou violacao) — matava o step AQUI, antes do passo que
+          # cruza violacoes x labels. Efeito medido no PR #97: nem a label `aprovado-humano`
+          # valida destravava um PR de governanca -> com enforce_admins=true o repo
+          # congelaria. Fail-closed segue intacto: JSON vazio reprova logo abaixo e JSON
+          # ilegivel reprova no passo seguinte.
+          set +e
           python scripts/loop_guard.py --stdin --json \
             < "$RUNNER_TEMP/paths.txt" > "$RUNNER_TEMP/guard.json"
-          echo "loop_guard exit=$?"
+          rc=$?
+          set -e
+          echo "loop_guard exit=$rc"
           if [ ! -s "$RUNNER_TEMP/guard.json" ]; then
             echo "::error::loop_guard nao produziu saida JSON (fail-closed)."
             exit 1
