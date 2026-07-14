@@ -1,0 +1,20 @@
+# CODEOWNERS — defesa contra o N0 (BLK-ORQ-20 / DEC-016).
+#
+# O N0 e a ameaca que NAO passa por um check run (portanto nao e forjavel por um PR que
+# reescreve o proprio workflow): um PR que altera a SUPERFICIE que define as PROPRIAS regras
+# do portao (workflows, o guard, o contrato de revisao, o backlog que classifica criticidade,
+# a config do pytest/ruff e o lockfile). Para esses caminhos exigimos revisao do DONO do repo.
+#
+# Este arquivo apenas DECLARA os donos. A exigencia efetiva (`require_code_owner_reviews: true`
+# na branch protection) e ligada no BLK-ORQ-21, junto da validacao empirica do N0.
+#
+# A ultima regra que casa um arquivo vence — mantenha as entradas especificas.
+
+/.github/                    @Kastaldy
+/scripts/loop_guard.py       @Kastaldy
+/REVIEW.md                   @Kastaldy
+/CLAUDE.md                   @Kastaldy
+/tasks/backlog.md            @Kastaldy
+/pyproject.toml              @Kastaldy
+/constraints.txt             @Kastaldy
+/conftest.py                 @Kastaldy

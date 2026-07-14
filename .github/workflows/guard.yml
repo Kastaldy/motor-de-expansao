@@ -1,0 +1,696 @@
+name: Guard
+
+# Portao de governanca do merge autonomo (DEC-016 / BLK-ORQ-20).
+#
+# POR QUE `pull_request_target` E NAO `pull_request`:
+# em `pull_request` o workflow roda a partir do HEAD do PR — um PR agentico poderia
+# editar o proprio job (ou o scripts/loop_guard.py) e se auto-aprovar. Em
+# `pull_request_target` o workflow roda a partir da BASE (main): o script e as regras
+# que JULGAM o PR vem da main, nao do PR. Por isso este workflow NUNCA faz checkout do
+# HEAD do PR e NUNCA executa codigo do PR — so le DADOS (a lista de caminhos do diff, as
+# labels e o timeline, via API) e os passa pelo guard/backlog da BASE.
+#
+# `synchronize` e `edited` estao nos types de proposito. `synchronize` = push novo: re-roda o
+# guard contra o NOVO diff. `edited` = troca de titulo/corpo/BASE do PR: sem ele, trocar a base
+# depois de tudo verde levaria uma branch hostil INTEIRA ao merge com os check runs presos ao
+# HEAD antigo (o conteudo mergeado muda sem gerar `synchronize`).
+#
+# Re-rodar nao basta: o GitHub NAO remove labels quando chega conteudo novo
+# (`dismiss_stale_reviews` so vale para REVIEWS). Sem remove-las, a label viraria cheque em
+# branco (aprova-se o diff de ontem, mergeia-se o de hoje). Por isso o PRIMEIRO passo de CADA
+# gate (`guard` e `review-gate`) remove as labels de aprovacao a cada conteudo novo — FAIL-CLOSED
+# e DENTRO do proprio job. NAO existe mais um job `dismiss-stale-approval` separado: um job
+# auxiliar do qual os gates dependessem (`needs:`) seria um single-point-of-failure FAIL-OPEN —
+# se ele falhasse, os gates ficariam `skipped`, e `skipped` conta como SUCESSO num required check.
+#
+# Jobs (os dois nomes sao required checks da `main`, junto de `test` e `claude-review`):
+#   guard       -> julga o DIFF (scripts/loop_guard.py da base) x labels x autor da label
+#   review-gate -> julga a CRITICIDADE declarada (label) x `tasks/backlog.md` da BASE
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+  merge_group:
+
+# Padrao restritivo no topo: por default os jobs so LEEM.
+# `issues: read` e necessario porque o timeline de um PR vive em /issues/{n}/timeline
+# (e e la que descobrimos QUEM aplicou cada label de aprovacao).
+# `guard` e `review-gate` ELEVAM para `pull-requests: write` no nivel do job (o `permissions`
+# do job SUBSTITUI este do topo) — necessario para REMOVER as labels de aprovacao velhas
+# quando chega conteudo novo. Seguro: em `pull_request_target` o codigo executado vem da
+# BASE, nunca do PR.
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # guard — o coracao da DEC-016: o diff do PR passa pelo scripts/loop_guard.py da BASE.
+  #   sem violacao          -> VERDE (o PR pode auto-mergear)
+  #   violacao `critico`    -> so passa com a label `critica-aprovada` E se ela tiver
+  #                            sido aplicada pelo PROPRIO dono (login Kastaldy)
+  #   violacao `governanca` -> passa com a label `aprovado-humano` E se ela tiver sido
+  #                            aplicada por um HUMANO com permissao de escrita, que nao
+  #                            seja o autor do PR
+  # Classe desconhecida e tratada como `critico` (fail-closed).
+  # ---------------------------------------------------------------------------
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # O `permissions` do job SUBSTITUI o do topo — por isso repetimos contents/issues aqui.
+    permissions:
+      contents: read        # checkout da BASE (main)
+      pull-requests: write  # remover labels de aprovacao velhas (synchronize/edited)
+      issues: read          # timeline do PR (/issues/{n}/timeline)
+    steps:
+      - name: Contexto merge_group (o PR ja foi julgado; nada a rejulgar)
+        if: github.event_name == 'merge_group'
+        run: |
+          echo "Evento merge_group - o veredito do guard foi dado no PR. Check verde."
+
+      # PRIMEIRO passo do gate (fail-closed): a cada conteudo novo (push=`synchronize` ou troca
+      # de titulo/corpo/base=`edited`) as labels de aprovacao VELHAS sao removidas AQUI DENTRO —
+      # nao num job auxiliar separado (que seria fail-open, ver comentario do topo). Idempotente e
+      # race-safe com o `review-gate` (ambos rodam este passo): lista -> DELETE best-effort ->
+      # RELEITURA AUTORITATIVA. E a RELEITURA — nao o exit do DELETE — que garante o fail-closed:
+      # se qualquer label de aprovacao PERSISTIR (DELETE engolido por 5xx/rate-limit), exit 1 e o
+      # check fica VERMELHO, nunca pulado. Um 404 no DELETE (corrida com o job irmao ja removeu) e
+      # ESTADO desejado, nao erro.
+      - name: Invalidar aprovacao apos conteudo novo (fail-closed)
+        if: github.event_name == 'pull_request_target' && (github.event.action == 'synchronize' || github.event.action == 'edited')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          ler_labels() { gh api "repos/$REPO/issues/$PR_NUMBER/labels" --paginate --jq '.[].name'; }
+          if ! ler_labels > "$RUNNER_TEMP/labels_pre.txt"; then
+            echo "::error::Falha ao listar labels do PR #$PR_NUMBER para invalidar aprovacao (fail-closed)."
+            exit 1
+          fi
+          for label in critica-aprovada aprovado-humano; do
+            if grep -qxF "$label" "$RUNNER_TEMP/labels_pre.txt"; then
+              echo "Removendo label '$label' (conteudo novo invalida a aprovacao anterior)."
+              # best-effort: 404 (removida em paralelo pelo job irmao) NAO e erro; a releitura decide.
+              gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/$label" >/dev/null 2>&1 || true
+            fi
+          done
+          # Releitura AUTORITATIVA: e ela, nao o DELETE, que garante o fail-closed.
+          if ! ler_labels > "$RUNNER_TEMP/labels_post.txt"; then
+            echo "::error::Falha ao reconferir labels apos remocao (fail-closed)."
+            exit 1
+          fi
+          for label in critica-aprovada aprovado-humano; do
+            if grep -qxF "$label" "$RUNNER_TEMP/labels_post.txt"; then
+              echo "::error::Label '$label' persiste apos DELETE — recusando avaliar conteudo novo com aprovacao velha (fail-closed)."
+              exit 1
+            fi
+          done
+          echo "Labels de aprovacao ausentes apos conteudo novo."
+
+      # Sem `ref:` = checkout da BASE (main). NAO trocar por ref do PR.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: github.event_name != 'merge_group'
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        if: github.event_name != 'merge_group'
+        with:
+          python-version: "3.11"
+
+      # Coleta os INSUMOS via API (dados, nunca codigo do PR):
+      #   paths.txt    -> nomes de arquivo do diff
+      #   labels.txt   -> labels ATUAIS do PR (fonte da verdade; o payload do evento pode
+      #                   estar defasado em re-runs e nao reflete a remocao feita acima)
+      #   timeline.tsv -> eventos `labeled` em ordem cronologica: "<label>\t<actor>"
+      - name: Coletar diff, labels e timeline do PR
+        if: github.event_name != 'merge_group'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          if ! gh pr diff "$PR_NUMBER" --name-only > "$RUNNER_TEMP/paths.txt"; then
+            echo "::error::Falha ao obter o diff do PR #$PR_NUMBER (fail-closed)."
+            exit 1
+          fi
+          if ! gh api "repos/$REPO/issues/$PR_NUMBER/labels" --paginate \
+              --jq '.[].name' > "$RUNNER_TEMP/labels.txt"; then
+            echo "::error::Falha ao ler as labels do PR #$PR_NUMBER (fail-closed)."
+            exit 1
+          fi
+          if ! gh api "repos/$REPO/issues/$PR_NUMBER/timeline" --paginate \
+              --jq '.[] | select(.event == "labeled") | [.label.name, (.actor.login // "")] | @tsv' \
+              > "$RUNNER_TEMP/timeline.tsv"; then
+            echo "::error::Falha ao ler o timeline do PR #$PR_NUMBER (fail-closed)."
+            exit 1
+          fi
+          echo "Arquivos no diff: $(wc -l < "$RUNNER_TEMP/paths.txt")"
+
+      # O guard da BASE julga os caminhos do PR. Contrato: --stdin le paths (um por linha)
+      # e --json imprime {"limpo":bool,"violacoes":[{"path","classe","motivo"}]}; exit 1
+      # quando ha violacao. Aqui o exit 1 NAO reprova o job ainda: as labels podem liberar.
+      - name: Rodar loop_guard sobre os caminhos do PR
+        if: github.event_name != 'merge_group'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          python scripts/loop_guard.py --stdin --json \
+            < "$RUNNER_TEMP/paths.txt" > "$RUNNER_TEMP/guard.json"
+          echo "loop_guard exit=$?"
+          if [ ! -s "$RUNNER_TEMP/guard.json" ]; then
+            echo "::error::loop_guard nao produziu saida JSON (fail-closed)."
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/guard.json"
+
+      # Decide o veredito cruzando violacoes x labels x QUEM aplicou cada label.
+      - name: Avaliar violacoes contra as labels de aprovacao
+        if: github.event_name != 'merge_group'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          AUTOR_PR: ${{ github.event.pull_request.user.login }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+
+          LABEL_CRITICA = "critica-aprovada"   # identificador — sem acento
+          LABEL_HUMANO = "aprovado-humano"     # identificador — sem acento
+          DONO = "kastaldy"                    # login do dono (comparado em minusculas)
+          CLASSES_CONHECIDAS = {"critico", "governanca"}
+          PERMISSOES_OK = {"admin", "maintain", "write"}
+
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          REPO = os.environ["REPO"]
+          AUTOR_PR = os.environ.get("AUTOR_PR", "")
+          resumo: list[str] = []
+
+          def escrever_resumo() -> None:
+              destino = os.environ.get("GITHUB_STEP_SUMMARY")
+              if destino:
+                  with open(destino, "a", encoding="utf-8") as fh:
+                      fh.write("\n".join(resumo) + "\n")
+              print("\n".join(resumo))
+
+          def reprovar(motivo: str) -> None:
+              resumo.append(f"\n**Resultado: REPROVADO.** {motivo}")
+              escrever_resumo()
+              print(f"::error::{motivo}")
+              sys.exit(1)
+
+          def ultimo_autor_label(nome: str) -> str:
+              """Ultimo evento `labeled` daquela label = quem a aplicou por ultimo."""
+              autor = ""
+              for linha in (tmp / "timeline.tsv").read_text(encoding="utf-8").splitlines():
+                  partes = linha.split("\t")
+                  if len(partes) >= 2 and partes[0] == nome:
+                      autor = partes[1].strip()
+              return autor
+
+          def validar_label_humana() -> None:
+              """`aprovado-humano` so vale se veio de GENTE com poder de escrita:
+              nao-bot, diferente do autor do PR e com permissao write/admin REAL no repo
+              (consultada na API, sem allowlist hardcoded). Fail-closed em qualquer duvida."""
+              autor = ultimo_autor_label(LABEL_HUMANO)
+              if not autor:
+                  resumo.append(
+                      f"\nA label `{LABEL_HUMANO}` esta no PR, mas nao ha evento `labeled` "
+                      f"correspondente no timeline."
+                  )
+                  reprovar(f"Nao foi possivel confirmar quem aplicou a label `{LABEL_HUMANO}` (fail-closed).")
+              if autor.lower().endswith("[bot]"):
+                  reprovar(
+                      f"A label `{LABEL_HUMANO}` foi aplicada por um bot (`{autor}`). "
+                      f"Aprovacao humana nao pode vir de automacao."
+                  )
+              if AUTOR_PR and autor.lower() == AUTOR_PR.lower():
+                  reprovar(
+                      f"A label `{LABEL_HUMANO}` foi aplicada pelo proprio autor do PR (`{autor}`). "
+                      f"A aprovacao precisa vir de outra pessoa."
+                  )
+              proc = subprocess.run(
+                  ["gh", "api", f"repos/{REPO}/collaborators/{autor}/permission", "--jq", ".permission"],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              nivel = proc.stdout.strip()
+              if proc.returncode != 0 or not nivel:
+                  reprovar(
+                      f"Nao foi possivel confirmar a permissao de `{autor}` no repositorio (fail-closed)."
+                  )
+              if nivel not in PERMISSOES_OK:
+                  reprovar(
+                      f"A label `{LABEL_HUMANO}` foi aplicada por `{autor}`, cuja permissao no "
+                      f"repositorio e `{nivel}` (esperado: `write` ou `admin`)."
+                  )
+              resumo.append(
+                  f"\nLabel `{LABEL_HUMANO}` validada — aplicada por **{autor}** "
+                  f"(permissao `{nivel}`, nao-bot, distinto do autor do PR)."
+              )
+
+          resumo.append("## Guard de governanca")
+          resumo.append(f"Commit avaliado: `{os.environ.get('HEAD_SHA', 'n/d')[:12]}`")
+
+          # ---- 1. Saida do loop_guard (fail-closed se ilegivel) --------------------
+          bruto = (tmp / "guard.json").read_text(encoding="utf-8").strip()
+          try:
+              guard = json.loads(bruto)
+              violacoes = list(guard["violacoes"])
+              limpo = bool(guard["limpo"])
+          except Exception as exc:  # noqa: BLE001 - fail-closed proposital
+              resumo.append(f"\nSaida do `loop_guard` invalida ou ausente: `{exc}`")
+              reprovar("Nao foi possivel interpretar a saida do guard (fail-closed).")
+
+          # ---- 2. Sem violacao -> verde -------------------------------------------
+          if limpo and not violacoes:
+              resumo.append("\nNenhum caminho protegido foi tocado. **APROVADO** — o PR pode seguir para o merge automatico.")
+              escrever_resumo()
+              sys.exit(0)
+
+          # ---- 3. Tabela de violacoes ---------------------------------------------
+          # `|` no texto quebraria a tabela do step summary -> escapar.
+          def celula(valor: object) -> str:
+              return str(valor).replace("|", "\\|")
+
+          resumo.append("\n### Caminhos protegidos tocados")
+          resumo.append("")
+          resumo.append("| Arquivo | Classe | Motivo |")
+          resumo.append("| --- | --- | --- |")
+          for item in violacoes:
+              path = celula(item.get("path", "?"))
+              classe = celula(item.get("classe", "?"))
+              motivo = celula(item.get("motivo", "?"))
+              resumo.append(f"| `{path}` | `{classe}` | {motivo} |")
+
+          classes = {str(item.get("classe", "")) for item in violacoes}
+          # Classe fora do contrato conhecido e tratada como critica (fail-closed).
+          desconhecidas = classes - CLASSES_CONHECIDAS
+          if desconhecidas:
+              resumo.append(
+                  f"\nClasse(s) fora do contrato conhecido tratada(s) como `critico` (fail-closed): "
+                  f"{', '.join(sorted(desconhecidas))}."
+              )
+          exige_critica = bool({"critico"} & classes) or bool(desconhecidas)
+          exige_governanca = "governanca" in classes
+
+          # ---- 4. Labels atuais ----------------------------------------------------
+          labels = {
+              linha.strip()
+              for linha in (tmp / "labels.txt").read_text(encoding="utf-8").splitlines()
+              if linha.strip()
+          }
+          resumo.append(f"\nLabels do PR: {', '.join(f'`{lb}`' for lb in sorted(labels)) or '_nenhuma_'}")
+
+          # ---- 5. Violacao critica: exige label do PROPRIO dono ---------------------
+          if exige_critica:
+              if LABEL_CRITICA not in labels:
+                  resumo.append(
+                      f"\nComo destravar: este PR toca o nucleo protegido (M1/score/pesos/artefatos, "
+                      f"deploy/VPS, segredos ou CI). Ele so passa com a label `{LABEL_CRITICA}` "
+                      f"aplicada pelo **proprio dono** (`Kastaldy`), acompanhada de uma DEC registrada "
+                      f"no CLAUDE.md secao 8."
+                  )
+                  reprovar(f"Violacao critica sem a label `{LABEL_CRITICA}`.")
+
+              # Ultimo evento `labeled` para essa label = quem a aplicou por ultimo.
+              autor = ultimo_autor_label(LABEL_CRITICA)
+              if not autor:
+                  resumo.append(
+                      f"\nA label `{LABEL_CRITICA}` esta no PR, mas nao foi encontrado nenhum evento "
+                      f"`labeled` correspondente no timeline."
+                  )
+                  reprovar("Nao foi possivel confirmar quem aplicou a label critica (fail-closed).")
+              if autor.lower() != DONO:
+                  resumo.append(
+                      f"\nA label `{LABEL_CRITICA}` foi aplicada por **{autor}**, e nao pelo dono "
+                      f"(`Kastaldy`). Mudanca critica so o dono libera — remova a label e peca a "
+                      f"aprovacao dele."
+                  )
+                  reprovar(f"Label critica aplicada por `{autor}` (esperado: `Kastaldy`).")
+              resumo.append(f"\nLabel `{LABEL_CRITICA}` confirmada — aplicada pelo dono (`{autor}`).")
+
+          # ---- 6. Violacao de governanca: exige aprovado-humano (validado) ----------
+          if exige_governanca:
+              if LABEL_HUMANO not in labels:
+                  resumo.append(
+                      f"\nComo destravar: este PR toca caminhos de governanca. Um colaborador com "
+                      f"permissao de escrita (que nao seja o autor do PR) precisa revisar e aplicar a "
+                      f"label `{LABEL_HUMANO}`."
+                  )
+                  reprovar(f"Violacao de governanca sem a label `{LABEL_HUMANO}`.")
+              validar_label_humana()
+
+          resumo.append("\n**Resultado: APROVADO** — as violacoes estao cobertas pelas labels exigidas.")
+          escrever_resumo()
+          sys.exit(0)
+          PY
+
+  # ---------------------------------------------------------------------------
+  # review-gate — regua de criticidade do BLOCO. Duas camadas deterministicas:
+  #   (a) fail-closed: o PR precisa de EXATAMENTE UMA label
+  #       `criticidade:{baixa|media|alta|critica}` — zero ou mais de uma reprova
+  #       (sem isso, "nao rotular" seria a rota mais facil para o merge);
+  #   (b) cross-check contra a BASE: a criticidade declarada tem de bater com o campo
+  #       `Criticidade` daquele bloco em `tasks/backlog.md` da MAIN — que o PR nao
+  #       consegue editar para efeito deste check (o job roda em `pull_request_target`).
+  #       Auto-classificacao divergente reprova.
+  #   (c) `alta` / `critica` exigem, alem disso, a label `aprovado-humano` — validada
+  #       da mesma forma que no `guard` (nao-bot, nao o autor do PR, com write/admin).
+  # PR fora do backlog (hotfix/ad-hoc) nao fica travado: sem bloco identificavel, ele
+  # passa com `aprovado-humano` aplicada por humano.
+  # Complementa o `guard`: la o veredito vem do DIFF; aqui, da criticidade DECLARADA.
+  # ---------------------------------------------------------------------------
+  review-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # O `permissions` do job SUBSTITUI o do topo — por isso repetimos contents/issues aqui.
+    permissions:
+      contents: read        # checkout da BASE (main) para ler tasks/backlog.md
+      pull-requests: write  # remover labels de aprovacao velhas (synchronize/edited)
+      issues: read          # timeline do PR (/issues/{n}/timeline)
+    steps:
+      - name: Contexto merge_group (o PR ja foi julgado; nada a rejulgar)
+        if: github.event_name == 'merge_group'
+        run: |
+          echo "Evento merge_group - o veredito do review-gate foi dado no PR. Check verde."
+
+      # PRIMEIRO passo do gate (fail-closed): mesma invalidacao de aprovacao velha do `guard`, aqui
+      # tambem. Idempotente e race-safe (ambos os gates rodam este passo): lista -> DELETE
+      # best-effort -> RELEITURA AUTORITATIVA; se qualquer label de aprovacao PERSISTIR, exit 1
+      # (check VERMELHO, nunca pulado). Ver comentario detalhado no job `guard`.
+      - name: Invalidar aprovacao apos conteudo novo (fail-closed)
+        if: github.event_name == 'pull_request_target' && (github.event.action == 'synchronize' || github.event.action == 'edited')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          ler_labels() { gh api "repos/$REPO/issues/$PR_NUMBER/labels" --paginate --jq '.[].name'; }
+          if ! ler_labels > "$RUNNER_TEMP/labels_pre.txt"; then
+            echo "::error::Falha ao listar labels do PR #$PR_NUMBER para invalidar aprovacao (fail-closed)."
+            exit 1
+          fi
+          for label in critica-aprovada aprovado-humano; do
+            if grep -qxF "$label" "$RUNNER_TEMP/labels_pre.txt"; then
+              echo "Removendo label '$label' (conteudo novo invalida a aprovacao anterior)."
+              gh api -X DELETE "repos/$REPO/issues/$PR_NUMBER/labels/$label" >/dev/null 2>&1 || true
+            fi
+          done
+          if ! ler_labels > "$RUNNER_TEMP/labels_post.txt"; then
+            echo "::error::Falha ao reconferir labels apos remocao (fail-closed)."
+            exit 1
+          fi
+          for label in critica-aprovada aprovado-humano; do
+            if grep -qxF "$label" "$RUNNER_TEMP/labels_post.txt"; then
+              echo "::error::Label '$label' persiste apos DELETE — recusando avaliar conteudo novo com aprovacao velha (fail-closed)."
+              exit 1
+            fi
+          done
+          echo "Labels de aprovacao ausentes apos conteudo novo."
+
+      # Sem `ref:` = checkout da BASE (main): o `tasks/backlog.md` lido aqui e o da main,
+      # nao o do PR. E isso que impede a auto-classificacao.
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: github.event_name != 'merge_group'
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        if: github.event_name != 'merge_group'
+        with:
+          python-version: "3.11"
+
+      - name: Coletar labels e timeline do PR
+        if: github.event_name != 'merge_group'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -uo pipefail
+          if ! gh api "repos/$REPO/issues/$PR_NUMBER/labels" --paginate \
+              --jq '.[].name' > "$RUNNER_TEMP/labels.txt"; then
+            echo "::error::Falha ao ler as labels do PR #$PR_NUMBER (fail-closed)."
+            exit 1
+          fi
+          if ! gh api "repos/$REPO/issues/$PR_NUMBER/timeline" --paginate \
+              --jq '.[] | select(.event == "labeled") | [.label.name, (.actor.login // "")] | @tsv' \
+              > "$RUNNER_TEMP/timeline.tsv"; then
+            echo "::error::Falha ao ler o timeline do PR #$PR_NUMBER (fail-closed)."
+            exit 1
+          fi
+
+      # Titulo e nome de branch sao dados NAO CONFIAVEIS (vem do PR) — entram por env,
+      # nunca interpolados no corpo do script.
+      - name: Avaliar a criticidade declarada contra o backlog da base
+        if: github.event_name != 'merge_group'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          AUTOR_PR: ${{ github.event.pull_request.user.login }}
+          PR_TITULO: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import subprocess
+          import sys
+          import unicodedata
+
+          LABEL_HUMANO = "aprovado-humano"          # identificador — sem acento
+          PREFIXO = "criticidade:"                  # identificador — sem acento
+          NIVEIS = {"baixa", "media", "alta", "critica"}
+          EXIGEM_HUMANO = {"alta", "critica"}
+          PERMISSOES_OK = {"admin", "maintain", "write"}
+          # Ordem total das criticidades (fraca -> forte). Quando o bloco declara uma FAIXA
+          # ("Alta/Critica"), o cross-check exige o MAXIMO: aceitar o nivel mais fraco deixaria
+          # um bloco critico escapar do gate do dono declarando-se `alta` (N6).
+          ORDEM_CRITICIDADE = {"baixa": 0, "media": 1, "alta": 2, "critica": 3}
+          # O backlog escreve "Média"/"Crítica"/"Estratégica" (com acento, texto humano);
+          # a label e um IDENTIFICADOR, sem acento. Normalizamos antes de comparar.
+          # "Estrategica" e a criticidade mais alta do backlog -> exige a label `critica`.
+          MAPA_BACKLOG = {
+              "baixa": "baixa",
+              "media": "media",
+              "alta": "alta",
+              "critica": "critica",
+              "estrategica": "critica",
+          }
+
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          REPO = os.environ["REPO"]
+          AUTOR_PR = os.environ.get("AUTOR_PR", "")
+          resumo: list[str] = []
+
+          def escrever_resumo() -> None:
+              destino = os.environ.get("GITHUB_STEP_SUMMARY")
+              if destino:
+                  with open(destino, "a", encoding="utf-8") as fh:
+                      fh.write("\n".join(resumo) + "\n")
+              print("\n".join(resumo))
+
+          def reprovar(motivo: str) -> None:
+              resumo.append(f"\n**Resultado: REPROVADO.** {motivo}")
+              escrever_resumo()
+              print(f"::error::{motivo}")
+              sys.exit(1)
+
+          def aprovar(motivo: str) -> None:
+              resumo.append(f"\n**Resultado: APROVADO.** {motivo}")
+              escrever_resumo()
+              sys.exit(0)
+
+          def sem_acento(texto: str) -> str:
+              decomposto = unicodedata.normalize("NFKD", texto)
+              return "".join(c for c in decomposto if not unicodedata.combining(c))
+
+          def ultimo_autor_label(nome: str) -> str:
+              autor = ""
+              for linha in (tmp / "timeline.tsv").read_text(encoding="utf-8").splitlines():
+                  partes = linha.split("\t")
+                  if len(partes) >= 2 and partes[0] == nome:
+                      autor = partes[1].strip()
+              return autor
+
+          def exigir_label_humana(contexto: str) -> None:
+              """Mesma regra do `guard`: `aprovado-humano` so vale se veio de GENTE com
+              poder de escrita — nao-bot, nao o autor do PR, com permissao write/admin
+              REAL no repo (consultada na API, sem allowlist hardcoded)."""
+              if LABEL_HUMANO not in labels:
+                  reprovar(f"{contexto} Falta a label `{LABEL_HUMANO}`, aplicada por um revisor humano.")
+              autor = ultimo_autor_label(LABEL_HUMANO)
+              if not autor:
+                  reprovar(f"Nao foi possivel confirmar quem aplicou a label `{LABEL_HUMANO}` (fail-closed).")
+              if autor.lower().endswith("[bot]"):
+                  reprovar(
+                      f"A label `{LABEL_HUMANO}` foi aplicada por um bot (`{autor}`). "
+                      f"Aprovacao humana nao pode vir de automacao."
+                  )
+              if AUTOR_PR and autor.lower() == AUTOR_PR.lower():
+                  reprovar(
+                      f"A label `{LABEL_HUMANO}` foi aplicada pelo proprio autor do PR (`{autor}`). "
+                      f"A aprovacao precisa vir de outra pessoa."
+                  )
+              proc = subprocess.run(
+                  ["gh", "api", f"repos/{REPO}/collaborators/{autor}/permission", "--jq", ".permission"],
+                  capture_output=True,
+                  text=True,
+                  check=False,
+              )
+              nivel = proc.stdout.strip()
+              if proc.returncode != 0 or not nivel:
+                  reprovar(f"Nao foi possivel confirmar a permissao de `{autor}` no repositorio (fail-closed).")
+              if nivel not in PERMISSOES_OK:
+                  reprovar(
+                      f"A label `{LABEL_HUMANO}` foi aplicada por `{autor}`, cuja permissao no "
+                      f"repositorio e `{nivel}` (esperado: `write` ou `admin`)."
+                  )
+              resumo.append(
+                  f"\nLabel `{LABEL_HUMANO}` validada — aplicada por **{autor}** "
+                  f"(permissao `{nivel}`, nao-bot, distinto do autor do PR)."
+              )
+
+          resumo.append("## Gate de criticidade")
+
+          # ---- 1. Exatamente UMA label de criticidade (fail-closed) -----------------
+          labels = {
+              linha.strip()
+              for linha in (tmp / "labels.txt").read_text(encoding="utf-8").splitlines()
+              if linha.strip()
+          }
+          resumo.append(f"\nLabels do PR: {', '.join(f'`{lb}`' for lb in sorted(labels)) or '_nenhuma_'}")
+
+          declaradas = sorted(lb for lb in labels if lb.startswith(PREFIXO))
+          validas = [lb for lb in declaradas if lb[len(PREFIXO):] in NIVEIS]
+          if len(validas) != 1 or len(declaradas) != 1:
+              resumo.append(
+                  "\nTodo PR precisa declarar **exatamente uma** label "
+                  "`criticidade:baixa` | `criticidade:media` | `criticidade:alta` | `criticidade:critica`, "
+                  "coerente com o campo **Criticidade** do bloco em `tasks/backlog.md`."
+              )
+              reprovar(
+                  f"Esperava exatamente uma label de criticidade valida; encontrei "
+                  f"{len(declaradas)} ({', '.join(f'`{lb}`' for lb in declaradas) or 'nenhuma'})."
+              )
+          declarada = validas[0][len(PREFIXO):]
+          resumo.append(f"\nCriticidade declarada: **{declarada}**.")
+
+          # ---- 2. Cross-check contra o backlog da BASE ------------------------------
+          backlog_path = pathlib.Path("tasks/backlog.md")
+          backlog = backlog_path.read_text(encoding="utf-8") if backlog_path.exists() else ""
+          linhas = backlog.splitlines()
+          # Vocabulario de blocos vem do proprio backlog da base (nao do PR).
+          ids_backlog = [
+              m.group(1)
+              for linha in linhas
+              if (m := re.match(r"^#{2,4}\s*(BLK-[A-Z0-9]+(?:-[0-9A-Za-z]+)+)", linha))
+          ]
+          alvo = f"{os.environ.get('PR_BRANCH', '')} {os.environ.get('PR_TITULO', '')}".lower()
+          candidatos = sorted({bid for bid in ids_backlog if bid.lower() in alvo})
+          # Descarta IDs contidos em outro candidato (ex.: BLK-ORQ-2 e substring de BLK-ORQ-20):
+          # so o mais especifico conta. Sem isso, um substring viraria falsa ambiguidade.
+          maximais = [
+              c for c in candidatos
+              if not any(c != outro and c.lower() in outro.lower() for outro in candidatos)
+          ]
+          # N6(ii): ambiguidade genuina (2+ blocos distintos casam — ex.: dois IDs no titulo) =
+          # fail-closed. Nao da para cross-checar contra "o" bloco -> exige revisor humano.
+          if len(maximais) > 1:
+              resumo.append(
+                  f"\nEste PR casa com mais de um bloco do backlog da base: "
+                  f"{', '.join(f'`{b}`' for b in maximais)}. Ambiguidade e tratada como fail-closed."
+              )
+              exigir_label_humana(
+                  "Titulo/branch casam com mais de um bloco do backlog (ambiguidade)."
+              )
+              aprovar(
+                  f"PR ambiguo ({', '.join(maximais)}) liberado pela revisao humana (`{LABEL_HUMANO}`)."
+              )
+          bloco = maximais[0] if maximais else ""
+
+          esperadas: set[str] = set()
+          if bloco:
+              inicio = next(
+                  i for i, linha in enumerate(linhas)
+                  if re.match(rf"^#{{2,4}}\s*{re.escape(bloco)}\b", linha)
+              )
+              campo = ""
+              for linha in linhas[inicio + 1 : inicio + 80]:
+                  if re.match(r"^#{2,4}\s", linha):
+                      break
+                  tabela = re.match(r"^\|\s*\*{0,2}Criticidade\*{0,2}\s*\|(.+)$", linha.strip())
+                  simples = re.match(r"^\*{0,2}Criticidade\*{0,2}\s*:\s*(.+)$", linha.strip())
+                  if tabela:
+                      campo = tabela.group(1).rsplit("|", 1)[0]
+                      break
+                  if simples:
+                      campo = simples.group(1)
+                      break
+              if campo:
+                  # So o "cabecalho" do campo conta (antes do parentese explicativo), para
+                  # nao pescar palavras soltas da justificativa.
+                  cabecalho = sem_acento(campo.split("(")[0]).lower()
+                  esperadas = {
+                      MAPA_BACKLOG[p] for p in re.findall(r"[a-z]+", cabecalho) if p in MAPA_BACKLOG
+                  }
+                  resumo.append(
+                      f"\nBloco identificado no backlog da base: **{bloco}** — campo Criticidade: "
+                      f"`{campo.strip()}` -> label(s) aceita(s): "
+                      f"{', '.join(f'`{PREFIXO}{e}`' for e in sorted(esperadas)) or '_indefinida_'}."
+                  )
+
+          if not esperadas:
+              # Bloco nao identificado (ou sem campo Criticidade utilizavel) -> fail-closed,
+              # com escape legitimo para hotfix/PR ad-hoc: aprovacao humana explicita.
+              resumo.append(
+                  f"\nNao consegui casar este PR com um bloco de `tasks/backlog.md` da base "
+                  f"(bloco `{bloco or 'nao identificado'}`). PRs fora do backlog (hotfix/ad-hoc) so "
+                  f"passam com a label `{LABEL_HUMANO}` aplicada por um revisor humano."
+              )
+              exigir_label_humana("PR sem bloco correspondente no backlog da base.")
+              if declarada in EXIGEM_HUMANO:
+                  aprovar(f"Criticidade `{declarada}` fora do backlog, coberta por `{LABEL_HUMANO}`.")
+              aprovar(f"PR fora do backlog liberado por `{LABEL_HUMANO}`.")
+
+          # N6(i): quando o bloco declara uma FAIXA, o alvo e o MAXIMO — nao o conjunto. Exigir
+          # `declarada == max` impede que um bloco `Alta/Critica` seja mergeado como `alta`
+          # (que exigiria so um colaborador qualquer, escapando do gate do dono).
+          esperada_max = max(esperadas, key=lambda n: ORDEM_CRITICIDADE[n])
+          faixa = "/".join(sorted(esperadas, key=lambda n: ORDEM_CRITICIDADE[n]))
+          if declarada != esperada_max:
+              resumo.append(
+                  f"\nA label declarada (`{PREFIXO}{declarada}`) nao bate com a criticidade do bloco "
+                  f"**{bloco}** no backlog da base (faixa `{faixa}` -> exige o MAXIMO "
+                  f"`{PREFIXO}{esperada_max}`). Corrija a label — ou o backlog, num PR proprio."
+              )
+              reprovar(
+                  f"Auto-classificacao rejeitada: bloco {bloco} exige `{esperada_max}` "
+                  f"(faixa declarada no backlog: {faixa}), mas o PR se declarou `{declarada}`."
+              )
+          resumo.append(
+              f"\nCriticidade declarada (`{declarada}`) confere com o maximo exigido pelo "
+              f"backlog da base (`{esperada_max}`)."
+          )
+
+          # ---- 3. Alta / critica exigem revisao humana ------------------------------
+          if declarada in EXIGEM_HUMANO:
+              exigir_label_humana(
+                  f"Este PR e de criticidade `{declarada}` e nao mergeia sozinho."
+              )
+              aprovar(f"Criticidade `{declarada}` coberta pela label `{LABEL_HUMANO}`.")
+
+          aprovar(
+              f"Criticidade `{declarada}` mergeia sozinha (nao exige label de aprovacao humana)."
+          )
+          PY
