@@ -22,6 +22,9 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # BLK-ORQ-21: `test` vira required check com enforce_admins=true. Sem teto de tempo,
+    # um job travado segura o portao pelo default de 6h e nenhum PR mergeia.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
