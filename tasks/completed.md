@@ -8485,3 +8485,127 @@ recomendação; o lock universal já garante as mesmas versões de libs em qualq
 ---
 
 - BLK-SCORE-04 (concluído 2026-05-31) — ver tasks/completed.md
+
+---
+
+### BLK-RELPON-06 — Legibilidade dos mapas no PDF + linha de dado por RAIO (densidade sobre área válida)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (render/display do Relatório Pontual + mudança de SEMÂNTICA da linha de dado; **READ-ONLY sobre o M1**; núcleo `censo_*` só ESTENDE render, sem tocar interseção/raio/estrutura de páginas/marca d'água). |
+| **Prioridade** | A definir (Vinicius). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — visual do PDF]` → Builder → QA. |
+| **Status** | Pendente — **decisões de produto D1/D2 JÁ TOMADAS** (Vinicius, 2026-07-13, ver abaixo). |
+| **Depende de** | **BLK-RELPON-05** (concluído 2026-07-10, PR #90 — introduziu a faixa superior "no ponto"). |
+| **Autonomia** | **manual (NÃO loop-safe)** — exige revisão VISUAL do PDF gerado; o loop não enxerga o render. |
+
+**Contexto (relato do Vinicius, 2026-07-13, com print do relatório de Rio Branco/AC `-9.95796, -67.81461`).**
+Duas dores distintas no Relatório Pontual Censitário:
+1. **Legibilidade:** nos slides **2 (Mapas de calor)** e **3 (Concorrentes)** o texto dos mapas fica pequeno e
+   **borrado**.
+2. **Semântica do dado:** a linha de dado do ponto hoje vem do **setor censitário que contém o pin**; o número
+   correto de densidade deve ser a **população contida no raio dividida pela área de espaço VÁLIDO** (que não é
+   mar/rio/vazio).
+
+**Diagnóstico medido (2026-07-13).**
+- O PNG é gerado com canvas **1000 px** de largura (`render_mapas_censitarios_combinados`, default) e encaixado
+  numa célula de **~299 pt** na tira 1x3 (`_map_grid_cells`: `usable_w = 960 - 2*20 - 2*12 = 896`; `896/3`) →
+  **redução de ~3,35x**. Tamanhos EFETIVOS no slide: título `20 px → ~6 pt`; linha do ponto `17 px → ~5,1 pt`;
+  legenda corpo `13 px → ~3,9 pt`; rótulos `11 px → ~3,3 pt`. São **dois** problemas: **tamanho** (fonte pequena)
+  e **nitidez** (reamostragem de 1000 px para 299 pt) — exigem **duas alavancas**: canvas de maior resolução
+  **e** fontes ampliadas em relação ao canvas.
+- A densidade do raio hoje é `pop_total_raio / area_km2` com `area_km2 = π · raio²` = **7,07 km² SEMPRE**
+  (`censo_point.py:168` e `:305`) — ou seja, **divide pelo círculo inteiro, incluindo água/vazio**, o que
+  **subestima** a densidade (visível no print: a mancha cinza do rio dentro do círculo de Rio Branco).
+- **O denominador correto JÁ É CALCULADO:** `area_intersecao_total_m2` (`censo_point.py:265`) = soma das áreas de
+  interseção dos setores IBGE com o círculo. O IBGE **não cobre água** → é exatamente a "área de espaço válido".
+  Falta apenas fazer a divisão.
+
+**Decisões de produto (gate humano, JÁ RESPONDIDAS por Vinicius em 2026-07-13).**
+- **D1 = os 3 dados passam a ser do RAIO** (não mais do setor que contém o pin):
+  - **Densidade** = `pop_total_raio / (area_intersecao_total_m2 / 1e6)` → **campo NOVO** (ex.:
+    `densidade_pop_raio_valida_hab_km2`).
+  - **Renda** = `renda_per_capita_media_raio` (**já existe** no `result`).
+  - **Score** = `score_setor_medio` (**já existe** no `result`).
+  - **Isto REVERTE o D3 do BLK-RELPON-05** (que fixou "valor do setor que CONTÉM o ponto"). Registrar a reversão
+    no `completed.md` do ciclo.
+  - Rótulo da faixa muda de **"no ponto"** para **"no raio"** (ex.: `Densidade no raio: 12.400 hab/km2`) — o
+    D2 do BLK-RELPON-05 é atualizado. Manter formatação ASCII-safe (`hab/km2`, `R$` sem centavos, score inteiro).
+- **D2 = fontes maiores SÓ no PDF.** O mesmo PNG serve o dashboard (tamanho quase real) e o PDF (reduzido 3,35x);
+  ampliar a fonte nos dois deixaria o mapa do dashboard com texto desproporcional. Implementar via **parâmetro(s)
+  OPCIONAL(is) com default `None` = render byte-a-byte IDÊNTICO ao de hoje** (padrão da emenda 2026-06-12 da
+  DEC-005), usados **apenas** no caminho de geração do relatório.
+
+**Escopo permitido.**
+- `censo_point.py` — expor o campo NOVO de densidade sobre área válida (leitura/derivação a partir de
+  `pop_total_raio` e `area_intersecao_total_m2`, ambos já calculados). **`n/d` quando não houver setores no raio
+  OU `area_intersecao_total_m2 == 0`** (guardar contra divisão por zero).
+- `censo_map.py` — (a) parâmetro(s) opcional(is) de **escala de texto e/ou canvas** aplicados a **título**,
+  **linha de dado** e **legenda** (título/corpo/rótulos); (b) trocar a fonte dos 3 valores da faixa para os
+  agregados do raio (D1) e o rótulo para "no raio".
+- `censo_report.py` — passar a escala/resolução no caminho do PDF (slides **2** e **3**).
+- Testes + `docs/relatorio_pontual_censitario.md`.
+
+**Fora de escopo (INTOCADOS).**
+- Método de interseção `setor_censitario_intersecao_area_1p5km`, **raio 1,5 km**, `RAIO_CENSITARIO_DEFAULT_KM`.
+- **O choropleth** (cor por setor) — só a **faixa de texto** muda; as cores por setor permanecem.
+- Contagem/ordem/estrutura das **5 páginas**, grid de Big Numbers 4x2, marca d'água anti-PII,
+  `set_compression(False)`.
+- `score_priorizacao`, `hex_score_estrutural`, pesos (`renda=0.40`/`pop=0.60`), carteira, plano, artefatos
+  oficiais do M1 (**READ-ONLY**, §5).
+- Os 5 campos do "setor do ponto" do BLK-RELPON-05 **não são removidos** do `result` (seguem para
+  CSV/auditoria); apenas **deixam de alimentar a faixa**.
+
+**Riscos.**
+- **Os números vão MUDAR** nos relatórios já gerados: a nova densidade é **sempre ≥ a atual** (denominador menor).
+  É esperado e é o ponto do bloco — mas convém avisar quem já usou um PDF antigo.
+- Divisão por zero se a área válida for 0 → `n/d` obrigatório.
+- O render é compartilhado com a **API** (que já passa knobs opcionais): o default `None` deve preservar o
+  caminho da API e do dashboard byte-a-byte.
+- **Consistência com os Big Numbers** (página 4), que já exibem médias do raio: conferir que os rótulos não
+  fiquem contraditórios após a mudança.
+
+**Critério de aceite.**
+- Slides **2 e 3**: título, linha de dado e legenda **legíveis e nítidos** — revisão visual humana aprovada
+  (alvo: texto efetivo ≥ ~9–10 pt no slide; sem borrão de reamostragem).
+- Faixa exibe os agregados do **raio** (D1), com "n/d" quando não há setores/área válida.
+- Densidade = população do raio ÷ área válida (exclui água/vazio), **verificada no caso de Rio Branco** (o rio
+  dentro do círculo deve elevar a densidade vs. o valor antigo).
+- **Dashboard e API: render byte-a-byte idêntico** quando os novos parâmetros não são passados.
+- Interseção/raio/estrutura de páginas/marca d'água **intocados**; **zero** alteração no M1.
+- Testes cobrindo a nova densidade (incl. área válida = 0) e a escala de texto; `ruff`/`mypy` limpos; suíte verde.
+
+---
+
+## Fechamento de ciclo — BLK-RELPON-06 (2026-07-14)
+
+Veredito QA: **APROVADO COM RESSALVAS** (Opus 4.8). Esteira: Block Orchestrator (sonnet) -> Planner (sonnet) -> [gate humano de produto] -> Builder (sonnet) -> QA (opus) -> [revisao visual humana].
+
+**ATENCAO — o texto do bloco acima esta SUPERSEDED em 2 pontos.** Ele foi escrito ANTES do gate; leia estas correcoes:
+
+**1. O D2 ("fontes maiores SO no PDF", com param opcional e dashboard byte-a-byte identico) foi REVERTIDO pelo D4** (Vinicius, 2026-07-14): a fonte maior vale para **dashboard, PDF e API**, com **UM unico render**. Motivo: "so no PDF" exigiria renderizar os mapas DUAS vezes (dobrando o custo de geracao do relatorio, que ja e uma dor conhecida) e tocar `pages.py`. Consequencia: `pages.py`, `tests/integration/test_streamlit_app.py` e o plumbing `mapas_pdf` em `censo_report.py` NAO foram necessarios.
+
+**2. A premissa do D1 ("o IBGE nao cobre agua") e FALSA para RIOS.** Medido com dado real: os setores censitarios **ladrilham por cima do rio** — em Rio Branco/AC (`-9.95796,-67.81461`) a area valida deu 7,068 km2 contra 7,069 km2 do circulo (0,0% excluido; densidade 2.890,84 -> 2.891,13). A malha do IBGE so termina de verdade no **MAR**. Evidencia:
+
+| Ponto | Area valida | Agua excluida | Densidade antes -> depois |
+|---|---|---|---|
+| Praia Grande/SP (orla) | 6,40 km2 | 0,67 km2 (9,4%) | 5.751 -> 6.350 (+10,4%) |
+| Santos/SP (sobre a agua) | 0,28 km2 | 6,79 km2 (96,1%) | 22 -> 567 (25x) |
+| Rio Branco/AC (rio) | 7,068 km2 | 0,001 km2 (0,0%) | 2.891 -> 2.891 |
+
+**Decisao humana (Vinicius, 2026-07-14): considerar SO o mar e suficiente; rios NAO sao necessarios.** Nenhum bloco de hidrografia sera aberto. O ganho real do campo novo e corrigir a densidade em TODA a costa (antes, um ponto na orla de Santos aparecia com 22 hab/km2 porque a populacao era diluida por km2 de oceano).
+
+**Decisoes de produto do gate:**
+- **D1** — a faixa dos 3 choropleths passa a mostrar os agregados do **RAIO** (REVERTE o D3 do BLK-RELPON-05, que fixara "setor que contem o pin"). Campo NOVO `densidade_pop_raio_valida_hab_km2` = `pop_total_raio / (area_intersecao_total_m2/1e6)`; Renda = `renda_per_capita_media_raio`; Score = `score_setor_medio`. Rotulo "no ponto" -> "no raio". Os 5 campos `*_setor_ponto` PERMANECEM no `result` (CSV/auditoria). Efeito em Rio Branco: densidade 941 -> 2.891; renda R$ 1.857 -> R$ 2.061; score 92 -> 76.
+- **D3 (fonte)** — `_font()` passa a usar SEMPRE a fonte embutida do Pillow (`ImageFont.load_default(size=)`), abandonando `arial.ttf`. **Achado do Planner, confirmado:** a imagem de producao (`python:3.11-slim`) NAO tem fonte alguma -> `arial.ttf` levantava OSError -> `load_default()` SEM size devolvia bitmap FIXO de ~10px que IGNORAVA o tamanho pedido. Ou seja, **o texto dos mapas estava quebrado em producao** (dashboard E PDF), nao so pequeno. `Dockerfile.streamlit` NAO foi tocado (evitou reclassificar o PR como Critico pelo loop_guard/DEC-016).
+- **D4 (render)** — fonte maior para todos, 1 render (ver ponto 1 acima).
+
+**Insight matematico do Planner (registrado):** escalar canvas E fontes pelo mesmo fator e **no-op para o tamanho do texto no PDF** — a largura embutida e fixa pela geometria da pagina, entao o fator se cancela (`pt_efetivo = font_px * (celula/canvas)`). Canvas maior so melhora nitidez. Por isso a solucao e **fonte-only**: titulo 20->44, linha de dado 17->38, legenda-titulo 17->34, legenda-corpo 13->32 (=9,6pt no PDF, acima do alvo de 9-10pt); layout `_MAP_TOP` 92->132, `_VALOR_Y` 51->78, coluna da legenda 252->330.
+
+**Bugs reais achados pelo Builder na revisao visual** (nao previstos pelo Planner): o caption "Pins: Ultra e concorrentes" (362px vs 252 de orcamento) e o subtitulo "Renda per capita (R$/pessoa)" (418px vs 320) transbordavam do canvas nos tamanhos propostos -> 2 constantes dedicadas (`_FS_LEGENDA_CAPTION=20`, `_FS_LEGENDA_SUBTITULO=22`) + teste de regressao para cada.
+
+**Validacoes (QA, evidencia propria):** suite completa serial `1 failed, 1747 passed, 2 skipped` — a unica falha (`test_score_retencao_territorial::test_run_readonly_m1_por_mtime`, camada M2/lifetime) foi provada PRE-EXISTENTE por stash+re-run no baseline (staging gitignored ausente). `ruff`/`mypy` limpos; `import streamlit_app` ok. `pytest -n auto` quebra por infra do xdist (Windows/Py3.14), gate rodado serial. Teste de **contrato de legibilidade** adicionado (trava `_FS_LEGENDA_CORPO * 0.2987 >= 9.0` e o rotulo mais longo cabendo na coluna) — a legibilidade fica travada em CI, nao depende so do olho.
+
+**READ-ONLY M1:** `score_priorizacao`/pesos/`hex_score_estrutural`/carteira/plano/artefatos oficiais INALTERADOS. Intocados tambem: `setor_censitario_intersecao_area_1p5km`, raio 1,5 km, estrutura das 5 paginas, grid de Big Numbers, marca d'agua, `set_compression(False)`, choropleth e faixas de cor (so texto/fonte/layout mudou). `pages.py` e `Dockerfile.streamlit` NAO tocados.
+
+**Arquivos:** `src/motor_expansao/dashboard/{censo_point,censo_map,censo_report}.py`; `tests/unit/test_relatorio_pontual_censitario_{motor,mapa}.py`; `docs/relatorio_pontual_censitario.md`. Sucessor aberto: **BLK-RELPON-06-FU1** (piso do Pillow no `pyproject.toml`). Merge = passo humano.

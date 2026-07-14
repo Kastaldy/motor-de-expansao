@@ -33,12 +33,14 @@ PDF_SECTION_HEADERS = (
 # `score` (BLK-CENSO-03-FU5) e o choropleth de score censitario COM legenda; a camada
 # `concorrentes` e o mapa SO de pins (basemap + pins Ultra/concorrentes + ponto central),
 # SEM choropleth — renderizada na pagina de Concorrentes (`_competitors_page`).
-# BLK-RELPON-05: os PNGs de densidade/renda/score que chegam aqui ja trazem "assada" a
-# faixa superior com o valor do setor do ponto (produzida em
+# BLK-RELPON-05 (faixa REVERTIDA para os agregados do raio pelo BLK-RELPON-06/D1): os
+# PNGs de densidade/renda/score que chegam aqui ja trazem "assada" a faixa superior com
+# o valor do raio de 1.5 km (produzida em
 # `censo_map.render_mapas_censitarios_combinados`/`_render_camada`); este modulo recebe
 # `mapas: dict[str, bytes]` ja pronto e so embute os bytes (`_mapas_calor_page`/
 # `_classico_mapas_calor_page` via `_draw_maps_grid`/`_map_grid_cells`), sem nenhuma
-# mudanca de logica.
+# mudanca de logica. As fontes maiores do BLK-RELPON-06 (D4) tambem vem embutidas nos
+# bytes do PNG (UM unico render p/ dashboard/PDF/API) -- nada muda neste modulo.
 MAP_LAYER_TITLES: tuple[tuple[str, str], ...] = (
     ("densidade", "População - Densidade"),
     ("renda", "Renda per capita"),
@@ -381,9 +383,10 @@ def _mapas_calor_page(
 ) -> list[tuple[float, float, float, float]]:
     """Slide unico "Mapas de calor" (template recente): faixa de titulo + tira 1x3 + rodape.
 
-    BLK-RELPON-05: a faixa "<Variavel> no ponto: <valor>" de cada mapa ja vem desenhada
-    nos bytes de `layers` (ver comentario acima de `MAP_LAYER_TITLES`); nenhuma mudanca
-    de logica necessaria nesta funcao.
+    BLK-RELPON-05 (faixa REVERTIDA para o raio pelo BLK-RELPON-06/D1): a faixa
+    "<Variavel> no raio: <valor>" de cada mapa ja vem desenhada nos bytes de `layers`
+    (ver comentario acima de `MAP_LAYER_TITLES`); nenhuma mudanca de logica necessaria
+    nesta funcao.
     """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)

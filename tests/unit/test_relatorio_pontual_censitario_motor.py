@@ -69,6 +69,12 @@ def test_motor_censitario_setor_totalmente_dentro_do_raio():
     setores = result["setores_intersectados"]
     assert setores.loc[0, "peso_area_setor"] == pytest.approx(1.0)
     assert setores.loc[0, "area_intersecao_m2"] == pytest.approx(setor.area)
+    # BLK-RELPON-06 (D1): densidade sobre area de espaco VALIDO (setor.area, aqui igual a
+    # area de intersecao pois o setor esta totalmente dentro do raio).
+    assert result["densidade_pop_raio_valida_hab_km2"] == pytest.approx(
+        round(500 / (setor.area / 1_000_000.0), 2)
+    )
+    assert result["densidade_pop_raio_valida_hab_km2"] > result["densidade_pop_raio_hab_km2"]
 
 
 def test_motor_censitario_setor_parcialmente_dentro_do_raio():
@@ -91,6 +97,18 @@ def test_motor_censitario_setor_parcialmente_dentro_do_raio():
         rel=0.01,
     )
     assert result["pop_total_raio"] == pytest.approx(1500 * expected_weight, rel=0.01)
+    # BLK-RELPON-06 (D1): densidade sobre area de espaco VALIDO (soma da area de
+    # intersecao, aqui menor que o setor inteiro) -- analogo determinístico do caso real
+    # de Rio Branco/AC (interseccao < circulo cheio -> densidade nova sobe vs a antiga,
+    # que divide por pi*raio^2 fixo).
+    assert result["densidade_pop_raio_valida_hab_km2"] == pytest.approx(
+        round(
+            (1500 * expected_weight) / (expected_intersection_area / 1_000_000.0),
+            2,
+        ),
+        rel=0.01,
+    )
+    assert result["densidade_pop_raio_valida_hab_km2"] > result["densidade_pop_raio_hab_km2"]
 
 
 def test_motor_censitario_exclui_setor_fora_do_raio():
@@ -102,6 +120,8 @@ def test_motor_censitario_exclui_setor_fora_do_raio():
     assert result["n_setores"] == 0
     assert result["pop_total_raio"] is None
     assert result["setores_intersectados"].empty
+    # BLK-RELPON-06 (D1): sem setores intersectados -> sem area valida -> "n/d" (None).
+    assert result["densidade_pop_raio_valida_hab_km2"] is None
 
 
 def test_motor_censitario_entrada_vazia_conta_pontos_por_distancia_real():
