@@ -8485,3 +8485,10 @@ recomendação; o lock universal já garante as mesmas versões de libs em qualq
 ---
 
 - BLK-SCORE-04 (concluído 2026-05-31) — ver tasks/completed.md
+
+---
+
+## Fechamento de ciclo - BLK-ORQ-25 (2026-07-14)
+
+Demonstrador do auto-merge zero-humanos da DEC-016 (ORQ-21) + housekeeping diferido (ORQ-24).
+Adicionados testes de regressao CRLF para `is_done`/`emit_delta` em `tests/unit/test_housekeeping_helper.py` (4 casos: heading movido + fechamento, prosa ignorada, sem  no ID, sem colisao de prefixo). READ-ONLY sobre o M1; toca so `tests/`. Este PR de implementacao entrou pelo AUTO-MERGE nativo (Baixa, 4 checks verdes, ZERO humanos) - a prova que faltava do ORQ-21. Stub do backlog DIFERIDO para o PR de housekeeping em lote (modo auto-merge do ORQ-24); ate la, `housekeeping_move_block.py --is-done BLK-ORQ-25` sai 0 e `--emit-delta` lista o bloco.
