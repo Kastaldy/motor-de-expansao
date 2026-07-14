@@ -135,3 +135,86 @@ def test_crlf_preserved_and_byte_identical():
     assert re.search(r"(?<!\r)\n", nc) is None
     # verify_moved deve passar mesmo em CRLF (stub termina com \r\n)
     hk.verify_moved(nb, nc, "BLK-FAKE-01")
+
+
+# --------------------------------------------------------------------------------------------
+# BLK-ORQ-24: is_done / emit_delta (seleção do loop + delta do PR de lote, sem substring)
+# --------------------------------------------------------------------------------------------
+
+# completed.md realista: um bloco movido (### heading), um resumo de fechamento (## heading) e
+# MENÇÕES em prosa a blocos que estavam ABERTOS quando o resumo foi escrito.
+COMPLETED_ORQ24 = """# Completed Tasks
+
+## Histórico
+
+### BLK-DONE-01 — Bloco movido pelo helper (modo merge-humano)
+
+Conteúdo. Sucessor: BLK-OPEN-99 (ainda aberto no backlog).
+
+## Fechamento de ciclo — BLK-DONE-02 (2026-07-14)
+
+Resumo do ciclo auto-merge. Próximo recomendado: BLK-OPEN-98. Depende de BLK-DONE-01.
+
+### BLK-DONE-02b — Follow-up ja concluido
+"""
+
+
+def test_is_done_detecta_heading_movido_e_fechamento():
+    # ### BLK-X (bloco movido) e ## Fechamento — BLK-Y (resumo auto-merge) contam como DONE.
+    assert hk.is_done(COMPLETED_ORQ24, "BLK-DONE-01") is True
+    assert hk.is_done(COMPLETED_ORQ24, "BLK-DONE-02") is True
+    assert hk.is_done(COMPLETED_ORQ24, "BLK-DONE-02b") is True
+
+
+def test_is_done_ignora_mencao_em_prosa():
+    # Blocos citados SÓ em prosa (sucessor/próximo/depende) NÃO contam — senão o loop pularia
+    # para sempre um bloco loop-safe ainda aberto (achado MEDIA do red-team ORQ-24).
+    assert hk.is_done(COMPLETED_ORQ24, "BLK-OPEN-99") is False
+    assert hk.is_done(COMPLETED_ORQ24, "BLK-OPEN-98") is False
+
+
+def test_is_done_nao_confunde_prefixo():
+    # Igualdade de TOKEN, não substring: DONE-02 concluído não marca DONE-021 como done.
+    assert hk.is_done("### BLK-DONE-02b — x\n", "BLK-DONE-02") is False
+    assert hk.is_done("### BLK-DONE-02 — x\n", "BLK-DONE-02b") is False
+
+
+def test_emit_delta_so_blocos_abertos_no_backlog_e_concluidos():
+    backlog = (
+        "## Pendentes\n\n"
+        "### BLK-DONE-02 — ainda com heading aberto no backlog\n\nx\n\n---\n\n"
+        "### BLK-OPEN-99 — aberto e NAO concluido\n\ny\n\n---\n"
+    )
+    delta = hk.emit_delta(backlog, COMPLETED_ORQ24)
+    # DONE-02 tem heading aberto no backlog E fechamento em completed -> entra.
+    assert "BLK-DONE-02" in delta
+    # OPEN-99 está aberto no backlog mas NÃO concluído -> fora.
+    assert "BLK-OPEN-99" not in delta
+    # DONE-01 está concluído mas NÃO tem mais heading aberto no backlog -> fora (nada a stubar).
+    assert "BLK-DONE-01" not in delta
+
+
+def test_emit_delta_nao_colide_prefixo():
+    # BLK-FIX-06 ABERTO no backlog + só BLK-FIX-06-C concluído em completed -> NÃO stuba o -06.
+    backlog = "## P\n\n### BLK-FIX-06 — aberto\n\nx\n\n---\n"
+    completed = "## H\n\n### BLK-FIX-06-C — concluido\n\ny\n"
+    assert hk.emit_delta(backlog, completed) == []
+
+
+def test_cli_is_done_exit_codes(tmp_path):
+    b, c = _write_tmp(tmp_path, "## P\n", COMPLETED_ORQ24)
+    assert hk.main(["BLK-DONE-02", "--is-done", "--backlog", b, "--completed", c]) == 0
+    assert hk.main(["BLK-OPEN-99", "--is-done", "--backlog", b, "--completed", c]) == 1
+
+
+def test_cli_emit_delta_sem_block_id(tmp_path):
+    backlog = "## P\n\n### BLK-DONE-02 — aberto\n\nx\n\n---\n"
+    b, c = _write_tmp(tmp_path, backlog, COMPLETED_ORQ24)
+    # --emit-delta dispensa block_id posicional.
+    assert hk.main(["--emit-delta", "--backlog", b, "--completed", c]) == 0
+
+
+def test_cli_sem_block_id_fora_de_emit_delta_erra(tmp_path):
+    b, c = _write_tmp(tmp_path, FAKE_BACKLOG, FAKE_COMPLETED)
+    with pytest.raises(SystemExit):
+        hk.main(["--is-done", "--backlog", b, "--completed", c])
