@@ -218,3 +218,46 @@ def test_cli_sem_block_id_fora_de_emit_delta_erra(tmp_path):
     b, c = _write_tmp(tmp_path, FAKE_BACKLOG, FAKE_COMPLETED)
     with pytest.raises(SystemExit):
         hk.main(["--is-done", "--backlog", b, "--completed", c])
+
+
+# --------------------------------------------------------------------------------------------
+# BLK-ORQ-25: regressao CRLF de is_done / emit_delta.
+# No Windows (plataforma de dev) backlog.md e completed.md sao CRLF. Um refactor futuro que troque
+# `splitlines()` por regex ou mude o padrao de heading poderia quebrar a deteccao em CRLF em
+# silencio -> loop mis-seleciona. Estes testes TRAVAM o comportamento (nao mudam a logica).
+# --------------------------------------------------------------------------------------------
+
+_COMPLETED_CRLF = (
+    "# Completed Tasks\r\n\r\n## Historico\r\n\r\n"
+    "### BLK-DONE-01 - Bloco movido pelo helper\r\n\r\n"
+    "Conteudo. Sucessor: BLK-OPEN-99 (ainda aberto).\r\n\r\n"
+    "## Fechamento de ciclo - BLK-DONE-02 (2026-07-14)\r\n\r\n"
+    "Resumo auto-merge. Proximo recomendado: BLK-OPEN-98.\r\n"
+)
+
+
+def test_is_done_crlf_heading_movido_e_fechamento():
+    # `splitlines()` corta \r\n; os dois marcadores contam DONE mesmo em CRLF.
+    assert hk.is_done(_COMPLETED_CRLF, "BLK-DONE-01") is True
+    assert hk.is_done(_COMPLETED_CRLF, "BLK-DONE-02") is True
+
+
+def test_is_done_crlf_ignora_prosa():
+    # Mencao em prosa (Sucessor/Proximo) NAO conta, nem em CRLF.
+    assert hk.is_done(_COMPLETED_CRLF, "BLK-OPEN-99") is False
+    assert hk.is_done(_COMPLETED_CRLF, "BLK-OPEN-98") is False
+
+
+def test_emit_delta_crlf_nao_captura_cr_no_id():
+    # O \r do CRLF entra no lookahead `(?=\s|$)`, entao o ID capturado NAO leva \r.
+    backlog = "## P\r\n\r\n### BLK-DONE-02 - aberto no backlog\r\n\r\nx\r\n\r\n---\r\n"
+    delta = hk.emit_delta(backlog, _COMPLETED_CRLF)
+    assert delta == ["BLK-DONE-02"]  # sem "BLK-DONE-02\r"
+    assert all("\r" not in bid for bid in delta)
+
+
+def test_emit_delta_crlf_nao_colide_prefixo():
+    # BLK-FIX-06 aberto no backlog + so BLK-FIX-06-C concluido em completed (CRLF) -> nao stuba o -06.
+    backlog = "## P\r\n\r\n### BLK-FIX-06 - aberto\r\n\r\nx\r\n"
+    completed = "## H\r\n\r\n### BLK-FIX-06-C - concluido\r\n\r\ny\r\n"
+    assert hk.emit_delta(backlog, completed) == []
