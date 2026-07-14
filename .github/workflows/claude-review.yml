@@ -120,6 +120,14 @@ jobs:
         with:
           # Assinatura Max (sem custo de API). Secret criado pelo dono.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # BLK-ORQ-21: SEM este input a action cai no fallback de OIDC
+          # (`setupGitHubToken` -> "Unable to get ACTIONS_ID_TOKEN_REQUEST_URL"), aborta
+          # ANTES de rodar o Claude e o check reprova por falta de saida estruturada — foi
+          # o que aconteceu no PR #97. A alternativa (`id-token: write`) exigiria o Claude
+          # GitHub App instalado no repo, que nao usamos. O escopo continua sendo o do
+          # `permissions:` deste workflow, e a action NAO publica nada (quem posta e o
+          # nosso gate, depois de redigir segredos).
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           # N4: a action NAO publica. Quem publica e o nosso gate, apos redigir segredos.
           # O modelo tambem nao tem ferramenta de escrita/rede (ver claude_args).
           use_sticky_comment: false
