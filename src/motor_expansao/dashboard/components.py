@@ -91,6 +91,8 @@ def build_unified_map_figure_cached(
     competitors_token: str,
     ultra_token: str,
     dominio_token: str,
+    _vazios_df: pd.DataFrame | None = None,
+    vazios_token: str = "none",
 ):
     """Wrapper cacheado (@st.cache_data, SEM ttl) do dispatcher do Mapa Territorial.
 
@@ -99,6 +101,9 @@ def build_unified_map_figure_cached(
     FICA FORA da chave (a layer de destaque é anexada pós-cache no render). cache_data devolve
     uma cópia por chamada -> anexar layer ao deck retornado não vaza para outros hits.
     READ-ONLY M1: não recalcula score, carteira, plano nem artefatos oficiais.
+
+    `_vazios_df`/`vazios_token` (BLK-TP-03-FU1): overlay opcional "Vazio competitivo LC",
+    keyword-only com default — compatível com qualquer chamador existente que não os passa.
     """
     return build_unified_map_figure(
         _df,
@@ -112,6 +117,7 @@ def build_unified_map_figure_cached(
         search_pin=search_pin,
         search_hex_id=search_hex_id,
         dominio_df=_dominio_df,
+        vazios_df=_vazios_df,
     )
 
 
@@ -1108,6 +1114,14 @@ _DISCARDED_LINE = [170, 170, 190, 200]
 # tanto das faixas de score quanto de _DISCARDED_FILL (gate humano, BLK-FIX-06-C).
 _NAN_SCORE_FILL = [110, 116, 140, 150]
 
+# Cor do overlay "Vazio competitivo LC" (BLK-TP-03-FU1) — roxo/violeta #7C5CFF
+# (COLORS["accent_alt"]), distinto de turquesa Ultra, magenta concorrente/pin,
+# ambar Ancoras Dominio e amarelo hex pesquisado. Gate humano: Felipe, 2026-07-15
+# (item 1 do gate de UX do handoff do Planner). Preenchimento bem translucido para
+# nao esconder a cor de score do hex por baixo; contorno grosso e bem visivel.
+_VAZIOS_LC_FILL_RGBA = [124, 92, 255, 60]
+_VAZIOS_LC_LINE_RGBA = [124, 92, 255, 230]
+
 
 def _apply_pop_cut_colors(map_df: pd.DataFrame, *, show_discarded: bool = True) -> pd.DataFrame:
     # BLK-FIX-11 (overlay descartados_5k): quando o overlay esta desligado
@@ -1151,6 +1165,20 @@ def render_ancoras_dominio_legend() -> None:
         "<span class='legend-chip'>"
         "<span class='legend-dot' style='background:#F59E0B;opacity:0.86;'></span>"
         "Âncora Domínio"
+        "</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_vazios_competitivos_legend() -> None:
+    # BLK-TP-03-FU1: legenda do overlay vazios_competitivos_lc (roxo #7C5CFF,
+    # alinhado ao H3HexagonLayer [124, 92, 255, 60]/[124, 92, 255, 230]). Gate
+    # humano: Felipe, 2026-07-15.
+    st.markdown(
+        "<div class='legend-row'>"
+        "<span class='legend-chip'>"
+        "<span class='legend-dot' style='background:#7C5CFF;opacity:0.86;'></span>"
+        "Vazio competitivo LC"
         "</span></div>",
         unsafe_allow_html=True,
     )
@@ -1299,6 +1327,69 @@ def _build_ancoras_dominio_layer(
         stroked=True,
         filled=True,
         pickable=True,
+    )
+
+
+def _build_vazios_competitivos_layer(vazios_df: pd.DataFrame | None) -> pdk.Layer | None:
+    """Camada de destaque dos hexes de vazio competitivo do concorrente low-cost.
+
+    Overlay `vazios_competitivos_lc` do Mapa Territorial (BLK-TP-03-FU1). Consome o
+    parquet `data/staging/vazios_competitivos_lc.parquet` (229 hexes, contrato
+    `vazios_competitivos_v1`, BLK-TP-03) ja materializado — READ-ONLY sobre o M1:
+    nenhuma coluna de score e recalculada aqui, apenas lida/formatada para exibicao
+    (`score_priorizacao` no tooltip). No-op silencioso (retorna None) quando
+    `vazios_df` e None/vazio ou nao tem `hex_id` — nunca lanca excecao.
+
+    H3HexagonLayer roxo `#7C5CFF` (gate humano: Felipe, 2026-07-15), preenchimento
+    bem translucido para nao esconder a cor de score do hex por baixo.
+    """
+    if vazios_df is None or vazios_df.empty:
+        return None
+    if "hex_id" not in vazios_df.columns:
+        return None
+
+    vazios = vazios_df.drop_duplicates(subset=["hex_id"], keep="first").copy()
+    if vazios.empty:
+        return None
+
+    n = len(vazios)
+    membros_gt5km = pd.to_numeric(
+        vazios.get("membros_gt5km_concorrente_lc", pd.Series([pd.NA] * n, index=vazios.index)),
+        errors="coerce",
+    )
+    uf = vazios.get("uf", pd.Series([pd.NA] * n, index=vazios.index)).map(_clean_tooltip_value)
+    nome_municipio = vazios.get(
+        "nome_municipio", pd.Series([pd.NA] * n, index=vazios.index)
+    ).map(_clean_tooltip_value)
+    score_priorizacao = pd.to_numeric(
+        vazios.get("score_priorizacao", pd.Series([pd.NA] * n, index=vazios.index)),
+        errors="coerce",
+    )
+
+    layer_df = vazios[["hex_id"]].copy().reset_index(drop=True)
+    layer_df["tooltip_title"] = "Vazio competitivo LC: " + layer_df["hex_id"].astype(str)
+    layer_df["tooltip_line_1"] = (
+        "Membros >5km do concorrente: "
+        + membros_gt5km.reset_index(drop=True).map(lambda v: format_int(v) if pd.notna(v) else "-")
+    )
+    layer_df["tooltip_line_2"] = "UF: " + uf.reset_index(drop=True).astype(str)
+    layer_df["tooltip_line_3"] = "Município: " + nome_municipio.reset_index(drop=True).astype(str)
+    layer_df["tooltip_line_4"] = "Score M1: " + score_priorizacao.reset_index(drop=True).map(format_score)
+    for i in range(5, 15):
+        layer_df[f"tooltip_line_{i}"] = ""
+
+    return pdk.Layer(
+        "H3HexagonLayer",
+        data=layer_df,
+        get_hexagon="hex_id",
+        get_fill_color=_VAZIOS_LC_FILL_RGBA,
+        get_line_color=_VAZIOS_LC_LINE_RGBA,
+        filled=True,
+        stroked=True,
+        extruded=False,
+        pickable=True,
+        line_width_min_pixels=3,
+        opacity=0.9,
     )
 
 
@@ -3015,6 +3106,7 @@ def build_unified_map_figure(
     search_pin: tuple[float, float] | None = None,
     search_hex_id: str | None = None,
     dominio_df: pd.DataFrame | None = None,
+    vazios_df: pd.DataFrame | None = None,
 ):
     """Dispatcher do Mapa Territorial Unificado.
 
@@ -3099,6 +3191,11 @@ def build_unified_map_figure(
         ancora_layer = _build_ancoras_dominio_layer(dominio_df, selected_ufs, selected_cities)
         if ancora_layer is not None:
             deck.layers = [*deck.layers, ancora_layer]
+
+    if "vazios_competitivos_lc" in enabled_overlays and deck is not None:
+        vazios_layer = _build_vazios_competitivos_layer(vazios_df)
+        if vazios_layer is not None:
+            deck.layers = [*deck.layers, vazios_layer]
 
     _stabilize_layer_ids(deck, prefix=f"{color_mode}")
     return deck, n_pontos
