@@ -1394,104 +1394,13 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 
 ---
 
-### BLK-ORQ-22 — Garimpeiro: routine na nuvem que abre PRs de branches `claude/*`
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (processo autônomo recorrente que **abre PRs**; não mergeia — o portão é o do ORQ-21. **READ-ONLY sobre o M1**). |
-| **Prioridade** | Alta (após o portão estar de pé). |
-| **Esteira** | Humano configura 1× (repo de dados + environment + routine) → operação autônoma. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-ORQ-21** (sem o portão aplicado, PRs abertos por routine ficariam esperando aprovação humana — não resolveria o gargalo). |
-| **Autonomia** | **manual (NÃO loop-safe)** — configuração de infra/nuvem por humano, 1×; NUNCA loop-safe. |
-
-**Contexto.** O loop hoje roda na máquina do Felipe (`iniciar-loop.cmd`). O Garimpeiro leva a execução para a nuvem
-e **entrega o trabalho como PR** — sem merge, sem deploy.
-
-**Escopo.**
-1. **Repo PRIVADO `motor-dados`** com os **~270 MB de `data/staging`**. **O repo do motor é PÚBLICO
-   (`Kastaldy/motor-de-expansao`) — NUNCA publicar parquet nele** (dado de negócio + risco de PII).
-2. **Environment** com **setup script** que clona o `motor-dados` e monta `data/staging` antes do bloco rodar.
-3. **Routine diária às 02:00 BRT**.
-4. **Push restrito a `claude/*`** (permissão default da routine, **sem PAT de escrita** — não consegue push na `main`
-   nem em `ciclo/*`).
-5. **Prompt exige `scripts/loop_guard.py` VERDE _antes_ de abrir o PR** (falhou → não abre PR, reporta).
-6. **Seleção de bloco por marcador ANCORADO:** regex **`^\| \*\*Autonomia\*\* \| loop-safe`** — âncora `^` +
-   `| ` obrigatórios; **NÃO casa** `| **Autonomia** | **manual (NÃO loop-safe)** |` (que contém a substring
-   "loop-safe" e seria falso-positivo de um `grep loop-safe` ingênuo). Respeitar também `Depende de`.
-
-**Critérios de aceite.**
-- Teste do seletor: bloco `manual (NÃO loop-safe)` **NÃO** é selecionado; bloco `loop-safe` **É** (fixtures dos dois
-  formatos reais do `backlog.md`).
-- A routine **não consegue** push fora de `claude/*` (tentativa falha).
-- `loop_guard` vermelho → **nenhum PR aberto**.
-- Nenhum `.parquet`/dado de `data/staging` aparece em diff do repo público (verificável no PR).
-- 1 execução real: PR aberto a partir de branch `claude/*`, com os 4 checks rodando.
-
-**Guardrail.** §5 **READ-ONLY M1**; **NUNCA** commitar dado/parquet no repo público; sem credencial de VPS/deploy no
-ambiente da routine (não deploya); o Garimpeiro **abre PR, não mergeia**.
-
----
-
-### BLK-ORQ-23 — Auditor de PRs: routine diária READ-ONLY com aviso no Telegram (grupo de ops, fase de teste)
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (routine **READ-ONLY**: não aplica label, não mergeia, não escreve código; **READ-ONLY sobre o M1**). |
-| **Prioridade** | Alta (é o **detector do gatilho de suspensão** da DEC-016 — sem ele o gatilho não tem medição). |
-| **Esteira** | Humano configura 1× (routine + bot/grupo Telegram de ops — o mesmo do Motor) → operação autônoma. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-ORQ-20** (precisa dos checks existindo para classificar). |
-| **Autonomia** | **manual (NÃO loop-safe)** — configuração de rotina na nuvem por humano, 1×; NUNCA loop-safe. |
-
-**Contexto/Objetivo.** Dar ao Felipe **visão diária** do que está aberto/mergeando **sem** ele virar o gargalo de novo.
-O gate é **determinístico** (checks + labels) — o Auditor **informa**, não decide.
-
-**Escopo.**
-1. Routine **diária** que lê **PRs abertos + diff + status de CI** (READ-ONLY).
-2. **Classifica** cada PR em: **candidato a auto-merge** / **revisar** / **bloqueio**.
-3. Entrega **UM aviso por dia no grupo Telegram de ops** (o mesmo usado para os alertas do Motor de Expansão — `chat_id` no `.env`; **fase de TESTE, no lugar do e-mail**) + **comentário em issue fixa** (histórico versionado).
-4. **Conta os incidentes** do gatilho da DEC-016: PR auto-mergeado que (i) reprove o `guard` em auditoria posterior,
-   (ii) introduza segredo/PII, (iii) exija `revert` na `main`, ou (iv) quebre o CI da `main`.
-   **2 incidentes em 90 dias → alerta explícito de SUSPENSÃO do auto-merge** no relatório.
-
-**Critérios de aceite.**
-- **NÃO aplica label**, **NÃO mergeia**, **NÃO faz push** (o gate é determinístico, **não a opinião do modelo**) —
-  verificável pelas permissões da routine (sem escrita).
-- 1 aviso no Telegram por dia (não 1 por PR); issue fixa recebe o mesmo resumo.
-- A contagem de incidentes (janela de 90 dias) aparece no relatório, com o alerta de suspensão ao atingir 2.
-- Relatório distingue os 3 estados e cita o check que reprovou, quando houver.
-
-**Guardrail.** §5 **READ-ONLY M1**; routine sem permissão de escrita no repo (nem label, nem merge, nem push);
-sem credencial de VPS/deploy; **não** expor conteúdo sensível de diff no corpo da mensagem do Telegram (linkar o PR).
+- BLK-ORQ-22 (concluído 2026-07-15) — ver tasks/completed.md
 
 
 ---
 
-- BLK-ORQ-24 (concluído 2026-07-14) — ver tasks/completed.md
+- BLK-ORQ-23 (concluído 2026-07-15) — ver tasks/completed.md
 
-
-
----
-
-- BLK-ORQ-25 (concluído 2026-07-14) — ver tasks/completed.md
-
-- BLK-ORQ-26 (concluído 2026-07-14) — ver tasks/completed.md
-
-
----
-
-- BLK-RELPON-06 (concluído 2026-07-14) — ver tasks/completed.md
-
-
----
-
-- BLK-RELPON-06-FU1 (concluído 2026-07-14) — ver tasks/completed.md
-
-
----
-
-- BLK-RELPON-07 (concluído 2026-07-15) — ver tasks/completed.md
 
 
 ---
