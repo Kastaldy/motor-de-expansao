@@ -48,7 +48,11 @@ jobs:
 
       - name: Aplicar criticidade + armar auto-merge (Baixa/Media)
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # label + leituras (o Actions token basta)
+          # PAT (fine-grained, PR:write) SO p/ armar auto-merge — o GITHUB_TOKEN nao pode
+          # (enablePullRequestAutoMerge). Ausente = nao arma (arm segue manual). Seguro: este job
+          # roda da BASE e NUNCA executa codigo do PR, entao o PAT nao vaza p/ PR de fork.
+          AUTO_MERGE_PAT: ${{ secrets.AUTO_MERGE_PAT }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITULO: ${{ github.event.pull_request.title }}

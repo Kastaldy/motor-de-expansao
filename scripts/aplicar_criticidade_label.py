@@ -154,13 +154,31 @@ def main() -> int:
     # 2) Arma o auto-merge SO para Baixa/Media (Alta/Critica seguem exigindo merge humano).
     #    `--auto` respeita TODAS as protecoes da main (os 4 checks + qualquer label exigida): so
     #    mergeia quando tudo estiver verde -> NUNCA fura o portao. Idempotente (re-armar = no-op).
-    if nivel in NIVEIS_AUTO_MERGE:
-        print(f"nivel `{nivel}` -> armando auto-merge (--auto --squash).")
-        arm = _gh("pr", "merge", pr, "--repo", repo, "--auto", "--squash")
-        if arm.returncode != 0:
-            print(f"::warning::falha ao armar auto-merge: {arm.stderr.strip()}")
-    else:
+    #    O GITHUB_TOKEN do Actions NAO consegue habilitar auto-merge (enablePullRequestAutoMerge =
+    #    "Resource not accessible by integration") -> exige um PAT (fine-grained, PR:write) em
+    #    AUTO_MERGE_PAT. Sem o PAT: nao arma (informativo, nao warning) e o arm segue manual.
+    if nivel not in NIVEIS_AUTO_MERGE:
         print(f"nivel `{nivel}` exige aprovacao humana -> NAO armo auto-merge (merge segue humano).")
+        return 0
+    pat = os.environ.get("AUTO_MERGE_PAT", "").strip()
+    if not pat:
+        print(
+            f"nivel `{nivel}` e auto-mergeavel, mas AUTO_MERGE_PAT nao esta configurado -> NAO armo "
+            "(o GITHUB_TOKEN do Actions nao pode habilitar auto-merge). Arme manual ou configure o PAT."
+        )
+        return 0
+    print(f"nivel `{nivel}` -> armando auto-merge (--auto --squash) com AUTO_MERGE_PAT.")
+    arm = subprocess.run(
+        ["gh", "pr", "merge", pr, "--repo", repo, "--auto", "--squash"],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "GH_TOKEN": pat},
+    )
+    if arm.returncode != 0:
+        print(f"::warning::falha ao armar auto-merge com o PAT: {arm.stderr.strip()}")
+    else:
+        print("auto-merge armado.")
     return 0
 
 
