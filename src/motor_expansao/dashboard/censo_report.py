@@ -750,11 +750,18 @@ def _perfil_metric_rows(perfil: dict[str, Any]) -> list[tuple[str, str, str]]:
     """As 4 metricas do perfil como (kind_icone, rotulo, valor). Rotulos e metodo de renda
     INALTERADOS (D3/D3.5); `_format_number` ja devolve "n/d" para ausente.
     """
+    renda_raw = perfil.get("renda_media_domiciliar")
+    # "R$" so quando ha valor; sem dado exibe apenas "n/d" (evita "R$ n/d").
+    renda_str = (
+        "R$ " + _format_number(renda_raw, 2)
+        if renda_raw is not None and not pd.isna(renda_raw)
+        else "n/d"
+    )
     return [
         ("pop", "População", _format_number(perfil.get("populacao_total"), 0)),
         ("dens", "Densidade demográfica", _format_number(perfil.get("densidade_hab_km2"), 0, " hab/km2")),
         ("dom", "Domicílios", _format_number(perfil.get("domicilios_total"), 0)),
-        ("renda", "Renda média", "R$ " + _format_number(perfil.get("renda_media_domiciliar"), 2)),
+        ("renda", "Renda média", renda_str),
     ]
 
 
