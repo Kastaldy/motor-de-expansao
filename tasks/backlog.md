@@ -1389,139 +1389,8 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 
 ---
 
-### BLK-ORQ-21 — Aplicar a branch protection nova (0 aprovações, `enforce_admins`, 4 checks) + ligar auto-merge
+- BLK-ORQ-21 (concluído 2026-07-14) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Crítica** (muda a governança efetiva da `main`; a partir daqui **nem o Felipe** mergeia sem CI verde). Coberta pela **DEC-016**. |
-| **Prioridade** | **Máxima** (logo após o ORQ-20 mergeado). |
-| **Esteira** | Humano (Felipe) executa os comandos `gh api` → verificação → registro no PR/handoff. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-ORQ-20 mergeado** **E** os **3 checks novos** (`guard`, `claude-review`, `review-gate`) terem **rodado ao menos 1× em um PR real**. **Ordem inegociável:** exigir um check que **nunca rodou** o deixa em estado **"expected" eterno** → **TODOS os PRs do repo travam** (inclusive o que consertaria isso). |
-| **Autonomia** | **manual (NÃO loop-safe)** — altera configuração do repositório/CI; NUNCA loop-safe. |
-
-**Contexto/Objetivo.** Aplicar na `main` o portão desenhado na DEC-016 e habilitar o **auto-merge nativo**
-(hoje `allow_auto_merge: false` → o auto-merge simplesmente **não existe** no repo).
-
-**ORDEM DE BOOTSTRAP (INEGOCIÁVEL — inverter estes passos CONGELA o repositório).**
-1. **Mergear o BLK-ORQ-20 com a proteção ATUAL** (1 aprovação humana, único required check `test`). É o último
-   merge pelo regime antigo.
-2. **Abrir 1 PR qualquer** (pode ser trivial) e deixar `guard`, `review-gate` e `claude-review` **rodarem ao menos
-   uma vez**. O GitHub só aceita como *required check* um **contexto que já reportou** ao menos um resultado no repo.
-3. **SÓ ENTÃO** aplicar o **PUT** da branch protection com os **4 checks** (`test`, `guard`, `review-gate`,
-   `claude-review`) + `required_approving_review_count: 0` + `enforce_admins: true`.
-4. **Ligar `allow_auto_merge`** (hoje **`false`** — sem isso o auto-merge nem existe) **e `delete_branch_on_merge`**.
-
-> **AVISO (o motivo de a ordem não poder ser invertida).** O `guard.yml` roda em **`pull_request_target`**, ou seja,
-> carrega o workflow **da BASE** — logo os checks novos **NÃO rodam no próprio PR que os cria**; eles só passam a
-> existir **depois do merge** do ORQ-20. E **`enforce_admins: true` + um required check que nunca reportou** =
-> **repo CONGELADO**: o check fica em *"expected"* eterno, **nenhum PR mergeia — nem o do admin, nem o que
-> consertaria isso** (o bypass `--admin` já não existe mais). Aplicar o PUT antes do passo 2 é exatamente esse
-> cenário.
-
-**Escopo (comandos).**
-1. **Antes do PUT:** `gh api repos/Kastaldy/motor-de-expansao/branches/main/protection > protection_backup.json`
-   — o **PUT é SUBSTITUTIVO**: todo campo omitido é **APAGADO**. Guardar o backup viabiliza rollback imediato.
-2. Aplicar a proteção:
-   ```bash
-   gh api --method PUT repos/Kastaldy/motor-de-expansao/branches/main/protection --input - <<'JSON'
-   {
-     "required_status_checks": {
-       "strict": true,
-       "contexts": ["test", "guard", "claude-review", "review-gate"]
-     },
-     "enforce_admins": true,
-     "required_pull_request_reviews": {
-       "required_approving_review_count": 0,
-       "dismiss_stale_reviews": false,
-       "require_code_owner_reviews": true
-     },
-     "restrictions": null,
-     "required_conversation_resolution": true,
-     "allow_force_pushes": false,
-     "allow_deletions": false
-   }
-   JSON
-   ```
-   > **`require_code_owner_reviews: true` é a defesa N0 (não-negociável).** Sem ela, um PR do próprio
-   > repo pode **forjar o portão**: como o `default_workflow_permissions` do repo é `read` mas **não é um
-   > teto** (a doc confirma que um workflow pode declarar `permissions: {checks: write}` e recebê-lo — só
-   > fork tem o write rebaixado), um PR pode adicionar um workflow que **publica check runs verdes com os
-   > nomes obrigatórios** (`test`/`guard`/`claude-review`/`review-gate`). Com `.github/CODEOWNERS`
-   > declarando `@Kastaldy` dono de `/.github/`, qualquer PR que adicione/edite um workflow passa a exigir
-   > **revisão do Felipe avaliada nativamente pelo GitHub** — que **não é um check run e não é forjável**.
-   > `require_code_owner_reviews` **funciona mesmo com `required_approving_review_count: 0`** (regras
-   > independentes, confirmado na doc). O `.github/CODEOWNERS` já existe (entregue no BLK-ORQ-20).
-3. Ligar auto-merge e limpeza de branch:
-   ```bash
-   gh api --method PATCH repos/Kastaldy/motor-de-expansao \
-     -F allow_auto_merge=true -F delete_branch_on_merge=true
-   ```
-4. Criar as labels `aprovado-humano`, `critica-aprovada` e as `criticidade:baixa|media|alta|critica`
-   (se ainda não existirem).
-5. **Secret do revisor = token da conta PESSOAL do Felipe (decisão para a fase de TESTES; sem conta-máquina).**
-   O `claude-review` autentica via `secrets.CLAUDE_CODE_OAUTH_TOKEN` (gerado por `claude setup-token`). **Decisão de
-   Felipe (2026-07-13): usar o token da própria conta pessoal para começar e testar — NÃO criar conta-máquina.**
-   Custo em **dólar = 0** (sem API key). **Trade-off aceito, a MONITORAR:** o token consome o pool de uso da
-   assinatura Max do Felipe → cada PR aberto morde a cota de 5h/semana dele, competindo (de forma invisível) com o
-   trabalho interativo dele. Ruído já mitigado no `claude-review.yml`: `--model sonnet`, `concurrency:
-   cancel-in-progress`, e pular draft/fork. **Reavaliar conta-máquina SÓ se a cota apertar** (sinal: cota estourando
-   no meio do dia). **AINDA NÃO configurado (verificado 2026-07-13):** `gh secret list` está vazio — o token precisa
-   ser adicionado ao repo com `gh secret set CLAUDE_CODE_OAUTH_TOKEN` (o auth do Claude Code CLI **local** NÃO serve:
-   o `claude-review` roda no **runner do GitHub**, não na máquina do Felipe).
-
-**Kill-switch (restaura o gate humano em 1 comando).** Se o portão der errado, o regime antigo volta com um único
-PUT — **não é preciso reverter código nem PR**:
-```bash
-gh api --method PUT repos/Kastaldy/motor-de-expansao/branches/main/protection --input - <<'JSON'
-{
-  "required_status_checks": {"strict": true, "contexts": ["test"]},
-  "enforce_admins": true,
-  "required_pull_request_reviews": {"required_approving_review_count": 1},
-  "restrictions": null
-}
-JSON
-```
-`required_approving_review_count: 1` traz de volta a aprovação humana obrigatória. É o mesmo kill-switch citado na
-DEC-016 (gatilho de suspensão: **2 incidentes em 90 dias**). Manter também o `protection_backup.json` do passo 1
-como rollback exato do estado anterior.
-
-**Critérios de aceite.**
-- **Ordem de bootstrap cumprida e comprovada:** (1) ORQ-20 mergeado pelo regime antigo; (2) `guard`, `review-gate` e
-  `claude-review` **já reportaram ao menos 1× em um PR real** (`gh pr checks <PR>` mostra os 3) — **antes** do PUT;
-  (3) só então o PUT dos 4 checks; (4) `allow_auto_merge` ligado por último. **Inverter (2) e (3) congela o repo.**
-- `gh api .../branches/main/protection` retorna `required_approving_review_count: 0`, `enforce_admins.enabled: true`
-  e os **4 contexts** exatos (`test`, `guard`, `claude-review`, `review-gate`).
-- `gh api repos/Kastaldy/motor-de-expansao --jq '.allow_auto_merge'` → `true` (estado inicial: **`false`**).
-- **Prova anti-congelamento:** logo após o PUT, um PR novo mostra os **4 checks reportando** (nenhum preso em
-  *"expected"*). Se algum ficar pendente para sempre → aplicar o **kill-switch** imediatamente.
-- **Prova do portão:** um PR de teste com CI vermelho **NÃO** mergeia **nem com `gh pr merge --admin`**
-  (é a prova de que `enforce_admins` fechou o bypass que causou o merge do PR #4 — DEC-005, emenda 2026-06-12).
-- **Prova do auto-merge:** um PR **Baixa/Média** com os 4 checks verdes mergeia **sozinho**, sem aprovação humana.
-- **Token do revisor configurado:** `gh secret set CLAUDE_CODE_OAUTH_TOKEN` executado (token da **conta pessoal do
-  Felipe**, decisão da fase de testes) e `gh secret list` mostra o secret — sem ele o `claude-review` não reporta e o
-  required check fica pendente. Consumo da cota Max do Felipe **monitorado** na 1ª quinzena; conta-máquina só se apertar.
-- **Interação `count:0` × code-owner validada EMPIRICAMENTE (não por doc):** a mesma prova anti-spoof acima
-  demonstra, num PR real, que `require_code_owner_reviews: true` bloqueia o PR que toca `.github/**` **mesmo com
-  `required_approving_review_count: 0`** — se o PR forjado ficar mergeável, a premissa (confirmada só na doc) está
-  errada no nosso repo e o portão está furado.
-- **Prova anti-spoof (N0) — rodar ANTES de confiar no portão:** abrir um PR de teste (branch do próprio repo)
-  que adiciona `.github/workflows/pwn.yml` com `permissions: {checks: write, statuses: write}` publicando um
-  check run **verde** de nome `guard` (e `test`). Verificar em `gh api repos/Kastaldy/motor-de-expansao/commits/<sha>/check-runs`
-  que o `guard` REAL (vermelho, por tocar `.github/`) coexiste com o forjado, e confirmar que **o botão de merge
-  permanece bloqueado** — seja porque (a) o GitHub exige TODOS os homônimos (o vermelho real bloqueia), seja porque
-  (b) `require_code_owner_reviews: true` exige a revisão do Felipe em `.github/**` (que o PR não tem). **Se o PR
-  ficar mergeável, NÃO prosseguir** — o portão está furado; investigar antes de qualquer auto-merge. Fechar o PR de
-  teste sem mergear.
-- `require_code_owner_reviews: true` confirmado (`gh api .../branches/main/protection --jq '.required_pull_request_reviews.require_code_owner_reviews'` → `true`) e `.github/CODEOWNERS` presente na `main`.
-- **(Opcional, defesa em profundidade)** avaliar um **repository ruleset** com "require workflows to pass" apontando
-  `guard.yml` **por caminho** (não por nome de check): um homônimo forjado não satisfaz um required workflow. Rulesets
-  estão disponíveis em repo público no plano free (`gh api repos/Kastaldy/motor-de-expansao/rulesets`).
-- `protection_backup.json` guardado (fora do repo; **não commitar**) + **kill-switch testado**: PUT com
-  `required_approving_review_count: 1` restaura o gate humano.
-
-**Guardrail.** §5 **READ-ONLY M1**; §6 (nenhum comando na VPS — isto é API do GitHub, não servidor); **não commitar**
-o backup da proteção; **deploy segue manual, por digest** (auto-merge NÃO deploya).
 
 ---
 
@@ -1564,13 +1433,13 @@ ambiente da routine (não deploya); o Garimpeiro **abre PR, não mergeia**.
 
 ---
 
-### BLK-ORQ-23 — Auditor de PRs: routine diária READ-ONLY com relatório por e-mail
+### BLK-ORQ-23 — Auditor de PRs: routine diária READ-ONLY com aviso no Telegram (grupo de ops, fase de teste)
 
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Média** (routine **READ-ONLY**: não aplica label, não mergeia, não escreve código; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Alta (é o **detector do gatilho de suspensão** da DEC-016 — sem ele o gatilho não tem medição). |
-| **Esteira** | Humano configura 1× (routine + conector Outlook) → operação autônoma. |
+| **Esteira** | Humano configura 1× (routine + bot/grupo Telegram de ops — o mesmo do Motor) → operação autônoma. |
 | **Status** | Pendente. |
 | **Depende de** | **BLK-ORQ-20** (precisa dos checks existindo para classificar). |
 | **Autonomia** | **manual (NÃO loop-safe)** — configuração de rotina na nuvem por humano, 1×; NUNCA loop-safe. |
@@ -1581,7 +1450,7 @@ O gate é **determinístico** (checks + labels) — o Auditor **informa**, não 
 **Escopo.**
 1. Routine **diária** que lê **PRs abertos + diff + status de CI** (READ-ONLY).
 2. **Classifica** cada PR em: **candidato a auto-merge** / **revisar** / **bloqueio**.
-3. Entrega **UM relatório por e-mail** (conector Outlook) + **comentário em issue fixa** (histórico versionado).
+3. Entrega **UM aviso por dia no grupo Telegram de ops** (o mesmo usado para os alertas do Motor de Expansão — `chat_id` no `.env`; **fase de TESTE, no lugar do e-mail**) + **comentário em issue fixa** (histórico versionado).
 4. **Conta os incidentes** do gatilho da DEC-016: PR auto-mergeado que (i) reprove o `guard` em auditoria posterior,
    (ii) introduza segredo/PII, (iii) exija `revert` na `main`, ou (iv) quebre o CI da `main`.
    **2 incidentes em 90 dias → alerta explícito de SUSPENSÃO do auto-merge** no relatório.
@@ -1589,12 +1458,12 @@ O gate é **determinístico** (checks + labels) — o Auditor **informa**, não 
 **Critérios de aceite.**
 - **NÃO aplica label**, **NÃO mergeia**, **NÃO faz push** (o gate é determinístico, **não a opinião do modelo**) —
   verificável pelas permissões da routine (sem escrita).
-- 1 e-mail por dia (não 1 por PR); issue fixa recebe o mesmo resumo.
+- 1 aviso no Telegram por dia (não 1 por PR); issue fixa recebe o mesmo resumo.
 - A contagem de incidentes (janela de 90 dias) aparece no relatório, com o alerta de suspensão ao atingir 2.
 - Relatório distingue os 3 estados e cita o check que reprovou, quando houver.
 
 **Guardrail.** §5 **READ-ONLY M1**; routine sem permissão de escrita no repo (nem label, nem merge, nem push);
-sem credencial de VPS/deploy; **não** expor conteúdo sensível de diff no corpo do e-mail (linkar o PR).
+sem credencial de VPS/deploy; **não** expor conteúdo sensível de diff no corpo da mensagem do Telegram (linkar o PR).
 
 
 ---
@@ -1606,6 +1475,8 @@ sem credencial de VPS/deploy; **não** expor conteúdo sensível de diff no corp
 ---
 
 - BLK-ORQ-25 (concluído 2026-07-14) — ver tasks/completed.md
+
+- BLK-ORQ-26 (concluído 2026-07-14) — ver tasks/completed.md
 
 
 ---
