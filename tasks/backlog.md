@@ -1673,10 +1673,13 @@ exemplo, São José do Rio Preto); `subdistrito` ~vazio (descartado).
   próprio) que soma pop/domicílios/área e calcula densidade e renda média ponderada dos setores da
   unidade; "n/d" gracioso quando o pin cai fora de qualquer setor ou a unidade não tem dado.
 - `censo_report.py` — **nova página** "Perfil do Bairro/Distrito" nas DUAS variantes (`censitario`
-  e `classico`), inserida após os Big Numbers e antes da página de Crédito. **Isto ALTERA a
-  contagem de páginas** (censitário 5→6; clássico 4→5) e o `/Count` — mudança INTENCIONAL deste
-  bloco (é o único ponto do "fora de escopo" histórico que este bloco toca de propósito). Atualizar
-  `PDF_SECTION_HEADERS`/contagem de imagens dos testes de estrutura.
+  e `classico`), inserida **entre a página de Concorrentes e a de Big Numbers** (decisão de Vinicius,
+  2026-07-15). Ordem final: Capa → Mapas de calor → Concorrentes → **Perfil do Bairro/Distrito** →
+  Big Numbers → Realização/Crédito. **Isto ALTERA a contagem de páginas** (as DUAS variantes: **5→6**;
+  ambas já tinham 5 páginas — o clássico também tem página de Concorrentes) e o `/Count` — mudança
+  INTENCIONAL deste bloco (é o único ponto do "fora de escopo" histórico que este bloco toca de
+  propósito). Atualizar `PDF_SECTION_HEADERS` (inserir o rótulo da nova seção **entre**
+  `"Concorrentes"` e `"Big Numbers"`) e a contagem de imagens/páginas dos testes de estrutura.
 - Testes: agregação por bairro (com e sem fallback para distrito; "n/d" fora da malha) + presença
   da nova página no PDF (as duas variantes) + atualização dos testes de contagem de páginas.
 - `docs/relatorio_pontual_censitario.md`.
