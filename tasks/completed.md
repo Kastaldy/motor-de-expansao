@@ -9013,3 +9013,21 @@ dentro de latin-1 com pontuação ASCII; regressão de acentuação verde.
 **Housekeeping (6.0, modo MERGE-HUMANO).** Bloco movido byte-idêntico do backlog para completed.md via
 `scripts/housekeeping_move_block.py BLK-RELPON-07 --date 2026-07-15` (stub de 1 linha no backlog); `--check`
 e `--is-done` verdes. READ-ONLY M1; pesos `renda=0.40`/`pop=0.60` e artefatos oficiais inalterados.
+
+### BLK-RELPON-07 — refino visual do slide (gate visual de Vinicius, 2026-07-15)
+
+Durante a revisão visual, Vinicius pediu para os 4 blocos do slide "Perfil do Bairro/Distrito"
+seguirem o formato do painel "Microárea" da GeoFusion (imagem de referência): layout VERTICAL
+empilhado em vez do grid 2x2 de cards. Redesenho SÓ visual em `censo_report.py` (READ-ONLY M1;
+não muda os 4 blocos, os valores, o método de renda D3.5, os rótulos, nem a contagem de páginas):
+- Novo painel `_draw_perfil_panel` (compartilhado pelas 2 variantes): moldura turquesa arredondada
+  + cartão branco + cabeçalho (rótulo "Bairro"/"Distrito" + nome + município/UF) + 4 métricas
+  empilhadas, cada uma com ícone vetorial (pessoas p/ população e densidade, casa p/ domicílios,
+  cifra p/ renda), rótulo cinza e valor grande azul-marinho, com círculo "i" decorativo à direita.
+- Helpers novos: `_perfil_icon` (ícones vetoriais via ellipse/polygon/rect), `_perfil_info_dot`,
+  `_perfil_metric_rows`, `_perfil_nota_metodo`. Cores novas `_PERFIL_VALOR_RGB`/`_PERFIL_ROTULO_RGB`/
+  `_PERFIL_INFO_RGB`/`_PERFIL_DIVISOR_RGB`.
+- Os 4 rótulos exatos ("População"/"Densidade demográfica"/"Domicílios"/"Renda média"), o título
+  "Perfil do Bairro/Distrito", a mensagem "Perfil não disponível" e o "n/d" gracioso preservados;
+  suíte export/motor/acentuação/municipal 96 passed; ruff/mypy limpos; import ok. Verificação visual
+  própria: 4 PNGs (recente/clássico × disponível/n-d) renderizados via PyMuPDF, layout fiel à referência.

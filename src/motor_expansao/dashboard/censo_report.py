@@ -77,6 +77,15 @@ ULTRA_BRANCO_GELO = (248, 248, 248)
 _BRANCO = (255, 255, 255)
 _CINZA_TEXTO = (60, 60, 60)
 
+# BLK-RELPON-07 (refino visual "Microarea" GeoFusion): painel vertical do Perfil do
+# Bairro/Distrito. Moldura turquesa arredondada + cartao branco + metricas empilhadas
+# (icone + rotulo cinza + valor grande azul-marinho). SO estilo/geometria — nao muda os
+# 4 blocos, os valores, o metodo de renda nem a contagem de paginas.
+_PERFIL_VALOR_RGB = (38, 50, 71)  # azul-marinho escuro dos numeros (como no painel de referencia)
+_PERFIL_ROTULO_RGB = (120, 126, 138)  # cinza medio dos rotulos das metricas
+_PERFIL_INFO_RGB = (206, 208, 214)  # cinza claro do circulo "i" decorativo
+_PERFIL_DIVISOR_RGB = (232, 233, 237)  # linha divisoria fina entre metricas
+
 # Atribuicao de tiles (DEC-004) — sempre presente no rodape de cada pagina de mapa/credito.
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
 _CREDITO_ULTRA = "Relatório gerado pelo Motor de Expansão - Ultra Academia"
@@ -687,6 +696,182 @@ def _competitors_page(
     _draw_footer(pdf, with_attribution=True)
 
 
+def _perfil_icon(
+    pdf: _UltraPDF, kind: str, x: float, y: float, size: float, rgb: tuple[int, int, int]
+) -> None:
+    """Icone vetorial simples do painel "Microarea": pessoas (pop/densidade), casa
+    (domicilios) e cifra (renda), em `rgb`, dentro do bounding box (x, y, size, size).
+    """
+    pdf.set_fill_color(*rgb)
+    pdf.set_draw_color(*rgb)
+    if kind in ("pop", "dens"):
+        # Duas "pessoas": duas cabecas (circulos) + dois ombros arredondados.
+        head_d = size * 0.30
+        pdf.ellipse(x + size * 0.14, y + size * 0.08, head_d, head_d, style="F")
+        pdf.ellipse(x + size * 0.56, y + size * 0.08, head_d, head_d, style="F")
+        pdf.rect(
+            x + size * 0.02, y + size * 0.48, size * 0.42, size * 0.44,
+            style="F", round_corners=True, corner_radius=size * 0.16,
+        )
+        pdf.rect(
+            x + size * 0.56, y + size * 0.48, size * 0.42, size * 0.44,
+            style="F", round_corners=True, corner_radius=size * 0.16,
+        )
+    elif kind == "dom":
+        # Casa: telhado (triangulo) + corpo (retangulo).
+        pdf.polygon(
+            [
+                (x + size * 0.50, y + size * 0.06),
+                (x + size * 0.94, y + size * 0.48),
+                (x + size * 0.06, y + size * 0.48),
+            ],
+            style="F",
+        )
+        pdf.rect(x + size * 0.20, y + size * 0.46, size * 0.60, size * 0.46, style="F")
+    else:  # renda -> cifra dentro de um circulo
+        pdf.ellipse(x + size * 0.05, y + size * 0.05, size * 0.90, size * 0.90, style="F")
+        pdf.set_text_color(*_BRANCO)
+        pdf.set_font("Helvetica", "B", max(9, int(size * 0.58)))
+        pdf.set_xy(x, y + size * 0.20)
+        pdf.cell(size, size * 0.5, "$", align="C")
+
+
+def _perfil_info_dot(pdf: _UltraPDF, cx: float, cy: float, r: float = 8.5) -> None:
+    """Circulo "i" decorativo cinza-claro a direita de cada metrica (fidelidade ao painel)."""
+    pdf.set_fill_color(*_PERFIL_INFO_RGB)
+    pdf.ellipse(cx - r, cy - r, 2 * r, 2 * r, style="F")
+    pdf.set_text_color(*_BRANCO)
+    pdf.set_font("Helvetica", "BI", int(r * 1.25))
+    pdf.set_xy(cx - r, cy - r * 0.95)
+    pdf.cell(2 * r, 2 * r * 0.95, "i", align="C")
+
+
+def _perfil_metric_rows(perfil: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """As 4 metricas do perfil como (kind_icone, rotulo, valor). Rotulos e metodo de renda
+    INALTERADOS (D3/D3.5); `_format_number` ja devolve "n/d" para ausente.
+    """
+    return [
+        ("pop", "População", _format_number(perfil.get("populacao_total"), 0)),
+        ("dens", "Densidade demográfica", _format_number(perfil.get("densidade_hab_km2"), 0, " hab/km2")),
+        ("dom", "Domicílios", _format_number(perfil.get("domicilios_total"), 0)),
+        ("renda", "Renda média", "R$ " + _format_number(perfil.get("renda_media_domiciliar"), 2)),
+    ]
+
+
+def _draw_perfil_panel(
+    pdf: _UltraPDF,
+    *,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    disponivel: bool,
+    tipo_label: str,
+    nome: str,
+    local_line: str,
+    rows: list[tuple[str, str, str]],
+) -> None:
+    """Painel vertical estilo "Microarea" (GeoFusion): moldura turquesa arredondada + cartao
+    branco + cabecalho (rotulo + nome) + metricas empilhadas (icone + rotulo cinza + valor
+    grande azul-marinho + circulo "i"). SO layout — nao altera valores nem a contagem de paginas.
+    """
+    frame_r = 26.0
+    borda = 12.0
+    # Moldura turquesa arredondada.
+    pdf.set_fill_color(*ULTRA_TURQUESA)
+    pdf.set_line_width(0)
+    pdf.rect(x, y, w, h, style="F", round_corners=True, corner_radius=frame_r)
+    # Cartao branco interno.
+    cx0, cy0 = x + borda, y + borda
+    cw, ch = w - 2 * borda, h - 2 * borda
+    pdf.set_fill_color(*_BRANCO)
+    pdf.rect(cx0, cy0, cw, ch, style="F", round_corners=True, corner_radius=frame_r - borda)
+
+    pad = 30.0
+    content_x = cx0 + pad
+    content_w = cw - 2 * pad
+    head_y = cy0 + 24.0
+
+    if disponivel:
+        pdf.set_text_color(*_PERFIL_ROTULO_RGB)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_xy(content_x, head_y)
+        pdf.cell(content_w, 14, _ascii(tipo_label))
+        pdf.set_text_color(*_PERFIL_VALOR_RGB)
+        pdf.set_font("Helvetica", "B", 24)
+        pdf.set_xy(content_x, head_y + 15)
+        pdf.multi_cell(content_w, 26, _ascii(nome))
+        y_after = pdf.get_y()
+        if local_line:
+            pdf.set_text_color(*_PERFIL_ROTULO_RGB)
+            pdf.set_font("Helvetica", "", 12)
+            pdf.set_xy(content_x, y_after + 2)
+            pdf.multi_cell(content_w, 14, _ascii(local_line))
+            y_after = pdf.get_y()
+    else:
+        pdf.set_text_color(*_PERFIL_VALOR_RGB)
+        pdf.set_font("Helvetica", "B", 20)
+        pdf.set_xy(content_x, head_y)
+        pdf.multi_cell(content_w, 24, _ascii("Perfil não disponível"))
+        y_after = pdf.get_y()
+        pdf.set_text_color(*_PERFIL_ROTULO_RGB)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_xy(content_x, y_after + 2)
+        pdf.multi_cell(
+            content_w, 14,
+            _ascii("Fora da malha de setores ou unidade sem dado suficiente."),
+        )
+        y_after = pdf.get_y()
+
+    # Divisor sob o cabecalho.
+    sep_y = y_after + 14.0
+    pdf.set_draw_color(*_PERFIL_DIVISOR_RGB)
+    pdf.set_line_width(1.0)
+    pdf.line(content_x, sep_y, content_x + content_w, sep_y)
+
+    # Metricas empilhadas, distribuidas no espaco restante do cartao.
+    rows_top = sep_y + 6.0
+    rows_bottom = cy0 + ch - 18.0
+    n = max(1, len(rows))
+    row_h = (rows_bottom - rows_top) / n
+    for i, (kind, label, value) in enumerate(rows):
+        ry = rows_top + i * row_h
+        icon_size = min(30.0, row_h * 0.44)
+        icon_y = ry + (row_h - icon_size) / 2.0 - 4.0
+        _perfil_icon(pdf, kind, content_x, icon_y, icon_size, ULTRA_TURQUESA)
+        text_x = content_x + icon_size + 16.0
+        text_w = content_w - (icon_size + 16.0) - 26.0
+        pdf.set_text_color(*_PERFIL_ROTULO_RGB)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_xy(text_x, ry + row_h * 0.16)
+        pdf.cell(text_w, 14, _ascii(label))
+        pdf.set_text_color(*_PERFIL_VALOR_RGB)
+        pdf.set_font("Helvetica", "B", 26)
+        pdf.set_xy(text_x, ry + row_h * 0.16 + 16.0)
+        pdf.cell(text_w, 28, _ascii(value))
+        _perfil_info_dot(pdf, content_x + content_w - 12.0, ry + row_h / 2.0)
+        if i < n - 1:
+            pdf.set_draw_color(*_PERFIL_DIVISOR_RGB)
+            pdf.set_line_width(1.0)
+            pdf.line(content_x, ry + row_h, content_x + content_w, ry + row_h)
+    pdf.set_line_width(0)
+
+
+def _perfil_nota_metodo(pdf: _UltraPDF) -> None:
+    """Nota de metodo auditavel do Perfil do Bairro/Distrito (rodape do slide)."""
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_xy(36, _PAGE_H - 40)
+    pdf.multi_cell(
+        _PAGE_W - 72,
+        10,
+        _ascii(
+            "Agregado sobre todos os setores do bairro/distrito (não o raio de 1,5 km). "
+            "Fonte: Censo IBGE 2022; renda média ponderada por domicílios."
+        ),
+    )
+
+
 def _perfil_bairro_page(
     pdf: _UltraPDF,
     perfil_bairro: dict[str, Any] | None,
@@ -695,9 +880,10 @@ def _perfil_bairro_page(
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
 ) -> None:
-    """(BLK-RELPON-07) Perfil do Bairro/Distrito — 4 cards agregados sobre a unidade INTEIRA
-    (nao o raio de 1.5 km). SEM mapa (so texto/numero); "n/d" gracioso quando o perfil nao
-    esta disponivel (ponto fora da malha de setores ou unidade sem dado suficiente).
+    """(BLK-RELPON-07) Perfil do Bairro/Distrito — painel vertical estilo "Microarea"
+    (GeoFusion) com as 4 metricas agregadas sobre a unidade INTEIRA (nao o raio de 1.5 km).
+    SEM mapa; "n/d" gracioso quando o perfil nao esta disponivel (ponto fora da malha de
+    setores ou unidade sem dado suficiente).
     """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
@@ -709,72 +895,25 @@ def _perfil_bairro_page(
     unidade_nome = str(perfil.get("unidade_nome") or "").strip()
     municipio = str(perfil.get("municipio_nome") or "").strip()
     uf = str(perfil.get("uf") or "").strip()
-    rotulo_tipo = "Bairro" if unidade_tipo == "bairro" else "Distrito"
+    tipo_label = "Bairro" if unidade_tipo == "bairro" else "Distrito"
+    local_line = f"{municipio}/{uf}".strip("/") if (municipio or uf) else ""
 
-    pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.set_xy(36, 70)
-    if flag_disponivel and unidade_nome:
-        if municipio or uf:
-            local = f"{municipio}/{uf}".strip("/")
-            subtitulo = f"{unidade_nome} - {rotulo_tipo} de {local}"
-        else:
-            subtitulo = f"{unidade_nome} ({rotulo_tipo})"
-    else:
-        subtitulo = (
-            "Perfil não disponível para este ponto (fora da malha de setores ou "
-            "unidade sem dado suficiente)."
-        )
-    pdf.multi_cell(_PAGE_W - 72, 20, _ascii(subtitulo))
-
-    cards = [
-        ("População", _format_number(perfil.get("populacao_total"), 0)),
-        ("Densidade demográfica", _format_number(perfil.get("densidade_hab_km2"), 0, " hab/km2")),
-        ("Domicílios", _format_number(perfil.get("domicilios_total"), 0)),
-        ("Renda média", "R$ " + _format_number(perfil.get("renda_media_domiciliar"), 2)),
-    ]
-
-    margin_x = 36.0
-    top = 110.0
-    gap = 20.0
-    cols, rows = 2, 2
-    card_w = (_PAGE_W - 2 * margin_x - gap) / cols
-    card_h = 150.0
-    accents = [primary, secondary]
-
-    for index, (label, value) in enumerate(cards):
-        col = index % cols
-        row = index // cols
-        x = margin_x + col * (card_w + gap)
-        y = top + row * (card_h + gap)
-        pdf.set_fill_color(*_BRANCO)
-        pdf.rect(x, y, card_w, card_h, style="F")
-        pdf.set_draw_color(225, 225, 228)
-        pdf.rect(x, y, card_w, card_h, style="D")
-        accent = accents[index % len(accents)]
-        pdf.set_fill_color(*accent)
-        pdf.rect(x, y, card_w, 6.0, style="F")
-        pdf.set_text_color(45, 45, 45)
-        pdf.set_font("Helvetica", "", 11)
-        pdf.set_xy(x + 14, y + 20)
-        pdf.multi_cell(card_w - 28, 14, _ascii(label))
-        pdf.set_text_color(40, 40, 40)
-        pdf.set_font("Helvetica", "B", 26)
-        pdf.set_xy(x + 14, y + 88)
-        pdf.multi_cell(card_w - 28, 28, _ascii(value))
-
-    pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.set_font("Helvetica", "", 8)
-    pdf.set_xy(margin_x, top + rows * (card_h + gap) + 2)
-    pdf.multi_cell(
-        _PAGE_W - 2 * margin_x,
-        11,
-        _ascii(
-            "Agregado sobre todos os setores do bairro/distrito (não o raio de 1,5 km). "
-            "Fonte: Censo IBGE 2022; renda média ponderada por domicílios."
-        ),
+    panel_w = 600.0
+    panel_x = (_PAGE_W - panel_w) / 2.0
+    _draw_perfil_panel(
+        pdf,
+        x=panel_x,
+        y=70.0,
+        w=panel_w,
+        h=410.0,
+        disponivel=flag_disponivel and bool(unidade_nome),
+        tipo_label=tipo_label,
+        nome=unidade_nome,
+        local_line=local_line,
+        rows=_perfil_metric_rows(perfil),
     )
 
+    _perfil_nota_metodo(pdf)
     _draw_footer(pdf, with_attribution=True)
 
 
@@ -1089,72 +1228,26 @@ def _classico_perfil_bairro_page(
     unidade_nome = str(perfil.get("unidade_nome") or "").strip()
     municipio = str(perfil.get("municipio_nome") or "").strip()
     uf = str(perfil.get("uf") or "").strip()
-    rotulo_tipo = "Bairro" if unidade_tipo == "bairro" else "Distrito"
+    tipo_label = "Bairro" if unidade_tipo == "bairro" else "Distrito"
+    local_line = f"{municipio}/{uf}".strip("/") if (municipio or uf) else ""
 
-    pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.set_font("Helvetica", "B", 16)
-    pdf.set_xy(_CLASSICO_MARGIN, 130.0)
-    if flag_disponivel and unidade_nome:
-        if municipio or uf:
-            local = f"{municipio}/{uf}".strip("/")
-            subtitulo = f"{unidade_nome} - {rotulo_tipo} de {local}"
-        else:
-            subtitulo = f"{unidade_nome} ({rotulo_tipo})"
-    else:
-        subtitulo = (
-            "Perfil não disponível para este ponto (fora da malha de setores ou "
-            "unidade sem dado suficiente)."
-        )
-    pdf.multi_cell(_PAGE_W - 2 * _CLASSICO_MARGIN, 20, _ascii(subtitulo))
-
-    cards = [
-        ("População", _format_number(perfil.get("populacao_total"), 0)),
-        ("Densidade demográfica", _format_number(perfil.get("densidade_hab_km2"), 0, " hab/km2")),
-        ("Domicílios", _format_number(perfil.get("domicilios_total"), 0)),
-        ("Renda média", "R$ " + _format_number(perfil.get("renda_media_domiciliar"), 2)),
-    ]
-
-    margin_x = _CLASSICO_MARGIN
-    top = 160.0
-    gap = 16.0
-    cols, rows = 2, 2
-    card_w = (_PAGE_W - 2 * margin_x - gap) / cols
-    card_h = 140.0
-    accents = [primary, secondary]
-
-    for index, (label, value) in enumerate(cards):
-        col = index % cols
-        row = index // cols
-        x = margin_x + col * (card_w + gap)
-        y = top + row * (card_h + gap)
-        pdf.set_fill_color(*_BRANCO)
-        pdf.rect(x, y, card_w, card_h, style="F")
-        pdf.set_draw_color(225, 225, 228)
-        pdf.rect(x, y, card_w, card_h, style="D")
-        accent = accents[index % len(accents)]
-        pdf.set_fill_color(*accent)
-        pdf.rect(x, y, card_w, 6.0, style="F")
-        pdf.set_text_color(45, 45, 45)
-        pdf.set_font("Helvetica", "", 11)
-        pdf.set_xy(x + 14, y + 20)
-        pdf.multi_cell(card_w - 28, 14, _ascii(label))
-        pdf.set_text_color(40, 40, 40)
-        pdf.set_font("Helvetica", "B", 26)
-        pdf.set_xy(x + 14, y + 80)
-        pdf.multi_cell(card_w - 28, 28, _ascii(value))
-
-    pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.set_font("Helvetica", "", 8)
-    pdf.set_xy(margin_x, top + rows * (card_h + gap) + 2)
-    pdf.multi_cell(
-        _PAGE_W - 2 * margin_x,
-        11,
-        _ascii(
-            "Agregado sobre todos os setores do bairro/distrito (não o raio de 1,5 km). "
-            "Fonte: Censo IBGE 2022; renda média ponderada por domicílios."
-        ),
+    # Painel "Microarea" abaixo da banda classica (que ocupa ate ~y=122).
+    panel_w = 600.0
+    panel_x = (_PAGE_W - panel_w) / 2.0
+    _draw_perfil_panel(
+        pdf,
+        x=panel_x,
+        y=132.0,
+        w=panel_w,
+        h=348.0,
+        disponivel=flag_disponivel and bool(unidade_nome),
+        tipo_label=tipo_label,
+        nome=unidade_nome,
+        local_line=local_line,
+        rows=_perfil_metric_rows(perfil),
     )
 
+    _perfil_nota_metodo(pdf)
     _draw_footer(pdf, with_attribution=True)
 
 
