@@ -20,6 +20,9 @@ _mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_mod)
 
 MAPA_BACKLOG = _mod.MAPA_BACKLOG
+NIVEIS = _mod.NIVEIS
+NIVEIS_AUTO_MERGE = _mod.NIVEIS_AUTO_MERGE
+EXIGEM_HUMANO = _mod.EXIGEM_HUMANO
 criticidade_do_bloco = _mod.criticidade_do_bloco
 sem_acento = _mod.sem_acento
 
@@ -131,3 +134,10 @@ def test_mapa_backlog_cobre_todos_os_niveis_do_review_gate() -> None:
 def test_sem_acento() -> None:
     assert sem_acento("Crítica") == "Critica"
     assert sem_acento("Estratégica") == "Estrategica"
+
+
+def test_particao_auto_merge_vs_humano() -> None:
+    # DEC-016: Baixa/Media auto-mergeiam; Alta/Critica exigem humano. Juntos cobrem TODOS os niveis
+    # e nao se sobrepoem -> nenhum nivel fica sem regra nem com regra dupla.
+    assert NIVEIS_AUTO_MERGE | EXIGEM_HUMANO == NIVEIS
+    assert NIVEIS_AUTO_MERGE & EXIGEM_HUMANO == set()

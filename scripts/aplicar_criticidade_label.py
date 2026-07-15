@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Auto-criticidade — aplica a label `criticidade:<nivel>` do bloco quando o PR ainda nao tem
-nenhuma.
+"""Auto-criticidade + auto-merge — a partir do bloco do PR (lido no backlog da BASE) faz duas
+coisas na abertura: (1) aplica a label `criticidade:<nivel>` se faltar; (2) arma o auto-merge
+(`--auto --squash`) para Baixa/Media.
 
 Contexto (DEC-016 / BLK-ORQ-20): o `review-gate` EXIGE exatamente uma label `criticidade:*`,
 conferida contra o campo Criticidade do bloco em `tasks/backlog.md` da BASE. Ele apenas VALIDA a
-label; nada a APLICAVA. Este script fecha esse buraco: le o bloco do PR (por titulo/branch) no
-backlog da BASE e aplica a label correspondente, **espelhando exatamente o mapa do review-gate**
-(guard.yml) para nunca divergir.
+label; nada a APLICAVA, e ninguem armava o auto-merge -> ambos eram passos manuais em todo PR. Este
+script fecha esse buraco, **espelhando exatamente o mapa do review-gate** (guard.yml) para nunca
+divergir.
 
 Seguranca:
 - roda no workflow `auto-criticidade.yml` em `pull_request_target` (a partir da BASE, sem checkout
@@ -17,9 +18,11 @@ Seguranca:
   unicamente identificavel no backlog da base (PR de housekeeping/ad-hoc, ou bloco novo ainda fora
   da base) -> nesse caso o passo manual/`review-gate` decide, como hoje.
 
-Isto NAO decide merge nem afrouxa nenhum portao: Alta/Critica seguem exigindo `aprovado-humano`/
-`critica-aprovada`; o `guard` de paths (M1/CI/deploy/...) segue independente. Apenas remove o passo
-manual de declarar a criticidade que ja e deterministica a partir do backlog.
+Nao afrouxa nenhum portao: o `--auto` respeita TODAS as protecoes da main (os 4 checks + qualquer
+label exigida), entao Alta/Critica/governanca/critico NUNCA mergeiam sem `aprovado-humano`/
+`critica-aprovada`; o `guard` de paths (M1/CI/deploy/...) segue independente. Apenas remove os passos
+manuais (declarar criticidade + armar o auto-merge) que ja sao deterministicos a partir do backlog.
+Kill-switch: desligar `allow_auto_merge` no repo desativa o armado de todos os PRs de uma vez.
 """
 from __future__ import annotations
 
@@ -31,6 +34,9 @@ import unicodedata
 PREFIXO = "criticidade:"
 # Espelho EXATO de guard.yml (review-gate). Manter em sincronia (test garante o mapa).
 NIVEIS = {"baixa", "media", "alta", "critica"}
+# Regua da DEC-016: Baixa/Media auto-mergeiam sem humano; Alta/Critica exigem label humana.
+NIVEIS_AUTO_MERGE = {"baixa", "media"}
+EXIGEM_HUMANO = {"alta", "critica"}
 ORDEM_CRITICIDADE = {"baixa": 0, "media": 1, "alta": 2, "critica": 3}
 MAPA_BACKLOG = {
     "baixa": "baixa",
@@ -118,6 +124,17 @@ def main() -> int:
     branch = os.environ.get("PR_BRANCH", "")
     titulo = os.environ.get("PR_TITULO", "")
 
+    with open("tasks/backlog.md", encoding="utf-8") as fh:
+        backlog = fh.read()
+    nivel = criticidade_do_bloco(backlog, branch, titulo)
+    if not nivel:
+        print(
+            "bloco nao unicamente identificavel no backlog da base (housekeeping/ad-hoc ou bloco "
+            "novo) -> no-op; label e auto-merge ficam para o passo manual/review-gate."
+        )
+        return 0
+
+    # 1) Aplica a label de criticidade se o PR ainda NAO tem nenhuma (nao briga com o humano).
     labels_proc = _gh("api", f"repos/{repo}/issues/{pr}/labels", "--jq", ".[].name")
     if labels_proc.returncode != 0:
         # fail-safe: nao conseguiu ler labels -> nao mexe (o review-gate ainda protege).
@@ -126,25 +143,24 @@ def main() -> int:
     labels = {ln.strip() for ln in labels_proc.stdout.splitlines() if ln.strip()}
     ja = sorted(ln for ln in labels if ln.startswith(PREFIXO))
     if ja:
-        print(f"criticidade ja definida ({', '.join(ja)}) -> no-op (nao brigo com o humano).")
-        return 0
+        print(f"criticidade ja definida ({', '.join(ja)}); nao reaplico.")
+    else:
+        label = f"{PREFIXO}{nivel}"
+        print(f"aplicando `{label}` (bloco identificado no backlog da base).")
+        add = _gh("pr", "edit", pr, "--repo", repo, "--add-label", label)
+        if add.returncode != 0:
+            print(f"::warning::falha ao aplicar `{label}`: {add.stderr.strip()}")
 
-    with open("tasks/backlog.md", encoding="utf-8") as fh:
-        backlog = fh.read()
-    nivel = criticidade_do_bloco(backlog, branch, titulo)
-    if not nivel:
-        print(
-            "bloco nao unicamente identificavel no backlog da base (housekeeping/ad-hoc ou bloco "
-            "novo) -> no-op; a label fica para o passo manual/review-gate."
-        )
-        return 0
-
-    label = f"{PREFIXO}{nivel}"
-    print(f"aplicando `{label}` (bloco identificado no backlog da base).")
-    add = _gh("pr", "edit", pr, "--repo", repo, "--add-label", label)
-    if add.returncode != 0:
-        print(f"::warning::falha ao aplicar `{label}`: {add.stderr.strip()}")
-        return 0
+    # 2) Arma o auto-merge SO para Baixa/Media (Alta/Critica seguem exigindo merge humano).
+    #    `--auto` respeita TODAS as protecoes da main (os 4 checks + qualquer label exigida): so
+    #    mergeia quando tudo estiver verde -> NUNCA fura o portao. Idempotente (re-armar = no-op).
+    if nivel in NIVEIS_AUTO_MERGE:
+        print(f"nivel `{nivel}` -> armando auto-merge (--auto --squash).")
+        arm = _gh("pr", "merge", pr, "--repo", repo, "--auto", "--squash")
+        if arm.returncode != 0:
+            print(f"::warning::falha ao armar auto-merge: {arm.stderr.strip()}")
+    else:
+        print(f"nivel `{nivel}` exige aprovacao humana -> NAO armo auto-merge (merge segue humano).")
     return 0
 
 
