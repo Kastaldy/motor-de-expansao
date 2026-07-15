@@ -8833,8 +8833,8 @@ loop por conclusão + delta do PR de housekeeping em lote). No Windows (platafor
 poderia quebrar a detecção em CRLF **silenciosamente** e fazer o loop mis-selecionar um bloco.
 
 **Objetivo.** Travar o comportamento CRLF com testes de regressão em `tests/unit/test_housekeeping_helper.py`:
-`is_done` detecta `### BLK-X
-` e `## Fechamento de ciclo — BLK-X
+`is_done` detecta `### BLK-X
+` e `## Fechamento de ciclo — BLK-X
 `; ignora menção em prosa mesmo em CRLF;
 `emit_delta` não captura o `` no ID e não colide prefixo (`BLK-FIX-06` vs `BLK-FIX-06-C`) em entrada CRLF.
 
