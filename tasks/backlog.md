@@ -1503,7 +1503,7 @@ sem credencial de VPS/deploy; **não** expor conteúdo sensível de diff no corp
 | **Criticidade** | **Media** (altera a pagina Big Numbers do Relatorio Pontual Censitario; **READ-ONLY sobre o M1**; ADICIONA um campo agregado `domicilios_total_raio` ao motor do ponto e muda layout/cor da grid; nucleo `censo_*` so ESTENDE leitura/render, sem tocar intersecao/raio/marca d'agua). |
 | **Prioridade** | A definir (Vinicius). |
 | **Esteira** | Block Orchestrator -> Planner -> Builder -> QA -> `[REVISAO HUMANA - visual do PDF]` -> merge. |
-| **Status** | Pendente - decisoes de produto D1/D2/D3 JA TOMADAS (Vinicius, 2026-07-15, abaixo). |
+| **Status** | Pendente - decisoes de produto D1/D2/D3 + D4/D7 (ex-Q1..Q4) TODAS TOMADAS (Vinicius, 2026-07-15, abaixo); pronto para /run-cycle sem gate pendente. |
 | **Depende de** | Relatorio Pontual ja existente (pagina Big Numbers, `_big_numbers_page`); malha de setores IBGE 2022 com `domicilios_particulares_ocupados_setor_2022` (ja usada pelo BLK-RELPON-07). |
 | **Autonomia** | **manual (NAO loop-safe)** - altera relatorio auditavel e exige revisao visual do PDF. |
 
@@ -1563,16 +1563,19 @@ READ-ONLY sobre o M1.
   neutro).
 - `docs/relatorio_pontual_censitario.md`.
 
-**Questoes para o gate/Planner (a confirmar antes do Builder).**
-- **Q1 - "Numero de domicilios" e NO RAIO** (novo `domicilios_total_raio`), nao do bairro (pagina 4).
-  Recomendado e assumido; confirmar no gate visual.
-- **Q2 - valor "n/d" (dado ausente):** propor cor NEUTRA (cinza claro, sem verde/vermelho) quando o valor do
-  card e None/"n/d" (pintar verde/vermelho um dado ausente seria enganoso). Vale tambem para
-  Consumo/Concorrentes quando SAM ou Residual e n/d (condicao indecidivel -> neutro). Confirmar.
-- **Q3 - paleta/contraste:** propor fundo em tom PASTEL (verde/vermelho claro) com barra de acento solida,
-  mantendo rotulo/valor em cinza-escuro legivel; ajuste fino no gate visual.
-- **Q4 - as metas (10000/1500/3000/60/2000/2000) sao constantes de DISPLAY** locais ao relatorio (nao sao
-  gate do M1/mercado); recomendado vira-las constantes nomeadas no modulo (auditaveis). Confirmar.
+**Decisoes adicionais (RESOLVIDAS por Vinicius, 2026-07-15 - eram Q1-Q4, agora fechadas; sem gate pendente antes do Builder).**
+- **D4 - "Numero de domicilios" e NO RAIO** (novo campo `domicilios_total_raio`), NAO do bairro (pagina 4).
+  Consistente com pop/renda/score, que ja sao "no raio". `domicilios_total` do BLK-RELPON-07 (bairro) NAO
+  e reusado aqui.
+- **D5 - valor "n/d" (dado ausente) = cor NEUTRA (cinza claro), sem verde/vermelho.** Nao pintar meta
+  atingida/nao-atingida quando o valor e None/"n/d" (evita falsa reprovacao/aprovacao de dado inexistente).
+  Vale tambem para Consumo/Concorrentes quando SAM ou Residual e n/d (condicao indecidivel -> neutro).
+- **D6 - estilo do fundo = PASTEL + barra de acento solida + texto cinza-escuro.** Fundo verde/vermelho
+  CLARO (pastel), barra de acento solida no topo do card e rotulo/valor em cinza-escuro legivel (mantem o
+  estilo atual dos cards e a legibilidade). Ajuste fino de tom no gate visual.
+- **D7 - as metas viram CONSTANTES NOMEADAS auditaveis** no modulo (ex.: um dict `BIG_NUMBERS_METAS`), nao
+  valores inline. Sao constantes de DISPLAY locais ao relatorio (nao gate do M1/mercado; nao alteram
+  `flag_sam`/DEC-006/DEC-007 nem os valores de `sam_fitness_potencial`/`oferta_efetiva_disponivel`).
 
 **Fora de escopo.** Metodo de intersecao `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
 `RAIO_CENSITARIO_DEFAULT_KM`, mapas de calor/choropleth, marca d'agua anti-PII, `set_compression(False)`,
