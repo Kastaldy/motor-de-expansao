@@ -23,3 +23,9 @@ secrets/*.enc.txt   binary
 # duas pontas automaticamente. REGRA: nunca reorganizar/reordenar o arquivo
 # com ciclos em voo — reorganizacao quebra o union e recria conflito.
 tasks/completed.md  merge=union
+
+# Markdown de tasks/ e docs/ sempre em LF nos blobs: evita conflito de "arquivo
+# inteiro" por EOL misto (CRLF na main x LF nos branches). O merge=union do
+# completed.md so funciona com EOL consistente. DEC-017.
+tasks/*.md          text eol=lf
+docs/*.md           text eol=lf
