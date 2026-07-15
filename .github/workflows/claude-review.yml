@@ -120,6 +120,14 @@ jobs:
         with:
           # Assinatura Max (sem custo de API). Secret criado pelo dono.
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # BLK-ORQ-21: SEM este input a action cai no fallback de OIDC
+          # (`setupGitHubToken` -> "Unable to get ACTIONS_ID_TOKEN_REQUEST_URL"), aborta
+          # ANTES de rodar o Claude e o check reprova por falta de saida estruturada — foi
+          # o que aconteceu no PR #97. A alternativa (`id-token: write`) exigiria o Claude
+          # GitHub App instalado no repo, que nao usamos. O escopo continua sendo o do
+          # `permissions:` deste workflow, e a action NAO publica nada (quem posta e o
+          # nosso gate, depois de redigir segredos).
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           # N4: a action NAO publica. Quem publica e o nosso gate, apos redigir segredos.
           # O modelo tambem nao tem ferramenta de escrita/rede (ver claude_args).
           use_sticky_comment: false
@@ -127,13 +135,17 @@ jobs:
             Voce e o revisor automatico de codigo do repositorio Motor de Expansao Ultra.
             Revise o pull request #${{ github.event.pull_request.number }}.
 
-            ## Como revisar
-            1. Leia `REVIEW.md` (a regua de severidade) e `CLAUDE.md` (os guardrails
-               canonicos: secoes 2, 3, 5, 6, 6.1 e 8/DECs).
-            2. Obtenha o diff com `gh pr diff ${{ github.event.pull_request.number }}`.
-               Se o comando falhar (token, rate limit, diff grande demais), NAO simule a
-               revisao e NAO devolva "0 achados": relate a falha em texto e ENCERRE sem
-               saida estruturada. O check reprova sozinho (fail-closed) — e o correto.
+            ## Como revisar (ECONOMIZE TURNOS: leia o DIFF primeiro, nao arquivos grandes inteiros)
+            1. Obtenha o diff com `gh pr diff ${{ github.event.pull_request.number }}` — e o sinal
+               mais barato e o UNICO escopo a revisar. Se o comando falhar (token, rate limit, diff
+               grande demais), NAO simule a revisao e NAO devolva "0 achados": relate a falha em
+               texto e ENCERRE sem saida estruturada. O check reprova sozinho (fail-closed) — e o correto.
+            2. Leia `REVIEW.md` (curto, a regua de severidade). Do `CLAUDE.md` (guardrails secoes
+               2, 3, 5, 6, 6.1 e 8/DECs) consulte SO as partes relevantes ao diff — use `Grep` para
+               achar a DEC/secao especifica em vez de ler o arquivo inteiro. NAO leia arquivos grandes
+               na integra so por contexto (ex.: `tasks/backlog.md` ~1750 linhas): o diff ja mostra o
+               trecho mudado. Ler arquivos gigantes inteiros estoura os turnos (o check reprova por
+               `max_turns` sem produzir veredito).
             3. Revise SOMENTE o que esta no diff. Nao comente codigo pre-existente que o
                PR nao tocou. Nao proponha refatoracoes de escopo.
             4. Classifique cada achado como ALTA ou MEDIA exatamente pelos criterios do
@@ -171,7 +183,7 @@ jobs:
             `itens: []` — mas `arquivos_revisados` ainda precisa refletir o que voce leu.
           claude_args: |
             --model sonnet
-            --max-turns 20
+            --max-turns 40
             --allowedTools "Read,Glob,Grep,Bash(gh pr diff:*)"
             --disallowedTools "Bash(gh pr comment:*),Bash(gh pr review:*),Bash(gh api:*),Bash(curl:*),Bash(wget:*),Bash(env:*),Bash(printenv:*),Bash(cat:*),Read(//proc/**),Read(//sys/**),Read(//etc/**),Grep(//proc/**),Write,Edit,NotebookEdit,WebFetch,WebSearch"
             --json-schema '{"type":"object","properties":{"arquivos_revisados":{"type":"integer","minimum":1},"achados_alta":{"type":"integer","minimum":0},"achados_media":{"type":"integer","minimum":0},"resumo":{"type":"string","maxLength":2000},"itens":{"type":"array","items":{"type":"object","properties":{"severidade":{"type":"string","enum":["alta","media"]},"arquivo":{"type":"string","pattern":"^[A-Za-z0-9._/-]+$","maxLength":300},"problema":{"type":"string","maxLength":500}},"required":["severidade","arquivo","problema"],"additionalProperties":false}}},"required":["arquivos_revisados","achados_alta","achados_media","resumo","itens"],"additionalProperties":false}'

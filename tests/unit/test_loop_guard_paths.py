@@ -228,6 +228,24 @@ def test_conftest_em_qualquer_nivel_e_critico() -> None:
     assert _classe("tests/unit/test_conftest_helpers.py") is None
 
 
+def test_blk_orq_24_backlog_bloqueia_completed_libera_auto_merge() -> None:
+    """BLK-ORQ-24: a invariante que faz o modo auto-merge funcionar.
+
+    O PR de ciclo no modo auto-merge leva SO codigo + testes + o append em ``completed.md``, e
+    DIFERE o stub de ``backlog.md`` para um PR de housekeeping em lote. Isso so mergeia sozinho se:
+
+    * ``tasks/backlog.md`` for GOVERNANCA -> qualquer PR que o toque exige label humana (e onde o
+      marcador ``loop-safe`` deve ser concedido sob olho humano); e
+    * ``tasks/completed.md`` for LIMPO -> o append de conclusao do ciclo passa o guard sem label.
+
+    Se estas duas classes se inverterem, o objetivo da DEC-016 (loop mergeando sozinho) quebra: ou
+    o append de conclusao passa a exigir label (nada auto-mergeia), ou o backlog vira auto-editavel
+    (um PR se auto-concede ``loop-safe``).
+    """
+    assert _classe("tasks/backlog.md") == CLASSE_GOVERNANCA
+    assert _classe("tasks/completed.md") is None
+
+
 def test_n1_config_de_raiz_e_ancorada() -> None:
     """N1: config de ferramenta na raiz e CRITICO, mas o regex e ANCORADO (`^...$`) a raiz."""
     for raiz in ("setup.py", "setup.cfg", "pytest.ini", "tox.ini", "ruff.toml", ".ruff.toml",
