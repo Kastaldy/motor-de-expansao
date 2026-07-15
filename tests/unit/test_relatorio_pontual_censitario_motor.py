@@ -10,6 +10,7 @@ from motor_expansao.dashboard.censo_point import (
     CRS_ORIGEM_CENSO,
     METODO_RELATORIO_PONTUAL_CENSITARIO,
     _local_metric_crs,
+    agregar_perfil_bairro_distrito,
     analisar_ponto_censitario_setores,
 )
 
@@ -29,6 +30,9 @@ def _sector_record(
     pop: float = 1000.0,
     renda: float = 2000.0,
     score: float = 70.0,
+    cod_bairro: str | None = None,
+    nome_bairro: str | None = None,
+    nome_distrito: str | None = None,
 ) -> dict[str, object]:
     geom_wgs = _to_wgs_geometry(local_geom)
     minx, miny, maxx, maxy = geom_wgs.bounds
@@ -50,6 +54,10 @@ def _sector_record(
         "flag_renda_disponivel": True,
         "flag_geometria_valida": True,
         "qualidade_join_uf": "A",
+        # BLK-RELPON-07: identificacao de bairro/distrito (opcional, default None).
+        "cod_bairro": cod_bairro,
+        "nome_bairro": nome_bairro,
+        "nome_distrito": nome_distrito,
     }
 
 
@@ -201,6 +209,10 @@ def test_lookup_setor_do_ponto_fora_da_malha():
     assert result["renda_per_capita_setor_ponto"] is None
     assert result["densidade_pop_setor_ponto"] is None
     assert result["score_setor_2022_calibrado_ponto"] is None
+    # BLK-RELPON-07: ponto fora da malha -> identificacao de bairro/distrito tambem "n/d".
+    assert result["cod_bairro_ponto"] is None
+    assert result["unidade_ponto_tipo"] is None
+    assert result["unidade_ponto_rotulo"] is None
 
 
 def test_lookup_setor_ponto_setor_geometria_invalida_fica_ausente():
@@ -221,3 +233,159 @@ def test_lookup_setor_ponto_setor_geometria_invalida_fica_ausente():
     assert result["renda_per_capita_setor_ponto"] is None
     assert result["densidade_pop_setor_ponto"] is None
     assert result["score_setor_2022_calibrado_ponto"] is None
+
+
+def test_lookup_bairro_ponto_quando_setor_tem_bairro():
+    # Setor cobre o ponto por completo e tem cod_bairro/nome_bairro preenchidos.
+    setor = box(-700, -700, 700, 700)
+    df = pd.DataFrame(
+        [_sector_record("355030801000020", setor, cod_bairro="0001", nome_bairro="Bairro Teste")]
+    )
+
+    result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
+
+    assert result["unidade_ponto_tipo"] == "bairro"
+    assert result["nome_bairro_ponto"] == "Bairro Teste"
+    assert result["unidade_ponto_rotulo"] == "Bairro Teste"
+
+
+def test_lookup_distrito_ponto_fallback_quando_bairro_ausente():
+    # nome_bairro ausente (None) mas nome_distrito preenchido -> fallback para distrito.
+    setor = box(-700, -700, 700, 700)
+    df = pd.DataFrame(
+        [_sector_record("355030801000021", setor, nome_bairro=None, nome_distrito="Distrito Teste")]
+    )
+
+    result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
+
+    assert result["unidade_ponto_tipo"] == "distrito"
+    assert result["unidade_ponto_rotulo"] == "Distrito Teste"
+
+
+# ── BLK-RELPON-07: agregar_perfil_bairro_distrito ────────────────────────────────
+
+
+def _bairro_row(
+    cod_setor: str,
+    *,
+    cod_bairro: str | None = None,
+    nome_distrito: str | None = None,
+    pop: float | None = None,
+    domicilios: float | None = None,
+    area_m2: float | None = None,
+    renda: float | None = None,
+) -> dict[str, object]:
+    return {
+        "cod_setor": cod_setor,
+        "cod_bairro": cod_bairro,
+        "nome_distrito": nome_distrito,
+        "pop_total_setor_2022": pop,
+        "domicilios_particulares_ocupados_setor_2022": domicilios,
+        "area_setor_m2": area_m2,
+        "renda_responsavel_media_setor_2022": renda,
+    }
+
+
+def test_agregar_perfil_bairro_agrega_todos_setores_do_bairro_por_cod_bairro():
+    df = pd.DataFrame(
+        [
+            _bairro_row(
+                "1", cod_bairro="0001", pop=1000, domicilios=100, area_m2=1_000_000, renda=2000
+            ),
+            _bairro_row(
+                "2", cod_bairro="0001", pop=2000, domicilios=200, area_m2=1_000_000, renda=3000
+            ),
+            _bairro_row(
+                "3", cod_bairro="0002", pop=500, domicilios=50, area_m2=500_000, renda=1500
+            ),
+        ]
+    )
+
+    perfil = agregar_perfil_bairro_distrito(df, cod_bairro="0001", nome_bairro="Bairro Teste")
+
+    assert perfil["flag_perfil_disponivel"] is True
+    assert perfil["unidade_tipo"] == "bairro"
+    assert perfil["n_setores_unidade"] == 2
+    assert perfil["populacao_total"] == pytest.approx(3000)
+    assert perfil["domicilios_total"] == pytest.approx(300)
+    assert perfil["densidade_hab_km2"] == pytest.approx(1500.0)
+    assert perfil["renda_media_domiciliar"] == pytest.approx(2666.67, abs=0.01)
+    assert perfil["metodo_renda_perfil_bairro"] == "renda_responsavel_media_ponderada_por_domicilios"
+
+
+def test_agregar_perfil_bairro_fallback_para_distrito_quando_bairro_ausente():
+    df = pd.DataFrame(
+        [
+            _bairro_row(
+                "1", cod_bairro=None, nome_distrito="Distrito Teste",
+                pop=800, domicilios=80, area_m2=800_000, renda=1800,
+            ),
+            _bairro_row(
+                "2", cod_bairro=None, nome_distrito="Distrito Teste",
+                pop=1200, domicilios=120, area_m2=800_000, renda=2200,
+            ),
+            _bairro_row(
+                "3", cod_bairro=None, nome_distrito="Outro Distrito",
+                pop=5000, domicilios=500, area_m2=5_000_000, renda=9000,
+            ),
+        ]
+    )
+
+    perfil = agregar_perfil_bairro_distrito(
+        df, cod_bairro=None, nome_distrito="Distrito Teste"
+    )
+
+    assert perfil["unidade_tipo"] == "distrito"
+    assert perfil["unidade_nome"] == "Distrito Teste"
+    assert perfil["n_setores_unidade"] == 2
+    assert perfil["populacao_total"] == pytest.approx(2000)
+    assert perfil["domicilios_total"] == pytest.approx(200)
+
+
+def test_agregar_perfil_bairro_renda_exclui_setor_com_domicilio_zero_ou_renda_nula():
+    df = pd.DataFrame(
+        [
+            _bairro_row(
+                "1", cod_bairro="0001", pop=500, domicilios=100, area_m2=500_000, renda=2000
+            ),
+            _bairro_row(
+                "2", cod_bairro="0001", pop=500, domicilios=0, area_m2=500_000, renda=2500
+            ),
+            _bairro_row(
+                "3", cod_bairro="0001", pop=500, domicilios=150, area_m2=500_000, renda=float("nan")
+            ),
+        ]
+    )
+
+    perfil = agregar_perfil_bairro_distrito(df, cod_bairro="0001", nome_bairro="Bairro Teste")
+
+    # Renda so considera o setor 1 (unico com renda e domicilios validos e > 0).
+    assert perfil["renda_media_domiciliar"] == pytest.approx(2000.0)
+    # Populacao/domicilios somam os 3 setores (a exclusao e so da renda).
+    assert perfil["populacao_total"] == pytest.approx(1500)
+    assert perfil["domicilios_total"] == pytest.approx(250)
+
+
+def test_agregar_perfil_bairro_nd_quando_sem_identificador():
+    df = pd.DataFrame(
+        [_bairro_row("1", cod_bairro="0001", pop=500, domicilios=100, area_m2=500_000, renda=2000)]
+    )
+
+    perfil = agregar_perfil_bairro_distrito(
+        df, cod_bairro=None, nome_bairro=None, nome_distrito=None
+    )
+
+    assert perfil["flag_perfil_disponivel"] is False
+    assert perfil["populacao_total"] is None
+    assert perfil["domicilios_total"] is None
+    assert perfil["densidade_hab_km2"] is None
+    assert perfil["renda_media_domiciliar"] is None
+
+
+def test_agregar_perfil_bairro_nd_quando_setores_df_vazio():
+    perfil = agregar_perfil_bairro_distrito(
+        pd.DataFrame(), cod_bairro="0001", nome_bairro="Bairro Teste"
+    )
+
+    assert perfil["flag_perfil_disponivel"] is False
+    assert perfil["populacao_total"] is None

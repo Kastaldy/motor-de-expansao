@@ -8844,6 +8844,194 @@ produção alterado; `is_done`/`emit_delta` inalterados (são testes de regress�
 
 **Guardrail.** §5 **READ-ONLY M1**; toca só `tests/`; sem rede, VPS, deploy, segredos ou PII.
 
+---
+
+### BLK-RELPON-07 — Slide de perfil do Bairro/Distrito no Relatório Pontual (estilo GeoFusion "Microárea")
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (novo slide no Relatório Pontual Censitário; **READ-ONLY sobre o M1**; ADICIONA uma página ao PDF e uma agregação por bairro; núcleo `censo_*` só ESTENDE render/leitura, sem tocar interseção/raio/marca d'água). |
+| **Prioridade** | A definir (Vinicius). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — visual do PDF]` → Builder → QA. |
+| **Status** | Pendente — **decisões de produto D1/D2/D3 JÁ TOMADAS** (Vinicius, 2026-07-15, abaixo). |
+| **Depende de** | Relatório Pontual já existente; malha de setores IBGE 2022 (`setores_censitarios_2022_geo`), que **já traz** `nome_bairro`/`cod_bairro`/`nome_distrito`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera relatório auditável e exige revisão visual do PDF. |
+
+**Objetivo.** Adicionar ao Relatório Pontual Censitário um **slide dedicado ao bairro/distrito** que
+CONTÉM o ponto pesquisado, no espírito do painel "Microárea" da GeoFusion — o perfil da área
+administrativa inteira, não do raio de 1,5 km. É uma **lente nova, complementar** aos mapas de calor.
+
+**Viabilidade medida (2026-07-15).** A base de setores 2022 já tem os campos geográficos e as
+métricas necessárias para **4 dos 7 blocos** do painel GeoFusion. Os outros 3 (faixa etária, faixa
+de renda ABEP A++/A+/B/C/D/E, PEA Dia/Trabalha×Reside) **não existem** no dado do projeto (o Censo
+ingerido é agregado; ABEP e PEA são fontes externas/proprietárias) e **NÃO entram** neste bloco
+(decisão D3). Cobertura geográfica: `distrito` 100% nacional; `bairro` ~61% nacional (100% no
+exemplo, São José do Rio Preto); `subdistrito` ~vazio (descartado).
+
+**Decisões de produto (gate — JÁ RESPONDIDAS por Vinicius, 2026-07-15).**
+- **D1 = unidade geográfica: BAIRRO com fallback para DISTRITO.** Usa `nome_bairro` quando existe;
+  quando `nome_bairro` é nulo (~39% dos setores nacionais), cai para `nome_distrito`. `subdistrito`
+  é descartado (dado quase sempre vazio). O rótulo do slide deve indicar qual unidade está sendo
+  mostrada (ex.: título = nome; subtítulo = "bairro de {município}" ou "distrito de {município}").
+- **D2 = escopo: a unidade que CONTÉM o pin.** Agrega **todos os setores** cujo `cod_bairro` (ou,
+  no fallback, `nome_distrito`) é igual ao do setor que contém o ponto — o perfil da área
+  administrativa inteira, independente do raio de 1,5 km. Reusa o lookup do "setor do ponto" já
+  existente (BLK-RELPON-05, `cod_setor_ponto`) para descobrir o bairro/distrito do pin. Os setores
+  do bairro já estão carregados: `read_censo_geo_partition` traz a partição do município inteiro.
+- **D3 = incluir SÓ os 4 blocos com dado fiel** (sem placeholder, sem aproximação inventada, sem
+  aquisição de dado externo):
+  1. **Título** — nome do bairro (fallback distrito) + contexto do município.
+  2. **População** — `Σ pop_total_setor_2022` dos setores da unidade.
+  3. **Densidade Demográfica** — `população / (Σ area_setor_m2 / 1e6)` (hab/km²).
+  4. **Domicílios** — `Σ domicilios_particulares_ocupados_setor_2022`.
+  5. **Renda Média** — a definir no planejamento: `renda_responsavel_media_setor_2022`
+     (ponderada por domicílios) **ou** `renda_per_capita_setor_2022_calibrada` (ponderada por
+     população). Preferir a **renda média domiciliar ponderada por domicílios**, que é a leitura
+     GeoFusion "Renda Média"; confirmar no gate visual. Formatar em R$ (padrão ASCII do PDF).
+  (Os gráficos de barras de faixa etária e faixa de renda, e o bloco PEA, do painel GeoFusion,
+  **NÃO** entram — decisão explícita de Vinicius.)
+
+**Escopo permitido (READ-ONLY M1, só display/relatório).**
+- `censo_point.py` — expor, no `result`, o **bairro/distrito do pin** (ex.: `cod_bairro_ponto`,
+  `nome_bairro_ponto`, `nome_distrito_ponto`, `unidade_ponto_rotulo` com o fallback já resolvido),
+  a partir do setor que contém o ponto — SÓ LEITURA, sem tocar interseção/raio.
+- Novo helper de **agregação por bairro/distrito** (pode viver em `censo_point.py` ou módulo
+  próprio) que soma pop/domicílios/área e calcula densidade e renda média ponderada dos setores da
+  unidade; "n/d" gracioso quando o pin cai fora de qualquer setor ou a unidade não tem dado.
+- `censo_report.py` — **nova página** "Perfil do Bairro/Distrito" nas DUAS variantes (`censitario`
+  e `classico`), inserida **entre a página de Concorrentes e a de Big Numbers** (decisão de Vinicius,
+  2026-07-15). Ordem final: Capa → Mapas de calor → Concorrentes → **Perfil do Bairro/Distrito** →
+  Big Numbers → Realização/Crédito. **Isto ALTERA a contagem de páginas** (as DUAS variantes: **5→6**;
+  ambas já tinham 5 páginas — o clássico também tem página de Concorrentes) e o `/Count` — mudança
+  INTENCIONAL deste bloco (é o único ponto do "fora de escopo" histórico que este bloco toca de
+  propósito). Atualizar `PDF_SECTION_HEADERS` (inserir o rótulo da nova seção **entre**
+  `"Concorrentes"` e `"Big Numbers"`) e a contagem de imagens/páginas dos testes de estrutura.
+- Testes: agregação por bairro (com e sem fallback para distrito; "n/d" fora da malha) + presença
+  da nova página no PDF (as duas variantes) + atualização dos testes de contagem de páginas.
+- `docs/relatorio_pontual_censitario.md`.
+
+**Fora de escopo.** Método de interseção `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
+`RAIO_CENSITARIO_DEFAULT_KM`, os mapas de calor / choropleth / faixa "no raio" (BLK-RELPON-06), grid
+de Big Numbers 4x2, marca d'água anti-PII, `set_compression(False)`. `score_priorizacao`/pesos/
+`hex_score_estrutural`/carteira/plano/artefatos oficiais do M1. Faixa etária, faixa de renda ABEP e
+PEA (sem dado — não entram). Relatório Municipal e UI do dashboard (fora do Relatório Pontual).
+Dependência de rede nova.
+
+**Riscos.**
+- **Contagem de páginas muda** — quebra os testes de estrutura do PDF de propósito; atualizá-los
+  (não relaxá-los). Conferir que a marca d'água (BLK-EST-01, todas as páginas) cobre a página nova.
+- **Bairro ausente (~39% nacional)** — o fallback para distrito precisa ser robusto; testar um
+  município SEM bairro (ex.: fora de SP) para garantir que o slide não fica vazio.
+- **Renda média — método de ponderação** (D3.5): documentar qual campo/peso foi usado, para o
+  número ser auditável e não ser confundido com a renda do raio (BLK-RELPON-06) nem com o setor do
+  pin (BLK-RELPON-05).
+- **Consistência semântica** — deixar claro no slide que é o **bairro inteiro** (não o raio de
+  1,5 km nem o setor do ponto), para não conflitar com os outros números do relatório.
+
+**Critério de aceite.** O Relatório Pontual passa a ter a página "Perfil do Bairro/Distrito"
+(as duas variantes) com os 4 blocos (título+unidade, população, densidade, domicílios, renda média)
+agregados sobre o bairro que contém o pin, com fallback para distrito e "n/d" gracioso; contagem de
+páginas/`/Count` e `PDF_SECTION_HEADERS` atualizados e testados; interseção/raio/marca d'água/M1
+INTOCADOS; `ruff`/`mypy` limpos; suíte verde; revisão visual do PDF aprovada.
+
+## Fechamento de ciclo — BLK-RELPON-07 (2026-07-15)
+
+Ciclo `/run-cycle BLK-RELPON-07` — **Slide de perfil do Bairro/Distrito no Relatório Pontual Censitário**
+(estilo GeoFusion "Microárea"). Criticidade **Média**. Esteira Block Orchestrator (sonnet) → Planner
+(sonnet) → Builder (sonnet) → QA (opus) → **[REVISÃO VISUAL HUMANA DO PDF — PENDENTE]** → merge humano.
+Veredito QA: **APROVADO COM RESSALVAS** (2026-07-15).
+
+**O que foi entregue.** Nova página "Perfil do Bairro/Distrito" no PDF do Relatório Pontual, nas DUAS
+variantes (`censitario` e `classico`), inserida **entre Concorrentes e Big Numbers** — o PDF passa de
+**5 para 6 páginas** (mudança INTENCIONAL). A página agrega, sobre TODO o bairro (fallback distrito) que
+CONTÉM o pin — não o raio de 1,5 km — 4 blocos de dado fiel: título+unidade, População
+(`Σ pop_total_setor_2022`), Densidade demográfica (`pop / (Σ area_setor_m2 / 1e6)` hab/km2), Domicílios
+(`Σ domicilios_particulares_ocupados_setor_2022`) e Renda média. Faixa etária, faixa de renda ABEP e PEA
+NÃO entram (sem dado no projeto — decisão D3 de Vinicius).
+
+**Decisões de produto (Vinicius, 2026-07-15).** D1 = BAIRRO com fallback para DISTRITO (subdistrito
+descartado). D2 = a unidade administrativa que contém o pin (todos os setores do bairro/distrito). D3 =
+só os 4 blocos com dado fiel. Ordem final do PDF: Capa -> Mapas de calor -> Concorrentes -> **Perfil do
+Bairro/Distrito** -> Big Numbers -> Realização.
+
+**Decisão técnica fechada pelo Planner (D3.5 — método da Renda Média).** Renda média domiciliar
+ponderada por domicílios (leitura GeoFusion "Renda Média"): `Σ(renda_responsavel_media_setor_2022 ×
+domicilios_particulares_ocupados_setor_2022) / Σ domicilios_particulares_ocupados_setor_2022`, com
+**exclusão simétrica** (setor só entra no numerador E no denominador se renda não-nula E domicílios
+não-nulo E > 0; senão sai dos dois lados — nunca vira zero disfarçado). Constante rastreável
+`METODO_RENDA_PERFIL_BAIRRO = "renda_responsavel_media_ponderada_por_domicilios"`. Escolhida sobre a
+renda per capita para NÃO criar 3 números de "renda per capita" com escopos diferentes no mesmo PDF
+(setor do pin BLK-RELPON-05, raio BLK-RELPON-06, e este). Rótulo distinto "Renda média".
+
+**Implementação (6 arquivos).**
+- `src/motor_expansao/dashboard/censo_point.py`: no `result` de `analisar_ponto_censitario_setores`,
+  5 campos novos de identificação do bairro/distrito do pin (`cod_bairro_ponto`, `nome_bairro_ponto`,
+  `nome_distrito_ponto`, `unidade_ponto_tipo` cru "bairro"/"distrito", `unidade_ponto_rotulo` com
+  fallback resolvido) — SÓ LEITURA de `ponto_row`, sem tocar interseção/raio. Novo helper público
+  `agregar_perfil_bairro_distrito(setores_df, *, cod_bairro/nome_bairro/nome_distrito/nome_municipio/uf)`
+  que resolve a unidade por prioridade (bairro > distrito), agrega pop/domicílios/área/densidade/renda
+  ponderada e devolve "n/d" gracioso (dict-default sem exceção) quando fora da malha ou sem dado.
+- `src/motor_expansao/dashboard/pages.py`: 2 pontos de chamada (`gerar_payloads_relatorio_pontual_para_pin`
+  e `render_relatorio_pontual_censitario`) propagam `perfil_bairro` aos geradores de PDF.
+- `src/motor_expansao/dashboard/censo_report.py`: `PDF_SECTION_HEADERS` de 5->6 strings ("Perfil do
+  Bairro/Distrito" entre "Concorrentes" e "Big Numbers"); novas páginas `_perfil_bairro_page` /
+  `_classico_perfil_bairro_page` (SEM mapa — texto/números, 4 cards grid 2x2, nota de método auditável,
+  "n/d" gracioso); parâmetro keyword-only `perfil_bairro` nos geradores e nos helpers de download; tema
+  bicolor reordenado (4 páginas de conteúdo). Marca d'água cobre a 6ª página automaticamente (laço por
+  `pdf.pages_count`), confirmado por teste.
+- `tests/unit/test_relatorio_pontual_censitario_motor.py` + `_export.py`: 9 testes novos (agregação por
+  cod_bairro; fallback distrito; exclusão simétrica da renda **provada** — assert 2000 e não a média
+  simples; "n/d" sem identificador / df vazio; presença da página nas 2 variantes com `/Count 6`;
+  indisponibilidade com `perfil_bairro=None`). ~13 asserts `/Count 5`->`/Count 6` e 2 watermark-count
+  `>=5`->`>=6` ATUALIZADOS (não relaxados); `test_classico_gera_5_paginas_e_secoes` renomeado para `..._6_...`.
+- `docs/relatorio_pontual_censitario.md`: §4/§7 atualizados (6 páginas, novo campo/helper, D3.5, nota de
+  escopo de que `api/service.py` não recebe `perfil_bairro` neste ciclo -> PDF da API mostra a página em
+  "n/d", intencional).
+
+**Nota de escopo (aceita).** `src/motor_expansao/api/service.py` NÃO foi tocado — o endpoint da API
+(`POST /analisar?formato=pdf`, DEC-005) chama o gerador sem `perfil_bairro`, então o PDF da API ganha a
+página em "n/d". Expor o perfil do bairro na API é bloco futuro, não deste ciclo.
+
+**QA (Opus 4.8, evidência própria).** Suíte FULL serial: **1 failed, 1770 passed, 2 skipped**. A única
+falha (`test_score_retencao_territorial::test_run_readonly_m1_por_mtime`) foi **provada PRÉ-EXISTENTE**
+via `git stash` (parquet gitignored ausente em camada NÃO tocada — mesma falha do baseline HEAD; `-n auto`
+quebra por infra execnet conhecida do ambiente Windows, não mascarado). Alvos do Planner: 96 passed.
+`ruff` limpo; `mypy` nos 3 arquivos tocados `Success: no issues` (6 erros `requests`-stub pré-existentes
+em módulos não tocados, provados por stash); smoke `import streamlit_app` ok. Escopo: só os 6 arquivos do
+plano. READ-ONLY M1 confirmado: `score_priorizacao`/pesos/artefatos oficiais, método
+`setor_censitario_intersecao_area_1p5km`, raio 1,5 km/`RAIO_CENSITARIO_DEFAULT_KM`, marca d'água anti-PII,
+`set_compression(False)`, `pdf_version="1.4"` e choropleth INTOCADOS (grep no diff = 0). Acentuação PT
+dentro de latin-1 com pontuação ASCII; regressão de acentuação verde.
+
+**Ressalvas (não bloqueiam o código).**
+1. **Gate de REVISÃO VISUAL HUMANA do PDF (dashboard + PDF das 2 variantes) PENDENTE** — Vinicius revisa o
+   PDF renderizado (layout/geometria dos 4 cards, subtítulo, nota de método) antes do merge. Geometria fina
+   da página é ponto de partida, ajustável no gate.
+2. **Merge humano** — bloco "manual (NÃO loop-safe)"; merge segue humano após o gate visual (não auto-merge).
+3. `api/service.py` sem `perfil_bairro` (nota de escopo acima).
+
+**Housekeeping (6.0, modo MERGE-HUMANO).** Bloco movido byte-idêntico do backlog para completed.md via
+`scripts/housekeeping_move_block.py BLK-RELPON-07 --date 2026-07-15` (stub de 1 linha no backlog); `--check`
+e `--is-done` verdes. READ-ONLY M1; pesos `renda=0.40`/`pop=0.60` e artefatos oficiais inalterados.
+
+### BLK-RELPON-07 — refino visual do slide (gate visual de Vinicius, 2026-07-15)
+
+Durante a revisão visual, Vinicius pediu para os 4 blocos do slide "Perfil do Bairro/Distrito"
+seguirem o formato do painel "Microárea" da GeoFusion (imagem de referência): layout VERTICAL
+empilhado em vez do grid 2x2 de cards. Redesenho SÓ visual em `censo_report.py` (READ-ONLY M1;
+não muda os 4 blocos, os valores, o método de renda D3.5, os rótulos, nem a contagem de páginas):
+- Novo painel `_draw_perfil_panel` (compartilhado pelas 2 variantes): moldura turquesa arredondada
+  + cartão branco + cabeçalho (rótulo "Bairro"/"Distrito" + nome + município/UF) + 4 métricas
+  empilhadas, cada uma com ícone vetorial (pessoas p/ população e densidade, casa p/ domicílios,
+  cifra p/ renda), rótulo cinza e valor grande azul-marinho, com círculo "i" decorativo à direita.
+- Helpers novos: `_perfil_icon` (ícones vetoriais via ellipse/polygon/rect), `_perfil_info_dot`,
+  `_perfil_metric_rows`, `_perfil_nota_metodo`. Cores novas `_PERFIL_VALOR_RGB`/`_PERFIL_ROTULO_RGB`/
+  `_PERFIL_INFO_RGB`/`_PERFIL_DIVISOR_RGB`.
+- Os 4 rótulos exatos ("População"/"Densidade demográfica"/"Domicílios"/"Renda média"), o título
+  "Perfil do Bairro/Distrito", a mensagem "Perfil não disponível" e o "n/d" gracioso preservados;
+  suíte export/motor/acentuação/municipal 96 passed; ruff/mypy limpos; import ok. Verificação visual
+  própria: 4 PNGs (recente/clássico × disponível/n-d) renderizados via PyMuPDF, layout fiel à referência.
+
 ## Fechamento de housekeeping em lote - BLK-ORQ-21 + BLK-ORQ-26 (2026-07-15)
 
 Housekeeping em lote (modo humano; toca `tasks/backlog.md` = GOVERNANÇA -> exige `aprovado-humano` de co-owner != autor, NÃO auto-mergeia). Fecha formalmente o **BLK-ORQ-21** (portão NO AR desde 2026-07-14, mas o backlog ainda o marcava "Pendente") e registra o **BLK-ORQ-26** (fix não planejado do `claude-review`, mergeado como PR #105 sem entrada de bloco). READ-ONLY sobre o M1; toca só `tasks/backlog.md` (stubs + update do ORQ-23 p/ Telegram) e `tasks/completed.md`.

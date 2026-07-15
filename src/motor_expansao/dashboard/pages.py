@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 from motor_expansao.dashboard.censo_map import render_mapas_censitarios_combinados
 from motor_expansao.dashboard.censo_point import (
     RAIO_CENSITARIO_DEFAULT_KM,
+    agregar_perfil_bairro_distrito,
     analisar_ponto_censitario_setores,
 )
 from motor_expansao.dashboard.censo_report import (
@@ -2973,12 +2974,21 @@ def gerar_payloads_relatorio_pontual_para_pin(
     lat, lng = search_pin
     uf = context["uf"]
     cod_municipio = context["cod_municipio"]
+    nome_municipio = context.get("nome_municipio")
     setores_df = censo_geo_loader(uf, cod_municipio)
     if setores_df is None or setores_df.empty:
         return None
     result = analisar_ponto_censitario_setores(
         lat, lng, setores_df, raio_km=raio_km,
         competitors_df=competitors_df, ultra_df=ultra_df,
+    )
+    perfil_bairro = agregar_perfil_bairro_distrito(
+        setores_df,
+        cod_bairro=result.get("cod_bairro_ponto"),
+        nome_bairro=result.get("nome_bairro_ponto"),
+        nome_distrito=result.get("nome_distrito_ponto"),
+        nome_municipio=nome_municipio,
+        uf=uf,
     )
     mapas = render_mapas_censitarios_combinados(
         lat, lng, setores_df, raio_km=raio_km,
@@ -3004,6 +3014,7 @@ def gerar_payloads_relatorio_pontual_para_pin(
         ultra_dir=Path("data/ultra"),
         template="classico",
         rotulo=rotulo,
+        perfil_bairro=perfil_bairro,
     )
 
 
@@ -3433,6 +3444,14 @@ def render_relatorio_pontual_censitario(
         competitors_df=competitors_df,
         ultra_df=ultra_df,
     )
+    perfil_bairro = agregar_perfil_bairro_distrito(
+        setores_df,
+        cod_bairro=result.get("cod_bairro_ponto"),
+        nome_bairro=result.get("nome_bairro_ponto"),
+        nome_distrito=result.get("nome_distrito_ponto"),
+        nome_municipio=nome_municipio,
+        uf=uf,
+    )
     # Uma geracao -> 3 camadas combinadas (Densidade/Renda/Concorrentes), sem dropdown.
     # Fundo de ruas por tiles online (DEC-004) com cache + fallback offline; pins com logo
     # via _ICON_CACHE ja populado por preload_logos no boot do streamlit_app.
@@ -3472,6 +3491,7 @@ def render_relatorio_pontual_censitario(
         residual=residual,
         ultra_dir=Path("data/ultra"),
         template="classico",
+        perfil_bairro=perfil_bairro,
     )
 
     st.markdown(f"**Ponto analisado:** `{lat:.5f}, {lng:.5f}` | `{nome_municipio}/{uf}`")
