@@ -1,0 +1,52 @@
+name: Auto-criticidade
+
+# Aplica a label `criticidade:<nivel>` do bloco quando o PR ainda NAO tem nenhuma, lendo o campo
+# Criticidade em `tasks/backlog.md` da BASE (mesma fonte e mesmo mapa do `review-gate` em guard.yml).
+# Fecha o buraco em que o `review-gate` so VALIDAVA a label mas nada a APLICAVA -> o passo manual de
+# declarar a criticidade some para todo PR que mapeia um bloco (loop e manual).
+#
+# POR QUE `pull_request_target` (como o guard): roda a partir da BASE (main). NUNCA faz checkout nem
+# executa codigo do PR — so LE `tasks/backlog.md` da base e aplica UMA label de METADADO via API.
+#
+# LIMITES (nao afrouxa nenhum portao):
+# - so aplica `criticidade:*`; NUNCA `aprovado-humano`/`critica-aprovada` (aprovacao HUMANA segue manual);
+# - no-op se o PR ja tem uma label de criticidade (nao briga com o humano) ou se o bloco nao e
+#   unicamente identificavel (housekeeping/ad-hoc/bloco novo) -> o `review-gate` decide, como hoje;
+# - Alta/Critica seguem exigindo label humana; o `guard` de paths (M1/CI/deploy) segue independente.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize]
+
+# Default restritivo; o job eleva so o necessario para aplicar a label.
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-criticidade-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-criticidade:
+    # Draft nao mergeia mesmo; e PR de fork nao precisa (sem risco — so leitura da base + label).
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout da BASE para ler tasks/backlog.md
+      pull-requests: write # aplicar a label criticidade:* (metadado)
+    steps:
+      # Sem `ref:` = checkout da BASE (main). NAO trocar por ref do PR (nunca rodar codigo do PR).
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Aplicar criticidade do bloco (se faltar)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITULO: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: python scripts/aplicar_criticidade_label.py
