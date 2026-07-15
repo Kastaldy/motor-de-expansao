@@ -13,7 +13,7 @@ from PIL import Image
 from motor_expansao.api.maps_geocoder import build_search_url
 from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSITARIO
 
-# Cabecalhos canonicos das 5 paginas do template Ultra. Renderizam em latin-1 (core font
+# Cabecalhos canonicos das 6 paginas do template Ultra. Renderizam em latin-1 (core font
 # Helvetica do fpdf2), que cobre integralmente os acentos portugueses -- o que e PROIBIDO e
 # tipografia fora de latin-1 (travessao/bullet/seta/reticencias/aspas curvas/(c)), que vira
 # "?" silenciosamente via _ascii(..., errors="replace").
@@ -21,10 +21,14 @@ from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSIT
 # Ordem das paginas (BLK-RELPON-01): os 3 choropleths (Densidade/Renda/Score) foram
 # CONSOLIDADOS em um unico slide "Mapas de calor" (tira 1x3 lado a lado), reduzindo o PDF
 # de 7 para 5 paginas: Capa -> Mapas de calor -> Concorrentes -> Big Numbers -> Realizacao.
+# BLK-RELPON-07: nova pagina "Perfil do Bairro/Distrito" inserida entre Concorrentes e Big
+# Numbers, levando o PDF de 5 para 6 paginas: Capa -> Mapas de calor -> Concorrentes ->
+# Perfil do Bairro/Distrito -> Big Numbers -> Realizacao.
 PDF_SECTION_HEADERS = (
     "Relatório Pontual Censitário",
     "Mapas de calor",
     "Concorrentes",
+    "Perfil do Bairro/Distrito",
     "Big Numbers",
     "Realização",
 )
@@ -683,6 +687,97 @@ def _competitors_page(
     _draw_footer(pdf, with_attribution=True)
 
 
+def _perfil_bairro_page(
+    pdf: _UltraPDF,
+    perfil_bairro: dict[str, Any] | None,
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+) -> None:
+    """(BLK-RELPON-07) Perfil do Bairro/Distrito — 4 cards agregados sobre a unidade INTEIRA
+    (nao o raio de 1.5 km). SEM mapa (so texto/numero); "n/d" gracioso quando o perfil nao
+    esta disponivel (ponto fora da malha de setores ou unidade sem dado suficiente).
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, "Perfil do Bairro/Distrito", rgb=primary)
+
+    perfil = perfil_bairro or {}
+    flag_disponivel = bool(perfil.get("flag_perfil_disponivel"))
+    unidade_tipo = perfil.get("unidade_tipo")
+    unidade_nome = str(perfil.get("unidade_nome") or "").strip()
+    municipio = str(perfil.get("municipio_nome") or "").strip()
+    uf = str(perfil.get("uf") or "").strip()
+    rotulo_tipo = "Bairro" if unidade_tipo == "bairro" else "Distrito"
+
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_xy(36, 70)
+    if flag_disponivel and unidade_nome:
+        if municipio or uf:
+            local = f"{municipio}/{uf}".strip("/")
+            subtitulo = f"{unidade_nome} - {rotulo_tipo} de {local}"
+        else:
+            subtitulo = f"{unidade_nome} ({rotulo_tipo})"
+    else:
+        subtitulo = (
+            "Perfil não disponível para este ponto (fora da malha de setores ou "
+            "unidade sem dado suficiente)."
+        )
+    pdf.multi_cell(_PAGE_W - 72, 20, _ascii(subtitulo))
+
+    cards = [
+        ("População", _format_number(perfil.get("populacao_total"), 0)),
+        ("Densidade demográfica", _format_number(perfil.get("densidade_hab_km2"), 0, " hab/km2")),
+        ("Domicílios", _format_number(perfil.get("domicilios_total"), 0)),
+        ("Renda média", "R$ " + _format_number(perfil.get("renda_media_domiciliar"), 2)),
+    ]
+
+    margin_x = 36.0
+    top = 110.0
+    gap = 20.0
+    cols, rows = 2, 2
+    card_w = (_PAGE_W - 2 * margin_x - gap) / cols
+    card_h = 150.0
+    accents = [primary, secondary]
+
+    for index, (label, value) in enumerate(cards):
+        col = index % cols
+        row = index // cols
+        x = margin_x + col * (card_w + gap)
+        y = top + row * (card_h + gap)
+        pdf.set_fill_color(*_BRANCO)
+        pdf.rect(x, y, card_w, card_h, style="F")
+        pdf.set_draw_color(225, 225, 228)
+        pdf.rect(x, y, card_w, card_h, style="D")
+        accent = accents[index % len(accents)]
+        pdf.set_fill_color(*accent)
+        pdf.rect(x, y, card_w, 6.0, style="F")
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_xy(x + 14, y + 20)
+        pdf.multi_cell(card_w - 28, 14, _ascii(label))
+        pdf.set_text_color(40, 40, 40)
+        pdf.set_font("Helvetica", "B", 26)
+        pdf.set_xy(x + 14, y + 88)
+        pdf.multi_cell(card_w - 28, 28, _ascii(value))
+
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_xy(margin_x, top + rows * (card_h + gap) + 2)
+    pdf.multi_cell(
+        _PAGE_W - 2 * margin_x,
+        11,
+        _ascii(
+            "Agregado sobre todos os setores do bairro/distrito (não o raio de 1,5 km). "
+            "Fonte: Censo IBGE 2022; renda média ponderada por domicílios."
+        ),
+    )
+
+    _draw_footer(pdf, with_attribution=True)
+
+
 def _credit_page(pdf: _UltraPDF, assets: dict[str, bytes | None]) -> None:
     """(g) Realizacao/Credito — fundo turquesa solido, texto Ultra centralizado. SEM PII.
 
@@ -970,6 +1065,99 @@ def _classico_competitors_page(
     _draw_footer(pdf, with_attribution=True)
 
 
+def _classico_perfil_bairro_page(
+    pdf: _UltraPDF,
+    perfil_bairro: dict[str, Any] | None,
+    assets: dict[str, bytes | None],
+    *,
+    banda_texto: str,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+) -> None:
+    """(BLK-RELPON-07) Perfil do Bairro/Distrito, variante classica: banda classica + 4 cards.
+
+    Mesma logica de conteudo de `_perfil_bairro_page`, com geometria deslocada para abrir
+    espaco a banda classica (que ocupa ate ~y=122). SEM mapa; "n/d" gracioso.
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _classico_title_band(pdf, banda_texto, "Perfil do Bairro/Distrito", assets, rgb=primary)
+
+    perfil = perfil_bairro or {}
+    flag_disponivel = bool(perfil.get("flag_perfil_disponivel"))
+    unidade_tipo = perfil.get("unidade_tipo")
+    unidade_nome = str(perfil.get("unidade_nome") or "").strip()
+    municipio = str(perfil.get("municipio_nome") or "").strip()
+    uf = str(perfil.get("uf") or "").strip()
+    rotulo_tipo = "Bairro" if unidade_tipo == "bairro" else "Distrito"
+
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_xy(_CLASSICO_MARGIN, 130.0)
+    if flag_disponivel and unidade_nome:
+        if municipio or uf:
+            local = f"{municipio}/{uf}".strip("/")
+            subtitulo = f"{unidade_nome} - {rotulo_tipo} de {local}"
+        else:
+            subtitulo = f"{unidade_nome} ({rotulo_tipo})"
+    else:
+        subtitulo = (
+            "Perfil não disponível para este ponto (fora da malha de setores ou "
+            "unidade sem dado suficiente)."
+        )
+    pdf.multi_cell(_PAGE_W - 2 * _CLASSICO_MARGIN, 20, _ascii(subtitulo))
+
+    cards = [
+        ("População", _format_number(perfil.get("populacao_total"), 0)),
+        ("Densidade demográfica", _format_number(perfil.get("densidade_hab_km2"), 0, " hab/km2")),
+        ("Domicílios", _format_number(perfil.get("domicilios_total"), 0)),
+        ("Renda média", "R$ " + _format_number(perfil.get("renda_media_domiciliar"), 2)),
+    ]
+
+    margin_x = _CLASSICO_MARGIN
+    top = 160.0
+    gap = 16.0
+    cols, rows = 2, 2
+    card_w = (_PAGE_W - 2 * margin_x - gap) / cols
+    card_h = 140.0
+    accents = [primary, secondary]
+
+    for index, (label, value) in enumerate(cards):
+        col = index % cols
+        row = index // cols
+        x = margin_x + col * (card_w + gap)
+        y = top + row * (card_h + gap)
+        pdf.set_fill_color(*_BRANCO)
+        pdf.rect(x, y, card_w, card_h, style="F")
+        pdf.set_draw_color(225, 225, 228)
+        pdf.rect(x, y, card_w, card_h, style="D")
+        accent = accents[index % len(accents)]
+        pdf.set_fill_color(*accent)
+        pdf.rect(x, y, card_w, 6.0, style="F")
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_xy(x + 14, y + 20)
+        pdf.multi_cell(card_w - 28, 14, _ascii(label))
+        pdf.set_text_color(40, 40, 40)
+        pdf.set_font("Helvetica", "B", 26)
+        pdf.set_xy(x + 14, y + 80)
+        pdf.multi_cell(card_w - 28, 28, _ascii(value))
+
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_xy(margin_x, top + rows * (card_h + gap) + 2)
+    pdf.multi_cell(
+        _PAGE_W - 2 * margin_x,
+        11,
+        _ascii(
+            "Agregado sobre todos os setores do bairro/distrito (não o raio de 1,5 km). "
+            "Fonte: Censo IBGE 2022; renda média ponderada por domicílios."
+        ),
+    )
+
+    _draw_footer(pdf, with_attribution=True)
+
+
 def _classico_banda_magenta_rodape(pdf: _UltraPDF) -> None:
     """Banda magenta full-width, flush-baixo, levemente acima da marca d'agua."""
     pdf.set_fill_color(*ULTRA_MAGENTA)
@@ -1065,6 +1253,7 @@ def gerar_pdf_relatorio_pontual_classico(
     mapas: dict[str, bytes] | bytes | None = None,
     *,
     residual: dict[str, Any] | None = None,
+    perfil_bairro: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     rotulo: str | None = None,
@@ -1072,27 +1261,31 @@ def gerar_pdf_relatorio_pontual_classico(
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
-    5 paginas na ordem canonica (Capa -> Mapas de calor -> Concorrentes -> Big Numbers ->
-    Realizacao), reusando o motor/helpers do template recente. Os 3 choropleths
-    (Densidade/Renda/Score) foram consolidados em um unico slide "Mapas de calor"
-    (tira 1x3 lado a lado) no BLK-RELPON-01. Difere do recente na ESTETICA: banda turquesa
-    com margem/cantos arredondados e icone Ultra, capa com endereco acima do subtitulo,
-    banda magenta de rodape e Realizacao com link clicavel + data por extenso. READ-ONLY
-    sobre o M1.
+    6 paginas na ordem canonica (Capa -> Mapas de calor -> Concorrentes -> Perfil do
+    Bairro/Distrito -> Big Numbers -> Realizacao), reusando o motor/helpers do template
+    recente. Os 3 choropleths (Densidade/Renda/Score) foram consolidados em um unico slide
+    "Mapas de calor" (tira 1x3 lado a lado) no BLK-RELPON-01; o BLK-RELPON-07 inseriu a
+    pagina "Perfil do Bairro/Distrito" entre Concorrentes e Big Numbers (5->6 paginas).
+    Difere do recente na ESTETICA: banda turquesa com margem/cantos arredondados e icone
+    Ultra, capa com endereco acima do subtitulo, banda magenta de rodape e Realizacao com
+    link clicavel + data por extenso. READ-ONLY sobre o M1.
 
-    `rotulo` e o nome/endereco do ponto (capa + banda + texto do link). `now` e injetavel
-    para data determinista em teste. Geracao 100% offline, sem PII. Marca d'agua identica
-    ao gerador recente (`solicitante`).
+    `rotulo` e o nome/endereco do ponto (capa + banda + texto do link). `perfil_bairro`
+    (BLK-RELPON-07) e o dict de `agregar_perfil_bairro_distrito`; `None` (default) produz a
+    pagina com "n/d" gracioso. `now` e injetavel para data determinista em teste. Geracao
+    100% offline, sem PII. Marca d'agua identica ao gerador recente (`solicitante`).
     """
     assets = _load_branding_assets(ultra_dir)
     layers = dict(_normalize_mapas_by_key(mapas))
     banda_texto = _classico_banda_texto(result, rotulo)
 
-    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01:
-    # 3 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Big Numbers=3).
+    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01 +
+    # BLK-RELPON-07: 4 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Perfil do
+    # Bairro/Distrito=3, Big Numbers=4).
     p1, _ = _tema_bicolor(1)
     p2, s2 = _tema_bicolor(2)
     p3, s3 = _tema_bicolor(3)
+    p4, s4 = _tema_bicolor(4)
 
     pdf = _UltraPDF()
     _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
@@ -1101,7 +1294,10 @@ def gerar_pdf_relatorio_pontual_classico(
         pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto,
         primary=p2, secondary=s2,
     )
-    _big_numbers_page(pdf, result, residual, assets, primary=p3, secondary=s3)
+    _classico_perfil_bairro_page(
+        pdf, perfil_bairro, assets, banda_texto=banda_texto, primary=p3, secondary=s3,
+    )
+    _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
     _classico_banda_magenta_rodape(pdf)
     _classico_credit_page(pdf, result, assets, rotulo=rotulo, now=now)
 
@@ -1139,42 +1335,50 @@ def gerar_pdf_relatorio_pontual_censitario(
     mapas: dict[str, bytes] | bytes | None = None,
     *,
     residual: dict[str, Any] | None = None,
+    perfil_bairro: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     rotulo: str | None = None,
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
-    Estrutura de 5 paginas (BLK-RELPON-01): Capa -> Mapas de calor -> Concorrentes ->
-    Big Numbers -> Realizacao/Credito. Os 3 choropleths (Densidade/Renda/Score) — antes
-    1 pagina cada — foram consolidados em UM slide "Mapas de calor" (tira 1x3 lado a lado).
+    Estrutura de 6 paginas (BLK-RELPON-01 + BLK-RELPON-07): Capa -> Mapas de calor ->
+    Concorrentes -> Perfil do Bairro/Distrito -> Big Numbers -> Realizacao/Credito. Os 3
+    choropleths (Densidade/Renda/Score) — antes 1 pagina cada — foram consolidados em UM
+    slide "Mapas de calor" (tira 1x3 lado a lado); o BLK-RELPON-07 inseriu a pagina "Perfil
+    do Bairro/Distrito" entre Concorrentes e Big Numbers (5->6 paginas).
 
     `mapas` aceita o dict de camadas combinadas (`{"densidade","renda","score",
     "concorrentes"}`) ou `bytes` (1 mapa legado, retrocompat). O slide "Mapas de calor" embute
     os 3 choropleths (score usa modo de cor + legenda); a pagina de Concorrentes usa o mapa
     so-pins. `residual` carrega os campos do lookup hex (READ-ONLY) para o Big Numbers.
-    `ultra_dir` aponta os assets de branding (fallback gracioso para cor solida se ausentes).
-    `solicitante` (BLK-EST-01) carimba a marca d'agua diagonal de rastreabilidade em TODAS as
-    5 paginas: None -> so "Ultra Academia"; preenchido -> "Ultra Academia | {solicitante}".
-    Geracao 100% offline, sem PII.
+    `perfil_bairro` (BLK-RELPON-07) e o dict de `agregar_perfil_bairro_distrito` (4 cards
+    agregados sobre TODO o bairro/distrito, nao o raio); `None` (default) produz a pagina com
+    "n/d" gracioso. `ultra_dir` aponta os assets de branding (fallback gracioso para cor
+    solida se ausentes). `solicitante` (BLK-EST-01) carimba a marca d'agua diagonal de
+    rastreabilidade em TODAS as 6 paginas: None -> so "Ultra Academia"; preenchido ->
+    "Ultra Academia | {solicitante}". Geracao 100% offline, sem PII.
     """
     assets = _load_branding_assets(ultra_dir)
     layers = dict(_normalize_mapas_by_key(mapas))
 
-    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01:
-    # 3 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Big Numbers=3).
+    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01 +
+    # BLK-RELPON-07: 4 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Perfil do
+    # Bairro/Distrito=3, Big Numbers=4).
     p1, _ = _tema_bicolor(1)
     p2, s2 = _tema_bicolor(2)
     p3, s3 = _tema_bicolor(3)
+    p4, s4 = _tema_bicolor(4)
 
     pdf = _UltraPDF()
     _cover_page(pdf, result, assets, rotulo=rotulo)
     _mapas_calor_page(pdf, layers, assets, primary=p1)
     _competitors_page(pdf, result, layers.get("concorrentes"), assets, primary=p2, secondary=s2)
-    _big_numbers_page(pdf, result, residual, assets, primary=p3, secondary=s3)
+    _perfil_bairro_page(pdf, perfil_bairro, assets, primary=p3, secondary=s3)
+    _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
     _credit_page(pdf, assets)
 
-    # Marca d'agua diagonal POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as 5).
+    # Marca d'agua diagonal POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as 6).
     # Escrever na pagina `n` via `pdf.page = n` ANEXA ao stream dessa pagina -> sobreposicao.
     wm_text = _watermark_text(solicitante)
     for page_number in range(1, pdf.pages_count + 1):
@@ -1197,6 +1401,7 @@ def gerar_payloads_download_relatorio_censitario(
     *,
     filename_prefix: str | None = None,
     residual: dict[str, Any] | None = None,
+    perfil_bairro: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     template: str | None = None,
@@ -1205,12 +1410,12 @@ def gerar_payloads_download_relatorio_censitario(
     prefix = filename_prefix or f"relatorio_pontual_censitario_{_point_name(result)}"
     if template == "classico":
         pdf_bytes = gerar_pdf_relatorio_pontual_classico(
-            result, mapas, residual=residual, ultra_dir=ultra_dir,
+            result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
             solicitante=solicitante, rotulo=rotulo,
         )
     else:
         pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
-            result, mapas, residual=residual, ultra_dir=ultra_dir,
+            result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
             solicitante=solicitante, rotulo=rotulo,
         )
     return RelatorioCensitarioDownloadPayloads(
@@ -1228,6 +1433,7 @@ def render_downloads_relatorio_censitario(
     *,
     filename_prefix: str | None = None,
     residual: dict[str, Any] | None = None,
+    perfil_bairro: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     template: str | None = None,
@@ -1239,6 +1445,7 @@ def render_downloads_relatorio_censitario(
         mapas,
         filename_prefix=filename_prefix,
         residual=residual,
+        perfil_bairro=perfil_bairro,
         ultra_dir=ultra_dir,
         solicitante=solicitante,
         template=template,

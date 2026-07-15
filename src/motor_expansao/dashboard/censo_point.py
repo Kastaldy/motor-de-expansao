@@ -14,6 +14,9 @@ from shapely.ops import transform
 CRS_ORIGEM_CENSO = "EPSG:4674"
 METODO_RELATORIO_PONTUAL_CENSITARIO = "setor_censitario_intersecao_area_1p5km"
 RAIO_CENSITARIO_DEFAULT_KM = 1.5
+# BLK-RELPON-07: renda media domiciliar do bairro/distrito ponderada por domicilios
+# (Metodo A, D3.5), com exclusao simetrica de setor com renda ou domicilios nulos/<=0.
+METODO_RENDA_PERFIL_BAIRRO = "renda_responsavel_media_ponderada_por_domicilios"
 
 
 def _haversine_km(
@@ -175,6 +178,17 @@ def analisar_ponto_censitario_setores(
     (o bloco inteiro e pulado) ou quando `area_intersecao_total_m2` e 0/None. Os 5 campos
     `*_setor_ponto` acima PERMANECEM no `result` para CSV/auditoria; so deixam de alimentar
     a faixa superior do mapa (`censo_map.py`).
+
+    BLK-RELPON-07: alem dos campos acima, `result` expoe 5 campos de IDENTIFICACAO do
+    bairro/distrito que CONTEM o ponto: `cod_bairro_ponto`, `nome_bairro_ponto`,
+    `nome_distrito_ponto`, `unidade_ponto_tipo` (`"bairro"`/`"distrito"`/`None`, identificador
+    cru, NAO acentuar) e `unidade_ponto_rotulo` (nome de exibicao ja com o fallback bairro ->
+    distrito resolvido). Sao leitura direta das colunas `cod_bairro`/`nome_bairro`/
+    `nome_distrito` do MESMO setor que contem o ponto (reaproveita o lookup do
+    BLK-RELPON-05, sem nova geometria/CRS). A AGREGACAO dos 4 blocos (populacao, densidade,
+    domicilios, renda media) sobre TODOS os setores dessa unidade e responsabilidade do
+    helper `agregar_perfil_bairro_distrito` (abaixo), nao desta funcao. Ponto fora de
+    qualquer setor da malha -> os 5 campos ficam `None`, sem excecao.
     """
     area_km2 = math.pi * raio_km**2
     concorrentes_raio = _points_in_radius(lat, lng, competitors_df, raio_km)
@@ -208,6 +222,12 @@ def analisar_ponto_censitario_setores(
         "densidade_pop_setor_ponto": None,
         "score_setor_2022_calibrado_ponto": None,
         "flag_setor_ponto_encontrado": False,
+        # BLK-RELPON-07: identificacao do bairro/distrito que CONTEM o ponto.
+        "cod_bairro_ponto": None,
+        "nome_bairro_ponto": None,
+        "nome_distrito_ponto": None,
+        "unidade_ponto_tipo": None,       # "bairro" | "distrito" | None (identificador cru, NAO acentuar)
+        "unidade_ponto_rotulo": None,     # nome de exibicao ja com fallback resolvido
     }
 
     if setores_df is None or setores_df.empty:
@@ -313,6 +333,23 @@ def analisar_ponto_censitario_setores(
         result["score_setor_2022_calibrado_ponto"] = (
             None if pd.isna(score_ponto) else round(float(score_ponto), 2)
         )
+        # BLK-RELPON-07: identificacao do bairro/distrito que CONTEM o ponto (D1: bairro
+        # tem prioridade sobre distrito). So leitura de colunas ja carregadas em `setores_df`
+        # -- `ponto_row.get(...)` retorna `None` com seguranca se a coluna nao existir.
+        cod_bairro_val = ponto_row.get("cod_bairro")
+        result["cod_bairro_ponto"] = None if pd.isna(cod_bairro_val) else str(cod_bairro_val)
+        nome_bairro_val = ponto_row.get("nome_bairro")
+        nome_bairro_ponto = None if pd.isna(nome_bairro_val) else str(nome_bairro_val).strip() or None
+        result["nome_bairro_ponto"] = nome_bairro_ponto
+        nome_distrito_val = ponto_row.get("nome_distrito")
+        nome_distrito_ponto = None if pd.isna(nome_distrito_val) else str(nome_distrito_val).strip() or None
+        result["nome_distrito_ponto"] = nome_distrito_ponto
+        if nome_bairro_ponto:
+            result["unidade_ponto_tipo"] = "bairro"
+            result["unidade_ponto_rotulo"] = nome_bairro_ponto
+        elif nome_distrito_ponto:
+            result["unidade_ponto_tipo"] = "distrito"
+            result["unidade_ponto_rotulo"] = nome_distrito_ponto
 
     if pop_weights.notna().any():
         pop_total = float(pop_weights.fillna(0).sum())
@@ -340,4 +377,126 @@ def analisar_ponto_censitario_setores(
     if score.notna().any():
         result["score_setor_max"] = round(float(score.max()), 2)
 
+    return result
+
+
+def _perfil_bairro_default(
+    *, nome_municipio: str | None, uf: str | None
+) -> dict[str, object]:
+    return {
+        "unidade_tipo": None,
+        "unidade_nome": None,
+        "n_setores_unidade": 0,
+        "populacao_total": None,
+        "domicilios_total": None,
+        "area_total_m2": None,
+        "densidade_hab_km2": None,
+        "renda_media_domiciliar": None,
+        "metodo_renda_perfil_bairro": METODO_RENDA_PERFIL_BAIRRO,
+        "flag_perfil_disponivel": False,
+        "municipio_nome": nome_municipio,
+        "uf": uf,
+    }
+
+
+def agregar_perfil_bairro_distrito(
+    setores_df: pd.DataFrame,
+    *,
+    cod_bairro: str | None = None,
+    nome_bairro: str | None = None,
+    nome_distrito: str | None = None,
+    nome_municipio: str | None = None,
+    uf: str | None = None,
+) -> dict[str, object]:
+    """Agrega populacao/domicilios/densidade/renda sobre TODOS os setores de um bairro/distrito.
+
+    BLK-RELPON-07 (slide "Perfil do Bairro/Distrito", entre Concorrentes e Big Numbers no
+    PDF do Relatorio Pontual Censitario):
+
+    - D1 (prioridade de unidade): resolve por `cod_bairro` quando disponivel; senao cai para
+      `nome_distrito` (fallback). `nome_subdistrito` NUNCA e usado como unidade (descartado).
+    - D2 (escopo): agrega TODOS os setores da unidade administrativa que contem o ponto --
+      NAO o raio de 1.5 km do relatorio (essa e a diferenca fundamental para os outros
+      agregados do modulo, que sao sempre "no raio").
+    - D3.5 (formula da renda media, fechada pelo Planner): `renda_media_domiciliar` e a media
+      de `renda_responsavel_media_setor_2022` PONDERADA por
+      `domicilios_particulares_ocupados_setor_2022` (Metodo A, leitura GeoFusion "Renda
+      Media" -- distinta da renda per capita usada em outras 2 paginas do PDF). Exclusao
+      SIMETRICA: um setor so entra no numerador E no denominador se renda E domicilios forem
+      nao-nulos E domicilios > 0; setor que falha qualquer condicao fica fora dos DOIS lados
+      da fracao (nunca vira zero disfarcado). Sem nenhum setor valido -> `None` ("n/d").
+
+    Funcao pura: nao muta `setores_df`, nao recalcula geometria/raio/M1. Em qualquer cenario
+    sem dado suficiente (DataFrame vazio/`None`, identificador ausente, colunas ausentes,
+    unidade sem setores) retorna o dict-default com `flag_perfil_disponivel=False`, sem
+    excecao -- mesmo padrao gracioso do resto do modulo.
+    """
+    default = _perfil_bairro_default(nome_municipio=nome_municipio, uf=uf)
+    if setores_df is None or setores_df.empty:
+        return default
+
+    tipo: str | None = None
+    mask: pd.Series | None = None
+    nome_unidade: str | None = None
+
+    cod_bairro_str = str(cod_bairro).strip() if cod_bairro is not None else ""
+    if cod_bairro_str and cod_bairro_str.lower() != "nan" and "cod_bairro" in setores_df.columns:
+        tipo = "bairro"
+        mask = setores_df["cod_bairro"].astype(str).str.strip() == cod_bairro_str
+        nome_bairro_str = str(nome_bairro).strip() if nome_bairro is not None else ""
+        nome_unidade = nome_bairro_str or cod_bairro_str
+    else:
+        nome_distrito_str = str(nome_distrito).strip() if nome_distrito is not None else ""
+        if (
+            nome_distrito_str
+            and nome_distrito_str.lower() != "nan"
+            and "nome_distrito" in setores_df.columns
+        ):
+            tipo = "distrito"
+            mask = setores_df["nome_distrito"].astype(str).str.strip() == nome_distrito_str
+            nome_unidade = nome_distrito_str
+
+    if tipo is None or mask is None:
+        return default
+
+    subset = setores_df.loc[mask]
+    if subset.empty:
+        return default
+
+    result = dict(default)
+    result["unidade_tipo"] = tipo
+    result["unidade_nome"] = nome_unidade
+    result["n_setores_unidade"] = int(len(subset))
+
+    pop = _numeric(subset, "pop_total_setor_2022")
+    dom = _numeric(subset, "domicilios_particulares_ocupados_setor_2022")
+    area = _numeric(subset, "area_setor_m2")
+    renda = _numeric(subset, "renda_responsavel_media_setor_2022")
+
+    populacao_total: float | None = None
+    if pop.notna().any():
+        populacao_total = round(float(pop[pop.notna()].sum()), 2)
+    result["populacao_total"] = populacao_total
+
+    domicilios_total: float | None = None
+    if dom.notna().any():
+        domicilios_total = round(float(dom[dom.notna()].sum()), 2)
+    result["domicilios_total"] = domicilios_total
+
+    area_total_m2: float | None = None
+    if area.notna().any():
+        area_total_m2 = round(float(area[area.notna()].sum()), 2)
+    result["area_total_m2"] = area_total_m2
+
+    if populacao_total is not None and area_total_m2 is not None and area_total_m2 > 0:
+        result["densidade_hab_km2"] = round(populacao_total / (area_total_m2 / 1_000_000.0), 2)
+
+    # D3.5: exclusao SIMETRICA -- so entra se renda E domicilios nao-nulos E domicilios > 0.
+    renda_mask = renda.notna() & dom.notna() & dom.gt(0)
+    if renda_mask.any():
+        result["renda_media_domiciliar"] = round(
+            float(np.average(renda[renda_mask], weights=dom[renda_mask])), 2
+        )
+
+    result["flag_perfil_disponivel"] = True
     return result

@@ -103,6 +103,22 @@ _RESIDUAL_OK = {
     "oferta_consumida_mercado_estimada": 1800.0,
 }
 
+# BLK-RELPON-07: dict sintetico no formato de `agregar_perfil_bairro_distrito`.
+_PERFIL_BAIRRO_OK = {
+    "unidade_tipo": "bairro",
+    "unidade_nome": "Bairro Teste",
+    "n_setores_unidade": 3,
+    "populacao_total": 12345.0,
+    "domicilios_total": 4321.0,
+    "area_total_m2": 2_000_000.0,
+    "densidade_hab_km2": 6172.5,
+    "renda_media_domiciliar": 3210.55,
+    "metodo_renda_perfil_bairro": "renda_responsavel_media_ponderada_por_domicilios",
+    "flag_perfil_disponivel": True,
+    "municipio_nome": "SAO PAULO",
+    "uf": "SP",
+}
+
 # Strings de PII reais da lamina de contato do .pptx (image24) — NUNCA podem vazar no PDF.
 _PII_FORBIDDEN = (
     b"vinicius",
@@ -124,9 +140,10 @@ def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
     assert len(pdf_bytes) > 15_000
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
-    # BLK-RELPON-01: 5 paginas (capa, mapas de calor, concorrentes, big numbers, credito);
-    # os 3 choropleths foram consolidados no slide unico "Mapas de calor".
-    assert b"/Count 5" in pdf_bytes
+    # BLK-RELPON-01 + BLK-RELPON-07: 6 paginas (capa, mapas de calor, concorrentes,
+    # perfil do bairro/distrito, big numbers, credito); os 3 choropleths foram consolidados
+    # no slide unico "Mapas de calor".
+    assert b"/Count 6" in pdf_bytes
     # 3 choropleths (densidade/renda/score) embutidos SEPARADAMENTE no slide unico + 1 pins
     # na pagina de Concorrentes = >= 4 imagens de mapa (nao pre-compostas).
     assert pdf_bytes.count(b"/Subtype /Image") >= 4
@@ -178,7 +195,7 @@ def test_pdf_offline_safe_sem_assets(tmp_path):
     )
 
     assert pdf_bytes.startswith(b"%PDF")
-    assert b"/Count 5" in pdf_bytes
+    assert b"/Count 6" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
 
@@ -204,8 +221,8 @@ def test_pdf_marca_dagua_com_solicitante():
 
     assert b"Ultra Academia" in pdf_bytes
     assert b"Analista Teste" in pdf_bytes
-    # 5 paginas preservadas e choropleths intactos (marca d'agua nao cria paginas).
-    assert b"/Count 5" in pdf_bytes
+    # 6 paginas preservadas e choropleths intactos (marca d'agua nao cria paginas).
+    assert b"/Count 6" in pdf_bytes
     assert pdf_bytes.count(b"/Subtype /Image") >= 4
 
 
@@ -219,20 +236,21 @@ def test_pdf_marca_dagua_sem_solicitante():
 
     assert b"Ultra Academia" in pdf_bytes
     assert b"Analista Teste" not in pdf_bytes
-    assert b"/Count 5" in pdf_bytes
+    assert b"/Count 6" in pdf_bytes
     assert pdf_bytes.count(b"/Subtype /Image") >= 4
 
 
 def test_pdf_marca_dagua_em_todas_as_paginas():
-    """BLK-RELPON-01: marca d'agua "Ultra Academia" em TODAS as 5 paginas -> >= 5x nos bytes crus."""
+    """BLK-RELPON-01 + BLK-RELPON-07: marca d'agua "Ultra Academia" em TODAS as 6 paginas ->
+    >= 6x nos bytes crus."""
     result, mapas = _sample_result()
 
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
         result, mapas, residual=_RESIDUAL_OK, solicitante="Analista Teste"
     )
 
-    # Uma ocorrencia da marca d'agua por pagina (5) -> contagem minima verificavel >= 5.
-    assert pdf_bytes.count(b"Ultra Academia") >= 5
+    # Uma ocorrencia da marca d'agua por pagina (6) -> contagem minima verificavel >= 6.
+    assert pdf_bytes.count(b"Ultra Academia") >= 6
 
 
 def test_pdf_atribuicao_de_tiles_no_rodape():
@@ -267,8 +285,8 @@ def test_pdf_retrocompat_aceita_bytes_unico_legado():
     # O slide unico "Mapas de calor" existe e as 2 celulas sem PNG mostram a mensagem de fallback.
     assert b"Mapas de calor" in pdf_bytes
     assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
-    # Estrutura de 5 paginas preservada.
-    assert b"/Count 5" in pdf_bytes
+    # Estrutura de 6 paginas preservada.
+    assert b"/Count 6" in pdf_bytes
 
 
 def test_pdf_estrutura_inalterada_com_faixa_valor_ponto_blk_relpon_05():
@@ -282,7 +300,7 @@ def test_pdf_estrutura_inalterada_com_faixa_valor_ponto_blk_relpon_05():
     )
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 5" in pdf_bytes
+    assert b"/Count 6" in pdf_bytes
     assert pdf_bytes.count(b"/Subtype /Image") >= 4
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
@@ -329,7 +347,7 @@ def test_pdf_concorrentes_contagem_total_e_mais_n_quando_excede_10():
     assert f"{total} no total".encode("latin-1") in pdf_bytes
     assert f"... e mais {total - 10}".encode("latin-1") in pdf_bytes
     # Contrato preservado.
-    assert b"/Count 5" in pdf_bytes
+    assert b"/Count 6" in pdf_bytes
     for needle in _PII_FORBIDDEN:
         assert needle not in pdf_bytes
 
@@ -389,7 +407,7 @@ def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
 # ---------------------------------------------------------------------------
 
 
-def test_classico_gera_5_paginas_e_secoes():
+def test_classico_gera_6_paginas_e_secoes():
     result, mapas = _sample_result()
 
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
@@ -397,7 +415,7 @@ def test_classico_gera_5_paginas_e_secoes():
     )
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 5" in pdf_bytes
+    assert b"/Count 6" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
     # 3 choropleths embutidos separadamente no slide "Mapas de calor" + 1 pins = >= 4 imagens.
@@ -429,7 +447,7 @@ def test_classico_offline_safe_sem_assets(tmp_path):
     )
 
     assert pdf_bytes.startswith(b"%PDF")
-    assert b"/Count 5" in pdf_bytes
+    assert b"/Count 6" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
 
@@ -453,7 +471,7 @@ def test_classico_marca_dagua_solicitante():
     )
 
     assert b"Ultra Academia | Analista Teste" in pdf_bytes
-    assert pdf_bytes.count(b"Ultra Academia") >= 5
+    assert pdf_bytes.count(b"Ultra Academia") >= 6
 
 
 def test_classico_template_recente_inalterado():
@@ -546,20 +564,20 @@ def test_slide_unico_tres_mapas_sem_sobreposicao():
 
 
 def test_slide_unico_count_5_e_titulo_mapas_de_calor():
-    """As duas variantes tem 5 paginas e o titulo de faixa "Mapas de calor" no slide unico."""
+    """As duas variantes tem 6 paginas e o titulo de faixa "Mapas de calor" no slide unico."""
     result, mapas = _sample_result()
 
     pdf_recente = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
-    assert b"/Count 5" in pdf_recente
+    assert b"/Count 6" in pdf_recente
     assert b"Mapas de calor" in pdf_recente
 
     pdf_classico = gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
-    assert b"/Count 5" in pdf_classico
+    assert b"/Count 6" in pdf_classico
     assert b"Mapas de calor" in pdf_classico
 
 
 def test_slide_unico_offline_safe_por_camada():
-    """Camada ausente no slide unico -> gera sem excecao, com fallback textual; /Count 5 preservado."""
+    """Camada ausente no slide unico -> gera sem excecao, com fallback textual; /Count 6 preservado."""
     result, mapas = _sample_result()
     # So densidade + concorrentes; renda e score AUSENTES -> fallback nas 2 celulas.
     mapas_parciais = {"densidade": mapas["densidade"], "concorrentes": mapas["concorrentes"]}
@@ -569,7 +587,7 @@ def test_slide_unico_offline_safe_por_camada():
     )
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 5" in pdf_bytes
+    assert b"/Count 6" in pdf_bytes
     assert b"Mapas de calor" in pdf_bytes
     assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
 
@@ -583,3 +601,52 @@ def test_slide_unico_tres_imagens_embutidas():
 
     pdf_classico = gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
     assert pdf_classico.count(b"/Subtype /Image") >= 4
+
+
+# ---------------------------------------------------------------------------
+# BLK-RELPON-07 — pagina "Perfil do Bairro/Distrito" (entre Concorrentes e Big Numbers)
+# ---------------------------------------------------------------------------
+
+
+def test_perfil_bairro_page_presente_com_4_metricas_recente():
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, perfil_bairro=_PERFIL_BAIRRO_OK, residual=_RESIDUAL_OK
+    )
+
+    for rotulo in (
+        "População".encode("latin-1"),
+        "Densidade demográfica".encode("latin-1"),
+        "Domicílios".encode("latin-1"),
+        "Renda média".encode("latin-1"),
+    ):
+        assert rotulo in pdf_bytes
+    assert "Bairro Teste".encode("latin-1") in pdf_bytes
+    assert "Perfil do Bairro/Distrito".encode("latin-1") in pdf_bytes
+    assert b"/Count 6" in pdf_bytes
+
+
+def test_perfil_bairro_page_nd_quando_perfil_bairro_none():
+    result, mapas = _sample_result()
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
+
+    assert b"/Count 6" in pdf_bytes
+    assert "Perfil do Bairro/Distrito".encode("latin-1") in pdf_bytes
+    assert "Perfil não disponível".encode("latin-1") in pdf_bytes
+
+
+def test_classico_perfil_bairro_page_presente_e_nd():
+    result, mapas = _sample_result()
+
+    pdf_com = gerar_pdf_relatorio_pontual_classico(
+        result, mapas, perfil_bairro=_PERFIL_BAIRRO_OK, residual=_RESIDUAL_OK
+    )
+    assert "Bairro Teste".encode("latin-1") in pdf_com
+    assert "Perfil do Bairro/Distrito".encode("latin-1") in pdf_com
+    assert b"/Count 6" in pdf_com
+
+    pdf_sem = gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
+    assert "Perfil não disponível".encode("latin-1") in pdf_sem
+    assert b"/Count 6" in pdf_sem
