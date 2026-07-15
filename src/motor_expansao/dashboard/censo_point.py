@@ -164,6 +164,17 @@ def analisar_ponto_censitario_setores(
     geometria ja decodificada/projetada no laco de intersecao (sem novo `_decode_geometry`
     nem novo transformer). Quando o ponto cai fora de qualquer setor da malha (agua/orla,
     setor com geometria invalida, etc.), os 5 campos ficam `None`/`False`, sem excecao.
+
+    BLK-RELPON-06 (D1, reverte o D3 do BLK-RELPON-05 quanto a fonte da FAIXA do mapa):
+    `densidade_pop_raio_valida_hab_km2` = `pop_total_raio / (area_intersecao_total_m2 /
+    1e6)`, ou seja, populacao do raio dividida pela area de espaco VALIDO (soma das areas
+    de intersecao dos setores IBGE com o circulo -- o IBGE nao cobre agua/vazio). Difere de
+    `densidade_pop_raio_hab_km2`, que divide por `pi*raio_km**2` FIXO (inclui agua/vazio
+    dentro do circulo, subestimando a densidade em pontos com rio/mar no raio). Guarda de
+    divisao por zero: fica `None` ("n/d" no display) quando nao ha setores intersectados
+    (o bloco inteiro e pulado) ou quando `area_intersecao_total_m2` e 0/None. Os 5 campos
+    `*_setor_ponto` acima PERMANECEM no `result` para CSV/auditoria; so deixam de alimentar
+    a faixa superior do mapa (`censo_map.py`).
     """
     area_km2 = math.pi * raio_km**2
     concorrentes_raio = _points_in_radius(lat, lng, competitors_df, raio_km)
@@ -180,6 +191,10 @@ def analisar_ponto_censitario_setores(
         "renda_per_capita_media_raio": None,
         "metodo_renda_raio": "ausente",
         "densidade_pop_raio_hab_km2": None,
+        # BLK-RELPON-06 (D1): densidade sobre area de espaco VALIDO (exclui agua/vazio) --
+        # ver docstring abaixo. Difere de `densidade_pop_raio_hab_km2` (divide por pi*raio^2
+        # fixo, incluindo agua/vazio dentro do circulo).
+        "densidade_pop_raio_valida_hab_km2": None,
         "score_setor_medio": None,
         "score_setor_max": None,
         "n_concorrentes": len(concorrentes_raio),
@@ -303,6 +318,15 @@ def analisar_ponto_censitario_setores(
         pop_total = float(pop_weights.fillna(0).sum())
         result["pop_total_raio"] = round(pop_total, 2)
         result["densidade_pop_raio_hab_km2"] = round(pop_total / area_km2, 2)
+        # BLK-RELPON-06 (D1): denominador = area de INTERSECAO VALIDA (soma das areas dos
+        # setores IBGE intersectados ao circulo), nao pi*raio^2 fixo -- exclui agua/vazio
+        # (o IBGE nao cobre agua). Guarda de divisao por zero: "n/d" (None) quando nao ha
+        # area valida (sem setores intersectados ou area_intersecao_total_m2 <= 0).
+        area_valida_m2 = result["area_intersecao_total_m2"]
+        if area_valida_m2 and area_valida_m2 > 0:
+            result["densidade_pop_raio_valida_hab_km2"] = round(
+                pop_total / (area_valida_m2 / 1_000_000.0), 2
+            )
 
     result["renda_per_capita_media_raio"] = _weighted_average(renda, renda_weight)
     if result["renda_per_capita_media_raio"] is not None:

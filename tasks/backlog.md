@@ -1609,3 +1609,13 @@ sem credencial de VPS/deploy; **não** expor conteúdo sensível de diff no corp
 
 
 ---
+
+- BLK-RELPON-06 (concluído 2026-07-14) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-06-FU1 (concluído 2026-07-14) — ver tasks/completed.md
+
+
+---
