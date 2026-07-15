@@ -202,6 +202,7 @@ def analisar_ponto_censitario_setores(
         "n_setores": 0,
         "area_intersecao_total_m2": 0.0,
         "pop_total_raio": None,
+        "domicilios_total_raio": None,
         "renda_per_capita_media_raio": None,
         "metodo_renda_raio": "ausente",
         "densidade_pop_raio_hab_km2": None,
@@ -282,6 +283,13 @@ def analisar_ponto_censitario_setores(
     intersectados = pd.DataFrame(records).reset_index(drop=True)
     pop_setor = _numeric(intersectados, "pop_total_setor_2022").clip(lower=0)
     intersectados["pop_estimada_intersecao"] = pop_setor * intersectados["peso_area_setor"]
+
+    # BLK-RELPON-08: mesmo padrao de peso de area de pop_total_raio, mas para domicilios
+    # particulares ocupados. NAO persistido como coluna em `intersectados`/`setores_intersectados`
+    # (fora do schema de `_empty_setores_frame()`); so o agregado do raio (`domicilios_total_raio`)
+    # e exposto no result.
+    dom_setor = _numeric(intersectados, "domicilios_particulares_ocupados_setor_2022").clip(lower=0)
+    dom_weights = dom_setor * intersectados["peso_area_setor"]
 
     renda = _numeric(intersectados, "renda_per_capita_setor_2022_calibrada")
     if renda.isna().all() and "renda_per_capita_setor_2022" in intersectados.columns:
@@ -364,6 +372,9 @@ def analisar_ponto_censitario_setores(
             result["densidade_pop_raio_valida_hab_km2"] = round(
                 pop_total / (area_valida_m2 / 1_000_000.0), 2
             )
+
+    if dom_weights.notna().any():
+        result["domicilios_total_raio"] = round(float(dom_weights.fillna(0).sum()), 2)
 
     result["renda_per_capita_media_raio"] = _weighted_average(renda, renda_weight)
     if result["renda_per_capita_media_raio"] is not None:

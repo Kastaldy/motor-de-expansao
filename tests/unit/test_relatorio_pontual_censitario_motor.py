@@ -33,6 +33,7 @@ def _sector_record(
     cod_bairro: str | None = None,
     nome_bairro: str | None = None,
     nome_distrito: str | None = None,
+    domicilios: float | None = None,
 ) -> dict[str, object]:
     geom_wgs = _to_wgs_geometry(local_geom)
     minx, miny, maxx, maxy = geom_wgs.bounds
@@ -58,6 +59,9 @@ def _sector_record(
         "cod_bairro": cod_bairro,
         "nome_bairro": nome_bairro,
         "nome_distrito": nome_distrito,
+        # BLK-RELPON-08: domicilios particulares ocupados do setor (opcional, default None
+        # -> coluna toda NaN, exercitando o caso "n/d" por omissao).
+        "domicilios_particulares_ocupados_setor_2022": domicilios,
     }
 
 
@@ -83,6 +87,43 @@ def test_motor_censitario_setor_totalmente_dentro_do_raio():
         round(500 / (setor.area / 1_000_000.0), 2)
     )
     assert result["densidade_pop_raio_valida_hab_km2"] > result["densidade_pop_raio_hab_km2"]
+
+
+def test_motor_censitario_domicilios_total_raio_setor_totalmente_dentro_do_raio():
+    setor = box(-100, -100, 100, 100)
+    df = pd.DataFrame(
+        [_sector_record("355030801000001", setor, pop=500, renda=1800, score=82, domicilios=300)]
+    )
+
+    result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
+
+    # Setor totalmente dentro do raio -> peso de area = 1.0.
+    assert result["domicilios_total_raio"] == pytest.approx(300)
+
+
+def test_motor_censitario_domicilios_total_raio_setor_parcial_pondera_por_area():
+    from shapely.geometry import Point
+
+    setor = box(1000, -500, 2500, 500)
+    df = pd.DataFrame(
+        [_sector_record("355030801000002", setor, pop=1500, renda=2400, score=60, domicilios=1000)]
+    )
+    expected_intersection_area = setor.intersection(Point(0, 0).buffer(1500, quad_segs=64)).area
+    expected_weight = expected_intersection_area / setor.area
+
+    result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
+
+    assert result["domicilios_total_raio"] == pytest.approx(1000 * expected_weight, rel=0.01)
+
+
+def test_motor_censitario_domicilios_total_raio_nd_quando_coluna_ausente():
+    setor = box(-100, -100, 100, 100)
+    # Sem passar `domicilios` -> coluna toda NaN -> "n/d" gracioso.
+    df = pd.DataFrame([_sector_record("355030801000001", setor, pop=500, renda=1800, score=82)])
+
+    result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
+
+    assert result["domicilios_total_raio"] is None
 
 
 def test_motor_censitario_setor_parcialmente_dentro_do_raio():
@@ -130,6 +171,8 @@ def test_motor_censitario_exclui_setor_fora_do_raio():
     assert result["setores_intersectados"].empty
     # BLK-RELPON-06 (D1): sem setores intersectados -> sem area valida -> "n/d" (None).
     assert result["densidade_pop_raio_valida_hab_km2"] is None
+    # BLK-RELPON-08: sem candidatos -> dict default intacto -> "n/d" (None).
+    assert result["domicilios_total_raio"] is None
 
 
 def test_motor_censitario_entrada_vazia_conta_pontos_por_distancia_real():

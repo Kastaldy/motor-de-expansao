@@ -77,6 +77,24 @@ ULTRA_BRANCO_GELO = (248, 248, 248)
 _BRANCO = (255, 255, 255)
 _CINZA_TEXTO = (60, 60, 60)
 
+# BLK-RELPON-08 (D3/Q4): metas do semaforo de cor dos 8 cards do Big Numbers. Verde quando o
+# valor bate a meta; vermelho quando nao bate; neutro quando "n/d" (Q2, indecidivel). Constantes
+# nomeadas e auditaveis (nao hardcoded inline dentro de `_big_numbers_page`).
+_META_POP_TOTAL_RAIO = 10_000.0
+_META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
+_META_DOMICILIOS_TOTAL_RAIO = 3_000.0
+_META_SCORE_SETOR_MEDIO = 60.0
+_META_SAM_FITNESS_POTENCIAL = 2_000.0
+_META_RESIDUAL_FITNESS_DISPONIVEL = 2_000.0
+
+# Paleta pastel do semaforo (Q3): fundo claro o bastante para preservar contraste com o
+# rotulo/valor em cinza-escuro (45,45,45)/(40,40,40) e com a borda fina (225,225,228) ja
+# existente do card. Neutro reusa a familia de cinza-claro de `_PERFIL_DIVISOR_RGB` (232,233,237)
+# para ficar visualmente distinto do branco puro do card sem meta aplicavel.
+_CARD_VERDE_RGB = (205, 236, 217)
+_CARD_VERMELHO_RGB = (248, 209, 209)
+_CARD_NEUTRO_RGB = (232, 233, 237)
+
 # BLK-RELPON-07 (refino visual "Microarea" GeoFusion): painel vertical do Perfil do
 # Bairro/Distrito. Moldura turquesa arredondada + cartao branco + metricas empilhadas
 # (icone + rotulo cinza + valor grande azul-marinho). SO estilo/geometria — nao muda os
@@ -510,6 +528,36 @@ def _cover_page(
     pdf.cell(block_w, 18, _ascii(f"Raio de análise: {raio}"), align=align)
 
 
+def _cor_por_meta(valor: Any, meta: float) -> tuple[int, int, int]:
+    """Cor de fundo do card: verde se valor >= meta, vermelho se < meta, neutro se "n/d".
+
+    BLK-RELPON-08 (D3/Q2): "n/d" (None/NaN) e tratado ANTES da comparacao numerica -- condicao
+    indecidivel vira neutro, nunca falsa reprovacao (vermelho) nem falso positivo (verde).
+    Funcao pura, testavel isoladamente sem depender do PDF.
+    """
+    if valor is None or pd.isna(valor):
+        return _CARD_NEUTRO_RGB
+    return _CARD_VERDE_RGB if float(valor) >= meta else _CARD_VERMELHO_RGB
+
+
+def _cor_consumo_concorrentes(sam: Any, residual_disponivel: Any) -> tuple[int, int, int]:
+    """Cor assimetrica do card "Consumo concorrentes (est.)" -- tambem usada para colorir
+    "Concorrentes no raio" (D3: esse card ESPELHA a cor do card acima, sem meta propria).
+
+    Regra (D3): VERMELHO quando o mercado ja esta consumido (SAM Fitness >= meta E Residual
+    Fitness < meta); VERDE caso contrario. "n/d" em SAM OU em Residual -> neutro (condicao
+    indecidivel, mesmo criterio de `_cor_por_meta`). Funcao pura.
+    """
+    if sam is None or pd.isna(sam) or residual_disponivel is None or pd.isna(residual_disponivel):
+        return _CARD_NEUTRO_RGB
+    if (
+        float(sam) >= _META_SAM_FITNESS_POTENCIAL
+        and float(residual_disponivel) < _META_RESIDUAL_FITNESS_DISPONIVEL
+    ):
+        return _CARD_VERMELHO_RGB
+    return _CARD_VERDE_RGB
+
+
 def _big_numbers_page(
     pdf: _UltraPDF,
     result: dict[str, Any],
@@ -529,15 +577,47 @@ def _big_numbers_page(
     _draw_title_band(pdf, "Big Numbers", rgb=primary)
 
     residual = residual or {}
+    sam = residual.get("sam_fitness_potencial")
+    oferta_disponivel = residual.get("oferta_efetiva_disponivel")
+    cor_consumo = _cor_consumo_concorrentes(sam, oferta_disponivel)
+
     cards = [
-        ("População total no raio", _format_number(result.get("pop_total_raio"), 0)),
-        ("Renda per capita média", "R$ " + _format_number(result.get("renda_per_capita_media_raio"), 2)),
-        ("Score censitário médio", _format_number(result.get("score_setor_medio"), 2)),
-        ("Score censitário máximo", _format_number(result.get("score_setor_max"), 2)),
-        ("SAM Fitness (alunos)", _format_number(residual.get("sam_fitness_potencial"), 0)),
-        ("Residual Fitness (alunos)", _format_number(residual.get("oferta_efetiva_disponivel"), 0)),
-        ("Concorrentes no raio", _format_number(result.get("n_concorrentes"), 0)),
-        ("Consumo concorrentes (est.)", _format_number(residual.get("oferta_consumida_mercado_estimada"), 0)),
+        (
+            "População total no raio",
+            _format_number(result.get("pop_total_raio"), 0),
+            _cor_por_meta(result.get("pop_total_raio"), _META_POP_TOTAL_RAIO),
+        ),
+        (
+            "Renda per capita média",
+            "R$ " + _format_number(result.get("renda_per_capita_media_raio"), 2),
+            _cor_por_meta(result.get("renda_per_capita_media_raio"), _META_RENDA_PER_CAPITA_MEDIA_RAIO),
+        ),
+        (
+            "Número de domicílios",
+            _format_number(result.get("domicilios_total_raio"), 0),
+            _cor_por_meta(result.get("domicilios_total_raio"), _META_DOMICILIOS_TOTAL_RAIO),
+        ),
+        (
+            "Score censitário médio",
+            _format_number(result.get("score_setor_medio"), 2),
+            _cor_por_meta(result.get("score_setor_medio"), _META_SCORE_SETOR_MEDIO),
+        ),
+        (
+            "SAM Fitness (alunos)",
+            _format_number(sam, 0),
+            _cor_por_meta(sam, _META_SAM_FITNESS_POTENCIAL),
+        ),
+        (
+            "Residual Fitness (alunos)",
+            _format_number(oferta_disponivel, 0),
+            _cor_por_meta(oferta_disponivel, _META_RESIDUAL_FITNESS_DISPONIVEL),
+        ),
+        ("Concorrentes no raio", _format_number(result.get("n_concorrentes"), 0), cor_consumo),
+        (
+            "Consumo concorrentes (est.)",
+            _format_number(residual.get("oferta_consumida_mercado_estimada"), 0),
+            cor_consumo,
+        ),
     ]
 
     # D3=B (BLK-EST-02): cards mais altos/arejados (156) com borda fina e barra acento 6 pt.
@@ -550,13 +630,13 @@ def _big_numbers_page(
     # Barras de destaque dos cards seguem o tom da pagina (primaria + acento).
     accents = [primary, secondary]
 
-    for index, (label, value) in enumerate(cards):
+    for index, (label, value, cor_fundo) in enumerate(cards):
         col = index % cols
         row = index // cols
         x = margin_x + col * (card_w + gap)
         y = top + row * (card_h + gap)
-        # Cartao branco com barra de destaque e borda fina (D3=B).
-        pdf.set_fill_color(*_BRANCO)
+        # Cartao com fundo por meta (semaforo D3) + borda fina + barra de destaque (D3=B).
+        pdf.set_fill_color(*cor_fundo)
         pdf.rect(x, y, card_w, card_h, style="F")
         pdf.set_draw_color(225, 225, 228)
         pdf.rect(x, y, card_w, card_h, style="D")
@@ -583,9 +663,10 @@ def _big_numbers_page(
         _PAGE_W - 2 * margin_x,
         11,
         _ascii(
-            "Fontes: pop/renda/score = censo (interseção de setores IBGE 2022 com círculo de 1.5 km, "
-            f"método {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = lookup READ-ONLY "
-            "do hex H3 (sem recálculo do M1). 'n/d' = dado ausente para o ponto."
+            "Fontes: pop/renda/domicílios/score = censo (interseção de setores IBGE 2022 com círculo de "
+            f"1.5 km, método {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = lookup "
+            "READ-ONLY do hex H3 (sem recálculo do M1). Fundo do card: verde = meta atingida, vermelho = "
+            "meta não atingida, cinza = 'n/d' (dado ausente para o ponto)."
         ),
     )
     _draw_footer(pdf, with_attribution=True)
