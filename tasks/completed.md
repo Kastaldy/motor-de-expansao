@@ -9031,3 +9031,45 @@ não muda os 4 blocos, os valores, o método de renda D3.5, os rótulos, nem a c
   "Perfil do Bairro/Distrito", a mensagem "Perfil não disponível" e o "n/d" gracioso preservados;
   suíte export/motor/acentuação/municipal 96 passed; ruff/mypy limpos; import ok. Verificação visual
   própria: 4 PNGs (recente/clássico × disponível/n-d) renderizados via PyMuPDF, layout fiel à referência.
+
+## Fechamento de housekeeping em lote - BLK-ORQ-21 + BLK-ORQ-26 (2026-07-15)
+
+Housekeeping em lote (modo humano; toca `tasks/backlog.md` = GOVERNANÇA -> exige `aprovado-humano` de co-owner != autor, NÃO auto-mergeia). Fecha formalmente o **BLK-ORQ-21** (portão NO AR desde 2026-07-14, mas o backlog ainda o marcava "Pendente") e registra o **BLK-ORQ-26** (fix não planejado do `claude-review`, mergeado como PR #105 sem entrada de bloco). READ-ONLY sobre o M1; toca só `tasks/backlog.md` (stubs + update do ORQ-23 p/ Telegram) e `tasks/completed.md`.
+
+---
+
+### BLK-ORQ-21 — Aplicar a branch protection nova (0 aprovações, `enforce_admins`, 4 checks) + ligar auto-merge
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (mudou a governança efetiva da `main`). Coberta pela **DEC-016**. |
+| **Status** | **CONCLUÍDO 2026-07-14** — portão NO AR na `main` (verificado ao vivo via `gh api .../branches/main/protection`). |
+| **Depende de** | BLK-ORQ-20 (concluído). |
+| **Autonomia** | manual (NÃO loop-safe). |
+
+**O que foi aplicado.** 4 required checks `test` + `guard` + `review-gate` + `claude-review`; `required_approving_review_count: 0`; `require_code_owner_reviews: true`; `required_conversation_resolution: true`; `strict: true`; `allow_auto_merge: true` + `delete_branch_on_merge: true` (antes `false` — o auto-merge nem existia). Secret `CLAUDE_CODE_OAUTH_TOKEN` (conta pessoal do Felipe, fase de teste, custo de API = 0) + labels `aprovado-humano`/`critica-aprovada`/`criticidade:{baixa,media,alta,critica}` criadas.
+
+**Ordem de bootstrap cumprida.** ORQ-20 mergeado pelo regime antigo (PR #96) -> os 3 checks novos rodaram >=1x num PR real (PR #97) -> SÓ ENTÃO o PUT dos 4 checks + `allow_auto_merge`. O PR #97 achou e corrigiu **4 defeitos** que congelariam o repo: CODEOWNERS com dono único (-> 3 donos + trilho crítico); `set -e` matando o step do `guard` (-> `set +e` + captura de rc); `github_token` faltando no `claude-review` (-> fallback OIDC abortava); deadlock do REVIEW.md #7. Runbook completo em `docs/portao_merge_orq21.md`.
+
+**Provas empíricas (antes de confiar no portão).**
+- **N0 anti-spoof** (PR #100, fechado sem merge): code owner funciona com `count:0` E o GitHub exige TODOS os check runs homônimos -> um `guard` forjado verde NÃO fura o portão.
+- **Auto-merge zero-humanos** (PR #106, BLK-ORQ-25 Baixa): mergeou sozinho só com `criticidade:baixa`, SEM label humana/admin — a prova que faltava do trilho SEM humano.
+- **Trilho COM humano** (PRs #101/#104): mergeou com `aprovado-humano`.
+
+**Ressalva vigente (proving period).** `enforce_admins` segue **`false`** por decisão do Felipe (~1-2 semanas de prova; o `--admin` fica como extintor enquanto o `claude-review` — SPOF externo — prova estabilidade). Virar para `true` é o passo final do endurecimento (PENDÊNCIA registrada). **Kill-switch** (restaura o gate humano em 1 PUT) em `docs/portao_merge_orq21.md`. Gatilho de suspensão: 2 incidentes/90d (detector = BLK-ORQ-23).
+
+**READ-ONLY M1.** DEC-001 intacta (`renda=0.40`/`pop=0.60`, `score_priorizacao`, artefatos oficiais inalterados) — é governança de merge. **Deploy segue manual por digest** (auto-merge NÃO deploya). Refs: PRs #96/#97/#99/#100; DEC-016; `docs/portao_merge_orq21.md`.
+
+---
+
+### BLK-ORQ-26 — `claude-review`: `max_turns` 20->40 + revisão diff-first (fix do fail-closed)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (fix de workflow de CI durante o proving period do portão; **READ-ONLY sobre o M1**). |
+| **Status** | **CONCLUÍDO 2026-07-14** (PR #105). Fix NÃO planejado, descoberto no proving period — sem bloco prévio no backlog. |
+| **Autonomia** | manual (NÃO loop-safe) — toca `.github/`. |
+
+**Problema.** O `claude-review` estourava `--max-turns 20` (`error_max_turns`, ~US$ 1,33/run) lendo os arquivos grandes do repo (CLAUDE.md + `backlog.md` ~1750 linhas) ANTES de devolver a saída estruturada -> **fail-closed** -> travava PRs legítimos (reprovou o #104 2x).
+
+**Fix** (`.github/workflows/claude-review.yml`): `--max-turns 20->40` + prompt "ler o DIFF primeiro, usar Grep, NÃO ler arquivos gigantes inteiros". Confirmado: a `claude-review` do próprio #105 passou em 56s (vs 2m10s falhando); depois o #106 passou em 1m6s. Como o `claude-review.yml` roda em `pull_request` (versão do HEAD do PR), o próprio PR que edita o workflow já testa a versão nova. O #105 e o #104 foram ADMIN-MERGED (extintor do proving period, `enforce_admins=false`). READ-ONLY sobre o M1.
