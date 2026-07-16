@@ -40,27 +40,36 @@ def _malha_fake() -> gpd.GeoDataFrame:
     )
 
 
+# Basico e renda vem EMBARALHADOS (ordem diferente da malha) de proposito: o join agora e' por
+# CHAVE `cod_setor`, entao a ordem das linhas nao pode mais importar. A verdade por setor e':
+#   A=...801000001 -> pop 900,  renda_resp 3000  (renda_pc 1000)
+#   B=...801000002 -> pop 1800, renda_resp 4500  (renda_pc 1500)
+#   C=...802000001 -> pop 2700, renda_resp 6000  (renda_pc 2000)
 def _basico_fake() -> pd.DataFrame:
+    # Ordem [B, C, A] — diferente da malha [A, B, C].
     return pd.DataFrame(
         {
+            "cod_setor": ["355030801000002", "355030802000001", "355030801000001"],
             "uf": ["SP", "SP", "SP"],
             "cod_uf": ["35", "35", "35"],
             "cod_municipio": ["3550308", "3550308", "3550308"],
             "area_setor_km2_ibge": [1.0, 1.0, 1.0],
-            "pop_total_setor_2022": [900.0, 1800.0, 2700.0],
-            "domicilios_particulares_ocupados_setor_2022": [300.0, 600.0, 900.0],
+            "pop_total_setor_2022": [1800.0, 2700.0, 900.0],
+            "domicilios_particulares_ocupados_setor_2022": [600.0, 900.0, 300.0],
             "avg_moradores_domicilio_setor_2022": [3.0, 3.0, 3.0],
         }
     )
 
 
 def _renda_fake() -> pd.DataFrame:
+    # Ordem [C, A, B] — diferente da malha e do basico.
     return pd.DataFrame(
         {
+            "cod_setor": ["355030802000001", "355030801000001", "355030801000002"],
             "uf": ["SP", "SP", "SP"],
             "cod_uf": ["35", "35", "35"],
-            "renda_responsavel_media_setor_2022": [3000.0, 4500.0, 6000.0],
-            "responsaveis_com_renda_setor_2022": [280.0, 570.0, 850.0],
+            "renda_responsavel_media_setor_2022": [6000.0, 3000.0, 4500.0],
+            "responsaveis_com_renda_setor_2022": [850.0, 280.0, 570.0],
         }
     )
 
@@ -94,6 +103,44 @@ def test_monta_base_setorial_geo_com_schema_crs_e_metricas():
     # BLK-RELMUN-02: nome_bairro flui ao artefato (com NA preservado no setor sem bairro).
     assert "nome_bairro" in result.columns
     assert list(result["nome_bairro"].fillna("<NA>")) == ["Bela Vista", "Centro", "<NA>"]
+
+
+def test_join_por_chave_ignora_ordem_e_setor_faltante():
+    # Regressao do bug do join posicional: renda SEM o setor B e em ordem [C, A]. O join por CHAVE
+    # deve dar a CADA setor a sua propria renda (ordem irrelevante) e deixar B com renda ausente —
+    # nunca a renda de um vizinho, como fazia o antigo alinhamento por posicao.
+    renda_incompleta = pd.DataFrame(
+        {
+            "cod_setor": ["355030802000001", "355030801000001"],  # [C, A], sem B
+            "uf": ["SP", "SP"],
+            "cod_uf": ["35", "35"],
+            "renda_responsavel_media_setor_2022": [6000.0, 3000.0],
+            "responsaveis_com_renda_setor_2022": [850.0, 280.0],
+        }
+    )
+    result = montar_base_setorial_uf(
+        _malha_fake(),
+        _basico_fake(),
+        renda_incompleta,
+        uf="SP",
+        m1_reference=_m1_reference_fake(),
+    ).set_index("cod_setor")
+
+    a, b, c = "355030801000001", "355030801000002", "355030802000001"
+    # Basico (embaralhado) casou por chave: cada setor manteve a SUA populacao.
+    assert result.loc[a, "pop_total_setor_2022"] == 900.0
+    assert result.loc[b, "pop_total_setor_2022"] == 1800.0
+    assert result.loc[c, "pop_total_setor_2022"] == 2700.0
+    # Renda casou por chave: A e C com a sua renda; renda_pc = renda_resp / avg_moradores (3).
+    assert result.loc[a, "renda_responsavel_media_setor_2022"] == 3000.0
+    assert result.loc[c, "renda_responsavel_media_setor_2022"] == 6000.0
+    assert result.loc[a, "renda_per_capita_setor_2022"] == 1000.0
+    assert result.loc[c, "renda_per_capita_setor_2022"] == 2000.0
+    # B nao existe na renda -> ausente (nunca a renda de um vizinho deslocada pela posicao).
+    assert pd.isna(result.loc[b, "renda_responsavel_media_setor_2022"])
+    assert not bool(result.loc[b, "flag_renda_disponivel"])
+    assert bool(result.loc[a, "flag_renda_disponivel"])
+    assert bool(result.loc[c, "flag_renda_disponivel"])
 
 
 def test_escreve_e_le_particao_por_uf_municipio(tmp_path: Path):
