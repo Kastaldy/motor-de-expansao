@@ -906,6 +906,8 @@ por persona** (executivo, operador, leigo). Relatório de problemas priorizados 
 | **Autonomia** | **manual (NÃO loop-safe)** — design/UX; exige julgamento humano. NÃO marcar loop-safe. |
 
 **Contexto.** Reduzir a complexidade para leigos sem perder poder para power users.
+Insumo de benchmark externo: `docs/system_design_referencia.md` (§3 layout, §4 navegação, §7 progressive
+disclosure, §8 fluxo triagem→viabilidade com H3, §10 matriz persona).
 **Objetivo.** Redesenhar a **arquitetura de informação** em torno dos fluxos core (triagem→viabilidade, per
 `docs/estado_dos_modelos.md`); **progressive disclosure** (modo simples p/ leigo vs avançado); wireframes de baixa
 fidelidade por persona. Usar o guia `frontend-design`.
@@ -926,6 +928,8 @@ fidelidade por persona. Usar o guia `frontend-design`.
 
 **Contexto.** Consolidar a linguagem visual (a direção **turquesa Ultra + magenta concorrente** do BLK-UI-10;
 tipografia; componentes) e o sistema de dataviz dos mapas/gráficos.
+Insumo de benchmark externo: `docs/system_design_referencia.md` (§5 componentização — design system de 5-6
+componentes canônicos; §6.2 paletas acessíveis e dataviz para leigos).
 **Objetivo.** Proposta de **design system** (tokens, componentes, paletas acessíveis light/dark) reusando os guias
 `frontend-design` e `dataviz`.
 **Guardrail.** §5 READ-ONLY M1.
@@ -944,6 +948,8 @@ tipografia; componentes) e o sistema de dataviz dos mapas/gráficos.
 | **Autonomia** | **manual (NÃO loop-safe)** — decisão estratégica; gate humano obrigatório + DEC. NÃO marcar loop-safe. |
 
 **Contexto.** Consolidar tudo numa recomendação acionável.
+Insumo de referência: `docs/system_design_referencia.md` (§2 diagnóstico técnico do gargalo rerun/pydeck e
+§11 recomendações priorizadas alimentam o critério de performance e o de custo de dev da matriz de decisão).
 **Objetivo.** Relatório executivo que junta **perf** (REV-01..06), **arquitetura** (REV-07/08) e **UX** (REV-09..11)
 numa **recomendação de rumo** (rebuild vs refactor incremental), **stack alvo**, direção de UX e **roadmap faseado**
 (esforço × risco × valor por fase). Registrar **DEC** com a decisão. A implementação vira **epic próprio** (fora deste
