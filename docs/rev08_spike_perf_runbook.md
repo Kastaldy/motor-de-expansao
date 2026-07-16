@@ -137,11 +137,36 @@ e vira o gargalo só perto de ~100k. Os números de **produção/A-B na VPS segu
 passo humano** (rede real + §6) — é o que valida se o payload inline (1,5–8,5 MB)
 sobrevive ao link real.
 
-> **Nota:** os markers `window.__spike*` existem SÓ no spike. O dashboard atual
-> (pydeck/Streamlit) **não** é instrumentado com eles → este harness NÃO produz
-> render/recolor/cenário comparáveis para o app atual. O baseline do app atual
-> vem dos diagnósticos **BLK-REV-03..06** (relatórios em `data/analysis/`,
-> gitignored) ou de medição por DevTools (sub-entregável i).
+> **Nota:** os markers `window.__spike*` existem SÓ no spike. O
+> `rev08_spike_playwright.py` NÃO mede o app atual. Para o baseline do app atual,
+> usou-se uma medição AUTOMATIZADA independente por **frames de WebSocket** (a
+> seguir), já que cada interação no Streamlit re-serializa o mapa e trafega pelo
+> WS — o tempo até o maior frame chegar é um proxy fiel do custo do rerun.
+
+### Comparação AUTOMATIZADA — app atual (pydeck/Streamlit) x spike (deck.gl)
+
+Método (app atual): Playwright dirige o dashboard real local (`:8502`, UF=SP,
+aba Mapa), captura os frames do WebSocket do Streamlit e mede, por interação, a
+**latência clique → chegada do maior frame WS** (mapa re-serializado) e o
+**tamanho desse frame**. 5 runs, mediana. **Laptop local, SEM rede VPS** — na
+mesma máquina que mediu o spike. (Script throwaway de scratchpad; reprodutível.)
+
+| Fluxo                         | App atual (Streamlit/pydeck) | Spike (deck.gl client-side) | Ganho    |
+|-------------------------------|------------------------------|-----------------------------|----------|
+| render (atualizar/1º mapa)    | **791 ms**                   | 478 ms                      | ~1,7×    |
+| recolor (trocar modo de cor)  | **3282 ms** (~3,3 s)         | 38 ms                       | **~86×** |
+| payload por INTERAÇÃO          | ~239 KB por rerun (a CADA clique) | 1,46 MB **uma vez** (0/clique) | break-even ~6 cliques |
+
+**Leitura:** o `render` (desenhar o mapa do zero) é comparável — o app atual até
+segura bem (791 ms). O abismo é a **interação**: trocar o modo de cor custa
+**~3,3 s no app atual** (rerun completo: recomputa cores + re-serializa + repaint)
+vs **38 ms no spike** (recolor client-side por `updateTriggers`, sem tráfego).
+O trade-off de payload: o app atual manda ~239 KB **a cada** interação; o spike
+paga 1,46 MB **uma vez** e depois ~0 — o ponto de equilíbrio é ~6 interações por
+sessão (bem abaixo do uso real). Caveats: `scenario` (add hex) não foi
+automatizado (exige clique no hexágono do mapa pydeck por pixel) — mas incorre no
+MESMO rerun do recolor; `239 KB` é o maior frame WS único (o total do rerun pode
+ser maior); tudo LOCAL — a **perna VPS** (rede real) segue passo humano (§6).
 
 ---
 

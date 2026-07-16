@@ -9247,3 +9247,14 @@ Ciclo APROVADO pelo QA (Opus 4.8) e pela REVISAO VISUAL HUMANA do PDF (Felipe, 2
   - **MG stress 104k:** 8,46 MB · render ~1038 ms (2/3 runs > 45 s → instável) · recolor 30 ms · cenário 177 ms.
 - **Leitura para o REV-12:** o diferencial do client-side é a **interação** (recolor 30–71 ms, cenário 57–177 ms), quase PLANA com o volume e sem round-trip ao servidor — a ordem de grandeza a comparar contra o rerun server-side do Streamlit. O `render` (1º paint) escala com o payload/tesselação e só vira gargalo perto de ~100k; a faixa operacional (cap 18k–35k) fica em ~0,5–0,65 s de render e < 100 ms de interação. **Caveat aberto (passo humano, §6):** validar na VPS se o payload inline (1,5–8,5 MB) sobrevive ao link real — o harness NÃO mede o app atual (markers `window.__spike*` são só do spike; baseline do app atual = REV-03..06/DevTools).
 - **Sem toque em código de produção/M1:** correção só em `docs/rev08_spike_perf_runbook.md` (tabelas). Medição via script throwaway de scratchpad (não versionado). READ-ONLY M1 inalterado.
+
+### BLK-REV-08-FU3 — Comparação automatizada spike x app atual (baseline do dashboard atual) (2026-07-16)
+
+- **Automação do baseline do app atual** (o harness do spike não serve — markers são só do spike): script Playwright throwaway que dirige o dashboard real local (`:8502`, UF=SP, aba Mapa), captura os frames do WebSocket do Streamlit e mede, por interação, a latência clique→chegada do maior frame WS (mapa re-serializado) + o tamanho do frame. 5 runs, mediana, laptop local (mesma máquina do spike), SEM rede VPS.
+- **Controles descobertos no app real:** tabs = segmented control (Mapa/Executivo/Expansão de Domínio/Carteira e Plano/Viabilidade); **selectbox "Modo de cor"** (Censitário/Residual Fitness/Expansão de Domínio) = recolor; botão **"Atualizar mapa"** = render.
+- **Resultado (app atual x spike):**
+  - render (atualizar/1º mapa): **791 ms** (frame WS ~239 KB) x spike **478 ms** → ~1,7×.
+  - recolor (trocar modo de cor): **3282 ms (~3,3 s)** (frame WS ~239 KB) x spike **38 ms** → **~86×**.
+  - payload por interação: app atual ~**239 KB por rerun (a CADA clique)** x spike **1,46 MB uma vez** (0/clique) → break-even ~6 cliques/sessão.
+- **Leitura para o REV-12:** o `render` do zero é comparável (o app atual segura bem); o **abismo é a interação** — o rerun do Streamlit (recompute + re-serializa + repaint) custa ~3,3 s por troca de cor vs 38 ms client-side do spike. O trade-off de payload (mandar ~239 KB a cada clique vs 1,46 MB uma vez) equilibra em ~6 interações, bem abaixo do uso real. Caveats: `scenario` (add hex) não automatizado (exige clique por pixel no mapa pydeck, mas incorre no MESMO rerun); `239 KB` é o maior frame único; tudo LOCAL — perna VPS segue passo humano (§6).
+- **Sem toque em produção/M1:** só `docs/rev08_spike_perf_runbook.md`; scripts de medição throwaway em scratchpad (não versionados). READ-ONLY M1 inalterado.
