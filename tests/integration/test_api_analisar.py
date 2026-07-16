@@ -149,3 +149,43 @@ def test_analisar_pdf_solicitante_none_fallback(monkeypatch) -> None:
     )
     assert out == b"%PDF-1.4 fake"
     assert capturado["solicitante"] is None
+
+
+def test_analisar_pdf_passa_perfil_bairro(monkeypatch) -> None:
+    """A API DEVE passar `perfil_bairro` ao gerador (regressao do bug do bot).
+
+    `perfil_bairro` e kwarg OPCIONAL com default `None`, e `None` degrada em silencio para
+    o painel "Perfil nao disponivel"/n/d -- sem erro nem log. Foi exatamente assim que o
+    BLK-RELPON-07 nasceu quebrado SO no bot: `pages.py` passava o agregado, `service.py`
+    nao. Este teste falha se alguem remover o kwarg de novo.
+
+    Aguas da Prata nao tem `cod_bairro` (0 setores), entao o caso exercitado e o FALLBACK
+    por `nome_distrito`.
+    """
+    from motor_expansao.api import service
+
+    capturado: dict[str, object] = {}
+
+    def _spy(*args, **kwargs) -> bytes:
+        capturado["perfil_bairro"] = kwargs.get("perfil_bairro")
+        return b"%PDF-1.4 fake"
+
+    monkeypatch.setattr(
+        "motor_expansao.dashboard.censo_report.gerar_pdf_relatorio_pontual_classico", _spy
+    )
+    service.gerar_pdf_ponto(
+        AGUAS_DA_PRATA["lat"], AGUAS_DA_PRATA["lng"], None, get_settings(), rotulo=None
+    )
+
+    perfil = capturado["perfil_bairro"]
+    assert perfil is not None, "service.py nao passou perfil_bairro -> PDF sai com n/d"
+    assert isinstance(perfil, dict)
+    # O agregado tem de estar RESOLVIDO, nao so presente: um dict-default (flag False)
+    # renderiza o mesmo "Perfil nao disponivel" que o bug original.
+    assert perfil["flag_perfil_disponivel"] is True
+    assert perfil["unidade_tipo"] == "distrito"  # fallback: municipio sem cod_bairro
+    assert perfil["n_setores_unidade"] > 0
+    assert perfil["populacao_total"] is not None
+    # Rotulos do painel resolvidos a partir do proprio setores_df (a API nao tem `context`).
+    assert perfil["municipio_nome"] is not None
+    assert perfil["uf"] == "SP"
