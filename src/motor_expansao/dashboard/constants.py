@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 REQUIRED_COLUMNS = [
     "hex_id",
     "lat",
@@ -361,6 +363,132 @@ RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
     (3_500.0,   "R$ 2.001-3.500",      (255, 210, 28,  150)),   # #FFD21C
     (5_000.0,   "R$ 3.501-5.000",      (168, 255, 168, 150)),   # #A8FFA8
     (float("inf"), ">R$ 5.000",        (0,   204, 0,   150)),   # #00CC00
+]
+
+# ── Renda media domiciliar (fase seguinte, portada do prototipo) ──────────────
+# renda_media_domiciliar = renda do responsavel (V06004) x uplift de composicao x fator temporal,
+# agregada ponderando por DOMICILIOS. Camada de VISUALIZACAO do Relatorio Pontual; NAO altera M1.
+#
+# uplift de composicao: responsavel -> domicilio inteiro. Mediana nacional 1.632 (~61% da renda vem
+# do responsavel). Por MUNICIPIO (IBGE) e, quando disponivel, por SETOR (agregado de parentesco,
+# rakeado por municipio: a media ponderada dos setores reproduz o uplift municipal do IBGE).
+UPLIFT_COMPOSICAO_NACIONAL = 1.632
+UPLIFT_COMPOSICAO_PATH = Path("data/staging/uplift_renda_domiciliar_municipio.parquet")
+UPLIFT_COMPOSICAO_SETOR_PATH = Path("data/staging/uplift_composicao_setor.parquet")
+
+# Fator temporal: atualiza a renda de JUL/2022 (Censo) para valores correntes (Novo CAGED,
+# winsorizado/ponderado; IPCA como conferencia). NACIONAL de proposito. Fallback 1.0 = nominal 2022.
+FATOR_TEMPORAL_RENDA_PATH = Path("data/staging/fator_temporal_renda.json")
+FATOR_TEMPORAL_RENDA_FALLBACK = 1.0
+
+
+def _carregar_fator_temporal() -> tuple[float, str]:
+    """Le o fator temporal do artefato. Cai em 1.0 (jul/2022) se ausente ou implausivel."""
+    if FATOR_TEMPORAL_RENDA_PATH.exists():
+        import json
+
+        try:
+            d = json.loads(FATOR_TEMPORAL_RENDA_PATH.read_text(encoding="utf-8"))
+            fator = float(d["fator_temporal_renda"])
+            fim = str(d["competencia_atual_fim"])
+            if 1.0 <= fator <= 2.0:
+                return fator, f"{fim[4:]}/{fim[:4]} (CAGED; Censo jul/2022 x {fator})"
+        except (KeyError, ValueError, TypeError, json.JSONDecodeError):
+            pass
+    return FATOR_TEMPORAL_RENDA_FALLBACK, "julho/2022 (Censo IBGE)"
+
+
+FATOR_TEMPORAL_RENDA, DATA_REFERENCIA_RENDA = _carregar_fator_temporal()
+
+_uplift_cache: dict[str, float] | None = None
+_uplift_uf_cache: dict[str, float] | None = None
+
+
+def _carregar_uplift() -> tuple[dict[str, float], dict[str, float]]:
+    """Le a tabela de uplift por municipio (artefato do IBGE). Cai no nacional se ausente."""
+    global _uplift_cache, _uplift_uf_cache
+    if _uplift_cache is None:
+        por_municipio: dict[str, float] = {}
+        por_uf: dict[str, float] = {}
+        if UPLIFT_COMPOSICAO_PATH.exists():
+            import pandas as pd
+
+            df = pd.read_parquet(
+                UPLIFT_COMPOSICAO_PATH,
+                columns=["uf", "cod_municipio", "uplift_composicao_final", "uplift_confiavel"],
+            )
+            por_municipio = dict(
+                zip(
+                    df["cod_municipio"].astype(str),
+                    pd.to_numeric(df["uplift_composicao_final"], errors="coerce"),
+                    strict=False,
+                )
+            )
+            confiavel = df[df["uplift_confiavel"].astype(bool)]
+            por_uf = confiavel.groupby("uf")["uplift_composicao_final"].median().to_dict()
+        _uplift_cache = por_municipio
+        _uplift_uf_cache = por_uf
+    return _uplift_cache, _uplift_uf_cache or {}
+
+
+def uplift_renda_domiciliar(uf: str | None, cod_municipio: str | None = None) -> float:
+    """Fator responsavel -> domicilio inteiro (IBGE). municipio -> mediana UF -> nacional."""
+    por_municipio, por_uf = _carregar_uplift()
+    if cod_municipio:
+        valor = por_municipio.get(str(cod_municipio).strip())
+        if valor is not None and valor == valor:  # descarta NaN
+            return float(valor)
+    if uf:
+        valor = por_uf.get(str(uf).strip().upper())
+        if valor is not None and valor == valor:
+            return float(valor)
+    return UPLIFT_COMPOSICAO_NACIONAL
+
+
+_uplift_setor_cache: dict[str, float] | None = None
+
+
+def _carregar_uplift_setor() -> dict[str, float]:
+    """Le a tabela de uplift por SETOR. Dict vazio se o artefato nao existir (cai no municipio)."""
+    global _uplift_setor_cache
+    if _uplift_setor_cache is None:
+        mapa: dict[str, float] = {}
+        if UPLIFT_COMPOSICAO_SETOR_PATH.exists():
+            import pandas as pd
+
+            df = pd.read_parquet(
+                UPLIFT_COMPOSICAO_SETOR_PATH, columns=["cod_setor", "uplift_composicao_setor"]
+            )
+            mapa = dict(
+                zip(
+                    df["cod_setor"].astype(str),
+                    pd.to_numeric(df["uplift_composicao_setor"], errors="coerce"),
+                    strict=False,
+                )
+            )
+        _uplift_setor_cache = mapa
+    return _uplift_setor_cache
+
+
+def uplift_composicao_por_setor(
+    cod_setor: object, uf: str | None = None, cod_municipio: str | None = None
+) -> float:
+    """Fator responsavel -> domicilio, no nivel do SETOR. Cascata: setor -> municipio -> UF -> nacional."""
+    if cod_setor is not None and cod_setor == cod_setor:  # descarta NaN
+        valor = _carregar_uplift_setor().get(str(cod_setor).strip())
+        if valor is not None and valor == valor:
+            return float(valor)
+    return uplift_renda_domiciliar(uf, cod_municipio)
+
+
+# Faixas absolutas de RENDA MEDIA DOMICILIAR TOTAL (R$/domicilio/mes), com uplift aplicado.
+# Cortes = classes de renda GeoFusion (C2/C1/B2/B1/A). Camada de VISUALIZACAO; NAO altera M1.
+RENDA_MEDIA_DOMICILIAR_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
+    (3_587.0,   "ate R$ 3.587 (C2/D/E)",   (255, 255, 178, 150)),
+    (6_200.0,   "R$ 3.588-6.200 (C1)",     (254, 204, 92,  150)),
+    (10_755.0,  "R$ 6.201-10.755 (B2)",    (217, 95,  14,  150)),
+    (20_983.0,  "R$ 10.756-20.983 (B1)",   (120, 198, 121, 150)),
+    (float("inf"), ">R$ 20.983 (A)",       (35,  132, 67,  150)),
 ]
 
 # Expansao de Dominio — constantes canonicas

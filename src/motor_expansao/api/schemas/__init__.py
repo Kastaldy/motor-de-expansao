@@ -95,6 +95,11 @@ class AnalisarResponseJSON(BaseModel):
     n_setores: int = 0
     pop_total_raio: float | None = None
     renda_per_capita_media_raio: float | None = None
+    # Renda media domiciliar (ponderada por domicilios): metrica comparavel a GeoFusion.
+    renda_media_domiciliar_raio: float | None = None
+    renda_domiciliar_total_raio: float | None = None
+    domicilios_total_raio: float | None = None
+    metodo_renda_domiciliar_raio: str | None = None
     densidade_pop_raio_hab_km2: float | None = None
     score_setor_medio: float | None = None
     score_setor_max: float | None = None

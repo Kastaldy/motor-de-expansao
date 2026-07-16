@@ -82,6 +82,8 @@ _CINZA_TEXTO = (60, 60, 60)
 # nomeadas e auditaveis (nao hardcoded inline dentro de `_big_numbers_page`).
 _META_POP_TOTAL_RAIO = 10_000.0
 _META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
+# Renda media domiciliar TOTAL (com uplift): alvo ~C1 GeoFusion (fase seguinte, ADITIVO).
+_META_RENDA_DOMICILIAR_TOTAL_RAIO = 6_200.0
 _META_DOMICILIOS_TOTAL_RAIO = 3_000.0
 _META_SCORE_SETOR_MEDIO = 60.0
 _META_SAM_FITNESS_POTENCIAL = 2_000.0
@@ -598,6 +600,13 @@ def _big_numbers_page(
             _cor_por_meta(result.get("domicilios_total_raio"), _META_DOMICILIOS_TOTAL_RAIO),
         ),
         (
+            "Renda média domiciliar",
+            "R$ " + _format_number(result.get("renda_domiciliar_total_raio"), 2),
+            _cor_por_meta(
+                result.get("renda_domiciliar_total_raio"), _META_RENDA_DOMICILIAR_TOTAL_RAIO
+            ),
+        ),
+        (
             "Score censitário médio",
             _format_number(result.get("score_setor_medio"), 2),
             _cor_por_meta(result.get("score_setor_medio"), _META_SCORE_SETOR_MEDIO),
@@ -624,7 +633,9 @@ def _big_numbers_page(
     margin_x = 36.0
     top = 70.0
     gap = 16.0
-    cols, rows = 4, 2
+    # 4x3 desde o BLK-RELPON: 9 cards (o 9o e a Renda media domiciliar, aditivo). rows dita a
+    # posicao da nota de rodape; sem isto o 9o card colidiria com ela.
+    cols, rows = 4, 3
     card_w = (_PAGE_W - 2 * margin_x - (cols - 1) * gap) / cols
     card_h = 156.0
     # Barras de destaque dos cards seguem o tom da pagina (primaria + acento).
