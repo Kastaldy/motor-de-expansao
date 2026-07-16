@@ -8658,7 +8658,8 @@ Nenhum artefato/score/peso do M1 tocado.
 ## Fechamento de ciclo - BLK-ORQ-25 (2026-07-14)
 
 Demonstrador do auto-merge zero-humanos da DEC-016 (ORQ-21) + housekeeping diferido (ORQ-24).
-Adicionados testes de regressao CRLF para `is_done`/`emit_delta` em `tests/unit/test_housekeeping_helper.py` (4 casos: heading movido + fechamento, prosa ignorada, sem  no ID, sem colisao de prefixo). READ-ONLY sobre o M1; toca so `tests/`. Este PR de implementacao entrou pelo AUTO-MERGE nativo (Baixa, 4 checks verdes, ZERO humanos) - a prova que faltava do ORQ-21. Stub do backlog DIFERIDO para o PR de housekeeping em lote (modo auto-merge do ORQ-24); ate la, `housekeeping_move_block.py --is-done BLK-ORQ-25` sai 0 e `--emit-delta` lista o bloco.
+Adicionados testes de regressao CRLF para `is_done`/`emit_delta` em `tests/unit/test_housekeeping_helper.py` (4 casos: heading movido + fechamento, prosa ignorada, sem 
+ no ID, sem colisao de prefixo). READ-ONLY sobre o M1; toca so `tests/`. Este PR de implementacao entrou pelo AUTO-MERGE nativo (Baixa, 4 checks verdes, ZERO humanos) - a prova que faltava do ORQ-21. Stub do backlog DIFERIDO para o PR de housekeeping em lote (modo auto-merge do ORQ-24); ate la, `housekeeping_move_block.py --is-done BLK-ORQ-25` sai 0 e `--emit-delta` lista o bloco.
 
 ---
 
@@ -8833,13 +8834,382 @@ loop por conclusão + delta do PR de housekeeping em lote). No Windows (platafor
 poderia quebrar a detecção em CRLF **silenciosamente** e fazer o loop mis-selecionar um bloco.
 
 **Objetivo.** Travar o comportamento CRLF com testes de regressão em `tests/unit/test_housekeeping_helper.py`:
-`is_done` detecta `### BLK-X
-` e `## Fechamento de ciclo — BLK-X
+`is_done` detecta `### BLK-X
+` e `## Fechamento de ciclo — BLK-X
 `; ignora menção em prosa mesmo em CRLF;
-`emit_delta` não captura o `` no ID e não colide prefixo (`BLK-FIX-06` vs `BLK-FIX-06-C`) em entrada CRLF.
+`emit_delta` não captura o `
+` no ID e não colide prefixo (`BLK-FIX-06` vs `BLK-FIX-06-C`) em entrada CRLF.
 
 **Critérios de aceite.** Testes novos cobrem `is_done` + `emit_delta` em entrada CRLF; suíte verde (`pytest -n auto`);
 o PR toca SÓ `tests/` (mais o append de fechamento em `tasks/completed.md` no modo auto-merge). NENHUM código de
 produção alterado; `is_done`/`emit_delta` inalterados (são testes de regressão, não mudança de comportamento).
 
 **Guardrail.** §5 **READ-ONLY M1**; toca só `tests/`; sem rede, VPS, deploy, segredos ou PII.
+
+---
+
+### BLK-RELPON-07 — Slide de perfil do Bairro/Distrito no Relatório Pontual (estilo GeoFusion "Microárea")
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (novo slide no Relatório Pontual Censitário; **READ-ONLY sobre o M1**; ADICIONA uma página ao PDF e uma agregação por bairro; núcleo `censo_*` só ESTENDE render/leitura, sem tocar interseção/raio/marca d'água). |
+| **Prioridade** | A definir (Vinicius). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — visual do PDF]` → Builder → QA. |
+| **Status** | Pendente — **decisões de produto D1/D2/D3 JÁ TOMADAS** (Vinicius, 2026-07-15, abaixo). |
+| **Depende de** | Relatório Pontual já existente; malha de setores IBGE 2022 (`setores_censitarios_2022_geo`), que **já traz** `nome_bairro`/`cod_bairro`/`nome_distrito`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — altera relatório auditável e exige revisão visual do PDF. |
+
+**Objetivo.** Adicionar ao Relatório Pontual Censitário um **slide dedicado ao bairro/distrito** que
+CONTÉM o ponto pesquisado, no espírito do painel "Microárea" da GeoFusion — o perfil da área
+administrativa inteira, não do raio de 1,5 km. É uma **lente nova, complementar** aos mapas de calor.
+
+**Viabilidade medida (2026-07-15).** A base de setores 2022 já tem os campos geográficos e as
+métricas necessárias para **4 dos 7 blocos** do painel GeoFusion. Os outros 3 (faixa etária, faixa
+de renda ABEP A++/A+/B/C/D/E, PEA Dia/Trabalha×Reside) **não existem** no dado do projeto (o Censo
+ingerido é agregado; ABEP e PEA são fontes externas/proprietárias) e **NÃO entram** neste bloco
+(decisão D3). Cobertura geográfica: `distrito` 100% nacional; `bairro` ~61% nacional (100% no
+exemplo, São José do Rio Preto); `subdistrito` ~vazio (descartado).
+
+**Decisões de produto (gate — JÁ RESPONDIDAS por Vinicius, 2026-07-15).**
+- **D1 = unidade geográfica: BAIRRO com fallback para DISTRITO.** Usa `nome_bairro` quando existe;
+  quando `nome_bairro` é nulo (~39% dos setores nacionais), cai para `nome_distrito`. `subdistrito`
+  é descartado (dado quase sempre vazio). O rótulo do slide deve indicar qual unidade está sendo
+  mostrada (ex.: título = nome; subtítulo = "bairro de {município}" ou "distrito de {município}").
+- **D2 = escopo: a unidade que CONTÉM o pin.** Agrega **todos os setores** cujo `cod_bairro` (ou,
+  no fallback, `nome_distrito`) é igual ao do setor que contém o ponto — o perfil da área
+  administrativa inteira, independente do raio de 1,5 km. Reusa o lookup do "setor do ponto" já
+  existente (BLK-RELPON-05, `cod_setor_ponto`) para descobrir o bairro/distrito do pin. Os setores
+  do bairro já estão carregados: `read_censo_geo_partition` traz a partição do município inteiro.
+- **D3 = incluir SÓ os 4 blocos com dado fiel** (sem placeholder, sem aproximação inventada, sem
+  aquisição de dado externo):
+  1. **Título** — nome do bairro (fallback distrito) + contexto do município.
+  2. **População** — `Σ pop_total_setor_2022` dos setores da unidade.
+  3. **Densidade Demográfica** — `população / (Σ area_setor_m2 / 1e6)` (hab/km²).
+  4. **Domicílios** — `Σ domicilios_particulares_ocupados_setor_2022`.
+  5. **Renda Média** — a definir no planejamento: `renda_responsavel_media_setor_2022`
+     (ponderada por domicílios) **ou** `renda_per_capita_setor_2022_calibrada` (ponderada por
+     população). Preferir a **renda média domiciliar ponderada por domicílios**, que é a leitura
+     GeoFusion "Renda Média"; confirmar no gate visual. Formatar em R$ (padrão ASCII do PDF).
+  (Os gráficos de barras de faixa etária e faixa de renda, e o bloco PEA, do painel GeoFusion,
+  **NÃO** entram — decisão explícita de Vinicius.)
+
+**Escopo permitido (READ-ONLY M1, só display/relatório).**
+- `censo_point.py` — expor, no `result`, o **bairro/distrito do pin** (ex.: `cod_bairro_ponto`,
+  `nome_bairro_ponto`, `nome_distrito_ponto`, `unidade_ponto_rotulo` com o fallback já resolvido),
+  a partir do setor que contém o ponto — SÓ LEITURA, sem tocar interseção/raio.
+- Novo helper de **agregação por bairro/distrito** (pode viver em `censo_point.py` ou módulo
+  próprio) que soma pop/domicílios/área e calcula densidade e renda média ponderada dos setores da
+  unidade; "n/d" gracioso quando o pin cai fora de qualquer setor ou a unidade não tem dado.
+- `censo_report.py` — **nova página** "Perfil do Bairro/Distrito" nas DUAS variantes (`censitario`
+  e `classico`), inserida **entre a página de Concorrentes e a de Big Numbers** (decisão de Vinicius,
+  2026-07-15). Ordem final: Capa → Mapas de calor → Concorrentes → **Perfil do Bairro/Distrito** →
+  Big Numbers → Realização/Crédito. **Isto ALTERA a contagem de páginas** (as DUAS variantes: **5→6**;
+  ambas já tinham 5 páginas — o clássico também tem página de Concorrentes) e o `/Count` — mudança
+  INTENCIONAL deste bloco (é o único ponto do "fora de escopo" histórico que este bloco toca de
+  propósito). Atualizar `PDF_SECTION_HEADERS` (inserir o rótulo da nova seção **entre**
+  `"Concorrentes"` e `"Big Numbers"`) e a contagem de imagens/páginas dos testes de estrutura.
+- Testes: agregação por bairro (com e sem fallback para distrito; "n/d" fora da malha) + presença
+  da nova página no PDF (as duas variantes) + atualização dos testes de contagem de páginas.
+- `docs/relatorio_pontual_censitario.md`.
+
+**Fora de escopo.** Método de interseção `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
+`RAIO_CENSITARIO_DEFAULT_KM`, os mapas de calor / choropleth / faixa "no raio" (BLK-RELPON-06), grid
+de Big Numbers 4x2, marca d'água anti-PII, `set_compression(False)`. `score_priorizacao`/pesos/
+`hex_score_estrutural`/carteira/plano/artefatos oficiais do M1. Faixa etária, faixa de renda ABEP e
+PEA (sem dado — não entram). Relatório Municipal e UI do dashboard (fora do Relatório Pontual).
+Dependência de rede nova.
+
+**Riscos.**
+- **Contagem de páginas muda** — quebra os testes de estrutura do PDF de propósito; atualizá-los
+  (não relaxá-los). Conferir que a marca d'água (BLK-EST-01, todas as páginas) cobre a página nova.
+- **Bairro ausente (~39% nacional)** — o fallback para distrito precisa ser robusto; testar um
+  município SEM bairro (ex.: fora de SP) para garantir que o slide não fica vazio.
+- **Renda média — método de ponderação** (D3.5): documentar qual campo/peso foi usado, para o
+  número ser auditável e não ser confundido com a renda do raio (BLK-RELPON-06) nem com o setor do
+  pin (BLK-RELPON-05).
+- **Consistência semântica** — deixar claro no slide que é o **bairro inteiro** (não o raio de
+  1,5 km nem o setor do ponto), para não conflitar com os outros números do relatório.
+
+**Critério de aceite.** O Relatório Pontual passa a ter a página "Perfil do Bairro/Distrito"
+(as duas variantes) com os 4 blocos (título+unidade, população, densidade, domicílios, renda média)
+agregados sobre o bairro que contém o pin, com fallback para distrito e "n/d" gracioso; contagem de
+páginas/`/Count` e `PDF_SECTION_HEADERS` atualizados e testados; interseção/raio/marca d'água/M1
+INTOCADOS; `ruff`/`mypy` limpos; suíte verde; revisão visual do PDF aprovada.
+
+## Fechamento de ciclo — BLK-RELPON-07 (2026-07-15)
+
+Ciclo `/run-cycle BLK-RELPON-07` — **Slide de perfil do Bairro/Distrito no Relatório Pontual Censitário**
+(estilo GeoFusion "Microárea"). Criticidade **Média**. Esteira Block Orchestrator (sonnet) → Planner
+(sonnet) → Builder (sonnet) → QA (opus) → **[REVISÃO VISUAL HUMANA DO PDF — PENDENTE]** → merge humano.
+Veredito QA: **APROVADO COM RESSALVAS** (2026-07-15).
+
+**O que foi entregue.** Nova página "Perfil do Bairro/Distrito" no PDF do Relatório Pontual, nas DUAS
+variantes (`censitario` e `classico`), inserida **entre Concorrentes e Big Numbers** — o PDF passa de
+**5 para 6 páginas** (mudança INTENCIONAL). A página agrega, sobre TODO o bairro (fallback distrito) que
+CONTÉM o pin — não o raio de 1,5 km — 4 blocos de dado fiel: título+unidade, População
+(`Σ pop_total_setor_2022`), Densidade demográfica (`pop / (Σ area_setor_m2 / 1e6)` hab/km2), Domicílios
+(`Σ domicilios_particulares_ocupados_setor_2022`) e Renda média. Faixa etária, faixa de renda ABEP e PEA
+NÃO entram (sem dado no projeto — decisão D3 de Vinicius).
+
+**Decisões de produto (Vinicius, 2026-07-15).** D1 = BAIRRO com fallback para DISTRITO (subdistrito
+descartado). D2 = a unidade administrativa que contém o pin (todos os setores do bairro/distrito). D3 =
+só os 4 blocos com dado fiel. Ordem final do PDF: Capa -> Mapas de calor -> Concorrentes -> **Perfil do
+Bairro/Distrito** -> Big Numbers -> Realização.
+
+**Decisão técnica fechada pelo Planner (D3.5 — método da Renda Média).** Renda média domiciliar
+ponderada por domicílios (leitura GeoFusion "Renda Média"): `Σ(renda_responsavel_media_setor_2022 ×
+domicilios_particulares_ocupados_setor_2022) / Σ domicilios_particulares_ocupados_setor_2022`, com
+**exclusão simétrica** (setor só entra no numerador E no denominador se renda não-nula E domicílios
+não-nulo E > 0; senão sai dos dois lados — nunca vira zero disfarçado). Constante rastreável
+`METODO_RENDA_PERFIL_BAIRRO = "renda_responsavel_media_ponderada_por_domicilios"`. Escolhida sobre a
+renda per capita para NÃO criar 3 números de "renda per capita" com escopos diferentes no mesmo PDF
+(setor do pin BLK-RELPON-05, raio BLK-RELPON-06, e este). Rótulo distinto "Renda média".
+
+**Implementação (6 arquivos).**
+- `src/motor_expansao/dashboard/censo_point.py`: no `result` de `analisar_ponto_censitario_setores`,
+  5 campos novos de identificação do bairro/distrito do pin (`cod_bairro_ponto`, `nome_bairro_ponto`,
+  `nome_distrito_ponto`, `unidade_ponto_tipo` cru "bairro"/"distrito", `unidade_ponto_rotulo` com
+  fallback resolvido) — SÓ LEITURA de `ponto_row`, sem tocar interseção/raio. Novo helper público
+  `agregar_perfil_bairro_distrito(setores_df, *, cod_bairro/nome_bairro/nome_distrito/nome_municipio/uf)`
+  que resolve a unidade por prioridade (bairro > distrito), agrega pop/domicílios/área/densidade/renda
+  ponderada e devolve "n/d" gracioso (dict-default sem exceção) quando fora da malha ou sem dado.
+- `src/motor_expansao/dashboard/pages.py`: 2 pontos de chamada (`gerar_payloads_relatorio_pontual_para_pin`
+  e `render_relatorio_pontual_censitario`) propagam `perfil_bairro` aos geradores de PDF.
+- `src/motor_expansao/dashboard/censo_report.py`: `PDF_SECTION_HEADERS` de 5->6 strings ("Perfil do
+  Bairro/Distrito" entre "Concorrentes" e "Big Numbers"); novas páginas `_perfil_bairro_page` /
+  `_classico_perfil_bairro_page` (SEM mapa — texto/números, 4 cards grid 2x2, nota de método auditável,
+  "n/d" gracioso); parâmetro keyword-only `perfil_bairro` nos geradores e nos helpers de download; tema
+  bicolor reordenado (4 páginas de conteúdo). Marca d'água cobre a 6ª página automaticamente (laço por
+  `pdf.pages_count`), confirmado por teste.
+- `tests/unit/test_relatorio_pontual_censitario_motor.py` + `_export.py`: 9 testes novos (agregação por
+  cod_bairro; fallback distrito; exclusão simétrica da renda **provada** — assert 2000 e não a média
+  simples; "n/d" sem identificador / df vazio; presença da página nas 2 variantes com `/Count 6`;
+  indisponibilidade com `perfil_bairro=None`). ~13 asserts `/Count 5`->`/Count 6` e 2 watermark-count
+  `>=5`->`>=6` ATUALIZADOS (não relaxados); `test_classico_gera_5_paginas_e_secoes` renomeado para `..._6_...`.
+- `docs/relatorio_pontual_censitario.md`: §4/§7 atualizados (6 páginas, novo campo/helper, D3.5, nota de
+  escopo de que `api/service.py` não recebe `perfil_bairro` neste ciclo -> PDF da API mostra a página em
+  "n/d", intencional).
+
+**Nota de escopo (aceita).** `src/motor_expansao/api/service.py` NÃO foi tocado — o endpoint da API
+(`POST /analisar?formato=pdf`, DEC-005) chama o gerador sem `perfil_bairro`, então o PDF da API ganha a
+página em "n/d". Expor o perfil do bairro na API é bloco futuro, não deste ciclo.
+
+**QA (Opus 4.8, evidência própria).** Suíte FULL serial: **1 failed, 1770 passed, 2 skipped**. A única
+falha (`test_score_retencao_territorial::test_run_readonly_m1_por_mtime`) foi **provada PRÉ-EXISTENTE**
+via `git stash` (parquet gitignored ausente em camada NÃO tocada — mesma falha do baseline HEAD; `-n auto`
+quebra por infra execnet conhecida do ambiente Windows, não mascarado). Alvos do Planner: 96 passed.
+`ruff` limpo; `mypy` nos 3 arquivos tocados `Success: no issues` (6 erros `requests`-stub pré-existentes
+em módulos não tocados, provados por stash); smoke `import streamlit_app` ok. Escopo: só os 6 arquivos do
+plano. READ-ONLY M1 confirmado: `score_priorizacao`/pesos/artefatos oficiais, método
+`setor_censitario_intersecao_area_1p5km`, raio 1,5 km/`RAIO_CENSITARIO_DEFAULT_KM`, marca d'água anti-PII,
+`set_compression(False)`, `pdf_version="1.4"` e choropleth INTOCADOS (grep no diff = 0). Acentuação PT
+dentro de latin-1 com pontuação ASCII; regressão de acentuação verde.
+
+**Ressalvas (não bloqueiam o código).**
+1. **Gate de REVISÃO VISUAL HUMANA do PDF (dashboard + PDF das 2 variantes) PENDENTE** — Vinicius revisa o
+   PDF renderizado (layout/geometria dos 4 cards, subtítulo, nota de método) antes do merge. Geometria fina
+   da página é ponto de partida, ajustável no gate.
+2. **Merge humano** — bloco "manual (NÃO loop-safe)"; merge segue humano após o gate visual (não auto-merge).
+3. `api/service.py` sem `perfil_bairro` (nota de escopo acima).
+
+**Housekeeping (6.0, modo MERGE-HUMANO).** Bloco movido byte-idêntico do backlog para completed.md via
+`scripts/housekeeping_move_block.py BLK-RELPON-07 --date 2026-07-15` (stub de 1 linha no backlog); `--check`
+e `--is-done` verdes. READ-ONLY M1; pesos `renda=0.40`/`pop=0.60` e artefatos oficiais inalterados.
+
+### BLK-RELPON-07 — refino visual do slide (gate visual de Vinicius, 2026-07-15)
+
+Durante a revisão visual, Vinicius pediu para os 4 blocos do slide "Perfil do Bairro/Distrito"
+seguirem o formato do painel "Microárea" da GeoFusion (imagem de referência): layout VERTICAL
+empilhado em vez do grid 2x2 de cards. Redesenho SÓ visual em `censo_report.py` (READ-ONLY M1;
+não muda os 4 blocos, os valores, o método de renda D3.5, os rótulos, nem a contagem de páginas):
+- Novo painel `_draw_perfil_panel` (compartilhado pelas 2 variantes): moldura turquesa arredondada
+  + cartão branco + cabeçalho (rótulo "Bairro"/"Distrito" + nome + município/UF) + 4 métricas
+  empilhadas, cada uma com ícone vetorial (pessoas p/ população e densidade, casa p/ domicílios,
+  cifra p/ renda), rótulo cinza e valor grande azul-marinho, com círculo "i" decorativo à direita.
+- Helpers novos: `_perfil_icon` (ícones vetoriais via ellipse/polygon/rect), `_perfil_info_dot`,
+  `_perfil_metric_rows`, `_perfil_nota_metodo`. Cores novas `_PERFIL_VALOR_RGB`/`_PERFIL_ROTULO_RGB`/
+  `_PERFIL_INFO_RGB`/`_PERFIL_DIVISOR_RGB`.
+- Os 4 rótulos exatos ("População"/"Densidade demográfica"/"Domicílios"/"Renda média"), o título
+  "Perfil do Bairro/Distrito", a mensagem "Perfil não disponível" e o "n/d" gracioso preservados;
+  suíte export/motor/acentuação/municipal 96 passed; ruff/mypy limpos; import ok. Verificação visual
+  própria: 4 PNGs (recente/clássico × disponível/n-d) renderizados via PyMuPDF, layout fiel à referência.
+
+## Fechamento de housekeeping em lote - BLK-ORQ-21 + BLK-ORQ-26 (2026-07-15)
+
+Housekeeping em lote (modo humano; toca `tasks/backlog.md` = GOVERNANÇA -> exige `aprovado-humano` de co-owner != autor, NÃO auto-mergeia). Fecha formalmente o **BLK-ORQ-21** (portão NO AR desde 2026-07-14, mas o backlog ainda o marcava "Pendente") e registra o **BLK-ORQ-26** (fix não planejado do `claude-review`, mergeado como PR #105 sem entrada de bloco). READ-ONLY sobre o M1; toca só `tasks/backlog.md` (stubs + update do ORQ-23 p/ Telegram) e `tasks/completed.md`.
+
+---
+
+### BLK-ORQ-21 — Aplicar a branch protection nova (0 aprovações, `enforce_admins`, 4 checks) + ligar auto-merge
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (mudou a governança efetiva da `main`). Coberta pela **DEC-016**. |
+| **Status** | **CONCLUÍDO 2026-07-14** — portão NO AR na `main` (verificado ao vivo via `gh api .../branches/main/protection`). |
+| **Depende de** | BLK-ORQ-20 (concluído). |
+| **Autonomia** | manual (NÃO loop-safe). |
+
+**O que foi aplicado.** 4 required checks `test` + `guard` + `review-gate` + `claude-review`; `required_approving_review_count: 0`; `require_code_owner_reviews: true`; `required_conversation_resolution: true`; `strict: true`; `allow_auto_merge: true` + `delete_branch_on_merge: true` (antes `false` — o auto-merge nem existia). Secret `CLAUDE_CODE_OAUTH_TOKEN` (conta pessoal do Felipe, fase de teste, custo de API = 0) + labels `aprovado-humano`/`critica-aprovada`/`criticidade:{baixa,media,alta,critica}` criadas.
+
+**Ordem de bootstrap cumprida.** ORQ-20 mergeado pelo regime antigo (PR #96) -> os 3 checks novos rodaram >=1x num PR real (PR #97) -> SÓ ENTÃO o PUT dos 4 checks + `allow_auto_merge`. O PR #97 achou e corrigiu **4 defeitos** que congelariam o repo: CODEOWNERS com dono único (-> 3 donos + trilho crítico); `set -e` matando o step do `guard` (-> `set +e` + captura de rc); `github_token` faltando no `claude-review` (-> fallback OIDC abortava); deadlock do REVIEW.md #7. Runbook completo em `docs/portao_merge_orq21.md`.
+
+**Provas empíricas (antes de confiar no portão).**
+- **N0 anti-spoof** (PR #100, fechado sem merge): code owner funciona com `count:0` E o GitHub exige TODOS os check runs homônimos -> um `guard` forjado verde NÃO fura o portão.
+- **Auto-merge zero-humanos** (PR #106, BLK-ORQ-25 Baixa): mergeou sozinho só com `criticidade:baixa`, SEM label humana/admin — a prova que faltava do trilho SEM humano.
+- **Trilho COM humano** (PRs #101/#104): mergeou com `aprovado-humano`.
+
+**Ressalva vigente (proving period).** `enforce_admins` segue **`false`** por decisão do Felipe (~1-2 semanas de prova; o `--admin` fica como extintor enquanto o `claude-review` — SPOF externo — prova estabilidade). Virar para `true` é o passo final do endurecimento (PENDÊNCIA registrada). **Kill-switch** (restaura o gate humano em 1 PUT) em `docs/portao_merge_orq21.md`. Gatilho de suspensão: 2 incidentes/90d (detector = BLK-ORQ-23).
+
+**READ-ONLY M1.** DEC-001 intacta (`renda=0.40`/`pop=0.60`, `score_priorizacao`, artefatos oficiais inalterados) — é governança de merge. **Deploy segue manual por digest** (auto-merge NÃO deploya). Refs: PRs #96/#97/#99/#100; DEC-016; `docs/portao_merge_orq21.md`.
+
+---
+
+### BLK-ORQ-26 — `claude-review`: `max_turns` 20->40 + revisão diff-first (fix do fail-closed)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (fix de workflow de CI durante o proving period do portão; **READ-ONLY sobre o M1**). |
+| **Status** | **CONCLUÍDO 2026-07-14** (PR #105). Fix NÃO planejado, descoberto no proving period — sem bloco prévio no backlog. |
+| **Autonomia** | manual (NÃO loop-safe) — toca `.github/`. |
+
+**Problema.** O `claude-review` estourava `--max-turns 20` (`error_max_turns`, ~US$ 1,33/run) lendo os arquivos grandes do repo (CLAUDE.md + `backlog.md` ~1750 linhas) ANTES de devolver a saída estruturada -> **fail-closed** -> travava PRs legítimos (reprovou o #104 2x).
+
+**Fix** (`.github/workflows/claude-review.yml`): `--max-turns 20->40` + prompt "ler o DIFF primeiro, usar Grep, NÃO ler arquivos gigantes inteiros". Confirmado: a `claude-review` do próprio #105 passou em 56s (vs 2m10s falhando); depois o #106 passou em 1m6s. Como o `claude-review.yml` roda em `pull_request` (versão do HEAD do PR), o próprio PR que edita o workflow já testa a versão nova. O #105 e o #104 foram ADMIN-MERGED (extintor do proving period, `enforce_admins=false`). READ-ONLY sobre o M1.
+
+## Fechamento de ciclo - BLK-ORQ-22 (2026-07-15)
+
+Garimpeiro — ÚLTIMO bloco de governança da DEC-016: o loop na nuvem que abre PRs em `claude/*`, sem merge/deploy. Entregue como CÓDIGO + RUNBOOK (a config de nuvem 1× é do humano, conforme a Esteira do bloco):
+- `scripts/garimpeiro_select_block.py` + `tests/unit/test_garimpeiro_select_block.py`: seletor do próximo bloco loop-safe com o MARCADOR ANCORADO (`^\| \*\*Autonomia\*\* \| loop-safe`) — NÃO casa `**manual (NÃO loop-safe)**` (a armadilha do `grep loop-safe`); respeita `Depende de` e pula concluídos com fronteira exata (`BLK-X` não confunde `BLK-X-FU1`; alinhado ao housekeeping diferido do BLK-ORQ-24, com `completed.md` como fonte de verdade). 7 testes verdes, ruff limpo.
+- `docs/garimpeiro.md`: runbook — arquitetura (o portão faz rótulo/arm/merge; o Garimpeiro só ABRE o PR), o prompt da routine e a configuração humana 1× (repo PRIVADO `motor-dados` com `data/staging` + deploy key read-only; environment com setup script anti-PII que aborta se `data/staging` não estiver gitignored; routine diária 02:00 BRT; push restrito a `claude/*`, SEM PAT de escrita, SEM credencial de VPS/deploy).
+
+Integração com o portão: com auto-criticidade (#109/#112) + auto-merge, um PR loop-safe (Baixa/Média) aberto pelo Garimpeiro auto-rotula, auto-arma e auto-mergeia (ZERO humanos); um bloco Alta/Crítica que escape para `claude/*` NÃO auto-mergeia (o `guard`/`review-gate` seguram por label humana). READ-ONLY sobre o M1 (pesos `renda=0.40`/`pop=0.60`, `score_priorizacao`, artefatos oficiais INALTERADOS). Este PR é guard-clean (só `scripts/`+`tests/`+`docs/`+`completed.md`) → precisa de UMA aprovação (`aprovado-humano`), estreando a folga da DEC-017.
+
+Os 5 critérios de aceite do bloco estão mapeados no runbook (§5). A configuração de nuvem 1× (criar o repo privado + o environment + a routine) fica com o humano; o restante — seletor testado, prompt, guardrails — está entregue e versionado. Deploy NUNCA automático.
+
+Estado do épico: com o ORQ-22, a trilha de GOVERNANÇA da DEC-016 (ORQ-20..26 + auto-criticidade) está COMPLETA. Restam apenas: (a) o legado ORQ-02 (Fase 2 do run-cycle, anterior à DEC-016); (b) pendências não-bloco — virar `enforce_admins=true` no fim do proving period e um PR de housekeeping em lote (stubs do ORQ-22/23 + auto-criticidade "ORQ-27" + DEC-017).
+
+---
+
+### BLK-ORQ-22 — Garimpeiro: routine na nuvem que abre PRs de branches `claude/*`
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (processo autônomo recorrente que **abre PRs**; não mergeia — o portão é o do ORQ-21. **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta (após o portão estar de pé). |
+| **Esteira** | Humano configura 1× (repo de dados + environment + routine) → operação autônoma. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-ORQ-21** (sem o portão aplicado, PRs abertos por routine ficariam esperando aprovação humana — não resolveria o gargalo). |
+| **Autonomia** | **manual (NÃO loop-safe)** — configuração de infra/nuvem por humano, 1×; NUNCA loop-safe. |
+
+**Contexto.** O loop hoje roda na máquina do Felipe (`iniciar-loop.cmd`). O Garimpeiro leva a execução para a nuvem
+e **entrega o trabalho como PR** — sem merge, sem deploy.
+
+**Escopo.**
+1. **Repo PRIVADO `motor-dados`** com os **~270 MB de `data/staging`**. **O repo do motor é PÚBLICO
+   (`Kastaldy/motor-de-expansao`) — NUNCA publicar parquet nele** (dado de negócio + risco de PII).
+2. **Environment** com **setup script** que clona o `motor-dados` e monta `data/staging` antes do bloco rodar.
+3. **Routine diária às 02:00 BRT**.
+4. **Push restrito a `claude/*`** (permissão default da routine, **sem PAT de escrita** — não consegue push na `main`
+   nem em `ciclo/*`).
+5. **Prompt exige `scripts/loop_guard.py` VERDE _antes_ de abrir o PR** (falhou → não abre PR, reporta).
+6. **Seleção de bloco por marcador ANCORADO:** regex **`^\| \*\*Autonomia\*\* \| loop-safe`** — âncora `^` +
+   `| ` obrigatórios; **NÃO casa** `| **Autonomia** | **manual (NÃO loop-safe)** |` (que contém a substring
+   "loop-safe" e seria falso-positivo de um `grep loop-safe` ingênuo). Respeitar também `Depende de`.
+
+**Critérios de aceite.**
+- Teste do seletor: bloco `manual (NÃO loop-safe)` **NÃO** é selecionado; bloco `loop-safe` **É** (fixtures dos dois
+  formatos reais do `backlog.md`).
+- A routine **não consegue** push fora de `claude/*` (tentativa falha).
+- `loop_guard` vermelho → **nenhum PR aberto**.
+- Nenhum `.parquet`/dado de `data/staging` aparece em diff do repo público (verificável no PR).
+- 1 execução real: PR aberto a partir de branch `claude/*`, com os 4 checks rodando.
+
+**Guardrail.** §5 **READ-ONLY M1**; **NUNCA** commitar dado/parquet no repo público; sem credencial de VPS/deploy no
+ambiente da routine (não deploya); o Garimpeiro **abre PR, não mergeia**.
+
+---
+
+### BLK-ORQ-23 — Auditor de PRs: routine diária READ-ONLY com aviso no Telegram (grupo de ops, fase de teste)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (routine **READ-ONLY**: não aplica label, não mergeia, não escreve código; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta (é o **detector do gatilho de suspensão** da DEC-016 — sem ele o gatilho não tem medição). |
+| **Esteira** | Humano configura 1× (routine + bot/grupo Telegram de ops — o mesmo do Motor) → operação autônoma. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-ORQ-20** (precisa dos checks existindo para classificar). |
+| **Autonomia** | **manual (NÃO loop-safe)** — configuração de rotina na nuvem por humano, 1×; NUNCA loop-safe. |
+
+**Contexto/Objetivo.** Dar ao Felipe **visão diária** do que está aberto/mergeando **sem** ele virar o gargalo de novo.
+O gate é **determinístico** (checks + labels) — o Auditor **informa**, não decide.
+
+**Escopo.**
+1. Routine **diária** que lê **PRs abertos + diff + status de CI** (READ-ONLY).
+2. **Classifica** cada PR em: **candidato a auto-merge** / **revisar** / **bloqueio**.
+3. Entrega **UM aviso por dia no grupo Telegram de ops** (o mesmo usado para os alertas do Motor de Expansão — `chat_id` no `.env`; **fase de TESTE, no lugar do e-mail**) + **comentário em issue fixa** (histórico versionado).
+4. **Conta os incidentes** do gatilho da DEC-016: PR auto-mergeado que (i) reprove o `guard` em auditoria posterior,
+   (ii) introduza segredo/PII, (iii) exija `revert` na `main`, ou (iv) quebre o CI da `main`.
+   **2 incidentes em 90 dias → alerta explícito de SUSPENSÃO do auto-merge** no relatório.
+
+**Critérios de aceite.**
+- **NÃO aplica label**, **NÃO mergeia**, **NÃO faz push** (o gate é determinístico, **não a opinião do modelo**) —
+  verificável pelas permissões da routine (sem escrita).
+- 1 aviso no Telegram por dia (não 1 por PR); issue fixa recebe o mesmo resumo.
+- A contagem de incidentes (janela de 90 dias) aparece no relatório, com o alerta de suspensão ao atingir 2.
+- Relatório distingue os 3 estados e cita o check que reprovou, quando houver.
+
+**Guardrail.** §5 **READ-ONLY M1**; routine sem permissão de escrita no repo (nem label, nem merge, nem push);
+sem credencial de VPS/deploy; **não** expor conteúdo sensível de diff no corpo da mensagem do Telegram (linkar o PR).
+
+
+---
+
+- BLK-ORQ-24 (concluído 2026-07-14) — ver tasks/completed.md
+
+
+
+---
+
+- BLK-ORQ-25 (concluído 2026-07-14) — ver tasks/completed.md
+
+- BLK-ORQ-26 (concluído 2026-07-14) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-06 (concluído 2026-07-14) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-06-FU1 (concluído 2026-07-14) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-07 (concluído 2026-07-15) — ver tasks/completed.md
+
+## Fechamento - Auto-criticidade + auto-merge (candidato a BLK-ORQ-27; sem bloco formal) (2026-07-15)
+
+Feature de governança mergeada nesta esteira SEM bloco BLK dedicado (registro para completude do housekeeping). PRs #109 (label `criticidade:*` automática, lida do backlog da BASE, espelhando o `review-gate`) + #112 (armar auto-merge via `AUTO_MERGE_PAT`, pois o `GITHUB_TOKEN` não habilita `enablePullRequestAutoMerge`). Entregue: workflow `.github/workflows/auto-criticidade.yml` + `scripts/aplicar_criticidade_label.py` + testes. Na abertura de todo PR: aplica `criticidade:<nível>` se faltar e arma o auto-merge para Baixa/Média. PROVADO no #110 (label aplicada por `github-actions[bot]`) e no #115 (guard-clean → uma aprovação). READ-ONLY sobre o M1. Detalhe na emenda da DEC-016 (§8) e na memória.
+
+Também sem bloco formal: a **DEC-017** (#114 — normalização de EOL `.md`=LF em `tasks/`+`docs/` + enxugamento do CODEOWNERS, removendo `/tasks/backlog.md`) está registrada como DEC no CLAUDE.md §8. Com ela, os PRs de ciclo/relatório deixam de conflitar em `backlog`/`completed` e passam a exigir uma aprovação.
+
+## Fechamento de ciclo — BLK-TP-03-FU1 (2026-07-15)
+
+**BLK-TP-03-FU1 — Overlay dos vazios competitivos no Mapa Territorial (Opção B).** Ciclo interativo (Block Orchestrator → Planner → **gate humano de UX aprovado por Felipe em 2026-07-15** → Builder → QA/Opus 4.8). Entregue: overlay opcional **READ-ONLY** (checkbox default OFF, key `mapa_territorial_vazios_lc`) no Mapa Territorial que realça os 229 hexes de "vazio competitivo" do concorrente low-cost (`data/staging/vazios_competitivos_lc.parquet`, contrato `vazios_competitivos_v1`, gerado no BLK-TP-03) como `H3HexagonLayer` roxo `#7C5CFF` (fill `[124,92,255,60]` translúcido + contorno `[124,92,255,230]` 3px), com tooltip de 4 linhas (Membros >5km do concorrente / UF / Município / Score M1) e legenda. Loader lazy+cacheado offline (`@st.cache_data`, sem rede — §2); parquet ausente → checkbox oculto + `st.caption`, nunca exceção.
+
+Implementação 100% **aditiva** (+413/−0) em 3 arquivos: `src/motor_expansao/dashboard/components.py` (`_build_vazios_competitivos_layer`, `render_vazios_competitivos_legend`, extensão de `build_unified_map_figure`/`build_unified_map_figure_cached` com params opcionais `vazios_df`/`_vazios_df`/`vazios_token`), `src/motor_expansao/dashboard/pages.py` (loader + checkbox splice em `enabled_overlays` em memória + hook de legenda) e `tests/integration/test_streamlit_app.py` (6 testes novos). **`constants.py`, `streamlit_app.py` e `demanda_revelada/` intocados** (zero linhas); `_downsample_map_index`/`MAP_POINT_LIMIT*`/`MAP_SOURCE_COLUMNS_*` inalterados (o overlay é camada separada, fora do cap dos 4 modos). O splice usa só checagem de string `"vazios_competitivos_lc" in enabled_overlays` (não registra em `OVERLAYS`), preservando `constants.py`.
+
+**READ-ONLY sobre o M1 (§5):** `score_priorizacao` só é LIDO para o tooltip; nenhuma escrita em pesos/fórmula/carteira/plano/artefatos; `git status -- data/` vazio (nenhum pipeline rodou); DEC-001 (renda 0.40/pop 0.60) e DEC-012 (sem PII nova no layer) intactas. **QA APROVADO COM RESSALVAS (Opus 4.8):** suíte FULL `pytest -n auto` = **1725 passed, 85 skipped, 4 failed**; as 4 falhas (`test_score_retencao_territorial`, `test_validation_dataset` x2, `test_batch_viabilidade`) foram provadas **pré-existentes na base limpa** (via `git stash`), determinísticas e específicas do **Python 3.14 local** (ex.: `assert nan is None`), sem qualquer caminho de import para `dashboard/` → **zero regressão** deste ciclo; o gate real de merge é o check `test` no CI (Python 3.11). `-k vazios` = 5 passed; `import streamlit_app` ok; ruff limpo; mypy 0 issues. Handoffs versionados: `context/handoff/20260715-{201359-block-orchestrator,172232-planner,183906-builder,185118-qa}.md`.
+
+## Fechamento de ciclo — BLK-RELPON-08 (2026-07-15)
+
+Ciclo APROVADO pelo QA (Opus 4.8) e pela REVISAO VISUAL HUMANA do PDF (Felipe, 2026-07-15). Esteira: Block Orchestrator -> Planner -> Builder -> QA. Criticidade Media, READ-ONLY sobre o M1. Modo de merge: AUTO-MERGE (nao toca backlog.md; stub diferido para o PR de housekeeping em lote).
+
+- **Entregue:** pagina Big Numbers do Relatorio Pontual Censitario reformada em `_big_numbers_page` (`censo_report.py`): (1) card "Score censitario maximo" (`score_setor_max`) trocado por "Numero de domicilios" (novo `domicilios_total_raio`, no raio de 1,5 km) — `score_setor_max` mantido no result/CSV para auditoria; (2) linha 1 reordenada (L1 = Populacao total no raio, Renda per capita media, Numero de domicilios, Score censitario medio); (3) semaforo verde/vermelho/neutro por meta via helpers PUROS `_cor_por_meta`/`_cor_consumo_concorrentes`, com as 6 metas como constantes nomeadas `_META_*`, regra assimetrica do Consumo (SAM>=2000 E Residual<2000 -> vermelho), Concorrentes espelhando Consumo, e n/d -> neutro tratado antes da comparacao. Paleta pastel (verde (205,236,217) / vermelho (248,209,209) / neutro (232,233,237)).
+- **Novo campo:** `domicilios_total_raio` em `analisar_ponto_censitario_setores` (`censo_point.py`), computado pelo MESMO padrao de peso de area de `pop_total_raio` (`domicilios_particulares_ocupados_setor_2022 x peso_area_setor`, soma; "n/d" gracioso; chave no dict default).
+- **QA (evidencia propria):** testes do escopo (motor + export/PDF + integracao streamlit) 300 passed / 0 failed; import ok; ruff limpo; mypy limpo. Suite full: 1726 passed, 85 skipped, 4 failed pre-existentes de ambiente Python 3.14 local (provadas identicas na base via git stash), fora do escopo.
+- **Revisao visual:** PDF real de Guarulhos/SP (ponto -23.4547,-46.5220; 200 setores no raio) gerado e aprovado por Felipe: card "Numero de domicilios" (31.060) em L1C3, "Score maximo" fora da grid, semaforo coerente (pop/renda/domicilios/SAM/residual verdes, score medio 54,4 vermelho).
+- **Guardrails:** READ-ONLY M1 confirmado (nenhum `pipelines/m1/`/`config.py`/score/artefato oficial tocado; pesos renda=0.40/pop=0.60 intactos); metodo de intersecao/raio 1,5 km/marca d'agua INTOCADOS; acentuacao latin-1 safe.
+- **Arquivos:** `src/motor_expansao/dashboard/censo_point.py`, `src/motor_expansao/dashboard/censo_report.py`, `tests/unit/test_relatorio_pontual_censitario_motor.py`, `tests/unit/test_relatorio_pontual_censitario_export.py`, `docs/relatorio_pontual_censitario.md`.

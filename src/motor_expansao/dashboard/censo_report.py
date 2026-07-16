@@ -13,7 +13,7 @@ from PIL import Image
 from motor_expansao.api.maps_geocoder import build_search_url
 from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSITARIO
 
-# Cabecalhos canonicos das 5 paginas do template Ultra. Renderizam em latin-1 (core font
+# Cabecalhos canonicos das 6 paginas do template Ultra. Renderizam em latin-1 (core font
 # Helvetica do fpdf2), que cobre integralmente os acentos portugueses -- o que e PROIBIDO e
 # tipografia fora de latin-1 (travessao/bullet/seta/reticencias/aspas curvas/(c)), que vira
 # "?" silenciosamente via _ascii(..., errors="replace").
@@ -21,10 +21,14 @@ from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSIT
 # Ordem das paginas (BLK-RELPON-01): os 3 choropleths (Densidade/Renda/Score) foram
 # CONSOLIDADOS em um unico slide "Mapas de calor" (tira 1x3 lado a lado), reduzindo o PDF
 # de 7 para 5 paginas: Capa -> Mapas de calor -> Concorrentes -> Big Numbers -> Realizacao.
+# BLK-RELPON-07: nova pagina "Perfil do Bairro/Distrito" inserida entre Concorrentes e Big
+# Numbers, levando o PDF de 5 para 6 paginas: Capa -> Mapas de calor -> Concorrentes ->
+# Perfil do Bairro/Distrito -> Big Numbers -> Realizacao.
 PDF_SECTION_HEADERS = (
     "Relatório Pontual Censitário",
     "Mapas de calor",
     "Concorrentes",
+    "Perfil do Bairro/Distrito",
     "Big Numbers",
     "Realização",
 )
@@ -72,6 +76,33 @@ ULTRA_MAGENTA = (194, 60, 142)
 ULTRA_BRANCO_GELO = (248, 248, 248)
 _BRANCO = (255, 255, 255)
 _CINZA_TEXTO = (60, 60, 60)
+
+# BLK-RELPON-08 (D3/Q4): metas do semaforo de cor dos 8 cards do Big Numbers. Verde quando o
+# valor bate a meta; vermelho quando nao bate; neutro quando "n/d" (Q2, indecidivel). Constantes
+# nomeadas e auditaveis (nao hardcoded inline dentro de `_big_numbers_page`).
+_META_POP_TOTAL_RAIO = 10_000.0
+_META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
+_META_DOMICILIOS_TOTAL_RAIO = 3_000.0
+_META_SCORE_SETOR_MEDIO = 60.0
+_META_SAM_FITNESS_POTENCIAL = 2_000.0
+_META_RESIDUAL_FITNESS_DISPONIVEL = 2_000.0
+
+# Paleta pastel do semaforo (Q3): fundo claro o bastante para preservar contraste com o
+# rotulo/valor em cinza-escuro (45,45,45)/(40,40,40) e com a borda fina (225,225,228) ja
+# existente do card. Neutro reusa a familia de cinza-claro de `_PERFIL_DIVISOR_RGB` (232,233,237)
+# para ficar visualmente distinto do branco puro do card sem meta aplicavel.
+_CARD_VERDE_RGB = (205, 236, 217)
+_CARD_VERMELHO_RGB = (248, 209, 209)
+_CARD_NEUTRO_RGB = (232, 233, 237)
+
+# BLK-RELPON-07 (refino visual "Microarea" GeoFusion): painel vertical do Perfil do
+# Bairro/Distrito. Moldura turquesa arredondada + cartao branco + metricas empilhadas
+# (icone + rotulo cinza + valor grande azul-marinho). SO estilo/geometria — nao muda os
+# 4 blocos, os valores, o metodo de renda nem a contagem de paginas.
+_PERFIL_VALOR_RGB = (38, 50, 71)  # azul-marinho escuro dos numeros (como no painel de referencia)
+_PERFIL_ROTULO_RGB = (120, 126, 138)  # cinza medio dos rotulos das metricas
+_PERFIL_INFO_RGB = (206, 208, 214)  # cinza claro do circulo "i" decorativo
+_PERFIL_DIVISOR_RGB = (232, 233, 237)  # linha divisoria fina entre metricas
 
 # Atribuicao de tiles (DEC-004) — sempre presente no rodape de cada pagina de mapa/credito.
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
@@ -497,6 +528,36 @@ def _cover_page(
     pdf.cell(block_w, 18, _ascii(f"Raio de análise: {raio}"), align=align)
 
 
+def _cor_por_meta(valor: Any, meta: float) -> tuple[int, int, int]:
+    """Cor de fundo do card: verde se valor >= meta, vermelho se < meta, neutro se "n/d".
+
+    BLK-RELPON-08 (D3/Q2): "n/d" (None/NaN) e tratado ANTES da comparacao numerica -- condicao
+    indecidivel vira neutro, nunca falsa reprovacao (vermelho) nem falso positivo (verde).
+    Funcao pura, testavel isoladamente sem depender do PDF.
+    """
+    if valor is None or pd.isna(valor):
+        return _CARD_NEUTRO_RGB
+    return _CARD_VERDE_RGB if float(valor) >= meta else _CARD_VERMELHO_RGB
+
+
+def _cor_consumo_concorrentes(sam: Any, residual_disponivel: Any) -> tuple[int, int, int]:
+    """Cor assimetrica do card "Consumo concorrentes (est.)" -- tambem usada para colorir
+    "Concorrentes no raio" (D3: esse card ESPELHA a cor do card acima, sem meta propria).
+
+    Regra (D3): VERMELHO quando o mercado ja esta consumido (SAM Fitness >= meta E Residual
+    Fitness < meta); VERDE caso contrario. "n/d" em SAM OU em Residual -> neutro (condicao
+    indecidivel, mesmo criterio de `_cor_por_meta`). Funcao pura.
+    """
+    if sam is None or pd.isna(sam) or residual_disponivel is None or pd.isna(residual_disponivel):
+        return _CARD_NEUTRO_RGB
+    if (
+        float(sam) >= _META_SAM_FITNESS_POTENCIAL
+        and float(residual_disponivel) < _META_RESIDUAL_FITNESS_DISPONIVEL
+    ):
+        return _CARD_VERMELHO_RGB
+    return _CARD_VERDE_RGB
+
+
 def _big_numbers_page(
     pdf: _UltraPDF,
     result: dict[str, Any],
@@ -516,15 +577,47 @@ def _big_numbers_page(
     _draw_title_band(pdf, "Big Numbers", rgb=primary)
 
     residual = residual or {}
+    sam = residual.get("sam_fitness_potencial")
+    oferta_disponivel = residual.get("oferta_efetiva_disponivel")
+    cor_consumo = _cor_consumo_concorrentes(sam, oferta_disponivel)
+
     cards = [
-        ("População total no raio", _format_number(result.get("pop_total_raio"), 0)),
-        ("Renda per capita média", "R$ " + _format_number(result.get("renda_per_capita_media_raio"), 2)),
-        ("Score censitário médio", _format_number(result.get("score_setor_medio"), 2)),
-        ("Score censitário máximo", _format_number(result.get("score_setor_max"), 2)),
-        ("SAM Fitness (alunos)", _format_number(residual.get("sam_fitness_potencial"), 0)),
-        ("Residual Fitness (alunos)", _format_number(residual.get("oferta_efetiva_disponivel"), 0)),
-        ("Concorrentes no raio", _format_number(result.get("n_concorrentes"), 0)),
-        ("Consumo concorrentes (est.)", _format_number(residual.get("oferta_consumida_mercado_estimada"), 0)),
+        (
+            "População total no raio",
+            _format_number(result.get("pop_total_raio"), 0),
+            _cor_por_meta(result.get("pop_total_raio"), _META_POP_TOTAL_RAIO),
+        ),
+        (
+            "Renda per capita média",
+            "R$ " + _format_number(result.get("renda_per_capita_media_raio"), 2),
+            _cor_por_meta(result.get("renda_per_capita_media_raio"), _META_RENDA_PER_CAPITA_MEDIA_RAIO),
+        ),
+        (
+            "Número de domicílios",
+            _format_number(result.get("domicilios_total_raio"), 0),
+            _cor_por_meta(result.get("domicilios_total_raio"), _META_DOMICILIOS_TOTAL_RAIO),
+        ),
+        (
+            "Score censitário médio",
+            _format_number(result.get("score_setor_medio"), 2),
+            _cor_por_meta(result.get("score_setor_medio"), _META_SCORE_SETOR_MEDIO),
+        ),
+        (
+            "SAM Fitness (alunos)",
+            _format_number(sam, 0),
+            _cor_por_meta(sam, _META_SAM_FITNESS_POTENCIAL),
+        ),
+        (
+            "Residual Fitness (alunos)",
+            _format_number(oferta_disponivel, 0),
+            _cor_por_meta(oferta_disponivel, _META_RESIDUAL_FITNESS_DISPONIVEL),
+        ),
+        ("Concorrentes no raio", _format_number(result.get("n_concorrentes"), 0), cor_consumo),
+        (
+            "Consumo concorrentes (est.)",
+            _format_number(residual.get("oferta_consumida_mercado_estimada"), 0),
+            cor_consumo,
+        ),
     ]
 
     # D3=B (BLK-EST-02): cards mais altos/arejados (156) com borda fina e barra acento 6 pt.
@@ -537,13 +630,13 @@ def _big_numbers_page(
     # Barras de destaque dos cards seguem o tom da pagina (primaria + acento).
     accents = [primary, secondary]
 
-    for index, (label, value) in enumerate(cards):
+    for index, (label, value, cor_fundo) in enumerate(cards):
         col = index % cols
         row = index // cols
         x = margin_x + col * (card_w + gap)
         y = top + row * (card_h + gap)
-        # Cartao branco com barra de destaque e borda fina (D3=B).
-        pdf.set_fill_color(*_BRANCO)
+        # Cartao com fundo por meta (semaforo D3) + borda fina + barra de destaque (D3=B).
+        pdf.set_fill_color(*cor_fundo)
         pdf.rect(x, y, card_w, card_h, style="F")
         pdf.set_draw_color(225, 225, 228)
         pdf.rect(x, y, card_w, card_h, style="D")
@@ -570,9 +663,10 @@ def _big_numbers_page(
         _PAGE_W - 2 * margin_x,
         11,
         _ascii(
-            "Fontes: pop/renda/score = censo (interseção de setores IBGE 2022 com círculo de 1.5 km, "
-            f"método {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = lookup READ-ONLY "
-            "do hex H3 (sem recálculo do M1). 'n/d' = dado ausente para o ponto."
+            "Fontes: pop/renda/domicílios/score = censo (interseção de setores IBGE 2022 com círculo de "
+            f"1.5 km, método {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = lookup "
+            "READ-ONLY do hex H3 (sem recálculo do M1). Fundo do card: verde = meta atingida, vermelho = "
+            "meta não atingida, cinza = 'n/d' (dado ausente para o ponto)."
         ),
     )
     _draw_footer(pdf, with_attribution=True)
@@ -680,6 +774,234 @@ def _competitors_page(
         pdf.set_xy(text_x, y)
         pdf.multi_cell(list_w - bullet_w, 14, _ascii(f"... e mais {total - 10}"))
 
+    _draw_footer(pdf, with_attribution=True)
+
+
+def _perfil_icon(
+    pdf: _UltraPDF, kind: str, x: float, y: float, size: float, rgb: tuple[int, int, int]
+) -> None:
+    """Icone vetorial simples do painel "Microarea": pessoas (pop/densidade), casa
+    (domicilios) e cifra (renda), em `rgb`, dentro do bounding box (x, y, size, size).
+    """
+    pdf.set_fill_color(*rgb)
+    pdf.set_draw_color(*rgb)
+    if kind in ("pop", "dens"):
+        # Duas "pessoas": duas cabecas (circulos) + dois ombros arredondados.
+        head_d = size * 0.30
+        pdf.ellipse(x + size * 0.14, y + size * 0.08, head_d, head_d, style="F")
+        pdf.ellipse(x + size * 0.56, y + size * 0.08, head_d, head_d, style="F")
+        pdf.rect(
+            x + size * 0.02, y + size * 0.48, size * 0.42, size * 0.44,
+            style="F", round_corners=True, corner_radius=size * 0.16,
+        )
+        pdf.rect(
+            x + size * 0.56, y + size * 0.48, size * 0.42, size * 0.44,
+            style="F", round_corners=True, corner_radius=size * 0.16,
+        )
+    elif kind == "dom":
+        # Casa: telhado (triangulo) + corpo (retangulo).
+        pdf.polygon(
+            [
+                (x + size * 0.50, y + size * 0.06),
+                (x + size * 0.94, y + size * 0.48),
+                (x + size * 0.06, y + size * 0.48),
+            ],
+            style="F",
+        )
+        pdf.rect(x + size * 0.20, y + size * 0.46, size * 0.60, size * 0.46, style="F")
+    else:  # renda -> cifra dentro de um circulo
+        pdf.ellipse(x + size * 0.05, y + size * 0.05, size * 0.90, size * 0.90, style="F")
+        pdf.set_text_color(*_BRANCO)
+        pdf.set_font("Helvetica", "B", max(9, int(size * 0.58)))
+        pdf.set_xy(x, y + size * 0.20)
+        pdf.cell(size, size * 0.5, "$", align="C")
+
+
+def _perfil_info_dot(pdf: _UltraPDF, cx: float, cy: float, r: float = 8.5) -> None:
+    """Circulo "i" decorativo cinza-claro a direita de cada metrica (fidelidade ao painel)."""
+    pdf.set_fill_color(*_PERFIL_INFO_RGB)
+    pdf.ellipse(cx - r, cy - r, 2 * r, 2 * r, style="F")
+    pdf.set_text_color(*_BRANCO)
+    pdf.set_font("Helvetica", "BI", int(r * 1.25))
+    pdf.set_xy(cx - r, cy - r * 0.95)
+    pdf.cell(2 * r, 2 * r * 0.95, "i", align="C")
+
+
+def _perfil_metric_rows(perfil: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """As 4 metricas do perfil como (kind_icone, rotulo, valor). Rotulos e metodo de renda
+    INALTERADOS (D3/D3.5); `_format_number` ja devolve "n/d" para ausente.
+    """
+    renda_raw = perfil.get("renda_media_domiciliar")
+    # "R$" so quando ha valor; sem dado exibe apenas "n/d" (evita "R$ n/d").
+    renda_str = (
+        "R$ " + _format_number(renda_raw, 2)
+        if renda_raw is not None and not pd.isna(renda_raw)
+        else "n/d"
+    )
+    return [
+        ("pop", "População", _format_number(perfil.get("populacao_total"), 0)),
+        ("dens", "Densidade demográfica", _format_number(perfil.get("densidade_hab_km2"), 0, " hab/km2")),
+        ("dom", "Domicílios", _format_number(perfil.get("domicilios_total"), 0)),
+        ("renda", "Renda média", renda_str),
+    ]
+
+
+def _draw_perfil_panel(
+    pdf: _UltraPDF,
+    *,
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    disponivel: bool,
+    tipo_label: str,
+    nome: str,
+    local_line: str,
+    rows: list[tuple[str, str, str]],
+) -> None:
+    """Painel vertical estilo "Microarea" (GeoFusion): moldura turquesa arredondada + cartao
+    branco + cabecalho (rotulo + nome) + metricas empilhadas (icone + rotulo cinza + valor
+    grande azul-marinho + circulo "i"). SO layout — nao altera valores nem a contagem de paginas.
+    """
+    frame_r = 26.0
+    borda = 12.0
+    # Moldura turquesa arredondada.
+    pdf.set_fill_color(*ULTRA_TURQUESA)
+    pdf.set_line_width(0)
+    pdf.rect(x, y, w, h, style="F", round_corners=True, corner_radius=frame_r)
+    # Cartao branco interno.
+    cx0, cy0 = x + borda, y + borda
+    cw, ch = w - 2 * borda, h - 2 * borda
+    pdf.set_fill_color(*_BRANCO)
+    pdf.rect(cx0, cy0, cw, ch, style="F", round_corners=True, corner_radius=frame_r - borda)
+
+    pad = 30.0
+    content_x = cx0 + pad
+    content_w = cw - 2 * pad
+    head_y = cy0 + 24.0
+
+    if disponivel:
+        pdf.set_text_color(*_PERFIL_ROTULO_RGB)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_xy(content_x, head_y)
+        pdf.cell(content_w, 14, _ascii(tipo_label))
+        pdf.set_text_color(*_PERFIL_VALOR_RGB)
+        pdf.set_font("Helvetica", "B", 24)
+        pdf.set_xy(content_x, head_y + 15)
+        pdf.multi_cell(content_w, 26, _ascii(nome))
+        y_after = pdf.get_y()
+        if local_line:
+            pdf.set_text_color(*_PERFIL_ROTULO_RGB)
+            pdf.set_font("Helvetica", "", 12)
+            pdf.set_xy(content_x, y_after + 2)
+            pdf.multi_cell(content_w, 14, _ascii(local_line))
+            y_after = pdf.get_y()
+    else:
+        pdf.set_text_color(*_PERFIL_VALOR_RGB)
+        pdf.set_font("Helvetica", "B", 20)
+        pdf.set_xy(content_x, head_y)
+        pdf.multi_cell(content_w, 24, _ascii("Perfil não disponível"))
+        y_after = pdf.get_y()
+        pdf.set_text_color(*_PERFIL_ROTULO_RGB)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_xy(content_x, y_after + 2)
+        pdf.multi_cell(
+            content_w, 14,
+            _ascii("Fora da malha de setores ou unidade sem dado suficiente."),
+        )
+        y_after = pdf.get_y()
+
+    # Divisor sob o cabecalho.
+    sep_y = y_after + 14.0
+    pdf.set_draw_color(*_PERFIL_DIVISOR_RGB)
+    pdf.set_line_width(1.0)
+    pdf.line(content_x, sep_y, content_x + content_w, sep_y)
+
+    # Metricas empilhadas, distribuidas no espaco restante do cartao.
+    rows_top = sep_y + 6.0
+    rows_bottom = cy0 + ch - 18.0
+    n = max(1, len(rows))
+    row_h = (rows_bottom - rows_top) / n
+    for i, (kind, label, value) in enumerate(rows):
+        ry = rows_top + i * row_h
+        icon_size = min(30.0, row_h * 0.44)
+        icon_y = ry + (row_h - icon_size) / 2.0 - 4.0
+        _perfil_icon(pdf, kind, content_x, icon_y, icon_size, ULTRA_TURQUESA)
+        text_x = content_x + icon_size + 16.0
+        text_w = content_w - (icon_size + 16.0) - 26.0
+        pdf.set_text_color(*_PERFIL_ROTULO_RGB)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_xy(text_x, ry + row_h * 0.16)
+        pdf.cell(text_w, 14, _ascii(label))
+        pdf.set_text_color(*_PERFIL_VALOR_RGB)
+        pdf.set_font("Helvetica", "B", 26)
+        pdf.set_xy(text_x, ry + row_h * 0.16 + 16.0)
+        pdf.cell(text_w, 28, _ascii(value))
+        _perfil_info_dot(pdf, content_x + content_w - 12.0, ry + row_h / 2.0)
+        if i < n - 1:
+            pdf.set_draw_color(*_PERFIL_DIVISOR_RGB)
+            pdf.set_line_width(1.0)
+            pdf.line(content_x, ry + row_h, content_x + content_w, ry + row_h)
+    pdf.set_line_width(0)
+
+
+def _perfil_nota_metodo(pdf: _UltraPDF) -> None:
+    """Nota de metodo auditavel do Perfil do Bairro/Distrito (rodape do slide)."""
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_xy(36, _PAGE_H - 40)
+    pdf.multi_cell(
+        _PAGE_W - 72,
+        10,
+        _ascii(
+            "Agregado sobre todos os setores do bairro/distrito (não o raio de 1,5 km). "
+            "Fonte: Censo IBGE 2022; renda média ponderada por domicílios."
+        ),
+    )
+
+
+def _perfil_bairro_page(
+    pdf: _UltraPDF,
+    perfil_bairro: dict[str, Any] | None,
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+) -> None:
+    """(BLK-RELPON-07) Perfil do Bairro/Distrito — painel vertical estilo "Microarea"
+    (GeoFusion) com as 4 metricas agregadas sobre a unidade INTEIRA (nao o raio de 1.5 km).
+    SEM mapa; "n/d" gracioso quando o perfil nao esta disponivel (ponto fora da malha de
+    setores ou unidade sem dado suficiente).
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, "Perfil do Bairro/Distrito", rgb=primary)
+
+    perfil = perfil_bairro or {}
+    flag_disponivel = bool(perfil.get("flag_perfil_disponivel"))
+    unidade_tipo = perfil.get("unidade_tipo")
+    unidade_nome = str(perfil.get("unidade_nome") or "").strip()
+    municipio = str(perfil.get("municipio_nome") or "").strip()
+    uf = str(perfil.get("uf") or "").strip()
+    tipo_label = "Bairro" if unidade_tipo == "bairro" else "Distrito"
+    local_line = f"{municipio}/{uf}".strip("/") if (municipio or uf) else ""
+
+    panel_w = 600.0
+    panel_x = (_PAGE_W - panel_w) / 2.0
+    _draw_perfil_panel(
+        pdf,
+        x=panel_x,
+        y=70.0,
+        w=panel_w,
+        h=410.0,
+        disponivel=flag_disponivel and bool(unidade_nome),
+        tipo_label=tipo_label,
+        nome=unidade_nome,
+        local_line=local_line,
+        rows=_perfil_metric_rows(perfil),
+    )
+
+    _perfil_nota_metodo(pdf)
     _draw_footer(pdf, with_attribution=True)
 
 
@@ -970,6 +1292,53 @@ def _classico_competitors_page(
     _draw_footer(pdf, with_attribution=True)
 
 
+def _classico_perfil_bairro_page(
+    pdf: _UltraPDF,
+    perfil_bairro: dict[str, Any] | None,
+    assets: dict[str, bytes | None],
+    *,
+    banda_texto: str,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+) -> None:
+    """(BLK-RELPON-07) Perfil do Bairro/Distrito, variante classica: banda classica + 4 cards.
+
+    Mesma logica de conteudo de `_perfil_bairro_page`, com geometria deslocada para abrir
+    espaco a banda classica (que ocupa ate ~y=122). SEM mapa; "n/d" gracioso.
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _classico_title_band(pdf, banda_texto, "Perfil do Bairro/Distrito", assets, rgb=primary)
+
+    perfil = perfil_bairro or {}
+    flag_disponivel = bool(perfil.get("flag_perfil_disponivel"))
+    unidade_tipo = perfil.get("unidade_tipo")
+    unidade_nome = str(perfil.get("unidade_nome") or "").strip()
+    municipio = str(perfil.get("municipio_nome") or "").strip()
+    uf = str(perfil.get("uf") or "").strip()
+    tipo_label = "Bairro" if unidade_tipo == "bairro" else "Distrito"
+    local_line = f"{municipio}/{uf}".strip("/") if (municipio or uf) else ""
+
+    # Painel "Microarea" abaixo da banda classica (que ocupa ate ~y=122).
+    panel_w = 600.0
+    panel_x = (_PAGE_W - panel_w) / 2.0
+    _draw_perfil_panel(
+        pdf,
+        x=panel_x,
+        y=132.0,
+        w=panel_w,
+        h=348.0,
+        disponivel=flag_disponivel and bool(unidade_nome),
+        tipo_label=tipo_label,
+        nome=unidade_nome,
+        local_line=local_line,
+        rows=_perfil_metric_rows(perfil),
+    )
+
+    _perfil_nota_metodo(pdf)
+    _draw_footer(pdf, with_attribution=True)
+
+
 def _classico_banda_magenta_rodape(pdf: _UltraPDF) -> None:
     """Banda magenta full-width, flush-baixo, levemente acima da marca d'agua."""
     pdf.set_fill_color(*ULTRA_MAGENTA)
@@ -1065,6 +1434,7 @@ def gerar_pdf_relatorio_pontual_classico(
     mapas: dict[str, bytes] | bytes | None = None,
     *,
     residual: dict[str, Any] | None = None,
+    perfil_bairro: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     rotulo: str | None = None,
@@ -1072,27 +1442,31 @@ def gerar_pdf_relatorio_pontual_classico(
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
-    5 paginas na ordem canonica (Capa -> Mapas de calor -> Concorrentes -> Big Numbers ->
-    Realizacao), reusando o motor/helpers do template recente. Os 3 choropleths
-    (Densidade/Renda/Score) foram consolidados em um unico slide "Mapas de calor"
-    (tira 1x3 lado a lado) no BLK-RELPON-01. Difere do recente na ESTETICA: banda turquesa
-    com margem/cantos arredondados e icone Ultra, capa com endereco acima do subtitulo,
-    banda magenta de rodape e Realizacao com link clicavel + data por extenso. READ-ONLY
-    sobre o M1.
+    6 paginas na ordem canonica (Capa -> Mapas de calor -> Concorrentes -> Perfil do
+    Bairro/Distrito -> Big Numbers -> Realizacao), reusando o motor/helpers do template
+    recente. Os 3 choropleths (Densidade/Renda/Score) foram consolidados em um unico slide
+    "Mapas de calor" (tira 1x3 lado a lado) no BLK-RELPON-01; o BLK-RELPON-07 inseriu a
+    pagina "Perfil do Bairro/Distrito" entre Concorrentes e Big Numbers (5->6 paginas).
+    Difere do recente na ESTETICA: banda turquesa com margem/cantos arredondados e icone
+    Ultra, capa com endereco acima do subtitulo, banda magenta de rodape e Realizacao com
+    link clicavel + data por extenso. READ-ONLY sobre o M1.
 
-    `rotulo` e o nome/endereco do ponto (capa + banda + texto do link). `now` e injetavel
-    para data determinista em teste. Geracao 100% offline, sem PII. Marca d'agua identica
-    ao gerador recente (`solicitante`).
+    `rotulo` e o nome/endereco do ponto (capa + banda + texto do link). `perfil_bairro`
+    (BLK-RELPON-07) e o dict de `agregar_perfil_bairro_distrito`; `None` (default) produz a
+    pagina com "n/d" gracioso. `now` e injetavel para data determinista em teste. Geracao
+    100% offline, sem PII. Marca d'agua identica ao gerador recente (`solicitante`).
     """
     assets = _load_branding_assets(ultra_dir)
     layers = dict(_normalize_mapas_by_key(mapas))
     banda_texto = _classico_banda_texto(result, rotulo)
 
-    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01:
-    # 3 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Big Numbers=3).
+    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01 +
+    # BLK-RELPON-07: 4 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Perfil do
+    # Bairro/Distrito=3, Big Numbers=4).
     p1, _ = _tema_bicolor(1)
     p2, s2 = _tema_bicolor(2)
     p3, s3 = _tema_bicolor(3)
+    p4, s4 = _tema_bicolor(4)
 
     pdf = _UltraPDF()
     _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
@@ -1101,7 +1475,10 @@ def gerar_pdf_relatorio_pontual_classico(
         pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto,
         primary=p2, secondary=s2,
     )
-    _big_numbers_page(pdf, result, residual, assets, primary=p3, secondary=s3)
+    _classico_perfil_bairro_page(
+        pdf, perfil_bairro, assets, banda_texto=banda_texto, primary=p3, secondary=s3,
+    )
+    _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
     _classico_banda_magenta_rodape(pdf)
     _classico_credit_page(pdf, result, assets, rotulo=rotulo, now=now)
 
@@ -1139,42 +1516,50 @@ def gerar_pdf_relatorio_pontual_censitario(
     mapas: dict[str, bytes] | bytes | None = None,
     *,
     residual: dict[str, Any] | None = None,
+    perfil_bairro: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     rotulo: str | None = None,
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
-    Estrutura de 5 paginas (BLK-RELPON-01): Capa -> Mapas de calor -> Concorrentes ->
-    Big Numbers -> Realizacao/Credito. Os 3 choropleths (Densidade/Renda/Score) — antes
-    1 pagina cada — foram consolidados em UM slide "Mapas de calor" (tira 1x3 lado a lado).
+    Estrutura de 6 paginas (BLK-RELPON-01 + BLK-RELPON-07): Capa -> Mapas de calor ->
+    Concorrentes -> Perfil do Bairro/Distrito -> Big Numbers -> Realizacao/Credito. Os 3
+    choropleths (Densidade/Renda/Score) — antes 1 pagina cada — foram consolidados em UM
+    slide "Mapas de calor" (tira 1x3 lado a lado); o BLK-RELPON-07 inseriu a pagina "Perfil
+    do Bairro/Distrito" entre Concorrentes e Big Numbers (5->6 paginas).
 
     `mapas` aceita o dict de camadas combinadas (`{"densidade","renda","score",
     "concorrentes"}`) ou `bytes` (1 mapa legado, retrocompat). O slide "Mapas de calor" embute
     os 3 choropleths (score usa modo de cor + legenda); a pagina de Concorrentes usa o mapa
     so-pins. `residual` carrega os campos do lookup hex (READ-ONLY) para o Big Numbers.
-    `ultra_dir` aponta os assets de branding (fallback gracioso para cor solida se ausentes).
-    `solicitante` (BLK-EST-01) carimba a marca d'agua diagonal de rastreabilidade em TODAS as
-    5 paginas: None -> so "Ultra Academia"; preenchido -> "Ultra Academia | {solicitante}".
-    Geracao 100% offline, sem PII.
+    `perfil_bairro` (BLK-RELPON-07) e o dict de `agregar_perfil_bairro_distrito` (4 cards
+    agregados sobre TODO o bairro/distrito, nao o raio); `None` (default) produz a pagina com
+    "n/d" gracioso. `ultra_dir` aponta os assets de branding (fallback gracioso para cor
+    solida se ausentes). `solicitante` (BLK-EST-01) carimba a marca d'agua diagonal de
+    rastreabilidade em TODAS as 6 paginas: None -> so "Ultra Academia"; preenchido ->
+    "Ultra Academia | {solicitante}". Geracao 100% offline, sem PII.
     """
     assets = _load_branding_assets(ultra_dir)
     layers = dict(_normalize_mapas_by_key(mapas))
 
-    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01:
-    # 3 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Big Numbers=3).
+    # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01 +
+    # BLK-RELPON-07: 4 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Perfil do
+    # Bairro/Distrito=3, Big Numbers=4).
     p1, _ = _tema_bicolor(1)
     p2, s2 = _tema_bicolor(2)
     p3, s3 = _tema_bicolor(3)
+    p4, s4 = _tema_bicolor(4)
 
     pdf = _UltraPDF()
     _cover_page(pdf, result, assets, rotulo=rotulo)
     _mapas_calor_page(pdf, layers, assets, primary=p1)
     _competitors_page(pdf, result, layers.get("concorrentes"), assets, primary=p2, secondary=s2)
-    _big_numbers_page(pdf, result, residual, assets, primary=p3, secondary=s3)
+    _perfil_bairro_page(pdf, perfil_bairro, assets, primary=p3, secondary=s3)
+    _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
     _credit_page(pdf, assets)
 
-    # Marca d'agua diagonal POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as 5).
+    # Marca d'agua diagonal POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as 6).
     # Escrever na pagina `n` via `pdf.page = n` ANEXA ao stream dessa pagina -> sobreposicao.
     wm_text = _watermark_text(solicitante)
     for page_number in range(1, pdf.pages_count + 1):
@@ -1197,6 +1582,7 @@ def gerar_payloads_download_relatorio_censitario(
     *,
     filename_prefix: str | None = None,
     residual: dict[str, Any] | None = None,
+    perfil_bairro: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     template: str | None = None,
@@ -1205,12 +1591,12 @@ def gerar_payloads_download_relatorio_censitario(
     prefix = filename_prefix or f"relatorio_pontual_censitario_{_point_name(result)}"
     if template == "classico":
         pdf_bytes = gerar_pdf_relatorio_pontual_classico(
-            result, mapas, residual=residual, ultra_dir=ultra_dir,
+            result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
             solicitante=solicitante, rotulo=rotulo,
         )
     else:
         pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
-            result, mapas, residual=residual, ultra_dir=ultra_dir,
+            result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
             solicitante=solicitante, rotulo=rotulo,
         )
     return RelatorioCensitarioDownloadPayloads(
@@ -1228,6 +1614,7 @@ def render_downloads_relatorio_censitario(
     *,
     filename_prefix: str | None = None,
     residual: dict[str, Any] | None = None,
+    perfil_bairro: dict[str, Any] | None = None,
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     template: str | None = None,
@@ -1239,6 +1626,7 @@ def render_downloads_relatorio_censitario(
         mapas,
         filename_prefix=filename_prefix,
         residual=residual,
+        perfil_bairro=perfil_bairro,
         ultra_dir=ultra_dir,
         solicitante=solicitante,
         template=template,

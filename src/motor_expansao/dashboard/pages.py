@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 from motor_expansao.dashboard.censo_map import render_mapas_censitarios_combinados
 from motor_expansao.dashboard.censo_point import (
     RAIO_CENSITARIO_DEFAULT_KM,
+    agregar_perfil_bairro_distrito,
     analisar_ponto_censitario_setores,
 )
 from motor_expansao.dashboard.censo_report import (
@@ -71,6 +72,7 @@ from motor_expansao.dashboard.components import (
     render_pop_cut_legend,
     render_score_bands_legend,
     render_ultra_legend,
+    render_vazios_competitivos_legend,
     style_ranking_table,
 )
 from motor_expansao.dashboard.constants import (
@@ -724,6 +726,31 @@ def render_empty_state() -> None:
 
 # BLK-UI-08 / DEC-010: cache local (gitignored) das resolucoes endereco->coordenada.
 _GEOCODE_CACHE_DIR = Path("data/cache/geocode")
+
+# BLK-TP-03-FU1: caminho do parquet de vazios competitivos do concorrente low-cost
+# (BLK-TP-03, contrato vazios_competitivos_v1). Overlay opcional do Mapa Territorial;
+# READ-ONLY sobre o M1 (so leitura). Nao vive em constants.py (arquivo intocado).
+_VAZIOS_COMPETITIVOS_LC_PATH = Path("data/staging/vazios_competitivos_lc.parquet")
+
+
+@st.cache_data(show_spinner=False)
+def _load_vazios_competitivos_lc_cached(path_str: str) -> pd.DataFrame | None:
+    """Le o parquet de vazios competitivos (BLK-TP-03-FU1), lazy + cacheado, offline.
+
+    Retorna None se o arquivo nao existe, esta vazio, nao tem 'hex_id', ou falha a
+    leitura — NUNCA lanca excecao (o toggle correspondente fica oculto). Sem rede
+    (CLAUDE.md §2). READ-ONLY sobre o M1: so leitura do parquet ja materializado.
+    """
+    path = Path(path_str)
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_parquet(path)
+    except Exception:
+        return None
+    if df.empty or "hex_id" not in df.columns:
+        return None
+    return df
 
 
 def _render_endereco_fallback_link(raw: str) -> None:
@@ -2251,6 +2278,8 @@ def _render_unified_legend(
         render_ultra_legend(ultra_df)
     if "ancoras_dominio" in enabled_overlays:
         render_ancoras_dominio_legend()
+    if "vazios_competitivos_lc" in enabled_overlays:
+        render_vazios_competitivos_legend()
 
 
 def render_carteira_e_plano(
@@ -2973,12 +3002,21 @@ def gerar_payloads_relatorio_pontual_para_pin(
     lat, lng = search_pin
     uf = context["uf"]
     cod_municipio = context["cod_municipio"]
+    nome_municipio = context.get("nome_municipio")
     setores_df = censo_geo_loader(uf, cod_municipio)
     if setores_df is None or setores_df.empty:
         return None
     result = analisar_ponto_censitario_setores(
         lat, lng, setores_df, raio_km=raio_km,
         competitors_df=competitors_df, ultra_df=ultra_df,
+    )
+    perfil_bairro = agregar_perfil_bairro_distrito(
+        setores_df,
+        cod_bairro=result.get("cod_bairro_ponto"),
+        nome_bairro=result.get("nome_bairro_ponto"),
+        nome_distrito=result.get("nome_distrito_ponto"),
+        nome_municipio=nome_municipio,
+        uf=uf,
     )
     mapas = render_mapas_censitarios_combinados(
         lat, lng, setores_df, raio_km=raio_km,
@@ -3004,6 +3042,7 @@ def gerar_payloads_relatorio_pontual_para_pin(
         ultra_dir=Path("data/ultra"),
         template="classico",
         rotulo=rotulo,
+        perfil_bairro=perfil_bairro,
     )
 
 
@@ -3433,6 +3472,14 @@ def render_relatorio_pontual_censitario(
         competitors_df=competitors_df,
         ultra_df=ultra_df,
     )
+    perfil_bairro = agregar_perfil_bairro_distrito(
+        setores_df,
+        cod_bairro=result.get("cod_bairro_ponto"),
+        nome_bairro=result.get("nome_bairro_ponto"),
+        nome_distrito=result.get("nome_distrito_ponto"),
+        nome_municipio=nome_municipio,
+        uf=uf,
+    )
     # Uma geracao -> 3 camadas combinadas (Densidade/Renda/Concorrentes), sem dropdown.
     # Fundo de ruas por tiles online (DEC-004) com cache + fallback offline; pins com logo
     # via _ICON_CACHE ja populado por preload_logos no boot do streamlit_app.
@@ -3472,6 +3519,7 @@ def render_relatorio_pontual_censitario(
         residual=residual,
         ultra_dir=Path("data/ultra"),
         template="classico",
+        perfil_bairro=perfil_bairro,
     )
 
     st.markdown(f"**Ponto analisado:** `{lat:.5f}, {lng:.5f}` | `{nome_municipio}/{uf}`")
@@ -4334,6 +4382,29 @@ def _render_mapa_fragment(
             key="mapa_territorial_overlays",
         )
 
+    # BLK-TP-03-FU1: toggle independente do multiselect "Overlays" (app nao usa
+    # st.sidebar; nao registrado em OVERLAYS/constants.py para nao tocar o arquivo).
+    # Gate humano (Felipe, 2026-07-15): cor roxa #7C5CFF, rotulo/help abaixo.
+    _vazios_lc_df = _load_vazios_competitivos_lc_cached(str(_VAZIOS_COMPETITIVOS_LC_PATH))
+    vazios_lc_ligado = False
+    if _vazios_lc_df is not None:
+        vazios_lc_ligado = st.checkbox(
+            "Vazio competitivo LC",
+            value=False,
+            key="mapa_territorial_vazios_lc",
+            help=(
+                "Hexágonos com demanda paga expressiva a mais de 5 km do concorrente "
+                "low-cost e sem unidade dele no hex (~229 hexes; cobertura concentrada "
+                "em metrópoles, não é leitura nacional). Camada de apoio - não altera "
+                "score, ranking, carteira nem artefatos oficiais do M1."
+            ),
+        )
+    else:
+        st.caption("Vazio competitivo LC indisponível neste ambiente (parquet não encontrado).")
+
+    if vazios_lc_ligado:
+        enabled_overlays = [*enabled_overlays, "vazios_competitivos_lc"]
+
     if selected_mode != "dominio" and not color_mode_available(df, selected_mode):
         st.warning(
             f"Modo '{mode_labels.get(selected_mode, selected_mode)}' não disponível no recorte atual. "
@@ -4403,6 +4474,10 @@ def _render_mapa_fragment(
             competitors_token=_map_frame_token(competitors_df_filtered, ["rede", "lat", "lng"]),
             ultra_token=_map_frame_token(ultra_df, ["lat", "lng"]),
             dominio_token=_map_frame_token(dominio_df, ["hex_id"]),
+            _vazios_df=_vazios_lc_df if vazios_lc_ligado else None,
+            vazios_token=_map_frame_token(
+                _vazios_lc_df if vazios_lc_ligado else None, ["hex_id"]
+            ),
         )
 
     if deck is None:

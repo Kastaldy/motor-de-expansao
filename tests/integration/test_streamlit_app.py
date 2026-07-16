@@ -10,6 +10,7 @@ import streamlit_app
 from motor_expansao.dashboard.components import (
     _DISCARDED_FILL,
     _NAN_SCORE_FILL,
+    _VAZIOS_LC_FILL_RGBA,
     _apply_pop_cut_colors,
     _hex_map_tooltip,
     _shared_map_tooltip,
@@ -2491,6 +2492,100 @@ def test_build_unified_map_figure_overlay_ancoras_dominio_ligado_vs_desligado():
     assert len(deck_empty.layers) == 1
 
 
+def test_build_unified_map_figure_overlay_vazios_competitivos_ligado_vs_desligado():
+    # BLK-TP-03-FU1: vazios_competitivos_lc injeta/remove a camada roxa; no-op
+    # silencioso quando vazios_df e None/vazio/sem hex_id.
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hex_vazio = h3.latlng_to_cell(-23.56, -46.64, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+    vazios_df = pd.DataFrame([{
+        "hex_id": hex_vazio,
+        "membros_gt5km_concorrente_lc": 250,
+        "uf": "SP",
+        "nome_municipio": "Sao Paulo",
+        "score_priorizacao": 42.0,
+    }])
+
+    deck_on, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=["vazios_competitivos_lc"],
+        selected_ufs=["SP"], selected_cities=[],
+        vazios_df=vazios_df,
+    )
+    assert deck_on is not None
+    assert len(deck_on.layers) == 2  # hex_layer + vazios_layer
+
+    deck_off, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=[],
+        selected_ufs=["SP"], selected_cities=[],
+        vazios_df=vazios_df,
+    )
+    assert deck_off is not None
+    assert len(deck_off.layers) == 1
+
+    # No-op silencioso quando vazios_df e None
+    deck_none, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=["vazios_competitivos_lc"],
+        selected_ufs=["SP"], selected_cities=[],
+        vazios_df=None,
+    )
+    assert deck_none is not None
+    assert len(deck_none.layers) == 1
+
+    # No-op silencioso quando vazios_df e vazio (DataFrame() sem colunas)
+    deck_empty, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=["vazios_competitivos_lc"],
+        selected_ufs=["SP"], selected_cities=[],
+        vazios_df=pd.DataFrame(),
+    )
+    assert deck_empty is not None
+    assert len(deck_empty.layers) == 1
+
+
+def test_overlay_vazios_competitivos_nao_altera_score_nem_mutacao_dos_frames():
+    # BLK-TP-03-FU1 — criterio de aceite READ-ONLY M1: overlay estritamente aditivo,
+    # nao muta o df de entrada nem recolore o hex_layer principal.
+    hex1 = h3.latlng_to_cell(-23.55, -46.63, 7)
+    hex2 = h3.latlng_to_cell(-23.65, -46.50, 7)
+    df = pd.DataFrame([
+        _hex_row(hex1, -23.55, -46.63),
+        _hex_row(hex2, -23.65, -46.50),
+    ])
+    df_antes = df.copy(deep=True)
+    vazios_df = pd.DataFrame([{
+        "hex_id": hex1,
+        "membros_gt5km_concorrente_lc": 300,
+        "uf": "SP",
+        "nome_municipio": "Sao Paulo",
+        "score_priorizacao": 55.0,
+    }])
+
+    deck_com, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=["vazios_competitivos_lc"],
+        selected_ufs=[], selected_cities=[],
+        vazios_df=vazios_df,
+    )
+    pd.testing.assert_frame_equal(df, df_antes)
+
+    deck_sem, _ = streamlit_app.build_unified_map_figure(
+        df, color_mode="m1",
+        enabled_overlays=[],
+        selected_ufs=[], selected_cities=[],
+        vazios_df=None,
+    )
+    pd.testing.assert_frame_equal(df, df_antes)
+
+    hex_layer_com = pd.DataFrame(deck_com.layers[0].data).set_index("hex_id")
+    hex_layer_sem = pd.DataFrame(deck_sem.layers[0].data).set_index("hex_id")
+    assert list(hex_layer_com.loc[hex1, "fill_color"]) == list(hex_layer_sem.loc[hex1, "fill_color"])
+    assert list(hex_layer_com.loc[hex2, "fill_color"]) == list(hex_layer_sem.loc[hex2, "fill_color"])
+    assert list(hex_layer_com.loc[hex1, "line_color"]) == list(hex_layer_sem.loc[hex1, "line_color"])
+
+
 def test_build_unified_map_figure_modo_dominio_fallback_sem_dados():
     deck, n = streamlit_app.build_unified_map_figure(
         pd.DataFrame(), color_mode="dominio",
@@ -2592,6 +2687,172 @@ def test_render_mapa_territorial_modo_m1_renderiza_mapa():
 
     assert len(fragment_calls) == 1
     assert fragment_calls[0] is not None
+
+
+def test_toggle_vazios_competitivos_existe_e_default_off():
+    # BLK-TP-03-FU1: com o parquet "presente" (mock), o checkbox e renderizado com
+    # default OFF (value=False) e a key canonica; com o toggle OFF, nenhuma camada
+    # extra e adicionada ao deck (READ-ONLY M1, aditivo).
+    import unittest.mock as mock
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+
+    vazios_synthetic = pd.DataFrame([{
+        "hex_id": "87a810998ffffff",
+        "membros_gt5km_concorrente_lc": 250,
+        "uf": "SP",
+        "nome_municipio": "Sao Paulo",
+        "score_priorizacao": 60.0,
+    }])
+
+    fragment_calls = []
+
+    with (
+        mock.patch("streamlit.selectbox", return_value="m1"),
+        mock.patch("streamlit.multiselect", return_value=[]),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.spinner"),
+        mock.patch("streamlit.expander") as exp_mock,
+        mock.patch("streamlit.info"),
+        mock.patch("streamlit.warning"),
+        mock.patch("streamlit.checkbox", return_value=False) as checkbox_mock,
+        mock.patch("streamlit.session_state", {"multihex_cenario": []}),
+        mock.patch(
+            "motor_expansao.dashboard.pages._load_vazios_competitivos_lc_cached",
+            return_value=vazios_synthetic,
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_mapa_pydeck_fragment",
+            side_effect=lambda deck, n_points, selected_ufs, multihex_ids: fragment_calls.append(deck),
+        ),
+    ):
+        exp_mock.return_value.__enter__ = lambda s: s
+        exp_mock.return_value.__exit__ = mock.MagicMock(return_value=False)
+        _call_mapa_fragment(df)
+
+    assert checkbox_mock.called
+    args, kwargs = checkbox_mock.call_args
+    assert args[0] == "Vazio competitivo LC"
+    assert kwargs["value"] is False
+    assert kwargs["key"] == "mapa_territorial_vazios_lc"
+
+    assert len(fragment_calls) == 1
+    deck = fragment_calls[0]
+    assert deck is not None
+    assert len(deck.layers) == 1  # so o hex_layer; toggle OFF nao adiciona a camada
+
+
+def test_toggle_vazios_competitivos_ligado_adiciona_layer():
+    # BLK-TP-03-FU1: com o toggle ON e o parquet presente, a camada H3HexagonLayer
+    # roxa e adicionada ao deck, cobrindo os hexes do parquet, com a cor e o
+    # tooltip decididos no gate humano (Felipe, 2026-07-15).
+    import unittest.mock as mock
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+
+    hex_vazio = h3.latlng_to_cell(-23.60, -46.70, 7)
+    vazios_synthetic = pd.DataFrame([{
+        "hex_id": hex_vazio,
+        "membros_gt5km_concorrente_lc": 321,
+        "uf": "SP",
+        "nome_municipio": "Sao Paulo",
+        "score_priorizacao": 47.5,
+    }])
+
+    fragment_calls = []
+
+    with (
+        mock.patch("streamlit.selectbox", return_value="m1"),
+        mock.patch("streamlit.multiselect", return_value=[]),
+        mock.patch("streamlit.columns", side_effect=_mock_columns),
+        mock.patch("streamlit.markdown"),
+        mock.patch("streamlit.caption"),
+        mock.patch("streamlit.spinner"),
+        mock.patch("streamlit.expander") as exp_mock,
+        mock.patch("streamlit.info"),
+        mock.patch("streamlit.warning"),
+        mock.patch("streamlit.checkbox", return_value=True),
+        mock.patch("streamlit.session_state", {"multihex_cenario": []}),
+        mock.patch(
+            "motor_expansao.dashboard.pages._load_vazios_competitivos_lc_cached",
+            return_value=vazios_synthetic,
+        ),
+        mock.patch(
+            "motor_expansao.dashboard.pages.render_mapa_pydeck_fragment",
+            side_effect=lambda deck, n_points, selected_ufs, multihex_ids: fragment_calls.append(deck),
+        ),
+    ):
+        exp_mock.return_value.__enter__ = lambda s: s
+        exp_mock.return_value.__exit__ = mock.MagicMock(return_value=False)
+        _call_mapa_fragment(df)
+
+    assert len(fragment_calls) == 1
+    deck = fragment_calls[0]
+    assert deck is not None
+    assert len(deck.layers) == 2  # hex_layer + vazios_layer (+1 frente ao baseline OFF)
+
+    vazios_layer = deck.layers[-1]
+    assert list(vazios_layer.get_fill_color) == list(_VAZIOS_LC_FILL_RGBA)
+
+    layer_data = pd.DataFrame(vazios_layer.data).set_index("hex_id")
+    assert hex_vazio in layer_data.index
+    row = layer_data.loc[hex_vazio]
+    assert "Membros >5km do concorrente:" in row["tooltip_line_1"]
+    assert "321" in row["tooltip_line_1"]
+    assert row["tooltip_line_2"] == "UF: SP"
+    assert row["tooltip_line_3"] == "Município: Sao Paulo"
+    assert "47.50" in row["tooltip_line_4"]
+
+
+def test_toggle_vazios_competitivos_parquet_ausente_oculta_checkbox():
+    # BLK-TP-03-FU1: com o parquet ausente/vazio/sem hex_id (3 casos), o checkbox
+    # fica OCULTO (nao chamado com a key canonica) e a mensagem de caption clara
+    # e emitida — nunca excecao.
+    import unittest.mock as mock
+
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    df = pd.DataFrame([_hex_row(hex_id, -23.55, -46.63)])
+
+    # Os 3 casos (parquet ausente / vazio / sem hex_id) resultam todos em None depois
+    # de passar pelo loader real (_load_vazios_competitivos_lc_cached); aqui mockamos
+    # o loader direto, entao o efeito observável no fragmento é o mesmo nos 3 — o
+    # loop repete a asserção 3x para deixar cada caso explícito na leitura do teste.
+    for _caso in ("ausente", "vazio", "sem_hex_id"):
+        with (
+            mock.patch("streamlit.selectbox", return_value="m1"),
+            mock.patch("streamlit.multiselect", return_value=[]),
+            mock.patch("streamlit.columns", side_effect=_mock_columns),
+            mock.patch("streamlit.markdown"),
+            mock.patch("streamlit.caption") as caption_mock,
+            mock.patch("streamlit.spinner"),
+            mock.patch("streamlit.expander") as exp_mock,
+            mock.patch("streamlit.info"),
+            mock.patch("streamlit.warning"),
+            mock.patch("streamlit.checkbox") as checkbox_mock,
+            mock.patch("streamlit.session_state", {"multihex_cenario": []}),
+            mock.patch(
+                "motor_expansao.dashboard.pages._load_vazios_competitivos_lc_cached",
+                return_value=None,
+            ),
+            mock.patch(
+                "motor_expansao.dashboard.pages.render_mapa_pydeck_fragment",
+            ),
+        ):
+            exp_mock.return_value.__enter__ = lambda s: s
+            exp_mock.return_value.__exit__ = mock.MagicMock(return_value=False)
+            _call_mapa_fragment(df)
+
+        vazios_lc_calls = [
+            c for c in checkbox_mock.call_args_list
+            if c.kwargs.get("key") == "mapa_territorial_vazios_lc"
+        ]
+        assert vazios_lc_calls == []
+        captions_captured = [c.args[0] for c in caption_mock.call_args_list if c.args]
+        assert any("indisponível" in c for c in captions_captured)
 
 
 def test_render_mapa_territorial_modo_indisponivel_exibe_aviso():
