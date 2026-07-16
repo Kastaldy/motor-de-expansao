@@ -12,7 +12,14 @@ from motor_expansao.dashboard.censo_point import (
     analisar_ponto_censitario_setores,
 )
 from motor_expansao.dashboard.censo_report import (
+    _CARD_NEUTRO_RGB,
+    _CARD_VERDE_RGB,
+    _CARD_VERMELHO_RGB,
+    _META_DOMICILIOS_TOTAL_RAIO,
+    _META_POP_TOTAL_RAIO,
     PDF_SECTION_HEADERS,
+    _cor_consumo_concorrentes,
+    _cor_por_meta,
     gerar_csv_setores_censitarios,
     gerar_payloads_download_relatorio_censitario,
     gerar_pdf_relatorio_pontual_censitario,
@@ -161,6 +168,10 @@ def test_pdf_embute_tres_choropleths_no_slide_unico():
 
 def test_pdf_big_numbers_com_residual_e_nd():
     result, mapas = _sample_result()
+    # BLK-RELPON-08: injeta o novo agregado do raio direto no result (os setores sinteticos de
+    # `_sample_result` nao tem `domicilios_particulares_ocupados_setor_2022`, entao o motor deixa
+    # o campo em None -- mais simples injetar aqui do que enriquecer os setores).
+    result["domicilios_total_raio"] = 4200.0
 
     pdf_com = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
     # Rotulos das 8 metricas presentes (4x2). NB: parenteses literais sao escapados (\( \)) no
@@ -168,14 +179,18 @@ def test_pdf_big_numbers_com_residual_e_nd():
     for rotulo in (
         "População total no raio".encode("latin-1"),
         "Renda per capita média".encode("latin-1"),
+        "Número de domicílios".encode("latin-1"),
         "Score censitário médio".encode("latin-1"),
-        "Score censitário máximo".encode("latin-1"),
         b"SAM Fitness",
         b"Residual Fitness",
         b"Concorrentes no raio",
         b"Consumo concorrentes",
     ):
         assert rotulo in pdf_com
+    # BLK-RELPON-08: o card "Score censitario maximo" foi REMOVIDO do PDF (fica so em result/CSV).
+    assert "Score censitário máximo".encode("latin-1") not in pdf_com
+    # BLK-RELPON-08: numero de domicilios do raio formatado com 0 casas.
+    assert b"4.200" in pdf_com
     # SAM e Residual Fitness saem em ALUNOS (numero), nao score: sam=3000, residual=1200, consumo=1800.
     assert b"3.000" in pdf_com
     assert b"1.200" in pdf_com
@@ -184,6 +199,57 @@ def test_pdf_big_numbers_com_residual_e_nd():
     # Sem residual -> "n/d" auditavel.
     pdf_sem = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=None)
     assert b"n/d" in pdf_sem
+
+
+def test_pdf_big_numbers_ordem_linha_1():
+    """BLK-RELPON-08 (D2): a linha 1 do grid segue Populacao -> Renda -> Domicilios -> Score medio.
+
+    Com `set_compression(False)`, o texto e cru no content stream e a ordem de aparicao dos
+    rotulos reflete a ordem de desenho dos cards.
+    """
+    result, mapas = _sample_result()
+    result["domicilios_total_raio"] = 4200.0
+
+    pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
+
+    pos_pop = pdf_bytes.index("População total no raio".encode("latin-1"))
+    pos_renda = pdf_bytes.index("Renda per capita média".encode("latin-1"))
+    pos_dom = pdf_bytes.index("Número de domicílios".encode("latin-1"))
+    pos_score = pdf_bytes.index("Score censitário médio".encode("latin-1"))
+
+    assert pos_pop < pos_renda < pos_dom < pos_score
+
+
+def test_cor_por_meta_verde_vermelho_neutro():
+    """BLK-RELPON-08 (D3/Q2): helper puro de cor por meta simples (>= meta -> verde)."""
+    # pop_total_raio / _META_POP_TOTAL_RAIO (10000)
+    assert _cor_por_meta(12_000, _META_POP_TOTAL_RAIO) == _CARD_VERDE_RGB
+    assert _cor_por_meta(_META_POP_TOTAL_RAIO, _META_POP_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
+    assert _cor_por_meta(5_000, _META_POP_TOTAL_RAIO) == _CARD_VERMELHO_RGB
+    assert _cor_por_meta(None, _META_POP_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+    assert _cor_por_meta(float("nan"), _META_POP_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+    # domicilios_total_raio / _META_DOMICILIOS_TOTAL_RAIO (3000) -- campo NOVO.
+    assert _cor_por_meta(3_500, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERDE_RGB
+    assert _cor_por_meta(3_000, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
+    assert _cor_por_meta(2_999, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERMELHO_RGB
+    assert _cor_por_meta(None, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+    assert _cor_por_meta(float("nan"), _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+
+
+def test_cor_consumo_concorrentes_regra_assimetrica():
+    """BLK-RELPON-08 (D3): vermelho SO quando SAM>=2000 E Residual<2000; espelhado no card Concorrentes."""
+    # (a) mercado consumido: SAM alto E Residual baixo -> vermelho.
+    assert _cor_consumo_concorrentes(3_000, 1_200) == _CARD_VERMELHO_RGB
+    # (b) SAM alto E Residual alto -> verde.
+    assert _cor_consumo_concorrentes(3_000, 2_500) == _CARD_VERDE_RGB
+    # (c) SAM baixo (independente do Residual) -> verde.
+    assert _cor_consumo_concorrentes(1_500, 500) == _CARD_VERDE_RGB
+    assert _cor_consumo_concorrentes(1_500, 5_000) == _CARD_VERDE_RGB
+    # (d) "n/d" em SAM OU Residual (isoladamente) -> neutro.
+    assert _cor_consumo_concorrentes(None, 1_200) == _CARD_NEUTRO_RGB
+    assert _cor_consumo_concorrentes(3_000, None) == _CARD_NEUTRO_RGB
+    assert _cor_consumo_concorrentes(float("nan"), 1_200) == _CARD_NEUTRO_RGB
+    assert _cor_consumo_concorrentes(3_000, float("nan")) == _CARD_NEUTRO_RGB
 
 
 def test_pdf_offline_safe_sem_assets(tmp_path):
