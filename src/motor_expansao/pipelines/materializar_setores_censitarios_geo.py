@@ -44,6 +44,16 @@ RENDA_PATH = (
     / "Agregados_por_setores_renda_responsavel_BR.csv"
 )
 SHAPEFILE_PATH = RAW_CENSO_DIR / "BR_setores_CD2022" / "BR_setores_CD2022.shp"
+# Os CSVs basico/renda/demografia vieram com CD_SETOR corrompido em notacao cientifica (abertos
+# no Excel). A renda tem a MESMA contagem/ordem dos demais agregados intactos, entao recuperamos
+# o CD_SETOR real enxertando a chave de um arquivo irmao intacto (alfabetizacao). Ja o basico
+# (contagem diferente, mas em ordem canonica de CD_SETOR) tem a chave recuperada pela malha
+# ordenada por CD_SETOR. Ver docstring de `carregar_renda`/`carregar_basico`.
+RENDA_KEY_SIBLING_PATH = (
+    RAW_CENSO_DIR
+    / "Agregados_por_setores_alfabetizacao_BR"
+    / "Agregados_por_setores_alfabetizacao_BR.csv"
+)
 DEFAULT_OUTPUT_ROOT = Path("data/outputs/setores_censitarios_2022_geo")
 DEFAULT_REPORT_PATH = Path("data/reports/relatorio_pontual_censitario_base_geo.md")
 DEFAULT_M1_REFERENCE_PATH = Path("data/staging/brasil_estrutural.parquet")
@@ -183,12 +193,38 @@ def _read_csv_with_encoding(path: Path, **kwargs) -> pd.DataFrame:
     return pd.read_csv(path, sep=";", encoding="latin-1", dtype=str, low_memory=False, **kwargs)
 
 
-def carregar_basico(path: Path = BASICO_PATH) -> pd.DataFrame:
+def carregar_basico(
+    path: Path = BASICO_PATH,
+    chaves_ordenadas: pd.Series | None = None,
+) -> pd.DataFrame:
+    """Carrega o Agregado basico (pop/moradores/domicilios).
+
+    O CD_SETOR do CSV veio corrompido (notacao cientifica). Como o arquivo esta em ordem
+    canonica de CD_SETOR (CD_MUN nao-decrescente) e tem a MESMA contagem da malha, recuperamos
+    o CD_SETOR real por posicao a partir de `chaves_ordenadas` (cod_setor da malha ordenado por
+    CD_SETOR). A verificacao exige que o municipio embutido no cod_setor recuperado (7 primeiros
+    digitos) bata com o CD_MUN intacto do proprio basico.
+    """
     usecols = ["CD_UF", "CD_MUN", "AREA_KM2", "v0001", "v0005", "v0007"]
     df = _read_csv_with_encoding(path, usecols=usecols)
     df["cod_uf"] = df["CD_UF"].astype(str).str.zfill(2)
     df["uf"] = df["cod_uf"].map(UF_POR_CODIGO)
-    df["cod_municipio"] = df["CD_MUN"].astype(str).str.zfill(7)
+    df["cod_municipio"] = df["CD_MUN"].astype(str).str.split(".").str[0].str.zfill(7)
+
+    if chaves_ordenadas is not None:
+        if len(chaves_ordenadas) != len(df):
+            raise ValueError(
+                f"Recuperacao de chave do basico: malha ({len(chaves_ordenadas)}) e "
+                f"basico ({len(df)}) precisam ter o mesmo total."
+            )
+        cod_setor = pd.Series(list(chaves_ordenadas), index=df.index, dtype="object")
+        conf = float((cod_setor.str[:7].values == df["cod_municipio"].values).mean())
+        if conf < 0.99:
+            raise ValueError(
+                f"Recuperacao de chave do basico suspeita: so {conf*100:.2f}% dos setores "
+                "tem municipio coerente entre chave recuperada e CD_MUN do basico."
+            )
+        df["cod_setor"] = cod_setor
     df["area_setor_km2_ibge"] = _to_number(df["AREA_KM2"])
     df["pop_total_setor_2022"] = _to_number(df["v0001"]).clip(lower=0)
     df["domicilios_particulares_ocupados_setor_2022"] = _to_number(df["v0007"]).clip(lower=0)
@@ -201,20 +237,40 @@ def carregar_basico(path: Path = BASICO_PATH) -> pd.DataFrame:
     df["avg_moradores_domicilio_setor_2022"] = df[
         "avg_moradores_domicilio_setor_2022"
     ].fillna(pd.Series(fallback_avg, index=df.index))
-    return df[
-        [
-            "uf",
-            "cod_uf",
-            "cod_municipio",
-            "area_setor_km2_ibge",
-            "pop_total_setor_2022",
-            "domicilios_particulares_ocupados_setor_2022",
-            "avg_moradores_domicilio_setor_2022",
-        ]
-    ].reset_index(drop=True)
+    saida = [
+        "uf",
+        "cod_uf",
+        "cod_municipio",
+        "area_setor_km2_ibge",
+        "pop_total_setor_2022",
+        "domicilios_particulares_ocupados_setor_2022",
+        "avg_moradores_domicilio_setor_2022",
+    ]
+    if "cod_setor" in df.columns:
+        saida = ["cod_setor", *saida]
+    return df[saida].reset_index(drop=True)
 
 
-def carregar_renda(path: Path = RENDA_PATH) -> pd.DataFrame:
+def carregar_renda(
+    path: Path = RENDA_PATH,
+    chave_sibling_path: Path | None = None,
+) -> pd.DataFrame:
+    """Carrega o Agregado de renda do responsavel (V06004).
+
+    O CD_SETOR do CSV veio corrompido (notacao cientifica). Recuperamos o CD_SETOR real
+    enxertando, por posicao, a chave de um agregado irmao INTACTO (`chave_sibling_path`), que
+    tem exatamente a mesma contagem e ordem de setores. A verificacao exige que a UF derivada
+    do valor corrompido (cujos primeiros digitos sobrevivem) bata com a UF da chave recuperada.
+    """
+    # O irmao intacto vive na mesma raiz CENSO do proprio arquivo de renda (nao no RAW_CENSO_DIR
+    # do modulo), para funcionar tambem quando os insumos vem de outro diretorio.
+    if chave_sibling_path is None:
+        chave_sibling_path = (
+            path.parent.parent
+            / "Agregados_por_setores_alfabetizacao_BR"
+            / "Agregados_por_setores_alfabetizacao_BR.csv"
+        )
+
     df = _read_csv_with_encoding(path)
     setor_as_int = (
         df["CD_SETOR"]
@@ -222,18 +278,52 @@ def carregar_renda(path: Path = RENDA_PATH) -> pd.DataFrame:
         .str.replace(",", ".", regex=False)
         .map(lambda value: Decimal(value) if value and value.upper() != "NAN" else None)
     )
-    df["cod_uf"] = setor_as_int.map(lambda value: str(int(value // Decimal("1e13"))).zfill(2) if value else None)
+    uf_corrompido = setor_as_int.map(
+        lambda value: str(int(value // Decimal("1e13"))).zfill(2) if value else None
+    )
+
+    sib = _read_csv_with_encoding(chave_sibling_path, usecols=[0]).iloc[:, 0]
+    cod_setor = sib.map(lambda value: _normalizar_codigo_ibge(value, 15))
+    if len(cod_setor) != len(df):
+        raise ValueError(
+            f"Recuperacao de chave da renda: irmao intacto ({len(cod_setor)}) e renda "
+            f"({len(df)}) precisam ter o mesmo total."
+        )
+    cod_setor = pd.Series(list(cod_setor), index=df.index, dtype="object")
+    conf = float((cod_setor.str[:2].values == uf_corrompido.values).mean())
+    if conf < 0.99:
+        raise ValueError(
+            f"Recuperacao de chave da renda suspeita: so {conf*100:.2f}% das UFs batem "
+            "entre valor corrompido e chave recuperada."
+        )
+    df["cod_setor"] = cod_setor
+    df["cod_uf"] = cod_setor.str[:2]
     df["uf"] = df["cod_uf"].map(UF_POR_CODIGO)
     df["renda_responsavel_media_setor_2022"] = _to_number(df["V06004"])
     df["responsaveis_com_renda_setor_2022"] = _to_number(df["V06001"]).clip(lower=0)
     return df[
         [
+            "cod_setor",
             "uf",
             "cod_uf",
             "renda_responsavel_media_setor_2022",
             "responsaveis_com_renda_setor_2022",
         ]
     ].reset_index(drop=True)
+
+
+def _ler_chaves_ordenadas(shp_path: Path = SHAPEFILE_PATH) -> pd.Series:
+    """cod_setor de TODA a malha, ordenado por CD_SETOR.
+
+    E' a chave usada para recuperar o CD_SETOR corrompido do Basico, que esta em ordem canonica
+    de CD_SETOR e tem a mesma contagem da malha. So os atributos sao lidos (sem geometria).
+    """
+    try:
+        atributos = gpd.read_file(shp_path, columns=["CD_SETOR"], ignore_geometry=True)
+    except (TypeError, ValueError):
+        atributos = gpd.read_file(shp_path)[["CD_SETOR"]]
+    chaves = atributos["CD_SETOR"].map(lambda value: _normalizar_codigo_ibge(value, 15)).dropna()
+    return pd.Series(sorted(chaves.tolist()), dtype="object")
 
 
 def carregar_malha_uf(path: Path, uf: str) -> gpd.GeoDataFrame:
@@ -362,10 +452,12 @@ def montar_base_setorial_uf(
     m1_reference: pd.DataFrame | None = None,
     data_materializacao: str | None = None,
 ) -> gpd.GeoDataFrame:
-    if len(gdf_malha) != len(basico_uf):
+    if "cod_setor" not in gdf_malha.columns:
+        raise ValueError(f"UF {uf}: malha sem coluna cod_setor para join por chave.")
+    if "cod_setor" not in basico_uf.columns or "cod_setor" not in renda_uf.columns:
         raise ValueError(
-            f"UF {uf}: malha ({len(gdf_malha)}) e Basico ({len(basico_uf)}) "
-            "precisam ter o mesmo total para join posicional."
+            f"UF {uf}: basico/renda precisam ter cod_setor recuperado para join por chave "
+            "(nao use mais join posicional)."
         )
 
     result = gdf_malha.copy()
@@ -375,19 +467,24 @@ def montar_base_setorial_uf(
     for opt_col in ("nome_bairro", "cod_bairro", "nome_subdistrito", "nome_distrito"):
         if opt_col not in result.columns:
             result[opt_col] = pd.NA
+    # Join por CHAVE cod_setor (o antigo join posicional era invalido: basico e renda tem
+    # contagens diferentes e ordens distintas da malha). A malha e' o ancoramento (left join);
+    # `area_setor_km2_ibge` vem da malha, nao do basico.
     basic_cols = [
-        "area_setor_km2_ibge",
         "pop_total_setor_2022",
         "domicilios_particulares_ocupados_setor_2022",
         "avg_moradores_domicilio_setor_2022",
     ]
-    for col in basic_cols:
-        result[col] = basico_uf[col].to_numpy()
-
-    renda_values = np.full(len(result), np.nan)
-    renda_valid = renda_uf["renda_responsavel_media_setor_2022"].to_numpy(dtype=float)
-    renda_values[: min(len(result), len(renda_valid))] = renda_valid[: len(result)]
-    result["renda_responsavel_media_setor_2022"] = renda_values
+    result = result.merge(
+        basico_uf[["cod_setor", *basic_cols]].drop_duplicates("cod_setor"),
+        on="cod_setor",
+        how="left",
+    )
+    result = result.merge(
+        renda_uf[["cod_setor", "renda_responsavel_media_setor_2022"]].drop_duplicates("cod_setor"),
+        on="cod_setor",
+        how="left",
+    )
     result["renda_per_capita_setor_2022"] = np.where(
         result["avg_moradores_domicilio_setor_2022"] > 0,
         result["renda_responsavel_media_setor_2022"]
@@ -413,11 +510,10 @@ def montar_base_setorial_uf(
         np.nan,
     )
     result["flag_renda_disponivel"] = result["renda_per_capita_setor_2022"].notna()
-    result["qualidade_join_uf"] = np.where(
-        len(renda_uf) >= len(result) * 0.95,
-        "A",
-        np.where(len(renda_uf) >= len(result) * 0.90, "B", "C"),
-    )
+    # Qualidade = taxa REAL de setores da malha que casaram com a renda por chave (antes era uma
+    # comparacao de contagens, que nada dizia sobre o acerto do join).
+    taxa_match = float(result["flag_renda_disponivel"].mean()) if len(result) else 0.0
+    result["qualidade_join_uf"] = "A" if taxa_match >= 0.95 else ("B" if taxa_match >= 0.90 else "C")
 
     geometries = result.geometry.copy()
     result = _calcular_scores_setoriais(pd.DataFrame(result.drop(columns="geometry")), m1_reference)
@@ -508,7 +604,10 @@ def gerar_relatorio(summaries: list[UFSummary], output_root: Path, schema: list[
             "- A geometria permanece no CRS original `EPSG:4674`; areas sao calculadas em `EPSG:5880`.",
             "- A renda setorial usa `V06004 / v0005` e calibracao multiplicativa global quando a referencia M1 esta disponivel.",
             "- O score setorial e paralelo e operacional; nao substitui `score_priorizacao`.",
-            "- O CSV de renda possui menos linhas que a malha/Basico; o join de renda segue alinhamento posicional por UF e registra `qualidade_join_uf`.",
+            "- O CSV de renda possui menos linhas que a malha/Basico. O join e' feito por CHAVE "
+            "`cod_setor` (nao posicional) e `qualidade_join_uf` registra a taxa real de match. A "
+            "chave e' recuperada: na renda, enxertando o `CD_SETOR` de um agregado irmao intacto "
+            "(alfabetizacao); no basico, pela malha ordenada por `CD_SETOR`.",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -535,7 +634,8 @@ def materializar_base_geo(
     if invalid:
         raise ValueError(f"UFs invalidas: {invalid}")
 
-    basico = carregar_basico(basico_path)
+    chaves_ordenadas = _ler_chaves_ordenadas(shp_path)
+    basico = carregar_basico(basico_path, chaves_ordenadas=chaves_ordenadas)
     renda = carregar_renda(renda_path)
     m1_reference = (
         pd.read_parquet(m1_reference_path, columns=["renda_per_capita"])
@@ -551,21 +651,16 @@ def materializar_base_geo(
         basico_uf = basico[basico["uf"] == uf].reset_index(drop=True)
         renda_uf = renda[renda["uf"] == uf].reset_index(drop=True)
 
+        # Basta filtrar a MALHA: basico/renda entram por join de chave (cod_setor), entao apenas
+        # os setores da malha filtrada sobrevivem ao left join. Fatiar basico/renda por posicao
+        # (como antes) misturava setores de municipios diferentes.
         if municipios_set:
-            mask = gdf_malha["cod_municipio"].isin(municipios_set)
-            keep_positions = np.flatnonzero(mask.to_numpy())
-            gdf_malha = gdf_malha.iloc[keep_positions].reset_index(drop=True)
-            basico_uf = basico_uf.iloc[keep_positions].reset_index(drop=True)
-            renda_positions = keep_positions[keep_positions < len(renda_uf)]
-            renda_uf = renda_uf.iloc[renda_positions].reset_index(drop=True)
+            gdf_malha = gdf_malha[
+                gdf_malha["cod_municipio"].isin(municipios_set)
+            ].reset_index(drop=True)
         elif max_municipios_por_uf:
             selected = sorted(gdf_malha["cod_municipio"].dropna().unique())[:max_municipios_por_uf]
-            mask = gdf_malha["cod_municipio"].isin(selected)
-            keep_positions = np.flatnonzero(mask.to_numpy())
-            gdf_malha = gdf_malha.iloc[keep_positions].reset_index(drop=True)
-            basico_uf = basico_uf.iloc[keep_positions].reset_index(drop=True)
-            renda_positions = keep_positions[keep_positions < len(renda_uf)]
-            renda_uf = renda_uf.iloc[renda_positions].reset_index(drop=True)
+            gdf_malha = gdf_malha[gdf_malha["cod_municipio"].isin(selected)].reset_index(drop=True)
 
         df_uf = montar_base_setorial_uf(
             gdf_malha,
