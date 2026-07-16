@@ -33,14 +33,24 @@ pip install -e '.[scraping]'
 python -m playwright install chromium
 ```
 
-Para servir o spike localmente (opt-in, sem tocar produção):
+Para servir o spike localmente (opt-in, sem tocar produção), use o **lançador
+standalone descartável** `scripts/rev08_spike_app.py` (serve APENAS a página
+`render_spike_page()`; não é importado por `pages.py`/`streamlit_app.py`):
 
 ```bash
-ULTRA_SPIKE_DECKGL=1 streamlit run src/motor_expansao/dashboard/streamlit_app.py
+python -m streamlit run scripts/rev08_spike_app.py
 ```
 
-> O spike é opt-in e **não** é importado por `pages.py`. Sem a env var, o
-> dashboard roda idêntico à produção.
+> O lançador já define `ULTRA_SPIKE_DECKGL=1` internamente. O dashboard de
+> produção (`streamlit_app.py`) NÃO é tocado e roda idêntico sem a env var.
+>
+> **Nota de render (fix pós-gate):** o protótipo desenha os hexágonos com o
+> `PolygonLayer` do deck.gl 8.9.36 tesselando a célula no cliente via
+> `h3-js@4` (`cellToBoundary`) a partir do `hex_id` cru — o payload continua
+> sem geometria. O motivo de não usar `H3HexagonLayer` é que o h3 embutido no
+> bundle standalone era incompatível (API v3 x v4). O deck cria o próprio
+> canvas dentro do `<div id="container">` (necessário para o controlador de
+> zoom/pan/clique funcionar dentro do iframe do Streamlit).
 
 ---
 
@@ -95,13 +105,20 @@ python scripts/rev08_spike_playwright.py \
 
 | Fluxo (harness)      | Alvo        | Mediana (ms) | p95 (ms) | Runs | Observação |
 |----------------------|-------------|--------------|----------|------|------------|
-| render (REV-03)      | spike local |              |          |      |            |
-| recolor (REV-04)     | spike local |              |          |      |            |
-| scenario (REV-05)    | spike local |              |          |      |            |
-| render (REV-03)      | produção    |              |          |      |            |
-| recolor (REV-04)     | produção    |              |          |      |            |
-| scenario (REV-05)    | produção    |              |          |      |            |
-| pdf (REV-06)         | produção    |              |          |      |            |
+| render (REV-03)      | spike local | 463          | 525      | 3    | 1ª leitura local 2026-07-16 (18k hexes SP; inclui build do payload + tesselação h3 + 1º paint WebGL) |
+| recolor (REV-04)     | spike local | 46           | 101      | 3    | recolor M1↔Residual client-side (updateTriggers GPU, sem re-serializar) |
+| scenario (REV-05)    | spike local | 32           | 33       | 3    | add hex ao cenário (client-side, sem rerun) |
+| render (REV-03)      | produção    |              |          |      | (humano — A/B na VPS) |
+| recolor (REV-04)     | produção    |              |          |      | (humano — A/B na VPS) |
+| scenario (REV-05)    | produção    |              |          |      | (humano — A/B na VPS) |
+| pdf (REV-06)         | produção    |              |          |      | (humano — só `--target production`) |
+
+> **Leitura local preliminar (2026-07-16, laptop, sem rede VPS):** o custo de
+> interação do spike (recolor ~46 ms, cenário ~32 ms) é client-side/GPU — a
+> ordem de grandeza que o REV-04/REV-05 queriam comparar contra o rerun
+> server-side do Streamlit. O `render` (~463 ms) inclui montar o payload de
+> ~1,45 MB, tesselar 18k células (h3-js) e o 1º paint WebGL. Os números de
+> **produção/A-B na VPS seguem sendo passo humano** (rede real + §6).
 
 ---
 
@@ -191,7 +208,7 @@ chaves curtas). Meça e anote — **não** otimize prematuramente no spike:
 
 | UF   | Hexes no recorte | Tamanho do JSON inline (KB) | Modo   |
 |------|------------------|-----------------------------|--------|
-| SP   |                  |                             | cap 18k|
+| SP   | 18000            | 1483 (~1,45 MB)             | cap 18k|
 | SP   |                  |                             | stress |
 |      |                  |                             |        |
 

@@ -13,11 +13,17 @@ READ-ONLY sobre o M1 (CLAUDE.md §5): zero recálculo/alteração de
 `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/plano/artefatos
 oficiais. Só LEITURA do parquet derivado por UF (não oficial M1).
 
-Diferença de motor vs `ui_proto.py` (Leaflet + h3-js):
-  - `H3HexagonLayer` aceita `hex_id` cru (`getHexagon: d => d.h`) e tessela a
-    célula na GPU — o payload NÃO carrega geometria nem lat/lng por hex.
+Motor de render (WebGL) vs `ui_proto.py` (Leaflet + h3-js, DOM/SVG):
+  - O payload carrega SÓ `hex_id` cru (sem geometria nem lat/lng por hex). A
+    tesselação da célula acontece no CLIENTE via `h3.cellToBoundary(h, true)`
+    (h3-js v4 por CDN) e desenha num `PolygonLayer` deck.gl (WebGL/GPU).
+    Nota: a rota original usava `H3HexagonLayer` (`getHexagon`), mas o bundle
+    standalone do deck.gl trazia um h3 interno incompatível (v3 x v4:
+    `h3GetResolution`/`h3ToGeo is not a function`) — trocado por
+    `PolygonLayer` + h3-js v4 explícito, que é robusto a versão e preserva a
+    tese "payload só com hex_id".
   - Recolor (M1↔Residual) é update de atributo GPU via `updateTriggers`,
-    sem re-serializar o payload.
+    sem re-serializar o payload (a geometria por hex fica cacheada em `d.__poly`).
   - Seleção/cenário é `pickable` + `onClick` no browser, sem rerun.
 
 Dados consumidos (leitura):
@@ -497,7 +503,7 @@ _DECKGL_TEMPLATE = """<!DOCTYPE html>
   html, body { height: 100%; background: __BG__; overflow: hidden;
     font-family: 'IBM Plex Sans', system-ui, sans-serif; color: __TEXT__; }
   #container { position: absolute; inset: 0; }
-  #deck-canvas { width: 100%; height: 100%; }
+  #container canvas { width: 100% !important; height: 100% !important; }
   #controls {
     position: absolute; top: 10px; left: 10px; z-index: 1000;
     background: __PANEL__; border: 1px solid __LINE__; border-radius: 8px;
@@ -539,7 +545,7 @@ _DECKGL_TEMPLATE = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div id="container"><canvas id="deck-canvas"></canvas></div>
+<div id="container"></div>
 <div id="controls">
   <button id="toggle-mode" onclick="window.__spikeToggleColor()">Cor: M1</button>
   <button id="add-hex" onclick="window.__spikeAddHex()">Adicionar hex ao cenário</button>
@@ -549,7 +555,8 @@ _DECKGL_TEMPLATE = """<!DOCTYPE html>
 <div id="legend"><div class="leg-title" id="legend-title">Score M1</div><div id="legend-items"></div></div>
 <div id="detail"><div class="title" id="detail-title">Hexágono</div><div id="detail-rows"></div></div>
 
-<script src="https://unpkg.com/deck.gl@latest/dist.min.js"></script>
+<script src="https://unpkg.com/h3-js@4.1.0/dist/h3-js.umd.js"></script>
+<script src="https://unpkg.com/deck.gl@8.9.36/dist.min.js"></script>
 <script>
 // ── Dados embutidos (sem round-trip) ──────────────────────────
 var HEX_DATA = __HEX_DATA__;
@@ -569,6 +576,22 @@ var __pendingAdd = false, __pendingAddStart = 0;
 window.__spikeFirstPaintMs = null;
 window.__spikeRecolorMs = null;
 window.__spikeAddHexMs = null;
+window.__spikeError = null;
+window.__spikeHexCount = (HEX_DATA && HEX_DATA.length) || 0;
+
+// Erro visivel na propria pagina (sem precisar de DevTools).
+function __spikeReport(msg, isError) {
+  var el = document.getElementById('scenario-summary');
+  if (el) {
+    el.textContent = msg;
+    el.style.color = isError ? '#ff6b6b' : '';
+  }
+}
+window.onerror = function(msg) {
+  window.__spikeError = String(msg);
+  __spikeReport('ERRO JS: ' + msg, true);
+  return false;
+};
 
 var deckgl = null;
 
@@ -586,11 +609,25 @@ function lineWidth(d) {
   return scenario[d.h] ? 3 : 0;
 }
 
+// Tesselação da célula H3 no CLIENTE, a partir do hex_id cru (sem geometria
+// no payload). Cacheado por hex (d.__poly) — recolor/seleção não recomputam.
+// h3.cellToBoundary(h, true) → anel [lng, lat] (ordem GeoJSON), que o
+// PolygonLayer consome direto. Preserva a tese "payload só com hex_id".
+function hexPoly(d) {
+  if (d.__poly) return d.__poly;
+  try {
+    d.__poly = h3.cellToBoundary(d.h, true);
+  } catch (e) {
+    d.__poly = [];
+  }
+  return d.__poly;
+}
+
 function makeLayers() {
   var glo = (typeof deck !== 'undefined') ? deck : {};
   var TileLayer = glo.TileLayer;
   var BitmapLayer = glo.BitmapLayer;
-  var H3HexagonLayer = glo.H3HexagonLayer;
+  var PolygonLayer = glo.PolygonLayer;
   var layers = [];
   if (TileLayer && BitmapLayer) {
     layers.push(new TileLayer({
@@ -606,14 +643,14 @@ function makeLayers() {
       }
     }));
   }
-  layers.push(new H3HexagonLayer({
+  layers.push(new PolygonLayer({
     id: 'hexes',
     data: HEX_DATA,
     pickable: true,
     filled: true,
     stroked: true,
     extruded: false,
-    getHexagon: function(d) { return d.h; },
+    getPolygon: hexPoly,
     getFillColor: fillColor,
     getLineColor: lineColor,
     getLineWidth: lineWidth,
@@ -718,14 +755,25 @@ window.__spikeClearScenario = function() {
 function boot() {
   var glo = (typeof deck !== 'undefined') ? deck : null;
   if (!glo || !glo.DeckGL) {
-    document.getElementById('scenario-summary').textContent =
-      'deck.gl indisponível (CDN offline)';
+    __spikeReport('deck.gl indisponível (CDN offline)', true);
+    window.__spikeError = 'deckgl-unavailable';
     return;
+  }
+  // Diagnóstico: quais classes o bundle expõe (falha silenciosa vira visível).
+  var missing = [];
+  if (!glo.PolygonLayer) missing.push('PolygonLayer');
+  if (!glo.TileLayer) missing.push('TileLayer');
+  if (!glo.BitmapLayer) missing.push('BitmapLayer');
+  if (typeof h3 === 'undefined' || !h3.cellToBoundary) missing.push('h3-js');
+  if (missing.length) {
+    __spikeReport('Classes ausentes no bundle: ' + missing.join(', '), true);
+    window.__spikeError = 'missing:' + missing.join(',');
   }
   updateLegend();
   updateSummary();
+  try {
   deckgl = new glo.DeckGL({
-    canvas: 'deck-canvas',
+    container: 'container',
     initialViewState: {
       longitude: VIEW.longitude, latitude: VIEW.latitude,
       zoom: VIEW.zoom, pitch: 0, bearing: 0
@@ -746,6 +794,10 @@ function boot() {
       }
     }
   });
+  } catch (e) {
+    window.__spikeError = String((e && e.message) || e);
+    __spikeReport('ERRO ao criar deck.gl: ' + window.__spikeError, true);
+  }
 }
 
 if (document.readyState === 'complete' || document.readyState === 'interactive') {

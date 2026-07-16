@@ -242,8 +242,11 @@ class TestBuildDeckglHtml:
 
         html = _build_deckgl_html(self._sample())
         assert "deck.gl" in html
-        assert "H3HexagonLayer" in html
-        assert "getHexagon" in html
+        # Render via PolygonLayer + h3-js v4 (tesselação client-side a partir do
+        # hex_id cru; robusto ao h3 interno incompatível do bundle standalone).
+        assert "PolygonLayer" in html
+        assert "cellToBoundary" in html
+        assert "h3-js" in html
         assert "updateTriggers" in html
         assert "__spikeFirstPaintMs" in html
 
