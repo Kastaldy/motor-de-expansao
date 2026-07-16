@@ -1,0 +1,49 @@
+name: Auditor de PRs
+
+# BLK-ORQ-23 (DEC-016): routine DIARIA READ-ONLY que da visao do que esta aberto/mergeando e mede o
+# gatilho de suspensao do auto-merge, sem virar gargalo. Manda UM aviso ao grupo Telegram de ops (mesmo
+# bot do Motor) e comenta numa issue fixa. NAO aplica label, NAO mergeia, NAO faz push — so LE + avisa.
+#
+# Config humana 1x (Esteira do bloco):
+#   - Secrets: `API_TELEGRAM_TOKEN` (bot) e `MONITOR_TELEGRAM_CHAT_ID` (grupo de ops) — os MESMOS do
+#     monitoramento da VPS (docs/infra_producao.md). Sem eles, o job so imprime o relatorio no log.
+#   - (Opcional) Variable `AUDITOR_ISSUE_NUMBER` = numero de uma issue fixa p/ o historico versionado;
+#     sem ela, so o Telegram recebe.
+
+on:
+  schedule:
+    - cron: "0 12 * * *" # 12:00 UTC = 09:00 BRT, diario
+  workflow_dispatch: {} # permite rodar sob demanda
+
+# READ-ONLY sobre o repo/PRs; a UNICA escrita e o comentario na issue fixa de historico.
+permissions:
+  contents: read # checkout + git log (revert na main)
+  pull-requests: read # listar PRs abertos/mergeados + diff (paths)
+  checks: read # status dos checks
+  statuses: read
+  actions: read # gh run list (CI da main)
+  issues: write # comentar na issue fixa de historico (NAO toca PRs)
+
+concurrency:
+  group: auditor-prs
+  cancel-in-progress: false
+
+jobs:
+  auditar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0 # historico completo p/ o git log --since=90d (reverts)
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Auditar PRs e avisar (Telegram + issue)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          API_TELEGRAM_TOKEN: ${{ secrets.API_TELEGRAM_TOKEN }}
+          MONITOR_TELEGRAM_CHAT_ID: ${{ secrets.MONITOR_TELEGRAM_CHAT_ID }}
+          AUDITOR_ISSUE_NUMBER: ${{ vars.AUDITOR_ISSUE_NUMBER }}
+        run: python scripts/auditor_prs.py

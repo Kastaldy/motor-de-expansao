@@ -926,6 +926,8 @@ por persona** (executivo, operador, leigo). Relatório de problemas priorizados 
 | **Autonomia** | **manual (NÃO loop-safe)** — design/UX; exige julgamento humano. NÃO marcar loop-safe. |
 
 **Contexto.** Reduzir a complexidade para leigos sem perder poder para power users.
+Insumo de benchmark externo: `docs/system_design_referencia.md` (§3 layout, §4 navegação, §7 progressive
+disclosure, §8 fluxo triagem→viabilidade com H3, §10 matriz persona).
 **Objetivo.** Redesenhar a **arquitetura de informação** em torno dos fluxos core (triagem→viabilidade, per
 `docs/estado_dos_modelos.md`); **progressive disclosure** (modo simples p/ leigo vs avançado); wireframes de baixa
 fidelidade por persona. Usar o guia `frontend-design`.
@@ -946,6 +948,8 @@ fidelidade por persona. Usar o guia `frontend-design`.
 
 **Contexto.** Consolidar a linguagem visual (a direção **turquesa Ultra + magenta concorrente** do BLK-UI-10;
 tipografia; componentes) e o sistema de dataviz dos mapas/gráficos.
+Insumo de benchmark externo: `docs/system_design_referencia.md` (§5 componentização — design system de 5-6
+componentes canônicos; §6.2 paletas acessíveis e dataviz para leigos).
 **Objetivo.** Proposta de **design system** (tokens, componentes, paletas acessíveis light/dark) reusando os guias
 `frontend-design` e `dataviz`.
 **Guardrail.** §5 READ-ONLY M1.
@@ -964,6 +968,8 @@ tipografia; componentes) e o sistema de dataviz dos mapas/gráficos.
 | **Autonomia** | **manual (NÃO loop-safe)** — decisão estratégica; gate humano obrigatório + DEC. NÃO marcar loop-safe. |
 
 **Contexto.** Consolidar tudo numa recomendação acionável.
+Insumo de referência: `docs/system_design_referencia.md` (§2 diagnóstico técnico do gargalo rerun/pydeck e
+§11 recomendações priorizadas alimentam o critério de performance e o de custo de dev da matriz de decisão).
 **Objetivo.** Relatório executivo que junta **perf** (REV-01..06), **arquitetura** (REV-07/08) e **UX** (REV-09..11)
 numa **recomendação de rumo** (rebuild vs refactor incremental), **stack alvo**, direção de UX e **roadmap faseado**
 (esforço × risco × valor por fase). Registrar **DEC** com a decisão. A implementação vira **epic próprio** (fora deste
@@ -1404,367 +1410,129 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 
 ---
 
-### BLK-ORQ-20 — Portão por checks de CI: `guard` + `review-gate` + `claude-review` + `REVIEW.md`
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Crítica** (introduz a governança de merge do repo e mexe em CI — path CRÍTICO do `loop_guard`; **READ-ONLY sobre o M1**). Coberta pela **DEC-016** (aprovada 2026-07-13). |
-| **Prioridade** | **Máxima** (destrava toda a esteira; é pré-requisito dos demais blocos da epic). |
-| **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — DEC-016 já aprovada]` → Builder → QA. |
-| **Status** | **Em execução** (branch `ciclo/BLK-ORQ-20-autonomia`). |
-| **Depende de** | **DEC-016 registrada** (CLAUDE.md §8) — concluído neste mesmo PR. |
-| **Autonomia** | **manual (NÃO loop-safe)** — mexe em CI/governança (paths CRÍTICO e GOVERNANÇA do próprio guard); NUNCA loop-safe. |
-
-**Contexto.** Hoje a `main` exige **1 aprovação humana** (Felipe) e o único required check é `test`. A DEC-016
-troca esse portão por checks auditáveis. Este bloco **cria os checks**; a proteção só é aplicada no **BLK-ORQ-21**
-(depois de os checks terem rodado ao menos 1×).
-
-**Objetivo.** Entregar os **3 checks novos** + o contrato de revisão, sem alterar branch protection ainda.
-
-**Escopo.**
-1. **`.github/workflows/guard.yml`** — job **`guard`** em **`pull_request_target`** (roda a partir da **BASE**;
-   **NUNCA** faz checkout nem executa código do PR — senão um PR agêntico editaria o próprio job e se
-   auto-aprovaria). Lê os paths tocados via API e chama `scripts/loop_guard.py`, classificando em **CRÍTICO**
-   (M1, scores paralelos servidos em produção, `deploy/`, segredos, CI) e **GOVERNANÇA** (o próprio guard,
-   `.claude/`, `REVIEW.md`, `CLAUDE.md`, `tasks/backlog.md`).
-2. **`.github/workflows/claude-review.yml`** — job **`claude-review`** com `anthropics/claude-code-action@v1`,
-   autenticado por **`claude_code_oauth_token`** (secret `CLAUDE_CODE_OAUTH_TOKEN`, assinatura Max — **sem custo
-   de API**). **REPROVA o check** em achado de severidade alta. **Posta UM comentário único (sticky), atualizado a
-   cada push — NUNCA review threads inline** (a `main` tem `required_conversation_resolution: true`: thread inline
-   aberta **trava o auto-merge** até alguém resolver).
-3. **Job `review-gate`** — exige a label conforme a criticidade: nada em **Baixa/Média**; **`aprovado-humano`** em
-   **Alta**; **`critica-aprovada`** em **Crítica**, com **validação via API do AUTOR da label** (só `Kastaldy`).
-4. **`REVIEW.md`** — contrato do revisor: severidades, o que reprova, formato sticky, o que NÃO é achado.
-5. **`scripts/loop_guard.py`** — ampliar com a classificação CRÍTICO/GOVERNANÇA + modo de uso por CI (lista de
-   paths → exit code), **preservando** o comportamento atual usado pelo loop (`RELATORIO-BLOQUEIO.md`).
-6. **Testes** de todo comportamento novo (`pytest`).
-7. **Blindagens do red team (2026-07-13; detalhadas na DEC-016, §8):** job **`dismiss-stale-approval`** (push novo
-   remove as labels de aprovação); **conferência da label `criticidade:*` contra o campo Criticidade do bloco em
-   `tasks/backlog.md` da BASE** (divergência = reprovado; PR sem bloco identificável exige `aprovado-humano`);
-   **validação via API de QUEM aplicou a label** (humano não-bot, ≠ autor do PR, com `write`/`admin`; `Kastaldy` na
-   Crítica); **PR de fork REPROVA no `claude-review`** (job pulado por `if:` conta como **sucesso** em required
-   check — não pular, reprovar); `pyproject.toml`, `constraints.txt`, `conftest.py`, `.gitleaks*`, `.trivyignore` e
-   `Dockerfile.*` na classe **CRÍTICO** (senão um PR desarma o próprio `test`, que roda do HEAD); **fail-closed**
-   em toda leitura (diff ilegível, `arquivos_revisados < 1`, saída inválida, action fora do ar → **vermelho**).
-
-**Critérios de aceite.**
-- `guard.yml` usa **`pull_request_target`** e **não contém** `actions/checkout` do `head.sha` nem execução de código
-  do PR (verificável por leitura do YAML + teste que falha se o gatilho ou o ref mudarem).
-- Teste: PR tocando `config.py`/`pipelines/m1/`/artefato oficial → `loop_guard` classifica **CRÍTICO**.
-- Teste: PR tocando `.github/`, `scripts/loop_guard.py`, `.claude/`, `REVIEW.md`, `CLAUDE.md` ou `tasks/backlog.md`
-  → classifica **GOVERNANÇA**.
-- Teste: label `critica-aprovada` aplicada por login **≠ `Kastaldy`** → `review-gate` **REPROVA**.
-- Teste: bloco **Baixa/Média** sem label nenhuma → `review-gate` **PASSA**.
-- Teste: PR tocando `pyproject.toml`, `constraints.txt`, `conftest.py`, `.gitleaks*`, `.trivyignore` ou
-  `Dockerfile.*` → `loop_guard` classifica **CRÍTICO** (não dá para desarmar o `test` sem gate).
-- Teste: label `criticidade:baixa` num PR cujo bloco em `tasks/backlog.md` (BASE) é **Crítica** → **REPROVA**
-  (criticidade não é auto-declarada); PR **sem bloco identificável** só passa com `aprovado-humano`.
-- Teste: `aprovado-humano` aplicada por **bot**, pelo **autor do PR**, ou por login **sem `write`/`admin`**
-  → **REPROVA**.
-- Teste: **push novo** em PR com `critica-aprovada`/`aprovado-humano` → `dismiss-stale-approval` **remove** a label
-  (aprovação vale para o diff revisado, não para o commit seguinte).
-- Teste: **PR de fork** → `claude-review` **REPROVA** (nunca "pula" — job pulado contaria como sucesso).
-- Teste: diff ilegível / `arquivos_revisados < 1` / saída inválida → check **VERMELHO** (**fail-closed**).
-- `claude-review` reprova (exit ≠ 0) em achado de severidade alta; comentário **sticky único**, zero review threads.
-- Suíte FULL verde (`pytest -n auto`); `ruff` + `mypy` limpos.
-- **Nenhum** arquivo de `deploy/`, `secrets/`, `.env`, `.claude/settings.json` ou `.gitignore` tocado neste PR.
-
-**Guardrail.** §5 **READ-ONLY M1** (zero escrita em score/pesos/`config.py`/`pipelines/m1/`/artefatos oficiais);
-NÃO tocar VPS/`deploy/`/segredos; **NÃO aplicar** branch protection aqui (é o ORQ-21); identificadores sem acento
-(`guard`, `review-gate`, `claude-review`, `aprovado-humano`, `critica-aprovada`).
-
----
-
-### BLK-ORQ-21 — Aplicar a branch protection nova (0 aprovações, `enforce_admins`, 4 checks) + ligar auto-merge
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Crítica** (muda a governança efetiva da `main`; a partir daqui **nem o Felipe** mergeia sem CI verde). Coberta pela **DEC-016**. |
-| **Prioridade** | **Máxima** (logo após o ORQ-20 mergeado). |
-| **Esteira** | Humano (Felipe) executa os comandos `gh api` → verificação → registro no PR/handoff. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-ORQ-20 mergeado** **E** os **3 checks novos** (`guard`, `claude-review`, `review-gate`) terem **rodado ao menos 1× em um PR real**. **Ordem inegociável:** exigir um check que **nunca rodou** o deixa em estado **"expected" eterno** → **TODOS os PRs do repo travam** (inclusive o que consertaria isso). |
-| **Autonomia** | **manual (NÃO loop-safe)** — altera configuração do repositório/CI; NUNCA loop-safe. |
-
-**Contexto/Objetivo.** Aplicar na `main` o portão desenhado na DEC-016 e habilitar o **auto-merge nativo**
-(hoje `allow_auto_merge: false` → o auto-merge simplesmente **não existe** no repo).
-
-**ORDEM DE BOOTSTRAP (INEGOCIÁVEL — inverter estes passos CONGELA o repositório).**
-1. **Mergear o BLK-ORQ-20 com a proteção ATUAL** (1 aprovação humana, único required check `test`). É o último
-   merge pelo regime antigo.
-2. **Abrir 1 PR qualquer** (pode ser trivial) e deixar `guard`, `review-gate` e `claude-review` **rodarem ao menos
-   uma vez**. O GitHub só aceita como *required check* um **contexto que já reportou** ao menos um resultado no repo.
-3. **SÓ ENTÃO** aplicar o **PUT** da branch protection com os **4 checks** (`test`, `guard`, `review-gate`,
-   `claude-review`) + `required_approving_review_count: 0` + `enforce_admins: true`.
-4. **Ligar `allow_auto_merge`** (hoje **`false`** — sem isso o auto-merge nem existe) **e `delete_branch_on_merge`**.
-
-> **AVISO (o motivo de a ordem não poder ser invertida).** O `guard.yml` roda em **`pull_request_target`**, ou seja,
-> carrega o workflow **da BASE** — logo os checks novos **NÃO rodam no próprio PR que os cria**; eles só passam a
-> existir **depois do merge** do ORQ-20. E **`enforce_admins: true` + um required check que nunca reportou** =
-> **repo CONGELADO**: o check fica em *"expected"* eterno, **nenhum PR mergeia — nem o do admin, nem o que
-> consertaria isso** (o bypass `--admin` já não existe mais). Aplicar o PUT antes do passo 2 é exatamente esse
-> cenário.
-
-**Escopo (comandos).**
-1. **Antes do PUT:** `gh api repos/Kastaldy/motor-de-expansao/branches/main/protection > protection_backup.json`
-   — o **PUT é SUBSTITUTIVO**: todo campo omitido é **APAGADO**. Guardar o backup viabiliza rollback imediato.
-2. Aplicar a proteção:
-   ```bash
-   gh api --method PUT repos/Kastaldy/motor-de-expansao/branches/main/protection --input - <<'JSON'
-   {
-     "required_status_checks": {
-       "strict": true,
-       "contexts": ["test", "guard", "claude-review", "review-gate"]
-     },
-     "enforce_admins": true,
-     "required_pull_request_reviews": {
-       "required_approving_review_count": 0,
-       "dismiss_stale_reviews": false,
-       "require_code_owner_reviews": true
-     },
-     "restrictions": null,
-     "required_conversation_resolution": true,
-     "allow_force_pushes": false,
-     "allow_deletions": false
-   }
-   JSON
-   ```
-   > **`require_code_owner_reviews: true` é a defesa N0 (não-negociável).** Sem ela, um PR do próprio
-   > repo pode **forjar o portão**: como o `default_workflow_permissions` do repo é `read` mas **não é um
-   > teto** (a doc confirma que um workflow pode declarar `permissions: {checks: write}` e recebê-lo — só
-   > fork tem o write rebaixado), um PR pode adicionar um workflow que **publica check runs verdes com os
-   > nomes obrigatórios** (`test`/`guard`/`claude-review`/`review-gate`). Com `.github/CODEOWNERS`
-   > declarando `@Kastaldy` dono de `/.github/`, qualquer PR que adicione/edite um workflow passa a exigir
-   > **revisão do Felipe avaliada nativamente pelo GitHub** — que **não é um check run e não é forjável**.
-   > `require_code_owner_reviews` **funciona mesmo com `required_approving_review_count: 0`** (regras
-   > independentes, confirmado na doc). O `.github/CODEOWNERS` já existe (entregue no BLK-ORQ-20).
-3. Ligar auto-merge e limpeza de branch:
-   ```bash
-   gh api --method PATCH repos/Kastaldy/motor-de-expansao \
-     -F allow_auto_merge=true -F delete_branch_on_merge=true
-   ```
-4. Criar as labels `aprovado-humano`, `critica-aprovada` e as `criticidade:baixa|media|alta|critica`
-   (se ainda não existirem).
-5. **Secret do revisor = token da conta PESSOAL do Felipe (decisão para a fase de TESTES; sem conta-máquina).**
-   O `claude-review` autentica via `secrets.CLAUDE_CODE_OAUTH_TOKEN` (gerado por `claude setup-token`). **Decisão de
-   Felipe (2026-07-13): usar o token da própria conta pessoal para começar e testar — NÃO criar conta-máquina.**
-   Custo em **dólar = 0** (sem API key). **Trade-off aceito, a MONITORAR:** o token consome o pool de uso da
-   assinatura Max do Felipe → cada PR aberto morde a cota de 5h/semana dele, competindo (de forma invisível) com o
-   trabalho interativo dele. Ruído já mitigado no `claude-review.yml`: `--model sonnet`, `concurrency:
-   cancel-in-progress`, e pular draft/fork. **Reavaliar conta-máquina SÓ se a cota apertar** (sinal: cota estourando
-   no meio do dia). **AINDA NÃO configurado (verificado 2026-07-13):** `gh secret list` está vazio — o token precisa
-   ser adicionado ao repo com `gh secret set CLAUDE_CODE_OAUTH_TOKEN` (o auth do Claude Code CLI **local** NÃO serve:
-   o `claude-review` roda no **runner do GitHub**, não na máquina do Felipe).
-
-**Kill-switch (restaura o gate humano em 1 comando).** Se o portão der errado, o regime antigo volta com um único
-PUT — **não é preciso reverter código nem PR**:
-```bash
-gh api --method PUT repos/Kastaldy/motor-de-expansao/branches/main/protection --input - <<'JSON'
-{
-  "required_status_checks": {"strict": true, "contexts": ["test"]},
-  "enforce_admins": true,
-  "required_pull_request_reviews": {"required_approving_review_count": 1},
-  "restrictions": null
-}
-JSON
-```
-`required_approving_review_count: 1` traz de volta a aprovação humana obrigatória. É o mesmo kill-switch citado na
-DEC-016 (gatilho de suspensão: **2 incidentes em 90 dias**). Manter também o `protection_backup.json` do passo 1
-como rollback exato do estado anterior.
-
-**Critérios de aceite.**
-- **Ordem de bootstrap cumprida e comprovada:** (1) ORQ-20 mergeado pelo regime antigo; (2) `guard`, `review-gate` e
-  `claude-review` **já reportaram ao menos 1× em um PR real** (`gh pr checks <PR>` mostra os 3) — **antes** do PUT;
-  (3) só então o PUT dos 4 checks; (4) `allow_auto_merge` ligado por último. **Inverter (2) e (3) congela o repo.**
-- `gh api .../branches/main/protection` retorna `required_approving_review_count: 0`, `enforce_admins.enabled: true`
-  e os **4 contexts** exatos (`test`, `guard`, `claude-review`, `review-gate`).
-- `gh api repos/Kastaldy/motor-de-expansao --jq '.allow_auto_merge'` → `true` (estado inicial: **`false`**).
-- **Prova anti-congelamento:** logo após o PUT, um PR novo mostra os **4 checks reportando** (nenhum preso em
-  *"expected"*). Se algum ficar pendente para sempre → aplicar o **kill-switch** imediatamente.
-- **Prova do portão:** um PR de teste com CI vermelho **NÃO** mergeia **nem com `gh pr merge --admin`**
-  (é a prova de que `enforce_admins` fechou o bypass que causou o merge do PR #4 — DEC-005, emenda 2026-06-12).
-- **Prova do auto-merge:** um PR **Baixa/Média** com os 4 checks verdes mergeia **sozinho**, sem aprovação humana.
-- **Token do revisor configurado:** `gh secret set CLAUDE_CODE_OAUTH_TOKEN` executado (token da **conta pessoal do
-  Felipe**, decisão da fase de testes) e `gh secret list` mostra o secret — sem ele o `claude-review` não reporta e o
-  required check fica pendente. Consumo da cota Max do Felipe **monitorado** na 1ª quinzena; conta-máquina só se apertar.
-- **Interação `count:0` × code-owner validada EMPIRICAMENTE (não por doc):** a mesma prova anti-spoof acima
-  demonstra, num PR real, que `require_code_owner_reviews: true` bloqueia o PR que toca `.github/**` **mesmo com
-  `required_approving_review_count: 0`** — se o PR forjado ficar mergeável, a premissa (confirmada só na doc) está
-  errada no nosso repo e o portão está furado.
-- **Prova anti-spoof (N0) — rodar ANTES de confiar no portão:** abrir um PR de teste (branch do próprio repo)
-  que adiciona `.github/workflows/pwn.yml` com `permissions: {checks: write, statuses: write}` publicando um
-  check run **verde** de nome `guard` (e `test`). Verificar em `gh api repos/Kastaldy/motor-de-expansao/commits/<sha>/check-runs`
-  que o `guard` REAL (vermelho, por tocar `.github/`) coexiste com o forjado, e confirmar que **o botão de merge
-  permanece bloqueado** — seja porque (a) o GitHub exige TODOS os homônimos (o vermelho real bloqueia), seja porque
-  (b) `require_code_owner_reviews: true` exige a revisão do Felipe em `.github/**` (que o PR não tem). **Se o PR
-  ficar mergeável, NÃO prosseguir** — o portão está furado; investigar antes de qualquer auto-merge. Fechar o PR de
-  teste sem mergear.
-- `require_code_owner_reviews: true` confirmado (`gh api .../branches/main/protection --jq '.required_pull_request_reviews.require_code_owner_reviews'` → `true`) e `.github/CODEOWNERS` presente na `main`.
-- **(Opcional, defesa em profundidade)** avaliar um **repository ruleset** com "require workflows to pass" apontando
-  `guard.yml` **por caminho** (não por nome de check): um homônimo forjado não satisfaz um required workflow. Rulesets
-  estão disponíveis em repo público no plano free (`gh api repos/Kastaldy/motor-de-expansao/rulesets`).
-- `protection_backup.json` guardado (fora do repo; **não commitar**) + **kill-switch testado**: PUT com
-  `required_approving_review_count: 1` restaura o gate humano.
-
-**Guardrail.** §5 **READ-ONLY M1**; §6 (nenhum comando na VPS — isto é API do GitHub, não servidor); **não commitar**
-o backup da proteção; **deploy segue manual, por digest** (auto-merge NÃO deploya).
-
----
-
-### BLK-ORQ-22 — Garimpeiro: routine na nuvem que abre PRs de branches `claude/*`
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** (processo autônomo recorrente que **abre PRs**; não mergeia — o portão é o do ORQ-21. **READ-ONLY sobre o M1**). |
-| **Prioridade** | Alta (após o portão estar de pé). |
-| **Esteira** | Humano configura 1× (repo de dados + environment + routine) → operação autônoma. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-ORQ-21** (sem o portão aplicado, PRs abertos por routine ficariam esperando aprovação humana — não resolveria o gargalo). |
-| **Autonomia** | **manual (NÃO loop-safe)** — configuração de infra/nuvem por humano, 1×; NUNCA loop-safe. |
-
-**Contexto.** O loop hoje roda na máquina do Felipe (`iniciar-loop.cmd`). O Garimpeiro leva a execução para a nuvem
-e **entrega o trabalho como PR** — sem merge, sem deploy.
-
-**Escopo.**
-1. **Repo PRIVADO `motor-dados`** com os **~270 MB de `data/staging`**. **O repo do motor é PÚBLICO
-   (`Kastaldy/motor-de-expansao`) — NUNCA publicar parquet nele** (dado de negócio + risco de PII).
-2. **Environment** com **setup script** que clona o `motor-dados` e monta `data/staging` antes do bloco rodar.
-3. **Routine diária às 02:00 BRT**.
-4. **Push restrito a `claude/*`** (permissão default da routine, **sem PAT de escrita** — não consegue push na `main`
-   nem em `ciclo/*`).
-5. **Prompt exige `scripts/loop_guard.py` VERDE _antes_ de abrir o PR** (falhou → não abre PR, reporta).
-6. **Seleção de bloco por marcador ANCORADO:** regex **`^\| \*\*Autonomia\*\* \| loop-safe`** — âncora `^` +
-   `| ` obrigatórios; **NÃO casa** `| **Autonomia** | **manual (NÃO loop-safe)** |` (que contém a substring
-   "loop-safe" e seria falso-positivo de um `grep loop-safe` ingênuo). Respeitar também `Depende de`.
-
-**Critérios de aceite.**
-- Teste do seletor: bloco `manual (NÃO loop-safe)` **NÃO** é selecionado; bloco `loop-safe` **É** (fixtures dos dois
-  formatos reais do `backlog.md`).
-- A routine **não consegue** push fora de `claude/*` (tentativa falha).
-- `loop_guard` vermelho → **nenhum PR aberto**.
-- Nenhum `.parquet`/dado de `data/staging` aparece em diff do repo público (verificável no PR).
-- 1 execução real: PR aberto a partir de branch `claude/*`, com os 4 checks rodando.
-
-**Guardrail.** §5 **READ-ONLY M1**; **NUNCA** commitar dado/parquet no repo público; sem credencial de VPS/deploy no
-ambiente da routine (não deploya); o Garimpeiro **abre PR, não mergeia**.
-
----
-
-### BLK-ORQ-23 — Auditor de PRs: routine diária READ-ONLY com relatório por e-mail
-
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Média** (routine **READ-ONLY**: não aplica label, não mergeia, não escreve código; **READ-ONLY sobre o M1**). |
-| **Prioridade** | Alta (é o **detector do gatilho de suspensão** da DEC-016 — sem ele o gatilho não tem medição). |
-| **Esteira** | Humano configura 1× (routine + conector Outlook) → operação autônoma. |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-ORQ-20** (precisa dos checks existindo para classificar). |
-| **Autonomia** | **manual (NÃO loop-safe)** — configuração de rotina na nuvem por humano, 1×; NUNCA loop-safe. |
-
-**Contexto/Objetivo.** Dar ao Felipe **visão diária** do que está aberto/mergeando **sem** ele virar o gargalo de novo.
-O gate é **determinístico** (checks + labels) — o Auditor **informa**, não decide.
-
-**Escopo.**
-1. Routine **diária** que lê **PRs abertos + diff + status de CI** (READ-ONLY).
-2. **Classifica** cada PR em: **candidato a auto-merge** / **revisar** / **bloqueio**.
-3. Entrega **UM relatório por e-mail** (conector Outlook) + **comentário em issue fixa** (histórico versionado).
-4. **Conta os incidentes** do gatilho da DEC-016: PR auto-mergeado que (i) reprove o `guard` em auditoria posterior,
-   (ii) introduza segredo/PII, (iii) exija `revert` na `main`, ou (iv) quebre o CI da `main`.
-   **2 incidentes em 90 dias → alerta explícito de SUSPENSÃO do auto-merge** no relatório.
-
-**Critérios de aceite.**
-- **NÃO aplica label**, **NÃO mergeia**, **NÃO faz push** (o gate é determinístico, **não a opinião do modelo**) —
-  verificável pelas permissões da routine (sem escrita).
-- 1 e-mail por dia (não 1 por PR); issue fixa recebe o mesmo resumo.
-- A contagem de incidentes (janela de 90 dias) aparece no relatório, com o alerta de suspensão ao atingir 2.
-- Relatório distingue os 3 estados e cita o check que reprovou, quando houver.
-
-**Guardrail.** §5 **READ-ONLY M1**; routine sem permissão de escrita no repo (nem label, nem merge, nem push);
-sem credencial de VPS/deploy; **não** expor conteúdo sensível de diff no corpo do e-mail (linkar o PR).
+- BLK-ORQ-20 (concluído 2026-07-14) — ver tasks/completed.md
 
 
 ---
 
-### BLK-ORQ-24 — Separar o housekeeping do backlog do PR de ciclo (destravar o auto-merge do loop)
+- BLK-ORQ-21 (concluído 2026-07-14) — ver tasks/completed.md
+
+
+---
+
+- BLK-ORQ-22 (concluído 2026-07-15) — ver tasks/completed.md
+
+
+---
+
+- BLK-ORQ-23 (concluído 2026-07-15) — ver tasks/completed.md
+
+
+
+---
+
+### BLK-RELPON-08 — Big Numbers (pagina 5) do Relatorio Pontual: trocar metrica, reordenar e semaforo verde/vermelho por meta
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Média** (muda o Passo 6.0 da esteira `/run-cycle`; **READ-ONLY sobre o M1**). |
-| **Prioridade** | **Alta** (sem isto, o objetivo central da DEC-016 — auto-merge do loop — fica ANULADO na prática). |
-| **Esteira** | /run-cycle (edita `.claude/commands/run-cycle.md` + `prompts/qa_analyzer.md`). |
-| **Status** | Pendente. |
-| **Depende de** | **BLK-ORQ-20** (o `guard` precisa existir e classificar `tasks/backlog.md` como GOVERNANÇA). |
-| **Autonomia** | **manual (NÃO loop-safe)** — altera a própria orquestração e toca `CLAUDE.md`/`prompts/` (governança). NÃO marcar loop-safe. |
+| **Criticidade** | **Media** (altera a pagina Big Numbers do Relatorio Pontual Censitario; **READ-ONLY sobre o M1**; ADICIONA um campo agregado `domicilios_total_raio` ao motor do ponto e muda layout/cor da grid; nucleo `censo_*` so ESTENDE leitura/render, sem tocar intersecao/raio/marca d'agua). |
+| **Prioridade** | A definir (Vinicius). |
+| **Esteira** | Block Orchestrator -> Planner -> Builder -> QA -> `[REVISAO HUMANA - visual do PDF]` -> merge. |
+| **Status** | Pendente - decisoes de produto D1/D2/D3 JA TOMADAS (Vinicius, 2026-07-15, abaixo). |
+| **Depende de** | Relatorio Pontual ja existente (pagina Big Numbers, `_big_numbers_page`); malha de setores IBGE 2022 com `domicilios_particulares_ocupados_setor_2022` (ja usada pelo BLK-RELPON-07). |
+| **Autonomia** | **manual (NAO loop-safe)** - altera relatorio auditavel e exige revisao visual do PDF. |
 
-**Contexto (o colapso operacional que o red team achou).** O `guard` classifica `tasks/backlog.md` como
-**GOVERNANÇA** — e isso é **correto**: é onde vive o marcador `loop-safe`, então um PR que editasse o backlog
-livremente e auto-mergeasse poderia **se auto-conceder** o direito de o loop tocar novos blocos. **Mas** o Passo 6.0
-do `/run-cycle` faz *housekeeping* a CADA ciclo aprovado: `scripts/housekeeping_move_block.py` **substitui o bloco por
-um stub em `tasks/backlog.md`** (além de mover o corpo para `tasks/completed.md`). Logo **TODO PR de ciclo/loop toca
-`backlog.md` → cai em GOVERNANÇA → exige `aprovado-humano`** — ou seja, **nenhum PR do loop/Garimpeiro mergeia
-sozinho**, e a rotina viraria carimbar a label por hábito (cheque em branco pela porta dos fundos). Isso anula o
-objetivo da DEC-016. (`tasks/completed.md` **não** é governança — o append do resumo continua auto-mergeável.)
+**Objetivo.** Ajustar a pagina 5 (Big Numbers) do Relatorio Pontual Censitario em tres frentes:
+(1) substituir a metrica "Score censitario maximo" por "Numero de domicilios" (no raio); (2) reordenar
+a linha 1 da grid; (3) pintar o fundo de cada quadro em verde (meta atingida = "positivo") ou vermelho
+(meta nao atingida = "negativo"), estilo semaforo, comparando cada valor com a meta esperada.
+READ-ONLY sobre o M1.
 
-**Objetivo.** Fazer o PR de ciclo/loop conter **apenas código + testes + o append em `completed.md`** (que passa
-LIMPO no guard), deixando a alteração de `backlog.md` **fora** do PR auto-mergeável.
+**Contexto tecnico (medido 2026-07-15).**
+- A pagina Big Numbers (`_big_numbers_page` em `censo_report.py`) e toda "no raio de 1,5 km". Grid 4x2,
+  8 cards, hoje na ordem (indice = `row*4 + col`, `row=idx//4`, `col=idx%4`):
+  - L1: [`Populacao total no raio` (`pop_total_raio`), `Renda per capita media` (`renda_per_capita_media_raio`),
+    `Score censitario medio` (`score_setor_medio`), `Score censitario maximo` (`score_setor_max`)]
+  - L2: [`SAM Fitness (alunos)` (`sam_fitness_potencial`), `Residual Fitness (alunos)` (`oferta_efetiva_disponivel`),
+    `Concorrentes no raio` (`n_concorrentes`), `Consumo concorrentes (est.)` (`oferta_consumida_mercado_estimada`)]
+- **NAO existe hoje um campo de domicilios no raio.** `analisar_ponto_censitario_setores` agrega
+  pop/renda/score no raio mas NAO domicilios. Sera preciso CRIAR o campo `domicilios_total_raio` no
+  `result`, computado com o MESMO padrao de `pop_total_raio`: soma de (`domicilios_particulares_ocupados_setor_2022`
+  x `peso_area_setor`) sobre os setores intersectados (peso = fracao da area do setor dentro do circulo,
+  ja materializada em `pop_estimada_intersecao`/`peso_area_setor`). "n/d" gracioso quando nenhum setor tem
+  domicilios.
+- `domicilios_total` do BLK-RELPON-07 e do BAIRRO/DISTRITO inteiro (pagina 4), NAO do raio - nao reusar
+  aqui (escopos diferentes: pagina 4 = bairro, pagina 5 = raio).
 
-**Opções avaliadas.**
-- **(a) [RECOMENDADA] Housekeeping do backlog em PR SEPARADO/batched.** No modo auto-merge, o ciclo **NÃO** roda o
-  stub-replacement em `backlog.md`; ele só entrega código + `completed.md`. A remoção do bloco do backlog vira um
-  **PR de housekeeping em lote** (semanal), revisado por humano — ou executado pela routine **Zelador** (a criar; já
-  prevista como reconciliadora do backlog). **Vantagem:** simples, sem parser novo; mantém `backlog.md` **sempre sob
-  olho humano**, que é exatamente onde o marcador `loop-safe` deve ser concedido. **Custo:** o backlog fica
-  transitoriamente defasado (o bloco aparece em `completed.md` mas ainda não some do backlog) até o PR de lote —
-  defasagem que o Zelador reconcilia e que **não** afeta o loop (ele lê o marcador, não o stub).
-- **(b) Guard com parser de diff do backlog.** O `guard` passaria a distinguir um diff de `backlog.md` que **só
-  move/stuba o próprio bloco do PR** (sem tocar `Autonomia`/`Criticidade` de OUTROS blocos) → não conta como
-  violação. **Mais poderoso** (PRs de ciclo continuam atômicos), mas exige um **parser de diff confiável na base**;
-  o risco é ele errar e **deixar passar uma auto-marcação `loop-safe`** de outro bloco — exatamente o que o guard
-  existe para impedir. **Rejeitada** por trocar um problema de UX por um risco de segurança.
-- **(c) `backlog.md`/`CLAUDE.md` saem do housekeeping automático no modo loop.** Igual a (a) na prática, mas sem o
-  PR de lote formal (o backlog só é reconciliado quando alguém lembra). Inferior a (a) por não ter dono da
-  reconciliação.
+**Decisoes de produto (gate - JA RESPONDIDAS por Vinicius, 2026-07-15).**
+- **D1 - trocar metrica:** "Score censitario maximo" (`score_setor_max`) SAI da grid; ENTRA "Numero de
+  domicilios" (no raio, novo campo `domicilios_total_raio`). O campo `score_setor_max` PODE permanecer no
+  `result`/CSV para auditoria (so deixa de ser exibido), como o BLK-RELPON-05 fez com `*_setor_ponto`.
+- **D2 - reordenar linha 1:** "Numero de domicilios" vai para **L1C3**; "Score censitario medio" vai para
+  **L1C4** (trocam de posicao). Linha 1 final = [Populacao total no raio, Renda per capita media, Numero de
+  domicilios, Score censitario medio]. Linha 2 INALTERADA.
+- **D3 - semaforo verde/vermelho por meta:** o FUNDO de cada quadro passa a verde (meta atingida) ou
+  vermelho (meta nao atingida), conforme:
 
-**Escopo (opção a).**
-1. `.claude/commands/run-cycle.md` Passo 6.0: no modo auto-merge (Baixa/Média), **pular o stub-replacement** de
-   `backlog.md`; manter o append em `completed.md` (Passo 6.2). Registrar o bloco a stubar numa fila
-   (`tasks/pending_housekeeping.md`, gitignored ou append-union) para o PR de lote.
-2. `prompts/qa_analyzer.md`: o `--check` do helper deixa de ser gate de fechamento **no modo auto-merge** (o
-   stub-move é diferido) — o QA valida que o bloco está DONE, não que o stub já existe.
-3. Documentar o PR de housekeeping em lote (semanal) como responsabilidade do **Zelador** (ou passo manual até ele
-   existir).
-4. **Regra de seleção do loop/Garimpeiro por `completed.md` (fecha o furo de RE-SELEÇÃO durante a defasagem).**
-   Como o stub no `backlog.md` fica diferido por até 7 dias, o bloco concluído continua no backlog **com o marcador
-   `loop-safe` e o heading completo**. Sem proteção, o loop re-selecionaria o mesmo bloco e abriria um PR duplicado.
-   O prompt do loop (`run-ralph-loop.sh`) passa a exigir: **IGNORE qualquer bloco cujo ID já esteja em
-   `tasks/completed.md`, mesmo que ainda apareça no `backlog.md`** — `completed.md` é a fonte de verdade **única** de
-   conclusão (já é o critério de término e de `Depende de` do loop; aqui vira também o critério de SELEÇÃO).
-   **Reler o `completed.md` da `main` ATUALIZADA (checkout/pull fresco) ANTES de cada seleção; NUNCA usar cópia em
-   cache de sessão anterior do loop.** A routine da nuvem clona fresco a cada run (bom); se algum dia o Garimpeiro
-   reusar estado entre execuções, o pull fresco de `completed.md` é obrigatório antes de escolher o bloco.
+  | Card | Verde (positivo) quando | Campo |
+  |---|---|---|
+  | Populacao total no raio | `>= 10000` | `pop_total_raio` |
+  | Renda per capita media | `>= 1500` | `renda_per_capita_media_raio` |
+  | Numero de domicilios | `>= 3000` | `domicilios_total_raio` (NOVO) |
+  | Score censitario medio | `>= 60` | `score_setor_medio` |
+  | SAM Fitness (alunos) | `>= 2000` | `sam_fitness_potencial` |
+  | Residual Fitness (alunos) | `>= 2000` | `oferta_efetiva_disponivel` |
+  | Consumo concorrentes (est.) | VERMELHO quando `sam_fitness_potencial >= 2000` **E** `oferta_efetiva_disponivel < 2000`; senao VERDE | `sam_fitness_potencial`, `oferta_efetiva_disponivel` |
+  | Concorrentes no raio | ESPELHA a cor de "Consumo concorrentes (est.)" | (segue o card acima) |
 
-**Consumidores do `backlog.md` durante a janela de defasagem (por que a janela de até 7 dias é segura).**
-- **Loop/Garimpeiro** — ÚNICO consumidor em tempo real DENTRO deste repo. Usa `completed.md` como verdade de
-  conclusão; com a regra de seleção do item 4, não re-pega bloco fechado.
-- **Zelador** (routine reconciliadora, **A CRIAR**) — a defasagem é o **INPUT** dele, não um bug: deve tratar
-  "bloco em `completed.md` ainda pendente no `backlog.md`" como **housekeeping pendente a reconciliar**, NUNCA como
-  erro. **Requisito de desenho** do bloco do Zelador.
-- **Ferramentas externas de produtividade** (ex.: o `growth-rpg-producer`, skill no ambiente Claude Desktop/Cowork
-  do Felipe, **FORA deste repo/máquina**) — leem o **ClickUp em modo somente-leitura**, **NÃO** o `backlog.md` do
-  git. Fonte de dado diferente → **não afetadas pela defasagem** (o motivo é a FONTE distinta, não a inexistência do
-  consumidor).
+**Escopo permitido (READ-ONLY M1, so display/relatorio + 1 campo agregado no raio).**
+- `censo_point.py` - novo campo `domicilios_total_raio` no `result` de `analisar_ponto_censitario_setores`,
+  computado pela soma de (`domicilios_particulares_ocupados_setor_2022` x `peso_area_setor`) (mesmo padrao de
+  `pop_total_raio`; "n/d"/None gracioso). SO leitura/agregacao; nao toca intersecao/raio/`circle_metric`/metodo.
+- `censo_report.py` - em `_big_numbers_page`: (a) trocar o card `score_setor_max` por `domicilios_total_raio`
+  ("Numero de domicilios", `_format_number(..., 0)`); (b) reordenar L1 conforme D2; (c) aplicar cor de fundo
+  por card (verde/vermelho/neutro) conforme D3 - helper PURO de decisao de cor por card + a pintura do
+  retangulo do card. Contraste de texto preservado (rotulo/valor legiveis sobre o fundo).
+- Testes: agregacao `domicilios_total_raio` (com peso de area conhecido; "n/d"); ordem/rotulos dos cards da
+  L1; cor por card em cenarios (acima/abaixo da meta; a regra do Consumo; o espelho do Concorrentes; n/d
+  neutro).
+- `docs/relatorio_pontual_censitario.md`.
 
-**Critérios de aceite.**
-- Um PR de ciclo de bloco **Média** que altere só código + testes + `completed.md` passa o `guard` **LIMPO**
-  (`printf '<arquivos>' | python scripts/loop_guard.py --stdin --json` → `{"limpo": true}`) e é **auto-mergeável**.
-- Um PR que toque `backlog.md` continua caindo em GOVERNANÇA (o guard **não** é afrouxado).
-- O bloco concluído aparece em `completed.md` no PR de ciclo; o stub em `backlog.md` chega pelo PR de lote.
-- **Anti-re-seleção:** com um bloco X já em `completed.md` mas ainda com heading `loop-safe` no `backlog.md`, uma
-  passada do loop **NÃO** re-seleciona X (teste com fixture da defasagem) e a seleção lê o `completed.md` **fresco**.
-- A esteira `/run-cycle` documentada e o dry-run de orquestração (Passo 6.c) passam.
+**Questoes para o gate/Planner (a confirmar antes do Builder).**
+- **Q1 - "Numero de domicilios" e NO RAIO** (novo `domicilios_total_raio`), nao do bairro (pagina 4).
+  Recomendado e assumido; confirmar no gate visual.
+- **Q2 - valor "n/d" (dado ausente):** propor cor NEUTRA (cinza claro, sem verde/vermelho) quando o valor do
+  card e None/"n/d" (pintar verde/vermelho um dado ausente seria enganoso). Vale tambem para
+  Consumo/Concorrentes quando SAM ou Residual e n/d (condicao indecidivel -> neutro). Confirmar.
+- **Q3 - paleta/contraste:** propor fundo em tom PASTEL (verde/vermelho claro) com barra de acento solida,
+  mantendo rotulo/valor em cinza-escuro legivel; ajuste fino no gate visual.
+- **Q4 - as metas (10000/1500/3000/60/2000/2000) sao constantes de DISPLAY** locais ao relatorio (nao sao
+  gate do M1/mercado); recomendado vira-las constantes nomeadas no modulo (auditaveis). Confirmar.
 
-**Guardrail.** §5 **READ-ONLY M1**; o `guard` **não** é enfraquecido (backlog segue governança); mudança só na
-ORDEM/EMPACOTAMENTO do housekeeping, não na proteção.
+**Fora de escopo.** Metodo de intersecao `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
+`RAIO_CENSITARIO_DEFAULT_KM`, mapas de calor/choropleth, marca d'agua anti-PII, `set_compression(False)`,
+pagina "Perfil do Bairro/Distrito" (BLK-RELPON-07). `score_priorizacao`/pesos/`hex_score_estrutural`/
+carteira/plano/artefatos oficiais do M1. `flag_sam`/gate do SAM (DEC-006/DEC-007) - as metas de cor sao de
+DISPLAY, NAO alteram o gate do SAM nem os valores de `sam_fitness_potencial`/`oferta_efetiva_disponivel`.
+Contagem de paginas (segue 6). Relatorio Municipal e UI do dashboard.
 
+**Riscos.**
+- **Novo campo no raio** - `domicilios_total_raio` deve seguir EXATAMENTE o padrao de peso de `pop_total_raio`
+  (fracao de area), senao o numero diverge de pop/renda no mesmo raio. Teste dedicado com peso de area conhecido.
+- **Contraste** - fundo colorido nao pode tornar rotulo/valor ilegiveis; validar no gate visual (texto escuro
+  sobre pastel claro).
+- **n/d pintado como meta** - sem a cor neutra (Q2), um dado ausente viraria "vermelho" (falsa reprovacao) ou
+  "verde"; tratar n/d explicitamente.
+- **Semantica do Consumo/Concorrentes** - a regra e assimetrica (Consumo e "ruim" quando ha demanda SAM alta
+  mas Residual baixo = mercado ja consumido); documentar na nota do slide para nao confundir "verde = mais
+  concorrentes".
+- **Metas hardcoded** - se viram constantes nomeadas (Q4), fica auditavel; caso contrario, documentar os
+  limiares na nota do slide.
+
+**Criterio de aceite.** Pagina Big Numbers passa a exibir "Numero de domicilios" (no raio) em L1C3 e "Score
+censitario medio" em L1C4, sem "Score censitario maximo"; cada quadro tem fundo verde/vermelho (neutro para
+n/d) conforme as metas de D3, com Consumo pela regra SAM x Residual e Concorrentes espelhando Consumo;
+`domicilios_total_raio` computado por peso de area e testado; intersecao/raio/marca d'agua/M1 INTOCADOS;
+`ruff`/`mypy` limpos; suite verde; revisao visual do PDF aprovada.
 
 ---

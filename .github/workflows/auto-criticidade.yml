@@ -1,0 +1,60 @@
+name: Auto-criticidade e auto-merge
+
+# Lendo o bloco do PR em `tasks/backlog.md` da BASE (mesma fonte e mesmo mapa do `review-gate` em
+# guard.yml), faz DUAS coisas na abertura do PR:
+#   1) aplica a label `criticidade:<nivel>` se o PR ainda NAO tem nenhuma (o `review-gate` so
+#      VALIDAVA a label; nada a APLICAVA -> era posta a mao em todo PR);
+#   2) ARMA o auto-merge (`--auto --squash`) SO para Baixa/Media (a regua da DEC-016) -> o PR fecha
+#      sozinho quando os 4 checks ficam verdes, sem ninguem clicar merge.
+#
+# POR QUE `pull_request_target` (como o guard): roda a partir da BASE (main). NUNCA faz checkout nem
+# executa codigo do PR — so LE `tasks/backlog.md` da base e chama a API (label + enable-auto-merge).
+#
+# LIMITES (nao afrouxa NENHUM portao):
+# - so aplica `criticidade:*`; NUNCA `aprovado-humano`/`critica-aprovada` (aprovacao HUMANA segue manual);
+# - o `--auto` respeita TODAS as protecoes da main (4 checks + qualquer label exigida): so mergeia
+#   quando tudo esta verde -> Alta/Critica/governanca/critico NAO mergeiam sem a label humana;
+# - so arma Baixa/Media; Alta/Critica NAO sao armadas (merge segue humano);
+# - no-op se o bloco nao e unicamente identificavel (housekeeping/ad-hoc/bloco novo);
+# - kill-switch: desligar `allow_auto_merge` no repo desativa o armado de todos os PRs de uma vez.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, edited, synchronize]
+
+# Default restritivo; o job eleva so o necessario para aplicar a label.
+permissions:
+  contents: read
+
+concurrency:
+  group: auto-criticidade-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  auto-criticidade:
+    # Draft nao mergeia mesmo; e PR de fork nao precisa (sem risco — so leitura da base + label).
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout da BASE para ler tasks/backlog.md
+      pull-requests: write # aplicar a label criticidade:* (metadado)
+    steps:
+      # Sem `ref:` = checkout da BASE (main). NAO trocar por ref do PR (nunca rodar codigo do PR).
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Aplicar criticidade + armar auto-merge (Baixa/Media)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }} # label + leituras (o Actions token basta)
+          # PAT (fine-grained, PR:write) SO p/ armar auto-merge — o GITHUB_TOKEN nao pode
+          # (enablePullRequestAutoMerge). Ausente = nao arma (arm segue manual). Seguro: este job
+          # roda da BASE e NUNCA executa codigo do PR, entao o PAT nao vaza p/ PR de fork.
+          AUTO_MERGE_PAT: ${{ secrets.AUTO_MERGE_PAT }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_TITULO: ${{ github.event.pull_request.title }}
+          PR_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: python scripts/aplicar_criticidade_label.py

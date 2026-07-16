@@ -22,6 +22,9 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # BLK-ORQ-21: `test` vira required check com enforce_admins=true. Sem teto de tempo,
+    # um job travado segura o portao pelo default de 6h e nenhum PR mergeia.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -89,8 +92,16 @@ jobs:
         # Upgrade do proprio pip p/ >=26.1.2 REMEDIA PYSEC-2026-196 (pip 26.1.1: entry
         # points instalados fora do dir de instalacao). Remediacao real (nao allowlist):
         # o pip-audit audita o env, que inclui o pip do runner.
+        #
+        # Idem setuptools >=83.0.0 (2026-07-14): REMEDIA PYSEC-2026-3447 (setuptools
+        # 79.0.1 do runner; FileList aplicava as diretivas exclude do MANIFEST.in sem
+        # normalizacao Unicode -> no macOS APFS/HFS+ um nome NFD escapava de uma regra
+        # NFC e entrava na sdist). Vuln do ambiente do CI, nao de dep nossa: setuptools
+        # NAO esta pinado no constraints.txt. Remediacao real, nao allowlist — mesmo
+        # padrao do pip acima. Sobe DEPOIS do `pip install -e .`, entao nao altera o
+        # que ja foi instalado nem a imagem de producao (step CI-only).
         run: |
-          python -m pip install --upgrade "pip>=26.1.2"
+          python -m pip install --upgrade "pip>=26.1.2" "setuptools>=83.0.0"
           pip install "pip-audit==2.7.3"
       - name: Dependency audit (pip-audit)
         run: pip-audit --desc --skip-editable --ignore-vuln GHSA-6w46-j5rx-g56g

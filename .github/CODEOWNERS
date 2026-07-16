@@ -9,12 +9,39 @@
 # na branch protection) e ligada no BLK-ORQ-21, junto da validacao empirica do N0.
 #
 # A ultima regra que casa um arquivo vence — mantenha as entradas especificas.
+#
+# BLK-ORQ-21 (2026-07-14, decisao de Felipe): TRES donos, nao um.
+# Motivo: o GitHub NAO deixa o autor do PR aprovar o proprio PR. Com dono unico
+# (@Kastaldy, autor de ~todos os PRs) + `require_code_owner_reviews: true` +
+# `enforce_admins: true`, todo PR que tocasse estes caminhos ficaria SEM revisor
+# elegivel -> repo CONGELADO (sem `--admin` para furar). Com 3 donos, sempre existe
+# um revisor humano elegivel e a defesa N0 continua de pe: um PR agentico/do loop
+# NUNCA se auto-aprova.
+#
+# BLK-ORQ-21: o CODEOWNERS passa a cobrir tambem o TRILHO CRITICO do loop_guard
+# (M1, deploy, segredos, scanners). Antes, so a classe GOVERNANCA tinha dono: mexer
+# em `config.py`/`pipelines/m1/` exigia apenas a label `critica-aprovada`, que o
+# proprio autor podia aplicar -> o gate mais forte estava no arquivo menos perigoso.
+# Agora o M1 e o deploy exigem revisao humana NATIVA do GitHub (nao forjavel por
+# check run), alem da label.
 
-/.github/                    @Kastaldy
-/scripts/loop_guard.py       @Kastaldy
-/REVIEW.md                   @Kastaldy
-/CLAUDE.md                   @Kastaldy
-/tasks/backlog.md            @Kastaldy
-/pyproject.toml              @Kastaldy
-/constraints.txt             @Kastaldy
-/conftest.py                 @Kastaldy
+# --- GOVERNANCA: a superficie que define as PROPRIAS regras do portao ---
+/.github/                          @Kastaldy @VinhoAbencoado @juancalu
+/scripts/loop_guard.py             @Kastaldy @VinhoAbencoado @juancalu
+/REVIEW.md                         @Kastaldy @VinhoAbencoado @juancalu
+/CLAUDE.md                         @Kastaldy @VinhoAbencoado @juancalu
+/pyproject.toml                    @Kastaldy @VinhoAbencoado @juancalu
+/constraints.txt                   @Kastaldy @VinhoAbencoado @juancalu
+/conftest.py                       @Kastaldy @VinhoAbencoado @juancalu
+
+# --- CRITICO: M1 oficial, deploy, segredos e scanners (espelha o loop_guard) ---
+# `deploy/` ainda nao existe no git; a regra e preventiva (o dia que nascer, ja tem dono).
+/src/motor_expansao/config.py      @Kastaldy @VinhoAbencoado @juancalu
+/src/motor_expansao/pipelines/m1/  @Kastaldy @VinhoAbencoado @juancalu
+/deploy/                           @Kastaldy @VinhoAbencoado @juancalu
+/secrets/                          @Kastaldy @VinhoAbencoado @juancalu
+/Dockerfile.*                      @Kastaldy @VinhoAbencoado @juancalu
+/docker-compose*.yml               @Kastaldy @VinhoAbencoado @juancalu
+/.gitleaks.toml                    @Kastaldy @VinhoAbencoado @juancalu
+/.gitleaksignore                   @Kastaldy @VinhoAbencoado @juancalu
+/.trivyignore                      @Kastaldy @VinhoAbencoado @juancalu

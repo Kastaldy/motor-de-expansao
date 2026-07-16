@@ -98,6 +98,34 @@ _CHOROPLETH_ALPHA = 140
 # Cor de fill para setor sem dado na faixa nova (cinza translucido).
 _FILL_SEM_DADO = (218, 222, 229, _CHOROPLETH_ALPHA)
 
+# BLK-RELPON-06 (D4): tamanhos de fonte do mapa. Valem para dashboard, PDF e API (UM render
+# so -- nao ha parametro `escala` por caminho, ver D4 da DEC). Ancorados no pior caso do PDF:
+# o PNG de 1000px entra numa celula de ~298,67pt na tira 1x3 do slide "Mapas de calor"
+# (`_map_grid_cells`: usable_w=896/3) -> ratio ~0,2987 -> a legenda-corpo (32px) sai a
+# ~9,6pt, acima do alvo de 9-10pt de legibilidade no PDF.
+_FS_TITULO = 44
+_FS_VALOR_RAIO = 38
+_FS_LEGENDA_TITULO = 34
+_FS_LEGENDA_CORPO = 32
+# Subtitulo da legenda ("Renda per capita (R$/pessoa)" etc.): fonte MENOR que o titulo --
+# o subtitulo mais longo transbordava do canvas a `_FS_LEGENDA_TITULO` (34px -> ~448px,
+# > budget de ~320px da coluna, `_LEGEND_COL_W - 10`). Texto secundario, como o rodape.
+_FS_LEGENDA_SUBTITULO = 22
+# Legenda de pins ("Ponto central"/"Pins: Ultra e concorrentes"): fonte MENOR que o corpo
+# das faixas -- a essas duas linhas cabe em `_LEGEND_COL_W`, mas a frase e mais longa que
+# o rotulo de faixa mais longo e transbordava do canvas a `_FS_LEGENDA_CORPO` (32px ->
+# ~362px, > budget de ~252px da coluna). Texto secundario/anotacao, como rodape/escala.
+_FS_LEGENDA_CAPTION = 20
+_FS_BODY = 26  # mensagem "Sem setores intersectados no raio"
+_FS_FOOTER = 22  # rodape (atribuicao CARTO)
+_FS_ESCALA = 24  # label da barra de escala
+
+# Coluna da legenda: alargada de 252 -> 330px porque o rotulo mais longo das faixas
+# ("R$ 2.001-3.500", 14 chars) ocupa ~246px a 32px de fonte (ver teste de legibilidade).
+_LEGEND_COL_W = 330
+_MAP_TOP = 132  # era 92: abre espaco para titulo (44px) + linha de dado (38px)
+_VALOR_Y = 78  # era 51: 22 (topo do titulo) + 44 (titulo) + 12 de respiro
+
 
 def _with_choropleth_alpha(rgba: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
     """Aplica o alpha canonico do choropleth (mantem RGB da faixa)."""
@@ -105,8 +133,13 @@ def _with_choropleth_alpha(rgba: tuple[int, int, int, int]) -> tuple[int, int, i
 
 
 def _map_box(width: int, height: int) -> tuple[int, int, int, int]:
-    """Retangulo (left, top, right, bottom) da area de mapa dentro da figura."""
-    return (28, 92, width - 285, height - 54)
+    """Retangulo (left, top, right, bottom) da area de mapa dentro da figura.
+
+    BLK-RELPON-06 (D4): `_MAP_TOP` abre espaco para o titulo+linha-de-dado maiores; o `-33`
+    preserva o mesmo respiro (~33px) entre a borda direita do mapa e a coluna da legenda que
+    existia antes (`(width-252) - (width-285) = 33`), agora com `_LEGEND_COL_W` mais larga.
+    """
+    return (28, _MAP_TOP, width - (_LEGEND_COL_W + 33), height - 54)
 
 
 def _map_inner_dims(width: int, height: int) -> tuple[float, float]:
@@ -116,12 +149,16 @@ def _map_inner_dims(width: int, height: int) -> tuple[float, float]:
 
 
 def _font(size: int = 12) -> ImageFont.ImageFont:
+    # BLK-RELPON-06 (D3): fonte TrueType EMBUTIDA do Pillow (>=10.1), via load_default(size=).
+    # Deliberadamente NAO usa TTF do sistema: `arial.ttf` so existe no Windows e a imagem de
+    # producao (python:3.11-slim) nao tem fonte alguma -> o fallback load_default() SEM size
+    # caia num bitmap FIXO ~10px que IGNORAVA o tamanho pedido, quebrando o texto do mapa no
+    # PDF *e* no dashboard (title_font(20) e title_font(60) renderizavam IGUAL em producao).
+    # Com load_default(size=N) a fonte escala de fato -> o PNG/PDF fica IDENTICO em Windows
+    # e na VPS (auditavel). truetype()/arial.ttf NAO devem ser reintroduzidos.
     # truetype() devolve FreeTypeFont (nao subclasse de ImageFont nos stubs Pillow);
     # cast preserva runtime e mantem a assinatura aceita por _draw_text/_text_width.
-    try:
-        return cast(ImageFont.ImageFont, ImageFont.truetype("arial.ttf", size))
-    except OSError:
-        return cast(ImageFont.ImageFont, ImageFont.load_default())
+    return cast(ImageFont.ImageFont, ImageFont.load_default(size=size))
 
 
 def _iter_polygons(geom: BaseGeometry) -> Iterable[Polygon]:
@@ -202,36 +239,38 @@ def _metric_label(metric_column: str) -> str:
     return MAPA_CENSITARIO_METRICAS.get(metric_column, metric_column)
 
 
-# ── Faixa superior "<variavel> no ponto" por camada (BLK-RELPON-05) ──────────────
-# Formata o valor BRUTO do setor que CONTEM o ponto pesquisado (nao o agregado ponderado
-# do raio de 1.5 km). "n/d" para None/NaN (ponto fora da malha) -- sem excecao. Texto so
-# com pontuacao ASCII por consistencia com o restante do relatorio.
+# ── Faixa superior "<variavel> no raio" por camada (BLK-RELPON-05, faixa REVERTIDA p/ o
+# raio pelo BLK-RELPON-06/D1) ──────────────────────────────────────────────────────────
+# Formata o valor AGREGADO do raio de 1.5 km (densidade sobre area valida, renda e score
+# medios ponderados) -- NAO mais o valor bruto do setor que contem o ponto (BLK-RELPON-05
+# original). "n/d" para None/NaN (sem setores intersectados). Texto so com pontuacao ASCII
+# por consistencia com o restante do relatorio.
 
 
 def _format_valor_ponto_renda(value: float | None) -> str:
-    """Renda per capita do setor do ponto: moeda, separador de milhar '.', sem centavos."""
+    """Renda per capita media do raio: moeda, separador de milhar '.', sem centavos."""
     if value is None or pd.isna(value):
         return "n/d"
     return f"R$ {float(value):,.0f}".replace(",", ".")
 
 
 def _format_valor_ponto_densidade(value: float | None) -> str:
-    """Densidade populacional do setor do ponto: inteiro, unidade ASCII 'hab/km2'."""
+    """Densidade populacional do raio (sobre area valida): inteiro, unidade ASCII 'hab/km2'."""
     if value is None or pd.isna(value):
         return "n/d"
     return f"{float(value):,.0f}".replace(",", ".") + " hab/km2"
 
 
 def _format_valor_ponto_score(value: float | None) -> str:
-    """Score censitario do setor do ponto: inteiro 0-100."""
+    """Score censitario medio do raio: inteiro 0-100."""
     if value is None or pd.isna(value):
         return "n/d"
     return f"{float(value):.0f}"
 
 
 def _legenda_valor_ponto(rotulo: str, texto: str) -> str:
-    """Monta o texto da faixa superior do mapa: "<Rotulo> no ponto: <texto>" (D2)."""
-    return f"{rotulo} no ponto: {texto}"
+    """Monta o texto da faixa superior do mapa: "<Rotulo> no raio: <texto>" (BLK-RELPON-06/D1)."""
+    return f"{rotulo} no raio: {texto}"
 
 
 def _draw_text(
@@ -276,8 +315,9 @@ def _draw_scale_bar(
     draw.line([(x0, y0 - 5), (x0, y0 + 5)], fill=_DARK_MAP_INK, width=2)
     draw.line([(x0 + px_len, y0 - 5), (x0 + px_len, y0 + 5)], fill=_DARK_MAP_INK, width=2)
     label = f"{scale_m // 1000} km" if scale_m >= 1000 else f"{scale_m} m"
-    draw.rectangle([x0 - 2, y0 + 5, x0 + px_len, y0 + 22], fill=(255, 255, 255, 180))
-    _draw_text(draw, (x0, y0 + 7), label, font=_font(11), fill=_DARK_MAP_INK)
+    # BLK-RELPON-06 (D4): box branco atras do label acompanha a fonte maior (_FS_ESCALA).
+    draw.rectangle([x0 - 2, y0 + 5, x0 + px_len, y0 + 34], fill=(255, 255, 255, 180))
+    _draw_text(draw, (x0, y0 + 8), label, font=_font(_FS_ESCALA), fill=_DARK_MAP_INK)
 
 
 def _paste_logo_pin(
@@ -306,30 +346,41 @@ def _draw_legend_camada(
     titulo: str,
     entries: list[tuple[str, tuple[int, int, int, int]]],
 ) -> None:
-    """Legenda por camada: faixas fixas (label + amostra de cor) + pins de referencia."""
-    title_font = _font(17)
-    body_font = _font(13)
-    _draw_text(draw, (x, y), "Legenda", font=title_font)
-    _draw_text(draw, (x, y + 26), titulo, font=body_font)
+    """Legenda por camada: faixas fixas (label + amostra de cor) + pins de referencia.
 
-    base_y = y + 58
-    row_h = 30
+    BLK-RELPON-06 (D4): fontes/layout ampliados (`_FS_LEGENDA_TITULO`/`_FS_LEGENDA_CORPO`,
+    linhas/swatch maiores) para o texto ficar legivel no PDF (celula ~299pt na tira 1x3).
+    """
+    title_font = _font(_FS_LEGENDA_TITULO)
+    body_font = _font(_FS_LEGENDA_CORPO)
+    caption_font = _font(_FS_LEGENDA_CAPTION)
+    subtitle_font = _font(_FS_LEGENDA_SUBTITULO)
+    _draw_text(draw, (x, y), "Legenda", font=title_font)
+    # Subtitulo com fonte dedicada MENOR que o corpo (ver `_FS_LEGENDA_SUBTITULO`): o mais
+    # longo ("Renda per capita (R$/pessoa)") transbordaria do canvas a `_FS_LEGENDA_CORPO`.
+    _draw_text(draw, (x, y + 44), titulo, font=subtitle_font)
+
+    base_y = y + 96
+    row_h = 48
     for idx, (label, color) in enumerate(entries):
         yy = base_y + idx * row_h
         # D7=C subset seguro (BLK-EST-02): amostras arredondadas (radius 5).
         draw.rounded_rectangle(
-            [x, yy, x + 30, yy + 22], radius=5, fill=color[:3], outline=(148, 163, 184)
+            [x, yy, x + 56, yy + 38], radius=5, fill=color[:3], outline=(148, 163, 184)
         )
-        _draw_text(draw, (x + 42, yy + 3), label, font=body_font)
+        _draw_text(draw, (x + 68, yy + 6), label, font=body_font)
 
     # D7=C subset seguro: linha separadora fina antes do bloco de pins.
-    sep_y = base_y + len(entries) * row_h + 4
+    sep_y = base_y + len(entries) * row_h + 8
     draw.line([(x, sep_y), (x + 210, sep_y)], fill=(210, 214, 222), width=1)
 
-    yy = base_y + len(entries) * row_h + 14
+    yy = base_y + len(entries) * row_h + 24
     _draw_center_pin(draw, x + 12, yy + 20, scale=0.8)
-    _draw_text(draw, (x + 42, yy), "Ponto central", font=body_font)
-    _draw_text(draw, (x + 42, yy + 26), "Pins: Ultra e concorrentes", font=body_font)
+    # Fonte MENOR (`_FS_LEGENDA_CAPTION`) que o corpo das faixas: a frase "Pins: Ultra e
+    # concorrentes" e mais longa que o rotulo de faixa mais longo e transbordaria do
+    # canvas a `_FS_LEGENDA_CORPO` (ver constante acima).
+    _draw_text(draw, (x + 68, yy), "Ponto central", font=caption_font)
+    _draw_text(draw, (x + 68, yy + 30), "Pins: Ultra e concorrentes", font=caption_font)
 
 
 def _draw_center_pin(
@@ -519,25 +570,29 @@ def _render_camada(
     de ruas de pixel; mantem basemap + circulo + ponto central + pins de concorrentes/Ultra +
     escala + footer + legenda so de pins. BLK-CENSO-03.
 
-    `valor_ponto` (BLK-RELPON-05): texto opcional da faixa superior ("<Variavel> no ponto:
-    <valor>"), desenhado numa 2a linha entre o titulo e o `map_box`. Default `None` preserva
-    o render IDENTICO desta funcao para qualquer chamador que nao passe o parametro.
+    `valor_ponto` (BLK-RELPON-05, faixa REVERTIDA p/ os agregados do raio pelo
+    BLK-RELPON-06/D1): texto opcional da faixa superior ("<Variavel> no raio: <valor>"),
+    desenhado numa 2a linha entre o titulo e o `map_box`. Default `None` preserva o render
+    IDENTICO desta funcao para qualquer chamador que nao passe o parametro.
+
+    BLK-RELPON-06 (D4): fontes ampliadas na BASE (`_FS_*`) -- vale para dashboard, PDF e
+    API com UM UNICO render (sem parametro de escala por-caminho).
     """
     image = Image.new("RGB", (width, height), (255, 255, 255))
     draw = ImageDraw.Draw(image, "RGBA")
-    title_font = _font(20)
-    body_font = _font(12)
-    small_font = _font(11)
+    title_font = _font(_FS_TITULO)
+    body_font = _font(_FS_BODY)
+    small_font = _font(_FS_FOOTER)
 
     _draw_text(draw, (28, 22), titulo, font=title_font)
     if valor_ponto is not None:
-        # BLK-RELPON-05: 2a linha entre o titulo (termina ~y=46) e o topo do map_box (y=92).
-        # Fonte 17 (BLK-RELPON-05-FU1, pedido de Vinicius 2026-07-10 para mais visibilidade;
-        # ainda menor que o titulo 20pt e com folga ate o map_box).
-        _draw_text(draw, (28, 51), valor_ponto, font=_font(17), fill=_DARK_MAP_INK)
+        # BLK-RELPON-06 (D4): `_VALOR_Y`/`_FS_VALOR_RAIO`/`_MAP_TOP` tem que fechar:
+        # _VALOR_Y (78) + _FS_VALOR_RAIO (38) + 16 de respiro = _MAP_TOP (132). Mudar um
+        # tamanho no gate visual exige recalcular os outros dois junto.
+        _draw_text(draw, (28, _VALOR_Y), valor_ponto, font=_font(_FS_VALOR_RAIO), fill=_DARK_MAP_INK)
 
     map_box = _map_box(width, height)
-    legend_x = width - 252
+    legend_x = width - _LEGEND_COL_W
     left, top, right, bottom = map_box
 
     minx, miny, maxx, maxy = bounds
@@ -719,14 +774,16 @@ def render_mapas_censitarios_combinados(
     teto baixo (160) sumiam sob a cor. `choropleth_alpha` e a opacidade do preenchimento das
     faixas — menor = ruas aparecem mais. A legenda usa RGB solido, entao nao muda com o alpha.
 
-    BLK-RELPON-05: os 3 choropleths (densidade/renda/score) recebem uma faixa superior com
-    o valor do setor que CONTEM o ponto (nao o agregado ponderado do raio), computada a
-    partir do PROPRIO `result` interno desta funcao (mesma chamada de
+    BLK-RELPON-05: os 3 choropleths (densidade/renda/score) recebem uma faixa superior,
+    computada a partir do PROPRIO `result` interno desta funcao (mesma chamada de
     `analisar_ponto_censitario_setores` que ja existia antes desta mudanca) -- nenhum
     caller em `pages.py` precisa mudar para o recurso aparecer, tanto no PNG interativo do
     dashboard quanto no PDF (que embute os mesmos PNGs). A camada `concorrentes` NAO
     recebe a faixa (fica byte-a-byte igual): e um mapa so-pins, sem variavel continua por
-    setor.
+    setor. BLK-RELPON-06 (D1) REVERTEU a fonte da faixa: era o valor BRUTO do setor que
+    CONTEM o ponto, agora sao os agregados do RAIO de 1.5 km (densidade sobre area valida,
+    renda e score medios ponderados) -- rotulo "no raio". Os 5 campos `*_setor_ponto`
+    continuam no `result` para CSV/auditoria.
     """
     if logos_dir is not None:
         from motor_expansao.dashboard.competitors import preload_logos
@@ -851,17 +908,18 @@ def render_mapas_censitarios_combinados(
         street_cap=street_cap,
     )
 
-    # BLK-RELPON-05: faixa superior por camada, com o valor BRUTO do setor que CONTEM o
-    # ponto (5 campos novos ja expostos por `result`, computados no proprio `analisar_
-    # ponto_censitario_setores` acima). "n/d" quando o ponto cai fora da malha.
-    valor_ponto_densidade = _legenda_valor_ponto(
-        "Densidade", _format_valor_ponto_densidade(result.get("densidade_pop_setor_ponto"))
+    # BLK-RELPON-06 (D1): faixa superior por camada, com os agregados do RAIO de 1.5 km
+    # (ja expostos por `result`, computados no proprio `analisar_ponto_censitario_setores`
+    # acima) -- REVERTE a fonte do BLK-RELPON-05, que usava o valor BRUTO do setor que
+    # CONTEM o ponto. "n/d" quando nao ha setores intersectados (sem area valida).
+    valor_raio_densidade = _legenda_valor_ponto(
+        "Densidade", _format_valor_ponto_densidade(result.get("densidade_pop_raio_valida_hab_km2"))
     )
-    valor_ponto_renda = _legenda_valor_ponto(
-        "Renda", _format_valor_ponto_renda(result.get("renda_per_capita_setor_ponto"))
+    valor_raio_renda = _legenda_valor_ponto(
+        "Renda", _format_valor_ponto_renda(result.get("renda_per_capita_media_raio"))
     )
-    valor_ponto_score = _legenda_valor_ponto(
-        "Score", _format_valor_ponto_score(result.get("score_setor_2022_calibrado_ponto"))
+    valor_raio_score = _legenda_valor_ponto(
+        "Score", _format_valor_ponto_score(result.get("score_setor_medio"))
     )
 
     densidade_png = _render_camada(
@@ -870,7 +928,7 @@ def render_mapas_censitarios_combinados(
         legenda_entries=_bands_legend_entries(DENSIDADE_POP_BANDS),
         color_fn=_dens_fn,
         source_values=densidade_series,
-        valor_ponto=valor_ponto_densidade,
+        valor_ponto=valor_raio_densidade,
         **common,
     )
     renda_png = _render_camada(
@@ -879,7 +937,7 @@ def render_mapas_censitarios_combinados(
         legenda_entries=_bands_legend_entries(RENDA_PER_CAPITA_BANDS),
         color_fn=_renda_fn,
         source_values=renda_series,
-        valor_ponto=valor_ponto_renda,
+        valor_ponto=valor_raio_renda,
         **common,
     )
     # Camada Score censitario: choropleth COM legenda (modo de cor ativo) — restaurada no
@@ -890,7 +948,7 @@ def render_mapas_censitarios_combinados(
         legenda_entries=_score_legend_entries(),
         color_fn=_score_fn,
         source_values=score_series,
-        valor_ponto=valor_ponto_score,
+        valor_ponto=valor_raio_score,
         **common,
     )
     concorrentes_png = _render_camada(

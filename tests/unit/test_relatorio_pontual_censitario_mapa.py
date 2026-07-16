@@ -3,7 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 
 import pandas as pd
-from PIL import Image
+from PIL import Image, ImageDraw
 from pyproj import Transformer
 from shapely.geometry import box
 from shapely.ops import transform
@@ -369,12 +369,48 @@ def test_valor_ponto_repassado_aos_3_choropleths_nao_a_concorrentes(monkeypatch)
     # A camada Concorrentes nunca recebe o kwarg `valor_ponto` (fica no default None de
     # `_render_camada`, ver assinatura) -- byte-a-byte igual ao render antigo.
     assert capturado["Concorrentes e Ultra"].get("valor_ponto") is None
+    # BLK-RELPON-06 (D1): a faixa REVERTE de "no ponto" para "no raio" -- trava a reversao.
+    for titulo in ("Densidade populacional", "Renda per capita", "Score censitario"):
+        assert "no raio" in capturado[titulo]["valor_ponto"]
+        assert "no ponto" not in capturado[titulo]["valor_ponto"]
 
 
-def test_valor_ponto_nd_quando_ponto_fora_da_malha(monkeypatch):
-    # Unico setor NAO cobre o ponto central (0,0) -- so intersecta parcialmente o raio.
+def test_valor_raio_nao_e_nd_quando_setor_nao_cobre_o_ponto_mas_intersecta_raio(monkeypatch):
+    # BLK-RELPON-06 (D1): unico setor NAO cobre o ponto central (0,0) -- so intersecta
+    # parcialmente o raio -- mas isso NAO produz "n/d": a faixa agora mostra os agregados
+    # do RAIO (n_setores=1, pop_total_raio nao-None), que sao valores REAIS aqui (sob
+    # BLK-RELPON-05 a faixa vinha do lookup "setor que contem o ponto" e dava n/d neste
+    # cenario; a semantica mudou).
     setores = pd.DataFrame(
         [_sector_record("355030801000003", box(1000, -500, 2500, 500), renda=2000, score=60)]
+    )
+
+    capturado: dict[str, dict] = {}
+    original = censo_map._render_camada
+
+    def _spy(*, titulo, **kwargs):
+        capturado[titulo] = kwargs
+        return original(titulo=titulo, **kwargs)
+
+    monkeypatch.setattr(censo_map, "_render_camada", _spy)
+
+    censo_map.render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+    )
+
+    assert "n/d" not in capturado["Densidade populacional"]["valor_ponto"]
+    assert "n/d" not in capturado["Renda per capita"]["valor_ponto"]
+    assert "n/d" not in capturado["Score censitario"]["valor_ponto"]
+    assert capturado["Renda per capita"]["valor_ponto"] == "Renda no raio: R$ 2.000"
+    assert capturado["Score censitario"]["valor_ponto"] == "Score no raio: 60"
+    assert capturado["Concorrentes e Ultra"].get("valor_ponto") is None
+
+
+def test_valor_raio_e_nd_quando_setor_fora_do_raio(monkeypatch):
+    # BLK-RELPON-06 (D1): o "n/d" de verdade e quando NAO ha setores intersectados no raio
+    # (geometria de test_motor_censitario_exclui_setor_fora_do_raio) -- n_setores=0.
+    setores = pd.DataFrame(
+        [_sector_record("355030801000030", box(3000, 3000, 3500, 3500), renda=2000, score=60)]
     )
 
     capturado: dict[str, dict] = {}
@@ -397,8 +433,9 @@ def test_valor_ponto_nd_quando_ponto_fora_da_malha(monkeypatch):
 
 
 def test_valor_ponto_muda_pixels_do_png():
-    # Mesmo setores_df, exceto a renda do setor que cobre o ponto: os bytes do PNG
-    # "renda" devem diferir (a faixa nova chega a imagem); os bytes do "concorrentes"
+    # Mesmo setores_df, exceto a renda do unico setor (que tambem cobre o ponto): os
+    # bytes do PNG "renda" devem diferir (a faixa do RAIO muda com a renda -- unico setor,
+    # entao a media ponderada do raio == o valor daquele setor); os bytes do "concorrentes"
     # devem ser IDENTICOS (essa camada nao e afetada por `valor_ponto`).
     setor_cobre_ponto = box(-700, -700, 700, 700)
 
@@ -428,7 +465,12 @@ def test_fallback_offline_canvas_claro(monkeypatch):
     )
     img = Image.open(BytesIO(mapas["densidade"])).convert("RGB")
     left, top, right, bottom = censo_map._map_box(600, 400)
-    cx, cy = (left + right) // 2, (top + bottom) // 2
+    # BLK-RELPON-06 (D4): com `_MAP_TOP`/`_LEGEND_COL_W` novos a caixa 600x400 encolheu
+    # o bastante para o pixel EXATAMENTE central cair na ponta do pin vermelho do ponto
+    # central (sempre desenhado no centro do frame projetado). Amostra perto de um canto
+    # do interior da caixa -- fora do circulo de 1.5 km (que fica inscrito no frame) e do
+    # pin -- para continuar testando so o fundo do canvas de fallback.
+    cx, cy = left + 20, top + 20
     r, g, b = img.getpixel((cx, cy))
     lum = 0.299 * r + 0.587 * g + 0.114 * b
     assert lum > 180, f"Canvas fallback deveria ser claro, luminancia={lum:.1f} (r={r},g={g},b={b})"
@@ -448,3 +490,100 @@ def test_shared_transformer_bytes_identicos():
     )
     for camada in ("densidade", "renda", "score", "concorrentes"):
         assert mapas_a[camada] == mapas_b[camada], f"PNG nao-deterministico na camada {camada}"
+
+
+# ── BLK-RELPON-06 (D3): fonte TrueType embutida do Pillow (determinística) ──────────────
+
+
+def test_font_escala_com_o_size():
+    # O bug de producao era exatamente `_font(20)` e `_font(60)` renderizarem IGUAL (bitmap
+    # fixo ~10px do load_default() SEM size). Prova que o `size` passa a ser respeitado.
+    small = censo_map._font(20).getbbox("A")
+    big = censo_map._font(40).getbbox("A")
+    small_w, small_h = small[2] - small[0], small[3] - small[1]
+    big_w, big_h = big[2] - big[0], big[3] - big[1]
+    assert big_w > small_w
+    assert big_h > small_h
+
+
+def test_font_nao_chama_truetype_do_sistema_no_proprio_codigo():
+    # Trava o determinismo Windows<->VPS do D3: o CODIGO de `_font` nao deve chamar
+    # `ImageFont.truetype(...)` (arial.ttf so existe no Windows; a imagem de producao
+    # python:3.11-slim nao tem fonte alguma). NB: `ImageFont.load_default(size=...)` usa
+    # `truetype` internamente sobre os BYTES da fonte embutida do Pillow (nao um path de
+    # disco) -- por isso a checagem e por INSPECAO DE CODIGO-FONTE (ignorando comentarios),
+    # nao por monkeypatch de `ImageFont.truetype` (que quebraria o proprio `load_default`).
+    import inspect
+
+    src = inspect.getsource(censo_map._font)
+    code_lines = [line for line in src.splitlines() if not line.strip().startswith("#")]
+    code = "\n".join(code_lines)
+    assert "truetype(" not in code
+    assert "arial" not in code.lower()
+
+
+def test_font_nao_depende_de_ttf_do_sistema():
+    # `_font` funciona mesmo com o Pillow sem NENHUMA fonte TrueType do sistema instalada
+    # (caso da imagem python:3.11-slim): usa so a fonte embutida do proprio Pillow.
+    font = censo_map._font(20)
+    assert font.getbbox("A") is not None
+
+
+# ── BLK-RELPON-06 (D4): contrato de legibilidade em codigo (nao so revisao visual) ──────
+
+
+def test_legenda_corpo_atinge_o_alvo_de_legibilidade_no_pdf():
+    # Pior caso do PDF: PNG de 1000px entra numa celula de ~298,67pt na tira 1x3
+    # (`_map_grid_cells`: usable_w=896/3) -> ratio ~0,2987. Alvo = texto efetivo >= 9pt.
+    ratio_pdf = 298.67 / 1000.0
+    assert censo_map._FS_LEGENDA_CORPO * ratio_pdf >= 9.0
+
+
+def test_rotulo_mais_longo_da_legenda_cabe_na_coluna():
+    from motor_expansao.dashboard.constants import RENDA_PER_CAPITA_BANDS
+
+    image = Image.new("RGB", (10, 10))
+    draw = ImageDraw.Draw(image, "RGBA")
+    font = censo_map._font(censo_map._FS_LEGENDA_CORPO)
+    rotulo_mais_longo = max(
+        (label for _upper, label, _color in RENDA_PER_CAPITA_BANDS), key=len
+    )
+    largura = censo_map._text_width(draw, rotulo_mais_longo, font)
+    orcamento = censo_map._LEGEND_COL_W - 78
+    assert largura <= orcamento, (
+        f"Rotulo '{rotulo_mais_longo}' ({largura}px) nao cabe no orcamento de "
+        f"{orcamento}px da coluna de legenda (_LEGEND_COL_W={censo_map._LEGEND_COL_W})"
+    )
+
+
+def test_legenda_subtitulo_mais_longo_nao_transborda_do_canvas():
+    # Regressao real encontrada no ajuste visual: "Renda per capita (R$/pessoa)" a
+    # `_FS_LEGENDA_TITULO`/`_FS_LEGENDA_CORPO` transbordava do canvas (o subtitulo e
+    # desenhado em x=legend_x, sem o +68 de indentacao dos rotulos/captions).
+    # `_FS_LEGENDA_SUBTITULO` (fonte dedicada, menor) deve caber no restante do canvas.
+    image = Image.new("RGB", (10, 10))
+    draw = ImageDraw.Draw(image, "RGBA")
+    font = censo_map._font(censo_map._FS_LEGENDA_SUBTITULO)
+    largura = censo_map._text_width(draw, "Renda per capita (R$/pessoa)", font)
+    orcamento = censo_map._LEGEND_COL_W - 10
+    assert largura <= orcamento, (
+        f"Subtitulo ({largura}px) nao cabe no orcamento de {orcamento}px "
+        f"(_FS_LEGENDA_SUBTITULO={censo_map._FS_LEGENDA_SUBTITULO})"
+    )
+
+
+def test_legenda_caption_pins_nao_transborda_do_canvas():
+    # Regressao real encontrada no ajuste visual: "Pins: Ultra e concorrentes" a
+    # `_FS_LEGENDA_CORPO` (32px) transbordava do canvas (largura ~362px > orcamento da
+    # coluna). `_FS_LEGENDA_CAPTION` (fonte dedicada, menor) deve caber com folga dentro
+    # do canto direito do canvas, para QUALQUER largura de canvas (a coluna e ancorada em
+    # `width - _LEGEND_COL_W`, entao o orcamento ate a borda e constante).
+    image = Image.new("RGB", (10, 10))
+    draw = ImageDraw.Draw(image, "RGBA")
+    font = censo_map._font(censo_map._FS_LEGENDA_CAPTION)
+    largura = censo_map._text_width(draw, "Pins: Ultra e concorrentes", font)
+    orcamento = censo_map._LEGEND_COL_W - 68 - 10
+    assert largura <= orcamento, (
+        f"Caption ({largura}px) nao cabe no orcamento de {orcamento}px "
+        f"(_FS_LEGENDA_CAPTION={censo_map._FS_LEGENDA_CAPTION})"
+    )

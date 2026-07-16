@@ -8,7 +8,9 @@
 #      tocou caminho proibido (config.py/score/pesos/pipelines m1/VPS/deploy/segredo/.env);
 #   3) os testes (ruff + pytest) sao o gate de correcao, sem bypass (o QA re-roda);
 #   4) o container nao tem chave de VPS/ClickUp -> nao consegue deployar nem escrever em producao.
-# O loop commita por path no branch atual e NUNCA faz merge/push/deploy. Revisao + merge = humano.
+# O loop commita por path no branch atual e NUNCA faz merge/push/deploy dentro do container. O PR
+# resultante auto-mergeia (Baixa/Media, 4 checks de CI verdes) ou segue por label humana (Alta/Critica)
+# depois, fora do container — ver DEC-016 / docs/portao_merge_orq21.md. Deploy segue sempre manual.
 set -uo pipefail
 
 MAX_ITERS="${MAX_ITERS:-10}"
@@ -44,6 +46,16 @@ echo "Sinais de rodada anterior limpos (LOOP_DONE / RELATORIO-BLOQUEIO.md)."
 PROMPT='/run-cycle [MODO LOOP AUTONOMO — sem humano no loop]
 Trabalhe UM bloco BLK-* por vez do tasks/backlog.md, SOMENTE blocos marcados "Autonomia: loop-safe".
 Ignore TOTALMENTE qualquer bloco SEM esse marcador (sao trabalho futuro/manual — nao entram no loop).
+SELECAO por completed.md (BLK-ORQ-24): tasks/completed.md e a FONTE UNICA de conclusao. Antes de
+escolher um bloco, cheque a conclusao de forma ESTRUTURAL, nao por substring:
+"python scripts/housekeeping_move_block.py <BLK-ID> --is-done" sai 0 se o bloco JA esta concluido
+(heading "### <BLK-ID>" em completed.md, com fronteira de palavra) -> nesse caso PULE o bloco, MESMO
+que ele ainda apareca integro (com heading e marcador loop-safe) em tasks/backlog.md (no modo
+auto-merge o stub do backlog e DIFERIDO ate o PR de housekeeping em lote). NAO decida conclusao por
+grep de mencao: completed.md cita blocos AINDA ABERTOS em prosa ("Sucessor: BLK-X", "Proximo
+recomendado: BLK-Y") e um teste de substring PULARIA para sempre um bloco loop-safe aberto. Reia o
+completed.md do checkout ATUAL antes de cada selecao (a routine clona fresco a cada run; NUNCA use
+cache de sessao anterior).
 Respeite "Depende de": so inicie um bloco cujas dependencias JA estao em tasks/completed.md; se uma
 dependencia ainda nao fechou, pule esse bloco nesta passada. Esteira Planner->Builder->QA.
 NESTE MODO o gate de APROVACAO HUMANA dos blocos Alta e SUBSTITUIDO pelo guard automatico:
@@ -52,10 +64,15 @@ Se o plano exigir alterar M1 (config.py/score/pesos/artefatos oficiais/pipelines
 .env/segredos ou gravar PII em disco -> NAO execute: pule o bloco e registre o motivo em
 RELATORIO-BLOQUEIO.md. Consuma os parquets ja existentes em data/staging (NAO faca ingestao ao vivo
 na Growth API — o container nao tem credencial). Rode "ruff check ." e "pytest -q" (gate unico no QA,
-SEM bypass); NAO avance com teste vermelho. Commit POR PATH no branch atual. NUNCA merge/push/deploy;
-NUNCA escreva no ClickUp ou na VPS. Quando TODOS os blocos loop-safe estiverem em tasks/completed.md e
-a suite estiver verde, crie o arquivo LOOP_DONE na raiz e pare. Se o MESMO erro persistir por 3
-tentativas, pare e escreva RELATORIO-BLOQUEIO.md.'
+SEM bypass); NAO avance com teste vermelho. Commit POR PATH no branch atual.
+HOUSEKEEPING no modo auto-merge (BLK-ORQ-24): NAO edite tasks/backlog.md ao fechar o bloco (NAO rode
+o housekeeping_move_block.py). O PR do ciclo leva SO codigo + testes + o append em tasks/completed.md
+(que o guard trata como LIMPO -> auto-mergeia). backlog.md e GOVERNANCA no guard: inclui-lo forcaria
+label humana e o PR nao auto-mergearia. A remocao do bloco do backlog fica para o PR de housekeeping
+em lote (humano). NUNCA merge/push/deploy; NUNCA escreva no ClickUp ou na VPS. Quando TODOS os blocos
+loop-safe ainda NAO concluidos estiverem cobertos (nada novo a fazer) e a suite estiver verde, crie o
+arquivo LOOP_DONE na raiz e pare. Se o MESMO erro persistir por 3 tentativas, pare e escreva
+RELATORIO-BLOQUEIO.md.'
 
 for i in $(seq 1 "$MAX_ITERS"); do
   if [ -f LOOP_DONE ]; then echo "LOOP_DONE presente — encerrando."; break; fi
