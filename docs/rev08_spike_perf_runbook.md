@@ -103,22 +103,45 @@ python scripts/rev08_spike_playwright.py \
   --out data/reports/scratch/rev08_spike_local.json
 ```
 
-| Fluxo (harness)      | Alvo        | Mediana (ms) | p95 (ms) | Runs | Observação |
-|----------------------|-------------|--------------|----------|------|------------|
-| render (REV-03)      | spike local | 463          | 525      | 3    | 1ª leitura local 2026-07-16 (18k hexes SP; inclui build do payload + tesselação h3 + 1º paint WebGL) |
-| recolor (REV-04)     | spike local | 46           | 101      | 3    | recolor M1↔Residual client-side (updateTriggers GPU, sem re-serializar) |
-| scenario (REV-05)    | spike local | 32           | 33       | 3    | add hex ao cenário (client-side, sem rerun) |
-| render (REV-03)      | produção    |              |          |      | (humano — A/B na VPS) |
-| recolor (REV-04)     | produção    |              |          |      | (humano — A/B na VPS) |
-| scenario (REV-05)    | produção    |              |          |      | (humano — A/B na VPS) |
-| pdf (REV-06)         | produção    |              |          |      | (humano — só `--target production`) |
+> **Limitação conhecida do harness:** o `--url`/`--flow` funcionam, mas o
+> harness clica "Gerar recorte" com a UF **default** do seletor — ele NÃO
+> seleciona a `--uf` na página. Para medir um volume específico, use a medição
+> determinística por volume abaixo (mais limpa: isola o deck.gl do iframe do
+> Streamlit).
 
-> **Leitura local preliminar (2026-07-16, laptop, sem rede VPS):** o custo de
-> interação do spike (recolor ~46 ms, cenário ~32 ms) é client-side/GPU — a
-> ordem de grandeza que o REV-04/REV-05 queriam comparar contra o rerun
-> server-side do Streamlit. O `render` (~463 ms) inclui montar o payload de
-> ~1,45 MB, tesselar 18k células (h3-js) e o 1º paint WebGL. Os números de
-> **produção/A-B na VPS seguem sendo passo humano** (rede real + §6).
+### Curva de escala (medição determinística por volume — laptop, 2026-07-16)
+
+Método: para cada volume, gera-se o recorte → monta-se o HTML do spike →
+abre-se o arquivo direto no Chromium (Playwright, `file://`) e lê-se
+`window.__spike*`. Isola o custo puro de render do deck.gl (sem o iframe do
+Streamlit). 3 runs por caso (mediana). **Laptop local, SEM rede VPS.**
+
+| Caso                    | hexes  | payload inline | render (1º paint) | recolor | cenário (add hex) |
+|-------------------------|--------|----------------|-------------------|---------|-------------------|
+| SP cap 18k (produção)   | 18.000 | 1,46 MB        | 478 ms            | 38 ms   | 57 ms             |
+| AC full 29k             | 29.004 | 2,41 MB        | 640 ms            | 34 ms   | 90 ms             |
+| SP stress 47k           | 47.389 | 3,86 MB        | 497 ms            | 71 ms   | 64 ms             |
+| MG stress 104k          | 104.078| 8,46 MB        | ~1038 ms ⚠️       | 30 ms   | 177 ms            |
+
+⚠️ No 104k, 2 de 3 runs estouraram o timeout de 45 s no 1º paint → a partir de
+~100k hexes o render fica pesado/instável (payload 8,5 MB inline). A faixa
+OPERACIONAL de produção é o cap 18k–35k, onde render ~0,5–0,65 s e interação
+< 100 ms.
+
+**Leitura para o REV-12:** o diferencial do client-side é a **interação**
+(recolor 30–71 ms, cenário 57–177 ms) — client-side/GPU, SEM round-trip ao
+servidor, praticamente **plana com o volume**; é a ordem de grandeza que o
+REV-04/REV-05 querem comparar contra o rerun server-side do Streamlit atual. O
+`render` (1º paint) escala com o volume (payload + tesselação h3 + paint WebGL)
+e vira o gargalo só perto de ~100k. Os números de **produção/A-B na VPS seguem
+passo humano** (rede real + §6) — é o que valida se o payload inline (1,5–8,5 MB)
+sobrevive ao link real.
+
+> **Nota:** os markers `window.__spike*` existem SÓ no spike. O dashboard atual
+> (pydeck/Streamlit) **não** é instrumentado com eles → este harness NÃO produz
+> render/recolor/cenário comparáveis para o app atual. O baseline do app atual
+> vem dos diagnósticos **BLK-REV-03..06** (relatórios em `data/analysis/`,
+> gitignored) ou de medição por DevTools (sub-entregável i).
 
 ---
 
@@ -208,9 +231,10 @@ chaves curtas). Meça e anote — **não** otimize prematuramente no spike:
 
 | UF   | Hexes no recorte | Tamanho do JSON inline (KB) | Modo   |
 |------|------------------|-----------------------------|--------|
-| SP   | 18000            | 1483 (~1,45 MB)             | cap 18k|
-| SP   |                  |                             | stress |
-|      |                  |                             |        |
+| SP   | 18000            | 1483 (~1,46 MB)             | cap 18k|
+| SP   | 47389            | ~3950 (~3,86 MB)            | stress |
+| AC   | 29004            | ~2470 (~2,41 MB)            | full   |
+| MG   | 104078           | ~8660 (~8,46 MB)            | stress |
 
 ---
 
