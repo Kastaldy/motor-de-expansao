@@ -100,6 +100,19 @@ def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
     return uf, cod_municipio, setores_df
 
 
+def _nome_municipio_de(setores_df) -> str | None:
+    """Nome do municipio a partir do proprio `setores_df` (rotulo do painel de perfil).
+
+    O dashboard tira isto do `context`; a API nao tem esse dicionario, mas a particao geo
+    ja traz a coluna. Gracioso: parquet antigo sem a coluna -> `None` (o painel omite o
+    "Municipio/UF", sem quebrar o resto).
+    """
+    if setores_df is None or "nome_municipio" not in setores_df.columns:
+        return None
+    valores = setores_df["nome_municipio"].dropna()
+    return str(valores.iloc[0]) if not valores.empty else None
+
+
 # --- camada de mercado/SAM + concorrentes + Ultra (opcional) ----------------
 
 _SAM_COLS = [
@@ -260,15 +273,29 @@ def gerar_pdf_ponto(
     from motor_expansao.dashboard.censo_map import render_mapas_censitarios_combinados
     from motor_expansao.dashboard.censo_point import (
         RAIO_CENSITARIO_DEFAULT_KM,
+        agregar_perfil_bairro_distrito,
         analisar_ponto_censitario_setores,
     )
     from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_classico
 
-    _uf, _cod, setores_df = _resolver_e_carregar(lat, lng, settings)
+    uf, _cod, setores_df = _resolver_e_carregar(lat, lng, settings)
     comp_df, ultra_df = _competitors_ultra(settings)
     result = analisar_ponto_censitario_setores(
         lat, lng, setores_df, raio_km=RAIO_CENSITARIO_DEFAULT_KM,
         competitors_df=comp_df, ultra_df=ultra_df,
+    )
+    # BLK-RELPON-07: sem este agregado o slide "Perfil do Bairro/Distrito" cai no
+    # default gracioso (`flag_perfil_disponivel=False`) e sai "n/d" -- era o estado
+    # do PDF do bot ate aqui. O dashboard (pages.py) ja fazia esta chamada; a API nao.
+    # `nome_municipio`/`uf` sao so rotulos do painel: o agregado resolve por
+    # `cod_bairro` (ou `nome_distrito` no fallback) sobre o proprio `setores_df`.
+    perfil_bairro = agregar_perfil_bairro_distrito(
+        setores_df,
+        cod_bairro=result.get("cod_bairro_ponto"),
+        nome_bairro=result.get("nome_bairro_ponto"),
+        nome_distrito=result.get("nome_distrito_ponto"),
+        nome_municipio=_nome_municipio_de(setores_df),
+        uf=uf,
     )
 
     ultra_dir = settings.ultra_dir if Path(settings.ultra_dir).is_dir() else None
@@ -308,7 +335,7 @@ def gerar_pdf_ponto(
     # MESMO modelo que o dashboard passou a gerar por padrao (pages.py usa
     # template="classico"). Drop-in: mesma assinatura do gerador recente.
     return gerar_pdf_relatorio_pontual_classico(
-        result, mapas, residual=residual, ultra_dir=ultra_dir,
+        result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
         solicitante=consumidor, rotulo=rotulo,
     )
 
