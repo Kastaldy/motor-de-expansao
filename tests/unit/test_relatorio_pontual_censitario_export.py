@@ -153,7 +153,7 @@ def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
     assert b"/Count 6" in pdf_bytes
     # 3 choropleths (densidade/renda/score) embutidos SEPARADAMENTE no slide unico + 1 pins
     # na pagina de Concorrentes = >= 4 imagens de mapa (nao pre-compostas).
-    assert pdf_bytes.count(b"/Subtype /Image") >= 4
+    assert pdf_bytes.count(b"/Subtype /Image") >= 5
     assert b"setor_censitario_intersecao_area_1p5km" in pdf_bytes
 
 
@@ -163,7 +163,7 @@ def test_pdf_embute_tres_choropleths_no_slide_unico():
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, ultra_dir="data/ultra")
 
     # Os 3 choropleths sao embutidos separadamente no slide "Mapas de calor" (+ pins) -> >= 4.
-    assert pdf_bytes.count(b"/Subtype /Image") >= 4
+    assert pdf_bytes.count(b"/Subtype /Image") >= 5
 
 
 def test_pdf_big_numbers_com_residual_e_nd():
@@ -289,7 +289,7 @@ def test_pdf_marca_dagua_com_solicitante():
     assert b"Analista Teste" in pdf_bytes
     # 6 paginas preservadas e choropleths intactos (marca d'agua nao cria paginas).
     assert b"/Count 6" in pdf_bytes
-    assert pdf_bytes.count(b"/Subtype /Image") >= 4
+    assert pdf_bytes.count(b"/Subtype /Image") >= 5
 
 
 def test_pdf_marca_dagua_sem_solicitante():
@@ -303,7 +303,7 @@ def test_pdf_marca_dagua_sem_solicitante():
     assert b"Ultra Academia" in pdf_bytes
     assert b"Analista Teste" not in pdf_bytes
     assert b"/Count 6" in pdf_bytes
-    assert pdf_bytes.count(b"/Subtype /Image") >= 4
+    assert pdf_bytes.count(b"/Subtype /Image") >= 5
 
 
 def test_pdf_marca_dagua_em_todas_as_paginas():
@@ -367,7 +367,7 @@ def test_pdf_estrutura_inalterada_com_faixa_valor_ponto_blk_relpon_05():
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
     assert b"/Count 6" in pdf_bytes
-    assert pdf_bytes.count(b"/Subtype /Image") >= 4
+    assert pdf_bytes.count(b"/Subtype /Image") >= 5
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
     assert b"setor_censitario_intersecao_area_1p5km" in pdf_bytes
@@ -485,7 +485,7 @@ def test_classico_gera_6_paginas_e_secoes():
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
     # 3 choropleths embutidos separadamente no slide "Mapas de calor" + 1 pins = >= 4 imagens.
-    assert pdf_bytes.count(b"/Subtype /Image") >= 4
+    assert pdf_bytes.count(b"/Subtype /Image") >= 5
 
 
 def test_classico_link_clicavel_na_realizacao():
@@ -588,10 +588,10 @@ def _boxes_overlap(a: tuple[float, float, float, float], b: tuple[float, float, 
     return ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah
 
 
-def test_slide_unico_tres_mapas_sem_sobreposicao():
-    """As 3 celulas da tira 1x3 nao se sobrepoem e estao contidas na area de conteudo.
+def test_slide_unico_quatro_mapas_sem_sobreposicao():
+    """As 4 celulas do grid 2x2 nao se sobrepoem e estao contidas na area de conteudo.
 
-    Variante recente (top=56, bottom=_PAGE_H-30, margin_x=20) e classica (top ~122).
+    Variante recente (top=60, bottom=_PAGE_H-26, margin_x=20) e classica (top ~122).
     """
     from motor_expansao.dashboard.censo_report import (
         _CLASSICO_MAPS_TOP,
@@ -602,30 +602,30 @@ def test_slide_unico_tres_mapas_sem_sobreposicao():
     )
 
     # Recente.
-    top, bottom, margin_x, gap = 56.0, _PAGE_H - 30.0, 20.0, 12.0
+    top, bottom, margin_x, gap = 60.0, _PAGE_H - 26.0, 20.0, 12.0
     cells = _map_grid_cells(top, bottom, margin_x, gap)
-    assert len(cells) == 3
-    for i in range(3):
+    assert len(cells) == 4
+    for i in range(4):
         x, y, w, h = cells[i]
         assert x >= margin_x - 1e-6
         assert x + w <= _PAGE_W - margin_x + 1e-6
         assert y >= top - 1e-6
         assert y + h <= bottom + 1e-6
-        for j in range(i + 1, 3):
+        for j in range(i + 1, 4):
             assert not _boxes_overlap(cells[i], cells[j])
 
     # Classico (topo mais baixo por causa da banda + titulo de secao).
-    top_c, bottom_c, margin_c = _CLASSICO_MAPS_TOP, _PAGE_H - 30.0, _CLASSICO_MARGIN
+    top_c, bottom_c, margin_c = _CLASSICO_MAPS_TOP, _PAGE_H - 26.0, _CLASSICO_MARGIN
     cells_c = _map_grid_cells(top_c, bottom_c, margin_c, 12.0)
-    assert len(cells_c) == 3
+    assert len(cells_c) == 4
     assert top_c >= 100.0  # abaixo da banda classica + titulo de secao
-    for i in range(3):
+    for i in range(4):
         x, y, w, h = cells_c[i]
         assert x >= margin_c - 1e-6
         assert x + w <= _PAGE_W - margin_c + 1e-6
         assert y >= top_c - 1e-6
         assert y + h <= bottom_c + 1e-6
-        for j in range(i + 1, 3):
+        for j in range(i + 1, 4):
             assert not _boxes_overlap(cells_c[i], cells_c[j])
 
 
@@ -663,10 +663,10 @@ def test_slide_unico_tres_imagens_embutidas():
     result, mapas = _sample_result()
 
     pdf_recente = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
-    assert pdf_recente.count(b"/Subtype /Image") >= 4
+    assert pdf_recente.count(b"/Subtype /Image") >= 5
 
     pdf_classico = gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
-    assert pdf_classico.count(b"/Subtype /Image") >= 4
+    assert pdf_classico.count(b"/Subtype /Image") >= 5
 
 
 # ---------------------------------------------------------------------------

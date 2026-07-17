@@ -24,7 +24,10 @@ from motor_expansao.dashboard.censo_point import (
 from motor_expansao.dashboard.competitors import _render_pin_tile
 from motor_expansao.dashboard.constants import (
     DENSIDADE_POP_BANDS,
+    FATOR_TEMPORAL_RENDA,
+    RENDA_MEDIA_DOMICILIAR_BANDS,
     RENDA_PER_CAPITA_BANDS,
+    uplift_composicao_por_setor,
 )
 from motor_expansao.dashboard.utils import score_band_to_color
 
@@ -77,9 +80,10 @@ MAPA_CENSITARIO_METRICAS = {
     "peso_area_setor": "Peso de area",
 }
 
-# Chaves canonicas das 4 camadas combinadas (BLK-CENSO-03-FU5): `score` e o choropleth de
-# score censitario COM legenda; `concorrentes` e o mapa SO de pins (sem choropleth).
-CAMADAS_CENSITARIAS = ("densidade", "renda", "score", "concorrentes")
+# Chaves canonicas das camadas combinadas (BLK-CENSO-03-FU5): `score` e o choropleth de
+# score censitario COM legenda; `renda_domiciliar` e o choropleth de renda media domiciliar
+# (renda_pc x moradores x uplift SETORIAL x fator temporal); `concorrentes` e o mapa SO de pins.
+CAMADAS_CENSITARIAS = ("densidade", "renda", "score", "renda_domiciliar", "concorrentes")
 
 _SECTOR_PALETTE = [
     (232, 242, 255, 225),
@@ -447,6 +451,11 @@ def _decode_intersections(
                 "renda_per_capita_setor_2022_calibrada": row.get("renda_per_capita_setor_2022_calibrada"),
                 "renda_per_capita_setor_2022": row.get("renda_per_capita_setor_2022"),
                 "score_setor_2022_calibrado": row.get("score_setor_2022_calibrado"),
+                # Insumos da renda media domiciliar por setor (uplift SETORIAL, formula do #124).
+                "avg_moradores_domicilio_setor_2022": row.get("avg_moradores_domicilio_setor_2022"),
+                "renda_responsavel_media_setor_2022": row.get("renda_responsavel_media_setor_2022"),
+                "uf": row.get("uf"),
+                "cod_municipio": row.get("cod_municipio"),
             }
         )
     return records, circle_metric
@@ -724,7 +733,19 @@ def _render_camada(
 
 def _bands_legend_entries(
     bands: list[tuple[float, str, tuple[int, int, int, int]]],
+    *,
+    curto: bool = False,
 ) -> list[tuple[str, tuple[int, int, int, int]]]:
+    """Entradas (rotulo, cor) da legenda. `curto=True` encurta o rotulo para caber na coluna
+    estreita da legenda do mapa: remove a anotacao de classe entre parenteses E o prefixo 'R$ '
+    (a unidade fica no titulo da legenda, ex.: 'Renda domiciliar (R$/domicilio)'). Ex.:
+    'ate R$ 3.587 (C2/D/E)' -> 'ate 3.587'. Usado pela camada renda_domiciliar (bandas com classe
+    e faixas de 5 digitos, que estouram a coluna com o texto integral)."""
+    if curto:
+        return [
+            (label.split(" (")[0].replace("R$ ", ""), color)
+            for _upper, label, color in bands
+        ]
     return [(label, color) for _upper, label, color in bands]
 
 
@@ -754,13 +775,14 @@ def render_mapas_censitarios_combinados(
     street_cap: int | None = None,
     choropleth_alpha: int | None = None,
 ) -> dict[str, bytes]:
-    """Gera as 4 camadas do Relatorio Pontual Censitario numa unica chamada.
+    """Gera as 5 camadas do Relatorio Pontual Censitario numa unica chamada.
 
-    Retorna `{"densidade": png, "renda": png, "score": png, "concorrentes": png}` (chaves
-    canonicas). `score` e o choropleth de score censitario COM legenda (modo de cor ativo);
-    `concorrentes` e o mapa SO de pins (basemap + pins, sem choropleth). As 3 camadas de
-    choropleth (densidade/renda/score) e a de pins compartilham basemap, bbox, projecao
-    (EPSG:3857) e pins; variam so o fill dos setores + a legenda/titulo.
+    Retorna `{"densidade": png, "renda": png, "score": png, "renda_domiciliar": png,
+    "concorrentes": png}` (chaves canonicas). `renda_domiciliar` e o choropleth de renda media
+    domiciliar (renda_pc x moradores x uplift SETORIAL x fator temporal); `concorrentes` e o mapa SO
+    de pins (basemap + pins, sem choropleth). As 4 camadas de choropleth (densidade/renda/score/
+    renda_domiciliar) e a de pins compartilham basemap, bbox, projecao (EPSG:3857) e pins; variam
+    so o fill dos setores + a legenda/titulo.
 
     READ-ONLY sobre o M1: o motor (`analisar_ponto_censitario_setores`,
     `setor_censitario_intersecao_area_1p5km`, raio 1.5 km) e INTOCADO; toda a mudanca e
@@ -832,28 +854,57 @@ def render_mapas_censitarios_combinados(
     densidade_vals: list[float] = []
     renda_vals: list[float] = []
     score_vals: list[float] = []
+    renda_domiciliar_vals: list[float] = []
     for idx, record in enumerate(sector_records):
         geom = record.get("geometry_metric")
         if not isinstance(geom, BaseGeometry) or geom.is_empty:
             densidade_vals.append(float("nan"))
             renda_vals.append(float("nan"))
             score_vals.append(float("nan"))
+            renda_domiciliar_vals.append(float("nan"))
             continue
         sector_records_3857.append((_project_geometry(geom, _to_3857), idx))
         densidade_vals.append(
             float(pd.to_numeric(record.get("densidade_pop_setor_hab_km2"), errors="coerce"))
         )
-        renda_raw = pd.to_numeric(record.get("renda_per_capita_setor_2022_calibrada"), errors="coerce")
+        renda_calibrada = pd.to_numeric(
+            record.get("renda_per_capita_setor_2022_calibrada"), errors="coerce"
+        )
+        renda_raw = renda_calibrada
         if pd.isna(renda_raw):
             renda_raw = pd.to_numeric(record.get("renda_per_capita_setor_2022"), errors="coerce")
         renda_vals.append(float(renda_raw))
         score_vals.append(
             float(pd.to_numeric(record.get("score_setor_2022_calibrado"), errors="coerce"))
         )
+        # Renda media domiciliar por setor (formula setorial do #124, censo_point.py:328-352):
+        # renda_pc(CALIBRADA) x moradores x uplift_SETORIAL(cod_setor) x fator_temporal, com fallback
+        # POR SETOR para renda_responsavel_media_setor_2022 quando calibrada x moradores e' NaN
+        # (`.where(notna, _resp)` do #124). Usa a CALIBRADA (nao a bruta do renda_per_capita), para o
+        # setor entrar na cor com o MESMO valor com que entra no agregado `renda_domiciliar_total_raio`.
+        moradores = pd.to_numeric(
+            record.get("avg_moradores_domicilio_setor_2022"), errors="coerce"
+        )
+        renda_domiciliar = renda_calibrada * moradores
+        if pd.isna(renda_domiciliar):
+            renda_domiciliar = pd.to_numeric(
+                record.get("renda_responsavel_media_setor_2022"), errors="coerce"
+            )
+        uf_val = record.get("uf")
+        mun_val = record.get("cod_municipio")
+        uplift_setor = uplift_composicao_por_setor(
+            str(record.get("cod_setor") or ""),
+            str(uf_val) if pd.notna(uf_val) else None,
+            str(mun_val) if pd.notna(mun_val) else None,
+        )
+        renda_domiciliar_vals.append(
+            float(renda_domiciliar * uplift_setor * float(FATOR_TEMPORAL_RENDA))
+        )
 
     densidade_series = pd.Series(densidade_vals, dtype="float64")
     renda_series = pd.Series(renda_vals, dtype="float64")
     score_series = pd.Series(score_vals, dtype="float64")
+    renda_domiciliar_series = pd.Series(renda_domiciliar_vals, dtype="float64")
 
     # bbox do mapa = o FRAME (quadrado em 3857). Os setores ja foram recortados a ele, entao
     # preenchem o frame todo (corners inclusos), sem sobra de margem nem spill na legenda.
@@ -883,6 +934,12 @@ def render_mapas_censitarios_combinados(
         if pd.isna(value):
             return sem_dado
         r, g, b, _a = _color_for_bands(value, RENDA_PER_CAPITA_BANDS)
+        return (int(r), int(g), int(b), eff_alpha)
+
+    def _renda_dom_fn(value: float) -> tuple[int, int, int, int]:
+        if pd.isna(value):
+            return sem_dado
+        r, g, b, _a = _color_for_bands(value, RENDA_MEDIA_DOMICILIAR_BANDS)
         return (int(r), int(g), int(b), eff_alpha)
 
     def _score_fn(value: float) -> tuple[int, int, int, int]:
@@ -921,6 +978,11 @@ def render_mapas_censitarios_combinados(
     valor_raio_score = _legenda_valor_ponto(
         "Score", _format_valor_ponto_score(result.get("score_setor_medio"))
     )
+    # Faixa da renda domiciliar: usa o agregado do raio COM uplift+temporal (mesma escala das
+    # bandas), NAO o pre-uplift `renda_media_domiciliar_raio` (cairia sempre na faixa mais baixa).
+    valor_raio_renda_dom = _legenda_valor_ponto(
+        "Renda dom.", _format_valor_ponto_renda(result.get("renda_domiciliar_total_raio"))
+    )
 
     densidade_png = _render_camada(
         titulo="Densidade populacional",
@@ -951,6 +1013,15 @@ def render_mapas_censitarios_combinados(
         valor_ponto=valor_raio_score,
         **common,
     )
+    renda_domiciliar_png = _render_camada(
+        titulo="Renda media domiciliar",
+        legenda_titulo="Renda domiciliar (R$/domicilio)",
+        legenda_entries=_bands_legend_entries(RENDA_MEDIA_DOMICILIAR_BANDS, curto=True),
+        color_fn=_renda_dom_fn,
+        source_values=renda_domiciliar_series,
+        valor_ponto=valor_raio_renda_dom,
+        **common,
+    )
     concorrentes_png = _render_camada(
         titulo="Concorrentes e Ultra",
         legenda_titulo="Pins: Ultra e concorrentes",
@@ -965,6 +1036,7 @@ def render_mapas_censitarios_combinados(
         "densidade": densidade_png,
         "renda": renda_png,
         "score": score_png,
+        "renda_domiciliar": renda_domiciliar_png,
         "concorrentes": concorrentes_png,
     }
 
