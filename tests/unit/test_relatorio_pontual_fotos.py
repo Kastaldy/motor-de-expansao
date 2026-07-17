@@ -27,6 +27,7 @@ from motor_expansao.dashboard.censo_report import (
     _FOTOS_PAGE_TITLE,
     _fotos_cells,
     _normalizar_foto,
+    _recortar_cover,
     gerar_pdf_relatorio_pontual_censitario,
     gerar_pdf_relatorio_pontual_classico,
 )
@@ -142,6 +143,36 @@ def test_fotos_cells_duas_colunas_sem_sobreposicao():
 
 def test_fotos_cells_limita_ao_max():
     assert len(_fotos_cells(5)) == _FOTOS_MAX
+
+
+# --------------------------------------------------------------------------- #
+# _recortar_cover (proporcao fixa / tamanho igual)                            #
+# --------------------------------------------------------------------------- #
+def test_recortar_cover_paisagem_para_quadrado():
+    out = _recortar_cover(_fake_foto(800, 400), 1.0)
+    assert out is not None
+    with Image.open(BytesIO(out)) as img:
+        assert abs(img.width - img.height) <= 1  # virou ~quadrado (sem distorcer)
+
+
+def test_recortar_cover_retrato_para_ratio_3_2():
+    out = _recortar_cover(_fake_foto(400, 800), 1.5)
+    assert out is not None
+    with Image.open(BytesIO(out)) as img:
+        assert abs((img.width / img.height) - 1.5) < 0.02
+
+
+def test_recortar_cover_duas_fotos_diferentes_mesma_proporcao():
+    # Duas fotos de proporcoes distintas -> mesma proporcao de saida (tamanho igual no PDF).
+    a = _recortar_cover(_fake_foto(1200, 400), 1.1)
+    b = _recortar_cover(_fake_foto(500, 900), 1.1)
+    assert a is not None and b is not None
+    with Image.open(BytesIO(a)) as ia, Image.open(BytesIO(b)) as ib:
+        assert abs((ia.width / ia.height) - (ib.width / ib.height)) < 0.02
+
+
+def test_recortar_cover_invalida_none():
+    assert _recortar_cover(b"nao eh imagem", 1.0) is None
 
 
 # --------------------------------------------------------------------------- #

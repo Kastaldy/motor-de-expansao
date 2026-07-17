@@ -472,6 +472,10 @@ _FOTO_LADO_MAX = 1600  # downscale: maior lado <= 1600 px (capa o tamanho do PDF
 _FOTO_JPEG_QUALIDADE = 82  # recompressao JPEG.
 _FOTOS_PAGE_TITLE = "Imóvel - Fotos"
 _SEM_FOTO_VALIDA = "Nenhuma foto valida para exibir."
+_FOTO_BORDA_LARANJA = (245, 130, 30)  # laranja Ultra (borda da foto)
+_FOTO_BORDA_LARGURA = 5.0  # espessura (pt) da borda ao redor de cada foto
+# Cores da borda das fotos, alternadas por foto: laranja Ultra e magenta (ja no PDF).
+_FOTO_BORDA_CORES = (_FOTO_BORDA_LARANJA, ULTRA_MAGENTA)
 
 
 def _normalizar_foto(
@@ -516,6 +520,34 @@ def _fotos_cells(n: int) -> list[tuple[float, float, float, float]]:
     return [(margin_x + c * (cell_w + gap), top, cell_w, cell_h) for c in range(cols)]
 
 
+def _recortar_cover(raw: bytes, ratio_wh: float) -> bytes | None:
+    """Center-crop (estilo "cover") da foto para a proporcao `ratio_wh` (largura/altura).
+
+    Padroniza o tamanho: TODAS as fotos passam a ocupar slots IDENTICOS, sem distorcer —
+    recorta o excesso do lado mais comprido (em vez de esticar ou deixar borda/letterbox).
+    Retorna JPEG ou None em falha. READ-ONLY sobre o M1; so BytesIO em memoria.
+    """
+    try:
+        with Image.open(BytesIO(raw)) as src:
+            img = src.convert("RGB")
+            w, h = img.size
+            atual = w / h
+            if atual > ratio_wh:  # muito larga -> corta as laterais
+                novo_w = max(1, int(round(h * ratio_wh)))
+                x0 = (w - novo_w) // 2
+                box = (x0, 0, x0 + novo_w, h)
+            else:  # muito alta -> corta topo/base
+                novo_h = max(1, int(round(w / ratio_wh)))
+                y0 = (h - novo_h) // 2
+                box = (0, y0, w, y0 + novo_h)
+            recorte = img.crop(box)
+            buffer = BytesIO()
+            recorte.save(buffer, format="JPEG", quality=_FOTO_JPEG_QUALIDADE, optimize=True)
+            return buffer.getvalue()
+    except Exception:
+        return None
+
+
 def _fotos_imovel_page(
     pdf: _UltraPDF,
     fotos: list[bytes],
@@ -523,11 +555,13 @@ def _fotos_imovel_page(
     *,
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
 ) -> None:
-    """Pagina de fotos do imovel: faixa de titulo + ate 2 fotos retangulares + rodape.
+    """Pagina de fotos do imovel: faixa de titulo + ate 2 fotos com TAMANHO FIXO + rodape.
 
-    Cada foto e normalizada (`_normalizar_foto`) e escalada para caber na sua celula
-    preservando proporcao (`min(cw/img_w, ch/img_h)`), centralizada. Fotos invalidas sao
-    descartadas; se nenhuma sobreviver, desenha um aviso gracioso. READ-ONLY sobre o M1.
+    Cada foto e normalizada (`_normalizar_foto`) e recortada (`_recortar_cover`) para a
+    proporcao da celula, preenchendo-a por inteiro. Assim as fotos ficam com o MESMO tamanho
+    (nenhuma diferente da outra), sem distorcer — recorta o excesso em vez de esticar. Cada
+    foto ganha uma BORDA (laranja Ultra / magenta, alternadas). Fotos invalidas sao
+    descartadas; se nenhuma sobreviver, desenha um aviso gracioso. READ-ONLY M1.
     """
     normalizadas = [n for n in (_normalizar_foto(f) for f in fotos[:_FOTOS_MAX]) if n]
 
@@ -543,19 +577,22 @@ def _fotos_imovel_page(
         _draw_footer(pdf, with_attribution=False)
         return
 
-    for png, (cx, cy, cw, ch) in zip(normalizadas, _fotos_cells(len(normalizadas)), strict=False):
-        dims = _png_dimensions(png)
-        if dims is None:
-            continue
-        img_w, img_h = dims
-        scale = min(cw / img_w, ch / img_h)
-        draw_w, draw_h = img_w * scale, img_h * scale
-        x = cx + (cw - draw_w) / 2.0
-        y = cy + (ch - draw_h) / 2.0
+    prev_lw = pdf.line_width
+    for idx, (png, (cx, cy, cw, ch)) in enumerate(
+        zip(normalizadas, _fotos_cells(len(normalizadas)), strict=False)
+    ):
+        # Recorta para a proporcao da celula e preenche a celula inteira -> tamanho fixo/igual.
+        recorte = _recortar_cover(png, cw / ch)
+        alvo = recorte if recorte is not None else png
         try:
-            pdf.image(BytesIO(png), x=x, y=y, w=draw_w, h=draw_h)
+            pdf.image(BytesIO(alvo), x=cx, y=cy, w=cw, h=ch)
         except Exception:
             pass
+        # Borda por cima da foto (laranja Ultra / magenta, alternadas).
+        pdf.set_draw_color(*_FOTO_BORDA_CORES[idx % len(_FOTO_BORDA_CORES)])
+        pdf.set_line_width(_FOTO_BORDA_LARGURA)
+        pdf.rect(cx, cy, cw, ch, style="D")
+    pdf.set_line_width(prev_lw)  # restaura p/ nao engrossar bordas das paginas seguintes
     _draw_footer(pdf, with_attribution=False)
 
 
