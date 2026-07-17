@@ -8,7 +8,7 @@ from typing import Any
 
 import pandas as pd
 from fpdf import FPDF
-from PIL import Image
+from PIL import Image, ImageOps
 
 from motor_expansao.api.maps_geocoder import build_search_url
 from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSITARIO
@@ -459,6 +459,321 @@ def _mapas_calor_page(
     )
     _draw_footer(pdf, with_attribution=True)
     return boxes
+
+
+# ---------------------------------------------------------------------------
+# Pagina de FOTOS do imovel (BLK-RELVIAB-01): upload do operador, ate 2 fotos
+# retangulares lado a lado, dimensoes adaptaveis (fit-within-box preservando
+# proporcao). READ-ONLY sobre o M1; saida OPCIONAL (so entra se `fotos` != None).
+# Anti-PII: bytes normalizados em memoria, nada persistido.
+# ---------------------------------------------------------------------------
+_FOTOS_MAX = 2  # MVP: no maximo 2 fotos no PDF.
+_FOTO_LADO_MAX = 1600  # downscale: maior lado <= 1600 px (capa o tamanho do PDF).
+_FOTO_JPEG_QUALIDADE = 82  # recompressao JPEG.
+_FOTOS_PAGE_TITLE = "Imóvel - Fotos"
+_SEM_FOTO_VALIDA = "Nenhuma foto valida para exibir."
+
+
+def _normalizar_foto(
+    raw: bytes,
+    *,
+    lado_max: int = _FOTO_LADO_MAX,
+    qualidade: int = _FOTO_JPEG_QUALIDADE,
+) -> bytes | None:
+    """Normaliza uma foto de upload para embutir no PDF (BLK-RELVIAB-01).
+
+    - corrige a orientacao EXIF (foto de celular sai em pe, nao deitada);
+    - achata para RGB (descarta alpha/paleta sobre fundo branco);
+    - downscale para `lado_max` no maior lado (fotos de celular tem varios MB);
+    - recomprime como JPEG `qualidade` para capar o tamanho do PDF.
+
+    Retorna `None` em qualquer falha (formato invalido etc.) -> fallback gracioso.
+    Puro/deterministico e sem I/O de disco (so BytesIO em memoria) -> loop-safe.
+    """
+    try:
+        with Image.open(BytesIO(raw)) as src:
+            oriented = ImageOps.exif_transpose(src)
+            if oriented.mode not in ("RGB", "L"):
+                flat = Image.new("RGB", oriented.size, (255, 255, 255))
+                flat.paste(oriented.convert("RGB"), mask=oriented.convert("RGBA").split()[-1])
+            else:
+                flat = oriented.convert("RGB")
+            flat.thumbnail((lado_max, lado_max), Image.Resampling.LANCZOS)
+            buffer = BytesIO()
+            flat.save(buffer, format="JPEG", quality=qualidade, optimize=True)
+            return buffer.getvalue()
+    except Exception:
+        return None
+
+
+def _fotos_cells(n: int) -> list[tuple[float, float, float, float]]:
+    """Geometria PURA das celulas para `n` fotos (1 ou 2), lado a lado. Testavel sem PDF."""
+    top, bottom, margin_x, gap = 60.0, _PAGE_H - 26.0, 40.0, 16.0
+    cols = max(1, min(n, _FOTOS_MAX))
+    usable_w = _PAGE_W - 2.0 * margin_x - (cols - 1) * gap
+    cell_w = usable_w / cols
+    cell_h = bottom - top
+    return [(margin_x + c * (cell_w + gap), top, cell_w, cell_h) for c in range(cols)]
+
+
+def _fotos_imovel_page(
+    pdf: _UltraPDF,
+    fotos: list[bytes],
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+) -> None:
+    """Pagina de fotos do imovel: faixa de titulo + ate 2 fotos retangulares + rodape.
+
+    Cada foto e normalizada (`_normalizar_foto`) e escalada para caber na sua celula
+    preservando proporcao (`min(cw/img_w, ch/img_h)`), centralizada. Fotos invalidas sao
+    descartadas; se nenhuma sobreviver, desenha um aviso gracioso. READ-ONLY sobre o M1.
+    """
+    normalizadas = [n for n in (_normalizar_foto(f) for f in fotos[:_FOTOS_MAX]) if n]
+
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _FOTOS_PAGE_TITLE, rgb=primary)
+
+    if not normalizadas:
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_xy(40, _PAGE_H / 2.0 - 8.0)
+        pdf.multi_cell(_PAGE_W - 80, 16, _ascii(_SEM_FOTO_VALIDA), align="C")
+        _draw_footer(pdf, with_attribution=False)
+        return
+
+    for png, (cx, cy, cw, ch) in zip(normalizadas, _fotos_cells(len(normalizadas)), strict=False):
+        dims = _png_dimensions(png)
+        if dims is None:
+            continue
+        img_w, img_h = dims
+        scale = min(cw / img_w, ch / img_h)
+        draw_w, draw_h = img_w * scale, img_h * scale
+        x = cx + (cw - draw_w) / 2.0
+        y = cy + (ch - draw_h) / 2.0
+        try:
+            pdf.image(BytesIO(png), x=x, y=y, w=draw_w, h=draw_h)
+        except Exception:
+            pass
+    _draw_footer(pdf, with_attribution=False)
+
+
+# ---------------------------------------------------------------------------
+# Pagina de INFORMACOES do imovel (BLK-RELVIAB-02): dados do imovel em cards +
+# observacoes. Saida OPCIONAL (so entra se `info_imovel` != None); campos
+# ausentes -> "n/d" gracioso. READ-ONLY sobre o M1; anti-PII (nada persistido).
+# ---------------------------------------------------------------------------
+_INFO_IMOVEL_PAGE_TITLE = "Imóvel - Informações"
+# (chave no dict, rotulo exibido, tipo de formatacao).
+_INFO_IMOVEL_CAMPOS: tuple[tuple[str, str, str], ...] = (
+    ("metragem_m2", "Metragem (m2)", "num"),
+    ("aluguel_pedido", "Aluguel pedido (mês)", "brl"),
+    ("valor_venda", "Valor de venda", "brl"),
+    ("pe_direito_m", "Pé-direito (m)", "num2"),
+    ("vagas", "Vagas", "num"),
+    ("tipo_imovel", "Tipo do imóvel", "texto"),
+)
+
+
+def _info_valor(value: Any, kind: str) -> str:
+    """Formata um valor de info do imovel; ausente/vazio -> 'n/d'; nao-numerico seguro."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "n/d"
+    try:
+        if kind == "brl":
+            return "R$ " + _format_number(value, 2)
+        if kind == "num":
+            return _format_number(value, 0)
+        if kind == "num2":
+            return _format_number(value, 2)
+    except (TypeError, ValueError):
+        return str(value)
+    return str(value)
+
+
+def _info_imovel_page(
+    pdf: _UltraPDF,
+    info_imovel: dict[str, Any],
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+) -> None:
+    """Pagina de informacoes do imovel: endereco + cards 3x2 + observacoes. READ-ONLY M1."""
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _INFO_IMOVEL_PAGE_TITLE, rgb=primary)
+
+    endereco = str(info_imovel.get("endereco") or info_imovel.get("rotulo") or "").strip()
+    y_cards = 72.0
+    if endereco:
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_xy(36, 66)
+        pdf.multi_cell(_PAGE_W - 72, 18, _ascii(endereco[:110]))
+        y_cards = 100.0
+
+    margin_x, gap, cols = 36.0, 12.0, 3
+    card_w = (_PAGE_W - 2 * margin_x - (cols - 1) * gap) / cols
+    card_h = 120.0
+    accents = [primary, secondary]
+    for index, (chave, rotulo, kind) in enumerate(_INFO_IMOVEL_CAMPOS):
+        col, row = index % cols, index // cols
+        x = margin_x + col * (card_w + gap)
+        y = y_cards + row * (card_h + gap)
+        pdf.set_fill_color(*_CARD_NEUTRO_RGB)
+        pdf.rect(x, y, card_w, card_h, style="F")
+        pdf.set_draw_color(225, 225, 228)
+        pdf.rect(x, y, card_w, card_h, style="D")
+        pdf.set_fill_color(*accents[index % len(accents)])
+        pdf.rect(x, y, card_w, 6.0, style="F")
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_xy(x + 14, y + 20)
+        pdf.multi_cell(card_w - 28, 14, _ascii(rotulo))
+        pdf.set_text_color(40, 40, 40)
+        pdf.set_font("Helvetica", "B", 22)
+        pdf.set_xy(x + 14, y + 66)
+        pdf.multi_cell(card_w - 28, 24, _ascii(_info_valor(info_imovel.get(chave), kind)))
+
+    observacoes = str(info_imovel.get("observacoes") or "").strip()
+    if observacoes:
+        y_obs = y_cards + 2 * (card_h + gap) + 6
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_xy(margin_x, y_obs)
+        pdf.cell(_PAGE_W - 2 * margin_x, 14, _ascii("Observações"))
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_xy(margin_x, y_obs + 16)
+        pdf.multi_cell(_PAGE_W - 2 * margin_x, 13, _ascii(observacoes[:600]))
+    _draw_footer(pdf, with_attribution=False)
+
+
+# ---------------------------------------------------------------------------
+# Paginas de VIABILIDADE (BLK-RELVIAB-04): slide de NUMEROS (estilo Big Numbers)
+# do motor `viabilidade_ponto` + slide de GRAFICOS (PNGs do BLK-RELVIAB-03).
+# Saida OPCIONAL (so entra se `viabilidade` != None). READ-ONLY sobre o M1.
+# ---------------------------------------------------------------------------
+_VIAB_NUMEROS_TITLE = "Viabilidade - Números"
+_VIAB_GRAFICOS_TITLE = "Viabilidade - Projeção financeira"
+
+
+def _viab_brl(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return "n/d"
+    return "R$ " + _format_number(value, 2)
+
+
+def _viab_pct(frac: Any) -> str:
+    if frac is None or pd.isna(frac):
+        return "n/d"
+    return _format_number(float(frac) * 100.0, 1) + "%"
+
+
+def _viab_payback(value: Any) -> str:
+    if value is None or value == float("inf") or pd.isna(value):
+        return "> 60 meses"
+    return _format_number(value, 0) + " meses"
+
+
+def _viab_breakeven(value: Any) -> str:
+    if value is None or value == float("inf") or pd.isna(value):
+        return "inviável"
+    return _format_number(value, 0)
+
+
+def _viab_faixa(p10: Any, p90: Any) -> str:
+    if (p10 is None or pd.isna(p10)) and (p90 is None or pd.isna(p90)):
+        return "n/d"
+    return f"{_format_number(p10, 0)} - {_format_number(p90, 0)}"
+
+
+def _viabilidade_page(
+    pdf: _UltraPDF,
+    viabilidade: dict[str, Any],
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+) -> None:
+    """Slide de numeros da viabilidade + (se houver) slide dos graficos. READ-ONLY M1.
+
+    `viabilidade` e um dict simples (serializavel) derivado do `ViabilidadePontoResult`:
+    alunos_breakeven, aluguel_teto, margem_ebitda_pct (fracao), payback_meses, roic_anual
+    (fracao), faturamento_mensal, ebitda_mensal, faixa_p10/p90, flag_viavel,
+    flag_fora_envelope e, opcionalmente, `graficos` (lista de ate 4 PNGs do BLK-RELVIAB-03).
+    Com `graficos` -> 2 paginas; sem -> 1 pagina.
+    """
+    # --- Pagina de NUMEROS (grid 4x2 estilo Big Numbers) ---
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _VIAB_NUMEROS_TITLE, rgb=primary)
+
+    cards = [
+        ("Alunos break-even", _viab_breakeven(viabilidade.get("alunos_breakeven"))),
+        ("Aluguel-teto (mês)", _viab_brl(viabilidade.get("aluguel_teto"))),
+        ("Margem EBITDA", _viab_pct(viabilidade.get("margem_ebitda_pct"))),
+        ("Payback", _viab_payback(viabilidade.get("payback_meses"))),
+        ("ROIC anual", _viab_pct(viabilidade.get("roic_anual"))),
+        ("Faturamento/mês", _viab_brl(viabilidade.get("faturamento_mensal"))),
+        ("EBITDA/mês", _viab_brl(viabilidade.get("ebitda_mensal"))),
+        (
+            "Faixa alunos (p10-p90)",
+            _viab_faixa(viabilidade.get("faixa_p10"), viabilidade.get("faixa_p90")),
+        ),
+    ]
+    margin_x, gap, cols = 36.0, 12.0, 4
+    card_w = (_PAGE_W - 2 * margin_x - (cols - 1) * gap) / cols
+    card_h = 132.0
+    top = 72.0
+    accents = [primary, secondary]
+    for index, (label, value) in enumerate(cards):
+        col, row = index % cols, index // cols
+        x = margin_x + col * (card_w + gap)
+        y = top + row * (card_h + gap)
+        pdf.set_fill_color(*_CARD_NEUTRO_RGB)
+        pdf.rect(x, y, card_w, card_h, style="F")
+        pdf.set_draw_color(225, 225, 228)
+        pdf.rect(x, y, card_w, card_h, style="D")
+        pdf.set_fill_color(*accents[index % len(accents)])
+        pdf.rect(x, y, card_w, 6.0, style="F")
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_xy(x + 14, y + 20)
+        pdf.multi_cell(card_w - 28, 14, _ascii(label))
+        pdf.set_text_color(40, 40, 40)
+        pdf.set_font("Helvetica", "B", 22)
+        pdf.set_xy(x + 14, y + 74)
+        pdf.multi_cell(card_w - 28, 24, _ascii(value))
+
+    viavel = "Sim" if viabilidade.get("flag_viavel") else "Não"
+    envelope = "fora do envelope" if viabilidade.get("flag_fora_envelope") else "dentro do envelope"
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(margin_x, top + 2 * (card_h + gap) + 6)
+    pdf.multi_cell(
+        _PAGE_W - 2 * margin_x,
+        12,
+        _ascii(
+            f"Viável? {viavel}   |   Metragem {envelope}. A demanda e uma PREMISSA do operador "
+            "(nao prevista pela geografia). READ-ONLY sobre o M1."
+        ),
+    )
+    _draw_footer(pdf, with_attribution=False)
+
+    # --- Pagina de GRAFICOS (grid 2x2), so quando ha PNGs ---
+    graficos = list(viabilidade.get("graficos") or [])
+    if graficos:
+        pdf.add_page()
+        _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+        _draw_title_band(pdf, _VIAB_GRAFICOS_TITLE, rgb=secondary)
+        pngs: list[bytes | None] = (graficos + [None, None, None, None])[:4]
+        _draw_maps_grid(
+            pdf, pngs, top=60.0, bottom=_PAGE_H - 26.0, margin_x=20.0, gap=12.0
+        )
+        _draw_footer(pdf, with_attribution=False)
 
 
 def _draw_watermark(
@@ -1484,6 +1799,9 @@ def gerar_pdf_relatorio_pontual_classico(
     solicitante: str | None = None,
     rotulo: str | None = None,
     now: datetime | None = None,
+    fotos: list[bytes] | None = None,
+    info_imovel: dict[str, Any] | None = None,
+    viabilidade: dict[str, Any] | None = None,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
@@ -1515,6 +1833,10 @@ def gerar_pdf_relatorio_pontual_classico(
 
     pdf = _UltraPDF()
     _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
+    if fotos:
+        _fotos_imovel_page(pdf, fotos, assets, primary=p1)
+    if info_imovel:
+        _info_imovel_page(pdf, info_imovel, assets, primary=p2, secondary=s2)
     _classico_mapas_calor_page(pdf, layers, assets, banda_texto=banda_texto, primary=p1)
     _classico_competitors_page(
         pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto,
@@ -1525,6 +1847,8 @@ def gerar_pdf_relatorio_pontual_classico(
     )
     _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
     _classico_banda_magenta_rodape(pdf)
+    if viabilidade:
+        _viabilidade_page(pdf, viabilidade, assets, primary=p1, secondary=p2)
     _classico_credit_page(pdf, result, assets, rotulo=rotulo, now=now)
 
     # Marca d'agua identica ao gerador recente: capa branca, demais cinza.
@@ -1565,6 +1889,9 @@ def gerar_pdf_relatorio_pontual_censitario(
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     rotulo: str | None = None,
+    fotos: list[bytes] | None = None,
+    info_imovel: dict[str, Any] | None = None,
+    viabilidade: dict[str, Any] | None = None,
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
@@ -1598,10 +1925,16 @@ def gerar_pdf_relatorio_pontual_censitario(
 
     pdf = _UltraPDF()
     _cover_page(pdf, result, assets, rotulo=rotulo)
+    if fotos:
+        _fotos_imovel_page(pdf, fotos, assets, primary=p1)
+    if info_imovel:
+        _info_imovel_page(pdf, info_imovel, assets, primary=p2, secondary=s2)
     _mapas_calor_page(pdf, layers, assets, primary=p1)
     _competitors_page(pdf, result, layers.get("concorrentes"), assets, primary=p2, secondary=s2)
     _perfil_bairro_page(pdf, perfil_bairro, assets, primary=p3, secondary=s3)
     _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
+    if viabilidade:
+        _viabilidade_page(pdf, viabilidade, assets, primary=p1, secondary=p2)
     _credit_page(pdf, assets)
 
     # Marca d'agua diagonal POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as 6).
@@ -1632,17 +1965,22 @@ def gerar_payloads_download_relatorio_censitario(
     solicitante: str | None = None,
     template: str | None = None,
     rotulo: str | None = None,
+    fotos: list[bytes] | None = None,
+    info_imovel: dict[str, Any] | None = None,
+    viabilidade: dict[str, Any] | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     prefix = filename_prefix or f"relatorio_pontual_censitario_{_point_name(result)}"
     if template == "classico":
         pdf_bytes = gerar_pdf_relatorio_pontual_classico(
             result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
             solicitante=solicitante, rotulo=rotulo,
+            fotos=fotos, info_imovel=info_imovel, viabilidade=viabilidade,
         )
     else:
         pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
             result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
             solicitante=solicitante, rotulo=rotulo,
+            fotos=fotos, info_imovel=info_imovel, viabilidade=viabilidade,
         )
     return RelatorioCensitarioDownloadPayloads(
         csv_bytes=gerar_csv_setores_censitarios(result),
@@ -1664,6 +2002,9 @@ def render_downloads_relatorio_censitario(
     solicitante: str | None = None,
     template: str | None = None,
     rotulo: str | None = None,
+    fotos: list[bytes] | None = None,
+    info_imovel: dict[str, Any] | None = None,
+    viabilidade: dict[str, Any] | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     """Renderiza botoes Streamlit e retorna os mesmos bytes para testes/reuso."""
     payloads = gerar_payloads_download_relatorio_censitario(
@@ -1676,6 +2017,9 @@ def render_downloads_relatorio_censitario(
         solicitante=solicitante,
         template=template,
         rotulo=rotulo,
+        fotos=fotos,
+        info_imovel=info_imovel,
+        viabilidade=viabilidade,
     )
     st_module.download_button(
         "Baixar CSV dos setores",
