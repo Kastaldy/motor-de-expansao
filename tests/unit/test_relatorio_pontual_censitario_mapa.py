@@ -20,7 +20,7 @@ from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS
 LAT_C = -23.55
 LNG_C = -46.63
 
-_CAMADAS = {"densidade", "renda", "score", "concorrentes"}
+_CAMADAS = {"densidade", "renda", "score", "renda_domiciliar", "concorrentes"}
 
 
 def _to_wgs_geometry(local_geom):
@@ -36,6 +36,7 @@ def _sector_record(
     renda: float = 2000.0,
     score: float = 70.0,
     densidade: float | None = None,
+    moradores: float = 3.0,
 ) -> dict[str, object]:
     geom_wgs = _to_wgs_geometry(local_geom)
     minx, miny, maxx, maxy = geom_wgs.bounds
@@ -53,6 +54,8 @@ def _sector_record(
         "bbox_maxy": maxy,
         "pop_total_setor_2022": pop,
         "renda_per_capita_setor_2022_calibrada": renda,
+        "avg_moradores_domicilio_setor_2022": moradores,
+        "renda_responsavel_media_setor_2022": renda * moradores,
         "densidade_pop_setor_hab_km2": dens,
         "score_setor_2022_calibrado": score,
         "flag_renda_disponivel": True,
@@ -336,10 +339,10 @@ def test_atribuicao_tiles_constante_e_legenda_arredondada_disponiveis():
 # ── BLK-RELPON-05: faixa "<variavel> no ponto" por camada ───────────────────────
 
 
-def test_valor_ponto_repassado_aos_3_choropleths_nao_a_concorrentes(monkeypatch):
-    # O ponto (0,0) cai dentro do setor A (renda/score distintos do B) -> os 3
-    # choropleths devem receber `valor_ponto` nao-None com o rotulo correspondente;
-    # a camada Concorrentes deve receber `valor_ponto=None` (byte-a-byte igual).
+def test_valor_ponto_repassado_aos_4_choropleths_nao_a_concorrentes(monkeypatch):
+    # O ponto (0,0) cai dentro do setor A (renda/score distintos do B) -> os 4
+    # choropleths (densidade/renda/score/renda domiciliar) devem receber `valor_ponto` nao-None
+    # com o rotulo correspondente; a camada Concorrentes deve receber `valor_ponto=None`.
     setores = pd.DataFrame(
         [
             _sector_record("355030801000001", box(-700, -700, 0, 700), renda=1900, score=55),
@@ -366,11 +369,18 @@ def test_valor_ponto_repassado_aos_3_choropleths_nao_a_concorrentes(monkeypatch)
     assert "Renda" in capturado["Renda per capita"]["valor_ponto"]
     assert capturado["Score censitario"]["valor_ponto"] is not None
     assert "Score" in capturado["Score censitario"]["valor_ponto"]
+    assert capturado["Renda media domiciliar"]["valor_ponto"] is not None
+    assert "Renda dom." in capturado["Renda media domiciliar"]["valor_ponto"]
     # A camada Concorrentes nunca recebe o kwarg `valor_ponto` (fica no default None de
     # `_render_camada`, ver assinatura) -- byte-a-byte igual ao render antigo.
     assert capturado["Concorrentes e Ultra"].get("valor_ponto") is None
     # BLK-RELPON-06 (D1): a faixa REVERTE de "no ponto" para "no raio" -- trava a reversao.
-    for titulo in ("Densidade populacional", "Renda per capita", "Score censitario"):
+    for titulo in (
+        "Densidade populacional",
+        "Renda per capita",
+        "Score censitario",
+        "Renda media domiciliar",
+    ):
         assert "no raio" in capturado[titulo]["valor_ponto"]
         assert "no ponto" not in capturado[titulo]["valor_ponto"]
 
@@ -488,7 +498,7 @@ def test_shared_transformer_bytes_identicos():
     mapas_b = render_mapas_censitarios_combinados(
         LAT_C, LNG_C, setores, width=600, height=460, basemap=False
     )
-    for camada in ("densidade", "renda", "score", "concorrentes"):
+    for camada in ("densidade", "renda", "score", "renda_domiciliar", "concorrentes"):
         assert mapas_a[camada] == mapas_b[camada], f"PNG nao-deterministico na camada {camada}"
 
 
@@ -533,27 +543,49 @@ def test_font_nao_depende_de_ttf_do_sistema():
 
 
 def test_legenda_corpo_atinge_o_alvo_de_legibilidade_no_pdf():
-    # Pior caso do PDF: PNG de 1000px entra numa celula de ~298,67pt na tira 1x3
-    # (`_map_grid_cells`: usable_w=896/3) -> ratio ~0,2987. Alvo = texto efetivo >= 9pt.
-    ratio_pdf = 298.67 / 1000.0
-    assert censo_map._FS_LEGENDA_CORPO * ratio_pdf >= 9.0
+    # Slide "Mapas de calor" em grid 2x2 (PNG 1000x760). A ALTURA da celula limita a escala.
+    from motor_expansao.dashboard.censo_report import (
+        _CLASSICO_MAPS_TOP,
+        _PAGE_H,
+        _map_grid_cells,
+    )
+
+    png_w, png_h = 1000.0, 760.0
+    # Variante RECENTE (top=60): celula ~454x221 -> legenda ~9,3pt >= 9pt (contrato mantido).
+    cell_r = _map_grid_cells(60.0, _PAGE_H - 26.0, 20.0, 12.0)[0]
+    ratio_r = min(cell_r[2] / png_w, cell_r[3] / png_h)
+    assert censo_map._FS_LEGENDA_CORPO * ratio_r >= 9.0
+    # Variante CLASSICA (o PDF que o dashboard baixa; header fixo banda+titulo em top ~122): a
+    # celula 2x2 e mais baixa (~454x190) -> legenda cai para ~8pt. E' o piso legivel ACEITO para
+    # caber 4 mapas no espaco menor do classico (nao ha altura para 9pt com 4 mapas ali).
+    cell_c = _map_grid_cells(_CLASSICO_MAPS_TOP, _PAGE_H - 26.0, 20.0, 12.0)[0]
+    ratio_c = min(cell_c[2] / png_w, cell_c[3] / png_h)
+    assert censo_map._FS_LEGENDA_CORPO * ratio_c >= 8.0
 
 
 def test_rotulo_mais_longo_da_legenda_cabe_na_coluna():
-    from motor_expansao.dashboard.constants import RENDA_PER_CAPITA_BANDS
+    from motor_expansao.dashboard.constants import (
+        RENDA_MEDIA_DOMICILIAR_BANDS,
+        RENDA_PER_CAPITA_BANDS,
+    )
 
     image = Image.new("RGB", (10, 10))
     draw = ImageDraw.Draw(image, "RGBA")
     font = censo_map._font(censo_map._FS_LEGENDA_CORPO)
-    rotulo_mais_longo = max(
-        (label for _upper, label, _color in RENDA_PER_CAPITA_BANDS), key=len
-    )
-    largura = censo_map._text_width(draw, rotulo_mais_longo, font)
     orcamento = censo_map._LEGEND_COL_W - 78
-    assert largura <= orcamento, (
-        f"Rotulo '{rotulo_mais_longo}' ({largura}px) nao cabe no orcamento de "
-        f"{orcamento}px da coluna de legenda (_LEGEND_COL_W={censo_map._LEGEND_COL_W})"
-    )
+    # Verifica os rotulos EXATOS que cada camada renderiza na legenda: per capita usa as bandas
+    # cruas; renda_domiciliar usa a versao CURTA (sem a anotacao de classe (C2/D/E)) via curto=True.
+    conjuntos = [
+        censo_map._bands_legend_entries(RENDA_PER_CAPITA_BANDS),
+        censo_map._bands_legend_entries(RENDA_MEDIA_DOMICILIAR_BANDS, curto=True),
+    ]
+    for entries in conjuntos:
+        rotulo_mais_longo = max((label for label, _color in entries), key=len)
+        largura = censo_map._text_width(draw, rotulo_mais_longo, font)
+        assert largura <= orcamento, (
+            f"Rotulo '{rotulo_mais_longo}' ({largura}px) nao cabe no orcamento de "
+            f"{orcamento}px da coluna de legenda (_LEGEND_COL_W={censo_map._LEGEND_COL_W})"
+        )
 
 
 def test_legenda_subtitulo_mais_longo_nao_transborda_do_canvas():

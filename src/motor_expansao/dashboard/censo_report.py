@@ -49,6 +49,7 @@ MAP_LAYER_TITLES: tuple[tuple[str, str], ...] = (
     ("densidade", "População - Densidade"),
     ("renda", "Renda per capita"),
     ("score", "Score censitário"),
+    ("renda_domiciliar", "Renda média domiciliar"),
     ("concorrentes", "Concorrentes e Ultra"),
 )
 
@@ -355,21 +356,30 @@ def _draw_footer(pdf: _UltraPDF, *, with_attribution: bool = True) -> None:
 _MAPA_INDISPONIVEL = "Mapa indisponível para esta camada."
 
 
+_MAP_GRID_COLS = 2
+_MAP_GRID_ROWS = 2
+
+
 def _map_grid_cells(
     top: float, bottom: float, margin_x: float, gap: float
 ) -> list[tuple[float, float, float, float]]:
-    """Geometria PURA das 3 celulas da tira 1x3 (x, y, w, h). Testavel sem gerar PDF.
+    """Geometria PURA das 4 celulas do grid 2x2 (x, y, w, h), em ordem row-major. Testavel
+    sem gerar PDF; compartilhada pelas variantes recente e classica (variam so top/margem).
 
-    Divide a largura util (`_PAGE_W - 2*margin_x - 2*gap`) em 3 colunas iguais; altura da
-    celula = `bottom - top`. Nao desenha nada; so calcula as caixas das celulas.
+    Largura util (`_PAGE_W - 2*margin_x - (cols-1)*gap`) dividida em `cols` colunas iguais;
+    altura util (`bottom - top - (rows-1)*gap`) em `rows` linhas iguais.
     """
-    usable_w = _PAGE_W - 2.0 * margin_x - 2.0 * gap
-    cell_w = usable_w / 3.0
-    cell_h = bottom - top
+    cols, rows = _MAP_GRID_COLS, _MAP_GRID_ROWS
+    usable_w = _PAGE_W - 2.0 * margin_x - (cols - 1) * gap
+    cell_w = usable_w / cols
+    usable_h = (bottom - top) - (rows - 1) * gap
+    cell_h = usable_h / rows
     cells: list[tuple[float, float, float, float]] = []
-    for i in range(3):
-        x = margin_x + i * (cell_w + gap)
-        cells.append((x, top, cell_w, cell_h))
+    for r in range(rows):
+        for c in range(cols):
+            x = margin_x + c * (cell_w + gap)
+            y = top + r * (cell_h + gap)
+            cells.append((x, y, cell_w, cell_h))
     return cells
 
 
@@ -382,11 +392,11 @@ def _draw_maps_grid(
     margin_x: float,
     gap: float,
 ) -> list[tuple[float, float, float, float]]:
-    """Desenha os 3 PNGs [densidade, renda, score] numa tira 1x3 sem sobreposicao.
+    """Desenha os 4 PNGs [densidade, renda, score, renda_domiciliar] num grid 2x2 sem sobreposicao.
 
     Cada PNG e escalado para caber na sua celula preservando proporcao (`min(w,h)`) e
     centralizado dentro dela; camada `None` -> texto de fallback centralizado na celula.
-    Os 3 PNGs sao embutidos SEPARADAMENTE (nao pre-compostos) para preservar a contagem
+    Os PNGs sao embutidos SEPARADAMENTE (nao pre-compostos) para preservar a contagem
     de `/Subtype /Image`. Retorna os bounding boxes efetivamente ocupados por cada mapa
     (imagem desenhada) ou a propria celula quando cai no fallback — usado pelo teste de
     nao-sobreposicao.
@@ -424,21 +434,26 @@ def _mapas_calor_page(
     *,
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
 ) -> list[tuple[float, float, float, float]]:
-    """Slide unico "Mapas de calor" (template recente): faixa de titulo + tira 1x3 + rodape.
+    """Slide unico "Mapas de calor" (template recente): faixa de titulo + grid 2x2 + rodape.
 
     BLK-RELPON-05 (faixa REVERTIDA para o raio pelo BLK-RELPON-06/D1): a faixa
     "<Variavel> no raio: <valor>" de cada mapa ja vem desenhada nos bytes de `layers`
     (ver comentario acima de `MAP_LAYER_TITLES`); nenhuma mudanca de logica necessaria
-    nesta funcao.
+    nesta funcao. Grid 2x2: [densidade, renda, score, renda_domiciliar].
     """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, "Mapas de calor", rgb=primary)
     boxes = _draw_maps_grid(
         pdf,
-        [layers.get("densidade"), layers.get("renda"), layers.get("score")],
-        top=56.0,
-        bottom=_PAGE_H - 30.0,
+        [
+            layers.get("densidade"),
+            layers.get("renda"),
+            layers.get("score"),
+            layers.get("renda_domiciliar"),
+        ],
+        top=60.0,
+        bottom=_PAGE_H - 26.0,
         margin_x=20.0,
         gap=12.0,
     )
@@ -1207,16 +1222,18 @@ def _classico_draw_maps_grid(
     pdf: _UltraPDF,
     pngs: list[bytes | None],
 ) -> list[tuple[float, float, float, float]]:
-    """Tira 1x3 dos 3 choropleths na geometria do template CLASSICO (BLK-RELPON-01).
+    """Grid 2x2 dos 4 choropleths na geometria do template CLASSICO (BLK-RELPON-01).
 
     Mesma logica de `_draw_maps_grid`, mas com o topo respeitando a banda classica + titulo
-    de secao (`_CLASSICO_MAPS_TOP` ~122) e a margem lateral classica (20).
+    de secao (`_CLASSICO_MAPS_TOP` ~122) e a margem lateral classica (20). O header fixo deixa a
+    celula 2x2 mais baixa que na variante recente -> a legenda embutida cai para ~8pt (piso legivel
+    aceito para caber os 4 mapas; ver test_legenda_corpo_atinge_o_alvo_de_legibilidade_no_pdf).
     """
     return _draw_maps_grid(
         pdf,
         pngs,
         top=_CLASSICO_MAPS_TOP,
-        bottom=_PAGE_H - 30.0,
+        bottom=_PAGE_H - 26.0,
         margin_x=_CLASSICO_MARGIN,
         gap=12.0,
     )
@@ -1230,13 +1247,18 @@ def _classico_mapas_calor_page(
     banda_texto: str,
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
 ) -> list[tuple[float, float, float, float]]:
-    """Slide unico "Mapas de calor" (template classico): banda classica + tira 1x3 + rodape."""
+    """Slide unico "Mapas de calor" (template classico): banda classica + grid 2x2 + rodape."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _classico_title_band(pdf, banda_texto, "Mapas de calor", assets, rgb=primary)
     boxes = _classico_draw_maps_grid(
         pdf,
-        [layers.get("densidade"), layers.get("renda"), layers.get("score")],
+        [
+            layers.get("densidade"),
+            layers.get("renda"),
+            layers.get("score"),
+            layers.get("renda_domiciliar"),
+        ],
     )
     _draw_footer(pdf, with_attribution=True)
     return boxes
