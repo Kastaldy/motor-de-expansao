@@ -484,7 +484,7 @@ def uplift_composicao_por_setor(
 # Faixas absolutas de RENDA MEDIA DOMICILIAR TOTAL (R$/domicilio/mes), com uplift aplicado.
 # Cortes = classes de renda GeoFusion (C2/C1/B2/B1/A). Camada de VISUALIZACAO; NAO altera M1.
 RENDA_MEDIA_DOMICILIAR_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
-    (3_587.0,   "ate R$ 3.587 (C2/D/E)",   (255, 255, 178, 150)),
+    (3_587.0,   "até R$ 3.587 (C2/D/E)",   (255, 255, 178, 150)),
     (6_200.0,   "R$ 3.588-6.200 (C1)",     (254, 204, 92,  150)),
     (10_755.0,  "R$ 6.201-10.755 (B2)",    (217, 95,  14,  150)),
     (20_983.0,  "R$ 10.756-20.983 (B1)",   (120, 198, 121, 150)),

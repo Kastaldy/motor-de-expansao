@@ -20,7 +20,9 @@ Os pesos sao estimados por OLS ponderado contra os 5.551 upliftes MUNICIPAIS ja 
 
 Os coeficientes ajustados sao economicamente coerentes, o que e a melhor evidencia de que o sinal
 e real: conjuge ~ +0.84 (quase uma segunda renda), outro adulto ~ +0.17 (filho adulto/avo
-contribuem pouco), domicilio unipessoal ~ -0.37 (nao ha ninguem para somar). R2 ~ 0.30.
+contribuem pouco), domicilio unipessoal ~ -0.37 (nao ha ninguem para somar). A qualidade e' medida
+OUT-OF-FOLD (k-fold 5x5 vs baseline da media, com IC95 e intervalo de predicao — DEC-008), nunca
+por R2 in-sample.
 
 O que foi testado e REJEITADO (2026-07-14) — nao refaca
 -------------------------------------------------------
@@ -48,7 +50,8 @@ domicilios dos setores de cada municipio reproduza EXATAMENTE o uplift municipal
   - o que muda e a DISTRIBUICAO dentro do municipio, que hoje e uniforme por construcao.
 
 O modelo so precisa acertar o formato relativo da distribuicao intra-municipal; o nivel continua
-vindo do IBGE. E por isso que um R2 de 0.30 entre municipios ainda e util: ele nao carrega o nivel.
+vindo do IBGE. E por isso que um R2 out-of-fold modesto entre municipios ainda e util: ele so precisa
+acertar o FORMATO relativo da distribuicao intra-municipal, nao o nivel (que continua vindo do IBGE).
 
 IMPORTANTE — valores de JULHO/2022 (referencia do Censo). A atualizacao temporal e um fator
 SEPARADO (`FATOR_TEMPORAL_RENDA`, em dashboard/constants.py). Nao embuta inflacao aqui: foi essa
@@ -59,6 +62,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -237,13 +241,135 @@ def montar_features(
     return out
 
 
+def _wls_fit(X: np.ndarray, y: np.ndarray, w: np.ndarray) -> np.ndarray:
+    """Minimos quadrados ponderados por `w` — a MESMA conta do modelo final, isolada p/ reuso."""
+    raiz = np.sqrt(w)
+    coef, *_ = np.linalg.lstsq(X * raiz[:, None], y * raiz, rcond=None)
+    return coef
+
+
+def _r2_ponderado(y: np.ndarray, pred: np.ndarray, w: np.ndarray, base: np.ndarray) -> float:
+    """R2 ponderado do modelo CONTRA um baseline explicito (nao a media in-sample).
+
+    base = predicao do baseline (media do treino) para as MESMAS linhas. R2 = 1 - SSres/SSbase:
+    positivo <=> o modelo bate a media; e' a metrica honesta exigida pela DEC-008.
+    """
+    ss_res = float(np.sum(w * (y - pred) ** 2))
+    ss_base = float(np.sum(w * (y - base) ** 2))
+    return 1.0 - ss_res / ss_base if ss_base > 0 else float("nan")
+
+
+def _predicoes_out_of_fold(
+    X: np.ndarray,
+    y: np.ndarray,
+    w: np.ndarray,
+    *,
+    n_splits: int = 5,
+    n_repeats: int = 5,
+    seed: int = 42,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Predicoes OUT-OF-FOLD do modelo e do baseline (media ponderada do TREINO), k-fold repetido.
+
+    DEC-008: nada de `fit(X, y) -> predict(X)`. Cada linha so e' prevista por folds que NAO a viram;
+    o baseline de cada fold e' a media do treino daquele fold. Poolando `n_repeats` particoes
+    (media por linha), retorna `(pred_modelo, pred_baseline)` para R2 e IC bootstrap a jusante.
+    """
+    n = len(y)
+    rng = np.random.default_rng(seed)
+    indices = np.arange(n)
+    soma_pred = np.zeros(n)
+    soma_base = np.zeros(n)
+    vezes = np.zeros(n)
+    for _ in range(n_repeats):
+        ordem = rng.permutation(n)
+        for teste in np.array_split(ordem, n_splits):
+            if teste.size == 0:
+                continue
+            treino = np.setdiff1d(indices, teste, assume_unique=False)
+            if treino.size == 0 or float(np.sum(w[treino])) <= 0.0:
+                continue
+            coef = _wls_fit(X[treino], y[treino], w[treino])
+            soma_pred[teste] += X[teste] @ coef
+            soma_base[teste] += float(np.average(y[treino], weights=w[treino]))
+            vezes[teste] += 1.0
+    validos = vezes > 0
+    pred = np.full(n, np.nan)
+    base = np.full(n, np.nan)
+    pred[validos] = soma_pred[validos] / vezes[validos]
+    base[validos] = soma_base[validos] / vezes[validos]
+    return pred, base
+
+
+def _ic_bootstrap_r2(
+    y: np.ndarray,
+    pred: np.ndarray,
+    w: np.ndarray,
+    base: np.ndarray,
+    *,
+    n_boot: int = 1000,
+    seed: int = 42,
+) -> tuple[float, float]:
+    """IC95 do R2 out-of-fold por bootstrap de linhas (seed fixa p/ reprodutibilidade — DEC-008)."""
+    rng = np.random.default_rng(seed)
+    n = len(y)
+    amostras = [
+        _r2_ponderado(y[idx], pred[idx], w[idx], base[idx])
+        for idx in (rng.integers(0, n, n) for _ in range(n_boot))
+    ]
+    vals = np.array([v for v in amostras if np.isfinite(v)], dtype=float)
+    if vals.size == 0:
+        return float("nan"), float("nan")
+    return float(np.percentile(vals, 2.5)), float(np.percentile(vals, 97.5))
+
+
+def validar_out_of_fold(
+    X: np.ndarray,
+    y: np.ndarray,
+    w: np.ndarray,
+    *,
+    n_splits: int = 5,
+    n_repeats: int = 5,
+    seed: int = 42,
+) -> dict[str, float]:
+    """Diagnostico honesto do modelo: R2 out-of-fold vs baseline da media + IC95 + intervalo de 95%.
+
+    Substitui o R2 in-sample (banido pela DEC-008). O intervalo de 95% vem do desvio ponderado dos
+    residuos out-of-fold (± 1.96 sigma) — a incerteza real de uma predicao nova.
+    """
+    pred, base = _predicoes_out_of_fold(
+        X, y, w, n_splits=n_splits, n_repeats=n_repeats, seed=seed
+    )
+    ok = np.isfinite(pred) & np.isfinite(base)
+    if not ok.any():
+        return {
+            "r2_oof": float("nan"),
+            "r2_oof_ic_baixo": float("nan"),
+            "r2_oof_ic_alto": float("nan"),
+            "intervalo_95": float("nan"),
+        }
+    r2 = _r2_ponderado(y[ok], pred[ok], w[ok], base[ok])
+    ic_baixo, ic_alto = _ic_bootstrap_r2(y[ok], pred[ok], w[ok], base[ok], seed=seed)
+    resid = y[ok] - pred[ok]
+    sigma = float(np.sqrt(np.average(resid**2, weights=w[ok])))
+    return {
+        "r2_oof": r2,
+        "r2_oof_ic_baixo": ic_baixo,
+        "r2_oof_ic_alto": ic_alto,
+        "intervalo_95": 1.96 * sigma,
+    }
+
+
 def ajustar_coeficientes(
     setores: pd.DataFrame, uplift_municipio: pd.DataFrame
-) -> tuple[np.ndarray, dict[str, float]]:
+) -> tuple[np.ndarray, dict[str, Any]]:
     """Estima os pesos do modelo contra o uplift MUNICIPAL do IBGE (OLS ponderado por domicilios).
 
     IBGE explicando IBGE: as features vem do agregado de parentesco; o alvo, do uplift municipal
     (SIDRA t.10295 x Censo v0005 / V06004). A GeoFusion nao entra — ela e' modelo, nao verdade.
+
+    O coeficiente final e' ajustado em TODOS os municipios (o modelo de producao); a qualidade,
+    porem, e' medida OUT-OF-FOLD (`validar_out_of_fold`) vs baseline da media — nunca in-sample
+    (DEC-008). O `envelope` (min/max de cada feature na calibracao) marca extrapolacao a jusante.
     """
     validos = setores[setores["features_completas"]]
     agregado = (
@@ -274,29 +400,36 @@ def ajustar_coeficientes(
     y = df["uplift_composicao"].to_numpy(dtype=float)
     w = df["domicilios_municipio"].to_numpy(dtype=float)
 
-    raiz = np.sqrt(w)
-    coef, *_ = np.linalg.lstsq(X * raiz[:, None], y * raiz, rcond=None)
+    coef = _wls_fit(X, y, w)
 
-    pred = X @ coef
-    ss_res = float(np.sum(w * (y - pred) ** 2))
-    ss_tot = float(np.sum(w * (y - np.average(y, weights=w)) ** 2))
-    diagnostico = {
-        "r2_ponderado": 1.0 - ss_res / ss_tot,
+    # Qualidade OUT-OF-FOLD (DEC-008): jamais o R2 in-sample do proprio ajuste.
+    validacao = validar_out_of_fold(X, y, w)
+    # Envelope de calibracao (min/max por feature) -> flag de extrapolacao ao aplicar por setor.
+    envelope = {f: (float(df[f].min()), float(df[f].max())) for f in FEATURES}
+    diagnostico: dict[str, Any] = {
+        **validacao,
         "municipios_ajuste": float(len(df)),
         "intercepto": float(coef[0]),
+        "envelope": envelope,
         **{f: float(c) for f, c in zip(FEATURES, coef[1:], strict=True)},
     }
     return coef, diagnostico
 
 
 def aplicar_e_rakear(
-    setores: pd.DataFrame, coef: np.ndarray, uplift_municipio: pd.DataFrame
+    setores: pd.DataFrame,
+    coef: np.ndarray,
+    uplift_municipio: pd.DataFrame,
+    envelope: dict[str, tuple[float, float]] | None = None,
 ) -> pd.DataFrame:
     """Aplica o modelo por setor e re-escalona para preservar o uplift municipal do IBGE.
 
     O raking e' o que torna a mudanca segura: a media ponderada por domicilios dos setores de cada
     municipio volta a ser EXATAMENTE o uplift municipal do IBGE. O nivel continua sendo do IBGE; o
     modelo so redistribui dentro do municipio — que e' precisamente o que hoje nao existe.
+
+    `envelope` (min/max por feature na calibracao MUNICIPAL) marca `flag_extrapolacao`: setores cuja
+    composicao cai fora da faixa vista no ajuste — honestamente, ali o modelo esta extrapolando.
     """
     df = setores.copy()
     X = np.column_stack(
@@ -304,6 +437,16 @@ def aplicar_e_rakear(
     )
     bruto = X @ coef
     df["uplift_modelo"] = np.where(df["features_completas"], bruto, np.nan)
+
+    completas = df["features_completas"].to_numpy(dtype=bool)
+    if envelope:
+        dentro = np.ones(len(df), dtype=bool)
+        for f, (lo, hi) in envelope.items():
+            vals = df[f].to_numpy(dtype=float)
+            dentro &= (vals >= lo) & (vals <= hi)
+        df["flag_extrapolacao"] = completas & ~dentro
+    else:
+        df["flag_extrapolacao"] = False
 
     mun = uplift_municipio[["cod_municipio", "uf", "uplift_composicao_final"]].copy()
     mun["cod_municipio"] = mun["cod_municipio"].astype(str).str.zfill(7)
@@ -365,13 +508,20 @@ def gerar_relatorio(df: pd.DataFrame, diagnostico: dict[str, float]) -> str:
         " (filho adulto, avo: contribuem pouco)",
         f"- fracao unipessoal: **{diagnostico['fracao_unipessoal']:+.3f}** (nao ha quem somar)",
         "",
-        f"R2 ponderado: **{diagnostico['r2_ponderado']:.3f}**"
-        f" ({int(diagnostico['municipios_ajuste']):,} municipios).",
+        f"R2 out-of-fold (k-fold 5x5, vs baseline da media): **{diagnostico['r2_oof']:.3f}**"
+        f" (IC95 [{diagnostico['r2_oof_ic_baixo']:+.3f}, {diagnostico['r2_oof_ic_alto']:+.3f}],"
+        f" {int(diagnostico['municipios_ajuste']):,} municipios)."
+        f" Intervalo de 95% de uma predicao: **+-{diagnostico['intervalo_95']:.3f}**.",
         "",
-        "Os sinais e magnitudes sao economicamente coerentes — a melhor evidencia de que o sinal e",
-        "real, e nao ajuste de curva.",
+        "Metrica HONESTA (DEC-008): cada municipio e' previsto so por folds que nao o viram, contra o",
+        "baseline da media. R2>0 com IC95 sem cruzar zero => o modelo bate a media fora da amostra.",
+        "Os sinais e magnitudes dos coeficientes sao economicamente coerentes — evidencia adicional de",
+        "que o sinal e real, e nao ajuste de curva.",
         "",
         "## Testado e rejeitado (nao refaca)",
+        "",
+        "Deltas de R2 abaixo sao de SCREENING exploratorio in-sample (comparacao relativa entre",
+        "candidatas, nao a validacao do modelo — esta e' out-of-fold, acima):",
         "",
         "- **Alfabetizacao**: R2 0.296 -> 0.297. Zero. O Censo 2022 nao publica escolaridade por",
         "  setor, so alfabetizacao binaria, que satura (~98%) em area urbana.",
@@ -392,6 +542,9 @@ def gerar_relatorio(df: pd.DataFrame, diagnostico: dict[str, float]) -> str:
         f"- Setores com uplift proprio (parentesco): **{len(setoriais):,}** de {len(df):,}"
         f" ({100*len(setoriais)/max(len(df),1):.1f}%)",
         f"- Setores que herdam o municipio: {int((df['fonte_uplift_setor']=='municipio_ibge').sum()):,}",
+        f"- Setores em EXTRAPOLACAO (composicao fora da faixa de calibracao municipal):"
+        f" **{int(df.get('flag_extrapolacao', pd.Series(dtype=bool)).sum()):,}**"
+        " — marcados em `flag_extrapolacao` para leitura cautelosa.",
         f"- Amplitude intra-municipal (p95-p05, mediana dos municipios): **{amplitude:.3f}**"
         " — antes era 0.000 por construcao.",
         "",
@@ -424,7 +577,7 @@ def executar(
     uplift_municipio = pd.read_parquet(uplift_municipio_path)
 
     coef, diagnostico = ajustar_coeficientes(setores, uplift_municipio)
-    df = aplicar_e_rakear(setores, coef, uplift_municipio)
+    df = aplicar_e_rakear(setores, coef, uplift_municipio, diagnostico.get("envelope"))
 
     cols = [
         "cod_setor",
@@ -436,6 +589,7 @@ def executar(
         "uplift_modelo",
         "fator_raking_municipio",
         "uplift_composicao_setor",
+        "flag_extrapolacao",  # composicao fora da faixa de calibracao (leitura cautelosa)
         "fonte_uplift_setor",
     ]
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -445,7 +599,10 @@ def executar(
 
     proprio = int((df["fonte_uplift_setor"] == "parentesco_setor").sum())
     print(f"[uplift-setor] setores: {len(df):,} | com uplift proprio: {proprio:,}")
-    print(f"[uplift-setor] R2 do modelo (vs uplift municipal IBGE): {diagnostico['r2_ponderado']:.3f}")
+    print(
+        f"[uplift-setor] R2 out-of-fold (vs baseline da media): {diagnostico['r2_oof']:.3f}"
+        f" IC95 [{diagnostico['r2_oof_ic_baixo']:+.3f}, {diagnostico['r2_oof_ic_alto']:+.3f}]"
+    )
     print(f"[uplift-setor] coef: intercepto={diagnostico['intercepto']:+.3f}")
     for f in FEATURES:
         print(f"[uplift-setor]       {f}={diagnostico[f]:+.3f}")
