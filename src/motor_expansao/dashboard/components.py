@@ -28,6 +28,7 @@ from motor_expansao.dashboard.constants import (
     FAIXA_COLORS_POR_LABEL,
     FAIXA_LABELS,
     FAIXA_ORDEM,
+    FATOR_TEMPORAL_RENDA,
     MAP_POINT_LIMIT,
     MAP_POINT_LIMIT_LARGE,
     MAP_SORT_ASCENDING,
@@ -38,6 +39,8 @@ from motor_expansao.dashboard.constants import (
     RESIDUAL_SCORE_BANDS,
     TABLE_ROW_LIMIT,
     ULTRA_PIN_LIMIT,
+    moradores_por_domicilio,
+    uplift_renda_domiciliar,
 )
 from motor_expansao.dashboard.data import _has_censo_signal, _normalized_join_quality, haversine_km
 from motor_expansao.dashboard.utils import (
@@ -511,16 +514,61 @@ def _apply_residual_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
     return map_df
 
 
-# BLK-PERF-01c (D4): rotulo + coluna ja formatada do "Score do modo ativo" (2a das 6
-# linhas do tooltip enxuto), por modo. Em mode="censitario" a linha 2 (Score do modo
-# ativo) e a linha 3 (Score Censitario) mostram o MESMO valor — aceito no gate D4
-# (ver Riscos), nao e bug.
+# BLK-PERF-01c (D4): rotulo + coluna ja formatada do "Score do modo ativo" (2a linha do
+# tooltip enxuto), por modo. Em mode="censitario" a linha 2 e' o Score Censitario; para NAO
+# duplicar, `_apply_hex_tooltip_fields` mostra o Score M1 na linha 3 nesse modo (desduplicado).
 _ACTIVE_SCORE_SPEC: dict[str, tuple[str, str]] = {
     "m1": ("Score M1", "score_priorizacao_fmt"),
     "hibrido": ("Score Híbrido", "score_hibrido_fmt"),
     "censitario": ("Score Censitário", "score_censo_fmt"),
     "residual": ("Score Residual", "score_residual_fmt"),
 }
+
+
+def _renda_media_domiciliar_series(map_df: pd.DataFrame) -> pd.Series:
+    """Renda media domiciliar por hex (R$/mes) para o tooltip, computada em tempo de render.
+
+    `renda_pc_calibrada(hex) x moradores_municipio x uplift_municipio x FATOR_TEMPORAL`. Moradores e
+    uplift sao MUNICIPAIS (por `cod_municipio`) — um hex res-7 cobre varios setores, entao o uplift
+    setorial do #124 nao se aplica a 1 hex. READ-ONLY sobre o M1 (so exibicao). Fallback gracioso:
+    NaN quando falta renda, ou quando `cod_municipio` esta ausente (coluna OU valor NaN por linha) —
+    hexes sem cobertura censitaria (costeiros/nao-granulares) ficam com o tooltip em branco em vez de
+    exibir uma estimativa de nivel UF. Sem o parquet municipal, moradores/uplift de municipios
+    conhecidos caem no nacional (~2.79 / 1.632). Nao depende do artefato enriquecido — so das
+    colunas ja servidas.
+    """
+    idx = map_df.index
+    renda_pc = pd.to_numeric(
+        map_df.get("renda_per_capita_setor_2022_calibrada", pd.Series(np.nan, index=idx)),
+        errors="coerce",
+    )
+    if "renda_per_capita" in map_df.columns:
+        renda_pc = renda_pc.where(
+            renda_pc.notna(), pd.to_numeric(map_df["renda_per_capita"], errors="coerce")
+        )
+    if "cod_municipio" not in map_df.columns:
+        return pd.Series(np.nan, index=idx)
+
+    def _s(value: object) -> str | None:
+        return None if pd.isna(value) else str(value)
+
+    uf_col = map_df["uf"] if "uf" in map_df.columns else pd.Series(pd.NA, index=idx)
+    keys = pd.DataFrame(
+        {"uf": uf_col.astype("string"), "cod_municipio": map_df["cod_municipio"].astype("string")}
+    )
+    fator_temporal = float(FATOR_TEMPORAL_RENDA)
+    uniq = keys.drop_duplicates().copy()
+    uniq["_fator_dom"] = [
+        moradores_por_domicilio(_s(uf), _s(cod))
+        * uplift_renda_domiciliar(_s(uf), _s(cod))
+        * fator_temporal
+        for uf, cod in uniq.itertuples(index=False, name=None)
+    ]
+    fatores = keys.merge(uniq, on=["uf", "cod_municipio"], how="left")["_fator_dom"].to_numpy()
+    resultado = pd.Series(renda_pc.to_numpy() * fatores, index=idx)
+    # Contrato: sem municipio resolvido (cod_municipio ausente/NaN por linha) -> tooltip vazio, e
+    # nao uma estimativa de nivel UF. Simetrico ao NaN quando falta renda.
+    return resultado.where(map_df["cod_municipio"].notna())
 
 
 def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str, show_discarded: bool = True) -> pd.DataFrame:
@@ -531,10 +579,29 @@ def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str, show_discarded
     active_fmt = map_df[active_col] if active_col in map_df.columns else pd.Series("-", index=map_df.index)
     map_df["tooltip_line_1"] = "Faixa M1: " + map_df["faixa_label"].astype(str)
     map_df["tooltip_line_2"] = f"{active_label}: " + active_fmt.astype(str)
-    map_df["tooltip_line_3"] = "Score Censitário: " + map_df["score_censo_fmt"].astype(str)
+    # Linha 3 = Score Censitario, EXCETO no modo censitario: ali a linha 2 (score do modo ativo) JA
+    # e o censitario, entao repetir seria a duplicacao reportada. No modo censitario mostramos o
+    # Score M1 -> a linha 3 nunca duplica a linha 2, e cada modo exibe dois scores distintos.
+    if mode == "censitario":
+        m1_score = (
+            map_df["score_priorizacao"]
+            if "score_priorizacao" in map_df.columns
+            else pd.Series(pd.NA, index=map_df.index)
+        )
+        map_df["tooltip_line_3"] = "Score M1: " + m1_score.map(format_score).astype(str)
+    else:
+        map_df["tooltip_line_3"] = "Score Censitário: " + map_df["score_censo_fmt"].astype(str)
     map_df["tooltip_line_4"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
     map_df["tooltip_line_5"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
     map_df["tooltip_line_6"] = map_df["tooltip_residual_1"]
+    # Linha 7 (NOVO, por ULTIMO): renda media domiciliar por hex, computada em tempo de render a
+    # partir das colunas ja servidas + tabela municipal (ver _renda_media_domiciliar_series). Fica na
+    # ultima linha DE PROPOSITO: quando vazia (NaN, sem renda/cod_municipio) nao deixa gap no meio do
+    # tooltip nem exibe "-". READ-ONLY sobre o M1 (so exibicao).
+    renda_dom = _renda_media_domiciliar_series(map_df)
+    map_df["tooltip_line_7"] = renda_dom.map(
+        lambda v: f"Renda média domiciliar: R$ {format_int(v)}" if pd.notna(v) else ""
+    )
 
     if "flag_pop_min_5k" in map_df.columns and show_discarded:
         discarded = ~map_df["flag_pop_min_5k"].fillna(True)
@@ -1079,9 +1146,9 @@ def _shared_map_tooltip() -> dict[str, object]:
 
 
 def _hex_map_tooltip() -> dict[str, object]:
-    """Tooltip enxuto (Título + 6 linhas, D4 BLK-PERF-01c) compartilhado pelos 4 modos
-    de hexágono do Mapa Territorial (M1/Híbrido/Censitário/Residual). Deixou de ser
-    exclusivo do modo Híbrido — ver `_apply_hex_tooltip_fields`/`_ACTIVE_SCORE_SPEC`."""
+    """Tooltip enxuto (Título + 7 linhas) compartilhado pelos 4 modos de hexágono do Mapa
+    Territorial (M1/Híbrido/Censitário/Residual). A linha 6 (renda média domiciliar) foi
+    acrescentada e o Residual passou para a linha 7 — ver `_apply_hex_tooltip_fields`."""
     return {
         "html": (
             "<b>{tooltip_title}</b><br/>"
@@ -1090,7 +1157,8 @@ def _hex_map_tooltip() -> dict[str, object]:
             "{tooltip_line_3}<br/>"
             "{tooltip_line_4}<br/>"
             "{tooltip_line_5}<br/>"
-            "{tooltip_line_6}"
+            "{tooltip_line_6}<br/>"
+            "{tooltip_line_7}"
         ),
         "style": {
             "backgroundColor": "rgba(10, 15, 31, 0.94)",

@@ -240,6 +240,7 @@ MAP_SOURCE_COLUMNS_M1 = [
     "renda_per_capita",
     "pop_total_setor_2022",
     "renda_per_capita_setor_2022_calibrada",
+    "cod_municipio",
     "flag_pop_min_5k",
     "sam_fitness_potencial",
     "oferta_consumida_mercado_estimada",
@@ -277,6 +278,7 @@ MAP_SOURCE_COLUMNS_HYBRID = [
     "renda_per_capita",
     "pop_total_setor_2022",
     "renda_per_capita_setor_2022_calibrada",
+    "cod_municipio",
     "flag_pop_min_5k",
     "sam_fitness_potencial",
     "oferta_consumida_mercado_estimada",
@@ -373,6 +375,9 @@ RENDA_PER_CAPITA_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
 # do responsavel). Por MUNICIPIO (IBGE) e, quando disponivel, por SETOR (agregado de parentesco,
 # rakeado por municipio: a media ponderada dos setores reproduz o uplift municipal do IBGE).
 UPLIFT_COMPOSICAO_NACIONAL = 1.632
+# Media nacional de moradores por domicilio (IBGE Censo 2022 ~2.79) — fallback quando o municipio
+# nao esta na tabela. Usado pela renda media domiciliar por hex (tooltip do Mapa Territorial).
+MORADORES_DOMICILIO_NACIONAL = 2.79
 UPLIFT_COMPOSICAO_PATH = Path("data/staging/uplift_renda_domiciliar_municipio.parquet")
 UPLIFT_COMPOSICAO_SETOR_PATH = Path("data/staging/uplift_composicao_setor.parquet")
 
@@ -443,6 +448,45 @@ def uplift_renda_domiciliar(uf: str | None, cod_municipio: str | None = None) ->
         if valor is not None and valor == valor:
             return float(valor)
     return UPLIFT_COMPOSICAO_NACIONAL
+
+
+_moradores_cache: dict[str, float] | None = None
+_moradores_uf_cache: dict[str, float] | None = None
+
+
+def _carregar_moradores() -> tuple[dict[str, float], dict[str, float]]:
+    """Le moradores/domicilio por municipio (mesma tabela do uplift). Cai no nacional se ausente."""
+    global _moradores_cache, _moradores_uf_cache
+    if _moradores_cache is None:
+        por_municipio: dict[str, float] = {}
+        por_uf: dict[str, float] = {}
+        if UPLIFT_COMPOSICAO_PATH.exists():
+            import pandas as pd
+
+            df = pd.read_parquet(
+                UPLIFT_COMPOSICAO_PATH,
+                columns=["uf", "cod_municipio", "moradores_por_domicilio_municipio"],
+            )
+            valores = pd.to_numeric(df["moradores_por_domicilio_municipio"], errors="coerce")
+            por_municipio = dict(zip(df["cod_municipio"].astype(str), valores, strict=False))
+            por_uf = df.assign(_m=valores).groupby("uf")["_m"].median().to_dict()
+        _moradores_cache = por_municipio
+        _moradores_uf_cache = por_uf
+    return _moradores_cache, _moradores_uf_cache or {}
+
+
+def moradores_por_domicilio(uf: str | None, cod_municipio: str | None = None) -> float:
+    """Moradores medios por domicilio (IBGE). municipio -> mediana UF -> nacional (~2.79)."""
+    por_municipio, por_uf = _carregar_moradores()
+    if cod_municipio:
+        valor = por_municipio.get(str(cod_municipio).strip())
+        if valor is not None and valor == valor:  # descarta NaN
+            return float(valor)
+    if uf:
+        valor = por_uf.get(str(uf).strip().upper())
+        if valor is not None and valor == valor:
+            return float(valor)
+    return MORADORES_DOMICILIO_NACIONAL
 
 
 _uplift_setor_cache: dict[str, float] | None = None
