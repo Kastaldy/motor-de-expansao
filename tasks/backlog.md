@@ -850,6 +850,213 @@ corrigido** e é ortogonal a este bloco.
 
 ---
 
+## Epic BLK-RELVIAB — Relatório de Viabilidade do Imóvel (PDF enriquecido: fotos + info do imóvel + slides financeiros)
+
+> **Objetivo.** Enriquecer o PDF gerado a partir da aba **Viabilidade** com: (1) **fotos do imóvel**
+> (upload, página logo após a capa), (2) uma página de **informações do imóvel** e (3) **slides de
+> viabilidade financeira** (números + gráficos) usando o motor `viabilidade_ponto` que já existe. O
+> **relatório completo** (capa → fotos → info do imóvel → páginas censitárias já existentes → viabilidade →
+> crédito) passa a ser **gerável e baixável pela própria aba Viabilidade** (botão novo lá). Tudo é
+> **saída OPCIONAL**: os parâmetros novos do gerador têm default `None` → sem os dados, o PDF sai
+> **byte-idêntico ao de hoje** (mesmo padrão gracioso de `perfil_bairro=None`). READ-ONLY sobre o M1 em
+> todos os blocos (camada de relatório/visualização, precedente DEC-004/DEC-011 — não recalcula
+> score/carteira/plano/artefatos).
+>
+> **Decisões de produto JÁ TOMADAS (Felipe, 2026-07-17 — NÃO reabrir no Planner):**
+> - **Onde fica o controle:** o **botão "Gerar relatório (PDF)" vai TAMBÉM na aba Viabilidade**, e é lá que
+>   ficam o **upload das fotos**, o **formulário de info do imóvel** e a extração do **relatório completo**.
+>   A seção do Relatório Pontual no Mapa Territorial segue como está (não é requisito mexer nela).
+> - **Fotos (MVP):** **2 fotos RETANGULARES** (sem recorte para quadrado). Layout **adaptável** às dimensões
+>   reais (fit-within-box preservando proporção; nada de esticar/distorcer). Correção de orientação **EXIF**
+>   e **downscale + recompressão** obrigatórios (foto de celular tem vários MB → sem isso o PDF estoura).
+> - **Gráficos financeiros:** renderizados como **PNG estático via matplotlib** (já é dependência base) —
+>   **sem dependência nova** (evita `kaleido`/Plotly-static, coerente com a imagem enxuta do projeto).
+> - **Anti-PII:** fotos e dados do imóvel ficam **só em memória** (bytes), **nunca** versionados nem
+>   persistidos em disco/cache/log; o PDF é servido por `st.download_button` como hoje.
+>
+> **Divisão de autonomia (lição BLK-UI-10).** Os blocos de **motor/PDF são puros, determinísticos e
+> headless** (recebem `bytes`/`dict`, produzem páginas de PDF; testes usam **fixtures sintéticas** e
+> comparam bytes/`/Count`) → **loop-safe**. A **fiação na UI** (`st.file_uploader`, formulário, botão,
+> layout na tela) **exige VER o render** → **manual** (o loop marca verde por teste, mas não enxerga a UI).
+>
+> **Sequência:** RELVIAB-01/02/03 (independentes, loop-safe) → RELVIAB-04 (viabilidade no PDF, depende do 03)
+> → RELVIAB-05 (orquestra o relatório completo, depende do 01/02/04) → **RELVIAB-06 (UI, manual)**.
+
+---
+
+### BLK-RELVIAB-01 — Página de FOTOS do imóvel no PDF (2 fotos retangulares, dimensões adaptáveis)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (módulo de PDF determinístico e isolado; **READ-ONLY sobre o M1**). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | Gerador atual (`censo_report.py`: `gerar_pdf_relatorio_pontual_classico`/`_censitario`, padrão `pdf.image(BytesIO(...))` de `_draw_full_page_background`/`_draw_maps_grid`). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, sem rede, sem dependência nova (Pillow/fpdf2 já são base); helper puro `list[bytes] → página`, testes com **fixtures sintéticas** (PNG/JPEG gerado in-memory por Pillow, ZERO foto real → sem PII), saída do PDF byte-comparável (`/Count`, bytes crus); gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md`. |
+
+**Objetivo.** Novo helper `_fotos_imovel_page(pdf, fotos)` (widescreen 960×540, mesmo estilo dos demais slides:
+fundo, faixa de título "Imóvel — Fotos", rodapé) que embute **até 2 fotos retangulares** lado a lado, cada uma
+ajustada a uma célula preservando proporção (reusa a lógica `scale = min(cw/img_w, ch/img_h)` de `_draw_maps_grid`,
+`censo_report.py:401`). Página inserida **logo após a capa** no gerador.
+
+**Escopo permitido.** `dashboard/censo_report.py`: (i) helper `_fotos_imovel_page`; (ii) helper de
+**normalização de imagem** (`_normalizar_foto(raw: bytes) -> bytes`): `PIL.ImageOps.exif_transpose` (orientação),
+downscale para um lado máximo (ex.: ≤1600 px) e **recompressão** (JPEG qualidade ~82) para capar o tamanho do PDF;
+(iii) parâmetro keyword opcional `fotos: list[bytes] | None = None` no(s) gerador(es), inserindo a página só quando
+houver ≥1 foto (default `None` → PDF inalterado). Descartar fotos além de 2 (MVP). Marca d'água já cobre a página
+nova pelo loop existente (`for page_number in range(...)`).
+
+**Critérios de aceite.** Com 2 fotos sintéticas: `/Count` sobe em 1, a página aparece após a capa, as imagens
+preservam proporção (sem distorção), fotos grandes são recomprimidas (tamanho do PDF sob controle), orientação EXIF
+corrigida; com `fotos=None` o PDF é **byte-idêntico** ao atual (teste de regressão); ZERO escrita em disco; ZERO
+escrita em M1.
+
+**Risco.** Baixo (aditivo, determinístico).
+
+---
+
+### BLK-RELVIAB-02 — Página de INFORMAÇÕES do imóvel no PDF
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (módulo de PDF determinístico e isolado; **READ-ONLY sobre o M1**). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | Gerador atual (`censo_report.py`) + estilo de cards de `_big_numbers_page`. |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, sem rede, sem dependência nova; helper puro `dict → página`, testes byte-comparáveis; gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md`. |
+
+**Objetivo.** Novo helper `_info_imovel_page(pdf, info_imovel)` que renderiza os dados do imóvel em cards/linhas
+(estilo do `_big_numbers_page`, `censo_report.py:573`): ex.: endereço/rótulo, metragem (m²), aluguel pedido, valor
+de venda, pé-direito, nº de vagas, tipo do imóvel, observações. Todo texto passa por `_ascii()` (latin-1) e segue a
+regra de acentuação (texto acentuado; **sem** travessão/bullet/seta/reticências Unicode → ASCII). Parâmetro keyword
+opcional `info_imovel: dict[str, Any] | None = None` no gerador; `None` → página não aparece; campos ausentes → "n/d"
+gracioso.
+
+**Escopo permitido.** `dashboard/censo_report.py`: helper `_info_imovel_page` + parâmetro opcional no(s) gerador(es).
+Inserida após a página de fotos.
+
+**Critérios de aceite.** Com `info_imovel` preenchido: `/Count` sobe em 1, os rótulos/valores aparecem nos bytes crus
+(compressão OFF), acentos portugueses OK e nenhum caractere fora de latin-1; com `None` o PDF é byte-idêntico ao
+atual; ZERO escrita em M1.
+
+**Risco.** Baixo.
+
+---
+
+### BLK-RELVIAB-03 — Gráficos financeiros de viabilidade como PNG estático (matplotlib, sem dependência nova)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (módulo determinístico isolado; **READ-ONLY sobre o M1**). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | Motor `viabilidade_ponto` (`ViabilidadePontoResult`) + `simulador.gerar_serie_mensal` (60 meses) — **já existem** (BLK-DIM-11). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, sem rede, **sem dependência nova** (matplotlib já é base); funções puras `result/série → bytes PNG`; testes verificam que retornam PNG válido de dimensão esperada (via `_png_dimensions`); determinístico (backend `Agg`, sem estado global); gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md`. |
+
+**Objetivo.** Novo módulo (ex.: `dashboard/viabilidade_charts.py`) com funções puras que reproduzem, em **matplotlib
+→ PNG (BytesIO)**, os 4 gráficos que a aba de viabilidade já plota em Plotly (`pages.py:3945-4102`), para embutir no
+PDF via `pdf.image(BytesIO(...))`: (1) rampa de alunos (balcão) com steady-state e marco de maturação; (2)
+faturamento (barras) + EBITDA (linha) mensais; (3) FCF acumulado com marco de payback; (4) **waterfall de DRE**
+steady-state (Fat. bruto → Deduções → Impostos → Custos op. → EBITDA). Paleta Ultra (turquesa/magenta, já
+constantes em `censo_report.py`). Backend `matplotlib.use("Agg")` (headless, sem display).
+
+**Escopo permitido.** Módulo novo de charts + reuso de `gerar_serie_mensal`/`ViabilidadePontoResult`. **NÃO** importa
+de `pipelines/m1/`. Sem persistência.
+
+**Critérios de aceite.** Cada função retorna `bytes` de um PNG válido (abre no Pillow, dimensão > 0); render é
+determinístico para o mesmo input; sem dependência nova no `pyproject.toml`; ZERO escrita em M1.
+
+**Risco.** Baixo-médio (reescrever 4 gráficos; a lógica/dados já existem prontos).
+
+---
+
+### BLK-RELVIAB-04 — Página(s) de VIABILIDADE no PDF (números + gráficos do RELVIAB-03)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (módulo de PDF determinístico; **READ-ONLY sobre o M1**). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-RELVIAB-03** (PNGs dos gráficos). Motor `viabilidade_ponto` (números) já existe. |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, sem rede, sem dependência nova; helper puro `result → página(s)`, testes byte-comparáveis; gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md`. |
+
+**Objetivo.** Novo helper `_viabilidade_page(pdf, viabilidade)` que renderiza (a) um slide de **números** estilo Big
+Numbers com os campos que o motor já produz (break-even em alunos, aluguel-teto, margem EBITDA, payback, ROIC anual,
+faturamento/EBITDA/mês, faixa p10/p50/p90 de alunos, flag de envelope) e (b) os **gráficos** do RELVIAB-03 embutidos
+por `pdf.image(BytesIO(...))`. Parâmetro keyword opcional `viabilidade: dict[str, Any] | None = None` no gerador
+(dict serializável derivado do `ViabilidadePontoResult` + PNGs); `None` → páginas não aparecem.
+
+**Escopo permitido.** `dashboard/censo_report.py`: helper(s) de página de viabilidade + parâmetro opcional no(s)
+gerador(es). Inserida próximo ao fim (antes da página de crédito).
+
+**Critérios de aceite.** Com `viabilidade` preenchido: `/Count` sobe conforme o nº de páginas de viabilidade, os
+valores-chave aparecem nos bytes crus, os PNGs dos gráficos embutem sem distorção; com `None` o PDF é byte-idêntico
+ao atual; ZERO escrita em M1.
+
+**Risco.** Baixo.
+
+---
+
+### BLK-RELVIAB-05 — Orquestrar o "relatório completo" (costura opcional de fotos + info + viabilidade)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (estende o gerador auditável com páginas opcionais; **READ-ONLY sobre o M1**). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-RELVIAB-01, -02, -04** (as três páginas novas). |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, sem VPS, sem rede, sem dependência nova; função pura, testes byte-comparáveis (com e sem os dados novos); gate humano substituído pelo guard no loop; ver `docs/loop_autonomo.md`. |
+
+**Objetivo.** Consolidar a montagem: os geradores `gerar_pdf_relatorio_pontual_classico`/`_censitario` (e o
+despacho `gerar_payloads_download_relatorio_censitario`) passam a aceitar os parâmetros opcionais `fotos`,
+`info_imovel`, `viabilidade` e a inserir as páginas na **ordem canônica**: Capa → **[Fotos]** → **[Info do imóvel]**
+→ Mapas de calor → Concorrentes → Perfil do Bairro/Distrito → Big Numbers → **[Viabilidade]** → Realização/Crédito.
+Atualizar os testes de `/Count` e de headers de seção para o caso enriquecido, mantendo o teste de **regressão
+byte-idêntica** quando nenhum parâmetro novo é passado.
+
+**Escopo permitido.** Fiação dos parâmetros opcionais + ordem de inserção + atualização dos testes de export. Sem
+lógica de UI (isso é o RELVIAB-06). Marca d'água e rodapé já cobrem as páginas novas automaticamente.
+
+**Critérios de aceite.** Sem parâmetros novos → PDF byte-idêntico ao atual (regressão verde); com fotos+info+viab →
+`/Count` e ordem corretos, todas as seções presentes nos bytes crus; a variante servida hoje na UI (`classico`)
+aceita os novos parâmetros; ZERO escrita em M1.
+
+**Risco.** Baixo (fiação; o trabalho pesado está nos blocos-página).
+
+---
+
+### BLK-RELVIAB-06 — UI na aba Viabilidade: upload de fotos + form do imóvel + botão "Gerar relatório (PDF)"
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (superfície do produto; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX/visual do PDF e da tela]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-RELVIAB-05** (gerador completo pronto). Reusa `render_mapas_censitarios_combinados`, `agregar_perfil_bairro_distrito`, `lookup_hex_by_coord`, `analisar_viabilidade_ponto` (todos já existem). |
+| **Autonomia** | **manual (NÃO loop-safe)** — UI exige VER o render (upload, layout do PDF, formulário) e julgamento de UX (lição BLK-UI-10: o loop marca verde por teste, mas não enxerga a tela). NÃO marcar loop-safe. |
+
+**Objetivo.** Na aba **Viabilidade** (`render_viabilidade_ponto`, `pages.py:3612`), após o cálculo de viabilidade,
+adicionar: (i) `st.file_uploader("Fotos do imóvel", accept_multiple_files=True)` limitado a **2 fotos retangulares**
+(lê `.getvalue()` → `list[bytes]`); (ii) um **formulário de informações do imóvel** (endereço/rótulo, valor de venda,
+pé-direito, vagas, tipo, observações — m²/aluguel/demanda já são coletados na aba); (iii) botão **"Gerar relatório
+(PDF)"** que, no ponto do imóvel, monta os insumos censitários (mapas via `render_mapas_censitarios_combinados`,
+`perfil_bairro`, `residual` via `lookup_hex_by_coord`) + serializa o `ViabilidadePontoResult` + PNGs (RELVIAB-03) e
+chama o gerador completo (RELVIAB-05), servindo por `st.download_button` (mesmo padrão de
+`render_downloads_relatorio_censitario`).
+
+**Guardrail.** §5 READ-ONLY M1; **anti-PII** (fotos/dados só em memória, nunca persistidos); geração **offline**
+(o basemap dos mapas segue DEC-004: import lazy + fallback). O output é **opcional** — sem fotos/info, o PDF ainda
+gera (páginas novas omitidas).
+
+**Critérios de aceite.** Upload de 2 fotos + preenchimento do form + clique gera um PDF baixável com as páginas novas
+na ordem canônica; sem fotos/info o PDF ainda gera; revisão visual humana do PDF e da tela aprovada; nenhuma foto/dado
+persistido; ZERO escrita em M1.
+
+**Risco.** Médio (integração de UI + montagem dos insumos censitários no ponto).
+
+---
+
 ## Epic BLK-REV — Revisão séria do app: pesquisa e planejamento (Desempenho + Arquitetura + UX/UI)
 
 > **Objetivo:** revisar a estrutura INTEIRA do app para achar pontos fortes/fracos e planejar o produto mais
