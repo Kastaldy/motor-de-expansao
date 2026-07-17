@@ -559,6 +559,98 @@ def _fotos_imovel_page(
     _draw_footer(pdf, with_attribution=False)
 
 
+# ---------------------------------------------------------------------------
+# Pagina de INFORMACOES do imovel (BLK-RELVIAB-02): dados do imovel em cards +
+# observacoes. Saida OPCIONAL (so entra se `info_imovel` != None); campos
+# ausentes -> "n/d" gracioso. READ-ONLY sobre o M1; anti-PII (nada persistido).
+# ---------------------------------------------------------------------------
+_INFO_IMOVEL_PAGE_TITLE = "Imóvel - Informações"
+# (chave no dict, rotulo exibido, tipo de formatacao).
+_INFO_IMOVEL_CAMPOS: tuple[tuple[str, str, str], ...] = (
+    ("metragem_m2", "Metragem (m2)", "num"),
+    ("aluguel_pedido", "Aluguel pedido (mês)", "brl"),
+    ("valor_venda", "Valor de venda", "brl"),
+    ("pe_direito_m", "Pé-direito (m)", "num2"),
+    ("vagas", "Vagas", "num"),
+    ("tipo_imovel", "Tipo do imóvel", "texto"),
+)
+
+
+def _info_valor(value: Any, kind: str) -> str:
+    """Formata um valor de info do imovel; ausente/vazio -> 'n/d'; nao-numerico seguro."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "n/d"
+    try:
+        if kind == "brl":
+            return "R$ " + _format_number(value, 2)
+        if kind == "num":
+            return _format_number(value, 0)
+        if kind == "num2":
+            return _format_number(value, 2)
+    except (TypeError, ValueError):
+        return str(value)
+    return str(value)
+
+
+def _info_imovel_page(
+    pdf: _UltraPDF,
+    info_imovel: dict[str, Any],
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+) -> None:
+    """Pagina de informacoes do imovel: endereco + cards 3x2 + observacoes. READ-ONLY M1."""
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _INFO_IMOVEL_PAGE_TITLE, rgb=primary)
+
+    endereco = str(info_imovel.get("endereco") or info_imovel.get("rotulo") or "").strip()
+    y_cards = 72.0
+    if endereco:
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "B", 13)
+        pdf.set_xy(36, 66)
+        pdf.multi_cell(_PAGE_W - 72, 18, _ascii(endereco[:110]))
+        y_cards = 100.0
+
+    margin_x, gap, cols = 36.0, 12.0, 3
+    card_w = (_PAGE_W - 2 * margin_x - (cols - 1) * gap) / cols
+    card_h = 120.0
+    accents = [primary, secondary]
+    for index, (chave, rotulo, kind) in enumerate(_INFO_IMOVEL_CAMPOS):
+        col, row = index % cols, index // cols
+        x = margin_x + col * (card_w + gap)
+        y = y_cards + row * (card_h + gap)
+        pdf.set_fill_color(*_CARD_NEUTRO_RGB)
+        pdf.rect(x, y, card_w, card_h, style="F")
+        pdf.set_draw_color(225, 225, 228)
+        pdf.rect(x, y, card_w, card_h, style="D")
+        pdf.set_fill_color(*accents[index % len(accents)])
+        pdf.rect(x, y, card_w, 6.0, style="F")
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_xy(x + 14, y + 20)
+        pdf.multi_cell(card_w - 28, 14, _ascii(rotulo))
+        pdf.set_text_color(40, 40, 40)
+        pdf.set_font("Helvetica", "B", 22)
+        pdf.set_xy(x + 14, y + 66)
+        pdf.multi_cell(card_w - 28, 24, _ascii(_info_valor(info_imovel.get(chave), kind)))
+
+    observacoes = str(info_imovel.get("observacoes") or "").strip()
+    if observacoes:
+        y_obs = y_cards + 2 * (card_h + gap) + 6
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "B", 11)
+        pdf.set_xy(margin_x, y_obs)
+        pdf.cell(_PAGE_W - 2 * margin_x, 14, _ascii("Observações"))
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_xy(margin_x, y_obs + 16)
+        pdf.multi_cell(_PAGE_W - 2 * margin_x, 13, _ascii(observacoes[:600]))
+    _draw_footer(pdf, with_attribution=False)
+
+
 def _draw_watermark(
     pdf: _UltraPDF, text: str, *, rgb: tuple[int, int, int] = _WATERMARK_RGB
 ) -> None:
@@ -1583,6 +1675,7 @@ def gerar_pdf_relatorio_pontual_classico(
     rotulo: str | None = None,
     now: datetime | None = None,
     fotos: list[bytes] | None = None,
+    info_imovel: dict[str, Any] | None = None,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
@@ -1616,6 +1709,8 @@ def gerar_pdf_relatorio_pontual_classico(
     _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
     if fotos:
         _fotos_imovel_page(pdf, fotos, assets, primary=p1)
+    if info_imovel:
+        _info_imovel_page(pdf, info_imovel, assets, primary=p2, secondary=s2)
     _classico_mapas_calor_page(pdf, layers, assets, banda_texto=banda_texto, primary=p1)
     _classico_competitors_page(
         pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto,
@@ -1667,6 +1762,7 @@ def gerar_pdf_relatorio_pontual_censitario(
     solicitante: str | None = None,
     rotulo: str | None = None,
     fotos: list[bytes] | None = None,
+    info_imovel: dict[str, Any] | None = None,
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
@@ -1702,6 +1798,8 @@ def gerar_pdf_relatorio_pontual_censitario(
     _cover_page(pdf, result, assets, rotulo=rotulo)
     if fotos:
         _fotos_imovel_page(pdf, fotos, assets, primary=p1)
+    if info_imovel:
+        _info_imovel_page(pdf, info_imovel, assets, primary=p2, secondary=s2)
     _mapas_calor_page(pdf, layers, assets, primary=p1)
     _competitors_page(pdf, result, layers.get("concorrentes"), assets, primary=p2, secondary=s2)
     _perfil_bairro_page(pdf, perfil_bairro, assets, primary=p3, secondary=s3)
