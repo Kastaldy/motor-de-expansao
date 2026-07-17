@@ -573,14 +573,10 @@ def test_rotulo_mais_longo_da_legenda_cabe_na_coluna():
     draw = ImageDraw.Draw(image, "RGBA")
     font = censo_map._font(censo_map._FS_LEGENDA_CORPO)
     orcamento = censo_map._LEGEND_COL_W - 78
-    # Verifica os rotulos EXATOS que cada camada renderiza na legenda: per capita usa as bandas
-    # cruas; renda_domiciliar usa a versao CURTA (sem a anotacao de classe (C2/D/E)) via curto=True.
-    conjuntos = [
-        censo_map._bands_legend_entries(RENDA_PER_CAPITA_BANDS),
-        censo_map._bands_legend_entries(RENDA_MEDIA_DOMICILIAR_BANDS, curto=True),
-    ]
-    for entries in conjuntos:
-        rotulo_mais_longo = max((label for label, _color in entries), key=len)
+    # As duas camadas de renda usam o MESMO formato compacto de rotulo (per capita e domiciliar);
+    # o rotulo mais longo de cada uma deve caber na coluna estreita da legenda.
+    for bands in (RENDA_PER_CAPITA_BANDS, RENDA_MEDIA_DOMICILIAR_BANDS):
+        rotulo_mais_longo = max((label for _upper, label, _color in bands), key=len)
         largura = censo_map._text_width(draw, rotulo_mais_longo, font)
         assert largura <= orcamento, (
             f"Rotulo '{rotulo_mais_longo}' ({largura}px) nao cabe no orcamento de "

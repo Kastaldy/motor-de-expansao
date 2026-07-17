@@ -186,9 +186,12 @@ def test_big_numbers_grid_4x3_cabe_na_pagina():
     assert (n_cards + censo_report._BIG_NUMBERS_COLS - 1) // censo_report._BIG_NUMBERS_COLS == rows
 
 
-# --- Acento da band nova (regra permanente §2) -------------------------------------------------
-def test_band_renda_media_domiciliar_acentuada():
+# --- Rotulo da band SEM acento (excecao de RENDER ao §2) ---------------------------------------
+def test_band_renda_media_domiciliar_sem_acento_para_legenda_png():
+    # Decisao de Felipe (2026-07-17): a legenda do choropleth de renda domiciliar e' rasterizada num
+    # PNG (Pillow) cujo font renderiza 'á' BUGADO; por isso os rotulos usam "ate" SEM acento, igual a
+    # RENDA_PER_CAPITA_BANDS (mesmo caminho de render). Excecao de rendering ao §2 (como o limite
+    # latin-1 do fpdf2), nao regressao de texto acentuavel.
     labels = [label for _, label, _ in RENDA_MEDIA_DOMICILIAR_BANDS]
-    # "ate" sem acento nao pode aparecer em string nova voltada ao usuario.
-    assert any("até" in s for s in labels)
-    assert not any(s.startswith("ate ") or " ate " in s for s in labels)
+    assert not any(any(ord(ch) > 127 for ch in s) for s in labels)  # nenhum caractere acentuado
+    assert any(s.startswith("ate ") for s in labels)  # "ate" sem acento, como a per capita
