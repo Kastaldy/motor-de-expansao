@@ -792,6 +792,64 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 
 ---
 
+### BLK-VIAB-11 — Recalibrar o custo de PESSOAL do simulador de viabilidade (fixo → % da receita)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (recalibra um coeficiente de custo da camada paralela de Dimensionamento/Viabilidade; muda a saída de go/no-go do simulador, mas **READ-ONLY sobre o M1** — não toca score/pesos/carteira/plano/artefatos oficiais). |
+| **Prioridade** | A definir (Felipe/Vini) — pedido explícito de Felipe (2026-07-17). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — confirmar o ratio com a controladoria]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-DIM-03R** (que fixou os coeficientes do DRE, incluindo `SIM_PESSOAL_MES`). Relacionado a **BLK-VIAB-04** (backtest N=112, para checar que a mudança não piora a validação). |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda a economia que a ferramenta recomenda; o **valor do ratio** (~25%) é decisão de produto/finanças que precisa de gate humano (N=6 nas DREs). Mecanicamente é simples, mas NÃO marcar loop-safe. |
+
+**Contexto.** O simulador (`dimensionamento/simulador.py::viabilidade`) modela a folha como um **custo fixo absoluto**
+`SIM_PESSOAL_MES = R$50.128,16` (`dimensionamento/config.py:103`), aplicado **igual a toda unidade**, independente de
+receita, metragem ou região. Seis DREs gerenciais reais (Augusta, Bangu, Cabo Frio, Icaraí, Praia Grande, Vila
+Guilherme; jun–jul/2026) mostram que **isso está errado nos extremos**: a folha real varia de **R$38k a R$99k/mês**,
+e o R$50k fixo **subestima unidades de alto faturamento** (Praia Grande: folha real ≈ R$99k) → **infla o EBITDA em
+~R$49k/mês** e **super-aprova unidades grandes**.
+
+**Evidência (das 6 DREs).** A folha é **estável como % da RECEITA BRUTA — média 26%, CV 0,16** (baixa dispersão), e
+**instável por m² — CV 0,34** (61→40 R$/m², cai com o tamanho = economia de escala). Ou seja, **pessoal acompanha
+VOLUME/faturamento, não metragem.** SP vs RJ: pessoal% ~idêntico (25% em ambos) → **sem ajuste regional para folha**
+(ao contrário de energia — fora deste bloco).
+
+**Objetivo.** Trocar, **apenas para o custo de pessoal**, o valor fixo por um **percentual da receita bruta
+(faturamento)**: `pessoal = SIM_PESSOAL_PCT × faturamento`, com `SIM_PESSOAL_PCT` default **0,25–0,26** (a confirmar
+com a controladoria; parametrizado). Isso torna a folha auto-consistente com o design "demanda é premissa" (mais
+alunos assumidos → mais folha, automático) e corrige a distorção nas caixas grandes.
+
+**Escopo (ENXUTO — só pessoal).**
+- **Incluído:** `dimensionamento/config.py` (nova constante `SIM_PESSOAL_PCT`); `simulador.py::viabilidade`,
+  `gerar_serie_mensal` (rampa — a folha deve acompanhar o faturamento de cada mês, inclusive menor na rampa),
+  o solver `aluguel_teto` e `grade_sensibilidade` (propagar a nova lógica); `viabilidade_ponto.py` se repassar `pessoal_mes`.
+- **Backward-compat:** manter o parâmetro `pessoal_mes` como **override opcional** (se o chamador passar um absoluto,
+  usa o absoluto; caso contrário, usa `SIM_PESSOAL_PCT × faturamento`). Nenhum chamador quebra.
+- **FORA de escopo (follow-up, NÃO fazer agora):** água/luz/energia (que é mista: m² + região/clima + volume), IPTU
+  (melhor virar input), multiplicador regional. Ficam como bloco sucessor **BLK-VIAB-12** (custos de ocupação).
+
+**Aceite.**
+1. `SIM_PESSOAL_PCT` adicionado em `dimensionamento/config.py`; folha calculada como `pct × faturamento` no
+   `viabilidade()` e na série mensal (rampa).
+2. **Sanity check:** no faturamento da unidade de referência (~R$193k, onde `50.128/193.000 ≈ 0,26`), o novo modelo
+   reproduz ≈ R$50k → sem quebra de continuidade no ponto de calibração antigo.
+3. **Teste unitário:** folha escala com a receita — uma unidade de faturamento alto (ex.: R$487k) recebe folha maior
+   que uma de R$145k; o override `pessoal_mes` explícito continua vencendo.
+4. **Backtest re-rodado (BLK-VIAB-04, N=112 / 54 Ultra):** MAPE e ranking por margem de segurança **não pioram**
+   (esperado: melhora nas unidades grandes). Registrar o antes/depois.
+5. **READ-ONLY M1:** zero escrita em score/pesos/`hex_score_estrutural`/carteira/plano/artefatos oficiais; suíte verde.
+
+**Guardrail.** §5 permanente — camada paralela de Dimensionamento, READ-ONLY sobre o M1 (DEC-001 intacta). Não altera
+`config.py` raiz do M1; só `dimensionamento/config.py` (constantes locais da camada, precedente BLK-DIM-00).
+
+**Ressalva.** **N=6 DREs** (4 com metragem), viés RJ/SP, possível ramp-up. O **ratio ~25%** é direção robusta
+(CV 0,16), mas o valor exato (25 vs 26%) deve ser **confirmado pela controladoria** e com mais DREs; por isso
+`SIM_PESSOAL_PCT` fica **parametrizado**. O bug de receita +33% (BLK-DIM-13, split 69/31 balcão/agregador) **já está
+corrigido** e é ortogonal a este bloco.
+
+---
+
 ## Epic BLK-REV — Revisão séria do app: pesquisa e planejamento (Desempenho + Arquitetura + UX/UI)
 
 > **Objetivo:** revisar a estrutura INTEIRA do app para achar pontos fortes/fracos e planejar o produto mais
