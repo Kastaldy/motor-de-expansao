@@ -651,6 +651,131 @@ def _info_imovel_page(
     _draw_footer(pdf, with_attribution=False)
 
 
+# ---------------------------------------------------------------------------
+# Paginas de VIABILIDADE (BLK-RELVIAB-04): slide de NUMEROS (estilo Big Numbers)
+# do motor `viabilidade_ponto` + slide de GRAFICOS (PNGs do BLK-RELVIAB-03).
+# Saida OPCIONAL (so entra se `viabilidade` != None). READ-ONLY sobre o M1.
+# ---------------------------------------------------------------------------
+_VIAB_NUMEROS_TITLE = "Viabilidade - Números"
+_VIAB_GRAFICOS_TITLE = "Viabilidade - Projeção financeira"
+
+
+def _viab_brl(value: Any) -> str:
+    if value is None or pd.isna(value):
+        return "n/d"
+    return "R$ " + _format_number(value, 2)
+
+
+def _viab_pct(frac: Any) -> str:
+    if frac is None or pd.isna(frac):
+        return "n/d"
+    return _format_number(float(frac) * 100.0, 1) + "%"
+
+
+def _viab_payback(value: Any) -> str:
+    if value is None or value == float("inf") or pd.isna(value):
+        return "> 60 meses"
+    return _format_number(value, 0) + " meses"
+
+
+def _viab_breakeven(value: Any) -> str:
+    if value is None or value == float("inf") or pd.isna(value):
+        return "inviável"
+    return _format_number(value, 0)
+
+
+def _viab_faixa(p10: Any, p90: Any) -> str:
+    if (p10 is None or pd.isna(p10)) and (p90 is None or pd.isna(p90)):
+        return "n/d"
+    return f"{_format_number(p10, 0)} - {_format_number(p90, 0)}"
+
+
+def _viabilidade_page(
+    pdf: _UltraPDF,
+    viabilidade: dict[str, Any],
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+) -> None:
+    """Slide de numeros da viabilidade + (se houver) slide dos graficos. READ-ONLY M1.
+
+    `viabilidade` e um dict simples (serializavel) derivado do `ViabilidadePontoResult`:
+    alunos_breakeven, aluguel_teto, margem_ebitda_pct (fracao), payback_meses, roic_anual
+    (fracao), faturamento_mensal, ebitda_mensal, faixa_p10/p90, flag_viavel,
+    flag_fora_envelope e, opcionalmente, `graficos` (lista de ate 4 PNGs do BLK-RELVIAB-03).
+    Com `graficos` -> 2 paginas; sem -> 1 pagina.
+    """
+    # --- Pagina de NUMEROS (grid 4x2 estilo Big Numbers) ---
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _VIAB_NUMEROS_TITLE, rgb=primary)
+
+    cards = [
+        ("Alunos break-even", _viab_breakeven(viabilidade.get("alunos_breakeven"))),
+        ("Aluguel-teto (mês)", _viab_brl(viabilidade.get("aluguel_teto"))),
+        ("Margem EBITDA", _viab_pct(viabilidade.get("margem_ebitda_pct"))),
+        ("Payback", _viab_payback(viabilidade.get("payback_meses"))),
+        ("ROIC anual", _viab_pct(viabilidade.get("roic_anual"))),
+        ("Faturamento/mês", _viab_brl(viabilidade.get("faturamento_mensal"))),
+        ("EBITDA/mês", _viab_brl(viabilidade.get("ebitda_mensal"))),
+        (
+            "Faixa alunos (p10-p90)",
+            _viab_faixa(viabilidade.get("faixa_p10"), viabilidade.get("faixa_p90")),
+        ),
+    ]
+    margin_x, gap, cols = 36.0, 12.0, 4
+    card_w = (_PAGE_W - 2 * margin_x - (cols - 1) * gap) / cols
+    card_h = 132.0
+    top = 72.0
+    accents = [primary, secondary]
+    for index, (label, value) in enumerate(cards):
+        col, row = index % cols, index // cols
+        x = margin_x + col * (card_w + gap)
+        y = top + row * (card_h + gap)
+        pdf.set_fill_color(*_CARD_NEUTRO_RGB)
+        pdf.rect(x, y, card_w, card_h, style="F")
+        pdf.set_draw_color(225, 225, 228)
+        pdf.rect(x, y, card_w, card_h, style="D")
+        pdf.set_fill_color(*accents[index % len(accents)])
+        pdf.rect(x, y, card_w, 6.0, style="F")
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_xy(x + 14, y + 20)
+        pdf.multi_cell(card_w - 28, 14, _ascii(label))
+        pdf.set_text_color(40, 40, 40)
+        pdf.set_font("Helvetica", "B", 22)
+        pdf.set_xy(x + 14, y + 74)
+        pdf.multi_cell(card_w - 28, 24, _ascii(value))
+
+    viavel = "Sim" if viabilidade.get("flag_viavel") else "Não"
+    envelope = "fora do envelope" if viabilidade.get("flag_fora_envelope") else "dentro do envelope"
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(margin_x, top + 2 * (card_h + gap) + 6)
+    pdf.multi_cell(
+        _PAGE_W - 2 * margin_x,
+        12,
+        _ascii(
+            f"Viável? {viavel}   |   Metragem {envelope}. A demanda e uma PREMISSA do operador "
+            "(nao prevista pela geografia). READ-ONLY sobre o M1."
+        ),
+    )
+    _draw_footer(pdf, with_attribution=False)
+
+    # --- Pagina de GRAFICOS (grid 2x2), so quando ha PNGs ---
+    graficos = list(viabilidade.get("graficos") or [])
+    if graficos:
+        pdf.add_page()
+        _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+        _draw_title_band(pdf, _VIAB_GRAFICOS_TITLE, rgb=secondary)
+        pngs: list[bytes | None] = (graficos + [None, None, None, None])[:4]
+        _draw_maps_grid(
+            pdf, pngs, top=60.0, bottom=_PAGE_H - 26.0, margin_x=20.0, gap=12.0
+        )
+        _draw_footer(pdf, with_attribution=False)
+
+
 def _draw_watermark(
     pdf: _UltraPDF, text: str, *, rgb: tuple[int, int, int] = _WATERMARK_RGB
 ) -> None:
@@ -1676,6 +1801,7 @@ def gerar_pdf_relatorio_pontual_classico(
     now: datetime | None = None,
     fotos: list[bytes] | None = None,
     info_imovel: dict[str, Any] | None = None,
+    viabilidade: dict[str, Any] | None = None,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
@@ -1721,6 +1847,8 @@ def gerar_pdf_relatorio_pontual_classico(
     )
     _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
     _classico_banda_magenta_rodape(pdf)
+    if viabilidade:
+        _viabilidade_page(pdf, viabilidade, assets, primary=p1, secondary=p2)
     _classico_credit_page(pdf, result, assets, rotulo=rotulo, now=now)
 
     # Marca d'agua identica ao gerador recente: capa branca, demais cinza.
@@ -1763,6 +1891,7 @@ def gerar_pdf_relatorio_pontual_censitario(
     rotulo: str | None = None,
     fotos: list[bytes] | None = None,
     info_imovel: dict[str, Any] | None = None,
+    viabilidade: dict[str, Any] | None = None,
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
@@ -1804,6 +1933,8 @@ def gerar_pdf_relatorio_pontual_censitario(
     _competitors_page(pdf, result, layers.get("concorrentes"), assets, primary=p2, secondary=s2)
     _perfil_bairro_page(pdf, perfil_bairro, assets, primary=p3, secondary=s3)
     _big_numbers_page(pdf, result, residual, assets, primary=p4, secondary=s4)
+    if viabilidade:
+        _viabilidade_page(pdf, viabilidade, assets, primary=p1, secondary=p2)
     _credit_page(pdf, assets)
 
     # Marca d'agua diagonal POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as 6).
