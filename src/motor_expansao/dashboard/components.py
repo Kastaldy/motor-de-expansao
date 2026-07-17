@@ -28,6 +28,7 @@ from motor_expansao.dashboard.constants import (
     FAIXA_COLORS_POR_LABEL,
     FAIXA_LABELS,
     FAIXA_ORDEM,
+    FATOR_TEMPORAL_RENDA,
     MAP_POINT_LIMIT,
     MAP_POINT_LIMIT_LARGE,
     MAP_SORT_ASCENDING,
@@ -38,6 +39,8 @@ from motor_expansao.dashboard.constants import (
     RESIDUAL_SCORE_BANDS,
     TABLE_ROW_LIMIT,
     ULTRA_PIN_LIMIT,
+    moradores_por_domicilio,
+    uplift_renda_domiciliar,
 )
 from motor_expansao.dashboard.data import _has_censo_signal, _normalized_join_quality, haversine_km
 from motor_expansao.dashboard.utils import (
@@ -522,6 +525,52 @@ _ACTIVE_SCORE_SPEC: dict[str, tuple[str, str]] = {
 }
 
 
+def _renda_media_domiciliar_series(map_df: pd.DataFrame) -> pd.Series:
+    """Renda media domiciliar por hex (R$/mes) para o tooltip, computada em tempo de render.
+
+    `renda_pc_calibrada(hex) x moradores_municipio x uplift_municipio x FATOR_TEMPORAL`. Moradores e
+    uplift sao MUNICIPAIS (por `cod_municipio`) — um hex res-7 cobre varios setores, entao o uplift
+    setorial do #124 nao se aplica a 1 hex. READ-ONLY sobre o M1 (so exibicao). Fallback gracioso:
+    NaN quando falta renda, ou quando `cod_municipio` esta ausente (coluna OU valor NaN por linha) —
+    hexes sem cobertura censitaria (costeiros/nao-granulares) ficam com o tooltip em branco em vez de
+    exibir uma estimativa de nivel UF. Sem o parquet municipal, moradores/uplift de municipios
+    conhecidos caem no nacional (~2.79 / 1.632). Nao depende do artefato enriquecido — so das
+    colunas ja servidas.
+    """
+    idx = map_df.index
+    renda_pc = pd.to_numeric(
+        map_df.get("renda_per_capita_setor_2022_calibrada", pd.Series(np.nan, index=idx)),
+        errors="coerce",
+    )
+    if "renda_per_capita" in map_df.columns:
+        renda_pc = renda_pc.where(
+            renda_pc.notna(), pd.to_numeric(map_df["renda_per_capita"], errors="coerce")
+        )
+    if "cod_municipio" not in map_df.columns:
+        return pd.Series(np.nan, index=idx)
+
+    def _s(value: object) -> str | None:
+        return None if pd.isna(value) else str(value)
+
+    uf_col = map_df["uf"] if "uf" in map_df.columns else pd.Series(pd.NA, index=idx)
+    keys = pd.DataFrame(
+        {"uf": uf_col.astype("string"), "cod_municipio": map_df["cod_municipio"].astype("string")}
+    )
+    fator_temporal = float(FATOR_TEMPORAL_RENDA)
+    uniq = keys.drop_duplicates().copy()
+    uniq["_fator_dom"] = [
+        moradores_por_domicilio(_s(uf), _s(cod))
+        * uplift_renda_domiciliar(_s(uf), _s(cod))
+        * fator_temporal
+        for uf, cod in uniq.itertuples(index=False, name=None)
+    ]
+    fatores = keys.merge(uniq, on=["uf", "cod_municipio"], how="left")["_fator_dom"].to_numpy()
+    resultado = pd.Series(renda_pc.to_numpy() * fatores, index=idx)
+    # Contrato: sem municipio resolvido (cod_municipio ausente/NaN por linha) -> tooltip vazio, e
+    # nao uma estimativa de nivel UF. Simetrico ao NaN quando falta renda.
+    return resultado.where(map_df["cod_municipio"].notna())
+
+
 def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str, show_discarded: bool = True) -> pd.DataFrame:
     map_df = _apply_residual_tooltip_fields(map_df)
     map_df["tooltip_title"] = map_df["nome_municipio"].astype(str) + " / " + map_df["uf"].astype(str)
@@ -544,17 +593,15 @@ def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str, show_discarded
         map_df["tooltip_line_3"] = "Score Censitário: " + map_df["score_censo_fmt"].astype(str)
     map_df["tooltip_line_4"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
     map_df["tooltip_line_5"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
-    # Linha 6 (NOVO): renda media domiciliar por hex (uplift municipal, ver data._add_renda_media_
-    # domiciliar_hex). Vazia quando a coluna nao existe (artefato ainda nao regenerado) ou e NaN ->
-    # nao polui o tooltip com "-". READ-ONLY sobre o M1 (so exibicao).
-    if "renda_media_domiciliar_hex" in map_df.columns:
-        renda_dom = pd.to_numeric(map_df["renda_media_domiciliar_hex"], errors="coerce")
-        map_df["tooltip_line_6"] = renda_dom.map(
-            lambda v: f"Renda média domiciliar: R$ {format_int(v)}" if pd.notna(v) else ""
-        )
-    else:
-        map_df["tooltip_line_6"] = ""
-    map_df["tooltip_line_7"] = map_df["tooltip_residual_1"]
+    map_df["tooltip_line_6"] = map_df["tooltip_residual_1"]
+    # Linha 7 (NOVO, por ULTIMO): renda media domiciliar por hex, computada em tempo de render a
+    # partir das colunas ja servidas + tabela municipal (ver _renda_media_domiciliar_series). Fica na
+    # ultima linha DE PROPOSITO: quando vazia (NaN, sem renda/cod_municipio) nao deixa gap no meio do
+    # tooltip nem exibe "-". READ-ONLY sobre o M1 (so exibicao).
+    renda_dom = _renda_media_domiciliar_series(map_df)
+    map_df["tooltip_line_7"] = renda_dom.map(
+        lambda v: f"Renda média domiciliar: R$ {format_int(v)}" if pd.notna(v) else ""
+    )
 
     if "flag_pop_min_5k" in map_df.columns and show_discarded:
         discarded = ~map_df["flag_pop_min_5k"].fillna(True)
