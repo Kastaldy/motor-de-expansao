@@ -511,10 +511,9 @@ def _apply_residual_tooltip_fields(map_df: pd.DataFrame) -> pd.DataFrame:
     return map_df
 
 
-# BLK-PERF-01c (D4): rotulo + coluna ja formatada do "Score do modo ativo" (2a das 6
-# linhas do tooltip enxuto), por modo. Em mode="censitario" a linha 2 (Score do modo
-# ativo) e a linha 3 (Score Censitario) mostram o MESMO valor — aceito no gate D4
-# (ver Riscos), nao e bug.
+# BLK-PERF-01c (D4): rotulo + coluna ja formatada do "Score do modo ativo" (2a linha do
+# tooltip enxuto), por modo. Em mode="censitario" a linha 2 e' o Score Censitario; para NAO
+# duplicar, `_apply_hex_tooltip_fields` mostra o Score M1 na linha 3 nesse modo (desduplicado).
 _ACTIVE_SCORE_SPEC: dict[str, tuple[str, str]] = {
     "m1": ("Score M1", "score_priorizacao_fmt"),
     "hibrido": ("Score Híbrido", "score_hibrido_fmt"),
@@ -531,10 +530,31 @@ def _apply_hex_tooltip_fields(map_df: pd.DataFrame, *, mode: str, show_discarded
     active_fmt = map_df[active_col] if active_col in map_df.columns else pd.Series("-", index=map_df.index)
     map_df["tooltip_line_1"] = "Faixa M1: " + map_df["faixa_label"].astype(str)
     map_df["tooltip_line_2"] = f"{active_label}: " + active_fmt.astype(str)
-    map_df["tooltip_line_3"] = "Score Censitário: " + map_df["score_censo_fmt"].astype(str)
+    # Linha 3 = Score Censitario, EXCETO no modo censitario: ali a linha 2 (score do modo ativo) JA
+    # e o censitario, entao repetir seria a duplicacao reportada. No modo censitario mostramos o
+    # Score M1 -> a linha 3 nunca duplica a linha 2, e cada modo exibe dois scores distintos.
+    if mode == "censitario":
+        m1_score = (
+            map_df["score_priorizacao"]
+            if "score_priorizacao" in map_df.columns
+            else pd.Series(pd.NA, index=map_df.index)
+        )
+        map_df["tooltip_line_3"] = "Score M1: " + m1_score.map(format_score).astype(str)
+    else:
+        map_df["tooltip_line_3"] = "Score Censitário: " + map_df["score_censo_fmt"].astype(str)
     map_df["tooltip_line_4"] = "Habitantes: " + map_df["pop_fmt"].astype(str)
     map_df["tooltip_line_5"] = "Renda per capita: R$ " + map_df["renda_fmt"].astype(str)
-    map_df["tooltip_line_6"] = map_df["tooltip_residual_1"]
+    # Linha 6 (NOVO): renda media domiciliar por hex (uplift municipal, ver data._add_renda_media_
+    # domiciliar_hex). Vazia quando a coluna nao existe (artefato ainda nao regenerado) ou e NaN ->
+    # nao polui o tooltip com "-". READ-ONLY sobre o M1 (so exibicao).
+    if "renda_media_domiciliar_hex" in map_df.columns:
+        renda_dom = pd.to_numeric(map_df["renda_media_domiciliar_hex"], errors="coerce")
+        map_df["tooltip_line_6"] = renda_dom.map(
+            lambda v: f"Renda média domiciliar: R$ {format_int(v)}" if pd.notna(v) else ""
+        )
+    else:
+        map_df["tooltip_line_6"] = ""
+    map_df["tooltip_line_7"] = map_df["tooltip_residual_1"]
 
     if "flag_pop_min_5k" in map_df.columns and show_discarded:
         discarded = ~map_df["flag_pop_min_5k"].fillna(True)
@@ -1079,9 +1099,9 @@ def _shared_map_tooltip() -> dict[str, object]:
 
 
 def _hex_map_tooltip() -> dict[str, object]:
-    """Tooltip enxuto (Título + 6 linhas, D4 BLK-PERF-01c) compartilhado pelos 4 modos
-    de hexágono do Mapa Territorial (M1/Híbrido/Censitário/Residual). Deixou de ser
-    exclusivo do modo Híbrido — ver `_apply_hex_tooltip_fields`/`_ACTIVE_SCORE_SPEC`."""
+    """Tooltip enxuto (Título + 7 linhas) compartilhado pelos 4 modos de hexágono do Mapa
+    Territorial (M1/Híbrido/Censitário/Residual). A linha 6 (renda média domiciliar) foi
+    acrescentada e o Residual passou para a linha 7 — ver `_apply_hex_tooltip_fields`."""
     return {
         "html": (
             "<b>{tooltip_title}</b><br/>"
@@ -1090,7 +1110,8 @@ def _hex_map_tooltip() -> dict[str, object]:
             "{tooltip_line_3}<br/>"
             "{tooltip_line_4}<br/>"
             "{tooltip_line_5}<br/>"
-            "{tooltip_line_6}"
+            "{tooltip_line_6}<br/>"
+            "{tooltip_line_7}"
         ),
         "style": {
             "backgroundColor": "rgba(10, 15, 31, 0.94)",

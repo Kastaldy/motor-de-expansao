@@ -12,6 +12,7 @@ from motor_expansao.dashboard.constants import (
     BOOL_COLUMNS,
     COVERAGE_BUCKET_ORDER,
     FAIXA_ORDEM,
+    FATOR_TEMPORAL_RENDA,
     FLOAT_COLUMNS,
     HYBRID_ELIGIBILITY_ORDER,
     JOIN_QUALITY_ORDER,
@@ -21,6 +22,7 @@ from motor_expansao.dashboard.constants import (
     POP_MIN_ACIONAVEL,
     RESIDUAL_MERCADO_COLS,
     TEXT_COLUMNS,
+    uplift_renda_domiciliar,
 )
 from motor_expansao.dashboard.schemas import validate_dashboard_frame
 from motor_expansao.pipelines.pop_corte import (
@@ -273,6 +275,7 @@ def _prepare_censo_trace(df: pd.DataFrame) -> pd.DataFrame:
         "coverage_pct_setor_2022",
         "delta_vs_vizinhos",
         "renda_per_capita_setor_2022_calibrada",
+        "domicilios_setor_2022",
     ]:
         if column in prepared.columns:
             prepared[column] = pd.to_numeric(prepared[column], errors="coerce").astype("Float32")
@@ -282,6 +285,71 @@ def _prepare_censo_trace(df: pd.DataFrame) -> pd.DataFrame:
             prepared[column] = prepared[column].fillna(False).astype(bool)
 
     return prepared
+
+
+def _add_renda_media_domiciliar_hex(df: pd.DataFrame) -> pd.DataFrame:
+    """Renda media domiciliar por hex (R$/domicilio/mes), READ-ONLY sobre o M1.
+
+    Espelha a formula do Relatorio Pontual Censitario (#124), porem por HEX e com uplift
+    MUNICIPAL (um hex res-7 cobre varios setores -> o uplift setorial nao se aplica a 1 hex):
+
+        renda_media_domiciliar_hex = renda_pc_calibrada
+            * moradores(pop_total_setor_2022 / domicilios_setor_2022)
+            * uplift_renda_domiciliar(uf, cod_municipio)   # cascata municipio->UF->nacional (1.632)
+            * FATOR_TEMPORAL_RENDA                          # jul/2022 -> presente
+
+    Camada de VISUALIZACAO: nao recalcula score/pesos/artefatos oficiais do M1. Fallback gracioso:
+    sem `domicilios_setor_2022` (ex.: artefato ainda nao regenerado) a coluna nem e criada e o
+    tooltip mostra vazio; sem o parquet de uplift, `uplift_renda_domiciliar` cai no fallback nacional.
+    """
+    if not {"pop_total_setor_2022", "domicilios_setor_2022"} <= set(df.columns):
+        return df
+
+    domicilios = pd.to_numeric(df["domicilios_setor_2022"], errors="coerce")
+    pop = pd.to_numeric(df["pop_total_setor_2022"], errors="coerce")
+    moradores = pop.where(domicilios > 0) / domicilios.where(domicilios > 0)
+
+    # `df.get(col)` devolve None quando a coluna falta, e pd.to_numeric(None) e' um ESCALAR nan
+    # (nao Series) -> .where()/.to_numpy() abaixo estourariam AttributeError e derrubariam o enrich.
+    # Um default Series all-NaN alinhado ao indice preserva o fallback gracioso (coluna vazia).
+    renda_pc = pd.to_numeric(
+        df.get("renda_per_capita_setor_2022_calibrada", pd.Series(np.nan, index=df.index)),
+        errors="coerce",
+    )
+    if "renda_per_capita" in df.columns:
+        renda_pc = renda_pc.where(
+            renda_pc.notna(), pd.to_numeric(df["renda_per_capita"], errors="coerce")
+        )
+
+    # Uplift MUNICIPAL vetorizado por (uf, cod_municipio) unicos -> merge (evita apply por linha).
+    if {"uf", "cod_municipio"} <= set(df.columns):
+        chaves = (
+            df[["uf", "cod_municipio"]]
+            .astype({"uf": "string", "cod_municipio": "string"})
+            .drop_duplicates()
+            .dropna()
+        )
+        registros = [
+            (str(uf), str(cod), float(uplift_renda_domiciliar(str(uf), str(cod))))
+            for uf, cod in chaves.itertuples(index=False, name=None)
+        ]
+        if registros:
+            up_df = pd.DataFrame(registros, columns=["uf", "cod_municipio", "_uplift_mun"])
+            uplift = (
+                df[["uf", "cod_municipio"]]
+                .astype({"uf": "string", "cod_municipio": "string"})
+                .merge(up_df, on=["uf", "cod_municipio"], how="left")["_uplift_mun"]
+                .to_numpy()
+            )
+        else:
+            uplift = np.nan
+    else:
+        uplift = np.nan
+
+    df["renda_media_domiciliar_hex"] = (
+        renda_pc.to_numpy() * moradores.to_numpy() * uplift * float(FATOR_TEMPORAL_RENDA)
+    )
+    return df
 
 
 def _coalesce_columns(df: pd.DataFrame, base_column: str, overlay_column: str) -> pd.DataFrame:
@@ -406,6 +474,7 @@ def enrich_dashboard_data(
         "motivo_fallback_setor_2022",
         "renda_per_capita_setor_2022_calibrada",
         "pop_total_setor_2022",
+        "domicilios_setor_2022",
     ]
     if not censo_df.empty:
         censo_subset = censo_df[[column for column in censo_extra_cols if column in censo_df.columns]]
@@ -423,6 +492,8 @@ def enrich_dashboard_data(
         ]:
             censo_column = f"{column}_censo"
             enriched = _coalesce_columns(enriched, column, censo_column)
+
+    enriched = _add_renda_media_domiciliar_hex(enriched)
 
     for column in [
         "top_municipio",

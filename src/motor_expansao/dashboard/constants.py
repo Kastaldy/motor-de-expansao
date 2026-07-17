@@ -82,6 +82,8 @@ CENSO_TRACE_LOAD_COLS = [
     "metodo_join_setor_2022",
     "motivo_fallback_setor_2022",
     "renda_per_capita_setor_2022_calibrada",
+    # domicilios por hex: insumo da renda media domiciliar (moradores = pop/domicilios).
+    "domicilios_setor_2022",
 ]
 
 CENSO_UFS = ["DF", "GO", "MG", "RJ", "RS", "SP"]
@@ -240,6 +242,7 @@ MAP_SOURCE_COLUMNS_M1 = [
     "renda_per_capita",
     "pop_total_setor_2022",
     "renda_per_capita_setor_2022_calibrada",
+    "renda_media_domiciliar_hex",
     "flag_pop_min_5k",
     "sam_fitness_potencial",
     "oferta_consumida_mercado_estimada",
@@ -277,6 +280,7 @@ MAP_SOURCE_COLUMNS_HYBRID = [
     "renda_per_capita",
     "pop_total_setor_2022",
     "renda_per_capita_setor_2022_calibrada",
+    "renda_media_domiciliar_hex",
     "flag_pop_min_5k",
     "sam_fitness_potencial",
     "oferta_consumida_mercado_estimada",

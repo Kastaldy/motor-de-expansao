@@ -329,6 +329,40 @@ def test_enrich_dashboard_data_preserva_base_oficial_e_sobrepoe_rastreabilidade(
     assert str(enriched.loc[0, "quartil_oportunidade_residual"]) == "Q4_maior_residual"
 
 
+def test_enrich_dashboard_data_materializa_renda_media_domiciliar_hex():
+    """enrich produz a coluna renda_media_domiciliar_hex quando o censo traz pop+domicilios (E2E)."""
+    from motor_expansao.dashboard.constants import (
+        FATOR_TEMPORAL_RENDA,
+        uplift_renda_domiciliar,
+    )
+
+    base_df = pd.DataFrame(
+        [{
+            "hex_id": "abc", "lat": -23.55, "lng": -46.63, "uf": "SP", "cidade": "Sao Paulo",
+            "regiao": "SE", "score_priorizacao": 90.0, "hex_score_estrutural": 88.0,
+            "ajuste_executivo": 2.0, "faixa_oportunidade": "alta", "flag_viavel": True,
+            "flag_prioridade": True, "rank_brasil": 1, "rank_uf": 1, "rank_cidade": 1,
+            "renda_per_capita": 3000.0, "populacao_proxy": 15000.0,
+        }]
+    )
+    hybrid_df = pd.DataFrame([{"hex_id": "abc", "nome_municipio": "Sao Paulo"}])
+    censo_df = pd.DataFrame(
+        [{
+            "hex_id": "abc", "cod_municipio": "3550308", "nome_municipio": "Sao Paulo",
+            "score_setor_2022_calibrado": 80.0, "qualidade_join_uf": "A",
+            "renda_per_capita_setor_2022_calibrada": 3000.0,
+            "pop_total_setor_2022": 6000.0, "domicilios_setor_2022": 2000.0,
+        }]
+    )
+
+    enriched = streamlit_app.enrich_dashboard_data(base_df, hybrid_df, censo_df)
+
+    assert "renda_media_domiciliar_hex" in enriched.columns
+    # 3000 (renda pc) x moradores(6000/2000=3) x uplift municipal x fator temporal
+    esperado = 3000.0 * 3.0 * uplift_renda_domiciliar("SP", "3550308") * float(FATOR_TEMPORAL_RENDA)
+    assert float(enriched.loc[0, "renda_media_domiciliar_hex"]) == pytest.approx(esperado)
+
+
 def test_build_map_scope_caption_reflete_todos_os_hexes_da_uf():
     caption = streamlit_app.build_map_scope_caption(1234, selected_ufs=["SP"])
 
@@ -1533,8 +1567,8 @@ def test_build_map_figure_payload_do_layer_so_tem_colunas_de_render_e_tooltip():
     # tooltip preservado
     assert isinstance(rendered.loc[0, "tooltip_title"], str)
     assert rendered.loc[0, "tooltip_title"] != ""
-    # BLK-PERF-01c (D4): campos cortados (linhas 7-14) confirmadamente ausentes
-    for i in range(7, 15):
+    # renda media domiciliar (linha 6) + Residual (linha 7) presentes; cortados = linhas 8-14
+    for i in range(8, 15):
         assert f"tooltip_line_{i}" not in rendered.columns
 
 
@@ -1603,8 +1637,8 @@ def test_build_hybrid_map_figure_payload_do_layer_enxuto():
     assert {"hex_id", "fill_color", "line_color", "tooltip_title"} <= set(rendered.columns)
     assert isinstance(rendered.loc[0, "tooltip_title"], str)
     assert rendered.loc[0, "tooltip_title"] != ""
-    # BLK-PERF-01c (D4): campos cortados (linhas 7-14) confirmadamente ausentes
-    for i in range(7, 15):
+    # renda media domiciliar (linha 6) + Residual (linha 7) presentes; cortados = linhas 8-14
+    for i in range(8, 15):
         assert f"tooltip_line_{i}" not in rendered.columns
 
 
@@ -1659,8 +1693,8 @@ def test_build_residual_heatmap_figure_payload_do_layer_enxuto():
     assert {"hex_id", "fill_color", "line_color", "tooltip_title"} <= set(rendered.columns)
     assert isinstance(rendered.loc[0, "tooltip_title"], str)
     assert rendered.loc[0, "tooltip_title"] != ""
-    # BLK-PERF-01c (D4): campos cortados (linhas 7-14) confirmadamente ausentes
-    for i in range(7, 15):
+    # renda media domiciliar (linha 6) + Residual (linha 7) presentes; cortados = linhas 8-14
+    for i in range(8, 15):
         assert f"tooltip_line_{i}" not in rendered.columns
 
 
@@ -1708,7 +1742,7 @@ def test_build_map_figure_adiciona_layer_de_destaque_do_hex_pesquisado():
     assert highlight["tooltip_line_3"] == "Score Censitário: 85.00"
     assert highlight["tooltip_line_4"] == "Habitantes: 12.345"
     assert highlight["tooltip_line_5"] == "Renda per capita: R$ 6.789"
-    assert highlight["tooltip_line_6"] == "Residual Fitness: 300"
+    assert highlight["tooltip_line_7"] == "Residual Fitness: 300"
 
 
 def test_build_map_figure_destaque_hex_aparece_mesmo_fora_dos_filtros():
@@ -1750,7 +1784,7 @@ def test_build_map_figure_destaque_hex_aparece_mesmo_fora_dos_filtros():
     assert highlight["tooltip_line_3"] == "Score Censitário: 85.00"
     assert highlight["tooltip_line_4"] == "Habitantes: 21.000"
     assert highlight["tooltip_line_5"] == "Renda per capita: R$ 4.500"
-    assert highlight["tooltip_line_6"] == "Residual Fitness: 300"
+    assert highlight["tooltip_line_7"] == "Residual Fitness: 300"
 
 
 def test_build_hybrid_map_figure_destaque_hex_usa_tooltip_enxuto():
@@ -1816,7 +1850,7 @@ def test_build_hybrid_map_figure_destaque_hex_usa_tooltip_enxuto():
     assert highlight["tooltip_line_3"] == "Score Censitário: 88.00"
     assert highlight["tooltip_line_4"] == "Habitantes: 21.000"
     assert highlight["tooltip_line_5"] == "Renda per capita: R$ 4.500"
-    assert highlight["tooltip_line_6"] == "Residual Fitness: 650"
+    assert highlight["tooltip_line_7"] == "Residual Fitness: 650"
     # Nota: tooltip_line_7..14 NAO sao verificados como ausentes aqui — este layer
     # de DESTAQUE (busca por hex_id) vem de `_search_hex_payload`/`_build_search_hex_layer`,
     # que ainda preenche `range(1,15)` (secao F do plano, limpeza opcional/nao
@@ -1862,8 +1896,8 @@ def test_tooltip_conjunto_d4_modo_m1():
     assert rendered["tooltip_line_3"] == "Score Censitário: 85.00"
     assert rendered["tooltip_line_4"] == "Habitantes: 12.345"
     assert rendered["tooltip_line_5"] == "Renda per capita: R$ 6.789"
-    assert rendered["tooltip_line_6"] == "Residual Fitness: 300"
-    for i in range(7, 15):
+    assert rendered["tooltip_line_7"] == "Residual Fitness: 300"
+    for i in range(8, 15):
         assert f"tooltip_line_{i}" not in rendered.index
 
 
@@ -1881,8 +1915,8 @@ def test_tooltip_conjunto_d4_modo_hibrido():
     assert rendered["tooltip_line_3"] == "Score Censitário: 88.00"
     assert rendered["tooltip_line_4"] == "Habitantes: 21.000"
     assert rendered["tooltip_line_5"] == "Renda per capita: R$ 4.500"
-    assert rendered["tooltip_line_6"] == "Residual Fitness: 650"
-    for i in range(7, 15):
+    assert rendered["tooltip_line_7"] == "Residual Fitness: 650"
+    for i in range(8, 15):
         assert f"tooltip_line_{i}" not in rendered.index
 
 
@@ -1899,15 +1933,32 @@ def test_tooltip_conjunto_d4_modo_censitario():
     assert rendered["tooltip_title"] == "Sao Paulo / SP"
     assert rendered["tooltip_line_1"] == "Faixa M1: Alta"
     assert rendered["tooltip_line_2"] == "Score Censitário: 88.00"
-    assert rendered["tooltip_line_3"] == "Score Censitário: 88.00"
-    # Duplicacao aceita no gate D4: no modo Censitario, a linha 2 (Score do modo
-    # ativo) e a linha 3 (Score Censitario) mostram o MESMO valor — nao e bug.
-    assert rendered["tooltip_line_2"] == rendered["tooltip_line_3"]
+    # DESDUPLICACAO: no modo Censitario a linha 2 ja e o Score Censitario, entao a linha 3
+    # mostra o Score M1 (nao repete a linha 2). As duas linhas sao SEMPRE distintas.
+    assert rendered["tooltip_line_3"] == "Score M1: 80.00"
+    assert rendered["tooltip_line_2"] != rendered["tooltip_line_3"]
     assert rendered["tooltip_line_4"] == "Habitantes: 21.000"
     assert rendered["tooltip_line_5"] == "Renda per capita: R$ 4.500"
-    assert rendered["tooltip_line_6"] == "Residual Fitness: 650"
-    for i in range(7, 15):
+    # renda media domiciliar ausente no fixture (coluna nao materializada) -> linha 6 vazia
+    assert rendered["tooltip_line_6"] == ""
+    assert rendered["tooltip_line_7"] == "Residual Fitness: 650"
+    for i in range(8, 15):
         assert f"tooltip_line_{i}" not in rendered.index
+
+
+def test_tooltip_renda_media_domiciliar_presente():
+    """Com a coluna materializada, a linha 6 exibe a renda media domiciliar formatada."""
+    import h3
+    hex_id = h3.latlng_to_cell(-23.55, -46.63, 7)
+    row = {**_HIBRIDO_ROW_D4, "renda_media_domiciliar_hex": 7344.0}
+    hdf = pd.DataFrame([{"hex_id": hex_id, "lat": -23.55, "lng": -46.63, **row}])
+
+    deck, _ = streamlit_app.build_hybrid_map_figure(
+        hdf, selected_ufs=["SP"], selected_cities=[], color_col="score_setor_2022_calibrado"
+    )
+    rendered = pd.DataFrame(deck.layers[0].data).iloc[0]
+    assert rendered["tooltip_line_6"] == "Renda média domiciliar: R$ 7.344"
+    assert rendered["tooltip_line_7"] == "Residual Fitness: 650"
 
 
 def test_tooltip_conjunto_d4_modo_residual():
@@ -1924,8 +1975,8 @@ def test_tooltip_conjunto_d4_modo_residual():
     assert rendered["tooltip_line_3"] == "Score Censitário: 88.00"
     assert rendered["tooltip_line_4"] == "Habitantes: 21.000"
     assert rendered["tooltip_line_5"] == "Renda per capita: R$ 4.500"
-    assert rendered["tooltip_line_6"] == "Residual Fitness: 650"
-    for i in range(7, 15):
+    assert rendered["tooltip_line_7"] == "Residual Fitness: 650"
+    for i in range(8, 15):
         assert f"tooltip_line_{i}" not in rendered.index
 
 
