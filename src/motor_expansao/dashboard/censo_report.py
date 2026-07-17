@@ -8,7 +8,7 @@ from typing import Any
 
 import pandas as pd
 from fpdf import FPDF
-from PIL import Image
+from PIL import Image, ImageOps
 
 from motor_expansao.api.maps_geocoder import build_search_url
 from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSITARIO
@@ -459,6 +459,104 @@ def _mapas_calor_page(
     )
     _draw_footer(pdf, with_attribution=True)
     return boxes
+
+
+# ---------------------------------------------------------------------------
+# Pagina de FOTOS do imovel (BLK-RELVIAB-01): upload do operador, ate 2 fotos
+# retangulares lado a lado, dimensoes adaptaveis (fit-within-box preservando
+# proporcao). READ-ONLY sobre o M1; saida OPCIONAL (so entra se `fotos` != None).
+# Anti-PII: bytes normalizados em memoria, nada persistido.
+# ---------------------------------------------------------------------------
+_FOTOS_MAX = 2  # MVP: no maximo 2 fotos no PDF.
+_FOTO_LADO_MAX = 1600  # downscale: maior lado <= 1600 px (capa o tamanho do PDF).
+_FOTO_JPEG_QUALIDADE = 82  # recompressao JPEG.
+_FOTOS_PAGE_TITLE = "Imóvel - Fotos"
+_SEM_FOTO_VALIDA = "Nenhuma foto valida para exibir."
+
+
+def _normalizar_foto(
+    raw: bytes,
+    *,
+    lado_max: int = _FOTO_LADO_MAX,
+    qualidade: int = _FOTO_JPEG_QUALIDADE,
+) -> bytes | None:
+    """Normaliza uma foto de upload para embutir no PDF (BLK-RELVIAB-01).
+
+    - corrige a orientacao EXIF (foto de celular sai em pe, nao deitada);
+    - achata para RGB (descarta alpha/paleta sobre fundo branco);
+    - downscale para `lado_max` no maior lado (fotos de celular tem varios MB);
+    - recomprime como JPEG `qualidade` para capar o tamanho do PDF.
+
+    Retorna `None` em qualquer falha (formato invalido etc.) -> fallback gracioso.
+    Puro/deterministico e sem I/O de disco (so BytesIO em memoria) -> loop-safe.
+    """
+    try:
+        with Image.open(BytesIO(raw)) as src:
+            oriented = ImageOps.exif_transpose(src)
+            if oriented.mode not in ("RGB", "L"):
+                flat = Image.new("RGB", oriented.size, (255, 255, 255))
+                flat.paste(oriented.convert("RGB"), mask=oriented.convert("RGBA").split()[-1])
+            else:
+                flat = oriented.convert("RGB")
+            flat.thumbnail((lado_max, lado_max), Image.Resampling.LANCZOS)
+            buffer = BytesIO()
+            flat.save(buffer, format="JPEG", quality=qualidade, optimize=True)
+            return buffer.getvalue()
+    except Exception:
+        return None
+
+
+def _fotos_cells(n: int) -> list[tuple[float, float, float, float]]:
+    """Geometria PURA das celulas para `n` fotos (1 ou 2), lado a lado. Testavel sem PDF."""
+    top, bottom, margin_x, gap = 60.0, _PAGE_H - 26.0, 40.0, 16.0
+    cols = max(1, min(n, _FOTOS_MAX))
+    usable_w = _PAGE_W - 2.0 * margin_x - (cols - 1) * gap
+    cell_w = usable_w / cols
+    cell_h = bottom - top
+    return [(margin_x + c * (cell_w + gap), top, cell_w, cell_h) for c in range(cols)]
+
+
+def _fotos_imovel_page(
+    pdf: _UltraPDF,
+    fotos: list[bytes],
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+) -> None:
+    """Pagina de fotos do imovel: faixa de titulo + ate 2 fotos retangulares + rodape.
+
+    Cada foto e normalizada (`_normalizar_foto`) e escalada para caber na sua celula
+    preservando proporcao (`min(cw/img_w, ch/img_h)`), centralizada. Fotos invalidas sao
+    descartadas; se nenhuma sobreviver, desenha um aviso gracioso. READ-ONLY sobre o M1.
+    """
+    normalizadas = [n for n in (_normalizar_foto(f) for f in fotos[:_FOTOS_MAX]) if n]
+
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _FOTOS_PAGE_TITLE, rgb=primary)
+
+    if not normalizadas:
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 12)
+        pdf.set_xy(40, _PAGE_H / 2.0 - 8.0)
+        pdf.multi_cell(_PAGE_W - 80, 16, _ascii(_SEM_FOTO_VALIDA), align="C")
+        _draw_footer(pdf, with_attribution=False)
+        return
+
+    for png, (cx, cy, cw, ch) in zip(normalizadas, _fotos_cells(len(normalizadas)), strict=False):
+        dims = _png_dimensions(png)
+        if dims is None:
+            continue
+        img_w, img_h = dims
+        scale = min(cw / img_w, ch / img_h)
+        draw_w, draw_h = img_w * scale, img_h * scale
+        x = cx + (cw - draw_w) / 2.0
+        y = cy + (ch - draw_h) / 2.0
+        try:
+            pdf.image(BytesIO(png), x=x, y=y, w=draw_w, h=draw_h)
+        except Exception:
+            pass
+    _draw_footer(pdf, with_attribution=False)
 
 
 def _draw_watermark(
@@ -1484,6 +1582,7 @@ def gerar_pdf_relatorio_pontual_classico(
     solicitante: str | None = None,
     rotulo: str | None = None,
     now: datetime | None = None,
+    fotos: list[bytes] | None = None,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
@@ -1515,6 +1614,8 @@ def gerar_pdf_relatorio_pontual_classico(
 
     pdf = _UltraPDF()
     _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
+    if fotos:
+        _fotos_imovel_page(pdf, fotos, assets, primary=p1)
     _classico_mapas_calor_page(pdf, layers, assets, banda_texto=banda_texto, primary=p1)
     _classico_competitors_page(
         pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto,
@@ -1565,6 +1666,7 @@ def gerar_pdf_relatorio_pontual_censitario(
     ultra_dir: Path | str | None = None,
     solicitante: str | None = None,
     rotulo: str | None = None,
+    fotos: list[bytes] | None = None,
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
@@ -1598,6 +1700,8 @@ def gerar_pdf_relatorio_pontual_censitario(
 
     pdf = _UltraPDF()
     _cover_page(pdf, result, assets, rotulo=rotulo)
+    if fotos:
+        _fotos_imovel_page(pdf, fotos, assets, primary=p1)
     _mapas_calor_page(pdf, layers, assets, primary=p1)
     _competitors_page(pdf, result, layers.get("concorrentes"), assets, primary=p2, secondary=s2)
     _perfil_bairro_page(pdf, perfil_bairro, assets, primary=p3, secondary=s3)
