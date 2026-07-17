@@ -525,14 +525,17 @@ def uplift_composicao_por_setor(
     return uplift_renda_domiciliar(uf, cod_municipio)
 
 
-# Faixas absolutas de RENDA MEDIA DOMICILIAR TOTAL (R$/domicilio/mes), com uplift aplicado.
-# Cortes = classes de renda GeoFusion (C2/C1/B2/B1/A). Camada de VISUALIZACAO; NAO altera M1.
+# Faixas absolutas de RENDA MEDIA DOMICILIAR (R$/domicilio/mes), com uplift + fator temporal.
+# MESMA paleta da RENDA_PER_CAPITA_BANDS (amarelo-claro -> amarelo -> dourado -> verde-claro ->
+# verde solido) e MESMO formato de rotulo SEM acento — o font do PNG da legenda nao renderiza 'á'
+# ("até" saia bugado; per capita ja usa "ate"). Faixas pedidas por Felipe (2026-07-17): 2.000 /
+# 4.600 / 8.000 / 14.000. Camada de VISUALIZACAO do Relatorio Pontual; NAO altera score/artefatos M1.
 RENDA_MEDIA_DOMICILIAR_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
-    (3_587.0,   "até R$ 3.587 (C2/D/E)",   (255, 255, 178, 150)),
-    (6_200.0,   "R$ 3.588-6.200 (C1)",     (254, 204, 92,  150)),
-    (10_755.0,  "R$ 6.201-10.755 (B2)",    (217, 95,  14,  150)),
-    (20_983.0,  "R$ 10.756-20.983 (B1)",   (120, 198, 121, 150)),
-    (float("inf"), ">R$ 20.983 (A)",       (35,  132, 67,  150)),
+    (2_000.0,   "ate R$ 2.000",        (247, 244, 139, 150)),   # #F7F48B
+    (4_600.0,   "R$ 2.001-4.600",      (255, 255, 0,   150)),   # #FFFF00
+    (8_000.0,   "R$ 4.601-8.000",      (255, 210, 28,  150)),   # #FFD21C
+    (14_000.0,  "R$ 8.001-14.000",     (168, 255, 168, 150)),   # #A8FFA8
+    (float("inf"), ">R$ 14.000",       (0,   204, 0,   150)),   # #00CC00
 ]
 
 # Expansao de Dominio — constantes canonicas

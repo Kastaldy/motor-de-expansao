@@ -733,19 +733,7 @@ def _render_camada(
 
 def _bands_legend_entries(
     bands: list[tuple[float, str, tuple[int, int, int, int]]],
-    *,
-    curto: bool = False,
 ) -> list[tuple[str, tuple[int, int, int, int]]]:
-    """Entradas (rotulo, cor) da legenda. `curto=True` encurta o rotulo para caber na coluna
-    estreita da legenda do mapa: remove a anotacao de classe entre parenteses E o prefixo 'R$ '
-    (a unidade fica no titulo da legenda, ex.: 'Renda domiciliar (R$/domicilio)'). Ex.:
-    'ate R$ 3.587 (C2/D/E)' -> 'ate 3.587'. Usado pela camada renda_domiciliar (bandas com classe
-    e faixas de 5 digitos, que estouram a coluna com o texto integral)."""
-    if curto:
-        return [
-            (label.split(" (")[0].replace("R$ ", ""), color)
-            for _upper, label, color in bands
-        ]
     return [(label, color) for _upper, label, color in bands]
 
 
@@ -1016,7 +1004,7 @@ def render_mapas_censitarios_combinados(
     renda_domiciliar_png = _render_camada(
         titulo="Renda media domiciliar",
         legenda_titulo="Renda domiciliar (R$/domicilio)",
-        legenda_entries=_bands_legend_entries(RENDA_MEDIA_DOMICILIAR_BANDS, curto=True),
+        legenda_entries=_bands_legend_entries(RENDA_MEDIA_DOMICILIAR_BANDS),
         color_fn=_renda_dom_fn,
         source_values=renda_domiciliar_series,
         valor_ponto=valor_raio_renda_dom,
