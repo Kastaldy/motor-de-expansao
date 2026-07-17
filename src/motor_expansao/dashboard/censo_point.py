@@ -11,6 +11,13 @@ from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
+from motor_expansao.dashboard.constants import (
+    DATA_REFERENCIA_RENDA,
+    FATOR_TEMPORAL_RENDA,
+    uplift_composicao_por_setor,
+    uplift_renda_domiciliar,
+)
+
 CRS_ORIGEM_CENSO = "EPSG:4674"
 METODO_RELATORIO_PONTUAL_CENSITARIO = "setor_censitario_intersecao_area_1p5km"
 RAIO_CENSITARIO_DEFAULT_KM = 1.5
@@ -205,6 +212,18 @@ def analisar_ponto_censitario_setores(
         "domicilios_total_raio": None,
         "renda_per_capita_media_raio": None,
         "metodo_renda_raio": "ausente",
+        # Renda media domiciliar no raio (fase seguinte): renda do responsavel x uplift x fator
+        # temporal, ponderada por DOMICILIOS. ADITIVO — nao substitui a renda per capita acima.
+        "renda_media_domiciliar_raio": None,
+        "renda_domiciliar_total_raio": None,
+        "metodo_renda_domiciliar_raio": "ausente",
+        "uf_renda_uplift": None,
+        "cod_municipio_renda_uplift": None,
+        "fator_uplift_renda_domiciliar": None,
+        "fator_uplift_composicao": None,
+        "fator_uplift_composicao_municipio": None,
+        "fator_temporal_renda": FATOR_TEMPORAL_RENDA,
+        "data_referencia_renda": DATA_REFERENCIA_RENDA,
         "densidade_pop_raio_hab_km2": None,
         # BLK-RELPON-06 (D1): densidade sobre area de espaco VALIDO (exclui agua/vazio) --
         # ver docstring abaixo. Difere de `densidade_pop_raio_hab_km2` (divide por pi*raio^2
@@ -302,6 +321,39 @@ def analisar_ponto_censitario_setores(
     renda_weight = pop_weights.where(pop_weights.gt(0), area_weights)
     score_weight = pop_weights.where(pop_weights.gt(0), area_weights)
 
+    # ── Renda media domiciliar por setor (fase seguinte) ──────────────────────────────────────
+    # renda domiciliar setor = renda per capita (calibrada) x moradores/domicilio (= renda do
+    # responsavel V06004). Fallback: renda do responsavel bruta quando faltar per capita/moradores.
+    moradores = _numeric(intersectados, "avg_moradores_domicilio_setor_2022")
+    renda_domiciliar = renda * moradores
+    if "renda_responsavel_media_setor_2022" in intersectados.columns:
+        _resp = _numeric(intersectados, "renda_responsavel_media_setor_2022")
+        renda_domiciliar = renda_domiciliar.where(renda_domiciliar.notna(), _resp)
+    # UF/municipio do ponto (moda) para a cascata do uplift.
+    uf_ponto = None
+    if "uf" in intersectados.columns:
+        _ufs = intersectados["uf"].dropna()
+        if not _ufs.empty:
+            uf_ponto = str(_ufs.mode().iloc[0])
+    municipio_ponto = None
+    if "cod_municipio" in intersectados.columns:
+        _muns = intersectados["cod_municipio"].dropna()
+        if not _muns.empty:
+            municipio_ponto = str(_muns.mode().iloc[0])
+    # uplift responsavel->domicilio POR SETOR (parentesco); cascata setor->municipio->UF->nacional.
+    fator_composicao_setor = pd.Series(
+        [
+            uplift_composicao_por_setor(cod, uf_ponto, municipio_ponto)
+            for cod in intersectados.get("cod_setor", pd.Series(index=intersectados.index))
+        ],
+        index=intersectados.index,
+        dtype="float64",
+    )
+    renda_domiciliar_total = renda_domiciliar * fator_composicao_setor * FATOR_TEMPORAL_RENDA
+    fator_composicao = uplift_renda_domiciliar(uf_ponto, municipio_ponto)
+    # Renda domiciliar do raio: ponderada por DOMICILIOS (fallback pop/area quando ausentes).
+    renda_domiciliar_weight = dom_weights.where(dom_weights.gt(0), renda_weight)
+
     display_cols = _available_columns(_empty_setores_frame().columns, intersectados)
     result["setores_intersectados"] = intersectados[display_cols].copy()
     result["n_setores"] = len(intersectados)
@@ -383,6 +435,42 @@ def analisar_ponto_censitario_setores(
             if pop_weights.gt(0).any()
             else "ponderada_area_intersecao"
         )
+
+    # ── Agregacao da renda media domiciliar no raio (ADITIVO) ─────────────────────────────────
+    result["renda_media_domiciliar_raio"] = _weighted_average(
+        renda_domiciliar, renda_domiciliar_weight
+    )
+    if result["renda_media_domiciliar_raio"] is not None:
+        result["metodo_renda_domiciliar_raio"] = (
+            "ponderada_domicilios_estimados"
+            if dom_weights.gt(0).any()
+            else "ponderada_populacao_ou_area"
+        )
+    result["renda_domiciliar_total_raio"] = _weighted_average(
+        renda_domiciliar_total, renda_domiciliar_weight
+    )
+    # Uplift EFETIVO do raio: media dos setores ponderada por domicilios (nao o escalar municipal).
+    # Sem _weighted_average aqui: ele arredonda a 2 casas, e um fator truncado nao reproduziria a
+    # renda aplicada por setor.
+    _peso_uplift = renda_domiciliar_weight.where(
+        fator_composicao_setor.notna() & renda_domiciliar_weight.gt(0)
+    )
+    if _peso_uplift.notna().any() and float(_peso_uplift.fillna(0).sum()) > 0:
+        uplift_efetivo = float(
+            np.average(
+                fator_composicao_setor[_peso_uplift.notna()],
+                weights=_peso_uplift[_peso_uplift.notna()],
+            )
+        )
+    elif fator_composicao_setor.notna().any():
+        uplift_efetivo = float(fator_composicao_setor.mean())
+    else:
+        uplift_efetivo = fator_composicao
+    result["uf_renda_uplift"] = uf_ponto
+    result["cod_municipio_renda_uplift"] = municipio_ponto
+    result["fator_uplift_renda_domiciliar"] = round(uplift_efetivo * FATOR_TEMPORAL_RENDA, 4)
+    result["fator_uplift_composicao"] = round(uplift_efetivo, 4)
+    result["fator_uplift_composicao_municipio"] = round(fator_composicao, 4)
 
     result["score_setor_medio"] = _weighted_average(score, score_weight)
     if score.notna().any():

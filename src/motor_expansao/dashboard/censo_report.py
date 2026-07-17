@@ -82,10 +82,22 @@ _CINZA_TEXTO = (60, 60, 60)
 # nomeadas e auditaveis (nao hardcoded inline dentro de `_big_numbers_page`).
 _META_POP_TOTAL_RAIO = 10_000.0
 _META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
+# Renda media domiciliar TOTAL (com uplift): alvo ~C1 GeoFusion (fase seguinte, ADITIVO).
+_META_RENDA_DOMICILIAR_TOTAL_RAIO = 6_200.0
 _META_DOMICILIOS_TOTAL_RAIO = 3_000.0
 _META_SCORE_SETOR_MEDIO = 60.0
 _META_SAM_FITNESS_POTENCIAL = 2_000.0
 _META_RESIDUAL_FITNESS_DISPONIVEL = 2_000.0
+
+# Geometria do grid 4x3 do Big Numbers (9 cards). A pagina e' FIXA 960x540 com auto_page_break OFF:
+# as 3 linhas + a nota de fonte precisam caber ACIMA do rodape (y=_PAGE_H-22). Constantes ao nivel
+# de modulo para o invariante ser testavel (test_censo_report) — nao locais dentro da funcao.
+# Invariante garantido: top + rows*card_h + (rows-1)*gap + nota <= _PAGE_H - 22.
+_BIG_NUMBERS_TOP = 62.0
+_BIG_NUMBERS_GAP = 12.0
+_BIG_NUMBERS_CARD_H = 132.0
+_BIG_NUMBERS_ROWS = 3
+_BIG_NUMBERS_COLS = 4
 
 # Paleta pastel do semaforo (Q3): fundo claro o bastante para preservar contraste com o
 # rotulo/valor em cinza-escuro (45,45,45)/(40,40,40) e com a borda fina (225,225,228) ja
@@ -598,6 +610,13 @@ def _big_numbers_page(
             _cor_por_meta(result.get("domicilios_total_raio"), _META_DOMICILIOS_TOTAL_RAIO),
         ),
         (
+            "Renda média domiciliar",
+            "R$ " + _format_number(result.get("renda_domiciliar_total_raio"), 2),
+            _cor_por_meta(
+                result.get("renda_domiciliar_total_raio"), _META_RENDA_DOMICILIAR_TOTAL_RAIO
+            ),
+        ),
+        (
             "Score censitário médio",
             _format_number(result.get("score_setor_medio"), 2),
             _cor_por_meta(result.get("score_setor_medio"), _META_SCORE_SETOR_MEDIO),
@@ -620,13 +639,16 @@ def _big_numbers_page(
         ),
     ]
 
-    # D3=B (BLK-EST-02): cards mais altos/arejados (156) com borda fina e barra acento 6 pt.
+    # 4x3 desde o BLK-RELPON: 9 cards (o 9o e a Renda media domiciliar, aditivo). Geometria em
+    # constantes de modulo (_BIG_NUMBERS_*) para o invariante "cabe na pagina 960x540" ser testavel.
+    # Os valores antigos (top=70/gap=16/card_h=156) estouravam: a 3a linha ia a y=570 e a nota a
+    # y=588, ambos fora dos 540 pt — cortando o 9o card e o rodape.
     margin_x = 36.0
-    top = 70.0
-    gap = 16.0
-    cols, rows = 4, 2
+    top = _BIG_NUMBERS_TOP
+    gap = _BIG_NUMBERS_GAP
+    cols, rows = _BIG_NUMBERS_COLS, _BIG_NUMBERS_ROWS
     card_w = (_PAGE_W - 2 * margin_x - (cols - 1) * gap) / cols
-    card_h = 156.0
+    card_h = _BIG_NUMBERS_CARD_H
     # Barras de destaque dos cards seguem o tom da pagina (primaria + acento).
     accents = [primary, secondary]
 
@@ -649,9 +671,10 @@ def _big_numbers_page(
         pdf.set_xy(x + 14, y + 20)
         pdf.multi_cell(card_w - 28, 14, _ascii(label))
         # Valor grande (D2=B: cinza-escuro 40,40,40, nao no acento; D3=B: 26 pt).
+        # Offset proporcional ao card de 132 pt (era +88 no card de 156) p/ nao encostar na base.
         pdf.set_text_color(40, 40, 40)
         pdf.set_font("Helvetica", "B", 26)
-        pdf.set_xy(x + 14, y + 88)
+        pdf.set_xy(x + 14, y + 74)
         pdf.multi_cell(card_w - 28, 28, _ascii(value))
 
     # Nota de fonte auditavel.
