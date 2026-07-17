@@ -1965,17 +1965,22 @@ def gerar_payloads_download_relatorio_censitario(
     solicitante: str | None = None,
     template: str | None = None,
     rotulo: str | None = None,
+    fotos: list[bytes] | None = None,
+    info_imovel: dict[str, Any] | None = None,
+    viabilidade: dict[str, Any] | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     prefix = filename_prefix or f"relatorio_pontual_censitario_{_point_name(result)}"
     if template == "classico":
         pdf_bytes = gerar_pdf_relatorio_pontual_classico(
             result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
             solicitante=solicitante, rotulo=rotulo,
+            fotos=fotos, info_imovel=info_imovel, viabilidade=viabilidade,
         )
     else:
         pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
             result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
             solicitante=solicitante, rotulo=rotulo,
+            fotos=fotos, info_imovel=info_imovel, viabilidade=viabilidade,
         )
     return RelatorioCensitarioDownloadPayloads(
         csv_bytes=gerar_csv_setores_censitarios(result),
@@ -1997,6 +2002,9 @@ def render_downloads_relatorio_censitario(
     solicitante: str | None = None,
     template: str | None = None,
     rotulo: str | None = None,
+    fotos: list[bytes] | None = None,
+    info_imovel: dict[str, Any] | None = None,
+    viabilidade: dict[str, Any] | None = None,
 ) -> RelatorioCensitarioDownloadPayloads:
     """Renderiza botoes Streamlit e retorna os mesmos bytes para testes/reuso."""
     payloads = gerar_payloads_download_relatorio_censitario(
@@ -2009,6 +2017,9 @@ def render_downloads_relatorio_censitario(
         solicitante=solicitante,
         template=template,
         rotulo=rotulo,
+        fotos=fotos,
+        info_imovel=info_imovel,
+        viabilidade=viabilidade,
     )
     st_module.download_button(
         "Baixar CSV dos setores",

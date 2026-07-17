@@ -148,3 +148,52 @@ def grafico_dre_waterfall(
     ax.set_ylabel("R$ / mes")
     ax.grid(True, axis="y", alpha=0.2)
     return _fig_to_png(fig)
+
+
+def montar_payload_viabilidade(
+    viab_result: Any,
+    serie: Sequence[dict] | None = None,
+    *,
+    incluir_graficos: bool = True,
+    maturacao_mes: int | None = None,
+) -> dict[str, Any]:
+    """Ponte engine -> dict do slide de viabilidade do PDF (BLK-RELVIAB-05).
+
+    Le um `ViabilidadePontoResult` (via duck typing — sem import do dataclass) e monta o dict
+    que `_viabilidade_page` consome (numeros + `graficos`). Com `serie` (saida de
+    `gerar_serie_mensal`) inclui os 3 graficos temporais + o waterfall; sem serie, so o
+    waterfall. READ-ONLY sobre o M1 (apenas LE o resultado do motor).
+    """
+    v = viab_result.viabilidade
+    payload: dict[str, Any] = {
+        "alunos_breakeven": viab_result.alunos_breakeven,
+        "aluguel_teto": viab_result.aluguel_teto_calculado,
+        "margem_ebitda_pct": v.margem_ebitda_pct,
+        "payback_meses": v.payback_meses,
+        "roic_anual": v.roic_anual,
+        "faturamento_mensal": v.faturamento_mensal_steady,
+        "ebitda_mensal": v.ebitda_mensal,
+        "faixa_p10": viab_result.faixa_alunos_p10,
+        "faixa_p90": viab_result.faixa_alunos_p90,
+        "flag_viavel": v.flag_viavel,
+        "flag_fora_envelope": viab_result.flag_fora_envelope,
+    }
+    if incluir_graficos:
+        graficos: list[bytes] = []
+        if serie:
+            steady = _finite(serie[-1].get("alunos_balcao"))
+            graficos.append(
+                grafico_rampa_alunos(serie, steady=steady, maturacao_mes=maturacao_mes)
+            )
+            graficos.append(grafico_faturamento_ebitda(serie))
+            graficos.append(grafico_fcf_acumulado(serie, payback_meses=v.payback_meses))
+        graficos.append(
+            grafico_dre_waterfall(
+                faturamento_bruto=v.faturamento_mensal_steady,
+                receita_liquida=v.receita_liquida,
+                receita_pos_impostos=v.receita_pos_impostos,
+                ebitda=v.ebitda_mensal,
+            )
+        )
+        payload["graficos"] = graficos
+    return payload
