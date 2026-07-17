@@ -66,6 +66,17 @@ A imagem `motor-expansao-api` é publicada no GHCR pelo job **`publish-api`** do
 `Dockerfile.api`, `src/motor_expansao/api/**` ou `pyproject.toml`. A VPS **puxa** por digest
 (`API_IMAGE` no `.env`), sem buildar localmente. Execução na VPS é passo humano (§6).
 
+> ⚠️ **GOTCHA — mudança em `dashboard/` NÃO dispara o rebuild da API.** A imagem da API
+> **contém e executa** o código de `src/motor_expansao/dashboard/**` (o bot gera o PDF via
+> `censo_report`/`censo_map`/`censo_point`). Mas o filtro de caminho do `publish-api` só olha
+> `api/`/`Dockerfile.api`/`pyproject.toml` — então uma feature de **dashboard** (ex.: novo
+> choropleth no Relatório Pontual, ajuste de legenda) sobe no **streamlit** pelo push na `main`,
+> mas a imagem da **API/bot fica STALE**. Para propagar ao bot, **republique a API manualmente**
+> após o merge: `gh workflow run ci.yml --ref main -f publish_api=true -f dispatch_build_sanity=false`,
+> pegue o "API digest imutavel publicado" e faça o pull+up abaixo. Verificação de fechamento:
+> `docker compose -f docker-compose.prod.yml exec -T api python -c "from motor_expansao.dashboard import censo_map as m; print(m.CAMADAS_CENSITARIAS)"`
+> deve refletir o código novo. (Feito assim em 2026-07-17 para o mapa de renda domiciliar.)
+
 ```bash
 cd /opt/motor-expansao/app
 # 1. Pinar o digest publicado (do job publish-api no Actions, "API digest imutavel publicado"):
