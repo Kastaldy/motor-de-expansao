@@ -883,7 +883,7 @@ produção**.
 | **Criticidade** | **Alta** (dor #5; **READ-ONLY sobre o M1**). |
 | **Prioridade** | A definir (Felipe/Vini). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Pendente — **~2/3 já executado**, ver "Insumo pronto" abaixo. |
 | **Depende de** | — (avaliação do app renderizado). |
 | **Autonomia** | **manual (NÃO loop-safe)** — exige VER o app renderizado + julgamento humano de UX; o loop não enxerga a UI. NÃO marcar loop-safe. |
 
@@ -891,6 +891,26 @@ produção**.
 **Objetivo.** Heuristic evaluation (Nielsen), inventário de poluição visual/densidade/jargão, e **jobs-to-be-done
 por persona** (executivo, operador, leigo). Relatório de problemas priorizados por severidade × esforço.
 **Guardrail.** §5 READ-ONLY M1.
+
+> **INSUMO PRONTO (2026-07-13) — LER ANTES DE INICIAR O CICLO:**
+> **`data/reports/rev09_passagem_heuristica_ux.md`** (evidência visual em `data/reports/rev09_telas/`;
+> reprodução via `scripts/rev09_capturar_telas.py`).
+>
+> A **passagem heurística sobre o app RENDERIZADO já foi feita** (Playwright, 5 abas, commit `e4ec53c`):
+> **19 achados catalogados** com heurística de Nielsen, severidade 0–4, evidência e matriz
+> severidade × esforço. Destaques: (#1) **"oportunidade" significa coisas diferentes em abas
+> diferentes** — 1.588 no Executivo vs 6 na Carteira, MESMO recorte; (#2) os cards "Onde expandir" e
+> "Onde evitar expansão" mostram **texto idêntico**; (#3) o mapa **não enquadra a UF selecionada**
+> (abre em escala continental); (#4) o mapa está **abaixo da dobra** (1.025 px = 1,02 telas).
+>
+> **O QUE FALTA (bloqueia o REV-10, só o humano fecha):** os **jobs-to-be-done por persona** — quem
+> abre o app, com que frequência, e **quem é concretamente o "leigo"** da dor #5. Deliberadamente NÃO
+> foi inventado: o REV-10 desenha wireframes *por persona* e o REV-12 herda a severidade numa DEC
+> estratégica — persona fictícia se propaga. As 4 perguntas estão na §6 do relatório.
+>
+> **Achado que afeta o BLK-REV-12:** nenhum dos 19 itens é culpa do Streamlit — cards idênticos, coluna
+> "Join" na tabela, mapa que não enquadra a seleção, guardrail de dev na tela. É dívida de **produto**,
+> não de **stack**: **um rebuild não conserta nada disso de graça.**
 
 ---
 
