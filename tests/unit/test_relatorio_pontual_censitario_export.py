@@ -222,6 +222,20 @@ def test_pdf_big_numbers_ordem_linha_1():
     assert pos_pop < pos_renda < pos_dom < pos_renda_dom
 
 
+def test_map_grid_cells_packed_proporcao_empacotado_sem_sobreposicao():
+    """Mapas de calor: celulas com a proporcao do mapa, empacotadas (sem vao branco) e iguais."""
+    from motor_expansao.dashboard.censo_report import _map_grid_cells_packed
+
+    aspect = 1000.0 / 760.0
+    cells = _map_grid_cells_packed(aspect, top=58.0, bottom=540.0 - 22.0, gap=10.0)
+    assert len(cells) == 4
+    for _x, _y, w, h in cells:
+        assert abs(w / h - aspect) < 0.02  # proporcao do mapa (retangular)
+    (x0, _y0, w0, h0), (x1, _y1, w1, h1) = cells[0], cells[1]
+    assert (w0, h0) == (w1, h1)  # grid uniforme
+    assert abs((x1 - (x0 + w0)) - 10.0) < 1e-6  # colado: so o gap de 10 entre colunas
+
+
 def test_cor_por_meta_verde_vermelho_neutro():
     """BLK-RELPON-08 (D3/Q2): helper puro de cor por meta simples (>= meta -> verde)."""
     # pop_total_raio / _META_POP_TOTAL_RAIO (10000)

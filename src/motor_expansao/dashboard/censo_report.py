@@ -384,6 +384,31 @@ def _map_grid_cells(
     return cells
 
 
+def _map_grid_cells_packed(
+    aspect: float, *, top: float, bottom: float, gap: float
+) -> list[tuple[float, float, float, float]]:
+    """Celulas 2x2 com a PROPORCAO `aspect` (largura/altura), maximizadas em altura e
+    EMPACOTADAS (coladas, so o `gap`) e centralizadas -> mapas maiores/retangulares e sem o
+    vao branco (letterbox) entre eles. Geometria pura, testavel sem PDF."""
+    cols, rows = _MAP_GRID_COLS, _MAP_GRID_ROWS
+    h_avail = bottom - top
+    cell_h = (h_avail - (rows - 1) * gap) / rows
+    cell_w = cell_h * aspect
+    max_total_w = _PAGE_W - 2.0 * 20.0  # margem lateral minima
+    if cols * cell_w + (cols - 1) * gap > max_total_w:
+        cell_w = (max_total_w - (cols - 1) * gap) / cols
+        cell_h = cell_w / aspect
+    total_w = cols * cell_w + (cols - 1) * gap
+    total_h = rows * cell_h + (rows - 1) * gap
+    x0 = (_PAGE_W - total_w) / 2.0
+    y0 = top + (h_avail - total_h) / 2.0
+    return [
+        (x0 + c * (cell_w + gap), y0 + r * (cell_h + gap), cell_w, cell_h)
+        for r in range(rows)
+        for c in range(cols)
+    ]
+
+
 def _draw_maps_grid(
     pdf: _UltraPDF,
     pngs: list[bytes | None],
@@ -392,6 +417,7 @@ def _draw_maps_grid(
     bottom: float,
     margin_x: float,
     gap: float,
+    pack: bool = False,
 ) -> list[tuple[float, float, float, float]]:
     """Desenha os 4 PNGs [densidade, renda, score, renda_domiciliar] num grid 2x2 sem sobreposicao.
 
@@ -401,8 +427,16 @@ def _draw_maps_grid(
     de `/Subtype /Image`. Retorna os bounding boxes efetivamente ocupados por cada mapa
     (imagem desenhada) ou a propria celula quando cai no fallback — usado pelo teste de
     nao-sobreposicao.
+
+    `pack=True` (mapas de calor): as celulas assumem a PROPORCAO do proprio mapa (do 1o PNG
+    valido) e sao empacotadas/centralizadas -> mapas maiores, retangulares e SEM o vao branco.
     """
-    cells = _map_grid_cells(top, bottom, margin_x, gap)
+    if pack:
+        dims_ref = next((_png_dimensions(p) for p in pngs if p), None)
+        aspect = (dims_ref[0] / dims_ref[1]) if dims_ref else (1000.0 / 760.0)
+        cells = _map_grid_cells_packed(aspect, top=top, bottom=bottom, gap=gap)
+    else:
+        cells = _map_grid_cells(top, bottom, margin_x, gap)
     boxes: list[tuple[float, float, float, float]] = []
     for png, (cx, cy, cw, ch) in zip(pngs, cells, strict=False):
         dims = _png_dimensions(png) if png else None
@@ -453,10 +487,11 @@ def _mapas_calor_page(
             layers.get("score"),
             layers.get("renda_domiciliar"),
         ],
-        top=60.0,
-        bottom=_PAGE_H - 26.0,
+        top=58.0,
+        bottom=_PAGE_H - 22.0,
         margin_x=20.0,
-        gap=12.0,
+        gap=10.0,
+        pack=True,
     )
     _draw_footer(pdf, with_attribution=True)
     return boxes
@@ -512,7 +547,7 @@ def _normalizar_foto(
 
 
 _FOTO_ASPECT = 1.5  # paisagem 3:2 (evita o "quadrado" e reduz o tamanho da foto)
-_FOTO_CELL_W_MAX = 345.0  # ~20% menor que a largura de celula anterior (432)
+_FOTO_CELL_W_MAX = 390.0  # paisagem, um pouco maior que 345 (pedido Felipe 2026-07-17)
 
 
 def _fotos_cells(n: int) -> list[tuple[float, float, float, float]]:
@@ -1589,9 +1624,10 @@ def _classico_draw_maps_grid(
         pdf,
         pngs,
         top=_CLASSICO_MAPS_TOP,
-        bottom=_PAGE_H - 26.0,
+        bottom=_PAGE_H - 22.0,
         margin_x=_CLASSICO_MARGIN,
-        gap=12.0,
+        gap=10.0,
+        pack=True,
     )
 
 

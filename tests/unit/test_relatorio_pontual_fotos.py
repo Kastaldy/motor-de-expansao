@@ -131,7 +131,7 @@ def test_fotos_cells_uma_coluna_centralizada_paisagem():
     assert len(cells) == 1
     x, _y, w, h = cells[0]
     assert abs((x + w / 2.0) - 480.0) < 1e-6  # centralizada (960/2)
-    assert w <= 345.0 + 1e-6 and w < 800.0  # reduzida, nao ocupa a largura toda
+    assert w <= 390.0 + 1e-6 and w < 800.0  # reduzida, nao ocupa a largura toda
     assert abs(w / h - 1.5) < 0.01  # paisagem 3:2 (nao quadrada)
 
 
