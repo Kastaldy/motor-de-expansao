@@ -9258,3 +9258,25 @@ Ciclo APROVADO pelo QA (Opus 4.8) e pela REVISAO VISUAL HUMANA do PDF (Felipe, 2
   - payload por interação: app atual ~**239 KB por rerun (a CADA clique)** x spike **1,46 MB uma vez** (0/clique) → break-even ~6 cliques/sessão.
 - **Leitura para o REV-12:** o `render` do zero é comparável (o app atual segura bem); o **abismo é a interação** — o rerun do Streamlit (recompute + re-serializa + repaint) custa ~3,3 s por troca de cor vs 38 ms client-side do spike. O trade-off de payload (mandar ~239 KB a cada clique vs 1,46 MB uma vez) equilibra em ~6 interações, bem abaixo do uso real. Caveats: `scenario` (add hex) não automatizado (exige clique por pixel no mapa pydeck, mas incorre no MESMO rerun); `239 KB` é o maior frame único; tudo LOCAL — perna VPS segue passo humano (§6).
 - **Sem toque em produção/M1:** só `docs/rev08_spike_perf_runbook.md`; scripts de medição throwaway em scratchpad (não versionados). READ-ONLY M1 inalterado.
+
+---
+
+### Epic BLK-RELVIAB — Relatório de Viabilidade do Imóvel (PDF: fotos + info + slides financeiros)
+
+Data: 2026-07-18 | PRs: #127 (backlog), #130 (blocos 01–05), #132 (bloco 06 + polish) | Deploy prod: 2026-07-18 (streamlit `sha-99acf6a`, digest `sha256:2d5026ebb103…c0be5e`).
+
+**Objetivo (concluído):** enriquecer o PDF gerado a partir da aba **Viabilidade** com fotos do imóvel, informações do imóvel e slides de viabilidade financeira; o **relatório completo** passou a ser gerável/baixável pela própria aba. Saída 100% OPCIONAL (params default `None` → PDF byte-compatível com o anterior). READ-ONLY sobre o M1.
+
+**Blocos:**
+- **BLK-RELVIAB-01** (loop-safe) — `_fotos_imovel_page` + `_normalizar_foto` (EXIF, downscale, recompressão JPEG) + `_fotos_cells`/`_recortar_cover`. Página de até 2 fotos após a capa; MVP tamanho fixo (cover-crop, paisagem 3:2), borda laranja/magenta. Param `fotos` nos dois geradores.
+- **BLK-RELVIAB-02** (loop-safe) — `_info_imovel_page` + `_info_valor`. Página de info do imóvel (cards + observações). Param `info_imovel`.
+- **BLK-RELVIAB-03** (loop-safe) — novo `dashboard/viabilidade_charts.py`: 4 gráficos matplotlib→PNG (rampa de alunos, faturamento+EBITDA, FCF com payback no cruzamento real da série, waterfall DRE com R$ nas barras). Fundo transparente. Sem dependência nova.
+- **BLK-RELVIAB-04** (loop-safe) — `_viabilidade_page`: slide de números (grid 4x2) + slide de gráficos. Param `viabilidade`.
+- **BLK-RELVIAB-05** (loop-safe) — threading dos params pelo dispatcher `gerar_payloads_download_relatorio_censitario`/`render_downloads_*` + assembler `montar_payload_viabilidade` (engine→dict). Regressão byte-compatível.
+- **BLK-RELVIAB-06** (manual/Alta) — UI na aba Viabilidade: `st.file_uploader` (2 fotos) + form de info + botão "Gerar relatório (PDF)"; `_montar_insumos_censo_pdf` (com fallback gracioso), contexto em `session_state` (sobrevive a reruns), `competitors_df`/`ultra_df` threaded.
+
+**Polish visual (validação de Felipe, 2026-07-17/18):** fotos maiores/paisagem com borda; Big Numbers 4x2 (removido "Score censitário médio"); gráficos com fundo transparente, FCF alinhado, R$ no DRE; **mapas de calor + concorrentes com fundo TRANSPARENTE** (censo_map canvas RGBA `(255,255,255,0)` → `/SMask` no PDF) e render **landscape 1280×760** (map_box ~1.55) — maiores e retangulares, cores do choropleth intocadas. Verificação da mudança dos mapas por workflow (investigação + protótipo em worktree isolado rodando os testes reais).
+
+**Governança:** emenda à **DEC-004** (CLAUDE.md §8) cobrindo o novo caminho de tiles online (aba Viabilidade = mesmo Relatório Pontual/mecanismo, mitigações vigentes). `claude-review` + `test` verdes antes do merge; ruff + mypy limpos. READ-ONLY sobre o M1 (sem toque em score/pesos/carteira/plano/artefatos); sem dependência nova; anti-PII (fotos/dados só em memória).
+
+Arquivos: `dashboard/censo_report.py`, `dashboard/viabilidade_charts.py` (novo), `dashboard/censo_map.py`, `dashboard/pages.py`, `streamlit_app.py`, `CLAUDE.md` (DEC-004 emenda), `tests/unit/test_relatorio_pontual_*` (+ novos).
