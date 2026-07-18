@@ -108,6 +108,7 @@ from motor_expansao.dashboard.relatorio_municipal import (
     render_mapas_municipio,
 )
 from motor_expansao.dashboard.utils import format_int, format_pct, format_score
+from motor_expansao.dashboard.viabilidade_charts import montar_payload_viabilidade
 from motor_expansao.dimensionamento.config import (
     RAIO_CATCHMENT_KM,
     SIM_CAPEX_DEFAULT,
@@ -3492,6 +3493,8 @@ def render_relatorio_pontual_censitario(
             competitors_df=competitors_df,
             ultra_df=ultra_df,
             basemap=True,
+            width=1280,
+            height=760,  # paisagem (map_box ~1.55) — mapas maiores/retangulares
         )
 
     # Big Numbers do PDF: lookup READ-ONLY do hex H3 do ponto (residual fitness + consumo).
@@ -3609,6 +3612,181 @@ def _resolve_viab_ponto(
     return search_pin
 
 
+def _montar_insumos_censo_pdf(
+    lat: float,
+    lng: float,
+    df: pd.DataFrame,
+    *,
+    competitors_df: pd.DataFrame | None,
+    ultra_df: pd.DataFrame | None,
+    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None,
+    censo_geo_dir: Path | None,
+) -> dict[str, Any]:
+    """Monta os insumos das paginas censitarias do PDF a partir do ponto (READ-ONLY M1).
+
+    Espelha `render_relatorio_pontual_censitario` sem RENDERIZAR: devolve
+    result/mapas/perfil/residual/local. Fallback gracioso quando a base setorial nao existe
+    (mapas=None, result minimo) -> o PDF ainda sai (paginas censitarias com fallback textual).
+    """
+    residual: dict[str, float | None] = {
+        "score_oportunidade_residual": None,
+        "oferta_efetiva_disponivel": None,
+        "sam_fitness_potencial": None,
+        "oferta_consumida_mercado_estimada": None,
+    }
+    hex_row = lookup_hex_by_coord(lat, lng, df, h3_res=7)
+    if hex_row is not None and not hex_row.get("_not_found", False):
+        for campo in residual:
+            valor = hex_row.get(campo)
+            if valor is not None and not pd.isna(valor):
+                residual[campo] = float(valor)
+
+    context = (
+        _resolve_censo_context((lat, lng), df, censo_geo_dir=censo_geo_dir)
+        if censo_geo_loader is not None
+        else None
+    )
+    setores_df = None
+    if context is not None and censo_geo_loader is not None:
+        cand = censo_geo_loader(context["uf"], context["cod_municipio"])
+        if cand is not None and not cand.empty:
+            setores_df = cand
+
+    if setores_df is None or context is None:
+        result_min: dict[str, Any] = {"lat": lat, "lng": lng, "raio_km": RAIO_CENSITARIO_DEFAULT_KM}
+        if context is not None:
+            result_min["uf"] = context["uf"]
+            result_min["nome_municipio"] = context["nome_municipio"]
+        return {
+            "result": result_min,
+            "mapas": None,
+            "perfil_bairro": None,
+            "residual": residual,
+            "local": "",
+        }
+
+    uf = context["uf"]
+    nome_municipio = context["nome_municipio"]
+    result_censo = analisar_ponto_censitario_setores(
+        lat, lng, setores_df, raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+        competitors_df=competitors_df, ultra_df=ultra_df,
+    )
+    perfil = agregar_perfil_bairro_distrito(
+        setores_df,
+        cod_bairro=result_censo.get("cod_bairro_ponto"),
+        nome_bairro=result_censo.get("nome_bairro_ponto"),
+        nome_distrito=result_censo.get("nome_distrito_ponto"),
+        nome_municipio=nome_municipio,
+        uf=uf,
+    )
+    with st.spinner("Gerando mapas censitários..."):
+        mapas = render_mapas_censitarios_combinados(
+            lat, lng, setores_df, raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+            competitors_df=competitors_df, ultra_df=ultra_df, basemap=True,
+            width=1280, height=760,  # paisagem (map_box ~1.55) — mapas maiores/retangulares
+        )
+    return {
+        "result": result_censo,
+        "mapas": mapas,
+        "perfil_bairro": perfil,
+        "residual": residual,
+        "local": f"{nome_municipio}/{uf}",
+    }
+
+
+def _render_relatorio_pdf_imovel(
+    df: pd.DataFrame,
+    *,
+    competitors_df: pd.DataFrame | None,
+    ultra_df: pd.DataFrame | None,
+    censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None,
+    censo_geo_dir: Path | None,
+) -> None:
+    """Secao 'Relatorio completo (PDF)' da aba Viabilidade (BLK-RELVIAB-06).
+
+    Upload de ate 2 fotos + formulario de info do imovel + botao que gera o PDF COMPLETO
+    (capa -> fotos -> info -> paginas censitarias -> viabilidade -> credito). Usa a ULTIMA
+    viabilidade calculada (persistida em `session_state`). READ-ONLY sobre o M1; anti-PII
+    (fotos/dados so em memoria, nada persistido).
+    """
+    st.markdown("---")
+    st.markdown("#### Relatório completo (PDF)")
+    ctx = st.session_state.get("viab_relatorio_ctx")
+    if ctx is None:
+        st.info("Calcule a viabilidade acima para habilitar a geração do relatório completo.")
+        return
+
+    fotos_files = st.file_uploader(
+        "Fotos do imóvel (até 2, retangulares)",
+        type=["jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+        key="viab_relatorio_fotos",
+        help="As 2 primeiras fotos entram no PDF, logo após a capa. Nada é salvo em disco.",
+    )
+    with st.form("viab_relatorio_form"):
+        endereco = st.text_input("Endereço / nome do imóvel", key="viab_info_endereco")
+        c1, c2, c3 = st.columns(3)
+        valor_venda = c1.number_input(
+            "Valor de venda (R$)", min_value=0.0, step=10_000.0, key="viab_info_valor"
+        )
+        pe_direito = c2.number_input(
+            "Pé-direito (m)", min_value=0.0, step=0.1, key="viab_info_pe"
+        )
+        vagas = c3.number_input("Vagas", min_value=0, step=1, key="viab_info_vagas")
+        tipo = st.text_input("Tipo do imóvel", key="viab_info_tipo")
+        observacoes = st.text_area("Observações", key="viab_info_obs", height=80)
+        gerar = st.form_submit_button("Gerar relatório (PDF)")
+
+    if not gerar:
+        return
+
+    result_engine = ctx["result"]
+    lat, lng = float(ctx["lat"]), float(ctx["lng"])
+    fotos = [f.getvalue() for f in (fotos_files or [])][:2]
+    info_imovel = {
+        "endereco": endereco,
+        "metragem_m2": ctx["m2"],
+        "aluguel_pedido": ctx["aluguel"],
+        "valor_venda": valor_venda or None,
+        "pe_direito_m": pe_direito or None,
+        "vagas": int(vagas),  # 0 e valor valido (imovel sem vaga) -> exibe "0", nao "n/d"
+        "tipo_imovel": tipo,
+        "observacoes": observacoes,
+    }
+    with st.spinner("Gerando relatório completo..."):
+        serie = gerar_serie_mensal(
+            alunos_maturidade=float(result_engine.alunos_balcao_premissa),
+            m2=float(ctx["m2"]),
+            aluguel_mes=float(ctx["aluguel"]),
+            ticket_medio=float(ctx["ticket"]),
+        )
+        viab_payload = montar_payload_viabilidade(
+            result_engine, serie, maturacao_mes=SIM_MATURACAO_MESES
+        )
+        insumos = _montar_insumos_censo_pdf(
+            lat, lng, df,
+            competitors_df=competitors_df, ultra_df=ultra_df,
+            censo_geo_loader=censo_geo_loader, censo_geo_dir=censo_geo_dir,
+        )
+        render_downloads_relatorio_censitario(
+            st,
+            insumos["result"],
+            insumos["mapas"],
+            filename_prefix=(
+                f"relatorio_imovel_{lat:.5f}_{lng:.5f}".replace("-", "m").replace(".", "p")
+            ),
+            residual=insumos["residual"],
+            perfil_bairro=insumos["perfil_bairro"],
+            ultra_dir=Path("data/ultra"),
+            template="classico",
+            rotulo=(endereco or insumos["local"] or None),
+            fotos=fotos,
+            info_imovel=info_imovel,
+            viabilidade=viab_payload,
+        )
+    st.success("Relatório gerado. Use o botão **Baixar PDF executivo** acima.")
+
+
 def render_viabilidade_ponto(
     search_pin: tuple[float, float] | None,
     df: pd.DataFrame,
@@ -3616,6 +3794,8 @@ def render_viabilidade_ponto(
     censo_geo_loader: Callable[[str, str | None], pd.DataFrame] | None = None,
     censo_geo_dir: Path | None = None,
     base_calibracao_df: pd.DataFrame | None = None,
+    competitors_df: pd.DataFrame | None = None,
+    ultra_df: pd.DataFrame | None = None,
 ) -> None:
     """Ferramenta property-first: stress-test de viabilidade de um imovel real.
 
@@ -3769,6 +3949,13 @@ def render_viabilidade_ponto(
 
     if not submitted:
         st.info("Ajuste os parâmetros e clique em **Calcular viabilidade**.")
+        _render_relatorio_pdf_imovel(
+            df,
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
+            censo_geo_loader=censo_geo_loader,
+            censo_geo_dir=censo_geo_dir,
+        )
         return
 
     # --- Catchment (contexto): resolve setores do municipio do ponto, se houver base ---
@@ -3804,6 +3991,17 @@ def render_viabilidade_ponto(
         )
 
     viab = result.viabilidade
+
+    # BLK-RELVIAB-06: persiste o contexto p/ o relatorio completo sobreviver aos reruns
+    # (o botao de gerar o PDF dispara um rerun em que o form de viabilidade NAO e resubmetido).
+    st.session_state["viab_relatorio_ctx"] = {
+        "lat": lat,
+        "lng": lng,
+        "m2": float(m2),
+        "aluguel": float(aluguel_pedido),
+        "ticket": float(ticket_medio),
+        "result": result,
+    }
 
     # --- Secao 3: guardrail visivel ---
     st.caption(
@@ -4133,6 +4331,15 @@ def render_viabilidade_ponto(
     # --- Secao 9: pino do imovel ---
     st.caption(
         "O ponto analisado é a coordenada/link informado acima (ou o pino ativo no Mapa Territorial)."
+    )
+
+    # --- Secao 10: relatorio completo em PDF (BLK-RELVIAB-06) ---
+    _render_relatorio_pdf_imovel(
+        df,
+        competitors_df=competitors_df,
+        ultra_df=ultra_df,
+        censo_geo_loader=censo_geo_loader,
+        censo_geo_dir=censo_geo_dir,
     )
 
 

@@ -51,6 +51,12 @@ def test_info_valor_texto():
     assert _info_valor("Galpão", "texto") == "Galpão"
 
 
+def test_info_valor_zero_num_mostra_zero_nao_nd():
+    # BLK-RELVIAB-06 (claude-review MEDIA): 0 vagas e valor VALIDO (imovel sem vaga) -> "0".
+    assert _info_valor(0, "num") == "0"
+    assert _info_valor(0.0, "num2") == "0,00"
+
+
 def test_info_valor_ausente_ou_vazio_vira_nd():
     assert _info_valor(None, "num") == "n/d"
     assert _info_valor("", "texto") == "n/d"

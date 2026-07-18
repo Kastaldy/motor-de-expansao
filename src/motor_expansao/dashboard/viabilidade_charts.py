@@ -39,12 +39,18 @@ PNG_HEIGHT = int(_FIG_H * _DPI)
 
 
 def _fig_to_png(fig: Any) -> bytes:
-    """Serializa a figura como PNG em memoria e fecha a figura (sem vazar estado)."""
+    """Serializa a figura como PNG (FUNDO TRANSPARENTE) e fecha a figura (sem vazar estado)."""
     buffer = BytesIO()
     fig.tight_layout()
-    fig.savefig(buffer, format="png", dpi=_DPI)
+    # transparent=True -> sem retangulo branco atras do grafico (mostra o fundo da pagina).
+    fig.savefig(buffer, format="png", dpi=_DPI, transparent=True)
     plt.close(fig)
     return buffer.getvalue()
+
+
+def _brl(value: float) -> str:
+    """R$ com separador de milhar pt-BR (ex.: 193000 -> 'R$ 193.000')."""
+    return "R$ " + f"{value:,.0f}".replace(",", ".")
 
 
 def _finite(value: Any) -> float | None:
@@ -74,7 +80,7 @@ def grafico_rampa_alunos(
     steady_f = _finite(steady)
     if steady_f is not None:
         ax.axhline(steady_f, color=_MAGENTA, linestyle="--", linewidth=1, label="Steady-state")
-        ax.legend(loc="lower right", fontsize=8)
+        ax.legend(loc="lower right", fontsize=8, frameon=False)
     if maturacao_mes is not None:
         ax.axvline(float(maturacao_mes), color=_CINZA, linestyle=":", linewidth=1)
     ax.set_title("Rampa de alunos (balcao)")
@@ -95,23 +101,35 @@ def grafico_faturamento_ebitda(serie: Sequence[dict]) -> bytes:
     ax.set_title("Faturamento e EBITDA mensais")
     ax.set_xlabel("Mes")
     ax.set_ylabel("R$ / mes")
-    ax.legend(loc="upper left", fontsize=8)
+    ax.legend(loc="upper left", fontsize=8, frameon=False)
     ax.grid(True, alpha=0.2)
     return _fig_to_png(fig)
 
 
 def grafico_fcf_acumulado(serie: Sequence[dict], *, payback_meses: float | None = None) -> bytes:
-    """Fluxo de caixa acumulado, com marco de payback quando finito."""
+    """Fluxo de caixa acumulado, com marco de payback ALINHADO a curva plotada.
+
+    O marco e' o proprio CRUZAMENTO da serie (primeiro mes com FCF >= 0), garantindo que a
+    linha de payback caia exatamente na troca negativo->positivo do grafico (o `payback_meses`
+    passado e' so fallback quando a serie nunca cruza).
+    """
     meses = _coluna(serie, "mes")
     fcf = _coluna(serie, "fcf_acumulado")
     fig, ax = plt.subplots(figsize=(_FIG_W, _FIG_H), dpi=_DPI)
     ax.fill_between(meses, fcf, color=_TURQUESA, alpha=0.35)
     ax.plot(meses, fcf, color=_TURQUESA, linewidth=1.8)
     ax.axhline(0.0, color=_CINZA, linewidth=0.8)
-    payback_f = _finite(payback_meses)
-    if payback_f is not None:
-        ax.axvline(payback_f, color=_MAGENTA, linestyle="--", linewidth=1, label="Payback")
-        ax.legend(loc="lower right", fontsize=8)
+    # Cruzamento real da serie (negativo -> positivo) = onde a linha de payback deve ficar.
+    marco: float | None = None
+    for mes, valor in zip(meses, fcf, strict=False):
+        if valor >= 0:
+            marco = mes
+            break
+    if marco is None:
+        marco = _finite(payback_meses)
+    if marco is not None:
+        ax.axvline(marco, color=_MAGENTA, linestyle="--", linewidth=1, label="Payback")
+        ax.legend(loc="lower right", fontsize=8, frameon=False)
     ax.set_title("Fluxo de caixa acumulado")
     ax.set_xlabel("Mes")
     ax.set_ylabel("R$ acumulado")
@@ -140,8 +158,16 @@ def grafico_dre_waterfall(
         ("EBITDA", 0.0, eb, _VERDE),
     ]
     fig, ax = plt.subplots(figsize=(_FIG_W, _FIG_H), dpi=_DPI)
+    topo_max = max(fat, eb, 1.0)
     for i, (_rotulo, base, topo, cor) in enumerate(passos):
-        ax.bar(i, topo - base, bottom=base, color=cor, width=0.6)
+        altura = topo - base
+        ax.bar(i, altura, bottom=base, color=cor, width=0.6)
+        # Valor em R$ acima de cada barra.
+        ax.text(
+            i, topo + topo_max * 0.015, _brl(altura),
+            ha="center", va="bottom", fontsize=7, color=_CINZA,
+        )
+    ax.set_ylim(top=topo_max * 1.14)  # headroom p/ os rotulos R$
     ax.set_xticks(range(len(passos)))
     ax.set_xticklabels([p[0] for p in passos], rotation=20, fontsize=8, ha="right")
     ax.set_title("DRE steady-state (R$ / mes)")

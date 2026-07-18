@@ -27,6 +27,7 @@ from motor_expansao.dashboard.censo_report import (
     _FOTOS_PAGE_TITLE,
     _fotos_cells,
     _normalizar_foto,
+    _recortar_cover,
     gerar_pdf_relatorio_pontual_censitario,
     gerar_pdf_relatorio_pontual_classico,
 )
@@ -125,23 +126,57 @@ def test_normalizar_foto_invalida_retorna_none():
 # --------------------------------------------------------------------------- #
 # _fotos_cells (geometria pura)                                               #
 # --------------------------------------------------------------------------- #
-def test_fotos_cells_uma_coluna_ocupa_largura_util():
+def test_fotos_cells_uma_coluna_centralizada_paisagem():
     cells = _fotos_cells(1)
     assert len(cells) == 1
-    x, _y, w, _h = cells[0]
-    assert x == 40.0
-    assert abs((x + w) - (960.0 - 40.0)) < 1e-6
+    x, _y, w, h = cells[0]
+    assert abs((x + w / 2.0) - 480.0) < 1e-6  # centralizada (960/2)
+    assert w <= 390.0 + 1e-6 and w < 800.0  # reduzida, nao ocupa a largura toda
+    assert abs(w / h - 1.5) < 0.01  # paisagem 3:2 (nao quadrada)
 
 
-def test_fotos_cells_duas_colunas_sem_sobreposicao():
+def test_fotos_cells_duas_colunas_iguais_e_menores():
     cells = _fotos_cells(2)
     assert len(cells) == 2
-    (x0, _y0, w0, _h0), (x1, _y1, _w1, _h1) = cells
-    assert x0 + w0 <= x1 + 1e-6  # coluna 0 termina antes de comecar a 1
+    (x0, _y0, w0, h0), (x1, _y1, w1, h1) = cells
+    assert (w0, h0) == (w1, h1)  # mesmo tamanho: nenhuma diferente da outra
+    assert x0 + w0 <= x1 + 1e-6  # sem sobreposicao
+    assert w0 < 432.0  # menor que a largura de celula anterior (>=20% menor)
+    assert abs(w0 / h0 - 1.5) < 0.01  # paisagem 3:2
 
 
 def test_fotos_cells_limita_ao_max():
     assert len(_fotos_cells(5)) == _FOTOS_MAX
+
+
+# --------------------------------------------------------------------------- #
+# _recortar_cover (proporcao fixa / tamanho igual)                            #
+# --------------------------------------------------------------------------- #
+def test_recortar_cover_paisagem_para_quadrado():
+    out = _recortar_cover(_fake_foto(800, 400), 1.0)
+    assert out is not None
+    with Image.open(BytesIO(out)) as img:
+        assert abs(img.width - img.height) <= 1  # virou ~quadrado (sem distorcer)
+
+
+def test_recortar_cover_retrato_para_ratio_3_2():
+    out = _recortar_cover(_fake_foto(400, 800), 1.5)
+    assert out is not None
+    with Image.open(BytesIO(out)) as img:
+        assert abs((img.width / img.height) - 1.5) < 0.02
+
+
+def test_recortar_cover_duas_fotos_diferentes_mesma_proporcao():
+    # Duas fotos de proporcoes distintas -> mesma proporcao de saida (tamanho igual no PDF).
+    a = _recortar_cover(_fake_foto(1200, 400), 1.1)
+    b = _recortar_cover(_fake_foto(500, 900), 1.1)
+    assert a is not None and b is not None
+    with Image.open(BytesIO(a)) as ia, Image.open(BytesIO(b)) as ib:
+        assert abs((ia.width / ia.height) - (ib.width / ib.height)) < 0.02
+
+
+def test_recortar_cover_invalida_none():
+    assert _recortar_cover(b"nao eh imagem", 1.0) is None
 
 
 # --------------------------------------------------------------------------- #

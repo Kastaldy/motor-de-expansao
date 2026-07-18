@@ -139,7 +139,9 @@ def test_mapa_censitario_faixas_fixas_nao_quartil():
     mapas = render_mapas_censitarios_combinados(
         LAT_C, LNG_C, setores, width=800, height=600, basemap=False
     )
-    colors = {c for _count, c in _all_colors(mapas["densidade"])}
+    # Fatia p/ RGB: o canvas agora e RGBA (fundo transparente), entao getcolors devolve
+    # tuplas de 4 canais; a swatch solida da legenda tem alpha 255 e RGB == a faixa.
+    colors = {c[:3] for _count, c in _all_colors(mapas["densidade"])}
     # A cor RGB exata da faixa 1 (clara) deve aparecer no PNG da densidade.
     assert DENSIDADE_POP_BANDS[0][2][:3] in colors
 

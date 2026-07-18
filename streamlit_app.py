@@ -674,6 +674,8 @@ def main() -> None:
             censo_geo_loader=load_censo_geo_setores,
             censo_geo_dir=CENSO_GEO_DIR,
             base_calibracao_df=load_base_calibracao(),
+            competitors_df=competitors_df,
+            ultra_df=ultra_df,
         )
 
     # Rodape read-only de proveniencia (BLK-OPS-03): fora dos branches de aba,
