@@ -3749,7 +3749,7 @@ def _render_relatorio_pdf_imovel(
         "aluguel_pedido": ctx["aluguel"],
         "valor_venda": valor_venda or None,
         "pe_direito_m": pe_direito or None,
-        "vagas": int(vagas) or None,
+        "vagas": int(vagas),  # 0 e valor valido (imovel sem vaga) -> exibe "0", nao "n/d"
         "tipo_imovel": tipo,
         "observacoes": observacoes,
     }
