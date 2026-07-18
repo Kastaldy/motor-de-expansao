@@ -3493,6 +3493,8 @@ def render_relatorio_pontual_censitario(
             competitors_df=competitors_df,
             ultra_df=ultra_df,
             basemap=True,
+            width=1280,
+            height=760,  # paisagem (map_box ~1.55) — mapas maiores/retangulares
         )
 
     # Big Numbers do PDF: lookup READ-ONLY do hex H3 do ponto (residual fitness + consumo).
@@ -3681,6 +3683,7 @@ def _montar_insumos_censo_pdf(
         mapas = render_mapas_censitarios_combinados(
             lat, lng, setores_df, raio_km=RAIO_CENSITARIO_DEFAULT_KM,
             competitors_df=competitors_df, ultra_df=ultra_df, basemap=True,
+            width=1280, height=760,  # paisagem (map_box ~1.55) — mapas maiores/retangulares
         )
     return {
         "result": result_censo,

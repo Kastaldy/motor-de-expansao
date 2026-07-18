@@ -587,7 +587,11 @@ def _render_camada(
     BLK-RELPON-06 (D4): fontes ampliadas na BASE (`_FS_*`) -- vale para dashboard, PDF e
     API com UM UNICO render (sem parametro de escala por-caminho).
     """
-    image = Image.new("RGB", (width, height), (255, 255, 255))
+    # Base RGBA TRANSPARENTE-branco: as margens (fora do map_box) ficam transparentes -> no
+    # PDF o fundo da pagina aparece (sem retangulo branco). O choropleth/pins sao clipados ao
+    # map_box (sobre basemap/fill OPACO), entao as cores nao mudam; e, achatado sobre branco
+    # (convert("RGB")), fica identico ao RGB antigo -> compat com os testes de cor das faixas.
+    image = Image.new("RGBA", (width, height), (255, 255, 255, 0))
     draw = ImageDraw.Draw(image, "RGBA")
     title_font = _font(_FS_TITULO)
     body_font = _font(_FS_BODY)
