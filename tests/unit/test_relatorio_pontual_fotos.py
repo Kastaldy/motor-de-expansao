@@ -126,19 +126,23 @@ def test_normalizar_foto_invalida_retorna_none():
 # --------------------------------------------------------------------------- #
 # _fotos_cells (geometria pura)                                               #
 # --------------------------------------------------------------------------- #
-def test_fotos_cells_uma_coluna_ocupa_largura_util():
+def test_fotos_cells_uma_coluna_centralizada_paisagem():
     cells = _fotos_cells(1)
     assert len(cells) == 1
-    x, _y, w, _h = cells[0]
-    assert x == 40.0
-    assert abs((x + w) - (960.0 - 40.0)) < 1e-6
+    x, _y, w, h = cells[0]
+    assert abs((x + w / 2.0) - 480.0) < 1e-6  # centralizada (960/2)
+    assert w <= 345.0 + 1e-6 and w < 800.0  # reduzida, nao ocupa a largura toda
+    assert abs(w / h - 1.5) < 0.01  # paisagem 3:2 (nao quadrada)
 
 
-def test_fotos_cells_duas_colunas_sem_sobreposicao():
+def test_fotos_cells_duas_colunas_iguais_e_menores():
     cells = _fotos_cells(2)
     assert len(cells) == 2
-    (x0, _y0, w0, _h0), (x1, _y1, _w1, _h1) = cells
-    assert x0 + w0 <= x1 + 1e-6  # coluna 0 termina antes de comecar a 1
+    (x0, _y0, w0, h0), (x1, _y1, w1, h1) = cells
+    assert (w0, h0) == (w1, h1)  # mesmo tamanho: nenhuma diferente da outra
+    assert x0 + w0 <= x1 + 1e-6  # sem sobreposicao
+    assert w0 < 432.0  # menor que a largura de celula anterior (>=20% menor)
+    assert abs(w0 / h0 - 1.5) < 0.01  # paisagem 3:2
 
 
 def test_fotos_cells_limita_ao_max():

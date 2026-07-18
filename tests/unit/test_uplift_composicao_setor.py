@@ -1,7 +1,7 @@
 """Testes do uplift de composicao por setor — foco na validacao HONESTA (DEC-008).
 
 Cobre o achado ALTA do BLK (R2 in-sample -> out-of-fold), a flag de extrapolacao, o raking, o
-invariante de layout do Big Numbers (grid 4x3 cabe na pagina 960x540) e o acento da band nova.
+invariante de layout do Big Numbers (grid 4x2 cabe na pagina 960x540) e o acento da band nova.
 """
 
 from __future__ import annotations
@@ -164,11 +164,11 @@ def test_raking_preserva_uplift_municipal_do_ibge():
     assert np.allclose(recomposto.to_numpy(), alvo.to_numpy(), atol=1e-6)
 
 
-# --- Layout do Big Numbers: o grid 4x3 cabe na pagina fixa 960x540 -----------------------------
-def test_big_numbers_grid_4x3_cabe_na_pagina():
-    """Invariante do achado MEDIA do PDF: as 3 linhas + a nota ficam ACIMA do rodape (y=_PAGE_H-22).
+# --- Layout do Big Numbers: o grid 4x2 cabe na pagina fixa 960x540 -----------------------------
+def test_big_numbers_grid_4x2_cabe_na_pagina():
+    """Invariante do layout do PDF: as 2 linhas + a nota ficam ACIMA do rodape (y=_PAGE_H-22).
 
-    Os valores antigos (top=70/gap=16/card_h=156) estouravam: 3a linha em y=570 e nota em y=588.
+    Grade reduzida de 9->8 cards em 2026-07-17 (card "Score censitario medio" removido).
     """
     top = censo_report._BIG_NUMBERS_TOP
     gap = censo_report._BIG_NUMBERS_GAP
@@ -181,8 +181,8 @@ def test_big_numbers_grid_4x3_cabe_na_pagina():
     assert ultima_linha_base <= censo_report._PAGE_H
     assert nota_y + 11.0 <= rodape_y  # a nota de fonte nao invade o rodape
 
-    # 9 cards em 4 colunas => exatamente 3 linhas (o 9o nao "vaza" para uma 4a linha).
-    n_cards = 9
+    # 8 cards em 4 colunas => exatamente 2 linhas (nenhum card "vaza" para uma 3a linha).
+    n_cards = 8
     assert (n_cards + censo_report._BIG_NUMBERS_COLS - 1) // censo_report._BIG_NUMBERS_COLS == rows
 
 

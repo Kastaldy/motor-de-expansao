@@ -180,13 +180,15 @@ def test_pdf_big_numbers_com_residual_e_nd():
         "População total no raio".encode("latin-1"),
         "Renda per capita média".encode("latin-1"),
         "Número de domicílios".encode("latin-1"),
-        "Score censitário médio".encode("latin-1"),
+        "Renda média domiciliar".encode("latin-1"),
         b"SAM Fitness",
         b"Residual Fitness",
         b"Concorrentes no raio",
         b"Consumo concorrentes",
     ):
         assert rotulo in pdf_com
+    # Score censitario medio REMOVIDO do PDF em 2026-07-17 (fica so em result/CSV) -> grade 4x2.
+    assert "Score censitário médio".encode("latin-1") not in pdf_com
     # BLK-RELPON-08: o card "Score censitario maximo" foi REMOVIDO do PDF (fica so em result/CSV).
     assert "Score censitário máximo".encode("latin-1") not in pdf_com
     # BLK-RELPON-08: numero de domicilios do raio formatado com 0 casas.
@@ -202,7 +204,7 @@ def test_pdf_big_numbers_com_residual_e_nd():
 
 
 def test_pdf_big_numbers_ordem_linha_1():
-    """BLK-RELPON-08 (D2): a linha 1 do grid segue Populacao -> Renda -> Domicilios -> Score medio.
+    """A linha 1 do grid 4x2 segue Populacao -> Renda per capita -> Domicilios -> Renda domiciliar.
 
     Com `set_compression(False)`, o texto e cru no content stream e a ordem de aparicao dos
     rotulos reflete a ordem de desenho dos cards.
@@ -215,9 +217,9 @@ def test_pdf_big_numbers_ordem_linha_1():
     pos_pop = pdf_bytes.index("População total no raio".encode("latin-1"))
     pos_renda = pdf_bytes.index("Renda per capita média".encode("latin-1"))
     pos_dom = pdf_bytes.index("Número de domicílios".encode("latin-1"))
-    pos_score = pdf_bytes.index("Score censitário médio".encode("latin-1"))
+    pos_renda_dom = pdf_bytes.index("Renda média domiciliar".encode("latin-1"))
 
-    assert pos_pop < pos_renda < pos_dom < pos_score
+    assert pos_pop < pos_renda < pos_dom < pos_renda_dom
 
 
 def test_cor_por_meta_verde_vermelho_neutro():

@@ -90,14 +90,15 @@ _META_SCORE_SETOR_MEDIO = 60.0
 _META_SAM_FITNESS_POTENCIAL = 2_000.0
 _META_RESIDUAL_FITNESS_DISPONIVEL = 2_000.0
 
-# Geometria do grid 4x3 do Big Numbers (9 cards). A pagina e' FIXA 960x540 com auto_page_break OFF:
-# as 3 linhas + a nota de fonte precisam caber ACIMA do rodape (y=_PAGE_H-22). Constantes ao nivel
+# Geometria do grid 4x2 do Big Numbers (8 cards; o card "Score censitario medio" foi removido do
+# PDF por pedido de Felipe 2026-07-17 — segue em result/CSV). A pagina e' FIXA 960x540 com
+# auto_page_break OFF: as 2 linhas + a nota precisam caber ACIMA do rodape (y=_PAGE_H-22). Constantes ao nivel
 # de modulo para o invariante ser testavel (test_censo_report) — nao locais dentro da funcao.
 # Invariante garantido: top + rows*card_h + (rows-1)*gap + nota <= _PAGE_H - 22.
 _BIG_NUMBERS_TOP = 62.0
 _BIG_NUMBERS_GAP = 12.0
 _BIG_NUMBERS_CARD_H = 132.0
-_BIG_NUMBERS_ROWS = 3
+_BIG_NUMBERS_ROWS = 2
 _BIG_NUMBERS_COLS = 4
 
 # Paleta pastel do semaforo (Q3): fundo claro o bastante para preservar contraste com o
@@ -510,14 +511,23 @@ def _normalizar_foto(
         return None
 
 
+_FOTO_ASPECT = 1.5  # paisagem 3:2 (evita o "quadrado" e reduz o tamanho da foto)
+_FOTO_CELL_W_MAX = 345.0  # ~20% menor que a largura de celula anterior (432)
+
+
 def _fotos_cells(n: int) -> list[tuple[float, float, float, float]]:
-    """Geometria PURA das celulas para `n` fotos (1 ou 2), lado a lado. Testavel sem PDF."""
-    top, bottom, margin_x, gap = 60.0, _PAGE_H - 26.0, 40.0, 16.0
+    """Geometria PURA das celulas para `n` fotos (1 ou 2): retangulos PAISAGEM 3:2,
+    reduzidos (~20% menores) e CENTRALIZADOS na area de conteudo. Testavel sem PDF."""
     cols = max(1, min(n, _FOTOS_MAX))
-    usable_w = _PAGE_W - 2.0 * margin_x - (cols - 1) * gap
-    cell_w = usable_w / cols
-    cell_h = bottom - top
-    return [(margin_x + c * (cell_w + gap), top, cell_w, cell_h) for c in range(cols)]
+    gap = 24.0
+    area_top, area_bottom, margin_x = 56.0, _PAGE_H - 26.0, 40.0
+    max_w = (_PAGE_W - 2.0 * margin_x - (cols - 1) * gap) / cols
+    cell_w = min(_FOTO_CELL_W_MAX, max_w)
+    cell_h = cell_w / _FOTO_ASPECT
+    total_w = cols * cell_w + (cols - 1) * gap
+    x0 = (_PAGE_W - total_w) / 2.0
+    y0 = area_top + (area_bottom - area_top - cell_h) / 2.0
+    return [(x0 + c * (cell_w + gap), y0, cell_w, cell_h) for c in range(cols)]
 
 
 def _recortar_cover(raw: bytes, ratio_wh: float) -> bytes | None:
@@ -984,11 +994,6 @@ def _big_numbers_page(
             ),
         ),
         (
-            "Score censitário médio",
-            _format_number(result.get("score_setor_medio"), 2),
-            _cor_por_meta(result.get("score_setor_medio"), _META_SCORE_SETOR_MEDIO),
-        ),
-        (
             "SAM Fitness (alunos)",
             _format_number(sam, 0),
             _cor_por_meta(sam, _META_SAM_FITNESS_POTENCIAL),
@@ -1006,10 +1011,9 @@ def _big_numbers_page(
         ),
     ]
 
-    # 4x3 desde o BLK-RELPON: 9 cards (o 9o e a Renda media domiciliar, aditivo). Geometria em
-    # constantes de modulo (_BIG_NUMBERS_*) para o invariante "cabe na pagina 960x540" ser testavel.
-    # Os valores antigos (top=70/gap=16/card_h=156) estouravam: a 3a linha ia a y=570 e a nota a
-    # y=588, ambos fora dos 540 pt — cortando o 9o card e o rodape.
+    # 4x2: 8 cards (o "Score censitario medio" foi removido em 2026-07-17 p/ a grade fechar certa).
+    # Geometria em constantes de modulo (_BIG_NUMBERS_*) para o invariante "cabe na pagina 960x540"
+    # ser testavel; a nota de fonte fica logo abaixo das 2 linhas.
     margin_x = 36.0
     top = _BIG_NUMBERS_TOP
     gap = _BIG_NUMBERS_GAP
