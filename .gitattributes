@@ -29,8 +29,3 @@ tasks/completed.md  merge=union
 # completed.md so funciona com EOL consistente. DEC-017.
 tasks/*.md          text eol=lf
 docs/*.md           text eol=lf
-# subpastas de docs/ (ex.: docs/decisions/) — extensao da regra da DEC-017
-docs/decisions/*.md text eol=lf
-docs/**/*.md        text eol=lf
-# Skills project-scoped em .claude/skills/ tambem em LF (loop roda em container Linux).
-.claude/**/*.md      text eol=lf
