@@ -9280,3 +9280,210 @@ Data: 2026-07-18 | PRs: #127 (backlog), #130 (blocos 01–05), #132 (bloco 06 + 
 **Governança:** emenda à **DEC-004** (CLAUDE.md §8) cobrindo o novo caminho de tiles online (aba Viabilidade = mesmo Relatório Pontual/mecanismo, mitigações vigentes). `claude-review` + `test` verdes antes do merge; ruff + mypy limpos. READ-ONLY sobre o M1 (sem toque em score/pesos/carteira/plano/artefatos); sem dependência nova; anti-PII (fotos/dados só em memória).
 
 Arquivos: `dashboard/censo_report.py`, `dashboard/viabilidade_charts.py` (novo), `dashboard/censo_map.py`, `dashboard/pages.py`, `streamlit_app.py`, `CLAUDE.md` (DEC-004 emenda), `tests/unit/test_relatorio_pontual_*` (+ novos).
+
+---
+
+### BLK-REV-08 — Spike técnico: mapa client-side (deck.gl/MapLibre) servido por API — teto de performance
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (embasa empiricamente o REV-07; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — visual/perf]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-REV-07** (ou BLK-REV-03). |
+| **Autonomia** | **manual (NÃO loop-safe)** — protótipo VISUAL throwaway; exige VER o render e medir FPS/interação no browser (lição BLK-UI-10). NÃO marcar loop-safe. |
+
+**Contexto.** Para embasar o REV-07, medir empiricamente o teto de performance do mapa client-side vs pydeck/Streamlit.
+**Objetivo.** Spike **descartável**: servir os hexes H3 por um endpoint e renderizar client-side (deck.gl
+`H3HexagonLayer` / MapLibre), medindo FPS, latência de troca de cor e de seleção vs o app atual. Protótipo, **NÃO
+produção**.
+**Guardrail.** §5 READ-ONLY M1; código de spike isolado, descartado após medir.
+
+> **Emenda (2026-07-10, Felipe):** (a) **partir do padrão já provado do `ui_proto.py`** (BLK-UI-10:
+> `st.components.v1.html` + dados embutidos + recorte por UF em `data/cache/ui_proto/`), trocando Leaflet
+> por deck.gl `H3HexagonLayer`/MapLibre e **escalando ao volume real do cap (18–35k hexes)** — a pergunta
+> que o PoC Leaflet (~500 hexes) não respondeu; `H3HexagonLayer` aceita `hex_id` cru (sem enviar geometria).
+> (b) **Incluir a medição VPS↔cliente como sub-entregável:** (i) DevTools contra a produção — tamanho real
+> dos frames WebSocket por rerun e tempo clique→paint (fecha o caveat iii dos REV-01..06); (ii) script
+> Playwright (dep já no extra `[scraping]`) cronometrando os 4 fluxos de dor ponta-a-ponta contra
+> `dashboard.ultra-expansao.tech`; (iii) A/B final: spike servido pelo Caddy da VPS, medido pelo mesmo
+> script — comparação Streamlit vs client-side na mesma rede real. Prioridade ELEVADA (2026-07-10): com o
+> time poliglota (ver emenda do REV-12), este é o número que decide o rumo no REV-12.
+
+---
+
+### BLK-TP-03-FU1 — Overlay dos vazios competitivos no Mapa Territorial (Opção B)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (camada de visualização/overlay no dashboard; **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir (Felipe/Vini). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX: cor/toggle/tooltip]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-TP-03** (concluído — parquet `data/staging/vazios_competitivos_lc.parquet`, 229 hexes). |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca `src/motor_expansao/dashboard/` (decisão de produto/UX). |
+
+**Objetivo.** Expor os hexes de "vazio competitivo" (parquet gerado no BLK-TP-03) como **overlay visual
+READ-ONLY** no Mapa Territorial: toggle na sidebar (default OFF) + camada de realce (contorno/cor
+distinta) sobre os 229 hexes, com tooltip de `membros_gt5km_concorrente_lc`/`uf`/`nome_municipio`/
+`score_priorizacao`. É a **Opção B** deferida no gate humano do BLK-TP-03 (Opção A = só parquet foi a
+escolhida). Camada visual de apoio (§2) — não altera score/ranking/carteira/plano/artefatos.
+
+**Plano técnico já detalhado** no handoff do Planner do BLK-TP-03 (passos 6–9):
+`context/handoff/20260702-104651-planner.md` — inclui a exigência de LER `constants.py`
+(`MAP_POINT_LIMIT`, `MAP_SOURCE_COLUMNS_*`) e `_downsample_map_index` ANTES de codar, para não
+regredir o cap dos 4 modos do mapa (M1/Híbrido/Censitário/Residual).
+
+**Critérios de aceite.** Toggle default OFF; layer só desenha os hexes do parquet; leitura lazy/cacheada
+offline (sem rede — §2); parquet ausente → toggle oculto/desabilitado com mensagem clara; score/
+carteira/plano do dashboard inalterados com overlay ON; cap dos 4 modos inalterado; teste de
+integração cobre o toggle/layer; suíte verde; `import streamlit_app` ok.
+**Guardrail.** §5 (READ-ONLY M1); §2 (sem API ao vivo); pins/camadas de concorrente são apoio visual
+(CLAUDE.md §2). NÃO tocar `_downsample_map_index`/`MAP_POINT_LIMIT`/`MAP_SOURCE_COLUMNS_*`.
+
+---
+
+- BLK-TP-04 (concluído 2026-07-02) — ver tasks/completed.md
+
+
+
+---
+
+- BLK-TP-06 (concluído 2026-07-02) — ver tasks/completed.md
+
+
+---
+
+- BLK-TP-07 (concluído 2026-07-03) — ver tasks/completed.md
+
+---
+
+### BLK-RELPON-08 — Big Numbers (pagina 5) do Relatorio Pontual: trocar metrica, reordenar e semaforo verde/vermelho por meta
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Media** (altera a pagina Big Numbers do Relatorio Pontual Censitario; **READ-ONLY sobre o M1**; ADICIONA um campo agregado `domicilios_total_raio` ao motor do ponto e muda layout/cor da grid; nucleo `censo_*` so ESTENDE leitura/render, sem tocar intersecao/raio/marca d'agua). |
+| **Prioridade** | A definir (Vinicius). |
+| **Esteira** | Block Orchestrator -> Planner -> Builder -> QA -> `[REVISAO HUMANA - visual do PDF]` -> merge. |
+| **Status** | Pendente - decisoes de produto D1/D2/D3 JA TOMADAS (Vinicius, 2026-07-15, abaixo). |
+| **Depende de** | Relatorio Pontual ja existente (pagina Big Numbers, `_big_numbers_page`); malha de setores IBGE 2022 com `domicilios_particulares_ocupados_setor_2022` (ja usada pelo BLK-RELPON-07). |
+| **Autonomia** | **manual (NAO loop-safe)** - altera relatorio auditavel e exige revisao visual do PDF. |
+
+**Objetivo.** Ajustar a pagina 5 (Big Numbers) do Relatorio Pontual Censitario em tres frentes:
+(1) substituir a metrica "Score censitario maximo" por "Numero de domicilios" (no raio); (2) reordenar
+a linha 1 da grid; (3) pintar o fundo de cada quadro em verde (meta atingida = "positivo") ou vermelho
+(meta nao atingida = "negativo"), estilo semaforo, comparando cada valor com a meta esperada.
+READ-ONLY sobre o M1.
+
+**Contexto tecnico (medido 2026-07-15).**
+- A pagina Big Numbers (`_big_numbers_page` em `censo_report.py`) e toda "no raio de 1,5 km". Grid 4x2,
+  8 cards, hoje na ordem (indice = `row*4 + col`, `row=idx//4`, `col=idx%4`):
+  - L1: [`Populacao total no raio` (`pop_total_raio`), `Renda per capita media` (`renda_per_capita_media_raio`),
+    `Score censitario medio` (`score_setor_medio`), `Score censitario maximo` (`score_setor_max`)]
+  - L2: [`SAM Fitness (alunos)` (`sam_fitness_potencial`), `Residual Fitness (alunos)` (`oferta_efetiva_disponivel`),
+    `Concorrentes no raio` (`n_concorrentes`), `Consumo concorrentes (est.)` (`oferta_consumida_mercado_estimada`)]
+- **NAO existe hoje um campo de domicilios no raio.** `analisar_ponto_censitario_setores` agrega
+  pop/renda/score no raio mas NAO domicilios. Sera preciso CRIAR o campo `domicilios_total_raio` no
+  `result`, computado com o MESMO padrao de `pop_total_raio`: soma de (`domicilios_particulares_ocupados_setor_2022`
+  x `peso_area_setor`) sobre os setores intersectados (peso = fracao da area do setor dentro do circulo,
+  ja materializada em `pop_estimada_intersecao`/`peso_area_setor`). "n/d" gracioso quando nenhum setor tem
+  domicilios.
+- `domicilios_total` do BLK-RELPON-07 e do BAIRRO/DISTRITO inteiro (pagina 4), NAO do raio - nao reusar
+  aqui (escopos diferentes: pagina 4 = bairro, pagina 5 = raio).
+
+**Decisoes de produto (gate - JA RESPONDIDAS por Vinicius, 2026-07-15).**
+- **D1 - trocar metrica:** "Score censitario maximo" (`score_setor_max`) SAI da grid; ENTRA "Numero de
+  domicilios" (no raio, novo campo `domicilios_total_raio`). O campo `score_setor_max` PODE permanecer no
+  `result`/CSV para auditoria (so deixa de ser exibido), como o BLK-RELPON-05 fez com `*_setor_ponto`.
+- **D2 - reordenar linha 1:** "Numero de domicilios" vai para **L1C3**; "Score censitario medio" vai para
+  **L1C4** (trocam de posicao). Linha 1 final = [Populacao total no raio, Renda per capita media, Numero de
+  domicilios, Score censitario medio]. Linha 2 INALTERADA.
+- **D3 - semaforo verde/vermelho por meta:** o FUNDO de cada quadro passa a verde (meta atingida) ou
+  vermelho (meta nao atingida), conforme:
+
+  | Card | Verde (positivo) quando | Campo |
+  |---|---|---|
+  | Populacao total no raio | `>= 10000` | `pop_total_raio` |
+  | Renda per capita media | `>= 1500` | `renda_per_capita_media_raio` |
+  | Numero de domicilios | `>= 3000` | `domicilios_total_raio` (NOVO) |
+  | Score censitario medio | `>= 60` | `score_setor_medio` |
+  | SAM Fitness (alunos) | `>= 2000` | `sam_fitness_potencial` |
+  | Residual Fitness (alunos) | `>= 2000` | `oferta_efetiva_disponivel` |
+  | Consumo concorrentes (est.) | VERMELHO quando `sam_fitness_potencial >= 2000` **E** `oferta_efetiva_disponivel < 2000`; senao VERDE | `sam_fitness_potencial`, `oferta_efetiva_disponivel` |
+  | Concorrentes no raio | ESPELHA a cor de "Consumo concorrentes (est.)" | (segue o card acima) |
+
+**Escopo permitido (READ-ONLY M1, so display/relatorio + 1 campo agregado no raio).**
+- `censo_point.py` - novo campo `domicilios_total_raio` no `result` de `analisar_ponto_censitario_setores`,
+  computado pela soma de (`domicilios_particulares_ocupados_setor_2022` x `peso_area_setor`) (mesmo padrao de
+  `pop_total_raio`; "n/d"/None gracioso). SO leitura/agregacao; nao toca intersecao/raio/`circle_metric`/metodo.
+- `censo_report.py` - em `_big_numbers_page`: (a) trocar o card `score_setor_max` por `domicilios_total_raio`
+  ("Numero de domicilios", `_format_number(..., 0)`); (b) reordenar L1 conforme D2; (c) aplicar cor de fundo
+  por card (verde/vermelho/neutro) conforme D3 - helper PURO de decisao de cor por card + a pintura do
+  retangulo do card. Contraste de texto preservado (rotulo/valor legiveis sobre o fundo).
+- Testes: agregacao `domicilios_total_raio` (com peso de area conhecido; "n/d"); ordem/rotulos dos cards da
+  L1; cor por card em cenarios (acima/abaixo da meta; a regra do Consumo; o espelho do Concorrentes; n/d
+  neutro).
+- `docs/relatorio_pontual_censitario.md`.
+
+**Questoes para o gate/Planner (a confirmar antes do Builder).**
+- **Q1 - "Numero de domicilios" e NO RAIO** (novo `domicilios_total_raio`), nao do bairro (pagina 4).
+  Recomendado e assumido; confirmar no gate visual.
+- **Q2 - valor "n/d" (dado ausente):** propor cor NEUTRA (cinza claro, sem verde/vermelho) quando o valor do
+  card e None/"n/d" (pintar verde/vermelho um dado ausente seria enganoso). Vale tambem para
+  Consumo/Concorrentes quando SAM ou Residual e n/d (condicao indecidivel -> neutro). Confirmar.
+- **Q3 - paleta/contraste:** propor fundo em tom PASTEL (verde/vermelho claro) com barra de acento solida,
+  mantendo rotulo/valor em cinza-escuro legivel; ajuste fino no gate visual.
+- **Q4 - as metas (10000/1500/3000/60/2000/2000) sao constantes de DISPLAY** locais ao relatorio (nao sao
+  gate do M1/mercado); recomendado vira-las constantes nomeadas no modulo (auditaveis). Confirmar.
+
+**Fora de escopo.** Metodo de intersecao `setor_censitario_intersecao_area_1p5km`, raio 1,5 km,
+`RAIO_CENSITARIO_DEFAULT_KM`, mapas de calor/choropleth, marca d'agua anti-PII, `set_compression(False)`,
+pagina "Perfil do Bairro/Distrito" (BLK-RELPON-07). `score_priorizacao`/pesos/`hex_score_estrutural`/
+carteira/plano/artefatos oficiais do M1. `flag_sam`/gate do SAM (DEC-006/DEC-007) - as metas de cor sao de
+DISPLAY, NAO alteram o gate do SAM nem os valores de `sam_fitness_potencial`/`oferta_efetiva_disponivel`.
+Contagem de paginas (segue 6). Relatorio Municipal e UI do dashboard.
+
+**Riscos.**
+- **Novo campo no raio** - `domicilios_total_raio` deve seguir EXATAMENTE o padrao de peso de `pop_total_raio`
+  (fracao de area), senao o numero diverge de pop/renda no mesmo raio. Teste dedicado com peso de area conhecido.
+- **Contraste** - fundo colorido nao pode tornar rotulo/valor ilegiveis; validar no gate visual (texto escuro
+  sobre pastel claro).
+- **n/d pintado como meta** - sem a cor neutra (Q2), um dado ausente viraria "vermelho" (falsa reprovacao) ou
+  "verde"; tratar n/d explicitamente.
+- **Semantica do Consumo/Concorrentes** - a regra e assimetrica (Consumo e "ruim" quando ha demanda SAM alta
+  mas Residual baixo = mercado ja consumido); documentar na nota do slide para nao confundir "verde = mais
+  concorrentes".
+- **Metas hardcoded** - se viram constantes nomeadas (Q4), fica auditavel; caso contrario, documentar os
+  limiares na nota do slide.
+
+**Criterio de aceite.** Pagina Big Numbers passa a exibir "Numero de domicilios" (no raio) em L1C3 e "Score
+censitario medio" em L1C4, sem "Score censitario maximo"; cada quadro tem fundo verde/vermelho (neutro para
+n/d) conforme as metas de D3, com Consumo pela regra SAM x Residual e Concorrentes espelhando Consumo;
+`domicilios_total_raio` computado por peso de area e testado; intersecao/raio/marca d'agua/M1 INTOCADOS;
+`ruff`/`mypy` limpos; suite verde; revisao visual do PDF aprovada.
+
+---
+
+## Fechamento de ciclo — BLK-ORQ-02 (superseded 2026-07-19)
+
+- **Superseded** pela DEC-016 (governança de merge por CI) + o split do §8 deste ciclo (PR #134), que já executou a migração das DECs para `docs/decisions/` que o ORQ-02 propunha via `DECISIONS.md`. Os agentes Fase 2 (master_orchestrator/approver/documenter/data_agent/metrics_agent) nunca foram criados; a direção real foi a esteira `/run-cycle` + DEC-016. Encerrado sem execução. READ-ONLY sobre o M1.
+
+---
+
+### BLK-ORQ-02 — Implementar estrutura Fase 2
+
+Status: pendente (depende de BLK-ORQ-01 validado)
+Criticidade: alta
+Prioridade: média
+Tipo: estrutura
+Skill recomendada: /run-cycle
+Resumo: Criar DECISIONS.md com migração das decisões do CLAUDE.md (DEC-001 a DEC-003),
+context/active_context.md, tasks/blocked.md e 5 prompts adicionais
+(master_orchestrator, approver, documenter, data_agent, metrics_agent).
+Dependências: BLK-ORQ-01
+Observações: CLAUDE.md não deve ser reescrito, apenas estendido com seção ## Skills.
+
+---
+
+- BLK-PROD-03 (concluído 2026-07-07) — ver tasks/completed.md

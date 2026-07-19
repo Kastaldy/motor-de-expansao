@@ -1,3 +1,5 @@
+> **[HISTORICO]** Contrato de ciclo concluido (maio/2026). Estado atual: `docs/README.md` + `docs/modelo_mercado_hexagonos.md`.
+
 # Expansao de Dominio — Contrato Tecnico
 > Versao: 2026-05-21 | Ciclo: Cenarios Multi-Hex e Dominio Hibrido (concluido)
 > Feature paralela ao M1: nao substitui score_priorizacao, carteira nem plano curto prazo.

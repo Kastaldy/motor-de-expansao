@@ -1,3 +1,5 @@
+> **[HISTORICO]** Descreve o dashboard de 4 abas (maio/2026). O app atual tem 5 abas — ver o canonico `docs/arquitetura_app_atual.md`.
+
 # Dashboard Executivo M1 + Hibrido no Streamlit
 
 ## Estrutura de abas

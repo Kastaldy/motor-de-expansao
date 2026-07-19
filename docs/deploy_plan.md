@@ -1,3 +1,5 @@
+> **[HISTORICO]** Plano PRE-deploy (placeholders, ex.: SEU_DOMINIO). Superado — infra real em `docs/infra_producao.md`.
+
 # Deploy — Motor de Expansão Dashboard
 
 ## Infraestrutura

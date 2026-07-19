@@ -1,3 +1,5 @@
+> **[HISTORICO]** Runbook generico de VPS Streamlit, sobreposto por `docs/infra_producao.md` + `docs/deploy.md`.
+
 # Deploy Streamlit em VPS
 
 Runbook curto para publicar o dashboard executivo em uma VPS usando Docker.
