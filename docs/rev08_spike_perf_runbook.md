@@ -1,3 +1,5 @@
+> **[SPIKE]** Artefato de medicao descartavel do BLK-REV-08 (tabelas propositalmente em branco).
+
 # Runbook de medição — Spike deck.gl (BLK-REV-08)
 
 > Spike **descartável** de teto de performance do mapa client-side (deck.gl

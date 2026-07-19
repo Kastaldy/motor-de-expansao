@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest*)",
+      "Bash(PYTHONPATH=src python -m pytest*)",
+      "Bash(python -m ruff*)",
+      "Bash(python -m mypy*)",
+      "Bash(python -m pip list*)",
+      "Bash(python -m pip show*)",
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git show*)",
+      "Bash(git add*)",
+      "Bash(git switch*)",
+      "Bash(git checkout*)",
+      "Bash(git commit*)",
+      "Bash(git rev-parse*)",
+      "Bash(git rev-list*)",
+      "Bash(git merge-base*)",
+      "Bash(git ls-files*)",
+      "Bash(git ls-tree*)",
+      "Bash(git check-ignore*)",
+      "Bash(git check-attr*)",
+      "Bash(git fetch*)",
+      "Bash(git worktree*)",
+      "Bash(gh pr view*)",
+      "Bash(gh pr checks*)",
+      "Bash(gh pr diff*)",
+      "Bash(gh run view*)",
+      "Bash(gh label list*)",
+      "Read(./src/**)",
+      "Read(./tests/**)",
+      "Read(./docs/**)",
+      "Read(./tasks/**)",
+      "Read(./prompts/**)",
+      "Read(./scripts/**)"
+    ]
+  }
+}

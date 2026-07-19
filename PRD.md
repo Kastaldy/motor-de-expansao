@@ -1,6 +1,6 @@
 # PRD — Motor de Expansao Ultra Academia
 
-> Versao: 2026-05-29
+> Versao: 2026-07-19 (rev. de reconciliacao; conteudo subordinado ao CLAUDE.md)
 > Responsavel: Felipe Silva | Estrategia e Growth | Ultra Academia
 
 ## 0. Cabecalho e subordinacao ao CLAUDE.md
@@ -84,6 +84,8 @@ Fora do escopo (espelhando `CLAUDE.md` §4):
 - Pesquisas e Power BI.
 
 Estes itens estao explicitamente fora do deploy inicial.
+
+> Nota (2026-07): a **API GeoEspacial existe como servico STANDALONE on-demand** (DEC-005; `api.ultra-expansao.tech`), fora do dashboard — o dashboard de producao segue **offline**, sem API ao vivo. A **Frente C (BLK-SCORE-\*) de validacao de score foi ENCERRADA pela DEC-009** (previsao de magnitude de demanda pela geografia = NO-GO honesto; pivo para viabilidade property-first).
 
 ## 4. Camadas e trilhas
 
@@ -188,7 +190,7 @@ intencao por frente:
   infra).
 - Frente B — `BLK-ARCH-*`: arquitetura (concluir migracao para `src/` e remover
   legado, sem alterar comportamento de scoring).
-- Frente C — `BLK-SCORE-*`: validacao de scores contra desfecho real (dataset
+- Frente C — `BLK-SCORE-*`: **(ENCERRADA — DEC-009)** validacao de scores contra desfecho real (dataset
   rotulado, poder preditivo e proposta de recalibracao com DEC).
 - Produto — `BLK-PROD-*`: evolucoes de produto e performance (geocodificacao,
   relatorio concorrencial, cenarios salvos, manutencao e refatoracao).

@@ -58,6 +58,7 @@ data/setores_censitarios_2022_geo/
 !.claude/commands/**
 !.claude/skills/
 !.claude/skills/**
+!.claude/settings.json
 *.swp
 *.swo
 

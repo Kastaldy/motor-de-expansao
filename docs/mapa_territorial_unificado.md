@@ -1,3 +1,5 @@
+> **[HISTORICO]** Contrato aprovado de ciclo antigo. Estado atual em `docs/arquitetura_app_atual.md`.
+
 # Mapa Territorial Unificado — Contrato de UX, Camadas e Guardrails
 
 **Ciclo:** Mapa Territorial Unificado
