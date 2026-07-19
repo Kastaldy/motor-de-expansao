@@ -1,0 +1,713 @@
+{
+  "roadmap": {
+    "executive_summary": "O repositorio esta funcional e cumpre o guardrail mais importante (M1 READ-ONLY: o nucleo puro `core/scoring.py` e limpo e as camadas paralelas nao regravam score/artefatos oficiais), e a governanca de merge (DEC-016: guard/claude-review/loop_guard) e excepcionalmente robusta em proteger CAMINHOS. O problema nao e correcao: e MANUTENIBILIDADE e RASTREABILIDADE em escala, agravado por ter sido construido por uma esteira de agentes que acumulou sem podar. Cinco forcas dominam: (1) uma FRACAO GRANDE de src/ (estimada em ~40%, a confirmar por script de alcancabilidade) e PESQUISA CONGELADA/NO-GO empacotada no wheel de producao sem fronteira que a distinga do runtime vivo; (2) DUPLICACAO transversal massiva de utilitarios que JA DIVERGIU (haversine great-circle reimplementado com ordem de argumentos divergente; harness estatistico OOF em 7 modulos; guarda anti-PII em ~15 variantes com semanticas incompativeis set/substring/regex); (3) FRONTEIRAS erodidas e invertidas (motor de relatorios/censo headless sob `dashboard/` consumido por api/bot/dimensionamento; o pipeline OFICIAL do M1 `fase1_bi_exports.py:16` importa `enrich_dashboard_data` de `dashboard/data.py`; ciclo bidirecional api<->dashboard); (4) God-files gigantes (pages.py 4908, components.py 3529, relatorio_municipal 2208, censo_report 2113, hex_enrichment 1660); (5) config/parametros sem fonte unica (Settings duplicada por inteiro, capacidade 2500 e corte 5000 replicados, `M1_HEX_LAND_FRACTION_MIN=0.05` ausente do bloco canonico do CLAUDE.md §3 — prova de drift ja ocorrido).\n\nA tese do refactor, corrigida pela critica adversarial: a rede de seguranca da Fase 0 precede QUALQUER extracao, mas ela tem DUAS pernas que os testes atuais nao tem. A byte-equivalencia do output NACIONAL do M1 NAO pode ser travada por um golden de subset — o score usa `_calcular_percentil_nacional` (scoring.py:50-64/187-190) sobre 1,54M hexes, entao um subset e auto-consistente mas nao pega drift de empate/NaN/contagem que so aparece em escala; a trava correta e ESTENDER `provenance.py` (que ja hasheia Ultra.csv + git rev e escreve `data/outputs/_manifest.json`) para um MANIFESTO commitado com hash+describe() por coluna dos 4 artefatos oficiais COMPLETOS. O golden de subset trava so a estabilidade da FORMULA. Os mapas devem ser goldenizados no nivel de DADOS (vetor de band-assignment, areas de setor recortado) e nao por bytes de PNG raster (matplotlib/PIL/contextily nao sao reproduziveis entre versoes/OS); so o stream vetorial do fpdf2 (relogio ja congelado) e byte-deterministico. Feita a rede de seguranca, colhem-se os quick wins de alto valor (anti-PII compliance-critico primeiro, docs/ponteiros, purga de morto, common/geo com DOIS raios nomeados preservando 6371.0 e 6378137.0, common/stats); depois observabilidade e separacao pesquisa/producao; entao as fronteiras (reporting/, geocoding/, dataset_io); config/legado; e por fim os God-files (agora cobertos). Todo item que toca o M1 e marcado risk_m1 e exige preservacao byte-a-byte de score/pesos/artefatos (DEC-001); a inversao do rank 19 (dataset_io) so e segura sob o MANIFESTO NACIONAL, nao sob o golden de 5 colunas.",
+    "health_scorecard": [
+      {
+        "area": "core/ (scoring puro M1)",
+        "grade": "B",
+        "one_liner": "Formula oficial limpa/testavel; poluida por pesos e funcoes LEGADAS (0.35/0.25/0.25/0.15) entrelacadas com as oficiais via PESOS_HEX_SCORE_FINAL computado no import (constants.py:36-58)."
+      },
+      {
+        "area": "provenance.py + reprodutibilidade M1",
+        "grade": "C",
+        "one_liner": "Unico artefato de auditoria (hash Ultra.csv + git rev -> _manifest.json), mas so cobre o CSV de entrada; nao hasheia os 4 artefatos oficiais de saida e usa parents[4] fragil."
+      },
+      {
+        "area": "config.py + parametros canonicos",
+        "grade": "C",
+        "one_liner": "Classe Settings duplicada por inteiro (pydantic+fallback), constantes de dominio replicadas, DATABASE_URL/SECRET_KEY PostGIS morto ainda cabeado, drift vs CLAUDE.md §3 (land_fraction ausente)."
+      },
+      {
+        "area": "pipelines/m1 (M1 oficial)",
+        "grade": "C",
+        "one_liner": "God-file hex_enrichment (1660) mistura 3 eras; fase1_bi_exports importa enrich_dashboard_data de dashboard.data (inversao); base_h3_brasil reimplementa haversine/overlap; formula reimplementada."
+      },
+      {
+        "area": "pipelines/* (mercado/censo/pesquisa)",
+        "grade": "C",
+        "one_liner": "Cadeia de producao sem orquestrador versionado (so doc+shell na VPS+rotulos 'Bloco N' colidentes); parte relevante e pesquisa one-off (validar_*/teste_*/comparar_*) misturada."
+      },
+      {
+        "area": "dashboard UI (pages/components/data)",
+        "grade": "C",
+        "one_liner": "Dois God-files (4908+3529) misturam 5 abas, PDF, CSS inline e builders puros com render acoplado a st.; constants faz I/O em import-time."
+      },
+      {
+        "area": "dashboard motor de relatorios/PDF",
+        "grade": "C",
+        "one_liner": "Motor headless streamlit-free (censo_*/municipal ~6,7k LOC) vive sob dashboard/; toolkit Ultra PDF e fetch de basemap duplicados verbatim; 28 except silenciosos."
+      },
+      {
+        "area": "demanda_revelada (camada TP)",
+        "grade": "C",
+        "one_liner": "Nucleo (contrato+ingestao) limpo; grande massa de estudos NO-GO shippada; anti-PII forte no comportamento mas fragmentada em ~15 variantes com semanticas incompativeis."
+      },
+      {
+        "area": "dimensionamento (viabilidade)",
+        "grade": "C",
+        "one_liner": "Motor de producao de alta qualidade (excel_export/imoveis_candidatos/batch); ~4k LOC de backtests NO-GO junto; ciclo dashboard<->dimensionamento; harness estatistico duplicado + import de simbolo PRIVADO cross-pacote."
+      },
+      {
+        "area": "lifetime (M2 retencao)",
+        "grade": "B",
+        "one_liner": "Bem documentado e desacoplado do M1, mas epic ENCERRADA em NO-GO (DEC-014) sem consumidor de producao; move puro trivial (zero importadores)."
+      },
+      {
+        "area": "api (FastAPI+bot+geocoders)",
+        "grade": "C",
+        "one_liner": "Bem isolada do M1, mas ciclo api<->dashboard (censo_report:13 importa dashboard->api), geocoding duplicado (2 Nominatim/N bboxes), 2o sistema de config e defaults de segredo inseguros."
+      },
+      {
+        "area": "tooling: scripts/CI/infra",
+        "grade": "C",
+        "one_liner": "Governanca de merge excelente, mas politica DEC-016 e parser do backlog triplicados; scripts de pesquisa (rev08/09) misturados com operacionais criticos."
+      },
+      {
+        "area": "TRANSVERSAL: fronteiras/camadas",
+        "grade": "C",
+        "one_liner": "Nenhuma camada explicita nem import-linter; 3 inversoes verificadas e 1 invariante documentada ('disjunto') FALSA no grafo real."
+      },
+      {
+        "area": "TRANSVERSAL: pesquisa vs producao",
+        "grade": "D",
+        "one_liner": "Grande superficie de experimento congelado no wheel de producao; sem politica escrita de 'o que pertence a src/' nem script de alcancabilidade."
+      },
+      {
+        "area": "TRANSVERSAL: testes/gates",
+        "grade": "C",
+        "one_liner": "Suite grande e gate robusto de PATH, mas ZERO manifesto/golden dos artefatos NACIONAIS do M1; caracterizacao mock-patch fragil; deck pydeck fora do alcance de AppTest; CI serial sem cobertura/markers."
+      },
+      {
+        "area": "TRANSVERSAL: documentacao",
+        "grade": "C",
+        "one_liner": "CLAUDE.md 109 KB (67% ledger inline), README stale (nega API que esta live), ponteiro context/handoff.md inexistente (9 refs), docs orfaos (HANDOFF_LIDER/PLANO_ORQ), sem ARCHITECTURE.md."
+      },
+      {
+        "area": "TRANSVERSAL: performance",
+        "grade": "B",
+        "one_liner": "Caminho quente do dashboard bem otimizado; hotspots pontuais em PDF (iterrows/shapely por linha) e transformers pyproj nao-memoizados; sem baseline dos caminhos reais de PDF/mapa."
+      }
+    ],
+    "top_themes": [
+      {
+        "theme": "Rede de seguranca ausente para refactor behavior-preserving (com duas pernas: manifesto nacional + golden de formula)",
+        "description": "Nao existe manifesto/golden dos artefatos NACIONAIS do M1 nem dos PDFs. Ponto critico verificado: o score usa percentil NACIONAL (_calcular_percentil_nacional, scoring.py:50-64/187-190) sobre 1,54M hexes, entao um golden de SUBSET e auto-consistente e NAO trava drift que so aparece em escala. A trava correta e estender provenance.py (que ja hasheia Ultra.csv+git rev -> _manifest.json) para hash+describe() por coluna dos 4 artefatos oficiais completos. Os mapas devem ser goldenizados no nivel de DADOS (band-assignment/areas), nao por bytes de PNG raster (nao-reproduziveis). AppTest caracteriza a arvore de widgets mas NAO introspecta st.pydeck_chart (o coracao do Mapa Territorial), que fica no nivel builder/golden-data.",
+        "affected_areas": [
+          "testes/CI",
+          "core/scoring",
+          "provenance.py",
+          "pipelines/m1",
+          "dashboard motor de relatorios",
+          "dashboard UI"
+        ],
+        "severity": "critica",
+        "rationale": "E o PRE-REQUISITO habilitante e a critica mostrou que a versao ingenua (subset+bytes) NAO cumpre a promessa: sem o manifesto nacional por hash, a inversao critica do rank 19 (que materializa hexagonos_brasil_dashboard.parquet via a funcao movida) embarca desprotegida."
+      },
+      {
+        "theme": "Duplicacao transversal de utilitarios (sem pacote common/)",
+        "description": "O unico nucleo e core/ (restrito ao M1), entao helpers foram reimplementados dezenas de vezes e JA DIVERGIRAM: haversine great-circle 11x (ordem de args divergente = footgun); harness OOF/bootstrap 7x (com import de simbolo PRIVADO cross-pacote: demanda_revelada importa _r2/_rmse de dimensionamento.backtest_dim); guarda anti-PII ~15x com semanticas incompativeis; _safe_div/_safe_float/_fmt/_ascii/escrever_relatorio espalhados. NUANCE (critica): coexistem DOIS raios legitimos — great-circle ~6371.0 (censo_point.py:35, VIVO no filtro DEC-005) e a esfera Web Mercator 6378137.0 (censo_map.py:505, relatorio_municipal.py:732/851, exigida pela matematica de tiles EPSG:3857); consolidar SO o haversine, jamais colapsar num raio unico.",
+        "affected_areas": [
+          "core",
+          "pipelines",
+          "dashboard",
+          "demanda_revelada",
+          "dimensionamento",
+          "lifetime",
+          "api"
+        ],
+        "severity": "alta",
+        "rationale": "Maximo alcance e baixo risco na maior parte; a divergencia anti-PII e compliance-critica (LGPD/DEC-012) e o haversine divergente e bug latente. Mas o raio de mercator NAO e bug: precisa de duas constantes nomeadas por intencao para impedir 'unificacao' equivocada por um agente futuro."
+      },
+      {
+        "theme": "Pesquisa/NO-GO shippada como producao",
+        "description": "Grande fracao de src/ (estimada ~40%, a substanciar por script de alcancabilidade, nao medida ainda) e experimento congelado no wheel: demanda_revelada (estudos zero-importador), lifetime (NO-GO DEC-014, zero importadores de producao), backtests de dimensionamento, validacoes one-off em pipelines, spikes (ui_spike_deckgl auto-declarado 'DESCARTAVEL', ui_proto). Vai para a imagem Docker, polui grep/RAG de IA e faz o repo parecer 2x maior que a producao real.",
+        "affected_areas": [
+          "demanda_revelada",
+          "lifetime",
+          "dimensionamento",
+          "pipelines",
+          "dashboard",
+          "scripts",
+          "testes/CI"
+        ],
+        "severity": "alta",
+        "rationale": "Dobra a superficie que humanos e agentes precisam ler antes de tocar qualquer coisa; risco de reativar um NO-GO por engano. O repo ja tem o precedente fora_primeira_fase/ mas a pesquisa recente foi shippada em src/. lifetime/ e move quase-nulo em risco (antecipavel)."
+      },
+      {
+        "theme": "Fronteiras de modulo erodidas e inversoes de camada",
+        "description": "Sem camadas nomeadas nem import-linter (__init__ vazios, ruff sem TID). Tres inversoes verificadas: (1) o motor de relatorios/censo headless (~6,7k LOC) vive sob dashboard/ mas e consumido por api/bot/dimensionamento; (2) o pipeline OFICIAL do M1 fase1_bi_exports.py:16 importa enrich_dashboard_data de dashboard.data (que define a funcao); (3) ciclo bidirecional api<->dashboard (censo_report.py:13 importa dashboard->api). A invariante 'demanda_revelada e disjunto' e FALSA no grafo.",
+        "affected_areas": [
+          "pipelines/m1",
+          "dashboard",
+          "api",
+          "dimensionamento",
+          "demanda_revelada"
+        ],
+        "severity": "alta",
+        "rationale": "O nucleo canonico depende da UI; quem procura o motor de PDF do bot olha na pasta errada; qualquer refactor de dashboard pode quebrar o M1/api. Bloqueia a decomposicao segura e a navegacao de humano+IA."
+      },
+      {
+        "theme": "God-files que concentram responsabilidades incompativeis",
+        "description": "pages.py 4908 (5 abas+PDF+busca+CSS), components.py 3529 (builders puros + render st.), relatorio_municipal 2208 (agregacao+PIL+PDF), censo_report 2113 (2 templates), hex_enrichment 1660 (3 eras+2 formulas de score), fase_a_censo2022_setores 1393, data.py 1046, service.py 565. Merges de ciclo colidem no mesmo arquivo; a IA carrega milhares de linhas irrelevantes para editar um detalhe.",
+        "affected_areas": [
+          "dashboard UI",
+          "dashboard motor de relatorios",
+          "pipelines/m1",
+          "pipelines/*",
+          "api",
+          "dimensionamento"
+        ],
+        "severity": "alta",
+        "rationale": "E o maior atrito de navegabilidade/onboarding no dia a dia; so e seguro atacar DEPOIS da rede de seguranca (manifesto/golden/AppTest) e das extracoes de fronteira."
+      },
+      {
+        "theme": "Config e parametros sem fonte unica + score legado entrelacado no nucleo",
+        "description": "Settings duplicada por inteiro (pydantic+fallback, ~80 linhas espelhadas, divergem no .env); capacidade 2500 em 6+ modulos, corte 5000 em 4+, raios 1.5/1.6 hardcoded; M1_HEX_LAND_FRACTION_MIN=0.05 no codigo mas AUSENTE do bloco canonico do CLAUDE.md §3; sem teste amarrando §3<->config. NUANCE (critica): PESOS_HEX_SCORE_FINAL (constants.py:36-58) e computado NO IMPORT a partir de AMBOS o legado PESOS_HEX_SCORE['ausencia_concorrencia'] E o oficial PESOS_HEX_SCORE_ESTRUTURAL — os dicts estao entrelacados, o 'corte limpo' para legacy/ nao e limpo.",
+        "affected_areas": [
+          "config",
+          "core",
+          "pipelines",
+          "dashboard",
+          "dimensionamento",
+          "api"
+        ],
+        "severity": "alta",
+        "rationale": "A fonte declarada como canonica (§3) ja sofreu drift sem ninguem notar; um agente pode confundir os pesos legados com os oficiais e violar a DEC-001. Baixo risco desduplicar ESTRUTURA preservando valores byte-a-byte, mas mover PESOS_HEX_SCORE sem recomputar o derivado FINAL muda um valor."
+      },
+      {
+        "theme": "Observabilidade fraca: logging e erros silenciosos",
+        "description": "306 print() em 44 arquivos convivem com structlog nas deps e logging.basicConfig repetido; a API usa logging mas o bot usa print artesanal '[ERRO]/[WARN]' numa API LIVE. 122 except Exception (67 engolem, 19 sao except:pass) escondem falhas reais (fallback silencioso de cod_municipio, basemap, uplift caindo no fallback nacional; zeragem silenciosa de renda na ingestao IBGE/SIDRA que distorce percentis nacionais).",
+        "affected_areas": [
+          "pipelines",
+          "dashboard motor de relatorios",
+          "api",
+          "demanda_revelada",
+          "dimensionamento"
+        ],
+        "severity": "alta",
+        "rationale": "No caminho API/bot headless e no loop autonomo, a falha vira no-op invisivel — o oposto da rastreabilidade que o refactor busca. Ja causou incidente real (parquets de uplift faltando na VPS)."
+      },
+      {
+        "theme": "Documentacao monolitica e ponteiros quebrados",
+        "description": "CLAUDE.md tem 109 KB (67% e o ledger DEC-001..017 inline, violando a propria regra 'manter curto'); context/handoff.md e referenciado em 9 lugares mas NAO existe (o real e context/handoff/ sem indice); README descreve 2026-05 e afirma que a API esta 'sem API implementada' quando ela esta LIVE; docs de arquitetura sobrepostos sem INDEX; HANDOFF_LIDER.md e PLANO_ORQUESTRACAO_V2.md orfaos na raiz; falta ARCHITECTURE.md; tasks/completed.md tem 664 KB.",
+        "affected_areas": [
+          "documentacao",
+          "governanca/esteira"
+        ],
+        "severity": "alta",
+        "rationale": "O ponto de entrada canonico nao cabe util num contexto de IA e aponta para artefatos inexistentes/desatualizados; onboarding de humano e IA parte de um mapa nao-confiavel. O split precisa atualizar as 409 refs 'DEC-0XX' e os 9 ponteiros no mesmo movimento."
+      }
+    ],
+    "prioritized_backlog": [
+      {
+        "rank": 1,
+        "title": "Rede de seguranca do M1: MANIFESTO NACIONAL por hash (via provenance.py) + golden de subset da FORMULA",
+        "theme": "Rede de seguranca",
+        "severity": "critica",
+        "effort": "M",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "src/motor_expansao/pipelines/m1/provenance.py, data/outputs/_manifest.json (estender), tests/contracts/test_m1_manifest.py (novo), tests/fixtures/m1_golden/ (subset fixo 2-3 UFs sem PII), tests/contracts/test_m1_formula_golden.py (novo), core/scoring.py, pipelines/m1/fase1_bi_exports.py",
+        "proposed_approach": "DUAS pernas complementares. (a) MANIFESTO NACIONAL: estender provenance.py para emitir, junto do _manifest.json ja existente (que hasheia Ultra.csv+git rev), hash SHA256 por coluna + row_count + describe() agregado (min/max/mean/quantis, ZERO PII) dos 4 artefatos oficiais (brasil_estrutural, brasil_priorizados, hexagonos_brasil_oportunidades, hexagonos_brasil_dashboard); teste exige que a regeneracao reproduza o manifesto commitado com tolerancia zero. E a UNICA forma de travar a byte-equivalencia do output NACIONAL (o score usa _calcular_percentil_nacional sobre 1,54M hexes; subset nao serve). (b) GOLDEN DE FORMULA: subset fixo pequeno para asseverar a estabilidade de calcular_hex_score_estrutural (renda_pct/pop_pct/hex_score_estrutural/ajuste/score_priorizacao) — trava a formula, explicitamente NAO o artefato nacional. Trocar parents[4] por descoberta robusta (subir ate pyproject.toml/.git) antes de qualquer move de pasta.",
+        "depends_on": ""
+      },
+      {
+        "rank": 2,
+        "title": "Teste de contrato CLAUDE.md §3 <-> config.py + registrar M1_HEX_LAND_FRACTION_MIN no §3",
+        "theme": "Config/parametros",
+        "severity": "alta",
+        "effort": "P",
+        "risk_m1": "leitura",
+        "quick_win": true,
+        "files": "tests/contracts/test_parametros_canonicos.py (novo), config.py, core/constants.py, CLAUDE.md §3, .github/CODEOWNERS",
+        "proposed_approach": "Fixar em teste os valores oficiais (PESOS_HEX_SCORE_ESTRUTURAL 0.40/0.60, RENDA_MIN 4500, AREA_*, M1_PRIORIZACAO_TOP_PCT_POR_UF 0.20, M1_HEX_LAND_FRACTION_MIN 0.05, M1_POP_MINIMA_PROXY) asseverando contra settings/core.constants. Adicionar o land_fraction (hoje so na prosa das DEC-002/003) ao bloco canonico do §3 — a AUSENCIA dele e a prova de que o drift ja ocorreu sem ninguem notar. Transforma 'M1 read-only' de garantia SOCIAL em invariante MECANICA; proteger o teste e o §3 via CODEOWNERS. Co-primeiro da Fase 0.",
+        "depends_on": ""
+      },
+      {
+        "rank": 3,
+        "title": "Golden dos PDFs no stream VETORIAL + golden dos mapas no nivel de DADOS (nao pixel)",
+        "theme": "Rede de seguranca",
+        "severity": "alta",
+        "effort": "M",
+        "risk_m1": "nenhum",
+        "quick_win": false,
+        "files": "tests/fixtures/reports_golden/ (novo), tests/unit/test_relatorio_pontual_censitario_export.py, tests/unit/test_relatorio_municipal.py, tests/conftest.py (relogio fpdf2 ja congelado)",
+        "proposed_approach": "So o STREAM VETORIAL/TEXTO do fpdf2 (relogio ja congelado, set_compression(False)) e byte-deterministico: goldenizar 1-2 PDFs pequenos (censitario+classico) por hash do conteudo de objetos vetoriais. Os MAPAS raster (matplotlib/PIL/contextily) NAO sao reproduziveis entre versoes/OS: goldenizar no nivel de DADOS — snapshot do vetor de band-assignment do choropleth e da tabela de areas de setor recortado (saidas numpy/geometricas deterministicas). Marker @pytest.mark.golden_pdf. Trava o refactor dos God-files de relatorio por equivalencia real (hoje os testes so checam prefixo/tamanho/headers) SEM depender de hash de imagem que flaka no CI.",
+        "depends_on": ""
+      },
+      {
+        "rank": 4,
+        "title": "Caracterizar God-files do dashboard: AppTest para a arvore de widgets + builder/golden-data para o deck pydeck",
+        "theme": "Rede de seguranca",
+        "severity": "alta",
+        "effort": "G",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "tests/integration/test_streamlit_app.py (7133 LOC -> dividir por aba), tests/integration/test_pages_*.py (novos), tests/helpers/fake_streamlit.py (novo)",
+        "proposed_approach": "Migrar o que da para streamlit.testing.v1.AppTest (roda o script real, inspeciona widgets sem patchar cada st.*). RESSALVA VERIFICADA: AppTest NAO introspecta st.pydeck_chart nem fragments — o coracao do Mapa Territorial (o deck, on_select='rerun') fica FORA do alcance e permanece caracterizado no nivel de BUILDER (build_map_figure) + golden-data (nao pixel). Extrair um _fake_streamlit_ctx() unico para o que AppTest nao cobre. Dividir o arquivo por aba espelhando a futura fatia de pages.py. Pre-condicao para decompor pages.py/components.py e fecha o flanco do guard (que exclui pages/components da classe GOVERNANCA).",
+        "depends_on": ""
+      },
+      {
+        "rank": 5,
+        "title": "Endurecer o gate de CI: xdist, markers, pytest-socket, cobertura, mypy incremental",
+        "theme": "Testes/gates",
+        "severity": "media",
+        "effort": "P",
+        "risk_m1": "nenhum",
+        "quick_win": true,
+        "files": ".github/workflows/ci.yml, pyproject.toml ([tool.pytest.ini_options], [tool.mypy.overrides], [tool.ruff]), tests/conftest.py",
+        "proposed_approach": "pytest -n auto (xdist ja e dep); registrar markers golden_m1/golden_pdf/research/network/slow e rodar -m 'not research' no gate rapido; adicionar pytest-socket com disable_socket autouse (materializa o 'nunca bate na rede real' das DEC-004/010/011); --cov com baseline travando nao-regressao; ligar disallow_untyped_defs em core/ e pipelines/m1 primeiro. Adicionar teste que assere que NENHUM caminho de import de producao resolve DATABASE_URL (impede reativacao silenciosa do PostGIS morto).",
+        "depends_on": ""
+      },
+      {
+        "rank": 6,
+        "title": "Consolidar a guarda anti-PII em common/pii.py adotando a semantica MAIS ESTRITA",
+        "theme": "Duplicacao/utilitarios",
+        "severity": "alta",
+        "effort": "M",
+        "risk_m1": "nenhum",
+        "quick_win": false,
+        "files": "src/motor_expansao/demanda_revelada/pii.py ou common/pii.py (novo), demanda_revelada/*.py (~14 call-sites), dimensionamento/growth_api_client.py, contrato.py (unificar COLUNAS_PII_PROIBIDAS)",
+        "proposed_approach": "Trocar as ~15 variantes divergentes (_assert_sem_pii_no_relatorio/_relatorio/_em_dict/_rede/_validacao/_vazios — assinaturas df-vs-texto-vs-dict e semanticas set-vs-substring-vs-regex INCOMPATIVEIS) por trio unico assert_sem_pii_df/_texto/_mapping lendo uma unica COLUNAS_PII_PROIBIDAS. CRITICO: o helper unificado DEVE adotar a variante MAIS ESTRITA (substring/set), NUNCA a token-regex \\b...\\b (que pode deixar passar o que a substring pega) — 'tao estrito quanto a mais estrita' significa escolher a substring, nao a media. Garantia LGPD (DEC-012) passa a ter um so ponto auditavel para o red team/Auditor de PRs. Lidera a Fase 1 por ser correcao/compliance, nao mera consolidacao.",
+        "depends_on": ""
+      },
+      {
+        "rank": 7,
+        "title": "Corrigir ponteiros de doc quebrados e README stale (quick win de descoberta)",
+        "theme": "Documentacao",
+        "severity": "alta",
+        "effort": "P",
+        "risk_m1": "leitura",
+        "quick_win": true,
+        "files": "README.md, context/handoff/ (+ latest.md/INDEX.md novos), CLAUDE.md, .claude/commands/run-cycle.md (9 refs a context/handoff.md)",
+        "proposed_approach": "Resolver o ponteiro context/handoff.md (inexistente): apontar as 9 referencias para context/handoff/ + criar latest.md/INDEX.md. Reescrever o topo do README para o estado atual (5 abas+Viabilidade+Relatorio Municipal+API LIVE+demanda revelada+M2) com data e link para docs/estado_dos_modelos.md; corrigir a linha que nega a API. Adicionar lint de caminho-citado-existe. PR classe GOVERNANCA (toca CLAUDE.md/run-cycle.md) -> exige label humana sob DEC-016, nao pode ser empacotado em PR Media auto-mergeavel.",
+        "depends_on": ""
+      },
+      {
+        "rank": 8,
+        "title": "Purga de codigo morto e spikes fora do runtime de producao",
+        "theme": "Pesquisa vs producao",
+        "severity": "media",
+        "effort": "P",
+        "risk_m1": "nenhum",
+        "quick_win": true,
+        "files": "dashboard/ui_spike_deckgl.py, scripts/rev08_spike_*.py, scripts/rev09_*.py, tests/unit/test_ui_spike_deckgl.py, config.py (CORES + subsistemas mortos), src/motor_expansao/data/ (vazio), dashboard/utils.py (_residual_score_to_color/_censo_score_to_color), dimensionamento/simulador.py (m2_otimo)",
+        "proposed_approach": "Deletar/arquivar ui_spike_deckgl (auto-declarado 'DESCARTAVEL') + scripts rev08/09 + teste; remover CORES morta e ~9 blocos de config de subsistemas sem consumidor (PostGIS/scraper/Sentry/Mapbox); remover o pacote vestigial data/; remover _residual_score_to_color/_censo_score_to_color (so pinados por teste) e simulador.m2_otimo (sem chamador). Registrar 1 linha em completed.md; git preserva historico.",
+        "depends_on": ""
+      },
+      {
+        "rank": 9,
+        "title": "Mover lifetime/ (M2 NO-GO, zero importadores de producao) para studies/",
+        "theme": "Pesquisa vs producao",
+        "severity": "media",
+        "effort": "P",
+        "risk_m1": "nenhum",
+        "quick_win": true,
+        "files": "studies/lifetime/ (novo, fora de src/), src/motor_expansao/lifetime/ (4 modulos), tests/ (mover + marker research), pyproject.toml (packages/exclude)",
+        "proposed_approach": "lifetime/ (epic ENCERRADA em NO-GO DEC-014, ZERO importadores de producao, sem deps cross-package) e o move mais seguro do repo: mover o pacote inteiro para studies/ levando seus testes com @pytest.mark.research, anexando o veredito NO-GO da DEC-014 ao topo do README do estudo. Antecipado da Fase 2 para a Fase 1 por ser ganho de navegacao quase-nulo em risco. Trocar parents[3] de resolucao de raiz por descoberta robusta antes de mover.",
+        "depends_on": ""
+      },
+      {
+        "rank": 10,
+        "title": "Baseline de perf dos caminhos REAIS de PDF/mapa (observabilidade barata)",
+        "theme": "Performance",
+        "severity": "media",
+        "effort": "P",
+        "risk_m1": "leitura",
+        "quick_win": true,
+        "files": "scripts/perf_baseline_app.py (estender), data/reports/perf_baseline_dashboard.md",
+        "proposed_approach": "Estender perf_baseline_app.py (hoje so mede com mapas=None) para cronometrar os caminhos REAIS de geracao de PDF/mapa por tamanho de municipio, com fixture sintetica. Independe do golden e destrava a demonstrabilidade dos ganhos dos ranks 29/30 (sem baseline, ganho de perf nao e demonstravel nem regressao detectavel). Antecipado para a Fase 1.",
+        "depends_on": ""
+      },
+      {
+        "rank": 11,
+        "title": "Extrair common/geo.py: DOIS raios NOMEADOS + haversine great-circle unico + transformers memoizados + bbox Brasil unico",
+        "theme": "Duplicacao/utilitarios",
+        "severity": "alta",
+        "effort": "M",
+        "risk_m1": "critico",
+        "quick_win": false,
+        "files": "src/motor_expansao/common/geo.py (novo), dashboard/censo_point.py, dashboard/data.py, dashboard/censo_map.py, dashboard/relatorio_municipal.py, dimensionamento/{huff,base_multirede,features_exogenas}.py, pipelines/gerar_plano_expansao_dominio.py, pipelines/m1/base_h3_brasil.py, api/coord.py, api/maps_geocoder.py",
+        "proposed_approach": "DUAS constantes nomeadas por INTENCAO, com docstring do porque diferem: EARTH_RADIUS_KM (great-circle, ~6371.0) e MERCATOR_SPHERE_M=6378137.0 (esfera Web Mercator, EXIGIDA pela matematica de tiles EPSG:3857 em censo_map.py:505 e relatorio_municipal.py:732/851 — NAO e bug, NAO unificar). UMA API canonica haversine_km(lat1,lng1,lat2,lng2) escalar+vetorizada com docstring fixando a ordem lat,lng (hoje divergente = footgun). risk_m1=CRITICO: censo_point._haversine_km (censo_point.py:35, raio 6371.0) e VIVO dentro do filtro de 1,5 km de um relatorio DEC-005-protegido; a unificacao DEVE preservar byte-a-byte o 6371.0 do censo_point (deslocar setores na borda do circulo altera saida) E o 6378137.0 do mercator. Teste de paridade numerica contra as 11 implementacoes antes de remover; @lru_cache em _transformer/_local_metric_crs.",
+        "depends_on": "1 (golden formula p/ paridade do censo_point)"
+      },
+      {
+        "rank": 12,
+        "title": "Extrair common/stats.py: harness OOF/kfold/bootstrap/R2/RMSE com API PUBLICA neutra",
+        "theme": "Duplicacao/utilitarios",
+        "severity": "alta",
+        "effort": "M",
+        "risk_m1": "nenhum",
+        "quick_win": false,
+        "files": "src/motor_expansao/common/stats.py (novo), dimensionamento/backtest_dim.py, demanda_revelada/{backtest_tp05,calibracao_residual,calibracao_curva,estrutura_funil,huff_captura,revalidacao_residual_candidatos}.py, lifetime/score_retencao_territorial.py (ou studies/), pipelines/derivar_uplift_composicao_setor.py",
+        "proposed_approach": "Modulo unico com r2, rmse, kfold_repetido_oof, ic_bootstrap_r2/rho, selecionar_alpha_e_oof (nomes SEM underscore), parametrizando SEED/N_REPEATS/N_BOOTSTRAP da DEC-008. Migra os 7 duplicados E elimina o import de simbolo PRIVADO cross-pacote (demanda_revelada importa _r2/_rmse de dimensionamento.backtest_dim) — promover a API publica e migrar os importadores NO MESMO PR (mypy strict=false nao protege renome interno). Congelar por teste de regressao numerica (mesmo seed -> mesmos IC).",
+        "depends_on": ""
+      },
+      {
+        "rank": 13,
+        "title": "Extrair common/{coerce,reporting,cli,logging}.py (utilitarios restantes)",
+        "theme": "Duplicacao/utilitarios",
+        "severity": "media",
+        "effort": "M",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "src/motor_expansao/common/{coerce,reporting,cli,logging}.py (novos), pipelines/*, dashboard/*, dimensionamento/*, censo_report.py, relatorio_municipal.py",
+        "proposed_approach": "coerce: safe_div/safe_float/safe_int com contrato de retorno explicito (hoje uma copia diverge no calculo). reporting: escrever_relatorio/markdown_table/fmt (nome de parametro unico, hoje _fmt tem 4 nomes) + _ascii unico (guardando o limite latin-1 do §2). cli: run_cli(fn,...) padronizando argparse+logger. logging: get_logger(name) com structlog central. Migracao incremental por dominio; helpers puros (baixo risco).",
+        "depends_on": ""
+      },
+      {
+        "rank": 14,
+        "title": "Padronizar logging (structlog central) e aposentar 306 print() de biblioteca",
+        "theme": "Observabilidade",
+        "severity": "alta",
+        "effort": "M",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "src/motor_expansao/common/logging.py (novo), pipelines/* (22 arquivos), api/telegram_bot.py, demanda_revelada/*, dimensionamento/*, pyproject.toml (ruff T20)",
+        "proposed_approach": "configure_logging() unico no entrypoint; converter print() de biblioteca em log.info/warning; remover os ~21 logging.basicConfig espalhados; migrar o bot Telegram (print artesanal '[ERRO]/[WARN]' numa API LIVE) para o logger padrao. Manter print() so em blocos __main__ de CLI. Ligar ruff T201 com per-file-ignore para os __main__.",
+        "depends_on": "13"
+      },
+      {
+        "rank": 15,
+        "title": "Politica de tratamento de erro: proibir swallow silencioso + excecoes de dominio",
+        "theme": "Observabilidade",
+        "severity": "alta",
+        "effort": "M",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "dashboard/data.py (resolve_cod_municipio_from_geo_dir), dashboard/censo_report.py, dashboard/censo_map.py, dashboard/relatorio_municipal.py (17 except), api/service.py, pipelines/m1/ibge_censo.py, pyproject.toml (ruff BLE/TRY), REVIEW.md",
+        "proposed_approach": "Varrer primeiro os 19 'except Exception: pass'; estreitar os catches para a excecao esperada (FileNotFoundError/pa.ArrowInvalid/KeyError) e logar em WARNING com contexto antes do fallback; introduzir DadosIndisponiveisError para os fallbacks legitimos (offline). Distinguir sem-dado (0 legitimo) de falha-de-fetch na ingestao IBGE/SIDRA (que hoje zera renda silenciosamente e distorce percentis nacionais). Ativar ruff BLE001/TRY.",
+        "depends_on": "14"
+      },
+      {
+        "rank": 16,
+        "title": "Separar pesquisa de producao: studies/ fora do wheel + checagem de alcancabilidade no CI",
+        "theme": "Pesquisa vs producao",
+        "severity": "alta",
+        "effort": "G",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "studies/ (novo, fora de src/), pyproject.toml (packages/exclude), demanda_revelada/ (estudos zero-importador), dimensionamento/ (backtests), pipelines/ (validar_*/teste_*/comparar_*/fase_a_piloto), tests/ (mover + marker), scripts/check_reachability.py (novo)",
+        "proposed_approach": "Definir politica escrita 'so entra em src/ o alcancado por um entrypoint de producao'. Script check_reachability.py que parte dos entrypoints reais (streamlit_app, api.app, CLIs de pipeline) e falha o CI se um modulo novo em src/ nao for importado por nenhum — SUBSTANCIA a estimativa '~40% e pesquisa' (hoje heuristica de grafo+docstring, nao medida). Mover para studies/ os pacotes sem importador, levando seus testes com @pytest.mark.research; anexar o veredito GO/NO-GO da DEC ao topo de cada estudo. CAUTELA: confirmar que nenhum teste movido e a UNICA cobertura de um helper tambem usado em producao (normalizadores de unidade, capacidade 2500) antes de exclui-lo do gate.",
+        "depends_on": "9"
+      },
+      {
+        "rank": 17,
+        "title": "Extrair pacote reporting/ headless (censo_*, relatorio_municipal, competitors) de dashboard/ + travar streamlit-free",
+        "theme": "Fronteiras de modulo",
+        "severity": "alta",
+        "effort": "G",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "src/motor_expansao/reporting/ (novo: censo_point, censo_map, censo_report, relatorio_municipal, competitors), pyproject.toml (import-linter forbidden: streamlit), dashboard/pages.py, api/service.py, dimensionamento/{catchment_batch,features_exogenas}.py",
+        "proposed_approach": "ANTES do move, adicionar um contrato import-linter que fixa censo_point/censo_map/censo_report/relatorio_municipal como STREAMLIT-FREE (forbidden import: streamlit) — a pre-condicao 'sao headless' vira invariante verificada, nao suposicao. Mover os 5 modulos para reporting/; dashboard/ mantem so os wrappers render_* que injetam st. Reapontar imports de api/service.py e dimensionamento/. Resolve a inversao de camada (motor headless sob UI) e mata metade do ciclo api<->dashboard. Move puro + reaponta imports (behavior-preserving; golden PDF/dados do rank 3 protege). CAUTELA CI: o publish-api nao rebuilda com mudanca em dashboard/ — revisar filtros de path e Dockerfiles para o bot continuar recebendo o motor.",
+        "depends_on": "3"
+      },
+      {
+        "rank": 18,
+        "title": "Extrair geocoding/ neutro (maps_geocoder + coord + bbox) e unificar as N implementacoes",
+        "theme": "Fronteiras de modulo",
+        "severity": "alta",
+        "effort": "M",
+        "risk_m1": "nenhum",
+        "quick_win": false,
+        "files": "src/motor_expansao/geocoding/ (novo), api/maps_geocoder.py, api/coord.py, api/geo.py, dashboard/pages.py, dashboard/censo_report.py (import top-level -> geocoding)",
+        "proposed_approach": "maps_geocoder e stdlib puro consumido pelo dashboard: move-lo para geocoding/ corta a aresta top-level dashboard->api (censo_report.py:13) que fecha o ciclo. Unificar os 2 clientes Nominatim, 2 seguidores de redirect, 2 URL builders e 2 parsers de coordenada do Maps numa interface Geocoder.resolve(). Consolidar o bbox do Brasil (usar o BRAZIL_BBOX unico do rank 11). PRESERVAR as mitigacoes DEC-010/011: import lazy, fallback offline gracioso, timeout curto, cache local — a carga/interatividade do dashboard nao pode passar a fazer fetch.",
+        "depends_on": "11"
+      },
+      {
+        "rank": 19,
+        "title": "Corrigir a inversao pipelines/m1 -> dashboard.data (dataset_io neutro) sob MANIFESTO NACIONAL",
+        "theme": "Fronteiras de modulo",
+        "severity": "alta",
+        "effort": "M",
+        "risk_m1": "critico",
+        "quick_win": false,
+        "files": "src/motor_expansao/pipelines/dataset_io.py (novo), pipelines/m1/fase1_bi_exports.py, dashboard/data.py, dashboard/constants.py",
+        "proposed_approach": "Extrair enrich_dashboard_data (definida em dashboard/data.py, importada por fase1_bi_exports.py:16) + _prepare_dataframe/_prepare_censo_trace/_coalesce_columns + constantes de coluna para um modulo neutro sem Streamlit. fase1_bi_exports (passo 3 do M1 OFICIAL) e dashboard.data passam ambos a importar dele (para baixo). PROTECAO OBRIGATORIA (critica): o artefato oficial hexagonos_brasil_dashboard.parquet e materializado ATRAVES de enrich_dashboard_data (materialize_enriched_dashboard, fase1_bi_exports.py:580) agregando DEZENAS de colunas — o golden de 5 campos de score do rank 1(b) NAO basta; validar contra o MANIFESTO NACIONAL COMPLETO (todas as colunas + row count + hash por coluna) do rank 1(a). Behavior-preserving obrigatorio.",
+        "depends_on": "1"
+      },
+      {
+        "rank": 20,
+        "title": "Toolkit Ultra PDF compartilhado (elimina duplicacao verbatim censo_report<->relatorio_municipal)",
+        "theme": "Duplicacao/utilitarios",
+        "severity": "alta",
+        "effort": "M",
+        "risk_m1": "nenhum",
+        "quick_win": false,
+        "files": "reporting/pdf_ultra.py + reporting/branding.py + reporting/basemap.py + reporting/mapdraw.py (novos), dashboard/censo_report.py, dashboard/relatorio_municipal.py, dashboard/censo_map.py",
+        "proposed_approach": "Extrair a classe _UltraPDF + ~10 helpers de chrome (background/title_band/footer/watermark/ascii/format_number/branding) + ~20 constantes de cor/geometria (duplicados verbatim, ~150 LOC) e o fetch de basemap/mapdraw (font/text/mercator, 2 copias que ja divergem no retry). Reusar MERCATOR_SPHERE_M do rank 11 (nao reintroduzir literal 6378137.0). Renomear os PDF_SECTION_HEADERS homonimos-com-valor-diferente para PONTUAL_/MUNICIPAL_. PRESERVAR a mitigacao DEC-004/011 (import lazy de contextily, fallback offline, cache local).",
+        "depends_on": "17"
+      },
+      {
+        "rank": 21,
+        "title": "Enforcement de fronteiras: import-linter + ruff TID + API publica nos __init__ + lint anti-drift",
+        "theme": "Fronteiras de modulo",
+        "severity": "media",
+        "effort": "M",
+        "risk_m1": "nenhum",
+        "quick_win": false,
+        "files": "pyproject.toml (ruff TID + import-linter contracts), .github/workflows/ci.yml, __init__.py de core/dashboard/pipelines/api/demanda_revelada/reporting/geocoding, tests/conftest.py (lint non-ASCII identifier), ARCHITECTURE.md",
+        "proposed_approach": "Definir 5 camadas nomeadas (config/core <- domain <- pipelines <- reporting/services <- delivery dashboard|api) e congelar o grafo com import-linter (contratos layers+forbidden) como required check. ruff TID251 bane 'from motor_expansao.dashboard' em pipelines/api. Declarar API publica em cada __init__ (hoje vazios). Tornar executavel a invariante 'demanda_revelada disjunto' (hoje FALSA). ADICIONAR lint que bane identificadores nao-ASCII (regex em conftest) para mecanizar o guardrail de acentuacao do §2 (hoje 100% seguido mas NAO enforcado; violacao causa bug silencioso em key=/enum/CSS). Depende dos ranks 17-19 terem quebrado os ciclos.",
+        "depends_on": "17, 18, 19"
+      },
+      {
+        "rank": 22,
+        "title": "Segregar o score LEGADO do nucleo M1, tratando o entrelacamento de PESOS_HEX_SCORE_FINAL",
+        "theme": "Config/parametros",
+        "severity": "alta",
+        "effort": "M",
+        "risk_m1": "critico",
+        "quick_win": false,
+        "files": "core/scoring.py, core/constants.py, pipelines/m1/legacy_osm_score.py (novo), pipelines/m1/hex_enrichment.py",
+        "proposed_approach": "Mover PESOS_HEX_SCORE (0.35/0.25/0.25/0.15) + calcular_hex_score/calcular_hex_score_final/calcular_score_concorrencia + o caminho OSM/por-cidade para legacy/ com docstring 'NAO e o score oficial (DEC-001)'. NUANCE VERIFICADA: PESOS_HEX_SCORE_FINAL (constants.py:36-58) e computado NO IMPORT a partir de AMBOS o legado PESOS_HEX_SCORE['ausencia_concorrencia'] E o oficial PESOS_HEX_SCORE_ESTRUTURAL — o 'corte limpo' NAO e limpo; mover PESOS_HEX_SCORE sem mover/recomputar PESOS_HEX_SCORE_FINAL muda um valor derivado. Manter os dois no mesmo modulo legacy ou congelar PESOS_HEX_SCORE_FINAL como literal com teste de igualdade ao calculo antigo. Criar core/scoring.py::compor_score_priorizacao() e substituir as 3 reimplementacoes da formula canonica. Behavior-preserving; golden de formula (rank 1b) + manifesto (rank 1a) protegem.",
+        "depends_on": "1"
+      },
+      {
+        "rank": 23,
+        "title": "Fonte unica de config/parametros: desduplicar Settings + constantes de dominio + PostGIS morto + rastro DEC",
+        "theme": "Config/parametros",
+        "severity": "alta",
+        "effort": "G",
+        "risk_m1": "critico",
+        "quick_win": false,
+        "files": "config.py, core/m1_params.py (novo), constants.py, pipelines/mercado_constants.py (novo), dimensionamento/config.py, dashboard/constants.py, conftest.py",
+        "proposed_approach": "Colapsar a Settings duplicada (pydantic+fallback) num unico dict _DEFAULTS consumido pelos dois ramos (elimina ~80 linhas espelhadas e o drift no .env). Centralizar capacidade 2500 (6+ copias) e corte 5000 (4+ copias) em constantes de dominio compartilhadas; nomear os raios 1.5/1.6 hardcoded. Remover DATABASE_URL/SECRET_KEY do PostGIS morto de config.py raiz E do conftest.py que injeta postgresql+asyncpg (mesmo risco fail-open do api/settings.py). Adotar comentario grep-avel '# DEC-00X' na linha de cada parametro canonico. Preservar VALORES byte-a-byte (so desduplicar estrutura); protegido pelo teste do rank 2.",
+        "depends_on": "2"
+      },
+      {
+        "rank": 24,
+        "title": "Contratos de coluna (schema.py) + orquestrador versionado da cadeia mercado/residual + geo de base_h3",
+        "theme": "Rastreabilidade",
+        "severity": "media",
+        "effort": "M",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "pipelines/schema.py (novo), pipelines/regen_mercado_residual.py (novo), pipelines/m1/base_h3_brasil.py, pipelines/m1/hex_enrichment.py, pipelines/{calcular_colunas_mercado,gerar_carteira_acionavel,enriquecer_outputs_residual_mercado}.py",
+        "proposed_approach": "Centralizar DASHBOARD_COLUMNS/SOURCE_COLUMNS/FAIXAS_OPORTUNIDADE/RESIDUAL_MERCADO_COLS (hoje em 3+ listas divergentes) num schema.py unico importado por produtores e consumidores, com teste de contrato do parquet materializado. Criar um runner in-repo que encadeia a ordem canonica (hoje so em doc+shell na VPS+rotulos 'Bloco N' colidentes) com logging por etapa, usando materialize_enriched_dashboard() e NAO main() (nao recompoe artefatos oficiais). Endereçar base_h3_brasil.py: migrar seu haversine/overlap geometrico (DEC-002/003, consome M1_HEX_LAND_FRACTION_MIN) para common/geo (rank 11) preservando o universo de 1.542.531 hexes.",
+        "depends_on": "11, 19"
+      },
+      {
+        "rank": 25,
+        "title": "Decompor hex_enrichment.py (1660) por responsabilidade/era",
+        "theme": "God-files",
+        "severity": "alta",
+        "effort": "G",
+        "risk_m1": "critico",
+        "quick_win": false,
+        "files": "pipelines/m1/hex_enrichment.py -> estrutural_nacional.py + opportunity_layer.py + priorizacao.py + reporting_md.py + legacy_osm_cidade.py",
+        "proposed_approach": "Separar as 3 eras: pipeline estrutural nacional vigente, camada de oportunidade/priorizacao (quebrar preparar_base_oportunidades de ~180 LOC em sub-funcoes puras), reporting markdown, e o MVP-OSM por cidade legado (que arrasta geopy/sklearn no import do M1). hex_enrichment.py vira re-export fino. So mover funcoes, sem tocar formula; MANIFESTO NACIONAL (rank 1a) + reorg do rank 22 primeiro.",
+        "depends_on": "1, 22"
+      },
+      {
+        "rank": 26,
+        "title": "Decompor os God-files de UI: pages.py (4908) e components.py (3529)",
+        "theme": "God-files",
+        "severity": "alta",
+        "effort": "G",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "dashboard/pages.py -> dashboard/tabs/{mapa_territorial,visao_executiva,expansao_dominio,carteira_plano,viabilidade}.py + dashboard/render/{coord_search,pdf_downloads,multihex}.py + dashboard/styles.py; dashboard/components.py -> components/{figures,map_layers,tooltips,legends}.py",
+        "proposed_approach": "pages.py: um modulo por aba + transversais (busca por coordenada, downloads de PDF, multi-hex) + mover as 340 linhas de CSS inline para styles.py; extrair render_viabilidade_ponto (~556 LOC) em _viab_form_inputs/_viab_run_engine/_viab_render_result. components.py: separar os 32 build_* puros/testaveis dos 14 render_* que chamam st.; unificar as 12 funcoes de legenda quase identicas num render_swatch_legend(items) data-driven. Reexportar os nomes atuais de pages.py/components.py com noqa durante a transicao (os testes patcham caminhos de atributo). Depende do rank 4 (AppTest + fake ctx).",
+        "depends_on": "4"
+      },
+      {
+        "rank": 27,
+        "title": "Decompor os God-files de PDF (censo_report 2113 + relatorio_municipal 2208)",
+        "theme": "God-files",
+        "severity": "alta",
+        "effort": "G",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "reporting/pontual/{censitario,classico,paginas_imovel}.py, reporting/municipal/{agregacao,mapa,pdf,constantes}.py",
+        "proposed_approach": "Apos o toolkit (rank 20): quebrar censo_report em templates censitario/classico + paginas de imovel (viabilidade); quebrar relatorio_municipal nas 3 camadas agregacao(pura, testavel)/render-PIL/layout-PDF, movendo OFERTA_DESTAQUE_MIN/CAPACIDADE (regra DEC-011) para constantes com docstring '# DEC-011'. gerar_pdf_* viram orquestradores finos. Depende dos ranks 3, 17, 20.",
+        "depends_on": "3, 17, 20"
+      },
+      {
+        "rank": 28,
+        "title": "Decompor data.py (1046), service.py (565), telegram_bot.py (489) + superficie de producao do dimensionamento",
+        "theme": "God-files",
+        "severity": "media",
+        "effort": "M",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "dashboard/data.py -> data/{io,enrich,geo,scenarios,coords}.py; api/service.py -> service_ponto.py+service_municipio.py+data_access.py; api/telegram_bot.py -> bot/{messages,api_client,conversa,polling}.py; dimensionamento/{excel_export,imoveis_candidatos,batch_viabilidade}.py (revisar coesao)",
+        "proposed_approach": "data.py: separar IO de parquet, enriquecimento/schema, geo, agregacao de cenario e parsing de coordenada. service.py: separar fluxo pontual do municipal e os loaders cacheados; mover o monkeypatch de contextily para reporting/. telegram_bot: separar templates/cliente-HTTP/maquina-de-estados(pura)/polling e endurecer os defaults de segredo inseguros de api/settings.py (fail-closed em production). Revisar a superficie de PRODUCAO do dimensionamento (excel_export/imoveis_candidatos/batch_viabilidade, consumida por dashboard/api) que a lista original de God-files omitia. Move + reaponta imports.",
+        "depends_on": "19"
+      },
+      {
+        "rank": 29,
+        "title": "Reestruturar a documentacao: split do CLAUDE.md + ARCHITECTURE.md + INDEX + particionar ledgers + indice DEC<->codigo bidirecional",
+        "theme": "Documentacao",
+        "severity": "alta",
+        "effort": "G",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "CLAUDE.md (-> <=200 linhas), docs/decisions/DEC-XXX.md + INDEX.md (novos), docs/CHANGELOG.md, ARCHITECTURE.md (raiz, novo), docs/INDEX.md, tasks/completed/ (particionar 664 KB), HANDOFF_LIDER.md + PLANO_ORQUESTRACAO_V2.md (raiz, arquivar), scripts/check_dec_index.py (novo)",
+        "proposed_approach": "Mover o ledger DEC-001..017 para um arquivo por decisao (front-matter id/status/supersede/implementado_em) + INDEX tabular; ciclos concluidos para CHANGELOG. CLAUDE.md fica curto (Norte/Regras/M1/Camadas + tabela-indice de DECs). Criar ARCHITECTURE.md (subpacotes+fronteiras+entrypoints+grafo validado por script) e docs/INDEX.md com status/dono/ultima_revisao. Arquivar orquestracao_agentes/claude.md (104 KB orfaos) + os docs orfaos da raiz (HANDOFF_LIDER/PLANO_ORQ). Particionar completed.md por trimestre. Gerar no CI um indice DEC<->codigo BIDIRECIONAL (front-matter implementado_em + indice reverso) e cruza-lo com as deny-lists do loop_guard.py (transforma 'alguem precisa lembrar de adicionar o path critico ao guard' num check gerado). Atualizar as 409 refs 'DEC-0XX' e os 9 ponteiros no mesmo movimento + lint de caminho-existe. PR classe GOVERNANCA -> exige label humana sob DEC-016.",
+        "depends_on": ""
+      },
+      {
+        "rank": 30,
+        "title": "Vetorizar hotspots de PDF/mapa (sob baseline de perf e golden de dados)",
+        "theme": "Performance",
+        "severity": "media",
+        "effort": "M",
+        "risk_m1": "leitura",
+        "quick_win": false,
+        "files": "reporting/municipal/agregacao.py (_bairros_por_hex), reporting/censo_map.py (_recortar_setores), reporting/censo_point.py",
+        "proposed_approach": "Substituir iterrows()+h3-por-linha em _bairros_por_hex (varre ~30k setores em SP) por operacao vetorizada numpy+groupby; trocar o recorte geometrico por shapely 2.0 vetorizado (from_wkb sobre array + intersection em lote) SEM tocar o metodo de intersecao setor_censitario_intersecao_area_1p5km (DEC-005 intacta). Provar equivalencia pelo golden de DADOS do rank 3 e medir contra o baseline do rank 10.",
+        "depends_on": "3, 10"
+      }
+    ],
+    "sequencing": [
+      {
+        "phase": "Fase 0 — Rede de seguranca (destrava tudo)",
+        "goal": "Construir a caracterizacao que hoje NAO existe, com as duas pernas que a critica exigiu: MANIFESTO NACIONAL por hash (unica trava do output nacional do M1) + golden de FORMULA; golden de PDF vetorial + golden de MAPA no nivel de DADOS (nao pixel); AppTest para widgets + builder/golden-data para o deck pydeck. Nada de refactor estrutural antes disto.",
+        "blocks": [
+          "Manifesto nacional por hash (provenance.py) + golden de subset da formula",
+          "Teste de contrato CLAUDE.md §3 <-> config.py + registrar M1_HEX_LAND_FRACTION_MIN",
+          "Golden dos PDFs vetoriais + golden dos mapas no nivel de DADOS",
+          "Caracterizacao AppTest (widgets) + builder/golden-data (deck pydeck)",
+          "Endurecer CI (xdist, markers, socket-block, cobertura, mypy incremental, no-DATABASE_URL)"
+        ]
+      },
+      {
+        "phase": "Fase 1 — Quick wins de alto valor (compliance, navegacao, moves quase-nulos)",
+        "goal": "Colher valor imediato: anti-PII compliance-critico primeiro, corrigir a navegacao (docs/ponteiros), remover peso morto, mover lifetime/ (NO-GO zero-importador), baseline de perf, e consolidar as duplicacoes geo/stats de maximo alcance.",
+        "blocks": [
+          "Consolidar anti-PII (common/pii.py, semantica mais estrita)",
+          "Corrigir ponteiros de doc quebrados + README stale",
+          "Purga de codigo morto e spikes",
+          "Mover lifetime/ (NO-GO) para studies/",
+          "Baseline de perf dos caminhos reais de PDF/mapa",
+          "Extrair common/geo.py (dois raios nomeados + haversine unico)",
+          "Extrair common/stats.py (harness OOF + API publica)"
+        ]
+      },
+      {
+        "phase": "Fase 2 — Utilitarios restantes, observabilidade e separacao pesquisa/producao",
+        "goal": "Terminar o pacote common/, tornar o sistema observavel e mover a pesquisa NO-GO restante para fora do wheel com checagem de alcancabilidade no CI que SUBSTANCIA a estimativa de superficie.",
+        "blocks": [
+          "Extrair common/{coerce,reporting,cli,logging}",
+          "Padronizar logging (structlog) e matar 306 print()",
+          "Politica de erro: proibir swallow silencioso + excecoes de dominio",
+          "Separar pesquisa de producao (studies/ + reachability CI)"
+        ]
+      },
+      {
+        "phase": "Fase 3 — Fronteiras de modulo e inversoes de camada",
+        "goal": "Extrair os pacotes neutros (reporting/ travado streamlit-free, geocoding/, dataset_io) para quebrar o ciclo api<->dashboard e a inversao pipeline-M1->dashboard, entao travar o grafo com import-linter. O dataset_io e critico e so seguro sob o MANIFESTO NACIONAL.",
+        "blocks": [
+          "Extrair reporting/ headless + import-linter streamlit-free pre-move",
+          "Extrair geocoding/ neutro",
+          "Corrigir inversao pipelines/m1 -> dashboard.data (dataset_io) sob manifesto nacional",
+          "Toolkit Ultra PDF compartilhado",
+          "Enforcement de fronteiras (import-linter + ruff TID + lint non-ASCII + caminho-existe)"
+        ]
+      },
+      {
+        "phase": "Fase 4 — Config/parametros como fonte unica + segregar legado M1",
+        "goal": "Eliminar a Settings duplicada e a dispersao de constantes, remover o PostGIS morto, e separar o score legado do nucleo tratando o entrelacamento de PESOS_HEX_SCORE_FINAL — tudo behavior-preserving sob manifesto+golden.",
+        "blocks": [
+          "Segregar score legado do nucleo (tratar PESOS_HEX_SCORE_FINAL entrelacado)",
+          "Fonte unica de config/parametros + PostGIS morto + rastro DEC",
+          "Contratos de coluna (schema.py) + orquestrador mercado/residual + geo de base_h3"
+        ]
+      },
+      {
+        "phase": "Fase 5 — Decomposicao dos God-files (ja cobertos por manifesto/golden/AppTest)",
+        "goal": "Quebrar os arquivos de milhares de linhas em modulos coesos por responsabilidade, agora com rede de seguranca e fronteiras ja extraidas.",
+        "blocks": [
+          "Decompor hex_enrichment.py",
+          "Decompor pages.py + components.py (God-files de UI)",
+          "Decompor censo_report.py + relatorio_municipal.py",
+          "Decompor data.py + service.py + telegram_bot.py + superficie dimensionamento"
+        ]
+      },
+      {
+        "phase": "Fase 6 — Documentacao e performance (contínuo/paralelo)",
+        "goal": "Reestruturar a base de conhecimento para caber num contexto de IA e ser navegavel, com indice DEC<->codigo bidirecional cruzado com o loop_guard, e otimizar os hotspots pontuais de PDF/mapa sob baseline e golden de dados.",
+        "blocks": [
+          "Split do CLAUDE.md + ARCHITECTURE.md + INDEX + ledgers + indice DEC<->codigo",
+          "Vetorizar hotspots de PDF/mapa"
+        ]
+      }
+    ],
+    "guardrails": [
+      "M1 READ-ONLY e inviolavel (DEC-001): NENHUM item pode alterar a semantica de score_priorizacao, dos pesos renda=0.40/pop=0.60, da formula hex_score_estrutural ou dos artefatos oficiais. Todo item risk_m1='critico' deve produzir saida byte-identica, validada pelo MANIFESTO NACIONAL (rank 1a) — NAO apenas pelo golden de subset, que so trava a formula (o score usa percentil NACIONAL sobre 1,54M hexes).",
+      "A ordem e obrigatoria: a Fase 0 completa (manifesto nacional + golden de formula + golden de PDF/dados + AppTest) precede QUALQUER extracao ou decomposicao. Em especial, a inversao dataset_io (rank 19) que materializa hexagonos_brasil_dashboard.parquet so pode embarcar sob o manifesto do artefato COMPLETO (todas as colunas + row count + hash por coluna), nunca sob o golden de 5 campos.",
+      "common/geo NAO pode colapsar num raio unico: preservar DUAS constantes nomeadas por intencao — EARTH_RADIUS_KM great-circle (~6371.0, e o 6371.0 de censo_point.py:35 e VIVO num relatorio DEC-005-protegido; mudar o raio desloca setores na borda do circulo de 1,5 km) e MERCATOR_SPHERE_M=6378137.0 (exigido pela matematica de tiles EPSG:3857). Preservar ambos byte-a-byte; unificar SO o haversine great-circle.",
+      "Extracoes de fronteira e decomposicoes de God-file sao MOVE + re-export puro: mesmas assinaturas, sem mudar logica; reexportar nomes atuais com noqa durante a transicao para nao quebrar os alvos de patch dos testes (que acoplam a caminhos de atributo, nao a comportamento).",
+      "Preservar as mitigacoes das DECs de desvio ao §2: import lazy de contextily/geocoder, fallback offline gracioso e o fato de que a carga/interatividade do dashboard nao faz fetch de rede (DEC-004/010/011) devem sobreviver a qualquer movimentacao de reporting/geocoding.",
+      "A guarda anti-PII (DEC-012) nao pode enfraquecer ao consolidar: o helper unico deve adotar a semantica MAIS ESTRITA existente — substring/set, NUNCA a variante token-regex (que pode deixar passar o que a substring pega) — e o teste test_zero_pii deve apontar para o ponto unico.",
+      "Segregar o score legado (rank 22) exige tratar o entrelacamento verificado: PESOS_HEX_SCORE_FINAL (constants.py:36-58) e computado no import a partir do legado E do oficial; mover PESOS_HEX_SCORE sem mover/recomputar o derivado FINAL muda um valor. Manter no mesmo modulo ou congelar o FINAL como literal com teste de igualdade ao calculo antigo.",
+      "Nao introduzir deploy nem dependencia de API ao vivo no dashboard de producao; auto-merge nao deploya (DEC-016). PRs de classe GOVERNANCA (CLAUDE.md §3, split do ledger DEC, CODEOWNERS, README, run-cycle.md — ranks 2, 7, 23, 29) exigem label humana (Alta 'aprovado-humano' / Critica 'critica-aprovada' do Kastaldy) e NAO podem ser empacotados num PR 'Media' auto-mergeavel.",
+      "Tocar config.py/core/constants.py exige preservar os VALORES exatos: desduplicar apenas a ESTRUTURA; qualquer mudanca de valor de parametro canonico e decisao critica com gate humano (DEC-016). O PostGIS morto (DATABASE_URL/SECRET_KEY) so pode ser removido com teste que assere que nenhum import de producao o resolve.",
+      "Respeitar a regra de acentuacao (§2): nunca acentuar identificadores (key=/enum/coluna/slug) ao renomear; acento so em labels de exibicao; e o §2 do fpdf2/latin-1 e do PNG-de-legenda ('ate' sem acento). Transformar a convencao seguida em lint que barra identificador nao-ASCII (rank 21).",
+      "Mover pesquisa para studies/ deve preservar o veredito GO/NO-GO das DECs anexado ao codigo (rastreabilidade da decisao) e mover os testes correspondentes com marker research, confirmando antes que nenhum e a UNICA cobertura de um helper tambem usado em producao."
+    ],
+    "risks_and_watchouts": [
+      "FUNDACAO: um golden de SUBSET de 2-3 UFs NAO reproduz os percentis nacionais (core/scoring.py:50-64/187-190 usa _calcular_percentil_nacional sobre 1,54M hexes) — e logicamente impossivel um subset ser 'representativo o suficiente'. A trava do output nacional DEPENDE de estender provenance.py para um manifesto por hash dos 4 artefatos completos; sem ele, os itens risk_m1='critico' (ranks 19, 22, 25) embarcam com rede parcial. Nao versionar dados reais nem PII — hashes/describe() agregados apenas.",
+      "A inversao pipelines/m1/fase1_bi_exports -> dashboard.data (rank 19) e risk_m1='critico': o artefato oficial hexagonos_brasil_dashboard.parquet flui pela funcao movida (enrich_dashboard_data via materialize_enriched_dashboard, fase1_bi_exports.py:580). Um erro na extracao altera silenciosamente a materializacao; exige validar contra o manifesto NACIONAL COMPLETO, nao contra o golden de 5 colunas.",
+      "Golden por igualdade de BYTES de PNG raster (matplotlib/PIL/freetype/zlib/contextily) e notoriamente nao-reproduzivel entre versoes de lib e OS — vai flakar no CI. So o stream vetorial do fpdf2 (relogio congelado) e deterministico; os mapas devem ser goldenizados no nivel de DADOS (band-assignment, area de setor recortado). Nao cair no anti-padrao de hash-de-imagem.",
+      "AppTest caracteriza a arvore de widgets mas NAO introspecta st.pydeck_chart nem fragments — a aba mais importante (Mapa Territorial, deck on_select='rerun') fica FORA da cobertura AppTest e depende de golden de builder/dados. Nao presumir que AppTest cobre o mapa; o rank 4 precede os ranks 25-26.",
+      "Stack de tile-server self-hosted (caddy/, data/mbtiles/, data/styles/, docker-compose.yml, scripts/generate-brazil.sh) aparece no git status do repo-pai mas NAO existe neste worktree. Se essa migracao pousar, ela SUPERSEDE o desvio online-tiles das DEC-004/010/011 e muda o alvo de reporting/basemap (rank 20). Registrar como dependencia externa em vez de assumir tiles online permanentes.",
+      "A superficie de reexport/patch acopla os testes a caminhos de atributo (streamlit_app.X, pages.build_map_figure), nao ao comportamento — decompor os God-files ANTES de migrar os testes para AppTest quebra dezenas de patches; por isso o rank 4 precede os ranks 25-28.",
+      "Mover modulos com parents[N] hardcoded (provenance.py parents[4], lifetime/pipelines parents[3]) quebra silenciosamente a resolucao de raiz do repo e do manifesto de proveniencia do M1 — trocar por descoberta robusta (subir ate pyproject.toml/.git) ANTES de qualquer movimentacao de pasta (ja embutido nos ranks 1 e 9).",
+      "O harness estatistico e importado por simbolo PRIVADO cross-pacote (demanda_revelada importa _r2/_rmse de dimensionamento.backtest_dim): a consolidacao do rank 12 deve promover a API publica e migrar os importadores no MESMO PR, senao renomear o interno quebra sem aviso (mypy strict=false nao protege).",
+      "O split do CLAUDE.md e a movimentacao de docs precisam atualizar as 409 referencias 'DEC-0XX' no codigo e os 9 ponteiros para context/handoff.md no mesmo movimento, senao troca ponteiros quebrados por outros — adicionar o lint de caminho-citado-existe junto do split; e o indice DEC<->codigo deve ser cruzado com as deny-lists do loop_guard.py.",
+      "Risco de escopo: ~30 itens; sem disciplina de PR pequeno e behavior-preserving, a esteira de agentes tende a acoplar mudancas ('aproveitar para melhorar a formula'). Cada item deve ter um unico tema e o manifesto/golden como gate; recusar qualquer PR que misture reorganizacao com mudanca de comportamento numerico. O guard exclui de proposito pages.py/components.py da classe GOVERNANCA — ate a caracterizacao AppTest (rank 4) existir, um PR 'Media' auto-mergeavel pode alterar logica de tooltip/rotulo exibido ao comite sem gate.",
+      "A imagem da API/bot nao rebuilda com mudanca em dashboard/ (filtro de path do publish-api): ao mover o motor de relatorios de dashboard/ para reporting/ (rank 17), revisar os filtros de path do CI e os Dockerfiles para o bot continuar recebendo o codigo do motor.",
+      "O PostGIS morto ainda esta cabeado em config.py raiz E no conftest.py (injeta postgresql+asyncpg), com defaults fail-open espelhados em api/settings.py — remover os tres no mesmo movimento (rank 23) e travar com teste de nao-resolucao de DATABASE_URL, senao a remocao parcial deixa um caminho de import de producao apontando para credencial default insegura."
+    ]
+  },
+  "critique": {
+    "verdict": "Roadmap forte e, no geral, aprovavel: a tese central (construir a rede de seguranca ANTES de qualquer extracao) esta correta, a disciplina do guardrail M1 READ-ONLY e consistente (todo item que toca o M1 vem marcado risk_m1 + behavior-preserving), e o sequenciamento em 6 fases e defensavel. A leitura dos achados foi fiel. POReM, a critica adversarial expoe cinco fragilidades tecnicas concretas que enfraquecem justamente a Fase 0 (a fundacao de tudo) e um punhado de reprioritizacoes/lacunas: (1) o golden do M1 sobre um SUBSET de 2-3 UFs NAO reproduz os percentis NACIONAIS (core/scoring.py:187-190 usa _calcular_percentil_nacional) — trava a formula, nao o artefato nacional, contrariando a promessa 'trava qualquer deriva numerica'; (2) golden por igualdade-de-BYTES de PDFs/PNGs de mapa e fragil (raster matplotlib/PIL/contextily nao e reproduzivel entre versoes/OS); (3) 'raio unico' de haversine e um overclaim perigoso — existem DOIS raios legitimos (great-circle ~6371 e a esfera Web Mercator 6378137.0 em censo_map.py:505/relatorio_municipal.py:732), colapsar quebra o basemap; (4) AppTest nao introspecta st.pydeck_chart, entao a aba mais importante (Mapa Territorial) fica sem caracterizacao real; (5) o golden do rank 1 (5 colunas de score) e insuficiente para proteger o rank 17 (critico), porque o artefato oficial hexagonos_brasil_dashboard.parquet e produzido ATRAVeS do enrich_dashboard_data movido (fase1_bi_exports.py:499). Nenhuma VIOLACAO dura do M1/DEC foi encontrada — o roadmap nao muda score/pesos/artefatos — mas ha varios risk_m1 sub-flagged (geo/haversine tocando censo_point vivo; escopo do golden vs rank 17) que precisam de correcao antes de executar. Veredito: adotar o roadmap, mas emendar a Fase 0 (golden nacional por manifesto de hash + golden de mapa no nivel de DADOS, nao pixel) e reordenar 2-3 itens de risco quase-nulo para mais cedo.",
+    "gaps": [
+      "FUNDACAO FURADA: o golden do M1 (rank 1) sobre subset de 2-3 UFs NAO reproduz os percentis nacionais — o score oficial usa _calcular_percentil_nacional (core/scoring.py:187-190) sobre 1,54M hexes; um subset e auto-consistente mas nao detecta mudanca que so aparece em escala nacional (empates, NaN, drift de contagem de linhas). Falta um mecanismo que trave o VALOR do artefato nacional real. O roadmap reconhece o risco em risks_and_watchouts[3] ('garantir que o subset e representativo') mas isso e logicamente impossivel: percentil de subset != percentil nacional.",
+      "provenance.py / data/outputs/_manifest.json (o UNICO artefato de reprodutibilidade do M1 hoje, ja hasheia Ultra.csv + git rev) nao e aproveitado como base do golden nacional — o roadmap reinventa golden do zero (rank 1) e so trata provenance.py como fragilidade de parents[4]. Estender o manifesto para hash+describe() por coluna dos 4 artefatos oficiais e o caminho barato que falta.",
+      "Escopo do golden (rank 1 = 5 colunas de score) vs alcance do rank 17 (critico): o artefato OFICIAL hexagonos_brasil_dashboard.parquet e materializado por fase1_bi_exports.py:499 ATRAVeS de enrich_dashboard_data (que sera movido no rank 17), agregando dezenas de colunas (labels hibridas, pop_cut). O golden precisa cobrir o schema+valores COMPLETOS desse artefato, nao so os 5 campos de score — senao o refactor critico embarca sem rede.",
+      "Infra self-hosted de tiles em andamento (caddy/, data/mbtiles/, data/styles/, docker-compose.yml, scripts/generate-brazil.sh) aparece no git status do repo-pai mas NAO existe neste worktree (verificado). Se essa migracao pousar, ela SUPERSEDE o guardrail online-tiles das DEC-004/010/011 e muda o alvo da extracao reporting/basemap (rank 18). O roadmap assume tiles online como permanentes — deveria registrar essa dependencia em vez de tratar DEC-004/011 como fixas.",
+      "Nenhum item enderecatipo base_h3_brasil.py (passo do M1 oficial que CONSOME M1_HEX_LAND_FRACTION_MIN e reimplementa haversine/overlap geometrico das DEC-002/003) — modulo central ao tema de drift do §3 e de duplicacao geo, sem finding proprio.",
+      "HANDOFF_LIDER.md e PLANO_ORQUESTRACAO_V2.md (raiz, untracked) sao docs de planejamento orfaos da mesma familia que o rank 28 (doc-restructure) mira, mas nao sao citados."
+    ],
+    "reprioritizations": [
+      "ANTECIPAR para a Fase 1 o move puro de lifetime/ (1,9k LOC, ZERO importadores de producao, NO-GO DEC-014, sem deps cross-package): e ganho de navegacao quase-nulo em risco que NAO depende do stats harness nem da extracao reporting/. Hoje esta soterrado no rank 14 (effort G, Fase 2). Idem para os 15 estudos zero-importador de demanda_revelada — o move em si e seguro desde que os testes vao junto.",
+      "Rank 10 (anti-PII) esta rotulado effort=M mas quick_win=true (inconsistencia interna) e e COMPLIANCE-critico com variantes SEMANTICAMENTE divergentes (token-regex \\b...\\b vs substring vs set — a variante token pode deixar passar o que a substring pega). e mais um fix de correcao/LGPD do que 'consolidacao' e merece liderar a Fase 1, nao ficar no meio.",
+      "Rank 5 (teste de contrato §3<->config) e o item que torna MECANICO o guardrail M1 que todo o roadmap pressupoe (hoje 'M1 read-only' e garantia social). Ele + a extensao de manifesto nacional (ver extra) deveriam ser co-primeiros da Fase 0, nao rank 5 — a propria evidencia (M1_HEX_LAND_FRACTION_MIN ausente do §3) prova que o drift ja ocorreu sem ninguem notar.",
+      "O sub-item de baseline de perf do rank 29 (medir os caminhos REAIS de PDF/mapa, hoje so com mapas=None) e observabilidade barata que NAO depende do golden e deveria ir para a Fase 1 — sem baseline, os ganhos de perf dos ranks 26/29 nao sao demonstraveis nem regressoes detectaveis."
+    ],
+    "overclaims": [
+      "Rank 1: 'asseverar ... com tolerancia zero. Trava qualquer deriva numerica dos itens que tocam o M1' — FALSO para mudancas de escala nacional. O score usa percentil NACIONAL (core/scoring.py:187-190); um golden de subset e auto-consistente dentro do subset e NAO pega mudanca de tratamento de empate/NaN/contagem que so se manifesta sobre 1,54M linhas. Trava a formula, nao o artefato. Deve ser reescrito como 'trava a estabilidade da formula' + adicionar manifesto-hash do artefato nacional.",
+      "Ranks 2 e 8: golden por 'igualdade de bytes/hash' de PDFs E de PNGs de mapa. Bytes de PNG raster (matplotlib/PIL/freetype/zlib/contextily) sao notoriamente nao-reproduziveis entre versoes de lib e OS — o hash de imagem de mapa vai flakar no CI. So o stream vetorial/texto do fpdf2 (relogio ja congelado) e deterministico; os mapas devem ser goldenizados no nivel de DADOS (band-assignment, area de setor recortado), nao pixel.",
+      "Rank 8: 'raio unico' / 'uma constante EARTH_RADIUS_M'. Verificado: coexistem QUATRO raios, sendo 6378137.0 (censo_map.py:505, relatorio_municipal.py:732/851) o raio da esfera Web Mercator EXIGIDO pela matematica de tiles EPSG:3857 — NAO e um bug a unificar. Colapsar tudo num raio quebra o alinhamento do basemap. A consolidacao deve escopar SO o haversine great-circle e excluir explicitamente a constante de mercator.",
+      "Rank 3: AppTest apresentado como a caracterizacao dos God-files 'roda o script real, inspeciona a arvore de widgets'. AppTest NAO introspecta o conteudo de st.pydeck_chart nem fragments — o coracao do Mapa Territorial (o deck do mapa, on_select='rerun') fica FORA da cobertura AppTest e permanece no nivel de builder/golden-image. Afirmar que AppTest caracteriza a aba mais importante e exagero; o proprio finding hedge ('_fake_streamlit_ctx enquanto AppTest nao cobre tudo') deveria virar a regra, nao a excecao.",
+      "Rank 19: 'so mover funcoes, sem tocar formula; behavior-preserving' subestima o acoplamento. Verificado: PESOS_HEX_SCORE_FINAL (core/constants.py:36-56) e computado NO IMPORT a partir de AMBOS o legado PESOS_HEX_SCORE['ausencia_concorrencia'] E o oficial PESOS_HEX_SCORE_ESTRUTURAL — os dois dicts estao entrelacados. O 'corte limpo' para legacy/ nao e limpo; mover PESOS_HEX_SCORE sem mover/recalcular PESOS_HEX_SCORE_FINAL muda um valor derivado.",
+      "Headline '~42% de src / ~25k LOC e pesquisa' repetido como fato — repousa em heuristica de grafo de imports + docstring, nao numa medicao de alcancabilidade. O script de reachability (rank 14) e exatamente o que substanciaria isso; ate la, apresentar como estimativa, nao fato."
+    ],
+    "guardrail_violations": [
+      "NENHUMA violacao dura encontrada (o roadmap nao muda score/pesos/formula/artefatos). Mas risk_m1 SUB-FLAGGED em rank 8 (geo): rotulado 'leitura', porem censo_point._haversine_km e VIVO (censo_point.py:124) dentro do filtro de distancia do relatorio censitario de 1,5 km — uma interface DECLARADA ESTAVEL pela DEC-005 (trilha censo do Vini). Trocar seu raio (6371.0 -> 6371.0088) desloca a inclusao de setores na borda do circulo, alterando SILENCIOSAMENTE a saida de um relatorio DEC-protegido. A unificacao geo DEVE preservar byte-a-byte o 6371.0 do censo_point (e o 6378137.0 do mercator).",
+      "Rank 17 (dataset_io, risk_m1=critico) CORRETAMENTE marcado, mas a protecao proposta (golden do rank 1, 5 colunas) e INSUFICIENTE: o artefato oficial hexagonos_brasil_dashboard.parquet flui pelo enrich_dashboard_data movido (fase1_bi_exports.py:499). Sem um golden do artefato COMPLETO (todas as colunas + row count + hash por coluna), o refactor critico embarca desprotegido. e um flanco aberto no guardrail, nao uma violacao ativa.",
+      "Ranks 5 e 28 editam caminhos classe-GOVERNANCA (CLAUDE.md §3, split do ledger DEC, CODEOWNERS). Nada os proibe, mas por DEC-016 esses PRs exigem label humana (Alta 'aprovado-humano' / Critica 'critica-aprovada' do Kastaldy) e NAO podem ser empacotados num PR 'Media' auto-mergeavel. O roadmap nao declara a criticidade/label que esses PRs de doc-governanca requerem — risco de auto-merge indevido.",
+      "Rank 10 (anti-PII): consolidar e correto, mas o helper unico DEVE adotar a semantica MAIS ESTRITA existente (substring/set), NUNCA a variante token-regex (que a evidencia diz 'pode deixar passar'). O roadmap ja pede isso em guardrails[5] — reforcar que 'tao estrito quanto a variante mais estrita' significa escolher a substring, nao a media das variantes, senao a garantia LGPD/DEC-012 ENFRAQUECE ao unificar."
+    ],
+    "missing_areas": [
+      "provenance.py / data/outputs/_manifest.json: o unico artefato de auditoria/reprodutibilidade do M1 (ja hasheia Ultra.csv + git rev) recebeu SO um finding de fragilidade parents[4]; seu papel como sede natural de um golden por hash dos 4 artefatos oficiais nacionais foi inteiramente perdido.",
+      "base_h3_brasil.py: modulo do M1 OFICIAL que consome M1_HEX_LAND_FRACTION_MIN (DEC-002/003, correcao do litoral) e reimplementa haversine + geometria overlap — central aos temas de drift do §3 e de duplicacao geo, sem finding dedicado (so citado de passagem).",
+      "dimensionamento/excel_export.py, imoveis_candidatos.py, batch_viabilidade.py: superficie de PRODUCAO do motor de viabilidade (consumida por dashboard/api), sem finding proprio — a lista de God-files/decomposicao do roadmap os omite.",
+      "caddy/ + data/mbtiles/ + data/styles/ + docker-compose.yml + scripts/generate-brazil.sh: stack de tile-server self-hosted presente no status do repo-pai (ausente deste worktree) que SUPERSEDERIA o desvio online-tiles das DEC-004/010/011 — nao revisado e nao antecipado pelo roadmap, que assume tiles online permanentes no rank 18.",
+      "config.py DATABASE_URL/SECRET_KEY (PostGIS morto): o roadmap flag os defaults inseguros de api/settings.py (rank 27) mas nao cruza o MESMO risco fail-open com os defaults de config.py raiz nem com o conftest.py que injeta DATABASE_URL=postgresql+asyncpg — subsistema fora do MVP ainda cabeado em config e testes.",
+      "HANDOFF_LIDER.md / PLANO_ORQUESTRACAO_V2.md (raiz, untracked): docs de planejamento orfaos da mesma familia que o rank 28 arquiva (orquestracao_agentes.md etc.), nao mencionados."
+    ],
+    "extra_recommendations": [
+      "Estender provenance.py para emitir um MANIFESTO commitado dos 4 artefatos oficiais (dtype+hash por coluna, row count, describe() agregado — ZERO PII) e um teste que exige que a regeneracao reproduza o manifesto. e a UNICA forma de travar a equivalencia byte-a-byte do output NACIONAL do M1; complementa o golden de subset (rank 1) que so trava a formula. Reusa o mecanismo de manifesto que JA existe, em vez de reinventar.",
+      "Goldenizar mapas no nivel de DADOS, nao de pixel: snapshot do vetor de band-assignment do choropleth e da tabela de areas de setor recortado (saidas numpy/geometricas deterministicas) em vez de bytes de PNG — robusto entre versoes de matplotlib/PIL, ao contrario do hash-de-imagem do rank 2.",
+      "Adicionar lint que BANE identificadores nao-ASCII (regex em conftest ou regra ruff custom) para mecanizar o guardrail de acentuacao do §2 (hoje 100% seguido mas NAO enforçado) — invariante barata que protege uma regra cuja violacao causa bug silencioso em key=/enum/CSS.",
+      "Introduzir DUAS constantes nomeadas por intencao em common/geo (EARTH_RADIUS_KM great-circle E MERCATOR_SPHERE_M=6378137.0) com docstring do PORQUE diferem — o proprio NOME impede um agente futuro de 'unificar' por engano os dois raios, endereÇando o overclaim do rank 8 de forma preventiva.",
+      "Adicionar um contrato import-linter que fixa censo_point/censo_map/censo_report/relatorio_municipal como STREAMLIT-FREE (forbidden import: streamlit) ANTES do move para reporting/ (rank 15) — assim a pre-condicao do move ('sao headless') vira invariante verificada, nao suposicao.",
+      "Tornar o indice DEC<->codigo BIDIRECIONAL e gerado no CI (front-matter implementado_em: + indice reverso) e cruza-lo com as deny-lists do loop_guard.py (DEC-016): transforma o gap 'alguem precisa lembrar de adicionar o path critico ao guard' num check gerado que lista quais DECs cada caminho critico implementa.",
+      "Para o PostGIS morto (conftest.py + config.py): alem de remover, adicionar um teste que assere que NENHUM caminho de import de producao resolve DATABASE_URL — impede reativacao silenciosa do stack legado."
+    ]
+  }
+}
