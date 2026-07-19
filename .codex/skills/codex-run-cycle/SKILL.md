@@ -3,6 +3,8 @@ name: codex-run-cycle
 description: Orchestrate the motor-de-expansao autonomous work cycle in Codex using sub-agents, handoffs, approvals, and the existing tasks/context/prompts files. Use when the user asks to run, port, adapt, or explain the Claude-style /run-cycle workflow in Codex; when a task should be executed through Block Orchestrator, Planner, Builder, and QA roles; or when Codex must coordinate autonomous sub-agents with limited task-specific context.
 ---
 
+> **[PONTEIRO]** Fluxo CANONICO da esteira = `.claude/commands/run-cycle.md` (Claude Code); em conflito, ele vence. **Governanca de merge mudou:** o portao da `main` agora e por CHECKS de CI + auto-merge por criticidade (DEC-016, `docs/decisions/DEC-016.md`), NAO "o humano mergeia sempre". Housekeeping e dual-mode (`scripts/housekeeping_move_block.py`). Ver `docs/portao_merge_orq21.md`.
+
 # Codex Run Cycle
 
 ## Purpose

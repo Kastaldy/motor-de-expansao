@@ -1,3 +1,5 @@
+> **[HISTORICO]** Guia de fases da esteira (maio/2026), superado pela DEC-016. Fluxo real: `.claude/commands/run-cycle.md` + `docs/portao_merge_orq21.md`.
+
 # Guia de Uso Prático — Sistema de Skills
 > Como operar o orquestrador autônomo em cada fase de maturidade.
 > Atualizado em: 2026-05-25
@@ -201,7 +203,7 @@ O DECISIONS.md começa com as decisões já tomadas, migradas do CLAUDE.md:
 - DEC-003: score_dominio_hibrido = clip(0.60*censitário + 0.40*residual)
 - DEC-004: Adoção da estrutura de Skills
 
-O template está em `orquestracao_claude.md`, seção DECISIONS.md.
+O template está em `docs/archive/orquestracao_claude.md`, seção DECISIONS.md.
 
 ---
 

@@ -1,3 +1,5 @@
+> **[HISTORICO]** Handoff de repositorio de maio/2026.
+
 # Handoff do repositorio
 
 Contrato curto para compartilhar o repo com a equipe e preparar o deploy Streamlit em VPS.

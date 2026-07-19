@@ -1,3 +1,5 @@
+> **[HISTORICO]** Contrato de ciclo concluido (maio/2026, raio 1.6 km). Estado atual do app em `docs/arquitetura_app_atual.md`.
+
 # Contrato: Visao Executiva Ultra e Analise Pontual de Entorno
 
 > Contrato de UX, metricas de raio e limites tecnicos para o ciclo Visao Executiva Ultra e Analise Pontual.
