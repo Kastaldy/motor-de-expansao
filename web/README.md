@@ -45,6 +45,12 @@ funil.
 No **4º passo** o botão da barra inferior deixa de ser "próxima camada" e passa a
 gerar o **Relatório Municipal** (9 páginas).
 
+O filtro de **UF e Município** é ordenado alfabeticamente e ganha um campo de
+**busca** (insensível a acento) quando há muitas opções. O painel lateral mostra
+até as **10 melhores** localidades da camada; como a lista já chega filtrada pelo
+funil (quente + residual + white space), toda recomendação é viável — se houver
+menos, a lista encurta sozinha.
+
 Escolhendo um hexágono, "Testar viabilidade deste ponto" leva para a segunda tela
 com a coordenada já carregada. Lá, os campos opcionais do imóvel (fotos, valor,
 pé-direito, vagas, tipo, observações) alimentam o **Relatório Pontual completo**.
@@ -109,8 +115,20 @@ Idênticas ao dashboard Streamlit (CLAUDE.md §5): faixas de 10 pontos via
 `RESIDUAL_SCORE_BANDS` (vermelho→verde), corte de `<5k hab` em cinza e score NaN
 com fill próprio — porte 1:1 de `dashboard/utils.score_band_to_color`. O score que
 colore muda por passo, espelhando os modos do dashboard: passo 1 → censitário,
-passos 2–3 → residual, passo 4 → M1. Os hexágonos do passo atual ganham contorno
-turquesa por cima da cor real, para o funil não sumir dentro do choropleth.
+passos 2–3 → residual, passo 4 → M1. Os hexágonos **do passo atual ficam em
+opacidade cheia e os de fora esmaecem** — um holofote no funil, sem contorno
+colorido (as 10 aberturas do passo 4 precisam se destacar no meio do mapa). Só o
+hex selecionado ganha um contorno claro.
+
+## Tooltip do hexágono
+
+Ao passar o mouse, o tooltip espelha o do dashboard Streamlit: **Município / UF**,
+**Faixa M1**, os três scores (M1, censitário, residual — o que colore o mapa no
+passo atual vem em destaque), **Habitantes**, **Renda per capita**, **Renda média
+domiciliar**, **Residual Fitness** e concorrentes no raio. A renda domiciliar usa a
+mesma fórmula do Streamlit (`renda per capita × moradores × uplift × fator
+temporal`, todos municipais); sem os parquets municipais de uplift no `data/`, cai
+no fallback nacional — igual ao Streamlit local.
 
 O basemap é o **CARTO Dark Matter** (tiles online, precedente DEC-004/DEC-010),
 com fallback gracioso ao gradiente do tema se a rede faltar — a interatividade do

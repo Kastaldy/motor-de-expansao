@@ -19,7 +19,12 @@ export interface Hex {
   /** sam_fitness_potencial, em alunos */
   sam: number | null
   pop: number | null
+  /** renda per capita (R$/mes) */
   renda: number | null
+  /** renda media domiciliar (R$/mes) = renda per capita x fator municipal */
+  renda_dom: number | null
+  /** rotulo da faixa de oportunidade M1 (ex.: "Alta") */
+  faixa: string | null
   conc: number
   ultra: number
 }

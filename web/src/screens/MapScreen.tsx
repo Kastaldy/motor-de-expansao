@@ -86,6 +86,8 @@ export default function MapScreen({
       sam: null,
       pop: null,
       renda: null,
+      renda_dom: null,
+      faixa: null,
       conc: 0,
       ultra: 0,
     }
@@ -102,6 +104,15 @@ export default function MapScreen({
   const porId = useMemo(
     () => new Map((dados?.hexes ?? []).map((h) => [h.id, h])),
     [dados],
+  )
+
+  // Municipios em ordem alfabetica no dropdown (a API os devolve por residual).
+  const opcoesMunicipio = useMemo(
+    () =>
+      [...municipios]
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+        .map((m) => ({ value: m.nome, label: m.nome })),
+    [municipios],
   )
 
   async function gerarRelatorioMunicipal() {
@@ -142,6 +153,8 @@ export default function MapScreen({
           hexes={dados.hexes}
           passo={passo}
           centro={dados.centro}
+          municipio={dados.municipio}
+          uf={dados.uf}
           selecionado={selecionado}
           onSelecionar={(h) => {
             setSelecionado(h.id)
@@ -209,7 +222,7 @@ export default function MapScreen({
             value={municipio}
             onChange={onMunicipio}
             maxWidth={200}
-            options={municipios.map((m) => ({ value: m.nome, label: m.nome }))}
+            options={opcoesMunicipio}
           />
         </label>
 
@@ -281,9 +294,20 @@ export default function MapScreen({
         <div style={{ flex: 1 }} />
 
         {dados && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'stretch',
+              background: 'var(--surf-raised)',
+              border: '1px solid var(--line-soft)',
+              borderRadius: 'var(--r-lg)',
+              overflow: 'hidden',
+            }}
+          >
             <Metrica rotulo="hexágonos" valor={num(dados.n_hex_total)} />
+            <MetricaDivisor />
             <Metrica rotulo="residual" valor={alunos(dados.resumo.residual_total)} />
+            <MetricaDivisor />
             <Metrica
               rotulo="espaço p/ academias"
               valor={num(dados.resumo.espaco_academias)}
@@ -481,28 +505,47 @@ function Metrica({
   destaque?: boolean
 }) {
   return (
-    <div style={{ textAlign: 'right' }}>
+    <div
+      style={{
+        padding: '6px 15px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+        background: destaque ? 'var(--ac-a08)' : 'transparent',
+      }}
+    >
       <div
         className="num"
         style={{
-          font: '700 14px/1 var(--f-num)',
-          color: destaque ? 'var(--ac-text)' : 'var(--tx-strong)',
+          font: '700 18px/1 var(--f-num)',
+          color: destaque ? 'var(--ac-text)' : 'var(--tx-max)',
         }}
       >
         {valor}
       </div>
       <div
         style={{
-          font: '400 10px/1 var(--f-ui)',
-          color: 'var(--tx-sub)',
-          marginTop: 4,
+          font: '600 9px/1 var(--f-ui)',
+          color: destaque ? 'var(--ac-text)' : 'var(--tx-label)',
           textTransform: 'uppercase',
-          letterSpacing: '.05em',
+          letterSpacing: '.06em',
+          whiteSpace: 'nowrap',
         }}
       >
         {rotulo}
       </div>
     </div>
+  )
+}
+
+function MetricaDivisor() {
+  return (
+    <span
+      aria-hidden
+      style={{ width: 1, background: 'var(--line-soft)', alignSelf: 'stretch' }}
+    />
   )
 }
 

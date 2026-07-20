@@ -6,7 +6,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-import { alunos, num } from '../lib/format'
+import { alunos, brl, num } from '../lib/format'
 import {
   DISCARDED_FILL,
   HEX_FILL_ALPHA,
@@ -45,18 +45,31 @@ function scoreDoPasso(h: Hex, passoN: number): number | null {
   return h.res // score_oportunidade_residual
 }
 
-/** Precedencia do dashboard: pop<5k vence, senao NaN, senao faixa de score. */
-function fillDoHex(h: Hex, passoN: number): RGBA {
-  if (h.pop !== null && h.pop < POP_MIN_ACIONAVEL) return [...DISCARDED_FILL]
-  const score = scoreDoPasso(h, passoN)
-  if (score === null) return [...NAN_SCORE_FILL]
-  return scoreBandToColor(score, HEX_FILL_ALPHA)
+/** Opacidade relativa dos hexes FORA do passo atual. O funil vira um holofote nos
+ *  hexes da camada — sem precisar de borda colorida (pedido do Felipe: tirar as
+ *  bordas azuis). Sem isso, as 10 aberturas do passo 4 sumiriam no meio do mapa. */
+const DIM_FORA_DO_PASSO = 0.5
+
+/** Precedencia do dashboard: pop<5k vence, senao NaN, senao faixa de score.
+ *  Hexes fora do passo atual entram esmaecidos (holofote no funil). */
+function fillDoHex(h: Hex, passoN: number, noPasso: boolean): RGBA {
+  let base: RGBA
+  if (h.pop !== null && h.pop < POP_MIN_ACIONAVEL) base = [...DISCARDED_FILL]
+  else {
+    const score = scoreDoPasso(h, passoN)
+    base = score === null ? [...NAN_SCORE_FILL] : scoreBandToColor(score, HEX_FILL_ALPHA)
+  }
+  if (noPasso) return base
+  return [base[0], base[1], base[2], Math.round(base[3] * DIM_FORA_DO_PASSO)]
 }
 
 export interface HexMapProps {
   hexes: Hex[]
   passo: Passo
   centro: { lat: number | null; lng: number | null }
+  /** Nome do municipio carregado — cabecalho do tooltip (como o Streamlit). */
+  municipio?: string
+  uf?: string
   selecionado: string | null
   onSelecionar: (h: Hex) => void
   searchPin: SearchPin | null
@@ -76,6 +89,8 @@ export default function HexMap({
   hexes,
   passo,
   centro,
+  municipio,
+  uf,
   selecionado,
   onSelecionar,
   searchPin,
@@ -131,19 +146,17 @@ export default function HexMap({
         extruded: false,
         filled: true,
         stroked: true,
-        getFillColor: (d) => fillDoHex(d, passo.n),
-        getLineColor: (d) => {
-          if (d.id === selecionado) return [238, 243, 248, 255]
-          if (destaque.has(d.id)) return [53, 201, 214, 210]
-          return [8, 11, 16, 60]
-        },
-        getLineWidth: (d) =>
-          d.id === selecionado ? 55 : destaque.has(d.id) ? 32 : 6,
+        getFillColor: (d) => fillDoHex(d, passo.n, destaque.has(d.id)),
+        // Borda neutra e fina em todos; so o hex SELECIONADO ganha contorno claro.
+        // Sem borda turquesa nos hexes do passo — o destaque agora e por opacidade.
+        getLineColor: (d) =>
+          d.id === selecionado ? [238, 243, 248, 255] : [8, 11, 16, 55],
+        getLineWidth: (d) => (d.id === selecionado ? 55 : 6),
         lineWidthUnits: 'meters',
         lineWidthMinPixels: 0.5,
         pickable: true,
         autoHighlight: true,
-        highlightColor: [53, 201, 214, 80],
+        highlightColor: [236, 240, 245, 40],
         onClick: (info) => {
           if (info.object) onSelecionar(info.object as Hex)
         },
@@ -154,8 +167,8 @@ export default function HexMap({
         },
         updateTriggers: {
           getFillColor: [passo.n],
-          getLineColor: [selecionado, passo.n],
-          getLineWidth: [selecionado, passo.n],
+          getLineColor: [selecionado],
+          getLineWidth: [selecionado],
         },
         transitions: { getFillColor: 260 },
       }),
@@ -256,21 +269,55 @@ export default function HexMap({
             backdropFilter: 'blur(16px)',
             boxShadow: '0 10px 30px -8px rgba(0,0,0,.7)',
             zIndex: 30,
-            minWidth: 168,
+            minWidth: 196,
           }}
         >
-          <div className="num" style={{ font: '600 10px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
+          {/* Cabecalho: Municipio / UF, com o hex id como legenda (como o Streamlit) */}
+          <div style={{ font: '600 12.5px/1.25 var(--f-ui)', color: 'var(--tx-max)' }}>
+            {municipio ? `${municipio}${uf ? ` / ${uf}` : ''}` : hover.h.id}
+          </div>
+          <div
+            className="num"
+            style={{ font: '500 9.5px/1 var(--f-num)', color: 'var(--tx-sub)', marginTop: 3 }}
+          >
             {hover.h.id}
           </div>
-          <Linha rotulo="Residual" valor={`${alunos(hover.h.oferta)} alunos`} forte />
-          <Linha rotulo="Score censo" valor={num(hover.h.censo, 1)} />
-          <Linha rotulo="Score M1" valor={num(hover.h.m1, 1)} />
-          <Linha rotulo="População" valor={num(hover.h.pop)} />
-          <Linha rotulo="Concorrentes" valor={num(hover.h.conc)} />
+
+          {hover.h.faixa && <Linha rotulo="Faixa M1" valor={hover.h.faixa} />}
+
+          <Divisoria />
+          {/* O score em destaque e o que colore o mapa NESTE passo (M1 / censo / residual) */}
+          <Linha rotulo="Score M1" valor={num(hover.h.m1, 1)} forte={passo.n === 4} />
+          <Linha rotulo="Score censitário" valor={num(hover.h.censo, 1)} forte={passo.n === 1} />
+          {hover.h.res !== null && (
+            <Linha
+              rotulo="Score residual"
+              valor={num(hover.h.res, 1)}
+              forte={passo.n === 2 || passo.n === 3}
+            />
+          )}
+
+          <Divisoria />
+          <Linha rotulo="Habitantes" valor={num(hover.h.pop)} />
+          <Linha rotulo="Renda per capita" valor={brl(hover.h.renda)} />
+          {hover.h.renda_dom !== null && (
+            <Linha rotulo="Renda domiciliar" valor={brl(hover.h.renda_dom)} />
+          )}
+          <Linha rotulo="Residual Fitness" valor={`${alunos(hover.h.oferta)} alunos`} />
+          <Linha rotulo="Concorrentes 2 km" valor={num(hover.h.conc)} />
           {hover.h.ultra > 0 && <Linha rotulo="Unidade Ultra" valor={num(hover.h.ultra)} />}
         </div>
       )}
     </div>
+  )
+}
+
+function Divisoria() {
+  return (
+    <div
+      aria-hidden
+      style={{ height: 1, background: 'var(--line-soft)', margin: '7px 0 1px' }}
+    />
   )
 }
 

@@ -1,10 +1,13 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 
 /* ---------------------------------------------------------------------------
    Dropdown customizado. O <select> nativo abre o popup de opcoes em BRANCO no
    Chrome/Windows por mais que se aplique color-scheme/background — ilegivel no
    tema escuro. Este componente controla o popup, então segue o tema sempre.
    Acessivel: teclado (setas, Enter, Esc), aria-listbox, fecha ao clicar fora.
+
+   Com muitas opcoes (municipios) o popup ganha um campo de BUSCA no topo, que
+   filtra por substring insensivel a acento. As opcoes ja chegam ordenadas.
    --------------------------------------------------------------------------- */
 
 export interface SelectProps {
@@ -13,15 +16,40 @@ export interface SelectProps {
   onChange: (v: string) => void
   label: string
   maxWidth?: number
+  /** Forca (ou desliga) o campo de busca. Por padrao liga com mais de 8 opcoes. */
+  buscavel?: boolean
 }
 
-export default function Select({ value, options, onChange, label, maxWidth = 150 }: SelectProps) {
+const norm = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase()
+    .trim()
+
+export default function Select({
+  value,
+  options,
+  onChange,
+  label,
+  maxWidth = 150,
+  buscavel,
+}: SelectProps) {
   const [aberto, setAberto] = useState(false)
   const [foco, setFoco] = useState(-1)
+  const [busca, setBusca] = useState('')
   const raiz = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
   const listaId = useId()
 
+  const temBusca = buscavel ?? options.length > 8
   const selecionado = options.find((o) => o.value === value)
+
+  const filtradas = useMemo(() => {
+    if (!temBusca || !busca.trim()) return options
+    const q = norm(busca)
+    return options.filter((o) => norm(o.label).includes(q))
+  }, [options, busca, temBusca])
 
   useEffect(() => {
     if (!aberto) return
@@ -32,9 +60,21 @@ export default function Select({ value, options, onChange, label, maxWidth = 150
     return () => document.removeEventListener('mousedown', fora)
   }, [aberto])
 
+  // Ao abrir: limpa a busca, posiciona o foco no valor atual e foca o input.
   useEffect(() => {
-    if (aberto) setFoco(options.findIndex((o) => o.value === value))
-  }, [aberto, options, value])
+    if (!aberto) return
+    setBusca('')
+    setFoco(options.findIndex((o) => o.value === value))
+    if (temBusca) {
+      const t = setTimeout(() => inputRef.current?.focus(), 0)
+      return () => clearTimeout(t)
+    }
+  }, [aberto, options, value, temBusca])
+
+  // Digitar na busca recomeca o foco no topo da lista filtrada.
+  useEffect(() => {
+    if (aberto && busca) setFoco(0)
+  }, [busca, aberto])
 
   // Fecha sempre que o valor selecionado muda. O setAberto(false) do escolher()
   // pode se perder na cascata de re-render do pai (troca de UF recarrega dados);
@@ -53,10 +93,16 @@ export default function Select({ value, options, onChange, label, maxWidth = 150
       setAberto(false)
       return
     }
-    if (e.key === 'Enter' || e.key === ' ') {
+    if (e.key === 'Enter') {
       e.preventDefault()
-      if (aberto && foco >= 0) escolher(options[foco].value)
-      else setAberto(true)
+      if (aberto && foco >= 0 && filtradas[foco]) escolher(filtradas[foco].value)
+      else if (!aberto) setAberto(true)
+      return
+    }
+    if (e.key === ' ' && !aberto) {
+      // Espaco so abre quando fechado; aberto com busca, o espaco e texto.
+      e.preventDefault()
+      setAberto(true)
       return
     }
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -65,8 +111,9 @@ export default function Select({ value, options, onChange, label, maxWidth = 150
         setAberto(true)
         return
       }
+      if (!filtradas.length) return
       const passo = e.key === 'ArrowDown' ? 1 : -1
-      setFoco((f) => (f + passo + options.length) % options.length)
+      setFoco((f) => (f + passo + filtradas.length) % filtradas.length)
     }
   }
 
@@ -122,61 +169,103 @@ export default function Select({ value, options, onChange, label, maxWidth = 150
       </button>
 
       {aberto && (
-        <ul
-          role="listbox"
-          id={listaId}
-          aria-label={label}
+        <div
           style={{
             position: 'absolute',
             top: 'calc(100% + 4px)',
             left: 0,
             zIndex: 40,
-            margin: 0,
-            padding: 4,
-            listStyle: 'none',
             minWidth: '100%',
-            maxWidth: 260,
-            maxHeight: 320,
-            overflowY: 'auto',
+            width: 'max-content',
+            maxWidth: 300,
             background: 'var(--surf-panel)',
             border: '1px solid var(--line-mid)',
             borderRadius: 'var(--r-md)',
             backdropFilter: 'blur(16px)',
             boxShadow: '0 14px 34px -10px rgba(0,0,0,.75)',
+            overflow: 'hidden',
           }}
         >
-          {options.map((o, i) => {
-            const ativo = o.value === value
-            const emFoco = i === foco
-            return (
-              <li
-                key={o.value}
-                role="option"
-                aria-selected={ativo}
-                onMouseEnter={() => setFoco(i)}
-                // Seleciona no mousedown (antes de mouseup/click/foco): sem isto,
-                // o click do botao dispara logo apos e REABRE o dropdown.
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  escolher(o.value)
-                }}
+          {temBusca && (
+            <div style={{ padding: 6, borderBottom: '1px solid var(--line-soft)' }}>
+              <input
+                ref={inputRef}
+                value={busca}
+                onChange={(e) => setBusca(e.target.value)}
+                onKeyDown={teclado}
+                placeholder="Buscar…"
+                aria-label={`Buscar ${label}`}
                 style={{
-                  padding: '7px 9px',
+                  width: '100%',
+                  boxSizing: 'border-box',
+                  background: 'var(--surf-input)',
+                  border: '1px solid var(--line)',
                   borderRadius: 7,
-                  font: '500 12.5px/1.2 var(--f-ui)',
-                  color: ativo ? 'var(--ac-text)' : 'var(--tx-soft)',
-                  background: emFoco ? 'var(--ac-a12)' : 'transparent',
-                  cursor: 'pointer',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
+                  padding: '7px 9px',
+                  font: '500 12.5px/1 var(--f-ui)',
+                  color: 'var(--tx-strong)',
+                }}
+              />
+            </div>
+          )}
+
+          <ul
+            role="listbox"
+            id={listaId}
+            aria-label={label}
+            style={{
+              margin: 0,
+              padding: 4,
+              listStyle: 'none',
+              maxHeight: 300,
+              overflowY: 'auto',
+            }}
+          >
+            {filtradas.length === 0 ? (
+              <li
+                style={{
+                  padding: '9px',
+                  font: '400 12px/1.3 var(--f-ui)',
+                  color: 'var(--tx-muted)',
                 }}
               >
-                {o.label}
+                Nada encontrado.
               </li>
-            )
-          })}
-        </ul>
+            ) : (
+              filtradas.map((o, i) => {
+                const ativo = o.value === value
+                const emFoco = i === foco
+                return (
+                  <li
+                    key={o.value}
+                    role="option"
+                    aria-selected={ativo}
+                    onMouseEnter={() => setFoco(i)}
+                    // Seleciona no mousedown (antes de mouseup/click/foco): sem isto,
+                    // o click do botao dispara logo apos e REABRE o dropdown.
+                    onMouseDown={(e) => {
+                      e.preventDefault()
+                      escolher(o.value)
+                    }}
+                    style={{
+                      padding: '7px 9px',
+                      borderRadius: 7,
+                      font: '500 12.5px/1.2 var(--f-ui)',
+                      color: ativo ? 'var(--ac-text)' : 'var(--tx-soft)',
+                      background: emFoco ? 'var(--ac-a12)' : 'transparent',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {o.label}
+                  </li>
+                )
+              })
+            )}
+          </ul>
+        </div>
       )}
     </div>
   )

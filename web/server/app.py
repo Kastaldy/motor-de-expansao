@@ -227,6 +227,98 @@ def _num(v: Any, casas: int = 0) -> float | None:
 
 
 # ============================================================================
+# Renda media domiciliar + rotulo de faixa (enriquecimento do tooltip)
+#
+# Espelha o tooltip do dashboard Streamlit (`_renda_media_domiciliar_series` e
+# `_compute_faixa_label` em dashboard/components.py). READ-ONLY sobre o M1: so
+# leitura/exibicao, nenhum recalculo de score.
+# ============================================================================
+
+
+def _init_renda_domiciliar_paths() -> float:
+    """Reaponta os artefatos de renda domiciliar para o DATA_DIR absoluto e le o
+    FATOR_TEMPORAL_RENDA real.
+
+    No motor, `UPLIFT_COMPOSICAO_PATH`/`FATOR_TEMPORAL_RENDA_PATH` sao RELATIVOS
+    ao CWD ("data/staging/..."). Como o uvicorn do piloto sobe de web/server, eles
+    nao resolvem e o uplift/moradores/temporal cairiam no fallback NACIONAL
+    (~1.632 / ~2.79 / 1.0) — mesma pegadinha do `_BASEMAP_CACHE_DIR`. Reaponta para
+    o checkout absoluto ANTES da 1a leitura (as caches sao lazy) e devolve o fator.
+    """
+    from motor_expansao.dashboard import constants as _const
+
+    _const.UPLIFT_COMPOSICAO_PATH = STAGING_DIR / "uplift_renda_domiciliar_municipio.parquet"
+    _const.UPLIFT_COMPOSICAO_SETOR_PATH = STAGING_DIR / "uplift_composicao_setor.parquet"
+    _const.FATOR_TEMPORAL_RENDA_PATH = STAGING_DIR / "fator_temporal_renda.json"
+    _const._uplift_cache = None
+    _const._uplift_uf_cache = None
+    _const._moradores_cache = None
+    _const._moradores_uf_cache = None
+    fator, _ref = _const._carregar_fator_temporal()
+    return fator
+
+
+@functools.lru_cache(maxsize=1)
+def _fator_temporal_renda() -> float:
+    return _init_renda_domiciliar_paths()
+
+
+def _fator_domiciliar(uf: str | None, cod_municipio: str | None) -> float | None:
+    """Fator renda per capita -> renda media domiciliar do municipio.
+
+    = moradores_por_domicilio x uplift_renda_domiciliar x FATOR_TEMPORAL_RENDA
+    (todos MUNICIPAIS, como no tooltip do Streamlit — um hex res-7 cobre varios
+    setores, entao o uplift setorial nao se aplica ao hex). Um hex do piloto
+    pertence a UM municipio, entao o fator e um escalar por chamada.
+    """
+    fator_temporal = _fator_temporal_renda()  # tambem reaponta os paths (1x)
+    from motor_expansao.dashboard.constants import (
+        moradores_por_domicilio,
+        uplift_renda_domiciliar,
+    )
+
+    try:
+        return (
+            moradores_por_domicilio(uf, cod_municipio)
+            * uplift_renda_domiciliar(uf, cod_municipio)
+            * fator_temporal
+        )
+    except Exception:  # noqa: BLE001 — enriquecimento opcional, degrada gracioso
+        return None
+
+
+def _renda_domiciliar_hex(r: pd.Series, fator: float | None) -> float | None:
+    """Renda media domiciliar do hex = renda per capita x fator municipal.
+
+    NaN (tooltip em branco) quando falta renda OU cod_municipio — fiel ao contrato
+    do Streamlit, que nao exibe estimativa de nivel UF para hex sem municipio.
+    """
+    if fator is None:
+        return None
+    cod = r.get("cod_municipio")
+    if cod is None or pd.isna(cod):
+        return None
+    return _num(r.get("renda_leitura", float("nan")) * fator)
+
+
+@functools.lru_cache(maxsize=1)
+def _faixa_labels() -> dict[str, str]:
+    from motor_expansao.dashboard.constants import FAIXA_LABELS
+
+    return dict(FAIXA_LABELS)
+
+
+def _faixa_label(v: Any) -> str | None:
+    """Rotulo de exibicao da faixa de oportunidade M1 (ex.: 'alta' -> 'Alta')."""
+    try:
+        if v is None or pd.isna(v):
+            return None
+    except (TypeError, ValueError):
+        return None
+    return _faixa_labels().get(str(v), str(v))
+
+
+# ============================================================================
 # Funil narrativo — os 4 passos do mapa, calculados sobre dado real
 # ============================================================================
 
@@ -274,9 +366,10 @@ def _etiqueta(
             return "Adensar", "blue"
         return "Disputa", "red"
     if metrica == "residual":
-        # No passo 4 a leitura e a FILA, nao a intensidade.
-        if rank <= 4 and row.get("_fila"):
-            return {1: "Agora", 2: "Próximo", 3: "Fila", 4: "Espera"}[rank], None
+        # No passo 4 a leitura e a FILA, nao a intensidade. Os 3 primeiros ganham
+        # rotulo de urgencia; do 4o ao 10o e "Espera" (a fila vai ate 10).
+        if row.get("_fila"):
+            return {1: "Agora", 2: "Próximo", 3: "Fila"}.get(rank, "Espera"), None
         if v >= 6000:
             return "Alta", "green"
         if v >= 3000:
@@ -292,8 +385,14 @@ def _rank_items(
     tom: str,
     casas: int = 0,
     bairros: dict[str, str] | None = None,
+    limite: int = 10,
 ) -> list[dict[str, Any]]:
-    """Top 4 hexes por uma coluna, no formato do painel de ranking."""
+    """Top-N localidades por uma coluna, no formato do painel de ranking.
+
+    `limite` = 10: mostra ate as 10 melhores. Como o df ja chega FILTRADO pelo
+    funil (quentes / residual >= 2000 / white space), todo item e viavel por
+    construcao; se houver menos de 10 localidades distintas, a lista encurta
+    sozinha (Felipe 2026-07-20: "as 10 melhores, apenas se forem viaveis")."""
     if col not in df.columns:
         return []
     bairros = bairros or {}
@@ -330,7 +429,7 @@ def _rank_items(
                 "tom": tom_item or tom,
             }
         )
-        if len(itens) == 4:
+        if len(itens) == limite:
             break
     return itens
 
@@ -367,8 +466,16 @@ def montar_funil(
     # Passo 3 — Concorrencia: dos residuais, quais estao desguarnecidos
     white = residual[residual["n_concorrentes_est"] == 0] if len(residual) else residual
 
-    # Passo 4 — Recomendacao: fila de aberturas priorizada por residual
-    fila = white.nlargest(4, "oferta_efetiva_disponivel") if len(white) else residual.nlargest(4, "oferta_efetiva_disponivel") if len(residual) else residual
+    # Passo 4 — Recomendacao: fila de ate 10 aberturas priorizada por residual.
+    # So entra quem passou o funil (white space, senao residual >= 2000): a fila e
+    # 100% viavel; encurta sozinha quando ha menos de 10 candidatos.
+    fila = (
+        white.nlargest(10, "oferta_efetiva_disponivel")
+        if len(white)
+        else residual.nlargest(10, "oferta_efetiva_disponivel")
+        if len(residual)
+        else residual
+    )
 
     passos = [
         {
@@ -520,6 +627,10 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
     else:
         vis = sel
 
+    # Fator municipal renda per capita -> renda media domiciliar (escalar por
+    # municipio, como no tooltip do Streamlit). Calculado 1x aqui.
+    fator_dom = _fator_domiciliar(uf.upper(), cod)
+
     hexes = [
         {
             "id": r["hex_id"],
@@ -533,6 +644,8 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
             "sam": _num(r.get("sam_fitness_potencial")),
             "pop": _num(r.get("pop_leitura")),
             "renda": _num(r.get("renda_leitura")),
+            "renda_dom": _renda_domiciliar_hex(r, fator_dom),
+            "faixa": _faixa_label(r.get("faixa_oportunidade")),
             "conc": int(r.get("n_concorrentes_est") or 0),
             "ultra": int(r.get("n_ultra") or 0),
         }
