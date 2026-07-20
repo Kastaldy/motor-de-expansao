@@ -112,6 +112,9 @@ export const api = {
 
   ufs: () => pedir<{ ufs: string[] }>('/api/ufs'),
 
+  /** Visão de UF inteira: funil por UF + recomendação de municípios. */
+  ufView: (uf: string) => pedir<MunicipioPayload>(`/api/uf/${encodeURIComponent(uf)}`),
+
   municipios: (uf: string) =>
     pedir<{ uf: string; municipios: MunicipioItem[] }>(
       `/api/municipios/${encodeURIComponent(uf)}`,

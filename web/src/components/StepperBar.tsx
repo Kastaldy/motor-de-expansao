@@ -14,6 +14,8 @@ export interface StepperBarProps {
   onIr: (n: number) => void
   onGerarRelatorio: () => void
   gerando: boolean
+  /** Na visão de UF inteira o passo 4 recomenda municípios — sem relatório. */
+  nivelUf?: boolean
 }
 
 export default function StepperBar({
@@ -22,8 +24,11 @@ export default function StepperBar({
   onIr,
   onGerarRelatorio,
   gerando,
+  nivelUf = false,
 }: StepperBarProps) {
   const ultimo = atual >= 4
+  // No nível da UF, o último passo guia para escolher um município (não gera PDF).
+  const ctaUf = ultimo && nivelUf
 
   return (
     <div
@@ -146,16 +151,17 @@ export default function StepperBar({
 
       <button
         type="button"
-        onClick={ultimo ? onGerarRelatorio : () => onIr(atual + 1)}
-        disabled={gerando}
+        onClick={ctaUf ? undefined : ultimo ? onGerarRelatorio : () => onIr(atual + 1)}
+        disabled={gerando || ctaUf}
         style={{
           flexShrink: 0,
-          background: 'var(--ac)',
-          color: 'var(--ac-on)',
+          background: ctaUf ? 'var(--surf-pending)' : 'var(--ac)',
+          color: ctaUf ? 'var(--tx-muted)' : 'var(--ac-on)',
           font: '700 12px/1 var(--f-ui)',
           padding: '10px 15px',
           borderRadius: 10,
-          boxShadow: 'var(--ac-glow)',
+          boxShadow: ctaUf ? 'none' : 'var(--ac-glow)',
+          border: ctaUf ? '1px solid var(--line-strong)' : 'none',
           opacity: gerando ? 0.6 : 1,
           display: 'flex',
           alignItems: 'center',
@@ -167,6 +173,8 @@ export default function StepperBar({
             <Spinner />
             Montando o relatório…
           </>
+        ) : ctaUf ? (
+          'Escolha um município ↑'
         ) : ultimo ? (
           'Gerar Relatório Municipal ↓'
         ) : (

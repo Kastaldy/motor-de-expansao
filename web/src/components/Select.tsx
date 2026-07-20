@@ -18,6 +18,8 @@ export interface SelectProps {
   maxWidth?: number
   /** Forca (ou desliga) o campo de busca. Por padrao liga com mais de 8 opcoes. */
   buscavel?: boolean
+  /** Texto do botao quando nada esta selecionado (value sem opcao correspondente). */
+  placeholder?: string
 }
 
 const norm = (s: string) =>
@@ -34,6 +36,7 @@ export default function Select({
   label,
   maxWidth = 150,
   buscavel,
+  placeholder,
 }: SelectProps) {
   const [aberto, setAberto] = useState(false)
   const [foco, setFoco] = useState(-1)
@@ -150,7 +153,7 @@ export default function Select({
             textAlign: 'left',
           }}
         >
-          {selecionado?.label ?? value}
+          {selecionado?.label ?? placeholder ?? value}
         </span>
         <svg
           width="12"

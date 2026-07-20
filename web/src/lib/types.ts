@@ -32,6 +32,8 @@ export interface Hex {
 export interface RankItem {
   rank: number
   hex_id: string
+  /** Presente na visão de UF: clicar no item filtra para este município (drill-down). */
+  municipio?: string | null
   titulo: string
   sub: string | null
   valor: number | null
@@ -80,8 +82,10 @@ export interface Pins {
 }
 
 export interface MunicipioPayload {
+  /** "uf" = visão de estado inteiro (recomenda municípios); "municipio" = drill-down. */
+  nivel: 'uf' | 'municipio'
   uf: string
-  municipio: string
+  municipio: string | null
   n_hex_total: number
   n_hex_mapa: number
   centro: { lat: number | null; lng: number | null }

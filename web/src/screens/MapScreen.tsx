@@ -7,7 +7,7 @@ import NarrativePanel from '../components/NarrativePanel'
 import ScoreLegend from '../components/ScoreLegend'
 import Select from '../components/Select'
 import StepperBar from '../components/StepperBar'
-import { Aviso, Botao } from '../components/primitives'
+import { Botao } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
@@ -48,13 +48,32 @@ export default function MapScreen({
   const [pin, setPin] = useState<SearchPin | null>(null)
   const [buscaErro, setBuscaErro] = useState<string | null>(null)
 
-  // Trocar de municipio recomeça a história do passo 1 e limpa a busca.
+  // Trocar de UF/município recomeça a história do passo 1 e limpa a busca.
   useEffect(() => {
     setPassoN(1)
     setSelecionado(null)
     setPin(null)
     setBuscaErro(null)
   }, [uf, municipio])
+
+  const passo = dados?.passos.find((p) => p.n === passoN) ?? dados?.passos[0] ?? null
+  const nivelUf = dados?.nivel === 'uf'
+
+  const porId = useMemo(
+    () => new Map((dados?.hexes ?? []).map((h) => [h.id, h])),
+    [dados],
+  )
+
+  // Municípios do dropdown: "Todos" (volta à UF) + lista alfabética.
+  const opcoesMunicipio = useMemo(
+    () => [
+      { value: '', label: 'Todos os municípios' },
+      ...[...municipios]
+        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+        .map((m) => ({ value: m.nome, label: m.nome })),
+    ],
+    [municipios],
+  )
 
   function buscarCoordenada() {
     const c = parseCoordinate(busca)
@@ -71,8 +90,6 @@ export default function MapScreen({
 
   function estudoPontualDoPin() {
     if (!pin) return
-    // Se o hex buscado está no recorte carregado, usa os dados reais; senão,
-    // um hex sintético só com a coordenada (a viabilidade e o Pontual são geo).
     const real = porId.get(pin.hexId)
     const hex: Hex = real ?? {
       id: pin.hexId,
@@ -99,33 +116,15 @@ export default function MapScreen({
     })
   }
 
-  const passo = dados?.passos.find((p) => p.n === passoN) ?? dados?.passos[0] ?? null
-
-  const porId = useMemo(
-    () => new Map((dados?.hexes ?? []).map((h) => [h.id, h])),
-    [dados],
-  )
-
-  // Municipios em ordem alfabetica no dropdown (a API os devolve por residual).
-  const opcoesMunicipio = useMemo(
-    () =>
-      [...municipios]
-        .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
-        .map((m) => ({ value: m.nome, label: m.nome })),
-    [municipios],
-  )
-
   async function gerarRelatorioMunicipal() {
-    if (!dados) return
+    if (!dados || dados.nivel !== 'municipio' || !dados.municipio) return
     setGerando(true)
     setAviso(null)
     try {
       const { blob, filename } = await api.relatorioMunicipal(dados.uf, dados.municipio)
       baixar(blob, filename)
     } catch (e) {
-      setAviso(
-        e instanceof ApiError ? e.message : 'Não foi possível gerar o relatório.',
-      )
+      setAviso(e instanceof ApiError ? e.message : 'Não foi possível gerar o relatório.')
     } finally {
       setGerando(false)
     }
@@ -134,26 +133,29 @@ export default function MapScreen({
   function analisar(hexId: string) {
     const h = porId.get(hexId)
     if (!h || !dados) return
-    const item = dados.passos
-      .flatMap((p) => p.itens)
-      .find((i) => i.hex_id === hexId)
+    const item = dados.passos.flatMap((p) => p.itens).find((i) => i.hex_id === hexId)
     onAnalisarPonto({
       hex: h,
-      rotulo: item?.titulo ?? dados.municipio,
-      municipio: dados.municipio,
+      rotulo: item?.titulo ?? dados.municipio ?? dados.uf,
+      municipio: dados.municipio ?? '',
       uf: dados.uf,
     })
   }
 
+  // ---------------- Porta de entrada: escolha de estado ----------------
+  if (!uf) {
+    return <Landing ufs={ufs} onUf={onUf} />
+  }
+
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
-      {/* ---------------- Mapa ao fundo, ocupando tudo ---------------- */}
+      {/* ---------------- Mapa ao fundo ---------------- */}
       {dados && passo && (
         <HexMap
           hexes={dados.hexes}
           passo={passo}
           centro={dados.centro}
-          municipio={dados.municipio}
+          municipio={dados.municipio ?? undefined}
           uf={dados.uf}
           pins={dados.pins}
           selecionado={selecionado}
@@ -196,10 +198,7 @@ export default function MapScreen({
         <Divisor />
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span
-            className="num"
-            style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}
-          >
+          <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
             UF
           </span>
           <Select
@@ -212,17 +211,14 @@ export default function MapScreen({
         </label>
 
         <label style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
-          <span
-            className="num"
-            style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}
-          >
+          <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
             MUNICÍPIO
           </span>
           <Select
             label="Município"
             value={municipio}
             onChange={onMunicipio}
-            maxWidth={200}
+            maxWidth={210}
             options={opcoesMunicipio}
           />
         </label>
@@ -309,11 +305,7 @@ export default function MapScreen({
             <MetricaDivisor />
             <Metrica rotulo="residual" valor={alunos(dados.resumo.residual_total)} />
             <MetricaDivisor />
-            <Metrica
-              rotulo="espaço p/ academias"
-              valor={num(dados.resumo.espaco_academias)}
-              destaque
-            />
+            <Metrica rotulo="espaço p/ academias" valor={num(dados.resumo.espaco_academias)} destaque />
           </div>
         )}
       </header>
@@ -351,7 +343,6 @@ export default function MapScreen({
           pointerEvents: 'none',
         }}
       >
-        {/* Legenda de score — no canto inferior esquerdo, acima do stepper. */}
         {dados && passo && (
           <div
             style={{
@@ -417,15 +408,17 @@ export default function MapScreen({
         <div style={{ pointerEvents: 'auto', display: 'flex', minHeight: 0 }}>
           {carregando && !dados ? (
             <PainelMensagem>
-              Lendo a base de {uf}… A primeira leitura de uma UF carrega a partição
-              inteira e pode levar alguns segundos.
+              {nivelUf || !municipio
+                ? `Lendo o território de ${uf}…`
+                : `Lendo ${municipio}…`}{' '}
+              A primeira leitura de uma UF carrega a partição inteira e pode levar alguns segundos.
             </PainelMensagem>
           ) : erro ? (
             <PainelMensagem>
               {erro}
               <br />
-              <br />O backend do piloto responde na porta 8899. Se você abriu o app
-              sem ele, feche e use o <code>iniciar-piloto-web.cmd</code>.
+              <br />O backend do piloto responde na porta 8899. Se você abriu o app sem ele, feche e
+              use o <code>iniciar-piloto-web.cmd</code>.
             </PainelMensagem>
           ) : dados && passo ? (
             <NarrativePanel
@@ -434,6 +427,7 @@ export default function MapScreen({
               selecionado={selecionado}
               onSelecionarHex={setSelecionado}
               onAnalisar={analisar}
+              onDrillMunicipio={onMunicipio}
             />
           ) : null}
         </div>
@@ -471,18 +465,114 @@ export default function MapScreen({
             onIr={(n) => setPassoN(Math.min(4, Math.max(1, n)))}
             onGerarRelatorio={gerarRelatorioMunicipal}
             gerando={gerando}
+            nivelUf={nivelUf}
           />
         </div>
       )}
+    </div>
+  )
+}
 
-      {!dados && !carregando && !erro && (
-        <div style={{ position: 'relative', zIndex: 10, flex: 1 }}>
-          <Aviso
-            titulo="Escolha um município para começar"
-            corpo="O mapa lê os hexágonos da UF selecionada e monta a sequência de quatro camadas até a recomendação."
-          />
+/* ---------------- Porta de entrada: hero + seletor de estado ---------------- */
+
+function Landing({ ufs, onUf }: { ufs: string[]; onUf: (uf: string) => void }) {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        display: 'grid',
+        placeItems: 'center',
+        padding: 24,
+        background:
+          'radial-gradient(120% 90% at 50% 30%, var(--bg-lift) 0%, var(--bg-base) 72%)',
+      }}
+    >
+      <div style={{ maxWidth: 560, textAlign: 'center' }}>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            font: '600 11px/1 var(--f-ui)',
+            letterSpacing: '.14em',
+            textTransform: 'uppercase',
+            color: 'var(--ac-text)',
+          }}
+        >
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--ac)' }} />
+          Inteligência de Expansão · Ultra Academia
+        </span>
+
+        <h1
+          className="story"
+          style={{
+            font: '400 44px/1.05 var(--f-story)',
+            color: 'var(--tx-max)',
+            margin: '18px 0 0',
+            letterSpacing: '.005em',
+          }}
+        >
+          Por onde a Ultra deve crescer?
+        </h1>
+
+        <p
+          style={{
+            font: '400 15px/1.6 var(--f-ui)',
+            color: 'var(--tx-narrative)',
+            margin: '16px auto 0',
+            maxWidth: 460,
+          }}
+        >
+          Comece escolhendo um <strong style={{ color: 'var(--tx-strong)' }}>estado</strong>. O mapa
+          lê o território inteiro e monta a sequência de camadas — do potencial socioeconômico até os
+          municípios com mais espaço para abrir.
+        </p>
+
+        <div
+          style={{
+            marginTop: 30,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '14px 16px',
+            background: 'var(--surf-panel)',
+            border: '1px solid var(--ac-a30)',
+            borderRadius: 'var(--r-lg)',
+            backdropFilter: 'blur(16px)',
+            boxShadow: 'var(--ac-glow)',
+          }}
+        >
+          <span style={{ font: '600 13px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
+            Selecione um estado
+          </span>
+          {ufs.length ? (
+            <Select
+              label="Escolha um estado para começar"
+              value=""
+              onChange={onUf}
+              maxWidth={260}
+              buscavel
+              placeholder="Escolha…"
+              options={ufs.map((u) => ({ value: u, label: u }))}
+            />
+          ) : (
+            <span className="num" style={{ font: '500 12px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+              carregando estados…
+            </span>
+          )}
         </div>
-      )}
+
+        <p
+          style={{
+            font: '400 11.5px/1.5 var(--f-ui)',
+            color: 'var(--tx-sub)',
+            margin: '18px 0 0',
+          }}
+        >
+          27 estados · Censo 2022 (IBGE) + rede Ultra e concorrentes mapeados · camada visual read-only
+        </p>
+      </div>
     </div>
   )
 }

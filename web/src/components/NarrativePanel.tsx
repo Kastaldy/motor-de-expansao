@@ -16,6 +16,8 @@ export interface NarrativePanelProps {
   selecionado: string | null
   onSelecionarHex: (hexId: string) => void
   onAnalisar: (hexId: string) => void
+  /** Visão de UF: clicar num item (município) filtra para ele (drill-down). */
+  onDrillMunicipio?: (municipio: string) => void
   hexes: Hex[]
 }
 
@@ -24,6 +26,7 @@ export default function NarrativePanel({
   selecionado,
   onSelecionarHex,
   onAnalisar,
+  onDrillMunicipio,
 }: NarrativePanelProps) {
   return (
     <aside
@@ -128,16 +131,18 @@ export default function NarrativePanel({
         ) : (
           passo.itens.map((it) => {
             const ativo = it.hex_id === selecionado
+            const acionar = () =>
+              it.municipio ? onDrillMunicipio?.(it.municipio) : onSelecionarHex(it.hex_id)
             return (
               <div
-                key={it.hex_id}
+                key={it.municipio ?? it.hex_id}
                 role="button"
                 tabIndex={0}
-                onClick={() => onSelecionarHex(it.hex_id)}
+                onClick={acionar}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' || e.key === ' ') {
                     e.preventDefault()
-                    onSelecionarHex(it.hex_id)
+                    acionar()
                   }
                 }}
                 style={{

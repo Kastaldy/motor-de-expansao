@@ -720,6 +720,223 @@ def montar_funil(
 
 
 # ============================================================================
+# Funil por UF (visão de entrada) — recomenda MUNICÍPIOS, não hexes (WEB-12)
+# ============================================================================
+
+
+def _etiqueta_muni(
+    label: str, valor: float | None, rank: int, fila: bool = False
+) -> tuple[str, str | None]:
+    v = valor or 0
+    if fila:
+        return {1: "Agora", 2: "Próximo", 3: "Fila"}.get(rank, "Espera"), None
+    if label == "setores":
+        if v >= 30:
+            return "Polo", "blue"
+        if v >= 8:
+            return "Forte", "green"
+        return "Emergente", "gray"
+    # residual (soma municipal — patamares maiores que o de 1 hex)
+    if v >= 20000:
+        return "Alta", "green"
+    if v >= 8000:
+        return "Média", "amber"
+    return "Baixa", "gray"
+
+
+def _rank_municipios(
+    df: pd.DataFrame,
+    value_col: str | None,
+    modo: str,
+    label: str,
+    tom: str,
+    fila: bool = False,
+) -> list[dict[str, Any]]:
+    """Top-10 MUNICÍPIOS por uma métrica agregada. Cada item carrega `municipio`
+    para o front fazer o drill-down (clicar -> filtra para o município)."""
+    if not len(df) or "nome_municipio" not in df.columns:
+        return []
+    g = df.groupby("nome_municipio")
+    serie = g.size() if modo == "count" else g[value_col].sum()
+    serie = serie[serie > 0].sort_values(ascending=False).head(10)
+    itens: list[dict[str, Any]] = []
+    for i, (muni, val) in enumerate(serie.items(), 1):
+        valor = _num(val)
+        etiqueta, tom_item = _etiqueta_muni(label, valor, i, fila)
+        itens.append(
+            {
+                "rank": i,
+                "hex_id": "",
+                "municipio": str(muni),
+                "titulo": str(muni),
+                "sub": None,
+                "valor": valor,
+                "label": label,
+                "tag": etiqueta,
+                "tom": tom_item or tom,
+            }
+        )
+    return itens
+
+
+def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
+    """Os 4 passos no nível da UF inteira; o ranking recomenda MUNICÍPIOS."""
+    total = len(df_uf)
+    n_munis = int(df_uf["nome_municipio"].nunique()) if "nome_municipio" in df_uf.columns else 0
+
+    col = "score_setor_2022_calibrado"
+    if col in df_uf.columns:
+        pop = df_uf["pop_leitura"] if "pop_leitura" in df_uf.columns else float("nan")
+        quentes = df_uf[(df_uf[col] >= 70) & (pop >= POP_MIN_ACIONAVEL)]
+    else:
+        quentes = df_uf.iloc[0:0]
+
+    residual = (
+        quentes[quentes["oferta_efetiva_disponivel"] >= OFERTA_DESTAQUE_MIN]
+        if "oferta_efetiva_disponivel" in quentes.columns
+        else quentes.iloc[0:0]
+    )
+    alunos_res = _num(residual["oferta_efetiva_disponivel"].sum()) if len(residual) else 0
+    white = residual[residual["n_concorrentes_est"] == 0] if len(residual) else residual
+    base_fila = white if len(white) else residual
+    n_reco = (
+        int(base_fila.groupby("nome_municipio")["oferta_efetiva_disponivel"].sum().gt(0).sum())
+        if len(base_fila)
+        else 0
+    )
+
+    return [
+        {
+            "n": 1,
+            "mode": "censitário",
+            "titulo": "Potencial socioeconômico",
+            "narrativa": (
+                f"{uf} tem {_fmt(total)} hexágonos habitáveis em {_fmt(n_munis)} municípios. "
+                f"O censo 2022 acende {_fmt(len(quentes))} setores quentes."
+            ),
+            "funil_big": len(quentes),
+            "funil_unit": "setores quentes",
+            "funil_from": f"{_fmt(total)} hexágonos",
+            "metrica": "score",
+            "itens": _rank_municipios(quentes, None, "count", "setores", "blue"),
+            "hexes": quentes["hex_id"].tolist(),
+        },
+        {
+            "n": 2,
+            "mode": "residual fitness",
+            "titulo": "Demanda não atendida",
+            "narrativa": (
+                f"Descontando a oferta já instalada, sobram {_fmt(len(residual))} regiões com "
+                f"residual real — {_fmt(alunos_res or 0)} alunos não atendidos."
+            ),
+            "funil_big": len(residual),
+            "funil_unit": "regiões com residual",
+            "funil_from": f"{_fmt(len(quentes))} setores quentes",
+            "metrica": "residual",
+            "itens": _rank_municipios(residual, "oferta_efetiva_disponivel", "sum", "residual", "green"),
+            "hexes": residual["hex_id"].tolist(),
+        },
+        {
+            "n": 3,
+            "mode": "competitivo",
+            "titulo": "Pressão concorrencial",
+            "narrativa": (
+                f"Dessas regiões, {_fmt(len(white))} são white space puro — sem concorrente "
+                "no hexágono; as demais exigem entrar protegendo o corredor Ultra."
+            ),
+            "funil_big": len(white),
+            "funil_unit": "white spaces livres",
+            "funil_from": f"{_fmt(len(residual))} regiões",
+            "metrica": "conc. 2 km",
+            "itens": _rank_municipios(base_fila, "oferta_efetiva_disponivel", "sum", "residual", "amber"),
+            "hexes": (white["hex_id"].tolist() if len(white) else []),
+        },
+        {
+            "n": 4,
+            "mode": "recomendação",
+            "titulo": "Para onde crescer",
+            "narrativa": (
+                f"A fila de municípios para entrar: {_fmt(n_reco)} onde o residual é maior e a "
+                "rede Ultra ainda tem espaço. Clique num município para aprofundar."
+            ),
+            "funil_big": n_reco,
+            "funil_unit": "municípios na fila",
+            "funil_from": f"{_fmt(len(white))} white spaces",
+            "metrica": "residual",
+            "itens": _rank_municipios(
+                base_fila, "oferta_efetiva_disponivel", "sum", "residual", "blue", fila=True
+            ),
+            "hexes": base_fila["hex_id"].tolist(),
+        },
+    ]
+
+
+def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
+    """Serializa um hex para o mapa (compartilhado entre as rotas UF e município)."""
+    return {
+        "id": r["hex_id"],
+        "lat": _num(r["lat"], 6),
+        "lng": _num(r["lng"], 6),
+        "m1": _num(r.get("score_priorizacao"), 1),
+        "censo": _num(r.get("score_setor_2022_calibrado"), 1),
+        "hib": _num(r.get("score_expansao_hibrido"), 1),
+        "res": _num(r.get("score_oportunidade_residual"), 1),
+        "oferta": _num(r.get("oferta_efetiva_disponivel")),
+        "sam": _num(r.get("sam_fitness_potencial")),
+        "pop": _num(r.get("pop_leitura")),
+        "renda": _num(r.get("renda_leitura")),
+        "renda_dom": _renda_domiciliar_hex(r, fator_dom),
+        "faixa": _faixa_label(r.get("faixa_oportunidade")),
+        "conc": int(r.get("n_concorrentes_est") or 0),
+        "ultra": int(r.get("n_ultra") or 0),
+    }
+
+
+def _resumo(df: pd.DataFrame) -> dict[str, Any]:
+    """KPIs de topo (residual, população, score médio, concorrentes, espaço)."""
+    return {
+        "residual_total": _num(df["oferta_efetiva_disponivel"].sum()),
+        "pop_total": (
+            _num(df["pop_total_setor_2022"].sum())
+            if "pop_total_setor_2022" in df.columns
+            else None
+        ),
+        "score_m1_medio": _num(df["score_priorizacao"].mean(), 1),
+        "n_concorrentes": int(df["n_concorrentes_est"].sum()),
+        "n_ultra": int(df["n_ultra"].sum()),
+        "espaco_academias": int(
+            round(
+                df.loc[
+                    df["oferta_efetiva_disponivel"] >= OFERTA_DESTAQUE_MIN,
+                    "oferta_efetiva_disponivel",
+                ].sum()
+                / CAPACIDADE_CONCORRENTE_PADRAO
+            )
+        ),
+    }
+
+
+def _pins_ultra_bbox(df: pd.DataFrame) -> dict[str, Any]:
+    """Só os pins Ultra (a rede própria) no bbox — overview da UF sem poluir com
+    milhares de concorrentes. Os concorrentes aparecem no drill-down do município."""
+    ultra = _carregar_ultra_pontos()
+    if len(ultra):
+        lat_min, lat_max = float(df["lat"].min()), float(df["lat"].max())
+        lng_min, lng_max = float(df["lng"].min()), float(df["lng"].max())
+        ultra = ultra[ultra["lat"].between(lat_min, lat_max) & ultra["lng"].between(lng_min, lng_max)]
+    return {
+        "concorrentes": [],
+        "ultra": [
+            {"lat": _num(t.lat, 6), "lng": _num(t.lng, 6), "nome": _clean(t.nome)}
+            for t in ultra.itertuples(index=False)
+        ]
+        if len(ultra)
+        else [],
+        "icones": {"__ultra__": _icone_ultra()} if len(ultra) else {},
+    }
+
+
+# ============================================================================
 # Rotas — catalogo
 # ============================================================================
 
@@ -765,6 +982,49 @@ def municipios(uf: str) -> dict[str, Any]:
     }
 
 
+@app.get("/api/uf/{uf}")
+def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
+    """Visão de UF inteira: funil narrativo por UF + ranking de MUNICÍPIOS.
+
+    Porta de entrada do app — o operador escolhe um estado e vê a leitura
+    territorial de toda a UF; o painel recomenda municípios (clique -> drill-down).
+    READ-ONLY sobre o M1.
+    """
+    df = carregar_uf(uf)
+    passos = montar_funil_uf(df, uf.upper())
+
+    citados = {h for p in passos for h in p["hexes"][:200]}
+    if len(df) > limite:
+        base = df.nlargest(limite, "oferta_efetiva_disponivel")
+        extras = df[df["hex_id"].isin(citados - set(base["hex_id"]))]
+        vis = pd.concat([base, extras]).drop_duplicates(subset="hex_id")
+    else:
+        vis = df
+
+    # Fator domiciliar por município (poucos únicos) para a renda do tooltip.
+    fatores: dict[str, float | None] = {}
+    if "cod_municipio" in vis.columns:
+        for cod in vis["cod_municipio"].dropna().astype(str).unique():
+            fatores[cod] = _fator_domiciliar(uf.upper(), cod)
+
+    hexes = [_hex_dict(r, fatores.get(str(r.get("cod_municipio")))) for _, r in vis.iterrows()]
+    for p in passos:
+        p["hexes"] = p["hexes"][:400]
+
+    return {
+        "nivel": "uf",
+        "uf": uf.upper(),
+        "municipio": None,
+        "n_hex_total": int(len(df)),
+        "n_hex_mapa": len(hexes),
+        "centro": {"lat": _num(df["lat"].mean(), 6), "lng": _num(df["lng"].mean(), 6)},
+        "resumo": _resumo(df),
+        "passos": passos,
+        "hexes": hexes,
+        "pins": _pins_ultra_bbox(df),
+    }
+
+
 @app.get("/api/municipio/{uf}/{municipio}")
 def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
     """Hexes + funil narrativo de 4 passos, tudo sobre dado real."""
@@ -799,59 +1059,19 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
     # municipio, como no tooltip do Streamlit). Calculado 1x aqui.
     fator_dom = _fator_domiciliar(uf.upper(), cod)
 
-    hexes = [
-        {
-            "id": r["hex_id"],
-            "lat": _num(r["lat"], 6),
-            "lng": _num(r["lng"], 6),
-            "m1": _num(r.get("score_priorizacao"), 1),
-            "censo": _num(r.get("score_setor_2022_calibrado"), 1),
-            "hib": _num(r.get("score_expansao_hibrido"), 1),
-            "res": _num(r.get("score_oportunidade_residual"), 1),
-            "oferta": _num(r.get("oferta_efetiva_disponivel")),
-            "sam": _num(r.get("sam_fitness_potencial")),
-            "pop": _num(r.get("pop_leitura")),
-            "renda": _num(r.get("renda_leitura")),
-            "renda_dom": _renda_domiciliar_hex(r, fator_dom),
-            "faixa": _faixa_label(r.get("faixa_oportunidade")),
-            "conc": int(r.get("n_concorrentes_est") or 0),
-            "ultra": int(r.get("n_ultra") or 0),
-        }
-        for _, r in vis.iterrows()
-    ]
+    hexes = [_hex_dict(r, fator_dom) for _, r in vis.iterrows()]
 
     for p in passos:
         p["hexes"] = p["hexes"][:400]
 
     return {
+        "nivel": "municipio",
         "uf": uf.upper(),
         "municipio": municipio,
         "n_hex_total": int(len(sel)),
         "n_hex_mapa": len(hexes),
         "centro": {"lat": _num(sel["lat"].mean(), 6), "lng": _num(sel["lng"].mean(), 6)},
-        "resumo": {
-            "residual_total": _num(sel["oferta_efetiva_disponivel"].sum()),
-            # Somar `pop_leitura` DUPLICA: quando o hex nao tem setor censitario,
-            # ela cai no fallback municipal, que se repete em todo hex do municipio.
-            # A soma so e valida sobre a populacao por setor (real, por hex).
-            "pop_total": (
-                _num(sel["pop_total_setor_2022"].sum())
-                if "pop_total_setor_2022" in sel.columns
-                else None
-            ),
-            "score_m1_medio": _num(sel["score_priorizacao"].mean(), 1),
-            "n_concorrentes": int(sel["n_concorrentes_est"].sum()),
-            "n_ultra": int(sel["n_ultra"].sum()),
-            "espaco_academias": int(
-                round(
-                    (sel.loc[
-                        sel["oferta_efetiva_disponivel"] >= OFERTA_DESTAQUE_MIN,
-                        "oferta_efetiva_disponivel",
-                    ].sum())
-                    / CAPACIDADE_CONCORRENTE_PADRAO
-                )
-            ),
-        },
+        "resumo": _resumo(sel),
         "passos": passos,
         "hexes": hexes,
         "pins": _montar_pins(sel),

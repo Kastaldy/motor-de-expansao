@@ -20,9 +20,11 @@ export default function App() {
   const [tela, setTela] = useState<Tela>('mapa')
 
   const [ufs, setUfs] = useState<string[]>([])
-  const [uf, setUf] = useState('DF')
+  // Começa SEM estado: o app abre na porta de entrada (escolha de UF).
+  const [uf, setUf] = useState('')
   const [municipios, setMunicipios] = useState<MunicipioItem[]>([])
-  const [municipio, setMunicipio] = useState('Brasília')
+  // Vazio = visão da UF inteira; preenchido = drill-down no município.
+  const [municipio, setMunicipio] = useState('')
 
   const [dados, setDados] = useState<MunicipioPayload | null>(null)
   const [carregando, setCarregando] = useState(false)
@@ -30,7 +32,7 @@ export default function App() {
 
   const [ponto, setPonto] = useState<PontoEscolhido | null>(null)
 
-  // Catalogo de UFs, uma vez.
+  // Catálogo de UFs, uma vez.
   useEffect(() => {
     api
       .ufs()
@@ -38,36 +40,37 @@ export default function App() {
       .catch((e: ApiError) => setErro(e.message))
   }, [])
 
-  // Municipios da UF corrente.
+  // Municípios da UF corrente (alimenta o seletor do cabeçalho no drill-down).
   useEffect(() => {
+    if (!uf) {
+      setMunicipios([])
+      return
+    }
     let vivo = true
     api
       .municipios(uf)
       .then((r) => {
-        if (!vivo) return
-        setMunicipios(r.municipios)
-        // Mantem o municipio se ele existir na nova UF; senao pega o de maior residual.
-        const existe = r.municipios.some(
-          (m) => m.nome.toLowerCase() === municipio.toLowerCase(),
-        )
-        if (!existe && r.municipios.length) setMunicipio(r.municipios[0].nome)
+        if (vivo) setMunicipios(r.municipios)
       })
-      .catch((e: ApiError) => setErro(e.message))
+      .catch(() => {
+        /* o seletor de município degrada gracioso */
+      })
     return () => {
       vivo = false
     }
-    // `municipio` de proposito fora: so reage a troca de UF.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uf])
 
-  // Carga do municipio selecionado.
+  // Carga dos dados: UF inteira (sem município) ou drill-down do município.
   useEffect(() => {
-    if (!municipio) return
+    if (!uf) {
+      setDados(null)
+      return
+    }
     let vivo = true
     setCarregando(true)
     setErro(null)
-    api
-      .municipio(uf, municipio)
+    const pedido = municipio ? api.municipio(uf, municipio) : api.ufView(uf)
+    pedido
       .then((d) => {
         if (vivo) setDados(d)
       })
@@ -85,13 +88,16 @@ export default function App() {
     }
   }, [uf, municipio])
 
-  const irParaViabilidade = useCallback(
-    (p: PontoEscolhido) => {
-      setPonto(p)
-      setTela('viabilidade')
-    },
-    [],
-  )
+  // Trocar de estado recomeça na visão da UF inteira.
+  const aoTrocarUf = useCallback((u: string) => {
+    setUf(u)
+    setMunicipio('')
+  }, [])
+
+  const irParaViabilidade = useCallback((p: PontoEscolhido) => {
+    setPonto(p)
+    setTela('viabilidade')
+  }, [])
 
   return (
     <div
@@ -109,7 +115,7 @@ export default function App() {
           <MapScreen
             ufs={ufs}
             uf={uf}
-            onUf={setUf}
+            onUf={aoTrocarUf}
             municipios={municipios}
             municipio={municipio}
             onMunicipio={setMunicipio}
