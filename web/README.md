@@ -22,13 +22,20 @@ ingestão semanal — DEC-013): faturamento, alunos ativos, churn, NPS e a
 **proporção pagantes × agregadores** (Gympass/TotalPass), com o **ranking de
 unidades por faturamento**. Cada card traz a variação **vs M-1** (verde/vermelho).
 
+Há um **seletor de PERÍODO** (competência) no topo — escolha o mês a analisar
+(evita ficar preso ao mês corrente parcial); o **ranking de unidades** pode ser por
+qualquer KPI (faturamento, alunos ativos, churn, NPS, ticket); e churn/NPS mostram a
+variação em **pontos percentuais** (`pp`/`pts`), não em % relativo (menos confuso).
+
 **ETL (atenção — a base tem peculiaridades, Felipe 2026-07-20):** os dados são
 DIÁRIOS e `faturamento`/`churn`/`cancelados` **acumulam no mês (MTD) e resetam no
-dia 1**. Por isso: acumulados (faturamento) usam o valor **MTD no dia de
-referência** e o M-1 compara o **mesmo dia-do-mês** anterior (12/06 vs 12/05, justo);
-snapshots (ativos/pagantes) comparam o mesmo dia; **churn é rolling 30 dias**
-(reconstruído do cumulativo, não o MTD parcial que subestima); unidades sem dado no
-mês de referência (paradas) ficam fora. Camada PARALELA, sem PII, READ-ONLY sobre o M1.
+dia 1**. Por isso **faturamento e churn são rolling 30 dias** (reconstruídos do
+cumulativo: mês + cauda do mês anterior — o MTD parcial mostra ~metade); o M-1
+compara a janela equivalente do mês anterior (mesmo dia-do-mês); snapshots
+(ativos/pagantes) comparam o mesmo dia. **Dado sujo filtrado**: entradas
+administrativas/de teste (faturamento < R$ 20k ou churn > 100%) e unidades paradas
+ficam fora; há também uma lista de exclusão explícita (`_EXEC_EXCLUIR`). Camada
+PARALELA, sem PII, READ-ONLY sobre o M1.
 
 > **READ-ONLY sobre o M1.** Nada aqui recalcula `score_priorizacao`, pesos ou
 > `hex_score_estrutural`, e nenhum artefato oficial é escrito. A camada só lê

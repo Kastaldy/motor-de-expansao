@@ -207,6 +207,10 @@ export interface ExecTotais {
 
 export interface ExecutivaPayload {
   uf: string
+  /** competência selecionada, ex.: "2026-06" */
+  mes: string | null
+  /** competências disponíveis (mais recentes primeiro), ex.: ["2026-06","2026-05",…] */
+  meses: string[]
   /** dia de referência (MTD), ex.: "12/06/2026" */
   referencia: string | null
   /** mesmo dia do mês anterior, ex.: "12/05/2026" */

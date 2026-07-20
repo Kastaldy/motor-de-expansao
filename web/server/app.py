@@ -1406,6 +1406,9 @@ GROWTH_PARQUET = STAGING_DIR / "growth_api_historico.parquet"
 # administrativas/de teste na base têm faturamento irrisório (R$ 1-5 mil) e churn
 # impossível (>100%) — "dado sujo" que polui ranking e totais. Academia real >> isto.
 _FAT_MIN_EXEC = 20000.0
+# Unidades a EXCLUIR da Visão Executiva (pedido de Felipe 2026-07-20): fora da rede
+# comparável. Casadas por nome normalizado (sem acento, sem sufixo " - UF").
+_EXEC_EXCLUIR = {"NATAL", "BATEL", "BACACHERI", "AGUAS CLARAS"}
 
 
 @functools.lru_cache(maxsize=1)
@@ -1456,7 +1459,7 @@ def _numf(v: Any) -> float | None:
 
 
 @app.get("/api/executiva/{uf}")
-def executiva(uf: str) -> dict[str, Any]:
+def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
     """Rede Ultra por estado, com o ETL correto da base Growth.
 
     Peculiaridades tratadas (Felipe 2026-07-20): a base é DIÁRIA e `faturamento`,
@@ -1476,8 +1479,17 @@ def executiva(uf: str) -> dict[str, Any]:
     if not len(sel):
         raise HTTPException(404, f"Sem unidades Ultra com dados de rede na UF {uf.upper()}.")
 
-    ref = df["_data"].max()
-    ry, rm, dom = int(ref.year), int(ref.month), int(ref.day)
+    # Período (competência) analisável: o operador escolhe o mês no topo — evita
+    # ficar preso ao mês corrente parcial. Default = mês mais recente com dado.
+    meses = sorted({str(p) for p in sel["_data"].dt.to_period("M").dropna().unique()}, reverse=True)
+    mes_sel = mes if (mes in meses) else (meses[0] if meses else None)
+    if mes_sel is None:
+        raise HTTPException(404, f"Sem competências com dado na UF {uf.upper()}.")
+    ry, rm = int(mes_sel[:4]), int(mes_sel[5:7])
+    # dia de referência = último dia COM DADO no mês escolhido (mês passado -> fim do
+    # mês; mês corrente -> último dia coletado).
+    ref = sel.loc[(sel["_data"].dt.year == ry) & (sel["_data"].dt.month == rm), "_data"].max()
+    dom = int(ref.day)
     py, pm = _prev_month(ry, rm)
 
     from motor_expansao.dimensionamento.growth_api_client import normalizar_unidade
@@ -1533,6 +1545,9 @@ def executiva(uf: str) -> dict[str, Any]:
 
     rows: list[dict[str, Any]] = []
     for nome_u, g in sel.groupby("unidade"):
+        nome = _clean(nome_u)
+        if normalizar_unidade(nome) in _EXEC_EXCLUIR:
+            continue  # unidade excluída da rede comparável (pedido de Felipe)
         g = g.sort_values("_data")
         cur = mtd(g, ry, rm)
         if cur is None:
@@ -1544,7 +1559,6 @@ def executiva(uf: str) -> dict[str, Any]:
         if fat_cur is None or fat_cur < _FAT_MIN_EXEC or (churn_cur is not None and churn_cur > 100.0):
             continue
         m1 = mtd(g, py, pm)
-        nome = _clean(nome_u)
         c = coords.get(normalizar_unidade(nome))
         rows.append(
             {
@@ -1617,8 +1631,13 @@ def executiva(uf: str) -> dict[str, Any]:
 
     return {
         "uf": uf.upper(),
+        "mes": mes_sel,
+        "meses": meses[:12],
         "referencia": ref.strftime("%d/%m/%Y"),
-        "referencia_m1": f"{dom:02d}/{pm:02d}/{py}",
+        # clampa o dia ao último do mês anterior (M-1 de 31/05 é 30/04, não 31/04)
+        "referencia_m1": (
+            f"{min(dom, pd.Period(freq='M', year=py, month=pm).days_in_month):02d}/{pm:02d}/{py}"
+        ),
         "centro": {
             "lat": _num(com_coord["lat"].mean(), 6) if len(com_coord) else None,
             "lng": _num(com_coord["lng"].mean(), 6) if len(com_coord) else None,

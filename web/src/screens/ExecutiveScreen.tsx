@@ -24,6 +24,13 @@ function valorKpi(u: ExecUnidade, k: OrdenarKey): string {
   return brl(u.faturamento, true)
 }
 
+const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
+function labelMes(m: string): string {
+  const [a, mm] = m.split('-')
+  const nome = MESES_PT[Number(mm) - 1] ?? mm
+  return `${nome.charAt(0).toUpperCase()}${nome.slice(1)}/${a}`
+}
+
 /* ---------------------------------------------------------------------------
    Visão Executiva — a rede Ultra REAL por estado (Growth API, camada paralela).
    Escolhe-se um estado e vê-se: pins/bolhas das unidades, alunos ativos,
@@ -40,6 +47,11 @@ export default function ExecutiveScreen({ ufs, uf, onUf }: ExecutiveScreenProps)
   const [dados, setDados] = useState<ExecutivaPayload | null>(null)
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
+  // Competência selecionada (YYYY-MM); vazio = mais recente (default do backend).
+  const [mes, setMes] = useState('')
+
+  // Trocar de estado volta para a competência mais recente.
+  useEffect(() => setMes(''), [uf])
 
   useEffect(() => {
     if (!uf) {
@@ -50,7 +62,7 @@ export default function ExecutiveScreen({ ufs, uf, onUf }: ExecutiveScreenProps)
     setCarregando(true)
     setErro(null)
     api
-      .executiva(uf)
+      .executiva(uf, mes || undefined)
       .then((d) => {
         if (vivo) setDados(d)
       })
@@ -66,7 +78,7 @@ export default function ExecutiveScreen({ ufs, uf, onUf }: ExecutiveScreenProps)
     return () => {
       vivo = false
     }
-  }, [uf])
+  }, [uf, mes])
 
   if (!uf) return <ExecLanding ufs={ufs} onUf={onUf} />
 
@@ -106,6 +118,20 @@ export default function ExecutiveScreen({ ufs, uf, onUf }: ExecutiveScreenProps)
             options={ufs.map((u) => ({ value: u, label: u }))}
           />
         </label>
+        {dados && dados.meses.length > 0 && (
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+              PERÍODO
+            </span>
+            <Select
+              label="Competência analisada"
+              value={dados.mes ?? ''}
+              onChange={setMes}
+              maxWidth={130}
+              options={dados.meses.map((m) => ({ value: m, label: labelMes(m) }))}
+            />
+          </label>
+        )}
         {dados?.referencia && (
           <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
             até {dados.referencia} · vs {dados.referencia_m1} (M-1)
@@ -196,8 +222,8 @@ function PainelExecutivo({ dados }: { dados: ExecutivaPayload }) {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 16 }}>
           <Kpi rotulo="Faturamento no mês" valor={brl(t.faturamento.atual, true)} metric={t.faturamento} bomSubindo destaque />
           <Kpi rotulo="Alunos ativos" valor={num(t.ativos.atual)} metric={t.ativos} bomSubindo />
-          <Kpi rotulo="Churn (30 dias)" valor={pct(t.churn.atual, 1)} metric={t.churn} bomSubindo={false} />
-          <Kpi rotulo="NPS médio" valor={num(t.nps.atual)} metric={t.nps} bomSubindo />
+          <Kpi rotulo="Churn (30 dias)" valor={pct(t.churn.atual, 1)} metric={t.churn} bomSubindo={false} modo="pp" />
+          <Kpi rotulo="NPS médio" valor={num(t.nps.atual)} metric={t.nps} bomSubindo modo="pts" />
         </div>
 
         {/* Split pagantes × agregadores */}
@@ -297,12 +323,15 @@ function Kpi({
   metric,
   bomSubindo,
   destaque,
+  modo = 'pct',
 }: {
   rotulo: string
   valor: string
   metric?: ExecMetric
   bomSubindo?: boolean
   destaque?: boolean
+  /** 'pct' = variação relativa (%); 'pp'/'pts' = diferença absoluta (churn/NPS). */
+  modo?: 'pct' | 'pp' | 'pts'
 }) {
   return (
     <div
@@ -319,22 +348,45 @@ function Kpi({
       <div style={{ font: '500 10px/1 var(--f-ui)', color: 'var(--tx-label)', marginTop: 5, textTransform: 'uppercase', letterSpacing: '.04em' }}>
         {rotulo}
       </div>
-      {metric && <Delta d={metric.delta_pct} bomSubindo={bomSubindo ?? true} />}
+      {metric && <Delta metric={metric} bomSubindo={bomSubindo ?? true} modo={modo} />}
     </div>
   )
 }
 
-/** Chip de variação vs M-1 — verde/vermelho conforme a métrica melhora ou piora. */
-function Delta({ d, bomSubindo }: { d: number | null; bomSubindo: boolean }) {
-  if (d == null) return null
-  const zero = Math.abs(d) < 0.05
-  const subiu = d > 0
+/** Chip de variação vs M-1. `pct` = variação relativa; `pp`/`pts` = diferença
+ *  ABSOLUTA em pontos (churn e NPS — percentual relativo confunde). Cor verde/
+ *  vermelho conforme a métrica melhora ou piora. */
+function Delta({
+  metric,
+  bomSubindo,
+  modo,
+}: {
+  metric: ExecMetric
+  bomSubindo: boolean
+  modo: 'pct' | 'pp' | 'pts'
+}) {
+  let subiu: boolean
+  let mudou: boolean
+  let texto: string
+  if (modo === 'pct') {
+    const d = metric.delta_pct
+    if (d == null) return null
+    subiu = d > 0
+    mudou = Math.abs(d) >= 0.05
+    texto = pct(Math.abs(d), 1)
+  } else {
+    if (metric.atual == null || metric.m1 == null) return null
+    const d = metric.atual - metric.m1
+    subiu = d > 0
+    mudou = Math.abs(d) >= 0.05
+    texto = `${num(Math.abs(d), 1)} ${modo === 'pp' ? 'pp' : 'pts'}`
+  }
   const bom = subiu === bomSubindo
-  const cor = zero ? 'var(--tx-muted)' : bom ? 'var(--pos, #37b26b)' : 'var(--neg, #ff5a6e)'
+  const cor = !mudou ? 'var(--tx-muted)' : bom ? 'var(--pos, #37b26b)' : 'var(--neg, #ff5a6e)'
   return (
     <div style={{ marginTop: 7, display: 'flex', alignItems: 'baseline', gap: 4 }}>
       <span className="num" style={{ font: '700 11px/1 var(--f-num)', color: cor }}>
-        {zero ? '—' : subiu ? '▲' : '▼'} {pct(Math.abs(d), 1)}
+        {!mudou ? '—' : subiu ? '▲' : '▼'} {texto}
       </span>
       <span style={{ font: '400 9px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>vs M-1</span>
     </div>

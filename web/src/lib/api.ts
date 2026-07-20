@@ -116,9 +116,12 @@ export const api = {
   /** Visão de UF inteira: funil por UF + recomendação de municípios. */
   ufView: (uf: string) => pedir<MunicipioPayload>(`/api/uf/${encodeURIComponent(uf)}`),
 
-  /** Visão Executiva: rede Ultra real agregada por estado (Growth API). */
-  executiva: (uf: string) =>
-    pedir<ExecutivaPayload>(`/api/executiva/${encodeURIComponent(uf)}`),
+  /** Visão Executiva: rede Ultra real agregada por estado (Growth API). `mes`
+   *  opcional (YYYY-MM) escolhe a competência; sem ele, a mais recente. */
+  executiva: (uf: string, mes?: string) =>
+    pedir<ExecutivaPayload>(
+      `/api/executiva/${encodeURIComponent(uf)}${mes ? `?mes=${encodeURIComponent(mes)}` : ''}`,
+    ),
 
   /** Geocoding de endereço livre -> lat/lng (Nominatim, DEC-010). */
   geocode: (q: string) =>
