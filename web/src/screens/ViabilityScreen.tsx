@@ -1,0 +1,776 @@
+import { useEffect, useRef, useState } from 'react'
+
+import type { PontoEscolhido } from '../App'
+import {
+  CascataDre,
+  FluxoCaixa,
+  RampaAlunos,
+  ReguaBreakEven,
+  Veredito,
+} from '../components/ViabilityCharts'
+import { Aviso, Botao, Eyebrow, Glass, Kpi } from '../components/primitives'
+import { api, ApiError, baixar } from '../lib/api'
+import { alunos, brl, coord, num, pct } from '../lib/format'
+import type {
+  FaixaAlunos,
+  InfoImovel,
+  MunicipioPayload,
+  ViabilidadeIn,
+  ViabilidadeOut,
+} from '../lib/types'
+
+export interface ViabilityScreenProps {
+  ponto: PontoEscolhido | null
+  dados: MunicipioPayload | null
+  onVoltar: () => void
+}
+
+const DEMANDA_PASSO = 100
+
+/** Texto -> numero opcional (aceita virgula decimal e separador de milhar). */
+function parseNum(txt: string): number | undefined {
+  const s = txt.trim().replace(/\./g, '').replace(',', '.')
+  if (!s) return undefined
+  const n = Number(s)
+  return Number.isFinite(n) ? n : undefined
+}
+
+export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProps) {
+  // --- Cenário -------------------------------------------------------------
+  const [m2, setM2] = useState(1500)
+  const [aluguel, setAluguel] = useState(20000)
+  const [demanda, setDemanda] = useState(800)
+  // A demanda vem padronizada no p50 da metragem e re-escala quando a metragem
+  // muda — até o operador mexer no ±, aí a mão dele prevalece (DEC-009: premissa).
+  const [demandaTocada, setDemandaTocada] = useState(false)
+  const [faixa, setFaixa] = useState<FaixaAlunos | null>(null)
+
+  // --- CAPEX opcional (entra no payback/ROIC; vazio = default do motor) -----
+  const [capexTxt, setCapexTxt] = useState('')
+  const [financiadoTxt, setFinanciadoTxt] = useState('')
+  const [parcelasTxt, setParcelasTxt] = useState('')
+  // Carência de aluguel: meses iniciais sem pagar aluguel (melhora payback/FCF).
+  const [carenciaTxt, setCarenciaTxt] = useState('')
+
+  // --- Dados opcionais do imóvel (entram no PDF completo) ------------------
+  const [info, setInfo] = useState<InfoImovel>({})
+  const [fotos, setFotos] = useState<File[]>([])
+
+  const [res, setRes] = useState<ViabilidadeOut | null>(null)
+  const [calculando, setCalculando] = useState(false)
+  const [gerandoPdf, setGerandoPdf] = useState(false)
+  const [erro, setErro] = useState<string | null>(null)
+
+  const inputFoto = useRef<HTMLInputElement>(null)
+
+  function montarPayload(demandaUsar: number): ViabilidadeIn {
+    const financiado = parseNum(financiadoTxt)
+    return {
+      lat: ponto!.hex.lat,
+      lng: ponto!.hex.lng,
+      m2,
+      aluguel,
+      demanda: demandaUsar,
+      capex: parseNum(capexTxt),
+      capex_financiado_pct: financiado !== undefined ? financiado / 100 : undefined,
+      capex_parcelas_meses: parseNum(parcelasTxt),
+      carencia_aluguel_meses: parseNum(carenciaTxt),
+    }
+  }
+
+  async function calcular(demandaUsar: number = demanda) {
+    if (!ponto) return
+    setCalculando(true)
+    setErro(null)
+    try {
+      const r = await api.viabilidade(montarPayload(demandaUsar))
+      setRes(r)
+    } catch (e) {
+      setErro(e instanceof ApiError ? e.message : 'Falha ao calcular a viabilidade.')
+    } finally {
+      setCalculando(false)
+    }
+  }
+
+  // Ao chegar num ponto: busca a faixa da metragem, semeia a demanda no p50 e
+  // calcula — a tela nunca abre vazia nem com o 800 fixo antigo.
+  useEffect(() => {
+    if (!ponto) return
+    let vivo = true
+    setDemandaTocada(false)
+    ;(async () => {
+      let seed = demanda
+      try {
+        const f = await api.faixaAlunos(m2)
+        if (!vivo) return
+        setFaixa(f)
+        if (f.p50 != null) seed = Math.round(f.p50)
+      } catch {
+        /* sem faixa: mantém a demanda atual */
+      }
+      if (vivo) {
+        setDemanda(seed)
+        void calcular(seed)
+      }
+    })()
+    return () => {
+      vivo = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ponto?.hex.id])
+
+  // Metragem mudou: re-busca a faixa e re-semeia a demanda no novo p50 (a menos
+  // que o operador já tenha fixado um valor manual nesta metragem).
+  useEffect(() => {
+    let vivo = true
+    const t = setTimeout(async () => {
+      try {
+        const f = await api.faixaAlunos(m2)
+        if (!vivo) return
+        setFaixa(f)
+        if (!demandaTocada && f.p50 != null) setDemanda(Math.round(f.p50))
+      } catch {
+        /* ignora */
+      }
+    }, 350)
+    return () => {
+      vivo = false
+      clearTimeout(t)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [m2])
+
+  async function gerarPdf() {
+    if (!ponto) return
+    setGerandoPdf(true)
+    setErro(null)
+    try {
+      const { blob, filename } = await api.relatorioPontual({
+        lat: ponto.hex.lat,
+        lng: ponto.hex.lng,
+        rotulo: info.nome || ponto.rotulo,
+        infoImovel: info,
+        viabilidade: res
+          ? {
+              demanda_premissa: res.demanda_premissa,
+              alunos_breakeven: res.alunos_breakeven,
+              aluguel_teto: res.aluguel_teto,
+              margem: res.dre.margem,
+              ebitda: res.dre.ebitda,
+              faturamento: res.dre.faturamento,
+              m2,
+              aluguel_pedido: aluguel,
+            }
+          : undefined,
+        fotos,
+      })
+      baixar(blob, filename)
+    } catch (e) {
+      setErro(e instanceof ApiError ? e.message : 'Falha ao gerar o relatório.')
+    } finally {
+      setGerandoPdf(false)
+    }
+  }
+
+  if (!ponto) {
+    return (
+      <Aviso
+        titulo="Nenhum ponto escolhido ainda"
+        corpo="A viabilidade testa um imóvel concreto. Volte ao mapa, chegue até a camada de recomendação e escolha um hexágono para trazer para cá."
+        acao={<Botao onClick={onVoltar}>Voltar ao mapa</Botao>}
+      />
+    )
+  }
+
+  const margem = res?.dre.margem ?? null
+  const be = res?.alunos_breakeven ?? null
+  const aprovado = margem !== null && margem > 0 && (be === null || demanda >= be)
+  const steady = Math.round(demanda * 0.69)
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        inset: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        background:
+          'radial-gradient(120% 90% at 50% 0%, var(--bg-lift) 0%, var(--bg-base) 70%)',
+      }}
+    >
+      {/* ---------------- Header ---------------- */}
+      <header
+        style={{
+          margin: '16px 16px 0',
+          padding: '9px 14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          background: 'var(--surf-chrome)',
+          border: '1px solid var(--line-soft)',
+          borderRadius: 'var(--r-xl)',
+          backdropFilter: 'blur(14px)',
+          flexWrap: 'wrap',
+        }}
+      >
+        <h1 style={{ font: '600 15px/1 var(--f-ui)', color: 'var(--tx-max)', margin: 0 }}>
+          Viabilidade do ponto
+        </h1>
+        <span aria-hidden style={{ width: 1, height: 20, background: 'var(--line-mid)' }} />
+        <button
+          type="button"
+          onClick={onVoltar}
+          className="num"
+          style={{
+            font: '500 11px/1 var(--f-num)',
+            color: 'var(--ac-chip)',
+            background: 'var(--ac-a12)',
+            border: '1px solid var(--ac-a25)',
+            borderRadius: 8,
+            padding: '6px 10px',
+          }}
+        >
+          ↩ vindo do mapa · {ponto.rotulo}
+        </button>
+
+        <div style={{ flex: 1 }} />
+
+        <span
+          className="num"
+          style={{ font: '500 12px/1 var(--f-num)', color: 'var(--tx-narrative)' }}
+        >
+          {coord(ponto.hex.lat, ponto.hex.lng)}
+        </span>
+      </header>
+
+      {/* ---------------- Corpo ---------------- */}
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          gap: 16,
+          padding: 16,
+          minHeight: 0,
+          overflow: 'hidden',
+        }}
+      >
+        {/* ---- Sidebar de premissas ---- */}
+        <aside
+          style={{
+            width: 346,
+            flexShrink: 0,
+            overflowY: 'auto',
+            padding: '18px 18px 22px',
+            background: 'var(--surf-sidebar)',
+            border: '1px solid var(--line-soft)',
+            borderRadius: 'var(--r-2xl)',
+            backdropFilter: 'blur(14px)',
+          }}
+        >
+          <Eyebrow>Cenário</Eyebrow>
+          <p
+            style={{
+              font: '400 11.5px/1.5 var(--f-ui)',
+              color: 'var(--tx-muted)',
+              margin: '9px 0 16px',
+            }}
+          >
+            Ajuste as premissas. A ferramenta testa o número que você assume — não
+            prevê a demanda.
+          </p>
+
+          <div style={{ display: 'flex', gap: 10 }}>
+            <Campo label="Metragem" sufixo="m²">
+              <input
+                type="number"
+                value={m2}
+                min={200}
+                step={50}
+                onChange={(e) => {
+                  setM2(Number(e.target.value))
+                  // Nova metragem re-escala a demanda: solta o override manual.
+                  setDemandaTocada(false)
+                }}
+              />
+            </Campo>
+            <Campo label="Aluguel" sufixo="/mês">
+              <input
+                type="number"
+                value={aluguel}
+                min={0}
+                step={1000}
+                onChange={(e) => setAluguel(Number(e.target.value))}
+              />
+            </Campo>
+          </div>
+
+          <div
+            style={{
+              marginTop: 14,
+              padding: '13px 15px',
+              background: 'var(--ac-a08)',
+              border: '1px solid var(--ac-a30)',
+              borderRadius: 'var(--r-lg)',
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'baseline',
+                marginBottom: 8,
+              }}
+            >
+              <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+                Demanda assumida
+              </span>
+              <span
+                className="num"
+                style={{
+                  font: '500 9.5px/1 var(--f-num)',
+                  color: demandaTocada ? 'var(--warn-text)' : 'var(--ac-text)',
+                }}
+              >
+                {demandaTocada ? 'ajuste manual' : 'padrão · p50'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span
+                className="num"
+                style={{ font: '700 22px/1 var(--f-num)', color: 'var(--tx-max)', flex: 1 }}
+              >
+                {alunos(demanda)}
+              </span>
+              <button
+                type="button"
+                aria-label="Diminuir demanda"
+                onClick={() => {
+                  setDemandaTocada(true)
+                  setDemanda((d) => Math.max(100, d - DEMANDA_PASSO))
+                }}
+                style={stepper}
+              >
+                −
+              </button>
+              <button
+                type="button"
+                aria-label="Aumentar demanda"
+                onClick={() => {
+                  setDemandaTocada(true)
+                  setDemanda((d) => d + DEMANDA_PASSO)
+                }}
+                style={stepper}
+              >
+                +
+              </button>
+            </div>
+            <div
+              style={{
+                font: '400 10.5px/1.4 var(--f-ui)',
+                color: 'var(--tx-sub)',
+                marginTop: 8,
+              }}
+            >
+              {faixa && faixa.p50 != null ? (
+                <>
+                  Padrão = p50 da curva tamanho→densidade para {num(m2)} m² (
+                  {alunos(faixa.p10)}–{alunos(faixa.p90)}, {faixa.n_comparaveis} comparáveis).
+                  {demandaTocada && (
+                    <>
+                      {' '}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDemandaTocada(false)
+                          if (faixa.p50 != null) setDemanda(Math.round(faixa.p50))
+                        }}
+                        style={{
+                          color: 'var(--ac-text)',
+                          font: '600 10.5px/1.4 var(--f-ui)',
+                          padding: 0,
+                          textDecoration: 'underline',
+                        }}
+                      >
+                        voltar ao p50
+                      </button>
+                    </>
+                  )}
+                </>
+              ) : (
+                'Premissa explícita do operador. Split: balcão ~69% + agregadores ~31%.'
+              )}
+            </div>
+          </div>
+
+          {/* ---- CAPEX (opcional) ---- */}
+          <div
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 16 }}
+          >
+            <Eyebrow>Investimento (CAPEX)</Eyebrow>
+            <span style={{ font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>opcional</span>
+          </div>
+          <p style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', margin: '7px 0 10px' }}>
+            Entra no payback e no ROIC. Vazio usa o padrão do modelo (R$ 2,34 mi).
+          </p>
+          <input
+            inputMode="numeric"
+            placeholder="CAPEX total (R$)"
+            value={capexTxt}
+            onChange={(e) => setCapexTxt(e.target.value)}
+          />
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <input
+              inputMode="numeric"
+              placeholder="% financiado"
+              value={financiadoTxt}
+              onChange={(e) => setFinanciadoTxt(e.target.value)}
+            />
+            <input
+              inputMode="numeric"
+              placeholder="Parcelas (meses)"
+              value={parcelasTxt}
+              onChange={(e) => setParcelasTxt(e.target.value)}
+            />
+          </div>
+          <label style={{ display: 'block', marginTop: 10 }}>
+            <input
+              inputMode="numeric"
+              placeholder="Carência de aluguel (meses)"
+              value={carenciaTxt}
+              onChange={(e) => setCarenciaTxt(e.target.value)}
+            />
+            <span style={{ display: 'block', font: '400 10px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 6 }}>
+              Meses iniciais sem pagar aluguel. Antecipa o payback; não muda a margem.
+            </span>
+          </label>
+          {res && (
+            <div
+              style={{
+                display: 'flex',
+                gap: 16,
+                marginTop: 10,
+                padding: '9px 11px',
+                background: 'var(--surf-raised)',
+                border: '1px solid var(--line-soft)',
+                borderRadius: 'var(--r-md)',
+              }}
+            >
+              <ReadoutCapex rotulo="Payback" valor={res.dre.payback == null ? 'não atinge' : `${num(res.dre.payback)} meses`} />
+              <ReadoutCapex rotulo="ROIC anual" valor={res.dre.roic == null ? 'n/d' : pct((res.dre.roic ?? 0) * 100)} />
+            </div>
+          )}
+
+          <div style={{ height: 1, background: 'var(--line-soft)', margin: '18px 0' }} />
+
+          <div
+            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}
+          >
+            <Eyebrow>Dados para o relatório</Eyebrow>
+            <span style={{ font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
+              opcional
+            </span>
+          </div>
+
+          {/* Fotos */}
+          <button
+            type="button"
+            onClick={() => inputFoto.current?.click()}
+            style={{
+              width: '100%',
+              marginTop: 12,
+              padding: '16px 12px',
+              border: '1.5px dashed var(--line-dashed)',
+              borderRadius: 11,
+              background: 'transparent',
+              color: 'var(--tx-muted)',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <path d="M12 16V4m0 0L8 8m4-4 4 4" />
+              <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+            </svg>
+            <span style={{ font: '600 12px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
+              {fotos.length ? `${fotos.length} foto(s) escolhida(s)` : 'Fotos do imóvel'}
+            </span>
+            <span style={{ font: '400 10.5px/1 var(--f-ui)' }}>até 2 · JPG ou PNG</span>
+          </button>
+          <input
+            ref={inputFoto}
+            type="file"
+            accept="image/jpeg,image/png"
+            multiple
+            hidden
+            onChange={(e) => setFotos(Array.from(e.target.files ?? []).slice(0, 2))}
+          />
+
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <input
+              placeholder="Nome / endereço do imóvel"
+              value={info.nome ?? ''}
+              onChange={(e) => setInfo({ ...info, nome: e.target.value })}
+            />
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                placeholder="Valor de venda"
+                value={info.valor_venda ?? ''}
+                onChange={(e) => setInfo({ ...info, valor_venda: e.target.value })}
+              />
+              <input
+                placeholder="Pé-direito"
+                style={{ maxWidth: 92 }}
+                value={info.pe_direito ?? ''}
+                onChange={(e) => setInfo({ ...info, pe_direito: e.target.value })}
+              />
+              <input
+                placeholder="Vagas"
+                style={{ maxWidth: 72 }}
+                value={info.vagas ?? ''}
+                onChange={(e) => setInfo({ ...info, vagas: e.target.value })}
+              />
+            </div>
+            <input
+              placeholder="Tipo do imóvel (loja, galpão…)"
+              value={info.tipo ?? ''}
+              onChange={(e) => setInfo({ ...info, tipo: e.target.value })}
+            />
+            <textarea
+              placeholder="Observações"
+              rows={2}
+              value={info.observacoes ?? ''}
+              onChange={(e) => setInfo({ ...info, observacoes: e.target.value })}
+              style={{ resize: 'vertical' }}
+            />
+          </div>
+
+          <Botao
+            onClick={() => calcular()}
+            disabled={calculando}
+            style={{ width: '100%', marginTop: 18, padding: 14, fontSize: 14 }}
+          >
+            {calculando ? 'Calculando…' : 'Recalcular viabilidade'}
+          </Botao>
+
+          <Botao
+            variante="ghost"
+            onClick={gerarPdf}
+            disabled={gerandoPdf}
+            style={{ width: '100%', marginTop: 10 }}
+            title="Relatório Pontual Censitário 1,5 km com fotos, dados do imóvel e os números da viabilidade"
+          >
+            {gerandoPdf ? 'Montando o relatório…' : 'Relatório completo em PDF ↓'}
+          </Botao>
+
+          {gerandoPdf && (
+            <p
+              style={{
+                font: '400 10.5px/1.5 var(--f-ui)',
+                color: 'var(--tx-sub)',
+                marginTop: 8,
+              }}
+            >
+              Os mapas de rua são baixados na hora; em área densa isso leva alguns
+              minutos.
+            </p>
+          )}
+        </aside>
+
+        {/* ---- Resultados ---- */}
+        <div
+          style={{
+            flex: 1,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 14,
+            minWidth: 0,
+            overflowY: 'auto',
+          }}
+        >
+          {erro && (
+            <div
+              role="alert"
+              style={{
+                padding: '12px 15px',
+                borderRadius: 'var(--r-md)',
+                background: 'rgba(255,90,110,.12)',
+                border: '1px solid rgba(255,90,110,.3)',
+                color: 'var(--neg)',
+                font: '500 12.5px/1.45 var(--f-ui)',
+              }}
+            >
+              {erro}
+            </div>
+          )}
+
+          <Veredito
+            aprovado={aprovado}
+            margem={margem}
+            demanda={demanda}
+            breakeven={be}
+          />
+
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            <Kpi
+              label="Margem EBITDA"
+              valor={pct(margem)}
+              sub="no cenário assumido"
+              tone={
+                margem === null
+                  ? undefined
+                  : margem >= 0
+                    ? 'var(--pos-text)'
+                    : 'var(--neg)'
+              }
+            />
+            <Kpi
+              label="Payback"
+              valor={
+                res?.dre.payback == null ? 'não atinge' : `${num(res.dre.payback)} meses`
+              }
+              sub={
+                res && (res.carencia_aluguel_meses ?? 0) > 0
+                  ? `com ${res.carencia_aluguel_meses}m de carência`
+                  : 'até o caixa virar'
+              }
+              tone={
+                res?.dre.payback == null
+                  ? 'var(--neg)'
+                  : res.dre.payback <= 36
+                    ? 'var(--pos-text)'
+                    : 'var(--warn-text)'
+              }
+            />
+            <Kpi
+              label="Ponto de equilíbrio"
+              valor={alunos(be)}
+              sub="alunos na maturidade"
+            />
+            <Kpi
+              label="Aluguel-teto"
+              valor={brl(res?.aluguel_teto ?? null, true)}
+              sub={`pedido: ${brl(aluguel, true)}`}
+              // `!= null` e nao truthy: teto 0 (cenario que nao paga aluguel
+              // nenhum) e o PIOR caso, mas 0 e falsy e pintava de verde.
+              tone={
+                res?.aluguel_teto == null
+                  ? undefined
+                  : aluguel > res.aluguel_teto
+                    ? 'var(--neg)'
+                    : 'var(--pos-text)'
+              }
+            />
+            <Kpi
+              label="Faixa de alunos"
+              valor={
+                res?.faixa_alunos.p50 !== null && res?.faixa_alunos.p50 !== undefined
+                  ? alunos(res.faixa_alunos.p50)
+                  : 'n/d'
+              }
+              sub={
+                res?.faixa_alunos.p10 != null && res?.faixa_alunos.p90 != null
+                  ? `p10 ${num(res.faixa_alunos.p10)} · p90 ${num(res.faixa_alunos.p90)}`
+                  : 'sem comparáveis'
+              }
+            />
+          </div>
+
+          <ReguaBreakEven demanda={demanda} breakeven={be} />
+
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            <CascataDre
+              faturamento={res?.dre.faturamento ?? null}
+              deducoes={res?.dre.deducoes ?? null}
+              impostos={res?.dre.impostos ?? null}
+              custos={res?.dre.custos ?? null}
+              ebitda={res?.dre.ebitda ?? null}
+            />
+            <div style={{ flex: 1, minWidth: 240, display: 'flex' }}>
+              <RampaAlunos steady={steady} />
+            </div>
+          </div>
+
+          <FluxoCaixa
+            serie={res?.fcf_serie ?? []}
+            payback={res?.dre.payback ?? null}
+            carencia={res?.carencia_aluguel_meses ?? 0}
+          />
+
+          {(res?.flag_fora_envelope || res?.flag_zona_morta) && (
+            <Glass style={{ padding: '13px 16px' }}>
+              <Eyebrow cor="var(--warn)" dot>
+                Guardrail
+              </Eyebrow>
+              <p
+                style={{
+                  font: '400 12.5px/1.5 var(--f-ui)',
+                  color: 'var(--tx-narrative)',
+                  margin: '8px 0 0',
+                }}
+              >
+                {res.flag_fora_envelope &&
+                  'A metragem está fora do envelope de imóveis comparáveis — a faixa de alunos é extrapolação, não leitura. '}
+                {res.flag_zona_morta && (res.motivo_zona_morta ?? 'Ponto sinalizado como zona morta.')}
+              </p>
+            </Glass>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const stepper: React.CSSProperties = {
+  width: 32,
+  height: 26,
+  borderRadius: 7,
+  background: 'var(--surf-pending)',
+  border: '1px solid var(--line-strong)',
+  color: 'var(--tx-soft)',
+  font: '600 15px/1 var(--f-ui)',
+  display: 'grid',
+  placeItems: 'center',
+}
+
+function ReadoutCapex({ rotulo, valor }: { rotulo: string; valor: string }) {
+  return (
+    <div style={{ flex: 1, minWidth: 0 }}>
+      <div style={{ font: '400 9.5px/1 var(--f-ui)', color: 'var(--tx-sub)', marginBottom: 4 }}>
+        {rotulo}
+      </div>
+      <div className="num" style={{ font: '600 13px/1 var(--f-num)', color: 'var(--tx-soft)' }}>
+        {valor}
+      </div>
+    </div>
+  )
+}
+
+function Campo({
+  label,
+  sufixo,
+  children,
+}: {
+  label: string
+  sufixo?: string
+  children: React.ReactNode
+}) {
+  return (
+    <label style={{ flex: 1, minWidth: 0 }}>
+      <span
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          font: '500 11px/1 var(--f-ui)',
+          color: 'var(--tx-label)',
+          marginBottom: 6,
+        }}
+      >
+        {label}
+        {sufixo && <span style={{ color: 'var(--tx-sub)' }}>{sufixo}</span>}
+      </span>
+      {children}
+    </label>
+  )
+}

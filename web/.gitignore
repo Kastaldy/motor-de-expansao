@@ -1,0 +1,9 @@
+# Rede de seguranca: o .gitignore da raiz ancora `data/cache/` na raiz do repo,
+# entao um cache escrito a partir de web/server escaparia dele. Ja corrigimos a
+# causa (o caminho do cache de tiles virou absoluto em server/app.py), mas
+# qualquer processo que suba com CWD aqui dentro fica coberto mesmo assim.
+data/
+node_modules/
+dist/
+.vite/
+*.local

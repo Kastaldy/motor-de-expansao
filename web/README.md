@@ -1,0 +1,138 @@
+# Piloto web — Motor de Expansão
+
+Substituição faseada do Streamlit por um app web. Duas telas: **Mapa Territorial**
+(sequência guiada de 4 camadas até a recomendação) e **Viabilidade do ponto**
+(stress-test de um imóvel real). Os dois relatórios em PDF saem daqui.
+
+> **READ-ONLY sobre o M1.** Nada aqui recalcula `score_priorizacao`, pesos ou
+> `hex_score_estrutural`, e nenhum artefato oficial é escrito. A camada só lê
+> parquet. Vale o guardrail permanente do CLAUDE.md §5.
+
+## Subir
+
+Na raiz do repositório:
+
+```
+iniciar-piloto-web.cmd
+```
+
+Sobe as duas peças e abre o browser:
+
+| Peça | Porta | O que é |
+|---|---|---|
+| front | `5000` | Vite + React + deck.gl |
+| back  | `8899` | FastAPI que embrulha as funções puras do motor |
+
+Os parquets são gitignored e vivem no checkout da `main`. O `.cmd` aponta
+`MOTOR_DATA_DIR` para lá; sobrescreva a variável se o seu caminho for outro.
+
+Manual, se preferir:
+
+```bash
+cd web/server && MOTOR_DATA_DIR=<...>/data python -m uvicorn app:app --port 8899
+cd web && npm run dev
+```
+
+## Como as telas se ligam
+
+O **mapa** conta a história em quatro camadas, e cada uma declara de onde veio e o
+que sobrou — no DF: `999 hexágonos → 99 setores quentes → 38 com residual →
+23 white spaces → 4 aberturas`. Os números saem do dado real, não são mock. O
+passo 1 (Potencial) só conta regiões com **≥ 5.000 habitantes** (mesma régua
+`POP_MIN_ACIONAVEL` do mapa, que pinta `<5k` em cinza); o corte propaga por todo o
+funil.
+
+No **4º passo** o botão da barra inferior deixa de ser "próxima camada" e passa a
+gerar o **Relatório Municipal** (9 páginas).
+
+Escolhendo um hexágono, "Testar viabilidade deste ponto" leva para a segunda tela
+com a coordenada já carregada. Lá, os campos opcionais do imóvel (fotos, valor,
+pé-direito, vagas, tipo, observações) alimentam o **Relatório Pontual completo**.
+
+## Busca por coordenada
+
+A lupa no cabeçalho aceita uma coordenada (`lat, lng`, com ponto ou vírgula
+decimal) ou um link do Google Maps. Ao buscar, o mapa voa até o ponto, **solta um
+pin**, **marca o hexágono** que o contém (H3 res-7) e abre o atalho **"Estudo
+pontual →"**, que leva à Viabilidade daquele ponto — funciona mesmo para uma
+coordenada fora do município carregado (a viabilidade e o Relatório Pontual são
+geográficos, resolvem o município no servidor). O parser é puro (sem rede) e
+valida o bounding box do Brasil.
+
+## Guardrail da demanda
+
+A demanda da Viabilidade é **premissa explícita do operador** — nunca prevista pela
+geografia (DEC-009). A ferramenta testa o número que você assume; ela não adivinha
+quantos alunos o ponto teria.
+
+Ela **vem preenchida com o p50** da curva tamanho→densidade para a metragem
+informada (dos comparáveis Ultra, depende só de `m²`) e **re-escala** quando você
+muda a metragem — até você mexer no `±`, aí o valor manual prevalece (o link
+"voltar ao p50" restaura). É um ponto de partida honesto, não uma previsão: o
+badge diz "padrão · p50" ou "ajuste manual" conforme o caso.
+
+## CAPEX e carência de aluguel
+
+A sidebar tem inputs opcionais de **investimento**: CAPEX total (R$), % financiado,
+parcelas e **carência de aluguel** (meses iniciais sem pagar aluguel). Vazios, o
+motor usa o padrão (R$ 2,34 mi, sem carência). CAPEX e carência entram no **payback**
+e no fluxo de caixa — **não na margem** (que é operacional de steady-state). O
+readout na sidebar e o **KPI Payback** (na fileira principal, para bater o olho)
+mostram o resultado.
+
+A carência é aplicada como pós-processamento da série canônica do simulador
+(`gerar_serie_mensal`): devolve o aluguel nos primeiros N meses, antecipando o
+payback. Não altera o motor.
+
+## Fluxo de caixa acumulado
+
+O gráfico de **FCF acumulado** plota a série mensal REAL dos 60 meses (do
+`gerar_serie_mensal`): mergulha com o CAPEX, sobe pela rampa de maturação e cruza a
+linha do zero no **payback** — área vermelha abaixo, verde acima, com o marcador do
+mês de virada. Reage a metragem, aluguel, demanda, CAPEX e carência.
+
+## Estrutura
+
+```
+web/
+  server/app.py         backend do piloto (não toca src/motor_expansao/api/)
+  src/
+    lib/                contrato de tipos, cliente HTTP, formatação pt-BR
+    components/         dock, mapa deck.gl, painel narrativo, stepper, gráficos
+    screens/            MapScreen, ViabilityScreen
+    styles/tokens.css   paleta e escalas
+```
+
+## Cores dos hexágonos
+
+Idênticas ao dashboard Streamlit (CLAUDE.md §5): faixas de 10 pontos via
+`RESIDUAL_SCORE_BANDS` (vermelho→verde), corte de `<5k hab` em cinza e score NaN
+com fill próprio — porte 1:1 de `dashboard/utils.score_band_to_color`. O score que
+colore muda por passo, espelhando os modos do dashboard: passo 1 → censitário,
+passos 2–3 → residual, passo 4 → M1. Os hexágonos do passo atual ganham contorno
+turquesa por cima da cor real, para o funil não sumir dentro do choropleth.
+
+O basemap é o **CARTO Dark Matter** (tiles online, precedente DEC-004/DEC-010),
+com fallback gracioso ao gradiente do tema se a rede faltar — a interatividade do
+mapa não depende de internet.
+
+## Tipografia
+
+O template de referência usa Manrope + JetBrains Mono. Aqui:
+
+- **Instrument Serif** — voz narrativa (títulos de camada, veredito)
+- **Instrument Sans** — interface
+- **IBM Plex Mono** — todo número, com figuras tabulares
+
+A separação serif/sans é o que faz a tela ler como um briefing e não como um
+painel de métricas.
+
+## O que ainda não é
+
+Piloto. O corte do Streamlit está fora de escopo e depende de decisão + DEC.
+As outras três abas do dock aparecem desabilitadas de propósito, para deixar
+explícito que isto é um recorte.
+
+Custos conhecidos: a primeira leitura de uma UF carrega a partição inteira
+(alguns segundos); o Relatório Pontual baixa tiles de rua e leva ~80 s em área
+densa.
