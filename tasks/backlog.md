@@ -1821,8 +1821,12 @@ crash); checklist da §15; validação humana de UX (<60s jr., "uma decisão por
 > **municípios**; clique = drill-down automático; "Todos os municípios" volta à UF), (b) **multi-hex** (cenário que
 > soma residual/pop/score no cliente), (c) **1 filtro global** ("MELHORES" por faixa M1). **FORA do WEB-12 agora**
 > (não pedidos): modos de score selecionáveis, overlay de vazios competitivos, Análise Pontual de Entorno dedicada,
-> régua de 8 filtros. Faltam **WEB-14** (geocoding), **WEB-15** (Visão Executiva por estado), **WEB-16** (testes+CI),
-> **WEB-17** (deploy). Nota de dado: logos de concorrentes ausentes no checkout → fallback quadrado cor+sigla.
+> régua de 8 filtros. **WEB-14 ✅ + WEB-15 ✅** (`b1996e7`): geocoding de endereço na busca do Mapa
+> (Nominatim/DEC-010) e a **Visão Executiva por estado** (aba habilitada; `/api/executiva/{uf}` agrega
+> `growth_api_historico.parquet` — faturamento/ativos/pagantes/churn/NPS + split pagantes×agregadores; bubble map
+> deck.gl das unidades). Também trocado o **ícone do app pela logo Ultra** (Dock + favicon). Felipe vai avaliar a
+> aba nova e dar feedback. Faltam **WEB-16** (testes+CI) e **WEB-17** (deploy). Nota de dado: logos de
+> concorrentes ausentes no checkout → fallback quadrado cor+sigla.
 
 ---
 
