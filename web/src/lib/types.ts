@@ -63,6 +63,22 @@ export interface Resumo {
   espaco_academias: number
 }
 
+/** Pin de mapa (concorrente ou Ultra). `rede`/`label` só em concorrentes. */
+export interface Pin {
+  lat: number
+  lng: number
+  rede?: string
+  label?: string
+  nome: string
+}
+
+/** Pins do município + ícones quadrados por rede (data URI SVG). */
+export interface Pins {
+  concorrentes: Pin[]
+  ultra: Pin[]
+  icones: Record<string, string>
+}
+
 export interface MunicipioPayload {
   uf: string
   municipio: string
@@ -72,6 +88,7 @@ export interface MunicipioPayload {
   resumo: Resumo
   passos: Passo[]
   hexes: Hex[]
+  pins: Pins
 }
 
 export interface MunicipioItem {

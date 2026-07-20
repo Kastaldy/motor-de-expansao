@@ -155,6 +155,7 @@ export default function MapScreen({
           centro={dados.centro}
           municipio={dados.municipio}
           uf={dados.uf}
+          pins={dados.pins}
           selecionado={selecionado}
           onSelecionar={(h) => {
             setSelecionado(h.id)

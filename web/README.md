@@ -55,6 +55,19 @@ Escolhendo um hexágono, "Testar viabilidade deste ponto" leva para a segunda te
 com a coordenada já carregada. Lá, os campos opcionais do imóvel (fotos, valor,
 pé-direito, vagas, tipo, observações) alimentam o **Relatório Pontual completo**.
 
+## Pins de concorrentes e Ultra
+
+Cada concorrente aparece como uma **bandeira quadrada** com a logo da rede (fundo
+branco + logo) ou, quando o PNG da logo não está disponível, um quadrado da cor da
+marca com a sigla (ex.: `SF` Smart Fit, `BF` Bluefit). As unidades **Ultra** usam a
+logo própria, um pouco maiores. São enxutos de propósito (o operador pediu "sem
+encher a tela"), filtrados ao município e com tooltip (rede + unidade) no hover.
+
+As logos das redes são `logo_<rede>.png` em `<repo>/concorrentes/` (gitignored;
+sobrescreva com `MOTOR_COMPETITORS_LOGO_DIR`). Sem elas, o fallback de sigla mantém
+o mapa legível. Os pontos vêm de `data/staging/concorrentes_mapeados.parquet` e
+`unidades_ultra_performance_hex.parquet`. Camada visual — não altera score/ranking.
+
 ## Busca por coordenada
 
 A lupa no cabeçalho aceita uma coordenada (`lat, lng`, com ponto ou vírgula

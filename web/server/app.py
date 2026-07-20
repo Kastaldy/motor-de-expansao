@@ -21,6 +21,7 @@ Subir:
 
 from __future__ import annotations
 
+import base64
 import functools
 import io
 import json
@@ -316,6 +317,173 @@ def _faixa_label(v: Any) -> str | None:
     except (TypeError, ValueError):
         return None
     return _faixa_labels().get(str(v), str(v))
+
+
+# ============================================================================
+# Pins de concorrentes e Ultra — bandeiras com logo QUADRADO (WEB-13)
+#
+# Felipe (2026-07-20): o concorrente vira apenas a bandeira com a logo em formato
+# QUADRADO, enxuta. Fallback local = quadrado da cor da marca + sigla (as logos
+# PNG das redes sao gitignored; so `logo_ultra.png` existe no checkout). Camada
+# VISUAL de apoio (CLAUDE.md §2): nao altera score/ranking/carteira/artefatos.
+# ============================================================================
+
+COMPETITOR_PIN_LIMIT = 6000  # espelha constants.COMPETITOR_PIN_LIMIT
+CONCORRENTES_PARQUET = STAGING_DIR / "concorrentes_mapeados.parquet"
+ULTRA_PERF_PARQUET = STAGING_DIR / "unidades_ultra_performance_hex.parquet"
+# Diretorio das logos PNG das redes (`logo_<rede>.png`). Canonico do motor =
+# <repo>/concorrentes (normalizar_concorrentes.CONCORRENTES_DIR); override por env.
+# As logos sao gitignored -> fallback gracioso (quadrado cor+sigla) quando ausentes.
+COMPETITORS_LOGO_DIR = Path(
+    os.environ.get("MOTOR_COMPETITORS_LOGO_DIR", str(_REPO_ROOT / "concorrentes"))
+)
+
+
+def _clean(v: Any) -> str:
+    if v is None:
+        return ""
+    try:
+        if pd.isna(v):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    return str(v).strip()
+
+
+def _svg_data_uri(svg: str) -> str:
+    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
+
+
+def _quadrado_logo(logo_path: Path | None, bg: str) -> str | None:
+    """Quadrado branco arredondado com a logo PNG encaixada. None se o PNG faltar."""
+    if logo_path is None or not logo_path.exists():
+        return None
+    try:
+        png = base64.b64encode(logo_path.read_bytes()).decode("ascii")
+    except Exception:  # noqa: BLE001
+        return None
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" '
+        'width="128" height="128" viewBox="0 0 128 128">'
+        f'<rect x="4" y="4" width="120" height="120" rx="26" fill="#FFFFFF" stroke="{bg}" stroke-width="7"/>'
+        f'<image href="data:image/png;base64,{png}" x="18" y="18" width="92" height="92" '
+        'preserveAspectRatio="xMidYMid meet"/></svg>'
+    )
+    return _svg_data_uri(svg)
+
+
+def _quadrado_sigla(short: str, bg: str, fg: str) -> str:
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">'
+        f'<rect x="4" y="4" width="120" height="120" rx="26" fill="{bg}" stroke="#FFFFFF" stroke-width="7"/>'
+        f'<text x="64" y="83" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" '
+        f'font-size="46" font-weight="800" fill="{fg}">{_clean(short)[:3] or "C"}</text></svg>'
+    )
+    return _svg_data_uri(svg)
+
+
+@functools.lru_cache(maxsize=64)
+def _icone_rede(rede: str) -> str:
+    from motor_expansao.dashboard.competitors import (
+        COMPETITOR_BRANDS,
+        COMPETITOR_LOGO_FILES,
+    )
+
+    brand = COMPETITOR_BRANDS.get(
+        rede, {"short": (rede[:3].upper() or "C"), "bg": "#64748B", "fg": "#FFFFFF"}
+    )
+    logo_file = COMPETITOR_LOGO_FILES.get(rede)
+    logo_path = COMPETITORS_LOGO_DIR / logo_file if logo_file else None
+    return _quadrado_logo(logo_path, str(brand["bg"])) or _quadrado_sigla(
+        str(brand["short"]), str(brand["bg"]), str(brand["fg"])
+    )
+
+
+@functools.lru_cache(maxsize=1)
+def _icone_ultra() -> str:
+    from motor_expansao.dashboard.competitors import ULTRA_BRAND, ULTRA_LOGO_FILE
+
+    return _quadrado_logo(ULTRA_DIR / ULTRA_LOGO_FILE, str(ULTRA_BRAND["bg"])) or _quadrado_sigla(
+        str(ULTRA_BRAND["short"]), str(ULTRA_BRAND["bg"]), str(ULTRA_BRAND["fg"])
+    )
+
+
+@functools.lru_cache(maxsize=1)
+def _carregar_concorrentes() -> pd.DataFrame:
+    """Pontos individuais de concorrentes (READ-ONLY). Vazio se o parquet faltar."""
+    cols = ["rede", "nome_unidade", "lat", "lng", "hex_id_res7"]
+    if not CONCORRENTES_PARQUET.exists():
+        return pd.DataFrame(columns=cols)
+    df = pd.read_parquet(
+        CONCORRENTES_PARQUET,
+        columns=[*cols, "flag_coord_valida"],
+    )
+    if "flag_coord_valida" in df.columns:
+        df = df[df["flag_coord_valida"].fillna(True).astype(bool)]
+    df = df.dropna(subset=["lat", "lng"])
+    return df[cols].reset_index(drop=True)
+
+
+@functools.lru_cache(maxsize=1)
+def _carregar_ultra_pontos() -> pd.DataFrame:
+    """Pontos reais das unidades Ultra (READ-ONLY). Vazio se o parquet faltar."""
+    if not ULTRA_PERF_PARQUET.exists():
+        return pd.DataFrame(columns=["nome", "lat", "lng"])
+    df = pd.read_parquet(ULTRA_PERF_PARQUET, columns=["unidade", "lat", "lng"]).rename(
+        columns={"unidade": "nome"}
+    )
+    df = df.dropna(subset=["lat", "lng"]).drop_duplicates(subset=["lat", "lng"])
+    return df[["nome", "lat", "lng"]].reset_index(drop=True)
+
+
+def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
+    """Pins de concorrentes (por hex do municipio) + Ultra (por bbox) + icones quadrados."""
+    from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
+
+    hex_ids = set(sel["hex_id"].astype(str))
+    lat_min, lat_max = float(sel["lat"].min()), float(sel["lat"].max())
+    lng_min, lng_max = float(sel["lng"].min()), float(sel["lng"].max())
+
+    conc = _carregar_concorrentes()
+    if len(conc):
+        no_muni = conc[conc["hex_id_res7"].astype(str).isin(hex_ids)]
+        if no_muni.empty:  # base antiga sem hex casavel -> cai no bbox
+            no_muni = conc[conc["lat"].between(lat_min, lat_max) & conc["lng"].between(lng_min, lng_max)]
+        conc = no_muni.head(COMPETITOR_PIN_LIMIT)
+
+    ultra = _carregar_ultra_pontos()
+    if len(ultra):
+        ultra = ultra[ultra["lat"].between(lat_min, lat_max) & ultra["lng"].between(lng_min, lng_max)]
+
+    redes = sorted(conc["rede"].dropna().astype(str).unique()) if len(conc) else []
+    icones = {r: _icone_rede(r) for r in redes}
+    if len(ultra):
+        icones["__ultra__"] = _icone_ultra()
+
+    def _label(r: str) -> str:
+        return str(COMPETITOR_BRANDS.get(r, {}).get("label", r))
+
+    return {
+        "concorrentes": [
+            {
+                "lat": _num(t.lat, 6),
+                "lng": _num(t.lng, 6),
+                "rede": str(t.rede),
+                "label": _label(str(t.rede)),
+                "nome": _clean(t.nome_unidade),
+            }
+            for t in conc.itertuples(index=False)
+        ]
+        if len(conc)
+        else [],
+        "ultra": [
+            {"lat": _num(t.lat, 6), "lng": _num(t.lng, 6), "nome": _clean(t.nome)}
+            for t in ultra.itertuples(index=False)
+        ]
+        if len(ultra)
+        else [],
+        "icones": icones,
+    }
 
 
 # ============================================================================
@@ -686,6 +854,7 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         },
         "passos": passos,
         "hexes": hexes,
+        "pins": _montar_pins(sel),
     }
 
 

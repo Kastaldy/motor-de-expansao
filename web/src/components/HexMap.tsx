@@ -1,6 +1,6 @@
-import { FlyToInterpolator } from '@deck.gl/core'
+import { FlyToInterpolator, type Layer } from '@deck.gl/core'
 import { H3HexagonLayer } from '@deck.gl/geo-layers'
-import { ScatterplotLayer } from '@deck.gl/layers'
+import { IconLayer, ScatterplotLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
@@ -15,7 +15,20 @@ import {
   scoreBandToColor,
   type RGBA,
 } from '../lib/colors'
-import type { Hex, Passo } from '../lib/types'
+import type { Hex, Passo, Pin, Pins } from '../lib/types'
+
+/** Objeto de ícone do deck.gl a partir de um data URI (bandeira quadrada). */
+interface IconeDeck {
+  url: string
+  width: number
+  height: number
+  anchorX: number
+  anchorY: number
+  mask: boolean
+}
+function iconeDeck(url: string): IconeDeck {
+  return { url, width: 128, height: 128, anchorX: 64, anchorY: 64, mask: false }
+}
 
 /* ---------------------------------------------------------------------------
    Mapa de hexagonos H3 res-7 sobre basemap MapLibre.
@@ -70,6 +83,8 @@ export interface HexMapProps {
   /** Nome do municipio carregado — cabecalho do tooltip (como o Streamlit). */
   municipio?: string
   uf?: string
+  /** Pins de concorrentes (bandeira quadrada) + Ultra + ícones por rede. */
+  pins?: Pins
   selecionado: string | null
   onSelecionar: (h: Hex) => void
   searchPin: SearchPin | null
@@ -91,11 +106,25 @@ export default function HexMap({
   centro,
   municipio,
   uf,
+  pins,
   selecionado,
   onSelecionar,
   searchPin,
 }: HexMapProps) {
   const [hover, setHover] = useState<{ h: Hex; x: number; y: number } | null>(null)
+  const [pinHover, setPinHover] = useState<{
+    titulo: string
+    sub: string
+    x: number
+    y: number
+  } | null>(null)
+
+  // Ícones deck.gl memoizados por rede (identidade estável evita re-pack do atlas).
+  const iconObjs = useMemo(() => {
+    const m: Record<string, IconeDeck> = {}
+    for (const [rede, url] of Object.entries(pins?.icones ?? {})) m[rede] = iconeDeck(url)
+    return m
+  }, [pins?.icones])
 
   const [view, setView] = useState<ViewState>(() => ({
     longitude: centro.lng ?? -47.9,
@@ -138,7 +167,7 @@ export default function HexMap({
   const destaque = useMemo(() => new Set(passo.hexes), [passo.hexes])
 
   const camadas = useMemo(() => {
-    const base = [
+    const base: Layer[] = [
       new H3HexagonLayer<Hex>({
         id: `hex-${passo.n}`,
         data: hexes,
@@ -173,19 +202,40 @@ export default function HexMap({
         transitions: { getFillColor: 260 },
       }),
 
-      new ScatterplotLayer<Hex>({
-        id: 'ultra',
-        data: hexes.filter((h) => h.ultra > 0),
+      // Concorrentes: bandeira QUADRADA com a logo da rede (fallback cor+sigla),
+      // enxuta (pedido do Felipe). Ultra vem por cima, um pouco maior.
+      new IconLayer<Pin>({
+        id: 'conc-pins',
+        data: pins?.concorrentes ?? [],
         getPosition: (d) => [d.lng, d.lat],
-        getRadius: 240,
-        radiusUnits: 'meters',
-        radiusMinPixels: 4,
-        radiusMaxPixels: 11,
-        getFillColor: [200, 0, 30, 240],
-        getLineColor: [255, 255, 255, 230],
-        lineWidthMinPixels: 1.5,
-        stroked: true,
-        pickable: false,
+        getIcon: (d) => iconObjs[d.rede ?? ''] ?? iconObjs.__ultra__,
+        getSize: 16,
+        sizeUnits: 'pixels',
+        sizeMinPixels: 10,
+        sizeMaxPixels: 20,
+        pickable: true,
+        onHover: (info) => {
+          const p = info.object as Pin | undefined
+          setPinHover(
+            p ? { titulo: p.label ?? p.rede ?? 'Concorrente', sub: p.nome, x: info.x, y: info.y } : null,
+          )
+        },
+      }),
+
+      new IconLayer<Pin>({
+        id: 'ultra-pins',
+        data: pins?.ultra ?? [],
+        getPosition: (d) => [d.lng, d.lat],
+        getIcon: () => iconObjs.__ultra__,
+        getSize: 23,
+        sizeUnits: 'pixels',
+        sizeMinPixels: 14,
+        sizeMaxPixels: 28,
+        pickable: true,
+        onHover: (info) => {
+          const p = info.object as Pin | undefined
+          setPinHover(p ? { titulo: 'Ultra Academia', sub: p.nome, x: info.x, y: info.y } : null)
+        },
       }),
     ]
 
@@ -231,11 +281,14 @@ export default function HexMap({
     }
 
     return base
-  }, [hexes, passo.n, selecionado, destaque, onSelecionar, searchPin])
+  }, [hexes, passo.n, selecionado, destaque, onSelecionar, searchPin, pins, iconObjs])
 
   return (
     <div
-      onMouseLeave={() => setHover(null)}
+      onMouseLeave={() => {
+        setHover(null)
+        setPinHover(null)
+      }}
       style={{
         position: 'absolute',
         inset: 0,
@@ -306,6 +359,41 @@ export default function HexMap({
           <Linha rotulo="Residual Fitness" valor={`${alunos(hover.h.oferta)} alunos`} />
           <Linha rotulo="Concorrentes 2 km" valor={num(hover.h.conc)} />
           {hover.h.ultra > 0 && <Linha rotulo="Unidade Ultra" valor={num(hover.h.ultra)} />}
+        </div>
+      )}
+
+      {pinHover && !hover && (
+        <div
+          role="tooltip"
+          style={{
+            position: 'absolute',
+            left: pinHover.x + 14,
+            top: pinHover.y + 14,
+            pointerEvents: 'none',
+            background: 'var(--surf-panel)',
+            border: '1px solid var(--line-mid)',
+            borderRadius: 'var(--r-md)',
+            padding: '7px 10px',
+            backdropFilter: 'blur(16px)',
+            boxShadow: '0 10px 30px -8px rgba(0,0,0,.7)',
+            zIndex: 30,
+            maxWidth: 240,
+          }}
+        >
+          <div style={{ font: '600 12px/1.2 var(--f-ui)', color: 'var(--tx-max)' }}>
+            {pinHover.titulo}
+          </div>
+          {pinHover.sub && (
+            <div
+              style={{
+                font: '400 11px/1.3 var(--f-ui)',
+                color: 'var(--tx-sub)',
+                marginTop: 2,
+              }}
+            >
+              {pinHover.sub}
+            </div>
+          )}
         </div>
       )}
     </div>
