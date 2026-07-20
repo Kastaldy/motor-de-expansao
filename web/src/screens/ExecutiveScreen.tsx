@@ -1,10 +1,28 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import ExecMap from '../components/ExecMap'
 import Select from '../components/Select'
 import { api, ApiError } from '../lib/api'
 import { brl, num, pct } from '../lib/format'
-import type { ExecMetric, ExecutivaPayload } from '../lib/types'
+import type { ExecMetric, ExecUnidade, ExecutivaPayload } from '../lib/types'
+
+/** KPIs pelos quais a lista de unidades pode ser ranqueada. */
+const ORDENAR_OPCOES = [
+  { value: 'faturamento', label: 'Faturamento' },
+  { value: 'ativos', label: 'Alunos ativos' },
+  { value: 'churn', label: 'Churn (30d)' },
+  { value: 'nps', label: 'NPS' },
+  { value: 'ticket', label: 'Ticket médio' },
+] as const
+type OrdenarKey = (typeof ORDENAR_OPCOES)[number]['value']
+
+function valorKpi(u: ExecUnidade, k: OrdenarKey): string {
+  if (k === 'ativos') return num(u.ativos)
+  if (k === 'churn') return pct(u.churn, 1)
+  if (k === 'nps') return num(u.nps)
+  if (k === 'ticket') return brl(u.ticket)
+  return brl(u.faturamento, true)
+}
 
 /* ---------------------------------------------------------------------------
    Visão Executiva — a rede Ultra REAL por estado (Growth API, camada paralela).
@@ -131,6 +149,18 @@ function PainelExecutivo({ dados }: { dados: ExecutivaPayload }) {
   const t = dados.totais
   const pctPag = t.pct_pagantes ?? 0
   const pctAgr = t.pct_agregadores ?? 0
+
+  const [ordenar, setOrdenar] = useState<OrdenarKey>('faturamento')
+  const unidades = useMemo(
+    () =>
+      [...dados.unidades].sort(
+        (a, b) =>
+          ((b[ordenar] as number | null) ?? -Infinity) -
+          ((a[ordenar] as number | null) ?? -Infinity),
+      ),
+    [dados.unidades, ordenar],
+  )
+
   return (
     <aside
       style={{
@@ -195,11 +225,31 @@ function PainelExecutivo({ dados }: { dados: ExecutivaPayload }) {
         </div>
       </header>
 
-      <div style={{ padding: '4px 14px 6px', font: '600 10px/1 var(--f-ui)', letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
-        Unidades por faturamento
+      <div
+        style={{
+          padding: '6px 14px 6px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+        }}
+      >
+        <span style={{ font: '600 10px/1 var(--f-ui)', letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
+          Unidades
+        </span>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ font: '500 10px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>ordenar por</span>
+          <Select
+            label="Ordenar unidades por"
+            value={ordenar}
+            onChange={(v) => setOrdenar(v as OrdenarKey)}
+            maxWidth={150}
+            options={ORDENAR_OPCOES.map((o) => ({ value: o.value, label: o.label }))}
+          />
+        </label>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '2px 14px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {dados.unidades.map((u, i) => (
+        {unidades.map((u, i) => (
           <div
             key={`${u.nome}-${i}`}
             style={{
@@ -220,11 +270,13 @@ function PainelExecutivo({ dados }: { dados: ExecutivaPayload }) {
                 {u.nome}
               </span>
               <span style={{ display: 'block', font: '400 10.5px/1.2 var(--f-ui)', color: 'var(--tx-label)', marginTop: 3 }}>
-                {num(u.ativos)} ativos · churn {pct(u.churn, 1)}
+                {ordenar === 'faturamento'
+                  ? `${num(u.ativos)} ativos · churn ${pct(u.churn, 1)}`
+                  : `${brl(u.faturamento, true)} · ${num(u.ativos)} ativos`}
               </span>
             </span>
             <span className="num" style={{ font: '700 13px/1 var(--f-num)', color: 'var(--tx-max)', flexShrink: 0 }}>
-              {brl(u.faturamento, true)}
+              {valorKpi(u, ordenar)}
             </span>
           </div>
         ))}

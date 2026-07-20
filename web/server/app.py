@@ -1402,6 +1402,10 @@ def _base_calibracao() -> pd.DataFrame | None:
 # ============================================================================
 
 GROWTH_PARQUET = STAGING_DIR / "growth_api_historico.parquet"
+# Piso de faturamento (30d) para uma unidade contar como academia OPERANTE. Entradas
+# administrativas/de teste na base têm faturamento irrisório (R$ 1-5 mil) e churn
+# impossível (>100%) — "dado sujo" que polui ranking e totais. Academia real >> isto.
+_FAT_MIN_EXEC = 20000.0
 
 
 @functools.lru_cache(maxsize=1)
@@ -1489,24 +1493,35 @@ def executiva(uf: str) -> dict[str, Any]:
         m = g[(g["_data"].dt.year == ano) & (g["_data"].dt.month == mes)]
         return m.iloc[-1] if len(m) else None
 
-    def churn30(g: pd.DataFrame, ano: int, mes: int) -> float | None:
-        """Churn dos ~30 dias que terminam no dia `dom` de (ano,mes): cancelados MTD
-        do mês + (cancelados do mês anterior COMPLETO - MTD até `dom`), sobre a base
-        de pagantes. Reconstrói a janela de 30 dias sobre o cumulativo mensal."""
+    def rolling30(g: pd.DataFrame, ano: int, mes: int, colr: str) -> float | None:
+        """Soma dos ~30 dias que terminam no dia `dom` de (ano,mes) para uma coluna
+        CUMULATIVA mensal (faturamento, cancelados): MTD do mês + (mês anterior
+        COMPLETO − MTD do mês anterior até `dom`). Reconstrói a janela de 30 dias
+        sobre o cumulativo que reseta no dia 1. Ex.: faturamento de 12/06 = jun(1..12)
+        + mai(13..31) ≈ um mês cheio (não os 12 dias parciais)."""
         atual = mtd(g, ano, mes)
         if atual is None:
             return None
-        c_mtd, pag = _numf(atual.get("cancelados")), _numf(atual.get("pagantes"))
-        if c_mtd is None or not pag:
+        v = _numf(atual.get(colr))
+        if v is None:
             return None
         pa, pmo = _prev_month(ano, mes)
         cheio, ate_dom = mes_cheio(g, pa, pmo), mtd(g, pa, pmo)
         extra = 0.0
         if cheio is not None and ate_dom is not None:
-            fv, sv = _numf(cheio.get("cancelados")), _numf(ate_dom.get("cancelados"))
+            fv, sv = _numf(cheio.get(colr)), _numf(ate_dom.get(colr))
             if fv is not None and sv is not None:
                 extra = max(0.0, fv - sv)
-        return 100.0 * (c_mtd + extra) / pag
+        return v + extra
+
+    def churn30(g: pd.DataFrame, ano: int, mes: int) -> float | None:
+        """Churn dos ~30 dias (cancelados rolling 30d / base de pagantes), em %."""
+        canc = rolling30(g, ano, mes, "cancelados")
+        atual = mtd(g, ano, mes)
+        pag = _numf(atual.get("pagantes")) if atual is not None else None
+        if canc is None or not pag:
+            return None
+        return 100.0 * canc / pag
 
     def agr(row: "pd.Series | None") -> float | None:
         if row is None:
@@ -1522,6 +1537,12 @@ def executiva(uf: str) -> dict[str, Any]:
         cur = mtd(g, ry, rm)
         if cur is None:
             continue  # unidade sem dado no mês de referência (parada) -> fora
+        fat_cur = rolling30(g, ry, rm, "faturamento")
+        churn_cur = churn30(g, ry, rm)
+        # Dado sujo: entradas administrativas/de teste (faturamento irrisório ou
+        # churn impossível >100%) poluem ranking e totais -> fora.
+        if fat_cur is None or fat_cur < _FAT_MIN_EXEC or (churn_cur is not None and churn_cur > 100.0):
+            continue
         m1 = mtd(g, py, pm)
         nome = _clean(nome_u)
         c = coords.get(normalizar_unidade(nome))
@@ -1531,8 +1552,9 @@ def executiva(uf: str) -> dict[str, Any]:
                 "lat": c[0] if c else None,
                 "lng": c[1] if c else None,
                 "inauguracao": _clean(cur.get("inauguracao")),
-                "fat_cur": val(cur, "faturamento"),
-                "fat_m1": val(m1, "faturamento"),
+                # faturamento = ROLLING 30 dias (mês cheio reconstruído), não o MTD parcial
+                "fat_cur": fat_cur,
+                "fat_m1": rolling30(g, py, pm, "faturamento"),
                 "ativos_cur": val(cur, "ativos_total"),
                 "ativos_m1": val(m1, "ativos_total"),
                 "pag_cur": val(cur, "pagantes"),
@@ -1543,7 +1565,7 @@ def executiva(uf: str) -> dict[str, Any]:
                 "ticket_m1": val(m1, "ticket_medio_pagantes"),
                 "nps_cur": val(cur, "NPS"),
                 "nps_m1": val(m1, "NPS"),
-                "churn_cur": churn30(g, ry, rm),
+                "churn_cur": churn_cur,
                 "churn_m1": churn30(g, py, pm),
             }
         )
