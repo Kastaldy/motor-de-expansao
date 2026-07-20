@@ -166,6 +166,46 @@ export interface ViabilidadeOut {
   grade: Record<string, unknown>[]
 }
 
+/* ---- Visão Executiva por estado (rede Ultra real, camada paralela) ---- */
+
+export interface ExecUnidade {
+  nome: string
+  lat: number | null
+  lng: number | null
+  ativos: number | null
+  pagantes: number | null
+  agregadores: number | null
+  faturamento: number | null
+  /** churn em % (ex.: 2.79 = 2,79%) */
+  churn: number | null
+  ticket: number | null
+  nps: number | null
+  inauguracao: string
+}
+
+export interface ExecTotais {
+  unidades: number
+  com_coordenada: number
+  ativos: number | null
+  pagantes: number | null
+  agregadores: number | null
+  faturamento: number | null
+  faturamento_sem_agregador: number | null
+  churn_medio: number | null
+  ticket_medio_pagantes: number | null
+  nps_medio: number | null
+  pct_pagantes: number | null
+  pct_agregadores: number | null
+}
+
+export interface ExecutivaPayload {
+  uf: string
+  competencia: string | null
+  centro: { lat: number | null; lng: number | null }
+  totais: ExecTotais
+  unidades: ExecUnidade[]
+}
+
 /** Campos opcionais do imovel que enriquecem o PDF do Relatorio Pontual. */
 export interface InfoImovel {
   nome?: string

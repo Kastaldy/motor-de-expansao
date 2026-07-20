@@ -1,6 +1,7 @@
 /** Cliente do backend do piloto. Tudo passa pelo proxy /api do Vite. */
 
 import type {
+  ExecutivaPayload,
   FaixaAlunos,
   InfoImovel,
   MunicipioItem,
@@ -114,6 +115,18 @@ export const api = {
 
   /** Visão de UF inteira: funil por UF + recomendação de municípios. */
   ufView: (uf: string) => pedir<MunicipioPayload>(`/api/uf/${encodeURIComponent(uf)}`),
+
+  /** Visão Executiva: rede Ultra real agregada por estado (Growth API). */
+  executiva: (uf: string) =>
+    pedir<ExecutivaPayload>(`/api/executiva/${encodeURIComponent(uf)}`),
+
+  /** Geocoding de endereço livre -> lat/lng (Nominatim, DEC-010). */
+  geocode: (q: string) =>
+    pedir<{ found: boolean; lat?: number; lng?: number; nome?: string }>(
+      `/api/geocode?q=${encodeURIComponent(q)}`,
+      {},
+      15_000,
+    ),
 
   municipios: (uf: string) =>
     pedir<{ uf: string; municipios: MunicipioItem[] }>(

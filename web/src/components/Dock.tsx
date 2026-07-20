@@ -37,7 +37,7 @@ const ICONES: Record<string, React.JSX.Element> = {
 
 const ITENS: { id: string; tela: Tela | null; titulo: string }[] = [
   { id: 'mapa', tela: 'mapa', titulo: 'Mapa territorial' },
-  { id: 'exec', tela: null, titulo: 'Visão executiva (fora do piloto)' },
+  { id: 'exec', tela: 'executiva', titulo: 'Visão executiva' },
   { id: 'dom', tela: null, titulo: 'Expansão de domínio (fora do piloto)' },
   { id: 'cart', tela: null, titulo: 'Carteira e plano (fora do piloto)' },
   { id: 'viab', tela: 'viabilidade', titulo: 'Viabilidade do ponto' },
@@ -73,16 +73,19 @@ export default function Dock({
           width: 42,
           height: 42,
           borderRadius: 11,
-          background: 'var(--ultra)',
-          color: '#fff',
-          font: '800 15px/1 var(--f-ui)',
+          overflow: 'hidden',
+          marginBottom: 6,
+          flexShrink: 0,
+          background: '#fff',
           display: 'grid',
           placeItems: 'center',
-          marginBottom: 6,
-          letterSpacing: '-.02em',
         }}
       >
-        UA
+        <img
+          src="/logo-ultra.png"
+          alt="Ultra Academia"
+          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+        />
       </div>
 
       {ITENS.map((it) => {

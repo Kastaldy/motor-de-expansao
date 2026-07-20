@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import hashlib
 import io
 import json
 import math
@@ -955,6 +956,67 @@ def ufs() -> dict[str, Any]:
     return {"ufs": listar_ufs()}
 
 
+# --- Geocoding de endereço (Nominatim, DEC-010: cache + timeout + fallback) ---
+GEOCODE_CACHE_DIR = DATA_DIR / "cache" / "geocode"
+_NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+_GEOCODE_UA = "MotorExpansaoUltra-Piloto/1.0 (contato: felipe.silva@ultraacademia.com.br)"
+
+
+@app.get("/api/geocode")
+def geocode(q: str) -> dict[str, Any]:
+    """Resolve um ENDEREÇO livre -> lat/lng (Nominatim, restrito ao Brasil).
+
+    DEC-010: cache em disco por hash da consulta, timeout curto, fallback gracioso
+    ({"found": false}) quando a rede/serviço falha. Não persiste PII; a consulta é
+    uma localização (endereço de imóvel), não dado pessoal de aluno.
+    """
+    termo = (q or "").strip()
+    if len(termo) < 3:
+        return {"found": False}
+
+    chave = hashlib.sha1(termo.lower().encode("utf-8")).hexdigest()[:16]
+    cache = GEOCODE_CACHE_DIR / f"{chave}.json"
+    if cache.exists():
+        try:
+            return json.loads(cache.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 — cache corrompido: refaz
+            pass
+
+    import requests
+
+    try:
+        resp = requests.get(
+            _NOMINATIM_URL,
+            params={"q": termo, "format": "json", "limit": 1, "countrycodes": "br"},
+            headers={"User-Agent": _GEOCODE_UA},
+            timeout=10,
+        )
+        arr = resp.json() if resp.ok else []
+    except Exception:  # noqa: BLE001 — rede/timeout -> fallback gracioso
+        arr = []
+
+    if not arr:
+        return {"found": False}
+
+    top = arr[0]
+    try:
+        out = {
+            "found": True,
+            "lat": _num(float(top["lat"]), 6),
+            "lng": _num(float(top["lon"]), 6),
+            "nome": str(top.get("display_name", ""))[:140],
+        }
+    except (KeyError, TypeError, ValueError):
+        return {"found": False}
+
+    try:  # cacheia só sucessos
+        GEOCODE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 @app.get("/api/municipios/{uf}")
 def municipios(uf: str) -> dict[str, Any]:
     df = carregar_uf(uf)
@@ -1328,6 +1390,133 @@ def _base_calibracao() -> pd.DataFrame | None:
         if "alunos_por_m2" in df.columns and len(df):
             return df
     return None
+
+
+# ============================================================================
+# Rotas — Visão Executiva por estado (rede Ultra real, camada PARALELA) — WEB-15
+#
+# Agrega `growth_api_historico.parquet` (ingestão semanal da Growth API, DEC-013)
+# por UF: alunos ativos/pagantes reais, faturamento, churn, split pagantes ×
+# agregadores. READ-ONLY sobre o M1; camada de rede PARALELA (sem PII — o parquet
+# é agregado por unidade/data).
+# ============================================================================
+
+GROWTH_PARQUET = STAGING_DIR / "growth_api_historico.parquet"
+
+
+@functools.lru_cache(maxsize=1)
+def _carregar_growth() -> pd.DataFrame:
+    if not GROWTH_PARQUET.exists():
+        return pd.DataFrame()
+    df = pd.read_parquet(GROWTH_PARQUET)
+    df["_data"] = pd.to_datetime(df.get("data"), format="%d/%m/%Y", errors="coerce")
+    return df
+
+
+@functools.lru_cache(maxsize=1)
+def _ultra_coord_map() -> dict[str, tuple[float, float]]:
+    """unidade normalizada -> (lat, lng) das unidades Ultra (para os pins)."""
+    from motor_expansao.dimensionamento.growth_api_client import normalizar_unidade
+
+    ultra = _carregar_ultra_pontos()
+    mapa: dict[str, tuple[float, float]] = {}
+    for t in ultra.itertuples(index=False):
+        chave = normalizar_unidade(t.nome)
+        if chave:
+            mapa[chave] = (float(t.lat), float(t.lng))
+    return mapa
+
+
+def _wavg(valores: pd.Series, pesos: pd.Series) -> float | None:
+    """Média ponderada JSON-safe; cai na média simples se não houver pesos."""
+    v = pd.to_numeric(valores, errors="coerce")
+    w = pd.to_numeric(pesos, errors="coerce")
+    m = v.notna() & w.notna() & (w > 0)
+    if not bool(m.any()):
+        vv = v.dropna()
+        return _num(vv.mean(), 2) if len(vv) else None
+    return _num(float((v[m] * w[m]).sum() / w[m].sum()), 2)
+
+
+@app.get("/api/executiva/{uf}")
+def executiva(uf: str) -> dict[str, Any]:
+    df = _carregar_growth()
+    if not len(df):
+        raise HTTPException(404, "Base de rede (growth_api_historico.parquet) ausente no servidor.")
+    sel = df[df["uf"].astype(str).str.upper() == uf.upper()].copy()
+    if not len(sel):
+        raise HTTPException(404, f"Sem unidades Ultra com dados de rede na UF {uf.upper()}.")
+
+    # Snapshot mais recente por unidade (última competência).
+    sel = sel.sort_values("_data")
+    ult = sel.groupby("unidade", as_index=False).tail(1)
+
+    def col(c: str) -> pd.Series:
+        return pd.to_numeric(ult.get(c), errors="coerce")
+
+    def z(v: Any) -> float:
+        x = _num(v, 2)
+        return x if x is not None else 0.0
+
+    ativos, pagantes = col("ativos_total"), col("pagantes")
+    agreg = col("alunos_gympass").fillna(0) + col("alunos_totalpass").fillna(0)
+    tot_pag = float(pagantes.fillna(0).sum())
+    tot_agr = float(agreg.sum())
+    base_split = tot_pag + tot_agr
+
+    from motor_expansao.dimensionamento.growth_api_client import normalizar_unidade
+
+    coords = _ultra_coord_map()
+    unidades: list[dict[str, Any]] = []
+    lats: list[float] = []
+    lngs: list[float] = []
+    for _, r in ult.iterrows():
+        nome = _clean(r.get("unidade"))
+        c = coords.get(normalizar_unidade(nome))
+        if c:
+            lats.append(c[0])
+            lngs.append(c[1])
+        unidades.append(
+            {
+                "nome": nome,
+                "lat": _num(c[0], 6) if c else None,
+                "lng": _num(c[1], 6) if c else None,
+                "ativos": _num(r.get("ativos_total")),
+                "pagantes": _num(r.get("pagantes")),
+                "agregadores": _num(z(r.get("alunos_gympass")) + z(r.get("alunos_totalpass"))),
+                "faturamento": _num(r.get("faturamento")),
+                "churn": _num(r.get("churn"), 3),
+                "ticket": _num(r.get("ticket_medio_pagantes"), 2),
+                "nps": _num(r.get("NPS"), 1),
+                "inauguracao": _clean(r.get("inauguracao")),
+            }
+        )
+    unidades.sort(key=lambda u: (u["faturamento"] or 0), reverse=True)
+
+    comp = ult["_data"].max()
+    return {
+        "uf": uf.upper(),
+        "competencia": comp.strftime("%m/%Y") if pd.notna(comp) else None,
+        "centro": {
+            "lat": _num(sum(lats) / len(lats), 6) if lats else None,
+            "lng": _num(sum(lngs) / len(lngs), 6) if lngs else None,
+        },
+        "totais": {
+            "unidades": int(len(ult)),
+            "com_coordenada": len(lats),
+            "ativos": _num(ativos.sum()),
+            "pagantes": _num(pagantes.sum()),
+            "agregadores": _num(agreg.sum()),
+            "faturamento": _num(col("faturamento").sum()),
+            "faturamento_sem_agregador": _num(col("faturamento_sem_agregador").sum()),
+            "churn_medio": _wavg(col("churn"), ativos),
+            "ticket_medio_pagantes": _wavg(col("ticket_medio_pagantes"), pagantes),
+            "nps_medio": _wavg(col("NPS"), ativos),
+            "pct_pagantes": _num(100 * tot_pag / base_split, 1) if base_split > 0 else None,
+            "pct_agregadores": _num(100 * tot_agr / base_split, 1) if base_split > 0 else None,
+        },
+        "unidades": unidades,
+    }
 
 
 # ============================================================================

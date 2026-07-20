@@ -54,6 +54,7 @@ export default function MapScreen({
   const [busca, setBusca] = useState('')
   const [pin, setPin] = useState<SearchPin | null>(null)
   const [buscaErro, setBuscaErro] = useState<string | null>(null)
+  const [buscando, setBuscando] = useState(false)
 
   // Filtro global: mostra só os melhores hexes (por faixa M1).
   const [filtroFaixa, setFiltroFaixa] = useState('')
@@ -68,6 +69,7 @@ export default function MapScreen({
     setSelecionado(null)
     setPin(null)
     setBuscaErro(null)
+    setBuscando(false)
     setFiltroFaixa('')
     setModoCenario(false)
     setCenario([])
@@ -121,17 +123,40 @@ export default function MapScreen({
     })
   }
 
-  function buscarCoordenada() {
-    const c = parseCoordinate(busca)
-    if (!c) {
-      setBuscaErro('Não reconheci a coordenada. Use "lat, lng" ou um link do Google Maps.')
-      setPin(null)
+  function aplicarPonto(lat: number, lng: number) {
+    const hexId = latLngToCell(lat, lng, 7)
+    setBuscaErro(null)
+    setPin({ lat, lng, hexId })
+    setSelecionado(hexId)
+  }
+
+  async function buscarCoordenada() {
+    const termo = busca.trim()
+    if (!termo || buscando) return
+    // 1) coordenada / link do Maps (offline, instantâneo)
+    const c = parseCoordinate(termo)
+    if (c) {
+      aplicarPonto(c.lat, c.lng)
       return
     }
-    const hexId = latLngToCell(c.lat, c.lng, 7)
+    // 2) endereço livre -> geocoding (Nominatim, DEC-010)
+    setBuscando(true)
     setBuscaErro(null)
-    setPin({ lat: c.lat, lng: c.lng, hexId })
-    setSelecionado(hexId)
+    try {
+      const r = await api.geocode(termo)
+      if (r.found && r.lat != null && r.lng != null) {
+        aplicarPonto(r.lat, r.lng)
+      } else {
+        setBuscaErro(
+          'Não encontrei esse endereço. Tente "lat, lng", um link do Google Maps ou um endereço mais completo.',
+        )
+        setPin(null)
+      }
+    } catch {
+      setBuscaErro('Busca de endereço indisponível agora. Use "lat, lng" ou um link do Google Maps.')
+    } finally {
+      setBuscando(false)
+    }
   }
 
   function estudoPontualDoPin() {
@@ -296,10 +321,11 @@ export default function MapScreen({
             height="14"
             viewBox="0 0 24 24"
             fill="none"
-            stroke="var(--tx-muted)"
+            stroke={buscando ? 'var(--ac)' : 'var(--tx-muted)'}
             strokeWidth="1.8"
             strokeLinecap="round"
             aria-hidden
+            style={buscando ? { animation: 'pulse 1s ease-in-out infinite' } : undefined}
           >
             <circle cx="11" cy="11" r="7" />
             <path d="m21 21-4.3-4.3" />
@@ -313,8 +339,8 @@ export default function MapScreen({
             onKeyDown={(e) => {
               if (e.key === 'Enter') buscarCoordenada()
             }}
-            placeholder="Buscar coordenada (lat, lng)"
-            aria-label="Buscar por coordenada"
+            placeholder={buscando ? 'Buscando endereço…' : 'Buscar endereço, coordenada ou link'}
+            aria-label="Buscar por endereço ou coordenada"
             style={{
               flex: 1,
               minWidth: 0,

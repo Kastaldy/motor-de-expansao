@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import Dock from './components/Dock'
+import ExecutiveScreen from './screens/ExecutiveScreen'
 import MapScreen from './screens/MapScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
 import { api, ApiError } from './lib/api'
 import type { Hex, MunicipioItem, MunicipioPayload } from './lib/types'
 
-export type Tela = 'mapa' | 'viabilidade'
+export type Tela = 'mapa' | 'viabilidade' | 'executiva'
 
 /** O ponto que viaja do mapa para a Viabilidade — a costura entre as duas telas. */
 export interface PontoEscolhido {
@@ -124,6 +125,8 @@ export default function App() {
             erro={erro}
             onAnalisarPonto={irParaViabilidade}
           />
+        ) : tela === 'executiva' ? (
+          <ExecutiveScreen ufs={ufs} uf={uf} onUf={aoTrocarUf} />
         ) : (
           <ViabilityScreen
             ponto={ponto}

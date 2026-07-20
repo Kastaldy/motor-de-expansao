@@ -1,8 +1,26 @@
 # Piloto web — Motor de Expansão
 
-Substituição faseada do Streamlit por um app web. Duas telas: **Mapa Territorial**
-(sequência guiada de 4 camadas até a recomendação) e **Viabilidade do ponto**
-(stress-test de um imóvel real). Os dois relatórios em PDF saem daqui.
+Substituição faseada do Streamlit por um app web. Três telas: **Mapa Territorial**
+(porta de entrada por estado → funil de 4 camadas → município), **Visão Executiva**
+(a rede Ultra real por estado — Growth API) e **Viabilidade do ponto** (stress-test
+de um imóvel real). Os relatórios em PDF saem do Mapa e da Viabilidade.
+
+## Porta de entrada por UF e drill-down
+
+O app abre numa **landing** com um seletor de estado bem visível. Ao escolher um
+estado, o Mapa mostra a leitura territorial da **UF inteira** e o painel recomenda
+**municípios**; clicar num município **filtra automático** para ele (drill-down).
+"Todos os municípios" volta à visão da UF. Dois extras enxutos: **multi-hex**
+(comparar vários hexes e somar residual/população/score) e um **filtro global**
+"MELHORES" (mostra só os hexes de faixa M1 mais alta).
+
+## Visão Executiva (rede real por estado)
+
+Escolhido um estado, mostra as unidades Ultra num **bubble map** (tamanho ∝
+faturamento) e os números REAIS da Growth API (`growth_api_historico.parquet`,
+ingestão semanal — DEC-013): faturamento/mês, alunos ativos, churn, NPS e a
+**proporção pagantes × agregadores** (Gympass/TotalPass), além do ranking de
+unidades por faturamento. Camada PARALELA, sem PII, READ-ONLY sobre o M1.
 
 > **READ-ONLY sobre o M1.** Nada aqui recalcula `score_priorizacao`, pesos ou
 > `hex_score_estrutural`, e nenhum artefato oficial é escrito. A camada só lê
@@ -71,12 +89,13 @@ o mapa legível. Os pontos vêm de `data/staging/concorrentes_mapeados.parquet` 
 ## Busca por coordenada
 
 A lupa no cabeçalho aceita uma coordenada (`lat, lng`, com ponto ou vírgula
-decimal) ou um link do Google Maps. Ao buscar, o mapa voa até o ponto, **solta um
-pin**, **marca o hexágono** que o contém (H3 res-7) e abre o atalho **"Estudo
-pontual →"**, que leva à Viabilidade daquele ponto — funciona mesmo para uma
-coordenada fora do município carregado (a viabilidade e o Relatório Pontual são
-geográficos, resolvem o município no servidor). O parser é puro (sem rede) e
-valida o bounding box do Brasil.
+decimal), um link do Google Maps **ou um endereço livre**. Coordenada/link são
+resolvidos offline (parser puro, bbox do Brasil); um endereço cai no **geocoding**
+(`/api/geocode`, Nominatim — DEC-010: cache em disco, timeout, fallback gracioso).
+Ao encontrar, o mapa voa até o ponto, **solta um pin**, **marca o hexágono** que o
+contém (H3 res-7) e abre o atalho **"Estudo pontual →"**, que leva à Viabilidade
+daquele ponto — funciona mesmo fora do município carregado (a viabilidade e o
+Relatório Pontual são geográficos, resolvem o município no servidor).
 
 ## Guardrail da demanda
 
