@@ -13,6 +13,13 @@ import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import type { Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
 
+/** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
+const FAIXA_FILTROS: Record<string, Set<string>> = {
+  prioridade: new Set(['Prioridade máxima']),
+  alta: new Set(['Prioridade máxima', 'Alta']),
+  media: new Set(['Prioridade máxima', 'Alta', 'Média']),
+}
+
 export interface MapScreenProps {
   ufs: string[]
   uf: string
@@ -48,12 +55,22 @@ export default function MapScreen({
   const [pin, setPin] = useState<SearchPin | null>(null)
   const [buscaErro, setBuscaErro] = useState<string | null>(null)
 
-  // Trocar de UF/município recomeça a história do passo 1 e limpa a busca.
+  // Filtro global: mostra só os melhores hexes (por faixa M1).
+  const [filtroFaixa, setFiltroFaixa] = useState('')
+  // Cenário multi-hex: seleção de vários hexes para somar.
+  const [modoCenario, setModoCenario] = useState(false)
+  const [cenario, setCenario] = useState<string[]>([])
+  const [copiado, setCopiado] = useState(false)
+
+  // Trocar de UF/município recomeça a história do passo 1 e limpa a busca/cenário.
   useEffect(() => {
     setPassoN(1)
     setSelecionado(null)
     setPin(null)
     setBuscaErro(null)
+    setFiltroFaixa('')
+    setModoCenario(false)
+    setCenario([])
   }, [uf, municipio])
 
   const passo = dados?.passos.find((p) => p.n === passoN) ?? dados?.passos[0] ?? null
@@ -74,6 +91,35 @@ export default function MapScreen({
     ],
     [municipios],
   )
+
+  // Filtro global de "melhores hexes" por faixa M1 (aplicado ao mapa).
+  const hexesFiltrados = useMemo(() => {
+    const hs = dados?.hexes ?? []
+    const permitidas = FAIXA_FILTROS[filtroFaixa]
+    return permitidas ? hs.filter((h) => h.faixa != null && permitidas.has(h.faixa)) : hs
+  }, [dados, filtroFaixa])
+
+  // Agregação do cenário multi-hex (soma no cliente a partir dos hexes servidos).
+  const resumoCenario = useMemo(() => {
+    const hs = cenario.map((id) => porId.get(id)).filter(Boolean) as Hex[]
+    if (!hs.length) return null
+    const soma = (f: (h: Hex) => number | null) => hs.reduce((a, h) => a + (f(h) ?? 0), 0)
+    const scores = hs.map((h) => h.censo).filter((v): v is number => v != null)
+    return {
+      n: hs.length,
+      residual: soma((h) => h.oferta),
+      pop: soma((h) => h.pop),
+      conc: soma((h) => h.conc),
+      scoreMedio: scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null,
+    }
+  }, [cenario, porId])
+
+  function copiarCenario() {
+    navigator.clipboard?.writeText(cenario.join('\n')).then(() => {
+      setCopiado(true)
+      setTimeout(() => setCopiado(false), 1500)
+    })
+  }
 
   function buscarCoordenada() {
     const c = parseCoordinate(busca)
@@ -152,16 +198,23 @@ export default function MapScreen({
       {/* ---------------- Mapa ao fundo ---------------- */}
       {dados && passo && (
         <HexMap
-          hexes={dados.hexes}
+          hexes={hexesFiltrados}
           passo={passo}
           centro={dados.centro}
           municipio={dados.municipio ?? undefined}
           uf={dados.uf}
           pins={dados.pins}
-          selecionado={selecionado}
+          selecionado={modoCenario ? null : selecionado}
+          cenario={cenario}
           onSelecionar={(h) => {
-            setSelecionado(h.id)
             setPin(null)
+            if (modoCenario) {
+              setCenario((cs) =>
+                cs.includes(h.id) ? cs.filter((x) => x !== h.id) : [...cs, h.id],
+              )
+            } else {
+              setSelecionado(h.id)
+            }
           }}
           searchPin={pin}
         />
@@ -288,6 +341,24 @@ export default function MapScreen({
           )}
         </div>
 
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+            MELHORES
+          </span>
+          <Select
+            label="Filtrar pelos melhores hexes"
+            value={filtroFaixa}
+            onChange={setFiltroFaixa}
+            maxWidth={150}
+            options={[
+              { value: '', label: 'Todos os hexes' },
+              { value: 'prioridade', label: 'Prioridade máxima' },
+              { value: 'alta', label: 'Alta ou +' },
+              { value: 'media', label: 'Média ou +' },
+            ]}
+          />
+        </label>
+
         <div style={{ flex: 1 }} />
 
         {dados && (
@@ -401,6 +472,85 @@ export default function MapScreen({
                 </button>
               </div>
             )}
+            {!nivelUf && (
+              <div
+                style={{
+                  pointerEvents: 'auto',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 8,
+                  maxWidth: 280,
+                }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (modoCenario) setCenario([])
+                    setModoCenario((m) => !m)
+                    setSelecionado(null)
+                  }}
+                  style={{
+                    alignSelf: 'flex-start',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    background: modoCenario ? 'var(--ac-a16)' : 'var(--surf-panel)',
+                    border: `1px solid ${modoCenario ? 'var(--ac-a30)' : 'var(--line-soft)'}`,
+                    borderRadius: 'var(--r-md)',
+                    padding: '8px 11px',
+                    font: '600 12px/1 var(--f-ui)',
+                    color: modoCenario ? 'var(--ac-text)' : 'var(--tx-soft)',
+                    backdropFilter: 'blur(16px)',
+                  }}
+                >
+                  {modoCenario ? '◆ Comparando hexes' : '◇ Comparar vários hexes'}
+                </button>
+
+                {modoCenario && (
+                  <div
+                    style={{
+                      background: 'var(--surf-panel)',
+                      border: '1px solid var(--ac-a30)',
+                      borderRadius: 'var(--r-md)',
+                      padding: '11px 13px',
+                      backdropFilter: 'blur(16px)',
+                      minWidth: 232,
+                    }}
+                  >
+                    <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)' }}>
+                      Cenário multi-hex · {resumoCenario?.n ?? 0} hex
+                    </div>
+                    {resumoCenario ? (
+                      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        <LinhaC rotulo="Residual somado" valor={`${alunos(resumoCenario.residual)} alunos`} forte />
+                        <LinhaC rotulo="População" valor={num(resumoCenario.pop)} />
+                        <LinhaC rotulo="Score censo médio" valor={num(resumoCenario.scoreMedio, 1)} />
+                        <LinhaC rotulo="Concorrentes 2 km" valor={num(resumoCenario.conc)} />
+                      </div>
+                    ) : (
+                      <p style={{ margin: '8px 0 0', font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                        Clique nos hexágonos do mapa para somar residual, população e score.
+                      </p>
+                    )}
+                    {resumoCenario && (
+                      <div style={{ marginTop: 11, display: 'flex', gap: 8 }}>
+                        <button
+                          type="button"
+                          onClick={() => setCenario([])}
+                          style={botaoGhost}
+                        >
+                          Limpar
+                        </button>
+                        <button type="button" onClick={copiarCenario} style={botaoGhost}>
+                          {copiado ? 'Copiado ✓' : 'Copiar IDs'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <ScoreLegend passoN={passo.n} />
           </div>
         )}
@@ -573,6 +723,33 @@ function Landing({ ufs, onUf }: { ufs: string[]; onUf: (uf: string) => void }) {
           27 estados · Censo 2022 (IBGE) + rede Ultra e concorrentes mapeados · camada visual read-only
         </p>
       </div>
+    </div>
+  )
+}
+
+const botaoGhost: React.CSSProperties = {
+  flex: 1,
+  padding: '7px 10px',
+  borderRadius: 8,
+  border: '1px solid var(--line-soft)',
+  background: 'var(--surf-raised)',
+  color: 'var(--tx-soft)',
+  font: '600 11.5px/1 var(--f-ui)',
+}
+
+function LinhaC({ rotulo, valor, forte }: { rotulo: string; valor: string; forte?: boolean }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14 }}>
+      <span style={{ font: '400 11.5px/1 var(--f-ui)', color: 'var(--tx-label)' }}>{rotulo}</span>
+      <span
+        className="num"
+        style={{
+          font: `${forte ? 700 : 500} 12px/1 var(--f-num)`,
+          color: forte ? 'var(--ac-text)' : 'var(--tx-soft)',
+        }}
+      >
+        {valor}
+      </span>
     </div>
   )
 }

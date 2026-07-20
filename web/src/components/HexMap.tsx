@@ -86,6 +86,8 @@ export interface HexMapProps {
   /** Pins de concorrentes (bandeira quadrada) + Ultra + ícones por rede. */
   pins?: Pins
   selecionado: string | null
+  /** Hexes do cenário multi-hex (contorno turquesa de seleção). */
+  cenario?: string[]
   onSelecionar: (h: Hex) => void
   searchPin: SearchPin | null
 }
@@ -108,6 +110,7 @@ export default function HexMap({
   uf,
   pins,
   selecionado,
+  cenario,
   onSelecionar,
   searchPin,
 }: HexMapProps) {
@@ -165,6 +168,8 @@ export default function HexMap({
   }, [searchPin])
 
   const destaque = useMemo(() => new Set(passo.hexes), [passo.hexes])
+  const cenarioSet = useMemo(() => new Set(cenario ?? []), [cenario])
+  const cenarioKey = (cenario ?? []).join(',')
 
   const camadas = useMemo(() => {
     const base: Layer[] = [
@@ -176,11 +181,15 @@ export default function HexMap({
         filled: true,
         stroked: true,
         getFillColor: (d) => fillDoHex(d, passo.n, destaque.has(d.id)),
-        // Borda neutra e fina em todos; so o hex SELECIONADO ganha contorno claro.
-        // Sem borda turquesa nos hexes do passo — o destaque agora e por opacidade.
+        // Borda neutra e fina; hex SELECIONADO -> contorno claro; hexes do CENÁRIO
+        // multi-hex -> contorno turquesa (seleção deliberada, não o funil).
         getLineColor: (d) =>
-          d.id === selecionado ? [238, 243, 248, 255] : [8, 11, 16, 55],
-        getLineWidth: (d) => (d.id === selecionado ? 55 : 6),
+          d.id === selecionado
+            ? [238, 243, 248, 255]
+            : cenarioSet.has(d.id)
+              ? [53, 201, 214, 255]
+              : [8, 11, 16, 55],
+        getLineWidth: (d) => (d.id === selecionado ? 55 : cenarioSet.has(d.id) ? 42 : 6),
         lineWidthUnits: 'meters',
         lineWidthMinPixels: 0.5,
         pickable: true,
@@ -196,8 +205,8 @@ export default function HexMap({
         },
         updateTriggers: {
           getFillColor: [passo.n],
-          getLineColor: [selecionado],
-          getLineWidth: [selecionado],
+          getLineColor: [selecionado, cenarioKey],
+          getLineWidth: [selecionado, cenarioKey],
         },
         transitions: { getFillColor: 260 },
       }),
@@ -281,7 +290,18 @@ export default function HexMap({
     }
 
     return base
-  }, [hexes, passo.n, selecionado, destaque, onSelecionar, searchPin, pins, iconObjs])
+  }, [
+    hexes,
+    passo.n,
+    selecionado,
+    destaque,
+    cenarioSet,
+    cenarioKey,
+    onSelecionar,
+    searchPin,
+    pins,
+    iconObjs,
+  ])
 
   return (
     <div
