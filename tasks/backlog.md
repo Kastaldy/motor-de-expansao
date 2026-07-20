@@ -1814,6 +1814,15 @@ crash); checklist da §15; validação humana de UX (<60s jr., "uma decisão por
 > (conceito novo, NÃO a "Carteira e Plano" do Streamlit); planejar quando priorizado.
 > **READ-ONLY sobre o M1 em todos.** **Nenhum bloco entra `loop-safe`** — frontend/rede/deploy exigem olho humano
 > (lição BLK-UI-10/BLK-VIAB-09; §6.1).
+>
+> **Progresso (2026-07-20):** **WEB-13 ✅** (`ee77fb7`) e **WEB-12 ✅** (`2cd7964` + `57f0c67`) concluídos e validados
+> no browser. **WEB-12 teve o ESCOPO REDUZIDO por Felipe (2026-07-20)** — "manter só o essencial": (a) **porta de
+> entrada por UF** (seletor de estado + storytelling/CTA na landing; funil narrativo por UF; painel recomenda
+> **municípios**; clique = drill-down automático; "Todos os municípios" volta à UF), (b) **multi-hex** (cenário que
+> soma residual/pop/score no cliente), (c) **1 filtro global** ("MELHORES" por faixa M1). **FORA do WEB-12 agora**
+> (não pedidos): modos de score selecionáveis, overlay de vazios competitivos, Análise Pontual de Entorno dedicada,
+> régua de 8 filtros. Faltam **WEB-14** (geocoding), **WEB-15** (Visão Executiva por estado), **WEB-16** (testes+CI),
+> **WEB-17** (deploy). Nota de dado: logos de concorrentes ausentes no checkout → fallback quadrado cor+sigla.
 
 ---
 
