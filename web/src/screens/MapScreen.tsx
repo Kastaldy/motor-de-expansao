@@ -598,7 +598,12 @@ function Metrica({
   return (
     <div
       style={{
-        padding: '6px 15px',
+        // Largura igual nos três cards (o rótulo "espaço p/ academias" é o mais
+        // largo; sem isto ele fica maior que os outros — pedido do Felipe).
+        width: 116,
+        flexShrink: 0,
+        boxSizing: 'border-box',
+        padding: '6px 8px',
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
@@ -618,10 +623,10 @@ function Metrica({
       </div>
       <div
         style={{
-          font: '600 9px/1 var(--f-ui)',
+          font: '600 8px/1 var(--f-ui)',
           color: destaque ? 'var(--ac-text)' : 'var(--tx-label)',
           textTransform: 'uppercase',
-          letterSpacing: '.06em',
+          letterSpacing: '.05em',
           whiteSpace: 'nowrap',
         }}
       >
