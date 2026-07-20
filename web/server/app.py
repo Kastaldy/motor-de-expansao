@@ -1438,8 +1438,33 @@ def _wavg(valores: pd.Series, pesos: pd.Series) -> float | None:
     return _num(float((v[m] * w[m]).sum() / w[m].sum()), 2)
 
 
+def _prev_month(ano: int, mes: int) -> tuple[int, int]:
+    return (ano - 1, 12) if mes == 1 else (ano, mes - 1)
+
+
+def _numf(v: Any) -> float | None:
+    """float JSON-safe SEM arredondar (NaN/inf -> None)."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return None if (math.isnan(f) or math.isinf(f)) else f
+
+
 @app.get("/api/executiva/{uf}")
 def executiva(uf: str) -> dict[str, Any]:
+    """Rede Ultra por estado, com o ETL correto da base Growth.
+
+    Peculiaridades tratadas (Felipe 2026-07-20): a base é DIÁRIA e `faturamento`,
+    `churn` e `cancelados` ACUMULAM no mês (MTD) e resetam no dia 1. Logo:
+      - acumulados (faturamento) -> valor MTD no dia de referência; M-1 = MESMO
+        DIA-DO-MÊS do mês anterior (12/06 vs 12/05), comparação justa;
+      - snapshots (ativos/pagantes/agregadores/ticket/NPS) -> valor no mesmo dia;
+      - churn -> ROLLING 30 dias (reconstruído do cumulativo mensal), não o MTD
+        parcial que subestima;
+      - unidades sem dado no mês de referência (paradas) ficam FORA.
+    Todos os cards trazem `atual`, `m1` e `delta_pct`. READ-ONLY sobre o M1.
+    """
     df = _carregar_growth()
     if not len(df):
         raise HTTPException(404, "Base de rede (growth_api_historico.parquet) ausente no servidor.")
@@ -1447,71 +1472,145 @@ def executiva(uf: str) -> dict[str, Any]:
     if not len(sel):
         raise HTTPException(404, f"Sem unidades Ultra com dados de rede na UF {uf.upper()}.")
 
-    # Snapshot mais recente por unidade (última competência).
-    sel = sel.sort_values("_data")
-    ult = sel.groupby("unidade", as_index=False).tail(1)
-
-    def col(c: str) -> pd.Series:
-        return pd.to_numeric(ult.get(c), errors="coerce")
-
-    def z(v: Any) -> float:
-        x = _num(v, 2)
-        return x if x is not None else 0.0
-
-    ativos, pagantes = col("ativos_total"), col("pagantes")
-    agreg = col("alunos_gympass").fillna(0) + col("alunos_totalpass").fillna(0)
-    tot_pag = float(pagantes.fillna(0).sum())
-    tot_agr = float(agreg.sum())
-    base_split = tot_pag + tot_agr
+    ref = df["_data"].max()
+    ry, rm, dom = int(ref.year), int(ref.month), int(ref.day)
+    py, pm = _prev_month(ry, rm)
 
     from motor_expansao.dimensionamento.growth_api_client import normalizar_unidade
 
     coords = _ultra_coord_map()
-    unidades: list[dict[str, Any]] = []
-    lats: list[float] = []
-    lngs: list[float] = []
-    for _, r in ult.iterrows():
-        nome = _clean(r.get("unidade"))
+
+    def mtd(g: pd.DataFrame, ano: int, mes: int) -> "pd.Series | None":
+        """Última linha do mês (ano,mes) com dia <= dom (valor MTD nesse dia)."""
+        m = g[(g["_data"].dt.year == ano) & (g["_data"].dt.month == mes) & (g["_data"].dt.day <= dom)]
+        return m.iloc[-1] if len(m) else None
+
+    def mes_cheio(g: pd.DataFrame, ano: int, mes: int) -> "pd.Series | None":
+        m = g[(g["_data"].dt.year == ano) & (g["_data"].dt.month == mes)]
+        return m.iloc[-1] if len(m) else None
+
+    def churn30(g: pd.DataFrame, ano: int, mes: int) -> float | None:
+        """Churn dos ~30 dias que terminam no dia `dom` de (ano,mes): cancelados MTD
+        do mês + (cancelados do mês anterior COMPLETO - MTD até `dom`), sobre a base
+        de pagantes. Reconstrói a janela de 30 dias sobre o cumulativo mensal."""
+        atual = mtd(g, ano, mes)
+        if atual is None:
+            return None
+        c_mtd, pag = _numf(atual.get("cancelados")), _numf(atual.get("pagantes"))
+        if c_mtd is None or not pag:
+            return None
+        pa, pmo = _prev_month(ano, mes)
+        cheio, ate_dom = mes_cheio(g, pa, pmo), mtd(g, pa, pmo)
+        extra = 0.0
+        if cheio is not None and ate_dom is not None:
+            fv, sv = _numf(cheio.get("cancelados")), _numf(ate_dom.get("cancelados"))
+            if fv is not None and sv is not None:
+                extra = max(0.0, fv - sv)
+        return 100.0 * (c_mtd + extra) / pag
+
+    def agr(row: "pd.Series | None") -> float | None:
+        if row is None:
+            return None
+        return (_numf(row.get("alunos_gympass")) or 0.0) + (_numf(row.get("alunos_totalpass")) or 0.0)
+
+    def val(row: "pd.Series | None", c: str) -> float | None:
+        return _numf(row.get(c)) if row is not None else None
+
+    rows: list[dict[str, Any]] = []
+    for nome_u, g in sel.groupby("unidade"):
+        g = g.sort_values("_data")
+        cur = mtd(g, ry, rm)
+        if cur is None:
+            continue  # unidade sem dado no mês de referência (parada) -> fora
+        m1 = mtd(g, py, pm)
+        nome = _clean(nome_u)
         c = coords.get(normalizar_unidade(nome))
-        if c:
-            lats.append(c[0])
-            lngs.append(c[1])
-        unidades.append(
+        rows.append(
             {
                 "nome": nome,
-                "lat": _num(c[0], 6) if c else None,
-                "lng": _num(c[1], 6) if c else None,
-                "ativos": _num(r.get("ativos_total")),
-                "pagantes": _num(r.get("pagantes")),
-                "agregadores": _num(z(r.get("alunos_gympass")) + z(r.get("alunos_totalpass"))),
-                "faturamento": _num(r.get("faturamento")),
-                "churn": _num(r.get("churn"), 3),
-                "ticket": _num(r.get("ticket_medio_pagantes"), 2),
-                "nps": _num(r.get("NPS"), 1),
-                "inauguracao": _clean(r.get("inauguracao")),
+                "lat": c[0] if c else None,
+                "lng": c[1] if c else None,
+                "inauguracao": _clean(cur.get("inauguracao")),
+                "fat_cur": val(cur, "faturamento"),
+                "fat_m1": val(m1, "faturamento"),
+                "ativos_cur": val(cur, "ativos_total"),
+                "ativos_m1": val(m1, "ativos_total"),
+                "pag_cur": val(cur, "pagantes"),
+                "pag_m1": val(m1, "pagantes"),
+                "agr_cur": agr(cur),
+                "agr_m1": agr(m1),
+                "ticket_cur": val(cur, "ticket_medio_pagantes"),
+                "ticket_m1": val(m1, "ticket_medio_pagantes"),
+                "nps_cur": val(cur, "NPS"),
+                "nps_m1": val(m1, "NPS"),
+                "churn_cur": churn30(g, ry, rm),
+                "churn_m1": churn30(g, py, pm),
             }
         )
-    unidades.sort(key=lambda u: (u["faturamento"] or 0), reverse=True)
 
-    comp = ult["_data"].max()
+    if not rows:
+        raise HTTPException(404, f"Sem unidades com dados no mês de referência na UF {uf.upper()}.")
+
+    U = pd.DataFrame(rows)
+    for c in (
+        "fat_cur fat_m1 ativos_cur ativos_m1 pag_cur pag_m1 agr_cur agr_m1 "
+        "ticket_cur ticket_m1 nps_cur nps_m1 churn_cur churn_m1 lat lng"
+    ).split():
+        U[c] = pd.to_numeric(U[c], errors="coerce")
+
+    def soma_metric(cur_c: str, m1_c: str) -> dict[str, Any]:
+        """Total (soma). `atual` = todos; `m1`/delta na cesta com M-1 (comparável)."""
+        both = U[U[cur_c].notna() & U[m1_c].notna()]
+        m1_sum = float(both[m1_c].sum()) if len(both) else None
+        cur_both = float(both[cur_c].sum()) if len(both) else None
+        delta = (100.0 * (cur_both - m1_sum) / m1_sum) if (m1_sum and cur_both is not None) else None
+        return {"atual": _num(U[cur_c].sum()), "m1": _num(m1_sum), "delta_pct": _num(delta, 1)}
+
+    def media_metric(cur_c: str, m1_c: str, w_cur: str, w_m1: str) -> dict[str, Any]:
+        atual, m1v = _wavg(U[cur_c], U[w_cur]), _wavg(U[m1_c], U[w_m1])
+        delta = (100.0 * (atual - m1v) / m1v) if (atual is not None and m1v) else None
+        return {"atual": _num(atual, 2), "m1": _num(m1v, 2), "delta_pct": _num(delta, 1)}
+
+    tot_pag = float(U["pag_cur"].fillna(0).sum())
+    tot_agr = float(U["agr_cur"].fillna(0).sum())
+    base_split = tot_pag + tot_agr
+    com_coord = U[U["lat"].notna()]
+
+    unidades = [
+        {
+            "nome": r["nome"],
+            "lat": _num(r["lat"], 6),
+            "lng": _num(r["lng"], 6),
+            "faturamento": _num(r["fat_cur"]),
+            "ativos": _num(r["ativos_cur"]),
+            "pagantes": _num(r["pag_cur"]),
+            "agregadores": _num(r["agr_cur"]),
+            "churn": _num(r["churn_cur"], 2),
+            "ticket": _num(r["ticket_cur"], 2),
+            "nps": _num(r["nps_cur"], 1),
+            "inauguracao": r["inauguracao"],
+        }
+        for _, r in U.sort_values("fat_cur", ascending=False).iterrows()
+    ]
+
     return {
         "uf": uf.upper(),
-        "competencia": comp.strftime("%m/%Y") if pd.notna(comp) else None,
+        "referencia": ref.strftime("%d/%m/%Y"),
+        "referencia_m1": f"{dom:02d}/{pm:02d}/{py}",
         "centro": {
-            "lat": _num(sum(lats) / len(lats), 6) if lats else None,
-            "lng": _num(sum(lngs) / len(lngs), 6) if lngs else None,
+            "lat": _num(com_coord["lat"].mean(), 6) if len(com_coord) else None,
+            "lng": _num(com_coord["lng"].mean(), 6) if len(com_coord) else None,
         },
         "totais": {
-            "unidades": int(len(ult)),
-            "com_coordenada": len(lats),
-            "ativos": _num(ativos.sum()),
-            "pagantes": _num(pagantes.sum()),
-            "agregadores": _num(agreg.sum()),
-            "faturamento": _num(col("faturamento").sum()),
-            "faturamento_sem_agregador": _num(col("faturamento_sem_agregador").sum()),
-            "churn_medio": _wavg(col("churn"), ativos),
-            "ticket_medio_pagantes": _wavg(col("ticket_medio_pagantes"), pagantes),
-            "nps_medio": _wavg(col("NPS"), ativos),
+            "unidades": int(len(U)),
+            "com_coordenada": int(len(com_coord)),
+            "faturamento": soma_metric("fat_cur", "fat_m1"),
+            "ativos": soma_metric("ativos_cur", "ativos_m1"),
+            "pagantes": soma_metric("pag_cur", "pag_m1"),
+            "agregadores": soma_metric("agr_cur", "agr_m1"),
+            "churn": media_metric("churn_cur", "churn_m1", "pag_cur", "pag_m1"),
+            "ticket": media_metric("ticket_cur", "ticket_m1", "pag_cur", "pag_m1"),
+            "nps": media_metric("nps_cur", "nps_m1", "ativos_cur", "ativos_m1"),
             "pct_pagantes": _num(100 * tot_pag / base_split, 1) if base_split > 0 else None,
             "pct_agregadores": _num(100 * tot_agr / base_split, 1) if base_split > 0 else None,
         },

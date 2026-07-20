@@ -4,7 +4,7 @@ import ExecMap from '../components/ExecMap'
 import Select from '../components/Select'
 import { api, ApiError } from '../lib/api'
 import { brl, num, pct } from '../lib/format'
-import type { ExecutivaPayload } from '../lib/types'
+import type { ExecMetric, ExecutivaPayload } from '../lib/types'
 
 /* ---------------------------------------------------------------------------
    Visão Executiva — a rede Ultra REAL por estado (Growth API, camada paralela).
@@ -88,9 +88,9 @@ export default function ExecutiveScreen({ ufs, uf, onUf }: ExecutiveScreenProps)
             options={ufs.map((u) => ({ value: u, label: u }))}
           />
         </label>
-        {dados?.competencia && (
+        {dados?.referencia && (
           <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
-            competência {dados.competencia}
+            até {dados.referencia} · vs {dados.referencia_m1} (M-1)
           </span>
         )}
         <div style={{ flex: 1 }} />
@@ -164,10 +164,10 @@ function PainelExecutivo({ dados }: { dados: ExecutivaPayload }) {
         </h2>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 16 }}>
-          <Kpi rotulo="Faturamento / mês" valor={brl(t.faturamento, true)} destaque />
-          <Kpi rotulo="Alunos ativos" valor={num(t.ativos)} />
-          <Kpi rotulo="Churn médio" valor={pct(t.churn_medio, 2)} />
-          <Kpi rotulo="NPS médio" valor={num(t.nps_medio)} />
+          <Kpi rotulo="Faturamento no mês" valor={brl(t.faturamento.atual, true)} metric={t.faturamento} bomSubindo destaque />
+          <Kpi rotulo="Alunos ativos" valor={num(t.ativos.atual)} metric={t.ativos} bomSubindo />
+          <Kpi rotulo="Churn (30 dias)" valor={pct(t.churn.atual, 1)} metric={t.churn} bomSubindo={false} />
+          <Kpi rotulo="NPS médio" valor={num(t.nps.atual)} metric={t.nps} bomSubindo />
         </div>
 
         {/* Split pagantes × agregadores */}
@@ -189,8 +189,8 @@ function PainelExecutivo({ dados }: { dados: ExecutivaPayload }) {
             <div style={{ width: `${pctAgr}%`, background: '#d94a86' }} />
           </div>
           <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
-            <Legenda cor="var(--ac)" texto={`${num(t.pagantes)} pagantes`} />
-            <Legenda cor="#d94a86" texto={`${num(t.agregadores)} agregadores`} />
+            <Legenda cor="var(--ac)" texto={`${num(t.pagantes.atual)} pagantes`} delta={t.pagantes.delta_pct} />
+            <Legenda cor="#d94a86" texto={`${num(t.agregadores.atual)} agregadores`} delta={t.agregadores.delta_pct} />
           </div>
         </div>
       </header>
@@ -239,7 +239,19 @@ function PainelExecutivo({ dados }: { dados: ExecutivaPayload }) {
   )
 }
 
-function Kpi({ rotulo, valor, destaque }: { rotulo: string; valor: string; destaque?: boolean }) {
+function Kpi({
+  rotulo,
+  valor,
+  metric,
+  bomSubindo,
+  destaque,
+}: {
+  rotulo: string
+  valor: string
+  metric?: ExecMetric
+  bomSubindo?: boolean
+  destaque?: boolean
+}) {
   return (
     <div
       style={{
@@ -255,15 +267,39 @@ function Kpi({ rotulo, valor, destaque }: { rotulo: string; valor: string; desta
       <div style={{ font: '500 10px/1 var(--f-ui)', color: 'var(--tx-label)', marginTop: 5, textTransform: 'uppercase', letterSpacing: '.04em' }}>
         {rotulo}
       </div>
+      {metric && <Delta d={metric.delta_pct} bomSubindo={bomSubindo ?? true} />}
     </div>
   )
 }
 
-function Legenda({ cor, texto }: { cor: string; texto: string }) {
+/** Chip de variação vs M-1 — verde/vermelho conforme a métrica melhora ou piora. */
+function Delta({ d, bomSubindo }: { d: number | null; bomSubindo: boolean }) {
+  if (d == null) return null
+  const zero = Math.abs(d) < 0.05
+  const subiu = d > 0
+  const bom = subiu === bomSubindo
+  const cor = zero ? 'var(--tx-muted)' : bom ? 'var(--pos, #37b26b)' : 'var(--neg, #ff5a6e)'
+  return (
+    <div style={{ marginTop: 7, display: 'flex', alignItems: 'baseline', gap: 4 }}>
+      <span className="num" style={{ font: '700 11px/1 var(--f-num)', color: cor }}>
+        {zero ? '—' : subiu ? '▲' : '▼'} {pct(Math.abs(d), 1)}
+      </span>
+      <span style={{ font: '400 9px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>vs M-1</span>
+    </div>
+  )
+}
+
+function Legenda({ cor, texto, delta }: { cor: string; texto: string; delta?: number | null }) {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
       <span style={{ width: 8, height: 8, borderRadius: 2, background: cor }} />
       {texto}
+      {delta != null && Math.abs(delta) >= 0.05 && (
+        <span className="num" style={{ font: '500 9.5px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+          ({delta > 0 ? '+' : '−'}
+          {pct(Math.abs(delta), 1)})
+        </span>
+      )}
     </span>
   )
 }

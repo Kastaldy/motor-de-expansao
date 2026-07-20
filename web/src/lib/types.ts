@@ -183,24 +183,34 @@ export interface ExecUnidade {
   inauguracao: string
 }
 
+/** Métrica com comparação M-1 (mesmo dia do mês anterior). */
+export interface ExecMetric {
+  atual: number | null
+  m1: number | null
+  delta_pct: number | null
+}
+
 export interface ExecTotais {
   unidades: number
   com_coordenada: number
-  ativos: number | null
-  pagantes: number | null
-  agregadores: number | null
-  faturamento: number | null
-  faturamento_sem_agregador: number | null
-  churn_medio: number | null
-  ticket_medio_pagantes: number | null
-  nps_medio: number | null
+  faturamento: ExecMetric
+  ativos: ExecMetric
+  pagantes: ExecMetric
+  agregadores: ExecMetric
+  /** churn rolling 30 dias, em % */
+  churn: ExecMetric
+  ticket: ExecMetric
+  nps: ExecMetric
   pct_pagantes: number | null
   pct_agregadores: number | null
 }
 
 export interface ExecutivaPayload {
   uf: string
-  competencia: string | null
+  /** dia de referência (MTD), ex.: "12/06/2026" */
+  referencia: string | null
+  /** mesmo dia do mês anterior, ex.: "12/05/2026" */
+  referencia_m1: string | null
   centro: { lat: number | null; lng: number | null }
   totais: ExecTotais
   unidades: ExecUnidade[]
