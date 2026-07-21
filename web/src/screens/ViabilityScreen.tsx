@@ -727,6 +727,23 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             overflowY: 'auto',
           }}
         >
+          {/* Rótulo permanente: o modelo de viabilidade ainda está em calibração vs planilha. */}
+          <div
+            style={{
+              padding: '9px 13px',
+              borderRadius: 'var(--r-md)',
+              background: 'rgba(255,193,7,.10)',
+              border: '1px solid rgba(255,193,7,.35)',
+              font: '400 11px/1.45 var(--f-ui)',
+              color: 'var(--warn-text)',
+            }}
+          >
+            <strong style={{ fontWeight: 600 }}>Números preliminares — em calibração.</strong> A
+            Viabilidade ainda está sendo ajustada à planilha financeira oficial (folha, split
+            balcão/agregadores e alavancagem do financiamento pendentes). Use como leitura
+            direcional, não como número final de comitê.
+          </div>
+
           {erro && (
             <div
               role="alert"

@@ -36,6 +36,7 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 # --- Localizacao do repo e dos dados ---------------------------------------
@@ -62,6 +63,8 @@ OFERTA_DESTAQUE_MIN = 2000.0  # espelha relatorio_municipal (emenda BLK-RELMUN-0
 POP_MIN_ACIONAVEL = 5000  # regua operacional do dashboard (<5k = descartado)
 
 app = FastAPI(title="Piloto Web — Motor de Expansao", version="0.1.0")
+# Em producao o SPA e a API sao servidos pela MESMA origem (mesmo container atras do
+# Caddy), entao CORS e irrelevante ali; estas origens sao so para o dev (Vite :5000).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5000", "http://127.0.0.1:5000"],
@@ -2022,6 +2025,19 @@ async def relatorio_pontual(
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="relatorio_pontual.pdf"'},
     )
+
+
+# ============================================================================
+# SPA estatico (build do Vite) — producao
+# ============================================================================
+# Em producao UM container serve o frontend (dist/) E a API na mesma porta; o
+# Caddy so faz reverse_proxy (espelha dashboard->streamlit). O mount na raiz vem
+# por ULTIMO (todas as rotas /api ja foram registradas acima) com html=True p/ o
+# SPA. So monta se o dist/ existir (em dev o Vite serve o front na :5000 e faz
+# proxy /api para ca, entao o dist/ nem existe). Caminho configuravel via WEB_DIST_DIR.
+_DIST_DIR = Path(os.environ.get("WEB_DIST_DIR", str(_REPO_ROOT / "web" / "dist")))
+if _DIST_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(_DIST_DIR), html=True), name="spa")
 
 
 if __name__ == "__main__":

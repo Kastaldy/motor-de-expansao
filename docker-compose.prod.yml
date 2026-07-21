@@ -126,6 +126,42 @@ services:
     healthcheck:
       disable: true
 
+  # ── Piloto Web (frontend Vite + backend FastAPI, num UNICO container) ────────
+  # Serve o SPA (dist/) E a API na mesma porta 8899; o Caddy so faz reverse_proxy
+  # (igual ao dashboard->streamlit), atras do Authelia. Consome os MESMOS volumes de
+  # dados (:ro) do host. Sem porta no host. PILOTO: numeros da Viabilidade em
+  # calibracao (rotulo "preliminar" na UI). READ-ONLY sobre o M1.
+  web:
+    # Modo PULL por digest (igual aos demais): o CI (job publish-web) publica
+    # `motor-expansao-web` no GHCR; a VPS pina por digest no .env. Fail-closed.
+    #   WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest>
+    # Build local de sanity: `docker build -f Dockerfile.web -t motor-expansao-web:local .`
+    image: ${WEB_IMAGE:?defina WEB_IMAGE com o digest imutavel ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest> — ver docs/deploy_piloto_web.md}
+    container_name: motor_expansao_web
+    restart: unless-stopped
+    expose:
+      - "8899"
+    environment:
+      # O backend deriva OUTPUTS/STAGING/IBGE/ULTRA/CENSO_GEO/ENRICHED de MOTOR_DATA_DIR.
+      MOTOR_DATA_DIR: "/app/data"
+      WEB_DIST_DIR: "/app/web/dist"
+    volumes:
+      - /opt/motor-expansao/data/outputs:/app/data/outputs:ro    # censo geo + enriquecido + base_calibracao
+      - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + renda domiciliar
+      - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal
+      - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF
+      - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)
+    networks:
+      - app_net
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8899/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
   # ── Caddy (reverse proxy + TLS automático) ─────────────────────────────────
   caddy:
     image: caddy:2-alpine
@@ -134,6 +170,7 @@ services:
     depends_on:
       - authelia
       - streamlit
+      - web
     ports:
       - "80:80"
       - "80:80/udp"

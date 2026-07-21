@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1
+# Imagem do PILOTO WEB (Motor de Expansao Ultra Academia). Multi-stage:
+#   1) Node builda o frontend Vite (web/ -> dist/)
+#   2) Python (espelha Dockerfile.api) roda o backend FastAPI, que serve o dist/
+#      E a API na MESMA porta 8899. Um unico container; o Caddy so faz reverse_proxy
+#      (igual ao dashboard->streamlit), atras do Authelia.
+#
+# READ-ONLY sobre o M1: o container so LE os parquets montados :ro; nao recalcula
+# score_priorizacao/pesos nem escreve artefato oficial (guardrail do backend).
+
+# --------------------------------------------------------------------------
+# Estagio 1 — build do frontend (Vite)
+# --------------------------------------------------------------------------
+FROM node:20-slim AS frontend
+WORKDIR /web
+# Cache das deps: copia so os manifests antes do `npm ci`.
+COPY web/package.json web/package-lock.json* ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# --------------------------------------------------------------------------
+# Estagio 2 — backend Python + SPA estatico
+# --------------------------------------------------------------------------
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HOME=/home/appuser \
+    MOTOR_DATA_DIR=/app/data \
+    WEB_DIST_DIR=/app/web/dist
+WORKDIR /app
+
+# curl (healthcheck) + libexpat1 (runtime do rasterio/contextily do Relatorio Pontual)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates libexpat1 \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# Motor (funcoes puras) + FastAPI/uvicorn (api_mvp) + contextily (basemap, p/ o PDF).
+# streamlit ja vem nas dependencias base. SEMPRE com o lockfile universal.
+# (COPY . . respeita o .dockerignore: nao traz data/, tests/, web/node_modules, web/dist.)
+COPY . .
+RUN python -m pip install --upgrade pip \
+    && python -m pip install ".[basemap,api_mvp]" -c constraints.txt
+
+# dist/ vem do estagio Node (o COPY . . nao o traz, por causa do .dockerignore)
+COPY --from=frontend /web/dist ./web/dist
+
+# Usuario non-root (padrao dos demais servicos)
+RUN useradd --create-home --shell /usr/sbin/nologin appuser \
+    && mkdir -p /app/data \
+    && chown -R appuser:appuser /app /home/appuser
+USER appuser
+
+EXPOSE 8899
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8899/api/health || exit 1
+
+# Um processo serve o SPA (dist/, via StaticFiles) e a API na :8899.
+CMD ["uvicorn", "app:app", "--app-dir", "web/server", "--host", "0.0.0.0", "--port", "8899"]

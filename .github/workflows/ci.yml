@@ -15,6 +15,10 @@ on:
         description: "Forcar build+publish da imagem da API/bot (motor-expansao-api) — bootstrap/manual"
         type: boolean
         default: false
+      publish_web:
+        description: "Forcar build+publish da imagem do piloto web (motor-expansao-web) — bootstrap/manual"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -296,3 +300,96 @@ jobs:
       - name: Exibir digest publicado (pin da API)
         if: steps.filter.outputs.changed == 'true'
         run: 'echo "API digest imutavel publicado: ${{ steps.push.outputs.digest }}"'
+
+  # ── Publica a imagem do PILOTO WEB (motor-expansao-web) no GHCR ──────────────
+  # Container unico: frontend Vite buildado (estagio Node) + backend FastAPI que serve
+  # o SPA e a API. Path-filter cobre web/** E os modulos do motor que o backend importa
+  # (dashboard/dimensionamento/api) — senao a imagem fica stale quando um deles muda
+  # (mesmo gotcha do publish-api). Trivy BLOQUEANTE: exposto publicamente atras do
+  # Authelia e sem Chrome (diferente da API). needs: test. Republish manual:
+  #   gh workflow run ci.yml --ref main -f publish_web=true -f dispatch_build_sanity=false
+  publish-web:
+    needs: [test]
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish_web)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+      - name: Detectar mudancas que afetam a imagem do web
+        id: filter
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "forcado por workflow_dispatch"; exit 0
+          fi
+          BASE="${{ github.event.before }}"
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BASE" 2>/dev/null; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "sem base comparavel -> publica"; exit 0
+          fi
+          if git diff --name-only "$BASE" "${{ github.sha }}" | grep -qE '^(Dockerfile\.web|web/|src/motor_expansao/(dashboard|dimensionamento|api)/|pyproject\.toml$)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"; echo "arquivos do web mudaram -> publica"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"; echo "nada do web mudou -> pula build"
+          fi
+      - name: Login no GHCR
+        if: steps.filter.outputs.changed == 'true'
+        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Metadata (tags/labels)
+        id: meta
+        if: steps.filter.outputs.changed == 'true'
+        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        with:
+          images: ghcr.io/${{ github.repository }}/motor-expansao-web
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+      - name: Set up Buildx
+        if: steps.filter.outputs.changed == 'true'
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+      - name: Build (local, p/ scan antes do push)
+        if: steps.filter.outputs.changed == 'true'
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: Dockerfile.web
+          load: true
+          tags: motor-expansao-web:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # Trivy BLOQUEANTE (exit-code 1): o piloto e exposto publicamente (atras do Authelia)
+      # e nao embute Chrome. HIGH/CRITICAL unfixed sao gate — igual ao Streamlit. Se travar
+      # numa CVE sem fix viavel, adicionar ao .trivyignore com justificativa.
+      - name: Image scan (Trivy, BLOQUEANTE)
+        if: steps.filter.outputs.changed == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: motor-expansao-web:scan
+          format: table
+          exit-code: "1"
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          vuln-type: os,library
+      - name: Push (apos scan)
+        id: push
+        if: steps.filter.outputs.changed == 'true'
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: .
+          file: Dockerfile.web
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Exibir digest publicado (pin do web)
+        if: steps.filter.outputs.changed == 'true'
+        run: 'echo "WEB digest imutavel publicado: ${{ steps.push.outputs.digest }}"'
