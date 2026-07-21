@@ -100,6 +100,58 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
+## Relatório Pontual Censitário — vista aérea de satélite (2026-07-21, pedido de Juan)
+
+> Pedido de Juan a partir dos estudos prontos do time de UX (`UX/*.pptx`, slide "Fotos Do Imóvel"),
+> que trazem uma **foto aérea do imóvel com pin**. Objetivo: gerar essa imagem automaticamente a
+> partir da coordenada que o usuário já informa (o campo de busca resolve coordenada, link do Maps,
+> Plus Code e **endereço livre** — `BLK-UI-08`/`DEC-010`), e inseri-la como página própria no PDF.
+
+### BLK-SAT-01 — Vista aérea (satélite Esri) no PDF do Relatório Pontual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Status** | **Em PR — TESTE, não é a versão definitiva** (validação visual pendente com Juan) |
+| **ClickUp** | — |
+
+**Escopo (aditivo, READ-ONLY sobre o M1):** `censo_map.render_foto_satelite_ponto()` monta um PNG
+da vista aérea do ponto (Esri World Imagery + `Reference/World_Transportation` para rótulos — a mesma
+composição do "World Imagery Hybrid" da Esri e do `sat-overlay` do `openmaptiles-infra`), com pin
+vermelho no centro. `censo_report._foto_satelite_page()` insere a página logo após a capa.
+**Nada recalcula** score, interseção de setores, raio de 1,5 km ou artefato oficial — os números do
+relatório saem idênticos com e sem a página.
+
+**Zoom:** sonda 1 tile e usa z19 se houver imagem no ponto, senão z18. Medido em 22 pontos do Brasil:
+z17 existe em todo lugar, z18 em cidade média/grande, z19 só em capital.
+
+**Tamanho da imagem na página:** `foto_satelite_grande=True` (API/bot e PDF do dashboard, onde a
+vista aérea é a única imagem) ocupa a área de conteúdo; `False` (aba Viabilidade) usa a célula padrão
+de `_fotos_cells`, para casar com a página de fotos do imóvel que o usuário sobe. Em **página própria**
+nos dois casos: com `_FOTOS_MAX=2`, dividir a página descartaria em silêncio uma foto do usuário.
+
+**Falha de rede → `None` → o PDF sai como hoje, sem a página** (mesmo fallback gracioso do
+`_fetch_basemap`, DEC-004). Nenhum caminho novo pode derrubar a geração do relatório.
+
+**PENDÊNCIA BLOQUEANTE PARA PRODUÇÃO — licença:** o `tou_summary.pdf` da Esri (21/04/2025) diz
+*"If you do not have Esri software, you must purchase an ArcGIS Online subscription"*. O tile hoje é
+puxado anônimo de `server.arcgisonline.com`. Uso em produção exige conta no **ArcGIS Location
+Platform** (grátis, 2M tiles/mês) e a chave via env. O mesmo documento proíbe **self-host** e
+**redistribuição** do tile — por isso a imagem é sempre externa e o crédito da Esri é desenhado na
+foto. Decisão de Felipe antes de subir para produção.
+
+**Ressalva §2 ("não criar dependência de API ao vivo no dashboard de produção"):** a geração do PDF
+já depende de tiles externos ao vivo desde a DEC-004 (basemap CARTO em `_fetch_basemap`); esta página
+entra na mesma categoria e com o mesmo fallback. Não introduz dependência nova no **dashboard**, só no
+**PDF**. Vale confirmar com Felipe se a leitura é essa.
+
+**Testes:** `tests/unit/test_relatorio_pontual_foto_satelite.py` (15 casos, zero acesso a rede —
+tile mockado por monkeypatch): matemática de tile, geometria pura da célula, fallback de rede,
+tolerância a tile faltando, e inserção/ausência da página nos dois tamanhos.
+
+
+---
+
 ## Relatório Municipal — novo formato (2026-06-19, pedido de Vini)
 
 > Novo formato de relatório que **coexiste** com o Relatório Pontual Censitário atual (que analisa

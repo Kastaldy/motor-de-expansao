@@ -3035,6 +3035,12 @@ def gerar_payloads_relatorio_pontual_para_pin(
             valor = hex_row.get(campo)
             if valor is not None and not pd.isna(valor):
                 residual[campo] = float(valor)
+    # BLK-SAT (TESTE): vista aerea do ponto, em pagina propria logo apos a capa.
+    # `grande=True` porque este PDF nao tem upload de fotos do imovel (so o da aba
+    # Viabilidade tem) -> a vista aerea e a unica imagem e ocupa a area de conteudo.
+    # `None` se a rede falhar -> o PDF sai como hoje, sem a pagina.
+    from motor_expansao.dashboard.censo_map import render_foto_satelite_ponto
+
     return gerar_payloads_download_relatorio_censitario(
         result,
         mapas,
@@ -3044,6 +3050,8 @@ def gerar_payloads_relatorio_pontual_para_pin(
         template="classico",
         rotulo=rotulo,
         perfil_bairro=perfil_bairro,
+        foto_satelite=render_foto_satelite_ponto(lat, lng),
+        foto_satelite_grande=True,
     )
 
 
@@ -3514,6 +3522,10 @@ def render_relatorio_pontual_censitario(
 
     # F2-F: botao de download no TOPO da secao do relatorio (antes das 4 imagens).
     # So a CHAMADA de UI foi reposicionada; censo_report.py/censo_map.py INTOCADOS.
+    # BLK-SAT (TESTE): vista aerea em pagina propria; `grande=True` porque este PDF nao
+    # tem upload de fotos do imovel. `None` na falha de rede -> PDF sai sem a pagina.
+    from motor_expansao.dashboard.censo_map import render_foto_satelite_ponto
+
     render_downloads_relatorio_censitario(
         st,
         result,
@@ -3523,6 +3535,8 @@ def render_relatorio_pontual_censitario(
         ultra_dir=Path("data/ultra"),
         template="classico",
         perfil_bairro=perfil_bairro,
+        foto_satelite=render_foto_satelite_ponto(lat, lng),
+        foto_satelite_grande=True,
     )
 
     st.markdown(f"**Ponto analisado:** `{lat:.5f}, {lng:.5f}` | `{nome_municipio}/{uf}`")
@@ -3768,6 +3782,11 @@ def _render_relatorio_pdf_imovel(
             competitors_df=competitors_df, ultra_df=ultra_df,
             censo_geo_loader=censo_geo_loader, censo_geo_dir=censo_geo_dir,
         )
+        # BLK-SAT (TESTE): vista aerea do imovel, em pagina propria logo apos a capa.
+        # `None` se a rede falhar -> o PDF sai como hoje, sem a pagina.
+        from motor_expansao.dashboard.censo_map import render_foto_satelite_ponto
+
+        foto_sat = render_foto_satelite_ponto(lat, lng)
         render_downloads_relatorio_censitario(
             st,
             insumos["result"],
@@ -3783,6 +3802,7 @@ def _render_relatorio_pdf_imovel(
             fotos=fotos,
             info_imovel=info_imovel,
             viabilidade=viab_payload,
+            foto_satelite=foto_sat,
         )
     st.success("Relatório gerado. Use o botão **Baixar PDF executivo** acima.")
 
