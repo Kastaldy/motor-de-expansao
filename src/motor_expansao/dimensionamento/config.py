@@ -101,6 +101,28 @@ SIM_CAPEX_DEFAULT = 2_340_000            # R9 formula cenario 0 (FC!C11:C16)
 
 # Custos fixos ABSOLUTOS mensais (nao no JSON — extraidos do Excel; DRE linhas 52-59,69 + Fopag 44)
 SIM_PESSOAL_MES = 50_128.16     # Fopag total c/ encargos (linha DRE 55)
+                                 # LEGADO: nao alimenta mais a folha (ver SIM_FOLHA_PCT abaixo);
+                                 # mantido so como default da assinatura de viabilidade()/gerar_serie_mensal().
 SIM_OUTROS_FIXOS_MES = 38_150.00  # IPTU(2000)+Agua/Luz(17000)+Tel(500)+
                                    # Limpeza(14000)+Tec(2150)+Assess(2500)+Outros(2000)
                                    # DRE linhas 52-59,69
+
+# ---------------------------------------------------------------------------
+# Reforma do motor de viabilidade (alinhamento a planilha financeira oficial).
+# READ-ONLY sobre o M1 (DEC-008/009): nao toca score_priorizacao/pesos/artefatos.
+# ---------------------------------------------------------------------------
+# Impostos: 16% sobre o FATURAMENTO BRUTO substitui a linha PIS/COFINS/ISS (acima do
+# EBITDA). IR/CSLL (SIM_IR_EFETIVO/SIM_CSLL_EFETIVO) seguem abaixo do EBITDA, inalterados.
+SIM_IMPOSTO_FATURAMENTO = 0.16
+# Folha: 17% do faturamento bruto (substitui o custo absoluto SIM_PESSOAL_MES) + custo por studio.
+SIM_FOLHA_PCT = 0.17
+SIM_CUSTO_STUDIO = 6_000.0       # R$/mes de fopag adicional por studio extra
+SIM_STUDIOS_DEFAULT = 0          # quantidade de studios (0..3)
+# CAPEX/OPEX: Obra (equity, parcelas sem juros) x Equipamentos (financiado). Taxa de franquia
+# paga a vista no M-4 (pre-inauguracao); usada na serie de fluxo de caixa operacional.
+SIM_TAXA_FRANQUIA = 160_000.0
+SIM_PARCELAS_OBRA_DEFAULT = 4
+# Aluguel-teto por clusters sobre o faturamento bruto steady (substitui a inversao por margem EBITDA).
+SIM_ALUGUEL_TETO_IDEAL = 0.15
+SIM_ALUGUEL_TETO_TETO = 0.20
+SIM_ALUGUEL_TETO_EXCECAO = 0.30

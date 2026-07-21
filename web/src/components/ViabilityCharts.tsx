@@ -490,6 +490,143 @@ export function FluxoCaixa({
   )
 }
 
+/**
+ * Resultado operacional MÊS A MÊS (não acumulado) — o caixa que a operação gera em
+ * cada mês (EBITDA − IR/CSLL − PMT). Mostra quando a operação passa a se pagar sozinha
+ * (o mês cruza o zero) e estabiliza no positivo. É DISTINTO do payback do investimento
+ * (FluxoCaixa), que acumula o capital. Cada ponto é o resultado do mês, não o acumulado.
+ */
+export function FluxoCaixaOperacional({
+  serie,
+  mesPositivo,
+}: {
+  serie: FcfPonto[]
+  mesPositivo: number | null
+}) {
+  const pts = serie
+    .map((p) => ({ mes: p.mes, fcf: p.fcf }))
+    .filter((p): p is { mes: number; fcf: number } => p.fcf !== null)
+
+  if (pts.length < 2) {
+    return (
+      <Glass style={{ padding: '17px 19px' }}>
+        <Cabecalho titulo="Resultado operacional mês a mês" sub="por mês" valor="n/d" cor="var(--tx-muted)" />
+        <p style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginTop: 10 }}>
+          Sem série de fluxo para este cenário.
+        </p>
+      </Glass>
+    )
+  }
+
+  const W = 620
+  const H = 150
+  const padL = 8
+  const padR = 8
+  const mesMin = Math.min(...pts.map((p) => p.mes))
+  const mesMax = Math.max(...pts.map((p) => p.mes))
+  const spanMes = mesMax - mesMin || 1
+  const vals = pts.map((p) => p.fcf)
+  const min = Math.min(...vals, 0)
+  const max = Math.max(...vals, 0)
+  const range = max - min || 1
+
+  const x = (mes: number) => padL + ((mes - mesMin) / spanMes) * (W - padL - padR)
+  const y = (fcf: number) => H - ((fcf - min) / range) * H
+  const zeroY = y(0)
+
+  const linha = pts.map((p) => `${x(p.mes).toFixed(1)},${y(p.fcf).toFixed(1)}`).join(' ')
+  const area = `${x(pts[0].mes).toFixed(1)},${zeroY.toFixed(1)} ${linha} ${x(
+    pts[pts.length - 1].mes,
+  ).toFixed(1)},${zeroY.toFixed(1)}`
+
+  const estavel = pts[pts.length - 1].fcf // resultado do último mês (platô steady)
+  const zeroFrac = Math.max(0, Math.min(1, zeroY / H))
+
+  // Mês em que a operação vira positiva (se dentro do eixo — garante narrowing p/ TS).
+  const mp =
+    mesPositivo != null && mesPositivo >= mesMin && mesPositivo <= mesMax ? mesPositivo : null
+
+  return (
+    <Glass style={{ padding: '17px 19px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
+        <span>
+          <span style={{ display: 'block', font: '600 13px/1 var(--f-ui)', color: 'var(--tx-strong)' }}>
+            Resultado operacional mês a mês
+          </span>
+          <span style={{ display: 'block', font: '400 10px/1 var(--f-ui)', color: 'var(--tx-muted)', marginTop: 5 }}>
+            {mp != null
+              ? `Opera no positivo a partir do mês ${mp} · estabiliza no platô`
+              : 'A operação não fecha o mês no positivo neste cenário'}
+          </span>
+        </span>
+        <span style={{ textAlign: 'right' }}>
+          <span className="num" style={{ display: 'block', font: '700 13px/1 var(--f-num)', color: estavel >= 0 ? 'var(--pos-text)' : 'var(--neg)' }}>
+            {brl(estavel, true)}
+          </span>
+          <span style={{ display: 'block', font: '400 9.5px/1 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 4 }}>
+            por mês (estável)
+          </span>
+        </span>
+      </div>
+
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        style={{ width: '100%', height: 150, marginTop: 12, display: 'block' }}
+        aria-hidden
+      >
+        <defs>
+          <linearGradient id="fcoGrad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2={H}>
+            <stop offset={zeroFrac} stopColor="var(--pos)" stopOpacity="0.28" />
+            <stop offset={zeroFrac} stopColor="var(--neg)" stopOpacity="0.24" />
+          </linearGradient>
+        </defs>
+
+        <polygon points={area} fill="url(#fcoGrad)" />
+
+        {/* linha do zero: acima = mês no azul, abaixo = mês no vermelho */}
+        <line x1={padL} y1={zeroY} x2={W - padR} y2={zeroY} stroke="rgba(255,255,255,.28)" strokeWidth="1" strokeDasharray="4 4" />
+
+        {/* marcador do break-even operacional (mês em que passa a se pagar) */}
+        {mp != null && (
+          <line x1={x(mp)} y1="0" x2={x(mp)} y2={H} stroke="var(--ac)" strokeWidth="1.5" strokeDasharray="3 3" />
+        )}
+
+        {/* a curva do resultado mensal */}
+        <polyline points={linha} fill="none" stroke="var(--tx-max)" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
+
+        {/* ponto do break-even operacional (cruzamento do zero) */}
+        {mp != null && <circle cx={x(mp)} cy={zeroY} r="3.2" fill="var(--ac)" />}
+      </svg>
+
+      {/* eixo de meses + rótulo da inauguração */}
+      <div style={{ position: 'relative', height: 16, marginTop: 2 }}>
+        <span className="num" style={{ position: 'absolute', left: 0, font: '400 9.5px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
+          mês {mesMin}
+        </span>
+        <span className="num" style={{ position: 'absolute', right: 0, font: '400 9.5px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
+          mês {mesMax}
+        </span>
+        {mp != null && (
+          <span
+            className="num"
+            style={{
+              position: 'absolute',
+              left: `${((mp - mesMin) / spanMes) * 100}%`,
+              transform: 'translateX(-50%)',
+              font: '600 9.5px/1 var(--f-num)',
+              color: 'var(--ac-text)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            se paga · mês {mp}
+          </span>
+        )}
+      </div>
+    </Glass>
+  )
+}
+
 function Cabecalho({
   titulo,
   sub,

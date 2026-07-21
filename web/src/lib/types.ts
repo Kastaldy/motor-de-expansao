@@ -111,16 +111,26 @@ export interface ViabilidadeIn {
   demanda: number
   ticket?: number
   formato?: string
-  /** Margem EBITDA-alvo (fração, ex.: 0.10 = 10%) que define o aluguel-teto. */
-  margem_alvo?: number
-  /** CAPEX opcional; sem valor, o motor usa o default (R$ 2,34M). */
+  /** Numero de studios extras (0..3); cada studio adiciona R$6.000/mes de folha. */
+  n_studios?: number
+  /** Obra (CAPEX, equity): base do ROIC/payback; parcelada sem juros. */
+  obra?: number
+  /** Parcelas da obra em meses (default 4, sem juros). */
+  parcelas_obra?: number
+  /** Equipamentos (OPEX): financiado; a PMT entra abaixo do EBITDA. */
+  equipamentos?: number
+  /** Prazo do financiamento de equipamentos em meses (36–60). */
+  prazo_equipamentos?: number
+  /** Juros mensal do financiamento de equipamentos (fração, ex.: 0.018 = 1,8% a.m.). */
+  juros_equipamentos_am?: number
+  /** LEGADO (compat): CAPEX único; sem valor o motor usa o default (R$ 2,34M). */
   capex?: number
   capex_financiado_pct?: number
-  /** Valor do capex financiado em R$ (o backend converte para fração). */
   capex_financiado_valor?: number
-  /** Taxa de juros mensal do financiamento (fração, ex.: 0.018 = 1,8% a.m.). */
   juros_financiamento_am?: number
   capex_parcelas_meses?: number
+  /** LEGADO: não dirige mais o aluguel-teto (agora por clusters); só alunos-para-alvo. */
+  margem_alvo?: number
   /** Meses iniciais sem pagar aluguel (beneficio de rampa; melhora payback/FCF). */
   carencia_aluguel_meses?: number
   /** Meses de rampa de maturacao do balcao (Simulador E13; default do motor = 8). */
@@ -165,17 +175,33 @@ export interface ViabilidadeOut {
   }
   alunos_breakeven: number | null
   alunos_para_margem_alvo: number | null
-  aluguel_teto: number | null
+  /** Aluguel-teto por clusters (% do faturamento bruto steady). */
+  aluguel_teto: AluguelTeto | null
   flag_fora_envelope: boolean
   flag_zona_morta: boolean | null
   motivo_zona_morta: string | null
   split: { balcao: number | null; agregadores: number | null }
   dre: Dre
+  /** FCF acumulado do investimento (payback): parte de −Obra, 60 meses. */
   fcf_serie: FcfPonto[]
+  /** Resultado operacional MÊS A MÊS (não acumulado): o caixa que a operação gera por mês. */
+  fco_serie: FcfPonto[]
+  /** Mês em que a operação passa a fechar no positivo e assim permanece; null se nunca vira. */
+  mes_operacao_positiva: number | null
   carencia_aluguel_meses: number
   /** Sugestões de melhoria quando o payback estoura (> 40 meses); null se ok. */
   melhoria_payback: MelhoriaPayback | null
   grade: Record<string, unknown>[]
+}
+
+/** Aluguel-teto por clusters sobre o faturamento bruto steady (Ideal/Teto/Exceção). */
+export interface AluguelTeto {
+  /** 15% do faturamento — faixa saudável. */
+  ideal: number | null
+  /** 20% do faturamento — teto recomendado. */
+  teto: number | null
+  /** 30% do faturamento — exceção (máximo tolerável). */
+  excecao: number | null
 }
 
 /** Quanto cortar de CAPEX ou de aluguel para o payback cair para ~alvo_meses. */

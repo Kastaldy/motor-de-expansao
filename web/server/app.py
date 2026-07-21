@@ -1153,18 +1153,30 @@ class ViabilidadeIn(BaseModel):
     demanda: float = Field(gt=0, description="PREMISSA do operador — nunca prevista")
     ticket: float | None = None
     formato: str | None = None
-    # Margem EBITDA-alvo (fracao, ex.: 0.10 = 10%) que define o aluguel-teto e os
-    # alunos-para-alvo. None usa o default do motor (0.10).
-    margem_alvo: float | None = Field(default=None, ge=0, le=1)
-    # CAPEX opcional — quando None, o motor usa SIM_CAPEX_DEFAULT (R$ 2,34M).
+    # Numero de studios extras (0..3): cada studio adiciona R$6.000/mes de folha.
+    n_studios: int | None = Field(default=None, ge=0, le=3)
+    # --- Investimento: Obra (CAPEX, equity) x Equipamentos (OPEX, financiado) ---
+    # Obra: desembolso do franqueado (equity), parcelado sem juros (parcelas_obra,
+    # default 4). E a base do ROIC e do fluxo acumulado (payback parte de -Obra).
+    obra: float | None = Field(default=None, ge=0)
+    parcelas_obra: int | None = Field(default=None, gt=0, le=12)
+    # Equipamentos: financiado (prazo 36-60m + juros a.m.); a PMT entra ABAIXO do
+    # EBITDA (nao e desembolso a vista) -> dilui no tempo e melhora o payback.
+    equipamentos: float | None = Field(default=None, ge=0)
+    prazo_equipamentos: int | None = Field(default=None, ge=1, le=60)
+    juros_equipamentos_am: float | None = Field(default=None, ge=0, le=1)
+    # --- LEGADO (compat): CAPEX unico + fracao/valor financiado ---
+    # Preservados para nao quebrar chamadas antigas; usados so como fallback quando
+    # obra/equipamentos nao vem preenchidos (ver _investimento()).
     capex: float | None = Field(default=None, ge=0)
     capex_financiado_pct: float | None = Field(default=None, ge=0, le=1)
-    # Valor do capex financiado em R$ (o front usa isto no lugar do pct; o backend
-    # converte para fracao contra o capex efetivo). Prevalece sobre o pct se informado.
     capex_financiado_valor: float | None = Field(default=None, ge=0)
-    # Taxa de juros mensal do financiamento (fracao, ex.: 0.018 = 1,8% a.m.).
     juros_financiamento_am: float | None = Field(default=None, ge=0, le=1)
     capex_parcelas_meses: int | None = Field(default=None, gt=0)
+    # Margem EBITDA-alvo (fracao). LEGADO: nao dirige mais o aluguel-teto (agora por
+    # clusters % do faturamento); segue so alimentando `alunos_para_margem_alvo`.
+    # None usa o default do motor (0.10).
+    margem_alvo: float | None = Field(default=None, ge=0, le=1)
     # Carencia de aluguel: meses iniciais sem pagar aluguel (beneficio de rampa;
     # melhora payback/FCF, nao muda margem/breakeven de steady-state).
     carencia_aluguel_meses: int | None = Field(default=None, ge=0, le=60)
@@ -1200,19 +1212,46 @@ def faixa_alunos(m2: float, formato: str | None = None) -> dict[str, Any]:
     }
 
 
-def _financiado_pct(body: "ViabilidadeIn") -> float | None:
-    """Fracao do capex financiada. Prefere o VALOR em R$ (convertido contra o capex
-    efetivo = body.capex ou o default do motor); senao usa o pct direto (compat)."""
-    if body.capex_financiado_valor is not None:
-        from motor_expansao.dimensionamento.config import SIM_CAPEX_DEFAULT
+def _investimento(body: ViabilidadeIn) -> dict[str, Any]:
+    """Investimento do franqueado (NUCLEO — a vista, sem financiamento).
 
-        capex_efetivo = float(body.capex) if body.capex is not None else float(SIM_CAPEX_DEFAULT)
-        if capex_efetivo <= 0:
-            return None
-        return min(1.0, max(0.0, float(body.capex_financiado_valor) / capex_efetivo))
-    if body.capex_financiado_pct is not None:
-        return float(body.capex_financiado_pct)
-    return None
+    Obra + Equipamentos somam o CAPEX total; somado a taxa de franquia (R$160k) da o
+    INVESTIMENTO TOTAL, base do ROIC (desalavancado) e do payback — igual a planilha
+    (Simulador!N21 = lucro/(R9+R10)). Financiamento/alavancagem como camada separada
+    fica para o 2o passo (por isso, no nucleo, nao ha PMT afetando DRE/payback/ROIC).
+    """
+    from motor_expansao.dimensionamento.config import SIM_CAPEX_DEFAULT, SIM_TAXA_FRANQUIA
+
+    if body.obra is not None or body.equipamentos is not None:
+        capex_total = float(body.obra or 0.0) + float(body.equipamentos or 0.0)
+    elif body.capex is not None:
+        capex_total = float(body.capex)
+    else:
+        capex_total = float(SIM_CAPEX_DEFAULT)
+    franquia = float(SIM_TAXA_FRANQUIA)
+    return {
+        "capex_total": capex_total,
+        "franquia": franquia,
+        "investimento_total": capex_total + franquia,
+    }
+
+
+def _clusters_aluguel_teto(faturamento: float | None) -> dict[str, float | None] | None:
+    """Aluguel-teto por clusters sobre o faturamento bruto steady (planilha oficial):
+    Ideal 15% · Teto 20% · Excecao 30%. Substitui a inversao por margem EBITDA."""
+    from motor_expansao.dimensionamento.config import (
+        SIM_ALUGUEL_TETO_EXCECAO,
+        SIM_ALUGUEL_TETO_IDEAL,
+        SIM_ALUGUEL_TETO_TETO,
+    )
+
+    if faturamento is None or faturamento <= 0:
+        return None
+    return {
+        "ideal": _num(faturamento * SIM_ALUGUEL_TETO_IDEAL, 2),
+        "teto": _num(faturamento * SIM_ALUGUEL_TETO_TETO, 2),
+        "excecao": _num(faturamento * SIM_ALUGUEL_TETO_EXCECAO, 2),
+    }
 
 
 @app.post("/api/viabilidade")
@@ -1230,22 +1269,11 @@ def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
     # (analisar_viabilidade_ponto tem `margem_alvo` como param nomeado; liga direto).
     if body.margem_alvo is not None:
         kwargs["margem_alvo"] = body.margem_alvo
-    # CAPEX flui como kwarg ate o simulador (analisar_viabilidade_ponto repassa
-    # **kwargs). So entra quando o operador preenche; senao o default do motor vale.
-    if body.capex is not None:
-        kwargs["capex"] = body.capex
-    # Financiamento: aceita valor em R$ (convertido para fracao contra o capex efetivo)
-    # ou a fracao direta (compat). O valor em R$ prevalece.
-    _pct_fin = _financiado_pct(body)
-    if _pct_fin is not None:
-        kwargs["capex_financiado_pct"] = _pct_fin
-    if body.juros_financiamento_am is not None:
-        kwargs["juros_financiamento_am"] = body.juros_financiamento_am
-    # O motor chama o param de "parcelas do financiamento" de `prazo_financiamento_meses`
-    # (NAO `capex_parcelas_meses`); `viabilidade()` nao tem **kwargs, entao o nome errado
-    # levantaria TypeError. Mapeia aqui.
-    if body.capex_parcelas_meses is not None:
-        kwargs["prazo_financiamento_meses"] = body.capex_parcelas_meses
+    # Investimento (NUCLEO — a vista): Obra + Equipamentos = CAPEX total; o motor recebe
+    # SO o capex (sem financiamento/PMT — camada separada fica p/ o 2o passo). O efeito
+    # dos studios ja veio embutido no ticket (frontend), nao como custo aqui.
+    inv = _investimento(body)
+    kwargs["capex"] = inv["capex_total"]
     # Rampa de maturacao (Simulador E13). Flui como kwarg ate gerar_serie_mensal
     # via analisar_viabilidade_ponto(**kwargs); afeta FCF/payback, nao a margem.
     if body.rampa_meses is not None:
@@ -1266,22 +1294,38 @@ def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
 
     v = res.viabilidade
 
-    # Serie mensal de FCF (60 meses) + carencia de aluguel. Steady-state (margem,
-    # breakeven, teto, ROIC) NAO muda com carencia — ela e beneficio de rampa.
-    serie, payback = _fcf_serie(body, kwargs)
+    # Serie mensal de FCF acumulado (payback, 60 meses, parte de -Obra) + carencia de
+    # aluguel. Steady-state (margem, breakeven, teto, ROIC) NAO muda com carencia.
+    serie, payback = _fcf_serie(body, inv)
 
     dre = _extrair_dre(v)
     # Payback REAL (fonte: serie): ajustado por carencia e extrapolado alem do mes
     # 60 quando o caixa ainda nao virou (o motor limita a 60 -> inf). Mais preciso
     # que o do motor, entao sempre substitui.
     dre["payback"] = payback
+    # ROIC DESALAVANCADO = lucro liquido anual / investimento total (capex + franquia),
+    # igual a planilha (Simulador!N21 = lucro/(R9+R10)). NAO desconta PMT (financiamento
+    # e camada separada, 2o passo). Usa o lucro steady x12 (retorno de maturidade).
+    investimento = float(inv["investimento_total"])
+    lucro_liq = getattr(v, "lucro_liquido_mensal", None)
+    dre["roic"] = (
+        _num((float(lucro_liq) * 12.0) / investimento, 4)
+        if (lucro_liq is not None and investimento > 0)
+        else None
+    )
 
-    # Sugestoes de melhoria quando o payback estoura: quanto cortar de CAPEX OU de
-    # aluguel para trazer o payback para a faixa ideal.
-    from motor_expansao.dimensionamento.config import SIM_CAPEX_DEFAULT
+    # Aluguel-teto por clusters (% do faturamento bruto steady): Ideal/Teto/Excecao.
+    aluguel_teto_clusters = _clusters_aluguel_teto(
+        getattr(v, "faturamento_mensal_steady", None)
+    )
 
-    capex_efetivo = float(body.capex) if body.capex is not None else float(SIM_CAPEX_DEFAULT)
-    melhoria = _melhoria_payback(serie, payback, float(body.aluguel), capex_efetivo)
+    # Resultado operacional mês a mês (não acumulado): quando a operação passa a se
+    # pagar sozinha por mês e estabiliza no positivo (mes_operacao_positiva).
+    fco_serie, mes_operacao_positiva = _fco_serie(body, inv)
+
+    # Sugestoes de melhoria quando o payback estoura: quanto cortar do investimento OU
+    # do aluguel para trazer o payback para a faixa ideal (o capex desloca o acumulado 1:1).
+    melhoria = _melhoria_payback(serie, payback, float(body.aluguel), investimento)
 
     grade = res.grade_sensibilidade
     return {
@@ -1295,7 +1339,7 @@ def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
         },
         "alunos_breakeven": _num(res.alunos_breakeven),
         "alunos_para_margem_alvo": _num(res.alunos_para_margem_alvo),
-        "aluguel_teto": _num(res.aluguel_teto_calculado),
+        "aluguel_teto": aluguel_teto_clusters,
         "flag_fora_envelope": bool(res.flag_fora_envelope),
         "flag_zona_morta": res.flag_zona_morta,
         "motivo_zona_morta": res.motivo_zona_morta,
@@ -1305,6 +1349,8 @@ def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
         },
         "dre": dre,
         "fcf_serie": serie,
+        "fco_serie": fco_serie,
+        "mes_operacao_positiva": mes_operacao_positiva,
         "carencia_aluguel_meses": body.carencia_aluguel_meses or 0,
         "melhoria_payback": melhoria,
         "grade": json.loads(grade.to_json(orient="records")) if grade is not None else [],
@@ -1343,17 +1389,13 @@ def _melhoria_payback(
     }
 
 
-def _fcf_serie(
-    body: "ViabilidadeIn", kwargs: dict[str, Any]
-) -> tuple[list[dict[str, Any]], float | None]:
-    """Serie mensal de FCF acumulado (60 meses) com carencia de aluguel opcional.
+def _serie_motor(body: ViabilidadeIn, inv: dict[str, Any]) -> list[dict[str, Any]]:
+    """Serie mensal BRUTA do motor (60 meses; campos com `fcf_acumulado`).
 
-    Chama a fonte canonica `gerar_serie_mensal` (mesmo motor da viabilidade) e, se
-    houver carencia, DEVOLVE o aluguel nos primeiros N meses (a carencia e nao
-    pagar aluguel nesse periodo). READ-ONLY: nao altera o motor; so pos-processa a
-    serie. Retorna (serie, payback_ajustado_em_meses).
+    Fonte unica usada pelas duas curvas (payback e operacional). Recebe o capex TOTAL
+    (Obra+Equip) e a fracao financiada (Equip/total) do `inv` -> o motor parte de -Obra.
+    Retorna [] em caso de falha (degrada gracioso).
     """
-    from motor_expansao.dimensionamento.config import SIM_CAPEX_DEFAULT
     from motor_expansao.dimensionamento.simulador import gerar_serie_mensal
     from motor_expansao.dimensionamento.viabilidade_ponto import (
         SHARE_BALCAO_DEFAULT,
@@ -1365,38 +1407,46 @@ def _fcf_serie(
     alunos_agregadores = float(body.demanda) * (1.0 - share)
     ticket = body.ticket or SIM_MENSALIDADE_BALCAO
 
-    serie_kwargs: dict[str, Any] = {"alunos_agregadores": alunos_agregadores}
-    if body.capex is not None:
-        serie_kwargs["capex"] = body.capex
-    # financiado (fracao ja resolvida de R$/pct) + juros vem por kwargs (viabilidade())
-    if "capex_financiado_pct" in kwargs:
-        serie_kwargs["capex_financiado_pct"] = kwargs["capex_financiado_pct"]
-    if "juros_financiamento_am" in kwargs:
-        serie_kwargs["juros_financiamento_am"] = kwargs["juros_financiamento_am"]
-    if body.capex_parcelas_meses is not None:
-        serie_kwargs["prazo_financiamento_meses"] = body.capex_parcelas_meses
+    serie_kwargs: dict[str, Any] = {
+        "alunos_agregadores": alunos_agregadores,
+        "capex": inv["capex_total"],
+    }
     if body.rampa_meses is not None:
         serie_kwargs["maturacao_meses"] = body.rampa_meses
 
     try:
-        serie = gerar_serie_mensal(
-            alunos_balcao, body.m2, body.aluguel, ticket, **serie_kwargs
-        )
+        return gerar_serie_mensal(alunos_balcao, body.m2, body.aluguel, ticket, **serie_kwargs)
     except Exception:  # noqa: BLE001 — se a serie falhar, o resto da viabilidade segue
+        return []
+
+
+def _fcf_serie(
+    body: ViabilidadeIn, inv: dict[str, Any]
+) -> tuple[list[dict[str, Any]], float | None]:
+    """Serie de FCF acumulado (payback): 60 meses, partindo de -(capex + franquia).
+
+    NUCLEO a vista: o acumulado parte do INVESTIMENTO total (capex + taxa de franquia)
+    e soma o caixa operacional mes a mes (sem PMT — financiamento e camada separada).
+    Se houver carencia, DEVOLVE o aluguel nos primeiros N meses. READ-ONLY.
+    Retorna (serie, payback_ajustado_em_meses).
+    """
+    serie = _serie_motor(body, inv)
+    if not serie:
         return [], None
 
     carencia = int(body.carencia_aluguel_meses or 0)
-    capex_efetivo = float(body.capex) if body.capex is not None else float(SIM_CAPEX_DEFAULT)
+    capex_total = float(inv["capex_total"])
+    investimento = float(inv["investimento_total"])
 
     out: list[dict[str, Any]] = []
-    prev_acum = -capex_efetivo
-    acum = -capex_efetivo
+    prev_motor = -capex_total  # acumulado do motor ANTES do mes 1 (a vista, sem PMT)
+    acum = -investimento  # payback parte do investimento total (capex + franquia)
     ultimo_mensal = 0.0
     payback: float | None = None
     for row in serie:
         mes = int(row["mes"])
-        mensal = float(row["fcf_acumulado"]) - prev_acum
-        prev_acum = float(row["fcf_acumulado"])
+        mensal = float(row["fcf_acumulado"]) - prev_motor
+        prev_motor = float(row["fcf_acumulado"])
         if carencia and mes <= carencia:
             mensal += float(body.aluguel)  # carencia: devolve o aluguel do mes
         acum += mensal
@@ -1412,6 +1462,48 @@ def _fcf_serie(
         payback = float(round(60 + (-acum) / ultimo_mensal))
 
     return out, payback
+
+
+def _fco_serie(
+    body: ViabilidadeIn, inv: dict[str, Any]
+) -> tuple[list[dict[str, Any]], int | None]:
+    """Resultado OPERACIONAL mês a mês (NÃO acumulado): o caixa que a operação gera
+    em CADA mês — EBITDA − IR/CSLL (com a carência de aluguel).
+
+    Mostra quando a operação passa a se pagar sozinha (o resultado mensal cruza o zero)
+    e estabiliza no positivo. É DIFERENTE do fcf_serie (payback), que acumula o
+    INVESTIMENTO. Nos primeiros meses o resultado é baixo/negativo (rampa de alunos);
+    cresce até o platô de maturidade. Retorna (serie_mensal, mes_operacao_positiva) —
+    o mês a partir do qual o resultado mensal fica >= 0 e assim permanece (None se nunca vira).
+    """
+    serie = _serie_motor(body, inv)
+    if not serie:
+        return [], None
+
+    capex_total = float(inv["capex_total"])
+    carencia = int(body.carencia_aluguel_meses or 0)
+
+    out: list[dict[str, Any]] = []
+    # A base -capex é o acumulado do motor ANTES do mês 1; a diferença isola o caixa
+    # operacional puro do mês (o capex cancela no delta, então o mensal não depende dele).
+    prev_acum = -capex_total
+    for row in serie:
+        mes = int(row["mes"])
+        mensal = float(row["fcf_acumulado"]) - prev_acum
+        prev_acum = float(row["fcf_acumulado"])
+        if carencia and mes <= carencia:
+            mensal += float(body.aluguel)  # carência: não paga aluguel nesses meses
+        out.append({"mes": mes, "fcf": _num(mensal)})
+
+    # Break-even operacional: 1o mês com resultado mensal >= 0 que assim permanece.
+    positiva: int | None = None
+    for i, p in enumerate(out):
+        val = p["fcf"]
+        if val is not None and val >= 0 and all((q["fcf"] or 0.0) >= 0 for q in out[i:]):
+            positiva = int(p["mes"])
+            break
+
+    return out, positiva
 
 
 def _extrair_dre(v: Any) -> dict[str, Any]:

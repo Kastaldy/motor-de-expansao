@@ -4,6 +4,7 @@ import type { PontoEscolhido } from '../App'
 import {
   CascataDre,
   FluxoCaixa,
+  FluxoCaixaOperacional,
   RampaAlunos,
   ReguaBreakEven,
   Veredito,
@@ -27,6 +28,9 @@ export interface ViabilityScreenProps {
 
 const DEMANDA_PASSO = 100
 
+/** Ticket (mensalidade) por nº de studios — tabela da planilha (Simulador!J9). */
+const TICKET_POR_STUDIO = [147, 157, 167, 177] as const
+
 /** Texto -> numero opcional (aceita virgula decimal e separador de milhar). */
 function parseNum(txt: string): number | undefined {
   const s = txt.trim().replace(/\./g, '').replace(',', '.')
@@ -39,12 +43,10 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   // --- Cenário -------------------------------------------------------------
   const [m2, setM2] = useState(1500)
   const [aluguel, setAluguel] = useState(20000)
-  // Ticket médio = mensalidade R$/mês por aluno pagante do balcão. Default = motor (137).
-  const [ticket, setTicket] = useState(137)
+  // Ticket = mensalidade R$/mês por aluno pagante do balcão. Coerente com studios=0
+  // (planilha: 0→147). Mudar Studios reajusta o ticket; pode editar manualmente.
+  const [ticket, setTicket] = useState<number>(TICKET_POR_STUDIO[0])
   const [demanda, setDemanda] = useState(800)
-  // Margem EBITDA-alvo (%) que define o aluguel-teto (o máximo de aluguel que ainda
-  // entrega esta margem). Default = 10% (default do motor).
-  const [margemAlvoPct, setMargemAlvoPct] = useState(10)
   // A demanda vem padronizada no p50 da metragem e re-escala quando a metragem
   // muda — até o operador mexer no ±, aí a mão dele prevalece (DEC-009: premissa).
   const [demandaTocada, setDemandaTocada] = useState(false)
@@ -52,14 +54,18 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   // Rampa de maturação (Simulador E13; padrão 8). Controlável na sidebar: alonga
   // a curva de alunos e o fluxo de caixa (afeta payback), não a margem steady.
   const [rampaMeses, setRampaMeses] = useState(8)
+  // Studios extras (0..3): cada studio adiciona R$6.000/mês de folha (reduz EBITDA).
+  const [nStudios, setNStudios] = useState(0)
 
-  // --- CAPEX opcional (entra no payback/ROIC; vazio = default do motor) -----
-  const [capexTxt, setCapexTxt] = useState('')
-  // Financiamento em VALOR (R$) + juros (% a.m.). O valor financiado abate o
-  // desembolso inicial e vira parcelas (padrão da planilha: 1,8% a.m. em 36×).
-  const [financiadoValorTxt, setFinanciadoValorTxt] = useState('')
-  const [jurosTxt, setJurosTxt] = useState('')
-  const [parcelasTxt, setParcelasTxt] = useState('')
+  // --- Investimento: Obra (equity) x Equipamentos (financiado) --------------
+  // Obra = desembolso do franqueado, parcelado sem juros (base do ROIC/payback).
+  const [obraTxt, setObraTxt] = useState('')
+  const [parcelasObraTxt, setParcelasObraTxt] = useState('')
+  // Equipamentos = financiado (36–60m + juros a.m.); a PMT entra abaixo do EBITDA
+  // (dilui no tempo, melhora o payback). Padrão da planilha: 1,8% a.m.
+  const [equipTxt, setEquipTxt] = useState('')
+  const [prazoEquipTxt, setPrazoEquipTxt] = useState('')
+  const [jurosEquipTxt, setJurosEquipTxt] = useState('')
   // Carência de aluguel: meses iniciais sem pagar aluguel (melhora payback/FCF).
   const [carenciaTxt, setCarenciaTxt] = useState('')
 
@@ -75,7 +81,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   const inputFoto = useRef<HTMLInputElement>(null)
 
   function montarPayload(demandaUsar: number): ViabilidadeIn {
-    const juros = parseNum(jurosTxt)
+    const jurosEquip = parseNum(jurosEquipTxt)
     return {
       lat: ponto!.hex.lat,
       lng: ponto!.hex.lng,
@@ -83,11 +89,12 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
       aluguel,
       ticket,
       demanda: demandaUsar,
-      margem_alvo: margemAlvoPct / 100,
-      capex: parseNum(capexTxt),
-      capex_financiado_valor: parseNum(financiadoValorTxt),
-      juros_financiamento_am: juros !== undefined ? juros / 100 : undefined,
-      capex_parcelas_meses: parseNum(parcelasTxt),
+      n_studios: nStudios,
+      obra: parseNum(obraTxt),
+      parcelas_obra: parseNum(parcelasObraTxt),
+      equipamentos: parseNum(equipTxt),
+      prazo_equipamentos: parseNum(prazoEquipTxt),
+      juros_equipamentos_am: jurosEquip !== undefined ? jurosEquip / 100 : undefined,
       carencia_aluguel_meses: parseNum(carenciaTxt),
       rampa_meses: rampaMeses,
     }
@@ -169,7 +176,8 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
           ? {
               demanda_premissa: res.demanda_premissa,
               alunos_breakeven: res.alunos_breakeven,
-              aluguel_teto: res.aluguel_teto,
+              // Relatório usa um teto único: o cluster "Teto" (20% do faturamento).
+              aluguel_teto: res.aluguel_teto?.teto ?? null,
               margem: res.dre.margem,
               ebitda: res.dre.ebitda,
               faturamento: res.dre.faturamento,
@@ -200,6 +208,19 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   const margem = res?.dre.margem ?? null
   const be = res?.alunos_breakeven ?? null
   const aprovado = margem !== null && margem > 0 && (be === null || demanda >= be)
+
+  // Classificação do aluguel pedido frente aos clusters de teto (% do faturamento).
+  const teto = res?.aluguel_teto ?? null
+  const tetoCls =
+    teto && teto.ideal != null && teto.teto != null && teto.excecao != null
+      ? aluguel <= teto.ideal
+        ? { label: 'dentro do ideal', tone: 'var(--pos-text)' }
+        : aluguel <= teto.teto
+          ? { label: 'no teto', tone: 'var(--warn-text)' }
+          : aluguel <= teto.excecao
+            ? { label: 'exceção', tone: 'var(--warn-text)' }
+            : { label: 'acima do máximo', tone: 'var(--neg)' }
+      : null
 
   return (
     <div
@@ -328,14 +349,18 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                 onChange={(e) => setTicket(Number(e.target.value))}
               />
             </Campo>
-            <Campo label="Margem EBITDA-alvo" sufixo="%">
+            <Campo label="Studios" sufixo="0–3">
               <input
                 type="number"
-                value={margemAlvoPct}
+                value={nStudios}
                 min={0}
-                max={60}
+                max={3}
                 step={1}
-                onChange={(e) => setMargemAlvoPct(Number(e.target.value))}
+                onChange={(e) => {
+                  const n = Math.max(0, Math.min(3, Math.round(Number(e.target.value) || 0)))
+                  setNStudios(n)
+                  setTicket(TICKET_POR_STUDIO[n]) // studios elevam o ticket (planilha)
+                }}
               />
             </Campo>
           </div>
@@ -347,7 +372,8 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               marginTop: 6,
             }}
           >
-            Ticket = mensalidade média por aluno pagante. A margem-alvo define o aluguel-teto.
+            Ticket = mensalidade por aluno. Studios elevam o ticket (0→147, 1→157, 2→167, 3→177);
+            você pode ajustar o ticket manualmente depois.
           </span>
 
           <div
@@ -498,42 +524,51 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             </div>
           </div>
 
-          {/* ---- CAPEX (opcional) ---- */}
+          {/* ---- Investimento: Obra (CAPEX) + Equipamentos (OPEX financiado) ---- */}
           <div
             style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 16 }}
           >
-            <Eyebrow>Investimento (CAPEX)</Eyebrow>
+            <Eyebrow>Investimento</Eyebrow>
             <span style={{ font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>opcional</span>
           </div>
           <p style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', margin: '7px 0 10px' }}>
-            Entra no payback e no ROIC. Vazio usa o padrão do modelo (R$ 2,34 mi).
+            Obra + Equipamentos = CAPEX. Com a taxa de franquia formam o investimento total,
+            base do ROIC e do payback (à vista). Vazio usa o padrão do modelo.
           </p>
-          <input
-            inputMode="numeric"
-            placeholder="CAPEX total (R$)"
-            value={capexTxt}
-            onChange={(e) => setCapexTxt(e.target.value)}
-          />
-          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <div style={{ display: 'flex', gap: 8 }}>
             <input
               inputMode="numeric"
-              placeholder="Valor financiado (R$)"
-              value={financiadoValorTxt}
-              onChange={(e) => setFinanciadoValorTxt(e.target.value)}
+              placeholder="Obra (R$)"
+              value={obraTxt}
+              onChange={(e) => setObraTxt(e.target.value)}
             />
             <input
               inputMode="numeric"
-              placeholder="Juros (% a.m.)"
-              value={jurosTxt}
-              onChange={(e) => setJurosTxt(e.target.value)}
+              placeholder="Parcelas obra (meses)"
+              value={parcelasObraTxt}
+              onChange={(e) => setParcelasObraTxt(e.target.value)}
             />
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <input
               inputMode="numeric"
-              placeholder="Parcelas (meses)"
-              value={parcelasTxt}
-              onChange={(e) => setParcelasTxt(e.target.value)}
+              placeholder="Equipamentos (R$)"
+              value={equipTxt}
+              onChange={(e) => setEquipTxt(e.target.value)}
+            />
+            <input
+              inputMode="numeric"
+              placeholder="Prazo financ. (meses)"
+              value={prazoEquipTxt}
+              onChange={(e) => setPrazoEquipTxt(e.target.value)}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <input
+              inputMode="numeric"
+              placeholder="Juros equip. (% a.m.)"
+              value={jurosEquipTxt}
+              onChange={(e) => setJurosEquipTxt(e.target.value)}
             />
             <input
               inputMode="numeric"
@@ -543,8 +578,8 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             />
           </div>
           <span style={{ display: 'block', font: '400 10px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}>
-            O valor financiado abate o desembolso inicial e vira parcelas (padrão da
-            planilha: 1,8% a.m. em 36×). Carência = meses iniciais sem pagar aluguel.
+            Taxa de franquia R$ 160.000 já entra no investimento. Carência = meses iniciais sem
+            aluguel. Prazo/juros do equipamento (alavancagem) entram no 2º passo — hoje é à vista.
           </span>
           {res && (
             <div
@@ -751,7 +786,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             <Kpi
               label="ROIC anual"
               valor={res?.dre.roic == null ? 'n/d' : pct((res.dre.roic ?? 0) * 100)}
-              sub="retorno sobre o CAPEX"
+              sub="lucro anual ÷ investimento"
               tone={
                 res?.dre.roic == null
                   ? undefined
@@ -762,17 +797,13 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             />
             <Kpi
               label="Aluguel-teto"
-              valor={brl(res?.aluguel_teto ?? null, true)}
-              sub={`pedido: ${brl(aluguel, true)}`}
-              // `!= null` e nao truthy: teto 0 (cenario que nao paga aluguel
-              // nenhum) e o PIOR caso, mas 0 e falsy e pintava de verde.
-              tone={
-                res?.aluguel_teto == null
-                  ? undefined
-                  : aluguel > res.aluguel_teto
-                    ? 'var(--neg)'
-                    : 'var(--pos-text)'
+              valor={tetoCls?.label ?? 'n/d'}
+              sub={
+                teto && teto.ideal != null && teto.teto != null && teto.excecao != null
+                  ? `ideal ${brl(teto.ideal, true)} · teto ${brl(teto.teto, true)} · exc ${brl(teto.excecao, true)}`
+                  : `pedido ${brl(aluguel, true)}`
               }
+              tone={tetoCls?.tone}
             />
             <Kpi
               label="Faixa de alunos"
@@ -805,6 +836,11 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               <RampaAlunos plateau={demanda} meses={rampaMeses} />
             </div>
           </div>
+
+          <FluxoCaixaOperacional
+            serie={res?.fco_serie ?? []}
+            mesPositivo={res?.mes_operacao_positiva ?? null}
+          />
 
           <CascataDre
             faturamento={res?.dre.faturamento ?? null}
