@@ -1,5 +1,5 @@
 import { alunos, brl, num, pct } from '../lib/format'
-import type { FcfPonto } from '../lib/types'
+import type { FcfPonto, MelhoriaPayback } from '../lib/types'
 import { Glass } from './primitives'
 
 /* ---------------------------------------------------------------------------
@@ -136,35 +136,45 @@ export function ReguaBreakEven({
   )
 }
 
-/** DRE em cascata. Barras descem do faturamento até o EBITDA. */
+/** DRE em cascata. Barras descem do faturamento até o lucro líquido. */
 export function CascataDre({
   faturamento,
   deducoes,
   impostos,
   custos,
   ebitda,
+  lucroLiquido,
 }: {
   faturamento: number | null
   deducoes: number | null
   impostos: number | null
   custos: number | null
   ebitda: number | null
+  lucroLiquido: number | null
 }) {
+  // IR/CSLL sobre o lucro = degrau entre EBITDA e lucro líquido. O motor define
+  // lucro_liquido = EBITDA − IR − CSLL (simulador.py), sem D&A/despesa financeira.
+  const irCsll =
+    ebitda !== null && lucroLiquido !== null
+      ? Math.round((ebitda - lucroLiquido) * 100) / 100
+      : null
   const barras = [
     { rotulo: 'Fat. bruto', valor: faturamento, tipo: 'pos' as const },
     { rotulo: 'Deduções', valor: deducoes, tipo: 'neg' as const },
     { rotulo: 'Impostos', valor: impostos, tipo: 'neg' as const },
     { rotulo: 'Custos op.', valor: custos, tipo: 'neg' as const },
     { rotulo: 'EBITDA', valor: ebitda, tipo: 'res' as const },
+    { rotulo: 'IR/CSLL', valor: irCsll, tipo: 'neg' as const },
+    { rotulo: 'Lucro líq.', valor: lucroLiquido, tipo: 'res' as const },
   ]
 
   const teto = Math.max(1, faturamento ?? 1)
-  const piso = Math.min(0, ebitda ?? 0)
+  const piso = Math.min(0, ebitda ?? 0, lucroLiquido ?? 0)
   const amplitude = teto - piso || 1
   const H = 130
 
   return (
-    <Glass style={{ padding: '17px 19px', flex: 1.25, minWidth: 0 }}>
+    <Glass style={{ padding: '17px 19px', minWidth: 0 }}>
       <div
         style={{
           display: 'flex',
@@ -265,32 +275,35 @@ export function CascataDre({
   )
 }
 
-/** Sparkline de maturação — a rampa de alunos até o platô. */
-export function RampaAlunos({ steady }: { steady: number }) {
-  const mesMaturacao = 8
-  const inicio = Math.round(steady * 0.92)
+/** Sparkline de maturação — a rampa de alunos, do ZERO ao platô assumido.
+ *  `plateau` = alunos assumidos na maturidade (a demanda do operador); `meses` =
+ *  duração da rampa, controlada na sidebar. Começa no mês 0 com 0 alunos. */
+export function RampaAlunos({ plateau, meses }: { plateau: number; meses: number }) {
+  const mat = Math.max(1, Math.round(meses))
+  // Horizonte um pouco além da maturação para o platô aparecer plano à direita.
+  const horizonte = Math.max(mat + 6, 18)
 
   const W = 300
   const H = 120
-  // Eixo y de base ZERO até `steady` (com folga no topo), para a área embaixo da
-  // curva ficar cheia e proporcional — igual ao FCF ao lado. O eixo 92%-100%
-  // antigo achatava a curva num filete no topo.
-  const y = (v: number) => H - (v / Math.max(1, steady)) * (H * 0.88) - 8
+  // Eixo y de base ZERO até o platô (com folga no topo).
+  const y = (v: number) => H - (v / Math.max(1, plateau)) * (H * 0.88) - 8
+  const x = (m: number) => (m / horizonte) * W
 
   const pontos: { x: number; y: number }[] = []
-  for (let m = 0; m <= 60; m += 2) {
-    const v = m >= mesMaturacao ? steady : inicio + ((steady - inicio) * m) / mesMaturacao
-    pontos.push({ x: (m / 60) * W, y: y(v) })
+  for (let m = 0; m <= horizonte; m += 1) {
+    const v = m >= mat ? plateau : (plateau * m) / mat
+    pontos.push({ x: x(m), y: y(v) })
   }
   const linha = pontos.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ')
   const area = `0,${H} ${linha} ${W},${H}`
+  const xMat = x(mat)
 
   return (
     <Glass style={{ padding: '17px 19px', flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
       <Cabecalho
         titulo="Rampa de alunos"
-        sub="maturação no mês 8"
-        valor={alunos(steady)}
+        sub={`do zero ao platô no mês ${mat}`}
+        valor={alunos(plateau)}
         cor="var(--ac-text)"
       />
       <div style={{ flex: 1, minHeight: 120, marginTop: 12 }}>
@@ -307,6 +320,18 @@ export function RampaAlunos({ steady }: { steady: number }) {
             </linearGradient>
           </defs>
           <polygon points={area} fill="url(#rampaGrad)" />
+          {/* marcador do mês de maturação */}
+          <line
+            x1={xMat}
+            y1="0"
+            x2={xMat}
+            y2={H}
+            stroke="var(--ac)"
+            strokeWidth="1"
+            strokeDasharray="3 3"
+            opacity="0.5"
+            vectorEffect="non-scaling-stroke"
+          />
           <polyline
             points={linha}
             fill="none"
@@ -317,6 +342,19 @@ export function RampaAlunos({ steady }: { steady: number }) {
             vectorEffect="non-scaling-stroke"
           />
         </svg>
+      </div>
+      <div
+        className="num"
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          marginTop: 4,
+          font: '400 9px/1 var(--f-num)',
+          color: 'var(--tx-sub)',
+        }}
+      >
+        <span>mês 0</span>
+        <span>mês {horizonte}</span>
       </div>
     </Glass>
   )
@@ -373,7 +411,7 @@ export function FluxoCaixa({
   const zeroFrac = Math.max(0, Math.min(1, zeroY / H))
 
   return (
-    <Glass style={{ padding: '17px 19px' }}>
+    <Glass style={{ padding: '17px 19px', flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 10 }}>
         <span>
           <span style={{ display: 'block', font: '600 13px/1 var(--f-ui)', color: 'var(--tx-strong)' }}>
@@ -493,17 +531,34 @@ function Cabecalho({
   )
 }
 
+/** Monta a frase de melhoria do payback (quanto cortar de CAPEX ou aluguel). */
+function textoMelhoria(m: MelhoriaPayback): string {
+  const partes: string[] = []
+  if (m.reduzir_capex != null) partes.push(`reduza o CAPEX em ~${brl(m.reduzir_capex, true)}`)
+  if (m.reduzir_aluguel != null) {
+    partes.push(`reduza o aluguel em ~${brl(m.reduzir_aluguel, true)}/mês`)
+  }
+  if (!partes.length) {
+    return 'cortes só de CAPEX ou de aluguel não bastam — reveja a demanda assumida ou a metragem'
+  }
+  return partes.join(' ou ')
+}
+
 /** Banner de veredito — a frase que o operador leva para o comitê. */
 export function Veredito({
   aprovado,
   margem,
   demanda,
   breakeven,
+  payback,
+  melhoria,
 }: {
   aprovado: boolean
   margem: number | null
   demanda: number
   breakeven: number | null
+  payback?: number | null
+  melhoria?: MelhoriaPayback | null
 }) {
   const cor = aprovado ? 'var(--pos)' : 'var(--warn)'
   return (
@@ -537,6 +592,15 @@ export function Veredito({
           {aprovado
             ? 'O imóvel fecha a conta nas premissas atuais.'
             : 'Reveja aluguel, metragem ou a demanda assumida antes de levar adiante.'}
+          {melhoria && (
+            <>
+              {' '}
+              <strong style={{ color: 'var(--warn-text)' }}>
+                O payback{payback != null ? ` (~${num(payback)} meses)` : ''} passa de 40 meses.
+              </strong>{' '}
+              Para trazê-lo a ~{melhoria.alvo_meses} meses, {textoMelhoria(melhoria)}.
+            </>
+          )}
         </div>
       </div>
       <span

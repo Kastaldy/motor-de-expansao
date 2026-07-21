@@ -400,7 +400,12 @@ def gerar_serie_mensal(
         _pmt = 0.0
 
     _maturacao_meses = max(maturacao_meses, 1)
-    fcf_acum = -capex_efetivo
+    # Abertura: sai do caixa so a ENTRADA (equity = capex - financiado). O principal
+    # financiado (_C) e pago pelo banco e devolvido nas parcelas (PMT ja descontada
+    # no fcf mensal). Antes somava-se so -capex_efetivo (capex CHEIO) E ainda a PMT,
+    # pagando o financiado DUAS vezes -> financiar estourava payback/FCF. Somar +_C
+    # aqui e a entrada do emprestimo que abate o desembolso inicial.
+    fcf_acum = -capex_efetivo + _C
     serie: list[dict] = []
 
     for t in range(1, 61):

@@ -1,5 +1,5 @@
-import { FlyToInterpolator } from '@deck.gl/core'
-import { ScatterplotLayer } from '@deck.gl/layers'
+import { FlyToInterpolator, type Layer } from '@deck.gl/core'
+import { IconLayer, ScatterplotLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
 import { useEffect, useMemo, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
@@ -30,12 +30,23 @@ interface ViewState {
 export interface ExecMapProps {
   unidades: ExecUnidade[]
   centro: { lat: number | null; lng: number | null }
+  /** Bandeira quadrada da Ultra (data URI SVG), plantada no centro de cada bolha. */
+  iconeUltra?: string | null
 }
 
-export default function ExecMap({ unidades, centro }: ExecMapProps) {
+export default function ExecMap({ unidades, centro, iconeUltra }: ExecMapProps) {
   const comCoord = useMemo(
     () => unidades.filter((u) => u.lat != null && u.lng != null),
     [unidades],
+  )
+  // Descritor de icone do deck.gl a partir do data URI (bandeira 128x128,
+  // ancorada no centro para cair no meio da bolha).
+  const ultraIcon = useMemo(
+    () =>
+      iconeUltra
+        ? { url: iconeUltra, width: 128, height: 128, anchorX: 64, anchorY: 64, mask: false }
+        : null,
+    [iconeUltra],
   )
   const maxFat = useMemo(
     () => Math.max(1, ...comCoord.map((u) => u.faturamento ?? 0)),
@@ -65,8 +76,8 @@ export default function ExecMap({ unidades, centro }: ExecMapProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [centroKey])
 
-  const layers = useMemo(
-    () => [
+  const layers = useMemo(() => {
+    const arr: Layer[] = [
       new ScatterplotLayer<ExecUnidade>({
         id: 'unidades',
         data: comCoord,
@@ -86,9 +97,27 @@ export default function ExecMap({ unidades, centro }: ExecMapProps) {
         onHover: (info) =>
           setHover(info.object ? { u: info.object as ExecUnidade, x: info.x, y: info.y } : null),
       }),
-    ],
-    [comCoord, maxFat],
-  )
+    ]
+    // Bandeira quadrada da Ultra no centro de cada bolha (igual ao Mapa
+    // Territorial). Fica POR CIMA do bubble; pickable:false para nao roubar o
+    // hover do circulo de faturamento.
+    if (ultraIcon) {
+      arr.push(
+        new IconLayer<ExecUnidade>({
+          id: 'ultra-flags',
+          data: comCoord,
+          getPosition: (d) => [d.lng!, d.lat!],
+          getIcon: () => ultraIcon,
+          getSize: 18,
+          sizeUnits: 'pixels',
+          sizeMinPixels: 12,
+          sizeMaxPixels: 22,
+          pickable: false,
+        }),
+      )
+    }
+    return arr
+  }, [comCoord, maxFat, ultraIcon])
 
   return (
     <div

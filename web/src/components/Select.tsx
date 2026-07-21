@@ -41,6 +41,12 @@ export default function Select({
   const [aberto, setAberto] = useState(false)
   const [foco, setFoco] = useState(-1)
   const [busca, setBusca] = useState('')
+  // Popup ciente do viewport: mede o espaco abaixo/acima do botao ao abrir e
+  // limita a altura da lista. Sem isto, com o botao no centro da tela (landing de
+  // escolha de estado), os ~300px do popup passam do rodape e os ultimos estados
+  // ficam cortados/inalcancaveis (a pagina nao rola).
+  const [maxLista, setMaxLista] = useState(300)
+  const [abrirPara, setAbrirPara] = useState<'baixo' | 'cima'>('baixo')
   const raiz = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const listaId = useId()
@@ -62,6 +68,21 @@ export default function Select({
     document.addEventListener('mousedown', fora)
     return () => document.removeEventListener('mousedown', fora)
   }, [aberto])
+
+  // Ao abrir: mede o espaco disponivel e decide a altura/direcao do popup para
+  // caber no viewport (a pagina do piloto nao rola).
+  useEffect(() => {
+    if (!aberto) return
+    const r = raiz.current?.getBoundingClientRect()
+    if (!r) return
+    const folga = 16
+    const buscaH = temBusca ? 46 : 0
+    const abaixo = window.innerHeight - r.bottom - folga - buscaH
+    const acima = r.top - folga - buscaH
+    const paraCima = abaixo < 200 && acima > abaixo
+    setAbrirPara(paraCima ? 'cima' : 'baixo')
+    setMaxLista(Math.max(140, Math.min(300, paraCima ? acima : abaixo)))
+  }, [aberto, temBusca])
 
   // Ao abrir: limpa a busca, posiciona o foco no valor atual e foca o input.
   useEffect(() => {
@@ -175,7 +196,9 @@ export default function Select({
         <div
           style={{
             position: 'absolute',
-            top: 'calc(100% + 4px)',
+            ...(abrirPara === 'cima'
+              ? { bottom: 'calc(100% + 4px)' }
+              : { top: 'calc(100% + 4px)' }),
             left: 0,
             zIndex: 40,
             minWidth: '100%',
@@ -220,7 +243,7 @@ export default function Select({
               margin: 0,
               padding: 4,
               listStyle: 'none',
-              maxHeight: 300,
+              maxHeight: maxLista,
               overflowY: 'auto',
             }}
           >

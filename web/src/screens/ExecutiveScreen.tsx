@@ -84,7 +84,9 @@ export default function ExecutiveScreen({ ufs, uf, onUf }: ExecutiveScreenProps)
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
-      {dados && <ExecMap unidades={dados.unidades} centro={dados.centro} />}
+      {dados && (
+        <ExecMap unidades={dados.unidades} centro={dados.centro} iconeUltra={dados.ultra_icon} />
+      )}
 
       <header
         style={{

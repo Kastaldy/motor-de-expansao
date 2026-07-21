@@ -1153,13 +1153,25 @@ class ViabilidadeIn(BaseModel):
     demanda: float = Field(gt=0, description="PREMISSA do operador — nunca prevista")
     ticket: float | None = None
     formato: str | None = None
+    # Margem EBITDA-alvo (fracao, ex.: 0.10 = 10%) que define o aluguel-teto e os
+    # alunos-para-alvo. None usa o default do motor (0.10).
+    margem_alvo: float | None = Field(default=None, ge=0, le=1)
     # CAPEX opcional — quando None, o motor usa SIM_CAPEX_DEFAULT (R$ 2,34M).
     capex: float | None = Field(default=None, ge=0)
     capex_financiado_pct: float | None = Field(default=None, ge=0, le=1)
+    # Valor do capex financiado em R$ (o front usa isto no lugar do pct; o backend
+    # converte para fracao contra o capex efetivo). Prevalece sobre o pct se informado.
+    capex_financiado_valor: float | None = Field(default=None, ge=0)
+    # Taxa de juros mensal do financiamento (fracao, ex.: 0.018 = 1,8% a.m.).
+    juros_financiamento_am: float | None = Field(default=None, ge=0, le=1)
     capex_parcelas_meses: int | None = Field(default=None, gt=0)
     # Carencia de aluguel: meses iniciais sem pagar aluguel (beneficio de rampa;
     # melhora payback/FCF, nao muda margem/breakeven de steady-state).
     carencia_aluguel_meses: int | None = Field(default=None, ge=0, le=60)
+    # Meses de rampa de maturacao do balcao (Simulador E13; default do motor = 8).
+    # Controlavel pelo operador na sidebar; afeta a serie de FCF e o payback (rampa
+    # mais longa = caixa mais lento), nao a margem/breakeven de steady-state.
+    rampa_meses: int | None = Field(default=None, ge=1, le=36)
 
 
 @app.get("/api/faixa-alunos")
@@ -1188,6 +1200,21 @@ def faixa_alunos(m2: float, formato: str | None = None) -> dict[str, Any]:
     }
 
 
+def _financiado_pct(body: "ViabilidadeIn") -> float | None:
+    """Fracao do capex financiada. Prefere o VALOR em R$ (convertido contra o capex
+    efetivo = body.capex ou o default do motor); senao usa o pct direto (compat)."""
+    if body.capex_financiado_valor is not None:
+        from motor_expansao.dimensionamento.config import SIM_CAPEX_DEFAULT
+
+        capex_efetivo = float(body.capex) if body.capex is not None else float(SIM_CAPEX_DEFAULT)
+        if capex_efetivo <= 0:
+            return None
+        return min(1.0, max(0.0, float(body.capex_financiado_valor) / capex_efetivo))
+    if body.capex_financiado_pct is not None:
+        return float(body.capex_financiado_pct)
+    return None
+
+
 @app.post("/api/viabilidade")
 def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
     from motor_expansao.dimensionamento.viabilidade_ponto import (
@@ -1199,17 +1226,30 @@ def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
         kwargs["ticket_medio"] = body.ticket
     if body.formato:
         kwargs["formato"] = body.formato
+    # Margem EBITDA-alvo do operador -> define o aluguel-teto e os alunos-para-alvo
+    # (analisar_viabilidade_ponto tem `margem_alvo` como param nomeado; liga direto).
+    if body.margem_alvo is not None:
+        kwargs["margem_alvo"] = body.margem_alvo
     # CAPEX flui como kwarg ate o simulador (analisar_viabilidade_ponto repassa
     # **kwargs). So entra quando o operador preenche; senao o default do motor vale.
     if body.capex is not None:
         kwargs["capex"] = body.capex
-    if body.capex_financiado_pct is not None:
-        kwargs["capex_financiado_pct"] = body.capex_financiado_pct
+    # Financiamento: aceita valor em R$ (convertido para fracao contra o capex efetivo)
+    # ou a fracao direta (compat). O valor em R$ prevalece.
+    _pct_fin = _financiado_pct(body)
+    if _pct_fin is not None:
+        kwargs["capex_financiado_pct"] = _pct_fin
+    if body.juros_financiamento_am is not None:
+        kwargs["juros_financiamento_am"] = body.juros_financiamento_am
     # O motor chama o param de "parcelas do financiamento" de `prazo_financiamento_meses`
     # (NAO `capex_parcelas_meses`); `viabilidade()` nao tem **kwargs, entao o nome errado
     # levantaria TypeError. Mapeia aqui.
     if body.capex_parcelas_meses is not None:
         kwargs["prazo_financiamento_meses"] = body.capex_parcelas_meses
+    # Rampa de maturacao (Simulador E13). Flui como kwarg ate gerar_serie_mensal
+    # via analisar_viabilidade_ponto(**kwargs); afeta FCF/payback, nao a margem.
+    if body.rampa_meses is not None:
+        kwargs["maturacao_meses"] = body.rampa_meses
 
     base = _base_calibracao()
     if base is not None:
@@ -1236,6 +1276,13 @@ def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
     # que o do motor, entao sempre substitui.
     dre["payback"] = payback
 
+    # Sugestoes de melhoria quando o payback estoura: quanto cortar de CAPEX OU de
+    # aluguel para trazer o payback para a faixa ideal.
+    from motor_expansao.dimensionamento.config import SIM_CAPEX_DEFAULT
+
+    capex_efetivo = float(body.capex) if body.capex is not None else float(SIM_CAPEX_DEFAULT)
+    melhoria = _melhoria_payback(serie, payback, float(body.aluguel), capex_efetivo)
+
     grade = res.grade_sensibilidade
     return {
         "demanda_premissa": res.demanda_premissa,
@@ -1259,7 +1306,40 @@ def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
         "dre": dre,
         "fcf_serie": serie,
         "carencia_aluguel_meses": body.carencia_aluguel_meses or 0,
+        "melhoria_payback": melhoria,
         "grade": json.loads(grade.to_json(orient="records")) if grade is not None else [],
+    }
+
+
+def _melhoria_payback(
+    serie: list[dict[str, Any]],
+    payback: float | None,
+    aluguel: float,
+    capex_efetivo: float,
+    alvo_meses: int = 36,
+    gatilho_meses: int = 40,
+) -> dict[str, Any] | None:
+    """Quando o payback estoura (> gatilho), estima quanto cortar de CAPEX OU de aluguel
+    para o payback cair para ~alvo_meses. Estimativa de 1a ordem a partir da serie de FCF:
+    o CAPEX desloca a curva 1:1; cada R$1/mes a menos de aluguel soma ~alvo_meses ao caixa
+    no mes-alvo. Retorna None quando nao ha o que sugerir (payback ok ou serie ausente).
+
+    payback None (nunca vira dentro de 60 meses) e o PIOR caso -> tambem gera sugestao."""
+    if payback is not None and payback <= gatilho_meses:
+        return None
+    row = next((r for r in serie if r.get("mes") == alvo_meses), None)
+    if row is None or row.get("fcf") is None or float(row["fcf"]) >= 0:
+        return None
+    deficit = -float(row["fcf"])  # caixa que ainda falta no mes-alvo
+    reduzir_capex = (
+        float(round(deficit)) if (capex_efetivo > 0 and deficit < capex_efetivo) else None
+    )
+    red_aluguel = deficit / alvo_meses
+    reduzir_aluguel = float(round(red_aluguel)) if (aluguel > 0 and red_aluguel < aluguel) else None
+    return {
+        "alvo_meses": alvo_meses,
+        "reduzir_capex": reduzir_capex,
+        "reduzir_aluguel": reduzir_aluguel,
     }
 
 
@@ -1288,10 +1368,15 @@ def _fcf_serie(
     serie_kwargs: dict[str, Any] = {"alunos_agregadores": alunos_agregadores}
     if body.capex is not None:
         serie_kwargs["capex"] = body.capex
-    if body.capex_financiado_pct is not None:
-        serie_kwargs["capex_financiado_pct"] = body.capex_financiado_pct
+    # financiado (fracao ja resolvida de R$/pct) + juros vem por kwargs (viabilidade())
+    if "capex_financiado_pct" in kwargs:
+        serie_kwargs["capex_financiado_pct"] = kwargs["capex_financiado_pct"]
+    if "juros_financiamento_am" in kwargs:
+        serie_kwargs["juros_financiamento_am"] = kwargs["juros_financiamento_am"]
     if body.capex_parcelas_meses is not None:
         serie_kwargs["prazo_financiamento_meses"] = body.capex_parcelas_meses
+    if body.rampa_meses is not None:
+        serie_kwargs["maturacao_meses"] = body.rampa_meses
 
     try:
         serie = gerar_serie_mensal(
@@ -1552,11 +1637,18 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
         cur = mtd(g, ry, rm)
         if cur is None:
             continue  # unidade sem dado no mês de referência (parada) -> fora
-        fat_cur = rolling30(g, ry, rm, "faturamento")
+        # Faturamento EXIBIDO = MTD (acumulado no mês até o dia de referência): o
+        # "faturamento até o dia disponível" que o Felipe pediu. O rolling30 (mês
+        # cheio reconstruído com a cauda do mês anterior) inflava o mês PARCIAL
+        # ~2x (SP jun 2,20x) e passa a servir SÓ como proxy de "unidade operante"
+        # no gate abaixo, para o piso de R$20k não derrubar unidade real no mês
+        # parcial (poucos dias de MTD ainda ficariam sob o piso).
+        fat_cur = _numf(cur.get("faturamento"))
+        fat_gate = rolling30(g, ry, rm, "faturamento")
         churn_cur = churn30(g, ry, rm)
         # Dado sujo: entradas administrativas/de teste (faturamento irrisório ou
         # churn impossível >100%) poluem ranking e totais -> fora.
-        if fat_cur is None or fat_cur < _FAT_MIN_EXEC or (churn_cur is not None and churn_cur > 100.0):
+        if fat_gate is None or fat_gate < _FAT_MIN_EXEC or (churn_cur is not None and churn_cur > 100.0):
             continue
         m1 = mtd(g, py, pm)
         c = coords.get(normalizar_unidade(nome))
@@ -1566,9 +1658,10 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
                 "lat": c[0] if c else None,
                 "lng": c[1] if c else None,
                 "inauguracao": _clean(cur.get("inauguracao")),
-                # faturamento = ROLLING 30 dias (mês cheio reconstruído), não o MTD parcial
+                # faturamento = MTD (acumulado no mês até o dia de referência); M-1 =
+                # MTD do mês anterior até o MESMO dia-do-mês (mtd() já limita a day<=dom)
                 "fat_cur": fat_cur,
-                "fat_m1": rolling30(g, py, pm, "faturamento"),
+                "fat_m1": _numf(m1.get("faturamento")) if m1 is not None else None,
                 "ativos_cur": val(cur, "ativos_total"),
                 "ativos_m1": val(m1, "ativos_total"),
                 "pag_cur": val(cur, "pagantes"),
@@ -1642,6 +1735,9 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
             "lat": _num(com_coord["lat"].mean(), 6) if len(com_coord) else None,
             "lng": _num(com_coord["lng"].mean(), 6) if len(com_coord) else None,
         },
+        # Bandeira quadrada da Ultra (mesmo tile do Mapa Territorial) para plantar no
+        # centro de cada bolha de faturamento no mapa da rede.
+        "ultra_icon": _icone_ultra() if len(com_coord) else None,
         "totais": {
             "unidades": int(len(U)),
             "com_coordenada": int(len(com_coord)),

@@ -39,15 +39,26 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   // --- Cenário -------------------------------------------------------------
   const [m2, setM2] = useState(1500)
   const [aluguel, setAluguel] = useState(20000)
+  // Ticket médio = mensalidade R$/mês por aluno pagante do balcão. Default = motor (137).
+  const [ticket, setTicket] = useState(137)
   const [demanda, setDemanda] = useState(800)
+  // Margem EBITDA-alvo (%) que define o aluguel-teto (o máximo de aluguel que ainda
+  // entrega esta margem). Default = 10% (default do motor).
+  const [margemAlvoPct, setMargemAlvoPct] = useState(10)
   // A demanda vem padronizada no p50 da metragem e re-escala quando a metragem
   // muda — até o operador mexer no ±, aí a mão dele prevalece (DEC-009: premissa).
   const [demandaTocada, setDemandaTocada] = useState(false)
   const [faixa, setFaixa] = useState<FaixaAlunos | null>(null)
+  // Rampa de maturação (Simulador E13; padrão 8). Controlável na sidebar: alonga
+  // a curva de alunos e o fluxo de caixa (afeta payback), não a margem steady.
+  const [rampaMeses, setRampaMeses] = useState(8)
 
   // --- CAPEX opcional (entra no payback/ROIC; vazio = default do motor) -----
   const [capexTxt, setCapexTxt] = useState('')
-  const [financiadoTxt, setFinanciadoTxt] = useState('')
+  // Financiamento em VALOR (R$) + juros (% a.m.). O valor financiado abate o
+  // desembolso inicial e vira parcelas (padrão da planilha: 1,8% a.m. em 36×).
+  const [financiadoValorTxt, setFinanciadoValorTxt] = useState('')
+  const [jurosTxt, setJurosTxt] = useState('')
   const [parcelasTxt, setParcelasTxt] = useState('')
   // Carência de aluguel: meses iniciais sem pagar aluguel (melhora payback/FCF).
   const [carenciaTxt, setCarenciaTxt] = useState('')
@@ -64,17 +75,21 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   const inputFoto = useRef<HTMLInputElement>(null)
 
   function montarPayload(demandaUsar: number): ViabilidadeIn {
-    const financiado = parseNum(financiadoTxt)
+    const juros = parseNum(jurosTxt)
     return {
       lat: ponto!.hex.lat,
       lng: ponto!.hex.lng,
       m2,
       aluguel,
+      ticket,
       demanda: demandaUsar,
+      margem_alvo: margemAlvoPct / 100,
       capex: parseNum(capexTxt),
-      capex_financiado_pct: financiado !== undefined ? financiado / 100 : undefined,
+      capex_financiado_valor: parseNum(financiadoValorTxt),
+      juros_financiamento_am: juros !== undefined ? juros / 100 : undefined,
       capex_parcelas_meses: parseNum(parcelasTxt),
       carencia_aluguel_meses: parseNum(carenciaTxt),
+      rampa_meses: rampaMeses,
     }
   }
 
@@ -185,7 +200,6 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   const margem = res?.dre.margem ?? null
   const be = res?.alunos_breakeven ?? null
   const aprovado = margem !== null && margem > 0 && (be === null || demanda >= be)
-  const steady = Math.round(demanda * 0.69)
 
   return (
     <div
@@ -304,6 +318,38 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             </Campo>
           </div>
 
+          <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
+            <Campo label="Ticket médio" sufixo="/mês">
+              <input
+                type="number"
+                value={ticket}
+                min={0}
+                step={5}
+                onChange={(e) => setTicket(Number(e.target.value))}
+              />
+            </Campo>
+            <Campo label="Margem EBITDA-alvo" sufixo="%">
+              <input
+                type="number"
+                value={margemAlvoPct}
+                min={0}
+                max={60}
+                step={1}
+                onChange={(e) => setMargemAlvoPct(Number(e.target.value))}
+              />
+            </Campo>
+          </div>
+          <span
+            style={{
+              display: 'block',
+              font: '400 10px/1.4 var(--f-ui)',
+              color: 'var(--tx-sub)',
+              marginTop: 6,
+            }}
+          >
+            Ticket = mensalidade média por aluno pagante. A margem-alvo define o aluguel-teto.
+          </span>
+
           <div
             style={{
               marginTop: 14,
@@ -402,6 +448,56 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             </div>
           </div>
 
+          {/* ---- Rampa de maturação (meses) ---- */}
+          <div
+            style={{
+              marginTop: 14,
+              padding: '12px 15px',
+              background: 'var(--surf-raised)',
+              border: '1px solid var(--line-soft)',
+              borderRadius: 'var(--r-lg)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+                Rampa de maturação
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <button
+                  type="button"
+                  aria-label="Diminuir meses de rampa"
+                  onClick={() => setRampaMeses((m) => Math.max(1, m - 1))}
+                  style={stepper}
+                >
+                  −
+                </button>
+                <span
+                  className="num"
+                  style={{
+                    font: '700 14px/1 var(--f-num)',
+                    color: 'var(--tx-max)',
+                    minWidth: 58,
+                    textAlign: 'center',
+                  }}
+                >
+                  {rampaMeses} {rampaMeses === 1 ? 'mês' : 'meses'}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Aumentar meses de rampa"
+                  onClick={() => setRampaMeses((m) => Math.min(36, m + 1))}
+                  style={stepper}
+                >
+                  +
+                </button>
+              </div>
+            </div>
+            <div style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}>
+              Meses até o platô de alunos (Simulador E13, padrão 8). Alonga a curva de
+              maturação e o fluxo de caixa; recalcule para atualizar o payback.
+            </div>
+          </div>
+
           {/* ---- CAPEX (opcional) ---- */}
           <div
             style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 16 }}
@@ -421,28 +517,35 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <input
               inputMode="numeric"
-              placeholder="% financiado"
-              value={financiadoTxt}
-              onChange={(e) => setFinanciadoTxt(e.target.value)}
+              placeholder="Valor financiado (R$)"
+              value={financiadoValorTxt}
+              onChange={(e) => setFinanciadoValorTxt(e.target.value)}
             />
+            <input
+              inputMode="numeric"
+              placeholder="Juros (% a.m.)"
+              value={jurosTxt}
+              onChange={(e) => setJurosTxt(e.target.value)}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <input
               inputMode="numeric"
               placeholder="Parcelas (meses)"
               value={parcelasTxt}
               onChange={(e) => setParcelasTxt(e.target.value)}
             />
-          </div>
-          <label style={{ display: 'block', marginTop: 10 }}>
             <input
               inputMode="numeric"
-              placeholder="Carência de aluguel (meses)"
+              placeholder="Carência aluguel (meses)"
               value={carenciaTxt}
               onChange={(e) => setCarenciaTxt(e.target.value)}
             />
-            <span style={{ display: 'block', font: '400 10px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 6 }}>
-              Meses iniciais sem pagar aluguel. Antecipa o payback; não muda a margem.
-            </span>
-          </label>
+          </div>
+          <span style={{ display: 'block', font: '400 10px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}>
+            O valor financiado abate o desembolso inicial e vira parcelas (padrão da
+            planilha: 1,8% a.m. em 36×). Carência = meses iniciais sem pagar aluguel.
+          </span>
           {res && (
             <div
               style={{
@@ -610,6 +713,8 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             margem={margem}
             demanda={demanda}
             breakeven={be}
+            payback={res?.dre.payback ?? null}
+            melhoria={res?.melhoria_payback ?? null}
           />
 
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
@@ -644,9 +749,16 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               }
             />
             <Kpi
-              label="Ponto de equilíbrio"
-              valor={alunos(be)}
-              sub="alunos na maturidade"
+              label="ROIC anual"
+              valor={res?.dre.roic == null ? 'n/d' : pct((res.dre.roic ?? 0) * 100)}
+              sub="retorno sobre o CAPEX"
+              tone={
+                res?.dre.roic == null
+                  ? undefined
+                  : res.dre.roic >= 0
+                    ? 'var(--pos-text)'
+                    : 'var(--neg)'
+              }
             />
             <Kpi
               label="Aluguel-teto"
@@ -679,23 +791,28 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
 
           <ReguaBreakEven demanda={demanda} breakeven={be} />
 
+          {/* Fluxo de caixa ao lado da rampa; a composição do resultado (agora com
+              7 barras) fica embaixo, em largura total, com mais espaço. */}
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-            <CascataDre
-              faturamento={res?.dre.faturamento ?? null}
-              deducoes={res?.dre.deducoes ?? null}
-              impostos={res?.dre.impostos ?? null}
-              custos={res?.dre.custos ?? null}
-              ebitda={res?.dre.ebitda ?? null}
-            />
+            <div style={{ flex: 1.5, minWidth: 320, display: 'flex' }}>
+              <FluxoCaixa
+                serie={res?.fcf_serie ?? []}
+                payback={res?.dre.payback ?? null}
+                carencia={res?.carencia_aluguel_meses ?? 0}
+              />
+            </div>
             <div style={{ flex: 1, minWidth: 240, display: 'flex' }}>
-              <RampaAlunos steady={steady} />
+              <RampaAlunos plateau={demanda} meses={rampaMeses} />
             </div>
           </div>
 
-          <FluxoCaixa
-            serie={res?.fcf_serie ?? []}
-            payback={res?.dre.payback ?? null}
-            carencia={res?.carencia_aluguel_meses ?? 0}
+          <CascataDre
+            faturamento={res?.dre.faturamento ?? null}
+            deducoes={res?.dre.deducoes ?? null}
+            impostos={res?.dre.impostos ?? null}
+            custos={res?.dre.custos ?? null}
+            ebitda={res?.dre.ebitda ?? null}
+            lucroLiquido={res?.dre.lucro_liquido ?? null}
           />
 
           {(res?.flag_fora_envelope || res?.flag_zona_morta) && (

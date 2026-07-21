@@ -111,12 +111,20 @@ export interface ViabilidadeIn {
   demanda: number
   ticket?: number
   formato?: string
+  /** Margem EBITDA-alvo (fração, ex.: 0.10 = 10%) que define o aluguel-teto. */
+  margem_alvo?: number
   /** CAPEX opcional; sem valor, o motor usa o default (R$ 2,34M). */
   capex?: number
   capex_financiado_pct?: number
+  /** Valor do capex financiado em R$ (o backend converte para fração). */
+  capex_financiado_valor?: number
+  /** Taxa de juros mensal do financiamento (fração, ex.: 0.018 = 1,8% a.m.). */
+  juros_financiamento_am?: number
   capex_parcelas_meses?: number
   /** Meses iniciais sem pagar aluguel (beneficio de rampa; melhora payback/FCF). */
   carencia_aluguel_meses?: number
+  /** Meses de rampa de maturacao do balcao (Simulador E13; default do motor = 8). */
+  rampa_meses?: number
 }
 
 /** Ponto da serie mensal de fluxo de caixa acumulado. */
@@ -139,6 +147,8 @@ export interface Dre {
   impostos: number | null
   custos: number | null
   ebitda: number | null
+  /** lucro liquido/mes = EBITDA - IR/CSLL (motor: simulador.lucro_liquido_mensal) */
+  lucro_liquido: number | null
   margem: number | null
   payback: number | null
   roic: number | null
@@ -163,7 +173,18 @@ export interface ViabilidadeOut {
   dre: Dre
   fcf_serie: FcfPonto[]
   carencia_aluguel_meses: number
+  /** Sugestões de melhoria quando o payback estoura (> 40 meses); null se ok. */
+  melhoria_payback: MelhoriaPayback | null
   grade: Record<string, unknown>[]
+}
+
+/** Quanto cortar de CAPEX ou de aluguel para o payback cair para ~alvo_meses. */
+export interface MelhoriaPayback {
+  alvo_meses: number
+  /** R$ a reduzir do CAPEX (null se um corte só de CAPEX não bastar). */
+  reduzir_capex: number | null
+  /** R$/mês a reduzir do aluguel (null se um corte só de aluguel não bastar). */
+  reduzir_aluguel: number | null
 }
 
 /* ---- Visão Executiva por estado (rede Ultra real, camada paralela) ---- */
@@ -216,6 +237,8 @@ export interface ExecutivaPayload {
   /** mesmo dia do mês anterior, ex.: "12/05/2026" */
   referencia_m1: string | null
   centro: { lat: number | null; lng: number | null }
+  /** bandeira quadrada da Ultra (data URI SVG) para o centro das bolhas do mapa. */
+  ultra_icon: string | null
   totais: ExecTotais
   unidades: ExecUnidade[]
 }
