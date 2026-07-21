@@ -24,7 +24,6 @@ from __future__ import annotations
 import base64
 import functools
 import hashlib
-import io
 import json
 import math
 import os
@@ -1676,12 +1675,12 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
 
     coords = _ultra_coord_map()
 
-    def mtd(g: pd.DataFrame, ano: int, mes: int) -> "pd.Series | None":
+    def mtd(g: pd.DataFrame, ano: int, mes: int) -> pd.Series | None:
         """Última linha do mês (ano,mes) com dia <= dom (valor MTD nesse dia)."""
         m = g[(g["_data"].dt.year == ano) & (g["_data"].dt.month == mes) & (g["_data"].dt.day <= dom)]
         return m.iloc[-1] if len(m) else None
 
-    def mes_cheio(g: pd.DataFrame, ano: int, mes: int) -> "pd.Series | None":
+    def mes_cheio(g: pd.DataFrame, ano: int, mes: int) -> pd.Series | None:
         m = g[(g["_data"].dt.year == ano) & (g["_data"].dt.month == mes)]
         return m.iloc[-1] if len(m) else None
 
@@ -1715,12 +1714,12 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
             return None
         return 100.0 * canc / pag
 
-    def agr(row: "pd.Series | None") -> float | None:
+    def agr(row: pd.Series | None) -> float | None:
         if row is None:
             return None
         return (_numf(row.get("alunos_gympass")) or 0.0) + (_numf(row.get("alunos_totalpass")) or 0.0)
 
-    def val(row: "pd.Series | None", c: str) -> float | None:
+    def val(row: pd.Series | None, c: str) -> float | None:
         return _numf(row.get(c)) if row is not None else None
 
     rows: list[dict[str, Any]] = []
