@@ -107,6 +107,16 @@ _HEX_DESTAQUE_MUNICIPAL_RGBA = (*_COR_APROVADO_MUNICIPAL, 200)
 _HEX_NEUTRO_RGBA = (176, 182, 196, 110)
 _CIRCLE_INK = (31, 41, 55)
 
+# BLK-RELPON-09-FU1: realce dos rotulos sobre os hexagonos (valor de Residual Fitness na
+# camada "resumo" e numero de zona na camada "dominio"). Decisao de PRODUTO de Vinicius no
+# gate visual de 2026-07-21, escolhida sobre 4 alternativas (branco opaco, grafite, turquesa):
+# a placa MAGENTA e a unica cor que nao colide com nada no mapa -- os hexagonos sao verdes/
+# cinza, o basemap e claro e os marcadores de rede sao pretos/azuis/amarelos. Reusa o
+# `ULTRA_MAGENTA` do proprio modulo (mesma tinta das bandas/frames do relatorio), em vez de
+# introduzir um magenta quase-igual. Parametrizado -> reajustar e mudanca de 1 linha.
+_ROTULO_PLACA_RGBA = (*ULTRA_MAGENTA, 240)
+_ROTULO_INK = (255, 255, 255)
+
 # Slide "Visao Geral do Municipio" (FU1): hexagonos do MUNICIPIO em 3 categorias.
 # Aprovado dado proprio (verde forte) / Aprovado fallback municipal (verde medio) / Reprovado (cinza).
 # Camada de DISPLAY; nao toca M1.
@@ -1087,32 +1097,50 @@ def _render_mapa_municipio(
             else:
                 odraw.polygon(pixels, fill=_HEX_NEUTRO_RGBA, outline=(255, 255, 255, 90))
 
+    # Compoe a overlay SO dentro do `map_box` (confinamento do recorte de foco).
+    clip = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(clip).rounded_rectangle(map_box, radius=6, fill=255)
+
+    def _compor_no_map_box(camada: Image.Image) -> None:
+        masked = Image.composite(camada, Image.new("RGBA", (width, height), (0, 0, 0, 0)),
+                                 ImageChops.multiply(camada.split()[3], clip))
+        image.paste(masked, (0, 0), masked)
+
+    _compor_no_map_box(overlay)
+
+    # Pins de Ultra/concorrentes (geograficos; dentro da bbox).
+    _draw_pins(draw, image, competitors_df, project, "", minx, maxx, miny, maxy)
+    _draw_pins(draw, image, ultra_df, project, "__ultra__", minx, maxx, miny, maxy)
+
+    # BLK-RELPON-09-FU1 (gate visual de Vinicius, 2026-07-21): os rotulos de valor sao
+    # desenhados numa overlay PROPRIA, composta DEPOIS dos pins, para que o marcador quadrado
+    # nao cubra o numero de Residual Fitness do hexagono -- que e o dado principal da pagina.
+    # Antes do FU1 a ordem era hexes+rotulos -> pins, e o pin vencia o numero. Mesmo `clip` do
+    # `map_box`, entao o confinamento do recorte de foco (AJUSTE 1/FU1) segue valendo.
+    rotulos_overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    rdraw = ImageDraw.Draw(rotulos_overlay, "RGBA")
+
     # Rotulos de oferta sobre hexes destacados (camada resumo). Decisao do produto (Vinicius,
     # 2026-06-24): exibir o Residual em TODOS os hexes aprovados (sem cap), com fonte menor
     # para mitigar a sobreposicao quando ha muitos destacados no quadro.
     label_font = _font(8)
     for cx, cy, txt in label_pins:
-        w = _text_width(odraw, txt, label_font)
-        odraw.rectangle([cx - w // 2 - 2, cy - 8, cx + w // 2 + 2, cy + 8], fill=(255, 255, 255, 200))
-        _draw_text(odraw, (cx - w // 2, cy - 7), txt, font=label_font, fill=_CIRCLE_INK)
+        w = _text_width(rdraw, txt, label_font)
+        rdraw.rectangle(
+            [cx - w // 2 - 2, cy - 8, cx + w // 2 + 2, cy + 8], fill=_ROTULO_PLACA_RGBA
+        )
+        _draw_text(rdraw, (cx - w // 2, cy - 7), txt, font=label_font, fill=_ROTULO_INK)
 
-    # FU1: numero da estrategia (1/2/3) sobre cada hex de zona (camada dominio).
+    # FU1: numero da estrategia (1/2/3) sobre cada hex de zona (camada dominio). Mesmo realce
+    # magenta dos valores (decisao de Vinicius no gate: aplicar nos dois, por consistencia
+    # entre as paginas Resumo e Dominio).
     zona_font = _font(15)
     for cx, cy, num, _zc in zona_labels:
-        w = _text_width(odraw, num, zona_font)
-        odraw.ellipse([cx - 11, cy - 11, cx + 11, cy + 11], fill=(255, 255, 255, 220))
-        _draw_text(odraw, (cx - w // 2, cy - 9), num, font=zona_font, fill=_CIRCLE_INK)
+        w = _text_width(rdraw, num, zona_font)
+        rdraw.ellipse([cx - 11, cy - 11, cx + 11, cy + 11], fill=_ROTULO_PLACA_RGBA)
+        _draw_text(rdraw, (cx - w // 2, cy - 9), num, font=zona_font, fill=_ROTULO_INK)
 
-    # Compoe a overlay SO dentro do `map_box` (confinamento do recorte de foco).
-    clip = Image.new("L", (width, height), 0)
-    ImageDraw.Draw(clip).rounded_rectangle(map_box, radius=6, fill=255)
-    masked = Image.composite(overlay, Image.new("RGBA", (width, height), (0, 0, 0, 0)),
-                             ImageChops.multiply(overlay.split()[3], clip))
-    image.paste(masked, (0, 0), masked)
-
-    # Pins de Ultra/concorrentes (geograficos; dentro da bbox).
-    _draw_pins(draw, image, competitors_df, project, "", minx, maxx, miny, maxy)
-    _draw_pins(draw, image, ultra_df, project, "__ultra__", minx, maxx, miny, maxy)
+    _compor_no_map_box(rotulos_overlay)
 
     # Legenda no canto superior direito: cobertura mostra as 3 categorias (aprovado proprio /
     # aprovado fallback municipal / reprovado); resumo mostra so as 2 de aprovado (realce de

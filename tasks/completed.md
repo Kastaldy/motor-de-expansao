@@ -9487,3 +9487,68 @@ Observações: CLAUDE.md não deve ser reescrito, apenas estendido com seção #
 ---
 
 - BLK-PROD-03 (concluído 2026-07-07) — ver tasks/completed.md
+
+---
+
+## Fechamento de ciclo — BLK-RELPON-09 (2026-07-21)
+
+**Indicador de concorrente = logo quadrada nos PDFs (Pontual + Municipal)** — criticidade
+Média, esteira Block Orchestrator → Planner → Builder → QA → [GATE VISUAL de Vinicius].
+**READ-ONLY sobre o M1** (§5): nada recalcula `score_priorizacao`, `hex_score_estrutural`,
+pesos, scores censitários, `flag_sam`, carteira, plano ou artefatos oficiais.
+
+**Origem.** Pedido de Vinicius (2026-07-21): o marcador de concorrente/Ultra deixa de ser um
+pin-balão com a logo mascarada em círculo e passa a ser a própria logo em formato quadrado.
+Foi um de 3 itens do mesmo pedido; os outros dois viraram BLK-RELPON-10 (slide novo
+Socioeconomia + Residual) e BLK-RELPON-11 (página de satélite Esri), ambos pendentes.
+
+**Entregue.** `competitors._render_square_logo_tile(key, size, *, border, shadow)` criada como
+**append puro** no fim de `competitors.py`; consumida por `censo_map._paste_logo_pin` (30 px),
+`relatorio_municipal._draw_pins` (26 px) e `_draw_rede_logo` (64 px, eliminando o
+`crop((37,20,91,74))` acoplado à geometria do balão). Âncora no **centro** do quadrado.
+`docs/relatorio_pontual_censitario.md:176` corrigido.
+
+**Decisões fechadas.** S2a: "30x30" em px do PNG-fonte (o PNG é rasterizado uma vez e reusado
+por dashboard/PDF/API; "pt do PDF" exigiria plumbing novo); Municipal escala proporcionalmente
+(razão 0,85 preservada). S2b: âncora no centro, **sem** o ponto extra de 2 px (antes do tile
+ficaria invisível sob a placa opaca; depois cairia no meio da logo) — o papel de "ponto exato"
+já é do `_draw_center_pin`, intocado. S2c: logo em CONTAIN (nunca esticada) e
+`ImageFont.load_default(size=)` em vez de `truetype("arialbd.ttf")` — defeito latente de
+`_render_pin_tile` que a imagem de produção sem fontes de sistema expõe.
+
+**Restrição dura cumprida.** `_render_pin_tile` e `build_icon_atlas` **INTOCADOS** (hashes de
+fonte idênticos; `git diff -U0` com hunk único `@@ -617,0 +618,124 @@`, nada dentro de
+504-618). O atlas 128px/`anchorY=122` do pydeck e a paridade de BLK-WEB-02/07 seguem intactos;
+teste-guarda novo cobre isso.
+
+**Teste de pixel reescrito, não enfraquecido.** O teste que provava o pin Ultra por pixels
+avermelhados virou diferencial (render com pins vs sem pins). O QA mediu que o critério ANTIGO
+(`reds > 0`) **passava mesmo sem nenhum marcador** — o pin vermelho central sozinho já o
+satisfazia; a reescrita é estritamente mais forte, validada por mutação (3/3 mutações quebram).
+
+**FU1 (pós-gate visual).** Vinicius aprovou o Pontual e reprovou o Municipal: os marcadores
+cobriam os valores de Residual Fitness dos hexágonos. Correção: os rótulos ganharam **overlay
+própria, composta DEPOIS de `_draw_pins`** (helper `_compor_no_map_box`), preservando o clip do
+`map_box`. E, por decisão de produto no mesmo gate (escolhida sobre 4 alternativas
+renderizadas com dado real), o realce do rótulo virou **placa magenta + texto branco**, aplicado
+tanto ao valor (camada `resumo`) quanto ao número de zona (camada `dominio`) — magenta é a
+única cor que não colide com nada no mapa. Reusa o `ULTRA_MAGENTA` do módulo `(194,60,142)`,
+não o `(199,32,120)` do mockup, para não brigar com as bandas do próprio relatório; cores
+extraídas para `_ROTULO_PLACA_RGBA`/`_ROTULO_INK` (recalibrar = 1 linha). Teste novo
+`test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1`, auto-localizante pelo diff e
+sondando a placa magenta: por mutação, a ordem antiga dá **0/329 px sobreviventes**.
+
+**Limitação conhecida e aceita.** Resolve marcador × rótulo. A colisão **marcador × marcador**
+persiste em município denso (inerente a 3.796 concorrentes) e exigiria clustering/dedup —
+bloco próprio, não este.
+
+**QA (Opus 4.8) — APROVADO.** Suíte FULL serial `1935 passed, 2 skipped, 1 failed`; a única
+falha é `test_score_retencao_territorial::test_run_readonly_m1_por_mtime` (parquet de staging
+gitignored ausente), **provada pré-existente** no baseline `f7bd08b` via stash. Zero regressões.
+`ruff` e `mypy` limpos. READ-ONLY M1 confirmado por mtime dos artefatos oficiais.
+
+**Housekeeping.** Modo **auto-merge** (DEC-016, criticidade Média): `tasks/backlog.md` NÃO foi
+tocado — o stub do bloco fica diferido para o PR de housekeeping em lote (governança). Este
+arquivo é a fonte de verdade da conclusão.
+
+**Deploy:** NÃO automático (§6) — subir na VPS segue passo manual do humano, por digest.
