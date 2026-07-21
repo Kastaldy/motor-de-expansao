@@ -100,6 +100,184 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
+## Relatório Pontual Censitário — satélite + mapas socioeconômico/residual + logo quadrada (2026-07-21, pedido de Vini)
+
+> **Pedido de Vinicius (2026-07-21)**, a partir do uso real do Relatório Pontual em produção, em três
+> partes: (1) **um slide novo ANTES do slide "Mapas de calor"**, com **dois mapas lado a lado** —
+> socioeconomia da região e residual fitness; (2) uma **imagem de satélite** da região inserida **antes**
+> desses mapas novos, com zoom aproximado para dar noção do que existe no ponto; (3) nos relatórios
+> gerados pelo motor, o **indicador de concorrente** deixa de ser um pin-balão com a logo dentro e passa
+> a ser a **própria logo em formato quadrado**. READ-ONLY sobre o M1 (§5 guardrail): nenhum dos três
+> recalcula `score_priorizacao`, scores censitários, `setor_censitario_intersecao_area_1p5km`, raio de
+> 1,5 km, carteira, plano ou artefatos oficiais — é camada de visualização/relatório.
+>
+> **Correção de premissa (medida no código em 2026-07-21).** O pedido descrevia o PDF como "5 páginas /
+> tira 1x3". Está desatualizado — **e o CLAUDE.md §4 também**: hoje são **6 páginas base** (`/Count 6`) e
+> o slide "Mapas de calor" já é um **grid 2x2 com 4 camadas** (`densidade`, `renda`, `score`,
+> `renda_domiciliar`) — `censo_report.py:27-34,387,465`. A correção do §4 entra junto com o BLK-RELPON-10.
+>
+> **Ordem final de páginas alvo (8 base):** Capa → **Satélite (RELPON-11)** → **Socioeconomia + Residual
+> (RELPON-10)** → Mapas de calor 2x2 → Concorrentes → Perfil do Bairro → Big Numbers → Realização. As
+> páginas opcionais (Fotos, Info do imóvel, Viabilidade) permanecem onde estão.
+>
+> **Decisões de produto travadas com Vinicius em 2026-07-21 (gate deste ciclo):**
+> - **D1 — "socioeconomia" = `score_setor_2022_calibrado`** (o composto socioeconômico do repo e camada
+>   PRIMÁRIA operacional, §1). O termo "socioeconomia" não existia no repositório (0 matches em `tasks/`);
+>   fica definido aqui.
+> - **D2 — residual fitness em raio MAIOR (~5 km)**, rotulado explicitamente como escala diferente do mapa
+>   ao lado. Motivo medido no dado real (Monte Carlo Voronoi, 200k pontos): no raio de 1,5 km cabem apenas
+>   **3 a 5 hexágonos H3 res-7** e **68,9%** dos hexes valem exatamente 0 → sairia um mosaico chapado, não
+>   um mapa de calor. Comparação no mesmo ponto (Av. Paulista): **639 setores censitários vs 5 hexes**.
+> - **D3 — satélite = `Esri.WorldImagery`, largura 250–400 m** (não Google, não 100 m). Ver BLK-RELPON-11.
+> - **D4 — logo quadrada vale no Pontual + Municipal**, via **função nova**, sem tocar `_render_pin_tile`
+>   nem o atlas do pydeck. Ver BLK-RELPON-09.
+>
+> **Sub-decisões ABERTAS, a fechar no gate visual de cada bloco** (não bloqueiam o Planner):
+> - **S1 (RELPON-10):** o `score` promovido ao slide novo **permanece** também no grid 2x2 (slide novo =
+>   resumo/"hero"; 2x2 = detalhe técnico)? **Recomendação: SIM, permanece** — tirá-lo regride o
+>   BLK-RELPON-01 e força o grid de 2x2 para 1x3, com churn extra e sem ganho claro.
+> - **S2 (RELPON-09):** "30x30" é em **px do PNG fonte** (recomendado, comparável aos 40 px atuais) ou em
+>   pt do PDF; e a âncora passa a ser o **centro** do quadrado + ponto fino de 2 px no local exato
+>   (recomendado) ou a base do quadrado (preserva a semântica do pin atual).
+>
+> **Impacto cruzado a citar nos gates:** `BLK-WEB-05`/`BLK-WEB-08` (pendentes) exigem **paridade** com o
+> "2x2 mapas" do Pontual e `BLK-WEB-02`/`BLK-WEB-07` exigem paridade com os **pins com logo** — os três
+> blocos abaixo criam dívida de paridade para o piloto web.
+
+---
+
+### BLK-RELPON-09 — Indicador de concorrente = logo quadrada nos PDFs (Pontual + Municipal)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (display local nos dois PDFs; sem rede, sem dado novo, sem DEC; **READ-ONLY sobre o M1** — não toca score, gate do SAM, faixas nem artefatos oficiais). |
+| **Prioridade** | Alta (entregável imediato; o único dos três que não trava em gate de produto ou DEC). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA → `[GATE VISUAL do Vini — PDF gerado]`. |
+| **Status** | Pendente. |
+| **Depende de** | — (independente dos outros dois). |
+| **Autonomia** | **manual** — o critério de aceite é VISUAL (legibilidade e colisão de marcadores sobre choropleth), que a suíte não captura. Não marcar `loop-safe`. |
+
+**Contexto.** O marcador de concorrente/Ultra é hoje um **balão teardrop 128x128** desenhado em PIL —
+`competitors._render_pin_tile` (`competitors.py:504-568`): polígono + elipse, círculo branco interno
+(`cx=64, cy=47, r=27`), logo clipada em **máscara circular 54x54** colada em `(37,20)`, com fallback de
+sigla. São **3 call-sites de produção**: `censo_map._paste_logo_pin` (`censo_map.py:327-343`, resize para
+**40 px**, âncora `(px - size//2, py - size)` = ponta do balão), `relatorio_municipal._draw_pins`
+(`relatorio_municipal.py:1141-1176`, **34 px**, mesma âncora) e `competitors.build_icon_atlas`
+(`competitors.py:597`, **mapa interativo pydeck**, que exige tile **exatamente 128** e emite `anchorY=122`).
+Consequência medida: a logo efetivamente visível hoje tem **~17 px** no Pontual e ~14 px no Municipal.
+
+**Objetivo (D4).** Criar `competitors._render_square_logo_tile(key, size)` — logo em **quadrado**, sem balão
+e **sem máscara circular**, com borda branca ~2 px e leve sombra para contraste sobre choropleth
+translúcido. Consumir a função nova **só** em `censo_map._paste_logo_pin` e `relatorio_municipal._draw_pins`
+(default 30 px; ver S2). `_render_pin_tile`, `build_icon_atlas` e o mapa interativo ficam **INTOCADOS**.
+Simplificação de brinde: `relatorio_municipal._draw_rede_logo` (`relatorio_municipal.py:1478-1494`) hoje faz
+`tile.crop((37,20,91,74))` — acoplado à geometria fixa do balão, degrada em silêncio se o tile mudar — e
+passa a **reusar** a função nova.
+
+**Ganho contra-intuitivo a registrar:** o quadrado de 30x30 **preenchido pela logo** entrega ~30 px de logo
+visível contra os ~17 px de hoje — quase o dobro, mesmo com um marcador menor.
+
+**Guardrail.** §5 READ-ONLY M1. `test_ultra_pins.py:282-300` (geometria do atlas) e a paridade dos blocos
+`BLK-WEB-02`/`BLK-WEB-07` só seguem verdes **se `_render_pin_tile` não for alterado** — é requisito, não
+recomendação. Atenção a `test_relatorio_pontual_censitario_mapa.py:198-206`, que conta pixels avermelhados
+para provar o pin Ultra: o vermelho vem do **balão** (`#C8001E`), não da logo → o teste deve ser reescrito
+para a forma nova, nunca silenciado.
+
+---
+
+### BLK-RELPON-10 — Slide novo "Socioeconomia + Residual Fitness" antes do grid 2x2
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — reverte uma decisão de produto já aprovada (o BLK-CENSO-02 fixou, com Felipe em 2026-06-05, que residual fitness entra no Pontual **só como número** nos Big Numbers, nunca como choropleth) e introduz **hexágonos H3 no caminho de render do Pontual** (hoje `censo_map.py` **não importa `h3`**; os 4 choropleths são todos de **setor censitário IBGE**). **READ-ONLY sobre o M1** — apenas lê `oferta_efetiva_disponivel` e `score_setor_2022_calibrado`. |
+| **Prioridade** | Alta (é o miolo do pedido). |
+| **Esteira** | Block Orchestrator → Planner → `[APROVAÇÃO HUMANA — S1 + régua de cor do residual]` → Builder → QA → `[GATE VISUAL do Vini]`. |
+| **Status** | Pendente. |
+| **Depende de** | — (mas **BLK-RELPON-11 depende dele**: os dois inserem página e pagam a mesma churn estrutural). |
+| **Autonomia** | **manual** — decisão de produto + aceite visual. Não marcar `loop-safe`. |
+
+**Objetivo.** Inserir **um slide novo antes do "Mapas de calor"**, com dois mapas lado a lado:
+**"Socioeconomia — raio 1,5 km"** (`score_setor_2022_calibrado`, por setor censitário; D1) e **"Residual
+Fitness — raio ~5 km"** (`oferta_efetiva_disponivel`, por hexágono H3 res-7; D2), com o raio de cada um
+**rotulado no próprio mapa**, para o operador não ler as duas escalas como se fossem iguais.
+
+**O que precisa nascer.** (a) camada nova em `censo_map._render_camada` (`censo_map.py:550-735`) = 4 peças
+(`color_fn`, `source_values`, `legenda_entries`, títulos); (b) **régua de cor do residual em ALUNOS** —
+`RESIDUAL_SCORE_BANDS` existe, mas é para score 0–100, e `oferta_efetiva_disponivel` é em alunos, **sem
+faixa absoluta definida** (decisão do gate); (c) **helper de recorte espacial de hexes** —
+`lookup_hex_by_coord` (`data.py:1023-1046`) devolve **uma linha**, não um recorte; o mapa exige
+`h3.grid_disk` + render de polígonos de hex (hoje só `relatorio_municipal.py:742` desenha hex); (d) a
+**gêmea clássica** (`_classico_*`) — o **clássico é o default em produção** (`pages.py:3044`,
+`api/service.py:341`).
+
+**Churn estrutural (o custo real).** Inserir página desloca: o **`/Count`**, asserido em **5 arquivos de
+teste** (`..._export.py` em 11 linhas, `..._info_imovel.py:75-111`, `..._viabilidade.py:85-150`,
+`..._orquestracao.py:77-125`, `..._ui_relviab06.py:67`) e em cascata até 10→12 páginas nas variantes com
+opcionais; **`PDF_SECTION_HEADERS`** (`censo_report.py:27-34`, tupla asserida nos **bytes crus** do PDF,
+latin-1 puro); e **`_tema_bicolor`** (`censo_report.py:313-324`) — os ordinais `p1..p4` alternam
+turquesa↔magenta, então **inserir uma página inverte a cor de todas as seguintes**.
+
+**Housekeeping obrigatório junto.** Corrigir o **CLAUDE.md §4**: hoje diz "5 páginas / tira 1x3"; a
+realidade já era 6 páginas / grid 2x2 **antes** deste bloco, e passa a 7 depois dele.
+
+**Guardrail.** §5 READ-ONLY M1: nada recalcula score, `flag_sam`, intersecção de setores nem o raio de
+1,5 km do motor — o raio de ~5 km é **recorte de exibição do mapa de residual**, não do método de análise
+(`setor_censitario_intersecao_area_1p5km` e `RAIO_CENSITARIO_DEFAULT_KM` INTOCADOS). Reverter a decisão do
+BLK-CENSO-02 exige registro explícito no gate (emenda ou DEC, conforme o desenho final).
+
+---
+
+### BLK-RELPON-11 — Página de imagem de satélite (Esri World Imagery) antes dos mapas de dados
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — **provedor de rede NOVO** no caminho de geração de relatório (desvio do guardrail §2); as DEC-004/DEC-011 são **nominais quanto ao provedor** (CartoDB/OSM, tiles de **ruas**) e **não cobrem** imagery de satélite. **READ-ONLY sobre o M1**. |
+| **Prioridade** | Média-Alta (depende de parecer humano sobre ToS). |
+| **Esteira** | Block Orchestrator → Planner → `[APROVAÇÃO HUMANA + DEC-018 — provedor/ToS/largura]` → Builder → QA → `[GATE VISUAL do Vini]`. |
+| **Status** | Pendente — **bloqueado por DEC-018**. |
+| **Depende de** | **BLK-RELPON-10** (ordem de página e churn de `/Count` / `PDF_SECTION_HEADERS` / `_tema_bicolor`). |
+| **Autonomia** | **manual** — introduz fetch de rede no caminho de geração, o que **desqualifica `loop-safe`** pelo critério do §6.1. Nunca marcar. |
+
+**Objetivo (D3).** Página nova, logo após a Capa e **antes** do slide de Socioeconomia+Residual, com um
+recorte de **imagem de satélite** centrado na coordenada do ponto, **largura 250–400 m**, altura
+proporcional 16:9, e atribuição no rodapé.
+
+**Provedor.** `Esri.WorldImagery`. Levantamento: dos **197 provedores de imagery** do `xyzservices`,
+filtrando cobertura global + sem token + não-`broken`, sobra **exatamente um**
+(`Stadia.AlidadeSatellite` está `status="broken"`; MapTiler/HERE exigem chave; ~190 são regionais de
+Áustria/França). **Zero dependência nova**: `contextily 1.7.0` e `xyzservices` já estão instalados e o extra
+`[basemap]` já vai embutido no `Dockerfile.streamlit`. **Google Static Maps está FORA** — exige chave paga, e
+raspar `mt.google.com` viola o ToS.
+
+**Por que 250–400 m e não os 100 m pedidos.** Sondagem HTTP em 10 pontos do Brasil: o teto real do Esri é
+**z19 em metrópoles, z18 em cidades médias, z17 no interior**. A lat −23,5: 100 m @z19 = 365x205 px = **61
+ppi** (borrado), e no interior @z17 = 91x51 px (inutilizável); 250 m = **153 ppi**; 400 m = **245 ppi** — e
+a 400 m ainda se leem quarteirão, estacionamento, vizinhos e avenida, que é o objetivo declarado do pedido.
+
+**Risco técnico que o padrão DEC-004 NÃO cobre.** Acima do zoom disponível, o Esri responde **HTTP 200 com
+tile placeholder cinza** ("Map data not yet available", `mean RGB ~204,7`, `std 5,37`) — confirmado pelo
+próprio contextily: z18/z19 → `std ~49` (imagem real); z20 → `std 5,4` (placeholder, **sem exceção**). O
+`try/except` do padrão atual **não protege**. Exige **fallback por CONTEÚDO**: detectar `std < ~15` →
+degradar o zoom em 1 até z16 → **omitir a página** se não houver imagem real. Teste novo com array sintético.
+
+**Guardrail.** §5 READ-ONLY M1. Herda **todas** as mitigações das DEC-004/011, obrigatórias: cache local em
+`data/cache/basemap_tiles/`; **fallback offline gracioso** (sem rede/tiles/`contextily` → página omitida,
+sem exceção); **import lazy** — a carga e a interatividade do dashboard **não** fazem fetch; default seguro
+em CI/teste (`basemap=False`) — o `conftest.py` **não bloqueia rede**, então o caminho novo precisa nascer
+com o default seguro. **Atribuição em constante NOVA e separada** (`_ATRIBUICAO_TILES` está triplicado em
+`censo_map.py:47`, `censo_report.py:122` e `relatorio_municipal.py:118`, e é asserido em
+`test_relatorio_pontual_censitario_mapa.py:329`), escrita em **ASCII**: a string oficial do Esri tem em-dash
+`—`, fora de latin-1, que o `_ascii()` (`censo_report.py:226-229`) converte em `"?"` silenciosamente.
+Latência no bot Telegram (`api/service.py:341` gera o mesmo PDF): mitigada por `_reuse_contextily_session`
+(`api/service.py:225`); um recorte de 250–400 m @z19 puxa apenas 4–16 tiles.
+
+**DEC-018 (a registrar no gate).** Provedor Esri World Imagery no caminho de geração dos relatórios.
+**Pergunta que nenhum agente pode responder e que a DEC precisa fechar:** se os ToS atuais do ArcGIS Online
+permitem uso programático de `server.arcgisonline.com` sem conta. Tecnicamente ele responde sem chave e é o
+default de QGIS/Leaflet/contextily há anos — isso é **prática de mercado, não parecer jurídico**.
+
+---
+
 ## Relatório Municipal — novo formato (2026-06-19, pedido de Vini)
 
 > Novo formato de relatório que **coexiste** com o Relatório Pontual Censitário atual (que analisa
