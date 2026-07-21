@@ -41,7 +41,7 @@ import pandas as pd
 from fpdf import FPDF
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
-from motor_expansao.dashboard.competitors import _render_pin_tile
+from motor_expansao.dashboard.competitors import _render_square_logo_tile
 from motor_expansao.dashboard.utils import score_band_to_color
 
 # ---------------------------------------------------------------------------
@@ -52,6 +52,15 @@ from motor_expansao.dashboard.utils import score_band_to_color
 OFERTA_DESTAQUE_MIN = 2000.0
 CAPACIDADE_UNIDADE = 2500.0
 H3_RES = 7
+
+# BLK-RELPON-09 (S2a): lado (px do PNG-fonte) do marcador de concorrente/Ultra nos mapas
+# municipais. 26 px preserva a razao 34/40 = 0,85 que o Municipal ja tinha frente ao
+# Pontual: mesmo canvas de 1000 px, porem cobrindo um MUNICIPIO inteiro -> muito mais
+# pins e maior risco de colisao. Logo util: ~14 px (balao) -> ~22 px (quadrado).
+_PIN_LOGO_PX = 26
+# Rasterizacao (px) da logo embutida no PDF da pagina "Concorrentes por rede": desenhada
+# a 14 pt, 64 px cobre ~300 dpi sem inchar o PDF (o crop antigo do balao era 54x54).
+_REDE_LOGO_RASTER_PX = 64
 
 # Carimbo de versao do contrato deste relatorio (D8 / espirito DEC-005 item 6).
 VERSAO_CONTRATO_MUNICIPAL = "BLK-RELMUN-01 | contrato v1 | score M1 INALTERADO"
@@ -1168,10 +1177,11 @@ def _draw_pins(
         try:
             from typing import cast
 
-            tile = cast(Image.Image, _render_pin_tile(key))
-            size = 34
-            tile = tile.resize((size, size), Image.Resampling.LANCZOS)
-            image.paste(tile, (int(px) - size // 2, int(py) - size), tile)
+            # BLK-RELPON-09: logo QUADRADA (sem balao/mascara circular), ancorada pelo
+            # CENTRO do quadrado no ponto (S2b) -- o marcador nao tem ponta.
+            size = _PIN_LOGO_PX
+            tile = cast(Image.Image, _render_square_logo_tile(key, size))
+            image.paste(tile, (int(px) - size // 2, int(py) - size // 2), tile)
         except Exception:
             draw.ellipse([px - 4, py - 4, px + 4, py + 4], fill=ULTRA_MAGENTA if not forced_key else ULTRA_TURQUESA)
 
@@ -1476,17 +1486,23 @@ def _draw_framed_map(
 
 
 def _draw_rede_logo(pdf: _UltraPDF, rede: str, x: float, y: float, size: float = 14.0) -> bool:
-    """Slide 8: desenha o tile do logo da rede (via `_render_pin_tile`) em (x,y).
+    """Slide 8: desenha a logo QUADRADA da rede (`competitors._render_square_logo_tile`) em (x,y).
 
+    BLK-RELPON-09: era `_render_pin_tile(...).crop((37,20,91,74))` -- recorte acoplado a
+    geometria do balao. Agora a logo ja vem quadrada; sem borda/sombra (a pagina do PDF e
+    branca, keyline e sombra ficariam sujeira). `size` continua em PONTOS do PDF (14 pt),
+    inalterado; `_REDE_LOGO_RASTER_PX` e so a resolucao do raster embutido.
     Fallback gracioso: sem tile/erro -> retorna False (o chamador mantem so o bullet/nome).
     """
     try:
         from typing import cast
 
-        tile = cast(Image.Image, _render_pin_tile(str(rede)))
-        crop = tile.crop((37, 20, 91, 74)) if tile.size == (128, 128) else tile
+        tile = cast(
+            Image.Image,
+            _render_square_logo_tile(str(rede), _REDE_LOGO_RASTER_PX, border=False, shadow=False),
+        )
         buf = BytesIO()
-        crop.convert("RGBA").save(buf, format="PNG")
+        tile.convert("RGBA").save(buf, format="PNG")
         buf.seek(0)
         pdf.image(buf, x=x, y=y, w=size, h=size)
         return True

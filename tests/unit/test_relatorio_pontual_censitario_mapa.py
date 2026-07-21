@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from io import BytesIO
 
+import numpy as np
 import pandas as pd
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 from pyproj import Transformer
 from shapely.geometry import box
 from shapely.ops import transform
@@ -15,6 +16,7 @@ from motor_expansao.dashboard.censo_map import (
     render_mapas_censitarios_combinados,
 )
 from motor_expansao.dashboard.censo_point import CRS_ORIGEM_CENSO, _local_metric_crs
+from motor_expansao.dashboard.competitors import _ICON_CACHE
 from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS
 
 LAT_C = -23.55
@@ -176,34 +178,89 @@ def test_mapa_censitario_ponto_central_pin_vermelho():
     assert blues_old == 0
 
 
-def test_mapa_censitario_pin_com_logo_concorrente_e_ultra():
-    setores = pd.DataFrame(
-        [_sector_record("355030801000001", box(-700, -700, 700, 700), pop=1000, score=60)]
-    )
-    competitors = pd.DataFrame(
-        [{"nome_unidade": "Smart Fit", "lat": LAT_C, "lng": LNG_C + 0.004, "rede": "smart_fit"}]
-    )
-    ultra = pd.DataFrame([{"nome_unidade": "Ultra", "lat": LAT_C, "lng": LNG_C - 0.004}])
+def test_mapa_censitario_marcador_quadrado_concorrente_e_ultra():
+    """BLK-RELPON-09: marcador de concorrente/Ultra e a LOGO QUADRADA, nao o balao.
 
-    mapas = render_mapas_censitarios_combinados(
-        LAT_C,
-        LNG_C,
-        setores,
-        competitors_df=competitors,
-        ultra_df=ultra,
-        width=800,
-        height=600,
-        basemap=False,
-    )
-    image = Image.open(BytesIO(mapas["concorrentes"])).convert("RGB")
-    # O pin Ultra usa a cor da marca (#C8001E -> ~(200,0,30)); deve haver pixels avermelhados
-    # fora do choropleth (o pin e desenhado por _render_pin_tile).
-    reds = sum(
-        1
-        for _count, (r, g, b) in image.getcolors(maxcolors=1_000_000) or []
-        if r > 150 and g < 80 and b < 80
-    )
-    assert reds > 0
+    Teste DIFERENCIAL (renderiza a MESMA camada com e sem pins): a camada
+    "concorrentes" e so-pins (sem choropleth) e seu titulo/legenda sao estaticos, entao
+    as duas imagens diferem EXCLUSIVAMENTE pelos 2 tiles colados. Prova (a) que os dois
+    marcadores foram desenhados, (b) que sao 2 clusters separados, (c) que o footprint e
+    QUADRADO (~`_PIN_LOGO_PX`), (d) que a ancora e o CENTRO do quadrado (S2b) e (e) a
+    identidade de marca por lado. Substitui a contagem de "pixels avermelhados" antiga,
+    que media o BALAO (`ULTRA_BRAND["bg"]`) e deixou de existir.
+    """
+    # `_ICON_CACHE` e estado de modulo e outros testes o populam: sem os pops, a placa
+    # viria BRANCA (ramo com logo) e as cores de marca abaixo nao existiriam.
+    _ICON_CACHE.pop("smart_fit", None)
+    _ICON_CACHE.pop("__ultra__", None)
+    try:
+        setores = pd.DataFrame(
+            [_sector_record("355030801000001", box(-700, -700, 700, 700), pop=1000, score=60)]
+        )
+        competitors = pd.DataFrame(
+            [{"nome_unidade": "Smart Fit", "lat": LAT_C, "lng": LNG_C + 0.004, "rede": "smart_fit"}]
+        )
+        ultra = pd.DataFrame([{"nome_unidade": "Ultra", "lat": LAT_C, "lng": LNG_C - 0.004}])
+
+        base = render_mapas_censitarios_combinados(
+            LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+        )
+        com_pins = render_mapas_censitarios_combinados(
+            LAT_C,
+            LNG_C,
+            setores,
+            competitors_df=competitors,
+            ultra_df=ultra,
+            width=800,
+            height=600,
+            basemap=False,
+        )
+        img_base = Image.open(BytesIO(base["concorrentes"])).convert("RGB")
+        img_pins = Image.open(BytesIO(com_pins["concorrentes"])).convert("RGB")
+
+        diff = ImageChops.difference(img_base, img_pins)
+        mask = np.array(diff.convert("L")) > 0
+        ys, xs = np.nonzero(mask)
+
+        # dois quadrados de 30x30 (+sombra) ~ 1.800 px; o teto prova que NAO foi a
+        # figura inteira que mudou.
+        assert 1200 <= int(mask.sum()) <= 2600
+
+        # dois clusters horizontais separados, cada um com o footprint do quadrado
+        uniq = sorted(set(int(v) for v in xs))
+        clusters: list[tuple[int, int]] = []
+        atual = [uniq[0]]
+        for anterior, seguinte in zip(uniq[:-1], uniq[1:], strict=True):
+            if seguinte - anterior >= 10:
+                clusters.append((atual[0], atual[-1]))
+                atual = [seguinte]
+            else:
+                atual.append(seguinte)
+        clusters.append((atual[0], atual[-1]))
+        assert len(clusters) == 2
+        for x0, x1 in clusters:
+            assert 26 <= (x1 - x0 + 1) <= 34
+        assert 26 <= (ys.max() - ys.min() + 1) <= 34
+
+        # ancora CENTRADA (S2b): o centro vertical do marcador coincide com a PONTA do
+        # pin vermelho central (mesma latitude). Com ancora na base cairia ~15 px acima.
+        vermelho = np.all(np.array(img_base) == np.array([220, 38, 38]), axis=-1)
+        vermelho[:, 800 - censo_map._LEGEND_COL_W :] = False  # exclui o pin da legenda
+        ys_vermelho, _xs_vermelho = np.nonzero(vermelho)
+        ponta_cy = int(ys_vermelho.max())
+        assert abs(((ys.min() + ys.max()) / 2) - ponta_cy) <= 3
+
+        # identidade de marca por lado: Ultra (#C8001E) a OESTE (LNG_C - 0.004),
+        # Smart Fit (#FFE600) a LESTE. Ambas vem do fallback de sigla (cache limpo).
+        arr_pins = np.array(img_pins)
+        (esq_x0, esq_x1), (dir_x0, dir_x1) = clusters
+        ultra_mask = np.all(arr_pins == np.array([200, 0, 30]), axis=-1)
+        smart_mask = np.all(arr_pins == np.array([255, 230, 0]), axis=-1)
+        assert ultra_mask[:, esq_x0 : esq_x1 + 1].sum() > 0
+        assert smart_mask[:, dir_x0 : dir_x1 + 1].sum() > 0
+    finally:
+        _ICON_CACHE.pop("smart_fit", None)
+        _ICON_CACHE.pop("__ultra__", None)
 
 
 def test_fetch_basemap_sem_contextily_devolve_none(monkeypatch):

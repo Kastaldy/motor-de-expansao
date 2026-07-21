@@ -21,7 +21,7 @@ from motor_expansao.dashboard.censo_point import (
     _transformer,
     analisar_ponto_censitario_setores,
 )
-from motor_expansao.dashboard.competitors import _render_pin_tile
+from motor_expansao.dashboard.competitors import _render_square_logo_tile
 from motor_expansao.dashboard.constants import (
     DENSIDADE_POP_BANDS,
     FATOR_TEMPORAL_RENDA,
@@ -68,6 +68,11 @@ _STREET_CAP = 210
 # o frame (setores recortados a este RETANGULO com a proporcao da area de mapa), nao so o
 # circulo — estilo GeoFusion, sem letterbox. A analise (KPIs) segue circular/INTOCADA; e so RENDER.
 _MAP_FRAME_MARGIN = 0.08
+
+# BLK-RELPON-09 (S2a): lado do marcador de concorrente/Ultra em PIXELS do PNG-fonte.
+# Era um balao de 40 px cuja logo util media ~17 px; agora o quadrado INTEIRO e logo
+# (~26 px uteis). Ancora = CENTRO do quadrado (S2b). RENDER apenas (READ-ONLY M1).
+_PIN_LOGO_PX = 30
 
 # Web Mercator (CRS nativo dos tiles). A composicao do mapa novo acontece em 3857;
 # o motor (intersecao setor x circulo 1.5 km) segue intocado em aeqd local (censo_point).
@@ -330,17 +335,19 @@ def _paste_logo_pin(
     py: int,
     key: str,
     *,
-    size: int = 40,
+    size: int = _PIN_LOGO_PX,
 ) -> None:
-    """Cola o pin (balao + logo OU sigla) de `competitors._render_pin_tile` no mapa.
+    """Cola a LOGO QUADRADA (`competitors._render_square_logo_tile`) no mapa.
 
-    Ancora a PONTA do balao (anchorY do tile 128x128) no ponto (px, py): o tile e
-    desenhado com a ponta na base, entao posicionamos `(px - w//2, py - h)`. Reusa a
+    BLK-RELPON-09: saiu o balao teardrop com a logo mascarada em circulo; entra a
+    propria logo num quadrado de `size` px, com borda branca e sombra leve. Ancora o
+    CENTRO do quadrado no ponto (px, py) -- o marcador nao tem ponta, e ancorar a base
+    deslocaria a leitura ~15 px (~88 m no frame de 1,5 km). O ponto exato da analise
+    segue marcado pelo pin vermelho central (`_draw_center_pin`, INALTERADO). Reusa a
     mascara alpha do tile RGBA. Logo real quando ha PNG no _ICON_CACHE; sigla no fallback.
     """
-    tile = cast(Image.Image, _render_pin_tile(key))
-    tile = tile.resize((size, size), Image.Resampling.LANCZOS)
-    image.paste(tile, (int(px) - size // 2, int(py) - size), tile)
+    tile = cast(Image.Image, _render_square_logo_tile(key, size))
+    image.paste(tile, (int(px) - size // 2, int(py) - size // 2), tile)
 
 
 def _draw_legend_camada(

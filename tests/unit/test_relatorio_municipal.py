@@ -11,14 +11,19 @@ Pontual recente nem do classico (isolamento estrito).
 
 from __future__ import annotations
 
+from io import BytesIO
+
 import h3
+import numpy as np
 import pandas as pd
 import pytest
+from PIL import Image
 
 from motor_expansao.dashboard.relatorio_municipal import (
     _COR_APROVADO_MUNICIPAL,
     _COR_APROVADO_PROPRIO,
     _COR_REPROVADO,
+    _PIN_LOGO_PX,
     CAPACIDADE_UNIDADE,
     PDF_SECTION_HEADERS,
     _fit_contain,
@@ -348,6 +353,37 @@ def test_render_mapas_municipio_png_altura_704(camada):
     dims = _png_dimensions(mapas[camada])
     assert dims is not None
     assert dims == (1000, 704)
+
+
+def test_mapa_municipal_marcador_ultra_quadrado_blk_relpon_09():
+    """BLK-RELPON-09: o marcador da unidade Ultra e a LOGO QUADRADA, nao o balao 34x34.
+
+    Com `_ICON_CACHE` limpo, a Ultra cai no fallback de sigla -> placa na cor da marca
+    (#C8001E). `_sample_ultra()` tem exatamente 1 unidade, e nenhuma outra cor do modulo
+    e (200,0,30) (ULTRA_MAGENTA/TURQUESA/LARANJA sao distintas), entao a mascara isola o
+    marcador. O footprint tem de ser QUADRADO e caber no lado `_PIN_LOGO_PX` -- o balao
+    anterior era mais alto que largo e media 34 px.
+    """
+    from motor_expansao.dashboard.competitors import _ICON_CACHE
+
+    _ICON_CACHE.pop("__ultra__", None)
+    try:
+        df = _sample_df()
+        res = agregar_municipio(df, nome_municipio="SAO PAULO", dominio_df=_sample_dominio())
+        # a camada "resumo" e onde `_draw_pins` roda; "cobertura" e gerada sem pins por design
+        mapas = render_mapas_municipio(
+            df, res, competitors_df=_sample_competitors(), ultra_df=_sample_ultra(), basemap=False
+        )
+        image = Image.open(BytesIO(mapas["resumo"])).convert("RGB")
+        mask = np.all(np.array(image) == np.array([200, 0, 30]), axis=-1)
+        ys, xs = np.nonzero(mask)
+
+        # interior do card (26 - 2 de sombra - 2x2 de borda = 20 px) menos a sigla
+        assert 250 <= int(mask.sum()) <= 700
+        assert 16 <= (int(xs.max()) - int(xs.min()) + 1) <= _PIN_LOGO_PX
+        assert 16 <= (int(ys.max()) - int(ys.min()) + 1) <= _PIN_LOGO_PX
+    finally:
+        _ICON_CACHE.pop("__ultra__", None)
 
 
 # ---------------------------------------------------------------------------
