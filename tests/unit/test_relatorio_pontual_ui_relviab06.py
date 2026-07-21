@@ -64,6 +64,6 @@ def test_wiring_do_botao_gera_pdf_completo():
         viabilidade=viab,
     )
     # capa + fotos + info + 4 conteudo + viab numeros + viab graficos + credito = 10
-    assert b"/Count 10" in payloads.pdf_bytes
+    assert b"/Count 11" in payloads.pdf_bytes
     assert payloads.pdf_bytes.startswith(b"%PDF")
     assert len(payloads.pdf_bytes) > 30_000  # PNGs reais embutidos

@@ -22,7 +22,18 @@ from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS
 LAT_C = -23.55
 LNG_C = -46.63
 
-_CAMADAS = {"densidade", "renda", "score", "renda_domiciliar", "concorrentes"}
+# BLK-RELPON-10: `socioeconomia` (mesmo insumo do `score`, titulo com o raio) e' produzida
+# SEMPRE; `residual` (choropleth de hexagonos H3 no raio de EXIBICAO de 5 km) e' CONDICIONAL —
+# so entra quando `hexes_df` foi passado e ha hex desenhavel.
+_CAMADAS_SEM_HEXES = {
+    "densidade",
+    "renda",
+    "score",
+    "renda_domiciliar",
+    "socioeconomia",
+    "concorrentes",
+}
+_CAMADAS = _CAMADAS_SEM_HEXES | {"residual"}
 
 
 def _to_wgs_geometry(local_geom):
@@ -94,7 +105,7 @@ def test_mapas_combinados_gera_png_com_setores_pins_legenda_e_escala(tmp_path):
         basemap=False,
     )
 
-    assert set(mapas) == _CAMADAS
+    assert set(mapas) == _CAMADAS_SEM_HEXES
     for camada, png in mapas.items():
         (tmp_path / f"mapa_{camada}.png").write_bytes(png)
         assert png.startswith(b"\x89PNG\r\n\x1a\n"), camada
@@ -114,7 +125,7 @@ def test_mapas_combinados_trata_estado_vazio_sem_concorrentes():
         basemap=False,
     )
 
-    assert set(mapas) == _CAMADAS
+    assert set(mapas) == _CAMADAS_SEM_HEXES
     for png in mapas.values():
         image = Image.open(BytesIO(png))
         assert image.format == "PNG"
@@ -290,7 +301,7 @@ def test_mapa_censitario_fallback_offline_sem_tiles(monkeypatch):
     mapas = censo_map.render_mapas_censitarios_combinados(
         LAT_C, LNG_C, setores, width=800, height=600, basemap=True
     )
-    assert set(mapas) == _CAMADAS
+    assert set(mapas) == _CAMADAS_SEM_HEXES
     for png in mapas.values():
         assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
@@ -624,6 +635,7 @@ def test_legenda_corpo_atinge_o_alvo_de_legibilidade_no_pdf():
 
 def test_rotulo_mais_longo_da_legenda_cabe_na_coluna():
     from motor_expansao.dashboard.constants import (
+        OFERTA_DISPONIVEL_ALUNOS_BANDS,
         RENDA_MEDIA_DOMICILIAR_BANDS,
         RENDA_PER_CAPITA_BANDS,
     )
@@ -634,7 +646,13 @@ def test_rotulo_mais_longo_da_legenda_cabe_na_coluna():
     orcamento = censo_map._LEGEND_COL_W - 78
     # As duas camadas de renda usam o MESMO formato compacto de rotulo (per capita e domiciliar);
     # o rotulo mais longo de cada uma deve caber na coluna estreita da legenda.
-    for bands in (RENDA_PER_CAPITA_BANDS, RENDA_MEDIA_DOMICILIAR_BANDS):
+    # BLK-RELPON-10: a regua de residual em ALUNOS entra na mesma verificacao (rotulo mais longo
+    # "5.001-10.000", 12 chars vs 14 do pior caso "R$ 2.001-3.500") -> travado por teste.
+    for bands in (
+        RENDA_PER_CAPITA_BANDS,
+        RENDA_MEDIA_DOMICILIAR_BANDS,
+        OFERTA_DISPONIVEL_ALUNOS_BANDS,
+    ):
         rotulo_mais_longo = max((label for _upper, label, _color in bands), key=len)
         largura = censo_map._text_width(draw, rotulo_mais_longo, font)
         assert largura <= orcamento, (
@@ -674,3 +692,173 @@ def test_legenda_caption_pins_nao_transborda_do_canvas():
         f"Caption ({largura}px) nao cabe no orcamento de {orcamento}px "
         f"(_FS_LEGENDA_CAPTION={censo_map._FS_LEGENDA_CAPTION})"
     )
+
+
+# ── BLK-RELPON-10: camada de Residual Fitness por hexagono (raio de EXIBICAO 5 km) ──────────
+
+
+def _hexes_sinteticos(lat: float = LAT_C, lng: float = LNG_C, k: int = 5) -> pd.DataFrame:
+    """Disco H3 res-7 em torno do ponto, com `oferta_efetiva_disponivel` variando por faixa."""
+    import h3
+
+    centro = h3.latlng_to_cell(lat, lng, 7)
+    celulas = list(h3.grid_disk(centro, k))
+    # Valores que cruzam TODAS as 6 faixas (0 / 1.250 / 2.500 / 5.000 / 10.000 / inf).
+    valores = [float(i % 6) * 2_600.0 for i in range(len(celulas))]
+    return pd.DataFrame({"hex_id": celulas, "oferta_efetiva_disponivel": valores})
+
+
+def _setores_um_quadrado() -> pd.DataFrame:
+    return pd.DataFrame(
+        [_sector_record("355030801000001", box(-700, -700, 700, 700), pop=1000, score=70)]
+    )
+
+
+def test_camada_residual_presente_com_hexes_df_e_png_valido():
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C,
+        LNG_C,
+        _setores_um_quadrado(),
+        width=1000,
+        height=760,
+        basemap=False,
+        hexes_df=_hexes_sinteticos(),
+    )
+
+    assert set(mapas) == _CAMADAS
+    png = mapas["residual"]
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+    image = Image.open(BytesIO(png))
+    assert image.size == (1000, 760)
+    # Choropleth de fato desenhado (varias faixas de cor no canvas).
+    assert len(_all_colors(png)) > 20
+
+
+def test_camada_residual_ausente_sem_hexes_df_ou_sem_hex_no_disco():
+    setores = _setores_um_quadrado()
+    # (a) sem `hexes_df` -> chave ausente (default preserva todos os callers antigos).
+    sem = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+    )
+    assert "residual" not in sem
+    # (b) `hexes_df` sem NENHUM hex do disco (hex de outra regiao) -> chave ausente, sem excecao.
+    import h3
+
+    longe = pd.DataFrame(
+        {
+            "hex_id": [h3.latlng_to_cell(-3.119, -60.0217, 7)],  # Manaus, longe de SP
+            "oferta_efetiva_disponivel": [5_000.0],
+        }
+    )
+    vazio = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False, hexes_df=longe
+    )
+    assert "residual" not in vazio
+    # (c) DataFrame vazio -> idem.
+    assert "residual" not in render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False, hexes_df=pd.DataFrame()
+    )
+
+
+def test_camadas_censitarias_declara_as_7_chaves():
+    assert set(censo_map.CAMADAS_CENSITARIAS) == _CAMADAS
+    assert len(censo_map.CAMADAS_CENSITARIAS) == 7
+
+
+def test_rodape_do_png_deriva_do_raio_km_1p5_identico_e_5p0_novo(monkeypatch):
+    """DT-5: o rodape passou a derivar de `raio_km`. Com 1.5 a string tem de sair IDENTICA
+    ("Raio 1,5 km"); a camada de residual (5 km) sai "Raio 5,0 km" — duas escalas rotuladas."""
+    textos: list[str] = []
+    real = censo_map._draw_text
+
+    def _spy(draw, xy, text, **kwargs):
+        textos.append(text)
+        return real(draw, xy, text, **kwargs)
+
+    monkeypatch.setattr(censo_map, "_draw_text", _spy)
+    render_mapas_censitarios_combinados(
+        LAT_C,
+        LNG_C,
+        _setores_um_quadrado(),
+        width=1000,
+        height=760,
+        basemap=False,
+        hexes_df=_hexes_sinteticos(),
+    )
+
+    assert "Raio 1,5 km - EPSG:3857 - fundo de ruas offline" in textos
+    assert "Raio 5,0 km - EPSG:3857 - fundo de ruas offline" in textos
+    # Titulos com o raio rotulado dentro do PNG (ASCII puro).
+    assert "Socioeconomia - raio 1,5 km" in textos
+    assert "Residual Fitness - raio 5 km" in textos
+    assert "Residual disponivel (alunos)" in textos
+
+
+def test_faixa_de_cor_do_residual_por_valor_absoluto():
+    from motor_expansao.dashboard.constants import OFERTA_DISPONIVEL_ALUNOS_BANDS as BANDS
+
+    # 0 exato cai na 1a faixa ("sem residual"; `val <= upper` captura o zero).
+    assert censo_map._color_for_bands(0.0, BANDS) == BANDS[0][2]
+    assert censo_map._color_for_bands(1_000.0, BANDS) == BANDS[1][2]
+    assert censo_map._color_for_bands(3_000.0, BANDS) == BANDS[3][2]
+    assert censo_map._color_for_bands(26_405.0, BANDS) == BANDS[-1][2]  # max nacional medido
+    # NaN (hex ausente do df) -> cor de "sem dado", DISTINTA da faixa "sem residual" (2 excecoes,
+    # 2 cores, como no BLK-FIX-06-C).
+    assert censo_map._color_for_bands(float("nan"), BANDS) == censo_map._FILL_SEM_DADO
+    assert censo_map._FILL_SEM_DADO[:3] != BANDS[0][2][:3]
+
+
+def test_labels_da_regua_de_residual_sem_acento_para_legenda_png():
+    """Excecao de RENDER ao §2 (mesma de `test_band_renda_media_domiciliar_sem_acento...`):
+    a legenda do choropleth e rasterizada num PNG cujo font (`ImageFont.load_default`) NAO tem
+    glifo acentuado -> qualquer acento vira tofu box. Rotulos em ASCII puro."""
+    from motor_expansao.dashboard.constants import OFERTA_DISPONIVEL_ALUNOS_BANDS as BANDS
+
+    labels = [label for _upper, label, _color in BANDS]
+    assert not any(any(ord(ch) > 127 for ch in s) for s in labels)
+    assert len(labels) == 6
+
+
+def test_formatadores_e_faixa_superior_do_hexagono():
+    assert censo_map._format_valor_residual(3_506.0) == "3.506"
+    assert censo_map._format_valor_residual(None) == "n/d"
+    assert censo_map._format_valor_residual(float("nan")) == "n/d"
+    assert censo_map._legenda_valor_hex("Residual", "3.506") == "Residual no hexagono: 3.506"
+    # Faixa superior do hex central usa o MESMO valor do lookup por hex_id (nao soma o disco).
+    import h3
+
+    centro = h3.latlng_to_cell(LAT_C, LNG_C, 7)
+    hexes = pd.DataFrame(
+        {"hex_id": [centro], "oferta_efetiva_disponivel": [3_506.0]}
+    )
+    assert censo_map._residual_hex_central(LAT_C, LNG_C, hexes) == 3_506.0
+    assert censo_map._residual_hex_central(LAT_C, LNG_C, pd.DataFrame()) is None
+
+
+def test_frame_box_metric_puro_reproduz_o_calculo_do_caller():
+    """Refactor sem mudanca de comportamento: o helper puro devolve o MESMO retangulo que o
+    calculo antes inline (lado menor = raio*(1+margem); aspect da area de mapa)."""
+    width, height = 1280, 760
+    frame = censo_map._frame_box_metric(1.5, width, height)
+    minx, miny, maxx, maxy = frame.bounds
+    base_half = 1.5 * 1000.0 * (1.0 + censo_map._MAP_FRAME_MARGIN)
+    inner_w, inner_h = censo_map._map_inner_dims(width, height)
+    aspect = inner_w / inner_h
+    assert maxy - miny == 2 * base_half
+    assert abs((maxx - minx) - 2 * base_half * aspect) < 1e-6
+    # O frame de 5 km e' proporcionalmente maior pelo mesmo fator de raio.
+    frame5 = censo_map._frame_box_metric(censo_map.RAIO_RESIDUAL_DISPLAY_KM, width, height)
+    b5 = frame5.bounds
+    assert abs((b5[3] - b5[1]) / (maxy - miny) - (5.0 / 1.5)) < 1e-9
+
+
+def test_raio_de_exibicao_nao_toca_o_raio_do_motor():
+    """RD-1 (READ-ONLY M1): o raio de 5 km e' constante de RENDER de `censo_map`; o raio do motor
+    censitario segue 1,5 km e NAO vem de `config.py`."""
+    import motor_expansao.config as config
+    from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
+
+    assert RAIO_CENSITARIO_DEFAULT_KM == 1.5
+    assert censo_map.RAIO_RESIDUAL_DISPLAY_KM == 5.0
+    assert not hasattr(config, "RAIO_RESIDUAL_DISPLAY_KM")
+    assert censo_map._RESIDUAL_GRID_DISK_K == 5
