@@ -1219,10 +1219,13 @@ def render_foto_satelite_ponto(
         d = ImageDraw.Draw(img, "RGBA")
         f = _font(max(11, int(14 * (img.width / 1100))))
         bb = d.textbbox((0, 0), _SAT_ATRIBUICAO, font=f)
-        tx, ty = img.width - (bb[2] - bb[0]) - 10, img.height - (bb[3] - bb[1]) - 10
+        # nome proprio: `tx`/`ty` acima sao coordenadas INTEIRAS de tile no laco do
+        # mosaico; reusar os nomes aqui (float) quebra o mypy.
+        cred_x = img.width - (bb[2] - bb[0]) - 10
+        cred_y = img.height - (bb[3] - bb[1]) - 10
         for dx, dy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
-            d.text((tx + dx, ty + dy), _SAT_ATRIBUICAO, font=f, fill=(0, 0, 0, 150))
-        d.text((tx, ty), _SAT_ATRIBUICAO, font=f, fill=(255, 255, 255, 225))
+            d.text((cred_x + dx, cred_y + dy), _SAT_ATRIBUICAO, font=f, fill=(0, 0, 0, 150))
+        d.text((cred_x, cred_y), _SAT_ATRIBUICAO, font=f, fill=(255, 255, 255, 225))
 
         raio = int(round(larg * _SAT_RAIO_CANTO_PCT))
         if raio > 0:
