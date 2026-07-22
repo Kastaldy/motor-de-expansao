@@ -11,6 +11,8 @@ from motor_expansao.dashboard.competitors import (
     _ICON_CACHE,
     COMPETITOR_SPECS,
     ULTRA_COLUMNS,
+    _render_pin_tile,
+    _render_square_logo_tile,
     _ultra_icon_svg,
     build_icon_atlas,
     competitor_icon_data,
@@ -324,3 +326,87 @@ def test_build_ultra_icon_layer_usa_atlas():
     payload = pd.DataFrame(layer.data)
     assert "icon_data" not in payload.columns
     assert "icon_key" in payload.columns
+
+
+# ── BLK-RELPON-09: logo quadrada (relatorios) ──────────────────────────────────
+
+
+def _valid_png(color: tuple[int, int, int, int] = (0, 128, 255, 255), side: int = 8) -> bytes:
+    """PNG REAL (decodificavel pelo Pillow) para exercitar o ramo "tem logo".
+
+    `_MINIMAL_PNG` acima e um stream deliberadamente minimo que o Pillow NAO consegue
+    decodificar (`OSError: broken data stream when reading image file`): serve aos
+    testes de cache/SVG (que so olham a data-URI), mas ao RASTERIZAR cai sempre no
+    fallback de sigla. Para provar a placa branca do ramo com logo e preciso um PNG
+    de verdade.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGBA", (side, side), color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def test_square_logo_tile_geometria_quadrada_com_sombra():
+    """Tile RGBA quadrado exatamente do tamanho pedido, card opaco e sombra visivel."""
+    _ICON_CACHE.pop("bluefit", None)
+    tile = _render_square_logo_tile("bluefit", 30)
+    assert tile.size == (30, 30)
+    assert tile.mode == "RGBA"
+    # centro do card: opaco (o card cobre o miolo do tile)
+    assert tile.getpixel((15, 15))[3] == 255
+    # faixa de sombra a DIREITA do card (o canto (29,29) e arredondado pelo radius=3,
+    # entao a prova da sombra sai no meio do lado, nao no vertice).
+    sombra = tile.getpixel((29, 15))
+    assert 0 < sombra[3] < 255
+
+
+def test_square_logo_tile_fallback_usa_cor_da_marca():
+    """Sem logo no cache, a placa fica na COR DA MARCA (unica pista de identidade)."""
+    _ICON_CACHE.pop("bluefit", None)
+    tile = _render_square_logo_tile("bluefit", 30)
+    cores = tile.getcolors(maxcolors=1_000_000) or []
+    # #174EA6 = bg do bluefit em COMPETITOR_BRANDS
+    marca = sum(n for n, cor in cores if cor == (23, 78, 166, 255))
+    assert marca >= 250
+
+
+def test_square_logo_tile_com_logo_real_usa_placa_branca(tmp_path):
+    """Com logo PNG no cache: placa BRANCA + logo; a cor da marca (sigla) nao aparece."""
+    ultra_dir = tmp_path / "ultra"
+    ultra_dir.mkdir()
+    (ultra_dir / "logo_ultra.png").write_bytes(_valid_png((0, 128, 255, 255)))
+    _ICON_CACHE.pop("__ultra__", None)
+    preload_logos(tmp_path / "concorrentes_inexistente", ultra_dir=ultra_dir)
+
+    tile = _render_square_logo_tile("__ultra__", 30)
+    cores = {cor for _n, cor in tile.getcolors(maxcolors=1_000_000) or []}
+    assert (200, 0, 30, 255) not in cores  # #C8001E: sinal de que caiu no fallback
+    assert (255, 255, 255, 255) in cores  # placa/keyline branca
+    assert (0, 128, 255, 255) in cores  # a propria logo, em CONTAIN
+    _ICON_CACHE.pop("__ultra__", None)
+
+
+def test_square_logo_tile_sem_borda_sem_sombra():
+    """`border=False, shadow=False` (PDF sobre pagina branca): sem pixel de sombra."""
+    _ICON_CACHE.pop("bluefit", None)
+    tile = _render_square_logo_tile("bluefit", 24, border=False, shadow=False)
+    assert tile.size == (24, 24)
+    cores = {cor for _n, cor in tile.getcolors(maxcolors=1_000_000) or []}
+    # rounded_rectangle nao faz antialias -> comparacao exata e segura
+    assert (0, 0, 0, 60) not in cores
+
+
+def test_render_pin_tile_geometria_128_preservada_blk_relpon_09():
+    """GUARDA: `_render_pin_tile` (balao 128x128) segue INTOCADO pelo BLK-RELPON-09.
+
+    E o contrato de que `build_icon_atlas`/pydeck dependem (tile 128 px, anchorY=122).
+    """
+    _ICON_CACHE.pop("__ultra__", None)
+    tile = _render_pin_tile("__ultra__")
+    assert tile.size == (128, 128)
+    assert tile.mode == "RGBA"
+    cores = {cor for _n, cor in tile.getcolors(maxcolors=1_000_000) or []}
+    assert (200, 0, 30, 255) in cores  # balao na cor da marca Ultra (#C8001E)

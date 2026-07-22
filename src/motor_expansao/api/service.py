@@ -178,6 +178,35 @@ def _residual_do_ponto(lat: float, lng: float, settings: Settings) -> dict:
     return residual
 
 
+def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int = 5):
+    """Hexes H3 (res 7) do disco de raio `k` em torno do ponto, com `oferta_efetiva_disponivel`.
+
+    Espelha `_residual_do_ponto`: filtra direto no parquet de mercado por um conjunto pequeno de
+    chaves (91 hexes em k=5) e 2 colunas -> leitura barata, NAO carrega a base de 1,5 M. Insumo do
+    choropleth de Residual Fitness do slide-hero (BLK-RELPON-10). READ-ONLY; nao recalcula nada
+    do M1. Devolve `None` (fallback gracioso -> camada ausente no PDF) em qualquer falha.
+    """
+    mercado = Path(settings.staging_dir / "hexagonos_mercado_mapeado.parquet")
+    if not mercado.is_file():
+        return None
+    try:
+        import h3
+        import pyarrow.compute as pc
+        import pyarrow.dataset as ds
+
+        centro = h3.latlng_to_cell(lat, lng, 7)  # 7 = H3_RESOLUTION (M1), LIDO
+        celulas = list(h3.grid_disk(centro, k))
+        tbl = ds.dataset(mercado).to_table(
+            filter=pc.field("hex_id").isin(celulas),
+            columns=["hex_id", "oferta_efetiva_disponivel"],
+        )
+        if not tbl.num_rows:
+            return None
+        return tbl.to_pandas()
+    except Exception:
+        return None
+
+
 def analisar_ponto(lat: float, lng: float, consumidor: str | None, settings: Settings) -> dict:
     """Executa o estudo do ponto e devolve o dict de KPIs (-> `AnalisarResponseJSON`).
 
@@ -264,7 +293,7 @@ def gerar_pdf_ponto(
     *,
     rotulo: str | None = None,
 ) -> bytes:
-    """Gera o PDF de 7 paginas do Relatorio Pontual Censitario (BLK-API-04).
+    """Gera o PDF de 8 paginas do Relatorio Pontual Censitario (BLK-API-04).
 
     Enriquecido (READ-ONLY): mapas com *ruas* (basemap online, DEC-004) + pins de
     concorrentes/Ultra, e Big Numbers de SAM/residual via `residual`. Fallback
@@ -313,11 +342,17 @@ def gerar_pdf_ponto(
         else None
     )
 
+    # BLK-RELPON-10: insumo do choropleth de Residual Fitness (slide-hero). Na API nao ha `df`
+    # em escopo como no dashboard -> le so o disco de 91 hexes do parquet de mercado. None ->
+    # camada `residual` ausente -> fallback textual no slide (offline-safe). READ-ONLY.
+    hexes_df = _hexes_vizinhos_do_ponto(lat, lng, settings)
+
     def _mapas(basemap: bool):
         return render_mapas_censitarios_combinados(
             lat, lng, setores_df, raio_km=RAIO_CENSITARIO_DEFAULT_KM,
             competitors_df=comp_df, ultra_df=ultra_df,
             basemap=basemap, ultra_logo_dir=ultra_dir, logos_dir=logos_dir,
+            hexes_df=hexes_df,
             # Arruamento mais visivel sob o choropleth: resgata tambem as ruas
             # residenciais CINZA-CLARAS do Voyager (ceil 160->215) e deixa a cor das
             # faixas mais translucida (alpha 140->110). So a API ajusta isto; o dashboard

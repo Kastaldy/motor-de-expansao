@@ -11,7 +11,7 @@
 - **Proposito:** API complementar ao Motor de Expansao, on-demand, para integracao com bots de
   **Telegram/WhatsApp**, dando autonomia de estudos geoespaciais internos. O caso de uso central do
   MVP e: o usuario manda um ponto (coordenada ou link do Google Maps) ao bot e recebe o estudo do
-  **Relatorio Pontual Censitario 1.5 km** (KPIs em JSON e/ou o PDF de 7 paginas).
+  **Relatorio Pontual Censitario 1.5 km** (KPIs em JSON e/ou o PDF de 8 paginas).
 - **ClickUp:** tarefa `86e1rtfe3` (G1), subtarefa de `86e1rtfcy` (projeto API GeoEspacial / `PROJETOS - DEG`).
 - **Papeis do projeto:** G1 = arquitetura/contrato (Felipe — este bloco); G2 = backend/rotas (Juan);
   G3 = integracao com o motor + testes fim-a-fim/observabilidade (Felipe+Juan); G4 = clientes
@@ -31,7 +31,9 @@ Fixadas por Felipe (2026-06-09) e reafirmadas na DEC-005 (2026-06-10):
    `censo_report.py` como interface ESTAVEL; nunca os edita (trilha do Vini — dashboard/PDF/UX).
    Mudancas nesses modulos sao solicitadas, nao feitas pela trilha da API.
 3. **Codigo novo so em `src/motor_expansao/api/`** (pasta disjunta). Nada de logica da API fora dela.
-4. **Dependencias so no extra `[api]`** do `pyproject.toml`, fora do deploy base do Streamlit.
+4. **Dependencias so em extra opcional** do `pyproject.toml`, fora do deploy base do Streamlit.
+   Materializado no extra `[api_mvp]` (mais `[basemap]`/`[geocoder]`, pos-contrato) — o `[api]` e o
+   bloco LEGADO PostGIS e nao deve ser instalado (§11).
 5. **READ-ONLY sobre o M1 (§5).** A API e camada paralela de consumo: NAO recalcula nem altera
    `score_priorizacao`, `hex_score_estrutural`, carteira, plano curto prazo, plano dominio ou
    qualquer artefato oficial do M1.
@@ -41,8 +43,10 @@ Fixadas por Felipe (2026-06-09) e reafirmadas na DEC-005 (2026-06-10):
 
 ## 3. Layout do pacote `src/motor_expansao/api/` (descritivo — a CRIAR em G2)
 
-> Proposta de modulos. **NENHUM arquivo e criado no BLK-API-01.** A pasta nasce no BLK-API-02
-> junto do esqueleto real.
+> Proposta de modulos de G1 (2026-06-10). **NENHUM arquivo e criado no BLK-API-01.** A pasta nasce
+> no BLK-API-02 junto do esqueleto real. A tabela fica como registro do PLANO: o pacote HOJE tem
+> tambem `errors.py` (handler `500`, §9), `geo.py`, `maps_geocoder.py`, `telegram_bot.py` e
+> `routes/analisar_municipio.py` (§6), todos nascidos pos-contrato.
 
 | Modulo | Responsabilidade | Bloco de criacao |
 |---|---|---|
@@ -52,7 +56,7 @@ Fixadas por Felipe (2026-06-09) e reafirmadas na DEC-005 (2026-06-10):
 | `auth.py` | Dependencia de autenticacao por **token de portador** (Decisao 2): valida o header e resolve o **consumidor** (rastreio do solicitante). | BLK-API-02 |
 | `routes/analisar.py` | Rota `POST /analisar` (negociacao JSON/PDF). | BLK-API-03 / BLK-API-04 |
 | `schemas/` | Modelos Pydantic de request/response (`AnalisarRequest`, `AnalisarResponseJSON`, `HealthResponse`, `ErrorResponse`). | BLK-API-03 |
-| `service.py` | Camada FINA: resolve `{lat,lng}`/`maps_url` -> `(uf, cod_municipio)`, carrega a particao via `read_censo_geo_partition`, chama `analisar_ponto_censitario_setores` (JSON) e, para PDF, `render_mapas_censitarios_combinados` + `gerar_pdf_relatorio_pontual_censitario`. **So importa `censo_*`, nunca edita.** | BLK-API-03 / BLK-API-04 |
+| `service.py` | Camada FINA: resolve `{lat,lng}`/`maps_url` -> `(uf, cod_municipio)`, carrega a particao via `read_censo_geo_partition`, chama `analisar_ponto_censitario_setores` (JSON) e, para PDF, `render_mapas_censitarios_combinados` + `gerar_pdf_relatorio_pontual_classico` (variante CLASSICA, default de producao desde o BLK-EST-05). **So importa `censo_*`, nunca edita.** | BLK-API-03 / BLK-API-04 |
 | `coord.py` | Utilitario PURO de coordenada: parser de link do Google Maps -> `(lat,lng)` (Decisao 4) + validacao de bounding box do Brasil. Sem dependencia do motor. | BLK-API-03 |
 
 ## 4. Fronteira "importa, nao edita `censo_*`" — assinaturas REAIS importadas
@@ -62,18 +66,44 @@ A API importa (e NUNCA edita) as funcoes abaixo, com as assinaturas reais confir
 - `dashboard.censo_point.analisar_ponto_censitario_setores(lat: float, lng: float, setores_df: pd.DataFrame, raio_km: float = RAIO_CENSITARIO_DEFAULT_KM, competitors_df: pd.DataFrame | None = None, ultra_df: pd.DataFrame | None = None) -> dict`
   — **pura**, nao muta inputs, nao recalcula nenhum artefato oficial do M1. Retorna o `result` dict
   (campos no §7).
-- `dashboard.censo_report.gerar_pdf_relatorio_pontual_censitario(result: dict[str, Any], mapas: dict[str, bytes] | bytes | None = None, *, residual: dict[str, Any] | None = None, ultra_dir: Path | str | None = None) -> bytes`
-  — gera o PDF de 7 paginas, **offline, sem PII**. O carimbo de versao (Decisao 6) entra no rodape.
-- `dashboard.censo_map.render_mapas_censitarios_combinados(lat: float, lng: float, setores_df: pd.DataFrame, *, raio_km: float = RAIO_CENSITARIO_DEFAULT_KM, competitors_df=None, ultra_df=None, width: int = 1000, height: int = 760, basemap: bool = True, logos_dir: Path | None = None, ultra_logo_dir: Path | None = None) -> dict[str, bytes]`
-  — retorna `{"densidade","renda","score","concorrentes"}` (PNGs) para o PDF. **Nota de deploy:** com
+- `dashboard.censo_point.agregar_perfil_bairro_distrito(setores_df: pd.DataFrame, *, cod_bairro: str | None = None, nome_bairro: str | None = None, nome_distrito: str | None = None, nome_municipio: str | None = None, uf: str | None = None) -> dict[str, object]`
+  — insumo do slide "Perfil do Bairro/Distrito" (BLK-RELPON-07). Sem ele a pagina existe mesmo assim,
+  com "n/d" gracioso.
+- `dashboard.censo_report.gerar_pdf_relatorio_pontual_classico(result: dict[str, Any], mapas: dict[str, bytes] | bytes | None = None, *, residual: dict[str, Any] | None = None, perfil_bairro: dict[str, Any] | None = None, ultra_dir: Path | str | None = None, solicitante: str | None = None, rotulo: str | None = None, now: datetime | None = None, fotos: list[bytes] | None = None, info_imovel: dict[str, Any] | None = None, viabilidade: dict[str, Any] | None = None) -> bytes`
+  — gera o PDF de 8 paginas (Capa -> Imagem do Entorno -> Socioeconomia e Residual Fitness -> Mapas
+  de calor -> Concorrentes -> Perfil do Bairro/Distrito -> Big Numbers -> Realizacao), **offline, sem
+  PII**. E a variante CLASSICA, default de producao desde o BLK-EST-05 (a gemea
+  `gerar_pdf_relatorio_pontual_censitario` monta a MESMA sequencia de 8 paginas e tem a mesma
+  assinatura, exceto `now`, que so existe no classico). Paginas OPCIONAIS nao usadas pela API:
+  `fotos` e `info_imovel` entram logo apos a capa e `viabilidade` entre Big Numbers e Realizacao
+  (1 pagina, ou 2 quando ha `graficos`) — teto de 12 paginas. O carimbo de versao no rodape
+  (Decisao 6) esta **PREVISTO E NAO IMPLEMENTADO**: hoje o rodape e credito Ultra + atribuicao
+  CARTO (`_draw_footer`) e o unico carimbo por pagina e a marca d'agua `Ultra Academia |
+  {solicitante}`; a API chama o gerador sem passar versao alguma.
+- `dashboard.censo_map.render_mapas_censitarios_combinados(lat: float, lng: float, setores_df: pd.DataFrame, *, raio_km: float = RAIO_CENSITARIO_DEFAULT_KM, competitors_df=None, ultra_df=None, width: int = 1000, height: int = 760, basemap: bool = True, logos_dir: Path | None = None, ultra_logo_dir: Path | None = None, street_ceil: int | None = None, street_gain: float | None = None, street_cap: int | None = None, choropleth_alpha: int | None = None, hexes_df: pd.DataFrame | None = None) -> dict[str, bytes]`
+  — retorna ate 8 PNGs para o PDF: `{"densidade","renda","score","renda_domiciliar","socioeconomia","residual","concorrentes","entorno"}`.
+  A chave `residual` e CONDICIONAL (so aparece com `hexes_df` e ao menos 1 hex desenhavel; ausente ->
+  fallback textual no slide); as demais sao incondicionais. **Nota de deploy:** com
   `basemap=True` busca tiles online (DEC-004); a API deve permitir `basemap=False` como fallback
-  gracioso/offline quando o ambiente nao tiver internet.
+  gracioso/offline quando o ambiente nao tiver internet. **Nota de render:** a API sobrescreve so
+  no seu caminho `street_ceil=215`, `street_gain=1.3`, `street_cap=200` e `choropleth_alpha=110`
+  (arruamento mais visivel sob o choropleth); o dashboard segue com os defaults do modulo
+  (160 / 2.2 / 210 / 140). Alem disso a API usa o canvas DEFAULT `1000x760`, enquanto o dashboard
+  renderiza em `1280x760` — como o lado MENOR do frame e o invariante (`_frame_box_metric`), o
+  enquadramento e o mesmo no eixo curto e mais estreito no eixo longo da API. Fontes, faixas e
+  metodo geometrico sao o mesmo render.
 - `dashboard.data.read_censo_geo_partition(base_dir: Path, uf: str, cod_municipio: str | None = None) -> pd.DataFrame`
   — loader dos Parquets `data/outputs/setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN`
   (`geometry_wkb` em EPSG:4674). Retorna DataFrame vazio quando a base nao existe.
 
 **Regra:** qualquer necessidade de mudanca nessas funcoes vira um pedido a trilha do Vini; a API se
 adapta a interface, nao a altera.
+
+**Excecao pos-contrato (import no sentido inverso):** `dashboard/censo_report.py:14` importa
+`motor_expansao.api.maps_geocoder.build_search_url` (helper PURO de URL). A fronteira segue de mao
+unica quanto a EDICAO, mas ha um import dashboard -> `api` em nivel de modulo. Nenhuma dep do extra
+`[api_mvp]`/`[geocoder]` entra no deploy base por causa disso: `api/__init__.py` so define
+`__version__` e `maps_geocoder` importa apenas stdlib no topo (selenium so em `MapsGeocoder.__init__`).
 
 ## 5. Resolucao de coordenada -> particao
 
@@ -100,6 +130,10 @@ Superficie minima do MVP:
 - `GET /health` — liveness. Resposta `200 {status, environment}`.
 - `POST /analisar` — analise de um ponto (Relatorio Pontual Censitario 1.5 km). Negociacao de conteudo
   JSON/PDF (Decisao 1 = (c)).
+
+**Alem do MVP (pos-contrato, ja em producao):** o Relatorio Municipal adicionou `GET /ufs`,
+`GET /municipios/{uf}` e `POST /analisar-municipio` (`routes/analisar_municipio.py`) — PDF proprio de
+9 paginas, READ-ONLY, fora do escopo deste §6.
 
 **Fora do MVP (roadmap — ver §13 / BLK-API-05):** `POST /lookup-hex` (M1) e `GET /mercado/...`
 (camada de mercado/residual). NAO entram no MVP; ficam documentados como escopo estendido condicional.
@@ -135,6 +169,13 @@ KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
   "n_setores": 12,
   "pop_total_raio": 18432.0,
   "renda_per_capita_media_raio": 5210.0,
+  // renda domiciliar (pos-contrato, PRs #124/#126/#129): os dois campos de renda sao
+  // R$/mes POR DOMICILIO, NAO soma do raio ("total" = renda do domicilio inteiro,
+  // com uplift de composicao SETORIAL + fator temporal)
+  "renda_media_domiciliar_raio": 15790.0,
+  "renda_domiciliar_total_raio": 25740.0,
+  "domicilios_total_raio": 6084.0,
+  "metodo_renda_domiciliar_raio": "ponderada_domicilios_estimados",
   "densidade_pop_raio_hab_km2": 2607.0,
   "score_setor_medio": 64.2,
   "score_setor_max": 91.0,
@@ -148,11 +189,15 @@ KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
 }
 ```
 > Os campos `concorrentes_raio` / `ultra_raio` / `setores_intersectados` do `result` podem ser
-> expostos como detalhe opcional, mas o payload padrao do bot e o resumo de KPIs acima.
+> expostos como detalhe opcional; o payload padrao do bot e o conjunto de KPIs acima — incluindo
+> os 4 campos de renda domiciliar, aditivos compativeis em `v1` (§10). Campo a campo (tipos,
+> nulabilidade, semantica) em `docs/api_geoespacial_openapi.yaml` (§15), que e a spec canonica.
 
 ### 7.3 `POST /analisar` — response PDF
-- `Content-Type: application/pdf`; corpo = `bytes` de `gerar_pdf_relatorio_pontual_censitario(result, mapas, ...)`.
-- O **carimbo de versao** (Decisao 6) entra no rodape do PDF (versao do contrato/score + data).
+- `Content-Type: application/pdf`; corpo = `bytes` de `gerar_pdf_relatorio_pontual_classico(result, mapas, ...)` — 8 paginas.
+- O **carimbo de versao** no rodape do PDF (Decisao 6) segue PREVISTO E NAO IMPLEMENTADO — ver §4.
+  O PDF entregue hoje carimba a marca d'agua `Ultra Academia | {solicitante}` (BLK-EST-03) e o
+  rodape de credito/atribuicao; a versao do contrato/score so existe no caminho JSON (§7.2).
 - Gerado quando `?formato=pdf` ou `Accept: application/pdf`.
 
 ### 7.4 `GET /health` — response (`HealthResponse`)
@@ -193,15 +238,16 @@ Corpo de erro padrao (`ErrorResponse`): `{ "detail": "<mensagem>", "codigo": "<s
 
 - **Prefixo:** todas as rotas sob `/api/v1` (`GET /api/v1/health`, `POST /api/v1/analisar`).
 - **Politica:** mudanca incompativel de contrato -> `/api/v2`; aditivos compativeis ficam em `v1`.
-- **Carimbo (Decisao 6):** `versao_contrato` + `versao_score` + `gerado_em` no JSON, e versao do
-  contrato/score + data no rodape do PDF — para estudos antigos seguirem interpretaveis.
+- **Carimbo (Decisao 6):** `versao_contrato` + `versao_score` + `gerado_em` no JSON — implementado.
+  A versao do contrato/score + data no rodape do PDF continua PREVISTA E NAO IMPLEMENTADA (§4/§7.3):
+  a decisao segue valendo (e da DEC-005), mas o PDF de hoje nao a carrega.
 
-## 11. Dependencias — subset MVP do extra `[api]`
+## 11. Dependencias — extra `[api_mvp]` (o `[api]` e legado PostGIS)
 
 **Subset MVP (manter):** `fastapi`, `uvicorn[standard]`, `pydantic`, `pydantic-settings`.
 Conforme Decisao 2/4, podem entrar tambem `python-multipart` (formularios/uploads, se necessario);
 o parser de `maps_url` e puro e nao exige `httpx`. Implementado no extra `[api_mvp]` do `pyproject.toml`,
-isolado do bloco legado `[api]` (§11 pedia esse isolamento).
+isolado do bloco legado `[api]` (isolamento pedido por esta secao).
 
 **Extras adicionais do runtime (pos-contrato, opcionais e isolados):**
 - `[basemap]` (`contextily`) — fundo de ruas do PDF, import lazy + fallback offline (DEC-004, BLK-API-04).
@@ -214,8 +260,9 @@ isolado do bloco legado `[api]` (§11 pedia esse isolamento).
 `passlib`. G1 recomenda que G2 instale apenas o subset MVP (idealmente isolando-o do bloco legado do
 extra `[api]`); essas libs sao do desenho PostGIS antigo e nao tem uso no MVP on-demand.
 
-**Guardrail de deploy:** as deps da API ficam fora do deploy base do Streamlit (extra `[api]`), para
-nao acoplar o dashboard a API.
+**Guardrail de deploy:** as deps da API ficam fora do deploy base do Streamlit (extras `[api_mvp]`
++ `[basemap]`/`[geocoder]`), para nao acoplar o dashboard as deps da API. (Ha um import
+dashboard -> `api.maps_geocoder`, mas sem arrastar dependencia — ver a excecao no §4.)
 
 ## 12. O que se aproveita do scaffold legado (`fora_primeira_fase/api_postgis/main.py`)
 
@@ -238,8 +285,10 @@ Parametrizada pela Decisao 3 = (a) (MVP minimo). Mapeada a G2/G3/G4 do ClickUp `
   Maps + validacao Brasil, Decisao 4), `service.py` (resolucao coord->particao +
   `read_censo_geo_partition` + `analisar_ponto_censitario_setores`), carimbo de versao (Decisao 6).
 - **BLK-API-04 — Saida PDF (G2/G3).** `?formato=pdf` / `Accept: application/pdf` via
-  `render_mapas_censitarios_combinados` + `gerar_pdf_relatorio_pontual_censitario` (Decisao 1 = (c)),
-  com fallback `basemap=False` quando offline; rodape carimbado (Decisao 6).
+  `render_mapas_censitarios_combinados` + `gerar_pdf_relatorio_pontual_censitario` *(plano de
+  2026-06-10; hoje o caminho real usa a gemea `gerar_pdf_relatorio_pontual_classico` — ver §3/§4)*
+  (Decisao 1 = (c)), com fallback `basemap=False` quando offline; rodape carimbado (Decisao 6,
+  nao implementado — §7.3).
 - **BLK-API-05 — Endpoints estendidos M1/mercado** *(CONDICIONAL / roadmap pos-MVP — so materializa
   se reaberta a Decisao 3 para (b)).* `POST /lookup-hex` (M1) e/ou `GET /mercado/...` (READ-ONLY).
 - **BLK-API-06 — Integracao G3 (Felipe+Juan).** Testes de contrato fim-a-fim, observabilidade minima,

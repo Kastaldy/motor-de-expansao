@@ -3022,6 +3022,9 @@ def gerar_payloads_relatorio_pontual_para_pin(
     mapas = render_mapas_censitarios_combinados(
         lat, lng, setores_df, raio_km=raio_km,
         competitors_df=competitors_df, ultra_df=ultra_df, basemap=True,
+        # BLK-RELPON-10: `df` (fatia uf=XX do enriquecido, ja em escopo e ja lido abaixo por
+        # `lookup_hex_by_coord`) alimenta o choropleth de residual por hexagono. READ-ONLY.
+        hexes_df=df,
     )
     residual: dict[str, float | None] = {
         "score_oportunidade_residual": None,
@@ -3495,6 +3498,8 @@ def render_relatorio_pontual_censitario(
             basemap=True,
             width=1280,
             height=760,  # paisagem (map_box ~1.55) — mapas maiores/retangulares
+            # BLK-RELPON-10: mesma fatia `df` usada logo abaixo pelo `lookup_hex_by_coord`.
+            hexes_df=df,
         )
 
     # Big Numbers do PDF: lookup READ-ONLY do hex H3 do ponto (residual fitness + consumo).
@@ -3684,6 +3689,8 @@ def _montar_insumos_censo_pdf(
             lat, lng, setores_df, raio_km=RAIO_CENSITARIO_DEFAULT_KM,
             competitors_df=competitors_df, ultra_df=ultra_df, basemap=True,
             width=1280, height=760,  # paisagem (map_box ~1.55) — mapas maiores/retangulares
+            # BLK-RELPON-10: mesma fatia `df` do `lookup_hex_by_coord` acima. READ-ONLY.
+            hexes_df=df,
         )
     return {
         "result": result_censo,
