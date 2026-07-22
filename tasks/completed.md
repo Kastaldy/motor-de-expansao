@@ -9552,3 +9552,63 @@ tocado — o stub do bloco fica diferido para o PR de housekeeping em lote (gove
 arquivo é a fonte de verdade da conclusão.
 
 **Deploy:** NÃO automático (§6) — subir na VPS segue passo manual do humano, por digest.
+
+---
+
+## Fechamento de ciclo — BLK-RELPON-10 (2026-07-22)
+
+**Slide "Socioeconomia e Residual Fitness" antes do grid 2x2** — criticidade Alta, esteira Block
+Orchestrator → Planner → [APROVAÇÃO HUMANA] → Builder → QA → [GATE VISUAL de Vinicius, APROVADO].
+**READ-ONLY sobre o M1** (§5): render puro; `score_priorizacao`, `hex_score_estrutural`, pesos,
+scores censitários, `flag_sam`, carteira, plano e artefatos oficiais INTOCADOS (mtime e tamanho
+verificados pelo QA). `setor_censitario_intersecao_area_1p5km` e `RAIO_CENSITARIO_DEFAULT_KM` idem.
+
+**Entregue.** Slide novo ANTES do "Mapas de calor", com dois mapas lado a lado e o raio **rotulado
+em cada um**: **Socioeconomia** = `score_setor_2022_calibrado` no raio de 1,5 km, e **Residual
+Fitness** = `oferta_efetiva_disponivel` (ALUNOS) por hexágono H3 res-7 num raio de **EXIBIÇÃO** de
+`RAIO_RESIDUAL_DISPLAY_KM = 5.0` km (disco `h3.grid_disk` k=5, clip ao frame). PDF de **6 → 7
+páginas** nas duas variantes. Régua nova `OFERTA_DISPONIVEL_ALUNOS_BANDS` (6 faixas absolutas,
+cortes 0/1.250/2.500/5.000/10.000/inf, ancorada em 2.500 alunos = 1 unidade). `CLAUDE.md` §4
+corrigido (dizia "5 páginas / tira 1x3"; já eram 6 páginas / grid 2x2 **antes** deste bloco).
+
+**Decisões do gate (Vinicius, 2026-07-21).** S1=A: o `score` permanece também no grid 2x2 → churn
+zero em `_mapas_calor_page`. S2=B: régua de 6 faixas com 3º corte em 2.500. A de 5 faixas foi
+recusada por saturação **medida**: em Manaus o p75 (7.588) e o máximo (13.472) cairiam na MESMA
+faixa de topo. A régua quantílica foi rejeitada com evidência de 1.542.531 hexes — 68,9% valem 0 e o
+p99 dos positivos é 1.774, então quantis nacionais pintariam de "verde alto" hexes onde não cabe
+1/30 de academia.
+
+**Dois achados que mudaram a execução.** (1) `_tema_bicolor`: o slide novo é **ordinal 0** e
+`0 % 2 == 0` já devolve magenta → **zero inversão em cascata**; a churn temida não existiu. (2) A
+fonte do PNG do mapa **não tem glifo acentuado** (`í`/`ç` renderizam o mesmo tofu box que um
+ideograma CJK) → todo texto novo do PNG é ASCII puro, exceção de RENDER ao §2; o QA confirmou por
+espião em `_draw_text` (0 não-ASCII em 86 textos).
+
+**FU1 (pós-gate visual).** A camada `residual` deixou de desenhar pins — a área a 5 km é ~11× a de
+1,5 km (r²) e a densidade de logos cobria o choropleth, medido na amostra da Av. Paulista. A
+Socioeconomia mantém os seus. A legenda ganhou `mostrar_legenda_pins` com **default `True`** de
+propósito: reagir ao `pins` vazio quebraria, num ponto sem concorrentes no raio, a byte-identidade
+das 5 camadas pré-existentes que o QA provou por sha256.
+
+**QA (Opus 4.8) — APROVADO.** Suíte FULL serial `1 failed, 1952 passed, 2 skipped`; a única falha é
+`test_score_retencao_territorial::test_run_readonly_m1_por_mtime` (parquet de staging gitignored
+ausente), **provada pré-existente** — o diff em `lifetime/` vs a baseline é vazio, logo o código
+exercitado é byte-idêntico. `ruff` limpo; `mypy` 7 erros no HEAD == 7 na baseline. Além do pedido, o
+QA provou **byte-identidade sha256** das 5 camadas PNG antigas e gerou a variante `recente`, que o
+Builder não tinha coberto.
+
+**Validação com dado real.** 3 amostras cobrindo os três regimes medidos: Av. Paulista/SP (11 de 14
+hexes no raio com residual **zero** — a avenida mais saturada do país lida corretamente), centro de
+Manaus/AM (exercita a régua inteira até a faixa `>10.000`) e Chapecó/SC (faixas intermediárias, hex
+do ponto = 1.541).
+
+**Governança.** A reversão do BLK-CENSO-02 (que limitava o residual a NÚMERO nos Big Numbers) foi
+registrada como **emenda à DEC-011**, não DEC nova — via `/registrar-decisao`, com o gate
+`test_claude_md_size.py` verde.
+
+**Housekeeping.** `tasks/backlog.md` NÃO foi tocado (stub diferido para o PR de housekeeping em
+lote). **Nenhum PR aberto**: por decisão de Vinicius, os 3 blocos do pedido (RELPON-09/10/11) entram
+num **PR único** no fim — o #137, que trazia só o 09, foi fechado temporariamente com o branch
+preservado.
+
+**Deploy:** NÃO automático (§6) — subir na VPS segue passo manual do humano, por digest.
