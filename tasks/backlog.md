@@ -227,20 +227,53 @@ BLK-CENSO-02 exige registro explícito no gate (emenda ou DEC, conforme o desenh
 
 ---
 
-### BLK-RELPON-11 — Página de imagem de satélite (Esri World Imagery) antes dos mapas de dados
+### BLK-RELPON-11 — Imagem do entorno do ponto (escopo REABERTO em 2026-07-22)
+
+> 🔴 **LEIA ISTO ANTES DE PLANEJAR.** O escopo deste bloco foi **reaberto** em 2026-07-22, depois de
+> uma pesquisa de alternativas pedida por Vinicius. **Não trate o Esri como caminho único** — ele é
+> uma das opções, e a mais cara em governança. **Relatório completo, com números medidos e lacunas
+> declaradas: `data/reports/imagem_entorno_alternativas.md`.** Não refaça essa pesquisa; ela custou
+> ~930 mil tokens de subagente.
+>
+> **Resumo do que a pesquisa fechou:**
+> - **Satélite gratuito de cobertura nacional está morto por ÓPTICA, não por licença.** Um recorte de
+>   250 m nítido exige ~26 cm/px; Sentinel-2 (10 m/px) dá **25 px**, CBERS-4A pan (2 m/px) dá 125 px e
+>   é cinza. Descartar a família inteira, inclusive INPE.
+> - **O recorte de ~100 m do pedido original é impossível** (exige 10 cm/px; nem o Esri passa). A
+>   janela viável é 250–400 m — e é a mesma para satélite e para mapa de ruas.
+> - **Existem 2 caminhos SEM DEC nenhuma:** (A4) o **operador anexa o print**, reusando
+>   `_fotos_imovel_page` + `st.file_uploader` que **já existem**; e (A1) **mapa de quadra no CartoDB
+>   Voyager z19** (~300 m), provedor **já aprovado** pelas DEC-004/011.
+> - **Mas isso NÃO dissolve a DEC-018 — adia.** A4 depende de um humano, então **não funciona no bot
+>   Telegram** nem no "gerar em 1 clique". A1 entrega morfologia (quadra, rua, número de porta), e
+>   **nenhum POI comercial** — o Shopping Ibirapuera aparece como blob bege rotulado "3103".
+> - **Armadilha se A4 for adotada:** `_recortar_cover` corta 150 px de cada lateral de um print 16:9
+>   → se a atribuição estiver ali, **o software a apaga sozinho**. Usar letterbox, não cover-crop.
+> - **z20 no Voyager PERDE os rótulos** → z19 é o teto, e o `_BASEMAP_ZOOM_BUMP = 1` faz overshoot
+>   nessa escala.
+> - Portas fechadas na verificação: **OpenAerialMap** (9 imagens em toda a Grande SP, parte CC BY-NC),
+>   **tileserver self-hosted** (não existe neste repo, apesar do `PLANO_APP_WEB.md`), ortofotos
+>   municipais (cobertura parcial; só o GeoSampa tem licença verificada, CC0).
+>
+> **A primeira decisão do gate deixou de ser "aprovar o Esri" e passou a ser "qual caminho seguir".**
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Alta** — **provedor de rede NOVO** no caminho de geração de relatório (desvio do guardrail §2); as DEC-004/DEC-011 são **nominais quanto ao provedor** (CartoDB/OSM, tiles de **ruas**) e **não cobrem** imagery de satélite. **READ-ONLY sobre o M1**. |
-| **Prioridade** | Média-Alta (depende de parecer humano sobre ToS). |
-| **Esteira** | Block Orchestrator → Planner → `[APROVAÇÃO HUMANA + DEC-018 — provedor/ToS/largura]` → Builder → QA → `[GATE VISUAL do Vini]`. |
-| **Status** | Pendente — **bloqueado por DEC-018**. |
-| **Depende de** | **BLK-RELPON-10** (ordem de página e churn de `/Count` / `PDF_SECTION_HEADERS` / `_tema_bicolor`). |
-| **Autonomia** | **manual** — introduz fetch de rede no caminho de geração, o que **desqualifica `loop-safe`** pelo critério do §6.1. Nunca marcar. |
+| **Criticidade** | **Alta se o caminho escolhido for provedor NOVO** (Esri/ortofoto) — desvio do guardrail §2, e as DEC-004/DEC-011 são **nominais quanto ao provedor** (CartoDB/OSM, tiles de **ruas**), não cobrem imagery. **Média se for A4 (upload) ou A1 (Voyager já aprovado)**, que não exigem DEC. |
+| **Prioridade** | Média-Alta. |
+| **Esteira** | Block Orchestrator → Planner → `[APROVAÇÃO HUMANA — ESCOLHA DO CAMINHO; + DEC-018 só se for provedor novo]` → Builder → QA → `[GATE VISUAL do Vini]`. |
+| **Status** | Pendente — **escopo reaberto**; bloqueado por DEC-018 **apenas no caminho Esri/ortofoto**. |
+| **Depende de** | **BLK-RELPON-10** (concluído em 2026-07-22; branch `ciclo/BLK-RELPON-10` @ `a491069`). Se este bloco inserir página, paga a mesma churn de `/Count` (**6 arquivos de teste**), `PDF_SECTION_HEADERS` e `_tema_bicolor`. |
+| **Autonomia** | **manual** — nunca `loop-safe`. Se o caminho envolver fetch de rede no caminho de geração, isso desqualifica por si só (§6.1); e mesmo A4/A1 têm aceite VISUAL. |
+| **Entrega** | **NÃO abrir PR próprio.** Decisão de Vinicius (2026-07-21): os 3 blocos do pedido (RELPON-09/10/11) entram num **PR ÚNICO** no fim. O PR #137, que trazia só o 09, foi **fechado temporariamente** com o branch preservado. Branch deste bloco empilha sobre o do 10. |
 
-**Objetivo (D3).** Página nova, logo após a Capa e **antes** do slide de Socioeconomia+Residual, com um
-recorte de **imagem de satélite** centrado na coordenada do ponto, **largura 250–400 m**, altura
-proporcional 16:9, e atribuição no rodapé.
+**Objetivo.** Dar ao operador **noção do que existe fisicamente no entorno do ponto**, numa página
+nova logo após a Capa e **antes** do slide "Socioeconomia e Residual Fitness". A forma (imagem de
+satélite automática, print anexado pelo operador, mapa de quadra, ou combinação) é **decisão do
+gate** — ver o quadro vermelho acima e o relatório de alternativas.
+
+**Se o caminho escolhido for o Esri**, o conteúdo abaixo (provedor, largura, risco de placeholder,
+mitigações) permanece válido e é o plano pronto.
 
 **Provedor.** `Esri.WorldImagery`. Levantamento: dos **197 provedores de imagery** do `xyzservices`,
 filtrando cobertura global + sem token + não-`broken`, sobra **exatamente um**
