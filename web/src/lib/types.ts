@@ -159,9 +159,13 @@ export interface Dre {
   ebitda: number | null
   /** lucro liquido/mes = EBITDA - IR/CSLL (motor: simulador.lucro_liquido_mensal) */
   lucro_liquido: number | null
+  /** margem EBITDA em PERCENTUAL (ex.: 34.57 = 34,57%). */
   margem: number | null
   payback: number | null
+  /** ROIC anual desalavancado, em FRAÇÃO (ex.: 0.18 = 18%). */
   roic: number | null
+  /** viável? (decidido pelo motor; usado pelo slide de viabilidade do PDF). */
+  flag_viavel?: boolean
 }
 
 export interface ViabilidadeOut {

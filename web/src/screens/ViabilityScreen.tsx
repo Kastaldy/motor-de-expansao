@@ -12,6 +12,7 @@ import {
 import { Aviso, Botao, Eyebrow, Glass, Kpi } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { alunos, brl, coord, num, pct } from '../lib/format'
+import { viabilidadeParaPdf } from '../lib/report'
 import type {
   FaixaAlunos,
   InfoImovel,
@@ -172,19 +173,10 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
         lng: ponto.hex.lng,
         rotulo: info.nome || ponto.rotulo,
         infoImovel: info,
-        viabilidade: res
-          ? {
-              demanda_premissa: res.demanda_premissa,
-              alunos_breakeven: res.alunos_breakeven,
-              // Relatório usa um teto único: o cluster "Teto" (20% do faturamento).
-              aluguel_teto: res.aluguel_teto?.teto ?? null,
-              margem: res.dre.margem,
-              ebitda: res.dre.ebitda,
-              faturamento: res.dre.faturamento,
-              m2,
-              aluguel_pedido: aluguel,
-            }
-          : undefined,
+        // Contrato do gerador de PDF (censo_report._viabilidade_page): chaves e
+        // unidades exatas via lib/report.ts. Mandar a chave/unidade errada faz o
+        // slide de viabilidade vir vazio ("n/d") — foi o bug corrigido em 2026-07-22.
+        viabilidade: res ? viabilidadeParaPdf(res) : undefined,
         fotos,
       })
       baixar(blob, filename)
