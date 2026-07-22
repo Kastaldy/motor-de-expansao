@@ -12,13 +12,14 @@
 
 A API GeoEspacial é uma camada de consumo **on-demand** do Motor de Expansão, complementar ao
 dashboard Streamlit. Ela expõe o **Relatório Pontual Censitário 1,5 km** (KPIs em JSON e PDF de
-7 páginas) para qualquer cliente HTTP com token — incluindo o bot Telegram "Paulo".
+8 páginas) e o **Relatório Municipal** (PDF) para qualquer cliente HTTP com token — incluindo o
+bot Telegram "Paulo".
 
 **Dois serviços independentes** (desacoplados; o bot consome a API por HTTP):
 
 | Serviço | O que é | Porta |
 |---|---|---|
-| **API** | FastAPI/uvicorn — `GET /health` + `POST /api/v1/analisar` (JSON/PDF) | 8077 (interna) |
+| **API** | FastAPI/uvicorn — `GET /health`, `POST /api/v1/analisar` (JSON/PDF) e as rotas do Relatório Municipal (`GET /api/v1/ufs`, `GET /api/v1/municipios/{uf}`, `POST /api/v1/analisar-municipio`) | 8077 (interna) |
 | **Bot** | Long-polling Telegram 24/7 que consome a API | — |
 
 **Diagrama simplificado:**
@@ -32,19 +33,26 @@ telegram-bot ──HTTP──> api ──Parquets locais──> motor censo_*
 **Dados lidos (READ-ONLY):**
 - `data/outputs/setores_censitarios_2022_geo/` — malha censitária (27 UFs, 5.571 municípios)
 - `data/ibge/municipios_*.geojson` — resolve coordenada → município
-- `data/staging/` — concorrentes/Ultra/SAM (opcional; ausência = fallback gracioso)
+- `data/staging/` — concorrentes/Ultra/SAM: **opcional** no Relatório Pontual (ausência = `"n/d"` nos
+  Big Numbers / fallback textual no mapa); **obrigatório** nas rotas do Relatório Municipal — sem
+  `hexagonos_mercado_mapeado.parquet` as três respondem `500 erro_interno` (não há fallback)
 
 **Docs interativos** (`/docs` Swagger UI e `/redoc`): disponíveis **apenas** quando
 `API_ENVIRONMENT != "production"`. Em produção, usar `docs/api_geoespacial_openapi.yaml` localmente.
 
-**Raio fixo: 1,5 km.** Não é parâmetro de entrada — é o método canônico
-`setor_censitario_intersecao_area_1p5km`, INTOCÁVEL (CLAUDE.md §4).
+**Raio fixo: 1,5 km — no Relatório Pontual.** Não é parâmetro de entrada — é o método canônico
+`setor_censitario_intersecao_area_1p5km`, INTOCÁVEL (CLAUDE.md §4). O Relatório Municipal não usa
+raio: agrega o município inteiro.
+Dois mapas do PDF pontual usam raio/escala só de **render** (nunca de análise): 5 km no choropleth
+de Residual Fitness — camada **condicional**, que vira fallback textual sem a base de mercado — e
+~0,14 km na "Imagem do Entorno" (rotulada "Escala de quadra"; ~300 m de lado).
 
 ---
 
 ## 2. Autenticação
 
-Todas as rotas — exceto `GET /health` — exigem autenticação por **Bearer token**.
+Todas as rotas — exceto `GET /health` e seu alias `GET /api/v1/health` — exigem autenticação por
+**Bearer token**.
 
 **Header obrigatório:**
 ```
@@ -107,7 +115,7 @@ Uso típico: monitoramento do load balancer e do docker compose.
 ### 3b. `POST /api/v1/analisar`
 
 Endpoint principal. Recebe um ponto geográfico e devolve o estudo censitário em **JSON** (default)
-ou **PDF** (7 páginas).
+ou **PDF** (8 páginas).
 
 #### Request body (`AnalisarRequest`)
 
@@ -141,6 +149,10 @@ JSON é o padrão. PDF é ativado por qualquer das 3 formas abaixo (em ordem de 
 | `n_setores` | `int` | Setores IBGE 2022 cruzados |
 | `pop_total_raio` | `float \| null` | População total no raio |
 | `renda_per_capita_media_raio` | `float \| null` | Renda per capita média ponderada |
+| `renda_media_domiciliar_raio` | `float \| null` | Renda domiciliar **PRÉ-uplift** (R$/mês por domicílio), ponderada por domicílios — menor que a exibida no PDF |
+| `renda_domiciliar_total_raio` | `float \| null` | Renda **por domicílio** (R$/mês) com uplift setorial + fator temporal — NÃO é massa/somatório; é o valor exibido no PDF |
+| `domicilios_total_raio` | `float \| null` | Domicílios estimados no raio |
+| `metodo_renda_domiciliar_raio` | `string \| null` | `"ponderada_domicilios_estimados"`, `"ponderada_populacao_ou_area"` ou `"ausente"` |
 | `densidade_pop_raio_hab_km2` | `float \| null` | Densidade populacional (hab/km²) |
 | `score_setor_medio` | `float \| null` | Score censitário médio ponderado |
 | `score_setor_max` | `float \| null` | Score censitário máximo no raio |
@@ -151,10 +163,13 @@ JSON é o padrão. PDF é ativado por qualquer das 3 formas abaixo (em ordem de 
 | `gerado_em` | `string` | Timestamp ISO 8601 UTC |
 | `consumidor` | `string \| null` | Token → consumidor (rastreio LGPD) |
 
-**Nota sobre SAM/residual:** os campos de mercado (`sam_fitness_potencial`,
-`oferta_efetiva_disponivel`, `score_oportunidade_residual`, `oferta_consumida_mercado_estimada`)
+**Nota sobre SAM/residual:** os campos de mercado `sam_fitness_potencial`,
+`oferta_efetiva_disponivel` e `oferta_consumida_mercado_estimada`
 são preenchidos no Big Numbers do PDF quando `data/staging/hexagonos_mercado_mapeado.parquet`
-existir no path configurado. Ausência é silenciosa (campos `null`).
+existir no path configurado. O mesmo Parquet alimenta o choropleth de **Residual Fitness** do
+slide "Socioeconomia e Residual Fitness". Ausência é silenciosa: Big Numbers saem como `"n/d"` e
+a camada de Residual Fitness cai em fallback textual (o JSON não tem esses campos).
+`score_oportunidade_residual` também é lido do Parquet, mas **não é exibido** em nenhuma página.
 
 #### Response PDF
 
@@ -163,12 +178,34 @@ Content-Type: application/pdf
 Content-Disposition: inline; filename="relatorio_pontual_censitario.pdf"
 ```
 
-PDF de 7 páginas: Capa → População → Renda → Score censitário → Concorrentes →
-Big Numbers → Realização/Crédito.
+PDF de 8 páginas: Capa → Imagem do Entorno → Socioeconomia e Residual Fitness → Mapas de calor
+(grid 2×2: densidade, renda, score censitário, renda média domiciliar) → Concorrentes →
+Perfil do Bairro/Distrito → Big Numbers → Realização/Crédito.
+
+É a variante "Apresentação Clássica Ultra" (`gerar_pdf_relatorio_pontual_classico`), a mesma que o
+dashboard entrega. A API não usa as páginas **opcionais** do gerador (fotos do imóvel, dados do
+imóvel, viabilidade) — pelo endpoint saem sempre exatamente estas 8.
 
 **Performance:** a primeira chamada pode levar de 10 a 30 s (cold load dos Parquets +
 busca de tiles de mapa). Chamadas subsequentes ao mesmo município são mais rápidas
 (cache em memória). Timeout do bot: 240 s.
+
+---
+
+### 3c. Rotas do Relatório Municipal
+
+`GET /api/v1/ufs` e `GET /api/v1/municipios/{uf}` listam as UFs e os municípios de uma UF. Existem
+para clientes HTTP montarem a escolha de UF/município — o bot Telegram **não** as consome: ele usa
+uma lista de 27 UFs embutida (`telegram_bot._UFS`) e deixa o casamento do nome digitado para o
+próprio `POST /analisar-municipio` (que responde `404` com sugestões).
+`POST /api/v1/analisar-municipio` devolve o **Relatório Municipal** em PDF (9 páginas) —
+outro estudo, que agrega um município inteiro (não um raio). Body (`AnalisarMunicipioRequest`):
+`uf`, `municipio` (aceita sem acento), `formato` (`"pdf"`) e `solicitante` (carimba a marca
+d'água). Exigem o mesmo Bearer token; timeout do bot: 300 s.
+
+**Custo de memória:** a primeira chamada a `POST /analisar-municipio` carrega a base de mercado
+inteira (~1,9 GB residentes, 1× por processo). As duas rotas `GET` leem só 3 colunas (~50 MB) e não
+pagam esse custo.
 
 ---
 
@@ -237,8 +274,9 @@ O campo `maps_url` suporta 4 padrões de URL do Google Maps, aplicados em ordem 
 | 3 | Query params `?q=`, `?query=`, `?ll=`, `?sll=`, `?center=`, `?destination=` | `https://maps.google.com/?q=-21.9180,-46.6855` | Vários formatos de busca |
 | 4 | `"lat,lng"` cru | `-21.9180,-46.6855` | String simples separada por vírgula |
 
-**Links compactados** (ex.: `maps.app.goo.gl/...`, `goo.gl/maps/...`, encurtadores em geral):
-expandidos automaticamente via redirect HTTP antes do parse — o bot faz isso de forma transparente.
+**Links compactados** (ex.: `maps.app.goo.gl/...`, `goo.gl/maps/...`, encurtadores em geral) **não
+são aceitos** em `maps_url`: o parser da API é puro (sem rede) e devolve `400 coordenada_invalida`.
+Quem segue o redirect é o bot Telegram, num passo anterior — ele envia `{lat, lng}` já resolvidos.
 
 **Bounding box de validação:** lat ∈ [-34,0; 5,5], lng ∈ [-74,0; -28,0] (inclui ilhas oceânicas:
 Fernando de Noronha, Trindade). Pontos fora → `400 coordenada_invalida`.
@@ -248,7 +286,8 @@ Fernando de Noronha, Trindade). Pontos fora → `400 coordenada_invalida`.
 ## 6. Bot Telegram — Paulo
 
 O bot "Paulo" é a interface conversacional da API para usuários do Telegram. Funciona por
-**long-polling 24/7** na VPS, consumindo o `POST /api/v1/analisar` por HTTP.
+**long-polling 24/7** na VPS, consumindo o `POST /api/v1/analisar` (Relatório Pontual) e o
+`POST /api/v1/analisar-municipio` (Relatório Municipal) por HTTP.
 
 ### Fluxo da máquina de estados
 
@@ -261,14 +300,20 @@ O bot "Paulo" é a interface conversacional da API para usuários do Telegram. F
    → Incorreta: repete pedido de senha
 
 3. Nome/login
-   → "Prazer, <nome>!" + menu [Relatorio | Ajuda]
+   → "Prazer, <nome>!" + menu [Relatorio Pontual | Relatorio Municipal | Ajuda]
    → "Me envie a localização do ponto agora."
 
 4. Menu (qualquer momento após autorizado)
-   "Relatorio" / /relatorio / /start  → pedido de localização
-   "Ajuda"     / /ajuda    / /help    → mensagem de ajuda
+   /start / "menu" / /menu                → volta ao menu
+   "Relatorio Pontual" / /relatorio       → pedido de localização
+   "Relatorio Municipal" / /municipal     → escolha da UF → digitar o município → PDF municipal
+   "Ajuda" / /ajuda / /help               → mensagem de ajuda
 
-5. Qualquer mensagem não-comando (localização)
+4b. Dentro do fluxo municipal (etapas "escolha da UF" e "digite o município") a mensagem
+    não-comando é CONSUMIDA por esse fluxo (vira UF / nome de município), não vira localização.
+    Saídas: "⬅️ Voltar" / "cancelar" ou qualquer comando global do passo 4.
+
+5. Qualquer mensagem não-comando FORA do fluxo municipal (= localização)
    → ⏳ "Recebi! Estou localizando o ponto e gerando o Relatório..."
    → resolve coordenada (ver 3 formas abaixo)
    → se falhar: ❌ instrução dos formatos aceitos
@@ -303,9 +348,11 @@ As sessões (quem já está logado) são salvas em `API_BOT_SESSOES_PATH`
 
 | Comando / Botão | Ação |
 |---|---|
-| `/start` | Reinicia / pede localização |
-| `Relatorio` / `/relatorio` | Pede localização para novo estudo |
+| `/start` / `menu` / `/menu` | Volta ao menu |
+| `Relatorio Pontual` / `pontual` / `relatorio` / `/relatorio` | Pede localização para novo estudo pontual |
+| `Relatorio Municipal` / `municipal` / `/municipal` | Pede UF e município para o Relatório Municipal |
 | `Ajuda` / `/ajuda` / `/help` | Mostra descrição e formas de localização |
+| `⬅️ Voltar` / `voltar` / `cancelar` | Só no fluxo municipal: de "digite o município" volta à escolha da UF; da UF volta ao menu |
 
 ### Rodar o bot (com a API já no ar)
 
@@ -323,8 +370,10 @@ Todos os erros da API seguem o formato `{"detail": "<mensagem>", "codigo": "<slu
 |---|---|---|---|
 | `400` | `coordenada_invalida` | `"Coordenada fora do Brasil"` | `lat`/`lng` fora do bounding box; `maps_url` não parseável; ponto sem município na malha |
 | `401` | `nao_autenticado` | `"Token invalido"` | Header `Authorization` ausente ou token não encontrado no mapa |
-| `404` | `base_geo_ausente` | `"Materialize setores_censitarios_2022_geo/ para SP/3550308"` | Partição censitária ausente para o município do ponto |
-| `500` | `erro_interno` | `"Erro interno ao gerar o estudo"` | Qualquer exceção não tratada (stack trace no log do servidor) |
+| `404` | `base_geo_ausente` | `"Materialize setores_censitarios_2022_geo/ para SP/3550308"` | Partição censitária ausente para o município do ponto (`POST /analisar`) |
+| `404` | `municipio_nao_encontrado` | `"Municipio 'Palmas' nao encontrado em TO. Voce quis dizer: ...?"` | Nome não casa nenhum município da UF em `POST /analisar-municipio` (o `detail` já traz até 6 sugestões) |
+| `404` | `municipio_sem_dados` | `"Municipio 'X' (UF) sem hexagonos"` | Município existe no índice, mas não tem hexágonos na base de mercado (`POST /analisar-municipio`) |
+| `500` | `erro_interno` | `"Erro interno ao gerar o estudo"` | Qualquer exceção não tratada (stack trace no log do servidor) — inclui `hexagonos_mercado_mapeado.parquet` ausente nas rotas municipais |
 
 **Nota sobre `422`:** FastAPI retorna `422` (sem campo `codigo`) para erros de validação do
 body Pydantic (ex.: body malformado, campos com tipo errado). Não faz parte do contrato
@@ -345,7 +394,7 @@ no `.env` na raiz do repo ou exportadas como variáveis de ambiente antes de sub
 | `API_IBGE_DIR` | `ibge_dir` | `data/ibge` | GeoJSONs municipais IBGE para ponto→município (READ-ONLY) |
 | `API_ULTRA_DIR` | `ultra_dir` | `data/ultra` | Assets de branding do PDF (READ-ONLY, opcional) |
 | `API_COMPETITORS_LOGOS_DIR` | `competitors_logos_dir` | `None` | Pasta com `logo_<rede>.png` para pins do mapa (opcional; fallback = sigla de texto) |
-| `API_STAGING_DIR` | `staging_dir` | `data/staging` | Parquets de mercado/concorrentes/Ultra (READ-ONLY, opcional) |
+| `API_STAGING_DIR` | `staging_dir` | `data/staging` | Parquets de mercado/concorrentes/Ultra (READ-ONLY). Opcional no Relatório Pontual; **obrigatório** nas rotas do Relatório Municipal |
 | `API_CORS_ORIGINS` | `cors_origins` | `["*"]` | Origens CORS; em produção restringir: `'["https://meudominio.com"]'` |
 | `API_TOKENS` | `tokens` | `{"dev-token": "dev-local"}` | Mapa token→consumidor (JSON string) |
 | `API_TELEGRAM_TOKEN` | `telegram_token` | `""` | Token do bot (@BotFather). **NUNCA commitar.** |
@@ -357,14 +406,16 @@ no `.env` na raiz do repo ou exportadas como variáveis de ambiente antes de sub
 
 ### Gotchas de produção
 
-**`API_CORS_ORIGINS`:** deve ser JSON válido. Tanto `["*"]` quanto lista com domínios específicos.
+**`API_CORS_ORIGINS`:** JSON é a forma recomendada — tanto `["*"]` quanto lista com domínios
+específicos. O parser também aceita lista separada por vírgula sem brackets.
 ```bash
-# CORRETO
+# RECOMENDADO (JSON)
 API_CORS_ORIGINS='["*"]'
 API_CORS_ORIGINS='["https://ultra.app","https://api.ultra.app"]'
 
-# ERRADO (string simples sem brackets — comportamento inesperado)
+# TAMBÉM ACEITO (sem brackets — split por vírgula)
 API_CORS_ORIGINS=*
+API_CORS_ORIGINS=https://ultra.app,https://api.ultra.app
 ```
 
 **`API_TOKENS`:** deve ser JSON válido com aspas duplas nas chaves e valores.
@@ -384,8 +435,9 @@ API_TOKENS=tok-telegram:bot-telegram
 # 1. Instalar dependências (na raiz do repo)
 pip install -e ".[api_mvp,basemap,geocoder]"
 
-# 2. Subir a API (porta padrão 8077)
-uvicorn motor_expansao.api.main:app --reload
+# 2. Subir a API na porta 8077 (a mesma do Dockerfile.api).
+#    Sem --port o uvicorn usa 8000 e os curl da seção 4 falham com connection refused.
+uvicorn motor_expansao.api.main:app --reload --port 8077
 
 # 3. Subir o bot (em outro terminal, com a API no ar)
 API_TELEGRAM_TOKEN=<token-do-botfather> python -m motor_expansao.api.telegram_bot
@@ -412,6 +464,7 @@ API_TELEGRAM_TOKEN=<token-do-botfather> python -m motor_expansao.api.telegram_bo
 | [docs/api_geoespacial_openapi.yaml](api_geoespacial_openapi.yaml) | Spec OpenAPI completa: schemas detalhados, exemplos de resposta, todos os endpoints |
 | [docs/api_geoespacial_deploy.md](api_geoespacial_deploy.md) | Instalação local, variáveis de env, dados necessários, hardening, observabilidade |
 | [docs/deploy_api_bot.md](deploy_api_bot.md) | Containerização VPS: `Dockerfile.api`, docker compose, segredos, volumes |
+| [docs/relatorio_municipal_template.md](relatorio_municipal_template.md) | Estrutura/template das 9 páginas do Relatório Municipal (`POST /api/v1/analisar-municipio`) |
 
 ---
 
@@ -419,10 +472,10 @@ API_TELEGRAM_TOKEN=<token-do-botfather> python -m motor_expansao.api.telegram_bo
 
 | Limitação | Detalhe |
 |---|---|
-| **Raio fixo 1,5 km** | Não é parâmetro de entrada — é o método canônico `setor_censitario_intersecao_area_1p5km`, INTOCÁVEL (CLAUDE.md §4) |
+| **Raio fixo 1,5 km (Relatório Pontual)** | Não é parâmetro de entrada — é o método canônico `setor_censitario_intersecao_area_1p5km`, INTOCÁVEL (CLAUDE.md §4). O Relatório Municipal não usa raio |
 | **PostGIS fora do MVP** | Persistência e queries geoespaciais em banco; evolução futura (BLK-API-05) |
 | **Docs interativas em produção** | `/docs` e `/redoc` desabilitados quando `API_ENVIRONMENT=production`; usar `api_geoespacial_openapi.yaml` localmente |
 | **Geocoding de endereço+CEP** | Requer Google Chrome instalado no host (extra `[geocoder]`); sem Chrome, cai em Nominatim (gratuito, menos preciso para localidades brasileiras) |
-| **SAM/residual no JSON** | Preenchidos apenas quando `data/staging/hexagonos_mercado_mapeado.parquet` existir no path configurado; ausência é silenciosa (campos `null`) |
+| **SAM/residual só no PDF** | Não fazem parte do `AnalisarResponseJSON`; aparecem no Big Numbers e no mapa de Residual Fitness do PDF quando `data/staging/hexagonos_mercado_mapeado.parquet` existir no path configurado; ausência é silenciosa (`"n/d"` / fallback textual) |
 | **Autenticação MVP** | Lista estática de tokens — sem endpoint de admin; rotação via edição do `.env` e restart do processo |
 | **Performance — 1ª chamada** | Cold load dos Parquets + busca de tiles pode levar até ~30 s em área densa; chamadas subsequentes ao mesmo município são mais rápidas (cache em memória) |

@@ -1,7 +1,7 @@
 """Testes do Relatorio Municipal (BLK-RELMUN-01).
 
 Espelham o teste do Relatorio Pontual (`test_relatorio_pontual_censitario_export.py`):
-agregacao, formula D1, 8 paginas/`/Count 8`/`%PDF-1.4`, headers das 8 secoes, fallback sem
+agregacao, formula D1, 9 paginas/`/Count 9`/`%PDF-1.4`, headers das 9 secoes, fallback sem
 `dominio_df`, fallback Pagina 6 sem bairro, fallback sem assets, anti-PII, mapas SEM rede
 (`basemap=False`), contagem de pins por H3. NENHUM teste bate na rede.
 
@@ -457,7 +457,7 @@ def test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1():
 # ---------------------------------------------------------------------------
 
 
-def test_pdf_municipal_8_paginas_e_secoes():
+def test_pdf_municipal_9_paginas_e_secoes():
     df = _sample_df()
     res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio())
     mapas = render_mapas_municipio(df, res, basemap=False)

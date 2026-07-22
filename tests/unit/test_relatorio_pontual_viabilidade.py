@@ -80,7 +80,7 @@ def test_viab_faixa():
 # --------------------------------------------------------------------------- #
 # Insercao das paginas (OPCIONAL)                                             #
 # --------------------------------------------------------------------------- #
-def test_sem_viabilidade_mantem_6_paginas():
+def test_sem_viabilidade_mantem_8_paginas():
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(_MIN_RESULT, None)
     assert b"/Count 8" in pdf_bytes
     assert _TIT_NUM not in pdf_bytes

@@ -157,7 +157,7 @@ def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
     assert b"setor_censitario_intersecao_area_1p5km" in pdf_bytes
 
 
-def test_pdf_embute_tres_choropleths_no_slide_unico():
+def test_pdf_embute_quatro_choropleths_no_slide_unico():
     result, mapas = _sample_result()
 
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, ultra_dir="data/ultra")
@@ -489,7 +489,7 @@ def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
 # ---------------------------------------------------------------------------
 
 
-def test_classico_gera_6_paginas_e_secoes():
+def test_classico_gera_8_paginas_e_secoes():
     result, mapas = _sample_result()
 
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
@@ -679,8 +679,13 @@ def test_slide_unico_offline_safe_por_camada():
     assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
 
 
-def test_slide_unico_tres_imagens_embutidas():
-    """Os 3 choropleths sao embutidos SEPARADAMENTE (nao pre-compostos) -> >= 4 imagens de mapa."""
+def test_slide_unico_quatro_imagens_embutidas():
+    """Os 4 choropleths do grid 2x2 sao embutidos SEPARADAMENTE (nao pre-compostos).
+
+    Piso de `>= 5` imagens: os 4 do grid + a de Concorrentes. E piso, nao igualdade, porque as
+    paginas "Imagem do Entorno" e "Socioeconomia e Residual Fitness" somam mais imagens quando
+    presentes; travar em igualdade quebraria a cada camada nova.
+    """
     result, mapas = _sample_result()
 
     pdf_recente = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)

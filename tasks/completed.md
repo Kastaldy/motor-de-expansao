@@ -9715,3 +9715,94 @@ de teste stale. Deferido de propósito por Planner, Builder e QA: conserto parci
 contraditórios.
 
 **Deploy:** NÃO automático (§6) — subir na VPS segue passo manual do humano, por digest.
+
+---
+
+## Fechamento de ciclo — BLK-RELPON-12
+
+**Bloco:** BLK-RELPON-12 — De-staling da documentação do Relatório Pontual.
+**Data:** 2026-07-22. **Criticidade:** Baixa. **Branch:** `ciclo/BLK-RELPON-12`, empilhado sobre
+`ciclo/BLK-RELPON-11` @ `cb2654c` (entra no mesmo PR único de 09/10/11).
+
+**Origem.** Deferido de propósito por Planner, Builder e QA do BLK-RELPON-11, com o mesmo
+argumento: os docs já estavam stale em vários eixos ANTES daquele bloco, e um conserto parcial
+(só a contagem de páginas) os deixaria **contraditórios** — pior que stale.
+
+**O escopo era maior do que o backlog previa.** Não era "trocar 7 por 8 em quatro lugares":
+- `docs/relatorio_pontual_censitario.md` — o contrato técnico principal — ainda dizia
+  **"estrutura de 6 paginas"** e **`/Count 6`**, e descrevia os mapas de calor como **tira 1x3 de
+  3 choropleths** quando hoje é **grid 2x2 de 4**. Não conhecia nem o RELPON-10 nem o -11.
+- `docs/api_geoespacial_uso.md:166` listava a estrutura **pré-BLK-RELPON-01** inteira
+  (`Capa -> População -> Renda -> Score censitário -> Concorrentes`), três consolidações atrás.
+
+**Forma da execução — workflow de 27 sub-agentes (0 erros, ~3,3 M tokens).** Sete fases:
+(1) **Verdade** — âncora factual única extraída do CÓDIGO (8 páginas, 23 fatos com evidência
+arquivo:linha, 16 armadilhas). Barreira deliberada: se cada corretor derivasse os fatos sozinho,
+os 4 docs divergiriam entre si — o defeito exato que o bloco existe para eliminar. (2) **Auditar**
+— 4 agentes, um por doc, cada um produzindo também `ja_corretos`, a lista de trechos que PARECEM
+stale mas são **histórico verdadeiro**; foi ela que protegeu a cronologia por bloco. (3) **Corrigir**
+— 4 agentes, com direito a rejeitar achado da auditoria. (4) **Renomear** — 8 nomes de teste.
+(5) **Verificar** — **12 céticos** (4 docs × 3 lentes: factual contra o código, consistência interna,
+e **dano colateral no diff**), instruídos a REFUTAR: **56 defeitos apontados, 13 bloqueantes**.
+(6) **Reparar** — 4 agentes aplicaram o confirmado e rejeitaram o que não procedia.
+(7) **Completude** — veredito **PRONTO_COM_RESSALVAS**, `diff_limpo: true`, 9 pendências.
+
+**Histórico preservado.** A cronologia por bloco (`7->5` pelo RELPON-01, `5->6` pelo -07) é registro
+verdadeiro e sobreviveu intacta; o que entrou foram os degraus que faltavam (`6->7` pelo -10 e
+`7->8` pelo -11) mais a correção de toda afirmação de ESTADO ATUAL. Distinguir "foi assim no bloco
+X" de "é assim hoje" foi a instrução central dada aos agentes.
+
+**Correções que os próprios agentes acharam, além do briefing.** O corretor do contrato da API
+rejeitou um achado da auditoria que propunha `GET /municipios` — a rota real é
+`GET /municipios/{uf}`, e publicar a forma errada mandaria o leitor a um 404; e detectou que o §4
+("assinaturas REAIS importadas") omitia `agregar_perfil_bairro_distrito`, que `service.py:307-311`
+importa de fato.
+
+**Três correções feitas pelo orquestrador depois do workflow.** (a) **EOL**: 4 arquivos voltaram
+com CRLF (1.001 no `test_relatorio_municipal.py`), renormalizados para LF (DEC-017). (b) **Duas
+regressões que o próprio bloco criou** — os renomes deixaram docstrings contradizendo os nomes
+novos: `test_relatorio_municipal.py:4` dizia "8 paginas/`/Count 8`" quando o municipal tem **9**
+(confirmado: `PDF_SECTION_HEADERS` com 9 entradas, `/Count 9` em 4 asserts), e
+`test_slide_unico_quatro_imagens_embutidas` ainda dizia "Os 3 choropleths -> >= 4 imagens" com
+assert real `>= 5`. (c) **Dois docs FORA dos 4 do escopo**, incluídos porque deixá-los recriaria a
+contradição cross-doc: `docs/arquitetura_app_atual.md` (dizia "**5 páginas**: Capa -> Mapas de calor
+(tira 1x3)" e "~8-9 páginas" para o municipal) e o **`CLAUDE.md` §4**, cuja contagem já estava em 8
+mas cujo MESMO parágrafo mentia em 3 fatos: Big Numbers listado como "pop/renda/**score medio/score
+max**" quando as 8 métricas reais (confirmadas por AST em `_big_numbers_page`) são pop / renda per
+capita / **domicílios** / **renda média domiciliar** / SAM / Residual / Concorrentes no raio /
+Consumo (o "Score censitário médio" foi removido em 2026-07-17); `card_h=156` quando
+`_BIG_NUMBERS_CARD_H = 132.0`; e "Realizacao com logo Ultra no topo" quando a página é
+**"SEM logo, SEM cartao de contato"** (`censo_report.py:1975`), anti-PII.
+
+**Verificação independente do orquestrador.** As 3 afirmações NOVAS que os agentes escreveram além
+do briefing — justamente onde um agente inventaria — foram checadas contra o código, uma a uma:
+`_BIG_NUMBERS_CARD_H = 132.0` (`censo_report.py:117`) **confere**; a página Realização é "SEM logo"
+(`censo_report.py:1975`) **confere**; `test_camadas_censitarias_declara_as_8_chaves` **existe**
+(`..._mapa.py:810`). Também confirmado que os docstrings de ordem de páginas em `src/censo_report.py`
+já estavam corretos (atualizados pelo Builder do -11) — zero contradição entre código e docs novos.
+
+**8 nomes de teste renomeados, ZERO asserção tocada** — provado, não afirmado:
+`git diff -U0 -- tests/ | grep -v "def test_"` retorna **0 linhas**.
+
+**Validação.** `186 passed` no subconjunto impactado (9 arquivos, serial — `-n auto` aborta com
+INTERNALERROR/execnet neste Windows/Py3.14); `ruff check src tests` limpo. A suíte FULL **não** foi
+rodada porque este bloco não altera nenhuma linha executável (só Markdown/YAML e nomes de função),
+e o subconjunto cobre 100% dos arquivos tocados. `git diff --name-only` não lista **nada** de
+`src/`, `config.py` ou `pipelines/`.
+
+**Extra declarado.** No `api_geoespacial_openapi.yaml`, ~7 campos foram convertidos de
+`nullable: true` para `type: [tipo, "null"]`. É correção legítima (o `nullable` foi REMOVIDO da
+OpenAPI 3.1 e a spec declara `openapi: 3.1.0`), mas é conformidade de schema, não de-staling —
+amplia o diff além do pedido. Mantido por ser um defeito real num arquivo já aberto, e sem risco
+de runtime (o YAML é espelhado por `api/schemas/__init__.py`, não consumido programaticamente).
+
+**Pendências que ficaram (nenhuma bloqueia).** `src/motor_expansao/dashboard/pages.py:3487` tem
+comentário stale ("3 camadas combinadas Densidade/Renda/Concorrentes"; hoje são até 8 e a UI exibe
+4) — é CÓDIGO, proibido tocar neste bloco; pega carona no próximo ciclo que abrir `pages.py`.
+E `docs/refatoracao/{findings.json,review.md}` citam `/Count 6`, mas são snapshots datados de uma
+auditoria — arguivelmente histórico válido; decidir se recebem carimbo de "documento congelado".
+
+**Housekeeping.** `tasks/backlog.md` **não** recebeu stub (diferido para o PR de housekeeping em
+lote), mesmo regime dos RELPON-09/10/11. **Nenhum PR aberto** — este bloco entra no PR único.
+
+**Deploy:** NÃO automático (§6). Doc-only, não altera imagem nem comportamento de runtime.

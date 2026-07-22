@@ -70,7 +70,7 @@ def test_info_valor_nao_numerico_em_campo_num_nao_quebra():
 # --------------------------------------------------------------------------- #
 # Insercao da pagina (OPCIONAL)                                               #
 # --------------------------------------------------------------------------- #
-def test_classico_sem_info_mantem_6_paginas():
+def test_classico_sem_info_mantem_8_paginas():
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(_MIN_RESULT, None)
     assert b"/Count 8" in pdf_bytes
     assert _TITULO not in pdf_bytes
