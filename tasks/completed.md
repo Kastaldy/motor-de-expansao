@@ -9612,3 +9612,106 @@ num **PR único** no fim — o #137, que trazia só o 09, foi fechado temporaria
 preservado.
 
 **Deploy:** NÃO automático (§6) — subir na VPS segue passo manual do humano, por digest.
+
+---
+
+## Fechamento de ciclo — BLK-RELPON-11
+
+**Bloco:** BLK-RELPON-11 — Imagem do entorno do ponto (página nova no Relatório Pontual Censitário).
+**Data:** 2026-07-22. **Criticidade:** Média. **Veredito do QA (Opus 4.8): APROVADO.**
+**Branch:** `ciclo/BLK-RELPON-11`, empilhado sobre `ciclo/BLK-RELPON-10` @ `a491069`.
+**Esteira:** Block Orchestrator (sonnet) -> Planner (opus) -> Builder (opus) -> QA (opus) -> GATE VISUAL.
+
+**Escopo REABERTO e decidido no gate.** O bloco entrou no ciclo com escopo reaberto (2026-07-22):
+a primeira pergunta deixara de ser "aprovar o Esri?" e passara a ser "**qual caminho seguir?**",
+depois da pesquisa de alternativas (`data/reports/imagem_entorno_alternativas.md`, ~930 mil tokens).
+**Vinicius escolheu o caminho A1 — mapa de quadra CartoDB Voyager.** Consequência direta: a
+**DEC-018 NÃO foi aberta**, nenhum provedor novo entrou (Esri, ortofoto municipal, OpenAerialMap,
+Sentinel/CBERS/INPE e Google ficaram fora em definitivo) e a criticidade caiu de Alta para **Média**
+— o backlog condicionava "Alta" exclusivamente ao caminho de provedor novo.
+
+**O que foi entregue.** Página **"Imagem do Entorno"** entre a Capa e o slide-hero "Socioeconomia e
+Residual Fitness", nas DUAS variantes (`censitario` e `classico`): **7 -> 8 páginas** (teto com todos
+os opcionais: 11 -> 12). Mapa de quadra só-basemap, raio de EXIBIÇÃO
+`RAIO_ENTORNO_DISPLAY_KM = 0.14` (lado curto do frame **302,4 m**, dentro da janela útil 250-400 m),
+**sem pins** e **sem círculo de raio**, rodapé "Escala de quadra". Chave `entorno` **INCONDICIONAL**
+em `CAMADAS_CENSITARIAS` — depende só de `lat`/`lng`, ao contrário de `residual` (que depende de
+`hexes_df`) — logo o **bot Telegram recebe a página de graça**, sem mudança própria em `api/service.py`
+além de 1 linha de docstring.
+
+**Por que não os ~100 m do pedido original.** Fisicamente impossível: exigiria 10 cm/px. A janela
+viável é 250-400 m, e é a mesma para satélite e para mapa de ruas — a largura **não** é o que se
+perde ao trocar um pelo outro. Registrado para não reabrir.
+
+**Decisões técnicas do Planner (fechadas por leitura de código, sem medir tiles).** (a) `zoom_bump`
+entra como parâmetro **opcional e default-preserving** de `_fetch_basemap`; a constante global
+`_BASEMAP_ZOOM_BUMP` permanece **`= 1`** e os 2 call-sites pré-existentes não mudam. (b) **Sem pins**,
+com razão nova e medida: a 1,82 px/m o `_PIN_LOGO_PX = 30` cobriria **16,5 m de solo** — uma
+edificação inteira, ou seja, o pin apagaria o objeto da página. (c) **Sem círculo**: o rodapé
+automático sairia `"Raio 0,1 km"` e um círculo de 140 m seria lido como footprint de análise,
+contradizendo o motor de 1,5 km. A barra de escala (100 m) dá a referência métrica.
+(d) `_render_camada` ganhou `circle_3857` e `rotulo_escala`, **ambos default-preserving**.
+
+**GATE VISUAL (Vinicius, 2026-07-22): z19 -> z18.** O QA abriu as duas amostras comparativas e
+levantou o argumento decisivo: o render tem **~1,82 px/m** contra **3,65 px/m** do tile z19, reduz o
+tile ~2x e joga o rótulo de rua para **3,0-3,3 pt** (variante recente) e **2,6-2,9 pt** (variante
+**CLÁSSICA — a que produção entrega**, dashboard + bot). Números de porta ilegíveis, que era
+justamente o que motivava escolher z19. Em **z18** os mesmos rótulos dobram (6,0-6,6 / 5,2-5,7 pt)
+com **campo de visão IDÊNTICO**. É o mesmo mecanismo que a pesquisa reporta ter matado o z20 —
+nesta geometria de canvas ele já morde no z19. FU1 aplicado: `zoom_bump=0` -> **`zoom_bump=-1`**
+(+ T6 renomeado para `test_entorno_pede_z18_em_todo_o_brasil`, com docstring registrando que **z18 é
+escolha de PRODUTO, não consequência da geometria** — o frame resolveria z19 sozinho pelos dois
+clampes em 19).
+
+**Prova de que o aprovado == o entregue.** Render pelo caminho de PRODUÇÃO
+(`_render_camada_entorno(..., basemap=True)`, **sem override**) comparado por sha256 contra a
+amostra que Vinicius aprovou no gate: `2e02ee41403c3c30` == `2e02ee41403c3c30`, **byte-idêntico**.
+O laço do gate visual fecha sem depender de uma amostra gerada por caminho paralelo.
+
+**QA (Opus 4.8) — APROVADO.** Suíte FULL **serial** `1 failed, 1963 passed, 2 skipped` em 17m23s
+(`-n auto` aborta com INTERNALERROR/execnet neste Windows/Py3.14 — substituição de ambiente
+declarada, **não** bypass: serial amplia o rigor). A única falha é
+`test_score_retencao_territorial::test_run_readonly_m1_por_mtime` (parquet de staging gitignored
+ausente), **provada pré-existente** (diff zero em `lifetime/`). Reconciliação de contagem por
+`--collect-only`: 1966 no working tree vs 1955 no `HEAD` = **+11**, exatamente as 11 funções de teste
+novas — nenhum teste sumiu. Além do pedido, o QA provou por **sha256** que as **7 camadas PNG
+pré-existentes saem byte-idênticas** e que `entorno` é a única chave nova (fecha a lacuna do T9, que
+só provava default-explícito == default-implícito), gerou os 2 PDFs offline por conta própria
+(`/Count 8` nas duas variantes) e rodou o `loop_guard` (**0 violação `critico`**).
+
+**Divergência 35 vs 39 asserts, resolvida a favor do Builder.** A prosa do plano dizia 35, a tabela
+do próprio plano listava 39; o real são **41 substituições = 39 asserts + 2 docstrings**, todas +1
+exato, sem duplo-incremento e sem `/Count 7` remanescente. `test_relatorio_municipal.py` (que tem
+`PDF_SECTION_HEADERS` **próprio**) ficou intocado e verde — prova de não-contaminação.
+
+**Correção de registro:** o `mypy` são **7** erros de stub `types-requests`, não 6 — o
+`current_task.md` estava certo e o "6" do Builder veio de `.mypy_cache` stale. Com cache limpo dos
+dois lados, working tree = 7 e baseline `HEAD` = 7, com lista `file:line` idêntica. **Zero erro novo.**
+
+**Guardrails.** §5 READ-ONLY M1 confirmado por evidência própria do QA: 7 artefatos oficiais com
+mtime `2026-06-10` e tamanhos inalterados; o diff não toca `config.py`, `pipelines/`,
+`dashboard/constants.py` nem `relatorio_municipal.py`. Motor censitário
+(`setor_censitario_intersecao_area_1p5km`, `RAIO_CENSITARIO_DEFAULT_KM = 1.5`) **INTOCADO** e travado
+por teste — o raio novo é de EXIBIÇÃO, não de análise. `contextily` segue **lazy**; `basemap=False`
+é o default seguro do caminho novo; fallback offline incondicional (canvas claro). **Nenhuma
+dependência nova, nenhuma DEC nova, nenhum provedor novo.** `ruff` limpo, `import streamlit_app` ok.
+
+**Limitação conhecida e aceita (não é defeito).** O Voyager **não entrega POI comercial** — shopping
+aparece como blob bege rotulado com o número, e não há nome de loja. O rótulo da página descreve
+**morfologia urbana** (quadra, ruas, números de porta) e **nunca** promete satélite ou POI. Cobertura
+fora de capital é mais esparsa (a pesquisa mediu Chapecó/SC com 4 números de porta); em z18 o que
+sobra ao menos é legível.
+
+**Housekeeping.** `tasks/backlog.md` **não** recebeu stub (diferido para o PR de housekeeping em
+lote), mesmo regime já aceito nos BLK-RELPON-09 e -10. **Nenhum PR aberto**: por decisão de Vinicius
+(2026-07-21) os 3 blocos do pedido (RELPON-09/10/11) entram num **PR único** no fim — o #137, que
+trazia só o 09, foi fechado temporariamente com o branch preservado. Esse PR combinado exigirá
+`aprovado-humano` **e** `critica-aprovada` do Felipe (`Kastaldy`), porque agrega
+`relatorio_municipal.py`, classificado **CRÍTICO por path** em `scripts/loop_guard.py`.
+
+**Follow-up registrado:** **BLK-RELPON-12** (de-staling, Baixa, `loop-safe`) — 4 docs que já mentem
+sobre a contagem de páginas (`relatorio_pontual_censitario.md` + os 3 `api_geoespacial_*`) e 5 nomes
+de teste stale. Deferido de propósito por Planner, Builder e QA: conserto parcial deixaria os docs
+contraditórios.
+
+**Deploy:** NÃO automático (§6) — subir na VPS segue passo manual do humano, por digest.

@@ -95,6 +95,10 @@ MAPA_CENSITARIO_METRICAS = {
 # Fitness" (S1=A do gate: o score PERMANECE tambem no grid 2x2); `residual` e o choropleth de
 # `oferta_efetiva_disponivel` por HEXAGONO H3 res-7 num raio de EXIBICAO de 5 km — chave
 # CONDICIONAL, so presente quando `hexes_df` foi passado e ha hex desenhavel.
+# BLK-RELPON-11: `entorno` e o mapa de QUADRA (so basemap Voyager + ponto central, sem
+# choropleth, sem pins e sem circulo de raio) num raio de EXIBICAO de ~0,14 km. Ao contrario de
+# `residual`, e INCONDICIONAL: depende so de `lat`/`lng` e cai no canvas claro offline quando
+# nao ha tile, entao a chave existe SEMPRE.
 CAMADAS_CENSITARIAS = (
     "densidade",
     "renda",
@@ -103,6 +107,7 @@ CAMADAS_CENSITARIAS = (
     "socioeconomia",
     "residual",
     "concorrentes",
+    "entorno",
 )
 
 # BLK-RELPON-10: raio de EXIBICAO do mapa de Residual Fitness por hexagono. NAO e' parametro de
@@ -117,6 +122,25 @@ RAIO_RESIDUAL_DISPLAY_KM = 5.0
 # k=5 da 11,63 km e cobre com folga (91 hexes, custo irrelevante). Nao reduzir "para economizar":
 # os hexes excedentes sao descartados de graca pelo clip ao frame.
 _RESIDUAL_GRID_DISK_K = 5
+
+# BLK-RELPON-11: raio de EXIBICAO do mapa de quadra "Imagem do Entorno". Constante de RENDER
+# (fora de `config.py` / §3 do CLAUDE.md), como `RAIO_RESIDUAL_DISPLAY_KM`. O lado MENOR do frame
+# sai em 2 * raio * 1000 * (1 + _MAP_FRAME_MARGIN) = 2 * 140 * 1,08 = 302,4 m -> dentro da janela
+# util de 250-400 m medida na pesquisa de alternativas (alvo ~300 m); o lado menor e INVARIANTE em
+# relacao ao canvas, entao a resolucao efetiva (~1,82 px por metro de solo) e a mesma a 1000x760 e
+# a 1280x760. O motor censitario (`setor_censitario_intersecao_area_1p5km`,
+# `RAIO_CENSITARIO_DEFAULT_KM`=1,5) fica INTOCADO — este raio e' so de EXIBICAO.
+RAIO_ENTORNO_DISPLAY_KM = 0.14
+
+# Textos da camada `entorno` (PNG). ASCII PURO: excecao de RENDER ao §2 do CLAUDE.md — o font
+# embutido do Pillow usado no PNG nao tem glifo acentuado. Nenhuma string promete satelite,
+# imagem aerea ou POI comercial: o Voyager entrega morfologia urbana (ruas/quadras/nomes).
+_ENTORNO_TITULO_PNG = "Entorno - mapa de quadra"
+_ENTORNO_VALOR_LINHA = "Ruas e quadras do entorno"
+_ENTORNO_LEGENDA_TITULO = "Entorno imediato do ponto"
+# Prefixo do rodape NO LUGAR de "Raio X km": nesta escala nao ha raio de ANALISE, e o formato
+# automatico sairia "Raio 0,1 km" (enganoso vs o motor censitario de 1,5 km).
+_ENTORNO_ROTULO_ESCALA = "Escala de quadra"
 
 _SECTOR_PALETTE = [
     (232, 242, 255, 225),
@@ -598,6 +622,8 @@ def _zoom_for_bounds(minx: float, maxx: float, target_px: int) -> int:
 def _fetch_basemap(
     bounds_3857: tuple[float, float, float, float],
     width: int,
+    *,
+    zoom_bump: int | None = None,
 ) -> tuple[object, tuple[float, float, float, float]] | None:
     """Busca tiles de basemap claro (CartoDB Voyager No-Labels) via contextily.
 
@@ -605,6 +631,16 @@ def _fetch_basemap(
     falhar (sem internet/timeout), devolve None e o chamador cai no fallback offline.
     Aplica realce de contraste `_BASEMAP_CONTRAST` p/ as ruas aparecerem sob o choropleth.
     Cache local em data/cache/basemap_tiles/. Retorna (img_array, extent_3857) ou None.
+
+    BLK-RELPON-11: `zoom_bump` sobrescreve o `_BASEMAP_ZOOM_BUMP` GLOBAL apenas nesta chamada
+    (`None` = usa a constante, que continua `1` e serve os frames de 1,5 km e 5 km). Honestidade
+    sobre o que ele faz HOJE no frame de quadra: e' um NO-OP, porque ha DOIS clampes em 19
+    (`_zoom_for_bounds` ja devolve no maximo 19 e o `min(19, ...)` abaixo repete o teto) -> tanto
+    `bump=1` quanto `bump=0` resolvem z19 nesse bbox — por isso o valor que a camada de quadra
+    passa NAO e' `0`, e sim `-1`: no gate visual de 2026-07-22 Vinicius escolheu **z18**, porque
+    o render tem ~1,82 px/m contra 3,65 px/m do tile z19, reduz o tile ~2x e joga o rotulo de rua
+    para 3,0-3,3 pt (variante recente) / 2,6-2,9 pt (CLASSICA) no PDF; em z18 os mesmos rotulos
+    dobram, com campo de visao identico. Ver `_render_camada_entorno`.
     """
     try:
         import contextily as ctx  # lazy: so existe com o extra [basemap]
@@ -617,7 +653,10 @@ def _fetch_basemap(
         except Exception:
             pass
         minx, miny, maxx, maxy = bounds_3857
-        zoom = min(19, _zoom_for_bounds(minx, maxx, width) + _BASEMAP_ZOOM_BUMP)
+        bump = _BASEMAP_ZOOM_BUMP if zoom_bump is None else int(zoom_bump)
+        # `max(0, ...)` e' guarda barata contra bump negativo em bbox continental; nao altera
+        # nada hoje (com o bump global o resultado e' sempre >= 1).
+        zoom = max(0, min(19, _zoom_for_bounds(minx, maxx, width) + bump))
         source = getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)
         img, extent = ctx.bounds2img(minx, miny, maxx, maxy, zoom=zoom, source=source, ll=False)
         if _BASEMAP_CONTRAST != 1.0:
@@ -639,7 +678,7 @@ def _render_camada(
     color_fn: Callable[[float], tuple[int, int, int, int]],
     source_values: pd.Series,
     sector_records_3857: list[tuple[BaseGeometry, int]],
-    circle_3857: BaseGeometry,
+    circle_3857: BaseGeometry | None,
     center_3857: tuple[float, float],
     pins: list[tuple[float, float, str]],
     ultra_pins: list[tuple[float, float, str]],
@@ -656,6 +695,7 @@ def _render_camada(
     street_gain: float | None = None,
     street_cap: int | None = None,
     valor_ponto: str | None = None,
+    rotulo_escala: str | None = None,
     mostrar_legenda_pins: bool = True,
 ) -> bytes:
     """Desenha UMA camada (mesmos bbox/projecao/basemap/pins; varia fill + legenda).
@@ -663,6 +703,13 @@ def _render_camada(
     Quando `pins_only=True` (camada Concorrentes): pula o choropleth de faixas E o overlay
     de ruas de pixel; mantem basemap + circulo + ponto central + pins de concorrentes/Ultra +
     escala + footer + legenda so de pins. BLK-CENSO-03.
+
+    BLK-RELPON-11 (2 parametros DEFAULT-PRESERVING — com os defaults, as 7 camadas anteriores
+    saem byte-a-byte identicas):
+    - `circle_3857=None` omite o circulo do raio. Usado SO pela camada `entorno`, cujo frame
+      de ~300 m nao tem raio de ANALISE nenhum (um circulo ali seria lido como se a analise
+      censitaria fosse de 140 m, contradizendo o motor de 1,5 km).
+    - `rotulo_escala` substitui o prefixo "Raio X km" do rodape. `None` mantem o formato atual.
 
     `valor_ponto` (BLK-RELPON-05, faixa REVERTIDA p/ os agregados do raio pelo
     BLK-RELPON-06/D1): texto opcional da faixa superior ("<Variavel> no raio: <valor>"),
@@ -772,13 +819,14 @@ def _render_camada(
         region.paste(basemap_patch, (0, 0), street_mask)
         image.paste(region, (left, top))
 
-    circle_points = [
-        (int(round(px)), int(round(py)))
-        for px, py in (project(x, y) for x, y in circle_3857.exterior.coords)
-    ]
-    if len(circle_points) >= 3:
-        # Circulo do raio em AZUL (pedido de Vini 2026-06-17), visivel sobre o fundo claro.
-        draw.line(circle_points + [circle_points[0]], fill=_CIRCLE_RGBA, width=3)
+    if circle_3857 is not None:
+        circle_points = [
+            (int(round(px)), int(round(py)))
+            for px, py in (project(x, y) for x, y in circle_3857.exterior.coords)
+        ]
+        if len(circle_points) >= 3:
+            # Circulo do raio em AZUL (pedido de Vini 2026-06-17), visivel sobre o fundo claro.
+            draw.line(circle_points + [circle_points[0]], fill=_CIRCLE_RGBA, width=3)
 
     cx, cy = project(*center_3857)
     _draw_center_pin(draw, int(round(cx)), int(round(cy)))
@@ -815,11 +863,15 @@ def _render_camada(
     # BLK-RELPON-10 (DT-5): o raio deixa de ser hardcode e deriva de `raio_km` (parametro que ja
     # existia e nao era usado no corpo) -> com raio_km=1.5 a string sai IDENTICA ("Raio 1,5 km")
     # e as 4 camadas censitarias ficam byte-a-byte iguais; a camada de residual sai "Raio 5,0 km".
+    # BLK-RELPON-11: `rotulo_escala` (default None) troca SO o prefixo do rodape -- com None a
+    # string sai EXATAMENTE como antes; a camada `entorno` passa "Escala de quadra" porque
+    # "Raio 0,1 km" (o que `:.1f` produziria a 0,14 km) seria ativamente enganoso.
     raio_txt = f"{float(raio_km):.1f}".replace(".", ",")
+    prefixo = f"Raio {raio_txt} km" if rotulo_escala is None else rotulo_escala
     if drew_basemap:
-        footer = f"Raio {raio_txt} km - EPSG:3857 - {_ATRIBUICAO_TILES}"
+        footer = f"{prefixo} - EPSG:3857 - {_ATRIBUICAO_TILES}"
     else:
-        footer = f"Raio {raio_txt} km - EPSG:3857 - fundo de ruas offline"
+        footer = f"{prefixo} - EPSG:3857 - fundo de ruas offline"
     _draw_text(draw, (28, height - 34), footer, font=small_font, fill=(71, 85, 105))
 
     output = BytesIO()
@@ -1031,6 +1083,78 @@ def _render_camada_residual_hex(
     )
 
 
+# ── BLK-RELPON-11: camada "Imagem do Entorno" — mapa de QUADRA (raio de EXIBICAO ~0,14 km) ──
+# Caminho A1 do gate de Vinicius (2026-07-22): mesmo provedor CartoDB Voyager das DEC-004/011,
+# SEM DEC nova e SEM provedor novo. Nao ha dado tematico nesta camada: e' so o basemap de ruas
+# + o ponto central, para o leitor ver a morfologia fisica (quadras, vias, nomes de rua) em que
+# o ponto esta inserido. READ-ONLY sobre o M1; o motor censitario (1,5 km) fica INTOCADO.
+
+
+def _render_camada_entorno(
+    lat: float,
+    lng: float,
+    *,
+    basemap: bool,
+    width: int,
+    height: int,
+) -> bytes:
+    """Mapa de quadra do entorno imediato do ponto (so basemap + ponto central).
+
+    Monta o PROPRIO frame (raio de EXIBICAO `RAIO_ENTORNO_DISPLAY_KM`, lado curto ~302 m) e
+    delega o desenho a `_render_camada` com `pins_only=True` — que pula o choropleth, o overlay
+    de ruas (desnecessario: sem cor por cima, as ruas do Voyager ja sao nativas) e a mensagem
+    "Sem setores intersectados no raio".
+
+    Decisoes de produto (Planner, 2026-07-22):
+    - **SEM pins de concorrentes/Ultra**: a ~1,82 px por metro de solo, um pin de
+      `_PIN_LOGO_PX`=30 px cobre ~16,5 m de solo — uma edificacao inteira; apagaria o objeto da
+      pagina. Mesmo argumento (e mesmo gatekeeper) do BLK-RELPON-10-FU1. "Quem esta instalado"
+      e' papel da pagina Concorrentes. O pin central vermelho CONTINUA: e' o sujeito da pagina.
+    - **SEM circulo de raio** (`circle_3857=None`) e rodape "Escala de quadra" (D4): nao ha raio
+      de ANALISE nesta escala. A referencia de distancia continua na barra de escala.
+
+    Devolve SEMPRE `bytes` (nunca `None`): sem tile/rede/contextily o proprio `_fetch_basemap`
+    devolve `None` e `_render_camada` cai no canvas claro — por isso a chave e' INCONDICIONAL.
+    """
+    frame_metric = _frame_box_metric(RAIO_ENTORNO_DISPLAY_KM, width, height)
+    to_3857_local = _transformer(_local_metric_crs(lat, lng), CRS_WEB_MERCATOR)
+    frame_3857 = _project_geometry(frame_metric, to_3857_local)
+    center_3857 = to_3857_local.transform(0.0, 0.0)
+
+    # `zoom_bump=-1` -> z18 (GATE VISUAL de Vinicius, 2026-07-22). O frame resolveria z19 pelos
+    # dois clampes em 19, mas o render tem ~1,82 px/m contra 3,65 px/m do tile z19: o tile e'
+    # reduzido ~2x e o rotulo de rua sai a 3,0-3,3 pt (variante recente) / 2,6-2,9 pt (CLASSICA,
+    # que e' a que o dashboard e o bot entregam) — numero de porta ilegivel, que era justamente
+    # o que motivava o z19. Em z18 os mesmos rotulos dobram (6,0-6,6 / 5,2-5,7 pt) com campo de
+    # visao IDENTICO. E' o mesmo mecanismo que matou o z20 na pesquisa; aqui ele ja morde no z19.
+    basemap_tiles = _fetch_basemap(frame_3857.bounds, width, zoom_bump=-1) if basemap else None
+
+    return _render_camada(
+        titulo=_ENTORNO_TITULO_PNG,
+        legenda_titulo=_ENTORNO_LEGENDA_TITULO,
+        legenda_entries=[],  # sem faixas de choropleth (camada so-basemap)
+        color_fn=_color_for_score,  # irrelevante quando pins_only=True
+        source_values=pd.Series(dtype="float64"),  # idem
+        sector_records_3857=[],
+        circle_3857=None,
+        center_3857=center_3857,
+        pins=[],
+        ultra_pins=[],
+        mostrar_legenda_pins=False,
+        basemap=basemap_tiles,
+        bounds=frame_3857.bounds,
+        lat=lat,
+        lng=lng,
+        raio_km=RAIO_ENTORNO_DISPLAY_KM,
+        n_setores=0,
+        width=width,
+        height=height,
+        pins_only=True,
+        valor_ponto=_ENTORNO_VALOR_LINHA,
+        rotulo_escala=_ENTORNO_ROTULO_ESCALA,
+    )
+
+
 def render_mapas_censitarios_combinados(
     lat: float,
     lng: float,
@@ -1053,7 +1177,8 @@ def render_mapas_censitarios_combinados(
     """Gera as camadas do Relatorio Pontual Censitario numa unica chamada.
 
     Retorna `{"densidade": png, "renda": png, "score": png, "renda_domiciliar": png,
-    "socioeconomia": png, "concorrentes": png}` e, CONDICIONALMENTE, `"residual"` (ver abaixo).
+    "socioeconomia": png, "concorrentes": png, "entorno": png}` e, CONDICIONALMENTE,
+    `"residual"` (ver abaixo).
     `renda_domiciliar` e o choropleth de renda media domiciliar (renda_pc x moradores x uplift
     SETORIAL x fator temporal); `concorrentes` e o mapa SO de pins (basemap + pins, sem
     choropleth). As camadas de choropleth de SETOR e a de pins compartilham basemap, bbox,
@@ -1073,6 +1198,14 @@ def render_mapas_censitarios_combinados(
       gracioso (hexes ausentes ficam sem cor, nao levantam excecao).
     READ-ONLY sobre o M1: `oferta_efetiva_disponivel` e `score_setor_2022_calibrado` sao apenas
     LIDOS; nenhum score/flag/artefato e' recalculado ou escrito.
+
+    BLK-RELPON-11 (pagina "Imagem do Entorno"):
+    - `entorno` e o mapa de QUADRA do entorno imediato: so o basemap CartoDB Voyager + o ponto
+      central, num raio de EXIBICAO de `RAIO_ENTORNO_DISPLAY_KM` (~0,14 km -> lado curto ~302 m
+      do frame), com `zoom_bump=-1` (z18 — gate visual, ver `_render_camada_entorno`), SEM pins
+      e SEM circulo de raio. Ao contrario de `residual`,
+      a chave e' INCONDICIONAL: depende so de `lat`/`lng` e cai no canvas claro quando nao ha
+      tile (`basemap=False`, sem rede ou sem o extra `[basemap]`).
 
     READ-ONLY sobre o M1: o motor (`analisar_ponto_censitario_setores`,
     `setor_censitario_intersecao_area_1p5km`, raio 1.5 km) e INTOCADO; toda a mudanca e
@@ -1325,6 +1458,16 @@ def render_mapas_censitarios_combinados(
         pins_only=True,
         **common,
     )
+    # BLK-RELPON-11: camada `entorno` (mapa de quadra, raio de EXIBICAO ~0,14 km). Tem frame,
+    # bbox e zoom PROPRIOS -> nao entra no `common`. INCONDICIONAL: devolve sempre bytes (canvas
+    # claro no fallback offline), por isso vai dentro do dict literal abaixo.
+    entorno_png = _render_camada_entorno(
+        lat,
+        lng,
+        basemap=basemap,
+        width=width,
+        height=height,
+    )
 
     mapas: dict[str, bytes] = {
         "densidade": densidade_png,
@@ -1333,6 +1476,7 @@ def render_mapas_censitarios_combinados(
         "renda_domiciliar": renda_domiciliar_png,
         "socioeconomia": socioeconomia_png,
         "concorrentes": concorrentes_png,
+        "entorno": entorno_png,
     }
 
     # Camada `residual` (raio de EXIBICAO de 5 km, hexagonos H3): CONDICIONAL. Sem `hexes_df` ou

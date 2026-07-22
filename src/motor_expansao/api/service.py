@@ -293,7 +293,7 @@ def gerar_pdf_ponto(
     *,
     rotulo: str | None = None,
 ) -> bytes:
-    """Gera o PDF de 7 paginas do Relatorio Pontual Censitario (BLK-API-04).
+    """Gera o PDF de 8 paginas do Relatorio Pontual Censitario (BLK-API-04).
 
     Enriquecido (READ-ONLY): mapas com *ruas* (basemap online, DEC-004) + pins de
     concorrentes/Ultra, e Big Numbers de SAM/residual via `residual`. Fallback

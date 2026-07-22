@@ -309,6 +309,45 @@ Latência no bot Telegram (`api/service.py:341` gera o mesmo PDF): mitigada por 
 permitem uso programático de `server.arcgisonline.com` sem conta. Tecnicamente ele responde sem chave e é o
 default de QGIS/Leaflet/contextily há anos — isso é **prática de mercado, não parecer jurídico**.
 
+> ⚠ **CAMINHO DECIDIDO EM 2026-07-22 (gate de Vinicius): A1 — mapa de quadra CartoDB Voyager.**
+> **A DEC-018 NÃO foi aberta e o Esri está FORA.** O texto acima sobre Esri/DEC-018 fica só como
+> registro histórico do que foi avaliado — não é plano pendente. Bloco **concluído em 2026-07-22**;
+> ver `tasks/completed.md`. Zoom final: **z18** (`zoom_bump=-1`), decidido no gate visual.
+
+---
+
+### BLK-RELPON-12 — De-staling da documentação do Relatório Pontual (dívida acumulada)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Baixa (documentação; zero código, zero teste, READ-ONLY sobre o M1). |
+| **Prioridade** | Média — a dívida cresce a cada bloco da família RELPON e já produz doc que **mente** sobre a contagem de páginas. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | Pendente. |
+| **Depende de** | BLK-RELPON-11 (concluído 2026-07-22). |
+| **Autonomia** | **loop-safe** — só edita Markdown/YAML de `docs/`, não toca M1, VPS, segredos nem ingestão ao vivo. |
+
+**Origem.** Deferido **de propósito** por Planner, Builder e QA do BLK-RELPON-11, com o mesmo
+argumento: os docs já estavam stale em vários eixos ANTES daquele bloco, e um conserto parcial
+(só a contagem de páginas) os deixaria **contraditórios** — pior que stale. Consertar de uma vez.
+
+**Escopo (4 docs + 5 testes):**
+
+1. `docs/relatorio_pontual_censitario.md` — stale em **5 eixos herdados** (anteriores ao RELPON-11).
+2. `docs/api_geoespacial_contrato.md` — diz "PDF de 7 páginas"; são **8**.
+3. `docs/api_geoespacial_openapi.yaml` — idem.
+4. `docs/api_geoespacial_uso.md` — idem, e o `uso.md:166` ainda lista a estrutura de páginas
+   **pré-BLK-RELPON-01** (antes da consolidação dos choropleths em "Mapas de calor").
+5. Renomear **5 testes com nome stale** (`..._6_paginas` / `count_6`) cujo nome não bate mais com o
+   que asseridam — puramente cosmético, sem mudar asserção.
+
+**Ordem final de páginas hoje (8, sem opcionais), para o Builder usar como fonte:** Capa ->
+Imagem do Entorno -> Socioeconomia e Residual Fitness -> Mapas de calor -> Concorrentes ->
+Perfil do Bairro/Distrito -> Big Numbers -> Realização. Teto com todos os opcionais: **12**.
+
+**Guardrail.** §5 READ-ONLY M1. Não alterar código de render nem asserções de teste — só nomes de
+teste e texto de doc. §2 acentuação vale para o texto novo.
+
 ---
 
 ## Relatório Municipal — novo formato (2026-06-19, pedido de Vini)

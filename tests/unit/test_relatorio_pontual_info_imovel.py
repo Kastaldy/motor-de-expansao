@@ -72,20 +72,20 @@ def test_info_valor_nao_numerico_em_campo_num_nao_quebra():
 # --------------------------------------------------------------------------- #
 def test_classico_sem_info_mantem_6_paginas():
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(_MIN_RESULT, None)
-    assert b"/Count 7" in pdf_bytes
+    assert b"/Count 8" in pdf_bytes
     assert _TITULO not in pdf_bytes
 
 
 def test_classico_com_info_adiciona_pagina_e_titulo():
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(_MIN_RESULT, None, info_imovel=_INFO_OK)
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 9" in pdf_bytes
     assert _TITULO in pdf_bytes
     assert b"R$ 20.000,00" in pdf_bytes  # valor formatado do aluguel
 
 
 def test_censitario_com_info_adiciona_pagina():
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(_MIN_RESULT, None, info_imovel=_INFO_OK)
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 9" in pdf_bytes
     assert _TITULO in pdf_bytes
 
 
@@ -93,7 +93,7 @@ def test_info_com_campos_ausentes_usa_nd_sem_quebrar():
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
         _MIN_RESULT, None, info_imovel={"metragem_m2": 1200}
     )
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 9" in pdf_bytes
     assert b"n/d" in pdf_bytes  # campos nao informados aparecem como n/d
 
 
@@ -108,4 +108,4 @@ def test_fotos_e_info_juntas_somam_duas_paginas():
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
         _MIN_RESULT, None, fotos=[foto, foto], info_imovel=_INFO_OK
     )
-    assert b"/Count 9" in pdf_bytes  # capa + fotos + info + 4 conteudo + credito
+    assert b"/Count 10" in pdf_bytes  # capa + fotos + info + 4 conteudo + credito

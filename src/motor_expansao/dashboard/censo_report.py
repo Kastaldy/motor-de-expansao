@@ -13,7 +13,7 @@ from PIL import Image, ImageOps
 from motor_expansao.api.maps_geocoder import build_search_url
 from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSITARIO
 
-# Cabecalhos canonicos das 7 paginas do template Ultra. Renderizam em latin-1 (core font
+# Cabecalhos canonicos das 8 paginas do template Ultra. Renderizam em latin-1 (core font
 # Helvetica do fpdf2), que cobre integralmente os acentos portugueses -- o que e PROIBIDO e
 # tipografia fora de latin-1 (travessao/bullet/seta/reticencias/aspas curvas/(c)), que vira
 # "?" silenciosamente via _ascii(..., errors="replace").
@@ -23,10 +23,13 @@ from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSIT
 # Bairro/Distrito" entre Concorrentes e Big Numbers; e o grid do slide de mapas passou a 2x2
 # com 4 camadas (densidade/renda/score/renda_domiciliar). Estado ANTERIOR a este bloco:
 # 6 paginas. BLK-RELPON-10: novo slide-hero "Socioeconomia e Residual Fitness" ANTES de
-# "Mapas de calor" -> 7 paginas: Capa -> Socioeconomia e Residual Fitness -> Mapas de calor ->
+# "Mapas de calor" -> 7 paginas. BLK-RELPON-11 (caminho A1, gate Vinicius 2026-07-22): nova
+# pagina "Imagem do Entorno" (mapa de quadra) entre a Capa e o slide-hero -> 8 paginas:
+# Capa -> Imagem do Entorno -> Socioeconomia e Residual Fitness -> Mapas de calor ->
 # Concorrentes -> Perfil do Bairro/Distrito -> Big Numbers -> Realizacao.
 PDF_SECTION_HEADERS = (
     "Relatório Pontual Censitário",
+    "Imagem do Entorno",
     "Socioeconomia e Residual Fitness",
     "Mapas de calor",
     "Concorrentes",
@@ -53,6 +56,9 @@ PDF_SECTION_HEADERS = (
 # `MAP_LAYER_TITLES[0]` e' o titulo do caminho retrocompativel de `bytes` unico (1 mapa legado ->
 # "densidade"), entao `densidade` tem de continuar no indice 0. A ordem desta tupla NAO define a
 # ordem das paginas (a composicao usa `layers.get(<chave>)`).
+# BLK-RELPON-11: `entorno` (mapa de quadra) entra no FIM pela mesma armadilha — sem estar nesta
+# tupla, `_normalize_mapas` a descartaria em SILENCIO e a pagina nova sairia so com o fallback
+# textual.
 MAP_LAYER_TITLES: tuple[tuple[str, str], ...] = (
     ("densidade", "População - Densidade"),
     ("renda", "Renda per capita"),
@@ -61,6 +67,7 @@ MAP_LAYER_TITLES: tuple[tuple[str, str], ...] = (
     ("socioeconomia", "Socioeconomia"),
     ("residual", "Residual Fitness"),
     ("concorrentes", "Concorrentes e Ultra"),
+    ("entorno", "Imagem do Entorno"),
 )
 
 CSV_SETOR_COLUMNS = [
@@ -503,6 +510,40 @@ def _draw_maps_grid(
 
 
 _SOCIOECONOMIA_RESIDUAL_TITULO = "Socioeconomia e Residual Fitness"
+_ENTORNO_TITULO = "Imagem do Entorno"
+
+
+def _entorno_page(
+    pdf: _UltraPDF,
+    layers: dict[str, bytes],
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+) -> list[tuple[float, float, float, float]]:
+    """(BLK-RELPON-11) Pagina "Imagem do Entorno" (template recente).
+
+    UM mapa de quadra ocupando a pagina (grid 1x1 empacotado): basemap CartoDB Voyager num raio
+    de EXIBICAO de ~0,14 km (lado curto ~302 m), sem choropleth, sem pins e sem circulo de raio
+    — o objetivo e mostrar a morfologia fisica (quadras, vias, nomes de rua) em torno do ponto.
+    Camada ausente -> fallback textual da propria `_draw_maps_grid` (offline-safe).
+    READ-ONLY sobre o M1.
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _ENTORNO_TITULO, rgb=primary)
+    boxes = _draw_maps_grid(
+        pdf,
+        [layers.get("entorno")],
+        top=58.0,
+        bottom=_PAGE_H - 22.0,
+        margin_x=20.0,
+        gap=10.0,
+        pack=True,
+        cols=1,
+        rows=1,
+    )
+    _draw_footer(pdf, with_attribution=True)
+    return boxes
 
 
 def _socioeconomia_residual_page(
@@ -1715,6 +1756,33 @@ def _classico_draw_maps_grid(
     )
 
 
+def _classico_entorno_page(
+    pdf: _UltraPDF,
+    layers: dict[str, bytes],
+    assets: dict[str, bytes | None],
+    *,
+    banda_texto: str,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+) -> list[tuple[float, float, float, float]]:
+    """(BLK-RELPON-11) Pagina "Imagem do Entorno", variante CLASSICA.
+
+    Gemea de `_entorno_page` na geometria do template classico (banda com margem + titulo de
+    secao). O classico e' o DEFAULT em producao (dashboard e bot Telegram), entao esta pagina
+    e' obrigatoria.
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _classico_title_band(pdf, banda_texto, _ENTORNO_TITULO, assets, rgb=primary)
+    boxes = _classico_draw_maps_grid(
+        pdf,
+        [layers.get("entorno")],
+        cols=1,
+        rows=1,
+    )
+    _draw_footer(pdf, with_attribution=True)
+    return boxes
+
+
 def _classico_socioeconomia_residual_page(
     pdf: _UltraPDF,
     layers: dict[str, bytes],
@@ -1992,12 +2060,14 @@ def gerar_pdf_relatorio_pontual_classico(
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
-    7 paginas na ordem canonica (Capa -> Socioeconomia e Residual Fitness -> Mapas de calor ->
-    Concorrentes -> Perfil do Bairro/Distrito -> Big Numbers -> Realizacao), reusando o
-    motor/helpers do template recente. Historico: o BLK-RELPON-01 consolidou os choropleths em um
-    unico slide "Mapas de calor"; o BLK-RELPON-07 inseriu "Perfil do Bairro/Distrito" (5->6
-    paginas) e o slide de mapas passou a GRID 2x2 com 4 camadas; o BLK-RELPON-10 inseriu o
-    slide-hero "Socioeconomia e Residual Fitness" ANTES dos mapas de calor (6->7 paginas).
+    8 paginas na ordem canonica (Capa -> Imagem do Entorno -> Socioeconomia e Residual Fitness ->
+    Mapas de calor -> Concorrentes -> Perfil do Bairro/Distrito -> Big Numbers -> Realizacao),
+    reusando o motor/helpers do template recente. Historico: o BLK-RELPON-01 consolidou os
+    choropleths em um unico slide "Mapas de calor"; o BLK-RELPON-07 inseriu "Perfil do
+    Bairro/Distrito" (5->6 paginas) e o slide de mapas passou a GRID 2x2 com 4 camadas; o
+    BLK-RELPON-10 inseriu o slide-hero "Socioeconomia e Residual Fitness" ANTES dos mapas de calor
+    (6->7 paginas); o BLK-RELPON-11 inseriu "Imagem do Entorno" (mapa de quadra) entre a Capa e o
+    slide-hero (7->8 paginas).
     Difere do recente na ESTETICA: banda turquesa com margem/cantos arredondados e icone
     Ultra, capa com endereco acima do subtitulo, banda magenta de rodape e Realizacao com
     link clicavel + data por extenso. READ-ONLY sobre o M1.
@@ -2015,6 +2085,9 @@ def gerar_pdf_relatorio_pontual_classico(
     # BLK-RELPON-07: 4 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Perfil do
     # Bairro/Distrito=3, Big Numbers=4). BLK-RELPON-10: o slide-hero inserido ANTES delas toma o
     # ordinal 0 (magenta) -> p1..p4 INALTERADOS, sem inversao de cor em cascata.
+    # BLK-RELPON-11: "Imagem do Entorno" vem ANTES do slide-hero -> ordinal -1 (turquesa, por
+    # `-1 % 2 == 1` em Python), mantendo p0..p4 exatamente como estao.
+    p_entorno, _s_entorno = _tema_bicolor(-1)
     p0, _s0 = _tema_bicolor(0)
     p1, _ = _tema_bicolor(1)
     p2, s2 = _tema_bicolor(2)
@@ -2027,6 +2100,9 @@ def gerar_pdf_relatorio_pontual_classico(
         _fotos_imovel_page(pdf, fotos, assets, primary=p1)
     if info_imovel:
         _info_imovel_page(pdf, info_imovel, assets, primary=p2, secondary=s2)
+    _classico_entorno_page(
+        pdf, layers, assets, banda_texto=banda_texto, primary=p_entorno
+    )
     _classico_socioeconomia_residual_page(
         pdf, layers, assets, banda_texto=banda_texto, primary=p0
     )
@@ -2088,16 +2164,19 @@ def gerar_pdf_relatorio_pontual_censitario(
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
-    Estrutura de 7 paginas (BLK-RELPON-01 + -07 + -10): Capa -> Socioeconomia e Residual Fitness
-    -> Mapas de calor -> Concorrentes -> Perfil do Bairro/Distrito -> Big Numbers ->
-    Realizacao/Credito. Os choropleths — antes 1 pagina cada — foram consolidados em UM slide
-    "Mapas de calor" (hoje GRID 2x2 com densidade/renda/score/renda_domiciliar); o BLK-RELPON-07
-    inseriu "Perfil do Bairro/Distrito" entre Concorrentes e Big Numbers (5->6 paginas); o
-    BLK-RELPON-10 inseriu o slide-hero "Socioeconomia e Residual Fitness" (6->7 paginas).
+    Estrutura de 8 paginas (BLK-RELPON-01 + -07 + -10 + -11): Capa -> Imagem do Entorno ->
+    Socioeconomia e Residual Fitness -> Mapas de calor -> Concorrentes -> Perfil do
+    Bairro/Distrito -> Big Numbers -> Realizacao/Credito. Os choropleths — antes 1 pagina cada —
+    foram consolidados em UM slide "Mapas de calor" (hoje GRID 2x2 com
+    densidade/renda/score/renda_domiciliar); o BLK-RELPON-07 inseriu "Perfil do Bairro/Distrito"
+    entre Concorrentes e Big Numbers (5->6 paginas); o BLK-RELPON-10 inseriu o slide-hero
+    "Socioeconomia e Residual Fitness" (6->7 paginas); o BLK-RELPON-11 inseriu "Imagem do Entorno"
+    (mapa de quadra) entre a Capa e o slide-hero (7->8 paginas).
 
     `mapas` aceita o dict de camadas combinadas (`{"densidade","renda","score",
-    "renda_domiciliar","socioeconomia","concorrentes"}` + `"residual"` quando disponivel) ou
-    `bytes` (1 mapa legado, retrocompat). O slide-hero embute socioeconomia+residual lado a lado;
+    "renda_domiciliar","socioeconomia","concorrentes","entorno"}` + `"residual"` quando
+    disponivel) ou `bytes` (1 mapa legado, retrocompat). A pagina "Imagem do Entorno" embute a
+    camada `entorno` em tela cheia; o slide-hero embute socioeconomia+residual lado a lado;
     o slide "Mapas de calor" embute o grid 2x2; a pagina de Concorrentes usa o mapa
     so-pins. `residual` carrega os campos do lookup hex (READ-ONLY) para o Big Numbers.
     `perfil_bairro` (BLK-RELPON-07) e o dict de `agregar_perfil_bairro_distrito` (4 cards
@@ -2114,6 +2193,9 @@ def gerar_pdf_relatorio_pontual_censitario(
     # BLK-RELPON-07: 4 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Perfil do
     # Bairro/Distrito=3, Big Numbers=4). BLK-RELPON-10: o slide-hero inserido ANTES delas toma o
     # ordinal 0 (magenta) -> p1..p4 INALTERADOS, sem inversao de cor em cascata.
+    # BLK-RELPON-11: "Imagem do Entorno" vem ANTES do slide-hero -> ordinal -1 (turquesa, por
+    # `-1 % 2 == 1` em Python), mantendo p0..p4 exatamente como estao.
+    p_entorno, _s_entorno = _tema_bicolor(-1)
     p0, _s0 = _tema_bicolor(0)
     p1, _ = _tema_bicolor(1)
     p2, s2 = _tema_bicolor(2)
@@ -2126,6 +2208,7 @@ def gerar_pdf_relatorio_pontual_censitario(
         _fotos_imovel_page(pdf, fotos, assets, primary=p1)
     if info_imovel:
         _info_imovel_page(pdf, info_imovel, assets, primary=p2, secondary=s2)
+    _entorno_page(pdf, layers, assets, primary=p_entorno)
     _socioeconomia_residual_page(pdf, layers, assets, primary=p0)
     _mapas_calor_page(pdf, layers, assets, primary=p1)
     _competitors_page(pdf, result, layers.get("concorrentes"), assets, primary=p2, secondary=s2)
