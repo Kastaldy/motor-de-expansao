@@ -110,6 +110,35 @@ jobs:
       - name: Dependency audit (pip-audit)
         run: pip-audit --desc --skip-editable --ignore-vuln GHSA-6w46-j5rx-g56g
 
+  # ── Piloto web: typecheck + unit (Vitest) + build (WEB-16) ──────────────────
+  # Gate de qualidade do FRONT do piloto, paralelo ao `test`. Toolchain Node (fora
+  # do container Python do CI) — por isso job separado. Roda nos MESMOS gatilhos do
+  # `test` (push nas branches acima, PR p/ main, workflow_dispatch). Node 20 = mesma
+  # major do estagio Node do Dockerfile.web. READ-ONLY sobre o M1 (so front).
+  # OBS de governanca: este job so vira REQUIRED CHECK quando o Felipe adiciona
+  # `web` a protecao de branch (config do portao, ORQ-21) — o codigo aqui so o define.
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      # TODO(pin de governanca): fixar setup-node por SHA como os demais actions do
+      # arquivo. @v4 e funcional; falta so a pinagem por digest (revisao do ci.yml).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Instalar deps (npm ci)
+        run: npm ci
+      - name: Testes unitarios (Vitest)
+        run: npm run test
+      - name: Typecheck + build (tsc --noEmit + vite build)
+        run: npm run build
+
   # Gate de publicacao (BLK-SEC-01): a imagem so e publicada no GHCR quando o job
   # `test` conclui com sucesso (needs: [test]) E o gatilho e push na default branch.
   # Sem CI verde, este job (e seus steps de push) e pulado — fecha o gap do antigo
