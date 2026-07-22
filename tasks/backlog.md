@@ -467,6 +467,48 @@ Permanece como roadmap até nova decisão de Felipe.
 - BLK-API-08 (concluído 2026-06-12) — ver tasks/completed.md
 
 
+### BLK-API-09 — Bot entrega o relatório DUPLICADO (409 Conflict não tratado)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta |
+| **Status** | **Em PR** — correção do laço de long-polling |
+| **ClickUp** | G4 |
+
+**Sintoma (reportado por Juan, 2026-07-22):** para UM endereço enviado, o bot responde
+"⏳ Gerando..." e entrega o PDF **duas vezes**.
+
+**Causa-raiz (confirmada por sondagem do token, 2026-07-22):** o Telegram só entrega cada update
+a **um** `getUpdates` por vez. Com **duas instâncias do bot no mesmo token**, elas se derrubam
+mutuamente (HTTP **409 Conflict**) e a mesma mensagem chega às duas → **dois relatórios**.
+Sondagem read-only (sem `offset`, nada consumido) mostrou 409 contínuo **nos dois tokens** —
+`@marioescolabot` (teste) **e `@Paulo_Ultra_Bot` (produção)** — a partir de um processo único,
+sem webhook e sem interceptação TLS. Ou seja: **produção também está afetada.**
+
+O código não detectava nada disso: `main()` capturava `RequestException`, imprimia e refazia a
+volta **na hora** (`continue` sem espera) — um busy-loop que só produzia ruído no log.
+
+**Escopo (aditivo, READ-ONLY sobre o M1 — só a camada do bot):** em
+`src/motor_expansao/api/telegram_bot.py`:
+
+1. **Guarda de instância única** — 409 seguidos são contados; até `_MAX_CONFLITOS` o bot espera
+   (um 409 isolado é normal logo após restart, o long-poll anterior ainda está registrado), e ao
+   estourar **aborta com `SystemExit` e mensagem explícita** nomeando a causa. Servir duplicado é
+   pior que parar com erro claro.
+2. **Backoff exponencial** (1s→30s) em qualquer falha de `getUpdates`, no lugar do busy-loop.
+3. **Guarda de reentrega** — `update_id` menor ou igual ao último tratado é ignorado. O `offset` só
+   é confirmado ao Telegram no `getUpdates` seguinte, e a geração do PDF leva ~2 min no meio.
+4. **`flush=True`** nos `print` de `[ESTUDO]`, `[ESTUDO-MUNI]` e "Bot no ar" — sem isso ficavam
+   presos no buffer justamente durante o diagnóstico. Os demais prints do arquivo já tinham.
+
+**Testes:** 6 casos novos em `tests/unit/test_api_telegram_bot.py` cobrindo o laço (antes sem
+cobertura nenhuma). O de reentrega **reproduz a duplicação** no código antigo (dois `processar`
+para o mesmo `update_id`) e passa no novo.
+
+**Fora de escopo (ação de operação, não de código):** localizar e encerrar a instância concorrente.
+O bot local (`APIGeoEspacial/motor-de-expansao-main/`, vivo desde 16/07) coexiste com a instância
+do servidor no token do Paulo. Enquanto as duas viverem, o código novo vai **abortar na subida** —
+que é o comportamento desejado, mas exige a limpeza operacional.
 
 ---
 

@@ -11,6 +11,11 @@ Ponto plugavel: `geo` (geocoding endereco+CEP -> coordenada).
 
 Rodar (com a API no ar):
     API_TELEGRAM_TOKEN=... python -m motor_expansao.api.telegram_bot
+
+UMA instancia por token. O Telegram entrega cada update a um `getUpdates` so; duas
+instancias com o mesmo token se derrubam (HTTP 409) e a mesma mensagem chega as duas
+— a pessoa recebe o relatorio DUPLICADO. O laco detecta isso e aborta (ver
+`_MAX_CONFLITOS`). Para testar em paralelo com producao, use OUTRO token de bot.
 """
 
 from __future__ import annotations
@@ -416,7 +421,8 @@ def processar(
             return [_msg(f"⚠️ {err}\n\nDigite outro nome ou toque em *⬅️ Voltar*.", _KB_VOLTAR)]
         s["etapa"] = None
         # Rastreio sem PII (BLK-SEC-05): chat opaco (hash), sem o nome do solicitante.
-        print(f"[ESTUDO-MUNI] chat={_chat_ref(chat_id, settings.telegram_token)} uf={uf} municipio={t}")
+        print(f"[ESTUDO-MUNI] chat={_chat_ref(chat_id, settings.telegram_token)} uf={uf} municipio={t}",
+              flush=True)
         return [
             _msg(f"📄 *Relatorio Municipal* — {t.strip()} - {uf}\n_Solicitado por {s.get('login', '?')}_"),
             {"pdf": pdf, "filename": f"relatorio_municipal_{uf.lower()}.pdf"},
@@ -438,7 +444,8 @@ def processar(
         return [_msg(f"⚠️ {_erro_api(payload, settings)}", _KB_MENU)]
     # Rastreio sem PII (BLK-SEC-05): chat opaco (hash), sem nome do solicitante nem
     # o endereco resolvido; a coordenada (alvo do estudo) e' dado de negocio.
-    print(f"[ESTUDO] chat={_chat_ref(chat_id, settings.telegram_token)} coord={lat},{lng}")
+    print(f"[ESTUDO] chat={_chat_ref(chat_id, settings.telegram_token)} coord={lat},{lng}",
+          flush=True)
     return [
         _msg(f"📄 Relatorio de *{nome}*\n_Solicitado por {s.get('login', '?')}_"),
         {"pdf": pdf},
@@ -485,6 +492,36 @@ def _enviar(token: str, chat_id: int, acao: dict) -> None:
                   f"{resp2.json().get('description', '')[:120]}", flush=True)
 
 
+# --- guarda de instancia unica (409 Conflict) -------------------------------
+#
+# O Telegram so entrega cada update a UM `getUpdates` por vez. Se DUAS instancias
+# do bot rodam com o MESMO token, elas se derrubam mutuamente (HTTP 409) e a mesma
+# mensagem acaba entregue as duas -> a pessoa recebe o relatorio DUPLICADO.
+#
+# Um 409 isolado e normal logo apos um restart: o long-poll da instancia anterior
+# ainda fica registrado no Telegram por alguns segundos. Muitos 409 SEGUIDOS, nao —
+# ai e outra instancia viva. Melhor parar com erro claro do que servir duplicado.
+_MAX_CONFLITOS = 8
+
+_AVISO_CONFLITO = (
+    "Outra instancia do bot esta fazendo getUpdates com ESTE MESMO token "
+    "(HTTP 409). Duas instancias recebem a mesma mensagem, entao cada pedido "
+    "vira DOIS relatorios. Encerre a outra instancia (inclusive em outra "
+    "maquina/servidor) e suba de novo."
+)
+
+
+def _espera(tentativa: int) -> float:
+    """Backoff exponencial 1s -> 30s. Sem isso o laco de erro vira busy-loop."""
+    return min(2.0 ** tentativa, 30.0)
+
+
+def _status_http(exc: requests.RequestException) -> int | None:
+    """Codigo HTTP do erro, quando ha resposta (409 vs. queda de rede)."""
+    resp = getattr(exc, "response", None)
+    return None if resp is None else int(resp.status_code)
+
+
 def _configurar_menu_comandos(token: str) -> None:
     """Define o menu de comandos do bot (substitui qualquer lista antiga, ex.: /analisar)."""
     comandos = [
@@ -510,16 +547,37 @@ def main() -> None:
 
     _configurar_menu_comandos(token)
     _carregar_sessoes(settings)  # restaura quem ja estava logado antes do restart
-    print(f"Bot no ar. API em {settings.api_base_url}. Ctrl+C para sair.")
+    print(f"Bot no ar. API em {settings.api_base_url}. Ctrl+C para sair.", flush=True)
     offset: int | None = None
+    # Ultimo update_id JA tratado. O offset so e confirmado ao Telegram no
+    # getUpdates SEGUINTE — e a geracao do PDF leva ~2min no meio. Se algo
+    # reentregar o mesmo update nesse intervalo, isto barra o 2o relatorio.
+    ultimo_tratado = -1
+    conflitos = 0   # 409 seguidos (outra instancia no mesmo token)
+    falhas = 0      # erros de rede seguidos
     while True:
         try:
             updates = _tg(token, "getUpdates", offset=offset, timeout=30)
         except requests.RequestException as exc:
-            print(f"getUpdates falhou: {exc}")
+            if _status_http(exc) == 409:
+                conflitos += 1
+                print(f"[CONFLITO {conflitos}/{_MAX_CONFLITOS}] {_AVISO_CONFLITO}", flush=True)
+                if conflitos >= _MAX_CONFLITOS:
+                    raise SystemExit(f"Abortando. {_AVISO_CONFLITO}") from exc
+                time.sleep(_espera(conflitos))
+                continue
+            falhas += 1
+            print(f"getUpdates falhou: {exc}", flush=True)
+            time.sleep(_espera(falhas))
             continue
+        conflitos = 0
+        falhas = 0
         for upd in updates.get("result", []):
             offset = upd["update_id"] + 1
+            if upd["update_id"] <= ultimo_tratado:
+                print(f"[DUPLICADO] update {upd['update_id']} reentregue — ignorado.", flush=True)
+                continue
+            ultimo_tratado = upd["update_id"]
             msg = upd.get("message") or upd.get("edited_message")
             if not msg or "text" not in msg:
                 continue
