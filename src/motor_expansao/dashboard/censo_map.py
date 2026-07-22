@@ -422,11 +422,21 @@ def _draw_legend_camada(
     y: int,
     titulo: str,
     entries: list[tuple[str, tuple[int, int, int, int]]],
+    *,
+    mostrar_legenda_pins: bool = True,
 ) -> None:
     """Legenda por camada: faixas fixas (label + amostra de cor) + pins de referencia.
 
     BLK-RELPON-06 (D4): fontes/layout ampliados (`_FS_LEGENDA_TITULO`/`_FS_LEGENDA_CORPO`,
     linhas/swatch maiores) para o texto ficar legivel no PDF (celula ~299pt na tira 1x3).
+
+    BLK-RELPON-10-FU1 (gate de Vinicius, 2026-07-22): `mostrar_legenda_pins=False` omite a
+    linha "Pins: Ultra e concorrentes" -- usado SO pela camada `residual`, que deixou de
+    desenhar pins (a 5 km a densidade de logos cobria o choropleth). O default `True` mantem
+    as 5 camadas pre-existentes byte-a-byte identicas, INCLUSIVE quando o raio nao tem nenhum
+    concorrente: a legenda NAO pode reagir ao `pins` estar vazio, senao a byte-identidade
+    provada pelo QA quebraria nesse cenario. "Ponto central" permanece nas duas: o pin do
+    centro continua sendo desenhado no mapa.
     """
     title_font = _font(_FS_LEGENDA_TITULO)
     body_font = _font(_FS_LEGENDA_CORPO)
@@ -457,7 +467,8 @@ def _draw_legend_camada(
     # concorrentes" e mais longa que o rotulo de faixa mais longo e transbordaria do
     # canvas a `_FS_LEGENDA_CORPO` (ver constante acima).
     _draw_text(draw, (x + 68, yy), "Ponto central", font=caption_font)
-    _draw_text(draw, (x + 68, yy + 30), "Pins: Ultra e concorrentes", font=caption_font)
+    if mostrar_legenda_pins:
+        _draw_text(draw, (x + 68, yy + 30), "Pins: Ultra e concorrentes", font=caption_font)
 
 
 def _draw_center_pin(
@@ -645,6 +656,7 @@ def _render_camada(
     street_gain: float | None = None,
     street_cap: int | None = None,
     valor_ponto: str | None = None,
+    mostrar_legenda_pins: bool = True,
 ) -> bytes:
     """Desenha UMA camada (mesmos bbox/projecao/basemap/pins; varia fill + legenda).
 
@@ -793,7 +805,10 @@ def _render_camada(
 
     meters_per_px = 1 / scale
     _draw_scale_bar(draw, map_box, meters_per_px)
-    _draw_legend_camada(draw, legend_x, 96, legenda_titulo, legenda_entries)
+    _draw_legend_camada(
+        draw, legend_x, 96, legenda_titulo, legenda_entries,
+        mostrar_legenda_pins=mostrar_legenda_pins,
+    )
 
     # D8=B (BLK-EST-02): rodape enxuto. Atribuicao CARTO (exigida pela licenca DEC-004)
     # permanece quando ha basemap; some no fallback offline (sem tile, sem atribuicao).
@@ -928,8 +943,6 @@ def _render_camada_residual_hex(
     lng: float,
     hexes_df: pd.DataFrame | None,
     *,
-    competitors_df: pd.DataFrame | None,
-    ultra_df: pd.DataFrame | None,
     basemap: bool,
     width: int,
     height: int,
@@ -956,7 +969,7 @@ def _render_camada_residual_hex(
 
     metric_crs = _local_metric_crs(lat, lng)
     to_3857_local = _transformer(metric_crs, CRS_WEB_MERCATOR)
-    to_wgs84 = _transformer(metric_crs, CRS_ORIGEM_CENSO)
+    # (o transformer para WGS84 saiu no BLK-RELPON-10-FU1: so servia ao recorte de pins.)
     # Transformer lat/lng -> 3857 criado UMA vez e reusado por todos os hexes (`_transformer`
     # NAO e' cacheado; recria-lo por hex custaria caro). Espelha o `_to_3857` compartilhado da
     # orquestradora (Fix 1 BLK-PERF-01a).
@@ -970,20 +983,9 @@ def _render_camada_residual_hex(
     if not hex_records:
         return None
 
-    # Pins do frame de 5 km: recorte de EXIBICAO por bbox WGS84 (nao e' analise nova).
-    frame_wgs84 = _project_geometry(frame_metric, to_wgs84)
-    minx, miny, maxx, maxy = frame_wgs84.bounds
-
-    def _no_frame(points_df: pd.DataFrame | None) -> pd.DataFrame | None:
-        if points_df is None or points_df.empty or not {"lat", "lng"}.issubset(points_df.columns):
-            return None
-        p_lat = pd.to_numeric(points_df["lat"], errors="coerce")
-        p_lng = pd.to_numeric(points_df["lng"], errors="coerce")
-        return points_df.loc[p_lat.between(miny, maxy) & p_lng.between(minx, maxx)]
-
-    pins = _project_points(_no_frame(competitors_df), lat, lng)
-    ultra_pins = _project_points(_no_frame(ultra_df), lat, lng)
-
+    # BLK-RELPON-10-FU1: esta camada NAO desenha pins (ver comentario na chamada de
+    # `_render_camada` abaixo), entao o recorte de pontos por bbox do frame foi removido
+    # junto com os parametros `competitors_df`/`ultra_df`.
     basemap_tiles = _fetch_basemap(frame_3857.bounds, width) if basemap else None
 
     eff_alpha = _CHOROPLETH_ALPHA if choropleth_alpha is None else int(choropleth_alpha)
@@ -1004,8 +1006,14 @@ def _render_camada_residual_hex(
         sector_records_3857=hex_records,
         circle_3857=circle_3857,
         center_3857=center_3857,
-        pins=pins,
-        ultra_pins=ultra_pins,
+        # BLK-RELPON-10-FU1 (gate de Vinicius, 2026-07-22): SEM pins nesta camada. A area a
+        # 5 km e ~11x a de 1,5 km (r^2), entao a densidade de logos cobria o choropleth --
+        # medido na amostra da Av. Paulista, onde os marcadores tapavam quase todos os
+        # hexagonos. Quem esta instalado ja e mostrado na pagina "Concorrentes"; este mapa
+        # existe para responder ONDE HA ESPACO, e a cor e o dado dele.
+        pins=[],
+        ultra_pins=[],
+        mostrar_legenda_pins=False,
         basemap=basemap_tiles,
         bounds=frame_3857.bounds,
         lat=lat,
@@ -1333,8 +1341,6 @@ def render_mapas_censitarios_combinados(
         lat,
         lng,
         hexes_df,
-        competitors_df=competitors_df,
-        ultra_df=ultra_df,
         basemap=basemap,
         width=width,
         height=height,

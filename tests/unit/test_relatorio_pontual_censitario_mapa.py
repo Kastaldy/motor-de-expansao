@@ -734,6 +734,50 @@ def test_camada_residual_presente_com_hexes_df_e_png_valido():
     assert len(_all_colors(png)) > 20
 
 
+def test_camada_residual_nao_desenha_pins_blk_relpon_10_fu1():
+    """BLK-RELPON-10-FU1: a camada `residual` (5 km) NAO desenha pins de concorrente/Ultra.
+
+    Gate visual de Vinicius (2026-07-22): a area a 5 km e ~11x a de 1,5 km (r^2), entao a
+    densidade de logos cobria o choropleth -- medido na amostra da Av. Paulista, onde os
+    marcadores tapavam quase todos os hexagonos. Quem esta instalado ja aparece na pagina
+    "Concorrentes"; este mapa responde ONDE HA ESPACO, e a cor e o dado dele.
+
+    Teste DIFERENCIAL: renderiza duas vezes, com e sem pontos, e exige que o PNG do
+    `residual` seja BYTE-IDENTICO -- prova que nenhum pixel do mapa depende dos pontos. O
+    mesmo par prova o inverso na camada `socioeconomia` (1,5 km), que DEVE continuar com
+    pins: sem essa segunda assercao, remover os pins de TODAS as camadas passaria no teste.
+    """
+    setores = _setores_um_quadrado()
+    hexes = _hexes_sinteticos()
+    # pontos bem no centro do frame -> cairiam dentro dos dois mapas se houvesse pins
+    competitors = pd.DataFrame(
+        [{"nome_unidade": "Concorrente", "lat": LAT_C, "lng": LNG_C + 0.004, "rede": "smart_fit"}]
+    )
+    ultra = pd.DataFrame([{"nome_unidade": "Ultra", "lat": LAT_C + 0.003, "lng": LNG_C}])
+
+    def _render(com_pontos: bool):
+        return render_mapas_censitarios_combinados(
+            LAT_C, LNG_C, setores, width=1000, height=760, basemap=False, hexes_df=hexes,
+            competitors_df=competitors if com_pontos else None,
+            ultra_df=ultra if com_pontos else None,
+        )
+
+    com, sem = _render(True), _render(False)
+
+    # (1) residual e imune aos pontos -> nenhum pin foi desenhado
+    assert com["residual"] == sem["residual"], (
+        "a camada `residual` mudou ao receber concorrentes/Ultra -- ela nao pode desenhar pins"
+    )
+    # (2) e a legenda nao promete pins que nao existem
+    assert b"Pins: Ultra e concorrentes" not in com["residual"]
+
+    # (3) trava anti-vacuo: socioeconomia (1,5 km) CONTINUA com pins, senao o teste (1)
+    # passaria trivialmente caso alguem removesse os pins de todas as camadas.
+    assert com["socioeconomia"] != sem["socioeconomia"], (
+        "a camada `socioeconomia` deveria continuar desenhando pins"
+    )
+
+
 def test_camada_residual_ausente_sem_hexes_df_ou_sem_hex_no_disco():
     setores = _setores_um_quadrado()
     # (a) sem `hexes_df` -> chave ausente (default preserva todos os callers antigos).
