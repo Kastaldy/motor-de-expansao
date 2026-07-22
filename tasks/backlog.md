@@ -111,9 +111,13 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | Média |
-| **Status** | **Em PR — TESTE, não é a versão definitiva** (validação visual pendente com Juan) |
+| **Criticidade** | Alta |
+| **Status** | **Em PR (#138) — TESTE, não é a versão definitiva.** Bloqueado pela [DEC-018](../docs/decisions/DEC-018.md) (PROPOSTA, aguardando Felipe) + validação visual pendente com Juan |
 | **ClickUp** | — |
+
+> **Criticidade Alta, não Média** (corrigido 2026-07-22 após a revisão automática do PR #138): o
+> precedente direto — DEC-004, tiles online no MESMO relatório — é Alta, pelo mesmo motivo (desvia do
+> guardrail §2 "não criar dependência de API ao vivo"). Merge exige a label `aprovado-humano`.
 
 **Escopo (aditivo, READ-ONLY sobre o M1):** `censo_map.render_foto_satelite_ponto()` monta um PNG
 da vista aérea do ponto (Esri World Imagery + `Reference/World_Transportation` para rótulos — a mesma
@@ -133,17 +137,18 @@ nos dois casos: com `_FOTOS_MAX=2`, dividir a página descartaria em silêncio u
 **Falha de rede → `None` → o PDF sai como hoje, sem a página** (mesmo fallback gracioso do
 `_fetch_basemap`, DEC-004). Nenhum caminho novo pode derrubar a geração do relatório.
 
-**PENDÊNCIA BLOQUEANTE PARA PRODUÇÃO — licença:** o `tou_summary.pdf` da Esri (21/04/2025) diz
-*"If you do not have Esri software, you must purchase an ArcGIS Online subscription"*. O tile hoje é
-puxado anônimo de `server.arcgisonline.com`. Uso em produção exige conta no **ArcGIS Location
-Platform** (grátis, 2M tiles/mês) e a chave via env. O mesmo documento proíbe **self-host** e
-**redistribuição** do tile — por isso a imagem é sempre externa e o crédito da Esri é desenhado na
-foto. Decisão de Felipe antes de subir para produção.
+**BLOQUEANTE — [DEC-018](../docs/decisions/DEC-018.md), PROPOSTA e aguardando Felipe.** A revisão
+automática do PR #138 reprovou (severidade ALTA) por dependência de rede nova não coberta por DEC: o
+`REVIEW.md` (ALTA #5) só permite rede fora da carga do dashboard nas exceções DEC-004/010/011, e a
+Esri é serviço novo. A DEC-018 foi redigida e traz o levantamento completo — inclusive a **licença**
+(o `tou_summary.pdf` da Esri, 21/04/2025, exige assinatura do ArcGIS Online; o tile hoje é anônimo) e
+o caminho de regularização (**ArcGIS Location Platform**, cadastro grátis, 2M tiles/mês, chave via
+env). Duas perguntas abertas ao final da DEC esperam decisão.
 
-**Ressalva §2 ("não criar dependência de API ao vivo no dashboard de produção"):** a geração do PDF
-já depende de tiles externos ao vivo desde a DEC-004 (basemap CARTO em `_fetch_basemap`); esta página
-entra na mesma categoria e com o mesmo fallback. Não introduz dependência nova no **dashboard**, só no
-**PDF**. Vale confirmar com Felipe se a leitura é essa.
+**Hermeticidade da suíte (achado MÉDIA do mesmo review, corrigido):** `render_foto_satelite_ponto` é
+chamada DENTRO de `gerar_pdf_ponto` e de `pages.py`, então testes que só mockavam a função final
+passaram a fazer HTTP real. Corrigido na raiz com a fixture `autouse` `_sat_offline` no `conftest.py`,
+em vez de remendar arquivo por arquivo.
 
 **Testes:** `tests/unit/test_relatorio_pontual_foto_satelite.py` (15 casos, zero acesso a rede —
 tile mockado por monkeypatch): matemática de tile, geometria pura da célula, fallback de rede,

@@ -28,3 +28,4 @@ Emendas entram no próprio arquivo da DEC, não no índice.
 - DEC-015 — *reservado* (a numeração pulou de 014 para 016)
 - [DEC-016](DEC-016.md) — Portão da `main` por checks de CI (0 aprovações) e auto-merge de blocos Baixa/Média
 - [DEC-017](DEC-017.md) — Normalização de EOL (`tasks/`+`docs/` em LF) + enxugamento do CODEOWNERS
+- [DEC-018](DEC-018.md) — Vista aérea por tiles de satélite (Esri) no Relatório Pontual Censitário (BLK-SAT-01) — **PROPOSTA, aguardando Felipe**
