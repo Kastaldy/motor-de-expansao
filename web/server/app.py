@@ -759,7 +759,12 @@ def _rank_municipios(
     para o front fazer o drill-down (clicar -> filtra para o município)."""
     if not len(df) or "nome_municipio" not in df.columns:
         return []
-    g = df.groupby("nome_municipio")
+    # observed=True: nome_municipio e Categorical com o dicionario NACIONAL de
+    # municipios (parquet dict-encoded); sem isto o groupby cria 1 grupo por
+    # categoria — inclusive municipios de OUTRAS UFs, com 0 hexes. Aqui o
+    # serie[serie > 0] abaixo ja filtrava esses fantasmas, mas observed=True evita
+    # gerar ~4,6k grupos vazios (e silencia o FutureWarning do pandas).
+    g = df.groupby("nome_municipio", observed=True)
     serie = g.size() if modo == "count" else g[value_col].sum()
     serie = serie[serie > 0].sort_values(ascending=False).head(10)
     itens: list[dict[str, Any]] = []
@@ -803,7 +808,7 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     white = residual[residual["n_concorrentes_est"] == 0] if len(residual) else residual
     base_fila = white if len(white) else residual
     n_reco = (
-        int(base_fila.groupby("nome_municipio")["oferta_efetiva_disponivel"].sum().gt(0).sum())
+        int(base_fila.groupby("nome_municipio", observed=True)["oferta_efetiva_disponivel"].sum().gt(0).sum())
         if len(base_fila)
         else 0
     )
@@ -1022,8 +1027,12 @@ def geocode(q: str) -> dict[str, Any]:
 @app.get("/api/municipios/{uf}")
 def municipios(uf: str) -> dict[str, Any]:
     df = carregar_uf(uf)
+    # observed=True e OBRIGATORIO: nome_municipio e Categorical com o dicionario
+    # NACIONAL (parquet dict-encoded). Sem isto, o groupby default (observed=False)
+    # gera 1 grupo por CATEGORIA — os ~4,6k municipios de outras UFs (0 hexes na
+    # particao) vazavam para a lista, poluindo o seletor com municipios fantasma.
     g = (
-        df.groupby("nome_municipio")
+        df.groupby("nome_municipio", observed=True)
         .agg(
             n_hex=("hex_id", "size"),
             residual=("oferta_efetiva_disponivel", "sum"),
@@ -1723,7 +1732,7 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
         return _numf(row.get(c)) if row is not None else None
 
     rows: list[dict[str, Any]] = []
-    for nome_u, g in sel.groupby("unidade"):
+    for nome_u, g in sel.groupby("unidade", observed=True):
         nome = _clean(nome_u)
         if normalizar_unidade(nome) in _EXEC_EXCLUIR:
             continue  # unidade excluída da rede comparável (pedido de Felipe)

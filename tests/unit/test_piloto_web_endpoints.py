@@ -343,3 +343,36 @@ def test_leituras_nao_mutam_artefatos(synth_data: Path) -> None:
 
     depois = _snapshot(synth_data)
     assert antes == depois, "backend escreveu/alterou artefato fora do cache durante leituras"
+
+
+def test_municipios_ignora_categorias_fantasma(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regressao (bug de prod 2026-07-22): `nome_municipio` vem como Categorical com
+    o dicionario NACIONAL de municipios (parquet dict-encoded -> a particao uf=SP
+    carrega ~5,3k categorias, mas so 645 presentes). O groupby default
+    (observed=False) gera 1 grupo por CATEGORIA — inclusive municipios de OUTRAS UFs,
+    com 0 hexes -> ~4,6k municipios FANTASMA vazavam no seletor. O endpoint deve
+    devolver SO os municipios presentes na particao."""
+    part = tmp_path / "outputs" / "hexagonos_dashboard_enriquecido" / "uf=SP"
+    part.mkdir(parents=True)
+    df = _synthetic_enriched()
+    presentes = list(dict.fromkeys(df["nome_municipio"]))  # distintos, ordem estavel
+    fantasmas = [f"Fantasma {i}" for i in range(50)]  # municipios de outras UFs, sem hex
+    df["nome_municipio"] = pd.Categorical(df["nome_municipio"], categories=presentes + fantasmas)
+    df.to_parquet(part / "part-0.parquet")
+    _point_app_at(monkeypatch, tmp_path)
+    try:
+        # sanity: o parquet PRESERVOU as categorias fantasma (senao o teste seria vacuo)
+        check = pd.read_parquet(part / "part-0.parquet", columns=["nome_municipio"])
+        assert str(check["nome_municipio"].dtype) == "category"
+        assert len(check["nome_municipio"].cat.categories) == len(presentes) + len(fantasmas)
+
+        nomes = [m["nome"] for m in pilot.municipios("SP")["municipios"]]
+        assert len(nomes) == len(presentes), (
+            f"esperava {len(presentes)} municipios reais, veio {len(nomes)} "
+            "(categoria sem hex vazando = regressao do observed=False)"
+        )
+        assert not any(str(n).startswith("Fantasma") for n in nomes)
+    finally:
+        _clear_caches()
