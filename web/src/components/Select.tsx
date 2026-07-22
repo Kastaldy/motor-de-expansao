@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { filtrarOpcoes } from '../lib/select-filter'
 
 /* ---------------------------------------------------------------------------
    Dropdown customizado. O <select> nativo abre o popup de opcoes em BRANCO no
@@ -21,13 +22,6 @@ export interface SelectProps {
   /** Texto do botao quando nada esta selecionado (value sem opcao correspondente). */
   placeholder?: string
 }
-
-const norm = (s: string) =>
-  s
-    .normalize('NFD')
-    .replace(/\p{Diacritic}/gu, '')
-    .toLowerCase()
-    .trim()
 
 export default function Select({
   value,
@@ -54,11 +48,10 @@ export default function Select({
   const temBusca = buscavel ?? options.length > 8
   const selecionado = options.find((o) => o.value === value)
 
-  const filtradas = useMemo(() => {
-    if (!temBusca || !busca.trim()) return options
-    const q = norm(busca)
-    return options.filter((o) => norm(o.label).includes(q))
-  }, [options, busca, temBusca])
+  const filtradas = useMemo(
+    () => (temBusca ? filtrarOpcoes(options, busca) : options),
+    [options, busca, temBusca],
+  )
 
   useEffect(() => {
     if (!aberto) return

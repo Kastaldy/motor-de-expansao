@@ -1,0 +1,65 @@
+import { describe, expect, it } from 'vitest'
+import { alunos, brl, coord, num, pct } from './format'
+
+describe('num', () => {
+  it('formata inteiro com separador de milhar pt-BR', () => {
+    expect(num(1234567)).toBe('1.234.567')
+  })
+  it('respeita casas decimais', () => {
+    expect(num(1234.5, 2)).toBe('1.234,50')
+  })
+  it('zero e um numero valido (nao vira n/d)', () => {
+    expect(num(0)).toBe('0')
+  })
+  it.each([null, undefined, NaN])('null/undefined/NaN -> "n/d" (nunca "0")', (v) => {
+    expect(num(v)).toBe('n/d')
+  })
+})
+
+describe('brl', () => {
+  it('reais com milhar', () => {
+    expect(brl(1500)).toBe('R$ 1.500')
+  })
+  it('compacto usa "mi" acima de 1 milhao', () => {
+    expect(brl(1_500_000, true)).toBe('R$ 1,5 mi')
+  })
+  it('compacto usa "mil" acima de 1 mil', () => {
+    expect(brl(2400, true)).toBe('R$ 2 mil')
+  })
+  it('compacto abaixo de 1 mil nao encurta', () => {
+    expect(brl(999, true)).toBe('R$ 999')
+  })
+  it('null -> n/d', () => {
+    expect(brl(null)).toBe('n/d')
+  })
+})
+
+describe('pct', () => {
+  it('uma casa por padrao com sinal de %', () => {
+    expect(pct(12.34)).toBe('12,3%')
+  })
+  it('zero formata (nao vira n/d)', () => {
+    expect(pct(0)).toBe('0,0%')
+  })
+  it('null -> n/d', () => {
+    expect(pct(null)).toBe('n/d')
+  })
+})
+
+describe('coord', () => {
+  it('5 casas, decimal com virgula, separado por virgula-espaco', () => {
+    const s = coord(-15.7942, -47.8822)
+    expect(s).toContain('15,79420')
+    expect(s).toContain('47,88220')
+    expect(s).toContain(', ')
+  })
+})
+
+describe('alunos', () => {
+  it('arredonda e formata inteiro', () => {
+    expect(alunos(1234.6)).toBe('1.235')
+  })
+  it('null -> n/d', () => {
+    expect(alunos(null)).toBe('n/d')
+  })
+})
