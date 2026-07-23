@@ -196,15 +196,15 @@ Growth **atualizam todo dia**, então a ingestão é **diária** (não semanal c
   escrever fora do staging read-only). **Wrapper de cron:** `scripts/cron/run_growth_daily.sh`.
 - **Cron sugerido (root, servidor em UTC):** `30 6 * * *` (06:30 UTC = 03:30 BRT; fora da janela dom 06:00 do
   GymScraping). Logs em `/var/log/growth/daily_<TS>.log` (+ symlink `daily_latest.log`).
-- **Fluxo do wrapper:** (1) `docker exec motor_expansao_api python scripts/ingerir_growth_api.py --out /tmp/...`
-  (o container tem o motor + as credenciais); (2) `docker cp` do parquet para o staging do **HOST**
-  (`/opt/motor-expansao/data/staging/`) — os containers montam o staging **`:ro`**, então a escrita direta não
-  funciona (mesmo motivo do `scp` dos uplifts); (3) `docker restart motor_expansao_web` (limpa o `lru_cache` de
-  `_carregar_growth` e passa a servir o dado novo).
-- **⚠️ PRÉ-REQUISITO (uma vez, MANUAL — envolve SEGREDO):** o container `motor_expansao_api` **hoje NÃO tem**
-  `GROWTH_API_USUARIO`/`GROWTH_API_SENHA` no ambiente (verificado 2026-07-23) → a ingestão aborta com "Credenciais
-  ausentes" e a Visão Executiva fica **404** em prod. Adicionar as duas variáveis ao `/opt/motor-expansao/app/.env`
-  e recriar o serviço: `cd /opt/motor-expansao/app && docker compose up -d api`. A chave **nunca** entra no repo/script.
+- **Fluxo do wrapper (one-shot, sem tocar na API viva):** (1) `docker run --rm` de um container **efêmero** com a
+  **imagem da API** (que já tem o motor + `scripts/ingerir_growth_api.py`), `--env-file` com as credenciais e o
+  **staging do host montado READ-WRITE** — ele lê o perf parquet e escreve `growth_api_historico.parquet` direto no
+  staging (os containers de longa duração montam o staging `:ro`, por isso o one-shot); (2) `docker restart
+  motor_expansao_web` (limpa o `lru_cache` de `_carregar_growth` e passa a servir o dado novo). Nenhum segredo mora
+  no container da API/bot; a API não reinicia.
+- **⚠️ PRÉ-REQUISITO (uma vez):** o arquivo de credenciais em `/opt/motor-expansao-infra/growth.env` (root-only,
+  `chmod 600`) com `GROWTH_API_USUARIO=...` e `GROWTH_API_SENHA=...`. Sem ele a ingestão aborta com "Credenciais
+  ausentes" e a Visão Executiva fica **404**. A chave **nunca** entra no repo/script.
 - **READ-ONLY sobre o M1** (camada Growth paralela, sem PII — `assert_sem_pii` antes de persistir; DEC-013).
 
 ### Transferir data/ultra (base Ultra)

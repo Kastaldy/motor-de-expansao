@@ -4,23 +4,20 @@
 # (alimenta a Visao Executiva do piloto web; os dados atualizam TODO DIA).
 #
 # Padrao espelhado do GymScraping (docs/infra_producao.md, DEC-013): infra na VPS,
-# roda a ingestao num container que JA tem o motor + as credenciais, deposita o
-# parquet no staging do HOST e reinicia o web (que cacheia o parquet via lru_cache).
+# roda a ingestao e reinicia o web (que cacheia o parquet via lru_cache).
 #
-# POR QUE `docker cp` e nao escrita direta: os containers montam
-# /opt/motor-expansao/data/staging como READ-ONLY (:ro) -> a ingestao escreve num
-# caminho gravavel do container (--out /tmp/...) e ESTE script copia para o staging
-# do host, exatamente como os uplifts foram por scp no ciclo de renda domiciliar.
+# DESENHO (menos invasivo, sem tocar na API viva): a ingestao roda num container
+# EFEMERO (`docker run --rm`) usando a MESMA imagem da API (que ja tem o motor +
+# scripts/ingerir_growth_api.py), com as credenciais isoladas num env-file
+# root-only e o staging do HOST montado READ-WRITE (so este one-shot escreve).
+# Assim NENHUM segredo mora no container de longa duracao e a API/bot nao reinicia.
 #
 # ---------------------------------------------------------------------------
-# PRE-REQUISITO (uma vez, MANUAL do Felipe -- envolve SEGREDO):
-#   O container `motor_expansao_api` HOJE NAO tem GROWTH_API_USUARIO/GROWTH_API_SENHA
-#   no ambiente (verificado 2026-07-23) -> a ingestao aborta com "Credenciais
-#   ausentes". Adicionar ao /opt/motor-expansao/app/.env:
+# PRE-REQUISITO (uma vez): o arquivo de credenciais em $GROWTH_ENV com as 2 linhas
 #       GROWTH_API_USUARIO=...
 #       GROWTH_API_SENHA=...
-#   e recriar o servico api:  cd /opt/motor-expansao/app && docker compose up -d api
-#   (a chave NUNCA entra neste script nem no repo).
+#   (chmod 600, root-only; NUNCA entra no repo). Sem ele a ingestao aborta com
+#   "Credenciais ausentes".
 #
 # INSTALACAO (uma vez): copie este script para a VPS e agende no cron do root
 #   (servidor em UTC; 06:30 UTC = 03:30 BRT, evita a janela dom 06:00 do GymScraping):
@@ -32,11 +29,9 @@ set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/motor-expansao/app}"
 HOST_STAGING="${HOST_STAGING:-/opt/motor-expansao/data/staging}"
-API_CONTAINER="${API_CONTAINER:-motor_expansao_api}"
+GROWTH_ENV="${GROWTH_ENV:-/opt/motor-expansao-infra/growth.env}"
 WEB_CONTAINER="${WEB_CONTAINER:-motor_expansao_web}"
 LOG_DIR="${LOG_DIR:-/var/log/growth}"
-TMP_IN_CONTAINER="/tmp/growth_api_historico.parquet"
-OUT_PARQUET="${HOST_STAGING}/growth_api_historico.parquet"
 
 TS="$(date -u +%Y%m%d-%H%M%S)"
 mkdir -p "$LOG_DIR"
@@ -45,17 +40,24 @@ exec > >(tee -a "$LOG") 2>&1
 
 echo ">> [$(date -u +%FT%TZ)] Growth diario - inicio"
 
-# 1) Ingestao dentro do container api (motor + creds via .env do compose). Escreve
-#    num caminho GRAVAVEL do container (o staging montado e :ro).
-docker exec "$API_CONTAINER" python scripts/ingerir_growth_api.py --out "$TMP_IN_CONTAINER"
+[ -f "$GROWTH_ENV" ] || { echo "!! credenciais ausentes em $GROWTH_ENV"; exit 1; }
 
-# 2) Copia o parquet para o staging do HOST (read-write no host; visivel ao web/api).
-docker cp "${API_CONTAINER}:${TMP_IN_CONTAINER}" "$OUT_PARQUET"
-docker exec "$API_CONTAINER" rm -f "$TMP_IN_CONTAINER" || true
-echo ">> parquet publicado em ${OUT_PARQUET}"
-ls -la "$OUT_PARQUET"
+# Imagem da API pinada por digest no .env do compose (mesma que ja tem motor + scripts).
+API_IMAGE="$(grep -E '^API_IMAGE=' "${APP_DIR}/.env" | head -1 | cut -d= -f2-)"
+[ -n "$API_IMAGE" ] || { echo "!! API_IMAGE nao encontrado em ${APP_DIR}/.env"; exit 1; }
 
-# 3) Restart do web para limpar o lru_cache de _carregar_growth e servir o dado novo.
+# 1) Ingestao num container efemero. Staging do HOST montado RW: le o perf parquet
+#    (insumo obrigatorio) e escreve growth_api_historico.parquet direto no staging.
+docker run --rm \
+  --env-file "$GROWTH_ENV" \
+  -v "${HOST_STAGING}:/app/data/staging" \
+  "$API_IMAGE" \
+  python scripts/ingerir_growth_api.py --out /app/data/staging/growth_api_historico.parquet
+
+echo ">> parquet publicado em ${HOST_STAGING}/growth_api_historico.parquet"
+ls -la "${HOST_STAGING}/growth_api_historico.parquet"
+
+# 2) Restart do web p/ limpar o lru_cache de _carregar_growth e servir o dado novo.
 docker restart "$WEB_CONTAINER" >/dev/null
 echo ">> ${WEB_CONTAINER} reiniciado (cache do growth invalidado)"
 
