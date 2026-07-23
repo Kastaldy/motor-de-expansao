@@ -2,13 +2,14 @@
 
 > **[canônico]** contrato dos sinais de vulnerabilidade de academias independentes (funil de M&A).
 > Responsável: Felipe Silva | Estratégia e Growth | Ultra Academia
-> Versão: 2026-07-23 (BLK-MA-01 — design/contrato; **ZERO código de produção**)
-> Regra de manutenção: manter curto; a implementação é dos blocos sucessores BLK-MA-02..07.
+> Versão: 2026-07-23 (BLK-MA-01 — design/contrato; **ZERO código de produção**;
+> emenda pós-gate 2 do mesmo dia: distinção coletor-vs-ingestão, chave de snapshot `slug`, e BLK-MA-08)
+> Regra de manutenção: manter curto; a implementação é dos blocos sucessores BLK-MA-02..08 (ver seção 13).
 
 Este documento fixa o contrato dos sinais de vulnerabilidade de concorrentes independentes, a
 metodologia do **score de vulnerabilidade** (heurística transparente, **não** modelo preditivo) e o
 registro das decisões de produto D1–D8 confirmadas no gate humano de 2026-07-23 (Vinicius). É a
-especificação que os blocos BLK-MA-02..06 vão implementar; nenhum extrator, score, join, entregável
+especificação que os blocos sucessores (BLK-MA-02..08, seção 13) vão implementar; nenhum extrator, score, join, entregável
 ou cron é escrito neste bloco.
 
 ---
@@ -35,6 +36,23 @@ ou cron é escrito neste bloco.
   coluna em ASCII** (ex.: `score_oportunidade_residual`, `oferta_efetiva_disponivel`,
   `sam_fitness_potencial`, `hex_id_res7`, `concorrente_id`, `abrir_agora`, `independente`,
   `flag_serie_imatura`). CSV do projeto sempre `sep=";"` / `encoding="utf-8-sig"`.
+
+### Insumo real conferido (2026-07-23) — o que os coletores REALMENTE emitem
+
+Conferência contra amostra real do coletor **TotalPass** (`unidades_totalpass_ac.csv`, **gitignored**,
+fora do versionamento — DEC-012). Colunas emitidas: `slug`, `nome`, `latitude`, `longitude`, `cidade`,
+`uf`, `cep`, `endereco_formatado`, `modalidades`, `data_coleta`. **NÃO há coluna de nota/rating.** Os
+coletores de cadeia em `concorrentes/` (`unidades_*.csv`) emitem `nome_unidade`, `latitude`,
+`longitude`, `data_coleta` — também sem nota. Consequências canônicas que orientam as decisões abaixo:
+
+- **Rating (sinal 2) NÃO é coletado por coletor nenhum hoje** → habilitá-lo é **ajuste de COLETOR
+  (scraper), não de ingestão**: exige raspar a nota no app TP/WH. Planejado no **BLK-MA-08** (seção 13).
+- **`nome`/`slug`/endereço JÁ são coletados** → a lista NOMEADA (Opção B do D1) é **só ingestão**
+  (`_ler_csv_tp_wh` parar de dropar), **sem** ajuste de coletor.
+- **`slug` (ID nativo do provedor) + `data_coleta` JÁ são coletados** → churn/staleness (sinais 3/4) são
+  coletáveis **hoje**, zero mudança de coletor (seção 6).
+- **Ressalva WellHub:** só há amostra de TotalPass no repo; confirmar contra um CSV real de WellHub se
+  ele traz nota nativa (poderia baratear o sinal 2 apenas para o WellHub).
 
 ---
 
@@ -80,15 +98,16 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
 
 ## 4. Contrato dos 6 sinais
 
-Sinais 1–4 são obrigatórios; 5 e 6 são opcionais (fora do MVP). Direção `↑vuln` = quanto maior o valor
+Sinais 1–4 são obrigatórios; 5 e 6 são opcionais (fora do MVP). Ressalva: o sinal 2, embora do núcleo,
+entra CONDICIONAL/inativo no Plano B até o BLK-MA-08 (seção 7). Direção `↑vuln` = quanto maior o valor
 bruto do sinal, maior a vulnerabilidade. Todo componente normalizado `vi ∈ [0,1]` tem `1 = máxima
 vulnerabilidade` (seção 8).
 
 | # | Sinal | Direção ↑vuln | Fonte real | Coluna / artefato | Maturidade | Tratamento n/d / imaturo | Condicional? |
 |---|---|---|---|---|---|---|---|
 | 1 | Presença/ausência em agregadores WellHub/TotalPass | menos agregadores → mais vuln (canal do público low-cost) | ingestão TP/WH (reuso via `fonte`) | derivada da `fonte` do universo raspado | madura (cadência mensal do agregador) | ausência **é** o sinal (0 agregadores); staleness do ativo mensal marcada | Não (obrigatório) |
-| 2 | Rating in-app WellHub/TotalPass | nota mais baixa → mais vuln | **CSVs brutos TP/WH (não retidos hoje)** | `rating` — **`n/d` PERMANENTE no Plano B** | inativo no MVP | renormaliza para fora (seção 8) | **Sim** — `n/d` permanente (ver seção 7 / D3); só reativa em BLK-MA-07 |
-| 3 | Churn/permanência (diff de snapshots) | sumiu recente / "piscando" → mais vuln | histórico de snapshots (seção 6) | derivada de `concorrente_id` entre semanas | imatura até `MIN_SEMANAS=8` | série imatura → `flag_serie_imatura`, renormaliza (não penaliza) | Não (obrigatório, gated por maturidade) |
+| 2 | Rating in-app WellHub/TotalPass | nota mais baixa → mais vuln | **NÃO coletado hoje (nenhum coletor emite nota)** | `rating` — **`n/d` até o BLK-MA-08** | inativo até ajuste de coletor | renormaliza para fora (seção 8) | **Sim** — `n/d` (ver seção 7 / D3); reativa via **BLK-MA-08** (ajuste de coletor) |
+| 3 | Churn/permanência (diff de snapshots) | sumiu recente / "piscando" → mais vuln | histórico de snapshots (seção 6) | derivada do `slug`/`concorrente_id` entre semanas | imatura até `MIN_SEMANAS=8` | série imatura → `flag_serie_imatura`, renormaliza (não penaliza) | Não (obrigatório, gated por maturidade) |
 | 4 | Staleness (diff de snapshots) | mais semanas sem mudança → mais vuln | histórico de snapshots (`hash_campos_raspados`) | `semanas_sem_mudanca` | só interpretável após série `>= STALE_SEMANAS=12` | série imatura → renormaliza (não penaliza) | Não (obrigatório, gated por maturidade) |
 | 5 | Tendência de popularidade no agregador | inclinação negativa de membros → mais vuln | série do agregador / Demanda Revelada | `membros` / `alunos_parceiras` | precisa de série; fora do MVP | fora do MVP → renormaliza | **Sim** (opcional) |
 | 6 | Pressão competitiva (independente espremida) | pressão maior → mais vuln | camada de mercado | `pressao_concorrencial_score_2km` (`hexagonos_mercado_mapeado.parquet`) | madura | fora do MVP → renormaliza | **Sim** (opcional) |
@@ -107,7 +126,7 @@ sinais do Plano B assim:
 | Presença em agregadores | **(1)** presença/ausência em agregadores |
 | Última atualização do cadastro | **(4)** staleness |
 
-Consequência: com o **D3 = Não** (seção 7), o sinal 2 fica `n/d` permanente no Plano B, e o "Δ de
+Consequência: com o **D3 = Não** (seção 7), o sinal 2 fica `n/d` no Plano B (até o BLK-MA-08 ajustar o coletor), e o "Δ de
 reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota externa.
 
 ---
@@ -116,14 +135,24 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
 
 **Decisão do gate (D2 = default do Planner).**
 
-- **Chave.** Snapshot semanal chaveado por `concorrente_id` (sha1 já existente de `rede|nome|lat|lng`).
+- **Chave (refino do insumo real).** Snapshot semanal chaveado pelo **`slug` nativo do provedor**
+  (ex.: `smart-fit-isaura-parente`), que **já vem no coletor** e é estável a jitter de lat/lng —
+  preferível ao `concorrente_id` (sha1 de `rede|nome|lat|lng`), que fica como **fallback** quando o
+  `slug` faltar. **Caveat:** alguns slugs carregam UUID (`academia-top-fitness-b8491478-...`) → o
+  BLK-MA-02 deve **validar a estabilidade do `slug` entre semanas** antes de confiar nele para churn.
+- **Data do snapshot.** `snapshot_date = data_coleta` (já emitido pelo coletor).
 - **Payload por linha (sem crus além do hash).**
-  `{snapshot_date, concorrente_id, hex_id_res7, rede, hash_campos_raspados}` — **sem** nome/coordenadas
-  brutas; a única "impressão digital" dos campos raspados é o `hash_campos_raspados`.
+  `{snapshot_date, slug, concorrente_id, hex_id_res7, rede, hash_campos_raspados}` — **sem**
+  nome/coordenadas brutas; a única "impressão digital" dos campos raspados é o `hash_campos_raspados`.
+- **Limpeza de ruído (BLK-MA-02, obrigatória antes de derivar churn).** O feed cru traz linhas que
+  **não** são academias reais e distorceriam churn/universo: coords `0;0` e rótulos de teste (ex.:
+  "Teste Raised"); **entradas de tecnologia/onboarding do TotalPass** ("Zon Tecnologia", "SAGAZ
+  Sistemas", "TSITECH Soluções", "DATAFITNESS - TTP" e variações "Batatão Jeans - <fornecedor>"); e
+  coords geograficamente inconsistentes com `cidade`/`uf`. Filtrar essas linhas é passo do BLK-MA-02.
 - **Local / retenção.** `data/staging/snapshots_concorrentes/semana=AAAA-SS/parte-*.parquet`
   (**gitignored**, vive na VPS). Retenção rolante **26 semanas** (6 meses).
 - **Derivação dos sinais.**
-  - Churn (sinal 3): o `concorrente_id` aparece / some / reaparece ("piscando") entre semanas.
+  - Churn (sinal 3): o `slug` (fallback `concorrente_id`) aparece / some / reaparece ("piscando") entre semanas.
   - Staleness (sinal 4): nº de semanas desde a última mudança de `hash_campos_raspados`.
 - **Ramp-up / maturidade.** `flag_serie_imatura = True` até `MIN_SEMANAS = 8` snapshots; enquanto
   imatura, os sinais 3/4 **NÃO penalizam** (são renormalizados para fora do score — seção 8). Staleness
@@ -136,15 +165,20 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
 
 **Decisão do gate (D3 = NÃO carregam a nota).**
 
-- **Fato de código.** Os CSVs brutos TP/WH **não** têm rating no caminho de ingestão atual:
-  `_ler_csv_tp_wh` (`concorrentes_densos.py:127`) produz **só** `hex_id_res7` / `rede_normalizada` /
-  `fonte`; qualquer nota estaria no ruído textual descartado na fronteira.
-- **Consequência.** O **sinal 2 fica `n/d` PERMANENTE no Plano B.** O framework o mantém **DEFINIDO**
-  (por completude do contrato), porém **INATIVO no MVP** — o score do Plano B roda em **S1 / S3 / S4**
-  renormalizados (seção 8). O `n/d` do sinal 2 **NÃO trava** BLK-MA-03/04.
-- **Onde a reputação/nota volta.** Qualquer sinal de reputação — nota in-app, se um dia surgir uma fonte
-  que a carregue, **ou** reputação externa (Google Places) — é consolidado na trilha **BLK-MA-07**
-  (opcional/futuro, com gate + DEC próprios). Esse é o único ponto onde o desvio do §2 reaparece.
+- **Fato de dado (corrigido com o insumo real, 2026-07-23).** A nota **não é dropada na ingestão — ela
+  não é COLETADA.** Nenhum CSV de coletor tem coluna de rating (ver "Insumo real conferido", seção 1);
+  a ingestão `_ler_csv_tp_wh` (`concorrentes_densos.py:127`) por cima ainda dropa `nome`/coords e emite
+  só `hex_id_res7` / `rede_normalizada` / `fonte`. Logo habilitar o rating é **ajuste de COLETOR
+  (scraper), não de ingestão.**
+- **Consequência.** O **sinal 2 fica `n/d`** enquanto o coletor não for ajustado. O framework o mantém
+  **DEFINIDO** (por completude do contrato), porém **INATIVO** — o score do Plano B roda em
+  **S1 / S3 / S4** renormalizados (seção 8). O `n/d` do sinal 2 **NÃO trava** BLK-MA-03/04.
+- **Como o sinal 2 é reativado (decisão do gate 2, 2026-07-23).** Via **BLK-MA-08** (bloco near-term,
+  seção 13): **ajustar os coletores TP/WH (GymScraping) para raspar a nota in-app**, persistindo só o
+  agregado numérico (anti-PII). BLK-MA-08 é pré-requisito EXPLÍCITO do sinal 2. A **reputação EXTERNA**
+  (Google Places, público geral) — essa sim — fica no **BLK-MA-07** (opcional/futuro, com gate + DEC
+  próprios), único ponto onde o desvio do §2 reaparece. **Ressalva:** confirmar se o WellHub já traz
+  nota nativa; se sim, parte do sinal 2 sai mais barata (só ingestão para o WellHub).
 
 ---
 
@@ -157,7 +191,7 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 ### 8.1 Componentes `vi ∈ [0,1]` (`1 = máxima vulnerabilidade`)
 
 - `v1` — presença em agregador: `0` agregadores → `1.0`; `1` → `0.5`; `2` → `0.0`.
-- `v2` — rating in-app (CONDICIONAL, `n/d` permanente no Plano B): `1 − normaliza(rating)`, ex.:
+- `v2` — rating in-app (CONDICIONAL, `n/d` no Plano B até o BLK-MA-08): `1 − normaliza(rating)`, ex.:
   `1 − (rating − 1) / (5 − 1)`; `n/d` → renormaliza para fora.
 - `v3` — churn/permanência: sumiu recente → `1.0`; "piscando" (some/reaparece) → `0.7`; estável →
   `0.0`.
@@ -283,20 +317,22 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 
 ---
 
-## 13. Decomposição BLK-MA-02..07
+## 13. Decomposição BLK-MA-02..08
 
-Ajustada pelo **D3 = Não** (rating fora do MVP → movido para BLK-MA-07):
+Ajustada pelo **D3 = Não** (rating não é coletado → sinal 2 depende de ajuste de coletor no
+**BLK-MA-08** near-term; reputação **externa** fica no BLK-MA-07):
 
 | Bloco | Escopo | D amarradas |
 |---|---|---|
-| **BLK-MA-02** | Extrator de churn+staleness do histórico de snapshots (100% interno) + flags de série imatura (ramp-up). É o núcleo 100%-reuso do Plano B. | D2 (S3/S4) |
-| **BLK-MA-03** | Presença em agregador (**sinal 1**, reuso via `fonte`) + (opcional/deferido) extensão de ingestão para o universo NOMEADO (D1-B, retém `nome_estabelecimento`); anti-PII por construção; fixtures sintéticas. **Rating (sinal 2) NÃO entra aqui (D3=Não)** — movido para BLK-MA-07. | sinal 1 + D1 |
+| **BLK-MA-02** | Extrator de churn+staleness do histórico de snapshots (100% interno) + **limpeza de ruído** (linhas `0;0`/teste, entradas de tecnologia/onboarding, coords inconsistentes) + flags de série imatura (ramp-up); chave `slug` + `data_coleta`. É o núcleo 100%-reuso do Plano B. | D2 (S3/S4) |
+| **BLK-MA-03** | Presença em agregador (**sinal 1**, reuso via `fonte`) + (opcional/deferido) extensão de **ingestão** para o universo NOMEADO (D1-B, retém `slug`/`nome_estabelecimento`; **só ingestão, SEM ajuste de coletor**); anti-PII por construção; fixtures sintéticas. **Rating (sinal 2) NÃO entra aqui** — depende do BLK-MA-08. | sinal 1 + D1 |
 | **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. | D4 + D7 |
 | **BLK-MA-05** | Lista priorizada de M&A (cruzamento com o hex quente, D5, **COM a INVERSÃO**) + entregável. | D5 + D6 |
 | **BLK-MA-06** | Integração ao cron semanal da VPS + runbook. | D8 |
-| **BLK-MA-07** | (Opcional/futuro, **gate + DEC próprios**) reputação/nota — in-app se surgir fonte **OU** externa (Google Places). Único ponto que reabre o §2. | — |
+| **BLK-MA-07** | (Opcional/futuro, **gate + DEC próprios**) reputação **EXTERNA** (Google Places ou outra, público geral). Único ponto que reabre o §2. | — |
+| **BLK-MA-08** | **(Near-term, decisão do gate 2) Ajustar os coletores TP/WH (GymScraping) para raspar a nota in-app** — pré-requisito EXPLÍCITO do sinal 2; persiste **só o agregado numérico** (anti-PII). **Toca a trilha de scrapers/VPS (não toca o M1, mas NÃO é READ-ONLY dos scrapers); NÃO loop-safe.** Confirmar antes o schema do WellHub. | sinal 2 (rating in-app) |
 
-D7 (anti-PII) é transversal a BLK-MA-02..05.
+D7 (anti-PII) é transversal a BLK-MA-02..05 e BLK-MA-08.
 
 ---
 
@@ -323,8 +359,8 @@ D7 (anti-PII) é transversal a BLK-MA-02..05.
   `sam_fitness_potencial`, `oferta_efetiva_disponivel`, `score_oportunidade_residual`, `tese_entrada`).
 - `src/motor_expansao/pipelines/enriquecer_outputs_residual_mercado.py:68-82` (molde defensivo de join
   READ-ONLY).
-- `src/motor_expansao/demanda_revelada/concorrentes_densos.py:127` (`_ler_csv_tp_wh` — confirma que o
-  rating não é retido e que o `nome` é lido e dropado na fronteira).
+- `src/motor_expansao/demanda_revelada/concorrentes_densos.py:127` (`_ler_csv_tp_wh` — a ingestão lê
+  `nome`/coords e dropa tudo; a nota **nem existe na fonte** → ajuste de coletor, não de ingestão).
 - `docs/infra_producao.md` (runbook do cron semanal GymScraping — D2/D8).
 - `CLAUDE.md` §1/§2/§4/§5/§6/§8.
 
@@ -335,8 +371,8 @@ D7 (anti-PII) é transversal a BLK-MA-02..05.
 | # | Questão | Opção escolhida no gate | Default do Planner |
 |---|---|---|---|
 | **D1** | Universo de "academia independente" e fonte que retém identidade | **FASEADO** — MVP hex-level agregado (Opção A, anti-PII) entra já; nomeação por-academia (Opção B) **deferida** atrás de confirmação dos CSVs brutos (nome existe na fonte, é dado de negócio). Independente = fora das 28 cadeias (`independente` ou marca com unidades `== 1`); reconciliar 28 scrapers vs 90 coletores no BLK-MA-02. | Entregar Opção A primeiro; Opção B atrás de confirmação. |
-| **D2** | Fonte/retenção dos snapshots (churn/staleness) | **Default aceito** — snapshots por `concorrente_id` + `hash_campos_raspados` em `data/staging/snapshots_concorrentes/semana=AAAA-SS/` (gitignored, VPS); retenção 26 semanas; `MIN_SEMANAS=8`; `STALE_SEMANAS=12`; série imatura marcada e neutra. | Idem (Opção A). |
-| **D3** | Rating de agregador (sinal 2) | **NÃO carregam a nota** — sinal 2 fica `n/d` PERMANENTE no Plano B; score roda em S1/S3/S4 renormalizados; reputação/nota só no BLK-MA-07 (gate + DEC próprios). | Sinal 2 CONDICIONAL, `n/d` não penaliza, renormaliza. |
+| **D2** | Fonte/retenção dos snapshots (churn/staleness) | **Default aceito + refino do insumo real:** chave = `slug` nativo + `data_coleta` (fallback `concorrente_id`), com limpeza de ruído (linhas `0;0`/teste/tecnologia) no BLK-MA-02; snapshots em `data/staging/snapshots_concorrentes/semana=AAAA-SS/` (gitignored, VPS); retenção 26 semanas; `MIN_SEMANAS=8`; `STALE_SEMANAS=12`; série imatura marcada e neutra. | snapshots por `concorrente_id` (Opção A). |
+| **D3** | Rating de agregador (sinal 2) | **NÃO é coletado (ajuste de coletor, não de ingestão)** — sinal 2 fica `n/d` até o **BLK-MA-08** (near-term) ajustar os coletores TP/WH para raspar a nota; enquanto isso o score roda em S1/S3/S4 renormalizados. Reputação **externa** (Google) fica no BLK-MA-07. | Sinal 2 CONDICIONAL, `n/d` não penaliza, renormaliza. |
 | **D4** | Fórmula/pesos do score de vulnerabilidade | **Pesos S1=0,15 / S2=0,25 / S3=0,35 / S4=0,25** (churn domina); efetivos no Plano B (S2 fora): **S1≈0,20 / S3≈0,467 / S4≈0,333** (`0,15/0,75`, `0,35/0,75`, `0,25/0,75`); normalização percentil-por-universo; RENORMALIZAÇÃO para sinal ausente/imaturo; flags de qualidade; **NÃO-preditivo**. Saída `score_vulnerabilidade ∈ [0,100] = 100·Σ(wi·vi)` + componentes `vi` + flags. | Idem, com S5/S6 fora do MVP. |
 | **D5** | Hexágono quente + distância + INVERSÃO | **Quente = `sam_fitness_potencial` alto (top quartil) AND `score_oportunidade_residual < 25` (saturado)**; distância **k=1** (`h3.grid_disk(k=1)`); **INVERSÃO** (demanda alta + residual baixo, oposto de `abrir_agora`) registrada; join READ-ONLY no molde `:68-82` com asserts de invariância. | Idem (Opção A + k=1 + join com asserts). |
 | **D6** | Entregável | **Default aceito** — Parquet `data/staging/vulnerabilidade_ma_academias.parquet` (gitignored se nomeado) + CSV `data/outputs/alvos_ma_priorizados.csv` (`sep=";"`/`utf-8-sig`); sem overlay de dashboard no MVP. | Idem. |

@@ -10070,3 +10070,16 @@ commit humano `0c2e344`, que adiciona o epic ao `tasks/backlog.md` (governança)
 BLK-MA-01 **não foi stubado** (evita churn add-then-stub no mesmo PR; o epic segue como âncora dos
 sucessores); a reconciliação do backlog é passo de governança posterior. O commit do ciclo NÃO inclui
 `tasks/backlog.md` (só `docs/` + este append + snapshots de handoff).
+
+**Emenda pós-gate 2 (mesmo dia, 2026-07-23) — insumo real `unidades_totalpass_ac.csv`:** Vinicius
+forneceu uma amostra real do coletor TotalPass (colunas `slug;nome;latitude;longitude;cidade;uf;cep;
+endereco_formatado;modalidades;data_coleta` — **sem coluna de nota**, gitignored/anti-PII). Isso destravou
+3 correções no contrato (só-doc, verificadas por 2 agentes adversariais Opus = CONSISTENTE + LIMPO):
+(1) **coletor-vs-ingestão** — o rating não é "dropado na ingestão", ele **não é COLETADO**; habilitá-lo é
+ajuste de COLETOR (scraper). A lista nomeada (D1-B) é **só ingestão** (nome/`slug` já coletados); churn/
+staleness são **coletáveis hoje**. (2) **D2** passa a usar `slug` nativo + `data_coleta` como chave de
+snapshot (fallback `concorrente_id`), com limpeza de ruído (linhas `0;0`/teste, entradas de tecnologia
+do TotalPass) no BLK-MA-02. (3) Novo bloco **BLK-MA-08** (near-term) — ajustar os coletores TP/WH para
+raspar a nota in-app, pré-requisito EXPLÍCITO do sinal 2; toca a trilha de scrapers/VPS (não toca o M1,
+mas **NÃO loop-safe**). BLK-MA-07 fica só para reputação **externa** (Google). Ressalva: confirmar se o
+WellHub já traz nota nativa. Diff da emenda: só `docs/vulnerabilidade_ma_contrato.md` (67+/31-).
