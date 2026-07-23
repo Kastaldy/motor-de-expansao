@@ -145,6 +145,9 @@ services:
       # O backend deriva OUTPUTS/STAGING/IBGE/ULTRA/CENSO_GEO/ENRICHED de MOTOR_DATA_DIR.
       MOTOR_DATA_DIR: "/app/data"
       WEB_DIST_DIR: "/app/web/dist"
+      # BLK-SAT-01: chave do ArcGIS Location Platform p/ a vista aerea (satelite) do
+      # Relatorio Pontual. Sem a var -> render devolve None -> pagina omitida (PDF sai igual).
+      API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro    # censo geo + enriquecido + base_calibracao
       - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + renda domiciliar
