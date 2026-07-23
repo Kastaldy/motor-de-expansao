@@ -202,6 +202,10 @@ Growth **atualizam todo dia**, então a ingestão é **diária** (não semanal c
   staging (os containers de longa duração montam o staging `:ro`, por isso o one-shot); (2) `docker restart
   motor_expansao_web` (limpa o `lru_cache` de `_carregar_growth` e passa a servir o dado novo). Nenhum segredo mora
   no container da API/bot; a API não reinicia.
+- **Detalhes do one-shot:** roda como **`--user 0:0` (root)** — a imagem roda como `appuser(1000)`, mas o staging e
+  o cache do host são `root:root`, então sem root o `to_parquet` falha com `PermissionError`. Monta um **cache
+  persistente** do host (`data/cache/growth_api`, = `config.CACHE_DIR`) para o **backfill de 52 meses não se repetir**:
+  o run diário só re-busca o mês corrente (cache hit no resto) → rápido apesar do rate limit da Growth (10 req/5 min).
 - **⚠️ PRÉ-REQUISITO (uma vez):** o arquivo de credenciais em `/opt/motor-expansao-infra/growth.env` (root-only,
   `chmod 600`) com `GROWTH_API_USUARIO=...` e `GROWTH_API_SENHA=...`. Sem ele a ingestão aborta com "Credenciais
   ausentes" e a Visão Executiva fica **404**. A chave **nunca** entra no repo/script.

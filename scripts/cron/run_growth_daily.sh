@@ -29,6 +29,10 @@ set -euo pipefail
 
 APP_DIR="${APP_DIR:-/opt/motor-expansao/app}"
 HOST_STAGING="${HOST_STAGING:-/opt/motor-expansao/data/staging}"
+# Cache PERSISTENTE das janelas mensais (config.CACHE_DIR = data/cache/growth_api):
+# no host para o backfill nao se repetir a cada run -> runs diarios so re-buscam o
+# mes corrente (cache hit no resto), ficando rapidos apesar do rate limit (10/5min).
+HOST_CACHE="${HOST_CACHE:-/opt/motor-expansao/data/cache/growth_api}"
 GROWTH_ENV="${GROWTH_ENV:-/opt/motor-expansao-infra/growth.env}"
 WEB_CONTAINER="${WEB_CONTAINER:-motor_expansao_web}"
 LOG_DIR="${LOG_DIR:-/var/log/growth}"
@@ -46,14 +50,23 @@ echo ">> [$(date -u +%FT%TZ)] Growth diario - inicio"
 API_IMAGE="$(grep -E '^API_IMAGE=' "${APP_DIR}/.env" | head -1 | cut -d= -f2-)"
 [ -n "$API_IMAGE" ] || { echo "!! API_IMAGE nao encontrado em ${APP_DIR}/.env"; exit 1; }
 
-# 1) Ingestao num container efemero. Staging do HOST montado RW: le o perf parquet
-#    (insumo obrigatorio) e escreve growth_api_historico.parquet no caminho DEFAULT
-#    (config.STAGING_DIR = data/staging, relativo ao CWD /app da imagem) -> cai direto
-#    no staging do host. (Nao usa --out: a imagem da API em prod pode ser anterior a
-#    essa flag; o mount RW no default ja resolve.)
+mkdir -p "$HOST_CACHE"
+
+# 1) Ingestao num container efemero. Escreve growth_api_historico.parquet no caminho
+#    DEFAULT (config.STAGING_DIR = data/staging, relativo ao CWD /app) -> cai direto no
+#    staging do host. Detalhes do desenho:
+#    - `--user 0:0`: a imagem roda como appuser(1000), mas o staging/cache do host sao
+#      root:root -> sem root o to_parquet falha com PermissionError (Errno 13). O
+#      one-shot efemero como root escreve os artefatos root:root (igual aos demais).
+#    - staging RW: escrita do parquet de saida (os containers longos montam :ro).
+#    - cache RW persistente: janelas mensais em data/cache/growth_api nao se perdem
+#      entre runs -> backfill so uma vez; diario re-busca so o mes corrente.
+#    (Nao usa --out: a imagem da API em prod pode ser anterior a essa flag.)
 docker run --rm \
+  --user 0:0 \
   --env-file "$GROWTH_ENV" \
   -v "${HOST_STAGING}:/app/data/staging" \
+  -v "${HOST_CACHE}:/app/data/cache/growth_api" \
   "$API_IMAGE" \
   python scripts/ingerir_growth_api.py
 
