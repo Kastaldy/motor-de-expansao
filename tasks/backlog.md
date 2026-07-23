@@ -112,7 +112,7 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 | Campo | Valor |
 |---|---|
 | **Criticidade** | Alta |
-| **Status** | **Em PR (#138) — TESTE, não é a versão definitiva.** Bloqueado pela [DEC-018](../docs/decisions/DEC-018.md) (PROPOSTA, aguardando Felipe) + validação visual pendente com Juan |
+| **Status** | **Aprovado e mergeado (PR #138, 2026-07-23)** — [DEC-018](../docs/decisions/DEC-018.md) APROVADA por Felipe (label `critica-aprovada`). Validação visual com Juan segue em andamento (não bloqueia; página aditiva). |
 | **ClickUp** | — |
 
 > **Criticidade Alta, não Média** (corrigido 2026-07-22 após a revisão automática do PR #138): o
