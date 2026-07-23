@@ -624,6 +624,8 @@ _FOTOS_MAX = 2  # MVP: no maximo 2 fotos no PDF.
 _FOTO_LADO_MAX = 1600  # downscale: maior lado <= 1600 px (capa o tamanho do PDF).
 _FOTO_JPEG_QUALIDADE = 82  # recompressao JPEG.
 _FOTOS_PAGE_TITLE = "Imóvel - Fotos"
+# BLK-SAT (TESTE): pagina propria da vista aerea, para nao ocupar as 2 vagas de foto.
+_SATELITE_PAGE_TITLE = "Imóvel - Vista aérea"
 _SEM_FOTO_VALIDA = "Nenhuma foto valida para exibir."
 _FOTO_BORDA_LARANJA = (245, 130, 30)  # laranja Ultra (borda da foto)
 _FOTO_BORDA_LARGURA = 5.0  # espessura (pt) da borda ao redor de cada foto
@@ -755,6 +757,69 @@ def _fotos_imovel_page(
         pdf.set_line_width(_FOTO_BORDA_LARGURA)
         pdf.rect(cx, cy, cw, ch, style="D")
     pdf.set_line_width(prev_lw)  # restaura p/ nao engrossar bordas das paginas seguintes
+    _draw_footer(pdf, with_attribution=False)
+
+
+def _foto_satelite_cell_grande() -> tuple[float, float, float, float]:
+    """Celula 3:2 CENTRADA ocupando a area de conteudo inteira (altura manda).
+
+    So para o caminho da API/bot, onde a vista aerea e a UNICA imagem da pagina.
+    No dashboard nao se usa: la a celula menor de `_fotos_cells` e o padrao da casa,
+    dimensionada para caber ate 2 imagens.
+    """
+    area_top, area_bottom, margin_x = 56.0, _PAGE_H - 26.0, 40.0
+    pad_v = 14.0
+    h = (area_bottom - area_top) - 2.0 * pad_v
+    w = h * _FOTO_ASPECT
+    max_w = _PAGE_W - 2.0 * margin_x
+    if w > max_w:                      # se estourar a largura, a largura passa a mandar
+        w, h = max_w, max_w / _FOTO_ASPECT
+    x0 = (_PAGE_W - w) / 2.0
+    y0 = area_top + ((area_bottom - area_top) - h) / 2.0
+    return x0, y0, w, h
+
+
+def _foto_satelite_page(
+    pdf: _UltraPDF,
+    foto: bytes,
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    grande: bool = False,
+) -> None:
+    """Pagina da VISTA AEREA (BLK-SAT, TESTE): faixa de titulo + 1 foto + rodape.
+
+    Pagina PROPRIA (nao a de fotos do imovel) para nao ocupar as 2 vagas de upload.
+
+    `grande` dimensiona a foto:
+      - False (default, DASHBOARD): mesma celula de `_fotos_cells(1)`. O tamanho menor
+        e o padrao da casa — a celula acomoda ate 2 imagens e a pagina de fotos do
+        imovel usa a mesma medida, entao as duas ficam consistentes.
+      - True (API/BOT): ocupa a area de conteudo inteira. La NAO existe upload de fotos
+        (`service.gerar_pdf_ponto` nao recebe `fotos`), entao a vista aerea e a unica
+        imagem e a celula reduzida so deixaria branco sobrando.
+    Foto invalida -> a pagina NAO e criada.
+    """
+    png = _normalizar_foto(foto)
+    if not png:
+        return
+
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _SATELITE_PAGE_TITLE, rgb=primary)
+
+    cx, cy, cw, ch = _foto_satelite_cell_grande() if grande else _fotos_cells(1)[0]
+    recorte = _recortar_cover(png, cw / ch)
+    try:
+        pdf.image(BytesIO(recorte if recorte is not None else png), x=cx, y=cy, w=cw, h=ch)
+    except Exception:
+        pass
+
+    prev_lw = pdf.line_width
+    pdf.set_draw_color(*_FOTO_BORDA_LARANJA)
+    pdf.set_line_width(_FOTO_BORDA_LARGURA)
+    pdf.rect(cx, cy, cw, ch, style="D")
+    pdf.set_line_width(prev_lw)
     _draw_footer(pdf, with_attribution=False)
 
 
@@ -2057,6 +2122,8 @@ def gerar_pdf_relatorio_pontual_classico(
     fotos: list[bytes] | None = None,
     info_imovel: dict[str, Any] | None = None,
     viabilidade: dict[str, Any] | None = None,
+    foto_satelite: bytes | None = None,
+    foto_satelite_grande: bool = False,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
@@ -2096,6 +2163,12 @@ def gerar_pdf_relatorio_pontual_classico(
 
     pdf = _UltraPDF()
     _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
+    # BLK-SAT (TESTE): vista aerea logo apos a capa — o leitor situa o imovel antes de
+    # ver qualquer numero. Pagina propria: nao disputa as 2 vagas de `fotos`.
+    if foto_satelite:
+        _foto_satelite_page(
+            pdf, foto_satelite, assets, primary=p1, grande=foto_satelite_grande
+        )
     if fotos:
         _fotos_imovel_page(pdf, fotos, assets, primary=p1)
     if info_imovel:
@@ -2249,6 +2322,8 @@ def gerar_payloads_download_relatorio_censitario(
     fotos: list[bytes] | None = None,
     info_imovel: dict[str, Any] | None = None,
     viabilidade: dict[str, Any] | None = None,
+    foto_satelite: bytes | None = None,
+    foto_satelite_grande: bool = False,
 ) -> RelatorioCensitarioDownloadPayloads:
     prefix = filename_prefix or f"relatorio_pontual_censitario_{_point_name(result)}"
     if template == "classico":
@@ -2256,6 +2331,7 @@ def gerar_payloads_download_relatorio_censitario(
             result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
             solicitante=solicitante, rotulo=rotulo,
             fotos=fotos, info_imovel=info_imovel, viabilidade=viabilidade,
+            foto_satelite=foto_satelite, foto_satelite_grande=foto_satelite_grande,
         )
     else:
         pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
@@ -2286,6 +2362,8 @@ def render_downloads_relatorio_censitario(
     fotos: list[bytes] | None = None,
     info_imovel: dict[str, Any] | None = None,
     viabilidade: dict[str, Any] | None = None,
+    foto_satelite: bytes | None = None,
+    foto_satelite_grande: bool = False,
 ) -> RelatorioCensitarioDownloadPayloads:
     """Renderiza botoes Streamlit e retorna os mesmos bytes para testes/reuso."""
     payloads = gerar_payloads_download_relatorio_censitario(
@@ -2301,6 +2379,8 @@ def render_downloads_relatorio_censitario(
         fotos=fotos,
         info_imovel=info_imovel,
         viabilidade=viabilidade,
+        foto_satelite=foto_satelite,
+        foto_satelite_grande=foto_satelite_grande,
     )
     st_module.download_button(
         "Baixar CSV dos setores",

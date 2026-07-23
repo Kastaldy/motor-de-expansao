@@ -100,6 +100,62 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
+## Relatório Pontual Censitário — vista aérea de satélite (2026-07-21, pedido de Juan)
+
+> Pedido de Juan a partir dos estudos prontos do time de UX (`UX/*.pptx`, slide "Fotos Do Imóvel"),
+> que trazem uma **foto aérea do imóvel com pin**. Objetivo: gerar essa imagem automaticamente a
+> partir da coordenada que o usuário já informa (o campo de busca resolve coordenada, link do Maps,
+> Plus Code e **endereço livre** — `BLK-UI-08`/`DEC-010`), e inseri-la como página própria no PDF.
+
+### BLK-SAT-01 — Vista aérea (satélite Esri) no PDF do Relatório Pontual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta |
+| **Status** | **Aprovado e mergeado (PR #138, 2026-07-23)** — [DEC-018](../docs/decisions/DEC-018.md) APROVADA por Felipe (label `critica-aprovada`). Validação visual com Juan segue em andamento (não bloqueia; página aditiva). |
+| **ClickUp** | — |
+
+> **Criticidade Alta, não Média** (corrigido 2026-07-22 após a revisão automática do PR #138): o
+> precedente direto — DEC-004, tiles online no MESMO relatório — é Alta, pelo mesmo motivo (desvia do
+> guardrail §2 "não criar dependência de API ao vivo"). Merge exige a label `aprovado-humano`.
+
+**Escopo (aditivo, READ-ONLY sobre o M1):** `censo_map.render_foto_satelite_ponto()` monta um PNG
+da vista aérea do ponto (Esri World Imagery + `Reference/World_Transportation` para rótulos — a mesma
+composição do "World Imagery Hybrid" da Esri e do `sat-overlay` do `openmaptiles-infra`), com pin
+vermelho no centro. `censo_report._foto_satelite_page()` insere a página logo após a capa.
+**Nada recalcula** score, interseção de setores, raio de 1,5 km ou artefato oficial — os números do
+relatório saem idênticos com e sem a página.
+
+**Zoom:** sonda 1 tile e usa z19 se houver imagem no ponto, senão z18. Medido em 22 pontos do Brasil:
+z17 existe em todo lugar, z18 em cidade média/grande, z19 só em capital.
+
+**Tamanho da imagem na página:** `foto_satelite_grande=True` (API/bot e PDF do dashboard, onde a
+vista aérea é a única imagem) ocupa a área de conteúdo; `False` (aba Viabilidade) usa a célula padrão
+de `_fotos_cells`, para casar com a página de fotos do imóvel que o usuário sobe. Em **página própria**
+nos dois casos: com `_FOTOS_MAX=2`, dividir a página descartaria em silêncio uma foto do usuário.
+
+**Falha de rede → `None` → o PDF sai como hoje, sem a página** (mesmo fallback gracioso do
+`_fetch_basemap`, DEC-004). Nenhum caminho novo pode derrubar a geração do relatório.
+
+**BLOQUEANTE — [DEC-018](../docs/decisions/DEC-018.md), PROPOSTA e aguardando Felipe.** A revisão
+automática do PR #138 reprovou (severidade ALTA) por dependência de rede nova não coberta por DEC: o
+`REVIEW.md` (ALTA #5) só permite rede fora da carga do dashboard nas exceções DEC-004/010/011, e a
+Esri é serviço novo. A DEC-018 foi redigida e traz o levantamento completo — inclusive a **licença**
+(o `tou_summary.pdf` da Esri, 21/04/2025, exige assinatura do ArcGIS Online; o tile hoje é anônimo) e
+o caminho de regularização (**ArcGIS Location Platform**, cadastro grátis, 2M tiles/mês, chave via
+env). Duas perguntas abertas ao final da DEC esperam decisão.
+
+**Hermeticidade da suíte (achado MÉDIA do mesmo review, corrigido):** `render_foto_satelite_ponto` é
+chamada DENTRO de `gerar_pdf_ponto` e de `pages.py`, então testes que só mockavam a função final
+passaram a fazer HTTP real. Corrigido na raiz com a fixture `autouse` `_sat_offline` no `conftest.py`,
+em vez de remendar arquivo por arquivo.
+
+**Testes:** `tests/unit/test_relatorio_pontual_foto_satelite.py` (15 casos, zero acesso a rede —
+tile mockado por monkeypatch): matemática de tile, geometria pura da célula, fallback de rede,
+tolerância a tile faltando, e inserção/ausência da página nos dois tamanhos.
+
+---
+
 ## Relatório Pontual Censitário — satélite + mapas socioeconômico/residual + logo quadrada (2026-07-21, pedido de Vini)
 
 > **Pedido de Vinicius (2026-07-21)**, a partir do uso real do Relatório Pontual em produção, em três

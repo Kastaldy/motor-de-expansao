@@ -369,13 +369,26 @@ def gerar_pdf_ponto(
         except Exception:
             mapas = None
 
+    # TESTE (BLK-SAT, ainda NAO definitivo): foto de satelite do ponto (Esri, z18/z19
+    # conforme disponibilidade) entrando na pagina "Fotos do Imovel" que ja existe.
+    # `render_foto_satelite_ponto` devolve None se a rede falhar -> o PDF sai igual ao
+    # de hoje, sem a pagina. Nao altera nenhum numero do relatorio.
+    from motor_expansao.dashboard.censo_map import render_foto_satelite_ponto
+
+    # Chave do ArcGIS Location Platform via settings (env API_ARCGIS_API_KEY). Sem
+    # ela, o render devolve None e o PDF sai sem a pagina de satelite (DEC-018).
+    foto_sat = render_foto_satelite_ponto(lat, lng, api_key=settings.arcgis_api_key or None)
+
     residual = _residual_do_ponto(lat, lng, settings)
     # Variante "Apresentacao Classica Ultra" (BLK-EST-05): a API/bot espelha o
     # MESMO modelo que o dashboard passou a gerar por padrao (pages.py usa
     # template="classico"). Drop-in: mesma assinatura do gerador recente.
     return gerar_pdf_relatorio_pontual_classico(
         result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
-        solicitante=consumidor, rotulo=rotulo,
+        solicitante=consumidor, rotulo=rotulo, foto_satelite=foto_sat,
+        # API/bot nao tem upload de fotos do imovel -> a vista aerea e a unica imagem
+        # da pagina e usa a area de conteudo inteira (no dashboard fica no tamanho padrao).
+        foto_satelite_grande=True,
     )
 
 
