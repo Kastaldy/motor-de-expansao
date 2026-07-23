@@ -10010,3 +10010,63 @@ Perfil do Bairro/Distrito -> Big Numbers -> Realização. Teto com todos os opci
 
 **Guardrail.** §5 READ-ONLY M1. Não alterar código de render nem asserções de teste — só nomes de
 teste e texto de doc. §2 acentuação vale para o texto novo.
+
+---
+
+## Fechamento de ciclo — BLK-MA-01 (Contrato e decisões do enriquecimento de vulnerabilidade, Plano B)
+
+**Data:** 2026-07-23 · **Veredito:** APROVADO COM RESSALVAS (ressalva de fechamento, não defeito) ·
+**Criticidade:** Média (com gate humano de produto embutido) · **Esteira:** Block Orchestrator (Opus)
+-> Planner (Opus) -> [gate humano de produto — Vinicius] -> Builder (Opus) -> QA (Opus 4.8).
+**READ-ONLY sobre o M1** (score PARALELO de vulnerabilidade; nada de `score_priorizacao`/
+`hex_score_estrutural`/pesos/carteira/plano/artefatos oficiais tocado). **SEM DEC** (Plano B não tem
+API externa; a rota Google Places fica no sucessor opcional BLK-MA-07 com gate + DEC próprios).
+
+**Entregável (SÓ-DOC, ZERO código de produção):**
+- `docs/vulnerabilidade_ma_contrato.md` (NOVO, 15 seções) — contrato canônico dos 6 sinais de
+  vulnerabilidade (1–4 obrigatórios; 5/6 opcionais), metodologia do `score_vulnerabilidade`
+  (heurística ponderada normalizada, NÃO-preditiva), a INVERSÃO da tese de M&A (comprar quer demanda
+  ALTA + residual BAIXO/saturado — o oposto de `abrir_agora`), o join READ-ONLY no molde
+  `enriquecer_outputs_residual_mercado.py:68-82` com asserts de invariância, anti-PII (DEC-012),
+  integração ao lote semanal (DEC-013) e o registro das decisões D1–D8.
+- `docs/README.md` — 1 linha no índice apontando o novo contrato.
+
+**Achado load-bearing (verificado no código pelo Block Orchestrator e confirmado pelo QA):** o único
+caminho de ingestão hoje — `_ler_csv_tp_wh` em `src/motor_expansao/demanda_revelada/concorrentes_densos.py:127`
+— produz só `hex_id_res7`/`rede_normalizada`/`fonte`; **lê o `nome` e o descarta na fronteira, e não
+retém rating**. Consequência: o **nome** do estabelecimento existe na fonte (viabiliza a lista NOMEADA
+no futuro, como dado de negócio distinto da PII de reviewer da DEC-012), mas a **nota/rating não existe**
+na fonte.
+
+**Decisões do gate humano (2026-07-23, Vinicius):**
+- **D1 = FASEADO** — MVP hex-level agregado (anti-PII) entra já; nomeação por-academia (Opção B)
+  deferida atrás da confirmação/extensão de ingestão dos CSVs brutos.
+- **D3 = NÃO carregam a nota** — sinal 2 (rating in-app) fica `n/d` PERMANENTE no Plano B (definido no
+  framework, inativo no MVP); reputação/nota externa só no BLK-MA-07. Score roda em S1/S3/S4.
+- **D4 = pesos S1=0,15 / S2=0,25 / S3=0,35 / S4=0,25** (churn domina); efetivos no Plano B (S2 fora,
+  renormalizado): S1≈0,20 / S3≈0,467 / S4≈0,333; normalização percentil-por-universo; renormalização
+  para sinal ausente/imaturo; flags de qualidade; NÃO-preditivo.
+- **D5 = hex quente para M&A** = `sam_fitness_potencial` alto (top quartil) AND
+  `score_oportunidade_residual < 25` (saturado); distância k=1 (`h3.grid_disk`); INVERSÃO registrada.
+- **D2/D6/D7/D8 = defaults do Planner aceitos** (snapshots por `concorrente_id`+hash, 26 semanas,
+  `MIN_SEMANAS=8`/`STALE_SEMANAS=12`; Parquet `data/staging` gitignored-se-nomeado + CSV
+  `sep=";"`/`utf-8-sig`; só agregados + fixtures sintéticas; passo no `run_weekly_90.sh` pós-regen).
+
+**Decomposição confirmada (a implementar nos sucessores):** BLK-MA-02 (churn+staleness, 100% reuso
+interno), BLK-MA-03 (presença em agregador + extensão opcional para universo nomeado; rating NÃO entra
+aqui por D3), BLK-MA-04 (score), BLK-MA-05 (lista de M&A com a inversão + entregável), BLK-MA-06 (cron
++ runbook), BLK-MA-07 (opcional/futuro — reputação externa, gate + DEC próprios).
+
+**Validações (re-executadas pelo QA, sem bypass):** `pytest -q tests/unit/test_claude_md_size.py` = 2
+passed; `import streamlit_app` = ok; diff do ciclo prova SÓ-DOC (apenas `docs/vulnerabilidade_ma_contrato.md`
++ `docs/README.md`; nenhuma linha de `src/`/`config.py`/`pipelines/m1`/artefato/`PRD.md`); §2 acentuação
+PASS (prosa acentuada, identificadores em ASCII); âncoras de código citadas conferidas no repo real.
+Suíte FULL não rodada (bloco não altera nenhuma linha executável; precedente BLK-RELPON-12) — não é
+bypass.
+
+**Ressalva de fechamento (a cargo do humano, não do Builder):** a branch `ciclo/BLK-MA-01` nasce do
+commit humano `0c2e344`, que adiciona o epic ao `tasks/backlog.md` (governança). Logo o merge é
+**humano** (PR de governança), não auto-merge — coerente com "executar ANTES de abrir PR". O bloco
+BLK-MA-01 **não foi stubado** (evita churn add-then-stub no mesmo PR; o epic segue como âncora dos
+sucessores); a reconciliação do backlog é passo de governança posterior. O commit do ciclo NÃO inclui
+`tasks/backlog.md` (só `docs/` + este append + snapshots de handoff).
