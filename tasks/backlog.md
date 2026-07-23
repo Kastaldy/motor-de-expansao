@@ -1460,7 +1460,7 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 > → Fase 2 viabilidade (**09**) → **10** (deploy paralelo) → **11** (paridade/aceite). O **mapa deck.gl (07)** e a
 > **paridade byte-a-byte (11)** são os marca-passos; o resto é port de spec conhecida sobre back pronto.
 >
-> **Escopo do corte do Streamlit (DEC-018, decisões de produto de Felipe em 2026-07-23):** "substituir 100% o Streamlit"
+> **Escopo do corte do Streamlit (DEC-019, decisões de produto de Felipe em 2026-07-23):** "substituir 100% o Streamlit"
 > passa a significar **paridade de apenas 3 telas — Mapa + Visão Executiva + Viabilidade** (gate de aceite = **BLK-WEB-11**),
 > **sem** portar Domínio nem Carteira/Plano como abas. **Três decisões fecham o escopo:**
 > 1. **Expansão de Domínio NÃO vira aba** — a **Fase 4 (camada 4) do Mapa Territorial** (recomendação + ordem de expansão +
@@ -1524,7 +1524,7 @@ Criar a **fundação compartilhada**: módulo de config/paths (tira do `streamli
 | **Criticidade** | **Baixa** (wraps finos de função pura; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Média. |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Concluído (escopo reduzido pela DEC-018, em prod rev 9b60761): overlays de concorrentes/Ultra + atlas de ícones quadrados servidos via campo `pins` nas respostas de /api/municipio e /api/uf, consumidos no MapScreen. **Domínio, carteira, plano e vazios competitivos: CANCELADOS pela DEC-018.** |
+| **Status** | Concluído (escopo reduzido pela DEC-019, em prod rev 9b60761): overlays de concorrentes/Ultra + atlas de ícones quadrados servidos via campo `pins` nas respostas de /api/municipio e /api/uf, consumidos no MapScreen. **Domínio, carteira, plano e vazios competitivos: CANCELADOS pela DEC-019.** |
 | **Depende de** | **BLK-WEB-01** (fundação de config/serialização/cache). |
 | **Autonomia** | **manual por padrão (candidato a loop-safe)** — mesmo perfil do 01 (mecânico, READ-ONLY, teste de contrato, sem deploy/dep nova). Marcação = pré-aprovação humana (§6.1). |
 
@@ -1842,7 +1842,7 @@ crash); checklist da §15; validação humana de UX (<60s jr., "uma decisão por
 
 ---
 
-## Epic BLK-WEB — Fecho do escopo do corte (2026-07-23, DEC-018)
+## Epic BLK-WEB — Fecho do escopo do corte (2026-07-23, DEC-019)
 
 > **Reconciliação com prod + decisões de escopo (Felipe, 2026-07-23).** Os Status dos blocos WEB-01..17 acima foram
 > atualizados para o estado REAL, verificado **na VPS** (não no código local): a imagem em produção (`motor_expansao_web`)
@@ -1850,7 +1850,7 @@ crash); checklist da §15; validação humana de UX (<60s jr., "uma decisão por
 > **11 endpoints vivos** (mapa por UF, executiva, faixa-alunos, geocode, municípios, relatórios municipal/pontual,
 > viabilidade + catálogos); **não existem** `/api/dominio`, `/api/carteira` nem `/api/plano`.
 >
-> **Decisões formalizadas na DEC-018:** (1) **Expansão de Domínio não vira aba** — a Fase 4 do Mapa já cobre;
+> **Decisões formalizadas na DEC-019:** (1) **Expansão de Domínio não vira aba** — a Fase 4 do Mapa já cobre;
 > (2) **Carteira vira "Oportunidades Imobiliárias"** (placeholder; feature plena = epic futura de imóveis + coletores,
 > com DEC + spec próprias) e as tabelas Carteira acionável + Plano curto prazo são **dropadas** — a parte de
 > domínio/carteira/plano/vazios do **BLK-WEB-02 fica CANCELADA**; (3) **substituir 100% o Streamlit = paridade só de
@@ -2013,7 +2013,7 @@ cobertura mínima acordada; roda no CI.
 | **Criticidade** | **Crítica** (toca `deploy/`/`Dockerfile.*`/`docker-compose*`/Caddy/**CI** + VPS; exige **`critica-aprovada`** do Felipe — DEC-016). |
 | **Prioridade** | Média (após telas + testes). |
 | **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — deploy/VPS/auth/LGPD/arquitetura]` → Builder → QA. |
-| **Status** | Concluído (parcial, em prod rev 9b60761): piloto ao lado do Streamlit — `Dockerfile.web`, serviço `web`/`motor_expansao_web` no compose (`:ro`, sob Caddy+Authelia), job `publish-web` e os 3 parquets de renda domiciliar presentes na VPS. Falta: registrar a decisão de qual manter (agora coberta pela **DEC-018** + gate **BLK-WEB-11**). |
+| **Status** | Concluído (parcial, em prod rev 9b60761): piloto ao lado do Streamlit — `Dockerfile.web`, serviço `web`/`motor_expansao_web` no compose (`:ro`, sob Caddy+Authelia), job `publish-web` e os 3 parquets de renda domiciliar presentes na VPS. Falta: registrar a decisão de qual manter (agora coberta pela **DEC-019** + gate **BLK-WEB-11**). |
 | **Depende de** | **BLK-WEB-12** + **BLK-WEB-15** + **BLK-WEB-16**. **Supersede/refina BLK-WEB-10** para a arquitetura standalone. |
 | **Autonomia** | **manual (NÃO loop-safe)** — `loop_guard` aborta em `deploy/`/`Dockerfile.*`/compose/CI; deploy sempre manual, por digest (§6). NUNCA loop-safe. |
 
