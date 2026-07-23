@@ -191,6 +191,19 @@ def test_render_monta_png_com_tiles_mockados(monkeypatch):
         assert abs(img.width / img.height - _SAT_RATIO) < 0.02
 
 
+def test_render_usa_api_key_do_parametro(monkeypatch):
+    """Caminho da API: a chave vem do parametro `api_key=` (settings), sem env."""
+    monkeypatch.delenv(_SAT_API_KEY_ENV, raising=False)  # nao ha chave no ambiente
+    monkeypatch.setattr(censo_map, "_sat_melhor_zoom", lambda *a, **k: _SAT_ZOOM_MIN)
+    monkeypatch.setattr(
+        censo_map,
+        "_sat_baixar_tile",
+        lambda *a, **k: Image.open(BytesIO(_png_sintetico())).convert("RGBA"),
+    )
+    png = render_foto_satelite_ponto(LAT_C, LNG_C, api_key="chave-via-param")
+    assert png is not None
+
+
 def test_render_tolera_tile_faltando(monkeypatch):
     """Um tile que falha nao invalida a foto inteira — o resto do mosaico entra."""
     monkeypatch.setenv(_SAT_API_KEY_ENV, _CHAVE_FAKE)

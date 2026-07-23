@@ -1085,17 +1085,19 @@ def render_mapa_censitario_estatico_png(
 # Brasil: z17 existe em todo lugar, z18 em cidade media/grande, z19 so em capital.
 #
 # LICENCA (REGULARIZADA — DEC-018): a imagem vem do ArcGIS Location Platform
-# (`ibasemaps-api.arcgis.com`), autenticada por CHAVE lida de env
-# (`MOTOR_ARCGIS_API_KEY`; a chave precisa do privilegio `premium:user:basemaps`;
-# faixa gratuita de 2M tiles/mes). A chave NUNCA e commitada. SEM chave, a pagina
-# de satelite e simplesmente OMITIDA (render devolve None) -- nunca se cai no
-# endpoint anonimo `server.arcgisonline.com`, cujo uso os termos da Esri consideram
-# irregular. A imagem e SEMPRE externa (nao se self-hospeda) e o credito da Esri e
-# obrigatorio -- por isso `_SAT_ATRIBUICAO` e desenhado no canto da foto.
+# (`ibasemaps-api.arcgis.com`), autenticada por CHAVE. A API passa a chave via
+# `settings.arcgis_api_key` (env `API_ARCGIS_API_KEY`); o dashboard cai no fallback
+# de env `_sat_api_key()`. A chave precisa do privilegio `premium:user:basemaps`
+# (faixa gratuita de 2M tiles/mes) e NUNCA e commitada. SEM chave, a pagina de
+# satelite e simplesmente OMITIDA (render devolve None) -- nunca se cai no endpoint
+# anonimo `server.arcgisonline.com`, cujo uso os termos da Esri consideram irregular.
+# A imagem e SEMPRE externa (nao se self-hospeda) e o credito da Esri e obrigatorio
+# -- por isso `_SAT_ATRIBUICAO` e desenhado no canto da foto.
 # ===========================================================================
 
-# Nome da env var com a chave do ArcGIS Location Platform (regularizacao da licenca).
-_SAT_API_KEY_ENV = "MOTOR_ARCGIS_API_KEY"
+# Env var com a chave do ArcGIS Location Platform (fallback p/ chamadas sem settings,
+# ex.: dashboard). Na API a chave vem de `settings.arcgis_api_key`, passada explicita.
+_SAT_API_KEY_ENV = "API_ARCGIS_API_KEY"
 _SAT_TILE_URL = (
     "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 )
@@ -1128,7 +1130,11 @@ def _sat_deg2num(lat: float, lng: float, z: int) -> tuple[float, float]:
 
 
 def _sat_api_key() -> str | None:
-    """Chave do ArcGIS Location Platform, lida de env. Sem ela, a vista aerea e omitida."""
+    """Fallback: chave do ArcGIS Location Platform lida de env (`API_ARCGIS_API_KEY`).
+
+    Usado por chamadores SEM `settings` (ex.: dashboard). A API passa a chave
+    explicitamente via `render_foto_satelite_ponto(..., api_key=settings.arcgis_api_key)`.
+    """
     import os
 
     return os.environ.get(_SAT_API_KEY_ENV) or None
@@ -1191,6 +1197,7 @@ def render_foto_satelite_ponto(
     lat: float,
     lng: float,
     *,
+    api_key: str | None = None,
     cobertura_m: int = _SAT_COBERTURA_M,
     zoom: int | None = None,
     rotulos: bool = True,
@@ -1199,12 +1206,15 @@ def render_foto_satelite_ponto(
     """PNG da foto de satelite do ponto, com pin no centro. `None` se a rede falhar
     OU se nao houver chave do ArcGIS Location Platform.
 
+    `api_key`: chave do ArcGIS Location Platform. A API passa `settings.arcgis_api_key`;
+    se omitido, cai no fallback de env `_sat_api_key()` (ex.: dashboard).
+
     Devolver `None` (em vez de levantar) e proposital: o chamador segue gerando o
     relatorio sem a pagina de foto, igual ao fallback offline do `_fetch_basemap`.
     Sem chave, a pagina e omitida — nunca se busca tile no endpoint anonimo (licenca).
     """
     try:
-        token = _sat_api_key()
+        token = api_key or _sat_api_key()
         if not token:
             return None
         z = zoom if zoom is not None else _sat_melhor_zoom(lat, lng, timeout, token)

@@ -340,7 +340,9 @@ def gerar_pdf_ponto(
     # de hoje, sem a pagina. Nao altera nenhum numero do relatorio.
     from motor_expansao.dashboard.censo_map import render_foto_satelite_ponto
 
-    foto_sat = render_foto_satelite_ponto(lat, lng)
+    # Chave do ArcGIS Location Platform via settings (env API_ARCGIS_API_KEY). Sem
+    # ela, o render devolve None e o PDF sai sem a pagina de satelite (DEC-018).
+    foto_sat = render_foto_satelite_ponto(lat, lng, api_key=settings.arcgis_api_key or None)
 
     residual = _residual_do_ponto(lat, lng, settings)
     # Variante "Apresentacao Classica Ultra" (BLK-EST-05): a API/bot espelha o

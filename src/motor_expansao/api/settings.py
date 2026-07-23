@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     # Chave da Google Geocoding API (opcional). Se vazia, o geocoding de
     # endereco+CEP usa Nominatim. Definir em .env: API_GOOGLE_MAPS_API_KEY=...
     google_maps_api_key: str = ""
+    # Chave do ArcGIS Location Platform p/ a VISTA AEREA (satelite Esri) do
+    # Relatorio Pontual — BLK-SAT-01/DEC-018. Se vazia, a pagina de satelite e
+    # OMITIDA (o resto do PDF sai igual). Definir em .env: API_ARCGIS_API_KEY=...
+    arcgis_api_key: str = ""
     # Onde persistir as sessoes do bot (quem ja esta logado), para que um restart
     # do bot NAO deslogue todo mundo. Default no repo; override via env.
     bot_sessoes_path: Path = _REPO_ROOT / "bot_sessoes.json"

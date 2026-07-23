@@ -38,6 +38,9 @@ services:
       STREAMLIT_SERVER_ADDRESS: "0.0.0.0"
       STREAMLIT_SERVER_PORT: "8501"
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
+      # Vista aerea (satelite Esri) no PDF do dashboard — lida via os.environ pelo
+      # fallback `_sat_api_key()`. Opcional; sem ela a pagina e omitida (DEC-018).
+      API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro
       - /opt/motor-expansao/data/staging:/app/data/staging:ro    # overlays do Mapa Territorial (vazios competitivos)
@@ -83,6 +86,10 @@ services:
       API_STAGING_DIR: "/app/data/staging"
       API_ULTRA_DIR: "/app/data/ultra"
       API_COMPETITORS_LOGOS_DIR: "/app/concorrentes"
+      # Chave do ArcGIS Location Platform p/ a vista aerea (satelite Esri) do PDF
+      # (BLK-SAT-01/DEC-018). Opcional: sem ela a pagina de satelite e omitida e o
+      # resto do PDF sai igual. Defina no .env do servidor: API_ARCGIS_API_KEY=...
+      API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro   # censo geo (obrigatorio)
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal (obrigatorio)
