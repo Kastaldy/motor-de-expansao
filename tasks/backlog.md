@@ -1251,6 +1251,139 @@ produção e exige DEC + gate humano.
 - BLK-ATR-03-FU1 (concluído 2026-07-07) — ver tasks/completed.md
 
 
+## Projeto — Score de vulnerabilidade de academias independentes (M&A)
+
+> Trilha nova (pedido de Vinicius, 2026-07-06): transformar a base de concorrentes já coletada pelos
+> scrapers (GymScraping, DEC-013) num **funil de M&A**. A cada academia INDEPENDENTE (não-rede/de
+> bairro) mapeada, anexar sinais de "saúde do negócio" e derivar um **score de vulnerabilidade**;
+> cruzar com os hexágonos quentes do Motor para produzir uma **lista priorizada de alvos de aquisição**
+> para o time comercial. É **camada de ENRIQUECIMENTO** sobre os scrapers existentes — NÃO cria pipeline
+> novo. **READ-ONLY sobre o M1** (§5): a vulnerabilidade é um score PARALELO, nunca toca
+> `score_priorizacao`/pesos/artefatos oficiais.
+>
+> **Rota escolhida por Vinicius (2026-07-06): PLANO B — sem Google Places.** Os sinais vêm de fontes
+> que o repo JÁ coleta: (a) presença + **rating in-app** do WellHub/TotalPass (DEC-013), e (b)
+> **diff do histórico de snapshots semanais** dos próprios scrapers (churn e staleness). Isso elimina a
+> dependência de API externa ao vivo (sem desvio do §2 → **sem DEC**), sem custo/ToS e **sem PII de
+> reviewers**. Reputação pública externa (Google Places etc.) fica como **sucessor opcional com gate
+> próprio** (BLK-MA-07), caso um dia se queira a nota do público geral.
+
+### BLK-MA-01 — Contrato e decisões do enriquecimento de vulnerabilidade (design, Plano B)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (camada de enriquecimento paralela que reusa dados já coletados + diff de snapshots; **sem dependência externa nova** e **sem DEC** — a rota Google Places/§2 foi descartada no Plano B; gera um score paralelo e um entregável comercial. **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir por Vinicius. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: pesos/limiares do score + definição de hex quente]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | DEC-013 (WellHub/TotalPass já coletados + **cron semanal que acumula os snapshots** — insumo de churn/staleness); camada mercado/residual + Demanda Revelada (para "hexágono quente"); `concorrentes_mapeados.parquet`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca a trilha de scrapers/VPS (integração ao cron, DEC-013) e define um score/entregável comercial; precisa de confirmação humana de produto. NÃO marcar loop-safe. |
+
+**Contexto (ancorado).** Os scrapers do Vini (`VinhoAbencoado/GymScraping`, DEC-013) já mapeiam a
+oferta concorrente **e rodam semanalmente**; a base entra no Motor via
+`normalizar_concorrentes → calcular_colunas_mercado` e alimenta o residual. Hoje esses registros têm
+oferta/rede/geo, mas **nenhum sinal de fragilidade do negócio**. O insight do Plano B: a **variação
+temporal** e a **última atualização** saem do **diff do próprio histórico de scraping** (nenhuma API
+externa), e a **reputação** vem do **rating in-app WellHub/TotalPass** que já é coletado. O BLK-MA-01
+**não escreve código de produção** — fixa o contrato dos sinais, a metodologia do score e as decisões
+de produto; os sucessores implementam.
+
+**Objetivo do epic.** Score de vulnerabilidade por academia independente + lista priorizada de M&A
+(academias mais vulneráveis próximas a hexágonos quentes) para o time comercial.
+
+**Sinais (Plano B — só fontes internas / já coletadas).**
+1. **Presença/ausência em agregadores** (WellHub/TotalPass) — já interno (DEC-013). Tese: ausência do
+   canal onde o público low-cost está → sinal de fragilidade.
+2. **Rating in-app WellHub/TotalPass** (subconjunto listado) — substitui a "avaliação média" do Google;
+   `n/d` para quem não está no agregador (ver D3). **[VERIFICAR no gate — checado por Claude em
+   2026-07-23]** o único caminho de ingestão que existe hoje,
+   `demanda_revelada/concorrentes_densos.py:_ler_csv_tp_wh` (linha 127), produz SÓ
+   `hex_id_res7`/`rede_normalizada`/`fonte` (drop-PII na fronteira), **sem coluna de rating**.
+   Confirmar que os CSVs BRUTOS TP/WH (que vivem na VPS, gitignored) carregam a nota ANTES que
+   BLK-MA-03/04 dependam dela — senão este sinal também é aquisição, não reuso, e o rótulo "já
+   coletado" cai. É a claim mais load-bearing do Plano B.
+3. **Churn/permanência** via **diff dos snapshots semanais** — apareceu/sumiu/reapareceu na base dos
+   scrapers → forte proxy de fechamento/venda. (Substitui a "variação de reviews".)
+4. **Staleness** via **diff dos snapshots** — tempo desde a última mudança nos campos raspados
+   (horário/preço/lista de unidades/endereço). (Substitui "tempo desde última atualização" — proxy mais
+   confiável que o "last-updated" do Google, que nem é exposto.)
+5. **(Opcional) Tendência de popularidade no agregador** — `membros`/`alunos_parceiras` da célula
+   subindo/caindo, quando a série permitir.
+6. **(Opcional, interno) Pressão competitiva** — proximidade a Smart Fit/rede Ultra + residual saturado
+   (de `concorrentes_mapeados` + Ultra + mercado/residual): independente espremida = mais vulnerável.
+   Colunas reais já materializadas por `hex_id` em `data/staging/hexagonos_mercado_mapeado.parquet`
+   (verificadas em 2026-07-23): `pressao_concorrencial_score_2km`, `n_concorrentes_mapeados_2km`,
+   `dist_concorrente_mais_proximo_m`, `n_unidades_ultra_2km`, `rede_dominante_2km`,
+   `share_smart_fit_2km` — nenhum sinal de "pressão" precisa ser recomputado do zero.
+
+**Mapa dos 4 sinais originais → Plano B:** avaliação média → (2) rating in-app; Δ reviews 3m → (3)
+churn + (5) tendência; presença agregadores → (1) [já interno]; última atualização → (4) staleness.
+
+**Decisões a resolver/confirmar (BLK-MA-01).**
+- **D1 — Definição de "academia independente".** Critério de não-rede/bairro sobre `concorrentes_mapeados`
+  (ex.: `rede` isolada / contagem de unidades da marca == 1) e o universo exato (os 28 scrapers citados
+  vs. os 90 coletores da DEC-013 — quais entram).
+- **D2 — Fonte/retenção dos snapshots semanais.** Onde vivem os snapshots dos scrapers (formato/retenção)
+  para computar churn/staleness; janela de staleness (nº de semanas sem mudança = "stale"); tratamento do
+  **ramp-up** (cron ativo desde 26/06 — ~1,5 mês hoje; a série cresce). Sem histórico → sinal marcado
+  como imaturo, não penaliza.
+- **D3 — Rating de agregador.** Usar como sinal só no subconjunto listado; como tratar `n/d` (não
+  penalizar quem não tem rating; a ausência de agregador já é o sinal 1).
+- **D4 — Fórmula/pesos do score.** Heurística transparente e auditável (composição ponderada normalizada
+  dos sinais), com direção de cada um (ausência de agregador ↑vuln.; rating baixo ↑; churn/sumiço ↑;
+  staleness alta ↑; popularidade caindo ↑; pressão competitiva alta ↑). NÃO é modelo preditivo treinado
+  em desfecho — se um dia se quiser validar que prevê aquisição/fechamento, entra a disciplina DEC-008
+  (out-of-fold vs baseline) em bloco próprio.
+- **D5 — "Hexágono quente" + proximidade.** Qual métrica define quente (`score_oportunidade_residual`,
+  SAM, demanda revelada) e o limiar de distância academia↔hex para entrar na lista de M&A.
+  Âncora verificada (2026-07-23): o hotness por hex já está materializado em
+  `data/outputs/carteira_expansao_acionavel.parquet` (4.899x62) — colunas `score_priorizacao`,
+  `score_setor_2022_calibrado`, `score_expansao_hibrido`, `score_oportunidade_residual`,
+  `oferta_efetiva_disponivel`, `tese_entrada` por `hex_id` — e casa direto com
+  `concorrentes_mapeados.hex_id_res7`. Fazer o join READ-ONLY no padrão defensivo de
+  `src/motor_expansao/pipelines/enriquecer_outputs_residual_mercado.py:68-82` (asserts de
+  `score_priorizacao`/ranks/cardinalidade inalterados após o join). **Nota de tese de M&A:** comprar
+  (não construir) quer demanda ALTA + residual BAIXO (mercado saturado); é a INVERSÃO do sinal de
+  abrir unidade nova (residual alto). Registrar a inversão no cálculo.
+- **D6 — Entregável.** Formato da lista priorizada (Parquet + CSV `sep=";"`/`utf-8-sig` para o comercial;
+  e/ou overlay no dashboard) e onde materializar (`data/staging` / `data/outputs`).
+- **D7 — Anti-PII.** Persistir **somente agregados** (rating médio, contagens, flags de churn/staleness);
+  **nunca** texto/autor de review nem PII. Fonte real fora do versionamento; fixtures sintéticas (DEC-012).
+- **D8 — Integração ao cron.** Rodar como passo do lote semanal da VPS (DEC-013) vs. cadência separada.
+
+**Escopo permitido (READ-ONLY M1).** Camada de enriquecimento nova (módulo isolado, ex.:
+`src/motor_expansao/vulnerabilidade/` ou extensão do pacote de mercado), consumindo o histórico de
+snapshots dos scrapers + o ativo WellHub/TotalPass + `concorrentes_mapeados`; materializa um Parquet
+paralelo com o score e a lista de M&A. NÃO altera artefatos oficiais do M1. **Sem dependência nova de
+base** e **sem API externa ao vivo**.
+
+**Fora de escopo.** `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/plano/artefatos oficiais
+do M1; `flag_sam`/gate do SAM (DEC-006/DEC-007); **Google Places / qualquer API externa de reputação**
+(movido para o sucessor opcional BLK-MA-07, com gate/DEC próprios); persistir PII.
+
+**Guardrails.** §5 (score paralelo, não recalcula M1); DEC-012/anti-PII (só agregados; fonte real não
+versionada; fixtures sintéticas); DEC-013 (extensão do lote de scrapers, não pipeline novo). §2 NÃO é
+desafiado no Plano B — não há API ao vivo; o dashboard segue offline sobre Parquets.
+
+**Entregável.** Score de vulnerabilidade por academia independente + lista priorizada de alvos de M&A
+(vulneráveis × proximidade a hexágonos quentes) para o time comercial.
+
+**Decomposição sugerida (sucessores, a confirmar no BLK-MA-01).**
+- **BLK-MA-02** — extrator de **churn + staleness** a partir do histórico de snapshots semanais dos
+  scrapers (100% interno); flags de série imatura (ramp-up).
+- **BLK-MA-03** — join do sinal de agregadores (**presença + rating in-app** WellHub/TotalPass) por
+  dedup com `concorrentes_mapeados`; anti-PII por construção; fixtures sintéticas.
+- **BLK-MA-04** — score de vulnerabilidade (fórmula/pesos do D4) + normalização + flags de qualidade.
+- **BLK-MA-05** — lista priorizada de M&A (cruzamento com hexágonos quentes, D5) + entregável (D6).
+- **BLK-MA-06** — integração ao cron semanal da VPS (D8) e runbook.
+- **BLK-MA-07 (opcional/futuro, gate + DEC próprios)** — enriquecer com **reputação externa** (Google
+  Places ou outra) SE se quiser a nota do público geral; só aqui reaparece o desvio do §2.
+
+**Critério de aceite (BLK-MA-01).** Contrato dos sinais internos (1–4, + 5/6 opcionais) e do score
+definido; D1–D8 resolvidas/confirmadas no gate de produto; decomposição BLK-MA-02+ confirmada;
+guardrails §5/anti-PII/DEC-013 explicitados; **sem DEC de API externa** (rota Google descartada, movida
+ao BLK-MA-07); ZERO código de produção neste bloco (só docs/contrato).
+
 ---
 
 ### BLK-ATR-05 — Materializar a estrutura escolhida (gate + matriz/composto) em produção (DEC + gate humano)
