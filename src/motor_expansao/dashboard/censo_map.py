@@ -1084,16 +1084,23 @@ def render_mapa_censitario_estatico_png(
 # devolve placeholder de ~2,5 KB onde nao ha imagem). Medido em 22 pontos do
 # Brasil: z17 existe em todo lugar, z18 em cidade media/grande, z19 so em capital.
 #
-# LICENCA: a imagem e SEMPRE externa (nao se self-hospeda) e o credito da Esri e
-# obrigatorio -- por isso `_SAT_ATRIBUICAO` e desenhado no canto da foto. Uso em
-# producao exige assinatura do ArcGIS Location Platform (2M tiles/mes gratuitos).
+# LICENCA (REGULARIZADA — DEC-018): a imagem vem do ArcGIS Location Platform
+# (`ibasemaps-api.arcgis.com`), autenticada por CHAVE lida de env
+# (`MOTOR_ARCGIS_API_KEY`; a chave precisa do privilegio `premium:user:basemaps`;
+# faixa gratuita de 2M tiles/mes). A chave NUNCA e commitada. SEM chave, a pagina
+# de satelite e simplesmente OMITIDA (render devolve None) -- nunca se cai no
+# endpoint anonimo `server.arcgisonline.com`, cujo uso os termos da Esri consideram
+# irregular. A imagem e SEMPRE externa (nao se self-hospeda) e o credito da Esri e
+# obrigatorio -- por isso `_SAT_ATRIBUICAO` e desenhado no canto da foto.
 # ===========================================================================
 
+# Nome da env var com a chave do ArcGIS Location Platform (regularizacao da licenca).
+_SAT_API_KEY_ENV = "MOTOR_ARCGIS_API_KEY"
 _SAT_TILE_URL = (
-    "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+    "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
 )
 _SAT_ROTULOS_URL = (
-    "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation"
+    "https://ibasemaps-api.arcgis.com/arcgis/rest/services/Reference/World_Transportation"
     "/MapServer/tile/{z}/{y}/{x}"
 )
 _SAT_ATRIBUICAO = "Esri, Vantor, Earthstar Geographics"
@@ -1120,15 +1127,29 @@ def _sat_deg2num(lat: float, lng: float, z: int) -> tuple[float, float]:
     return x, y
 
 
-def _sat_baixar_tile(url: str, z: int, x: int, y: int, timeout: float) -> Image.Image:
+def _sat_api_key() -> str | None:
+    """Chave do ArcGIS Location Platform, lida de env. Sem ela, a vista aerea e omitida."""
+    import os
+
+    return os.environ.get(_SAT_API_KEY_ENV) or None
+
+
+def _sat_url(base: str, z: int, x: int, y: int, token: str) -> str:
+    """URL do tile ja autenticada com o token do ArcGIS Location Platform (`?token=`)."""
+    from urllib.parse import quote
+
+    return f"{base.format(z=z, x=x, y=y)}?token={quote(token, safe='')}"
+
+
+def _sat_baixar_tile(url: str, z: int, x: int, y: int, timeout: float, token: str) -> Image.Image:
     import urllib.request
 
-    req = urllib.request.Request(url.format(z=z, x=x, y=y), headers=_SAT_UA)
+    req = urllib.request.Request(_sat_url(url, z, x, y, token), headers=_SAT_UA)
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return Image.open(BytesIO(resp.read())).convert("RGBA")
 
 
-def _sat_melhor_zoom(lat: float, lng: float, timeout: float) -> int:
+def _sat_melhor_zoom(lat: float, lng: float, timeout: float, token: str) -> int:
     """Maior zoom com imagem REAL neste ponto (1 tile de sonda, nao o mosaico todo)."""
     import urllib.request
 
@@ -1136,7 +1157,7 @@ def _sat_melhor_zoom(lat: float, lng: float, timeout: float) -> int:
         fx, fy = _sat_deg2num(lat, lng, z)
         try:
             req = urllib.request.Request(
-                _SAT_TILE_URL.format(z=z, x=int(fx), y=int(fy)), headers=_SAT_UA
+                _sat_url(_SAT_TILE_URL, z, int(fx), int(fy), token), headers=_SAT_UA
             )
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 if len(resp.read()) > _SAT_PLACEHOLDER_MAX_BYTES:
@@ -1175,13 +1196,18 @@ def render_foto_satelite_ponto(
     rotulos: bool = True,
     timeout: float = 20.0,
 ) -> bytes | None:
-    """PNG da foto de satelite do ponto, com pin no centro. `None` se a rede falhar.
+    """PNG da foto de satelite do ponto, com pin no centro. `None` se a rede falhar
+    OU se nao houver chave do ArcGIS Location Platform.
 
     Devolver `None` (em vez de levantar) e proposital: o chamador segue gerando o
     relatorio sem a pagina de foto, igual ao fallback offline do `_fetch_basemap`.
+    Sem chave, a pagina e omitida — nunca se busca tile no endpoint anonimo (licenca).
     """
     try:
-        z = zoom if zoom is not None else _sat_melhor_zoom(lat, lng, timeout)
+        token = _sat_api_key()
+        if not token:
+            return None
+        z = zoom if zoom is not None else _sat_melhor_zoom(lat, lng, timeout, token)
         m_px = 156543.03392 * math.cos(math.radians(lat)) / (2**z)
         larg = int(round(cobertura_m / m_px))
         alt = int(round(larg / _SAT_RATIO))
@@ -1199,7 +1225,7 @@ def render_foto_satelite_ponto(
         with ThreadPoolExecutor(max_workers=8) as ex:
             for url in urls:                       # ordem importa: foto, depois rotulo
                 futs = {
-                    (tx, ty): ex.submit(_sat_baixar_tile, url, z, tx, ty, timeout)
+                    (tx, ty): ex.submit(_sat_baixar_tile, url, z, tx, ty, timeout, token)
                     for tx, ty in coords
                 }
                 for (tx, ty), fut in futs.items():

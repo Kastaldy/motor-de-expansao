@@ -17,10 +17,14 @@ from PIL import Image
 
 from motor_expansao.dashboard import censo_map
 from motor_expansao.dashboard.censo_map import (
+    _SAT_API_KEY_ENV,
     _SAT_RATIO,
+    _SAT_ROTULOS_URL,
+    _SAT_TILE_URL,
     _SAT_ZOOM_MAX,
     _SAT_ZOOM_MIN,
     _sat_deg2num,
+    _sat_url,
     render_foto_satelite_ponto,
 )
 from motor_expansao.dashboard.censo_report import (
@@ -36,6 +40,10 @@ from motor_expansao.dashboard.censo_report import (
 
 LAT_C = -16.6869
 LNG_C = -49.2648
+
+# Chave ficticia para os testes do caminho feliz. A regularizacao (DEC-018) faz o
+# render devolver None sem chave, entao os testes que esperam PNG precisam de uma.
+_CHAVE_FAKE = "chave-de-teste-arcgis"
 
 
 def _png_sintetico(w: int = 256, h: int = 256, cor: tuple[int, int, int] = (90, 120, 80)) -> bytes:
@@ -96,6 +104,17 @@ def test_ratio_da_foto_igual_ao_da_celula_do_pdf():
     assert _SAT_RATIO == _FOTO_ASPECT
 
 
+def test_licenca_usa_host_autenticado_e_nunca_o_anonimo():
+    """Regularizacao DEC-018: tiles vem do ArcGIS Location Platform, com token, e o
+    endpoint anonimo `server.arcgisonline.com` NAO aparece em nenhuma URL."""
+    for base in (_SAT_TILE_URL, _SAT_ROTULOS_URL):
+        assert base.startswith("https://ibasemaps-api.arcgis.com/")
+        assert "server.arcgisonline.com" not in base
+    url = _sat_url(_SAT_TILE_URL, 18, 100, 200, "minha-chave/secreta")
+    assert "ibasemaps-api.arcgis.com" in url
+    assert "token=minha-chave%2Fsecreta" in url  # token url-encoded
+
+
 # --------------------------------------------------------------------------- #
 # Geometria pura da celula grande                                              #
 # --------------------------------------------------------------------------- #
@@ -127,8 +146,28 @@ def test_celula_grande_e_maior_que_a_padrao():
 # --------------------------------------------------------------------------- #
 
 
+def test_render_devolve_none_sem_chave(monkeypatch):
+    """Sem chave do ArcGIS Location Platform -> `None` e NENHUM fetch (regularizacao DEC-018).
+
+    Garante que o endpoint anonimo `server.arcgisonline.com` nunca e tocado: sem chave,
+    o render retorna antes de qualquer sonda/download de tile.
+    """
+    monkeypatch.delenv(_SAT_API_KEY_ENV, raising=False)
+    chamado = {"fetch": False}
+
+    def _marca(*_args, **_kwargs):
+        chamado["fetch"] = True
+        raise AssertionError("nao pode buscar tile sem chave")
+
+    monkeypatch.setattr(censo_map, "_sat_melhor_zoom", _marca)
+    monkeypatch.setattr(censo_map, "_sat_baixar_tile", _marca)
+    assert render_foto_satelite_ponto(LAT_C, LNG_C) is None
+    assert chamado["fetch"] is False
+
+
 def test_render_devolve_none_quando_a_rede_falha(monkeypatch):
-    """Rede fora -> `None` -> o PDF sai como hoje, sem a pagina (nao quebra o relatorio)."""
+    """Com chave, mas rede fora -> `None` -> o PDF sai como hoje, sem a pagina."""
+    monkeypatch.setenv(_SAT_API_KEY_ENV, _CHAVE_FAKE)
 
     def _explode(*_args, **_kwargs):
         raise OSError("sem rede")
@@ -138,7 +177,8 @@ def test_render_devolve_none_quando_a_rede_falha(monkeypatch):
 
 
 def test_render_monta_png_com_tiles_mockados(monkeypatch):
-    """Caminho feliz, sem rede: devolve PNG na proporcao pedida."""
+    """Caminho feliz (com chave), sem rede: devolve PNG na proporcao pedida."""
+    monkeypatch.setenv(_SAT_API_KEY_ENV, _CHAVE_FAKE)
     monkeypatch.setattr(censo_map, "_sat_melhor_zoom", lambda *a, **k: _SAT_ZOOM_MIN)
     monkeypatch.setattr(
         censo_map,
@@ -153,6 +193,7 @@ def test_render_monta_png_com_tiles_mockados(monkeypatch):
 
 def test_render_tolera_tile_faltando(monkeypatch):
     """Um tile que falha nao invalida a foto inteira — o resto do mosaico entra."""
+    monkeypatch.setenv(_SAT_API_KEY_ENV, _CHAVE_FAKE)
     chamadas = {"n": 0}
 
     def _as_vezes_falha(*_args, **_kwargs):
