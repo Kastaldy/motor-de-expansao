@@ -171,6 +171,7 @@ export const api = {
     solicitante?: string
     infoImovel?: Record<string, unknown>
     viabilidade?: unknown
+    viabilidadeInputs?: ViabilidadeIn
     fotos?: File[]
   }) => {
     const q = new URLSearchParams({
@@ -183,6 +184,9 @@ export const api = {
       q.set('info_imovel', JSON.stringify(opts.infoImovel))
     }
     if (opts.viabilidade) q.set('viabilidade_json', JSON.stringify(opts.viabilidade))
+    if (opts.viabilidadeInputs) {
+      q.set('viabilidade_inputs_json', JSON.stringify(opts.viabilidadeInputs))
+    }
 
     const fd = new FormData()
     for (const f of (opts.fotos ?? []).slice(0, 2)) fd.append('fotos', f)

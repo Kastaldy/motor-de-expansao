@@ -342,6 +342,22 @@ COMPETITORS_LOGO_DIR = Path(
 )
 
 
+@app.on_event("startup")
+def _preload_pins_logos() -> None:
+    """Popula competitors._ICON_CACHE uma vez no boot: SEM isto os pins dos PDFs
+    (Relatorio Municipal + Pontual) caem no fallback de sigla e as logos das redes NAO
+    aparecem. Idempotente e gracioso (arquivo ausente -> so nao cacheia). READ-ONLY M1."""
+    try:
+        from motor_expansao.dashboard.competitors import preload_logos
+
+        preload_logos(
+            COMPETITORS_LOGO_DIR,
+            ultra_dir=ULTRA_DIR if ULTRA_DIR.is_dir() else None,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _clean(v: Any) -> str:
     if v is None:
         return ""
@@ -1954,6 +1970,59 @@ def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
     )
 
 
+def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
+    """Re-roda o motor de viabilidade e monta o payload do slide do PDF COM os graficos
+    (rampa de alunos, faturamento/EBITDA, FCF acumulado, DRE waterfall). `None` em qualquer
+    falha -> o PDF cai no payload so-numeros (viabilidade_json). Alinha payback/roic aos
+    MESMOS valores da tela (a rota /api/viabilidade sobrescreve os do motor). READ-ONLY M1."""
+    try:
+        from motor_expansao.dashboard.viabilidade_charts import montar_payload_viabilidade
+        from motor_expansao.dimensionamento.viabilidade_ponto import (
+            analisar_viabilidade_ponto,
+        )
+
+        kwargs: dict[str, Any] = {}
+        if body.ticket:
+            kwargs["ticket_medio"] = body.ticket
+        if body.formato:
+            kwargs["formato"] = body.formato
+        if body.margem_alvo is not None:
+            kwargs["margem_alvo"] = body.margem_alvo
+        inv = _investimento(body)
+        kwargs["capex"] = inv["capex_total"]
+        if body.rampa_meses is not None:
+            kwargs["maturacao_meses"] = body.rampa_meses
+        base = _base_calibracao()
+        if base is not None:
+            kwargs["base_calibracao_df"] = base
+
+        res = analisar_viabilidade_ponto(
+            lat=body.lat,
+            lng=body.lng,
+            m2=body.m2,
+            aluguel_pedido=body.aluguel,
+            demanda_premissa=body.demanda,
+            **kwargs,
+        )
+        serie = _serie_motor(body, inv)
+        payload = montar_payload_viabilidade(res, serie, maturacao_mes=body.rampa_meses)
+
+        # Alinha payback/roic aos valores da TELA (a rota /api/viabilidade sobrescreve os do
+        # motor: payback pela serie de FCF, roic desalavancado) -> numeros do PDF batem.
+        _serie_fcf, payback = _fcf_serie(body, inv)
+        payload["payback_meses"] = payback
+        investimento = float(inv["investimento_total"])
+        lucro_liq = getattr(res.viabilidade, "lucro_liquido_mensal", None)
+        payload["roic_anual"] = (
+            _num((float(lucro_liq) * 12.0) / investimento, 4)
+            if (lucro_liq is not None and investimento > 0)
+            else None
+        )
+        return payload
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @app.post("/api/relatorio/pontual")
 async def relatorio_pontual(
     lat: float,
@@ -1962,6 +2031,7 @@ async def relatorio_pontual(
     solicitante: str | None = None,
     info_imovel: str | None = None,
     viabilidade_json: str | None = None,
+    viabilidade_inputs_json: str | None = None,
     fotos: list[UploadFile] | None = None,
 ) -> Response:
     """Relatorio Pontual Censitario 1,5 km — com fotos, dados do imovel e viabilidade.
@@ -2084,6 +2154,20 @@ async def relatorio_pontual(
     except Exception:  # noqa: BLE001
         foto_satelite = None
 
+    # Viabilidade no PDF: com os INPUTS (viabilidade_inputs_json) re-roda o motor p/ incluir
+    # os GRAFICOS (rampa/faturamento/FCF/DRE waterfall); sem eles (ou em falha) cai nos numeros
+    # crus do viabilidade_json (retrocompat). Nenhum caminho novo derruba a geracao.
+    viab_pdf: dict[str, Any] | None = None
+    if viabilidade_inputs_json:
+        try:
+            viab_pdf = _viabilidade_pdf_payload(
+                ViabilidadeIn(**json.loads(viabilidade_inputs_json))
+            )
+        except Exception:  # noqa: BLE001
+            viab_pdf = None
+    if viab_pdf is None and viabilidade_json:
+        viab_pdf = json.loads(viabilidade_json)
+
     pdf = gerar_pdf_relatorio_pontual_censitario(
         result,
         mapas,
@@ -2094,7 +2178,7 @@ async def relatorio_pontual(
         rotulo=rotulo,
         fotos=fotos_bytes[:2] or None,
         info_imovel=json.loads(info_imovel) if info_imovel else None,
-        viabilidade=json.loads(viabilidade_json) if viabilidade_json else None,
+        viabilidade=viab_pdf,
         foto_satelite=foto_satelite,
     )
     return Response(

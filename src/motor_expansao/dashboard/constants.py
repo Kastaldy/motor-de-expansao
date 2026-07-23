@@ -529,11 +529,12 @@ def uplift_composicao_por_setor(
 # MESMA paleta da RENDA_PER_CAPITA_BANDS (amarelo-claro -> amarelo -> dourado -> verde-claro ->
 # verde solido) e MESMO formato de rotulo SEM acento — o font do PNG da legenda nao renderiza 'á'
 # ("até" saia bugado; per capita ja usa "ate"). Faixas pedidas por Felipe (2026-07-17): 2.000 /
-# 4.600 / 8.000 / 14.000. Camada de VISUALIZACAO do Relatorio Pontual; NAO altera score/artefatos M1.
+# 4.000 / 8.000 / 14.000 (corte de 4.600 -> 4.000 a pedido de Felipe 2026-07-23). Camada de
+# VISUALIZACAO do Relatorio Pontual; NAO altera score/artefatos M1.
 RENDA_MEDIA_DOMICILIAR_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
     (2_000.0,   "ate R$ 2.000",        (247, 244, 139, 150)),   # #F7F48B
-    (4_600.0,   "R$ 2.001-4.600",      (255, 255, 0,   150)),   # #FFFF00
-    (8_000.0,   "R$ 4.601-8.000",      (255, 210, 28,  150)),   # #FFD21C
+    (4_000.0,   "R$ 2.001-4.000",      (255, 255, 0,   150)),   # #FFFF00
+    (8_000.0,   "R$ 4.001-8.000",      (255, 210, 28,  150)),   # #FFD21C
     (14_000.0,  "R$ 8.001-14.000",     (168, 255, 168, 150)),   # #A8FFA8
     (float("inf"), ">R$ 14.000",       (0,   204, 0,   150)),   # #00CC00
 ]

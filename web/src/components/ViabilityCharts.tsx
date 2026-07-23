@@ -569,10 +569,11 @@ export function FluxoCaixaOperacional({
         </span>
       </div>
 
+      <div style={{ position: 'relative', marginTop: 12 }}>
       <svg
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
-        style={{ width: '100%', height: 150, marginTop: 12, display: 'block' }}
+        style={{ width: '100%', height: 150, display: 'block' }}
         aria-hidden
       >
         <defs>
@@ -598,6 +599,21 @@ export function FluxoCaixaOperacional({
         {/* ponto do break-even operacional (cruzamento do zero) */}
         {mp != null && <circle cx={x(mp)} cy={zeroY} r="3.2" fill="var(--ac)" />}
       </svg>
+        {/* Rótulos do eixo Y: a MAGNITUDE (R$/mês) muda por cenário mesmo quando a
+            forma (rampa até o platô) parece igual — antes o gráfico normalizado dava a
+            impressão de ser sempre o mesmo. */}
+        <span className="num" style={{ position: 'absolute', top: 1, left: 3, font: '400 9px/1 var(--f-num)', color: 'var(--tx-sub)', pointerEvents: 'none' }}>
+          {brl(max, true)}
+        </span>
+        <span className="num" style={{ position: 'absolute', top: `${zeroFrac * 100}%`, left: 3, transform: 'translateY(-50%)', font: '400 9px/1 var(--f-num)', color: 'var(--tx-off)', pointerEvents: 'none' }}>
+          R$ 0
+        </span>
+        {min < 0 && (
+          <span className="num" style={{ position: 'absolute', bottom: 1, left: 3, font: '400 9px/1 var(--f-num)', color: 'var(--neg)', pointerEvents: 'none' }}>
+            {brl(min, true)}
+          </span>
+        )}
+      </div>
 
       {/* eixo de meses + rótulo da inauguração */}
       <div style={{ position: 'relative', height: 16, marginTop: 2 }}>

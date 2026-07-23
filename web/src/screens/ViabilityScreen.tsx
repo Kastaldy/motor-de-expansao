@@ -179,6 +179,9 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
         // unidades exatas via lib/report.ts. Mandar a chave/unidade errada faz o
         // slide de viabilidade vir vazio ("n/d") — foi o bug corrigido em 2026-07-22.
         viabilidade: res ? viabilidadeParaPdf(res) : undefined,
+        // Inputs do cenário → o backend re-roda o motor e inclui os GRÁFICOS no PDF
+        // (rampa/faturamento/FCF/DRE cascata). Sem isso o PDF só traria os números.
+        viabilidadeInputs: res ? montarPayload(demanda) : undefined,
         fotos,
       })
       baixar(blob, filename)
@@ -807,12 +810,12 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               }
             />
             <Kpi
-              label="Aluguel-teto"
-              valor={tetoCls?.label ?? 'n/d'}
+              label="Aluguel vs teto"
+              valor={brl(aluguel, true)}
               sub={
                 teto && teto.ideal != null && teto.teto != null && teto.excecao != null
-                  ? `ideal ${brl(teto.ideal, true)} · teto ${brl(teto.teto, true)} · exc ${brl(teto.excecao, true)}`
-                  : `pedido ${brl(aluguel, true)}`
+                  ? `${tetoCls?.label ?? ''} · ideal ${brl(teto.ideal, true)} · teto ${brl(teto.teto, true)} · máx ${brl(teto.excecao, true)}`
+                  : 'sem base de faturamento'
               }
               tone={tetoCls?.tone}
             />
