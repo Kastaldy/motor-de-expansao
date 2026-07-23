@@ -618,7 +618,7 @@ export function FluxoCaixaOperacional({
       {/* eixo de meses + rótulo da inauguração */}
       <div style={{ position: 'relative', height: 16, marginTop: 2 }}>
         <span className="num" style={{ position: 'absolute', left: 0, font: '400 9.5px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
-          mês {mesMin}
+          {mesMin < 0 ? `M${mesMin} · obras` : `mês ${mesMin}`}
         </span>
         <span className="num" style={{ position: 'absolute', right: 0, font: '400 9.5px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
           mês {mesMax}

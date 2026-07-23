@@ -90,6 +90,37 @@ def grafico_rampa_alunos(
     return _fig_to_png(fig)
 
 
+def grafico_fco(serie: Sequence[dict], *, mes_positivo: int | None = None) -> bytes:
+    """Fluxo de Caixa Operacional mes a mes (NAO acumulado): obras (M-4..M-1) + operacao.
+
+    A serie ja vem pronta do backend (`_fco_serie`): os meses negativos sao a pre-abertura
+    (obras: desembolso de capex + aluguel) e os meses >= 1 sao o caixa operacional do mes.
+    Verde acima de zero, magenta abaixo; marca a transicao obras->operacao e o mes em que a
+    operacao passa a se pagar. Titulos/rotulos em ASCII (excecao de RENDER do PNG)."""
+    meses = _coluna(serie, "mes")
+    fco = _coluna(serie, "fcf")
+    fig, ax = plt.subplots(figsize=(_FIG_W, _FIG_H), dpi=_DPI)
+    mask_pos = [v >= 0 for v in fco]
+    mask_neg = [v < 0 for v in fco]
+    ax.fill_between(meses, fco, 0, where=mask_pos, color=_VERDE, alpha=0.30, step=None)
+    ax.fill_between(meses, fco, 0, where=mask_neg, color=_MAGENTA, alpha=0.22, step=None)
+    ax.plot(meses, fco, color=_CINZA, linewidth=1.8)
+    ax.axhline(0.0, color=_CINZA, linewidth=0.8)
+    # Transicao obras -> operacao (entre M-1 e M1).
+    ax.axvline(0.0, color=_CINZA, linestyle=":", linewidth=1)
+    mp = _finite(mes_positivo)
+    if mp is not None:
+        ax.axvline(
+            mp, color=_TURQUESA, linestyle="--", linewidth=1, label=f"Se paga (mes {int(mp)})"
+        )
+        ax.legend(loc="lower right", fontsize=8, frameon=False)
+    ax.set_title("Fluxo de Caixa Operacional")
+    ax.set_xlabel("Mes (M-4 a M-1 = obras)")
+    ax.set_ylabel("R$ / mes")
+    ax.grid(True, alpha=0.2)
+    return _fig_to_png(fig)
+
+
 def grafico_faturamento_ebitda(serie: Sequence[dict]) -> bytes:
     """Faturamento (barras) e EBITDA (linha) mensais."""
     meses = _coluna(serie, "mes")
@@ -182,6 +213,8 @@ def montar_payload_viabilidade(
     *,
     incluir_graficos: bool = True,
     maturacao_mes: int | None = None,
+    fco_serie: Sequence[dict] | None = None,
+    mes_operacao_positiva: int | None = None,
 ) -> dict[str, Any]:
     """Ponte engine -> dict do slide de viabilidade do PDF (BLK-RELVIAB-05).
 
@@ -207,10 +240,13 @@ def montar_payload_viabilidade(
     if incluir_graficos:
         graficos: list[bytes] = []
         if serie:
-            steady = _finite(serie[-1].get("alunos_balcao"))
-            graficos.append(
-                grafico_rampa_alunos(serie, steady=steady, maturacao_mes=maturacao_mes)
-            )
+            # 1o grafico: Fluxo de Caixa Operacional (substitui a "rampa de alunos" —
+            # item Felipe 2026-07-23). Cai no waterfall-only se o backend nao mandar a
+            # serie de FCO (retrocompat com chamadores que so passam `serie`).
+            if fco_serie:
+                graficos.append(
+                    grafico_fco(fco_serie, mes_positivo=mes_operacao_positiva)
+                )
             graficos.append(grafico_faturamento_ebitda(serie))
             graficos.append(grafico_fcf_acumulado(serie, payback_meses=v.payback_meses))
         graficos.append(

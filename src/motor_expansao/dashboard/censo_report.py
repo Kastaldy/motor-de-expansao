@@ -26,6 +26,8 @@ from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSIT
 # Perfil do Bairro/Distrito -> Big Numbers -> Realizacao.
 PDF_SECTION_HEADERS = (
     "Relatório Pontual Censitário",
+    "Imagem do Entorno",
+    "Socioeconomia e Residual Fitness",
     "Mapas de calor",
     "Concorrentes",
     "Perfil do Bairro/Distrito",
@@ -50,7 +52,10 @@ MAP_LAYER_TITLES: tuple[tuple[str, str], ...] = (
     ("renda", "Renda per capita"),
     ("score", "Score censitário"),
     ("renda_domiciliar", "Renda média domiciliar"),
+    ("socioeconomia", "Socioeconomia"),
+    ("residual", "Residual Fitness"),
     ("concorrentes", "Concorrentes e Ultra"),
+    ("entorno", "Imagem do Entorno"),
 )
 
 CSV_SETOR_COLUMNS = [
@@ -83,8 +88,9 @@ _CINZA_TEXTO = (60, 60, 60)
 # nomeadas e auditaveis (nao hardcoded inline dentro de `_big_numbers_page`).
 _META_POP_TOTAL_RAIO = 10_000.0
 _META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
-# Renda media domiciliar TOTAL (com uplift): alvo ~C1 GeoFusion (fase seguinte, ADITIVO).
-_META_RENDA_DOMICILIAR_TOTAL_RAIO = 6_200.0
+# Renda media domiciliar TOTAL (com uplift): corte em 4.000 (pedido de Felipe 2026-07-23 —
+# acima de R$ 4.000 o card NAO deve vir vermelho). Alinha com a 1a faixa "verde" das bandas.
+_META_RENDA_DOMICILIAR_TOTAL_RAIO = 4_000.0
 _META_DOMICILIOS_TOTAL_RAIO = 3_000.0
 _META_SCORE_SETOR_MEDIO = 60.0
 _META_SAM_FITNESS_POTENCIAL = 2_000.0
@@ -362,15 +368,23 @@ _MAP_GRID_ROWS = 2
 
 
 def _map_grid_cells(
-    top: float, bottom: float, margin_x: float, gap: float
+    top: float,
+    bottom: float,
+    margin_x: float,
+    gap: float,
+    *,
+    cols: int = _MAP_GRID_COLS,
+    rows: int = _MAP_GRID_ROWS,
 ) -> list[tuple[float, float, float, float]]:
-    """Geometria PURA das 4 celulas do grid 2x2 (x, y, w, h), em ordem row-major. Testavel
+    """Geometria PURA das celulas do grid (x, y, w, h), em ordem row-major. Testavel
     sem gerar PDF; compartilhada pelas variantes recente e classica (variam so top/margem).
 
     Largura util (`_PAGE_W - 2*margin_x - (cols-1)*gap`) dividida em `cols` colunas iguais;
     altura util (`bottom - top - (rows-1)*gap`) em `rows` linhas iguais.
+
+    BLK-RELPON-10: `cols`/`rows` viraram keyword-only COM O DEFAULT NOS VALORES ATUAIS (2x2) ->
+    o caminho do slide "Mapas de calor" fica byte-identico; o slide-hero novo pede 2x1.
     """
-    cols, rows = _MAP_GRID_COLS, _MAP_GRID_ROWS
     usable_w = _PAGE_W - 2.0 * margin_x - (cols - 1) * gap
     cell_w = usable_w / cols
     usable_h = (bottom - top) - (rows - 1) * gap
@@ -385,12 +399,20 @@ def _map_grid_cells(
 
 
 def _map_grid_cells_packed(
-    aspect: float, *, top: float, bottom: float, gap: float
+    aspect: float,
+    *,
+    top: float,
+    bottom: float,
+    gap: float,
+    cols: int = _MAP_GRID_COLS,
+    rows: int = _MAP_GRID_ROWS,
 ) -> list[tuple[float, float, float, float]]:
-    """Celulas 2x2 com a PROPORCAO `aspect` (largura/altura), maximizadas em altura e
+    """Celulas com a PROPORCAO `aspect` (largura/altura), maximizadas em altura e
     EMPACOTADAS (coladas, so o `gap`) e centralizadas -> mapas maiores/retangulares e sem o
-    vao branco (letterbox) entre eles. Geometria pura, testavel sem PDF."""
-    cols, rows = _MAP_GRID_COLS, _MAP_GRID_ROWS
+    vao branco (letterbox) entre eles. Geometria pura, testavel sem PDF.
+
+    BLK-RELPON-10: `cols`/`rows` com default nos valores atuais (2x2) -> caminho existente
+    inalterado; o slide-hero "Socioeconomia e Residual Fitness" usa 2x1 (2 mapas lado a lado)."""
     h_avail = bottom - top
     cell_h = (h_avail - (rows - 1) * gap) / rows
     cell_w = cell_h * aspect
@@ -418,8 +440,11 @@ def _draw_maps_grid(
     margin_x: float,
     gap: float,
     pack: bool = False,
+    cols: int = _MAP_GRID_COLS,
+    rows: int = _MAP_GRID_ROWS,
 ) -> list[tuple[float, float, float, float]]:
-    """Desenha os 4 PNGs [densidade, renda, score, renda_domiciliar] num grid 2x2 sem sobreposicao.
+    """Desenha os PNGs num grid `cols` x `rows` sem sobreposicao (default 2x2:
+    [densidade, renda, score, renda_domiciliar]).
 
     Cada PNG e escalado para caber na sua celula preservando proporcao (`min(w,h)`) e
     centralizado dentro dela; camada `None` -> texto de fallback centralizado na celula.
@@ -434,9 +459,11 @@ def _draw_maps_grid(
     if pack:
         dims_ref = next((_png_dimensions(p) for p in pngs if p), None)
         aspect = (dims_ref[0] / dims_ref[1]) if dims_ref else (1000.0 / 760.0)
-        cells = _map_grid_cells_packed(aspect, top=top, bottom=bottom, gap=gap)
+        cells = _map_grid_cells_packed(
+            aspect, top=top, bottom=bottom, gap=gap, cols=cols, rows=rows
+        )
     else:
-        cells = _map_grid_cells(top, bottom, margin_x, gap)
+        cells = _map_grid_cells(top, bottom, margin_x, gap, cols=cols, rows=rows)
     boxes: list[tuple[float, float, float, float]] = []
     for png, (cx, cy, cw, ch) in zip(pngs, cells, strict=False):
         dims = _png_dimensions(png) if png else None
@@ -459,6 +486,76 @@ def _draw_maps_grid(
         pdf.set_xy(cx, cy + ch / 2.0 - 8.0)
         pdf.multi_cell(cw, 14, _ascii(_MAPA_INDISPONIVEL), align="C")
         boxes.append((cx, cy, cw, ch))
+    return boxes
+
+
+_SOCIOECONOMIA_RESIDUAL_TITULO = "Socioeconomia e Residual Fitness"
+_ENTORNO_TITULO = "Imagem do Entorno"
+
+
+def _entorno_page(
+    pdf: _UltraPDF,
+    layers: dict[str, bytes],
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+) -> list[tuple[float, float, float, float]]:
+    """(BLK-RELPON-11) Pagina "Imagem do Entorno" (template recente).
+
+    UM mapa de quadra ocupando a pagina (grid 1x1 empacotado): basemap CartoDB Voyager num raio
+    de EXIBICAO de ~0,14 km (lado curto ~302 m), sem choropleth, sem pins e sem circulo de raio
+    — o objetivo e mostrar a morfologia fisica (quadras, vias, nomes de rua) em torno do ponto.
+    Camada ausente -> fallback textual da propria `_draw_maps_grid` (offline-safe).
+    READ-ONLY sobre o M1.
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _ENTORNO_TITULO, rgb=primary)
+    boxes = _draw_maps_grid(
+        pdf,
+        [layers.get("entorno")],
+        top=58.0,
+        bottom=_PAGE_H - 22.0,
+        margin_x=20.0,
+        gap=10.0,
+        pack=True,
+        cols=1,
+        rows=1,
+    )
+    _draw_footer(pdf, with_attribution=True)
+    return boxes
+
+
+def _socioeconomia_residual_page(
+    pdf: _UltraPDF,
+    layers: dict[str, bytes],
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_MAGENTA,
+) -> list[tuple[float, float, float, float]]:
+    """(BLK-RELPON-10) Slide-hero "Socioeconomia e Residual Fitness" (template recente).
+
+    Dois mapas LADO A LADO (grid 2x1), com ESCALAS diferentes rotuladas dentro do proprio PNG
+    (titulo + rodape, produzidos em `censo_map`): Socioeconomia = `score_setor_2022_calibrado`
+    por setor censitario no raio de 1,5 km; Residual Fitness = `oferta_efetiva_disponivel`
+    (alunos) por hexagono H3 res-7 no raio de EXIBICAO de 5 km. Camada ausente -> fallback
+    textual da propria `_draw_maps_grid` (offline-safe). READ-ONLY sobre o M1.
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _SOCIOECONOMIA_RESIDUAL_TITULO, rgb=primary)
+    boxes = _draw_maps_grid(
+        pdf,
+        [layers.get("socioeconomia"), layers.get("residual")],
+        top=58.0,
+        bottom=_PAGE_H - 22.0,
+        margin_x=20.0,
+        gap=10.0,
+        pack=True,
+        cols=2,
+        rows=1,
+    )
+    _draw_footer(pdf, with_attribution=True)
     return boxes
 
 
@@ -1195,6 +1292,50 @@ def _safe_len(points: pd.DataFrame | None) -> int:
         return 0
 
 
+def _redes_no_raio(result: dict[str, Any], *, max_nomes: int = 12) -> tuple[str, str]:
+    """(header, texto) compactos das redes no raio p/ a faixa inferior do slide Concorrentes.
+
+    So NOMES de rede (deduplicados), sem PII de pessoas nem enderecos. Ultra entra como
+    contagem de unidades (o parquet de Ultra nao traz nome de unidade). Trunca com "(+N)".
+    """
+    conc = result.get("concorrentes_raio", pd.DataFrame())
+    ultra = result.get("ultra_raio", pd.DataFrame())
+    total = _safe_len(conc) + _safe_len(ultra)
+    header = "Redes no raio de 1.5 km"
+    if total > 10:
+        header = f"{header} ({total} no total)"
+
+    def _nomes(df: pd.DataFrame | None) -> list[str]:
+        if df is None or df.empty:
+            return []
+        col = next(
+            (c for c in ("rede", "nome_unidade", "nome", "brand") if c in df.columns), None
+        )
+        if col is None:
+            return []
+        vistos: set[str] = set()
+        out: list[str] = []
+        for valor in df[col].astype(str):
+            nome = valor.strip()
+            if nome and nome.lower() not in vistos:
+                vistos.add(nome.lower())
+                out.append(nome)
+        return out
+
+    nomes = _nomes(conc)
+    n_ultra = _safe_len(ultra)
+    if not nomes and not n_ultra:
+        return header, "Nenhuma rede mapeada no raio de 1,5 km."
+    prefixo = f"Ultra: {n_ultra} unidade(s) no raio.  " if n_ultra else ""
+    if not nomes:
+        return header, prefixo.strip()
+    mostrados = nomes[:max_nomes]
+    texto = prefixo + "Concorrentes: " + ", ".join(mostrados)
+    if len(nomes) > max_nomes:
+        texto += f"  (+{len(nomes) - max_nomes})"
+    return header, texto
+
+
 def _competitors_page(
     pdf: _UltraPDF,
     result: dict[str, Any],
@@ -1204,68 +1345,40 @@ def _competitors_page(
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
 ) -> None:
-    """(f) Concorrentes — mapa + lista textual das redes no raio (sem PII)."""
+    """(f) Concorrentes — mapa CENTRALIZADO (so-pins, sem titulo/legenda internos) + faixa
+    inferior com as redes no raio (sem PII). Pedido de Felipe 2026-07-23: centralizar o mapa,
+    remover o titulo interno "Concorrentes e Ultra" (redundante com a barra) e a legenda."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, "Concorrentes", rgb=primary)
 
-    # Mapa de concorrentes a ESQUERDA (16:9: mapa + lista lado a lado).
+    # Mapa CENTRALIZADO como elemento principal do slide (o PNG ja vem sem titulo/legenda).
+    map_top, map_bottom = 58.0, _PAGE_H - 70.0
     if png_bytes:
         dims = _png_dimensions(png_bytes)
         if dims is not None:
             img_w, img_h = dims
-            max_w, max_h = 560.0, 430.0
+            max_w, max_h = _PAGE_W - 96.0, map_bottom - map_top
             scale = min(max_w / img_w, max_h / img_h)
             draw_w = img_w * scale
             draw_h = img_h * scale
-            x = 36.0 + (max_w - draw_w) / 2.0
-            y = 60.0 + (max_h - draw_h) / 2.0
+            x = (_PAGE_W - draw_w) / 2.0
+            y = map_top + (max_h - draw_h) / 2.0
             try:
                 pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
             except Exception:
                 pass
 
-    # Lista de redes a DIREITA.
-    list_x = 620.0
-    list_w = _PAGE_W - list_x - 36.0
-    bullet_w = 12.0
-    text_x = list_x + bullet_w
-
-    # D4=B (BLK-EST-02): cabecalho com contagem total quando ha mais de 10 redes no raio.
-    concorrentes_df = result.get("concorrentes_raio", pd.DataFrame())
-    ultra_df = result.get("ultra_raio", pd.DataFrame())
-    total = _safe_len(concorrentes_df) + _safe_len(ultra_df)
-    header = "Redes no raio de 1.5 km"
-    if total > 10:
-        header = f"{header} ({total} no total)"
+    # Faixa inferior: redes no raio (compacta, sem PII).
+    header, texto = _redes_no_raio(result)
     pdf.set_text_color(*secondary)
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.set_xy(list_x, 70.0)
-    pdf.cell(list_w, 18, _ascii(header))
-
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_xy(40.0, map_bottom + 2.0)
+    pdf.cell(_PAGE_W - 80.0, 15, _ascii(header))
+    pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 10)
-    y = 100.0
-    # D4=B: cada linha leva um bullet colorido por tipo (Ultra=turquesa, concorrente=magenta).
-    linhas: list[tuple[str, bool]] = []
-    linhas.extend(_point_rows(concorrentes_df, "Concorrente", is_ultra=False))
-    linhas.extend(_point_rows(ultra_df, "Ultra", is_ultra=True))
-    truncated = total > 10
-    for line, is_ultra in linhas:
-        if y > _PAGE_H - 40:
-            break
-        bullet_rgb = ULTRA_TURQUESA if is_ultra else ULTRA_MAGENTA
-        pdf.set_fill_color(*bullet_rgb)
-        pdf.ellipse(list_x, y + 4, 6, 6, style="F")
-        pdf.set_text_color(*_CINZA_TEXTO)
-        pdf.set_xy(text_x, y)
-        pdf.multi_cell(list_w - bullet_w, 14, _ascii(line))
-        y = pdf.get_y() + 4.0
-
-    # D4=B: rodape da lista "... e mais N" quando truncar em 10 linhas.
-    if truncated and y <= _PAGE_H - 40:
-        pdf.set_text_color(*_CINZA_TEXTO)
-        pdf.set_xy(text_x, y)
-        pdf.multi_cell(list_w - bullet_w, 14, _ascii(f"... e mais {total - 10}"))
+    pdf.set_xy(40.0, map_bottom + 20.0)
+    pdf.multi_cell(_PAGE_W - 80.0, 13, _ascii(texto))
 
     _draw_footer(pdf, with_attribution=True)
 
@@ -1676,6 +1789,9 @@ _CLASSICO_MAPS_TOP = _CLASSICO_MARGIN + _CLASSICO_BAND_H + 12.0 + 24.0 + 8.0
 def _classico_draw_maps_grid(
     pdf: _UltraPDF,
     pngs: list[bytes | None],
+    *,
+    cols: int = _MAP_GRID_COLS,
+    rows: int = _MAP_GRID_ROWS,
 ) -> list[tuple[float, float, float, float]]:
     """Grid 2x2 dos 4 choropleths na geometria do template CLASSICO (BLK-RELPON-01).
 
@@ -1683,6 +1799,9 @@ def _classico_draw_maps_grid(
     de secao (`_CLASSICO_MAPS_TOP` ~122) e a margem lateral classica (20). O header fixo deixa a
     celula 2x2 mais baixa que na variante recente -> a legenda embutida cai para ~8pt (piso legivel
     aceito para caber os 4 mapas; ver test_legenda_corpo_atinge_o_alvo_de_legibilidade_no_pdf).
+
+    BLK-RELPON-10: `cols`/`rows` keyword-only com default 2x2 (caminho existente inalterado);
+    o slide-hero classico passa 2x1.
     """
     return _draw_maps_grid(
         pdf,
@@ -1692,7 +1811,62 @@ def _classico_draw_maps_grid(
         margin_x=_CLASSICO_MARGIN,
         gap=10.0,
         pack=True,
+        cols=cols,
+        rows=rows,
     )
+
+
+def _classico_entorno_page(
+    pdf: _UltraPDF,
+    layers: dict[str, bytes],
+    assets: dict[str, bytes | None],
+    *,
+    banda_texto: str,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+) -> list[tuple[float, float, float, float]]:
+    """(BLK-RELPON-11) Pagina "Imagem do Entorno", variante CLASSICA.
+
+    Gemea de `_entorno_page` na geometria do template classico (banda com margem + titulo de
+    secao). O classico e' o DEFAULT em producao (dashboard e bot Telegram), entao esta pagina
+    e' obrigatoria.
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _classico_title_band(pdf, banda_texto, _ENTORNO_TITULO, assets, rgb=primary)
+    boxes = _classico_draw_maps_grid(
+        pdf,
+        [layers.get("entorno")],
+        cols=1,
+        rows=1,
+    )
+    _draw_footer(pdf, with_attribution=True)
+    return boxes
+
+
+def _classico_socioeconomia_residual_page(
+    pdf: _UltraPDF,
+    layers: dict[str, bytes],
+    assets: dict[str, bytes | None],
+    *,
+    banda_texto: str,
+    primary: tuple[int, int, int] = ULTRA_MAGENTA,
+) -> list[tuple[float, float, float, float]]:
+    """(BLK-RELPON-10) Slide-hero "Socioeconomia e Residual Fitness", variante CLASSICA.
+
+    Gemea de `_socioeconomia_residual_page` na geometria do template classico (banda com margem +
+    titulo de secao). O classico e' o DEFAULT em producao, entao esta pagina e' obrigatoria.
+    """
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _classico_title_band(pdf, banda_texto, _SOCIOECONOMIA_RESIDUAL_TITULO, assets, rgb=primary)
+    boxes = _classico_draw_maps_grid(
+        pdf,
+        [layers.get("socioeconomia"), layers.get("residual")],
+        cols=2,
+        rows=1,
+    )
+    _draw_footer(pdf, with_attribution=True)
+    return boxes
 
 
 def _classico_mapas_calor_page(
@@ -1730,65 +1904,39 @@ def _classico_competitors_page(
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
 ) -> None:
-    """Concorrentes classica: banda classica + mapa a esquerda + lista a direita (reuso)."""
+    """Concorrentes classica: banda classica + mapa CENTRALIZADO (so-pins) + faixa inferior
+    com as redes no raio. Mesmo pedido de Felipe 2026-07-23 aplicado a variante classica."""
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _classico_title_band(pdf, banda_texto, "Concorrentes", assets, rgb=primary)
 
-    # Mapa de concorrentes a ESQUERDA (abaixo da banda + titulo de secao).
+    # Mapa CENTRALIZADO (sem titulo/legenda internos), abaixo da banda classica.
+    map_top, map_bottom = 128.0, _PAGE_H - 66.0
     if png_bytes:
         dims = _png_dimensions(png_bytes)
         if dims is not None:
             img_w, img_h = dims
-            max_w, max_h = 540.0, 380.0
+            max_w, max_h = _PAGE_W - 2.0 * _CLASSICO_MARGIN, map_bottom - map_top
             scale = min(max_w / img_w, max_h / img_h)
             draw_w = img_w * scale
             draw_h = img_h * scale
-            x = _CLASSICO_MARGIN + (max_w - draw_w) / 2.0
-            y = 130.0 + (max_h - draw_h) / 2.0
+            x = (_PAGE_W - draw_w) / 2.0
+            y = map_top + (max_h - draw_h) / 2.0
             try:
                 pdf.image(BytesIO(png_bytes), x=x, y=y, w=draw_w, h=draw_h)
             except Exception:
                 pass
 
-    # Lista de redes a DIREITA (mesma logica de `_competitors_page`, reusa _point_rows/_safe_len).
-    list_x = 600.0
-    list_w = _PAGE_W - list_x - _CLASSICO_MARGIN
-    bullet_w = 12.0
-    text_x = list_x + bullet_w
-
-    concorrentes_df = result.get("concorrentes_raio", pd.DataFrame())
-    ultra_df = result.get("ultra_raio", pd.DataFrame())
-    total = _safe_len(concorrentes_df) + _safe_len(ultra_df)
-    header = "Redes no raio de 1.5 km"
-    if total > 10:
-        header = f"{header} ({total} no total)"
+    # Faixa inferior: redes no raio (compacta, sem PII).
+    header, texto = _redes_no_raio(result)
     pdf.set_text_color(*secondary)
-    pdf.set_font("Helvetica", "B", 14)
-    pdf.set_xy(list_x, 130.0)
-    pdf.cell(list_w, 18, _ascii(header))
-
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_xy(_CLASSICO_MARGIN, map_bottom + 2.0)
+    pdf.cell(_PAGE_W - 2.0 * _CLASSICO_MARGIN, 15, _ascii(header))
+    pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 10)
-    y = 160.0
-    linhas: list[tuple[str, bool]] = []
-    linhas.extend(_point_rows(concorrentes_df, "Concorrente", is_ultra=False))
-    linhas.extend(_point_rows(ultra_df, "Ultra", is_ultra=True))
-    truncated = total > 10
-    for line, is_ultra in linhas:
-        if y > _PAGE_H - 40:
-            break
-        bullet_rgb = ULTRA_TURQUESA if is_ultra else ULTRA_MAGENTA
-        pdf.set_fill_color(*bullet_rgb)
-        pdf.ellipse(list_x, y + 4, 6, 6, style="F")
-        pdf.set_text_color(*_CINZA_TEXTO)
-        pdf.set_xy(text_x, y)
-        pdf.multi_cell(list_w - bullet_w, 14, _ascii(line))
-        y = pdf.get_y() + 4.0
-
-    if truncated and y <= _PAGE_H - 40:
-        pdf.set_text_color(*_CINZA_TEXTO)
-        pdf.set_xy(text_x, y)
-        pdf.multi_cell(list_w - bullet_w, 14, _ascii(f"... e mais {total - 10}"))
+    pdf.set_xy(_CLASSICO_MARGIN, map_bottom + 20.0)
+    pdf.multi_cell(_PAGE_W - 2.0 * _CLASSICO_MARGIN, 13, _ascii(texto))
 
     _draw_footer(pdf, with_attribution=True)
 
@@ -1969,6 +2117,8 @@ def gerar_pdf_relatorio_pontual_classico(
     # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01 +
     # BLK-RELPON-07: 4 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Perfil do
     # Bairro/Distrito=3, Big Numbers=4).
+    p_entorno, _s_entorno = _tema_bicolor(-1)  # turquesa (-1 % 2 == 1)
+    p0, _s0 = _tema_bicolor(0)  # magenta
     p1, _ = _tema_bicolor(1)
     p2, s2 = _tema_bicolor(2)
     p3, s3 = _tema_bicolor(3)
@@ -1976,13 +2126,20 @@ def gerar_pdf_relatorio_pontual_classico(
 
     pdf = _UltraPDF()
     _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
-    # BLK-SAT-01: vista aerea logo apos a capa (pagina propria, nao disputa as vagas de fotos).
-    if foto_satelite:
-        _foto_satelite_page(pdf, foto_satelite, assets, primary=p1, grande=foto_satelite_grande)
+    # Imovel: FOTOS primeiro, DEPOIS a vista aerea (item Felipe 2026-07-23) — cada uma em
+    # pagina propria; nao disputam vagas entre si.
     if fotos:
         _fotos_imovel_page(pdf, fotos, assets, primary=p1)
+    if foto_satelite:
+        _foto_satelite_page(pdf, foto_satelite, assets, primary=p1, grande=foto_satelite_grande)
     if info_imovel:
         _info_imovel_page(pdf, info_imovel, assets, primary=p2, secondary=s2)
+    # BLK-RELPON-11/10: Imagem do Entorno -> Socioeconomia e Residual Fitness, ANTES dos
+    # mapas de calor.
+    _classico_entorno_page(pdf, layers, assets, banda_texto=banda_texto, primary=p_entorno)
+    _classico_socioeconomia_residual_page(
+        pdf, layers, assets, banda_texto=banda_texto, primary=p0
+    )
     _classico_mapas_calor_page(pdf, layers, assets, banda_texto=banda_texto, primary=p1)
     _classico_competitors_page(
         pdf, result, layers.get("concorrentes"), assets, banda_texto=banda_texto,
@@ -2066,6 +2223,8 @@ def gerar_pdf_relatorio_pontual_censitario(
     # Tom principal alterna por pagina de conteudo (turquesa <-> magenta). BLK-RELPON-01 +
     # BLK-RELPON-07: 4 paginas de conteudo (Mapas de calor=1, Concorrentes=2, Perfil do
     # Bairro/Distrito=3, Big Numbers=4).
+    p_entorno, _s_entorno = _tema_bicolor(-1)  # turquesa (-1 % 2 == 1)
+    p0, _s0 = _tema_bicolor(0)  # magenta
     p1, _ = _tema_bicolor(1)
     p2, s2 = _tema_bicolor(2)
     p3, s3 = _tema_bicolor(3)
@@ -2073,14 +2232,18 @@ def gerar_pdf_relatorio_pontual_censitario(
 
     pdf = _UltraPDF()
     _cover_page(pdf, result, assets, rotulo=rotulo)
-    # BLK-SAT-01: vista aerea logo apos a capa — o leitor situa o imovel antes de ver
-    # qualquer numero. Pagina propria: nao disputa as 2 vagas de `fotos`.
-    if foto_satelite:
-        _foto_satelite_page(pdf, foto_satelite, assets, primary=p1, grande=foto_satelite_grande)
+    # Imovel: FOTOS primeiro, DEPOIS a vista aerea (item Felipe 2026-07-23) — cada uma em
+    # pagina propria; nao disputam as 2 vagas de `fotos`.
     if fotos:
         _fotos_imovel_page(pdf, fotos, assets, primary=p1)
+    if foto_satelite:
+        _foto_satelite_page(pdf, foto_satelite, assets, primary=p1, grande=foto_satelite_grande)
     if info_imovel:
         _info_imovel_page(pdf, info_imovel, assets, primary=p2, secondary=s2)
+    # BLK-RELPON-11/10: Imagem do Entorno -> Socioeconomia e Residual Fitness, ANTES dos
+    # mapas de calor.
+    _entorno_page(pdf, layers, assets, primary=p_entorno)
+    _socioeconomia_residual_page(pdf, layers, assets, primary=p0)
     _mapas_calor_page(pdf, layers, assets, primary=p1)
     _competitors_page(pdf, result, layers.get("concorrentes"), assets, primary=p2, secondary=s2)
     _perfil_bairro_page(pdf, perfil_bairro, assets, primary=p3, secondary=s3)

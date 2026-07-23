@@ -2,7 +2,7 @@
 
 Cobre (a) o assembler `montar_payload_viabilidade` (engine -> dict do PDF), (b) o threading
 dos params novos pelo dispatcher `gerar_payloads_download_relatorio_censitario`, (c) a
-regressao (sem params novos -> /Count 6) e (d) o caminho end-to-end com o motor real
+regressao (sem params novos -> /Count 8) e (d) o caminho end-to-end com o motor real
 `analisar_viabilidade_ponto`. Sem PII.
 """
 
@@ -61,7 +61,21 @@ def test_assembler_com_serie_quatro_graficos():
     serie = gerar_serie_mensal(
         alunos_maturidade=800.0, m2=1500.0, aluguel_mes=20000.0, ticket_medio=137.0
     )
-    payload = montar_payload_viabilidade(_viab_result(), serie, maturacao_mes=8)
+    # Item Felipe 2026-07-23: o 1o grafico agora e' o Fluxo de Caixa Operacional (substitui a
+    # rampa de alunos). Ele depende da serie de FCO (obras M-4..operacao) que o backend calcula
+    # e passa via `fco_serie`; sem ela o assembler cai no waterfall-only (3 graficos).
+    fco_serie = [
+        {"mes": -4, "fcf": -75000.0},
+        {"mes": -3, "fcf": -75000.0},
+        {"mes": -2, "fcf": -75000.0},
+        {"mes": -1, "fcf": -75000.0},
+        {"mes": 1, "fcf": -12000.0},
+        {"mes": 2, "fcf": 3000.0},
+        {"mes": 6, "fcf": 18000.0},
+    ]
+    payload = montar_payload_viabilidade(
+        _viab_result(), serie, maturacao_mes=8, fco_serie=fco_serie, mes_operacao_positiva=2
+    )
     assert len(payload["graficos"]) == 4
     for png in payload["graficos"]:
         assert isinstance(png, bytes) and png[:8] == b"\x89PNG\r\n\x1a\n"
@@ -74,7 +88,7 @@ def test_dispatcher_regressao_sem_params_novos_count_6():
     payloads = gerar_payloads_download_relatorio_censitario(
         _MIN_RESULT, None, template="classico"
     )
-    assert b"/Count 6" in payloads.pdf_bytes
+    assert b"/Count 8" in payloads.pdf_bytes
 
 
 def test_dispatcher_com_fotos_info_viab_enriquecido():
@@ -101,14 +115,14 @@ def test_dispatcher_com_fotos_info_viab_enriquecido():
         viabilidade=payload_viab,
     )
     # capa + fotos + info + 4 conteudo + viab numeros + viab graficos + credito = 10
-    assert b"/Count 10" in payloads.pdf_bytes
+    assert b"/Count 12" in payloads.pdf_bytes
 
 
 def test_dispatcher_censitario_tambem_aceita_params():
     payloads = gerar_payloads_download_relatorio_censitario(
         _MIN_RESULT, None, info_imovel={"metragem_m2": 1200}
     )
-    assert b"/Count 7" in payloads.pdf_bytes
+    assert b"/Count 9" in payloads.pdf_bytes
 
 
 # --------------------------------------------------------------------------- #
@@ -122,5 +136,5 @@ def test_end_to_end_motor_para_pdf():
     payloads = gerar_payloads_download_relatorio_censitario(
         _MIN_RESULT, None, template="classico", viabilidade=viabilidade
     )
-    assert b"/Count 8" in payloads.pdf_bytes  # numeros + graficos
+    assert b"/Count 10" in payloads.pdf_bytes  # numeros + graficos
     assert len(payloads.pdf_bytes) > 30_000

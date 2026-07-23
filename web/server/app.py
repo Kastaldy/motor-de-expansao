@@ -1447,6 +1447,11 @@ def _serie_motor(body: ViabilidadeIn, inv: dict[str, Any]) -> list[dict[str, Any
         return []
 
 
+# Meses de pré-abertura/obras antes da inauguração (M-4..M-1). O CAPEX é desembolsado
+# nesse período e a carência de aluguel conta A PARTIR DE M-4 (mês de contrato 1 = M-4).
+_MESES_OBRA = 4
+
+
 def _fcf_serie(
     body: ViabilidadeIn, inv: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], float | None]:
@@ -1474,8 +1479,8 @@ def _fcf_serie(
         mes = int(row["mes"])
         mensal = float(row["fcf_acumulado"]) - prev_motor
         prev_motor = float(row["fcf_acumulado"])
-        if carencia and mes <= carencia:
-            mensal += float(body.aluguel)  # carencia: devolve o aluguel do mes
+        if carencia and (mes + _MESES_OBRA) <= carencia:
+            mensal += float(body.aluguel)  # carencia (contada de M-4): devolve o aluguel
         acum += mensal
         ultimo_mensal = mensal
         if payback is None and acum >= 0:
@@ -1494,39 +1499,56 @@ def _fcf_serie(
 def _fco_serie(
     body: ViabilidadeIn, inv: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], int | None]:
-    """Resultado OPERACIONAL mês a mês (NÃO acumulado): o caixa que a operação gera
-    em CADA mês — EBITDA − IR/CSLL (com a carência de aluguel).
+    """Fluxo de caixa OPERACIONAL mês a mês (NÃO acumulado), partindo das OBRAS.
 
-    Mostra quando a operação passa a se pagar sozinha (o resultado mensal cruza o zero)
-    e estabiliza no positivo. É DIFERENTE do fcf_serie (payback), que acumula o
-    INVESTIMENTO. Nos primeiros meses o resultado é baixo/negativo (rampa de alunos);
-    cresce até o platô de maturidade. Retorna (serie_mensal, mes_operacao_positiva) —
-    o mês a partir do qual o resultado mensal fica >= 0 e assim permanece (None se nunca vira).
+    A linha do tempo começa em M-4: 4 meses de pré-abertura/obras (M-4..M-1) em que o
+    CAPEX é desembolsado e já se paga aluguel (salvo carência), seguidos da operação
+    (mês 1..60). Em cada mês de operação o valor é o caixa operacional puro do mês
+    (EBITDA − IR/CSLL); nas obras é o desembolso de capex do mês + aluguel. Assim o
+    gráfico REAGE a aluguel E a capex (antes o capex cancelava no delta e sumia).
+
+    A carência de aluguel conta A PARTIR DE M-4 (mês de contrato 1 = M-4): os primeiros
+    N meses de contrato ficam sem aluguel, consumindo-se primeiro nas obras. Retorna
+    (serie, mes_operacao_positiva) — o 1o mês de OPERAÇÃO (>=1) cujo resultado fica >= 0
+    e assim permanece (None se nunca vira; as obras, sempre negativas, são ignoradas aqui).
     """
     serie = _serie_motor(body, inv)
     if not serie:
         return [], None
 
     capex_total = float(inv["capex_total"])
+    aluguel = float(body.aluguel)
     carencia = int(body.carencia_aluguel_meses or 0)
 
     out: list[dict[str, Any]] = []
-    # A base -capex é o acumulado do motor ANTES do mês 1; a diferença isola o caixa
-    # operacional puro do mês (o capex cancela no delta, então o mensal não depende dele).
+    # Pré-abertura: 4 meses de obras (M-4..M-1). O capex é desembolsado ao longo das
+    # obras; o aluguel só entra quando a carência (contada de M-4) já se esgotou.
+    obra_mensal = capex_total / _MESES_OBRA if capex_total > 0 else 0.0
+    for i in range(_MESES_OBRA):
+        contrato_mes = i + 1  # 1..4  -> M-4..M-1
+        display_mes = i - _MESES_OBRA  # -4..-1
+        aluguel_mes = 0.0 if contrato_mes <= carencia else aluguel
+        out.append({"mes": display_mes, "fcf": _num(-obra_mensal - aluguel_mes)})
+
+    # Operação: resultado operacional mensal (delta do fcf_acumulado do motor). O capex
+    # cancela no delta; a carência de operação só vale se ainda não se esgotou nas obras
+    # (mês de contrato = mês de operação + 4).
     prev_acum = -capex_total
     for row in serie:
         mes = int(row["mes"])
         mensal = float(row["fcf_acumulado"]) - prev_acum
         prev_acum = float(row["fcf_acumulado"])
-        if carencia and mes <= carencia:
-            mensal += float(body.aluguel)  # carência: não paga aluguel nesses meses
+        if carencia and (mes + _MESES_OBRA) <= carencia:
+            mensal += aluguel  # carência ainda vigente neste mês de operação
         out.append({"mes": mes, "fcf": _num(mensal)})
 
-    # Break-even operacional: 1o mês com resultado mensal >= 0 que assim permanece.
+    # Break-even operacional: 1o mês de OPERAÇÃO (mes >= 1) com resultado >= 0 e que
+    # assim permanece (ignora as obras, sempre negativas).
     positiva: int | None = None
-    for i, p in enumerate(out):
+    operacao = [p for p in out if p["mes"] >= 1]
+    for i, p in enumerate(operacao):
         val = p["fcf"]
-        if val is not None and val >= 0 and all((q["fcf"] or 0.0) >= 0 for q in out[i:]):
+        if val is not None and val >= 0 and all((q["fcf"] or 0.0) >= 0 for q in operacao[i:]):
             positiva = int(p["mes"])
             break
 
@@ -2005,7 +2027,16 @@ def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
             **kwargs,
         )
         serie = _serie_motor(body, inv)
-        payload = montar_payload_viabilidade(res, serie, maturacao_mes=body.rampa_meses)
+        # Fluxo de Caixa Operacional (M-4..operação) para o gráfico do slide — substitui
+        # a antiga "rampa de alunos" e reage a aluguel/capex (item Felipe 2026-07-23).
+        fco_serie, mes_operacao_positiva = _fco_serie(body, inv)
+        payload = montar_payload_viabilidade(
+            res,
+            serie,
+            maturacao_mes=body.rampa_meses,
+            fco_serie=fco_serie,
+            mes_operacao_positiva=mes_operacao_positiva,
+        )
 
         # Alinha payback/roic aos valores da TELA (a rota /api/viabilidade sobrescreve os do
         # motor: payback pela serie de FCF, roic desalavancado) -> numeros do PDF batem.
@@ -2024,6 +2055,36 @@ def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
 
 
 @app.post("/api/relatorio/pontual")
+def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
+    """Disco de hexes (grid_disk k=5, res 7) ao redor do ponto com `oferta_efetiva_disponivel`,
+    para o choropleth de Residual Fitness do slide-hero "Socioeconomia e Residual Fitness".
+
+    Filtro direto no parquet de mercado (~91 linhas), espelhando `_residual_do_ponto`. `None`
+    se o parquet faltar ou falhar -> a camada residual cai no fallback textual (offline-safe).
+    READ-ONLY sobre o M1 (so leitura de parquet)."""
+    mercado = staging_dir / "hexagonos_mercado_mapeado.parquet"
+    if not mercado.is_file():
+        return None
+    try:
+        import h3
+        import pyarrow.compute as pc
+        import pyarrow.dataset as ds
+
+        centro = h3.latlng_to_cell(float(lat), float(lng), 7)
+        cells = list(h3.grid_disk(centro, 5))
+        if not cells:
+            return None
+        tbl = ds.dataset(mercado).to_table(
+            filter=pc.field("hex_id").isin(cells),
+            columns=["hex_id", "oferta_efetiva_disponivel"],
+        )
+        if not tbl.num_rows:
+            return None
+        return tbl.to_pandas()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def relatorio_pontual(
     lat: float,
     lng: float,
@@ -2109,6 +2170,9 @@ async def relatorio_pontual(
     )
 
     ultra_dir = ULTRA_DIR if ULTRA_DIR.is_dir() else None
+    # Disco de hexes p/ o choropleth Residual Fitness do slide-hero (grid_disk k=5).
+    # None -> a camada residual cai no fallback textual (nao derruba o PDF).
+    hexes_residual = _residual_hexes_do_ponto(lat, lng, STAGING_DIR)
 
     def _mapas(basemap: bool):
         return render_mapas_censitarios_combinados(
@@ -2124,6 +2188,7 @@ async def relatorio_pontual(
             street_gain=1.3,
             street_cap=200,
             choropleth_alpha=110,
+            hexes_df=hexes_residual,
         )
 
     # Ruas online -> offline -> sem mapas. O PDF nunca falha por causa do basemap.

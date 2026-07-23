@@ -16,6 +16,7 @@ from motor_expansao.dashboard.viabilidade_charts import (
     grafico_dre_waterfall,
     grafico_faturamento_ebitda,
     grafico_fcf_acumulado,
+    grafico_fco,
     grafico_rampa_alunos,
 )
 from motor_expansao.dimensionamento.simulador import gerar_serie_mensal
@@ -36,6 +37,25 @@ def _assert_png_valido(raw: bytes):
 
 def test_grafico_rampa_alunos_png_valido():
     _assert_png_valido(grafico_rampa_alunos(_serie(), steady=900.0, maturacao_mes=8))
+
+
+def _fco_serie():
+    """FCO sintetico: 4 meses de obras negativos (M-4..M-1) + operacao ate o plato."""
+    obras = [{"mes": m, "fcf": -75_000.0} for m in (-4, -3, -2, -1)]
+    op = [{"mes": t, "fcf": float(-8_000 + t * 1_500)} for t in range(1, 25)]
+    return obras + op
+
+
+def test_grafico_fco_png_valido():
+    _assert_png_valido(grafico_fco(_fco_serie(), mes_positivo=6))
+
+
+def test_grafico_fco_sem_marco_nao_quebra():
+    _assert_png_valido(grafico_fco(_fco_serie(), mes_positivo=None))
+
+
+def test_grafico_fco_serie_vazia_nao_quebra():
+    _assert_png_valido(grafico_fco([]))
 
 
 def test_grafico_faturamento_ebitda_png_valido():

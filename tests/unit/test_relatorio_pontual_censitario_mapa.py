@@ -20,7 +20,18 @@ from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS
 LAT_C = -23.55
 LNG_C = -46.63
 
-_CAMADAS = {"densidade", "renda", "score", "renda_domiciliar", "concorrentes"}
+# BLK-RELPON-10/11: alem das 4 camadas de 1,5 km + concorrentes, a orquestradora agora produz
+# `socioeconomia` (slide-hero) e `entorno` (mapa de quadra), AMBAS incondicionais. `residual`
+# e' CONDICIONAL ao `hexes_df` (nao passado aqui) -> ausente do set offline.
+_CAMADAS = {
+    "densidade",
+    "renda",
+    "score",
+    "renda_domiciliar",
+    "socioeconomia",
+    "concorrentes",
+    "entorno",
+}
 
 
 def _to_wgs_geometry(local_geom):
@@ -98,7 +109,11 @@ def test_mapas_combinados_gera_png_com_setores_pins_legenda_e_escala(tmp_path):
         assert png.startswith(b"\x89PNG\r\n\x1a\n"), camada
         assert len(png) > 10_000, camada
         image = Image.open(BytesIO(png))
-        assert image.size == (900, 680)
+        if camada == "concorrentes":
+            # Concorrentes e recortada (sem titulo/legenda) -> menor que o frame cheio.
+            assert image.size[0] < 900 and image.size[1] < 680, camada
+        else:
+            assert image.size == (900, 680), camada
         assert len(_all_colors(png)) > 20, camada
 
 
@@ -113,10 +128,14 @@ def test_mapas_combinados_trata_estado_vazio_sem_concorrentes():
     )
 
     assert set(mapas) == _CAMADAS
-    for png in mapas.values():
+    for camada, png in mapas.items():
         image = Image.open(BytesIO(png))
         assert image.format == "PNG"
-        assert image.size == (720, 520)
+        if camada == "concorrentes":
+            # Concorrentes e recortada (sem titulo/legenda) -> menor que o frame cheio.
+            assert image.size[0] < 720 and image.size[1] < 520, camada
+        else:
+            assert image.size == (720, 520), camada
 
 
 def test_mapa_censitario_faixas_fixas_nao_quartil():
@@ -335,7 +354,9 @@ def test_atribuicao_tiles_constante_e_legenda_arredondada_disponiveis():
     combinador_src = inspect.getsource(m.render_mapas_censitarios_combinados)
     assert "Relatorio Pontual Censitario - " not in combinador_src
     assert 'titulo="Densidade populacional"' in combinador_src
-    assert 'titulo="Concorrentes e Ultra"' in combinador_src
+    # Camada Concorrentes (pedido Felipe 2026-07-23): SEM titulo interno e SEM legenda
+    # (o mapa e so-pins; titulo/legenda eram redundantes com a barra do slide).
+    assert "mostrar_legenda=False" in combinador_src
 
 
 # ── BLK-RELPON-05: faixa "<variavel> no ponto" por camada ───────────────────────
@@ -375,7 +396,9 @@ def test_valor_ponto_repassado_aos_4_choropleths_nao_a_concorrentes(monkeypatch)
     assert "Renda dom." in capturado["Renda media domiciliar"]["valor_ponto"]
     # A camada Concorrentes nunca recebe o kwarg `valor_ponto` (fica no default None de
     # `_render_camada`, ver assinatura) -- byte-a-byte igual ao render antigo.
-    assert capturado["Concorrentes e Ultra"].get("valor_ponto") is None
+    # Camada Concorrentes: titulo interno agora "" (removido; pedido Felipe 2026-07-23) e
+    # nunca recebe `valor_ponto` (fica no default None de `_render_camada`).
+    assert capturado[""].get("valor_ponto") is None
     # BLK-RELPON-06 (D1): a faixa REVERTE de "no ponto" para "no raio" -- trava a reversao.
     for titulo in (
         "Densidade populacional",
@@ -415,7 +438,9 @@ def test_valor_raio_nao_e_nd_quando_setor_nao_cobre_o_ponto_mas_intersecta_raio(
     assert "n/d" not in capturado["Score censitario"]["valor_ponto"]
     assert capturado["Renda per capita"]["valor_ponto"] == "Renda no raio: R$ 2.000"
     assert capturado["Score censitario"]["valor_ponto"] == "Score no raio: 60"
-    assert capturado["Concorrentes e Ultra"].get("valor_ponto") is None
+    # Camada Concorrentes: titulo interno agora "" (removido; pedido Felipe 2026-07-23) e
+    # nunca recebe `valor_ponto` (fica no default None de `_render_camada`).
+    assert capturado[""].get("valor_ponto") is None
 
 
 def test_valor_raio_e_nd_quando_setor_fora_do_raio(monkeypatch):
@@ -441,7 +466,9 @@ def test_valor_raio_e_nd_quando_setor_fora_do_raio(monkeypatch):
     assert "n/d" in capturado["Densidade populacional"]["valor_ponto"]
     assert "n/d" in capturado["Renda per capita"]["valor_ponto"]
     assert "n/d" in capturado["Score censitario"]["valor_ponto"]
-    assert capturado["Concorrentes e Ultra"].get("valor_ponto") is None
+    # Camada Concorrentes: titulo interno agora "" (removido; pedido Felipe 2026-07-23) e
+    # nunca recebe `valor_ponto` (fica no default None de `_render_camada`).
+    assert capturado[""].get("valor_ponto") is None
 
 
 def test_valor_ponto_muda_pixels_do_png():

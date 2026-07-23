@@ -70,8 +70,13 @@ def test_viabilidade_contrato_e_coerencia() -> None:
     investimento = 800_000 + 700_000 + 160_000
     assert dre["roic"] == pytest.approx((dre["lucro_liquido"] * 12) / investimento, abs=1e-3)
 
-    # fco_serie e o resultado MENSAL (nao acumulado): comeca no mes 1
-    assert body["fco_serie"] and body["fco_serie"][0]["mes"] == 1
+    # fco_serie e o resultado MENSAL (nao acumulado): comeca em M-4 (obras/pre-abertura, item
+    # Felipe 2026-07-23) e segue ate a operacao. Os 4 primeiros meses (obras, com capex+aluguel)
+    # sao negativos; a operacao comeca no mes 1.
+    fco = body["fco_serie"]
+    assert fco and [p["mes"] for p in fco[:4]] == [-4, -3, -2, -1]
+    assert all(p["fcf"] < 0 for p in fco[:4])  # obras: desembolso de capex + aluguel
+    assert any(p["mes"] == 1 for p in fco)  # operacao comeca no mes 1
     # fcf_serie (payback) parte de -(investimento): primeiro ponto e negativo
     assert body["fcf_serie"] and body["fcf_serie"][0]["fcf"] < 0
 

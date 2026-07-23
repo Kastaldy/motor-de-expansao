@@ -260,9 +260,10 @@ def test_viabilidade_contrato_e_json_safe(empty_data: Path) -> None:
     if all(dre.get(k) is not None for k in ("faturamento", "deducoes", "impostos", "custos", "ebitda")):
         recomposto = dre["faturamento"] - dre["deducoes"] - dre["impostos"] - dre["custos"]
         assert recomposto == pytest.approx(dre["ebitda"], abs=0.05)
-    # fcf_serie (payback) parte NEGATIVO (-(investimento)); fco_serie comeca no mes 1.
+    # fcf_serie (payback) parte NEGATIVO (-(investimento)); fco_serie comeca em M-4 (obras/
+    # pre-abertura, item Felipe 2026-07-23), com os 4 meses de obras negativos antes da operacao.
     assert body["fcf_serie"] and body["fcf_serie"][0]["fcf"] < 0
-    assert body["fco_serie"] and body["fco_serie"][0]["mes"] == 1
+    assert body["fco_serie"] and [p["mes"] for p in body["fco_serie"][:4]] == [-4, -3, -2, -1]
 
 
 # ===========================================================================
