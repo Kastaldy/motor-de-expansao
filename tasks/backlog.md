@@ -1460,9 +1460,21 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 > → Fase 2 viabilidade (**09**) → **10** (deploy paralelo) → **11** (paridade/aceite). O **mapa deck.gl (07)** e a
 > **paridade byte-a-byte (11)** são os marca-passos; o resto é port de spec conhecida sobre back pronto.
 >
-> **FORA do piloto (decisão futura, DEC + gate):** o **corte** que aposenta o Streamlit (Fase 4 do plano) e as
-> **outras 3 telas** (Executivo, Expansão de Domínio, Carteira e Plano) — só depois do piloto validar os
-> critérios da §1/§15 do plano. **Deploy SEMPRE manual, por digest, pelo Felipe (§6) — auto-merge não deploya.**
+> **Escopo do corte do Streamlit (DEC-018, decisões de produto de Felipe em 2026-07-23):** "substituir 100% o Streamlit"
+> passa a significar **paridade de apenas 3 telas — Mapa + Visão Executiva + Viabilidade** (gate de aceite = **BLK-WEB-11**),
+> **sem** portar Domínio nem Carteira/Plano como abas. **Três decisões fecham o escopo:**
+> 1. **Expansão de Domínio NÃO vira aba** — a **Fase 4 (camada 4) do Mapa Territorial** (recomendação + ordem de expansão +
+>    Relatório Municipal) já entrega essa análise; a parte de domínio prevista no **BLK-WEB-02** fica **CANCELADA**.
+> 2. **A aba "Carteira e Plano" vira "Oportunidades Imobiliárias"** — nasce como **PLACEHOLDER**. As tabelas atuais de
+>    **Carteira acionável + Plano curto prazo (T+0..T+9) são DROPADAS** (funil + Relatório Municipal já cobrem), e a parte
+>    de carteira/plano prevista no **BLK-WEB-02** fica **CANCELADA**. A feature plena (mapear oportunidades de imóveis no
+>    mapa + coletores imobiliários online) é uma **EPIC FUTURA própria** — nova fonte de dados de imóveis, que **merece DEC +
+>    spec próprias**.
+> 3. **Critério de corte redefinido:** aposentar o Streamlit = **paridade de Mapa + Visão Executiva + Viabilidade**,
+>    validada em **BLK-WEB-11** — nada além dessas 3 telas. **Caveat:** a **Visão Executiva** depende de
+>    `growth_api_historico.parquet`, **hoje AUSENTE em prod** (`GET /api/executiva/{uf}` → **HTTP 404**); gerar/deployar esse
+>    parquet é pré-requisito da paridade da tela executiva.
+> **Deploy SEMPRE manual, por digest, pelo Felipe (§6) — auto-merge não deploya.**
 >
 > **Governança loop-safe:** **nenhum bloco entra marcado `loop-safe`** — essa marcação é **pré-aprovação HUMANA**
 > (§6.1: "ALGUÉM humano precisa adicionar essa linha"). Os blocos de **backend (01–05)** são **candidatos naturais**
@@ -1480,7 +1492,7 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 | **Criticidade** | **Média** (nova superfície read-only na API existente; **READ-ONLY sobre o M1** — só serializa artefatos, não altera nenhum score). |
 | **Prioridade** | Alta (funda a Fase 0; tudo depende dela). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — contrato de resposta]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (em prod, rev 9b60761): os 3 endpoints existem e respondem — GET /api/ufs (catálogo), GET /api/uf/{uf} (slice + funil), GET /api/municipios/{uf} — sobre fundação compartilhada (`MOTOR_DATA_DIR`, `lru_cache` por UF, serialização). Ressalva: o slice usa funil narrativo + cap 15k em vez dos 8 filtros globais e da banda de cor server-side. |
 | **Depende de** | — (primeiro bloco do epic). |
 | **Autonomia** | **manual por padrão (candidato a loop-safe)** — mecânico, READ-ONLY M1, verificado por teste de contrato, não toca deploy/VPS/segredos, consome `data/outputs`/`data/staging`, sem dep nova (`[api_mvp]`). Qualifica p/ loop-safe, mas a marcação é pré-aprovação HUMANA (§6.1). |
 
@@ -1512,7 +1524,7 @@ Criar a **fundação compartilhada**: módulo de config/paths (tira do `streamli
 | **Criticidade** | **Baixa** (wraps finos de função pura; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Média. |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (escopo reduzido pela DEC-018, em prod rev 9b60761): overlays de concorrentes/Ultra + atlas de ícones quadrados servidos via campo `pins` nas respostas de /api/municipio e /api/uf, consumidos no MapScreen. **Domínio, carteira, plano e vazios competitivos: CANCELADOS pela DEC-018.** |
 | **Depende de** | **BLK-WEB-01** (fundação de config/serialização/cache). |
 | **Autonomia** | **manual por padrão (candidato a loop-safe)** — mesmo perfil do 01 (mecânico, READ-ONLY, teste de contrato, sem deploy/dep nova). Marcação = pré-aprovação humana (§6.1). |
 
@@ -1540,7 +1552,7 @@ pins com logo + cluster (M7/M16).
 | **Criticidade** | **Média** (motor interativo das telas; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Alta (a interatividade do mapa depende dela). |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (parcial, em prod rev 9b60761): ponto censitário 1,5 km via POST /api/relatorio/pontual (`analisar_ponto_censitario_setores`); multi-hex agregado no cliente (MapScreen). Sem API /ponto/entorno nem /cenario/multihex — o estudo pontual roteia para a Viabilidade. |
 | **Depende de** | **BLK-WEB-01**. |
 | **Autonomia** | **manual por padrão (candidato a loop-safe)** — funções puras, READ-ONLY, teste de contrato; sem rede (o geocoding da busca fica no 06, humano). Marcação = pré-aprovação humana (§6.1). |
 
@@ -1567,7 +1579,7 @@ cenário multi-hex com add/remove/colar/copiar e os 25 KPIs (M10/M11), disclaime
 | **Criticidade** | **Média** (expõe o engine property-first; **READ-ONLY sobre o M1**; não altera o simulador). |
 | **Prioridade** | Alta (Fase 2 depende dela). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — schema de request]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (parcial, em prod rev 9b60761): POST /api/viabilidade (JSON completo — break-even, aluguel-teto, p10/p50/p90, grade de sensibilidade, série 60m, DRE cascata) e PDF via /api/relatorio/pontual (viabilidade embutida). Falta o export Excel (`gerar_excel_viabilidade` não exposto). |
 | **Depende de** | **BLK-WEB-01**. |
 | **Autonomia** | **manual por padrão (candidato a loop-safe)** — engine já é função pura; wrap + serialização verificáveis por teste; sem deploy/dep nova. Marcação = pré-aprovação humana (§6.1). |
 
@@ -1600,7 +1612,7 @@ com fallback offline; anti-PII (nada persistido).
 | **Criticidade** | **Média** (expõe relatórios existentes como download; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Média. |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (parcial, em prod rev 9b60761): POST /api/relatorio/pontual (PDF, com fotos/imóvel/viabilidade) e POST /api/relatorio/municipal (PDF 9 págs), ambos ligados no front (ViabilityScreen/MapScreen). Falta: export CSV de setores do Pontual e suporte a fila/lote (i/N). |
 | **Depende de** | **BLK-WEB-03** (contexto de ponto/censo). |
 | **Autonomia** | **manual por padrão (candidato a loop-safe)** — geradores já são server-side puros (bytes); wrap de download + tiles online (DEC-004/011, cache+fallback). Marcação = pré-aprovação humana (§6.1). |
 
@@ -1626,7 +1638,7 @@ botões-topo compartilhados (S6).
 | **Criticidade** | **Média** (funda o frontend; introduz toolchain Node; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Alta (Fase 1). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX/visual]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (em prod, rev 9b60761): scaffold Vite+React+TS, AppShell (Dock de 5 destinos, domínio/carteira desabilitados), design system (Glass/Chip/Kpi) e busca coord/link Maps + geocode Nominatim. Ressalva: `fetch` em vez de react-query; sem Plus Code/short-link no cliente. |
 | **Depende de** | **BLK-WEB-01** (para `/ufs` + `/uf/{uf}`). |
 | **Autonomia** | **manual (NÃO loop-safe)** — toolchain Node/Vite (fora do container Python do loop) + revisão visual humana + a busca por endereço usa **rede ao vivo** (DEC-010/Nominatim). NUNCA loop-safe. |
 
@@ -1655,7 +1667,7 @@ score no cliente — **nunca** cálculo de score.
 | **Criticidade** | **Alta** (o item de maior risco/incerteza do piloto; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Alta — **medir primeiro** (o marca-passo do calendário). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — visual/perf]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (em prod, rev 9b60761): HexMap.tsx com `H3HexagonLayer` (score→cor por faixa, <5k cinza, NaN fill), `IconLayer` de pins Ultra/concorrentes, click→select, tooltip de 7 linhas, hex buscado e multi-hex destacados. Spike aprovado (08/09 construídos por cima). Ressalva: basemap CARTO Dark Matter online (não o `/tiles/` self-hosted); modos = passos do funil (sem híbrido explícito). |
 | **Depende de** | **BLK-WEB-06** + **BLK-WEB-01** + **BLK-WEB-02**. |
 | **Autonomia** | **manual (NÃO loop-safe)** — WebGL/perf/visual exige olho humano; toolchain Node. NUNCA loop-safe. |
 
@@ -1685,7 +1697,7 @@ descartados (M9), pins (M16).
 | **Criticidade** | **Alta** (superfície principal do piloto; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Alta. |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX/visual]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (parcial, em prod rev 9b60761): Mapa com narrativa em 4 camadas + funil real, filtros UF/município/melhores + busca/geocode, multi-hex (compara + copia IDs), tooltips com renda domiciliar, Relatório Municipal/Pontual. Ressalva: entorno 1,6 km dobrado na Viabilidade; multi-hex e conjunto de filtros simplificados vs spec (sem 25 KPIs, sem os 8 filtros). |
 | **Depende de** | **BLK-WEB-07** + **BLK-WEB-03** + **BLK-WEB-02** + **BLK-WEB-05**. |
 | **Autonomia** | **manual (NÃO loop-safe)** — UI exige revisão visual humana (lição BLK-UI-10/BLK-VIAB-09). NUNCA loop-safe. |
 
@@ -1714,7 +1726,7 @@ via BLK-WEB-05; tooltips completos incl. renda média domiciliar (M8).
 | **Criticidade** | **Alta** (segunda tela do piloto; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Alta. |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX/visual]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (parcial, em prod rev 9b60761): ViabilityScreen sobre POST /api/viabilidade + /api/faixa-alunos + PDF via /api/relatorio/pontual (veredito, KPIs, régua break-even, faixas p10/p50/p90, rampa, FCF/FCO/DRE, fotos/dados do imóvel). Falta o export Excel (V9) e a grade de sensibilidade na UI (V7, já retornada pelo backend). |
 | **Depende de** | **BLK-WEB-06** + **BLK-WEB-04**. |
 | **Autonomia** | **manual (NÃO loop-safe)** — UI exige revisão visual humana. NUNCA loop-safe. |
 
@@ -1742,7 +1754,7 @@ acumulado**, **DRE em cascata** — V8), **Excel** (V9) e **Relatório completo 
 | **Criticidade** | **Crítica** (toca `deploy/`/`Dockerfile.*`/`docker-compose*`/Caddy/**CI** + VPS; exige **`critica-aprovada`** do Felipe — DEC-016). |
 | **Prioridade** | Média (depois das duas telas prontas). |
 | **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — deploy/VPS/auth/LGPD]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (em prod, rev 9b60761): `Dockerfile.web` (build Vite + FastAPI servindo SPA+API na 8899), job `publish-web` no CI por digest (WEB_IMAGE, Trivy bloqueante), serviço `web` no `docker-compose.prod.yml` ao lado do Streamlit, Caddy `reverse_proxy web:8899` atrás do Authelia; container `motor_expansao_web` vivo. (SPA via FastAPI StaticFiles, não nginx.) |
 | **Depende de** | **BLK-WEB-08** + **BLK-WEB-09**. |
 | **Autonomia** | **manual (NÃO loop-safe)** — o `loop_guard` aborta em `deploy/`/`Dockerfile.*`/compose/CI; deploy sempre manual por digest (§6). NUNCA loop-safe. |
 
@@ -1769,7 +1781,7 @@ dashboard sem gate. Roda **AO LADO** do Streamlit (sem corte).
 | **Criticidade** | **Média** (porta de validação do piloto; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Média (fecha o piloto). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — aceite/UX]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | **Pendente — gate de fechamento do corte** (paridade Mapa + Visão Executiva + Viabilidade, DEC-018). Faltam: testes de contrato byte-a-byte vs Streamlit, teste de guardrail (`mtime` dos artefatos M1), baseline de carga por UF e aceite humano (<60s jr.). É o único bloco que separa o piloto do corte do Streamlit. |
 | **Depende de** | **BLK-WEB-08** + **BLK-WEB-09**. |
 | **Autonomia** | **manual (NÃO loop-safe)** — os critérios de aceite incluem UX ("<60s sem treino") e paridade visual que exigem olho humano; a parte de teste de contrato é automatizável, o veredito de aceite é humano. |
 
@@ -1830,6 +1842,26 @@ crash); checklist da §15; validação humana de UX (<60s jr., "uma decisão por
 
 ---
 
+## Epic BLK-WEB — Fecho do escopo do corte (2026-07-23, DEC-018)
+
+> **Reconciliação com prod + decisões de escopo (Felipe, 2026-07-23).** Os Status dos blocos WEB-01..17 acima foram
+> atualizados para o estado REAL, verificado **na VPS** (não no código local): a imagem em produção (`motor_expansao_web`)
+> foi buildada do commit **`9b60761` = tip de `origin/piloto-web`** — **prod == este código**. O `/openapi.json` expõe
+> **11 endpoints vivos** (mapa por UF, executiva, faixa-alunos, geocode, municípios, relatórios municipal/pontual,
+> viabilidade + catálogos); **não existem** `/api/dominio`, `/api/carteira` nem `/api/plano`.
+>
+> **Decisões formalizadas na DEC-018:** (1) **Expansão de Domínio não vira aba** — a Fase 4 do Mapa já cobre;
+> (2) **Carteira vira "Oportunidades Imobiliárias"** (placeholder; feature plena = epic futura de imóveis + coletores,
+> com DEC + spec próprias) e as tabelas Carteira acionável + Plano curto prazo são **dropadas** — a parte de
+> domínio/carteira/plano/vazios do **BLK-WEB-02 fica CANCELADA**; (3) **substituir 100% o Streamlit = paridade só de
+> Mapa + Visão Executiva + Viabilidade**, gate = **BLK-WEB-11** (o único bloco que ainda falta).
+>
+> **Caveat aberto (pendência de DADO, não de código):** a Visão Executiva depende de `growth_api_historico.parquet`,
+> **ausente na VPS** — `GET /api/executiva/SP` retorna **HTTP 404**; gerar/subir esse parquet (via `scp` para
+> `/opt/motor-expansao/data/staging/`, como os uplifts em §5) é pré-requisito da paridade da tela executiva.
+
+---
+
 ### BLK-WEB-12 — Paridade total do Mapa Territorial (standalone) vs Streamlit
 
 | Campo | Valor |
@@ -1837,7 +1869,7 @@ crash); checklist da §15; validação humana de UX (<60s jr., "uma decisão por
 | **Criticidade** | **Alta** (superfície principal do piloto; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Alta (fecha a tela mais usada). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX/visual]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (em prod, rev 9b60761; commits 2cd7964+57f0c67): porta por UF + funil narrativo, cenário multi-hex (soma no cliente + copiar IDs) e filtro global "MELHORES" por faixa M1. Escopo reduzido por Felipe 2026-07-20 (modos de score, overlay de vazios e régua de 8 filtros ficaram FORA — cancelados, não pendentes). |
 | **Depende de** | piloto standalone atual (Mapa entregue); herda a spec de paridade de **BLK-WEB-08** e os critérios de **BLK-WEB-11**. |
 | **Autonomia** | **manual (NÃO loop-safe)** — UI/visual + WebGL; exige olho humano. |
 
@@ -1868,7 +1900,7 @@ nenhum recálculo de score/artefato; UX preservada.
 | **Criticidade** | **Baixa** (camada visual de apoio; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Média (a "única troca relevante" da paridade do mapa). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — visual]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (em prod, rev 9b60761): concorrentes como bandeira quadrada — backend `_montar_pins` (atlas por rede, fallback cor+sigla, cap COMPETITOR_PIN_LIMIT=6000, tooltip); front `IconLayer` conc-pins. Ultra em marcador próprio; escopo largo (UF) mostra só Ultra, concorrentes no drill-down do município (sem cluster explícito). |
 | **Depende de** | **BLK-WEB-12** (superfície do mapa) — na prática vai junto. |
 | **Autonomia** | **manual (NÃO loop-safe)** — decisão visual; exige olho humano. |
 
@@ -1895,7 +1927,7 @@ paridade com o dashboard.
 | **Criticidade** | **Média** (rede ao vivo — precedente **DEC-010**; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Média. |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — rede/anti-PII]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (em prod, rev 9b60761): GET /api/geocode (Nominatim, cache `data/cache/geocode/`, timeout 10s, fallback gracioso, anti-PII, restrito ao Brasil — DEC-010). A busca aceita endereço além de coordenada/link, com pin e mensagem de fallback offline. |
 | **Depende de** | — (a busca do piloto já resolve `lat,lng` + link Maps offline). Relacionado a **BLK-PROD-05** (geral) e **BLK-VIAB-08** (imóveis). |
 | **Autonomia** | **manual (NÃO loop-safe)** — geocoding é rede ao vivo (DEC-010/Nominatim); o loop não faz rede. NUNCA loop-safe. |
 
@@ -1920,7 +1952,7 @@ nenhuma PII persistida.
 | **Criticidade** | **Média** (nova tela; **READ-ONLY sobre o M1**; consome a camada PARALELA Growth, **sem PII**). |
 | **Prioridade** | Alta (frente pedida por Felipe). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX/visual + conferência dos números]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Código concluído; **sem paridade em prod (dado ausente)** (rev 9b60761): GET /api/executiva/{uf} agrega Growth por UF (faturamento, ativos/pagantes, churn 30d, split pagantes×agregadores, ticket, NPS, M-1) + ExecutiveScreen (pins Ultra, KPIs, seletor mês/estado). **Bloqueio operacional:** `growth_api_historico.parquet` ausente na VPS → HTTP 404 (não é bug de código; `scripts/ingerir_growth_api.py` está em prod mas não rodou). |
 | **Depende de** | `growth_api_historico.parquet` no `data/staging` do backend (ingestão semanal já roda na VPS — **DEC-013**). |
 | **Autonomia** | **manual (NÃO loop-safe)** — UI/visual + validação de números reais de negócio. |
 
@@ -1949,7 +1981,7 @@ agregadores coerente; nenhum dado pessoal exibido ou persistido.
 | **Criticidade** | **Média** (fundação de qualidade da nova versão; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Alta (bloqueia a substituição segura do Streamlit). |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (parcial, em prod rev 9b60761): job `web` no CI (setup-node 20 + npm ci + Vitest + tsc/vite build) e 5 testes de lib verdes. Falta: pytest do backend (contrato/paridade/guardrail READ-ONLY), E2E Playwright, eslint e mypy. |
 | **Depende de** | telas do piloto razoavelmente estáveis (**BLK-WEB-12** + **BLK-WEB-15**). Absorve/estende **BLK-WEB-11**. |
 | **Autonomia** | **manual por padrão** — introduz toolchain **Node no CI** (fora do container Python do loop); parte é automatizável, mas o pipeline novo pede gate humano. |
 
@@ -1981,7 +2013,7 @@ cobertura mínima acordada; roda no CI.
 | **Criticidade** | **Crítica** (toca `deploy/`/`Dockerfile.*`/`docker-compose*`/Caddy/**CI** + VPS; exige **`critica-aprovada`** do Felipe — DEC-016). |
 | **Prioridade** | Média (após telas + testes). |
 | **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — deploy/VPS/auth/LGPD/arquitetura]` → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | Concluído (parcial, em prod rev 9b60761): piloto ao lado do Streamlit — `Dockerfile.web`, serviço `web`/`motor_expansao_web` no compose (`:ro`, sob Caddy+Authelia), job `publish-web` e os 3 parquets de renda domiciliar presentes na VPS. Falta: registrar a decisão de qual manter (agora coberta pela **DEC-018** + gate **BLK-WEB-11**). |
 | **Depende de** | **BLK-WEB-12** + **BLK-WEB-15** + **BLK-WEB-16**. **Supersede/refina BLK-WEB-10** para a arquitetura standalone. |
 | **Autonomia** | **manual (NÃO loop-safe)** — `loop_guard` aborta em `deploy/`/`Dockerfile.*`/compose/CI; deploy sempre manual, por digest (§6). NUNCA loop-safe. |
 

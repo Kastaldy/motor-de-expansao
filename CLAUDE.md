@@ -185,3 +185,4 @@ Se um detalhe historico nao estiver aqui, procurar primeiro nesses docs antes de
 | DEC-015 | — | — | *(reservado — a numeracao pulou 014→016)* | — |
 | [DEC-016](docs/decisions/DEC-016.md) | 2026-07-13 | Estratégica | Portão da `main` por CHECKS DE CI (0 aprovações) e auto-merge de blocos Baixa/Média | APROVADA |
 | [DEC-017](docs/decisions/DEC-017.md) | 2026-07-15 | Estratégica | Normalização de EOL (Markdown de `tasks/`+`docs/` em LF) + enxugamento do CODEOWNERS (uma aprovação para governança de bookkeeping) | APROVADA |
+| [DEC-018](docs/decisions/DEC-018.md) | 2026-07-23 | Estratégica | Escopo do corte do Streamlit pelo piloto web: Domínio fora (coberto pela Fase 4 do Mapa), Carteira vira Oportunidades Imobiliárias (placeholder), paridade só de Mapa + Visão Executiva + Viabilidade (BLK-WEB-11) | APROVADA |
