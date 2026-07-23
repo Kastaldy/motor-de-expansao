@@ -1871,20 +1871,77 @@ class RelatorioMunicipalIn(BaseModel):
 
 @app.post("/api/relatorio/municipal")
 def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
-    """Relatorio Municipal (9 paginas). Acionado pelo 4o passo do mapa."""
+    """Relatorio Municipal (9 paginas). Acionado pelo 4o passo do mapa.
+
+    Renderiza as 5 camadas de mapa (`render_mapas_municipio`) e AS PASSA ao gerador —
+    sem isso o PDF saia sem nenhum mapa (o gerador cai em "Mapa indisponivel" em toda
+    pagina), que era o defeito reportado ("relatorio nao gera"). Espelha o
+    /api/relatorio/pontual: reaponta o cache de tiles (RELATIVO ao CWD do uvicorn em
+    web/server) e degrada gracioso online -> offline -> sem mapas.
+    """
+    from motor_expansao.api.service import _competitors_ultra
+    from motor_expansao.api.settings import Settings
+    from motor_expansao.dashboard import relatorio_municipal as _relmun
     from motor_expansao.dashboard.relatorio_municipal import (
+        _municipio_mask,
         agregar_municipio,
         gerar_payloads_download_relatorio_municipal,
+        render_mapas_municipio,
     )
 
     df = carregar_uf_completo(body.uf)
+    df_muni = df.loc[_municipio_mask(df, body.municipio)].copy()
+    if df_muni.empty:
+        raise HTTPException(
+            404, f"Nenhum hexagono encontrado para '{body.municipio}' em {body.uf.upper()}."
+        )
+
+    cfg = Settings(
+        censo_geo_dir=CENSO_GEO_DIR,
+        ibge_dir=IBGE_DIR,
+        ultra_dir=ULTRA_DIR,
+        staging_dir=STAGING_DIR,
+    )
+    comp_df, ultra_df = _competitors_ultra(cfg)
+
     try:
-        result = agregar_municipio(df, nome_municipio=body.municipio, uf=body.uf.upper())
+        result = agregar_municipio(
+            df,
+            nome_municipio=body.municipio,
+            uf=body.uf.upper(),
+            competitors_df=comp_df,
+            ultra_df=ultra_df,
+            df_pre_filtrado=df_muni,
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, f"Falha ao agregar o municipio: {exc}") from exc
 
+    # `_BASEMAP_CACHE_DIR` do modulo e RELATIVO ao CWD (uvicorn sobe de web/server).
+    # Reaponta para o cache absoluto do checkout (mesmo motivo do /relatorio/pontual).
+    _relmun._BASEMAP_CACHE_DIR = DATA_DIR / "cache" / "basemap_tiles"
+
+    def _mapas(basemap: bool) -> dict[str, bytes]:
+        return render_mapas_municipio(
+            df_muni,
+            result,
+            competitors_df=comp_df,
+            ultra_df=ultra_df,
+            basemap=basemap,
+        )
+
+    # Ruas online -> offline (choropleth sem tiles) -> sem mapas. O PDF nunca falha
+    # por causa do basemap; na pior hipotese sai como antes (sem mapas).
+    try:
+        mapas: dict[str, bytes] | None = _mapas(True)
+    except Exception:  # noqa: BLE001
+        try:
+            mapas = _mapas(False)
+        except Exception:  # noqa: BLE001
+            mapas = None
+
     payloads = gerar_payloads_download_relatorio_municipal(
         result,
+        mapas,
         ultra_dir=ULTRA_DIR if ULTRA_DIR.exists() else None,
         solicitante=body.solicitante,
     )

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { viabilidadeParaPdf } from './report'
+import { infoImovelParaPdf, viabilidadeParaPdf } from './report'
 import type { ViabilidadeOut } from './types'
 
 function make(over: Partial<ViabilidadeOut> = {}): ViabilidadeOut {
@@ -85,5 +85,49 @@ describe('viabilidadeParaPdf', () => {
     )
     expect(d.aluguel_teto).toBeNull()
     expect(d.margem_ebitda_pct).toBeNull()
+  })
+})
+
+describe('infoImovelParaPdf', () => {
+  const cenario = { m2: 1500, aluguel: 20000 }
+
+  it('SEMPRE inclui metragem/aluguel do Cenário como número (o bug do "n/d")', () => {
+    const d = infoImovelParaPdf({}, cenario)
+    expect(d.metragem_m2).toBe(1500)
+    expect(d.aluguel_pedido).toBe(20000)
+  })
+
+  it('remapeia as chaves do front para o contrato do gerador (pe_direito_m, tipo_imovel, endereco)', () => {
+    const d = infoImovelParaPdf(
+      { nome: 'Loja Centro', pe_direito: '4,5', tipo: 'galpão', vagas: '10' },
+      cenario,
+    )
+    expect(d.endereco).toBe('Loja Centro')
+    expect(d.pe_direito_m).toBe(4.5)
+    expect(d.tipo_imovel).toBe('galpão')
+    expect(d.vagas).toBe(10)
+    // Nunca emite as chaves ERRADAS que o front usava antes.
+    expect(d).not.toHaveProperty('pe_direito')
+    expect(d).not.toHaveProperty('tipo')
+    expect(d).not.toHaveProperty('nome')
+  })
+
+  it('valor de venda pt-BR (ponto=milhar, vírgula=decimal) vira número', () => {
+    expect(infoImovelParaPdf({ valor_venda: 'R$ 1.200.000,00' }, cenario).valor_venda).toBe(
+      1200000,
+    )
+    // "4.5" NÃO é milhar (só 1 dígito depois do ponto) -> preserva 4.5
+    expect(infoImovelParaPdf({ pe_direito: '4.5' }, cenario).pe_direito_m).toBe(4.5)
+  })
+
+  it('campos opcionais vazios são omitidos (sem chaves undefined no payload)', () => {
+    const d = infoImovelParaPdf({ nome: '  ', valor_venda: '' }, cenario)
+    expect(Object.keys(d).sort()).toEqual(['aluguel_pedido', 'metragem_m2'])
+  })
+
+  it('texto não numérico em campo numérico segue como texto (degrada gracioso, não vira n/d)', () => {
+    expect(infoImovelParaPdf({ valor_venda: 'a combinar' }, cenario).valor_venda).toBe(
+      'a combinar',
+    )
   })
 })

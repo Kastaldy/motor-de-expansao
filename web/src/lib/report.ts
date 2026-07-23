@@ -8,7 +8,7 @@
    `margem`/`ebitda`/`faturamento`, o gerador le `margem_ebitda_pct`/`ebitda_mensal`/
    `faturamento_mensal`, alem de nem enviar payback/roic/faixa).
    --------------------------------------------------------------------------- */
-import type { ViabilidadeOut } from './types'
+import type { InfoImovel, ViabilidadeOut } from './types'
 
 /**
  * Dict serializavel esperado por `_viabilidade_page`:
@@ -34,4 +34,48 @@ export function viabilidadeParaPdf(res: ViabilidadeOut): Record<string, unknown>
     flag_viavel: res.dre.flag_viavel ?? false,
     flag_fora_envelope: res.flag_fora_envelope,
   }
+}
+
+/**
+ * Mapeia os inputs do imóvel para o CONTRATO de `censo_report._info_imovel_page`, que
+ * lê CHAVES ESPECÍFICAS: `metragem_m2`, `aluguel_pedido`, `valor_venda`, `pe_direito_m`,
+ * `vagas`, `tipo_imovel`, além de `endereco` e `observacoes`.
+ *
+ * BUG que isto corrige: a metragem e o aluguel vivem no **Cenário** (não em "Dados para o
+ * relatório") e nunca eram enviados; e o front mandava `pe_direito`/`tipo`, mas o PDF lê
+ * `pe_direito_m`/`tipo_imovel`. Resultado: o imóvel saía com "n/d" mesmo tudo preenchido.
+ * Mesmo padrão testado do `viabilidadeParaPdf`: chave errada → slide vazio, sem erro.
+ *
+ * `metragem_m2`/`aluguel_pedido` vêm como número (formatação `num`/`brl` do gerador); os
+ * campos de texto são convertidos para número no formato pt-BR (ponto=milhar, vírgula=decimal)
+ * quando possível, senão seguem como texto (o gerador degrada gracioso). Chaves vazias saem.
+ */
+export function infoImovelParaPdf(
+  info: InfoImovel,
+  cenario: { m2: number; aluguel: number },
+): Record<string, unknown> {
+  const numOpt = (s?: string): number | string | undefined => {
+    const t = (s ?? '').trim()
+    if (!t) return undefined
+    // pt-BR: ponto separa milhar, vírgula é decimal. Só remove o ponto quando ele
+    // separa milhar (seguido de exatamente 3 dígitos), preservando "4.5" como 4.5.
+    const cleaned = t
+      .replace(/[^\d.,-]/g, '')
+      .replace(/\.(?=\d{3}(\D|$))/g, '')
+      .replace(',', '.')
+    const n = Number(cleaned)
+    return cleaned !== '' && Number.isFinite(n) ? n : t
+  }
+  const out: Record<string, unknown> = {
+    metragem_m2: cenario.m2,
+    aluguel_pedido: cenario.aluguel,
+    valor_venda: numOpt(info.valor_venda),
+    pe_direito_m: numOpt(info.pe_direito),
+    vagas: numOpt(info.vagas),
+    tipo_imovel: info.tipo?.trim() || undefined,
+    endereco: info.nome?.trim() || undefined,
+    observacoes: info.observacoes?.trim() || undefined,
+  }
+  for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k]
+  return out
 }

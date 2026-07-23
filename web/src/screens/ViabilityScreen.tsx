@@ -12,7 +12,7 @@ import {
 import { Aviso, Botao, Eyebrow, Glass, Kpi } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { alunos, brl, coord, num, pct } from '../lib/format'
-import { viabilidadeParaPdf } from '../lib/report'
+import { infoImovelParaPdf, viabilidadeParaPdf } from '../lib/report'
 import type {
   FaixaAlunos,
   InfoImovel,
@@ -172,7 +172,9 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
         lat: ponto.hex.lat,
         lng: ponto.hex.lng,
         rotulo: info.nome || ponto.rotulo,
-        infoImovel: info,
+        // Metragem/aluguel vêm do Cenário e as chaves são remapeadas para o contrato
+        // do PDF (senão o imóvel saía "n/d" mesmo preenchido — lib/report.ts).
+        infoImovel: infoImovelParaPdf(info, { m2, aluguel }),
         // Contrato do gerador de PDF (censo_report._viabilidade_page): chaves e
         // unidades exatas via lib/report.ts. Mandar a chave/unidade errada faz o
         // slide de viabilidade vir vazio ("n/d") — foi o bug corrigido em 2026-07-22.

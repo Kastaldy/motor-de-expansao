@@ -376,3 +376,57 @@ def test_municipios_ignora_categorias_fantasma(
         assert not any(str(n).startswith("Fantasma") for n in nomes)
     finally:
         _clear_caches()
+
+
+def test_relatorio_municipal_renderiza_e_passa_os_mapas(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regressao (bug 'relatorio municipal nao gera'): o endpoint DEVE renderizar as
+    camadas de mapa e PASSA-LAS ao gerador. Antes chamava o gerador com mapas=None e o
+    PDF saia com 'Mapa indisponivel' em toda pagina. Patcha os colaboradores nas
+    fronteiras (o endpoint importa tudo de forma lazy do modulo relatorio_municipal)."""
+    import motor_expansao.dashboard.relatorio_municipal as relmun
+    from motor_expansao.api import service as api_service
+
+    df = pd.DataFrame(
+        {"nome_municipio": ["X"], "uf": ["DF"], "hex_id": ["8a"], "lat": [0.0], "lng": [0.0]}
+    )
+    monkeypatch.setattr(pilot, "carregar_uf_completo", lambda uf: df)
+    monkeypatch.setattr(
+        relmun, "_municipio_mask", lambda d, nome: pd.Series([True] * len(d), index=d.index)
+    )
+    monkeypatch.setattr(
+        relmun,
+        "agregar_municipio",
+        lambda *a, **k: {"uf": "DF", "nome_municipio": "X", "n_hex_total": 1},
+    )
+    monkeypatch.setattr(api_service, "_competitors_ultra", lambda cfg: (None, None))
+
+    chamada: dict[str, object] = {}
+
+    def _fake_render(df_muni, result, *, competitors_df=None, ultra_df=None, basemap=False):
+        chamada["render"] = True
+        chamada["basemap"] = basemap
+        return {c: b"PNG" for c in ("cobertura", "resumo", "score", "residual", "dominio")}
+
+    monkeypatch.setattr(relmun, "render_mapas_municipio", _fake_render)
+
+    capturado: dict[str, object] = {}
+
+    def _fake_payloads(result, mapas=None, **k):
+        capturado["mapas"] = mapas
+
+        class _P:
+            pdf_bytes = b"%PDF-1.4"
+            pdf_filename = "r.pdf"
+
+        return _P()
+
+    monkeypatch.setattr(
+        relmun, "gerar_payloads_download_relatorio_municipal", _fake_payloads
+    )
+
+    resp = pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="DF", municipio="X"))
+    assert resp.media_type == "application/pdf"
+    assert chamada.get("render") is True, "o endpoint nao chamou render_mapas_municipio"
+    mapas = capturado.get("mapas")
+    assert mapas is not None, "regressao: o gerador recebeu mapas=None (PDF sem mapas)"
+    assert set(mapas) >= {"cobertura", "resumo", "score", "residual", "dominio"}

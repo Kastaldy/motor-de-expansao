@@ -3,7 +3,6 @@
 import type {
   ExecutivaPayload,
   FaixaAlunos,
-  InfoImovel,
   MunicipioItem,
   MunicipioPayload,
   ViabilidadeIn,
@@ -170,7 +169,7 @@ export const api = {
     lng: number
     rotulo?: string
     solicitante?: string
-    infoImovel?: InfoImovel
+    infoImovel?: Record<string, unknown>
     viabilidade?: unknown
     fotos?: File[]
   }) => {
