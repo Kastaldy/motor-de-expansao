@@ -41,7 +41,7 @@ import pandas as pd
 from fpdf import FPDF
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
-from motor_expansao.dashboard.competitors import _render_pin_tile
+from motor_expansao.dashboard.competitors import _render_square_logo_tile
 from motor_expansao.dashboard.utils import score_band_to_color
 
 # ---------------------------------------------------------------------------
@@ -52,6 +52,15 @@ from motor_expansao.dashboard.utils import score_band_to_color
 OFERTA_DESTAQUE_MIN = 2000.0
 CAPACIDADE_UNIDADE = 2500.0
 H3_RES = 7
+
+# BLK-RELPON-09 (S2a): lado (px do PNG-fonte) do marcador de concorrente/Ultra nos mapas
+# municipais. 26 px preserva a razao 34/40 = 0,85 que o Municipal ja tinha frente ao
+# Pontual: mesmo canvas de 1000 px, porem cobrindo um MUNICIPIO inteiro -> muito mais
+# pins e maior risco de colisao. Logo util: ~14 px (balao) -> ~22 px (quadrado).
+_PIN_LOGO_PX = 26
+# Rasterizacao (px) da logo embutida no PDF da pagina "Concorrentes por rede": desenhada
+# a 14 pt, 64 px cobre ~300 dpi sem inchar o PDF (o crop antigo do balao era 54x54).
+_REDE_LOGO_RASTER_PX = 64
 
 # Carimbo de versao do contrato deste relatorio (D8 / espirito DEC-005 item 6).
 VERSAO_CONTRATO_MUNICIPAL = "BLK-RELMUN-01 | contrato v1 | score M1 INALTERADO"
@@ -97,6 +106,16 @@ _HEX_DESTAQUE_RGBA = (*_COR_APROVADO_PROPRIO, 200)
 _HEX_DESTAQUE_MUNICIPAL_RGBA = (*_COR_APROVADO_MUNICIPAL, 200)
 _HEX_NEUTRO_RGBA = (176, 182, 196, 110)
 _CIRCLE_INK = (31, 41, 55)
+
+# BLK-RELPON-09-FU1: realce dos rotulos sobre os hexagonos (valor de Residual Fitness na
+# camada "resumo" e numero de zona na camada "dominio"). Decisao de PRODUTO de Vinicius no
+# gate visual de 2026-07-21, escolhida sobre 4 alternativas (branco opaco, grafite, turquesa):
+# a placa MAGENTA e a unica cor que nao colide com nada no mapa -- os hexagonos sao verdes/
+# cinza, o basemap e claro e os marcadores de rede sao pretos/azuis/amarelos. Reusa o
+# `ULTRA_MAGENTA` do proprio modulo (mesma tinta das bandas/frames do relatorio), em vez de
+# introduzir um magenta quase-igual. Parametrizado -> reajustar e mudanca de 1 linha.
+_ROTULO_PLACA_RGBA = (*ULTRA_MAGENTA, 240)
+_ROTULO_INK = (255, 255, 255)
 
 # Slide "Visao Geral do Municipio" (FU1): hexagonos do MUNICIPIO em 3 categorias.
 # Aprovado dado proprio (verde forte) / Aprovado fallback municipal (verde medio) / Reprovado (cinza).
@@ -1078,32 +1097,50 @@ def _render_mapa_municipio(
             else:
                 odraw.polygon(pixels, fill=_HEX_NEUTRO_RGBA, outline=(255, 255, 255, 90))
 
+    # Compoe a overlay SO dentro do `map_box` (confinamento do recorte de foco).
+    clip = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(clip).rounded_rectangle(map_box, radius=6, fill=255)
+
+    def _compor_no_map_box(camada: Image.Image) -> None:
+        masked = Image.composite(camada, Image.new("RGBA", (width, height), (0, 0, 0, 0)),
+                                 ImageChops.multiply(camada.split()[3], clip))
+        image.paste(masked, (0, 0), masked)
+
+    _compor_no_map_box(overlay)
+
+    # Pins de Ultra/concorrentes (geograficos; dentro da bbox).
+    _draw_pins(draw, image, competitors_df, project, "", minx, maxx, miny, maxy)
+    _draw_pins(draw, image, ultra_df, project, "__ultra__", minx, maxx, miny, maxy)
+
+    # BLK-RELPON-09-FU1 (gate visual de Vinicius, 2026-07-21): os rotulos de valor sao
+    # desenhados numa overlay PROPRIA, composta DEPOIS dos pins, para que o marcador quadrado
+    # nao cubra o numero de Residual Fitness do hexagono -- que e o dado principal da pagina.
+    # Antes do FU1 a ordem era hexes+rotulos -> pins, e o pin vencia o numero. Mesmo `clip` do
+    # `map_box`, entao o confinamento do recorte de foco (AJUSTE 1/FU1) segue valendo.
+    rotulos_overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    rdraw = ImageDraw.Draw(rotulos_overlay, "RGBA")
+
     # Rotulos de oferta sobre hexes destacados (camada resumo). Decisao do produto (Vinicius,
     # 2026-06-24): exibir o Residual em TODOS os hexes aprovados (sem cap), com fonte menor
     # para mitigar a sobreposicao quando ha muitos destacados no quadro.
     label_font = _font(8)
     for cx, cy, txt in label_pins:
-        w = _text_width(odraw, txt, label_font)
-        odraw.rectangle([cx - w // 2 - 2, cy - 8, cx + w // 2 + 2, cy + 8], fill=(255, 255, 255, 200))
-        _draw_text(odraw, (cx - w // 2, cy - 7), txt, font=label_font, fill=_CIRCLE_INK)
+        w = _text_width(rdraw, txt, label_font)
+        rdraw.rectangle(
+            [cx - w // 2 - 2, cy - 8, cx + w // 2 + 2, cy + 8], fill=_ROTULO_PLACA_RGBA
+        )
+        _draw_text(rdraw, (cx - w // 2, cy - 7), txt, font=label_font, fill=_ROTULO_INK)
 
-    # FU1: numero da estrategia (1/2/3) sobre cada hex de zona (camada dominio).
+    # FU1: numero da estrategia (1/2/3) sobre cada hex de zona (camada dominio). Mesmo realce
+    # magenta dos valores (decisao de Vinicius no gate: aplicar nos dois, por consistencia
+    # entre as paginas Resumo e Dominio).
     zona_font = _font(15)
     for cx, cy, num, _zc in zona_labels:
-        w = _text_width(odraw, num, zona_font)
-        odraw.ellipse([cx - 11, cy - 11, cx + 11, cy + 11], fill=(255, 255, 255, 220))
-        _draw_text(odraw, (cx - w // 2, cy - 9), num, font=zona_font, fill=_CIRCLE_INK)
+        w = _text_width(rdraw, num, zona_font)
+        rdraw.ellipse([cx - 11, cy - 11, cx + 11, cy + 11], fill=_ROTULO_PLACA_RGBA)
+        _draw_text(rdraw, (cx - w // 2, cy - 9), num, font=zona_font, fill=_ROTULO_INK)
 
-    # Compoe a overlay SO dentro do `map_box` (confinamento do recorte de foco).
-    clip = Image.new("L", (width, height), 0)
-    ImageDraw.Draw(clip).rounded_rectangle(map_box, radius=6, fill=255)
-    masked = Image.composite(overlay, Image.new("RGBA", (width, height), (0, 0, 0, 0)),
-                             ImageChops.multiply(overlay.split()[3], clip))
-    image.paste(masked, (0, 0), masked)
-
-    # Pins de Ultra/concorrentes (geograficos; dentro da bbox).
-    _draw_pins(draw, image, competitors_df, project, "", minx, maxx, miny, maxy)
-    _draw_pins(draw, image, ultra_df, project, "__ultra__", minx, maxx, miny, maxy)
+    _compor_no_map_box(rotulos_overlay)
 
     # Legenda no canto superior direito: cobertura mostra as 3 categorias (aprovado proprio /
     # aprovado fallback municipal / reprovado); resumo mostra so as 2 de aprovado (realce de
@@ -1168,10 +1205,11 @@ def _draw_pins(
         try:
             from typing import cast
 
-            tile = cast(Image.Image, _render_pin_tile(key))
-            size = 34
-            tile = tile.resize((size, size), Image.Resampling.LANCZOS)
-            image.paste(tile, (int(px) - size // 2, int(py) - size), tile)
+            # BLK-RELPON-09: logo QUADRADA (sem balao/mascara circular), ancorada pelo
+            # CENTRO do quadrado no ponto (S2b) -- o marcador nao tem ponta.
+            size = _PIN_LOGO_PX
+            tile = cast(Image.Image, _render_square_logo_tile(key, size))
+            image.paste(tile, (int(px) - size // 2, int(py) - size // 2), tile)
         except Exception:
             draw.ellipse([px - 4, py - 4, px + 4, py + 4], fill=ULTRA_MAGENTA if not forced_key else ULTRA_TURQUESA)
 
@@ -1476,17 +1514,23 @@ def _draw_framed_map(
 
 
 def _draw_rede_logo(pdf: _UltraPDF, rede: str, x: float, y: float, size: float = 14.0) -> bool:
-    """Slide 8: desenha o tile do logo da rede (via `_render_pin_tile`) em (x,y).
+    """Slide 8: desenha a logo QUADRADA da rede (`competitors._render_square_logo_tile`) em (x,y).
 
+    BLK-RELPON-09: era `_render_pin_tile(...).crop((37,20,91,74))` -- recorte acoplado a
+    geometria do balao. Agora a logo ja vem quadrada; sem borda/sombra (a pagina do PDF e
+    branca, keyline e sombra ficariam sujeira). `size` continua em PONTOS do PDF (14 pt),
+    inalterado; `_REDE_LOGO_RASTER_PX` e so a resolucao do raster embutido.
     Fallback gracioso: sem tile/erro -> retorna False (o chamador mantem so o bullet/nome).
     """
     try:
         from typing import cast
 
-        tile = cast(Image.Image, _render_pin_tile(str(rede)))
-        crop = tile.crop((37, 20, 91, 74)) if tile.size == (128, 128) else tile
+        tile = cast(
+            Image.Image,
+            _render_square_logo_tile(str(rede), _REDE_LOGO_RASTER_PX, border=False, shadow=False),
+        )
         buf = BytesIO()
-        crop.convert("RGBA").save(buf, format="PNG")
+        tile.convert("RGBA").save(buf, format="PNG")
         buf.seek(0)
         pdf.image(buf, x=x, y=y, w=size, h=size)
         return True

@@ -154,6 +154,71 @@ em vez de remendar arquivo por arquivo.
 tile mockado por monkeypatch): matemática de tile, geometria pura da célula, fallback de rede,
 tolerância a tile faltando, e inserção/ausência da página nos dois tamanhos.
 
+---
+
+## Relatório Pontual Censitário — satélite + mapas socioeconômico/residual + logo quadrada (2026-07-21, pedido de Vini)
+
+> **Pedido de Vinicius (2026-07-21)**, a partir do uso real do Relatório Pontual em produção, em três
+> partes: (1) **um slide novo ANTES do slide "Mapas de calor"**, com **dois mapas lado a lado** —
+> socioeconomia da região e residual fitness; (2) uma **imagem de satélite** da região inserida **antes**
+> desses mapas novos, com zoom aproximado para dar noção do que existe no ponto; (3) nos relatórios
+> gerados pelo motor, o **indicador de concorrente** deixa de ser um pin-balão com a logo dentro e passa
+> a ser a **própria logo em formato quadrado**. READ-ONLY sobre o M1 (§5 guardrail): nenhum dos três
+> recalcula `score_priorizacao`, scores censitários, `setor_censitario_intersecao_area_1p5km`, raio de
+> 1,5 km, carteira, plano ou artefatos oficiais — é camada de visualização/relatório.
+>
+> **Correção de premissa (medida no código em 2026-07-21).** O pedido descrevia o PDF como "5 páginas /
+> tira 1x3". Está desatualizado — **e o CLAUDE.md §4 também**: hoje são **6 páginas base** (`/Count 6`) e
+> o slide "Mapas de calor" já é um **grid 2x2 com 4 camadas** (`densidade`, `renda`, `score`,
+> `renda_domiciliar`) — `censo_report.py:27-34,387,465`. A correção do §4 entra junto com o BLK-RELPON-10.
+>
+> **Ordem final de páginas alvo (8 base):** Capa → **Satélite (RELPON-11)** → **Socioeconomia + Residual
+> (RELPON-10)** → Mapas de calor 2x2 → Concorrentes → Perfil do Bairro → Big Numbers → Realização. As
+> páginas opcionais (Fotos, Info do imóvel, Viabilidade) permanecem onde estão.
+>
+> **Decisões de produto travadas com Vinicius em 2026-07-21 (gate deste ciclo):**
+> - **D1 — "socioeconomia" = `score_setor_2022_calibrado`** (o composto socioeconômico do repo e camada
+>   PRIMÁRIA operacional, §1). O termo "socioeconomia" não existia no repositório (0 matches em `tasks/`);
+>   fica definido aqui.
+> - **D2 — residual fitness em raio MAIOR (~5 km)**, rotulado explicitamente como escala diferente do mapa
+>   ao lado. Motivo medido no dado real (Monte Carlo Voronoi, 200k pontos): no raio de 1,5 km cabem apenas
+>   **3 a 5 hexágonos H3 res-7** e **68,9%** dos hexes valem exatamente 0 → sairia um mosaico chapado, não
+>   um mapa de calor. Comparação no mesmo ponto (Av. Paulista): **639 setores censitários vs 5 hexes**.
+> - **D3 — satélite = `Esri.WorldImagery`, largura 250–400 m** (não Google, não 100 m). Ver BLK-RELPON-11.
+> - **D4 — logo quadrada vale no Pontual + Municipal**, via **função nova**, sem tocar `_render_pin_tile`
+>   nem o atlas do pydeck. Ver BLK-RELPON-09.
+>
+> **Sub-decisões ABERTAS, a fechar no gate visual de cada bloco** (não bloqueiam o Planner):
+> - **S1 (RELPON-10):** o `score` promovido ao slide novo **permanece** também no grid 2x2 (slide novo =
+>   resumo/"hero"; 2x2 = detalhe técnico)? **Recomendação: SIM, permanece** — tirá-lo regride o
+>   BLK-RELPON-01 e força o grid de 2x2 para 1x3, com churn extra e sem ganho claro.
+> - **S2 (RELPON-09):** "30x30" é em **px do PNG fonte** (recomendado, comparável aos 40 px atuais) ou em
+>   pt do PDF; e a âncora passa a ser o **centro** do quadrado + ponto fino de 2 px no local exato
+>   (recomendado) ou a base do quadrado (preserva a semântica do pin atual).
+>
+> **Impacto cruzado a citar nos gates:** `BLK-WEB-05`/`BLK-WEB-08` (pendentes) exigem **paridade** com o
+> "2x2 mapas" do Pontual e `BLK-WEB-02`/`BLK-WEB-07` exigem paridade com os **pins com logo** — os três
+> blocos abaixo criam dívida de paridade para o piloto web.
+
+---
+
+- BLK-RELPON-09 (concluído 2026-07-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-10 (concluído 2026-07-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-11 (concluído 2026-07-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-12 (concluído 2026-07-22) — ver tasks/completed.md
+
 
 ---
 
