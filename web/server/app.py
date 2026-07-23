@@ -1981,7 +1981,10 @@ async def relatorio_pontual(
     )
     from motor_expansao.api.settings import Settings
     from motor_expansao.dashboard import censo_map as _censo_map
-    from motor_expansao.dashboard.censo_map import render_mapas_censitarios_combinados
+    from motor_expansao.dashboard.censo_map import (
+        render_foto_satelite_ponto,
+        render_mapas_censitarios_combinados,
+    )
 
     # `_BASEMAP_CACHE_DIR` no modulo e RELATIVO ao CWD ("data/cache/basemap_tiles").
     # Como o uvicorn do piloto sobe de web/server, os tiles caiam em
@@ -2073,6 +2076,14 @@ async def relatorio_pontual(
         if conteudo:
             fotos_bytes.append(conteudo)
 
+    # BLK-SAT-01: vista aerea (satelite Esri) da capa do PDF. A chave vem de env
+    # API_ARCGIS_API_KEY (passthrough no compose); sem chave/rede -> None -> pagina
+    # OMITIDA e o resto do PDF sai igual. Nenhum caminho novo derruba a geracao.
+    try:
+        foto_satelite = render_foto_satelite_ponto(lat, lng)
+    except Exception:  # noqa: BLE001
+        foto_satelite = None
+
     pdf = gerar_pdf_relatorio_pontual_censitario(
         result,
         mapas,
@@ -2084,6 +2095,7 @@ async def relatorio_pontual(
         fotos=fotos_bytes[:2] or None,
         info_imovel=json.loads(info_imovel) if info_imovel else None,
         viabilidade=json.loads(viabilidade_json) if viabilidade_json else None,
+        foto_satelite=foto_satelite,
     )
     return Response(
         content=pdf,

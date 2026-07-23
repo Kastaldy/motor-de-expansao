@@ -642,6 +642,70 @@ def _fotos_imovel_page(
 
 
 # ---------------------------------------------------------------------------
+# Pagina de VISTA AEREA (satelite Esri) — porte do BLK-SAT-01 (main). Pagina
+# PROPRIA (nao a de fotos do imovel) para nao ocupar as 2 vagas de upload. Saida
+# OPCIONAL (so entra se `foto_satelite` != None e a imagem for valida). O PNG e
+# gerado pelo chamador via `censo_map.render_foto_satelite_ponto` (fallback gracioso
+# -> None sem chave/rede). READ-ONLY sobre o M1; licenca Esri (credito embutido no PNG).
+# ---------------------------------------------------------------------------
+_SATELITE_PAGE_TITLE = "Imóvel - Vista aérea"
+
+
+def _foto_satelite_cell_grande() -> tuple[float, float, float, float]:
+    """Celula 3:2 CENTRADA ocupando a area de conteudo inteira (altura manda).
+
+    Para quando a vista aerea e a UNICA imagem da pagina (sem upload de fotos do imovel).
+    """
+    area_top, area_bottom, margin_x = 56.0, _PAGE_H - 26.0, 40.0
+    pad_v = 14.0
+    h = (area_bottom - area_top) - 2.0 * pad_v
+    w = h * _FOTO_ASPECT
+    max_w = _PAGE_W - 2.0 * margin_x
+    if w > max_w:                      # se estourar a largura, a largura passa a mandar
+        w, h = max_w, max_w / _FOTO_ASPECT
+    x0 = (_PAGE_W - w) / 2.0
+    y0 = area_top + ((area_bottom - area_top) - h) / 2.0
+    return x0, y0, w, h
+
+
+def _foto_satelite_page(
+    pdf: _UltraPDF,
+    foto: bytes,
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    grande: bool = False,
+) -> None:
+    """Pagina da VISTA AEREA: faixa de titulo + 1 foto + rodape.
+
+    `grande` dimensiona a foto: False (default) usa a mesma celula de `_fotos_cells(1)`;
+    True ocupa a area de conteudo inteira (quando a vista aerea e a unica imagem).
+    Foto invalida -> a pagina NAO e criada.
+    """
+    png = _normalizar_foto(foto)
+    if not png:
+        return
+
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _SATELITE_PAGE_TITLE, rgb=primary)
+
+    cx, cy, cw, ch = _foto_satelite_cell_grande() if grande else _fotos_cells(1)[0]
+    recorte = _recortar_cover(png, cw / ch)
+    try:
+        pdf.image(BytesIO(recorte if recorte is not None else png), x=cx, y=cy, w=cw, h=ch)
+    except Exception:
+        pass
+
+    prev_lw = pdf.line_width
+    pdf.set_draw_color(*_FOTO_BORDA_LARANJA)
+    pdf.set_line_width(_FOTO_BORDA_LARGURA)
+    pdf.rect(cx, cy, cw, ch, style="D")
+    pdf.set_line_width(prev_lw)
+    _draw_footer(pdf, with_attribution=False)
+
+
+# ---------------------------------------------------------------------------
 # Pagina de INFORMACOES do imovel (BLK-RELVIAB-02): dados do imovel em cards +
 # observacoes. Saida OPCIONAL (so entra se `info_imovel` != None); campos
 # ausentes -> "n/d" gracioso. READ-ONLY sobre o M1; anti-PII (nada persistido).
@@ -1879,6 +1943,8 @@ def gerar_pdf_relatorio_pontual_classico(
     fotos: list[bytes] | None = None,
     info_imovel: dict[str, Any] | None = None,
     viabilidade: dict[str, Any] | None = None,
+    foto_satelite: bytes | None = None,
+    foto_satelite_grande: bool = False,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
@@ -1910,6 +1976,9 @@ def gerar_pdf_relatorio_pontual_classico(
 
     pdf = _UltraPDF()
     _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
+    # BLK-SAT-01: vista aerea logo apos a capa (pagina propria, nao disputa as vagas de fotos).
+    if foto_satelite:
+        _foto_satelite_page(pdf, foto_satelite, assets, primary=p1, grande=foto_satelite_grande)
     if fotos:
         _fotos_imovel_page(pdf, fotos, assets, primary=p1)
     if info_imovel:
@@ -1969,6 +2038,8 @@ def gerar_pdf_relatorio_pontual_censitario(
     fotos: list[bytes] | None = None,
     info_imovel: dict[str, Any] | None = None,
     viabilidade: dict[str, Any] | None = None,
+    foto_satelite: bytes | None = None,
+    foto_satelite_grande: bool = False,
 ) -> bytes:
     """Gera o PDF do Relatorio Pontual Censitario com template Ultra (fpdf2, offline).
 
@@ -2002,6 +2073,10 @@ def gerar_pdf_relatorio_pontual_censitario(
 
     pdf = _UltraPDF()
     _cover_page(pdf, result, assets, rotulo=rotulo)
+    # BLK-SAT-01: vista aerea logo apos a capa — o leitor situa o imovel antes de ver
+    # qualquer numero. Pagina propria: nao disputa as 2 vagas de `fotos`.
+    if foto_satelite:
+        _foto_satelite_page(pdf, foto_satelite, assets, primary=p1, grande=foto_satelite_grande)
     if fotos:
         _fotos_imovel_page(pdf, fotos, assets, primary=p1)
     if info_imovel:
