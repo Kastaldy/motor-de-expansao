@@ -186,6 +186,27 @@ com o deploy; se os pipelines da cadeia mudarem, re-sincronizar o checkout manua
 > **Pendentes (futuro):** cron **mensal** dos agregadores WellHub/TotalPass (~20h, invocação separada);
 > integração deles ao residual com remodelagem (Huff por tipo de rede + dedup) usando as bases `NAO_ABRA/`.
 
+### Ingestão DIÁRIA da Growth API (Visão Executiva do piloto web)
+
+A **Visão Executiva** do piloto web (`/api/executiva/{uf}`) lê `data/staging/growth_api_historico.parquet`
+(rede Ultra real por UF — faturamento/ativos/pagantes/churn/NPS + split pagantes×agregadores). Os dados da
+Growth **atualizam todo dia**, então a ingestão é **diária** (não semanal como o GymScraping).
+
+- **Script canônico (repo):** `scripts/ingerir_growth_api.py` (ganhou `--out`/env `GROWTH_OUT_PARQUET` para
+  escrever fora do staging read-only). **Wrapper de cron:** `scripts/cron/run_growth_daily.sh`.
+- **Cron sugerido (root, servidor em UTC):** `30 6 * * *` (06:30 UTC = 03:30 BRT; fora da janela dom 06:00 do
+  GymScraping). Logs em `/var/log/growth/daily_<TS>.log` (+ symlink `daily_latest.log`).
+- **Fluxo do wrapper:** (1) `docker exec motor_expansao_api python scripts/ingerir_growth_api.py --out /tmp/...`
+  (o container tem o motor + as credenciais); (2) `docker cp` do parquet para o staging do **HOST**
+  (`/opt/motor-expansao/data/staging/`) — os containers montam o staging **`:ro`**, então a escrita direta não
+  funciona (mesmo motivo do `scp` dos uplifts); (3) `docker restart motor_expansao_web` (limpa o `lru_cache` de
+  `_carregar_growth` e passa a servir o dado novo).
+- **⚠️ PRÉ-REQUISITO (uma vez, MANUAL — envolve SEGREDO):** o container `motor_expansao_api` **hoje NÃO tem**
+  `GROWTH_API_USUARIO`/`GROWTH_API_SENHA` no ambiente (verificado 2026-07-23) → a ingestão aborta com "Credenciais
+  ausentes" e a Visão Executiva fica **404** em prod. Adicionar as duas variáveis ao `/opt/motor-expansao/app/.env`
+  e recriar o serviço: `cd /opt/motor-expansao/app && docker compose up -d api`. A chave **nunca** entra no repo/script.
+- **READ-ONLY sobre o M1** (camada Growth paralela, sem PII — `assert_sem_pii` antes de persistir; DEC-013).
+
 ### Transferir data/ultra (base Ultra)
 
 ```powershell
