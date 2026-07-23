@@ -47,12 +47,15 @@ API_IMAGE="$(grep -E '^API_IMAGE=' "${APP_DIR}/.env" | head -1 | cut -d= -f2-)"
 [ -n "$API_IMAGE" ] || { echo "!! API_IMAGE nao encontrado em ${APP_DIR}/.env"; exit 1; }
 
 # 1) Ingestao num container efemero. Staging do HOST montado RW: le o perf parquet
-#    (insumo obrigatorio) e escreve growth_api_historico.parquet direto no staging.
+#    (insumo obrigatorio) e escreve growth_api_historico.parquet no caminho DEFAULT
+#    (config.STAGING_DIR = data/staging, relativo ao CWD /app da imagem) -> cai direto
+#    no staging do host. (Nao usa --out: a imagem da API em prod pode ser anterior a
+#    essa flag; o mount RW no default ja resolve.)
 docker run --rm \
   --env-file "$GROWTH_ENV" \
   -v "${HOST_STAGING}:/app/data/staging" \
   "$API_IMAGE" \
-  python scripts/ingerir_growth_api.py --out /app/data/staging/growth_api_historico.parquet
+  python scripts/ingerir_growth_api.py
 
 echo ">> parquet publicado em ${HOST_STAGING}/growth_api_historico.parquet"
 ls -la "${HOST_STAGING}/growth_api_historico.parquet"
