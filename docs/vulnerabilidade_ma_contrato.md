@@ -51,8 +51,9 @@ coletores de cadeia em `concorrentes/` (`unidades_*.csv`) emitem `nome_unidade`,
   (`_ler_csv_tp_wh` parar de dropar), **sem** ajuste de coletor.
 - **`slug` (ID nativo do provedor) + `data_coleta` JÁ são coletados** → churn/staleness (sinais 3/4) são
   coletáveis **hoje**, zero mudança de coletor (seção 6).
-- **Ressalva WellHub:** só há amostra de TotalPass no repo; confirmar contra um CSV real de WellHub se
-  ele traz nota nativa (poderia baratear o sinal 2 apenas para o WellHub).
+- **WellHub = mesmo schema do TotalPass (confirmado por Vinicius, 2026-07-23):** logo o WellHub **também
+  não traz nota** → o BLK-MA-08 ajusta os **dois** coletores (TP e WH); não há atalho "só-WellHub" mais
+  barato. (Só há amostra de TotalPass versionada no repo, mas o padrão de colunas é o mesmo.)
 
 ---
 
@@ -177,8 +178,8 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   seção 13): **ajustar os coletores TP/WH (GymScraping) para raspar a nota in-app**, persistindo só o
   agregado numérico (anti-PII). BLK-MA-08 é pré-requisito EXPLÍCITO do sinal 2. A **reputação EXTERNA**
   (Google Places, público geral) — essa sim — fica no **BLK-MA-07** (opcional/futuro, com gate + DEC
-  próprios), único ponto onde o desvio do §2 reaparece. **Ressalva:** confirmar se o WellHub já traz
-  nota nativa; se sim, parte do sinal 2 sai mais barata (só ingestão para o WellHub).
+  próprios), único ponto onde o desvio do §2 reaparece. **WellHub = mesmo schema do TotalPass
+  (confirmado 2026-07-23) → também sem nota:** o BLK-MA-08 cobre os DOIS coletores; sem atalho só-WellHub.
 
 ---
 
@@ -330,7 +331,7 @@ Ajustada pelo **D3 = Não** (rating não é coletado → sinal 2 depende de ajus
 | **BLK-MA-05** | Lista priorizada de M&A (cruzamento com o hex quente, D5, **COM a INVERSÃO**) + entregável. | D5 + D6 |
 | **BLK-MA-06** | Integração ao cron semanal da VPS + runbook. | D8 |
 | **BLK-MA-07** | (Opcional/futuro, **gate + DEC próprios**) reputação **EXTERNA** (Google Places ou outra, público geral). Único ponto que reabre o §2. | — |
-| **BLK-MA-08** | **(Near-term, decisão do gate 2) Ajustar os coletores TP/WH (GymScraping) para raspar a nota in-app** — pré-requisito EXPLÍCITO do sinal 2; persiste **só o agregado numérico** (anti-PII). **Toca a trilha de scrapers/VPS (não toca o M1, mas NÃO é READ-ONLY dos scrapers); NÃO loop-safe.** Confirmar antes o schema do WellHub. | sinal 2 (rating in-app) |
+| **BLK-MA-08** | **(Near-term, decisão do gate 2) Ajustar os coletores TP/WH (GymScraping) para raspar a nota in-app** — pré-requisito EXPLÍCITO do sinal 2; persiste **só o agregado numérico** (anti-PII). **Toca a trilha de scrapers/VPS (não toca o M1, mas NÃO é READ-ONLY dos scrapers); NÃO loop-safe.** Vale para os DOIS coletores (WellHub segue o mesmo schema do TotalPass — sem nota). | sinal 2 (rating in-app) |
 
 D7 (anti-PII) é transversal a BLK-MA-02..05 e BLK-MA-08.
 

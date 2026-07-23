@@ -10081,5 +10081,5 @@ staleness são **coletáveis hoje**. (2) **D2** passa a usar `slug` nativo + `da
 snapshot (fallback `concorrente_id`), com limpeza de ruído (linhas `0;0`/teste, entradas de tecnologia
 do TotalPass) no BLK-MA-02. (3) Novo bloco **BLK-MA-08** (near-term) — ajustar os coletores TP/WH para
 raspar a nota in-app, pré-requisito EXPLÍCITO do sinal 2; toca a trilha de scrapers/VPS (não toca o M1,
-mas **NÃO loop-safe**). BLK-MA-07 fica só para reputação **externa** (Google). Ressalva: confirmar se o
-WellHub já traz nota nativa. Diff da emenda: só `docs/vulnerabilidade_ma_contrato.md` (67+/31-).
+mas **NÃO loop-safe**). BLK-MA-07 fica só para reputação **externa** (Google). WellHub = mesmo schema do TotalPass (confirmado
+por Vinicius 2026-07-23) → também sem nota; BLK-MA-08 cobre os dois coletores (sem atalho só-WellHub).
