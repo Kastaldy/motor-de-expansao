@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 from typing import cast
@@ -1534,3 +1536,210 @@ def render_mapa_censitario_estatico_png(
     if metric_column == "score_setor_2022_calibrado":
         return mapas["score"]
     return mapas["densidade"]
+
+
+# ===========================================================================
+# TESTE (ainda NAO definitivo) — FOTO DE SATELITE do ponto.
+#
+# Fonte: Esri World Imagery + Reference/World_Transportation (rotulos) — a MESMA
+# composicao do "World Imagery Hybrid" da Esri e do sat-overlay do
+# openmaptiles-infra. Aditivo: nenhuma funcao existente foi tocada.
+#
+# Zoom: tenta z19 e cai p/ z18 conforme a disponibilidade REAL no ponto (a Esri
+# devolve placeholder de ~2,5 KB onde nao ha imagem). Medido em 22 pontos do
+# Brasil: z17 existe em todo lugar, z18 em cidade media/grande, z19 so em capital.
+#
+# LICENCA (REGULARIZADA — DEC-018): a imagem vem do ArcGIS Location Platform
+# (`ibasemaps-api.arcgis.com`), autenticada por CHAVE. A API passa a chave via
+# `settings.arcgis_api_key` (env `API_ARCGIS_API_KEY`); o dashboard cai no fallback
+# de env `_sat_api_key()`. A chave precisa do privilegio `premium:user:basemaps`
+# (faixa gratuita de 2M tiles/mes) e NUNCA e commitada. SEM chave, a pagina de
+# satelite e simplesmente OMITIDA (render devolve None) -- nunca se cai no endpoint
+# anonimo `server.arcgisonline.com`, cujo uso os termos da Esri consideram irregular.
+# A imagem e SEMPRE externa (nao se self-hospeda) e o credito da Esri e obrigatorio
+# -- por isso `_SAT_ATRIBUICAO` e desenhado no canto da foto.
+# ===========================================================================
+
+# Env var com a chave do ArcGIS Location Platform (fallback p/ chamadas sem settings,
+# ex.: dashboard). Na API a chave vem de `settings.arcgis_api_key`, passada explicita.
+_SAT_API_KEY_ENV = "API_ARCGIS_API_KEY"
+_SAT_TILE_URL = (
+    "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+)
+_SAT_ROTULOS_URL = (
+    "https://ibasemaps-api.arcgis.com/arcgis/rest/services/Reference/World_Transportation"
+    "/MapServer/tile/{z}/{y}/{x}"
+)
+_SAT_ATRIBUICAO = "Esri, Vantor, Earthstar Geographics"
+_SAT_ZOOM_MIN, _SAT_ZOOM_MAX = 18, 19
+_SAT_PLACEHOLDER_MAX_BYTES = 3000
+_SAT_COBERTURA_M = 400          # largura do enquadramento no chao
+# Proporcao = a MESMA da celula de foto do PDF (`_FOTO_ASPECT`, paisagem 3:2). Se gerar
+# em outra proporcao, `_recortar_cover` corta as laterais p/ encaixar na celula -- e o
+# corte come o credito da Esri no canto, que a licenca exige visivel. Medido no teste:
+# em 1,667 o PDF cortou 141 px e a atribuicao saiu pela metade.
+_SAT_RATIO = 3.0 / 2.0
+_SAT_RAIO_CANTO_PCT = 0.025
+_SAT_TILE_PX = 256
+_SAT_UA = {"User-Agent": "motor_expansao_ultra_academia_bot"}
+
+
+def _sat_deg2num(lat: float, lng: float, z: int) -> tuple[float, float]:
+    """lat/lng -> coordenada de tile FRACIONARIA (a parte decimal centraliza o recorte)."""
+    n = 2.0**z
+    x = (lng + 180.0) / 360.0 * n
+    y = (
+        1.0 - math.log(math.tan(math.radians(lat)) + 1 / math.cos(math.radians(lat))) / math.pi
+    ) / 2.0 * n
+    return x, y
+
+
+def _sat_api_key() -> str | None:
+    """Fallback: chave do ArcGIS Location Platform lida de env (`API_ARCGIS_API_KEY`).
+
+    Usado por chamadores SEM `settings` (ex.: dashboard). A API passa a chave
+    explicitamente via `render_foto_satelite_ponto(..., api_key=settings.arcgis_api_key)`.
+    """
+    import os
+
+    return os.environ.get(_SAT_API_KEY_ENV) or None
+
+
+def _sat_url(base: str, z: int, x: int, y: int, token: str) -> str:
+    """URL do tile ja autenticada com o token do ArcGIS Location Platform (`?token=`)."""
+    from urllib.parse import quote
+
+    return f"{base.format(z=z, x=x, y=y)}?token={quote(token, safe='')}"
+
+
+def _sat_baixar_tile(url: str, z: int, x: int, y: int, timeout: float, token: str) -> Image.Image:
+    import urllib.request
+
+    req = urllib.request.Request(_sat_url(url, z, x, y, token), headers=_SAT_UA)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return Image.open(BytesIO(resp.read())).convert("RGBA")
+
+
+def _sat_melhor_zoom(lat: float, lng: float, timeout: float, token: str) -> int:
+    """Maior zoom com imagem REAL neste ponto (1 tile de sonda, nao o mosaico todo)."""
+    import urllib.request
+
+    for z in range(_SAT_ZOOM_MAX, _SAT_ZOOM_MIN - 1, -1):
+        fx, fy = _sat_deg2num(lat, lng, z)
+        try:
+            req = urllib.request.Request(
+                _sat_url(_SAT_TILE_URL, z, int(fx), int(fy), token), headers=_SAT_UA
+            )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if len(resp.read()) > _SAT_PLACEHOLDER_MAX_BYTES:
+                    return z
+        except Exception:
+            continue
+    return _SAT_ZOOM_MIN
+
+
+def _sat_desenhar_pin(img: Image.Image, escala: float) -> None:
+    """Pin vermelho com a PONTA no centro — mesma geometria de `_draw_center_pin`."""
+    cx, cy = img.width // 2, img.height // 2
+    vermelho = (218, 32, 32)
+    r = max(6, int(round(9 * escala)))
+    topo = cy - int(round(24 * escala))
+
+    camada = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(camada)
+    sr = int(r * 1.2)
+    d.ellipse([cx - sr, cy - int(sr * 0.34), cx + sr, cy + int(sr * 0.34)], fill=(0, 0, 0, 115))
+    # gota: o pescoco sai TANGENTE a cabeca, senao circulo+triangulo viram um borrao
+    bx, by = r * 0.72, topo + r * 0.70
+    d.polygon([(cx, cy), (cx - bx, by), (cx + bx, by)], fill=vermelho)
+    d.ellipse([cx - r, topo - r, cx + r, topo + r], fill=vermelho)
+    furo = max(3, int(round(r * 0.38)))
+    d.ellipse([cx - furo, topo - furo, cx + furo, topo + furo], fill=(255, 255, 255))
+    img.paste(Image.alpha_composite(img.convert("RGBA"), camada).convert("RGB"), (0, 0))
+
+
+def render_foto_satelite_ponto(
+    lat: float,
+    lng: float,
+    *,
+    api_key: str | None = None,
+    cobertura_m: int = _SAT_COBERTURA_M,
+    zoom: int | None = None,
+    rotulos: bool = True,
+    timeout: float = 20.0,
+) -> bytes | None:
+    """PNG da foto de satelite do ponto, com pin no centro. `None` se a rede falhar
+    OU se nao houver chave do ArcGIS Location Platform.
+
+    `api_key`: chave do ArcGIS Location Platform. A API passa `settings.arcgis_api_key`;
+    se omitido, cai no fallback de env `_sat_api_key()` (ex.: dashboard).
+
+    Devolver `None` (em vez de levantar) e proposital: o chamador segue gerando o
+    relatorio sem a pagina de foto, igual ao fallback offline do `_fetch_basemap`.
+    Sem chave, a pagina e omitida — nunca se busca tile no endpoint anonimo (licenca).
+    """
+    try:
+        token = api_key or _sat_api_key()
+        if not token:
+            return None
+        z = zoom if zoom is not None else _sat_melhor_zoom(lat, lng, timeout, token)
+        m_px = 156543.03392 * math.cos(math.radians(lat)) / (2**z)
+        larg = int(round(cobertura_m / m_px))
+        alt = int(round(larg / _SAT_RATIO))
+
+        fx, fy = _sat_deg2num(lat, lng, z)
+        x0, y0 = fx * _SAT_TILE_PX - larg / 2, fy * _SAT_TILE_PX - alt / 2
+        tx0, ty0 = math.floor(x0 / _SAT_TILE_PX), math.floor(y0 / _SAT_TILE_PX)
+        tx1 = math.floor((x0 + larg) / _SAT_TILE_PX)
+        ty1 = math.floor((y0 + alt) / _SAT_TILE_PX)
+        coords = [(tx, ty) for ty in range(ty0, ty1 + 1) for tx in range(tx0, tx1 + 1)]
+
+        tam = ((tx1 - tx0 + 1) * _SAT_TILE_PX, (ty1 - ty0 + 1) * _SAT_TILE_PX)
+        canvas = Image.new("RGBA", tam, (20, 24, 34, 255))
+        urls = [_SAT_TILE_URL] + ([_SAT_ROTULOS_URL] if rotulos else [])
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            for url in urls:                       # ordem importa: foto, depois rotulo
+                futs = {
+                    (tx, ty): ex.submit(_sat_baixar_tile, url, z, tx, ty, timeout, token)
+                    for tx, ty in coords
+                }
+                for (tx, ty), fut in futs.items():
+                    try:
+                        canvas.alpha_composite(
+                            fut.result(),
+                            ((tx - tx0) * _SAT_TILE_PX, (ty - ty0) * _SAT_TILE_PX),
+                        )
+                    except Exception:
+                        continue                   # tile faltando nao invalida a foto
+        ox, oy = int(round(x0 - tx0 * _SAT_TILE_PX)), int(round(y0 - ty0 * _SAT_TILE_PX))
+        img = canvas.crop((ox, oy, ox + larg, oy + alt)).convert("RGB")
+
+        _sat_desenhar_pin(img, escala=larg / 520)
+
+        # credito da Esri: exigido pela licenca. Texto com sombra, sem caixa.
+        d = ImageDraw.Draw(img, "RGBA")
+        f = _font(max(11, int(14 * (img.width / 1100))))
+        bb = d.textbbox((0, 0), _SAT_ATRIBUICAO, font=f)
+        # nome proprio: `tx`/`ty` acima sao coordenadas INTEIRAS de tile no laco do
+        # mosaico; reusar os nomes aqui (float) quebra o mypy.
+        cred_x = img.width - (bb[2] - bb[0]) - 10
+        cred_y = img.height - (bb[3] - bb[1]) - 10
+        for dx, dy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
+            d.text((cred_x + dx, cred_y + dy), _SAT_ATRIBUICAO, font=f, fill=(0, 0, 0, 150))
+        d.text((cred_x, cred_y), _SAT_ATRIBUICAO, font=f, fill=(255, 255, 255, 225))
+
+        raio = int(round(larg * _SAT_RAIO_CANTO_PCT))
+        if raio > 0:
+            mask = Image.new("L", img.size, 0)
+            ImageDraw.Draw(mask).rounded_rectangle(
+                [0, 0, img.width - 1, img.height - 1], raio, fill=255
+            )
+            arredondado = Image.new("RGBA", img.size, (255, 255, 255, 0))
+            arredondado.paste(img, (0, 0), mask)
+            img = arredondado
+
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+    except Exception:
+        return None
