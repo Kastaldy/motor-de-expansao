@@ -1781,7 +1781,7 @@ dashboard sem gate. Roda **AO LADO** do Streamlit (sem corte).
 | **Criticidade** | **Média** (porta de validação do piloto; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Média (fecha o piloto). |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — aceite/UX]` → Builder → QA. |
-| **Status** | **Pendente — gate de fechamento do corte** (paridade Mapa + Visão Executiva + Viabilidade, DEC-018). Faltam: testes de contrato byte-a-byte vs Streamlit, teste de guardrail (`mtime` dos artefatos M1), baseline de carga por UF e aceite humano (<60s jr.). É o único bloco que separa o piloto do corte do Streamlit. |
+| **Status** | **Pendente (gate do corte, mas AVANÇADO)** — o núcleo automatizável **já existe**: `tests/unit/test_piloto_web_endpoints.py` (24 testes: contrato de todos os endpoints + JSON-safe + **guardrail READ-ONLY estático (AST) e runtime** por snapshot do FS). **Baseline de performance MEDIDO em prod (2026-07-23, rev 9b60761):** `/api/uf/{uf}` em **0,6–1,2 s/UF** (SP 1,21 s cold / 0,98 s warm), resposta ~3 MB capada por `MAP_POINT_LIMIT`, **sem crash em SP/MG** — dentro do baseline do Streamlit. **Faltam (humano/medido):** paridade byte-a-byte formal vs Streamlit e o aceite de UX (analista jr. → recomendação < 60 s). |
 | **Depende de** | **BLK-WEB-08** + **BLK-WEB-09**. |
 | **Autonomia** | **manual (NÃO loop-safe)** — os critérios de aceite incluem UX ("<60s sem treino") e paridade visual que exigem olho humano; a parte de teste de contrato é automatizável, o veredito de aceite é humano. |
 
@@ -1981,7 +1981,7 @@ agregadores coerente; nenhum dado pessoal exibido ou persistido.
 | **Criticidade** | **Média** (fundação de qualidade da nova versão; **READ-ONLY sobre o M1**). |
 | **Prioridade** | Alta (bloqueia a substituição segura do Streamlit). |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Concluído (parcial, em prod rev 9b60761): job `web` no CI (setup-node 20 + npm ci + Vitest + tsc/vite build) e 5 testes de lib verdes. Falta: pytest do backend (contrato/paridade/guardrail READ-ONLY), E2E Playwright, eslint e mypy. |
+| **Status** | Concluído (parcial, em prod rev 9b60761): CI job `web` (Node 20 + **Vitest 59 testes** + tsc/vite build) **e o pytest do backend** `tests/unit/test_piloto_web_endpoints.py` (24 testes: contrato de todos os endpoints + JSON-safe + **guardrail READ-ONLY AST e runtime**). Falta: **E2E Playwright**, eslint e mypy. |
 | **Depende de** | telas do piloto razoavelmente estáveis (**BLK-WEB-12** + **BLK-WEB-15**). Absorve/estende **BLK-WEB-11**. |
 | **Autonomia** | **manual por padrão** — introduz toolchain **Node no CI** (fora do container Python do loop); parte é automatizável, mas o pipeline novo pede gate humano. |
 
