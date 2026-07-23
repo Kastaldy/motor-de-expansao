@@ -9806,3 +9806,207 @@ auditoria — arguivelmente histórico válido; decidir se recebem carimbo de "d
 lote), mesmo regime dos RELPON-09/10/11. **Nenhum PR aberto** — este bloco entra no PR único.
 
 **Deploy:** NÃO automático (§6). Doc-only, não altera imagem nem comportamento de runtime.
+
+---
+
+### BLK-RELPON-09 — Indicador de concorrente = logo quadrada nos PDFs (Pontual + Municipal)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (display local nos dois PDFs; sem rede, sem dado novo, sem DEC; **READ-ONLY sobre o M1** — não toca score, gate do SAM, faixas nem artefatos oficiais). |
+| **Prioridade** | Alta (entregável imediato; o único dos três que não trava em gate de produto ou DEC). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA → `[GATE VISUAL do Vini — PDF gerado]`. |
+| **Status** | Pendente. |
+| **Depende de** | — (independente dos outros dois). |
+| **Autonomia** | **manual** — o critério de aceite é VISUAL (legibilidade e colisão de marcadores sobre choropleth), que a suíte não captura. Não marcar `loop-safe`. |
+
+**Contexto.** O marcador de concorrente/Ultra é hoje um **balão teardrop 128x128** desenhado em PIL —
+`competitors._render_pin_tile` (`competitors.py:504-568`): polígono + elipse, círculo branco interno
+(`cx=64, cy=47, r=27`), logo clipada em **máscara circular 54x54** colada em `(37,20)`, com fallback de
+sigla. São **3 call-sites de produção**: `censo_map._paste_logo_pin` (`censo_map.py:327-343`, resize para
+**40 px**, âncora `(px - size//2, py - size)` = ponta do balão), `relatorio_municipal._draw_pins`
+(`relatorio_municipal.py:1141-1176`, **34 px**, mesma âncora) e `competitors.build_icon_atlas`
+(`competitors.py:597`, **mapa interativo pydeck**, que exige tile **exatamente 128** e emite `anchorY=122`).
+Consequência medida: a logo efetivamente visível hoje tem **~17 px** no Pontual e ~14 px no Municipal.
+
+**Objetivo (D4).** Criar `competitors._render_square_logo_tile(key, size)` — logo em **quadrado**, sem balão
+e **sem máscara circular**, com borda branca ~2 px e leve sombra para contraste sobre choropleth
+translúcido. Consumir a função nova **só** em `censo_map._paste_logo_pin` e `relatorio_municipal._draw_pins`
+(default 30 px; ver S2). `_render_pin_tile`, `build_icon_atlas` e o mapa interativo ficam **INTOCADOS**.
+Simplificação de brinde: `relatorio_municipal._draw_rede_logo` (`relatorio_municipal.py:1478-1494`) hoje faz
+`tile.crop((37,20,91,74))` — acoplado à geometria fixa do balão, degrada em silêncio se o tile mudar — e
+passa a **reusar** a função nova.
+
+**Ganho contra-intuitivo a registrar:** o quadrado de 30x30 **preenchido pela logo** entrega ~30 px de logo
+visível contra os ~17 px de hoje — quase o dobro, mesmo com um marcador menor.
+
+**Guardrail.** §5 READ-ONLY M1. `test_ultra_pins.py:282-300` (geometria do atlas) e a paridade dos blocos
+`BLK-WEB-02`/`BLK-WEB-07` só seguem verdes **se `_render_pin_tile` não for alterado** — é requisito, não
+recomendação. Atenção a `test_relatorio_pontual_censitario_mapa.py:198-206`, que conta pixels avermelhados
+para provar o pin Ultra: o vermelho vem do **balão** (`#C8001E`), não da logo → o teste deve ser reescrito
+para a forma nova, nunca silenciado.
+
+---
+
+### BLK-RELPON-10 — Slide novo "Socioeconomia + Residual Fitness" antes do grid 2x2
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** — reverte uma decisão de produto já aprovada (o BLK-CENSO-02 fixou, com Felipe em 2026-06-05, que residual fitness entra no Pontual **só como número** nos Big Numbers, nunca como choropleth) e introduz **hexágonos H3 no caminho de render do Pontual** (hoje `censo_map.py` **não importa `h3`**; os 4 choropleths são todos de **setor censitário IBGE**). **READ-ONLY sobre o M1** — apenas lê `oferta_efetiva_disponivel` e `score_setor_2022_calibrado`. |
+| **Prioridade** | Alta (é o miolo do pedido). |
+| **Esteira** | Block Orchestrator → Planner → `[APROVAÇÃO HUMANA — S1 + régua de cor do residual]` → Builder → QA → `[GATE VISUAL do Vini]`. |
+| **Status** | Pendente. |
+| **Depende de** | — (mas **BLK-RELPON-11 depende dele**: os dois inserem página e pagam a mesma churn estrutural). |
+| **Autonomia** | **manual** — decisão de produto + aceite visual. Não marcar `loop-safe`. |
+
+**Objetivo.** Inserir **um slide novo antes do "Mapas de calor"**, com dois mapas lado a lado:
+**"Socioeconomia — raio 1,5 km"** (`score_setor_2022_calibrado`, por setor censitário; D1) e **"Residual
+Fitness — raio ~5 km"** (`oferta_efetiva_disponivel`, por hexágono H3 res-7; D2), com o raio de cada um
+**rotulado no próprio mapa**, para o operador não ler as duas escalas como se fossem iguais.
+
+**O que precisa nascer.** (a) camada nova em `censo_map._render_camada` (`censo_map.py:550-735`) = 4 peças
+(`color_fn`, `source_values`, `legenda_entries`, títulos); (b) **régua de cor do residual em ALUNOS** —
+`RESIDUAL_SCORE_BANDS` existe, mas é para score 0–100, e `oferta_efetiva_disponivel` é em alunos, **sem
+faixa absoluta definida** (decisão do gate); (c) **helper de recorte espacial de hexes** —
+`lookup_hex_by_coord` (`data.py:1023-1046`) devolve **uma linha**, não um recorte; o mapa exige
+`h3.grid_disk` + render de polígonos de hex (hoje só `relatorio_municipal.py:742` desenha hex); (d) a
+**gêmea clássica** (`_classico_*`) — o **clássico é o default em produção** (`pages.py:3044`,
+`api/service.py:341`).
+
+**Churn estrutural (o custo real).** Inserir página desloca: o **`/Count`**, asserido em **5 arquivos de
+teste** (`..._export.py` em 11 linhas, `..._info_imovel.py:75-111`, `..._viabilidade.py:85-150`,
+`..._orquestracao.py:77-125`, `..._ui_relviab06.py:67`) e em cascata até 10→12 páginas nas variantes com
+opcionais; **`PDF_SECTION_HEADERS`** (`censo_report.py:27-34`, tupla asserida nos **bytes crus** do PDF,
+latin-1 puro); e **`_tema_bicolor`** (`censo_report.py:313-324`) — os ordinais `p1..p4` alternam
+turquesa↔magenta, então **inserir uma página inverte a cor de todas as seguintes**.
+
+**Housekeeping obrigatório junto.** Corrigir o **CLAUDE.md §4**: hoje diz "5 páginas / tira 1x3"; a
+realidade já era 6 páginas / grid 2x2 **antes** deste bloco, e passa a 7 depois dele.
+
+**Guardrail.** §5 READ-ONLY M1: nada recalcula score, `flag_sam`, intersecção de setores nem o raio de
+1,5 km do motor — o raio de ~5 km é **recorte de exibição do mapa de residual**, não do método de análise
+(`setor_censitario_intersecao_area_1p5km` e `RAIO_CENSITARIO_DEFAULT_KM` INTOCADOS). Reverter a decisão do
+BLK-CENSO-02 exige registro explícito no gate (emenda ou DEC, conforme o desenho final).
+
+---
+
+### BLK-RELPON-11 — Imagem do entorno do ponto (escopo REABERTO em 2026-07-22)
+
+> 🔴 **LEIA ISTO ANTES DE PLANEJAR.** O escopo deste bloco foi **reaberto** em 2026-07-22, depois de
+> uma pesquisa de alternativas pedida por Vinicius. **Não trate o Esri como caminho único** — ele é
+> uma das opções, e a mais cara em governança. **Relatório completo, com números medidos e lacunas
+> declaradas: `data/reports/imagem_entorno_alternativas.md`.** Não refaça essa pesquisa; ela custou
+> ~930 mil tokens de subagente.
+>
+> **Resumo do que a pesquisa fechou:**
+> - **Satélite gratuito de cobertura nacional está morto por ÓPTICA, não por licença.** Um recorte de
+>   250 m nítido exige ~26 cm/px; Sentinel-2 (10 m/px) dá **25 px**, CBERS-4A pan (2 m/px) dá 125 px e
+>   é cinza. Descartar a família inteira, inclusive INPE.
+> - **O recorte de ~100 m do pedido original é impossível** (exige 10 cm/px; nem o Esri passa). A
+>   janela viável é 250–400 m — e é a mesma para satélite e para mapa de ruas.
+> - **Existem 2 caminhos SEM DEC nenhuma:** (A4) o **operador anexa o print**, reusando
+>   `_fotos_imovel_page` + `st.file_uploader` que **já existem**; e (A1) **mapa de quadra no CartoDB
+>   Voyager z19** (~300 m), provedor **já aprovado** pelas DEC-004/011.
+> - **Mas isso NÃO dissolve a DEC-018 — adia.** A4 depende de um humano, então **não funciona no bot
+>   Telegram** nem no "gerar em 1 clique". A1 entrega morfologia (quadra, rua, número de porta), e
+>   **nenhum POI comercial** — o Shopping Ibirapuera aparece como blob bege rotulado "3103".
+> - **Armadilha se A4 for adotada:** `_recortar_cover` corta 150 px de cada lateral de um print 16:9
+>   → se a atribuição estiver ali, **o software a apaga sozinho**. Usar letterbox, não cover-crop.
+> - **z20 no Voyager PERDE os rótulos** → z19 é o teto, e o `_BASEMAP_ZOOM_BUMP = 1` faz overshoot
+>   nessa escala.
+> - Portas fechadas na verificação: **OpenAerialMap** (9 imagens em toda a Grande SP, parte CC BY-NC),
+>   **tileserver self-hosted** (não existe neste repo, apesar do `PLANO_APP_WEB.md`), ortofotos
+>   municipais (cobertura parcial; só o GeoSampa tem licença verificada, CC0).
+>
+> **A primeira decisão do gate deixou de ser "aprovar o Esri" e passou a ser "qual caminho seguir".**
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta se o caminho escolhido for provedor NOVO** (Esri/ortofoto) — desvio do guardrail §2, e as DEC-004/DEC-011 são **nominais quanto ao provedor** (CartoDB/OSM, tiles de **ruas**), não cobrem imagery. **Média se for A4 (upload) ou A1 (Voyager já aprovado)**, que não exigem DEC. |
+| **Prioridade** | Média-Alta. |
+| **Esteira** | Block Orchestrator → Planner → `[APROVAÇÃO HUMANA — ESCOLHA DO CAMINHO; + DEC-018 só se for provedor novo]` → Builder → QA → `[GATE VISUAL do Vini]`. |
+| **Status** | Pendente — **escopo reaberto**; bloqueado por DEC-018 **apenas no caminho Esri/ortofoto**. |
+| **Depende de** | **BLK-RELPON-10** (concluído em 2026-07-22; branch `ciclo/BLK-RELPON-10` @ `a491069`). Se este bloco inserir página, paga a mesma churn de `/Count` (**6 arquivos de teste**), `PDF_SECTION_HEADERS` e `_tema_bicolor`. |
+| **Autonomia** | **manual** — nunca `loop-safe`. Se o caminho envolver fetch de rede no caminho de geração, isso desqualifica por si só (§6.1); e mesmo A4/A1 têm aceite VISUAL. |
+| **Entrega** | **NÃO abrir PR próprio.** Decisão de Vinicius (2026-07-21): os 3 blocos do pedido (RELPON-09/10/11) entram num **PR ÚNICO** no fim. O PR #137, que trazia só o 09, foi **fechado temporariamente** com o branch preservado. Branch deste bloco empilha sobre o do 10. |
+
+**Objetivo.** Dar ao operador **noção do que existe fisicamente no entorno do ponto**, numa página
+nova logo após a Capa e **antes** do slide "Socioeconomia e Residual Fitness". A forma (imagem de
+satélite automática, print anexado pelo operador, mapa de quadra, ou combinação) é **decisão do
+gate** — ver o quadro vermelho acima e o relatório de alternativas.
+
+**Se o caminho escolhido for o Esri**, o conteúdo abaixo (provedor, largura, risco de placeholder,
+mitigações) permanece válido e é o plano pronto.
+
+**Provedor.** `Esri.WorldImagery`. Levantamento: dos **197 provedores de imagery** do `xyzservices`,
+filtrando cobertura global + sem token + não-`broken`, sobra **exatamente um**
+(`Stadia.AlidadeSatellite` está `status="broken"`; MapTiler/HERE exigem chave; ~190 são regionais de
+Áustria/França). **Zero dependência nova**: `contextily 1.7.0` e `xyzservices` já estão instalados e o extra
+`[basemap]` já vai embutido no `Dockerfile.streamlit`. **Google Static Maps está FORA** — exige chave paga, e
+raspar `mt.google.com` viola o ToS.
+
+**Por que 250–400 m e não os 100 m pedidos.** Sondagem HTTP em 10 pontos do Brasil: o teto real do Esri é
+**z19 em metrópoles, z18 em cidades médias, z17 no interior**. A lat −23,5: 100 m @z19 = 365x205 px = **61
+ppi** (borrado), e no interior @z17 = 91x51 px (inutilizável); 250 m = **153 ppi**; 400 m = **245 ppi** — e
+a 400 m ainda se leem quarteirão, estacionamento, vizinhos e avenida, que é o objetivo declarado do pedido.
+
+**Risco técnico que o padrão DEC-004 NÃO cobre.** Acima do zoom disponível, o Esri responde **HTTP 200 com
+tile placeholder cinza** ("Map data not yet available", `mean RGB ~204,7`, `std 5,37`) — confirmado pelo
+próprio contextily: z18/z19 → `std ~49` (imagem real); z20 → `std 5,4` (placeholder, **sem exceção**). O
+`try/except` do padrão atual **não protege**. Exige **fallback por CONTEÚDO**: detectar `std < ~15` →
+degradar o zoom em 1 até z16 → **omitir a página** se não houver imagem real. Teste novo com array sintético.
+
+**Guardrail.** §5 READ-ONLY M1. Herda **todas** as mitigações das DEC-004/011, obrigatórias: cache local em
+`data/cache/basemap_tiles/`; **fallback offline gracioso** (sem rede/tiles/`contextily` → página omitida,
+sem exceção); **import lazy** — a carga e a interatividade do dashboard **não** fazem fetch; default seguro
+em CI/teste (`basemap=False`) — o `conftest.py` **não bloqueia rede**, então o caminho novo precisa nascer
+com o default seguro. **Atribuição em constante NOVA e separada** (`_ATRIBUICAO_TILES` está triplicado em
+`censo_map.py:47`, `censo_report.py:122` e `relatorio_municipal.py:118`, e é asserido em
+`test_relatorio_pontual_censitario_mapa.py:329`), escrita em **ASCII**: a string oficial do Esri tem em-dash
+`—`, fora de latin-1, que o `_ascii()` (`censo_report.py:226-229`) converte em `"?"` silenciosamente.
+Latência no bot Telegram (`api/service.py:341` gera o mesmo PDF): mitigada por `_reuse_contextily_session`
+(`api/service.py:225`); um recorte de 250–400 m @z19 puxa apenas 4–16 tiles.
+
+**DEC-018 (a registrar no gate).** Provedor Esri World Imagery no caminho de geração dos relatórios.
+**Pergunta que nenhum agente pode responder e que a DEC precisa fechar:** se os ToS atuais do ArcGIS Online
+permitem uso programático de `server.arcgisonline.com` sem conta. Tecnicamente ele responde sem chave e é o
+default de QGIS/Leaflet/contextily há anos — isso é **prática de mercado, não parecer jurídico**.
+
+> ⚠ **CAMINHO DECIDIDO EM 2026-07-22 (gate de Vinicius): A1 — mapa de quadra CartoDB Voyager.**
+> **A DEC-018 NÃO foi aberta e o Esri está FORA.** O texto acima sobre Esri/DEC-018 fica só como
+> registro histórico do que foi avaliado — não é plano pendente. Bloco **concluído em 2026-07-22**;
+> ver `tasks/completed.md`. Zoom final: **z18** (`zoom_bump=-1`), decidido no gate visual.
+
+---
+
+### BLK-RELPON-12 — De-staling da documentação do Relatório Pontual (dívida acumulada)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Baixa (documentação; zero código, zero teste, READ-ONLY sobre o M1). |
+| **Prioridade** | Média — a dívida cresce a cada bloco da família RELPON e já produz doc que **mente** sobre a contagem de páginas. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | Pendente. |
+| **Depende de** | BLK-RELPON-11 (concluído 2026-07-22). |
+| **Autonomia** | **loop-safe** — só edita Markdown/YAML de `docs/`, não toca M1, VPS, segredos nem ingestão ao vivo. |
+
+**Origem.** Deferido **de propósito** por Planner, Builder e QA do BLK-RELPON-11, com o mesmo
+argumento: os docs já estavam stale em vários eixos ANTES daquele bloco, e um conserto parcial
+(só a contagem de páginas) os deixaria **contraditórios** — pior que stale. Consertar de uma vez.
+
+**Escopo (4 docs + 5 testes):**
+
+1. `docs/relatorio_pontual_censitario.md` — stale em **5 eixos herdados** (anteriores ao RELPON-11).
+2. `docs/api_geoespacial_contrato.md` — diz "PDF de 7 páginas"; são **8**.
+3. `docs/api_geoespacial_openapi.yaml` — idem.
+4. `docs/api_geoespacial_uso.md` — idem, e o `uso.md:166` ainda lista a estrutura de páginas
+   **pré-BLK-RELPON-01** (antes da consolidação dos choropleths em "Mapas de calor").
+5. Renomear **5 testes com nome stale** (`..._6_paginas` / `count_6`) cujo nome não bate mais com o
+   que asseridam — puramente cosmético, sem mudar asserção.
+
+**Ordem final de páginas hoje (8, sem opcionais), para o Builder usar como fonte:** Capa ->
+Imagem do Entorno -> Socioeconomia e Residual Fitness -> Mapas de calor -> Concorrentes ->
+Perfil do Bairro/Distrito -> Big Numbers -> Realização. Teto com todos os opcionais: **12**.
+
+**Guardrail.** §5 READ-ONLY M1. Não alterar código de render nem asserções de teste — só nomes de
+teste e texto de doc. §2 acentuação vale para o texto novo.
