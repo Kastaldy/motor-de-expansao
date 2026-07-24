@@ -431,3 +431,28 @@ def test_relatorio_municipal_renderiza_e_passa_os_mapas(monkeypatch: pytest.Monk
     mapas = capturado.get("mapas")
     assert mapas is not None, "regressao: o gerador recebeu mapas=None (PDF sem mapas)"
     assert set(mapas) >= {"cobertura", "resumo", "score", "residual", "dominio"}
+
+
+def test_rotas_http_apontam_para_o_handler_certo():
+    """Regressao: cada rota HTTP tem que apontar para o SEU handler, nao um helper vizinho.
+
+    Bug real (2026-07-24): `_residual_hexes_do_ponto` foi inserido ENTRE o
+    `@app.post("/api/relatorio/pontual")` e `async def relatorio_pontual`, entao o decorator
+    registrou o HELPER como rota -> o param `staging_dir: Path` (sem default) virou query
+    obrigatoria -> 422 "missing staging_dir" em TODOS os relatorios pontuais. Os demais
+    testes chamam as funcoes de rota DIRETO (sem HTTP), entao SO um teste de REGISTRO
+    de rota pega esse tipo de erro de decorator.
+    """
+    esperado = {
+        "/api/relatorio/pontual": "relatorio_pontual",
+        "/api/relatorio/municipal": "relatorio_municipal",
+        "/api/viabilidade": "viabilidade",
+        "/api/executiva/{uf}": "executiva",
+        "/api/health": "health",
+    }
+    registrado = {
+        r.path: r.endpoint.__name__
+        for r in pilot.app.routes
+        if getattr(r, "path", "") in esperado
+    }
+    assert registrado == esperado

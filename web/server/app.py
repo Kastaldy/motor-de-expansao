@@ -2119,7 +2119,6 @@ def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
         return None
 
 
-@app.post("/api/relatorio/pontual")
 def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
     """Disco de hexes (grid_disk k=5, res 7) ao redor do ponto com `oferta_efetiva_disponivel`,
     para o choropleth de Residual Fitness do slide-hero "Socioeconomia e Residual Fitness".
@@ -2150,6 +2149,7 @@ def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
         return None
 
 
+@app.post("/api/relatorio/pontual")
 async def relatorio_pontual(
     lat: float,
     lng: float,
