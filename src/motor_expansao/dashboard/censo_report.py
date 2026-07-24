@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
@@ -896,8 +897,15 @@ def _info_imovel_page(
 
 # ---------------------------------------------------------------------------
 # Paginas de VIABILIDADE (BLK-RELVIAB-04): slide de NUMEROS (estilo Big Numbers)
-# do motor `viabilidade_ponto` + slide de GRAFICOS (PNGs do BLK-RELVIAB-03).
+# + slide de GRAFICOS (PNGs de `viabilidade_charts`).
 # Saida OPCIONAL (so entra se `viabilidade` != None). READ-ONLY sobre o M1.
+#
+# RENDER PURO (FIN-VIAB-01, 2026-07-24): este slide so IMPRIME o `viabilidade_payload_v1`
+# — o MESMO objeto que a tela consome — direto ou ja achatado por
+# `viabilidade_charts.montar_payload_pdf_viabilidade`. Nao ha aqui nenhuma chamada ao motor
+# de dimensionamento nem nenhuma conta financeira; era a duplicacao dessas contas que fazia
+# o PDF divergir da tela no MESMO cenario (aluguel-teto R$105.813,13 x R$55.535,18,
+# payback 33 x 35, acumulado M60 R$2,05 mi x R$1,89 mi). Chave ausente -> "n/d"/linha omitida.
 # ---------------------------------------------------------------------------
 _VIAB_NUMEROS_TITLE = "Viabilidade - Números"
 _VIAB_GRAFICOS_TITLE = "Viabilidade - Projeção financeira"
@@ -933,6 +941,230 @@ def _viab_faixa(p10: Any, p90: Any) -> str:
     return f"{_format_number(p10, 0)} - {_format_number(p90, 0)}"
 
 
+def _viab_tem(value: Any) -> bool:
+    """True quando o payload trouxe o campo com valor utilizavel (nao None/NaN)."""
+    if value is None:
+        return False
+    try:
+        return not bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return True
+
+
+def _viab_campo(viabilidade: Mapping[str, Any], plana: str, *caminho: str) -> Any:
+    """Le o campo pela chave PLANA e, faltando ela, pelo caminho dentro do payload v1.
+
+    O slide aceita as duas formas do mesmo objeto: o dict plano montado por
+    `viabilidade_charts.montar_payload_pdf_viabilidade` e o proprio
+    `viabilidade_payload_v1` que a API devolve para a tela (com ou sem as chaves planas
+    de compatibilidade por cima). Em nenhum dos casos o PDF calcula: so LE.
+    """
+    if _viab_tem(viabilidade.get(plana)):
+        return viabilidade.get(plana)
+    atual: Any = viabilidade
+    for chave in caminho:
+        if not isinstance(atual, Mapping):
+            return None
+        atual = atual.get(chave)
+        if atual is None:
+            return None
+    return atual
+
+
+def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
+    """Achata o payload de viabilidade nas chaves que o slide imprime (sem recalcular)."""
+    teto = viabilidade.get("aluguel_teto")
+    faixas = viabilidade.get("aluguel_teto_faixas")
+    if not isinstance(faixas, Mapping):
+        faixas = teto if isinstance(teto, Mapping) else {}
+    canonico = teto.get("canonico") if isinstance(teto, Mapping) else teto
+
+    dados: dict[str, Any] = {
+        "alunos_breakeven": _viab_campo(viabilidade, "alunos_breakeven", "break_even", "ebitda"),
+        "breakeven_unidade": _viab_campo(
+            viabilidade, "breakeven_unidade", "break_even", "unidade"
+        ),
+        "breakeven_caixa": _viab_campo(viabilidade, "breakeven_caixa", "break_even", "caixa"),
+        "aluguel_teto": canonico,
+        "aluguel_teto_faixas": dict(faixas),
+        "margem_ebitda_pct": _viab_campo(viabilidade, "margem_ebitda_pct", "dre", "margem"),
+        "payback_meses": _viab_campo(viabilidade, "payback_meses", "retorno", "payback"),
+        "retorno_anual": _viab_campo(
+            viabilidade, "retorno_anual", "retorno", "retorno_anual_desalavancado"
+        ),
+        "retorno_otica": _viab_campo(viabilidade, "retorno_otica", "retorno", "otica"),
+        "roic_anual": viabilidade.get("roic_anual"),
+        "faturamento_mensal": _viab_campo(
+            viabilidade, "faturamento_mensal", "dre", "faturamento"
+        ),
+        # Anuidade: parcela do faturamento acima + a regra que a gera. So LEITURA — o
+        # slide imprime a linha, nao a decompoe nem a recalcula.
+        "receita_anuidade": _viab_campo(viabilidade, "receita_anuidade", "dre", "receita_anuidade"),
+        "anuidade_valor": _viab_campo(viabilidade, "anuidade_valor", "premissas", "anuidade_valor"),
+        "anuidade_elegivel_pct": _viab_campo(
+            viabilidade, "anuidade_elegivel_pct", "premissas", "anuidade_elegivel_pct"
+        ),
+        "anuidade_mes_inicio": _viab_campo(
+            viabilidade, "anuidade_mes_inicio", "premissas", "anuidade_mes_inicio"
+        ),
+        "anuidade_apenas_balcao": _viab_campo(
+            viabilidade, "anuidade_apenas_balcao", "premissas", "anuidade_apenas_balcao"
+        ),
+        # Mes de operacao a que a DRE de steady-state se refere (regime pleno: alunos
+        # maduros E anuidade em cobranca). LIDO do payload — recalcular a partir de
+        # `maturacao_meses` foi o que fez o waterfall divergir do card ao lado.
+        "mes_referencia_steady": _viab_campo(
+            viabilidade, "mes_referencia_steady", "premissas", "mes_referencia_steady"
+        ),
+        "ebitda_mensal": _viab_campo(viabilidade, "ebitda_mensal", "dre", "ebitda"),
+        "faixa_p10": _viab_campo(viabilidade, "faixa_p10", "faixa_alunos", "p10"),
+        "faixa_p90": _viab_campo(viabilidade, "faixa_p90", "faixa_alunos", "p90"),
+        "pmt_mensal": _viab_campo(viabilidade, "pmt_mensal", "investimento", "pmt"),
+        "juros_totais": _viab_campo(viabilidade, "juros_totais", "investimento", "juros_totais"),
+        "investimento_total": _viab_campo(
+            viabilidade, "investimento_total", "investimento", "investimento_total"
+        ),
+        "tir_anual": _viab_campo(viabilidade, "tir_anual", "retorno", "tir_anual"),
+        "vpl": _viab_campo(viabilidade, "vpl", "retorno", "vpl"),
+        "acumulado_mes_final": viabilidade.get("acumulado_mes_final"),
+        "mes_caixa_operacional_positivo": viabilidade.get("mes_caixa_operacional_positivo"),
+        "horizonte_meses": _viab_campo(
+            viabilidade, "horizonte_meses", "premissas", "horizonte_meses"
+        ),
+        "flag_fora_envelope": viabilidade.get("flag_fora_envelope"),
+        "flag_zona_morta": viabilidade.get("flag_zona_morta"),
+        "motivo_zona_morta": viabilidade.get("motivo_zona_morta"),
+    }
+    # `flag_viavel` e opcional: sem ele o rodape simplesmente nao afirma viabilidade.
+    viavel = _viab_campo(viabilidade, "flag_viavel", "dre", "flag_viavel")
+    if "flag_viavel" in viabilidade or viavel is not None:
+        dados["flag_viavel"] = viavel
+    return dados
+
+
+def _viab_unidade_breakeven(viabilidade: dict[str, Any]) -> str:
+    """Rotulo da unidade do break-even, vindo do payload (`break_even.unidade`).
+
+    Sem o campo (payload legado), NAO se assume "alunos totais": o numero antigo variava
+    so o balcao e nao era comparavel com a demanda total digitada pelo operador.
+    """
+    bruto = viabilidade.get("breakeven_unidade")
+    if not bruto:
+        return ""
+    return str(bruto).replace("_", " ").strip()
+
+
+def _viab_maior_que_zero(value: Any) -> bool:
+    """True quando o campo veio no payload E e um numero positivo."""
+    if not _viab_tem(value):
+        return False
+    try:
+        return float(value) > 0.0
+    except (TypeError, ValueError):
+        return False
+
+
+def _viab_linha_receita(viabilidade: dict[str, Any]) -> str | None:
+    """Linha que torna VISIVEL a composicao do faturamento e o mes do steady-state.
+
+    A anuidade e uma receita SEPARADA da mensalidade (R$ X uma vez por ano, por aluno de
+    balcao que completa N meses) e antes engordava o faturamento sem nenhuma linha
+    explicando de onde vinha. Aqui tudo e LEITURA do payload: o faturamento, a parcela de
+    anuidade, o valor/ano, a fracao elegivel (derivada do churn) e o mes de referencia do
+    regime pleno (`premissas.mes_referencia_steady` — nunca recalculado de `maturacao`).
+    """
+    mes_ref = viabilidade.get("mes_referencia_steady")
+    anuidade = viabilidade.get("receita_anuidade")
+    tem_anuidade = _viab_maior_que_zero(anuidade)
+    if not tem_anuidade and not _viab_tem(mes_ref):
+        return None
+
+    if _viab_tem(mes_ref):
+        prefixo = f"Steady-state = mês {_format_number(mes_ref, 0)} (regime pleno)"
+    else:
+        prefixo = "Steady-state (regime pleno)"
+    faturamento = _viab_brl(viabilidade.get("faturamento_mensal"))
+    if not tem_anuidade:
+        return f"{prefixo}. Faturamento {faturamento}, todo de mensalidades."
+
+    detalhes: list[str] = []
+    valor = viabilidade.get("anuidade_valor")
+    inicio = viabilidade.get("anuidade_mes_inicio")
+    if _viab_tem(valor):
+        alvo = "por aluno de balcão" if viabilidade.get("anuidade_apenas_balcao") else "por aluno"
+        detalhes.append(f"{_viab_brl(valor)} uma vez por ano {alvo}")
+    if _viab_tem(inicio):
+        detalhes.append(f"a partir do mês {_format_number(inicio, 0)} de casa")
+    eleg = viabilidade.get("anuidade_elegivel_pct")
+    if _viab_tem(eleg):
+        detalhes.append(f"{_viab_pct(eleg)} chegam lá")
+    detalhes.append("reconhecida pro-rata mensal")
+    return (
+        f"{prefixo}. Faturamento {faturamento} = mensalidades + anuidade "
+        f"{_viab_brl(anuidade)} ({', '.join(detalhes)})."
+    )
+
+
+def _viab_linhas_detalhe(viabilidade: dict[str, Any]) -> list[str]:
+    """Linhas de texto sob os cards. So entra a linha cujo dado veio no payload."""
+    linhas: list[str] = []
+
+    # Composicao do faturamento + mes de referencia: primeira linha, logo sob os cards.
+    receita = _viab_linha_receita(viabilidade)
+    if receita:
+        linhas.append(receita)
+
+    unidade = _viab_unidade_breakeven(viabilidade)
+    caixa = viabilidade.get("breakeven_caixa")
+    if _viab_tem(caixa) or unidade:
+        sufixo = f" {unidade}" if unidade else ""
+        texto = (
+            f"Break-even: {_viab_breakeven(viabilidade.get('alunos_breakeven'))}{sufixo} "
+            "para EBITDA zero"
+        )
+        if _viab_tem(caixa):
+            texto += f" e {_viab_breakeven(caixa)}{sufixo} para o caixa (cobre a PMT)"
+        linhas.append(texto + ".")
+
+    faixas = viabilidade.get("aluguel_teto_faixas") or {}
+    if any(_viab_tem(faixas.get(k)) for k in ("ideal", "teto", "excecao")):
+        linhas.append(
+            "Aluguel-teto (base: faturamento bruto mensal): ideal "
+            f"{_viab_brl(faixas.get('ideal'))}  |  teto {_viab_brl(faixas.get('teto'))}"
+            f"  |  exceção {_viab_brl(faixas.get('excecao'))} - o card acima traz o canônico."
+        )
+
+    pmt = viabilidade.get("pmt_mensal")
+    juros = viabilidade.get("juros_totais")
+    investimento = viabilidade.get("investimento_total")
+    if any(_viab_tem(v) for v in (pmt, juros, investimento)):
+        linhas.append(
+            f"Financiamento: PMT {_viab_brl(pmt)}/mês  |  juros totais do contrato "
+            f"{_viab_brl(juros)}  |  investimento total {_viab_brl(investimento)}."
+        )
+
+    tir = viabilidade.get("tir_anual")
+    vpl = viabilidade.get("vpl")
+    acumulado = viabilidade.get("acumulado_mes_final")
+    mes_positivo = viabilidade.get("mes_caixa_operacional_positivo")
+    if any(_viab_tem(v) for v in (tir, vpl, acumulado, mes_positivo)):
+        horizonte = viabilidade.get("horizonte_meses")
+        rotulo_acum = (
+            f"acumulado no mês {_format_number(horizonte, 0)}"
+            if _viab_tem(horizonte)
+            else "acumulado no fim do horizonte"
+        )
+        texto = (
+            f"TIR {_viab_pct(tir)} a.a.  |  VPL {_viab_brl(vpl)}  |  "
+            f"{rotulo_acum} {_viab_brl(acumulado)}"
+        )
+        if _viab_tem(mes_positivo):
+            texto += f"  |  caixa operacional positivo a partir do mês {_format_number(mes_positivo, 0)}"
+        linhas.append(texto + ".")
+
+    return linhas
+
+
 def _viabilidade_page(
     pdf: _UltraPDF,
     viabilidade: dict[str, Any],
@@ -943,28 +1175,41 @@ def _viabilidade_page(
 ) -> None:
     """Slide de numeros da viabilidade + (se houver) slide dos graficos. READ-ONLY M1.
 
-    `viabilidade` e um dict simples (serializavel) derivado do `ViabilidadePontoResult`:
-    alunos_breakeven, aluguel_teto, margem_ebitda_pct (fracao), payback_meses, roic_anual
-    (fracao), faturamento_mensal, ebitda_mensal, faixa_p10/p90, flag_viavel,
-    flag_fora_envelope e, opcionalmente, `graficos` (lista de ate 4 PNGs do BLK-RELVIAB-03).
-    Com `graficos` -> 2 paginas; sem -> 1 pagina.
+    `viabilidade` e o `viabilidade_payload_v1` (ou o dict plano equivalente montado por
+    `viabilidade_charts.montar_payload_pdf_viabilidade`) mais, opcionalmente, `graficos`
+    (lista de ate 4 PNGs). `_viab_normalizado` aceita as duas formas. Com `graficos` ->
+    2 paginas; sem -> 1 pagina. O dict LEGADO (so os 8 numeros do BLK-RELVIAB-04)
+    continua renderizando: os campos novos que faltarem viram "n/d" e as linhas de
+    detalhe correspondentes simplesmente somem.
     """
+    dados = _viab_normalizado(viabilidade)
+
     # --- Pagina de NUMEROS (grid 4x2 estilo Big Numbers) ---
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, _VIAB_NUMEROS_TITLE, rgb=primary)
 
+    unidade_be = _viab_unidade_breakeven(dados)
+    rotulo_be = f"Break-even ({unidade_be})" if unidade_be else "Alunos break-even"
+    otica = str(dados.get("retorno_otica") or "").strip()
+    rotulo_retorno = "Retorno anual (desalav.)" if otica.startswith("desalav") else "ROIC anual"
+    retorno_valor = (
+        dados.get("retorno_anual")
+        if _viab_tem(dados.get("retorno_anual"))
+        else dados.get("roic_anual")
+    )
+
     cards = [
-        ("Alunos break-even", _viab_breakeven(viabilidade.get("alunos_breakeven"))),
-        ("Aluguel-teto (mês)", _viab_brl(viabilidade.get("aluguel_teto"))),
-        ("Margem EBITDA", _viab_pct(viabilidade.get("margem_ebitda_pct"))),
-        ("Payback", _viab_payback(viabilidade.get("payback_meses"))),
-        ("ROIC anual", _viab_pct(viabilidade.get("roic_anual"))),
-        ("Faturamento/mês", _viab_brl(viabilidade.get("faturamento_mensal"))),
-        ("EBITDA/mês", _viab_brl(viabilidade.get("ebitda_mensal"))),
+        (rotulo_be, _viab_breakeven(dados.get("alunos_breakeven"))),
+        ("Aluguel-teto (mês)", _viab_brl(dados.get("aluguel_teto"))),
+        ("Margem EBITDA", _viab_pct(dados.get("margem_ebitda_pct"))),
+        ("Payback", _viab_payback(dados.get("payback_meses"))),
+        (rotulo_retorno, _viab_pct(retorno_valor)),
+        ("Faturamento/mês", _viab_brl(dados.get("faturamento_mensal"))),
+        ("EBITDA/mês", _viab_brl(dados.get("ebitda_mensal"))),
         (
             "Faixa alunos (p10-p90)",
-            _viab_faixa(viabilidade.get("faixa_p10"), viabilidade.get("faixa_p90")),
+            _viab_faixa(dados.get("faixa_p10"), dados.get("faixa_p90")),
         ),
     ]
     margin_x, gap, cols = 36.0, 12.0, 4
@@ -991,19 +1236,28 @@ def _viabilidade_page(
         pdf.set_xy(x + 14, y + 74)
         pdf.multi_cell(card_w - 28, 24, _ascii(value))
 
-    viavel = "Sim" if viabilidade.get("flag_viavel") else "Não"
-    envelope = "fora do envelope" if viabilidade.get("flag_fora_envelope") else "dentro do envelope"
+    envelope = "fora do envelope" if dados.get("flag_fora_envelope") else "dentro do envelope"
+    rodape = f"Metragem {envelope}."
+    if "flag_viavel" in dados:
+        viavel = "Sim" if dados.get("flag_viavel") else "Não"
+        rodape = f"Viável? {viavel}   |   " + rodape
+    if dados.get("flag_zona_morta"):
+        motivo = str(dados.get("motivo_zona_morta") or "").strip()
+        rodape += f" Zona morta: {motivo}." if motivo else " Cenário em zona morta."
+    rodape += (
+        " A demanda é uma PREMISSA do operador (não prevista pela geografia). "
+        "READ-ONLY sobre o M1."
+    )
+
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 9)
-    pdf.set_xy(margin_x, top + 2 * (card_h + gap) + 6)
-    pdf.multi_cell(
-        _PAGE_W - 2 * margin_x,
-        12,
-        _ascii(
-            f"Viável? {viavel}   |   Metragem {envelope}. A demanda e uma PREMISSA do operador "
-            "(nao prevista pela geografia). READ-ONLY sobre o M1."
-        ),
-    )
+    y_texto = top + 2 * (card_h + gap) + 6
+    for linha in _viab_linhas_detalhe(dados):
+        pdf.set_xy(margin_x, y_texto)
+        pdf.multi_cell(_PAGE_W - 2 * margin_x, 12, _ascii(linha))
+        y_texto += 15.0
+    pdf.set_xy(margin_x, y_texto + 3.0)
+    pdf.multi_cell(_PAGE_W - 2 * margin_x, 12, _ascii(rodape))
     _draw_footer(pdf, with_attribution=False)
 
     # --- Pagina de GRAFICOS (grid 2x2), so quando ha PNGs ---
