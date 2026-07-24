@@ -13,7 +13,7 @@ import { Aviso, Botao, Eyebrow, Glass, Kpi } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { coordenadaDoEstudo } from '../lib/coord'
 import { alunos, brl, coord, num, pctFrac, rotuloMes } from '../lib/format'
-import { infoImovelParaPdf, viabilidadeParaPdf } from '../lib/report'
+import { infoImovelParaPdf } from '../lib/report'
 import type {
   FaixaAlunos,
   InfoImovel,
@@ -194,12 +194,10 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
         // Metragem/aluguel vêm do Cenário e as chaves são remapeadas para o contrato
         // do PDF (senão o imóvel saía "n/d" mesmo preenchido — lib/report.ts).
         infoImovel: infoImovelParaPdf(info, { m2, aluguel }),
-        // Contrato do gerador de PDF (censo_report._viabilidade_page): chaves e
-        // unidades exatas via lib/report.ts. Mandar a chave/unidade errada faz o
-        // slide de viabilidade vir vazio ("n/d") — foi o bug corrigido em 2026-07-22.
-        viabilidade: res ? viabilidadeParaPdf(res) : undefined,
-        // Inputs do cenário → o backend re-roda o motor e inclui os GRÁFICOS no PDF
-        // (rampa/faturamento/FCF/DRE cascata). Sem isso o PDF só traria os números.
+        // SÓ os inputs do cenário: o backend roda o motor UMA vez e monta o payload
+        // inteiro (números + gráficos) por conta própria. Não reenviamos o payload
+        // calculado — ele tem 70 KB (série de 64 meses + grade) e estourava a query
+        // string em HTTP 431. Ver o comentário em lib/api.ts::relatorioPontual.
         viabilidadeInputs: res ? montarPayload(demanda) : undefined,
         fotos,
       })

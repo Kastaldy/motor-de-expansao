@@ -164,13 +164,27 @@ export const api = {
       `relatorio_municipal_${municipio}.pdf`,
     ),
 
+  /**
+   * Relatorio Pontual em PDF.
+   *
+   * NAO manda o payload de viabilidade de volta ao servidor: ele so precisa dos
+   * INPUTS (`viabilidadeInputs`) e recalcula o payload inteiro por conta propria,
+   * numa unica rodada do motor.
+   *
+   * Mandar o payload custava um HTTP 431 (Request Header Fields Too Large): a query
+   * string carregava o objeto completo e, quando o payload passou a trazer a serie
+   * mensal unica (64 linhas) e a grade (30 linhas), ele saltou de ~1 KB para
+   * 70 KB URL-encoded, contra o limite de ~16 KB de request line + headers do h11.
+   * Fora isso, reenviar um payload que o servidor acabou de calcular — para servir
+   * de fallback caso o calculo do servidor falhe — e justamente o padrao de duas
+   * fontes de verdade que o FIN-VIAB-01 existe para eliminar.
+   */
   relatorioPontual: (opts: {
     lat: number
     lng: number
     rotulo?: string
     solicitante?: string
     infoImovel?: Record<string, unknown>
-    viabilidade?: unknown
     viabilidadeInputs?: ViabilidadeIn
     fotos?: File[]
   }) => {
@@ -183,7 +197,6 @@ export const api = {
     if (opts.infoImovel && Object.keys(opts.infoImovel).length) {
       q.set('info_imovel', JSON.stringify(opts.infoImovel))
     }
-    if (opts.viabilidade) q.set('viabilidade_json', JSON.stringify(opts.viabilidade))
     if (opts.viabilidadeInputs) {
       q.set('viabilidade_inputs_json', JSON.stringify(opts.viabilidadeInputs))
     }
