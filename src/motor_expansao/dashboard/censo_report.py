@@ -100,8 +100,10 @@ _CINZA_TEXTO = (60, 60, 60)
 # nomeadas e auditaveis (nao hardcoded inline dentro de `_big_numbers_page`).
 _META_POP_TOTAL_RAIO = 10_000.0
 _META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
-# Renda media domiciliar TOTAL (com uplift): verde a partir de 4.000 -- decisao de Vinicius no
+# Renda media domiciliar TOTAL (com uplift): verde a partir de 4.000 -- pedido de Felipe
+# (2026-07-23, "acima de R$ 4.000 o card NAO deve vir vermelho") e confirmado por Vinicius no
 # gate visual do BLK-RELPON-13 (2026-07-24); substitui o alvo anterior de 6.200 (~C1 GeoFusion).
+# Alinha com a 1a faixa "verde" das bandas.
 _META_RENDA_DOMICILIAR_TOTAL_RAIO = 4_000.0
 _META_DOMICILIOS_TOTAL_RAIO = 3_000.0
 _META_SCORE_SETOR_MEDIO = 60.0

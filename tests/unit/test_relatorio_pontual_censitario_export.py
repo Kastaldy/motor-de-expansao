@@ -27,6 +27,7 @@ from motor_expansao.dashboard.censo_report import (
     gerar_pdf_relatorio_pontual_classico,
     render_downloads_relatorio_censitario,
 )
+from motor_expansao.dashboard.constants import RENDA_MEDIA_DOMICILIAR_BANDS
 
 LAT_C = -23.55
 LNG_C = -46.63
@@ -299,6 +300,32 @@ def test_renda_media_domiciliar_fica_verde_a_partir_de_4000():
     assert _cor_por_meta(5_000, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB  # era vermelho
     assert _cor_por_meta(None, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
     assert _cor_por_meta(float("nan"), _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+
+
+def test_meta_renda_domiciliar_corta_em_4000():
+    """Regressao de producao (bot do Telegram, relato de Felipe 2026-07-24): o card
+    "Renda media domiciliar" saia VERMELHO com renda acima de R$ 4.000 porque a meta
+    da `main` ainda era 6.200 (o corte 4.000 pedido em 2026-07-23 so existia no piloto).
+    Trava o valor E o comportamento nas duas bordas da faixa 4.000-6.200."""
+    assert _META_RENDA_DOMICILIAR_TOTAL_RAIO == 4_000.0
+    # A faixa que estava errada: >= 4.000 e < 6.200 tem de sair VERDE.
+    assert _cor_por_meta(4_000.0, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
+    assert _cor_por_meta(4_532.10, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB
+    assert _cor_por_meta(6_199.0, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB
+    # Abaixo do corte segue vermelho; "n/d" segue neutro (nunca falsa reprovacao).
+    assert _cor_por_meta(3_999.0, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERMELHO_RGB
+    assert _cor_por_meta(None, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+
+
+def test_bands_renda_domiciliar_cortam_em_4000():
+    """A regua do choropleth acompanha a meta: 2.000 / 4.000 / 8.000 / 14.000 (Felipe
+    2026-07-23). Rotulos SEM acento (o font do PNG da legenda nao renderiza 'a')."""
+    limites = [limite for limite, _rotulo, _rgba in RENDA_MEDIA_DOMICILIAR_BANDS]
+    assert limites == [2_000.0, 4_000.0, 8_000.0, 14_000.0, float("inf")]
+    rotulos = [rotulo for _limite, rotulo, _rgba in RENDA_MEDIA_DOMICILIAR_BANDS]
+    assert rotulos[1] == "R$ 2.001-4.000"
+    assert rotulos[2] == "R$ 4.001-8.000"
+    assert all("á" not in r for r in rotulos)
 
 
 def test_cor_consumo_concorrentes_regra_assimetrica():
