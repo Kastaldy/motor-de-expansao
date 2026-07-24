@@ -20,6 +20,28 @@ function noBrasil(lat: number, lng: number): Coord | null {
 }
 
 /**
+ * Coordenada que representa o IMOVEL num estudo pontual.
+ *
+ * Prefere a coordenada EXATA (busca por endereco/lat,lng) e so cai no centroide do
+ * hexagono quando ela nao existe (ponto veio do clique num hex do ranking, onde o
+ * centroide e mesmo a unica coordenada disponivel).
+ *
+ * Por que importa: `hex.lat/hex.lng` sao o centroide do hex res-7, a ate ~1,5 km do
+ * endereco. Usa-lo no Relatorio Pontual (a) tirava a foto de satelite (cobertura de
+ * 400 m) e o mapa de quadra (~300 m) de outro lugar e (b) na orla jogava o ponto no
+ * mar, onde a malha municipal do IBGE nao resolve -> HTTP 400 "fora do Brasil".
+ */
+export function coordenadaDoEstudo(ponto: {
+  hex: { lat: number; lng: number }
+  lat?: number
+  lng?: number
+}): Coord {
+  return ponto.lat != null && ponto.lng != null
+    ? { lat: ponto.lat, lng: ponto.lng }
+    : { lat: ponto.hex.lat, lng: ponto.hex.lng }
+}
+
+/**
  * Extrai uma coordenada de texto livre. Retorna `null` se nao reconhecer ou se
  * cair fora do Brasil. Ordem: link do Maps -> par decimal com ponto -> par pt-BR.
  */

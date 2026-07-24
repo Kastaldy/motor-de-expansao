@@ -11,6 +11,7 @@ import {
 } from '../components/ViabilityCharts'
 import { Aviso, Botao, Eyebrow, Glass, Kpi } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
+import { coordenadaDoEstudo } from '../lib/coord'
 import { alunos, brl, coord, num, pct } from '../lib/format'
 import { infoImovelParaPdf, viabilidadeParaPdf } from '../lib/report'
 import type {
@@ -81,11 +82,17 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
 
   const inputFoto = useRef<HTMLInputElement>(null)
 
+  // Coordenada do estudo: a EXATA quando o ponto veio da busca; o centroide do hexágono
+  // só quando ele veio do clique no ranking (aí é a única que existe). Ver PontoEscolhido.
+  const alvo = ponto ? coordenadaDoEstudo(ponto) : null
+  const alvoLat = alvo?.lat
+  const alvoLng = alvo?.lng
+
   function montarPayload(demandaUsar: number): ViabilidadeIn {
     const jurosEquip = parseNum(jurosEquipTxt)
     return {
-      lat: ponto!.hex.lat,
-      lng: ponto!.hex.lng,
+      lat: alvoLat!,
+      lng: alvoLng!,
       m2,
       aluguel,
       ticket,
@@ -169,8 +176,8 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
     setErro(null)
     try {
       const { blob, filename } = await api.relatorioPontual({
-        lat: ponto.hex.lat,
-        lng: ponto.hex.lng,
+        lat: alvoLat!,
+        lng: alvoLng!,
         rotulo: info.nome || ponto.rotulo,
         // Metragem/aluguel vêm do Cenário e as chaves são remapeadas para o contrato
         // do PDF (senão o imóvel saía "n/d" mesmo preenchido — lib/report.ts).
@@ -271,7 +278,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
           className="num"
           style={{ font: '500 12px/1 var(--f-num)', color: 'var(--tx-narrative)' }}
         >
-          {coord(ponto.hex.lat, ponto.hex.lng)}
+          {coord(alvoLat!, alvoLng!)}
         </span>
       </header>
 

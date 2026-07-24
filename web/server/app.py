@@ -21,6 +21,7 @@ Subir:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import functools
 import hashlib
@@ -37,6 +38,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
+
+# Quantos Relatorios Pontuais podem ser gerados AO MESMO TEMPO. O gerador e pesado
+# (interseccao de setores, tiles de basemap/satelite, matplotlib, fpdf) e roda no
+# threadpool; sem teto, N pedidos simultaneos disputariam as 4 CPUs da VPS e inflariam
+# a memoria. 3 deixa folga para o event loop e para os demais apps do host.
+_PDF_CONCORRENCIA_MAX = 3
+_PDF_SEMAFORO = asyncio.Semaphore(_PDF_CONCORRENCIA_MAX)
 
 # --- Localizacao do repo e dos dados ---------------------------------------
 # O backend do piloto vive em <repo>/web/server; o codigo do motor em <repo>/src.
@@ -2168,6 +2177,52 @@ async def relatorio_pontual(
 
     `info_imovel` e `viabilidade_json` chegam como JSON serializado porque o corpo
     e multipart (por causa das fotos).
+
+    Esta funcao so faz a parte ASSINCRONA (ler os uploads) e delega o resto ao
+    threadpool — ver `_gerar_relatorio_pontual_pdf`.
+    """
+    # Unico I/O assincrono da rota: o corpo multipart.
+    fotos_bytes: list[bytes] = []
+    for f in fotos or []:
+        conteudo = await f.read()
+        if conteudo:
+            fotos_bytes.append(conteudo)
+
+    # O resto do trabalho e 100% SINCRONO e pesado (10-30 s). Rodando direto dentro do
+    # `async def`, ele BLOQUEAVA o event loop do unico worker do uvicorn: enquanto um PDF
+    # era gerado, TODAS as outras requisicoes ficavam presas na fila — inclusive as de
+    # outros usuarios e o proprio /api/health (medido em producao em 2026-07-24: 3
+    # relatorios simultaneos serializaram em 12/21/31 s e um /api/health levou 29 s).
+    # Era isso que aparecia como "o relatorio carrega para sempre" na aba Viabilidade.
+    # No threadpool o event loop segue livre e os pedidos rodam de fato em paralelo.
+    async with _PDF_SEMAFORO:
+        return await run_in_threadpool(
+            _gerar_relatorio_pontual_pdf,
+            lat,
+            lng,
+            rotulo,
+            solicitante,
+            info_imovel,
+            viabilidade_json,
+            viabilidade_inputs_json,
+            fotos_bytes,
+        )
+
+
+def _gerar_relatorio_pontual_pdf(
+    lat: float,
+    lng: float,
+    rotulo: str | None,
+    solicitante: str | None,
+    info_imovel: str | None,
+    viabilidade_json: str | None,
+    viabilidade_inputs_json: str | None,
+    fotos_bytes: list[bytes],
+) -> Response:
+    """Corpo SINCRONO do Relatorio Pontual — roda no threadpool, nunca no event loop.
+
+    Recebe as fotos ja lidas em bytes (o `await` ficou na rota). Deliberadamente `def`,
+    nao `async def`: e o que mantem o servidor respondendo durante a geracao.
     """
     from motor_expansao.api.service import (
         _competitors_ultra,
@@ -2269,12 +2324,6 @@ async def relatorio_pontual(
         residual = _residual_do_ponto(lat, lng, cfg)
     except Exception:  # noqa: BLE001
         residual = None
-
-    fotos_bytes: list[bytes] = []
-    for f in fotos or []:
-        conteudo = await f.read()
-        if conteudo:
-            fotos_bytes.append(conteudo)
 
     # BLK-SAT-01: vista aerea (satelite Esri) da capa do PDF. A chave vem de env
     # API_ARCGIS_API_KEY (passthrough no compose); sem chave/rede -> None -> pagina

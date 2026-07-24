@@ -456,3 +456,46 @@ def test_rotas_http_apontam_para_o_handler_certo():
         if getattr(r, "path", "") in esperado
     }
     assert registrado == esperado
+
+
+def test_relatorio_pontual_nao_bloqueia_o_event_loop():
+    """Regressao de producao (2026-07-24): "o relatorio da aba Viabilidade carrega para
+    sempre".
+
+    A rota era `async def` com corpo 100% SINCRONO e pesado (interseccao de setores,
+    tiles de basemap/satelite, matplotlib, fpdf). Num `async def`, esse corpo roda NO
+    event loop do unico worker do uvicorn -> enquanto um PDF era gerado, toda outra
+    requisicao ficava presa na fila. Medido em producao: 3 relatorios simultaneos
+    serializaram em 12/21/31 s e um `/api/health` (trivial) levou 29 s.
+
+    O contrato que impede a volta do defeito: a rota continua `async` (precisa do
+    `await` dos uploads), mas o trabalho pesado vive numa funcao SINCRONA separada,
+    despachada ao threadpool. Se alguem transformar o helper em `async def` de novo,
+    ou reinserir o corpo pesado na rota, este teste quebra.
+    """
+    import inspect
+
+    # A rota segue assincrona (le o corpo multipart das fotos com await).
+    assert inspect.iscoroutinefunction(pilot.relatorio_pontual)
+
+    # ...mas o gerador e SINCRONO -> `run_in_threadpool` o tira do event loop.
+    assert not inspect.iscoroutinefunction(pilot._gerar_relatorio_pontual_pdf)
+
+    # E a rota realmente delega (nao ficou com uma copia do corpo pesado).
+    fonte = inspect.getsource(pilot.relatorio_pontual)
+    assert "run_in_threadpool" in fonte
+    assert "_gerar_relatorio_pontual_pdf" in fonte
+    # O corpo pesado NAO pode estar na rota: nenhuma dessas chamadas ali dentro.
+    for pesado in ("render_mapas_censitarios_combinados", "gerar_pdf_relatorio_pontual"):
+        assert pesado not in fonte, f"corpo pesado ({pesado}) voltou para o event loop"
+
+    # Teto de concorrencia: sem ele, N pedidos simultaneos disputariam as 4 CPUs da VPS.
+    assert 1 <= pilot._PDF_CONCORRENCIA_MAX <= 4
+
+
+def test_relatorio_municipal_tambem_fora_do_event_loop():
+    """O Relatorio Municipal e igualmente pesado; como e `def` (nao `async def`), o
+    proprio FastAPI ja o roda no threadpool. Trava esse invariante junto."""
+    import inspect
+
+    assert not inspect.iscoroutinefunction(pilot.relatorio_municipal)

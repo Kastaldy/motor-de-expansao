@@ -15,6 +15,17 @@ export interface PontoEscolhido {
   rotulo: string
   municipio: string
   uf: string
+  /**
+   * Coordenada EXATA do imóvel, quando o ponto veio da busca (endereço geocodificado
+   * ou lat/lng digitada). `hex.lat/hex.lng` NÃO servem para isso: são o centroide do
+   * hexágono res-7 (h3.cell_to_latlng no pipeline), a até ~1,5 km do endereço — o
+   * bastante para a foto de satélite (400 m) e o mapa de quadra (~300 m) do PDF
+   * saírem de outro lugar, e para o ponto cair no mar na orla (400 na malha IBGE).
+   * Ausente quando o ponto veio do clique num hexágono do ranking: ali o centroide
+   * é mesmo a única coordenada que existe.
+   */
+  lat?: number
+  lng?: number
 }
 
 export default function App() {

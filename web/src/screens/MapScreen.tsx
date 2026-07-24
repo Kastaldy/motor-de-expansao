@@ -184,6 +184,13 @@ export default function MapScreen({
       rotulo: coord(pin.lat, pin.lng),
       municipio: dados?.municipio ?? '',
       uf: dados?.uf ?? uf,
+      // A coordenada BUSCADA viaja junto. `hex` aqui costuma ser o `real` do dataset,
+      // cujo lat/lng é o CENTROIDE do hexágono — usá-lo no relatório tirava a foto de
+      // satélite e o mapa de quadra de até ~1,5 km do imóvel (e, na orla, jogava o
+      // ponto no mar -> "fora do Brasil"). O hexágono continua o mesmo: por construção
+      // `latLngToCell(pin.lat, pin.lng, 7) === pin.hexId === hex.id`.
+      lat: pin.lat,
+      lng: pin.lng,
     })
   }
 
