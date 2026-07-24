@@ -12,20 +12,43 @@ export function num(v: number | null | undefined, casas = 0): string {
   return nf(casas).format(v)
 }
 
-/** Reais. `compacto` usa mil/mi para caber em card estreito. */
-export function brl(v: number | null | undefined, compacto = false): string {
+/**
+ * Reais. `compacto` usa mil/mi para caber em card estreito; `casas` serve para
+ * valores em que o centavo importa (ticket: R$ 88,20 e nao R$ 88).
+ */
+export function brl(v: number | null | undefined, compacto = false, casas = 0): string {
   if (v === null || v === undefined || Number.isNaN(v)) return 'n/d'
   if (compacto) {
     const abs = Math.abs(v)
     if (abs >= 1_000_000) return `R$ ${nf(1).format(v / 1_000_000)} mi`
     if (abs >= 1_000) return `R$ ${nf(0).format(v / 1_000)} mil`
   }
-  return `R$ ${nf(0).format(v)}`
+  return `R$ ${nf(casas).format(v)}`
 }
 
 export function pct(v: number | null | undefined, casas = 1): string {
   if (v === null || v === undefined || Number.isNaN(v)) return 'n/d'
   return `${nf(casas).format(v)}%`
+}
+
+/**
+ * Percentual a partir de uma FRACAO — a unidade em que o motor entrega TODA taxa
+ * (margem, retorno, TIR, reajuste, share). O x100 e RENDER, nao calculo: a tela
+ * nao pode derivar numero financeiro (FIN-VIAB-01).
+ */
+export function pctFrac(v: number | null | undefined, casas = 1): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return 'n/d'
+  return pct(v * 100, casas)
+}
+
+/**
+ * Rotulo de um mes da linha do tempo do motor (M-4..M+60). Mes negativo e
+ * pre-abertura (obra); a partir de 1 e operacao. Nao existe mes 0.
+ */
+export function rotuloMes(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return 'n/d'
+  const m = Math.round(v)
+  return m < 0 ? `M${m} (obra)` : `mês ${m}`
 }
 
 /** Coordenada no padrao pt-BR (virgula decimal), como o template mostra. */

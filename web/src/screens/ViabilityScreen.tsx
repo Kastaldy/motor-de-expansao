@@ -12,7 +12,7 @@ import {
 import { Aviso, Botao, Eyebrow, Glass, Kpi } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { coordenadaDoEstudo } from '../lib/coord'
-import { alunos, brl, coord, num, pct } from '../lib/format'
+import { alunos, brl, coord, num, pctFrac, rotuloMes } from '../lib/format'
 import { infoImovelParaPdf, viabilidadeParaPdf } from '../lib/report'
 import type {
   FaixaAlunos,
@@ -30,8 +30,15 @@ export interface ViabilityScreenProps {
 
 const DEMANDA_PASSO = 100
 
-/** Ticket (mensalidade) por nº de studios — tabela da planilha (Simulador!J9). */
+/** Ticket CHEIO do plano por nº de studios — tabela da planilha (Simulador!J9). */
 const TICKET_POR_STUDIO = [147, 157, 167, 177] as const
+
+/**
+ * Limiar apenas VISUAL do card de payback (espelha `SIM_PAYBACK_VIAVEL_MAX` do
+ * config do motor). Não entra em conta nenhuma: quem dá o veredito de viabilidade
+ * é o motor (`dre.flag_viavel`); aqui só decide a cor do número.
+ */
+const PAYBACK_ALVO_MESES = 36
 
 /** Texto -> numero opcional (aceita virgula decimal e separador de milhar). */
 function parseNum(txt: string): number | undefined {
@@ -45,8 +52,9 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   // --- Cenário -------------------------------------------------------------
   const [m2, setM2] = useState(1500)
   const [aluguel, setAluguel] = useState(20000)
-  // Ticket = mensalidade R$/mês por aluno pagante do balcão. Coerente com studios=0
-  // (planilha: 0→147). Mudar Studios reajusta o ticket; pode editar manualmente.
+  // Ticket CHEIO = mensalidade R$/mês do plano de balcão (P2-12). O ticket médio
+  // (blended, com o mix de agregadores) é somente-leitura e vem do motor. Coerente
+  // com studios=0 (planilha: 0→147); mudar Studios reajusta, dá para editar depois.
   const [ticket, setTicket] = useState<number>(TICKET_POR_STUDIO[0])
   const [demanda, setDemanda] = useState(800)
   // A demanda vem padronizada no p50 da metragem e re-escala quando a metragem
@@ -70,6 +78,9 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   const [jurosEquipTxt, setJurosEquipTxt] = useState('')
   // Carência de aluguel: meses iniciais sem pagar aluguel (melhora payback/FCF).
   const [carenciaTxt, setCarenciaTxt] = useState('')
+  // Taxa de franquia: R$160.000 é o padrão do motor, mas o operador pode sobrescrever
+  // (decisão de Felipe, FIN-VIAB-01). Vazio = padrão; o payload devolve o valor usado.
+  const [taxaFranquiaTxt, setTaxaFranquiaTxt] = useState('')
 
   // --- Dados opcionais do imóvel (entram no PDF completo) ------------------
   const [info, setInfo] = useState<InfoImovel>({})
@@ -105,6 +116,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
       juros_equipamentos_am: jurosEquip !== undefined ? jurosEquip / 100 : undefined,
       carencia_aluguel_meses: parseNum(carenciaTxt),
       rampa_meses: rampaMeses,
+      taxa_franquia: parseNum(taxaFranquiaTxt),
     }
   }
 
@@ -209,9 +221,19 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
     )
   }
 
-  const margem = res?.dre.margem ?? null
-  const be = res?.alunos_breakeven ?? null
-  const aprovado = margem !== null && margem > 0 && (be === null || demanda >= be)
+  // TUDO abaixo é LEITURA do viabilidade_payload_v1. A tela não deriva número
+  // financeiro nenhum: o motor (dimensionamento/simulador.py) já entregou pronto.
+  const premissas = res?.premissas ?? null
+  const dre = res?.dre ?? null
+  const retorno = res?.retorno ?? null
+  const serie = res?.serie_mensal ?? []
+  /** margem EBITDA em FRAÇÃO (0,3873 = 38,73%) — o payload nunca manda percentual. */
+  const margem = dre?.margem ?? null
+  /** Break-even OPERACIONAL (EBITDA = 0), em alunos TOTAIS. */
+  const beEbitda = res?.break_even.ebitda ?? null
+  /** Break-even DE CAIXA (cobre também a PMT do financiamento), em alunos TOTAIS. */
+  const beCaixa = res?.break_even.caixa ?? null
+  const aprovado = margem !== null && margem > 0 && (beEbitda === null || demanda >= beEbitda)
 
   // Classificação do aluguel pedido frente aos clusters de teto (% do faturamento).
   const teto = res?.aluguel_teto ?? null
@@ -344,7 +366,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
           </div>
 
           <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
-            <Campo label="Ticket médio" sufixo="/mês">
+            <Campo label="Ticket cheio do plano" sufixo="/mês">
               <input
                 type="number"
                 value={ticket}
@@ -368,6 +390,52 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               />
             </Campo>
           </div>
+
+          {/* Ticket médio (blended) — SOMENTE-LEITURA, vem do motor. O operador digita o
+              cheio; o que entra no caixa por aluno TOTAL é este, com o mix e o ticket do
+              agregador acoplado ao cheio (P2-12). */}
+          <div
+            style={{
+              marginTop: 10,
+              padding: '10px 12px',
+              background: 'var(--surf-raised)',
+              border: '1px solid var(--line-soft)',
+              borderRadius: 'var(--r-md)',
+            }}
+          >
+            <div
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}
+            >
+              <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+                Ticket médio (blended)
+              </span>
+              <span
+                className="num"
+                style={{ font: '700 14px/1 var(--f-num)', color: 'var(--tx-max)' }}
+              >
+                {premissas ? brl(premissas.ticket_blended, false, 2) : 'n/d'}
+              </span>
+            </div>
+            <div
+              style={{ font: '400 10px/1.45 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 6 }}
+            >
+              {premissas ? (
+                <>
+                  Mix {pctFrac(premissas.share_balcao, 0)} cheio (
+                  {brl(premissas.ticket_cheio, false, 2)}) ·{' '}
+                  {pctFrac(1 - premissas.share_balcao, 0)} agregador (
+                  {brl(premissas.ticket_agregador, false, 2)}
+                  {premissas.ticket_agregador_fator != null
+                    ? `, ${pctFrac(premissas.ticket_agregador_fator, 0)} do cheio`
+                    : ''}
+                  ). Já líquido de churn e inadimplência. Calculado pelo motor — a tela só exibe.
+                </>
+              ) : (
+                'Calcule o cenário para ver o ticket médio efetivo por aluno total.'
+              )}
+            </div>
+          </div>
+
           <span
             style={{
               display: 'block',
@@ -376,8 +444,8 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               marginTop: 6,
             }}
           >
-            Ticket = mensalidade por aluno. Studios elevam o ticket (0→147, 1→157, 2→167, 3→177);
-            você pode ajustar o ticket manualmente depois.
+            Ticket cheio = mensalidade do plano de balcão. Studios elevam o cheio (0→147, 1→157,
+            2→167, 3→177); você pode ajustar manualmente depois.
           </span>
 
           <div
@@ -472,8 +540,13 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                     </>
                   )}
                 </>
+              ) : premissas ? (
+                `Premissa explícita do operador, em alunos TOTAIS. Mix: ${pctFrac(
+                  premissas.share_balcao,
+                  0,
+                )} balcão + ${pctFrac(1 - premissas.share_balcao, 0)} agregadores.`
               ) : (
-                'Premissa explícita do operador. Split: balcão ~69% + agregadores ~31%.'
+                'Premissa explícita do operador, em alunos TOTAIS (balcão + agregadores).'
               )}
             </div>
           </div>
@@ -537,7 +610,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
           </div>
           <p style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', margin: '7px 0 10px' }}>
             Obra + Equipamentos = CAPEX. Com a taxa de franquia formam o investimento total,
-            base do ROIC e do payback (à vista). Vazio usa o padrão do modelo.
+            base do retorno desalavancado e do payback. Vazio usa o padrão do modelo.
           </p>
           <div style={{ display: 'flex', gap: 8 }}>
             <input
@@ -581,11 +654,68 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               onChange={(e) => setCarenciaTxt(e.target.value)}
             />
           </div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+            <input
+              inputMode="numeric"
+              placeholder="Taxa de franquia (R$)"
+              value={taxaFranquiaTxt}
+              onChange={(e) => setTaxaFranquiaTxt(e.target.value)}
+            />
+          </div>
           <span style={{ display: 'block', font: '400 10px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}>
-            Taxa de franquia R$ 160.000 já entra no investimento. Carência = meses iniciais sem
-            aluguel. Obra = equity parcelada sem juros; equipamentos financiados (prazo + juros a.m.)
-            entram como PMT no Fluxo de Caixa Operacional mês a mês.
+            A taxa de franquia é editável (vazio = padrão do modelo) e entra à vista no M-4,
+            somando ao investimento. Obra = equity parcelada sem juros; equipamentos financiados
+            (prazo + juros a.m.) entram como PMT no caixa mês a mês.
           </span>
+
+          {/* P1-7: a carência EFETIVA que o motor aplicou e o mês em que o aluguel
+              começa a ser cobrado. Antes o texto falava em "padrão do modelo", que não
+              existe: o default é ZERO e a contagem parte da ENTREGA (M-4), não da abertura. */}
+          {premissas && (
+            <div
+              style={{
+                marginTop: 10,
+                padding: '9px 11px',
+                background: 'var(--surf-raised)',
+                border: '1px solid var(--line-soft)',
+                borderRadius: 'var(--r-md)',
+                font: '400 10.5px/1.5 var(--f-ui)',
+                color: 'var(--tx-sub)',
+              }}
+            >
+              {premissas.carencia_aluguel_meses > 0 ? (
+                <>
+                  Carência efetiva:{' '}
+                  <strong style={{ color: 'var(--tx-soft)' }}>
+                    {premissas.carencia_aluguel_meses}{' '}
+                    {premissas.carencia_aluguel_meses === 1 ? 'mês' : 'meses'}
+                  </strong>
+                  , contados da entrega da unidade (M-4), não da inauguração. Primeira cobrança
+                  de aluguel:{' '}
+                  <strong style={{ color: 'var(--tx-soft)' }}>
+                    {premissas.mes_inicio_aluguel == null
+                      ? 'nenhuma no horizonte'
+                      : rotuloMes(premissas.mes_inicio_aluguel)}
+                  </strong>
+                  .
+                </>
+              ) : (
+                <>
+                  <strong style={{ color: 'var(--tx-soft)' }}>Sem carência.</strong> Primeira
+                  cobrança de aluguel:{' '}
+                  <strong style={{ color: 'var(--tx-soft)' }}>
+                    {premissas.mes_inicio_aluguel == null
+                      ? 'nenhuma no horizonte'
+                      : rotuloMes(premissas.mes_inicio_aluguel)}
+                  </strong>
+                  {premissas.mes_inicio_aluguel != null && premissas.mes_inicio_aluguel < 0
+                    ? ' — ou seja, já durante as obras.'
+                    : '.'}
+                </>
+              )}
+            </div>
+          )}
+
           {res && (
             <div
               style={{
@@ -598,8 +728,20 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                 borderRadius: 'var(--r-md)',
               }}
             >
-              <ReadoutCapex rotulo="Payback" valor={res.dre.payback == null ? 'não atinge' : `${num(res.dre.payback)} meses`} />
-              <ReadoutCapex rotulo="ROIC anual" valor={res.dre.roic == null ? 'n/d' : pct((res.dre.roic ?? 0) * 100)} />
+              <ReadoutCapex
+                rotulo="Investimento total"
+                valor={brl(res.investimento.investimento_total, true)}
+              />
+              <ReadoutCapex
+                rotulo="Taxa de franquia"
+                valor={brl(res.investimento.taxa_franquia, true)}
+              />
+              <ReadoutCapex
+                rotulo="PMT"
+                valor={
+                  res.investimento.pmt ? `${brl(res.investimento.pmt)}/mês` : 'sem financiamento'
+                }
+              />
             </div>
           )}
 
@@ -743,10 +885,10 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               color: 'var(--warn-text)',
             }}
           >
-            <strong style={{ fontWeight: 600 }}>Números preliminares — em calibração.</strong> A
-            Viabilidade ainda está sendo ajustada à planilha financeira oficial (folha, split
-            balcão/agregadores e alavancagem do financiamento pendentes). Use como leitura
-            direcional, não como número final de comitê.
+            <strong style={{ fontWeight: 600 }}>Premissas em calibração.</strong> Tela, gráficos
+            e PDF passaram a ler o MESMO motor — não há mais número recalculado fora dele. Seguem
+            pendentes de gate: o nível da folha (17% do faturamento bruto, revisão no BLK-VIAB-11)
+            e a taxa de desconto do VPL/TIR (12% a.a., provisória).
           </div>
 
           {erro && (
@@ -769,16 +911,23 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             aprovado={aprovado}
             margem={margem}
             demanda={demanda}
-            breakeven={be}
-            payback={res?.dre.payback ?? null}
+            breakEvenEbitda={beEbitda}
+            breakEvenCaixa={beCaixa}
+            payback={retorno?.payback ?? null}
             melhoria={res?.melhoria_payback ?? null}
           />
 
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
             <Kpi
               label="Margem EBITDA"
-              valor={pct(margem)}
-              sub="no cenário assumido"
+              valor={pctFrac(margem)}
+              /* O steady-state é o mês `mes_referencia_steady` do payload (regime pleno:
+                 alunos maduros E anuidade em cobrança) — LEITURA, nunca recalculado. */
+              sub={
+                premissas
+                  ? `no cenário assumido · mês ${num(premissas.mes_referencia_steady)} (regime pleno)`
+                  : 'no cenário assumido'
+              }
               tone={
                 margem === null
                   ? undefined
@@ -787,34 +936,48 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                     : 'var(--neg)'
               }
             />
+            {/* P2-15: "payback" é SÓ o retorno do capital. P0-4: TIR e VPL ao lado dele. */}
             <Kpi
-              label="Payback"
-              valor={
-                res?.dre.payback == null ? 'não atinge' : `${num(res.dre.payback)} meses`
-              }
+              label="Payback do investimento"
+              valor={retorno?.payback == null ? 'não atinge' : `${num(retorno.payback)} meses`}
               sub={
-                res && (res.carencia_aluguel_meses ?? 0) > 0
-                  ? `com ${res.carencia_aluguel_meses}m de carência`
-                  : 'até o caixa virar'
+                retorno
+                  ? `TIR ${pctFrac(retorno.tir_anual)} a.a. · VPL ${brl(retorno.vpl, true)}`
+                  : 'retorno do capital investido'
               }
               tone={
-                res?.dre.payback == null
+                retorno?.payback == null
                   ? 'var(--neg)'
-                  : res.dre.payback <= 36
+                  : retorno.payback <= PAYBACK_ALVO_MESES
                     ? 'var(--pos-text)'
                     : 'var(--warn-text)'
               }
             />
+            {/* P0-4: a legenda estava "lucro anual + investimento" (o operador escreveu
+                errado) e a ótica não aparecia. Padrão do produto = DESALAVANCADO. */}
             <Kpi
-              label="ROIC anual"
-              valor={res?.dre.roic == null ? 'n/d' : pct((res.dre.roic ?? 0) * 100)}
-              sub="lucro anual ÷ investimento"
+              label="Retorno anual (desalavancado)"
+              valor={pctFrac(retorno?.retorno_anual_desalavancado)}
+              sub="lucro anual / investimento total"
               tone={
-                res?.dre.roic == null
+                retorno?.retorno_anual_desalavancado == null
                   ? undefined
-                  : res.dre.roic >= 0
+                  : retorno.retorno_anual_desalavancado >= 0
                     ? 'var(--pos-text)'
                     : 'var(--neg)'
+              }
+            />
+            {/* P2-15: este é o indicador OPERACIONAL — não é payback. */}
+            <Kpi
+              label="1º mês com caixa operacional positivo"
+              valor={
+                res?.mes_caixa_operacional_positivo == null
+                  ? 'não vira'
+                  : `mês ${res.mes_caixa_operacional_positivo}`
+              }
+              sub={`e assim permanece até o mês ${premissas?.horizonte_meses ?? 60}`}
+              tone={
+                res?.mes_caixa_operacional_positivo == null ? 'var(--neg)' : 'var(--pos-text)'
               }
             />
             <Kpi
@@ -842,36 +1005,36 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             />
           </div>
 
-          <ReguaBreakEven demanda={demanda} breakeven={be} />
+          <ReguaBreakEven
+            demanda={demanda}
+            breakEvenEbitda={beEbitda}
+            breakEvenCaixa={beCaixa}
+            p90={res?.faixa_alunos.p90 ?? faixa?.p90 ?? null}
+          />
 
-          {/* Fluxo de caixa ao lado da rampa; a composição do resultado (agora com
-              7 barras) fica embaixo, em largura total, com mais espaço. */}
+          {/* Fluxo de caixa ao lado da rampa; a composição do resultado (agora com as
+              parcelas do custo e a despesa financeira) fica embaixo, em largura total. */}
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
             <div style={{ flex: 1.5, minWidth: 320, display: 'flex' }}>
               <FluxoCaixa
-                serie={res?.fcf_serie ?? []}
-                payback={res?.dre.payback ?? null}
-                carencia={res?.carencia_aluguel_meses ?? 0}
+                serie={serie}
+                payback={retorno?.payback ?? null}
+                carencia={premissas?.carencia_aluguel_meses ?? 0}
               />
             </div>
             <div style={{ flex: 1, minWidth: 240, display: 'flex' }}>
-              <RampaAlunos plateau={demanda} meses={rampaMeses} />
+              <RampaAlunos serie={serie} maturacaoMeses={premissas?.maturacao_meses ?? null} />
             </div>
           </div>
 
           <FluxoCaixaOperacional
-            serie={res?.fco_serie ?? []}
-            mesPositivo={res?.mes_operacao_positiva ?? null}
+            serie={serie}
+            mesPositivo={res?.mes_caixa_operacional_positivo ?? null}
           />
 
-          <CascataDre
-            faturamento={res?.dre.faturamento ?? null}
-            deducoes={res?.dre.deducoes ?? null}
-            impostos={res?.dre.impostos ?? null}
-            custos={res?.dre.custos ?? null}
-            ebitda={res?.dre.ebitda ?? null}
-            lucroLiquido={res?.dre.lucro_liquido ?? null}
-          />
+          {/* `premissas` entra só como ROTULAGEM: o mês de referência do regime pleno
+              (`mes_referencia_steady`, lido do payload) e a regra da anuidade. */}
+          <CascataDre dre={dre} premissas={premissas} />
 
           {(res?.flag_fora_envelope || res?.flag_zona_morta) && (
             <Glass style={{ padding: '13px 16px' }}>
