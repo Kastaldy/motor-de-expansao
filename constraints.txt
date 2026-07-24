@@ -175,6 +175,12 @@ gitdb==4.0.12
     # via gitpython
 gitpython==3.1.55
     # via streamlit
+    # 3.1.52 -> 3.1.55 (2026-07-24): REMEDIA GHSA-3rp5-jjmw-4wv2 (injecao de secao no
+    # .git/config por nome de submodulo -> RCE via core.sshCommand; fix em 3.1.53) e
+    # GHSA-r9mr-m37c-5fr3 (bypass do check_unsafe_options por valor de kwarg de 1 char
+    # -> ACE via --upload-pack; fix em 3.1.54). Remediacao real, nao allowlist — mesmo
+    # padrao do pip/setuptools acima. Dep transitiva do streamlit; o motor nao importa
+    # gitpython.
 graphviz==0.21
     # via prefect
 greenlet==3.5.3
