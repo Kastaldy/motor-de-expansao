@@ -237,7 +237,7 @@ def test_relatorio_pontual_sem_geo_levanta_404(empty_data: Path) -> None:
 
 
 def test_viabilidade_contrato_e_json_safe(empty_data: Path) -> None:
-    # A viabilidade roda pela calibracao INTERNA do motor (base=None): sem parquets.
+    # A viabilidade roda pelas premissas INTERNAS do motor (base=None): sem parquets.
     body = pilot.viabilidade(
         pilot.ViabilidadeIn(
             lat=-23.5,
@@ -250,20 +250,181 @@ def test_viabilidade_contrato_e_json_safe(empty_data: Path) -> None:
             equipamentos=700_000,
         )
     )
-    assert {"dre", "fcf_serie", "fco_serie", "aluguel_teto", "grade", "faixa_alunos"} <= set(body)
-    # JSON-safe de ponta a ponta: o payload inteiro serializa SEM NaN/inf.
+    assert body["versao"] == pilot.VIABILIDADE_PAYLOAD_VERSAO
+    assert {
+        "premissas", "dre", "investimento", "retorno", "break_even",
+        "aluguel_teto", "grade", "faixa_alunos", "serie_mensal",
+    } <= set(body)
+    # JSON-safe de ponta a ponta: o payload inteiro serializa SEM NaN/inf. E o guardrail
+    # do `json.dumps(..., allow_nan=False)` do Starlette — payback infinito e TIR
+    # inexistente tem que sair como null, nunca como Infinity/NaN.
     json.dumps(body, allow_nan=False)
 
     dre = body["dre"]
-    assert {"faturamento", "ebitda", "lucro_liquido", "payback", "roic", "margem"} <= set(dre)
-    # Cascata coerente: faturamento - deducoes - impostos - custos == ebitda.
-    if all(dre.get(k) is not None for k in ("faturamento", "deducoes", "impostos", "custos", "ebitda")):
-        recomposto = dre["faturamento"] - dre["deducoes"] - dre["impostos"] - dre["custos"]
-        assert recomposto == pytest.approx(dre["ebitda"], abs=0.05)
-    # fcf_serie (payback) parte NEGATIVO (-(investimento)); fco_serie comeca em M-4 (obras/
-    # pre-abertura, item Felipe 2026-07-23), com os 4 meses de obras negativos antes da operacao.
-    assert body["fcf_serie"] and body["fcf_serie"][0]["fcf"] < 0
-    assert body["fco_serie"] and [p["mes"] for p in body["fco_serie"][:4]] == [-4, -3, -2, -1]
+    assert {"faturamento", "ebitda", "custos_op", "margem", "ir_csll"} <= set(dre)
+    # Cascata coerente: faturamento - deducoes - impostos - custos_op == ebitda.
+    recomposto = dre["faturamento"] - dre["deducoes"] - dre["impostos"] - dre["custos_op"]
+    assert recomposto == pytest.approx(dre["ebitda"], abs=0.05)
+    # Serie UNICA (M-4..M60) com o CAPEX dentro: o acumulado parte negativo.
+    serie = body["serie_mensal"]
+    assert [linha["mes"] for linha in serie[:4]] == [-4, -3, -2, -1]
+    assert serie[0]["fcf_acumulado"] < 0
+    # Sem base de comparaveis, a fonte da faixa e EXPLICITA (degradacao nao-silenciosa).
+    assert body["premissas"]["fonte_base_calibracao"] == pilot.FONTE_BASE_INDISPONIVEL
+    assert body["faixa_alunos"]["p50"] is None
+
+
+def test_viabilidade_payback_infinito_vira_null(empty_data: Path) -> None:
+    """Cenario que nunca se paga: `payback`/`tir_anual` saem como null explicito.
+
+    O motor devolve `inf`/`None`; se algum deles vazasse, o Starlette (que serializa
+    com allow_nan=False) derrubaria a resposta inteira com um 500 opaco.
+    """
+    body = pilot.viabilidade(
+        pilot.ViabilidadeIn(
+            lat=-23.5, lng=-46.6, m2=1500, aluguel=120_000, demanda=200, ticket=100
+        )
+    )
+    assert body["retorno"]["payback"] is None
+    assert body["retorno"]["tir_anual"] is None
+    json.dumps(body, allow_nan=False)
+
+
+def _viab(empty: bool = True, **extra) -> dict:
+    base = dict(
+        lat=-23.5, lng=-46.6, m2=1500, aluguel=30000, demanda=1600, ticket=177,
+        obra=600_000, equipamentos=1_400_000, prazo_equipamentos=60,
+        juros_equipamentos_am=0.018,
+    )
+    return pilot.viabilidade(pilot.ViabilidadeIn(**{**base, **extra}))
+
+
+def test_n_studios_custa_no_dre(empty_data: Path) -> None:
+    """Cada studio soma SIM_CUSTO_STUDIO ao custo fixo.
+
+    Ate o FIN-VIAB-01 o campo era aceito e DESCARTADO: o studio elevava o ticket no
+    front e nao custava nada no DRE (receita fantasma) — uma unidade com 3 studios
+    rodava com o custo fixo de uma sem nenhum.
+    """
+    from motor_expansao.dimensionamento.config import SIM_CUSTO_STUDIO
+
+    sem = _viab(n_studios=0)["dre"]
+    com = _viab(n_studios=2)["dre"]
+    assert com["custos_fixos"] - sem["custos_fixos"] == pytest.approx(2 * SIM_CUSTO_STUDIO, abs=0.05)
+    assert com["ebitda"] < sem["ebitda"]
+
+
+def test_taxa_franquia_editavel_pelo_operador(empty_data: Path) -> None:
+    """A taxa de franquia era constante invisivel; agora e premissa explicita."""
+    from motor_expansao.dimensionamento.config import SIM_TAXA_FRANQUIA
+
+    padrao = _viab()["investimento"]
+    assert padrao["taxa_franquia"] == pytest.approx(SIM_TAXA_FRANQUIA)
+
+    ajustada = _viab(taxa_franquia=140_000)["investimento"]
+    assert ajustada["taxa_franquia"] == pytest.approx(140_000)
+    assert ajustada["investimento_total"] == pytest.approx(padrao["investimento_total"] - 20_000)
+
+
+def test_tela_e_pdf_leem_os_mesmos_kpis(empty_data: Path) -> None:
+    """COERENCIA ENTRE CAMADAS: tela e PDF entregam o MESMO numero (tolerancia R$0,01).
+
+    E a regressao do defeito central do FIN-VIAB-01 — o mesmo cenario saindo com payback
+    35 no card e 33 no grafico, aluguel-teto R$55,5 mil na tela e R$105,8 mil no PDF.
+    Compara o `viabilidade_payload_v1` que a rota devolve com o dict que o slide do PDF
+    de fato imprime, ja normalizado por `censo_report._viab_normalizado`.
+    """
+    from motor_expansao.dashboard.censo_report import _viab_normalizado
+
+    entrada = pilot.ViabilidadeIn(
+        lat=-23.5, lng=-46.6, m2=1500, aluguel=30000, demanda=1600, ticket=177,
+        obra=600_000, equipamentos=1_400_000, prazo_equipamentos=60,
+        juros_equipamentos_am=0.018,
+    )
+    tela = pilot.viabilidade(entrada)
+    pdf = _viab_normalizado(pilot._viabilidade_pdf_payload(entrada))
+
+    for caminho, chave_pdf in (
+        (("dre", "faturamento"), "faturamento_mensal"),
+        (("dre", "ebitda"), "ebitda_mensal"),
+        (("dre", "margem"), "margem_ebitda_pct"),
+        (("retorno", "payback"), "payback_meses"),
+        (("retorno", "retorno_anual_desalavancado"), "retorno_anual"),
+        (("retorno", "tir_anual"), "tir_anual"),
+        (("retorno", "vpl"), "vpl"),
+        (("break_even", "ebitda"), "alunos_breakeven"),
+        (("break_even", "caixa"), "breakeven_caixa"),
+        (("investimento", "pmt"), "pmt_mensal"),
+        (("investimento", "juros_totais"), "juros_totais"),
+        (("investimento", "investimento_total"), "investimento_total"),
+        (("aluguel_teto", "canonico"), "aluguel_teto"),
+        (("acumulado_mes_final",), "acumulado_mes_final"),
+    ):
+        esperado: object = tela
+        for parte in caminho:
+            esperado = esperado[parte]  # type: ignore[index]
+        obtido = pdf[chave_pdf]
+        if esperado is None:
+            assert obtido is None, f"{chave_pdf}: tela=None mas PDF={obtido!r}"
+        else:
+            assert obtido == pytest.approx(esperado, abs=0.01), (
+                f"{chave_pdf}: tela={esperado!r} x PDF={obtido!r}"
+            )
+
+    # As 3 FAIXAS do aluguel-teto tem que chegar ao PDF. A chave PLANA `aluguel_teto`
+    # (float) e homonima da secao v1 (dict): sem preservar as faixas a parte, o slide
+    # perdia a linha "ideal | teto | excecao" e imprimia so o canonico.
+    faixas = pdf["aluguel_teto_faixas"]
+    for nome in ("ideal", "teto", "excecao"):
+        assert faixas[nome] == pytest.approx(tela["aluguel_teto"][nome], abs=0.01)
+
+
+def test_dre_do_payload_e_a_linha_de_steady_da_serie(empty_data: Path) -> None:
+    """O DRE de topo tem que ser EXATAMENTE uma linha da serie unica, nao outro mes.
+
+    O waterfall do PDF ja reencontrou a "linha de steady" por `maturacao_meses` em vez de
+    ler o `dre`; bastou o nucleo mover o steady para grafico e card do MESMO slide saírem
+    de meses diferentes. Este teste trava a identidade dre == serie[mes de referencia].
+
+    O mes de referencia e SERVIDO em `premissas.mes_referencia_steady` e vale
+    max(maturacao, inicio da anuidade) — com a anuidade ligada ele NAO e mais
+    `maturacao_meses`. Reencontrar a linha por `maturacao_meses` aqui era o proprio
+    anti-padrao que este ciclo elimina: o teste passava a comparar o DRE de regime
+    pleno (mes 12) com a linha do mes 8.
+    """
+    corpo = _viab()
+    ref = corpo["premissas"]["mes_referencia_steady"]
+    # Com a anuidade ligada o regime pleno so comeca depois da maturacao.
+    assert ref >= corpo["premissas"]["maturacao_meses"]
+    linha = next(r for r in corpo["serie_mensal"] if r["mes"] == ref)
+    assert corpo["dre"]["faturamento"] == pytest.approx(linha["faturamento_mensal"], abs=0.01)
+    assert corpo["dre"]["ebitda"] == pytest.approx(linha["ebitda_mensal"], abs=0.01)
+    # Os degraus intermediarios do DRE tambem sao a MESMA linha (nao subtracoes).
+    assert corpo["dre"]["deducoes"] == pytest.approx(linha["deducoes"], abs=0.01)
+    assert corpo["dre"]["impostos"] == pytest.approx(linha["impostos"], abs=0.01)
+    assert corpo["dre"]["receita_liquida"] == pytest.approx(linha["receita_liquida"], abs=0.01)
+    assert corpo["dre"]["receita_anuidade"] == pytest.approx(linha["receita_anuidade"], abs=0.01)
+
+
+def test_premissas_opcionais_sobrescrevem_o_config(empty_data: Path) -> None:
+    """As premissas que viraram campo do schema chegam MESMO ao motor (nao sao ignoradas)."""
+    body = _viab(
+        deducoes_pct=0.01,
+        reajuste_ticket_aa=0.0,
+        taxa_desconto_aa=0.15,
+        custo_pre_operacional_mes=5_000,
+        carencia_aluguel_meses=6,
+    )
+    p = body["premissas"]
+    assert p["deducoes_pct"] == pytest.approx(0.01)
+    assert p["reajuste_ticket_aa"] == pytest.approx(0.0)
+    assert p["taxa_desconto_aa"] == pytest.approx(0.15)
+    assert p["custo_pre_operacional_mes"] == pytest.approx(5_000)
+    # Carencia contada da ENTREGA (M-4): 6 meses de contrato -> aluguel comeca em M3.
+    assert p["carencia_aluguel_meses"] == 6
+    assert p["mes_inicio_aluguel"] == 3
+    assert body["serie_mensal"][0]["aluguel"] == 0.0
+    assert body["serie_mensal"][0]["custo_pre_operacional"] == pytest.approx(5_000)
 
 
 # ===========================================================================

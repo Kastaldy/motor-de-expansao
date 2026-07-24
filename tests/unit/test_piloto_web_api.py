@@ -34,6 +34,13 @@ def test_faixa_alunos_contrato() -> None:
 
 
 def test_viabilidade_contrato_e_coerencia() -> None:
+    """Contrato `viabilidade_payload_v1` (FIN-VIAB-01).
+
+    O payload antigo tinha DUAS series (`fcf_serie` acumulada e `fco_serie` mensal),
+    montadas no backend, mais `dre.payback`/`dre.roic` que SOBRESCREVIAM os do motor —
+    a duplicacao que fazia o card dizer 35 e o grafico 33. Agora existe UMA serie
+    (`serie_mensal`, do nucleo) e o payback/retorno sao os do motor, sem override.
+    """
     body = pilot_app.viabilidade(
         pilot_app.ViabilidadeIn(
             lat=-23.5,
@@ -46,39 +53,65 @@ def test_viabilidade_contrato_e_coerencia() -> None:
             equipamentos=700_000,
         )
     )
-    # contrato dos campos-chave do payload
+    assert body["versao"] == pilot_app.VIABILIDADE_PAYLOAD_VERSAO
     assert set(body) >= {
+        "premissas",
         "dre",
-        "fcf_serie",
-        "fco_serie",
-        "mes_operacao_positiva",
+        "investimento",
+        "retorno",
+        "break_even",
         "aluguel_teto",
-        "melhoria_payback",
+        "faixa_alunos",
+        "serie_mensal",
+        "split",
+        "grade",
     }
-    dre = body["dre"]
-    assert set(dre) >= {"faturamento", "ebitda", "lucro_liquido", "margem", "payback", "roic"}
-    # DRE NAO expoe mais a linha de financiamento (reforma revertida no nucleo)
-    assert "financiamento" not in dre and "resultado_franqueado" not in dre
+    # As series duplicadas do backend NAO existem mais.
+    assert "fcf_serie" not in body and "fco_serie" not in body
 
-    # aluguel-teto por CLUSTERS (nao mais escalar): ideal/teto/excecao = 15/20/30% do fat
+    dre = body["dre"]
+    assert set(dre) >= {
+        "faturamento", "deducoes", "impostos", "custos_op", "custos_variaveis",
+        "folha", "custos_fixos", "ebitda", "margem", "ir_csll", "resultado_apos_ir",
+    }
+    # Cascata coerente: as PARCELAS do custo vem do motor, nao por diferenca.
+    assert dre["custos_op"] == pytest.approx(
+        dre["custos_variaveis"] + dre["folha"] + dre["custos_fixos"], abs=0.05
+    )
+    assert dre["faturamento"] - dre["deducoes"] - dre["impostos"] - dre["custos_op"] == (
+        pytest.approx(dre["ebitda"], abs=0.05)
+    )
+    # margem em FRACAO (0,3873 = 38,73%), como todo percentual do payload.
+    assert 0.0 <= dre["margem"] <= 1.0
+
+    # Aluguel-teto = % do faturamento bruto steady (unica definicao do sistema).
     teto = body["aluguel_teto"]
-    assert teto is not None and set(teto) == {"ideal", "teto", "excecao"}
+    assert teto["base"] == "faturamento_bruto"
     assert teto["ideal"] < teto["teto"] < teto["excecao"]
+    assert teto["canonico"] == pytest.approx(teto["excecao"])
     assert teto["teto"] == pytest.approx(0.20 * dre["faturamento"], rel=1e-4)
 
-    # ROIC DESALAVANCADO = lucro liquido anual / investimento total (capex + franquia 160k)
-    investimento = 800_000 + 700_000 + 160_000
-    assert dre["roic"] == pytest.approx((dre["lucro_liquido"] * 12) / investimento, abs=1e-3)
+    # Retorno DESALAVANCADO = (EBITDA - IR) x12 / investimento total (capex + franquia).
+    inv = body["investimento"]
+    assert inv["investimento_total"] == pytest.approx(800_000 + 700_000 + 160_000)
+    assert body["retorno"]["otica"] == "desalavancada"
+    assert body["retorno"]["retorno_anual_desalavancado"] == pytest.approx(
+        (dre["resultado_apos_ir"] * 12) / inv["investimento_total"], abs=1e-3
+    )
 
-    # fco_serie e o resultado MENSAL (nao acumulado): comeca em M-4 (obras/pre-abertura, item
-    # Felipe 2026-07-23) e segue ate a operacao. Os 4 primeiros meses (obras, com capex+aluguel)
-    # sao negativos; a operacao comeca no mes 1.
-    fco = body["fco_serie"]
-    assert fco and [p["mes"] for p in fco[:4]] == [-4, -3, -2, -1]
-    assert all(p["fcf"] < 0 for p in fco[:4])  # obras: desembolso de capex + aluguel
-    assert any(p["mes"] == 1 for p in fco)  # operacao comeca no mes 1
-    # fcf_serie (payback) parte de -(investimento): primeiro ponto e negativo
-    assert body["fcf_serie"] and body["fcf_serie"][0]["fcf"] < 0
+    # Break-even em alunos TOTAIS (comparavel com a demanda digitada); o de caixa
+    # (que cobre a PMT) e sempre >= o de EBITDA.
+    be = body["break_even"]
+    assert be["unidade"] == "alunos_totais"
+    assert be["caixa"] >= be["ebitda"]
+
+    # A UNICA serie: M-4..M-1 de pre-abertura + M1..M60 de operacao, com o CAPEX dentro.
+    serie = body["serie_mensal"]
+    assert [linha["mes"] for linha in serie[:4]] == [-4, -3, -2, -1]
+    assert all(linha["fase"] == "pre_operacional" for linha in serie[:4])
+    assert serie[0]["fcf_acumulado"] < 0  # o acumulado parte do desembolso
+    assert serie[-1]["mes"] == body["premissas"]["horizonte_meses"]
+    assert body["acumulado_mes_final"] == pytest.approx(serie[-1]["fcf_acumulado"])
 
 
 def test_backend_e_read_only() -> None:
