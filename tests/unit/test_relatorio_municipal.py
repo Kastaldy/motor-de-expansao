@@ -1,7 +1,7 @@
 """Testes do Relatorio Municipal (BLK-RELMUN-01).
 
 Espelham o teste do Relatorio Pontual (`test_relatorio_pontual_censitario_export.py`):
-agregacao, formula D1, 8 paginas/`/Count 8`/`%PDF-1.4`, headers das 8 secoes, fallback sem
+agregacao, formula D1, 9 paginas/`/Count 9`/`%PDF-1.4`, headers das 9 secoes, fallback sem
 `dominio_df`, fallback Pagina 6 sem bairro, fallback sem assets, anti-PII, mapas SEM rede
 (`basemap=False`), contagem de pins por H3. NENHUM teste bate na rede.
 
@@ -11,16 +11,22 @@ Pontual recente nem do classico (isolamento estrito).
 
 from __future__ import annotations
 
+from io import BytesIO
+
 import h3
+import numpy as np
 import pandas as pd
 import pytest
+from PIL import Image
 
 from motor_expansao.dashboard.relatorio_municipal import (
     _COR_APROVADO_MUNICIPAL,
     _COR_APROVADO_PROPRIO,
     _COR_REPROVADO,
+    _PIN_LOGO_PX,
     CAPACIDADE_UNIDADE,
     PDF_SECTION_HEADERS,
+    ULTRA_MAGENTA,
     _fit_contain,
     _hex_destacado_mask,
     _png_dimensions,
@@ -350,12 +356,108 @@ def test_render_mapas_municipio_png_altura_704(camada):
     assert dims == (1000, 704)
 
 
+def test_mapa_municipal_marcador_ultra_quadrado_blk_relpon_09():
+    """BLK-RELPON-09: o marcador da unidade Ultra e a LOGO QUADRADA, nao o balao 34x34.
+
+    Com `_ICON_CACHE` limpo, a Ultra cai no fallback de sigla -> placa na cor da marca
+    (#C8001E). `_sample_ultra()` tem exatamente 1 unidade, e nenhuma outra cor do modulo
+    e (200,0,30) (ULTRA_MAGENTA/TURQUESA/LARANJA sao distintas), entao a mascara isola o
+    marcador. O footprint tem de ser QUADRADO e caber no lado `_PIN_LOGO_PX` -- o balao
+    anterior era mais alto que largo e media 34 px.
+    """
+    from motor_expansao.dashboard.competitors import _ICON_CACHE
+
+    _ICON_CACHE.pop("__ultra__", None)
+    try:
+        df = _sample_df()
+        res = agregar_municipio(df, nome_municipio="SAO PAULO", dominio_df=_sample_dominio())
+        # a camada "resumo" e onde `_draw_pins` roda; "cobertura" e gerada sem pins por design
+        mapas = render_mapas_municipio(
+            df, res, competitors_df=_sample_competitors(), ultra_df=_sample_ultra(), basemap=False
+        )
+        image = Image.open(BytesIO(mapas["resumo"])).convert("RGB")
+        mask = np.all(np.array(image) == np.array([200, 0, 30]), axis=-1)
+        ys, xs = np.nonzero(mask)
+
+        # interior do card (26 - 2 de sombra - 2x2 de borda = 20 px) menos a sigla
+        assert 250 <= int(mask.sum()) <= 700
+        assert 16 <= (int(xs.max()) - int(xs.min()) + 1) <= _PIN_LOGO_PX
+        assert 16 <= (int(ys.max()) - int(ys.min()) + 1) <= _PIN_LOGO_PX
+    finally:
+        _ICON_CACHE.pop("__ultra__", None)
+
+
+def test_rotulo_de_valor_fica_acima_do_marcador_blk_relpon_09_fu1():
+    """BLK-RELPON-09-FU1: o rotulo de Residual Fitness do hexagono vence o marcador.
+
+    Gate visual de Vinicius (2026-07-21): no Municipal os marcadores quadrados cobriam os
+    numeros dos hexagonos -- o dado principal da pagina. O FU1 passou os rotulos para uma
+    overlay propria, composta DEPOIS de `_draw_pins`.
+
+    Teste DIFERENCIAL e adversarial: posiciona uma unidade Ultra EXATAMENTE no centroide de
+    um hex destacado, forcando colisao maxima com o rotulo, e compara a tinta do texto
+    (`_CIRCLE_INK`) na caixa do rotulo contra o render SEM nenhum pin. Se a ordem regredir
+    (pins por ultimo), a placa opaca de 26 px centrada no mesmo ponto engole o numero e a
+    contagem despenca. A tolerancia e estreita de proposito: a placa branca do rotulo tem
+    alpha 200, entao o pin por baixo NAO pode remover tinta.
+    """
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", dominio_df=_sample_dominio())
+
+    # centroide real do 1o hex destacado (oferta 4451 -> rotulo "4.451")
+    hex_destacado = str(df.loc[0, "hex_id"])
+    lat_c, lng_c = h3.cell_to_latlng(hex_destacado)
+    ultra_no_centro = pd.DataFrame(
+        [{"rede": "ultra", "lat": lat_c, "lng": lng_c, "hex_id_res7": hex_destacado}]
+    )
+
+    com_pin = render_mapas_municipio(
+        df, res, competitors_df=None, ultra_df=ultra_no_centro, basemap=False
+    )["resumo"]
+    sem_pin = render_mapas_municipio(
+        df, res, competitors_df=None, ultra_df=None, basemap=False
+    )["resumo"]
+
+    arr_com = np.array(Image.open(BytesIO(com_pin)).convert("RGB")).astype(np.int16)
+    arr_sem = np.array(Image.open(BytesIO(sem_pin)).convert("RGB")).astype(np.int16)
+
+    # A UNICA diferenca entre os dois renders e o marcador -> o diff LOCALIZA o pin,
+    # sem depender de projecao nem de constante de layout.
+    diff = np.any(arr_com != arr_sem, axis=-1)
+    assert diff.sum() > 0, "o pin nao foi desenhado; o teste seria vacuo"
+    ys, xs = np.nonzero(diff)
+    y0, y1 = int(ys.min()), int(ys.max()) + 1
+    x0, x1 = int(xs.min()), int(xs.max()) + 1
+
+    # A sonda e a PLACA MAGENTA do rotulo (BLK-RELPON-09-FU1): e a unica cor do mapa que o
+    # marcador nao consegue imitar -- hexes sao verdes/cinza, basemap e claro e as redes sao
+    # pretas/azuis/amarelas. Muito mais area que a tinta do texto (fonte 8 e antialiasada).
+    # Tolerancia de 25/canal cobre o alpha 240 da placa blendando com o fundo por baixo.
+    magenta = np.array(ULTRA_MAGENTA, dtype=np.int16)
+    mask_sem = np.all(np.abs(arr_sem[y0:y1, x0:x1] - magenta) <= 25, axis=-1)
+    mask_com = np.all(np.abs(arr_com[y0:y1, x0:x1] - magenta) <= 25, axis=-1)
+    tinta_sem = int(mask_sem.sum())
+    sobreviveu = int((mask_sem & mask_com).sum())
+
+    # (1) a colisao e REAL: ha placa de rotulo debaixo da area do marcador
+    assert tinta_sem >= 60, (
+        f"sem colisao real ({tinta_sem} px de placa sob o marcador) -- o teste seria vacuo"
+    )
+    # (2) o marcador cobriu de fato aquela regiao (senao nao houve teste de ordem nenhum)
+    assert int(diff[y0:y1, x0:x1].sum()) >= 200, "marcador pequeno demais para provar a ordem"
+    # (3) e NENHUM pixel de tinta do numero foi perdido -> os rotulos vencem os pins
+    assert sobreviveu >= tinta_sem * 0.9, (
+        f"o marcador cobriu o rotulo: {sobreviveu}/{tinta_sem} px de placa sobreviveram "
+        "-- a overlay de rotulos precisa ser composta DEPOIS de _draw_pins"
+    )
+
+
 # ---------------------------------------------------------------------------
 # PDF (8 paginas / headers / formato)
 # ---------------------------------------------------------------------------
 
 
-def test_pdf_municipal_8_paginas_e_secoes():
+def test_pdf_municipal_9_paginas_e_secoes():
     df = _sample_df()
     res = agregar_municipio(df, nome_municipio="SAO PAULO", uf="SP", dominio_df=_sample_dominio())
     mapas = render_mapas_municipio(df, res, basemap=False)

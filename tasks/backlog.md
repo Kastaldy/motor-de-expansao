@@ -100,6 +100,128 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
+## Relatório Pontual Censitário — vista aérea de satélite (2026-07-21, pedido de Juan)
+
+> Pedido de Juan a partir dos estudos prontos do time de UX (`UX/*.pptx`, slide "Fotos Do Imóvel"),
+> que trazem uma **foto aérea do imóvel com pin**. Objetivo: gerar essa imagem automaticamente a
+> partir da coordenada que o usuário já informa (o campo de busca resolve coordenada, link do Maps,
+> Plus Code e **endereço livre** — `BLK-UI-08`/`DEC-010`), e inseri-la como página própria no PDF.
+
+### BLK-SAT-01 — Vista aérea (satélite Esri) no PDF do Relatório Pontual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta |
+| **Status** | **Aprovado e mergeado (PR #138, 2026-07-23)** — [DEC-018](../docs/decisions/DEC-018.md) APROVADA por Felipe (label `critica-aprovada`). Validação visual com Juan segue em andamento (não bloqueia; página aditiva). |
+| **ClickUp** | — |
+
+> **Criticidade Alta, não Média** (corrigido 2026-07-22 após a revisão automática do PR #138): o
+> precedente direto — DEC-004, tiles online no MESMO relatório — é Alta, pelo mesmo motivo (desvia do
+> guardrail §2 "não criar dependência de API ao vivo"). Merge exige a label `aprovado-humano`.
+
+**Escopo (aditivo, READ-ONLY sobre o M1):** `censo_map.render_foto_satelite_ponto()` monta um PNG
+da vista aérea do ponto (Esri World Imagery + `Reference/World_Transportation` para rótulos — a mesma
+composição do "World Imagery Hybrid" da Esri e do `sat-overlay` do `openmaptiles-infra`), com pin
+vermelho no centro. `censo_report._foto_satelite_page()` insere a página logo após a capa.
+**Nada recalcula** score, interseção de setores, raio de 1,5 km ou artefato oficial — os números do
+relatório saem idênticos com e sem a página.
+
+**Zoom:** sonda 1 tile e usa z19 se houver imagem no ponto, senão z18. Medido em 22 pontos do Brasil:
+z17 existe em todo lugar, z18 em cidade média/grande, z19 só em capital.
+
+**Tamanho da imagem na página:** `foto_satelite_grande=True` (API/bot e PDF do dashboard, onde a
+vista aérea é a única imagem) ocupa a área de conteúdo; `False` (aba Viabilidade) usa a célula padrão
+de `_fotos_cells`, para casar com a página de fotos do imóvel que o usuário sobe. Em **página própria**
+nos dois casos: com `_FOTOS_MAX=2`, dividir a página descartaria em silêncio uma foto do usuário.
+
+**Falha de rede → `None` → o PDF sai como hoje, sem a página** (mesmo fallback gracioso do
+`_fetch_basemap`, DEC-004). Nenhum caminho novo pode derrubar a geração do relatório.
+
+**BLOQUEANTE — [DEC-018](../docs/decisions/DEC-018.md), PROPOSTA e aguardando Felipe.** A revisão
+automática do PR #138 reprovou (severidade ALTA) por dependência de rede nova não coberta por DEC: o
+`REVIEW.md` (ALTA #5) só permite rede fora da carga do dashboard nas exceções DEC-004/010/011, e a
+Esri é serviço novo. A DEC-018 foi redigida e traz o levantamento completo — inclusive a **licença**
+(o `tou_summary.pdf` da Esri, 21/04/2025, exige assinatura do ArcGIS Online; o tile hoje é anônimo) e
+o caminho de regularização (**ArcGIS Location Platform**, cadastro grátis, 2M tiles/mês, chave via
+env). Duas perguntas abertas ao final da DEC esperam decisão.
+
+**Hermeticidade da suíte (achado MÉDIA do mesmo review, corrigido):** `render_foto_satelite_ponto` é
+chamada DENTRO de `gerar_pdf_ponto` e de `pages.py`, então testes que só mockavam a função final
+passaram a fazer HTTP real. Corrigido na raiz com a fixture `autouse` `_sat_offline` no `conftest.py`,
+em vez de remendar arquivo por arquivo.
+
+**Testes:** `tests/unit/test_relatorio_pontual_foto_satelite.py` (15 casos, zero acesso a rede —
+tile mockado por monkeypatch): matemática de tile, geometria pura da célula, fallback de rede,
+tolerância a tile faltando, e inserção/ausência da página nos dois tamanhos.
+
+---
+
+## Relatório Pontual Censitário — satélite + mapas socioeconômico/residual + logo quadrada (2026-07-21, pedido de Vini)
+
+> **Pedido de Vinicius (2026-07-21)**, a partir do uso real do Relatório Pontual em produção, em três
+> partes: (1) **um slide novo ANTES do slide "Mapas de calor"**, com **dois mapas lado a lado** —
+> socioeconomia da região e residual fitness; (2) uma **imagem de satélite** da região inserida **antes**
+> desses mapas novos, com zoom aproximado para dar noção do que existe no ponto; (3) nos relatórios
+> gerados pelo motor, o **indicador de concorrente** deixa de ser um pin-balão com a logo dentro e passa
+> a ser a **própria logo em formato quadrado**. READ-ONLY sobre o M1 (§5 guardrail): nenhum dos três
+> recalcula `score_priorizacao`, scores censitários, `setor_censitario_intersecao_area_1p5km`, raio de
+> 1,5 km, carteira, plano ou artefatos oficiais — é camada de visualização/relatório.
+>
+> **Correção de premissa (medida no código em 2026-07-21).** O pedido descrevia o PDF como "5 páginas /
+> tira 1x3". Está desatualizado — **e o CLAUDE.md §4 também**: hoje são **6 páginas base** (`/Count 6`) e
+> o slide "Mapas de calor" já é um **grid 2x2 com 4 camadas** (`densidade`, `renda`, `score`,
+> `renda_domiciliar`) — `censo_report.py:27-34,387,465`. A correção do §4 entra junto com o BLK-RELPON-10.
+>
+> **Ordem final de páginas alvo (8 base):** Capa → **Satélite (RELPON-11)** → **Socioeconomia + Residual
+> (RELPON-10)** → Mapas de calor 2x2 → Concorrentes → Perfil do Bairro → Big Numbers → Realização. As
+> páginas opcionais (Fotos, Info do imóvel, Viabilidade) permanecem onde estão.
+>
+> **Decisões de produto travadas com Vinicius em 2026-07-21 (gate deste ciclo):**
+> - **D1 — "socioeconomia" = `score_setor_2022_calibrado`** (o composto socioeconômico do repo e camada
+>   PRIMÁRIA operacional, §1). O termo "socioeconomia" não existia no repositório (0 matches em `tasks/`);
+>   fica definido aqui.
+> - **D2 — residual fitness em raio MAIOR (~5 km)**, rotulado explicitamente como escala diferente do mapa
+>   ao lado. Motivo medido no dado real (Monte Carlo Voronoi, 200k pontos): no raio de 1,5 km cabem apenas
+>   **3 a 5 hexágonos H3 res-7** e **68,9%** dos hexes valem exatamente 0 → sairia um mosaico chapado, não
+>   um mapa de calor. Comparação no mesmo ponto (Av. Paulista): **639 setores censitários vs 5 hexes**.
+> - **D3 — satélite = `Esri.WorldImagery`, largura 250–400 m** (não Google, não 100 m). Ver BLK-RELPON-11.
+> - **D4 — logo quadrada vale no Pontual + Municipal**, via **função nova**, sem tocar `_render_pin_tile`
+>   nem o atlas do pydeck. Ver BLK-RELPON-09.
+>
+> **Sub-decisões ABERTAS, a fechar no gate visual de cada bloco** (não bloqueiam o Planner):
+> - **S1 (RELPON-10):** o `score` promovido ao slide novo **permanece** também no grid 2x2 (slide novo =
+>   resumo/"hero"; 2x2 = detalhe técnico)? **Recomendação: SIM, permanece** — tirá-lo regride o
+>   BLK-RELPON-01 e força o grid de 2x2 para 1x3, com churn extra e sem ganho claro.
+> - **S2 (RELPON-09):** "30x30" é em **px do PNG fonte** (recomendado, comparável aos 40 px atuais) ou em
+>   pt do PDF; e a âncora passa a ser o **centro** do quadrado + ponto fino de 2 px no local exato
+>   (recomendado) ou a base do quadrado (preserva a semântica do pin atual).
+>
+> **Impacto cruzado a citar nos gates:** `BLK-WEB-05`/`BLK-WEB-08` (pendentes) exigem **paridade** com o
+> "2x2 mapas" do Pontual e `BLK-WEB-02`/`BLK-WEB-07` exigem paridade com os **pins com logo** — os três
+> blocos abaixo criam dívida de paridade para o piloto web.
+
+---
+
+- BLK-RELPON-09 (concluído 2026-07-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-10 (concluído 2026-07-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-11 (concluído 2026-07-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-12 (concluído 2026-07-22) — ver tasks/completed.md
+
+
+---
+
 ## Relatório Municipal — novo formato (2026-06-19, pedido de Vini)
 
 > Novo formato de relatório que **coexiste** com o Relatório Pontual Censitário atual (que analisa
@@ -1185,6 +1307,139 @@ produção e exige DEC + gate humano.
 - BLK-ATR-03-FU1 (concluído 2026-07-07) — ver tasks/completed.md
 
 
+## Projeto — Score de vulnerabilidade de academias independentes (M&A)
+
+> Trilha nova (pedido de Vinicius, 2026-07-06): transformar a base de concorrentes já coletada pelos
+> scrapers (GymScraping, DEC-013) num **funil de M&A**. A cada academia INDEPENDENTE (não-rede/de
+> bairro) mapeada, anexar sinais de "saúde do negócio" e derivar um **score de vulnerabilidade**;
+> cruzar com os hexágonos quentes do Motor para produzir uma **lista priorizada de alvos de aquisição**
+> para o time comercial. É **camada de ENRIQUECIMENTO** sobre os scrapers existentes — NÃO cria pipeline
+> novo. **READ-ONLY sobre o M1** (§5): a vulnerabilidade é um score PARALELO, nunca toca
+> `score_priorizacao`/pesos/artefatos oficiais.
+>
+> **Rota escolhida por Vinicius (2026-07-06): PLANO B — sem Google Places.** Os sinais vêm de fontes
+> que o repo JÁ coleta: (a) presença + **rating in-app** do WellHub/TotalPass (DEC-013), e (b)
+> **diff do histórico de snapshots semanais** dos próprios scrapers (churn e staleness). Isso elimina a
+> dependência de API externa ao vivo (sem desvio do §2 → **sem DEC**), sem custo/ToS e **sem PII de
+> reviewers**. Reputação pública externa (Google Places etc.) fica como **sucessor opcional com gate
+> próprio** (BLK-MA-07), caso um dia se queira a nota do público geral.
+
+### BLK-MA-01 — Contrato e decisões do enriquecimento de vulnerabilidade (design, Plano B)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (camada de enriquecimento paralela que reusa dados já coletados + diff de snapshots; **sem dependência externa nova** e **sem DEC** — a rota Google Places/§2 foi descartada no Plano B; gera um score paralelo e um entregável comercial. **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir por Vinicius. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: pesos/limiares do score + definição de hex quente]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | DEC-013 (WellHub/TotalPass já coletados + **cron semanal que acumula os snapshots** — insumo de churn/staleness); camada mercado/residual + Demanda Revelada (para "hexágono quente"); `concorrentes_mapeados.parquet`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca a trilha de scrapers/VPS (integração ao cron, DEC-013) e define um score/entregável comercial; precisa de confirmação humana de produto. NÃO marcar loop-safe. |
+
+**Contexto (ancorado).** Os scrapers do Vini (`VinhoAbencoado/GymScraping`, DEC-013) já mapeiam a
+oferta concorrente **e rodam semanalmente**; a base entra no Motor via
+`normalizar_concorrentes → calcular_colunas_mercado` e alimenta o residual. Hoje esses registros têm
+oferta/rede/geo, mas **nenhum sinal de fragilidade do negócio**. O insight do Plano B: a **variação
+temporal** e a **última atualização** saem do **diff do próprio histórico de scraping** (nenhuma API
+externa), e a **reputação** vem do **rating in-app WellHub/TotalPass** que já é coletado. O BLK-MA-01
+**não escreve código de produção** — fixa o contrato dos sinais, a metodologia do score e as decisões
+de produto; os sucessores implementam.
+
+**Objetivo do epic.** Score de vulnerabilidade por academia independente + lista priorizada de M&A
+(academias mais vulneráveis próximas a hexágonos quentes) para o time comercial.
+
+**Sinais (Plano B — só fontes internas / já coletadas).**
+1. **Presença/ausência em agregadores** (WellHub/TotalPass) — já interno (DEC-013). Tese: ausência do
+   canal onde o público low-cost está → sinal de fragilidade.
+2. **Rating in-app WellHub/TotalPass** (subconjunto listado) — substitui a "avaliação média" do Google;
+   `n/d` para quem não está no agregador (ver D3). **[VERIFICAR no gate — checado por Claude em
+   2026-07-23]** o único caminho de ingestão que existe hoje,
+   `demanda_revelada/concorrentes_densos.py:_ler_csv_tp_wh` (linha 127), produz SÓ
+   `hex_id_res7`/`rede_normalizada`/`fonte` (drop-PII na fronteira), **sem coluna de rating**.
+   Confirmar que os CSVs BRUTOS TP/WH (que vivem na VPS, gitignored) carregam a nota ANTES que
+   BLK-MA-03/04 dependam dela — senão este sinal também é aquisição, não reuso, e o rótulo "já
+   coletado" cai. É a claim mais load-bearing do Plano B.
+3. **Churn/permanência** via **diff dos snapshots semanais** — apareceu/sumiu/reapareceu na base dos
+   scrapers → forte proxy de fechamento/venda. (Substitui a "variação de reviews".)
+4. **Staleness** via **diff dos snapshots** — tempo desde a última mudança nos campos raspados
+   (horário/preço/lista de unidades/endereço). (Substitui "tempo desde última atualização" — proxy mais
+   confiável que o "last-updated" do Google, que nem é exposto.)
+5. **(Opcional) Tendência de popularidade no agregador** — `membros`/`alunos_parceiras` da célula
+   subindo/caindo, quando a série permitir.
+6. **(Opcional, interno) Pressão competitiva** — proximidade a Smart Fit/rede Ultra + residual saturado
+   (de `concorrentes_mapeados` + Ultra + mercado/residual): independente espremida = mais vulnerável.
+   Colunas reais já materializadas por `hex_id` em `data/staging/hexagonos_mercado_mapeado.parquet`
+   (verificadas em 2026-07-23): `pressao_concorrencial_score_2km`, `n_concorrentes_mapeados_2km`,
+   `dist_concorrente_mais_proximo_m`, `n_unidades_ultra_2km`, `rede_dominante_2km`,
+   `share_smart_fit_2km` — nenhum sinal de "pressão" precisa ser recomputado do zero.
+
+**Mapa dos 4 sinais originais → Plano B:** avaliação média → (2) rating in-app; Δ reviews 3m → (3)
+churn + (5) tendência; presença agregadores → (1) [já interno]; última atualização → (4) staleness.
+
+**Decisões a resolver/confirmar (BLK-MA-01).**
+- **D1 — Definição de "academia independente".** Critério de não-rede/bairro sobre `concorrentes_mapeados`
+  (ex.: `rede` isolada / contagem de unidades da marca == 1) e o universo exato (os 28 scrapers citados
+  vs. os 90 coletores da DEC-013 — quais entram).
+- **D2 — Fonte/retenção dos snapshots semanais.** Onde vivem os snapshots dos scrapers (formato/retenção)
+  para computar churn/staleness; janela de staleness (nº de semanas sem mudança = "stale"); tratamento do
+  **ramp-up** (cron ativo desde 26/06 — ~1,5 mês hoje; a série cresce). Sem histórico → sinal marcado
+  como imaturo, não penaliza.
+- **D3 — Rating de agregador.** Usar como sinal só no subconjunto listado; como tratar `n/d` (não
+  penalizar quem não tem rating; a ausência de agregador já é o sinal 1).
+- **D4 — Fórmula/pesos do score.** Heurística transparente e auditável (composição ponderada normalizada
+  dos sinais), com direção de cada um (ausência de agregador ↑vuln.; rating baixo ↑; churn/sumiço ↑;
+  staleness alta ↑; popularidade caindo ↑; pressão competitiva alta ↑). NÃO é modelo preditivo treinado
+  em desfecho — se um dia se quiser validar que prevê aquisição/fechamento, entra a disciplina DEC-008
+  (out-of-fold vs baseline) em bloco próprio.
+- **D5 — "Hexágono quente" + proximidade.** Qual métrica define quente (`score_oportunidade_residual`,
+  SAM, demanda revelada) e o limiar de distância academia↔hex para entrar na lista de M&A.
+  Âncora verificada (2026-07-23): o hotness por hex já está materializado em
+  `data/outputs/carteira_expansao_acionavel.parquet` (4.899x62) — colunas `score_priorizacao`,
+  `score_setor_2022_calibrado`, `score_expansao_hibrido`, `score_oportunidade_residual`,
+  `oferta_efetiva_disponivel`, `tese_entrada` por `hex_id` — e casa direto com
+  `concorrentes_mapeados.hex_id_res7`. Fazer o join READ-ONLY no padrão defensivo de
+  `src/motor_expansao/pipelines/enriquecer_outputs_residual_mercado.py:68-82` (asserts de
+  `score_priorizacao`/ranks/cardinalidade inalterados após o join). **Nota de tese de M&A:** comprar
+  (não construir) quer demanda ALTA + residual BAIXO (mercado saturado); é a INVERSÃO do sinal de
+  abrir unidade nova (residual alto). Registrar a inversão no cálculo.
+- **D6 — Entregável.** Formato da lista priorizada (Parquet + CSV `sep=";"`/`utf-8-sig` para o comercial;
+  e/ou overlay no dashboard) e onde materializar (`data/staging` / `data/outputs`).
+- **D7 — Anti-PII.** Persistir **somente agregados** (rating médio, contagens, flags de churn/staleness);
+  **nunca** texto/autor de review nem PII. Fonte real fora do versionamento; fixtures sintéticas (DEC-012).
+- **D8 — Integração ao cron.** Rodar como passo do lote semanal da VPS (DEC-013) vs. cadência separada.
+
+**Escopo permitido (READ-ONLY M1).** Camada de enriquecimento nova (módulo isolado, ex.:
+`src/motor_expansao/vulnerabilidade/` ou extensão do pacote de mercado), consumindo o histórico de
+snapshots dos scrapers + o ativo WellHub/TotalPass + `concorrentes_mapeados`; materializa um Parquet
+paralelo com o score e a lista de M&A. NÃO altera artefatos oficiais do M1. **Sem dependência nova de
+base** e **sem API externa ao vivo**.
+
+**Fora de escopo.** `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/plano/artefatos oficiais
+do M1; `flag_sam`/gate do SAM (DEC-006/DEC-007); **Google Places / qualquer API externa de reputação**
+(movido para o sucessor opcional BLK-MA-07, com gate/DEC próprios); persistir PII.
+
+**Guardrails.** §5 (score paralelo, não recalcula M1); DEC-012/anti-PII (só agregados; fonte real não
+versionada; fixtures sintéticas); DEC-013 (extensão do lote de scrapers, não pipeline novo). §2 NÃO é
+desafiado no Plano B — não há API ao vivo; o dashboard segue offline sobre Parquets.
+
+**Entregável.** Score de vulnerabilidade por academia independente + lista priorizada de alvos de M&A
+(vulneráveis × proximidade a hexágonos quentes) para o time comercial.
+
+**Decomposição sugerida (sucessores, a confirmar no BLK-MA-01).**
+- **BLK-MA-02** — extrator de **churn + staleness** a partir do histórico de snapshots semanais dos
+  scrapers (100% interno); flags de série imatura (ramp-up).
+- **BLK-MA-03** — join do sinal de agregadores (**presença + rating in-app** WellHub/TotalPass) por
+  dedup com `concorrentes_mapeados`; anti-PII por construção; fixtures sintéticas.
+- **BLK-MA-04** — score de vulnerabilidade (fórmula/pesos do D4) + normalização + flags de qualidade.
+- **BLK-MA-05** — lista priorizada de M&A (cruzamento com hexágonos quentes, D5) + entregável (D6).
+- **BLK-MA-06** — integração ao cron semanal da VPS (D8) e runbook.
+- **BLK-MA-07 (opcional/futuro, gate + DEC próprios)** — enriquecer com **reputação externa** (Google
+  Places ou outra) SE se quiser a nota do público geral; só aqui reaparece o desvio do §2.
+
+**Critério de aceite (BLK-MA-01).** Contrato dos sinais internos (1–4, + 5/6 opcionais) e do score
+definido; D1–D8 resolvidas/confirmadas no gate de produto; decomposição BLK-MA-02+ confirmada;
+guardrails §5/anti-PII/DEC-013 explicitados; **sem DEC de API externa** (rota Google descartada, movida
+ao BLK-MA-07); ZERO código de produção neste bloco (só docs/contrato).
+
 ---
 
 ### BLK-ATR-05 — Materializar a estrutura escolhida (gate + matriz/composto) em produção (DEC + gate humano)
@@ -1421,5 +1676,367 @@ PDF/CSV). Sub-blocos independentes (podem ir em PRs separados); cada um traz seu
 
 - BLK-RELPON-08 (concluído 2026-07-15) — ver tasks/completed.md
 
+
+---
+
+## Epic BLK-WEB — Piloto Web App (React + deck.gl) das telas Mapa e Viabilidade (substituição faseada do Streamlit; READ-ONLY sobre o M1)
+
+> **Origem (2026-07-19, pedido de Felipe):** construir o **piloto completo** de um web app dedicado que
+> reproduz o Motor com UX/UI muito melhor, começando pelas **duas telas** do protótipo — **Mapa** e
+> **Viabilidade** — **preservando 100% das funções que essas abas têm hoje** (seleção de hex, busca,
+> entorno, cenário multi-hex, relatórios, etc.). Handoff de produto: **`PLANO_APP_WEB.md`** (raiz, ajustado
+> nesta mesma entrega para refletir a realidade do repo). Referência visual: **`Motor de Expansão -
+> Referência (standalone).html`** (raiz) — spec visual de alta fidelidade; **o mapa nela é FALSO** (hexágonos
+> em CSS, dados mockados) → no app vira `H3HexagonLayer` deck.gl sobre dados reais.
+>
+> **Arquitetura alvo:** motor Python **INTOCADO** → **API FastAPI fina read-only** (estende a que já existe)
+> → **frontend React + deck.gl + MapLibre**. Roda **EM PARALELO** ao Streamlit. **READ-ONLY sobre o M1 em
+> TODOS os blocos** (§5): nenhum recalcula `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/plano/
+> artefatos oficiais; a API só **lê e serializa** os Parquets que o motor já gera; o guardrail "nada
+> recalcula score" fica garantido por construção.
+>
+> **Realidade do repo que muda o custo (confirmada por varredura de código, 2026-07-19):**
+> - **Motor desacoplado — CONFIRMADO:** a camada de compute é **100% st-free** (`data.py`, `competitors.py`,
+>   `censo_point.py`, `censo_map.py`, `censo_report.py`, `relatorio_municipal.py`, `viabilidade_charts.py`,
+>   `dimensionamento/*`, `constants.py`, `utils.py` = zero `import streamlit`). O acoplamento vive em
+>   `streamlit_app.py` (704 LOC, 16 loaders cacheados), `pages.py` (4908 LOC, 539 `st.`) e `components.py`.
+> - **API FastAPI production-grade JÁ EXISTE e está LIVE** (`api.ultra-expansao.tech`): `src/motor_expansao/api/`
+>   (~2432 LOC) com factory, **auth Bearer token→consumidor**, CORS, modelo de erro `{detail,codigo}`, settings,
+>   versionamento, `Dockerfile.api`, `docker-compose.prod.yml`, **publish por digest no GHCR** e bot Telegram.
+>   **Fase 0 ESTENDE essa API, não cria do zero.** Hoje há 5 endpoints; `/ponto/censitario` **já existe** como
+>   `POST /api/v1/analisar`; `/ufs` existe mas **aponta para a base de mercado** (repontar p/ partições enriquecidas).
+> - **Basemap MapLibre JÁ self-hosted:** `tileserver-gl` (OpenMapTiles) roteado por Caddy em `/tiles/` same-origin
+>   (`docker-compose.yml` + `caddy/tiles.Caddyfile`, montados localmente). A parte mais dura da infra de mapa está resolvida.
+> - **Spike deck.gl prévio:** `src/motor_expansao/dashboard/ui_spike_deckgl.py` (810 LOC) — ativo de referência.
+> - **Relatórios são server-side puros** (`censo_report.py`→bytes, `gerar_excel_viabilidade`→bytes,
+>   `relatorio_municipal.py`, `montar_payload_viabilidade`) → viram **endpoint de download, não React**.
+>
+> **Ordem (dependência real):** Fase 0 backend (**01→02/03/04→05**) → Fase 1 mapa (**06→07 [spike, marca-passo]→08**)
+> → Fase 2 viabilidade (**09**) → **10** (deploy paralelo) → **11** (paridade/aceite). O **mapa deck.gl (07)** e a
+> **paridade byte-a-byte (11)** são os marca-passos; o resto é port de spec conhecida sobre back pronto.
+>
+> **FORA do piloto (decisão futura, DEC + gate):** o **corte** que aposenta o Streamlit (Fase 4 do plano) e as
+> **outras 3 telas** (Executivo, Expansão de Domínio, Carteira e Plano) — só depois do piloto validar os
+> critérios da §1/§15 do plano. **Deploy SEMPRE manual, por digest, pelo Felipe (§6) — auto-merge não deploya.**
+>
+> **Governança loop-safe:** **nenhum bloco entra marcado `loop-safe`** — essa marcação é **pré-aprovação HUMANA**
+> (§6.1: "ALGUÉM humano precisa adicionar essa linha"). Os blocos de **backend (01–05)** são **candidatos naturais**
+> (mecânicos, READ-ONLY, verificados por teste de contrato, sem deploy, reusam o extra `[api_mvp]` sem dep nova);
+> Felipe/Vini adicionam a linha `| **Autonomia** | loop-safe ... |` se quiserem a esteira autônoma. **Frontend
+> (06–09) e deploy (10) NUNCA são loop-safe** (UX/visual exige olho humano — lição BLK-UI-10/BLK-VIAB-09;
+> toolchain Node/Vite fora do container Python do loop; deploy toca VPS/CI).
+
+---
+
+### BLK-WEB-01 — API base: catálogo de UF + slice por UF com filtros server-side + fundação compartilhada
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (nova superfície read-only na API existente; **READ-ONLY sobre o M1** — só serializa artefatos, não altera nenhum score). |
+| **Prioridade** | Alta (funda a Fase 0; tudo depende dela). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — contrato de resposta]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | — (primeiro bloco do epic). |
+| **Autonomia** | **manual por padrão (candidato a loop-safe)** — mecânico, READ-ONLY M1, verificado por teste de contrato, não toca deploy/VPS/segredos, consome `data/outputs`/`data/staging`, sem dep nova (`[api_mvp]`). Qualifica p/ loop-safe, mas a marcação é pré-aprovação HUMANA (§6.1). |
+
+**Contexto.** A API existente (`src/motor_expansao/api/`) é orientada a PDF de ponto/município; falta a superfície de
+"dados de dashboard". As funções puras já existem: `list_partitioned_ufs` (`data.py:65`), `read_enriched_uf_partition`
+(`data.py:82`), `apply_global_filters` (`data.py:477`), `list_censo_geo_municipios` (`data.py:130`). Os **paths estão
+hardcoded** em `streamlit_app.py:187-214` e o cache é `@st.cache_*` (`streamlit_app.py:277-460`).
+
+**Objetivo.** Endpoints: **`GET /ufs`** (catálogo — **repontar** de `_MERCADO_PARQUET` para `list_partitioned_ufs`
+sobre `hexagonos_dashboard_enriquecido/`, `service.py:438`); **`GET /uf/{uf}`** (slice de hexes via
+`read_enriched_uf_partition` + `apply_global_filters` server-side com os **8 params** — `municipios[]`, `faixas[]`,
+`elegibilidade_hibrida[]`, `cobertura[]`, `qualidade[]`, `only_top_municipio`, `only_top_hex_intraurbano` — aplicar
+`MAP_POINT_LIMIT`/`_LARGE` (`constants.py:117`) server-side, preservar **colunas oficiais** e já enviar a **banda de
+cor** por `RESIDUAL_SCORE_BANDS` (`constants.py:328`); **`GET /uf/{uf}/municipios`** (`list_censo_geo_municipios`).
+Criar a **fundação compartilhada**: módulo de config/paths (tira do `streamlit_app.py`), camada de serialização
+(dicts com DataFrames aninhados → `to_dict("records")`), `functools.lru_cache` por UF (drop-in dos `@st.cache_*`).
+
+**Preserva (paridade):** seleção de UF com carga lazy (S1), filtros globais (S2), régua de recorte "X hex | Y UF | Z cidades".
+
+**Guardrail.** §5 READ-ONLY M1; a API **importa `data.py`/`constants.py`, NUNCA `pages.py`/`components.py`/`streamlit_app.py`**
+(que arrastam Streamlit). Nomes/valores de coluna oficiais intactos. Teste de contrato: JSON == números do Streamlit.
+
+---
+
+### BLK-WEB-02 — API de overlays + tabelas operacionais (concorrentes, Ultra, atlas de ícones, domínio, carteira, plano)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (wraps finos de função pura; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Média. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-01** (fundação de config/serialização/cache). |
+| **Autonomia** | **manual por padrão (candidato a loop-safe)** — mesmo perfil do 01 (mecânico, READ-ONLY, teste de contrato, sem deploy/dep nova). Marcação = pré-aprovação humana (§6.1). |
+
+**Contexto.** Camadas visuais de apoio; funções puras prontas: `load_competitor_points` (`competitors.py:323`),
+`load_ultra_points` (`competitors.py:397`), `build_icon_atlas` (`competitors.py:571`). Domínio/carteira/plano são
+`pd.read_parquet` diretos dos artefatos (`plano_expansao_dominio.parquet`, `carteira_expansao_acionavel.parquet`,
+`plano_expansao_curto_prazo.parquet`).
+
+**Objetivo.** **`GET /overlays/concorrentes`** (filtro `uf`/`municipio`/`rede` + `COMPETITOR_PIN_LIMIT` 6000 + cluster
+em escopo largo — `constants.py:128,133`), **`GET /overlays/ultra`**, servir o **atlas/sprite de ícones** (`build_icon_atlas`)
+para o `IconLayer` do deck.gl, **`GET /dominio`**, **`GET /carteira`**, **`GET /plano`** (filtro `uf`/`municipio`), e o
+overlay opcional `vazios_competitivos_lc` (`data/staging/vazios_competitivos_lc.parquet`).
+
+**Preserva (paridade):** overlays Concorrentes/Ultra/Âncoras Domínio/Vazio LC (M3/M4/M16), filtro por rede (M5),
+pins com logo + cluster (M7/M16).
+
+**Guardrail.** §5 READ-ONLY M1; respeitar caps/amostragem determinística; pins são camada visual (não afetam score/ranking).
+
+---
+
+### BLK-WEB-03 — API de análises pontuais interativas (entorno 1.6 km, cenário multi-hex, ponto censitário 1.5 km)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (motor interativo das telas; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta (a interatividade do mapa depende dela). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-01**. |
+| **Autonomia** | **manual por padrão (candidato a loop-safe)** — funções puras, READ-ONLY, teste de contrato; sem rede (o geocoding da busca fica no 06, humano). Marcação = pré-aprovação humana (§6.1). |
+
+**Contexto.** Helpers puros já retornam dicts prontos: `analisar_entorno_ponto` (`data.py:726`, raio 1.6 km),
+`agregar_cenario_multihex` (`data.py:863`, **25 campos**), `analisar_ponto_censitario_setores` (`censo_point.py:155`,
+raio fixo **1.5 km** `censo_point.py:23`), `parse_hex_ids_from_text` (`data.py:1015`), `lookup_hex_by_coord`.
+
+**Objetivo.** **`GET /ponto/entorno?lat=&lng=&raio_km=1.6`**; **`POST /cenario/multihex`** (lista de `hex_id` →
+`agregar_cenario_multihex`, aceitar colar lista via `parse_hex_ids_from_text`, devolver os 25 campos +
+`hexes_selecionados`); **`GET /ponto/censitario?lat=&lng=`** — **alinhar/reusar** o `POST /api/v1/analisar`
+(`routes/analisar.py:31`) já existente (mesmo engine). Endpoint auxiliar `lookup_hex_by_coord` (busca → hex).
+
+**Preserva (paridade):** click no hex → centroide res-7 → entorno (M6/M13), pins no raio via `filter_points_to_radius`,
+cenário multi-hex com add/remove/colar/copiar e os 25 KPIs (M10/M11), disclaimer de centroide.
+
+**Guardrail.** §5 READ-ONLY M1; centroide de hex como aproximação (documentar na UI); serializar DataFrames aninhados.
+
+---
+
+### BLK-WEB-04 — API de viabilidade (JSON + Excel + PDF)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (expõe o engine property-first; **READ-ONLY sobre o M1**; não altera o simulador). |
+| **Prioridade** | Alta (Fase 2 depende dela). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — schema de request]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-01**. |
+| **Autonomia** | **manual por padrão (candidato a loop-safe)** — engine já é função pura; wrap + serialização verificáveis por teste; sem deploy/dep nova. Marcação = pré-aprovação humana (§6.1). |
+
+**Contexto.** O engine é **puro e desacoplado** (DEC-009): `analisar_viabilidade_ponto` (`dimensionamento/viabilidade_ponto.py:318`)
+→ `ViabilidadePontoResult` (dataclass, `:74/:104`); a matemática vive em `dimensionamento/simulador.py` (`viabilidade`
+`:89` — DRE em cascata; `aluguel_teto` `:436` e `alunos_minimos_viaveis` `:494` via `scipy.brentq`; `gerar_serie_mensal`
+`:340` — rampa `SIM_MATURACAO_MESES` mês 8 + FCF 60m). `render_viabilidade_ponto` (`pages.py:3790`) é **só UI**.
+Excel (`gerar_excel_viabilidade` `dimensionamento/excel_export.py:334`→bytes) e o payload de PDF (`montar_payload_viabilidade`
+`viabilidade_charts.py:179`) **já são server-side**.
+
+**Objetivo.** **`POST /viabilidade`** (schema de request: ponto, `m2`, `aluguel`, `demanda` premissa, `usar_p50`, params
+avançados — ticket/margem/capex/financiamento; resposta: KPIs, break-even, aluguel-teto, faixa p10/p50/p90
+(`faixa_alunos_por_densidade` `:125`), grade de sensibilidade, **série 60m** e **DRE cascata**; mapear `inf`→JSON-safe
+como o Excel já faz); **`POST /viabilidade/excel`** (`gerar_excel_viabilidade`→bytes); **`POST /viabilidade/relatorio-pdf`**
+(portar o assembly de `_render_relatorio_pdf_imovel` (`pages.py:3697`) + `_montar_insumos_censo_pdf` (`pages.py:3615`)
+para a camada `api/service.py`; só o `st.spinner` é cosmético).
+
+**Preserva (paridade):** todos os resultados da tela (V4–V9), a demanda **como premissa** (DEC-009, nunca prevista pela
+geografia), split balcão ~69%/agregadores ~31%.
+
+**Guardrail.** §5 READ-ONLY M1; não muta o simulador/coeficientes; PDF usa `[basemap]`/`contextily` já embutido (DEC-004/011)
+com fallback offline; anti-PII (nada persistido).
+
+---
+
+### BLK-WEB-05 — API de relatórios do mapa (download): Relatório Pontual Censitário (PDF+CSV) + Relatório Municipal (PDF)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (expõe relatórios existentes como download; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Média. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-03** (contexto de ponto/censo). |
+| **Autonomia** | **manual por padrão (candidato a loop-safe)** — geradores já são server-side puros (bytes); wrap de download + tiles online (DEC-004/011, cache+fallback). Marcação = pré-aprovação humana (§6.1). |
+
+**Contexto.** Relatório Pontual Censitário e Relatório Municipal já geram **bytes** server-side
+(`gerar_payloads_relatorio_pontual_para_pin` `pages.py:2975`; `relatorio_municipal.py` via `agregar_municipio` +
+`render_mapas_municipio`, tiles online DEC-011). O PDF pontual já é servido pela API (`service.gerar_pdf_ponto`).
+
+**Objetivo.** Endpoints de **download**: Relatório Pontual Censitário (PDF **e** CSV; reusar o caminho `/analisar` PDF +
+o CSV de setores), Relatório Municipal (PDF 9 páginas), com suporte a **fila/lote** (i/N). Fundo de ruas por tiles
+online sob as mitigações da **DEC-004/DEC-011** (cache `data/cache/basemap_tiles/`, fallback offline gracioso, import lazy).
+
+**Preserva (paridade):** Relatório Pontual (M14) com fila + single + 2×2 mapas + PDF/CSV; Relatório Municipal (M15);
+botões-topo compartilhados (S6).
+
+**Guardrail.** §5 READ-ONLY M1; DEC-004/011 vigentes; anti-PII (`.pptx`/cartão de contato nunca embutidos).
+
+---
+
+### BLK-WEB-06 — Frontend scaffold (Vite + React + TS) + AppShell + Design System (tokens §7) + CommandBar + busca
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (funda o frontend; introduz toolchain Node; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta (Fase 1). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX/visual]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-01** (para `/ufs` + `/uf/{uf}`). |
+| **Autonomia** | **manual (NÃO loop-safe)** — toolchain Node/Vite (fora do container Python do loop) + revisão visual humana + a busca por endereço usa **rede ao vivo** (DEC-010/Nominatim). NUNCA loop-safe. |
+
+**Contexto.** Frontend novo em `web/` (ou similar): **React + TypeScript + Vite + @tanstack/react-query**, `deck.gl`,
+`maplibre-gl`. Design system da **§7 do `PLANO_APP_WEB.md`** (cores, Manrope + JetBrains Mono, vidro/backdrop-blur,
+raios, ícones line minimalistas).
+
+**Objetivo.** `AppShell` (Dock lateral com 5 destinos + área de conteúdo por tela), `CommandBar` (título +
+**busca** coordenada/endereço/link Maps/Plus Code + seletor de UF + pill "Modo guiado"), `GlassPanel` base,
+`TagPill`, `Kpi`, wiring `react-query` a `GET /ufs` e `GET /uf/{uf}`. A busca reusa a **cascata de 4 passos** do
+`render_coord_search_sidebar` (`pages.py:807`): `parse_coordinate_input` (offline) → link Maps (`extract_any_coord` +
+`resolve_short_link`) → Plus Code → endereço `resolve_endereco_http` (Nominatim), com o card de resultado (S5) e o
+link-fallback offline. Rede só neste sub-caminho (DEC-010: cache, timeout, fallback, anti-PII).
+
+**Preserva (paridade):** chrome global S3/S4/S5 (nav, busca 4-passos, card do hex pesquisado).
+
+**Guardrail.** §5 READ-ONLY M1; DEC-010 (rede só na resolução de endereço, cache/fallback/anti-PII); só cor a partir de
+score no cliente — **nunca** cálculo de score.
+
+---
+
+### BLK-WEB-07 — MapCanvas: spike deck.gl + MapLibre (H3 real + pins + click-select + 4 modos + caps + perf) — MARCA-PASSO
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (o item de maior risco/incerteza do piloto; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta — **medir primeiro** (o marca-passo do calendário). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — visual/perf]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-06** + **BLK-WEB-01** + **BLK-WEB-02**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — WebGL/perf/visual exige olho humano; toolchain Node. NUNCA loop-safe. |
+
+**Contexto.** O mapa da referência é **FALSO** (hexágonos CSS); o real é `H3HexagonLayer`. Ativo de referência:
+`ui_spike_deckgl.py` (810 LOC). Basemap MapLibre **já self-hosted** em `/tiles/` (same-origin). O paralelo Streamlit é
+`build_unified_map_figure_cached` (`components.py:80`) + `st.pydeck_chart(on_select="rerun")` (`pages.py:4386`).
+
+**Objetivo (isolado, medível):** `MapCanvas` com `H3HexagonLayer` colorido por `RESIDUAL_SCORE_BANDS` nos modos
+**censitário** (default visível), **residual** e **domínio** (M1/híbrido disponíveis nos dados, ocultos como hoje —
+`MAPA_COLOR_MODES_OCULTOS`), basemap MapLibre `/tiles/`, pan/zoom, **`IconLayer`** de pins (Ultra `__ultra__` +
+concorrentes por logo via atlas do BLK-WEB-02) + cluster em escopo largo, **click no hex → centroide res-7 → select**
+(equivale ao `_extract_click_coord_from_selection` `pages.py:2815`), tooltip de 7 linhas (M8), descartados <5k cinza
+(M9), hex pesquisado destacado, highlight laranja de multi-hex, caps `MAP_POINT_LIMIT`/`_LARGE`, e **medir performance
+em UFs grandes** (SP/AM/PA/MG/BA) vs baseline. Entregável de spike: relatório curto de perf + "vai/não-vai" da abordagem.
+
+**Preserva (paridade):** render do mapa + seleção por clique (M6), tooltips (M8), caps/sampling (M7), coloração de
+descartados (M9), pins (M16).
+
+**Guardrail.** §5 READ-ONLY M1; manter os caps (anti-OOM/WebGL); centroide como aproximação; só score→cor no cliente.
+
+---
+
+### BLK-WEB-08 — Tela Mapa completa: narrativa em 4 camadas + funil + seleção + entorno + multi-hex + filtros + relatórios
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (superfície principal do piloto; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX/visual]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-07** + **BLK-WEB-03** + **BLK-WEB-02** + **BLK-WEB-05**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — UI exige revisão visual humana (lição BLK-UI-10/BLK-VIAB-09). NUNCA loop-safe. |
+
+**Contexto.** Junta o MapCanvas (07) com a narrativa/§9 do plano e **todas as funções da aba Mapa** hoje
+(`render_mapa_territorial` `pages.py:4775`). A narrativa em 4 camadas (`mstep` 1→4) é a **reorganização de UX** do
+protótipo sobre os modos de cor reais.
+
+**Objetivo.** `RecommendationPanel` + `NarrativeTimeline` (stepper 1→4 + funil com **números reais** derivados dos
+endpoints, não fixos) + `RankedList`; filtros globais (8 filtros, S2) na UI; modos de cor + **legenda de 10 faixas**
+(M1/M2); overlays multiselect + rede de concorrentes + vazio LC (M3/M4/M5); **click → Análise Pontual de Entorno**
+1.6 km (single + multihex, M13) via `/ponto/entorno`; **Cenário Multi-Hex** (add/remove, colar lista, **copiar hex_id**,
+25 KPIs, highlight laranja "Atualizar mapa", M10/M11) via `/cenario/multihex`; Detalhamento territorial (Análise +
+Ranking, M12); **Relatório Pontual Censitário** (fila + single, PDF/CSV, 2×2 mapas, M14) e **Relatório Municipal** (M15)
+via BLK-WEB-05; tooltips completos incl. renda média domiciliar (M8).
+
+**Preserva (paridade):** **TODAS** as features M1–M16 da aba Mapa + chrome S1–S6.
+
+**Guardrail.** §5 READ-ONLY M1; "camada visual · read-only M1" visível (princípio §8.6); só score→cor no cliente.
+
+---
+
+### BLK-WEB-09 — Tela Viabilidade completa: cenário (stress-test) + veredito + KPIs + régua break-even + DRE + rampa + FCF + relatório
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (segunda tela do piloto; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Alta. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — UX/visual]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-06** + **BLK-WEB-04**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — UI exige revisão visual humana. NUNCA loop-safe. |
+
+**Contexto.** Espelha `render_viabilidade_ponto` (`pages.py:3790`) sobre `POST /viabilidade`. É **stress-test de um
+imóvel real** (DEC-009): a demanda é **premissa do operador**, nunca prevista pela geografia. Todo cálculo no backend.
+
+**Objetivo.** `ScenarioForm`: captura do ponto (coord/link Maps offline + **breadcrumb** "↩ vindo do mapa" do
+`search_pin`, V1), inputs (metragem, aluguel, checkbox p50, demanda, params avançados: ticket/margem/capex/financiamento,
+V2); resultados: **Verdict banner** + KPIs (break-even, aluguel-teto, margem EBITDA, payback, ROIC, faturamento, EBITDA,
+viável — V4), faixa **p10/p50/p90** (V5), contexto de catchment + zona morta (V6), **régua de equilíbrio** (peça
+principal, §10 do plano) + sensibilidade demanda×aluguel (V7), **4 gráficos** (rampa, faturamento/EBITDA, **FCF
+acumulado**, **DRE em cascata** — V8), **Excel** (V9) e **Relatório completo (PDF)** com "Dados para o relatório"
+(fotos até 2 + endereço/valor/pé-direito/vagas/tipo/obs, V11) via `/viabilidade/relatorio-pdf`.
+
+**Preserva (paridade):** **TODAS** as features V1–V11 da aba Viabilidade.
+
+**Guardrail.** §5 READ-ONLY M1 (não muta score/carteira/plano/artefatos); demanda como premissa; usa faixas, não pontos.
+
+---
+
+### BLK-WEB-10 — Deploy do piloto EM PARALELO ao Streamlit (serviço web nginx + rota Caddy + auth + CI por digest)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (toca `deploy/`/`Dockerfile.*`/`docker-compose*`/Caddy/**CI** + VPS; exige **`critica-aprovada`** do Felipe — DEC-016). |
+| **Prioridade** | Média (depois das duas telas prontas). |
+| **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — deploy/VPS/auth/LGPD]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-08** + **BLK-WEB-09**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — o `loop_guard` aborta em `deploy/`/`Dockerfile.*`/compose/CI; deploy sempre manual por digest (§6). NUNCA loop-safe. |
+
+**Contexto.** Prod atual = 5 serviços em `docker-compose.prod.yml` (streamlit, api, telegram-bot, caddy, authelia);
+único ingress é o Caddy (80/443); a **API hoje não tem porta no host** (interna, só o bot consome) e `API_CORS_ORIGINS`
+é curinga. Precedente de API pública com Bearer: `api.ultra-expansao.tech`.
+
+**Objetivo.** Adição **aditiva**: `Dockerfile.web` (build Vite → nginx estático), job **`publish-web`** no CI +
+`WEB_IMAGE` por digest (introduz toolchain Node/Vite no CI hoje só-Python), serviço `web` no compose, **rota Caddy**
+(subdomínio dedicado **ou** `/app` + `/api/*` same-origin sob **Authelia**, reusando o truque do `/tiles/`),
+`API_CORS_ORIGINS` **restrito**, expor a API ao browser. **DECISÃO de auth/LGPD no gate:** Authelia interno
+(recomendado — dados de dashboard atrás de login) **vs** Bearer; a API pública NÃO deve ganhar endpoints de dados de
+dashboard sem gate. Roda **AO LADO** do Streamlit (sem corte).
+
+**Guardrail.** §6 (nenhum comando na VPS sem confirmação, comando a comando; deploy por digest, manual); §5 READ-ONLY M1.
+**Não** aposenta o Streamlit (isso é decisão futura + DEC).
+
+---
+
+### BLK-WEB-11 — Paridade byte-a-byte + critérios de aceite do piloto (§15) + baseline de performance
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (porta de validação do piloto; **READ-ONLY sobre o M1**). |
+| **Prioridade** | Média (fecha o piloto). |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA — aceite/UX]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-08** + **BLK-WEB-09**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — os critérios de aceite incluem UX ("<60s sem treino") e paridade visual que exigem olho humano; a parte de teste de contrato é automatizável, o veredito de aceite é humano. |
+
+**Contexto.** Critérios da **§1/§15 do `PLANO_APP_WEB.md`**: paridade numérica byte-a-byte, performance por UF ≤
+baseline (`data/reports/perf_baseline_dashboard.md`), zero recálculo de score, analista jr. → recomendação de UF < 60s.
+
+**Objetivo.** **Testes de contrato** comparando o JSON de cada endpoint com a saída do Streamlit (mesmas funções puras,
+mesmos Parquets) — byte-a-byte nos números; **teste de guardrail** (nenhum endpoint escreve em disco; `mtime` dos 4
+artefatos oficiais inalterado; score/pesos intactos); medição de **carga por UF** vs baseline (incl. UFs grandes sem
+crash); checklist da §15; validação humana de UX (<60s jr., "uma decisão por tela", read-only visível).
+
+**Guardrail.** §5 READ-ONLY M1 (o próprio teste de guardrail prova isso); centralizar `RESIDUAL_SCORE_BANDS` no back
+(evita divergência de cor/faixa).
 
 ---

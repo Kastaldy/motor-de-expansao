@@ -87,3 +87,28 @@ def unidades_ultra_coords():
         (-22.91, -43.17),  # Rio
         (-15.78, -47.93),  # Brasília
     ]
+
+
+@pytest.fixture(autouse=True)
+def _sat_offline(monkeypatch):
+    """BLK-SAT-01: mantem a suite HERMETICA (sem rede) por padrao.
+
+    `render_foto_satelite_ponto` e chamada DENTRO de `api/service.gerar_pdf_ponto` e de
+    `dashboard/pages.py`. Sem esta fixture, testes que so mockam a funcao final passariam
+    a bater de verdade em `server.arcgisonline.com` a cada execucao (a falha viraria
+    `None` em silencio -- nao quebraria o teste, mas ele deixaria de ser offline).
+
+    Aqui a SONDA de zoom levanta, o que faz `render_foto_satelite_ponto` cair no seu
+    fallback gracioso e devolver `None`. Efeito colateral util: todo teste que gera PDF
+    exercita o caminho "sem rede" de graca.
+
+    Quem PRECISA do caminho feliz (tests/unit/test_relatorio_pontual_foto_satelite.py)
+    faz seu proprio `monkeypatch.setattr` depois desta fixture e sobrescreve o stub.
+    """
+    from motor_expansao.dashboard import censo_map
+
+    def _sem_rede(*_args, **_kwargs):
+        raise OSError("rede bloqueada na suite (fixture _sat_offline)")
+
+    monkeypatch.setattr(censo_map, "_sat_melhor_zoom", _sem_rede)
+    monkeypatch.setattr(censo_map, "_sat_baixar_tile", _sem_rede)
