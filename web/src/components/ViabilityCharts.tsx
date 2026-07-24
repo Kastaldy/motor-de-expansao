@@ -519,7 +519,7 @@ export function FluxoCaixaOperacional({
   }
 
   const W = 620
-  const H = 150
+  const H = 230
   const padL = 8
   const padR = 8
   const mesMin = Math.min(...pts.map((p) => p.mes))
@@ -573,7 +573,7 @@ export function FluxoCaixaOperacional({
       <svg
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
-        style={{ width: '100%', height: 150, display: 'block' }}
+        style={{ width: '100%', height: 230, display: 'block' }}
         aria-hidden
       >
         <defs>

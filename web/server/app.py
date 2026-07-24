@@ -1496,50 +1496,115 @@ def _fcf_serie(
     return out, payback
 
 
+def _plano_pagamento(body: ViabilidadeIn, inv: dict[str, Any]) -> dict[str, Any]:
+    """Desmembra o investimento em OBRA (equity, parcelada SEM juros) e EQUIPAMENTOS
+    (FINANCIADOS, PMT com juros — sistema Price) para o fluxo de caixa mês a mês.
+
+    - Obra: `obra` pago em `parcelas_obra` parcelas iguais (default 4), sem juros.
+    - Equipamentos: `equipamentos` financiado em `prazo_equipamentos` meses a
+      `juros_equipamentos_am` (fracao a.m.) -> PMT constante. Juros 0 -> parcela simples.
+    Legado (so `capex`/`capex_financiado_*`): split por valor/percentual; senao tudo em obra.
+    Retorna as parcelas mensais e os prazos, para `_fco_serie` compor o caixa."""
+    capex_total = float(inv["capex_total"])
+    obra = float(body.obra) if body.obra is not None else None
+    equip = float(body.equipamentos) if body.equipamentos is not None else None
+    if obra is None and equip is None:
+        if body.capex_financiado_valor:
+            equip = min(float(body.capex_financiado_valor), capex_total)
+            obra = capex_total - equip
+        elif body.capex_financiado_pct:
+            equip = capex_total * float(body.capex_financiado_pct)
+            obra = capex_total - equip
+        else:
+            obra, equip = capex_total, 0.0
+    obra = float(obra or 0.0)
+    equip = float(equip or 0.0)
+
+    parcelas_obra = int(body.parcelas_obra or _MESES_OBRA)
+    prazo_equip = int(body.prazo_equipamentos or body.capex_parcelas_meses or 36)
+    juros = body.juros_equipamentos_am
+    if juros is None:
+        juros = body.juros_financiamento_am
+    juros = float(juros or 0.0)
+
+    obra_parcela = obra / parcelas_obra if parcelas_obra > 0 else 0.0
+    if equip > 0 and prazo_equip > 0:
+        if juros > 0:
+            fator = (1.0 + juros) ** prazo_equip
+            equip_pmt = equip * juros * fator / (fator - 1.0)
+        else:
+            equip_pmt = equip / prazo_equip
+    else:
+        equip_pmt = 0.0
+    return {
+        "obra": obra,
+        "equipamentos": equip,
+        "obra_parcela": obra_parcela,
+        "parcelas_obra": max(parcelas_obra, 0),
+        "equip_pmt": equip_pmt,
+        "prazo_equip": max(prazo_equip, 0),
+        "juros": juros,
+    }
+
+
 def _fco_serie(
     body: ViabilidadeIn, inv: dict[str, Any]
 ) -> tuple[list[dict[str, Any]], int | None]:
-    """Fluxo de caixa OPERACIONAL mês a mês (NÃO acumulado), partindo das OBRAS.
+    """Fluxo de caixa OPERACIONAL + FINANCEIRO mês a mês (NÃO acumulado), a partir das OBRAS.
 
-    A linha do tempo começa em M-4: 4 meses de pré-abertura/obras (M-4..M-1) em que o
-    CAPEX é desembolsado e já se paga aluguel (salvo carência), seguidos da operação
-    (mês 1..60). Em cada mês de operação o valor é o caixa operacional puro do mês
-    (EBITDA − IR/CSLL); nas obras é o desembolso de capex do mês + aluguel. Assim o
-    gráfico REAGE a aluguel E a capex (antes o capex cancelava no delta e sumia).
+    Compõe, mês a mês: (a) caixa OPERACIONAL (EBITDA − IR/CSLL, já com aluguel), (b) a
+    PARCELA da OBRA (equity, sem juros, ao longo de `parcelas_obra`), (c) a PMT dos
+    EQUIPAMENTOS FINANCIADOS (com juros, ao longo de `prazo_equipamentos`) e (d) o aluguel
+    da pré-abertura. Por isso REAGE a obra/equipamentos/parcelas/juros (antes o gráfico era
+    idêntico em qualquer cenário de financiamento). O motor roda A VISTA (sem PMT); a
+    alavancagem é composta AQUI, então o caixa operacional puro sai do delta do motor.
 
-    A carência de aluguel conta A PARTIR DE M-4 (mês de contrato 1 = M-4): os primeiros
-    N meses de contrato ficam sem aluguel, consumindo-se primeiro nas obras. Retorna
-    (serie, mes_operacao_positiva) — o 1o mês de OPERAÇÃO (>=1) cujo resultado fica >= 0
-    e assim permanece (None se nunca vira; as obras, sempre negativas, são ignoradas aqui).
-    """
+    Linha do tempo: M-4..M-1 = obras (parcela da obra + aluguel salvo carência), depois a
+    operação (mês 1..60). Carência de aluguel conta A PARTIR de M-4 (mês de contrato 1 = M-4).
+    Retorna (serie, mes_operacao_positiva) — 1o mês de OPERAÇÃO (>=1) com resultado >= 0 que
+    assim permanece (None se nunca vira)."""
     serie = _serie_motor(body, inv)
     if not serie:
         return [], None
 
-    capex_total = float(inv["capex_total"])
     aluguel = float(body.aluguel)
     carencia = int(body.carencia_aluguel_meses or 0)
+    capex_total = float(inv["capex_total"])
+    plano = _plano_pagamento(body, inv)
+    obra_parcela = float(plano["obra_parcela"])
+    parcelas_obra = int(plano["parcelas_obra"])
+    equip_pmt = float(plano["equip_pmt"])
+    prazo_equip = int(plano["prazo_equip"])
 
     out: list[dict[str, Any]] = []
-    # Pré-abertura: 4 meses de obras (M-4..M-1). O capex é desembolsado ao longo das
-    # obras; o aluguel só entra quando a carência (contada de M-4) já se esgotou.
-    obra_mensal = capex_total / _MESES_OBRA if capex_total > 0 else 0.0
+    # Pré-abertura (M-4..M-1, mês de contrato 1..4): parcela da obra (enquanto durar) +
+    # aluguel (fora da carência). Equipamentos financiados NÃO desembolsam aqui (a PMT
+    # corre na operação).
     for i in range(_MESES_OBRA):
-        contrato_mes = i + 1  # 1..4  -> M-4..M-1
+        contrato_mes = i + 1  # 1..4 -> M-4..M-1
         display_mes = i - _MESES_OBRA  # -4..-1
-        aluguel_mes = 0.0 if contrato_mes <= carencia else aluguel
-        out.append({"mes": display_mes, "fcf": _num(-obra_mensal - aluguel_mes)})
+        val = 0.0
+        if contrato_mes <= parcelas_obra:
+            val -= obra_parcela
+        if contrato_mes > carencia:
+            val -= aluguel
+        out.append({"mes": display_mes, "fcf": _num(val)})
 
-    # Operação: resultado operacional mensal (delta do fcf_acumulado do motor). O capex
-    # cancela no delta; a carência de operação só vale se ainda não se esgotou nas obras
-    # (mês de contrato = mês de operação + 4).
+    # Operação: caixa operacional (delta do motor — EBITDA − IR, com aluguel; o capex
+    # cancela no delta) MENOS a parcela da obra que passa da abertura e a PMT dos
+    # equipamentos. Carência devolve o aluguel enquanto vigente (contada de M-4).
     prev_acum = -capex_total
     for row in serie:
         mes = int(row["mes"])
+        contrato_mes = mes + _MESES_OBRA  # 5..64
         mensal = float(row["fcf_acumulado"]) - prev_acum
         prev_acum = float(row["fcf_acumulado"])
-        if carencia and (mes + _MESES_OBRA) <= carencia:
+        if carencia and contrato_mes <= carencia:
             mensal += aluguel  # carência ainda vigente neste mês de operação
+        if contrato_mes <= parcelas_obra:
+            mensal -= obra_parcela  # parcelas de obra que passam da abertura
+        if mes <= prazo_equip:
+            mensal -= equip_pmt  # PMT do equipamento financiado (juros a.m.)
         out.append({"mes": mes, "fcf": _num(mensal)})
 
     # Break-even operacional: 1o mês de OPERAÇÃO (mes >= 1) com resultado >= 0 e que

@@ -576,7 +576,8 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
           </div>
           <span style={{ display: 'block', font: '400 10px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}>
             Taxa de franquia R$ 160.000 já entra no investimento. Carência = meses iniciais sem
-            aluguel. Prazo/juros do equipamento (alavancagem) entram no 2º passo — hoje é à vista.
+            aluguel. Obra = equity parcelada sem juros; equipamentos financiados (prazo + juros a.m.)
+            entram como PMT no Fluxo de Caixa Operacional mês a mês.
           </span>
           {res && (
             <div
