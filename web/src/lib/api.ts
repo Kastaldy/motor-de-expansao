@@ -11,8 +11,8 @@ import type {
 
 /** A primeira leitura de uma UF carrega a particao inteira — pode passar de 15 s. */
 const TIMEOUT_LEITURA = 90_000
-/** O PDF baixa tiles de basemap; em area densa passa de 1 min. */
-const TIMEOUT_PDF = 240_000
+/** O PDF baixa tiles de basemap (8 mapas); em area densa/cache frio passa de 1 min. */
+const TIMEOUT_PDF = 360_000
 
 export class ApiError extends Error {
   constructor(

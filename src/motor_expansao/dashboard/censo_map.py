@@ -984,7 +984,11 @@ def _render_camada_residual_hex(
     if not hex_records:
         return None
 
-    basemap_tiles = _fetch_basemap(frame_3857.bounds, width) if basemap else None
+    # Zoom GROSSO para o overview de 5 km: o frame do residual e ~10x mais largo que os mapas
+    # de 1,5 km, entao o zoom default (+1) baixaria CENTENAS de tiles (o Relatorio Pontual
+    # estourava o timeout). z13 (~14 m/px) casa com a resolucao de exibicao (1280 px p/ ~18 km)
+    # e mostra vias/quadras principais — detalhe de rua nao e legivel a 5 km de qualquer forma.
+    basemap_tiles = _fetch_basemap(frame_3857.bounds, width, zoom_bump=-1) if basemap else None
 
     eff_alpha = _CHOROPLETH_ALPHA if choropleth_alpha is None else int(choropleth_alpha)
     sem_dado = (_FILL_SEM_DADO[0], _FILL_SEM_DADO[1], _FILL_SEM_DADO[2], eff_alpha)
@@ -1234,7 +1238,12 @@ def render_mapas_censitarios_combinados(
 
     basemap_tiles = None
     if basemap:
-        basemap_tiles = _fetch_basemap(bounds_t, width)
+        # `zoom_bump=0` (em vez do +1 global): o frame de 1,5 km ficou mais largo (5,5 km) com
+        # os mapas retangulares, e o +1 baixava ~208 tiles/mapa (27 s, cache frio) -> o Relatorio
+        # Pontual estourava o timeout quando o CartoDB limitava o IP. z16 (~52 tiles, 6 s) casa
+        # com a resolucao de exibicao (1280 px p/ 5,5 km) — as ruas seguem nitidas ao reduzir
+        # (o tile ja era super-amostrado). 5x menos requisicoes de tile por relatorio.
+        basemap_tiles = _fetch_basemap(bounds_t, width, zoom_bump=0)
 
     pins = _project_points(result["concorrentes_raio"], lat, lng)
     ultra_pins = _project_points(result["ultra_raio"], lat, lng)
