@@ -17,6 +17,7 @@ from motor_expansao.dashboard.censo_report import (
     _CARD_VERMELHO_RGB,
     _META_DOMICILIOS_TOTAL_RAIO,
     _META_POP_TOTAL_RAIO,
+    _META_RENDA_DOMICILIAR_TOTAL_RAIO,
     PDF_SECTION_HEADERS,
     _cor_consumo_concorrentes,
     _cor_por_meta,
@@ -283,6 +284,21 @@ def test_cor_por_meta_verde_vermelho_neutro():
     assert _cor_por_meta(2_999, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERMELHO_RGB
     assert _cor_por_meta(None, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
     assert _cor_por_meta(float("nan"), _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+
+
+def test_renda_media_domiciliar_fica_verde_a_partir_de_4000():
+    """Gate visual BLK-RELPON-13 (Vinicius, 2026-07-24): meta baixada de 6.200 para 4.000.
+
+    Trava a REGRA pedida ("verde a partir de 4000") no valor de fronteira, nao so no simbolo:
+    4.000 e' verde (inclusiva), 3.999 e' vermelho. Cobre a faixa 4.000-6.199, que ANTES do
+    gate saia vermelha.
+    """
+    assert _META_RENDA_DOMICILIAR_TOTAL_RAIO == 4_000.0  # a meta pedida no gate
+    assert _cor_por_meta(4_000, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
+    assert _cor_por_meta(3_999, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERMELHO_RGB
+    assert _cor_por_meta(5_000, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB  # era vermelho
+    assert _cor_por_meta(None, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+    assert _cor_por_meta(float("nan"), _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
 
 
 def test_cor_consumo_concorrentes_regra_assimetrica():

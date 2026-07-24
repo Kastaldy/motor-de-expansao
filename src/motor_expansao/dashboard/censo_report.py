@@ -100,8 +100,9 @@ _CINZA_TEXTO = (60, 60, 60)
 # nomeadas e auditaveis (nao hardcoded inline dentro de `_big_numbers_page`).
 _META_POP_TOTAL_RAIO = 10_000.0
 _META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
-# Renda media domiciliar TOTAL (com uplift): alvo ~C1 GeoFusion (fase seguinte, ADITIVO).
-_META_RENDA_DOMICILIAR_TOTAL_RAIO = 6_200.0
+# Renda media domiciliar TOTAL (com uplift): verde a partir de 4.000 -- decisao de Vinicius no
+# gate visual do BLK-RELPON-13 (2026-07-24); substitui o alvo anterior de 6.200 (~C1 GeoFusion).
+_META_RENDA_DOMICILIAR_TOTAL_RAIO = 4_000.0
 _META_DOMICILIOS_TOTAL_RAIO = 3_000.0
 _META_SCORE_SETOR_MEDIO = 60.0
 _META_SAM_FITNESS_POTENCIAL = 2_000.0
@@ -522,7 +523,7 @@ _SOCIOECONOMIA_RESIDUAL_TITULO = "Socioeconomia e Residual Fitness"
 _ENTORNO_TITULO = "Imagem do Entorno"
 # BLK-RELPON-13: fator de escala das 2 imagens do slide-hero (1.0 = tamanho atual). Ponto de
 # PARTIDA CALIBRAVEL no gate visual de Vinicius; so as paginas socioeconomia+residual o aplicam.
-_HERO_MAP_SCALE = 0.92
+_HERO_MAP_SCALE = 0.85
 
 
 def _entorno_page(

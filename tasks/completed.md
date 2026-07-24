@@ -10200,3 +10200,24 @@ pré-existente virou **BLK-FIX-LTV-01** no backlog (Baixa, loop-safe, só teste)
 **Pendente (humano).** **Gate visual de Vinicius** sobre o `_HERO_MAP_SCALE` (0.92) e a aparência final do
 hex a 5 km — é critério de aceite do bloco e acontece **antes do merge**; Alta exige a label
 `aprovado-humano` (DEC-016). Deploy segue manual, por digest.
+
+### BLK-RELPON-13 — resultado do gate visual (2026-07-24, Vinicius)
+
+Gate visual **REALIZADO** (o fechamento anterior o registrava como pendente com o valor de partida).
+Duas calibrações pedidas por Vinicius apos ver o PDF no dashboard local:
+
+1. **`_HERO_MAP_SCALE` 0.92 -> 0.85`** (`censo_report.py`) — as 2 imagens do slide-hero ficam um pouco
+   menores do que o ponto de partida. Vale para as duas variantes; nenhum teste travava o 0.92
+   (o `test_map_grid_cells_packed_scale_encolhe_e_mantem_centrado` trava a MECANICA, nao o numero),
+   entao foi mudanca de uma constante so.
+2. **`_META_RENDA_DOMICILIAR_TOTAL_RAIO` 6.200 -> 4.000`** (`censo_report.py`) — o card "Renda média
+   domiciliar" dos Big Numbers passa a ficar **verde a partir de 4.000**. Efeito: a faixa 4.000-6.199,
+   que antes saía vermelha, agora sai verde. Substitui o alvo anterior ancorado em "~C1 GeoFusion" —
+   decisão de produto de Vinicius no gate. Entrou COM teste
+   (`test_renda_media_domiciliar_fica_verde_a_partir_de_4000`, trava a fronteira 4.000 verde /
+   3.999 vermelho), pois nenhum teste cobria a cor desse card. `docs/relatorio_pontual_censitario.md`
+   atualizado nos dois pontos (o contrato afirmava 0.92 e 6200).
+
+Validação: subconjunto impactado **92 passed**, ruff e mypy limpos. READ-ONLY sobre o M1 inalterado
+(as duas mudanças são constantes de DISPLAY locais a `censo_report.py`; não tocam `flag_sam`, DEC-006/007,
+`sam_fitness_potencial`, `oferta_efetiva_disponivel` nem qualquer artefato oficial).
