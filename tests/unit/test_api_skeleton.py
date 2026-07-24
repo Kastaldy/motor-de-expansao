@@ -170,3 +170,63 @@ def test_500_inesperado_usa_corpo_padrao_e_loga_traceback() -> None:
     assert resp.json() == {"detail": "Erro interno ao gerar o estudo", "codigo": "erro_interno"}
     # Ha um ERROR com traceback (exc_info) do nosso handler.
     assert any(r.levelno == logging.ERROR and r.exc_info for r in registros)
+
+
+def test_hexes_vizinhos_serve_score_setor_para_socioeconomia_do_hero(tmp_path):
+    """Regressao BLK-RELPON-13: o painel Socioeconomia do slide-hero passou a ser desenhado
+    por HEXAGONO e depende de `score_setor_2022_calibrado` no `hexes_df`. O caminho da API/bot
+    (`_hexes_vizinhos_do_ponto`) servia so `oferta_efetiva_disponivel` -> o painel caia no
+    fallback textual em TODO PDF do bot. Este teste trava as duas colunas no retorno.
+    """
+    import h3
+    import pandas as pd
+
+    from motor_expansao.api.service import _hexes_vizinhos_do_ponto
+
+    lat, lng = -23.55, -46.63
+    centro = h3.latlng_to_cell(lat, lng, 7)
+    hexes = list(h3.grid_disk(centro, 5))
+    df = pd.DataFrame(
+        {
+            "hex_id": hexes,
+            "oferta_efetiva_disponivel": [1200.0] * len(hexes),
+            "score_setor_2022_calibrado": [64.0] * len(hexes),
+            "coluna_irrelevante": [0] * len(hexes),  # nao deve ser puxada
+        }
+    )
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    df.to_parquet(staging / "hexagonos_mercado_mapeado.parquet")
+
+    settings = Settings(staging_dir=staging)
+    out = _hexes_vizinhos_do_ponto(lat, lng, settings)
+
+    assert out is not None
+    assert "score_setor_2022_calibrado" in out.columns  # a regressao
+    assert "oferta_efetiva_disponivel" in out.columns
+    assert "coluna_irrelevante" not in out.columns       # segue lendo so o necessario
+    assert (out["score_setor_2022_calibrado"] == 64.0).all()
+
+
+def test_hexes_vizinhos_sem_a_coluna_score_nao_crasha(tmp_path):
+    """Parquet antigo sem `score_setor_2022_calibrado`: a leitura e tolerante (nao pede a
+    coluna) e devolve o que houver -> a Socioeconomia cai no fallback textual, sem crashar."""
+    import h3
+    import pandas as pd
+
+    from motor_expansao.api.service import _hexes_vizinhos_do_ponto
+
+    lat, lng = -23.55, -46.63
+    centro = h3.latlng_to_cell(lat, lng, 7)
+    hexes = list(h3.grid_disk(centro, 5))
+    df = pd.DataFrame(
+        {"hex_id": hexes, "oferta_efetiva_disponivel": [1200.0] * len(hexes)}
+    )
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    df.to_parquet(staging / "hexagonos_mercado_mapeado.parquet")
+
+    out = _hexes_vizinhos_do_ponto(lat, lng, Settings(staging_dir=staging))
+    assert out is not None
+    assert "score_setor_2022_calibrado" not in out.columns
+    assert "oferta_efetiva_disponivel" in out.columns

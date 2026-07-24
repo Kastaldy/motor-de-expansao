@@ -238,6 +238,39 @@ def test_map_grid_cells_packed_proporcao_empacotado_sem_sobreposicao():
     assert abs((x1 - (x0 + w0)) - 10.0) < 1e-6  # colado: so o gap de 10 entre colunas
 
 
+def test_map_grid_cells_packed_scale_encolhe_e_mantem_centrado():
+    """BLK-RELPON-13: `scale` encolhe as celulas do slide-hero e mantem o grid centrado.
+
+    Trava a MECANICA (scale=1.0 -> geometria IDENTICA; scale<1.0 -> menor, mesma proporcao,
+    mesmo centro), NAO o valor de `_HERO_MAP_SCALE`, que e' calibravel no gate visual.
+    """
+    from motor_expansao.dashboard.censo_report import _PAGE_W, _map_grid_cells_packed
+
+    aspect = 1000.0 / 760.0
+    kw = {"top": 58.0, "bottom": 518.0, "gap": 10.0, "cols": 2, "rows": 1}
+    base = _map_grid_cells_packed(aspect, **kw)
+    assert _map_grid_cells_packed(aspect, scale=1.0, **kw) == base  # default preserva
+
+    menor = _map_grid_cells_packed(aspect, scale=0.8, **kw)
+    assert len(menor) == len(base)
+    for i in range(len(base)):
+        _xb, _yb, wb, hb = base[i]
+        _xm, _ym, wm, hm = menor[i]
+        assert wm < wb and hm < hb  # encolheu nas duas dimensoes
+        assert abs(wm / hm - wb / hb) < 1e-6  # proporcao do mapa preservada
+
+    def _centro(cells):
+        xs = [c[0] for c in cells] + [c[0] + c[2] for c in cells]
+        ys = [c[1] for c in cells] + [c[1] + c[3] for c in cells]
+        return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+
+    cx_base, cy_base = _centro(base)
+    cx_menor, cy_menor = _centro(menor)
+    assert abs(cx_base - cx_menor) < 1e-6  # segue centrado na horizontal
+    assert abs(cy_base - cy_menor) < 1e-6  # e na vertical
+    assert abs(cx_base - _PAGE_W / 2.0) < 1e-6  # centrado na pagina
+
+
 def test_cor_por_meta_verde_vermelho_neutro():
     """BLK-RELPON-08 (D3/Q2): helper puro de cor por meta simples (>= meta -> verde)."""
     # pop_total_raio / _META_POP_TOTAL_RAIO (10000)
@@ -252,6 +285,21 @@ def test_cor_por_meta_verde_vermelho_neutro():
     assert _cor_por_meta(2_999, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERMELHO_RGB
     assert _cor_por_meta(None, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
     assert _cor_por_meta(float("nan"), _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+
+
+def test_renda_media_domiciliar_fica_verde_a_partir_de_4000():
+    """Gate visual BLK-RELPON-13 (Vinicius, 2026-07-24): meta baixada de 6.200 para 4.000.
+
+    Trava a REGRA pedida ("verde a partir de 4000") no valor de fronteira, nao so no simbolo:
+    4.000 e' verde (inclusiva), 3.999 e' vermelho. Cobre a faixa 4.000-6.199, que ANTES do
+    gate saia vermelha.
+    """
+    assert _META_RENDA_DOMICILIAR_TOTAL_RAIO == 4_000.0  # a meta pedida no gate
+    assert _cor_por_meta(4_000, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
+    assert _cor_por_meta(3_999, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERMELHO_RGB
+    assert _cor_por_meta(5_000, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB  # era vermelho
+    assert _cor_por_meta(None, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+    assert _cor_por_meta(float("nan"), _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
 
 
 def test_meta_renda_domiciliar_corta_em_4000():
@@ -858,11 +906,12 @@ def test_slide_hero_presente_nas_2_variantes_com_8_paginas():
 
 
 def test_slide_hero_offline_safe_sem_camada_residual():
-    """Sem `hexes_df` a camada `residual` nao existe -> o slide cai no fallback TEXTUAL da
-    celula, sem excecao, e a estrutura de 8 paginas e preservada."""
+    """Sem `hexes_df` NEM `socioeconomia` NEM `residual` existem (BLK-RELPON-13: ambas viraram
+    hexagono a 5 km, CONDICIONAIS ao `hexes_df`) -> as DUAS celulas do slide-hero caem no fallback
+    TEXTUAL ("Mapa indisponivel"), sem excecao, e a estrutura de 8 paginas e preservada."""
     result, mapas = _sample_result()
     assert "residual" not in mapas  # `_sample_result` nao passa `hexes_df`
-    assert "socioeconomia" in mapas
+    assert "socioeconomia" not in mapas  # BLK-RELPON-13: agora tambem condicional ao `hexes_df`
 
     for gerar in (gerar_pdf_relatorio_pontual_censitario, gerar_pdf_relatorio_pontual_classico):
         pdf_bytes = gerar(result, mapas, residual=_RESIDUAL_OK)

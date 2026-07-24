@@ -100,8 +100,10 @@ _CINZA_TEXTO = (60, 60, 60)
 # nomeadas e auditaveis (nao hardcoded inline dentro de `_big_numbers_page`).
 _META_POP_TOTAL_RAIO = 10_000.0
 _META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
-# Renda media domiciliar TOTAL (com uplift): corte em 4.000 (pedido de Felipe 2026-07-23 —
-# acima de R$ 4.000 o card NAO deve vir vermelho). Alinha com a 1a faixa "verde" das bandas.
+# Renda media domiciliar TOTAL (com uplift): verde a partir de 4.000 -- pedido de Felipe
+# (2026-07-23, "acima de R$ 4.000 o card NAO deve vir vermelho") e confirmado por Vinicius no
+# gate visual do BLK-RELPON-13 (2026-07-24); substitui o alvo anterior de 6.200 (~C1 GeoFusion).
+# Alinha com a 1a faixa "verde" das bandas.
 _META_RENDA_DOMICILIAR_TOTAL_RAIO = 4_000.0
 _META_DOMICILIOS_TOTAL_RAIO = 3_000.0
 _META_SCORE_SETOR_MEDIO = 60.0
@@ -427,13 +429,17 @@ def _map_grid_cells_packed(
     gap: float,
     cols: int = _MAP_GRID_COLS,
     rows: int = _MAP_GRID_ROWS,
+    scale: float = 1.0,
 ) -> list[tuple[float, float, float, float]]:
     """Celulas com a PROPORCAO `aspect` (largura/altura), maximizadas em altura e
     EMPACOTADAS (coladas, so o `gap`) e centralizadas -> mapas maiores/retangulares e sem o
     vao branco (letterbox) entre eles. Geometria pura, testavel sem PDF.
 
     BLK-RELPON-10: `cols`/`rows` com default nos valores atuais (2x2) -> caminho existente
-    inalterado; o slide-hero "Socioeconomia e Residual Fitness" usa 2x1 (2 mapas lado a lado)."""
+    inalterado; o slide-hero "Socioeconomia e Residual Fitness" usa 2x1 (2 mapas lado a lado).
+    BLK-RELPON-13: `scale` (default 1.0 = geometria IDENTICA) encolhe uniformemente cada celula
+    APOS o clamp de largura; como a recentragem usa `total_w`/`total_h`, as celulas menores ficam
+    centradas. So o slide-hero passa `scale<1.0` para reduzir um pouco as 2 imagens."""
     h_avail = bottom - top
     cell_h = (h_avail - (rows - 1) * gap) / rows
     cell_w = cell_h * aspect
@@ -441,6 +447,8 @@ def _map_grid_cells_packed(
     if cols * cell_w + (cols - 1) * gap > max_total_w:
         cell_w = (max_total_w - (cols - 1) * gap) / cols
         cell_h = cell_w / aspect
+    cell_w *= scale
+    cell_h *= scale
     total_w = cols * cell_w + (cols - 1) * gap
     total_h = rows * cell_h + (rows - 1) * gap
     x0 = (_PAGE_W - total_w) / 2.0
@@ -463,6 +471,7 @@ def _draw_maps_grid(
     pack: bool = False,
     cols: int = _MAP_GRID_COLS,
     rows: int = _MAP_GRID_ROWS,
+    packed_scale: float = 1.0,
 ) -> list[tuple[float, float, float, float]]:
     """Desenha os PNGs num grid `cols` x `rows` sem sobreposicao (default 2x2:
     [densidade, renda, score, renda_domiciliar]).
@@ -476,12 +485,14 @@ def _draw_maps_grid(
 
     `pack=True` (mapas de calor): as celulas assumem a PROPORCAO do proprio mapa (do 1o PNG
     valido) e sao empacotadas/centralizadas -> mapas maiores, retangulares e SEM o vao branco.
+    `packed_scale` (BLK-RELPON-13, default 1.0 = geometria IDENTICA; so o ramo `pack=True` o usa)
+    encolhe uniformemente as celulas empacotadas — usado so pelo slide-hero.
     """
     if pack:
         dims_ref = next((_png_dimensions(p) for p in pngs if p), None)
         aspect = (dims_ref[0] / dims_ref[1]) if dims_ref else (1000.0 / 760.0)
         cells = _map_grid_cells_packed(
-            aspect, top=top, bottom=bottom, gap=gap, cols=cols, rows=rows
+            aspect, top=top, bottom=bottom, gap=gap, cols=cols, rows=rows, scale=packed_scale
         )
     else:
         cells = _map_grid_cells(top, bottom, margin_x, gap, cols=cols, rows=rows)
@@ -512,6 +523,9 @@ def _draw_maps_grid(
 
 _SOCIOECONOMIA_RESIDUAL_TITULO = "Socioeconomia e Residual Fitness"
 _ENTORNO_TITULO = "Imagem do Entorno"
+# BLK-RELPON-13: fator de escala das 2 imagens do slide-hero (1.0 = tamanho atual). Ponto de
+# PARTIDA CALIBRAVEL no gate visual de Vinicius; so as paginas socioeconomia+residual o aplicam.
+_HERO_MAP_SCALE = 0.85
 
 
 def _entorno_page(
@@ -558,9 +572,10 @@ def _socioeconomia_residual_page(
 
     Dois mapas LADO A LADO (grid 2x1), com ESCALAS diferentes rotuladas dentro do proprio PNG
     (titulo + rodape, produzidos em `censo_map`): Socioeconomia = `score_setor_2022_calibrado`
-    por setor censitario no raio de 1,5 km; Residual Fitness = `oferta_efetiva_disponivel`
-    (alunos) por hexagono H3 res-7 no raio de EXIBICAO de 5 km. Camada ausente -> fallback
-    textual da propria `_draw_maps_grid` (offline-safe). READ-ONLY sobre o M1.
+    por hexagono H3 res-7 no raio de EXIBICAO de 5 km (BLK-RELPON-13; era setor a 1,5 km);
+    Residual Fitness = `oferta_efetiva_disponivel` (alunos) por hexagono H3 res-7 no raio de
+    EXIBICAO de 5 km. As 2 imagens sao reduzidas por `_HERO_MAP_SCALE` (gate visual). Camada
+    ausente -> fallback textual da propria `_draw_maps_grid` (offline-safe). READ-ONLY sobre o M1.
     """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
@@ -575,6 +590,7 @@ def _socioeconomia_residual_page(
         pack=True,
         cols=2,
         rows=1,
+        packed_scale=_HERO_MAP_SCALE,
     )
     _draw_footer(pdf, with_attribution=True)
     return boxes
@@ -1798,6 +1814,7 @@ def _classico_draw_maps_grid(
     *,
     cols: int = _MAP_GRID_COLS,
     rows: int = _MAP_GRID_ROWS,
+    packed_scale: float = 1.0,
 ) -> list[tuple[float, float, float, float]]:
     """Grid 2x2 dos 4 choropleths na geometria do template CLASSICO (BLK-RELPON-01).
 
@@ -1808,6 +1825,8 @@ def _classico_draw_maps_grid(
 
     BLK-RELPON-10: `cols`/`rows` keyword-only com default 2x2 (caminho existente inalterado);
     o slide-hero classico passa 2x1.
+    BLK-RELPON-13: `packed_scale` (default 1.0 = geometria IDENTICA) repassado ao `_draw_maps_grid`;
+    so o slide-hero classico passa `_HERO_MAP_SCALE`.
     """
     return _draw_maps_grid(
         pdf,
@@ -1819,6 +1838,7 @@ def _classico_draw_maps_grid(
         pack=True,
         cols=cols,
         rows=rows,
+        packed_scale=packed_scale,
     )
 
 
@@ -1861,6 +1881,8 @@ def _classico_socioeconomia_residual_page(
 
     Gemea de `_socioeconomia_residual_page` na geometria do template classico (banda com margem +
     titulo de secao). O classico e' o DEFAULT em producao, entao esta pagina e' obrigatoria.
+    BLK-RELPON-13: Socioeconomia = `score_setor_2022_calibrado` por hexagono H3 res-7 a 5 km (era
+    setor a 1,5 km); as 2 imagens reduzidas por `_HERO_MAP_SCALE` (gate visual).
     """
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
@@ -1870,6 +1892,7 @@ def _classico_socioeconomia_residual_page(
         [layers.get("socioeconomia"), layers.get("residual")],
         cols=2,
         rows=1,
+        packed_scale=_HERO_MAP_SCALE,
     )
     _draw_footer(pdf, with_attribution=True)
     return boxes

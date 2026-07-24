@@ -22,9 +22,9 @@ from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS
 LAT_C = -23.55
 LNG_C = -46.63
 
-# BLK-RELPON-10: `socioeconomia` (mesmo insumo do `score`, titulo com o raio) e' produzida
-# SEMPRE; `residual` (choropleth de hexagonos H3 no raio de EXIBICAO de 5 km) e' CONDICIONAL —
-# so entra quando `hexes_df` foi passado e ha hex desenhavel.
+# BLK-RELPON-13: `socioeconomia` passou a ser HEXAGONO H3 a 5 km (score_setor_2022_calibrado),
+# CONDICIONAL ao `hexes_df` como o `residual` — sem hexes desenhaveis a chave e' AUSENTE. Junto
+# do `residual` (choropleth de hexagonos H3 no raio de EXIBICAO de 5 km), tambem CONDICIONAL.
 # BLK-RELPON-11: `entorno` (mapa de quadra, raio de EXIBICAO ~0,14 km) e' INCONDICIONAL — nao
 # depende de `hexes_df`, de setores nem de tiles; por isso entra no set "sem hexes".
 _CAMADAS_SEM_HEXES = {
@@ -32,11 +32,10 @@ _CAMADAS_SEM_HEXES = {
     "renda",
     "score",
     "renda_domiciliar",
-    "socioeconomia",
     "concorrentes",
     "entorno",
 }
-_CAMADAS = _CAMADAS_SEM_HEXES | {"residual"}
+_CAMADAS = _CAMADAS_SEM_HEXES | {"socioeconomia", "residual"}
 
 
 def _to_wgs_geometry(local_geom):
@@ -701,14 +700,23 @@ def test_legenda_caption_pins_nao_transborda_do_canvas():
 
 
 def _hexes_sinteticos(lat: float = LAT_C, lng: float = LNG_C, k: int = 5) -> pd.DataFrame:
-    """Disco H3 res-7 em torno do ponto, com `oferta_efetiva_disponivel` variando por faixa."""
+    """Disco H3 res-7 em torno do ponto, com `oferta_efetiva_disponivel` (residual) e
+    `score_setor_2022_calibrado` (socioeconomia BLK-RELPON-13) variando por faixa."""
     import h3
 
     centro = h3.latlng_to_cell(lat, lng, 7)
     celulas = list(h3.grid_disk(centro, k))
     # Valores que cruzam TODAS as 6 faixas (0 / 1.250 / 2.500 / 5.000 / 10.000 / inf).
     valores = [float(i % 6) * 2_600.0 for i in range(len(celulas))]
-    return pd.DataFrame({"hex_id": celulas, "oferta_efetiva_disponivel": valores})
+    # Score censitario 0-100 cruzando as faixas de 20 pontos (BLK-RELPON-13: socioeconomia hex).
+    scores = [float((i % 10) * 11) for i in range(len(celulas))]
+    return pd.DataFrame(
+        {
+            "hex_id": celulas,
+            "oferta_efetiva_disponivel": valores,
+            "score_setor_2022_calibrado": scores,
+        }
+    )
 
 
 def _setores_um_quadrado() -> pd.DataFrame:
@@ -746,9 +754,10 @@ def test_camada_residual_nao_desenha_pins_blk_relpon_10_fu1():
     "Concorrentes"; este mapa responde ONDE HA ESPACO, e a cor e o dado dele.
 
     Teste DIFERENCIAL: renderiza duas vezes, com e sem pontos, e exige que o PNG do
-    `residual` seja BYTE-IDENTICO -- prova que nenhum pixel do mapa depende dos pontos. O
-    mesmo par prova o inverso na camada `socioeconomia` (1,5 km), que DEVE continuar com
-    pins: sem essa segunda assercao, remover os pins de TODAS as camadas passaria no teste.
+    `residual` seja BYTE-IDENTICO -- prova que nenhum pixel do mapa depende dos pontos.
+    BLK-RELPON-13: a `socioeconomia` virou hex a 5 km SEM pins -> tambem imune aos pontos
+    (byte-identica). A sentinela anti-vacuo passa a ser a camada `score` (setor a 1,5 km, que
+    MANTEM pins): sem ela, remover os pins de TODAS as camadas passaria trivialmente no teste.
     """
     setores = _setores_um_quadrado()
     hexes = _hexes_sinteticos()
@@ -774,10 +783,14 @@ def test_camada_residual_nao_desenha_pins_blk_relpon_10_fu1():
     # (2) e a legenda nao promete pins que nao existem
     assert b"Pins: Ultra e concorrentes" not in com["residual"]
 
-    # (3) trava anti-vacuo: socioeconomia (1,5 km) CONTINUA com pins, senao o teste (1)
+    # (3) socioeconomia (BLK-RELPON-13: hex a 5 km SEM pins) tambem e imune aos pontos.
+    assert com["socioeconomia"] == sem["socioeconomia"], (
+        "a camada `socioeconomia` (hex a 5 km) nao pode desenhar pins"
+    )
+    # (4) trava anti-vacuo: `score` (setor a 1,5 km) CONTINUA com pins, senao o teste (1)
     # passaria trivialmente caso alguem removesse os pins de todas as camadas.
-    assert com["socioeconomia"] != sem["socioeconomia"], (
-        "a camada `socioeconomia` deveria continuar desenhando pins"
+    assert com["score"] != sem["score"], (
+        "a camada `score` deveria continuar desenhando pins"
     )
 
 
@@ -805,6 +818,100 @@ def test_camada_residual_ausente_sem_hexes_df_ou_sem_hex_no_disco():
     assert "residual" not in render_mapas_censitarios_combinados(
         LAT_C, LNG_C, setores, width=800, height=600, basemap=False, hexes_df=pd.DataFrame()
     )
+
+
+# ── BLK-RELPON-13: socioeconomia do slide-hero = hexagono H3 a 5 km (score_setor_2022_calibrado) ──
+
+
+def test_socioeconomia_e_hexagono_nao_setor_a_5km(monkeypatch):
+    """A `socioeconomia` do slide-hero passou a ser o choropleth de `score_setor_2022_calibrado`
+    por hexagono H3 res-7 no raio de EXIBICAO de 5 km (mesma bbox/geometria do residual), nao mais
+    o setor a 1,5 km. Prova indireta: com `hexes_df`, a chave existe, e PNG valido e emite o titulo
+    "Socioeconomia - raio 5 km" + o rodape "Raio 5,0 km" (ambos ASCII)."""
+    textos: list[str] = []
+    real = censo_map._draw_text
+
+    def _spy(draw, xy, text, **kwargs):
+        textos.append(text)
+        return real(draw, xy, text, **kwargs)
+
+    monkeypatch.setattr(censo_map, "_draw_text", _spy)
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C,
+        LNG_C,
+        _setores_um_quadrado(),
+        width=1000,
+        height=760,
+        basemap=False,
+        hexes_df=_hexes_sinteticos(),
+    )
+
+    assert "socioeconomia" in mapas
+    png = mapas["socioeconomia"]
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+    image = Image.open(BytesIO(png))
+    assert image.size == (1000, 760)
+    assert len(_all_colors(png)) > 20
+    assert "Socioeconomia - raio 5 km" in textos
+    assert "Raio 5,0 km - EPSG:3857 - fundo de ruas offline" in textos
+    # Legenda com a escala de score (0-100), nao a de residual (alunos).
+    assert "Score censitario (0-100)" in textos
+
+
+def test_socioeconomia_ausente_sem_hexes_df_ou_sem_coluna_score():
+    """CONDICIONAL como o residual: sem `hexes_df`, sem a coluna `score_setor_2022_calibrado`
+    ou sem hex no disco, a chave `socioeconomia` e AUSENTE (fallback textual do PDF), sem excecao."""
+    setores = _setores_um_quadrado()
+    # (a) sem `hexes_df` -> chave ausente.
+    sem = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+    )
+    assert "socioeconomia" not in sem
+    # (b) `hexes_df` SEM a coluna de score (so hex_id + oferta) -> ausente, sem excecao.
+    import h3
+
+    centro = h3.latlng_to_cell(LAT_C, LNG_C, 7)
+    so_oferta = pd.DataFrame(
+        {"hex_id": list(h3.grid_disk(centro, 5)), "oferta_efetiva_disponivel": 3_000.0}
+    )
+    sem_col = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False, hexes_df=so_oferta
+    )
+    assert "socioeconomia" not in sem_col
+    # ... mas o `residual` (que tem a coluna) CONTINUA presente -> prova que so a socioeconomia caiu.
+    assert "residual" in sem_col
+    # (c) `hexes_df` de outra regiao (hex fora do disco) -> ausente.
+    longe = pd.DataFrame(
+        {
+            "hex_id": [h3.latlng_to_cell(-3.119, -60.0217, 7)],  # Manaus, longe de SP
+            "score_setor_2022_calibrado": [80.0],
+        }
+    )
+    fora = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False, hexes_df=longe
+    )
+    assert "socioeconomia" not in fora
+
+
+def test_socioeconomia_reage_ao_score_setor_2022_calibrado():
+    """A cor depende do dado: dois `hexes_df` com `score_setor_2022_calibrado` diferentes por hex
+    produzem PNGs de socioeconomia DIFERENTES (trava anti-constante)."""
+    import h3
+
+    setores = _setores_um_quadrado()
+    centro = h3.latlng_to_cell(LAT_C, LNG_C, 7)
+    celulas = list(h3.grid_disk(centro, 5))
+
+    def _render(scores: list[float]) -> bytes:
+        hexes = pd.DataFrame({"hex_id": celulas, "score_setor_2022_calibrado": scores})
+        mapas = render_mapas_censitarios_combinados(
+            LAT_C, LNG_C, setores, width=1000, height=760, basemap=False, hexes_df=hexes
+        )
+        return mapas["socioeconomia"]
+
+    baixos = _render([float((i % 10) * 3) for i in range(len(celulas))])  # 0-27 (faixas baixas)
+    altos = _render([float(90 + (i % 10)) for i in range(len(celulas))])  # 90-99 (faixa alta)
+    assert baixos != altos
 
 
 def test_camadas_censitarias_declara_as_8_chaves():
@@ -836,7 +943,7 @@ def test_rodape_do_png_deriva_do_raio_km_1p5_identico_e_5p0_novo(monkeypatch):
     assert "Raio 1,5 km - EPSG:3857 - fundo de ruas offline" in textos
     assert "Raio 5,0 km - EPSG:3857 - fundo de ruas offline" in textos
     # Titulos com o raio rotulado dentro do PNG (ASCII puro).
-    assert "Socioeconomia - raio 1,5 km" in textos
+    assert "Socioeconomia - raio 5 km" in textos
     assert "Residual Fitness - raio 5 km" in textos
     assert "Residual disponivel (alunos)" in textos
 
@@ -972,9 +1079,10 @@ def test_camada_entorno_presente_e_png_valido():
 def test_camada_entorno_nao_desenha_pins_e_e_imune_a_concorrentes():
     """T2: sem pins de concorrente/Ultra (a ~1,82 px/m um pin de 30 px cobre ~16,5 m de solo).
 
-    Teste DIFERENCIAL byte-a-byte, com a MESMA trava anti-vacuo do residual: `socioeconomia`
-    (1,5 km) DEVE continuar reagindo aos pontos, senao remover os pins de todas as camadas
-    passaria trivialmente.
+    Teste DIFERENCIAL byte-a-byte, com a MESMA trava anti-vacuo do residual. Este teste NAO passa
+    `hexes_df`, entao a `socioeconomia` (BLK-RELPON-13: hex a 5 km) estaria AUSENTE; a sentinela
+    passa a ser `score` (setor a 1,5 km, com pins): DEVE reagir aos pontos, senao remover os pins
+    de todas as camadas passaria trivialmente.
     """
     setores = _setores_um_quadrado()
     competitors = pd.DataFrame(
@@ -995,9 +1103,10 @@ def test_camada_entorno_nao_desenha_pins_e_e_imune_a_concorrentes():
         "a camada `entorno` mudou ao receber concorrentes/Ultra -- ela nao pode desenhar pins"
     )
     assert b"Pins: Ultra e concorrentes" not in com["entorno"]
-    # Trava anti-vacuo: socioeconomia (1,5 km) CONTINUA com pins.
-    assert com["socioeconomia"] != sem["socioeconomia"], (
-        "a camada `socioeconomia` deveria continuar desenhando pins"
+    # Trava anti-vacuo: sem `hexes_df` a `socioeconomia` esta ausente; `score` (setor a 1,5 km)
+    # CONTINUA com pins e serve de sentinela.
+    assert com["score"] != sem["score"], (
+        "a camada `score` deveria continuar desenhando pins"
     )
 
 
