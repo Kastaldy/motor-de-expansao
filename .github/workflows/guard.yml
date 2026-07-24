@@ -49,7 +49,8 @@ jobs:
   # guard — o coracao da DEC-016: o diff do PR passa pelo scripts/loop_guard.py da BASE.
   #   sem violacao          -> VERDE (o PR pode auto-mergear)
   #   violacao `critico`    -> so passa com a label `critica-aprovada` E se ela tiver
-  #                            sido aplicada pelo PROPRIO dono (login Kastaldy)
+  #                            sido aplicada por um dos donos autorizados (Kastaldy ou
+  #                            VinhoAbencoado; DEC-019)
   #   violacao `governanca` -> passa com a label `aprovado-humano` E se ela tiver sido
   #                            aplicada por um HUMANO com permissao de escrita, que nao
   #                            seja o autor do PR
@@ -195,7 +196,8 @@ jobs:
 
           LABEL_CRITICA = "critica-aprovada"   # identificador — sem acento
           LABEL_HUMANO = "aprovado-humano"     # identificador — sem acento
-          DONO = "kastaldy"                    # login do dono (comparado em minusculas)
+          # DEC-019: dois donos autorizados a liberar mudanca critica (logins em minusculas).
+          DONOS = {"kastaldy", "vinhoabencoado"}
           CLASSES_CONHECIDAS = {"critico", "governanca"}
           PERMISSOES_OK = {"admin", "maintain", "write"}
 
@@ -327,8 +329,8 @@ jobs:
                   resumo.append(
                       f"\nComo destravar: este PR toca o nucleo protegido (M1/score/pesos/artefatos, "
                       f"deploy/VPS, segredos ou CI). Ele so passa com a label `{LABEL_CRITICA}` "
-                      f"aplicada pelo **proprio dono** (`Kastaldy`), acompanhada de uma DEC registrada "
-                      f"no CLAUDE.md secao 8."
+                      f"aplicada por um dos donos autorizados (`Kastaldy` ou `VinhoAbencoado`), "
+                      f"acompanhada de uma DEC registrada no CLAUDE.md secao 8."
                   )
                   reprovar(f"Violacao critica sem a label `{LABEL_CRITICA}`.")
 
@@ -340,14 +342,17 @@ jobs:
                       f"`labeled` correspondente no timeline."
                   )
                   reprovar("Nao foi possivel confirmar quem aplicou a label critica (fail-closed).")
-              if autor.lower() != DONO:
+              if autor.lower() not in DONOS:
                   resumo.append(
-                      f"\nA label `{LABEL_CRITICA}` foi aplicada por **{autor}**, e nao pelo dono "
-                      f"(`Kastaldy`). Mudanca critica so o dono libera — remova a label e peca a "
-                      f"aprovacao dele."
+                      f"\nA label `{LABEL_CRITICA}` foi aplicada por **{autor}**, que nao e um dos "
+                      f"donos autorizados (`Kastaldy`, `VinhoAbencoado`). Mudanca critica so um dono "
+                      f"libera — remova a label e peca a aprovacao de um deles."
                   )
-                  reprovar(f"Label critica aplicada por `{autor}` (esperado: `Kastaldy`).")
-              resumo.append(f"\nLabel `{LABEL_CRITICA}` confirmada — aplicada pelo dono (`{autor}`).")
+                  reprovar(
+                      f"Label critica aplicada por `{autor}` "
+                      f"(esperado: um dos donos: Kastaldy, VinhoAbencoado)."
+                  )
+              resumo.append(f"\nLabel `{LABEL_CRITICA}` confirmada — aplicada por um dono autorizado (`{autor}`).")
 
           # ---- 6. Violacao de governanca: exige aprovado-humano (validado) ----------
           if exige_governanca:
