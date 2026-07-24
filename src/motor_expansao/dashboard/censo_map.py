@@ -1571,8 +1571,16 @@ _SAT_ROTULOS_URL = (
     "/MapServer/tile/{z}/{y}/{x}"
 )
 _SAT_ATRIBUICAO = "Esri, Vantor, Earthstar Geographics"
-_SAT_ZOOM_MIN, _SAT_ZOOM_MAX = 18, 19
+# Faixa da sonda de zoom. O piso era 18 e isso FURAVA em area sem cobertura fina: a Esri
+# devolve 404 em z18/z19 (ex.: -10.1880,-48.3247, interior do TO, onde so ha imagem de z17
+# para baixo), a sonda nao achava nada e caia no piso 18 -> todos os tiles 404 -> saia uma
+# PAGINA PRETA no PDF. Agora desce ate 16 e, se nem ai houver imagem, a pagina e OMITIDA.
+_SAT_ZOOM_MIN, _SAT_ZOOM_MAX = 16, 19
 _SAT_PLACEHOLDER_MAX_BYTES = 3000
+# Zoom baixo cobre os mesmos 400 m com MENOS pixels (z17 ~365 px, z16 ~180 px) e a celula do
+# PDF tem ~1100 px. Ampliamos ate esta largura ANTES de desenhar pin e credito, para os dois
+# sairem nitidos sobre o fundo ampliado (o credito da Esri e exigido pela licenca).
+_SAT_LARGURA_ALVO = 1100
 _SAT_COBERTURA_M = 400          # largura do enquadramento no chao
 # Proporcao = a MESMA da celula de foto do PDF (`_FOTO_ASPECT`, paisagem 3:2). Se gerar
 # em outra proporcao, `_recortar_cover` corta as laterais p/ encaixar na celula -- e o
@@ -1620,8 +1628,14 @@ def _sat_baixar_tile(url: str, z: int, x: int, y: int, timeout: float, token: st
         return Image.open(BytesIO(resp.read())).convert("RGBA")
 
 
-def _sat_melhor_zoom(lat: float, lng: float, timeout: float, token: str) -> int:
-    """Maior zoom com imagem REAL neste ponto (1 tile de sonda, nao o mosaico todo)."""
+def _sat_melhor_zoom(lat: float, lng: float, timeout: float, token: str) -> int | None:
+    """Maior zoom com imagem REAL neste ponto (1 tile de sonda, nao o mosaico todo).
+
+    Desce de `_SAT_ZOOM_MAX` ate `_SAT_ZOOM_MIN` ate achar cobertura. Devolve `None`
+    quando NENHUM zoom tem imagem real -- a Esri responde 404 (ou um placeholder de
+    ~2,5 KB) fora da area coberta. Antes esta funcao devolvia o piso nesse caso, o que
+    fazia o mosaico buscar tiles inexistentes e render uma pagina PRETA.
+    """
     import urllib.request
 
     for z in range(_SAT_ZOOM_MAX, _SAT_ZOOM_MIN - 1, -1):
@@ -1635,7 +1649,7 @@ def _sat_melhor_zoom(lat: float, lng: float, timeout: float, token: str) -> int:
                     return z
         except Exception:
             continue
-    return _SAT_ZOOM_MIN
+    return None
 
 
 def _sat_desenhar_pin(img: Image.Image, escala: float) -> None:
@@ -1683,6 +1697,8 @@ def render_foto_satelite_ponto(
         if not token:
             return None
         z = zoom if zoom is not None else _sat_melhor_zoom(lat, lng, timeout, token)
+        if z is None:
+            return None  # sem cobertura de imagem em nenhum zoom -> pagina omitida
         m_px = 156543.03392 * math.cos(math.radians(lat)) / (2**z)
         larg = int(round(cobertura_m / m_px))
         alt = int(round(larg / _SAT_RATIO))
@@ -1697,6 +1713,7 @@ def render_foto_satelite_ponto(
         tam = ((tx1 - tx0 + 1) * _SAT_TILE_PX, (ty1 - ty0 + 1) * _SAT_TILE_PX)
         canvas = Image.new("RGBA", tam, (20, 24, 34, 255))
         urls = [_SAT_TILE_URL] + ([_SAT_ROTULOS_URL] if rotulos else [])
+        tiles_foto_ok = 0                          # quantos tiles da FOTO entraram
         with ThreadPoolExecutor(max_workers=8) as ex:
             for url in urls:                       # ordem importa: foto, depois rotulo
                 futs = {
@@ -1709,10 +1726,26 @@ def render_foto_satelite_ponto(
                             fut.result(),
                             ((tx - tx0) * _SAT_TILE_PX, (ty - ty0) * _SAT_TILE_PX),
                         )
+                        if url == _SAT_TILE_URL:
+                            tiles_foto_ok += 1
                     except Exception:
                         continue                   # tile faltando nao invalida a foto
+        # NENHUM tile de foto entrou -> so restaria o canvas de fundo. Devolver isso
+        # gerava uma pagina PRETA no PDF; o certo e omitir a pagina (mesmo contrato do
+        # fallback de rede). Um tile faltando aqui e ali continua tolerado (acima).
+        if tiles_foto_ok == 0:
+            return None
         ox, oy = int(round(x0 - tx0 * _SAT_TILE_PX)), int(round(y0 - ty0 * _SAT_TILE_PX))
         img = canvas.crop((ox, oy, ox + larg, oy + alt)).convert("RGB")
+
+        # Em zoom baixo os mesmos 400 m rendem poucos pixels; amplia ANTES do pin e do
+        # credito, para os dois ficarem nitidos sobre o fundo ampliado.
+        if img.width < _SAT_LARGURA_ALVO:
+            img = img.resize(
+                (_SAT_LARGURA_ALVO, int(round(_SAT_LARGURA_ALVO / _SAT_RATIO))),
+                Image.Resampling.LANCZOS,
+            )
+            larg = img.width                       # pin e canto arredondado seguem o tamanho final
 
         _sat_desenhar_pin(img, escala=larg / 520)
 
