@@ -31,19 +31,42 @@ from motor_expansao.api.settings import Settings
 _VERSAO_SCORE = "score_setor_2022_calibrado"
 
 
+# Tolerancia do "encoste" na malha municipal, em GRAUS (~0.018 deg ~ 2 km no Brasil).
+# Motivo: a malha IBGE e um recorte de TERRA; um ponto legitimo pode cair num vao dela —
+# na agua a poucas centenas de metros da praia (orla), numa lagoa/represa, ou na fresta
+# entre dois poligonos vizinhos. Sem tolerancia, `within` estrito devolve None e o usuario
+# recebe "Coordenada fora do Brasil" para um endereco que existe (ex.: Janga/Paulista-PE).
+# 2 km cobre o pior caso do centroide de um hex res-7 (circunraio ~1,5 km) sem alcançar o
+# municipio errado do outro lado de uma baia.
+_TOLERANCIA_MALHA_GRAUS = 0.018
+
+
 class _MalhaMunicipal:
     """Indice espacial (STRtree) dos municipios IBGE para resolver ponto->municipio."""
 
-    def __init__(self, tree: STRtree, meta: list[tuple[str, str]]) -> None:
+    def __init__(self, tree: STRtree, meta: list[tuple[str, str]], geoms: list) -> None:
         self._tree = tree
         self._meta = meta  # lista paralela de (uf, cod_municipio)
+        self._geoms = geoms  # lista paralela de geometrias (p/ medir a distancia do encoste)
 
     def resolver(self, lat: float, lng: float) -> tuple[str, str] | None:
         ponto = Point(lng, lat)  # GeoJSON/shapely usam (x=lng, y=lat)
-        # STRtree avalia predicate(ponto, poligono); queremos poligono.contains(ponto),
-        # equivalente a ponto.within(poligono) -> predicate="within".
+        # 1) Caminho exato: STRtree avalia predicate(ponto, poligono); queremos
+        # poligono.contains(ponto), equivalente a ponto.within(poligono) -> "within".
         for idx in self._tree.query(ponto, predicate="within"):
             return self._meta[int(idx)]
+        # 2) Encoste: nenhum poligono CONTEM o ponto (orla/lagoa/fresta da malha). Cai no
+        # municipio mais proximo, desde que dentro da tolerancia. Fora dela -> None (ex.:
+        # oceano aberto, pais vizinho), preservando a rejeicao de coordenada realmente fora.
+        try:
+            idx = self._tree.nearest(ponto)
+        except Exception:  # arvore vazia / shapely sem `nearest` -> comportamento antigo
+            return None
+        if idx is None:
+            return None
+        i = int(idx)
+        if self._geoms[i].distance(ponto) <= _TOLERANCIA_MALHA_GRAUS:
+            return self._meta[i]
         return None
 
 
@@ -77,7 +100,7 @@ def _carregar_malha(ibge_dir_str: str) -> _MalhaMunicipal:
                 continue
     if not geoms:
         raise APIError(500, "Malha municipal IBGE ausente ou vazia", "erro_interno")
-    return _MalhaMunicipal(STRtree(geoms), meta)
+    return _MalhaMunicipal(STRtree(geoms), meta, geoms)
 
 
 def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
@@ -87,7 +110,15 @@ def _resolver_e_carregar(lat: float, lng: float, settings: Settings):
     malha = _carregar_malha(str(settings.ibge_dir))
     resolvido = malha.resolver(lat, lng)
     if resolvido is None:
-        raise APIError(400, "Coordenada fora do Brasil", "coordenada_invalida")
+        # Mensagem PRECISA: o que falhou foi o ponto-em-poligono na malha municipal, nao o
+        # bounding box do Brasil (esse fica em `coord.validar_brasil`). Dizer "fora do Brasil"
+        # para um ponto a 2 km da costa confundia o operador (relato de Felipe em 2026-07-24).
+        raise APIError(
+            400,
+            "Coordenada fora da malha municipal do IBGE (mar aberto, fora do Brasil "
+            "ou a mais de 2 km de qualquer municipio)",
+            "coordenada_invalida",
+        )
     uf, cod_municipio = resolvido
 
     setores_df = read_censo_geo_partition(settings.censo_geo_dir, uf, cod_municipio)
