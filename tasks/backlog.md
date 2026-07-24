@@ -222,70 +222,8 @@ tolerância a tile faltando, e inserção/ausência da página nos dois tamanhos
 
 ---
 
-### BLK-RELPON-13 — Correção do painel Socioeconomia do slide-hero: hexágono H3 a 5 km (padrão residual), não setor
+- BLK-RELPON-13 (concluído 2026-07-24) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Alta** — mudança visual no PDF do Relatório Pontual, mesma natureza do BLK-RELPON-10; render puro, **READ-ONLY sobre o M1**. Exige **gate visual humano** (Vinicius) antes do merge. |
-| **Prioridade** | A definir por Vinicius. |
-| **Esteira** | Block Orchestrator → Planner → `[gate humano/visual — Vinicius: tamanho das 2 imagens + aparência final]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | BLK-RELPON-10 (slide-hero "Socioeconomia e Residual Fitness", já em produção). |
-| **Autonomia** | **manual (NÃO loop-safe)** — exige gate visual humano (o loop não faz gate visual). READ-ONLY M1, mas não loop-safe por causa do gate. |
-
-**Problema (diagnosticado no código, 2026-07-23).** No slide-hero, o painel **Socioeconomia**
-(`censo_map.py:1445-1453`) desenha o **mesmo** `score_setor_2022_calibrado` por **SETOR** a 1,5 km que a
-camada `score` do grid 2x2 (o gate S1=A do RELPON-10 manteve o score também no grid) — é **redundante**.
-E é a única metade do hero ainda em setor/1,5 km, enquanto a outra (Residual Fitness) já é **hexágono H3
-a 5 km**: o slide fica geometricamente incoerente.
-
-**Correção (decisões de Vinicius, 2026-07-23).** Fazer o painel Socioeconomia seguir o **padrão do
-Residual Fitness**, mantendo a **mesma métrica e paleta de hoje**:
-- **Métrica/cor INALTERADAS:** `score_setor_2022_calibrado` colorido por `score_band_to_color` — o
-  **mesmo dado que o dashboard mostra no modo de cor censitário** (`COLOR_MODES["censitario"]`,
-  `constants.py:593-598`). Não troca a métrica.
-- **Geometria muda:** de setor a 1,5 km → **hexágono H3 res-7** via disco `h3.grid_disk(k=5)` no raio de
-  **exibição** `RAIO_RESIDUAL_DISPLAY_KM=5.0` km (padrão de `_render_camada_residual_hex`,
-  `censo_map.py:995-1085`), lendo `score_setor_2022_calibrado` por hex do `hexes_df`.
-- **Sem pins** e **fallback textual** quando faltar `hexes_df` (à risca do residual; FU1 do RELPON-10).
-- **Reduzir um pouco o tamanho das 2 imagens** da página (`_socioeconomia_residual_page` /
-  `_draw_maps_grid`, `censo_report.py:549-579`).
-- O que passa a diferenciar do painel `score` do grid é a **escala/geometria** (grid = setor local
-  1,5 km; hero = hex regional 5 km, igual ao dashboard), não a métrica.
-
-**Escopo (render puro, READ-ONLY M1):**
-1. Generalizar `_render_camada_residual_hex` + `_hex_polygons_3857` (hoje lê `oferta_efetiva_disponivel`
-   fixo em `censo_map.py:963`) para aceitar `value_col` + `color_fn`/bandas — reusado por residual e pela
-   nova socioeconomia.
-2. Religar a camada `socioeconomia` (`censo_map.py:1445`) ao render hex: `value_col=score_setor_2022_calibrado`,
-   `color_fn=score_band_to_color` (a de hoje), título "Socioeconomia - raio 5 km" (ASCII), `pins=[]`,
-   `mostrar_legenda_pins=False`, fallback textual sem `hexes_df`.
-3. Reduzir o tamanho das 2 imagens em `_socioeconomia_residual_page` / `_draw_maps_grid` (ajustar
-   `margin_x`/`gap`/`top`/`bottom` ou fator de escala) — calibrado no gate visual.
-4. Espelhar na variante **clássica** `_classico_socioeconomia_residual_page` (`censo_report.py:1851+`) —
-   dashboard e bot.
-
-**Guardrails.** **READ-ONLY M1 (§5):** não recalcula `score_priorizacao`/`hex_score_estrutural`/scores
-censitários/`oferta_efetiva_disponivel`/artefatos oficiais. `setor_censitario_intersecao_area_1p5km` e
-`RAIO_CENSITARIO_DEFAULT_KM=1,5` **INTOCADOS** — o raio de 1,5 km segue valendo para o motor censitário e
-o grid 2x2; muda só a **EXIBIÇÃO** do painel hero. Labels do PNG em **ASCII** (a fonte não tem glifo
-acentuado — exceção de RENDER ao §2). `CAMADAS_CENSITARIAS` mantém as **mesmas 8 chaves** (reusa
-`socioeconomia`); **`/Count 8`** inalterado; demais camadas (densidade/renda/score/renda_domiciliar/
-concorrentes/entorno) **byte-idênticas**.
-
-**Testes a atualizar (o comportamento mudou de propósito).**
-- Travas anti-vácuo que exigem `socioeconomia` reagir a pins: `test_relatorio_pontual_censitario_mapa.py:779-780`
-  e `:998-1001` — agora sem pins (como o residual).
-- Assert de título/raio: `:839` ("Socioeconomia - raio 1,5 km" → 5 km) e o rodapé de raio do PNG.
-- Manter byte-identidade das OUTRAS camadas (`test_camadas_existentes_ficam_byte_identicas...`) e `/Count 8`
-  (`test_relatorio_pontual_censitario_export.py`).
-- Novos: camada `socioeconomia` é hex (não setor), sem pins, com fallback textual sem `hexes_df`, reagindo
-  a `score_setor_2022_calibrado`.
-
-**Critério de aceite.** Painel Socioeconomia do hero = `score_setor_2022_calibrado` por hexágono a 5 km
-(padrão residual), sem pins, fallback textual; 2 imagens um pouco menores; variante clássica espelhada;
-`/Count 8` e demais camadas byte-idênticas; ASCII no PNG; READ-ONLY M1 confirmado por mtime dos artefatos;
-gate visual de Vinicius aprovado.
 
 ---
 
@@ -1585,6 +1523,35 @@ declarado no relatório.
 
 - BLK-LTV-04 (concluído 2026-07-01) — ver tasks/completed.md
 
+
+---
+
+### BLK-FIX-LTV-01 — Guarda de skip faltante em `test_run_readonly_m1_por_mtime` (só teste)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** — só arquivo de teste; zero código de produção, READ-ONLY sobre o M1. |
+| **Prioridade** | Baixa — a falha é local-only e **não** afeta o portão da `main`. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | Pendente. |
+| **Depende de** | — |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, só teste, sem VPS/deploy/segredos/PII, consome `data/staging`. |
+
+**Problema (achado pelo QA do BLK-RELPON-13, 2026-07-24).**
+`tests/unit/test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime` guarda com `pytest.skip`
+os **artefatos M1** ausentes (linhas 260-261), mas **não guarda a própria ENTRADA** que `run()` carrega
+logo depois (linha 263): `data/staging/unidade_territorio_retencao.parquet`. Numa máquina de dev onde
+alguns dos artefatos M1 existem mas esse dataset **não** existe, o skip não dispara e o teste morre com
+`FileNotFoundError` em vez de pular. Em CI limpo `data/staging/` é gitignored → nenhum artefato M1 → o
+teste pula; por isso o portão da `main` **não** é afetado (falha é local-only, reproduzida em 2026-07-24).
+
+**Correção.** Estender a guarda para cobrir também o dataset de entrada: se
+`data/staging/unidade_territorio_retencao.parquet` não existir, `pytest.skip` com a mesma mensagem de
+"ambiente sem os parquets". **Não** alterar a semântica do teste — o assert de mtime (READ-ONLY M1)
+permanece exatamente como está.
+
+**Critério de aceite.** Em máquina sem o parquet de entrada o teste **pula** (não falha); em máquina com o
+parquet ele roda e mantém o assert de mtime; `pytest -q` deixa de reportar esse `FAILED`.
 
 ---
 
