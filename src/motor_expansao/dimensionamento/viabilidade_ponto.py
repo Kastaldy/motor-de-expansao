@@ -19,18 +19,26 @@ pesos, carteira, plano nem artefatos oficiais (DEC-001/DEC-008). Funcao pura, se
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, fields, replace
+from typing import Any
 
 import numpy as np
 import pandas as pd
 
 from motor_expansao.dimensionamento.catchment_batch import calcular_catchment_unidade
-from motor_expansao.dimensionamento.config import RAIO_CATCHMENT_KM, SIM_MENSALIDADE_BALCAO
+from motor_expansao.dimensionamento.config import (
+    RAIO_CATCHMENT_KM,
+    SIM_MENSALIDADE_BALCAO,
+    SIM_PARCELAS_OBRA_DEFAULT,
+    SIM_SHARE_BALCAO,
+    SIM_TAXA_FRANQUIA,
+)
 from motor_expansao.dimensionamento.simulador import (
+    Premissas,
     ViabilidadeResult,
-    aluguel_teto,
-    alunos_minimos_viaveis,
-    viabilidade,
+    aluguel_teto_clusters,
+    alunos_para_margem,
+    simular,
 )
 
 # --- Thresholds de zona morta (exogenos; NAO preveem alunos) -----------------
@@ -63,8 +71,11 @@ FORMATO_POR_MARCA: dict[str, str] = {
 
 # --- Composicao balcao/agregadores (estudo §5; Ultra ~69% balcao / ~31% agregadores) ---
 # A demanda_premissa representa alunos TOTAIS; o split alimenta o DRE com 2 tickets
-# (balcao a ticket cheio + agregadores ~60% do ticket). NAO altera o simulador (DRE).
-SHARE_BALCAO_DEFAULT: float = 0.69
+# (balcao a ticket cheio + agregadores = fracao do ticket cheio).
+# FIN-VIAB-01: REEXPORTA `config.SIM_SHARE_BALCAO` — o 0.69 tem UM dono (o config.py).
+# Antes este literal era copiado tambem em web/server/app.py::_serie_motor, e mudar um
+# sem o outro fazia a tela divergir do proprio grafico.
+SHARE_BALCAO_DEFAULT: float = SIM_SHARE_BALCAO
 
 # --- Guardrail de envelope de metragem (BLK-VIAB-06) -------------------------
 ENVELOPE_MIN: float = 600.0   # m2 mínimo da base de calibração Ultra (636 m2 - folga)
@@ -101,8 +112,15 @@ class ViabilidadePontoResult:
     renda_per_capita_captacao: float | None
 
     # --- Viabilidade no cenario pedido (demanda = premissa explicita) ---
+    # FIN-VIAB-01: `viabilidade` e a saida de `simular()` — traz a serie mensal
+    # completa (M-4..M+60) e TODOS os KPIs ja calculados. Ninguem recalcula nada.
     viabilidade: ViabilidadeResult
+    # Aluguel-teto CANONICO (excecao, 30% do faturamento bruto steady). Vem de
+    # `aluguel_teto_clusters` — NAO mais da inversao por margem EBITDA-alvo, que
+    # devolvia R$105.813,13 onde a tela mostrava R$55.535,18 no mesmo cenario.
     aluguel_teto_calculado: float
+    # Break-even de EBITDA em alunos TOTAIS (mix balcao/agregadores escalando junto).
+    # Antes era em alunos de BALCAO e a tela comparava com a demanda TOTAL.
     alunos_breakeven: float
 
     # --- Grade de sensibilidade ---
@@ -112,14 +130,29 @@ class ViabilidadePontoResult:
     alunos_balcao_premissa: float = 0.0
     alunos_agregadores_premissa: float = 0.0
 
-    # --- Break-even com margem_alvo explícita (NAO break-even real) ---
-    alunos_para_margem_alvo: float = 0.0
+    # --- Alunos para a margem-alvo (FIN-VIAB-01: unidade corrigida) ---
+    # Antes vinha de `alunos_minimos_viaveis(margem_alvo=X)`, que variava SO o balcao
+    # mantendo os agregadores congelados — numero nao comparavel com a demanda total.
+    # Agora sai de `alunos_para_margem()`, em forma fechada e em alunos TOTAIS, na
+    # MESMA regua de `alunos_breakeven`. `inf` quando a margem-alvo e inatingivel.
+    alunos_para_margem_alvo: float = float("nan")
 
     # --- Guardrail: demanda NUNCA derivada de geo ---
     demanda_fonte: str = DEMANDA_FONTE_PREMISSA
 
     # --- Guardrail de envelope de metragem (BLK-VIAB-06) ---
     flag_fora_envelope: bool = False
+
+    # --- Aluguel-teto: as 3 faixas + o teto sobre o p10 da faixa (FIN-VIAB-01) ---
+    # `aluguel_teto_faixas` = {"ideal": 15%, "teto": 20%, "excecao": 30%, "canonico"}.
+    aluguel_teto_faixas: dict[str, float] = field(default_factory=dict)
+    # Teto CANONICO (30%) sobre o faturamento do cenario p10 da faixa de alunos. E o
+    # unico teto NAO circular: o teto sobre a demanda assumida so devolve a premissa
+    # que o operador digitou. None quando nao ha p10 (base de comparaveis ausente).
+    aluguel_teto_p10: float | None = None
+
+    # --- Break-even de CAIXA (EBITDA - IR cobrindo tambem a PMT), em alunos TOTAIS ---
+    alunos_breakeven_caixa: float = 0.0
 
 
 def faixa_alunos_por_densidade(
@@ -259,6 +292,82 @@ def flag_zona_morta(
     return {"flag_zona_morta": flag, "motivo_zona_morta": motivo}
 
 
+# ---------------------------------------------------------------------------
+# Ponte para o nucleo (Premissas + simular) — FIN-VIAB-01
+#
+# Este modulo NAO tem coeficiente financeiro proprio: tudo vem de `Premissas`
+# (defaults do config.py). Aqui so se traduz a assinatura property-first
+# (m2/aluguel pedido/demanda) para o contrato do nucleo.
+# ---------------------------------------------------------------------------
+
+_CAMPOS_PREMISSAS = frozenset(f.name for f in fields(Premissas))
+_CHAVES_PROPRIAS = frozenset({"ticket_cheio", "share_balcao", "aluguel_mes"})
+
+
+def _premissas_do_ponto(
+    ticket_medio: float,
+    aluguel_mes: float,
+    share_balcao: float,
+    premissas: Premissas | None,
+    kwargs: dict[str, Any],
+) -> Premissas:
+    """Monta as `Premissas` do cenario. `premissas` explicito manda em tudo.
+
+    Sem `premissas`, qualquer kwarg cujo nome seja campo de `Premissas`
+    (maturacao_meses, carencia_aluguel_meses, folha_pct, ...) e repassado — e o
+    que mantem vivas as chamadas historicas do dashboard/backtest/batch.
+    """
+    if premissas is not None:
+        # O aluguel PEDIDO e o do cenario; nunca deixa os dois divergirem.
+        return replace(premissas, aluguel_mes=float(aluguel_mes))
+    extras = {
+        k: v for k, v in kwargs.items() if k in _CAMPOS_PREMISSAS and k not in _CHAVES_PROPRIAS
+    }
+    return Premissas(
+        ticket_cheio=float(ticket_medio),
+        share_balcao=float(share_balcao),
+        aluguel_mes=float(aluguel_mes),
+        **extras,  # type: ignore[arg-type]
+    )
+
+
+def _investimento_do_ponto(
+    *,
+    obra: float | None,
+    parcelas_obra: int | None,
+    equipamentos: float | None,
+    prazo_equipamentos: int | None,
+    juros_equipamentos_am: float | None,
+    taxa_franquia: float | None,
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """Kwargs de investimento de `simular()`, com adaptacao do CAPEX legado.
+
+    Legado (`capex` + `capex_financiado_pct` + `prazo_financiamento_meses` +
+    `juros_financiamento_am`): a fracao financiada vira EQUIPAMENTOS e o resto vira
+    OBRA (equity). Chamadas novas passam obra/equipamentos diretamente.
+    """
+    if obra is None and equipamentos is None and kwargs.get("capex") is not None:
+        capex = float(kwargs["capex"])
+        pct = float(kwargs.get("capex_financiado_pct") or 0.0)
+        equipamentos = capex * pct
+        obra = capex - equipamentos
+    if prazo_equipamentos is None:
+        prazo_equipamentos = kwargs.get("prazo_financiamento_meses")  # type: ignore[assignment]
+    if juros_equipamentos_am is None:
+        juros_equipamentos_am = kwargs.get("juros_financiamento_am")  # type: ignore[assignment]
+
+    equip = float(equipamentos or 0.0)
+    return {
+        "obra": float(obra or 0.0),
+        "parcelas_obra": int(parcelas_obra or SIM_PARCELAS_OBRA_DEFAULT),
+        "equipamentos": equip,
+        "prazo_equipamentos": int(prazo_equipamentos or 0) if equip > 0 else 0,
+        "juros_equipamentos_am": float(juros_equipamentos_am or 0.0),
+        "taxa_franquia": float(SIM_TAXA_FRANQUIA if taxa_franquia is None else taxa_franquia),
+    }
+
+
 def grade_sensibilidade(
     m2: float,
     aluguel_ref: float,
@@ -269,36 +378,49 @@ def grade_sensibilidade(
     n_aluguel_range: tuple[float, ...] = ALUGUEL_RANGE_FATOR,
     margem_alvo: float = 0.10,
     share_balcao: float = SHARE_BALCAO_DEFAULT,
-    **kwargs: object,
+    premissas: Premissas | None = None,
+    obra: float | None = None,
+    parcelas_obra: int | None = None,
+    equipamentos: float | None = None,
+    prazo_equipamentos: int | None = None,
+    juros_equipamentos_am: float | None = None,
+    taxa_franquia: float | None = None,
+    **kwargs: Any,
 ) -> pd.DataFrame:
-    """Varredura cartesiana alunos x aluguel -> viabilidade() por par.
+    """Varredura cartesiana alunos x aluguel -> `simular()` por par.
 
-    `n_alunos_range` e uma grade ABSOLUTA de alunos TOTAIS (nao inclui
-    `demanda_premissa` automaticamente; o orquestrador a usa como referencia
-    separada). Cada celula aplica o split interno via `share_balcao`:
-    balcao = alunos*share_balcao + agregadores = alunos*(1-share_balcao).
-    `n_aluguel_range` sao FATORES multiplicados por `aluguel_ref`.
+    FIN-VIAB-01: cada celula roda o MESMO motor do cenario principal, com as MESMAS
+    premissas e o MESMO investimento — so o aluguel e a demanda mudam. Antes a grade
+    chamava o adaptador legado (folha absoluta, IR efetivo, sem pre-abertura), entao a
+    celula do aluguel pedido nao reproduzia o KPI exibido ao lado dela.
 
-    `margem_alvo` fica na assinatura por simetria; nao gera coluna dependente aqui.
-    `demanda_premissa` e referencia (nao entra na varredura — a grade varre
-    `n_alunos_range`); mantido na assinatura por simetria com o orquestrador.
+    `n_alunos_range` e uma grade ABSOLUTA de alunos TOTAIS (o mix balcao/agregadores
+    escala junto, dentro do nucleo). `n_aluguel_range` sao FATORES sobre `aluguel_ref`.
+    `m2`, `demanda_premissa` e `margem_alvo` ficam na assinatura por compatibilidade;
+    nao entram na varredura.
 
     Retorna DataFrame com colunas:
       ['alunos', 'aluguel', 'fator_aluguel', 'margem_liq', 'viavel', 'payback'].
-    Shape = (len(n_alunos_range) * len(n_aluguel_range), 6). `margem_liq` e a
-    margem EBITDA do DRE (`margem_ebitda_pct`).
+    `margem_liq` e a margem EBITDA do DRE; `payback` pode ser `inf` (nunca se paga) —
+    quem serializa para JSON precisa sanear.
     """
-    _ = (demanda_premissa, margem_alvo)  # referencia explicita; nao varridos
+    _ = (m2, demanda_premissa, margem_alvo)  # referencia explicita; nao varridos
+    p_base = _premissas_do_ponto(ticket_medio, aluguel_ref, share_balcao, premissas, kwargs)
+    inv = _investimento_do_ponto(
+        obra=obra,
+        parcelas_obra=parcelas_obra,
+        equipamentos=equipamentos,
+        prazo_equipamentos=prazo_equipamentos,
+        juros_equipamentos_am=juros_equipamentos_am,
+        taxa_franquia=taxa_franquia,
+        kwargs=kwargs,
+    )
+
     linhas: list[dict] = []
     for alunos in n_alunos_range:
-        balcao_cel = float(alunos) * share_balcao
-        agr_cel = float(alunos) * (1.0 - share_balcao)
         for fator in n_aluguel_range:
             aluguel = float(aluguel_ref) * float(fator)
-            r = viabilidade(
-                balcao_cel, m2, aluguel, ticket_medio,
-                alunos_agregadores=agr_cel, **kwargs,  # type: ignore[arg-type]
-            )
+            r = simular(float(alunos), replace(p_base, aluguel_mes=aluguel), **inv)
             linhas.append(
                 {
                     "alunos": float(alunos),
@@ -331,22 +453,35 @@ def analisar_viabilidade_ponto(
     alunos_range: tuple[float, ...] = ALUNOS_RANGE_DEFAULT,
     aluguel_range_fator: tuple[float, ...] = ALUGUEL_RANGE_FATOR,
     formato: str | None = None,
-    **kwargs: object,
+    premissas: Premissas | None = None,
+    obra: float | None = None,
+    parcelas_obra: int | None = None,
+    equipamentos: float | None = None,
+    prazo_equipamentos: int | None = None,
+    juros_equipamentos_am: float | None = None,
+    taxa_franquia: float | None = None,
+    **kwargs: Any,
 ) -> ViabilidadePontoResult:
-    """Orquestrador property-first.
+    """Orquestrador property-first — roda o nucleo (`Premissas` + `simular`) UMA vez.
 
     GUARDRAIL: `demanda_premissa` e entrada do operador; NUNCA derivada de lat/lng.
     lat/lng entram SO no catchment (contexto pop/renda) e na flag de zona morta.
 
+    FIN-VIAB-01: `viabilidade` passa a ser o `ViabilidadeResult` de `simular()`, que
+    ja traz a serie mensal M-4..M+60 e todos os KPIs (payback, TIR, VPL, retorno,
+    break-even, aluguel-teto, acumulado). Backend, tela e PDF apenas LEEM esse objeto.
+    `margem_alvo` fica na assinatura por compatibilidade — nao dirige mais nada
+    (o aluguel-teto agora e % do faturamento, nao inversao por margem EBITDA).
+
     Modos degradados:
       - setores_df is None  -> catchment NAO roda; flag_zona_morta=None,
         pop_captacao/renda_per_capita_captacao=None.
-      - base_calibracao_df is None -> faixa_alunos_p10/p50/p90=None, n_comparaveis=None.
+      - base_calibracao_df is None -> faixa_alunos_p10/p50/p90=None, n_comparaveis=None,
+        aluguel_teto_p10=None.
 
     formato (opcional, BLK-VIAB-07): quando != None, restringe a curva
     tamanho->densidade aos comparaveis do mesmo formato de operacao (fallback
-    gracioso p/ base completa se < n_min). formato=None (default) mantem o
-    comportamento historico byte-a-byte (dashboard nao passa formato).
+    gracioso p/ base completa se < n_min).
     """
     # 1. Catchment (contexto) — so roda se setores_df foi injetado.
     catch: dict | None
@@ -381,43 +516,56 @@ def analisar_viabilidade_ponto(
         faixa = faixa_alunos_por_densidade(m2, base_calibracao_df, formato=formato)
 
     # 3b. Split da premissa em balcao + agregadores (composicao; estudo §5).
-    # A demanda_premissa e SEMPRE alunos TOTAIS; o DRE roda com 2 tickets.
+    # A demanda_premissa e SEMPRE alunos TOTAIS; o DRE roda com 2 tickets. Aqui o split
+    # e so EXIBICAO/auditabilidade — quem aplica o mix no DRE e o proprio nucleo.
     alunos_balcao = float(demanda_premissa) * share_balcao
     alunos_agregadores = float(demanda_premissa) * (1.0 - share_balcao)
 
-    # 4. Viabilidade no cenario pedido (demanda = premissa explicita).
-    viab = viabilidade(
-        alunos_balcao, m2, aluguel_pedido, ticket_medio,
-        alunos_agregadores=alunos_agregadores, **kwargs,  # type: ignore[arg-type]
+    # 4. Viabilidade no cenario pedido (demanda = premissa explicita). UMA chamada ao
+    # nucleo; tudo o que vem depois e LEITURA do resultado.
+    p = _premissas_do_ponto(ticket_medio, aluguel_pedido, share_balcao, premissas, kwargs)
+    inv = _investimento_do_ponto(
+        obra=obra,
+        parcelas_obra=parcelas_obra,
+        equipamentos=equipamentos,
+        prazo_equipamentos=prazo_equipamentos,
+        juros_equipamentos_am=juros_equipamentos_am,
+        taxa_franquia=taxa_franquia,
+        kwargs=kwargs,
+    )
+    viab = simular(float(demanda_premissa), p, **inv)
+
+    # 5. Aluguel-teto (% do faturamento bruto steady) e break-even (alunos TOTAIS):
+    # ambos ja vem calculados pelo nucleo, do MESMO cenario.
+    teto_faixas = dict(viab.aluguel_teto)
+    teto_canonico = float(teto_faixas.get("canonico", 0.0))
+
+    # 5b. Teto sobre o p10 da faixa de alunos (informativo). O teto sobre a demanda
+    # ASSUMIDA e circular — ele so devolve a premissa que o operador digitou; o teto
+    # sobre o p10 responde "e se a unidade ocupar como a pior comparavel do porte?".
+    # `p.faturamento(alunos)` e a MESMA funcao que gera o faturamento steady da serie.
+    # `com_anuidade=True` NAO e opcional: o teto canonico acima vem do faturamento de
+    # steady-state, que e do mes de REGIME PLENO (anuidade ja em cobranca). Como
+    # `Premissas.faturamento()` tem `com_anuidade=False` por default, omitir o
+    # argumento colocaria dois aluguel-teto de REGUAS DIFERENTES lado a lado na mesma
+    # tela (divergencia medida no golden: R$966,36/mes, 2,2%) — exatamente a classe de
+    # defeito que o FIN-VIAB-01 existe para eliminar.
+    p10 = faixa["faixa_alunos_p10"]
+    teto_p10 = (
+        float(aluguel_teto_clusters(p.faturamento(float(p10), com_anuidade=True))["canonico"])
+        if p10 is not None
+        else None
     )
 
-    # 5. Aluguel-teto e break-even.
-    teto = aluguel_teto(
-        alunos_balcao, m2, ticket_medio, margem_alvo=margem_alvo,
-        alunos_agregadores=alunos_agregadores, **kwargs,  # type: ignore[arg-type]
-    )
-    # Break-even REAL: margem EBITDA = 0% (definicao canonica; DEC-009)
-    breakeven = alunos_minimos_viaveis(
-        m2, aluguel_pedido, ticket_medio, margem_alvo=0.0,
-        alunos_agregadores=alunos_agregadores, **kwargs,  # type: ignore[arg-type]
-    )
-    # Alunos para a margem-alvo (informativo; sempre >= breakeven)
-    alunos_margem_alvo = alunos_minimos_viaveis(
-        m2, aluguel_pedido, ticket_medio, margem_alvo=margem_alvo,
-        alunos_agregadores=alunos_agregadores, **kwargs,  # type: ignore[arg-type]
-    )
-
-    # 6. Grade de sensibilidade.
+    # 6. Grade de sensibilidade (mesmas premissas, mesmo investimento).
     grade = grade_sensibilidade(
         m2,
         aluguel_pedido,
         demanda_premissa,
-        ticket_medio=ticket_medio,
         n_alunos_range=alunos_range,
         n_aluguel_range=aluguel_range_fator,
-        margem_alvo=margem_alvo,
-        share_balcao=share_balcao,
-        **kwargs,
+        premissas=p,
+        **inv,
     )
 
     # 7. Montar resultado.
@@ -436,14 +584,17 @@ def analisar_viabilidade_ponto(
         pop_captacao=None if catch is None else pop,
         renda_per_capita_captacao=None if catch is None else renda,
         viabilidade=viab,
-        aluguel_teto_calculado=float(teto),
-        alunos_breakeven=float(breakeven),
+        aluguel_teto_calculado=teto_canonico,
+        alunos_breakeven=float(viab.alunos_break_even_total),
         grade_sensibilidade=grade,
         alunos_balcao_premissa=float(alunos_balcao),
         alunos_agregadores_premissa=float(alunos_agregadores),
-        alunos_para_margem_alvo=float(alunos_margem_alvo),
         demanda_fonte=DEMANDA_FONTE_PREMISSA,
         flag_fora_envelope=flag_envelope,
+        aluguel_teto_faixas=teto_faixas,
+        aluguel_teto_p10=teto_p10,
+        alunos_breakeven_caixa=float(viab.alunos_break_even_caixa_total),
+        alunos_para_margem_alvo=float(alunos_para_margem(p, margem_alvo)),
     )
 
 
@@ -467,4 +618,5 @@ __all__ = [
     "SHARE_BALCAO_DEFAULT",
     "ENVELOPE_MIN",
     "ENVELOPE_MAX",
+    "Premissas",
 ]
