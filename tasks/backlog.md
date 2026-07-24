@@ -828,6 +828,24 @@ alunos assumidos → mais folha, automático) e corrige a distorção nas caixas
 `SIM_PESSOAL_PCT` fica **parametrizado**. O bug de receita +33% (BLK-DIM-13, split 69/31 balcão/agregador) **já está
 corrigido** e é ortogonal a este bloco.
 
+**Nota — FIN-VIAB-01 (2026-07-24): a ESTRUTURA já foi entregue; falta só o NÍVEL.** O ciclo FIN-VIAB-01
+(reconciliação do simulador) **ativou a folha percentual** no núcleo: `SIM_FOLHA_PCT = 0,17` do **faturamento
+bruto** (`dimensionamento/config.py`), consumido por `simulador.py` na série mensal completa — a folha passou a
+**escalar com o volume**, com override absoluto (`pessoal_mes_override`) preservado para os chamadores históricos.
+`SIM_PESSOAL_MES = R$50.128,16` vira **legado** (não alimenta mais a folha; segue só como default da assinatura de
+`viabilidade()`/`gerar_serie_mensal()`). O **0,17** foi escolha de Felipe (2026-07-24) para ficar ~no status quo de
+nível (R$50.128 / R$277.676 = 18,05% no caso de referência) e permitir atribuir o delta do ciclo à mudança de
+ESTRUTURA, não de nível. **Este bloco segue pendente APENAS para calibrar o NÍVEL** — 17% (vigente) vs **25-26%**
+(as 6 DREs) — **com a controladoria**. Impacto **re-medido no gate de fechamento, com a anuidade LIGADA** (caso
+Boulevard Londrina): a 17% a folha é **R$49.003,79** e o EBITDA fecha em **R$113.159,69 (39,26%)**, break-even
+**840,6** alunos totais e payback **28** meses; **a 26%** a folha vai a **R$74.946,97**, o EBITDA cai para
+**R$87.216,50 (30,26%)**, o break-even sobe para **987,8** alunos totais e o **payback vai de 28 para 54 meses** —
+ou seja, a unidade deixaria de atender o critério de payback de 36 meses. (Os números que esta nota trazia antes —
+R$47.942,66 / R$109.233,60 / 38,73% / 859,6 / 29 → 58 — eram da rodada com a **anuidade desligada**, estado que
+deixou de valer em 2026-07-24.) Premissas e conflito documentados em
+`PREMISSAS_VIABILIDADE.md` (§4 e §9-a); impacto no comitê em `docs/nota_impacto_fin_viab_01.md`. **Status e
+criticidade deste bloco permanecem inalterados.**
+
 ---
 
 ## Epic BLK-RELVIAB — Relatório de Viabilidade do Imóvel (PDF enriquecido) — CONCLUÍDA (2026-07-18)

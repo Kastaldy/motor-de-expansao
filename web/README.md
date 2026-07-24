@@ -124,25 +124,101 @@ muda a metragem — até você mexer no `±`, aí o valor manual prevalece (o li
 "voltar ao p50" restaura). É um ponto de partida honesto, não uma previsão: o
 badge diz "padrão · p50" ou "ajuste manual" conforme o caso.
 
-## CAPEX e carência de aluguel
+## Motor único de viabilidade
 
-A sidebar tem inputs opcionais de **investimento**: CAPEX total (R$), % financiado,
-parcelas e **carência de aluguel** (meses iniciais sem pagar aluguel). Vazios, o
-motor usa o padrão (R$ 2,34 mi, sem carência). CAPEX e carência entram no **payback**
-e no fluxo de caixa — **não na margem** (que é operacional de steady-state). O
-readout na sidebar e o **KPI Payback** (na fileira principal, para bater o olho)
-mostram o resultado.
+Desde o ciclo **FIN-VIAB-01** existe **um** motor e **uma** série mensal. O backend
+chama `simular()` (`dimensionamento/simulador.py`), que devolve um `ViabilidadeResult`
+com **tudo já calculado**, e serve isso como `viabilidade_payload_v1`. **Tela, API e
+PDF consomem exatamente o mesmo objeto e não recalculam nada** — se um número aparece
+em dois lugares, é literalmente o mesmo campo.
 
-A carência é aplicada como pós-processamento da série canônica do simulador
-(`gerar_serie_mensal`): devolve o aluguel nos primeiros N meses, antecipando o
-payback. Não altera o motor.
+Antes disso havia cinco séries mensais independentes e nove KPIs com implementação
+dupla, e o mesmo cenário divergia entre tela e PDF (payback 35 no KPI e 33 no gráfico,
+aluguel-teto R$ 55.535 na tela e R$ 105.813 no PDF). Toda premissa vive em
+`dimensionamento/config.py` e está documentada em `PREMISSAS_VIABILIDADE.md` (default,
+fonte, quem pode alterar). **Nenhuma fórmula financeira pode ser escrita fora do
+simulador** — se der vontade, ela já existe lá.
+
+A série é **uma linha do tempo de M-4 a M+60**: quatro meses de pré-abertura (obra,
+taxa de franquia, aluguel se já houver contrato) e sessenta de operação. O CAPEX
+aparece **inteiro** nela, então o payback do gráfico e o payback do KPI são, por
+construção, o mesmo número.
+
+### Anuidade
+
+A DRE tem uma linha de **anuidade** (a `Simulador!J10` da planilha, que o motor não
+implementava até 2026-07-24): **R$ 99 uma vez por ano** por aluno de **balcão** que
+completa 12 meses de casa. Quatro detalhes que mudam o número:
+
+- **Agregador não paga.** O aluno de Gympass/TotalPass não tem contrato com a
+  academia — o agregador remunera por acesso.
+- **Nem todo aluno chega aos 12 meses.** A fatia elegível é **derivada do churn**
+  (`(1 − churn)¹²` = `0,94¹²` = **47,59%**), não um número fixado à mão: mexer no
+  churn ajusta a elegibilidade sozinho.
+- **Reconhecimento pro-rata mensal** (`99 ÷ 12` a partir do mês 12), não um
+  lançamento único — os aniversários se espalham pelo ano, e o lançamento único
+  criaria um degrau falso no gráfico de caixa.
+- **O steady-state passa a ser o mês 12**, não o mês da maturação (8): só aí o
+  regime é pleno (alunos maduros *e* anuidade em cobrança). O motor serve esse mês
+  em `premissas.mes_referencia_steady` — **tela, gráficos e PDF leem de lá e não
+  recalculam**.
+
+A linha aparece explícita no payload (`dre.receita_anuidade`), justamente para que o
+faturamento não suba sem uma causa visível na tela. No caso de referência são
+**R$ 6.241,94/mês**, 2,2% do faturamento. O valor e as quatro regras vivem em
+`config.py` (`SIM_ANUIDADE_*`) e estão documentados em `PREMISSAS_VIABILIDADE.md`
+§2.1 — mudar qualquer um deles é decisão do dono do produto, não de engenharia.
+
+## Indicadores
+
+**Break-even em alunos TOTAIS.** O número é diretamente comparável com a demanda que
+você digita, porque o mix balcão/agregadores (69/31) escala junto. Antes o break-even
+variava só o balcão, com os agregadores congelados na premissa, e era exibido como se
+fosse total — dava 632 contra uma demanda de 2.304. São dois: o de **EBITDA** (cobre o
+custo operacional) e o de **caixa** (cobre também a PMT do financiamento). Os dois são
+medidos em **regime pleno**, com a anuidade dentro da receita por aluno — a mesma régua
+da DRE de steady-state, para não haver duas contas do mesmo cenário.
+
+**TIR e VPL.** A TIR sai do fluxo de caixa real dos 64 meses; o VPL desconta o mesmo
+fluxo a **12% a.a.** — taxa **provisória, pendente de aval do comitê** (muda o VPL, não
+muda payback, EBITDA nem TIR). Quando o fluxo não troca de sinal não existe raiz real:
+a TIR vem como `null` explícito, nunca como `NaN`.
+
+**Retorno desalavancado** é o padrão (resultado antes da PMT ÷ investimento cheio). O
+retorno de **equity** existe como visão secundária e nunca aparece no mesmo KPI.
+
+**Aluguel-teto** é % do faturamento bruto de steady-state, em três faixas — ideal 15%,
+teto 20% e exceção 30%. O exibido como "aluguel-teto" é o de **30%**, mas as **três
+faixas viajam no payload e aparecem tanto na tela quanto no PDF**: mostrar só o
+canônico esconde a régua que dá sentido a ele.
+
+## CAPEX, carência e reajuste
+
+A sidebar tem inputs opcionais de **investimento**: obra (parcelada, sem juros),
+equipamentos (financiados no Price, com prazo e juros), **taxa de franquia** (agora
+editável — o default é R$ 160.000) e **carência de aluguel**.
+
+A **carência** é do motor, não pós-processamento: conta em `mes_contrato`, ou seja, a
+partir de **M-4 (entrega da unidade)**, não da abertura — que é como o contrato de
+locação costuma ser escrito.
+
+O **reajuste anual** de 4% a.a. incide sobre ticket, aluguel e custos fixos, como um
+degrau a partir do mês 13. A **PMT é nominal e não reajusta**.
+
+CAPEX e carência entram no **payback** e no fluxo de caixa — **não na margem**, que é
+operacional de steady-state.
 
 ## Fluxo de caixa acumulado
 
-O gráfico de **FCF acumulado** plota a série mensal REAL dos 60 meses (do
-`gerar_serie_mensal`): mergulha com o CAPEX, sobe pela rampa de maturação e cruza a
-linha do zero no **payback** — área vermelha abaixo, verde acima, com o marcador do
-mês de virada. Reage a metragem, aluguel, demanda, CAPEX e carência.
+O gráfico de **FCF acumulado** plota a série mensal real (`serie_mensal` do payload,
+M-4 a M+60): mergulha com o CAPEX na pré-abertura, sobe pela rampa de maturação e cruza
+a linha do zero no **payback** — área vermelha abaixo, verde acima, com o marcador do
+mês de virada. Reage a metragem, aluguel, demanda, CAPEX, carência e taxa de franquia.
+
+Duas coisas que o gráfico agora mostra e antes ficavam escondidas pela média de
+steady-state: o **EBITDA do mês 1 é negativo** (o custo operacional é integral desde a
+abertura, enquanto os alunos rampam por 8 meses) e há um **mês declarado de virada do
+caixa operacional** (`mes_caixa_operacional_positivo`).
 
 ## Estrutura
 
