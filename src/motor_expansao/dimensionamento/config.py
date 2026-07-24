@@ -110,19 +110,138 @@ SIM_OUTROS_FIXOS_MES = 38_150.00  # IPTU(2000)+Agua/Luz(17000)+Tel(500)+
 # ---------------------------------------------------------------------------
 # Reforma do motor de viabilidade (alinhamento a planilha financeira oficial).
 # READ-ONLY sobre o M1 (DEC-008/009): nao toca score_priorizacao/pesos/artefatos.
+#
+# FIN-VIAB-01 (2026-07-24): este bloco e a FONTE UNICA de premissas do simulador.
+# Nenhum coeficiente financeiro pode viver como literal em simulador.py,
+# viabilidade_ponto.py, web/server/app.py ou no frontend. Todo parametro daqui
+# esta documentado em PREMISSAS_VIABILIDADE.md (default, fonte, quem pode alterar).
 # ---------------------------------------------------------------------------
-# Impostos: 16% sobre o FATURAMENTO BRUTO substitui a linha PIS/COFINS/ISS (acima do
-# EBITDA). IR/CSLL (SIM_IR_EFETIVO/SIM_CSLL_EFETIVO) seguem abaixo do EBITDA, inalterados.
+# ORFA / NAO CONSUMIDA — mantida so para nao quebrar import de terceiros.
+# NAO LIGAR sem gate humano: trocaria PIS/COFINS/ISS (6,65% da liquida) por 16% da
+# bruta = +R$26 mil/mes no caso de referencia. O regime vigente e o de SIM_PIS/
+# SIM_COFINS/SIM_ISS, que tem celula rastreavel na planilha (Tributos E38/E40/E42);
+# este 0.16 nao tem fonte. Ver PREMISSAS_VIABILIDADE.md secao "Constantes orfas".
 SIM_IMPOSTO_FATURAMENTO = 0.16
-# Folha: 17% do faturamento bruto (substitui o custo absoluto SIM_PESSOAL_MES) + custo por studio.
+
+# Folha: % do FATURAMENTO BRUTO (substitui o custo absoluto SIM_PESSOAL_MES).
+# ATIVADA em FIN-VIAB-01 por decisao de Felipe (2026-07-24).
+# CONFLITO ABERTO: o BLK-VIAB-11 (tasks/backlog.md) apurou 0,25-0,26 em 6 DREs
+# gerenciais reais (folha real R$38k-99k/mes, estavel como % da bruta, CV 0,16).
+# 0,17 fica ~no status quo (R$50.128 / R$277.676 = 18,05% no caso de referencia),
+# entao a mudanca e de ESTRUTURA (folha passa a escalar com volume), nao de nivel.
+# A calibracao do nivel segue pendente de gate da controladoria no BLK-VIAB-11.
 SIM_FOLHA_PCT = 0.17
 SIM_CUSTO_STUDIO = 6_000.0       # R$/mes de fopag adicional por studio extra
 SIM_STUDIOS_DEFAULT = 0          # quantidade de studios (0..3)
 # CAPEX/OPEX: Obra (equity, parcelas sem juros) x Equipamentos (financiado). Taxa de franquia
 # paga a vista no M-4 (pre-inauguracao); usada na serie de fluxo de caixa operacional.
+# DIVERGENCIA DE FONTE: a planilha (simulador_estrutura.json, celula R10) e
+# docs/modelo_dimensionamento_expansao.md:276 dizem 140.000. O 160.000 abaixo e o
+# valor em producao e o que o comite ja viu; mantido por decisao de Felipe
+# (2026-07-24) e agora EXPOSTO no schema da API para o operador poder sobrescrever.
 SIM_TAXA_FRANQUIA = 160_000.0
 SIM_PARCELAS_OBRA_DEFAULT = 4
 # Aluguel-teto por clusters sobre o faturamento bruto steady (substitui a inversao por margem EBITDA).
+# FIN-VIAB-01: passa a ser a UNICA definicao de aluguel-teto do sistema (tela E PDF).
+# O canonico exibido como "aluguel-teto" e o SIM_ALUGUEL_TETO_EXCECAO (30%).
 SIM_ALUGUEL_TETO_IDEAL = 0.15
 SIM_ALUGUEL_TETO_TETO = 0.20
 SIM_ALUGUEL_TETO_EXCECAO = 0.30
+
+# ---------------------------------------------------------------------------
+# FIN-VIAB-01 — premissas que estavam como literal espalhado pelo codigo
+# ---------------------------------------------------------------------------
+# Inadimplencia: estava HARDCODED duas vezes na assinatura do simulador
+# (viabilidade() e gerar_serie_mensal()); alterar uma sem a outra fazia o steady
+# divergir da serie mensal. Agora tem dono unico.
+SIM_INADIMPLENCIA = 0.02
+
+# Composicao da demanda: a demanda_premissa e SEMPRE alunos TOTAIS; o DRE roda com
+# dois tickets. Estava em viabilidade_ponto.SHARE_BALCAO_DEFAULT e DUPLICADO em
+# web/server/app.py::_serie_motor.
+SIM_SHARE_BALCAO = 0.69
+
+# Ticket do agregador (Gympass/TotalPass e similares) como FRACAO do ticket cheio.
+# ANTES: SIM_TICKET_AGREGADOR = R$82 ABSOLUTO, desacoplado do ticket cheio -> quando
+# o studio elevava o ticket de 147 para 177, o agregador degradava de 55,8% para
+# 46,3% sem ninguem ver. O comentario de viabilidade_ponto.py ja dizia "~60% do
+# ticket"; agora e o que o codigo faz.
+SIM_TICKET_AGREGADOR_FATOR = 0.60
+SIM_TICKET_AGREGADOR = 82        # LEGADO: piso absoluto so p/ chamadas antigas sem ticket
+
+# IR/CSLL — Lucro Presumido, servicos (base presumida 32% da RECEITA BRUTA).
+# ANTES: aliquotas efetivas de 8%/2,88% aplicadas sobre a receita LIQUIDA, com o
+# adicional de 10% embutido como se TODA a base excedesse o limite. Agora a faixa
+# do adicional e explicita.
+SIM_BASE_PRESUMIDA_PCT = 0.32    # base de calculo presumida sobre a receita bruta
+SIM_IRPJ_ALIQUOTA = 0.15
+SIM_IRPJ_ADICIONAL_ALIQUOTA = 0.10
+# Limite do adicional: R$60.000/trimestre. Aplicado PRO-RATA MENSAL (=60.000/3) para
+# nao criar degrau artificial na serie de caixa; equivalente ao trimestral quando os
+# meses do trimestre sao estaveis. Ver PREMISSAS_VIABILIDADE.md.
+SIM_IRPJ_ADICIONAL_LIMITE_MES = 20_000.0
+SIM_CSLL_ALIQUOTA = 0.09
+
+# Reajuste anual (P1-8). Aplicado a partir do mes 13 (fator degrau por ano cheio).
+# A PMT do financiamento e NOMINAL e NAO sofre reajuste.
+SIM_REAJUSTE_TICKET_AA = 0.04
+SIM_REAJUSTE_ALUGUEL_AA = 0.04
+SIM_REAJUSTE_CUSTOS_AA = 0.04
+
+# Taxa de desconto do VPL/TIR (ao ano). PENDENTE DE AVAL — default provisorio.
+SIM_TAXA_DESCONTO_AA = 0.12
+
+# Linha do tempo: M-4..M-1 = pre-abertura (obra), M1..M60 = operacao.
+SIM_MESES_PRE_ABERTURA = 4
+SIM_HORIZONTE_MESES = 60
+
+# Carencia de aluguel: meses iniciais sem pagar aluguel, contados A PARTIR DE M-4
+# (entrega da unidade / inicio das obras), nao da abertura.
+SIM_CARENCIA_ALUGUEL_MESES = 0
+
+# Custo pre-operacional (contratacao, treinamento, pre-venda nos meses de obra).
+# Default ZERO — existe para tornar EXPLICITO que hoje o modelo assume ausencia total.
+SIM_CUSTO_PRE_OPERACIONAL_MES = 0.0
+
+# Fim do horizonte (P2-16). Defaults ZERO; existem para tornar explicito que o corte
+# em 60 meses ignora tanto o valor residual quanto o CAPEX de renovacao.
+SIM_VALOR_RESIDUAL_MES_60 = 0.0
+SIM_CAPEX_RENOVACAO = 0.0
+
+# Criterio de viabilidade (estavam como literais em simulador.py::flag_viavel).
+SIM_MARGEM_VIAVEL_MIN = 0.10
+SIM_PAYBACK_VIAVEL_MAX = 36
+
+# ---------------------------------------------------------------------------
+# Anuidade / taxa de manutencao (Simulador J10 + J12)
+# ---------------------------------------------------------------------------
+# Linha de receita que existe na planilha (drivers.manutencao_anuidade, J10) e nunca
+# tinha sido implementada no motor.
+#
+# LIGADA por decisao explicita de Felipe (2026-07-24), com a periodicidade confirmada
+# por ele: R$99 UMA VEZ POR ANO (nao por mes) por aluno de BALCAO que completa 12
+# meses de casa. O gate de QA deste mesmo ciclo a havia desligado por nao conseguir
+# verificar a aprovacao — a aprovacao existe, e as 4 condicoes que o QA exigiu para
+# religar foram cumpridas no mesmo commit:
+#   (a) a anuidade e EXPOSTA no `viabilidade_payload_v1` (premissas.anuidade_* e
+#       dre.receita_anuidade) — o operador ve a linha, nao um faturamento maior sem causa;
+#   (b) os numeros do caso golden foram re-medidos em tests/contracts/;
+#   (c) PREMISSAS_VIABILIDADE.md, STATUS_ORQUESTRACAO.md e a nota de impacto atualizados;
+#   (d) o mes de referencia do steady-state passa a ser max(maturacao, inicio da
+#       anuidade) = 12, e o PDF le esse mes do bloco `dre` do payload (nao o recalcula),
+#       que era a causa do waterfall divergir do card ao lado no mesmo slide.
+SIM_ANUIDADE_VALOR = 99.0
+# Mes de operacao a partir do qual a cobranca existe (Simulador J12).
+SIM_ANUIDADE_MES_INICIO = 12
+# So o BALCAO paga: aluno de agregador (Gympass/TotalPass) nao paga anuidade da
+# academia — o agregador remunera por acesso.
+SIM_ANUIDADE_APENAS_BALCAO = True
+# Fracao dos alunos que chega aos 12 meses. None = DERIVA do churn ((1-churn)^12),
+# entao mexer no churn ajusta a elegibilidade sozinho, sem numero magico paralelo.
+# Com churn 0,06 -> 0,94^12 = 47,6%. Pedido explicito de Felipe: "nem todos os
+# alunos chegam a 12 meses".
+SIM_ANUIDADE_ELEGIVEL_PCT: float | None = None
+# Reconhecimento PRO-RATA MENSAL (valor/12) a partir do mes de inicio, em vez de um
+# lancamento unico no mes 12: os aniversarios dos alunos se distribuem ao longo do
+# ano, entao o lancamento unico criaria um degrau artificial no caixa.
+SIM_ANUIDADE_PRO_RATA = True
