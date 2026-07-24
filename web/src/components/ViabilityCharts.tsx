@@ -904,7 +904,10 @@ export function FluxoCaixaOperacional({
   }
 
   const W = 620
-  const H = 230
+  // 230 -> 300 (+30%) por pedido de Felipe (2026-07-24): a 230 o grafico ficava
+  // espremido num retangulo 2,7:1 e a travessia do zero mal se distinguia. O card
+  // (Glass) cresce junto porque o SVG esta no fluxo normal.
+  const H = 300
   const padL = 8
   const padR = 8
   const tMin = pts[0].t
@@ -980,7 +983,7 @@ export function FluxoCaixaOperacional({
         <svg
           viewBox={`0 0 ${W} ${H}`}
           preserveAspectRatio="none"
-          style={{ width: '100%', height: 230, display: 'block' }}
+          style={{ width: '100%', height: H, display: 'block' }}
           aria-hidden
         >
           <defs>

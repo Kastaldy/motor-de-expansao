@@ -88,7 +88,8 @@ def test_viabilidade_contrato_e_coerencia() -> None:
     teto = body["aluguel_teto"]
     assert teto["base"] == "faturamento_bruto"
     assert teto["ideal"] < teto["teto"] < teto["excecao"]
-    assert teto["canonico"] == pytest.approx(teto["excecao"])
+    # Card grande usa o TETO (20%), nao a excecao (decisao de Felipe 2026-07-24).
+    assert teto["canonico"] == pytest.approx(teto["teto"])
     assert teto["teto"] == pytest.approx(0.20 * dre["faturamento"], rel=1e-4)
 
     # Retorno DESALAVANCADO = (EBITDA - IR) x12 / investimento total (capex + franquia).

@@ -259,8 +259,11 @@ def test_golden_aluguel_teto_tres_faixas():
     assert r.aluguel_teto["ideal"] == pytest.approx(43_238.64, abs=CENTAVO)
     assert r.aluguel_teto["teto"] == pytest.approx(57_651.51, abs=CENTAVO)
     assert r.aluguel_teto["excecao"] == pytest.approx(86_477.27, abs=CENTAVO)
-    # O canonico exibido como "aluguel-teto" e a EXCECAO (30%).
-    assert r.aluguel_teto["canonico"] == pytest.approx(r.aluguel_teto["excecao"], abs=1e-12)
+    # O canonico exibido no card grande e o TETO (20%), nao a excecao (30%) —
+    # decisao de Felipe 2026-07-24: o card mostra o limite que a operacao defende;
+    # a excecao e caso de excecao, nao referencia. As 3 faixas seguem no detalhe.
+    assert r.aluguel_teto["canonico"] == pytest.approx(r.aluguel_teto["teto"], abs=1e-12)
+    assert r.aluguel_teto["canonico"] < r.aluguel_teto["excecao"]
     # Base = faturamento bruto steady (nao inversao por margem EBITDA).
     assert r.aluguel_teto == aluguel_teto_clusters(r.faturamento_mensal_steady)
 
@@ -845,7 +848,7 @@ PREMISSAS_TRAVADAS: dict[str, float | int] = {
     "SIM_CARTOES_PCT": 0.0105,
     # custo fixo
     "SIM_OUTROS_FIXOS_MES": 38_150.00,
-    # aluguel-teto (% do faturamento bruto; canonico = excecao)
+    # aluguel-teto (% do faturamento bruto; canonico = TETO 20%)
     "SIM_ALUGUEL_TETO_IDEAL": 0.15,
     "SIM_ALUGUEL_TETO_TETO": 0.20,
     "SIM_ALUGUEL_TETO_EXCECAO": 0.30,
@@ -917,7 +920,7 @@ def test_aluguel_teto_usa_as_faixas_do_config():
     assert faixas["ideal"] == pytest.approx(100_000.0 * cfg.SIM_ALUGUEL_TETO_IDEAL, abs=1e-9)
     assert faixas["teto"] == pytest.approx(100_000.0 * cfg.SIM_ALUGUEL_TETO_TETO, abs=1e-9)
     assert faixas["excecao"] == pytest.approx(100_000.0 * cfg.SIM_ALUGUEL_TETO_EXCECAO, abs=1e-9)
-    assert faixas["canonico"] == faixas["excecao"]
+    assert faixas["canonico"] == faixas["teto"]
     # Faturamento zero nao pode virar NaN/inf no payload.
     assert aluguel_teto_clusters(0.0) == {
         "ideal": 0.0, "teto": 0.0, "excecao": 0.0, "canonico": 0.0

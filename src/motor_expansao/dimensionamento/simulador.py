@@ -436,16 +436,20 @@ def aluguel_teto_clusters(faturamento_bruto: float) -> dict[str, float]:
 
     Substitui a inversao por margem EBITDA que o PDF usava e que devolvia
     R$105.813,13 onde a tela mostrava R$55.535,18 no MESMO cenario.
-    O canonico exibido como "aluguel-teto" e o `excecao` (30%).
+
+    O canonico exibido no card grande e o `teto` (20%), nao o `excecao` (30%) —
+    decisao de Felipe (2026-07-24): o card tem de mostrar o limite que a operacao
+    defende, e a excecao (30%) e caso de excecao, nao referencia. As tres faixas
+    seguem impressas no detalhe, todas da mesma base.
     """
     if faturamento_bruto <= 0:
         return {"ideal": 0.0, "teto": 0.0, "excecao": 0.0, "canonico": 0.0}
-    excecao = faturamento_bruto * SIM_ALUGUEL_TETO_EXCECAO
+    teto = faturamento_bruto * SIM_ALUGUEL_TETO_TETO
     return {
         "ideal": faturamento_bruto * SIM_ALUGUEL_TETO_IDEAL,
-        "teto": faturamento_bruto * SIM_ALUGUEL_TETO_TETO,
-        "excecao": excecao,
-        "canonico": excecao,
+        "teto": teto,
+        "excecao": faturamento_bruto * SIM_ALUGUEL_TETO_EXCECAO,
+        "canonico": teto,
     }
 
 

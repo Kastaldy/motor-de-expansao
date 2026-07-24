@@ -1255,7 +1255,11 @@ def _viabilidade_page(
     for linha in _viab_linhas_detalhe(dados):
         pdf.set_xy(margin_x, y_texto)
         pdf.multi_cell(_PAGE_W - 2 * margin_x, 12, _ascii(linha))
-        y_texto += 15.0
+        # Avanca pela altura REAL consumida. Com o passo fixo de 15 pt que havia aqui,
+        # uma linha que quebrasse em duas ocupava 24 pt e a linha SEGUINTE era desenhada
+        # 3 pt acima do fim dela -> textos sobrepostos e ilegiveis (reportado por Felipe
+        # 2026-07-24, depois que a explicacao da anuidade alongou a primeira linha).
+        y_texto = pdf.get_y() + 3.0
     pdf.set_xy(margin_x, y_texto + 3.0)
     pdf.multi_cell(_PAGE_W - 2 * margin_x, 12, _ascii(rodape))
     _draw_footer(pdf, with_attribution=False)
