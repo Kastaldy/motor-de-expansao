@@ -179,12 +179,13 @@ def _residual_do_ponto(lat: float, lng: float, settings: Settings) -> dict:
 
 
 def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int = 5):
-    """Hexes H3 (res 7) do disco de raio `k` em torno do ponto, com `oferta_efetiva_disponivel`.
+    """Hexes H3 (res 7) do disco de raio `k` em torno do ponto, com o valor de cada camada hex.
 
     Espelha `_residual_do_ponto`: filtra direto no parquet de mercado por um conjunto pequeno de
-    chaves (91 hexes em k=5) e 2 colunas -> leitura barata, NAO carrega a base de 1,5 M. Insumo do
-    choropleth de Residual Fitness do slide-hero (BLK-RELPON-10). READ-ONLY; nao recalcula nada
-    do M1. Devolve `None` (fallback gracioso -> camada ausente no PDF) em qualquer falha.
+    chaves (91 hexes em k=5) e poucas colunas -> leitura barata, NAO carrega a base de 1,5 M.
+    Insumo dos choropleths POR HEXAGONO do slide-hero: Residual Fitness (`oferta_efetiva_disponivel`,
+    BLK-RELPON-10) e Socioeconomia (`score_setor_2022_calibrado`, BLK-RELPON-13). READ-ONLY; nao
+    recalcula nada do M1. Devolve `None` (fallback gracioso -> camada ausente no PDF) em qualquer falha.
     """
     mercado = Path(settings.staging_dir / "hexagonos_mercado_mapeado.parquet")
     if not mercado.is_file():
@@ -194,11 +195,20 @@ def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int 
         import pyarrow.compute as pc
         import pyarrow.dataset as ds
 
+        dataset = ds.dataset(mercado)
+        # Servir tambem `score_setor_2022_calibrado` quando existir: a partir do BLK-RELPON-13 o
+        # painel Socioeconomia do hero e desenhado por hexagono e depende dessa coluna estar no
+        # `hexes_df`. Sem ela (parquet antigo), a camada cai no fallback textual em vez de crashar.
+        disponiveis = set(dataset.schema.names)
+        colunas = ["hex_id", "oferta_efetiva_disponivel"]
+        if "score_setor_2022_calibrado" in disponiveis:
+            colunas.append("score_setor_2022_calibrado")
+
         centro = h3.latlng_to_cell(lat, lng, 7)  # 7 = H3_RESOLUTION (M1), LIDO
         celulas = list(h3.grid_disk(centro, k))
-        tbl = ds.dataset(mercado).to_table(
+        tbl = dataset.to_table(
             filter=pc.field("hex_id").isin(celulas),
-            columns=["hex_id", "oferta_efetiva_disponivel"],
+            columns=colunas,
         )
         if not tbl.num_rows:
             return None
