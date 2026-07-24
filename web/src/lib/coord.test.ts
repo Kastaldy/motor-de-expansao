@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseCoordinate } from './coord'
+import { coordenadaDoEstudo, parseCoordinate } from './coord'
 
 describe('parseCoordinate', () => {
   it('par decimal com ponto', () => {
@@ -32,5 +32,33 @@ describe('parseCoordinate', () => {
   })
   it('longitude fora do Brasil -> null', () => {
     expect(parseCoordinate('-15.79, 10.0')).toBeNull()
+  })
+})
+
+describe('coordenadaDoEstudo', () => {
+  // Centroide real do hex res-7 que contem o ponto do usuario em Janga/Paulista-PE.
+  // O caso que quebrou em producao (2026-07-24): o front mandava o centroide, que cai
+  // no mar -> a malha municipal do IBGE nao resolve -> HTTP 400 "fora do Brasil".
+  const hex = { lat: -7.942426, lng: -34.821732 }
+
+  it('usa a coordenada EXATA quando o ponto veio da busca', () => {
+    const alvo = coordenadaDoEstudo({ hex, lat: -7.93908, lng: -34.82566 })
+    expect(alvo).toEqual({ lat: -7.93908, lng: -34.82566 })
+    // Nao pode vazar o centroide.
+    expect(alvo.lat).not.toBe(hex.lat)
+    expect(alvo.lng).not.toBe(hex.lng)
+  })
+
+  it('cai no centroide do hexagono quando nao ha coordenada exata (clique no ranking)', () => {
+    expect(coordenadaDoEstudo({ hex })).toEqual(hex)
+  })
+
+  it('nao aceita coordenada exata pela metade', () => {
+    expect(coordenadaDoEstudo({ hex, lat: -7.93908 })).toEqual(hex)
+    expect(coordenadaDoEstudo({ hex, lng: -34.82566 })).toEqual(hex)
+  })
+
+  it('preserva lat/lng = 0 (falsy, mas coordenada valida)', () => {
+    expect(coordenadaDoEstudo({ hex, lat: 0, lng: 0 })).toEqual({ lat: 0, lng: 0 })
   })
 })
