@@ -314,7 +314,11 @@ export function CascataDre({
   const teto = Math.max(1, d.faturamento ?? 1)
   const piso = Math.min(0, d.ebitda ?? 0, d.resultado_apos_ir ?? 0)
   const amplitude = teto - piso || 1
-  const H = 130
+  // 130 -> 169 (+30%) -> 190 (+21), pedidos de Felipe (2026-07-24): as barras ficavam
+  // achatadas. A cascata ganhou linhas neste ciclo (as 3 parcelas do custo + despesa
+  // financeira), entao ha mais barras dividindo a MESMA altura — cada uma sobrava
+  // ainda mais baixa.
+  const H = 190
 
   return (
     <Glass style={{ padding: '17px 19px', minWidth: 0 }}>

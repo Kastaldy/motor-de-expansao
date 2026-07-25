@@ -9,10 +9,11 @@ import {
   ReguaBreakEven,
   Veredito,
 } from '../components/ViabilityCharts'
+import { NotasMetodologicas } from '../components/ViabilityNotes'
 import { Aviso, Botao, Eyebrow, Glass, Kpi } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { coordenadaDoEstudo } from '../lib/coord'
-import { alunos, brl, coord, num, pctFrac, rotuloMes } from '../lib/format'
+import { alunos, brl, brlCurto, coord, num, pctFrac, rotuloMes } from '../lib/format'
 import { infoImovelParaPdf } from '../lib/report'
 import type {
   FaixaAlunos,
@@ -89,6 +90,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   const [res, setRes] = useState<ViabilidadeOut | null>(null)
   const [calculando, setCalculando] = useState(false)
   const [gerandoPdf, setGerandoPdf] = useState(false)
+  const [gerandoXlsx, setGerandoXlsx] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
 
   const inputFoto = useRef<HTMLInputElement>(null)
@@ -206,6 +208,28 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
       setErro(e instanceof ApiError ? e.message : 'Falha ao gerar o relatório.')
     } finally {
       setGerandoPdf(false)
+    }
+  }
+
+  /**
+   * Baixa o simulador financeiro completo em Excel (fórmulas vivas). Manda os MESMOS
+   * inputs do cenário — o servidor roda o motor uma vez e monta a planilha; a tela
+   * não deriva nada. Mesmo padrão de carregando/erro do PDF.
+   */
+  async function gerarXlsx() {
+    if (!ponto) return
+    setGerandoXlsx(true)
+    setErro(null)
+    try {
+      const { blob, filename } = await api.simuladorXlsx(
+        montarPayload(demanda),
+        info.nome || ponto.rotulo,
+      )
+      baixar(blob, filename)
+    } catch (e) {
+      setErro(e instanceof ApiError ? e.message : 'Falha ao gerar a planilha.')
+    } finally {
+      setGerandoXlsx(false)
     }
   }
 
@@ -726,18 +750,22 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                 borderRadius: 'var(--r-md)',
               }}
             >
+              {/* Notação curta ("R$ 2,2M", "R$ 38k/mês"): os três readouts dividem uma
+                  linha estreita e o valor cheio quebrava para a linha de baixo. */}
               <ReadoutCapex
                 rotulo="Investimento total"
-                valor={brl(res.investimento.investimento_total, true)}
+                valor={brlCurto(res.investimento.investimento_total)}
               />
               <ReadoutCapex
                 rotulo="Taxa de franquia"
-                valor={brl(res.investimento.taxa_franquia, true)}
+                valor={brlCurto(res.investimento.taxa_franquia)}
               />
               <ReadoutCapex
                 rotulo="PMT"
                 valor={
-                  res.investimento.pmt ? `${brl(res.investimento.pmt)}/mês` : 'sem financiamento'
+                  res.investimento.pmt
+                    ? `${brlCurto(res.investimento.pmt)}/mês`
+                    : 'sem financiamento'
                 }
               />
             </div>
@@ -859,6 +887,28 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               minutos.
             </p>
           )}
+
+          <Botao
+            variante="ghost"
+            onClick={gerarXlsx}
+            disabled={gerandoXlsx}
+            style={{ width: '100%', marginTop: 10 }}
+            title="Planilha do cenário com DRE, folha de pagamento e fluxo de caixa dos 60 meses, em fórmulas editáveis"
+          >
+            {gerandoXlsx ? 'Montando a planilha…' : 'Baixar simulador (Excel) ↓'}
+          </Botao>
+
+          <p
+            style={{
+              font: '400 10.5px/1.5 var(--f-ui)',
+              color: 'var(--tx-sub)',
+              marginTop: 8,
+            }}
+          >
+            {gerandoXlsx
+              ? 'Montando os 60 meses de DRE, folha e fluxo de caixa.'
+              : 'Abre com fórmulas vivas: dá para editar aluguel, demanda e salários na frente do investidor e ver os 60 meses recalcularem no Excel.'}
+          </p>
         </aside>
 
         {/* ---- Resultados ---- */}
@@ -1033,6 +1083,10 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
           {/* `premissas` entra só como ROTULAGEM: o mês de referência do regime pleno
               (`mes_referencia_steady`, lido do payload) e a regra da anuidade. */}
           <CascataDre dre={dre} premissas={premissas} />
+
+          {/* Manual da tela, abaixo de TODOS os gráficos: o que cada KPI significa e
+              como é calculado. Lê as premissas do payload, então não desatualiza. */}
+          <NotasMetodologicas premissas={premissas} dre={dre} />
 
           {(res?.flag_fora_envelope || res?.flag_zona_morta) && (
             <Glass style={{ padding: '13px 16px' }}>

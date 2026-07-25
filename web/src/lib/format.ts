@@ -26,6 +26,19 @@ export function brl(v: number | null | undefined, compacto = false, casas = 0): 
   return `R$ ${nf(casas).format(v)}`
 }
 
+/**
+ * Reais em notacao CURTA: "R$ 38k", "R$ 2,2M". Para readout de sidebar, onde o valor
+ * tem de caber numa linha so — mais enxuto que `brl(v, true)`, que escreve "mil"/"mi"
+ * por extenso e quebrava a linha no bloco de investimento.
+ */
+export function brlCurto(v: number | null | undefined): string {
+  if (v === null || v === undefined || Number.isNaN(v)) return 'n/d'
+  const abs = Math.abs(v)
+  if (abs >= 1_000_000) return `R$ ${nf(abs >= 10_000_000 ? 0 : 1).format(v / 1_000_000)}M`
+  if (abs >= 1_000) return `R$ ${nf(0).format(v / 1_000)}k`
+  return `R$ ${nf(0).format(v)}`
+}
+
 export function pct(v: number | null | undefined, casas = 1): string {
   if (v === null || v === undefined || Number.isNaN(v)) return 'n/d'
   return `${nf(casas).format(v)}%`
