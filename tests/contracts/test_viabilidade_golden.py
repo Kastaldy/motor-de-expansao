@@ -372,7 +372,11 @@ def test_golden_payback_retorno_tir_vpl():
     assert r.retorno_anual_equity == pytest.approx(0.7176080, abs=RATE)
     assert r.tir_anual is not None
     assert r.tir_anual == pytest.approx(0.3898033, abs=RATE)
-    assert r.vpl == pytest.approx(849_484.15, abs=CENTAVO)
+    # 4a rodada: fluxo DO SOCIO descontado a taxa DO SOCIO (Ke=27,08%, derivada de
+    # Ku=25% e Kd=23,87%). Era 849.484,15 a 12% — taxa de projeto num fluxo de socio.
+    assert r.vpl == pytest.approx(276_103.24, abs=CENTAVO)
+    assert r.vpl_socio == pytest.approx(276_103.24, abs=CENTAVO)
+    assert r.vpl_negocio == pytest.approx(312_177.18, abs=CENTAVO)
     assert r.acumulado_mes_final == pytest.approx(1_645_454.56, abs=CENTAVO)
     assert r.flag_viavel is True
 
@@ -582,7 +586,7 @@ def test_anuidade_e_aditiva_nao_redistribui_nada():
     assert sem.alunos_break_even_caixa_total == pytest.approx(1_566.11, abs=0.05)
     assert sem.payback_meses == 32.0
     assert sem.tir_anual == pytest.approx(0.3639585, abs=RATE)
-    assert sem.vpl == pytest.approx(752_610.14, abs=CENTAVO)
+    assert sem.vpl == pytest.approx(212_103.28, abs=CENTAVO)
     assert sem.acumulado_mes_final == pytest.approx(1_503_326.98, abs=CENTAVO)
     assert sem.aluguel_teto["excecao"] == pytest.approx(84_604.69, abs=CENTAVO)
 
@@ -666,7 +670,7 @@ def test_fronteira_p10_opera_acima_do_break_even_e_ainda_assim_nao_paga():
     assert math.isinf(r.payback_meses)                   # NUNCA paga o investimento
     assert r.mes_caixa_operacional_positivo is None
     assert r.tir_anual is None                           # sem troca de sinal -> sem raiz
-    assert r.vpl == pytest.approx(-2_209_423.70, abs=CENTAVO)
+    assert r.vpl == pytest.approx(-1_885_497.58, abs=CENTAVO)
     assert r.acumulado_mes_final == pytest.approx(-2_632_012.43, abs=CENTAVO)
     assert r.retorno_anual_desalavancado == pytest.approx(0.0693907, abs=RATE)
     assert r.retorno_anual_equity == pytest.approx(-0.4082908, abs=RATE)
@@ -686,7 +690,7 @@ def test_fronteira_p90():
     assert r.payback_meses == 18.0
     assert r.mes_caixa_operacional_positivo == 5
     assert r.tir_anual == pytest.approx(0.9456790, abs=RATE)
-    assert r.vpl == pytest.approx(2_852_177.18, abs=CENTAVO)
+    assert r.vpl == pytest.approx(1_691_321.71, abs=CENTAVO)
     assert r.acumulado_mes_final == pytest.approx(4_445_948.64, abs=CENTAVO)
     assert r.retorno_anual_desalavancado == pytest.approx(0.7249029, abs=RATE)
     assert r.aluguel_teto["excecao"] == pytest.approx(113_401.49, abs=CENTAVO)
@@ -729,7 +733,7 @@ def test_fronteira_carencia_desloca_o_inicio_da_cobranca_e_melhora_o_payback():
         sem.acumulado_mes_final + 4 * 30_000.0, abs=CENTAVO
     )
     assert com.acumulado_mes_final == pytest.approx(1_765_454.56, abs=CENTAVO)
-    assert com.vpl == pytest.approx(967_802.80, abs=CENTAVO)
+    assert com.vpl == pytest.approx(392_591.13, abs=CENTAVO)
     assert com.tir_anual == pytest.approx(0.4569667, abs=RATE)
 
 
@@ -771,7 +775,13 @@ def test_fronteira_equipamentos_a_vista():
     assert vista.payback_meses > fin.payback_meses
     assert vista.mes_caixa_operacional_positivo == 4
     assert vista.tir_anual == pytest.approx(0.3173924, abs=RATE)
-    assert vista.vpl == pytest.approx(1_187_991.43, abs=CENTAVO)
+    # Equipamentos A VISTA: sem divida, D/E=0, entao Ke == Ku e o fluxo do socio E o
+    # do negocio -> os dois VPLs coincidem. E a identidade da 4a rodada funcionando.
+    assert vista.vpl == pytest.approx(312_177.18, abs=CENTAVO)
+    assert vista.vpl_negocio == pytest.approx(vista.vpl_socio, abs=CENTAVO)
+    assert vista.taxa_minima_socio_aa == pytest.approx(
+        vista.taxa_minima_negocio_aa, abs=1e-12
+    )
     assert vista.acumulado_mes_final == pytest.approx(2_546_379.73, abs=CENTAVO)
 
 
@@ -1076,7 +1086,9 @@ PREMISSAS_TRAVADAS: dict[str, float | int] = {
     "SIM_REAJUSTE_ALUGUEL_AA": 0.04,
     "SIM_REAJUSTE_CUSTOS_AA": 0.04,
     # desconto do VPL/TIR
-    "SIM_TAXA_DESCONTO_AA": 0.12,
+    # 4a rodada: a taxa de desconto generica de 12% virou a taxa minima do NEGOCIO
+    # (25% a.a.). A do socio nao e parametro: e derivada em simular().
+    "SIM_TAXA_MINIMA_NEGOCIO_AA": 0.25,
     # IR/CSLL -- Lucro Presumido com a faixa do adicional explicita
     "SIM_BASE_PRESUMIDA_PCT": 0.32,
     "SIM_IRPJ_ALIQUOTA": 0.15,
@@ -1115,7 +1127,7 @@ def test_defaults_de_premissas_vem_do_config():
     assert p.churn == cfg.SIM_CHURN
     assert p.personal_mes == cfg.SIM_PERSONAL_MES_RECEITA
     assert p.outros_fixos_mes == cfg.SIM_OUTROS_FIXOS_MES
-    assert p.taxa_desconto_aa == cfg.SIM_TAXA_DESCONTO_AA
+    assert p.taxa_minima_negocio_aa == cfg.SIM_TAXA_MINIMA_NEGOCIO_AA
     assert p.reajuste_ticket_aa == cfg.SIM_REAJUSTE_TICKET_AA
     assert p.reajuste_aluguel_aa == cfg.SIM_REAJUSTE_ALUGUEL_AA
     assert p.reajuste_custos_aa == cfg.SIM_REAJUSTE_CUSTOS_AA
@@ -1404,9 +1416,11 @@ def test_parcelamento_da_franquia_nao_altera_ebitda_margem_nem_break_even():
     assert parcelado.tir_anual > vista.tir_anual
     assert parcelado.tir_anual - vista.tir_anual == pytest.approx(0.0033296, abs=1e-6)
     assert parcelado.vpl > vista.vpl
-    assert parcelado.vpl - vista.vpl == pytest.approx(2_241.80, abs=CENTAVO)
+    # O ganho do parcelamento CRESCEU porque a taxa de desconto subiu de 12% para
+    # 27,08%: adiar desembolso vale mais quanto mais caro e o dinheiro.
+    assert parcelado.vpl - vista.vpl == pytest.approx(4_682.82, abs=CENTAVO)
     assert vista.tir_anual == pytest.approx(0.3864737, abs=RATE)
-    assert vista.vpl == pytest.approx(847_242.35, abs=CENTAVO)
+    assert vista.vpl == pytest.approx(271_420.42, abs=CENTAVO)
 
 
 def test_franquia_zerada_nao_gera_parcela():

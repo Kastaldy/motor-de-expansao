@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from motor_expansao.dimensionamento.config import (
     SIM_ALUGUEL_MES,
     SIM_PERSONAL_MES_RECEITA,
@@ -225,7 +227,12 @@ def test_flag_viavel_com_payback_menor_igual_36() -> None:
     """
     r = viabilidade(**{**VIAVEL, "capex": 150_000})
     assert r.payback_meses <= 36
-    assert r.flag_viavel is True
+    # A REGUA DE MARGEM SUBIU PARA 30% (decisao de Felipe, 2026-07-25; era 10%). Este
+    # cenario legado fecha o payback em 22 meses mas so 18,27% de margem, entao o
+    # criterio COMBINADO agora reprova. Passar no payback deixou de bastar — e o
+    # proposito da regua nova. O que este teste trava e justamente isso.
+    assert r.margem_ebitda_pct == pytest.approx(0.1827, abs=0.001)
+    assert r.flag_viavel is False
 
 
 def test_flag_nao_viavel_com_payback_entre_37_e_60() -> None:

@@ -200,6 +200,13 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
             'único indicador que se chama payback nesta tela.',
         },
         {
+          kpi: 'Régua de aprovação',
+          como:
+            'O veredito exige DUAS coisas ao mesmo tempo: margem EBITDA de pelo menos ' +
+            '30% e payback dentro de 36 meses de operação. Passar só no payback deixou ' +
+            'de bastar — a régua de margem subiu de 10% para 30% em 2026-07-25.',
+        },
+        {
           kpi: 'Aluguel-teto',
           como:
             'Percentual do faturamento bruto, em três faixas: ideal 15%, teto 20% e ' +
@@ -213,27 +220,49 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
       titulo: 'Retorno',
       notas: [
         {
-          kpi: 'Retorno anual (desalavancado)',
+          kpi: 'Duas óticas, nunca no mesmo número',
           como:
-            'Resultado anual ANTES da parcela do financiamento, dividido pelo ' +
-            'investimento total (CAPEX + franquia). É a ótica de comitê: mede o ativo, ' +
-            'não a estrutura de capital. A visão equity (depois da parcela, sobre o que ' +
-            'foi aportado) aparece separada — as duas nunca se misturam no mesmo número.',
+            'Todo indicador de retorno aparece em PAR. O "do negócio" mede o ATIVO: ' +
+            'nenhum financiamento no fluxo e o CAPEX inteiro saindo do caixa. O "do ' +
+            'sócio" mede a ESTRUTURA DE CAPITAL: a parcela do financiamento sai e só o ' +
+            'aporte de obra e franquia entra. Misturar numerador de um com denominador ' +
+            'do outro faz o modelo se beneficiar do financiamento duas vezes.',
         },
         {
-          kpi: 'TIR',
+          kpi: 'Taxa mínima do negócio',
           como:
-            'Taxa interna de retorno do fluxo de caixa de M-4 até o mês ' +
-            `${p.horizonte_meses}. Ao contrário do payback, considera QUANDO cada real ` +
-            'entra.',
+            `${pctFrac(p.taxa_minima_negocio_aa)} ao ano, nominal. É a única taxa ` +
+            'editável do modelo, e o piso vem da própria decisão de financiar: se o ' +
+            'banco cobra menos que isso, tomar emprestado cria valor; se cobra mais, ' +
+            'destrói. Como o Lucro Presumido não tem escudo fiscal da dívida, esta é ' +
+            'também a taxa do ativo — não há média ponderada a fazer.',
         },
         {
-          kpi: 'VPL',
+          kpi: 'Taxa mínima do sócio',
           como:
-            'Valor presente líquido do mesmo fluxo, descontado a ' +
-            `${pctFrac(p.taxa_desconto_aa)} ao ano. Positivo significa criar valor ` +
-            'acima do custo de capital. A taxa é premissa editável e ainda pende de ' +
-            'validação.',
+            'NÃO é um campo: é derivada da taxa do negócio, do custo da dívida e da ' +
+            'alavancagem. O sócio é subordinado ao banco — recebe o resíduo, e o ' +
+            'equipamento é garantia do credor — então a taxa dele tem de ser maior que ' +
+            'a do credor. Sendo derivada, é impossível alguém digitar uma taxa de sócio ' +
+            'abaixo do custo da dívida, que era o furo do modelo anterior.',
+        },
+        {
+          kpi: 'TIR e VPL',
+          como:
+            'Taxa interna de retorno e valor presente do fluxo de M-4 até o mês ' +
+            `${p.horizonte_meses}. Ao contrário do payback, consideram QUANDO cada real ` +
+            'entra. Cada um sai duas vezes, na ótica do negócio e na do sócio, cada uma ' +
+            'descontada pela SUA taxa. A diferença entre as duas é a alavancagem: sem ' +
+            'escudo fiscal no Presumido, ela cria valor apenas por ARBITRAGEM — tomar ' +
+            'dinheiro mais barato do que o ativo rende.',
+        },
+        {
+          kpi: 'Cheque total',
+          como:
+            'O pior ponto do caixa acumulado, e não o aporte contratado. É o dinheiro ' +
+            'que o investidor precisa ter DISPONÍVEL, porque a obra e os primeiros ' +
+            'meses de operação queimam caixa antes da casa encher. Decide se o negócio ' +
+            'é financiável, o que é uma pergunta diferente de ser bom.',
         },
       ],
     },

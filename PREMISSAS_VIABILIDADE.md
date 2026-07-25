@@ -5,9 +5,13 @@
 > `src/motor_expansao/dimensionamento/simulador.py`. Backend, frontend e PDF apenas
 > **leem** o resultado — nenhuma fórmula financeira pode ser reescrita fora do simulador.
 >
-> Ciclo: **FIN-VIAB-01** (reconciliação do simulador) · Atualizado em **2026-07-24**
-> (**3ª rodada** — duas decisões de produto de Felipe entraram no núcleo: **folha fixa desde o
-> mês 1** e **taxa de franquia parcelada em 4×**. Ver §4.1 e §6.)
+> Ciclo: **FIN-VIAB-01** (reconciliação do simulador) · Atualizado em **2026-07-25**
+> (**4ª rodada** — a régua de retorno foi refeita: a taxa de desconto de 12% a.a. **saiu** e deu
+> lugar à **taxa mínima do negócio de 25% a.a.**, a **taxa mínima do sócio passou a ser derivada**
+> (não é mais parâmetro), TIR e VPL passaram a existir em **duas óticas separadas**, entrou o
+> **cheque total** e a margem mínima de viabilidade subiu de 10% para **30%**. Ver §6.2, §6.3,
+> §6.4 e §10. A 3ª rodada — **folha fixa desde o mês 1** e **taxa de franquia parcelada em 4×** —
+> segue valendo: §4.1 e §6.1.)
 > Guardrail permanente: camada **paralela**, READ-ONLY sobre o M1 (DEC-001/DEC-008/DEC-009).
 
 ---
@@ -210,19 +214,23 @@ R$ 20.000/mês → IR/CSLL = **R$ 29.362,42/mês**.
 | `SIM_REAJUSTE_TICKET_AA` | `0.04` | % ao ano | premissa de reajuste (degrau anual a partir do mês 13) | Felipe | `config.py` → `Premissas.reajuste_ticket_aa` |
 | `SIM_REAJUSTE_ALUGUEL_AA` | `0.04` | % ao ano | idem | Felipe | `config.py` → `Premissas.reajuste_aluguel_aa` |
 | `SIM_REAJUSTE_CUSTOS_AA` | `0.04` | % ao ano | idem (aplica a `outros_fixos`) | Felipe | `config.py` → `Premissas.reajuste_custos_aa` |
-| `SIM_TAXA_DESCONTO_AA` | `0.12` | % ao ano | **provisório — pendente de aval** (ver §10) | Comitê + DEC | `config.py` → `Premissas.taxa_desconto_aa`; VPL |
-| `SIM_VALOR_RESIDUAL_MES_60` | `0.0` | R$ | **explicitação de ausência** — o corte em 60 meses ignora valor terminal | Comitê + DEC | `config.py` → `Premissas.valor_residual_mes_60` |
+| `SIM_TAXA_MINIMA_NEGOCIO_AA` | `0.25` | % ao ano (nominal) | **decisão de Felipe, 2026-07-25** — piso implícito da própria decisão de financiar (custo da dívida de 1,8% a.m. = **23,87% a.a.**) + *build-up* sobre a Selic de **14,25%**. **Substitui** `SIM_TAXA_DESCONTO_AA = 0,12` (§10) | **Felipe (dono do produto)** | `config.py` → `Premissas.taxa_minima_negocio_aa`; VPL **do negócio**; resultado `taxa_minima_negocio_aa` |
+| *(derivada — **não** é parâmetro)* **taxa mínima do sócio** | **27,08% a.a.** no caso de referência | % ao ano | `Ke = Ku + (Ku − Kd) × D/E` — calculada dentro de `simular()`. **Não existe campo onde digitá-la** (§6.2) | — (ninguém: é derivada) | `simulador.py::simular`; resultado `taxa_minima_socio_aa`; VPL **do sócio** |
+| *(derivado)* **custo da dívida** | **23,87% a.a.** no caso de referência | % ao ano | `(1 + juros_equipamentos_am)^12 − 1` — vem do contrato de financiamento, não de premissa | — | resultado `custo_divida_aa` |
+| *(derivada)* **alavancagem** | **1,8421** no caso de referência | × | `equipamentos ÷ aporte inicial` (dívida sobre obra + franquia) | — | resultado `alavancagem_divida_sobre_aporte` |
+| `SIM_VALOR_RESIDUAL_MES_60` | `0.0` | R$ | **explicitação de ausência** — o corte em 60 meses ignora valor terminal. Régua **em decisão com o Marcos** (§12) | Comitê + DEC | `config.py` → `Premissas.valor_residual_mes_60` |
 | `SIM_CAPEX_RENOVACAO` | `0.0` | R$ | **explicitação de ausência** — o corte em 60 meses ignora CAPEX de renovação | Comitê + DEC | `config.py` → `Premissas.capex_renovacao` |
-| `SIM_MARGEM_VIAVEL_MIN` | `0.10` | % de margem EBITDA | critério de `flag_viavel` (era literal em `simulador.py`) | Comitê + DEC | `config.py` |
+| `SIM_MARGEM_VIAVEL_MIN` | **`0.30`** | % de margem EBITDA | **decisão de Felipe, 2026-07-25** — era `0.10`; a régua antiga aprovava cenário de margem 12% que ninguém levaria a comitê. Ver §6.4 | Comitê + DEC | `config.py` → `flag_viavel` |
 | `SIM_PAYBACK_VIAVEL_MAX` | `36` | meses | critério de `flag_viavel` (era literal em `simulador.py`) | Comitê + DEC | `config.py` |
 
 **A PMT é nominal e não sofre reajuste.** O reajuste anual é um degrau por ano cheio a partir do
 mês 13; a pré-abertura não reajusta.
 
-**Óticas de retorno.** O padrão exibido é o **desalavancado** (resultado antes da PMT ÷ investimento
-cheio = CAPEX + taxa de franquia). O retorno de **equity** (resultado depois da PMT ÷ obra + franquia)
-é visão secundária e **nunca aparece no mesmo KPI** — o ROIC anterior misturava numerador
-desalavancado com denominador de capex cheio, e o modelo se beneficiava do financiamento duas vezes.
+**Óticas de retorno.** Existem **duas**, e elas nunca se misturam num mesmo número: a **do negócio**
+(mede o ativo) e a **do sócio** (mede a estrutura de capital). O vocabulário, o que cada uma
+responde e as identidades que o modelo afere estão em **§6.2** — leitura obrigatória antes de citar
+qualquer TIR ou VPL. O ROIC anterior misturava as duas (numerador antes do financiamento sobre
+denominador de capex cheio), e o modelo se beneficiava do financiamento duas vezes.
 
 ### 6.1 Taxa de franquia parcelada em 4× sem juros (decisão de Felipe, 2026-07-24)
 
@@ -237,6 +245,134 @@ EBITDA, margem e break-even **não mudam** (parcelamento não é resultado); pay
 M60 ficam **idênticos**. Muda apenas o que é sensível à *data* de cada real: **TIR +0,33 pp** e
 **VPL +R$ 2.241,80** (medido, §15). Se um dia o número de parcelas passar da janela de pré-abertura,
 as parcelas restantes cairão nos primeiros meses de operação — a série já trata esse caso.
+
+### 6.2 Como ler retorno — as duas óticas (decisão de Felipe, 2026-07-25)
+
+Até a 3ª rodada existia **um** par TIR/VPL, e ele era o do **sócio** descontado a **12% a.a.** Uma
+revisão externa apontou o furo: o sócio é **subordinado ao banco**, e o banco cobra **23,87% a.a.**
+nesta operação. Descontar o fluxo do sócio a 12% é afirmar que ele aceita **metade** do retorno do
+credor para correr **todo** o risco residual. O número não estava "conservador" — estava errado de
+sinal conceitual, e inflava o VPL.
+
+A correção não foi trocar 12 por 25 num campo. Foram **duas óticas separadas**, cada uma com o seu
+fluxo e a sua taxa:
+
+| | **DO NEGÓCIO** (FCFF) | **DO SÓCIO** (FCFE) |
+|---|---|---|
+| **Pergunta que responde** | O **ativo** se paga? A academia, como negócio, rende mais que o mínimo exigido? | A **estrutura de capital** funciona? O dinheiro que EU coloco rende quanto? |
+| **Fluxo** | Sem financiamento nenhum: o **CAPEX inteiro** sai de verdade (o equipamento volta como desembolso na véspera da abertura, porque medir o ativo com o dinheiro do banco não mede o ativo) | Como o caixa realmente acontece: a **PMT inteira** sai, e só **obra + franquia** entram como aporte |
+| **Taxa** | **taxa mínima do negócio = 25,00% a.a.** (parâmetro, `SIM_TAXA_MINIMA_NEGOCIO_AA`) | **taxa mínima do sócio = 27,08% a.a.** (**derivada**, nunca digitada) |
+| **Campos no resultado** | `tir_negocio_anual`, `vpl_negocio` | `tir_socio_anual`, `vpl_socio` (**e** os aliases históricos `tir_anual` / `vpl`, que apontam para **este** par) |
+| **Caso de referência** | TIR **31,74% a.a.** · VPL **R$ 312.177,18** | TIR **38,98% a.a.** · VPL **R$ 276.103,24** |
+| **Retorno anual (steady ÷ denominador)** | **46,55%** (resultado antes da PMT ÷ investimento cheio) | **71,76%** (resultado depois da PMT ÷ aporte inicial) |
+
+**Por que 25% a.a. e não um número redondo qualquer.** A taxa tem dois pisos, e o maior manda:
+
+1. **Piso da própria decisão de financiar.** A operação toma dinheiro a **1,8% a.m. = 23,87% a.a.**
+   Um ativo que rende menos que isso não deveria ser financiado — a decisão de assinar o contrato
+   de equipamentos já **revela** que a Ultra acredita render acima de 23,87%.
+2. ***Build-up* sobre a Selic de 14,25%.** Sobre o livre de risco entram prêmio de risco de
+   pequeno negócio, iliquidez total da cota e risco de execução de uma unidade nova.
+
+Os dois pisos convergem para a mesma casa, e **25% a.a. nominal** é o número fixado. Quem pode
+alterar: **o dono do produto** (Felipe). Não é mais "provisório pendente de aval" — foi decidido
+(§10).
+
+**A taxa do sócio NÃO é parâmetro — é derivada, e isso é o ponto.** Dentro de `simular()`:
+
+```
+taxa mínima do sócio = negócio + (negócio − custo da dívida) × (dívida ÷ aporte inicial)
+27,08% a.a.          = 25,00% + (25,00% − 23,87%) × 1,8421
+```
+
+Não existe campo, input de tela, chave de payload ou constante onde alguém possa digitar uma taxa
+de sócio **abaixo** do custo da dívida. **A incoerência que a revisão externa apontou ficou
+impossível por construção** — não é uma validação que dispara um aviso, é uma equação que não tem
+onde receber o valor errado.
+
+**WACC = taxa mínima do negócio.** No Lucro Presumido **não existe escudo fiscal da dívida**: o
+IR/CSLL incide sobre a **receita bruta** presumida (32%) e **ignora** a despesa financeira. Sem
+escudo, não há média ponderada a fazer — a estrutura de capital **não muda o valor do ativo**, só
+a sua repartição entre banco e sócio. É por isso que o VPL do negócio é descontado à taxa do
+negócio e ponto.
+
+**Então de onde vem valor ao alavancar? De arbitragem, e só.** Tomar dinheiro a **23,87%** para
+aplicar num ativo que exige **25%** vale, no caso de referência, **R$ 24.908,57** de VPL — é o VPL
+do próprio fluxo da dívida descontado à taxa do negócio. **Sem escudo fiscal, essa é a ÚNICA forma
+pela qual a alavancagem cria valor aqui.** Se o banco cobrasse mais que 25%, a alavancagem passaria
+a **destruir** valor, e o resultado acende `alerta_divida_acima_da_taxa_negocio` (hoje `False`).
+
+**As duas identidades que o modelo afere.** Formulação importante: **não** é verdade que "os dois
+VPLs coincidem". Eles **não** coincidem, e a razão é explícita — a taxa do sócio usa a alavancagem
+**inicial** (D/E = 1,8421) enquanto o saldo devedor cai de R$ 1,4 mi a **zero** ao longo do
+contrato. O que fecha exato é outra coisa:
+
+| # | Identidade | Medida no caso de referência |
+|---|---|---|
+| **(a)** | **VPL do fluxo da dívida, descontado ao custo da dívida, é ZERO** | `0,00` (10⁻⁹) — prova aritmética de que a tabela Price está certa: o banco, por definição, não ganha nem perde VPL à própria taxa |
+| **(b)** | **VPL do sócio @ taxa do negócio = VPL do negócio @ taxa do negócio + VPL da dívida @ taxa do negócio** | **R$ 337.085,75 = R$ 312.177,18 + R$ 24.908,57** · resíduo **R$ −0,00** |
+
+A identidade (b) é a que decompõe o valor: o ativo vale R$ 312 mil e a arbitragem da dívida
+acrescenta R$ 24,9 mil, **na mesma régua de 25%**.
+
+**`vpl_identidade_residuo` é diagnóstico, não tolerância escondida.** O campo expõe
+`VPL do sócio @ taxa do sócio − VPL do negócio @ taxa do negócio` = **R$ −36.073,94** no caso de
+referência. Ele **não** é um erro a ser zerado: é a medida de quanto a simplificação da taxa única
+do sócio (alavancagem congelada na inicial) desloca a leitura em relação ao ativo. Está no payload
+para ser lido, não para ser comparado contra um épsilon.
+
+**Campos novos no resultado desta rodada:** `tir_negocio_mensal`, `tir_negocio_anual`,
+`vpl_negocio`, `tir_socio_mensal`, `tir_socio_anual`, `vpl_socio`, `taxa_minima_negocio_aa`,
+`taxa_minima_socio_aa`, `custo_divida_aa`, `alavancagem_divida_sobre_aporte`,
+`alerta_divida_acima_da_taxa_negocio`, `vpl_identidade_residuo`, `cheque_total` e
+`mes_cheque_total`. `tir_anual` e `vpl` permanecem como **alias** do par do **sócio** (compat).
+
+**Vocabulário obrigatório** em rótulo de usuário, tela, PDF e payload — `Ku`/`Ke` ficam **só** em
+docstring, nunca na cara do operador:
+
+| dizer | não dizer |
+|---|---|
+| taxa mínima do negócio | Ku, WACC, taxa de desconto |
+| taxa mínima do sócio | Ke, custo do equity |
+| **do negócio** | desalavancado, *unlevered* |
+| **cheque total** | equity aportado, caixa mínimo |
+
+### 6.3 Cheque total × aporte inicial (decisão de Felipe, 2026-07-25)
+
+São **dois números diferentes**, e a confusão entre eles é o tipo de erro que quebra uma abertura
+no mês 5 — não no comitê.
+
+| | o que é | caso de referência |
+|---|---|---|
+| **aporte inicial (obra + franquia)** | O que o **contrato** prevê que o sócio coloque. Segue sendo o **denominador do retorno do sócio**. | **R$ 760.000,00** |
+| **cheque total** | O **pior ponto do caixa acumulado** da série inteira — o dinheiro que precisa estar **disponível**, porque a queima da rampa vem depois do CAPEX e antes da receita. | **R$ 1.142.112,62**, no **mês 5** |
+
+**1,50×.** O cheque total é **uma vez e meia** o aporte contratado. **É o número que decide se o
+negócio é FINANCIÁVEL** — e ele **não aparecia em lugar nenhum** até esta rodada: nem na tela, nem
+no PDF, nem no payload. Um investidor que se comprometesse com R$ 760 mil descobriria o buraco de
+R$ 382 mil ao vivo, no quinto mês de operação, com a folha inteira rodando e a casa em ~60% da
+demanda.
+
+Servido em `cheque_total` e `mes_cheque_total`. **Vocabulário:** "cheque total" é **este** número;
+os R$ 760 mil passam a se chamar **"aporte inicial (obra + franquia)"**. Não usar "equity aportado".
+
+### 6.4 Margem mínima de viabilidade: 10% → 30% (decisão de Felipe, 2026-07-25)
+
+`SIM_MARGEM_VIAVEL_MIN` era **0,10**. Uma régua de 10% de margem EBITDA aprova cenário que ninguém
+levaria a comitê: 12% de margem numa operação com custo fixo alto e PMT de R$ 38 mil/mês não é
+"viável com folga apertada", é ruído em torno do zero. A régua passou a **0,30**.
+
+- **O caso de referência segue viável:** margem **39,26%** contra mínimo de **30%** (e payback 31
+  contra máximo de 36) → `flag_viavel = True`.
+- **Cenários entre 10% e 30% viram NÃO-viável.** Quem comparar com material antigo tem de saber
+  disso: um cenário que aparecia como "viável, margem 22%" agora reprova — e não porque a economia
+  mudou, mas porque a régua era frouxa.
+- A margem continua sendo **de steady-state** (mês 12, regime pleno), e continua **operacional**:
+  não inclui CAPEX nem PMT, que entram no payback e no cheque total.
+
+Para referência de dimensionamento, `alunos_para_margem()` na régua nova: são necessários
+**1.869,1 alunos totais** para 30% de margem (contra 1.322,6 para os 10% antigos) — margem de
+segurança de **1,23×** sobre a demanda premissa de 2.304.
 
 ---
 
@@ -333,8 +469,9 @@ Desde a 3ª rodada é obrigatório separar as duas, porque só uma foi resolvida
 | **O que o código faz hoje** | `SIM_FOLHA_PCT = 0,17`, aplicado **uma vez** sobre o faturamento **maduro** → R$ 49.003,79/mês fixos. |
 | **O que a evidência diz** | O **BLK-VIAB-11** apurou **25-26%** em **6 DREs gerenciais reais** (Augusta, Bangu, Cabo Frio, Icaraí, Praia Grande, Vila Guilherme; jun-jul/2026). Folha real de **R$ 38 mil a R$ 99 mil/mês**, **estável como % da receita bruta (CV 0,16)** e instável por m² (CV 0,34). SP e RJ praticamente idênticos → sem ajuste regional. |
 | **Por que 17% mesmo assim** | 17% mantém o **nível** próximo do status quo (R$ 50.128 fixos ÷ R$ 277.676 = 18,05% no caso antigo). A 3ª rodada mexeu na **estrutura**, não no nível — e trocar as duas coisas ao mesmo tempo tornaria impossível atribuir o delta. Note a ironia útil: com a folha fixa, o nível de 17% reproduz quase exatamente o R$ 50.128 absoluto do modelo original, agora dimensionado por uma régua rastreável em vez de um número herdado. |
-| **Impacto do nível (re-medido na estrutura NOVA, 2026-07-24)** | A 17%: folha **R$ 49.003,79**, EBITDA **R$ 113.159,69 (39,26%)**, break-even **1.152,0**, payback **31**, TIR **38,98% a.a.**, VPL **R$ 849.484,15**, M60 **R$ 1.645.454,56**. **A 26%: folha R$ 74.946,97, EBITDA R$ 87.216,50 (30,26%), break-even 1.416,1, EBITDA do mês 1 de −R$ 69.407,65 e o payback NÃO OCORRE dentro dos 60 meses** (`inf`) — TIR **−1,05% a.a.**, VPL **−R$ 384.910,19**, acumulado de M60 **−R$ 40.745,08**. |
-| **Atenção ao comparar com material anterior** | A leitura anterior desta linha dizia "payback 28 → 54 meses" e "VPL −R$ 174.670,13". Aquilo foi medido com a folha **percentual**, que diluía o custo na rampa. Na estrutura correta a 26% o projeto **não se paga no horizonte** — a pendência ficou materialmente **pior**, não melhor. |
+| **Impacto do nível (re-medido na 4ª rodada, 2026-07-25 — nas duas óticas e na régua de 30%)** | A **17%**: folha **R$ 49.003,79**, EBITDA **R$ 113.159,69 (39,26%)**, break-even **1.152,0**, payback **31**, **do negócio** TIR **31,74%** / VPL **R$ 312.177,18**, **do sócio** TIR **38,98%** / VPL **R$ 276.103,24**, cheque total **R$ 1.142.112,62** (mês 5), M60 **R$ 1.645.454,56**, `flag_viavel` **True**. **A 26%: folha R$ 74.946,97, EBITDA R$ 87.216,50 (30,26%), break-even 1.416,1, EBITDA do mês 1 de −R$ 69.407,65, cheque total R$ 1.297.571,83 (mês 7) e o payback NÃO OCORRE dentro dos 60 meses** (`inf`) — **do negócio** TIR **11,20%** / VPL **−R$ 623.616,27**, **do sócio** TIR **−1,05%** / VPL **−R$ 623.473,26**, acumulado de M60 **−R$ 40.745,08**, `flag_viavel` **False**. |
+| **O que a régua nova de 30% revela aqui** | A 26% a margem fica em **30,26%** — passa o mínimo de 30% **por 26 pontos-base**. Quem reprova o cenário é o **payback infinito**, não a margem. Ou seja: no nível de folha que 6 DREs reais apuraram, o critério de margem fica **na casa dos centavos** do limite. Isso é informação de decisão, não curiosidade: a folga de margem que o caso de referência parece ter (39,26% contra 30%) é **quase toda** dependente do nível de folha estar em 17%. |
+| **Atenção ao comparar com material anterior** | Duas revisões atrás esta linha dizia "payback 28 → 54 meses" e "VPL −R$ 174.670,13" (folha **percentual**, que diluía o custo na rampa). A revisão de 2026-07-24 já corrigiu para "não se paga no horizonte", mas citava **VPL −R$ 384.910,19 @ 12% a.a.** — taxa que **não existe mais**. Na régua de hoje o VPL a 26% é **−R$ 623 mil nas duas óticas**: quanto mais alta a taxa, mais pesado o desconto de um fluxo que só melhora no fim. |
 | **Status** | **PENDENTE de gate da controladoria.** É a decisão pendente de maior impacto do ciclo: sozinha, ela inverte a conclusão de go/no-go do Boulevard. |
 
 ### (b) TAXA DE FRANQUIA — R$ 160.000 (código) × R$ 140.000 (planilha e spec)
@@ -344,7 +481,7 @@ Desde a 3ª rodada é obrigatório separar as duas, porque só uma foi resolvida
 | **Código** | `SIM_TAXA_FRANQUIA = 160 000,00`. |
 | **Fonte documental** | `data/staging/simulador_estrutura.json`, célula **`Simulador!R10`** → `valor_default: 140000`, natureza "contrato". E `docs/modelo_dimensionamento_expansao.md:276` → "Taxa de franquia · R10 · R$140k · contrato". |
 | **Decisão** | **Mantido R$ 160.000** por decisão de Felipe (2026-07-24): é o valor em produção e o que o comitê já viu. Passa a ser **editável pelo operador** (exposto no schema da API) e **parcelado em 4× sem juros** (§6.1), o que resolve o caso prático sem forçar a escolha do default. |
-| **Sensibilidade (re-medida, 2026-07-24)** | Com R$ 140.000: payback **30 meses** (contra 31), acumulado de M60 **R$ 1.665.454,56** (+R$ 20.000 exatos), VPL **R$ 869.203,92** (+R$ 19.719,77 — menos que os R$ 20 mil nominais, porque o desembolso é descontado), TIR **40,01% a.a.** e retorno desalavancado **46,99%** (era 46,55%). EBITDA, margem e break-even não mudam. |
+| **Sensibilidade (re-medida na 4ª rodada, 2026-07-25)** | Com R$ 140.000: payback **30 meses** (contra 31), acumulado de M60 **R$ 1.665.454,56** (+R$ 20.000 exatos), **cheque total R$ 1.122.112,62** (contra R$ 1.142.112,62 — cai exatamente os R$ 20 mil, e o pior mês segue sendo o 5). **Do negócio:** TIR **32,21%** (era 31,74%) e VPL **R$ 331.631,23** (+R$ 19.454,05 — menos que os R$ 20 mil nominais, porque o desembolso é descontado). **Do sócio:** TIR **40,01%** (era 38,98%) e VPL **R$ 293.930,92**; o retorno do negócio vai a **46,99%** (era 46,55%) e o do sócio a **73,70%** (era 71,76%). A **taxa mínima do sócio sobe** para **27,13%**, porque um aporte menor eleva a alavancagem (D/E 1,8421 → 1,8919) — efeito que a régua de 12% a.a. era incapaz de mostrar. EBITDA, margem e break-even não mudam. |
 | **Status** | Divergência **aceita e documentada**, não resolvida. Reconciliar planilha × contrato real é tarefa de quem mantém a planilha. |
 
 ### (c) TICKET POR STUDIO — a tela está deslocada um degrau
@@ -354,24 +491,34 @@ Desde a 3ª rodada é obrigatório separar as duas, porque só uma foi resolvida
 | **Frontend** | `web/src/screens/ViabilityScreen.tsx:34` → `TICKET_POR_STUDIO = [147, 157, 167, 177]` (0 → 147, 1 → 157, 2 → 167, 3 → 177). |
 | **Planilha** | `Simulador!J9` → `=IF(N12=0,137,IF(N12=1,147,IF(N12=2,157,IF(N12=3,167,0))))` → **[137, 147, 157, 167]**. Confirmado em `simulador_estrutura.json` e em `docs/modelo_dimensionamento_expansao.md:271` ("Mensalidade · J9 · R$137 por cenário"). |
 | **Efeito** | A tela cobra **um degrau a mais** em todos os cenários de studio. O caso de referência (0 studios) roda a R$ 147 na tela e a R$ 137 na planilha. |
-| **Sensibilidade (re-medida, 2026-07-24)** | A R$ 137 o caso golden faz faturamento **R$ 269.412,97**, folha **R$ 45.800,20** (a régua de 17% acompanha o faturamento maduro menor), EBITDA **R$ 101.306,71 (37,60%)**, break-even **1.199,2** e payback **37 meses** — ou seja, **estoura o critério de 36 meses** e `flag_viavel` cai para falso. TIR **25,66% a.a.**, VPL **R$ 416.749,97**. Na medição anterior (folha percentual) davam 34 meses e o critério ainda passava; com a folha fixa, este conflito passou a ser capaz de reprovar a unidade sozinho. |
+| **Sensibilidade (re-medida na 4ª rodada, 2026-07-25)** | A R$ 137 o caso golden faz faturamento **R$ 269.412,97**, folha **R$ 45.800,20** (a régua de 17% acompanha o faturamento maduro menor), EBITDA **R$ 101.306,71 (37,60%)** — a margem **passa** o mínimo de 30% —, break-even **1.199,2**, cheque total **R$ 1.162.843,40** (mês 6) e payback **37 meses**: **estoura o critério de 36** e `flag_viavel` cai para **falso**. E o mais duro: **na régua nova o VPL fica NEGATIVO nas duas óticas** — **do negócio** TIR **24,79%** / VPL **−R$ 9.517,56**, **do sócio** TIR **25,66%** / VPL **−R$ 32.166,21**. A R$ 137 o ativo rende **abaixo** da taxa mínima do negócio (24,79% < 25,00%), e a alavancagem deixa de compensar. Com a taxa antiga de 12% a.a. o mesmo cenário exibia **VPL +R$ 416.749,97** e parecia um projeto folgado. |
 | **Status** | **Aberto.** Não corrigido neste ciclo: mexer no ticket muda a conclusão de todos os cenários já apresentados, e a régua comercial vigente (R$ 147 como entrada) é decisão de produto, não de engenharia. Precisa de Felipe. |
 
 ---
 
-## 10. Pendente de aval
+## 10. A taxa SAIU desta seção — foi decidida (2026-07-25)
 
-**Taxa de desconto do VPL — `SIM_TAXA_DESCONTO_AA = 0,12` a.a.**
+**Esta seção era "Pendente de aval" e tinha um único item: a taxa de desconto do VPL
+(`SIM_TAXA_DESCONTO_AA = 0,12` a.a.). O item foi RESOLVIDO e a constante NÃO EXISTE MAIS.**
 
-É um **default provisório**, escolhido para destravar a entrega de TIR/VPL no FIN-VIAB-01. Não há
-custo de capital formalizado pela Ultra, nem WACC aprovado, nem taxa de referência decidida pelo
-comitê. O número **muda o VPL, não muda o payback, o EBITDA nem a TIR** (a TIR é a raiz do fluxo,
-independe da taxa) — a decisão é sobre a régua de comparação, não sobre a economia da unidade.
+| O que era | O que é |
+|---|---|
+| `SIM_TAXA_DESCONTO_AA = 0,12` — "default provisório, escolhido para destravar a entrega de TIR/VPL", sem custo de capital formalizado. Todo VPL vinha com a ressalva "taxa provisória, pendente de aval do comitê". | **`SIM_TAXA_MINIMA_NEGOCIO_AA = 0,25`** (25% a.a. nominal), **decidida por Felipe** em 2026-07-25, com justificativa registrada: **piso do custo da dívida (23,87% a.a.) + *build-up* sobre a Selic de 14,25%**. **Quem pode alterar: o dono do produto.** |
+| Uma taxa só, aplicada a um fluxo **de sócio** | **Duas óticas**, cada uma com a sua taxa — e a **do sócio é derivada** (§6.2), não configurável |
 
-No caso de referência, a 12% a.a.: **VPL = R$ 849.484,15**, contra **TIR de 38,98% a.a.**
+**Nenhum VPL exibido carrega mais a ressalva de "taxa provisória".** O que a tela, o PDF e o
+payload devem dizer é qual **ótica** está sendo lida — "do negócio, a 25,00% a.a." ou "do sócio, a
+27,08% a.a." — e as duas taxas viajam no payload (`taxa_minima_negocio_aa`, `taxa_minima_socio_aa`)
+justamente para o rótulo não precisar ser escrito à mão em nenhum consumidor.
 
-**Ação pendente:** o comitê precisa fixar a taxa (ou declarar que 12% é a régua oficial). Enquanto
-não houver decisão, todo VPL exibido deve ser lido como "descontado a 12% a.a., taxa provisória".
+**Efeito honesto da decisão:** o VPL anunciado **caiu**. Era **R$ 849.484,15 a 12% a.a.**; hoje são
+**R$ 312.177,18 do negócio a 25%** e **R$ 276.103,24 do sócio a 27,08%**. Isso **não é uma piora do
+negócio** — é o mesmo fluxo de caixa medido contra a régua certa. A TIR não se moveu um centavo (é
+raiz do fluxo, independe da taxa): o que se moveu foi a **exigência**.
+
+**O que continua pendente** não é taxa: são os itens de **§9** (nível da folha, taxa de franquia,
+ticket por studio) e de **§12** (matrícula e múltiplo de valuation), e a régua de **valor residual**,
+hoje em decisão com o Marcos.
 
 ---
 
@@ -408,11 +555,17 @@ justificativa em **§2.1**. O que **continua ausente** são duas linhas:
 | linha da planilha | célula | valor | o que falta no motor |
 |---|---|---|---|
 | Matrícula | `Simulador!J11` | R$ 0 (default) | Receita de adesão por novo aluno. **Não existe** na série mensal — não há constante, não há campo em `Premissas` e não há relógio de início (o `SIM_ANUIDADE_MES_INICIO` é só da anuidade). |
-| Múltiplo de valuation | `Simulador!R11` | **1,5×** receita | Valor terminal no fim do horizonte. O motor tem o campo (`SIM_VALOR_RESIDUAL_MES_60`) mas ele está em **zero** — o corte em 60 meses hoje ignora completamente o valor da unidade em operação. |
+| Múltiplo de valuation | `Simulador!R11` | **1,5×** receita | Valor terminal no fim do horizonte. O motor tem o campo (`SIM_VALOR_RESIDUAL_MES_60`) mas ele está em **zero** — o corte em 60 meses hoje ignora completamente o valor da unidade em operação. **A régua está em decisão com o Marcos** (4ª rodada). |
 
 **Efeito prático:** o payback e o VPL exibidos continuam **piores** do que a planilha entregaria.
 Ao comparar com números vindos do Excel, esta é a primeira diferença a checar. Implementar qualquer
 uma delas é mudança de conclusão de viabilidade → **Comitê + DEC**.
+
+**A omissão do valor residual pesa mais agora do que pesava a 12% a.a.** Um valor terminal no mês 60
+é o fluxo **mais distante** da série, logo o mais castigado pelo desconto — e a régua subiu de 12%
+para 25% a.a. Em outras palavras: ligar o múltiplo de 1,5× **aumentaria** o VPL, mas bem menos do
+que aumentaria na régua antiga. Isso é argumento para decidir a régua com o Marcos **sobre a taxa de
+hoje**, não sobre a de ontem.
 
 ---
 
@@ -454,8 +607,9 @@ camada de ingestão do BLK-DIM, que **não** tem relação com viabilidade finan
 
 ## 15. Caso de referência verificado
 
-Boulevard Shopping Londrina. Reproduzido diretamente de `simular()` em 2026-07-24, **na 3ª rodada**
-(folha fixa + franquia parcelada) — os números abaixo são saída real do motor, não estimativa.
+Boulevard Shopping Londrina. Reproduzido diretamente de `simular()` em 2026-07-25, **na 4ª rodada**
+(régua de retorno em duas óticas, taxa do sócio derivada, cheque total, margem mínima 30%; sobre a
+folha fixa + franquia parcelada da 3ª) — os números abaixo são saída real do motor, não estimativa.
 
 **Inputs:** m² = 1.050 · aluguel = R$ 30.000 · ticket cheio = R$ 147 · studios = 0 ·
 demanda total = 2.304 alunos · rampa 8 meses · obra R$ 600.000 em 4 parcelas ·
@@ -470,7 +624,7 @@ carência 0.
 | Receita por aluno total (regime pleno) | R$ 122,94 (mensalidade + anuidade — régua do break-even) |
 | Elegibilidade da anuidade | **47,59%** (= 0,94¹²) → R$ 3,9263 por aluno de balcão por mês |
 | **Fator `k` (receita → EBITDA)** | **0,798985** (a folha **não** entra — §4.1) |
-| **Folha — FIXA desde o mês 1** | **R$ 49.003,79/mês** (17% do faturamento maduro de R$ 288.257,57) |
+| **Folha — FIXA desde o mês 1** | **R$ 49.003,79/mês** (17% do faturamento maduro de R$ 288.257,57), **igual do M1 ao M12**; degrau do reajuste no **M13 = R$ 50.963,94** e **M60 = R$ 57.327,50** |
 | **Custo fixo sem aluguel** (`custo_fixo_total_mes`) | **R$ 87.153,79** (outros fixos 38.150,00 + folha 49.003,79) |
 | **Pré-abertura, CADA mês de M-4 a M-1** | investimento **R$ 190.000,00** (obra 150.000 + franquia 40.000) |
 | Faturamento (steady) | R$ 288.257,57 |
@@ -485,12 +639,28 @@ carência 0.
 | PMT | R$ 38.348,75 · juros totais R$ 900.925,18 |
 | Break-even EBITDA | **1.152,0 alunos totais** |
 | Break-even de caixa | **1.542,4 alunos totais** |
-| Alunos para margem de 10% | **1.322,6 alunos totais** |
-| Payback | **31 meses** (número único: KPI, gráfico e PDF) |
+| Alunos para a margem-critério de **30%** | **1.869,1 alunos totais** (margem de segurança 1,23×) |
+| *(referência)* alunos para margem de 10% | *1.322,6 alunos totais — régua antiga, ver §6.4* |
+| Payback | **31 meses** (número único: KPI, gráfico e PDF) · limite 36 |
+| **Margem EBITDA × critério** | **39,26%** contra mínimo de **30%** → `flag_viavel` **True** |
 | 1º mês de caixa operacional positivo | mês 6 |
-| Retorno desalavancado | 46,55% a.a. |
-| TIR | 38,98% a.a. |
-| VPL @ 12% a.a. | R$ 849.484,15 |
+| **taxa mínima do negócio** | **25,00% a.a.** (premissa) |
+| **custo da dívida** | **23,87% a.a.** (= 1,8% a.m., contrato) |
+| **alavancagem** (dívida ÷ aporte inicial) | **1,8421** |
+| **taxa mínima do sócio** | **27,08% a.a.** (**derivada**: 25,00% + (25,00% − 23,87%) × 1,8421) |
+| **DO NEGÓCIO — TIR** | **31,74% a.a.** |
+| **DO NEGÓCIO — VPL** @ taxa do negócio | **R$ 312.177,18** |
+| **DO SÓCIO — TIR** | **38,98% a.a.** |
+| **DO SÓCIO — VPL** @ taxa do sócio | **R$ 276.103,24** |
+| Retorno anual do negócio | 46,55% |
+| Retorno anual do sócio | 71,76% |
+| **VPL da dívida** @ taxa do negócio (**arbitragem**) | **R$ 24.908,57** |
+| **Identidade (a)** — VPL do fluxo da dívida @ custo da dívida | **R$ 0,00** (prova a tabela Price) |
+| **Identidade (b)** — sócio @ negócio = negócio @ negócio + dívida @ negócio | **337.085,75 = 312.177,18 + 24.908,57** · resíduo **R$ −0,00** |
+| `vpl_identidade_residuo` (**diagnóstico**, não tolerância) | **−R$ 36.073,94** (sócio @ taxa do sócio − negócio @ taxa do negócio) |
+| `alerta_divida_acima_da_taxa_negocio` | **False** (23,87% < 25,00%) |
+| **CHEQUE TOTAL** (pior ponto do caixa acumulado) | **R$ 1.142.112,62**, no **mês 5** |
+| **aporte inicial** (obra + franquia) | **R$ 760.000,00** → cheque total = **1,50×** o aporte |
 | Acumulado M60 | R$ 1.645.454,56 |
 | Aluguel-teto | ideal R$ 43.238,64 · **canônico (teto) R$ 57.651,51** · exceção R$ 86.477,27 |
 | Série mensal | 64 linhas (M-4 a M+60), 4 de pré-abertura |
@@ -503,18 +673,37 @@ aluguel-teto são idênticos aos da rodada anterior — no mês 12 o faturamento
 folha percentual e folha fixa dão o mesmo R$ 49.003,79. Tudo o que mudou está na **rampa** e no que
 deriva dela (break-even, payback, TIR, VPL, acumulado).
 
-**Isolamento das duas mudanças da 3ª rodada** (medido em 2026-07-24, uma por vez):
+**O que a 4ª rodada mudou no caso de referência.** Nada na operação: faturamento, EBITDA, margem,
+folha, IR/CSLL, break-even, payback, aluguel-teto e acumulado de M60 estão **idênticos** aos da 3ª
+rodada — a 4ª rodada não tocou em nenhuma linha da DRE. O que mudou é a **régua de retorno** e o que
+o motor **expõe**:
+
+| item | 3ª rodada | 4ª rodada |
+|---|---|---|
+| Taxa | uma só: 12% a.a. (provisória) | **negócio 25,00%** (premissa) + **sócio 27,08%** (derivada) |
+| TIR | uma só: 38,98% a.a. (era, sem rótulo, a do sócio) | **negócio 31,74%** · **sócio 38,98%** (o número antigo **era** o do sócio — não mudou, ganhou nome) |
+| VPL | **R$ 849.484,15** @ 12% | **negócio R$ 312.177,18** @ 25% · **sócio R$ 276.103,24** @ 27,08% |
+| Cheque total | **não existia** | **R$ 1.142.112,62** no mês 5 (**1,50×** o aporte de R$ 760 mil) |
+| Margem mínima | 10% | **30%** (o caso segue viável: 39,26%) |
+| Guardas | nenhuma | **duas identidades** aferidas + `alerta_divida_acima_da_taxa_negocio` + `vpl_identidade_residuo` |
+
+**A queda do VPL é a correção, não um efeito colateral.** R$ 849 mil vinha de descontar um fluxo de
+**sócio** a **12%** quando o **banco** cobra **23,87%**. Ver §6.2 e §10.
+
+**Isolamento das duas mudanças da 3ª rodada** (medido em 2026-07-24, uma por vez; os VPLs desta
+tabela são **históricos, @ 12% a.a.**, e ficam só para rastrear o efeito de cada mudança **entre si**
+— não são o VPL de hoje):
 
 | mudança | efeito |
 |---|---|
 | **Franquia parcelada 4×** — só timing de caixa | TIR **+0,33 pp** · VPL **+R$ 2.241,80** · payback, acumulado de M60, EBITDA, margem e break-even **idênticos** |
 | **Folha fixa desde o mês 1** — responde por todo o resto | break-even **840,6 → 1.152,0** · payback **28 → 31** · TIR **45,48% → 38,65%** (antes de somar a franquia) · VPL **R$ 986.172,80 → R$ 847.242,35** · M60 **R$ 1.795.729,88 → R$ 1.645.454,56** · EBITDA do mês 1 **−R$ 10.139,56 → −R$ 43.464,47** |
 
-**Referência com a anuidade desligada** (`anuidade_valor = 0`), re-medida na estrutura nova, para
-quem precisar comparar com material anterior: steady no **mês 8** · faturamento R$ 282.015,62 ·
-folha R$ 47.942,66 · EBITDA R$ 109.233,60 (38,73%) · break-even **1.166,9** · payback **32** ·
-TIR 36,40% a.a. · VPL R$ 752.610,14 · acumulado M60 R$ 1.503.326,98 · aluguel-teto canônico
-R$ 56.403,12.
+**Referência com a anuidade desligada** (`anuidade_valor = 0`), re-medida na 4ª rodada, para quem
+precisar comparar com material anterior: steady no **mês 8** · faturamento R$ 282.015,62 · folha
+R$ 47.942,66 · EBITDA R$ 109.233,60 (38,73%) · break-even **1.166,9** · payback **32** · **do
+negócio** TIR 30,34% / VPL R$ 244.664,58 · **do sócio** TIR 36,40% / VPL R$ 212.103,28 · cheque
+total R$ 1.136.806,97 (mês 5) · acumulado M60 R$ 1.503.326,98 · aluguel-teto canônico R$ 56.403,12.
 
 ---
 
@@ -543,3 +732,23 @@ simular(..., parcelas_franquia=4)                          # argumento novo
 
 A propriedade `Premissas.custo_fixo_base_mes` **não existe mais**: foi substituída pelo método
 `custo_fixo_total_mes(demanda_total)`, que inclui a folha.
+
+**O que a 4ª rodada REMOVEU** (nenhuma assinatura de função mudou, mas um campo saiu):
+
+```python
+# NÃO EXISTE MAIS — TypeError no construtor, AttributeError no acesso:
+Premissas(..., taxa_desconto_aa=0.12)   # TypeError: unexpected keyword argument
+p.taxa_desconto_aa                      # AttributeError
+SIM_TAXA_DESCONTO_AA                    # ImportError
+
+# O substituto:
+Premissas(..., taxa_minima_negocio_aa=0.25)   # SIM_TAXA_MINIMA_NEGOCIO_AA
+# e a taxa do sócio NÃO tem parâmetro: sai derivada em `simular()` (§6.2)
+```
+
+Qualquer consumidor que ainda passe `taxa_desconto_aa` a `Premissas` ou leia
+`premissas.taxa_desconto_aa` **quebra em runtime** — não devolve número errado silencioso, o que é
+o comportamento desejado. Consumidores a reconciliar: `web/server/app.py` (campo do body e do
+payload), `web/src/lib/types.ts` + `ViabilityNotes.tsx` + `ViabilityScreen.tsx` (rótulo da tela),
+`dimensionamento/simulador_xlsx.py` (linha "Taxa de desconto (VPL)" da aba Premissas) e
+`tests/contracts/test_viabilidade_golden.py` (pin da constante antiga).

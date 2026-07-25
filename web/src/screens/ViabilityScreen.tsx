@@ -35,11 +35,18 @@ const DEMANDA_PASSO = 100
 const TICKET_POR_STUDIO = [147, 157, 167, 177] as const
 
 /**
- * Limiar apenas VISUAL do card de payback (espelha `SIM_PAYBACK_VIAVEL_MAX` do
- * config do motor). Não entra em conta nenhuma: quem dá o veredito de viabilidade
- * é o motor (`dre.flag_viavel`); aqui só decide a cor do número.
+ * Limiar apenas VISUAL do card de payback, usado só como FALLBACK quando o payload
+ * ainda não chegou — o número oficial vem em `premissas.payback_viavel_max`. Não
+ * entra em conta nenhuma: quem dá o veredito é o motor (`dre.flag_viavel`).
  */
 const PAYBACK_ALVO_MESES = 36
+
+/**
+ * Quanto o cheque total pode passar do aporte inicial antes de virar aviso. Acima
+ * disto a diferença é dinheiro que o investidor precisa TER e que o contrato não
+ * pede — o caso de referência bate 1,50x. Limiar de EXIBIÇÃO, não de cálculo.
+ */
+const CHEQUE_AVISO_RAZAO = 1.2
 
 /** Texto -> numero opcional (aceita virgula decimal e separador de milhar). */
 function parseNum(txt: string): number | undefined {
@@ -86,6 +93,10 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   // Antes a taxa saía INTEIRA do caixa no M-4. Vazio = padrão do motor (4). É só
   // timing de caixa: mexe em TIR/VPL, não em EBITDA, margem ou break-even.
   const [parcelasFranquiaTxt, setParcelasFranquiaTxt] = useState('')
+  // Taxa mínima do NEGÓCIO (% a.a.) — a ÚNICA taxa configurável. Vazio = padrão do
+  // motor (25% a.a.). A taxa mínima do SÓCIO NÃO tem campo: ela é DERIVADA dentro do
+  // motor, o que torna impossível digitar uma taxa de sócio abaixo do custo da dívida.
+  const [taxaNegocioTxt, setTaxaNegocioTxt] = useState('')
 
   // --- Dados opcionais do imóvel (entram no PDF completo) ------------------
   const [info, setInfo] = useState<InfoImovel>({})
@@ -107,6 +118,9 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
 
   function montarPayload(demandaUsar: number): ViabilidadeIn {
     const jurosEquip = parseNum(jurosEquipTxt)
+    // % a.a. digitado -> FRAÇÃO (o contrato do payload). Conversão de UNIDADE, igual à
+    // dos juros do financiamento; não é derivação de número financeiro.
+    const taxaNegocio = parseNum(taxaNegocioTxt)
     return {
       lat: alvoLat!,
       lng: alvoLng!,
@@ -124,6 +138,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
       rampa_meses: rampaMeses,
       taxa_franquia: parseNum(taxaFranquiaTxt),
       parcelas_franquia: parseNum(parcelasFranquiaTxt),
+      taxa_minima_negocio_aa: taxaNegocio !== undefined ? taxaNegocio / 100 : undefined,
     }
   }
 
@@ -637,7 +652,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
           </div>
           <p style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', margin: '7px 0 10px' }}>
             Obra + Equipamentos = CAPEX. Com a taxa de franquia formam o investimento total,
-            base do retorno desalavancado e do payback. Vazio usa o padrão do modelo.
+            base do retorno do negócio e do payback. Vazio usa o padrão do modelo.
           </p>
           <div style={{ display: 'flex', gap: 8 }}>
             <input
@@ -705,6 +720,78 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             franquia é só timing de caixa: melhora TIR e VPL, e não muda EBITDA, margem nem
             break-even.
           </span>
+
+          {/* ---- Taxas mínimas: uma é INPUT, a outra é DERIVADA -------------------
+              A do NEGÓCIO é a única premissa. A do SÓCIO sai de
+              Ke = Ku + (Ku − Kd) × D/E dentro do motor — o sócio é subordinado ao
+              banco, então a taxa dele não pode ser menor que a do credor. Não existe
+              campo para digitá-la: a incoerência ficou impossível por construção. */}
+          <div
+            style={{
+              marginTop: 14,
+              padding: '12px 15px',
+              background: 'var(--surf-raised)',
+              border: '1px solid var(--line-soft)',
+              borderRadius: 'var(--r-lg)',
+            }}
+          >
+            <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+              Taxa mínima do negócio
+            </span>
+            <div style={{ marginTop: 8 }}>
+              <input
+                inputMode="decimal"
+                placeholder={
+                  premissas
+                    ? `${pctFrac(premissas.taxa_minima_negocio_aa)} a.a. (padrão)`
+                    : 'Taxa mínima do negócio (% a.a.)'
+                }
+                value={taxaNegocioTxt}
+                onChange={(e) => setTaxaNegocioTxt(e.target.value)}
+                title="Piso de retorno que o ativo tem de entregar, ao ano. Vazio usa o padrão do modelo."
+              />
+            </div>
+            {/* Derivada: SOMENTE-LEITURA, com a fórmula no tooltip. */}
+            <div
+              title="Taxa mínima do sócio = taxa do negócio + (taxa do negócio − custo da dívida) × dívida/aporte inicial. Derivada pelo motor; não é editável."
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'baseline',
+                gap: 8,
+                marginTop: 10,
+                padding: '9px 11px',
+                background: 'var(--surf-pending)',
+                border: '1px dashed var(--line-strong)',
+                borderRadius: 'var(--r-md)',
+              }}
+            >
+              <span style={{ font: '500 10.5px/1.3 var(--f-ui)', color: 'var(--tx-label)' }}>
+                Taxa mínima do sócio
+                <span style={{ color: 'var(--tx-sub)', fontWeight: 400 }}> · derivada</span>
+              </span>
+              <span
+                className="num"
+                style={{ font: '700 13px/1 var(--f-num)', color: 'var(--tx-max)' }}
+              >
+                {retorno?.socio ? `${pctFrac(retorno.socio.taxa_minima_aa)} a.a.` : 'n/d'}
+              </span>
+            </div>
+            <div
+              style={{ font: '400 10px/1.45 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}
+            >
+              {retorno ? (
+                <>
+                  Custo da dívida {pctFrac(retorno.custo_divida_aa)} a.a. · alavancagem{' '}
+                  {num(retorno.alavancagem_divida_sobre_aporte, 2)}x o aporte inicial. O sócio
+                  entra depois do banco, então exige mais que ele — a taxa dele é calculada
+                  pelo motor e não pode ser digitada.
+                </>
+              ) : (
+                'Calcule o cenário para ver a taxa mínima do sócio, derivada do custo da dívida e da alavancagem.'
+              )}
+            </div>
+          </div>
 
           {/* P1-7: a carência EFETIVA que o motor aplicou e o mês em que o aluguel
               começa a ser cobrado. Antes o texto falava em "padrão do modelo", que não
@@ -1016,15 +1103,11 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                     : 'var(--neg)'
               }
             />
-            {/* P2-15: "payback" é SÓ o retorno do capital. P0-4: TIR e VPL ao lado dele. */}
+            {/* P2-15: "payback" é SÓ o retorno do capital. Meses de OPERAÇÃO. */}
             <Kpi
               label="Payback do investimento"
               valor={retorno?.payback == null ? 'não atinge' : `${num(retorno.payback)} meses`}
-              sub={
-                retorno
-                  ? `TIR ${pctFrac(retorno.tir_anual)} a.a. · VPL ${brl(retorno.vpl, true)}`
-                  : 'retorno do capital investido'
-              }
+              sub="meses de operação, contados do 1º desembolso da obra"
               tone={
                 retorno?.payback == null
                   ? 'var(--neg)'
@@ -1033,18 +1116,52 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                     : 'var(--warn-text)'
               }
             />
-            {/* P0-4: a legenda estava "lucro anual + investimento" (o operador escreveu
-                errado) e a ótica não aparecia. Padrão do produto = DESALAVANCADO. */}
+            {/* As DUAS ÓTICAS, em cards SEPARADOS e cada uma com a SUA taxa. Antes havia
+                UM par de TIR/VPL sem ótica declarada (era o do sócio) ao lado de um
+                retorno rotulado "desalavancado" — misturava as duas réguas no mesmo
+                bloco, que é o defeito que este ciclo existe para matar. */}
             <Kpi
-              label="Retorno anual (desalavancado)"
-              valor={pctFrac(retorno?.retorno_anual_desalavancado)}
-              sub="lucro anual / investimento total"
+              label="Retorno do negócio (o ativo)"
+              valor={pctFrac(retorno?.negocio?.retorno_anual ?? retorno?.retorno_anual_desalavancado)}
+              sub={
+                retorno?.negocio
+                  ? `TIR ${pctFrac(retorno.negocio.tir_anual)} · VPL ${brl(retorno.negocio.vpl, true)} @ ${pctFrac(retorno.negocio.taxa_minima_aa)}`
+                  : 'lucro anual / investimento total'
+              }
               tone={
-                retorno?.retorno_anual_desalavancado == null
-                  ? undefined
-                  : retorno.retorno_anual_desalavancado >= 0
-                    ? 'var(--pos-text)'
-                    : 'var(--neg)'
+                (retorno?.negocio?.vpl ?? 0) >= 0 ? 'var(--pos-text)' : 'var(--neg)'
+              }
+            />
+            <Kpi
+              label="Retorno do sócio (com a alavancagem)"
+              valor={pctFrac(retorno?.socio?.retorno_anual ?? retorno?.retorno_anual_equity)}
+              sub={
+                retorno?.socio
+                  ? `TIR ${pctFrac(retorno.socio.tir_anual)} · VPL ${brl(retorno.socio.vpl, true)} @ ${pctFrac(retorno.socio.taxa_minima_aa)} (derivada)`
+                  : 'depois da parcela do financiamento'
+              }
+              tone={(retorno?.socio?.vpl ?? 0) >= 0 ? 'var(--pos-text)' : 'var(--neg)'}
+            />
+            {/* O número que decide se o negócio é FINANCIÁVEL, e que não existia: o pior
+                ponto do caixa acumulado. O aporte contratado (obra + franquia) é bem
+                menor que o cheque que o investidor precisa ter disponível. */}
+            <Kpi
+              label="Cheque total"
+              valor={brl(res?.investimento?.cheque_total, true)}
+              sub={
+                res?.investimento?.cheque_total && res.investimento.aporte_inicial
+                  ? `pior caixa, no mês ${res.investimento.mes_cheque_total ?? '?'} · ${(
+                      res.investimento.cheque_total / res.investimento.aporte_inicial
+                    ).toFixed(2)}× o aporte de ${brl(res.investimento.aporte_inicial, true)}`
+                  : 'pior ponto do caixa acumulado'
+              }
+              tone={
+                res?.investimento?.cheque_total && res.investimento.aporte_inicial
+                  ? res.investimento.cheque_total / res.investimento.aporte_inicial >
+                    CHEQUE_AVISO_RAZAO
+                    ? 'var(--warn-text)'
+                    : 'var(--pos-text)'
+                  : undefined
               }
             />
             {/* P2-15: este é o indicador OPERACIONAL — não é payback. */}

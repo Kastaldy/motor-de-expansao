@@ -1241,6 +1241,15 @@ class ViabilidadeIn(BaseModel):
     reajuste_ticket_aa: float | None = Field(default=None, ge=0, le=1)
     reajuste_aluguel_aa: float | None = Field(default=None, ge=0, le=1)
     reajuste_custos_aa: float | None = Field(default=None, ge=0, le=1)
+    # TAXA MINIMA DO NEGOCIO (a.a., fracao) — a UNICA taxa configuravel do modelo.
+    # Default do config: 25% a.a. A taxa minima do SOCIO NAO entra aqui: ela e
+    # DERIVADA dentro de `simular()` a partir desta, do custo da divida e da
+    # alavancagem. Nao existe campo onde alguem possa digitar uma taxa de socio
+    # abaixo do que o banco cobra — a incoerencia ficou impossivel por construcao.
+    taxa_minima_negocio_aa: float | None = Field(default=None, ge=0, le=1)
+    # ALIAS DEPRECIADO (1 versao) de `taxa_minima_negocio_aa`. Existe so para nao
+    # quebrar consumidor que ainda manda o nome antigo; `taxa_minima_negocio_aa`
+    # tem precedencia quando os dois vem preenchidos.
     taxa_desconto_aa: float | None = Field(default=None, ge=0, le=1)
     custo_pre_operacional_mes: float | None = Field(default=None, ge=0)
     valor_residual_mes_60: float | None = Field(default=None, ge=0)
@@ -1350,7 +1359,15 @@ def _premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
         "reajuste_ticket_aa": body.reajuste_ticket_aa,
         "reajuste_aluguel_aa": body.reajuste_aluguel_aa,
         "reajuste_custos_aa": body.reajuste_custos_aa,
-        "taxa_desconto_aa": body.taxa_desconto_aa,
+        # `taxa_desconto_aa` e o nome ANTIGO do mesmo campo (alias depreciado por 1
+        # versao); o novo tem precedencia. Do lado do motor existe UM campo so:
+        # `taxa_minima_negocio_aa`. A taxa minima do SOCIO nao e configuravel — sai
+        # derivada de Ke = Ku + (Ku - Kd) * D/E dentro de `simular()`.
+        "taxa_minima_negocio_aa": (
+            body.taxa_minima_negocio_aa
+            if body.taxa_minima_negocio_aa is not None
+            else body.taxa_desconto_aa
+        ),
         "custo_pre_operacional_mes": body.custo_pre_operacional_mes,
         "valor_residual_mes_60": body.valor_residual_mes_60,
         "capex_renovacao": body.capex_renovacao,
@@ -1415,6 +1432,10 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
     38,73%; retorno 0,4475; TIR 0,4221). Dinheiro em reais, alunos em alunos TOTAIS.
     Nenhum valor nao-finito sai daqui (payback infinito / TIR inexistente -> null).
     """
+    from motor_expansao.dimensionamento.config import (
+        SIM_MARGEM_VIAVEL_MIN,
+        SIM_PAYBACK_VIAVEL_MAX,
+    )
     from motor_expansao.dimensionamento.viabilidade_ponto import (
         analisar_viabilidade_ponto,
     )
@@ -1476,7 +1497,19 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
             "reajuste_ticket_aa": _num(premissas.reajuste_ticket_aa, 4),
             "reajuste_aluguel_aa": _num(premissas.reajuste_aluguel_aa, 4),
             "reajuste_custos_aa": _num(premissas.reajuste_custos_aa, 4),
-            "taxa_desconto_aa": _num(premissas.taxa_desconto_aa, 4),
+            # TAXA MINIMA DO NEGOCIO (a.a.): a unica taxa configuravel. A do SOCIO nao
+            # aparece aqui de proposito — ela e DERIVADA e viaja no bloco `retorno`
+            # (`socio.taxa_minima_aa`), junto do custo da divida e da alavancagem que a
+            # produzem. Expor as duas como premissa editavel era o que permitia digitar
+            # uma taxa de socio menor que a do credor.
+            "taxa_minima_negocio_aa": _num(premissas.taxa_minima_negocio_aa, 4),
+            # ALIAS DEPRECIADO (1 versao) do campo acima — nome antigo, mesmo numero.
+            "taxa_desconto_aa": _num(premissas.taxa_minima_negocio_aa, 4),
+            # Reguas do veredito (`dre.flag_viavel`), servidas para a tela e o PDF
+            # rotularem o criterio sem cravar o numero. Sao CONSTANTES da fonte unica
+            # (`dimensionamento/config.py`), nao contas feitas aqui.
+            "margem_viavel_min": _num(SIM_MARGEM_VIAVEL_MIN, 4),
+            "payback_viavel_max": int(SIM_PAYBACK_VIAVEL_MAX),
             "carencia_aluguel_meses": int(premissas.carencia_aluguel_meses),
             "mes_inicio_aluguel": mes_inicio_aluguel,
             "custo_pre_operacional_mes": _num(premissas.custo_pre_operacional_mes, 2),
@@ -1545,11 +1578,71 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
                 else 0.0,
                 2,
             ),
+            # APORTE INICIAL (obra + taxa de franquia) = o dinheiro que o CONTRATO pede
+            # do socio, e o denominador do retorno dele. VOCABULARIO: nao se chama mais
+            # "equity aportado"; e "aporte inicial". A soma e dos DOIS campos que ja
+            # estao neste mesmo bloco (nao ha coeficiente nem formula financeira aqui) e
+            # reproduz literalmente o denominador que o nucleo usa em `simular()`.
+            "aporte_inicial": _num(inv["obra"] + inv["taxa_franquia"], 2),
+            # CHEQUE TOTAL: o pior ponto do caixa acumulado — quanto o investidor precisa
+            # TER disponivel, nao quanto o contrato pede. No caso de referencia sao
+            # R$1,14 mi no mes 5 contra R$760 mil de aporte (1,50x). E o numero que
+            # decide se o negocio e FINANCIAVEL e nao existia em lugar nenhum do produto.
+            # Vem PRONTO do nucleo (`cheque_total` / `mes_cheque_total`).
+            "cheque_total": _num(r.cheque_total, 2),
+            "mes_cheque_total": int(r.mes_cheque_total),
         },
         "retorno": {
-            # Padrao DESALAVANCADO (decisao do dono do produto). O equity vem junto,
-            # como visao SECUNDARIA — nunca misturado no mesmo indicador.
-            "otica": "desalavancada",
+            # ------------------------------------------------------------------
+            # DUAS OTICAS, SEPARADAS E ROTULADAS — nunca no mesmo numero.
+            #   `negocio` (FCFF): sem financiamento, CAPEX inteiro desembolsado. Mede o
+            #       ATIVO. Descontado a taxa minima do NEGOCIO (premissa).
+            #   `socio`   (FCFE): PMT inteira sai do caixa e so obra+franquia entram como
+            #       aporte. Mede a ESTRUTURA. Descontado a taxa minima do SOCIO, que e
+            #       DERIVADA (Ke = Ku + (Ku - Kd) * D/E) — o socio e subordinado ao
+            #       banco, entao a taxa dele nao pode ser menor que a do credor.
+            # Sem escudo fiscal no Lucro Presumido, WACC = taxa minima do negocio: a
+            # divida so cria valor por ARBITRAGEM (tomar a 23,87% para um ativo que
+            # rende 25%), nunca por beneficio tributario.
+            # Rotulos de usuario: "do negocio" (era "desalavancado") e "do socio".
+            # ------------------------------------------------------------------
+            "negocio": {
+                "tir_anual": _num(r.tir_negocio_anual, 4),
+                "vpl": _num(r.vpl_negocio, 2),
+                "taxa_minima_aa": _num(r.taxa_minima_negocio_aa, 4),
+                "retorno_anual": _num(r.retorno_anual_desalavancado, 4),
+            },
+            "socio": {
+                "tir_anual": _num(r.tir_socio_anual, 4),
+                "vpl": _num(r.vpl_socio, 2),
+                "taxa_minima_aa": _num(r.taxa_minima_socio_aa, 4),
+                "retorno_anual": _num(r.retorno_anual_equity, 4),
+            },
+            "custo_divida_aa": _num(r.custo_divida_aa, 4),
+            "alavancagem_divida_sobre_aporte": _num(r.alavancagem_divida_sobre_aporte, 4),
+            # VPL da divida descontado a taxa minima do NEGOCIO = a ARBITRAGEM. Vem do
+            # nucleo quando ele o publica; `null` enquanto nao publicar — este backend
+            # NAO calcula formula financeira para preencher o campo.
+            "vpl_divida_arbitragem": _num(getattr(r, "vpl_divida_arbitragem", None), 2),
+            # GUARDA 1: se a divida custa mais que a taxa minima do negocio, a
+            # alavancagem DESTROI valor em vez de criar (sem escudo fiscal nao ha o que
+            # compensar). Aviso visivel na tela.
+            "alerta_divida_acima_da_taxa_negocio": bool(
+                r.alerta_divida_acima_da_taxa_negocio
+            ),
+            # GUARDA 2 (diagnostico, NAO tolerancia): VPL do socio @taxa do socio menos
+            # VPL do negocio @taxa do negocio. Os dois NAO coincidem de proposito — a
+            # taxa do socio usa a alavancagem INICIAL enquanto o saldo devedor cai a
+            # zero ao longo do contrato. -R$36.073,94 no caso de referencia.
+            "vpl_identidade_residuo": _num(r.vpl_identidade_residuo, 2),
+            # --- CHAVES PLANAS: ALIAS HISTORICOS (o PDF e o XLSX leem delas) ---------
+            # `tir_anual` e `vpl` sao o par do SOCIO (e o que o nucleo mantem como alias
+            # em `ViabilidadeResult`). `retorno_anual_desalavancado` e o retorno DO
+            # NEGOCIO e `retorno_anual_equity` o DO SOCIO — os nomes ficam pelo contrato
+            # antigo; os rotulos de usuario sao "do negocio" e "do socio".
+            "otica": "desalavancada",  # LEGADO: `censo_report` escolhe o rotulo do card
+            # por `otica.startswith("desalav")`; mudar o VALOR aqui trocaria o card do
+            # PDF para "ROIC anual". O rotulo novo e responsabilidade do consumidor.
             "retorno_anual_desalavancado": _num(r.retorno_anual_desalavancado, 4),
             "retorno_anual_equity": _num(r.retorno_anual_equity, 4),
             "tir_anual": _num(r.tir_anual, 4),

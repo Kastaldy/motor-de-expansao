@@ -91,8 +91,8 @@ from motor_expansao.dimensionamento.config import (
     SIM_REAJUSTE_TICKET_AA,
     SIM_ROYALTIES_PCT,
     SIM_SHARE_BALCAO,
-    SIM_TAXA_DESCONTO_AA,
     SIM_TAXA_FRANQUIA,
+    SIM_TAXA_MINIMA_NEGOCIO_AA,
     SIM_TICKET_AGREGADOR,
     SIM_TICKET_AGREGADOR_FATOR,
     SIM_VALOR_RESIDUAL_MES_60,
@@ -166,7 +166,10 @@ class Premissas:
 
     valor_residual_mes_60: float = SIM_VALOR_RESIDUAL_MES_60
     capex_renovacao: float = SIM_CAPEX_RENOVACAO
-    taxa_desconto_aa: float = SIM_TAXA_DESCONTO_AA
+    # Taxa minima do NEGOCIO (Ku na literatura; rotulo de usuario = "taxa minima do
+    # negocio"). Unica taxa configuravel: a do SOCIO e derivada em `simular()`.
+    # Sem escudo fiscal no Presumido, WACC = esta taxa.
+    taxa_minima_negocio_aa: float = SIM_TAXA_MINIMA_NEGOCIO_AA
 
     # Override absoluto do ticket de agregador (compat com chamadas historicas).
     ticket_agregador_absoluto: float | None = None
@@ -396,12 +399,50 @@ class ViabilidadeResult:
     pmt_mensal: float = 0.0
     juros_totais: float = 0.0
 
-    # retorno: as duas oticas, NUNCA misturadas
-    retorno_anual_desalavancado: float = 0.0
-    retorno_anual_equity: float = 0.0
+    # ---- Retorno: as duas oticas, NUNCA misturadas -------------------------
+    # Rotulo de usuario: "do negocio" (era "desalavancado") e "do socio" (era equity).
+    # Ku/Ke ficam so nas docstrings.
+    retorno_anual_desalavancado: float = 0.0   # = do NEGOCIO (mantido p/ compat)
+    retorno_anual_equity: float = 0.0          # = do SOCIO   (mantido p/ compat)
+
+    # TIR/VPL DO SOCIO: fluxo que subtrai a PMT inteira e conta so o aporte de obra +
+    # franquia (o equipamento entra pela parcela, nao pelo caixa) = FCFE.
+    # `tir_anual`/`vpl` ficam como alias historico DESTE par.
     tir_mensal: float | None = None
     tir_anual: float | None = None
     vpl: float | None = None
+    tir_socio_mensal: float | None = None
+    tir_socio_anual: float | None = None
+    vpl_socio: float | None = None
+
+    # TIR/VPL DO NEGOCIO: sem financiamento nenhum, CAPEX inteiro saindo de verdade
+    # = FCFF. Mede o ATIVO; a diferenca contra o par do socio e a alavancagem.
+    tir_negocio_mensal: float | None = None
+    tir_negocio_anual: float | None = None
+    vpl_negocio: float | None = None
+
+    # Taxas: a do negocio e premissa; a do socio e DERIVADA (Ke = Ku + (Ku-Kd)*D/E).
+    taxa_minima_negocio_aa: float = 0.0
+    taxa_minima_socio_aa: float = 0.0
+    custo_divida_aa: float = 0.0
+    alavancagem_divida_sobre_aporte: float = 0.0
+
+    # ---- Guardas (2) -------------------------------------------------------
+    # (1) A divida nao pode custar mais que a taxa minima do negocio: se custar, a
+    #     alavancagem DESTROI valor em vez de criar (sem escudo fiscal no Presumido,
+    #     ela so cria valor por arbitragem: o ativo render mais que o banco cobra).
+    alerta_divida_acima_da_taxa_negocio: bool = False
+    # (2) Sem escudo fiscal, o VPL do negocio e o do socio TEM de coincidir. O residuo
+    #     abaixo mede o quanto nao coincidem: com Ke unico calculado na alavancagem
+    #     INICIAL sobra diferenca, porque a divida amortiza e o D/E cai a zero ao longo
+    #     do contrato. E leitura de diagnostico, nao tolerancia escondida.
+    vpl_identidade_residuo: float = 0.0
+
+    # Cheque TOTAL que o investidor precisa ter disponivel: o pior ponto do caixa
+    # acumulado, nao o aporte contratado. No caso de referencia sao R$1,14 mi contra
+    # R$760 mil de aporte — e o numero que decide se o negocio e financiavel.
+    cheque_total: float = 0.0
+    mes_cheque_total: int = 0
 
     mes_caixa_operacional_positivo: int | None = None
     acumulado_mes_final: float = 0.0
@@ -762,8 +803,43 @@ def simular(
     )
     retorno_equity = resultado_equity * 12.0 / equity_investido if equity_investido > 0 else 0.0
 
+    # ---- Fluxo do SOCIO (FCFE): PMT inteira sai; so obra+franquia como aporte ----
     fluxos = [(r["mes_contrato"] - 1, r["fcf_mensal"]) for r in serie]
     tir_m = tir_mensal(fluxos)
+
+    # ---- Fluxo do NEGOCIO (FCFF): sem financiamento, CAPEX inteiro desembolsado ----
+    # Quando o equipamento e financiado ele NAO aparece na serie (o banco paga), entao
+    # aqui ele volta como saida real, na vespera da abertura — senao estariamos medindo
+    # o ativo com o dinheiro de outra pessoa.
+    financiado = equipamentos > 0 and prazo_equipamentos > 0
+    equip_a_desembolsar = float(equipamentos) if financiado else 0.0
+    pre_rows = [r for r in serie if r["fase"] == "pre_operacional"]
+    mes_equip = pre_rows[-1]["mes"] if pre_rows else (operacao[0]["mes"] if operacao else 0)
+    fluxos_negocio = [
+        (
+            r["mes_contrato"] - 1,
+            r["ebitda_mensal"]
+            - r["ir_csll"]
+            - r["investimento"]
+            - (equip_a_desembolsar if r["mes"] == mes_equip else 0.0),
+        )
+        for r in serie
+    ]
+    tir_neg_m = tir_mensal(fluxos_negocio)
+
+    # ---- Taxas: negocio e premissa; socio e DERIVADA -----------------------------
+    ku = float(p.taxa_minima_negocio_aa)
+    kd = (1.0 + float(juros_equipamentos_am)) ** 12 - 1.0 if financiado else 0.0
+    aporte = float(obra) + float(taxa_franquia)
+    d_sobre_e = (float(equipamentos) / aporte) if (financiado and aporte > 0) else 0.0
+    # MM-II sem impostos: o socio, subordinado ao banco, exige o premio da alavancagem.
+    ke = ku + (ku - kd) * d_sobre_e
+
+    vpl_socio_v = float(vpl(fluxos, ke))
+    vpl_negocio_v = float(vpl(fluxos_negocio, ku))
+
+    # ---- Cheque total: o pior ponto do caixa acumulado ---------------------------
+    pior = min(serie, key=lambda r: r["fcf_acumulado"])
 
     return ViabilidadeResult(
         faturamento_mensal_steady=float(fat),
@@ -793,7 +869,21 @@ def simular(
         retorno_anual_equity=float(retorno_equity),
         tir_mensal=tir_m,
         tir_anual=((1.0 + tir_m) ** 12 - 1.0) if tir_m is not None else None,
-        vpl=float(vpl(fluxos, p.taxa_desconto_aa)),
+        vpl=vpl_socio_v,
+        tir_socio_mensal=tir_m,
+        tir_socio_anual=((1.0 + tir_m) ** 12 - 1.0) if tir_m is not None else None,
+        vpl_socio=vpl_socio_v,
+        tir_negocio_mensal=tir_neg_m,
+        tir_negocio_anual=((1.0 + tir_neg_m) ** 12 - 1.0) if tir_neg_m is not None else None,
+        vpl_negocio=vpl_negocio_v,
+        taxa_minima_negocio_aa=ku,
+        taxa_minima_socio_aa=ke,
+        custo_divida_aa=kd,
+        alavancagem_divida_sobre_aporte=d_sobre_e,
+        alerta_divida_acima_da_taxa_negocio=bool(financiado and kd > ku),
+        vpl_identidade_residuo=vpl_socio_v - vpl_negocio_v,
+        cheque_total=abs(min(0.0, pior["fcf_acumulado"])),
+        mes_cheque_total=int(pior["mes"]),
         mes_caixa_operacional_positivo=mes_pos,
         acumulado_mes_final=float(serie[-1]["fcf_acumulado"]),
         ticket_blended=float(p.ticket_blended),

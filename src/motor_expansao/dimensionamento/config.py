@@ -205,8 +205,26 @@ SIM_REAJUSTE_TICKET_AA = 0.04
 SIM_REAJUSTE_ALUGUEL_AA = 0.04
 SIM_REAJUSTE_CUSTOS_AA = 0.04
 
-# Taxa de desconto do VPL/TIR (ao ano). PENDENTE DE AVAL — default provisorio.
-SIM_TAXA_DESCONTO_AA = 0.12
+# ---------------------------------------------------------------------------
+# Taxa minima do negocio (Ku) — a UNICA taxa configuravel do modelo.
+# Decisao de Felipe, 2026-07-25.
+# ---------------------------------------------------------------------------
+# 25% a.a. NOMINAL. Justificativa registrada: piso implicito da propria decisao de
+# financiar (o custo da divida de 1,8% a.m. = 23,87% a.a.) + build-up sobre a Selic
+# de 14,25%. Substitui a antiga SIM_TAXA_DESCONTO_AA = 0.12, que era uma taxa de
+# referencia generica aplicada a um fluxo DE SOCIO — incoerencia apontada em revisao
+# externa: o socio e subordinado ao banco, entao a taxa dele nao pode ser MENOR que a
+# do credor.
+#
+# A taxa do SOCIO (Ke) NAO e configuravel: e DERIVADA, em `simular()`, por
+#     Ke = Ku + (Ku - Kd) * D/E
+# Isso torna a incoerencia IMPOSSIVEL por construcao — nao existe campo onde alguem
+# possa digitar uma taxa de socio abaixo do custo da divida.
+#
+# E como o Lucro Presumido NAO tem escudo fiscal da divida (o IR/CSLL incide sobre a
+# receita bruta e ignora a despesa financeira), WACC = Ku. Nao ha media ponderada a
+# fazer: a estrutura de capital nao muda o valor do ativo, so a sua reparticao.
+SIM_TAXA_MINIMA_NEGOCIO_AA = 0.25
 
 # Linha do tempo: M-4..M-1 = pre-abertura (obra), M1..M60 = operacao.
 SIM_MESES_PRE_ABERTURA = 4
@@ -226,7 +244,12 @@ SIM_VALOR_RESIDUAL_MES_60 = 0.0
 SIM_CAPEX_RENOVACAO = 0.0
 
 # Criterio de viabilidade (estavam como literais em simulador.py::flag_viavel).
-SIM_MARGEM_VIAVEL_MIN = 0.10
+# MARGEM MINIMA 30% por decisao de Felipe (2026-07-25); era 0.10. A regua antiga
+# aprovava cenario de margem 12% que ninguem levaria a comite.
+SIM_MARGEM_VIAVEL_MIN = 0.30
+# Payback em meses de OPERACAO (M1..M60), NAO meses decorridos desde a entrega do
+# imovel (M-4). No caso de referencia: 31 meses de operacao = 35 meses desde o 1o
+# desembolso. A base de contagem esta travada em teste.
 SIM_PAYBACK_VIAVEL_MAX = 36
 
 # ---------------------------------------------------------------------------

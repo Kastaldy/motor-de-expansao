@@ -1294,7 +1294,11 @@ def _viabilidade_page(
     unidade_be = _viab_unidade_breakeven(dados)
     rotulo_be = f"Break-even ({unidade_be})" if unidade_be else "Alunos break-even"
     otica = str(dados.get("retorno_otica") or "").strip()
-    rotulo_retorno = "Retorno anual (desalav.)" if otica.startswith("desalav") else "ROIC anual"
+    # VOCABULARIO (4a rodada): "do negocio" no lugar de "desalavancado" — o rotulo
+    # tem de dizer O QUE mede (o ativo), nao o jargao de estrutura de capital.
+    rotulo_retorno = (
+        "Retorno anual do negocio" if otica.startswith("desalav") else "ROIC anual"
+    )
     retorno_valor = (
         dados.get("retorno_anual")
         if _viab_tem(dados.get("retorno_anual"))

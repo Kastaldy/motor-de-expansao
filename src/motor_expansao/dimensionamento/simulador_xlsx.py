@@ -45,9 +45,43 @@ DINHEIRO aparece com a FONTE em VERMELHO. Onde o numero pode alternar de sinal
 (EBITDA, FCF, VPL, TIR, retorno) a cor vem de formatacao CONDICIONAL, para a
 planilha nao mentir quando o valor virar.
 
+FIN-VIAB-01, 4a rodada (decisoes de Felipe, 2026-07-25) — a reconciliacao das TAXAS
+e das DUAS OTICAS de retorno, espelhada formula por formula:
+
+  (1) TAXA. A antiga "taxa de desconto" (12% a.a.) sumiu. Entra a TAXA MINIMA DO
+      NEGOCIO (25% a.a., `SIM_TAXA_MINIMA_NEGOCIO_AA`) como UNICA taxa editavel; a
+      TAXA MINIMA DO SOCIO e DERIVADA por formula na propria aba Premissas
+      (`= negocio + (negocio - divida) * divida/aporte`), junto do CUSTO DA DIVIDA
+      a.a. (do juros a.m.) e da ALAVANCAGEM. Nao existe celula onde alguem possa
+      digitar uma taxa de socio menor que o custo da divida.
+
+  (2) DUAS OTICAS, nunca no mesmo numero. O fluxo de caixa ganhou duas linhas novas:
+      FLUXO DO NEGOCIO (EBITDA - IR - investimento do mes - o equipamento financiado
+      desembolsado na vespera da abertura) e FLUXO DA DIVIDA (+captacao no mes da
+      vespera, -PMT depois). A aba Resumo traz TIR e VPL em PAR rotulado, cada um com
+      IRR/NPV sobre a SUA linha e a SUA taxa.
+
+  (3) CHEQUE TOTAL. O pior ponto do caixa acumulado, com o mes, contra o APORTE
+      INICIAL (obra + franquia) — que e o novo nome do que se chamava "equity
+      aportado". E o numero que decide se o negocio e FINANCIAVEL.
+
+  (4) IDENTIDADES. A aba Afericao ganhou as duas que fecham EXATAS:
+      (a) VPL(fluxo da divida @ custo da divida) == 0  -> prova a tabela Price;
+      (b) VPL socio @taxa do negocio == VPL negocio + VPL divida, ambos @taxa do
+          negocio -> prova que as duas oticas sao a MESMA economia repartida.
+      NAO se testa "os dois VPLs coincidem": isso e FALSO com uma taxa de socio unica
+      calculada na alavancagem INICIAL, porque o saldo devedor cai a zero ao longo do
+      contrato. O residuo dessa comparacao vive na planilha como DIAGNOSTICO rotulado,
+      nao como tolerancia escondida.
+
 A aba `Afericao` e a defesa do arquivo: lado a lado, o valor que o MOTOR Python
 calculou (estatico, escrito por nos) e o valor que a FORMULA da planilha produz.
 Quem abre ve na hora se alguma formula quebrou.
+
+VOCABULARIO DE USUARIO (obrigatorio nos rotulos): "taxa minima do negocio" e "taxa
+minima do socio"; "do negocio" no lugar de "desalavancado"; "cheque total" para o pior
+ponto do caixa e "aporte inicial" para obra+franquia. Ku/Ke/FCFF/FCFE ficam SO em
+docstring e comentario.
 
 READ-ONLY sobre o M1: nao recalcula score_priorizacao, pesos nem artefatos
 (DEC-001/DEC-008/DEC-009). Sem I/O de disco: usa BytesIO exclusivamente.
@@ -233,7 +267,7 @@ _INVEST_ROW_INI = 5
 _INVEST_ORDEM = (
     "obra", "parcelas_obra", "obra_parcela", "equip", "prazo_equip", "juros_am",
     "taxa_franquia", "parcelas_franquia", "franquia_parcela",
-    "capex_total", "investimento_total", "equity", "equip_financiado",
+    "capex_total", "investimento_total", "aporte_inicial", "equip_financiado",
     "pmt", "total_pago", "juros_totais", "saldo_m60",
 )
 _INVEST_ROW = {k: _INVEST_ROW_INI + i for i, k in enumerate(_INVEST_ORDEM)}
@@ -293,7 +327,8 @@ _DRE_ORDEM: tuple[tuple[str, str, str, bool, bool], ...] = (
     ("ir_csll_al", "CSLL 9% sobre a base", "brl", True, False),
     ("ir_total", "(-) IR/CSLL", "brl", False, False),
     ("juros", "(-) Despesa financeira (juros do financiamento)", "brl", False, False),
-    ("resultado_desalav", "(=) Resultado desalavancado após IR (EBITDA - IR/CSLL)",
+    # "do negócio" no lugar de "desalavancado" (vocabulário obrigatório, 4a rodada).
+    ("resultado_desalav", "(=) Resultado DO NEGÓCIO após IR (EBITDA - IR/CSLL)",
      "brl", False, True),
     ("resultado_apos_juros", "(=) Resultado após IR e despesa financeira", "brl", False, True),
 )
@@ -317,9 +352,24 @@ _FLX_ORDEM: tuple[tuple[str, str, str, bool, bool], ...] = (
     ("inv_capex_renov", "CAPEX de renovação", "brl", True, False),
     ("investimento", "(-) Investimento do mês", "brl", False, False),
     ("valor_residual", "(+) Valor residual", "brl", True, False),
-    ("fcf", "(=) FCF do mês", "brl", False, True),
-    ("fcf_acumulado", "(=) FCF ACUMULADO", "brl", False, True),
+    # O FCF da serie do motor E o fluxo DO SÓCIO: a PMT inteira já saiu e o
+    # equipamento financiado nunca passou por este caixa (o banco pagou).
+    ("fcf", "(=) FLUXO DO SÓCIO no mês (a PMT inteira já saiu)", "brl", False, True),
+    ("fcf_acumulado", "(=) FLUXO DO SÓCIO ACUMULADO (caixa acumulado)", "brl", False, True),
     ("payback", "Marcador de payback", "txt", True, False),
+    # --- As duas linhas novas da 4a rodada (2026-07-25) ----------------------
+    # Ótica DO NEGÓCIO: sem financiamento nenhum, o CAPEX inteiro desembolsado.
+    # Mede o ATIVO. É a linha que a TIR e o VPL "do negócio" descontam.
+    ("neg_equip", "Equipamentos desembolsados na véspera (ótica do negócio)",
+     "brl", True, False),
+    ("fluxo_negocio", "(=) FLUXO DO NEGÓCIO (sem financiamento, CAPEX inteiro)",
+     "brl", False, True),
+    # Ótica DA DÍVIDA: entra a captação no mês da véspera, saem as PMT. Serve às
+    # duas identidades da aba Aferição (e o VPL dela à taxa do negócio é a
+    # ARBITRAGEM: a única forma pela qual a alavancagem cria valor sem escudo fiscal).
+    ("div_captacao", "(+) Captação do financiamento (no mês da véspera)",
+     "brl", True, False),
+    ("fluxo_divida", "(=) FLUXO DA DÍVIDA (captação - PMT)", "brl", False, True),
 )
 _FLX_ROW = {k: _TL_DADOS_ROW_INI + i for i, (k, *_r) in enumerate(_FLX_ORDEM)}
 
@@ -697,7 +747,8 @@ def _bloco_investimento(
     parcelas_franquia: int,
 ) -> list[dict[str, Any]]:
     return [
-        _e("obra", "Obra (equity, parcelada sem juros)", valor=float(obra), unidade="R$",
+        _e("obra", "Obra (aporte do franqueado, parcelada sem juros)",
+           valor=float(obra), unidade="R$",
            fonte="Entrada do operador", fmt=_FMT_CONTABIL),
         _e("parcelas_obra", "Parcelas da obra", valor=int(parcelas_obra), unidade="meses",
            fonte="config.py SIM_PARCELAS_OBRA_DEFAULT", fmt=_FMT_INT),
@@ -732,9 +783,17 @@ def _bloco_investimento(
         _e("investimento_total", "Investimento total (CAPEX + franquia)",
            formula="={capex_total}+{taxa_franquia}", unidade="R$", fonte="Derivado",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
-        _e("equity", "Equity aportado (obra + franquia)", formula="={obra}+{taxa_franquia}",
-           unidade="R$", fonte="Derivado (denominador do retorno de equity)",
-           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
+        # VOCABULARIO (4a rodada): "aporte inicial" no lugar de "equity aportado". Os
+        # R$ 760 mil daqui NAO sao o cheque que o investidor precisa ter — esse e o
+        # "cheque total" da aba Resumo (o pior ponto do caixa acumulado). Este segue
+        # sendo o DENOMINADOR do retorno do socio e a base da alavancagem.
+        _e("aporte_inicial", "Aporte inicial (obra + franquia)",
+           formula="={obra}+{taxa_franquia}",
+           unidade="R$", fonte="Derivado (denominador do retorno do sócio)",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL,
+           nota="NÃO confundir com o CHEQUE TOTAL da aba Resumo: aquele é o pior ponto do "
+                "caixa acumulado (o dinheiro que precisa estar disponível) e é bem maior. "
+                "Este é o aporte contratado de obra + taxa de franquia."),
         _e("pmt", "PMT do financiamento (Price)",
            formula=f"={ABA_INVESTIMENTO}!$B${_INVEST_ROW['pmt']}", unidade="R$/mês",
            fonte=f"Aba {ABA_INVESTIMENTO} (=PGTO do Excel)", quem=_QUEM_DERIVADO,
@@ -787,15 +846,69 @@ def _bloco_reajuste(p: Premissas) -> list[dict[str, Any]]:
     ]
 
 
-def _bloco_desconto(p: Premissas) -> list[dict[str, Any]]:
+def _bloco_taxas(p: Premissas) -> list[dict[str, Any]]:
+    """As taxas mínimas de retorno: UMA editável, o resto DERIVADO por fórmula.
+
+    Substitui o bloco "Desconto (VPL / TIR)", que tinha uma unica "taxa de desconto"
+    de 12% a.a. aplicada a um fluxo DE SOCIO — incoerente, porque o socio e subordinado
+    ao banco e nao pode exigir menos que o credor (custo da divida de 23,87% a.a. no
+    caso de referencia).
+
+    Aqui a taxa minima do NEGOCIO (Ku na literatura) e a unica entrada; a do SOCIO (Ke)
+    e DERIVADA por `Ke = Ku + (Ku - Kd) * D/E`, exatamente como `simulador.simular()`.
+    Isso torna a incoerencia impossivel por construcao: nao existe celula onde alguem
+    possa digitar uma taxa de socio abaixo do custo da divida. E como o Lucro Presumido
+    nao tem escudo fiscal da divida, o WACC E a taxa minima do negocio — nao ha media
+    ponderada a fazer, e por isso ela nao aparece aqui.
+    """
     return [
-        _e("taxa_desconto_aa", "Taxa de desconto (VPL)", valor=float(p.taxa_desconto_aa),
-           unidade="% a.a.", fonte="config.py SIM_TAXA_DESCONTO_AA", fmt=_FMT_PCT2,
+        _e("taxa_negocio_aa", "Taxa mínima do negócio (a.a.)",
+           valor=float(p.taxa_minima_negocio_aa), unidade="% a.a.",
+           fonte="config.py SIM_TAXA_MINIMA_NEGOCIO_AA", fmt=_FMT_PCT2,
            quem=_QUEM_CONTROLADORIA,
-           nota="Default PROVISÓRIO — pendente de aval da controladoria."),
-        _e("taxa_desconto_am", "Taxa de desconto equivalente",
-           formula="=(1+{taxa_desconto_aa})^(1/12)-1", unidade="% a.m.", fonte="Derivado",
+           nota="ÚNICA taxa editável do modelo (decisão de Felipe, 2026-07-25). 25% a.a. "
+                "NOMINAL: piso implícito da própria decisão de financiar (o custo da dívida "
+                "de 1,8% a.m. = 23,87% a.a.) mais build-up sobre a Selic de 14,25%. Sem "
+                "escudo fiscal no Lucro Presumido, esta é também a taxa do ativo (o WACC)."),
+        _e("taxa_negocio_am", "Taxa mínima do negócio (a.m. equivalente)",
+           formula="=(1+{taxa_negocio_aa})^(1/12)-1", unidade="% a.m.",
+           fonte="Derivado (equivalência composta)", quem=_QUEM_DERIVADO, kind=_DERIV,
+           fmt=_FMT_PCT3),
+        _e("custo_divida_am", "Custo da dívida (a.m.)",
+           formula="=IF(AND({equip}>0,{prazo_equip}>0),{juros_am},0)", unidade="% a.m.",
+           fonte="Derivado dos juros do financiamento (zero sem financiamento)",
            quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_PCT3),
+        _e("custo_divida_aa", "Custo da dívida (a.a.)",
+           formula="=(1+{custo_divida_am})^12-1", unidade="% a.a.",
+           fonte="Derivado: anualização composta do juros a.m.", quem=_QUEM_DERIVADO,
+           kind=_DERIV, fmt=_FMT_PCT2),
+        _e("alavancagem", "Alavancagem (dívida / aporte inicial)",
+           formula="=IF(AND({equip_financiado}>0,{aporte_inicial}>0),"
+                   "{equip_financiado}/{aporte_inicial},0)",
+           unidade="x", fonte="Derivado: principal financiado sobre obra + franquia",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt="0.0000"),
+        _e("taxa_socio_aa", "Taxa mínima do sócio (a.a.)",
+           formula="={taxa_negocio_aa}+({taxa_negocio_aa}-{custo_divida_aa})*{alavancagem}",
+           unidade="% a.a.",
+           fonte="Derivado: taxa do negócio + prêmio da alavancagem (NÃO é editável)",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_PCT2,
+           nota="FÓRMULA, nunca um número cravado: o sócio é subordinado ao banco, então a "
+                "taxa dele é a do negócio MAIS o prêmio de correr o risco depois do credor. "
+                "Se a dívida custasse mais que o negócio, este prêmio ficaria NEGATIVO — e é "
+                "isso que a linha de alerta logo abaixo denuncia."),
+        _e("taxa_socio_am", "Taxa mínima do sócio (a.m. equivalente)",
+           formula="=(1+{taxa_socio_aa})^(1/12)-1", unidade="% a.m.",
+           fonte="Derivado (equivalência composta)", quem=_QUEM_DERIVADO, kind=_DERIV,
+           fmt=_FMT_PCT3),
+        _e("alerta_divida", "A dívida custa mais que a taxa mínima do negócio?",
+           formula='=IF(AND({equip_financiado}>0,{custo_divida_aa}>{taxa_negocio_aa}),'
+                   '"Sim - a alavancagem destroi valor","Nao")',
+           unidade="Sim/Não",
+           fonte="Derivado: guarda da 4a rodada", quem=_QUEM_DERIVADO, kind=_DERIV,
+           nota="Sem escudo fiscal no Lucro Presumido, a alavancagem só cria valor por "
+                "ARBITRAGEM: tomar dinheiro a uma taxa menor do que o ativo rende. Se a "
+                "dívida custar mais que a taxa mínima do negócio, ela DESTRÓI valor e o "
+                "prêmio da taxa do sócio fica negativo."),
     ]
 
 
@@ -883,7 +996,7 @@ def _blocos_premissas(
         ),
         ("Anuidade (taxa de manutenção)", _bloco_anuidade(p)),
         ("Reajuste anual (degrau a partir do mês 13)", _bloco_reajuste(p)),
-        ("Desconto (VPL / TIR)", _bloco_desconto(p)),
+        ("Taxas mínimas de retorno (negócio e sócio)", _bloco_taxas(p)),
         ("Aluguel-teto (régua de decisão)", _bloco_teto()),
         ("Rampa e horizonte", _bloco_horizonte(p)),
     ]
@@ -1400,6 +1513,13 @@ def _flx_formulas(j: int, refs: dict[str, str]) -> dict[str, str]:
 
     t = c("t")
     dre = f"'{ABA_DRE}'!{L}"
+    # Mes em que o equipamento financiado seria desembolsado se NAO houvesse banco:
+    # a vespera da abertura (ultimo mes de pre-abertura). Sem pre-abertura o motor cai
+    # no primeiro mes de operacao — as duas pernas do IF reproduzem `mes_equip`.
+    mes_da_vespera = (
+        f"IF({P['meses_pre']}>0,{c('mes_contrato')}={P['meses_pre']},"
+        f"{c('mes_contrato')}=1)"
+    )
     saldo_ini = (
         f"=IF({t}=1,{P['equip_financiado']},0)"
         if ant is None
@@ -1451,6 +1571,23 @@ def _flx_formulas(j: int, refs: dict[str, str]) -> dict[str, str]:
             if ant is None
             else f'=IF(AND({c("fcf_acumulado")}>=0,{a("fcf_acumulado")}<0),"PAYBACK","")'
         ),
+        # --- Ótica DO NEGÓCIO ------------------------------------------------
+        # Quando o equipamento é financiado ele NÃO passa pelo caixa da série (o banco
+        # paga), então aqui ele volta como saída real na véspera da abertura — senão
+        # estaríamos medindo o ativo com o dinheiro de outra pessoa.
+        "neg_equip": f"=IF(AND({P['equip_financiado']}>0,{mes_da_vespera}),"
+                     f"{P['equip_financiado']},0)",
+        # Sem a PMT e SEM o valor residual — exatamente o fluxo que o motor desconta
+        # em `vpl_negocio` / `tir_negocio_*`. Se o valor residual deixar de ser zero,
+        # esta linha continua reproduzindo o motor (que também o ignora nesta ótica).
+        "fluxo_negocio": (
+            f"={c('ebitda')}-{c('ir_csll')}-{c('investimento')}-{c('neg_equip')}"
+        ),
+        # --- Ótica DA DÍVIDA -------------------------------------------------
+        # A captação é o MESMO principal do desembolso acima, com o sinal invertido:
+        # referenciar a célula garante que as duas nunca se descolem.
+        "div_captacao": f"={c('neg_equip')}",
+        "fluxo_divida": f"={c('div_captacao')}-{c('pmt')}",
     }
 
 
@@ -1464,7 +1601,9 @@ def _write_aba_fluxo(
     _write_hdr_linha_do_tempo(
         ws, meses, "FLUXO DE CAIXA — mesma linha do tempo da DRE",
         "A PMT é NOMINAL (não reajusta). Price: juros do mês = saldo devedor anterior x taxa. "
-        "O CAPEX aparece INTEIRO aqui, então o payback do gráfico e o do KPI são o mesmo número.",
+        "O CAPEX aparece INTEIRO aqui, então o payback do gráfico e o do KPI são o mesmo número. "
+        "TRÊS fluxos, nunca somados entre si: DO SÓCIO (a PMT inteira sai), DO NEGÓCIO (sem "
+        "financiamento, CAPEX inteiro desembolsado) e DA DÍVIDA (captação menos as PMT).",
         _FLX_ORDEM, col_total=col_total, col_steady=col_steady,
         label_steady="Steady (regime pleno)",
     )
@@ -1525,7 +1664,7 @@ def _write_aba_investimento(
     _write_header(ws, "INVESTIMENTO E FINANCIAMENTO", n_cols=len(_INVEST_COLS))
     _nota(
         ws, 2,
-        "Obra = equity, parcelada sem juros. Equipamentos = financiados (Price). "
+        "Obra = aporte do franqueado, parcelada sem juros. Equipamentos = financiados (Price). "
         "Taxa de franquia PARCELADA sem juros, junto da obra: as parcelas caem nos meses de "
         "contrato 1 a N, contados da entrega da unidade. Edite os valores na aba Premissas.",
         len(_INVEST_COLS),
@@ -1539,7 +1678,7 @@ def _write_aba_investimento(
     r_saldo = _FLX_ROW["saldo_final"]
 
     linhas: list[tuple[str, str, str, str, str | None]] = [
-        ("obra", "Obra (equity)", f"={P['obra']}", "R$", _FMT_CONTABIL),
+        ("obra", "Obra (aporte)", f"={P['obra']}", "R$", _FMT_CONTABIL),
         ("parcelas_obra", "Parcelas da obra", f"={P['parcelas_obra']}", "meses", _FMT_INT),
         ("obra_parcela", "Parcela mensal da obra",
          f"=IF({P['parcelas_obra']}>0,{P['obra']}/{P['parcelas_obra']},0)", "R$/mês",
@@ -1557,7 +1696,7 @@ def _write_aba_investimento(
          f"={P['obra']}+{P['equip']}", "R$", _FMT_CONTABIL),
         ("investimento_total", "Investimento total (CAPEX + franquia)",
          f"=B{_INVEST_ROW['capex_total']}+{P['taxa_franquia']}", "R$", _FMT_CONTABIL),
-        ("equity", "Equity aportado (obra + franquia)",
+        ("aporte_inicial", "Aporte inicial (obra + franquia)",
          f"={P['obra']}+{P['taxa_franquia']}", "R$", _FMT_CONTABIL),
         ("equip_financiado", "Principal financiado",
          f"=IF(AND({P['equip']}>0,{P['prazo_equip']}>0),{P['equip']},0)", "R$", _FMT_CONTABIL),
@@ -1601,7 +1740,7 @@ _RESUMO_ROW_INI = 5
 _RESUMO_SAIDA = frozenset(
     {
         "custos_op", "folha", "ir_csll", "pmt", "juros_totais",
-        "capex_total", "investimento_total", "equity",
+        "capex_total", "investimento_total", "aporte_inicial",
     }
 )
 # Pode ALTERNAR de sinal -> formatacao CONDICIONAL (vermelho so quando negativo).
@@ -1674,7 +1813,8 @@ def _linhas_resumo(
          "Obra + equipamentos"),
         ("investimento_total", "Investimento total", f"={P['investimento_total']}",
          _FMT_CONTABIL, "CAPEX + taxa de franquia"),
-        ("equity", "Equity aportado", f"={P['equity']}", _FMT_CONTABIL, "Obra + franquia"),
+        ("aporte_inicial", "Aporte inicial", f"={P['aporte_inicial']}", _FMT_CONTABIL,
+         "Obra + franquia — NAO e o cheque total; ver o cheque total abaixo"),
         ("pmt", "PMT do financiamento", f"={P['pmt']}", _FMT_CONTABIL, "Price, nominal"),
         ("juros_totais", "Juros totais do financiamento",
          f"=Investimento!$B${_INVEST_ROW['juros_totais']}", _FMT_CONTABIL,
@@ -1685,20 +1825,22 @@ def _linhas_resumo(
          f"MATCH(\"PAYBACK\",'{ABA_FLUXO}'!${ini}${F['payback']}:${fim}${F['payback']},0)),"
          '"Não atingido")',
          _FMT_INT, "Primeiro mês com FCF acumulado >= 0"),
-        ("tir_mensal", "TIR mensal", f'=IFERROR(IRR({fcf}),"n/d")', _FMT_PCT3,
-         "Sobre a linha de FCF do fluxo"),
-        ("tir_anual", "TIR anual", None, _FMT_PCT2, "(1 + TIR mensal)^12 - 1"),
-        ("vpl", "VPL", f"=NPV({P['taxa_desconto_am']},{fcf})*(1+{P['taxa_desconto_am']})",
-         _FMT_CONTABIL, "Primeiro fluxo NÃO descontado (período 0)"),
+        ("tir_mensal", "TIR mensal do sócio", f'=IFERROR(IRR({fcf}),"n/d")', _FMT_PCT3,
+         "Sobre a linha de FCF (fluxo DO SÓCIO: PMT inteira sai)"),
+        ("tir_anual", "TIR anual do sócio", None, _FMT_PCT2, "(1 + TIR mensal)^12 - 1"),
+        ("vpl", "VPL do sócio", f"=NPV({P['taxa_socio_am']},{fcf})*(1+{P['taxa_socio_am']})",
+         _FMT_CONTABIL,
+         "Fluxo DO SÓCIO descontado à taxa mínima DO SÓCIO (derivada). "
+         "Primeiro fluxo NÃO descontado (período 0)"),
         ("acumulado_m60", "FCF acumulado no fim do horizonte",
          f"='{ABA_FLUXO}'!{fim}{F['fcf_acumulado']}", _FMT_CONTABIL, ""),
-        ("retorno_desalav", "Retorno anual desalavancado",
+        ("retorno_desalav", "Retorno anual do negócio",
          f"=IF({P['investimento_total']}>0,{dre_st}{D['resultado_desalav']}*12"
          f"/{P['investimento_total']},0)", _FMT_PCT2,
          "Resultado ANTES da PMT sobre o investimento cheio"),
-        ("retorno_equity", "Retorno anual do equity",
-         f"=IF({P['equity']}>0,({dre_st}{D['resultado_desalav']}-{flx_st}{F['pmt']})*12"
-         f"/{P['equity']},0)", _FMT_PCT2,
+        ("retorno_equity", "Retorno anual do sócio",
+         f"=IF({P['aporte_inicial']}>0,({dre_st}{D['resultado_desalav']}-{flx_st}{F['pmt']})*12"
+         f"/{P['aporte_inicial']},0)", _FMT_PCT2,
          "Resultado DEPOIS da PMT sobre o equity aportado"),
         ("", "Ticket", None, None, ""),
         ("ticket_blended", "Ticket blended por aluno total", f"={P['ticket_blended']}",
@@ -2103,7 +2245,7 @@ _NOMES_DEFINIDOS = (
     "k_ebitda", "custo_fixo_total",
     "receita_por_aluno", "personal_mes", "obra", "equip", "taxa_franquia",
     "parcelas_franquia", "franquia_parcela", "pmt",
-    "investimento_total", "equity", "mes_steady", "taxa_desconto_aa", "taxa_desconto_am",
+    "investimento_total", "aporte_inicial", "mes_steady",
     "maturacao", "horizonte", "meses_pre",
 )
 

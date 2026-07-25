@@ -113,7 +113,7 @@ export interface ViabilidadeIn {
   formato?: string
   /** Numero de studios extras (0..3); cada studio adiciona R$6.000/mes de folha. */
   n_studios?: number
-  /** Obra (CAPEX, equity): base do ROIC/payback; parcelada sem juros. */
+  /** Obra (CAPEX): parte do APORTE INICIAL do sócio, parcelada sem juros. */
   obra?: number
   /** Parcelas da obra em meses (default 4, sem juros). */
   parcelas_obra?: number
@@ -150,7 +150,13 @@ export interface ViabilidadeIn {
   reajuste_ticket_aa?: number
   reajuste_aluguel_aa?: number
   reajuste_custos_aa?: number
-  /** Taxa de desconto do VPL/TIR, ao ano, em FRAÇÃO. */
+  /** Taxa mínima do NEGÓCIO ao ano, em FRAÇÃO (0.25 = 25% a.a.) — a ÚNICA taxa
+   *  configurável do modelo. A taxa mínima do SÓCIO não entra aqui: ela é DERIVADA
+   *  pelo motor a partir desta, do custo da dívida e da alavancagem, justamente para
+   *  que ninguém possa digitar uma taxa de sócio menor que a que o banco cobra. */
+  taxa_minima_negocio_aa?: number
+  /** @deprecated ALIAS (1 versão) de `taxa_minima_negocio_aa`. O nome novo tem
+   *  precedência quando os dois forem enviados. */
   taxa_desconto_aa?: number
   custo_pre_operacional_mes?: number
   valor_residual_mes_60?: number
@@ -217,7 +223,16 @@ export interface PremissasViabilidade {
   reajuste_ticket_aa: number
   reajuste_aluguel_aa: number
   reajuste_custos_aa: number
+  /** Taxa mínima do NEGÓCIO ao ano, em FRAÇÃO — a única taxa que é premissa. A do
+   *  SÓCIO é DERIVADA e viaja em `retorno.socio.taxa_minima_aa`. */
+  taxa_minima_negocio_aa: number
+  /** @deprecated ALIAS (1 versão) de `taxa_minima_negocio_aa` — mesmo número. */
   taxa_desconto_aa: number
+  /** Margem EBITDA mínima do veredito, em FRAÇÃO (0.30 = 30%). Constante do motor
+   *  (`SIM_MARGEM_VIAVEL_MIN`) servida para a tela rotular a régua sem cravá-la. */
+  margem_viavel_min: number
+  /** Payback máximo do veredito, em meses de operação (`SIM_PAYBACK_VIAVEL_MAX`). */
+  payback_viavel_max: number
   /** Carencia EFETIVA aplicada, em meses contados a partir da entrega (M-4). */
   carencia_aluguel_meses: number
   /** Mes da linha do tempo (M-4..M60) em que o aluguel comeca a ser cobrado (LEITURA
@@ -275,7 +290,7 @@ export interface DreViabilidade {
   ir_csll: number | null
   /** juros da parcela do financiamento no mes steady. */
   despesa_financeira: number | null
-  /** EBITDA - IR/CSLL (otica DESALAVANCADA: antes da PMT). */
+  /** EBITDA - IR/CSLL (ótica DO NEGÓCIO: antes da parcela do financiamento). */
   resultado_apos_ir: number | null
   /** viável? (decidido pelo motor: margem mínima + payback máximo). */
   flag_viavel?: boolean
@@ -298,15 +313,71 @@ export interface InvestimentoViabilidade {
   parcelas_franquia?: number
   /** R$ de CADA parcela da franquia (= taxa_franquia / parcelas_franquia). */
   franquia_parcela?: number | null
+  /** APORTE INICIAL = obra + taxa de franquia: o dinheiro que o CONTRATO pede do
+   *  sócio, e o denominador do retorno dele. É o número que antes se chamava
+   *  "equity aportado" — o vocabulário mudou, a conta não. */
+  aporte_inicial?: number | null
+  /** CHEQUE TOTAL: o pior ponto do caixa acumulado — quanto o investidor precisa TER
+   *  disponível, não quanto o contrato pede. No caso de referência R$ 1,14 mi contra
+   *  R$ 760 mil de aporte. É o número que decide se o negócio é FINANCIÁVEL. */
+  cheque_total?: number | null
+  /** Mês da linha do tempo (M-4..M60) em que o caixa acumulado toca o fundo. */
+  mes_cheque_total?: number | null
 }
 
-/** Retorno do capital. A otica padrao e a DESALAVANCADA; equity nunca no mesmo KPI. */
-export interface RetornoViabilidade {
-  otica: string
-  retorno_anual_desalavancado: number | null
-  retorno_anual_equity: number | null
-  /** TIR ao ano em FRACAO; null quando nao ha troca de sinal. */
+/** Uma ÓTICA de retorno: o par TIR + VPL com a taxa mínima que o desconta. */
+export interface OticaRetorno {
+  /** TIR ao ano em FRAÇÃO; null quando não há troca de sinal no fluxo. */
   tir_anual: number | null
+  /** VPL do MESMO fluxo, descontado por `taxa_minima_aa`. */
+  vpl: number | null
+  /** Taxa mínima desta ótica, ao ano, em FRAÇÃO. */
+  taxa_minima_aa: number | null
+  /** Resultado anual / base da ótica, em FRAÇÃO. */
+  retorno_anual: number | null
+}
+
+/**
+ * Retorno do capital em DUAS ÓTICAS separadas — nunca no mesmo número.
+ *
+ * `negocio` (FCFF) roda sem financiamento, com o CAPEX inteiro desembolsado: mede o
+ * ATIVO. `socio` (FCFE) tira a parcela inteira do caixa e conta só obra + franquia
+ * como aporte: mede a ESTRUTURA de capital. A taxa do sócio é DERIVADA da do negócio
+ * (ele é subordinado ao banco, logo exige mais que o credor), por isso ela não existe
+ * como campo editável em lugar nenhum.
+ *
+ * As chaves PLANAS (`tir_anual`, `vpl`, `retorno_anual_*`, `otica`) seguem no contrato
+ * como ALIAS porque o PDF e o XLSX leem delas: `tir_anual`/`vpl` são o par do SÓCIO.
+ */
+export interface RetornoViabilidade {
+  /** Ótica do NEGÓCIO (o ativo, sem financiamento). */
+  negocio?: OticaRetorno
+  /** Ótica do SÓCIO (com a parcela do financiamento saindo do caixa). */
+  socio?: OticaRetorno
+  /** Custo da dívida ao ano, em FRAÇÃO (1,8% a.m. = 23,87% a.a.). */
+  custo_divida_aa?: number | null
+  /** Dívida / aporte inicial (1,8421 no caso de referência). */
+  alavancagem_divida_sobre_aporte?: number | null
+  /** VPL da dívida descontado à taxa mínima do negócio = a ARBITRAGEM. Sem escudo
+   *  fiscal no Lucro Presumido, é a ÚNICA via pela qual a alavancagem cria valor.
+   *  `null` enquanto o motor não publicar o campo — o backend não o calcula. */
+  vpl_divida_arbitragem?: number | null
+  /** true = a dívida custa MAIS que a taxa mínima do negócio: a alavancagem destrói
+   *  valor em vez de criar. Aviso visível na tela. */
+  alerta_divida_acima_da_taxa_negocio?: boolean
+  /** DIAGNÓSTICO (não tolerância): VPL do sócio menos VPL do negócio, cada um na sua
+   *  taxa. Não coincidem de propósito — a taxa do sócio usa a alavancagem INICIAL
+   *  enquanto o saldo devedor cai a zero ao longo do contrato. */
+  vpl_identidade_residuo?: number | null
+  /** @deprecated ALIAS LEGADO — o PDF escolhe o rótulo do card por este valor. */
+  otica: string
+  /** @deprecated ALIAS de `negocio.retorno_anual`. */
+  retorno_anual_desalavancado: number | null
+  /** @deprecated ALIAS de `socio.retorno_anual`. */
+  retorno_anual_equity: number | null
+  /** @deprecated ALIAS de `socio.tir_anual` — o par do SÓCIO, não do negócio. */
+  tir_anual: number | null
+  /** @deprecated ALIAS de `socio.vpl` — o par do SÓCIO, não do negócio. */
   vpl: number | null
   /** Meses ate o acumulado virar; null quando nao vira dentro do horizonte. */
   payback: number | null
