@@ -11,8 +11,11 @@ import type {
 
 /** A primeira leitura de uma UF carrega a particao inteira — pode passar de 15 s. */
 const TIMEOUT_LEITURA = 90_000
-/** O PDF baixa tiles de basemap (8 mapas); em area densa/cache frio passa de 1 min. */
-const TIMEOUT_PDF = 360_000
+/**
+ * Downloads pesados (PDF, XLSX). O PDF baixa tiles de basemap (8 mapas) e em area
+ * densa/cache frio passa de 1 min; a planilha monta 60 meses de formulas.
+ */
+const TIMEOUT_ARQUIVO = 360_000
 
 export class ApiError extends Error {
   constructor(
@@ -58,17 +61,30 @@ async function pedir<T>(
   }
 }
 
-async function pedirPdf(
+/** Mensagens de erro de um download binário. Default = as do PDF (era o único). */
+interface TextosDownload {
+  falha?: string
+  timeout?: string
+  rede?: string
+}
+
+/**
+ * Download binário (PDF, XLSX) com timeout, nome do arquivo do servidor e mensagens
+ * de erro faláveis. Era `pedirPdf`; virou genérico quando entrou o simulador em Excel
+ * — o corpo é idêntico, só os textos mudam.
+ */
+async function pedirArquivo(
   url: string,
   init: RequestInit,
   nomeSugerido: string,
+  textos: TextosDownload = {},
 ): Promise<{ blob: Blob; filename: string }> {
   const ctrl = new AbortController()
-  const t = setTimeout(() => ctrl.abort(), TIMEOUT_PDF)
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_ARQUIVO)
   try {
     const r = await fetch(url, { ...init, signal: ctrl.signal })
     if (!r.ok) {
-      let detalhe = `Falha ao gerar o PDF (${r.status})`
+      let detalhe = `${textos.falha ?? 'Falha ao gerar o PDF'} (${r.status})`
       try {
         const j = await r.json()
         detalhe = j.detail ?? detalhe
@@ -85,11 +101,12 @@ async function pedirPdf(
     if (e instanceof ApiError) throw e
     if (e instanceof DOMException && e.name === 'AbortError') {
       throw new ApiError(
-        'O relatório demorou demais. Mapas de rua em área densa levam alguns minutos.',
+        textos.timeout ??
+          'O relatório demorou demais. Mapas de rua em área densa levam alguns minutos.',
         408,
       )
     }
-    throw new ApiError('Não foi possível gerar o relatório.', 0)
+    throw new ApiError(textos.rede ?? 'Não foi possível gerar o relatório.', 0)
   } finally {
     clearTimeout(t)
   }
@@ -154,7 +171,7 @@ export const api = {
     }),
 
   relatorioMunicipal: (uf: string, municipio: string, solicitante?: string) =>
-    pedirPdf(
+    pedirArquivo(
       '/api/relatorio/municipal',
       {
         method: 'POST',
@@ -164,13 +181,27 @@ export const api = {
       `relatorio_municipal_${municipio}.pdf`,
     ),
 
+  /**
+   * Relatorio Pontual em PDF.
+   *
+   * NAO manda o payload de viabilidade de volta ao servidor: ele so precisa dos
+   * INPUTS (`viabilidadeInputs`) e recalcula o payload inteiro por conta propria,
+   * numa unica rodada do motor.
+   *
+   * Mandar o payload custava um HTTP 431 (Request Header Fields Too Large): a query
+   * string carregava o objeto completo e, quando o payload passou a trazer a serie
+   * mensal unica (64 linhas) e a grade (30 linhas), ele saltou de ~1 KB para
+   * 70 KB URL-encoded, contra o limite de ~16 KB de request line + headers do h11.
+   * Fora isso, reenviar um payload que o servidor acabou de calcular — para servir
+   * de fallback caso o calculo do servidor falhe — e justamente o padrao de duas
+   * fontes de verdade que o FIN-VIAB-01 existe para eliminar.
+   */
   relatorioPontual: (opts: {
     lat: number
     lng: number
     rotulo?: string
     solicitante?: string
     infoImovel?: Record<string, unknown>
-    viabilidade?: unknown
     viabilidadeInputs?: ViabilidadeIn
     fotos?: File[]
   }) => {
@@ -183,7 +214,6 @@ export const api = {
     if (opts.infoImovel && Object.keys(opts.infoImovel).length) {
       q.set('info_imovel', JSON.stringify(opts.infoImovel))
     }
-    if (opts.viabilidade) q.set('viabilidade_json', JSON.stringify(opts.viabilidade))
     if (opts.viabilidadeInputs) {
       q.set('viabilidade_inputs_json', JSON.stringify(opts.viabilidadeInputs))
     }
@@ -191,10 +221,36 @@ export const api = {
     const fd = new FormData()
     for (const f of (opts.fotos ?? []).slice(0, 2)) fd.append('fotos', f)
 
-    return pedirPdf(
+    return pedirArquivo(
       `/api/relatorio/pontual?${q.toString()}`,
       { method: 'POST', body: fd },
       'relatorio_pontual.pdf',
+    )
+  },
+
+  /**
+   * Simulador financeiro completo em XLSX, com FÓRMULAS VIVAS (DRE, folha de
+   * pagamento, fluxo de caixa dos 60 meses).
+   *
+   * Manda os MESMOS inputs do /api/viabilidade: o servidor roda o motor uma vez e
+   * monta a planilha. `rotulo` vai na query só para nomear o arquivo — o nome final
+   * chega no `Content-Disposition`.
+   */
+  simuladorXlsx: (inputs: ViabilidadeIn, rotulo?: string) => {
+    const q = rotulo ? `?rotulo=${encodeURIComponent(rotulo)}` : ''
+    return pedirArquivo(
+      `/api/simulador/xlsx${q}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(inputs),
+      },
+      'simulador_viabilidade.xlsx',
+      {
+        falha: 'Falha ao gerar a planilha',
+        timeout: 'A planilha demorou demais e o pedido foi cancelado. Tente de novo.',
+        rede: 'Não foi possível gerar a planilha.',
+      },
     )
   },
 }

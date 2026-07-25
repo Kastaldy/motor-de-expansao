@@ -783,6 +783,19 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 | **Depende de** | **BLK-DIM-03R** (que fixou os coeficientes do DRE, incluindo `SIM_PESSOAL_MES`). Relacionado a **BLK-VIAB-04** (backtest N=112, para checar que a mudança não piora a validação). |
 | **Autonomia** | **manual (NÃO loop-safe)** — muda a economia que a ferramenta recomenda; o **valor do ratio** (~25%) é decisão de produto/finanças que precisa de gate humano (N=6 nas DREs). Mecanicamente é simples, mas NÃO marcar loop-safe. |
 
+> **ATENÇÃO — a ESTRUTURA deste bloco já foi implementada, e de forma DIFERENTE da escrita abaixo (FIN-VIAB-01,
+> decisão de Felipe em 2026-07-24). Não executar o texto original ao pé da letra: ele reintroduziria o defeito que
+> acabou de ser corrigido.** O que existe hoje no motor: `SIM_FOLHA_PCT` dimensiona a folha pelo **faturamento
+> MADURO** (regime pleno, a preços do ano 1) e o valor resultante é **FIXO desde o mês 1**, reajustando só
+> anualmente — a equipe é contratada **antes** dos alunos chegarem. Logo a folha é **custo FIXO**, saiu de
+> `fator_receita_para_ebitda` (k: 0,628985 → 0,798985) e entrou em `Premissas.custo_fixo_total_mes()`. As frases
+> "a folha deve acompanhar o faturamento de cada mês, inclusive menor na rampa" (Escopo) e "folha escala com a
+> receita" (Aceite item 3) descrevem a regra **ANTIGA/DESCARTADA** — a folha percentual do mês diluía o custo na
+> rampa, subestimava a queima de caixa do mês 1 em ~R$33,3 mil e deixava o break-even otimista (840,6 em vez de
+> 1.152,0 alunos totais no caso de referência). **O que continua PENDENTE deste bloco é só o NÍVEL do percentual**
+> (0,17 vigente x 0,25–0,26 apurados nas 6 DREs), com a controladoria; ver `PREMISSAS_VIABILIDADE.md` §4.1 e
+> `docs/nota_impacto_fin_viab_01.md`.
+
 **Contexto.** O simulador (`dimensionamento/simulador.py::viabilidade`) modela a folha como um **custo fixo absoluto**
 `SIM_PESSOAL_MES = R$50.128,16` (`dimensionamento/config.py:103`), aplicado **igual a toda unidade**, independente de
 receita, metragem ou região. Seis DREs gerenciais reais (Augusta, Bangu, Cabo Frio, Icaraí, Praia Grande, Vila
@@ -827,6 +840,24 @@ alunos assumidos → mais folha, automático) e corrige a distorção nas caixas
 (CV 0,16), mas o valor exato (25 vs 26%) deve ser **confirmado pela controladoria** e com mais DREs; por isso
 `SIM_PESSOAL_PCT` fica **parametrizado**. O bug de receita +33% (BLK-DIM-13, split 69/31 balcão/agregador) **já está
 corrigido** e é ortogonal a este bloco.
+
+**Nota — FIN-VIAB-01 (2026-07-24): a ESTRUTURA já foi entregue; falta só o NÍVEL.** O ciclo FIN-VIAB-01
+(reconciliação do simulador) **ativou a folha percentual** no núcleo: `SIM_FOLHA_PCT = 0,17` do **faturamento
+bruto** (`dimensionamento/config.py`), consumido por `simulador.py` na série mensal completa — a folha passou a
+**escalar com o volume**, com override absoluto (`pessoal_mes_override`) preservado para os chamadores históricos.
+`SIM_PESSOAL_MES = R$50.128,16` vira **legado** (não alimenta mais a folha; segue só como default da assinatura de
+`viabilidade()`/`gerar_serie_mensal()`). O **0,17** foi escolha de Felipe (2026-07-24) para ficar ~no status quo de
+nível (R$50.128 / R$277.676 = 18,05% no caso de referência) e permitir atribuir o delta do ciclo à mudança de
+ESTRUTURA, não de nível. **Este bloco segue pendente APENAS para calibrar o NÍVEL** — 17% (vigente) vs **25-26%**
+(as 6 DREs) — **com a controladoria**. Impacto **re-medido no gate de fechamento, com a anuidade LIGADA** (caso
+Boulevard Londrina): a 17% a folha é **R$49.003,79** e o EBITDA fecha em **R$113.159,69 (39,26%)**, break-even
+**840,6** alunos totais e payback **28** meses; **a 26%** a folha vai a **R$74.946,97**, o EBITDA cai para
+**R$87.216,50 (30,26%)**, o break-even sobe para **987,8** alunos totais e o **payback vai de 28 para 54 meses** —
+ou seja, a unidade deixaria de atender o critério de payback de 36 meses. (Os números que esta nota trazia antes —
+R$47.942,66 / R$109.233,60 / 38,73% / 859,6 / 29 → 58 — eram da rodada com a **anuidade desligada**, estado que
+deixou de valer em 2026-07-24.) Premissas e conflito documentados em
+`PREMISSAS_VIABILIDADE.md` (§4 e §9-a); impacto no comitê em `docs/nota_impacto_fin_viab_01.md`. **Status e
+criticidade deste bloco permanecem inalterados.**
 
 ---
 

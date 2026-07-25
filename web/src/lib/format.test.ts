@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { alunos, brl, coord, num, pct } from './format'
+import { alunos, brl, coord, num, pct, pctFrac, rotuloMes } from './format'
 
 describe('num', () => {
   it('formata inteiro com separador de milhar pt-BR', () => {
@@ -29,6 +29,9 @@ describe('brl', () => {
   it('compacto abaixo de 1 mil nao encurta', () => {
     expect(brl(999, true)).toBe('R$ 999')
   })
+  it('casas exibe o centavo (ticket do agregador)', () => {
+    expect(brl(88.2, false, 2)).toBe('R$ 88,20')
+  })
   it('null -> n/d', () => {
     expect(brl(null)).toBe('n/d')
   })
@@ -43,6 +46,33 @@ describe('pct', () => {
   })
   it('null -> n/d', () => {
     expect(pct(null)).toBe('n/d')
+  })
+})
+
+describe('pctFrac', () => {
+  it('fracao do motor vira percentual na tela (0,3873 -> 38,7%)', () => {
+    expect(pctFrac(0.3873)).toBe('38,7%')
+  })
+  it('sem casas para rotular mix (0,69 -> 69%)', () => {
+    expect(pctFrac(0.69, 0)).toBe('69%')
+  })
+  it('negativo mantem o sinal', () => {
+    expect(pctFrac(-0.05)).toBe('-5,0%')
+  })
+  it.each([null, undefined, NaN, Infinity])('null/NaN/Infinity -> n/d', (v) => {
+    expect(pctFrac(v)).toBe('n/d')
+  })
+})
+
+describe('rotuloMes', () => {
+  it('mes negativo e pre-abertura (obra)', () => {
+    expect(rotuloMes(-4)).toBe('M-4 (obra)')
+  })
+  it('mes positivo e operacao', () => {
+    expect(rotuloMes(1)).toBe('mês 1')
+  })
+  it('null -> n/d', () => {
+    expect(rotuloMes(null)).toBe('n/d')
   })
 })
 

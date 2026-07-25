@@ -25,10 +25,14 @@ import asyncio
 import base64
 import functools
 import hashlib
+import inspect
 import json
 import math
 import os
+import re
 import sys
+import unicodedata
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -1189,13 +1193,20 @@ class ViabilidadeIn(BaseModel):
     demanda: float = Field(gt=0, description="PREMISSA do operador — nunca prevista")
     ticket: float | None = None
     formato: str | None = None
-    # Numero de studios extras (0..3): cada studio adiciona R$6.000/mes de folha.
+    # Numero de studios extras (0..3): cada studio soma SIM_CUSTO_STUDIO (R$6.000/mes de
+    # fopag) aos custos fixos. FIN-VIAB-01: ate aqui o campo era aceito e DESCARTADO —
+    # o studio elevava o ticket no front e nao custava nada no DRE (receita fantasma).
     n_studios: int | None = Field(default=None, ge=0, le=3)
     # --- Investimento: Obra (CAPEX, equity) x Equipamentos (OPEX, financiado) ---
     # Obra: desembolso do franqueado (equity), parcelado sem juros (parcelas_obra,
     # default 4). E a base do ROIC e do fluxo acumulado (payback parte de -Obra).
     obra: float | None = Field(default=None, ge=0)
     parcelas_obra: int | None = Field(default=None, gt=0, le=12)
+    # Taxa de franquia PARCELADA sem juros (decisao de Felipe, 2026-07-24; default 4).
+    # Antes saia INTEIRA do caixa no M-4. As parcelas caem nos meses de CONTRATO 1..N
+    # (M-4..M-1 com N=4), junto da obra. E SO timing de caixa: melhora TIR/VPL e nao
+    # toca EBITDA, margem nem break-even. Mesma validacao de `parcelas_obra`.
+    parcelas_franquia: int | None = Field(default=None, gt=0, le=12)
     # Equipamentos: financiado (prazo 36-60m + juros a.m.); a PMT entra ABAIXO do
     # EBITDA (nao e desembolso a vista) -> dilui no tempo e melhora o payback.
     equipamentos: float | None = Field(default=None, ge=0)
@@ -1216,10 +1227,33 @@ class ViabilidadeIn(BaseModel):
     # Carencia de aluguel: meses iniciais sem pagar aluguel (beneficio de rampa;
     # melhora payback/FCF, nao muda margem/breakeven de steady-state).
     carencia_aluguel_meses: int | None = Field(default=None, ge=0, le=60)
-    # Meses de rampa de maturacao do balcao (Simulador E13; default do motor = 8).
-    # Controlavel pelo operador na sidebar; afeta a serie de FCF e o payback (rampa
-    # mais longa = caixa mais lento), nao a margem/breakeven de steady-state.
+    # Meses de rampa de maturacao (Simulador E13; default do motor = 8). Controlavel
+    # pelo operador; afeta a serie e o payback, nao a margem/breakeven de steady-state.
     rampa_meses: int | None = Field(default=None, ge=1, le=36)
+
+    # --- Premissas explicitas (FIN-VIAB-01) ---------------------------------
+    # Todas OPCIONAIS: None = default do config.py (fonte unica). Estavam escondidas
+    # como literal no meio do codigo; agora o operador ve e pode sobrescrever.
+    # Taxa de franquia: 160.000 por decisao de Felipe (a planilha diz 140.000), agora
+    # EDITAVEL em vez de constante invisivel.
+    taxa_franquia: float | None = Field(default=None, ge=0)
+    deducoes_pct: float | None = Field(default=None, ge=0, le=1)
+    reajuste_ticket_aa: float | None = Field(default=None, ge=0, le=1)
+    reajuste_aluguel_aa: float | None = Field(default=None, ge=0, le=1)
+    reajuste_custos_aa: float | None = Field(default=None, ge=0, le=1)
+    # TAXA MINIMA DO NEGOCIO (a.a., fracao) — a UNICA taxa configuravel do modelo.
+    # Default do config: 25% a.a. A taxa minima do SOCIO NAO entra aqui: ela e
+    # DERIVADA dentro de `simular()` a partir desta, do custo da divida e da
+    # alavancagem. Nao existe campo onde alguem possa digitar uma taxa de socio
+    # abaixo do que o banco cobra — a incoerencia ficou impossivel por construcao.
+    taxa_minima_negocio_aa: float | None = Field(default=None, ge=0, le=1)
+    # ALIAS DEPRECIADO (1 versao) de `taxa_minima_negocio_aa`. Existe so para nao
+    # quebrar consumidor que ainda manda o nome antigo; `taxa_minima_negocio_aa`
+    # tem precedencia quando os dois vem preenchidos.
+    taxa_desconto_aa: float | None = Field(default=None, ge=0, le=1)
+    custo_pre_operacional_mes: float | None = Field(default=None, ge=0)
+    valor_residual_mes_60: float | None = Field(default=None, ge=0)
+    capex_renovacao: float | None = Field(default=None, ge=0)
 
 
 @app.get("/api/faixa-alunos")
@@ -1235,7 +1269,7 @@ def faixa_alunos(m2: float, formato: str | None = None) -> dict[str, Any]:
         faixa_alunos_por_densidade,
     )
 
-    base = _base_calibracao()
+    base, _fonte = _base_calibracao()
     if base is None:
         return {"p10": None, "p50": None, "p90": None, "n_comparaveis": 0}
 
@@ -1249,75 +1283,166 @@ def faixa_alunos(m2: float, formato: str | None = None) -> dict[str, Any]:
 
 
 def _investimento(body: ViabilidadeIn) -> dict[str, Any]:
-    """Investimento do franqueado (NUCLEO — a vista, sem financiamento).
+    """Kwargs de investimento de `simular()` — o desmembramento REAL do desembolso.
 
-    Obra + Equipamentos somam o CAPEX total; somado a taxa de franquia (R$160k) da o
-    INVESTIMENTO TOTAL, base do ROIC (desalavancado) e do payback — igual a planilha
-    (Simulador!N21 = lucro/(R9+R10)). Financiamento/alavancagem como camada separada
-    fica para o 2o passo (por isso, no nucleo, nao ha PMT afetando DRE/payback/ROIC).
+    - OBRA: equity do franqueado, parcelada SEM juros ao longo de `parcelas_obra`
+      (default 4, os meses M-4..M-1 de pre-abertura).
+    - EQUIPAMENTOS: financiados (`prazo_equipamentos` meses a `juros_equipamentos_am`);
+      a PMT (Price) sai do caixa mes a mes e a parcela de juros vai a DRE.
+    - TAXA DE FRANQUIA: PARCELADA sem juros em `parcelas_franquia` (default 4), nos
+      meses de contrato 1..N (M-4..M-1), junto da obra — antes saia inteira no M-4.
+      Valor default do config (R$160 mil), sobrescrivivel pelo operador.
+
+    Legado (`capex` + `capex_financiado_valor`/`_pct` + `juros_financiamento_am` +
+    `capex_parcelas_meses`): a fracao financiada vira EQUIPAMENTOS, o resto vira OBRA.
     """
-    from motor_expansao.dimensionamento.config import SIM_CAPEX_DEFAULT, SIM_TAXA_FRANQUIA
-
-    if body.obra is not None or body.equipamentos is not None:
-        capex_total = float(body.obra or 0.0) + float(body.equipamentos or 0.0)
-    elif body.capex is not None:
-        capex_total = float(body.capex)
-    else:
-        capex_total = float(SIM_CAPEX_DEFAULT)
-    franquia = float(SIM_TAXA_FRANQUIA)
-    return {
-        "capex_total": capex_total,
-        "franquia": franquia,
-        "investimento_total": capex_total + franquia,
-    }
-
-
-def _clusters_aluguel_teto(faturamento: float | None) -> dict[str, float | None] | None:
-    """Aluguel-teto por clusters sobre o faturamento bruto steady (planilha oficial):
-    Ideal 15% · Teto 20% · Excecao 30%. Substitui a inversao por margem EBITDA."""
     from motor_expansao.dimensionamento.config import (
-        SIM_ALUGUEL_TETO_EXCECAO,
-        SIM_ALUGUEL_TETO_IDEAL,
-        SIM_ALUGUEL_TETO_TETO,
+        SIM_CAPEX_DEFAULT,
+        SIM_PARCELAS_FRANQUIA_DEFAULT,
+        SIM_PARCELAS_OBRA_DEFAULT,
+        SIM_TAXA_FRANQUIA,
     )
 
-    if faturamento is None or faturamento <= 0:
-        return None
+    obra = float(body.obra) if body.obra is not None else None
+    equip = float(body.equipamentos) if body.equipamentos is not None else None
+    if obra is None and equip is None:
+        capex_total = float(body.capex) if body.capex is not None else float(SIM_CAPEX_DEFAULT)
+        if body.capex_financiado_valor:
+            equip = min(float(body.capex_financiado_valor), capex_total)
+        elif body.capex_financiado_pct:
+            equip = capex_total * float(body.capex_financiado_pct)
+        else:
+            equip = 0.0
+        obra = capex_total - equip
+    obra = float(obra or 0.0)
+    equip = float(equip or 0.0)
+
+    juros = body.juros_equipamentos_am
+    if juros is None:
+        juros = body.juros_financiamento_am
+    franquia = SIM_TAXA_FRANQUIA if body.taxa_franquia is None else float(body.taxa_franquia)
     return {
-        "ideal": _num(faturamento * SIM_ALUGUEL_TETO_IDEAL, 2),
-        "teto": _num(faturamento * SIM_ALUGUEL_TETO_TETO, 2),
-        "excecao": _num(faturamento * SIM_ALUGUEL_TETO_EXCECAO, 2),
+        "obra": obra,
+        "parcelas_obra": int(body.parcelas_obra or SIM_PARCELAS_OBRA_DEFAULT),
+        "equipamentos": equip,
+        # Sem prazo declarado, mantem o default historico de 36 meses; equipamento
+        # zerado -> prazo 0 (o nucleo trata como nao-financiado).
+        "prazo_equipamentos": (
+            int(body.prazo_equipamentos or body.capex_parcelas_meses or 36) if equip > 0 else 0
+        ),
+        "juros_equipamentos_am": float(juros or 0.0),
+        "taxa_franquia": float(franquia),
+        "parcelas_franquia": int(body.parcelas_franquia or SIM_PARCELAS_FRANQUIA_DEFAULT),
     }
 
 
-@app.post("/api/viabilidade")
-def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
+def _premissas_do_body(body: ViabilidadeIn):  # -> simulador.Premissas
+    """Traduz o corpo da requisicao em `Premissas` — a fonte unica de coeficientes.
+
+    Tudo que o operador NAO informa fica com o default do `config.py`. Nenhum
+    coeficiente financeiro nasce aqui.
+
+    `n_studios` deixa de ser receita fantasma: cada studio soma SIM_CUSTO_STUDIO
+    (R$6.000/mes de fopag) em `outros_fixos_mes`. Antes o campo era aceito e
+    DESCARTADO — o studio elevava o ticket no front e nao custava nada no DRE.
+    """
+    from motor_expansao.dimensionamento.config import (
+        SIM_CUSTO_STUDIO,
+        SIM_MENSALIDADE_BALCAO,
+        SIM_OUTROS_FIXOS_MES,
+    )
+    from motor_expansao.dimensionamento.simulador import Premissas
+
+    n_studios = int(body.n_studios or 0)
+    opcionais: dict[str, Any] = {
+        "devolucoes_pct": body.deducoes_pct,
+        "reajuste_ticket_aa": body.reajuste_ticket_aa,
+        "reajuste_aluguel_aa": body.reajuste_aluguel_aa,
+        "reajuste_custos_aa": body.reajuste_custos_aa,
+        # `taxa_desconto_aa` e o nome ANTIGO do mesmo campo (alias depreciado por 1
+        # versao); o novo tem precedencia. Do lado do motor existe UM campo so:
+        # `taxa_minima_negocio_aa`. A taxa minima do SOCIO nao e configuravel — sai
+        # derivada de Ke = Ku + (Ku - Kd) * D/E dentro de `simular()`.
+        "taxa_minima_negocio_aa": (
+            body.taxa_minima_negocio_aa
+            if body.taxa_minima_negocio_aa is not None
+            else body.taxa_desconto_aa
+        ),
+        "custo_pre_operacional_mes": body.custo_pre_operacional_mes,
+        "valor_residual_mes_60": body.valor_residual_mes_60,
+        "capex_renovacao": body.capex_renovacao,
+        "maturacao_meses": body.rampa_meses,
+        "carencia_aluguel_meses": body.carencia_aluguel_meses,
+    }
+    return Premissas(
+        ticket_cheio=float(body.ticket or SIM_MENSALIDADE_BALCAO),
+        aluguel_mes=float(body.aluguel),
+        outros_fixos_mes=float(SIM_OUTROS_FIXOS_MES) + n_studios * float(SIM_CUSTO_STUDIO),
+        **{k: v for k, v in opcionais.items() if v is not None},
+    )
+
+
+# Campos da linha da serie que NAO sao numero (nao passam pelo arredondamento).
+_SERIE_NAO_NUMERICOS = ("mes", "mes_contrato", "fase")
+
+
+def _linha_serie(linha: dict[str, Any]) -> dict[str, Any]:
+    """Uma linha da serie do nucleo, JSON-safe (NaN/inf -> None). NAO recalcula nada."""
+    out: dict[str, Any] = {
+        "mes": int(linha["mes"]),
+        "mes_contrato": int(linha["mes_contrato"]),
+        "fase": str(linha["fase"]),
+    }
+    for chave, valor in linha.items():
+        if chave not in _SERIE_NAO_NUMERICOS:
+            out[chave] = _num(valor, 2)
+    return out
+
+
+def _grade_json(grade: pd.DataFrame | None) -> list[dict[str, Any]]:
+    """Grade de sensibilidade em JSON-safe. `payback` pode vir `inf` (nunca se paga):
+    `json.dumps(..., allow_nan=False)` do Starlette quebraria com Infinity."""
+    if grade is None or not len(grade):
+        return []
+    return [
+        {
+            "alunos": _num(t.alunos),
+            "aluguel": _num(t.aluguel, 2),
+            "fator_aluguel": _num(t.fator_aluguel, 2),
+            "margem_liq": _num(t.margem_liq, 4),
+            "viavel": bool(t.viavel),
+            "payback": _num(t.payback, 1),
+        }
+        for t in grade.itertuples(index=False)
+    ]
+
+
+VIABILIDADE_PAYLOAD_VERSAO = "viabilidade_payload_v1"
+
+
+def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
+    """Monta o `viabilidade_payload_v1` a partir de UMA rodada do nucleo.
+
+    CONTRATO (FIN-VIAB-01): este dict e a UNICA saida financeira do backend — a tela
+    e o PDF consomem o MESMO objeto, sem recalcular. Antes existiam cinco series
+    mensais e nove KPIs com implementacao dupla aqui dentro (payback do card 35 x 33
+    do grafico, aluguel-teto R$55,5 mil x R$105,8 mil).
+
+    Convencao de unidades: TODA taxa/percentual vai como FRACAO (margem 0,3873 =
+    38,73%; retorno 0,4475; TIR 0,4221). Dinheiro em reais, alunos em alunos TOTAIS.
+    Nenhum valor nao-finito sai daqui (payback infinito / TIR inexistente -> null).
+    """
+    from motor_expansao.dimensionamento.config import (
+        SIM_MARGEM_VIAVEL_MIN,
+        SIM_PAYBACK_VIAVEL_MAX,
+    )
     from motor_expansao.dimensionamento.viabilidade_ponto import (
         analisar_viabilidade_ponto,
     )
 
-    kwargs: dict[str, Any] = {}
-    if body.ticket:
-        kwargs["ticket_medio"] = body.ticket
-    if body.formato:
-        kwargs["formato"] = body.formato
-    # Margem EBITDA-alvo do operador -> define o aluguel-teto e os alunos-para-alvo
-    # (analisar_viabilidade_ponto tem `margem_alvo` como param nomeado; liga direto).
-    if body.margem_alvo is not None:
-        kwargs["margem_alvo"] = body.margem_alvo
-    # Investimento (NUCLEO — a vista): Obra + Equipamentos = CAPEX total; o motor recebe
-    # SO o capex (sem financiamento/PMT — camada separada fica p/ o 2o passo). O efeito
-    # dos studios ja veio embutido no ticket (frontend), nao como custo aqui.
+    premissas = _premissas_do_body(body)
     inv = _investimento(body)
-    kwargs["capex"] = inv["capex_total"]
-    # Rampa de maturacao (Simulador E13). Flui como kwarg ate gerar_serie_mensal
-    # via analisar_viabilidade_ponto(**kwargs); afeta FCF/payback, nao a margem.
-    if body.rampa_meses is not None:
-        kwargs["maturacao_meses"] = body.rampa_meses
-
-    base = _base_calibracao()
-    if base is not None:
-        kwargs["base_calibracao_df"] = base
+    base, fonte_base = _base_calibracao()
 
     res = analisar_viabilidade_ponto(
         lat=body.lat,
@@ -1325,72 +1450,253 @@ def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
         m2=body.m2,
         aluguel_pedido=body.aluguel,
         demanda_premissa=body.demanda,
-        **kwargs,
+        premissas=premissas,
+        base_calibracao_df=base,
+        formato=body.formato,
+        **inv,
+    )
+    r = res.viabilidade
+    serie = [_linha_serie(linha) for linha in r.serie_mensal]
+    # 1o mes em que o aluguel de fato entra no caixa (LEITURA da serie — a carencia
+    # conta a partir do M-4, entao o operador precisa ver o mes resultante).
+    mes_inicio_aluguel = next((linha["mes"] for linha in serie if (linha["aluguel"] or 0) > 0), None)
+    teto = res.aluguel_teto_faixas
+    # Linha da serie a que a DRE de steady-state se refere (regime pleno). O motor ja
+    # publica `deducoes` e `impostos` como COLUNAS dessa linha; ler daqui elimina as
+    # duas ultimas subtracoes que montavam degrau de DRE dentro do backend.
+    linha_steady = next(
+        (linha for linha in serie if linha["mes"] == int(r.mes_referencia_steady)), {}
     )
 
-    v = res.viabilidade
-
-    # Serie mensal de FCF acumulado (payback, 60 meses, parte de -Obra) + carencia de
-    # aluguel. Steady-state (margem, breakeven, teto, ROIC) NAO muda com carencia.
-    serie, payback = _fcf_serie(body, inv)
-
-    dre = _extrair_dre(v)
-    # Payback REAL (fonte: serie): ajustado por carencia e extrapolado alem do mes
-    # 60 quando o caixa ainda nao virou (o motor limita a 60 -> inf). Mais preciso
-    # que o do motor, entao sempre substitui.
-    dre["payback"] = payback
-    # ROIC DESALAVANCADO = lucro liquido anual / investimento total (capex + franquia),
-    # igual a planilha (Simulador!N21 = lucro/(R9+R10)). NAO desconta PMT (financiamento
-    # e camada separada, 2o passo). Usa o lucro steady x12 (retorno de maturidade).
-    investimento = float(inv["investimento_total"])
-    lucro_liq = getattr(v, "lucro_liquido_mensal", None)
-    dre["roic"] = (
-        _num((float(lucro_liq) * 12.0) / investimento, 4)
-        if (lucro_liq is not None and investimento > 0)
-        else None
-    )
-
-    # Aluguel-teto por clusters (% do faturamento bruto steady): Ideal/Teto/Excecao.
-    aluguel_teto_clusters = _clusters_aluguel_teto(
-        getattr(v, "faturamento_mensal_steady", None)
-    )
-
-    # Resultado operacional mês a mês (não acumulado): quando a operação passa a se
-    # pagar sozinha por mês e estabiliza no positivo (mes_operacao_positiva).
-    fco_serie, mes_operacao_positiva = _fco_serie(body, inv)
-
-    # Sugestoes de melhoria quando o payback estoura: quanto cortar do investimento OU
-    # do aluguel para trazer o payback para a faixa ideal (o capex desloca o acumulado 1:1).
-    melhoria = _melhoria_payback(serie, payback, float(body.aluguel), investimento)
-
-    grade = res.grade_sensibilidade
     return {
-        "demanda_premissa": res.demanda_premissa,
-        "demanda_fonte": res.demanda_fonte,
+        "versao": VIABILIDADE_PAYLOAD_VERSAO,
+        "premissas": {
+            "ticket_cheio": _num(premissas.ticket_cheio, 2),
+            "ticket_agregador": _num(premissas.ticket_agregador, 2),
+            "ticket_blended": _num(premissas.ticket_blended, 2),
+            "ticket_agregador_fator": _num(premissas.ticket_agregador_fator, 4),
+            "share_balcao": _num(premissas.share_balcao, 4),
+            "folha_pct": _num(premissas.folha_pct, 4),
+            # FOLHA FIXA DESDE O MES 1 (decisao de Felipe, 2026-07-24). `folha_pct`
+            # nao e mais um percentual da receita DO MES: ele DIMENSIONA a folha pelo
+            # faturamento MADURO (regime pleno, a precos do ano 1) e o valor resultante
+            # e pago integralmente desde o mes 1 — a equipe existe antes dos alunos.
+            # Consequencia: a folha e CUSTO FIXO (saiu de `fator_receita_para_ebitda`) e
+            # os meses de rampa ficam mais pesados. Os tres campos abaixo vem do proprio
+            # motor (`Premissas.folha_fixa_mes` / `.faturamento_maduro`); a tela LE, nao
+            # multiplica percentual por faturamento.
+            "folha_fixa_mes": _num(premissas.folha_fixa_mes(float(body.demanda)), 2),
+            "folha_base_faturamento_maduro": _num(
+                premissas.faturamento_maduro(float(body.demanda)), 2
+            ),
+            "folha_fixa_desde_mes_1": True,
+            "folha_regime": "fixa_desde_mes_1_dimensionada_pelo_faturamento_maduro",
+            "deducoes_pct": _num(premissas.devolucoes_pct, 4),
+            "impostos_receita_pct": _num(premissas.impostos_receita_pct, 4),
+            "custo_variavel_pct": _num(premissas.custo_variavel_pct, 4),
+            "reajuste_ticket_aa": _num(premissas.reajuste_ticket_aa, 4),
+            "reajuste_aluguel_aa": _num(premissas.reajuste_aluguel_aa, 4),
+            "reajuste_custos_aa": _num(premissas.reajuste_custos_aa, 4),
+            # TAXA MINIMA DO NEGOCIO (a.a.): a unica taxa configuravel. A do SOCIO nao
+            # aparece aqui de proposito — ela e DERIVADA e viaja no bloco `retorno`
+            # (`socio.taxa_minima_aa`), junto do custo da divida e da alavancagem que a
+            # produzem. Expor as duas como premissa editavel era o que permitia digitar
+            # uma taxa de socio menor que a do credor.
+            "taxa_minima_negocio_aa": _num(premissas.taxa_minima_negocio_aa, 4),
+            # ALIAS DEPRECIADO (1 versao) do campo acima — nome antigo, mesmo numero.
+            "taxa_desconto_aa": _num(premissas.taxa_minima_negocio_aa, 4),
+            # Reguas do veredito (`dre.flag_viavel`), servidas para a tela e o PDF
+            # rotularem o criterio sem cravar o numero. Sao CONSTANTES da fonte unica
+            # (`dimensionamento/config.py`), nao contas feitas aqui.
+            "margem_viavel_min": _num(SIM_MARGEM_VIAVEL_MIN, 4),
+            "payback_viavel_max": int(SIM_PAYBACK_VIAVEL_MAX),
+            "carencia_aluguel_meses": int(premissas.carencia_aluguel_meses),
+            "mes_inicio_aluguel": mes_inicio_aluguel,
+            "custo_pre_operacional_mes": _num(premissas.custo_pre_operacional_mes, 2),
+            "maturacao_meses": int(premissas.maturacao_meses),
+            "horizonte_meses": int(premissas.horizonte_meses),
+            # Anuidade (Simulador J10/J12): R$ por aluno de BALCAO que completa
+            # `anuidade_mes_inicio` meses, cobrada 1x/ano e reconhecida pro-rata.
+            # A elegibilidade sai do proprio churn ((1-churn)^12) — nem todo aluno
+            # chega a 12 meses. Exposta aqui para o operador ver a linha, e nao um
+            # faturamento maior sem causa visivel.
+            "anuidade_valor": _num(premissas.anuidade_valor, 2),
+            "anuidade_mes_inicio": int(premissas.anuidade_mes_inicio),
+            "anuidade_apenas_balcao": bool(premissas.anuidade_apenas_balcao),
+            "anuidade_elegivel_pct": _num(premissas.anuidade_elegivel_efetivo, 4),
+            # Mes de operacao a que a DRE de steady-state se refere (regime pleno:
+            # alunos maduros E anuidade ja em cobranca). LEIA daqui — nao recalcule.
+            "mes_referencia_steady": int(r.mes_referencia_steady),
+            "valor_residual_mes_60": _num(premissas.valor_residual_mes_60, 2),
+            "capex_renovacao": _num(premissas.capex_renovacao, 2),
+            "fonte_base_calibracao": fonte_base,
+        },
+        "dre": {
+            "faturamento": _num(r.faturamento_mensal_steady, 2),
+            # Parcela de anuidade dentro do faturamento acima (0 antes do mes de inicio).
+            "receita_anuidade": _num(r.receita_anuidade_mensal, 2),
+            # LEITURA da coluna `deducoes` da linha de steady (nao a subtracao
+            # faturamento - receita_liquida): o degrau ja existe pronto no motor.
+            "deducoes": linha_steady.get("deducoes"),
+            # Niveis intermediarios servidos PRONTOS: sem eles o gerador de graficos
+            # reconstruia os dois degraus do waterfall por subtracao — era a ultima
+            # formula financeira viva fora do simulador.py.
+            "receita_liquida": _num(r.receita_liquida, 2),
+            "receita_pos_impostos": _num(r.receita_pos_impostos, 2),
+            # Idem: coluna `impostos` da MESMA linha, nao receita_liquida - pos_impostos.
+            "impostos": linha_steady.get("impostos"),
+            "custos_op": _num(r.custos_op_mensal, 2),
+            "custos_variaveis": _num(r.custos_variaveis_mensal, 2),
+            "folha": _num(r.folha_mensal, 2),
+            "custos_fixos": _num(r.custos_fixos_mensal, 2),
+            "ebitda": _num(r.ebitda_mensal, 2),
+            "margem": _num(r.margem_ebitda_pct, 4),
+            "ir_csll": _num(r.ir_csll_mensal, 2),
+            "despesa_financeira": _num(r.despesa_financeira_mensal, 2),
+            "resultado_apos_ir": _num(r.resultado_apos_ir_mensal, 2),
+            "flag_viavel": bool(r.flag_viavel),
+        },
+        "investimento": {
+            "obra": _num(inv["obra"], 2),
+            "equipamentos": _num(inv["equipamentos"], 2),
+            "capex_total": _num(r.capex_total, 2),
+            "taxa_franquia": _num(r.taxa_franquia, 2),
+            "investimento_total": _num(r.investimento_total, 2),
+            "pmt": _num(r.pmt_mensal, 2),
+            "juros_totais": _num(r.juros_totais, 2),
+            "prazo_equipamentos": int(inv["prazo_equipamentos"]),
+            "juros_equipamentos_am": _num(inv["juros_equipamentos_am"], 6),
+            "parcelas_obra": int(inv["parcelas_obra"]),
+            # Franquia PARCELADA sem juros: N parcelas iguais nos meses de contrato
+            # 1..N (M-4..M-1 com N=4), junto da obra. A divisao abaixo e RENDER do
+            # cronograma de desembolso (valor / n de parcelas sem juros), nao uma
+            # formula financeira nova — nenhum coeficiente entra nela.
+            "parcelas_franquia": int(inv["parcelas_franquia"]),
+            "franquia_parcela": _num(
+                inv["taxa_franquia"] / inv["parcelas_franquia"]
+                if inv["taxa_franquia"] > 0 and inv["parcelas_franquia"] > 0
+                else 0.0,
+                2,
+            ),
+            # APORTE INICIAL (obra + taxa de franquia) = o dinheiro que o CONTRATO pede
+            # do socio, e o denominador do retorno dele. VOCABULARIO: nao se chama mais
+            # "equity aportado"; e "aporte inicial". A soma e dos DOIS campos que ja
+            # estao neste mesmo bloco (nao ha coeficiente nem formula financeira aqui) e
+            # reproduz literalmente o denominador que o nucleo usa em `simular()`.
+            "aporte_inicial": _num(inv["obra"] + inv["taxa_franquia"], 2),
+            # CHEQUE TOTAL: o pior ponto do caixa acumulado — quanto o investidor precisa
+            # TER disponivel, nao quanto o contrato pede. No caso de referencia sao
+            # R$1,14 mi no mes 5 contra R$760 mil de aporte (1,50x). E o numero que
+            # decide se o negocio e FINANCIAVEL e nao existia em lugar nenhum do produto.
+            # Vem PRONTO do nucleo (`cheque_total` / `mes_cheque_total`).
+            "cheque_total": _num(r.cheque_total, 2),
+            "mes_cheque_total": int(r.mes_cheque_total),
+        },
+        "retorno": {
+            # ------------------------------------------------------------------
+            # DUAS OTICAS, SEPARADAS E ROTULADAS — nunca no mesmo numero.
+            #   `negocio` (FCFF): sem financiamento, CAPEX inteiro desembolsado. Mede o
+            #       ATIVO. Descontado a taxa minima do NEGOCIO (premissa).
+            #   `socio`   (FCFE): PMT inteira sai do caixa e so obra+franquia entram como
+            #       aporte. Mede a ESTRUTURA. Descontado a taxa minima do SOCIO, que e
+            #       DERIVADA (Ke = Ku + (Ku - Kd) * D/E) — o socio e subordinado ao
+            #       banco, entao a taxa dele nao pode ser menor que a do credor.
+            # Sem escudo fiscal no Lucro Presumido, WACC = taxa minima do negocio: a
+            # divida so cria valor por ARBITRAGEM (tomar a 23,87% para um ativo que
+            # rende 25%), nunca por beneficio tributario.
+            # Rotulos de usuario: "do negocio" (era "desalavancado") e "do socio".
+            # ------------------------------------------------------------------
+            "negocio": {
+                "tir_anual": _num(r.tir_negocio_anual, 4),
+                "vpl": _num(r.vpl_negocio, 2),
+                "taxa_minima_aa": _num(r.taxa_minima_negocio_aa, 4),
+                "retorno_anual": _num(r.retorno_anual_desalavancado, 4),
+            },
+            "socio": {
+                "tir_anual": _num(r.tir_socio_anual, 4),
+                "vpl": _num(r.vpl_socio, 2),
+                "taxa_minima_aa": _num(r.taxa_minima_socio_aa, 4),
+                "retorno_anual": _num(r.retorno_anual_equity, 4),
+            },
+            "custo_divida_aa": _num(r.custo_divida_aa, 4),
+            "alavancagem_divida_sobre_aporte": _num(r.alavancagem_divida_sobre_aporte, 4),
+            # VPL da divida descontado a taxa minima do NEGOCIO = a ARBITRAGEM. Vem do
+            # nucleo quando ele o publica; `null` enquanto nao publicar — este backend
+            # NAO calcula formula financeira para preencher o campo.
+            "vpl_divida_arbitragem": _num(getattr(r, "vpl_divida_arbitragem", None), 2),
+            # GUARDA 1: se a divida custa mais que a taxa minima do negocio, a
+            # alavancagem DESTROI valor em vez de criar (sem escudo fiscal nao ha o que
+            # compensar). Aviso visivel na tela.
+            "alerta_divida_acima_da_taxa_negocio": bool(
+                r.alerta_divida_acima_da_taxa_negocio
+            ),
+            # GUARDA 2 (diagnostico, NAO tolerancia): VPL do socio @taxa do socio menos
+            # VPL do negocio @taxa do negocio. Os dois NAO coincidem de proposito — a
+            # taxa do socio usa a alavancagem INICIAL enquanto o saldo devedor cai a
+            # zero ao longo do contrato. -R$36.073,94 no caso de referencia.
+            "vpl_identidade_residuo": _num(r.vpl_identidade_residuo, 2),
+            # --- CHAVES PLANAS: ALIAS HISTORICOS (o PDF e o XLSX leem delas) ---------
+            # `tir_anual` e `vpl` sao o par do SOCIO (e o que o nucleo mantem como alias
+            # em `ViabilidadeResult`). `retorno_anual_desalavancado` e o retorno DO
+            # NEGOCIO e `retorno_anual_equity` o DO SOCIO — os nomes ficam pelo contrato
+            # antigo; os rotulos de usuario sao "do negocio" e "do socio".
+            "otica": "desalavancada",  # LEGADO: `censo_report` escolhe o rotulo do card
+            # por `otica.startswith("desalav")`; mudar o VALOR aqui trocaria o card do
+            # PDF para "ROIC anual". O rotulo novo e responsabilidade do consumidor.
+            "retorno_anual_desalavancado": _num(r.retorno_anual_desalavancado, 4),
+            "retorno_anual_equity": _num(r.retorno_anual_equity, 4),
+            "tir_anual": _num(r.tir_anual, 4),
+            "vpl": _num(r.vpl, 2),
+            "payback": _num(r.payback_meses, 1),
+        },
+        "break_even": {
+            "unidade": "alunos_totais",
+            "ebitda": _num(res.alunos_breakeven, 1),
+            "caixa": _num(res.alunos_breakeven_caixa, 1),
+        },
+        "aluguel_teto": {
+            "base": "faturamento_bruto",
+            "ideal": _num(teto.get("ideal"), 2),
+            "teto": _num(teto.get("teto"), 2),
+            "excecao": _num(teto.get("excecao"), 2),
+            "canonico": _num(res.aluguel_teto_calculado, 2),
+            # Teto sobre o p10 da faixa (nao circular). null sem base de comparaveis.
+            "teto_p10": _num(res.aluguel_teto_p10, 2),
+        },
         "faixa_alunos": {
             "p10": _num(res.faixa_alunos_p10),
             "p50": _num(res.faixa_alunos_p50),
             "p90": _num(res.faixa_alunos_p90),
             "n_comparaveis": res.n_comparaveis,
         },
-        "alunos_breakeven": _num(res.alunos_breakeven),
-        "alunos_para_margem_alvo": _num(res.alunos_para_margem_alvo),
-        "aluguel_teto": aluguel_teto_clusters,
-        "flag_fora_envelope": bool(res.flag_fora_envelope),
+        "serie_mensal": serie,
+        "mes_caixa_operacional_positivo": r.mes_caixa_operacional_positivo,
+        "acumulado_mes_final": _num(r.acumulado_mes_final, 2),
+        "demanda_premissa": _num(res.demanda_premissa, 1),
+        "demanda_fonte": res.demanda_fonte,
+        "split": {
+            "balcao": _num(res.alunos_balcao_premissa, 1),
+            "agregadores": _num(res.alunos_agregadores_premissa, 1),
+        },
         "flag_zona_morta": res.flag_zona_morta,
         "motivo_zona_morta": res.motivo_zona_morta,
-        "split": {
-            "balcao": _num(res.alunos_balcao_premissa),
-            "agregadores": _num(res.alunos_agregadores_premissa),
-        },
-        "dre": dre,
-        "fcf_serie": serie,
-        "fco_serie": fco_serie,
-        "mes_operacao_positiva": mes_operacao_positiva,
-        "carencia_aluguel_meses": body.carencia_aluguel_meses or 0,
-        "melhoria_payback": melhoria,
-        "grade": json.loads(grade.to_json(orient="records")) if grade is not None else [],
+        "flag_fora_envelope": bool(res.flag_fora_envelope),
+        "grade": _grade_json(res.grade_sensibilidade),
+        # Sugestao de ajuste quando o payback estoura (LEITURA da serie; nao e KPI).
+        "melhoria_payback": _melhoria_payback(
+            serie, _num(r.payback_meses, 1), float(body.aluguel), float(r.investimento_total)
+        ),
     }
+
+
+@app.post("/api/viabilidade")
+def viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
+    """Viabilidade do ponto — devolve o `viabilidade_payload_v1` (contrato unico).
+
+    GUARDRAIL: a demanda e PREMISSA EXPLICITA do operador (DEC-009), nunca derivada
+    de lat/lng. READ-ONLY sobre o M1.
+    """
+    return _payload_viabilidade(body)
 
 
 def _melhoria_payback(
@@ -1402,17 +1708,18 @@ def _melhoria_payback(
     gatilho_meses: int = 40,
 ) -> dict[str, Any] | None:
     """Quando o payback estoura (> gatilho), estima quanto cortar de CAPEX OU de aluguel
-    para o payback cair para ~alvo_meses. Estimativa de 1a ordem a partir da serie de FCF:
-    o CAPEX desloca a curva 1:1; cada R$1/mes a menos de aluguel soma ~alvo_meses ao caixa
-    no mes-alvo. Retorna None quando nao ha o que sugerir (payback ok ou serie ausente).
+    para o payback cair para ~alvo_meses. Estimativa de 1a ordem LIDA da serie do nucleo
+    (`fcf_acumulado` no mes-alvo): o CAPEX desloca a curva 1:1; cada R$1/mes a menos de
+    aluguel soma ~alvo_meses ao caixa no mes-alvo. NAO e KPI e nao recalcula o motor —
+    e uma sugestao de ajuste. None quando nao ha o que sugerir.
 
-    payback None (nunca vira dentro de 60 meses) e o PIOR caso -> tambem gera sugestao."""
+    payback None (nunca vira dentro do horizonte) e o PIOR caso -> tambem gera sugestao."""
     if payback is not None and payback <= gatilho_meses:
         return None
     row = next((r for r in serie if r.get("mes") == alvo_meses), None)
-    if row is None or row.get("fcf") is None or float(row["fcf"]) >= 0:
+    if row is None or row.get("fcf_acumulado") is None or float(row["fcf_acumulado"]) >= 0:
         return None
-    deficit = -float(row["fcf"])  # caixa que ainda falta no mes-alvo
+    deficit = -float(row["fcf_acumulado"])  # caixa que ainda falta no mes-alvo
     reduzir_capex = (
         float(round(deficit)) if (capex_efetivo > 0 and deficit < capex_efetivo) else None
     )
@@ -1425,261 +1732,27 @@ def _melhoria_payback(
     }
 
 
-def _serie_motor(body: ViabilidadeIn, inv: dict[str, Any]) -> list[dict[str, Any]]:
-    """Serie mensal BRUTA do motor (60 meses; campos com `fcf_acumulado`).
-
-    Fonte unica usada pelas duas curvas (payback e operacional). Recebe o capex TOTAL
-    (Obra+Equip) e a fracao financiada (Equip/total) do `inv` -> o motor parte de -Obra.
-    Retorna [] em caso de falha (degrada gracioso).
-    """
-    from motor_expansao.dimensionamento.simulador import gerar_serie_mensal
-    from motor_expansao.dimensionamento.viabilidade_ponto import (
-        SHARE_BALCAO_DEFAULT,
-        SIM_MENSALIDADE_BALCAO,
-    )
-
-    share = SHARE_BALCAO_DEFAULT
-    alunos_balcao = float(body.demanda) * share
-    alunos_agregadores = float(body.demanda) * (1.0 - share)
-    ticket = body.ticket or SIM_MENSALIDADE_BALCAO
-
-    serie_kwargs: dict[str, Any] = {
-        "alunos_agregadores": alunos_agregadores,
-        "capex": inv["capex_total"],
-    }
-    if body.rampa_meses is not None:
-        serie_kwargs["maturacao_meses"] = body.rampa_meses
-
-    try:
-        return gerar_serie_mensal(alunos_balcao, body.m2, body.aluguel, ticket, **serie_kwargs)
-    except Exception:  # noqa: BLE001 — se a serie falhar, o resto da viabilidade segue
-        return []
-
-
-# Meses de pré-abertura/obras antes da inauguração (M-4..M-1). O CAPEX é desembolsado
-# nesse período e a carência de aluguel conta A PARTIR DE M-4 (mês de contrato 1 = M-4).
-_MESES_OBRA = 4
-
-
-def _fcf_serie(
-    body: ViabilidadeIn, inv: dict[str, Any]
-) -> tuple[list[dict[str, Any]], float | None]:
-    """Serie de FCF acumulado (payback): 60 meses, partindo de -(capex + franquia).
-
-    NUCLEO a vista: o acumulado parte do INVESTIMENTO total (capex + taxa de franquia)
-    e soma o caixa operacional mes a mes (sem PMT — financiamento e camada separada).
-    Se houver carencia, DEVOLVE o aluguel nos primeiros N meses. READ-ONLY.
-    Retorna (serie, payback_ajustado_em_meses).
-    """
-    serie = _serie_motor(body, inv)
-    if not serie:
-        return [], None
-
-    carencia = int(body.carencia_aluguel_meses or 0)
-    capex_total = float(inv["capex_total"])
-    investimento = float(inv["investimento_total"])
-
-    out: list[dict[str, Any]] = []
-    prev_motor = -capex_total  # acumulado do motor ANTES do mes 1 (a vista, sem PMT)
-    acum = -investimento  # payback parte do investimento total (capex + franquia)
-    ultimo_mensal = 0.0
-    payback: float | None = None
-    for row in serie:
-        mes = int(row["mes"])
-        mensal = float(row["fcf_acumulado"]) - prev_motor
-        prev_motor = float(row["fcf_acumulado"])
-        if carencia and (mes + _MESES_OBRA) <= carencia:
-            mensal += float(body.aluguel)  # carencia (contada de M-4): devolve o aluguel
-        acum += mensal
-        ultimo_mensal = mensal
-        if payback is None and acum >= 0:
-            payback = float(mes)
-        out.append({"mes": mes, "fcf": _num(acum)})
-
-    # Nao virou dentro dos 60 meses: extrapola pelo FCF mensal de steady-state
-    # (mes 60 ja e pos-maturacao e pos-carencia). Mostra o payback REAL em vez de
-    # "inf"/"nao atinge". So faz sentido se o caixa mensal ja e positivo.
-    if payback is None and ultimo_mensal > 0:
-        payback = float(round(60 + (-acum) / ultimo_mensal))
-
-    return out, payback
-
-
-def _plano_pagamento(body: ViabilidadeIn, inv: dict[str, Any]) -> dict[str, Any]:
-    """Desmembra o investimento em OBRA (equity, parcelada SEM juros) e EQUIPAMENTOS
-    (FINANCIADOS, PMT com juros — sistema Price) para o fluxo de caixa mês a mês.
-
-    - Obra: `obra` pago em `parcelas_obra` parcelas iguais (default 4), sem juros.
-    - Equipamentos: `equipamentos` financiado em `prazo_equipamentos` meses a
-      `juros_equipamentos_am` (fracao a.m.) -> PMT constante. Juros 0 -> parcela simples.
-    Legado (so `capex`/`capex_financiado_*`): split por valor/percentual; senao tudo em obra.
-    Retorna as parcelas mensais e os prazos, para `_fco_serie` compor o caixa."""
-    capex_total = float(inv["capex_total"])
-    obra = float(body.obra) if body.obra is not None else None
-    equip = float(body.equipamentos) if body.equipamentos is not None else None
-    if obra is None and equip is None:
-        if body.capex_financiado_valor:
-            equip = min(float(body.capex_financiado_valor), capex_total)
-            obra = capex_total - equip
-        elif body.capex_financiado_pct:
-            equip = capex_total * float(body.capex_financiado_pct)
-            obra = capex_total - equip
-        else:
-            obra, equip = capex_total, 0.0
-    obra = float(obra or 0.0)
-    equip = float(equip or 0.0)
-
-    parcelas_obra = int(body.parcelas_obra or _MESES_OBRA)
-    prazo_equip = int(body.prazo_equipamentos or body.capex_parcelas_meses or 36)
-    juros = body.juros_equipamentos_am
-    if juros is None:
-        juros = body.juros_financiamento_am
-    juros = float(juros or 0.0)
-
-    obra_parcela = obra / parcelas_obra if parcelas_obra > 0 else 0.0
-    if equip > 0 and prazo_equip > 0:
-        if juros > 0:
-            fator = (1.0 + juros) ** prazo_equip
-            equip_pmt = equip * juros * fator / (fator - 1.0)
-        else:
-            equip_pmt = equip / prazo_equip
-    else:
-        equip_pmt = 0.0
-    return {
-        "obra": obra,
-        "equipamentos": equip,
-        "obra_parcela": obra_parcela,
-        "parcelas_obra": max(parcelas_obra, 0),
-        "equip_pmt": equip_pmt,
-        "prazo_equip": max(prazo_equip, 0),
-        "juros": juros,
-    }
-
-
-def _fco_serie(
-    body: ViabilidadeIn, inv: dict[str, Any]
-) -> tuple[list[dict[str, Any]], int | None]:
-    """Fluxo de caixa OPERACIONAL + FINANCEIRO mês a mês (NÃO acumulado), a partir das OBRAS.
-
-    Compõe, mês a mês: (a) caixa OPERACIONAL (EBITDA − IR/CSLL, já com aluguel), (b) a
-    PARCELA da OBRA (equity, sem juros, ao longo de `parcelas_obra`), (c) a PMT dos
-    EQUIPAMENTOS FINANCIADOS (com juros, ao longo de `prazo_equipamentos`) e (d) o aluguel
-    da pré-abertura. Por isso REAGE a obra/equipamentos/parcelas/juros (antes o gráfico era
-    idêntico em qualquer cenário de financiamento). O motor roda A VISTA (sem PMT); a
-    alavancagem é composta AQUI, então o caixa operacional puro sai do delta do motor.
-
-    Linha do tempo: M-4..M-1 = obras (parcela da obra + aluguel salvo carência), depois a
-    operação (mês 1..60). Carência de aluguel conta A PARTIR de M-4 (mês de contrato 1 = M-4).
-    Retorna (serie, mes_operacao_positiva) — 1o mês de OPERAÇÃO (>=1) com resultado >= 0 que
-    assim permanece (None se nunca vira)."""
-    serie = _serie_motor(body, inv)
-    if not serie:
-        return [], None
-
-    aluguel = float(body.aluguel)
-    carencia = int(body.carencia_aluguel_meses or 0)
-    capex_total = float(inv["capex_total"])
-    plano = _plano_pagamento(body, inv)
-    obra_parcela = float(plano["obra_parcela"])
-    parcelas_obra = int(plano["parcelas_obra"])
-    equip_pmt = float(plano["equip_pmt"])
-    prazo_equip = int(plano["prazo_equip"])
-
-    out: list[dict[str, Any]] = []
-    # Pré-abertura (M-4..M-1, mês de contrato 1..4): parcela da obra (enquanto durar) +
-    # aluguel (fora da carência). Equipamentos financiados NÃO desembolsam aqui (a PMT
-    # corre na operação).
-    for i in range(_MESES_OBRA):
-        contrato_mes = i + 1  # 1..4 -> M-4..M-1
-        display_mes = i - _MESES_OBRA  # -4..-1
-        val = 0.0
-        if contrato_mes <= parcelas_obra:
-            val -= obra_parcela
-        if contrato_mes > carencia:
-            val -= aluguel
-        out.append({"mes": display_mes, "fcf": _num(val)})
-
-    # Operação: caixa operacional (delta do motor — EBITDA − IR, com aluguel; o capex
-    # cancela no delta) MENOS a parcela da obra que passa da abertura e a PMT dos
-    # equipamentos. Carência devolve o aluguel enquanto vigente (contada de M-4).
-    prev_acum = -capex_total
-    for row in serie:
-        mes = int(row["mes"])
-        contrato_mes = mes + _MESES_OBRA  # 5..64
-        mensal = float(row["fcf_acumulado"]) - prev_acum
-        prev_acum = float(row["fcf_acumulado"])
-        if carencia and contrato_mes <= carencia:
-            mensal += aluguel  # carência ainda vigente neste mês de operação
-        if contrato_mes <= parcelas_obra:
-            mensal -= obra_parcela  # parcelas de obra que passam da abertura
-        if mes <= prazo_equip:
-            mensal -= equip_pmt  # PMT do equipamento financiado (juros a.m.)
-        out.append({"mes": mes, "fcf": _num(mensal)})
-
-    # Break-even operacional: 1o mês de OPERAÇÃO (mes >= 1) com resultado >= 0 e que
-    # assim permanece (ignora as obras, sempre negativas).
-    positiva: int | None = None
-    operacao = [p for p in out if p["mes"] >= 1]
-    for i, p in enumerate(operacao):
-        val = p["fcf"]
-        if val is not None and val >= 0 and all((q["fcf"] or 0.0) >= 0 for q in operacao[i:]):
-            positiva = int(p["mes"])
-            break
-
-    return out, positiva
-
-
-def _extrair_dre(v: Any) -> dict[str, Any]:
-    """Monta a cascata do DRE a partir do ViabilidadeResult.
-
-    O dataclass expoe NIVEIS acumulados (faturamento -> receita liquida ->
-    receita pos-impostos -> EBITDA), nao as parcelas. A cascata precisa das
-    PARCELAS, entao cada degrau e a diferenca entre dois niveis consecutivos.
-
-    Atencao: `margem_ebitda_pct` e FRACAO (-0.3457), nao percentual; e
-    `payback_meses` vem `inf` quando nunca paga, e inf nao sobrevive ao JSON.
-    """
-
-    def campo(nome: str) -> float | None:
-        return _num(getattr(v, nome, None), 2)
-
-    faturamento = campo("faturamento_mensal_steady")
-    liquida = campo("receita_liquida")
-    pos_imp = campo("receita_pos_impostos")
-    ebitda = campo("ebitda_mensal")
-
-    def delta(a: float | None, b: float | None) -> float | None:
-        return None if a is None or b is None else round(a - b, 2)
-
-    margem_frac = getattr(v, "margem_ebitda_pct", None)
-
-    return {
-        "faturamento": faturamento,
-        "deducoes": delta(faturamento, liquida),
-        "impostos": delta(liquida, pos_imp),
-        "custos": delta(pos_imp, ebitda),
-        "ebitda": ebitda,
-        "margem": None if margem_frac is None else _num(float(margem_frac) * 100, 2),
-        "payback": _num(getattr(v, "payback_meses", None), 1),
-        "roic": _num(getattr(v, "roic_anual", None), 4),
-        "lucro_liquido": campo("lucro_liquido_mensal"),
-        "flag_viavel": bool(getattr(v, "flag_viavel", False)),
-    }
+# Bases da curva tamanho->densidade, em ordem de preferencia: (arquivo, rotulo da fonte).
+# O rotulo VAI NO PAYLOAD (`premissas.fonte_base_calibracao`) porque a degradacao era
+# SILENCIOSA: caindo no fallback (ou sem base nenhuma), a faixa p10/p50/p90 mudava de
+# significado sem nenhum sinal na tela nem no PDF.
+_BASES_CALIBRACAO = (
+    ("base_calibracao_maduras.parquet", "base_calibracao_maduras.parquet (oficial)"),
+    ("unidades_ultra_performance_hex.parquet", "unidades_ultra_performance_hex.parquet (fallback)"),
+)
+FONTE_BASE_INDISPONIVEL = "indisponivel (faixa de alunos nao calculada)"
 
 
 @functools.lru_cache(maxsize=1)
-def _base_calibracao() -> pd.DataFrame | None:
-    """Base de comparaveis da curva tamanho->densidade.
+def _base_calibracao() -> tuple[pd.DataFrame | None, str]:
+    """Base de comparaveis da curva tamanho->densidade + QUAL arquivo a alimentou.
 
     A curva exige a coluna `alunos_por_m2`. `base_calibracao_multirede` NAO a tem
     (traz `alunos_reais` + `metragem` crus), entao entregar aquele parquet faz a
     faixa voltar vazia com n_comparaveis=0 — foi o bug da primeira versao.
     Prioriza as bases que ja trazem a coluna e valida antes de devolver.
     """
-    for nome in (
-        "base_calibracao_maduras.parquet",
-        "unidades_ultra_performance_hex.parquet",
-    ):
+    for nome, rotulo in _BASES_CALIBRACAO:
         caminho = STAGING_DIR / nome
         if not caminho.exists():
             continue
@@ -1688,8 +1761,8 @@ def _base_calibracao() -> pd.DataFrame | None:
         except Exception:  # noqa: BLE001 — base opcional, degrada gracioso
             continue
         if "alunos_por_m2" in df.columns and len(df):
-            return df
-    return None
+            return df, rotulo
+    return None, FONTE_BASE_INDISPONIVEL
 
 
 # ============================================================================
@@ -2067,65 +2140,39 @@ def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
 
 
 def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
-    """Re-roda o motor de viabilidade e monta o payload do slide do PDF COM os graficos
-    (rampa de alunos, faturamento/EBITDA, FCF acumulado, DRE waterfall). `None` em qualquer
-    falha -> o PDF cai no payload so-numeros (viabilidade_json). Alinha payback/roic aos
-    MESMOS valores da tela (a rota /api/viabilidade sobrescreve os do motor). READ-ONLY M1."""
+    """Payload do slide de viabilidade do PDF — o MESMO `viabilidade_payload_v1` da tela.
+
+    FIN-VIAB-01: o PDF NAO re-roda o motor nem realinha KPI nenhum. Antes esta funcao
+    chamava o motor de novo e depois sobrescrevia payback/ROIC "para bater com a tela";
+    era exatamente essa segunda passagem que fazia o mesmo cenario sair com payback
+    35 x 33 e aluguel-teto R$55,5 mil x R$105,8 mil.
+
+    O achatamento v1 -> chaves planas do slide (e os 4 PNGs) vem de
+    `viabilidade_charts.montar_payload_pdf_viabilidade`, a ponte UNICA do PDF. Havia aqui
+    uma segunda copia desse mapeamento e ela ja tinha regredido em dois pontos: a chave
+    plana `aluguel_teto` (float) sobrescrevia a secao v1 homonima (dict) e sumia com a
+    linha "ideal | teto | excecao"; e o waterfall reencontrava a linha de steady na serie
+    por `maturacao_meses` em vez de ler o `dre` do payload, entao grafico e card do MESMO
+    slide podiam sair de meses diferentes.
+
+    Devolve o payload v1 + as chaves PLANAS que o slide legado consome + `graficos`.
+    `None` em qualquer falha -> o PDF cai no payload so-numeros (`viabilidade_json`).
+    """
+    from motor_expansao.dashboard.viabilidade_charts import montar_payload_pdf_viabilidade
+
     try:
-        from motor_expansao.dashboard.viabilidade_charts import montar_payload_viabilidade
-        from motor_expansao.dimensionamento.viabilidade_ponto import (
-            analisar_viabilidade_ponto,
-        )
-
-        kwargs: dict[str, Any] = {}
-        if body.ticket:
-            kwargs["ticket_medio"] = body.ticket
-        if body.formato:
-            kwargs["formato"] = body.formato
-        if body.margem_alvo is not None:
-            kwargs["margem_alvo"] = body.margem_alvo
-        inv = _investimento(body)
-        kwargs["capex"] = inv["capex_total"]
-        if body.rampa_meses is not None:
-            kwargs["maturacao_meses"] = body.rampa_meses
-        base = _base_calibracao()
-        if base is not None:
-            kwargs["base_calibracao_df"] = base
-
-        res = analisar_viabilidade_ponto(
-            lat=body.lat,
-            lng=body.lng,
-            m2=body.m2,
-            aluguel_pedido=body.aluguel,
-            demanda_premissa=body.demanda,
-            **kwargs,
-        )
-        serie = _serie_motor(body, inv)
-        # Fluxo de Caixa Operacional (M-4..operação) para o gráfico do slide — substitui
-        # a antiga "rampa de alunos" e reage a aluguel/capex (item Felipe 2026-07-23).
-        fco_serie, mes_operacao_positiva = _fco_serie(body, inv)
-        payload = montar_payload_viabilidade(
-            res,
-            serie,
-            maturacao_mes=body.rampa_meses,
-            fco_serie=fco_serie,
-            mes_operacao_positiva=mes_operacao_positiva,
-        )
-
-        # Alinha payback/roic aos valores da TELA (a rota /api/viabilidade sobrescreve os do
-        # motor: payback pela serie de FCF, roic desalavancado) -> numeros do PDF batem.
-        _serie_fcf, payback = _fcf_serie(body, inv)
-        payload["payback_meses"] = payback
-        investimento = float(inv["investimento_total"])
-        lucro_liq = getattr(res.viabilidade, "lucro_liquido_mensal", None)
-        payload["roic_anual"] = (
-            _num((float(lucro_liq) * 12.0) / investimento, 4)
-            if (lucro_liq is not None and investimento > 0)
-            else None
-        )
-        return payload
-    except Exception:  # noqa: BLE001
+        payload = _payload_viabilidade(body)
+    except Exception:  # noqa: BLE001 — o PDF nunca cai por causa da viabilidade
         return None
+
+    saida: dict[str, Any] = dict(payload)
+    try:
+        saida.update(montar_payload_pdf_viabilidade(payload) or {})
+    except Exception:  # noqa: BLE001 — sem graficos o slide sai so com os numeros
+        saida.update(montar_payload_pdf_viabilidade(payload, incluir_graficos=False) or {})
+    # `flag_viavel` nao faz parte do contrato v1 fechado; o slide le do `dre` quando existe.
+    saida["flag_viavel"] = payload["dre"].get("flag_viavel")
+    return saida
 
 
 def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
@@ -2364,6 +2411,103 @@ def _gerar_relatorio_pontual_pdf(
         content=pdf,
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="relatorio_pontual.pdf"'},
+    )
+
+
+# ============================================================================
+# Simulador financeiro completo em XLSX (formulas vivas)
+#
+# Pedido do dono do produto (Felipe, 2026-07-24): abrir a planilha na frente do
+# investidor e defender os numeros — DRE, folha de pagamento e fluxo de caixa com
+# possibilidade de EDICAO MANUAL. Por isso a planilha sai com FORMULAS, nao com
+# valores estaticos: mudar a demanda, o aluguel ou um salario dentro do Excel
+# recalcula os 60 meses ali mesmo, sem voltar ao sistema.
+#
+# Esta rota nao contem calculo financeiro nenhum: reusa `_premissas_do_body` e
+# `_investimento` (os MESMOS do /api/viabilidade) e delega a montagem ao motor.
+# ============================================================================
+
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _slug_arquivo(texto: str | None, default: str = "cenario") -> str:
+    """Slug ASCII (sem acento) para NOME DE ARQUIVO.
+
+    Excecao explicita do §2 do CLAUDE.md: texto de usuario leva acento, nome de
+    arquivo NAO — acento em `Content-Disposition` sai mojibake no download.
+    """
+    base = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode("ascii")
+    base = re.sub(r"[^A-Za-z0-9]+", "-", base).strip("-").lower()
+    return base[:60] or default
+
+
+def _gerador_simulador_xlsx() -> Callable[..., bytes]:
+    """Resolve o gerador do XLSX no motor (import lazy, como o resto do backend).
+
+    Isolado em uma funcao por dois motivos: o import pesa (openpyxl) e nao deve
+    custar no boot do piloto, e o teste troca o gerador aqui para nao pagar a
+    montagem real da planilha.
+    """
+    try:
+        from motor_expansao.dimensionamento.simulador_xlsx import gerar_simulador_xlsx
+    except ImportError as exc:  # modulo do motor ausente neste checkout
+        # Texto de USUARIO (chega ao box de erro da tela) -> acentuado, §2 do CLAUDE.md.
+        raise HTTPException(
+            503,
+            "O gerador da planilha não está disponível neste servidor "
+            f"(motor_expansao.dimensionamento.simulador_xlsx): {exc}",
+        ) from exc
+    return gerar_simulador_xlsx
+
+
+def _kwargs_aceitos(fn: Callable[..., Any], **candidatos: Any) -> dict[str, Any]:
+    """Mantem so os kwargs OPCIONAIS que a assinatura do gerador de fato aceita.
+
+    Os extras (rotulo/m2) sao enfeite de cabecalho da planilha, nao contrato: um
+    nome diferente do outro lado viraria `TypeError` em runtime — HTTP 500 no lugar
+    do arquivo. Os argumentos ESSENCIAIS (demanda/premissas/investimento) vao
+    posicionais e nao passam por aqui: se aqueles nao casarem, tem de estourar.
+    """
+    params = inspect.signature(fn).parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return candidatos
+    return {k: v for k, v in candidatos.items() if k in params}
+
+
+@app.post("/api/simulador/xlsx")
+async def simulador_xlsx(body: ViabilidadeIn, rotulo: str | None = None) -> Response:
+    """Simulador financeiro completo em XLSX, com formulas vivas.
+
+    Mesmo corpo do /api/viabilidade (`ViabilidadeIn`); `rotulo` (query) so nomeia o
+    arquivo. A montagem e SINCRONA e pesada (openpyxl escrevendo 60 meses de DRE,
+    folha e fluxo de caixa), entao roda no threadpool — igual ao PDF Pontual. Sem
+    isso ela bloquearia o event loop do unico worker do uvicorn e todo o resto do
+    piloto ficaria preso na fila durante a geracao.
+
+    GUARDRAILS: nada e escrito em disco (BytesIO dentro do gerador) e a demanda
+    segue sendo PREMISSA do operador (DEC-009), nunca derivada de lat/lng.
+    """
+    return await run_in_threadpool(_gerar_simulador_xlsx_response, body, rotulo)
+
+
+def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> Response:
+    """Corpo SINCRONO da rota do XLSX — roda no threadpool, nunca no event loop.
+
+    Deliberadamente `def`, nao `async def`: e o que mantem o servidor respondendo
+    durante a geracao.
+    """
+    gerar = _gerador_simulador_xlsx()
+    premissas = _premissas_do_body(body)
+    inv = _investimento(body)
+    extras = _kwargs_aceitos(gerar, rotulo=rotulo, m2=float(body.m2))
+
+    conteudo = gerar(float(body.demanda), premissas, inv, **extras)
+
+    nome = f"simulador_viabilidade_{_slug_arquivo(rotulo)}.xlsx"
+    return Response(
+        content=conteudo,
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{nome}"'},
     )
 
 
