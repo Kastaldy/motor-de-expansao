@@ -104,8 +104,15 @@ SIM_PESSOAL_MES = 50_128.16     # Fopag total c/ encargos (linha DRE 55)
                                  # LEGADO: nao alimenta mais a folha (ver SIM_FOLHA_PCT abaixo);
                                  # mantido so como default da assinatura de viabilidade()/gerar_serie_mensal().
 SIM_OUTROS_FIXOS_MES = 38_150.00  # IPTU(2000)+Agua/Luz(17000)+Tel(500)+
-                                   # Limpeza(14000)+Tec(2150)+Assess(2500)+Outros(2000)
+                                   # Limpeza(14000)+Tec(2150)+Assess(2500) = 38.150
                                    # DRE linhas 52-59,69
+# FIN-VIAB-01 (2026-07-24): este comentario listava tambem "Outros(2000)", e as SETE
+# componentes somavam 40.150 — R$ 2.000 acima do valor da propria constante. As SEIS
+# acima fecham EXATAMENTE nos 38.150 que o motor usa, entao o "Outros" era espurio:
+# entrou no texto e nunca no numero. A constante NAO mudou (o golden esta preservado);
+# so o comentario foi corrigido. Descoberto ao decompor a linha na aba Premissas do
+# simulador em XLSX, onde ratear as sete dava "IPTU R$ 1.900,37" — indefensavel linha
+# a linha. Se a decomposicao real da unidade for outra, quem muda e a controladoria.
 
 # ---------------------------------------------------------------------------
 # Reforma do motor de viabilidade (alinhamento a planilha financeira oficial).

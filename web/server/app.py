@@ -25,10 +25,14 @@ import asyncio
 import base64
 import functools
 import hashlib
+import inspect
 import json
 import math
 import os
+import re
 import sys
+import unicodedata
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -2281,6 +2285,103 @@ def _gerar_relatorio_pontual_pdf(
         content=pdf,
         media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="relatorio_pontual.pdf"'},
+    )
+
+
+# ============================================================================
+# Simulador financeiro completo em XLSX (formulas vivas)
+#
+# Pedido do dono do produto (Felipe, 2026-07-24): abrir a planilha na frente do
+# investidor e defender os numeros — DRE, folha de pagamento e fluxo de caixa com
+# possibilidade de EDICAO MANUAL. Por isso a planilha sai com FORMULAS, nao com
+# valores estaticos: mudar a demanda, o aluguel ou um salario dentro do Excel
+# recalcula os 60 meses ali mesmo, sem voltar ao sistema.
+#
+# Esta rota nao contem calculo financeiro nenhum: reusa `_premissas_do_body` e
+# `_investimento` (os MESMOS do /api/viabilidade) e delega a montagem ao motor.
+# ============================================================================
+
+XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def _slug_arquivo(texto: str | None, default: str = "cenario") -> str:
+    """Slug ASCII (sem acento) para NOME DE ARQUIVO.
+
+    Excecao explicita do §2 do CLAUDE.md: texto de usuario leva acento, nome de
+    arquivo NAO — acento em `Content-Disposition` sai mojibake no download.
+    """
+    base = unicodedata.normalize("NFKD", texto or "").encode("ascii", "ignore").decode("ascii")
+    base = re.sub(r"[^A-Za-z0-9]+", "-", base).strip("-").lower()
+    return base[:60] or default
+
+
+def _gerador_simulador_xlsx() -> Callable[..., bytes]:
+    """Resolve o gerador do XLSX no motor (import lazy, como o resto do backend).
+
+    Isolado em uma funcao por dois motivos: o import pesa (openpyxl) e nao deve
+    custar no boot do piloto, e o teste troca o gerador aqui para nao pagar a
+    montagem real da planilha.
+    """
+    try:
+        from motor_expansao.dimensionamento.simulador_xlsx import gerar_simulador_xlsx
+    except ImportError as exc:  # modulo do motor ausente neste checkout
+        # Texto de USUARIO (chega ao box de erro da tela) -> acentuado, §2 do CLAUDE.md.
+        raise HTTPException(
+            503,
+            "O gerador da planilha não está disponível neste servidor "
+            f"(motor_expansao.dimensionamento.simulador_xlsx): {exc}",
+        ) from exc
+    return gerar_simulador_xlsx
+
+
+def _kwargs_aceitos(fn: Callable[..., Any], **candidatos: Any) -> dict[str, Any]:
+    """Mantem so os kwargs OPCIONAIS que a assinatura do gerador de fato aceita.
+
+    Os extras (rotulo/m2) sao enfeite de cabecalho da planilha, nao contrato: um
+    nome diferente do outro lado viraria `TypeError` em runtime — HTTP 500 no lugar
+    do arquivo. Os argumentos ESSENCIAIS (demanda/premissas/investimento) vao
+    posicionais e nao passam por aqui: se aqueles nao casarem, tem de estourar.
+    """
+    params = inspect.signature(fn).parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return candidatos
+    return {k: v for k, v in candidatos.items() if k in params}
+
+
+@app.post("/api/simulador/xlsx")
+async def simulador_xlsx(body: ViabilidadeIn, rotulo: str | None = None) -> Response:
+    """Simulador financeiro completo em XLSX, com formulas vivas.
+
+    Mesmo corpo do /api/viabilidade (`ViabilidadeIn`); `rotulo` (query) so nomeia o
+    arquivo. A montagem e SINCRONA e pesada (openpyxl escrevendo 60 meses de DRE,
+    folha e fluxo de caixa), entao roda no threadpool — igual ao PDF Pontual. Sem
+    isso ela bloquearia o event loop do unico worker do uvicorn e todo o resto do
+    piloto ficaria preso na fila durante a geracao.
+
+    GUARDRAILS: nada e escrito em disco (BytesIO dentro do gerador) e a demanda
+    segue sendo PREMISSA do operador (DEC-009), nunca derivada de lat/lng.
+    """
+    return await run_in_threadpool(_gerar_simulador_xlsx_response, body, rotulo)
+
+
+def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> Response:
+    """Corpo SINCRONO da rota do XLSX — roda no threadpool, nunca no event loop.
+
+    Deliberadamente `def`, nao `async def`: e o que mantem o servidor respondendo
+    durante a geracao.
+    """
+    gerar = _gerador_simulador_xlsx()
+    premissas = _premissas_do_body(body)
+    inv = _investimento(body)
+    extras = _kwargs_aceitos(gerar, rotulo=rotulo, m2=float(body.m2))
+
+    conteudo = gerar(float(body.demanda), premissas, inv, **extras)
+
+    nome = f"simulador_viabilidade_{_slug_arquivo(rotulo)}.xlsx"
+    return Response(
+        content=conteudo,
+        media_type=XLSX_MEDIA_TYPE,
+        headers={"Content-Disposition": f'attachment; filename="{nome}"'},
     )
 
 
