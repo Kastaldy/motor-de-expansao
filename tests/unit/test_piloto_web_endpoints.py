@@ -428,6 +428,128 @@ def test_premissas_opcionais_sobrescrevem_o_config(empty_data: Path) -> None:
 
 
 # ===========================================================================
+# 3b) FIN-VIAB-01 (2026-07-24) — folha FIXA desde o mes 1 e franquia parcelada 4x
+# ===========================================================================
+
+
+def test_payload_serve_folha_fixa_desde_o_mes_1(empty_data: Path) -> None:
+    """A `folha` da serie servida NAO escala com a rampa (era o defeito reportado).
+
+    Decisao de Felipe (2026-07-24): a folha e dimensionada UMA vez pelo faturamento
+    MADURO e paga integralmente desde o mes 1 -- a equipe existe antes dos alunos.
+    Consequencias visiveis no payload: `dre.folha` == folha de QUALQUER mes do ano 1,
+    e o EBITDA do mes 1 fica bem mais negativo do que com a folha escalonada.
+    """
+    corpo = _viab()
+    operacao = [linha for linha in corpo["serie_mensal"] if linha["fase"] == "operacao"]
+    ano1 = operacao[:12]
+    assert [linha["mes"] for linha in ano1] == list(range(1, 13))
+
+    # UM unico valor de folha no ano 1 -- e ele e o `dre.folha` do topo do payload.
+    assert len({linha["folha"] for linha in ano1}) == 1
+    assert ano1[0]["folha"] == pytest.approx(corpo["dre"]["folha"], abs=0.01)
+    # ...mesmo com os alunos MAIS QUE DOBRANDO no intervalo (637,5 -> 1.600).
+    assert ano1[-1]["alunos_total"] > 2.0 * ano1[0]["alunos_total"]
+    # Reajuste anual e o UNICO degrau: aparece no mes 13, nunca antes.
+    assert operacao[12]["mes"] == 13
+    assert operacao[12]["folha"] > ano1[0]["folha"]
+
+    # A folha do mes 1 e MAIOR que folha_pct x faturamento do mes 1 (a regra antiga).
+    folha_pct = corpo["premissas"]["folha_pct"]
+    assert ano1[0]["folha"] > folha_pct * ano1[0]["faturamento_mensal"]
+    # E o mes 1 nasce no vermelho por causa disso.
+    assert ano1[0]["ebitda_mensal"] < 0
+
+    # A cascata do DRE continua fechando com a folha como parcela propria.
+    dre = corpo["dre"]
+    assert dre["custos_op"] == pytest.approx(
+        dre["custos_variaveis"] + dre["folha"] + dre["custos_fixos"], abs=0.05
+    )
+
+
+def test_payload_folha_e_breakeven_dependem_da_demanda_assumida(empty_data: Path) -> None:
+    """Demanda assumida menor -> folha menor -> break-even menor.
+
+    A folha virou custo FIXO dimensionado pela demanda, entao `break_even_alunos` e
+    `alunos_para_margem` passaram a receber a demanda. Isto prova que o backend serve
+    essa dependencia (antes o break-even nao se movia com a demanda).
+    """
+    baixa = _viab(demanda=900)
+    alta = _viab(demanda=2400)
+    assert baixa["dre"]["folha"] < alta["dre"]["folha"]
+    assert baixa["break_even"]["ebitda"] < alta["break_even"]["ebitda"]
+    assert baixa["break_even"]["caixa"] < alta["break_even"]["caixa"]
+    # O de caixa cobre a PMT, entao continua >= o de EBITDA nos dois cenarios.
+    for corpo in (baixa, alta):
+        assert corpo["break_even"]["caixa"] >= corpo["break_even"]["ebitda"]
+
+
+def test_payload_serve_a_franquia_em_parcelas_iguais(empty_data: Path) -> None:
+    """4 parcelas iguais nos meses de contrato 1..4 (M-4..M-1), junto da obra.
+
+    Antes a taxa saia INTEIRA do caixa no M-4. O payload tem de servir o cronograma
+    (nao so o total) para o operador ver quando o dinheiro sai.
+    """
+    from motor_expansao.dimensionamento.config import SIM_PARCELAS_FRANQUIA_DEFAULT
+
+    # Obra e equipamentos ZERADOS: a linha `investimento` da serie e SO a franquia.
+    corpo = _viab(obra=0, equipamentos=0, prazo_equipamentos=1)
+    inv = corpo["investimento"]
+    assert inv["parcelas_franquia"] == SIM_PARCELAS_FRANQUIA_DEFAULT == 4
+    assert inv["franquia_parcela"] == pytest.approx(inv["taxa_franquia"] / 4, abs=0.01)
+
+    pre = [linha for linha in corpo["serie_mensal"] if linha["fase"] == "pre_operacional"]
+    assert [linha["mes"] for linha in pre] == [-4, -3, -2, -1]
+    for linha in pre:
+        assert linha["investimento"] == pytest.approx(inv["franquia_parcela"], abs=0.01)
+    # A SOMA das parcelas e a taxa de franquia (nada se perde no cronograma).
+    assert sum(linha["investimento"] for linha in corpo["serie_mensal"]) == pytest.approx(
+        inv["taxa_franquia"], abs=0.01
+    )
+
+
+def test_payload_parcelas_franquia_1_reproduz_o_a_vista_sem_mexer_no_resultado(
+    empty_data: Path,
+) -> None:
+    """`parcelas_franquia=1` = regra antiga (tudo no M-4). E parcelar NAO muda resultado.
+
+    Parcelamento e timing de CAIXA: EBITDA, margem e break-even ficam identicos; so
+    TIR e VPL melhoram. Payback nao muda porque as 4 parcelas cabem na pre-abertura.
+    """
+    parcelado = _viab()
+    vista = _viab(parcelas_franquia=1)
+
+    assert vista["investimento"]["parcelas_franquia"] == 1
+    pre_p = [x for x in parcelado["serie_mensal"] if x["fase"] == "pre_operacional"]
+    pre_v = [x for x in vista["serie_mensal"] if x["fase"] == "pre_operacional"]
+    # A vista o M-4 carrega a taxa inteira a mais que os demais meses.
+    assert pre_v[0]["investimento"] - pre_v[1]["investimento"] == pytest.approx(
+        parcelado["investimento"]["taxa_franquia"], abs=0.01
+    )
+    assert len({x["investimento"] for x in pre_p}) == 1  # parcelado: 4 meses iguais
+
+    # Resultado IDENTICO.
+    for secao, chave in (
+        ("dre", "ebitda"), ("dre", "margem"), ("dre", "folha"), ("dre", "custos_op"),
+        ("break_even", "ebitda"), ("break_even", "caixa"),
+        ("retorno", "payback"), ("retorno", "retorno_anual_desalavancado"),
+    ):
+        assert parcelado[secao][chave] == pytest.approx(vista[secao][chave], abs=0.01), (
+            f"{secao}.{chave} mudou com o parcelamento (deveria ser so timing de caixa)"
+        )
+    assert parcelado["acumulado_mes_final"] == pytest.approx(
+        vista["acumulado_mes_final"], abs=0.01
+    )
+    assert parcelado["investimento"]["investimento_total"] == pytest.approx(
+        vista["investimento"]["investimento_total"], abs=0.01
+    )
+
+    # ...e o que melhora e o valor do dinheiro no tempo.
+    assert parcelado["retorno"]["tir_anual"] > vista["retorno"]["tir_anual"]
+    assert parcelado["retorno"]["vpl"] > vista["retorno"]["vpl"]
+
+
+# ===========================================================================
 # 4) Guardrail READ-ONLY ESTATICO (AST) — nenhum escritor de artefato/destruicao
 # ===========================================================================
 

@@ -135,22 +135,32 @@ SIM_IMPOSTO_FATURAMENTO = 0.16
 # CONFLITO ABERTO: o BLK-VIAB-11 (tasks/backlog.md) apurou 0,25-0,26 em 6 DREs
 # gerenciais reais (folha real R$38k-99k/mes, estavel como % da bruta, CV 0,16).
 # 0,17 fica ~no status quo (R$50.128 / R$277.676 = 18,05% no caso de referencia),
-# entao a mudanca e de ESTRUTURA (folha passa a escalar com volume), nao de nivel.
+# entao a mudanca e de ESTRUTURA, nao de nivel.
+# ATENCAO (decisao de Felipe, 2026-07-24): o percentual dimensiona a folha pelo
+# faturamento MADURO, e o valor resultante e FIXO desde o mes 1 — a folha NAO escala
+# com a rampa. Ver `Premissas.folha_fixa_mes()`. Como consequencia a folha e custo
+# FIXO e NAO entra em `fator_receita_para_ebitda`.
 # A calibracao do nivel segue pendente de gate da controladoria no BLK-VIAB-11.
 SIM_FOLHA_PCT = 0.17
 SIM_CUSTO_STUDIO = 6_000.0       # R$/mes de fopag adicional por studio extra
 SIM_STUDIOS_DEFAULT = 0          # quantidade de studios (0..3)
-# CAPEX/OPEX: Obra (equity, parcelas sem juros) x Equipamentos (financiado). Taxa de franquia
-# paga a vista no M-4 (pre-inauguracao); usada na serie de fluxo de caixa operacional.
+# CAPEX/OPEX: Obra (equity, parcelas sem juros) x Equipamentos (financiado). Taxa de
+# franquia PARCELADA sem juros junto da obra (ver SIM_PARCELAS_FRANQUIA_DEFAULT).
 # DIVERGENCIA DE FONTE: a planilha (simulador_estrutura.json, celula R10) e
 # docs/modelo_dimensionamento_expansao.md:276 dizem 140.000. O 160.000 abaixo e o
 # valor em producao e o que o comite ja viu; mantido por decisao de Felipe
 # (2026-07-24) e agora EXPOSTO no schema da API para o operador poder sobrescrever.
 SIM_TAXA_FRANQUIA = 160_000.0
 SIM_PARCELAS_OBRA_DEFAULT = 4
+# Taxa de franquia PARCELADA sem juros (decisao de Felipe, 2026-07-24). Antes saia
+# inteira do caixa no M-4; parcelada, o desembolso acompanha a obra e o payback
+# deixa de carregar uma antecipacao que o contrato nao exige.
+SIM_PARCELAS_FRANQUIA_DEFAULT = 4
 # Aluguel-teto por clusters sobre o faturamento bruto steady (substitui a inversao por margem EBITDA).
 # FIN-VIAB-01: passa a ser a UNICA definicao de aluguel-teto do sistema (tela E PDF).
-# O canonico exibido como "aluguel-teto" e o SIM_ALUGUEL_TETO_EXCECAO (30%).
+# O canonico exibido no card grande e o SIM_ALUGUEL_TETO_TETO (20%) — o limite que a
+# operacao defende. A EXCECAO (30%) e caso de excecao, nao referencia (decisao de
+# Felipe, 2026-07-24). As tres faixas seguem impressas no detalhe da tela e do PDF.
 SIM_ALUGUEL_TETO_IDEAL = 0.15
 SIM_ALUGUEL_TETO_TETO = 0.20
 SIM_ALUGUEL_TETO_EXCECAO = 0.30

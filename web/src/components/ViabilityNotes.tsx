@@ -1,4 +1,4 @@
-import { brl, pctFrac, rotuloMes } from '../lib/format'
+import { alunos, brl, pctFrac, rotuloMes } from '../lib/format'
 import type { DreViabilidade, PremissasViabilidade } from '../lib/types'
 import { Glass } from './primitives'
 
@@ -25,7 +25,7 @@ interface Secao {
   notas: Nota[]
 }
 
-function montarSecoes(p: PremissasViabilidade): Secao[] {
+function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): Secao[] {
   const mixAgr = 1 - (p.share_balcao ?? 0)
   const fatorAgr = p.ticket_agregador_fator ?? null
   const mesSteady = p.mes_referencia_steady ?? p.maturacao_meses
@@ -67,7 +67,9 @@ function montarSecoes(p: PremissasViabilidade): Secao[] {
           kpi: 'Faturamento',
           como:
             'Receita BRUTA do mês: mensalidades + anuidade + personal. É a base de ' +
-            'cálculo da folha, do IR/CSLL e do aluguel-teto.',
+            'cálculo do IR/CSLL e do aluguel-teto. A folha NÃO sai do faturamento do ' +
+            'mês: ela é dimensionada uma vez pelo faturamento MADURO e fica fixa (ver ' +
+            'Custos e impostos).',
         },
       ],
     },
@@ -92,21 +94,29 @@ function montarSecoes(p: PremissasViabilidade): Secao[] {
           como:
             `${pctFrac(p.custo_variavel_pct, 2)} da receita líquida, somando QUATRO ` +
             'linhas: royalties 8% + fundo de marketing (FPP) 2% + manutenção 2% + ' +
-            'taxas de cartão 1,05%. Escalam com a receita, então mais alunos não ' +
-            'diluem esta linha.',
+            'taxas de cartão 1,05%. São os ÚNICOS custos que escalam com a receita — ' +
+            'a folha NÃO está aqui, ela é custo fixo (ver a linha abaixo). Por serem ' +
+            'percentuais, mais alunos não diluem esta linha.',
         },
         {
-          kpi: 'Folha',
+          kpi: 'Folha (fixa desde o mês 1)',
           como:
-            `${pctFrac(p.folha_pct)} do faturamento BRUTO. Acompanha o volume: mais ` +
-            'alunos assumidos, mais folha, automático. Substituiu um valor fixo que ' +
-            'subestimava unidades de alto faturamento.',
+            `${brl(p.folha_fixa_mes, false, 2)} por mês, FIXOS desde o mês 1. O valor é ` +
+            `dimensionado uma vez — ${pctFrac(p.folha_pct)} do faturamento MADURO ` +
+            `(${brl(p.folha_base_faturamento_maduro, true)}, a casa cheia) — e é pago ` +
+            'integralmente já no primeiro mês, porque a equipe é contratada ANTES dos ' +
+            'alunos chegarem. Não acompanha a rampa: no mês 1, com a casa vazia, a ' +
+            'folha é a mesma do mês de regime pleno (só o reajuste anual a move). É ' +
+            'por isso que ela conta como custo FIXO, e não como percentual da receita ' +
+            'do mês.',
         },
         {
           kpi: 'Outros custos fixos',
           como:
             'Valor absoluto por mês, somando IPTU, água e luz, telefone, limpeza, ' +
-            'tecnologia, assessorias e outros. Não varia com o número de alunos.',
+            'tecnologia e assessorias. Não varia com o número de alunos. Somado à ' +
+            `folha (${brl(p.folha_fixa_mes, true)}) forma o custo fixo que o aluguel ` +
+            'ainda vai engrossar.',
         },
         {
           kpi: 'Aluguel',
@@ -128,9 +138,12 @@ function montarSecoes(p: PremissasViabilidade): Secao[] {
           kpi: 'EBITDA e margem',
           como:
             'Faturamento menos deduções, impostos e custos operacionais. A margem é ' +
-            'sobre a receita BRUTA. O custo é integral desde o mês 1, então o EBITDA ' +
-            'dos primeiros meses é NEGATIVO enquanto a rampa não enche a casa — isso ' +
-            'é o comportamento correto, não um defeito do gráfico.',
+            'sobre a receita BRUTA. O custo é integral desde o mês 1 — e a folha ' +
+            `(${brl(p.folha_fixa_mes, true)}/mês) entra CHEIA já no mês 1, sem ` +
+            'acompanhar a rampa — então o EBITDA dos primeiros meses é bem NEGATIVO ' +
+            'enquanto a casa não enche. A alavancagem operacional é alta: quase todo ' +
+            'o custo é fixo e cada aluno novo cai direto no resultado. Isso é o ' +
+            'comportamento correto, não um defeito do gráfico.',
         },
         {
           kpi: 'IR/CSLL',
@@ -158,7 +171,12 @@ function montarSecoes(p: PremissasViabilidade): Secao[] {
           como:
             'Alunos TOTAIS (balcão + agregadores, na mesma proporção do mix) para o ' +
             'EBITDA fechar em zero. Está na mesma unidade da demanda que você digita, ' +
-            'então dá para comparar direto.',
+            'então dá para comparar direto. A pergunta que ele responde: “montei a casa ' +
+            `para ${demandaPremissa != null ? `${alunos(demandaPremissa)} alunos` : 'a demanda assumida'}` +
+            `, com a folha de ${brl(p.folha_fixa_mes, true)}/mês já contratada — com ` +
+            'quantos eu empato?”. ' +
+            'Como a folha é fixa e não encolhe se o volume não vier, este número é ' +
+            'mais alto (e mais honesto) que o de um modelo com folha percentual.',
         },
         {
           kpi: 'Break-even de caixa',
@@ -177,7 +195,9 @@ function montarSecoes(p: PremissasViabilidade): Secao[] {
           como:
             'Mês em que o caixa ACUMULADO cruza o zero, contado desde o primeiro ' +
             'desembolso da obra (M-4). Devolve o capital investido — CAPEX mais a taxa ' +
-            'de franquia. É o único indicador que se chama payback nesta tela.',
+            'de franquia, esta última PARCELADA sem juros junto da obra (o nº de ' +
+            'parcelas está no bloco de investimento), não mais à vista no M-4. É o ' +
+            'único indicador que se chama payback nesta tela.',
         },
         {
           kpi: 'Aluguel-teto',
@@ -269,14 +289,18 @@ function montarSecoes(p: PremissasViabilidade): Secao[] {
 export function NotasMetodologicas({
   premissas,
   dre,
+  demanda = null,
 }: {
   premissas: PremissasViabilidade | null
   dre: DreViabilidade | null
+  /** `demanda_premissa` do payload — entra SÓ como rótulo na nota do break-even
+   *  (é ela que dimensiona a folha fixa). Nenhuma conta é feita aqui. */
+  demanda?: number | null
 }) {
   if (!premissas) return null
 
   const mesSteady = premissas.mes_referencia_steady ?? premissas.maturacao_meses
-  const secoes = montarSecoes(premissas)
+  const secoes = montarSecoes(premissas, demanda)
 
   return (
     <Glass style={{ padding: '19px 21px', minWidth: 0 }}>

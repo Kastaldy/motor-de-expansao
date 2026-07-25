@@ -114,6 +114,24 @@ def test_viabilidade_contrato_e_coerencia() -> None:
     assert serie[-1]["mes"] == body["premissas"]["horizonte_meses"]
     assert body["acumulado_mes_final"] == pytest.approx(serie[-1]["fcf_acumulado"])
 
+    # FOLHA FIXA desde o mes 1 (decisao de Felipe, 2026-07-24): a folha da serie NAO
+    # acompanha a rampa de alunos -- ela e dimensionada pelo faturamento MADURO e paga
+    # inteira desde o mes 1. O `dre.folha` do topo e a folha de QUALQUER mes do ano 1.
+    operacao = [linha for linha in serie if linha["fase"] == "operacao"]
+    ano1 = operacao[:12]
+    assert len({linha["folha"] for linha in ano1}) == 1, "a folha voltou a escalar"
+    assert ano1[0]["folha"] == pytest.approx(dre["folha"], abs=0.01)
+    assert ano1[0]["ebitda_mensal"] < 0  # o mes 1 nasce no vermelho por causa dela
+    assert operacao[12]["folha"] > ano1[0]["folha"]  # reajuste anual so no mes 13
+
+    # TAXA DE FRANQUIA PARCELADA (mesma decisao): N parcelas iguais nos meses de
+    # contrato 1..N, e a SOMA das parcelas == taxa_franquia.
+    n_parcelas = inv["parcelas_franquia"]
+    assert n_parcelas >= 1
+    assert inv["franquia_parcela"] == pytest.approx(inv["taxa_franquia"] / n_parcelas, abs=0.01)
+    parcelas = [linha for linha in serie if linha["mes_contrato"] <= n_parcelas]
+    assert [linha["mes_contrato"] for linha in parcelas] == list(range(1, n_parcelas + 1))
+
 
 def test_backend_e_read_only() -> None:
     """Guardrail: o backend do piloto NAO escreve artefato (READ-ONLY sobre o M1)."""

@@ -124,6 +124,9 @@ muda a metragem — até você mexer no `±`, aí o valor manual prevalece (o li
 "voltar ao p50" restaura). É um ponto de partida honesto, não uma previsão: o
 badge diz "padrão · p50" ou "ajuste manual" conforme o caso.
 
+A demanda também **dimensiona a folha** (ver a seção abaixo): é ela que define o
+tamanho da equipe que a unidade contrata para abrir a porta.
+
 ## Motor único de viabilidade
 
 Desde o ciclo **FIN-VIAB-01** existe **um** motor e **uma** série mensal. O backend
@@ -140,9 +143,39 @@ fonte, quem pode alterar). **Nenhuma fórmula financeira pode ser escrita fora d
 simulador** — se der vontade, ela já existe lá.
 
 A série é **uma linha do tempo de M-4 a M+60**: quatro meses de pré-abertura (obra,
-taxa de franquia, aluguel se já houver contrato) e sessenta de operação. O CAPEX
-aparece **inteiro** nela, então o payback do gráfico e o payback do KPI são, por
-construção, o mesmo número.
+parcelas da taxa de franquia, aluguel se já houver contrato) e sessenta de operação.
+O CAPEX aparece **inteiro** nela, então o payback do gráfico e o payback do KPI são,
+por construção, o mesmo número.
+
+### Folha — custo FIXO desde o mês 1
+
+A folha **não escala com a rampa de alunos**. Ela é dimensionada **uma vez**, por
+`SIM_FOLHA_PCT` (17%) aplicado ao faturamento **MADURO** — o de regime pleno, a preços
+do ano 1 —, e esse valor é pago **integralmente desde o mês 1**, reajustando
+anualmente como os demais custos. No caso de referência: 17% × R$ 288.257,57 =
+**R$ 49.003,79/mês**, do M1 ao M60.
+
+Antes (até 2026-07-24) ela era `17% × faturamento DO MÊS`, então encolhia junto com a
+rampa — custava R$ 15.678,87 no mês 1. Isso equivalia a supor que **se contrata gente
+na medida em que o aluno entra**, e escondia duas coisas: a queima de caixa real dos
+primeiros meses e o break-even verdadeiro. Decisão de Felipe (2026-07-24): **a equipe
+existe antes dos alunos**.
+
+Três consequências que aparecem na tela:
+
+- **A folha é custo fixo, não percentual.** O fator receita → EBITDA (`k`) **não**
+  subtrai mais a folha: passou de `0,628985` para **`0,798985`**. O bloco de custo
+  fixo passou a incluí-la (sem aluguel: R$ 38.150 → **R$ 87.153,79**).
+- **A alavancagem operacional aumentou.** Mais custo fixo e mais contribuição por
+  aluno: cada aluno vale mais no topo, e a falta de alunos dói mais embaixo.
+- **O mês 1 fica mais duro e o steady não muda.** O EBITDA do mês 1 vai de
+  −R$ 10.139,56 para **−R$ 43.464,47**; o mês 12 (steady) fica **idêntico**, porque lá
+  o faturamento já é o maduro. O que muda é a rampa e tudo que deriva dela —
+  break-even, payback, TIR, VPL.
+
+O **nível** (17%) segue pendente de gate da controladoria (o BLK-VIAB-11 apurou 25-26%
+em 6 DREs reais); a **estrutura** (fixa) está decidida. Detalhe em
+`PREMISSAS_VIABILIDADE.md` §4.1.
 
 ### Anuidade
 
@@ -174,10 +207,17 @@ faturamento não suba sem uma causa visível na tela. No caso de referência sã
 **Break-even em alunos TOTAIS.** O número é diretamente comparável com a demanda que
 você digita, porque o mix balcão/agregadores (69/31) escala junto. Antes o break-even
 variava só o balcão, com os agregadores congelados na premissa, e era exibido como se
-fosse total — dava 632 contra uma demanda de 2.304. São dois: o de **EBITDA** (cobre o
-custo operacional) e o de **caixa** (cobre também a PMT do financiamento). Os dois são
-medidos em **regime pleno**, com a anuidade dentro da receita por aluno — a mesma régua
-da DRE de steady-state, para não haver duas contas do mesmo cenário.
+fosse total — dava 632 contra uma demanda de 2.304. Hoje, no caso de referência, são
+**1.152,0 alunos totais** (margem de segurança de 2,0×). São dois: o de **EBITDA**
+(cobre o custo operacional) e o de **caixa** (cobre também a PMT do financiamento —
+1.542,4 alunos). Os dois são medidos em **regime pleno**, com a anuidade dentro da
+receita por aluno — a mesma régua da DRE de steady-state, para não haver duas contas
+do mesmo cenário.
+
+A conta usa a **folha da demanda que você assumiu**, e é isso que a torna honesta: ela
+responde "montei a casa para 2.304 alunos; com quantos eu empato?" — não "com quantos
+eu empato se a equipe também encolher junto". Enquanto a folha era percentual, o
+break-even saía otimista (840,6).
 
 **TIR e VPL.** A TIR sai do fluxo de caixa real dos 64 meses; o VPL desconta o mesmo
 fluxo a **12% a.a.** — taxa **provisória, pendente de aval do comitê** (muda o VPL, não
@@ -188,9 +228,10 @@ a TIR vem como `null` explícito, nunca como `NaN`.
 retorno de **equity** existe como visão secundária e nunca aparece no mesmo KPI.
 
 **Aluguel-teto** é % do faturamento bruto de steady-state, em três faixas — ideal 15%,
-teto 20% e exceção 30%. O exibido como "aluguel-teto" é o de **30%**, mas as **três
-faixas viajam no payload e aparecem tanto na tela quanto no PDF**: mostrar só o
-canônico esconde a régua que dá sentido a ele.
+teto 20% e exceção 30%. O exibido como "aluguel-teto" é o de **20% (o teto)**, porque o
+card tem de mostrar o limite que a operação defende; 30% é caso de exceção, não
+referência. As **três faixas viajam no payload e aparecem tanto na tela quanto no
+PDF**: mostrar só o canônico esconde a régua que dá sentido a ele.
 
 ## CAPEX, carência e reajuste
 
@@ -198,12 +239,19 @@ A sidebar tem inputs opcionais de **investimento**: obra (parcelada, sem juros),
 equipamentos (financiados no Price, com prazo e juros), **taxa de franquia** (agora
 editável — o default é R$ 160.000) e **carência de aluguel**.
 
+A **taxa de franquia é parcelada em 4× sem juros** (default), nos mesmos meses da
+obra (M-4 a M-1) — antes ela saía inteira do caixa no M-4. A pré-abertura fica plana
+em **R$ 190.000/mês** no caso de referência (obra 150.000 + franquia 40.000) em vez de
+R$ 310.000 no primeiro mês. É **só timing de caixa**: EBITDA, margem, break-even,
+payback e acumulado de 60 meses **não mudam**; só TIR (+0,33 pp) e VPL (+R$ 2.241,80),
+que são sensíveis à data de cada real.
+
 A **carência** é do motor, não pós-processamento: conta em `mes_contrato`, ou seja, a
 partir de **M-4 (entrega da unidade)**, não da abertura — que é como o contrato de
 locação costuma ser escrito.
 
-O **reajuste anual** de 4% a.a. incide sobre ticket, aluguel e custos fixos, como um
-degrau a partir do mês 13. A **PMT é nominal e não reajusta**.
+O **reajuste anual** de 4% a.a. incide sobre ticket, aluguel e custos fixos (**a folha
+inclusive**), como um degrau a partir do mês 13. A **PMT é nominal e não reajusta**.
 
 CAPEX e carência entram no **payback** e no fluxo de caixa — **não na margem**, que é
 operacional de steady-state.
@@ -216,9 +264,10 @@ a linha do zero no **payback** — área vermelha abaixo, verde acima, com o mar
 mês de virada. Reage a metragem, aluguel, demanda, CAPEX, carência e taxa de franquia.
 
 Duas coisas que o gráfico agora mostra e antes ficavam escondidas pela média de
-steady-state: o **EBITDA do mês 1 é negativo** (o custo operacional é integral desde a
-abertura, enquanto os alunos rampam por 8 meses) e há um **mês declarado de virada do
-caixa operacional** (`mes_caixa_operacional_positivo`).
+steady-state: o **EBITDA do mês 1 é bem negativo** (−R$ 43.464,47 no caso de
+referência — a folha é integral desde a abertura, enquanto os alunos rampam por 8
+meses; o mês 4 já vai a +R$ 21.522,79) e há um **mês declarado de virada do caixa
+operacional** (`mes_caixa_operacional_positivo` — mês 6 no caso de referência).
 
 ## Estrutura
 

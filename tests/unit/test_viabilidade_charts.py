@@ -22,6 +22,7 @@ from motor_expansao.dashboard.viabilidade_charts import (
     grafico_fcf_acumulado,
     grafico_fco,
     grafico_rampa_alunos,
+    limites_y_faturamento_ebitda,
     montar_payload_pdf_viabilidade,
 )
 from motor_expansao.dimensionamento.simulador import gerar_serie_mensal
@@ -360,6 +361,153 @@ def test_pdf_sem_anuidade_nao_inventa_a_linha():
     assert b"todo de mensalidades" in pdf_bytes
     assert b"Steady-state = m\xeas 8 \\(regime pleno\\)" in pdf_bytes
     assert b"R$ 6.241,94" not in pdf_bytes
+
+
+# --------------------------------------------------------------------------- #
+# FOLHA FIXA DESDE O MES 1 + FRANQUIA PARCELADA (decisoes de Felipe 2026-07-24)  #
+# --------------------------------------------------------------------------- #
+def _payload_folha_fixa():
+    """Golden Boulevard Londrina da 3a rodada: folha FIXA e franquia em 4x."""
+    payload = _payload_com_anuidade()
+    payload["premissas"] = {
+        **payload["premissas"],
+        "folha_pct": 0.17,
+        "folha_fixa_mes": 49_003.79,
+        "folha_base_faturamento_maduro": 288_257.57,
+        "folha_fixa_desde_mes_1": True,
+    }
+    # As tres parcelas FECHAM no custo_op do golden: 37.429,52 (13,05% da liquida)
+    # + 49.003,79 (folha fixa) + 68.150,00 (outros fixos 38.150 + aluguel 30.000).
+    payload["dre"] = {
+        **payload["dre"],
+        "custos_op": 154_583.31,
+        "custos_variaveis": 37_429.52,
+        "folha": 49_003.79,
+        "custos_fixos": 68_150.00,
+    }
+    payload["investimento"] = {
+        **payload["investimento"],
+        "parcelas_obra": 4,
+        "parcelas_franquia": 4,
+    }
+    return payload
+
+
+def test_render_puro_expoe_a_folha_fixa_e_o_parcelamento_da_franquia():
+    """A ponte LE as duas linhas novas do payload; nao recompoe custo nem cronograma."""
+    viab = montar_payload_pdf_viabilidade(_payload_folha_fixa(), incluir_graficos=False)
+    assert viab is not None
+    assert viab["folha"] == 49_003.79
+    assert viab["custos_variaveis"] == 37_429.52
+    assert viab["custos_fixos"] == 68_150.00
+    assert viab["custos_op"] == 154_583.31
+    assert viab["folha_pct"] == 0.17
+    assert viab["parcelas_franquia"] == 4
+    assert viab["taxa_franquia"] == 160_000.0
+
+
+def test_pdf_diz_que_a_folha_e_fixa_desde_o_mes_1():
+    """O defeito reportado era o leitor supor que a folha escala com a rampa."""
+    from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_classico
+
+    viab = montar_payload_pdf_viabilidade(_payload_folha_fixa())
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        {"lat": -23.31, "lng": -51.16, "nome_municipio": "LONDRINA", "uf": "PR", "raio_km": 1.5},
+        None,
+        viabilidade=viab,
+    )
+    assert b"/Count 10" in pdf_bytes             # contagem/ordem de paginas INALTERADAS
+    assert b"R$ 49.003,79" in pdf_bytes          # a folha, agora visivel como linha
+    # "mes" sai acentuado em latin-1; o fpdf2 escapa os parenteses do literal PDF.
+    assert b"FIXA desde o m\xeas 1" in pdf_bytes
+    assert b"dimensionada por 17,0% do faturamento maduro" in pdf_bytes
+    assert b"R$ 37.429,52" in pdf_bytes          # custo variavel
+    assert b"R$ 68.150,00" in pdf_bytes          # fixos + aluguel
+
+
+def test_pdf_diz_que_a_taxa_de_franquia_e_parcelada_sem_juros():
+    """A franquia deixou de sair inteira no M-4: 4x sem juros, junto da obra."""
+    from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_classico
+
+    viab = montar_payload_pdf_viabilidade(_payload_folha_fixa())
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        {"lat": -23.31, "lng": -51.16, "nome_municipio": "LONDRINA", "uf": "PR", "raio_km": 1.5},
+        None,
+        viabilidade=viab,
+    )
+    assert b"/Count 10" in pdf_bytes
+    assert b"parcelada em 4x sem juros" in pdf_bytes
+    assert b"R$ 160.000,00 parcelada" in pdf_bytes
+
+
+def test_pdf_sem_parcelas_franquia_nao_afirma_parcelamento():
+    """Degradacao graciosa: sem o campo novo o PDF nao inventa numero de parcelas."""
+    from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_classico
+
+    payload = _payload_folha_fixa()
+    payload["investimento"] = {
+        k: v for k, v in payload["investimento"].items() if k != "parcelas_franquia"
+    }
+    viab = montar_payload_pdf_viabilidade(payload)
+    assert viab is not None and viab["parcelas_franquia"] is None
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        {"lat": -23.31, "lng": -51.16, "nome_municipio": "LONDRINA", "uf": "PR", "raio_km": 1.5},
+        None,
+        viabilidade=viab,
+    )
+    assert b"/Count 10" in pdf_bytes
+    assert b"sem juros" not in pdf_bytes
+    assert b"Taxa de franquia" not in pdf_bytes
+    # A linha de financiamento continua inteira.
+    assert b"investimento total" in pdf_bytes
+
+
+def test_pdf_sem_folha_no_payload_nao_inventa_a_linha():
+    """Payload legado (sem `dre.folha`) sai exatamente como antes."""
+    from motor_expansao.dashboard.censo_report import gerar_pdf_relatorio_pontual_classico
+
+    viab = montar_payload_pdf_viabilidade(_payload_v1())
+    assert viab is not None and viab["folha"] is None
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        {"lat": -23.31, "lng": -51.16, "nome_municipio": "LONDRINA", "uf": "PR", "raio_km": 1.5},
+        None,
+        viabilidade=viab,
+    )
+    assert b"/Count 10" in pdf_bytes
+    assert b"FIXA desde o m\xeas 1" not in pdf_bytes
+
+
+def test_eixo_do_ebitda_acomoda_o_mes_1_mais_negativo():
+    """O vale do mes 1 dobrou de profundidade; o eixo tem de descer com ele.
+
+    Regressao do risco apontado no FIN-VIAB-01 (3a rodada): com a folha fixa o EBITDA do
+    mes 1 caiu de -R$10.139,56 para -R$43.464,47.
+    """
+    fat = [36_032.20, 288_257.57]
+    lo, hi = limites_y_faturamento_ebitda(fat, [-43_464.47, 113_159.69])
+    assert lo < -43_464.47          # o vale cabe, com folga
+    assert hi > 288_257.57          # e a barra mais alta nao e cortada
+    lo_antigo, _ = limites_y_faturamento_ebitda(fat, [-10_139.56, 113_159.69])
+    assert lo < lo_antigo           # o piso desce junto com o vale
+    # Sem dado utilizavel nao se inventa limite (autoscale do matplotlib decide).
+    assert limites_y_faturamento_ebitda([], []) is None
+    assert limites_y_faturamento_ebitda([0.0], [0.0]) is None
+
+
+def test_grafico_faturamento_ebitda_muda_com_a_profundidade_do_vale():
+    """O PNG reflete o mes 1 mais negativo (nao e um render insensivel ao dado)."""
+    base = [
+        {"mes": t, "fase": "operacao", "faturamento_mensal": 36_032.20 * min(t, 8),
+         "ebitda_mensal": 113_159.69 if t >= 8 else -10_139.56}
+        for t in range(1, 13)
+    ]
+    fundo = [{**linha, "ebitda_mensal": -43_464.47 if linha["mes"] < 8 else 113_159.69}
+             for linha in base]
+    raso = grafico_faturamento_ebitda(base)
+    profundo = grafico_faturamento_ebitda(fundo)
+    _assert_png_valido(raso)
+    _assert_png_valido(profundo)
+    assert raso != profundo
 
 
 def test_pdf_aceita_o_payload_v1_cru():

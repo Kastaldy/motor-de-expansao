@@ -1017,12 +1017,28 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
             viabilidade, "mes_referencia_steady", "premissas", "mes_referencia_steady"
         ),
         "ebitda_mensal": _viab_campo(viabilidade, "ebitda_mensal", "dre", "ebitda"),
+        # Composicao do custo operacional do mes de steady. A folha e a unica destas linhas
+        # que mudou de NATUREZA (decisao de Felipe, 2026-07-24): custo FIXO dimensionado
+        # pelo faturamento MADURO e pago integralmente desde o mes 1, nao mais percentual
+        # da receita do mes. So LEITURA — o slide imprime, nao recompoe o custo.
+        "custos_op": _viab_campo(viabilidade, "custos_op", "dre", "custos_op"),
+        "custos_variaveis": _viab_campo(viabilidade, "custos_variaveis", "dre", "custos_variaveis"),
+        "folha": _viab_campo(viabilidade, "folha", "dre", "folha"),
+        "custos_fixos": _viab_campo(viabilidade, "custos_fixos", "dre", "custos_fixos"),
+        "folha_pct": _viab_campo(viabilidade, "folha_pct", "premissas", "folha_pct"),
         "faixa_p10": _viab_campo(viabilidade, "faixa_p10", "faixa_alunos", "p10"),
         "faixa_p90": _viab_campo(viabilidade, "faixa_p90", "faixa_alunos", "p90"),
         "pmt_mensal": _viab_campo(viabilidade, "pmt_mensal", "investimento", "pmt"),
         "juros_totais": _viab_campo(viabilidade, "juros_totais", "investimento", "juros_totais"),
         "investimento_total": _viab_campo(
             viabilidade, "investimento_total", "investimento", "investimento_total"
+        ),
+        # Taxa de franquia + parcelamento sem juros. `parcelas_franquia` e campo NOVO do
+        # payload: quando o backend ainda nao o manda, a linha simplesmente nao afirma
+        # parcelamento (degradacao graciosa, nunca um numero assumido).
+        "taxa_franquia": _viab_campo(viabilidade, "taxa_franquia", "investimento", "taxa_franquia"),
+        "parcelas_franquia": _viab_campo(
+            viabilidade, "parcelas_franquia", "investimento", "parcelas_franquia"
         ),
         "tir_anual": _viab_campo(viabilidade, "tir_anual", "retorno", "tir_anual"),
         "vpl": _viab_campo(viabilidade, "vpl", "retorno", "vpl"),
@@ -1062,6 +1078,16 @@ def _viab_maior_que_zero(value: Any) -> bool:
         return float(value) > 0.0
     except (TypeError, ValueError):
         return False
+
+
+def _viab_inteiro(value: Any) -> int | None:
+    """int do campo do payload, ou None quando ausente/NaN/nao numerico."""
+    if not _viab_tem(value):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _viab_linha_receita(viabilidade: dict[str, Any]) -> str | None:
@@ -1105,6 +1131,82 @@ def _viab_linha_receita(viabilidade: dict[str, Any]) -> str | None:
     )
 
 
+def _viab_linha_custos(viabilidade: dict[str, Any]) -> str | None:
+    """Linha que descreve o CUSTO do mes de steady, com a natureza real da folha.
+
+    A folha deixou de ser percentual do faturamento DO MES e virou custo FIXO: e
+    dimensionada pelo faturamento MADURO (regime pleno) e paga integralmente desde o mes 1
+    (decisao de Felipe, 2026-07-24). Sem dizer isso, o leitor supunha que a folha encolhia
+    junto com a rampa — que era exatamente o defeito reportado ("a folha esta escalando
+    junto com a unidade"). Consequencia visivel no proprio relatorio: o EBITDA do mes 1
+    fica bem mais negativo e o break-even sobe.
+
+    Tudo LEITURA do payload (`dre.custos_variaveis`/`dre.folha`/`dre.custos_fixos` e
+    `premissas.folha_pct`). Sem a folha no payload a linha nao existe (payload legado sai
+    exatamente como antes).
+
+    A frase e deliberadamente curta: o bloco de detalhe cabe em ~9 linhas RENDERIZADAS
+    acima do rodape (auto_page_break OFF), e cada quebra a mais empurra o texto para cima
+    do credito Ultra. Ao mexer aqui, REGERAR o PDF e conferir as coordenadas Y.
+    """
+    folha = viabilidade.get("folha")
+    if not _viab_maior_que_zero(folha):
+        return None
+
+    pct = viabilidade.get("folha_pct")
+    base = (
+        f"por {_viab_pct(pct)} do faturamento maduro"
+        if _viab_tem(pct)
+        else "pelo faturamento maduro"
+    )
+    linha = f"Folha {_viab_brl(folha)}/mês FIXA desde o mês 1, dimensionada {base}."
+
+    # Composicao do custo do mes de steady (a folha nao se repete: acabou de ser dita).
+    partes: list[str] = []
+    variaveis = viabilidade.get("custos_variaveis")
+    if _viab_tem(variaveis):
+        partes.append(f"variáveis {_viab_brl(variaveis)}")
+    partes.append("folha")
+    fixos = viabilidade.get("custos_fixos")
+    if _viab_tem(fixos):
+        partes.append(f"fixos e aluguel {_viab_brl(fixos)}")
+    if len(partes) == 1:
+        return linha
+    total = viabilidade.get("custos_op")
+    rotulo = (
+        f"Custo operacional {_viab_brl(total)}/mês" if _viab_tem(total) else "Custo operacional"
+    )
+    return f"{linha} {rotulo}: " + " + ".join(partes) + "."
+
+
+def _viab_linha_investimento(viabilidade: dict[str, Any]) -> str | None:
+    """Linha de financiamento/investimento, incluindo o parcelamento da taxa de franquia.
+
+    A taxa de franquia e PARCELADA sem juros (4x por decisao de Felipe, 2026-07-24; antes
+    saia inteira do caixa no M-4, junto da 1a parcela da obra). `parcelas_franquia` e campo
+    NOVO do payload: quando ele nao vem, a frase do parcelamento simplesmente nao entra —
+    o PDF nunca afirma um numero de parcelas que o backend nao mandou.
+    """
+    pmt = viabilidade.get("pmt_mensal")
+    juros = viabilidade.get("juros_totais")
+    investimento = viabilidade.get("investimento_total")
+    if not any(_viab_tem(v) for v in (pmt, juros, investimento)):
+        return None
+    texto = (
+        f"Financiamento: PMT {_viab_brl(pmt)}/mês  |  juros totais do contrato "
+        f"{_viab_brl(juros)}  |  investimento total {_viab_brl(investimento)}."
+    )
+
+    n = _viab_inteiro(viabilidade.get("parcelas_franquia"))
+    if n is None or n < 1:
+        return texto
+    taxa = viabilidade.get("taxa_franquia")
+    rotulo = f"Taxa de franquia {_viab_brl(taxa)}" if _viab_tem(taxa) else "Taxa de franquia"
+    if n <= 1:
+        return f"{texto} {rotulo} paga de uma vez, no 1o mês de contrato."
+    return f"{texto} {rotulo} parcelada em {n}x sem juros, junto da obra."
+
+
 def _viab_linhas_detalhe(viabilidade: dict[str, Any]) -> list[str]:
     """Linhas de texto sob os cards. So entra a linha cujo dado veio no payload."""
     linhas: list[str] = []
@@ -1113,6 +1215,11 @@ def _viab_linhas_detalhe(viabilidade: dict[str, Any]) -> list[str]:
     receita = _viab_linha_receita(viabilidade)
     if receita:
         linhas.append(receita)
+
+    # Composicao do custo, com a folha declarada como FIXA desde o mes 1.
+    custos = _viab_linha_custos(viabilidade)
+    if custos:
+        linhas.append(custos)
 
     unidade = _viab_unidade_breakeven(viabilidade)
     caixa = viabilidade.get("breakeven_caixa")
@@ -1134,14 +1241,9 @@ def _viab_linhas_detalhe(viabilidade: dict[str, Any]) -> list[str]:
             f"  |  exceção {_viab_brl(faixas.get('excecao'))} - o card acima traz o canônico."
         )
 
-    pmt = viabilidade.get("pmt_mensal")
-    juros = viabilidade.get("juros_totais")
-    investimento = viabilidade.get("investimento_total")
-    if any(_viab_tem(v) for v in (pmt, juros, investimento)):
-        linhas.append(
-            f"Financiamento: PMT {_viab_brl(pmt)}/mês  |  juros totais do contrato "
-            f"{_viab_brl(juros)}  |  investimento total {_viab_brl(investimento)}."
-        )
+    investimento_linha = _viab_linha_investimento(viabilidade)
+    if investimento_linha:
+        linhas.append(investimento_linha)
 
     tir = viabilidade.get("tir_anual")
     vpl = viabilidade.get("vpl")

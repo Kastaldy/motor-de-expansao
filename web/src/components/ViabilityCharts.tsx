@@ -303,7 +303,10 @@ export function CascataDre({
     { rotulo: 'Deduções', valor: d.deducoes, tipo: 'neg' as const },
     { rotulo: 'Impostos', valor: d.impostos, tipo: 'neg' as const },
     { rotulo: 'Custo variável', valor: d.custos_variaveis, tipo: 'neg' as const },
-    { rotulo: 'Folha', valor: d.folha, tipo: 'neg' as const },
+    // "Folha (fixa)": o rotulo tem de dizer a natureza do custo. A folha e
+    // dimensionada pelo faturamento MADURO e paga integralmente desde o mes 1 —
+    // nao acompanha a rampa (decisao de Felipe, 2026-07-24).
+    { rotulo: 'Folha (fixa)', valor: d.folha, tipo: 'neg' as const },
     { rotulo: 'Fixos + aluguel', valor: d.custos_fixos, tipo: 'neg' as const },
     { rotulo: 'EBITDA', valor: d.ebitda, tipo: 'res' as const },
     { rotulo: 'IR/CSLL', valor: d.ir_csll, tipo: 'neg' as const },
@@ -497,8 +500,16 @@ export function CascataDre({
         Receita líquida {brl(d.receita_liquida)} (bruto − deduções) e receita após impostos{' '}
         {brl(d.receita_pos_impostos)} vêm prontas do motor. Custo operacional {brl(d.custos_op)} =
         variável {brl(d.custos_variaveis)} + folha {brl(d.folha)} + fixos com aluguel{' '}
-        {brl(d.custos_fixos)}. A despesa financeira (juros da parcela) aparece à parte: o
-        resultado após IR é DESALAVANCADO, antes da PMT.
+        {brl(d.custos_fixos)}. A <strong>folha é FIXA desde o mês 1</strong>
+        {premissas
+          ? `: ${brl(premissas.folha_fixa_mes, false, 2)}/mês, dimensionados por ${pctFrac(
+              premissas.folha_pct,
+            )} do faturamento MADURO (${brl(premissas.folha_base_faturamento_maduro, true)})`
+          : ''}{' '}
+        — a equipe é contratada antes dos alunos, então ela NÃO acompanha a rampa e só o
+        reajuste anual a move. Neste mês de regime pleno o valor coincide com a base; nos
+        meses de rampa é ela que segura o EBITDA no negativo. A despesa financeira (juros da
+        parcela) aparece à parte: o resultado após IR é DESALAVANCADO, antes da PMT.
       </p>
     </Glass>
   )

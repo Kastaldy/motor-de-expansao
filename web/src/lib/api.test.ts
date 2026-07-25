@@ -28,6 +28,9 @@ const INPUTS: ViabilidadeIn = {
   equipamentos: 1400000,
   prazo_equipamentos: 60,
   juros_equipamentos_am: 0.018,
+  // Franquia parcelada 4x sem juros (default do motor; explicito aqui p/ espelhar
+  // o caso golden). So timing de caixa — nao muda EBITDA/margem/break-even.
+  parcelas_franquia: 4,
 } as ViabilidadeIn
 
 /** Limite conservador: metade do orçamento de ~16 KB do h11. */

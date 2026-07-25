@@ -17,9 +17,33 @@ DUAS DECISOES TOMADAS POR ELE (nao rediscutir aqui):
   (b) FORMATO: XLSX com formulas vivas (nao valores).
 
 INTERRUPTOR DE MODO DA FOLHA: `Folha!$B$5` tem validacao de lista
-["percentual da receita", "quadro de pessoal"] e DEFAULT "percentual da receita",
-para o arquivo abrir reproduzindo o motor ao centavo. O investidor pode abrir o
-detalhe do quadro sem que o arquivo passe a divergir do sistema por default.
+["percentual do faturamento maduro", "quadro de pessoal"] e DEFAULT
+"percentual do faturamento maduro", para o arquivo abrir reproduzindo o motor ao
+centavo. O investidor pode abrir o detalhe do quadro sem que o arquivo passe a
+divergir do sistema por default.
+
+FIN-VIAB-01, 3a rodada (decisoes de Felipe, 2026-07-24) — DUAS MUDANCAS DE PRODUTO
+que quebravam formula por formula e foram re-espelhadas aqui:
+
+  (1) FOLHA FIXA DESDE O MES 1. Antes a DRE calculava a folha como
+      `folha_pct x faturamento DO MES`, entao ela encolhia junto com a rampa —
+      equivalia a supor que se contrata gente na medida em que o aluno entra. Agora
+      a folha e dimensionada UMA vez pelo faturamento MADURO (aba Premissas expoe a
+      base e o R$ resultante em celulas proprias) e a DRE referencia essa UNICA
+      celula em todos os 64 meses, so multiplicada pelo reajuste anual de custos.
+      Consequencias nas formulas: o `k` (receita -> EBITDA) NAO subtrai mais a folha
+      (`=(1-deducoes)*(1-impostos-cvar)`), e o break-even da aba Resumo passa a somar
+      a folha no custo fixo. Os dois modos do interruptor sao agora FIXOS no tempo:
+      "percentual do faturamento maduro" e "quadro de pessoal".
+
+  (2) TAXA DE FRANQUIA PARCELADA (default 4x sem juros). O fluxo de caixa mostra a
+      PARCELA nos meses de contrato 1..N (M-4..M-1 com N=4), nao a taxa inteira no
+      M-4; a aba Investimento ganhou "Parcelas da franquia" e "Valor da parcela".
+
+E um pedido cosmetico do mesmo dia: na aba Resumo, todo valor que e SAIDA DE
+DINHEIRO aparece com a FONTE em VERMELHO. Onde o numero pode alternar de sinal
+(EBITDA, FCF, VPL, TIR, retorno) a cor vem de formatacao CONDICIONAL, para a
+planilha nao mentir quando o valor virar.
 
 A aba `Afericao` e a defesa do arquivo: lado a lado, o valor que o MOTOR Python
 calculou (estatico, escrito por nos) e o valor que a FORMULA da planilha produz.
@@ -52,6 +76,7 @@ from motor_expansao.dimensionamento.config import (
     SIM_ALUGUEL_TETO_IDEAL,
     SIM_ALUGUEL_TETO_TETO,
     SIM_MARGEM_VIAVEL_MIN,
+    SIM_PARCELAS_FRANQUIA_DEFAULT,
     SIM_PARCELAS_OBRA_DEFAULT,
     SIM_PAYBACK_VIAVEL_MAX,
     SIM_TAXA_FRANQUIA,
@@ -109,6 +134,9 @@ _FMT_ALUNOS = "#,##0.0"
 _FMT_INT = "#,##0"
 
 _CINZA_TRAVADO = "FFE2E2E8"
+# Vermelho de FONTE (o `_VERMELHO_CLR` do export estatico e cor de PREENCHIMENTO).
+# Pedido de Felipe (2026-07-24): na aba Resumo, saida de dinheiro em texto vermelho.
+_VERMELHO_FONTE = "FFC00000"
 
 _BORDA_FINA = Border(
     left=Side(style="thin", color="FFB0B0BC"),
@@ -175,7 +203,11 @@ _NOTA_ESTIMATIVA = (
     "sistema. Substitua pelo valor real da unidade antes de defender o número."
 )
 
-_MODOS_FOLHA = ("percentual da receita", "quadro de pessoal")
+# Os DOIS modos produzem uma folha FIXA no tempo (decisao de Felipe, 2026-07-24). O
+# rotulo antigo do primeiro modo era "percentual da receita", o que passou a mentir
+# quando a folha deixou de escalar com a receita do mes: o percentual dimensiona a
+# folha pelo faturamento MADURO e o valor resultante vale desde o mes 1.
+_MODOS_FOLHA = ("percentual do faturamento maduro", "quadro de pessoal")
 _MODOS_RAMPA = ("demanda total", "apenas balcão")
 _SIM_NAO = ("Sim", "Não")
 
@@ -200,7 +232,8 @@ _FOLHA_AFER_ROW = _FOLHA_TOTAL_ROW + 2  # 3 linhas de afericao a partir daqui
 _INVEST_ROW_INI = 5
 _INVEST_ORDEM = (
     "obra", "parcelas_obra", "obra_parcela", "equip", "prazo_equip", "juros_am",
-    "taxa_franquia", "capex_total", "investimento_total", "equity", "equip_financiado",
+    "taxa_franquia", "parcelas_franquia", "franquia_parcela",
+    "capex_total", "investimento_total", "equity", "equip_financiado",
     "pmt", "total_pago", "juros_totais", "saldo_m60",
 )
 _INVEST_ROW = {k: _INVEST_ROW_INI + i for i, k in enumerate(_INVEST_ORDEM)}
@@ -241,7 +274,7 @@ _DRE_ORDEM: tuple[tuple[str, str, str, bool, bool], ...] = (
     ("cvar_marketing", "Marketing / FPP", "brl", True, False),
     ("cvar_manutencao", "Manutenção", "brl", True, False),
     ("cvar_cartoes", "Taxas de cartão", "brl", True, False),
-    ("folha", "(-) Folha", "brl", False, False),
+    ("folha", "(-) Folha (FIXA desde o mês 1)", "brl", False, False),
     ("outros_total", "(-) Outros custos fixos", "brl", False, False),
     ("of_iptu", "IPTU", "brl", True, False),
     ("of_agua_luz", "Água e luz", "brl", True, False),
@@ -279,7 +312,7 @@ _FLX_ORDEM: tuple[tuple[str, str, str, bool, bool], ...] = (
     ("amortizacao", "Amortização do principal", "brl", True, False),
     ("saldo_final", "Saldo devedor no fim do mês", "brl", True, False),
     ("inv_obra", "Obra (parcela do mês)", "brl", True, False),
-    ("inv_franquia", "Taxa de franquia", "brl", True, False),
+    ("inv_franquia", "Taxa de franquia (parcela do mês)", "brl", True, False),
     ("inv_equip_vista", "Equipamentos à vista (quando não financiados)", "brl", True, False),
     ("inv_capex_renov", "CAPEX de renovação", "brl", True, False),
     ("investimento", "(-) Investimento do mês", "brl", False, False),
@@ -536,11 +569,20 @@ def _bloco_custo_variavel(p: Premissas) -> list[dict[str, Any]]:
 
 
 def _bloco_folha(p: Premissas) -> list[dict[str, Any]]:
+    """Folha FIXA no tempo, dimensionada pelo faturamento MADURO.
+
+    As duas celulas novas (`fat_maduro` e `folha_fixa`) existem para a DRE referenciar
+    UMA celula em todos os 64 meses, em vez de recalcular a folha coluna por coluna a
+    partir do faturamento daquele mes — que era exatamente o defeito reportado ("a
+    folha esta escalando junto com a unidade").
+    """
     return [
-        _e("folha_pct", "Folha como % da receita bruta", valor=float(p.folha_pct),
-           unidade="% da bruta", fonte="config.py SIM_FOLHA_PCT", fmt=_FMT_PCT2,
+        _e("folha_pct", "Folha como % do faturamento MADURO", valor=float(p.folha_pct),
+           unidade="% do maduro", fonte="config.py SIM_FOLHA_PCT", fmt=_FMT_PCT2,
            quem=_QUEM_CONTROLADORIA,
-           nota="Conflito aberto (BLK-VIAB-11): 6 DREs gerenciais reais apuraram 0,25-0,26. "
+           nota="O percentual DIMENSIONA a folha pelo faturamento de regime pleno; o R$ "
+                "resultante é FIXO desde o mês 1 (decisão de Felipe, 2026-07-24). "
+                "Conflito aberto (BLK-VIAB-11): 6 DREs gerenciais reais apuraram 0,25-0,26. "
                 "O 0,17 mantém o nível do status quo; a calibração segue pendente de gate."),
         _e("modo_folha", "Modo da folha (interruptor)", formula=f"={ABA_FOLHA}!$B${_FOLHA_MODO_ROW}",
            unidade="lista", fonte=f"Aba {ABA_FOLHA}, célula B{_FOLHA_MODO_ROW} (validação de lista)",
@@ -549,10 +591,22 @@ def _bloco_folha(p: Premissas) -> list[dict[str, Any]]:
            formula=f"={ABA_FOLHA}!$E${_FOLHA_TOTAL_ROW}", unidade="R$/mês",
            fonte=f"Aba {ABA_FOLHA} (soma do quadro editável)", quem=_QUEM_DERIVADO,
            kind=_DERIV, fmt=_FMT_CONTABIL),
-        _e("folha_efetiva_pct", "Folha % efetiva no modelo",
-           formula='=IF({modo_folha}="quadro de pessoal",0,{folha_pct})', unidade="% da bruta",
-           fonte="Derivado: no modo quadro a folha vira custo fixo absoluto",
-           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_PCT2),
+        _e("fat_maduro", "Faturamento MADURO (base de dimensionamento da folha)",
+           formula="={demanda}*{receita_por_aluno}+{personal_mes}", unidade="R$/mês",
+           fonte="Derivado: regime pleno a preços do ano 1 (casa cheia, anuidade em cobrança)",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL,
+           nota="A PREÇOS DO ANO 1, de propósito: o reajuste anual de custos entra uma única "
+                "vez, na linha da DRE, e não duas vezes (aqui e lá)."),
+        _e("folha_fixa", "Folha mensal FIXA (vale desde o mês 1)",
+           formula='=IF({modo_folha}="quadro de pessoal",{folha_quadro_total},'
+                   "{folha_pct}*{fat_maduro})",
+           unidade="R$/mês",
+           fonte="Derivado: os DOIS modos do interruptor são fixos no tempo",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL,
+           nota="A equipe existe ANTES dos alunos: a folha é paga integralmente desde o mês 1 "
+                "e a DRE lê esta única célula nos 64 meses, só multiplicada pelo reajuste "
+                "anual de custos. Antes ela era % do faturamento DO MÊS e encolhia com a "
+                "rampa, o que subestimava o EBITDA do mês 1 e o break-even."),
     ]
 
 
@@ -601,8 +655,9 @@ def _bloco_custos_fixos(p: Premissas) -> list[dict[str, Any]]:
     return [
         *of,
         _e("outros_total", "Outros fixos (total)", formula=f"=SUM({{RANGE:{_OF_KEY_INI}:{_OF_KEY_FIM}}})",
-           unidade="R$/mês", fonte="Derivado (soma das 7 linhas acima)", quem=_QUEM_DERIVADO,
-           kind=_DERIV, fmt=_FMT_CONTABIL),
+           unidade="R$/mês",
+           fonte=f"Derivado (soma das {len(_OUTROS_FIXOS_DECOMP)} linhas acima)",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
         _e("aluguel", "Aluguel", valor=float(p.aluguel_mes), unidade="R$/mês",
            fonte="Entrada do operador (imóvel negociado)", fmt=_FMT_CONTABIL),
         _e("carencia", "Carência de aluguel (contada de M-4)",
@@ -613,16 +668,21 @@ def _bloco_custos_fixos(p: Premissas) -> list[dict[str, Any]]:
            fonte="config.py SIM_CUSTO_PRE_OPERACIONAL_MES", fmt=_FMT_CONTABIL,
            nota="Default ZERO de propósito: torna explícito que hoje o modelo assume "
                 "ausência total de custo pré-operacional."),
-        _e("custo_fixo_base", "Custo fixo base (sem aluguel)",
-           formula='={outros_total}+IF({modo_folha}="quadro de pessoal",'
-                   "{folha_quadro_total},0)",
+        _e("custo_fixo_total", "Custo fixo total, sem aluguel (outros fixos + folha)",
+           formula="={outros_total}+{folha_fixa}",
            unidade="R$/mês", fonte="Derivado (base do break-even)", quem=_QUEM_DERIVADO,
-           kind=_DERIV, fmt=_FMT_CONTABIL),
+           kind=_DERIV, fmt=_FMT_CONTABIL,
+           nota="A folha entra AQUI, no custo fixo, porque deixou de ser percentual da "
+                "receita do mês (decisão de Felipe, 2026-07-24). É por isso que o "
+                "break-even subiu: a folha não é mais diluída pelo volume."),
         _e("k_ebitda", "Fator receita -> EBITDA (k)",
-           formula="=(1-{devolucoes})*(1-{impostos_total}-{cvar_total})-{folha_efetiva_pct}",
+           formula="=(1-{devolucoes})*(1-{impostos_total}-{cvar_total})",
            unidade="R$ por R$ de bruta",
            fonte="Derivado: quanto de cada R$ 1 de bruta sobra antes do custo fixo",
-           quem=_QUEM_DERIVADO, kind=_DERIV, fmt="0.000000"),
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt="0.000000",
+           nota="A FOLHA NÃO ENTRA MAIS AQUI (era subtraída como folha_pct). Ela virou "
+                "custo FIXO, dimensionado pelo faturamento maduro — ver 'Folha mensal FIXA'. "
+                "Por isso k passou de 0,628985 para 0,798985."),
     ]
 
 
@@ -634,6 +694,7 @@ def _bloco_investimento(
     prazo_equipamentos: int,
     juros_equipamentos_am: float,
     taxa_franquia: float,
+    parcelas_franquia: int,
 ) -> list[dict[str, Any]]:
     return [
         _e("obra", "Obra (equity, parcelada sem juros)", valor=float(obra), unidade="R$",
@@ -646,12 +707,22 @@ def _bloco_investimento(
            unidade="meses", fonte="Entrada do operador", fmt=_FMT_INT),
         _e("juros_am", "Juros do financiamento", valor=float(juros_equipamentos_am),
            unidade="% a.m.", fonte="Entrada do operador (proposta do banco)", fmt=_FMT_PCT3),
-        _e("taxa_franquia", "Taxa de franquia (à vista no M-4)", valor=float(taxa_franquia),
+        _e("taxa_franquia", "Taxa de franquia (parcelada sem juros)", valor=float(taxa_franquia),
            unidade="R$", fonte="config.py SIM_TAXA_FRANQUIA", fmt=_FMT_CONTABIL,
            quem=_QUEM_FRANQUEADORA,
            nota="Divergência de fonte registrada: a planilha original (célula R10) e o doc "
                 "do modelo dizem R$ 140.000. R$ 160.000 é o valor em produção e o que o "
                 "comitê já viu (decisão de Felipe, 2026-07-24)."),
+        _e("parcelas_franquia", "Parcelas da taxa de franquia", valor=int(parcelas_franquia),
+           unidade="meses", fonte="config.py SIM_PARCELAS_FRANQUIA_DEFAULT", fmt=_FMT_INT,
+           quem=_QUEM_FRANQUEADORA,
+           nota="Parcelada SEM JUROS, junto da obra: as parcelas caem nos meses de CONTRATO "
+                "1..N (M-4..M-1 com N=4), não a taxa inteira no M-4 (decisão de Felipe, "
+                "2026-07-24). É só TIMING de caixa — não muda EBITDA nem break-even."),
+        _e("franquia_parcela", "Valor da parcela da franquia",
+           formula="=IF({taxa_franquia}>0,{taxa_franquia}/MAX({parcelas_franquia},1),0)",
+           unidade="R$/mês", fonte="Derivado (sem juros: divisão simples)",
+           quem=_QUEM_DERIVADO, kind=_DERIV, fmt=_FMT_CONTABIL),
         _e("equip_financiado", "Principal financiado",
            formula="=IF(AND({equip}>0,{prazo_equip}>0),{equip},0)", unidade="R$",
            fonte="Derivado (sem prazo, o equipamento é pago à vista no M-1)",
@@ -786,6 +857,7 @@ def _blocos_premissas(
     prazo_equipamentos: int,
     juros_equipamentos_am: float,
     taxa_franquia: float,
+    parcelas_franquia: int,
 ) -> list[tuple[str, list[dict[str, Any]]]]:
     """Especificacao declarativa da aba Premissas, bloco a bloco.
 
@@ -806,6 +878,7 @@ def _blocos_premissas(
                 obra=obra, parcelas_obra=parcelas_obra, equipamentos=equipamentos,
                 prazo_equipamentos=prazo_equipamentos,
                 juros_equipamentos_am=juros_equipamentos_am, taxa_franquia=taxa_franquia,
+                parcelas_franquia=parcelas_franquia,
             ),
         ),
         ("Anuidade (taxa de manutenção)", _bloco_anuidade(p)),
@@ -927,8 +1000,13 @@ def _write_aba_folha(wb: openpyxl.Workbook, p: Premissas, refs: dict[str, str],
     """Quadro de pessoal EDITAVEL + interruptor de modo da folha.
 
     O total do quadro alimenta a DRE SOMENTE quando o interruptor esta em
-    "quadro de pessoal". O default e "percentual da receita" para o arquivo abrir
-    reproduzindo o motor ao centavo (decisao de Felipe, 2026-07-24).
+    "quadro de pessoal". O default e "percentual do faturamento maduro" para o arquivo
+    abrir reproduzindo o motor ao centavo (decisao de Felipe, 2026-07-24).
+
+    Nos DOIS modos a folha e FIXA no tempo: no modo percentual ela e
+    `folha_pct x faturamento MADURO` (nao o faturamento do mes), no modo quadro e o
+    total desta aba. Quem monta o valor unico e a celula "Folha mensal FIXA" da aba
+    Premissas; esta aba so alimenta um dos dois lados do interruptor.
     """
     ws = wb.create_sheet(ABA_FOLHA)
     _write_header(ws, "FOLHA DE PAGAMENTO — quadro de pessoal editável", n_cols=len(_FOLHA_COLS))
@@ -955,10 +1033,12 @@ def _write_aba_folha(wb: openpyxl.Workbook, p: Premissas, refs: dict[str, str],
     _estilo_valor(cel_modo, _EDIT, None)
     cel_modo.alignment = Alignment(horizontal="left", vertical="center")
     cel_modo.comment = Comment(
-        'DEFAULT "percentual da receita": nesse modo a DRE usa folha_pct x faturamento '
-        "bruto e o arquivo reproduz o motor do sistema ao centavo. Troque para "
-        '"quadro de pessoal" para a DRE passar a usar o TOTAL desta aba — aí o arquivo '
-        "passa a refletir a folha real e pode divergir do sistema de propósito.",
+        'DEFAULT "percentual do faturamento maduro": nesse modo a folha é '
+        "folha_pct x faturamento de REGIME PLENO — um valor único, pago integralmente "
+        "desde o mês 1 — e o arquivo reproduz o motor do sistema ao centavo. Troque para "
+        '"quadro de pessoal" para a folha passar a ser o TOTAL desta aba (também fixo no '
+        "tempo) — aí o arquivo reflete a folha real e pode divergir do sistema de propósito. "
+        "Nos dois modos a folha NÃO acompanha a rampa de alunos.",
         "Motor de Expansão",
     )
     _validacao_lista(ws, _MODOS_FOLHA, [f"{ABA_FOLHA}!$B${_FOLHA_MODO_ROW}"])
@@ -967,7 +1047,9 @@ def _write_aba_folha(wb: openpyxl.Workbook, p: Premissas, refs: dict[str, str],
         c.font = Font(name=_FONTE_PADRAO, color="FF55555F", size=8)
     _nota(
         ws, _FOLHA_MODO_ROW + 1,
-        'A DRE lê: =SE(modo="quadro de pessoal"; Folha!TOTAL; folha_% x faturamento bruto).',
+        'A DRE lê UMA célula (Premissas: "Folha mensal FIXA") = SE(modo="quadro de pessoal"; '
+        "Folha!TOTAL; folha_% x faturamento MADURO), repetida nos 64 meses e só corrigida "
+        "pelo reajuste anual de custos. A folha NÃO escala com a rampa de alunos.",
         len(_FOLHA_COLS),
     )
 
@@ -1011,8 +1093,7 @@ def _write_aba_folha(wb: openpyxl.Workbook, p: Premissas, refs: dict[str, str],
     _estilo_valor(c_tt, _DERIV, _FMT_CONTABIL)
     c_tt.font = Font(name=_FONTE_PADRAO, bold=True, color=_CINZA_ESC, size=11)
 
-    # Afericao do quadro contra o % da bruta.
-    fat_steady = f"'{ABA_DRE}'!{col_steady}{_DRE_ROW['faturamento']}"
+    # Afericao do quadro contra a regua do % do faturamento MADURO.
     folha_dre = f"'{ABA_DRE}'!{col_steady}{_DRE_ROW['folha']}"
     afer = [
         (
@@ -1021,13 +1102,13 @@ def _write_aba_folha(wb: openpyxl.Workbook, p: Premissas, refs: dict[str, str],
             "Depende do interruptor acima",
         ),
         (
-            "Folha teórica: % da receita bruta x faturamento (mês de referência)",
-            f"={refs['folha_pct']}*{fat_steady}",
-            "Régua do motor",
+            "Folha FIXA da régua do motor: % x faturamento MADURO",
+            f"={refs['folha_fixa']}",
+            "Vale desde o mês 1",
         ),
         (
-            "Aferido vs % da bruta (TOTAL do quadro - % x faturamento)",
-            f"=E{r_tot}-{refs['folha_pct']}*{fat_steady}",
+            "Aferido vs a régua (TOTAL do quadro - % x faturamento maduro)",
+            f"=E{r_tot}-{refs['folha_pct']}*{refs['fat_maduro']}",
             "Quanto o quadro estimado se afasta da régua",
         ),
     ]
@@ -1203,10 +1284,10 @@ def _dre_formulas(j: int, meses: list[int], refs: dict[str, str]) -> dict[str, A
             f"={c('cvar_royalties')}+{c('cvar_marketing')}+{c('cvar_manutencao')}"
             f"+{c('cvar_cartoes')}"
         ),
-        "folha": (
-            f'=IF({t}=0,0,IF({P["modo_folha"]}="quadro de pessoal",'
-            f"{P['folha_quadro_total']},{P['folha_pct']}*{c('faturamento')}))"
-        ),
+        # FOLHA FIXA: uma UNICA celula de Premissas nos 64 meses, so corrigida pelo
+        # reajuste anual de custos. Antes era `folha_pct * faturamento DO MES`, que
+        # encolhia com a rampa — o defeito reportado.
+        "folha": f"=IF({t}=0,0,{P['folha_fixa']}*{c('f_custos')})",
         "outros_total": f"=SUM({c(_OF_KEY_INI)}:{c(_OF_KEY_FIM)})",
         "aluguel": (
             f"=IF({c('mes_contrato')}<={P['carencia']},0,{P['aluguel']}"
@@ -1254,7 +1335,8 @@ def _write_aba_dre(
     _write_hdr_linha_do_tempo(
         ws, meses, "DRE MENSAL — M-4 a M60, tudo em fórmula sobre Premissas e Folha",
         "Reajuste anual por degrau a partir do mês 13; carência de aluguel contada de M-4; "
-        "custo operacional INTEGRAL desde o mês 1 (é por isso que o EBITDA do mês 1 é negativo).",
+        "custo operacional INTEGRAL desde o mês 1 — inclusive a FOLHA, que é fixa e não "
+        "acompanha a rampa (é por isso que o EBITDA do mês 1 é bem negativo).",
         _DRE_ORDEM, col_total=None, col_steady=col_steady,
         label_steady="Steady (regime pleno)",
     )
@@ -1339,8 +1421,13 @@ def _flx_formulas(j: int, refs: dict[str, str]) -> dict[str, str]:
             f"=IF(AND({P['obra']}>0,{c('mes_contrato')}<=MAX({P['parcelas_obra']},1)),"
             f"{P['obra']}/MAX({P['parcelas_obra']},1),0)"
         ),
+        # Taxa de franquia PARCELADA sem juros: a parcela cai nos meses de CONTRATO
+        # 1..N (M-4..M-1 com N=4), junto da obra — nao a taxa inteira no M-4. O motor
+        # trata `parcelas <= 0` como 1 parcela, e o MAX(...,1) reproduz isso.
         "inv_franquia": (
-            f"=IF(AND({P['meses_pre']}>0,{c('mes_contrato')}=1),{P['taxa_franquia']},0)"
+            f"=IF(AND({P['taxa_franquia']}>0,"
+            f"{c('mes_contrato')}<=MAX({P['parcelas_franquia']},1)),"
+            f"{P['franquia_parcela']},0)"
         ),
         "inv_equip_vista": (
             f"=IF(AND({P['equip_financiado']}=0,{P['meses_pre']}>0,"
@@ -1439,7 +1526,8 @@ def _write_aba_investimento(
     _nota(
         ws, 2,
         "Obra = equity, parcelada sem juros. Equipamentos = financiados (Price). "
-        "Taxa de franquia à vista no M-4. Edite os valores na aba Premissas.",
+        "Taxa de franquia PARCELADA sem juros, junto da obra: as parcelas caem nos meses de "
+        "contrato 1 a N, contados da entrega da unidade. Edite os valores na aba Premissas.",
         len(_INVEST_COLS),
     )
     _cabecalho_tabela(ws, 4, _INVEST_COLS)
@@ -1460,6 +1548,11 @@ def _write_aba_investimento(
         ("prazo_equip", "Prazo do financiamento", f"={P['prazo_equip']}", "meses", _FMT_INT),
         ("juros_am", "Juros do financiamento", f"={P['juros_am']}", "% a.m.", _FMT_PCT3),
         ("taxa_franquia", "Taxa de franquia", f"={P['taxa_franquia']}", "R$", _FMT_CONTABIL),
+        ("parcelas_franquia", "Parcelas da franquia", f"={P['parcelas_franquia']}", "meses",
+         _FMT_INT),
+        ("franquia_parcela", "Valor da parcela da franquia",
+         f"=IF({P['taxa_franquia']}>0,{P['taxa_franquia']}/MAX({P['parcelas_franquia']},1),0)",
+         "R$/mês", _FMT_CONTABIL),
         ("capex_total", "CAPEX total (obra + equipamentos)",
          f"={P['obra']}+{P['equip']}", "R$", _FMT_CONTABIL),
         ("investimento_total", "Investimento total (CAPEX + franquia)",
@@ -1502,6 +1595,25 @@ def _write_aba_investimento(
 
 _RESUMO_ROW_INI = 5
 
+# --- Cor da fonte na aba Resumo (pedido de Felipe, 2026-07-24) ---------------
+# SAIDA DE DINHEIRO -> texto VERMELHO fixo. Sao valores que so existem com um sinal:
+# custo, imposto, despesa financeira, PMT, juros totais, CAPEX/investimento/equity.
+_RESUMO_SAIDA = frozenset(
+    {
+        "custos_op", "folha", "ir_csll", "pmt", "juros_totais",
+        "capex_total", "investimento_total", "equity",
+    }
+)
+# Pode ALTERNAR de sinal -> formatacao CONDICIONAL (vermelho so quando negativo).
+# Pintar de vermelho fixo aqui seria mentir quando o numero virar positivo, e pintar
+# de verde fixo seria mentir quando virar negativo.
+_RESUMO_ALTERNA = frozenset(
+    {
+        "ebitda", "margem", "resultado_desalav", "tir_mensal", "tir_anual", "vpl",
+        "acumulado_m60", "retorno_desalav", "retorno_equity", "ebitda_m1",
+    }
+)
+
 
 def _linhas_resumo(
     meses: list[int], refs: dict[str, str], st_dre: str, st_flx: str,
@@ -1516,8 +1628,11 @@ def _linhas_resumo(
     dre_st = f"'{ABA_DRE}'!{st_dre}"
     flx_st = f"'{ABA_FLUXO}'!{st_flx}"
 
-    fat_be = f"({P['custo_fixo_base']}+{P['aluguel']})/{P['k_ebitda']}"
-    fat_be_caixa = f"({P['custo_fixo_base']}+{P['aluguel']}+{P['pmt']})/{P['k_ebitda']}"
+    # O custo fixo do break-even agora INCLUI a folha (ela deixou de ser percentual da
+    # receita do mes), e o `k` deixou de subtrai-la. Trocar so um dos dois lados daria
+    # um break-even sem defesa: 840,6 alunos no caso de referencia contra 1.152 reais.
+    fat_be = f"({P['custo_fixo_total']}+{P['aluguel']})/{P['k_ebitda']}"
+    fat_be_caixa = f"({P['custo_fixo_total']}+{P['aluguel']}+{P['pmt']})/{P['k_ebitda']}"
 
     def be(fat: str) -> str:
         return (
@@ -1540,6 +1655,8 @@ def _linhas_resumo(
          f"={dre_st}{D['receita_pos_impostos']}", _FMT_CONTABIL, "PIS + COFINS + ISS"),
         ("custos_op", "Custos operacionais / mês", f"={dre_st}{D['custos_op']}",
          _FMT_CONTABIL, "Variável + folha + outros fixos + aluguel"),
+        ("folha", "  dos quais folha (FIXA desde o mês 1)", f"={dre_st}{D['folha']}",
+         _FMT_CONTABIL, "% do faturamento MADURO, não do faturamento do mês"),
         ("ebitda", "EBITDA / mês", f"={dre_st}{D['ebitda']}", _FMT_CONTABIL, ""),
         ("margem", "Margem EBITDA", f"={dre_st}{D['margem_ebitda']}", _FMT_PCT2,
          "Sobre o faturamento bruto"),
@@ -1549,7 +1666,7 @@ def _linhas_resumo(
          f"={dre_st}{D['resultado_desalav']}", _FMT_CONTABIL, "EBITDA menos IR/CSLL"),
         ("", "Break-even (em alunos TOTAIS, o mix escala junto)", None, None, ""),
         ("break_even_ebitda", "Break-even de EBITDA", be(fat_be), _FMT_ALUNOS,
-         "Alunos totais para EBITDA zero"),
+         "Alunos totais para EBITDA zero, com a folha dimensionada para a demanda assumida"),
         ("break_even_caixa", "Break-even de caixa (cobre a PMT)", be(fat_be_caixa),
          _FMT_ALUNOS, "Alunos totais para o caixa fechar com o financiamento"),
         ("", "Investimento", None, None, ""),
@@ -1622,6 +1739,13 @@ def _write_aba_resumo(
         "Premissas. Mude uma premissa e todos estes KPIs se movem.",
         3,
     )
+    _nota(
+        ws, 3,
+        "Números em VERMELHO são SAÍDA DE DINHEIRO (custo, imposto, despesa financeira, PMT, "
+        "juros, CAPEX e aporte). Onde o valor pode virar de sinal (EBITDA, resultado, FCF "
+        "acumulado, VPL, TIR e retorno), o vermelho aparece SÓ quando o número fica negativo.",
+        3,
+    )
     _cabecalho_tabela(ws, 4, ["Indicador", "Valor", "Observação"])
 
     linhas = _linhas_resumo(meses, refs, st_dre, st_flx)
@@ -1653,6 +1777,20 @@ def _write_aba_resumo(
         _estilo_valor(cel, _DERIV, fmt)
         if key in ("ebitda", "margem", "teto_teto"):
             cel.fill = _fill(_VERDE_CLR)
+        if key in _RESUMO_SAIDA:
+            # Vermelho FIXO: nao ha cenario em que estas linhas sejam entrada de caixa.
+            cel.font = Font(
+                name=_FONTE_PADRAO, italic=True, bold=False,
+                color=_VERMELHO_FONTE, size=10,
+            )
+        elif key in _RESUMO_ALTERNA:
+            ws.conditional_formatting.add(
+                f"B{r}",
+                CellIsRule(
+                    operator="lessThan", formula=["0"],
+                    font=Font(name=_FONTE_PADRAO, italic=True, color=_VERMELHO_FONTE),
+                ),
+            )
         c_obs = ws.cell(row=r, column=3, value=obs)
         c_obs.font = Font(name=_FONTE_PADRAO, color="FF55555F", size=8)
         c_obs.alignment = Alignment(horizontal="left", vertical="center")
@@ -1678,7 +1816,8 @@ def _write_aba_sensibilidade(wb: openpyxl.Workbook, refs: dict[str, str]) -> str
     _nota(
         ws, 2,
         "Forma fechada do motor: faturamento = alunos x receita por aluno + personal; "
-        "EBITDA = faturamento x k - (custo fixo base + aluguel). Verde >= 10%, amarelo >= 0%, "
+        "EBITDA = faturamento x k - (custo fixo total + aluguel), onde o custo fixo já inclui "
+        "a FOLHA (que não varia com os alunos desta grade). Verde >= 10%, amarelo >= 0%, "
         "vermelho < 0%.",
         n_cols,
     )
@@ -1720,7 +1859,7 @@ def _write_aba_sensibilidade(wb: openpyxl.Workbook, refs: dict[str, str]) -> str
                 row=r, column=col,
                 value=(
                     f"=IF({fat}>0,({fat}*{P['k_ebitda']}"
-                    f"-({P['custo_fixo_base']}+{letra}${_SENS_HDR_ALUGUEL_ROW}))/{fat},0)"
+                    f"-({P['custo_fixo_total']}+{letra}${_SENS_HDR_ALUGUEL_ROW}))/{fat},0)"
                 ),
             )
             cel.number_format = _FMT_PCT2
@@ -1769,15 +1908,30 @@ _AFER_COLS = [
 
 def _pares_afericao(
     r: ViabilidadeResult, refs: dict[str, str], rrefs: dict[str, str], st_dre: str,
-    centro_sens: str, meses: list[int],
+    centro_sens: str, meses: list[int], p: Premissas, demanda_total: float,
 ) -> list[tuple[str, Any, str, str | None]]:
-    """(rotulo, valor do motor, referencia da formula, formato)."""
+    """(rotulo, valor do motor, referencia da formula, formato).
+
+    Os pares por MES (folha do mes 1, EBITDA dos meses 1/4/8, investimento do M-4) sao
+    o que pega as duas mudancas de produto desta rodada: uma folha que voltasse a
+    escalar com a rampa, ou uma franquia que voltasse a sair inteira no M-4, batem aqui
+    mesmo que o mes de steady continue igual — no steady as duas mudancas sao invisiveis.
+    """
     serie = {int(row["mes"]): row for row in r.serie_mensal}
     st = serie.get(int(r.mes_referencia_steady), {})
     m1 = serie.get(1, {})
 
     def d(key: str) -> str:
         return f"'{ABA_DRE}'!{st_dre}{_DRE_ROW[key]}"
+
+    def col_mes(mes: int) -> str:
+        return get_column_letter(_MES_COL_INI + meses.index(mes)) if mes in meses else "B"
+
+    def dre_mes(key: str, mes: int) -> str:
+        return f"'{ABA_DRE}'!{col_mes(mes)}{_DRE_ROW[key]}"
+
+    def flx_mes(key: str, mes: int) -> str:
+        return f"'{ABA_FLUXO}'!{col_mes(mes)}{_FLX_ROW[key]}"
 
     brl, pct, al, num = _FMT_CONTABIL, _FMT_PCT3, _FMT_ALUNOS, _FMT_INT
     pares: list[tuple[str, Any, str, str | None]] = [
@@ -1793,8 +1947,18 @@ def _pares_afericao(
         ("Receita pós-impostos", r.receita_pos_impostos, rrefs["receita_pos_impostos"], brl),
         ("Custo variável", r.custos_variaveis_mensal, d("cvar_total"), brl),
         ("Folha", r.folha_mensal, d("folha"), brl),
+        ("Faturamento MADURO (base de dimensionamento da folha)",
+         p.faturamento_maduro(float(demanda_total)), refs["fat_maduro"], brl),
+        ("Folha FIXA dimensionada pelo faturamento maduro",
+         p.folha_fixa_mes(float(demanda_total)), refs["folha_fixa"], brl),
+        ("Folha no mês 1 (a folha NÃO acompanha a rampa)", m1.get("folha", 0.0),
+         dre_mes("folha", 1), brl),
         ("Outros custos fixos", st.get("outros_fixos", 0.0), d("outros_total"), brl),
         ("Aluguel", st.get("aluguel", 0.0), d("aluguel"), brl),
+        ("Custo fixo total sem aluguel (outros fixos + folha)",
+         p.custo_fixo_total_mes(float(demanda_total)), refs["custo_fixo_total"], brl),
+        ("Fator receita -> EBITDA (k), sem a folha", p.fator_receita_para_ebitda,
+         refs["k_ebitda"], "0.000000"),
         ("Custos operacionais totais", r.custos_op_mensal, rrefs["custos_op"], brl),
         ("EBITDA", r.ebitda_mensal, rrefs["ebitda"], brl),
         ("Margem EBITDA", r.margem_ebitda_pct, rrefs["margem"], pct),
@@ -1831,14 +1995,28 @@ def _pares_afericao(
          rrefs["teto_excecao"], brl),
         ("EBITDA do mês 1 (negativo por construção)", m1.get("ebitda_mensal", 0.0),
          rrefs["ebitda_m1"], brl),
+        ("EBITDA do mês 4 (meio da rampa)", serie.get(4, {}).get("ebitda_mensal", 0.0),
+         dre_mes("ebitda", 4), brl),
+        ("EBITDA do mês 8 (fim da rampa)", serie.get(8, {}).get("ebitda_mensal", 0.0),
+         dre_mes("ebitda", 8), brl),
+        # Franquia PARCELADA: o motor nao expoe a parcela isolada na serie (e nada aqui
+        # pode re-derivar formula financeira fora do simulador), entao a afericao usa o
+        # investimento TOTAL de cada mes, que a serie expoe. Isso ja e suficiente: com a
+        # taxa saindo inteira no M-4 o par do M-4 daria R$ 310 mil e o do M-1 R$ 150 mil.
+        ("Investimento do M-4 (obra + parcela da franquia)",
+         serie.get(-4, {}).get("investimento", 0.0), flx_mes("investimento", -4), brl),
+        ("Investimento do M-1 (4a parcela da franquia ainda dentro da obra)",
+         serie.get(-1, {}).get("investimento", 0.0), flx_mes("investimento", -1), brl),
+        ("Investimento no mês 1 (as parcelas não vazam da pré-abertura)",
+         serie.get(1, {}).get("investimento", 0.0), flx_mes("investimento", 1), brl),
     ]
-    del refs, meses
     return pares
 
 
 def _write_aba_afericao(
     wb: openpyxl.Workbook, r: ViabilidadeResult, refs: dict[str, str],
     rrefs: dict[str, str], st_dre: str, centro_sens: str, meses: list[int],
+    p: Premissas, demanda_total: float,
 ) -> None:
     ws = wb.create_sheet(ABA_AFERICAO)
     _write_header(ws, "AFERIÇÃO — a planilha confere com o motor do sistema?",
@@ -1859,7 +2037,9 @@ def _write_aba_afericao(
     )
     _cabecalho_tabela(ws, 5, _AFER_COLS)
 
-    pares = _pares_afericao(r, refs, rrefs, st_dre, centro_sens, meses)
+    pares = _pares_afericao(
+        r, refs, rrefs, st_dre, centro_sens, meses, p, demanda_total
+    )
     for i, (label, motor, ref_formula, fmt) in enumerate(pares):
         row = _AFER_ROW_INI + i
         _linha_label(ws, row, label)
@@ -1919,8 +2099,10 @@ def _write_aba_afericao(
 
 _NOMES_DEFINIDOS = (
     "demanda", "ticket_cheio", "ticket_agregador", "ticket_blended", "share", "churn",
-    "inadimplencia", "aluguel", "folha_pct", "outros_total", "k_ebitda", "custo_fixo_base",
-    "receita_por_aluno", "personal_mes", "obra", "equip", "taxa_franquia", "pmt",
+    "inadimplencia", "aluguel", "folha_pct", "fat_maduro", "folha_fixa", "outros_total",
+    "k_ebitda", "custo_fixo_total",
+    "receita_por_aluno", "personal_mes", "obra", "equip", "taxa_franquia",
+    "parcelas_franquia", "franquia_parcela", "pmt",
     "investimento_total", "equity", "mes_steady", "taxa_desconto_aa", "taxa_desconto_am",
     "maturacao", "horizonte", "meses_pre",
 )
@@ -1941,7 +2123,7 @@ def _registrar_nomes(wb: openpyxl.Workbook, refs: dict[str, str]) -> None:
 
 _INVEST_KEYS = (
     "obra", "parcelas_obra", "equipamentos", "prazo_equipamentos",
-    "juros_equipamentos_am", "taxa_franquia",
+    "juros_equipamentos_am", "taxa_franquia", "parcelas_franquia",
 )
 
 
@@ -1956,6 +2138,7 @@ def gerar_simulador_xlsx(
     prazo_equipamentos: int = 0,
     juros_equipamentos_am: float = 0.0,
     taxa_franquia: float = SIM_TAXA_FRANQUIA,
+    parcelas_franquia: int = SIM_PARCELAS_FRANQUIA_DEFAULT,
     nome_ponto: str = "",
     rotulo: str | None = None,
     m2: float | None = None,
@@ -1977,8 +2160,10 @@ def gerar_simulador_xlsx(
         POSICIONAL porque e assim que a rota do piloto web chama. O que vier aqui
         sobrescreve os kwargs equivalentes; chaves desconhecidas sao ignoradas.
     obra, parcelas_obra, equipamentos, prazo_equipamentos, juros_equipamentos_am,
-    taxa_franquia:
-        Mesma semantica de `simulador.simular()`, para uso direto sem o dict.
+    taxa_franquia, parcelas_franquia:
+        Mesma semantica de `simulador.simular()`, para uso direto sem o dict. A taxa
+        de franquia e PARCELADA sem juros (default 4x): as parcelas caem nos meses de
+        contrato 1..N (M-4..M-1 com N=4), junto da obra.
     nome_ponto, rotulo:
         Nome do imovel/ponto exibido nos cabecalhos. `rotulo` e o nome que a rota
         do piloto web usa e tem precedencia quando os dois vem.
@@ -2000,6 +2185,7 @@ def gerar_simulador_xlsx(
         "prazo_equipamentos": prazo_equipamentos,
         "juros_equipamentos_am": juros_equipamentos_am,
         "taxa_franquia": taxa_franquia,
+        "parcelas_franquia": parcelas_franquia,
     }
     if investimento:
         inv.update({k: v for k, v in investimento.items() if k in _INVEST_KEYS})
@@ -2009,6 +2195,7 @@ def gerar_simulador_xlsx(
     prazo_equipamentos = int(inv["prazo_equipamentos"])
     juros_equipamentos_am = float(inv["juros_equipamentos_am"])
     taxa_franquia = float(inv["taxa_franquia"])
+    parcelas_franquia = int(inv["parcelas_franquia"])
 
     titulo_ponto = (rotulo or nome_ponto or "").strip()
     if m2:
@@ -2019,6 +2206,7 @@ def gerar_simulador_xlsx(
         demanda_total, premissas, obra=obra, parcelas_obra=parcelas_obra,
         equipamentos=equipamentos, prazo_equipamentos=prazo_equipamentos,
         juros_equipamentos_am=juros_equipamentos_am, taxa_franquia=taxa_franquia,
+        parcelas_franquia=parcelas_franquia,
     )
     meses = _meses_da_serie(premissas)
 
@@ -2035,6 +2223,7 @@ def gerar_simulador_xlsx(
         demanda_total, premissas, obra=obra, parcelas_obra=parcelas_obra,
         equipamentos=equipamentos, prazo_equipamentos=prazo_equipamentos,
         juros_equipamentos_am=juros_equipamentos_am, taxa_franquia=taxa_franquia,
+        parcelas_franquia=parcelas_franquia,
     )
     refs = _write_aba_premissas(wb, blocos, titulo_ponto)
     _write_aba_folha(wb, premissas, refs, letra_st_dre)
@@ -2043,7 +2232,9 @@ def gerar_simulador_xlsx(
     _write_aba_investimento(wb, meses, refs, col_total_flx)
     rrefs = _write_aba_resumo(wb, meses, refs, letra_st_dre, letra_st_flx, titulo_ponto)
     centro_sens = _write_aba_sensibilidade(wb, refs)
-    _write_aba_afericao(wb, r, refs, rrefs, letra_st_dre, centro_sens, meses)
+    _write_aba_afericao(
+        wb, r, refs, rrefs, letra_st_dre, centro_sens, meses, premissas, demanda_total
+    )
 
     _registrar_nomes(wb, refs)
     wb.calculation.fullCalcOnLoad = True

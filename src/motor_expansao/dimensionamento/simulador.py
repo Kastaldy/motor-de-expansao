@@ -20,7 +20,8 @@ Receita (3 fontes reais):
 O custo operacional NAO e 100% fixo — tem tres naturezas, agora EXPLICITAS no
 resultado (antes o dataclass so expunha o total e a UI reconstruia por diferenca):
   - variavel (% da receita liquida): royalties + marketing + manutencao + cartoes
-  - folha (% do faturamento bruto):  SIM_FOLHA_PCT  [caminho novo]
+  - folha: FIXA no tempo, dimensionada por `SIM_FOLHA_PCT` x faturamento MADURO e
+    paga integralmente desde o mes 1 (a equipe existe antes dos alunos)
   - fixo absoluto:                   outros_fixos + aluguel + custo pre-operacional
 
 COMPATIBILIDADE
@@ -79,6 +80,7 @@ from motor_expansao.dimensionamento.config import (
     SIM_MATURACAO_MESES,
     SIM_MESES_PRE_ABERTURA,
     SIM_OUTROS_FIXOS_MES,
+    SIM_PARCELAS_FRANQUIA_DEFAULT,
     SIM_PARCELAS_OBRA_DEFAULT,
     SIM_PAYBACK_VIAVEL_MAX,
     SIM_PERSONAL_MES_RECEITA,
@@ -132,7 +134,9 @@ class Premissas:
     manutencao_pct: float = SIM_MANUTENCAO_PCT
     cartoes_pct: float = SIM_CARTOES_PCT
 
-    # Folha: % do faturamento bruto, OU absoluto quando pessoal_mes_override != None.
+    # Folha: `folha_pct` DIMENSIONA a folha pelo faturamento MADURO, e o valor
+    # resultante e FIXO desde o mes 1 (nao escala com a rampa) — ver
+    # `folha_fixa_mes()`. `pessoal_mes_override` troca por um absoluto (legado).
     folha_pct: float = SIM_FOLHA_PCT
     pessoal_mes_override: float | None = None
 
@@ -223,23 +227,48 @@ class Premissas:
     def fator_receita_para_ebitda(self) -> float:
         """Quanto de cada R$1 de faturamento bruto sobra ANTES do custo fixo.
 
-        k = (1 - deducoes) * (1 - impostos - custo_variavel) - folha_pct
+        k = (1 - deducoes) * (1 - impostos - custo_variavel) = 0,995 * 0,803 = 0,798985
 
-        Com os defaults novos: 0,995 * (1 - 0,0665 - 0,1305) - 0,17 = 0,628985.
-        O briefing da auditoria supunha 0,92883 (tratando o custo como 100% fixo),
-        o que superestimava a contribuicao por aluno em 16,3%.
+        A FOLHA NAO ENTRA AQUI. Ela e dimensionada uma vez, pelo faturamento MADURO, e
+        e paga integralmente desde o mes 1 (decisao de Felipe, 2026-07-24): o quadro de
+        pessoal e contratado antes dos alunos chegarem. Logo a folha e custo FIXO no
+        tempo, nao percentual da receita do mes — ver `folha_fixa_mes()`.
         """
         return (1.0 - self.devolucoes_pct) * (
             1.0 - self.impostos_receita_pct - self.custo_variavel_pct
-        ) - self.folha_efetiva_pct
+        )
 
-    @property
-    def custo_fixo_base_mes(self) -> float:
-        """Custo fixo de steady-state SEM aluguel (que tem carencia propria)."""
-        base = self.outros_fixos_mes
+    def folha_fixa_mes(self, demanda_total: float) -> float:
+        """Folha mensal — FIXA no tempo, dimensionada pelo faturamento MADURO.
+
+        `folha_pct` x faturamento de REGIME PLENO (casa cheia e anuidade em cobranca),
+        e esse valor vale desde o mes 1. Antes a folha era `folha_pct` x faturamento DO
+        MES, entao encolhia junto com a rampa — o que equivale a supor que se contrata
+        gente na medida em que o aluno entra. Na pratica a equipe existe antes.
+
+        Consequencia: o mes de steady NAO muda (la o faturamento ja e o maduro), mas os
+        meses de rampa ficam mais pesados e o break-even sobe — a folha deixa de ser
+        diluida pelo volume.
+
+        Com override absoluto (`pessoal_mes_override`) devolve o override, que ja era
+        fixo por definicao — e o caminho legado.
+        """
         if self.pessoal_mes_override is not None:
-            base += self.pessoal_mes_override
-        return base
+            return float(self.pessoal_mes_override)
+        return self.folha_pct * self.faturamento_maduro(demanda_total)
+
+    def faturamento_maduro(self, demanda_total: float) -> float:
+        """Faturamento bruto de REGIME PLENO a precos do ano 1 (sem reajuste).
+
+        Base de dimensionamento da folha. Inclui a anuidade porque o regime pleno a
+        tem; e a precos do ano 1 para o reajuste anual entrar UMA vez, no consumidor.
+        """
+        com_anuidade = self.anuidade_valor > 0
+        return self.faturamento(demanda_total, com_anuidade=com_anuidade)
+
+    def custo_fixo_total_mes(self, demanda_total: float) -> float:
+        """Custo fixo mensal SEM aluguel: outros fixos + folha dimensionada."""
+        return self.outros_fixos_mes + self.folha_fixa_mes(demanda_total)
 
     def contribuicao_por_aluno_total(self) -> float:
         """Quanto cada aluno TOTAL adiciona ao EBITDA (mix balcao/agregador)."""
@@ -453,7 +482,7 @@ def aluguel_teto_clusters(faturamento_bruto: float) -> dict[str, float]:
     }
 
 
-def alunos_para_margem(p: Premissas, margem_alvo: float) -> float:
+def alunos_para_margem(p: Premissas, margem_alvo: float, demanda_total: float) -> float:
     """Alunos TOTAIS necessarios para atingir uma margem EBITDA-alvo.
 
     Mesma algebra do break-even, com a margem no lugar do zero:
@@ -461,41 +490,47 @@ def alunos_para_margem(p: Premissas, margem_alvo: float) -> float:
         fat * k - custo_fixo = margem_alvo * fat
         fat = custo_fixo / (k - margem_alvo)
 
-    Substitui o goal-seek por brentq do motor antigo (que variava so o balcao) e
-    devolve o numero na MESMA unidade do break-even: alunos totais no mix.
+    `demanda_total` e a demanda ASSUMIDA do cenario, e entra porque a folha e
+    dimensionada por ela (fixa desde o mes 1) — nao pela demanda-alvo desta conta.
     Retorna inf quando a margem-alvo e inatingivel (margem_alvo >= k).
     """
     k = p.fator_receita_para_ebitda
     receita_aluno = p.receita_por_aluno_total
     if receita_aluno <= 0 or margem_alvo >= k:
         return float("inf")
-    fat_alvo = (p.custo_fixo_base_mes + p.aluguel_mes) / (k - margem_alvo)
+    fat_alvo = (p.custo_fixo_total_mes(demanda_total) + p.aluguel_mes) / (k - margem_alvo)
     return max(0.0, (fat_alvo - p.personal_mes) / receita_aluno)
 
 
-def break_even_alunos(p: Premissas, *, incluir_pmt: float = 0.0) -> float:
+def break_even_alunos(
+    p: Premissas, demanda_total: float, *, incluir_pmt: float = 0.0
+) -> float:
     """Break-even em alunos TOTAIS (o mix balcao/agregador escala junto).
 
-    Forma fechada — o custo variavel e a folha % ja estao dentro de
-    `fator_receita_para_ebitda`, entao nao ha solver aqui:
+    Forma fechada — o custo variavel esta dentro de `fator_receita_para_ebitda` e a
+    folha e custo FIXO dimensionado pela demanda assumida, entao nao ha solver:
 
-        faturamento_BE = (custo_fixo + aluguel + pmt) / k
+        faturamento_BE = (outros_fixos + folha + aluguel + pmt) / k
         alunos_BE      = (faturamento_BE - personal) / receita_por_aluno_total
 
-    `receita_por_aluno_total` ja inclui a anuidade em regime pleno, entao o
-    break-even e medido no MESMO regime que a DRE de steady-state.
+    `demanda_total` e a demanda ASSUMIDA do cenario. Ela entra porque a folha foi
+    dimensionada para ELA e continua sendo paga integralmente se o volume nao vier —
+    e essa a pergunta do break-even: "montei a casa para 2.304 alunos; com quantos eu
+    empato?". Antes a folha era percentual da receita do mes, entao encolhia junto com
+    o volume e o break-even saia otimista (840,6 em vez de ~1.152 no caso de referencia).
+
+    `receita_por_aluno_total` ja inclui a anuidade em regime pleno, entao o break-even
+    e medido no MESMO regime que a DRE de steady-state.
 
     `incluir_pmt > 0` devolve o break-even DE CAIXA (cobre o financiamento).
-
-    Antes, `alunos_minimos_viaveis` variava SO o balcao mantendo os agregadores
-    congelados na premissa, e o resultado (632) era rotulado e comparado na tela
-    como se fosse alunos totais — contra uma demanda total de 2.304.
     """
     k = p.fator_receita_para_ebitda
     receita_aluno = p.receita_por_aluno_total
     if k <= 0 or receita_aluno <= 0:
         return float("inf")
-    custo_fixo = p.custo_fixo_base_mes + p.aluguel_mes + max(0.0, incluir_pmt)
+    custo_fixo = (
+        p.custo_fixo_total_mes(demanda_total) + p.aluguel_mes + max(0.0, incluir_pmt)
+    )
     fat_be = custo_fixo / k
     return max(0.0, (fat_be - p.personal_mes) / receita_aluno)
 
@@ -524,6 +559,7 @@ def gerar_serie_mensal_completa(
     prazo_equipamentos: int = 0,
     juros_equipamentos_am: float = 0.0,
     taxa_franquia: float = SIM_TAXA_FRANQUIA,
+    parcelas_franquia: int = SIM_PARCELAS_FRANQUIA_DEFAULT,
 ) -> list[dict]:
     """Linha do tempo unica: M-`meses_pre_abertura`..M-1 e M1..M`horizonte`.
 
@@ -553,6 +589,16 @@ def gerar_serie_mensal_completa(
     n_parc_obra = max(int(parcelas_obra), 1) if obra > 0 else 0
     obra_parcela = (obra / n_parc_obra) if n_parc_obra > 0 else 0.0
 
+    # Taxa de franquia PARCELADA sem juros (default 4x, decisao de Felipe 2026-07-24).
+    # Antes saia inteira do caixa no M-4, o que antecipava R$120 mil de desembolso e
+    # piorava payback/TIR/VPL sem necessidade.
+    n_parc_franquia = max(int(parcelas_franquia), 1) if taxa_franquia > 0 else 0
+    franquia_parcela = (float(taxa_franquia) / n_parc_franquia) if n_parc_franquia > 0 else 0.0
+
+    # FOLHA FIXA: dimensionada UMA vez pelo faturamento maduro e paga integralmente
+    # desde o mes 1 — a equipe existe antes dos alunos. Reajusta como os demais custos.
+    folha_base = p.folha_fixa_mes(float(demanda_total))
+
     financiado = equipamentos > 0 and prazo_equipamentos > 0
     pmt = pmt_price(equipamentos, juros_equipamentos_am, prazo_equipamentos) if financiado else 0.0
     saldo = float(equipamentos) if financiado else 0.0
@@ -569,8 +615,8 @@ def gerar_serie_mensal_completa(
         invest = 0.0
         if mes_contrato <= n_parc_obra:
             invest += obra_parcela
-        if i == 0:
-            invest += float(taxa_franquia)
+        if mes_contrato <= n_parc_franquia:
+            invest += franquia_parcela
         if not financiado and i == pre - 1:
             invest += float(equipamentos)
 
@@ -611,9 +657,7 @@ def gerar_serie_mensal_completa(
         imp = rl * p.impostos_receita_pct
         rpi = rl - imp
         cvar = rl * p.custo_variavel_pct
-        folha = (
-            p.pessoal_mes_override if p.pessoal_mes_override is not None else fat * p.folha_pct
-        )
+        folha = folha_base * f_custos
         outros = p.outros_fixos_mes * f_custos
         aluguel_m = 0.0 if mes_contrato <= carencia else p.aluguel_mes * f_aluguel
         custos_op = cvar + folha + outros + aluguel_m
@@ -626,6 +670,8 @@ def gerar_serie_mensal_completa(
         saldo = max(0.0, saldo - amort)
 
         invest = obra_parcela if mes_contrato <= n_parc_obra else 0.0
+        if mes_contrato <= n_parc_franquia:
+            invest += franquia_parcela  # parcelas da franquia que passam da abertura
         if t == horizonte:
             invest += p.capex_renovacao
 
@@ -664,12 +710,14 @@ def simular(
     prazo_equipamentos: int = 0,
     juros_equipamentos_am: float = 0.0,
     taxa_franquia: float = SIM_TAXA_FRANQUIA,
+    parcelas_franquia: int = SIM_PARCELAS_FRANQUIA_DEFAULT,
 ) -> ViabilidadeResult:
     """Calcula TODOS os KPIs a partir de UMA serie mensal."""
     serie = gerar_serie_mensal_completa(
         demanda_total, p, obra=obra, parcelas_obra=parcelas_obra,
         equipamentos=equipamentos, prazo_equipamentos=prazo_equipamentos,
         juros_equipamentos_am=juros_equipamentos_am, taxa_franquia=taxa_franquia,
+        parcelas_franquia=parcelas_franquia,
     )
     operacao = [r for r in serie if r["fase"] == "operacao"]
     # O mes de referencia do steady-state e o primeiro em REGIME PLENO: alunos
@@ -750,8 +798,10 @@ def simular(
         acumulado_mes_final=float(serie[-1]["fcf_acumulado"]),
         ticket_blended=float(p.ticket_blended),
         aluguel_teto=aluguel_teto_clusters(float(fat)),
-        alunos_break_even_total=float(break_even_alunos(p)),
-        alunos_break_even_caixa_total=float(break_even_alunos(p, incluir_pmt=pmt)),
+        alunos_break_even_total=float(break_even_alunos(p, demanda_total)),
+        alunos_break_even_caixa_total=float(
+            break_even_alunos(p, demanda_total, incluir_pmt=pmt)
+        ),
         serie_mensal=serie,
     )
 

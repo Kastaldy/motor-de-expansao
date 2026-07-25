@@ -1,15 +1,25 @@
 """Testes do simulador financeiro XLSX com formulas vivas (FIN-VIAB-01).
 
-LIMITE CONHECIDO: openpyxl NAO avalia formulas. Entao aqui NAO se testa o
-resultado de nenhuma formula. Testa-se o que da para testar sem um motor de
-calculo:
-  - a estrutura do arquivo (8 abas, 64 colunas de mes, sublinhas de custo);
-  - que as celulas de DRE/fluxo/resumo contem FORMULA (comecam com "="), e nao
-    valor cravado — se alguem trocar formula por valor, o teste quebra;
-  - que os VALORES DO MOTOR gravados na aba Afericao conferem com `simular()` ao
-    vivo. Isso e o que garante que o PARAMETRO DE COMPARACAO dentro do arquivo
-    esta certo: e a afericao que defende o arquivo na frente do investidor, e um
-    parametro errado la tornaria a aba inutil (ou pior, tranquilizadora a toa).
+DOIS NIVEIS DE TESTE, de proposito:
+
+1) ESTRUTURA (openpyxl, sempre roda). openpyxl NAO avalia formula, entao aqui se
+   testa a estrutura do arquivo (8 abas, 64 colunas de mes, sublinhas de custo),
+   que as celulas de DRE/fluxo/resumo contem FORMULA (e nao valor cravado) e que
+   os VALORES DO MOTOR gravados na aba Afericao conferem com `simular()` ao vivo —
+   e a afericao que defende o arquivo na frente do investidor, e um parametro de
+   comparacao errado la tornaria a aba inutil (ou pior, tranquilizadora a toa).
+
+2) RECALCULO REAL (pacote `formulas`, SKIP quando nao instalado). O nivel 1 nao
+   pega formula que compila e devolve o numero errado — a rodada anterior achou 4
+   defeitos exatamente assim. Os testes de recalculo avaliam as 4.293 formulas do
+   arquivo e comparam DRE e fluxo nos 64 meses, mais as duas colunas da Afericao,
+   contra `simular()`. Instalar com `python -m pip install formulas` (nao e
+   dependencia do projeto; no CI estes testes ficam SKIPPED).
+
+Cobertura especifica das duas mudancas de produto de 2026-07-24 (folha FIXA desde o
+mes 1 e taxa de franquia PARCELADA 4x): as duas sao INVISIVEIS no mes de steady, por
+isso os testes olham os meses de RAMPA (1/4/8), o degrau de reajuste (M13) e os meses
+de pre-abertura (M-4..M-1) — nao so a coluna de regime pleno.
 """
 
 from __future__ import annotations
@@ -19,23 +29,34 @@ import unicodedata
 import warnings
 import zipfile
 from io import BytesIO
+from pathlib import Path
 
 import openpyxl
 import pytest
+from openpyxl.utils import get_column_letter
 
-from motor_expansao.dimensionamento.config import SIM_OUTROS_FIXOS_MES
+from motor_expansao.dimensionamento.config import (
+    SIM_OUTROS_FIXOS_MES,
+    SIM_PARCELAS_FRANQUIA_DEFAULT,
+)
 from motor_expansao.dimensionamento.simulador import Premissas, simular
 from motor_expansao.dimensionamento.simulador_xlsx import (
     _DRE_ROW,
     _FLX_ROW,
     _FOLHA_MODO_ROW,
+    _INVEST_ROW,
     _MES_COL_INI,
+    _MODOS_FOLHA,
     _OUTROS_FIXOS_DECOMP,
+    _RESUMO_ALTERNA,
     _RESUMO_ROW_INI,
+    _RESUMO_SAIDA,
+    _VERMELHO_FONTE,
     ABA_AFERICAO,
     ABA_DRE,
     ABA_FLUXO,
     ABA_FOLHA,
+    ABA_INVESTIMENTO,
     ABA_PREMISSAS,
     ABA_RESUMO,
     ABAS_ESPERADAS,
@@ -52,6 +73,13 @@ _INVEST = {
     "juros_equipamentos_am": 0.018,
     "taxa_franquia": 160_000.0,
 }
+
+# Indice da coluna de cada mes na linha do tempo (M-4 = 0 ... M60 = 63).
+_COL_DE_MES = {m: i for i, m in enumerate([-4, -3, -2, -1, *range(1, 61)])}
+
+
+def _col(mes: int) -> int:
+    return _MES_COL_INI + _COL_DE_MES[mes]
 
 
 def _premissas() -> Premissas:
@@ -273,21 +301,95 @@ def test_folha_calcula_custo_por_cargo_com_formula(wb: openpyxl.Workbook) -> Non
     )
 
 
-def test_dre_le_a_folha_pelo_interruptor_de_modo(wb: openpyxl.Workbook) -> None:
-    """A DRE alterna entre `folha_pct x faturamento` e o TOTAL do quadro de pessoal."""
-    formula = str(wb[ABA_DRE].cell(row=_DRE_ROW["folha"], column=_MES_COL_INI + 15).value)
-    assert "quadro de pessoal" in formula
-    assert f"{ABA_PREMISSAS}!" in formula
-
-    # A ponte DRE -> Folha passa pela aba Premissas: uma celula aponta para o
-    # interruptor e outra para o TOTAL do quadro.
+def _premissas_por_rotulo(wb: openpyxl.Workbook) -> dict[str, object]:
+    """Rotulo normalizado -> valor BRUTO da celula B (formula como str, ou o numero)."""
     ws = wb[ABA_PREMISSAS]
-    pontes = {
-        _norm(ws.cell(row=r, column=1).value or ""): str(ws.cell(row=r, column=2).value)
+    return {
+        _norm(ws.cell(row=r, column=1).value or ""): ws.cell(row=r, column=2).value
         for r in range(4, ws.max_row + 1)
     }
+
+
+def _ref_premissa(wb: openpyxl.Workbook, rotulo_norm: str) -> str:
+    ws = wb[ABA_PREMISSAS]
+    for r in range(4, ws.max_row + 1):
+        if _norm(ws.cell(row=r, column=1).value or "").startswith(rotulo_norm):
+            return f"{ABA_PREMISSAS}!$B${r}"
+    raise AssertionError(f"premissa {rotulo_norm!r} não existe na aba {ABA_PREMISSAS}")
+
+
+def _usa(formula: object, ref: str) -> bool:
+    """A formula referencia EXATAMENTE esta celula?
+
+    Substring crua daria falso positivo: `Premissas!$B$6` casa dentro de
+    `Premissas!$B$66`. O lookahead fecha a referencia no fim do numero da linha.
+    """
+    return re.search(re.escape(ref) + r"(?!\d)", str(formula)) is not None
+
+
+def test_dre_le_a_folha_de_uma_unica_celula_de_premissas(wb: openpyxl.Workbook) -> None:
+    """A folha da DRE e UMA celula de Premissas x reajuste, igual em todos os meses.
+
+    O interruptor de modo continua existindo, mas mudou de lugar: quem alterna entre
+    `folha_pct x faturamento MADURO` e o TOTAL do quadro e a celula "Folha mensal FIXA"
+    da aba Premissas. A DRE nao decide mais nada por coluna — se ela voltasse a decidir,
+    voltaria tambem o defeito de dimensionar a folha pelo faturamento DAQUELE mes.
+    """
+    ref_folha_fixa = _ref_premissa(wb, "folha mensal fixa")
+    ws = wb[ABA_DRE]
+    for mes in (1, 8, 12, 13, 60):
+        letra = get_column_letter(_col(mes))
+        formula = str(ws.cell(row=_DRE_ROW["folha"], column=_col(mes)).value)
+        assert _usa(formula, ref_folha_fixa), f"M{mes}: {formula!r}"
+        # So o reajuste anual de custos entra; o faturamento do mes NAO.
+        assert f"{letra}{_DRE_ROW['f_custos']}" in formula, f"M{mes}: {formula!r}"
+        assert f"{letra}{_DRE_ROW['faturamento']}" not in formula, (
+            f"M{mes}: a folha voltou a depender do faturamento do mês: {formula!r}"
+        )
+
+    # A ponte Premissas -> Folha: uma celula aponta para o interruptor, outra para o
+    # TOTAL do quadro, e a "Folha mensal FIXA" combina as duas com o % do maduro.
+    pontes = _premissas_por_rotulo(wb)
     assert pontes["modo da folha (interruptor)"] == f"={ABA_FOLHA}!$B${_FOLHA_MODO_ROW}"
-    assert pontes["total do quadro de pessoal (aba folha)"].startswith(f"={ABA_FOLHA}!$E$")
+    assert str(pontes["total do quadro de pessoal (aba folha)"]).startswith(
+        f"={ABA_FOLHA}!$E$"
+    )
+    folha_fixa = str(pontes["folha mensal fixa (vale desde o mes 1)"])
+    assert "quadro de pessoal" in folha_fixa
+    assert _usa(folha_fixa, _ref_premissa(wb, "faturamento maduro"))
+    assert _usa(folha_fixa, _ref_premissa(wb, "folha como % do faturamento maduro"))
+
+
+def test_folha_fixa_e_a_mesma_formula_nos_64_meses(wb: openpyxl.Workbook) -> None:
+    """Um valor unico repetido: a folha nao pode variar de mes para mes por si.
+
+    A unica diferenca legitima entre as colunas e o fator de reajuste, que e uma
+    celula DA PROPRIA coluna — entao trocando o nome da coluna as formulas coincidem.
+    """
+    ws = wb[ABA_DRE]
+    normalizadas = set()
+    for mes in [-4, -3, -2, -1, *range(1, 61)]:
+        col = _col(mes)
+        letra = get_column_letter(col)
+        formula = str(ws.cell(row=_DRE_ROW["folha"], column=col).value)
+        # Troca SO as referencias relativas da propria coluna (`F11` -> `@11`); um
+        # `replace` cru trocaria tambem o "F" de "IF" e o "B" de "$B$51".
+        normalizadas.add(re.sub(rf"(?<![A-Z$]){letra}(\d+)", r"@\1", formula))
+    assert len(normalizadas) == 1, f"a folha tem {len(normalizadas)} fórmulas diferentes"
+
+
+def test_faturamento_maduro_e_a_base_da_folha_a_precos_do_ano_1(
+    wb: openpyxl.Workbook,
+) -> None:
+    """A base e demanda x receita por aluno + personal, sem fator de reajuste."""
+    formula = str(
+        _premissas_por_rotulo(wb)["faturamento maduro (base de dimensionamento da folha)"]
+    )
+    assert _usa(formula, _ref_premissa(wb, "demanda total"))
+    assert _usa(formula, _ref_premissa(wb, "receita por aluno total"))
+    assert _usa(formula, _ref_premissa(wb, "receita fixa de personal"))
+    # Nao pode olhar nenhuma coluna de mes: se olhasse, o reajuste entraria duas vezes.
+    assert ABA_DRE not in formula and ABA_FLUXO not in formula
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +402,24 @@ def test_interruptor_modo_da_folha_existe_com_default_percentual(
 ) -> None:
     ws = wb[ABA_FOLHA]
     assert _norm(ws.cell(row=_FOLHA_MODO_ROW, column=1).value) == "modo da folha"
-    assert ws.cell(row=_FOLHA_MODO_ROW, column=2).value == "percentual da receita"
+    assert ws.cell(row=_FOLHA_MODO_ROW, column=2).value == "percentual do faturamento maduro"
+
+
+def test_rotulo_do_modo_percentual_nao_mente_sobre_a_base(wb: openpyxl.Workbook) -> None:
+    """O rotulo era "percentual da receita" e passou a mentir.
+
+    Com a folha FIXA, o percentual e do faturamento MADURO e o valor nao acompanha a
+    receita do mes — chamar o modo de "percentual da receita" faria quem abre a planilha
+    esperar uma folha que encolhe na rampa.
+    """
+    assert _MODOS_FOLHA[0] == "percentual do faturamento maduro"
+    assert "maduro" in _norm(_MODOS_FOLHA[0])
+    ws = wb[ABA_FOLHA]
+    texto = _norm(
+        " ".join(str(ws.cell(row=r, column=1).value or "") for r in range(1, _FOLHA_MODO_ROW + 3))
+    )
+    assert "maduro" in texto, "a aba tem de dizer, em texto visível, que a base é o maduro"
+    assert "nao escala com a rampa" in texto or "nao acompanha a rampa" in texto
 
 
 def test_interruptor_modo_da_folha_tem_validacao_de_lista(wb: openpyxl.Workbook) -> None:
@@ -312,7 +431,7 @@ def test_interruptor_modo_da_folha_tem_validacao_de_lista(wb: openpyxl.Workbook)
     ]
     assert candidatos, "interruptor sem validação de lista"
     dv = candidatos[0]
-    assert "percentual da receita" in dv.formula1
+    assert "percentual do faturamento maduro" in dv.formula1
     assert "quadro de pessoal" in dv.formula1
 
 
@@ -338,6 +457,193 @@ def test_quadro_default_fica_proximo_de_17pct_da_bruta_do_golden(resultado) -> N
     assert abs(total - resultado.folha_mensal) < 500.0, (
         f"quadro estimado R$ {total:,.2f} vs folha do motor R$ {resultado.folha_mensal:,.2f}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Folha virou custo FIXO: o "k" e o custo fixo do break-even
+# ---------------------------------------------------------------------------
+
+
+def test_k_nao_subtrai_mais_a_folha(wb: openpyxl.Workbook) -> None:
+    """`k = (1-deducoes)*(1-impostos-cvar)`, SEM o termo da folha.
+
+    Enquanto a folha era percentual da receita ela era subtraida aqui. Deixar o termo
+    depois de a folha virar custo fixo a contaria DUAS vezes (no k e no custo fixo) e
+    devolveria k = 0,628985 no lugar de 0,798985.
+    """
+    formula = str(_premissas_por_rotulo(wb)["fator receita -> ebitda (k)"])
+    for chave in ("devolucoes", "impostos sobre receita (total)", "custo variavel total"):
+        assert _usa(formula, _ref_premissa(wb, chave)), f"{chave} ausente de {formula!r}"
+    for chave in ("folha como % do faturamento maduro", "folha mensal fixa"):
+        assert not _usa(formula, _ref_premissa(wb, chave)), (
+            f"a folha voltou para dentro do k: {formula!r}"
+        )
+
+
+def test_custo_fixo_do_break_even_inclui_a_folha(wb: openpyxl.Workbook) -> None:
+    """O custo fixo (sem aluguel) = outros fixos + folha FIXA, nos dois modos."""
+    formula = str(
+        _premissas_por_rotulo(wb)["custo fixo total, sem aluguel (outros fixos + folha)"]
+    )
+    assert _usa(formula, _ref_premissa(wb, "outros fixos (total)"))
+    assert _usa(formula, _ref_premissa(wb, "folha mensal fixa"))
+
+
+def test_break_even_do_resumo_usa_o_custo_fixo_com_folha(wb: openpyxl.Workbook) -> None:
+    ws = wb[ABA_RESUMO]
+    ref_cf = _ref_premissa(wb, "custo fixo total")
+    ref_k = _ref_premissa(wb, "fator receita -> ebitda")
+    achados = 0
+    for r in range(_RESUMO_ROW_INI, ws.max_row + 1):
+        if not _norm(ws.cell(row=r, column=1).value or "").startswith("break-even"):
+            continue
+        formula = ws.cell(row=r, column=2).value
+        if not (isinstance(formula, str) and formula.startswith("=")):
+            continue  # faixa de titulo do bloco "Break-even (...)", sem valor
+        assert _usa(formula, ref_cf), f"break-even sem a folha no custo fixo: {formula!r}"
+        assert _usa(formula, ref_k)
+        achados += 1
+    assert achados == 2, "esperava break-even de EBITDA e de caixa"
+
+
+# ---------------------------------------------------------------------------
+# Taxa de franquia PARCELADA (4x sem juros)
+# ---------------------------------------------------------------------------
+
+
+def test_premissas_expoe_parcelas_e_valor_da_parcela_da_franquia(
+    wb: openpyxl.Workbook,
+) -> None:
+    prem = _premissas_por_rotulo(wb)
+    assert prem["parcelas da taxa de franquia"] == SIM_PARCELAS_FRANQUIA_DEFAULT == 4
+    parcela = str(prem["valor da parcela da franquia"])
+    assert _usa(parcela, _ref_premissa(wb, "taxa de franquia"))
+    assert _usa(parcela, _ref_premissa(wb, "parcelas da taxa de franquia"))
+
+
+def test_fluxo_lanca_a_parcela_da_franquia_e_nao_a_taxa_inteira(
+    wb: openpyxl.Workbook,
+) -> None:
+    """A linha do fluxo tem de olhar as PARCELAS, nao um "mes_contrato = 1"."""
+    ws = wb[ABA_FLUXO]
+    ref_parcelas = _ref_premissa(wb, "parcelas da taxa de franquia")
+    ref_parcela = _ref_premissa(wb, "valor da parcela da franquia")
+    for mes in (-4, -2, -1, 1):
+        formula = str(ws.cell(row=_FLX_ROW["inv_franquia"], column=_col(mes)).value)
+        assert _usa(formula, ref_parcelas), f"M{mes}: {formula!r}"
+        assert _usa(formula, ref_parcela), f"M{mes}: {formula!r}"
+        assert f"{_FLX_ROW['mes_contrato']}" in formula
+
+
+def test_investimento_tem_parcelas_e_valor_da_parcela_da_franquia(
+    wb: openpyxl.Workbook,
+) -> None:
+    ws = wb[ABA_INVESTIMENTO]
+    rotulos = {
+        k: _norm(ws.cell(row=_INVEST_ROW[k], column=1).value or "")
+        for k in ("parcelas_franquia", "franquia_parcela")
+    }
+    assert rotulos["parcelas_franquia"] == "parcelas da franquia"
+    assert rotulos["franquia_parcela"] == "valor da parcela da franquia"
+    for k in rotulos:
+        v = ws.cell(row=_INVEST_ROW[k], column=2).value
+        assert isinstance(v, str) and v.startswith("="), f"{k} cravado: {v!r}"
+
+
+# ---------------------------------------------------------------------------
+# Resumo: saida de dinheiro em VERMELHO (pedido de Felipe, 2026-07-24)
+# ---------------------------------------------------------------------------
+
+
+class _RefsQualquer(dict):
+    """Refs de premissa que resolvem qualquer chave — só a ORDEM das linhas importa."""
+
+    def __missing__(self, chave: str) -> str:
+        return f"{ABA_PREMISSAS}!$B$999"
+
+
+def _resumo_por_key(wb: openpyxl.Workbook) -> dict[str, int]:
+    """Mapa `key -> linha` do Resumo, reconstruido pela MESMA ordem que o writer usa.
+
+    Reconstruir e melhor que casar rotulo por rotulo: se alguem inserir uma linha no
+    meio, o mapa acompanha e os testes de cor continuam apontando para a linha certa.
+    """
+    from motor_expansao.dimensionamento.simulador_xlsx import _linhas_resumo
+
+    meses = [-4, -3, -2, -1, *range(1, 61)]
+    linhas = _linhas_resumo(meses, _RefsQualquer(), "BM", "BN")
+    out: dict[str, int] = {}
+    r = _RESUMO_ROW_INI
+    for key, *_resto in linhas:
+        if key:
+            out[key] = r
+        r += 1
+    # Consistencia: a linha reconstruida tem de ter, na aba, uma formula na coluna B.
+    ws = wb[ABA_RESUMO]
+    for key, row in out.items():
+        v = ws.cell(row=row, column=2).value
+        assert isinstance(v, str) and v.startswith("="), f"{key}: linha {row} = {v!r}"
+    return out
+
+
+def _cf_por_faixa(ws) -> dict[str, list]:
+    return {str(cf.sqref): list(cf.rules) for cf in ws.conditional_formatting}
+
+
+def test_resumo_pinta_saida_de_dinheiro_em_vermelho(wb: openpyxl.Workbook) -> None:
+    ws = wb[ABA_RESUMO]
+    linhas = _resumo_por_key(wb)
+    assert _RESUMO_SAIDA <= set(linhas), "key de saída sem linha no Resumo"
+    for key in sorted(_RESUMO_SAIDA):
+        cel = ws.cell(row=linhas[key], column=2)
+        assert cel.font.color is not None and cel.font.color.rgb == _VERMELHO_FONTE, (
+            f"{key} (linha {linhas[key]}) deveria estar em vermelho: {cel.font.color}"
+        )
+
+
+def test_resumo_nao_pinta_entrada_nem_resultado_de_vermelho_fixo(
+    wb: openpyxl.Workbook,
+) -> None:
+    """Faturamento, receitas, EBITDA, VPL e acumulado NAO levam vermelho fixo."""
+    ws = wb[ABA_RESUMO]
+    linhas = _resumo_por_key(wb)
+    neutras = (
+        "faturamento", "receita_anuidade", "receita_liquida", "receita_pos_impostos",
+        "ebitda", "vpl", "acumulado_m60", "ticket_blended", "receita_por_aluno",
+        "break_even_ebitda", "teto_teto",
+    )
+    for key in neutras:
+        cel = ws.cell(row=linhas[key], column=2)
+        cor = cel.font.color.rgb if cel.font.color is not None else None
+        assert cor != _VERMELHO_FONTE, f"{key} não é saída de dinheiro, mas está vermelho"
+
+
+def test_valor_que_alterna_de_sinal_usa_formatacao_condicional(
+    wb: openpyxl.Workbook,
+) -> None:
+    """EBITDA/FCF/VPL/TIR: vermelho SO quando negativo, senao a planilha mentiria."""
+    ws = wb[ABA_RESUMO]
+    linhas = _resumo_por_key(wb)
+    faixas = _cf_por_faixa(ws)
+    alvo = {f"B{linhas[k]}" for k in _RESUMO_ALTERNA}
+    cobertas = {ref for ref in faixas if ref in alvo}
+    assert cobertas == alvo, f"sem formatação condicional: {sorted(alvo - cobertas)}"
+    for ref, regras in faixas.items():
+        if ref not in alvo:
+            continue
+        assert any(
+            r.operator == "lessThan" and r.dxf is not None
+            and r.dxf.font is not None
+            and r.dxf.font.color is not None
+            and r.dxf.font.color.rgb == _VERMELHO_FONTE
+            for r in regras
+        ), f"{ref}: regra de negativo em vermelho ausente"
+
+
+def test_resumo_explica_a_convencao_de_cor(wb: openpyxl.Workbook) -> None:
+    ws = wb[ABA_RESUMO]
+    texto = _norm(" ".join(str(ws.cell(row=r, column=1).value or "") for r in range(1, 5)))
+    assert "vermelho" in texto and "saida de dinheiro" in texto
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +709,17 @@ def test_afericao_grava_os_valores_do_motor_corretos(wb: openpyxl.Workbook, resu
         "receita pos-impostos": resultado.receita_pos_impostos,
         "custo variavel": resultado.custos_variaveis_mensal,
         "folha": resultado.folha_mensal,
+        # Folha FIXA: a base madura, o R$ dimensionado e o valor DO MES 1 (que era o
+        # defeito — antes o mes 1 pagava menos folha porque a rampa nao tinha chegado).
+        "faturamento maduro (base de dimensionamento da folha)": _premissas().faturamento_maduro(
+            _DEMANDA
+        ),
+        "folha fixa dimensionada pelo faturamento maduro": _premissas().folha_fixa_mes(_DEMANDA),
+        "folha no mes 1 (a folha nao acompanha a rampa)": serie[1]["folha"],
+        "custo fixo total sem aluguel (outros fixos + folha)": _premissas().custo_fixo_total_mes(
+            _DEMANDA
+        ),
+        "fator receita -> ebitda (k), sem a folha": _premissas().fator_receita_para_ebitda,
         "outros custos fixos": steady["outros_fixos"],
         "aluguel": steady["aluguel"],
         "custos operacionais totais": resultado.custos_op_mensal,
@@ -429,6 +746,15 @@ def test_afericao_grava_os_valores_do_motor_corretos(wb: openpyxl.Workbook, resu
         "aluguel-teto - teto (canonico)": resultado.aluguel_teto["teto"],
         "aluguel-teto - excecao": resultado.aluguel_teto["excecao"],
         "ebitda do mes 1 (negativo por construcao)": serie[1]["ebitda_mensal"],
+        "ebitda do mes 4 (meio da rampa)": serie[4]["ebitda_mensal"],
+        "ebitda do mes 8 (fim da rampa)": serie[8]["ebitda_mensal"],
+        # Franquia PARCELADA: o M-4 e o M-1 desembolsam o MESMO valor (obra + parcela),
+        # e nada da franquia vaza para o mes 1.
+        "investimento do m-4 (obra + parcela da franquia)": serie[-4]["investimento"],
+        "investimento do m-1 (4a parcela da franquia ainda dentro da obra)":
+            serie[-1]["investimento"],
+        "investimento no mes 1 (as parcelas nao vazam da pre-abertura)":
+            serie[1]["investimento"],
     }
     assert len(esperado) >= 20
 
@@ -585,3 +911,203 @@ def test_nomes_definidos_sao_ascii(wb: openpyxl.Workbook) -> None:
     for n in nomes:
         assert n.isascii(), f"identificador acentuado: {n}"
         assert n.startswith("prem_")
+
+
+# ---------------------------------------------------------------------------
+# RECALCULO REAL das formulas (pacote `formulas`; SKIP quando nao instalado)
+#
+# Este bloco e o unico que pega formula que COMPILA e devolve numero ERRADO —
+# openpyxl nunca calcula nada. Instalar com `python -m pip install formulas`.
+# ---------------------------------------------------------------------------
+
+# linha da planilha -> campo da serie do motor.
+_DRE_VS_MOTOR = {
+    "alunos_total": "alunos_total",
+    "alunos_balcao": "alunos_balcao",
+    "alunos_agregadores": "alunos_agregadores",
+    "faturamento": "faturamento_mensal",
+    "rec_anuidade": "receita_anuidade",
+    "deducoes": "deducoes",
+    "receita_liquida": "receita_liquida",
+    "impostos": "impostos",
+    "receita_pos_impostos": "receita_pos_impostos",
+    "cvar_total": "custos_variaveis",
+    "folha": "folha",
+    "outros_total": "outros_fixos",
+    "aluguel": "aluguel",
+    "custo_pre_op": "custo_pre_operacional",
+    "custos_op": "custos_op",
+    "ebitda": "ebitda_mensal",
+    "ir_total": "ir_csll",
+    "juros": "juros",
+}
+_FLX_VS_MOTOR = {
+    "ebitda": "ebitda_mensal",
+    "ir_csll": "ir_csll",
+    "juros": "juros",
+    "pmt": "pmt",
+    "amortizacao": "amortizacao",
+    "investimento": "investimento",
+    "fcf": "fcf_mensal",
+    "fcf_acumulado": "fcf_acumulado",
+}
+
+
+@pytest.fixture(scope="module")
+def ler_celula(blob: bytes, tmp_path_factory: pytest.TempPathFactory):
+    """Recalcula o workbook e devolve `ler(aba, "B7") -> valor`.
+
+    SKIP quando o pacote `formulas` nao esta instalado (nao e dependencia do projeto).
+    """
+    formulas = pytest.importorskip(
+        "formulas", reason="instale com `python -m pip install formulas` para recalcular"
+    )
+    caminho: Path = tmp_path_factory.mktemp("simulador_xlsx") / "simulador.xlsx"
+    caminho.write_bytes(blob)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sol = formulas.ExcelModel().loads(str(caminho)).finish().calculate()
+    base = f"'[{caminho.name}]"
+
+    def ler(aba: str, coord: str) -> float:
+        chave = f"{base}{aba.upper()}'!{coord}"
+        assert chave in sol, f"célula {aba}!{coord} não existe no modelo recalculado"
+        valor = sol[chave]
+        try:
+            valor = valor.value[0, 0]
+        except (AttributeError, TypeError, IndexError):
+            pass
+        return valor
+
+    return ler
+
+
+def _num(valor: object) -> float:
+    assert not isinstance(valor, str), f"a fórmula devolveu texto/erro: {valor!r}"
+    return float(valor)  # type: ignore[arg-type]
+
+
+def test_recalculo_reproduz_a_dre_e_o_fluxo_nos_64_meses(ler_celula, resultado) -> None:
+    """As 4.293 fórmulas avaliadas, mês a mês, contra `simular()`."""
+    divergencias: list[str] = []
+    for j, linha in enumerate(resultado.serie_mensal):
+        letra = get_column_letter(_MES_COL_INI + j)
+        mes = int(linha["mes"])
+        for aba, mapa, rows in (
+            (ABA_DRE, _DRE_VS_MOTOR, _DRE_ROW),
+            (ABA_FLUXO, _FLX_VS_MOTOR, _FLX_ROW),
+        ):
+            for key, campo in mapa.items():
+                obtido = _num(ler_celula(aba, f"{letra}{rows[key]}"))
+                esperado = float(linha[campo])
+                if abs(obtido - esperado) > 0.01:
+                    divergencias.append(
+                        f"{aba}/{key} M{mes}: planilha {obtido:.4f} vs motor {esperado:.4f}"
+                    )
+    assert not divergencias, "\n".join(divergencias[:30])
+
+
+def test_recalculo_da_afericao_nao_tem_nenhum_divergente(
+    ler_celula, wb: openpyxl.Workbook
+) -> None:
+    """Coluna C (fórmula recalculada) == coluna B (motor) em TODAS as linhas."""
+    ws = wb[ABA_AFERICAO]
+    conferidas = 0
+    for row in range(1, ws.max_row + 1):
+        rotulo = ws.cell(row=row, column=1).value
+        motor = ws.cell(row=row, column=2).value
+        formula = ws.cell(row=row, column=3).value
+        if not (rotulo and isinstance(formula, str) and formula.startswith("=")):
+            continue
+        assert isinstance(motor, (int, float)), f"{rotulo}: motor não numérico ({motor!r})"
+        obtido = _num(ler_celula(ABA_AFERICAO, f"C{row}"))
+        assert abs(obtido - float(motor)) < 0.01, (
+            f"{rotulo}: fórmula {obtido!r} vs motor {motor!r}"
+        )
+        conferidas += 1
+    assert conferidas >= 40
+
+
+def test_recalculo_prova_que_a_folha_e_fixa_e_so_reajusta_no_mes_13(
+    ler_celula, resultado
+) -> None:
+    """O que o Felipe reportou: a folha não pode escalar com a unidade."""
+    folha_m1 = _num(ler_celula(ABA_DRE, f"{get_column_letter(_col(1))}{_DRE_ROW['folha']}"))
+    assert folha_m1 == pytest.approx(resultado.folha_mensal, abs=0.01)
+    for mes in range(1, 13):
+        atual = _num(ler_celula(ABA_DRE, f"{get_column_letter(_col(mes))}{_DRE_ROW['folha']}"))
+        assert atual == pytest.approx(folha_m1, abs=0.01), f"a folha mudou no M{mes}"
+    # Único movimento legítimo: o degrau anual de custos a partir do mês 13.
+    folha_m13 = _num(ler_celula(ABA_DRE, f"{get_column_letter(_col(13))}{_DRE_ROW['folha']}"))
+    assert folha_m13 == pytest.approx(folha_m1 * 1.04, abs=0.01)
+    # O faturamento do mês 1 é uma fração do maduro, mas a folha é integral: é isso
+    # que faz o EBITDA do mês 1 ser bem mais negativo do que no modelo antigo.
+    fat_m1 = _num(ler_celula(ABA_DRE, f"{get_column_letter(_col(1))}{_DRE_ROW['faturamento']}"))
+    assert fat_m1 < 0.5 * resultado.faturamento_mensal_steady
+    assert folha_m1 > 0.4 * fat_m1
+
+
+def test_recalculo_prova_a_franquia_parcelada_em_4x(ler_celula) -> None:
+    linha = _FLX_ROW["inv_franquia"]
+    for mes in (-4, -3, -2, -1):
+        parcela = _num(ler_celula(ABA_FLUXO, f"{get_column_letter(_col(mes))}{linha}"))
+        assert parcela == pytest.approx(40_000.0, abs=0.01), f"M{mes}"
+        total = _num(
+            ler_celula(ABA_FLUXO, f"{get_column_letter(_col(mes))}{_FLX_ROW['investimento']}")
+        )
+        assert total == pytest.approx(190_000.0, abs=0.01), f"M{mes}"
+    for mes in (1, 2, 12):
+        assert _num(ler_celula(ABA_FLUXO, f"{get_column_letter(_col(mes))}{linha}")) == 0
+    # As 4 parcelas somam a taxa CHEIA: parcelar é timing, não desconto nem invenção
+    # de dinheiro. A coluna "Total do horizonte" vem logo depois dos 64 meses.
+    total_horizonte = get_column_letter(_MES_COL_INI + 64)
+    assert _num(ler_celula(ABA_FLUXO, f"{total_horizonte}{linha}")) == pytest.approx(
+        _INVEST["taxa_franquia"], abs=0.01
+    )
+
+
+def test_recalculo_do_resumo_bate_com_os_kpis_do_motor(
+    ler_celula, wb: openpyxl.Workbook, resultado
+) -> None:
+    linhas = _resumo_por_key(wb)
+    esperado = {
+        "faturamento": resultado.faturamento_mensal_steady,
+        "folha": resultado.folha_mensal,
+        "custos_op": resultado.custos_op_mensal,
+        "ebitda": resultado.ebitda_mensal,
+        "margem": resultado.margem_ebitda_pct,
+        "break_even_ebitda": resultado.alunos_break_even_total,
+        "break_even_caixa": resultado.alunos_break_even_caixa_total,
+        "payback": resultado.payback_meses,
+        "tir_anual": resultado.tir_anual,
+        "vpl": resultado.vpl,
+        "acumulado_m60": resultado.acumulado_mes_final,
+        "ebitda_m1": resultado.serie_mensal[4]["ebitda_mensal"],
+        "teto_teto": resultado.aluguel_teto["teto"],
+    }
+    for key, valor in esperado.items():
+        obtido = _num(ler_celula(ABA_RESUMO, f"B{linhas[key]}"))
+        tol = 0.0001 if abs(float(valor)) < 1 else 0.01
+        assert obtido == pytest.approx(float(valor), abs=tol), key
+
+
+def test_recalculo_confirma_o_k_e_o_custo_fixo_com_folha(ler_celula, wb) -> None:
+    """Os dois lados da mudança: k sem folha, custo fixo COM folha."""
+    p = _premissas()
+    ref_k = _ref_premissa(wb, "fator receita -> ebitda").split("!")[1].replace("$", "")
+    ref_cf = _ref_premissa(wb, "custo fixo total").split("!")[1].replace("$", "")
+    ref_folha = _ref_premissa(wb, "folha mensal fixa").split("!")[1].replace("$", "")
+    ref_fat = _ref_premissa(wb, "faturamento maduro").split("!")[1].replace("$", "")
+    assert _num(ler_celula(ABA_PREMISSAS, ref_k)) == pytest.approx(
+        p.fator_receita_para_ebitda, abs=1e-9
+    )
+    assert _num(ler_celula(ABA_PREMISSAS, ref_k)) == pytest.approx(0.798985, abs=1e-9)
+    assert _num(ler_celula(ABA_PREMISSAS, ref_cf)) == pytest.approx(
+        p.custo_fixo_total_mes(_DEMANDA), abs=0.01
+    )
+    assert _num(ler_celula(ABA_PREMISSAS, ref_folha)) == pytest.approx(
+        p.folha_fixa_mes(_DEMANDA), abs=0.01
+    )
+    assert _num(ler_celula(ABA_PREMISSAS, ref_fat)) == pytest.approx(
+        p.faturamento_maduro(_DEMANDA), abs=0.01
+    )

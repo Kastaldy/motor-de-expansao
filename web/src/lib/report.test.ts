@@ -45,7 +45,14 @@ function make(over: Partial<ViabilidadeOut> = {}): ViabilidadeOut {
       ticket_blended: 120.23,
       share_balcao: 0.69,
       ticket_agregador_fator: 0.6,
+      // Folha FIXA desde o mes 1: `folha_pct` dimensiona pelo faturamento MADURO
+      // (aqui = o proprio steady, porque a anuidade esta desligada e o reajuste so
+      // comeca no mes 13) e o valor vale desde o mes 1 — nao acompanha a rampa.
       folha_pct: 0.17,
+      folha_fixa_mes: 47_942.66,
+      folha_base_faturamento_maduro: 282_015.62,
+      folha_fixa_desde_mes_1: true,
+      folha_regime: 'fixa_desde_mes_1_dimensionada_pelo_faturamento_maduro',
       deducoes_pct: 0.005,
       impostos_receita_pct: 0.0665,
       custo_variavel_pct: 0.1305,
@@ -105,6 +112,9 @@ function make(over: Partial<ViabilidadeOut> = {}): ViabilidadeOut {
       prazo_equipamentos: 60,
       juros_equipamentos_am: 0.018,
       parcelas_obra: 4,
+      // Franquia PARCELADA 4x sem juros (M-4..M-1), nao a vista no M-4.
+      parcelas_franquia: 4,
+      franquia_parcela: 40_000,
     },
     retorno: {
       otica: 'desalavancada',
@@ -198,6 +208,19 @@ describe('viabilidadeParaPdf', () => {
     // O mes de referencia do steady vem SERVIDO — o PDF nao o recalcula de maturacao.
     expect(enviado.premissas.mes_referencia_steady).toBe(12)
     expect(enviado.premissas.maturacao_meses).toBe(8)
+  })
+
+  it('a folha FIXA e o parcelamento da franquia viajam ate o PDF (nao podem sumir)', () => {
+    // Regressao do defeito "a folha esta escalando junto com a unidade": o PDF nao
+    // pode reconstruir a folha multiplicando `folha_pct` pelo faturamento DO MES.
+    // Ele le `folha_fixa_mes` (dimensionada pelo faturamento MADURO, paga desde o
+    // mes 1) e o cronograma da franquia parcelada — ambos servidos pelo motor.
+    const enviado = viabilidadeParaPdf(make()) as unknown as ViabilidadeOut
+    expect(enviado.premissas.folha_fixa_mes).toBe(47_942.66)
+    expect(enviado.premissas.folha_base_faturamento_maduro).toBe(282_015.62)
+    expect(enviado.premissas.folha_fixa_desde_mes_1).toBe(true)
+    expect(enviado.investimento.parcelas_franquia).toBe(4)
+    expect(enviado.investimento.franquia_parcela).toBe(40_000)
   })
 
   it('os degraus intermediarios chegam prontos (sem subtracao no cliente)', () => {

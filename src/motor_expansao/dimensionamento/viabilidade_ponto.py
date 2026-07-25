@@ -29,6 +29,7 @@ from motor_expansao.dimensionamento.catchment_batch import calcular_catchment_un
 from motor_expansao.dimensionamento.config import (
     RAIO_CATCHMENT_KM,
     SIM_MENSALIDADE_BALCAO,
+    SIM_PARCELAS_FRANQUIA_DEFAULT,
     SIM_PARCELAS_OBRA_DEFAULT,
     SIM_SHARE_BALCAO,
     SIM_TAXA_FRANQUIA,
@@ -115,9 +116,13 @@ class ViabilidadePontoResult:
     # FIN-VIAB-01: `viabilidade` e a saida de `simular()` — traz a serie mensal
     # completa (M-4..M+60) e TODOS os KPIs ja calculados. Ninguem recalcula nada.
     viabilidade: ViabilidadeResult
-    # Aluguel-teto CANONICO (excecao, 30% do faturamento bruto steady). Vem de
-    # `aluguel_teto_clusters` — NAO mais da inversao por margem EBITDA-alvo, que
-    # devolvia R$105.813,13 onde a tela mostrava R$55.535,18 no mesmo cenario.
+    # Aluguel-teto CANONICO = a faixa `teto` (20% do faturamento bruto steady), lida
+    # de `aluguel_teto_clusters()["canonico"]` — NAO a excecao (30%). Este comentario
+    # dizia "excecao, 30%" e estava mentindo sobre o proprio codigo desde que o
+    # canonico passou a ser o teto (decisao de Felipe, 2026-07-24: o card grande mostra
+    # o limite que a operacao defende; a excecao segue impressa so no detalhe).
+    # A fonte tambem NAO e mais a inversao por margem EBITDA-alvo, que devolvia
+    # R$105.813,13 onde a tela mostrava R$55.535,18 no mesmo cenario.
     aluguel_teto_calculado: float
     # Break-even de EBITDA em alunos TOTAIS (mix balcao/agregadores escalando junto).
     # Antes era em alunos de BALCAO e a tela comparava com a demanda TOTAL.
@@ -339,6 +344,7 @@ def _investimento_do_ponto(
     prazo_equipamentos: int | None,
     juros_equipamentos_am: float | None,
     taxa_franquia: float | None,
+    parcelas_franquia: int | None = None,
     kwargs: dict[str, Any],
 ) -> dict[str, Any]:
     """Kwargs de investimento de `simular()`, com adaptacao do CAPEX legado.
@@ -346,6 +352,11 @@ def _investimento_do_ponto(
     Legado (`capex` + `capex_financiado_pct` + `prazo_financiamento_meses` +
     `juros_financiamento_am`): a fracao financiada vira EQUIPAMENTOS e o resto vira
     OBRA (equity). Chamadas novas passam obra/equipamentos diretamente.
+
+    `parcelas_franquia` (FIN-VIAB-01, decisao de Felipe 2026-07-24): a taxa de
+    franquia e PARCELADA sem juros (default 4x, junto da obra) em vez de sair
+    inteira do caixa no M-4. So timing de caixa: nao muda EBITDA, margem nem
+    break-even.
     """
     if obra is None and equipamentos is None and kwargs.get("capex") is not None:
         capex = float(kwargs["capex"])
@@ -365,6 +376,7 @@ def _investimento_do_ponto(
         "prazo_equipamentos": int(prazo_equipamentos or 0) if equip > 0 else 0,
         "juros_equipamentos_am": float(juros_equipamentos_am or 0.0),
         "taxa_franquia": float(SIM_TAXA_FRANQUIA if taxa_franquia is None else taxa_franquia),
+        "parcelas_franquia": int(parcelas_franquia or SIM_PARCELAS_FRANQUIA_DEFAULT),
     }
 
 
@@ -385,6 +397,7 @@ def grade_sensibilidade(
     prazo_equipamentos: int | None = None,
     juros_equipamentos_am: float | None = None,
     taxa_franquia: float | None = None,
+    parcelas_franquia: int | None = None,
     **kwargs: Any,
 ) -> pd.DataFrame:
     """Varredura cartesiana alunos x aluguel -> `simular()` por par.
@@ -413,6 +426,7 @@ def grade_sensibilidade(
         prazo_equipamentos=prazo_equipamentos,
         juros_equipamentos_am=juros_equipamentos_am,
         taxa_franquia=taxa_franquia,
+        parcelas_franquia=parcelas_franquia,
         kwargs=kwargs,
     )
 
@@ -460,6 +474,7 @@ def analisar_viabilidade_ponto(
     prazo_equipamentos: int | None = None,
     juros_equipamentos_am: float | None = None,
     taxa_franquia: float | None = None,
+    parcelas_franquia: int | None = None,
     **kwargs: Any,
 ) -> ViabilidadePontoResult:
     """Orquestrador property-first — roda o nucleo (`Premissas` + `simular`) UMA vez.
@@ -531,6 +546,7 @@ def analisar_viabilidade_ponto(
         prazo_equipamentos=prazo_equipamentos,
         juros_equipamentos_am=juros_equipamentos_am,
         taxa_franquia=taxa_franquia,
+        parcelas_franquia=parcelas_franquia,
         kwargs=kwargs,
     )
     viab = simular(float(demanda_premissa), p, **inv)
@@ -594,7 +610,9 @@ def analisar_viabilidade_ponto(
         aluguel_teto_faixas=teto_faixas,
         aluguel_teto_p10=teto_p10,
         alunos_breakeven_caixa=float(viab.alunos_break_even_caixa_total),
-        alunos_para_margem_alvo=float(alunos_para_margem(p, margem_alvo)),
+        alunos_para_margem_alvo=float(
+            alunos_para_margem(p, margem_alvo, float(demanda_premissa))
+        ),
     )
 
 

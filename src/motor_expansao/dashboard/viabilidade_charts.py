@@ -18,8 +18,15 @@ MESMO objeto que a tela consome — via `montar_payload_pdf_viabilidade()`:
   - resultado mensal: `serie_mensal[].fcf_mensal`;
   - faturamento x EBITDA: `serie_mensal[].faturamento_mensal` / `.ebitda_mensal`
     (o EBITDA do mes 1 e NEGATIVO por construcao — o custo operacional e integral
-    desde o mes 1 enquanto a rampa de alunos ainda esta no comeco);
-  - aluguel-teto impresso: `aluguel_teto.canonico` (30% do faturamento bruto);
+    desde o mes 1 enquanto a rampa de alunos ainda esta no comeco, e desde a decisao
+    de Felipe de 2026-07-24 a FOLHA tambem e integral desde o mes 1, o que aprofunda
+    esse primeiro mes: -R$43.464,47 contra -R$10.139,56 na versao anterior);
+  - composicao do custo do mes de steady: `dre.custos_variaveis` / `dre.folha` /
+    `dre.custos_fixos` (a folha e custo FIXO, dimensionada pelo faturamento MADURO);
+  - taxa de franquia e seu parcelamento: `investimento.taxa_franquia` /
+    `investimento.parcelas_franquia` (campo novo; ausente -> a linha nao afirma nada);
+  - aluguel-teto impresso: `aluguel_teto.canonico` (= a faixa `teto`, 20% do
+    faturamento bruto; a `excecao` de 30% segue impressa no detalhe, nao no card);
   - break-even impresso: `break_even.ebitda`/`break_even.caixa`, em alunos TOTAIS.
 
 As unicas contas aqui sao GEOMETRIA de grafico (empilhamento das barras do
@@ -165,12 +172,49 @@ def grafico_fco(serie: Sequence[dict], *, mes_positivo: int | None = None) -> by
     return _fig_to_png(fig)
 
 
+_MARGEM_EIXO_Y = 0.08
+
+
+def limites_y_faturamento_ebitda(
+    faturamento: Sequence[float], ebitda: Sequence[float]
+) -> tuple[float, float] | None:
+    """Limites do eixo Y que acomodam a barra MAIS ALTA e o vale MAIS FUNDO, com folga.
+
+    GEOMETRIA de grafico, nao formula financeira: so le os extremos das duas series que
+    ja vem do payload. Existe para o enquadramento ser EXPLICITO em vez de depender do
+    autoscale: o EBITDA do mes 1 ficou bem mais negativo depois da folha fixa
+    (-R$43.464,47 contra -R$10.139,56), e o eixo tem de descer com ele sem cortar a
+    linha nem achatar as barras de faturamento.
+
+    O zero entra sempre no intervalo (as barras nascem nele). Serie vazia/nao-finita ou
+    span nulo -> None, e o chamador deixa o autoscale do matplotlib decidir.
+    """
+    valores = [v for v in [*faturamento, *ebitda] if math.isfinite(v)]
+    if not valores:
+        return None
+    piso = min(0.0, min(valores))
+    teto = max(0.0, max(valores))
+    span = teto - piso
+    if span <= 0.0:
+        return None
+    folga = span * _MARGEM_EIXO_Y
+    return piso - folga, teto + folga
+
+
 def grafico_faturamento_ebitda(serie: Sequence[dict]) -> bytes:
     """Faturamento (barras) e EBITDA (linha) mensais, direto da serie do payload.
 
     So a fase de OPERACAO entra (a pre-abertura nao tem faturamento). O EBITDA do mes 1
     aparece NEGATIVO: o custo operacional e integral desde a inauguracao enquanto a rampa
     de alunos ainda esta no comeco — e o comportamento correto do modelo, nao um defeito.
+    Com a FOLHA FIXA desde o mes 1 (decisao de Felipe, 2026-07-24) esse primeiro mes ficou
+    bem mais fundo (-R$43.464,47 contra -R$10.139,56 antes).
+
+    O eixo Y e enquadrado por `limites_y_faturamento_ebitda`, que inclui o vale do EBITDA
+    e o topo do faturamento com folga — o mes 1 nao encosta na borda nem sai da area de
+    plotagem. A linha do ZERO e desenhada explicitamente para o sinal do EBITDA ser
+    legivel: com as barras nascendo em zero e o eixo descendo aos -47 mil, sem ela nao
+    havia referencia visual de onde o resultado troca de sinal.
     """
     operacao = _so_operacao(serie)
     meses = _coluna(operacao, "mes")
@@ -179,6 +223,11 @@ def grafico_faturamento_ebitda(serie: Sequence[dict]) -> bytes:
     fig, ax = plt.subplots(figsize=(_FIG_W, _FIG_H), dpi=_DPI)
     ax.bar(meses, faturamento, color=_TURQUESA, alpha=0.55, label="Faturamento")
     ax.plot(meses, ebitda, color=_MAGENTA, linewidth=2, label="EBITDA")
+    # Referencia do zero: o EBITDA dos primeiros meses e negativo e precisa ler como tal.
+    ax.axhline(0.0, color=_CINZA, linewidth=0.8)
+    limites = limites_y_faturamento_ebitda(faturamento, ebitda)
+    if limites is not None:
+        ax.set_ylim(*limites)
     ax.set_title("Faturamento e EBITDA mensais")
     ax.set_xlabel("Mes")
     ax.set_ylabel("R$ / mes")
@@ -349,7 +398,8 @@ def montar_payload_pdf_viabilidade(
         "alunos_breakeven": break_even.get("ebitda"),
         "breakeven_unidade": break_even.get("unidade"),
         "breakeven_caixa": break_even.get("caixa"),
-        # Aluguel-teto = % do faturamento bruto; o canonico e a faixa de excecao (30%).
+        # Aluguel-teto = % do faturamento bruto; o canonico e a faixa `teto` (20%), nao a
+        # `excecao` (30%) — o card grande mostra o limite que a operacao defende.
         "aluguel_teto": teto.get("canonico"),
         "aluguel_teto_faixas": {
             "base": teto.get("base"),
@@ -375,12 +425,28 @@ def montar_payload_pdf_viabilidade(
         # divergir do card ao lado no mesmo slide.
         "mes_referencia_steady": _ler(payload, "premissas", "mes_referencia_steady"),
         "ebitda_mensal": dre.get("ebitda"),
+        # Composicao do custo operacional do mes de steady. A FOLHA e a linha que mudou de
+        # natureza (decisao de Felipe, 2026-07-24): deixou de ser percentual da receita DO
+        # MES e virou custo FIXO, dimensionado pelo faturamento MADURO e pago integralmente
+        # desde o mes 1. O slide precisa dizer isso, senao o leitor supoe que a folha
+        # encolhe com a rampa — foi exatamente o defeito reportado. Tudo LEITURA do payload.
+        "custos_op": dre.get("custos_op"),
+        "custos_variaveis": dre.get("custos_variaveis"),
+        "folha": dre.get("folha"),
+        "custos_fixos": dre.get("custos_fixos"),
+        "folha_pct": _ler(payload, "premissas", "folha_pct"),
         "faixa_p10": faixa.get("p10"),
         "faixa_p90": faixa.get("p90"),
         # --- linhas de detalhe (financiamento e indicadores de comite) ---
         "pmt_mensal": investimento.get("pmt"),
         "juros_totais": investimento.get("juros_totais"),
         "investimento_total": investimento.get("investimento_total"),
+        # Taxa de franquia e seu PARCELAMENTO sem juros (4x por decisao de Felipe,
+        # 2026-07-24; antes saia inteira do caixa no M-4). `parcelas_franquia` e campo NOVO
+        # do payload: ausente -> a linha de investimento nao afirma parcelamento nenhum,
+        # em vez de assumir um numero que o backend nao mandou.
+        "taxa_franquia": investimento.get("taxa_franquia"),
+        "parcelas_franquia": investimento.get("parcelas_franquia"),
         "tir_anual": retorno.get("tir_anual"),
         "vpl": retorno.get("vpl"),
         "acumulado_mes_final": payload.get("acumulado_mes_final"),

@@ -783,6 +783,19 @@ a base de calibração DENTRO do formato Ultra, e revalidar a curva (reabre BLK-
 | **Depende de** | **BLK-DIM-03R** (que fixou os coeficientes do DRE, incluindo `SIM_PESSOAL_MES`). Relacionado a **BLK-VIAB-04** (backtest N=112, para checar que a mudança não piora a validação). |
 | **Autonomia** | **manual (NÃO loop-safe)** — muda a economia que a ferramenta recomenda; o **valor do ratio** (~25%) é decisão de produto/finanças que precisa de gate humano (N=6 nas DREs). Mecanicamente é simples, mas NÃO marcar loop-safe. |
 
+> **ATENÇÃO — a ESTRUTURA deste bloco já foi implementada, e de forma DIFERENTE da escrita abaixo (FIN-VIAB-01,
+> decisão de Felipe em 2026-07-24). Não executar o texto original ao pé da letra: ele reintroduziria o defeito que
+> acabou de ser corrigido.** O que existe hoje no motor: `SIM_FOLHA_PCT` dimensiona a folha pelo **faturamento
+> MADURO** (regime pleno, a preços do ano 1) e o valor resultante é **FIXO desde o mês 1**, reajustando só
+> anualmente — a equipe é contratada **antes** dos alunos chegarem. Logo a folha é **custo FIXO**, saiu de
+> `fator_receita_para_ebitda` (k: 0,628985 → 0,798985) e entrou em `Premissas.custo_fixo_total_mes()`. As frases
+> "a folha deve acompanhar o faturamento de cada mês, inclusive menor na rampa" (Escopo) e "folha escala com a
+> receita" (Aceite item 3) descrevem a regra **ANTIGA/DESCARTADA** — a folha percentual do mês diluía o custo na
+> rampa, subestimava a queima de caixa do mês 1 em ~R$33,3 mil e deixava o break-even otimista (840,6 em vez de
+> 1.152,0 alunos totais no caso de referência). **O que continua PENDENTE deste bloco é só o NÍVEL do percentual**
+> (0,17 vigente x 0,25–0,26 apurados nas 6 DREs), com a controladoria; ver `PREMISSAS_VIABILIDADE.md` §4.1 e
+> `docs/nota_impacto_fin_viab_01.md`.
+
 **Contexto.** O simulador (`dimensionamento/simulador.py::viabilidade`) modela a folha como um **custo fixo absoluto**
 `SIM_PESSOAL_MES = R$50.128,16` (`dimensionamento/config.py:103`), aplicado **igual a toda unidade**, independente de
 receita, metragem ou região. Seis DREs gerenciais reais (Augusta, Bangu, Cabo Frio, Icaraí, Praia Grande, Vila

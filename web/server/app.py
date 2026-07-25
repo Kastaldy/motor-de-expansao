@@ -1202,6 +1202,11 @@ class ViabilidadeIn(BaseModel):
     # default 4). E a base do ROIC e do fluxo acumulado (payback parte de -Obra).
     obra: float | None = Field(default=None, ge=0)
     parcelas_obra: int | None = Field(default=None, gt=0, le=12)
+    # Taxa de franquia PARCELADA sem juros (decisao de Felipe, 2026-07-24; default 4).
+    # Antes saia INTEIRA do caixa no M-4. As parcelas caem nos meses de CONTRATO 1..N
+    # (M-4..M-1 com N=4), junto da obra. E SO timing de caixa: melhora TIR/VPL e nao
+    # toca EBITDA, margem nem break-even. Mesma validacao de `parcelas_obra`.
+    parcelas_franquia: int | None = Field(default=None, gt=0, le=12)
     # Equipamentos: financiado (prazo 36-60m + juros a.m.); a PMT entra ABAIXO do
     # EBITDA (nao e desembolso a vista) -> dilui no tempo e melhora o payback.
     equipamentos: float | None = Field(default=None, ge=0)
@@ -1275,14 +1280,16 @@ def _investimento(body: ViabilidadeIn) -> dict[str, Any]:
       (default 4, os meses M-4..M-1 de pre-abertura).
     - EQUIPAMENTOS: financiados (`prazo_equipamentos` meses a `juros_equipamentos_am`);
       a PMT (Price) sai do caixa mes a mes e a parcela de juros vai a DRE.
-    - TAXA DE FRANQUIA: a vista no M-4. Default do config (R$160 mil), agora
-      sobrescrivivel pelo operador (`taxa_franquia` no corpo).
+    - TAXA DE FRANQUIA: PARCELADA sem juros em `parcelas_franquia` (default 4), nos
+      meses de contrato 1..N (M-4..M-1), junto da obra — antes saia inteira no M-4.
+      Valor default do config (R$160 mil), sobrescrivivel pelo operador.
 
     Legado (`capex` + `capex_financiado_valor`/`_pct` + `juros_financiamento_am` +
     `capex_parcelas_meses`): a fracao financiada vira EQUIPAMENTOS, o resto vira OBRA.
     """
     from motor_expansao.dimensionamento.config import (
         SIM_CAPEX_DEFAULT,
+        SIM_PARCELAS_FRANQUIA_DEFAULT,
         SIM_PARCELAS_OBRA_DEFAULT,
         SIM_TAXA_FRANQUIA,
     )
@@ -1316,6 +1323,7 @@ def _investimento(body: ViabilidadeIn) -> dict[str, Any]:
         ),
         "juros_equipamentos_am": float(juros or 0.0),
         "taxa_franquia": float(franquia),
+        "parcelas_franquia": int(body.parcelas_franquia or SIM_PARCELAS_FRANQUIA_DEFAULT),
     }
 
 
@@ -1448,6 +1456,20 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
             "ticket_agregador_fator": _num(premissas.ticket_agregador_fator, 4),
             "share_balcao": _num(premissas.share_balcao, 4),
             "folha_pct": _num(premissas.folha_pct, 4),
+            # FOLHA FIXA DESDE O MES 1 (decisao de Felipe, 2026-07-24). `folha_pct`
+            # nao e mais um percentual da receita DO MES: ele DIMENSIONA a folha pelo
+            # faturamento MADURO (regime pleno, a precos do ano 1) e o valor resultante
+            # e pago integralmente desde o mes 1 — a equipe existe antes dos alunos.
+            # Consequencia: a folha e CUSTO FIXO (saiu de `fator_receita_para_ebitda`) e
+            # os meses de rampa ficam mais pesados. Os tres campos abaixo vem do proprio
+            # motor (`Premissas.folha_fixa_mes` / `.faturamento_maduro`); a tela LE, nao
+            # multiplica percentual por faturamento.
+            "folha_fixa_mes": _num(premissas.folha_fixa_mes(float(body.demanda)), 2),
+            "folha_base_faturamento_maduro": _num(
+                premissas.faturamento_maduro(float(body.demanda)), 2
+            ),
+            "folha_fixa_desde_mes_1": True,
+            "folha_regime": "fixa_desde_mes_1_dimensionada_pelo_faturamento_maduro",
             "deducoes_pct": _num(premissas.devolucoes_pct, 4),
             "impostos_receita_pct": _num(premissas.impostos_receita_pct, 4),
             "custo_variavel_pct": _num(premissas.custo_variavel_pct, 4),
@@ -1512,6 +1534,17 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
             "prazo_equipamentos": int(inv["prazo_equipamentos"]),
             "juros_equipamentos_am": _num(inv["juros_equipamentos_am"], 6),
             "parcelas_obra": int(inv["parcelas_obra"]),
+            # Franquia PARCELADA sem juros: N parcelas iguais nos meses de contrato
+            # 1..N (M-4..M-1 com N=4), junto da obra. A divisao abaixo e RENDER do
+            # cronograma de desembolso (valor / n de parcelas sem juros), nao uma
+            # formula financeira nova — nenhum coeficiente entra nela.
+            "parcelas_franquia": int(inv["parcelas_franquia"]),
+            "franquia_parcela": _num(
+                inv["taxa_franquia"] / inv["parcelas_franquia"]
+                if inv["taxa_franquia"] > 0 and inv["parcelas_franquia"] > 0
+                else 0.0,
+                2,
+            ),
         },
         "retorno": {
             # Padrao DESALAVANCADO (decisao do dono do produto). O equity vem junto,

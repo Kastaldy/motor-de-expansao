@@ -117,6 +117,10 @@ export interface ViabilidadeIn {
   obra?: number
   /** Parcelas da obra em meses (default 4, sem juros). */
   parcelas_obra?: number
+  /** Parcelas da TAXA DE FRANQUIA (default 4, sem juros): caem nos meses de contrato
+   *  1..N (M-4..M-1), junto da obra. É só timing de caixa — melhora TIR/VPL e NÃO
+   *  altera EBITDA, margem nem break-even. Vazio = padrão 4. */
+  parcelas_franquia?: number
   /** Equipamentos (OPEX): financiado; a PMT entra abaixo do EBITDA. */
   equipamentos?: number
   /** Prazo do financiamento de equipamentos em meses (36–60). */
@@ -138,7 +142,8 @@ export interface ViabilidadeIn {
   /* --- Premissas explícitas (FIN-VIAB-01). Todas OPCIONAIS: vazio = default do
      `dimensionamento/config.py`, a fonte única. Estavam escondidas como literal no
      meio do código; hoje o operador pode sobrescrever. --------------------- */
-  /** Taxa de franquia (R$, à vista no M-4). Editável pelo operador; vazio = R$ 160.000. */
+  /** Taxa de franquia (R$, parcelada sem juros — ver `parcelas_franquia`). Editável
+   *  pelo operador; vazio = R$ 160.000. */
   taxa_franquia?: number
   /** Deduções (devoluções) como FRAÇÃO do faturamento bruto. */
   deducoes_pct?: number
@@ -189,7 +194,23 @@ export interface PremissasViabilidade {
   share_balcao: number
   /** Fracao do ticket cheio que o agregador paga (0.60). Opcional: so para rotular o mix. */
   ticket_agregador_fator?: number | null
+  /* --- Folha: FIXA desde o mês 1 (decisão de Felipe, 2026-07-24) --------------
+     `folha_pct` NÃO é mais um percentual da receita do mês: ele DIMENSIONA a folha
+     pelo faturamento MADURO (regime pleno, a preços do ano 1) e o valor resultante
+     (`folha_fixa_mes`) é pago integralmente desde o mês 1 — a equipe existe antes
+     dos alunos. Logo a folha é CUSTO FIXO: saiu do fator receita→EBITDA (k passou de
+     0,628985 para 0,798985) e entrou no custo fixo. Era o defeito reportado ("a folha
+     está escalando junto com a unidade"). A tela LÊ estes campos; nunca multiplica
+     `folha_pct` por faturamento. ------------------------------------------------ */
   folha_pct: number
+  /** R$/mês de folha, FIXO desde o mês 1 (= folha_pct × faturamento maduro). */
+  folha_fixa_mes: number
+  /** Faturamento de regime pleno usado como BASE do dimensionamento da folha. */
+  folha_base_faturamento_maduro: number
+  /** Sempre true no contrato v1: deixa explícito que a folha não acompanha a rampa. */
+  folha_fixa_desde_mes_1: boolean
+  /** Rótulo do regime da folha (identificador, sem acento — não exibir cru). */
+  folha_regime: string
   deducoes_pct: number
   impostos_receita_pct: number
   custo_variavel_pct: number
@@ -273,6 +294,10 @@ export interface InvestimentoViabilidade {
   /** juros mensal em FRACAO (0.018 = 1,8% a.m.). */
   juros_equipamentos_am?: number | null
   parcelas_obra?: number
+  /** Parcelas da taxa de franquia, sem juros (default 4), nos meses de contrato 1..N. */
+  parcelas_franquia?: number
+  /** R$ de CADA parcela da franquia (= taxa_franquia / parcelas_franquia). */
+  franquia_parcela?: number | null
 }
 
 /** Retorno do capital. A otica padrao e a DESALAVANCADA; equity nunca no mesmo KPI. */
@@ -296,7 +321,7 @@ export interface BreakEvenViabilidade {
   caixa: number | null
 }
 
-/** Aluguel-teto como % do faturamento bruto steady. Canonico = excecao (30%). */
+/** Aluguel-teto como % do faturamento bruto steady. Canonico = TETO (20%). */
 export interface AluguelTeto {
   base: string
   /** 15% do faturamento — faixa saudável. */
@@ -305,7 +330,8 @@ export interface AluguelTeto {
   teto: number | null
   /** 30% do faturamento — exceção (máximo tolerável). */
   excecao: number | null
-  /** O que a tela chama de "aluguel-teto" (= exceção, por decisão do dono do produto). */
+  /** O que a tela chama de "aluguel-teto" (= faixa TETO de 20%, por decisão do dono do
+   *  produto: o card grande mostra o limite que a operação defende, não a exceção). */
   canonico: number | null
   /** Mesmo teto calculado sobre o faturamento do cenário p10 (leitura conservadora). */
   teto_p10: number | null

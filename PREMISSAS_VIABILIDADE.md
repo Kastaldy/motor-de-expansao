@@ -6,6 +6,8 @@
 > **leem** o resultado — nenhuma fórmula financeira pode ser reescrita fora do simulador.
 >
 > Ciclo: **FIN-VIAB-01** (reconciliação do simulador) · Atualizado em **2026-07-24**
+> (**3ª rodada** — duas decisões de produto de Felipe entraram no núcleo: **folha fixa desde o
+> mês 1** e **taxa de franquia parcelada em 4×**. Ver §4.1 e §6.)
 > Guardrail permanente: camada **paralela**, READ-ONLY sobre o M1 (DEC-001/DEC-008/DEC-009).
 
 ---
@@ -109,19 +111,64 @@ balcão por mês → **R$ 6.241,94/mês** dentro de um faturamento de R$ 288.257
 | `SIM_MANUTENCAO_PCT` | `0.02` | % da receita líquida | DRE `F67` | Controladoria | `config.py` → `Premissas.manutencao_pct` |
 | `SIM_CARTOES_PCT` | `0.0105` | % da receita líquida | DRE `F79` | Controladoria | `config.py` → `Premissas.cartoes_pct` |
 | *(derivado)* `custo_variavel_pct` | `0.1305` | % da receita líquida | royalties + marketing + manutenção + cartões | — | `Premissas.custo_variavel_pct`; payload `premissas.custo_variavel_pct` |
-| `SIM_FOLHA_PCT` | `0.17` | % do **faturamento bruto** | decisão de Felipe, 2026-07-24 — ver conflito **A** na §9 | Felipe + Controladoria | `config.py` → `Premissas.folha_pct`; linha `folha` da série |
+| `SIM_FOLHA_PCT` | `0.17` | % do **faturamento MADURO** (regime pleno) → **R$/mês fixo desde o mês 1** | decisão de Felipe, 2026-07-24 — estrutura em §4.1, nível no conflito **A** da §9 | Felipe + Controladoria | `config.py` → `Premissas.folha_pct` → **`Premissas.folha_fixa_mes(demanda)`**; linha `folha` da série |
+| *(derivado)* `folha_fixa_mes(demanda)` | **R$ 49.003,79** no caso de referência | R$/mês | `folha_pct × faturamento_maduro(demanda)`, a preços do ano 1 | — | `Premissas.folha_fixa_mes()`; reajusta anualmente como os demais custos |
+| *(derivado)* `custo_fixo_total_mes(demanda)` | **R$ 87.153,79** no caso de referência | R$/mês (sem aluguel) | `outros_fixos_mes + folha_fixa_mes(demanda)` | — | `Premissas.custo_fixo_total_mes()`; **substituiu** a propriedade `custo_fixo_base_mes` |
 | `SIM_PESSOAL_MES` | `50 128,16` | R$/mês | Fopag com encargos (DRE linha 55) | **congelado (legado)** | `config.py`; **não alimenta mais a folha** — só default de `viabilidade()`/`gerar_serie_mensal()` |
-| `pessoal_mes_override` | `None` | R$/mês | escotilha de compatibilidade | Engenharia (compat) | `Premissas`; quando preenchido, a folha vira custo fixo e `folha_pct` é ignorado |
-| `SIM_OUTROS_FIXOS_MES` | `38 150,00` | R$/mês | Excel, DRE linhas 52-59 e 69 (IPTU 2.000 + água/luz 17.000 + telefone 500 + limpeza 14.000 + tecnologia 2.150 + assessorias 2.500 + outros 2.000) | Controladoria | `config.py` → `Premissas.outros_fixos_mes` |
+| `pessoal_mes_override` | `None` | R$/mês | escotilha de compatibilidade | Engenharia (compat) | `Premissas`; quando preenchido, este valor absoluto **substitui** o dimensionamento por percentual (`folha_pct` é ignorado). A folha já é fixa nos dois modos |
+| `SIM_OUTROS_FIXOS_MES` | `38 150,00` | R$/mês | Excel, DRE linhas 52-59 e 69 — **seis** componentes que fecham exatamente nos 38.150: IPTU 2.000 + água/luz 17.000 + telefone 500 + limpeza 14.000 + tecnologia 2.150 + assessorias 2.500. (O "outros 2.000" que aparecia nesta lista era **espúrio**: as sete componentes somavam 40.150, R$ 2.000 acima da própria constante. Corrigido no comentário do `config.py` em 2026-07-24; o valor **não** mudou.) | Controladoria | `config.py` → `Premissas.outros_fixos_mes` |
 | `aluguel_mes` | — (input) | R$/mês | **input manual do operador** — escopo fechado, não é estimado pelo motor | Operador | `Premissas.aluguel_mes` |
 | `SIM_CUSTO_PRE_OPERACIONAL_MES` | `0.0` | R$/mês | **explicitação de ausência** — hoje o modelo assume zero custo de contratação/treinamento/pré-venda | Felipe | `config.py` → `Premissas.custo_pre_operacional_mes`; linhas M-4..M-1 |
-| `SIM_CUSTO_STUDIO` | `6 000,00` | R$/mês por studio | fopag adicional por studio extra | Felipe | `config.py`; **declarada e não consumida** — ver §8 |
+| `SIM_CUSTO_STUDIO` | `6 000,00` | R$/mês por studio | fopag adicional por studio extra | Felipe | `config.py`; **consumida** por `web/server/app.py::_premissas_do_body`, que soma `n_studios × SIM_CUSTO_STUDIO` a `outros_fixos_mes` |
 | `SIM_STUDIOS_DEFAULT` | `0` | un. (0..3) | configuração padrão de unidade | Felipe | `config.py`; **declarada e não consumida** — ver §8 |
 
-**Natureza do custo (explícita no resultado desde o FIN-VIAB-01):** variável (% da receita líquida),
-folha (% do faturamento bruto) e fixo absoluto (outros fixos + aluguel + pré-operacional). O custo
-operacional é **integral desde o mês 1** — não acompanha a rampa de alunos. As únicas variações
-legítimas no tempo são a carência de aluguel e o reajuste anual.
+**Natureza do custo (explícita no resultado):** variável (% da receita líquida), **folha (custo
+FIXO** dimensionado pelo faturamento maduro — ver §4.1) e fixo absoluto (outros fixos + aluguel +
+pré-operacional). O custo operacional é **integral desde o mês 1** — não acompanha a rampa de
+alunos. As únicas variações legítimas no tempo são a carência de aluguel e o reajuste anual.
+
+### 4.1 Regra da folha — FIXA desde o mês 1 (decisão de Felipe, 2026-07-24 — não rediscutir)
+
+**O que era:** `folha = folha_pct × faturamento DO MÊS`. Como o faturamento rampa por 8 meses, a
+folha rampava junto — no caso de referência ela entrava com **R$ 15.678,87 no mês 1** e só chegava
+aos ~R$ 49 mil na maturidade. Isso equivale a supor que **se contrata gente na medida em que o
+aluno entra**, o que não é como a unidade abre. Foi exatamente o defeito reportado: *"a folha está
+escalando junto com a unidade"*.
+
+**O que é agora:** `Premissas.folha_fixa_mes(demanda)` = `folha_pct × faturamento MADURO` (regime
+pleno, casa cheia e anuidade em cobrança, **a preços do ano 1**), e esse valor vale **desde o mês
+1**, reajustando anualmente como os demais custos. No caso de referência: 17% × R$ 288.257,57 =
+**R$ 49.003,79/mês**, do M1 ao M60.
+
+**Por quê:** a equipe existe antes dos alunos. O quadro de pessoal de uma unidade de 1.050 m² é
+dimensionado pela operação que ela vai ter — recepção, limpeza, professores por horário, gerência
+— e é contratado para abrir a porta, não conforme a matrícula chega. Dimensionar pelo faturamento
+maduro e pagar integralmente desde o mês 1 é o que o caixa real faz.
+
+**Quatro consequências estruturais** (todas já no núcleo; nenhuma é escolha de engenharia):
+
+1. **A folha deixou de ser percentual e virou CUSTO FIXO.** O percentual sobrevive apenas como
+   *régua de dimensionamento*, aplicada uma única vez.
+2. **Ela saiu do fator `k`.** `fator_receita_para_ebitda` não subtrai mais `folha_pct`:
+   `k = (1 − deduções) × (1 − impostos − custo variável)` = `0,995 × 0,803` = **0,798985**
+   (era **0,628985**). Quem lê `k` como "quanto de cada R$ 1 de faturamento sobra antes do custo
+   fixo" continua certo — o que mudou é que a folha agora está do outro lado da conta.
+3. **O custo fixo cresceu.** Sem aluguel: de **R$ 38.150,00** (só `outros_fixos`) para
+   **R$ 87.153,79** (`outros_fixos` + folha). Com o aluguel de R$ 30.000 do caso de referência, o
+   bloco fixo que o break-even divide por `k` vai de **R$ 68.150,00 para R$ 117.153,79**. A
+   **alavancagem operacional aumentou**: mais custo fixo e mais contribuição marginal por aluno —
+   cada aluno vale mais no topo, e a queda dói mais embaixo.
+4. **Duas assinaturas mudaram**, porque é a demanda assumida que dimensiona a folha:
+   `break_even_alunos(p, demanda_total, *, incluir_pmt=0)` e
+   `alunos_para_margem(p, margem_alvo, demanda_total)`. A pergunta que o break-even responde passou
+   a ser a correta: *"montei a casa para 2.304 alunos; com quantos eu empato?"* — e não *"com
+   quantos eu empato se eu também encolher a equipe proporcionalmente?"*.
+
+**Efeito no caso de referência:** o mês de *steady* **não muda** (lá o faturamento já é o maduro,
+então a folha percentual e a folha fixa coincidem: R$ 49.003,79 nos dois modelos). O que muda são
+os meses de rampa e tudo que deriva deles — EBITDA do mês 1 de **−R$ 10.139,56 para −R$ 43.464,47**,
+break-even de **840,6 para 1.152,0** alunos totais, payback de **28 para 31 meses**. Números
+completos em §15 e no antes × depois de `docs/nota_impacto_fin_viab_01.md`.
 
 ---
 
@@ -154,6 +201,7 @@ R$ 20.000/mês → IR/CSLL = **R$ 29.362,42/mês**.
 | `prazo_equipamentos` | — (input) | meses | contrato de financiamento | Operador | argumento de `simular()` |
 | `juros_equipamentos_am` | — (input) | % ao mês | contrato de financiamento | Operador | argumento de `simular()` |
 | `SIM_TAXA_FRANQUIA` | `160 000,00` | R$ | conflito **B** na §9 (planilha diz 140.000) | Felipe + Comitê | `config.py` → argumento `taxa_franquia`; **editável pelo operador** |
+| `SIM_PARCELAS_FRANQUIA_DEFAULT` | `4` | parcelas **sem juros** | decisão de Felipe, 2026-07-24 — ver §6.1 | Felipe + Comitê | `config.py` → argumento `parcelas_franquia` de `gerar_serie_mensal_completa()` e `simular()`; parcelas nos meses de **contrato 1..N** (M-4..M-1 com N=4), junto da obra |
 | `SIM_CAPEX_DEFAULT` | `2 340 000` | R$ | `Simulador!R9`, cenário 0 (`FC!C11:C16`) | **congelado (legado)** | `config.py`; só o caminho `viabilidade()` legado |
 | `SIM_ALUGUEL_MES` | `20 000` | R$/mês | `Simulador!N9` | **congelado (legado)** | `config.py`; o aluguel real é input manual |
 | `SIM_MESES_PRE_ABERTURA` | `4` | meses | linha do tempo M-4..M-1 | Felipe | `config.py` → `Premissas.meses_pre_abertura` |
@@ -176,6 +224,20 @@ cheio = CAPEX + taxa de franquia). O retorno de **equity** (resultado depois da 
 é visão secundária e **nunca aparece no mesmo KPI** — o ROIC anterior misturava numerador
 desalavancado com denominador de capex cheio, e o modelo se beneficiava do financiamento duas vezes.
 
+### 6.1 Taxa de franquia parcelada em 4× sem juros (decisão de Felipe, 2026-07-24)
+
+Antes a taxa saía **inteira do caixa no M-4**, junto da primeira parcela da obra: o desembolso do
+M-4 era de R$ 310.000 (obra 150.000 + franquia 160.000) contra R$ 150.000 nos três meses seguintes.
+Agora ela é parcelada em **4× sem juros**, nos meses de **contrato 1..N** — os mesmos M-4..M-1 da
+obra —, o que deixa a pré-abertura plana em **R$ 190.000 por mês** (obra 150.000 + franquia 40.000).
+
+**Isto é só timing de caixa, e o efeito é pequeno de propósito:** as quatro parcelas cabem
+inteiras dentro da janela de pré-abertura, então **no mês 1 o desembolso acumulado já é o mesmo**.
+EBITDA, margem e break-even **não mudam** (parcelamento não é resultado); payback e acumulado de
+M60 ficam **idênticos**. Muda apenas o que é sensível à *data* de cada real: **TIR +0,33 pp** e
+**VPL +R$ 2.241,80** (medido, §15). Se um dia o número de parcelas passar da janela de pré-abertura,
+as parcelas restantes cairão nos primeiros meses de operação — a série já trata esse caso.
+
 ---
 
 ## 7. Aluguel-teto
@@ -183,8 +245,8 @@ desalavancado com denominador de capex cheio, e o modelo se beneficiava do finan
 | parâmetro | default | unidade | fonte | quem pode alterar | onde vive |
 |---|---|---|---|---|---|
 | `SIM_ALUGUEL_TETO_IDEAL` | `0.15` | % do faturamento bruto | régua de ocupação da rede | Felipe | `config.py` → `aluguel_teto_clusters()` |
-| `SIM_ALUGUEL_TETO_TETO` | `0.20` | % do faturamento bruto | idem | Felipe | idem |
-| `SIM_ALUGUEL_TETO_EXCECAO` | `0.30` | % do faturamento bruto | idem — **é o valor canônico exibido** | Felipe | idem; payload `aluguel_teto.canonico` |
+| `SIM_ALUGUEL_TETO_TETO` | `0.20` | % do faturamento bruto | idem — **é o valor canônico exibido** | Felipe | idem; payload `aluguel_teto.canonico` |
+| `SIM_ALUGUEL_TETO_EXCECAO` | `0.30` | % do faturamento bruto | idem — **exceção, não referência**; segue impressa no detalhe | Felipe | idem |
 
 Base de cálculo: **faturamento bruto de steady-state** — o do `mes_referencia_steady` (mês 12),
 anuidade inclusa. É a única definição de aluguel-teto do sistema (tela **e** PDF), e as **três
@@ -192,7 +254,12 @@ faixas** viajam no payload: sumir com ideal e teto no PDF, deixando só o canôn
 defeitos apontados pelo QA deste ciclo. A inversão por margem EBITDA-alvo (`aluguel_teto()`) está
 **deprecated**: devolvia R$ 105.813,13 onde a tela mostrava R$ 55.535,18 no mesmo cenário.
 
-No caso de referência: ideal R$ 43.238,64 · teto R$ 57.651,51 · **exceção/canônico R$ 86.477,27**.
+**O canônico exibido no card grande é o `teto` (20%), não a `excecao` (30%)** — decisão de Felipe
+(2026-07-24): o card tem de mostrar o limite que a operação **defende**; 30% é caso de exceção, não
+referência. As três faixas seguem impressas no detalhe, todas da mesma base.
+
+No caso de referência: ideal R$ 43.238,64 · **teto/canônico R$ 57.651,51** · exceção R$ 86.477,27.
+O aluguel pedido de R$ 30.000 é **10,4%** do faturamento — abaixo da faixa ideal.
 
 ---
 
@@ -228,16 +295,20 @@ motor**. Ficam documentadas aqui exatamente para que ninguém as "conserte" liga
   de ticket alto. O caminho canônico é `SIM_TICKET_AGREGADOR_FATOR = 0,60`.
 - **Decisão:** manter congelada. Nenhum código novo deve importá-la.
 
-### `SIM_CUSTO_STUDIO = 6 000,00` e `SIM_STUDIOS_DEFAULT = 0`
+### `SIM_STUDIOS_DEFAULT = 0` (e `SIM_CUSTO_STUDIO`, que **deixou de ser órfã**)
 
-- **Estado:** órfãs. Verificado em 2026-07-24: **nenhum consumidor** em `src/`, `web/` ou `tests/`.
-- **Fonte:** "fopag adicional por studio extra" — sem célula da planilha nem linha de DRE.
-- **A armadilha:** a tela **tem** um seletor de studios (0..3), o que dá a impressão de que o custo
-  do studio já entra no DRE. **Não entra.** Hoje os studios só afetam o **ticket** (via
-  `TICKET_POR_STUDIO` no frontend), nunca o custo. Uma unidade com 3 studios roda com a mesma folha
-  e o mesmo custo fixo de uma sem nenhum.
-- **Decisão:** ou ligar `SIM_CUSTO_STUDIO` no custo fixo (mudança de conclusão → Felipe), ou removê-la.
-  Manter declarada e desligada é o pior dos mundos, porque parece implementada.
+- **`SIM_CUSTO_STUDIO = 6 000,00` foi LIGADA neste ciclo.** `web/server/app.py::_premissas_do_body`
+  soma `n_studios × SIM_CUSTO_STUDIO` a `outros_fixos_mes` (com `n_studios = 2`, o custo fixo vai de
+  R$ 68.150,00 para R$ 80.150,00, ou seja −R$ 12.000 no EBITDA). Antes, a tela **tinha** um seletor
+  de studios (0..3) que só afetava o **ticket** (via `TICKET_POR_STUDIO` no frontend) e nunca o
+  custo: uma unidade com 3 studios rodava com o mesmo custo fixo de uma sem nenhum. A **fonte**
+  ("fopag adicional por studio extra") continua sem célula da planilha nem linha de DRE — calibrar o
+  valor é da controladoria. Nota: o studio entra em `outros_fixos_mes`, **não** na folha dimensionada
+  por `SIM_FOLHA_PCT` (§4.1) — se o quadro de pessoal do studio já estivesse dentro dos 17%, isso
+  seria dupla contagem, e é uma pergunta aberta para a controladoria.
+- **`SIM_STUDIOS_DEFAULT = 0` continua órfã.** Re-verificado em 2026-07-24: **nenhum consumidor** em
+  `src/`, `web/` ou `tests/`. Decisão: ou vira o default do seletor da tela, ou sai. Manter declarada
+  e desligada é o pior dos mundos, porque parece implementada.
 
 ---
 
@@ -246,15 +317,25 @@ motor**. Ficam documentadas aqui exatamente para que ninguém as "conserte" liga
 Três divergências **conhecidas, não resolvidas**, entre o código e a fonte documental. Nenhuma
 bloqueia o ciclo; todas precisam de decisão nomeada.
 
-### (a) FOLHA — 17% (código) × 25-26% (DREs reais)
+### (a) FOLHA — a nota tem DUAS dimensões: a ESTRUTURA (decidida) e o NÍVEL (pendente)
+
+Desde a 3ª rodada é obrigatório separar as duas, porque só uma foi resolvida:
+
+| dimensão | pergunta | estado |
+|---|---|---|
+| **ESTRUTURA** | a folha é **custo fixo** ou **percentual da receita do mês**? | **DECIDIDA — custo fixo desde o mês 1** (Felipe, 2026-07-24). Regra e consequências em §4.1. Não rediscutir. |
+| **NÍVEL** | o percentual que **dimensiona** esse custo fixo é 17% ou 25-26%? | **PENDENTE de gate da controladoria** (BLK-VIAB-11 aberto, criticidade Média). |
+
+**Sobre o nível:**
 
 | | |
 |---|---|
-| **O que o código faz hoje** | `SIM_FOLHA_PCT = 0,17` do faturamento bruto, **ativado no FIN-VIAB-01** por decisão de Felipe (2026-07-24). |
+| **O que o código faz hoje** | `SIM_FOLHA_PCT = 0,17`, aplicado **uma vez** sobre o faturamento **maduro** → R$ 49.003,79/mês fixos. |
 | **O que a evidência diz** | O **BLK-VIAB-11** apurou **25-26%** em **6 DREs gerenciais reais** (Augusta, Bangu, Cabo Frio, Icaraí, Praia Grande, Vila Guilherme; jun-jul/2026). Folha real de **R$ 38 mil a R$ 99 mil/mês**, **estável como % da receita bruta (CV 0,16)** e instável por m² (CV 0,34). SP e RJ praticamente idênticos → sem ajuste regional. |
-| **Por que 17% mesmo assim** | 17% mantém o **nível** próximo do status quo (R$ 50.128 fixos ÷ R$ 277.676 = 18,05% no caso antigo). A mudança do FIN-VIAB-01 é de **estrutura** — a folha passa a escalar com o volume — não de nível. Trocar as duas coisas ao mesmo tempo tornaria impossível atribuir o delta. |
-| **Impacto do nível** | A 17%, a folha do caso golden é **R$ 49.003,79** e o EBITDA fecha em **R$ 113.159,69 (39,26%)**. A 26%, a folha vai a **R$ 74.946,97** e o EBITDA cai para **R$ 87.216,50 (30,26%)** — o payback salta de **28 para 54 meses**, o acumulado de M60 despenca de R$ 1.795.729,88 para **R$ 189.087,77** e o VPL @ 12% a.a. vira **negativo (−R$ 174.670,13)**. Medido com a anuidade ligada, não estimado. |
-| **Status** | **PENDENTE de gate da controladoria** (BLK-VIAB-11 segue aberto, criticidade Média, apenas para calibrar o **nível**). |
+| **Por que 17% mesmo assim** | 17% mantém o **nível** próximo do status quo (R$ 50.128 fixos ÷ R$ 277.676 = 18,05% no caso antigo). A 3ª rodada mexeu na **estrutura**, não no nível — e trocar as duas coisas ao mesmo tempo tornaria impossível atribuir o delta. Note a ironia útil: com a folha fixa, o nível de 17% reproduz quase exatamente o R$ 50.128 absoluto do modelo original, agora dimensionado por uma régua rastreável em vez de um número herdado. |
+| **Impacto do nível (re-medido na estrutura NOVA, 2026-07-24)** | A 17%: folha **R$ 49.003,79**, EBITDA **R$ 113.159,69 (39,26%)**, break-even **1.152,0**, payback **31**, TIR **38,98% a.a.**, VPL **R$ 849.484,15**, M60 **R$ 1.645.454,56**. **A 26%: folha R$ 74.946,97, EBITDA R$ 87.216,50 (30,26%), break-even 1.416,1, EBITDA do mês 1 de −R$ 69.407,65 e o payback NÃO OCORRE dentro dos 60 meses** (`inf`) — TIR **−1,05% a.a.**, VPL **−R$ 384.910,19**, acumulado de M60 **−R$ 40.745,08**. |
+| **Atenção ao comparar com material anterior** | A leitura anterior desta linha dizia "payback 28 → 54 meses" e "VPL −R$ 174.670,13". Aquilo foi medido com a folha **percentual**, que diluía o custo na rampa. Na estrutura correta a 26% o projeto **não se paga no horizonte** — a pendência ficou materialmente **pior**, não melhor. |
+| **Status** | **PENDENTE de gate da controladoria.** É a decisão pendente de maior impacto do ciclo: sozinha, ela inverte a conclusão de go/no-go do Boulevard. |
 
 ### (b) TAXA DE FRANQUIA — R$ 160.000 (código) × R$ 140.000 (planilha e spec)
 
@@ -262,8 +343,8 @@ bloqueia o ciclo; todas precisam de decisão nomeada.
 |---|---|
 | **Código** | `SIM_TAXA_FRANQUIA = 160 000,00`. |
 | **Fonte documental** | `data/staging/simulador_estrutura.json`, célula **`Simulador!R10`** → `valor_default: 140000`, natureza "contrato". E `docs/modelo_dimensionamento_expansao.md:276` → "Taxa de franquia · R10 · R$140k · contrato". |
-| **Decisão** | **Mantido R$ 160.000** por decisão de Felipe (2026-07-24): é o valor em produção e o que o comitê já viu. Passa a ser **editável pelo operador** (exposto no schema da API), o que resolve o caso prático sem forçar a escolha do default. |
-| **Sensibilidade** | Com R$ 140.000, o caso golden mantém payback **28 meses** e ganha **+R$ 20.000** no acumulado de M60 (R$ 1.815.729,88) e no VPL (R$ 1.006.172,80); retorno desalavancado sobe de 46,55% para 46,99%. |
+| **Decisão** | **Mantido R$ 160.000** por decisão de Felipe (2026-07-24): é o valor em produção e o que o comitê já viu. Passa a ser **editável pelo operador** (exposto no schema da API) e **parcelado em 4× sem juros** (§6.1), o que resolve o caso prático sem forçar a escolha do default. |
+| **Sensibilidade (re-medida, 2026-07-24)** | Com R$ 140.000: payback **30 meses** (contra 31), acumulado de M60 **R$ 1.665.454,56** (+R$ 20.000 exatos), VPL **R$ 869.203,92** (+R$ 19.719,77 — menos que os R$ 20 mil nominais, porque o desembolso é descontado), TIR **40,01% a.a.** e retorno desalavancado **46,99%** (era 46,55%). EBITDA, margem e break-even não mudam. |
 | **Status** | Divergência **aceita e documentada**, não resolvida. Reconciliar planilha × contrato real é tarefa de quem mantém a planilha. |
 
 ### (c) TICKET POR STUDIO — a tela está deslocada um degrau
@@ -273,7 +354,7 @@ bloqueia o ciclo; todas precisam de decisão nomeada.
 | **Frontend** | `web/src/screens/ViabilityScreen.tsx:34` → `TICKET_POR_STUDIO = [147, 157, 167, 177]` (0 → 147, 1 → 157, 2 → 167, 3 → 177). |
 | **Planilha** | `Simulador!J9` → `=IF(N12=0,137,IF(N12=1,147,IF(N12=2,157,IF(N12=3,167,0))))` → **[137, 147, 157, 167]**. Confirmado em `simulador_estrutura.json` e em `docs/modelo_dimensionamento_expansao.md:271` ("Mensalidade · J9 · R$137 por cenário"). |
 | **Efeito** | A tela cobra **um degrau a mais** em todos os cenários de studio. O caso de referência (0 studios) roda a R$ 147 na tela e a R$ 137 na planilha. |
-| **Sensibilidade** | A R$ 137 o caso golden faz faturamento **R$ 269.412,97**, EBITDA **R$ 101.306,71 (37,60%)** e payback **34 meses** (contra 28). |
+| **Sensibilidade (re-medida, 2026-07-24)** | A R$ 137 o caso golden faz faturamento **R$ 269.412,97**, folha **R$ 45.800,20** (a régua de 17% acompanha o faturamento maduro menor), EBITDA **R$ 101.306,71 (37,60%)**, break-even **1.199,2** e payback **37 meses** — ou seja, **estoura o critério de 36 meses** e `flag_viavel` cai para falso. TIR **25,66% a.a.**, VPL **R$ 416.749,97**. Na medição anterior (folha percentual) davam 34 meses e o critério ainda passava; com a folha fixa, este conflito passou a ser capaz de reprovar a unidade sozinho. |
 | **Status** | **Aberto.** Não corrigido neste ciclo: mexer no ticket muda a conclusão de todos os cenários já apresentados, e a régua comercial vigente (R$ 147 como entrada) é decisão de produto, não de engenharia. Precisa de Felipe. |
 
 ---
@@ -287,7 +368,7 @@ custo de capital formalizado pela Ultra, nem WACC aprovado, nem taxa de referên
 comitê. O número **muda o VPL, não muda o payback, o EBITDA nem a TIR** (a TIR é a raiz do fluxo,
 independe da taxa) — a decisão é sobre a régua de comparação, não sobre a economia da unidade.
 
-No caso de referência, a 12% a.a.: **VPL = R$ 986.172,80**, contra **TIR de 45,48% a.a.**
+No caso de referência, a 12% a.a.: **VPL = R$ 849.484,15**, contra **TIR de 38,98% a.a.**
 
 **Ação pendente:** o comitê precisa fixar a taxa (ou declarar que 12% é a régua oficial). Enquanto
 não houver decisão, todo VPL exibido deve ser lido como "descontado a 12% a.a., taxa provisória".
@@ -373,19 +454,25 @@ camada de ingestão do BLK-DIM, que **não** tem relação com viabilidade finan
 
 ## 15. Caso de referência verificado
 
-Boulevard Shopping Londrina. Reproduzido diretamente de `simular()` em 2026-07-24 — os números
-abaixo são saída real do motor, não estimativa.
+Boulevard Shopping Londrina. Reproduzido diretamente de `simular()` em 2026-07-24, **na 3ª rodada**
+(folha fixa + franquia parcelada) — os números abaixo são saída real do motor, não estimativa.
 
 **Inputs:** m² = 1.050 · aluguel = R$ 30.000 · ticket cheio = R$ 147 · studios = 0 ·
 demanda total = 2.304 alunos · rampa 8 meses · obra R$ 600.000 em 4 parcelas ·
-equipamentos R$ 1.400.000 em 60 meses a 1,8% a.m. · taxa de franquia R$ 160.000 · carência 0.
+equipamentos R$ 1.400.000 em 60 meses a 1,8% a.m. · taxa de franquia R$ 160.000 **em 4 parcelas** ·
+carência 0.
 
 | indicador | valor |
 |---|---|
 | **Mês de referência do steady-state** | **12** (= `max(maturação 8, anuidade 12)`; servido em `premissas.mes_referencia_steady`) |
 | Ticket agregador | R$ 88,20 (60% do cheio) |
 | Ticket blended | R$ 120,23 |
+| Receita por aluno total (regime pleno) | R$ 122,94 (mensalidade + anuidade — régua do break-even) |
 | Elegibilidade da anuidade | **47,59%** (= 0,94¹²) → R$ 3,9263 por aluno de balcão por mês |
+| **Fator `k` (receita → EBITDA)** | **0,798985** (a folha **não** entra — §4.1) |
+| **Folha — FIXA desde o mês 1** | **R$ 49.003,79/mês** (17% do faturamento maduro de R$ 288.257,57) |
+| **Custo fixo sem aluguel** (`custo_fixo_total_mes`) | **R$ 87.153,79** (outros fixos 38.150,00 + folha 49.003,79) |
+| **Pré-abertura, CADA mês de M-4 a M-1** | investimento **R$ 190.000,00** (obra 150.000 + franquia 40.000) |
 | Faturamento (steady) | R$ 288.257,57 |
 | *dos quais anuidade* | *R$ 6.241,94* |
 | Deduções | R$ 1.441,29 |
@@ -396,23 +483,38 @@ equipamentos R$ 1.400.000 em 60 meses a 1,8% a.m. · taxa de franquia R$ 160.000
 | EBITDA | R$ 113.159,69 — **39,26%** |
 | IR/CSLL | R$ 29.362,42 (faixa do adicional de 10%) |
 | PMT | R$ 38.348,75 · juros totais R$ 900.925,18 |
-| Break-even EBITDA | **840,6 alunos totais** |
-| Break-even de caixa | **1.336,6 alunos totais** |
-| Alunos para margem de 10% | **1.007,2 alunos totais** |
-| Payback | **28 meses** (número único: KPI, gráfico e PDF) |
+| Break-even EBITDA | **1.152,0 alunos totais** |
+| Break-even de caixa | **1.542,4 alunos totais** |
+| Alunos para margem de 10% | **1.322,6 alunos totais** |
+| Payback | **31 meses** (número único: KPI, gráfico e PDF) |
 | 1º mês de caixa operacional positivo | mês 6 |
 | Retorno desalavancado | 46,55% a.a. |
-| TIR | 45,48% a.a. |
-| VPL @ 12% a.a. | R$ 986.172,80 |
-| Acumulado M60 | R$ 1.795.729,88 |
-| Aluguel-teto | ideal R$ 43.238,64 · teto R$ 57.651,51 · **canônico (exceção) R$ 86.477,27** |
+| TIR | 38,98% a.a. |
+| VPL @ 12% a.a. | R$ 849.484,15 |
+| Acumulado M60 | R$ 1.645.454,56 |
+| Aluguel-teto | ideal R$ 43.238,64 · **canônico (teto) R$ 57.651,51** · exceção R$ 86.477,27 |
 | Série mensal | 64 linhas (M-4 a M+60), 4 de pré-abertura |
-| EBITDA do mês 1 | **R$ -10.139,56** (negativo — o custo é integral desde o mês 1) |
+| **EBITDA do mês 1** | **−R$ 43.464,47** (a folha é integral e os alunos rampam por 8 meses) |
+| EBITDA do mês 4 | R$ 21.522,79 |
+| EBITDA do mês 8 | R$ 108.172,47 |
 
-**Referência com a anuidade desligada** (`anuidade_valor = 0`), para quem precisar comparar com
-material anterior a 2026-07-24: faturamento R$ 282.015,62 · EBITDA R$ 109.233,60 (38,73%) ·
-break-even 859,6 · payback 29 · TIR 42,21% a.a. · VPL R$ 875.106,66 · acumulado M60
-R$ 1.636.628,61 · aluguel-teto canônico R$ 84.604,69.
+**Steady-state não mudou na 3ª rodada.** Faturamento, EBITDA, margem, folha do mês 12, IR/CSLL e
+aluguel-teto são idênticos aos da rodada anterior — no mês 12 o faturamento já é o maduro, então
+folha percentual e folha fixa dão o mesmo R$ 49.003,79. Tudo o que mudou está na **rampa** e no que
+deriva dela (break-even, payback, TIR, VPL, acumulado).
+
+**Isolamento das duas mudanças da 3ª rodada** (medido em 2026-07-24, uma por vez):
+
+| mudança | efeito |
+|---|---|
+| **Franquia parcelada 4×** — só timing de caixa | TIR **+0,33 pp** · VPL **+R$ 2.241,80** · payback, acumulado de M60, EBITDA, margem e break-even **idênticos** |
+| **Folha fixa desde o mês 1** — responde por todo o resto | break-even **840,6 → 1.152,0** · payback **28 → 31** · TIR **45,48% → 38,65%** (antes de somar a franquia) · VPL **R$ 986.172,80 → R$ 847.242,35** · M60 **R$ 1.795.729,88 → R$ 1.645.454,56** · EBITDA do mês 1 **−R$ 10.139,56 → −R$ 43.464,47** |
+
+**Referência com a anuidade desligada** (`anuidade_valor = 0`), re-medida na estrutura nova, para
+quem precisar comparar com material anterior: steady no **mês 8** · faturamento R$ 282.015,62 ·
+folha R$ 47.942,66 · EBITDA R$ 109.233,60 (38,73%) · break-even **1.166,9** · payback **32** ·
+TIR 36,40% a.a. · VPL R$ 752.610,14 · acumulado M60 R$ 1.503.326,98 · aluguel-teto canônico
+R$ 56.403,12.
 
 ---
 
@@ -427,3 +529,17 @@ Existem só para não quebrar `backtest_viabilidade`, `batch_viabilidade`, `exce
 | `gerar_serie_mensal()` | `gerar_serie_mensal_completa()` | só 60 linhas de operação, sem CAPEX na série → payback do gráfico ≠ payback do KPI |
 | `aluguel_teto()` | `aluguel_teto_clusters()` | inversão por margem EBITDA-alvo; devolvia R$ 105.813,13 onde a tela mostrava R$ 55.535,18 |
 | `alunos_minimos_viaveis()` | `break_even_alunos()` | variava só o balcão com os agregadores congelados; o resultado era rotulado como alunos totais |
+
+**Assinaturas que mudaram na 3ª rodada** (a folha fixa é dimensionada pela demanda assumida, então
+as duas funções passaram a **receber** a demanda — chamada sem ela agora é `TypeError`, não um
+número errado silencioso):
+
+```python
+break_even_alunos(p, demanda_total, *, incluir_pmt=0.0)     # antes: (p, *, incluir_pmt=0.0)
+alunos_para_margem(p, margem_alvo, demanda_total)           # antes: (p, margem_alvo)
+gerar_serie_mensal_completa(..., parcelas_franquia=4)       # argumento novo
+simular(..., parcelas_franquia=4)                          # argumento novo
+```
+
+A propriedade `Premissas.custo_fixo_base_mes` **não existe mais**: foi substituída pelo método
+`custo_fixo_total_mes(demanda_total)`, que inclui a folha.

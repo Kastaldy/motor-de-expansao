@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import builtins
 import importlib
+import os
 import sys
 
 import pytest
@@ -39,6 +40,7 @@ def _load_config_fallback():
 def config_fallback():
     """Carrega o config no ramo fallback e restaura o estado real no teardown."""
     saved_pydantic_settings = sys.modules.get("pydantic_settings")
+    env_no_setup = dict(os.environ)
     try:
         yield _load_config_fallback()
     finally:
@@ -49,6 +51,20 @@ def config_fallback():
             sys.modules["pydantic_settings"] = saved_pydantic_settings
         else:
             sys.modules.pop("pydantic_settings", None)
+        # O reload de teardown TEM de rodar com o ambiente que existia no setup.
+        # `monkeypatch` e finalizado DEPOIS deste bloco (finalizacao LIFO: quem
+        # entra primeiro na assinatura do teste sai por ultimo), entao o
+        # `monkeypatch.setenv("H3_RESOLUTION", "9")` de `test_fallback_env_override`
+        # ainda estava valendo aqui e o `settings` GLOBAL do processo ficava com
+        # H3_RESOLUTION=9 para o resto da sessao. Efeito observado:
+        # `tests/contracts/test_parametros_canonicos.py::
+        #  test_constants_reexport_alinha_a_sua_origem` quebrava com `assert 7 == 9`
+        # sempre que este arquivo rodasse ANTES dele (repro:
+        # `pytest tests/unit/test_config_fallback.py tests/contracts/test_parametros_canonicos.py`).
+        # Na ordem alfabetica da suite completa contracts vem primeiro, entao o
+        # defeito ficava escondido; com pytest-randomly ou xdist, virava flake.
+        os.environ.clear()
+        os.environ.update(env_no_setup)
         importlib.reload(importlib.import_module("motor_expansao.config"))
 
 

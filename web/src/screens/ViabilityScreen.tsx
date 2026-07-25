@@ -82,6 +82,10 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   // Taxa de franquia: R$160.000 é o padrão do motor, mas o operador pode sobrescrever
   // (decisão de Felipe, FIN-VIAB-01). Vazio = padrão; o payload devolve o valor usado.
   const [taxaFranquiaTxt, setTaxaFranquiaTxt] = useState('')
+  // Parcelas da taxa de franquia: 4x SEM JUROS por decisão de Felipe (2026-07-24).
+  // Antes a taxa saía INTEIRA do caixa no M-4. Vazio = padrão do motor (4). É só
+  // timing de caixa: mexe em TIR/VPL, não em EBITDA, margem ou break-even.
+  const [parcelasFranquiaTxt, setParcelasFranquiaTxt] = useState('')
 
   // --- Dados opcionais do imóvel (entram no PDF completo) ------------------
   const [info, setInfo] = useState<InfoImovel>({})
@@ -119,6 +123,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
       carencia_aluguel_meses: parseNum(carenciaTxt),
       rampa_meses: rampaMeses,
       taxa_franquia: parseNum(taxaFranquiaTxt),
+      parcelas_franquia: parseNum(parcelasFranquiaTxt),
     }
   }
 
@@ -683,11 +688,22 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               value={taxaFranquiaTxt}
               onChange={(e) => setTaxaFranquiaTxt(e.target.value)}
             />
+            {/* Parcelas da franquia: mesmo par que "Obra + Parcelas obra", uma linha
+                abaixo — o número de parcelas fica ao lado do valor que ele divide. */}
+            <input
+              inputMode="numeric"
+              placeholder="Parcelas franquia (meses)"
+              value={parcelasFranquiaTxt}
+              onChange={(e) => setParcelasFranquiaTxt(e.target.value)}
+            />
           </div>
           <span style={{ display: 'block', font: '400 10px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}>
-            A taxa de franquia é editável (vazio = padrão do modelo) e entra à vista no M-4,
-            somando ao investimento. Obra = equity parcelada sem juros; equipamentos financiados
-            (prazo + juros a.m.) entram como PMT no caixa mês a mês.
+            A taxa de franquia é editável (vazio = padrão do modelo) e entra{' '}
+            <strong>parcelada sem juros</strong> (vazio = 4x), a partir do M-4, junto da obra —
+            não mais à vista no M-4. Obra = equity parcelada sem juros; equipamentos
+            financiados (prazo + juros a.m.) entram como PMT no caixa mês a mês. Parcelar a
+            franquia é só timing de caixa: melhora TIR e VPL, e não muda EBITDA, margem nem
+            break-even.
           </span>
 
           {/* P1-7: a carência EFETIVA que o motor aplicou e o mês em que o aluguel
@@ -756,9 +772,21 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                 rotulo="Investimento total"
                 valor={brlCurto(res.investimento.investimento_total)}
               />
+              {/* A franquia é PARCELADA: mostrar só o total esconderia o desembolso
+                  real de cada mês de obra. Ambos vêm do payload (nenhuma divisão aqui). */}
               <ReadoutCapex
-                rotulo="Taxa de franquia"
-                valor={brlCurto(res.investimento.taxa_franquia)}
+                rotulo={
+                  res.investimento.parcelas_franquia
+                    ? `Franquia (${res.investimento.parcelas_franquia}x)`
+                    : 'Taxa de franquia'
+                }
+                valor={
+                  res.investimento.franquia_parcela
+                    ? `${brlCurto(res.investimento.taxa_franquia)} · ${brlCurto(
+                        res.investimento.franquia_parcela,
+                      )}/parc.`
+                    : brlCurto(res.investimento.taxa_franquia)
+                }
               />
               <ReadoutCapex
                 rotulo="PMT"
@@ -935,8 +963,12 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
           >
             <strong style={{ fontWeight: 600 }}>Premissas em calibração.</strong> Tela, gráficos
             e PDF passaram a ler o MESMO motor — não há mais número recalculado fora dele. Seguem
-            pendentes de gate: o nível da folha (17% do faturamento bruto, revisão no BLK-VIAB-11)
-            e a taxa de desconto do VPL/TIR (12% a.a., provisória).
+            pendentes de gate o NÍVEL da folha
+            {premissas ? ` (${pctFrac(premissas.folha_pct)} do faturamento maduro,` : ' ('}{' '}
+            revisão no BLK-VIAB-11) e a taxa de desconto do VPL/TIR
+            {premissas ? ` (${pctFrac(premissas.taxa_desconto_aa)} a.a.,` : ' ('} provisória). A
+            ESTRUTURA da folha já está decidida: valor FIXO desde o mês 1, dimensionado pelo
+            faturamento maduro — não escala com a rampa.
           </div>
 
           {erro && (
@@ -1086,7 +1118,11 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
 
           {/* Manual da tela, abaixo de TODOS os gráficos: o que cada KPI significa e
               como é calculado. Lê as premissas do payload, então não desatualiza. */}
-          <NotasMetodologicas premissas={premissas} dre={dre} />
+          <NotasMetodologicas
+            premissas={premissas}
+            dre={dre}
+            demanda={res?.demanda_premissa ?? null}
+          />
 
           {(res?.flag_fora_envelope || res?.flag_zona_morta) && (
             <Glass style={{ padding: '13px 16px' }}>
