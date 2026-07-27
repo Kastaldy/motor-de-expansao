@@ -100,6 +100,40 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
+### BLK-RELPON-07 — Mapas de calor legíveis (nomes de rua/bairro POR CIMA do choropleth)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (melhora a LEITURA do Relatório Pontual; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[GATE VISUAL — Felipe]` → Builder → QA |
+| **Depende de** | — (aditivo sobre `censo_map`; OpenMapTiles self-host é passo posterior/opcional) |
+| **Status** | Em revisão (PR aberto) |
+
+**Contexto:** nos mapas de calor do Relatório Pontual (densidade/renda/score/renda domiciliar) o
+choropleth **cobre as ruas e os nomes** — não dá para identificar QUAL área tem o número melhor/pior.
+O realce `_STREET_*` recupera só as LINHAS de rua; os TEXTOS (nomes) continuam soterrados sob a cor.
+
+**Objetivo:** ordem de camadas — o heat entra POR BAIXO e um tileset **só-rótulos** (transparente) é
+composto POR CIMA, deixando "Av. X", "Bairro Y" legíveis sobre a cor (identificação da área).
+
+**Escopo:** `_fetch_labels` (mosaico só-rótulos, lazy/best-effort via rede) + composição em
+`_render_camada` alinhada ao extent do basemap; rótulos buscados **1x** e compartilhados pelas 4
+camadas; flag `labels_overlay` (default on); a camada só-pins (concorrentes) não recebe overlay.
+Fonte atual = CartoDB Voyager Only-Labels (keyless, mesma licença/atribuição do basemap Voyager).
+Quando o OpenMapTiles self-host subir, trocar `_LABELS_TILE_URL` para o endpoint de rótulos do
+tileserver (`openmaptiles-infra`, estilo `ultra-maptiler` já com a camada `transportation_name`).
+
+**Fora de escopo (invioláveis):** score/pesos/intersecção de setores/raio/artefatos M1 (RENDER apenas);
+subir a infra (passo posterior); dado de carteira/residual.
+
+**Critérios de aceite:** nomes visíveis por cima do choropleth quando há basemap; **degradação graciosa**
+(offline/sem rede → mapa sem nomes, byte-compatível com o anterior); testes cobrindo overlay
+ligado/desligado; ruff + mypy + pytest verdes; **gate visual do Felipe**.
+
+**Risco:** baixo (aditivo, gated por flag e por rede; caminho `basemap=False`/offline preservado).
+
+---
+
 ## Relatório Municipal — novo formato (2026-06-19, pedido de Vini)
 
 > Novo formato de relatório que **coexiste** com o Relatório Pontual Censitário atual (que analisa
