@@ -19,6 +19,7 @@ import argparse
 import json
 import time
 from datetime import date
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -497,12 +498,36 @@ def validar_uf(
             total_rastreio += len(subset)
     pct_nulos_rastreio = round(nulos_rastreio / max(total_rastreio, 1) * 100, 2)
 
+    # Coerencia com o M1: a renda setorial tem de correlacionar com a renda MUNICIPAL do SIDRA,
+    # que e' fonte independente e limpa. E' o gate que pega join quebrado: com a renda embaralhada
+    # (bug do join posicional) a correlacao desaba para ~0. Teto baixo por construcao — o M1 e'
+    # constante dentro do municipio, entao so a componente ENTRE municipios e' capturada.
+    corr_m1 = float("nan")
+    if "renda_per_capita" in df.columns and "renda_per_capita_setor_2022" in df.columns:
+        a = pd.to_numeric(df["renda_per_capita_setor_2022"], errors="coerce")
+        b = pd.to_numeric(df["renda_per_capita"], errors="coerce")
+        mask = a.notna() & b.notna()
+        if int(mask.sum()) > 50 and a[mask].nunique() > 1 and b[mask].nunique() > 1:
+            corr_m1 = round(float(np.corrcoef(a[mask], b[mask])[0, 1]), 3)
+
     # Gates
     gate_cobertura = cobertura_pct >= 85.0
-    gate_amplitude = amplitude > 50.0
     gate_nulos = pct_nulos_rastreio <= 2.0
+    # Recalibrado em 2026-07-14, apos a correcao do join posicional.
+    # ANTES: `amplitude > 50`. Esse gate media DESIGUALDADE REGIONAL, nao qualidade de dado —
+    # reprovava UF pobre e homogenea (com a renda correta, AM cai p/ 28 e PB/PI/CE/PE ~36, enquanto
+    # MT/SC/PR ficam em 59-71). Virou metrica INFORMATIVA, com um piso baixo so para pegar dado
+    # degenerado (score praticamente constante).
+    gate_amplitude = amplitude > 20.0
+    # Gate REAL de qualidade: coerencia com o M1 municipal. Antes da correcao do join a media
+    # nacional era r=0.13 (varias UFs em ~0); depois, r=0.35. NaN (UF sem M1) nao reprova.
+    gate_coerencia_m1 = bool(np.isnan(corr_m1)) or corr_m1 > 0.20
 
-    status = "GO" if (gate_cobertura and gate_amplitude and gate_nulos) else "NO-GO"
+    status = (
+        "GO"
+        if (gate_cobertura and gate_amplitude and gate_nulos and gate_coerencia_m1)
+        else "NO-GO"
+    )
 
     ref = REF_2010.get(uf, {})
 
@@ -515,9 +540,11 @@ def validar_uf(
         "std_score": std,
         "valores_distintos": distintos,
         "pct_nulos_rastreio": pct_nulos_rastreio,
+        "corr_renda_vs_m1": corr_m1,
         "gate_cobertura": gate_cobertura,
         "gate_amplitude": gate_amplitude,
         "gate_nulos": gate_nulos,
+        "gate_coerencia_m1": gate_coerencia_m1,
         "status": status,
         "ref_2010_cobertura": ref.get("cobertura"),
         "ref_2010_amplitude": ref.get("amplitude_p95_p05"),
@@ -898,13 +925,36 @@ def executar_fase_a(
 # ---------------------------------------------------------------------------
 # Suporte a arquivos nacionais do Censo 2022
 # ---------------------------------------------------------------------------
-# Os arquivos nacionais (download completo do IBGE 2022) nao possuem CD_SETOR
-# com precisao suficiente nos CSVs (6 sig figs no Basico, 3 no Renda).
-# A estrategia adotada e:
-#   - Basico x Shapefile: join posicional por UF (mesma qtd de linhas, mesma ordem)
-#   - Renda x Basico:     join posicional por UF (renda tem ~1-3% de linhas a menos;
-#                          setores faltantes na renda sao marcados como NaN / fallback)
+# Os CSVs nacionais Basico e Renda vieram com CD_SETOR corrompido em notacao
+# cientifica (abertos no Excel). O join costumava ser POSICIONAL — e era invalido:
+# Basico tem 468.099 linhas e Renda 458.772, entao o padding por posicao deslocava
+# a renda a partir do primeiro setor faltante e contaminava o resto da UF.
+#
+# Agora a CHAVE e RECUPERADA (mesma estrategia de materializar_setores_censitarios_geo):
+#   - Renda:  CD_SETOR enxertado de um agregado irmao INTACTO (mesma contagem/ordem)
+#   - Basico: CD_SETOR vindo da malha ordenada por CD_SETOR (mesma contagem, ordem canonica)
+# e o join passa a ser por CHAVE `cod_setor`. Ambas as recuperacoes tem assert (>=99%).
 # ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=2)
+def _basico_nacional_keyed(basico_path: str, shp_path: str) -> pd.DataFrame:
+    """Basico nacional COM cod_setor recuperado (cacheado: a leitura e cara)."""
+    from motor_expansao.pipelines.materializar_setores_censitarios_geo import (
+        _ler_chaves_ordenadas,
+        carregar_basico,
+    )
+
+    chaves = _ler_chaves_ordenadas(Path(shp_path))
+    return carregar_basico(Path(basico_path), chaves_ordenadas=chaves)
+
+
+@lru_cache(maxsize=2)
+def _renda_nacional_keyed(renda_path: str) -> pd.DataFrame:
+    """Renda nacional COM cod_setor recuperado (cacheado: a leitura e cara)."""
+    from motor_expansao.pipelines.materializar_setores_censitarios_geo import carregar_renda
+
+    return carregar_renda(Path(renda_path))
 
 
 def ler_malha_nacional_uf(shp_path: Path, uf: str) -> gpd.GeoDataFrame:
@@ -936,45 +986,34 @@ def ler_malha_nacional_uf(shp_path: Path, uf: str) -> gpd.GeoDataFrame:
     return gdf[["cod_setor", "geometry"]]
 
 
-def ler_basico_nacional_uf(basico_path: Path, uf: str) -> pd.DataFrame:
-    """Le CSV Basico nacional e filtra por CD_UF.
+def ler_basico_nacional_uf(
+    basico_path: Path,
+    uf: str,
+    shp_path: Path = NACIONAL_SHAPEFILE_PATH,
+) -> pd.DataFrame:
+    """Le o Basico nacional COM `cod_setor` recuperado e filtra por UF.
 
-    Preserva a ordem original (igual ao shapefile filtrado por UF).
-    Colunas carregadas (dicionario IBGE Censo 2022):
+    Devolve `cod_setor` para o join por CHAVE (o antigo join posicional era invalido).
+    Colunas do dicionario IBGE Censo 2022 usadas por `carregar_basico`:
     - v0001: Total de pessoas (populacao total do setor)
-    - v0002: Total de Domicilios (nao populacao — usado apenas como fallback de domicilios)
-    - v0005: Media de moradores em Domicilios Particulares Ocupados (household size, '2,8')
-    - v0007: Total de Domicilios Particulares Ocupados (DPPO + DPIO)
+    - v0005: Media de moradores em Domicilios Particulares Ocupados (household size)
+    - v0007: Total de Domicilios Particulares Ocupados (fallback do household size)
     """
-    cod_uf = int(UFS_PILOTO[uf])
-    df = pd.read_csv(basico_path, sep=";", encoding="latin-1", low_memory=False,
-                     usecols=["CD_UF", "v0001", "v0002", "v0005", "v0007"], dtype=str)
-    df = df[df["CD_UF"].astype(int) == cod_uf].copy()
+    # `carregar_basico` recupera o CD_SETOR corrompido pela malha ordenada (com assert de
+    # coerencia por municipio) e ja aplica v0005 + fallback v0001/v0007 para o household size.
+    df = _basico_nacional_keyed(str(basico_path), str(shp_path))
+    df_uf = df[df["uf"] == uf].copy()
+    df_uf = df_uf.rename(columns={"avg_moradores_domicilio_setor_2022": "avg_household_size"})
 
-    # v0001 = Total de pessoas (populacao total) — corrigido em 2026-05-15
-    df["pop_total_setor_2022"] = pd.to_numeric(df["v0001"], errors="coerce")
-    df["pop_total_setor_2022"] = df["pop_total_setor_2022"].where(
-        df["pop_total_setor_2022"] >= 0, np.nan
-    )
-    # v0007 = Domicilios Particulares Ocupados (referencia para household size)
-    df["domicilios_setor"] = pd.to_numeric(df["v0007"], errors="coerce")
-    # v0005 = media de moradores por domicilio (comma decimal, e.g. '2,8')
-    v0005_str = df["v0005"].str.replace(",", ".", regex=False)
-    df["avg_household_size"] = pd.to_numeric(v0005_str, errors="coerce")
-    # Fallback: v0001/v0007 = pessoas / domicilios particulares ocupados
-    fallback_size = np.where(
-        df["domicilios_setor"] > 0,
-        df["pop_total_setor_2022"] / df["domicilios_setor"],
-        np.nan,
-    )
-    df["avg_household_size"] = df["avg_household_size"].fillna(pd.Series(fallback_size, index=df.index))
-    # Limitar entre 1 e 15 (valores biologicamente razoaveis)
-    df["avg_household_size"] = df["avg_household_size"].clip(lower=1.0, upper=15.0)
+    df_uf["pop_total_setor_2022"] = pd.to_numeric(
+        df_uf["pop_total_setor_2022"], errors="coerce"
+    ).where(lambda s: s >= 0, np.nan)
+    df_uf["avg_household_size"] = df_uf["avg_household_size"].clip(lower=1.0, upper=15.0)
 
-    df = df.reset_index(drop=True)
-    log.info("basico_nacional_uf_lido", uf=uf, total=len(df),
-             avg_size_median=float(df["avg_household_size"].median()))
-    return df[["pop_total_setor_2022", "avg_household_size"]]
+    df_uf = df_uf.reset_index(drop=True)
+    log.info("basico_nacional_uf_lido", uf=uf, total=len(df_uf),
+             avg_size_median=float(df_uf["avg_household_size"].median()))
+    return df_uf[["cod_setor", "pop_total_setor_2022", "avg_household_size"]]
 
 
 def ler_renda_nacional_uf(renda_path: Path, uf: str) -> pd.DataFrame:
@@ -1035,48 +1074,27 @@ def ler_renda_nacional_uf(renda_path: Path, uf: str) -> pd.DataFrame:
 def ler_renda_nacional_uf_preservando_suprimidos(
     renda_path: Path, uf: str
 ) -> pd.DataFrame:
-    """Le renda nacional preservando linhas suprimidas como NaN.
+    """Le a Renda nacional COM `cod_setor` recuperado, preservando suprimidos como NaN.
 
-    Esta funcao existe para manter a reprodutibilidade do join posicional
-    entre Basico e Renda dentro da UF: valores 'X' em V06004 continuam na
-    serie como NaN, em vez de deslocar todas as linhas subsequentes.
+    O CD_SETOR do CSV veio corrompido; `carregar_renda` o recupera enxertando a chave de um
+    agregado irmao INTACTO (assert de coerencia por UF). Setores com V06004 = 'X' (sigilo)
+    permanecem como NaN — com join por chave eles ja nao deslocam mais nada.
+
+    `renda_per_capita_setor_2022` aqui e' o V06004 CRU (rendimento medio do RESPONSAVEL);
+    a divisao por `avg_household_size` acontece em `montar_gdf_setores_nacional`.
     """
-    cod_uf = int(UFS_PILOTO[uf])
-    df = pd.read_csv(
-        renda_path,
-        sep=";",
-        encoding="latin-1",
-        dtype=str,
-        low_memory=False,
+    df = _renda_nacional_keyed(str(renda_path))
+    df_uf = df[df["uf"] == uf].copy()
+
+    # V06004 = rendimento medio mensal do responsavel. V06005 e' descartado no carregador
+    # (valores anomalos, inconsistentes com V06004 x V06001).
+    df_uf["renda_per_capita_setor_2022"] = pd.to_numeric(
+        df_uf["renda_responsavel_media_setor_2022"], errors="coerce"
     )
-
-    cd_setor_str = df["CD_SETOR"].str.replace(",", ".", regex=False)
-    cd_setor_float = pd.to_numeric(cd_setor_str, errors="coerce")
-    df["cd_uf_approx"] = (cd_setor_float // 10 ** 13).astype("Int64")
-    df_uf = df[df["cd_uf_approx"] == cod_uf].copy()
-
-    renda_col = None
-    for cand in ("V06004", "v06004", "V06005", "v06005", "V003", "v003"):
-        if cand in df_uf.columns:
-            renda_col = cand
-            break
-    if renda_col is None:
-        raise ValueError(
-            f"Coluna de renda nao encontrada no arquivo renda nacional. "
-            f"Colunas disponiveis: {list(df_uf.columns)}"
-        )
-
-    renda_str = df_uf[renda_col].str.replace(",", ".", regex=False)
-    df_uf["renda_per_capita_setor_2022"] = pd.to_numeric(renda_str, errors="coerce")
-
-    if "V06001" in df_uf.columns:
-        v06001_str = df_uf["V06001"].str.replace(",", ".", regex=False)
-        v06001 = pd.to_numeric(v06001_str, errors="coerce")
-        df_uf["renda_total_setor_2022"] = (
-            df_uf["renda_per_capita_setor_2022"] * v06001
-        )
-    else:
-        df_uf["renda_total_setor_2022"] = np.nan
+    # renda_total = V06001 (responsaveis com rendimento) x V06004.
+    df_uf["renda_total_setor_2022"] = df_uf["renda_per_capita_setor_2022"] * pd.to_numeric(
+        df_uf["responsaveis_com_renda_setor_2022"], errors="coerce"
+    )
 
     df_uf = df_uf.reset_index(drop=True)
     n_validos = int(df_uf["renda_per_capita_setor_2022"].notna().sum())
@@ -1086,9 +1104,9 @@ def ler_renda_nacional_uf_preservando_suprimidos(
         total_linhas=len(df_uf),
         validos=n_validos,
         suprimidos_x=len(df_uf) - n_validos,
-        col_renda=renda_col,
+        col_renda="V06004",
     )
-    return df_uf[["renda_per_capita_setor_2022", "renda_total_setor_2022"]]
+    return df_uf[["cod_setor", "renda_per_capita_setor_2022", "renda_total_setor_2022"]]
 
 
 def montar_gdf_setores_nacional(
@@ -1097,56 +1115,53 @@ def montar_gdf_setores_nacional(
     df_renda: pd.DataFrame,
     uf: str,
 ) -> gpd.GeoDataFrame:
-    """Monta GeoDataFrame de setores por join posicional (malha x basico x renda).
+    """Monta GeoDataFrame de setores por join de CHAVE (malha x basico x renda).
 
-    - malha (shapefile) e basico tem EXATAMENTE o mesmo numero de linhas por UF
-      e estao na mesma ordem de sector code → join por posicao e exato.
-    - renda pode ter ate ~3% de linhas a menos; linhas excedentes em basico
-      ficam com renda NaN e sao marcadas como fallback.
+    O join era POSICIONAL e era invalido: Basico e Renda tem contagens diferentes, e o padding
+    por posicao deslocava a renda a partir do primeiro setor faltante, contaminando o resto da
+    UF. Agora as tres fontes trazem `cod_setor` recuperado e o join e' por chave (left na malha).
+    Setores sem renda (sigilo) ficam NaN — sem deslocar ninguem.
     """
-    n_malha = len(gdf_malha)
-    n_basico = len(df_basico)
-    n_renda = len(df_renda)
+    for nome, df in (("malha", gdf_malha), ("basico", df_basico), ("renda", df_renda)):
+        if "cod_setor" not in df.columns:
+            raise ValueError(
+                f"UF {uf}: {nome} sem coluna cod_setor — o join por chave exige a chave "
+                "recuperada (nao use mais join posicional)."
+            )
 
-    if n_malha != n_basico:
-        raise ValueError(
-            f"UF {uf}: malha ({n_malha} linhas) e basico ({n_basico} linhas) "
-            f"nao tem o mesmo numero de setores. Verifique os arquivos."
-        )
-
-    log.info(
-        "join_posicional",
-        uf=uf,
-        n_malha=n_malha,
-        n_basico=n_basico,
-        n_renda=n_renda,
-        renda_validos=int(df_renda["renda_per_capita_setor_2022"].notna().sum()),
-        delta_renda=n_basico - n_renda,
+    gdf = gdf_malha.merge(
+        df_basico[["cod_setor", "pop_total_setor_2022", "avg_household_size"]].drop_duplicates(
+            "cod_setor"
+        ),
+        on="cod_setor",
+        how="left",
+    ).merge(
+        df_renda[
+            ["cod_setor", "renda_per_capita_setor_2022", "renda_total_setor_2022"]
+        ].drop_duplicates("cod_setor"),
+        on="cod_setor",
+        how="left",
+        suffixes=("", "_renda"),
     )
 
-    # Join posicional malha x basico (exato)
-    gdf = gdf_malha.copy()
-    gdf["pop_total_setor_2022"] = df_basico["pop_total_setor_2022"].values
-    gdf["avg_household_size"] = df_basico["avg_household_size"].values
-
-    # Join posicional basico x renda (aproximado — renda pode ter menos linhas)
-    # V06004 = rendimento medio mensal do responsavel (per household head).
-    # Para tornar comparavel ao M1 renda_per_capita (per capita domiciliar),
-    # dividimos pelo tamanho medio do domicilio (v0005 do basico).
-    renda_pc_v06004 = df_renda["renda_per_capita_setor_2022"].values
-    renda_pc_padded_v06004 = np.full(n_malha, np.nan)
-    renda_pc_padded_v06004[:len(renda_pc_v06004)] = renda_pc_v06004
-    # Ajuste: V06004 / avg_household_size → proxy de renda per capita domiciliar
+    # V06004 = rendimento medio do RESPONSAVEL. Para comparar com o `renda_per_capita` do M1
+    # (per capita domiciliar), dividimos pelo tamanho medio do domicilio (v0005 do basico).
+    renda_responsavel = pd.to_numeric(gdf["renda_per_capita_setor_2022"], errors="coerce")
     gdf["renda_per_capita_setor_2022"] = np.where(
-        (gdf["avg_household_size"] > 0) & ~np.isnan(renda_pc_padded_v06004),
-        renda_pc_padded_v06004 / gdf["avg_household_size"],
+        (gdf["avg_household_size"] > 0) & renda_responsavel.notna(),
+        renda_responsavel / gdf["avg_household_size"],
         np.nan,
     )
 
-    renda_tot_vals = df_renda["renda_total_setor_2022"].values
-    renda_tot_padded = np.full(n_malha, np.nan)
-    renda_tot_padded[:len(renda_tot_vals)] = renda_tot_vals
-    gdf["renda_total_setor_2022"] = renda_tot_padded
+    log.info(
+        "join_por_chave",
+        uf=uf,
+        n_malha=len(gdf_malha),
+        n_basico=len(df_basico),
+        n_renda=len(df_renda),
+        pop_casados=int(gdf["pop_total_setor_2022"].notna().sum()),
+        renda_casados=int(gdf["renda_per_capita_setor_2022"].notna().sum()),
+    )
 
     # Area do setor (em graus^2, consistente com hexagonos)
     gdf["area_setor"] = gdf.geometry.area
