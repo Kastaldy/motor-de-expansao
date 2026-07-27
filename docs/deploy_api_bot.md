@@ -35,7 +35,19 @@ telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ib
 | `data/outputs/setores_censitarios_2022_geo/` | malha de setores 2022 (~1,2 GB) | **Sim** (o relatório) |
 | `data/ibge/municipios_*.geojson` | malha municipal (resolve lat,lng → município) | **Sim** (sem ela → 500) |
 | `data/staging/{concorrentes_mapeados,unidades_ultra_mapeadas,hexagonos_mercado_mapeado}.parquet` | mercado/SAM + concorrentes/Ultra | Não (enriquece o PDF) |
+| `data/staging/uplift_renda_domiciliar_municipio.parquet` | uplift de composição + `moradores_por_domicilio_municipio`, por município | **Sim, na prática** — ver aviso abaixo |
+| `data/staging/uplift_composicao_setor.parquet` | uplift de composição por setor (choropleth `renda_domiciliar` do PDF) | **Sim, na prática** — ver aviso abaixo |
+| `data/staging/fator_temporal_renda.json` | fator temporal CAGED (renda jul/2022 → corrente) | **Sim, na prática** — ver aviso abaixo |
 | `data/ultra/` | assets de branding do PDF | Não (fallback de cor sólida) |
+
+> **⚠ Falha SILENCIOSA (custou um deploy em 2026-07-17).** Os três artefatos de renda domiciliar acima
+> não quebram nada quando faltam: o código cai em fallback e o PDF sai **com renda domiciliar errada, sem
+> erro nenhum**. Os fallbacks são `UPLIFT_COMPOSICAO_NACIONAL = 1.632`, `MORADORES_DOMICILIO_NACIONAL = 2.79`
+> e `FATOR_TEMPORAL_RENDA_FALLBACK = 1.0` (renda nominal de jul/2022, sem correção) — todos em
+> `dashboard/constants.py:377-387`. Numa VPS nova, num restore ou num volume recriado, o defeito volta
+> calado. **Conferir a presença dos três antes de dar o deploy por concluído.**
+> Regeneráveis por `pipelines/derivar_uplift_renda_domiciliar.py`, `pipelines/derivar_uplift_composicao_setor.py`
+> e `pipelines/derivar_fator_temporal_renda.py`.
 
 Subir os que faltam (do Windows, dev):
 ```powershell
@@ -43,7 +55,14 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra" -r data/ibge   root@2.25.137.241:/opt/mo
 scp -i "$env:USERPROFILE\.ssh\id_ultra" data/staging/concorrentes_mapeados.parquet `
     data/staging/unidades_ultra_mapeadas.parquet data/staging/hexagonos_mercado_mapeado.parquet `
     root@2.25.137.241:/opt/motor-expansao/data/staging/
+# renda domiciliar (os 3 do aviso acima) — em 2026-07-17 foram enviados com a chave `id_ultra_mcp`
+scp -i "$env:USERPROFILE\.ssh\id_ultra_mcp" data/staging/uplift_renda_domiciliar_municipio.parquet `
+    data/staging/uplift_composicao_setor.parquet data/staging/fator_temporal_renda.json `
+    root@2.25.137.241:/opt/motor-expansao/data/staging/
 ```
+
+Verificar que chegaram íntegros — `md5sum` na VPS contra o local (`Get-FileHash -Algorithm MD5`).
+`scp` para a VPS funciona; `ssh` remoto interativo é bloqueado pelo classificador do harness (CLAUDE.md §2).
 
 ## Segredos (`.env` na VPS, gitignored)
 

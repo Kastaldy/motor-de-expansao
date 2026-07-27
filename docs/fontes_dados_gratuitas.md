@@ -78,8 +78,8 @@ renda_pct_nacional = percentil_nacional(renda_per_capita)
 pop_pct_nacional = percentil_nacional(populacao_proxy)
 
 hex_score_estrutural = 100 * (
-    0.60 * renda_pct_nacional +
-    0.40 * pop_pct_nacional
+    0.40 * renda_pct_nacional +
+    0.60 * pop_pct_nacional
 )
 
 score_priorizacao = clip(hex_score_estrutural + ajuste_executivo, 0, 100)
@@ -90,6 +90,16 @@ Regras:
 - normalização nacional por percentil
 - `hex_score_estrutural` fica separado do `ajuste_executivo`
 - `pop_total` é a fonte canônica de população (trava 18-45 removida em 2026-05-15; `populacao_proxy` = `pop_total`)
+
+> **Pesos canônicos: `renda=0.40`, `pop=0.60`.** Fonte de verdade:
+> `PESOS_HEX_SCORE_ESTRUTURAL` em `src/motor_expansao/core/constants.py`, espelhada no
+> `CLAUDE.md` §3 e ratificada pela **DEC-001** (2026-05-31: backtest BLK-SCORE-02 deu Spearman
+> rho ~= -0.004 com IC95% cruzando zero -> pesos mantidos INALTERADOS).
+> **Correção de 2026-07-27:** este bloco dizia `0.60*renda + 0.40*pop` — os pesos foram invertidos
+> no código em `ef325d8` (2026-05-12, aprovação de diretoria 2026-04-24) e das três cópias da
+> fórmula só duas (`CLAUDE.md` e `README.md`) foram atualizadas na época. **Não confundir** com
+> `score_dominio_hibrido` / `score_setor_2022_calibrado`, onde `0.60/0.40` É legítimo — é essa
+> coincidência que fez o erro passar despercebido por ~2 meses.
 
 ## 5. Saídas oficiais
 
