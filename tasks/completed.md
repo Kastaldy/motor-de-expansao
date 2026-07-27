@@ -9465,6 +9465,64 @@ n/d) conforme as metas de D3, com Consumo pela regra SAM x Residual e Concorrent
 
 ---
 
+## Fechamento de ciclo — Renda média domiciliar: tooltip + mapa PDF + API/bot (2026-07-17)
+
+> **Registro retroativo (2026-07-27).** Este ciclo fechou sem entrada aqui — o commit de housekeeping
+> `639f28b` registrou a feature **apenas no `CLAUDE.md`** (§4 + §5), que na prática virou o único
+> bookkeeping. A entrada abaixo reconstrói o fechamento a partir daquele texto antes que o enxugamento
+> do `CLAUDE.md` (que aponta para cá como "fonte única de conclusão") deixasse o ciclo sem lar nenhum.
+
+**Renda média domiciliar** — PRs **#124 / #125 / #126 / #129**, ClickUp `86e2d4w7m` (concluído).
+**READ-ONLY sobre o M1** (§5): camada de VISUALIZAÇÃO; não recalcula `score_priorizacao`,
+`hex_score_estrutural`, pesos, carteira, plano ou artefatos oficiais.
+
+**Entregue.** A renda média domiciliar passa a ser exibida em 3 lugares, sempre pela mesma fórmula
+`renda_pc_calibrada × moradores × uplift × FATOR_TEMPORAL_RENDA`:
+
+- **(a) Tooltip do hex** (PR #125) — `_renda_media_domiciliar_series` em `dashboard/components.py`.
+  Uplift e moradores **MUNICIPAIS** (`cod_municipio` → `uplift_renda_domiciliar` /
+  `moradores_por_domicilio_municipio`, de `uplift_renda_domiciliar_municipio.parquet`). Computado
+  **em tempo de render** a partir das colunas já servidas — não regenera artefato, não depende do
+  parquet enriquecido. Uplift **setorial não se aplica ao hex**: um hex res-7 cobre vários setores.
+  Contrato de falha: **NaN (célula em branco)** quando falta renda OU `cod_municipio` (coluna ausente
+  ou valor NaN na linha) — hexes sem cobertura censitária ficam vazios em vez de exibir estimativa de
+  nível UF. No mesmo PR, **desduplicação do Score Censitário** no tooltip (modo censitário → linha 3
+  passa a exibir o Score M1, para nunca repetir a linha 2).
+- **(b) 5º choropleth do Relatório Pontual** (PR #126) — camada `renda_domiciliar` de
+  `render_mapas_censitarios_combinados`, com uplift **SETORIAL** por polígono
+  (`uplift_composicao_por_setor(cod_setor)`, fórmula do #124 em `censo_point.py`) e faixa "no raio" =
+  `renda_domiciliar_total_raio`. O slide "Mapas de calor" virou **grid 2×2**
+  `[densidade, renda, score, renda_domiciliar]` (era tira 1×3) via `_map_grid_cells`. A variante
+  **CLÁSSICA** (a que o dashboard baixa) tem header fixo → legenda ~8 pt.
+- **(c) PDF da API / bot Telegram** (PR #129) — mesmo `censo_report`, sem caminho paralelo.
+
+`RENDA_MEDIA_DOMICILIAR_BANDS`: **mesma paleta** da `RENDA_PER_CAPITA_BANDS`, cortes
+2.000 / 4.600 / 8.000 / 14.000 e `"ate"` **SEM acento** — o font do PNG da legenda não tem glifo
+acentuado (exceção de RENDER ao §2, como o limite latin-1 do `fpdf2`).
+*(O corte de 4.600 virou **4.000** depois, no BLK-RELPON-13 / 2026-07-24, commit `bb12585`.)*
+
+**Operacional do deploy — os 3 gotchas que este ciclo produziu.**
+
+1. **Artefatos faltando na VPS, com falha SILENCIOSA.** `uplift_renda_domiciliar_municipio.parquet`,
+   `uplift_composicao_setor.parquet` e `fator_temporal_renda.json` **não estavam** na VPS. Sem eles o
+   uplift cai no fallback **NACIONAL** (`UPLIFT_COMPOSICAO_NACIONAL = 1.632`,
+   `MORADORES_DOMICILIO_NACIONAL = 2.79`, `FATOR_TEMPORAL_RENDA_FALLBACK = 1.0`) e o PDF sai com renda
+   **errada, sem erro visível**. Enviados por
+   `scp -i ~/.ssh/id_ultra_mcp ... root@2.25.137.241:/opt/motor-expansao/data/staging/` — o
+   classificador do harness bloqueia `ssh` remoto mas **não** `scp` (§2) — e validados por `md5sum` na
+   VPS. **Corrigido em 2026-07-27:** os três entraram na tabela "Pré-condições de dados na VPS" de
+   `docs/deploy_api_bot.md`, com o aviso de fallback silencioso e os pipelines que os regeneram.
+2. **Merge por admin.** Autor == aprovador **não** satisfaz o `review-gate` da DEC-016; `test` +
+   `claude-review` verdes bastam para o merge administrativo.
+3. **A imagem da API/bot NÃO rebuilda com mudança só em `dashboard/`** (filtro de path do
+   `publish-api`). Republicar manualmente após o merge:
+   `gh workflow run ci.yml --ref main -f publish_api=true -f dispatch_build_sanity=false` → deploy de
+   `api` + `telegram-bot` por `API_IMAGE` (`docs/deploy_api_bot.md`). Deploy sempre por digest, manual (§6).
+
+**Contrato canônico da feature:** `docs/relatorio_pontual_censitario.md`.
+
+---
+
 ## Fechamento de ciclo — BLK-ORQ-02 (superseded 2026-07-19)
 
 - **Superseded** pela DEC-016 (governança de merge por CI) + o split do §8 deste ciclo (PR #134), que já executou a migração das DECs para `docs/decisions/` que o ORQ-02 propunha via `DECISIONS.md`. Os agentes Fase 2 (master_orchestrator/approver/documenter/data_agent/metrics_agent) nunca foram criados; a direção real foi a esteira `/run-cycle` + DEC-016. Encerrado sem execução. READ-ONLY sobre o M1.
@@ -10221,3 +10279,87 @@ Duas calibrações pedidas por Vinicius apos ver o PDF no dashboard local:
 Validação: subconjunto impactado **92 passed**, ruff e mypy limpos. READ-ONLY sobre o M1 inalterado
 (as duas mudanças são constantes de DISPLAY locais a `censo_report.py`; não tocam `flag_sam`, DEC-006/007,
 `sam_fitness_potencial`, `oferta_efetiva_disponivel` nem qualquer artefato oficial).
+
+---
+
+### BLK-GRAPH-01 — Grafo de conhecimento (graphify) + correção do drift doc-vs-código
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta |
+| **Status** | Concluído 2026-07-27 (branch `graph-01`) — merge exige label `aprovado-humano` |
+| **ClickUp** | — |
+
+> **Alta, não Média:** o bloco edita `CLAUDE.md`, que o `scripts/loop_guard.py` classifica como
+> **GOVERNANÇA** (os arquivos que definem as próprias regras). **NÃO é loop-safe** — sem marcador de
+> autonomia. READ-ONLY sobre o M1: nada recalcula `score_priorizacao`, `hex_score_estrutural`, pesos,
+> carteira, plano ou artefatos oficiais.
+
+**Escopo A — grafo.** Build do graphify sobre o **núcleo canônico** (421 arquivos: 290 de código por
+AST + 131 docs/contratos/DECs). `context/handoff/` (566 logs de processo) e as imagens ficaram fora
+de propósito. Resultado: **7.633 nós, 15.362 arestas, 424 comunidades**; benchmark do próprio
+graphify: **~58× menos tokens por consulta**. Versionados: `graphify-out/graph.json`,
+`GRAPH_REPORT.md` e `.graphify_labels.json` (45 comunidades rotuladas à mão + derivadas); cache,
+HTML e backups datados vão para o `.gitignore`.
+
+**Escopo B — manutenção.** Hooks `post-commit`/`post-checkout` (rebuild AST automático, sem LLM) +
+merge driver para `graph.json`. Documentado em `CLAUDE.md` §7, incluindo o limite: **o hook NÃO
+cobre `.md`** — mudança em doc exige `python -m graphify . --update` numa sessão Claude.
+
+**Escopo C — 8 correções de drift doc-vs-código** que a extração revelou. Todas nasceram corretas e
+envelheceram (mesma assinatura: fato duplicado em prosa + código, código travado por teste, prosa
+travada por nada):
+1. `docs/fontes_dados_gratuitas.md` §4 — pesos do M1 invertidos (`0.60/0.40` → **`0.40/0.60`**);
+2. `CLAUDE.md` §6.1 — perímetro loop-safe apontava blocos deletados → aponta o seletor real;
+3. `CLAUDE.md` §5 — 4 tabs → **5 tabs**, nomes e ordem reais;
+4. `CLAUDE.md` §5 — baseline pytest `532` → **`2006 tests`**, virou regra em vez de número;
+5. `CLAUDE.md` §3 — faltava `M1_HEX_LAND_FRACTION_MIN = 0.05`;
+6. `docs/relatorio_pontual_censitario.md` — artefato híbrido `1.532.645` → **`1.542.531`** linhas;
+7. `docs/relatorio_municipal_template.md` — 8 → **9 páginas** (faltava "Visão Geral do Município");
+8. `docs/expansao_dominio.md` — `DIST_MIN_ULTRA_AINDA_KM` (nunca existiu) → `DIST_MIN_ULTRA_EXISTENTE_KM`.
+
+**Escopo D — bookkeeping retroativo.** O ciclo `Renda média domiciliar` (2026-07-17, PRs
+#124/#125/#126/#129) não tinha entrada em `completed.md` — o `CLAUDE.md` era o único registro.
+Entrada reconstruída, e os 3 parquets de uplift entraram nas pré-condições de
+`docs/deploy_api_bot.md` com o aviso de **fallback silencioso** (1.632 / 2.79 / 1.0).
+
+**Fora de escopo (fica para bloco próprio):** servidor MCP do grafo (transformaria o grafo de
+instrução em ferramenta) e o **gate doc-vs-código** — fazer `tests/contracts/test_parametros_canonicos.py`
+parsear o `CLAUDE.md` §3 em vez de repetir os valores num dict. Sem esse gate, o drift volta.
+
+---
+
+## Fechamento de ciclo — BLK-GRAPH-01 (2026-07-27)
+
+**Grafo de conhecimento (graphify) + correção do drift doc-vs-código** — criticidade **Alta**
+(edita `CLAUDE.md`, classificado como GOVERNANÇA por `scripts/loop_guard.py`), sessão ad-hoc fora
+do `/run-cycle`, branch `graph-01`. **READ-ONLY sobre o M1**: nada recalcula `score_priorizacao`,
+`hex_score_estrutural`, pesos, carteira, plano ou artefatos oficiais. Merge exige `aprovado-humano`.
+
+**Entregue.** Ver a especificação do bloco acima (escopos A-D). Resumo do estado final: grafo com
+**7.633 nós / 15.362 arestas / 424 comunidades** sobre 421 arquivos; `graphify-out/graph.json`,
+`GRAPH_REPORT.md` e `.graphify_labels.json` versionados; hooks de rebuild instalados; `CLAUDE.md` §7
+com a seção do grafo e seus limites; 8 correções de doc; entrada retroativa do ciclo de renda
+domiciliar (2026-07-17).
+
+**Validação.** `237 passed` no subconjunto impactado (`test_claude_md_size`,
+`test_parametros_canonicos`, `test_relatorio_municipal`, `test_loop_guard`, `test_loop_guard_paths`).
+`CLAUDE.md` em 173/230 linhas (teto do `test_claude_md_size`). EOL em LF preservado nos `.md` de
+`tasks/` e `docs/` (DEC-017) — dois docs que estavam em CRLF passaram a normalizar corretamente.
+Query de fumaça no grafo confirma que ele agora devolve `renda=0.40 / pop=0.60` e distingue o
+`score_dominio_hibrido` (onde `0.60/0.40` É legítimo) — a exata confusão que sustentou o defeito
+por ~2 meses.
+
+**Defeitos corrigidos durante o próprio ciclo** (encontrados por verificação, não por presunção):
+(a) o comando `graphify` documentado não estava no PATH — trocado por `python -m graphify`;
+(b) o merge driver registrado pelo `hook install` apontava para o lançador nu — corrigido para
+caminho absoluto; (c) `.graphify_labels.json` (rótulos curados) caía no `.gitignore` por um padrão
+genérico `.graphify_*` — exceção explícita aberta.
+
+**Dívida deixada em aberto, com nome.** (1) **Gate doc-vs-código**: `test_parametros_canonicos.py`
+declara na docstring ser o contrato `CLAUDE.md §3 <-> config`, mas compara código com código (dict
+`CANONICAL` hardcoded). Enquanto ele não parsear o §3, editar o `CLAUDE.md` não quebra nada e o
+drift volta — foi essa a causa mecânica dos 8 defeitos. Já pedido em `docs/refatoracao/review.md`
+(rank 2 da Fase 0). (2) **Servidor MCP** do grafo: sem ele, o grafo é instrução no §7 e depende de o
+agente ler e obedecer. (3) Os hooks vivem em `.git/hooks/` e **não são versionados** — cada clone
+precisa de `python -m graphify hook install`; o container do loop e o CI não têm o pacote.

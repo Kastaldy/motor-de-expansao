@@ -100,6 +100,16 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
+## Grafo de conhecimento do repositório — otimização de token (2026-07-27, pedido de Vinicius)
+
+> Pedido ad-hoc (fora do `/run-cycle`): aplicar o **graphify** ao repositório para reduzir o contexto
+> que cada sessão/sub-agente carrega. A branch `graph-01` foi criada para isso.
+
+- BLK-GRAPH-01 (concluído 2026-07-27) — ver tasks/completed.md
+
+
+---
+
 ## Relatório Pontual Censitário — vista aérea de satélite (2026-07-21, pedido de Juan)
 
 > Pedido de Juan a partir dos estudos prontos do time de UX (`UX/*.pptx`, slide "Fotos Do Imóvel"),
