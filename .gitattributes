@@ -29,3 +29,4 @@ tasks/completed.md  merge=union
 # completed.md so funciona com EOL consistente. DEC-017.
 tasks/*.md          text eol=lf
 docs/*.md           text eol=lf
+graphify-out/graph.json merge=graphify
