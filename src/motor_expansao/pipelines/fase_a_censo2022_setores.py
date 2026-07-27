@@ -1212,7 +1212,11 @@ def executar_fase_a_nacional(
 
         # Passo 1: Ler arquivos nacionais filtrados por UF
         gdf_malha = ler_malha_nacional_uf(shp_path, uf)
-        df_basico = ler_basico_nacional_uf(basico_path, uf)
+        # `shp_path` TEM de ser repassado: a recuperacao do cod_setor do Basico vem da malha
+        # ordenada por CD_SETOR. Caindo no default `NACIONAL_SHAPEFILE_PATH`, uma malha
+        # customizada (`--shp-path`) daria chaves de OUTRA malha — join corrompido em silencio
+        # ou ValueError de contagem.
+        df_basico = ler_basico_nacional_uf(basico_path, uf, shp_path=shp_path)
         df_renda = ler_renda_nacional_uf_preservando_suprimidos(renda_path, uf)
         renda_validos = int(df_renda["renda_per_capita_setor_2022"].notna().sum())
 
