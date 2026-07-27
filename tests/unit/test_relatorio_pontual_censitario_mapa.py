@@ -1294,3 +1294,58 @@ def test_camadas_existentes_ficam_byte_identicas_com_os_defaults_novos():
     implicito = censo_map._render_camada(circle_3857=circulo, **comum)
     explicito = censo_map._render_camada(circle_3857=circulo, rotulo_escala=None, **comum)
     assert implicito == explicito
+# ── Overlay de RÓTULOS por cima do choropleth (mapa de calor legível) ────────────────────
+# Sem rede: monkeypatch de `_fetch_basemap`/`_fetch_labels`. A base é cinza (sem magenta) e o
+# tileset de rótulos é magenta OPACO; se o magenta aparece na camada de choropleth, os nomes
+# foram compostos POR CIMA da cor — a leitura que o formato legível exige (nomes de rua/bairro
+# sobre o heat, não soterrados). `_fetch_labels` recebe (bounds_3857, width) e devolve
+# (Image RGBA, extent) no mesmo contrato do basemap.
+
+_ROTULO_MAGENTA = (255, 0, 255)
+
+
+def _fake_basemap_cinza(bounds, _width, *, zoom_bump=None):
+    # `zoom_bump` e' keyword-only no `_fetch_basemap` real desde o BLK-RELPON-11 (a camada
+    # `entorno` passa -1 p/ forcar z18). O fake precisa aceita-lo: `render_mapas_censitarios_
+    # combinados` monta TODAS as camadas, inclusive a de quadra, e sem isso o patch estoura
+    # TypeError antes de chegar no que estes testes medem.
+    minx, miny, maxx, maxy = bounds
+    return Image.new("RGBA", (256, 256), (235, 235, 235, 255)), (minx, maxx, miny, maxy)
+
+
+def _fake_labels_magenta(bounds, _width):
+    minx, miny, maxx, maxy = bounds
+    return Image.new("RGBA", (256, 256), (*_ROTULO_MAGENTA, 255)), (minx, maxx, miny, maxy)
+
+
+def _setores_dois_faixas() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            _sector_record("355030801000001", box(-700, -700, 0, 700), pop=800, score=40),
+            _sector_record("355030801000002", box(0, -700, 700, 700), pop=1400, score=85),
+        ]
+    )
+
+
+def test_labels_overlay_compoe_rotulos_por_cima_do_choropleth(monkeypatch):
+    monkeypatch.setattr(censo_map, "_fetch_basemap", _fake_basemap_cinza)
+    monkeypatch.setattr(censo_map, "_fetch_labels", _fake_labels_magenta)
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, _setores_dois_faixas(), width=800, height=600, basemap=True
+    )
+    dens_cores = {c[:3] for _count, c in _all_colors(mapas["densidade"])}
+    assert _ROTULO_MAGENTA in dens_cores  # rótulos compostos POR CIMA da cor
+    # a camada só-pins (concorrentes) NÃO recebe overlay de rótulos (mantém o basemap nativo)
+    conc_cores = {c[:3] for _count, c in _all_colors(mapas["concorrentes"])}
+    assert _ROTULO_MAGENTA not in conc_cores
+
+
+def test_labels_overlay_desligado_nao_compoe_rotulos(monkeypatch):
+    monkeypatch.setattr(censo_map, "_fetch_basemap", _fake_basemap_cinza)
+    monkeypatch.setattr(censo_map, "_fetch_labels", _fake_labels_magenta)
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, _setores_dois_faixas(), width=800, height=600,
+        basemap=True, labels_overlay=False,
+    )
+    dens_cores = {c[:3] for _count, c in _all_colors(mapas["densidade"])}
+    assert _ROTULO_MAGENTA not in dens_cores
