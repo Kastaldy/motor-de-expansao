@@ -29,3 +29,11 @@ tasks/completed.md  merge=union
 # completed.md so funciona com EOL consistente. DEC-017.
 tasks/*.md          text eol=lf
 docs/*.md           text eol=lf
+
+# graph.json e' ARTEFATO GERADO (graphify, BLK-GRAPH-01): ~10 MB / 263k linhas de JSON.
+# Sem `-diff` ele domina 99% do diff do PR e AFOGA o revisor automatico -- o
+# `claude-review` do PR #150 terminou com `success` mas sem saida estruturada, e o gate
+# reprovou fail-closed. `-diff` faz o git tratar como binario ("Binary files differ");
+# `linguist-generated` colapsa na UI do GitHub. NAO altera o conteudo versionado nem
+# encosta nas regras de eol/binary dos `.enc.*` acima.
+graphify-out/graph.json -diff linguist-generated=true

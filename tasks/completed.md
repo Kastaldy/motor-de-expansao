@@ -10286,9 +10286,22 @@ Validação: subconjunto impactado **92 passed**, ruff e mypy limpos. READ-ONLY 
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | Alta |
-| **Status** | Concluído 2026-07-27 (branch `graph-01`) — merge exige label `aprovado-humano` |
+| **Criticidade** | **Crítica** (escalou de Alta em 2026-07-27 — ver nota abaixo) |
+| **Status** | Concluído 2026-07-27 (branch `graph-01`, PR #150) — merge exige label `critica-aprovada` |
 | **ClickUp** | — |
+
+> **Escalada de Alta para Crítica, e por quê.** O bloco nasceu Alta (edita `CLAUDE.md`, GOVERNANÇA
+> no `loop_guard`). Subiu para Crítica ao precisar de UMA linha no `.gitattributes` —
+> `graphify-out/graph.json -diff linguist-generated=true` — que o `loop_guard` classifica como
+> **CRÍTICO por caminho, não por conteúdo** (é o arquivo que impede a conversão CRLF de corromper
+> os segredos `.enc.*`, BLK-OPS-01). A linha não encosta nessas regras.
+> **Por que foi necessária:** `graph.json` tem ~10 MB / 263k linhas e representava **99% do diff**
+> do PR #150. O revisor automático (`claude-review`) terminava com `success` mas **sem saída
+> estruturada**, e o gate reprovava fail-closed. Sem o `-diff`, todo PR futuro que tocasse o grafo
+> afogaria o revisor do mesmo jeito. Trocou-se uma aprovação Crítica única por um conserto
+> permanente. Histórico: uma primeira linha (`merge=graphify`, do `graphify hook install`) foi
+> REVERTIDA em `1ebef60` justamente para evitar essa escalada — voltou por necessidade, não por
+> descuido.
 
 > **Alta, não Média:** o bloco edita `CLAUDE.md`, que o `scripts/loop_guard.py` classifica como
 > **GOVERNANÇA** (os arquivos que definem as próprias regras). **NÃO é loop-safe** — sem marcador de
@@ -10331,10 +10344,11 @@ parsear o `CLAUDE.md` §3 em vez de repetir os valores num dict. Sem esse gate, 
 
 ## Fechamento de ciclo — BLK-GRAPH-01 (2026-07-27)
 
-**Grafo de conhecimento (graphify) + correção do drift doc-vs-código** — criticidade **Alta**
-(edita `CLAUDE.md`, classificado como GOVERNANÇA por `scripts/loop_guard.py`), sessão ad-hoc fora
-do `/run-cycle`, branch `graph-01`. **READ-ONLY sobre o M1**: nada recalcula `score_priorizacao`,
-`hex_score_estrutural`, pesos, carteira, plano ou artefatos oficiais. Merge exige `aprovado-humano`.
+**Grafo de conhecimento (graphify) + correção do drift doc-vs-código** — criticidade **Crítica**
+(escalou de Alta ao tocar o `.gitattributes`; ver a nota na especificação do bloco acima), sessão
+ad-hoc fora do `/run-cycle`, branch `graph-01`, PR #150. **READ-ONLY sobre o M1**: nada recalcula
+`score_priorizacao`, `hex_score_estrutural`, pesos, carteira, plano ou artefatos oficiais.
+Merge exige `critica-aprovada` do Felipe.
 
 **Entregue.** Ver a especificação do bloco acima (escopos A-D). Resumo do estado final: grafo com
 **7.633 nós / 15.362 arestas / 424 comunidades** sobre 421 arquivos; `graphify-out/graph.json`,
