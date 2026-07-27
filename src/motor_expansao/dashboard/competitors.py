@@ -163,6 +163,31 @@ COMPETITOR_LOGO_FILES: dict[str, str] = {
     "vidya_studio":        "logo_vidya_studio.png",
     "world_gym":           "logo_world_gym.png",
     "xprime":              "logo_xprime.png",
+    # Regionais incorporadas 2026-07 (logos padronizados <x>_logo.png -> logo_<rede>.png).
+    # So imagem/branding: os pontos (lat/lng) dessas redes ainda nao estao mapeados.
+    "ad3":                 "logo_ad3.png",
+    "acuas_fitness":       "logo_acuas_fitness.png",
+    "ajuste":              "logo_ajuste.png",
+    "bg_fitness":          "logo_bg_fitness.png",
+    "biofisic":            "logo_biofisic.png",
+    "burnfit":             "logo_burnfit.png",
+    "california":          "logo_california.png",
+    "force_one":           "logo_force_one.png",
+    "gymflix":             "logo_gymflix.png",
+    "hammer":              "logo_hammer.png",
+    "hi":                  "logo_hi.png",
+    "ironberg":            "logo_ironberg.png",
+    "korpus":              "logo_korpus.png",
+    "malibu":              "logo_malibu.png",
+    "mansao_maromba":      "logo_mansao_maromba.png",
+    "ymca":                "logo_ymca.png",
+    "ciafit":              "logo_ciafit.png",
+    "companhiafit":        "logo_companhiafit.png",
+    "corpo_e_saude":       "logo_corpo_e_saude.png",
+    "inova":               "logo_inova.png",
+    "marrafit":            "logo_marrafit.png",
+    "matchfit":            "logo_matchfit.png",
+    "moinhosfit":          "logo_moinhosfit.png",
 }
 
 ULTRA_LOGO_FILE = "logo_ultra.png"
