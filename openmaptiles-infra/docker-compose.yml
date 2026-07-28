@@ -1,0 +1,40 @@
+# ============================================================================
+# OpenMapTiles self-host — basemap do motor (visual MapTiler + satélite/overlay)
+#
+# Stack SEPARADA, seguindo o padrão dos outros -infra do projeto
+# (/opt/gymscraping-infra, /opt/motor-monitoring): roda na MESMA rede do motor
+# (app_net EXTERNA) para o Caddy do motor rotear um subdomínio até o tileserver.
+#
+# SEM porta publicada no host: o ufw só libera 22/80/443. O acesso externo é
+# via Caddy, SOB o domínio do dashboard e o MESMO login (Authelia):
+#   https://dashboard.ultra-expansao.tech/tiles/  (ver caddy/tiles.Caddyfile).
+#
+# Caps (servidor 16 GB / 4 vCPU, motor usa 3-6 GB): tileserver NUNCA passa de
+# 1.5 GB / 1 vCPU. Servir tile vector é I/O (não CPU) -> impacto no motor ~nulo.
+# ============================================================================
+name: openmaptiles-basemap
+
+services:
+  tileserver:
+    image: maptiler/tileserver-gl:latest
+    container_name: motor_expansao_tileserver   # segue o padrão motor_expansao_*
+    command: ["--config", "/data/config.json", "--port", "8080"]
+    volumes:
+      - ./data:/data:ro           # config.json, styles/, mbtiles/ (read-only)
+    expose:
+      - "8080"                    # SÓ interno; o Caddy faz reverse_proxy tileserver:8080
+    networks:
+      - app_net
+    mem_limit: 1500m              # trava de segurança: nunca briga com o motor
+    cpus: 1.0
+    security_opt:
+      - no-new-privileges:true    # mesmo hardening dos serviços do motor
+    restart: unless-stopped
+
+# Rede EXTERNA — a mesma criada pelo docker-compose.prod.yml do motor.
+# Confirme o nome real no servidor:  docker network ls | grep app
+# (o compose do motor roda em /opt/motor-expansao/app -> rede 'app_app_net').
+networks:
+  app_net:
+    external: true
+    name: app_app_net

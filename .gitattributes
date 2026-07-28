@@ -35,6 +35,12 @@ docs/*.md           text eol=lf
 # o checkout entregaria CRLF e quebraria o shebang `#!/bin/sh`.
 .githooks/*         text eol=lf
 
+# Stack do tileserver (BLK-BASEMAP-01): TODO arquivo daqui e consumido no Linux da VPS
+# (`docker compose up`, `bash scripts/generate-brazil.sh`, bloco colado no Caddyfile). O `*.sh`
+# da L12 ja cobre o gerador, mas o `docker-compose.yml` e o `tiles.Caddyfile` ficavam de fora e
+# o checkout Windows (core.autocrlf=true) os entregaria em CRLF. Mesma razao do `.githooks/*`.
+openmaptiles-infra/**   text eol=lf
+
 # graph.json e' ARTEFATO GERADO (graphify, BLK-GRAPH-01): ~10 MB / 263k linhas de JSON.
 # Sem `-diff` ele domina 99% do diff do PR e AFOGA o revisor automatico -- o
 # `claude-review` do PR #150 terminou com `success` mas sem saida estruturada, e o gate
