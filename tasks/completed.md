@@ -10377,3 +10377,171 @@ drift volta — foi essa a causa mecânica dos 8 defeitos. Já pedido em `docs/r
 (rank 2 da Fase 0). (2) **Servidor MCP** do grafo: sem ele, o grafo é instrução no §7 e depende de o
 agente ler e obedecer. (3) Os hooks vivem em `.git/hooks/` e **não são versionados** — cada clone
 precisa de `python -m graphify hook install`; o container do loop e o CI não têm o pacote.
+
+---
+
+### BLK-GRAPH-02 — Tornar o grafo uma FERRAMENTA, não uma instrução
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** — o Escopo B entrou neste ciclo (gate humano de 2026-07-28): o PR toca `pyproject.toml` e `.gitattributes`, ambos `critico` no `loop_guard`. |
+| **Status** | Pendente — preparado em 2026-07-28 para execução em sessão nova |
+| **Depende de** | Estado final do BLK-GRAPH-01 na branch `graph-01` (`5450f04`). **NÃO exige merge** — o PR #150 pode seguir fechado. |
+| **Autonomia** | *(sem marcador — **NÃO** loop-safe: toca `CLAUDE.md`, que é GOVERNANÇA no `loop_guard`)* |
+| **ClickUp** | — |
+
+**PONTO DE PARTIDA — ler primeiro.** Este bloco roda **a partir da branch `graph-01`**, não da
+`main`. O PR #150 está **fechado de propósito** (faltava só a label `aprovado-humano`, operacional)
+e **não precisa ser mergeado antes**. Começar com:
+
+```
+git checkout graph-01          # HEAD 5450f04; 7 commits sobre a main
+git checkout -b graph-02       # ou seguir na propria graph-01
+```
+
+Nessa branch o grafo **já existe versionado** — `graphify-out/graph.json`, `GRAPH_REPORT.md` e
+`.graphify_labels.json` — que é o insumo de que o `.mcp.json` precisa apontar. Na `main` eles não
+existem; partir dela deixaria o bloco sem base.
+**Consequência a decidir na abertura do PR:** uma branch derivada da `graph-01` carrega os 7
+commits dela até que a `graph-01` entre. Ou abrir o PR do 02 com **base `graph-01`** (diff limpo,
+só o 02), ou aceitar o diff combinado, ou reabrir e mergear o #150 antes. Escolher
+conscientemente — o diff combinado passaria de 265k linhas e afogaria o `claude-review`, pelo
+mesmo motivo documentado abaixo.
+
+**Problema.** O BLK-GRAPH-01 entregou o grafo e o versionou, mas o *uso* dele não viaja. Estado
+verificado em 2026-07-27 (não presumido — cada linha foi medida):
+
+| O que falta | Evidência |
+|---|---|
+| Pacote instalado | `graphifyy` (DOIS 'y' — o nome nu `graphify` está UNCLAIMED no PyPI) não consta de `pyproject.toml` nem de `constraints.txt` |
+| Atualização automática | `.git/hooks/` não é versionado; `core.hooksPath` não definido → **0 hooks viajam** |
+| Ser ferramenta | **não existe `.mcp.json`** no repo |
+| Norma vs bibliografia | a regra vive no `CLAUDE.md` **§7** ("Onde aprofundar"), lida como ponteiro |
+
+Consequência: hoje o grafo depende de o agente ler a §7 e decidir obedecer, a cada sessão de cada
+pessoa. Quem usar outro agente não recebe nada.
+
+**Escopo A — Alta (entrega a maior parte do valor).**
+1. **`.mcp.json` versionado** expondo o servidor MCP do graphify
+   (`python -m graphify.serve graphify-out/graph.json`). Tools: `query_graph`, `get_node`,
+   `get_neighbors`, `get_community`, `god_nodes`, `graph_stats`, `shortest_path`. É o único item
+   que viaja com o repo **e** transforma o grafo em ferramenta — o agente passa a vê-lo na lista
+   de tools e usa como usa Grep, sem depender de ler doc.
+2. **Mover a regra da §7 para a §2** (`Regras operacionais rapidas`), que é lida como norma. Manter
+   na §7 só o detalhe técnico (limites, rebuild, o que ficou fora do grafo).
+3. **Hooks versionados**: mover para `.githooks/` no repo + documentar
+   `git config core.hooksPath .githooks`. **Atenção — isto NÃO é automático:** o git, por
+   segurança, não aplica `core.hooksPath` vindo do repositório; cada clone roda o comando uma vez.
+   O ganho é o hook ser revisável e igual para todos, não auto-instalável.
+
+**Escopo B — Crítica, SEPARÁVEL.** Declarar `graphifyy[mcp]` como dependência (extra opcional em
+`pyproject.toml`, e `constraints.txt` se for pinar). Ambos são **path CRÍTICO** do `loop_guard`
+(`pyproject.toml` = config do pytest/ruff + deps da imagem; `constraints.txt` = lockfile de supply
+chain) → exige `critica-aprovada`.
+
+**Criticidade e recorte.** Classificação medida com `loop_guard.classificar`:
+`.mcp.json` = livre · `.githooks/*` = livre · `CLAUDE.md` = governança ·
+`pyproject.toml` = **crítico** · `constraints.txt` = **crítico**.
+Fazer A sozinho mantém o PR em **Alta** (só `aprovado-humano`). Juntar B escala para **Crítica**.
+**Recomendação: A primeiro, B como bloco/PR próprio** — não prender o valor principal a uma
+aprovação Crítica.
+
+**QUESTÃO DE PROJETO EM ABERTO (decidir com evidência, não no chute).** O comando do `.mcp.json`
+precisa ser **portátil**. `python -m graphify.serve` só funciona se o `graphify` estiver instalado
+no python ativo — que é justamente o Escopo B. Caminho absoluto de interpretador **não** serve
+(é específico da máquina). Investigar antes de implementar:
+(a) o MCP falha graciosamente quando o pacote falta, ou quebra a sessão inteira?
+(b) dá para apontar para `graphify-out/.graphify_python`? *(Não: é gitignored.)*
+(c) A depende mesmo de B para ser portátil, ou um `README`/erro claro basta?
+A resposta muda o recorte A/B — e a resposta errada entrega um `.mcp.json` que só funciona na
+máquina de quem o criou.
+
+**Fora de escopo:** tudo que envolva reconstruir o grafo, mudar o recorte do corpus
+(`context/handoff/` e imagens seguem fora) ou tocar M1. **READ-ONLY sobre o M1.**
+
+**Critério de aceite.** `.mcp.json` versionado e funcional num clone limpo (testar de verdade, não
+presumir); regra na §2; hooks em `.githooks/` com a limitação do `core.hooksPath` documentada
+explicitamente; `ruff`/`mypy` limpos; suíte verde; `loop_guard --base main` sem CRÍTICO se o
+Escopo B ficou de fora.
+
+**Armadilhas herdadas do BLK-GRAPH-01 — ler antes de começar.**
+- O comando `graphify` **não está no PATH** (o pacote instala em `<python>/Scripts/`). Usar sempre
+  `python -m graphify`.
+- `python -m graphify hook install` **re-adiciona** `graphify-out/graph.json merge=graphify` ao
+  `.gitattributes` — que é path **CRÍTICO**. Remover antes de commitar, ou o PR escala sem querer.
+- `graph.json` é versionado **com** `-diff linguist-generated=true` no `.gitattributes`. Sem esse
+  atributo o diff de ~10 MB **afoga o `claude-review`** (termina com `success` mas sem saída
+  estruturada → gate fail-closed). Não remover.
+- Um PR Crítico exige **DUAS** labels cumulativas: `critica-aprovada` (de um dono) **E**
+  `aprovado-humano` (de humano ≠ autor). Elas não se substituem.
+
+**Achado colateral a resolver (não é deste bloco, mas alguém precisa decidir).** O
+`.github/workflows/guard.yml` já implementa `DONOS = {"kastaldy", "vinhoabencoado"}`, mas a
+**DEC-019 está como `PROPOSTA`** no índice do `CLAUDE.md` §8 e no corpo da própria DEC
+("aguardando aprovacao de Felipe"). O código executa uma decisão que a documentação diz não estar
+aprovada. Ou a DEC vira APROVADA, ou o `guard.yml` volta a um dono só.
+
+## Fechamento de ciclo — BLK-GRAPH-02 (2026-07-28)
+
+**Veredito do QA: APROVADO COM RESSALVAS** (não-bloqueantes). Esteira completa: Block Orchestrator →
+Planner (Escopo A) → [gate humano — AJUSTE de recorte] → Planner consolidado (A+B) → [gate humano —
+aprovação] → Builder → QA. Todos em Opus. Branch `ciclo/BLK-GRAPH-02` (de `graph-01` @ `be7787a`);
+base do PR: **`main`**. Criticidade **CRÍTICA** (escalada por decisão do humano).
+
+**Entrega.** O grafo do graphify deixou de ser um ponteiro na §7 e virou ferramenta + norma:
+`.mcp.json` versionado e **funcional** (10 tools por handshake JSON-RPC real), `graphifyy[mcp]`
+declarado em `[dependency-groups]` (PEP 735) com o pin **`mcp>=1.28,<2`**, hook `post-commit`
+versionado em `.githooks/`, norma movida da §7 para a §2 do `CLAUDE.md`, runbook novo em
+`docs/grafo_conhecimento.md` e 3 arquivos de teste. DEC-019 passou de `PROPOSTA` a **APROVADA**.
+
+**4 commits, todos por path:** `037c61a` (DEC-019 + §8 do `CLAUDE.md`) · `5255e4f` (`pyproject.toml`)
+· `24f4619` (o Escopo A inteiro + script de prova + testes) · `acd72d4` (`tasks/backlog.md`).
+
+**Quatro premissas do backlog caíram, todas por medição — nenhuma por suposição:**
+1. **`mcp` 2.0.0 QUEBRA o servidor.** Removeu `AnyUrl` de `mcp.types`; `graphify/serve.py:1116` ainda
+   o importa dentro de um `try/except` que **mascara o erro e mente** (`'mcp not installed'`). Sem o
+   pin `<2`, o critério "funcional" é inalcançável — é isto que justifica o Escopo B.
+2. **"O diff combinado passa de 265k linhas e afoga o `claude-review`"** está **OBSOLETA**: com o
+   `-diff linguist-generated=true` do commit `a7c4754`, `main...HEAD` = **14 arquivos, 2.312/30
+   linhas** (`graph.json` sai binário). Foi o que reabriu a base `main`.
+3. **O extra em `[project.optional-dependencies]` era uma bomba-relógio:** `uv pip compile
+   --all-extras` (comando canônico do lock, `ci.yml:45`) puxaria +36 pins no próximo bump de
+   segurança. Medido em venv descartável: com `[dependency-groups]`, os 214 pins ficam **byte a byte
+   idênticos**; como extra, viram 250.
+4. **Regenerar o `constraints.txt` NÃO é inócuo:** `uv pip compile` não preserva pins — re-resolve
+   tudo. Com o `pyproject.toml` intocado, o refresh de hoje já mudaria **30 pacotes**, incluindo
+   `streamlit 1.59.2→1.60.0` e `fastapi 0.139.0→0.140.9`, ambos nas imagens de **produção**. Daí a
+   decisão de deixar o lockfile **intocado**.
+
+Além disso: o nome do pacote no PyPI é **`graphifyy`** (dois "y"); `graphify` nu está **UNCLAIMED** —
+o próprio backlog escrevia o nome errado, corrigido no `acd72d4`. E o `post-checkout` do graphify
+**não** foi versionado de propósito: ele chama `_rebuild_code` sem `changed_paths` (corpus inteiro) e
+produz um grafo divergente do curado — 13.599 nós contra os 7.560 versionados, com `context/handoff/`
+entrando no corpus contra o recorte da §7 e os rótulos curados sobrescritos.
+
+**Validações (re-executadas pelo QA, sem bypass).** Prova funcional do MCP a partir do próprio
+`.mcp.json`: `TOOLS (10)`, `Nodes: 7633 | Edges: 15362 | Communities: 424`, `EXIT: 0`,
+`STDERR: (vazio)`, `VERDICT: PASS`. Suíte completa serial: **2028 passed, 2 skipped, 1 failed**.
+`ruff` limpo; `mypy` verde no CI. `loop_guard`: `critico` = {`.gitattributes`, `pyproject.toml`},
+`governanca` = {`CLAUDE.md`, `.gitignore`, `tasks/backlog.md`, `.claude/settings.json`}, **0 caminhos
+de M1**. READ-ONLY M1 confirmado: `git diff main...HEAD -- config.py src/ data/` vazio e artefatos
+oficiais com mtime de 2026-06-10.
+
+**Ressalvas não-bloqueantes (nenhuma é regressão deste ciclo):**
+- `pytest -n auto` quebra nesta máquina (`INTERNALERROR` do `execnet`) — o QA reproduziu **num
+  worktree da `main` pura**, provando que é pré-existente. CI roda serial, não é afetado. Bloco novo:
+  **BLK-QA-XDIST-01**.
+- A falha única da suíte (`test_run_readonly_m1_por_mtime`) é ambiental — falta
+  `data/staging/unidade_territorio_retencao.parquet` nesta máquina. Já catalogada como
+  **BLK-FIX-LTV-01**; blobs idênticos aos da `main`.
+- O critério de aceite nº 8 do plano ficou **literalmente** descumprido: a string
+  `python -m graphify . --update` permanece no `CLAUDE.md`, mas **só dentro da advertência**
+  `NAO faz isso` — o teste varre todas as ocorrências e trava essa intenção. Pede ratificação
+  explícita do humano no corpo do PR.
+
+**Pendências para o humano.** (1) Merge exige **três** labels cumulativas — `criticidade:critica`,
+`critica-aprovada` (dono) e `aprovado-humano` (≠ autor) — mais review nativo de CODEOWNER para
+`/CLAUDE.md` e `/pyproject.toml`. (2) **`git config core.hooksPath .githooks`** em cada clone: sem
+isso o hook versionado não entra em vigor e o `post-checkout` divergente continua ativo. (3) Tocar
+`pyproject.toml` faz o merge **republicar a imagem da API/bot no GHCR** (`ci.yml:236`) — não é deploy;
+deploy segue manual por digest (§6).

@@ -107,106 +107,8 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 - BLK-GRAPH-01 (concluído 2026-07-27) — ver tasks/completed.md
 
-### BLK-GRAPH-02 — Tornar o grafo uma FERRAMENTA, não uma instrução
+- BLK-GRAPH-02 (concluído 2026-07-28) — ver tasks/completed.md
 
-| Campo | Valor |
-|---|---|
-| **Criticidade** | **Crítica** — o Escopo B entrou neste ciclo (gate humano de 2026-07-28): o PR toca `pyproject.toml` e `.gitattributes`, ambos `critico` no `loop_guard`. |
-| **Status** | Pendente — preparado em 2026-07-28 para execução em sessão nova |
-| **Depende de** | Estado final do BLK-GRAPH-01 na branch `graph-01` (`5450f04`). **NÃO exige merge** — o PR #150 pode seguir fechado. |
-| **Autonomia** | *(sem marcador — **NÃO** loop-safe: toca `CLAUDE.md`, que é GOVERNANÇA no `loop_guard`)* |
-| **ClickUp** | — |
-
-**PONTO DE PARTIDA — ler primeiro.** Este bloco roda **a partir da branch `graph-01`**, não da
-`main`. O PR #150 está **fechado de propósito** (faltava só a label `aprovado-humano`, operacional)
-e **não precisa ser mergeado antes**. Começar com:
-
-```
-git checkout graph-01          # HEAD 5450f04; 7 commits sobre a main
-git checkout -b graph-02       # ou seguir na propria graph-01
-```
-
-Nessa branch o grafo **já existe versionado** — `graphify-out/graph.json`, `GRAPH_REPORT.md` e
-`.graphify_labels.json` — que é o insumo de que o `.mcp.json` precisa apontar. Na `main` eles não
-existem; partir dela deixaria o bloco sem base.
-**Consequência a decidir na abertura do PR:** uma branch derivada da `graph-01` carrega os 7
-commits dela até que a `graph-01` entre. Ou abrir o PR do 02 com **base `graph-01`** (diff limpo,
-só o 02), ou aceitar o diff combinado, ou reabrir e mergear o #150 antes. Escolher
-conscientemente — o diff combinado passaria de 265k linhas e afogaria o `claude-review`, pelo
-mesmo motivo documentado abaixo.
-
-**Problema.** O BLK-GRAPH-01 entregou o grafo e o versionou, mas o *uso* dele não viaja. Estado
-verificado em 2026-07-27 (não presumido — cada linha foi medida):
-
-| O que falta | Evidência |
-|---|---|
-| Pacote instalado | `graphifyy` (DOIS 'y' — o nome nu `graphify` está UNCLAIMED no PyPI) não consta de `pyproject.toml` nem de `constraints.txt` |
-| Atualização automática | `.git/hooks/` não é versionado; `core.hooksPath` não definido → **0 hooks viajam** |
-| Ser ferramenta | **não existe `.mcp.json`** no repo |
-| Norma vs bibliografia | a regra vive no `CLAUDE.md` **§7** ("Onde aprofundar"), lida como ponteiro |
-
-Consequência: hoje o grafo depende de o agente ler a §7 e decidir obedecer, a cada sessão de cada
-pessoa. Quem usar outro agente não recebe nada.
-
-**Escopo A — Alta (entrega a maior parte do valor).**
-1. **`.mcp.json` versionado** expondo o servidor MCP do graphify
-   (`python -m graphify.serve graphify-out/graph.json`). Tools: `query_graph`, `get_node`,
-   `get_neighbors`, `get_community`, `god_nodes`, `graph_stats`, `shortest_path`. É o único item
-   que viaja com o repo **e** transforma o grafo em ferramenta — o agente passa a vê-lo na lista
-   de tools e usa como usa Grep, sem depender de ler doc.
-2. **Mover a regra da §7 para a §2** (`Regras operacionais rapidas`), que é lida como norma. Manter
-   na §7 só o detalhe técnico (limites, rebuild, o que ficou fora do grafo).
-3. **Hooks versionados**: mover para `.githooks/` no repo + documentar
-   `git config core.hooksPath .githooks`. **Atenção — isto NÃO é automático:** o git, por
-   segurança, não aplica `core.hooksPath` vindo do repositório; cada clone roda o comando uma vez.
-   O ganho é o hook ser revisável e igual para todos, não auto-instalável.
-
-**Escopo B — Crítica, SEPARÁVEL.** Declarar `graphifyy[mcp]` como dependência (extra opcional em
-`pyproject.toml`, e `constraints.txt` se for pinar). Ambos são **path CRÍTICO** do `loop_guard`
-(`pyproject.toml` = config do pytest/ruff + deps da imagem; `constraints.txt` = lockfile de supply
-chain) → exige `critica-aprovada`.
-
-**Criticidade e recorte.** Classificação medida com `loop_guard.classificar`:
-`.mcp.json` = livre · `.githooks/*` = livre · `CLAUDE.md` = governança ·
-`pyproject.toml` = **crítico** · `constraints.txt` = **crítico**.
-Fazer A sozinho mantém o PR em **Alta** (só `aprovado-humano`). Juntar B escala para **Crítica**.
-**Recomendação: A primeiro, B como bloco/PR próprio** — não prender o valor principal a uma
-aprovação Crítica.
-
-**QUESTÃO DE PROJETO EM ABERTO (decidir com evidência, não no chute).** O comando do `.mcp.json`
-precisa ser **portátil**. `python -m graphify.serve` só funciona se o `graphify` estiver instalado
-no python ativo — que é justamente o Escopo B. Caminho absoluto de interpretador **não** serve
-(é específico da máquina). Investigar antes de implementar:
-(a) o MCP falha graciosamente quando o pacote falta, ou quebra a sessão inteira?
-(b) dá para apontar para `graphify-out/.graphify_python`? *(Não: é gitignored.)*
-(c) A depende mesmo de B para ser portátil, ou um `README`/erro claro basta?
-A resposta muda o recorte A/B — e a resposta errada entrega um `.mcp.json` que só funciona na
-máquina de quem o criou.
-
-**Fora de escopo:** tudo que envolva reconstruir o grafo, mudar o recorte do corpus
-(`context/handoff/` e imagens seguem fora) ou tocar M1. **READ-ONLY sobre o M1.**
-
-**Critério de aceite.** `.mcp.json` versionado e funcional num clone limpo (testar de verdade, não
-presumir); regra na §2; hooks em `.githooks/` com a limitação do `core.hooksPath` documentada
-explicitamente; `ruff`/`mypy` limpos; suíte verde; `loop_guard --base main` sem CRÍTICO se o
-Escopo B ficou de fora.
-
-**Armadilhas herdadas do BLK-GRAPH-01 — ler antes de começar.**
-- O comando `graphify` **não está no PATH** (o pacote instala em `<python>/Scripts/`). Usar sempre
-  `python -m graphify`.
-- `python -m graphify hook install` **re-adiciona** `graphify-out/graph.json merge=graphify` ao
-  `.gitattributes` — que é path **CRÍTICO**. Remover antes de commitar, ou o PR escala sem querer.
-- `graph.json` é versionado **com** `-diff linguist-generated=true` no `.gitattributes`. Sem esse
-  atributo o diff de ~10 MB **afoga o `claude-review`** (termina com `success` mas sem saída
-  estruturada → gate fail-closed). Não remover.
-- Um PR Crítico exige **DUAS** labels cumulativas: `critica-aprovada` (de um dono) **E**
-  `aprovado-humano` (de humano ≠ autor). Elas não se substituem.
-
-**Achado colateral a resolver (não é deste bloco, mas alguém precisa decidir).** O
-`.github/workflows/guard.yml` já implementa `DONOS = {"kastaldy", "vinhoabencoado"}`, mas a
-**DEC-019 está como `PROPOSTA`** no índice do `CLAUDE.md` §8 e no corpo da própria DEC
-("aguardando aprovacao de Felipe"). O código executa uma decisão que a documentação diz não estar
-aprovada. Ou a DEC vira APROVADA, ou o `guard.yml` volta a um dono só.
 
 ---
 
@@ -1662,6 +1564,51 @@ permanece exatamente como está.
 
 **Critério de aceite.** Em máquina sem o parquet de entrada o teste **pula** (não falha); em máquina com o
 parquet ele roda e mantém o assert de mtime; `pytest -q` deixa de reportar esse `FAILED`.
+
+---
+
+### BLK-QA-XDIST-01 — `pytest -n auto` quebrado nesta estação (INTERNALERROR do `execnet`)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** — ergonomia de gate local; **não** afeta o portão da `main` (o CI roda serial, `ci.yml:60`). READ-ONLY sobre o M1. |
+| **Prioridade** | Média — hoje o gate do QA custa **23 min** em serial contra os poucos minutos que o `-n auto` custava. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | Pendente. |
+| **Depende de** | — |
+| **Autonomia** | *(sem marcador — **NÃO** loop-safe: o diagnóstico exige rodar/instalar tooling na estação, fora do container)* |
+
+**Problema (achado e MEDIDO pelo QA do BLK-GRAPH-02, 2026-07-28).**
+`python -m pytest -n auto` aborta com `INTERNALERROR` antes de coletar qualquer teste, na criação dos
+workers (`xdist/workermanage.py:setup_node` → `execnet/gateway.py:_rinfo`). Três assinaturas alternando
+entre execuções: `EOFError: couldn't load message header, expected 9 bytes, got 0`,
+`OSError: [WinError 6] Identificador inválido` e `OSError: [WinError 50] Não há suporte para o pedido`
+(em `_winapi.DuplicateHandle`). `os.cpu_count()` = 12 → `-n auto` = 12 workers.
+Versões: `pytest 8.4.2`, `pytest-xdist 3.8.0`, `execnet 2.1.2`, Python 3.14 (Windows).
+
+**PROVADO PRÉ-EXISTENTE — não é regressão do BLK-GRAPH-02:**
+1. Reproduzido **3/3** em `tests/unit/test_claude_md_size.py` (2 testes, sem subprocess), cujo blob é
+   **idêntico** ao da `main`, com `conftest.py` e a seção `[tool.pytest.ini_options]` também idênticos.
+2. Reproduzido **2/2** em um `git worktree` da **`main` pura** (zero mudanças do ciclo). Nesse mesmo
+   worktree o `-n 2` também caiu (`WinError 50`).
+3. Reproduzido com **`-n 4`** na suíte completa (mesmo `INTERNALERROR`).
+4. Os pacotes instalados pelo grupo `graph` (`mcp`, `graphifyy`, `starlette`, `sse-starlette`,
+   `httpx-sse`, `pyjwt`) **não registram** nenhum entry point `pytest11` — não são a causa.
+5. Fora do repositório, num diretório temporário com um teste trivial, `-n auto` **passa** — ou seja, a
+   quebra aparece com o `conftest.py`/site-packages deste projeto carregados em 12 workers, não com o
+   xdist em si.
+
+**Histórico.** O `-n auto` **funcionava** (ver `tasks/completed.md`: "672 passed" e "678 passed ...
+idêntico em `-n auto` e serial"). Regrediu em algum ponto entre aqueles ciclos e 2026-07-28.
+
+**Correção sugerida (a confirmar por medição, não presumir).** Investigar (a) limitar workers por
+`addopts`/`-n logical` ou um teto explícito no `pyproject.toml`; (b) `--dist loadfile` (reduz canais);
+(c) bump de `pytest-xdist`/`execnet`; (d) compatibilidade do `execnet 2.1.2` com Python 3.14 no Windows
+(`DuplicateHandle`). **Não** mascarar com `-p no:xdist`.
+
+**Critério de aceite.** `python -m pytest -n auto -q` completa a suíte com a **mesma contagem** do serial
+(hoje: `2028 passed, 2 skipped` + o `FAILED` conhecido do BLK-FIX-LTV-01), em 3 execuções seguidas.
+Documentar no `prompts/qa_analyzer.md` o modo de execução vigente se a conclusão for mudar de `-n auto`.
 
 ---
 
