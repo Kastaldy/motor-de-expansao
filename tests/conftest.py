@@ -7,23 +7,19 @@ toca producao (`src/`): sao apenas garantias de reprodutibilidade do ambiente de
 
 `fpdf2` (>=2.8) carimba em CADA instancia de `FPDF` um `/CreationDate` derivado de
 `datetime.now(timezone.utc)` capturado no `__init__`, e um `/ID` derivado desse
-timestamp. Como `gerar_pdf_relatorio_pontual_classico` constroi uma instancia nova
+timestamp. Como `gerar_pdf_relatorio_pontual_censitario` constroi uma instancia nova
 de `_UltraPDF` por chamada, dois PDFs gerados com os MESMOS inputs em segundos de
 relogio diferentes divergem em alguns bytes (campo de segundos do `/CreationDate` e o
-hash `/ID`). Isso tornava `test_geracoes_repetidas_sao_deterministas` (que compara
-`antes == depois` de duas geracoes do mesmo relatorio) flaky quando as duas geracoes
+hash `/ID`). Isso tornava `test_classico_template_recente_inalterado` (que compara
+`antes == depois` de dois PDFs do template recente) flaky quando as duas geracoes
 cruzavam a virada de um segundo — falha de DETERMINISMO de ambiente, nao de logica.
 
 A fixture abaixo congela `datetime.now()` SO dentro dos modulos do `fpdf2` durante os
 testes, mantendo todo o resto do `datetime` intacto. Nao mascara o teste: a assercao
-`antes == depois` continua validando que uma geracao no meio nao mutou estado
-compartilhado que afete os bytes da seguinte. Apenas remove a unica fonte de
-nao-determinismo legitima (o relogio de parede) que nao tem relacao com o que o teste
-pretende verificar. Producao (`censo_report.py`) fica INTOCADA.
-
-BLK-RELPON-14: o mesmo congelamento sustenta
-`test_wrapper_censitario_e_identico_ao_classico_e_avisa_depreciacao`, que exige bytes
-IDENTICOS entre o wrapper depreciado e o gerador classico.
+`antes == depois` continua validando que gerar o template classico no meio nao mutou
+estado compartilhado que afete os bytes do template recente. Apenas remove a unica
+fonte de nao-determinismo legitima (o relogio de parede) que nao tem relacao com o que
+o teste pretende verificar. Producao (`censo_report.py`) fica INTOCADA.
 """
 
 from __future__ import annotations
