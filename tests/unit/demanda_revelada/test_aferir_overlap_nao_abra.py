@@ -191,8 +191,14 @@ def test_ler_competidores_drop_pii(tmp_path: Path) -> None:
     assert "Cluster_ID" not in df.columns
     # NaN em hex_id devem ter sido dropados
     assert df["hex_id"].isna().sum() == 0
-    # SKYFIT ACADEMIA RJ deve ser classificada como independente (gap de token)
-    assert n_skyfit >= 1, "esperava ao menos 1 linha skyfit não reconhecida"
+    # O gap de token do skyfit foi FECHADO: `VOCABULARIO_REDES` passou a cobrir as redes do
+    # registro do dashboard (`skyfit` entre elas), entao "SKYFIT ACADEMIA RJ" agora e'
+    # classificada como `skyfit` e o contador de nao-reconhecidas cai a 0. O contador segue
+    # existindo como diagnostico (uma rede nova sem token voltaria a incrementa-lo).
+    assert "skyfit" in set(df["rede_normalizada"]), (
+        "SKYFIT ACADEMIA RJ deveria ser reconhecida pelo vocabulario de redes"
+    )
+    assert n_skyfit == 0, f"nenhuma linha skyfit deveria ficar sem reconhecimento, veio {n_skyfit}"
 
 
 # --------------------------------------------------------------------------- #

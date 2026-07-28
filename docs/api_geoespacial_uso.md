@@ -12,7 +12,7 @@
 
 A API GeoEspacial é uma camada de consumo **on-demand** do Motor de Expansão, complementar ao
 dashboard Streamlit. Ela expõe o **Relatório Pontual Censitário 1,5 km** (KPIs em JSON e PDF de
-8 páginas) e o **Relatório Municipal** (PDF) para qualquer cliente HTTP com token — incluindo o
+7 páginas) e o **Relatório Municipal** (PDF) para qualquer cliente HTTP com token — incluindo o
 bot Telegram "Paulo".
 
 **Dois serviços independentes** (desacoplados; o bot consome a API por HTTP):
@@ -43,9 +43,12 @@ telegram-bot ──HTTP──> api ──Parquets locais──> motor censo_*
 **Raio fixo: 1,5 km — no Relatório Pontual.** Não é parâmetro de entrada — é o método canônico
 `setor_censitario_intersecao_area_1p5km`, INTOCÁVEL (CLAUDE.md §4). O Relatório Municipal não usa
 raio: agrega o município inteiro.
-Dois mapas do PDF pontual usam raio/escala só de **render** (nunca de análise): 5 km no choropleth
-de Residual Fitness — camada **condicional**, que vira fallback textual sem a base de mercado — e
-~0,14 km na "Imagem do Entorno" (rotulada "Escala de quadra"; ~300 m de lado).
+Dois mapas do PDF pontual usam escala só de **render** (nunca de análise): os painéis de
+Socioeconomia e de Residual Fitness são **enquadrados** a 5 km (`RAIO_RESIDUAL_DISPLAY_KM`), ambos
+**condicionais** — viram fallback textual sem a base de mercado/hexágonos. Desde o **BLK-RELPON-14**
+esses 5 km deixaram de ser **desenhados**: sem círculo e sem rótulo "Raio X km"; o ponto aparece
+pelo pin central e pela borda fina do hexágono H3 que o contém. O valor de enquadramento
+**não mudou**.
 
 ---
 
@@ -115,7 +118,7 @@ Uso típico: monitoramento do load balancer e do docker compose.
 ### 3b. `POST /api/v1/analisar`
 
 Endpoint principal. Recebe um ponto geográfico e devolve o estudo censitário em **JSON** (default)
-ou **PDF** (8 páginas).
+ou **PDF** (7 páginas).
 
 #### Request body (`AnalisarRequest`)
 
@@ -178,13 +181,15 @@ Content-Type: application/pdf
 Content-Disposition: inline; filename="relatorio_pontual_censitario.pdf"
 ```
 
-PDF de 8 páginas: Capa → Imagem do Entorno → Socioeconomia e Residual Fitness → Mapas de calor
+PDF de 7 páginas: Capa → Socioeconomia e Residual Fitness → Mapas de calor
 (grid 2×2: densidade, renda, score censitário, renda média domiciliar) → Concorrentes →
-Perfil do Bairro/Distrito → Big Numbers → Realização/Crédito.
+Perfil do Bairro/Distrito → Big Numbers → Realização/Crédito. A página "Imagem do Entorno"
+(mapa de quadra) saiu no **BLK-RELPON-14** — eram 8.
 
 É a variante "Apresentação Clássica Ultra" (`gerar_pdf_relatorio_pontual_classico`), a mesma que o
-dashboard entrega. A API não usa as páginas **opcionais** do gerador (fotos do imóvel, dados do
-imóvel, viabilidade) — pelo endpoint saem sempre exatamente estas 8.
+dashboard entrega e, desde o BLK-RELPON-14, o **gerador único** do relatório pontual. A API não usa
+as páginas **opcionais** do gerador (fotos do imóvel, dados do imóvel, viabilidade) — pelo endpoint
+saem sempre exatamente estas 7.
 
 **Performance:** a primeira chamada pode levar de 10 a 30 s (cold load dos Parquets +
 busca de tiles de mapa). Chamadas subsequentes ao mesmo município são mais rápidas
