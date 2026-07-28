@@ -197,6 +197,11 @@ def test_caminhos_governanca(path: str) -> None:
         # outro dado em `data/` (ex.: censo agregado) NAO e arrastado.
         "docs/ibge_notas.md",
         "data/reports/base_h3_brasil.md",
+        # BLK-GRAPH-02: o tooling do grafo e' LIVRE no guard (o que escala o PR e' .gitattributes
+        # + pyproject.toml, nao estes).
+        ".mcp.json",
+        ".githooks/post-commit",
+        "scripts/verify_mcp_graphify.py",
     ],
 )
 def test_caminhos_limpos(path: str) -> None:
