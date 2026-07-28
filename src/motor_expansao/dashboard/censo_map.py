@@ -46,8 +46,23 @@ _BASEMAP_CACHE_DIR = Path("data/cache/basemap_tiles")
 # cima fornece a cor; para a cor nao apagar o arruamento, recolocamos POR CIMA os PROPRIOS
 # pixels ESCUROS do tile (ruas+nomes nativos — NAO e edge-detection; ver _STREET_*).
 # O provedor e resolvido lazy em _fetch_basemap (ctx.providers.CartoDB.<_BASEMAP_PROVIDER_ATTR>).
+# Continua sendo o FALLBACK quando o self-host abaixo nao esta configurado.
 _BASEMAP_PROVIDER_ATTR = "Voyager"
+
+# BLK-BASEMAP-02 — basemap SELF-HOST (emenda a DEC-004). Com `API_BASEMAP_TILES_URL` definida, o
+# fundo de ruas vem do tileserver OpenMapTiles proprio (stack em `openmaptiles-infra/`) em vez do
+# CartoDB. Em producao a API e o Streamlit alcancam o container direto pela rede `app_net`:
+#   API_BASEMAP_TILES_URL=http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png
+# INTERNO de proposito, NAO a rota publica `/tiles/`: aquela esta atras do Authelia e um fetch
+# server-side nao tem cookie de sessao -> 302 p/ o login, `_fetch_basemap` engole a excecao e o
+# PDF sairia SEM ruas, em silencio. Sem a env var o comportamento e' byte-identico ao anterior
+# (Voyager), que e' o que CI, teste e dev local exercitam. Nao e' parametro de score: e' RENDER.
+_BASEMAP_TILES_URL_ENV = "API_BASEMAP_TILES_URL"
+
 # Atribuicao exigida pela licenca CARTO/OSM (DEC-004); aparece no rodape do PNG quando ha tile.
+# INALTERADA nos dois modos: no self-host o dado e' OpenStreetMap (schema OpenMapTiles) e os
+# ROTULOS continuam vindo do CARTO (`_LABELS_TILE_URL`, BLK-RELPON-07) -> os dois creditos seguem
+# devidos. Quem muda e' o Relatorio Municipal, que nao tem overlay de rotulos (ver la).
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
 _BASEMAP_CONTRAST = 1.15
 # Zoom extra dos tiles (alem do minimo p/ cobrir a bbox) -> ruas mais nitidas/detalhadas.
@@ -633,6 +648,28 @@ def _zoom_for_bounds(minx: float, maxx: float, target_px: int) -> int:
     return 19
 
 
+def _basemap_source(ctx: object) -> object:
+    """Fonte de tiles do fundo de ruas: self-host quando configurado, CartoDB Voyager senao.
+
+    O `contextily` aceita tanto um provider do `xyzservices` quanto um TEMPLATE de URL cru com
+    `{z}/{x}/{y}` — e por isso a env var pode entrar direto como `source`, sem provider novo.
+
+    Sem `API_BASEMAP_TILES_URL` devolve exatamente o que devolvia antes (`ctx.providers.CartoDB.
+    Voyager`), entao CI/teste/dev local seguem no caminho conhecido e o fallback offline da
+    DEC-004 (sem rede -> None -> canvas claro) vale IGUAL nos dois modos.
+
+    Nota de zoom: o `brazil.mbtiles` e' z0-14, mas o relatorio pede ate z19. Nao e' problema —
+    o tileserver-gl RASTERIZA o vetor no zoom pedido (overzoom de vetor, geometria continua
+    nitida), ao contrario de um raster overzoomado, que borra.
+    """
+    import os
+
+    url = os.environ.get(_BASEMAP_TILES_URL_ENV)
+    if url:
+        return url
+    return getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)  # type: ignore[attr-defined]
+
+
 def _fetch_basemap(
     bounds_3857: tuple[float, float, float, float],
     width: int,
@@ -671,7 +708,7 @@ def _fetch_basemap(
         # `max(0, ...)` e' guarda barata contra bump negativo em bbox continental; nao altera
         # nada hoje (com o bump global o resultado e' sempre >= 1).
         zoom = max(0, min(19, _zoom_for_bounds(minx, maxx, width) + bump))
-        source = getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)
+        source = _basemap_source(ctx)
         img, extent = ctx.bounds2img(minx, miny, maxx, maxy, zoom=zoom, source=source, ll=False)
         if _BASEMAP_CONTRAST != 1.0:
             base = Image.fromarray(np.asarray(img)).convert("RGB")

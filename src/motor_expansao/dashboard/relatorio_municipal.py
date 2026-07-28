@@ -41,6 +41,7 @@ import pandas as pd
 from fpdf import FPDF
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
+from motor_expansao.dashboard.censo_map import _BASEMAP_TILES_URL_ENV
 from motor_expansao.dashboard.competitors import _render_square_logo_tile
 from motor_expansao.dashboard.utils import score_band_to_color
 
@@ -135,6 +136,12 @@ _RESUMO_LEGENDA = (
 )
 
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
+# BLK-BASEMAP-02 (emenda a DEC-011): no self-host o fundo vem do tileserver proprio (dado OSM,
+# schema OpenMapTiles) e o CARTO deixa de ser usado NESTE relatorio -- ao contrario do Pontual,
+# aqui NAO ha overlay de rotulos CARTO (BLK-RELPON-07 e' so do Pontual). Creditar o CARTO num PDF
+# que nao consome nenhum tile dele seria credito falso, entao a atribuicao e' resolvida em runtime
+# por `_atribuicao_tiles()`. A constante acima segue valendo no modo fallback (Voyager).
+_ATRIBUICAO_TILES_SELFHOST = "(c) OpenStreetMap"
 _CREDITO_ULTRA = "Relatório gerado pelo Motor de Expansão - Ultra Academia"
 
 _ASSET_CAPA = "relatorio_capa_bg.png"
@@ -848,6 +855,30 @@ def _focus_bounds_mercator(
     return (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
 
 
+def _basemap_source(ctx: object) -> object:
+    """Fonte de tiles: self-host (`API_BASEMAP_TILES_URL`) quando configurado, Voyager senao.
+
+    Reusa a MESMA env var do Relatorio Pontual de proposito — os dois relatorios saem da mesma
+    caixa e apontar para tileservers diferentes so criaria divergencia visual entre eles. O
+    `contextily` aceita template de URL cru como `source`, entao a env entra direto.
+    """
+    import os
+
+    url = os.environ.get(_BASEMAP_TILES_URL_ENV)
+    if url:
+        return url
+    return getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)  # type: ignore[attr-defined]
+
+
+def _atribuicao_tiles() -> str:
+    """Credito do rodape, coerente com a fonte REALMENTE usada (ver `_ATRIBUICAO_TILES_SELFHOST`)."""
+    import os
+
+    if os.environ.get(_BASEMAP_TILES_URL_ENV):
+        return _ATRIBUICAO_TILES_SELFHOST
+    return _ATRIBUICAO_TILES
+
+
 def _fetch_basemap_municipio(
     bounds_3857: tuple[float, float, float, float], width: int
 ) -> tuple[object, tuple[float, float, float, float]] | None:
@@ -875,7 +906,7 @@ def _fetch_basemap_municipio(
             if span / res >= width:
                 zoom = max(0, min(z, 19))
                 break
-        source = getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)
+        source = _basemap_source(ctx)
         # Retry: a 1a busca (rede fria) pode dar timeout e deixar so essa camada offline (ex.:
         # Resumo, a 1a das 4 de foco) enquanto as demais ja pegam o cache. Tenta ate 3x antes de
         # cair no fallback offline (que segue valido se a rede realmente faltar).
@@ -1164,7 +1195,7 @@ def _render_mapa_municipio(
 
     # Rodape com atribuicao quando ha basemap.
     footer = (
-        f"Agregação H3 res 7 - EPSG:3857 - {_ATRIBUICAO_TILES}"
+        f"Agregação H3 res 7 - EPSG:3857 - {_atribuicao_tiles()}"
         if drew_basemap
         else "Agregação H3 res 7 - fundo de ruas offline"
     )
@@ -1362,7 +1393,7 @@ def _draw_footer(pdf: _UltraPDF, *, versao: str | None = None, with_attribution:
     pdf.set_xy(36, _PAGE_H - 22)
     text = _CREDITO_ULTRA
     if with_attribution:
-        text = f"{text}   |   {_ATRIBUICAO_TILES}"
+        text = f"{text}   |   {_atribuicao_tiles()}"
     if versao:
         text = f"{text}   |   {versao}"
     pdf.cell(_PAGE_W - 72, 12, _ascii(text))

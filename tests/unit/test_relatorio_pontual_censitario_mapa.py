@@ -1349,3 +1349,42 @@ def test_labels_overlay_desligado_nao_compoe_rotulos(monkeypatch):
     )
     dens_cores = {c[:3] for _count, c in _all_colors(mapas["densidade"])}
     assert _ROTULO_MAGENTA not in dens_cores
+
+
+# ── BLK-BASEMAP-02: basemap self-host (OpenMapTiles) via env var ────────────────────────────
+# A troca do provedor e' resolvida em runtime por `_basemap_source`, NAO por constante fixa: sem
+# `API_BASEMAP_TILES_URL` o caminho e' byte-identico ao Voyager de sempre (o que CI/dev exercitam)
+# e com ela o `contextily` recebe o template de URL cru do tileserver proprio. Emenda a DEC-004.
+
+
+class _FakeCartoDB:
+    Voyager = "provider-voyager-sentinela"
+
+
+class _FakeCtx:
+    providers = type("_P", (), {"CartoDB": _FakeCartoDB})()
+
+
+def test_basemap_source_usa_voyager_sem_env(monkeypatch):
+    monkeypatch.delenv(censo_map._BASEMAP_TILES_URL_ENV, raising=False)
+    assert censo_map._basemap_source(_FakeCtx()) == "provider-voyager-sentinela"
+
+
+def test_basemap_source_usa_self_host_com_env(monkeypatch):
+    url = "http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png"
+    monkeypatch.setenv(censo_map._BASEMAP_TILES_URL_ENV, url)
+    assert censo_map._basemap_source(_FakeCtx()) == url
+
+
+def test_basemap_source_ignora_env_vazia(monkeypatch):
+    # Env var presente porem VAZIA (caso classico de `.env` com `API_BASEMAP_TILES_URL=`) nao pode
+    # virar uma URL vazia entregue ao contextily -> cairia em erro e o PDF sairia sem ruas.
+    monkeypatch.setenv(censo_map._BASEMAP_TILES_URL_ENV, "")
+    assert censo_map._basemap_source(_FakeCtx()) == "provider-voyager-sentinela"
+
+
+def test_atribuicao_do_pontual_credita_osm_e_carto_nos_dois_modos(monkeypatch):
+    # No Pontual o credito NAO muda com o self-host: o dado do tileserver e' OpenStreetMap e os
+    # ROTULOS continuam vindo do CARTO (`_LABELS_TILE_URL`, BLK-RELPON-07) -> os dois sao devidos.
+    assert censo_map._ATRIBUICAO_TILES == "(c) OpenStreetMap, (c) CARTO"
+    assert "cartocdn.com" in censo_map._LABELS_TILE_URL
