@@ -16,7 +16,7 @@ name: openmaptiles-basemap
 
 services:
   tileserver:
-    image: maptiler/tileserver-gl:latest
+    image: maptiler/tileserver-gl@sha256:3a9ccdb24820b6814c8119bcc8a4376c39867cb0ffe69d62919ef898b90c2427
     container_name: motor_expansao_tileserver   # segue o padrão motor_expansao_*
     command: ["--config", "/data/config.json", "--port", "8080"]
     volumes:
