@@ -41,7 +41,7 @@ import pandas as pd
 from fpdf import FPDF
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
-from motor_expansao.dashboard.censo_map import _BASEMAP_TILES_URL_ENV
+from motor_expansao.dashboard.censo_map import _BASEMAP_TILES_URL_ENV, _fetch_labels
 from motor_expansao.dashboard.competitors import _render_square_logo_tile
 from motor_expansao.dashboard.utils import score_band_to_color
 
@@ -135,13 +135,18 @@ _RESUMO_LEGENDA = (
     ("Aprovado (fallback municipal)", _COR_APROVADO_MUNICIPAL),
 )
 
+# Atribuicao do rodape. UMA constante para os dois modos (fallback Voyager e self-host), porque
+# nos dois o CARTO e' de fato consumido.
+#
+# HISTORICO, para nao regredir: o BLK-BASEMAP-02 criou um `_ATRIBUICAO_TILES_SELFHOST =
+# "(c) OpenStreetMap"` resolvido em runtime, com o raciocinio correto na epoca — no self-host o
+# fundo vem do tileserver proprio e este relatorio, ao contrario do Pontual, nao tinha overlay de
+# rotulos, entao creditar CARTO seria credito falso. O efeito COLATERAL era o mapa municipal
+# perder os NOMES DE RUA: o estilo `ultra-maptiler` tem as geometrias de via (`transportation`)
+# mas nao a camada `transportation_name`, enquanto o Voyager trazia os nomes embutidos no raster.
+# O BLK-BASEMAP-03 fecha isso reusando o `_fetch_labels` do Pontual aqui tambem -> o CARTO volta
+# a ser consumido nos DOIS modos e o credito duplo volta a ser o unico honesto.
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
-# BLK-BASEMAP-02 (emenda a DEC-011): no self-host o fundo vem do tileserver proprio (dado OSM,
-# schema OpenMapTiles) e o CARTO deixa de ser usado NESTE relatorio -- ao contrario do Pontual,
-# aqui NAO ha overlay de rotulos CARTO (BLK-RELPON-07 e' so do Pontual). Creditar o CARTO num PDF
-# que nao consome nenhum tile dele seria credito falso, entao a atribuicao e' resolvida em runtime
-# por `_atribuicao_tiles()`. A constante acima segue valendo no modo fallback (Voyager).
-_ATRIBUICAO_TILES_SELFHOST = "(c) OpenStreetMap"
 _CREDITO_ULTRA = "Relatório gerado pelo Motor de Expansão - Ultra Academia"
 
 _ASSET_CAPA = "relatorio_capa_bg.png"
@@ -871,11 +876,14 @@ def _basemap_source(ctx: object) -> object:
 
 
 def _atribuicao_tiles() -> str:
-    """Credito do rodape, coerente com a fonte REALMENTE usada (ver `_ATRIBUICAO_TILES_SELFHOST`)."""
-    import os
+    """Credito do rodape, coerente com as fontes REALMENTE usadas (ver `_ATRIBUICAO_TILES`).
 
-    if os.environ.get(_BASEMAP_TILES_URL_ENV):
-        return _ATRIBUICAO_TILES_SELFHOST
+    Constante nos dois modos desde o BLK-BASEMAP-03: o fundo e' OSM (Voyager ou tileserver
+    proprio) e os ROTULOS de rua vem do CARTO em ambos, entao os dois creditos sempre valem.
+    Segue como funcao — e nao uso direto da constante — porque os dois call sites (rodape do PNG
+    e rodape do PDF) sao o ponto natural de mudanca se um dia a fonte de rotulos virar o proprio
+    tileserver (ai o credito passa a ser so OSM).
+    """
     return _ATRIBUICAO_TILES
 
 
@@ -1138,6 +1146,35 @@ def _render_mapa_municipio(
         image.paste(masked, (0, 0), masked)
 
     _compor_no_map_box(overlay)
+
+    # BLK-BASEMAP-03: NOMES DE RUA por cima dos hexes. O estilo self-host `ultra-maptiler` tem as
+    # geometrias de via mas nao a camada `transportation_name`, entao sem este overlay o mapa sai
+    # com as ruas desenhadas e SEM nome — regressao contra o Voyager, que trazia os nomes
+    # embutidos no raster. Mesma fonte e mesmo contrato do Pontual (`_fetch_labels`, BLK-RELPON-07,
+    # com cache em disco pela emenda a DEC-004), reprojetada pelo EXTENT DOS TILES (nao pelo bbox,
+    # senao os nomes saem deslocados) e recortada no `map_box` como as demais camadas.
+    #
+    # Ordem: DEPOIS dos hexes (o nome tem de ler sobre a cor) e ANTES dos pins e dos rotulos de
+    # valor, que seguem por cima — a mesma prioridade que o gate visual do FU1 fixou.
+    # `drew_basemap` como guarda: sem fundo de ruas nao ha o que rotular, e a condicao de rede e'
+    # a mesma. Best-effort: qualquer falha deixa o mapa exatamente como estava.
+    if drew_basemap:
+        rotulos_rua = _fetch_labels((minx, miny, maxx, maxy), width)
+        if rotulos_rua is not None:
+            try:
+                rua_img, rua_extent = rotulos_rua
+                ex_minx, ex_maxx, ex_miny, ex_maxy = rua_extent
+                rx0, ry0 = project(ex_minx, ex_maxy)
+                rx1, ry1 = project(ex_maxx, ex_miny)
+                rua = rua_img.resize(
+                    (max(1, int(round(rx1 - rx0))), max(1, int(round(ry1 - ry0)))),
+                    Image.Resampling.LANCZOS,
+                )
+                camada_rua = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                camada_rua.paste(rua, (int(round(rx0)), int(round(ry0))))
+                _compor_no_map_box(camada_rua)
+            except Exception:
+                pass  # nome de rua e' aditivo: falha aqui nao pode derrubar a pagina
 
     # Pins de Ultra/concorrentes (geograficos; dentro da bbox).
     _draw_pins(draw, image, competitors_df, project, "", minx, maxx, miny, maxy)
