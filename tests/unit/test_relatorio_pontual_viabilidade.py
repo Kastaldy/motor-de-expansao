@@ -80,15 +80,16 @@ def test_viab_faixa():
 # --------------------------------------------------------------------------- #
 # Insercao das paginas (OPCIONAL)                                             #
 # --------------------------------------------------------------------------- #
-def test_sem_viabilidade_mantem_8_paginas():
+def test_sem_viabilidade_mantem_7_paginas():
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(_MIN_RESULT, None)
-    assert b"/Count 8" in pdf_bytes
+    # BLK-RELPON-14: o PDF base caiu de 8 para 7 paginas (a "Imagem do Entorno" saiu).
+    assert b"/Count 7" in pdf_bytes
     assert _TIT_NUM not in pdf_bytes
 
 
 def test_viabilidade_sem_graficos_1_pagina():
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(_MIN_RESULT, None, viabilidade=_VIAB)
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 8" in pdf_bytes
     assert _TIT_NUM in pdf_bytes
     assert _TIT_GRAF not in pdf_bytes
     assert b"R$ 24.500,00" in pdf_bytes  # aluguel-teto formatado
@@ -97,7 +98,7 @@ def test_viabilidade_sem_graficos_1_pagina():
 def test_viabilidade_com_graficos_2_paginas():
     viab = {**_VIAB, "graficos": [_png(), _png(), _png(), _png()]}
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(_MIN_RESULT, None, viabilidade=viab)
-    assert b"/Count 10" in pdf_bytes
+    assert b"/Count 9" in pdf_bytes
     assert _TIT_NUM in pdf_bytes
     assert _TIT_GRAF in pdf_bytes
 
@@ -105,11 +106,11 @@ def test_viabilidade_com_graficos_2_paginas():
 def test_censitario_com_viabilidade_e_graficos():
     viab = {**_VIAB, "graficos": [_png(), _png()]}
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(_MIN_RESULT, None, viabilidade=viab)
-    assert b"/Count 10" in pdf_bytes  # numeros + graficos (2 pngs preenchem, resto fallback)
+    assert b"/Count 9" in pdf_bytes  # numeros + graficos (2 pngs preenchem, resto fallback)
 
 
 def test_relatorio_completo_soma_todas_as_paginas():
-    """Fotos(1 pag) + info(1) + viab numeros(1) + viab graficos(1) = 6 + 4 = 10."""
+    """Fotos(1 pag) + info(1) + viab numeros(1) + viab graficos(1) = 7 + 4 = 11."""
     viab = {**_VIAB, "graficos": [_png(), _png(), _png(), _png()]}
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
         _MIN_RESULT,
@@ -118,7 +119,7 @@ def test_relatorio_completo_soma_todas_as_paginas():
         info_imovel={"metragem_m2": 1500, "endereco": "Rua Teste, 1"},
         viabilidade=viab,
     )
-    assert b"/Count 12" in pdf_bytes
+    assert b"/Count 11" in pdf_bytes
 
 
 def test_integra_graficos_reais_do_relviab_03():
@@ -147,5 +148,5 @@ def test_integra_graficos_reais_do_relviab_03():
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
         _MIN_RESULT, None, viabilidade={**_VIAB, "graficos": graficos}
     )
-    assert b"/Count 10" in pdf_bytes
+    assert b"/Count 9" in pdf_bytes
     assert len(pdf_bytes) > 30_000  # 4 PNGs reais embutidos

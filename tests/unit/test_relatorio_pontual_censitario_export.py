@@ -149,10 +149,11 @@ def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
     assert len(pdf_bytes) > 15_000
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
-    # BLK-RELPON-01 + -07 + -10 + -11: 8 paginas (capa, imagem do entorno, socioeconomia+residual,
-    # mapas de calor, concorrentes, perfil do bairro/distrito, big numbers, credito); os
-    # choropleths censitarios foram consolidados no slide unico "Mapas de calor" (grid 2x2).
-    assert b"/Count 8" in pdf_bytes
+    # BLK-RELPON-01 + -07 + -10 + -14: 7 paginas (capa, socioeconomia+residual, mapas de calor,
+    # concorrentes, perfil do bairro/distrito, big numbers, credito); os choropleths censitarios
+    # foram consolidados no slide unico "Mapas de calor" (grid 2x2) e a pagina "Imagem do
+    # Entorno" (BLK-RELPON-11) saiu no BLK-RELPON-14 (8 -> 7).
+    assert b"/Count 7" in pdf_bytes
     # 3 choropleths (densidade/renda/score) embutidos SEPARADAMENTE no slide unico + 1 pins
     # na pagina de Concorrentes = >= 4 imagens de mapa (nao pre-compostas).
     assert pdf_bytes.count(b"/Subtype /Image") >= 5
@@ -353,7 +354,7 @@ def test_pdf_offline_safe_sem_assets(tmp_path):
     )
 
     assert pdf_bytes.startswith(b"%PDF")
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
 
@@ -379,8 +380,8 @@ def test_pdf_marca_dagua_com_solicitante():
 
     assert b"Ultra Academia" in pdf_bytes
     assert b"Analista Teste" in pdf_bytes
-    # 8 paginas preservadas e choropleths intactos (marca d'agua nao cria paginas).
-    assert b"/Count 8" in pdf_bytes
+    # 7 paginas preservadas e choropleths intactos (marca d'agua nao cria paginas).
+    assert b"/Count 7" in pdf_bytes
     assert pdf_bytes.count(b"/Subtype /Image") >= 5
 
 
@@ -394,21 +395,21 @@ def test_pdf_marca_dagua_sem_solicitante():
 
     assert b"Ultra Academia" in pdf_bytes
     assert b"Analista Teste" not in pdf_bytes
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     assert pdf_bytes.count(b"/Subtype /Image") >= 5
 
 
 def test_pdf_marca_dagua_em_todas_as_paginas():
-    """BLK-RELPON-01 + -07 + -10 + -11: marca d'agua "Ultra Academia" em TODAS as 8 paginas ->
-    >= 8x nos bytes crus."""
+    """BLK-RELPON-01 + -07 + -10 + -14: marca d'agua "Ultra Academia" em TODAS as 7 paginas ->
+    >= 7x nos bytes crus."""
     result, mapas = _sample_result()
 
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
         result, mapas, residual=_RESIDUAL_OK, solicitante="Analista Teste"
     )
 
-    # Uma ocorrencia da marca d'agua por pagina (8) -> contagem minima verificavel >= 8.
-    assert pdf_bytes.count(b"Ultra Academia") >= 8
+    # Uma ocorrencia da marca d'agua por pagina (7) -> contagem minima verificavel >= 7.
+    assert pdf_bytes.count(b"Ultra Academia") >= 7
 
 
 def test_pdf_atribuicao_de_tiles_no_rodape():
@@ -443,8 +444,8 @@ def test_pdf_retrocompat_aceita_bytes_unico_legado():
     # O slide unico "Mapas de calor" existe e as 2 celulas sem PNG mostram a mensagem de fallback.
     assert b"Mapas de calor" in pdf_bytes
     assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
-    # Estrutura de 8 paginas preservada.
-    assert b"/Count 8" in pdf_bytes
+    # Estrutura de 7 paginas preservada.
+    assert b"/Count 7" in pdf_bytes
 
 
 def test_pdf_estrutura_inalterada_com_faixa_valor_ponto_blk_relpon_05():
@@ -458,7 +459,7 @@ def test_pdf_estrutura_inalterada_com_faixa_valor_ponto_blk_relpon_05():
     )
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     assert pdf_bytes.count(b"/Subtype /Image") >= 5
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
@@ -505,7 +506,7 @@ def test_pdf_concorrentes_contagem_total_e_mais_n_quando_excede_10():
     assert f"{total} no total".encode("latin-1") in pdf_bytes
     assert f"... e mais {total - 10}".encode("latin-1") in pdf_bytes
     # Contrato preservado.
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     for needle in _PII_FORBIDDEN:
         assert needle not in pdf_bytes
 
@@ -565,7 +566,7 @@ def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
 # ---------------------------------------------------------------------------
 
 
-def test_classico_gera_8_paginas_e_secoes():
+def test_classico_gera_7_paginas_e_secoes():
     result, mapas = _sample_result()
 
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
@@ -573,7 +574,7 @@ def test_classico_gera_8_paginas_e_secoes():
     )
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
     # 3 choropleths embutidos separadamente no slide "Mapas de calor" + 1 pins = >= 4 imagens.
@@ -605,7 +606,7 @@ def test_classico_offline_safe_sem_assets(tmp_path):
     )
 
     assert pdf_bytes.startswith(b"%PDF")
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
 
@@ -632,8 +633,13 @@ def test_classico_marca_dagua_solicitante():
     assert pdf_bytes.count(b"Ultra Academia") >= 6
 
 
-def test_classico_template_recente_inalterado():
-    """Gerar o classico NAO altera os bytes do template recente (isolamento)."""
+def test_geracoes_repetidas_sao_deterministas():
+    """Gerar o classico entre duas geracoes nao altera os bytes (isolamento entre chamadas).
+
+    BLK-RELPON-14: com o gerador unificado o "recente" e' wrapper do classico, entao este teste
+    passou a travar o DETERMINISMO da geracao (nenhum estado de modulo vaza de uma chamada para
+    a seguinte), nao mais o isolamento entre dois templates distintos.
+    """
     result, mapas = _sample_result()
 
     antes = gerar_pdf_relatorio_pontual_censitario(
@@ -649,23 +655,27 @@ def test_classico_template_recente_inalterado():
     assert antes == depois
 
 
-def test_downloads_roteia_template_classico():
-    """`template="classico"` roteia ao gerador classico; sem template = recente (default)."""
+def test_downloads_os_dois_ramos_de_template_produzem_o_mesmo_pdf():
+    """BLK-RELPON-14: unificado o gerador, `template="classico"` e o default produzem o MESMO PDF.
+
+    O ramo `else` continua passando pelo simbolo legado `gerar_pdf_relatorio_pontual_censitario`
+    (hoje wrapper depreciado) para nao quebrar quem faz spy/patch nesse nome — mas o resultado
+    e' byte-a-byte igual, com a estetica classica (banda magenta de rodape + link clicavel).
+    """
     result, mapas = _sample_result()
 
     p_classico = gerar_payloads_download_relatorio_censitario(
         result, mapas, filename_prefix="t", residual=_RESIDUAL_OK, template="classico"
     )
-    p_recente = gerar_payloads_download_relatorio_censitario(
+    p_default = gerar_payloads_download_relatorio_censitario(
         result, mapas, filename_prefix="t", residual=_RESIDUAL_OK
     )
 
     assert p_classico.pdf_bytes.startswith(b"%PDF")
-    assert p_recente.pdf_bytes.startswith(b"%PDF")
-    # O classico tem a banda magenta de rodape + link clicavel -> bytes diferentes do recente.
-    assert p_classico.pdf_bytes != p_recente.pdf_bytes
-    assert "Link para localização do ponto:".encode("latin-1") in p_classico.pdf_bytes
-    assert "Link para localização do ponto:".encode("latin-1") not in p_recente.pdf_bytes
+    assert p_default.pdf_bytes.startswith(b"%PDF")
+    assert p_classico.pdf_bytes == p_default.pdf_bytes
+    for pdf_bytes in (p_classico.pdf_bytes, p_default.pdf_bytes):
+        assert "Link para localização do ponto:".encode("latin-1") in pdf_bytes
 
 
 # ---------------------------------------------------------------------------
@@ -721,26 +731,26 @@ def test_slide_unico_quatro_mapas_sem_sobreposicao():
             assert not _boxes_overlap(cells_c[i], cells_c[j])
 
 
-def test_slide_unico_count_8_e_titulo_mapas_de_calor():
-    """As duas variantes tem 8 paginas e o titulo de faixa "Mapas de calor" no slide unico.
+def test_slide_unico_count_7_e_titulo_mapas_de_calor():
+    """As duas variantes tem 7 paginas e o titulo de faixa "Mapas de calor" no slide unico.
 
-    (Nome corrigido no BLK-RELPON-10: era `..._count_5_...` e ja asseria 6 — passou a 7 com o
-    slide-hero "Socioeconomia e Residual Fitness"; agora 8, com a pagina "Imagem do Entorno"
-    inserida entre a capa e o slide-hero pelo BLK-RELPON-11.)
+    (Historico do nome: era `..._count_5_...` e ja asseria 6 — passou a 7 com o slide-hero
+    "Socioeconomia e Residual Fitness", subiu a 8 com a "Imagem do Entorno" do BLK-RELPON-11 e
+    VOLTOU a 7 no BLK-RELPON-14, que removeu essa pagina.)
     """
     result, mapas = _sample_result()
 
     pdf_recente = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
-    assert b"/Count 8" in pdf_recente
+    assert b"/Count 7" in pdf_recente
     assert b"Mapas de calor" in pdf_recente
 
     pdf_classico = gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
-    assert b"/Count 8" in pdf_classico
+    assert b"/Count 7" in pdf_classico
     assert b"Mapas de calor" in pdf_classico
 
 
 def test_slide_unico_offline_safe_por_camada():
-    """Camada ausente no slide unico -> gera sem excecao, com fallback textual; /Count 8 preservado."""
+    """Camada ausente no slide unico -> gera sem excecao, com fallback textual; /Count 7 preservado."""
     result, mapas = _sample_result()
     # So densidade + concorrentes; renda e score AUSENTES -> fallback nas 2 celulas.
     mapas_parciais = {"densidade": mapas["densidade"], "concorrentes": mapas["concorrentes"]}
@@ -750,7 +760,7 @@ def test_slide_unico_offline_safe_por_camada():
     )
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     assert b"Mapas de calor" in pdf_bytes
     assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
 
@@ -758,9 +768,9 @@ def test_slide_unico_offline_safe_por_camada():
 def test_slide_unico_quatro_imagens_embutidas():
     """Os 4 choropleths do grid 2x2 sao embutidos SEPARADAMENTE (nao pre-compostos).
 
-    Piso de `>= 5` imagens: os 4 do grid + a de Concorrentes. E piso, nao igualdade, porque as
-    paginas "Imagem do Entorno" e "Socioeconomia e Residual Fitness" somam mais imagens quando
-    presentes; travar em igualdade quebraria a cada camada nova.
+    Piso de `>= 5` imagens: os 4 do grid + a de Concorrentes. E piso, nao igualdade, porque a
+    pagina "Socioeconomia e Residual Fitness" soma mais imagens quando as camadas de hexagono
+    estao presentes; travar em igualdade quebraria a cada camada nova.
     """
     result, mapas = _sample_result()
 
@@ -792,7 +802,7 @@ def test_perfil_bairro_page_presente_com_4_metricas_recente():
         assert rotulo in pdf_bytes
     assert "Bairro Teste".encode("latin-1") in pdf_bytes
     assert "Perfil do Bairro/Distrito".encode("latin-1") in pdf_bytes
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
 
 
 def test_perfil_bairro_page_nd_quando_perfil_bairro_none():
@@ -800,7 +810,7 @@ def test_perfil_bairro_page_nd_quando_perfil_bairro_none():
 
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
 
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     assert "Perfil do Bairro/Distrito".encode("latin-1") in pdf_bytes
     assert "Perfil não disponível".encode("latin-1") in pdf_bytes
 
@@ -813,11 +823,11 @@ def test_classico_perfil_bairro_page_presente_e_nd():
     )
     assert "Bairro Teste".encode("latin-1") in pdf_com
     assert "Perfil do Bairro/Distrito".encode("latin-1") in pdf_com
-    assert b"/Count 8" in pdf_com
+    assert b"/Count 7" in pdf_com
 
     pdf_sem = gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
     assert "Perfil não disponível".encode("latin-1") in pdf_sem
-    assert b"/Count 8" in pdf_sem
+    assert b"/Count 7" in pdf_sem
 
 
 # ---------------------------------------------------------------------------
@@ -838,8 +848,6 @@ def test_tema_bicolor_ordinal_zero_e_magenta_sem_mexer_nos_existentes():
     assert _tema_bicolor(2) == (ULTRA_MAGENTA, ULTRA_TURQUESA)
     assert _tema_bicolor(3) == (ULTRA_TURQUESA, ULTRA_MAGENTA)
     assert _tema_bicolor(4) == (ULTRA_MAGENTA, ULTRA_TURQUESA)
-    # Usado pela pagina "Imagem do Entorno" (BLK-RELPON-11), inserida ANTES desta -> ordinal -1.
-    assert _tema_bicolor(-1) == (ULTRA_TURQUESA, ULTRA_MAGENTA)
 
 
 def _spy_titulos(monkeypatch, modulo, nome_funcao, alvo: list):
@@ -855,12 +863,13 @@ def _spy_titulos(monkeypatch, modulo, nome_funcao, alvo: list):
     monkeypatch.setattr(modulo, nome_funcao, _spy)
 
 
-def test_sequencia_de_titulo_e_cor_das_6_paginas_de_conteudo_nas_2_variantes(monkeypatch):
+def test_sequencia_de_titulo_e_cor_das_5_paginas_de_conteudo_nas_2_variantes(monkeypatch):
     """DT-4 travado por teste: a ordem/cor das paginas de conteudo nas DUAS variantes.
 
-    Imagem do Entorno=turquesa (ordinal -1, BLK-RELPON-11) -> Socioeconomia e Residual
-    Fitness=magenta -> Mapas de calor=turquesa -> Concorrentes=magenta -> Perfil=turquesa ->
-    Big Numbers=magenta. As paginas EXISTENTES mantem exatamente a cor que ja tinham.
+    Socioeconomia e Residual Fitness=magenta -> Mapas de calor=turquesa ->
+    Concorrentes=magenta -> Perfil=turquesa -> Big Numbers=magenta. BLK-RELPON-14: a pagina
+    "Imagem do Entorno" (ordinal -1) saiu; como os ordinais sao ABSOLUTOS, as paginas que
+    ficaram mantem EXATAMENTE a cor que ja tinham (zero cascata).
     """
     import motor_expansao.dashboard.censo_report as cr
 
@@ -869,22 +878,14 @@ def test_sequencia_de_titulo_e_cor_das_6_paginas_de_conteudo_nas_2_variantes(mon
     recente: list = []
     _spy_titulos(monkeypatch, cr, "_draw_title_band", recente)
     cr.gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
-    assert recente == [
-        ("Imagem do Entorno", cr.ULTRA_TURQUESA),
-        ("Socioeconomia e Residual Fitness", cr.ULTRA_MAGENTA),
-        ("Mapas de calor", cr.ULTRA_TURQUESA),
-        ("Concorrentes", cr.ULTRA_MAGENTA),
-        ("Perfil do Bairro/Distrito", cr.ULTRA_TURQUESA),
-        ("Big Numbers", cr.ULTRA_MAGENTA),
-    ]
+    # BLK-RELPON-14: o "recente" e' wrapper do classico -> a banda CLASSICA cobre as 4
+    # primeiras paginas de conteudo e o Big Numbers reusa `_draw_title_band`.
+    assert recente == [("Big Numbers", cr.ULTRA_MAGENTA)]
 
     classico: list = []
     _spy_titulos(monkeypatch, cr, "_classico_title_band", classico)
     cr.gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
-    # O Big Numbers do classico reusa `_big_numbers_page` (usa `_draw_title_band`), entao a
-    # banda CLASSICA e desenhada nas 5 primeiras paginas de conteudo.
     assert classico == [
-        ("Imagem do Entorno", cr.ULTRA_TURQUESA),
         ("Socioeconomia e Residual Fitness", cr.ULTRA_MAGENTA),
         ("Mapas de calor", cr.ULTRA_TURQUESA),
         ("Concorrentes", cr.ULTRA_MAGENTA),
@@ -892,12 +893,12 @@ def test_sequencia_de_titulo_e_cor_das_6_paginas_de_conteudo_nas_2_variantes(mon
     ]
 
 
-def test_slide_hero_presente_nas_2_variantes_com_8_paginas():
+def test_slide_hero_presente_nas_2_variantes_com_7_paginas():
     result, mapas = _sample_result()
 
     for gerar in (gerar_pdf_relatorio_pontual_censitario, gerar_pdf_relatorio_pontual_classico):
         pdf_bytes = gerar(result, mapas, residual=_RESIDUAL_OK)
-        assert b"/Count 8" in pdf_bytes
+        assert b"/Count 7" in pdf_bytes
         assert b"Socioeconomia e Residual Fitness" in pdf_bytes
         assert b"Mapas de calor" in pdf_bytes
     assert "Socioeconomia e Residual Fitness" in PDF_SECTION_HEADERS
@@ -908,7 +909,7 @@ def test_slide_hero_presente_nas_2_variantes_com_8_paginas():
 def test_slide_hero_offline_safe_sem_camada_residual():
     """Sem `hexes_df` NEM `socioeconomia` NEM `residual` existem (BLK-RELPON-13: ambas viraram
     hexagono a 5 km, CONDICIONAIS ao `hexes_df`) -> as DUAS celulas do slide-hero caem no fallback
-    TEXTUAL ("Mapa indisponivel"), sem excecao, e a estrutura de 8 paginas e preservada."""
+    TEXTUAL ("Mapa indisponivel"), sem excecao, e a estrutura de 7 paginas e preservada."""
     result, mapas = _sample_result()
     assert "residual" not in mapas  # `_sample_result` nao passa `hexes_df`
     assert "socioeconomia" not in mapas  # BLK-RELPON-13: agora tambem condicional ao `hexes_df`
@@ -916,7 +917,7 @@ def test_slide_hero_offline_safe_sem_camada_residual():
     for gerar in (gerar_pdf_relatorio_pontual_censitario, gerar_pdf_relatorio_pontual_classico):
         pdf_bytes = gerar(result, mapas, residual=_RESIDUAL_OK)
         assert pdf_bytes.startswith(b"%PDF-1.4")
-        assert b"/Count 8" in pdf_bytes
+        assert b"/Count 7" in pdf_bytes
         assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
 
 
@@ -929,17 +930,18 @@ def test_map_layer_titles_inclui_as_chaves_novas_senao_os_pngs_sumiriam():
     assert chaves[0] == "densidade"
     assert "socioeconomia" in chaves
     assert "residual" in chaves
-    # BLK-RELPON-11: sem `entorno` aqui, o PNG do mapa de quadra seria descartado em SILENCIO.
-    assert "entorno" in chaves
     passou = dict(_normalize_mapas_by_key({"socioeconomia": b"A", "residual": b"B"}))
     assert passou == {"socioeconomia": b"A", "residual": b"B"}
-    assert dict(_normalize_mapas_by_key({"entorno": b"E"})) == {"entorno": b"E"}
+    # BLK-RELPON-14: `entorno` saiu do registro -> a chave e' descartada em silencio (a camada
+    # tambem deixou de ser produzida em `censo_map`), que e' o comportamento desejado agora.
+    assert dict(_normalize_mapas_by_key({"entorno": b"E"})) == {}
 
 
 def test_grid_de_mapas_aceita_2x1_e_1x1_e_mantem_o_default_2x2():
     """DT-3: `cols`/`rows` keyword-only com default nos valores atuais -> o caminho 2x2 fica
-    identico; o slide-hero pede 2 celulas lado a lado, sem sobreposicao; a pagina "Imagem do
-    Entorno" (BLK-RELPON-11) pede 1 celula unica preenchendo a altura util."""
+    identico; o slide-hero pede 2 celulas lado a lado, sem sobreposicao. O caso 1x1 (1 celula
+    unica preenchendo a altura util) segue coberto como MECANICA do helper, mesmo sem pagina
+    que o use hoje (o slide de quadra saiu no BLK-RELPON-14)."""
     from motor_expansao.dashboard.censo_report import (
         _map_grid_cells,
         _map_grid_cells_packed,
@@ -957,7 +959,7 @@ def test_grid_de_mapas_aceita_2x1_e_1x1_e_mantem_o_default_2x2():
     assert abs(y0 - y1) < 1e-9 and abs(h0 - h1) < 1e-9  # mesma linha, mesma altura
     assert abs(w0 - w1) < 1e-9
 
-    # 1x1 (BLK-RELPON-11): uma celula so, sem o clamp de `max_total_w` -> preenche os 460 pt de
+    # 1x1: uma celula so, sem o clamp de `max_total_w` -> preenche os 460 pt de
     # altura util (top=58 .. bottom=518) sem deixar vao branco, e nao transborda o `bottom`.
     assert len(_map_grid_cells(58.0, 518.0, 20.0, 10.0, cols=1, rows=1)) == 1
     uma = _map_grid_cells_packed(
@@ -969,37 +971,56 @@ def test_grid_de_mapas_aceita_2x1_e_1x1_e_mantem_o_default_2x2():
 
 
 # ---------------------------------------------------------------------------
-# BLK-RELPON-11 — pagina "Imagem do Entorno" (mapa de quadra, entre a Capa e o slide-hero)
+# BLK-RELPON-14 — a pagina "Imagem do Entorno" (BLK-RELPON-11) foi REMOVIDA por completo
+# (camada PNG + paginas do PDF + constantes orfas). O PDF base voltou a 7 paginas e o
+# gerador ficou UNICO: o "recente" virou wrapper depreciado do classico.
 # ---------------------------------------------------------------------------
 
 
-def test_pagina_entorno_presente_nas_2_variantes_com_8_paginas():
-    """A pagina nova existe nas DUAS variantes, com o titulo nos bytes crus e /Count 8."""
+def test_pagina_entorno_saiu_do_pdf_nas_2_variantes():
+    """Nenhum vestigio do slide removido: titulo fora dos bytes e `entorno` fora dos registros."""
+    from motor_expansao.dashboard.censo_report import MAP_LAYER_TITLES
+
     result, mapas = _sample_result()
 
     for gerar in (gerar_pdf_relatorio_pontual_censitario, gerar_pdf_relatorio_pontual_classico):
         pdf_bytes = gerar(result, mapas, residual=_RESIDUAL_OK)
-        assert b"/Count 8" in pdf_bytes
-        assert b"Imagem do Entorno" in pdf_bytes
-        # +1 imagem de mapa (a camada `entorno`) alem das ja embutidas.
-        assert pdf_bytes.count(b"/Subtype /Image") >= 6
+        assert b"/Count 7" in pdf_bytes
+        assert b"Imagem do Entorno" not in pdf_bytes
 
-    assert len(PDF_SECTION_HEADERS) == 8
-    assert PDF_SECTION_HEADERS[1] == "Imagem do Entorno"
-    # ASCII puro (latin-1-safe, sem travessao/bullet/reticencias).
-    assert all(ord(ch) < 128 for ch in "Imagem do Entorno")
+    assert len(PDF_SECTION_HEADERS) == 7
+    assert "Imagem do Entorno" not in PDF_SECTION_HEADERS
+    # A camada tambem deixou de ser produzida em `censo_map` -> a chave sai do registro.
+    assert "entorno" not in [k for k, _t in MAP_LAYER_TITLES]
 
 
-def test_pagina_entorno_offline_safe_sem_a_camada():
-    """Sem a chave `entorno` no dict de mapas a pagina cai no fallback TEXTUAL da celula, sem
-    excecao, e a estrutura de 8 paginas e preservada (offline-safe)."""
+def test_wrapper_censitario_e_identico_ao_classico_e_avisa_depreciacao():
+    """BLK-RELPON-14: `gerar_pdf_relatorio_pontual_censitario` virou WRAPPER FINO do classico.
+
+    Contrato do wrapper: (a) emite `DeprecationWarning`, (b) devolve os MESMOS bytes que
+    `gerar_pdf_relatorio_pontual_classico` para a mesma entrada (unificacao do gerador -- a
+    estetica classica venceu) e (c) repassa os kwargs opcionais que so a classica aceitava.
+    NB: a fixture de `conftest.py` congela o `/CreationDate` do fpdf2, entao a igualdade
+    byte-a-byte nao e' flaky por causa do relogio.
+    """
+    import warnings
+
     result, mapas = _sample_result()
-    mapas_sem_entorno = {k: v for k, v in mapas.items() if k != "entorno"}
-    assert "entorno" not in mapas_sem_entorno
+    kwargs = dict(residual=_RESIDUAL_OK, perfil_bairro=_PERFIL_BAIRRO_OK, rotulo="Av Teste, 100")
 
-    for gerar in (gerar_pdf_relatorio_pontual_censitario, gerar_pdf_relatorio_pontual_classico):
-        pdf_bytes = gerar(result, mapas_sem_entorno, residual=_RESIDUAL_OK)
-        assert pdf_bytes.startswith(b"%PDF-1.4")
-        assert b"/Count 8" in pdf_bytes
-        assert b"Imagem do Entorno" in pdf_bytes
-        assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
+    with warnings.catch_warnings(record=True) as capturados:
+        warnings.simplefilter("always")
+        pdf_wrapper = gerar_pdf_relatorio_pontual_censitario(result, mapas, **kwargs)
+
+    assert any(issubclass(w.category, DeprecationWarning) for w in capturados), (
+        f"o wrapper deve emitir DeprecationWarning; capturado: {[w.category for w in capturados]}"
+    )
+    pdf_classico = gerar_pdf_relatorio_pontual_classico(result, mapas, **kwargs)
+    assert pdf_wrapper == pdf_classico
+    assert b"/Count 7" in pdf_wrapper
+
+    # Superset da assinatura antiga: os kwargs que so a classica aceitava passam pelo wrapper.
+    pdf_extra = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, **kwargs, fotos=None, info_imovel=None, viabilidade=None
+    )
+    assert pdf_extra == pdf_classico

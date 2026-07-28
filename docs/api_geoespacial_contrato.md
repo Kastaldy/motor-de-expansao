@@ -11,7 +11,7 @@
 - **Proposito:** API complementar ao Motor de Expansao, on-demand, para integracao com bots de
   **Telegram/WhatsApp**, dando autonomia de estudos geoespaciais internos. O caso de uso central do
   MVP e: o usuario manda um ponto (coordenada ou link do Google Maps) ao bot e recebe o estudo do
-  **Relatorio Pontual Censitario 1.5 km** (KPIs em JSON e/ou o PDF de 8 paginas).
+  **Relatorio Pontual Censitario 1.5 km** (KPIs em JSON e/ou o PDF de 7 paginas).
 - **ClickUp:** tarefa `86e1rtfe3` (G1), subtarefa de `86e1rtfcy` (projeto API GeoEspacial / `PROJETOS - DEG`).
 - **Papeis do projeto:** G1 = arquitetura/contrato (Felipe — este bloco); G2 = backend/rotas (Juan);
   G3 = integracao com o motor + testes fim-a-fim/observabilidade (Felipe+Juan); G4 = clientes
@@ -70,18 +70,19 @@ A API importa (e NUNCA edita) as funcoes abaixo, com as assinaturas reais confir
   — insumo do slide "Perfil do Bairro/Distrito" (BLK-RELPON-07). Sem ele a pagina existe mesmo assim,
   com "n/d" gracioso.
 - `dashboard.censo_report.gerar_pdf_relatorio_pontual_classico(result: dict[str, Any], mapas: dict[str, bytes] | bytes | None = None, *, residual: dict[str, Any] | None = None, perfil_bairro: dict[str, Any] | None = None, ultra_dir: Path | str | None = None, solicitante: str | None = None, rotulo: str | None = None, now: datetime | None = None, fotos: list[bytes] | None = None, info_imovel: dict[str, Any] | None = None, viabilidade: dict[str, Any] | None = None) -> bytes`
-  — gera o PDF de 8 paginas (Capa -> Imagem do Entorno -> Socioeconomia e Residual Fitness -> Mapas
+  — gera o PDF de 7 paginas (Capa -> Socioeconomia e Residual Fitness -> Mapas
   de calor -> Concorrentes -> Perfil do Bairro/Distrito -> Big Numbers -> Realizacao), **offline, sem
-  PII**. E a variante CLASSICA, default de producao desde o BLK-EST-05 (a gemea
-  `gerar_pdf_relatorio_pontual_censitario` monta a MESMA sequencia de 8 paginas e tem a mesma
-  assinatura, exceto `now`, que so existe no classico). Paginas OPCIONAIS nao usadas pela API:
-  `fotos` e `info_imovel` entram logo apos a capa e `viabilidade` entre Big Numbers e Realizacao
-  (1 pagina, ou 2 quando ha `graficos`) — teto de 12 paginas. O carimbo de versao no rodape
+  PII**. E a variante CLASSICA, default de producao desde o BLK-EST-05 e, desde o **BLK-RELPON-14**,
+  a IMPLEMENTACAO UNICA: a gemea `gerar_pdf_relatorio_pontual_censitario` virou wrapper fino
+  DEPRECIADO (`DeprecationWarning`) que repassa os kwargs para esta. A pagina "Imagem do Entorno"
+  (BLK-RELPON-11) foi REMOVIDA no mesmo bloco (8 -> 7 paginas). Paginas OPCIONAIS nao usadas pela
+  API: `fotos` e `info_imovel` entram logo apos a capa e `viabilidade` entre Big Numbers e
+  Realizacao (1 pagina, ou 2 quando ha `graficos`) — teto de 11 paginas. O carimbo de versao no rodape
   (Decisao 6) esta **PREVISTO E NAO IMPLEMENTADO**: hoje o rodape e credito Ultra + atribuicao
   CARTO (`_draw_footer`) e o unico carimbo por pagina e a marca d'agua `Ultra Academia |
   {solicitante}`; a API chama o gerador sem passar versao alguma.
 - `dashboard.censo_map.render_mapas_censitarios_combinados(lat: float, lng: float, setores_df: pd.DataFrame, *, raio_km: float = RAIO_CENSITARIO_DEFAULT_KM, competitors_df=None, ultra_df=None, width: int = 1000, height: int = 760, basemap: bool = True, logos_dir: Path | None = None, ultra_logo_dir: Path | None = None, street_ceil: int | None = None, street_gain: float | None = None, street_cap: int | None = None, choropleth_alpha: int | None = None, hexes_df: pd.DataFrame | None = None) -> dict[str, bytes]`
-  — retorna ate 8 PNGs para o PDF: `{"densidade","renda","score","renda_domiciliar","socioeconomia","residual","concorrentes","entorno"}`.
+  — retorna ate 7 PNGs para o PDF: `{"densidade","renda","score","renda_domiciliar","socioeconomia","residual","concorrentes"}` (a chave `entorno` saiu no BLK-RELPON-14).
   A chave `residual` e CONDICIONAL (so aparece com `hexes_df` e ao menos 1 hex desenhavel; ausente ->
   fallback textual no slide); as demais sao incondicionais. **Nota de deploy:** com
   `basemap=True` busca tiles online (DEC-004); a API deve permitir `basemap=False` como fallback
@@ -194,7 +195,7 @@ KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
 > nulabilidade, semantica) em `docs/api_geoespacial_openapi.yaml` (§15), que e a spec canonica.
 
 ### 7.3 `POST /analisar` — response PDF
-- `Content-Type: application/pdf`; corpo = `bytes` de `gerar_pdf_relatorio_pontual_classico(result, mapas, ...)` — 8 paginas.
+- `Content-Type: application/pdf`; corpo = `bytes` de `gerar_pdf_relatorio_pontual_classico(result, mapas, ...)` — 7 paginas (BLK-RELPON-14; eram 8 com o slide "Imagem do Entorno").
 - O **carimbo de versao** no rodape do PDF (Decisao 6) segue PREVISTO E NAO IMPLEMENTADO — ver §4.
   O PDF entregue hoje carimba a marca d'agua `Ultra Academia | {solicitante}` (BLK-EST-03) e o
   rodape de credito/atribuicao; a versao do contrato/score so existe no caminho JSON (§7.2).

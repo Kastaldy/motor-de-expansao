@@ -10,10 +10,14 @@ from streamlit.web import cli as stcli
 
 from motor_expansao.dashboard.censo_map import render_mapa_censitario_estatico_png  # noqa: F401
 from motor_expansao.dashboard.censo_point import analisar_ponto_censitario_setores  # noqa: F401
+
+# BLK-RELPON-14: o gerador UNICO do Pontual passou a ser o `_classico` (ja era o default de
+# producao via `template="classico"`); `gerar_pdf_relatorio_pontual_censitario` virou wrapper
+# deprecado e saiu deste re-export. Este modulo nunca CHAMOU nenhum dos dois - so reexportava.
 from motor_expansao.dashboard.censo_report import (  # noqa: F401
     gerar_csv_setores_censitarios,
     gerar_payloads_download_relatorio_censitario,
-    gerar_pdf_relatorio_pontual_censitario,
+    gerar_pdf_relatorio_pontual_classico,
     render_downloads_relatorio_censitario,
 )
 from motor_expansao.dashboard.competitors import (  # noqa: F401

@@ -334,11 +334,15 @@ def gerar_pdf_ponto(
     *,
     rotulo: str | None = None,
 ) -> bytes:
-    """Gera o PDF de 8 paginas do Relatorio Pontual Censitario (BLK-API-04).
+    """Gera o PDF de 7 paginas do Relatorio Pontual Censitario (BLK-API-04).
 
     Enriquecido (READ-ONLY): mapas com *ruas* (basemap online, DEC-004) + pins de
     concorrentes/Ultra, e Big Numbers de SAM/residual via `residual`. Fallback
     gracioso para `basemap=False` se a busca de tiles falhar (offline).
+
+    BLK-RELPON-14: a pagina "Imagem do Entorno" (mapa de quadra) saiu do gerador ->
+    o PDF base caiu de 8 para 7 paginas. Aqui nada mais precisava mudar: a API nunca
+    montou essa camada a mao (ela vinha pronta do dict de `render_mapas_censitarios_combinados`).
 
     `rotulo`: nome do endereco/estabelecimento para a capa (no lugar de "Coordenada: ...").
     """
@@ -423,7 +427,22 @@ def gerar_pdf_ponto(
     residual = _residual_do_ponto(lat, lng, settings)
     # Variante "Apresentacao Classica Ultra" (BLK-EST-05): a API/bot espelha o
     # MESMO modelo que o dashboard passou a gerar por padrao (pages.py usa
-    # template="classico"). Drop-in: mesma assinatura do gerador recente.
+    # template="classico"). Com o BLK-RELPON-14 a classica virou o gerador UNICO
+    # do Pontual (a `_censitario` e so um wrapper deprecado) — esta chamada ja
+    # aponta para o lugar certo e NAO deve migrar.
+    #
+    # PAGINAS OPCIONAIS QUE FICAM DE FORA AQUI (`viabilidade`, `info_imovel`, `fotos`):
+    # os insumos NAO existem neste escopo, entao nao ha o que repassar — e fabricar
+    # valores falsearia o relatorio. O que faltaria para habilita-las:
+    #   - `viabilidade`: exige metragem/aluguel/ticket do imovel + `gerar_serie_mensal`
+    #     e `montar_payload_viabilidade` (fluxo da aba Viabilidade do dashboard, que
+    #     guarda `viab_relatorio_ctx` em `session_state`). Nada disso chega na rota.
+    #   - `info_imovel`: mesma origem (formulario de endereco/valor/pe-direito/vagas).
+    #   - `fotos`: upload de arquivo; o request da API e JSON e nao carrega binario.
+    # Habilitar exigiria ESTENDER `AnalisarRequest` (campos do imovel + fotos em
+    # base64/multipart) e propagar por `routes/analisar.py` -> `gerar_pdf_ponto`.
+    # Decisao: fora do escopo do BLK-RELPON-14; o PDF do bot segue com as 7 paginas
+    # base + a vista aerea.
     return gerar_pdf_relatorio_pontual_classico(
         result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
         solicitante=consumidor, rotulo=rotulo, foto_satelite=foto_sat,
