@@ -111,7 +111,7 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 | Campo | Valor |
 |---|---|
-| **Criticidade** | **Alta** no Escopo A; **Crítica** se o Escopo B entrar no mesmo PR (ver "Criticidade e recorte") |
+| **Criticidade** | **Crítica** — o Escopo B entrou neste ciclo (gate humano de 2026-07-28): o PR toca `pyproject.toml` e `.gitattributes`, ambos `critico` no `loop_guard`. |
 | **Status** | Pendente — preparado em 2026-07-28 para execução em sessão nova |
 | **Depende de** | Estado final do BLK-GRAPH-01 na branch `graph-01` (`5450f04`). **NÃO exige merge** — o PR #150 pode seguir fechado. |
 | **Autonomia** | *(sem marcador — **NÃO** loop-safe: toca `CLAUDE.md`, que é GOVERNANÇA no `loop_guard`)* |
@@ -140,7 +140,7 @@ verificado em 2026-07-27 (não presumido — cada linha foi medida):
 
 | O que falta | Evidência |
 |---|---|
-| Pacote instalado | `graphify` não consta de `pyproject.toml` nem de `constraints.txt` |
+| Pacote instalado | `graphifyy` (DOIS 'y' — o nome nu `graphify` está UNCLAIMED no PyPI) não consta de `pyproject.toml` nem de `constraints.txt` |
 | Atualização automática | `.git/hooks/` não é versionado; `core.hooksPath` não definido → **0 hooks viajam** |
 | Ser ferramenta | **não existe `.mcp.json`** no repo |
 | Norma vs bibliografia | a regra vive no `CLAUDE.md` **§7** ("Onde aprofundar"), lida como ponteiro |
@@ -161,7 +161,7 @@ pessoa. Quem usar outro agente não recebe nada.
    segurança, não aplica `core.hooksPath` vindo do repositório; cada clone roda o comando uma vez.
    O ganho é o hook ser revisável e igual para todos, não auto-instalável.
 
-**Escopo B — Crítica, SEPARÁVEL.** Declarar `graphify` como dependência (extra opcional em
+**Escopo B — Crítica, SEPARÁVEL.** Declarar `graphifyy[mcp]` como dependência (extra opcional em
 `pyproject.toml`, e `constraints.txt` se for pinar). Ambos são **path CRÍTICO** do `loop_guard`
 (`pyproject.toml` = config do pytest/ruff + deps da imagem; `constraints.txt` = lockfile de supply
 chain) → exige `critica-aprovada`.
