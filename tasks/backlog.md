@@ -107,6 +107,88 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 - BLK-GRAPH-01 (concluído 2026-07-27) — ver tasks/completed.md
 
+### BLK-GRAPH-02 — Tornar o grafo uma FERRAMENTA, não uma instrução
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** no Escopo A; **Crítica** se o Escopo B entrar no mesmo PR (ver "Criticidade e recorte") |
+| **Status** | Pendente — preparado em 2026-07-28 para execução em sessão nova |
+| **Depende de** | BLK-GRAPH-01 mergeado (PR #150). Sem ele não há grafo no repo. |
+| **Autonomia** | *(sem marcador — **NÃO** loop-safe: toca `CLAUDE.md`, que é GOVERNANÇA no `loop_guard`)* |
+| **ClickUp** | — |
+
+**Problema.** O BLK-GRAPH-01 entregou o grafo e o versionou, mas o *uso* dele não viaja. Estado
+verificado em 2026-07-27 (não presumido — cada linha foi medida):
+
+| O que falta | Evidência |
+|---|---|
+| Pacote instalado | `graphify` não consta de `pyproject.toml` nem de `constraints.txt` |
+| Atualização automática | `.git/hooks/` não é versionado; `core.hooksPath` não definido → **0 hooks viajam** |
+| Ser ferramenta | **não existe `.mcp.json`** no repo |
+| Norma vs bibliografia | a regra vive no `CLAUDE.md` **§7** ("Onde aprofundar"), lida como ponteiro |
+
+Consequência: hoje o grafo depende de o agente ler a §7 e decidir obedecer, a cada sessão de cada
+pessoa. Quem usar outro agente não recebe nada.
+
+**Escopo A — Alta (entrega a maior parte do valor).**
+1. **`.mcp.json` versionado** expondo o servidor MCP do graphify
+   (`python -m graphify.serve graphify-out/graph.json`). Tools: `query_graph`, `get_node`,
+   `get_neighbors`, `get_community`, `god_nodes`, `graph_stats`, `shortest_path`. É o único item
+   que viaja com o repo **e** transforma o grafo em ferramenta — o agente passa a vê-lo na lista
+   de tools e usa como usa Grep, sem depender de ler doc.
+2. **Mover a regra da §7 para a §2** (`Regras operacionais rapidas`), que é lida como norma. Manter
+   na §7 só o detalhe técnico (limites, rebuild, o que ficou fora do grafo).
+3. **Hooks versionados**: mover para `.githooks/` no repo + documentar
+   `git config core.hooksPath .githooks`. **Atenção — isto NÃO é automático:** o git, por
+   segurança, não aplica `core.hooksPath` vindo do repositório; cada clone roda o comando uma vez.
+   O ganho é o hook ser revisável e igual para todos, não auto-instalável.
+
+**Escopo B — Crítica, SEPARÁVEL.** Declarar `graphify` como dependência (extra opcional em
+`pyproject.toml`, e `constraints.txt` se for pinar). Ambos são **path CRÍTICO** do `loop_guard`
+(`pyproject.toml` = config do pytest/ruff + deps da imagem; `constraints.txt` = lockfile de supply
+chain) → exige `critica-aprovada`.
+
+**Criticidade e recorte.** Classificação medida com `loop_guard.classificar`:
+`.mcp.json` = livre · `.githooks/*` = livre · `CLAUDE.md` = governança ·
+`pyproject.toml` = **crítico** · `constraints.txt` = **crítico**.
+Fazer A sozinho mantém o PR em **Alta** (só `aprovado-humano`). Juntar B escala para **Crítica**.
+**Recomendação: A primeiro, B como bloco/PR próprio** — não prender o valor principal a uma
+aprovação Crítica.
+
+**QUESTÃO DE PROJETO EM ABERTO (decidir com evidência, não no chute).** O comando do `.mcp.json`
+precisa ser **portátil**. `python -m graphify.serve` só funciona se o `graphify` estiver instalado
+no python ativo — que é justamente o Escopo B. Caminho absoluto de interpretador **não** serve
+(é específico da máquina). Investigar antes de implementar:
+(a) o MCP falha graciosamente quando o pacote falta, ou quebra a sessão inteira?
+(b) dá para apontar para `graphify-out/.graphify_python`? *(Não: é gitignored.)*
+(c) A depende mesmo de B para ser portátil, ou um `README`/erro claro basta?
+A resposta muda o recorte A/B — e a resposta errada entrega um `.mcp.json` que só funciona na
+máquina de quem o criou.
+
+**Fora de escopo:** tudo que envolva reconstruir o grafo, mudar o recorte do corpus
+(`context/handoff/` e imagens seguem fora) ou tocar M1. **READ-ONLY sobre o M1.**
+
+**Critério de aceite.** `.mcp.json` versionado e funcional num clone limpo (testar de verdade, não
+presumir); regra na §2; hooks em `.githooks/` com a limitação do `core.hooksPath` documentada
+explicitamente; `ruff`/`mypy` limpos; suíte verde; `loop_guard --base main` sem CRÍTICO se o
+Escopo B ficou de fora.
+
+**Armadilhas herdadas do BLK-GRAPH-01 — ler antes de começar.**
+- O comando `graphify` **não está no PATH** (o pacote instala em `<python>/Scripts/`). Usar sempre
+  `python -m graphify`.
+- `python -m graphify hook install` **re-adiciona** `graphify-out/graph.json merge=graphify` ao
+  `.gitattributes` — que é path **CRÍTICO**. Remover antes de commitar, ou o PR escala sem querer.
+- `graph.json` é versionado **com** `-diff linguist-generated=true` no `.gitattributes`. Sem esse
+  atributo o diff de ~10 MB **afoga o `claude-review`** (termina com `success` mas sem saída
+  estruturada → gate fail-closed). Não remover.
+- Um PR Crítico exige **DUAS** labels cumulativas: `critica-aprovada` (de um dono) **E**
+  `aprovado-humano` (de humano ≠ autor). Elas não se substituem.
+
+**Achado colateral a resolver (não é deste bloco, mas alguém precisa decidir).** O
+`.github/workflows/guard.yml` já implementa `DONOS = {"kastaldy", "vinhoabencoado"}`, mas a
+**DEC-019 está como `PROPOSTA`** no índice do `CLAUDE.md` §8 e no corpo da própria DEC
+("aguardando aprovacao de Felipe"). O código executa uma decisão que a documentação diz não estar
+aprovada. Ou a DEC vira APROVADA, ou o `guard.yml` volta a um dono só.
 
 ---
 
