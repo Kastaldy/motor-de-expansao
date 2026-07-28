@@ -1388,3 +1388,187 @@ def test_atribuicao_do_pontual_credita_osm_e_carto_nos_dois_modos(monkeypatch):
     # ROTULOS continuam vindo do CARTO (`_LABELS_TILE_URL`, BLK-RELPON-07) -> os dois sao devidos.
     assert censo_map._ATRIBUICAO_TILES == "(c) OpenStreetMap, (c) CARTO"
     assert "cartocdn.com" in censo_map._LABELS_TILE_URL
+
+
+# ── BLK-BASEMAP-03 (emenda DEC-004): grade de tiles e cache do overlay de rótulos ───────────
+# O achado MÉDIA da revisão do PR #154 era exatamente isto: os 2 testes de overlay acima fazem
+# monkeypatch de `_fetch_labels` INTEIRA, então a aritmética Web Mercator -> índice de tile e o
+# caminho de rede/cache nunca eram exercitados. Aqui eles são, sem rede.
+
+
+def test_labels_grid_cobre_o_bbox_pedido():
+    """A faixa de tiles tem de CONTER o bbox — e o extent devolvido, idem (grade é discreta)."""
+    bounds = (-5_200_000.0, -2_800_000.0, -5_195_000.0, -2_795_000.0)
+    zoom, tx0, tx1, ty0, ty1, tile_m = censo_map._labels_grid(bounds, 1000)
+
+    assert tx0 <= tx1 and ty0 <= ty1
+    assert tile_m == censo_map._EARTH_M / (2**zoom)
+
+    ex_minx, ex_maxx, ex_miny, ex_maxy = censo_map._labels_extent(tx0, tx1, ty0, ty1, tile_m)
+    assert ex_minx <= bounds[0] and ex_miny <= bounds[1]
+    assert ex_maxx >= bounds[2] and ex_maxy >= bounds[3]
+
+
+def test_labels_grid_y_cresce_para_o_sul():
+    """Convenção XYZ: `y` cresce para o SUL. Um bbox mais ao norte tem de ter `ty` MENOR."""
+    largura = 4_000.0
+    norte = (-5_200_000.0, -2_000_000.0, -5_200_000.0 + largura, -2_000_000.0 + largura)
+    sul = (-5_200_000.0, -3_000_000.0, -5_200_000.0 + largura, -3_000_000.0 + largura)
+
+    _z_n, _tx0n, _tx1n, ty0_norte, _ty1n, _tn = censo_map._labels_grid(norte, 1000)
+    _z_s, _tx0s, _tx1s, ty0_sul, _ty1s, _ts = censo_map._labels_grid(sul, 1000)
+    assert ty0_norte < ty0_sul
+
+
+def test_labels_grid_respeita_o_teto_de_zoom_19():
+    """Bbox minúsculo pediria zoom altíssimo; o teto é 19, igual ao do `_fetch_basemap`."""
+    zoom, *_ = censo_map._labels_grid((-5_200_000.0, -2_800_000.0, -5_199_999.0, -2_799_999.0), 1000)
+    assert zoom == 19
+
+
+def test_labels_extent_e_o_retangulo_dos_tiles_inteiros():
+    """Extent = borda dos tiles inteiros: largura = (tx1-tx0+1) tiles, altura = (ty1-ty0+1)."""
+    tile_m = 1000.0
+    ex_minx, ex_maxx, ex_miny, ex_maxy = censo_map._labels_extent(10, 12, 20, 21, tile_m)
+    assert abs((ex_maxx - ex_minx) - 3 * tile_m) < 1e-6
+    assert abs((ex_maxy - ex_miny) - 2 * tile_m) < 1e-6
+
+
+def _png_bytes(cor) -> bytes:
+    buf = BytesIO()
+    Image.new("RGBA", (512, 512), cor).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_labels_tile_grava_no_cache_e_reusa_sem_segunda_ida_a_rede(monkeypatch, tmp_path):
+    """DEC-004 mitigação (a): o 2º pedido do MESMO tile sai do disco, sem tocar a rede.
+
+    Era a dívida ALTA do PR #154: `_fetch_basemap` herda cache do `ctx.set_cache_dir()`, mas o
+    overlay usava `urllib` cru e rebaixava o mosaico inteiro a cada PDF.
+    """
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", tmp_path / "labels")
+    idas = []
+
+    class _Resp:
+        def __enter__(self_inner):
+            return self_inner
+
+        def __exit__(self_inner, *_a):
+            return False
+
+        def read(self_inner):
+            return _png_bytes((10, 20, 30, 255))
+
+    def _fake_urlopen(_req, timeout=None):
+        idas.append(1)
+        return _Resp()
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+
+    primeiro = censo_map._labels_tile(17, 40_000, 60_000)
+    assert len(idas) == 1
+    assert (tmp_path / "labels" / "17_40000_60000.png").is_file()
+
+    segundo = censo_map._labels_tile(17, 40_000, 60_000)
+    assert len(idas) == 1, "o 2o pedido foi a rede — o cache nao pegou"
+    assert primeiro.getpixel((0, 0)) == segundo.getpixel((0, 0))
+
+
+def test_labels_tile_rebaixa_quando_o_cache_esta_corrompido(monkeypatch, tmp_path):
+    """PNG truncado no disco não pode derrubar o render — rebaixa como se não existisse."""
+    cache = tmp_path / "labels"
+    cache.mkdir(parents=True)
+    (cache / "17_1_2.png").write_bytes(b"nao sou um png")
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", cache)
+
+    class _Resp:
+        def __enter__(self_inner):
+            return self_inner
+
+        def __exit__(self_inner, *_a):
+            return False
+
+        def read(self_inner):
+            return _png_bytes((99, 0, 0, 255))
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda _r, timeout=None: _Resp())
+    assert censo_map._labels_tile(17, 1, 2).getpixel((0, 0))[0] == 99
+
+
+def test_labels_tile_nao_quebra_quando_o_cache_nao_e_gravavel(monkeypatch, tmp_path):
+    """Cache é otimização: falha de ESCRITA é engolida e o tile sai da rede normalmente."""
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", tmp_path / "labels")
+
+    class _Resp:
+        def __enter__(self_inner):
+            return self_inner
+
+        def __exit__(self_inner, *_a):
+            return False
+
+        def read(self_inner):
+            return _png_bytes((7, 7, 7, 255))
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda _r, timeout=None: _Resp())
+
+    def _mkdir_explode(*_a, **_k):
+        raise OSError("disco read-only")
+
+    monkeypatch.setattr(censo_map.Path, "mkdir", _mkdir_explode)
+    assert censo_map._labels_tile(17, 5, 5).getpixel((0, 0))[0] == 7
+
+
+def test_fetch_labels_devolve_none_quando_a_rede_falha(monkeypatch, tmp_path):
+    """Contrato de degradação graciosa: sem rede -> None -> o mapa sai SEM nomes, sem exceção."""
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", tmp_path / "labels")
+
+    def _explode(*_a, **_k):
+        raise OSError("sem rede")
+
+    monkeypatch.setattr(censo_map, "_labels_grid", _explode)
+    assert censo_map._fetch_labels((-5_200_000.0, -2_800_000.0, -5_195_000.0, -2_795_000.0), 1000) is None
+
+
+def test_fetch_labels_tolera_tile_faltando(monkeypatch, tmp_path):
+    """Um tile 404 no meio do mosaico não invalida os outros — o resto compõe normal."""
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", tmp_path / "labels")
+    chamadas = {"n": 0}
+
+    def _tile_intermitente(_zoom, _tx, _ty):
+        chamadas["n"] += 1
+        if chamadas["n"] % 2 == 0:
+            raise OSError("404")
+        return Image.new("RGBA", (512, 512), (0, 255, 0, 255))
+
+    monkeypatch.setattr(censo_map, "_labels_tile", _tile_intermitente)
+    out = censo_map._fetch_labels((-5_200_000.0, -2_800_000.0, -5_150_000.0, -2_750_000.0), 1000)
+
+    assert out is not None
+    canvas, _extent = out
+    arr = np.asarray(canvas)
+    assert bool(((arr[:, :, 1] == 255) & (arr[:, :, 3] == 255)).any()), (
+        "nenhum tile bom entrou no mosaico"
+    )
+
+
+def test_fetch_labels_devolve_none_quando_nenhum_tile_entra(monkeypatch, tmp_path):
+    """Rede 100% fora -> None, NAO um mosaico transparente.
+
+    Regressão real do BLK-RELPON-07: o `except Exception: continue` por tile engolia todas as
+    falhas e a função devolvia canvas vazio + extent, contrariando o próprio docstring ("QUALQUER
+    falha -> None"). O chamador então compunha uma camada inteiramente transparente achando que
+    tinha rótulos. Mesmo critério da DEC-018 para a foto de satélite.
+    """
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", tmp_path / "labels")
+
+    def _todo_tile_falha(_zoom, _tx, _ty):
+        raise OSError("CDN fora")
+
+    monkeypatch.setattr(censo_map, "_labels_tile", _todo_tile_falha)
+    bounds = (-5_200_000.0, -2_800_000.0, -5_195_000.0, -2_795_000.0)
+    assert censo_map._fetch_labels(bounds, 1000) is None
+
+
+def test_labels_timeout_por_tile_limita_o_pior_caso():
+    """Teto por tile explícito: 8 s. Documenta o pior caso do mosaico contra CDN em blackhole."""
+    assert censo_map._LABELS_TIMEOUT_S <= 8

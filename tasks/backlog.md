@@ -2162,3 +2162,57 @@ crash); checklist da §15; validação humana de UX (<60s jr., "uma decisão por
 (evita divergência de cor/faixa).
 
 ---
+
+### BLK-BASEMAP-03 — Quita a dívida do overlay de rótulos + nomes de rua no Relatório Municipal
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (RENDER; **READ-ONLY sobre o M1**) |
+| **Esteira** | Builder → QA |
+| **Depende de** | BLK-RELPON-07 (#154), BLK-BASEMAP-01 (#155), BLK-BASEMAP-02 (#156) — todos em `main` |
+| **Status** | Em revisão (PR aberto) |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca DECs e o caminho de geração dos dois relatórios |
+
+**Contexto.** O #154 entrou por bypass com dois achados aceitos (ALTA: `_fetch_labels` sem o cache
+que a mitigação (a) da DEC-004 exige; MÉDIA: a matemática de zoom/tile/extent sem teste direto).
+E o #156 trouxe uma regressão não prevista: como o estilo `ultra-maptiler` não tem
+`transportation_name` e o Municipal não tinha overlay de rótulos, o mapa municipal passou a sair
+com as ruas desenhadas e **sem nome** — o Voyager trazia os nomes embutidos no raster.
+
+**Entregue.** (1) cache em disco por tile em `data/cache/label_tiles/`, escrita atômica;
+(2) `_labels_grid`/`_labels_extent` extraídos e testáveis sem rede, com 12 casos novos;
+(3) `_fetch_labels` devolve `None` quando **nenhum** tile entra (antes devolvia canvas
+transparente, contrariando o próprio docstring); (4) timeout por tile 20 s → 8 s;
+(5) overlay de rótulos também no Relatório Municipal, com o crédito do CARTO de volta ao rodapé.
+
+**Guardrail.** §5 READ-ONLY M1: nenhuma mudança em score/pesos/carteira/plano/artefatos.
+Emendas em DEC-004 e DEC-011.
+
+---
+
+### BLK-BASEMAP-04 — Custo do mosaico de rótulos: `@2x` desperdiçado e orçamento de tempo
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (custo/latência de RENDER; **READ-ONLY sobre o M1**) |
+| **Esteira** | Block Orchestrator → Planner → `[GATE VISUAL — Vinicius]` → Builder → QA |
+| **Depende de** | BLK-BASEMAP-03 |
+| **Status** | Pendente |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda resolução de render, exige gate visual |
+
+**Contexto (medido no frame canônico do Pontual: raio 1,5 km, canvas 1000x760, lat −23,55).**
+O mosaico de rótulos busca **624 tiles** por relatório contra 169 do basemap, e aloca um canvas de
+`13312x12288` RGBA ≈ **654 MB por chamada**. O `@2x` é **100% desperdiçado**: o mosaico sai a
+3,349 px/m contra 0,1548 px/m do frame — downsample de **21,6x** no render. O cache do
+BLK-BASEMAP-03 corta a repetição, **não o pico**: no cache frio os 624 tiles e os 654 MB continuam.
+
+**Objetivo.** (a) avaliar dropar o `@2x` e/ou baixar `_LABELS_ZOOM_BUMP` de 1 para 0 (corta os
+tiles ~4x) — **precisa de gate visual**, porque a nitidez dos nomes foi aprovada por Vinicius no
+gate do BLK-RELPON-11; (b) orçamento de tempo (wall-clock) para o mosaico inteiro, em vez de só
+timeout por tile: hoje o pior caso contra um CDN em blackhole ainda é ~10 min segurando o PDF;
+(c) avaliar servir os rótulos do **próprio tileserver** (camada `transportation_name` no estilo
+`ultra-maptiler`), o que elimina o CARTO e deixa o rodapé honestamente só `(c) OpenStreetMap`.
+
+**Guardrail.** §5 READ-ONLY M1. Qualquer mudança de resolução passa por gate visual antes do merge.
+
+---

@@ -1001,9 +1001,11 @@ def test_agregar_municipio_prefiltrado_identico_ao_nacional():
         assert result_full[key] == result_pre[key], f"Divergencia em {key!r}"
 
 
-# ── BLK-BASEMAP-02: basemap self-host no Relatorio Municipal ────────────────────────────────
-# Diferenca em relacao ao Pontual: aqui NAO ha overlay de rotulos CARTO, entao no self-host o
-# CARTO deixa de ser consumido e creditar ele seria credito FALSO. Emenda a DEC-011.
+# ── BLK-BASEMAP-02/03: basemap self-host no Relatorio Municipal ─────────────────────────────
+# O BLK-BASEMAP-02 trocou o fundo pelo tileserver proprio; o BLK-BASEMAP-03 trouxe o overlay de
+# rotulos do Pontual para ca, porque o estilo `ultra-maptiler` nao tem `transportation_name` e o
+# mapa municipal estava saindo com as ruas desenhadas e SEM nome. Consequencia direta na
+# atribuicao: o CARTO volta a ser consumido nos DOIS modos (emenda a DEC-011).
 
 
 def test_municipal_basemap_source_alterna_por_env(monkeypatch):
@@ -1022,7 +1024,25 @@ def test_municipal_basemap_source_alterna_por_env(monkeypatch):
     assert rm._basemap_source(fake_ctx) == url
 
 
-def test_municipal_atribuicao_perde_carto_no_self_host(monkeypatch):
+def _mapa_resumo(*, basemap: bool) -> bytes:
+    """PNG da camada `resumo` com a amostra padrao do modulo — atalho dos testes de overlay."""
+    df = _sample_df()
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", dominio_df=_sample_dominio())
+    mapas = render_mapas_municipio(
+        df,
+        res,
+        competitors_df=_sample_competitors(),
+        ultra_df=_sample_ultra(),
+        basemap=basemap,
+    )
+    return mapas["resumo"]
+
+
+def test_municipal_credita_carto_nos_dois_modos_por_causa_do_overlay(monkeypatch):
+    # BLK-BASEMAP-03 REVERTE o comportamento que o BLK-BASEMAP-02 tinha fixado aqui (self-host ->
+    # so OSM). Com o overlay de rotulos ligado tambem no Municipal, o CARTO passa a ser consumido
+    # nos dois modos e o credito duplo volta a ser o unico honesto. Se um dia a fonte de rotulos
+    # virar o proprio tileserver, ESTE teste e' o ponto de mudanca.
     from motor_expansao.dashboard import relatorio_municipal as rm
 
     monkeypatch.delenv(rm._BASEMAP_TILES_URL_ENV, raising=False)
@@ -1032,5 +1052,58 @@ def test_municipal_atribuicao_perde_carto_no_self_host(monkeypatch):
         rm._BASEMAP_TILES_URL_ENV,
         "http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png",
     )
-    assert rm._atribuicao_tiles() == "(c) OpenStreetMap"
-    assert "CARTO" not in rm._atribuicao_tiles()
+    assert rm._atribuicao_tiles() == "(c) OpenStreetMap, (c) CARTO"
+
+
+def test_municipal_compoe_nomes_de_rua_por_cima_dos_hexes(monkeypatch):
+    """O overlay de rotulos entra no PNG do mapa municipal (nomes sobre a cor dos hexes).
+
+    Sentinela MAGENTA opaco: nenhuma camada do relatorio usa essa cor, entao encontra-la no PNG
+    prova que o mosaico de `_fetch_labels` foi composto. Sem rede — `_fetch_basemap_municipio` e
+    `_fetch_labels` sao ambos monkeypatchados.
+    """
+    from motor_expansao.dashboard import relatorio_municipal as rm
+
+    magenta = (255, 0, 255)
+
+    def _fake_basemap(bounds, _width):
+        minx, miny, maxx, maxy = bounds
+        return np.asarray(Image.new("RGB", (256, 256), (235, 235, 235))), (minx, maxx, miny, maxy)
+
+    def _fake_labels(bounds, _width):
+        minx, miny, maxx, maxy = bounds
+        return Image.new("RGBA", (256, 256), (*magenta, 255)), (minx, maxx, miny, maxy)
+
+    monkeypatch.setattr(rm, "_fetch_basemap_municipio", _fake_basemap)
+    monkeypatch.setattr(rm, "_fetch_labels", _fake_labels)
+
+    png = _mapa_resumo(basemap=True)
+    arr = np.asarray(Image.open(BytesIO(png)).convert("RGB"))
+    achou = ((arr[:, :, 0] == 255) & (arr[:, :, 1] == 0) & (arr[:, :, 2] == 255)).any()
+    assert bool(achou), "os nomes de rua nao foram compostos no mapa municipal"
+
+
+def test_municipal_sem_basemap_nao_busca_rotulos(monkeypatch):
+    """Sem fundo de ruas nao ha o que rotular — e o fetch de rede nem chega a acontecer."""
+    from motor_expansao.dashboard import relatorio_municipal as rm
+
+    chamou = []
+    monkeypatch.setattr(rm, "_fetch_labels", lambda *a, **k: chamou.append(1))
+
+    _mapa_resumo(basemap=False)
+    assert chamou == []
+
+
+def test_municipal_tolera_falha_no_overlay_de_rotulos(monkeypatch):
+    """Rotulo e' aditivo: `_fetch_labels` devolvendo None (rede fora) nao pode derrubar a pagina."""
+    from motor_expansao.dashboard import relatorio_municipal as rm
+
+    def _fake_basemap(bounds, _width):
+        minx, miny, maxx, maxy = bounds
+        return np.asarray(Image.new("RGB", (256, 256), (235, 235, 235))), (minx, maxx, miny, maxy)
+
+    monkeypatch.setattr(rm, "_fetch_basemap_municipio", _fake_basemap)
+    monkeypatch.setattr(rm, "_fetch_labels", lambda *a, **k: None)
+
+    png = _mapa_resumo(basemap=True)
+    assert Image.open(BytesIO(png)).size[0] > 0

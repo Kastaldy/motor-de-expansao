@@ -62,7 +62,8 @@ _BASEMAP_TILES_URL_ENV = "API_BASEMAP_TILES_URL"
 # Atribuicao exigida pela licenca CARTO/OSM (DEC-004); aparece no rodape do PNG quando ha tile.
 # INALTERADA nos dois modos: no self-host o dado e' OpenStreetMap (schema OpenMapTiles) e os
 # ROTULOS continuam vindo do CARTO (`_LABELS_TILE_URL`, BLK-RELPON-07) -> os dois creditos seguem
-# devidos. Quem muda e' o Relatorio Municipal, que nao tem overlay de rotulos (ver la).
+# devidos. Desde o BLK-BASEMAP-03 o Relatorio Municipal usa o MESMO overlay, entao o credito
+# duplo vale igual la (ver `relatorio_municipal._ATRIBUICAO_TILES`).
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
 _BASEMAP_CONTRAST = 1.15
 # Zoom extra dos tiles (alem do minimo p/ cobrir a bbox) -> ruas mais nitidas/detalhadas.
@@ -79,6 +80,22 @@ _LABELS_SUBDOMAINS = ("a", "b", "c")
 # Rotulos num zoom ACIMA do basemap -> nomes maiores e legiveis sobre a cor (o zoom base ja e
 # minimo-p/-cobrir + _BASEMAP_ZOOM_BUMP; aqui somamos mais 1).
 _LABELS_ZOOM_BUMP = 1
+# Cache local dos tiles de rotulo (emenda BLK-BASEMAP-03 a DEC-004, mitigacao (a) — a MESMA
+# faz ao basemap). O `_fetch_basemap` herda o cache de graca do `ctx.set_cache_dir()`; aqui o
+# fetch e' `urllib` cru, entao o cache precisa ser explicito. Diretorio SEPARADO do
+# `_BASEMAP_CACHE_DIR` porque o conteudo e' outro: PNG RGBA nosso, indexado por (z,x,y), e nao o
+# cache interno do contextily/requests-cache.
+_LABELS_CACHE_DIR = Path("data/cache/label_tiles")
+# Timeout POR TILE. Era 20 s, mas o mosaico do frame canonico do Pontual (raio 1,5 km, canvas
+# 1000x760) tem 624 tiles em 8 workers: contra um CDN que faz BLACKHOLE (nao recusa, so' nao
+# responde) o pior caso era 624/8 x 20 s ~= 26 min segurando a geracao do PDF. Com 8 s cai para
+# ~10 min. Ainda longo — o teto de verdade e' um orcamento de tempo do mosaico inteiro, anotado
+# como follow-up no BLK-BASEMAP-04 junto com o desperdicio do @2x.
+_LABELS_TIMEOUT_S = 8
+
+# Circunferencia da Terra em Web Mercator (EPSG:3857). Uma constante so, usada pelo calculo de
+# zoom e pela grade de tiles do overlay — antes o mesmo literal aparecia nos dois lugares.
+_EARTH_M = 2.0 * np.pi * 6378137.0
 
 # Cores dos elementos desenhados DENTRO do mapa claro (precisam contrastar com fundo claro):
 # circulo do raio (AZUL, pedido de Vini 2026-06-17) e barra de escala/labels em tinta ESCURA.
@@ -639,10 +656,9 @@ def _zoom_for_bounds(minx: float, maxx: float, target_px: int) -> int:
 
     A resolucao 3857 no zoom z e (2*pi*R)/(256*2^z) m/px; queremos span/res >= target_px.
     """
-    earth_circumference = 2.0 * np.pi * 6378137.0
     span_m = max(maxx - minx, 1.0)
     for zoom in range(0, 20):
-        res = earth_circumference / (256.0 * (2**zoom))
+        res = _EARTH_M / (256.0 * (2**zoom))
         if span_m / res >= target_px:
             return max(0, min(zoom, 19))
     return 19
@@ -721,6 +737,81 @@ def _fetch_basemap(
         return None
 
 
+def _labels_grid(
+    bounds_3857: tuple[float, float, float, float], width: int
+) -> tuple[int, int, int, int, int, float]:
+    """Zoom + faixa de tiles `(zoom, tx0, tx1, ty0, ty1, tile_m)` que cobre `bounds_3857`.
+
+    Extraido de `_fetch_labels` (emenda BLK-BASEMAP-03 a DEC-004) p/ ser testado SEM rede: e' a
+    unica aritmetica nao trivial do overlay e antes so era exercitada por monkeypatch da funcao
+    inteira, ou seja, nunca. Convencao XYZ: `x` cresce para LESTE a partir de -180 e `y` cresce
+    para o SUL a partir do topo — por isso `ty0` sai de `maxy` e `ty1` de `miny` (invertidos em
+    relacao a `x`). O teto de zoom 19 e' o mesmo do `_fetch_basemap`.
+    """
+    minx, miny, maxx, maxy = bounds_3857
+    zoom = min(19, _zoom_for_bounds(minx, maxx, width) + _BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP)
+    tile_m = _EARTH_M / (2**zoom)  # tamanho do tile em metros (3857)
+    tx0 = int((minx + _EARTH_M / 2) / tile_m)
+    tx1 = int((maxx + _EARTH_M / 2) / tile_m)
+    ty0 = int((_EARTH_M / 2 - maxy) / tile_m)
+    ty1 = int((_EARTH_M / 2 - miny) / tile_m)
+    return zoom, tx0, tx1, ty0, ty1, tile_m
+
+
+def _labels_extent(
+    tx0: int, tx1: int, ty0: int, ty1: int, tile_m: float
+) -> tuple[float, float, float, float]:
+    """Extent 3857 do mosaico como `(minx, maxx, miny, maxy)` — convencao do `ctx.bounds2img`.
+
+    E' o extent dos TILES INTEIROS, sempre >= o bbox pedido (a grade e' discreta): quem compoe
+    reprojeta por este extent, nao pelo bbox, senao os nomes saem deslocados.
+    """
+    return (
+        tx0 * tile_m - _EARTH_M / 2,
+        (tx1 + 1) * tile_m - _EARTH_M / 2,
+        _EARTH_M / 2 - (ty1 + 1) * tile_m,
+        _EARTH_M / 2 - ty0 * tile_m,
+    )
+
+
+def _labels_tile(zoom: int, tx: int, ty: int) -> Image.Image:
+    """Um tile de rotulo, servido do DISCO quando ja baixado (DEC-004, mitigacao (a)).
+
+    E' o cache que a mitigacao (a) da DEC-004 exige do basemap e que o overlay nao tinha: sem
+    ele cada PDF rebaixava o mosaico inteiro do CARTO. O `_fetch_basemap` ganha isso de graca
+    via `ctx.set_cache_dir()`; como aqui o fetch e' `urllib` cru, o cache e' explicito.
+
+    Escrita por arquivo temporario + `replace()` (atomico) de proposito: sao 8 threads aqui e
+    ate 3 relatorios concorrentes no piloto, entao um leitor poderia abrir um PNG truncado.
+    Falha de ESCRITA e' engolida — cache e' otimizacao e nao pode derrubar o render; falha de
+    REDE sobe e o chamador trata o tile como faltando (o mosaico segue sem aquele pedaco).
+    """
+    import os
+    import urllib.request
+
+    destino = _LABELS_CACHE_DIR / f"{zoom}_{tx}_{ty}.png"
+    if destino.is_file():
+        try:
+            with Image.open(destino) as cached:
+                return cached.convert("RGBA")
+        except Exception:
+            pass  # cache corrompido/truncado -> rebaixa como se nao existisse
+
+    url = _LABELS_TILE_URL.format(s=_LABELS_SUBDOMAINS[(tx + ty) % 3], z=zoom, x=tx, y=ty)
+    req = urllib.request.Request(url, headers={"User-Agent": "motor-expansao/censo-labels"})
+    with urllib.request.urlopen(req, timeout=_LABELS_TIMEOUT_S) as resp:  # noqa: S310 (URL https)
+        raw = resp.read()
+    tile = Image.open(BytesIO(raw)).convert("RGBA")
+    try:
+        _LABELS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        parcial = destino.with_name(f"{destino.name}.{os.getpid()}.tmp")
+        parcial.write_bytes(raw)
+        parcial.replace(destino)
+    except Exception:
+        pass
+    return tile
+
+
 def _fetch_labels(
     bounds_3857: tuple[float, float, float, float],
     width: int,
@@ -731,46 +822,45 @@ def _fetch_labels(
     imagem e RGBA transparente (so texto/halo) e vem de `_LABELS_TILE_URL`. Rede + best-effort:
     QUALQUER falha (sem internet, timeout, tile faltando) -> None, e o mapa segue SEM nomes,
     identico ao comportamento anterior (degradacao graciosa, igual ao basemap offline).
+
+    Consumido pelos DOIS relatorios: Pontual (`_render_camada`) e Municipal (BLK-BASEMAP-03) —
+    este ultimo porque o estilo self-host `ultra-maptiler` nao tem `transportation_name` e sem o
+    overlay o mapa municipal sairia com as ruas desenhadas e SEM nome. Tile a tile o fetch passa
+    por `_labels_tile`, que cacheia em disco (emenda BLK-BASEMAP-03 a DEC-004, mitigacao (a)); a
+    grade e o extent saem de `_labels_grid`/`_labels_extent`, testaveis sem rede.
+
+    NENHUM tile entrou -> `None`, nao um canvas transparente. Ate o BLK-BASEMAP-03 o
+    `except Exception: continue` por tile engolia TUDO e a funcao devolvia mosaico vazio +
+    extent mesmo com 100% dos tiles falhando: o docstring prometia `None`, o codigo entregava
+    outra coisa e o chamador compunha uma camada inteiramente transparente achando que tinha
+    rotulos. Mesmo criterio que a DEC-018 fixou para a foto de satelite ("conta os tiles que
+    entraram e devolve None se for zero").
     """
     import concurrent.futures as cf
-    import urllib.request
 
     try:
-        minx, miny, maxx, maxy = bounds_3857
-        zoom = min(19, _zoom_for_bounds(minx, maxx, width) + _BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP)
-        earth = 2.0 * np.pi * 6378137.0
-        tile_m = earth / (2**zoom)  # tamanho do tile em metros (3857)
-        tx0 = int((minx + earth / 2) / tile_m)
-        tx1 = int((maxx + earth / 2) / tile_m)
-        ty0 = int((earth / 2 - maxy) / tile_m)
-        ty1 = int((earth / 2 - miny) / tile_m)
+        zoom, tx0, tx1, ty0, ty1, tile_m = _labels_grid(bounds_3857, width)
         px = 512  # tiles @2x
-
-        def _tile(tx: int, ty: int) -> Image.Image:
-            url = _LABELS_TILE_URL.format(s=_LABELS_SUBDOMAINS[(tx + ty) % 3], z=zoom, x=tx, y=ty)
-            req = urllib.request.Request(url, headers={"User-Agent": "motor-expansao/censo-labels"})
-            with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 (URL fixa https)
-                return Image.open(BytesIO(resp.read())).convert("RGBA")
 
         canvas = Image.new("RGBA", ((tx1 - tx0 + 1) * px, (ty1 - ty0 + 1) * px), (0, 0, 0, 0))
         coords = [(tx, ty) for ty in range(ty0, ty1 + 1) for tx in range(tx0, tx1 + 1)]
+        entraram = 0
         with cf.ThreadPoolExecutor(max_workers=8) as executor:
-            futures = {(tx, ty): executor.submit(_tile, tx, ty) for tx, ty in coords}
+            futures = {
+                (tx, ty): executor.submit(_labels_tile, zoom, tx, ty) for tx, ty in coords
+            }
             for (tx, ty), future in futures.items():
                 try:
                     tile = future.result()
                     if tile.size != (px, px):
                         tile = tile.resize((px, px), Image.Resampling.LANCZOS)
                     canvas.alpha_composite(tile, ((tx - tx0) * px, (ty - ty0) * px))
+                    entraram += 1
                 except Exception:
                     continue  # rotulo faltando nao e problema (base ja desenhada)
-        extent = (
-            tx0 * tile_m - earth / 2,
-            (tx1 + 1) * tile_m - earth / 2,
-            earth / 2 - (ty1 + 1) * tile_m,
-            earth / 2 - ty0 * tile_m,
-        )
-        return canvas, extent
+        if not entraram:
+            return None  # rede toda fora -> contrato de None, nao mosaico transparente
+        return canvas, _labels_extent(tx0, tx1, ty0, ty1, tile_m)
     except Exception:
         return None
 
