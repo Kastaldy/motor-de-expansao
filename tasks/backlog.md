@@ -113,9 +113,27 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 |---|---|
 | **Criticidade** | **Alta** no Escopo A; **Crítica** se o Escopo B entrar no mesmo PR (ver "Criticidade e recorte") |
 | **Status** | Pendente — preparado em 2026-07-28 para execução em sessão nova |
-| **Depende de** | BLK-GRAPH-01 mergeado (PR #150). Sem ele não há grafo no repo. |
+| **Depende de** | Estado final do BLK-GRAPH-01 na branch `graph-01` (`5450f04`). **NÃO exige merge** — o PR #150 pode seguir fechado. |
 | **Autonomia** | *(sem marcador — **NÃO** loop-safe: toca `CLAUDE.md`, que é GOVERNANÇA no `loop_guard`)* |
 | **ClickUp** | — |
+
+**PONTO DE PARTIDA — ler primeiro.** Este bloco roda **a partir da branch `graph-01`**, não da
+`main`. O PR #150 está **fechado de propósito** (faltava só a label `aprovado-humano`, operacional)
+e **não precisa ser mergeado antes**. Começar com:
+
+```
+git checkout graph-01          # HEAD 5450f04; 7 commits sobre a main
+git checkout -b graph-02       # ou seguir na propria graph-01
+```
+
+Nessa branch o grafo **já existe versionado** — `graphify-out/graph.json`, `GRAPH_REPORT.md` e
+`.graphify_labels.json` — que é o insumo de que o `.mcp.json` precisa apontar. Na `main` eles não
+existem; partir dela deixaria o bloco sem base.
+**Consequência a decidir na abertura do PR:** uma branch derivada da `graph-01` carrega os 7
+commits dela até que a `graph-01` entre. Ou abrir o PR do 02 com **base `graph-01`** (diff limpo,
+só o 02), ou aceitar o diff combinado, ou reabrir e mergear o #150 antes. Escolher
+conscientemente — o diff combinado passaria de 265k linhas e afogaria o `claude-review`, pelo
+mesmo motivo documentado abaixo.
 
 **Problema.** O BLK-GRAPH-01 entregou o grafo e o versionou, mas o *uso* dele não viaja. Estado
 verificado em 2026-07-27 (não presumido — cada linha foi medida):
