@@ -1,0 +1,4 @@
+# artefatos grandes / gerados — não versionar
+planetiler.jar
+data/mbtiles/*.mbtiles
+data/sources/

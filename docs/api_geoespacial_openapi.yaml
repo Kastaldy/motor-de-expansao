@@ -2,10 +2,12 @@ openapi: 3.1.0
 info:
   title: API GeoEspacial - Motor de Expansao Ultra Academia
   description: >
-    API complementar on-demand para estudos geoespaciais (Relatorio Pontual Censitario 1.5 km),
-    consumida por bots de Telegram/WhatsApp. MVP minimo: GET /health + POST /analisar.
+    API complementar on-demand para estudos geoespaciais, consumida por bots de Telegram/WhatsApp.
+    Esta spec cobre GET /health + POST /analisar (Relatorio Pontual Censitario 1.5 km); a API
+    serve tambem GET /ufs, GET /municipios/{uf} e POST /analisar-municipio (Relatorio Municipal),
+    fora desta spec (ver docs/api_geoespacial_contrato.md).
     READ-ONLY sobre o M1. Decisoes-chave aprovadas por Felipe Silva em 2026-06-10 (ver DEC-005).
-    Esboco de contrato (BLK-API-01 / G1) - nao e implementacao.
+    Origem do esboco: BLK-API-01 / G1; hoje implementado (BLK-API-02/03/04) e em producao.
   version: api-geoespacial/v1
 servers:
   - url: /api/v1
@@ -34,7 +36,7 @@ paths:
       description: >
         Recebe uma coordenada {lat,lng} OU um link do Google Maps (maps_url) e retorna o estudo
         do ponto. Por padrao devolve JSON com KPIs; com formato=pdf (ou Accept: application/pdf)
-        devolve o PDF de 7 paginas. Raio fixo 1.5 km. Importa, nao edita, a camada censo_*.
+        devolve o PDF de 8 paginas. Raio fixo 1.5 km. Importa, nao edita, a camada censo_*.
       operationId: postAnalisar
       parameters:
         - in: query
@@ -53,7 +55,7 @@ paths:
               $ref: "#/components/schemas/AnalisarRequest"
       responses:
         "200":
-          description: Estudo do ponto (JSON com KPIs ou PDF de 7 paginas).
+          description: Estudo do ponto (JSON com KPIs ou PDF de 8 paginas).
           content:
             application/json:
               schema:
@@ -79,7 +81,7 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "403":
           description: >
-            Token valido sem permissao. RESERVADO: nao emitido no MVP (sem escopos por
+            Token valido sem permissao. RESERVADO: nao emitido nesta versao (sem escopos por
             consumidor; todo token valido tem acesso). Documentado para evolucao futura.
           content:
             application/json:
@@ -113,7 +115,7 @@ components:
       type: http
       scheme: bearer
       description: >
-        Token de portador por consumidor/bot (Decisao 2). MVP = lista estatica token->consumidor;
+        Token de portador por consumidor/bot (Decisao 2). Nesta versao: lista estatica token->consumidor;
         evoluivel para Authelia/JWT. O consumidor resolvido e carimbado no JSON (rastreio LGPD).
 
   schemas:
@@ -149,8 +151,7 @@ components:
           enum: [json, pdf]
           default: json
         rotulo:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: >
             Nome do endereco/estabelecimento (opcional). Quando presente e nao for
             apenas "lat,lng", aparece na capa do PDF no lugar de "Coordenada: ...".
@@ -192,24 +193,50 @@ components:
           type: integer
           example: 12
         pop_total_raio:
-          type: number
-          nullable: true
+          type: [number, "null"]
           example: 18432.0
         renda_per_capita_media_raio:
-          type: number
-          nullable: true
+          type: [number, "null"]
           example: 5210.0
+        renda_media_domiciliar_raio:
+          type: [number, "null"]
+          description: >
+            Renda domiciliar PRE-uplift (R$/mes por domicilio): renda per capita calibrada x
+            moradores por domicilio, calculada POR SETOR (fallback para a coluna
+            renda_responsavel_media_setor_2022) e so entao agregada ao raio por media ponderada
+            por domicilios estimados -- no codigo equivale a renda do RESPONSAVEL (V06004).
+            NAO e a soma da renda do raio, nem renda_per_capita_media_raio x moradores. O valor
+            que o PDF/dashboard exibem para o MESMO ponto e renda_domiciliar_total_raio (com
+            uplift + fator temporal), sensivelmente MAIOR que este.
+          example: 15790.0
+        renda_domiciliar_total_raio:
+          type: [number, "null"]
+          description: >
+            Renda POR DOMICILIO (R$/mes) com o uplift de composicao SETORIAL e o fator
+            temporal aplicados ("total" = renda do domicilio inteiro, nao so do responsavel).
+            Tambem NAO e a soma da renda do raio; e a faixa exibida no choropleth
+            renda_domiciliar do PDF. O example abaixo assume fator temporal 1,0 (fallback sem
+            data/staging/fator_temporal_renda.json); em producao o fator temporal (~1,17)
+            tambem multiplica.
+          example: 25740.0
+        domicilios_total_raio:
+          type: [number, "null"]
+          description: Domicilios particulares ocupados estimados no raio (soma ponderada por area).
+          example: 6084.0
+        metodo_renda_domiciliar_raio:
+          type: [string, "null"]
+          description: >
+            Ponderacao usada: "ponderada_domicilios_estimados", "ponderada_populacao_ou_area"
+            ou "ausente".
+          example: ponderada_domicilios_estimados
         densidade_pop_raio_hab_km2:
-          type: number
-          nullable: true
+          type: [number, "null"]
           example: 2607.0
         score_setor_medio:
-          type: number
-          nullable: true
+          type: [number, "null"]
           example: 64.2
         score_setor_max:
-          type: number
-          nullable: true
+          type: [number, "null"]
           example: 91.0
         n_concorrentes:
           type: integer

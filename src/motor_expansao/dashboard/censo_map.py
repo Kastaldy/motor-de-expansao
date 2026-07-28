@@ -24,7 +24,7 @@ from motor_expansao.dashboard.censo_point import (
     _transformer,
     analisar_ponto_censitario_setores,
 )
-from motor_expansao.dashboard.competitors import _render_pin_tile
+from motor_expansao.dashboard.competitors import _render_square_logo_tile
 from motor_expansao.dashboard.constants import (
     DENSIDADE_POP_BANDS,
     FATOR_TEMPORAL_RENDA,
@@ -46,12 +46,56 @@ _BASEMAP_CACHE_DIR = Path("data/cache/basemap_tiles")
 # cima fornece a cor; para a cor nao apagar o arruamento, recolocamos POR CIMA os PROPRIOS
 # pixels ESCUROS do tile (ruas+nomes nativos — NAO e edge-detection; ver _STREET_*).
 # O provedor e resolvido lazy em _fetch_basemap (ctx.providers.CartoDB.<_BASEMAP_PROVIDER_ATTR>).
+# Continua sendo o FALLBACK quando o self-host abaixo nao esta configurado.
 _BASEMAP_PROVIDER_ATTR = "Voyager"
+
+# BLK-BASEMAP-02 — basemap SELF-HOST (emenda a DEC-004). Com `API_BASEMAP_TILES_URL` definida, o
+# fundo de ruas vem do tileserver OpenMapTiles proprio (stack em `openmaptiles-infra/`) em vez do
+# CartoDB. Em producao a API e o Streamlit alcancam o container direto pela rede `app_net`:
+#   API_BASEMAP_TILES_URL=http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png
+# INTERNO de proposito, NAO a rota publica `/tiles/`: aquela esta atras do Authelia e um fetch
+# server-side nao tem cookie de sessao -> 302 p/ o login, `_fetch_basemap` engole a excecao e o
+# PDF sairia SEM ruas, em silencio. Sem a env var o comportamento e' byte-identico ao anterior
+# (Voyager), que e' o que CI, teste e dev local exercitam. Nao e' parametro de score: e' RENDER.
+_BASEMAP_TILES_URL_ENV = "API_BASEMAP_TILES_URL"
+
 # Atribuicao exigida pela licenca CARTO/OSM (DEC-004); aparece no rodape do PNG quando ha tile.
+# INALTERADA nos dois modos: no self-host o dado e' OpenStreetMap (schema OpenMapTiles) e os
+# ROTULOS continuam vindo do CARTO (`_LABELS_TILE_URL`, BLK-RELPON-07) -> os dois creditos seguem
+# devidos. Desde o BLK-BASEMAP-03 o Relatorio Municipal usa o MESMO overlay, entao o credito
+# duplo vale igual la (ver `relatorio_municipal._ATRIBUICAO_TILES`).
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
 _BASEMAP_CONTRAST = 1.15
 # Zoom extra dos tiles (alem do minimo p/ cobrir a bbox) -> ruas mais nitidas/detalhadas.
 _BASEMAP_ZOOM_BUMP = 1
+
+# Overlay de ROTULOS (nomes de rua/bairro) POR CIMA do choropleth. Sem isso os nomes ficam
+# SOTERRADOS sob a cor e nao da p/ identificar QUAL area tem o numero melhor/pior — a dor que o
+# realce `_STREET_*` (so linhas de rua, sem texto) nao resolve. Solucao = ordem de camadas: o heat
+# entra por baixo e um tileset SO-ROTULOS (transparente) e composto por cima. Fonte atual = CartoDB
+# Voyager Only-Labels (keyless; MESMA familia/licenca do basemap Voyager -> atribuicao inalterada).
+# Quando o OpenMapTiles self-host subir, trocar por um endpoint de rotulos do proprio tileserver.
+_LABELS_TILE_URL = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png"
+_LABELS_SUBDOMAINS = ("a", "b", "c")
+# Rotulos num zoom ACIMA do basemap -> nomes maiores e legiveis sobre a cor (o zoom base ja e
+# minimo-p/-cobrir + _BASEMAP_ZOOM_BUMP; aqui somamos mais 1).
+_LABELS_ZOOM_BUMP = 1
+# Cache local dos tiles de rotulo (emenda BLK-BASEMAP-03 a DEC-004, mitigacao (a) — a MESMA
+# faz ao basemap). O `_fetch_basemap` herda o cache de graca do `ctx.set_cache_dir()`; aqui o
+# fetch e' `urllib` cru, entao o cache precisa ser explicito. Diretorio SEPARADO do
+# `_BASEMAP_CACHE_DIR` porque o conteudo e' outro: PNG RGBA nosso, indexado por (z,x,y), e nao o
+# cache interno do contextily/requests-cache.
+_LABELS_CACHE_DIR = Path("data/cache/label_tiles")
+# Timeout POR TILE. Era 20 s, mas o mosaico do frame canonico do Pontual (raio 1,5 km, canvas
+# 1000x760) tem 624 tiles em 8 workers: contra um CDN que faz BLACKHOLE (nao recusa, so' nao
+# responde) o pior caso era 624/8 x 20 s ~= 26 min segurando a geracao do PDF. Com 8 s cai para
+# ~10 min. Ainda longo — o teto de verdade e' um orcamento de tempo do mosaico inteiro, anotado
+# como follow-up no BLK-BASEMAP-04 junto com o desperdicio do @2x.
+_LABELS_TIMEOUT_S = 8
+
+# Circunferencia da Terra em Web Mercator (EPSG:3857). Uma constante so, usada pelo calculo de
+# zoom e pela grade de tiles do overlay — antes o mesmo literal aparecia nos dois lugares.
+_EARTH_M = 2.0 * np.pi * 6378137.0
 
 # Cores dos elementos desenhados DENTRO do mapa claro (precisam contrastar com fundo claro):
 # circulo do raio (AZUL, pedido de Vini 2026-06-17) e barra de escala/labels em tinta ESCURA.
@@ -73,6 +117,11 @@ _STREET_CAP = 210
 # circulo — estilo GeoFusion, sem letterbox. A analise (KPIs) segue circular/INTOCADA; e so RENDER.
 _MAP_FRAME_MARGIN = 0.08
 
+# BLK-RELPON-09 (S2a): lado do marcador de concorrente/Ultra em PIXELS do PNG-fonte.
+# Era um balao de 40 px cuja logo util media ~17 px; agora o quadrado INTEIRO e logo
+# (~26 px uteis). Ancora = CENTRO do quadrado (S2b). RENDER apenas (READ-ONLY M1).
+_PIN_LOGO_PX = 30
+
 # Web Mercator (CRS nativo dos tiles). A composicao do mapa novo acontece em 3857;
 # o motor (intersecao setor x circulo 1.5 km) segue intocado em aeqd local (censo_point).
 CRS_WEB_MERCATOR = "EPSG:3857"
@@ -87,6 +136,15 @@ MAPA_CENSITARIO_METRICAS = {
 # Chaves canonicas das camadas combinadas (BLK-CENSO-03-FU5): `score` e o choropleth de
 # score censitario COM legenda; `renda_domiciliar` e o choropleth de renda media domiciliar
 # (renda_pc x moradores x uplift SETORIAL x fator temporal); `concorrentes` e o mapa SO de pins.
+# BLK-RELPON-10: `socioeconomia` e o MESMO choropleth de score censitario do `score` (mesmo
+# insumo/legenda), so com titulo/raio rotulados p/ o slide-hero "Socioeconomia e Residual
+# Fitness" (S1=A do gate: o score PERMANECE tambem no grid 2x2); `residual` e o choropleth de
+# `oferta_efetiva_disponivel` por HEXAGONO H3 res-7 num raio de EXIBICAO de 5 km — chave
+# CONDICIONAL, so presente quando `hexes_df` foi passado e ha hex desenhavel.
+# BLK-RELPON-11: `entorno` e o mapa de QUADRA (so basemap Voyager + ponto central, sem
+# choropleth, sem pins e sem circulo de raio) num raio de EXIBICAO de ~0,14 km. Ao contrario de
+# `residual`, e INCONDICIONAL: depende so de `lat`/`lng` e cai no canvas claro offline quando
+# nao ha tile, entao a chave existe SEMPRE.
 CAMADAS_CENSITARIAS = (
     "densidade",
     "renda",
@@ -99,25 +157,35 @@ CAMADAS_CENSITARIAS = (
 )
 
 # BLK-RELPON-10: raio de EXIBICAO do mapa de Residual Fitness por hexagono. NAO e' parametro de
-# motor (nao entra em `config.py` nem no §3 do CLAUDE.md) e nao toca o motor censitario de 1,5 km.
-# No circulo de 1,5 km cabem so 3-5 hexes res-7 -> mosaico chapado; por isso o raio maior de
-# EXIBICAO. READ-ONLY sobre o M1.
+# motor — nao entra em `config.py` nem no §3 do CLAUDE.md, e nao toca
+# `setor_censitario_intersecao_area_1p5km`/`RAIO_CENSITARIO_DEFAULT_KM` (o motor censitario segue
+# em 1,5 km, INTOCADO). Motivo do raio maior: no circulo de 1,5 km cabem so 3 a 5 hexes res-7 ->
+# mosaico chapado, nao mapa de calor. READ-ONLY sobre o M1.
 RAIO_RESIDUAL_DISPLAY_KM = 5.0
-# Raio `k` do disco H3 (res-7) de hexes candidatos ao redor do hex central (cobre com folga a
-# meia-diagonal do frame de 5 km; excedentes descartados de graca pelo clip ao frame).
+# Raio `k` do disco H3 (res-7) de hexes candidatos ao redor do hex central. O disco cobre no PIOR
+# eixo (direcao da aresta) ~(2k+1)*apotema = (2k+1)*1,057 km; a meia-diagonal do frame de 5 km no
+# caller mais largo (1280x760 -> aspect ~1,573) e ~10,07 km. k=4 daria so 9,51 km -> CANTOS VAZIOS;
+# k=5 da 11,63 km e cobre com folga (91 hexes, custo irrelevante). Nao reduzir "para economizar":
+# os hexes excedentes sao descartados de graca pelo clip ao frame.
 _RESIDUAL_GRID_DISK_K = 5
 
 # BLK-RELPON-11: raio de EXIBICAO do mapa de quadra "Imagem do Entorno". Constante de RENDER
-# (fora de `config.py` / §3). Lado menor do frame ~302 m. O motor censitario (1,5 km) fica INTOCADO.
+# (fora de `config.py` / §3 do CLAUDE.md), como `RAIO_RESIDUAL_DISPLAY_KM`. O lado MENOR do frame
+# sai em 2 * raio * 1000 * (1 + _MAP_FRAME_MARGIN) = 2 * 140 * 1,08 = 302,4 m -> dentro da janela
+# util de 250-400 m medida na pesquisa de alternativas (alvo ~300 m); o lado menor e INVARIANTE em
+# relacao ao canvas, entao a resolucao efetiva (~1,82 px por metro de solo) e a mesma a 1000x760 e
+# a 1280x760. O motor censitario (`setor_censitario_intersecao_area_1p5km`,
+# `RAIO_CENSITARIO_DEFAULT_KM`=1,5) fica INTOCADO — este raio e' so de EXIBICAO.
 RAIO_ENTORNO_DISPLAY_KM = 0.14
 
-# Textos da camada `entorno` (PNG). ASCII PURO (excecao de RENDER ao §2: o font do Pillow no PNG
-# nao tem glifo acentuado). Nada promete satelite/aereo: o Voyager entrega morfologia urbana.
+# Textos da camada `entorno` (PNG). ASCII PURO: excecao de RENDER ao §2 do CLAUDE.md — o font
+# embutido do Pillow usado no PNG nao tem glifo acentuado. Nenhuma string promete satelite,
+# imagem aerea ou POI comercial: o Voyager entrega morfologia urbana (ruas/quadras/nomes).
 _ENTORNO_TITULO_PNG = "Entorno - mapa de quadra"
 _ENTORNO_VALOR_LINHA = "Ruas e quadras do entorno"
 _ENTORNO_LEGENDA_TITULO = "Entorno imediato do ponto"
-# Prefixo do rodape NO LUGAR de "Raio X km": nesta escala nao ha raio de ANALISE (o automatico
-# sairia "Raio 0,1 km", enganoso vs o motor censitario de 1,5 km).
+# Prefixo do rodape NO LUGAR de "Raio X km": nesta escala nao ha raio de ANALISE, e o formato
+# automatico sairia "Raio 0,1 km" (enganoso vs o motor censitario de 1,5 km).
 _ENTORNO_ROTULO_ESCALA = "Escala de quadra"
 
 _SECTOR_PALETTE = [
@@ -185,6 +253,26 @@ def _map_inner_dims(width: int, height: int) -> tuple[float, float]:
     """Dimensoes uteis (inner_w, inner_h) onde o frame e desenhado (sem o padding de 12px)."""
     left, top, right, bottom = _map_box(width, height)
     return (float(right - left - 24), float(bottom - top - 24))
+
+
+def _frame_box_metric(raio_km: float, width: int, height: int) -> Polygon:
+    """Frame do mapa (retangulo no CRS metrico local, centrado em 0,0), como poligono.
+
+    RETANGULO com a proporcao da area de mapa (nao quadrado), para o choropleth preencher a
+    figura inteira sem letterbox. O lado MENOR = raio*(1+`_MAP_FRAME_MARGIN`) — o circulo do raio
+    cabe e fica redondo, pois x/y compartilham o mesmo `scale` no render. Os poligonos (setores ou
+    hexes) sao recortados a este retangulo, nao ao circulo. Geometria PURA (testavel isolada);
+    extraida do corpo de `render_mapas_censitarios_combinados` no BLK-RELPON-10 SEM mudanca de
+    calculo. RENDER apenas — a analise (KPIs) segue circular e INTOCADA.
+    """
+    base_half = raio_km * 1000.0 * (1.0 + _MAP_FRAME_MARGIN)
+    inner_w, inner_h = _map_inner_dims(width, height)
+    aspect = inner_w / inner_h if inner_h > 0 else 1.0
+    if aspect >= 1.0:
+        frame_half_x, frame_half_y = base_half * aspect, base_half
+    else:
+        frame_half_x, frame_half_y = base_half, base_half / aspect
+    return box(-frame_half_x, -frame_half_y, frame_half_x, frame_half_y)
 
 
 def _font(size: int = 12) -> ImageFont.ImageFont:
@@ -307,9 +395,27 @@ def _format_valor_ponto_score(value: float | None) -> str:
     return f"{float(value):.0f}"
 
 
+def _format_valor_residual(value: float | None) -> str:
+    """Residual fitness disponivel (alunos): inteiro com separador de milhar '.'; "n/d" se ausente."""
+    if value is None or pd.isna(value):
+        return "n/d"
+    return f"{float(value):,.0f}".replace(",", ".")
+
+
 def _legenda_valor_ponto(rotulo: str, texto: str) -> str:
     """Monta o texto da faixa superior do mapa: "<Rotulo> no raio: <texto>" (BLK-RELPON-06/D1)."""
     return f"{rotulo} no raio: {texto}"
+
+
+def _legenda_valor_hex(rotulo: str, texto: str) -> str:
+    """Faixa superior da camada de HEXAGONO: "<Rotulo> no hexagono: <texto>" (BLK-RELPON-10).
+
+    Irmao de `_legenda_valor_ponto`, com rotulo de ESCALA diferente: o valor exibido e' o do hex
+    central (o MESMO ja mostrado nos Big Numbers via `lookup_hex_by_coord`), NAO a soma do disco —
+    somar seria agregado NOVO (analise), e este bloco e' 100% exibicao. ASCII puro ("hexagono"
+    sem acento): o font do PNG nao tem glifo acentuado.
+    """
+    return f"{rotulo} no hexagono: {texto}"
 
 
 def _draw_text(
@@ -365,17 +471,19 @@ def _paste_logo_pin(
     py: int,
     key: str,
     *,
-    size: int = 40,
+    size: int = _PIN_LOGO_PX,
 ) -> None:
-    """Cola o pin (balao + logo OU sigla) de `competitors._render_pin_tile` no mapa.
+    """Cola a LOGO QUADRADA (`competitors._render_square_logo_tile`) no mapa.
 
-    Ancora a PONTA do balao (anchorY do tile 128x128) no ponto (px, py): o tile e
-    desenhado com a ponta na base, entao posicionamos `(px - w//2, py - h)`. Reusa a
+    BLK-RELPON-09: saiu o balao teardrop com a logo mascarada em circulo; entra a
+    propria logo num quadrado de `size` px, com borda branca e sombra leve. Ancora o
+    CENTRO do quadrado no ponto (px, py) -- o marcador nao tem ponta, e ancorar a base
+    deslocaria a leitura ~15 px (~88 m no frame de 1,5 km). O ponto exato da analise
+    segue marcado pelo pin vermelho central (`_draw_center_pin`, INALTERADO). Reusa a
     mascara alpha do tile RGBA. Logo real quando ha PNG no _ICON_CACHE; sigla no fallback.
     """
-    tile = cast(Image.Image, _render_pin_tile(key))
-    tile = tile.resize((size, size), Image.Resampling.LANCZOS)
-    image.paste(tile, (int(px) - size // 2, int(py) - size), tile)
+    tile = cast(Image.Image, _render_square_logo_tile(key, size))
+    image.paste(tile, (int(px) - size // 2, int(py) - size // 2), tile)
 
 
 def _draw_legend_camada(
@@ -392,9 +500,13 @@ def _draw_legend_camada(
     BLK-RELPON-06 (D4): fontes/layout ampliados (`_FS_LEGENDA_TITULO`/`_FS_LEGENDA_CORPO`,
     linhas/swatch maiores) para o texto ficar legivel no PDF (celula ~299pt na tira 1x3).
 
-    BLK-RELPON-10-FU1: `mostrar_legenda_pins=False` omite a linha "Pins: Ultra e
-    concorrentes" — usado SO pela camada `residual` (sem pins). Default `True` preserva o
-    render das camadas anteriores.
+    BLK-RELPON-10-FU1 (gate de Vinicius, 2026-07-22): `mostrar_legenda_pins=False` omite a
+    linha "Pins: Ultra e concorrentes" -- usado SO pela camada `residual`, que deixou de
+    desenhar pins (a 5 km a densidade de logos cobria o choropleth). O default `True` mantem
+    as 5 camadas pre-existentes byte-a-byte identicas, INCLUSIVE quando o raio nao tem nenhum
+    concorrente: a legenda NAO pode reagir ao `pins` estar vazio, senao a byte-identidade
+    provada pelo QA quebraria nesse cenario. "Ponto central" permanece nas duas: o pin do
+    centro continua sendo desenhado no mapa.
     """
     title_font = _font(_FS_LEGENDA_TITULO)
     body_font = _font(_FS_LEGENDA_CORPO)
@@ -544,13 +656,34 @@ def _zoom_for_bounds(minx: float, maxx: float, target_px: int) -> int:
 
     A resolucao 3857 no zoom z e (2*pi*R)/(256*2^z) m/px; queremos span/res >= target_px.
     """
-    earth_circumference = 2.0 * np.pi * 6378137.0
     span_m = max(maxx - minx, 1.0)
     for zoom in range(0, 20):
-        res = earth_circumference / (256.0 * (2**zoom))
+        res = _EARTH_M / (256.0 * (2**zoom))
         if span_m / res >= target_px:
             return max(0, min(zoom, 19))
     return 19
+
+
+def _basemap_source(ctx: object) -> object:
+    """Fonte de tiles do fundo de ruas: self-host quando configurado, CartoDB Voyager senao.
+
+    O `contextily` aceita tanto um provider do `xyzservices` quanto um TEMPLATE de URL cru com
+    `{z}/{x}/{y}` — e por isso a env var pode entrar direto como `source`, sem provider novo.
+
+    Sem `API_BASEMAP_TILES_URL` devolve exatamente o que devolvia antes (`ctx.providers.CartoDB.
+    Voyager`), entao CI/teste/dev local seguem no caminho conhecido e o fallback offline da
+    DEC-004 (sem rede -> None -> canvas claro) vale IGUAL nos dois modos.
+
+    Nota de zoom: o `brazil.mbtiles` e' z0-14, mas o relatorio pede ate z19. Nao e' problema —
+    o tileserver-gl RASTERIZA o vetor no zoom pedido (overzoom de vetor, geometria continua
+    nitida), ao contrario de um raster overzoomado, que borra.
+    """
+    import os
+
+    url = os.environ.get(_BASEMAP_TILES_URL_ENV)
+    if url:
+        return url
+    return getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)  # type: ignore[attr-defined]
 
 
 def _fetch_basemap(
@@ -567,7 +700,20 @@ def _fetch_basemap(
     Cache local em data/cache/basemap_tiles/. Retorna (img_array, extent_3857) ou None.
 
     BLK-RELPON-11: `zoom_bump` sobrescreve o `_BASEMAP_ZOOM_BUMP` GLOBAL apenas nesta chamada
-    (`None` = usa a constante). A camada de quadra (`_render_camada_entorno`) passa `-1` (z18).
+    (`None` = usa a constante, que continua `1` e serve os frames de 1,5 km e 5 km). Honestidade
+    sobre o que ele faz HOJE no frame de quadra: e' um NO-OP, porque ha DOIS clampes em 19
+    (`_zoom_for_bounds` ja devolve no maximo 19 e o `min(19, ...)` abaixo repete o teto) -> tanto
+    `bump=1` quanto `bump=0` resolvem z19 nesse bbox — por isso o valor que a camada de quadra
+    passa NAO e' `0`, e sim `-1`: no gate visual de 2026-07-22 Vinicius escolheu **z18**, porque
+    o render tem ~1,82 px/m contra 3,65 px/m do tile z19, reduz o tile ~2x e joga o rotulo de rua
+    para 3,0-3,3 pt (variante recente) / 2,6-2,9 pt (CLASSICA) no PDF; em z18 os mesmos rotulos
+    dobram, com campo de visao identico. Ver `_render_camada_entorno`.
+
+    RECONCILIACAO (piloto-web x main): os frames de 1,5 km e de 5 km do Relatorio Pontual NAO
+    usam mais a constante — a orquestradora passa `zoom_bump=0` e `_render_camada_residual_hex`
+    passa `zoom_bump=-1`, mitigacao de tempo/quota do piloto contra o CartoDB (ver os
+    comentarios nas duas chamadas). O paragrafo acima descreve o default, que segue valendo
+    para quem nao passa o parametro.
     """
     try:
         import contextily as ctx  # lazy: so existe com o extra [basemap]
@@ -581,8 +727,10 @@ def _fetch_basemap(
             pass
         minx, miny, maxx, maxy = bounds_3857
         bump = _BASEMAP_ZOOM_BUMP if zoom_bump is None else int(zoom_bump)
+        # `max(0, ...)` e' guarda barata contra bump negativo em bbox continental (o piloto
+        # passa `zoom_bump` -1/0 nos frames de 5 km e 1,5 km; ver as chamadas).
         zoom = max(0, min(19, _zoom_for_bounds(minx, maxx, width) + bump))
-        source = getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)
+        source = _basemap_source(ctx)
         img, extent = ctx.bounds2img(minx, miny, maxx, maxy, zoom=zoom, source=source, ll=False)
         if _BASEMAP_CONTRAST != 1.0:
             base = Image.fromarray(np.asarray(img)).convert("RGB")
@@ -617,6 +765,134 @@ def _crop_png_box(
         return png_bytes
 
 
+def _labels_grid(
+    bounds_3857: tuple[float, float, float, float], width: int
+) -> tuple[int, int, int, int, int, float]:
+    """Zoom + faixa de tiles `(zoom, tx0, tx1, ty0, ty1, tile_m)` que cobre `bounds_3857`.
+
+    Extraido de `_fetch_labels` (emenda BLK-BASEMAP-03 a DEC-004) p/ ser testado SEM rede: e' a
+    unica aritmetica nao trivial do overlay e antes so era exercitada por monkeypatch da funcao
+    inteira, ou seja, nunca. Convencao XYZ: `x` cresce para LESTE a partir de -180 e `y` cresce
+    para o SUL a partir do topo — por isso `ty0` sai de `maxy` e `ty1` de `miny` (invertidos em
+    relacao a `x`). O teto de zoom 19 e' o mesmo do `_fetch_basemap`.
+    """
+    minx, miny, maxx, maxy = bounds_3857
+    zoom = min(19, _zoom_for_bounds(minx, maxx, width) + _BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP)
+    tile_m = _EARTH_M / (2**zoom)  # tamanho do tile em metros (3857)
+    tx0 = int((minx + _EARTH_M / 2) / tile_m)
+    tx1 = int((maxx + _EARTH_M / 2) / tile_m)
+    ty0 = int((_EARTH_M / 2 - maxy) / tile_m)
+    ty1 = int((_EARTH_M / 2 - miny) / tile_m)
+    return zoom, tx0, tx1, ty0, ty1, tile_m
+
+
+def _labels_extent(
+    tx0: int, tx1: int, ty0: int, ty1: int, tile_m: float
+) -> tuple[float, float, float, float]:
+    """Extent 3857 do mosaico como `(minx, maxx, miny, maxy)` — convencao do `ctx.bounds2img`.
+
+    E' o extent dos TILES INTEIROS, sempre >= o bbox pedido (a grade e' discreta): quem compoe
+    reprojeta por este extent, nao pelo bbox, senao os nomes saem deslocados.
+    """
+    return (
+        tx0 * tile_m - _EARTH_M / 2,
+        (tx1 + 1) * tile_m - _EARTH_M / 2,
+        _EARTH_M / 2 - (ty1 + 1) * tile_m,
+        _EARTH_M / 2 - ty0 * tile_m,
+    )
+
+
+def _labels_tile(zoom: int, tx: int, ty: int) -> Image.Image:
+    """Um tile de rotulo, servido do DISCO quando ja baixado (DEC-004, mitigacao (a)).
+
+    E' o cache que a mitigacao (a) da DEC-004 exige do basemap e que o overlay nao tinha: sem
+    ele cada PDF rebaixava o mosaico inteiro do CARTO. O `_fetch_basemap` ganha isso de graca
+    via `ctx.set_cache_dir()`; como aqui o fetch e' `urllib` cru, o cache e' explicito.
+
+    Escrita por arquivo temporario + `replace()` (atomico) de proposito: sao 8 threads aqui e
+    ate 3 relatorios concorrentes no piloto, entao um leitor poderia abrir um PNG truncado.
+    Falha de ESCRITA e' engolida — cache e' otimizacao e nao pode derrubar o render; falha de
+    REDE sobe e o chamador trata o tile como faltando (o mosaico segue sem aquele pedaco).
+    """
+    import os
+    import urllib.request
+
+    destino = _LABELS_CACHE_DIR / f"{zoom}_{tx}_{ty}.png"
+    if destino.is_file():
+        try:
+            with Image.open(destino) as cached:
+                return cached.convert("RGBA")
+        except Exception:
+            pass  # cache corrompido/truncado -> rebaixa como se nao existisse
+
+    url = _LABELS_TILE_URL.format(s=_LABELS_SUBDOMAINS[(tx + ty) % 3], z=zoom, x=tx, y=ty)
+    req = urllib.request.Request(url, headers={"User-Agent": "motor-expansao/censo-labels"})
+    with urllib.request.urlopen(req, timeout=_LABELS_TIMEOUT_S) as resp:  # noqa: S310 (URL https)
+        raw = resp.read()
+    tile = Image.open(BytesIO(raw)).convert("RGBA")
+    try:
+        _LABELS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        parcial = destino.with_name(f"{destino.name}.{os.getpid()}.tmp")
+        parcial.write_bytes(raw)
+        parcial.replace(destino)
+    except Exception:
+        pass
+    return tile
+
+
+def _fetch_labels(
+    bounds_3857: tuple[float, float, float, float],
+    width: int,
+) -> tuple[Image.Image, tuple[float, float, float, float]] | None:
+    """Mosaico SO-de-rotulos (PNG transparente) p/ compor os nomes POR CIMA do choropleth.
+
+    Espelha o contrato de `_fetch_basemap` (retorna imagem + extent 3857, topo = norte), mas a
+    imagem e RGBA transparente (so texto/halo) e vem de `_LABELS_TILE_URL`. Rede + best-effort:
+    QUALQUER falha (sem internet, timeout, tile faltando) -> None, e o mapa segue SEM nomes,
+    identico ao comportamento anterior (degradacao graciosa, igual ao basemap offline).
+
+    Consumido pelos DOIS relatorios: Pontual (`_render_camada`) e Municipal (BLK-BASEMAP-03) —
+    este ultimo porque o estilo self-host `ultra-maptiler` nao tem `transportation_name` e sem o
+    overlay o mapa municipal sairia com as ruas desenhadas e SEM nome. Tile a tile o fetch passa
+    por `_labels_tile`, que cacheia em disco (emenda BLK-BASEMAP-03 a DEC-004, mitigacao (a)); a
+    grade e o extent saem de `_labels_grid`/`_labels_extent`, testaveis sem rede.
+
+    NENHUM tile entrou -> `None`, nao um canvas transparente. Ate o BLK-BASEMAP-03 o
+    `except Exception: continue` por tile engolia TUDO e a funcao devolvia mosaico vazio +
+    extent mesmo com 100% dos tiles falhando: o docstring prometia `None`, o codigo entregava
+    outra coisa e o chamador compunha uma camada inteiramente transparente achando que tinha
+    rotulos. Mesmo criterio que a DEC-018 fixou para a foto de satelite ("conta os tiles que
+    entraram e devolve None se for zero").
+    """
+    import concurrent.futures as cf
+
+    try:
+        zoom, tx0, tx1, ty0, ty1, tile_m = _labels_grid(bounds_3857, width)
+        px = 512  # tiles @2x
+
+        canvas = Image.new("RGBA", ((tx1 - tx0 + 1) * px, (ty1 - ty0 + 1) * px), (0, 0, 0, 0))
+        coords = [(tx, ty) for ty in range(ty0, ty1 + 1) for tx in range(tx0, tx1 + 1)]
+        entraram = 0
+        with cf.ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {
+                (tx, ty): executor.submit(_labels_tile, zoom, tx, ty) for tx, ty in coords
+            }
+            for (tx, ty), future in futures.items():
+                try:
+                    tile = future.result()
+                    if tile.size != (px, px):
+                        tile = tile.resize((px, px), Image.Resampling.LANCZOS)
+                    canvas.alpha_composite(tile, ((tx - tx0) * px, (ty - ty0) * px))
+                    entraram += 1
+                except Exception:
+                    continue  # rotulo faltando nao e problema (base ja desenhada)
+        if not entraram:
+            return None  # rede toda fora -> contrato de None, nao mosaico transparente
+        return canvas, _labels_extent(tx0, tx1, ty0, ty1, tile_m)
+    except Exception:
+        return None
+
+
 def _render_camada(
     *,
     titulo: str,
@@ -645,12 +921,28 @@ def _render_camada(
     rotulo_escala: str | None = None,
     mostrar_legenda_pins: bool = True,
     mostrar_legenda: bool = True,
+    labels: tuple[Image.Image, tuple[float, float, float, float]] | None = None,
 ) -> bytes:
     """Desenha UMA camada (mesmos bbox/projecao/basemap/pins; varia fill + legenda).
 
     Quando `pins_only=True` (camada Concorrentes): pula o choropleth de faixas E o overlay
     de ruas de pixel; mantem basemap + circulo + ponto central + pins de concorrentes/Ultra +
     escala + footer + legenda so de pins. BLK-CENSO-03.
+
+    BLK-RELPON-11 (2 parametros DEFAULT-PRESERVING — com os defaults, as 7 camadas anteriores
+    saem byte-a-byte identicas):
+    - `circle_3857=None` omite o circulo do raio. Usado SO pela camada `entorno`, cujo frame
+      de ~300 m nao tem raio de ANALISE nenhum (um circulo ali seria lido como se a analise
+      censitaria fosse de 140 m, contradizendo o motor de 1,5 km).
+    - `rotulo_escala` substitui o prefixo "Raio X km" do rodape. `None` mantem o formato atual.
+
+    `mostrar_legenda` (piloto web, pedido Felipe 2026-07-23) suprime a coluna de legenda
+    INTEIRA — nao so a linha de pins do `mostrar_legenda_pins`. Usado SO pela camada
+    Concorrentes, que e' so-pins-com-logo e cujo PNG e' depois recortado por `_crop_png_box`.
+    Default `True` -> render byte-a-byte identico para as demais camadas.
+
+    `labels` (BLK-RELPON-07) e o mosaico so-de-rotulos de `_fetch_labels`, composto POR CIMA
+    do choropleth (e por BAIXO do circulo/pins). `None` = sem overlay, render anterior.
 
     `valor_ponto` (BLK-RELPON-05, faixa REVERTIDA p/ os agregados do raio pelo
     BLK-RELPON-06/D1): texto opcional da faixa superior ("<Variavel> no raio: <valor>"),
@@ -760,6 +1052,27 @@ def _render_camada(
         region.paste(basemap_patch, (0, 0), street_mask)
         image.paste(region, (left, top))
 
+    # Rotulos (NOMES de rua/bairro) POR CIMA do choropleth -> da p/ identificar a area. O realce
+    # `_STREET_*` acima recupera so as LINHAS de rua; aqui entram os TEXTOS, crus, de um tileset
+    # so-rotulos transparente (buscado 1x em `render_mapas_censitarios_combinados`). Alinhado ao
+    # extent dos tiles como o basemap (project()), recortado ao `map_box`. Pulado em pins_only
+    # (mapa so-pins mantem os rotulos nativos do basemap, sem choropleth por cima). RENDER apenas.
+    if labels is not None and not pins_only:
+        labels_img, (lb_minx, lb_maxx, lb_miny, lb_maxy) = labels
+        lx0, ly0 = project(lb_minx, lb_maxy)  # canto sup-esq do mosaico de rotulos
+        lx1, ly1 = project(lb_maxx, lb_miny)  # canto inf-dir
+        lw, lh = max(1, int(round(lx1 - lx0))), max(1, int(round(ly1 - ly0)))
+        placed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        placed.paste(labels_img.resize((lw, lh), Image.Resampling.LANCZOS),
+                     (int(round(lx0)), int(round(ly0))))
+        patch = placed.crop((left, top, right, bottom))
+        region = image.crop((left, top, right, bottom))
+        region.alpha_composite(patch)
+        image.paste(region, (left, top))
+
+    # Circulo do raio: OPCIONAL desde o BLK-RELPON-11 (a camada `entorno`, mapa de quadra, nao
+    # tem raio). O overlay de rotulos acima entra ANTES dele de proposito -- o circulo e' desenho
+    # do motor, nao do basemap, e nao pode ser coberto por rotulo de rua.
     if circle_3857 is not None:
         circle_points = [
             (int(round(px)), int(round(py)))
@@ -795,7 +1108,8 @@ def _render_camada(
     meters_per_px = 1 / scale
     _draw_scale_bar(draw, map_box, meters_per_px)
     # BLK-RELPON (pedido Felipe 2026-07-23): a camada Concorrentes passa `mostrar_legenda=False`
-    # -> nenhuma legenda desenhada (o mapa e so-pins com logos; a legenda era redundante).
+    # -> nenhuma legenda desenhada (o mapa e so-pins com logos; a legenda era redundante). Com o
+    # default `True` as demais camadas seguem byte-a-byte identicas.
     if mostrar_legenda:
         _draw_legend_camada(
             draw, legend_x, 96, legenda_titulo, legenda_entries,
@@ -804,9 +1118,12 @@ def _render_camada(
 
     # D8=B (BLK-EST-02): rodape enxuto. Atribuicao CARTO (exigida pela licenca DEC-004)
     # permanece quando ha basemap; some no fallback offline (sem tile, sem atribuicao).
-    # BLK-RELPON-10: o raio deriva de `raio_km` (com 1,5 sai "Raio 1,5 km" identico; residual
-    # sai "Raio 5,0 km"). BLK-RELPON-11: `rotulo_escala` (default None) troca SO o prefixo
-    # (a camada `entorno` passa "Escala de quadra").
+    # BLK-RELPON-10 (DT-5): o raio deixa de ser hardcode e deriva de `raio_km` (parametro que ja
+    # existia e nao era usado no corpo) -> com raio_km=1.5 a string sai IDENTICA ("Raio 1,5 km")
+    # e as 4 camadas censitarias ficam byte-a-byte iguais; a camada de residual sai "Raio 5,0 km".
+    # BLK-RELPON-11: `rotulo_escala` (default None) troca SO o prefixo do rodape -- com None a
+    # string sai EXATAMENTE como antes; a camada `entorno` passa "Escala de quadra" porque
+    # "Raio 0,1 km" (o que `:.1f` produziria a 0,14 km) seria ativamente enganoso.
     raio_txt = f"{float(raio_km):.1f}".replace(".", ",")
     prefixo = f"Raio {raio_txt} km" if rotulo_escala is None else rotulo_escala
     if drew_basemap:
@@ -834,38 +1151,11 @@ def _score_legend_entries() -> list[tuple[str, tuple[int, int, int, int]]]:
     return entries
 
 
-def _frame_box_metric(raio_km: float, width: int, height: int) -> Polygon:
-    """Frame do mapa (retangulo no CRS metrico local, centrado em 0,0), como poligono.
-
-    RETANGULO com a proporcao da area de mapa (nao quadrado), para o choropleth preencher a
-    figura inteira sem letterbox. O lado MENOR = raio*(1+`_MAP_FRAME_MARGIN`). Geometria PURA;
-    mesma que a inline de `render_mapas_censitarios_combinados`. RENDER apenas (analise INTOCADA).
-    """
-    base_half = raio_km * 1000.0 * (1.0 + _MAP_FRAME_MARGIN)
-    inner_w, inner_h = _map_inner_dims(width, height)
-    aspect = inner_w / inner_h if inner_h > 0 else 1.0
-    if aspect >= 1.0:
-        frame_half_x, frame_half_y = base_half * aspect, base_half
-    else:
-        frame_half_x, frame_half_y = base_half, base_half / aspect
-    return box(-frame_half_x, -frame_half_y, frame_half_x, frame_half_y)
-
-
-def _format_valor_residual(value: float | None) -> str:
-    """Residual fitness disponivel (alunos): inteiro com separador de milhar '.'; "n/d" se ausente."""
-    if value is None or pd.isna(value):
-        return "n/d"
-    return f"{float(value):,.0f}".replace(",", ".")
-
-
-def _legenda_valor_hex(rotulo: str, texto: str) -> str:
-    """Faixa superior da camada de HEXAGONO: "<Rotulo> no hexagono: <texto>" (BLK-RELPON-10).
-
-    Irmao de `_legenda_valor_ponto`; o valor exibido e' o do hex central (o MESMO dos Big
-    Numbers), NAO a soma do disco. ASCII puro ("hexagono" sem acento): o font do PNG nao tem
-    glifo acentuado.
-    """
-    return f"{rotulo} no hexagono: {texto}"
+# ── BLK-RELPON-10: camada de Residual Fitness por HEXAGONO H3 (raio de EXIBICAO 5 km) ──────
+# READ-ONLY sobre o M1: `oferta_efetiva_disponivel` e' apenas LIDA do dataframe recebido; nada
+# aqui recalcula score/flag/carteira/plano nem escreve artefato. O motor censitario (raio 1,5 km,
+# `setor_censitario_intersecao_area_1p5km`) fica INTOCADO — esta camada e' um recorte visual
+# paralelo, com escala PROPRIA e rotulada como tal.
 
 
 def _hex_polygons_3857(
@@ -874,16 +1164,30 @@ def _hex_polygons_3857(
     hexes_df: pd.DataFrame | None,
     frame_3857: BaseGeometry,
     to_3857: Transformer,
+    *,
+    value_col: str = "oferta_efetiva_disponivel",
 ) -> tuple[list[tuple[BaseGeometry, int]], pd.Series]:
     """Poligonos dos hexes H3 res-7 do disco em torno do ponto, recortados ao frame (EPSG:3857).
 
     Cadeia: `h3.latlng_to_cell(lat,lng,7)` -> `h3.grid_disk(centro, _RESIDUAL_GRID_DISK_K)` ->
     filtro por `hex_id` no `hexes_df` -> `h3.cell_to_boundary` -> projecao -> clip ao frame.
-    Devolve `(records, values)` no formato que `_render_camada` consome. Lista vazia quando nao ha
-    hex utilizavel. READ-ONLY: `oferta_efetiva_disponivel` e' apenas LIDA.
+    O `7` e' `H3_RESOLUTION` do M1, apenas LIDO. Import de `h3` LAZY (mesmo padrao de `data.py`).
+
+    Devolve `(records, values)` no formato que `_render_camada` consome: `records` = lista de
+    `(geometria_3857, idx)` e `values` = Serie posicional com o valor de `value_col`
+    (default `oferta_efetiva_disponivel`; a socioeconomia passa `score_setor_2022_calibrado`)
+    (`idx` indexa `values.iloc[]`). Lista vazia quando nao ha hex utilizavel — inclusive quando
+    `value_col` nao esta no `hexes_df` (a socioeconomia SEM a coluna cai no fallback textual).
+
+    Nota de projecao: `h3.cell_to_boundary` emite WGS84 e usamos `CRS_ORIGEM_CENSO`
+    (EPSG:4674/SIRGAS 2000) como origem — igual ao que `_project_points` ja faz com lat/lng de
+    concorrentes. A diferenca 4674<->4326 e' sub-metrica, irrelevante num frame de ~17 km, e
+    preserva UMA unica convencao "lat/lng -> 3857" no modulo.
     """
     empty: tuple[list[tuple[BaseGeometry, int]], pd.Series] = ([], pd.Series(dtype="float64"))
     if hexes_df is None or hexes_df.empty or "hex_id" not in hexes_df.columns:
+        return empty
+    if value_col not in hexes_df.columns:
         return empty
     try:
         import h3  # lazy: nunca no topo deste modulo
@@ -918,19 +1222,29 @@ def _hex_polygons_3857(
         if clipped.is_empty:
             continue
         records.append((clipped, len(values)))
-        values.append(float(pd.to_numeric(row.get("oferta_efetiva_disponivel"), errors="coerce")))
+        values.append(float(pd.to_numeric(row.get(value_col), errors="coerce")))
 
     if not records:
         return empty
     return records, pd.Series(values, dtype="float64")
 
 
-def _residual_hex_central(lat: float, lng: float, hexes_df: pd.DataFrame | None) -> float | None:
-    """`oferta_efetiva_disponivel` do hex H3 res-7 que CONTEM o ponto (mesmo valor dos Big
-    Numbers). `None` quando a coluna/linha nao existe ou o valor e' NaN -> faixa "n/d"."""
+def _residual_hex_central(
+    lat: float,
+    lng: float,
+    hexes_df: pd.DataFrame | None,
+    *,
+    value_col: str = "oferta_efetiva_disponivel",
+) -> float | None:
+    """Valor de `value_col` do hex H3 res-7 que CONTEM o ponto — o MESMO valor exibido nos
+    Big Numbers (mesma chave `hex_id`, mesma resolucao 7 de `lookup_hex_by_coord`). Deliberadamente
+    NAO soma o disco: somar seria um agregado NOVO (analise), e este bloco e' so exibicao. Default
+    `oferta_efetiva_disponivel` (residual); a socioeconomia passa `score_setor_2022_calibrado`.
+    `None` quando a coluna/linha nao existe ou o valor e' NaN -> a faixa mostra "n/d".
+    """
     if hexes_df is None or hexes_df.empty:
         return None
-    if not {"hex_id", "oferta_efetiva_disponivel"}.issubset(hexes_df.columns):
+    if not {"hex_id", value_col}.issubset(hexes_df.columns):
         return None
     try:
         import h3  # lazy
@@ -941,7 +1255,7 @@ def _residual_hex_central(lat: float, lng: float, hexes_df: pd.DataFrame | None)
     linha = hexes_df.loc[hexes_df["hex_id"].astype(str) == str(cell)]
     if linha.empty:
         return None
-    valor = pd.to_numeric(linha["oferta_efetiva_disponivel"].iloc[0], errors="coerce")
+    valor = pd.to_numeric(linha[value_col].iloc[0], errors="coerce")
     if pd.isna(valor):
         return None
     return float(valor)
@@ -959,13 +1273,30 @@ def _render_camada_residual_hex(
     street_gain: float | None = None,
     street_cap: int | None = None,
     choropleth_alpha: int | None = None,
+    value_col: str = "oferta_efetiva_disponivel",
+    titulo: str = "Residual Fitness - raio 5 km",
+    legenda_titulo: str = "Residual disponivel (alunos)",
+    legenda_entries: list[tuple[str, tuple[int, int, int, int]]] | None = None,
+    color_fn: Callable[[float], tuple[int, int, int, int]] | None = None,
+    valor_central_rotulo: str = "Residual",
+    valor_central_fmt: Callable[[float | None], str] = _format_valor_residual,
 ) -> bytes | None:
-    """Choropleth de `oferta_efetiva_disponivel` por hexagono H3 no raio de EXIBICAO de 5 km.
+    """Choropleth de `value_col` por hexagono H3 no raio de EXIBICAO de 5 km.
 
     Monta o PROPRIO frame/circulo/basemap (bounds diferentes das camadas de 1,5 km) e delega o
-    desenho a `_render_camada`. SEM pins (a 5 km a densidade de logos cobria o choropleth). Devolve
-    `None` quando nao ha hex desenhavel -> a chave `residual` some e o slide cai no fallback textual.
+    desenho a `_render_camada`, cujo `sector_records_3857` ja e' generico (poligonos 3857 coloridos
+    por `color_fn`) — nao precisa saber que sao hexes. Pins de concorrentes/Ultra sao filtrados
+    pelo bbox do frame de 5 km (NAO reusa `result["concorrentes_raio"]`, que e' do recorte de
+    1,5 km e daria a impressao falsa de que so existem aqueles). Devolve `None` quando nao ha hex
+    desenhavel -> a chave `residual` some do dict e o slide cai no fallback textual do PDF.
+
+    Generalizado no BLK-RELPON-13 (DEFAULT-PRESERVING): TODOS os parametros keyword-only novos
+    (`value_col`/`titulo`/`legenda_titulo`/`legenda_entries`/`color_fn`/`valor_central_*`) tem
+    default que reproduz o Residual Fitness byte-a-byte. A socioeconomia do slide-hero reusa este
+    caminho passando `value_col="score_setor_2022_calibrado"` + titulo/legenda/`color_fn` do score
+    — mesmo frame/basemap/clip de 5 km, sem duplicar a logica.
     """
+    # Saida rapida: sem dataframe de hexes nao ha camada (nem transformer, nem fetch de tiles).
     if hexes_df is None or hexes_df.empty:
         return None
 
@@ -974,20 +1305,31 @@ def _render_camada_residual_hex(
 
     metric_crs = _local_metric_crs(lat, lng)
     to_3857_local = _transformer(metric_crs, CRS_WEB_MERCATOR)
+    # (o transformer para WGS84 saiu no BLK-RELPON-10-FU1: so servia ao recorte de pins.)
+    # Transformer lat/lng -> 3857 criado UMA vez e reusado por todos os hexes (`_transformer`
+    # NAO e' cacheado; recria-lo por hex custaria caro). Espelha o `_to_3857` compartilhado da
+    # orquestradora (Fix 1 BLK-PERF-01a).
     to_3857_wgs = _transformer(CRS_ORIGEM_CENSO, CRS_WEB_MERCATOR)
 
     frame_3857 = _project_geometry(frame_metric, to_3857_local)
     circle_3857 = _project_geometry(circle_metric, to_3857_local)
     center_3857 = to_3857_local.transform(0.0, 0.0)
 
-    hex_records, hex_values = _hex_polygons_3857(lat, lng, hexes_df, frame_3857, to_3857_wgs)
+    hex_records, hex_values = _hex_polygons_3857(
+        lat, lng, hexes_df, frame_3857, to_3857_wgs, value_col=value_col
+    )
     if not hex_records:
         return None
 
-    # Zoom GROSSO para o overview de 5 km: o frame do residual e ~10x mais largo que os mapas
-    # de 1,5 km, entao o zoom default (+1) baixaria CENTENAS de tiles (o Relatorio Pontual
-    # estourava o timeout). z13 (~14 m/px) casa com a resolucao de exibicao (1280 px p/ ~18 km)
-    # e mostra vias/quadras principais — detalhe de rua nao e legivel a 5 km de qualquer forma.
+    # BLK-RELPON-10-FU1: esta camada NAO desenha pins (ver comentario na chamada de
+    # `_render_camada` abaixo), entao o recorte de pontos por bbox do frame foi removido
+    # junto com os parametros `competitors_df`/`ultra_df`.
+    #
+    # Zoom GROSSO para o overview de 5 km (piloto web): o frame do residual e ~10x mais largo
+    # que os mapas de 1,5 km, entao o zoom default (+1) baixaria CENTENAS de tiles (o Relatorio
+    # Pontual estourava o timeout). z13 (~14 m/px) casa com a resolucao de exibicao (1280 px p/
+    # ~18 km) e mostra vias/quadras principais — detalhe de rua nao e legivel a 5 km de qualquer
+    # forma. Vale nos DOIS modos de basemap (CartoDB e self-host `API_BASEMAP_TILES_URL`).
     basemap_tiles = _fetch_basemap(frame_3857.bounds, width, zoom_bump=-1) if basemap else None
 
     eff_alpha = _CHOROPLETH_ALPHA if choropleth_alpha is None else int(choropleth_alpha)
@@ -999,15 +1341,29 @@ def _render_camada_residual_hex(
         r, g, b, _a = _color_for_bands(value, OFERTA_DISPONIVEL_ALUNOS_BANDS)
         return (int(r), int(g), int(b), eff_alpha)
 
+    # DEFAULT-PRESERVING: sem override (`None`), legenda/cor sao as do Residual Fitness -> byte
+    # a byte identico ao de hoje. A socioeconomia passa as suas (score) e nao toca este caminho.
+    _legenda_entries_eff = (
+        legenda_entries
+        if legenda_entries is not None
+        else _bands_legend_entries(OFERTA_DISPONIVEL_ALUNOS_BANDS)
+    )
+    _color_fn_eff = color_fn if color_fn is not None else _residual_fn
+
     return _render_camada(
-        titulo="Residual Fitness - raio 5 km",
-        legenda_titulo="Residual disponivel (alunos)",
-        legenda_entries=_bands_legend_entries(OFERTA_DISPONIVEL_ALUNOS_BANDS),
-        color_fn=_residual_fn,
+        titulo=titulo,
+        legenda_titulo=legenda_titulo,
+        legenda_entries=_legenda_entries_eff,
+        color_fn=_color_fn_eff,
         source_values=hex_values,
         sector_records_3857=hex_records,
         circle_3857=circle_3857,
         center_3857=center_3857,
+        # BLK-RELPON-10-FU1 (gate de Vinicius, 2026-07-22): SEM pins nesta camada. A area a
+        # 5 km e ~11x a de 1,5 km (r^2), entao a densidade de logos cobria o choropleth --
+        # medido na amostra da Av. Paulista, onde os marcadores tapavam quase todos os
+        # hexagonos. Quem esta instalado ja e mostrado na pagina "Concorrentes"; este mapa
+        # existe para responder ONDE HA ESPACO, e a cor e o dado dele.
         pins=[],
         ultra_pins=[],
         mostrar_legenda_pins=False,
@@ -1023,9 +1379,19 @@ def _render_camada_residual_hex(
         street_gain=street_gain,
         street_cap=street_cap,
         valor_ponto=_legenda_valor_hex(
-            "Residual", _format_valor_residual(_residual_hex_central(lat, lng, hexes_df))
+            valor_central_rotulo,
+            valor_central_fmt(
+                _residual_hex_central(lat, lng, hexes_df, value_col=value_col)
+            ),
         ),
     )
+
+
+# ── BLK-RELPON-11: camada "Imagem do Entorno" — mapa de QUADRA (raio de EXIBICAO ~0,14 km) ──
+# Caminho A1 do gate de Vinicius (2026-07-22): mesmo provedor CartoDB Voyager das DEC-004/011,
+# SEM DEC nova e SEM provedor novo. Nao ha dado tematico nesta camada: e' so o basemap de ruas
+# + o ponto central, para o leitor ver a morfologia fisica (quadras, vias, nomes de rua) em que
+# o ponto esta inserido. READ-ONLY sobre o M1; o motor censitario (1,5 km) fica INTOCADO.
 
 
 def _render_camada_entorno(
@@ -1038,17 +1404,33 @@ def _render_camada_entorno(
 ) -> bytes:
     """Mapa de quadra do entorno imediato do ponto (so basemap + ponto central).
 
-    Monta o PROPRIO frame (raio de EXIBICAO `RAIO_ENTORNO_DISPLAY_KM`, lado curto ~302 m) e delega
-    a `_render_camada` com `pins_only=True` — sem choropleth, sem circulo de raio (`circle_3857=None`,
-    rodape "Escala de quadra") e sem pins de concorrentes/Ultra (o pin central vermelho CONTINUA).
-    `zoom_bump=-1` -> z18 (gate visual de Vinicius, 2026-07-22: rotulos de rua legiveis). Devolve
-    SEMPRE `bytes` (sem tile/rede o `_fetch_basemap` da None e `_render_camada` cai no canvas claro).
+    Monta o PROPRIO frame (raio de EXIBICAO `RAIO_ENTORNO_DISPLAY_KM`, lado curto ~302 m) e
+    delega o desenho a `_render_camada` com `pins_only=True` — que pula o choropleth, o overlay
+    de ruas (desnecessario: sem cor por cima, as ruas do Voyager ja sao nativas) e a mensagem
+    "Sem setores intersectados no raio".
+
+    Decisoes de produto (Planner, 2026-07-22):
+    - **SEM pins de concorrentes/Ultra**: a ~1,82 px por metro de solo, um pin de
+      `_PIN_LOGO_PX`=30 px cobre ~16,5 m de solo — uma edificacao inteira; apagaria o objeto da
+      pagina. Mesmo argumento (e mesmo gatekeeper) do BLK-RELPON-10-FU1. "Quem esta instalado"
+      e' papel da pagina Concorrentes. O pin central vermelho CONTINUA: e' o sujeito da pagina.
+    - **SEM circulo de raio** (`circle_3857=None`) e rodape "Escala de quadra" (D4): nao ha raio
+      de ANALISE nesta escala. A referencia de distancia continua na barra de escala.
+
+    Devolve SEMPRE `bytes` (nunca `None`): sem tile/rede/contextily o proprio `_fetch_basemap`
+    devolve `None` e `_render_camada` cai no canvas claro — por isso a chave e' INCONDICIONAL.
     """
     frame_metric = _frame_box_metric(RAIO_ENTORNO_DISPLAY_KM, width, height)
     to_3857_local = _transformer(_local_metric_crs(lat, lng), CRS_WEB_MERCATOR)
     frame_3857 = _project_geometry(frame_metric, to_3857_local)
     center_3857 = to_3857_local.transform(0.0, 0.0)
 
+    # `zoom_bump=-1` -> z18 (GATE VISUAL de Vinicius, 2026-07-22). O frame resolveria z19 pelos
+    # dois clampes em 19, mas o render tem ~1,82 px/m contra 3,65 px/m do tile z19: o tile e'
+    # reduzido ~2x e o rotulo de rua sai a 3,0-3,3 pt (variante recente) / 2,6-2,9 pt (CLASSICA,
+    # que e' a que o dashboard e o bot entregam) — numero de porta ilegivel, que era justamente
+    # o que motivava o z19. Em z18 os mesmos rotulos dobram (6,0-6,6 / 5,2-5,7 pt) com campo de
+    # visao IDENTICO. E' o mesmo mecanismo que matou o z20 na pesquisa; aqui ele ja morde no z19.
     basemap_tiles = _fetch_basemap(frame_3857.bounds, width, zoom_bump=-1) if basemap else None
 
     return _render_camada(
@@ -1095,20 +1477,45 @@ def render_mapas_censitarios_combinados(
     street_cap: int | None = None,
     choropleth_alpha: int | None = None,
     hexes_df: pd.DataFrame | None = None,
+    labels_overlay: bool = True,
 ) -> dict[str, bytes]:
     """Gera as camadas do Relatorio Pontual Censitario numa unica chamada.
 
-    BLK-RELPON-10/11: alem das 4 camadas de choropleth (1,5 km) + `concorrentes`, produz
-    `socioeconomia` (mesmo choropleth de score, para o slide-hero), `residual`
-    (`oferta_efetiva_disponivel` por hex H3 no raio de EXIBICAO de 5 km — CONDICIONAL ao
-    `hexes_df`) e `entorno` (mapa de quadra ~0,14 km). READ-ONLY sobre o M1.
-
     Retorna `{"densidade": png, "renda": png, "score": png, "renda_domiciliar": png,
-    "concorrentes": png}` (chaves canonicas). `renda_domiciliar` e o choropleth de renda media
-    domiciliar (renda_pc x moradores x uplift SETORIAL x fator temporal); `concorrentes` e o mapa SO
-    de pins (basemap + pins, sem choropleth). As 4 camadas de choropleth (densidade/renda/score/
-    renda_domiciliar) e a de pins compartilham basemap, bbox, projecao (EPSG:3857) e pins; variam
-    so o fill dos setores + a legenda/titulo.
+    "concorrentes": png, "entorno": png}` e, CONDICIONALMENTE, `"socioeconomia"` e `"residual"`
+    (ambas dependem de `hexes_df` desenhavel — ver abaixo).
+    `renda_domiciliar` e o choropleth de renda media domiciliar (renda_pc x moradores x uplift
+    SETORIAL x fator temporal); `concorrentes` e o mapa SO de pins (basemap + pins, sem
+    choropleth). As camadas de choropleth de SETOR e a de pins compartilham basemap, bbox,
+    projecao (EPSG:3857) e pins; variam so o fill dos setores + a legenda/titulo.
+
+    BLK-RELPON-10 (slide-hero "Socioeconomia e Residual Fitness"),
+    revisto no BLK-RELPON-13 (gate visual de Vinicius, 2026-07-23):
+    - `socioeconomia` e o choropleth de `score_setor_2022_calibrado` por HEXAGONO H3 res-7 num
+      raio de EXIBICAO de 5 km (disco `grid_disk` k=5), com a MESMA metrica/paleta do `score`
+      do grid 2x2 — o que a distingue e' a geometria/escala (hex a 5 km, nao setor a 1,5 km).
+      Reusa o caminho de `_render_camada_residual_hex` (mesmo frame/basemap/clip do residual).
+      CONDICIONAL como o `residual`: so entra no dict quando `hexes_df` traz `hex_id` +
+      `score_setor_2022_calibrado` e ha >= 1 hex desenhavel; senao a chave e' AUSENTE e o PDF
+      cai no fallback textual. O `score` PERMANECE no grid 2x2 (S1=A do gate de Vinicius).
+    - `residual` e o choropleth de `oferta_efetiva_disponivel` (ALUNOS) por hexagono H3 res-7 num
+      raio de EXIBICAO de 5 km (`RAIO_RESIDUAL_DISPLAY_KM`), com escala PROPRIA rotulada no titulo
+      e no rodape do PNG. So entra no dict quando `hexes_df` foi passado E ha >= 1 hex desenhavel;
+      caso contrario a chave e' AUSENTE e o PDF cai no fallback textual (offline-safe).
+      `hexes_df` precisa ter `hex_id` + `oferta_efetiva_disponivel` — no dashboard e' o proprio
+      `df` da UF ja em escopo. *Limitacao conhecida e aceita:* como o `df` e' a fatia da UF
+      carregada (CLAUDE.md §4), um ponto na divisa de UF tera o disco truncado; o efeito e'
+      gracioso (hexes ausentes ficam sem cor, nao levantam excecao).
+    READ-ONLY sobre o M1: `oferta_efetiva_disponivel` e `score_setor_2022_calibrado` sao apenas
+    LIDOS; nenhum score/flag/artefato e' recalculado ou escrito.
+
+    BLK-RELPON-11 (pagina "Imagem do Entorno"):
+    - `entorno` e o mapa de QUADRA do entorno imediato: so o basemap CartoDB Voyager + o ponto
+      central, num raio de EXIBICAO de `RAIO_ENTORNO_DISPLAY_KM` (~0,14 km -> lado curto ~302 m
+      do frame), com `zoom_bump=-1` (z18 — gate visual, ver `_render_camada_entorno`), SEM pins
+      e SEM circulo de raio. Ao contrario de `residual`,
+      a chave e' INCONDICIONAL: depende so de `lat`/`lng` e cai no canvas claro quando nao ha
+      tile (`basemap=False`, sem rede ou sem o extra `[basemap]`).
 
     READ-ONLY sobre o M1: o motor (`analisar_ponto_censitario_setores`,
     `setor_censitario_intersecao_area_1p5km`, raio 1.5 km) e INTOCADO; toda a mudanca e
@@ -1121,6 +1528,12 @@ def render_mapas_censitarios_combinados(
     subir o `ceil` recupera as vias residenciais CINZA-CLARAS do Voyager (lum ~200) que com o
     teto baixo (160) sumiam sob a cor. `choropleth_alpha` e a opacidade do preenchimento das
     faixas — menor = ruas aparecem mais. A legenda usa RGB solido, entao nao muda com o alpha.
+
+    BLK-RELPON-07: `labels_overlay` (default True) compoe os NOMES de rua/bairro POR CIMA do
+    choropleth (tileset so-rotulos, buscado 1x por `_fetch_labels` e compartilhado pelas 4 camadas
+    de choropleth). Enquanto o `_STREET_*` recupera so as LINHAS de rua, este overlay traz os
+    TEXTOS -> da p/ identificar a area. Best-effort: sem basemap/rede o overlay some (mapa sem
+    nomes, identico ao anterior). A camada so-pins (concorrentes) nao recebe overlay.
 
     BLK-RELPON-05: os 3 choropleths (densidade/renda/score) recebem uma faixa superior,
     computada a partir do PROPRIO `result` interno desta funcao (mesma chamada de
@@ -1147,17 +1560,8 @@ def render_mapas_censitarios_combinados(
         ultra_df=ultra_df,
     )
     # Frame do mapa: RETANGULO com a proporcao da area de mapa (nao mais quadrado), para o
-    # choropleth preencher a figura inteira sem letterbox. O lado MENOR = raio*(1+margem) (o
-    # circulo de 1.5 km cabe e fica redondo, pois x/y tem o mesmo scale). Os setores sao
-    # recortados a este retangulo (nao ao circulo) -> figura toda preenchida. RENDER apenas.
-    base_half = raio_km * 1000.0 * (1.0 + _MAP_FRAME_MARGIN)
-    inner_w, inner_h = _map_inner_dims(width, height)
-    aspect = inner_w / inner_h if inner_h > 0 else 1.0
-    if aspect >= 1.0:
-        frame_half_x, frame_half_y = base_half * aspect, base_half
-    else:
-        frame_half_x, frame_half_y = base_half, base_half / aspect
-    frame_box_metric = box(-frame_half_x, -frame_half_y, frame_half_x, frame_half_y)
+    # choropleth preencher a figura inteira sem letterbox (ver `_frame_box_metric`).
+    frame_box_metric = _frame_box_metric(raio_km, width, height)
     sector_records, circle_metric = _decode_intersections(
         lat,
         lng,
@@ -1237,6 +1641,7 @@ def render_mapas_censitarios_combinados(
     bounds_t = frame_3857.bounds
 
     basemap_tiles = None
+    labels_tiles = None
     if basemap:
         # `zoom_bump=0` (em vez do +1 global): o frame de 1,5 km ficou mais largo (5,5 km) com
         # os mapas retangulares, e o +1 baixava ~208 tiles/mapa (27 s, cache frio) -> o Relatorio
@@ -1244,6 +1649,14 @@ def render_mapas_censitarios_combinados(
         # com a resolucao de exibicao (1280 px p/ 5,5 km) — as ruas seguem nitidas ao reduzir
         # (o tile ja era super-amostrado). 5x menos requisicoes de tile por relatorio.
         basemap_tiles = _fetch_basemap(bounds_t, width, zoom_bump=0)
+        # rotulos buscados UMA vez (compartilhados pelas 4 camadas de choropleth); so quando ha
+        # basemap (mesma condicao de rede) e o overlay esta ligado. best-effort -> None nao quebra.
+        # RECONCILIACAO: o `_labels_grid` continua somando `_BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP`
+        # (nao le o `zoom_bump=0` acima) -> o mosaico de rotulos fica 2 zooms acima do basemap.
+        # E' proposital do BLK-RELPON-07 (nomes maiores/legiveis por cima da cor) e a composicao
+        # e' por EXTENT, nao por grade de tile, entao os dois seguem alinhados.
+        if basemap_tiles is not None and labels_overlay:
+            labels_tiles = _fetch_labels(bounds_t, width)
 
     pins = _project_points(result["concorrentes_raio"], lat, lng)
     ultra_pins = _project_points(result["ultra_raio"], lat, lng)
@@ -1284,6 +1697,7 @@ def render_mapas_censitarios_combinados(
         pins=pins,
         ultra_pins=ultra_pins,
         basemap=basemap_tiles,
+        labels=labels_tiles,
         bounds=bounds_t,
         lat=lat,
         lng=lng,
@@ -1367,23 +1781,28 @@ def render_mapas_censitarios_combinados(
         mostrar_legenda=False,
         **common,
     )
+    # Recorte do PNG de Concorrentes (pedido Felipe 2026-07-23, piloto web): tira a faixa de
+    # titulo (agora vazia) e a coluna de legenda (suprimida por `mostrar_legenda=False`), de modo
+    # que o mapa entre limpo e centralizado no slide. Barra de escala e atribuicao CARTO ficam
+    # DENTRO do box, entao a licenca (DEC-004) segue atendida.
     concorrentes_png = _crop_png_box(
         concorrentes_png, 0, _MAP_TOP - 16, width - _LEGEND_COL_W, height
     )
-    # BLK-RELPON-10: `socioeconomia` = MESMO choropleth de score (1,5 km), para o slide-hero
-    # "Socioeconomia e Residual Fitness". Reusa score_series/_score_fn/valor_raio_score.
-    socioeconomia_png = _render_camada(
-        titulo="Socioeconomia - raio 1,5 km",
-        legenda_titulo="Score censitario (0-100)",
-        legenda_entries=_score_legend_entries(),
-        color_fn=_score_fn,
-        source_values=score_series,
-        valor_ponto=valor_raio_score,
-        **common,
-    )
-    # BLK-RELPON-11: mapa de quadra "Imagem do Entorno" (~0,14 km, sem pins/circulo). Sempre bytes.
+    # RECONCILIACAO: ficou de fora a `socioeconomia` do piloto web (o MESMO choropleth de score
+    # de SETOR a 1,5 km, via `_render_camada(**common)`). A main a redefiniu no BLK-RELPON-13
+    # como choropleth de `score_setor_2022_calibrado` por HEXAGONO H3 a 5 km, CONDICIONAL ao
+    # `hexes_df` (ver o bloco abaixo do dict). As duas nao podem coexistir na mesma chave; a
+    # versao da main e' a mais recente e passou pelo gate visual de Vinicius (2026-07-23).
+
+    # BLK-RELPON-11: camada `entorno` (mapa de quadra, raio de EXIBICAO ~0,14 km). Tem frame,
+    # bbox e zoom PROPRIOS -> nao entra no `common`. INCONDICIONAL: devolve sempre bytes (canvas
+    # claro no fallback offline), por isso vai dentro do dict literal abaixo.
     entorno_png = _render_camada_entorno(
-        lat, lng, basemap=basemap, width=width, height=height
+        lat,
+        lng,
+        basemap=basemap,
+        width=width,
+        height=height,
     )
 
     mapas: dict[str, bytes] = {
@@ -1391,15 +1810,50 @@ def render_mapas_censitarios_combinados(
         "renda": renda_png,
         "score": score_png,
         "renda_domiciliar": renda_domiciliar_png,
-        "socioeconomia": socioeconomia_png,
         "concorrentes": concorrentes_png,
         "entorno": entorno_png,
     }
-    # BLK-RELPON-10: `residual` = choropleth de `oferta_efetiva_disponivel` por hex H3 (5 km),
-    # CONDICIONAL ao `hexes_df` (sem ele -> chave ausente -> slide-hero cai no fallback textual).
+
+    # BLK-RELPON-13: camada `socioeconomia` do slide-hero = `score_setor_2022_calibrado` por
+    # HEXAGONO H3 res-7 no raio de EXIBICAO de 5 km (disco `grid_disk` k=5), MESMA metrica/paleta
+    # do `score` do grid 2x2 — o que muda e' a geometria/escala (hex a 5 km, nao setor a 1,5 km).
+    # Reusa `_render_camada_residual_hex` (mesmo frame/basemap/clip do residual), so trocando o
+    # dado/titulo/legenda/cor. CONDICIONAL como o `residual`: sem `hexes_df`, sem a coluna
+    # `score_setor_2022_calibrado` ou sem hex desenhavel -> chave AUSENTE, fallback textual do PDF.
+    socioeconomia_png = _render_camada_residual_hex(
+        lat,
+        lng,
+        hexes_df,
+        basemap=basemap,
+        width=width,
+        height=height,
+        street_ceil=street_ceil,
+        street_gain=street_gain,
+        street_cap=street_cap,
+        choropleth_alpha=choropleth_alpha,
+        value_col="score_setor_2022_calibrado",
+        titulo="Socioeconomia - raio 5 km",  # ASCII (excecao de RENDER, CLAUDE.md §2)
+        legenda_titulo="Score censitario (0-100)",
+        legenda_entries=_score_legend_entries(),
+        color_fn=_score_fn,
+        valor_central_rotulo="Score",
+        valor_central_fmt=_format_valor_ponto_score,
+    )
+    if socioeconomia_png is not None:
+        mapas["socioeconomia"] = socioeconomia_png
+
+    # Camada `residual` (raio de EXIBICAO de 5 km, hexagonos H3): CONDICIONAL. Sem `hexes_df` ou
+    # sem hex desenhavel a chave nao entra -> o slide cai no fallback textual do `_draw_maps_grid`.
     residual_png = _render_camada_residual_hex(
-        lat, lng, hexes_df, basemap=basemap, width=width, height=height,
-        street_ceil=street_ceil, street_gain=street_gain, street_cap=street_cap,
+        lat,
+        lng,
+        hexes_df,
+        basemap=basemap,
+        width=width,
+        height=height,
+        street_ceil=street_ceil,
+        street_gain=street_gain,
+        street_cap=street_cap,
         choropleth_alpha=choropleth_alpha,
     )
     if residual_png is not None:
@@ -1446,18 +1900,29 @@ def render_mapa_censitario_estatico_png(
 
 
 # ===========================================================================
-# VISTA AEREA (satelite Esri) — porte do BLK-SAT-01 (main) para o piloto web.
+# TESTE (ainda NAO definitivo) — FOTO DE SATELITE do ponto.
 #
-# LICENCA (REGULARIZADA — DEC BLK-SAT-01): a imagem vem do ArcGIS Location
-# Platform (`ibasemaps-api.arcgis.com`), autenticada por CHAVE. A chave e lida de
-# env `API_ARCGIS_API_KEY` (`_sat_api_key()`) ou passada em `api_key=`. Faixa
-# gratuita de 2M tiles/mes; a chave NUNCA e commitada. SEM chave, a pagina de
-# satelite e simplesmente OMITIDA (render devolve None) — NUNCA se cai no endpoint
+# Fonte: Esri World Imagery + Reference/World_Transportation (rotulos) — a MESMA
+# composicao do "World Imagery Hybrid" da Esri e do sat-overlay do
+# openmaptiles-infra. Aditivo: nenhuma funcao existente foi tocada.
+#
+# Zoom: tenta z19 e cai p/ z18 conforme a disponibilidade REAL no ponto (a Esri
+# devolve placeholder de ~2,5 KB onde nao ha imagem). Medido em 22 pontos do
+# Brasil: z17 existe em todo lugar, z18 em cidade media/grande, z19 so em capital.
+#
+# LICENCA (REGULARIZADA — DEC-018): a imagem vem do ArcGIS Location Platform
+# (`ibasemaps-api.arcgis.com`), autenticada por CHAVE. A API passa a chave via
+# `settings.arcgis_api_key` (env `API_ARCGIS_API_KEY`); o dashboard cai no fallback
+# de env `_sat_api_key()`. A chave precisa do privilegio `premium:user:basemaps`
+# (faixa gratuita de 2M tiles/mes) e NUNCA e commitada. SEM chave, a pagina de
+# satelite e simplesmente OMITIDA (render devolve None) -- nunca se cai no endpoint
 # anonimo `server.arcgisonline.com`, cujo uso os termos da Esri consideram irregular.
 # A imagem e SEMPRE externa (nao se self-hospeda) e o credito da Esri e obrigatorio
-# — por isso `_SAT_ATRIBUICAO` e desenhado no canto da foto. READ-ONLY sobre o M1.
+# -- por isso `_SAT_ATRIBUICAO` e desenhado no canto da foto.
 # ===========================================================================
 
+# Env var com a chave do ArcGIS Location Platform (fallback p/ chamadas sem settings,
+# ex.: dashboard). Na API a chave vem de `settings.arcgis_api_key`, passada explicita.
 _SAT_API_KEY_ENV = "API_ARCGIS_API_KEY"
 _SAT_TILE_URL = (
     "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
@@ -1467,12 +1932,21 @@ _SAT_ROTULOS_URL = (
     "/MapServer/tile/{z}/{y}/{x}"
 )
 _SAT_ATRIBUICAO = "Esri, Vantor, Earthstar Geographics"
-_SAT_ZOOM_MIN, _SAT_ZOOM_MAX = 18, 19
+# Faixa da sonda de zoom. O piso era 18 e isso FURAVA em area sem cobertura fina: a Esri
+# devolve 404 em z18/z19 (ex.: -10.1880,-48.3247, interior do TO, onde so ha imagem de z17
+# para baixo), a sonda nao achava nada e caia no piso 18 -> todos os tiles 404 -> saia uma
+# PAGINA PRETA no PDF. Agora desce ate 16 e, se nem ai houver imagem, a pagina e OMITIDA.
+_SAT_ZOOM_MIN, _SAT_ZOOM_MAX = 16, 19
 _SAT_PLACEHOLDER_MAX_BYTES = 3000
+# Zoom baixo cobre os mesmos 400 m com MENOS pixels (z17 ~365 px, z16 ~180 px) e a celula do
+# PDF tem ~1100 px. Ampliamos ate esta largura ANTES de desenhar pin e credito, para os dois
+# sairem nitidos sobre o fundo ampliado (o credito da Esri e exigido pela licenca).
+_SAT_LARGURA_ALVO = 1100
 _SAT_COBERTURA_M = 400          # largura do enquadramento no chao
 # Proporcao = a MESMA da celula de foto do PDF (`_FOTO_ASPECT`, paisagem 3:2). Se gerar
 # em outra proporcao, `_recortar_cover` corta as laterais p/ encaixar na celula -- e o
-# corte come o credito da Esri no canto, que a licenca exige visivel.
+# corte come o credito da Esri no canto, que a licenca exige visivel. Medido no teste:
+# em 1,667 o PDF cortou 141 px e a atribuicao saiu pela metade.
 _SAT_RATIO = 3.0 / 2.0
 _SAT_RAIO_CANTO_PCT = 0.025
 _SAT_TILE_PX = 256
@@ -1490,7 +1964,11 @@ def _sat_deg2num(lat: float, lng: float, z: int) -> tuple[float, float]:
 
 
 def _sat_api_key() -> str | None:
-    """Fallback: chave do ArcGIS Location Platform lida de env (`API_ARCGIS_API_KEY`)."""
+    """Fallback: chave do ArcGIS Location Platform lida de env (`API_ARCGIS_API_KEY`).
+
+    Usado por chamadores SEM `settings` (ex.: dashboard). A API passa a chave
+    explicitamente via `render_foto_satelite_ponto(..., api_key=settings.arcgis_api_key)`.
+    """
     import os
 
     return os.environ.get(_SAT_API_KEY_ENV) or None
@@ -1511,8 +1989,14 @@ def _sat_baixar_tile(url: str, z: int, x: int, y: int, timeout: float, token: st
         return Image.open(BytesIO(resp.read())).convert("RGBA")
 
 
-def _sat_melhor_zoom(lat: float, lng: float, timeout: float, token: str) -> int:
-    """Maior zoom com imagem REAL neste ponto (1 tile de sonda, nao o mosaico todo)."""
+def _sat_melhor_zoom(lat: float, lng: float, timeout: float, token: str) -> int | None:
+    """Maior zoom com imagem REAL neste ponto (1 tile de sonda, nao o mosaico todo).
+
+    Desce de `_SAT_ZOOM_MAX` ate `_SAT_ZOOM_MIN` ate achar cobertura. Devolve `None`
+    quando NENHUM zoom tem imagem real -- a Esri responde 404 (ou um placeholder de
+    ~2,5 KB) fora da area coberta. Antes esta funcao devolvia o piso nesse caso, o que
+    fazia o mosaico buscar tiles inexistentes e render uma pagina PRETA.
+    """
     import urllib.request
 
     for z in range(_SAT_ZOOM_MAX, _SAT_ZOOM_MIN - 1, -1):
@@ -1526,7 +2010,7 @@ def _sat_melhor_zoom(lat: float, lng: float, timeout: float, token: str) -> int:
                     return z
         except Exception:
             continue
-    return _SAT_ZOOM_MIN
+    return None
 
 
 def _sat_desenhar_pin(img: Image.Image, escala: float) -> None:
@@ -1562,16 +2046,20 @@ def render_foto_satelite_ponto(
     """PNG da foto de satelite do ponto, com pin no centro. `None` se a rede falhar
     OU se nao houver chave do ArcGIS Location Platform.
 
-    `api_key`: chave do ArcGIS Location Platform; se omitido, cai no fallback de env
-    `_sat_api_key()` (`API_ARCGIS_API_KEY`). Devolver `None` (em vez de levantar) e
-    proposital: o chamador segue gerando o relatorio sem a pagina de foto. Sem chave, a
-    pagina e omitida — nunca se busca tile no endpoint anonimo (licenca).
+    `api_key`: chave do ArcGIS Location Platform. A API passa `settings.arcgis_api_key`;
+    se omitido, cai no fallback de env `_sat_api_key()` (ex.: dashboard).
+
+    Devolver `None` (em vez de levantar) e proposital: o chamador segue gerando o
+    relatorio sem a pagina de foto, igual ao fallback offline do `_fetch_basemap`.
+    Sem chave, a pagina e omitida — nunca se busca tile no endpoint anonimo (licenca).
     """
     try:
         token = api_key or _sat_api_key()
         if not token:
             return None
         z = zoom if zoom is not None else _sat_melhor_zoom(lat, lng, timeout, token)
+        if z is None:
+            return None  # sem cobertura de imagem em nenhum zoom -> pagina omitida
         m_px = 156543.03392 * math.cos(math.radians(lat)) / (2**z)
         larg = int(round(cobertura_m / m_px))
         alt = int(round(larg / _SAT_RATIO))
@@ -1586,6 +2074,7 @@ def render_foto_satelite_ponto(
         tam = ((tx1 - tx0 + 1) * _SAT_TILE_PX, (ty1 - ty0 + 1) * _SAT_TILE_PX)
         canvas = Image.new("RGBA", tam, (20, 24, 34, 255))
         urls = [_SAT_TILE_URL] + ([_SAT_ROTULOS_URL] if rotulos else [])
+        tiles_foto_ok = 0                          # quantos tiles da FOTO entraram
         with ThreadPoolExecutor(max_workers=8) as ex:
             for url in urls:                       # ordem importa: foto, depois rotulo
                 futs = {
@@ -1598,10 +2087,26 @@ def render_foto_satelite_ponto(
                             fut.result(),
                             ((tx - tx0) * _SAT_TILE_PX, (ty - ty0) * _SAT_TILE_PX),
                         )
+                        if url == _SAT_TILE_URL:
+                            tiles_foto_ok += 1
                     except Exception:
                         continue                   # tile faltando nao invalida a foto
+        # NENHUM tile de foto entrou -> so restaria o canvas de fundo. Devolver isso
+        # gerava uma pagina PRETA no PDF; o certo e omitir a pagina (mesmo contrato do
+        # fallback de rede). Um tile faltando aqui e ali continua tolerado (acima).
+        if tiles_foto_ok == 0:
+            return None
         ox, oy = int(round(x0 - tx0 * _SAT_TILE_PX)), int(round(y0 - ty0 * _SAT_TILE_PX))
         img = canvas.crop((ox, oy, ox + larg, oy + alt)).convert("RGB")
+
+        # Em zoom baixo os mesmos 400 m rendem poucos pixels; amplia ANTES do pin e do
+        # credito, para os dois ficarem nitidos sobre o fundo ampliado.
+        if img.width < _SAT_LARGURA_ALVO:
+            img = img.resize(
+                (_SAT_LARGURA_ALVO, int(round(_SAT_LARGURA_ALVO / _SAT_RATIO))),
+                Image.Resampling.LANCZOS,
+            )
+            larg = img.width                       # pin e canto arredondado seguem o tamanho final
 
         _sat_desenhar_pin(img, escala=larg / 520)
 
@@ -1609,6 +2114,8 @@ def render_foto_satelite_ponto(
         d = ImageDraw.Draw(img, "RGBA")
         f = _font(max(11, int(14 * (img.width / 1100))))
         bb = d.textbbox((0, 0), _SAT_ATRIBUICAO, font=f)
+        # nome proprio: `tx`/`ty` acima sao coordenadas INTEIRAS de tile no laco do
+        # mosaico; reusar os nomes aqui (float) quebra o mypy.
         cred_x = img.width - (bb[2] - bb[0]) - 10
         cred_y = img.height - (bb[3] - bb[1]) - 10
         for dx, dy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):

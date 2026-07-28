@@ -149,9 +149,9 @@ def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
     assert len(pdf_bytes) > 15_000
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
-    # BLK-RELPON-01 + BLK-RELPON-07: 6 paginas (capa, mapas de calor, concorrentes,
-    # perfil do bairro/distrito, big numbers, credito); os 3 choropleths foram consolidados
-    # no slide unico "Mapas de calor".
+    # BLK-RELPON-01 + -07 + -10 + -11: 8 paginas (capa, imagem do entorno, socioeconomia+residual,
+    # mapas de calor, concorrentes, perfil do bairro/distrito, big numbers, credito); os
+    # choropleths censitarios foram consolidados no slide unico "Mapas de calor" (grid 2x2).
     assert b"/Count 8" in pdf_bytes
     # 3 choropleths (densidade/renda/score) embutidos SEPARADAMENTE no slide unico + 1 pins
     # na pagina de Concorrentes = >= 4 imagens de mapa (nao pre-compostas).
@@ -159,7 +159,7 @@ def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
     assert b"setor_censitario_intersecao_area_1p5km" in pdf_bytes
 
 
-def test_pdf_embute_tres_choropleths_no_slide_unico():
+def test_pdf_embute_quatro_choropleths_no_slide_unico():
     result, mapas = _sample_result()
 
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, ultra_dir="data/ultra")
@@ -238,6 +238,39 @@ def test_map_grid_cells_packed_proporcao_empacotado_sem_sobreposicao():
     assert abs((x1 - (x0 + w0)) - 10.0) < 1e-6  # colado: so o gap de 10 entre colunas
 
 
+def test_map_grid_cells_packed_scale_encolhe_e_mantem_centrado():
+    """BLK-RELPON-13: `scale` encolhe as celulas do slide-hero e mantem o grid centrado.
+
+    Trava a MECANICA (scale=1.0 -> geometria IDENTICA; scale<1.0 -> menor, mesma proporcao,
+    mesmo centro), NAO o valor de `_HERO_MAP_SCALE`, que e' calibravel no gate visual.
+    """
+    from motor_expansao.dashboard.censo_report import _PAGE_W, _map_grid_cells_packed
+
+    aspect = 1000.0 / 760.0
+    kw = {"top": 58.0, "bottom": 518.0, "gap": 10.0, "cols": 2, "rows": 1}
+    base = _map_grid_cells_packed(aspect, **kw)
+    assert _map_grid_cells_packed(aspect, scale=1.0, **kw) == base  # default preserva
+
+    menor = _map_grid_cells_packed(aspect, scale=0.8, **kw)
+    assert len(menor) == len(base)
+    for i in range(len(base)):
+        _xb, _yb, wb, hb = base[i]
+        _xm, _ym, wm, hm = menor[i]
+        assert wm < wb and hm < hb  # encolheu nas duas dimensoes
+        assert abs(wm / hm - wb / hb) < 1e-6  # proporcao do mapa preservada
+
+    def _centro(cells):
+        xs = [c[0] for c in cells] + [c[0] + c[2] for c in cells]
+        ys = [c[1] for c in cells] + [c[1] + c[3] for c in cells]
+        return (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+
+    cx_base, cy_base = _centro(base)
+    cx_menor, cy_menor = _centro(menor)
+    assert abs(cx_base - cx_menor) < 1e-6  # segue centrado na horizontal
+    assert abs(cy_base - cy_menor) < 1e-6  # e na vertical
+    assert abs(cx_base - _PAGE_W / 2.0) < 1e-6  # centrado na pagina
+
+
 def test_cor_por_meta_verde_vermelho_neutro():
     """BLK-RELPON-08 (D3/Q2): helper puro de cor por meta simples (>= meta -> verde)."""
     # pop_total_raio / _META_POP_TOTAL_RAIO (10000)
@@ -252,6 +285,21 @@ def test_cor_por_meta_verde_vermelho_neutro():
     assert _cor_por_meta(2_999, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERMELHO_RGB
     assert _cor_por_meta(None, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
     assert _cor_por_meta(float("nan"), _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+
+
+def test_renda_media_domiciliar_fica_verde_a_partir_de_4000():
+    """Gate visual BLK-RELPON-13 (Vinicius, 2026-07-24): meta baixada de 6.200 para 4.000.
+
+    Trava a REGRA pedida ("verde a partir de 4000") no valor de fronteira, nao so no simbolo:
+    4.000 e' verde (inclusiva), 3.999 e' vermelho. Cobre a faixa 4.000-6.199, que ANTES do
+    gate saia vermelha.
+    """
+    assert _META_RENDA_DOMICILIAR_TOTAL_RAIO == 4_000.0  # a meta pedida no gate
+    assert _cor_por_meta(4_000, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
+    assert _cor_por_meta(3_999, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERMELHO_RGB
+    assert _cor_por_meta(5_000, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB  # era vermelho
+    assert _cor_por_meta(None, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
+    assert _cor_por_meta(float("nan"), _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
 
 
 def test_meta_renda_domiciliar_corta_em_4000():
@@ -331,7 +379,7 @@ def test_pdf_marca_dagua_com_solicitante():
 
     assert b"Ultra Academia" in pdf_bytes
     assert b"Analista Teste" in pdf_bytes
-    # 6 paginas preservadas e choropleths intactos (marca d'agua nao cria paginas).
+    # 8 paginas preservadas e choropleths intactos (marca d'agua nao cria paginas).
     assert b"/Count 8" in pdf_bytes
     assert pdf_bytes.count(b"/Subtype /Image") >= 5
 
@@ -351,16 +399,16 @@ def test_pdf_marca_dagua_sem_solicitante():
 
 
 def test_pdf_marca_dagua_em_todas_as_paginas():
-    """BLK-RELPON-01 + BLK-RELPON-07: marca d'agua "Ultra Academia" em TODAS as 6 paginas ->
-    >= 6x nos bytes crus."""
+    """BLK-RELPON-01 + -07 + -10 + -11: marca d'agua "Ultra Academia" em TODAS as 8 paginas ->
+    >= 8x nos bytes crus."""
     result, mapas = _sample_result()
 
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
         result, mapas, residual=_RESIDUAL_OK, solicitante="Analista Teste"
     )
 
-    # Uma ocorrencia da marca d'agua por pagina (6) -> contagem minima verificavel >= 6.
-    assert pdf_bytes.count(b"Ultra Academia") >= 6
+    # Uma ocorrencia da marca d'agua por pagina (8) -> contagem minima verificavel >= 8.
+    assert pdf_bytes.count(b"Ultra Academia") >= 8
 
 
 def test_pdf_atribuicao_de_tiles_no_rodape():
@@ -395,7 +443,7 @@ def test_pdf_retrocompat_aceita_bytes_unico_legado():
     # O slide unico "Mapas de calor" existe e as 2 celulas sem PNG mostram a mensagem de fallback.
     assert b"Mapas de calor" in pdf_bytes
     assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
-    # Estrutura de 6 paginas preservada.
+    # Estrutura de 8 paginas preservada.
     assert b"/Count 8" in pdf_bytes
 
 
@@ -520,7 +568,7 @@ def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
 # ---------------------------------------------------------------------------
 
 
-def test_classico_gera_6_paginas_e_secoes():
+def test_classico_gera_8_paginas_e_secoes():
     result, mapas = _sample_result()
 
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
@@ -676,8 +724,13 @@ def test_slide_unico_quatro_mapas_sem_sobreposicao():
             assert not _boxes_overlap(cells_c[i], cells_c[j])
 
 
-def test_slide_unico_count_5_e_titulo_mapas_de_calor():
-    """As duas variantes tem 6 paginas e o titulo de faixa "Mapas de calor" no slide unico."""
+def test_slide_unico_count_8_e_titulo_mapas_de_calor():
+    """As duas variantes tem 8 paginas e o titulo de faixa "Mapas de calor" no slide unico.
+
+    (Nome corrigido no BLK-RELPON-10: era `..._count_5_...` e ja asseria 6 — passou a 7 com o
+    slide-hero "Socioeconomia e Residual Fitness"; agora 8, com a pagina "Imagem do Entorno"
+    inserida entre a capa e o slide-hero pelo BLK-RELPON-11.)
+    """
     result, mapas = _sample_result()
 
     pdf_recente = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
@@ -705,8 +758,13 @@ def test_slide_unico_offline_safe_por_camada():
     assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
 
 
-def test_slide_unico_tres_imagens_embutidas():
-    """Os 3 choropleths sao embutidos SEPARADAMENTE (nao pre-compostos) -> >= 4 imagens de mapa."""
+def test_slide_unico_quatro_imagens_embutidas():
+    """Os 4 choropleths do grid 2x2 sao embutidos SEPARADAMENTE (nao pre-compostos).
+
+    Piso de `>= 5` imagens: os 4 do grid + a de Concorrentes. E piso, nao igualdade, porque as
+    paginas "Imagem do Entorno" e "Socioeconomia e Residual Fitness" somam mais imagens quando
+    presentes; travar em igualdade quebraria a cada camada nova.
+    """
     result, mapas = _sample_result()
 
     pdf_recente = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
@@ -763,3 +821,188 @@ def test_classico_perfil_bairro_page_presente_e_nd():
     pdf_sem = gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
     assert "Perfil não disponível".encode("latin-1") in pdf_sem
     assert b"/Count 8" in pdf_sem
+
+
+# ---------------------------------------------------------------------------
+# BLK-RELPON-10 — slide-hero "Socioeconomia e Residual Fitness" (antes de "Mapas de calor")
+# ---------------------------------------------------------------------------
+
+
+def test_tema_bicolor_ordinal_zero_e_magenta_sem_mexer_nos_existentes():
+    """DT-4: o slide novo e o ordinal 0 -> magenta, SEM alterar p1..p4 (zero cascata)."""
+    from motor_expansao.dashboard.censo_report import (
+        ULTRA_MAGENTA,
+        ULTRA_TURQUESA,
+        _tema_bicolor,
+    )
+
+    assert _tema_bicolor(0) == (ULTRA_MAGENTA, ULTRA_TURQUESA)
+    assert _tema_bicolor(1) == (ULTRA_TURQUESA, ULTRA_MAGENTA)
+    assert _tema_bicolor(2) == (ULTRA_MAGENTA, ULTRA_TURQUESA)
+    assert _tema_bicolor(3) == (ULTRA_TURQUESA, ULTRA_MAGENTA)
+    assert _tema_bicolor(4) == (ULTRA_MAGENTA, ULTRA_TURQUESA)
+    # Usado pela pagina "Imagem do Entorno" (BLK-RELPON-11), inserida ANTES desta -> ordinal -1.
+    assert _tema_bicolor(-1) == (ULTRA_TURQUESA, ULTRA_MAGENTA)
+
+
+def _spy_titulos(monkeypatch, modulo, nome_funcao, alvo: list):
+    real = getattr(modulo, nome_funcao)
+
+    def _spy(pdf, *args, **kwargs):
+        # `_draw_title_band(pdf, title, *, rgb=...)`;
+        # `_classico_title_band(pdf, banda_texto, titulo_secao, assets, *, rgb=...)`.
+        titulo = args[0] if nome_funcao == "_draw_title_band" else args[1]
+        alvo.append((titulo, kwargs.get("rgb")))
+        return real(pdf, *args, **kwargs)
+
+    monkeypatch.setattr(modulo, nome_funcao, _spy)
+
+
+def test_sequencia_de_titulo_e_cor_das_6_paginas_de_conteudo_nas_2_variantes(monkeypatch):
+    """DT-4 travado por teste: a ordem/cor das paginas de conteudo nas DUAS variantes.
+
+    Imagem do Entorno=turquesa (ordinal -1, BLK-RELPON-11) -> Socioeconomia e Residual
+    Fitness=magenta -> Mapas de calor=turquesa -> Concorrentes=magenta -> Perfil=turquesa ->
+    Big Numbers=magenta. As paginas EXISTENTES mantem exatamente a cor que ja tinham.
+    """
+    import motor_expansao.dashboard.censo_report as cr
+
+    result, mapas = _sample_result()
+
+    recente: list = []
+    _spy_titulos(monkeypatch, cr, "_draw_title_band", recente)
+    cr.gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
+    assert recente == [
+        ("Imagem do Entorno", cr.ULTRA_TURQUESA),
+        ("Socioeconomia e Residual Fitness", cr.ULTRA_MAGENTA),
+        ("Mapas de calor", cr.ULTRA_TURQUESA),
+        ("Concorrentes", cr.ULTRA_MAGENTA),
+        ("Perfil do Bairro/Distrito", cr.ULTRA_TURQUESA),
+        ("Big Numbers", cr.ULTRA_MAGENTA),
+    ]
+
+    classico: list = []
+    _spy_titulos(monkeypatch, cr, "_classico_title_band", classico)
+    cr.gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
+    # O Big Numbers do classico reusa `_big_numbers_page` (usa `_draw_title_band`), entao a
+    # banda CLASSICA e desenhada nas 5 primeiras paginas de conteudo.
+    assert classico == [
+        ("Imagem do Entorno", cr.ULTRA_TURQUESA),
+        ("Socioeconomia e Residual Fitness", cr.ULTRA_MAGENTA),
+        ("Mapas de calor", cr.ULTRA_TURQUESA),
+        ("Concorrentes", cr.ULTRA_MAGENTA),
+        ("Perfil do Bairro/Distrito", cr.ULTRA_TURQUESA),
+    ]
+
+
+def test_slide_hero_presente_nas_2_variantes_com_8_paginas():
+    result, mapas = _sample_result()
+
+    for gerar in (gerar_pdf_relatorio_pontual_censitario, gerar_pdf_relatorio_pontual_classico):
+        pdf_bytes = gerar(result, mapas, residual=_RESIDUAL_OK)
+        assert b"/Count 8" in pdf_bytes
+        assert b"Socioeconomia e Residual Fitness" in pdf_bytes
+        assert b"Mapas de calor" in pdf_bytes
+    assert "Socioeconomia e Residual Fitness" in PDF_SECTION_HEADERS
+    # ASCII puro (latin-1-safe, sem travessao/bullet/reticencias).
+    assert all(ord(ch) < 128 for ch in "Socioeconomia e Residual Fitness")
+
+
+def test_slide_hero_offline_safe_sem_camada_residual():
+    """Sem `hexes_df` NEM `socioeconomia` NEM `residual` existem (BLK-RELPON-13: ambas viraram
+    hexagono a 5 km, CONDICIONAIS ao `hexes_df`) -> as DUAS celulas do slide-hero caem no fallback
+    TEXTUAL ("Mapa indisponivel"), sem excecao, e a estrutura de 8 paginas e preservada."""
+    result, mapas = _sample_result()
+    assert "residual" not in mapas  # `_sample_result` nao passa `hexes_df`
+    assert "socioeconomia" not in mapas  # BLK-RELPON-13: agora tambem condicional ao `hexes_df`
+
+    for gerar in (gerar_pdf_relatorio_pontual_censitario, gerar_pdf_relatorio_pontual_classico):
+        pdf_bytes = gerar(result, mapas, residual=_RESIDUAL_OK)
+        assert pdf_bytes.startswith(b"%PDF-1.4")
+        assert b"/Count 8" in pdf_bytes
+        assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
+
+
+def test_map_layer_titles_inclui_as_chaves_novas_senao_os_pngs_sumiriam():
+    """Sem estas chaves em `MAP_LAYER_TITLES`, `_normalize_mapas` descartaria os PNGs novos
+    em SILENCIO. `densidade` tem de continuar no indice 0 (titulo do caminho legado de bytes)."""
+    from motor_expansao.dashboard.censo_report import MAP_LAYER_TITLES, _normalize_mapas_by_key
+
+    chaves = [k for k, _t in MAP_LAYER_TITLES]
+    assert chaves[0] == "densidade"
+    assert "socioeconomia" in chaves
+    assert "residual" in chaves
+    # BLK-RELPON-11: sem `entorno` aqui, o PNG do mapa de quadra seria descartado em SILENCIO.
+    assert "entorno" in chaves
+    passou = dict(_normalize_mapas_by_key({"socioeconomia": b"A", "residual": b"B"}))
+    assert passou == {"socioeconomia": b"A", "residual": b"B"}
+    assert dict(_normalize_mapas_by_key({"entorno": b"E"})) == {"entorno": b"E"}
+
+
+def test_grid_de_mapas_aceita_2x1_e_1x1_e_mantem_o_default_2x2():
+    """DT-3: `cols`/`rows` keyword-only com default nos valores atuais -> o caminho 2x2 fica
+    identico; o slide-hero pede 2 celulas lado a lado, sem sobreposicao; a pagina "Imagem do
+    Entorno" (BLK-RELPON-11) pede 1 celula unica preenchendo a altura util."""
+    from motor_expansao.dashboard.censo_report import (
+        _map_grid_cells,
+        _map_grid_cells_packed,
+    )
+
+    assert len(_map_grid_cells(58.0, 518.0, 20.0, 10.0)) == 4
+    assert len(_map_grid_cells_packed(1000.0 / 760.0, top=58.0, bottom=518.0, gap=10.0)) == 4
+
+    duas = _map_grid_cells_packed(
+        1000.0 / 760.0, top=58.0, bottom=518.0, gap=10.0, cols=2, rows=1
+    )
+    assert len(duas) == 2
+    (x0, y0, w0, h0), (x1, y1, w1, h1) = duas
+    assert x0 + w0 <= x1 + 1e-6  # lado a lado, sem sobrepor
+    assert abs(y0 - y1) < 1e-9 and abs(h0 - h1) < 1e-9  # mesma linha, mesma altura
+    assert abs(w0 - w1) < 1e-9
+
+    # 1x1 (BLK-RELPON-11): uma celula so, sem o clamp de `max_total_w` -> preenche os 460 pt de
+    # altura util (top=58 .. bottom=518) sem deixar vao branco, e nao transborda o `bottom`.
+    assert len(_map_grid_cells(58.0, 518.0, 20.0, 10.0, cols=1, rows=1)) == 1
+    uma = _map_grid_cells_packed(
+        1280.0 / 760.0, top=58.0, bottom=518.0, gap=10.0, cols=1, rows=1
+    )
+    assert len(uma) == 1
+    assert abs(uma[0][3] - 460.0) < 1e-6
+    assert uma[0][1] + uma[0][3] <= 518.0 + 1e-6
+
+
+# ---------------------------------------------------------------------------
+# BLK-RELPON-11 — pagina "Imagem do Entorno" (mapa de quadra, entre a Capa e o slide-hero)
+# ---------------------------------------------------------------------------
+
+
+def test_pagina_entorno_presente_nas_2_variantes_com_8_paginas():
+    """A pagina nova existe nas DUAS variantes, com o titulo nos bytes crus e /Count 8."""
+    result, mapas = _sample_result()
+
+    for gerar in (gerar_pdf_relatorio_pontual_censitario, gerar_pdf_relatorio_pontual_classico):
+        pdf_bytes = gerar(result, mapas, residual=_RESIDUAL_OK)
+        assert b"/Count 8" in pdf_bytes
+        assert b"Imagem do Entorno" in pdf_bytes
+        # +1 imagem de mapa (a camada `entorno`) alem das ja embutidas.
+        assert pdf_bytes.count(b"/Subtype /Image") >= 6
+
+    assert len(PDF_SECTION_HEADERS) == 8
+    assert PDF_SECTION_HEADERS[1] == "Imagem do Entorno"
+    # ASCII puro (latin-1-safe, sem travessao/bullet/reticencias).
+    assert all(ord(ch) < 128 for ch in "Imagem do Entorno")
+
+
+def test_pagina_entorno_offline_safe_sem_a_camada():
+    """Sem a chave `entorno` no dict de mapas a pagina cai no fallback TEXTUAL da celula, sem
+    excecao, e a estrutura de 8 paginas e preservada (offline-safe)."""
+    result, mapas = _sample_result()
+    mapas_sem_entorno = {k: v for k, v in mapas.items() if k != "entorno"}
+    assert "entorno" not in mapas_sem_entorno
+
+    for gerar in (gerar_pdf_relatorio_pontual_censitario, gerar_pdf_relatorio_pontual_classico):
+        pdf_bytes = gerar(result, mapas_sem_entorno, residual=_RESIDUAL_OK)
+        assert pdf_bytes.startswith(b"%PDF-1.4")
+        assert b"/Count 8" in pdf_bytes
+        assert b"Imagem do Entorno" in pdf_bytes
+        assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes

@@ -209,6 +209,45 @@ def _residual_do_ponto(lat: float, lng: float, settings: Settings) -> dict:
     return residual
 
 
+def _hexes_vizinhos_do_ponto(lat: float, lng: float, settings: Settings, k: int = 5):
+    """Hexes H3 (res 7) do disco de raio `k` em torno do ponto, com o valor de cada camada hex.
+
+    Espelha `_residual_do_ponto`: filtra direto no parquet de mercado por um conjunto pequeno de
+    chaves (91 hexes em k=5) e poucas colunas -> leitura barata, NAO carrega a base de 1,5 M.
+    Insumo dos choropleths POR HEXAGONO do slide-hero: Residual Fitness (`oferta_efetiva_disponivel`,
+    BLK-RELPON-10) e Socioeconomia (`score_setor_2022_calibrado`, BLK-RELPON-13). READ-ONLY; nao
+    recalcula nada do M1. Devolve `None` (fallback gracioso -> camada ausente no PDF) em qualquer falha.
+    """
+    mercado = Path(settings.staging_dir / "hexagonos_mercado_mapeado.parquet")
+    if not mercado.is_file():
+        return None
+    try:
+        import h3
+        import pyarrow.compute as pc
+        import pyarrow.dataset as ds
+
+        dataset = ds.dataset(mercado)
+        # Servir tambem `score_setor_2022_calibrado` quando existir: a partir do BLK-RELPON-13 o
+        # painel Socioeconomia do hero e desenhado por hexagono e depende dessa coluna estar no
+        # `hexes_df`. Sem ela (parquet antigo), a camada cai no fallback textual em vez de crashar.
+        disponiveis = set(dataset.schema.names)
+        colunas = ["hex_id", "oferta_efetiva_disponivel"]
+        if "score_setor_2022_calibrado" in disponiveis:
+            colunas.append("score_setor_2022_calibrado")
+
+        centro = h3.latlng_to_cell(lat, lng, 7)  # 7 = H3_RESOLUTION (M1), LIDO
+        celulas = list(h3.grid_disk(centro, k))
+        tbl = dataset.to_table(
+            filter=pc.field("hex_id").isin(celulas),
+            columns=colunas,
+        )
+        if not tbl.num_rows:
+            return None
+        return tbl.to_pandas()
+    except Exception:
+        return None
+
+
 def analisar_ponto(lat: float, lng: float, consumidor: str | None, settings: Settings) -> dict:
     """Executa o estudo do ponto e devolve o dict de KPIs (-> `AnalisarResponseJSON`).
 
@@ -295,7 +334,7 @@ def gerar_pdf_ponto(
     *,
     rotulo: str | None = None,
 ) -> bytes:
-    """Gera o PDF de 7 paginas do Relatorio Pontual Censitario (BLK-API-04).
+    """Gera o PDF de 8 paginas do Relatorio Pontual Censitario (BLK-API-04).
 
     Enriquecido (READ-ONLY): mapas com *ruas* (basemap online, DEC-004) + pins de
     concorrentes/Ultra, e Big Numbers de SAM/residual via `residual`. Fallback
@@ -344,11 +383,17 @@ def gerar_pdf_ponto(
         else None
     )
 
+    # BLK-RELPON-10: insumo do choropleth de Residual Fitness (slide-hero). Na API nao ha `df`
+    # em escopo como no dashboard -> le so o disco de 91 hexes do parquet de mercado. None ->
+    # camada `residual` ausente -> fallback textual no slide (offline-safe). READ-ONLY.
+    hexes_df = _hexes_vizinhos_do_ponto(lat, lng, settings)
+
     def _mapas(basemap: bool):
         return render_mapas_censitarios_combinados(
             lat, lng, setores_df, raio_km=RAIO_CENSITARIO_DEFAULT_KM,
             competitors_df=comp_df, ultra_df=ultra_df,
             basemap=basemap, ultra_logo_dir=ultra_dir, logos_dir=logos_dir,
+            hexes_df=hexes_df,
             # Arruamento mais visivel sob o choropleth: resgata tambem as ruas
             # residenciais CINZA-CLARAS do Voyager (ceil 160->215) e deixa a cor das
             # faixas mais translucida (alpha 140->110). So a API ajusta isto; o dashboard
@@ -365,13 +410,26 @@ def gerar_pdf_ponto(
         except Exception:
             mapas = None
 
+    # TESTE (BLK-SAT, ainda NAO definitivo): foto de satelite do ponto (Esri, z18/z19
+    # conforme disponibilidade) entrando na pagina "Fotos do Imovel" que ja existe.
+    # `render_foto_satelite_ponto` devolve None se a rede falhar -> o PDF sai igual ao
+    # de hoje, sem a pagina. Nao altera nenhum numero do relatorio.
+    from motor_expansao.dashboard.censo_map import render_foto_satelite_ponto
+
+    # Chave do ArcGIS Location Platform via settings (env API_ARCGIS_API_KEY). Sem
+    # ela, o render devolve None e o PDF sai sem a pagina de satelite (DEC-018).
+    foto_sat = render_foto_satelite_ponto(lat, lng, api_key=settings.arcgis_api_key or None)
+
     residual = _residual_do_ponto(lat, lng, settings)
     # Variante "Apresentacao Classica Ultra" (BLK-EST-05): a API/bot espelha o
     # MESMO modelo que o dashboard passou a gerar por padrao (pages.py usa
     # template="classico"). Drop-in: mesma assinatura do gerador recente.
     return gerar_pdf_relatorio_pontual_classico(
         result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
-        solicitante=consumidor, rotulo=rotulo,
+        solicitante=consumidor, rotulo=rotulo, foto_satelite=foto_sat,
+        # API/bot nao tem upload de fotos do imovel -> a vista aerea e a unica imagem
+        # da pagina e usa a area de conteudo inteira (no dashboard fica no tamanho padrao).
+        foto_satelite_grande=True,
     )
 
 

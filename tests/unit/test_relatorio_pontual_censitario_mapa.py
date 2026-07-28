@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from io import BytesIO
 
+import numpy as np
 import pandas as pd
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 from pyproj import Transformer
 from shapely.geometry import box
 from shapely.ops import transform
@@ -15,23 +16,26 @@ from motor_expansao.dashboard.censo_map import (
     render_mapas_censitarios_combinados,
 )
 from motor_expansao.dashboard.censo_point import CRS_ORIGEM_CENSO, _local_metric_crs
+from motor_expansao.dashboard.competitors import _ICON_CACHE
 from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS
 
 LAT_C = -23.55
 LNG_C = -46.63
 
-# BLK-RELPON-10/11: alem das 4 camadas de 1,5 km + concorrentes, a orquestradora agora produz
-# `socioeconomia` (slide-hero) e `entorno` (mapa de quadra), AMBAS incondicionais. `residual`
-# e' CONDICIONAL ao `hexes_df` (nao passado aqui) -> ausente do set offline.
-_CAMADAS = {
+# BLK-RELPON-13: `socioeconomia` passou a ser HEXAGONO H3 a 5 km (score_setor_2022_calibrado),
+# CONDICIONAL ao `hexes_df` como o `residual` — sem hexes desenhaveis a chave e' AUSENTE. Junto
+# do `residual` (choropleth de hexagonos H3 no raio de EXIBICAO de 5 km), tambem CONDICIONAL.
+# BLK-RELPON-11: `entorno` (mapa de quadra, raio de EXIBICAO ~0,14 km) e' INCONDICIONAL — nao
+# depende de `hexes_df`, de setores nem de tiles; por isso entra no set "sem hexes".
+_CAMADAS_SEM_HEXES = {
     "densidade",
     "renda",
     "score",
     "renda_domiciliar",
-    "socioeconomia",
     "concorrentes",
     "entorno",
 }
+_CAMADAS = _CAMADAS_SEM_HEXES | {"socioeconomia", "residual"}
 
 
 def _to_wgs_geometry(local_geom):
@@ -103,7 +107,7 @@ def test_mapas_combinados_gera_png_com_setores_pins_legenda_e_escala(tmp_path):
         basemap=False,
     )
 
-    assert set(mapas) == _CAMADAS
+    assert set(mapas) == _CAMADAS_SEM_HEXES
     for camada, png in mapas.items():
         (tmp_path / f"mapa_{camada}.png").write_bytes(png)
         assert png.startswith(b"\x89PNG\r\n\x1a\n"), camada
@@ -127,7 +131,9 @@ def test_mapas_combinados_trata_estado_vazio_sem_concorrentes():
         basemap=False,
     )
 
-    assert set(mapas) == _CAMADAS
+    # main (BLK-RELPON-13): sem `hexes_df` as camadas de hexagono ficam AUSENTES -> set "sem hexes".
+    # piloto: itera com a CHAVE porque `concorrentes` e' recortada e tem tamanho proprio (abaixo).
+    assert set(mapas) == _CAMADAS_SEM_HEXES
     for camada, png in mapas.items():
         image = Image.open(BytesIO(png))
         assert image.format == "PNG"
@@ -195,34 +201,89 @@ def test_mapa_censitario_ponto_central_pin_vermelho():
     assert blues_old == 0
 
 
-def test_mapa_censitario_pin_com_logo_concorrente_e_ultra():
-    setores = pd.DataFrame(
-        [_sector_record("355030801000001", box(-700, -700, 700, 700), pop=1000, score=60)]
-    )
-    competitors = pd.DataFrame(
-        [{"nome_unidade": "Smart Fit", "lat": LAT_C, "lng": LNG_C + 0.004, "rede": "smart_fit"}]
-    )
-    ultra = pd.DataFrame([{"nome_unidade": "Ultra", "lat": LAT_C, "lng": LNG_C - 0.004}])
+def test_mapa_censitario_marcador_quadrado_concorrente_e_ultra():
+    """BLK-RELPON-09: marcador de concorrente/Ultra e a LOGO QUADRADA, nao o balao.
 
-    mapas = render_mapas_censitarios_combinados(
-        LAT_C,
-        LNG_C,
-        setores,
-        competitors_df=competitors,
-        ultra_df=ultra,
-        width=800,
-        height=600,
-        basemap=False,
-    )
-    image = Image.open(BytesIO(mapas["concorrentes"])).convert("RGB")
-    # O pin Ultra usa a cor da marca (#C8001E -> ~(200,0,30)); deve haver pixels avermelhados
-    # fora do choropleth (o pin e desenhado por _render_pin_tile).
-    reds = sum(
-        1
-        for _count, (r, g, b) in image.getcolors(maxcolors=1_000_000) or []
-        if r > 150 and g < 80 and b < 80
-    )
-    assert reds > 0
+    Teste DIFERENCIAL (renderiza a MESMA camada com e sem pins): a camada
+    "concorrentes" e so-pins (sem choropleth) e seu titulo/legenda sao estaticos, entao
+    as duas imagens diferem EXCLUSIVAMENTE pelos 2 tiles colados. Prova (a) que os dois
+    marcadores foram desenhados, (b) que sao 2 clusters separados, (c) que o footprint e
+    QUADRADO (~`_PIN_LOGO_PX`), (d) que a ancora e o CENTRO do quadrado (S2b) e (e) a
+    identidade de marca por lado. Substitui a contagem de "pixels avermelhados" antiga,
+    que media o BALAO (`ULTRA_BRAND["bg"]`) e deixou de existir.
+    """
+    # `_ICON_CACHE` e estado de modulo e outros testes o populam: sem os pops, a placa
+    # viria BRANCA (ramo com logo) e as cores de marca abaixo nao existiriam.
+    _ICON_CACHE.pop("smart_fit", None)
+    _ICON_CACHE.pop("__ultra__", None)
+    try:
+        setores = pd.DataFrame(
+            [_sector_record("355030801000001", box(-700, -700, 700, 700), pop=1000, score=60)]
+        )
+        competitors = pd.DataFrame(
+            [{"nome_unidade": "Smart Fit", "lat": LAT_C, "lng": LNG_C + 0.004, "rede": "smart_fit"}]
+        )
+        ultra = pd.DataFrame([{"nome_unidade": "Ultra", "lat": LAT_C, "lng": LNG_C - 0.004}])
+
+        base = render_mapas_censitarios_combinados(
+            LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+        )
+        com_pins = render_mapas_censitarios_combinados(
+            LAT_C,
+            LNG_C,
+            setores,
+            competitors_df=competitors,
+            ultra_df=ultra,
+            width=800,
+            height=600,
+            basemap=False,
+        )
+        img_base = Image.open(BytesIO(base["concorrentes"])).convert("RGB")
+        img_pins = Image.open(BytesIO(com_pins["concorrentes"])).convert("RGB")
+
+        diff = ImageChops.difference(img_base, img_pins)
+        mask = np.array(diff.convert("L")) > 0
+        ys, xs = np.nonzero(mask)
+
+        # dois quadrados de 30x30 (+sombra) ~ 1.800 px; o teto prova que NAO foi a
+        # figura inteira que mudou.
+        assert 1200 <= int(mask.sum()) <= 2600
+
+        # dois clusters horizontais separados, cada um com o footprint do quadrado
+        uniq = sorted(set(int(v) for v in xs))
+        clusters: list[tuple[int, int]] = []
+        atual = [uniq[0]]
+        for anterior, seguinte in zip(uniq[:-1], uniq[1:], strict=True):
+            if seguinte - anterior >= 10:
+                clusters.append((atual[0], atual[-1]))
+                atual = [seguinte]
+            else:
+                atual.append(seguinte)
+        clusters.append((atual[0], atual[-1]))
+        assert len(clusters) == 2
+        for x0, x1 in clusters:
+            assert 26 <= (x1 - x0 + 1) <= 34
+        assert 26 <= (ys.max() - ys.min() + 1) <= 34
+
+        # ancora CENTRADA (S2b): o centro vertical do marcador coincide com a PONTA do
+        # pin vermelho central (mesma latitude). Com ancora na base cairia ~15 px acima.
+        vermelho = np.all(np.array(img_base) == np.array([220, 38, 38]), axis=-1)
+        vermelho[:, 800 - censo_map._LEGEND_COL_W :] = False  # exclui o pin da legenda
+        ys_vermelho, _xs_vermelho = np.nonzero(vermelho)
+        ponta_cy = int(ys_vermelho.max())
+        assert abs(((ys.min() + ys.max()) / 2) - ponta_cy) <= 3
+
+        # identidade de marca por lado: Ultra (#C8001E) a OESTE (LNG_C - 0.004),
+        # Smart Fit (#FFE600) a LESTE. Ambas vem do fallback de sigla (cache limpo).
+        arr_pins = np.array(img_pins)
+        (esq_x0, esq_x1), (dir_x0, dir_x1) = clusters
+        ultra_mask = np.all(arr_pins == np.array([200, 0, 30]), axis=-1)
+        smart_mask = np.all(arr_pins == np.array([255, 230, 0]), axis=-1)
+        assert ultra_mask[:, esq_x0 : esq_x1 + 1].sum() > 0
+        assert smart_mask[:, dir_x0 : dir_x1 + 1].sum() > 0
+    finally:
+        _ICON_CACHE.pop("smart_fit", None)
+        _ICON_CACHE.pop("__ultra__", None)
 
 
 def test_fetch_basemap_sem_contextily_devolve_none(monkeypatch):
@@ -252,7 +313,7 @@ def test_mapa_censitario_fallback_offline_sem_tiles(monkeypatch):
     mapas = censo_map.render_mapas_censitarios_combinados(
         LAT_C, LNG_C, setores, width=800, height=600, basemap=True
     )
-    assert set(mapas) == _CAMADAS
+    assert set(mapas) == _CAMADAS_SEM_HEXES
     for png in mapas.values():
         assert png.startswith(b"\x89PNG\r\n\x1a\n")
 
@@ -594,6 +655,7 @@ def test_legenda_corpo_atinge_o_alvo_de_legibilidade_no_pdf():
 
 def test_rotulo_mais_longo_da_legenda_cabe_na_coluna():
     from motor_expansao.dashboard.constants import (
+        OFERTA_DISPONIVEL_ALUNOS_BANDS,
         RENDA_MEDIA_DOMICILIAR_BANDS,
         RENDA_PER_CAPITA_BANDS,
     )
@@ -604,7 +666,13 @@ def test_rotulo_mais_longo_da_legenda_cabe_na_coluna():
     orcamento = censo_map._LEGEND_COL_W - 78
     # As duas camadas de renda usam o MESMO formato compacto de rotulo (per capita e domiciliar);
     # o rotulo mais longo de cada uma deve caber na coluna estreita da legenda.
-    for bands in (RENDA_PER_CAPITA_BANDS, RENDA_MEDIA_DOMICILIAR_BANDS):
+    # BLK-RELPON-10: a regua de residual em ALUNOS entra na mesma verificacao (rotulo mais longo
+    # "5.001-10.000", 12 chars vs 14 do pior caso "R$ 2.001-3.500") -> travado por teste.
+    for bands in (
+        RENDA_PER_CAPITA_BANDS,
+        RENDA_MEDIA_DOMICILIAR_BANDS,
+        OFERTA_DISPONIVEL_ALUNOS_BANDS,
+    ):
         rotulo_mais_longo = max((label for _upper, label, _color in bands), key=len)
         largura = censo_map._text_width(draw, rotulo_mais_longo, font)
         assert largura <= orcamento, (
@@ -644,3 +712,881 @@ def test_legenda_caption_pins_nao_transborda_do_canvas():
         f"Caption ({largura}px) nao cabe no orcamento de {orcamento}px "
         f"(_FS_LEGENDA_CAPTION={censo_map._FS_LEGENDA_CAPTION})"
     )
+
+
+# ── BLK-RELPON-10: camada de Residual Fitness por hexagono (raio de EXIBICAO 5 km) ──────────
+
+
+def _hexes_sinteticos(lat: float = LAT_C, lng: float = LNG_C, k: int = 5) -> pd.DataFrame:
+    """Disco H3 res-7 em torno do ponto, com `oferta_efetiva_disponivel` (residual) e
+    `score_setor_2022_calibrado` (socioeconomia BLK-RELPON-13) variando por faixa."""
+    import h3
+
+    centro = h3.latlng_to_cell(lat, lng, 7)
+    celulas = list(h3.grid_disk(centro, k))
+    # Valores que cruzam TODAS as 6 faixas (0 / 1.250 / 2.500 / 5.000 / 10.000 / inf).
+    valores = [float(i % 6) * 2_600.0 for i in range(len(celulas))]
+    # Score censitario 0-100 cruzando as faixas de 20 pontos (BLK-RELPON-13: socioeconomia hex).
+    scores = [float((i % 10) * 11) for i in range(len(celulas))]
+    return pd.DataFrame(
+        {
+            "hex_id": celulas,
+            "oferta_efetiva_disponivel": valores,
+            "score_setor_2022_calibrado": scores,
+        }
+    )
+
+
+def _setores_um_quadrado() -> pd.DataFrame:
+    return pd.DataFrame(
+        [_sector_record("355030801000001", box(-700, -700, 700, 700), pop=1000, score=70)]
+    )
+
+
+def test_camada_residual_presente_com_hexes_df_e_png_valido():
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C,
+        LNG_C,
+        _setores_um_quadrado(),
+        width=1000,
+        height=760,
+        basemap=False,
+        hexes_df=_hexes_sinteticos(),
+    )
+
+    assert set(mapas) == _CAMADAS
+    png = mapas["residual"]
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+    image = Image.open(BytesIO(png))
+    assert image.size == (1000, 760)
+    # Choropleth de fato desenhado (varias faixas de cor no canvas).
+    assert len(_all_colors(png)) > 20
+
+
+def test_camada_residual_nao_desenha_pins_blk_relpon_10_fu1():
+    """BLK-RELPON-10-FU1: a camada `residual` (5 km) NAO desenha pins de concorrente/Ultra.
+
+    Gate visual de Vinicius (2026-07-22): a area a 5 km e ~11x a de 1,5 km (r^2), entao a
+    densidade de logos cobria o choropleth -- medido na amostra da Av. Paulista, onde os
+    marcadores tapavam quase todos os hexagonos. Quem esta instalado ja aparece na pagina
+    "Concorrentes"; este mapa responde ONDE HA ESPACO, e a cor e o dado dele.
+
+    Teste DIFERENCIAL: renderiza duas vezes, com e sem pontos, e exige que o PNG do
+    `residual` seja BYTE-IDENTICO -- prova que nenhum pixel do mapa depende dos pontos.
+    BLK-RELPON-13: a `socioeconomia` virou hex a 5 km SEM pins -> tambem imune aos pontos
+    (byte-identica). A sentinela anti-vacuo passa a ser a camada `score` (setor a 1,5 km, que
+    MANTEM pins): sem ela, remover os pins de TODAS as camadas passaria trivialmente no teste.
+    """
+    setores = _setores_um_quadrado()
+    hexes = _hexes_sinteticos()
+    # pontos bem no centro do frame -> cairiam dentro dos dois mapas se houvesse pins
+    competitors = pd.DataFrame(
+        [{"nome_unidade": "Concorrente", "lat": LAT_C, "lng": LNG_C + 0.004, "rede": "smart_fit"}]
+    )
+    ultra = pd.DataFrame([{"nome_unidade": "Ultra", "lat": LAT_C + 0.003, "lng": LNG_C}])
+
+    def _render(com_pontos: bool):
+        return render_mapas_censitarios_combinados(
+            LAT_C, LNG_C, setores, width=1000, height=760, basemap=False, hexes_df=hexes,
+            competitors_df=competitors if com_pontos else None,
+            ultra_df=ultra if com_pontos else None,
+        )
+
+    com, sem = _render(True), _render(False)
+
+    # (1) residual e imune aos pontos -> nenhum pin foi desenhado
+    assert com["residual"] == sem["residual"], (
+        "a camada `residual` mudou ao receber concorrentes/Ultra -- ela nao pode desenhar pins"
+    )
+    # (2) e a legenda nao promete pins que nao existem
+    assert b"Pins: Ultra e concorrentes" not in com["residual"]
+
+    # (3) socioeconomia (BLK-RELPON-13: hex a 5 km SEM pins) tambem e imune aos pontos.
+    assert com["socioeconomia"] == sem["socioeconomia"], (
+        "a camada `socioeconomia` (hex a 5 km) nao pode desenhar pins"
+    )
+    # (4) trava anti-vacuo: `score` (setor a 1,5 km) CONTINUA com pins, senao o teste (1)
+    # passaria trivialmente caso alguem removesse os pins de todas as camadas.
+    assert com["score"] != sem["score"], (
+        "a camada `score` deveria continuar desenhando pins"
+    )
+
+
+def test_camada_residual_ausente_sem_hexes_df_ou_sem_hex_no_disco():
+    setores = _setores_um_quadrado()
+    # (a) sem `hexes_df` -> chave ausente (default preserva todos os callers antigos).
+    sem = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+    )
+    assert "residual" not in sem
+    # (b) `hexes_df` sem NENHUM hex do disco (hex de outra regiao) -> chave ausente, sem excecao.
+    import h3
+
+    longe = pd.DataFrame(
+        {
+            "hex_id": [h3.latlng_to_cell(-3.119, -60.0217, 7)],  # Manaus, longe de SP
+            "oferta_efetiva_disponivel": [5_000.0],
+        }
+    )
+    vazio = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False, hexes_df=longe
+    )
+    assert "residual" not in vazio
+    # (c) DataFrame vazio -> idem.
+    assert "residual" not in render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False, hexes_df=pd.DataFrame()
+    )
+
+
+# ── BLK-RELPON-13: socioeconomia do slide-hero = hexagono H3 a 5 km (score_setor_2022_calibrado) ──
+
+
+def test_socioeconomia_e_hexagono_nao_setor_a_5km(monkeypatch):
+    """A `socioeconomia` do slide-hero passou a ser o choropleth de `score_setor_2022_calibrado`
+    por hexagono H3 res-7 no raio de EXIBICAO de 5 km (mesma bbox/geometria do residual), nao mais
+    o setor a 1,5 km. Prova indireta: com `hexes_df`, a chave existe, e PNG valido e emite o titulo
+    "Socioeconomia - raio 5 km" + o rodape "Raio 5,0 km" (ambos ASCII)."""
+    textos: list[str] = []
+    real = censo_map._draw_text
+
+    def _spy(draw, xy, text, **kwargs):
+        textos.append(text)
+        return real(draw, xy, text, **kwargs)
+
+    monkeypatch.setattr(censo_map, "_draw_text", _spy)
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C,
+        LNG_C,
+        _setores_um_quadrado(),
+        width=1000,
+        height=760,
+        basemap=False,
+        hexes_df=_hexes_sinteticos(),
+    )
+
+    assert "socioeconomia" in mapas
+    png = mapas["socioeconomia"]
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+    image = Image.open(BytesIO(png))
+    assert image.size == (1000, 760)
+    assert len(_all_colors(png)) > 20
+    assert "Socioeconomia - raio 5 km" in textos
+    assert "Raio 5,0 km - EPSG:3857 - fundo de ruas offline" in textos
+    # Legenda com a escala de score (0-100), nao a de residual (alunos).
+    assert "Score censitario (0-100)" in textos
+
+
+def test_socioeconomia_ausente_sem_hexes_df_ou_sem_coluna_score():
+    """CONDICIONAL como o residual: sem `hexes_df`, sem a coluna `score_setor_2022_calibrado`
+    ou sem hex no disco, a chave `socioeconomia` e AUSENTE (fallback textual do PDF), sem excecao."""
+    setores = _setores_um_quadrado()
+    # (a) sem `hexes_df` -> chave ausente.
+    sem = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False
+    )
+    assert "socioeconomia" not in sem
+    # (b) `hexes_df` SEM a coluna de score (so hex_id + oferta) -> ausente, sem excecao.
+    import h3
+
+    centro = h3.latlng_to_cell(LAT_C, LNG_C, 7)
+    so_oferta = pd.DataFrame(
+        {"hex_id": list(h3.grid_disk(centro, 5)), "oferta_efetiva_disponivel": 3_000.0}
+    )
+    sem_col = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False, hexes_df=so_oferta
+    )
+    assert "socioeconomia" not in sem_col
+    # ... mas o `residual` (que tem a coluna) CONTINUA presente -> prova que so a socioeconomia caiu.
+    assert "residual" in sem_col
+    # (c) `hexes_df` de outra regiao (hex fora do disco) -> ausente.
+    longe = pd.DataFrame(
+        {
+            "hex_id": [h3.latlng_to_cell(-3.119, -60.0217, 7)],  # Manaus, longe de SP
+            "score_setor_2022_calibrado": [80.0],
+        }
+    )
+    fora = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=800, height=600, basemap=False, hexes_df=longe
+    )
+    assert "socioeconomia" not in fora
+
+
+def test_socioeconomia_reage_ao_score_setor_2022_calibrado():
+    """A cor depende do dado: dois `hexes_df` com `score_setor_2022_calibrado` diferentes por hex
+    produzem PNGs de socioeconomia DIFERENTES (trava anti-constante)."""
+    import h3
+
+    setores = _setores_um_quadrado()
+    centro = h3.latlng_to_cell(LAT_C, LNG_C, 7)
+    celulas = list(h3.grid_disk(centro, 5))
+
+    def _render(scores: list[float]) -> bytes:
+        hexes = pd.DataFrame({"hex_id": celulas, "score_setor_2022_calibrado": scores})
+        mapas = render_mapas_censitarios_combinados(
+            LAT_C, LNG_C, setores, width=1000, height=760, basemap=False, hexes_df=hexes
+        )
+        return mapas["socioeconomia"]
+
+    baixos = _render([float((i % 10) * 3) for i in range(len(celulas))])  # 0-27 (faixas baixas)
+    altos = _render([float(90 + (i % 10)) for i in range(len(celulas))])  # 90-99 (faixa alta)
+    assert baixos != altos
+
+
+def test_camadas_censitarias_declara_as_8_chaves():
+    assert set(censo_map.CAMADAS_CENSITARIAS) == _CAMADAS
+    assert len(censo_map.CAMADAS_CENSITARIAS) == 8
+
+
+def test_rodape_do_png_deriva_do_raio_km_1p5_identico_e_5p0_novo(monkeypatch):
+    """DT-5: o rodape passou a derivar de `raio_km`. Com 1.5 a string tem de sair IDENTICA
+    ("Raio 1,5 km"); a camada de residual (5 km) sai "Raio 5,0 km" — duas escalas rotuladas."""
+    textos: list[str] = []
+    real = censo_map._draw_text
+
+    def _spy(draw, xy, text, **kwargs):
+        textos.append(text)
+        return real(draw, xy, text, **kwargs)
+
+    monkeypatch.setattr(censo_map, "_draw_text", _spy)
+    render_mapas_censitarios_combinados(
+        LAT_C,
+        LNG_C,
+        _setores_um_quadrado(),
+        width=1000,
+        height=760,
+        basemap=False,
+        hexes_df=_hexes_sinteticos(),
+    )
+
+    assert "Raio 1,5 km - EPSG:3857 - fundo de ruas offline" in textos
+    assert "Raio 5,0 km - EPSG:3857 - fundo de ruas offline" in textos
+    # Titulos com o raio rotulado dentro do PNG (ASCII puro).
+    assert "Socioeconomia - raio 5 km" in textos
+    assert "Residual Fitness - raio 5 km" in textos
+    assert "Residual disponivel (alunos)" in textos
+
+
+def test_faixa_de_cor_do_residual_por_valor_absoluto():
+    from motor_expansao.dashboard.constants import OFERTA_DISPONIVEL_ALUNOS_BANDS as BANDS
+
+    # 0 exato cai na 1a faixa ("sem residual"; `val <= upper` captura o zero).
+    assert censo_map._color_for_bands(0.0, BANDS) == BANDS[0][2]
+    assert censo_map._color_for_bands(1_000.0, BANDS) == BANDS[1][2]
+    assert censo_map._color_for_bands(3_000.0, BANDS) == BANDS[3][2]
+    assert censo_map._color_for_bands(26_405.0, BANDS) == BANDS[-1][2]  # max nacional medido
+    # NaN (hex ausente do df) -> cor de "sem dado", DISTINTA da faixa "sem residual" (2 excecoes,
+    # 2 cores, como no BLK-FIX-06-C).
+    assert censo_map._color_for_bands(float("nan"), BANDS) == censo_map._FILL_SEM_DADO
+    assert censo_map._FILL_SEM_DADO[:3] != BANDS[0][2][:3]
+
+
+def test_labels_da_regua_de_residual_sem_acento_para_legenda_png():
+    """Excecao de RENDER ao §2 (mesma de `test_band_renda_media_domiciliar_sem_acento...`):
+    a legenda do choropleth e rasterizada num PNG cujo font (`ImageFont.load_default`) NAO tem
+    glifo acentuado -> qualquer acento vira tofu box. Rotulos em ASCII puro."""
+    from motor_expansao.dashboard.constants import OFERTA_DISPONIVEL_ALUNOS_BANDS as BANDS
+
+    labels = [label for _upper, label, _color in BANDS]
+    assert not any(any(ord(ch) > 127 for ch in s) for s in labels)
+    assert len(labels) == 6
+
+
+def test_formatadores_e_faixa_superior_do_hexagono():
+    assert censo_map._format_valor_residual(3_506.0) == "3.506"
+    assert censo_map._format_valor_residual(None) == "n/d"
+    assert censo_map._format_valor_residual(float("nan")) == "n/d"
+    assert censo_map._legenda_valor_hex("Residual", "3.506") == "Residual no hexagono: 3.506"
+    # Faixa superior do hex central usa o MESMO valor do lookup por hex_id (nao soma o disco).
+    import h3
+
+    centro = h3.latlng_to_cell(LAT_C, LNG_C, 7)
+    hexes = pd.DataFrame(
+        {"hex_id": [centro], "oferta_efetiva_disponivel": [3_506.0]}
+    )
+    assert censo_map._residual_hex_central(LAT_C, LNG_C, hexes) == 3_506.0
+    assert censo_map._residual_hex_central(LAT_C, LNG_C, pd.DataFrame()) is None
+
+
+def test_frame_box_metric_puro_reproduz_o_calculo_do_caller():
+    """Refactor sem mudanca de comportamento: o helper puro devolve o MESMO retangulo que o
+    calculo antes inline (lado menor = raio*(1+margem); aspect da area de mapa)."""
+    width, height = 1280, 760
+    frame = censo_map._frame_box_metric(1.5, width, height)
+    minx, miny, maxx, maxy = frame.bounds
+    base_half = 1.5 * 1000.0 * (1.0 + censo_map._MAP_FRAME_MARGIN)
+    inner_w, inner_h = censo_map._map_inner_dims(width, height)
+    aspect = inner_w / inner_h
+    assert maxy - miny == 2 * base_half
+    assert abs((maxx - minx) - 2 * base_half * aspect) < 1e-6
+    # O frame de 5 km e' proporcionalmente maior pelo mesmo fator de raio.
+    frame5 = censo_map._frame_box_metric(censo_map.RAIO_RESIDUAL_DISPLAY_KM, width, height)
+    b5 = frame5.bounds
+    assert abs((b5[3] - b5[1]) / (maxy - miny) - (5.0 / 1.5)) < 1e-9
+
+
+def test_raio_de_exibicao_nao_toca_o_raio_do_motor():
+    """RD-1 (READ-ONLY M1): o raio de 5 km e' constante de RENDER de `censo_map`; o raio do motor
+    censitario segue 1,5 km e NAO vem de `config.py`."""
+    import motor_expansao.config as config
+    from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
+
+    assert RAIO_CENSITARIO_DEFAULT_KM == 1.5
+    assert censo_map.RAIO_RESIDUAL_DISPLAY_KM == 5.0
+    assert not hasattr(config, "RAIO_RESIDUAL_DISPLAY_KM")
+    assert censo_map._RESIDUAL_GRID_DISK_K == 5
+
+
+# ── BLK-RELPON-11: camada "Imagem do Entorno" (mapa de quadra, raio de EXIBICAO ~0,14 km) ──
+
+
+class _FakeCartoDB:
+    Voyager = "fake-voyager-provider"
+
+
+class _FakeProviders:
+    CartoDB = _FakeCartoDB()
+
+
+class _FakeContextily:
+    """Stub de `contextily` que CAPTURA o `zoom` pedido, sem tocar a rede.
+
+    Devolve um mosaico 256x256 preto e um extent unitario — suficiente para o pipeline de
+    composicao de `_render_camada` rodar; o teste so olha o `zoom`.
+    """
+
+    def __init__(self) -> None:
+        self.zooms: list[int] = []
+        self.providers = _FakeProviders()
+
+    def set_cache_dir(self, path):  # noqa: D401 - stub
+        return None
+
+    def bounds2img(self, minx, miny, maxx, maxy, *, zoom, source, ll=False):
+        self.zooms.append(int(zoom))
+        return np.zeros((256, 256, 3), dtype=np.uint8), (0.0, 1.0, 0.0, 1.0)
+
+
+def _instalar_contextily_falso(monkeypatch, tmp_path) -> _FakeContextily:
+    import sys
+
+    fake = _FakeContextily()
+    monkeypatch.setitem(sys.modules, "contextily", fake)
+    # Cache num tmp_path: o teste nao pode criar `data/cache/basemap_tiles/` no repo.
+    monkeypatch.setattr(censo_map, "_BASEMAP_CACHE_DIR", tmp_path)
+    return fake
+
+
+def test_camada_entorno_presente_e_png_valido():
+    """T1: a camada `entorno` e INCONDICIONAL (sem `hexes_df`, sem tiles) e sai PNG valido."""
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C,
+        LNG_C,
+        _setores_um_quadrado(),
+        width=1000,
+        height=760,
+        basemap=False,
+    )
+
+    assert "entorno" in mapas
+    png = mapas["entorno"]
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+    image = Image.open(BytesIO(png))
+    assert image.size == (1000, 760)
+
+
+def test_camada_entorno_nao_desenha_pins_e_e_imune_a_concorrentes():
+    """T2: sem pins de concorrente/Ultra (a ~1,82 px/m um pin de 30 px cobre ~16,5 m de solo).
+
+    Teste DIFERENCIAL byte-a-byte, com a MESMA trava anti-vacuo do residual. Este teste NAO passa
+    `hexes_df`, entao a `socioeconomia` (BLK-RELPON-13: hex a 5 km) estaria AUSENTE; a sentinela
+    passa a ser `score` (setor a 1,5 km, com pins): DEVE reagir aos pontos, senao remover os pins
+    de todas as camadas passaria trivialmente.
+    """
+    setores = _setores_um_quadrado()
+    competitors = pd.DataFrame(
+        [{"nome_unidade": "Concorrente", "lat": LAT_C, "lng": LNG_C + 0.0004, "rede": "smart_fit"}]
+    )
+    ultra = pd.DataFrame([{"nome_unidade": "Ultra", "lat": LAT_C + 0.0003, "lng": LNG_C}])
+
+    def _render(com_pontos: bool):
+        return render_mapas_censitarios_combinados(
+            LAT_C, LNG_C, setores, width=1000, height=760, basemap=False,
+            competitors_df=competitors if com_pontos else None,
+            ultra_df=ultra if com_pontos else None,
+        )
+
+    com, sem = _render(True), _render(False)
+
+    assert com["entorno"] == sem["entorno"], (
+        "a camada `entorno` mudou ao receber concorrentes/Ultra -- ela nao pode desenhar pins"
+    )
+    assert b"Pins: Ultra e concorrentes" not in com["entorno"]
+    # Trava anti-vacuo: sem `hexes_df` a `socioeconomia` esta ausente; `score` (setor a 1,5 km)
+    # CONTINUA com pins e serve de sentinela.
+    assert com["score"] != sem["score"], (
+        "a camada `score` deveria continuar desenhando pins"
+    )
+
+
+def test_render_camada_entorno_textos_ascii_e_rodape_sem_raio(monkeypatch):
+    """T3: textos da camada nova em ASCII puro (excecao de RENDER ao §2) e rodape SEM "Raio ".
+
+    Chama `_render_camada_entorno` DIRETAMENTE para os textos capturados pertencerem so a esta
+    camada (o rodape automatico sairia "Raio 0,1 km" a 0,14 km — enganoso vs o motor de 1,5 km).
+    """
+    textos: list[str] = []
+    real = censo_map._draw_text
+
+    def _spy(draw, xy, text, **kwargs):
+        textos.append(text)
+        return real(draw, xy, text, **kwargs)
+
+    monkeypatch.setattr(censo_map, "_draw_text", _spy)
+    png = censo_map._render_camada_entorno(
+        LAT_C, LNG_C, basemap=False, width=1000, height=760
+    )
+    assert png.startswith(b"\x89PNG\r\n\x1a\n")
+
+    for esperado in (
+        "Entorno - mapa de quadra",
+        "Ruas e quadras do entorno",
+        "Entorno imediato do ponto",
+        "Escala de quadra - EPSG:3857 - fundo de ruas offline",
+        "Ponto central",
+    ):
+        assert esperado in textos, f"texto ausente no PNG: {esperado!r}"
+
+    assert "Pins: Ultra e concorrentes" not in textos
+    assert not any(t.startswith("Raio ") for t in textos), (
+        f"nenhum texto pode prometer raio de analise nesta escala: {textos}"
+    )
+    # Excecao de RENDER do §2: o font do PNG nao tem glifo acentuado -> ASCII puro.
+    assert all(ord(c) < 128 for t in textos for c in t)
+
+
+def _conta_pixels_do_circulo(png: bytes) -> int:
+    """Pixels 'azuis do circulo' (`_CIRCLE_RGBA`=(0,102,255,235) sobre o canvas claro)."""
+    arr = np.array(Image.open(BytesIO(png)).convert("RGB"))
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    return int(((b > 200) & (r < 80) & (g < 160)).sum())
+
+
+def test_camada_entorno_nao_desenha_o_circulo_do_raio():
+    """T4: `circle_3857=None` -> zero pixel do circulo azul; a camada `densidade` prova que o
+    predicado DETECTA o circulo onde ele existe (sem isso o assert de zero seria vacuo)."""
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, _setores_um_quadrado(), width=1000, height=760, basemap=False
+    )
+
+    assert _conta_pixels_do_circulo(mapas["entorno"]) == 0
+    assert _conta_pixels_do_circulo(mapas["densidade"]) > 0
+
+
+def test_fetch_basemap_aceita_zoom_bump_local_sem_mexer_na_constante(monkeypatch, tmp_path):
+    """T5: `zoom_bump` sobrescreve o bump SO na chamada; a constante global fica `1`."""
+    fake = _instalar_contextily_falso(monkeypatch, tmp_path)
+
+    # bbox com span 3857 ~3.759 m e width=1000 -> `_zoom_for_bounds` = 16.
+    bounds = (-5_000_000.0, -3_000_000.0, -5_000_000.0 + 3_759.0, -3_000_000.0 + 3_759.0)
+    assert censo_map._zoom_for_bounds(bounds[0], bounds[2], 1000) == 16
+
+    censo_map._fetch_basemap(bounds, 1000)
+    censo_map._fetch_basemap(bounds, 1000, zoom_bump=0)
+    censo_map._fetch_basemap(bounds, 1000, zoom_bump=-1)
+
+    assert fake.zooms == [17, 16, 15]
+    assert censo_map._BASEMAP_ZOOM_BUMP == 1
+
+
+def test_entorno_pede_z18_em_todo_o_brasil(monkeypatch, tmp_path):
+    """T6: o frame de quadra pede z18 em toda a faixa de latitude do Brasil e nos 2 canvases
+    usados pelos callers de PDF.
+
+    z18 e' ESCOLHA DE PRODUTO do gate visual (Vinicius, 2026-07-22), nao consequencia da
+    geometria: o frame resolveria z19 sozinho (dois clampes em 19), e e' o `zoom_bump=-1` de
+    `_render_camada_entorno` que desce um nivel. Motivo: o render tem ~1,82 px/m contra
+    3,65 px/m do tile z19 -> em z19 o rotulo de rua sai a 2,6-3,3 pt no PDF (ilegivel, e a
+    variante CLASSICA que producao entrega e a pior); em z18 dobra. Se este teste quebrar,
+    e' porque alguem mexeu no zoom da pagina — confirmar com o gate antes de atualizar.
+    """
+    fake = _instalar_contextily_falso(monkeypatch, tmp_path)
+
+    pontos = [(-23.55, -46.63), (-33.7, -53.4), (2.82, -60.67)]
+    for width, height in ((1000, 760), (1280, 760)):
+        for lat, lng in pontos:
+            censo_map._render_camada_entorno(
+                lat, lng, basemap=True, width=width, height=height
+            )
+
+    assert fake.zooms == [18] * 6, fake.zooms
+
+
+def test_raio_entorno_e_constante_de_render_dentro_da_janela():
+    """T7: `RAIO_ENTORNO_DISPLAY_KM` e constante de RENDER (nunca `config.py`) e o lado CURTO do
+    frame fica na janela util de 250-400 m, alvo ~300 m. Motor censitario INTOCADO."""
+    import motor_expansao.config as config
+    from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
+
+    assert censo_map.RAIO_ENTORNO_DISPLAY_KM == 0.14
+    lado = 2.0 * censo_map.RAIO_ENTORNO_DISPLAY_KM * 1000.0 * (1.0 + censo_map._MAP_FRAME_MARGIN)
+    assert 250.0 <= lado <= 400.0
+    assert abs(lado - 300.0) <= 10.0
+    assert not hasattr(config, "RAIO_ENTORNO_DISPLAY_KM")
+    # O raio novo e' de EXIBICAO: o motor censitario segue em 1,5 km.
+    assert RAIO_CENSITARIO_DEFAULT_KM == 1.5
+
+    # Invariante do lado CURTO em relacao ao canvas (a resolucao efetiva nao muda com a largura).
+    for width, height in ((1000, 760), (1280, 760)):
+        minx, miny, maxx, maxy = censo_map._frame_box_metric(
+            censo_map.RAIO_ENTORNO_DISPLAY_KM, width, height
+        ).bounds
+        assert abs(min(maxx - minx, maxy - miny) - lado) < 1e-6
+
+
+def test_textos_do_entorno_cabem_sem_invadir_a_coluna_da_legenda():
+    """T8: titulo/linha de dado nao invadem a coluna da legenda; o subtitulo cabe na coluna."""
+    image = Image.new("RGBA", (1000, 760))
+    draw = ImageDraw.Draw(image, "RGBA")
+    largura_util = 1000 - censo_map._LEGEND_COL_W
+
+    titulo_w = censo_map._text_width(
+        draw, censo_map._ENTORNO_TITULO_PNG, censo_map._font(censo_map._FS_TITULO)
+    )
+    assert 28 + titulo_w <= largura_util
+
+    valor_w = censo_map._text_width(
+        draw, censo_map._ENTORNO_VALOR_LINHA, censo_map._font(censo_map._FS_VALOR_RAIO)
+    )
+    assert 28 + valor_w <= largura_util
+
+    legenda_w = censo_map._text_width(
+        draw, censo_map._ENTORNO_LEGENDA_TITULO, censo_map._font(censo_map._FS_LEGENDA_SUBTITULO)
+    )
+    assert legenda_w <= censo_map._LEGEND_COL_W - 10
+
+
+def test_camadas_existentes_ficam_byte_identicas_com_os_defaults_novos():
+    """T9: `circle_3857: BaseGeometry | None` e `rotulo_escala=None` sao DEFAULT-PRESERVING.
+
+    Renderiza as camadas antigas duas vezes — uma pelo caminho normal (defaults) e outra com os
+    parametros novos passados EXPLICITAMENTE com os valores default — e exige igualdade
+    byte-a-byte. (Preferido a hashes literais: nao envelhece com mudancas legitimas de fonte.)
+    """
+    from shapely.geometry import Point
+
+    setores = _setores_um_quadrado()
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, setores, width=1000, height=760, basemap=False,
+        hexes_df=_hexes_sinteticos(),
+    )
+    assert set(mapas) == _CAMADAS
+
+    # Prova direta sobre `_render_camada`: com um circulo real + `rotulo_escala=None`
+    # explicito, a saida bate byte-a-byte com a chamada que omite os dois parametros.
+    to_3857 = censo_map._transformer(
+        censo_map._local_metric_crs(LAT_C, LNG_C), censo_map.CRS_WEB_MERCATOR
+    )
+    circulo = censo_map._project_geometry(Point(0, 0).buffer(1_500.0, quad_segs=96), to_3857)
+    frame = censo_map._project_geometry(
+        censo_map._frame_box_metric(1.5, 1000, 760), to_3857
+    )
+    comum = dict(
+        titulo="Densidade populacional",
+        legenda_titulo="Densidade (hab/km2)",
+        legenda_entries=censo_map._bands_legend_entries(DENSIDADE_POP_BANDS),
+        color_fn=_color_for_densidade,
+        source_values=pd.Series([1_000.0], dtype="float64"),
+        sector_records_3857=[],
+        center_3857=to_3857.transform(0.0, 0.0),
+        pins=[],
+        ultra_pins=[],
+        basemap=None,
+        bounds=frame.bounds,
+        lat=LAT_C,
+        lng=LNG_C,
+        raio_km=1.5,
+        n_setores=0,
+        width=1000,
+        height=760,
+    )
+    implicito = censo_map._render_camada(circle_3857=circulo, **comum)
+    explicito = censo_map._render_camada(circle_3857=circulo, rotulo_escala=None, **comum)
+    assert implicito == explicito
+# ── Overlay de RÓTULOS por cima do choropleth (mapa de calor legível) ────────────────────
+# Sem rede: monkeypatch de `_fetch_basemap`/`_fetch_labels`. A base é cinza (sem magenta) e o
+# tileset de rótulos é magenta OPACO; se o magenta aparece na camada de choropleth, os nomes
+# foram compostos POR CIMA da cor — a leitura que o formato legível exige (nomes de rua/bairro
+# sobre o heat, não soterrados). `_fetch_labels` recebe (bounds_3857, width) e devolve
+# (Image RGBA, extent) no mesmo contrato do basemap.
+
+_ROTULO_MAGENTA = (255, 0, 255)
+
+
+def _fake_basemap_cinza(bounds, _width, *, zoom_bump=None):
+    # `zoom_bump` e' keyword-only no `_fetch_basemap` real desde o BLK-RELPON-11 (a camada
+    # `entorno` passa -1 p/ forcar z18). O fake precisa aceita-lo: `render_mapas_censitarios_
+    # combinados` monta TODAS as camadas, inclusive a de quadra, e sem isso o patch estoura
+    # TypeError antes de chegar no que estes testes medem.
+    minx, miny, maxx, maxy = bounds
+    return Image.new("RGBA", (256, 256), (235, 235, 235, 255)), (minx, maxx, miny, maxy)
+
+
+def _fake_labels_magenta(bounds, _width):
+    minx, miny, maxx, maxy = bounds
+    return Image.new("RGBA", (256, 256), (*_ROTULO_MAGENTA, 255)), (minx, maxx, miny, maxy)
+
+
+def _setores_dois_faixas() -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            _sector_record("355030801000001", box(-700, -700, 0, 700), pop=800, score=40),
+            _sector_record("355030801000002", box(0, -700, 700, 700), pop=1400, score=85),
+        ]
+    )
+
+
+def test_labels_overlay_compoe_rotulos_por_cima_do_choropleth(monkeypatch):
+    monkeypatch.setattr(censo_map, "_fetch_basemap", _fake_basemap_cinza)
+    monkeypatch.setattr(censo_map, "_fetch_labels", _fake_labels_magenta)
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, _setores_dois_faixas(), width=800, height=600, basemap=True
+    )
+    dens_cores = {c[:3] for _count, c in _all_colors(mapas["densidade"])}
+    assert _ROTULO_MAGENTA in dens_cores  # rótulos compostos POR CIMA da cor
+    # a camada só-pins (concorrentes) NÃO recebe overlay de rótulos (mantém o basemap nativo)
+    conc_cores = {c[:3] for _count, c in _all_colors(mapas["concorrentes"])}
+    assert _ROTULO_MAGENTA not in conc_cores
+
+
+def test_labels_overlay_desligado_nao_compoe_rotulos(monkeypatch):
+    monkeypatch.setattr(censo_map, "_fetch_basemap", _fake_basemap_cinza)
+    monkeypatch.setattr(censo_map, "_fetch_labels", _fake_labels_magenta)
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, _setores_dois_faixas(), width=800, height=600,
+        basemap=True, labels_overlay=False,
+    )
+    dens_cores = {c[:3] for _count, c in _all_colors(mapas["densidade"])}
+    assert _ROTULO_MAGENTA not in dens_cores
+
+
+# ── BLK-BASEMAP-02: basemap self-host (OpenMapTiles) via env var ────────────────────────────
+# A troca do provedor e' resolvida em runtime por `_basemap_source`, NAO por constante fixa: sem
+# `API_BASEMAP_TILES_URL` o caminho e' byte-identico ao Voyager de sempre (o que CI/dev exercitam)
+# e com ela o `contextily` recebe o template de URL cru do tileserver proprio. Emenda a DEC-004.
+
+
+class _FakeCartoDB:
+    Voyager = "provider-voyager-sentinela"
+
+
+class _FakeCtx:
+    providers = type("_P", (), {"CartoDB": _FakeCartoDB})()
+
+
+def test_basemap_source_usa_voyager_sem_env(monkeypatch):
+    monkeypatch.delenv(censo_map._BASEMAP_TILES_URL_ENV, raising=False)
+    assert censo_map._basemap_source(_FakeCtx()) == "provider-voyager-sentinela"
+
+
+def test_basemap_source_usa_self_host_com_env(monkeypatch):
+    url = "http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png"
+    monkeypatch.setenv(censo_map._BASEMAP_TILES_URL_ENV, url)
+    assert censo_map._basemap_source(_FakeCtx()) == url
+
+
+def test_basemap_source_ignora_env_vazia(monkeypatch):
+    # Env var presente porem VAZIA (caso classico de `.env` com `API_BASEMAP_TILES_URL=`) nao pode
+    # virar uma URL vazia entregue ao contextily -> cairia em erro e o PDF sairia sem ruas.
+    monkeypatch.setenv(censo_map._BASEMAP_TILES_URL_ENV, "")
+    assert censo_map._basemap_source(_FakeCtx()) == "provider-voyager-sentinela"
+
+
+def test_atribuicao_do_pontual_credita_osm_e_carto_nos_dois_modos(monkeypatch):
+    # No Pontual o credito NAO muda com o self-host: o dado do tileserver e' OpenStreetMap e os
+    # ROTULOS continuam vindo do CARTO (`_LABELS_TILE_URL`, BLK-RELPON-07) -> os dois sao devidos.
+    assert censo_map._ATRIBUICAO_TILES == "(c) OpenStreetMap, (c) CARTO"
+    assert "cartocdn.com" in censo_map._LABELS_TILE_URL
+
+
+# ── BLK-BASEMAP-03 (emenda DEC-004): grade de tiles e cache do overlay de rótulos ───────────
+# O achado MÉDIA da revisão do PR #154 era exatamente isto: os 2 testes de overlay acima fazem
+# monkeypatch de `_fetch_labels` INTEIRA, então a aritmética Web Mercator -> índice de tile e o
+# caminho de rede/cache nunca eram exercitados. Aqui eles são, sem rede.
+
+
+def test_labels_grid_cobre_o_bbox_pedido():
+    """A faixa de tiles tem de CONTER o bbox — e o extent devolvido, idem (grade é discreta)."""
+    bounds = (-5_200_000.0, -2_800_000.0, -5_195_000.0, -2_795_000.0)
+    zoom, tx0, tx1, ty0, ty1, tile_m = censo_map._labels_grid(bounds, 1000)
+
+    assert tx0 <= tx1 and ty0 <= ty1
+    assert tile_m == censo_map._EARTH_M / (2**zoom)
+
+    ex_minx, ex_maxx, ex_miny, ex_maxy = censo_map._labels_extent(tx0, tx1, ty0, ty1, tile_m)
+    assert ex_minx <= bounds[0] and ex_miny <= bounds[1]
+    assert ex_maxx >= bounds[2] and ex_maxy >= bounds[3]
+
+
+def test_labels_grid_y_cresce_para_o_sul():
+    """Convenção XYZ: `y` cresce para o SUL. Um bbox mais ao norte tem de ter `ty` MENOR."""
+    largura = 4_000.0
+    norte = (-5_200_000.0, -2_000_000.0, -5_200_000.0 + largura, -2_000_000.0 + largura)
+    sul = (-5_200_000.0, -3_000_000.0, -5_200_000.0 + largura, -3_000_000.0 + largura)
+
+    _z_n, _tx0n, _tx1n, ty0_norte, _ty1n, _tn = censo_map._labels_grid(norte, 1000)
+    _z_s, _tx0s, _tx1s, ty0_sul, _ty1s, _ts = censo_map._labels_grid(sul, 1000)
+    assert ty0_norte < ty0_sul
+
+
+def test_labels_grid_respeita_o_teto_de_zoom_19():
+    """Bbox minúsculo pediria zoom altíssimo; o teto é 19, igual ao do `_fetch_basemap`."""
+    zoom, *_ = censo_map._labels_grid((-5_200_000.0, -2_800_000.0, -5_199_999.0, -2_799_999.0), 1000)
+    assert zoom == 19
+
+
+def test_labels_extent_e_o_retangulo_dos_tiles_inteiros():
+    """Extent = borda dos tiles inteiros: largura = (tx1-tx0+1) tiles, altura = (ty1-ty0+1)."""
+    tile_m = 1000.0
+    ex_minx, ex_maxx, ex_miny, ex_maxy = censo_map._labels_extent(10, 12, 20, 21, tile_m)
+    assert abs((ex_maxx - ex_minx) - 3 * tile_m) < 1e-6
+    assert abs((ex_maxy - ex_miny) - 2 * tile_m) < 1e-6
+
+
+def _png_bytes(cor) -> bytes:
+    buf = BytesIO()
+    Image.new("RGBA", (512, 512), cor).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_labels_tile_grava_no_cache_e_reusa_sem_segunda_ida_a_rede(monkeypatch, tmp_path):
+    """DEC-004 mitigação (a): o 2º pedido do MESMO tile sai do disco, sem tocar a rede.
+
+    Era a dívida ALTA do PR #154: `_fetch_basemap` herda cache do `ctx.set_cache_dir()`, mas o
+    overlay usava `urllib` cru e rebaixava o mosaico inteiro a cada PDF.
+    """
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", tmp_path / "labels")
+    idas = []
+
+    class _Resp:
+        def __enter__(self_inner):
+            return self_inner
+
+        def __exit__(self_inner, *_a):
+            return False
+
+        def read(self_inner):
+            return _png_bytes((10, 20, 30, 255))
+
+    def _fake_urlopen(_req, timeout=None):
+        idas.append(1)
+        return _Resp()
+
+    monkeypatch.setattr("urllib.request.urlopen", _fake_urlopen)
+
+    primeiro = censo_map._labels_tile(17, 40_000, 60_000)
+    assert len(idas) == 1
+    assert (tmp_path / "labels" / "17_40000_60000.png").is_file()
+
+    segundo = censo_map._labels_tile(17, 40_000, 60_000)
+    assert len(idas) == 1, "o 2o pedido foi a rede — o cache nao pegou"
+    assert primeiro.getpixel((0, 0)) == segundo.getpixel((0, 0))
+
+
+def test_labels_tile_rebaixa_quando_o_cache_esta_corrompido(monkeypatch, tmp_path):
+    """PNG truncado no disco não pode derrubar o render — rebaixa como se não existisse."""
+    cache = tmp_path / "labels"
+    cache.mkdir(parents=True)
+    (cache / "17_1_2.png").write_bytes(b"nao sou um png")
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", cache)
+
+    class _Resp:
+        def __enter__(self_inner):
+            return self_inner
+
+        def __exit__(self_inner, *_a):
+            return False
+
+        def read(self_inner):
+            return _png_bytes((99, 0, 0, 255))
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda _r, timeout=None: _Resp())
+    assert censo_map._labels_tile(17, 1, 2).getpixel((0, 0))[0] == 99
+
+
+def test_labels_tile_nao_quebra_quando_o_cache_nao_e_gravavel(monkeypatch, tmp_path):
+    """Cache é otimização: falha de ESCRITA é engolida e o tile sai da rede normalmente."""
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", tmp_path / "labels")
+
+    class _Resp:
+        def __enter__(self_inner):
+            return self_inner
+
+        def __exit__(self_inner, *_a):
+            return False
+
+        def read(self_inner):
+            return _png_bytes((7, 7, 7, 255))
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda _r, timeout=None: _Resp())
+
+    def _mkdir_explode(*_a, **_k):
+        raise OSError("disco read-only")
+
+    monkeypatch.setattr(censo_map.Path, "mkdir", _mkdir_explode)
+    assert censo_map._labels_tile(17, 5, 5).getpixel((0, 0))[0] == 7
+
+
+def test_fetch_labels_devolve_none_quando_a_rede_falha(monkeypatch, tmp_path):
+    """Contrato de degradação graciosa: sem rede -> None -> o mapa sai SEM nomes, sem exceção."""
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", tmp_path / "labels")
+
+    def _explode(*_a, **_k):
+        raise OSError("sem rede")
+
+    monkeypatch.setattr(censo_map, "_labels_grid", _explode)
+    assert censo_map._fetch_labels((-5_200_000.0, -2_800_000.0, -5_195_000.0, -2_795_000.0), 1000) is None
+
+
+def test_fetch_labels_tolera_tile_faltando(monkeypatch, tmp_path):
+    """Um tile 404 no meio do mosaico não invalida os outros — o resto compõe normal."""
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", tmp_path / "labels")
+    chamadas = {"n": 0}
+
+    def _tile_intermitente(_zoom, _tx, _ty):
+        chamadas["n"] += 1
+        if chamadas["n"] % 2 == 0:
+            raise OSError("404")
+        return Image.new("RGBA", (512, 512), (0, 255, 0, 255))
+
+    monkeypatch.setattr(censo_map, "_labels_tile", _tile_intermitente)
+    out = censo_map._fetch_labels((-5_200_000.0, -2_800_000.0, -5_150_000.0, -2_750_000.0), 1000)
+
+    assert out is not None
+    canvas, _extent = out
+    arr = np.asarray(canvas)
+    assert bool(((arr[:, :, 1] == 255) & (arr[:, :, 3] == 255)).any()), (
+        "nenhum tile bom entrou no mosaico"
+    )
+
+
+def test_fetch_labels_devolve_none_quando_nenhum_tile_entra(monkeypatch, tmp_path):
+    """Rede 100% fora -> None, NAO um mosaico transparente.
+
+    Regressão real do BLK-RELPON-07: o `except Exception: continue` por tile engolia todas as
+    falhas e a função devolvia canvas vazio + extent, contrariando o próprio docstring ("QUALQUER
+    falha -> None"). O chamador então compunha uma camada inteiramente transparente achando que
+    tinha rótulos. Mesmo critério da DEC-018 para a foto de satélite.
+    """
+    monkeypatch.setattr(censo_map, "_LABELS_CACHE_DIR", tmp_path / "labels")
+
+    def _todo_tile_falha(_zoom, _tx, _ty):
+        raise OSError("CDN fora")
+
+    monkeypatch.setattr(censo_map, "_labels_tile", _todo_tile_falha)
+    bounds = (-5_200_000.0, -2_800_000.0, -5_195_000.0, -2_795_000.0)
+    assert censo_map._fetch_labels(bounds, 1000) is None
+
+
+def test_labels_timeout_por_tile_limita_o_pior_caso():
+    """Teto por tile explícito: 8 s. Documenta o pior caso do mosaico contra CDN em blackhole."""
+    assert censo_map._LABELS_TIMEOUT_S <= 8

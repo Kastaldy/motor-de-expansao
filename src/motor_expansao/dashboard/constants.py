@@ -539,8 +539,20 @@ RENDA_MEDIA_DOMICILIAR_BANDS: list[tuple[float, str, tuple[int, int, int, int]]]
     (float("inf"), ">R$ 14.000",       (0,   204, 0,   150)),   # #00CC00
 ]
 
-# BLK-RELPON-10: faixas absolutas de Residual Fitness (oferta_efetiva_disponivel, em ALUNOS)
-# ancoradas em 2.500 alunos = 1 unidade. READ-ONLY sobre o M1 (so RENDER da camada residual).
+# Faixas absolutas de RESIDUAL FITNESS DISPONIVEL (`oferta_efetiva_disponivel`), em ALUNOS —
+# NAO confundir com `RESIDUAL_SCORE_BANDS`, que e' score 0-100. Ancora: 2.500 alunos = capacidade
+# default de 1 unidade (CLAUDE.md §4) -> a legenda le direto como "~N unidades". Regua ABSOLUTA
+# (nao quantilica): 68,9% dos 1.542.531 hexes valem exatamente 0 e, entre os positivos, a mediana
+# e' 1 e o p99 e' 1.774 -> quantis nacionais colocariam "verde alto" em hexes onde nao cabe 1/30
+# de academia (mesmo motivo pelo qual o BLK-CENSO-03 trocou quartil por faixa absoluta).
+# Cortes 0 / 1.250 / 2.500 / 5.000 / 10.000 / inf aprovados por Vinicius no gate do BLK-RELPON-10
+# (S2 = Alternativa B, 6 faixas; a de 5 faixas saturava Manaus, cujo p75 7.588 e max 13.472 caiam
+# na MESMA faixa de topo). Rampa cinza -> amarelo -> ambar -> verde: cinza = `_COR_REPROVADO` e
+# verde forte = `_COR_APROVADO_PROPRIO` do Relatorio Municipal (DEC-011/BLK-RELMUN-05).
+# Rotulos em ASCII PURO: a legenda e' rasterizada num PNG cujo font (ImageFont.load_default) NAO
+# tem glifo acentuado (excecao de RENDER ao §2, como em RENDA_MEDIA_DOMICILIAR_BANDS).
+# alpha 150 = cor da LEGENDA; o FILL no mapa usa `_CHOROPLETH_ALPHA`.
+# Camada de VISUALIZACAO do Relatorio Pontual Censitario — NAO altera score/artefatos M1.
 OFERTA_DISPONIVEL_ALUNOS_BANDS: list[tuple[float, str, tuple[int, int, int, int]]] = [
     (0.0,        "sem residual",   (150, 156, 170, 150)),   # rede saturada
     (1_250.0,    "1-1.250",        (247, 244, 139, 150)),   # < 1/2 unidade

@@ -1,0 +1,219 @@
+{
+  "n_hexes": 486850,
+  "n_uf": 12,
+  "n_validos": 486850,
+  "corr": {
+    "densidade_x_pop": 0.35060306084754156,
+    "densidade_x_score": 0.17995708308421277,
+    "densidade_x_renda": 0.17955039604161538,
+    "crescimento_x_score": 0.1803632320170655,
+    "crescimento_x_pop": 0.21552052208517627,
+    "crescimento_x_densidade": 0.8082043881386947
+  },
+  "n_amostra_rf": 80000,
+  "r2": {
+    "baseline": 0.9999987700009976,
+    "mais_densidade": 0.9999983396149555,
+    "mais_crescimento": 0.9999983263583507,
+    "mais_ambos": 0.9999980877412808,
+    "d_densidade": -4.303860420273864e-07,
+    "d_crescimento": -4.436426468412691e-07,
+    "d_ambos": -6.822597167222e-07
+  },
+  "ocultos": 39873,
+  "ocultos_pct": 8.19,
+  "ocultos_top": [
+    {
+      "municipio": "Nova Itarana",
+      "uf": "BA",
+      "densidade": 0.0693,
+      "score_m1": 9.4,
+      "divergencia": 0.984
+    },
+    {
+      "municipio": "Maraial",
+      "uf": "PE",
+      "densidade": 0.0726,
+      "score_m1": 12.8,
+      "divergencia": 0.977
+    },
+    {
+      "municipio": "Cardeal da Silva",
+      "uf": "BA",
+      "densidade": 0.0427,
+      "score_m1": 9.7,
+      "divergencia": 0.976
+    },
+    {
+      "municipio": "Itaquara",
+      "uf": "BA",
+      "densidade": 0.0419,
+      "score_m1": 9.9,
+      "divergencia": 0.976
+    },
+    {
+      "municipio": "Fruta de Leite",
+      "uf": "MG",
+      "densidade": 0.0418,
+      "score_m1": 11.1,
+      "divergencia": 0.976
+    },
+    {
+      "municipio": "Morpará",
+      "uf": "BA",
+      "densidade": 0.034,
+      "score_m1": 8.4,
+      "divergencia": 0.975
+    },
+    {
+      "municipio": "Potengi",
+      "uf": "CE",
+      "densidade": 0.0341,
+      "score_m1": 9.2,
+      "divergencia": 0.975
+    },
+    {
+      "municipio": "Martinópole",
+      "uf": "CE",
+      "densidade": 0.066,
+      "score_m1": 13.6,
+      "divergencia": 0.974
+    },
+    {
+      "municipio": "Quixaba",
+      "uf": "PE",
+      "densidade": 0.0292,
+      "score_m1": 1.9,
+      "divergencia": 0.974
+    },
+    {
+      "municipio": "Terezinha",
+      "uf": "PE",
+      "densidade": 0.0297,
+      "score_m1": 6.9,
+      "divergencia": 0.974
+    },
+    {
+      "municipio": "Nova Itarana",
+      "uf": "BA",
+      "densidade": 0.0335,
+      "score_m1": 9.4,
+      "divergencia": 0.974
+    },
+    {
+      "municipio": "Jaborandi",
+      "uf": "BA",
+      "densidade": 0.042,
+      "score_m1": 12.0,
+      "divergencia": 0.973
+    },
+    {
+      "municipio": "Itacuruba",
+      "uf": "PE",
+      "densidade": 0.0285,
+      "score_m1": 5.2,
+      "divergencia": 0.973
+    },
+    {
+      "municipio": "Jaqueira",
+      "uf": "PE",
+      "densidade": 0.0272,
+      "score_m1": 7.1,
+      "divergencia": 0.972
+    },
+    {
+      "municipio": "Paramoti",
+      "uf": "CE",
+      "densidade": 0.0275,
+      "score_m1": 8.7,
+      "divergencia": 0.971
+    }
+  ],
+  "score_constante_no_municipio": {
+    "municipios_multi_hex": 3890,
+    "com_score_constante": 3890
+  },
+  "resolucao": {
+    "m1_unidades": 3892,
+    "satelite_hexes": 486850,
+    "fator": 125.1
+  },
+  "variancia_dentro_municipio_pct": {
+    "densidade": 68.2,
+    "crescimento": 76.8
+  },
+  "por_uf": [
+    {
+      "uf": "MG",
+      "hexes": 104078,
+      "dens_2023": 0.0029,
+      "pct_cresceu": 72.8
+    },
+    {
+      "uf": "BA",
+      "hexes": 94279,
+      "dens_2023": 0.0016,
+      "pct_cresceu": 74.5
+    },
+    {
+      "uf": "RS",
+      "hexes": 62410,
+      "dens_2023": 0.0037,
+      "pct_cresceu": 64.2
+    },
+    {
+      "uf": "GO",
+      "hexes": 59954,
+      "dens_2023": 0.0019,
+      "pct_cresceu": 67.3
+    },
+    {
+      "uf": "SP",
+      "hexes": 47389,
+      "dens_2023": 0.0109,
+      "pct_cresceu": 64.0
+    },
+    {
+      "uf": "PR",
+      "hexes": 40481,
+      "dens_2023": 0.0053,
+      "pct_cresceu": 68.4
+    },
+    {
+      "uf": "CE",
+      "hexes": 24192,
+      "dens_2023": 0.0036,
+      "pct_cresceu": 71.5
+    },
+    {
+      "uf": "SC",
+      "hexes": 20373,
+      "dens_2023": 0.0078,
+      "pct_cresceu": 79.7
+    },
+    {
+      "uf": "PE",
+      "hexes": 16085,
+      "dens_2023": 0.0048,
+      "pct_cresceu": 79.7
+    },
+    {
+      "uf": "ES",
+      "hexes": 8324,
+      "dens_2023": 0.0055,
+      "pct_cresceu": 92.3
+    },
+    {
+      "uf": "RJ",
+      "hexes": 8286,
+      "dens_2023": 0.0162,
+      "pct_cresceu": 74.0
+    },
+    {
+      "uf": "DF",
+      "hexes": 999,
+      "dens_2023": 0.0219,
+      "pct_cresceu": 76.2
+    }
+  ]
+}

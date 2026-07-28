@@ -615,3 +615,127 @@ def build_icon_atlas(
     result = (atlas_data_uri, mapping)
     _ATLAS_CACHE[cache_key] = result
     return result
+
+
+# ── logo quadrada para relatorios (BLK-RELPON-09) ──────────────────────────────
+# Marcador de concorrente/Ultra dos PDFs (Relatorio Pontual Censitario e Relatorio
+# Municipal): a PROPRIA logo num quadrado, SEM balao e SEM mascara circular. NAO
+# substitui `_render_pin_tile` -- que segue alimentando `build_icon_atlas`/pydeck com o
+# tile 128x128 e `anchorY=122` (e a paridade de BLK-WEB-02/07). As duas coexistem.
+# Camada visual (CLAUDE.md §5): nao altera score, faixas nem artefatos M1.
+_SQUARE_LOGO_RADIUS = 3
+_SQUARE_LOGO_BORDER_PX = 2
+_SQUARE_LOGO_SHADOW_PX = 2
+_SQUARE_LOGO_SHADOW_RGBA = (0, 0, 0, 60)
+
+
+def _render_square_logo_tile(
+    key: str,
+    size: int = 30,
+    *,
+    border: bool = True,
+    shadow: bool = True,
+) -> object:
+    """Rasteriza um tile RGBA `size` x `size` com a logo QUADRADA de `key`.
+
+    `key` e a rede do concorrente ou "__ultra__". O tile e um quadrado de cantos
+    levemente arredondados (o "card"), SEM balao e SEM mascara circular:
+      - ha logo PNG no `_ICON_CACHE` -> placa BRANCA + a logo inteira em CONTAIN
+        (preserva a proporcao; nunca estica);
+      - nao ha logo (ou falha ao abrir) -> placa na COR DA MARCA + sigla, que e a
+        unica pista de identidade no fallback.
+    O canvas tem exatamente `size` x `size`; com `shadow=True` a sombra ocupa os
+    `_SQUARE_LOGO_SHADOW_PX` px inferiores-direitos DENTRO do canvas, logo o card
+    mede `size - _SQUARE_LOGO_SHADOW_PX`. `border`/`shadow` sao desligaveis (o PDF
+    do Relatorio Municipal desenha a logo sobre pagina branca, onde keyline e
+    sombra virariam sujeira).
+
+    A ANCORA e decidida no chamador (BLK-RELPON-09, S2b): os relatorios centram o
+    quadrado no ponto (`- size // 2` nos dois eixos), porque o marcador nao tem
+    ponta. Chamadores tipam o retorno com `cast(Image.Image, ...)` (o modulo nao
+    importa PIL no topo; o import e lazy, como em `_render_pin_tile`).
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    size = max(8, int(size))
+
+    if key == "__ultra__":
+        brand: dict[str, str] = dict(ULTRA_BRAND)
+    else:
+        brand = dict(
+            COMPETITOR_BRANDS.get(
+                key,
+                {"label": "Concorrente", "short": "C", "bg": "#64748B", "fg": "#FFFFFF"},
+            )
+        )
+    bg = str(brand.get("bg", "#64748B"))
+    fg = str(brand.get("fg", "#FFFFFF"))
+    short = str(brand.get("short", "C"))[:3]
+
+    pad = _SQUARE_LOGO_SHADOW_PX if shadow else 0
+    bw = _SQUARE_LOGO_BORDER_PX if border else 0
+
+    tile = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(tile, "RGBA")
+    card = (0, 0, size - 1 - pad, size - 1 - pad)
+
+    if shadow:
+        draw.rounded_rectangle(
+            (pad, pad, size - 1, size - 1),
+            radius=_SQUARE_LOGO_RADIUS,
+            fill=_SQUARE_LOGO_SHADOW_RGBA,
+        )
+
+    logo_png = _extract_embedded_logo_png(str(_ICON_CACHE.get(key, {}).get("url", "")))
+    if logo_png is not None:
+        try:
+            import io
+
+            # placa branca: logo com transparencia/arte escura precisa de fundo claro
+            # para ler sobre o choropleth.
+            draw.rounded_rectangle(card, radius=_SQUARE_LOGO_RADIUS, fill=(255, 255, 255, 255))
+            inner_w = max(1, (size - pad) - 2 * bw)
+            inner_h = inner_w  # o card e quadrado
+            logo = Image.open(io.BytesIO(logo_png)).convert("RGBA")
+            # CONTAIN: preserva o aspect ratio (nunca estica) e amplia quando preciso
+            # (por isso NAO usar Image.thumbnail, que so reduz).
+            ratio = min(inner_w / logo.width, inner_h / logo.height)
+            new_w = max(1, int(round(logo.width * ratio)))
+            new_h = max(1, int(round(logo.height * ratio)))
+            logo = logo.resize((new_w, new_h), Image.Resampling.LANCZOS)
+            ox = bw + (inner_w - new_w) // 2
+            oy = bw + (inner_h - new_h) // 2
+            tile.paste(logo, (ox, oy), logo)
+            if border:
+                draw.rounded_rectangle(
+                    card,
+                    radius=_SQUARE_LOGO_RADIUS,
+                    outline=(255, 255, 255, 255),
+                    width=bw,
+                )
+            return tile
+        except Exception:
+            pass
+
+    # fallback: placa na cor da marca + sigla centrada
+    draw.rounded_rectangle(card, radius=_SQUARE_LOGO_RADIUS, fill=bg)
+    font: ImageFont.FreeTypeFont | ImageFont.ImageFont
+    try:
+        # `load_default(size=)` (Pillow >= 10.1) respeita o tamanho pedido; `truetype`
+        # nao serve aqui porque a imagem de producao nao tem fonte de sistema e o
+        # fallback degradaria para um bitmap fixo de ~10 px (ver `censo_map._font`).
+        font = ImageFont.load_default(size=max(7, int(round(size * 0.42))))
+    except Exception:
+        font = ImageFont.load_default()
+    ccx = ccy = (size - 1 - pad) / 2
+    bbox = draw.textbbox((0, 0), short, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text((ccx - tw / 2 - bbox[0], ccy - th / 2 - bbox[1]), short, fill=fg, font=font)
+    if border:
+        draw.rounded_rectangle(
+            card,
+            radius=_SQUARE_LOGO_RADIUS,
+            outline=(255, 255, 255, 255),
+            width=bw,
+        )
+    return tile

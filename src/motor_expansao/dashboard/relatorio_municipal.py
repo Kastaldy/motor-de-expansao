@@ -41,7 +41,8 @@ import pandas as pd
 from fpdf import FPDF
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
-from motor_expansao.dashboard.competitors import _render_pin_tile
+from motor_expansao.dashboard.censo_map import _BASEMAP_TILES_URL_ENV, _fetch_labels
+from motor_expansao.dashboard.competitors import _render_square_logo_tile
 from motor_expansao.dashboard.utils import score_band_to_color
 
 # ---------------------------------------------------------------------------
@@ -52,6 +53,15 @@ from motor_expansao.dashboard.utils import score_band_to_color
 OFERTA_DESTAQUE_MIN = 2000.0
 CAPACIDADE_UNIDADE = 2500.0
 H3_RES = 7
+
+# BLK-RELPON-09 (S2a): lado (px do PNG-fonte) do marcador de concorrente/Ultra nos mapas
+# municipais. 26 px preserva a razao 34/40 = 0,85 que o Municipal ja tinha frente ao
+# Pontual: mesmo canvas de 1000 px, porem cobrindo um MUNICIPIO inteiro -> muito mais
+# pins e maior risco de colisao. Logo util: ~14 px (balao) -> ~22 px (quadrado).
+_PIN_LOGO_PX = 26
+# Rasterizacao (px) da logo embutida no PDF da pagina "Concorrentes por rede": desenhada
+# a 14 pt, 64 px cobre ~300 dpi sem inchar o PDF (o crop antigo do balao era 54x54).
+_REDE_LOGO_RASTER_PX = 64
 
 # Carimbo de versao do contrato deste relatorio (D8 / espirito DEC-005 item 6).
 VERSAO_CONTRATO_MUNICIPAL = "BLK-RELMUN-01 | contrato v1 | score M1 INALTERADO"
@@ -98,6 +108,16 @@ _HEX_DESTAQUE_MUNICIPAL_RGBA = (*_COR_APROVADO_MUNICIPAL, 200)
 _HEX_NEUTRO_RGBA = (176, 182, 196, 110)
 _CIRCLE_INK = (31, 41, 55)
 
+# BLK-RELPON-09-FU1: realce dos rotulos sobre os hexagonos (valor de Residual Fitness na
+# camada "resumo" e numero de zona na camada "dominio"). Decisao de PRODUTO de Vinicius no
+# gate visual de 2026-07-21, escolhida sobre 4 alternativas (branco opaco, grafite, turquesa):
+# a placa MAGENTA e a unica cor que nao colide com nada no mapa -- os hexagonos sao verdes/
+# cinza, o basemap e claro e os marcadores de rede sao pretos/azuis/amarelos. Reusa o
+# `ULTRA_MAGENTA` do proprio modulo (mesma tinta das bandas/frames do relatorio), em vez de
+# introduzir um magenta quase-igual. Parametrizado -> reajustar e mudanca de 1 linha.
+_ROTULO_PLACA_RGBA = (*ULTRA_MAGENTA, 240)
+_ROTULO_INK = (255, 255, 255)
+
 # Slide "Visao Geral do Municipio" (FU1): hexagonos do MUNICIPIO em 3 categorias.
 # Aprovado dado proprio (verde forte) / Aprovado fallback municipal (verde medio) / Reprovado (cinza).
 # Camada de DISPLAY; nao toca M1.
@@ -115,6 +135,17 @@ _RESUMO_LEGENDA = (
     ("Aprovado (fallback municipal)", _COR_APROVADO_MUNICIPAL),
 )
 
+# Atribuicao do rodape. UMA constante para os dois modos (fallback Voyager e self-host), porque
+# nos dois o CARTO e' de fato consumido.
+#
+# HISTORICO, para nao regredir: o BLK-BASEMAP-02 criou um `_ATRIBUICAO_TILES_SELFHOST =
+# "(c) OpenStreetMap"` resolvido em runtime, com o raciocinio correto na epoca — no self-host o
+# fundo vem do tileserver proprio e este relatorio, ao contrario do Pontual, nao tinha overlay de
+# rotulos, entao creditar CARTO seria credito falso. O efeito COLATERAL era o mapa municipal
+# perder os NOMES DE RUA: o estilo `ultra-maptiler` tem as geometrias de via (`transportation`)
+# mas nao a camada `transportation_name`, enquanto o Voyager trazia os nomes embutidos no raster.
+# O BLK-BASEMAP-03 fecha isso reusando o `_fetch_labels` do Pontual aqui tambem -> o CARTO volta
+# a ser consumido nos DOIS modos e o credito duplo volta a ser o unico honesto.
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
 _CREDITO_ULTRA = "Relatório gerado pelo Motor de Expansão - Ultra Academia"
 
@@ -829,6 +860,33 @@ def _focus_bounds_mercator(
     return (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
 
 
+def _basemap_source(ctx: object) -> object:
+    """Fonte de tiles: self-host (`API_BASEMAP_TILES_URL`) quando configurado, Voyager senao.
+
+    Reusa a MESMA env var do Relatorio Pontual de proposito — os dois relatorios saem da mesma
+    caixa e apontar para tileservers diferentes so criaria divergencia visual entre eles. O
+    `contextily` aceita template de URL cru como `source`, entao a env entra direto.
+    """
+    import os
+
+    url = os.environ.get(_BASEMAP_TILES_URL_ENV)
+    if url:
+        return url
+    return getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)  # type: ignore[attr-defined]
+
+
+def _atribuicao_tiles() -> str:
+    """Credito do rodape, coerente com as fontes REALMENTE usadas (ver `_ATRIBUICAO_TILES`).
+
+    Constante nos dois modos desde o BLK-BASEMAP-03: o fundo e' OSM (Voyager ou tileserver
+    proprio) e os ROTULOS de rua vem do CARTO em ambos, entao os dois creditos sempre valem.
+    Segue como funcao — e nao uso direto da constante — porque os dois call sites (rodape do PNG
+    e rodape do PDF) sao o ponto natural de mudanca se um dia a fonte de rotulos virar o proprio
+    tileserver (ai o credito passa a ser so OSM).
+    """
+    return _ATRIBUICAO_TILES
+
+
 def _fetch_basemap_municipio(
     bounds_3857: tuple[float, float, float, float], width: int
 ) -> tuple[object, tuple[float, float, float, float]] | None:
@@ -856,7 +914,7 @@ def _fetch_basemap_municipio(
             if span / res >= width:
                 zoom = max(0, min(z, 19))
                 break
-        source = getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)
+        source = _basemap_source(ctx)
         # Retry: a 1a busca (rede fria) pode dar timeout e deixar so essa camada offline (ex.:
         # Resumo, a 1a das 4 de foco) enquanto as demais ja pegam o cache. Tenta ate 3x antes de
         # cair no fallback offline (que segue valido se a rede realmente faltar).
@@ -1078,32 +1136,79 @@ def _render_mapa_municipio(
             else:
                 odraw.polygon(pixels, fill=_HEX_NEUTRO_RGBA, outline=(255, 255, 255, 90))
 
+    # Compoe a overlay SO dentro do `map_box` (confinamento do recorte de foco).
+    clip = Image.new("L", (width, height), 0)
+    ImageDraw.Draw(clip).rounded_rectangle(map_box, radius=6, fill=255)
+
+    def _compor_no_map_box(camada: Image.Image) -> None:
+        masked = Image.composite(camada, Image.new("RGBA", (width, height), (0, 0, 0, 0)),
+                                 ImageChops.multiply(camada.split()[3], clip))
+        image.paste(masked, (0, 0), masked)
+
+    _compor_no_map_box(overlay)
+
+    # BLK-BASEMAP-03: NOMES DE RUA por cima dos hexes. O estilo self-host `ultra-maptiler` tem as
+    # geometrias de via mas nao a camada `transportation_name`, entao sem este overlay o mapa sai
+    # com as ruas desenhadas e SEM nome — regressao contra o Voyager, que trazia os nomes
+    # embutidos no raster. Mesma fonte e mesmo contrato do Pontual (`_fetch_labels`, BLK-RELPON-07,
+    # com cache em disco pela emenda a DEC-004), reprojetada pelo EXTENT DOS TILES (nao pelo bbox,
+    # senao os nomes saem deslocados) e recortada no `map_box` como as demais camadas.
+    #
+    # Ordem: DEPOIS dos hexes (o nome tem de ler sobre a cor) e ANTES dos pins e dos rotulos de
+    # valor, que seguem por cima — a mesma prioridade que o gate visual do FU1 fixou.
+    # `drew_basemap` como guarda: sem fundo de ruas nao ha o que rotular, e a condicao de rede e'
+    # a mesma. Best-effort: qualquer falha deixa o mapa exatamente como estava.
+    if drew_basemap:
+        rotulos_rua = _fetch_labels((minx, miny, maxx, maxy), width)
+        if rotulos_rua is not None:
+            try:
+                rua_img, rua_extent = rotulos_rua
+                ex_minx, ex_maxx, ex_miny, ex_maxy = rua_extent
+                rx0, ry0 = project(ex_minx, ex_maxy)
+                rx1, ry1 = project(ex_maxx, ex_miny)
+                rua = rua_img.resize(
+                    (max(1, int(round(rx1 - rx0))), max(1, int(round(ry1 - ry0)))),
+                    Image.Resampling.LANCZOS,
+                )
+                camada_rua = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+                camada_rua.paste(rua, (int(round(rx0)), int(round(ry0))))
+                _compor_no_map_box(camada_rua)
+            except Exception:
+                pass  # nome de rua e' aditivo: falha aqui nao pode derrubar a pagina
+
+    # Pins de Ultra/concorrentes (geograficos; dentro da bbox).
+    _draw_pins(draw, image, competitors_df, project, "", minx, maxx, miny, maxy)
+    _draw_pins(draw, image, ultra_df, project, "__ultra__", minx, maxx, miny, maxy)
+
+    # BLK-RELPON-09-FU1 (gate visual de Vinicius, 2026-07-21): os rotulos de valor sao
+    # desenhados numa overlay PROPRIA, composta DEPOIS dos pins, para que o marcador quadrado
+    # nao cubra o numero de Residual Fitness do hexagono -- que e o dado principal da pagina.
+    # Antes do FU1 a ordem era hexes+rotulos -> pins, e o pin vencia o numero. Mesmo `clip` do
+    # `map_box`, entao o confinamento do recorte de foco (AJUSTE 1/FU1) segue valendo.
+    rotulos_overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    rdraw = ImageDraw.Draw(rotulos_overlay, "RGBA")
+
     # Rotulos de oferta sobre hexes destacados (camada resumo). Decisao do produto (Vinicius,
     # 2026-06-24): exibir o Residual em TODOS os hexes aprovados (sem cap), com fonte menor
     # para mitigar a sobreposicao quando ha muitos destacados no quadro.
     label_font = _font(8)
     for cx, cy, txt in label_pins:
-        w = _text_width(odraw, txt, label_font)
-        odraw.rectangle([cx - w // 2 - 2, cy - 8, cx + w // 2 + 2, cy + 8], fill=(255, 255, 255, 200))
-        _draw_text(odraw, (cx - w // 2, cy - 7), txt, font=label_font, fill=_CIRCLE_INK)
+        w = _text_width(rdraw, txt, label_font)
+        rdraw.rectangle(
+            [cx - w // 2 - 2, cy - 8, cx + w // 2 + 2, cy + 8], fill=_ROTULO_PLACA_RGBA
+        )
+        _draw_text(rdraw, (cx - w // 2, cy - 7), txt, font=label_font, fill=_ROTULO_INK)
 
-    # FU1: numero da estrategia (1/2/3) sobre cada hex de zona (camada dominio).
+    # FU1: numero da estrategia (1/2/3) sobre cada hex de zona (camada dominio). Mesmo realce
+    # magenta dos valores (decisao de Vinicius no gate: aplicar nos dois, por consistencia
+    # entre as paginas Resumo e Dominio).
     zona_font = _font(15)
     for cx, cy, num, _zc in zona_labels:
-        w = _text_width(odraw, num, zona_font)
-        odraw.ellipse([cx - 11, cy - 11, cx + 11, cy + 11], fill=(255, 255, 255, 220))
-        _draw_text(odraw, (cx - w // 2, cy - 9), num, font=zona_font, fill=_CIRCLE_INK)
+        w = _text_width(rdraw, num, zona_font)
+        rdraw.ellipse([cx - 11, cy - 11, cx + 11, cy + 11], fill=_ROTULO_PLACA_RGBA)
+        _draw_text(rdraw, (cx - w // 2, cy - 9), num, font=zona_font, fill=_ROTULO_INK)
 
-    # Compoe a overlay SO dentro do `map_box` (confinamento do recorte de foco).
-    clip = Image.new("L", (width, height), 0)
-    ImageDraw.Draw(clip).rounded_rectangle(map_box, radius=6, fill=255)
-    masked = Image.composite(overlay, Image.new("RGBA", (width, height), (0, 0, 0, 0)),
-                             ImageChops.multiply(overlay.split()[3], clip))
-    image.paste(masked, (0, 0), masked)
-
-    # Pins de Ultra/concorrentes (geograficos; dentro da bbox).
-    _draw_pins(draw, image, competitors_df, project, "", minx, maxx, miny, maxy)
-    _draw_pins(draw, image, ultra_df, project, "__ultra__", minx, maxx, miny, maxy)
+    _compor_no_map_box(rotulos_overlay)
 
     # Legenda no canto superior direito: cobertura mostra as 3 categorias (aprovado proprio /
     # aprovado fallback municipal / reprovado); resumo mostra so as 2 de aprovado (realce de
@@ -1127,7 +1232,7 @@ def _render_mapa_municipio(
 
     # Rodape com atribuicao quando ha basemap.
     footer = (
-        f"Agregação H3 res 7 - EPSG:3857 - {_ATRIBUICAO_TILES}"
+        f"Agregação H3 res 7 - EPSG:3857 - {_atribuicao_tiles()}"
         if drew_basemap
         else "Agregação H3 res 7 - fundo de ruas offline"
     )
@@ -1168,10 +1273,11 @@ def _draw_pins(
         try:
             from typing import cast
 
-            tile = cast(Image.Image, _render_pin_tile(key))
-            size = 34
-            tile = tile.resize((size, size), Image.Resampling.LANCZOS)
-            image.paste(tile, (int(px) - size // 2, int(py) - size), tile)
+            # BLK-RELPON-09: logo QUADRADA (sem balao/mascara circular), ancorada pelo
+            # CENTRO do quadrado no ponto (S2b) -- o marcador nao tem ponta.
+            size = _PIN_LOGO_PX
+            tile = cast(Image.Image, _render_square_logo_tile(key, size))
+            image.paste(tile, (int(px) - size // 2, int(py) - size // 2), tile)
         except Exception:
             draw.ellipse([px - 4, py - 4, px + 4, py + 4], fill=ULTRA_MAGENTA if not forced_key else ULTRA_TURQUESA)
 
@@ -1324,7 +1430,7 @@ def _draw_footer(pdf: _UltraPDF, *, versao: str | None = None, with_attribution:
     pdf.set_xy(36, _PAGE_H - 22)
     text = _CREDITO_ULTRA
     if with_attribution:
-        text = f"{text}   |   {_ATRIBUICAO_TILES}"
+        text = f"{text}   |   {_atribuicao_tiles()}"
     if versao:
         text = f"{text}   |   {versao}"
     pdf.cell(_PAGE_W - 72, 12, _ascii(text))
@@ -1476,17 +1582,23 @@ def _draw_framed_map(
 
 
 def _draw_rede_logo(pdf: _UltraPDF, rede: str, x: float, y: float, size: float = 14.0) -> bool:
-    """Slide 8: desenha o tile do logo da rede (via `_render_pin_tile`) em (x,y).
+    """Slide 8: desenha a logo QUADRADA da rede (`competitors._render_square_logo_tile`) em (x,y).
 
+    BLK-RELPON-09: era `_render_pin_tile(...).crop((37,20,91,74))` -- recorte acoplado a
+    geometria do balao. Agora a logo ja vem quadrada; sem borda/sombra (a pagina do PDF e
+    branca, keyline e sombra ficariam sujeira). `size` continua em PONTOS do PDF (14 pt),
+    inalterado; `_REDE_LOGO_RASTER_PX` e so a resolucao do raster embutido.
     Fallback gracioso: sem tile/erro -> retorna False (o chamador mantem so o bullet/nome).
     """
     try:
         from typing import cast
 
-        tile = cast(Image.Image, _render_pin_tile(str(rede)))
-        crop = tile.crop((37, 20, 91, 74)) if tile.size == (128, 128) else tile
+        tile = cast(
+            Image.Image,
+            _render_square_logo_tile(str(rede), _REDE_LOGO_RASTER_PX, border=False, shadow=False),
+        )
         buf = BytesIO()
-        crop.convert("RGBA").save(buf, format="PNG")
+        tile.convert("RGBA").save(buf, format="PNG")
         buf.seek(0)
         pdf.image(buf, x=x, y=y, w=size, h=size)
         return True

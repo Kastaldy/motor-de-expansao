@@ -22,7 +22,7 @@ Hierarquia de decisao:
 | **Hex ancora** | Hex selecionado pelo algoritmo greedy como candidato prioritario de abertura. Maximiza residual incremental capturado no cluster. |
 | **Residual capturado** | Fracao de `oferta_efetiva_disponivel` que uma unidade aberta no hex ancora consegue servir, usando decaimento linear ate 2 km. |
 | **Sobreposicao** | Interseccao do raio de captura (2 km) de uma nova ancora com raio de ancora ja selecionada; penaliza a escolha greedy. |
-| **Protecao de marca** | Gate que bloqueia ancoras em hexes a menos de `DIST_MIN_ULTRA_AINDA_KM` de unidade Ultra existente, evitando canibalizacao. |
+| **Protecao de marca** | Gate que bloqueia ancoras em hexes a menos de `DIST_MIN_ULTRA_EXISTENTE_KM` (= 1.0) de unidade Ultra existente, evitando canibalizacao. (Ate 2026-07-27 esta linha citava `DIST_MIN_ULTRA_AINDA_KM`, identificador que nunca existiu no codigo; o nome certo ja aparecia correto na tabela de parametros abaixo.) |
 | **Fase de abertura** | Ordem sequencial (`ordem_expansao_cidade`) dentro da cidade; fase 1 = hex com maior ganho incremental. |
 
 ## 3. Parametros iniciais

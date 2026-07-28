@@ -100,6 +100,176 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
+## Grafo de conhecimento do repositório — otimização de token (2026-07-27, pedido de Vinicius)
+
+> Pedido ad-hoc (fora do `/run-cycle`): aplicar o **graphify** ao repositório para reduzir o contexto
+> que cada sessão/sub-agente carrega. A branch `graph-01` foi criada para isso.
+
+- BLK-GRAPH-01 (concluído 2026-07-27) — ver tasks/completed.md
+
+- BLK-GRAPH-02 (concluído 2026-07-28) — ver tasks/completed.md
+
+
+---
+
+## Relatório Pontual Censitário — vista aérea de satélite (2026-07-21, pedido de Juan)
+
+> Pedido de Juan a partir dos estudos prontos do time de UX (`UX/*.pptx`, slide "Fotos Do Imóvel"),
+> que trazem uma **foto aérea do imóvel com pin**. Objetivo: gerar essa imagem automaticamente a
+> partir da coordenada que o usuário já informa (o campo de busca resolve coordenada, link do Maps,
+> Plus Code e **endereço livre** — `BLK-UI-08`/`DEC-010`), e inseri-la como página própria no PDF.
+
+### BLK-SAT-01 — Vista aérea (satélite Esri) no PDF do Relatório Pontual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta |
+| **Status** | **Aprovado e mergeado (PR #138, 2026-07-23)** — [DEC-018](../docs/decisions/DEC-018.md) APROVADA por Felipe (label `critica-aprovada`). Validação visual com Juan segue em andamento (não bloqueia; página aditiva). |
+| **ClickUp** | — |
+
+> **Criticidade Alta, não Média** (corrigido 2026-07-22 após a revisão automática do PR #138): o
+> precedente direto — DEC-004, tiles online no MESMO relatório — é Alta, pelo mesmo motivo (desvia do
+> guardrail §2 "não criar dependência de API ao vivo"). Merge exige a label `aprovado-humano`.
+
+**Escopo (aditivo, READ-ONLY sobre o M1):** `censo_map.render_foto_satelite_ponto()` monta um PNG
+da vista aérea do ponto (Esri World Imagery + `Reference/World_Transportation` para rótulos — a mesma
+composição do "World Imagery Hybrid" da Esri e do `sat-overlay` do `openmaptiles-infra`), com pin
+vermelho no centro. `censo_report._foto_satelite_page()` insere a página logo após a capa.
+**Nada recalcula** score, interseção de setores, raio de 1,5 km ou artefato oficial — os números do
+relatório saem idênticos com e sem a página.
+
+**Zoom:** sonda 1 tile e usa z19 se houver imagem no ponto, senão z18. Medido em 22 pontos do Brasil:
+z17 existe em todo lugar, z18 em cidade média/grande, z19 só em capital.
+
+**Tamanho da imagem na página:** `foto_satelite_grande=True` (API/bot e PDF do dashboard, onde a
+vista aérea é a única imagem) ocupa a área de conteúdo; `False` (aba Viabilidade) usa a célula padrão
+de `_fotos_cells`, para casar com a página de fotos do imóvel que o usuário sobe. Em **página própria**
+nos dois casos: com `_FOTOS_MAX=2`, dividir a página descartaria em silêncio uma foto do usuário.
+
+**Falha de rede → `None` → o PDF sai como hoje, sem a página** (mesmo fallback gracioso do
+`_fetch_basemap`, DEC-004). Nenhum caminho novo pode derrubar a geração do relatório.
+
+**BLOQUEANTE — [DEC-018](../docs/decisions/DEC-018.md), PROPOSTA e aguardando Felipe.** A revisão
+automática do PR #138 reprovou (severidade ALTA) por dependência de rede nova não coberta por DEC: o
+`REVIEW.md` (ALTA #5) só permite rede fora da carga do dashboard nas exceções DEC-004/010/011, e a
+Esri é serviço novo. A DEC-018 foi redigida e traz o levantamento completo — inclusive a **licença**
+(o `tou_summary.pdf` da Esri, 21/04/2025, exige assinatura do ArcGIS Online; o tile hoje é anônimo) e
+o caminho de regularização (**ArcGIS Location Platform**, cadastro grátis, 2M tiles/mês, chave via
+env). Duas perguntas abertas ao final da DEC esperam decisão.
+
+**Hermeticidade da suíte (achado MÉDIA do mesmo review, corrigido):** `render_foto_satelite_ponto` é
+chamada DENTRO de `gerar_pdf_ponto` e de `pages.py`, então testes que só mockavam a função final
+passaram a fazer HTTP real. Corrigido na raiz com a fixture `autouse` `_sat_offline` no `conftest.py`,
+em vez de remendar arquivo por arquivo.
+
+**Testes:** `tests/unit/test_relatorio_pontual_foto_satelite.py` (15 casos, zero acesso a rede —
+tile mockado por monkeypatch): matemática de tile, geometria pura da célula, fallback de rede,
+tolerância a tile faltando, e inserção/ausência da página nos dois tamanhos.
+
+---
+
+## Relatório Pontual Censitário — satélite + mapas socioeconômico/residual + logo quadrada (2026-07-21, pedido de Vini)
+
+> **Pedido de Vinicius (2026-07-21)**, a partir do uso real do Relatório Pontual em produção, em três
+> partes: (1) **um slide novo ANTES do slide "Mapas de calor"**, com **dois mapas lado a lado** —
+> socioeconomia da região e residual fitness; (2) uma **imagem de satélite** da região inserida **antes**
+> desses mapas novos, com zoom aproximado para dar noção do que existe no ponto; (3) nos relatórios
+> gerados pelo motor, o **indicador de concorrente** deixa de ser um pin-balão com a logo dentro e passa
+> a ser a **própria logo em formato quadrado**. READ-ONLY sobre o M1 (§5 guardrail): nenhum dos três
+> recalcula `score_priorizacao`, scores censitários, `setor_censitario_intersecao_area_1p5km`, raio de
+> 1,5 km, carteira, plano ou artefatos oficiais — é camada de visualização/relatório.
+>
+> **Correção de premissa (medida no código em 2026-07-21).** O pedido descrevia o PDF como "5 páginas /
+> tira 1x3". Está desatualizado — **e o CLAUDE.md §4 também**: hoje são **6 páginas base** (`/Count 6`) e
+> o slide "Mapas de calor" já é um **grid 2x2 com 4 camadas** (`densidade`, `renda`, `score`,
+> `renda_domiciliar`) — `censo_report.py:27-34,387,465`. A correção do §4 entra junto com o BLK-RELPON-10.
+>
+> **Ordem final de páginas alvo (8 base):** Capa → **Satélite (RELPON-11)** → **Socioeconomia + Residual
+> (RELPON-10)** → Mapas de calor 2x2 → Concorrentes → Perfil do Bairro → Big Numbers → Realização. As
+> páginas opcionais (Fotos, Info do imóvel, Viabilidade) permanecem onde estão.
+>
+> **Decisões de produto travadas com Vinicius em 2026-07-21 (gate deste ciclo):**
+> - **D1 — "socioeconomia" = `score_setor_2022_calibrado`** (o composto socioeconômico do repo e camada
+>   PRIMÁRIA operacional, §1). O termo "socioeconomia" não existia no repositório (0 matches em `tasks/`);
+>   fica definido aqui.
+> - **D2 — residual fitness em raio MAIOR (~5 km)**, rotulado explicitamente como escala diferente do mapa
+>   ao lado. Motivo medido no dado real (Monte Carlo Voronoi, 200k pontos): no raio de 1,5 km cabem apenas
+>   **3 a 5 hexágonos H3 res-7** e **68,9%** dos hexes valem exatamente 0 → sairia um mosaico chapado, não
+>   um mapa de calor. Comparação no mesmo ponto (Av. Paulista): **639 setores censitários vs 5 hexes**.
+> - **D3 — satélite = `Esri.WorldImagery`, largura 250–400 m** (não Google, não 100 m). Ver BLK-RELPON-11.
+> - **D4 — logo quadrada vale no Pontual + Municipal**, via **função nova**, sem tocar `_render_pin_tile`
+>   nem o atlas do pydeck. Ver BLK-RELPON-09.
+>
+> **Sub-decisões ABERTAS, a fechar no gate visual de cada bloco** (não bloqueiam o Planner):
+> - **S1 (RELPON-10):** o `score` promovido ao slide novo **permanece** também no grid 2x2 (slide novo =
+>   resumo/"hero"; 2x2 = detalhe técnico)? **Recomendação: SIM, permanece** — tirá-lo regride o
+>   BLK-RELPON-01 e força o grid de 2x2 para 1x3, com churn extra e sem ganho claro.
+> - **S2 (RELPON-09):** "30x30" é em **px do PNG fonte** (recomendado, comparável aos 40 px atuais) ou em
+>   pt do PDF; e a âncora passa a ser o **centro** do quadrado + ponto fino de 2 px no local exato
+>   (recomendado) ou a base do quadrado (preserva a semântica do pin atual).
+>
+> **Impacto cruzado a citar nos gates:** `BLK-WEB-05`/`BLK-WEB-08` (pendentes) exigem **paridade** com o
+> "2x2 mapas" do Pontual e `BLK-WEB-02`/`BLK-WEB-07` exigem paridade com os **pins com logo** — os três
+> blocos abaixo criam dívida de paridade para o piloto web.
+
+---
+
+- BLK-RELPON-09 (concluído 2026-07-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-10 (concluído 2026-07-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-11 (concluído 2026-07-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-12 (concluído 2026-07-22) — ver tasks/completed.md
+
+
+---
+
+- BLK-RELPON-13 (concluído 2026-07-24) — ver tasks/completed.md
+
+### BLK-RELPON-07 — Mapas de calor legíveis (nomes de rua/bairro POR CIMA do choropleth)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (melhora a LEITURA do Relatório Pontual; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[GATE VISUAL — Felipe]` → Builder → QA |
+| **Depende de** | — (aditivo sobre `censo_map`; OpenMapTiles self-host é passo posterior/opcional) |
+| **Status** | Em revisão (PR aberto) |
+
+**Contexto:** nos mapas de calor do Relatório Pontual (densidade/renda/score/renda domiciliar) o
+choropleth **cobre as ruas e os nomes** — não dá para identificar QUAL área tem o número melhor/pior.
+O realce `_STREET_*` recupera só as LINHAS de rua; os TEXTOS (nomes) continuam soterrados sob a cor.
+
+**Objetivo:** ordem de camadas — o heat entra POR BAIXO e um tileset **só-rótulos** (transparente) é
+composto POR CIMA, deixando "Av. X", "Bairro Y" legíveis sobre a cor (identificação da área).
+
+**Escopo:** `_fetch_labels` (mosaico só-rótulos, lazy/best-effort via rede) + composição em
+`_render_camada` alinhada ao extent do basemap; rótulos buscados **1x** e compartilhados pelas 4
+camadas; flag `labels_overlay` (default on); a camada só-pins (concorrentes) não recebe overlay.
+Fonte atual = CartoDB Voyager Only-Labels (keyless, mesma licença/atribuição do basemap Voyager).
+Quando o OpenMapTiles self-host subir, trocar `_LABELS_TILE_URL` para o endpoint de rótulos do
+tileserver (`openmaptiles-infra`, estilo `ultra-maptiler` já com a camada `transportation_name`).
+
+**Fora de escopo (invioláveis):** score/pesos/intersecção de setores/raio/artefatos M1 (RENDER apenas);
+subir a infra (passo posterior); dado de carteira/residual.
+
+**Critérios de aceite:** nomes visíveis por cima do choropleth quando há basemap; **degradação graciosa**
+(offline/sem rede → mapa sem nomes, byte-compatível com o anterior); testes cobrindo overlay
+ligado/desligado; ruff + mypy + pytest verdes; **gate visual do Felipe**.
+
+**Risco:** baixo (aditivo, gated por flag e por rede; caminho `basemap=False`/offline preservado).
+
+---
+
 ## Relatório Municipal — novo formato (2026-06-19, pedido de Vini)
 
 > Novo formato de relatório que **coexiste** com o Relatório Pontual Censitário atual (que analisa
@@ -1216,6 +1386,139 @@ produção e exige DEC + gate humano.
 - BLK-ATR-03-FU1 (concluído 2026-07-07) — ver tasks/completed.md
 
 
+## Projeto — Score de vulnerabilidade de academias independentes (M&A)
+
+> Trilha nova (pedido de Vinicius, 2026-07-06): transformar a base de concorrentes já coletada pelos
+> scrapers (GymScraping, DEC-013) num **funil de M&A**. A cada academia INDEPENDENTE (não-rede/de
+> bairro) mapeada, anexar sinais de "saúde do negócio" e derivar um **score de vulnerabilidade**;
+> cruzar com os hexágonos quentes do Motor para produzir uma **lista priorizada de alvos de aquisição**
+> para o time comercial. É **camada de ENRIQUECIMENTO** sobre os scrapers existentes — NÃO cria pipeline
+> novo. **READ-ONLY sobre o M1** (§5): a vulnerabilidade é um score PARALELO, nunca toca
+> `score_priorizacao`/pesos/artefatos oficiais.
+>
+> **Rota escolhida por Vinicius (2026-07-06): PLANO B — sem Google Places.** Os sinais vêm de fontes
+> que o repo JÁ coleta: (a) presença + **rating in-app** do WellHub/TotalPass (DEC-013), e (b)
+> **diff do histórico de snapshots semanais** dos próprios scrapers (churn e staleness). Isso elimina a
+> dependência de API externa ao vivo (sem desvio do §2 → **sem DEC**), sem custo/ToS e **sem PII de
+> reviewers**. Reputação pública externa (Google Places etc.) fica como **sucessor opcional com gate
+> próprio** (BLK-MA-07), caso um dia se queira a nota do público geral.
+
+### BLK-MA-01 — Contrato e decisões do enriquecimento de vulnerabilidade (design, Plano B)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (camada de enriquecimento paralela que reusa dados já coletados + diff de snapshots; **sem dependência externa nova** e **sem DEC** — a rota Google Places/§2 foi descartada no Plano B; gera um score paralelo e um entregável comercial. **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir por Vinicius. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: pesos/limiares do score + definição de hex quente]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | DEC-013 (WellHub/TotalPass já coletados + **cron semanal que acumula os snapshots** — insumo de churn/staleness); camada mercado/residual + Demanda Revelada (para "hexágono quente"); `concorrentes_mapeados.parquet`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca a trilha de scrapers/VPS (integração ao cron, DEC-013) e define um score/entregável comercial; precisa de confirmação humana de produto. NÃO marcar loop-safe. |
+
+**Contexto (ancorado).** Os scrapers do Vini (`VinhoAbencoado/GymScraping`, DEC-013) já mapeiam a
+oferta concorrente **e rodam semanalmente**; a base entra no Motor via
+`normalizar_concorrentes → calcular_colunas_mercado` e alimenta o residual. Hoje esses registros têm
+oferta/rede/geo, mas **nenhum sinal de fragilidade do negócio**. O insight do Plano B: a **variação
+temporal** e a **última atualização** saem do **diff do próprio histórico de scraping** (nenhuma API
+externa), e a **reputação** vem do **rating in-app WellHub/TotalPass** que já é coletado. O BLK-MA-01
+**não escreve código de produção** — fixa o contrato dos sinais, a metodologia do score e as decisões
+de produto; os sucessores implementam.
+
+**Objetivo do epic.** Score de vulnerabilidade por academia independente + lista priorizada de M&A
+(academias mais vulneráveis próximas a hexágonos quentes) para o time comercial.
+
+**Sinais (Plano B — só fontes internas / já coletadas).**
+1. **Presença/ausência em agregadores** (WellHub/TotalPass) — já interno (DEC-013). Tese: ausência do
+   canal onde o público low-cost está → sinal de fragilidade.
+2. **Rating in-app WellHub/TotalPass** (subconjunto listado) — substitui a "avaliação média" do Google;
+   `n/d` para quem não está no agregador (ver D3). **[VERIFICAR no gate — checado por Claude em
+   2026-07-23]** o único caminho de ingestão que existe hoje,
+   `demanda_revelada/concorrentes_densos.py:_ler_csv_tp_wh` (linha 127), produz SÓ
+   `hex_id_res7`/`rede_normalizada`/`fonte` (drop-PII na fronteira), **sem coluna de rating**.
+   Confirmar que os CSVs BRUTOS TP/WH (que vivem na VPS, gitignored) carregam a nota ANTES que
+   BLK-MA-03/04 dependam dela — senão este sinal também é aquisição, não reuso, e o rótulo "já
+   coletado" cai. É a claim mais load-bearing do Plano B.
+3. **Churn/permanência** via **diff dos snapshots semanais** — apareceu/sumiu/reapareceu na base dos
+   scrapers → forte proxy de fechamento/venda. (Substitui a "variação de reviews".)
+4. **Staleness** via **diff dos snapshots** — tempo desde a última mudança nos campos raspados
+   (horário/preço/lista de unidades/endereço). (Substitui "tempo desde última atualização" — proxy mais
+   confiável que o "last-updated" do Google, que nem é exposto.)
+5. **(Opcional) Tendência de popularidade no agregador** — `membros`/`alunos_parceiras` da célula
+   subindo/caindo, quando a série permitir.
+6. **(Opcional, interno) Pressão competitiva** — proximidade a Smart Fit/rede Ultra + residual saturado
+   (de `concorrentes_mapeados` + Ultra + mercado/residual): independente espremida = mais vulnerável.
+   Colunas reais já materializadas por `hex_id` em `data/staging/hexagonos_mercado_mapeado.parquet`
+   (verificadas em 2026-07-23): `pressao_concorrencial_score_2km`, `n_concorrentes_mapeados_2km`,
+   `dist_concorrente_mais_proximo_m`, `n_unidades_ultra_2km`, `rede_dominante_2km`,
+   `share_smart_fit_2km` — nenhum sinal de "pressão" precisa ser recomputado do zero.
+
+**Mapa dos 4 sinais originais → Plano B:** avaliação média → (2) rating in-app; Δ reviews 3m → (3)
+churn + (5) tendência; presença agregadores → (1) [já interno]; última atualização → (4) staleness.
+
+**Decisões a resolver/confirmar (BLK-MA-01).**
+- **D1 — Definição de "academia independente".** Critério de não-rede/bairro sobre `concorrentes_mapeados`
+  (ex.: `rede` isolada / contagem de unidades da marca == 1) e o universo exato (os 28 scrapers citados
+  vs. os 90 coletores da DEC-013 — quais entram).
+- **D2 — Fonte/retenção dos snapshots semanais.** Onde vivem os snapshots dos scrapers (formato/retenção)
+  para computar churn/staleness; janela de staleness (nº de semanas sem mudança = "stale"); tratamento do
+  **ramp-up** (cron ativo desde 26/06 — ~1,5 mês hoje; a série cresce). Sem histórico → sinal marcado
+  como imaturo, não penaliza.
+- **D3 — Rating de agregador.** Usar como sinal só no subconjunto listado; como tratar `n/d` (não
+  penalizar quem não tem rating; a ausência de agregador já é o sinal 1).
+- **D4 — Fórmula/pesos do score.** Heurística transparente e auditável (composição ponderada normalizada
+  dos sinais), com direção de cada um (ausência de agregador ↑vuln.; rating baixo ↑; churn/sumiço ↑;
+  staleness alta ↑; popularidade caindo ↑; pressão competitiva alta ↑). NÃO é modelo preditivo treinado
+  em desfecho — se um dia se quiser validar que prevê aquisição/fechamento, entra a disciplina DEC-008
+  (out-of-fold vs baseline) em bloco próprio.
+- **D5 — "Hexágono quente" + proximidade.** Qual métrica define quente (`score_oportunidade_residual`,
+  SAM, demanda revelada) e o limiar de distância academia↔hex para entrar na lista de M&A.
+  Âncora verificada (2026-07-23): o hotness por hex já está materializado em
+  `data/outputs/carteira_expansao_acionavel.parquet` (4.899x62) — colunas `score_priorizacao`,
+  `score_setor_2022_calibrado`, `score_expansao_hibrido`, `score_oportunidade_residual`,
+  `oferta_efetiva_disponivel`, `tese_entrada` por `hex_id` — e casa direto com
+  `concorrentes_mapeados.hex_id_res7`. Fazer o join READ-ONLY no padrão defensivo de
+  `src/motor_expansao/pipelines/enriquecer_outputs_residual_mercado.py:68-82` (asserts de
+  `score_priorizacao`/ranks/cardinalidade inalterados após o join). **Nota de tese de M&A:** comprar
+  (não construir) quer demanda ALTA + residual BAIXO (mercado saturado); é a INVERSÃO do sinal de
+  abrir unidade nova (residual alto). Registrar a inversão no cálculo.
+- **D6 — Entregável.** Formato da lista priorizada (Parquet + CSV `sep=";"`/`utf-8-sig` para o comercial;
+  e/ou overlay no dashboard) e onde materializar (`data/staging` / `data/outputs`).
+- **D7 — Anti-PII.** Persistir **somente agregados** (rating médio, contagens, flags de churn/staleness);
+  **nunca** texto/autor de review nem PII. Fonte real fora do versionamento; fixtures sintéticas (DEC-012).
+- **D8 — Integração ao cron.** Rodar como passo do lote semanal da VPS (DEC-013) vs. cadência separada.
+
+**Escopo permitido (READ-ONLY M1).** Camada de enriquecimento nova (módulo isolado, ex.:
+`src/motor_expansao/vulnerabilidade/` ou extensão do pacote de mercado), consumindo o histórico de
+snapshots dos scrapers + o ativo WellHub/TotalPass + `concorrentes_mapeados`; materializa um Parquet
+paralelo com o score e a lista de M&A. NÃO altera artefatos oficiais do M1. **Sem dependência nova de
+base** e **sem API externa ao vivo**.
+
+**Fora de escopo.** `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/plano/artefatos oficiais
+do M1; `flag_sam`/gate do SAM (DEC-006/DEC-007); **Google Places / qualquer API externa de reputação**
+(movido para o sucessor opcional BLK-MA-07, com gate/DEC próprios); persistir PII.
+
+**Guardrails.** §5 (score paralelo, não recalcula M1); DEC-012/anti-PII (só agregados; fonte real não
+versionada; fixtures sintéticas); DEC-013 (extensão do lote de scrapers, não pipeline novo). §2 NÃO é
+desafiado no Plano B — não há API ao vivo; o dashboard segue offline sobre Parquets.
+
+**Entregável.** Score de vulnerabilidade por academia independente + lista priorizada de alvos de M&A
+(vulneráveis × proximidade a hexágonos quentes) para o time comercial.
+
+**Decomposição sugerida (sucessores, a confirmar no BLK-MA-01).**
+- **BLK-MA-02** — extrator de **churn + staleness** a partir do histórico de snapshots semanais dos
+  scrapers (100% interno); flags de série imatura (ramp-up).
+- **BLK-MA-03** — join do sinal de agregadores (**presença + rating in-app** WellHub/TotalPass) por
+  dedup com `concorrentes_mapeados`; anti-PII por construção; fixtures sintéticas.
+- **BLK-MA-04** — score de vulnerabilidade (fórmula/pesos do D4) + normalização + flags de qualidade.
+- **BLK-MA-05** — lista priorizada de M&A (cruzamento com hexágonos quentes, D5) + entregável (D6).
+- **BLK-MA-06** — integração ao cron semanal da VPS (D8) e runbook.
+- **BLK-MA-07 (opcional/futuro, gate + DEC próprios)** — enriquecer com **reputação externa** (Google
+  Places ou outra) SE se quiser a nota do público geral; só aqui reaparece o desvio do §2.
+
+**Critério de aceite (BLK-MA-01).** Contrato dos sinais internos (1–4, + 5/6 opcionais) e do score
+definido; D1–D8 resolvidas/confirmadas no gate de produto; decomposição BLK-MA-02+ confirmada;
+guardrails §5/anti-PII/DEC-013 explicitados; **sem DEC de API externa** (rota Google descartada, movida
+ao BLK-MA-07); ZERO código de produção neste bloco (só docs/contrato).
+
 ---
 
 ### BLK-ATR-05 — Materializar a estrutura escolhida (gate + matriz/composto) em produção (DEC + gate humano)
@@ -1294,6 +1597,80 @@ declarado no relatório.
 
 - BLK-LTV-04 (concluído 2026-07-01) — ver tasks/completed.md
 
+
+---
+
+### BLK-FIX-LTV-01 — Guarda de skip faltante em `test_run_readonly_m1_por_mtime` (só teste)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** — só arquivo de teste; zero código de produção, READ-ONLY sobre o M1. |
+| **Prioridade** | Baixa — a falha é local-only e **não** afeta o portão da `main`. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | Pendente. |
+| **Depende de** | — |
+| **Autonomia** | **loop-safe** — READ-ONLY M1, só teste, sem VPS/deploy/segredos/PII, consome `data/staging`. |
+
+**Problema (achado pelo QA do BLK-RELPON-13, 2026-07-24).**
+`tests/unit/test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime` guarda com `pytest.skip`
+os **artefatos M1** ausentes (linhas 260-261), mas **não guarda a própria ENTRADA** que `run()` carrega
+logo depois (linha 263): `data/staging/unidade_territorio_retencao.parquet`. Numa máquina de dev onde
+alguns dos artefatos M1 existem mas esse dataset **não** existe, o skip não dispara e o teste morre com
+`FileNotFoundError` em vez de pular. Em CI limpo `data/staging/` é gitignored → nenhum artefato M1 → o
+teste pula; por isso o portão da `main` **não** é afetado (falha é local-only, reproduzida em 2026-07-24).
+
+**Correção.** Estender a guarda para cobrir também o dataset de entrada: se
+`data/staging/unidade_territorio_retencao.parquet` não existir, `pytest.skip` com a mesma mensagem de
+"ambiente sem os parquets". **Não** alterar a semântica do teste — o assert de mtime (READ-ONLY M1)
+permanece exatamente como está.
+
+**Critério de aceite.** Em máquina sem o parquet de entrada o teste **pula** (não falha); em máquina com o
+parquet ele roda e mantém o assert de mtime; `pytest -q` deixa de reportar esse `FAILED`.
+
+---
+
+### BLK-QA-XDIST-01 — `pytest -n auto` quebrado nesta estação (INTERNALERROR do `execnet`)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** — ergonomia de gate local; **não** afeta o portão da `main` (o CI roda serial, `ci.yml:60`). READ-ONLY sobre o M1. |
+| **Prioridade** | Média — hoje o gate do QA custa **23 min** em serial contra os poucos minutos que o `-n auto` custava. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | Pendente. |
+| **Depende de** | — |
+| **Autonomia** | *(sem marcador — **NÃO** loop-safe: o diagnóstico exige rodar/instalar tooling na estação, fora do container)* |
+
+**Problema (achado e MEDIDO pelo QA do BLK-GRAPH-02, 2026-07-28).**
+`python -m pytest -n auto` aborta com `INTERNALERROR` antes de coletar qualquer teste, na criação dos
+workers (`xdist/workermanage.py:setup_node` → `execnet/gateway.py:_rinfo`). Três assinaturas alternando
+entre execuções: `EOFError: couldn't load message header, expected 9 bytes, got 0`,
+`OSError: [WinError 6] Identificador inválido` e `OSError: [WinError 50] Não há suporte para o pedido`
+(em `_winapi.DuplicateHandle`). `os.cpu_count()` = 12 → `-n auto` = 12 workers.
+Versões: `pytest 8.4.2`, `pytest-xdist 3.8.0`, `execnet 2.1.2`, Python 3.14 (Windows).
+
+**PROVADO PRÉ-EXISTENTE — não é regressão do BLK-GRAPH-02:**
+1. Reproduzido **3/3** em `tests/unit/test_claude_md_size.py` (2 testes, sem subprocess), cujo blob é
+   **idêntico** ao da `main`, com `conftest.py` e a seção `[tool.pytest.ini_options]` também idênticos.
+2. Reproduzido **2/2** em um `git worktree` da **`main` pura** (zero mudanças do ciclo). Nesse mesmo
+   worktree o `-n 2` também caiu (`WinError 50`).
+3. Reproduzido com **`-n 4`** na suíte completa (mesmo `INTERNALERROR`).
+4. Os pacotes instalados pelo grupo `graph` (`mcp`, `graphifyy`, `starlette`, `sse-starlette`,
+   `httpx-sse`, `pyjwt`) **não registram** nenhum entry point `pytest11` — não são a causa.
+5. Fora do repositório, num diretório temporário com um teste trivial, `-n auto` **passa** — ou seja, a
+   quebra aparece com o `conftest.py`/site-packages deste projeto carregados em 12 workers, não com o
+   xdist em si.
+
+**Histórico.** O `-n auto` **funcionava** (ver `tasks/completed.md`: "672 passed" e "678 passed ...
+idêntico em `-n auto` e serial"). Regrediu em algum ponto entre aqueles ciclos e 2026-07-28.
+
+**Correção sugerida (a confirmar por medição, não presumir).** Investigar (a) limitar workers por
+`addopts`/`-n logical` ou um teto explícito no `pyproject.toml`; (b) `--dist loadfile` (reduz canais);
+(c) bump de `pytest-xdist`/`execnet`; (d) compatibilidade do `execnet 2.1.2` com Python 3.14 no Windows
+(`DuplicateHandle`). **Não** mascarar com `-p no:xdist`.
+
+**Critério de aceite.** `python -m pytest -n auto -q` completa a suíte com a **mesma contagem** do serial
+(hoje: `2028 passed, 2 skipped` + o `FAILED` conhecido do BLK-FIX-LTV-01), em 3 execuções seguidas.
+Documentar no `prompts/qa_analyzer.md` o modo de execução vigente se a conclusão for mudar de `-n auto`.
 
 ---
 
@@ -2064,5 +2441,59 @@ não deploya**); §5 READ-ONLY M1; DEC-016 (`critica-aprovada`). **Não** aposen
 
 **Aceite.** Piloto acessível em prod atrás de login, ao lado do Streamlit, com os 3 parquets presentes (renda
 domiciliar municipal correta); uso real coletado; decisão de qual manter registrada em DEC.
+
+---
+
+### BLK-BASEMAP-03 — Quita a dívida do overlay de rótulos + nomes de rua no Relatório Municipal
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (RENDER; **READ-ONLY sobre o M1**) |
+| **Esteira** | Builder → QA |
+| **Depende de** | BLK-RELPON-07 (#154), BLK-BASEMAP-01 (#155), BLK-BASEMAP-02 (#156) — todos em `main` |
+| **Status** | Em revisão (PR aberto) |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca DECs e o caminho de geração dos dois relatórios |
+
+**Contexto.** O #154 entrou por bypass com dois achados aceitos (ALTA: `_fetch_labels` sem o cache
+que a mitigação (a) da DEC-004 exige; MÉDIA: a matemática de zoom/tile/extent sem teste direto).
+E o #156 trouxe uma regressão não prevista: como o estilo `ultra-maptiler` não tem
+`transportation_name` e o Municipal não tinha overlay de rótulos, o mapa municipal passou a sair
+com as ruas desenhadas e **sem nome** — o Voyager trazia os nomes embutidos no raster.
+
+**Entregue.** (1) cache em disco por tile em `data/cache/label_tiles/`, escrita atômica;
+(2) `_labels_grid`/`_labels_extent` extraídos e testáveis sem rede, com 12 casos novos;
+(3) `_fetch_labels` devolve `None` quando **nenhum** tile entra (antes devolvia canvas
+transparente, contrariando o próprio docstring); (4) timeout por tile 20 s → 8 s;
+(5) overlay de rótulos também no Relatório Municipal, com o crédito do CARTO de volta ao rodapé.
+
+**Guardrail.** §5 READ-ONLY M1: nenhuma mudança em score/pesos/carteira/plano/artefatos.
+Emendas em DEC-004 e DEC-011.
+
+---
+
+### BLK-BASEMAP-04 — Custo do mosaico de rótulos: `@2x` desperdiçado e orçamento de tempo
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (custo/latência de RENDER; **READ-ONLY sobre o M1**) |
+| **Esteira** | Block Orchestrator → Planner → `[GATE VISUAL — Vinicius]` → Builder → QA |
+| **Depende de** | BLK-BASEMAP-03 |
+| **Status** | Pendente |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda resolução de render, exige gate visual |
+
+**Contexto (medido no frame canônico do Pontual: raio 1,5 km, canvas 1000x760, lat −23,55).**
+O mosaico de rótulos busca **624 tiles** por relatório contra 169 do basemap, e aloca um canvas de
+`13312x12288` RGBA ≈ **654 MB por chamada**. O `@2x` é **100% desperdiçado**: o mosaico sai a
+3,349 px/m contra 0,1548 px/m do frame — downsample de **21,6x** no render. O cache do
+BLK-BASEMAP-03 corta a repetição, **não o pico**: no cache frio os 624 tiles e os 654 MB continuam.
+
+**Objetivo.** (a) avaliar dropar o `@2x` e/ou baixar `_LABELS_ZOOM_BUMP` de 1 para 0 (corta os
+tiles ~4x) — **precisa de gate visual**, porque a nitidez dos nomes foi aprovada por Vinicius no
+gate do BLK-RELPON-11; (b) orçamento de tempo (wall-clock) para o mosaico inteiro, em vez de só
+timeout por tile: hoje o pior caso contra um CDN em blackhole ainda é ~10 min segurando o PDF;
+(c) avaliar servir os rótulos do **próprio tileserver** (camada `transportation_name` no estilo
+`ultra-maptiler`), o que elimina o CARTO e deixa o rodapé honestamente só `(c) OpenStreetMap`.
+
+**Guardrail.** §5 READ-ONLY M1. Qualquer mudança de resolução passa por gate visual antes do merge.
 
 ---

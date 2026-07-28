@@ -1,6 +1,12 @@
 {
+  "enabledMcpjsonServers": ["graphify"],
   "permissions": {
     "allow": [
+      "Bash(python -m graphify query*)",
+      "Bash(python -m graphify path*)",
+      "Bash(python -m graphify explain*)",
+      "Bash(python -m graphify god-nodes*)",
+      "Bash(python -m graphify affected*)",
       "Bash(python -m pytest*)",
       "Bash(PYTHONPATH=src python -m pytest*)",
       "Bash(python -m ruff*)",

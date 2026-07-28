@@ -33,6 +33,11 @@ CONTAINERS=(
     motor_expansao_streamlit
     motor_expansao_api
     motor_expansao_telegram_bot
+    # Tileserver do basemap self-host (BLK-BASEMAP-01, stack em /opt/openmaptiles-infra).
+    # Sobe de 5 para 6 containers. Vale monitorar apesar de nao servir o edge: se ele cair, a
+    # geracao de PDF NAO quebra -- `_fetch_basemap` engole a falha e o relatorio sai SEM ruas,
+    # em silencio. Sem este alerta, a degradacao so apareceria quando alguem olhasse um PDF.
+    motor_expansao_tileserver
 )
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"

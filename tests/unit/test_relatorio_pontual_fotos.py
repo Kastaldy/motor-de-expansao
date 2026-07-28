@@ -182,7 +182,7 @@ def test_recortar_cover_invalida_none():
 # --------------------------------------------------------------------------- #
 # Insercao da pagina nos geradores (OPCIONAL)                                 #
 # --------------------------------------------------------------------------- #
-def test_classico_sem_fotos_mantem_6_paginas():
+def test_classico_sem_fotos_mantem_8_paginas():
     result, mapas = _sample_result()
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(result, mapas)
     assert b"/Count 8" in pdf_bytes

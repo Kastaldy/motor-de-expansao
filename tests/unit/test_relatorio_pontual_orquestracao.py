@@ -84,7 +84,7 @@ def test_assembler_com_serie_quatro_graficos():
 # --------------------------------------------------------------------------- #
 # Threading pelo dispatcher                                                   #
 # --------------------------------------------------------------------------- #
-def test_dispatcher_regressao_sem_params_novos_count_6():
+def test_dispatcher_regressao_sem_params_novos_count_8():
     payloads = gerar_payloads_download_relatorio_censitario(
         _MIN_RESULT, None, template="classico"
     )

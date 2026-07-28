@@ -1,5 +1,4 @@
-"""Testes do BLK-SAT-01 (porte piloto-web): pagina de VISTA AEREA (satelite Esri) no
-PDF do Relatorio Pontual.
+"""Testes do BLK-SAT: pagina de VISTA AEREA (satelite Esri) no PDF do Relatorio Pontual.
 
 Cobre a matematica de tile (`_sat_deg2num`), a geometria pura da celula grande
 (`_foto_satelite_cell_grande`), o fallback gracioso de rede (`render_foto_satelite_ponto`
@@ -19,6 +18,7 @@ from PIL import Image
 from motor_expansao.dashboard import censo_map
 from motor_expansao.dashboard.censo_map import (
     _SAT_API_KEY_ENV,
+    _SAT_LARGURA_ALVO,
     _SAT_RATIO,
     _SAT_ROTULOS_URL,
     _SAT_TILE_URL,
@@ -28,6 +28,11 @@ from motor_expansao.dashboard.censo_map import (
     _sat_url,
     render_foto_satelite_ponto,
 )
+
+# Referencia à funcao ORIGINAL: a fixture autouse `_sat_offline` troca o atributo do
+# modulo, mas este import (feito na carga) continua apontando para a implementacao real,
+# que e o que os testes da sonda de zoom precisam exercitar.
+from motor_expansao.dashboard.censo_map import _sat_melhor_zoom as _melhor_zoom_real
 from motor_expansao.dashboard.censo_report import (
     _FOTO_ASPECT,
     _PAGE_H,
@@ -42,8 +47,8 @@ from motor_expansao.dashboard.censo_report import (
 LAT_C = -16.6869
 LNG_C = -49.2648
 
-# Chave ficticia para os testes do caminho feliz. Sem chave o render devolve None,
-# entao os testes que esperam PNG precisam de uma.
+# Chave ficticia para os testes do caminho feliz. A regularizacao (DEC-018) faz o
+# render devolver None sem chave, entao os testes que esperam PNG precisam de uma.
 _CHAVE_FAKE = "chave-de-teste-arcgis"
 
 
@@ -106,7 +111,7 @@ def test_ratio_da_foto_igual_ao_da_celula_do_pdf():
 
 
 def test_licenca_usa_host_autenticado_e_nunca_o_anonimo():
-    """Regularizacao (licenca Esri): tiles vem do ArcGIS Location Platform, com token, e o
+    """Regularizacao DEC-018: tiles vem do ArcGIS Location Platform, com token, e o
     endpoint anonimo `server.arcgisonline.com` NAO aparece em nenhuma URL."""
     for base in (_SAT_TILE_URL, _SAT_ROTULOS_URL):
         assert base.startswith("https://ibasemaps-api.arcgis.com/")
@@ -136,7 +141,7 @@ def test_celula_grande_fica_dentro_da_pagina_e_centrada_na_horizontal():
 
 def test_celula_grande_e_maior_que_a_padrao():
     """O tamanho padrao existe p/ acomodar 2 imagens; o grande so entra onde a vista
-    aerea e a UNICA imagem da pagina."""
+    aerea e a UNICA imagem da pagina (API/bot e PDF do dashboard)."""
     _gx, _gy, gw, _gh = _foto_satelite_cell_grande()
     _px, _py, pw, _ph = _fotos_cells(1)[0]
     assert gw > pw
@@ -148,7 +153,7 @@ def test_celula_grande_e_maior_que_a_padrao():
 
 
 def test_render_devolve_none_sem_chave(monkeypatch):
-    """Sem chave do ArcGIS Location Platform -> `None` e NENHUM fetch.
+    """Sem chave do ArcGIS Location Platform -> `None` e NENHUM fetch (regularizacao DEC-018).
 
     Garante que o endpoint anonimo `server.arcgisonline.com` nunca e tocado: sem chave,
     o render retorna antes de qualquer sonda/download de tile.
@@ -193,7 +198,7 @@ def test_render_monta_png_com_tiles_mockados(monkeypatch):
 
 
 def test_render_usa_api_key_do_parametro(monkeypatch):
-    """Caminho com chave via parametro `api_key=`, sem env."""
+    """Caminho da API: a chave vem do parametro `api_key=` (settings), sem env."""
     monkeypatch.delenv(_SAT_API_KEY_ENV, raising=False)  # nao ha chave no ambiente
     monkeypatch.setattr(censo_map, "_sat_melhor_zoom", lambda *a, **k: _SAT_ZOOM_MIN)
     monkeypatch.setattr(
@@ -203,6 +208,113 @@ def test_render_usa_api_key_do_parametro(monkeypatch):
     )
     png = render_foto_satelite_ponto(LAT_C, LNG_C, api_key="chave-via-param")
     assert png is not None
+
+
+# --------------------------------------------------------------------------- #
+# Sonda de zoom: fallback para zoom menor onde falta cobertura                  #
+# --------------------------------------------------------------------------- #
+
+
+class _RespFake:
+    """Resposta minima de urlopen (context manager com .read())."""
+
+    def __init__(self, nbytes: int):
+        self._payload = b"x" * nbytes
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+    def read(self) -> bytes:
+        return self._payload
+
+
+def _zoom_da_url(url: str) -> int:
+    """Extrai o {z} da URL de tile (.../tile/{z}/{y}/{x}?token=...)."""
+    return int(url.split("/tile/")[1].split("/")[0])
+
+
+def test_zoom_desce_ate_achar_cobertura(monkeypatch):
+    """z19/z18 sem cobertura (404) -> desce e usa z17.
+
+    Regressao do ponto -10.188045,-48.324699 (interior do TO): a Esri devolve 404 em
+    z18/z19 ali; com o piso antigo (18) a sonda nao achava nada, caia no piso e o
+    mosaico saia todo 404 -> pagina PRETA no PDF.
+    """
+    import urllib.request
+
+    vistos: list[int] = []
+
+    def _urlopen(req, timeout=None):
+        z = _zoom_da_url(req.full_url)
+        vistos.append(z)
+        if z >= 18:
+            raise OSError("HTTP 404 — sem cobertura neste zoom")
+        return _RespFake(20_000)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    assert _melhor_zoom_real(LAT_C, LNG_C, 5.0, _CHAVE_FAKE) == 17
+    assert vistos[:3] == [19, 18, 17]  # desceu na ordem, sem pular
+
+
+def test_zoom_none_quando_nenhum_nivel_tem_cobertura(monkeypatch):
+    """Sem imagem em nenhum zoom -> `None` (e nao o piso), p/ a pagina ser omitida."""
+    import urllib.request
+
+    def _urlopen(req, timeout=None):
+        raise OSError("HTTP 404")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    assert _melhor_zoom_real(LAT_C, LNG_C, 5.0, _CHAVE_FAKE) is None
+
+
+def test_zoom_ignora_placeholder_e_desce(monkeypatch):
+    """Placeholder pequeno (~2,5 KB) conta como SEM cobertura — desce mais um nivel."""
+    import urllib.request
+
+    def _urlopen(req, timeout=None):
+        z = _zoom_da_url(req.full_url)
+        return _RespFake(2_500 if z >= 18 else 20_000)
+
+    monkeypatch.setattr(urllib.request, "urlopen", _urlopen)
+    assert _melhor_zoom_real(LAT_C, LNG_C, 5.0, _CHAVE_FAKE) == 17
+
+
+def test_render_devolve_none_quando_zoom_none(monkeypatch):
+    """Sonda sem cobertura -> render nao tenta o mosaico e omite a pagina."""
+    monkeypatch.setenv(_SAT_API_KEY_ENV, _CHAVE_FAKE)
+    monkeypatch.setattr(censo_map, "_sat_melhor_zoom", lambda *a, **k: None)
+    assert render_foto_satelite_ponto(LAT_C, LNG_C) is None
+
+
+def test_render_devolve_none_quando_nenhum_tile_de_foto_entra(monkeypatch):
+    """TODOS os tiles falham -> `None`, nao um retangulo vazio (pagina preta)."""
+    monkeypatch.setenv(_SAT_API_KEY_ENV, _CHAVE_FAKE)
+    monkeypatch.setattr(censo_map, "_sat_melhor_zoom", lambda *a, **k: _SAT_ZOOM_MIN)
+
+    def _todos_falham(*_args, **_kwargs):
+        raise OSError("HTTP 404")
+
+    monkeypatch.setattr(censo_map, "_sat_baixar_tile", _todos_falham)
+    assert render_foto_satelite_ponto(LAT_C, LNG_C) is None
+
+
+def test_render_amplia_imagem_de_zoom_baixo(monkeypatch):
+    """Zoom baixo rende poucos pixels -> amplia ate `_SAT_LARGURA_ALVO` (pin/credito nitidos)."""
+    monkeypatch.setenv(_SAT_API_KEY_ENV, _CHAVE_FAKE)
+    monkeypatch.setattr(censo_map, "_sat_melhor_zoom", lambda *a, **k: _SAT_ZOOM_MIN)
+    monkeypatch.setattr(
+        censo_map,
+        "_sat_baixar_tile",
+        lambda *a, **k: Image.open(BytesIO(_png_sintetico())).convert("RGBA"),
+    )
+    png = render_foto_satelite_ponto(LAT_C, LNG_C)
+    assert png is not None
+    with Image.open(BytesIO(png)) as img:
+        assert img.width >= _SAT_LARGURA_ALVO
+        assert abs(img.width / img.height - _SAT_RATIO) < 0.02
 
 
 def test_render_tolera_tile_faltando(monkeypatch):
@@ -256,3 +368,15 @@ def test_foto_invalida_nao_cria_a_pagina_nem_levanta():
         _result_minimo(), foto_satelite=b"isto nao e uma imagem"
     )
     assert not _tem_pagina_satelite(pdf)
+
+
+def test_vista_aerea_nao_ocupa_as_vagas_das_fotos_do_imovel():
+    """Pagina PROPRIA: com `_FOTOS_MAX=2`, dividir a pagina descartaria 1 foto do usuario."""
+    fotos = [_png_sintetico(600, 400, (10, 20, 30)), _png_sintetico(600, 400, (200, 30, 40))]
+    com_sat = gerar_pdf_relatorio_pontual_classico(
+        _result_minimo(), fotos=fotos, foto_satelite=_png_sintetico(600, 400)
+    )
+    sem_sat = gerar_pdf_relatorio_pontual_classico(_result_minimo(), fotos=fotos)
+    assert _tem_pagina_satelite(com_sat)
+    assert not _tem_pagina_satelite(sem_sat)
+    assert com_sat.count(b"/Type /Page") == sem_sat.count(b"/Type /Page") + 1
