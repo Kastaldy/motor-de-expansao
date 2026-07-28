@@ -149,10 +149,11 @@ def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
     assert len(pdf_bytes) > 15_000
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
-    # BLK-RELPON-01 + BLK-RELPON-07: 6 paginas (capa, mapas de calor, concorrentes,
-    # perfil do bairro/distrito, big numbers, credito); os 3 choropleths foram consolidados
-    # no slide unico "Mapas de calor".
-    assert b"/Count 8" in pdf_bytes
+    # BLK-RELPON-01 + -07 + -10 + -14: 7 paginas (capa, socioeconomia+residual, mapas de calor,
+    # concorrentes, perfil do bairro/distrito, big numbers, credito); os choropleths censitarios
+    # foram consolidados no slide unico "Mapas de calor" e a pagina "Imagem do Entorno"
+    # (BLK-RELPON-11) saiu no BLK-RELPON-14 (8 -> 7).
+    assert b"/Count 7" in pdf_bytes
     # 3 choropleths (densidade/renda/score) embutidos SEPARADAMENTE no slide unico + 1 pins
     # na pagina de Concorrentes = >= 4 imagens de mapa (nao pre-compostas).
     assert pdf_bytes.count(b"/Subtype /Image") >= 5
@@ -305,7 +306,7 @@ def test_pdf_offline_safe_sem_assets(tmp_path):
     )
 
     assert pdf_bytes.startswith(b"%PDF")
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
 
@@ -331,8 +332,8 @@ def test_pdf_marca_dagua_com_solicitante():
 
     assert b"Ultra Academia" in pdf_bytes
     assert b"Analista Teste" in pdf_bytes
-    # 6 paginas preservadas e choropleths intactos (marca d'agua nao cria paginas).
-    assert b"/Count 8" in pdf_bytes
+    # 7 paginas preservadas e choropleths intactos (marca d'agua nao cria paginas).
+    assert b"/Count 7" in pdf_bytes
     assert pdf_bytes.count(b"/Subtype /Image") >= 5
 
 
@@ -346,13 +347,13 @@ def test_pdf_marca_dagua_sem_solicitante():
 
     assert b"Ultra Academia" in pdf_bytes
     assert b"Analista Teste" not in pdf_bytes
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     assert pdf_bytes.count(b"/Subtype /Image") >= 5
 
 
 def test_pdf_marca_dagua_em_todas_as_paginas():
-    """BLK-RELPON-01 + BLK-RELPON-07: marca d'agua "Ultra Academia" em TODAS as 6 paginas ->
-    >= 6x nos bytes crus."""
+    """BLK-RELPON-01 + -07 + -10 + -14: marca d'agua "Ultra Academia" em TODAS as 7 paginas ->
+    >= 7x nos bytes crus."""
     result, mapas = _sample_result()
 
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(
@@ -395,8 +396,8 @@ def test_pdf_retrocompat_aceita_bytes_unico_legado():
     # O slide unico "Mapas de calor" existe e as 2 celulas sem PNG mostram a mensagem de fallback.
     assert b"Mapas de calor" in pdf_bytes
     assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
-    # Estrutura de 6 paginas preservada.
-    assert b"/Count 8" in pdf_bytes
+    # Estrutura de 7 paginas preservada.
+    assert b"/Count 7" in pdf_bytes
 
 
 def test_pdf_estrutura_inalterada_com_faixa_valor_ponto_blk_relpon_05():
@@ -410,7 +411,7 @@ def test_pdf_estrutura_inalterada_com_faixa_valor_ponto_blk_relpon_05():
     )
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     assert pdf_bytes.count(b"/Subtype /Image") >= 5
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
@@ -460,7 +461,7 @@ def test_pdf_concorrentes_contagem_total_e_mais_n_quando_excede_10():
     # A caption lista os concorrentes (deduplicados por rede, sem PII).
     assert b"Concorrentes:" in pdf_bytes
     # Contrato preservado.
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     for needle in _PII_FORBIDDEN:
         assert needle not in pdf_bytes
 
@@ -520,7 +521,7 @@ def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
 # ---------------------------------------------------------------------------
 
 
-def test_classico_gera_6_paginas_e_secoes():
+def test_classico_gera_7_paginas_e_secoes():
     result, mapas = _sample_result()
 
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
@@ -528,7 +529,7 @@ def test_classico_gera_6_paginas_e_secoes():
     )
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
     # 3 choropleths embutidos separadamente no slide "Mapas de calor" + 1 pins = >= 4 imagens.
@@ -560,7 +561,7 @@ def test_classico_offline_safe_sem_assets(tmp_path):
     )
 
     assert pdf_bytes.startswith(b"%PDF")
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
 
@@ -587,8 +588,13 @@ def test_classico_marca_dagua_solicitante():
     assert pdf_bytes.count(b"Ultra Academia") >= 6
 
 
-def test_classico_template_recente_inalterado():
-    """Gerar o classico NAO altera os bytes do template recente (isolamento)."""
+def test_geracoes_repetidas_sao_deterministas():
+    """Gerar o classico entre duas geracoes nao altera os bytes (isolamento entre chamadas).
+
+    BLK-RELPON-14: com o gerador unificado o "recente" e' wrapper do classico, entao este teste
+    passou a travar o DETERMINISMO da geracao (nenhum estado de modulo vaza de uma chamada para
+    a seguinte), nao mais o isolamento entre dois templates distintos.
+    """
     result, mapas = _sample_result()
 
     antes = gerar_pdf_relatorio_pontual_censitario(
@@ -604,23 +610,78 @@ def test_classico_template_recente_inalterado():
     assert antes == depois
 
 
-def test_downloads_roteia_template_classico():
-    """`template="classico"` roteia ao gerador classico; sem template = recente (default)."""
+def test_downloads_os_dois_ramos_de_template_produzem_o_mesmo_pdf():
+    """BLK-RELPON-14: unificado o gerador, `template="classico"` e o default produzem o MESMO PDF.
+
+    O ramo `else` continua passando pelo simbolo legado `gerar_pdf_relatorio_pontual_censitario`
+    (hoje wrapper depreciado) para nao quebrar quem faz spy/patch nesse nome — mas o resultado
+    e' byte-a-byte igual, com a estetica classica (banda magenta de rodape + link clicavel).
+    """
     result, mapas = _sample_result()
 
     p_classico = gerar_payloads_download_relatorio_censitario(
         result, mapas, filename_prefix="t", residual=_RESIDUAL_OK, template="classico"
     )
-    p_recente = gerar_payloads_download_relatorio_censitario(
+    p_default = gerar_payloads_download_relatorio_censitario(
         result, mapas, filename_prefix="t", residual=_RESIDUAL_OK
     )
 
     assert p_classico.pdf_bytes.startswith(b"%PDF")
-    assert p_recente.pdf_bytes.startswith(b"%PDF")
-    # O classico tem a banda magenta de rodape + link clicavel -> bytes diferentes do recente.
-    assert p_classico.pdf_bytes != p_recente.pdf_bytes
-    assert "Link para localização do ponto:".encode("latin-1") in p_classico.pdf_bytes
-    assert "Link para localização do ponto:".encode("latin-1") not in p_recente.pdf_bytes
+    assert p_default.pdf_bytes.startswith(b"%PDF")
+    assert p_classico.pdf_bytes == p_default.pdf_bytes
+    for pdf_bytes in (p_classico.pdf_bytes, p_default.pdf_bytes):
+        assert "Link para localização do ponto:".encode("latin-1") in pdf_bytes
+
+
+def test_wrapper_censitario_e_identico_ao_classico_e_avisa_depreciacao():
+    """BLK-RELPON-14: `gerar_pdf_relatorio_pontual_censitario` virou WRAPPER FINO do classico.
+
+    Contrato do wrapper: (a) emite `DeprecationWarning`, (b) devolve os MESMOS bytes que
+    `gerar_pdf_relatorio_pontual_classico` para a mesma entrada (unificacao do gerador -- a
+    estetica classica venceu) e (c) repassa os kwargs opcionais que so a classica aceitava.
+    NB: a fixture de `conftest.py` congela o `/CreationDate` do fpdf2, entao a igualdade
+    byte-a-byte nao e' flaky por causa do relogio.
+    """
+    import warnings
+
+    result, mapas = _sample_result()
+    kwargs = dict(residual=_RESIDUAL_OK, perfil_bairro=_PERFIL_BAIRRO_OK, rotulo="Av Teste, 100")
+
+    with warnings.catch_warnings(record=True) as capturados:
+        warnings.simplefilter("always")
+        pdf_wrapper = gerar_pdf_relatorio_pontual_censitario(result, mapas, **kwargs)
+
+    assert any(issubclass(w.category, DeprecationWarning) for w in capturados), (
+        f"o wrapper deve emitir DeprecationWarning; capturado: {[w.category for w in capturados]}"
+    )
+    pdf_classico = gerar_pdf_relatorio_pontual_classico(result, mapas, **kwargs)
+    assert pdf_wrapper == pdf_classico
+    assert b"/Count 7" in pdf_wrapper
+
+    # Superset da assinatura antiga: os kwargs que so a classica aceitava passam pelo wrapper.
+    pdf_extra = gerar_pdf_relatorio_pontual_censitario(
+        result, mapas, **kwargs, fotos=None, info_imovel=None, viabilidade=None
+    )
+    assert pdf_extra == pdf_classico
+
+
+def test_pagina_entorno_saiu_do_pdf_nas_2_variantes():
+    """Nenhum vestigio do slide removido: titulo fora dos bytes e `entorno` fora dos registros."""
+    from motor_expansao.dashboard.censo_report import MAP_LAYER_TITLES, _normalize_mapas_by_key
+
+    result, mapas = _sample_result()
+
+    for gerar in (gerar_pdf_relatorio_pontual_censitario, gerar_pdf_relatorio_pontual_classico):
+        pdf_bytes = gerar(result, mapas, residual=_RESIDUAL_OK)
+        assert b"/Count 7" in pdf_bytes
+        assert b"Imagem do Entorno" not in pdf_bytes
+
+    assert len(PDF_SECTION_HEADERS) == 7
+    assert "Imagem do Entorno" not in PDF_SECTION_HEADERS
+    # A camada tambem deixou de ser produzida em `censo_map` -> a chave sai do registro e um PNG
+    # `entorno` que ainda chegasse seria descartado em silencio (comportamento desejado agora).
+    assert "entorno" not in [k for k, _t in MAP_LAYER_TITLES]
+    assert dict(_normalize_mapas_by_key({"entorno": b"E"})) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -676,21 +737,25 @@ def test_slide_unico_quatro_mapas_sem_sobreposicao():
             assert not _boxes_overlap(cells_c[i], cells_c[j])
 
 
-def test_slide_unico_count_5_e_titulo_mapas_de_calor():
-    """As duas variantes tem 6 paginas e o titulo de faixa "Mapas de calor" no slide unico."""
+def test_slide_unico_count_7_e_titulo_mapas_de_calor():
+    """As duas variantes tem 7 paginas e o titulo de faixa "Mapas de calor" no slide unico.
+
+    (Historico do nome: era `..._count_5_...` e ja asseria 8 — a "Imagem do Entorno" do
+    BLK-RELPON-11 saiu no BLK-RELPON-14 e o PDF base VOLTOU a 7.)
+    """
     result, mapas = _sample_result()
 
     pdf_recente = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
-    assert b"/Count 8" in pdf_recente
+    assert b"/Count 7" in pdf_recente
     assert b"Mapas de calor" in pdf_recente
 
     pdf_classico = gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
-    assert b"/Count 8" in pdf_classico
+    assert b"/Count 7" in pdf_classico
     assert b"Mapas de calor" in pdf_classico
 
 
 def test_slide_unico_offline_safe_por_camada():
-    """Camada ausente no slide unico -> gera sem excecao, com fallback textual; /Count 8 preservado."""
+    """Camada ausente no slide unico -> gera sem excecao, com fallback textual; /Count 7 preservado."""
     result, mapas = _sample_result()
     # So densidade + concorrentes; renda e score AUSENTES -> fallback nas 2 celulas.
     mapas_parciais = {"densidade": mapas["densidade"], "concorrentes": mapas["concorrentes"]}
@@ -700,7 +765,7 @@ def test_slide_unico_offline_safe_por_camada():
     )
 
     assert pdf_bytes.startswith(b"%PDF-1.4")
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     assert b"Mapas de calor" in pdf_bytes
     assert "Mapa indisponível para esta camada.".encode("latin-1") in pdf_bytes
 
@@ -737,7 +802,7 @@ def test_perfil_bairro_page_presente_com_4_metricas_recente():
         assert rotulo in pdf_bytes
     assert "Bairro Teste".encode("latin-1") in pdf_bytes
     assert "Perfil do Bairro/Distrito".encode("latin-1") in pdf_bytes
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
 
 
 def test_perfil_bairro_page_nd_quando_perfil_bairro_none():
@@ -745,7 +810,7 @@ def test_perfil_bairro_page_nd_quando_perfil_bairro_none():
 
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
 
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 7" in pdf_bytes
     assert "Perfil do Bairro/Distrito".encode("latin-1") in pdf_bytes
     assert "Perfil não disponível".encode("latin-1") in pdf_bytes
 
@@ -758,8 +823,8 @@ def test_classico_perfil_bairro_page_presente_e_nd():
     )
     assert "Bairro Teste".encode("latin-1") in pdf_com
     assert "Perfil do Bairro/Distrito".encode("latin-1") in pdf_com
-    assert b"/Count 8" in pdf_com
+    assert b"/Count 7" in pdf_com
 
     pdf_sem = gerar_pdf_relatorio_pontual_classico(result, mapas, residual=_RESIDUAL_OK)
     assert "Perfil não disponível".encode("latin-1") in pdf_sem
-    assert b"/Count 8" in pdf_sem
+    assert b"/Count 7" in pdf_sem

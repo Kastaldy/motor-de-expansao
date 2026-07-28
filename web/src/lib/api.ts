@@ -12,7 +12,8 @@ import type {
 /** A primeira leitura de uma UF carrega a particao inteira — pode passar de 15 s. */
 const TIMEOUT_LEITURA = 90_000
 /**
- * Downloads pesados (PDF, XLSX). O PDF baixa tiles de basemap (8 mapas) e em area
+ * Downloads pesados (PDF, XLSX). O PDF baixa tiles de basemap (7 mapas — a camada
+ * "entorno" saiu no BLK-RELPON-14) e em area
  * densa/cache frio passa de 1 min; a planilha monta 60 meses de formulas.
  */
 const TIMEOUT_ARQUIVO = 360_000

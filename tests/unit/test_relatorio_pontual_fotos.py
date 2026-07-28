@@ -182,17 +182,18 @@ def test_recortar_cover_invalida_none():
 # --------------------------------------------------------------------------- #
 # Insercao da pagina nos geradores (OPCIONAL)                                 #
 # --------------------------------------------------------------------------- #
-def test_classico_sem_fotos_mantem_6_paginas():
+def test_classico_sem_fotos_mantem_7_paginas():
     result, mapas = _sample_result()
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(result, mapas)
-    assert b"/Count 8" in pdf_bytes
+    # BLK-RELPON-14: o PDF base caiu de 8 para 7 paginas (a "Imagem do Entorno" saiu).
+    assert b"/Count 7" in pdf_bytes
 
 
 def test_classico_com_2_fotos_adiciona_pagina():
     result, mapas = _sample_result()
     fotos = [_fake_foto(800, 600), _fake_foto(600, 800)]
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(result, mapas, fotos=fotos)
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 8" in pdf_bytes
     assert _FOTOS_PAGE_TITLE.encode("latin-1") in pdf_bytes
 
 
@@ -200,18 +201,18 @@ def test_censitario_com_2_fotos_adiciona_pagina():
     result, mapas = _sample_result()
     fotos = [_fake_foto(1024, 768), _fake_foto(768, 1024)]
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, fotos=fotos)
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 8" in pdf_bytes
 
 
 def test_terceira_foto_descartada_no_mvp():
     result, mapas = _sample_result()
     fotos = [_fake_foto(), _fake_foto(), _fake_foto()]  # 3 -> so 2 entram
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(result, mapas, fotos=fotos)
-    assert b"/Count 9" in pdf_bytes  # 1 pagina de fotos, nao 2
+    assert b"/Count 8" in pdf_bytes  # 1 pagina de fotos, nao 2
 
 
 def test_fotos_invalidas_nao_quebram_geracao():
     result, mapas = _sample_result()
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(result, mapas, fotos=[b"lixo", b""])
     # pagina ainda e adicionada (aviso gracioso), sem excecao.
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 8" in pdf_bytes

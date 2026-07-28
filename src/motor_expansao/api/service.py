@@ -301,6 +301,11 @@ def gerar_pdf_ponto(
     concorrentes/Ultra, e Big Numbers de SAM/residual via `residual`. Fallback
     gracioso para `basemap=False` se a busca de tiles falhar (offline).
 
+    BLK-RELPON-14: a pagina "Imagem do Entorno" (mapa de quadra) saiu do gerador ->
+    o PDF base caiu de 8 para 7 paginas. Aqui nada mais precisava mudar: a API nunca
+    montou essa camada a mao (ela vinha pronta do dict de
+    `render_mapas_censitarios_combinados`), entao some sozinha do `mapas`.
+
     `rotulo`: nome do endereco/estabelecimento para a capa (no lugar de "Coordenada: ...").
     """
     _reuse_contextily_session()  # acelera a busca de tiles (~117s -> ~24s em area densa)
@@ -368,7 +373,18 @@ def gerar_pdf_ponto(
     residual = _residual_do_ponto(lat, lng, settings)
     # Variante "Apresentacao Classica Ultra" (BLK-EST-05): a API/bot espelha o
     # MESMO modelo que o dashboard passou a gerar por padrao (pages.py usa
-    # template="classico"). Drop-in: mesma assinatura do gerador recente.
+    # template="classico"). Com o BLK-RELPON-14 a classica virou o gerador UNICO
+    # do Pontual (a `_censitario` e so um wrapper deprecado) — esta chamada ja
+    # aponta para o lugar certo e NAO deve migrar.
+    #
+    # PAGINAS OPCIONAIS QUE FICAM DE FORA AQUI (`viabilidade`, `info_imovel`, `fotos`):
+    # os insumos NAO existem neste escopo, entao nao ha o que repassar — e fabricar
+    # valores falsearia o relatorio. Quem tem esses insumos e a rota do piloto
+    # (`web/server/app.py::/api/relatorio/pontual`), que recebe o multipart com as fotos
+    # e os JSONs do imovel/viabilidade. Habilitar aqui exigiria ESTENDER `AnalisarRequest`
+    # (campos do imovel + fotos em base64/multipart) e propagar por `routes/analisar.py`
+    # -> `gerar_pdf_ponto`. Decisao: fora do escopo do BLK-RELPON-14; o PDF do bot segue
+    # com as 7 paginas base.
     return gerar_pdf_relatorio_pontual_classico(
         result, mapas, residual=residual, perfil_bairro=perfil_bairro, ultra_dir=ultra_dir,
         solicitante=consumidor, rotulo=rotulo,

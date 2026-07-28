@@ -14,9 +14,10 @@ Duas camadas complementares:
 - 5.2 (COMPLEMENTAR): varredura dos bytes crus (compressao OFF). IMPORTANTE: os PDFs sao
   gerados SEM imagens embutidas (`mapas=None`/`{}` + `ultra_dir` vazio), porque o binario PNG
   (mapas de calor + fundos de branding) contem bytes `0x3F` ("?") LEGITIMOS que nao sao
-  artefato de encoding -- confirmado empiricamente (BLK-ACENTO-02): sem imagens, o template
-  recente e o municipal ficam com ZERO "?" e o classico com EXATAMENTE 1, vindo da URL do
-  Google Maps do link clicavel (allowlist abaixo).
+  artefato de encoding -- confirmado empiricamente (BLK-ACENTO-02): sem imagens, o municipal
+  fica com ZERO "?" e o Relatorio Pontual com EXATAMENTE 1, vindo da URL do Google Maps do
+  link clicavel (allowlist abaixo). BLK-RELPON-14: o template "recente" foi unificado no
+  classico, entao os dois simbolos do pontual caem no mesmo caso (1 "?" da URL).
 
 Reusa os fixtures sinteticos dos 2 arquivos de teste existentes (sem duplicar dicts).
 Nenhum teste bate na rede.
@@ -87,26 +88,34 @@ def test_relatorios_sem_caractere_fora_de_latin1(monkeypatch):
 # ---------------------------------------------------------------------------
 # 5.2 (COMPLEMENTAR) - varredura de bytes crus, sem imagens embutidas
 # ---------------------------------------------------------------------------
-def test_pdfs_sem_link_zero_qmark_nos_bytes(tmp_path):
-    """Recente + Municipal (sem link externo) -> ZERO "?" nos bytes crus (sem imagens)."""
-    result, _ = _sample_result()
-    pdf_recente = gerar_pdf_relatorio_pontual_censitario(
-        result, None, residual=_RESIDUAL_OK, ultra_dir=tmp_path
-    )
-    assert b"?" not in pdf_recente
+def test_pdf_municipal_sem_link_zero_qmark_nos_bytes(tmp_path):
+    """Municipal (sem link externo) -> ZERO "?" nos bytes crus (sem imagens).
 
+    BLK-RELPON-14: o template "recente" do Relatorio Pontual foi unificado no classico (virou
+    wrapper depreciado), entao ele deixou de ser um caso "sem link" -- passou a cair na
+    allowlist da URL do Google Maps, coberta em `test_pontual_qmark_apenas_da_url_do_maps`.
+    """
     _, muni = _municipio_result()
     pdf_muni = gerar_pdf_relatorio_municipal(muni, {}, ultra_dir=tmp_path)
     assert b"?" not in pdf_muni
 
 
-def test_classico_qmark_apenas_da_url_do_maps(tmp_path):
-    """Classico (sem imagens) -> o unico "?" vem da URL do Google Maps (allowlist)."""
+def test_pontual_qmark_apenas_da_url_do_maps(tmp_path):
+    """Relatorio Pontual (sem imagens) -> o unico "?" vem da URL do Google Maps (allowlist).
+
+    BLK-RELPON-14: vale para os DOIS simbolos, ja que o "recente" virou wrapper do classico.
+    """
     result, _ = _sample_result()
-    pdf_classico = gerar_pdf_relatorio_pontual_classico(
-        result, None, residual=_RESIDUAL_OK, ultra_dir=tmp_path
+    pdfs = (
+        gerar_pdf_relatorio_pontual_classico(
+            result, None, residual=_RESIDUAL_OK, ultra_dir=tmp_path
+        ),
+        gerar_pdf_relatorio_pontual_censitario(
+            result, None, residual=_RESIDUAL_OK, ultra_dir=tmp_path
+        ),
     )
-    scrubbed = pdf_classico
-    for pattern in _QMARK_ALLOWLIST:
-        scrubbed = scrubbed.replace(pattern, b"")
-    assert b"?" not in scrubbed
+    for pdf_bytes in pdfs:
+        scrubbed = pdf_bytes
+        for pattern in _QMARK_ALLOWLIST:
+            scrubbed = scrubbed.replace(pattern, b"")
+        assert b"?" not in scrubbed

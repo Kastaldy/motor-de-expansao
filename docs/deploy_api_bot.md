@@ -74,8 +74,11 @@ A imagem `motor-expansao-api` é publicada no GHCR pelo job **`publish-api`** do
 > mas a imagem da **API/bot fica STALE**. Para propagar ao bot, **republique a API manualmente**
 > após o merge: `gh workflow run ci.yml --ref main -f publish_api=true -f dispatch_build_sanity=false`,
 > pegue o "API digest imutavel publicado" e faça o pull+up abaixo. Verificação de fechamento:
-> `docker compose -f docker-compose.prod.yml exec -T api python -c "from motor_expansao.dashboard import censo_map as m; print(m.CAMADAS_CENSITARIAS)"`
+> `docker compose -f docker-compose.prod.yml exec -T api python -c "from motor_expansao.dashboard import censo_map as m; print(len(m.CAMADAS_CENSITARIAS), m.CAMADAS_CENSITARIAS)"`
 > deve refletir o código novo. (Feito assim em 2026-07-17 para o mapa de renda domiciliar.)
+> **Desde o BLK-RELPON-14 o esperado é `7` chaves** — a camada `entorno` saiu junto com o slide
+> "Imagem do Entorno". Se a VPS ainda imprimir `8`, a imagem está **STALE**: hoje este contador é
+> a forma mais barata de flagrar deploy velho da API/bot.
 
 ```bash
 cd /opt/motor-expansao/app

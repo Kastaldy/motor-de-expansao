@@ -13,7 +13,10 @@ from motor_expansao.dashboard.censo_point import analisar_ponto_censitario_setor
 from motor_expansao.dashboard.censo_report import (  # noqa: F401
     gerar_csv_setores_censitarios,
     gerar_payloads_download_relatorio_censitario,
-    gerar_pdf_relatorio_pontual_censitario,
+    # BLK-RELPON-14: reexporta a implementacao UNICA. Este modulo nunca CHAMOU o gerador —
+    # so o reexportava —, entao trocar o nome aqui nao muda comportamento; so para de expor
+    # `gerar_pdf_relatorio_pontual_censitario` (wrapper deprecado) como superficie publica.
+    gerar_pdf_relatorio_pontual_classico,
     render_downloads_relatorio_censitario,
 )
 from motor_expansao.dashboard.competitors import (  # noqa: F401

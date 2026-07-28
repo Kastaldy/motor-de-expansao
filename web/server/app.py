@@ -414,7 +414,11 @@ def _quadrado_sigla(short: str, bg: str, fg: str) -> str:
     return _svg_data_uri(svg)
 
 
-@functools.lru_cache(maxsize=64)
+# BLK-RELPON-14: 64 era folgado com as 39 redes antigas — e as 68 novas nem tinham entrada em
+# COMPETITOR_LOGO_FILES, entao `_quadrado_logo(None, ...)` curto-circuitava sem custo. Agora as 107
+# tem `logo_<slug>.png`, e cada MISS custa Path.exists() + read_bytes() + base64 do PNG. Com 107
+# redes possiveis contra 64 entradas o LRU entrava em thrash entre municipios.
+@functools.lru_cache(maxsize=128)
 def _icone_rede(rede: str) -> str:
     from motor_expansao.dashboard.competitors import (
         COMPETITOR_BRANDS,
@@ -2218,9 +2222,10 @@ async def relatorio_pontual(
 ) -> Response:
     """Relatorio Pontual Censitario 1,5 km — com fotos, dados do imovel e viabilidade.
 
-    Espelha a montagem da API de producao (`api/service.gerar_pdf_ponto`), mas usa
-    o gerador com os kwargs opcionais que o piloto precisa (`fotos`, `info_imovel`,
-    `viabilidade`) — aqueles a rota de producao nao expoe.
+    Espelha a montagem da API de producao (`api/service.gerar_pdf_ponto`) — desde o
+    BLK-RELPON-14 os dois usam o MESMO gerador unico (a "Apresentacao Classica Ultra")
+    —, mas aqui passamos os kwargs opcionais que so o piloto tem (`fotos`,
+    `info_imovel`, `viabilidade`), aqueles que a rota de producao nao expoe.
 
     `info_imovel` e `viabilidade_json` chegam como JSON serializado porque o corpo
     e multipart (por causa das fotos).
@@ -2295,7 +2300,7 @@ def _gerar_relatorio_pontual_pdf(
         analisar_ponto_censitario_setores,
     )
     from motor_expansao.dashboard.censo_report import (
-        gerar_pdf_relatorio_pontual_censitario,
+        gerar_pdf_relatorio_pontual_classico,
     )
 
     if not CENSO_GEO_DIR.exists():
@@ -2394,7 +2399,19 @@ def _gerar_relatorio_pontual_pdf(
     if viab_pdf is None and viabilidade_json:
         viab_pdf = json.loads(viabilidade_json)
 
-    pdf = gerar_pdf_relatorio_pontual_censitario(
+    # BLK-RELPON-14: a "Apresentacao Classica Ultra" virou o gerador UNICO do Pontual.
+    # `gerar_pdf_relatorio_pontual_censitario` ficou como wrapper fino DEPRECADO (emite
+    # DeprecationWarning e repassa os mesmos kwargs), entao o piloto chama a classica
+    # direto: mesmos argumentos e OS MESMOS BYTES QUE O WRAPPER PRODUZIRIA HOJE, sem o
+    # warning. A assinatura da classica e superset da antiga (aceita tambem `now`), nenhum
+    # kwarg daqui ficou de fora.
+    #
+    # ATENCAO PARA O GATE VISUAL: o PDF entregue ao piloto MUDA de aparencia. Antes esta rota
+    # saia pelo template "recente"; agora sai pela estetica CLASSICA (capa com endereco acima
+    # do subtitulo, banda turquesa com margem e icone, banda magenta no rodape, Realizacao com
+    # link clicavel e data por extenso). E o efeito PRETENDIDO da unificacao, nao um efeito
+    # colateral — mas e uma mudanca perceptivel para quem usa o piloto.
+    pdf = gerar_pdf_relatorio_pontual_classico(
         result,
         mapas,
         residual=residual,
