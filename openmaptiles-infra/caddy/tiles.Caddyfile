@@ -1,0 +1,31 @@
+# ============================================================================
+# Basemap self-host servido SOB O DOMÍNIO DO DASHBOARD, protegido pelo MESMO
+# login (Authelia) — igual ao antigo/dashboard.
+#
+# POR QUE NÃO um subdomínio 'tiles.' separado atrás do Authelia:
+#   o MapLibre/pydeck busca os tiles SEM enviar o cookie de sessão cross-origin,
+#   então o Authelia barraria e os tiles não carregariam. Sob /tiles no MESMO
+#   domínio do dashboard é same-origin: o cookie de login já vale, os tiles
+#   herdam a proteção — sem CORS e sem registro DNS novo.
+#
+# COMO APLICAR: adicione o handle abaixo DENTRO do bloco já existente
+#     dashboard.ultra-expansao.tech {
+#         ...  (forward_auth do Authelia continua no topo, protegendo tudo)
+#         >>> COLE AQUI, antes do reverse_proxy do streamlit <<<
+#         reverse_proxy streamlit:8501
+#     }
+# no Caddyfile do motor (SOPS: secrets/Caddyfile.enc). Recarregue:
+#     docker compose -f docker-compose.prod.yml restart caddy
+# ============================================================================
+
+    handle_path /tiles/* {
+        reverse_proxy motor_expansao_tileserver:8080
+        header Cache-Control "public, max-age=604800"
+    }
+
+# Observações:
+# - O forward_auth do Authelia no topo do bloco já protege /tiles/* (roda antes
+#   do handle). Requisições same-origin do dashboard levam o cookie -> liberado.
+# - Se o Caddy reclamar de misturar `handle_path` com o `reverse_proxy` "solto"
+#   do streamlit, envolva o do streamlit também:
+#       handle { reverse_proxy streamlit:8501 }
