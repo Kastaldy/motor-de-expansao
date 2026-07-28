@@ -999,3 +999,38 @@ def test_agregar_municipio_prefiltrado_identico_ao_nacional():
         "mercado_disponivel_pessoas", "score_censo_max",
     ):
         assert result_full[key] == result_pre[key], f"Divergencia em {key!r}"
+
+
+# ── BLK-BASEMAP-02: basemap self-host no Relatorio Municipal ────────────────────────────────
+# Diferenca em relacao ao Pontual: aqui NAO ha overlay de rotulos CARTO, entao no self-host o
+# CARTO deixa de ser consumido e creditar ele seria credito FALSO. Emenda a DEC-011.
+
+
+def test_municipal_basemap_source_alterna_por_env(monkeypatch):
+    from motor_expansao.dashboard import relatorio_municipal as rm
+
+    class _FakeCartoDB:
+        Voyager = "provider-voyager-sentinela"
+
+    fake_ctx = type("_C", (), {"providers": type("_P", (), {"CartoDB": _FakeCartoDB})()})()
+
+    monkeypatch.delenv(rm._BASEMAP_TILES_URL_ENV, raising=False)
+    assert rm._basemap_source(fake_ctx) == "provider-voyager-sentinela"
+
+    url = "http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png"
+    monkeypatch.setenv(rm._BASEMAP_TILES_URL_ENV, url)
+    assert rm._basemap_source(fake_ctx) == url
+
+
+def test_municipal_atribuicao_perde_carto_no_self_host(monkeypatch):
+    from motor_expansao.dashboard import relatorio_municipal as rm
+
+    monkeypatch.delenv(rm._BASEMAP_TILES_URL_ENV, raising=False)
+    assert rm._atribuicao_tiles() == "(c) OpenStreetMap, (c) CARTO"
+
+    monkeypatch.setenv(
+        rm._BASEMAP_TILES_URL_ENV,
+        "http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png",
+    )
+    assert rm._atribuicao_tiles() == "(c) OpenStreetMap"
+    assert "CARTO" not in rm._atribuicao_tiles()
