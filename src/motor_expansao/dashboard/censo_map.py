@@ -53,6 +53,18 @@ _BASEMAP_CONTRAST = 1.15
 # Zoom extra dos tiles (alem do minimo p/ cobrir a bbox) -> ruas mais nitidas/detalhadas.
 _BASEMAP_ZOOM_BUMP = 1
 
+# Overlay de ROTULOS (nomes de rua/bairro) POR CIMA do choropleth. Sem isso os nomes ficam
+# SOTERRADOS sob a cor e nao da p/ identificar QUAL area tem o numero melhor/pior — a dor que o
+# realce `_STREET_*` (so linhas de rua, sem texto) nao resolve. Solucao = ordem de camadas: o heat
+# entra por baixo e um tileset SO-ROTULOS (transparente) e composto por cima. Fonte atual = CartoDB
+# Voyager Only-Labels (keyless; MESMA familia/licenca do basemap Voyager -> atribuicao inalterada).
+# Quando o OpenMapTiles self-host subir, trocar por um endpoint de rotulos do proprio tileserver.
+_LABELS_TILE_URL = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png"
+_LABELS_SUBDOMAINS = ("a", "b", "c")
+# Rotulos num zoom ACIMA do basemap -> nomes maiores e legiveis sobre a cor (o zoom base ja e
+# minimo-p/-cobrir + _BASEMAP_ZOOM_BUMP; aqui somamos mais 1).
+_LABELS_ZOOM_BUMP = 1
+
 # Cores dos elementos desenhados DENTRO do mapa claro (precisam contrastar com fundo claro):
 # circulo do raio (AZUL, pedido de Vini 2026-06-17) e barra de escala/labels em tinta ESCURA.
 # _CIRCLE_RGBA: azul vivido, visivel sobre o fundo claro do basemap.
@@ -672,6 +684,60 @@ def _fetch_basemap(
         return None
 
 
+def _fetch_labels(
+    bounds_3857: tuple[float, float, float, float],
+    width: int,
+) -> tuple[Image.Image, tuple[float, float, float, float]] | None:
+    """Mosaico SO-de-rotulos (PNG transparente) p/ compor os nomes POR CIMA do choropleth.
+
+    Espelha o contrato de `_fetch_basemap` (retorna imagem + extent 3857, topo = norte), mas a
+    imagem e RGBA transparente (so texto/halo) e vem de `_LABELS_TILE_URL`. Rede + best-effort:
+    QUALQUER falha (sem internet, timeout, tile faltando) -> None, e o mapa segue SEM nomes,
+    identico ao comportamento anterior (degradacao graciosa, igual ao basemap offline).
+    """
+    import concurrent.futures as cf
+    import urllib.request
+
+    try:
+        minx, miny, maxx, maxy = bounds_3857
+        zoom = min(19, _zoom_for_bounds(minx, maxx, width) + _BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP)
+        earth = 2.0 * np.pi * 6378137.0
+        tile_m = earth / (2**zoom)  # tamanho do tile em metros (3857)
+        tx0 = int((minx + earth / 2) / tile_m)
+        tx1 = int((maxx + earth / 2) / tile_m)
+        ty0 = int((earth / 2 - maxy) / tile_m)
+        ty1 = int((earth / 2 - miny) / tile_m)
+        px = 512  # tiles @2x
+
+        def _tile(tx: int, ty: int) -> Image.Image:
+            url = _LABELS_TILE_URL.format(s=_LABELS_SUBDOMAINS[(tx + ty) % 3], z=zoom, x=tx, y=ty)
+            req = urllib.request.Request(url, headers={"User-Agent": "motor-expansao/censo-labels"})
+            with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 (URL fixa https)
+                return Image.open(BytesIO(resp.read())).convert("RGBA")
+
+        canvas = Image.new("RGBA", ((tx1 - tx0 + 1) * px, (ty1 - ty0 + 1) * px), (0, 0, 0, 0))
+        coords = [(tx, ty) for ty in range(ty0, ty1 + 1) for tx in range(tx0, tx1 + 1)]
+        with cf.ThreadPoolExecutor(max_workers=8) as executor:
+            futures = {(tx, ty): executor.submit(_tile, tx, ty) for tx, ty in coords}
+            for (tx, ty), future in futures.items():
+                try:
+                    tile = future.result()
+                    if tile.size != (px, px):
+                        tile = tile.resize((px, px), Image.Resampling.LANCZOS)
+                    canvas.alpha_composite(tile, ((tx - tx0) * px, (ty - ty0) * px))
+                except Exception:
+                    continue  # rotulo faltando nao e problema (base ja desenhada)
+        extent = (
+            tx0 * tile_m - earth / 2,
+            (tx1 + 1) * tile_m - earth / 2,
+            earth / 2 - (ty1 + 1) * tile_m,
+            earth / 2 - ty0 * tile_m,
+        )
+        return canvas, extent
+    except Exception:
+        return None
+
+
 def _render_camada(
     *,
     titulo: str,
@@ -699,6 +765,7 @@ def _render_camada(
     valor_ponto: str | None = None,
     rotulo_escala: str | None = None,
     mostrar_legenda_pins: bool = True,
+    labels: tuple[Image.Image, tuple[float, float, float, float]] | None = None,
 ) -> bytes:
     """Desenha UMA camada (mesmos bbox/projecao/basemap/pins; varia fill + legenda).
 
@@ -821,6 +888,27 @@ def _render_camada(
         region.paste(basemap_patch, (0, 0), street_mask)
         image.paste(region, (left, top))
 
+    # Rotulos (NOMES de rua/bairro) POR CIMA do choropleth -> da p/ identificar a area. O realce
+    # `_STREET_*` acima recupera so as LINHAS de rua; aqui entram os TEXTOS, crus, de um tileset
+    # so-rotulos transparente (buscado 1x em `render_mapas_censitarios_combinados`). Alinhado ao
+    # extent dos tiles como o basemap (project()), recortado ao `map_box`. Pulado em pins_only
+    # (mapa so-pins mantem os rotulos nativos do basemap, sem choropleth por cima). RENDER apenas.
+    if labels is not None and not pins_only:
+        labels_img, (lb_minx, lb_maxx, lb_miny, lb_maxy) = labels
+        lx0, ly0 = project(lb_minx, lb_maxy)  # canto sup-esq do mosaico de rotulos
+        lx1, ly1 = project(lb_maxx, lb_miny)  # canto inf-dir
+        lw, lh = max(1, int(round(lx1 - lx0))), max(1, int(round(ly1 - ly0)))
+        placed = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+        placed.paste(labels_img.resize((lw, lh), Image.Resampling.LANCZOS),
+                     (int(round(lx0)), int(round(ly0))))
+        patch = placed.crop((left, top, right, bottom))
+        region = image.crop((left, top, right, bottom))
+        region.alpha_composite(patch)
+        image.paste(region, (left, top))
+
+    # Circulo do raio: OPCIONAL desde o BLK-RELPON-11 (a camada `entorno`, mapa de quadra, nao
+    # tem raio). O overlay de rotulos acima entra ANTES dele de proposito -- o circulo e' desenho
+    # do motor, nao do basemap, e nao pode ser coberto por rotulo de rua.
     if circle_3857 is not None:
         circle_points = [
             (int(round(px)), int(round(py)))
@@ -1215,6 +1303,7 @@ def render_mapas_censitarios_combinados(
     street_cap: int | None = None,
     choropleth_alpha: int | None = None,
     hexes_df: pd.DataFrame | None = None,
+    labels_overlay: bool = True,
 ) -> dict[str, bytes]:
     """Gera as camadas do Relatorio Pontual Censitario numa unica chamada.
 
@@ -1265,6 +1354,12 @@ def render_mapas_censitarios_combinados(
     subir o `ceil` recupera as vias residenciais CINZA-CLARAS do Voyager (lum ~200) que com o
     teto baixo (160) sumiam sob a cor. `choropleth_alpha` e a opacidade do preenchimento das
     faixas — menor = ruas aparecem mais. A legenda usa RGB solido, entao nao muda com o alpha.
+
+    BLK-RELPON-07: `labels_overlay` (default True) compoe os NOMES de rua/bairro POR CIMA do
+    choropleth (tileset so-rotulos, buscado 1x por `_fetch_labels` e compartilhado pelas 4 camadas
+    de choropleth). Enquanto o `_STREET_*` recupera so as LINHAS de rua, este overlay traz os
+    TEXTOS -> da p/ identificar a area. Best-effort: sem basemap/rede o overlay some (mapa sem
+    nomes, identico ao anterior). A camada so-pins (concorrentes) nao recebe overlay.
 
     BLK-RELPON-05: os 3 choropleths (densidade/renda/score) recebem uma faixa superior,
     computada a partir do PROPRIO `result` interno desta funcao (mesma chamada de
@@ -1372,8 +1467,13 @@ def render_mapas_censitarios_combinados(
     bounds_t = frame_3857.bounds
 
     basemap_tiles = None
+    labels_tiles = None
     if basemap:
         basemap_tiles = _fetch_basemap(bounds_t, width)
+        # rotulos buscados UMA vez (compartilhados pelas 4 camadas de choropleth); so quando ha
+        # basemap (mesma condicao de rede) e o overlay esta ligado. best-effort -> None nao quebra.
+        if basemap_tiles is not None and labels_overlay:
+            labels_tiles = _fetch_labels(bounds_t, width)
 
     pins = _project_points(result["concorrentes_raio"], lat, lng)
     ultra_pins = _project_points(result["ultra_raio"], lat, lng)
@@ -1414,6 +1514,7 @@ def render_mapas_censitarios_combinados(
         pins=pins,
         ultra_pins=ultra_pins,
         basemap=basemap_tiles,
+        labels=labels_tiles,
         bounds=bounds_t,
         lat=lat,
         lng=lng,
