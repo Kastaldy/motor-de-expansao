@@ -146,3 +146,24 @@ python_files = ["test_*.py"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/motor_expansao"]
+
+[dependency-groups]
+# Ferramenta de ESTACAO DE TRABALHO (grafo de conhecimento, §2/§7): serve o MCP declarado no
+# `.mcp.json`. NAO roda no CI, nem nas imagens de producao (Dockerfile.streamlit/.api), nem no
+# container do loop -- nenhum arquivo de src/, scripts/ ou tests/ faz `import graphify`.
+# POR QUE [dependency-groups] (PEP 735) E NAO UM EXTRA: o comando canonico de refresh do lock
+# (ci.yml:45, `uv pip compile pyproject.toml --all-extras ...`) NAO enxerga dependency-groups.
+# MEDIDO em 2026-07-28: compilar com e sem este bloco devolve os MESMOS 214 pins, byte a byte;
+# como extra, o mesmo comando devolve 250 (+36, dos quais 25 gramaticas tree-sitter). Logo o
+# `constraints.txt` fica INTOCADO de proposito -- nao e' esquecimento.
+# ATENCAO AO NOME: o pacote no PyPI e' `graphifyy`, com DOIS 'y'. O nome nu `graphify` esta
+# UNCLAIMED no PyPI -- declara-lo abriria typosquatting.
+# O PIN `mcp<2` E' OBRIGATORIO, NAO COSMETICO: o mcp 2.0.0 removeu `AnyUrl` de `mcp.types` e
+# `graphify/serve.py:1116` ainda o importa; sem o pin o servidor sobe e morre com a mensagem
+# ENGANOSA 'mcp not installed'. Medido 2026-07-28: mcp 2.0.0 = ImportError / mcp 1.29.0 =
+# handshake OK com 10 tools. Reavaliar quando o graphify suportar mcp 2.x.
+# Instalar: python -m pip install --group graph
+graph = [
+    "graphifyy[mcp]>=0.9.29,<0.10",
+    "mcp>=1.28,<2",
+]

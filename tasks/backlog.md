@@ -100,6 +100,18 @@ buscar o sinal que falta). Recomendação: A agora + B como aposta. Ver BLK-DIM-
 
 ---
 
+## Grafo de conhecimento do repositório — otimização de token (2026-07-27, pedido de Vinicius)
+
+> Pedido ad-hoc (fora do `/run-cycle`): aplicar o **graphify** ao repositório para reduzir o contexto
+> que cada sessão/sub-agente carrega. A branch `graph-01` foi criada para isso.
+
+- BLK-GRAPH-01 (concluído 2026-07-27) — ver tasks/completed.md
+
+- BLK-GRAPH-02 (concluído 2026-07-28) — ver tasks/completed.md
+
+
+---
+
 ## Relatório Pontual Censitário — vista aérea de satélite (2026-07-21, pedido de Juan)
 
 > Pedido de Juan a partir dos estudos prontos do time de UX (`UX/*.pptx`, slide "Fotos Do Imóvel"),
@@ -1552,6 +1564,51 @@ permanece exatamente como está.
 
 **Critério de aceite.** Em máquina sem o parquet de entrada o teste **pula** (não falha); em máquina com o
 parquet ele roda e mantém o assert de mtime; `pytest -q` deixa de reportar esse `FAILED`.
+
+---
+
+### BLK-QA-XDIST-01 — `pytest -n auto` quebrado nesta estação (INTERNALERROR do `execnet`)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** — ergonomia de gate local; **não** afeta o portão da `main` (o CI roda serial, `ci.yml:60`). READ-ONLY sobre o M1. |
+| **Prioridade** | Média — hoje o gate do QA custa **23 min** em serial contra os poucos minutos que o `-n auto` custava. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | Pendente. |
+| **Depende de** | — |
+| **Autonomia** | *(sem marcador — **NÃO** loop-safe: o diagnóstico exige rodar/instalar tooling na estação, fora do container)* |
+
+**Problema (achado e MEDIDO pelo QA do BLK-GRAPH-02, 2026-07-28).**
+`python -m pytest -n auto` aborta com `INTERNALERROR` antes de coletar qualquer teste, na criação dos
+workers (`xdist/workermanage.py:setup_node` → `execnet/gateway.py:_rinfo`). Três assinaturas alternando
+entre execuções: `EOFError: couldn't load message header, expected 9 bytes, got 0`,
+`OSError: [WinError 6] Identificador inválido` e `OSError: [WinError 50] Não há suporte para o pedido`
+(em `_winapi.DuplicateHandle`). `os.cpu_count()` = 12 → `-n auto` = 12 workers.
+Versões: `pytest 8.4.2`, `pytest-xdist 3.8.0`, `execnet 2.1.2`, Python 3.14 (Windows).
+
+**PROVADO PRÉ-EXISTENTE — não é regressão do BLK-GRAPH-02:**
+1. Reproduzido **3/3** em `tests/unit/test_claude_md_size.py` (2 testes, sem subprocess), cujo blob é
+   **idêntico** ao da `main`, com `conftest.py` e a seção `[tool.pytest.ini_options]` também idênticos.
+2. Reproduzido **2/2** em um `git worktree` da **`main` pura** (zero mudanças do ciclo). Nesse mesmo
+   worktree o `-n 2` também caiu (`WinError 50`).
+3. Reproduzido com **`-n 4`** na suíte completa (mesmo `INTERNALERROR`).
+4. Os pacotes instalados pelo grupo `graph` (`mcp`, `graphifyy`, `starlette`, `sse-starlette`,
+   `httpx-sse`, `pyjwt`) **não registram** nenhum entry point `pytest11` — não são a causa.
+5. Fora do repositório, num diretório temporário com um teste trivial, `-n auto` **passa** — ou seja, a
+   quebra aparece com o `conftest.py`/site-packages deste projeto carregados em 12 workers, não com o
+   xdist em si.
+
+**Histórico.** O `-n auto` **funcionava** (ver `tasks/completed.md`: "672 passed" e "678 passed ...
+idêntico em `-n auto` e serial"). Regrediu em algum ponto entre aqueles ciclos e 2026-07-28.
+
+**Correção sugerida (a confirmar por medição, não presumir).** Investigar (a) limitar workers por
+`addopts`/`-n logical` ou um teto explícito no `pyproject.toml`; (b) `--dist loadfile` (reduz canais);
+(c) bump de `pytest-xdist`/`execnet`; (d) compatibilidade do `execnet 2.1.2` com Python 3.14 no Windows
+(`DuplicateHandle`). **Não** mascarar com `-p no:xdist`.
+
+**Critério de aceite.** `python -m pytest -n auto -q` completa a suíte com a **mesma contagem** do serial
+(hoje: `2028 passed, 2 skipped` + o `FAILED` conhecido do BLK-FIX-LTV-01), em 3 execuções seguidas.
+Documentar no `prompts/qa_analyzer.md` o modo de execução vigente se a conclusão for mudar de `-n auto`.
 
 ---
 

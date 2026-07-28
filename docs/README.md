@@ -38,6 +38,7 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 - [portao_merge_orq21.md](portao_merge_orq21.md) — **[canônico]** runbook do portão de merge (DEC-016/BLK-ORQ-21).
 - [loop_autonomo.md](loop_autonomo.md) — runbook do loop "ralph".
 - [garimpeiro.md](garimpeiro.md) — routine autônoma de execução de blocos loop-safe.
+- [grafo_conhecimento.md](grafo_conhecimento.md) — **[canônico]** grafo de conhecimento (graphify): instalação (`--group graph`), consulta via MCP/CLI, `.mcp.json`, hooks em `.githooks/` e as duas limitações de instalação por clone.
 - [decisions/](decisions/README.md) — **[canônico]** corpo completo das DECs (índice no `CLAUDE.md` §8).
 - [system_design_referencia.md](system_design_referencia.md) — referência de design de sistema.
 - [uso_pratico_skills.md](uso_pratico_skills.md) — **[histórico]** guia de fases da esteira (superado pela DEC-016; ver `portao_merge_orq21.md` + `.claude/commands/run-cycle.md`).

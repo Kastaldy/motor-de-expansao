@@ -29,3 +29,16 @@ tasks/completed.md  merge=union
 # completed.md so funciona com EOL consistente. DEC-017.
 tasks/*.md          text eol=lf
 docs/*.md           text eol=lf
+
+# Hooks versionados (BLK-GRAPH-02): `.githooks/post-commit` nao tem extensao, entao o
+# `*.sh` da L12 NAO o cobre. Roda sob o `sh` do Git for Windows e, com core.autocrlf=true,
+# o checkout entregaria CRLF e quebraria o shebang `#!/bin/sh`.
+.githooks/*         text eol=lf
+
+# graph.json e' ARTEFATO GERADO (graphify, BLK-GRAPH-01): ~10 MB / 263k linhas de JSON.
+# Sem `-diff` ele domina 99% do diff do PR e AFOGA o revisor automatico -- o
+# `claude-review` do PR #150 terminou com `success` mas sem saida estruturada, e o gate
+# reprovou fail-closed. `-diff` faz o git tratar como binario ("Binary files differ");
+# `linguist-generated` colapsa na UI do GitHub. NAO altera o conteudo versionado nem
+# encosta nas regras de eol/binary dos `.enc.*` acima.
+graphify-out/graph.json -diff linguist-generated=true

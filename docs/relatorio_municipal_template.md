@@ -12,7 +12,12 @@ não o substitui. Unidade de análise = **município inteiro** (selecionado no d
 gerável e baixável após a seleção do município. Estética = a mesma família visual do
 template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágonos).
 
-## Estrutura (8 páginas/slides)
+## Estrutura (9 páginas/slides)
+
+> Fonte de verdade da contagem/ordem: `PDF_SECTION_HEADERS` em
+> `src/motor_expansao/dashboard/relatorio_municipal.py` (9 entradas), travada por
+> `tests/unit/test_relatorio_municipal.py` (7 asserts em `/Count 9`). Ao mudar a estrutura,
+> atualizar ESTE doc no mesmo PR — a página 2 abaixo ficou 1 mês fora dele (BLK-RELMUN-01-FU1).
 
 ### Página 1 — Capa
 - Eyebrow: "ANÁLISE DE EXPANSÃO".
@@ -21,7 +26,17 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
 - Rótulo do município: **"Cidade - UF"** (preenchido com o município selecionado).
 - Arte: capa escura (roxo/navy) com hexágonos de contorno (magenta/turquesa/laranja) e barras de acento.
 
-### Página 2 — Resumo da Região (01)
+### Página 2 — Visão Geral do Município
+- Inserida pelo **BLK-RELMUN-01-FU1** (2026-06-23), logo após a capa — é o slide que faltava
+  neste doc até 2026-07-27.
+- Título da banda: **"Visão Geral do Município - Cidade - UF"**.
+- **Mapa** do município INTEIRO (não o recorte das páginas seguintes), distinguindo hexágonos
+  **aprovados**, **reprovados** e **fora do município**.
+- Bloco **"REGIÕES CONSIDERADAS"**: quantas regiões entram nas páginas seguintes e quantas
+  ficaram de fora (`n_aprovados` / `n_hex_municipio` / `n_reprovados`).
+- READ-ONLY sobre o M1. Implementação: `_visao_geral_page` em `relatorio_municipal.py`.
+
+### Página 3 — Resumo da Região (01)
 - Título "Cidade - UF" / subtítulo "Potencial de entrada de novas unidades".
 - **Mapa** de hexágonos (estilo dashboard) com pins de Ultra e concorrentes; alguns hexágonos
   exibem o número de **vagas/consumo** (ex.: 4.451, 5.061, 4.259, 3.863, 4.371, 4.561, 5.876, 4.651).
@@ -36,14 +51,14 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
   - `÷ 2.500 → XX`
 - Legenda: "● Ultra".
 
-### Página 3 — Score Censitário (02)
+### Página 4 — Score Censitário (02)
 - Subtítulo: "Potencial socioeconômico por célula hexagonal H3".
 - **Mapa choropleth** H3 (verde→amarelo→laranja→vermelho) com pins Ultra/concorrentes.
 - Legenda (4 faixas): **Alto potencial** (verde), **Médio-alto** (amarelo/âmbar),
   **Médio** (laranja), **Baixo potencial** (vermelho).
 - Rodapé: "Fonte: IBGE Censo 2022 · Agregação H3 resolução 7".
 
-### Página 4 — Residual Fitness (03)
+### Página 5 — Residual Fitness (03)
 - Subtítulo: "Estimativa de mercado ainda não capturado pela concorrência".
 - **Mapa** residual (verde/amarelo/vermelho) com pins.
 - Painel **"MERCADO DISPONÍVEL"**:
@@ -53,7 +68,7 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
   - **Penetração fitness** ~XX,X%
   - Nota de método: "Pop. elegível − alunos com academia cadastrada".
 
-### Página 5 — Expansão de Domínio (04) — mapa + estratégia
+### Página 6 — Expansão de Domínio (04) — mapa + estratégia
 - Subtítulo: "Sugestão de posicionamento para cercar e dominar a região".
 - **Mapa** com hexágonos numerados por **zona** (1, 2, 3) e pins.
 - Painel **"ESTRATÉGIA"** (3 movimentos; rótulos do template — atenção: no template os textos
@@ -64,7 +79,7 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
   - **3 Ancora central** — hexágonos centrais / posicionamento.
 - Rodapé: "Motor de Expansão Ultra · IBGE + OSM".
 
-### Página 6 — Expansão de Domínio (04) — bairros por zona
+### Página 7 — Expansão de Domínio (04) — bairros por zona
 - Cabeçalho do painel: "Bairros com os melhores números".
 - Listas de **bairros agrupadas por zona** (1/2/3/4), ex. (Bauru-SP no template):
   - Zona 1: Parque Roosevelt, Parque Primavera, Jardim Petrópolis, Núcleo 9 de Julho,
@@ -74,7 +89,7 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
   - Zona 4: Núcleo Hab. Mary Dota, Núcleo Hab. Beija-Flor, Núcleo Hab. Isaura Pitta Garms, Jardim Silvestre II.
 - Rodapé: "Motor de Expansão Ultra · IBGE + OSM".
 
-### Página 7 — Síntese — Diagnóstico & Recomendação Estratégica
+### Página 8 — Síntese — Diagnóstico & Recomendação Estratégica
 - 3 cards (acento magenta / turquesa / laranja):
   - **~XX,X% de penetração** → "Mercado com Oportunidade": penetração fitness atual baixa,
     grande espaço para crescimento.
@@ -84,7 +99,7 @@ template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágon
     núcleo pelos flancos antes da concorrência; áreas centrais saturadas).
 - Rodapé: "Estratégia e Growth · Ultra Academia · Motor de Expansão · 2026".
 
-### Página 8 — Síntese — Espaço e academias
+### Página 9 — Síntese — Espaço e academias
 - Eyebrow "SÍNTESE" / título "Espaço e academias".
 - 3 big numbers:
   - **XX** Unidades Ultra mapeadas.
