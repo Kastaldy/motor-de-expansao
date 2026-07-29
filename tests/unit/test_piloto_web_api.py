@@ -193,15 +193,43 @@ def test_disco_de_hexes_tolera_parquet_sem_a_coluna_de_score(tmp_path: Path) -> 
     assert "score_setor_2022_calibrado" not in df.columns
 
 
-def test_mapas_usam_raio_de_display_menor_que_o_de_analise() -> None:
-    """Pedido Felipe 2026-07-29: mapas enquadram 1 km; a ANALISE segue em 1,5 km.
+def test_piloto_e_api_renderizam_o_mapa_com_os_MESMOS_parametros() -> None:
+    """DEC-021 — trava anti-deriva entre as duas superficies que geram o Relatorio Pontual.
 
-    Trava as duas pontas de uma vez — se alguem "simplificar" reusando a constante do motor no
-    render, o zoom volta a 1,5 km; se alguem trocar a do motor, os numeros do relatorio mudam
-    sem passar pelo gate do §3.
+    Historico que justifica o teste: o piloto e a API divergiram em producao por HORAS sem
+    ninguem notar — alpha 255 aqui contra 110 la, e raio de display 1,0 contra analise 1,5 —
+    porque cada call site passava seus proprios kwargs. A divergencia so aparecia comparando
+    dois PDFs lado a lado. Agora ambos OMITEM o alpha (vale o default do modulo) e usam o
+    MESMO raio canonico; este teste falha se alguem reintroduzir um override em qualquer lado.
     """
+    import inspect
+
+    from motor_expansao.api import service
     from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
 
-    assert pilot_app.RAIO_MAPAS_DISPLAY_KM == 1.0
-    assert RAIO_CENSITARIO_DEFAULT_KM == 1.5
-    assert pilot_app.RAIO_MAPAS_DISPLAY_KM < RAIO_CENSITARIO_DEFAULT_KM
+    # 1. Nenhuma das duas superficies pode voltar a fixar o alpha do choropleth.
+    for modulo, nome in ((pilot_app, "piloto web"), (service, "API/bot")):
+        fonte = inspect.getsource(modulo)
+        assert "choropleth_alpha=" not in fonte, (
+            f"{nome} voltou a sobrescrever o alpha; o valor unico vive em censo_map."
+        )
+
+    # 2. O piloto nao pode ter raio de display proprio (a analise E o raio do mapa).
+    assert not hasattr(pilot_app, "RAIO_MAPAS_DISPLAY_KM"), (
+        "raio de display separado ressuscitou: o PDF volta a desenhar um raio e contar outro"
+    )
+
+    # 3. O raio canonico e o da DEC-021.
+    assert RAIO_CENSITARIO_DEFAULT_KM == 1.0
+
+
+def test_rotulo_do_metodo_acompanha_o_raio() -> None:
+    """DEC-021: o `metodo` e' contrato publico da API e nao pode mentir sobre o raio."""
+    from motor_expansao.dashboard.censo_point import (
+        METODO_RELATORIO_PONTUAL_CENSITARIO,
+        RAIO_CENSITARIO_DEFAULT_KM,
+    )
+
+    assert METODO_RELATORIO_PONTUAL_CENSITARIO == "setor_censitario_intersecao_area_1km"
+    assert "1p5km" not in METODO_RELATORIO_PONTUAL_CENSITARIO
+    assert RAIO_CENSITARIO_DEFAULT_KM == 1.0

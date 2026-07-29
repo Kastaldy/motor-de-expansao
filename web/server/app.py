@@ -2179,13 +2179,6 @@ def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
     return saida
 
 
-# Raio de EXIBICAO dos mapas de calor e do mapa de Concorrentes (pedido Felipe 2026-07-29).
-# Constante de RENDER: NAO entra em `config.py` nem no §3 do CLAUDE.md e NAO toca o motor
-# censitario (`RAIO_CENSITARIO_DEFAULT_KM` = 1,5 segue governando quais setores entram na conta).
-# Enquadrar 1 km em vez de 1,5 km aumenta o zoom em ~1,5x e e' o que torna rua e entorno legiveis.
-RAIO_MAPAS_DISPLAY_KM = 1.0
-
-
 def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
     """Disco de hexes (grid_disk k=5, res 7) ao redor do ponto para o slide-hero
     "Socioeconomia e Residual Fitness": `oferta_efetiva_disponivel` (Residual) E
@@ -2369,15 +2362,10 @@ def _gerar_relatorio_pontual_pdf(
             lat,
             lng,
             setores_df,
-            # RENDER, nao analise (pedido Felipe 2026-07-29): os mapas de calor e o de
-            # Concorrentes enquadram 1 km em vez de 1,5 km -> mais zoom, rua e entorno legiveis.
-            # A ANALISE segue em `RAIO_CENSITARIO_DEFAULT_KM` (1,5 km) na chamada de
-            # `analisar_ponto_censitario_setores` acima: os Big Numbers do PDF NAO mudam.
-            # Consequencia a olhar no gate visual: o rodape do mapa passa a dizer "Raio 1,0 km"
-            # (descreve o circulo desenhado) enquanto os numeros do relatorio continuam sendo os
-            # de 1,5 km. Alinhar os dois exige mexer no raio de ANALISE — parametro canonico do
-            # §3, com DEC e gate humano proprios.
-            raio_km=RAIO_MAPAS_DISPLAY_KM,
+            # DEC-021: mapa e analise voltam a usar O MESMO raio. A divergencia display 1,0 x
+            # analise 1,5 durou algumas horas em 2026-07-29 e era, por construcao, um PDF que
+            # desenhava um raio e contava outro. Agora o canonico vale 1,0 km e nao ha dois.
+            raio_km=RAIO_CENSITARIO_DEFAULT_KM,
             competitors_df=comp_df,
             ultra_df=ultra_df,
             basemap=basemap,
@@ -2385,12 +2373,9 @@ def _gerar_relatorio_pontual_pdf(
             street_ceil=215,
             street_gain=1.3,
             street_cap=200,
-            # Cor CHEIA, fiel a legenda (pedido Felipe 2026-07-29). O `110` existia para as ruas
-            # do basemap aparecerem POR BAIXO da cor; desde o BLK-BASEMAP-06 a malha viaria e
-            # desenhada POR CIMA, pelo overlay do tileserver, entao o motivo do alpha baixo
-            # deixou de existir. A legenda sempre pintou RGB solido ignorando este alpha (ver
-            # `_CHOROPLETH_ALPHA` em censo_map.py) — era por isso que mapa e legenda nao batiam.
-            choropleth_alpha=255,
+            # SEM override de alpha: o default do modulo (`_CHOROPLETH_ALPHA`) passa a valer
+            # nas TRES superficies (dashboard, API/bot e piloto). Era override em duas delas —
+            # 110 na API e 255 aqui — e a divergencia so aparecia comparando PDFs lado a lado.
             hexes_df=hexes_residual,
         )
 

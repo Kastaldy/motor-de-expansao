@@ -17,11 +17,17 @@ from motor_expansao.dashboard.censo_map import (
     render_mapas_censitarios_combinados,
 )
 from motor_expansao.dashboard.censo_point import CRS_ORIGEM_CENSO, _local_metric_crs
+from motor_expansao.dashboard.censo_point import (
+    RAIO_CENSITARIO_DEFAULT_KM as _RAIO_CENSITARIO_KM,
+)
 from motor_expansao.dashboard.competitors import _ICON_CACHE
 from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS
 
 LAT_C = -23.55
 LNG_C = -46.63
+
+# DEC-021: fixtures geometricos derivam do raio canonico em vez de fixar metros contra 1,5 km.
+_RAIO_M = _RAIO_CENSITARIO_KM * 1000.0
 
 
 @pytest.fixture(autouse=True)
@@ -494,7 +500,17 @@ def test_valor_raio_nao_e_nd_quando_setor_nao_cobre_o_ponto_mas_intersecta_raio(
     # BLK-RELPON-05 a faixa vinha do lookup "setor que contem o ponto" e dava n/d neste
     # cenario; a semantica mudou).
     setores = pd.DataFrame(
-        [_sector_record("355030801000003", box(1000, -500, 2500, 500), renda=2000, score=60)]
+        [
+            _sector_record(
+                "355030801000003",
+                # DEC-021: proporcional ao raio (0,667R a 1,667R, meia-altura R/3). Fixo em
+                # 1.000-2.500 m o setor ficava FORA do circulo de 1 km e o teste passava a
+                # medir "sem setor" em vez de "setor intersecta sem cobrir o ponto".
+                box(_RAIO_M * (2 / 3), -_RAIO_M / 3, _RAIO_M * (5 / 3), _RAIO_M / 3),
+                renda=2000,
+                score=60,
+            )
+        ]
     )
 
     capturado: dict[str, dict] = {}
@@ -962,7 +978,7 @@ def test_camadas_censitarias_declara_as_7_chaves():
     assert "entorno" not in censo_map.CAMADAS_CENSITARIAS
 
 
-def test_rodape_do_png_deriva_do_raio_km_1p5_identico_e_paineis_de_hex_sem_raio(monkeypatch):
+def test_rodape_do_png_deriva_do_raio_do_motor_e_paineis_de_hex_sem_raio(monkeypatch):
     """DT-5: o rodape deriva de `raio_km`. Com 1.5 a string tem de sair IDENTICA ("Raio 1,5 km").
 
     BLK-RELPON-14: os paineis de hexagono passam `raio_km=None` -> o rodape sai SEM o prefixo de
@@ -986,8 +1002,12 @@ def test_rodape_do_png_deriva_do_raio_km_1p5_identico_e_paineis_de_hex_sem_raio(
         hexes_df=_hexes_sinteticos(),
     )
 
-    # As 4 camadas de setor (1,5 km) seguem rotulando o raio, byte-a-byte como antes.
-    assert "Raio 1,5 km - EPSG:3857 - fundo de ruas offline" in textos
+    # As 4 camadas de setor seguem rotulando o raio — agora derivado do canonico (DEC-021),
+    # e nao de um literal. O rodape do MAPA ja era dinamico; era o teste que fixava "1,5".
+    from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
+
+    raio_txt = f"{RAIO_CENSITARIO_DEFAULT_KM:.1f}".replace(".", ",")
+    assert f"Raio {raio_txt} km - EPSG:3857 - fundo de ruas offline" in textos
     # Os 2 paineis de hexagono (5 km) usam o rodape SEM prefixo de raio.
     assert "EPSG:3857 - fundo de ruas offline" in textos
     assert not any(t.startswith("Raio 5,0 km") for t in textos)
@@ -1066,7 +1086,9 @@ def test_raio_de_exibicao_nao_toca_o_raio_do_motor():
     import motor_expansao.config as config
     from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
 
-    assert RAIO_CENSITARIO_DEFAULT_KM == 1.5
+    # DEC-021 (AUTORIZADA por Felipe, 2026-07-29): 1,5 -> 1,0 km. O valor segue PINADO aqui
+    # de proposito: e' a guarda contra mudanca silenciosa do parametro canonico do §3.
+    assert RAIO_CENSITARIO_DEFAULT_KM == 1.0
     assert censo_map.RAIO_RESIDUAL_DISPLAY_KM == 5.0
     assert not hasattr(config, "RAIO_RESIDUAL_DISPLAY_KM")
     assert censo_map._RESIDUAL_GRID_DISK_K == 5
@@ -1151,9 +1173,11 @@ def test_paineis_de_hexagono_nao_desenham_o_circulo_do_raio(monkeypatch):
     for titulo in ("Socioeconomia", "Residual Fitness"):
         assert capturado[titulo]["circle_3857"] is None
         assert capturado[titulo]["raio_km"] is None
-    # As camadas de 1,5 km seguem com circulo + raio rotulado (nada mudou nelas).
+    # As camadas de setor seguem com circulo + raio rotulado (nada mudou nelas).
+    from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
+
     assert capturado["Densidade populacional"]["circle_3857"] is not None
-    assert capturado["Densidade populacional"]["raio_km"] == 1.5
+    assert capturado["Densidade populacional"]["raio_km"] == RAIO_CENSITARIO_DEFAULT_KM
 
 
 def test_hex_central_e_o_unico_marcado_para_a_borda_de_destaque():
@@ -1249,10 +1273,13 @@ def test_borda_de_destaque_desenhada_so_no_poligono_marcado():
 
     minx, miny, maxx, maxy = frame.bounds
     left, top, right, bottom = censo_map._map_box(1000, 760)
-    inner_w, inner_h = right - left - 24, bottom - top - 24
+    # Mesma fonte da verdade do render (`_map_inner_dims`). Antes esta conta era duplicada aqui
+    # com o `-24`/`+12` do padding — quando o padding saiu (DEC-021, faixa sem cor na borda), o
+    # teste passou a projetar num sistema de coordenadas que nao existe mais.
+    inner_w, inner_h = censo_map._map_inner_dims(1000, 760)
     scale = min(inner_w / (maxx - minx), inner_h / (maxy - miny))
-    offset_x = left + 12 + (inner_w - (maxx - minx) * scale) / 2
-    offset_y = top + 12 + (inner_h - (maxy - miny) * scale) / 2
+    offset_x = left + (inner_w - (maxx - minx) * scale) / 2
+    offset_y = top + (inner_h - (maxy - miny) * scale) / 2
 
     def _caixa_px(geom):
         gx0, gy0, gx1, gy1 = geom.bounds

@@ -402,7 +402,10 @@ def gerar_pdf_ponto(
             # residenciais CINZA-CLARAS do Voyager (ceil 160->215) e deixa a cor das
             # faixas mais translucida (alpha 140->110). So a API ajusta isto; o dashboard
             # segue com os defaults do modulo. (Diagnostico Parque Bosque Maia, 2026-06-12.)
-            street_ceil=215, street_gain=1.3, street_cap=200, choropleth_alpha=110,
+            # SEM `choropleth_alpha`: o default do modulo vale para API/bot, piloto e
+            # dashboard (DEC-021). O 110 daqui existia para as ruas aparecerem por baixo
+            # da cor — o overlay do BLK-BASEMAP-06 as desenha POR CIMA desde entao.
+            street_ceil=215, street_gain=1.3, street_cap=200,
         )
 
     # Tenta com ruas (online); cai para offline; em ultimo caso, sem mapas.

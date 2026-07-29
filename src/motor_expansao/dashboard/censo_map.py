@@ -117,7 +117,12 @@ _EARTH_M = 2.0 * np.pi * 6378137.0
 # _CIRCLE_RGBA: azul vivido, visivel sobre o fundo claro do basemap. BLK-RELPON-14: nos paineis
 # de 5 km o circulo saiu e este mesmo azul passou a desenhar a borda do hex central
 # (`_HEX_CENTRAL_EDGE_COLOR`); nas camadas de 1,5 km ele segue sendo o circulo do raio.
-_CIRCLE_RGBA = (0, 102, 255, 235)
+# 2026-07-29 (Felipe): "um azul um pouco mais forte/escuro, nao muito". A saturacao ja era
+# 100%, entao so a luminosidade da p/ mexer: HSL(216,100%,50%) -> HSL(216,100%,43%).
+# ~14% mais escuro, mesma matiz, longe de azul-marinho. Limite pratico: os predicados de
+# pixel dos testes (test_relatorio_pontual_censitario_mapa.py:1092,1099) exigem canal
+# azul >= 216 — escurecer alem disso obriga a reescreve-los em funcao desta constante.
+_CIRCLE_RGBA = (0, 88, 220, 235)
 _DARK_MAP_INK = (31, 41, 55)
 
 # Ruas/nomes do Voyager sao pixels ESCUROS sobre fundo claro. Para o choropleth nao apagar
@@ -195,7 +200,16 @@ _SECTOR_PALETTE = [
 # a cor de faixa ser legivel sobre o claro; as ruas escuras do Voyager sao RECOLOCADAS por cima
 # depois (_STREET_*), entao o arruamento nao se perde. A legenda usa RGB solido (ignora este
 # alpha), entao as faixas seguem nitidas na legenda.
-_CHOROPLETH_ALPHA = 140
+# 2026-07-29 (Felipe): "menos transparentes e mais visiveis" e depois "diminuir um pouco,
+# exageramos". 200 = 78% da cor sobre o branco da pagina. Passa a ser o valor UNICO das
+# tres superficies (dashboard 140, API/bot 110, piloto 255 convergem aqui).
+# NOTA MEDIDA: o PIL NAO faz blend neste render (`ImageDraw.Draw(img, "RGBA")` so mistura
+# quando a base e RGB), entao este alpha e gravado LITERAL no canal do PNG e o basemap
+# embaixo e SUBSTITUIDO. Baixar o alpha NAO revela rua nenhuma — apenas lava a cor contra
+# o branco. Quem devolve as ruas e o overlay do BLK-BASEMAP-06, desenhado POR CIMA.
+# O swatch da legenda e opaco (`fill=color[:3]`), entao abaixo de 255 mapa e legenda
+# divergem um pouco — e uma escolha consciente do pedido acima, nao um descuido.
+_CHOROPLETH_ALPHA = 200
 
 # Cor de fill para setor sem dado na faixa nova (cinza translucido).
 _FILL_SEM_DADO = (218, 222, 229, _CHOROPLETH_ALPHA)
@@ -245,9 +259,20 @@ def _map_box(width: int, height: int) -> tuple[int, int, int, int]:
 
 
 def _map_inner_dims(width: int, height: int) -> tuple[float, float]:
-    """Dimensoes uteis (inner_w, inner_h) onde o frame e desenhado (sem o padding de 12px)."""
+    """Dimensoes uteis (inner_w, inner_h) onde o frame e desenhado: o `map_box` INTEIRO.
+
+    DEFEITO CORRIGIDO (Felipe, 2026-07-29): havia um `- 24` aqui (12 px de padding por lado) que
+    NAO existia na colagem do basemap — o basemap era colado no `map_box` inteiro e o choropleth,
+    dentro da caixa encolhida. Resultado: uma faixa de basemap SEM COR na borda de todos os
+    mapas, medida em 14/13/12/11 px (~6,9% da area util), identica em setores e hexagonos.
+
+    Nao era falta de dado: os setores sao selecionados pelo BBOX DO FRAME (nao pelo circulo do
+    raio) e o disco H3 k=5 cobre os cantos com folga. Era so geometria de render. O padding ficou
+    invisivel por dois ciclos porque o alpha baixo do choropleth lavava a cor e a faixa nao se
+    distinguia do resto; virou obvio quando o alpha subiu.
+    """
     left, top, right, bottom = _map_box(width, height)
-    return (float(right - left - 24), float(bottom - top - 24))
+    return (float(right - left), float(bottom - top))
 
 
 def _frame_box_metric(raio_km: float, width: int, height: int) -> Polygon:
@@ -1012,11 +1037,12 @@ def _render_camada(
     minx, miny, maxx, maxy = bounds
     span_x = max(maxx - minx, 1.0)
     span_y = max(maxy - miny, 1.0)
-    inner_w = right - left - 24
-    inner_h = bottom - top - 24
+    # UMA fonte da verdade com `_frame_box_metric`: as duas contas divergirem foi metade do
+    # defeito da faixa sem cor (aqui havia `-24` e `+12`; a colagem do basemap nao tinha).
+    inner_w, inner_h = _map_inner_dims(width, height)
     scale = min(inner_w / span_x, inner_h / span_y)
-    offset_x = left + 12 + (inner_w - span_x * scale) / 2
-    offset_y = top + 12 + (inner_h - span_y * scale) / 2
+    offset_x = left + (inner_w - span_x * scale) / 2
+    offset_y = top + (inner_h - span_y * scale) / 2
 
     def project(x: float, y: float) -> tuple[float, float]:
         px = offset_x + (x - minx) * scale
@@ -1044,7 +1070,6 @@ def _render_camada(
             # recorta a area do map_box e cola so ela (mantem moldura)
             patch = crop.crop((left, top, right, bottom))
             image.paste(patch, (left, top))
-            draw.rounded_rectangle(map_box, radius=6, outline=(71, 85, 105))
             basemap_patch = patch
             drew_basemap = True
         except Exception:
@@ -1052,7 +1077,7 @@ def _render_camada(
             basemap_patch = None
     if not drew_basemap:
         # Fallback offline: canvas claro (sem ruas), coerente com o tema claro do mapa.
-        draw.rounded_rectangle(map_box, radius=6, fill=(245, 245, 245), outline=(71, 85, 105))
+        draw.rounded_rectangle(map_box, radius=6, fill=(245, 245, 245))
 
     # choropleth por faixa fixa (alpha translucido -> ruas ESCURAS do basemap claro aparecem por
     # cima depois). SEM borda nos setores: transicao suave entre faixas (estilo GeoFusion).
@@ -1105,6 +1130,11 @@ def _render_camada(
         region = image.crop((left, top, right, bottom))
         region.alpha_composite(patch)
         image.paste(region, (left, top))
+
+    # Moldura do mapa POR CIMA do choropleth e do overlay. Ela era desenhada junto com o basemap,
+    # antes da cor: como o choropleth agora ocupa o `map_box` inteiro (sem o padding de 12 px que
+    # criava a faixa vazia), a cor passaria POR CIMA da borda e a caixa perderia o contorno.
+    draw.rounded_rectangle(map_box, radius=6, outline=(71, 85, 105))
 
     # Circulo do raio: OPCIONAL desde o BLK-RELPON-11 (a camada `entorno`, mapa de quadra, nao
     # tem raio). O overlay de rotulos acima entra ANTES dele de proposito -- o circulo e' desenho
