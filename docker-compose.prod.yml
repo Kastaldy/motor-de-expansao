@@ -165,6 +165,17 @@ services:
       # BLK-SAT-01: chave do ArcGIS Location Platform p/ a vista aerea (satelite) do
       # Relatorio Pontual. Sem a var -> render devolve None -> pagina omitida (PDF sai igual).
       API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}
+      # Fundo de ruas dos PDFs pelo tileserver proprio (BLK-BASEMAP-02, emenda DEC-004/011).
+      # MESMA URL INTERNA que `streamlit` e `api` usam: a emenda diz, com todas as letras, que os
+      # relatorios saem "da mesma caixa" e que apontar para tileservers diferentes so criaria
+      # divergencia visual entre eles. Opcional; sem ela cai no CartoDB Voyager de antes.
+      #   API_BASEMAP_TILES_URL=http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png
+      #
+      # CORRECAO DE DERIVA (2026-07-29): a producao JA passava esta variavel ao `web` — o compose
+      # do servidor foi editado a mao e ficou A FRENTE do repo. Sem esta linha, restaurar o compose
+      # versionado por cima do servidor DESLIGARIA o tileserver no piloto, em silencio (o PDF
+      # continuaria saindo, pelo CartoDB). Conferido por diff do arquivo real do VPS.
+      API_BASEMAP_TILES_URL: ${API_BASEMAP_TILES_URL:-}
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro    # censo geo + enriquecido + base_calibracao
       - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + renda domiciliar
