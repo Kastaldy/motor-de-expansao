@@ -140,7 +140,8 @@ O Streamlit lê do volume na próxima requisição — **não é necessário rei
      `contagem_atual.csv`, diff vs. `contagem_anterior.csv` (delta por rede), histórico `historico_contagem.csv`
      e `relatorio_crescimento_<data>.txt`;
   4. **Integração ao motor** (regen camada paralela, READ-ONLY M1 — ver abaixo);
-  5. **Restart** de `streamlit`/`api`/`telegram-bot`.
+  5. **Sync do diretório de concorrentes dos apps** (`sync_concorrentes_dashboard.py` — ver abaixo);
+  6. **Restart** de `streamlit`/`api`/`telegram-bot`/`web`.
 - **Cron:** `0 6 * * 0` (domingo **06:00 UTC = 03:00 BRT**; o servidor é UTC). `crontab -l` no root.
 - **Logs:** `/var/log/gymscraping/weekly_<TS>.log` (+ symlink `weekly_latest.log`).
 
@@ -164,6 +165,40 @@ para `/opt/motor-expansao/data/staging/` (`censo2022_setores_calibrado` + varian
 
 **Gotcha de permissão:** os containers de coleta/regen rodam como **`--user 0:0` (root)** — os CSVs/parquets no
 host são de root e o usuário não-root da imagem não consegue sobrescrevê-los; o Chrome já usa `--no-sandbox`.
+
+### Sync do diretório de concorrentes dos apps (BLK-CONC-SYNC-01)
+
+> **Por que existe:** o mount `$REPO/Unidades:/app/concorrentes:ro` do passo anterior vale **só dentro do
+> container de regen** — ele alimenta o *parquet*. O diretório **`/opt/motor-expansao/concorrentes`**, que os
+> serviços `streamlit`, `api` e `web` montam em `/app/concorrentes`, **não era tocado por ninguém**. Medido em
+> 2026-07-29: estava congelado desde 2026-05-28 com 39 CSVs e 39 logos, enquanto o parquet já tinha 106 redes.
+> Efeito visível: o Streamlit (que lê os CSVs, não o parquet) perdia **68 das 107 redes** no mapa, e os pins do
+> piloto web e dos PDFs caíam no **fallback de sigla** por falta de `logo_<slug>.png`.
+
+O passo roda `scripts/sync_concorrentes_dashboard.py` (cópia instalada em `/opt/gymscraping-infra/`) dentro da
+imagem do `streamlit`, com `GymScraping` em `:ro` e o diretório dos apps como destino. Duas regras importam:
+
+- **Normalização de nome:** o coletor guarda parte das artes fora do padrão (`AD3_logo.png`, `Malibu_logo.png`,
+  `companhiafit_logo.png`). O canônico é sempre `logo_<slug>.png`, definido por `COMPETITOR_LOGO_FILES`; o
+  casamento é por chave compacta, com desempate por prefixo. Rede sem arte fica sem logo **de propósito** (o pin
+  cai na sigla) — hoje são 10 das 107.
+- **Nunca reduzir:** por rede, vence a fonte com **mais** unidades válidas entre o destino atual e a coleta,
+  contando com o mesmo parser do app. Uma coleta parcial (já houve domingo com 45/106 redes) não pode apagar o
+  que estava visível em produção.
+
+O `web` entra no restart porque o piloto carrega as logos em `@app.on_event("startup")` e cacheia o ícone por
+rede em `lru_cache` — sem restart, logo nova não aparece nele. Rodar sob demanda (é idempotente):
+
+```bash
+IMG=$(docker inspect --format '{{.Image}}' motor_expansao_streamlit)
+docker run --rm --user 0:0 -e PYTHONIOENCODING=utf-8 \
+  -v /opt/gymscraping-infra/sync_concorrentes_dashboard.py:/tmp/sync.py:ro \
+  -v /opt/gymscraping:/gymscraping:ro -v /opt/motor-expansao/concorrentes:/destino \
+  "$IMG" python /tmp/sync.py --gymscraping /gymscraping --destino /destino   # --aplicar para escrever
+```
+
+> **Ao mexer no script versionado, reinstalar a cópia da VPS** (`scp` para `/opt/gymscraping-infra/`, com
+> **LF**): o runner não faz `git pull` do checkout do motor, então `scripts/` do repo não chega lá sozinho.
 
 ### Operação manual / troubleshooting
 

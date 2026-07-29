@@ -2337,3 +2337,57 @@ aparece quando alguém abre um relatório.
 **Guardrail.** §5 READ-ONLY M1. Nenhuma mudança em código de render, score ou pipeline.
 
 ---
+
+### BLK-CONC-SYNC-01 — O diretório de concorrentes dos apps nunca era sincronizado (68 redes fora do mapa, 58 logos faltando)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (corrige degradação silenciosa já no ar e toca o runner semanal da VPS) |
+| **Esteira** | Block Orchestrator → Builder → QA |
+| **Depende de** | BLK-RELPON-14 (#158, em `main` — cadastrou as 107 redes nos registros) |
+| **Status** | **Aplicado em produção em 2026-07-29**; versionamento em revisão |
+| **Autonomia** | **manual (NÃO loop-safe)** — mexe em dados de produção e no cron da VPS |
+
+> Criticidade **Crítica** porque toca `/opt/motor-expansao/concorrentes` (dado que as três
+> superfícies servem) e `/opt/gymscraping-infra/run_weekly_90.sh` (cron semanal) — caminhos de
+> deploy/VPS pelo `loop_guard`. Nada de M1: camada visual/de apoio (§2), não altera score,
+> ranking, carteira nem artefatos oficiais.
+
+**Problema (medido em produção em 2026-07-29).** O #158 cadastrou as 107 redes nos três registros
+de `dashboard/competitors.py`, mas os **arquivos** nunca chegaram ao servidor:
+`/opt/motor-expansao/concorrentes` estava congelado desde **2026-05-28** com 39 CSVs e 39 logos.
+A causa não é esquecimento pontual — é estrutural: o `run_weekly_90.sh` monta
+`GymScraping/Unidades` como `/app/concorrentes:ro` **só dentro do container de regen**, que
+alimenta `concorrentes_mapeados.parquet`. O diretório que os serviços `streamlit`, `api` e `web`
+montam em `/app/concorrentes` **não era tocado por nenhum passo do ciclo**.
+
+Efeito por superfície (medido, não inferido):
+- **Streamlit** — lê os CSVs por `load_competitor_points`: **3.542 pontos / 39 redes** quando o
+  parquet já tinha 106. As 68 redes novas simplesmente não existiam no mapa.
+- **Piloto web e PDFs** — leem o parquet, então os pontos apareciam; mas sem `logo_<slug>.png` o
+  pin caía no fallback de sigla. Em São Paulo, **14 das 39 redes** visíveis sem logo.
+
+**Escopo (3 partes):**
+
+1. **Dado em produção** — `/opt/motor-expansao/concorrentes` passa de 39 para **107 CSVs** e de 39
+   para **97 logos** (backup em `concorrentes.bak-20260729-1600`). Streamlit vai a **4.513 pontos /
+   107 redes**; nenhuma rede perde unidades (ver regra em 2).
+2. **`scripts/sync_concorrentes_dashboard.py`** — normaliza o nome das logos do coletor
+   (`AD3_logo.png` → `logo_ad3.png`) e escolhe, **por rede**, a fonte com mais unidades válidas
+   entre o destino e a coleta. A regra de não reduzir é deliberada: já houve domingo com coleta
+   parcial (45/106 redes) e um CSV truncado não pode apagar o que estava visível.
+3. **Runner semanal** — o passo de sync entra no `run_weekly_90.sh` e o **`web`** entra no restart
+   (o piloto carrega as logos em `@app.on_event("startup")` e cacheia por `lru_cache`; sem restart
+   a logo nova não aparece nele).
+
+**Critérios de aceite:**
+- Streamlit em produção carrega 107 redes e ≥ 4.500 pontos de concorrentes.
+- `/api/municipio/SP/São Paulo` no piloto devolve **0 ícones** sem logo (era 14).
+- O sync é idempotente: rodar duas vezes seguidas não muda nenhum arquivo.
+- 10 redes seguem sem logo — não existe arte no coletor; o fallback de sigla é o projetado.
+
+**Guardrail.** §2/§5 READ-ONLY M1. Nenhuma mudança em score, pesos, pipeline ou artefato oficial;
+o parquet `concorrentes_mapeados.parquet` **não** foi regerado (decisão de Felipe em 2026-07-29:
+ele tem 4.611 pontos contra 4.366 da coleta atual e regerar reduziria o que está no ar).
+
+---
