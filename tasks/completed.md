@@ -10707,3 +10707,171 @@ comprovados; a inferência apressada não mudou o resultado.
 
 **Snapshots de handoff (versionados):** `20260729-121047-block-orchestrator.md` ·
 `20260729-123146-planner.md` · `20260729-130703-builder.md` · `20260729-134525-qa.md`.
+
+---
+
+### BLK-MA-03 — Sinal 1 do score de vulnerabilidade: presença em agregador (WellHub/TotalPass), hex-level
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (agregação sobre contrato de coluna já materializado pelo BLK-MA-02; READ-ONLY sobre o M1; não cria ingestão, não persiste PII pela primeira vez, não apaga disco). **Ressalva:** a emenda ao §8.1 do contrato do epic (granularidade de `v1`) exige **gate humano pontual antes do Builder**. |
+| **Prioridade** | Antes do **BLK-MA-04** (é o insumo do `v1`). |
+| **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — emenda §8.1]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | BLK-MA-02 (concluído 2026-07-29). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do BLK-MA-02/FU1: camada com insumo de PII na origem (DEC-012), toca `tasks/backlog.md` (governança) e exige gate humano de contrato. NÃO marcar loop-safe. |
+
+**Objetivo.** Derivar o **sinal 1** do contrato §4 (presença/ausência em agregador) a partir da coluna
+`fonte` que o BLK-MA-02 já materializa no snapshot, entregando-o no contrato
+`presenca_agregador_v1` que o BLK-MA-04 vai consumir — sem calcular `v1`, pesos ou
+`score_vulnerabilidade`.
+
+**Escopo.** Criar `src/motor_expansao/vulnerabilidade/presenca_agregador.py` com
+`extrair_presenca_agregador(base_dir=None, *, snapshots=None)` (mesmo molde de
+`extrair_churn_staleness`: exatamente um entre os dois; puro com `snapshots` injetado). Algoritmo:
+reduzir cada `(fonte, chave_snapshot)` à observação de **maior `semana`** → filtrar
+`fonte in {totalpass, wellhub}` **E** `rede == independente` → agregar por `hex_id_res7`. Saída de 10
+colunas (`hex_id_res7`, `fontes_presentes_no_hex`, `n_agregadores_no_hex`,
+`n_academias_independentes_totalpass`, `n_academias_independentes_wellhub`,
+`semana_ultima_observacao_totalpass`, `semana_ultima_observacao_wellhub`,
+`snapshot_date_ultimo_totalpass`, `snapshot_date_ultimo_wellhub`, `versao_contrato`), com
+`_assert_schema_presenca_agregador` e trava executável contra `v1`/`v2`/`score_vulnerabilidade`/
+`n_sinais_disponiveis`/`flag_score_provisorio`. Constantes novas em `vulnerabilidade/contrato.py`
+(`VERSAO_CONTRATO_PRESENCA_AGREGADOR`, `FONTES_AGREGADORES`, `CATEGORIA_INDEPENDENTE` **replicada**,
+`CONTRATO_COLUNAS_PRESENCA_AGREGADOR`). Testes com fixtures 100% sintéticas.
+
+**Decisão que exige gate humano — emenda ao §8.1 do contrato.** A granularidade de `v1` passa de
+**por academia** para **por hexágono**: com o universo NOMEADO (D1-B) deferido, a chave do snapshot
+embute a `fonte` (`contrato.py:395-413`) e o `nome` não é persistido, logo a mesma academia em TP e WH
+é sempre duas chaves e "quantos agregadores cobrem esta linha" seria constante `1`. Consequências a
+registrar no contrato: viés conhecido (todas as academias do hex recebem o mesmo `v1`; erro
+sistemático nos hexes densos, direção de **falso negativo**); o ramo "0 agregadores → `v1=1,0`" é
+**inalcançável e vacuoso** (fontes só-positivas; hex sem alvo observado não tem o que pontuar; o caso
+informativo é o S3 `sumiu_recente`, peso ≈ 0,467); domínio efetivo `v1 ∈ {0.0, 0.5}` (S1 contribui ≤
+10 dos 100 pontos); `v1` é categórico (§8.2: **nunca** percentil) e **não** é renormalizado para fora
+pelo §8.4. **Restrição herdada pelo BLK-MA-04:** enquanto S3/S4 estiverem imaturos (~8–12 meses,
+§6/§12), S1 é o único sinal do score e produz `score_vulnerabilidade ∈ {0, 50}`.
+
+**Fora de escopo.** `v1`/pesos/`score_vulnerabilidade`/`n_sinais_disponiveis`/`flag_score_provisorio`
+e qualquer normalização (**BLK-MA-04**); cruzamento com hex quente, `h3.grid_disk(k=1)`,
+`alvos_ma_priorizados.csv` (**BLK-MA-05**); flag de staleness e plug no cron (**BLK-MA-06**); sinal 2
+/ rating (**BLK-MA-08**); universo NOMEADO / D1-B / `concorrentes_densos.py` (**deferido pela decisão
+S1**); os itens do `BLK-MA-02-FU1`; qualquer artefato, score, peso ou pipeline do M1;
+`normalizar_concorrentes.py` e `calcular_colunas_mercado.py` (`_DENY_CRITICO`, molde de leitura
+apenas); editar `snapshots.py`/`churn_staleness.py` (só importar).
+
+**Critério de aceite.** Universo do sinal 1 fechado (TP/WH × `independente`), com o filtro aplicado
+**depois** da redução; redução por **maior `semana`**, jamais por `snapshot_date` (que pode congelar
+ou regredir quando o coletor falha); contagem de **chaves distintas** por `(hex, fonte)`;
+`n_agregadores_no_hex ∈ {1,2}` e hex sem observação **não** emite linha, com o limite registrado no
+docstring; contrato de 10 colunas travado por `_assert_schema_presenca_agregador` (ordem, res-7,
+duplicidade, consistência `fontes_presentes_no_hex` × contagens, nulabilidade dos relógios de frescor
+sse contagem `0`); trava executável contra score adiantado; isolamento de import por AST **incluindo**
+a proibição específica de `demanda_revelada` no módulo novo; `CATEGORIA_INDEPENDENTE` replicada e
+travada contra drift por teste; zero PII e zero releitura de CSV cru; emenda ao §8.1 escrita no mesmo
+PR; suíte completa sem regressão (baseline nesta base: **2186 coletados**, a re-medir); `ruff` limpo;
+`python scripts/loop_guard.py` sem `CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
+
+---
+
+## Fechamento de ciclo — BLK-MA-03 (Sinal 1 do score de vulnerabilidade: presença em agregador, hex-level)
+
+**Data:** 2026-07-29 · **Veredito:** APROVADO COM RESSALVAS (0 críticos · 2 médios · 6 menores) ·
+**Criticidade:** Média · **Esteira:** Block Orchestrator (Sonnet) -> Planner (Opus) -> [gate humano
+G1/G2 — Vinicius] -> Builder (Opus) -> QA (Opus). **READ-ONLY sobre o M1** e **anti-PII por
+construção** (DEC-012). **SEM DEC nova.**
+
+**Entregável.** Módulo novo `src/motor_expansao/vulnerabilidade/presenca_agregador.py` com
+`extrair_presenca_agregador(...)`, o contrato `presenca_agregador_v1` (**10 colunas**) em
+`contrato.py`, reexports no `__init__.py` e **43 testes novos** com fixtures 100% sintéticas. Entrega
+o **insumo bruto do sinal 1** (presença em agregador) que o BLK-MA-04 vai consumir — o módulo NÃO
+calcula `v1`, pesos nem `score_vulnerabilidade`.
+
+**Base da branch (decisão B1, Vinicius).** `ciclo/BLK-MA-03` EMPILHA sobre `ciclo/BLK-MA-02` (ainda
+não mergeado) com `origin/main` (`67e85f0`, PR #159 / BLK-BASEMAP-05) mergeado para dentro
+(`a0430b8`, auto-merge limpo do `backlog.md`). O MA-03 depende do pacote `vulnerabilidade/` e da
+coluna `fonte`, que só existem na branch do MA-02. **Escopo (decisão S1):** SÓ o sinal 1 — o universo
+NOMEADO (Opção B / D1-B) segue DEFERIDO, e `concorrentes_densos.py` não foi tocado.
+
+**A decisão que dominou o ciclo — o contrato descrevia algo incomputável.** O §8.1 define `v1` **por
+academia** (0/1/2 agregadores). Isso pressupõe casar a MESMA academia entre TotalPass e WellHub, o
+que exige identidade cross-provider — exatamente a Opção B, deferida. O Block Orchestrator detectou e
+o Planner **confirmou no código**: `chave_do_slug` e `chave_hash_estavel` **embutem a `fonte`**, logo
+a mesma academia em TP e WH é sempre DUAS chaves distintas, e "quantos agregadores cobrem esta linha"
+seria constante `1` — um sinal sem variância, inútil para ranking.
+
+**Gate humano G1 (2026-07-29, Vinicius) — RATIFICADO: emenda ao §8.1, `v1` passa a ser medido por
+HEX.** A emenda (itens a-d, no cabeçalho, §8.1, §4 e §13) deixa escritos os quatro pontos exigidos:
+(1) o **viés** — num hex denso em que o TP cobre a academia A e o WH cobre a B, o hex lê "2
+agregadores" e ambas recebem `v1 = 0.0`; erro sistemático nos hexes-alvo, mas na direção **segura**
+(**falso NEGATIVO**, nunca falso alvo); (2) o **domínio efetivo `v1 ∈ {0.0, 0.5}`**, com S1
+contribuindo no máximo **10 dos 100 pontos**, não 20; (3) `v1` é **CATEGÓRICO — NUNCA percentilizar**
+(percentilizar um binário reescalaria "presente em 1 agregador" para ~1,0 e destruiria a calibração);
+(4) `v1` **não** é renormalizado para fora pelo §8.4. As colunas saem com sufixo **`_no_hex`**
+(`n_agregadores_no_hex`, `fontes_presentes_no_hex`) para a ressalva viajar até todo consumidor futuro.
+
+**Gate humano G2 — CIÊNCIA REGISTRADA (achado do Planner, não estava em lugar nenhum).** Pelo §8.4,
+sinal imaturo é renormalizado para fora; pelo §6/§12, S3 e S4 ficam imaturos ~8-12 meses na cadência
+real. Logo, durante todo o ramp-up **S1 é o ÚNICO sinal maduro do Plano B** e, sozinho, com peso
+renormalizado 1,00 e domínio `{0.0, 0.5}`, produz **`score_vulnerabilidade ∈ {0, 50}`** — um score de
+dois valores, que não ordena carteira. **Não é defeito deste bloco**; é restrição herdada pelo
+**BLK-MA-04**, que precisará apresentá-la como banda/flag em vez de ranking, ou o BLK-MA-05 esperar a
+maturidade do S3. Vinicius optou por **prosseguir sem mudar a sequência do epic** (nenhuma antecipação
+de BLK-MA-08 ou BLK-MA-06 autorizada).
+
+**Dois defeitos que o Planner achou auditando o Block Orchestrator:**
+- **P1 — a redução "observação mais recente" não pode ordenar por `snapshot_date`.** Coletor que falha
+  mantém o CSV anterior (`infra_producao.md:181-182`), então várias semanas carregam o MESMO
+  `snapshot_date` e o desempate vira arbitrário; pior, uma execução que serve um CSV mais antigo faz o
+  `snapshot_date` **regredir** enquanto a `semana` avança, e a redução escolheria a observação errada.
+  Corrigido: ordenar por **`semana`** (a partição, derivada da data de EXECUÇÃO — foi por isso que o
+  P1 do MA-02 a definiu assim). `snapshot_date` é medidor de frescor, nunca chave de ordenação.
+- **P2 — reduzir ANTES de filtrar.** Filtrando primeiro, uma chave classificada `independente` na
+  semana 1 e `smart_fit` na semana 5 sobreviveria pela observação **velha** e entraria como falso alvo
+  de M&A — exatamente o falso positivo que o universo pretendia matar. A classificação mais recente
+  vence.
+
+**Três correções de raciocínio do Planner sobre o BO** (nenhuma muda o resultado, todas melhoram o
+registro): a analogia com o §9/D5 **não se sustenta** — ali a grandeza propagada (hotness) é
+intrínseca ao hex, enquanto "estar em agregador" é intrínseco à ACADEMIA; propagar o agregado do hex
+como atributo da academia é **erro de categoria**, e a leitura hex tem de ser defendida pelo que é (a
+única granularidade com variância), não por um precedente inexistente. O CA de isolamento, como o BO
+escreveu, **não provava nada** — o `test_isolamento_imports` herdado não proíbe `demanda_revelada` (e
+não poderia: `snapshots.py:51` o importa), então acrescentar o módulo à tupla passaria mesmo com o
+import indevido; exigiu-se teste próprio. E a motivação de replicar `CATEGORIA_INDEPENDENTE` estava
+factualmente errada: **não economiza um milissegundo** (qualquer import do pacote já executa o
+`__init__` e paga os 7,5 s); o benefício real é não criar uma **segunda aresta**, para que o
+`BLK-MA-02-FU1` feche o vazamento removendo uma dependência e não duas.
+
+**Limite consciente registrado (R1).** O ramo "0 agregadores" (`v1 = 1,0`) é **estruturalmente
+inalcançável e vacuoso** nesta granularidade: TP/WH são fontes **só-positivas** (a ausência de linha
+nunca prova ausência real, só não-observação), e um hex sem academia independente observada não tem
+alvo de M&A para pontuar. O caso informativo — "estava no agregador e saiu" — já é capturado pelo
+**S3** (`status_churn == "sumiu_recente"`, peso efetivo ~0,467). O Planner conferiu que
+`oferta_academias_menores` **não** fecharia o buraco: é TP/WH-derivado (colunas `n_plano_tp0..tp7`),
+mesma família só-positiva. Nenhuma expansão de escopo foi proposta.
+
+**Validações re-executadas pelo QA, sem bypass:** suíte **COMPLETA** serial (como o CI) ->
+`1 failed, 2227 passed, 2 skipped in 1592.47s (26m32s)`, **2230 coletados** = baseline **2186** + 44.
+A única falha é a **pré-existente** `test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime`
+(BLK-FIX-LTV-01), que morre por `unidade_territorio_retencao.parquet` ausente, em `lifetime/`, fora do
+diff. `ruff check .` limpo; `loop_guard --stdin` = 4 violações, **todas `governanca`, zero `critico`**;
+`import streamlit_app` ok; `test_parametros_canonicos` 4 passed; `garimpeiro_select_block` não
+seleciona o BLK-MA-03; 0 CRLF (DEC-017). READ-ONLY provado pelo diff contra `a0430b8`.
+
+**Sonda adversarial que o QA construiu (e que o Builder não tinha):** com 300 academias em 40 hexes,
+o sinal produziu **12 hexes com `n_agregadores_no_hex = 1` e 25 com `= 2`** — variância real
+confirmada, afastando o modo de falha "sinal constante" que o QA do MA-02 pegou no bloco irmão. O ramo
+"0 agregadores" foi provado inalcançável pelo caminho público.
+
+**Ressalvas registradas.** Viraram `BLK-MA-03-FU1` (**Baixa**, manual): a super-contagem de
+`n_academias_independentes_*` sob rotação de chave `slug`->`hash_estavel` (não contamina
+`n_agregadores_no_hex`, mas infla a leitura de "densidade do alvo" que o contrato vende ao BLK-MA-04)
+e os 6 menores. **Uma ressalva foi para o `BLK-MA-02-FU1` (Item 2-B), não para o FU1 deste bloco:** o
+QA mediu, por sonda de injeção, que o `test_isolamento_imports` pega **3 das 5 formas** de escrever o
+import proibido — escapam `from .. import demanda_revelada` (nó `ImportFrom` com `module=None`) e
+`importlib`. O buraco vale para **todos** os módulos proibidos e é anterior a este bloco; a correção
+de **1 linha** fecha o teste compartilhado e o teste próprio do MA-03 de uma vez. Impacto hoje: zero.
+
+**Snapshots de handoff (versionados):** `20260729-144904-block-orchestrator.md` ·
+`20260729-151112-planner.md` · `20260729-154930-builder.md` · `20260729-162056-qa.md`.

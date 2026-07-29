@@ -1603,6 +1603,19 @@ passo do cron quebra no import. Tornar o `__init__` do `demanda_revelada` lazy *
 classificador (como já foi feito com o `concorrente_id`); no mínimo corrigir o docstring para "não
 importa **diretamente**". Acrescentar teste de isolamento por `sys.modules`, não só por AST.
 
+**Item 2-B (médio, acrescentado pelo QA do BLK-MA-03 em 2026-07-29) — ponto cego de 1 linha no
+`test_isolamento_imports`, que enfraquece o guardrail nos DOIS blocos.** O QA do MA-03 construiu uma
+sonda de injeção e mediu: das 5 formas de escrever o import proibido, o teste por AST pega 3 e
+**deixa passar 2** — `from .. import demanda_revelada` e
+`importlib.import_module("motor_expansao.demanda_revelada")`. Causa: o filtro
+`if isinstance(node, ast.ImportFrom) and node.module` **descarta o nó quando `node.module is None`**
+(que é exatamente o caso `from .. import X`), e os aliases nunca são coletados. O buraco vale para
+**todos** os módulos proibidos (`pipelines.m1`, `dashboard`, `api`, `censo`, `config`,
+`normalizar_concorrentes`), não só para `demanda_revelada`. **Impacto hoje: zero** — nenhum módulo
+entregue usa essas formas. **Correção (1 linha):** coletar `a.name for a in node.names` também quando
+`node.module is None`. Fica neste bloco porque a mesma linha fecha o teste compartilhado
+(`test_snapshots.py`) e o teste próprio do MA-03 (`test_presenca_agregador.py`), que se apoiou nele.
+
 **Item 3 (menores, 6).** (m1) `escrever_particao_semana` com frame vazio não limpa a partição
 anterior da mesma semana e devolve caminho inexistente — a direção é segura (preserva dado), mas
 contradiz o docstring e não tem teste. (m2) `montar_snapshot(df, data_referencia)` nunca usa
@@ -1625,6 +1638,70 @@ gate de 2026-07-23, revisitar só no BLK-MA-06); o plug no `run_weekly_90.sh` (B
 por `sys.modules`); os 6 menores endereçados ou explicitamente recusados com justificativa; suíte
 completa sem regressão (baseline do BLK-MA-02: **2186 coletados**); `ruff` limpo;
 `python scripts/loop_guard.py` sem `CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
+
+---
+
+- BLK-MA-03 (concluído 2026-07-29) — ver tasks/completed.md
+
+---
+
+### BLK-MA-03-FU1 — Ajustes pós-QA do sinal 1 (presença em agregador)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (documentação de limite conhecido, um teste de congelamento, correção de ponteiro de linha e acentuação de prosa; nenhuma mudança de comportamento do sinal). |
+| **Prioridade** | Antes do **BLK-MA-04**, que é o consumidor das colunas afetadas. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | Pendente. |
+| **Depende de** | BLK-MA-03 (concluído 2026-07-29). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
+
+**Origem.** Ressalvas do QA do BLK-MA-03 (APROVADO COM RESSALVAS em 2026-07-29; 0 críticos, 2 médios,
+6 menores). Snapshot: `context/handoff/20260729-162056-qa.md`. **O médio M1 (ponto cego do AST no
+`test_isolamento_imports`) NÃO está aqui** — foi para o `BLK-MA-02-FU1` (Item 2-B), porque a mesma
+correção de 1 linha fecha o teste compartilhado e o teste próprio deste bloco.
+
+**Item 1 (médio) — `n_academias_independentes_*` super-conta sob rotação de chave.** Sonda do QA: uma
+única academia observada nas semanas 1-2 sob `chave_origem = slug` e nas semanas 3-4 sob
+`hash_estavel` sai como `n_academias_independentes_totalpass = 2`. A redução dedupla por
+`(fonte, chave_snapshot)`, então as duas encarnações da MESMA academia sobrevivem como duas chaves.
+**Não contamina `n_agregadores_no_hex`** (segue `1`), que é o insumo real do `v1` — mas o contrato
+vende as colunas 4/5 ao consumidor como "densidade do alvo" ("hex com 6 independentes num agregador
+só é uma tese diferente de hex com 1"), e é essa leitura que fica inflada. O módulo irmão já tem
+`flag_troca_chave_na_serie` exatamente para este modo de falha; aqui não há menção no docstring, nem
+no comentário da coluna em `contrato.py`, nem teste. **Atenuante:** o rebaixamento global da chave só
+ocorre se o chamador INJETAR a taxa medida (default `None`, `contrato.py:47-51`), logo é raro e
+deliberado. **Correção:** registrar o limite no docstring do módulo e no comentário das colunas 4/5,
+mais um teste que congele o comportamento.
+
+**Item 2 (menores, 6).** (m1) A emenda G1 cita `vulnerabilidade/contrato.py:395-413` como prova de que
+`chave_do_slug`/`chave_hash_estavel` embutem a `fonte`; era verdade em `a0430b8`, mas o **mesmo
+commit** acrescentou 41 linhas acima delas — hoje estão em **432-450**, e `395-413` aponta para
+`rotulo_de_teste`/`entrada_tecnologia_totalpass`. O ponteiro errado está em **2 artefatos
+permanentes**: `docs/vulnerabilidade_ma_contrato.md:241` e este `tasks/backlog.md`. A afirmação é
+verdadeira e tem teste; só a referência precisa ir para `432-450`. (m2) §2 acentuação: 4 linhas de
+prosa sem acento — `presenca_agregador.py:69,308,309` e `test_presenca_agregador.py:34` — contra a
+afirmação explícita do handoff do Builder de que a prosa estava acentuada. Mesma classe da ressalva
+`m4` do QA do MA-02. **Não** contam como defeito as mensagens de `raise` em ASCII (cópia deliberada do
+precedente em `churn_staleness.py:222`; §2 mira texto de usuário, não exceção de desenvolvedor).
+(m3) O handoff do Builder afirma "nada mais do texto do Planner foi alterado", mas o item (b) da
+emenda tem **2 linhas aditivas** além das 29 byte-idênticas — o acréscimo é útil, a afirmação é que
+está imprecisa. (m4) O `fillna("")` do `_assert_schema` (desvio 2 declarado pelo Builder) foi provado
+necessário pelo QA — sem ele, `fontes_presentes_no_hex = pd.NA` faz a comparação mascarada devolver
+`0` e a checagem passar em silêncio —, mas **nenhum teste o trava**: o teste existente usa
+`"wellhub"`, não `pd.NA`. (m5) `_agregar_por_hex` emite `n_agregadores_no_hex = 0` em silêncio se
+chamado direto com `fonte = "unidades"`; pelo caminho público é inalcançável (o filtro garante o
+universo) e o `_assert_schema` barra, mas a função privada não tem guarda própria. (m6) Divergência
+trivial de contagem de warnings no smoke de import (2 relatados vs 4 medidos), pré-existente.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; `v1`, pesos e `score_vulnerabilidade`
+(BLK-MA-04); a granularidade hex de `v1` (ratificada no gate G1 de 2026-07-29 — não reabrir); o ponto
+cego do AST (está no `BLK-MA-02-FU1`, Item 2-B).
+
+**Critério de aceite.** Limite da rotação de chave documentado no docstring e no comentário das
+colunas 4/5, com teste que o congele; ponteiro `432-450` corrigido nos 2 artefatos; 4 linhas de prosa
+acentuadas; teste do `fillna` com `pd.NA`; suíte completa sem regressão (baseline do BLK-MA-03:
+**2230 coletados**); `ruff` limpo; `loop_guard` sem `CRITICO`.
 
 ---
 
