@@ -173,7 +173,7 @@ _DENY_GOVERNANCA: list[tuple[str, str]] = [
         "motor de viabilidade (DEC-009)",
     ),
     (
-        r"^src/motor_expansao/(lifetime|demanda_revelada)/",
+        r"^src/motor_expansao/(lifetime|demanda_revelada|vulnerabilidade)/",
         "camadas paralelas com insumo de PII na origem (DEC-012)",
     ),
     # N3 - governanca da esteira e insumos/config de PRODUCAO que um bloco "Media" auto-mergeavel

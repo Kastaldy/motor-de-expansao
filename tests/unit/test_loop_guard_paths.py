@@ -148,6 +148,9 @@ def test_caminhos_criticos(path: str) -> None:
         "src/motor_expansao/dimensionamento/viabilidade_ponto.py",  # DEC-009
         "src/motor_expansao/lifetime/score_retencao_territorial.py",  # DEC-012 (PII na origem)
         "src/motor_expansao/demanda_revelada/ingestao.py",
+        # BLK-MA-02 (D5, gate 2026-07-29) — mesmo perfil das duas acima: ingestao de fonte com PII
+        # na origem, snapshots derivados persistidos e poda que APAGA disco. Alargamento de guarda.
+        "src/motor_expansao/vulnerabilidade/snapshots.py",
         # N3 — governanca da esteira + config/insumo de PRODUCAO que um "Media" auto-mergeavel nao
         # deve mover sem olho humano (no ralph e AVISO; no CI exige label).
         "prompts/builder.md",
