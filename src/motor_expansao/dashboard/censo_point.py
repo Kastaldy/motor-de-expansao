@@ -19,8 +19,19 @@ from motor_expansao.dashboard.constants import (
 )
 
 CRS_ORIGEM_CENSO = "EPSG:4674"
-METODO_RELATORIO_PONTUAL_CENSITARIO = "setor_censitario_intersecao_area_1p5km"
-RAIO_CENSITARIO_DEFAULT_KM = 1.5
+# DEC-021 (2026-07-29, AUTORIZADA por Felipe): o raio do Relatorio Pontual Censitario passa de
+# 1,5 km para 1,0 km — analise E rotulos, nao so o enquadramento do mapa.
+#
+# Viavel sem reprocessar nada: a intersecao setor x circulo e calculada EM RUNTIME a partir deste
+# valor (`buffer(raio_km * 1000)` + `intersection` setor a setor, mais abaixo neste arquivo), e o
+# artefato M1 geo e RADIUS-AGNOSTIC — nenhuma das 38 colunas de `COLUNAS_ARTEFATO` depende de
+# raio. Os 468.099 setores / 1,17 GB ficam intocados.
+#
+# O rotulo do metodo acompanha o valor: mante-lo como `..._1p5km` faria o proprio artefato mentir
+# sobre si mesmo, e ele vaza para o JSON da API, para o schema publico e para o texto do PDF.
+# E' MUDANCA DE CONTRATO: quem comparava a string literal precisa atualizar (ver DEC-021).
+METODO_RELATORIO_PONTUAL_CENSITARIO = "setor_censitario_intersecao_area_1km"
+RAIO_CENSITARIO_DEFAULT_KM = 1.0
 # BLK-RELPON-07: renda media domiciliar do bairro/distrito ponderada por domicilios
 # (Metodo A, D3.5), com exclusao simetrica de setor com renda ou domicilios nulos/<=0.
 METODO_RENDA_PERFIL_BAIRRO = "renda_responsavel_media_ponderada_por_domicilios"

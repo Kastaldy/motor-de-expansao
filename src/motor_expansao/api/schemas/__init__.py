@@ -91,7 +91,7 @@ class AnalisarResponseJSON(BaseModel):
     lng: float
     raio_km: float = Field(examples=[1.5])
     area_km2: float | None = Field(default=None, examples=[7.07])
-    metodo: str = Field(examples=["setor_censitario_intersecao_area_1p5km"])
+    metodo: str = Field(examples=["setor_censitario_intersecao_area_1km"])
     n_setores: int = 0
     pop_total_raio: float | None = None
     renda_per_capita_media_raio: float | None = None
