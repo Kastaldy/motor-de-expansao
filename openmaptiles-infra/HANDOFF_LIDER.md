@@ -40,8 +40,12 @@ Espera-se `app_app_net`. Se o nome for OUTRO, ajuste em `docker-compose.yml` (ca
 
 ### 3) Java para o gerador de tiles (se faltar)
 ```bash
-java -version 2>/dev/null || apt update && apt install -y openjdk-17-jre-headless
+java -version 2>/dev/null || apt update && apt install -y openjdk-21-jre-headless
 ```
+> **Java 21, nao 17.** O `generate-brazil.sh` baixa `releases/latest` do planetiler, que hoje e
+> compilado para class file 65 (Java 21). Com o JRE 17 o gerador aborta na hora com
+> `UnsupportedClassVersionError ... class file version 65.0 ... recognizes up to 61.0`.
+> (Medido em 2026-07-28, na subida real.)
 
 ### 4) Gerar os tiles do Brasil (~3–6 GB) — passo mais longo
 ```bash
@@ -56,7 +60,7 @@ bash scripts/generate-brazil.sh
 ```bash
 docker compose up -d
 docker compose ps
-docker exec motor_expansao_tileserver wget -qO- http://127.0.0.1:8080/data/brazil.json | head
+docker exec motor_expansao_web curl -fsS http://motor_expansao_tileserver:8080/data/brazil.json | head
 ```
 O container fica interno (sem porta no host), com cap 1.5 GB / 1 vCPU — não compete com o motor.
 
