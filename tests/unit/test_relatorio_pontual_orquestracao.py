@@ -2,7 +2,7 @@
 
 Cobre (a) o assembler `montar_payload_viabilidade` (engine -> dict do PDF), (b) o threading
 dos params novos pelo dispatcher `gerar_payloads_download_relatorio_censitario`, (c) a
-regressao (sem params novos -> /Count 8) e (d) o caminho end-to-end com o motor real
+regressao (sem params novos -> /Count 7) e (d) o caminho end-to-end com o motor real
 `analisar_viabilidade_ponto`. Sem PII.
 """
 
@@ -84,11 +84,12 @@ def test_assembler_com_serie_quatro_graficos():
 # --------------------------------------------------------------------------- #
 # Threading pelo dispatcher                                                   #
 # --------------------------------------------------------------------------- #
-def test_dispatcher_regressao_sem_params_novos_count_8():
+def test_dispatcher_regressao_sem_params_novos_count_7():
     payloads = gerar_payloads_download_relatorio_censitario(
         _MIN_RESULT, None, template="classico"
     )
-    assert b"/Count 8" in payloads.pdf_bytes
+    # BLK-RELPON-14: o PDF base caiu de 8 para 7 paginas (a "Imagem do Entorno" saiu).
+    assert b"/Count 7" in payloads.pdf_bytes
 
 
 def test_dispatcher_com_fotos_info_viab_enriquecido():
@@ -114,15 +115,15 @@ def test_dispatcher_com_fotos_info_viab_enriquecido():
         info_imovel={"metragem_m2": 1500},
         viabilidade=payload_viab,
     )
-    # capa + fotos + info + 4 conteudo + viab numeros + viab graficos + credito = 10
-    assert b"/Count 12" in payloads.pdf_bytes
+    # capa + fotos + info + 5 conteudo + viab numeros + viab graficos + credito = 11
+    assert b"/Count 11" in payloads.pdf_bytes
 
 
 def test_dispatcher_censitario_tambem_aceita_params():
     payloads = gerar_payloads_download_relatorio_censitario(
         _MIN_RESULT, None, info_imovel={"metragem_m2": 1200}
     )
-    assert b"/Count 9" in payloads.pdf_bytes
+    assert b"/Count 8" in payloads.pdf_bytes
 
 
 # --------------------------------------------------------------------------- #
@@ -136,5 +137,5 @@ def test_end_to_end_motor_para_pdf():
     payloads = gerar_payloads_download_relatorio_censitario(
         _MIN_RESULT, None, template="classico", viabilidade=viabilidade
     )
-    assert b"/Count 10" in payloads.pdf_bytes  # numeros + graficos
+    assert b"/Count 9" in payloads.pdf_bytes  # numeros + graficos
     assert len(payloads.pdf_bytes) > 30_000

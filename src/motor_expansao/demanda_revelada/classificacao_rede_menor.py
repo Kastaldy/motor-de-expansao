@@ -3,8 +3,9 @@
 Estende a ingestão anti-PII do TP-08 (`oferta_academias_menores.py`) com um passo de
 CLASSIFICAÇÃO na FRONTEIRA: cada academia recebe uma categoria `rede_menor` derivada do
 `Nome_Academia` cru (só em memória) por matching de TOKEN com word-boundary contra uma
-lista CURADA das 28 redes de `concorrentes_mapeados`; o nome/coords/cluster são DROPADOS
-imediatamente. Produz dois artefatos gitignored/NÃO oficiais:
+lista CURADA das 107 redes de `concorrentes_mapeados` (39 do registro histórico + as 68
+com coletor no GymScraping — VinhoAbencoado/GymScraping, DEC-013); o nome/coords/cluster
+são DROPADOS imediatamente. Produz dois artefatos gitignored/NÃO oficiais:
 
   (a) `data/staging/oferta_academias_menores_rede_h3.parquet` — oferta por `hex_id × rede_menor`
       (formato LONGO), habilitando o dedup FINO por rede vs `concorrentes_mapeados`.
@@ -110,6 +111,98 @@ VOCABULARIO_REDES: dict[str, tuple[str, ...]] = {
     "jab_house": ("jab house",),
     # `gavioes` é nome próprio comum (torcida/bairro) → exige contexto de academia.
     "gavioes": ("gavioes academia", "gavioes fit"),
+    # ── Redes do registro do dashboard que faltavam aqui (11) ─────────────────────────
+    # `COMPETITOR_SPECS`/`COMPETITOR_BRANDS` já traziam 39 redes; este vocabulário cobria
+    # só 28 — as 11 abaixo caíam em `independente` mesmo tendo concorrente mapeado.
+    "a_fitness": ("a fitness",),
+    "biohit": ("biohit",),
+    # `evolve` mantido como token único (marca distintiva, mesmo critério de `evoque`).
+    "evolve": ("evolve",),
+    "feira_fitness": ("feira fitness",),
+    # `formula` sozinho é genérico (fórmula 1 / fórmula magistral) → só a marca composta.
+    "formula": ("formula academia", "academia formula"),
+    "motion_fit": ("motion fit", "motionfit"),
+    "my_box": ("my box",),
+    "pacer": ("pacer",),
+    "pro3": ("pro3", "pro 3"),
+    # `red fit` NÃO casa "red fitness" (word-boundary); `red_fitness` já vem antes.
+    "redfit": ("redfit", "red fit"),
+    "skyfit": ("skyfit", "sky fit"),
+    # ── 68 redes com coletor no GymScraping (VinhoAbencoado/GymScraping, DEC-013) ─────
+    # Mesmo critério do gate A: marca distintiva → token único; palavra genérica
+    # (`one`, `hi`, `premium`, `universal`, `wave`, `america`, `cristal`…) → SÓ marca
+    # COMPOSTA com contexto de academia. Ordem = precedência: `force_one` vem antes de
+    # `one` para que "Force One Academia" não caia em `one`.
+    "a_melhor_academia": ("a melhor academia",),
+    "academia_do_parque": ("academia do parque",),
+    "acuas_fitness": ("acuas fitness", "acuas"),
+    "ad3": ("ad3",),
+    "ajuste": ("ajuste academia", "academia ajuste", "ajuste fitness"),
+    "america": ("america academia", "academia america", "america fitness"),
+    "bg_fitness": ("bg fitness",),
+    "biofisic": ("biofisic",),
+    "body_shop": ("body shop",),
+    "bulkfit": ("bulkfit", "bulk fit"),
+    "burnfit": ("burnfit", "burn fit"),
+    "caixa_magica": ("caixa magica",),
+    "california": ("california academia", "academia california", "california fitness"),
+    "ciafit": ("ciafit", "cia fit"),
+    "companhia_fit": ("companhia fit", "companhiafit"),
+    "competition": ("competition academia", "competition fitness", "competition gym"),
+    "corpo_e_saude": ("corpo e saude",),
+    "cristal": ("cristal academia", "academia cristal", "cristal fitness"),
+    "ctrc": ("ctrc",),
+    "dffit": ("dffit", "df fit"),
+    "domofit": ("domofit", "domo fit"),
+    "flexfitness": ("flexfitness", "flex fitness"),
+    "force_one": ("force one",),
+    "gofit": ("gofit", "go fit"),
+    "grecoforma": ("grecoforma", "greco forma"),
+    "gymflix": ("gymflix",),
+    "hammer": ("hammer academia", "academia hammer", "hammer fitness"),
+    # `hi` sozinho é ruído puro (2 letras) → só a marca composta.
+    "hi": ("hi academia", "academia hi"),
+    "inova": ("inova academia", "academia inova", "inova fitness"),
+    "ironberg": ("ironberg", "iron berg"),
+    "korpus": ("korpus",),
+    "malibu_fitness": ("malibu fitness", "malibu academia", "malibu"),
+    "mansao_maromba": ("mansao maromba",),
+    "marra_fit": ("marra fit", "marrafit"),
+    "match_fit": ("match fit", "matchfit"),
+    "moinhos_fitness": ("moinhos fitness", "moinhos fit", "moinhosfit"),
+    "monstrao": ("monstrao academia", "academia monstrao", "monstrao fitness"),
+    "nadarte": ("nadarte",),
+    "nation_ct": ("nation ct", "nation academia"),
+    "novafit": ("novafit", "nova fit"),
+    "one": ("one academia", "academia one", "one fitness"),
+    "paulo_bedeu": ("paulo bedeu", "bedeu"),
+    "performance": ("performance academia", "academia performance", "performance fitness"),
+    "power_fit": ("power fit", "powerfit"),
+    "premium": ("premium academia", "academia premium", "premium fitness"),
+    "profit": ("profit academia", "profit fitness", "profit gym"),
+    "rede_lifefit": ("lifefit", "life fit"),
+    "reebok_sports_club": ("reebok sports club", "reebok sports", "reebok"),
+    # `romero` sozinho é sobrenome comum → só a marca composta.
+    "romero_training": ("romero training",),
+    "rtesser": ("rtesser", "r tesser", "tesser"),
+    "runner": ("runner academia", "academia runner", "runner fitness"),
+    "simplifit": ("simplifit", "simpli fit"),
+    "sportdata": ("sportdata", "sport data"),
+    "summit_fitness": ("summit fitness", "summit academia"),
+    "target_gym": ("target gym", "target academia", "target fitness"),
+    "tem_esportes": ("tem esportes",),
+    "the_simple_gym": ("the simple gym", "simple gym"),
+    "tntfit": ("tntfit", "tnt fit"),
+    "topfit": ("topfit", "top fit"),
+    "ufit": ("ufit", "u fit"),
+    "universal": ("universal academia", "academia universal", "universal fitness"),
+    "uplay": ("uplay", "u play"),
+    "usina_do_corpo": ("usina do corpo",),
+    "vasco_neto": ("vasco neto",),
+    "voi_fit": ("voi fit", "voifit"),
+    "wave": ("wave academia", "academia wave", "wave fitness"),
+    "wellness_club": ("wellness club",),
+    "ymca": ("ymca",),
 }
 
 # Regexes pré-compilados por rede (ordem estável = precedência first-match).

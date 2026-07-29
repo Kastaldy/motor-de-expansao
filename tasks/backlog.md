@@ -4,6 +4,8 @@
 
 **Ciclo em curso (PR #134):** enxugamento do CLAUDE.md + higiene de docs/orquestração — split do §8 para `docs/decisions/`, skill `/registrar-decisao` + lint de teto, índice `docs/README.md`, arquivamento do sprawl da raiz, 4 skills novas (deploy, fechar-ciclo, clickup-sync, backlog-reconcile), `.claude/settings.json` versionado, e esta reconciliação de backlog/PRD. READ-ONLY sobre o M1.
 
+**Bloco em curso (2026-07-28):** `BLK-RELPON-14` — unificação do gerador de PDF do Relatório Pontual, remoção do slide "Imagem do Entorno" (8 → 7 páginas), borda no hexágono central dos painéis de 5 km e cadastro de 68 redes de concorrentes. Gate humano pendente: emenda de 2026-07-28 à DEC-011.
+
 **Próximo bloco:** derivar de `/backlog-reconcile` (cruza git × completed × backlog e calcula o próximo loop-safe desbloqueado). Blocos abertos = os headings `### BLK-` abaixo.
 
 > O ponteiro anterior (BLK-PERF-01a, 2026-07-10) apontava para bloco já concluído — substituído.
@@ -267,6 +269,76 @@ subir a infra (passo posterior); dado de carteira/residual.
 ligado/desligado; ruff + mypy + pytest verdes; **gate visual do Felipe**.
 
 **Risco:** baixo (aditivo, gated por flag e por rede; caminho `basemap=False`/offline preservado).
+
+---
+
+### BLK-RELPON-14 — Unificação do gerador de PDF + remoção do slide "Imagem do Entorno" + borda no hex central + cadastro de 68 redes
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Alta |
+| **Status** | **Em implementação** na branch `ciclo/BLK-RELPON-14-sync-piloto`. Emenda de 2026-07-28 à [DEC-011](../docs/decisions/DEC-011.md) **PENDENTE DE APROVAÇÃO por Vinicius** — merge exige a label `aprovado-humano`. |
+| **ClickUp** | — |
+
+> **Criticidade Alta porque emenda a DEC-011** (Alta): a representação do raio de 5 km nos painéis
+> de Socioeconomia/Residual muda, e a emenda de 2026-07-22 daquela DEC dizia explicitamente "dois
+> raios distintos, cada um **ROTULADO** no próprio mapa". Nada de M1: é camada de visualização/
+> relatório (§5 guardrail permanente) — `setor_censitario_intersecao_area_1p5km`, raio de 1,5 km,
+> `score_priorizacao`, carteira, plano e artefatos oficiais ficam INTOCADOS.
+
+**Escopo (4 partes, decididas por Felipe):**
+
+1. **Unificação do gerador de PDF — a estética CLÁSSICA vence.** Ela já era o default de produção
+   no dashboard, na API e no bot; `gerar_pdf_relatorio_pontual_classico` passa a ser **A**
+   implementação única. `gerar_pdf_relatorio_pontual_censitario` vira **wrapper fino** que só
+   repassa os kwargs para a clássica, com `DeprecationWarning` — não quebra a branch piloto-web,
+   que ainda a chama pelo nome. As funções de página duplicadas do template "recente"
+   (`_cover_page`, `_socioeconomia_residual_page`, `_mapas_calor_page`, `_competitors_page`,
+   `_perfil_bairro_page`, `_credit_page`, `_entorno_page`) são **DELETADAS**; as compartilhadas
+   (`_big_numbers_page`, `_viabilidade_page`, `_fotos_imovel_page`, `_info_imovel_page`) **FICAM**.
+2. **Slide "Imagem do Entorno" REMOVIDO por completo** — página do PDF, camada PNG `entorno`,
+   constantes órfãs (`RAIO_ENTORNO_DISPLAY_KM`, `_ENTORNO_VALOR_LINHA`, o parâmetro `rotulo_escala`
+   e o override local de `zoom_bump`) e a chave `entorno` em `CAMADAS_CENSITARIAS`/`MAP_LAYER_TITLES`.
+   O PDF base cai de **8 → 7 páginas** (`/Count 7`, `PDF_SECTION_HEADERS` com 7 strings) e o teto com
+   as opcionais de **12 → 11**. Os ordinais de `_tema_bicolor` são absolutos: liberar o `-1` que só
+   servia a essa página **não desloca cor nenhuma**. Reverte o BLK-RELPON-11 (2026-07-22).
+3. **Raio dos painéis Socioeconomia e Residual Fitness: o VALOR não muda, a REPRESENTAÇÃO sai.**
+   `RAIO_RESIDUAL_DISPLAY_KM = 5.0` **PERMANECE** — continua definindo o ENQUADRAMENTO dos dois
+   painéis; encolhê-lo reintroduziria o mosaico chapado de 3 a 5 hexágonos medido no gate de
+   2026-07-21 (o motivo de existir do raio de exibição, DEC-011). O que sai é o desenho: **círculo
+   azul removido** e **rótulo "Raio X km" removido** do rodapé e do título. No lugar, o **hexágono
+   H3 res-7 que CONTÉM o ponto ganha uma borda fina de destaque** (`destaque_3857`,
+   `_HEX_CENTRAL_EDGE_COLOR` = o mesmo azul do antigo círculo, `_HEX_CENTRAL_LINEWIDTH = 3`) — só a
+   borda; o preenchimento continua vindo do `color_fn`, e sem hex central desenhável simplesmente
+   não há borda. As camadas de 1,5 km seguem com círculo + rótulo, byte-a-byte idênticas.
+4. **Cadastro de 68 redes** do coletor semanal (VinhoAbencoado/GymScraping, [DEC-013](../docs/decisions/DEC-013.md))
+   em `dashboard/competitors.py`: as redes já tinham CSV em `concorrentes/Unidades/unidades_<slug>.csv`,
+   mas caíam em `independente` porque `load_competitor_points` só itera `COMPETITOR_SPECS`. Entram nos
+   três registros — `COMPETITOR_SPECS`, estilos de marca (`label`/`short` de 3 chars único/cores,
+   reusando a paleta existente) e o registro de logos `logo_<slug>.png`. **10 redes ainda não têm PNG**
+   no GymScraping: `preload_logos` ignora o arquivo ausente e o pin cai no fallback de sigla, que é o
+   comportamento projetado. A normalização de nomes invertidos/slugs divergentes (`companhiafit`,
+   `malibu`, `marrafit`, `matchfit`, `moinhosfit`) acontece na **cópia dos PNGs para a VPS**, não no
+   registro.
+
+**Gate humano:** aprovação da emenda de 2026-07-28 à DEC-011 por Vinicius (o único ponto que sai do
+já decidido). As partes 1, 2 e 4 são estrutura de relatório/cadastro e não emendam DEC alguma.
+
+**Testes:** contagem de páginas e headers para `/Count 7` (e `/Count 11` no teto com as opcionais,
+em `test_relatorio_pontual_viabilidade.py`/`test_relatorio_pontual_orquestracao.py`); as 7 chaves de
+`CAMADAS_CENSITARIAS`; a bateria da camada/página `entorno` **removida**; ausência de círculo e de
+rótulo de raio nos dois painéis de 5 km; borda do hex central mudando pixels sem alterar a cor do
+choropleth; equivalência do wrapper depreciado com a clássica (mesmo PDF + `DeprecationWarning`);
+regressão de byte-identidade das camadas de 1,5 km.
+
+**Impacto cruzado:** `BLK-WEB-*` (piloto web) importa `gerar_pdf_relatorio_pontual_censitario` pelo
+nome — por isso o wrapper, e não a remoção do símbolo. Deploy: mudança em `dashboard/` **não**
+dispara o rebuild da imagem da API — republicar manualmente e conferir o smoke de
+`CAMADAS_CENSITARIAS` (7 chaves) em `docs/deploy_api_bot.md`.
+
+**Docs atualizadas:** `docs/relatorio_pontual_censitario.md` (§3/§6/§7), `docs/decisions/DEC-011.md`
+(emenda 2026-07-28, pendente), `docs/deploy_api_bot.md`, `docs/api_geoespacial_contrato.md`,
+`docs/api_geoespacial_uso.md`, `docs/api_geoespacial_openapi.yaml`, `docs/arquitetura_app_atual.md`.
 
 ---
 

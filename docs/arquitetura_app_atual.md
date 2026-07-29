@@ -258,7 +258,7 @@ Ambos geram PDF com **fpdf2** (classe `_UltraPDF(FPDF)`, páginas 16:9 widescree
 PDF 1.4, compressão OFF para auditabilidade anti-PII).
 
 **Relatório Pontual Censitário — `censo_report.py`:**
-- `gerar_pdf_relatorio_pontual_censitario(result, mapas=None, *, residual=None, perfil_bairro=None, ultra_dir=None, solicitante=None, rotulo=None, fotos=None, info_imovel=None, viabilidade=None) -> bytes` — **8 páginas**: Capa → Imagem do Entorno (mapa de quadra, BLK-RELPON-11) → Socioeconomia e Residual Fitness (BLK-RELPON-10) → Mapas de calor (**grid 2×2**: Densidade/Renda/Score/Renda média domiciliar, cada PNG embutido) → Concorrentes → Perfil do Bairro/Distrito (BLK-RELPON-07) → Big Numbers (grid 4×2 de 8 métricas) → Realização/Crédito. Recebe os PNGs de mapa já compostos (por `mapas`), embute e adiciona marca d'água; não faz fetch de tiles aqui (os PNGs vêm de `censo_map`). As páginas OPCIONAIS (`fotos`, `info_imovel`, `viabilidade`) não alteram essa ordem base; com todas presentes o teto é 12. `gerar_pdf_relatorio_pontual_classico` tem a mesma estrutura (é a variante que o dashboard baixa e que a API/bot entrega).
+- `gerar_pdf_relatorio_pontual_classico(result, mapas=None, *, residual=None, perfil_bairro=None, ultra_dir=None, solicitante=None, rotulo=None, now=None, fotos=None, info_imovel=None, viabilidade=None, foto_satelite=None, foto_satelite_grande=False) -> bytes` — **7 páginas**: Capa → Socioeconomia e Residual Fitness (BLK-RELPON-10) → Mapas de calor (**grid 2×2**: Densidade/Renda/Score/Renda média domiciliar, cada PNG embutido) → Concorrentes → Perfil do Bairro/Distrito (BLK-RELPON-07) → Big Numbers (grid 4×2 de 8 métricas) → Realização/Crédito. A página "Imagem do Entorno" (mapa de quadra, BLK-RELPON-11) foi **removida no BLK-RELPON-14** (8 → 7). Recebe os PNGs de mapa já compostos (por `mapas`), embute e adiciona marca d'água; não faz fetch de tiles aqui (os PNGs vêm de `censo_map`). As páginas OPCIONAIS (`fotos`, `info_imovel`, `viabilidade`) não alteram essa ordem base; com todas presentes o teto é 11. É a variante que o dashboard baixa e que a API/bot entrega e, desde o BLK-RELPON-14, o **gerador único**: `gerar_pdf_relatorio_pontual_censitario` é um wrapper fino depreciado (`DeprecationWarning`) que repassa os kwargs para esta.
 - Público auxiliar: `gerar_csv_setores_censitarios`, `gerar_payloads_download_relatorio_censitario`, `render_downloads_relatorio_censitario`.
 - Deps: `censo_point` (constante de método), `api.maps_geocoder` (`build_search_url`).
 
@@ -382,7 +382,7 @@ segundos + RSS de centenas de MB para fundir o Brasil inteiro).
 | `build_city_summary`/`build_uf_summary` | **Não** (só se aba Executivo/Mapa) | — | — | groupby, barato |
 | `build_map_figure` / `build_hybrid_map_figure` / `build_residual_heatmap_figure` | **Não** | — | — | **0,65-3,25 s por rerun** (custo integral: downsample+cap+color+tooltip) |
 | `agregar_cenario_multihex` | **Não** | — | — | ~0,01-0,02 s |
-| `gerar_pdf_relatorio_pontual_censitario` (fpdf2, sem mapas) | **Não** (cacheia payload em session_state) | — | — | ~0,06-0,19 s (mapas PNG NÃO medidos) |
+| `gerar_pdf_relatorio_pontual_classico` (fpdf2, sem mapas) | **Não** (cacheia payload em session_state) | — | — | ~0,06-0,19 s (mapas PNG NÃO medidos) |
 | `gerar_pdf_relatorio_municipal` (fpdf2, sem mapas) | **Não** | — | — | ~0,08-0,09 s (mapas PNG NÃO medidos) |
 
 Observação: os builders de mapa são o **maior custo Python recorrente da interação**

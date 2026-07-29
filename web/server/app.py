@@ -414,7 +414,11 @@ def _quadrado_sigla(short: str, bg: str, fg: str) -> str:
     return _svg_data_uri(svg)
 
 
-@functools.lru_cache(maxsize=64)
+# BLK-RELPON-14: 64 era folgado com as 39 redes antigas — e as 68 novas nem tinham entrada em
+# COMPETITOR_LOGO_FILES, entao `_quadrado_logo(None, ...)` curto-circuitava sem custo. Agora as 107
+# tem `logo_<slug>.png`, e cada MISS custa Path.exists() + read_bytes() + base64 do PNG. Com 107
+# redes possiveis contra 64 entradas o LRU entrava em thrash entre municipios.
+@functools.lru_cache(maxsize=128)
 def _icone_rede(rede: str) -> str:
     from motor_expansao.dashboard.competitors import (
         COMPETITOR_BRANDS,
@@ -2295,7 +2299,7 @@ def _gerar_relatorio_pontual_pdf(
         analisar_ponto_censitario_setores,
     )
     from motor_expansao.dashboard.censo_report import (
-        gerar_pdf_relatorio_pontual_censitario,
+        gerar_pdf_relatorio_pontual_classico,
     )
 
     if not CENSO_GEO_DIR.exists():
@@ -2394,7 +2398,17 @@ def _gerar_relatorio_pontual_pdf(
     if viab_pdf is None and viabilidade_json:
         viab_pdf = json.loads(viabilidade_json)
 
-    pdf = gerar_pdf_relatorio_pontual_censitario(
+    # BLK-RELPON-14: o gerador unico e' a estetica CLASSICA. `gerar_pdf_relatorio_pontual_censitario`
+    # virou wrapper depreciado dela; chamamos a classica direto para nao emitir
+    # DeprecationWarning a cada PDF do piloto. Os ARGUMENTOS sao os mesmos e a assinatura da
+    # classica e' superset da antiga — nenhum kwarg daqui ficou de fora.
+    #
+    # ATENCAO PARA O GATE VISUAL: os BYTES do PDF MUDAM. Antes esta rota saia pelo template
+    # "recente"; agora sai pela estetica CLASSICA (capa com endereco acima do subtitulo, banda
+    # turquesa com margem e icone, banda magenta no rodape, Realizacao com link clicavel e data
+    # por extenso) e sem o slide "Imagem do Entorno" (8 -> 7 paginas de base). E o efeito
+    # PRETENDIDO da unificacao, nao colateral — mas e' perceptivel para quem usa o piloto.
+    pdf = gerar_pdf_relatorio_pontual_classico(
         result,
         mapas,
         residual=residual,
