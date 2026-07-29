@@ -2179,13 +2179,29 @@ def _viabilidade_pdf_payload(body: ViabilidadeIn) -> dict[str, Any] | None:
     return saida
 
 
+# Raio de EXIBICAO dos mapas de calor e do mapa de Concorrentes (pedido Felipe 2026-07-29).
+# Constante de RENDER: NAO entra em `config.py` nem no §3 do CLAUDE.md e NAO toca o motor
+# censitario (`RAIO_CENSITARIO_DEFAULT_KM` = 1,5 segue governando quais setores entram na conta).
+# Enquadrar 1 km em vez de 1,5 km aumenta o zoom em ~1,5x e e' o que torna rua e entorno legiveis.
+RAIO_MAPAS_DISPLAY_KM = 1.0
+
+
 def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
-    """Disco de hexes (grid_disk k=5, res 7) ao redor do ponto com `oferta_efetiva_disponivel`,
-    para o choropleth de Residual Fitness do slide-hero "Socioeconomia e Residual Fitness".
+    """Disco de hexes (grid_disk k=5, res 7) ao redor do ponto para o slide-hero
+    "Socioeconomia e Residual Fitness": `oferta_efetiva_disponivel` (Residual) E
+    `score_setor_2022_calibrado` (Socioeconomia, BLK-RELPON-13).
+
+    DEFEITO CORRIGIDO (achado por Felipe em 2026-07-29): esta funcao lia SO
+    `oferta_efetiva_disponivel`. Como `_render_camada_residual_hex` devolve lista vazia quando
+    a `value_col` pedida nao esta no DataFrame, a chave `socioeconomia` simplesmente NAO existia
+    no dict de mapas e o PDF do piloto saia com o painel de Socioeconomia em fallback textual —
+    so o Residual aparecia. Nao havia erro: a ausencia da chave e' um caminho legitimo (ponto sem
+    hex desenhavel), entao falhava em silencio. Mesma defesa da API (`api/service.py`): a coluna
+    entra SE existir no schema, para nao quebrar em parquet antigo.
 
     Filtro direto no parquet de mercado (~91 linhas), espelhando `_residual_do_ponto`. `None`
-    se o parquet faltar ou falhar -> a camada residual cai no fallback textual (offline-safe).
-    READ-ONLY sobre o M1 (so leitura de parquet)."""
+    se o parquet faltar ou falhar -> as camadas de hexagono caem no fallback textual
+    (offline-safe). READ-ONLY sobre o M1 (so leitura de parquet)."""
     mercado = staging_dir / "hexagonos_mercado_mapeado.parquet"
     if not mercado.is_file():
         return None
@@ -2198,10 +2214,13 @@ def _residual_hexes_do_ponto(lat: float, lng: float, staging_dir: Path):
         cells = list(h3.grid_disk(centro, 5))
         if not cells:
             return None
-        tbl = ds.dataset(mercado).to_table(
-            filter=pc.field("hex_id").isin(cells),
-            columns=["hex_id", "oferta_efetiva_disponivel"],
-        )
+        conjunto = ds.dataset(mercado)
+        colunas = ["hex_id", "oferta_efetiva_disponivel"]
+        # BLK-RELPON-13: o painel de Socioeconomia le `score_setor_2022_calibrado` do MESMO
+        # disco de hexes. So pede se o schema tiver — parquet antigo continua servindo o Residual.
+        if "score_setor_2022_calibrado" in conjunto.schema.names:
+            colunas.append("score_setor_2022_calibrado")
+        tbl = conjunto.to_table(filter=pc.field("hex_id").isin(cells), columns=colunas)
         if not tbl.num_rows:
             return None
         return tbl.to_pandas()
@@ -2350,7 +2369,15 @@ def _gerar_relatorio_pontual_pdf(
             lat,
             lng,
             setores_df,
-            raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+            # RENDER, nao analise (pedido Felipe 2026-07-29): os mapas de calor e o de
+            # Concorrentes enquadram 1 km em vez de 1,5 km -> mais zoom, rua e entorno legiveis.
+            # A ANALISE segue em `RAIO_CENSITARIO_DEFAULT_KM` (1,5 km) na chamada de
+            # `analisar_ponto_censitario_setores` acima: os Big Numbers do PDF NAO mudam.
+            # Consequencia a olhar no gate visual: o rodape do mapa passa a dizer "Raio 1,0 km"
+            # (descreve o circulo desenhado) enquanto os numeros do relatorio continuam sendo os
+            # de 1,5 km. Alinhar os dois exige mexer no raio de ANALISE — parametro canonico do
+            # §3, com DEC e gate humano proprios.
+            raio_km=RAIO_MAPAS_DISPLAY_KM,
             competitors_df=comp_df,
             ultra_df=ultra_df,
             basemap=basemap,
@@ -2358,7 +2385,12 @@ def _gerar_relatorio_pontual_pdf(
             street_ceil=215,
             street_gain=1.3,
             street_cap=200,
-            choropleth_alpha=110,
+            # Cor CHEIA, fiel a legenda (pedido Felipe 2026-07-29). O `110` existia para as ruas
+            # do basemap aparecerem POR BAIXO da cor; desde o BLK-BASEMAP-06 a malha viaria e
+            # desenhada POR CIMA, pelo overlay do tileserver, entao o motivo do alpha baixo
+            # deixou de existir. A legenda sempre pintou RGB solido ignorando este alpha (ver
+            # `_CHOROPLETH_ALPHA` em censo_map.py) — era por isso que mapa e legenda nao batiam.
+            choropleth_alpha=255,
             hexes_df=hexes_residual,
         )
 

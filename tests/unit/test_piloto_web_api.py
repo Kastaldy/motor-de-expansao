@@ -139,3 +139,69 @@ def test_backend_e_read_only() -> None:
     proibidos = [".to_parquet(", ".to_csv(", ".to_feather(", "shutil.rmtree("]
     achados = [p for p in proibidos if p in src]
     assert not achados, f"backend do piloto deve ser READ-ONLY; escrita encontrada: {achados}"
+
+
+def test_disco_de_hexes_traz_a_coluna_da_socioeconomia(tmp_path: Path) -> None:
+    """DEFEITO (Felipe, 2026-07-29): o PDF do piloto saia SEM o painel de Socioeconomia.
+
+    `_residual_hexes_do_ponto` lia so `oferta_efetiva_disponivel`. O painel de Socioeconomia
+    (BLK-RELPON-13) le `score_setor_2022_calibrado` do MESMO disco de hexes; sem a coluna,
+    `_render_camada_residual_hex` devolve lista vazia, a chave `socioeconomia` nao entra no dict
+    de mapas e o PDF cai no fallback textual. Nada falhava: chave ausente e' caminho legitimo
+    (ponto sem hex desenhavel), entao o defeito era SILENCIOSO. So o Residual aparecia.
+    """
+    import h3
+    import pandas as pd
+
+    lat, lng = -23.55, -46.63
+    centro = h3.latlng_to_cell(lat, lng, 7)
+    vizinhos = list(h3.grid_disk(centro, 1))
+    pd.DataFrame(
+        {
+            "hex_id": vizinhos,
+            "oferta_efetiva_disponivel": [1000.0] * len(vizinhos),
+            "score_setor_2022_calibrado": [55.0] * len(vizinhos),
+            "coluna_irrelevante": ["x"] * len(vizinhos),
+        }
+    ).to_parquet(tmp_path / "hexagonos_mercado_mapeado.parquet", index=False)
+
+    df = pilot_app._residual_hexes_do_ponto(lat, lng, tmp_path)
+
+    assert df is not None and not df.empty
+    assert "score_setor_2022_calibrado" in df.columns, (
+        "sem esta coluna o painel de Socioeconomia some do PDF, em silencio"
+    )
+    assert "oferta_efetiva_disponivel" in df.columns
+    # Projecao continua enxuta: nao carrega o parquet inteiro so por causa disso.
+    assert "coluna_irrelevante" not in df.columns
+
+
+def test_disco_de_hexes_tolera_parquet_sem_a_coluna_de_score(tmp_path: Path) -> None:
+    """Parquet antigo (pre-BLK-RELPON-13) nao pode derrubar o Residual junto."""
+    import h3
+    import pandas as pd
+
+    lat, lng = -23.55, -46.63
+    vizinhos = list(h3.grid_disk(h3.latlng_to_cell(lat, lng, 7), 1))
+    pd.DataFrame(
+        {"hex_id": vizinhos, "oferta_efetiva_disponivel": [900.0] * len(vizinhos)}
+    ).to_parquet(tmp_path / "hexagonos_mercado_mapeado.parquet", index=False)
+
+    df = pilot_app._residual_hexes_do_ponto(lat, lng, tmp_path)
+
+    assert df is not None and "oferta_efetiva_disponivel" in df.columns
+    assert "score_setor_2022_calibrado" not in df.columns
+
+
+def test_mapas_usam_raio_de_display_menor_que_o_de_analise() -> None:
+    """Pedido Felipe 2026-07-29: mapas enquadram 1 km; a ANALISE segue em 1,5 km.
+
+    Trava as duas pontas de uma vez — se alguem "simplificar" reusando a constante do motor no
+    render, o zoom volta a 1,5 km; se alguem trocar a do motor, os numeros do relatorio mudam
+    sem passar pelo gate do §3.
+    """
+    from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
+
+    assert pilot_app.RAIO_MAPAS_DISPLAY_KM == 1.0
+    assert RAIO_CENSITARIO_DEFAULT_KM == 1.5
+    assert pilot_app.RAIO_MAPAS_DISPLAY_KM < RAIO_CENSITARIO_DEFAULT_KM
