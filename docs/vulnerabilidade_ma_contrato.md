@@ -4,6 +4,10 @@
 > Responsável: Felipe Silva | Estratégia e Growth | Ultra Academia
 > Versão: 2026-07-23 (BLK-MA-01 — design/contrato; **ZERO código de produção**;
 > emenda pós-gate 2 do mesmo dia: distinção coletor-vs-ingestão, chave de snapshot `slug`, e BLK-MA-08)
+> **Emenda BLK-MA-02 (gate de engenharia de 2026-07-29, Vinicius):** seção 6 — payload de 10 colunas,
+> chave própria do snapshot, origem da `semana` e **cadência real** (os dois relógios); seção 12 —
+> plug do materializador no runner semanal e o cron mensal como caminho crítico. Marcadas com
+> `[emenda 2026-07-29]`.
 > Regra de manutenção: manter curto; a implementação é dos blocos sucessores BLK-MA-02..08 (ver seção 13).
 
 Este documento fixa o contrato dos sinais de vulnerabilidade de concorrentes independentes, a
@@ -141,10 +145,32 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   preferível ao `concorrente_id` (sha1 de `rede|nome|lat|lng`), que fica como **fallback** quando o
   `slug` faltar. **Caveat:** alguns slugs carregam UUID (`academia-top-fitness-b8491478-...`) → o
   BLK-MA-02 deve **validar a estabilidade do `slug` entre semanas** antes de confiar nele para churn.
-- **Data do snapshot.** `snapshot_date = data_coleta` (já emitido pelo coletor).
-- **Payload por linha (sem crus além do hash).**
-  `{snapshot_date, slug, concorrente_id, hex_id_res7, rede, hash_campos_raspados}` — **sem**
-  nome/coordenadas brutas; a única "impressão digital" dos campos raspados é o `hash_campos_raspados`.
+- **Chave efetivamente implementada `[emenda 2026-07-29]`.** O `concorrente_id` de produção
+  (`sha1(rede|nome|lat|lng)`, `normalizar_concorrentes.py:29`) foi **descartado como chave de
+  churn**: a coordenada entra com `:.6f` (~**11 cm**), então qualquer re-geocodificação produziria
+  1 falso `sumiu_recente` + 1 falso `novo` no sinal de maior peso. A chave passa a ser
+  `sha1("hash_estavel|<fonte>|<rede>|<nome_normalizado>|<hex_id_res7>")` e, quando o `slug` é
+  confiável, `sha1("slug|<fonte>|<slug_normalizado>")` — **sempre sha1 hex de 40** nos dois casos,
+  com o valor de `chave_origem` registrando qual foi usada (`slug` | `hash_estavel`). Colisões de
+  chave são **COLAPSADAS**, nunca desambiguadas por ordinal (ordinal depende da ordem de leitura do
+  CSV e geraria churn sintético toda semana). O `concorrente_id` continua no payload apenas como
+  rastreabilidade, com a fórmula **replicada** (nunca importada) e o limite honesto de que só casa
+  com `concorrentes_mapeados.parquet` para `fonte == "unidades"`.
+- **Data do snapshot.** `snapshot_date = data_coleta` **por linha** (já emitido pelo coletor).
+- **Origem da partição `semana` `[emenda 2026-07-29]`.** A `semana=AAAA-SS` é a semana ISO
+  (`isocalendar().iso_year`, jamais `date.year`) da **data de referência da EXECUÇÃO**, NUNCA do
+  `data_coleta` da linha. Motivo: coletor que falha **mantém o CSV anterior**
+  (`docs/infra_producao.md:181-182`); derivar a partição da linha faria uma execução de hoje
+  reescrever uma semana passada e, com `existing_data_behavior="delete_matching"`, **apagá-la**.
+  Com a partição vindo da execução, o `snapshot_date` por linha passa a servir de **medidor de
+  frescor** (é o único detector de "o CSV é o da semana passada").
+- **Payload por linha (sem crus além do hash) `[emenda 2026-07-29]`.** 10 colunas, nesta ordem:
+  `{snapshot_date, slug, concorrente_id, chave_snapshot, chave_origem, hex_id_res7, rede, fonte,
+  hash_campos_raspados, versao_contrato}` — **sem** nome/coordenadas brutas; a única "impressão
+  digital" dos campos raspados é o `hash_campos_raspados` (que **não** inclui `data_coleta` nem
+  `slug`). `fonte` não é opcional: o sinal 1 da seção 4 é derivado dela, e sem ela a regra de "gap
+  de feed não vira churn" é impossível de implementar. `semana` **não** é coluna do arquivo — vive
+  no caminho, como chave de partição hive.
 - **Limpeza de ruído (BLK-MA-02, obrigatória antes de derivar churn).** O feed cru traz linhas que
   **não** são academias reais e distorceriam churn/universo: coords `0;0` e rótulos de teste (ex.:
   "Teste Raised"); **entradas de tecnologia/onboarding do TotalPass** ("Zon Tecnologia", "SAGAZ
@@ -157,8 +183,23 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   - Staleness (sinal 4): nº de semanas desde a última mudança de `hash_campos_raspados`.
 - **Ramp-up / maturidade.** `flag_serie_imatura = True` até `MIN_SEMANAS = 8` snapshots; enquanto
   imatura, os sinais 3/4 **NÃO penalizam** (são renormalizados para fora do score — seção 8). Staleness
-  só é interpretável após a série atingir `STALE_SEMANAS = 12`. Mitiga falso churn no início da série
-  (o cron acumula snapshots desde ~26/06/2026).
+  só é interpretável após a série atingir `STALE_SEMANAS = 12`. Mitiga falso churn no início da série.
+- **Cadência real e os DOIS relógios `[emenda 2026-07-29]` — corrige afirmação factualmente falsa.**
+  A versão anterior desta seção afirmava que "o cron acumula snapshots desde ~26/06/2026". **Isso é
+  falso e foi removido:** nenhum passo do `run_weekly_90.sh` arquiva o feed por estabelecimento
+  (`docs/infra_producao.md:136-143`; o único histórico existente é `historico_contagem.csv`, **por
+  rede**), e os CSVs crus são **sobrescritos** a cada coleta. Em 2026-07-29 havia **ZERO** semanas
+  de série por estabelecimento, e o produtor do insumo nasceu no **BLK-MA-02**. Os dois relógios:
+  - o cron **semanal** atualiza só `Unidades/unidades_<rede>.csv` (**cadeias**, `infra_producao.md:149`);
+  - o cron dos agregadores WellHub/TotalPass — onde vivem os **independentes**, o universo-alvo
+    desta epic — é **MENSAL e ainda pendente** (`infra_producao.md:186`, DEC-013 §7.3).
+
+  **Consequência de cronograma, load-bearing para o BLK-MA-04/05:** `MIN_SEMANAS` e `STALE_SEMANAS`
+  contam **semanas OBSERVADAS**, não semanas de calendário. Na cadência real do feed dos
+  independentes, **8 snapshots = ~8 MESES** e **12 snapshots = ~12 MESES** — ou seja, o
+  `score_vulnerabilidade` sai com `flag_score_provisorio` por cerca de um ano após o cron mensal
+  entrar no ar. Os valores `MIN_SEMANAS = 8` / `STALE_SEMANAS = 12` **não** foram alterados
+  (decisão do gate de 2026-07-23; revisitar no BLK-MA-06, com a cadência real medida).
 
 ---
 
@@ -310,6 +351,19 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 - **Dois relógios.** Churn/staleness (S3/S4) saem do snapshot semanal dos 90 coletores →
   `run_weekly_90.sh` (DEC-013). Presença/rating de agregador (S1/S2) dependem do cron **mensal** dos
   agregadores WellHub/TotalPass, que ainda é **FUTURO/pendente** (`infra_producao.md`, § Pendentes).
+- **O materializador de snapshots é plugado JÁ no runner semanal `[emenda 2026-07-29]`.** Decisão de
+  produto antecipada no gate: o **BLK-MA-06** anexa
+  `python -m motor_expansao.vulnerabilidade.snapshots` ao `run_weekly_90.sh`, **depois** do passo de
+  coleta, para o feed `unidades`. O snapshot **tem** de ser tirado dentro da execução do runner
+  porque os CSVs crus são sobrescritos a cada coleta. Custo ~zero, risco ~zero (READ-ONLY sobre o
+  M1), e valida o caminho em produção enquanto a série começa a acumular. **Ressalva honesta
+  registrada:** isso produz série de **CADEIAS**, que **não** é o universo-alvo do funil de M&A
+  (independentes) — o valor é de engenharia e de mercado/residual, não do epic.
+- **O cron MENSAL dos agregadores é CAMINHO CRÍTICO do BLK-MA-04/05 `[emenda 2026-07-29]`.** Ele
+  aparece em `infra_producao.md` apenas como "pendente futuro" e **não** como dependência de bloco.
+  Sem ele, S1/S3/S4 sobre os **independentes** não existem e o epic não entrega o que promete:
+  registrá-lo como `Depende de` explícito do BLK-MA-04 é ação de backlog (fora do escopo do
+  BLK-MA-02, que só sinaliza).
 - **Passo semanal.** Anexar o recompute do `score_vulnerabilidade` como **passo** do runner semanal
   **APÓS** a regen da camada mercado/residual (para o hotness estar fresco), estritamente **READ-ONLY**
   sobre o M1. Os sinais de agregador são consumidos do **ativo mensal mais recente**, marcados com flag
