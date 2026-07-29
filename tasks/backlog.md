@@ -2354,3 +2354,52 @@ timeout por tile: hoje o pior caso contra um CDN em blackhole ainda é ~10 min s
 **Guardrail.** §5 READ-ONLY M1. Qualquer mudança de resolução passa por gate visual antes do merge.
 
 ---
+
+### BLK-BASEMAP-05 — Fontes do estilo (100% dos tiles PNG davam 500), pin do tileserver por digest e o piloto no healthcheck
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (toca deploy/VPS e o monitoramento de produção; corrige degradação silenciosa já no ar) |
+| **Esteira** | Block Orchestrator → Builder → QA |
+| **Depende de** | BLK-BASEMAP-01 (#155), BLK-BASEMAP-02 (#156), BLK-BASEMAP-03 (#157) — todos em `main` |
+| **Status** | **Em revisão** no PR #159 |
+| **Autonomia** | **manual (NÃO loop-safe)** — mexe em deploy/VPS e no healthcheck de produção |
+
+> Criticidade **Crítica** porque o bloco toca `openmaptiles-infra/docker-compose.yml`,
+> `scripts/healthcheck_vps.sh` e a configuração do tileserver que serve produção — caminhos de
+> deploy/VPS pelo `loop_guard`. Nada de M1: não toca score, pesos, pipelines nem artefatos
+> oficiais (READ-ONLY, §5).
+
+**Problema (medido na subida real de 2026-07-28).** O tileserver subiu servindo `brazil.json` com
+HTTP 200 e **100% dos tiles PNG com HTTP 500**. O `ultra-maptiler/style.json` pedia
+`Open Sans Semibold`/`Open Sans Italic`, fontes que não existem nem na stack (que não versiona
+nenhum `.pbf`) nem na imagem (que só traz `Noto Sans Regular`), e o `data/config.json` não
+declarava `paths.fonts` — então o tileserver procurava em `/data/<fontstack>/<range>.pbf`, não
+achava e o rasterizador falhava o tile INTEIRO (`Font load error`).
+
+**Por que é perigoso e não só chato:** o `_fetch_basemap` do motor **engole a falha em silêncio**
+e o PDF sai sem fundo de ruas — e, como o overlay de rótulos é guardado por `basemap_tiles is not
+None`, sai **sem os nomes de rua também**. O deploy passa em todos os checks e a degradação só
+aparece quando alguém abre um relatório.
+
+**Escopo (3 partes):**
+
+1. **Fontes** — `data/config.json` ganha `paths.fonts` apontando para dentro da imagem
+   (`/usr/src/app/node_modules/tileserver-gl-styles/fonts`) e as duas camadas de símbolo do
+   estilo (`water-name`, `place-labels`) passam a usar `Noto Sans Regular`.
+2. **Pin por digest** — `maptiler/tileserver-gl:latest` → `@sha256:3a9ccdb2…`. O caminho das
+   fontes é INTERNO à imagem: um `:latest` que mude de layout quebra a rasterização sem aviso.
+3. **Monitoramento** — `scripts/healthcheck_vps.sh` passa de 5 para **7** containers: entram o
+   `motor_expansao_tileserver` (BLK-BASEMAP-01) e o `motor_expansao_web`, o piloto, que **estava
+   rodando em produção sem nenhuma vigilância** — nem este script nem a versão do BLK-BASEMAP-01
+   o listavam, porque a `main` não descrevia o piloto (ele subiu da branch `piloto-web` com o
+   compose do servidor editado à mão).
+
+**Critérios de aceite:**
+- `…/tiles/styles/ultra-maptiler/{z}/{x}/{y}@2x.png` devolve 200 (logado), não 500.
+- Um PDF gerado com `API_BASEMAP_TILES_URL` apontando para o tileserver sai **com** nomes de rua.
+- `healthcheck_vps.sh` acusa 7 containers e alerta se o `motor_expansao_web` cair.
+
+**Guardrail.** §5 READ-ONLY M1. Nenhuma mudança em código de render, score ou pipeline.
+
+---

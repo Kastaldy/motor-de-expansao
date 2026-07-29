@@ -3,7 +3,8 @@
     "paths": {
       "root": "/data",
       "styles": "styles",
-      "mbtiles": "mbtiles"
+      "mbtiles": "mbtiles",
+      "fonts": "/usr/src/app/node_modules/tileserver-gl-styles/fonts"
     },
     "publicUrl": "https://dashboard.ultra-expansao.tech/tiles/",
     "serveAllFonts": true

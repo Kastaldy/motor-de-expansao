@@ -34,10 +34,15 @@ CONTAINERS=(
     motor_expansao_api
     motor_expansao_telegram_bot
     # Tileserver do basemap self-host (BLK-BASEMAP-01, stack em /opt/openmaptiles-infra).
-    # Sobe de 5 para 6 containers. Vale monitorar apesar de nao servir o edge: se ele cair, a
-    # geracao de PDF NAO quebra -- `_fetch_basemap` engole a falha e o relatorio sai SEM ruas,
-    # em silencio. Sem este alerta, a degradacao so apareceria quando alguem olhasse um PDF.
+    # Vale monitorar apesar de nao servir o edge: se ele cair, a geracao de PDF NAO quebra --
+    # `_fetch_basemap` engole a falha e o relatorio sai SEM ruas, em silencio. Sem este alerta,
+    # a degradacao so apareceria quando alguem olhasse um PDF.
     motor_expansao_tileserver
+    # Piloto web (`Dockerfile.web`, servico `web` do compose de producao). Estava rodando em
+    # producao SEM NENHUMA VIGILANCIA: nem este script nem a versao do BLK-BASEMAP-01 o
+    # listavam, porque a `main` nao descrevia o piloto — ele subiu a partir da branch
+    # `piloto-web` com o compose do servidor editado a mao. Total vai de 5 para 7.
+    motor_expansao_web
 )
 
 mkdir -p "$STATE_DIR" "$(dirname "$LOG_FILE")"

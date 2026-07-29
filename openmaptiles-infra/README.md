@@ -153,3 +153,34 @@ a fonte é OpenMapTiles, a mesma família do MapTiler Basic.
   um `map_style` resolvido de `st.session_state["basemap_choice"]`, com o seletor no
   `render_uf_selectbox` (`pages.py`), apontando para os estilos deste servidor.
 ```
+
+## Fontes do estilo (nao remover)
+
+O `data/config.json` aponta `paths.fonts` para **dentro da imagem**
+(`/usr/src/app/node_modules/tileserver-gl-styles/fonts`) e o `ultra-maptiler/style.json` usa
+**`Noto Sans Regular`** nas duas camadas de simbolo (`water-name`, `place-labels`).
+
+Isso nao e' preferencia estetica, e' requisito de funcionamento. A stack **nao versiona nenhum
+arquivo de fonte**; sem `paths.fonts` o tileserver procura em `/data/<fontstack>/<range>.pbf`, nao
+acha, e o rasterizador falha o tile INTEIRO:
+
+```
+ERROR: Font not found: /data/Open Sans Semibold/0-255.pbf
+Render error: [Error: Font load error]
+GET /styles/ultra-maptiler/14/6069/9296@2x.png 500
+```
+
+O estilo original pedia `Open Sans Semibold`/`Open Sans Italic`, que **nao existem em lugar
+nenhum** - nem na stack, nem na imagem, que so' traz `Noto Sans Regular`. Resultado medido em
+2026-07-28: `brazil.json` respondia 200 e **100% dos tiles PNG davam 500**.
+
+Por que isso e' perigoso e nao so' chato: o `_fetch_basemap` do motor **engole a falha em
+silencio** e o PDF sai sem ruas. O deploy passa em todos os checks e a degradacao so' aparece
+quando alguem abre um relatorio.
+
+Se um dia quiser outra fonte, as opcoes sao: (a) trocar por outra que a imagem traga, ou
+(b) versionar os `.pbf` em `data/fonts/` e apontar `paths.fonts` para `fonts` - o que deixa a
+stack autossuficiente, ao custo de binario no git.
+
+A imagem esta **pinada por digest** no `docker-compose.yml` justamente porque o caminho acima e'
+interno a ela: um `:latest` que mudasse de layout quebraria a rasterizacao sem aviso.

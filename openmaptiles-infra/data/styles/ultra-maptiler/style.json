@@ -74,13 +74,13 @@
 
     { "id": "water-name", "type": "symbol", "source": "openmaptiles", "source-layer": "water_name", "minzoom": 10,
       "layout": { "text-field": ["coalesce", ["get", "name:pt"], ["get", "name"]],
-                  "text-font": ["Open Sans Italic"], "text-size": 11 },
+                  "text-font": ["Noto Sans Regular"], "text-size": 11 },
       "paint": { "text-color": "hsl(205,42%,42%)", "text-halo-color": "hsl(60,22%,95%)", "text-halo-width": 1 } },
 
     { "id": "place-labels", "type": "symbol", "source": "openmaptiles", "source-layer": "place",
       "filter": ["match", ["get", "class"], ["city", "town", "suburb", "neighbourhood", "village"], true, false],
       "layout": { "text-field": ["coalesce", ["get", "name:pt"], ["get", "name"]],
-                  "text-font": ["Open Sans Semibold"],
+                  "text-font": ["Noto Sans Regular"],
                   "text-size": ["interpolate", ["linear"], ["zoom"], 8, 10, 12, 15],
                   "text-letter-spacing": 0.02 },
       "paint": { "text-color": "hsl(0,0%,10%)", "text-halo-color": "hsl(60,22%,95%)", "text-halo-width": 1.5 } }
