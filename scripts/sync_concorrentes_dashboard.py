@@ -147,9 +147,20 @@ def sincronizar(gymscraping: Path, destino: Path, aplicar: bool) -> int:
         if n_origem < 0 and n_destino < 0:
             sem_fonte.append(spec["rede"])
             continue
-        if n_origem > n_destino:
+        # Empate de contagem TAMBEM propaga (desde que o conteudo mude): uma coleta que
+        # so corrige coordenada ou nome de unidade nao altera o total e, com `>`, ficaria
+        # presa fora de producao para sempre. O que a regra proibe e REDUZIR.
+        origem_csv = dir_unidades / nome_csv
+        alvo_csv = destino / nome_csv
+        empate_com_mudanca = (
+            n_origem == n_destino
+            and n_origem >= 0
+            and origem_csv.is_file()
+            and (not alvo_csv.is_file() or alvo_csv.read_bytes() != origem_csv.read_bytes())
+        )
+        if n_origem > n_destino or empate_com_mudanca:
             if aplicar:
-                shutil.copyfile(dir_unidades / nome_csv, destino / nome_csv)
+                shutil.copyfile(origem_csv, alvo_csv)
             copiados.append((nome_csv, max(n_destino, 0), n_origem))
             total += n_origem
         else:

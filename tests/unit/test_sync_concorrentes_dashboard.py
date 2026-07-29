@@ -190,3 +190,41 @@ def test_origem_sem_unidades_falha(tmp_path: Path) -> None:
     gym = tmp_path / "gym"
     gym.mkdir()
     assert sync.sincronizar(gym, tmp_path / "destino", aplicar=True) == 1
+
+
+def test_empate_de_contagem_com_conteudo_novo_propaga(arvore) -> None:
+    """Coleta que so corrige coordenada nao muda o total — e mesmo assim precisa entrar."""
+    gym, destino = arvore
+    (destino / "unidades_ad3.csv").write_text(
+        CSV_HEADER + "Unidade 0;-23.500;-46.600;2026-06-01\n", encoding="utf-8"
+    )
+    corrigido = CSV_HEADER + "Unidade 0;-23.511;-46.611;2026-07-26\n"
+    (gym / "Unidades" / "unidades_ad3.csv").write_text(corrigido, encoding="utf-8")
+
+    sync.sincronizar(gym, destino, aplicar=True)
+
+    assert (destino / "unidades_ad3.csv").read_text(encoding="utf-8") == corrigido
+
+
+def test_sync_e_idempotente(arvore) -> None:
+    """Rodar duas vezes seguidas nao pode mudar nenhum arquivo."""
+    gym, destino = arvore
+    (gym / "Logos" / "AD3_logo.png").write_bytes(PNG_MINIMO)
+    (gym / "Unidades" / "unidades_ad3.csv").write_text(_csv(4), encoding="utf-8")
+
+    sync.sincronizar(gym, destino, aplicar=True)
+    antes = {p.name: p.read_bytes() for p in sorted(destino.iterdir())}
+    sync.sincronizar(gym, destino, aplicar=True)
+    depois = {p.name: p.read_bytes() for p in sorted(destino.iterdir())}
+
+    assert antes == depois
+
+
+def test_uma_logo_nao_e_reaproveitada_por_duas_redes(arvore) -> None:
+    """Guarda contra casamento por prefixo largo demais (ex.: `pro3` puxar `profit`)."""
+    gym, _ = arvore
+    (gym / "Logos" / "logo_profit.png").write_bytes(PNG_MINIMO)
+    indice = sync.indexar_logos(gym / "Logos")
+
+    assert sync.resolver_logo("profit", indice) == "logo_profit.png"
+    assert sync.resolver_logo("pro3", indice) is None
