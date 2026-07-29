@@ -95,8 +95,9 @@ MAPA_CENSITARIO_METRICAS = {
 # BLK-RELPON-10: `socioeconomia` e o MESMO choropleth de score censitario do `score` (mesmo
 # insumo/legenda), so com titulo/raio rotulados p/ o slide-hero "Socioeconomia e Residual
 # Fitness" (S1=A do gate: o score PERMANECE tambem no grid 2x2); `residual` e o choropleth de
-# `oferta_efetiva_disponivel` por HEXAGONO H3 res-7 num raio de EXIBICAO de 5 km — chave
-# CONDICIONAL, so presente quando `hexes_df` foi passado e ha hex desenhavel.
+# `oferta_efetiva_disponivel` por HEXAGONO H3 res-7 num raio de EXIBICAO de 5 km (circulo
+# desenhado: 1,5 km; os 5 km sao o ENQUADRAMENTO — BLK-RELPON-14) — chave CONDICIONAL, so
+# presente quando `hexes_df` foi passado e ha hex desenhavel.
 # BLK-RELPON-11: `entorno` e o mapa de QUADRA (so basemap Voyager + ponto central, sem
 # choropleth, sem pins e sem circulo de raio) num raio de EXIBICAO de ~0,14 km. Ao contrario de
 # `residual`, e INCONDICIONAL: depende so de `lat`/`lng` e cai no canvas claro offline quando
@@ -124,6 +125,28 @@ RAIO_RESIDUAL_DISPLAY_KM = 5.0
 # k=5 da 11,63 km e cobre com folga (91 hexes, custo irrelevante). Nao reduzir "para economizar":
 # os hexes excedentes sao descartados de graca pelo clip ao frame.
 _RESIDUAL_GRID_DISK_K = 5
+
+# BLK-RELPON-14 (pedido de Vinicius, 2026-07-28): raio do CIRCULO AZUL desenhado nas camadas de
+# HEXAGONO (`socioeconomia`/`residual`). Constante de RENDER PROPRIA, no mesmo padrao de
+# `RAIO_RESIDUAL_DISPLAY_KM`/`RAIO_ENTORNO_DISPLAY_KM`: NAO entra em `config.py` nem no §3 do
+# CLAUDE.md. Antes deste bloco o circulo herdava `RAIO_RESIDUAL_DISPLAY_KM` (5 km) porque UM
+# parametro governava DUAS coisas — enquadramento e desenho. Agora: o frame segue em 5 km
+# (`_frame_box_metric`) e SO o circulo cai para 1,5 km. Coincide NUMERICAMENTE com
+# `RAIO_CENSITARIO_DEFAULT_KM` (motor censitario) de proposito, mas NAO importa aquele simbolo:
+# acoplar RENDER a MOTOR quebraria a separacao que este arquivo pratica (D1 do ciclo).
+RAIO_CIRCULO_DISPLAY_KM = 1.5
+
+# BLK-RELPON-14 (D2, decisao de produto de Vinicius): prefixo do rodape das camadas de hexagono.
+# O formato automatico ("Raio X km", derivado de `raio_km` em `_render_camada`) passaria a MENTIR
+# sobre o desenho: o circulo tem 1,5 km e o frame cobre 5 km. Injetado via `rotulo_escala` (o mesmo
+# mecanismo DEFAULT-PRESERVING que a camada `entorno` ja usa) -> as 4 camadas de 1,5 km continuam
+# byte-identicas. DERIVADO das duas constantes para o texto nunca dessincronizar do desenho.
+# ASCII puro (excecao de RENDER do §2 do CLAUDE.md: o font embutido do Pillow nao tem glifo
+# acentuado). NB: `:.0f` na escala e' deliberado ("escala 5 km", nao "5,0 km"); se algum dia o
+# enquadramento deixar de ser inteiro, o teste do texto exato quebra e obriga revisao.
+_HEX_ROTULO_ESCALA = (
+    f"Raio {RAIO_CIRCULO_DISPLAY_KM:.1f} km - escala {RAIO_RESIDUAL_DISPLAY_KM:.0f} km"
+).replace(".", ",")
 
 # BLK-RELPON-11: raio de EXIBICAO do mapa de quadra "Imagem do Entorno". Constante de RENDER
 # (fora de `config.py` / §3 do CLAUDE.md), como `RAIO_RESIDUAL_DISPLAY_KM`. O lado MENOR do frame
@@ -864,7 +887,9 @@ def _render_camada(
     # permanece quando ha basemap; some no fallback offline (sem tile, sem atribuicao).
     # BLK-RELPON-10 (DT-5): o raio deixa de ser hardcode e deriva de `raio_km` (parametro que ja
     # existia e nao era usado no corpo) -> com raio_km=1.5 a string sai IDENTICA ("Raio 1,5 km")
-    # e as 4 camadas censitarias ficam byte-a-byte iguais; a camada de residual sai "Raio 5,0 km".
+    # e as 4 camadas censitarias ficam byte-a-byte iguais. Desde o BLK-RELPON-14 este `:.1f`
+    # serve SO as camadas de 1,5 km: as de hexagono (`socioeconomia`/`residual`) passam
+    # `rotulo_escala` proprio, porque nelas o circulo (1,5 km) e o frame (5 km) divergem.
     # BLK-RELPON-11: `rotulo_escala` (default None) troca SO o prefixo do rodape -- com None a
     # string sai EXATAMENTE como antes; a camada `entorno` passa "Escala de quadra" porque
     # "Raio 0,1 km" (o que `:.1f` produziria a 0,14 km) seria ativamente enganoso.
@@ -1018,14 +1043,20 @@ def _render_camada_residual_hex(
     street_cap: int | None = None,
     choropleth_alpha: int | None = None,
     value_col: str = "oferta_efetiva_disponivel",
-    titulo: str = "Residual Fitness - raio 5 km",
+    # BLK-RELPON-14 (D3): "escala", nao "raio" — o circulo desenhado tem 1,5 km; os 5 km sao o
+    # ENQUADRAMENTO. Mesmo vocabulario do rodape (`_HEX_ROTULO_ESCALA`). ASCII (excecao de RENDER).
+    titulo: str = "Residual Fitness - escala 5 km",
     legenda_titulo: str = "Residual disponivel (alunos)",
     legenda_entries: list[tuple[str, tuple[int, int, int, int]]] | None = None,
     color_fn: Callable[[float], tuple[int, int, int, int]] | None = None,
     valor_central_rotulo: str = "Residual",
     valor_central_fmt: Callable[[float | None], str] = _format_valor_residual,
 ) -> bytes | None:
-    """Choropleth de `value_col` por hexagono H3 no raio de EXIBICAO de 5 km.
+    """Choropleth de `value_col` por hexagono H3 no ENQUADRAMENTO de EXIBICAO de 5 km.
+
+    BLK-RELPON-14: frame de 5 km (`RAIO_RESIDUAL_DISPLAY_KM`) e circulo azul DESENHADO de 1,5 km
+    (`RAIO_CIRCULO_DISPLAY_KM`) — duas responsabilidades, duas constantes. O clip dos hexes e' ao
+    FRAME (o circulo nao recorta dado nenhum), e o rodape sai com `_HEX_ROTULO_ESCALA`.
 
     Monta o PROPRIO frame/circulo/basemap (bounds diferentes das camadas de 1,5 km) e delega o
     desenho a `_render_camada`, cujo `sector_records_3857` ja e' generico (poligonos 3857 coloridos
@@ -1045,7 +1076,9 @@ def _render_camada_residual_hex(
         return None
 
     frame_metric = _frame_box_metric(RAIO_RESIDUAL_DISPLAY_KM, width, height)
-    circle_metric = Point(0, 0).buffer(RAIO_RESIDUAL_DISPLAY_KM * 1000.0, quad_segs=96)
+    # BLK-RELPON-14: o CIRCULO usa a sua propria constante (1,5 km); o FRAME (linha acima) continua
+    # em `RAIO_RESIDUAL_DISPLAY_KM` (5 km). Sao responsabilidades diferentes desde este bloco.
+    circle_metric = Point(0, 0).buffer(RAIO_CIRCULO_DISPLAY_KM * 1000.0, quad_segs=96)
 
     metric_crs = _local_metric_crs(lat, lng)
     to_3857_local = _transformer(metric_crs, CRS_WEB_MERCATOR)
@@ -1109,6 +1142,9 @@ def _render_camada_residual_hex(
         bounds=frame_3857.bounds,
         lat=lat,
         lng=lng,
+        # BLK-RELPON-14: com `rotulo_escala` setado, `raio_km` deixa de alimentar o rodape e fica
+        # so como a escala DECLARADA do frame (5 km) — trocar por `RAIO_CIRCULO_DISPLAY_KM` seria
+        # mentir sobre o enquadramento.
         raio_km=RAIO_RESIDUAL_DISPLAY_KM,
         n_setores=len(hex_records),
         width=width,
@@ -1122,6 +1158,7 @@ def _render_camada_residual_hex(
                 _residual_hex_central(lat, lng, hexes_df, value_col=value_col)
             ),
         ),
+        rotulo_escala=_HEX_ROTULO_ESCALA,  # BLK-RELPON-14 (D2)
     )
 
 
@@ -1237,7 +1274,9 @@ def render_mapas_censitarios_combinados(
       cai no fallback textual. O `score` PERMANECE no grid 2x2 (S1=A do gate de Vinicius).
     - `residual` e o choropleth de `oferta_efetiva_disponivel` (ALUNOS) por hexagono H3 res-7 num
       raio de EXIBICAO de 5 km (`RAIO_RESIDUAL_DISPLAY_KM`), com escala PROPRIA rotulada no titulo
-      e no rodape do PNG. So entra no dict quando `hexes_df` foi passado E ha >= 1 hex desenhavel;
+      e no rodape do PNG (circulo desenhado: 1,5 km, `RAIO_CIRCULO_DISPLAY_KM`; os 5 km sao o
+      ENQUADRAMENTO — BLK-RELPON-14, vale tambem para a `socioeconomia` acima).
+      So entra no dict quando `hexes_df` foi passado E ha >= 1 hex desenhavel;
       caso contrario a chave e' AUSENTE e o PDF cai no fallback textual (offline-safe).
       `hexes_df` precisa ter `hex_id` + `oferta_efetiva_disponivel` — no dashboard e' o proprio
       `df` da UF ja em escopo. *Limitacao conhecida e aceita:* como o `df` e' a fatia da UF
@@ -1530,7 +1569,8 @@ def render_mapas_censitarios_combinados(
         street_cap=street_cap,
         choropleth_alpha=choropleth_alpha,
         value_col="score_setor_2022_calibrado",
-        titulo="Socioeconomia - raio 5 km",  # ASCII (excecao de RENDER, CLAUDE.md §2)
+        # BLK-RELPON-14 (D3): "escala 5 km" (enquadramento); o circulo desenhado e' de 1,5 km.
+        titulo="Socioeconomia - escala 5 km",  # ASCII (excecao de RENDER, CLAUDE.md §2)
         legenda_titulo="Score censitario (0-100)",
         legenda_entries=_score_legend_entries(),
         color_fn=_score_fn,

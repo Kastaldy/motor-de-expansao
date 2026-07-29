@@ -827,7 +827,10 @@ def test_socioeconomia_e_hexagono_nao_setor_a_5km(monkeypatch):
     """A `socioeconomia` do slide-hero passou a ser o choropleth de `score_setor_2022_calibrado`
     por hexagono H3 res-7 no raio de EXIBICAO de 5 km (mesma bbox/geometria do residual), nao mais
     o setor a 1,5 km. Prova indireta: com `hexes_df`, a chave existe, e PNG valido e emite o titulo
-    "Socioeconomia - raio 5 km" + o rodape "Raio 5,0 km" (ambos ASCII)."""
+    "Socioeconomia - escala 5 km" + o rodape "Raio 1,5 km - escala 5 km" (ambos ASCII).
+
+    BLK-RELPON-14: o ENQUADRAMENTO continua em 5 km (dai o nome do teste); o que mudou e' o
+    circulo DESENHADO (1,5 km) e, por consequencia, o vocabulario do titulo/rodape."""
     textos: list[str] = []
     real = censo_map._draw_text
 
@@ -852,8 +855,8 @@ def test_socioeconomia_e_hexagono_nao_setor_a_5km(monkeypatch):
     image = Image.open(BytesIO(png))
     assert image.size == (1000, 760)
     assert len(_all_colors(png)) > 20
-    assert "Socioeconomia - raio 5 km" in textos
-    assert "Raio 5,0 km - EPSG:3857 - fundo de ruas offline" in textos
+    assert "Socioeconomia - escala 5 km" in textos
+    assert "Raio 1,5 km - escala 5 km - EPSG:3857 - fundo de ruas offline" in textos
     # Legenda com a escala de score (0-100), nao a de residual (alunos).
     assert "Score censitario (0-100)" in textos
 
@@ -919,9 +922,15 @@ def test_camadas_censitarias_declara_as_8_chaves():
     assert len(censo_map.CAMADAS_CENSITARIAS) == 8
 
 
-def test_rodape_do_png_deriva_do_raio_km_1p5_identico_e_5p0_novo(monkeypatch):
-    """DT-5: o rodape passou a derivar de `raio_km`. Com 1.5 a string tem de sair IDENTICA
-    ("Raio 1,5 km"); a camada de residual (5 km) sai "Raio 5,0 km" — duas escalas rotuladas."""
+def test_rodape_1p5_por_raio_km_nas_camadas_de_setor_e_rotulo_escala_nas_de_hexagono(monkeypatch):
+    """DT-5: nas camadas de SETOR o rodape deriva de `raio_km`; com 1.5 a string tem de sair
+    IDENTICA ("Raio 1,5 km").
+
+    BLK-RELPON-14: as camadas de HEXAGONO (`socioeconomia`/`residual`) deixaram de anunciar
+    "Raio 5,0 km" — o circulo desenhado tem 1,5 km e os 5 km sao o ENQUADRAMENTO. Elas passam
+    `rotulo_escala=_HEX_ROTULO_ESCALA` e o rodape sai "Raio 1,5 km - escala 5 km", com os titulos
+    no mesmo vocabulario ("... - escala 5 km").
+    """
     textos: list[str] = []
     real = censo_map._draw_text
 
@@ -941,10 +950,13 @@ def test_rodape_do_png_deriva_do_raio_km_1p5_identico_e_5p0_novo(monkeypatch):
     )
 
     assert "Raio 1,5 km - EPSG:3857 - fundo de ruas offline" in textos
-    assert "Raio 5,0 km - EPSG:3857 - fundo de ruas offline" in textos
-    # Titulos com o raio rotulado dentro do PNG (ASCII puro).
-    assert "Socioeconomia - raio 5 km" in textos
-    assert "Residual Fitness - raio 5 km" in textos
+    assert "Raio 1,5 km - escala 5 km - EPSG:3857 - fundo de ruas offline" in textos
+    assert not any(t.startswith("Raio 5,0 km") for t in textos), (
+        "nenhuma camada pode voltar a anunciar 'Raio 5,0 km': o circulo tem 1,5 km (BLK-RELPON-14)"
+    )
+    # Titulos com a escala rotulada dentro do PNG (ASCII puro).
+    assert "Socioeconomia - escala 5 km" in textos
+    assert "Residual Fitness - escala 5 km" in textos
     assert "Residual disponivel (alunos)" in textos
 
 
@@ -1153,6 +1165,15 @@ def _conta_pixels_do_circulo(png: bytes) -> int:
     return int(((b > 200) & (r < 80) & (g < 160)).sum())
 
 
+def _bbox_dos_pixels_do_circulo(png: bytes) -> tuple[int, int, int, int]:
+    """(x0, x1, y0, y1) dos pixels azuis do circulo — MESMO predicado de
+    `_conta_pixels_do_circulo`. Usado pelo BLK-RELPON-14 para medir o DIAMETRO desenhado."""
+    arr = np.array(Image.open(BytesIO(png)).convert("RGB"))
+    r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+    ys, xs = np.nonzero((b > 200) & (r < 80) & (g < 160))
+    return int(xs.min()), int(xs.max()), int(ys.min()), int(ys.max())
+
+
 def test_camada_entorno_nao_desenha_o_circulo_do_raio():
     """T4: `circle_3857=None` -> zero pixel do circulo azul; a camada `densidade` prova que o
     predicado DETECTA o circulo onde ele existe (sem isso o assert de zero seria vacuo)."""
@@ -1294,3 +1315,119 @@ def test_camadas_existentes_ficam_byte_identicas_com_os_defaults_novos():
     implicito = censo_map._render_camada(circle_3857=circulo, **comum)
     explicito = censo_map._render_camada(circle_3857=circulo, rotulo_escala=None, **comum)
     assert implicito == explicito
+
+
+# ── BLK-RELPON-14: circulo desenhado de 1,5 km dentro do ENQUADRAMENTO de 5 km ──────────────
+# Pedido de Vinicius (2026-07-28): nos dois paineis de HEXAGONO (`socioeconomia`/`residual`) o
+# circulo azul passou a 1,5 km, enquanto o frame do mapa continua derivando de
+# `RAIO_RESIDUAL_DISPLAY_KM` (5 km). Sao duas responsabilidades e duas constantes desde este bloco.
+
+
+def test_circulo_desenhado_tem_1_5_km_com_frame_de_5_km(monkeypatch):
+    """Mede o circulo ANTES do desenho, em METROS, de forma deterministica.
+
+    Duas espias de modulo capturam (a) o raio pedido ao `_frame_box_metric` — que tem de seguir
+    em 5 km — e (b) o `circle_3857` entregue ao `_render_camada`, desprojetado de volta ao CRS
+    metrico local para medir o raio de CADA vertice. `Point(0,0).buffer(r)` poe todos os vertices
+    exatamente a `r` e o round-trip aeqd->3857->aeqd erra ~2,6e-09 m, entao a tolerancia de 1,0 m
+    e' ~9 ordens acima do erro real e ~3 ordens abaixo da diferenca que se quer detectar (3.500 m).
+    """
+    capt: dict = {}
+    real_frame, real_camada = censo_map._frame_box_metric, censo_map._render_camada
+
+    def _spy_frame(raio_km, width, height):
+        capt.setdefault("raios_frame", []).append(float(raio_km))
+        return real_frame(raio_km, width, height)
+
+    def _spy_camada(**kwargs):  # `_render_camada` e' keyword-only
+        capt.update(circle=kwargs["circle_3857"], bounds=kwargs["bounds"], raio_km=kwargs["raio_km"])
+        return real_camada(**kwargs)
+
+    monkeypatch.setattr(censo_map, "_frame_box_metric", _spy_frame)
+    monkeypatch.setattr(censo_map, "_render_camada", _spy_camada)
+    png = censo_map._render_camada_residual_hex(
+        LAT_C, LNG_C, _hexes_sinteticos(), basemap=False, width=1000, height=760
+    )
+    assert png is not None
+
+    # (a) ENQUADRAMENTO INTOCADO: o frame continua sendo pedido a 5 km.
+    assert capt["raios_frame"] == [censo_map.RAIO_RESIDUAL_DISPLAY_KM] == [5.0]
+    assert capt["raio_km"] == censo_map.RAIO_RESIDUAL_DISPLAY_KM
+
+    # (b) CIRCULO = 1,5 km: desprojeta 3857 -> CRS metrico local e mede o raio de CADA vertice.
+    inv = censo_map._transformer(censo_map.CRS_WEB_MERCATOR, _local_metric_crs(LAT_C, LNG_C))
+    circulo_metrico = censo_map._project_geometry(capt["circle"], inv)
+    xs, ys = circulo_metrico.exterior.coords.xy
+    raios = np.hypot(np.asarray(xs), np.asarray(ys))
+    esperado_m = censo_map.RAIO_CIRCULO_DISPLAY_KM * 1000.0
+    assert abs(float(raios.max()) - esperado_m) <= 1.0
+    assert abs(float(raios.min()) - esperado_m) <= 1.0
+    # (c) anti-vacuo: nao e' mais o raio do enquadramento.
+    assert float(raios.max()) < 0.5 * censo_map.RAIO_RESIDUAL_DISPLAY_KM * 1000.0
+
+
+def test_circulo_em_pixel_encolheu_nos_dois_paineis_de_hexagono():
+    """Prova o ARTEFATO desenhado (nao so o insumo), nos DOIS paineis, pelo caminho publico.
+
+    O diametro em px e' invariante ao canvas (o frame acompanha o aspect): mede-se contra
+    `inner_h * RAIO_CIRCULO_DISPLAY_KM / (RAIO_RESIDUAL_DISPLAY_KM * (1 + _MAP_FRAME_MARGIN))`.
+    Calibracao medida no codigo anterior (circulo ainda a 5 km): 509 px de extensao azul, contra
+    509,2 px previstos pela formula — erro de 0,2 px. Tolerancia de 6 px cobre a linha de 3 px +
+    distorcao Mercator e ainda reprova qualquer volta ao circulo de 5 km.
+    """
+    mapas = render_mapas_censitarios_combinados(
+        LAT_C, LNG_C, _setores_um_quadrado(), width=1000, height=760,
+        basemap=False, hexes_df=_hexes_sinteticos(),
+    )
+    _inner_w, inner_h = censo_map._map_inner_dims(1000, 760)
+    esperado_px = inner_h * censo_map.RAIO_CIRCULO_DISPLAY_KM / (
+        censo_map.RAIO_RESIDUAL_DISPLAY_KM * (1.0 + censo_map._MAP_FRAME_MARGIN)
+    )
+    for chave in ("socioeconomia", "residual"):
+        x0, x1, y0, y1 = _bbox_dos_pixels_do_circulo(mapas[chave])
+        assert abs((x1 - x0) - esperado_px) <= 6, chave
+        assert abs((y1 - y0) - esperado_px) <= 6, chave
+    # Trava anti-vacuo do predicado: as camadas de 1,5 km (frame de 1,5 km) seguem com o circulo
+    # GRANDE — sem isto, um circulo que sumisse do PNG passaria despercebido.
+    x0, x1, _y0, _y1 = _bbox_dos_pixels_do_circulo(mapas["densidade"])
+    assert (x1 - x0) > 0.8 * inner_h
+
+
+def test_raio_do_circulo_e_constante_de_render_propria():
+    """D1: o circulo tem constante de RENDER PROPRIA, nunca em `config.py`, e o enquadramento/
+    disco de candidatos/motor censitario ficam INTOCADOS. Espelha
+    `test_raio_de_exibicao_nao_toca_o_raio_do_motor`."""
+    import motor_expansao.config as config
+    from motor_expansao.dashboard.censo_point import RAIO_CENSITARIO_DEFAULT_KM
+
+    assert censo_map.RAIO_CIRCULO_DISPLAY_KM == 1.5
+    assert not hasattr(config, "RAIO_CIRCULO_DISPLAY_KM")  # constante de RENDER, nunca de motor
+    assert censo_map.RAIO_RESIDUAL_DISPLAY_KM == 5.0  # enquadramento preservado
+    assert censo_map._RESIDUAL_GRID_DISK_K == 5  # disco de candidatos preservado
+    assert RAIO_CENSITARIO_DEFAULT_KM == 1.5  # motor censitario INTOCADO
+    assert censo_map._HEX_ROTULO_ESCALA == "Raio 1,5 km - escala 5 km"  # D2, texto imutavel
+    # Coincidencia NUMERICA documentada, SEM acoplamento: o circulo de RENDER nao deriva do motor.
+    # Se o motor um dia mudar de 1,5 km, este assert cai e forca uma decisao explicita sobre o
+    # circulo, em vez de o valor ser arrastado junto em silencio.
+    assert censo_map.RAIO_CIRCULO_DISPLAY_KM == RAIO_CENSITARIO_DEFAULT_KM
+
+
+def test_titulos_das_camadas_de_hexagono_cabem_sem_invadir_a_legenda():
+    """D3: "escala 5 km" e' mais largo que "raio 5 km" — a folga do pior titulo caiu para ~23 px
+    contra o budget que respeita o respiro ate a coluna da legenda. Trava permanente."""
+    image = Image.new("RGBA", (1000, 760))
+    draw = ImageDraw.Draw(image, "RGBA")
+    budget = 1000 - censo_map._LEGEND_COL_W - 33 - 28
+
+    for titulo in ("Socioeconomia - escala 5 km", "Residual Fitness - escala 5 km"):
+        assert censo_map._text_width(draw, titulo, censo_map._font(censo_map._FS_TITULO)) <= budget
+
+    # Rodape novo (61 chars) e a variante ONLINE (mais longa) cabem no canvas.
+    for rodape in (
+        f"{censo_map._HEX_ROTULO_ESCALA} - EPSG:3857 - fundo de ruas offline",
+        f"{censo_map._HEX_ROTULO_ESCALA} - EPSG:3857 - {censo_map._ATRIBUICAO_TILES}",
+    ):
+        assert censo_map._text_width(draw, rodape, censo_map._font(censo_map._FS_FOOTER)) <= 1000 - 36
+
+    # ASCII puro (excecao de RENDER do §2): o font embutido do Pillow nao tem glifo acentuado.
+    assert all(ord(c) < 128 for c in censo_map._HEX_ROTULO_ESCALA)
