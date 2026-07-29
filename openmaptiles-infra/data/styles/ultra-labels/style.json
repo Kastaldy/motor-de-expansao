@@ -3,7 +3,9 @@
   "name": "Ultra Labels (so rotulos, fundo transparente)",
   "metadata": {
     "ultra:desc": "Estilo SO-DE-ROTULOS servido pelo tileserver proprio, para compor os NOMES de rua/avenida/bairro POR CIMA do choropleth dos mapas de calor. Substitui o tileset only-labels do CARTO (BLK-BASEMAP-06). Sem geometria de fundo: o fundo de ruas vem do estilo `ultra-maptiler`, este aqui so carimba texto.",
-    "ultra:tamanhos": "O texto e' DELIBERADAMENTE maior que o de um basemap de tela. Este mosaico e' buscado no MESMO zoom do frame (bump 0) e depois o PNG de 1280x760 ainda e' reduzido ao entrar no PDF; com os tamanhos de um estilo normal os nomes chegariam ao relatorio com ~3 pt."
+    "ultra:tamanhos": "O texto e' DELIBERADAMENTE maior que o de um basemap de tela. Este mosaico e' buscado no MESMO zoom do frame (bump 0) e depois o PNG de 1280x760 ainda e' reduzido ao entrar no PDF; com os tamanhos de um estilo normal os nomes chegariam ao relatorio com ~3 pt.",
+    "ultra:calibragem": "Tamanhos calibrados contra o PREVIEW REAL do frame de 1,5 km (mosaico reduzido ao map_box de 900 px) em 2026-07-29, com `zoom_bump=-1`. Nao sao tamanhos de basemap de tela: o mosaico ainda e ~2,5x mais denso que o PNG final, e o PNG e' reduzido de novo ao entrar no PDF.",
+    "ultra:limite-do-dado": "O `brazil.mbtiles` e' z0-14 e no schema OpenMapTiles a camada `transportation_name` so traz nome de via MENOR a partir de z16. O tileserver rasteriza por overzoom, mas nao inventa dado: no frame do relatorio saem BAIRROS e AVENIDAS, nao ruas residenciais. A classe `residential` fica no filtro de proposito — passa a valer sozinha se um dia o mbtiles for regerado com maxzoom >= 16 (custo: horas de processamento e varios GB)."
   },
   "sources": {
     "openmaptiles": {
@@ -16,23 +18,63 @@
     {
       "id": "fundo-transparente",
       "type": "background",
-      "paint": { "background-color": "rgba(0,0,0,0)" }
+      "paint": {
+        "background-color": "rgba(0,0,0,0)"
+      }
     },
-
     {
       "id": "rotulo-via-principal",
       "type": "symbol",
       "source": "openmaptiles",
       "source-layer": "transportation_name",
       "minzoom": 11,
-      "filter": ["match", ["get", "class"],
-                 ["motorway", "trunk", "primary", "secondary"], true, false],
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "motorway",
+          "trunk",
+          "primary",
+          "secondary"
+        ],
+        true,
+        false
+      ],
       "layout": {
-        "text-field": ["coalesce", ["get", "name:pt"], ["get", "name"]],
-        "text-font": ["Noto Sans Regular"],
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:pt"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
         "symbol-placement": "line",
         "text-rotation-alignment": "map",
-        "text-size": ["interpolate", ["linear"], ["zoom"], 11, 15, 14, 19, 17, 23],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          18,
+          14,
+          26,
+          17,
+          32
+        ],
         "text-max-angle": 35,
         "symbol-spacing": 320,
         "text-padding": 4
@@ -43,23 +85,58 @@
         "text-halo-width": 2.2
       }
     },
-
     {
       "id": "rotulo-via-secundaria",
       "type": "symbol",
       "source": "openmaptiles",
       "source-layer": "transportation_name",
-      "minzoom": 14,
-      "filter": ["match", ["get", "class"],
-                 ["tertiary", "minor", "residential", "street", "unclassified"], true, false],
+      "minzoom": 15,
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "tertiary",
+          "minor",
+          "residential"
+        ],
+        true,
+        false
+      ],
       "layout": {
-        "text-field": ["coalesce", ["get", "name:pt"], ["get", "name"]],
-        "text-font": ["Noto Sans Regular"],
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:pt"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
         "symbol-placement": "line",
         "text-rotation-alignment": "map",
-        "text-size": ["interpolate", ["linear"], ["zoom"], 14, 15, 17, 19],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          15,
+          21,
+          17,
+          26
+        ],
         "text-max-angle": 35,
-        "symbol-spacing": 280,
+        "symbol-spacing": 500,
         "text-padding": 4
       },
       "paint": {
@@ -68,19 +145,59 @@
         "text-halo-width": 2.0
       }
     },
-
     {
       "id": "rotulo-bairro",
       "type": "symbol",
       "source": "openmaptiles",
       "source-layer": "place",
       "minzoom": 11,
-      "filter": ["match", ["get", "class"],
-                 ["suburb", "neighbourhood", "quarter", "village", "town", "city"], true, false],
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "suburb",
+          "neighbourhood",
+          "quarter",
+          "village",
+          "town",
+          "city"
+        ],
+        true,
+        false
+      ],
       "layout": {
-        "text-field": ["coalesce", ["get", "name:pt"], ["get", "name"]],
-        "text-font": ["Noto Sans Regular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 11, 18, 14, 24, 17, 30],
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:pt"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          24,
+          14,
+          34,
+          17,
+          40
+        ],
         "text-letter-spacing": 0.04,
         "text-padding": 6
       },
@@ -90,7 +207,6 @@
         "text-halo-width": 2.6
       }
     },
-
     {
       "id": "rotulo-agua",
       "type": "symbol",
@@ -98,9 +214,33 @@
       "source-layer": "water_name",
       "minzoom": 12,
       "layout": {
-        "text-field": ["coalesce", ["get", "name:pt"], ["get", "name"]],
-        "text-font": ["Noto Sans Regular"],
-        "text-size": ["interpolate", ["linear"], ["zoom"], 12, 15, 16, 19]
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:pt"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          12,
+          20,
+          16,
+          26
+        ]
       },
       "paint": {
         "text-color": "hsl(205,42%,32%)",
