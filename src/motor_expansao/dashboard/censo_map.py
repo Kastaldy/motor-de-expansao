@@ -90,7 +90,11 @@ _LABELS_SUBDOMAINS = ("a", "b", "c")
 # um texto de ~11 px virava 0,54 px — invisivel. Medido em producao em 2026-07-29 (mosaico a
 # 3,349 px/m contra 0,1636 px/m do frame). Com `0` o mosaico sai ~1:1 com o frame e o tamanho do
 # texto passa a ser governado pelo `text-size` do estilo, onde da p/ controlar de verdade.
-_LABELS_ZOOM_BUMP = 0
+# CALIBRAGEM (preview real do frame de 1,5 km, 2026-07-29): com bump efetivo `0` o mosaico ainda
+# saia 5,1x mais denso que o `map_box` e um texto de 19 px chegava com 3,7 px — presente, porem
+# miudo. Com `-1` a reducao cai para 2,6x. Nao adianta ir alem: o `brazil.mbtiles` e' z0-14 e o
+# tileserver overzooma o vetor, entao buscar mais alto so multiplica tile sem acrescentar dado.
+_LABELS_ZOOM_BUMP = -1
 # Cache local dos tiles de rotulo (emenda BLK-BASEMAP-03 a DEC-004, mitigacao (a) — a MESMA
 # faz ao basemap). O `_fetch_basemap` herda o cache de graca do `ctx.set_cache_dir()`; aqui o
 # fetch e' `urllib` cru, entao o cache precisa ser explicito. Diretorio SEPARADO do

@@ -1482,7 +1482,9 @@ def test_rotulos_saem_na_mesma_escala_do_frame_e_nao_viram_subpixel():
     # E o bump do chamador tem de ser REALMENTE respeitado (era ignorado antes).
     zoom_com_bump_1, *_ = censo_map._labels_grid(bounds, largura_px, zoom_bump=1)
     assert zoom_com_bump_1 == zoom + 1
-    assert censo_map._LABELS_ZOOM_BUMP == 0
+    # -1 = um nivel ABAIXO do frame, calibrado no preview real (reducao 2,6x). Com 0 o
+    # texto chegava a 3,7 px; o defeito original media 0,54 px.
+    assert censo_map._LABELS_ZOOM_BUMP == -1
 
 
 def test_labels_grid_cobre_o_bbox_pedido():
