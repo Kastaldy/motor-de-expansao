@@ -186,6 +186,13 @@ imagem do `streamlit`, com `GymScraping` em `:ro` e o diretório dos apps como d
   contando com o mesmo parser do app. Uma coleta parcial (já houve domingo com 45/106 redes) não pode apagar o
   que estava visível em produção.
 
+> **Custo conhecido da regra "nunca reduzir":** unidade que **fecha de verdade** não sai sozinha do diretório —
+> a contagem do destino só sobe. O `relatorio_crescimento_<data>.txt` é quem mostra a queda real por rede; se
+> ele acusar retração sustentada em alguma rede, forçar a coleta por cima com
+> `cp /opt/gymscraping/Unidades/unidades_<slug>.csv /opt/motor-expansao/concorrentes/` e reiniciar os apps.
+> Vale lembrar que isso é a camada **visual** (§2) — o `concorrentes_mapeados.parquet`, que alimenta o piloto
+> web e os PDFs, é regerado do zero pelo `normalizar_concorrentes` toda semana e não herda esse acúmulo.
+
 O `web` entra no restart porque o piloto carrega as logos em `@app.on_event("startup")` e cacheia o ícone por
 rede em `lru_cache` — sem restart, logo nova não aparece nele. Rodar sob demanda (é idempotente):
 
