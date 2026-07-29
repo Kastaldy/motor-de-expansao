@@ -236,6 +236,9 @@ tolerância a tile faltando, e inserção/ausência da página nos dois tamanhos
 
 - BLK-RELPON-13 (concluído 2026-07-24) — ver tasks/completed.md
 
+- BLK-RELPON-14 (concluído 2026-07-29) — ver tasks/completed.md
+
+
 
 ---
 

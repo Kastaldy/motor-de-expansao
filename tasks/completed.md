@@ -10545,3 +10545,156 @@ oficiais com mtime de 2026-06-10.
 isso o hook versionado não entra em vigor e o `post-checkout` divergente continua ativo. (3) Tocar
 `pyproject.toml` faz o merge **republicar a imagem da API/bot no GHCR** (`ci.yml:236`) — não é deploy;
 deploy segue manual por digest (§6).
+
+---
+
+### BLK-RELPON-14 — Círculo azul de 1,5 km nos mapas de escala 5 km (enquadramento INTOCADO)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Status** | Pendente — aberto em 2026-07-28 a pedido de Vinicius |
+| **Depende de** | — (BLK-RELPON-10 e BLK-RELPON-13 já concluídos e mergeados) |
+| **Autonomia** | *(sem marcador — **NÃO** loop-safe: a validação final é VISUAL, olho humano no PDF; o loop não julga aparência)* |
+| **ClickUp** | — |
+
+**Pedido literal de Vinicius (2026-07-28).** *"Na imagens de 5 km, o raio também possui 5 km. Eu quero
+que a imagem continue cobrindo a mesma escala de distância, porém que o raio azul seja reduzido para
+1,5 km, como nos outros mapas."*
+
+**Diagnóstico — medido no código em 2026-07-28, não presumido.** Um único parâmetro governa **duas
+coisas diferentes** nos mapas de hexágono, e é por isso que o círculo herdou a escala:
+
+| O que | Onde | Hoje |
+|---|---|---|
+| Enquadramento (extensão do mapa) | `censo_map.py:1047` → `_frame_box_metric(RAIO_RESIDUAL_DISPLAY_KM, ...)` | 5 km — **deve ficar como está** |
+| Círculo azul desenhado | `censo_map.py:1048` → `Point(0, 0).buffer(RAIO_RESIDUAL_DISPLAY_KM * 1000.0, quad_segs=96)` | 5 km — **deve virar 1,5 km** |
+| Rótulo do rodapé | `censo_map.py:871-872` → `raio_txt = f"{float(raio_km):.1f}"` (recebe `raio_km=RAIO_RESIDUAL_DISPLAY_KM` na L1112) | sai `"Raio 5,0 km"` — **precisa de decisão (D2 abaixo)** |
+
+A constante é `RAIO_RESIDUAL_DISPLAY_KM = 5.0` (`censo_map.py:120`), declarada como raio de **EXIBIÇÃO**
+— não é parâmetro de motor, não está em `config.py`. O círculo é `_CIRCLE_RGBA = (0, 102, 255, 235)`
+(`censo_map.py:59`), desenhado em `censo_map.py:824-831`.
+
+**Alcance: DOIS painéis, não um.** `_render_camada_residual_hex` (`censo_map.py:1008`) é reusado por
+ambas as camadas de hexágono — `socioeconomia` (`censo_map.py:1521`, o painel do slide-hero criado no
+BLK-RELPON-13) e `residual` (`censo_map.py:1545`). A correção vale para os dois, por construção.
+
+**Isto NÃO contradiz a D2 do bloco original** (raio de exibição de ~5 km para o residual). Aquela decisão
+era sobre a **escala do enquadramento** — medida no dado real: no círculo de 1,5 km cabem só 3 a 5 hexes
+H3 res-7 e 68,9% valem 0, o que daria mosaico chapado em vez de mapa de calor. O círculo de 5 km foi
+**efeito colateral** de reusar o mesmo `raio_km` para enquadrar e para desenhar. A escala fica; só o
+círculo muda.
+
+**Escopo.** Desacoplar as duas responsabilidades em `_render_camada_residual_hex`: o frame continua
+derivando de `RAIO_RESIDUAL_DISPLAY_KM`; o círculo passa a derivar de uma constante nova (sugestão:
+`RAIO_CIRCULO_DISPLAY_KM = 1.5`) ou diretamente de `RAIO_CENSITARIO_DEFAULT_KM`, a decidir no ciclo (D1).
+
+**Decisões a fechar no ciclo (o Builder não deve decidir sozinho):**
+- **D1 — de onde vem o 1,5 km:** constante de RENDER nova em `censo_map.py`, ou reuso direto de
+  `RAIO_CENSITARIO_DEFAULT_KM` (o parâmetro do motor censitário)? Reusar acopla RENDER a MOTOR e
+  contraria o padrão explicitado nos comentários das linhas 115-135; constante nova mantém a separação,
+  ao custo de uma duplicação numérica que precisa de teste amarrando as duas.
+- **D2 — o rótulo do rodapé.** Hoje sai `"Raio 5,0 km"`, derivado do mesmo `raio_km`. Com o círculo em
+  1,5 km, o rótulo atual passa a **mentir sobre o desenho**. Alternativas: (a) `"Raio 1,5 km"` — descreve
+  o círculo, mas some a informação de que o mapa cobre 5 km; (b) algo como `"Raio 1,5 km - escala 5 km"`
+  — honesto nas duas dimensões, ocupa mais espaço; (c) manter o parâmetro do rótulo independente
+  (`rotulo_escala=`, que já existe e é usado pela camada `entorno`, `censo_map.py:1196`). **Decisão de
+  produto — precisa de Vinicius.**
+- **D3 — o título da camada residual** menciona a escala de 5 km em algum lugar (o BLK-RELPON-10 pedia
+  rótulo explícito de escala diferente)? Se sim, conferir se continua coerente depois da mudança.
+
+**A VERIFICAR antes de implementar (não afirmado aqui como fato).** O `circle_metric` de 5 km parece ser
+usado **só para desenho** neste caminho — o clip dos hexes é pelo `frame_3857` (`censo_map.py:1063`) e o
+`_residual_hex_central` (`censo_map.py:976`) resolve o hex central pelo ponto. **Confirmar com evidência**
+que nenhum recorte de DADO depende do círculo antes de mudar o valor; se depender, o desacoplamento tem
+de preservar o círculo de 5 km no caminho de dados e mudar só o de render.
+
+**Fora de escopo.** O motor censitário (`setor_censitario_intersecao_area_1p5km`,
+`RAIO_CENSITARIO_DEFAULT_KM` = 1,5 km) é **INTOCADO**; o enquadramento de 5 km é **INTOCADO**; o
+`_RESIDUAL_GRID_DISK_K = 5` (disco de hexes candidatos, dimensionado para o frame de 5 km) é
+**INTOCADO**; as camadas do grid 2x2, a página de satélite e a de concorrentes ficam **byte-idênticas**.
+**READ-ONLY sobre o M1.**
+
+**Critério de aceite.**
+1. Nos dois painéis de hexágono (`socioeconomia` e `residual`), o círculo azul tem **1,5 km** e o
+   enquadramento continua cobrindo **5 km** — verificado por teste geométrico, não a olho.
+2. `censo_map.RAIO_RESIDUAL_DISPLAY_KM == 5.0` preservado e `_frame_box_metric` recebendo-o inalterado
+   (o teste `tests/unit/test_relatorio_pontual_censitario_mapa.py:1004,1016` já trava isso — não pode
+   quebrar).
+3. Teste novo amarrando o raio do círculo desenhado a 1,5 km, para a regressão não voltar em silêncio.
+4. O rótulo do rodapé é coerente com o que está desenhado (conforme D2).
+5. `/Count` do PDF e as demais páginas **inalterados**; nenhuma constante de motor tocada
+   (`assert not hasattr(config, ...)`, no padrão já usado nas linhas 1017 e 1216 do mesmo teste).
+6. `ruff`/`mypy` limpos; suíte verde.
+7. **Gate visual humano de Vinicius** antes do merge — comparar o PDF antes/depois no mesmo ponto.
+
+**Arquivos prováveis.** `src/motor_expansao/dashboard/censo_map.py` (o desacoplamento) ·
+`tests/unit/test_relatorio_pontual_censitario_mapa.py` (travas) · possivelmente
+`docs/relatorio_pontual_censitario.md` (contrato canônico da camada, se o rótulo mudar).
+
+## Fechamento de ciclo — BLK-RELPON-14 (2026-07-29)
+
+**Veredito do QA: APROVADO** (0 críticos, 0 médios) — pendente apenas do **gate visual humano de
+Vinicius** (critério de aceite nº 7), que é do humano e não do QA.
+
+**Esteira:** Block Orchestrator (sonnet) → Planner (opus, +1) → Builder (opus, +1) → QA (opus).
+Snapshots: `context/handoff/20260728-153129-block-orchestrator.md`, `20260728-154511-planner.md`,
+`20260728-155919-builder.md`, `20260729-100951-qa.md`.
+
+### O que mudou
+Uma única constante governava **duas responsabilidades** nos painéis de hexágono: o enquadramento do
+mapa e o círculo azul desenhado. Foram separadas.
+
+- `src/motor_expansao/dashboard/censo_map.py` (+56): constante de RENDER nova
+  `RAIO_CIRCULO_DISPLAY_KM = 1.5` (**D1** — não reusa `RAIO_CENSITARIO_DEFAULT_KM`, para não acoplar
+  RENDER a MOTOR); o `circle_metric` passa a derivar dela; **`_frame_box_metric(RAIO_RESIDUAL_DISPLAY_KM, …)`
+  não mudou uma letra**; rodapé via `_HEX_ROTULO_ESCALA` (derivado das DUAS constantes, mecanismo
+  `rotulo_escala=` que a camada `entorno` já usava); títulos `- raio 5 km` → `- escala 5 km`.
+- `tests/unit/test_relatorio_pontual_censitario_mapa.py` (+157): 4 testes novos (48 → 52; asserts
+  153 → 173), 2 testes atualizados nas strings de produto **e** reforçados com um assert **negativo**
+  proibindo `"Raio 5,0 km"` — o conjunto ficou mais estrito, não mais frouxo.
+- `docs/relatorio_pontual_censitario.md` (+14): §3, §6, §7, validação mínima e parágrafo histórico. A
+  afirmação de que o painel `residual` desenhava o círculo de 5 km era **falsa** e foi corrigida.
+
+### Decisões do ciclo
+- **D1** (orquestrador, sobre recomendação do BO): constante de RENDER nova, no padrão já explicitado
+  no arquivo — `RAIO_RESIDUAL_DISPLAY_KM`/`RAIO_ENTORNO_DISPLAY_KM` são deliberadamente fora do `config.py`.
+- **D2** (produto, **Vinicius**, 2026-07-28): rodapé =
+  `Raio 1,5 km - escala 5 km - EPSG:3857 - fundo de ruas offline`. Honesto nas duas dimensões.
+- **D3** (Planner): títulos = `Socioeconomia - escala 5 km` / `Residual Fitness - escala 5 km` —
+  "raio 5 km" contradiria o círculo novo. Larguras medidas: 573/586 px contra budget de 609 px.
+
+### Prova de que nenhum recorte de DADO mudou (a regressão mais perigosa do bloco)
+O QA carregou o `censo_map.py` da `main` via `git show` como módulo paralelo e rodou o **mesmo caminho
+público** (`render_mapas_censitarios_combinados`) nos dois, com as fixtures do próprio repo: **38 hexes
+antes e depois**, WKB idênticos, `bounds` idênticos, valores-fonte idênticos, nos dois painéis;
+`_frame_box_metric` recebeu `[1.5, 0.14, 5.0, 5.0]` em ambos; círculo 5.000,000 m → 1.500,000 m;
+**6 das 8 camadas byte-idênticas** (só `socioeconomia`/`residual` mudam, como esperado); `/Count 8` igual.
+O clip dos hexes é ao `frame_3857` — o `circle_3857` é lido em um único ponto (`censo_map.py:824-831`),
+só para desenhar.
+
+### Validações
+`pytest` do arquivo primário **52 passed** · conjunto export/orquestração/viabilidade/api **78 passed** ·
+`test_streamlit_app.py` **255 passed** · **suíte completa SERIAL: 2032 passed, 2 skipped**, mais a falha
+PRÉ-EXISTENTE `test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime` (parquet de staging
+ausente nesta estação — `BLK-FIX-LTV-01`; em CI o teste pula). Baseline do bloco era `2028 passed` →
+**+4 = exatamente os 4 testes novos** · `ruff` limpo · `mypy src/` com 3 erros pré-existentes de
+`types-requests` em `pipelines/m1/`, nenhum arquivo do ciclo · `import streamlit_app` ok.
+
+### Guardrails
+READ-ONLY sobre o M1 confirmado: `git diff` vazio em `config.py`, `src/motor_expansao/pipelines/` e
+`data/`; artefatos oficiais com `mtime` de 2026-06-10/11. Motor censitário
+(`setor_censitario_intersecao_area_1p5km`, `RAIO_CENSITARIO_DEFAULT_KM`), `_RESIDUAL_GRID_DISK_K`,
+grid 2x2, página de satélite e de concorrentes: **intocados**. Texto desenhado em ASCII (exceção de
+RENDER, §2).
+
+### Fechamento (Passo 6)
+Modo **MERGE-HUMANO**: o `loop_guard` classifica `censo_map.py` como **governança** → o check `guard`
+exige a label `aprovado-humano` de um humano ≠ autor, então o auto-merge de Média não se aplica.
+Housekeeping executado pelo helper (`--check` e `--is-done` saem 0; `test_housekeeping_helper.py`
+**22 passed**). Dry-run 6.c **não dispara** — o ciclo não tocou `.claude/commands/run-cycle.md`,
+`prompts/*.md` nem `.codex/skills/`.
+
+**Ressalva registrada (não bloqueante, do próprio QA):** o teste de raio em PIXEL é tautológico sob
+mutação da constante (o esperado deriva da mesma constante e sobreviveu à mutação); a mesma mutação
+**matou** os outros dois testes, então a invariante segue travada. Melhoria opcional para um próximo ciclo.
