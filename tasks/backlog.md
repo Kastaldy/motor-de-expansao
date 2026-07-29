@@ -2338,7 +2338,7 @@ aparece quando alguém abre um relatório.
 
 ---
 
-### BLK-BASEMAP-06 — Nomes de rua/avenida legíveis por cima do choropleth, servidos pelo tileserver próprio (CARTO sai)
+### BLK-BASEMAP-06 — Malha viária (e nomes) por cima do choropleth, servidas pelo tileserver próprio (CARTO sai)
 
 | Campo | Valor |
 |---|---|
@@ -2362,6 +2362,19 @@ aparece quando alguém abre um relatório.
 2. **O `ultra-maptiler` não tem `transportation_name`.** O basemap próprio desenha as vias mas
    não os nomes delas — o que o BLK-BASEMAP-03 já havia constatado no Relatório Municipal e
    contornado trazendo o overlay do CARTO de volta.
+
+**Correção de rumo (2026-07-29, após revisão de Felipe).** O primeiro corte deste bloco leu o
+exemplo visual como "nomes de rua por cima do choropleth" e entregou só isso. **O pedido era o
+DESENHO das vias:** no exemplo, a malha viária aparece em BRANCO por cima da cor, e os polígonos
+do choropleth preenchem os quarteirões entre as ruas — o nome é secundário. Sem a malha, o mapa de
+calor é uma mancha de cor sem referência urbana, que é a dor real; o realce `_STREET_*` nunca
+resolveu isso porque recompõe o basemap POR BAIXO da cor. O overlay passa a carregar **geometria de
+via (`transportation`) + rótulos**, nesta ordem, com o texto por cima das linhas.
+
+Detalhe que viabiliza: `transportation` existe até z14 no `brazil.mbtiles` (ao contrário de
+`transportation_name`, que só traz via menor a partir de z16), então a malha COMPLETA — inclusive
+rua residencial — está disponível no zoom do relatório. É por isso que dá para desenhar a rua e
+não para nomeá-la.
 
 **Escopo (3 partes):**
 
