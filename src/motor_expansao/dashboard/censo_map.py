@@ -59,27 +59,38 @@ _BASEMAP_PROVIDER_ATTR = "Voyager"
 # (Voyager), que e' o que CI, teste e dev local exercitam. Nao e' parametro de score: e' RENDER.
 _BASEMAP_TILES_URL_ENV = "API_BASEMAP_TILES_URL"
 
-# Atribuicao exigida pela licenca CARTO/OSM (DEC-004); aparece no rodape do PNG quando ha tile.
-# INALTERADA nos dois modos: no self-host o dado e' OpenStreetMap (schema OpenMapTiles) e os
-# ROTULOS continuam vindo do CARTO (`_LABELS_TILE_URL`, BLK-RELPON-07) -> os dois creditos seguem
-# devidos. Desde o BLK-BASEMAP-03 o Relatorio Municipal usa o MESMO overlay, entao o credito
-# duplo vale igual la (ver `relatorio_municipal._ATRIBUICAO_TILES`).
+# Atribuicao do rodape do PNG (DEC-004), resolvida em RUNTIME porque depende do MODO:
+#   self-host  -> fundo E rotulos saem do tileserver proprio (dado OSM, schema OpenMapTiles):
+#                 nenhum tile do CARTO e' consumido e credita-lo seria credito FALSO.
+#   fallback   -> sem `API_BASEMAP_TILES_URL` o fundo cai no CartoDB Voyager (contextily) e o
+#                 credito duplo continua devido.
+# BLK-BASEMAP-06 reverte a parte de credito do BLK-BASEMAP-03: la o CARTO voltou ao rodape
+# porque o overlay de rotulos vinha DELE; agora os rotulos vem do `ultra-labels` proprio.
 _ATRIBUICAO_TILES = "(c) OpenStreetMap, (c) CARTO"
+_ATRIBUICAO_TILES_SELFHOST = "(c) OpenStreetMap - OpenMapTiles"
 _BASEMAP_CONTRAST = 1.15
 # Zoom extra dos tiles (alem do minimo p/ cobrir a bbox) -> ruas mais nitidas/detalhadas.
 _BASEMAP_ZOOM_BUMP = 1
 
-# Overlay de ROTULOS (nomes de rua/bairro) POR CIMA do choropleth. Sem isso os nomes ficam
-# SOTERRADOS sob a cor e nao da p/ identificar QUAL area tem o numero melhor/pior — a dor que o
-# realce `_STREET_*` (so linhas de rua, sem texto) nao resolve. Solucao = ordem de camadas: o heat
-# entra por baixo e um tileset SO-ROTULOS (transparente) e composto por cima. Fonte atual = CartoDB
-# Voyager Only-Labels (keyless; MESMA familia/licenca do basemap Voyager -> atribuicao inalterada).
-# Quando o OpenMapTiles self-host subir, trocar por um endpoint de rotulos do proprio tileserver.
-_LABELS_TILE_URL = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}@2x.png"
+# Overlay de ROTULOS (nomes de rua/avenida/bairro) POR CIMA do choropleth. Sem isso os nomes
+# ficam SOTERRADOS sob a cor e nao da p/ identificar QUAL area tem o numero melhor/pior — a dor
+# que o realce `_STREET_*` (so linhas de rua, sem texto) nao resolve. Solucao = ordem de camadas:
+# o heat entra por baixo e um tileset SO-ROTULOS (transparente) e composto por cima.
+#
+# BLK-BASEMAP-06: a fonte deixa de ser o CartoDB Voyager Only-Labels e passa a ser o estilo
+# `ultra-labels` do tileserver PROPRIO (`openmaptiles-infra/data/styles/ultra-labels/`), que o
+# `ultra-maptiler` nao servia: aquele estilo tem a geometria das vias (`transportation`) mas NAO
+# a camada `transportation_name`, entao entregava ruas desenhadas e ANONIMAS.
+#   API_BASEMAP_LABELS_URL=http://motor_expansao_tileserver:8080/styles/ultra-labels/{z}/{x}/{y}@2x.png
+# Sem a env var NAO ha overlay (devolve None) — nao existe mais fallback para o CARTO.
+_LABELS_TILES_URL_ENV = "API_BASEMAP_LABELS_URL"
 _LABELS_SUBDOMAINS = ("a", "b", "c")
-# Rotulos num zoom ACIMA do basemap -> nomes maiores e legiveis sobre a cor (o zoom base ja e
-# minimo-p/-cobrir + _BASEMAP_ZOOM_BUMP; aqui somamos mais 1).
-_LABELS_ZOOM_BUMP = 1
+# Rotulos no MESMO zoom do basemap. Era `1` (zoom a mais, "nomes maiores"), e a intencao se
+# invertia na pratica: o mosaico saia ~20x mais denso que o frame e, no resize para o PNG final,
+# um texto de ~11 px virava 0,54 px — invisivel. Medido em producao em 2026-07-29 (mosaico a
+# 3,349 px/m contra 0,1636 px/m do frame). Com `0` o mosaico sai ~1:1 com o frame e o tamanho do
+# texto passa a ser governado pelo `text-size` do estilo, onde da p/ controlar de verdade.
+_LABELS_ZOOM_BUMP = 0
 # Cache local dos tiles de rotulo (emenda BLK-BASEMAP-03 a DEC-004, mitigacao (a) — a MESMA
 # faz ao basemap). O `_fetch_basemap` herda o cache de graca do `ctx.set_cache_dir()`; aqui o
 # fetch e' `urllib` cru, entao o cache precisa ser explicito. Diretorio SEPARADO do
@@ -666,6 +677,34 @@ def _basemap_source(ctx: object) -> object:
     return getattr(ctx.providers.CartoDB, _BASEMAP_PROVIDER_ATTR)  # type: ignore[attr-defined]
 
 
+def _basemap_e_selfhost() -> bool:
+    """True quando o fundo de ruas vem do tileserver proprio (env definida)."""
+    import os
+
+    return bool(os.environ.get(_BASEMAP_TILES_URL_ENV))
+
+
+def _labels_tiles_url() -> str | None:
+    """Template de tiles SO-ROTULOS, ou None quando nao ha fonte configurada.
+
+    BLK-BASEMAP-06: nao existe mais default embutido. Antes o default era o CartoDB
+    Voyager Only-Labels, o que fazia o relatorio consumir tile de terceiro mesmo com o
+    tileserver proprio no ar — e obrigava o rodape a creditar o CARTO.
+    """
+    import os
+
+    return os.environ.get(_LABELS_TILES_URL_ENV) or None
+
+
+def _atribuicao_tiles() -> str:
+    """Credito do rodape, resolvido pelo MODO em runtime.
+
+    So credita quem realmente serviu tile: no self-host o fundo E os rotulos saem do
+    tileserver proprio (dado OSM/OpenMapTiles) e o CARTO nao entra em nada.
+    """
+    return _ATRIBUICAO_TILES_SELFHOST if _basemap_e_selfhost() else _ATRIBUICAO_TILES
+
+
 def _fetch_basemap(
     bounds_3857: tuple[float, float, float, float],
     width: int,
@@ -707,7 +746,10 @@ def _fetch_basemap(
 
 
 def _labels_grid(
-    bounds_3857: tuple[float, float, float, float], width: int
+    bounds_3857: tuple[float, float, float, float],
+    width: int,
+    *,
+    zoom_bump: int | None = None,
 ) -> tuple[int, int, int, int, int, float]:
     """Zoom + faixa de tiles `(zoom, tx0, tx1, ty0, ty1, tile_m)` que cobre `bounds_3857`.
 
@@ -718,7 +760,12 @@ def _labels_grid(
     relacao a `x`). O teto de zoom 19 e' o mesmo do `_fetch_basemap`.
     """
     minx, miny, maxx, maxy = bounds_3857
-    zoom = min(19, _zoom_for_bounds(minx, maxx, width) + _BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP)
+    # MESMO bump do basemap (o chamador repassa o que usou em `_fetch_basemap`) + o bump proprio
+    # dos rotulos, hoje `0`. Antes somava `_BASEMAP_ZOOM_BUMP` fixo e ignorava o que o chamador
+    # tinha pedido: no piloto, que busca o fundo com `zoom_bump=0`, os rotulos saiam DOIS niveis
+    # acima do fundo e sumiam no resize.
+    bump = _BASEMAP_ZOOM_BUMP if zoom_bump is None else int(zoom_bump)
+    zoom = max(0, min(19, _zoom_for_bounds(minx, maxx, width) + bump + _LABELS_ZOOM_BUMP))
     tile_m = _EARTH_M / (2**zoom)  # tamanho do tile em metros (3857)
     tx0 = int((minx + _EARTH_M / 2) / tile_m)
     tx1 = int((maxx + _EARTH_M / 2) / tile_m)
@@ -766,7 +813,13 @@ def _labels_tile(zoom: int, tx: int, ty: int) -> Image.Image:
         except Exception:
             pass  # cache corrompido/truncado -> rebaixa como se nao existisse
 
-    url = _LABELS_TILE_URL.format(s=_LABELS_SUBDOMAINS[(tx + ty) % 3], z=zoom, x=tx, y=ty)
+    modelo = _labels_tiles_url()
+    if not modelo:
+        raise RuntimeError("API_BASEMAP_LABELS_URL nao definida — sem fonte de rotulos")
+    # `{s}` so existe em CDNs com subdominio (o tileserver proprio nao usa); manter o suporte
+    # deixa a env var compativel com qualquer provedor de tiles so-rotulos.
+    alvo = modelo.replace("{s}", _LABELS_SUBDOMAINS[(tx + ty) % 3]) if "{s}" in modelo else modelo
+    url = alvo.format(z=zoom, x=tx, y=ty)
     req = urllib.request.Request(url, headers={"User-Agent": "motor-expansao/censo-labels"})
     with urllib.request.urlopen(req, timeout=_LABELS_TIMEOUT_S) as resp:  # noqa: S310 (URL https)
         raw = resp.read()
@@ -784,6 +837,8 @@ def _labels_tile(zoom: int, tx: int, ty: int) -> Image.Image:
 def _fetch_labels(
     bounds_3857: tuple[float, float, float, float],
     width: int,
+    *,
+    zoom_bump: int | None = None,
 ) -> tuple[Image.Image, tuple[float, float, float, float]] | None:
     """Mosaico SO-de-rotulos (PNG transparente) p/ compor os nomes POR CIMA do choropleth.
 
@@ -807,8 +862,11 @@ def _fetch_labels(
     """
     import concurrent.futures as cf
 
+    if not _labels_tiles_url():
+        return None  # sem fonte de rotulos configurada -> contrato de None (mapa sem nomes)
+
     try:
-        zoom, tx0, tx1, ty0, ty1, tile_m = _labels_grid(bounds_3857, width)
+        zoom, tx0, tx1, ty0, ty1, tile_m = _labels_grid(bounds_3857, width, zoom_bump=zoom_bump)
         px = 512  # tiles @2x
 
         canvas = Image.new("RGBA", ((tx1 - tx0 + 1) * px, (ty1 - ty0 + 1) * px), (0, 0, 0, 0))
@@ -1067,7 +1125,7 @@ def _render_camada(
     # BLK-RELPON-14: `raio_km=None` SUPRIME o prefixo de raio (nada o substitui) -- usado pelos
     # paineis de hexagono, onde os 5 km sao ENQUADRAMENTO e nao raio de analise. A referencia de
     # distancia continua na barra de escala; o resto do rodape nao muda.
-    fundo_txt = _ATRIBUICAO_TILES if drew_basemap else "fundo de ruas offline"
+    fundo_txt = _atribuicao_tiles() if drew_basemap else "fundo de ruas offline"
     if raio_km is None:
         footer = f"EPSG:3857 - {fundo_txt}"
     else:
@@ -1551,8 +1609,13 @@ def render_mapas_censitarios_combinados(
         basemap_tiles = _fetch_basemap(bounds_t, width)
         # rotulos buscados UMA vez (compartilhados pelas 4 camadas de choropleth); so quando ha
         # basemap (mesma condicao de rede) e o overlay esta ligado. best-effort -> None nao quebra.
+        # `zoom_bump=0` alinha o mosaico ao FRAME, nao ao basemap: o que decide se o nome sobrevive
+        # e a razao entre a densidade do mosaico e a do PNG final. Com o bump do basemap (+1) o
+        # texto sairia pela metade — e era somando DOIS niveis que ele virava sub-pixel
+        # (BLK-BASEMAP-06). O tamanho passa a ser governado pelo `text-size` do estilo
+        # `ultra-labels`, que e' onde da p/ controlar de verdade.
         if basemap_tiles is not None and labels_overlay:
-            labels_tiles = _fetch_labels(bounds_t, width)
+            labels_tiles = _fetch_labels(bounds_t, width, zoom_bump=0)
 
     pins = _project_points(result["concorrentes_raio"], lat, lng)
     ultra_pins = _project_points(result["ultra_raio"], lat, lng)

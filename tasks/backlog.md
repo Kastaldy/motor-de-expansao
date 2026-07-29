@@ -2337,3 +2337,59 @@ aparece quando alguém abre um relatório.
 **Guardrail.** §5 READ-ONLY M1. Nenhuma mudança em código de render, score ou pipeline.
 
 ---
+
+### BLK-BASEMAP-06 — Nomes de rua/avenida legíveis por cima do choropleth, servidos pelo tileserver próprio (CARTO sai)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (muda a REPRESENTAÇÃO dos mapas de calor e a atribuição de licença; READ-ONLY sobre o M1) |
+| **Esteira** | Block Orchestrator → Builder → `[GATE VISUAL — Vinicius]` → QA |
+| **Depende de** | BLK-RELPON-07 (#154), BLK-BASEMAP-02 (#156), BLK-BASEMAP-03 (#157), BLK-BASEMAP-05 (#159) |
+| **Status** | **Em implementação** |
+| **Autonomia** | **manual (NÃO loop-safe)** — muda render aprovado em gate visual e toca a stack do tileserver |
+
+**Problema (medido em produção, 2026-07-29).** Os mapas de calor do Relatório Pontual saíam
+**sem nome de rua nenhum**, e o rodapé creditava `(c) CARTO`. Duas causas independentes:
+
+1. **Os rótulos eram sub-pixel.** `_labels_grid` somava `_BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP`
+   fixos e **ignorava o bump que o chamador usou no fundo**. O piloto busca o fundo com
+   `zoom_bump=0`, então os rótulos saíam DOIS níveis acima. Medição no ponto do relatório:
+   mosaico a **3,349 px/m** contra **0,1636 px/m** do frame → redução de **20,5x**; um texto de
+   ~11 px chegava ao PNG final com **0,54 px**. O `_fetch_labels` devolvia um mosaico VÁLIDO —
+   só que ilegível —, então nada falhava e ninguém via erro. É o mesmo desperdício que o
+   BLK-BASEMAP-04 registrou como problema de CUSTO (`@2x` + 624 tiles); ninguém tinha ligado as
+   duas coisas.
+2. **O `ultra-maptiler` não tem `transportation_name`.** O basemap próprio desenha as vias mas
+   não os nomes delas — o que o BLK-BASEMAP-03 já havia constatado no Relatório Municipal e
+   contornado trazendo o overlay do CARTO de volta.
+
+**Escopo (3 partes):**
+
+1. **Estilo `ultra-labels` no tileserver** (`openmaptiles-infra/data/styles/ultra-labels/`):
+   só símbolos, fundo transparente, com `transportation_name` (vias principais e secundárias),
+   `place` (bairro/distrito) e `water_name`. `text-size` deliberadamente maior que o de um
+   basemap de tela, porque o PNG ainda é reduzido ao entrar no PDF. O `brazil.mbtiles` já
+   continha `transportation_name` — só faltava o estilo consumi-lo.
+2. **Rótulos no mesmo zoom do frame.** `_labels_grid` e `_fetch_labels` passam a aceitar
+   `zoom_bump` e o chamador repassa o mesmo do fundo; `_LABELS_ZOOM_BUMP` vai de `1` para `0`.
+   O tamanho do texto passa a ser governado pelo `text-size` do estilo — onde dá para controlar.
+3. **CARTO sai do caminho.** `_LABELS_TILE_URL` (hardcode do Voyager Only-Labels) vira
+   `API_BASEMAP_LABELS_URL`, **sem default**: sem a env var não há overlay. A atribuição passa a
+   ser resolvida em runtime — `(c) OpenStreetMap - OpenMapTiles` no self-host,
+   `(c) OpenStreetMap, (c) CARTO` no fallback Voyager — e o Municipal **delega** a mesma função,
+   para os dois relatórios não divergirem de rodapé (foi o que aconteceu entre o -02 e o -03).
+
+**Critérios de aceite:**
+- Nome de rua/avenida legível por cima do choropleth nos 4 mapas de calor. `[GATE VISUAL]`
+- Rodapé sem `CARTO` quando `API_BASEMAP_TILES_URL` está definida.
+- Teste numérico travando a densidade do mosaico em ≤ 3x a do frame (piso do `@2x`).
+- Nenhum tile de terceiro requisitado em produção.
+
+**Fora de escopo (segue aberto):** os painéis Socioeconomia e Residual Fitness (5 km) continuam
+sem overlay — eles passam por `_render_camada_residual_hex`, que nunca recebeu `labels`. É o
+limite conhecido registrado no BLK-RELPON-07 e não muda aqui.
+
+**Guardrail.** §5 READ-ONLY M1: só RENDER. Não toca score, pesos, interseção censitária, raio de
+análise, carteira, plano nem artefatos oficiais.
+
+---
