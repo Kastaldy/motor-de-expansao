@@ -10545,3 +10545,165 @@ oficiais com mtime de 2026-06-10.
 isso o hook versionado não entra em vigor e o `post-checkout` divergente continua ativo. (3) Tocar
 `pyproject.toml` faz o merge **republicar a imagem da API/bot no GHCR** (`ci.yml:236`) — não é deploy;
 deploy segue manual por digest (§6).
+
+---
+
+### BLK-MA-02 — Materializador de snapshots semanais + extrator de churn/staleness (sinais S3/S4)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (cria **pipeline de ingestão novo**, **persiste dado derivado de fonte real com PII na origem** sob requisito anti-PII (D7/DEC-012), **apaga arquivos em disco** na poda de retenção e é o módulo que o BLK-MA-06 pluga no cron de produção. **READ-ONLY sobre o M1** — não toca `score_priorizacao`, `hex_score_estrutural`, pesos, carteira, plano nem artefato oficial; **sem DEC nova**, contrato §14). |
+| **Prioridade** | Alta — é o primeiro bloco com código de produção da epic e destrava BLK-MA-04/05. |
+| **Esteira** | Block Orchestrator → Planner → `[gate humano de ENGENHARIA — chave do snapshot, layout de partição, fronteira anti-PII]` → Builder → QA. |
+| **Status** | Em execução (ciclo 2026-07-29). |
+| **Depende de** | BLK-MA-01 (contrato `docs/vulnerabilidade_ma_contrato.md`, §6 e §13). **Não** depende de dado real: valida-se só com fixtures sintéticas. |
+| **Autonomia** | **manual (NÃO loop-safe)** — criticidade Alta, ingestão de fonte com PII na origem e edição de `tasks/backlog.md` (governança). NUNCA marcar loop-safe. |
+
+**Contexto.** O contrato §6 (D2) define churn (S3) e staleness (S4) a partir do **diff de snapshots
+semanais** dos coletores. Verificação no repositório em 2026-07-29:
+`data/staging/snapshots_concorrentes/` **não existe** e **nada no repo o gera** — a string só aparece
+em `docs/vulnerabilidade_ma_contrato.md`. O `run_weekly_90.sh` atualiza os CSVs crus **sem arquivar
+nada por estabelecimento** (`docs/infra_producao.md:136-149`), e os CSVs são **sobrescritos** a cada
+coleta: toda semana não fotografada é perdida para sempre. Além disso, o feed onde vivem os
+independentes (TotalPass/WellHub) é **mensal e ainda pendente** (`infra_producao.md:186`, DEC-013 §7.3).
+Logo o produtor do insumo precisa nascer neste bloco.
+
+**Objetivo.** Criar o pacote paralelo `src/motor_expansao/vulnerabilidade/` com (a) o
+**materializador** — CSV cru → limpeza de ruído auditável → chave estável → `hash_campos_raspados` →
+partição `data/staging/snapshots_concorrentes/semana=AAAA-SS/parte-*.parquet` (gitignored) — e (b) o
+**extrator** — série de partições → `status_churn`, `semanas_sem_mudanca`, `flag_serie_imatura`,
+`flag_staleness_interpretavel`.
+
+**Escopo permitido.** Pacote novo com 4 módulos (`__init__.py`, `contrato.py`, `snapshots.py`,
+`churn_staleness.py`); testes em `tests/unit/vulnerabilidade/` com fixtures **100% sintéticas** em
+`tmp_path`; retenção rolante de 26 semanas; extensão de `_DENY_GOVERNANCA` do `loop_guard` ao pacote
+novo; emendas de prosa ao contrato (§6 payload de 10 colunas; §6/§12 cadência real).
+
+**Fora de escopo.** `score_vulnerabilidade`, `v3`/`v4`, normalização percentil e pesos → **BLK-MA-04**.
+Presença em agregador e universo nomeado → **BLK-MA-03**. Rating in-app → **BLK-MA-08**. Cruzamento
+com hex quente e entregável comercial → **BLK-MA-05**. Plug no cron/VPS e runbook → **BLK-MA-06**.
+`normalizar_concorrentes.py` e `calcular_colunas_mercado.py` (`_DENY_CRITICO`) — leitura como molde,
+**nunca** alteração nem import. Nenhuma alteração em `.gitignore` (`data/staging/*` já cobre).
+
+**Critérios de aceite.** Pacote isolado provado por teste de import via AST (sem `pipelines.m1`,
+`dashboard`, `api`, `censo`, `config` raiz, `normalizar_concorrentes`); snapshot com exatamente as
+10 colunas do contrato, dtypes coagidos e `_assert_schema` que falha em coluna extra/faltante, chave
+vazia, hex fora de res-7 ou chave duplicada; **anti-PII provado relendo o Parquet do disco** (nenhuma
+coluna de PII, e o nome sintético injetado ausente até nos bytes do arquivo); partição por semana ISO
+usando `iso_year` (fronteira `2027-01-01` → `2026-53`) e idempotente ao rodar duas vezes; limpeza de
+ruído com auditoria **só de contagens** por `motivo_descarte`; `hash_campos_raspados` insensível a
+`data_coleta`/`slug` e à ordem das modalidades, sensível a mudança real; estabilidade do `slug`
+medida e rebaixamento de chave auditável via `chave_origem`; os 4 estados de churn assertados em
+fixture de ≥10 semanas; **gap de feed (por `fonte` e por `(fonte, rede)`) não vira churn**;
+`semanas_sem_mudanca` conta semanas observadas e reseta na mudança; poda remove só diretórios
+`semana=` e nunca é chamada por `materializar(escrever=False)`; nenhum teste lê fonte real; CSV de
+fixture com `sep=";"`/`utf-8-sig`; identificadores 100% ASCII; `loop_guard` sem `CRITICO`; suíte sem
+regressão sobre a baseline de **2056** testes coletados.
+
+---
+
+## Fechamento de ciclo — BLK-MA-02 (Materializador de snapshots semanais + extrator de churn/staleness)
+
+**Data:** 2026-07-29 · **Veredito:** APROVADO COM RESSALVAS (0 críticos · 3 médios · 6 menores) ·
+**Criticidade:** Alta · **Esteira:** Block Orchestrator (Opus) -> Planner (Opus) -> [gate humano de
+engenharia — Vinicius] -> Builder (Opus) -> QA (Opus). **READ-ONLY sobre o M1** e **anti-PII por
+construção** (DEC-012). **SEM DEC nova** (contrato §14: o Plano B não tem API externa).
+
+**Entregável.** Pacote paralelo novo `src/motor_expansao/vulnerabilidade/` (`__init__.py`,
+`contrato.py` puro sem I/O, `snapshots.py` materializador, `churn_staleness.py` extrator) + **129
+testes** em `tests/unit/vulnerabilidade/` com fixtures 100% sintéticas em `tmp_path`. Entrega o
+caminho ponta a ponta dos sinais S3 (churn) e S4 (staleness): CSV cru dos coletores -> limpeza de
+ruído -> partição `data/staging/snapshots_concorrentes/semana=AAAA-SS/parte-*.parquet` (gitignored)
+-> `status_churn` / `semanas_sem_mudanca` / flags de maturidade. O extrator **para** no estado de
+churn — `v3`/`v4`, normalização, pesos e `score_vulnerabilidade` são BLK-MA-04.
+
+**Escopo decidido antes da esteira (E1/E2, Vinicius 2026-07-29):** E1 = materializador **+** extrator
+(a §13 do contrato já põe a limpeza de ruído, que opera sobre o feed CRU, dentro deste bloco, logo
+ele necessariamente atravessa a fronteira CSV->snapshot); E2 = o ciclo escreve o bloco BLK-MA-02
+estruturado no backlog (ele só existia como uma linha da decomposição do epic), assumindo o modo
+MERGE-HUMANO daí decorrente.
+
+**Achado que derrubou uma premissa do contrato (Block Orchestrator, verificado no repo).** O feed
+onde vivem os independentes (WellHub/TotalPass) **não roda em cron nenhum**: está como *"Pendentes
+(futuro)"* com cadência prevista **mensal** (`docs/infra_producao.md:186`,
+`docs/decisions/DEC-013.md:7`). O cron semanal atualiza só `Unidades/unidades_<rede>.csv`
+(**cadeias**) e **sobrescreve** os CSVs; o único histórico é `historico_contagem.csv`, por rede. Logo
+a afirmação do contrato §6 de que "o cron acumula snapshots desde ~26/06/2026" era **factualmente
+falsa** — havia **zero** semanas de série por estabelecimento.
+
+**Dois defeitos reais achados pelo Planner e corrigidos antes de qualquer código:**
+- **P1 — a partição não pode sair do `data_coleta` da linha.** Coletor que falha mantém o CSV antigo
+  (`infra_producao.md:181-182`), então aquelas linhas chegam com `data_coleta` de semanas atrás; com
+  `existing_data_behavior="delete_matching"`, uma execução de hoje **apagaria uma semana passada** e
+  a substituiria por um punhado de linhas da rede que falhou — perda irreversível, já que os CSVs
+  crus são sobrescritos. Corrigido: `semana` = semana ISO da **data de referência da execução**;
+  `snapshot_date` continua sendo o `data_coleta` por linha.
+- **P2 — o gap de feed é por `(fonte, rede)`, não por `fonte`.** O feed `unidades` é um CSV por rede;
+  se o coletor da `selfit` falhar, a fonte `unidades` ainda tem linhas das outras redes, e uma regra
+  fonte-level marcaria a rede inteira como `sumiu_recente`. Falso churn em massa no sinal de maior
+  peso (S3 ~ 0,467).
+
+**Gate humano de engenharia (2026-07-29, Vinicius) — três decisões ratificadas:**
+- **D3 — chave própria, `slug` visível.**
+  `chave_snapshot = sha1("hash_estavel|<fonte>|<rede>|<nome_normalizado>|<hex_id_res7>")` e, quando o
+  `slug` for confiável, `sha1("slug|<fonte>|<slug_normalizado>")` — **sempre** sha1 hex de 40 chars
+  nos dois ramos. O `concorrente_id` de produção foi **descartado como chave de churn**: `lat:.6f` ~
+  **11 cm**, então qualquer re-geocodificação vira 1 falso `sumiu_recente` + 1 falso `novo`. Ele fica
+  na linha só para rastreabilidade, com a fórmula **replicada** (nunca importada de
+  `normalizar_concorrentes.py`, que é `_DENY_CRITICO`) e o limite documentado: só casa com
+  `concorrentes_mapeados.parquet` para `fonte == "unidades"`. Colisões são **COLAPSADAS**, nunca
+  desambiguadas por ordinal (o ordinal depende da ordem de leitura do CSV e re-chavearia toda
+  semana). A alternativa opaca (`flag_slug_presente`) foi **recusada**.
+- **D5 — guarda alargada.** `_DENY_GOVERNANCA` do `scripts/loop_guard.py` passa a
+  `^src/motor_expansao/(lifetime|demanda_revelada|vulnerabilidade)/` + 1 caso em
+  `tests/unit/test_loop_guard_paths.py`. Sem isso, um PR que tocasse só o pacote novo seria
+  classificado `LIMPO` apesar de mexer em camada com PII na origem.
+- **D6 — contrato emendado (§6/§12) + decisão de produto.** Removida a afirmação falsa; registrados
+  os dois relógios e a equivalência "**8 snapshots = ~8 MESES** na cadência real" (`MIN_SEMANAS=8` e
+  `STALE_SEMANAS=12` contam semanas **observadas**, e foram especificados assumindo feed semanal);
+  decidido que o **BLK-MA-06 pluga** o materializador no `run_weekly_90.sh` para o feed `unidades`
+  (ressalva: dá série de CADEIAS, não do universo-alvo de independentes — o valor é de engenharia e
+  de mercado/residual); registrado que o **cron MENSAL dos agregadores é caminho crítico do
+  BLK-MA-04/05**. `MIN_SEMANAS`/`STALE_SEMANAS` **intocados** (valores do gate de 2026-07-23).
+- D1, D2, D4, D7 fechadas pelo Planner sem objeção do gate.
+
+**Defeito corrigido dentro do ciclo (pelo Builder):** `taxa_slug_com_uuid` era medida sobre o slug
+**normalizado** (onde o `-` já virou espaço), zerando em silêncio justamente a métrica que detecta
+UUID rotativo. Passou a ler o slug cru, travado por teste.
+
+**Validações re-executadas pelo QA, sem bypass:** suíte **COMPLETA** serial (como o CI, `ci.yml:60`)
+-> `1 failed, 2183 passed, 2 skipped in 1477.77s (24m37s)`, **2186 coletados** = baseline **2056** +
+130. A única falha é a **pré-existente**
+`test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime` (BLK-FIX-LTV-01), que roda o
+`run()` do `lifetime` sobre os Parquets reais do M1 e não tem relação com este bloco. `ruff check .`
+limpo; `loop_guard` sobre o diff real = 6 violações, **todas `governanca`, ZERO `critico`**;
+`garimpeiro_select_block.py` devolve `BLK-FIX-LTV-01` (o bloco **não** entra no loop); `backlog.md`
+com **0 CRLF** (DEC-017). O QA ainda rodou sondas adversariais próprias, fora do conjunto de testes
+do Builder.
+
+**Ressalvas registradas (viraram `BLK-MA-02-FU1`, Média, manual, no backlog):** (1)
+`flag_troca_chave_na_serie` mede "origens MISTAS no escopo", não "a chave trocou ao longo da série"
+-> nasce permanentemente `True` e entregaria um sinal morto ao BLK-MA-04 (é a fórmula que o Planner
+especificou e o gate não vetou, não desvio do Builder); (2) vazamento **transitivo** de import — o
+pacote carrega `motor_expansao.dashboard.*` + `sklearn`/`scipy` em 7,5 s via o `__init__` do
+`demanda_revelada`, o que não fere o READ-ONLY mas é **bloqueante para o BLK-MA-06** plugar no cron;
+(3) seis menores (partição vazia, parâmetro morto, `assert` de runtime para
+`CAMPOS_NUNCA_HASHEADOS`, prosa sem acento em 2 arquivos de teste, drift no §14/D2 do contrato,
+`argparse`/`--dry-run` no `__main__`).
+
+**Pendências fora deste bloco.** (a) O `Depende de` explícito do cron mensal dos agregadores no
+**BLK-MA-04** não pôde ser registrado: o BLK-MA-04 ainda não existe como bloco estruturado no
+backlog (só como linha da decomposição do epic) — o §12 do contrato já o registra como caminho
+crítico. (b) **Achado de tooling:** `pytest-xdist 3.8.0` está **inutilizável** neste ambiente
+(Windows + Python 3.14) — qualquer `-n N`, mesmo com 1 arquivo, aborta em `OSError: [WinError 6]`.
+Não afeta o CI (serial), mas invalida a recomendação de `pytest -n auto` do
+`prompts/qa_analyzer.md` para qualquer QA rodando local.
+
+**Correção de bookkeeping:** o Builder afirmou que "CA-15 e CA-16 não são enumerados em lugar nenhum
+do handoff"; eles **estão**, no handoff do Block Orchestrator
+(`context/handoff/20260729-121047-block-orchestrator.md:217` e `:220`) — CA-15 = "READ-ONLY sobre o
+M1, provado pelo diff" (o `loop_guard` é só a segunda metade) e CA-16 = "suíte sem regressão". Ambos
+comprovados; a inferência apressada não mudou o resultado.
+
+**Snapshots de handoff (versionados):** `20260729-121047-block-orchestrator.md` ·
+`20260729-123146-planner.md` · `20260729-130703-builder.md` · `20260729-134525-qa.md`.
