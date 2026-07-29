@@ -22,6 +22,7 @@ import pytest
 
 from motor_expansao.vulnerabilidade import churn_staleness as mchurn
 from motor_expansao.vulnerabilidade import contrato as c
+from motor_expansao.vulnerabilidade import presenca_agregador as mpresenca
 from motor_expansao.vulnerabilidade import snapshots as m
 
 REF = date(2026, 7, 29)  # semana ISO 2026-31
@@ -168,12 +169,16 @@ def test_isolamento_imports() -> None:
     """Pacote DISJUNTO: nenhum import pode casar M1/dashboard/api/censo/config raiz.
 
     O AST olha os IMPORTS reais, nunca a prosa do docstring (que cita os caminhos proibidos como
-    guardrail). `normalizar_concorrentes` entra na lista: e `_DENY_CRITICO` do loop_guard e a sua
-    formula foi REPLICADA no `contrato`, jamais importada.
+    guardrail). `normalizar_concorrentes` entra na lista: é `_DENY_CRITICO` do loop_guard e a sua
+    fórmula foi REPLICADA no `contrato`, jamais importada.
+
+    Esta tupla é a garantia COMPARTILHADA do pacote; ela **não** proíbe `demanda_revelada` (nem
+    poderia: `snapshots.py` o importa). A proibição específica do módulo do sinal 1 vive em
+    `test_presenca_agregador.py::test_modulo_nao_importa_demanda_revelada`.
     """
     import motor_expansao.vulnerabilidade as pacote
 
-    for modulo in (pacote, c, m, mchurn):
+    for modulo in (pacote, c, m, mchurn, mpresenca):
         tree = ast.parse(inspect.getsource(modulo))
         nomes: list[str] = []
         for node in ast.walk(tree):

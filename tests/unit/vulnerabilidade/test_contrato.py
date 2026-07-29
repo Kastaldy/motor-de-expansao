@@ -103,19 +103,30 @@ def test_identificadores_do_contrato_sao_ascii() -> None:
     alvos: list[str] = [
         *c.CONTRATO_COLUNAS_SNAPSHOT.keys(),
         *c.CONTRATO_COLUNAS_CHURN.keys(),
+        *c.CONTRATO_COLUNAS_PRESENCA_AGREGADOR.keys(),
         *c.MOTIVOS_DESCARTE,
         *c.STATUS_CHURN_VALIDOS,
         *sorted(c.FONTES_VALIDAS),
+        *c.FONTES_AGREGADORES,
         *sorted(c.CHAVE_ORIGEM_VALIDAS),
         *sorted(c.COLUNAS_PII_PROIBIDAS),
         *c.BBOX_UF.keys(),
         c.VERSAO_CONTRATO_SNAPSHOT,
         c.VERSAO_CONTRATO_CHURN,
+        c.VERSAO_CONTRATO_PRESENCA_AGREGADOR,
+        c.CATEGORIA_INDEPENDENTE,
         c.COLUNA_PARTICAO,
     ]
     for valor in alvos:
         assert valor.isascii(), f"identificador com caractere fora de ASCII: {valor!r}"
         assert valor == valor.strip()
+
+
+def test_fontes_agregadores_e_subconjunto_de_fontes_validas() -> None:
+    """O sinal 1 vive só nos AGREGADORES: a fonte `unidades` é o feed de cadeias, nunca entra."""
+    assert set(c.FONTES_AGREGADORES) < c.FONTES_VALIDAS
+    assert "unidades" not in c.FONTES_AGREGADORES
+    assert c.FONTES_AGREGADORES == ("totalpass", "wellhub"), "a ORDEM é canônica, não incidental"
 
 
 def test_motivos_de_descarte_sao_os_seis_do_contrato() -> None:

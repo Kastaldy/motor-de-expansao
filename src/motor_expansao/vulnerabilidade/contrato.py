@@ -33,6 +33,7 @@ from datetime import date
 # --------------------------------------------------------------------------- #
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v1"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v1"
+VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -63,6 +64,19 @@ RE_UUID = re.compile(
 FONTES_VALIDAS: frozenset[str] = frozenset({"totalpass", "wellhub", "unidades"})
 CHAVE_ORIGEM_VALIDAS: frozenset[str] = frozenset({"slug", "hash_estavel"})
 STATUS_CHURN_VALIDOS: tuple[str, ...] = ("novo", "estavel", "piscando", "sumiu_recente")
+
+# ORDEM CANÔNICA do `fontes_presentes_no_hex` (molde de domínio-tupla: `STATUS_CHURN_VALIDOS`) —
+# a string do sinal 1 é montada iterando ESTA tupla, nunca um `set`, para ser determinística.
+# Subconjunto PRÓPRIO de `FONTES_VALIDAS`: a fonte `unidades` é o feed de CADEIAS e nunca entra no
+# universo do sinal 1 (BLK-MA-03).
+FONTES_AGREGADORES: tuple[str, ...] = ("totalpass", "wellhub")
+
+# REPLICADA de `demanda_revelada/classificacao_rede_menor.py:58`, NUNCA importada: aquele pacote é
+# reexportado inteiro pelo seu `__init__`, e importá-lo daqui criaria uma SEGUNDA aresta para o
+# vazamento transitivo que o `BLK-MA-02-FU1` (Item 2) vai fechar removendo UMA dependência. Não é
+# ganho de tempo de import (o `__init__` deste pacote já paga o custo via `snapshots.py`): é não
+# multiplicar o débito. Travada contra drift por teste, não por confiança.
+CATEGORIA_INDEPENDENTE = "independente"
 
 # (lat_min, lat_max, lng_min, lng_max) - MESMOS valores de `normalizar_concorrentes.py:24-25`,
 # REPLICADOS de propósito (aquele arquivo é `_DENY_CRITICO` do loop_guard: molde de leitura,
@@ -208,6 +222,29 @@ CONTRATO_COLUNAS_CHURN: dict[str, str] = {
     "flag_staleness_interpretavel": "bool",
     "flag_troca_chave_na_serie": "bool",
     "versao_contrato": "string",
+}
+
+# Sinal 1 (presença em agregador), hex-level: 10 colunas, nesta ORDEM. Uma linha por
+# `hex_id_res7`. `v1`/`v2`/`score_vulnerabilidade`/`n_sinais_disponiveis`/`flag_score_provisorio`
+# estão AUSENTES DE PROPÓSITO — são BLK-MA-04 (e o `v2`, BLK-MA-08).
+#
+# GRANULARIDADE (emenda BLK-MA-03 ao §8.1 do contrato do epic, ratificada em 2026-07-29): o §8.1
+# descrevia `v1` POR ACADEMIA, mas a chave do snapshot embute a `fonte` (`chave_do_slug` e
+# `chave_hash_estavel`), logo a mesma academia em TotalPass e WellHub é sempre DUAS chaves e
+# "quantos agregadores cobrem esta linha" seria constante `1` — sinal sem variância. O sufixo
+# `_no_hex` das colunas 2 e 3 é deliberado: ele carrega essa ressalva até todo consumidor futuro,
+# depois do join `many_to_one` do BLK-MA-04.
+CONTRATO_COLUNAS_PRESENCA_AGREGADOR: dict[str, str] = {
+    "hex_id_res7": "string",                          # a chave (anti-PII, DEC-012) e o join
+    "fontes_presentes_no_hex": "string",              # subconjunto de FONTES_AGREGADORES, `,`
+    "n_agregadores_no_hex": "int64",                  # {1, 2} — nunca 0 (ver docstring do módulo)
+    "n_academias_independentes_totalpass": "int64",   # chaves distintas de TP no hex
+    "n_academias_independentes_wellhub": "int64",     # chaves distintas de WH no hex
+    "semana_ultima_observacao_totalpass": "string",   # relógio do PIPELINE (nulo sse contagem 0)
+    "semana_ultima_observacao_wellhub": "string",     # idem, WellHub
+    "snapshot_date_ultimo_totalpass": "string",       # relógio do COLETOR (nulo sse contagem 0)
+    "snapshot_date_ultimo_wellhub": "string",         # idem, WellHub
+    "versao_contrato": "string",                      # carimbo; mudança = descontinuidade de série
 }
 
 # Colunas PROIBIDAS nos artefatos desta camada (rede de segurança do teste anti-PII: a limpeza é
@@ -435,6 +472,7 @@ def concorrente_id_producao(rede: object, nome: object, lat: object, lng: object
 __all__ = [
     "VERSAO_CONTRATO_SNAPSHOT",
     "VERSAO_CONTRATO_CHURN",
+    "VERSAO_CONTRATO_PRESENCA_AGREGADOR",
     "H3_RES_CONTRATO",
     "MIN_SEMANAS",
     "STALE_SEMANAS",
@@ -445,6 +483,8 @@ __all__ = [
     "RE_SEMANA",
     "RE_UUID",
     "FONTES_VALIDAS",
+    "FONTES_AGREGADORES",
+    "CATEGORIA_INDEPENDENTE",
     "CHAVE_ORIGEM_VALIDAS",
     "STATUS_CHURN_VALIDOS",
     "ENVELOPE_BRASIL",
@@ -458,6 +498,7 @@ __all__ = [
     "CAMPOS_NUMERICOS",
     "CONTRATO_COLUNAS_SNAPSHOT",
     "CONTRATO_COLUNAS_CHURN",
+    "CONTRATO_COLUNAS_PRESENCA_AGREGADOR",
     "COLUNAS_PII_PROIBIDAS",
     "normalizar_texto",
     "normalizar_lista",

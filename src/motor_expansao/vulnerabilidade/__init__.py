@@ -6,10 +6,11 @@ Pacote DISJUNTO (BLK-MA-02 / DEC-012): NUNCA importa de `pipelines/m1/`, `censo_
 `pipelines/calcular_colunas_mercado.py` são `_DENY_CRITICO` do `loop_guard`: molde de leitura
 apenas — a fórmula do `concorrente_id` está REPLICADA em `contrato.py`, nunca importada.
 
-Fronteira dos dois módulos: `snapshots.py` transforma o CSV cru de UMA execução em UMA partição
-`semana=AAAA-SS`; `churn_staleness.py` lê a série dessas partições e devolve o estado de churn.
-O extrator **para** no `status_churn`/`semanas_sem_mudanca` — `score_vulnerabilidade`, `v3`/`v4`,
-normalização e pesos são do BLK-MA-04.
+Fronteira dos módulos: `snapshots.py` transforma o CSV cru de UMA execução em UMA partição
+`semana=AAAA-SS`; `churn_staleness.py` lê a série dessas partições e devolve o estado de churn
+(sinais 3 e 4); `presenca_agregador.py` lê a mesma série e devolve, por `hex_id_res7`, o insumo
+bruto do sinal 1 (presença em TotalPass/WellHub). Os extratores **param** no insumo —
+`score_vulnerabilidade`, `v1`/`v3`/`v4`, normalização e pesos são do BLK-MA-04.
 
 Contrato canônico do epic: `docs/vulnerabilidade_ma_contrato.md`.
 """
@@ -18,15 +19,20 @@ from __future__ import annotations
 
 from .churn_staleness import extrair_churn_staleness
 from .contrato import (
+    CATEGORIA_INDEPENDENTE,
     COLUNAS_PII_PROIBIDAS,
     CONTRATO_COLUNAS_CHURN,
+    CONTRATO_COLUNAS_PRESENCA_AGREGADOR,
     CONTRATO_COLUNAS_SNAPSHOT,
+    FONTES_AGREGADORES,
     MIN_SEMANAS,
     RETENCAO_SEMANAS,
     STALE_SEMANAS,
     VERSAO_CONTRATO_CHURN,
+    VERSAO_CONTRATO_PRESENCA_AGREGADOR,
     VERSAO_CONTRATO_SNAPSHOT,
 )
+from .presenca_agregador import extrair_presenca_agregador
 from .snapshots import (
     SNAPSHOTS_DIR_DEFAULT,
     avaliar_estabilidade_slug,
@@ -56,6 +62,12 @@ __all__ = [
     "SNAPSHOTS_DIR_DEFAULT",
     # Extrator (serie -> churn/staleness)
     "extrair_churn_staleness",
+    # Sinal 1 (presenca em agregador, hex-level)
+    "extrair_presenca_agregador",
+    "CONTRATO_COLUNAS_PRESENCA_AGREGADOR",
+    "VERSAO_CONTRATO_PRESENCA_AGREGADOR",
+    "FONTES_AGREGADORES",
+    "CATEGORIA_INDEPENDENTE",
     # Contrato
     "CONTRATO_COLUNAS_SNAPSHOT",
     "CONTRATO_COLUNAS_CHURN",
