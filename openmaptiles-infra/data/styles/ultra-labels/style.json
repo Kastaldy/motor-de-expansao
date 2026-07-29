@@ -1,8 +1,8 @@
 {
   "version": 8,
-  "name": "Ultra Labels (so rotulos, fundo transparente)",
+  "name": "Ultra Overlay (vias + rotulos, fundo transparente)",
   "metadata": {
-    "ultra:desc": "Estilo SO-DE-ROTULOS servido pelo tileserver proprio, para compor os NOMES de rua/avenida/bairro POR CIMA do choropleth dos mapas de calor. Substitui o tileset only-labels do CARTO (BLK-BASEMAP-06). Sem geometria de fundo: o fundo de ruas vem do estilo `ultra-maptiler`, este aqui so carimba texto.",
+    "ultra:desc": "Overlay TRANSPARENTE composto POR CIMA do choropleth: a MALHA VIARIA em branco (o que orienta a leitura) e, por cima dela, os nomes. Resolve a dor real: o choropleth de setores cobre as ruas do basemap e o mapa vira mancha de cor sem referencia urbana. As vias vem da camada `transportation` (existe ate z14 no mbtiles, ao contrario de `transportation_name`).",
     "ultra:tamanhos": "O texto e' DELIBERADAMENTE maior que o de um basemap de tela. Este mosaico e' buscado no MESMO zoom do frame (bump 0) e depois o PNG de 1280x760 ainda e' reduzido ao entrar no PDF; com os tamanhos de um estilo normal os nomes chegariam ao relatorio com ~3 pt.",
     "ultra:calibragem": "Tamanhos calibrados contra o PREVIEW REAL do frame de 1,5 km (mosaico reduzido ao map_box de 900 px) em 2026-07-29, com `zoom_bump=-1`. Nao sao tamanhos de basemap de tela: o mosaico ainda e ~2,5x mais denso que o PNG final, e o PNG e' reduzido de novo ao entrar no PDF.",
     "ultra:limite-do-dado": "O `brazil.mbtiles` e' z0-14 e no schema OpenMapTiles a camada `transportation_name` so traz nome de via MENOR a partir de z16. O tileserver rasteriza por overzoom, mas nao inventa dado: no frame do relatorio saem BAIRROS e AVENIDAS, nao ruas residenciais. A classe `residential` fica no filtro de proposito — passa a valer sozinha se um dia o mbtiles for regerado com maxzoom >= 16 (custo: horas de processamento e varios GB)."
@@ -20,6 +20,354 @@
       "type": "background",
       "paint": {
         "background-color": "rgba(0,0,0,0)"
+      }
+    },
+    {
+      "id": "via-local-casing",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 10,
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "minor",
+          "residential",
+          "unclassified",
+          "service",
+          "street"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "hsl(0,0%,45%)",
+        "line-opacity": 0.45,
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          1.5,
+          14,
+          3.6,
+          17,
+          6.5
+        ]
+      }
+    },
+    {
+      "id": "via-local",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 10,
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "minor",
+          "residential",
+          "unclassified",
+          "service",
+          "street"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "hsl(0,0%,100%)",
+        "line-opacity": 0.97,
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          1.1,
+          14,
+          2.8,
+          17,
+          5.2
+        ]
+      }
+    },
+    {
+      "id": "via-terciaria-casing",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 10,
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "tertiary"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "hsl(0,0%,45%)",
+        "line-opacity": 0.45,
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          2.2,
+          14,
+          5.4,
+          17,
+          9.5
+        ]
+      }
+    },
+    {
+      "id": "via-terciaria",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 10,
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "tertiary"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "hsl(0,0%,100%)",
+        "line-opacity": 0.97,
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          1.6,
+          14,
+          4.2,
+          17,
+          7.5
+        ]
+      }
+    },
+    {
+      "id": "via-arterial-casing",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 10,
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "secondary",
+          "primary"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "hsl(0,0%,45%)",
+        "line-opacity": 0.45,
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          5,
+          14,
+          11,
+          17,
+          18
+        ]
+      }
+    },
+    {
+      "id": "via-arterial",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 10,
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "secondary",
+          "primary"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "hsl(0,0%,100%)",
+        "line-opacity": 0.97,
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          3.5,
+          14,
+          9,
+          17,
+          15
+        ]
+      }
+    },
+    {
+      "id": "via-expressa-casing",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 10,
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "motorway",
+          "trunk"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "hsl(0,0%,45%)",
+        "line-opacity": 0.45,
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          7,
+          14,
+          15,
+          17,
+          24
+        ]
+      }
+    },
+    {
+      "id": "via-expressa",
+      "type": "line",
+      "source": "openmaptiles",
+      "source-layer": "transportation",
+      "minzoom": 10,
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "motorway",
+          "trunk"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "line-cap": "round",
+        "line-join": "round"
+      },
+      "paint": {
+        "line-color": "hsl(0,0%,100%)",
+        "line-opacity": 0.97,
+        "line-width": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          5,
+          14,
+          12.5,
+          17,
+          20
+        ]
       }
     },
     {
