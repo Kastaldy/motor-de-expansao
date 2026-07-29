@@ -4,6 +4,7 @@ from io import BytesIO
 
 import numpy as np
 import pandas as pd
+import pytest
 from PIL import Image, ImageChops, ImageDraw
 from pyproj import Transformer
 from shapely.geometry import box
@@ -21,6 +22,22 @@ from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS
 
 LAT_C = -23.55
 LNG_C = -46.63
+
+
+@pytest.fixture(autouse=True)
+def _fonte_de_rotulos(monkeypatch):
+    """BLK-BASEMAP-06: o overlay so existe com `API_BASEMAP_LABELS_URL` definida.
+
+    Espelha PRODUCAO, onde a var aponta para o estilo `ultra-labels` do tileserver proprio.
+    Antes a URL do CARTO era hardcode no modulo e os testes de mecanica de tile pegavam
+    carona nela; sem esta fixture eles exercitariam o caminho "sem fonte -> None" e
+    passariam sem testar nada. O teste de atribuicao remove a var de proposito, para
+    cobrir o modo fallback.
+    """
+    monkeypatch.setenv(
+        censo_map._LABELS_TILES_URL_ENV,
+        "http://motor_expansao_tileserver:8080/styles/ultra-labels/{z}/{x}/{y}@2x.png",
+    )
 
 # BLK-RELPON-13: `socioeconomia` passou a ser HEXAGONO H3 a 5 km (score_setor_2022_calibrado),
 # CONDICIONAL ao `hexes_df` como o `residual` — sem hexes desenhaveis a chave e' AUSENTE. Junto
@@ -1354,7 +1371,7 @@ def _fake_basemap_cinza(bounds, _width, *, zoom_bump=None):
     return Image.new("RGBA", (256, 256), (235, 235, 235, 255)), (minx, maxx, miny, maxy)
 
 
-def _fake_labels_magenta(bounds, _width):
+def _fake_labels_magenta(bounds, _width, **_kwargs):  # **_kwargs: aceita `zoom_bump=`
     minx, miny, maxx, maxy = bounds
     return Image.new("RGBA", (256, 256), (*_ROTULO_MAGENTA, 255)), (minx, maxx, miny, maxy)
 
@@ -1424,17 +1441,75 @@ def test_basemap_source_ignora_env_vazia(monkeypatch):
     assert censo_map._basemap_source(_FakeCtx()) == "provider-voyager-sentinela"
 
 
-def test_atribuicao_do_pontual_credita_osm_e_carto_nos_dois_modos(monkeypatch):
-    # No Pontual o credito NAO muda com o self-host: o dado do tileserver e' OpenStreetMap e os
-    # ROTULOS continuam vindo do CARTO (`_LABELS_TILE_URL`, BLK-RELPON-07) -> os dois sao devidos.
-    assert censo_map._ATRIBUICAO_TILES == "(c) OpenStreetMap, (c) CARTO"
-    assert "cartocdn.com" in censo_map._LABELS_TILE_URL
+def test_atribuicao_do_pontual_segue_a_fonte_real_de_cada_modo(monkeypatch):
+    """BLK-BASEMAP-06: credita quem SERVIU tile, e o CARTO deixou de servir no self-host.
+
+    Antes este teste fixava o credito duplo "nos dois modos", porque os rotulos vinham do
+    CartoDB Voyager Only-Labels mesmo com o tileserver proprio no ar. Agora os rotulos saem do
+    estilo `ultra-labels` do proprio tileserver, entao no self-host nenhum tile do CARTO e'
+    consumido — creditar seria credito FALSO. No fallback (sem a env var) o fundo ainda e'
+    Voyager e o credito duplo continua devido.
+    """
+    monkeypatch.delenv(censo_map._BASEMAP_TILES_URL_ENV, raising=False)
+    assert censo_map._atribuicao_tiles() == "(c) OpenStreetMap, (c) CARTO"
+
+    monkeypatch.setenv(
+        censo_map._BASEMAP_TILES_URL_ENV,
+        "http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png",
+    )
+    assert censo_map._atribuicao_tiles() == "(c) OpenStreetMap - OpenMapTiles"
+    assert "CARTO" not in censo_map._atribuicao_tiles()
+
+    # E o CARTO nao pode voltar por default nenhum: sem env de rotulos, nao ha overlay.
+    monkeypatch.delenv(censo_map._LABELS_TILES_URL_ENV, raising=False)
+    assert censo_map._labels_tiles_url() is None
+    assert censo_map._fetch_labels((-5_200_000.0, -2_800_000.0, -5_195_000.0, -2_795_000.0), 800) is None
 
 
 # ── BLK-BASEMAP-03 (emenda DEC-004): grade de tiles e cache do overlay de rótulos ───────────
 # O achado MÉDIA da revisão do PR #154 era exatamente isto: os 2 testes de overlay acima fazem
 # monkeypatch de `_fetch_labels` INTEIRA, então a aritmética Web Mercator -> índice de tile e o
 # caminho de rede/cache nunca eram exercitados. Aqui eles são, sem rede.
+
+
+def test_rotulos_saem_na_mesma_escala_do_frame_e_nao_viram_subpixel():
+    """BLK-BASEMAP-06 — o defeito que deixou os nomes INVISIVEIS por dois ciclos.
+
+    O overlay era buscado somando `_BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP` FIXOS, ignorando o
+    bump que o chamador tinha usado no fundo. No piloto (que busca o fundo com `zoom_bump=0`) os
+    rotulos saiam DOIS niveis acima: medido em producao em 2026-07-29, o mosaico ficava a
+    3,349 px/m contra 0,1636 px/m do frame — reducao de 20,5x, e um texto de 11 px chegava ao PNG
+    final com 0,54 px. O mapa saia sem nome nenhum e ninguem via erro: `_fetch_labels` devolvia um
+    mosaico VALIDO, so que ilegivel.
+
+    Trava numerica: com o mesmo bump do fundo, o mosaico nao pode passar de 3x a densidade do
+    frame. O piso NAO e' 1:1 — os tiles sao `@2x` (512 px para um tile logico de 256), o que
+    dobra a densidade de PROPOSITO para o texto sair nitido apos o resize, e a grade de tiles e'
+    discreta, o que soma mais um resto. Medido com o conserto: 2,3x. O defeito media 20,5x, entao
+    o limite de 3x pega a regressao com folga de quase 7x.
+    """
+    # Frame canonico do Pontual: 5,5 km de largura renderizados em 1000 px.
+    largura_px = 1000
+    meia = 2750.0
+    bounds = (-5_200_000.0, -2_800_000.0, -5_200_000.0 + 2 * meia, -2_800_000.0 + 2 * meia)
+
+    zoom, tx0, tx1, ty0, ty1, tile_m = censo_map._labels_grid(bounds, largura_px, zoom_bump=0)
+    ex_minx, ex_maxx, _ex_miny, _ex_maxy = censo_map._labels_extent(tx0, tx1, ty0, ty1, tile_m)
+
+    # 512 px por tile (@2x) — o mesmo que `_labels_tile` baixa.
+    px_mosaico = (tx1 - tx0 + 1) * 512
+    densidade_mosaico = px_mosaico / (ex_maxx - ex_minx)   # px por metro
+    densidade_frame = largura_px / (bounds[2] - bounds[0])
+
+    assert densidade_mosaico / densidade_frame <= 3.0, (
+        f"mosaico {densidade_mosaico:.3f} px/m contra frame {densidade_frame:.4f} px/m "
+        f"-> reducao de {densidade_mosaico / densidade_frame:.1f}x; o texto some no resize"
+    )
+
+    # E o bump do chamador tem de ser REALMENTE respeitado (era ignorado antes).
+    zoom_com_bump_1, *_ = censo_map._labels_grid(bounds, largura_px, zoom_bump=1)
+    assert zoom_com_bump_1 == zoom + 1
+    assert censo_map._LABELS_ZOOM_BUMP == 0
 
 
 def test_labels_grid_cobre_o_bbox_pedido():

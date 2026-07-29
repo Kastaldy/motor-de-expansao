@@ -47,6 +47,11 @@ services:
       # Opcional: SEM ela o basemap cai no CartoDB Voyager de antes, sem quebrar nada.
       #   API_BASEMAP_TILES_URL=http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png
       API_BASEMAP_TILES_URL: ${API_BASEMAP_TILES_URL:-}
+      # Rotulos (nomes de rua/avenida/bairro) compostos POR CIMA do choropleth, do MESMO
+      # tileserver — estilo `ultra-labels` (BLK-BASEMAP-06). Sem esta var NAO ha overlay e os
+      # mapas de calor saem sem nome nenhum; nao ha mais fallback para o CARTO.
+      #   API_BASEMAP_LABELS_URL=http://motor_expansao_tileserver:8080/styles/ultra-labels/{z}/{x}/{y}@2x.png
+      API_BASEMAP_LABELS_URL: ${API_BASEMAP_LABELS_URL:-}
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro
       - /opt/motor-expansao/data/staging:/app/data/staging:ro    # overlays do Mapa Territorial (vazios competitivos)
@@ -100,6 +105,11 @@ services:
       # servico streamlit — os dois relatorios saem da mesma caixa e apontar para tileservers
       # diferentes so criaria divergencia visual. Opcional; sem ela cai no Voyager de antes.
       API_BASEMAP_TILES_URL: ${API_BASEMAP_TILES_URL:-}
+      # Rotulos (nomes de rua/avenida/bairro) compostos POR CIMA do choropleth, do MESMO
+      # tileserver — estilo `ultra-labels` (BLK-BASEMAP-06). Sem esta var NAO ha overlay e os
+      # mapas de calor saem sem nome nenhum; nao ha mais fallback para o CARTO.
+      #   API_BASEMAP_LABELS_URL=http://motor_expansao_tileserver:8080/styles/ultra-labels/{z}/{x}/{y}@2x.png
+      API_BASEMAP_LABELS_URL: ${API_BASEMAP_LABELS_URL:-}
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro   # censo geo (obrigatorio)
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal (obrigatorio)
@@ -176,6 +186,11 @@ services:
       # versionado por cima do servidor DESLIGARIA o tileserver no piloto, em silencio (o PDF
       # continuaria saindo, pelo CartoDB). Conferido por diff do arquivo real do VPS.
       API_BASEMAP_TILES_URL: ${API_BASEMAP_TILES_URL:-}
+      # Rotulos (nomes de rua/avenida/bairro) compostos POR CIMA do choropleth, do MESMO
+      # tileserver — estilo `ultra-labels` (BLK-BASEMAP-06). Sem esta var NAO ha overlay e os
+      # mapas de calor saem sem nome nenhum; nao ha mais fallback para o CARTO.
+      #   API_BASEMAP_LABELS_URL=http://motor_expansao_tileserver:8080/styles/ultra-labels/{z}/{x}/{y}@2x.png
+      API_BASEMAP_LABELS_URL: ${API_BASEMAP_LABELS_URL:-}
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro    # censo geo + enriquecido + base_calibracao
       - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + renda domiciliar
