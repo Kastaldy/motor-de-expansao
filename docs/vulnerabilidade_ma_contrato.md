@@ -8,6 +8,7 @@
 > chave própria do snapshot, origem da `semana` e **cadência real** (os dois relógios); seção 12 —
 > plug do materializador no runner semanal e o cron mensal como caminho crítico. Marcadas com
 > `[emenda 2026-07-29]`.
+> **Emenda BLK-MA-03 (2026-07-29):** seção 8.1 — granularidade de v1 (hex, não academia), domínio efetivo e tratamento no §8.2/§8.4. Marcada com [emenda BLK-MA-03].
 > Regra de manutenção: manter curto; a implementação é dos blocos sucessores BLK-MA-02..08 (ver seção 13).
 
 Este documento fixa o contrato dos sinais de vulnerabilidade de concorrentes independentes, a
@@ -110,7 +111,7 @@ vulnerabilidade` (seção 8).
 
 | # | Sinal | Direção ↑vuln | Fonte real | Coluna / artefato | Maturidade | Tratamento n/d / imaturo | Condicional? |
 |---|---|---|---|---|---|---|---|
-| 1 | Presença/ausência em agregadores WellHub/TotalPass | menos agregadores → mais vuln (canal do público low-cost) | ingestão TP/WH (reuso via `fonte`) | derivada da `fonte` do universo raspado | madura (cadência mensal do agregador) | ausência **é** o sinal (0 agregadores); staleness do ativo mensal marcada | Não (obrigatório) |
+| 1 | Presença/ausência em agregadores WellHub/TotalPass | menos agregadores → mais vuln (canal do público low-cost) | ingestão TP/WH (reuso via `fonte`) | derivada da `fonte` do universo raspado | madura (cadência mensal do agregador) | ausência **é** o sinal (0 agregadores) `[ver emenda BLK-MA-03 no §8.1: inalcançável no grão hex]`; staleness do ativo mensal marcada | Não (obrigatório) |
 | 2 | Rating in-app WellHub/TotalPass | nota mais baixa → mais vuln | **NÃO coletado hoje (nenhum coletor emite nota)** | `rating` — **`n/d` até o BLK-MA-08** | inativo até ajuste de coletor | renormaliza para fora (seção 8) | **Sim** — `n/d` (ver seção 7 / D3); reativa via **BLK-MA-08** (ajuste de coletor) |
 | 3 | Churn/permanência (diff de snapshots) | sumiu recente / "piscando" → mais vuln | histórico de snapshots (seção 6) | derivada do `slug`/`concorrente_id` entre semanas | imatura até `MIN_SEMANAS=8` | série imatura → `flag_serie_imatura`, renormaliza (não penaliza) | Não (obrigatório, gated por maturidade) |
 | 4 | Staleness (diff de snapshots) | mais semanas sem mudança → mais vuln | histórico de snapshots (`hash_campos_raspados`) | `semanas_sem_mudanca` | só interpretável após série `>= STALE_SEMANAS=12` | série imatura → renormaliza (não penaliza) | Não (obrigatório, gated por maturidade) |
@@ -233,6 +234,39 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 ### 8.1 Componentes `vi ∈ [0,1]` (`1 = máxima vulnerabilidade`)
 
 - `v1` — presença em agregador: `0` agregadores → `1.0`; `1` → `0.5`; `2` → `0.0`.
+
+> **[emenda BLK-MA-03, 2026-07-29] Granularidade e domínio efetivo de `v1`.** O texto acima descreve
+> `v1` **por academia**. Com o universo NOMEADO (Opção B / D1-B) **deferido** (decisão S1), não existe
+> identidade cross-provider: a chave do snapshot embute a `fonte` (`chave_do_slug` e
+> `chave_hash_estavel`, `vulnerabilidade/contrato.py:395-413`) e o `nome` não é persistido (anti-PII,
+> §11), logo a MESMA academia em TotalPass e WellHub é sempre DUAS chaves distintas e "quantos
+> agregadores cobrem esta linha" seria constante `1` — sinal sem variância. **`v1` passa a ser medido
+> por `hex_id_res7`** (quantos agregadores cobrem o hex) e propagado às academias do hex pelo
+> BLK-MA-04 via join `validate="many_to_one"` (molde do §9/D5).
+> **Viés registrado, não é o mesmo caso do §9/D5:** ali a grandeza propagada (hotness) é intrínseca ao
+> hex; aqui "estar em agregador" é intrínseco à ACADEMIA. Num hex denso em que o TotalPass cobre a
+> academia A e o WellHub cobre a B, o hex lê "2 agregadores" e ambas recebem `v1 = 0.0`, embora cada
+> uma esteja em um só. O erro é sistemático nos hexes densos (que são os hexes-alvo, pela INVERSÃO do
+> §2), mas a sua direção é a segura para um funil de aquisição: **falso negativo** (alvo bom que não
+> sobe no ranking), nunca falso alvo.
+> **O ramo `0` agregadores → `1.0` é inalcançável e VACUOSO nesta granularidade.** TotalPass e WellHub
+> são fontes **só-positivas**: a ausência de linha nunca prova ausência real, só não-observação. E um
+> hex sem nenhuma academia independente observada não tem alvo de M&A para pontuar. O caso
+> informativo — "estava no agregador e saiu" — já é capturado pelo **S3**
+> (`status_churn == "sumiu_recente"`, peso efetivo ≈ 0,467), não por este sinal.
+> **Domínio efetivo de `v1` no Plano B: `{0.0, 0.5}`.** Com peso efetivo `S1 ≈ 0,20`, S1 contribui no
+> máximo **10 dos 100 pontos** do `score_vulnerabilidade`, não 20.
+> **§8.2 — `v1` é CATEGÓRICO:** entra como flag graduado, **NUNCA** por normalização percentil.
+> Percentilizar um binário reescalaria "presente em 1 agregador" para ~1,0 e destruiria a calibração.
+> **§8.4 — `v1` NÃO é renormalizado para fora:** ele não é ausente nem imaturo. **Restrição de produto
+> herdada pelo BLK-MA-04:** enquanto S3/S4 estiverem imaturos (~8–12 meses na cadência real, §6/§12),
+> o §8.4 os renormaliza para fora e **S1 fica sendo o único sinal do score** — sozinho, com peso
+> renormalizado 1,00 e domínio `{0.0, 0.5}`, ele produz `score_vulnerabilidade ∈ {0, 50}`. Um score de
+> dois valores não ordena carteira: o BLK-MA-04 precisa decidir como apresentar isso (banda/flag em vez
+> de ranking) ou o BLK-MA-05 precisa esperar a maturidade de S3.
+> O insumo bruto hex-level é entregue pelo BLK-MA-03 no contrato de coluna `presenca_agregador_v1`
+> (`vulnerabilidade/presenca_agregador.py`), com os sufixos `_no_hex` carregando esta ressalva.
+
 - `v2` — rating in-app (CONDICIONAL, `n/d` no Plano B até o BLK-MA-08): `1 − normaliza(rating)`, ex.:
   `1 − (rating − 1) / (5 − 1)`; `n/d` → renormaliza para fora.
 - `v3` — churn/permanência: sumiu recente → `1.0`; "piscando" (some/reaparece) → `0.7`; estável →
@@ -380,7 +414,7 @@ Ajustada pelo **D3 = Não** (rating não é coletado → sinal 2 depende de ajus
 | Bloco | Escopo | D amarradas |
 |---|---|---|
 | **BLK-MA-02** | Extrator de churn+staleness do histórico de snapshots (100% interno) + **limpeza de ruído** (linhas `0;0`/teste, entradas de tecnologia/onboarding, coords inconsistentes) + flags de série imatura (ramp-up); chave `slug` + `data_coleta`. É o núcleo 100%-reuso do Plano B. | D2 (S3/S4) |
-| **BLK-MA-03** | Presença em agregador (**sinal 1**, reuso via `fonte`) + (opcional/deferido) extensão de **ingestão** para o universo NOMEADO (D1-B, retém `slug`/`nome_estabelecimento`; **só ingestão, SEM ajuste de coletor**); anti-PII por construção; fixtures sintéticas. **Rating (sinal 2) NÃO entra aqui** — depende do BLK-MA-08. | sinal 1 + D1 |
+| **BLK-MA-03** | Presença em agregador (**sinal 1**, reuso via `fonte`) + (opcional/deferido) extensão de **ingestão** para o universo NOMEADO (D1-B, retém `slug`/`nome_estabelecimento`; **só ingestão, SEM ajuste de coletor**); anti-PII por construção; fixtures sintéticas. **Rating (sinal 2) NÃO entra aqui** — depende do BLK-MA-08. Entregue como insumo BRUTO hex-level (contrato `presenca_agregador_v1`); `v1`/pesos são BLK-MA-04. | sinal 1 + D1 |
 | **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. | D4 + D7 |
 | **BLK-MA-05** | Lista priorizada de M&A (cruzamento com o hex quente, D5, **COM a INVERSÃO**) + entregável. | D5 + D6 |
 | **BLK-MA-06** | Integração ao cron semanal da VPS + runbook. | D8 |
