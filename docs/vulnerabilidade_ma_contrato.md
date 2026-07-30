@@ -9,6 +9,7 @@
 > plug do materializador no runner semanal e o cron mensal como caminho crítico. Marcadas com
 > `[emenda 2026-07-29]`.
 > **Emenda BLK-MA-03 (2026-07-29):** seção 8.1 — granularidade de v1 (hex, não academia), domínio efetivo e tratamento no §8.2/§8.4. Marcada com [emenda BLK-MA-03].
+> **Emenda BLK-MA-04 (2026-07-30, gate humano — G-D1/G-D2/G-D3 ratificados):** §8.1 (v3 do estado `novo`), §8.2 (normalização de v4 — razão absoluta), §8.4 (universo do score, bordas de ausência e flags), §8.5 (grão da linha = academia e contrato de coluna). Marcadas com [emenda BLK-MA-04].
 > Regra de manutenção: manter curto; a implementação é dos blocos sucessores BLK-MA-02..08 (ver seção 13).
 
 Este documento fixa o contrato dos sinais de vulnerabilidade de concorrentes independentes, a
@@ -271,6 +272,17 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
   `1 − (rating − 1) / (5 − 1)`; `n/d` → renormaliza para fora.
 - `v3` — churn/permanência: sumiu recente → `1.0`; "piscando" (some/reaparece) → `0.7`; estável →
   `0.0`.
+
+> **[emenda BLK-MA-04, 2026-07-30] `STATUS_CHURN_VALIDOS` tem QUATRO estados, e o texto acima mapeia
+> três.** O quarto é `novo` (`churn_staleness.py`: presente, zero desaparecimentos e série ainda
+> imatura), e ele mapeia para **AUSENTE** — renormaliza S3 para fora —, **nunca para `0.0`**: ler
+> "série curta demais para julgar" como "estável" inverteria o sinal em silêncio, e um `dict` sem a
+> chave `novo` estouraria `KeyError` ou, com `.get(..., 0.0)`, faria exatamente essa leitura errada.
+> O mapa é `V3_POR_STATUS_CHURN` (`vulnerabilidade/contrato.py`), e as suas chaves são **exatamente**
+> os 4 estados de `STATUS_CHURN_VALIDOS` — um 5º estado futuro quebra o teste do contrato em vez de
+> cair num default silencioso. Corolário implementado: "sinal disponível" equivale a "componente não
+> nulo", de modo que `novo` sai do regime em vez de pontuar `0`.
+
 - `v4` — staleness: `min(semanas_sem_mudanca / STALE_SEMANAS, 1)`; série imatura → renormaliza para fora.
 - `v5` (opcional) — tendência de popularidade: inclinação negativa de `membros` / `alunos_parceiras`
   normalizada; entra só quando a série permitir.
@@ -281,6 +293,27 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 
 **Percentil por universo** (robusto a outliers) para os sinais contínuos (rating, staleness,
 popularidade, pressão); flags graduados para os categóricos (S1/S3). Tudo em `[0,1]`, com `↑ = ↑vuln`.
+
+> **[emenda BLK-MA-04, 2026-07-30 — G-D3 ratificado no gate] `v4` é RAZÃO ABSOLUTA, não percentil.**
+> O §8.1 e este §8.2 se contradiziam sobre o `v4` (`min(semanas_sem_mudanca / STALE_SEMANAS, 1)` vs
+> "percentil por universo"). Vale o **§8.1, literalmente**. Motivos, em ordem de peso:
+> 1. **Não-monotonicidade (decisivo).** Percentil-por-universo faria o score deixar de ser monótono
+>    no sinal que ele diz medir: acrescentar ao lote uma academia muito parada **BAIXA** o `v4` de
+>    todas as outras, sem que nada tenha mudado nelas. Um score de vulnerabilidade em que ficar
+>    parado pode reduzir a vulnerabilidade medida de terceiros é indefensável perante o comercial —
+>    e mata a exigência-título do D4 ("**AUDITÁVEL**").
+> 2. **Não-reprodutibilidade.** A régua mudaria a cada execução conforme o universo raspado variasse
+>    (e o universo do percentil seria o subconjunto `flag_staleness_interpretavel`, que muda toda
+>    semana).
+> 3. **Degeneração no ramp-up.** Com poucas observações, `semanas_sem_mudanca` empata quase
+>    totalmente e o percentil vira ruído.
+> 4. **Não há consumidor.** No Plano B, S2 é `n/d` (D3) e S5/S6 estão fora do MVP: `v4` é o único
+>    "contínuo" ativo. A normalização percentil fica **RESERVADA** para quando S1..S6 estiverem todos
+>    ativos, e o bloco que a reativar terá de reabrir esta seção.
+>
+> `v1` e `v3` seguem **CATEGÓRICOS** (flags graduados), como este §8.2 já dizia e a emenda G1
+> reforçou para o `v1`: percentilizar um categórico reescalaria "presente em 1 agregador" para ~1,0 e
+> destruiria a calibração dos pesos.
 
 ### 8.3 Pesos
 
@@ -317,10 +350,64 @@ auditável que imputar um neutro `0,5`. Flags de qualidade obrigatórias:
 - `flag_score_provisorio` — quando S3 **e** S4 estão imaturos e o score depende só de S1 (e S2 quando
   ativo).
 
+> **[emenda BLK-MA-04, 2026-07-30] Universo do score, bordas de ausência e leitura honesta do `0`.**
+>
+> **(i) UNIVERSO DO SCORE — `fonte ∈ FONTES_AGREGADORES` E `rede == independente`.** O frame de churn
+> é um extrator **genérico** e traz o feed `unidades` (CADEIAS, um CSV por rede) e também marcas
+> conhecidas listadas dentro do TotalPass/WellHub. **Sem este filtro o score pontuaria a Smart Fit
+> como alvo de aquisição** (medido em 2026-07-30 sobre fixtures sintéticas). O filtro vive no
+> **score**, não no extrator — o §12 já ratificou plugar o extrator no runner semanal justamente para
+> o feed de cadeias, cujo valor é de engenharia/mercado —, e reusa o predicado do sinal 1
+> (`_filtrar_universo_sinal_1`), porque pelo §3/D1 o universo do sinal 1 e o universo de M&A são o
+> **mesmo conjunto por definição**. É travado duas vezes: no filtro de entrada e no schema de saída.
+>
+> **(ii) `n_sinais_disponiveis == 0` → score NULO, jamais `0`.** `0` significa "não vulnerável" e
+> seria uma afirmação de solidez que ninguém mediu; ausência de evidência é nulo.
+>
+> **(iii) `v1` ausente → renormaliza S1 para fora, nunca imputa.** Uma academia cujo `hex_id_res7` não
+> tem par no sinal 1 recebe `v1` **ausente**. Imputar `0.0` leria "2 agregadores" (falso negativo
+> injetado); `0.5` ou `1.0` inventariam observação. O caso não levanta exceção: é borda prevista, e
+> fica auditável pelo biconditional `v1` nulo ⟺ `n_agregadores_no_hex` nulo ⟺ `"s1"` fora de
+> `sinais_disponiveis`.
+>
+> **(iv) `sinais_disponiveis`** (string com os sinais que entraram, na ordem canônica) passa a
+> acompanhar `n_sinais_disponiveis`: ela torna a renormalização **reconstituível a partir da própria
+> saída**, sem reler o insumo.
+>
+> **(v) No regime só-S1, `score == 0` NÃO significa "não vulnerável"** — significa "o hex tem os dois
+> agregadores". Durante o ramp-up (~8–12 meses, §6/§12) a maior parte do universo terá `0` sem
+> nenhuma evidência de solidez. Daí a coluna de ordenação nula do §8.5.
+>
+> **NÃO foi aberta exceção para `sumiu_recente` com série imatura** (decisão do gate, G-D2): a
+> maturidade é o amortecedor contra **coleta parcial** — um scrape que devolve 30% das páginas
+> marcaria 70% do universo como `sumiu_recente` de uma vez, no sinal de maior peso e sem
+> amortecimento algum no ramp-up. A informação que a exceção queria injetar é entregue como **FATO**:
+> `status_churn` é propagado na saída **sem peso**, fora de `Σ(wi · vi)` e sem mudar regime, para o
+> BLK-MA-05 **segmentar** por "sumiço observado" em vez de ordenar por um score de dois valores.
+
 ### 8.5 Saída
 
 `score_vulnerabilidade ∈ [0,100] = 100 · Σ(wi · vi)` com os pesos **renormalizados**, acompanhado dos
 componentes `vi` por sinal (para auditoria) e das flags de qualidade.
+
+> **[emenda BLK-MA-04, 2026-07-30] Grão da linha, contrato de coluna e a coluna de ordenação.**
+> A saída do score é o contrato **`score_vulnerabilidade_v1`, de 20 colunas**
+> (`CONTRATO_COLUNAS_SCORE` em `vulnerabilidade/contrato.py`; implementação em
+> `vulnerabilidade/score.py`, módulo **PURO, sem I/O**), com **uma linha por ACADEMIA** =
+> `(fonte, chave_snapshot)`. "Academia" aqui é uma **chave de snapshot**, não um estabelecimento
+> nomeado (universo NOMEADO / D1-B deferido): a mesma academia em TotalPass e WellHub são **duas
+> linhas** — intencional, e é a razão de o `v1` ser medido por hex (emenda BLK-MA-03).
+> **Duas colunas de score (G-D1 ratificado no gate):** `score_vulnerabilidade` é o número auditável
+> do D4 e está **sempre preenchido** quando há ≥ 1 sinal; `score_vulnerabilidade_ordenavel` é
+> **NULA enquanto `flag_score_provisorio`** estiver ligada, e igual à primeira quando não estiver.
+> A proibição de ordenar carteira por um score de dois valores deixa de ser prosa e vira o **tipo da
+> saída**: um `sort_values` sobre frame provisório devolve NaN em todas as linhas. Reversível de
+> graça — a flag desliga sozinha quando o S3 amadurece.
+> **Linhas de regimes diferentes não são comparáveis entre si** (uma linha `{S1}` e uma `{S1,S3,S4}`
+> não estão na mesma régua): `sinais_disponiveis` + `n_sinais_disponiveis` existem na saída
+> exatamente para o BLK-MA-05 segmentar antes de ordenar.
+> O CSV **hex-level** do exemplo do §10/D6 é o entregável do **BLK-MA-05**, derivado por agregação
+> deste frame — não é a saída deste contrato.
 
 ---
 
@@ -415,7 +502,7 @@ Ajustada pelo **D3 = Não** (rating não é coletado → sinal 2 depende de ajus
 |---|---|---|
 | **BLK-MA-02** | Extrator de churn+staleness do histórico de snapshots (100% interno) + **limpeza de ruído** (linhas `0;0`/teste, entradas de tecnologia/onboarding, coords inconsistentes) + flags de série imatura (ramp-up); chave `slug` + `data_coleta`. É o núcleo 100%-reuso do Plano B. | D2 (S3/S4) |
 | **BLK-MA-03** | Presença em agregador (**sinal 1**, reuso via `fonte`) + (opcional/deferido) extensão de **ingestão** para o universo NOMEADO (D1-B, retém `slug`/`nome_estabelecimento`; **só ingestão, SEM ajuste de coletor**); anti-PII por construção; fixtures sintéticas. **Rating (sinal 2) NÃO entra aqui** — depende do BLK-MA-08. Entregue como insumo BRUTO hex-level (contrato `presenca_agregador_v1`); `v1`/pesos são BLK-MA-04. | sinal 1 + D1 |
-| **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. | D4 + D7 |
+| **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. Entregue como contrato de coluna `score_vulnerabilidade_v1` (20 colunas, módulo PURO sem I/O), uma linha por academia, com o **universo de M&A filtrado aqui**; os artefatos do D6 são BLK-MA-05. | D4 + D7 |
 | **BLK-MA-05** | Lista priorizada de M&A (cruzamento com o hex quente, D5, **COM a INVERSÃO**) + entregável. | D5 + D6 |
 | **BLK-MA-06** | Integração ao cron semanal da VPS + runbook. | D8 |
 | **BLK-MA-07** | (Opcional/futuro, **gate + DEC próprios**) reputação **EXTERNA** (Google Places ou outra, público geral). Único ponto que reabre o §2. | — |
@@ -462,7 +549,7 @@ D7 (anti-PII) é transversal a BLK-MA-02..05 e BLK-MA-08.
 | **D1** | Universo de "academia independente" e fonte que retém identidade | **FASEADO** — MVP hex-level agregado (Opção A, anti-PII) entra já; nomeação por-academia (Opção B) **deferida** atrás de confirmação dos CSVs brutos (nome existe na fonte, é dado de negócio). Independente = fora das 28 cadeias (`independente` ou marca com unidades `== 1`); reconciliar 28 scrapers vs 90 coletores no BLK-MA-02. | Entregar Opção A primeiro; Opção B atrás de confirmação. |
 | **D2** | Fonte/retenção dos snapshots (churn/staleness) | **Default aceito + refino do insumo real:** chave = `slug` nativo + `data_coleta` (fallback `concorrente_id`), com limpeza de ruído (linhas `0;0`/teste/tecnologia) no BLK-MA-02; snapshots em `data/staging/snapshots_concorrentes/semana=AAAA-SS/` (gitignored, VPS); retenção 26 semanas; `MIN_SEMANAS=8`; `STALE_SEMANAS=12`; série imatura marcada e neutra. | snapshots por `concorrente_id` (Opção A). |
 | **D3** | Rating de agregador (sinal 2) | **NÃO é coletado (ajuste de coletor, não de ingestão)** — sinal 2 fica `n/d` até o **BLK-MA-08** (near-term) ajustar os coletores TP/WH para raspar a nota; enquanto isso o score roda em S1/S3/S4 renormalizados. Reputação **externa** (Google) fica no BLK-MA-07. | Sinal 2 CONDICIONAL, `n/d` não penaliza, renormaliza. |
-| **D4** | Fórmula/pesos do score de vulnerabilidade | **Pesos S1=0,15 / S2=0,25 / S3=0,35 / S4=0,25** (churn domina); efetivos no Plano B (S2 fora): **S1≈0,20 / S3≈0,467 / S4≈0,333** (`0,15/0,75`, `0,35/0,75`, `0,25/0,75`); normalização percentil-por-universo; RENORMALIZAÇÃO para sinal ausente/imaturo; flags de qualidade; **NÃO-preditivo**. Saída `score_vulnerabilidade ∈ [0,100] = 100·Σ(wi·vi)` + componentes `vi` + flags. | Idem, com S5/S6 fora do MVP. |
+| **D4** | Fórmula/pesos do score de vulnerabilidade | **Pesos S1=0,15 / S2=0,25 / S3=0,35 / S4=0,25** (churn domina); efetivos no Plano B (S2 fora): **S1≈0,20 / S3≈0,467 / S4≈0,333** (`0,15/0,75`, `0,35/0,75`, `0,25/0,75`); normalização percentil-por-universo **[ver emenda BLK-MA-04 no §8.2: `v4` é razão absoluta; o percentil fica reservado]**; RENORMALIZAÇÃO para sinal ausente/imaturo; flags de qualidade; **NÃO-preditivo**. Saída `score_vulnerabilidade ∈ [0,100] = 100·Σ(wi·vi)` + componentes `vi` + flags. | Idem, com S5/S6 fora do MVP. |
 | **D5** | Hexágono quente + distância + INVERSÃO | **Quente = `sam_fitness_potencial` alto (top quartil) AND `score_oportunidade_residual < 25` (saturado)**; distância **k=1** (`h3.grid_disk(k=1)`); **INVERSÃO** (demanda alta + residual baixo, oposto de `abrir_agora`) registrada; join READ-ONLY no molde `:68-82` com asserts de invariância. | Idem (Opção A + k=1 + join com asserts). |
 | **D6** | Entregável | **Default aceito** — Parquet `data/staging/vulnerabilidade_ma_academias.parquet` (gitignored se nomeado) + CSV `data/outputs/alvos_ma_priorizados.csv` (`sep=";"`/`utf-8-sig`); sem overlay de dashboard no MVP. | Idem. |
 | **D7** | Anti-PII | **Default aceito** — só agregados; nome/endereço só no artefato nomeado (gitignored); fixtures sintéticas; fonte real fora do versionamento (DEC-012). | Idem. |
