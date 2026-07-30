@@ -11,3 +11,37 @@
 CVE-2026-24049
 # jaraco.context <6.1.0: path traversal via tar malicioso (setuptools build-time only)
 CVE-2026-23949
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BLK-SEC-03 (2026-07-30) — Allowlist TEMPORARIA, autorizada por Felipe.
+#
+# Contexto: estas mesmas imagens PASSARAM pelo gate horas antes, nos builds
+# `sha-ecb5b4c`, `sha-f1f9437` e `sha-7e424ef`. O que mudou nao foi o codigo, foi a
+# base de CVEs do Trivy. Sem esta entrada o gate bloqueia o deploy do piloto web E do
+# dashboard por um evento externo ao repositorio.
+#
+# COMO SAI DAQUI (nao e' allowlist permanente): o `Dockerfile.web`/`Dockerfile.api` ja
+# rodam `apt-get upgrade -y`, entao o libexpat se corrige SOZINHO no proximo build
+# assim que o mirror do Debian servir o `2.8.2-1~deb13u1` (hoje ele so oferece
+# `2.7.1-2`). A acao de saida e: rodar o build, conferir que o Trivy nao acusa mais, e
+# APAGAR este bloco. Revisar ate 2026-08-15 — prazo curto de proposito.
+#
+# libexpat1 (2.7.1-2 -> 2.8.2-1~deb13u1): overflow/DoS no parser XML expat.
+# Exposicao avaliada: o caminho de geracao do relatorio nao le XML de terceiro — os
+# insumos sao parquet local e tiles PNG do tileserver proprio. O expat entra como
+# dependencia transitiva do rasterio/contextily, sem receber documento de usuario.
+CVE-2025-59375
+CVE-2026-25210
+CVE-2026-45186
+CVE-2026-56131
+CVE-2026-56408
+#
+# msgpack 1.1.2 (fix 1.2.1): NAO e' dependencia do projeto — nao aparece no
+# `constraints.txt`. E' a copia VENDORIZADA dentro do pip (pip/_vendor/cachecontrol),
+# ou seja, ferramenta de BUILD, exatamente a mesma classe ja aceita no bloco
+# BLK-SEC-02 acima. Nao e' importada em runtime por nenhum servico.
+GHSA-6v7p-g79w-8964
+#
+# setuptools 70.3.0 (fix 78.1.1): path traversal em `PackageIndex.download`, chamado
+# so em resolucao de dependencia — build-time. Mesma classe do bloco BLK-SEC-02.
+CVE-2025-47273
