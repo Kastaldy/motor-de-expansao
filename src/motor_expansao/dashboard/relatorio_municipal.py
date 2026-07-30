@@ -41,7 +41,13 @@ import pandas as pd
 from fpdf import FPDF
 from PIL import Image, ImageChops, ImageDraw, ImageFont
 
-from motor_expansao.dashboard.censo_map import _BASEMAP_TILES_URL_ENV, _fetch_labels
+from motor_expansao.dashboard.censo_map import (
+    _BASEMAP_TILES_URL_ENV,
+    _fetch_labels,
+)
+from motor_expansao.dashboard.censo_map import (
+    _atribuicao_tiles as _censo_atribuicao_tiles,
+)
 from motor_expansao.dashboard.competitors import _render_square_logo_tile
 from motor_expansao.dashboard.utils import score_band_to_color
 
@@ -876,15 +882,18 @@ def _basemap_source(ctx: object) -> object:
 
 
 def _atribuicao_tiles() -> str:
-    """Credito do rodape, coerente com as fontes REALMENTE usadas (ver `_ATRIBUICAO_TILES`).
+    """Credito do rodape, coerente com as fontes REALMENTE usadas.
 
-    Constante nos dois modos desde o BLK-BASEMAP-03: o fundo e' OSM (Voyager ou tileserver
-    proprio) e os ROTULOS de rua vem do CARTO em ambos, entao os dois creditos sempre valem.
-    Segue como funcao — e nao uso direto da constante — porque os dois call sites (rodape do PNG
-    e rodape do PDF) sao o ponto natural de mudanca se um dia a fonte de rotulos virar o proprio
-    tileserver (ai o credito passa a ser so OSM).
+    BLK-BASEMAP-06: chegou o dia que o docstring anterior antecipava — "se um dia a fonte de
+    rotulos virar o proprio tileserver (ai o credito passa a ser so OSM)". Os rotulos passaram a
+    vir do estilo `ultra-labels` do tileserver proprio, entao no modo self-host nenhum tile do
+    CARTO e' consumido nem no fundo nem no texto.
+
+    DELEGA para `censo_map._atribuicao_tiles()` de proposito: os dois relatorios saem da mesma
+    caixa (emenda BLK-BASEMAP-02 a DEC-011) e manter duas copias da regra so criaria divergencia
+    de rodape entre eles — foi exatamente o que aconteceu entre o BASEMAP-02 e o BASEMAP-03.
     """
-    return _ATRIBUICAO_TILES
+    return _censo_atribuicao_tiles()
 
 
 def _fetch_basemap_municipio(
@@ -1159,7 +1168,10 @@ def _render_mapa_municipio(
     # `drew_basemap` como guarda: sem fundo de ruas nao ha o que rotular, e a condicao de rede e'
     # a mesma. Best-effort: qualquer falha deixa o mapa exatamente como estava.
     if drew_basemap:
-        rotulos_rua = _fetch_labels((minx, miny, maxx, maxy), width)
+        # `zoom_bump=0`: rotulos no MESMO zoom do frame. Com o bump padrao (+1) o mosaico sai
+        # 2x mais denso que o mapa e o texto encolhe pela metade no resize — a mesma armadilha
+        # que deixou os nomes sub-pixel no Relatorio Pontual (BLK-BASEMAP-06).
+        rotulos_rua = _fetch_labels((minx, miny, maxx, maxy), width, zoom_bump=0)
         if rotulos_rua is not None:
             try:
                 rua_img, rua_extent = rotulos_rua

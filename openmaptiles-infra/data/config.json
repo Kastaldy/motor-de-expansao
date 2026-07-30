@@ -10,7 +10,8 @@
     "serveAllFonts": true
   },
   "styles": {
-    "ultra-maptiler": { "style": "ultra-maptiler/style.json" }
+    "ultra-maptiler": { "style": "ultra-maptiler/style.json" },
+    "ultra-labels": { "style": "ultra-labels/style.json" }
   },
   "data": {
     "brazil": { "mbtiles": "brazil.mbtiles" }
