@@ -112,22 +112,28 @@ _RAIO_LABEL = f"{_RAIO_TXT} km"
 # BLK-RELPON-08 (D3/Q4): metas do semaforo de cor dos 8 cards do Big Numbers. Verde quando o
 # valor bate a meta; vermelho quando nao bate; neutro quando "n/d" (Q2, indecidivel). Constantes
 # nomeadas e auditaveis (nao hardcoded inline dentro de `_big_numbers_page`).
-# DEC-021 (raio 1,5 -> 1,0 km): as metas de TOTAL sao absolutas e estavam calibradas para a
-# area de 1,5 km. A area cai para (1,0/1,5)^2 = 44,4%, entao populacao e domicilios no raio
-# caem ~56% pela mudanca de escala, sem nada piorar na praca. Sem reescalar, cards hoje
-# VERDES virariam VERMELHOS em massa e o semaforo passaria a medir o raio, nao o mercado.
-# Reescalados pelo MESMO fator de area, o criterio de negocio fica equivalente: 10.000 hab
-# em 7,07 km2 e 4.444 hab em 3,14 km2 sao a MESMA densidade (~1.415 hab/km2).
-# As metas de MEDIA (renda per capita, renda domiciliar, score) sao escala-invariantes e
-# NAO mudam. Idem SAM/Residual Fitness, que sao por hexagono H3, nao pelo raio.
-_META_POP_TOTAL_RAIO = 4_444.0
+# DEC-021 (raio 1,5 -> 1,0 km): as metas de TOTAL sao ABSOLUTAS e foram calibradas para a area
+# de 1,5 km. Com 1,0 km a area cai para (1,0/1,5)^2 = 44,4%, logo populacao e domicilios no raio
+# caem ~56% por MUDANCA DE ESCALA, sem nada piorar na praca analisada.
+#
+# DECISAO DE FELIPE (2026-07-30), consultado explicitamente: os cortes FICAM como estao —
+# "pode manter o corte de 10k populacao mesmo com a mudanca do Raio e dos dados num geral".
+# Consequencia assumida, registrada para nao virar surpresa: o limiar IMPLICITO de densidade
+# sobe de ~1.415 para ~3.183 hab/km2 (10.000 / 3,14 km2), ou seja o card fica MAIS DIFICIL de
+# ficar verde — passa a exigir mais que o dobro da densidade de antes. E' endurecimento
+# deliberado do criterio, nao efeito colateral.
+#
+# As metas de MEDIA (renda per capita, renda domiciliar, score) sao escala-invariantes e nao
+# seriam afetadas de todo jeito. Idem SAM/Residual Fitness, que sao por hexagono H3.
+_META_POP_TOTAL_RAIO = 10_000.0
 _META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
 # Renda media domiciliar TOTAL (com uplift): verde a partir de 4.000 -- pedido de Felipe
 # (2026-07-23, "acima de R$ 4.000 o card NAO deve vir vermelho") e confirmado por Vinicius no
 # gate visual do BLK-RELPON-13 (2026-07-24); substitui o alvo anterior de 6.200 (~C1 GeoFusion).
 # Alinha com a 1a faixa "verde" das bandas.
 _META_RENDA_DOMICILIAR_TOTAL_RAIO = 4_000.0
-_META_DOMICILIOS_TOTAL_RAIO = 1_333.0  # DEC-021: 3.000 x (1,0/1,5)^2 — mesma densidade
+_META_DOMICILIOS_TOTAL_RAIO = 3_000.0  # mantido junto com a meta de populacao (decisao de Felipe,
+# 2026-07-30): manter uma reescalada e a outra nao deixaria o semaforo com duas filosofias.
 _META_SCORE_SETOR_MEDIO = 60.0
 _META_SAM_FITNESS_POTENCIAL = 2_000.0
 _META_RESIDUAL_FITNESS_DISPONIVEL = 2_000.0

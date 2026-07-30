@@ -1698,10 +1698,11 @@ def render_mapas_censitarios_combinados(
         basemap_tiles = _fetch_basemap(bounds_t, width, zoom_bump=0)
         # rotulos buscados UMA vez (compartilhados pelas 4 camadas de choropleth); so quando ha
         # basemap (mesma condicao de rede) e o overlay esta ligado. best-effort -> None nao quebra.
-        # RECONCILIACAO: o `_labels_grid` continua somando `_BASEMAP_ZOOM_BUMP + _LABELS_ZOOM_BUMP`
-        # (nao le o `zoom_bump=0` acima) -> o mosaico de rotulos fica 2 zooms acima do basemap.
-        # E' proposital do BLK-RELPON-07 (nomes maiores/legiveis por cima da cor) e a composicao
-        # e' por EXTENT, nao por grade de tile, entao os dois seguem alinhados.
+        # `zoom_bump=0` alinha o mosaico ao FRAME, nao ao basemap: o que decide se o nome sobrevive
+        # e a razao entre a densidade do mosaico e a do PNG final. Com o bump do basemap (+1) o
+        # texto sairia pela metade — e era somando DOIS niveis que ele virava sub-pixel
+        # (BLK-BASEMAP-06). O tamanho passa a ser governado pelo `text-size` do estilo
+        # `ultra-labels`, que e' onde da p/ controlar de verdade.
         if basemap_tiles is not None and labels_overlay:
             labels_tiles = _fetch_labels(bounds_t, width, zoom_bump=0)
 
