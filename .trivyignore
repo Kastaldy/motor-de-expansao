@@ -1,47 +1,19 @@
-# BLK-SEC-02 — Allowlist de CVEs em ferramentas de BUILD da imagem.
+# Allowlist de CVEs do gate Trivy.
 #
-# wheel / setuptools(_vendor)/jaraco.context vem da imagem base python:3.11 e NAO sao
-# invocadas em runtime pelo Streamlit (nenhum build/install de wheel ocorre quando o
-# container serve) -> zero exposicao em producao. Os fixes existem mas estao tambem em
-# copias vendored dentro do setuptools; remediar de verdade = imagem multi-stage sem
-# build tools no runtime (follow-up de hardening). Gate Trivy segue BLOQUEANTE para
-# todo o resto (HIGH/CRITICAL, ignore-unfixed). Revisar ate 2026-09.
-
-# wheel <0.46.2: priv-esc / exec de codigo via wheel malicioso (build-time only)
-CVE-2026-24049
-# jaraco.context <6.1.0: path traversal via tar malicioso (setuptools build-time only)
-CVE-2026-23949
-
-# ─────────────────────────────────────────────────────────────────────────────
-# BLK-SEC-03 (2026-07-30) — Allowlist TEMPORARIA, autorizada por Felipe.
+# VAZIA DE PROPOSITO desde o BLK-SEC-04 (2026-07-30).
 #
-# Contexto: estas mesmas imagens PASSARAM pelo gate horas antes, nos builds
-# `sha-ecb5b4c`, `sha-f1f9437` e `sha-7e424ef`. O que mudou nao foi o codigo, foi a
-# base de CVEs do Trivy. Sem esta entrada o gate bloqueia o deploy do piloto web E do
-# dashboard por um evento externo ao repositorio.
+# Politica (a mesma que o comentario do libssh2 no Dockerfile.streamlit ja enunciava):
+# CVE COM fix disponivel se REMEDIA, nao se ignora. So entra aqui achado sem fix, e
+# ainda assim com justificativa de exposicao e data de revisao.
 #
-# COMO SAI DAQUI (nao e' allowlist permanente): o `Dockerfile.web`/`Dockerfile.api` ja
-# rodam `apt-get upgrade -y`, entao o libexpat se corrige SOZINHO no proximo build
-# assim que o mirror do Debian servir o `2.8.2-1~deb13u1` (hoje ele so oferece
-# `2.7.1-2`). A acao de saida e: rodar o build, conferir que o Trivy nao acusa mais, e
-# APAGAR este bloco. Revisar ate 2026-08-15 — prazo curto de proposito.
+# O que tornou esta lista desnecessaria:
+#   - libexpat1 (5 HIGH) — tinha fix em `trixie-security` o tempo todo; o que impedia
+#     a atualizacao era o cache de camada do CI, nao a ausencia de pacote. Resolvido
+#     pelo `ARG APT_REFRESH` + camada final de `apt-get upgrade`.
+#   - msgpack, setuptools, wheel, jaraco.context — eram ferramentas de BUILD que
+#     sobravam na imagem de runtime (o `msgpack` nem dependencia do projeto era: vinha
+#     vendorizado dentro do pip). Resolvido removendo pip/setuptools/wheel da imagem
+#     final, com smoke de import antes e depois para o build falhar se algo quebrar.
 #
-# libexpat1 (2.7.1-2 -> 2.8.2-1~deb13u1): overflow/DoS no parser XML expat.
-# Exposicao avaliada: o caminho de geracao do relatorio nao le XML de terceiro — os
-# insumos sao parquet local e tiles PNG do tileserver proprio. O expat entra como
-# dependencia transitiva do rasterio/contextily, sem receber documento de usuario.
-CVE-2025-59375
-CVE-2026-25210
-CVE-2026-45186
-CVE-2026-56131
-CVE-2026-56408
-#
-# msgpack 1.1.2 (fix 1.2.1): NAO e' dependencia do projeto — nao aparece no
-# `constraints.txt`. E' a copia VENDORIZADA dentro do pip (pip/_vendor/cachecontrol),
-# ou seja, ferramenta de BUILD, exatamente a mesma classe ja aceita no bloco
-# BLK-SEC-02 acima. Nao e' importada em runtime por nenhum servico.
-GHSA-6v7p-g79w-8964
-#
-# setuptools 70.3.0 (fix 78.1.1): path traversal em `PackageIndex.download`, chamado
-# so em resolucao de dependencia — build-time. Mesma classe do bloco BLK-SEC-02.
-CVE-2025-47273
+# Se precisar reabrir esta lista, escreva junto: pacote, por que NAO da p/ remediar,
+# qual a exposicao real e ate quando vale.
