@@ -12,7 +12,10 @@ from fpdf import FPDF
 from PIL import Image, ImageOps
 
 from motor_expansao.api.maps_geocoder import build_search_url
-from motor_expansao.dashboard.censo_point import METODO_RELATORIO_PONTUAL_CENSITARIO
+from motor_expansao.dashboard.censo_point import (
+    METODO_RELATORIO_PONTUAL_CENSITARIO,
+    RAIO_CENSITARIO_DEFAULT_KM,
+)
 
 # Cabecalhos canonicos das 7 paginas do template Ultra. Renderizam em latin-1 (core font
 # Helvetica do fpdf2), que cobre integralmente os acentos portugueses -- o que e PROIBIDO e
@@ -48,7 +51,7 @@ PDF_SECTION_HEADERS = (
 # SEM choropleth — renderizada na pagina de Concorrentes (`_classico_competitors_page`).
 # BLK-RELPON-05 (faixa REVERTIDA para os agregados do raio pelo BLK-RELPON-06/D1): os
 # PNGs de densidade/renda/score que chegam aqui ja trazem "assada" a faixa superior com
-# o valor do raio de 1.5 km (produzida em
+# o valor do raio vigente (produzida em
 # `censo_map.render_mapas_censitarios_combinados`/`_render_camada`); este modulo recebe
 # `mapas: dict[str, bytes]` ja pronto e so embute os bytes (`_classico_mapas_calor_page`
 # via `_draw_maps_grid`/`_map_grid_cells`), sem nenhuma
@@ -98,9 +101,29 @@ ULTRA_BRANCO_GELO = (248, 248, 248)
 _BRANCO = (255, 255, 255)
 _CINZA_TEXTO = (60, 60, 60)
 
+# DEC-021: o raio VISIVEL deriva do canonico, nunca mais e' digitado. Este arquivo tinha 6 strings
+# "1,5 km" hardcoded e ZERO referencia a `raio_km` — trocar o raio deixaria o motor calculando um
+# valor e o PDF estampando outro, errado em SILENCIO para quem le o relatorio. O rodape dos MAPAS
+# ja era dinamico desde o BLK-RELPON-10 (`censo_map.py`); aqui nao era.
+_RAIO_TXT = f"{RAIO_CENSITARIO_DEFAULT_KM:.1f}".replace(".", ",")  # "1,0"
+_RAIO_LABEL = f"{_RAIO_TXT} km"
+
 # BLK-RELPON-08 (D3/Q4): metas do semaforo de cor dos 8 cards do Big Numbers. Verde quando o
 # valor bate a meta; vermelho quando nao bate; neutro quando "n/d" (Q2, indecidivel). Constantes
 # nomeadas e auditaveis (nao hardcoded inline dentro de `_big_numbers_page`).
+# DEC-021 (raio 1,5 -> 1,0 km): as metas de TOTAL sao ABSOLUTAS e foram calibradas para a area
+# de 1,5 km. Com 1,0 km a area cai para (1,0/1,5)^2 = 44,4%, logo populacao e domicilios no raio
+# caem ~56% por MUDANCA DE ESCALA, sem nada piorar na praca analisada.
+#
+# DECISAO DE FELIPE (2026-07-30), consultado explicitamente: os cortes FICAM como estao —
+# "pode manter o corte de 10k populacao mesmo com a mudanca do Raio e dos dados num geral".
+# Consequencia assumida, registrada para nao virar surpresa: o limiar IMPLICITO de densidade
+# sobe de ~1.415 para ~3.183 hab/km2 (10.000 / 3,14 km2), ou seja o card fica MAIS DIFICIL de
+# ficar verde — passa a exigir mais que o dobro da densidade de antes. E' endurecimento
+# deliberado do criterio, nao efeito colateral.
+#
+# As metas de MEDIA (renda per capita, renda domiciliar, score) sao escala-invariantes e nao
+# seriam afetadas de todo jeito. Idem SAM/Residual Fitness, que sao por hexagono H3.
 _META_POP_TOTAL_RAIO = 10_000.0
 _META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
 # Renda media domiciliar TOTAL (com uplift): verde a partir de 4.000 -- pedido de Felipe
@@ -108,7 +131,8 @@ _META_RENDA_PER_CAPITA_MEDIA_RAIO = 1_500.0
 # gate visual do BLK-RELPON-13 (2026-07-24); substitui o alvo anterior de 6.200 (~C1 GeoFusion).
 # Alinha com a 1a faixa "verde" das bandas.
 _META_RENDA_DOMICILIAR_TOTAL_RAIO = 4_000.0
-_META_DOMICILIOS_TOTAL_RAIO = 3_000.0
+_META_DOMICILIOS_TOTAL_RAIO = 3_000.0  # mantido junto com a meta de populacao (decisao de Felipe,
+# 2026-07-30): manter uma reescalada e a outra nao deixaria o semaforo com duas filosofias.
 _META_SCORE_SETOR_MEDIO = 60.0
 _META_SAM_FITNESS_POTENCIAL = 2_000.0
 _META_RESIDUAL_FITNESS_DISPONIVEL = 2_000.0
@@ -1137,7 +1161,7 @@ def _big_numbers_page(
         11,
         _ascii(
             "Fontes: pop/renda/domicílios/score = censo (interseção de setores IBGE 2022 com círculo de "
-            f"1.5 km, método {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = lookup "
+            f"{_RAIO_LABEL}, método {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = lookup "
             "READ-ONLY do hex H3 (sem recálculo do M1). Fundo do card: verde = meta atingida, vermelho = "
             "meta não atingida, cinza = 'n/d' (dado ausente para o ponto)."
         ),
@@ -1352,7 +1376,7 @@ def _perfil_nota_metodo(pdf: _UltraPDF) -> None:
         _PAGE_W - 72,
         10,
         _ascii(
-            "Agregado sobre todos os setores do bairro/distrito (não o raio de 1,5 km). "
+            f"Agregado sobre todos os setores do bairro/distrito (não o raio de {_RAIO_LABEL}). "
             "Fonte: Censo IBGE 2022; renda média ponderada por domicílios."
         ),
     )
@@ -1469,7 +1493,7 @@ def _classico_cover_page(
     endereco = nome if (nome and not _parece_coordenada(nome)) else f"Coordenada: {coord}"
     if len(endereco) > 72:
         endereco = endereco[:69] + "..."
-    subtitulo = f"Relatório Pontual Censitário - Raio 1,5 km | {_classico_mes_ano(now)}"
+    subtitulo = f"Relatório Pontual Censitário - Raio {_RAIO_LABEL} | {_classico_mes_ano(now)}"
 
     # Zona limpa inferior-direita quando ha fundo de marca; centro quando nao ha.
     base_x = 478.0 if has_bg else 80.0
@@ -1532,7 +1556,7 @@ def _classico_socioeconomia_residual_page(
     Dois mapas LADO A LADO (grid 2x1) na geometria do template classico (banda com margem +
     titulo de secao), com ESCALAS rotuladas dentro do proprio PNG (produzidos em `censo_map`).
     BLK-RELPON-13: Socioeconomia = `score_setor_2022_calibrado` por hexagono H3 res-7 a 5 km (era
-    setor a 1,5 km); Residual Fitness = `oferta_efetiva_disponivel` (alunos) no mesmo hex/raio;
+    setor no raio do relatorio); Residual Fitness = `oferta_efetiva_disponivel` (alunos) no mesmo hex/raio;
     as 2 imagens reduzidas por `_HERO_MAP_SCALE` (gate visual). Camada ausente -> fallback
     textual da propria `_draw_maps_grid` (offline-safe). READ-ONLY sobre o M1.
     """
@@ -1615,7 +1639,7 @@ def _classico_competitors_page(
     concorrentes_df = result.get("concorrentes_raio", pd.DataFrame())
     ultra_df = result.get("ultra_raio", pd.DataFrame())
     total = _safe_len(concorrentes_df) + _safe_len(ultra_df)
-    header = "Redes no raio de 1.5 km"
+    header = f"Redes no raio de {_RAIO_LABEL}"
     if total > 10:
         header = f"{header} ({total} no total)"
     pdf.set_text_color(*secondary)
@@ -1659,7 +1683,7 @@ def _classico_perfil_bairro_page(
 ) -> None:
     """(BLK-RELPON-07) Perfil do Bairro/Distrito: banda classica + painel "Microarea".
 
-    As 4 metricas sao agregadas sobre a unidade INTEIRA (nao o raio de 1,5 km), com a
+    As 4 metricas sao agregadas sobre a unidade INTEIRA (nao o raio do relatorio), com a
     geometria deslocada para abrir espaco a banda classica (que ocupa ate ~y=122). SEM mapa;
     "n/d" gracioso quando o perfil nao esta disponivel (ponto fora da malha de setores ou
     unidade sem dado suficiente).
@@ -1738,7 +1762,7 @@ def _classico_credit_page(
         _PAGE_W - 320,
         16,
         _ascii(
-            "Interseção de setores censitários IBGE 2022 com círculo de 1,5 km; "
+            f"Interseção de setores censitários IBGE 2022 com círculo de {_RAIO_LABEL}; "
             "distribuição intrassetor por área."
         ),
         align="C",

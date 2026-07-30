@@ -9,6 +9,7 @@ from shapely.ops import transform
 from motor_expansao.dashboard.censo_point import (
     CRS_ORIGEM_CENSO,
     METODO_RELATORIO_PONTUAL_CENSITARIO,
+    RAIO_CENSITARIO_DEFAULT_KM,
     _local_metric_crs,
     agregar_perfil_bairro_distrito,
     analisar_ponto_censitario_setores,
@@ -16,6 +17,25 @@ from motor_expansao.dashboard.censo_point import (
 
 LAT_C = -23.55
 LNG_C = -46.63
+
+# DEC-021: a geometria dos fixtures DERIVA do raio canonico em vez de fixar 1.500 m. Antes, um
+# setor "parcialmente dentro" era `box(1000, -500, 2500, 500)` — numeros escolhidos contra o raio
+# de 1,5 km. Com 1,0 km aquela caixa comeca EXATAMENTE na borda do circulo e a intersecao vai a
+# zero: o teste passaria a medir "setor fora do raio" achando que mede ponderacao por area.
+# Mantendo as PROPORCOES (0,667R a 1,667R, meia-altura R/3), o peso esperado e' identico ao de
+# antes e o teste vale para qualquer raio.
+_RAIO_M = RAIO_CENSITARIO_DEFAULT_KM * 1000.0
+
+
+def _setor_parcial():
+    """Caixa que ATRAVESSA a borda do circulo — proporcional ao raio vigente."""
+    return box(_RAIO_M * (2 / 3), -_RAIO_M / 3, _RAIO_M * (5 / 3), _RAIO_M / 3)
+
+
+def _circulo_do_raio():
+    from shapely.geometry import Point
+
+    return Point(0, 0).buffer(_RAIO_M, quad_segs=64)
 
 
 def _to_wgs_geometry(local_geom):
@@ -72,8 +92,12 @@ def test_motor_censitario_setor_totalmente_dentro_do_raio():
     result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
 
     assert result["metodo"] == METODO_RELATORIO_PONTUAL_CENSITARIO
-    assert result["raio_km"] == pytest.approx(1.5)
-    assert result["area_km2"] == pytest.approx(7.07)
+    assert result["raio_km"] == pytest.approx(RAIO_CENSITARIO_DEFAULT_KM)
+    import math
+
+    assert result["area_km2"] == pytest.approx(
+        round(math.pi * RAIO_CENSITARIO_DEFAULT_KM**2, 2), rel=0.01
+    )
     assert result["n_setores"] == 1
     assert result["pop_total_raio"] == pytest.approx(500)
     assert result["renda_per_capita_media_raio"] == pytest.approx(1800)
@@ -102,13 +126,12 @@ def test_motor_censitario_domicilios_total_raio_setor_totalmente_dentro_do_raio(
 
 
 def test_motor_censitario_domicilios_total_raio_setor_parcial_pondera_por_area():
-    from shapely.geometry import Point
 
-    setor = box(1000, -500, 2500, 500)
+    setor = _setor_parcial()
     df = pd.DataFrame(
         [_sector_record("355030801000002", setor, pop=1500, renda=2400, score=60, domicilios=1000)]
     )
-    expected_intersection_area = setor.intersection(Point(0, 0).buffer(1500, quad_segs=64)).area
+    expected_intersection_area = setor.intersection(_circulo_do_raio()).area
     expected_weight = expected_intersection_area / setor.area
 
     result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
@@ -127,11 +150,10 @@ def test_motor_censitario_domicilios_total_raio_nd_quando_coluna_ausente():
 
 
 def test_motor_censitario_setor_parcialmente_dentro_do_raio():
-    from shapely.geometry import Point
 
-    setor = box(1000, -500, 2500, 500)
+    setor = _setor_parcial()
     df = pd.DataFrame([_sector_record("355030801000002", setor, pop=1500, renda=2400, score=60)])
-    expected_intersection_area = setor.intersection(Point(0, 0).buffer(1500, quad_segs=64)).area
+    expected_intersection_area = setor.intersection(_circulo_do_raio()).area
     expected_weight = expected_intersection_area / setor.area
 
     result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)
@@ -213,11 +235,14 @@ def test_motor_censitario_nao_muta_dataframe_de_entrada():
 
 def test_lookup_setor_do_ponto_dentro_da_malha():
     # Setor A cobre o ponto (0,0 no CRS metrico local) por completo. Setor B fica fora do
-    # ambito de A (nao compartilha fronteira com o ponto) mas ainda dentro do raio de
-    # 1.5 km, com renda/score bem diferentes -- serve para provar que o valor do ponto
-    # NAO e reciclagem do agregado ponderado do raio (que combina A+B).
-    setor_a = box(-700, -700, 700, 700)
-    setor_b = box(1000, -200, 1400, 200)
+    # ambito de A (nao compartilha fronteira com o ponto) mas ainda DENTRO do raio, com
+    # renda/score bem diferentes -- serve para provar que o valor do ponto NAO e reciclagem
+    # do agregado ponderado do raio (que combina A+B).
+    # DEC-021: as duas caixas derivam do raio. Fixas em 1.000-1.400 m elas valiam para 1,5 km;
+    # com 1,0 km o setor B cairia FORA do circulo, o agregado do raio viraria so o A e o teste
+    # passaria a comparar 1900 com 1900 — deixando de provar o que se propoe.
+    setor_a = box(-_RAIO_M * 0.47, -_RAIO_M * 0.47, _RAIO_M * 0.47, _RAIO_M * 0.47)
+    setor_b = box(_RAIO_M * (2 / 3), -_RAIO_M * 0.13, _RAIO_M * 0.93, _RAIO_M * 0.13)
     df = pd.DataFrame(
         [
             _sector_record("355030801000010", setor_a, pop=800, renda=1900, score=55),
@@ -242,7 +267,7 @@ def test_lookup_setor_do_ponto_dentro_da_malha():
 def test_lookup_setor_do_ponto_fora_da_malha():
     # Setor que intersecta o raio mas NAO cobre o ponto (0,0): geometria de
     # test_motor_censitario_setor_parcialmente_dentro_do_raio.
-    setor = box(1000, -500, 2500, 500)
+    setor = _setor_parcial()
     df = pd.DataFrame([_sector_record("355030801000012", setor)])
 
     result = analisar_ponto_censitario_setores(LAT_C, LNG_C, df)

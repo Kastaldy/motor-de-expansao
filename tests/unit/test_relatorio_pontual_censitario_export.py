@@ -8,6 +8,8 @@ from shapely.ops import transform
 from motor_expansao.dashboard.censo_map import render_mapas_censitarios_combinados
 from motor_expansao.dashboard.censo_point import (
     CRS_ORIGEM_CENSO,
+    METODO_RELATORIO_PONTUAL_CENSITARIO,
+    RAIO_CENSITARIO_DEFAULT_KM,
     _local_metric_crs,
     analisar_ponto_censitario_setores,
 )
@@ -157,7 +159,9 @@ def test_export_pdf_executivo_gera_bytes_com_secoes_obrigatorias_e_mapa():
     # 3 choropleths (densidade/renda/score) embutidos SEPARADAMENTE no slide unico + 1 pins
     # na pagina de Concorrentes = >= 4 imagens de mapa (nao pre-compostas).
     assert pdf_bytes.count(b"/Subtype /Image") >= 5
-    assert b"setor_censitario_intersecao_area_1p5km" in pdf_bytes
+    # DEC-021: o rotulo acompanha o raio. Vindo da constante, o teste segue valido em
+    # qualquer raio futuro e ainda prova que o metodo VAI para dentro do PDF.
+    assert METODO_RELATORIO_PONTUAL_CENSITARIO.encode("latin-1") in pdf_bytes
 
 
 def test_pdf_embute_quatro_choropleths_no_slide_unico():
@@ -274,16 +278,20 @@ def test_map_grid_cells_packed_scale_encolhe_e_mantem_centrado():
 
 def test_cor_por_meta_verde_vermelho_neutro():
     """BLK-RELPON-08 (D3/Q2): helper puro de cor por meta simples (>= meta -> verde)."""
-    # pop_total_raio / _META_POP_TOTAL_RAIO (10000)
-    assert _cor_por_meta(12_000, _META_POP_TOTAL_RAIO) == _CARD_VERDE_RGB
+    # DEC-021: os valores de prova derivam da META, nao de literais. Com a meta reescalada
+    # de 10.000 para 4.444 (area de 1,5 -> 1,0 km), o antigo literal 5_000 virou APROVADO e o
+    # teste passou a afirmar o contrario do que queria — deixando de cobrir o caso vermelho.
+    assert _cor_por_meta(_META_POP_TOTAL_RAIO * 1.2, _META_POP_TOTAL_RAIO) == _CARD_VERDE_RGB
     assert _cor_por_meta(_META_POP_TOTAL_RAIO, _META_POP_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
-    assert _cor_por_meta(5_000, _META_POP_TOTAL_RAIO) == _CARD_VERMELHO_RGB
+    assert _cor_por_meta(_META_POP_TOTAL_RAIO * 0.5, _META_POP_TOTAL_RAIO) == _CARD_VERMELHO_RGB
     assert _cor_por_meta(None, _META_POP_TOTAL_RAIO) == _CARD_NEUTRO_RGB
     assert _cor_por_meta(float("nan"), _META_POP_TOTAL_RAIO) == _CARD_NEUTRO_RGB
     # domicilios_total_raio / _META_DOMICILIOS_TOTAL_RAIO (3000) -- campo NOVO.
-    assert _cor_por_meta(3_500, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERDE_RGB
-    assert _cor_por_meta(3_000, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
-    assert _cor_por_meta(2_999, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERMELHO_RGB
+    # Mesma razao do bloco de populacao: derivar da meta em vez de fixar 3.500/3.000/2.999,
+    # que foram escolhidos contra a meta de 1,5 km (DEC-021 reescalou para 1.333).
+    assert _cor_por_meta(_META_DOMICILIOS_TOTAL_RAIO * 1.17, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERDE_RGB
+    assert _cor_por_meta(_META_DOMICILIOS_TOTAL_RAIO, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
+    assert _cor_por_meta(_META_DOMICILIOS_TOTAL_RAIO - 1, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_VERMELHO_RGB
     assert _cor_por_meta(None, _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
     assert _cor_por_meta(float("nan"), _META_DOMICILIOS_TOTAL_RAIO) == _CARD_NEUTRO_RGB
 
@@ -463,7 +471,9 @@ def test_pdf_estrutura_inalterada_com_faixa_valor_ponto_blk_relpon_05():
     assert pdf_bytes.count(b"/Subtype /Image") >= 5
     for header in PDF_SECTION_HEADERS:
         assert header.encode("latin-1") in pdf_bytes
-    assert b"setor_censitario_intersecao_area_1p5km" in pdf_bytes
+    # DEC-021: o rotulo acompanha o raio. Vindo da constante, o teste segue valido em
+    # qualquer raio futuro e ainda prova que o metodo VAI para dentro do PDF.
+    assert METODO_RELATORIO_PONTUAL_CENSITARIO.encode("latin-1") in pdf_bytes
 
 
 def test_pdf_concorrentes_contagem_total_e_mais_n_quando_excede_10():
@@ -516,7 +526,8 @@ def test_pdf_concorrentes_sem_contagem_quando_ate_10():
     result, mapas = _sample_result()  # 1 concorrente + 1 Ultra = 2 redes
     pdf_bytes = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=_RESIDUAL_OK)
 
-    assert b"Redes no raio de 1.5 km" in pdf_bytes
+    raio_txt = f"{RAIO_CENSITARIO_DEFAULT_KM:.1f}".replace(".", ",")
+    assert f"Redes no raio de {raio_txt} km".encode("latin-1") in pdf_bytes
     assert b"no total" not in pdf_bytes
     assert b"... e mais" not in pdf_bytes
 
