@@ -2616,4 +2616,95 @@ limite conhecido registrado no BLK-RELPON-07 e não muda aqui.
 **Guardrail.** §5 READ-ONLY M1: só RENDER. Não toca score, pesos, interseção censitária, raio de
 análise, carteira, plano nem artefatos oficiais.
 
+### BLK-CONC-SYNC-01 — O diretório de concorrentes dos apps nunca era sincronizado (68 redes fora do mapa, 58 logos faltando)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (corrige degradação silenciosa já no ar e toca o runner semanal da VPS) |
+| **Esteira** | Block Orchestrator → Builder → QA |
+| **Depende de** | BLK-RELPON-14 (#158, em `main` — cadastrou as 107 redes nos registros) |
+| **Status** | **Aplicado em produção em 2026-07-29**; versionamento em revisão |
+| **Autonomia** | **manual (NÃO loop-safe)** — mexe em dados de produção e no cron da VPS |
+
+> Criticidade **Crítica** porque toca `/opt/motor-expansao/concorrentes` (dado que as três
+> superfícies servem) e `/opt/gymscraping-infra/run_weekly_90.sh` (cron semanal) — caminhos de
+> deploy/VPS pelo `loop_guard`. Nada de M1: camada visual/de apoio (§2), não altera score,
+> ranking, carteira nem artefatos oficiais.
+
+**Problema (medido em produção em 2026-07-29).** O #158 cadastrou as 107 redes nos três registros
+de `dashboard/competitors.py`, mas os **arquivos** nunca chegaram ao servidor:
+`/opt/motor-expansao/concorrentes` estava congelado desde **2026-05-28** com 39 CSVs e 39 logos.
+A causa não é esquecimento pontual — é estrutural: o `run_weekly_90.sh` monta
+`GymScraping/Unidades` como `/app/concorrentes:ro` **só dentro do container de regen**, que
+alimenta `concorrentes_mapeados.parquet`. O diretório que os serviços `streamlit`, `api` e `web`
+montam em `/app/concorrentes` **não era tocado por nenhum passo do ciclo**.
+
+Efeito por superfície (medido, não inferido):
+- **Streamlit** — lê os CSVs por `load_competitor_points`: **3.542 pontos / 39 redes** quando o
+  parquet já tinha 106. As 68 redes novas simplesmente não existiam no mapa.
+- **Piloto web e PDFs** — leem o parquet, então os pontos apareciam; mas sem `logo_<slug>.png` o
+  pin caía no fallback de sigla. Em São Paulo, **14 das 39 redes** visíveis sem logo.
+
+**Escopo (3 partes):**
+
+1. **Dado em produção** — `/opt/motor-expansao/concorrentes` passa de 39 para **107 CSVs** e de 39
+   para **97 logos** (backup em `concorrentes.bak-20260729-1600`). Streamlit vai a **4.513 pontos /
+   107 redes**; nenhuma rede perde unidades (ver regra em 2).
+2. **`scripts/sync_concorrentes_dashboard.py`** — normaliza o nome das logos do coletor
+   (`AD3_logo.png` → `logo_ad3.png`) e escolhe, **por rede**, a fonte com mais unidades válidas
+   entre o destino e a coleta. A regra de não reduzir é deliberada: já houve domingo com coleta
+   parcial (45/106 redes) e um CSV truncado não pode apagar o que estava visível.
+3. **Runner semanal** — o passo de sync entra no `run_weekly_90.sh` e o **`web`** entra no restart
+   (o piloto carrega as logos em `@app.on_event("startup")` e cacheia por `lru_cache`; sem restart
+   a logo nova não aparece nele).
+
+**Critérios de aceite:**
+- Streamlit em produção carrega 107 redes e ≥ 4.500 pontos de concorrentes.
+- `/api/municipio/SP/São Paulo` no piloto devolve **0 ícones** sem logo (era 14).
+- O sync é idempotente: rodar duas vezes seguidas não muda nenhum arquivo.
+- 10 redes seguem sem logo — não existe arte no coletor; o fallback de sigla é o projetado.
+
+**Guardrail.** §2/§5 READ-ONLY M1. Nenhuma mudança em score, pesos, pipeline ou artefato oficial;
+o parquet `concorrentes_mapeados.parquet` **não** foi regerado (decisão de Felipe em 2026-07-29:
+ele tem 4.611 pontos contra 4.366 da coleta atual e regerar reduziria o que está no ar).
+
+---
+
+### BLK-RELPON-15 — Raio de 1 km (DEC-021), cobertura total do frame, cor fiel e paridade bot x piloto
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (muda parâmetro canônico do §3 e todos os números do Relatório Pontual) |
+| **Esteira** | Block Orchestrator → Builder → `[GATE VISUAL — Vinicius]` → QA |
+| **Depende de** | BLK-BASEMAP-06 (overlay de malha viária), DEC-021 |
+| **Status** | **Em implementação** |
+| **Autonomia** | **manual (NÃO loop-safe)** — parâmetro canônico + render aprovado em gate visual |
+
+**Quatro itens pedidos por Felipe em 2026-07-29, mais um defeito achado no caminho.**
+
+1. **Raio 1,5 → 1,0 km** — análise, rótulos e metas. Registrado na **DEC-021**; emenda a
+   decisão-chave 5 da DEC-005 e o invariante do §3. Viável sem reprocessar nada: a interseção é
+   runtime e o artefato M1 é *radius-agnostic*. O rótulo do método vira
+   `setor_censitario_intersecao_area_1km` — **mudança de contrato da API**.
+2. **Borda sem coloração** — não era falta de dado: `_map_inner_dims` encolhia a área útil em
+   12 px por lado enquanto o basemap era colado no `map_box` inteiro. Faixa medida de 14/13/12/11 px
+   (~6,9% da área), idêntica em setores e hexágonos. O contrato canônico já prometia "o choropleth
+   preenche a figura inteira **sem letterbox**" — o padding violava o texto vigente.
+3. **Opacidade** — `_CHOROPLETH_ALPHA` 140 → 200, e os overrides das superfícies (110 na API,
+   255 no piloto) **removidos**: passa a haver um valor só.
+4. **Azul do raio** — `_CIRCLE_RGBA` de HSL(216,100%,50%) para HSL(216,100%,43%).
+5. **Defeito**: o painel de Socioeconomia sumia do PDF do piloto porque `_residual_hexes_do_ponto`
+   não pedia `score_setor_2022_calibrado`. Falhava em silêncio (chave ausente é caminho legítimo).
+
+**Critérios de aceite:**
+- Nenhuma faixa de basemap sem cor na borda dos mapas. `[GATE VISUAL]`
+- PDF do bot e do piloto **idênticos** no mapa (mesmo raio, mesmo alpha, mesma cor).
+- Nenhuma string "1,5 km" visível no PDF; todas derivam do raio canônico.
+- Metas absolutas dos Big Numbers **mantidas** (10.000 / 3.000) por decisão de Felipe: o limiar
+  implícito de densidade sobe de ~1.415 para ~3.183 hab/km², endurecendo o critério de propósito.
+
+**Guardrail.** §5 READ-ONLY M1: nenhum artefato, pipeline, score, peso, carteira ou plano tocado.
+Raios de outros domínios (`RAIO_CATCHMENT_KM`, `RAIO_FEATURES_KM`, `DIST_MIN_NOVAS_ULTRAS_KM`)
+seguem em 1,5 km — são outro escopo.
+
 ---
