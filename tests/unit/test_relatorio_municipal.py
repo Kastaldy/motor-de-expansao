@@ -1038,11 +1038,11 @@ def _mapa_resumo(*, basemap: bool) -> bytes:
     return mapas["resumo"]
 
 
-def test_municipal_credita_carto_nos_dois_modos_por_causa_do_overlay(monkeypatch):
-    # BLK-BASEMAP-03 REVERTE o comportamento que o BLK-BASEMAP-02 tinha fixado aqui (self-host ->
-    # so OSM). Com o overlay de rotulos ligado tambem no Municipal, o CARTO passa a ser consumido
-    # nos dois modos e o credito duplo volta a ser o unico honesto. Se um dia a fonte de rotulos
-    # virar o proprio tileserver, ESTE teste e' o ponto de mudanca.
+def test_municipal_credita_conforme_a_fonte_real_de_cada_modo(monkeypatch):
+    # BLK-BASEMAP-06: chegou o "se um dia" que o teste anterior antecipava. A fonte de rotulos
+    # virou o proprio tileserver (estilo `ultra-labels`), entao no self-host o CARTO nao serve
+    # nem o fundo nem o texto — creditar seria FALSO. No fallback (sem env) o fundo ainda e'
+    # Voyager e o credito duplo continua devido.
     from motor_expansao.dashboard import relatorio_municipal as rm
 
     monkeypatch.delenv(rm._BASEMAP_TILES_URL_ENV, raising=False)
@@ -1052,7 +1052,13 @@ def test_municipal_credita_carto_nos_dois_modos_por_causa_do_overlay(monkeypatch
         rm._BASEMAP_TILES_URL_ENV,
         "http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png",
     )
-    assert rm._atribuicao_tiles() == "(c) OpenStreetMap, (c) CARTO"
+    assert rm._atribuicao_tiles() == "(c) OpenStreetMap - OpenMapTiles"
+    assert "CARTO" not in rm._atribuicao_tiles()
+
+    # Os dois relatorios saem da MESMA caixa: o rodape do Municipal nao pode divergir do Pontual.
+    from motor_expansao.dashboard import censo_map as cm
+
+    assert rm._atribuicao_tiles() == cm._atribuicao_tiles()
 
 
 def test_municipal_compoe_nomes_de_rua_por_cima_dos_hexes(monkeypatch):
@@ -1070,7 +1076,7 @@ def test_municipal_compoe_nomes_de_rua_por_cima_dos_hexes(monkeypatch):
         minx, miny, maxx, maxy = bounds
         return np.asarray(Image.new("RGB", (256, 256), (235, 235, 235))), (minx, maxx, miny, maxy)
 
-    def _fake_labels(bounds, _width):
+    def _fake_labels(bounds, _width, **_kwargs):  # **_kwargs: aceita `zoom_bump=`
         minx, miny, maxx, maxy = bounds
         return Image.new("RGBA", (256, 256), (*magenta, 255)), (minx, maxx, miny, maxy)
 
