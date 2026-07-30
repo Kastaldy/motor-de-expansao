@@ -38,6 +38,40 @@ RUN python -m pip install --upgrade pip \
 
 # Usuario nao-root com HOME gravavel: cache do webdriver-manager (~/.wdm) e perfil
 # do Chrome headless precisam escrever. /data e o volume de sessoes do bot.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BLK-SEC-04 — camada final de SEGURANCA. Fica por ULTIMO de proposito.
+#
+# PROBLEMA 1 (o que travou o deploy em 2026-07-30): o CI builda com
+# `cache-from: type=gha` e a linha do `apt-get` acima nunca muda -> a camada de
+# pacotes de SO ficava CONGELADA no estado da primeira vez que foi cacheada.
+# Atualizacao de seguranca do Debian NUNCA chegava, por mais rebuilds que se
+# fizesse. Foi assim que o `libexpat1` ficou preso em 2.7.1-2 com 2.8.2-1~deb13u1
+# disponivel em `trixie-security` e 5 HIGH abertos.
+# O `ARG APT_REFRESH` recebe o `github.run_id` no CI: muda a cada execucao, entao
+# ESTA camada e' sempre refeita. Ela vem depois do `pip install` justamente para
+# nao invalidar a camada cara — o custo e' ~20s de apt, nao o build inteiro.
+#
+# PROBLEMA 2: `pip`/`setuptools`/`wheel` ficavam na imagem de RUNTIME e arrastavam
+# CVE de ferramenta de build (inclusive o `msgpack` VENDORIZADO dentro do pip).
+# Era a divida que o proprio `.trivyignore` nomeava: "remediar de verdade = imagem
+# sem build tools no runtime". Nenhum servico importa isso em runtime — os unicos
+# usos de `setuptools_scm` no venv (matplotlib, pyarrow) estao sob `try` e so valem
+# para checkout de git.
+#
+# Os DOIS smokes existem para que uma remocao errada quebre o BUILD, nunca a
+# producao: se algum import parar de funcionar, a imagem nao e' publicada.
+ARG APT_REFRESH=0
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -c "import fastapi, uvicorn, contextily, rasterio, matplotlib, pyarrow, motor_expansao" \
+    && (python -m pip uninstall -y wheel || true) \
+    && (python -m pip uninstall -y setuptools || true) \
+    && (python -m pip uninstall -y pip || true) \
+    && python -c "import fastapi, uvicorn, contextily, rasterio, matplotlib, pyarrow, motor_expansao" \
+    && echo "BLK-SEC-04: build tools removidos, imports intactos"
+
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \
     && mkdir -p /app/data /data \
     && chown -R appuser:appuser /app /data /home/appuser

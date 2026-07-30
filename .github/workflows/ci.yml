@@ -145,6 +145,13 @@ jobs:
           tags: motor-expansao-streamlit:scan
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # BLK-SEC-04: muda a cada execucao -> a camada final de seguranca do Dockerfile
+          # e' SEMPRE refeita. Sem isto o `cache-from: type=gha` congela os pacotes de SO
+          # no estado da primeira vez que a camada foi cacheada e atualizacao de seguranca
+          # nunca chega (foi o que prendeu o libexpat1 em 2.7.1-2 com o fix disponivel).
+          # A camada vem DEPOIS do `pip install`, entao o build caro segue cacheado.
+          build-args: |
+            APT_REFRESH=${{ github.run_id }}
       # BLK-SEC-02: Trivy bloqueia HIGH/CRITICAL antes do push (ignore-unfixed: nao
       # bloqueia CVE sem patch upstream -> controle de ruido). Imagem vulneravel NAO publica.
       - name: Image scan (Trivy, HIGH/CRITICAL block)
@@ -168,6 +175,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # BLK-SEC-04: muda a cada execucao -> a camada final de seguranca do Dockerfile
+          # e' SEMPRE refeita. Sem isto o `cache-from: type=gha` congela os pacotes de SO
+          # no estado da primeira vez que a camada foi cacheada e atualizacao de seguranca
+          # nunca chega (foi o que prendeu o libexpat1 em 2.7.1-2 com o fix disponivel).
+          # A camada vem DEPOIS do `pip install`, entao o build caro segue cacheado.
+          build-args: |
+            APT_REFRESH=${{ github.run_id }}
       - name: Exibir digest publicado (pin de prod)
         run: 'echo "Digest imutavel publicado: ${{ steps.push.outputs.digest }}"'
 
@@ -192,6 +206,13 @@ jobs:
           tags: motor-expansao-streamlit:sanity
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # BLK-SEC-04: muda a cada execucao -> a camada final de seguranca do Dockerfile
+          # e' SEMPRE refeita. Sem isto o `cache-from: type=gha` congela os pacotes de SO
+          # no estado da primeira vez que a camada foi cacheada e atualizacao de seguranca
+          # nunca chega (foi o que prendeu o libexpat1 em 2.7.1-2 com o fix disponivel).
+          # A camada vem DEPOIS do `pip install`, entao o build caro segue cacheado.
+          build-args: |
+            APT_REFRESH=${{ github.run_id }}
       # BLK-SEC-02: mesmo gate de imagem do publish, aqui como sanity bloqueante
       # (decisao travada) -> build de ciclo com HIGH/CRITICAL reprova antes de virar prod.
       - name: Image scan (Trivy, HIGH/CRITICAL block)
@@ -267,6 +288,13 @@ jobs:
           tags: motor-expansao-api:scan
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # BLK-SEC-04: muda a cada execucao -> a camada final de seguranca do Dockerfile
+          # e' SEMPRE refeita. Sem isto o `cache-from: type=gha` congela os pacotes de SO
+          # no estado da primeira vez que a camada foi cacheada e atualizacao de seguranca
+          # nunca chega (foi o que prendeu o libexpat1 em 2.7.1-2 com o fix disponivel).
+          # A camada vem DEPOIS do `pip install`, entao o build caro segue cacheado.
+          build-args: |
+            APT_REFRESH=${{ github.run_id }}
       # Trivy em modo REPORT (exit-code 0) p/ a imagem da API: ela embute Google Chrome,
       # que carrega CVEs HIGH/CRITICAL perpetuas sem fix viavel (upstream fora do nosso
       # controle). Como a API NAO tem porta no host (so rede interna app_net), reportamos
@@ -293,6 +321,13 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # BLK-SEC-04: muda a cada execucao -> a camada final de seguranca do Dockerfile
+          # e' SEMPRE refeita. Sem isto o `cache-from: type=gha` congela os pacotes de SO
+          # no estado da primeira vez que a camada foi cacheada e atualizacao de seguranca
+          # nunca chega (foi o que prendeu o libexpat1 em 2.7.1-2 com o fix disponivel).
+          # A camada vem DEPOIS do `pip install`, entao o build caro segue cacheado.
+          build-args: |
+            APT_REFRESH=${{ github.run_id }}
       - name: Exibir digest publicado (pin da API)
         if: steps.filter.outputs.changed == 'true'
         run: 'echo "API digest imutavel publicado: ${{ steps.push.outputs.digest }}"'
