@@ -10875,3 +10875,158 @@ de **1 linha** fecha o teste compartilhado e o teste próprio do MA-03 de uma ve
 
 **Snapshots de handoff (versionados):** `20260729-144904-block-orchestrator.md` ·
 `20260729-151112-planner.md` · `20260729-154930-builder.md` · `20260729-162056-qa.md`.
+
+---
+
+### BLK-MA-04 — Score de vulnerabilidade (D4): composição ponderada de S1/S3/S4, renormalização e flags
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (fecha a fórmula de um score de negócio novo e emenda o contrato canônico do epic; **camada PARALELA e READ-ONLY sobre o M1** — não toca `score_priorizacao`, `hex_score_estrutural`, pesos `renda=0.40`/`pop=0.60`, carteira, plano ou artefato oficial). **Exige gate humano antes do Builder** (3 decisões de produto). |
+| **Prioridade** | Antes do **BLK-MA-05** (é o insumo da lista priorizada). |
+| **Esteira** | Block Orchestrator → Planner → `[GATE HUMANO — G-D1/G-D2/G-D3]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | BLK-MA-02 (concluído 2026-07-29) e BLK-MA-03 (concluído 2026-07-29). **Nota (não bloqueio):** o **cron MENSAL dos agregadores WellHub/TotalPass** segue pendente (`docs/infra_producao.md`, DEC-013 §7.3) — sem ele não existe série real dos independentes e o score não produz número de produção. Este bloco entrega o CÓDIGO, validado com fixtures 100% sintéticas. |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012), emenda contrato canônico, toca `tasks/backlog.md` (governança) e exige gate humano. NUNCA marcar loop-safe. |
+
+**Objetivo.** Materializar o §8 do `docs/vulnerabilidade_ma_contrato.md`: compor
+`score_vulnerabilidade ∈ [0,100]` a partir de S1 (`presenca_agregador_v1`, hex-level) e S3/S4
+(`churn_staleness_v1`, por academia), com renormalização por sinal ausente/imaturo e flags de
+qualidade — **uma linha por academia** (`(fonte, chave_snapshot)`), sem hotness, sem entregável
+comercial e **sem escrever nada em disco**.
+
+**Escopo.** Criar `src/motor_expansao/vulnerabilidade/score.py` (módulo PURO) com
+`calcular_score_vulnerabilidade(base_dir=None, *, churn=None, presenca=None)` e
+`_assert_schema_score`; acrescentar a `contrato.py` (stdlib puro) `VERSAO_CONTRATO_SCORE`,
+`SINAIS_ORDEM`, `PESOS_ALVO_SINAIS`, `SINAIS_INATIVOS`, `V3_POR_STATUS_CHURN`,
+`CONTRATO_COLUNAS_SCORE` e a primitiva `renormalizar_pesos`; exportar em `__init__.py`; criar
+`tests/unit/vulnerabilidade/test_score.py` (fixtures 100% sintéticas); estender
+`test_contrato.py::test_identificadores_do_contrato_sao_ascii` e
+`test_snapshots.py::test_isolamento_imports`; emendar o contrato do epic com `[emenda BLK-MA-04]`.
+
+**Pontos críticos.** (1) **Filtro de universo neste bloco** — o frame de churn traz cadeias
+(`fonte == "unidades"`) e marcas conhecidas dentro do TotalPass; sem filtro o score pontuaria uma
+rede de cadeia como alvo de aquisição. O predicado é reusado de `presenca_agregador`, nunca
+duplicado. (2) **Renormalização genérica** a partir dos pesos-alvo do D4 (`0,15/0,25/0,35/0,25`); os
+efetivos (`~0,20/~0,467/~0,333`) são consequência de S2 estar inativo e são **asseridos, nunca
+digitados**. (3) `n_sinais_disponiveis == 0` → score **NULO**, jamais `0`. (4) `v1` é CATEGÓRICO —
+nunca percentilizado. (5) Enquanto S3/S4 estiverem imaturos (~8-12 meses na cadência real, §6/§12),
+o score vive em `{0, 50}` com `flag_score_provisorio` — e **não ordena carteira**.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; reabrir os pesos do D4 (gate de 2026-07-23)
+ou a granularidade hex do `v1` (gate G1 de 2026-07-29); sinal 2/rating (**BLK-MA-08**); hotness,
+`h3.grid_disk(k=1)`, a INVERSÃO aplicada, lista comercial e os artefatos do D6
+(**BLK-MA-05**); plug no `run_weekly_90.sh` e runbook (**BLK-MA-06**); `MIN_SEMANAS`/
+`STALE_SEMANAS`/`RETENCAO_SEMANAS`; editar `snapshots.py`/`churn_staleness.py`/
+`presenca_agregador.py`; corrigir as ressalvas dos FU1; ler fonte real, escrever em disco,
+persistir PII ou criar dependência de API ao vivo.
+
+**Critério de aceite.** Fórmula do §8 implementada com renormalização genérica e pesos efetivos
+calculados; os regimes de disponibilidade cobertos por teste; `v1`/`v3`/`v4` nos domínios
+contratados, com `novo` → ausente; universo filtrado com teste que falharia se uma cadeia entrasse;
+join `validate="many_to_one"` com a borda do hex sem par coberta; contrato de coluna travado por
+`_assert_schema_score`, que rejeita colunas do M1, do BLK-MA-05 e as duas famílias ressalvadas dos
+FU1; módulo puro, sem I/O e sem PII; isolamento de import estendido; emenda ao contrato marcada
+`[emenda BLK-MA-04]`, sem DEC; suíte completa sem regressão (baseline: **2231 coletados**); `ruff
+check . --no-cache` limpo; `python scripts/loop_guard.py` sem `CRITICO` (só `governanca`);
+READ-ONLY sobre o M1 provado pelo diff.
+
+---
+
+## Fechamento de ciclo — BLK-MA-04 (Score de vulnerabilidade: composição ponderada de S1/S3/S4)
+
+**Data:** 2026-07-30 · **Veredito:** APROVADO COM RESSALVAS (0 críticos · 2 médios · 7 leves) ·
+**Criticidade:** Alta · **Esteira:** Block Orchestrator (Opus) -> Planner (Opus) -> [gate humano
+G-D1/G-D2/G-D3 — Vinicius] -> Builder (Opus) -> QA (Opus). **READ-ONLY sobre o M1** e **anti-PII por
+construção** (DEC-012). **SEM DEC nova** (contrato §14).
+
+**Entregável.** `src/motor_expansao/vulnerabilidade/score.py` (novo), contrato
+`CONTRATO_COLUNAS_SCORE` de **20 colunas** + `SINAIS_ORDEM` / `PESOS_ALVO_SINAIS` / `SINAIS_INATIVOS`
+/ `V3_POR_STATUS_CHURN` / `renormalizar_pesos` em `contrato.py`, reexport no `__init__.py`, **79
+testes** novos com fixtures 100% sintéticas, e a emenda `[emenda BLK-MA-04]` em 7 pontos do contrato
+do epic. Este bloco **fecha a fórmula do `score_vulnerabilidade`**; o cruzamento com hex quente, o
+entregável comercial e os artefatos do D6 são BLK-MA-05, e o cron é BLK-MA-06.
+
+**Criticidade ALTA, não Crítica (decisão C1, registrada).** A regra dura do `/run-cycle` ("pesos do
+score -> Crítica") tem por contexto o **M1** — a mesma linha cita `score_priorizacao`,
+`hex_score_estrutural` e artefatos M1 oficiais. A interpretação operacional de 2026-05-30 amarra
+Crítica a alteração de **artefato M1**, o que este bloco não faz: o `score_vulnerabilidade` é
+PARALELO e READ-ONLY. Reforçam: o §14 diz "sem DEC neste bloco", e o gate de produto do D4 (pesos
+S1=0,15 / S2=0,25 / S3=0,35 / S4=0,25) já ocorrera em 2026-07-23.
+
+**O achado mais grave, pego pelo Block Orchestrator e medido: o score pontuaria a SMART FIT como alvo
+de aquisição.** O frame de churn do BLK-MA-02 traz `fonte == "unidades"` — o feed de CADEIAS —, e o
+BLK-MA-02 não filtra universo (o §12 ratificou plugar o extrator de churn justamente nesse feed). O
+BLK-MA-03 já filtrava do seu lado; este bloco não filtrava. Medição do Planner:
+`{'totalpass': 3, 'unidades': 1, 'wellhub': 1}`. **O filtro ficou NESTE bloco**, não como correção
+retroativa no MA-02, para não quebrar o que o §12 ratificou. Falso alvo é o erro mais caro do epic —
+a lista vai para o time comercial.
+
+**Gate humano (2026-07-30, Vinicius) — três decisões, todas ratificadas na recomendação do Planner:**
+- **G-D1 — coluna ordenável nula.** A pergunta era "um consumidor futuro respeita uma proibição
+  escrita em contrato?". Resposta do Planner: **não, e não precisa**. A saída traz
+  `score_vulnerabilidade` **sempre preenchido** (o número auditável do D4) **e**
+  `score_vulnerabilidade_ordenavel`, que fica **NaN enquanto `flag_score_provisorio`** estiver ligada.
+  Um `sort_values` sobre frame provisório devolve NaN em todas as linhas — o consumidor descobre no
+  primeiro teste, não no primeiro relatório entregue ao comercial. Reversível de graça quando o S3
+  amadurecer. **Razão material (P3):** no regime só-S1, `score == 0` **não** significa "não
+  vulnerável", significa "o hex tem os 2 agregadores" — mentira semântica que não pode virar número
+  para o comercial.
+- **G-D2 — NÃO abrir exceção no §8.4; propagar `status_churn` como coluna de FATO.** Aqui o Planner
+  **discordou do BO** (que recomendava "fraca a favor") e o gate seguiu o Planner. `status_churn`
+  entra como dado observado: sem peso, fora de `Σ(wi·vi)`, sem mudar regime. Dá ao BLK-MA-05
+  exatamente a informação que a exceção queria injetar — segmentar por "sumiço observado" — sem que o
+  score finja maturidade que não tem, e sem mexer em cláusula ratificada em 2026-07-23.
+  **A justificativa do BO caiu por medição (P4):** a proteção `(fonte, rede)` cobre gap do **escopo
+  inteiro**, não **coleta parcial** — com 30% das páginas raspadas, 70% do universo viraria
+  `sumiu_recente` com peso 0,70 e zero amortecimento no ramp-up.
+- **G-D3 — `v4 = min(semanas_sem_mudanca / STALE_SEMANAS, 1)`** (razão absoluta do §8.1), emendando o
+  §8.2 para registrar que percentil-por-universo **não tem consumidor** no Plano B. Motivo decisivo: o
+  percentil tornaria o score **NÃO MONOTÔNICO** — uma academia parada baixaria o `v4` de todas as
+  outras, e a régua mudaria a cada execução conforme o universo raspado variasse.
+
+**Dois defeitos que o Planner achou no plano do BO** (nenhum chegou ao código): **P1** —
+`n_agregadores_no_hex` tipado `int64` é incompatível com o próprio critério de aceite, porque no join
+com miss o pandas promove a `float64`+NaN; tem de ser `Int64` nulável. **P2** — o assert de
+`left_only` que o BO propôs mataria exatamente a borda que outro CA exige testar; resolvido sem
+`raise`, com biconditional auditável na saída.
+
+**Buracos do contrato fechados neste ciclo** (achados novos do BO, nenhum estava em handoff anterior):
+`novo` era um `status_churn` real **sem `v3` definido** no §8.1; e o §8.1 e o §8.2 **se contradiziam**
+sobre `v4` (razão absoluta vs percentil). Ambos viraram emenda.
+
+**Desbloqueio dos dois FU1 anteriores (D5, fechada pelo Planner).** Verificado no código que os únicos
+insumos de `vi` são `n_agregadores_no_hex`, `status_churn` e
+`semanas_sem_mudanca` + `flag_staleness_interpretavel` — logo nem a `flag_troca_chave_na_serie`
+permanentemente ligada (`BLK-MA-02-FU1`) nem a super-contagem de `n_academias_independentes_*`
+(`BLK-MA-03-FU1`) bloqueiam este bloco.
+
+**Validações re-executadas pelo QA, sem bypass:** suíte **COMPLETA** serial ->
+`1 failed, 2308 passed, 2 skipped in 1824.67s (30m24s)`, **2311 coletados** (baseline **2231**). A
+única falha é a **pré-existente** `test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime`
+(BLK-FIX-LTV-01). `ruff` limpo; `loop_guard` 4x `governanca`, **zero `CRITICO`**; READ-ONLY M1 provado
+pelo diff contra `1ea0242` (o merge de `origin/main`, não contra `main`, porque a branch empilha);
+`garimpeiro` não lista o bloco; 0 CRLF.
+
+**As sondas que o QA construiu (fora dos testes do Builder) — é o que sustenta o veredito:**
+- **A3 provado por MUTAÇÃO:** desligou o filtro de universo -> **4 testes falham**; desligou o filtro
+  **e** o schema -> os 2 testes comportamentais ainda falham sozinhos. A cadeia realmente não entra.
+- **G-D1:** ordenável nula no provisório, idêntica ao score fora dele.
+- **G-D2:** §8.4 **byte-a-byte intocado** (diff só aditivo); os 4 `status_churn` dão o mesmo score.
+- **G-D3:** `v4` monotônico — mover `semanas_sem_mudanca` de B de 5 para 99 **não move** o score de A.
+- **Renormalizador é DERIVADO, não digitado:** mutou os pesos-alvo e os efetivos acompanharam.
+- "Ausência nunca vira zero" verificado em **3 caminhos**; `Int64` nulável confirmado.
+- **Acentuação limpa nos dois sentidos** em `score.py` e `test_score.py` — **primeira vez no epic sem
+  ressalva de acento nos arquivos novos** (o QA pegara isso no MA-02 e no MA-03).
+
+**Ressalvas registradas (viraram `BLK-MA-04-FU1`, Baixa, manual).** (1) O teste de isolamento novo
+prova **2 das 5** formas de import — o Builder replicou num arquivo novo o ponto cego do AST já
+registrado no `BLK-MA-02-FU1` Item 2-B, que agora **subconta** (2 -> 3 arquivos; 3/5 -> 2/5) e precisa
+ter o texto atualizado. (2) O regime de 1 sinal **`{s3}`** não tem teste e **o G-D1 não o cobre**:
+medido `score = 100.0`, `provisorio = False`, `ordenavel = 100.0` — fiel ao §8.4 ratificado, mas
+significa que a coluna ordenável não protege regime de 1 sinal quando o sinal é o S3; inalcançável por
+`base_dir`, alcançável por frames injetados, que é o modo que o MA-05 pode usar. (3) Quatro leves,
+entre eles uma **asserção morta** (`float(score or 1.0) != 0.0` passa para `NaN` **e** para `0.0`).
+
+**Snapshots de handoff (versionados):** `20260730-093051-block-orchestrator.md` ·
+`20260730-095342-planner.md` · `20260730-102902-builder.md` · `20260730-110503-qa.md`.
