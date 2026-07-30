@@ -2457,5 +2457,4 @@ Efeito por superfície (medido, não inferido):
 o parquet `concorrentes_mapeados.parquet` **não** foi regerado (decisão de Felipe em 2026-07-29:
 ele tem 4.611 pontos contra 4.366 da coleta atual e regerar reduziria o que está no ar).
 
-
 ---
