@@ -104,6 +104,11 @@ def test_identificadores_do_contrato_sao_ascii() -> None:
         *c.CONTRATO_COLUNAS_SNAPSHOT.keys(),
         *c.CONTRATO_COLUNAS_CHURN.keys(),
         *c.CONTRATO_COLUNAS_PRESENCA_AGREGADOR.keys(),
+        *c.CONTRATO_COLUNAS_SCORE.keys(),
+        *c.SINAIS_ORDEM,
+        *c.SINAIS_INATIVOS,
+        *c.PESOS_ALVO_SINAIS.keys(),
+        *c.V3_POR_STATUS_CHURN.keys(),
         *c.MOTIVOS_DESCARTE,
         *c.STATUS_CHURN_VALIDOS,
         *sorted(c.FONTES_VALIDAS),
@@ -114,12 +119,19 @@ def test_identificadores_do_contrato_sao_ascii() -> None:
         c.VERSAO_CONTRATO_SNAPSHOT,
         c.VERSAO_CONTRATO_CHURN,
         c.VERSAO_CONTRATO_PRESENCA_AGREGADOR,
+        c.VERSAO_CONTRATO_SCORE,
         c.CATEGORIA_INDEPENDENTE,
         c.COLUNA_PARTICAO,
     ]
     for valor in alvos:
         assert valor.isascii(), f"identificador com caractere fora de ASCII: {valor!r}"
         assert valor == valor.strip()
+
+
+def test_sinais_ordem_bate_com_as_chaves_dos_pesos() -> None:
+    """A ordem canônica dos sinais é a MESMA dos pesos-alvo do D4: uma fonte de verdade só."""
+    assert tuple(c.PESOS_ALVO_SINAIS) == c.SINAIS_ORDEM
+    assert set(c.SINAIS_INATIVOS) < set(c.SINAIS_ORDEM)
 
 
 def test_fontes_agregadores_e_subconjunto_de_fontes_validas() -> None:

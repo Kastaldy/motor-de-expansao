@@ -9,8 +9,9 @@ apenas — a fórmula do `concorrente_id` está REPLICADA em `contrato.py`, nunc
 Fronteira dos módulos: `snapshots.py` transforma o CSV cru de UMA execução em UMA partição
 `semana=AAAA-SS`; `churn_staleness.py` lê a série dessas partições e devolve o estado de churn
 (sinais 3 e 4); `presenca_agregador.py` lê a mesma série e devolve, por `hex_id_res7`, o insumo
-bruto do sinal 1 (presença em TotalPass/WellHub). Os extratores **param** no insumo —
-`score_vulnerabilidade`, `v1`/`v3`/`v4`, normalização e pesos são do BLK-MA-04.
+bruto do sinal 1 (presença em TotalPass/WellHub). Os extratores **param** no insumo; `score.py`
+(BLK-MA-04) compõe `v1`/`v3`/`v4` e o `score_vulnerabilidade` a partir deles, sem I/O, e é onde o
+universo de M&A é fechado. Materializar artefato e cruzar com hexágono quente são do BLK-MA-05.
 
 Contrato canônico do epic: `docs/vulnerabilidade_ma_contrato.md`.
 """
@@ -23,16 +24,24 @@ from .contrato import (
     COLUNAS_PII_PROIBIDAS,
     CONTRATO_COLUNAS_CHURN,
     CONTRATO_COLUNAS_PRESENCA_AGREGADOR,
+    CONTRATO_COLUNAS_SCORE,
     CONTRATO_COLUNAS_SNAPSHOT,
     FONTES_AGREGADORES,
     MIN_SEMANAS,
+    PESOS_ALVO_SINAIS,
     RETENCAO_SEMANAS,
+    SINAIS_INATIVOS,
+    SINAIS_ORDEM,
     STALE_SEMANAS,
+    V3_POR_STATUS_CHURN,
     VERSAO_CONTRATO_CHURN,
     VERSAO_CONTRATO_PRESENCA_AGREGADOR,
+    VERSAO_CONTRATO_SCORE,
     VERSAO_CONTRATO_SNAPSHOT,
+    renormalizar_pesos,
 )
 from .presenca_agregador import extrair_presenca_agregador
+from .score import calcular_score_vulnerabilidade
 from .snapshots import (
     SNAPSHOTS_DIR_DEFAULT,
     avaliar_estabilidade_slug,
@@ -68,6 +77,15 @@ __all__ = [
     "VERSAO_CONTRATO_PRESENCA_AGREGADOR",
     "FONTES_AGREGADORES",
     "CATEGORIA_INDEPENDENTE",
+    # Score de vulnerabilidade (D4)
+    "calcular_score_vulnerabilidade",
+    "CONTRATO_COLUNAS_SCORE",
+    "VERSAO_CONTRATO_SCORE",
+    "PESOS_ALVO_SINAIS",
+    "SINAIS_ORDEM",
+    "SINAIS_INATIVOS",
+    "V3_POR_STATUS_CHURN",
+    "renormalizar_pesos",
     # Contrato
     "CONTRATO_COLUNAS_SNAPSHOT",
     "CONTRATO_COLUNAS_CHURN",

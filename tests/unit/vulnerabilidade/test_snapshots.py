@@ -23,6 +23,7 @@ import pytest
 from motor_expansao.vulnerabilidade import churn_staleness as mchurn
 from motor_expansao.vulnerabilidade import contrato as c
 from motor_expansao.vulnerabilidade import presenca_agregador as mpresenca
+from motor_expansao.vulnerabilidade import score as mscore
 from motor_expansao.vulnerabilidade import snapshots as m
 
 REF = date(2026, 7, 29)  # semana ISO 2026-31
@@ -173,12 +174,13 @@ def test_isolamento_imports() -> None:
     fórmula foi REPLICADA no `contrato`, jamais importada.
 
     Esta tupla é a garantia COMPARTILHADA do pacote; ela **não** proíbe `demanda_revelada` (nem
-    poderia: `snapshots.py` o importa). A proibição específica do módulo do sinal 1 vive em
-    `test_presenca_agregador.py::test_modulo_nao_importa_demanda_revelada`.
+    poderia: `snapshots.py` o importa). A proibição específica dos módulos do sinal 1 e do score
+    vive em `test_presenca_agregador.py::test_modulo_nao_importa_demanda_revelada` e em
+    `test_score.py::test_modulo_nao_importa_demanda_revelada`.
     """
     import motor_expansao.vulnerabilidade as pacote
 
-    for modulo in (pacote, c, m, mchurn, mpresenca):
+    for modulo in (pacote, c, m, mchurn, mpresenca, mscore):
         tree = ast.parse(inspect.getsource(modulo))
         nomes: list[str] = []
         for node in ast.walk(tree):

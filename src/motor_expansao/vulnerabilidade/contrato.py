@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 import re
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date
 
 # --------------------------------------------------------------------------- #
@@ -34,6 +34,7 @@ from datetime import date
 VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v1"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v1"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v1"
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -245,6 +246,64 @@ CONTRATO_COLUNAS_PRESENCA_AGREGADOR: dict[str, str] = {
     "snapshot_date_ultimo_totalpass": "string",       # relógio do COLETOR (nulo sse contagem 0)
     "snapshot_date_ultimo_wellhub": "string",         # idem, WellHub
     "versao_contrato": "string",                      # carimbo; mudança = descontinuidade de série
+}
+
+# --------------------------------------------------------------------------- #
+# Score de vulnerabilidade (D4) — BLK-MA-04
+# --------------------------------------------------------------------------- #
+# ORDEM CANÔNICA do `sinais_disponiveis` (molde de domínio-tupla: `STATUS_CHURN_VALIDOS`).
+# A string é montada iterando ESTA tupla, nunca um `set` nem as chaves de um dict.
+SINAIS_ORDEM: tuple[str, ...] = ("s1", "s2", "s3", "s4")
+
+# Pesos-alvo do D4 (gate de produto de 2026-07-23). CONGELADOS: somam 1,00 e só mudam com novo
+# gate. Os pesos EFETIVOS do Plano B (~0,20 / ~0,467 / ~0,333) são CONSEQUÊNCIA de S2 estar
+# inativo e são calculados por `renormalizar_pesos` — jamais digitados em lugar algum.
+PESOS_ALVO_SINAIS: dict[str, float] = {"s1": 0.15, "s2": 0.25, "s3": 0.35, "s4": 0.25}
+
+# S2 (rating in-app) é `n/d` PERMANENTE no Plano B (contrato §7 / D3) até o BLK-MA-08 ajustar o
+# coletor. Reativar o sinal 2 é remover UMA entrada desta tupla — a fórmula do score não muda.
+SINAIS_INATIVOS: tuple[str, ...] = ("s2",)
+
+# `novo` mapeia para `None` (= AUSENTE), NUNCA para `0.0`: ler "série curta demais para julgar"
+# como "estável" inverteria o sinal em silêncio. As chaves são EXATAMENTE `STATUS_CHURN_VALIDOS`
+# — um 5º estado futuro quebra o teste do contrato em vez de cair num default silencioso.
+V3_POR_STATUS_CHURN: dict[str, float | None] = {
+    "novo": None,
+    "estavel": 0.0,
+    "piscando": 0.7,
+    "sumiu_recente": 1.0,
+}
+
+# Score de vulnerabilidade (D4): 20 colunas, nesta ORDEM. Uma linha por ACADEMIA, isto é, por
+# `(fonte, chave_snapshot)` do universo de M&A (TotalPass/WellHub x independente).
+#
+# `v2` está AUSENTE DE PROPÓSITO (S2 é `n/d` permanente, D3 — BLK-MA-08); `hex_quente`,
+# `sam_fitness_potencial` e a lista comercial são BLK-MA-05.
+#
+# `n_agregadores_no_hex` é `Int64` (NULÁVEL) e é a única coluna de inteiro nulável do contrato:
+# a linha cujo hex não casa no join com o sinal 1 fica com `v1` AUSENTE (renormalizado para
+# fora), e o `int64` nativo não carrega nulo — no miss o pandas promoveria a `float64` + `NaN`.
+CONTRATO_COLUNAS_SCORE: dict[str, str] = {
+    "chave_snapshot": "string",                    # a chave opaca (anti-PII); metade do grão
+    "fonte": "string",                             # totalpass | wellhub — NUNCA `unidades`
+    "rede": "string",                              # sempre `independente` (universo de M&A)
+    "hex_id_res7": "string",                       # join com o sinal 1 e, no BLK-MA-05, hotness
+    "status_churn": "string",                      # FATO propagado, sem peso (G-D2)
+    "v1": "float64",                               # componente do S1; {0.0, 0.5} ou nulo
+    "v3": "float64",                               # componente do S3; {0.0, 0.7, 1.0} ou nulo
+    "v4": "float64",                               # componente do S4; [0, 1] ou nulo
+    "sinais_disponiveis": "string",                # subconjunto de SINAIS_ORDEM, unido por `,`
+    "n_sinais_disponiveis": "int64",               # 0..3 (4 quando o BLK-MA-08 ativar o S2)
+    "score_vulnerabilidade": "float64",            # [0, 100]; nulo sse nenhum sinal disponível
+    "score_vulnerabilidade_ordenavel": "float64",  # nulo enquanto `flag_score_provisorio` (G-D1)
+    "flag_serie_imatura": "bool",                  # propagada do churn
+    "flag_staleness_interpretavel": "bool",        # propagada do churn; condiciona o S4
+    "flag_score_provisorio": "bool",               # S3 E S4 indisponíveis (contrato §8.4)
+    "n_agregadores_no_hex": "Int64",               # auditoria do v1; NULÁVEL (ver acima)
+    "fontes_presentes_no_hex": "string",           # auditoria do v1; nulo sse a de cima for nula
+    "semana_ultima_observacao": "string",          # relógio do PIPELINE (vem do churn)
+    "snapshot_date_ultimo": "string",              # relógio do COLETOR (vem do churn)
+    "versao_contrato": "string",                   # carimbo; mudança = descontinuidade de série
 }
 
 # Colunas PROIBIDAS nos artefatos desta camada (rede de segurança do teste anti-PII: a limpeza é
@@ -469,10 +528,41 @@ def concorrente_id_producao(rede: object, nome: object, lat: object, lng: object
     return hashlib.sha1(f"{rede}|{nome}|{la:.6f}|{ln:.6f}".encode()).hexdigest()
 
 
+# --------------------------------------------------------------------------- #
+# Primitiva do score de vulnerabilidade (D4) — mora ao lado dos pesos de propósito
+# --------------------------------------------------------------------------- #
+def renormalizar_pesos(disponiveis: Sequence[str]) -> dict[str, float]:
+    """Pesos-alvo do D4 restritos a `disponiveis`, reescalados para somar `1,0`.
+
+    É a implementação GENÉRICA da regra do §8.4 do contrato do epic ("dropar o peso do sinal
+    ausente/imaturo e reescalar os restantes"). Os pesos efetivos do Plano B saem daqui como
+    CONSEQUÊNCIA — `renormalizar_pesos(["s1", "s3", "s4"])` devolve `~0,20 / ~0,467 / ~0,333` —,
+    e por isso esses três números **nunca** são digitados no código: reativar o S2 (BLK-MA-08) é
+    remover uma entrada de `SINAIS_INATIVOS`, sem tocar em fórmula alguma.
+
+    Devolve `{}` quando `disponiveis` é vazio — o chamador trata isso como score AUSENTE, nunca
+    como `0` (zero é uma afirmação de solidez; ausência é ausência). Itera `SINAIS_ORDEM` para o
+    dicionário sair determinístico, e duplicatas na entrada colapsam. Sinal fora de
+    `SINAIS_ORDEM` levanta `ValueError`.
+    """
+    pedidos = {str(s) for s in disponiveis}
+    desconhecidos = sorted(pedidos - set(SINAIS_ORDEM))
+    if desconhecidos:
+        raise ValueError(
+            f"sinal fora de SINAIS_ORDEM {list(SINAIS_ORDEM)}: {desconhecidos}"
+        )
+    presentes = [s for s in SINAIS_ORDEM if s in pedidos]
+    if not presentes:
+        return {}
+    soma = sum(PESOS_ALVO_SINAIS[s] for s in presentes)
+    return {s: PESOS_ALVO_SINAIS[s] / soma for s in presentes}
+
+
 __all__ = [
     "VERSAO_CONTRATO_SNAPSHOT",
     "VERSAO_CONTRATO_CHURN",
     "VERSAO_CONTRATO_PRESENCA_AGREGADOR",
+    "VERSAO_CONTRATO_SCORE",
     "H3_RES_CONTRATO",
     "MIN_SEMANAS",
     "STALE_SEMANAS",
@@ -499,6 +589,11 @@ __all__ = [
     "CONTRATO_COLUNAS_SNAPSHOT",
     "CONTRATO_COLUNAS_CHURN",
     "CONTRATO_COLUNAS_PRESENCA_AGREGADOR",
+    "CONTRATO_COLUNAS_SCORE",
+    "SINAIS_ORDEM",
+    "SINAIS_INATIVOS",
+    "PESOS_ALVO_SINAIS",
+    "V3_POR_STATUS_CHURN",
     "COLUNAS_PII_PROIBIDAS",
     "normalizar_texto",
     "normalizar_lista",
@@ -513,4 +608,5 @@ __all__ = [
     "chave_hash_estavel",
     "chave_do_slug",
     "concorrente_id_producao",
+    "renormalizar_pesos",
 ]
