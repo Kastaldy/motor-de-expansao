@@ -295,7 +295,17 @@ export function CascataDre({
   /** Mês de operação a que TODA esta DRE se refere (regime pleno). */
   const mesRef = premissas?.mes_referencia_steady ?? null
 
-  const barras = [
+  // % do faturamento das duas linhas de RESULTADO: chega PRONTO no bloco `dre`
+  // (FIN-VIAB-01 — a tela não divide número financeiro, só renderiza). Campos
+  // OPCIONAIS no contrato: payload antigo simplesmente não exibe o percentual.
+
+  const barras: {
+    rotulo: string
+    valor: number | null
+    tipo: 'pos' | 'neg' | 'res' | 'fin' | 'anu'
+    /** Fração do faturamento bruto servida pelo backend; ausente = não exibir. */
+    pct?: number | null
+  }[] = [
     temAnuidade
       ? { rotulo: 'Mensalidades', valor: mensalidades, tipo: 'pos' as const }
       : { rotulo: 'Fat. bruto', valor: d.faturamento, tipo: 'pos' as const },
@@ -308,9 +318,19 @@ export function CascataDre({
     // nao acompanha a rampa (decisao de Felipe, 2026-07-24).
     { rotulo: 'Folha (fixa)', valor: d.folha, tipo: 'neg' as const },
     { rotulo: 'Fixos + aluguel', valor: d.custos_fixos, tipo: 'neg' as const },
-    { rotulo: 'EBITDA', valor: d.ebitda, tipo: 'res' as const },
+    {
+      rotulo: 'EBITDA',
+      valor: d.ebitda,
+      tipo: 'res' as const,
+      pct: d.ebitda_pct_faturamento ?? null,
+    },
     { rotulo: 'IR/CSLL', valor: d.ir_csll, tipo: 'neg' as const },
-    { rotulo: 'Result. após IR', valor: d.resultado_apos_ir, tipo: 'res' as const },
+    {
+      rotulo: 'Result. após IR',
+      valor: d.resultado_apos_ir,
+      tipo: 'res' as const,
+      pct: d.resultado_apos_ir_pct_faturamento ?? null,
+    },
     { rotulo: 'Desp. financeira', valor: d.despesa_financeira, tipo: 'fin' as const },
   ]
 
@@ -477,6 +497,19 @@ export function CascataDre({
             >
               {b.valor === null ? 'n/d' : brl(b.valor, true)}
             </div>
+            {b.pct != null && (
+              <div
+                className="num"
+                title={`${b.rotulo}: ${pctFrac(b.pct)} do faturamento bruto`}
+                style={{
+                  font: '400 9px/1.2 var(--f-num)',
+                  color: 'var(--tx-muted)',
+                  marginTop: 2,
+                }}
+              >
+                {pctFrac(b.pct)}
+              </div>
+            )}
             <div
               style={{
                 font: '400 9px/1.2 var(--f-ui)',
@@ -509,7 +542,9 @@ export function CascataDre({
         — a equipe é contratada antes dos alunos, então ela NÃO acompanha a rampa e só o
         reajuste anual a move. Neste mês de regime pleno o valor coincide com a base; nos
         meses de rampa é ela que segura o EBITDA no negativo. A despesa financeira (juros da
-        parcela) aparece à parte: o resultado após IR é DESALAVANCADO, antes da PMT.
+        parcela) aparece à parte: o resultado após IR é DESALAVANCADO, antes da PMT. O
+        percentual menor sob o EBITDA e sob o resultado após IR é a fatia de cada um no{' '}
+        <strong>faturamento bruto</strong> deste mês.
       </p>
     </Glass>
   )
@@ -1234,7 +1269,12 @@ export function Veredito({
           className="story"
           style={{ font: '400 19px/1.2 var(--f-story)', color: 'var(--tx-max)' }}
         >
-          {aprovado ? 'Viável no cenário assumido' : 'Abaixo do ponto de equilíbrio'}
+          {/* A régua do selo é a do motor (margem >= margem_viavel_min E payback <=
+              payback_viavel_max), NÃO o break-even: um cenário pode estar acima do
+              ponto de equilíbrio e ainda assim reprovar por margem/payback. Dizer
+              "abaixo do ponto de equilíbrio" aqui contradizia a margem positiva
+              impressa duas linhas abaixo. */}
+          {aprovado ? 'Viável no cenário assumido' : 'Fora da régua de viabilidade'}
         </div>
         <div
           style={{

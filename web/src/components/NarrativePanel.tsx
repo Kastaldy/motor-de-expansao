@@ -125,8 +125,12 @@ export default function NarrativePanel({
               margin: 0,
             }}
           >
-            Nenhuma região passou neste filtro. Volte uma camada para ver o que
-            foi descartado, ou escolha outro município.
+            {/* O botão "← Camada anterior" só existe a partir do passo 2 (StepperBar
+                o esconde quando `atual === 1`); na camada 1 mandar o usuário clicar
+                nele apontaria para um controle que não está na tela. */}
+            {passo.n > 1
+              ? 'Nenhuma região passou neste filtro. Use "← Camada anterior", na barra de passos abaixo, para ver o que foi descartado — ou escolha outro município.'
+              : 'Nenhuma região passou neste filtro. Escolha outro município ou outro estado na barra de busca.'}
           </p>
         ) : (
           passo.itens.map((it) => {
@@ -245,7 +249,7 @@ export default function NarrativePanel({
               font: '600 12.5px/1 var(--f-ui)',
             }}
           >
-            Testar viabilidade deste ponto →
+            Testar viabilidade desta região →
           </button>
         )}
       </div>

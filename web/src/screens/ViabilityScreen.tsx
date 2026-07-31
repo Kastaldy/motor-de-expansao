@@ -10,7 +10,7 @@ import {
   Veredito,
 } from '../components/ViabilityCharts'
 import { NotasMetodologicas } from '../components/ViabilityNotes'
-import { Aviso, Botao, Eyebrow, Glass, Kpi } from '../components/primitives'
+import { Aviso, Botao, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { coordenadaDoEstudo } from '../lib/coord'
 import { alunos, brl, brlCurto, coord, num, pctFrac, rotuloMes } from '../lib/format'
@@ -35,11 +35,14 @@ const DEMANDA_PASSO = 100
 const TICKET_POR_STUDIO = [147, 157, 167, 177] as const
 
 /**
- * Limiar apenas VISUAL do card de payback, usado só como FALLBACK quando o payload
- * ainda não chegou — o número oficial vem em `premissas.payback_viavel_max`. Não
- * entra em conta nenhuma: quem dá o veredito é o motor (`dre.flag_viavel`).
+ * FALLBACKS das réguas do veredito, usados SÓ enquanto o payload não chegou (primeiro
+ * render) — os números oficiais vêm em `premissas.payback_viavel_max` e
+ * `premissas.margem_viavel_min`, servidos da fonte única (`dimensionamento/config.py`).
+ * Se a régua mudar lá, a tela acompanha sozinha; estes valores nunca prevalecem sobre
+ * o payload. Quem dá o veredito é o motor (`dre.flag_viavel`).
  */
 const PAYBACK_ALVO_MESES = 36
+const MARGEM_VIAVEL_MIN_FALLBACK = 0.3
 
 /**
  * Quanto o cheque total pode passar do aporte inicial antes de virar aviso. Acima
@@ -275,7 +278,25 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   const beEbitda = res?.break_even.ebitda ?? null
   /** Break-even DE CAIXA (cobre também a PMT do financiamento), em alunos TOTAIS. */
   const beCaixa = res?.break_even.caixa ?? null
-  const aprovado = margem !== null && margem > 0 && (beEbitda === null || demanda >= beEbitda)
+  /** Réguas do veredito servidas pelo motor; as constantes só cobrem o payload ausente. */
+  const margemViavelMin = premissas?.margem_viavel_min ?? MARGEM_VIAVEL_MIN_FALLBACK
+  const paybackViavelMax = premissas?.payback_viavel_max ?? PAYBACK_ALVO_MESES
+  /** Horizonte da simulação (meses de operação), para rotular os cards sem cravar 60. */
+  const horizonteMeses = premissas?.horizonte_meses ?? 60
+  /**
+   * Selo do veredito = o que o MOTOR decidiu (`dre.flag_viavel`: margem >=
+   * margem_viavel_min E payback <= payback_viavel_max). A tela não re-deriva o
+   * veredito: enquanto ela o derivava do break-even, o mesmo cenário saía "Aprovado
+   * para comitê" aqui e "Viável? Não" no PDF, que lê o mesmo `flag_viavel`.
+   * FALLBACK (o campo é opcional no contrato, para payload antigo): aplica a MESMA
+   * régua do motor com os limiares acima — nunca o critério antigo de break-even.
+   */
+  const aprovado =
+    dre?.flag_viavel ??
+    (margem !== null &&
+      margem >= margemViavelMin &&
+      retorno?.payback != null &&
+      retorno.payback <= paybackViavelMax)
 
   // Classificação do aluguel pedido frente aos clusters de teto (% do faturamento).
   const teto = res?.aluguel_teto ?? null
@@ -985,9 +1006,15 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             onClick={gerarPdf}
             disabled={gerandoPdf}
             style={{ width: '100%', marginTop: 10 }}
-            title="Relatório Pontual Censitário 1,5 km com fotos, dados do imóvel e os números da viabilidade"
+            title="Relatório Pontual Censitário 1,0 km com fotos, dados do imóvel e os números da viabilidade"
           >
-            {gerandoPdf ? 'Montando o relatório…' : 'Relatório completo em PDF ↓'}
+            {gerandoPdf ? (
+              <span style={carregando}>
+                <Spinner /> Montando o relatório…
+              </span>
+            ) : (
+              'Relatório completo em PDF ↓'
+            )}
           </Botao>
 
           {gerandoPdf && (
@@ -1010,7 +1037,13 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             style={{ width: '100%', marginTop: 10 }}
             title="Planilha do cenário com DRE, folha de pagamento e fluxo de caixa dos 60 meses, em fórmulas editáveis"
           >
-            {gerandoXlsx ? 'Montando a planilha…' : 'Baixar simulador (Excel) ↓'}
+            {gerandoXlsx ? (
+              <span style={carregando}>
+                <Spinner /> Montando a planilha…
+              </span>
+            ) : (
+              'Baixar simulador (Excel) ↓'
+            )}
           </Botao>
 
           <p
@@ -1095,12 +1128,18 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                   ? `no cenário assumido · mês ${num(premissas.mes_referencia_steady)} (regime pleno)`
                   : 'no cenário assumido'
               }
+              /* MESMA régua do veredito (`margem_viavel_min`, do motor): verde só a
+                 partir dela. Enquanto o corte aqui era `>= 0`, um cenário de 12% de
+                 margem pintava o card de VERDE logo abaixo do selo "Requer revisão de
+                 premissas" — dois sinais opostos para o mesmo número. */
               tone={
                 margem === null
                   ? undefined
-                  : margem >= 0
+                  : margem >= margemViavelMin
                     ? 'var(--pos-text)'
-                    : 'var(--neg)'
+                    : margem >= 0
+                      ? 'var(--warn-text)'
+                      : 'var(--neg)'
               }
             />
             {/* P2-15: "payback" é SÓ o retorno do capital. Meses de OPERAÇÃO. */}
@@ -1111,7 +1150,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               tone={
                 retorno?.payback == null
                   ? 'var(--neg)'
-                  : retorno.payback <= PAYBACK_ALVO_MESES
+                  : retorno.payback <= paybackViavelMax
                     ? 'var(--pos-text)'
                     : 'var(--warn-text)'
               }
@@ -1169,10 +1208,14 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               label="1º mês com caixa operacional positivo"
               valor={
                 res?.mes_caixa_operacional_positivo == null
-                  ? 'não vira'
+                  ? 'não atinge'
                   : `mês ${res.mes_caixa_operacional_positivo}`
               }
-              sub={`e assim permanece até o mês ${premissas?.horizonte_meses ?? 60}`}
+              sub={
+                res?.mes_caixa_operacional_positivo == null
+                  ? `a operação não fecha nenhum mês no positivo de forma permanente até o mês ${horizonteMeses}`
+                  : `e assim permanece até o mês ${horizonteMeses}`
+              }
               tone={
                 res?.mes_caixa_operacional_positivo == null ? 'var(--neg)' : 'var(--pos-text)'
               }
@@ -1263,6 +1306,13 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
       </div>
     </div>
   )
+}
+
+/** Rótulo + spinner na mesma linha: o `Botao` não é flex, o wrapper é que alinha. */
+const carregando: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 8,
 }
 
 const stepper: React.CSSProperties = {

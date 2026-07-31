@@ -243,6 +243,20 @@ def _num(v: Any, casas: int = 0) -> float | None:
     return round(f, casas) if casas else round(f)
 
 
+def _pct_do_faturamento(valor: Any, faturamento: Any) -> float | None:
+    """Fracao de uma linha da DRE sobre o faturamento bruto de steady-state.
+
+    Existe no BACKEND por causa do FIN-VIAB-01: a tela nao divide numero
+    financeiro, so renderiza o que o payload traz. `None` (o front omite o %)
+    quando o faturamento e zero/ausente, o que evita divisao por zero.
+    """
+    fat = _num(faturamento, 2)
+    v = _num(valor, 2)
+    if v is None or not fat:
+        return None
+    return _num(v / fat, 4)
+
+
 # ============================================================================
 # Renda media domiciliar + rotulo de faixa (enriquecimento do tooltip)
 #
@@ -689,10 +703,10 @@ def montar_funil(
             "narrativa": (
                 f"{municipio} tem {_fmt(total)} hexágonos habitáveis. A primeira pergunta é "
                 "onde vive gente com renda e perfil para treinar — o censo 2022 acende "
-                f"{_fmt(len(quentes))} setores quentes."
+                f"{_fmt(len(quentes))} hexágonos quentes."
             ),
             "funil_big": len(quentes),
-            "funil_unit": "setores quentes",
+            "funil_unit": "hexágonos quentes",
             "funil_from": f"{_fmt(total)} hexágonos",
             "metrica": "score",
             "itens": _rank_items(quentes, col_censo, "score", "blue", bairros=bairros),
@@ -703,13 +717,13 @@ def montar_funil(
             "mode": "residual fitness",
             "titulo": "Demanda não atendida",
             "narrativa": (
-                "Setor quente não basta: precisa ter espaço. Descontando a oferta já "
+                "Hexágono quente não basta: precisa ter espaço. Descontando a oferta já "
                 f"instalada, sobram {_fmt(len(residual))} regiões com residual fitness "
                 f"real — {_fmt(alunos_residual or 0)} alunos não atendidos."
             ),
             "funil_big": len(residual),
             "funil_unit": "regiões com residual",
-            "funil_from": f"{_fmt(len(quentes))} setores quentes",
+            "funil_from": f"{_fmt(len(quentes))} hexágonos quentes",
             "metrica": "residual",
             "itens": _rank_items(residual, "oferta_efetiva_disponivel", "residual", "green", bairros=bairros),
             "hexes": residual["hex_id"].tolist(),
@@ -761,12 +775,18 @@ def montar_funil(
 
 
 def _etiqueta_muni(
-    label: str, valor: float | None, rank: int, fila: bool = False
+    modo: str, valor: float | None, rank: int, fila: bool = False
 ) -> tuple[str, str | None]:
+    """Etiqueta curta do item do ranking de MUNICIPIOS.
+
+    Ramifica por `modo` ("count" = contagem de hexes; qualquer outro = soma de
+    residual), NAO pelo `label` exibido: o label e' texto de usuario e passou a ser
+    acentuado ("hexágonos"), e valor acentuado nao pode virar chave de comparacao.
+    """
     v = valor or 0
     if fila:
         return {1: "Agora", 2: "Próximo", 3: "Fila"}.get(rank, "Espera"), None
-    if label == "setores":
+    if modo == "count":
         if v >= 30:
             return "Polo", "blue"
         if v >= 8:
@@ -803,7 +823,7 @@ def _rank_municipios(
     itens: list[dict[str, Any]] = []
     for i, (muni, val) in enumerate(serie.items(), 1):
         valor = _num(val)
-        etiqueta, tom_item = _etiqueta_muni(label, valor, i, fila)
+        etiqueta, tom_item = _etiqueta_muni(modo, valor, i, fila)
         itens.append(
             {
                 "rank": i,
@@ -853,13 +873,13 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             "titulo": "Potencial socioeconômico",
             "narrativa": (
                 f"{uf} tem {_fmt(total)} hexágonos habitáveis em {_fmt(n_munis)} municípios. "
-                f"O censo 2022 acende {_fmt(len(quentes))} setores quentes."
+                f"O censo 2022 acende {_fmt(len(quentes))} hexágonos quentes."
             ),
             "funil_big": len(quentes),
-            "funil_unit": "setores quentes",
+            "funil_unit": "hexágonos quentes",
             "funil_from": f"{_fmt(total)} hexágonos",
             "metrica": "score",
-            "itens": _rank_municipios(quentes, None, "count", "setores", "blue"),
+            "itens": _rank_municipios(quentes, None, "count", "hexágonos", "blue"),
             "hexes": quentes["hex_id"].tolist(),
         },
         {
@@ -872,7 +892,7 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             ),
             "funil_big": len(residual),
             "funil_unit": "regiões com residual",
-            "funil_from": f"{_fmt(len(quentes))} setores quentes",
+            "funil_from": f"{_fmt(len(quentes))} hexágonos quentes",
             "metrica": "residual",
             "itens": _rank_municipios(residual, "oferta_efetiva_disponivel", "sum", "residual", "green"),
             "hexes": residual["hex_id"].tolist(),
@@ -1558,6 +1578,16 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
             "ir_csll": _num(r.ir_csll_mensal, 2),
             "despesa_financeira": _num(r.despesa_financeira_mensal, 2),
             "resultado_apos_ir": _num(r.resultado_apos_ir_mensal, 2),
+            # FRACAO do faturamento bruto de steady das duas linhas de RESULTADO da
+            # cascata. Servido aqui porque a tela nao faz conta financeira
+            # (FIN-VIAB-01) — ela so renderiza. `None` quando o faturamento e zero
+            # (cenario degenerado): a tela omite o % em vez de exibir infinito.
+            "ebitda_pct_faturamento": _pct_do_faturamento(
+                r.ebitda_mensal, r.faturamento_mensal_steady
+            ),
+            "resultado_apos_ir_pct_faturamento": _pct_do_faturamento(
+                r.resultado_apos_ir_mensal, r.faturamento_mensal_steady
+            ),
             "flag_viavel": bool(r.flag_viavel),
         },
         "investimento": {
@@ -2093,6 +2123,16 @@ def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
     )
     comp_df, ultra_df = _competitors_ultra(cfg)
 
+    # Bairros REAIS da Pagina 6. Sem este kwarg `agregar_municipio` recebe None e a
+    # pagina degrada EM SILENCIO para "N hexes - <tese>", ainda imprimindo a nota
+    # falsa de "bairros nao mapeados na base IBGE". Streamlit e bot ja passavam.
+    cod = (
+        df_muni["cod_municipio"].dropna().astype(str).iloc[0]
+        if "cod_municipio" in df_muni.columns and df_muni["cod_municipio"].notna().any()
+        else None
+    )
+    bairros = bairros_por_hex(body.uf.upper(), cod) if cod else None
+
     try:
         result = agregar_municipio(
             df,
@@ -2100,6 +2140,7 @@ def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
             uf=body.uf.upper(),
             competitors_df=comp_df,
             ultra_df=ultra_df,
+            bairros_por_hex=bairros,
             df_pre_filtrado=df_muni,
         )
     except Exception as exc:  # noqa: BLE001
@@ -2232,7 +2273,7 @@ async def relatorio_pontual(
     viabilidade_inputs_json: str | None = None,
     fotos: list[UploadFile] | None = None,
 ) -> Response:
-    """Relatorio Pontual Censitario 1,5 km — com fotos, dados do imovel e viabilidade.
+    """Relatorio Pontual Censitario 1,0 km (DEC-021) — fotos, dados do imovel e viabilidade.
 
     Espelha a montagem da API de producao (`api/service.gerar_pdf_ponto`), mas usa
     o gerador com os kwargs opcionais que o piloto precisa (`fotos`, `info_imovel`,

@@ -89,20 +89,7 @@
   --sh-frame: 0 30px 70px -30px rgba(0, 0, 0, 0.6);
 }
 
-/* Rampas de score, expostas ao JS via getComputedStyle quando necessario.
-   Indigo = potencial socioeconomico (camada 1); verde = residual (camada 2). */
-:root {
-  --ramp-indigo-0: #2a2358;
-  --ramp-indigo-1: #3a2f86;
-  --ramp-indigo-2: #5344b4;
-  --ramp-indigo-3: #7161da;
-  --ramp-indigo-4: #9789ee;
-  --ramp-indigo-5: #c1baff;
-
-  --ramp-green-0: #123f26;
-  --ramp-green-1: #19613a;
-  --ramp-green-2: #237f4c;
-  --ramp-green-3: #39a063;
-  --ramp-green-4: #5cbf83;
-  --ramp-green-5: #8ad9a5;
-}
+/* As rampas --ramp-indigo-* / --ramp-green-*, herdadas do prototipo standalone,
+   sairam daqui (N8): nenhum arquivo de web/src as referenciava. A cor de score do
+   piloto vem de src/lib/colors.ts (SCORE_BANDS_HEX), espelho de
+   constants.RESIDUAL_SCORE_BANDS. */
