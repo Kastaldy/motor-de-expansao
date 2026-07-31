@@ -1113,3 +1113,128 @@ def test_municipal_tolera_falha_no_overlay_de_rotulos(monkeypatch):
 
     png = _mapa_resumo(basemap=True)
     assert Image.open(BytesIO(png)).size[0] > 0
+
+
+# ---------------------------------------------------------------------------
+# BLK-RELMUN-05 — recorte territorial dos pins (concorrentes fora do municipio)
+# ---------------------------------------------------------------------------
+# Bug relatado por Juan (2026-07-31): pedindo Sao Bernardo do Campo, o PDF trazia unidades de
+# Santo Andre, Diadema e Sao Paulo. Causa: `_draw_pins` so testava a bbox da IMAGEM (municipio
+# + padding de enquadramento), sem filtro territorial. A contagem ja filtrava por hex res-7,
+# mas hex res-7 tem ~5 km2 e cruza divisa -> a faixa de fronteira entrava.
+
+
+def _competidor_vizinho() -> pd.DataFrame:
+    """Concorrente num hex que NAO e do municipio, mas perto o bastante p/ cair na bbox."""
+    return pd.DataFrame(
+        [{"rede": "bluefit", "lat": -23.62, "lng": -46.70, "hex_id_res7": _hex(-23.62, -46.70)}]
+    )
+
+
+def test_mapa_nao_desenha_concorrente_de_fora_do_municipio(monkeypatch):
+    """REGRESSAO do bug: `_draw_pins` so pode receber linhas DO municipio.
+
+    Captura os frames entregues a `_draw_pins` em vez de inspecionar pixels: o que se quer
+    provar e o recorte, e ler pixel dependeria da geometria do enquadramento (que muda com o
+    foco). `_sample_competitors()` tem 3 linhas, sendo 1 num hex distante; somamos um vizinho
+    proximo, que e o caso que a bbox deixava passar e o hex nao.
+    """
+    from motor_expansao.dashboard import relatorio_municipal as rm
+
+    recebidos: list[pd.DataFrame | None] = []
+
+    def _spy(draw, image, frame, project, forced_key, minx, maxx, miny, maxy):
+        recebidos.append(None if frame is None else frame.copy())
+
+    monkeypatch.setattr(rm, "_draw_pins", _spy)
+
+    df = _sample_df()
+    comp = pd.concat([_sample_competitors(), _competidor_vizinho()], ignore_index=True)
+    res = agregar_municipio(df, nome_municipio="SAO PAULO", competitors_df=comp)
+    render_mapas_municipio(df, res, competitors_df=comp, ultra_df=_sample_ultra(), basemap=False)
+
+    frames_conc = [f for f in recebidos if f is not None and "rede" in f.columns]
+    assert frames_conc, "nenhuma chamada de _draw_pins com concorrentes"
+    for frame in frames_conc:
+        assert len(frame) == 2, f"vazou pin de fora do municipio: {len(frame)} linhas"
+        assert set(frame["rede"]) == {"smart_fit", "bio_ritmo"}
+        # O vizinho (bluefit) e o distante nao podem chegar ao desenho.
+        assert "bluefit" not in set(frame["rede"])
+
+
+def test_filtrar_pins_por_poligono_corta_a_faixa_de_fronteira():
+    """Com poligono IBGE, um pin DENTRO de hex do municipio mas FORA da divisa e descartado.
+
+    E o vazamento (b): o hex res-7 de `(-23.57, -46.65)` pertence ao municipio de teste, entao
+    o filtro por hex aceita o pin; o poligono (que nao cobre esse canto) rejeita.
+    """
+    from shapely.geometry import box
+
+    from motor_expansao.dashboard.relatorio_municipal import (
+        _hexes_do_municipio,
+        filtrar_pins_do_municipio,
+    )
+
+    df = _sample_df()
+    hexes = _hexes_do_municipio(df)
+    poligono = box(-46.645, -23.565, -46.615, -23.535)
+
+    pins = pd.DataFrame(
+        [
+            {"rede": "smart_fit", "lat": -23.55, "lng": -46.63},   # dentro da divisa
+            {"rede": "bluefit", "lat": -23.57, "lng": -46.65},     # hex do municipio, fora da divisa
+        ]
+    )
+
+    # Sem poligono: o filtro por hex aceita os dois (o comportamento historico).
+    so_hex = filtrar_pins_do_municipio(pins, hexes_muni=hexes)
+    assert set(so_hex["rede"]) == {"smart_fit", "bluefit"}
+
+    # Com poligono: so o que esta de fato dentro do municipio.
+    com_poligono = filtrar_pins_do_municipio(pins, hexes_muni=hexes, poligono=poligono)
+    assert set(com_poligono["rede"]) == {"smart_fit"}
+
+
+def test_agregar_municipio_conta_pins_pelo_poligono_quando_disponivel():
+    """A contagem do slide 8 tambem passa a respeitar a divisa quando ha poligono."""
+    from shapely.geometry import box
+
+    df = _sample_df()
+    pins = pd.DataFrame(
+        [
+            {"rede": "smart_fit", "lat": -23.55, "lng": -46.63},
+            {"rede": "bluefit", "lat": -23.57, "lng": -46.65},
+        ]
+    )
+
+    sem = agregar_municipio(df, nome_municipio="SAO PAULO", competitors_df=pins)
+    assert sem["n_concorrentes"] == 2
+
+    com = agregar_municipio(
+        df,
+        nome_municipio="SAO PAULO",
+        competitors_df=pins,
+        poligono_municipio=box(-46.645, -23.565, -46.615, -23.535),
+    )
+    assert com["n_concorrentes"] == 1
+    assert com["concorrentes_por_rede"] == {"smart_fit": 1}
+
+
+def test_carregar_poligono_municipio_degrada_gracioso(tmp_path):
+    """Sem `data/ibge` (caso do container Streamlit hoje) devolve None, sem levantar."""
+    from motor_expansao.dashboard.relatorio_municipal import carregar_poligono_municipio
+
+    assert carregar_poligono_municipio(None, "SP", "3548708") is None
+    assert carregar_poligono_municipio(tmp_path, "SP", None) is None
+    assert carregar_poligono_municipio(tmp_path, "SP", "3548708") is None  # dir sem geojson
+
+
+def test_formatador_municipal_usa_texto_sem_dado_por_extenso():
+    """A sigla "n/d" saiu do PDF (pedido de Juan, 2026-07-31)."""
+    from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
+    from motor_expansao.dashboard.relatorio_municipal import _format_number
+
+    assert _format_number(None) == TEXTO_SEM_DADO
+    assert _format_number(float("nan")) == TEXTO_SEM_DADO
+    assert TEXTO_SEM_DADO == "Não disponível"
+    assert _format_number(1234.0) == "1.234"

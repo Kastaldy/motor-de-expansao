@@ -21,7 +21,7 @@ from motor_expansao.dashboard.censo_point import (
     RAIO_CENSITARIO_DEFAULT_KM as _RAIO_CENSITARIO_KM,
 )
 from motor_expansao.dashboard.competitors import _ICON_CACHE
-from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS
+from motor_expansao.dashboard.constants import DENSIDADE_POP_BANDS, TEXTO_SEM_DADO
 
 LAT_C = -23.55
 LNG_C = -46.63
@@ -481,7 +481,7 @@ def test_valor_ponto_repassado_aos_4_choropleths_nao_a_concorrentes(monkeypatch)
 
 def test_valor_raio_nao_e_nd_quando_setor_nao_cobre_o_ponto_mas_intersecta_raio(monkeypatch):
     # BLK-RELPON-06 (D1): unico setor NAO cobre o ponto central (0,0) -- so intersecta
-    # parcialmente o raio -- mas isso NAO produz "n/d": a faixa agora mostra os agregados
+    # parcialmente o raio -- mas isso NAO produz sem-dado: a faixa agora mostra os agregados
     # do RAIO (n_setores=1, pop_total_raio nao-None), que sao valores REAIS aqui (sob
     # BLK-RELPON-05 a faixa vinha do lookup "setor que contem o ponto" e dava n/d neste
     # cenario; a semantica mudou).
@@ -512,16 +512,16 @@ def test_valor_raio_nao_e_nd_quando_setor_nao_cobre_o_ponto_mas_intersecta_raio(
         LAT_C, LNG_C, setores, width=800, height=600, basemap=False
     )
 
-    assert "n/d" not in capturado["Densidade populacional"]["valor_ponto"]
-    assert "n/d" not in capturado["Renda per capita"]["valor_ponto"]
-    assert "n/d" not in capturado["Score censitario"]["valor_ponto"]
+    assert TEXTO_SEM_DADO not in capturado["Densidade populacional"]["valor_ponto"]
+    assert TEXTO_SEM_DADO not in capturado["Renda per capita"]["valor_ponto"]
+    assert TEXTO_SEM_DADO not in capturado["Score censitario"]["valor_ponto"]
     assert capturado["Renda per capita"]["valor_ponto"] == "Renda no raio: R$ 2.000"
     assert capturado["Score censitario"]["valor_ponto"] == "Score no raio: 60"
     assert capturado["Concorrentes e Ultra"].get("valor_ponto") is None
 
 
 def test_valor_raio_e_nd_quando_setor_fora_do_raio(monkeypatch):
-    # BLK-RELPON-06 (D1): o "n/d" de verdade e quando NAO ha setores intersectados no raio
+    # BLK-RELPON-06 (D1): o sem-dado de verdade e quando NAO ha setores intersectados no raio
     # (geometria de test_motor_censitario_exclui_setor_fora_do_raio) -- n_setores=0.
     setores = pd.DataFrame(
         [_sector_record("355030801000030", box(3000, 3000, 3500, 3500), renda=2000, score=60)]
@@ -540,9 +540,9 @@ def test_valor_raio_e_nd_quando_setor_fora_do_raio(monkeypatch):
         LAT_C, LNG_C, setores, width=800, height=600, basemap=False
     )
 
-    assert "n/d" in capturado["Densidade populacional"]["valor_ponto"]
-    assert "n/d" in capturado["Renda per capita"]["valor_ponto"]
-    assert "n/d" in capturado["Score censitario"]["valor_ponto"]
+    assert TEXTO_SEM_DADO in capturado["Densidade populacional"]["valor_ponto"]
+    assert TEXTO_SEM_DADO in capturado["Renda per capita"]["valor_ponto"]
+    assert TEXTO_SEM_DADO in capturado["Score censitario"]["valor_ponto"]
     assert capturado["Concorrentes e Ultra"].get("valor_ponto") is None
 
 
@@ -1027,8 +1027,8 @@ def test_labels_da_regua_de_residual_sem_acento_para_legenda_png():
 
 def test_formatadores_e_faixa_superior_do_hexagono():
     assert censo_map._format_valor_residual(3_506.0) == "3.506"
-    assert censo_map._format_valor_residual(None) == "n/d"
-    assert censo_map._format_valor_residual(float("nan")) == "n/d"
+    assert censo_map._format_valor_residual(None) == TEXTO_SEM_DADO
+    assert censo_map._format_valor_residual(float("nan")) == TEXTO_SEM_DADO
     assert censo_map._legenda_valor_hex("Residual", "3.506") == "Residual no hexagono: 3.506"
     # Faixa superior do hex central usa o MESMO valor do lookup por hex_id (nao soma o disco).
     import h3
