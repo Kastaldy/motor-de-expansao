@@ -31,6 +31,7 @@ from motor_expansao.dashboard.constants import (
     OFERTA_DISPONIVEL_ALUNOS_BANDS,
     RENDA_MEDIA_DOMICILIAR_BANDS,
     RENDA_PER_CAPITA_BANDS,
+    TEXTO_SEM_DADO,
     uplift_composicao_por_setor,
 )
 from motor_expansao.dashboard.utils import score_band_to_color
@@ -390,35 +391,44 @@ def _metric_label(metric_column: str) -> str:
 # raio pelo BLK-RELPON-06/D1) ──────────────────────────────────────────────────────────
 # Formata o valor AGREGADO do raio de 1.5 km (densidade sobre area valida, renda e score
 # medios ponderados) -- NAO mais o valor bruto do setor que contem o ponto (BLK-RELPON-05
-# original). "n/d" para None/NaN (sem setores intersectados). Texto so com pontuacao ASCII
-# por consistencia com o restante do relatorio.
+# original). `TEXTO_SEM_DADO` para None/NaN (sem setores intersectados).
+#
+# ACENTO NESTA FAIXA (2026-07-31): o resto do texto dos PNGs e' ASCII puro porque o bitmap
+# FIXO do `load_default()` antigo nao tinha glifo acentuado. Com `load_default(size=)`
+# (Pillow >= 10.1, ver `_font`) a fonte embutida TEM os glifos latin-1 -- conferido
+# renderizando "Não disponível" e comparando a tinta com a forma sem acento. A faixa comeca
+# em x=28 num canvas de ~1000 px e o pior caso ("Renda dom. no raio: Não disponível") ocupa
+# ~metade dela, entao a string longa nao e' cortada.
 
 
 def _format_valor_ponto_renda(value: float | None) -> str:
     """Renda per capita media do raio: moeda, separador de milhar '.', sem centavos."""
     if value is None or pd.isna(value):
-        return "n/d"
+        return TEXTO_SEM_DADO
     return f"R$ {float(value):,.0f}".replace(",", ".")
 
 
 def _format_valor_ponto_densidade(value: float | None) -> str:
     """Densidade populacional do raio (sobre area valida): inteiro, unidade ASCII 'hab/km2'."""
     if value is None or pd.isna(value):
-        return "n/d"
+        return TEXTO_SEM_DADO
     return f"{float(value):,.0f}".replace(",", ".") + " hab/km2"
 
 
 def _format_valor_ponto_score(value: float | None) -> str:
     """Score censitario medio do raio: inteiro 0-100."""
     if value is None or pd.isna(value):
-        return "n/d"
+        return TEXTO_SEM_DADO
     return f"{float(value):.0f}"
 
 
 def _format_valor_residual(value: float | None) -> str:
-    """Residual fitness disponivel (alunos): inteiro com separador de milhar '.'; "n/d" se ausente."""
+    """Residual fitness disponivel (alunos): inteiro com separador de milhar '.'.
+
+    Ausente -> `TEXTO_SEM_DADO`.
+    """
     if value is None or pd.isna(value):
-        return "n/d"
+        return TEXTO_SEM_DADO
     return f"{float(value):,.0f}".replace(",", ".")
 
 
@@ -1357,7 +1367,7 @@ def _residual_hex_central(
     Big Numbers (mesma chave `hex_id`, mesma resolucao 7 de `lookup_hex_by_coord`). Deliberadamente
     NAO soma o disco: somar seria um agregado NOVO (analise), e este bloco e' so exibicao. Default
     `oferta_efetiva_disponivel` (residual); a socioeconomia passa `score_setor_2022_calibrado`.
-    `None` quando a coluna/linha nao existe ou o valor e' NaN -> a faixa mostra "n/d".
+    `None` quando a coluna/linha nao existe ou o valor e' NaN -> a faixa mostra `TEXTO_SEM_DADO`.
     """
     if hexes_df is None or hexes_df.empty:
         return None
@@ -1761,7 +1771,7 @@ def render_mapas_censitarios_combinados(
     # BLK-RELPON-06 (D1): faixa superior por camada, com os agregados do RAIO de 1.5 km
     # (ja expostos por `result`, computados no proprio `analisar_ponto_censitario_setores`
     # acima) -- REVERTE a fonte do BLK-RELPON-05, que usava o valor BRUTO do setor que
-    # CONTEM o ponto. "n/d" quando nao ha setores intersectados (sem area valida).
+    # CONTEM o ponto. `TEXTO_SEM_DADO` quando nao ha setores intersectados (sem area valida).
     valor_raio_densidade = _legenda_valor_ponto(
         "Densidade", _format_valor_ponto_densidade(result.get("densidade_pop_raio_valida_hab_km2"))
     )

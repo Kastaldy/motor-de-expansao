@@ -363,7 +363,7 @@ def gerar_pdf_ponto(
         competitors_df=comp_df, ultra_df=ultra_df,
     )
     # BLK-RELPON-07: sem este agregado o slide "Perfil do Bairro/Distrito" cai no
-    # default gracioso (`flag_perfil_disponivel=False`) e sai "n/d" -- era o estado
+    # default gracioso (`flag_perfil_disponivel=False`) e sai `TEXTO_SEM_DADO` -- era o estado
     # do PDF do bot ate aqui. O dashboard (pages.py) ja fazia esta chamada; a API nao.
     # `nome_municipio`/`uf` sao so rotulos do painel: o agregado resolve por
     # `cod_bairro` (ou `nome_distrito` no fallback) sobre o proprio `setores_df`.
@@ -601,6 +601,7 @@ def gerar_pdf_municipio(
     from motor_expansao.dashboard.relatorio_municipal import (
         _carregar_bairros_por_hex,
         agregar_municipio,
+        carregar_poligono_municipio,
         gerar_payloads_download_relatorio_municipal,
         render_mapas_municipio,
     )
@@ -624,6 +625,7 @@ def gerar_pdf_municipio(
     dominio_df = _dominio_df(settings)
 
     # Bairros reais (best-effort): usa cod_municipio da propria linha + particao geo.
+    cod: str | None = None
     bairros: dict | None = None
     try:
         cod = _normalizar_cod(df_muni.iloc[0].get("cod_municipio"))
@@ -632,10 +634,14 @@ def gerar_pdf_municipio(
     except Exception:
         bairros = None
 
+    # BLK-RELMUN-05: divisa REAL do municipio (malha IBGE, ja montada neste container) para
+    # recortar os pins. `None` -> recorte por hexes res-7; o relatorio sai igual, so menos exato.
+    poligono = carregar_poligono_municipio(settings.ibge_dir, uf, cod)
+
     result = agregar_municipio(
         df, nome_municipio=nome_exato, uf=uf, dominio_df=dominio_df,
         competitors_df=comp_df, ultra_df=ultra_df, bairros_por_hex=bairros,
-        df_pre_filtrado=df_muni,
+        df_pre_filtrado=df_muni, poligono_municipio=poligono,
     )
     if result.get("n_hex_total", 0) == 0:
         raise APIError(404, f"Municipio '{nome_exato}' ({uf}) sem hexagonos", "municipio_sem_dados")
@@ -660,6 +666,7 @@ def gerar_pdf_municipio(
     def _mapas(basemap: bool):
         return render_mapas_municipio(
             df_muni, result, competitors_df=comp_df, ultra_df=ultra_df, basemap=basemap,
+            poligono_municipio=poligono,
         )
 
     try:
