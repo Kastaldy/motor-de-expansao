@@ -20,6 +20,7 @@ from motor_expansao.dashboard.censo_report import (
     gerar_pdf_relatorio_pontual_censitario,
     gerar_pdf_relatorio_pontual_classico,
 )
+from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 
 _MIN_RESULT = {"lat": -23.55, "lng": -46.63, "nome_municipio": "SAO PAULO", "uf": "SP", "raio_km": 1.5}
 
@@ -52,12 +53,12 @@ def _png(w: int = 300, h: int = 200) -> bytes:
 # --------------------------------------------------------------------------- #
 def test_viab_brl():
     assert _viab_brl(24500.0) == "R$ 24.500,00"
-    assert _viab_brl(None) == "n/d"
+    assert _viab_brl(None) == TEXTO_SEM_DADO
 
 
 def test_viab_pct():
     assert _viab_pct(0.18) == "18,0%"
-    assert _viab_pct(None) == "n/d"
+    assert _viab_pct(None) == TEXTO_SEM_DADO
 
 
 def test_viab_payback():
@@ -74,7 +75,7 @@ def test_viab_breakeven():
 
 def test_viab_faixa():
     assert _viab_faixa(400, 1000) == "400 - 1.000"
-    assert _viab_faixa(None, None) == "n/d"
+    assert _viab_faixa(None, None) == TEXTO_SEM_DADO
 
 
 # --------------------------------------------------------------------------- #

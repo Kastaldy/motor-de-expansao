@@ -363,7 +363,7 @@ def gerar_pdf_ponto(
         competitors_df=comp_df, ultra_df=ultra_df,
     )
     # BLK-RELPON-07: sem este agregado o slide "Perfil do Bairro/Distrito" cai no
-    # default gracioso (`flag_perfil_disponivel=False`) e sai "n/d" -- era o estado
+    # default gracioso (`flag_perfil_disponivel=False`) e sai `TEXTO_SEM_DADO` -- era o estado
     # do PDF do bot ate aqui. O dashboard (pages.py) ja fazia esta chamada; a API nao.
     # `nome_municipio`/`uf` sao so rotulos do painel: o agregado resolve por
     # `cod_bairro` (ou `nome_distrito` no fallback) sobre o proprio `setores_df`.
