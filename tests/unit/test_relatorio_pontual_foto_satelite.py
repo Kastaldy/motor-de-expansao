@@ -59,7 +59,7 @@ def _png_sintetico(w: int = 256, h: int = 256, cor: tuple[int, int, int] = (90, 
 
 
 def _result_minimo() -> dict:
-    """`result` enxuto: as paginas censitarias caem no fallback gracioso ('n/d')."""
+    """`result` enxuto: as paginas censitarias caem no fallback gracioso (`TEXTO_SEM_DADO`)."""
     return {
         "lat": LAT_C,
         "lng": LNG_C,

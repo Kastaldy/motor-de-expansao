@@ -12,6 +12,7 @@ from motor_expansao.dashboard.censo_report import (
     gerar_pdf_relatorio_pontual_censitario,
     gerar_pdf_relatorio_pontual_classico,
 )
+from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 
 _MIN_RESULT = {
     "lat": -23.55,
@@ -58,9 +59,9 @@ def test_info_valor_zero_num_mostra_zero_nao_nd():
 
 
 def test_info_valor_ausente_ou_vazio_vira_nd():
-    assert _info_valor(None, "num") == "n/d"
-    assert _info_valor("", "texto") == "n/d"
-    assert _info_valor("   ", "texto") == "n/d"
+    assert _info_valor(None, "num") == TEXTO_SEM_DADO
+    assert _info_valor("", "texto") == TEXTO_SEM_DADO
+    assert _info_valor("   ", "texto") == TEXTO_SEM_DADO
 
 
 def test_info_valor_nao_numerico_em_campo_num_nao_quebra():
@@ -95,7 +96,8 @@ def test_info_com_campos_ausentes_usa_nd_sem_quebrar():
         _MIN_RESULT, None, info_imovel={"metragem_m2": 1200}
     )
     assert b"/Count 8" in pdf_bytes
-    assert b"n/d" in pdf_bytes  # campos nao informados aparecem como n/d
+    # Campos nao informados aparecem por extenso (era a sigla "n/d" ate 2026-07-31).
+    assert TEXTO_SEM_DADO.encode("latin-1") in pdf_bytes
 
 
 def test_fotos_e_info_juntas_somam_duas_paginas():
