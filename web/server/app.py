@@ -225,10 +225,15 @@ def _fmt(v: Any, casas: int = 0) -> str:
 
     Existe porque a narrativa mistura numero e texto: um `.replace(",", ".")`
     global comia as virgulas das FRASES, nao so as dos numeros.
+
+    Ausente -> `TEXTO_SEM_DADO`, a MESMA string dos PDFs (2026-07-31): a narrativa do piloto
+    e o relatorio que sai dela nao podem chamar a mesma coisa por nomes diferentes.
     """
+    from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
+
     n = _num(v, casas)
     if n is None:
-        return "n/d"
+        return TEXTO_SEM_DADO
     return f"{n:,.{casas}f}".replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
 
@@ -611,6 +616,8 @@ def _rank_items(
     funil (quentes / residual >= 2000 / white space), todo item e viavel por
     construcao; se houver menos de 10 localidades distintas, a lista encurta
     sozinha (Felipe 2026-07-20: "as 10 melhores, apenas se forem viaveis")."""
+    from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
+
     if col not in df.columns:
         return []
     bairros = bairros or {}
@@ -627,7 +634,7 @@ def _rank_items(
     for _, r in ordenado.iterrows():
         hid = str(r.get("hex_id"))
         local = bairros.get(hid)
-        titulo = local or (r.get("nome_municipio") or "n/d")
+        titulo = local or (r.get("nome_municipio") or TEXTO_SEM_DADO)
         chave = str(titulo).casefold()
         if chave in vistos:
             continue
@@ -2104,6 +2111,7 @@ def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
     from motor_expansao.dashboard.relatorio_municipal import (
         _municipio_mask,
         agregar_municipio,
+        carregar_poligono_municipio,
         gerar_payloads_download_relatorio_municipal,
         render_mapas_municipio,
     )
@@ -2123,15 +2131,22 @@ def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
     )
     comp_df, ultra_df = _competitors_ultra(cfg)
 
-    # Bairros REAIS da Pagina 6. Sem este kwarg `agregar_municipio` recebe None e a
-    # pagina degrada EM SILENCIO para "N hexes - <tese>", ainda imprimindo a nota
+    # Codigo do municipio. Os dois consumidores abaixo (divisa e bairros) derivam do
+    # MESMO df, entao resolve-se uma vez so'. Mantida a forma do `origin/piloto-web`,
+    # que faz `.strip()` — o codigo vem do nome da particao e pode trazer espaco.
+    cod_muni = None
+    if "cod_municipio" in df_muni.columns and not df_muni["cod_municipio"].dropna().empty:
+        cod_muni = str(df_muni["cod_municipio"].dropna().iloc[0]).strip()
+
+    # Divisa REAL do municipio (malha IBGE em IBGE_DIR, ja montada no container do piloto):
+    # sem ela os pins vazavam para os municipios vizinhos (SBC saia com Santo Andre/Diadema/SP).
+    # `None` -> recorte por hexes res-7; o PDF sai igual, so menos exato na fronteira.
+    poligono = carregar_poligono_municipio(IBGE_DIR, body.uf.upper(), cod_muni)
+
+    # Bairros REAIS da pagina de bairros. Sem este kwarg `agregar_municipio` recebe None
+    # e a pagina degrada EM SILENCIO para "N hexes - <tese>", ainda imprimindo a nota
     # falsa de "bairros nao mapeados na base IBGE". Streamlit e bot ja passavam.
-    cod = (
-        df_muni["cod_municipio"].dropna().astype(str).iloc[0]
-        if "cod_municipio" in df_muni.columns and df_muni["cod_municipio"].notna().any()
-        else None
-    )
-    bairros = bairros_por_hex(body.uf.upper(), cod) if cod else None
+    bairros = bairros_por_hex(body.uf.upper(), cod_muni) if cod_muni else None
 
     try:
         result = agregar_municipio(
@@ -2142,6 +2157,7 @@ def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
             ultra_df=ultra_df,
             bairros_por_hex=bairros,
             df_pre_filtrado=df_muni,
+            poligono_municipio=poligono,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(500, f"Falha ao agregar o municipio: {exc}") from exc
@@ -2157,6 +2173,7 @@ def relatorio_municipal(body: RelatorioMunicipalIn) -> Response:
             competitors_df=comp_df,
             ultra_df=ultra_df,
             basemap=basemap,
+            poligono_municipio=poligono,
         )
 
     # Ruas online -> offline (choropleth sem tiles) -> sem mapas. O PDF nunca falha

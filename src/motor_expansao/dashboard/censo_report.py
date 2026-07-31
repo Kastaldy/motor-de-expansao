@@ -17,6 +17,7 @@ from motor_expansao.dashboard.censo_point import (
     METODO_RELATORIO_PONTUAL_CENSITARIO,
     RAIO_CENSITARIO_DEFAULT_KM,
 )
+from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 
 # Cabecalhos canonicos das 7 paginas do template Ultra. Renderizam em latin-1 (core font
 # Helvetica do fpdf2), que cobre integralmente os acentos portugueses -- o que e PROIBIDO e
@@ -110,7 +111,7 @@ _RAIO_TXT = f"{RAIO_CENSITARIO_DEFAULT_KM:.1f}".replace(".", ",")  # "1,0"
 _RAIO_LABEL = f"{_RAIO_TXT} km"
 
 # BLK-RELPON-08 (D3/Q4): metas do semaforo de cor dos 8 cards do Big Numbers. Verde quando o
-# valor bate a meta; vermelho quando nao bate; neutro quando "n/d" (Q2, indecidivel). Constantes
+# valor bate a meta; vermelho quando nao bate; neutro quando sem dado (Q2, indecidivel). Constantes
 # nomeadas e auditaveis (nao hardcoded inline dentro de `_big_numbers_page`).
 # DEC-021 (raio 1,5 -> 1,0 km): as metas de TOTAL sao ABSOLUTAS e foram calibradas para a area
 # de 1,5 km. Com 1,0 km a area cai para (1,0/1,5)^2 = 44,4%, logo populacao e domicilios no raio
@@ -254,7 +255,7 @@ def gerar_csv_setores_censitarios(result: dict[str, Any] | pd.DataFrame) -> byte
 
 def _format_number(value: Any, decimals: int = 0, suffix: str = "") -> str:
     if value is None or pd.isna(value):
-        return "n/d"
+        return TEXTO_SEM_DADO
     number = float(value)
     if decimals <= 0:
         text = f"{number:,.0f}".replace(",", ".")
@@ -274,6 +275,33 @@ def _point_name(result: dict[str, Any]) -> str:
 def _ascii(text: str) -> str:
     """Reduz a latin-1/ASCII seguro para o core font Helvetica do fpdf2."""
     return text.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def _ajustar_fonte_para_largura(
+    pdf: FPDF,
+    texto: str,
+    largura: float,
+    *,
+    familia: str = "Helvetica",
+    estilo: str = "B",
+    tamanho: float = 26.0,
+    minimo: float = 11.0,
+) -> float:
+    """Fixa a maior fonte <= `tamanho` em que `texto` cabe em UMA linha de `largura` pt.
+
+    Necessario desde que "n/d" virou `TEXTO_SEM_DADO` (2026-07-31): a string por extenso nao
+    cabe nos 185 pt uteis do card de Big Numbers a 26 pt, e o `multi_cell` a quebraria em duas
+    linhas que vazariam a base do card de 132 pt. Encolher em passos de 1 pt e' preferivel a
+    quebrar -- o card continua com uma linha so, alinhada com os vizinhos. Tambem protege
+    valores numericos longos (ex.: renda com centavos em municipio grande), que ate aqui
+    dependiam de caber por sorte. Devolve o corpo aplicado (a fonte fica ATIVA no `pdf`).
+    """
+    corpo = float(tamanho)
+    pdf.set_font(familia, estilo, corpo)
+    while corpo > minimo and pdf.get_string_width(texto) > largura:
+        corpo -= 1.0
+        pdf.set_font(familia, estilo, corpo)
+    return corpo
 
 
 def _watermark_text(solicitante: str | None) -> str:
@@ -775,7 +803,7 @@ def _foto_satelite_page(
 # ---------------------------------------------------------------------------
 # Pagina de INFORMACOES do imovel (BLK-RELVIAB-02): dados do imovel em cards +
 # observacoes. Saida OPCIONAL (so entra se `info_imovel` != None); campos
-# ausentes -> "n/d" gracioso. READ-ONLY sobre o M1; anti-PII (nada persistido).
+# ausentes -> `TEXTO_SEM_DADO` gracioso. READ-ONLY sobre o M1; anti-PII (nada persistido).
 # ---------------------------------------------------------------------------
 _INFO_IMOVEL_PAGE_TITLE = "Imóvel - Informações"
 # (chave no dict, rotulo exibido, tipo de formatacao).
@@ -792,7 +820,7 @@ _INFO_IMOVEL_CAMPOS: tuple[tuple[str, str, str], ...] = (
 def _info_valor(value: Any, kind: str) -> str:
     """Formata um valor de info do imovel; ausente/vazio -> 'n/d'; nao-numerico seguro."""
     if value is None or (isinstance(value, str) and not value.strip()):
-        return "n/d"
+        return TEXTO_SEM_DADO
     try:
         if kind == "brl":
             return "R$ " + _format_number(value, 2)
@@ -882,13 +910,13 @@ _VIAB_GRAFICOS_TITLE = "Viabilidade - Projeção financeira"
 
 def _viab_brl(value: Any) -> str:
     if value is None or pd.isna(value):
-        return "n/d"
+        return TEXTO_SEM_DADO
     return "R$ " + _format_number(value, 2)
 
 
 def _viab_pct(frac: Any) -> str:
     if frac is None or pd.isna(frac):
-        return "n/d"
+        return TEXTO_SEM_DADO
     return _format_number(float(frac) * 100.0, 1) + "%"
 
 
@@ -906,7 +934,7 @@ def _viab_breakeven(value: Any) -> str:
 
 def _viab_faixa(p10: Any, p90: Any) -> str:
     if (p10 is None or pd.isna(p10)) and (p90 is None or pd.isna(p90)):
-        return "n/d"
+        return TEXTO_SEM_DADO
     return f"{_format_number(p10, 0)} - {_format_number(p90, 0)}"
 
 
@@ -1307,9 +1335,12 @@ def _viabilidade_page(
         pdf.set_xy(x + 14, y + 20)
         pdf.multi_cell(card_w - 28, 14, _ascii(label))
         pdf.set_text_color(40, 40, 40)
-        pdf.set_font("Helvetica", "B", 22)
+        # Mesmo encolhimento do grid de Big Numbers: aqui tambem cai `TEXTO_SEM_DADO`
+        # (via _viab_brl/_viab_pct/_viab_faixa) num card de largura fixa.
+        valor_txt = _ascii(value)
+        _ajustar_fonte_para_largura(pdf, valor_txt, card_w - 28, tamanho=22.0)
         pdf.set_xy(x + 14, y + 74)
-        pdf.multi_cell(card_w - 28, 24, _ascii(value))
+        pdf.multi_cell(card_w - 28, 24, valor_txt)
 
     envelope = "fora do envelope" if dados.get("flag_fora_envelope") else "dentro do envelope"
     rodape = f"Metragem {envelope}."
@@ -1388,9 +1419,9 @@ def _parece_coordenada(texto: str) -> bool:
 
 
 def _cor_por_meta(valor: Any, meta: float) -> tuple[int, int, int]:
-    """Cor de fundo do card: verde se valor >= meta, vermelho se < meta, neutro se "n/d".
+    """Cor de fundo do card: verde se valor >= meta, vermelho se < meta, neutro quando sem dado.
 
-    BLK-RELPON-08 (D3/Q2): "n/d" (None/NaN) e tratado ANTES da comparacao numerica -- condicao
+    BLK-RELPON-08 (D3/Q2): sem dado (None/NaN) e tratado ANTES da comparacao numerica -- condicao
     indecidivel vira neutro, nunca falsa reprovacao (vermelho) nem falso positivo (verde).
     Funcao pura, testavel isoladamente sem depender do PDF.
     """
@@ -1404,7 +1435,7 @@ def _cor_consumo_concorrentes(sam: Any, residual_disponivel: Any) -> tuple[int, 
     "Concorrentes no raio" (D3: esse card ESPELHA a cor do card acima, sem meta propria).
 
     Regra (D3): VERMELHO quando o mercado ja esta consumido (SAM Fitness >= meta E Residual
-    Fitness < meta); VERDE caso contrario. "n/d" em SAM OU em Residual -> neutro (condicao
+    Fitness < meta); VERDE caso contrario. Sem dado em SAM OU em Residual -> neutro (condicao
     indecidivel, mesmo criterio de `_cor_por_meta`). Funcao pura.
     """
     if sam is None or pd.isna(sam) or residual_disponivel is None or pd.isna(residual_disponivel):
@@ -1426,7 +1457,7 @@ def _big_numbers_page(
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
 ) -> None:
-    """(e) Big Numbers — grid 4x2 das 8 metricas. READ-ONLY; "n/d" auditavel.
+    """(e) Big Numbers — grid 4x2 das 8 metricas. READ-ONLY; sem dado auditavel.
 
     SAM Fitness e Residual Fitness saem em NUMERO DE ALUNOS (sizing absoluto da camada de
     mercado), nao em score: `sam_fitness_potencial` e `oferta_efetiva_disponivel` do hex H3.
@@ -1513,10 +1544,13 @@ def _big_numbers_page(
         pdf.multi_cell(card_w - 28, 14, _ascii(label))
         # Valor grande (D2=B: cinza-escuro 40,40,40, nao no acento; D3=B: 26 pt).
         # Offset proporcional ao card de 132 pt (era +88 no card de 156) p/ nao encostar na base.
+        # A fonte encolhe quando o texto nao cabe em uma linha (`TEXTO_SEM_DADO`, valores
+        # longos) -- sem isso o multi_cell quebraria em 2 linhas e vazaria a base do card.
         pdf.set_text_color(40, 40, 40)
-        pdf.set_font("Helvetica", "B", 26)
+        valor_txt = _ascii(value)
+        _ajustar_fonte_para_largura(pdf, valor_txt, card_w - 28)
         pdf.set_xy(x + 14, y + 74)
-        pdf.multi_cell(card_w - 28, 28, _ascii(value))
+        pdf.multi_cell(card_w - 28, 28, valor_txt)
 
     # Nota de fonte auditavel.
     pdf.set_text_color(*_CINZA_TEXTO)
@@ -1709,14 +1743,14 @@ def _perfil_info_dot(pdf: _UltraPDF, cx: float, cy: float, r: float = 8.5) -> No
 
 def _perfil_metric_rows(perfil: dict[str, Any]) -> list[tuple[str, str, str]]:
     """As 4 metricas do perfil como (kind_icone, rotulo, valor). Rotulos e metodo de renda
-    INALTERADOS (D3/D3.5); `_format_number` ja devolve "n/d" para ausente.
+    INALTERADOS (D3/D3.5); `_format_number` ja devolve `TEXTO_SEM_DADO` para ausente.
     """
     renda_raw = perfil.get("renda_media_domiciliar")
-    # "R$" so quando ha valor; sem dado exibe apenas "n/d" (evita "R$ n/d").
+    # "R$" so quando ha valor; sem dado exibe so o texto (evita "R$ Nao disponivel").
     renda_str = (
         "R$ " + _format_number(renda_raw, 2)
         if renda_raw is not None and not pd.isna(renda_raw)
-        else "n/d"
+        else TEXTO_SEM_DADO
     )
     return [
         ("pop", "População", _format_number(perfil.get("populacao_total"), 0)),
@@ -2117,7 +2151,7 @@ def _classico_perfil_bairro_page(
 
     As 4 metricas sao agregadas sobre a unidade INTEIRA (nao o raio do relatorio), com a
     geometria deslocada para abrir espaco a banda classica (que ocupa ate ~y=122). SEM mapa;
-    "n/d" gracioso quando o perfil nao esta disponivel (ponto fora da malha de setores ou
+    `TEXTO_SEM_DADO` gracioso quando o perfil nao esta disponivel (ponto fora da malha de setores ou
     unidade sem dado suficiente).
     """
     pdf.add_page()
@@ -2220,7 +2254,7 @@ def _classico_credit_page(
         lat = result.get("lat")
         lng = result.get("lng")
         link_query = f"{float(lat):.6f},{float(lng):.6f}" if lat is not None and lng is not None else ""
-        link_label = link_query or "n/d"
+        link_label = link_query or TEXTO_SEM_DADO
     url = build_search_url(link_query) if link_query else build_search_url("")
 
     pdf.set_text_color(*_BRANCO)
@@ -2282,7 +2316,7 @@ def gerar_pdf_relatorio_pontual_classico(
 
     `rotulo` e o nome/endereco do ponto (capa + banda + texto do link). `perfil_bairro`
     (BLK-RELPON-07) e o dict de `agregar_perfil_bairro_distrito`; `None` (default) produz a
-    pagina com "n/d" gracioso. `now` e injetavel para data determinista em teste. `solicitante`
+    pagina com `TEXTO_SEM_DADO` gracioso. `now` e injetavel para data determinista em teste. `solicitante`
     (BLK-EST-01) carimba a marca d'agua de rastreabilidade em TODAS as paginas: None -> so
     "Ultra Academia"; preenchido -> "Ultra Academia | {solicitante}". Geracao 100% offline, sem PII.
     """

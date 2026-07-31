@@ -686,9 +686,20 @@ def test_relatorio_municipal_renderiza_e_passa_os_mapas(monkeypatch: pytest.Monk
 
     chamada: dict[str, object] = {}
 
-    def _fake_render(df_muni, result, *, competitors_df=None, ultra_df=None, basemap=False):
+    def _fake_render(
+        df_muni,
+        result,
+        *,
+        competitors_df=None,
+        ultra_df=None,
+        basemap=False,
+        poligono_municipio=None,
+    ):
         chamada["render"] = True
         chamada["basemap"] = basemap
+        # BLK-RELMUN-05: o endpoint tem de REPASSAR o recorte territorial ao render. O kwarg
+        # e obrigatorio na assinatura do mock — sem ele a chamada real levanta TypeError.
+        chamada["poligono_kwarg"] = True
         return {c: b"PNG" for c in ("cobertura", "resumo", "score", "residual", "dominio")}
 
     monkeypatch.setattr(relmun, "render_mapas_municipio", _fake_render)
@@ -711,6 +722,10 @@ def test_relatorio_municipal_renderiza_e_passa_os_mapas(monkeypatch: pytest.Monk
     resp = pilot.relatorio_municipal(pilot.RelatorioMunicipalIn(uf="DF", municipio="X"))
     assert resp.media_type == "application/pdf"
     assert chamada.get("render") is True, "o endpoint nao chamou render_mapas_municipio"
+    assert chamada.get("poligono_kwarg") is True, (
+        "BLK-RELMUN-05: o endpoint tem de passar `poligono_municipio` ao render, senao os "
+        "pins do PDF voltam a vazar para os municipios vizinhos"
+    )
     mapas = capturado.get("mapas")
     assert mapas is not None, "regressao: o gerador recebeu mapas=None (PDF sem mapas)"
     assert set(mapas) >= {"cobertura", "resumo", "score", "residual", "dominio"}
