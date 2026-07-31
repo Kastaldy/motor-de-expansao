@@ -1773,6 +1773,315 @@ ou explicitamente recusados com justificativa; suíte completa sem regressão (b
 
 ---
 
+### BLK-MA-08 — Coletar a nota do WellHub (`partnerRating`) no GymScraping
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (coluna nova num coletor de produção, no repo externo `VinhoAbencoado/GymScraping`; muda o schema de um CSV com 12.769 linhas já coletadas e estende o escopo de coleta autorizado pela DEC-013). **Exige emenda à DEC-013 registrada + gate humano obrigatório** antes do Builder. Não pode ser Média: `scripts/aplicar_criticidade_label.py:38` arma **auto-merge** para Baixa/Média, o que furaria o gate que este bloco declara. |
+| **Prioridade** | Depois do gate conjunto descrito abaixo, e antes do **BLK-MA-09**, que é o consumidor da coluna. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE CONJUNTO — Vinicius: D-A/D-B/D-C do BLK-MA-09 + emenda de escopo da DEC-013]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | DEC-013 (emenda de escopo, a registrar no gate). |
+| **Autonomia** | **manual (NÃO loop-safe)** — repo externo, coletor de produção que roda na VPS por cron; toca a trilha de scrapers. NÃO marcar loop-safe. |
+
+**Contexto (medido em 2026-07-30/31; evidência em `data/reports/sonda_rating_agregadores_2026-07-31.md`).**
+O contrato afirma, em três lugares, que o WellHub não traz nota: §1
+(`docs/vulnerabilidade_ma_contrato.md:60-62`), §7/D3 (`:220-225`) e §13 (`:509`) — todos derivados da
+premissa *"WellHub = mesmo schema do TotalPass (confirmado por Vinicius, 2026-07-23)"*, registrada
+com a ressalva honesta de que **só havia amostra de TotalPass versionada**. Duas sondas sobre as
+páginas públicas **falsificaram a premissa**: a equivalência vale para o CSV de **saída**, não para o
+HTML de **origem**. A página de parceiro do WellHub traz, no mesmo payload RSC que o coletor já baixa
+e já parseia, o bloco `\"partnerRating\":{\"value\":4.81,\"label\":\"(105 Avaliações)\"}`. Cobertura
+medida: **53 de 54** unidades sorteadas (2 por UF nas 27 UFs), **98,1%**. O TotalPass, na mesma
+sonda, deu **7/7 sem nenhum sinal de nota** — ver **BLK-MA-10**.
+
+**Objetivo.** Passar a extrair `partnerRating` (nota **e** contagem de avaliações) no coletor do
+WellHub e persistir os dois como agregados numéricos no CSV, sem coletar nenhum texto ou autor de
+avaliação. Entregável: `Wellhub/csvs/unidades_wellhub_<uf>.csv` com as colunas novas, e o
+consolidado regenerado de forma íntegra.
+
+**STOP-RULE (ler antes de começar).** Este bloco **paga o custo** de uma decisão cujo valor só o
+**BLK-MA-09** materializa, e as três decisões de gate daquele bloco (D-A, D-B, D-C) são **100%
+decidíveis hoje** — nenhuma delas precisa da coluna existir. Por isso o gate é **conjunto**. Se o
+gate decidir **D-C = manter `{s1,s2}` provisório** e **D-B = segmentar por regime**, então este par
+de blocos entrega **zero** valor ordenável até o S3 amadurecer (~8 meses na cadência real), e a
+recomendação é **repriorizar os dois para depois do cron mensal dos agregadores**. Construir o MA-08
+antes desse gate é o caminho default para deixá-lo órfão.
+
+**Escopo permitido (repo `VinhoAbencoado/GymScraping`, clonado em `../GymScraping`).** Quatro pontos
+de código, todos já localizados: (1) constante `_RSC_PARTNER_RATING_BLOCK_RE` em `Wellhub/extracao.py`
+(após a linha 41), no **mesmo padrão** de `_RSC_ADDRESS_BLOCK_RE` — `r'\\"partnerRating\\":\{[^{}]*\}'`,
+já verificado casando nas 4 fixtures; (2) helper `_extract_partner_rating` entre as linhas 117 e 120,
+reusando `_extract_number(bloco, "value")` e `_extract_string(bloco, "label")`, que **funcionam sem
+modificação** sobre o bloco casado; (3) chamada em `extract` após a linha 171; (4) chaves novas no
+dict de saída entre 182 e 183. Mais a coluna em `FIELDNAMES` (`Wellhub/csv_writer.py`, entre as
+linhas 26 e 27 — **antes** de `data_coleta`, que é o último por convenção nos dois coletores
+agregadores). Testes em `Wellhub/tests/`. Docs: `CLAUDE.md:23` do GymScraping e
+`Wellhub/RECON.md:97` (contrato de colunas), mais as duas correções de carona de docs **já stale
+hoje** (`RECON.md:12` e `csv_writer.py:4`, ambos listando 9 colunas, sem `atividades`).
+
+**Duas decisões de produto para o gate.** (a) **Uma coluna ou duas?** O `label` embute a contagem
+(`(105 Avaliações)`); a recomendação é **duas** (`nota_wellhub` e `qtd_avaliacoes_wellhub`, ambas
+agregados numéricos), porque a contagem é o que permite ponderar confiança — 2/53 unidades têm menos
+de 30 avaliações, e 5,0 com 13 avaliações não vale o mesmo que 4,73 com 1.262. (b) **`value`
+inteiro.** Duas das 4 fixtures trazem `5`, não `5.0`; `_extract_number` devolve `float`, e
+`str(5.0)` grava `"5.0"`. Decidir entre fidelidade ao bruto (capturar string) e normalização
+numérica — e travar a escolha em teste.
+
+**O estado "sem avaliações" tem forma DIFERENTE.** Numa das 54 unidades sondadas o campo vem como
+`\"partnerRating\":null` — o objeto inteiro nulo, **não** `{"value":null,...}` —, logo após
+`\"newPartner\":{...}`. Um parser que só procure a forma preenchida reporta "ausente" tanto para
+*sem avaliações* (legítimo) quanto para *layout mudou* (quebra do scraper), e uma quebra silenciosa
+entraria no score como `n/d` sem ninguém perceber. As duas condições **têm de ser distinguíveis** —
+é critério de aceite, não detalhe de implementação.
+
+**Armadilha operacional (não é código, e corrompe em silêncio).** `ensure_header`
+(`Wellhub/csv_writer.py:36`) só escreve cabeçalho em arquivo inexistente ou vazio, e `append_rows`
+projeta cada linha em `{field: row.get(field, "") for field in FIELDNAMES}` (`:58`) — é essa projeção
+que descarta chave nova em silêncio (o `extrasaction="ignore"` da linha 55 nunca chega a disparar).
+O checkpoint atual está **completo** (`ok=12769, failed=175, filtered=30708`) e
+`Wellhub/unidades_wellhub.csv` tem 12.769 linhas sob um cabeçalho de **10 colunas**. Rodar o coletor
+com `FIELDNAMES` ampliado contra esse arquivo grava campos a mais sob o cabeçalho antigo — **arquivo
+corrompido, sem erro e sem log**. A migração exige CSV novo (`--output` limpo, ou remoção do arquivo
++ `--no-resume`); os 27 arquivos de `Wellhub/csvs/` se regeneram por `split_by_state`, mas só a
+partir de um consolidado íntegro. O bloco deve entregar o procedimento de migração **escrito e
+executado**, não só o código.
+
+**Guardrail.** READ-ONLY sobre o M1 por construção (o bloco não toca o repo do motor). Anti-PII
+(DEC-012): persistir **apenas** os agregados numéricos — nota e contagem; **nunca** texto ou autor de
+avaliação, que o §11 do contrato proíbe nominalmente, nem qualquer outro não-agregado (foto, data de
+review), pela regra geral de persistir só agregados. Nenhuma alteração no cron ou no runner da VPS
+neste bloco — isso é **BLK-MA-06**. Não tocar `gymscraping/core/contracts.py` (`OFFICIAL_COLUMNS`),
+do qual o WellHub vive fora por decisão explícita (`RECON.md:100`).
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; toda a reativação do sinal 2 no motor —
+ingestão, contrato de snapshot, `v2`, pesos e comparabilidade — que é **BLK-MA-09**; o TotalPass, que
+é **BLK-MA-10**; a reputação externa/Google Places, que segue no **BLK-MA-07** com gate e DEC
+próprios; o plug no cron da VPS e o runbook, que são **BLK-MA-06**; qualquer mudança em
+`CAMPOS_HASH_POR_FONTE` (ver o guardrail do **BLK-MA-09** — a nota **NUNCA** entra no hash).
+
+**Critério de aceite.** Coluna(s) nova(s) extraídas e gravadas, com teste que falharia antes,
+**100% offline** — as 4 fixtures em `Wellhub/tests/fixtures/` já contêm `partnerRating` (norpra
+`4.81`, gabi_marie `4.71`, ctf_londrina `5`, max_trainer `5`), verificado por execução, então nenhum
+teste novo pode tocar a rede; cobertura obrigatória de 4 casos — decimal, **inteiro** (`5`),
+**`partnerRating: null`** e **bloco ausente do HTML**, sendo os dois últimos distinguíveis entre si e
+cobertos por HTML forjado inline (molde em `Wellhub/tests/test_extracao.py:176-184`, já que nenhuma
+fixture os contém); os 2 testes que quebram por construção atualizados
+(`Wellhub/tests/test_extracao.py:29-35`, igualdade de conjunto de chaves, e
+`Wellhub/tests/test_pipeline.py:64`, string literal do cabeçalho); os 4 pontos de doc corrigidos;
+procedimento de migração do consolidado documentado e executado; suíte do WellHub sem regressão
+(baseline medida em 2026-07-31: **83 testes**, via `python -m unittest discover -s Wellhub/tests -t .`
+a partir da raiz do repo do scraper).
+
+---
+
+### BLK-MA-09 — Reativar o sinal 2 (`v2`) no motor, com régua assimétrica por fonte
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (liga um sinal do `score_vulnerabilidade`, o que **rebalanceia todos os pesos efetivos**: S3 cai de ≈0,467 para 0,35 e S4 de ≈0,333 para 0,25; muda o contrato de snapshot e força bump de versão. Camada **PARALELA e READ-ONLY sobre o M1** — não toca `score_priorizacao`, pesos, nem artefatos oficiais, e o score ainda não tem consumidor materializado; **volta a ser Crítica quando o BLK-MA-05 materializar o entregável**). **Exige emenda ao contrato ratificada no gate + gate humano obrigatório** antes do Builder. |
+| **Prioridade** | Depois do **BLK-MA-08**, que produz o insumo. Antes do **BLK-MA-05**, que é o consumidor do score — se o MA-05 sair antes, ordenará sobre uma régua que este bloco vai mudar. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA — D-A/D-B/D-C, ratificadas no gate conjunto do BLK-MA-08]` → Builder → QA. |
+| **Status** | Pendente (bloqueado pela coluna do coletor). |
+| **Depende de** | BLK-MA-08. |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
+
+**Contexto.** O sinal 2 está `n/d` por decisão do gate 2 (D3, §7 do contrato), com a justificativa
+*"nenhum coletor emite nota"*. O **BLK-MA-08** derruba essa justificativa **para o WellHub apenas** —
+o TotalPass segue sem nota (**BLK-MA-10**). O resultado é um cenário que o contrato **nunca
+contemplou**: sinal presente para um **subconjunto** do universo. A aritmética já suporta isso —
+`renormalizar_pesos` (`src/motor_expansao/vulnerabilidade/contrato.py:534-558`) e `_compor_score`
+(`.../score.py:263-305`) renormalizam **por linha, agrupando por padrão de disponibilidade**
+(`score.py:281-290`), e o helper `_saida_valida` (`tests/unit/vulnerabilidade/test_score.py:199-220`)
+já monta três regimes distintos num único frame. **O trabalho é ~20% aritmética e ~80% contrato e
+comparabilidade.**
+
+**Objetivo.** Ligar o `v2` para as linhas com nota, mantendo o score correto, reprodutível e
+**comparável**, e corrigir as três afirmações falsificadas do contrato.
+
+**O que o S2 realmente destrava (formulação corrigida).** O S2 **não** é o único sinal independente
+de maturidade de série: o S1 também é pontual (`score.py:201`, `n_agregadores_no_hex.notna()`), e é
+por isso que hoje, na primeira coleta, o regime é `{s1}` e o score vive em `{0, 50}` — `v1` é
+categórico de domínio efetivo `{0,0 · 0,5}`. O S2 é o **segundo** sinal pontual, e o único que pode
+ser **acrescentado** sem esperar série: com ele, o regime `{s1,s2}` produz
+`0,375 · v1 + 0,625 · v2`, um score **contínuo** já na semana 1 — mas **só para o subconjunto
+WellHub**. E, decisivo: com o código atual, `flag_score_provisorio` (`score.py:294`) marca `{s1,s2}`
+como provisório, e `score_vulnerabilidade_ordenavel` (`:299`) fica nulo — ou seja, **sem o D-C virar,
+o par MA-08+MA-09 não destrava nada ordenável**, e quando o S3 amadurecer o S2 valerá no máximo ~4,6
+dos 100 pontos. Todo o valor de curto prazo da dupla depende do **D-C**.
+
+**Decisões do gate — as três são UMA decisão conjunta (nenhuma é reversível de graça).**
+- **D-A — qual régua absoluta para o `v2`?** O percentil está **fechado** pela emenda G-D3
+  (2026-07-30), que o deixou RESERVADO por não-monotonicidade e não-reprodutibilidade — motivos que
+  valem igualmente para o rating. Mas, ao contrário do `v4`, a régua do `v2` está **genuinamente em
+  aberto**: o §8.1 (`:271-272`) diz `1 − normaliza(rating)` e dá a razão linear apenas como
+  **exemplo** (`ex.:`). Medido nas **53 unidades com nota**, o `v2` linear sobre 1–5 ocupa **18% do
+  domínio** (0,005 a 0,185): contribui no máximo **~4,6** pontos de 100, com amplitude de **~4,5**
+  pontos entre a pior e a melhor nota. A distribuição **tem** variância real (desvio 0,127; decis de
+  4,62 a 4,92) — é a régua que a desperdiça, porque notas de app não ocupam a metade inferior da
+  escala. Terceira via a avaliar: **min-max sobre faixa fixa por decisão** (não por lote), o que
+  preserva monotonicidade e reprodutibilidade. **Pré-requisito:** re-medir a distribuição restrita a
+  `independente` (a sonda cobriu o universo WellHub inteiro), e escolher o limite inferior **abaixo**
+  do mínimo plausível de independente — não 4,0, que satura justamente a ponta vulnerável —, travando
+  o comportamento do clip em teste.
+- **D-B — comparabilidade entre regimes.** Com S2 só-WellHub, o universo se parte em `{s1,s2,s3,s4}`
+  (pesos `0,15/0,25/0,35/0,25`) e `{s1,s3,s4}` (`≈0,20/0,467/0,333`). Duas academias idênticas, uma
+  listada em cada agregador, **saem com scores diferentes** — e o churn pesa 33% mais no grupo sem
+  nota. O §8.5 (`:406-408`) já diz que regimes diferentes não são comparáveis, e o G-D1 blindou o
+  eixo **temporal**; o que é novo aqui é que a fragmentação deixa de ser transitória e passa a ser
+  **permanente e correlacionada com a fonte**, reduzindo o pool comparável. Três opções, nesta ordem
+  de preferência: **(0)** propagar o rating como **coluna-fato sem peso** (molde do G-D2), o que
+  dissolve D-A e D-C e entrega o dado ao MA-05 sem tocar a régua; **(1)** segmentação obrigatória por
+  regime antes de qualquer ordenação — e então a pergunta ao MA-05 é se ele entrega **duas listas**;
+  **(2)** anular o `ordenavel` fora do regime majoritário — só considerar após medir qual regime é
+  majoritário **no universo do score** (`fonte in FONTES_AGREGADORES` e `rede == independente`), não
+  no universo bruto.
+- **D-C — `flag_score_provisorio` e o valor real do S2.** `score.py:294` calcula
+  `provisorio = (~disponivel["s3"]) & (~disponivel["s4"])`, mas o §8.4 (`:350-351`) define a flag como
+  *"quando S3 e S4 estão imaturos e o score depende só de S1 **(e S2 quando ativo)**"* — parêntese que
+  a implementação não contempla. Com o cron dos agregadores ainda **mensal e pendente**
+  (`docs/infra_producao.md:228`; DEC-013, decisão parte 3, `docs/decisions/DEC-013.md:7`),
+  `MIN_SEMANAS = 8` significa **~8 meses** e `STALE_SEMANAS = 12`, **~12 meses**. Manter `{s1,s2}`
+  provisório é defensável (dois sinais pontuais não substituem série); tratá-lo como ordenável é o
+  que dá valor à dupla no curto prazo. **O gate precisa ver o composto que estará autorizando:**
+  `{s1,s2}` = `0,375 · v1 + 0,625 · v2`, com domínio efetivo dado pela opção escolhida em D-A.
+
+**Escopo permitido (READ-ONLY M1) — 12 pontos.** `_COLUNAS_TRABALHO` (`snapshots.py:92-107`) — hoje a
+coluna nova é **DROPADA em silêncio** em `snapshots.py:150`; `CONTRATO_COLUNAS_SNAPSHOT`
+(`contrato.py:193-204`), de 10 para 11/12 colunas, **com bump de `VERSAO_CONTRATO_SNAPSHOT`**
+(`contrato.py:34`); **`ler_snapshots`** — a leitura hive de esquema misto (partições pré e pós-bump)
+**dropa a coluna nova sem erro**, e o `v2` sairia nulo para o universo inteiro sem ninguém perceber:
+exige `schema=` explícito ou `unify_schemas`; a rota de ingestão do valor até o score —
+`CONTRATO_COLUNAS_CHURN` (`contrato.py:208-226`) e `vulnerabilidade/churn_staleness.py`, ou um
+terceiro parâmetro em `calcular_score_vulnerabilidade` (`score.py:457-462`), conforme a decisão de
+grão abaixo; remover `"s2"` de `SINAIS_INATIVOS` (`contrato.py:265` — o comentário `:263-264` já
+antecipa: *"Reativar o sinal 2 é remover UMA entrada desta tupla"*); a máscara literal `False` em
+`score.py:202` e o loop `:206-207`; **a tupla literal de `_derivar_componentes`**
+(`score.py:236`: `for sinal, bruto in (("s1", v1_bruto), ("s3", v3_bruto), ("s4", v4_bruto))`) — sem
+tocá-la a coluna `v2` nunca é criada e `_disponibilidade_efetiva` (`:246-247`) devolve `False` para
+sempre, tornando inócua a remoção de `SINAIS_INATIVOS`; `CONTRATO_COLUNAS_SCORE`
+(`contrato.py:286-307`), de 20 para 21 colunas; o biconditional `s2 ⟺ v2` (`score.py:402-411`); a
+flag de `:294` e o `ordenavel` de `:299` conforme D-B e D-C. Mais as correções de contrato: §1
+(`:60-62`), §7 (`:220-225`) e §13 (`:509`), que afirmam a premissa falsificada; a reabertura do §8.2
+exigida pelo item 4 da emenda G-D3; e a consequência para o `score_vulnerabilidade_medio` hex-level
+do §10, que agrega linhas de réguas diferentes.
+
+**Ponteiros a redirecionar (consequência do fatiamento).** Sete comentários no código e um teste
+apontam para o **BLK-MA-08** como o bloco que reativa o S2 e produz o `v2` — o que passou a ser
+**este** bloco quando a frente foi partida em coletor (MA-08) e motor (MA-09):
+`contrato.py:230`, `:263`, `:280`, `:296`, `:540`; `presenca_agregador.py:80`; `score.py:123`; e
+`tests/unit/vulnerabilidade/test_presenca_agregador.py:400`. Redirecionar todos para `BLK-MA-09`,
+junto com as menções equivalentes no contrato (`docs/vulnerabilidade_ma_contrato.md:55`, `:61`,
+`:109`, `:116`, `:136`, `:220-225`, `:271`, `:499`, `:504`, `:509`). São comentários e prosa — nenhum
+altera comportamento —, mas deixá-los apontando para o bloco errado é exatamente o defeito de drift
+doc-vs-código que o §5 do `CLAUDE.md` registra.
+
+**Guardrail (inviolável).** A nota **NUNCA** entra em `CAMPOS_HASH_POR_FONTE`
+(`contrato.py:161-183`). Ela muda a cada avaliação nova; hasheá-la faria toda unidade parecer
+"cadastro alterado" a cada coleta, `semanas_sem_mudanca` nunca cresceria e **o S4 morreria** — é
+exatamente o modo de falha que o comentário `:159-160` descreve para `data_coleta`, que por isso vive
+em `CAMPOS_NUNCA_HASHEADOS` (`:184`). A nota deve ir para lá ou equivalente. Nota e contagem **não**
+são PII e não estão em `COLUNAS_PII_PROIBIDAS` (`contrato.py:311-333`), coerente com o §13
+(*"persiste só o agregado numérico"*); texto e autor de review continuam proibidos pelo §11.
+**A razão real de fazer isto agora:** mudar as primitivas CONGELADAS re-chaveia a série
+(`contrato.py:335-337`), e a série está em zero-a-poucas semanas — este é o único momento em que o
+bump é gratuito, e o custo só cresce.
+
+**Grão a decidir antes de escrever código.** O `v1` foi rebaixado para hex-level porque a chave de
+snapshot embute a `fonte` e "quantos agregadores cobrem esta linha" era constante `1` (emenda
+BLK-MA-03, contrato `:239-269`). O `v2` **não** tem esse problema: a nota é intrínseca à academia.
+Logo o `v2` é o **primeiro sinal genuinamente por-academia** do score — não deve herdar o sufixo
+`_no_hex` nem o join `many_to_one`, e isso decide qual módulo o produz e por onde ele entra em
+`calcular_score_vulnerabilidade`.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; o coletor e o CSV, que são **BLK-MA-08**; o
+TotalPass, que é **BLK-MA-10**; a reputação externa/Google Places (**BLK-MA-07**, gate e DEC
+próprios); o cruzamento com hex quente e o entregável comercial (**BLK-MA-05**); o cron e o runbook
+(**BLK-MA-06**); reabrir a fórmula, os pesos do D4 ou as decisões G-D1/G-D2/G-D3 **exceto** no ponto
+que o item 4 da emenda G-D3 explicitamente delega a este bloco (o §8.2).
+
+**Critério de aceite.** D-A, D-B e D-C decididas no gate conjunto e registradas como emenda ao
+contrato (§7, §8.1, §8.2, §8.4, §8.5), com DEC nova **apenas** se o D-B escolher algo que mude a
+arquitetura da entrega (duas listas, ou anulação por regime); `v2` ligado com teste do regime misto
+`{s1,s2,s3,s4}` × `{s1,s3,s4}` no mesmo frame, provando a política escolhida; teste de que a nota
+**não** entra no hash e que o S4 sobrevive a uma nota oscilando entre coletas; teste de leitura hive
+com uma partição pré-bump e uma pós-bump provando que a coluna nova sobrevive; **check de execução**
+— se `ler_snapshots` devolver ≥ 1 semana no momento do ciclo, o procedimento de migração das
+partições passa a ser obrigatório (hoje é gratuito porque a série está vazia, mas isso é premissa a
+verificar, não a assumir); as três afirmações falsificadas corrigidas no contrato; os tripwires
+intencionais atualizados com justificativa — `tests/unit/vulnerabilidade/test_score.py:269`
+(`SINAIS_INATIVOS == ("s2",)`), `:264` (pesos-alvo), `:283-293` (pesos efetivos `pytest.approx`
+hard-coded), `:725` (20 colunas), `tests/unit/vulnerabilidade/test_snapshots.py:226` (10 colunas);
+suíte completa sem regressão contra baseline **medida no início do ciclo** por
+`pytest --collect-only -q` (em 2026-07-31, na `main`: **2334 coletados**); `ruff` limpo; `loop_guard`
+sem `CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
+
+---
+
+### BLK-MA-10 — TotalPass: a nota existe? (spike de viabilidade, sem código de produção)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (investigação time-boxed; ZERO código de produção, ZERO alteração de coletor, ZERO persistência). O resultado pode ser "não fazer" — e esse é um resultado válido. |
+| **Prioridade** | Antes do **BLK-MA-09**, não depois: o veredito é insumo do D-B daquele bloco (se o TotalPass puder ter nota, a régua deixa de ser permanentemente assimétrica e o D-B muda). Não bloqueia o **BLK-MA-08**. |
+| **Esteira** | Block Orchestrator → Builder → `[decisão humana — Vinicius: seguir, arquivar ou redirecionar ao BLK-MA-07]`. |
+| **Status** | Pendente. |
+| **Depende de** | — (não bloqueia nada; o sinal 2 já entrega valor só com o WellHub). |
+| **Autonomia** | **manual (NÃO loop-safe)** — investigação sobre alvo externo de produção, com decisão de ToS envolvida. NÃO marcar loop-safe. |
+
+**Contexto (medido em 2026-07-30/31; evidência em `data/reports/sonda_rating_agregadores_2026-07-31.md`).**
+Duas sondas sobre `https://totalpass.com/br/academias/{slug}/` deram **7/7 sem nenhum sinal de nota**.
+O JSON-LD é idêntico em todas as amostras — 9 chaves (`@context, @type, address, geo, image, name,
+openingHours, telephone, url`), **sem** `aggregateRating`. No HTML inteiro (54–63 KB): zero ocorrência
+de `aggregateRating`, `ratingValue`, `reviewCount`, `avalia`, `review`, `estrela` ou `nota`. A página é
+Next.js **App Router** (payload RSC, sem `__NEXT_DATA__`). Conclusão da sonda: **o produto web do
+TotalPass não tem sequer interface de avaliação de unidade** — não é uma nota escondida atrás de uma
+API web. Cobre 15.986 unidades já coletadas, universo maior que o do WellHub.
+
+**Objetivo.** Responder, com evidência e sem escrever código de produção, a uma pergunta binária: **a
+nota do TotalPass existe em alguma superfície acessível de forma legítima e sustentável?** E, se
+existe, a que custo. O entregável é uma recomendação — **seguir, arquivar ou redirecionar** —, não uma
+implementação.
+
+**Escopo permitido (time-box de 1 ciclo).** Investigar, em ordem de custo crescente: (1) as
+superfícies do próprio TotalPass que a sonda identificou mas **não** investigou —
+`booking.totalpass.com` e `cms.totalpass.com` são as candidatas óbvias, e são muito mais baratas que a
+hipótese mobile; (2) outras superfícies públicas (sitemap, feed, página de rede, área de parceiro);
+(3) se o app mobile expõe nota por unidade e por qual superfície — hipótese principal caso (1) e (2)
+falhem, já que o web não a tem; (4) o custo real dessa hipótese — API autenticada exige credencial de
+usuário pagante, certificate pinning é provável, e o contrato de dados pode mudar sem aviso.
+Entregável: relatório curto em `data/reports/` com veredito, evidência e estimativa de esforço/risco.
+
+**Os Termos de Uso decidem antes da engenharia.** Ler os ToS do TotalPass é passo **de abertura**, não
+de fechamento: se a coleta autenticada for vedada, a investigação **para em (3)** e a recomendação é
+arquivar, sem gastar o time-box em viabilidade técnica. A leitura vale para o alvo desta sonda; não é
+parecer jurídico e não se estende a outros coletores.
+
+**A alternativa mais provável.** Se o veredito for "inviável ou vedado", a recomendação natural **não**
+é insistir no TotalPass — é levar aquele universo para o **BLK-MA-07** (reputação externa, com gate e
+DEC próprios). Isso muda o desenho do sinal (reputação externa ≠ nota in-app, e o §2 do contrato
+reaparece) e é decisão de produto, não de engenharia. **Se este for o desfecho esperado, considerar
+não gastar um bloco:** mover a conclusão de duas linhas para o contexto do BLK-MA-07 e deixar a
+hipótese mobile como uma linha de risco lá é mais barato que um ciclo inteiro para confirmar um "não".
+
+**Guardrail.** READ-ONLY sobre o M1 e sobre o motor inteiro — este bloco **não escreve código de
+produção em repo nenhum**. Nenhuma credencial real em repositório, nenhuma persistência de dado
+coletado, nenhuma alteração no coletor ou no cron. Nenhuma tentativa de contornar autenticação,
+rate-limit ou proteção técnica: se o acesso exigir burlar controle, o veredito é **arquivar**. Volume
+de requisições de sondagem mínimo e espaçado, no mesmo padrão educado do coletor de produção.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; implementar coleta de nota no TotalPass —
+isso seria um bloco novo, **condicionado** ao veredito deste; o WellHub (**BLK-MA-08**) e a reativação
+do `v2` (**BLK-MA-09**); a reputação externa em si (**BLK-MA-07**).
+
+**Critério de aceite.** Relatório em `data/reports/` respondendo à pergunta binária com evidência
+reproduzível (URLs, superfícies testadas, o que se viu em cada uma); veredito explícito entre
+**seguir / arquivar / redirecionar ao BLK-MA-07**, com esforço e risco estimados; leitura dos ToS
+registrada com citação; ZERO alteração em código de produção, provada pelo diff; nenhuma credencial
+nem dado coletado versionado.
+
+---
+
 ### BLK-ATR-05 — Materializar a estrutura escolhida (gate + matriz/composto) em produção (DEC + gate humano)
 
 | Campo | Valor |
