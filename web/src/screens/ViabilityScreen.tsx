@@ -1070,6 +1070,40 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             overflowY: 'auto',
           }}
         >
+          {/* Estado de carregamento da TELA, nao so' do botao. O spinner dentro do
+              botao passava despercebido (relato de Felipe, 2026-07-31): o operador
+              nao sabia se a tela estava processando. Fica `sticky` para continuar
+              visivel com a coluna rolada, e no caso do recalculo AVISA que os
+              numeros exibidos ainda sao do cenario anterior. */}
+          {(calculando || gerandoPdf || gerandoXlsx) && (
+            <div
+              role="status"
+              aria-live="polite"
+              style={{
+                position: 'sticky',
+                top: 0,
+                zIndex: 3,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 11,
+                padding: '13px 16px',
+                borderRadius: 'var(--r-md)',
+                background: 'var(--ac-a12)',
+                border: '1px solid var(--ac-a30)',
+                color: 'var(--ac-text)',
+                font: '600 13px/1.4 var(--f-ui)',
+                backdropFilter: 'blur(14px)',
+              }}
+            >
+              <Spinner tamanho={18} />
+              {calculando
+                ? 'Recalculando a viabilidade — os números abaixo ainda são do cenário anterior.'
+                : gerandoPdf
+                  ? 'Montando o Relatório Pontual. Os mapas de rua são baixados na hora; em área densa leva alguns minutos.'
+                  : 'Montando a planilha do simulador.'}
+            </div>
+          )}
+
           {/* Rótulo permanente: o modelo de viabilidade ainda está em calibração vs planilha. */}
           <div
             style={{

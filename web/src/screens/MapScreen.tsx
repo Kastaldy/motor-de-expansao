@@ -308,6 +308,21 @@ export default function MapScreen({
           />
         </label>
 
+        {/* Saida VISIVEL do drill-down. Voltar a' visao do estado ja era possivel,
+            mas so' abrindo o seletor e achando "Todos os municipios" no meio da
+            lista — caminho que existe e nao se anuncia (relato de Felipe,
+            2026-07-31). So' aparece quando ha' municipio selecionado. */}
+        {municipio && (
+          <Botao
+            variante="ghost"
+            onClick={() => onMunicipio('')}
+            title="Voltar à visão do estado inteiro"
+            style={{ padding: '6px 11px', font: '600 11.5px/1 var(--f-ui)', whiteSpace: 'nowrap' }}
+          >
+            ← Todos os municípios
+          </Botao>
+        )}
+
         <Divisor />
 
         {/* Lupa de busca por coordenada */}

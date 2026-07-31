@@ -1311,20 +1311,53 @@ export function Veredito({
           )}
         </div>
       </div>
-      <span
+      {/* Carimbo do veredito. Era um pill de 11px encostado no canto: o operador lia
+          a frase inteira antes de saber a conclusao. Escolha de Felipe (2026-07-31):
+          bater o olho na tela e ja ter o veredito. A cor segue a semantica de antes
+          (--pos aprovado / --warn reprovado); "requer revisao" nao e' reprovacao
+          definitiva, entao continua ambar, nao vermelho. */}
+      <div
+        role="status"
+        aria-label={aprovado ? 'Aprovado para comitê' : 'Requer revisão de premissas'}
         style={{
-          alignSelf: 'flex-start',
-          font: '600 11px/1 var(--f-ui)',
-          padding: '7px 11px',
-          borderRadius: 8,
-          whiteSpace: 'nowrap',
-          background: aprovado ? 'rgba(46,200,110,.16)' : 'rgba(217,164,65,.16)',
-          border: `1px solid ${aprovado ? 'rgba(46,200,110,.35)' : 'rgba(217,164,65,.4)'}`,
+          alignSelf: 'center',
+          flexShrink: 0,
+          width: 152,
+          padding: '15px 10px',
+          borderRadius: 'var(--r-md)',
+          textAlign: 'center',
+          background: aprovado ? 'rgba(46,200,110,.13)' : 'rgba(217,164,65,.13)',
+          border: `2px solid ${cor}`,
           color: aprovado ? 'var(--pos-pill)' : 'var(--warn-text)',
         }}
       >
-        {aprovado ? 'Aprovado para comitê' : 'Requer revisão de premissas'}
-      </span>
+        <span aria-hidden style={{ display: 'block', font: '700 28px/1 var(--f-ui)', color: cor }}>
+          {aprovado ? '✓' : '✕'}
+        </span>
+        <span
+          style={{
+            display: 'block',
+            marginTop: 8,
+            font: '800 12.5px/1.2 var(--f-ui)',
+            letterSpacing: '.06em',
+            textTransform: 'uppercase',
+          }}
+        >
+          {aprovado ? 'Aprovado' : 'Requer revisão'}
+        </span>
+        <span
+          style={{
+            display: 'block',
+            marginTop: 3,
+            font: '600 10px/1.2 var(--f-ui)',
+            letterSpacing: '.05em',
+            textTransform: 'uppercase',
+            opacity: 0.82,
+          }}
+        >
+          {aprovado ? 'para comitê' : 'de premissas'}
+        </span>
+      </div>
     </div>
   )
 }
