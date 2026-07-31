@@ -32,6 +32,7 @@ from __future__ import annotations
 import math
 import unicodedata
 from dataclasses import dataclass
+from functools import lru_cache
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -49,6 +50,7 @@ from motor_expansao.dashboard.censo_map import (
     _atribuicao_tiles as _censo_atribuicao_tiles,
 )
 from motor_expansao.dashboard.competitors import _render_square_logo_tile
+from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 from motor_expansao.dashboard.utils import score_band_to_color
 
 # ---------------------------------------------------------------------------
@@ -263,8 +265,15 @@ def _slug(text: str) -> str:
 
 
 def _format_number(value: Any, decimals: int = 0, suffix: str = "") -> str:
+    """Numero formatado pt-BR; ausente/NaN -> `TEXTO_SEM_DADO` (por extenso desde 2026-07-31).
+
+    Os valores que caem em celula de fonte grande deste relatorio (Residual do municipio,
+    contagem de hexes, contagem de pins) sao somas/contagens e NUNCA sao NaN; os que podem ser
+    NaN (renda media, score medio, populacao) so aparecem em tabela de rotulo+valor, onde a
+    string longa cabe. Por isso aqui nao ha o encolhimento de fonte do Relatorio Pontual.
+    """
     if value is None or (isinstance(value, float) and math.isnan(value)) or pd.isna(value):
-        return "n/d"
+        return TEXTO_SEM_DADO
     number = float(value)
     if decimals <= 0:
         text = f"{number:,.0f}".replace(",", ".")
@@ -566,54 +575,198 @@ def _zonas_geometricas(df_muni: pd.DataFrame) -> dict[str, Any]:
     return {"hex_zona": hex_zona, "zonas": zonas}
 
 
+# ---------------------------------------------------------------------------
+# Recorte territorial dos pins (BLK-RELMUN-05)
+# ---------------------------------------------------------------------------
+# Os pins de concorrentes/Ultra vazavam para fora do municipio por DOIS caminhos distintos:
+#
+#   (a) o MAPA desenhava todo pin dentro da bbox da imagem -- que cobre o municipio MAIS o
+#       padding do enquadramento --, sem filtro territorial nenhum. Por isso o relatorio de
+#       Sao Bernardo do Campo saia com unidades de Santo Andre, Diadema e Sao Paulo;
+#   (b) a CONTAGEM filtrava pelo conjunto de hexes H3 res-7 do municipio. Um hex res-7 tem
+#       ~5 km2 e cruza divisa, entao a faixa de fronteira entrava na conta.
+#
+# `filtrar_pins_do_municipio` centraliza o recorte e passa a ser aplicado ANTES de contar E
+# ANTES de desenhar. Dois niveis de precisao, com degradacao graciosa:
+#
+#   - com `poligono` (malha municipal IBGE, `data/ibge/municipios_<UF>.geojson`): teste
+#     ponto-em-poligono -- a divisa e a real, resolve (a) e (b);
+#   - sem `poligono` (app que nao monta `data/ibge`): cai no conjunto de hexes res-7, que
+#     resolve (a) e mantem o comportamento historico de (b).
+#
+# READ-ONLY sobre o M1: so filtra linhas de um parquet ja pronto, nao recalcula metrica alguma.
+
+
+def _hexes_do_municipio(df_muni: pd.DataFrame) -> set[str]:
+    """Conjunto de `hex_id` (res-7) do municipio; vazio quando a coluna nao existe."""
+    if "hex_id" not in df_muni.columns:
+        return set()
+    return {str(h) for h in df_muni["hex_id"].dropna().astype(str)}
+
+
+def _hexes_res7_do_frame(frame: pd.DataFrame) -> pd.Series | None:
+    """`hex_id_res7` do frame de pins; deriva de lat/lng via h3 quando a coluna nao existe."""
+    if "hex_id_res7" in frame.columns:
+        return frame["hex_id_res7"].astype(str)
+    if not {"lat", "lng"}.issubset(frame.columns):
+        return None
+    import h3
+
+    out: list[str] = []
+    for _, row in frame.iterrows():
+        la = _safe_float(row.get("lat"))
+        lo = _safe_float(row.get("lng"))
+        if math.isnan(la) or math.isnan(lo):
+            out.append("")
+            continue
+        out.append(str(h3.latlng_to_cell(float(la), float(lo), H3_RES)))
+    return pd.Series(out, index=frame.index)
+
+
+def _mask_dentro_do_poligono(frame: pd.DataFrame, poligono: Any) -> pd.Series | None:
+    """Mascara ponto-em-poligono para `frame` (colunas `lat`/`lng`). `None` se indisponivel.
+
+    Pre-filtra pela bbox do poligono (comparacao numerica vetorizada, barata) e so entao roda
+    o teste exato de geometria nos sobreviventes -- a base de concorrentes e NACIONAL e o
+    municipio e uma fracao minuscula dela, entao a bbox derruba quase tudo antes do shapely.
+    Usa `covers` (nao `contains`) para nao descartar unidade exatamente sobre a divisa.
+    """
+    try:
+        from shapely.geometry import Point
+    except Exception:  # shapely ausente -> chamador cai no filtro por hex
+        return None
+    try:
+        minx, miny, maxx, maxy = poligono.bounds
+    except Exception:
+        return None
+    lat = pd.to_numeric(frame["lat"], errors="coerce")
+    lng = pd.to_numeric(frame["lng"], errors="coerce")
+    candidatos = (
+        lat.notna() & lng.notna() & lng.between(minx, maxx) & lat.between(miny, maxy)
+    )
+    mask = pd.Series(False, index=frame.index)
+    for idx in frame.index[candidatos]:
+        try:
+            if poligono.covers(Point(float(lng.at[idx]), float(lat.at[idx]))):
+                mask.at[idx] = True
+        except Exception:  # geometria estranha numa linha nao pode derrubar o relatorio
+            continue
+    return mask
+
+
+def filtrar_pins_do_municipio(
+    frame: pd.DataFrame | None,
+    *,
+    hexes_muni: set[str],
+    poligono: Any | None = None,
+) -> pd.DataFrame | None:
+    """Recorta um frame de pins (concorrentes/Ultra) ao territorio do municipio.
+
+    `poligono` = geometria da malha IBGE (via `carregar_poligono_municipio`); quando dado,
+    manda. Sem ele, filtra pelo conjunto `hexes_muni` de hexes res-7. Sem NENHUMA referencia
+    territorial (`hexes_muni` vazio) devolve frame VAZIO -- e o que a contagem ja fazia
+    (`return 0, 0, {}`), e o contrario seria desenhar a base nacional inteira no mapa.
+    """
+    if frame is None or frame.empty:
+        return frame
+    if poligono is not None and {"lat", "lng"}.issubset(frame.columns):
+        mask = _mask_dentro_do_poligono(frame, poligono)
+        if mask is not None:
+            return frame.loc[mask]
+    if not hexes_muni:
+        return frame.iloc[0:0]
+    hexes = _hexes_res7_do_frame(frame)
+    if hexes is None:  # sem hex e sem lat/lng: nada a filtrar por
+        return frame.iloc[0:0]
+    return frame.loc[hexes.isin(hexes_muni)]
+
+
+@lru_cache(maxsize=8)
+def _indice_malha_uf(ibge_dir_str: str, uf: str) -> dict[str, Any]:
+    """`cod_municipio` -> geometria, lido de `municipios_<UF>.geojson` (cacheado por processo).
+
+    Mesma fonte e mesmas chaves de propriedade que `api.service._carregar_malha`, mas indexado
+    por codigo em vez de espacialmente: aqui ja sabemos QUAL municipio queremos.
+    """
+    import json
+
+    from shapely.geometry import shape
+
+    path = Path(ibge_dir_str) / f"municipios_{uf}.geojson"
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    out: dict[str, Any] = {}
+    for feat in data.get("features", []) or []:
+        props = feat.get("properties") or {}
+        cod = str(
+            props.get("codarea") or props.get("CD_MUN") or props.get("cod_municipio") or ""
+        ).strip()
+        geom = feat.get("geometry")
+        if not cod or not geom:
+            continue
+        try:
+            out[cod] = shape(geom)
+        except Exception:  # geometria malformada -> municipio fica sem poligono
+            continue
+    return out
+
+
+def carregar_poligono_municipio(
+    ibge_dir: Path | str | None,
+    uf: str | None,
+    cod_municipio: str | None,
+) -> Any | None:
+    """Geometria do municipio na malha IBGE, ou `None` (fallback gracioso p/ filtro por hex).
+
+    `None` e o caminho esperado em app que nao monta `data/ibge` (o Streamlit, hoje) ou quando
+    a linha do parquet nao tem `cod_municipio`. Nunca levanta: o relatorio sai de qualquer jeito.
+    """
+    if not ibge_dir or not uf or not cod_municipio:
+        return None
+    cod = str(cod_municipio).strip()
+    if not cod:
+        return None
+    try:
+        return _indice_malha_uf(str(ibge_dir), str(uf).strip().upper()).get(cod)
+    except Exception:
+        return None
+
+
 def _pins_no_municipio(
     df_muni: pd.DataFrame,
     competitors_df: pd.DataFrame | None,
     ultra_df: pd.DataFrame | None,
+    *,
+    poligono: Any | None = None,
 ) -> tuple[int, int, dict[str, int]]:
-    """D6: conta pins Ultra/concorrentes cujo hex H3 res-7 cai nos hexes do municipio.
+    """D6: conta pins Ultra/concorrentes DENTRO do municipio. Anti-PII: usa so `rede`.
 
-    Reusa `hex_id_res7` quando presente; senao deriva via h3. Anti-PII: usa so `rede`.
-    Retorna (n_ultra, n_concorrentes, {rede: contagem}).
+    Recorte por `filtrar_pins_do_municipio` (poligono IBGE quando disponivel; senao hexes
+    res-7). Retorna (n_ultra, n_concorrentes, {rede: contagem}).
     """
-    hexes_muni: set[str] = set()
-    if "hex_id" in df_muni.columns:
-        hexes_muni = {str(h) for h in df_muni["hex_id"].dropna().astype(str)}
-    if not hexes_muni:
+    hexes_muni = _hexes_do_municipio(df_muni)
+    if not hexes_muni and poligono is None:
         return 0, 0, {}
 
-    def _hexes_of(frame: pd.DataFrame | None) -> pd.Series | None:
-        if frame is None or frame.empty:
-            return None
-        if "hex_id_res7" in frame.columns:
-            return frame["hex_id_res7"].astype(str)
-        if {"lat", "lng"}.issubset(frame.columns):
-            import h3
+    ultra_muni = filtrar_pins_do_municipio(
+        ultra_df, hexes_muni=hexes_muni, poligono=poligono
+    )
+    conc_muni = filtrar_pins_do_municipio(
+        competitors_df, hexes_muni=hexes_muni, poligono=poligono
+    )
 
-            out: list[str] = []
-            for _, row in frame.iterrows():
-                la = _safe_float(row.get("lat"))
-                lo = _safe_float(row.get("lng"))
-                if math.isnan(la) or math.isnan(lo):
-                    out.append("")
-                    continue
-                out.append(str(h3.latlng_to_cell(float(la), float(lo), H3_RES)))
-            return pd.Series(out, index=frame.index)
-        return None
-
-    n_ultra = 0
-    ultra_hexes = _hexes_of(ultra_df)
-    if ultra_hexes is not None:
-        n_ultra = int(ultra_hexes.isin(hexes_muni).sum())
+    n_ultra = 0 if ultra_muni is None else int(len(ultra_muni))
 
     n_conc = 0
     por_rede: dict[str, int] = {}
-    conc_hexes = _hexes_of(competitors_df)
-    if conc_hexes is not None and competitors_df is not None:
-        in_muni = conc_hexes.isin(hexes_muni)
-        n_conc = int(in_muni.sum())
-        if "rede" in competitors_df.columns:
-            redes = competitors_df.loc[in_muni, "rede"].astype(str)
+    if conc_muni is not None:
+        n_conc = int(len(conc_muni))
+        if "rede" in conc_muni.columns:
+            redes = conc_muni["rede"].astype(str)
             por_rede = {
                 str(rede): int(cnt) for rede, cnt in redes.value_counts().items()
             }
@@ -630,6 +783,7 @@ def agregar_municipio(
     ultra_df: pd.DataFrame | None = None,
     bairros_por_hex: dict[str, str] | None = None,
     df_pre_filtrado: pd.DataFrame | None = None,
+    poligono_municipio: Any | None = None,
 ) -> dict[str, Any]:
     """Agrega o dicionario canonico de metricas do municipio. READ-ONLY (so le colunas).
 
@@ -645,6 +799,10 @@ def agregar_municipio(
     full-scan de 1,5 M hexes). Quando fornecido, substitui a filtragem interna por `_municipio_mask`.
     `df` continua obrigatorio na assinatura para compatibilidade, mas nao e usado para filtragem
     quando `df_pre_filtrado` esta presente.
+
+    `poligono_municipio` (BLK-RELMUN-05): geometria da malha IBGE (via
+    `carregar_poligono_municipio`) para recortar os pins pela divisa REAL. `None` (default)
+    mantem o recorte por hexes res-7. Ver o bloco "Recorte territorial dos pins" acima.
     """
     if df_pre_filtrado is not None:
         df_muni = df_pre_filtrado.copy()
@@ -707,7 +865,7 @@ def agregar_municipio(
     # Fallback gracioso: None/{} -> listas vazias (Pagina 6 cai nas zonas geometricas + tese).
     bairros_por_zona = _bairros_por_zona(zonas_geo.get("hex_zona", {}), bairros_por_hex)
     n_ultra, n_concorrentes, concorrentes_por_rede = _pins_no_municipio(
-        df_muni, competitors_df, ultra_df
+        df_muni, competitors_df, ultra_df, poligono=poligono_municipio
     )
 
     return {
@@ -1319,6 +1477,7 @@ def render_mapas_municipio(
     basemap: bool = False,
     width: int = 1000,
     height: int = 704,
+    poligono_municipio: Any | None = None,
 ) -> dict[str, bytes]:
     """Gera as camadas de mapa do relatorio (cobertura/resumo/score/residual/dominio).
 
@@ -1329,8 +1488,20 @@ def render_mapas_municipio(
 
     FU1 (slide novo): a camada "cobertura" mostra o municipio INTEIRO (sem foco) com aprovados
     (destacados, verde) e reprovados (cinza), sem pins.
+
+    BLK-RELMUN-05: os frames de pins sao RECORTADOS ao municipio aqui, uma vez, antes de
+    qualquer render -- `_draw_pins` so filtrava pela bbox da imagem e por isso desenhava
+    concorrentes dos municipios vizinhos. Recortar na entrada tambem conserta o viewport de
+    foco, que passa a enquadrar so o que e do municipio.
     """
     zonas = municipio_result.get("zonas", [])
+    hexes_muni = _hexes_do_municipio(df_muni)
+    competitors_df = filtrar_pins_do_municipio(
+        competitors_df, hexes_muni=hexes_muni, poligono=poligono_municipio
+    )
+    ultra_df = filtrar_pins_do_municipio(
+        ultra_df, hexes_muni=hexes_muni, poligono=poligono_municipio
+    )
     focus_bounds = _focus_bounds_mercator(
         df_muni, competitors_df=competitors_df, ultra_df=ultra_df
     )

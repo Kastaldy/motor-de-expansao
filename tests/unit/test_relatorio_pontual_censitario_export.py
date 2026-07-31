@@ -29,7 +29,7 @@ from motor_expansao.dashboard.censo_report import (
     gerar_pdf_relatorio_pontual_classico,
     render_downloads_relatorio_censitario,
 )
-from motor_expansao.dashboard.constants import RENDA_MEDIA_DOMICILIAR_BANDS
+from motor_expansao.dashboard.constants import RENDA_MEDIA_DOMICILIAR_BANDS, TEXTO_SEM_DADO
 
 LAT_C = -23.55
 LNG_C = -46.63
@@ -205,9 +205,9 @@ def test_pdf_big_numbers_com_residual_e_nd():
     assert b"1.200" in pdf_com
     assert b"1.800" in pdf_com
 
-    # Sem residual -> "n/d" auditavel.
+    # Sem residual -> `TEXTO_SEM_DADO` auditavel (era a sigla "n/d" ate 2026-07-31).
     pdf_sem = gerar_pdf_relatorio_pontual_censitario(result, mapas, residual=None)
-    assert b"n/d" in pdf_sem
+    assert TEXTO_SEM_DADO.encode("latin-1") in pdf_sem
 
 
 def test_pdf_big_numbers_ordem_linha_1():
@@ -321,7 +321,7 @@ def test_meta_renda_domiciliar_corta_em_4000():
     assert _cor_por_meta(4_000.0, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB  # inclusiva
     assert _cor_por_meta(4_532.10, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB
     assert _cor_por_meta(6_199.0, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERDE_RGB
-    # Abaixo do corte segue vermelho; "n/d" segue neutro (nunca falsa reprovacao).
+    # Abaixo do corte segue vermelho; sem dado segue neutro (nunca falsa reprovacao).
     assert _cor_por_meta(3_999.0, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_VERMELHO_RGB
     assert _cor_por_meta(None, _META_RENDA_DOMICILIAR_TOTAL_RAIO) == _CARD_NEUTRO_RGB
 
@@ -346,7 +346,7 @@ def test_cor_consumo_concorrentes_regra_assimetrica():
     # (c) SAM baixo (independente do Residual) -> verde.
     assert _cor_consumo_concorrentes(1_500, 500) == _CARD_VERDE_RGB
     assert _cor_consumo_concorrentes(1_500, 5_000) == _CARD_VERDE_RGB
-    # (d) "n/d" em SAM OU Residual (isoladamente) -> neutro.
+    # (d) sem dado em SAM OU Residual (isoladamente) -> neutro.
     assert _cor_consumo_concorrentes(None, 1_200) == _CARD_NEUTRO_RGB
     assert _cor_consumo_concorrentes(3_000, None) == _CARD_NEUTRO_RGB
     assert _cor_consumo_concorrentes(float("nan"), 1_200) == _CARD_NEUTRO_RGB

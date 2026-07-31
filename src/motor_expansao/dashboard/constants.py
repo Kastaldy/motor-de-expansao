@@ -2,6 +2,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+# Texto exibido nos relatorios PDF quando a metrica nao existe para o recorte (nenhum setor
+# censitario intersectado, coluna ausente no parquet, valor NaN). Era a sigla "n/d", trocada
+# por extenso a pedido de Juan (2026-07-31): quem le o PDF nao e do time e nao decodificava a
+# sigla. Latin-1 safe -> passa pelo `_ascii()` dos geradores sem virar "?" (BLK-ACENTO-02).
+# Os cards de valor grande encolhem a fonte ate caber (`_ajustar_fonte_para_largura`), entao a
+# string longa nao estoura a grade 4x2 dos Big Numbers.
+TEXTO_SEM_DADO = "Não disponível"
+
 REQUIRED_COLUMNS = [
     "hex_id",
     "lat",
