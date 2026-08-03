@@ -143,6 +143,10 @@ def test_caminhos_criticos(path: str) -> None:
         "src/motor_expansao/dashboard/censo_map.py",
         "src/motor_expansao/dashboard/censo_report.py",
         "streamlit_app.py",
+        # DEC-022 — piloto web servido em producao: backend E frontend sob governanca.
+        "web/server/app.py",
+        "web/src/screens/MapScreen.tsx",
+        "web/package.json",
         "src/motor_expansao/api/main.py",
         "src/motor_expansao/api/maps_geocoder.py",
         "src/motor_expansao/dimensionamento/viabilidade_ponto.py",  # DEC-009
