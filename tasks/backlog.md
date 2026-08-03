@@ -3392,3 +3392,50 @@ Raios de outros domínios (`RAIO_CATCHMENT_KM`, `RAIO_FEATURES_KM`, `DIST_MIN_NO
 seguem em 1,5 km — são outro escopo.
 
 ---
+
+### BLK-EXEC-COORD-01 — Pins da Visão Executiva: a lista tinha 85 unidades e o mapa, 52
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (a tela executiva mostrava 61% da rede no mapa; o RJ, 2 de 9) |
+| **Esteira** | Builder → QA |
+| **Depende de** | — |
+| **Status** | **Feito** (parte 1); resíduo abaixo em aberto |
+| **Autonomia** | **loop-safe** — camada de leitura do piloto, READ-ONLY sobre o M1 |
+
+**Diagnóstico (medido na produção em 2026-08-03, competência 02/08/2026).** A lista lateral
+e o mapa liam de bases diferentes: a lista, de `growth_api_historico.parquet` (102 unidades,
+atualizado diariamente); os pins, de `unidades_ultra_performance_hex.parquet` — **congelado em
+29/06/2026, 54 unidades**. O join por nome ainda usava `normalizar_unidade`, que só remove o
+sufixo `" - XX"`, enquanto o cadastro grava também `"/ RJ"` e `" RJ"`. Quem não casava sumia do
+mapa (`ExecMap.tsx`: `unidades.filter(u => u.lat != null && u.lng != null)`), e o `centro` do
+mapa — média de quem tem pin — jogava o RJ na Região dos Lagos em vez da capital.
+
+**Correção.** `unidades_ultra_mapeadas.parquet` (150 unidades, todas com `flag_coord_valida`)
+passa a COMPLETAR as coordenadas, com a base curada mantendo precedência; `_chave_unidade`
+aceita as três grafias de sufixo de UF; `_EXEC_ALIAS_COORD` cobre 12 nomes comerciais
+divergentes; `ADMINISTRACAO` entra no `_EXEC_EXCLUIR` (não é unidade física).
+
+**Resultado medido contra os parquets reais:** cobertura do mapa **61% → 93%** (52 → 79 de 85).
+RJ 2 → 8, SP 19 → 26, DF 18 → 23, MG 1 → 5, PR 2 → 4. **Zero** unidades mudaram de posição.
+
+**Resíduo (em aberto).**
+1. Sem cadastro em nenhuma base — precisam de coordenada: `CAXIAS - RJ`, `CAMPO LIMPO - SP`,
+   `CEILANDIA QNM24 - DF`, `CEILANDIA QNM33 - DF`, `SAGRADA FAMILIA - MT`, `BOA VISTA - BA`.
+2. **Auditar `unidades_ultra_mapeadas.parquet`**: 4 chaves com coordenadas divergentes —
+   `PARANOA`, `SOBRADINHO`, `SAO PEDRO DA ALDEIA` e **`TAUBATE`**, esta com um ponto em
+   −23,64/−46,78 (Grande SP, não Taubaté). Hoje a precedência da base curada neutraliza as
+   duas que importam, mas o dado errado segue lá.
+3. O **Mapa Territorial** e os PDFs seguem usando só a base curada (`_carregar_ultra_pontos`),
+   fora do escopo desta correção — provável que percam unidades Ultra pelo mesmo motivo.
+
+**Critérios de aceite:**
+- `totais.com_coordenada` ≥ 93% de `totais.unidades` na rede. ✅
+- Nenhuma unidade já presente no mapa muda de coordenada. ✅ (52 conferidas)
+- Degradação graciosa sem os parquets (cenário do CI). ✅
+
+**Guardrail.** §5 READ-ONLY M1: nenhum artefato, pipeline, score, peso, carteira ou plano
+tocado. `growth_api_client.normalizar_unidade` **não** foi alterada — é compartilhada com o
+catchment e a consolidação do M1; a normalização mais larga vive só no backend do piloto.
+
+---

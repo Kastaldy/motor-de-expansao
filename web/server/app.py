@@ -366,6 +366,11 @@ def _faixa_label(v: Any) -> str | None:
 COMPETITOR_PIN_LIMIT = 6000  # espelha constants.COMPETITOR_PIN_LIMIT
 CONCORRENTES_PARQUET = STAGING_DIR / "concorrentes_mapeados.parquet"
 ULTRA_PERF_PARQUET = STAGING_DIR / "unidades_ultra_performance_hex.parquet"
+# Cadastro AMPLO das unidades Ultra (150 linhas, com `uf`/`cidade`/`flag_coord_valida`).
+# O `ULTRA_PERF_PARQUET` acima so tem as 54 unidades da planilha GeoFusion e esta
+# congelado; este cadastro cobre a rede atual e serve para COMPLETAR as coordenadas
+# da Visao Executiva (ver `_ultra_coord_map`). READ-ONLY, como todo o resto.
+ULTRA_MAPEADAS_PARQUET = STAGING_DIR / "unidades_ultra_mapeadas.parquet"
 # Diretorio das logos PNG das redes (`logo_<rede>.png`). Canonico do motor =
 # <repo>/concorrentes (normalizar_concorrentes.CONCORRENTES_DIR); override por env.
 # As logos sao gitignored -> fallback gracioso (quadrado cor+sigla) quando ausentes.
@@ -1822,7 +1827,61 @@ GROWTH_PARQUET = STAGING_DIR / "growth_api_historico.parquet"
 _FAT_MIN_EXEC = 20000.0
 # Unidades a EXCLUIR da Visão Executiva (pedido de Felipe 2026-07-20): fora da rede
 # comparável. Casadas por nome normalizado (sem acento, sem sufixo " - UF").
-_EXEC_EXCLUIR = {"NATAL", "BATEL", "BACACHERI", "AGUAS CLARAS"}
+# "ADMINISTRACAO" não é unidade física — é a entrada administrativa da base Growth,
+# que nunca terá coordenada e não deve entrar em ranking nem em total.
+_EXEC_EXCLUIR = {"NATAL", "BATEL", "BACACHERI", "AGUAS CLARAS", "ADMINISTRACAO"}
+
+# Siglas de UF que aparecem como SUFIXO do nome da unidade, em três grafias que
+# convivem nas bases: "Bangú / RJ", "BANGU - RJ" e "Icaraí RJ". O separador é
+# OBRIGATÓRIO no padrão — sem ele, "NATAL" viraria "NAT" (o "AL" de Alagoas) e
+# "VISCONDE DE RIO CLARO" viraria "…CLA" (o "RO" de Rondônia).
+_UFS_BR = (
+    "AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO"
+)
+_UF_SUFIXO_RE = re.compile(rf"(?:\s*[/-]\s*|\s+)(?:{_UFS_BR})$")
+
+
+def _chave_unidade(valor: object) -> str:
+    """Chave de join de unidade, tolerante às grafias que convivem nas bases.
+
+    Estende `growth_api_client.normalizar_unidade` (que só remove o sufixo " - XX")
+    para também remover "/ XX" e " XX". Vive AQUI, e não no `growth_api_client`,
+    de propósito: aquela função é compartilhada com o catchment e a consolidação do
+    M1, e alargar o join lá mudaria pipelines que não são objeto desta correção.
+    """
+    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+        return ""
+    texto = unicodedata.normalize("NFKD", str(valor))
+    texto = "".join(c for c in texto if not unicodedata.combining(c)).upper().strip()
+    texto = " ".join(texto.split())
+    anterior = None
+    while anterior != texto:  # "Sao Pedro da Aldeia / RJ" -> "SAO PEDRO DA ALDEIA"
+        anterior = texto
+        texto = _UF_SUFIXO_RE.sub("", texto).strip()
+    return texto
+
+
+# Unidades cujo nome COMERCIAL na base Growth não bate com o nome no cadastro, e que
+# nenhuma normalização resolve. Cada entrada foi conferida contra o cadastro em
+# 2026-08-03: o alvo existe, está livre (nenhuma outra unidade da Growth o reivindica)
+# e a `cidade` do cadastro confere. `(chave Growth, UF) -> chave no cadastro`.
+_EXEC_ALIAS_COORD: dict[tuple[str, str], str] = {
+    ("PATIO BRASIL", "DF"): "PATIO SHOPPING BRASIL",
+    # "Vicente Pires / DF" já é consumida pela unidade "VICENTE PIRES - DF" da Growth;
+    # a da "Rua 8" é a segunda do bairro, cadastrada como "Vicente Pires 2".
+    ("VICENTE PIRES RUA 8", "DF"): "VICENTE PIRES 2",
+    ("CESARIO", "MG"): "CESARIO ALVIM",
+    ("FLORIANO", "MG"): "FLORIANO PEIXOTO",
+    # Única unidade de PE nas duas bases; a av. Domingos Ferreira fica no Pina.
+    ("DOMINGOS FERREIRA", "PE"): "RECIFE - PINA",
+    ("FLOW", "PR"): "CURITIBA FLOW (UBERABA)",
+    ("SAO GONCALO - CENTRO", "RJ"): "SAO GONCALO",
+    ("SAO GONCALO SHOPPING", "RJ"): "SHOPPING PARTAGE",
+    ("PICARRAS", "SC"): "BALNEARIO PICARRAS",
+    ("AMERICANA CENTRO", "SP"): "AMERICANA",
+    ("VILLA BRANCA", "SP"): "JACAREI",  # Villa Branca é bairro de Jacareí
+    ("VISCONDE DE RIO CLARO", "SP"): "RIO CLARO",
+}
 
 
 @functools.lru_cache(maxsize=1)
@@ -1835,17 +1894,89 @@ def _carregar_growth() -> pd.DataFrame:
 
 
 @functools.lru_cache(maxsize=1)
-def _ultra_coord_map() -> dict[str, tuple[float, float]]:
-    """unidade normalizada -> (lat, lng) das unidades Ultra (para os pins)."""
-    from motor_expansao.dimensionamento.growth_api_client import normalizar_unidade
+def _carregar_ultra_mapeadas() -> pd.DataFrame:
+    """Cadastro amplo das unidades Ultra (READ-ONLY). Vazio se o parquet faltar."""
+    cols = ["nome", "uf", "cidade", "lat", "lng"]
+    if not ULTRA_MAPEADAS_PARQUET.exists():
+        return pd.DataFrame(columns=cols)
+    df = pd.read_parquet(
+        ULTRA_MAPEADAS_PARQUET,
+        columns=["unidade", "uf", "cidade", "lat", "lng", "flag_coord_valida"],
+    ).rename(columns={"unidade": "nome"})
+    if "flag_coord_valida" in df.columns:
+        df = df[df["flag_coord_valida"].fillna(True).astype(bool)]
+    df = df.dropna(subset=["lat", "lng"])
+    # Ordem estável: o desempate de chaves repetidas abaixo não pode depender da
+    # ordem de gravação do parquet.
+    return df[cols].sort_values(["uf", "nome"], kind="stable").reset_index(drop=True)
 
-    ultra = _carregar_ultra_pontos()
-    mapa: dict[str, tuple[float, float]] = {}
-    for t in ultra.itertuples(index=False):
-        chave = normalizar_unidade(t.nome)
+
+@functools.lru_cache(maxsize=1)
+def _ultra_coord_map() -> tuple[
+    dict[str, tuple[float, float]],
+    dict[tuple[str, str], tuple[float, float]],
+    dict[str, tuple[float, float]],
+]:
+    """Índices de coordenadas das unidades Ultra, um por fonte e por forma de busca.
+
+    Devolve `(curada, cadastro_por_chave_uf, cadastro_por_chave)`. Ficam SEPARADOS
+    porque a precedência é entre FONTES, não entre formas de busca: um acerto por
+    (chave, UF) no cadastro não pode ganhar de um acerto por chave na curada — foi
+    exatamente assim que `TAUBATE` foi parar na Grande SP na primeira versão desta
+    correção. Quem aplica a ordem é `_coord_da_unidade`.
+
+    Chaves repetidas dentro de uma mesma fonte: vence a PRIMEIRA na ordem estável.
+    """
+    curada: dict[str, tuple[float, float]] = {}
+    cad_por_chave_uf: dict[tuple[str, str], tuple[float, float]] = {}
+    cad_por_chave: dict[str, tuple[float, float]] = {}
+
+    for t in _carregar_ultra_pontos().itertuples(index=False):
+        chave = _chave_unidade(t.nome)
         if chave:
-            mapa[chave] = (float(t.lat), float(t.lng))
-    return mapa
+            curada.setdefault(chave, (float(t.lat), float(t.lng)))
+
+    for t in _carregar_ultra_mapeadas().itertuples(index=False):
+        chave, uf = _chave_unidade(t.nome), str(t.uf).upper().strip()
+        if not chave:
+            continue
+        ponto = (float(t.lat), float(t.lng))
+        if uf:
+            cad_por_chave_uf.setdefault((chave, uf), ponto)
+        cad_por_chave.setdefault(chave, ponto)
+
+    return curada, cad_por_chave_uf, cad_por_chave
+
+
+def _coord_da_unidade(nome: str, uf: str) -> tuple[float, float] | None:
+    """(lat, lng) de uma unidade da base Growth, ou None se não houver cadastro.
+
+    Ordem de busca, da fonte mais confiável para a mais ampla:
+
+      1. `unidades_ultra_performance_hex.parquet` — base curada (54 unidades), a que o
+         piloto já usava. Vem primeiro para que nenhuma unidade hoje no mapa mude de
+         lugar: onde o cadastro amplo diverge dela (`TAUBATE` está cadastrado com um
+         ponto na Grande SP, `SOBRADINHO` com um ponto fora de Sobradinho), a curada
+         é a correta e prevalece.
+      2. `unidades_ultra_mapeadas.parquet` por (chave, UF) — completa a rede atual.
+      3. o mesmo cadastro só por chave — rede de segurança para UF divergente entre as
+         bases (ex.: "Novo Gama / GO" atendendo a unidade que a Growth marca como DF).
+
+    Nomes comerciais que nenhuma normalização reconcilia passam antes por
+    `_EXEC_ALIAS_COORD`, que redireciona a busca para a chave do cadastro.
+    """
+    curada, cad_por_chave_uf, cad_por_chave = _ultra_coord_map()
+    uf = str(uf).upper().strip()
+    chave = _chave_unidade(nome)
+    if not chave:
+        return None
+    # O alias existe justamente porque a chave crua não casa: ele SUBSTITUI a chave.
+    chave = _EXEC_ALIAS_COORD.get((chave, uf), chave)
+    return (
+        curada.get(chave)
+        or cad_por_chave_uf.get((chave, uf))
+        or cad_por_chave.get(chave)
+    )
 
 
 def _wavg(valores: pd.Series, pesos: pd.Series) -> float | None:
@@ -1906,9 +2037,7 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
     dom = int(ref.day)
     py, pm = _prev_month(ry, rm)
 
-    from motor_expansao.dimensionamento.growth_api_client import normalizar_unidade
-
-    coords = _ultra_coord_map()
+    uf_sel = uf.upper()
 
     def mtd(g: pd.DataFrame, ano: int, mes: int) -> pd.Series | None:
         """Última linha do mês (ano,mes) com dia <= dom (valor MTD nesse dia)."""
@@ -1960,7 +2089,7 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     for nome_u, g in sel.groupby("unidade", observed=True):
         nome = _clean(nome_u)
-        if normalizar_unidade(nome) in _EXEC_EXCLUIR:
+        if _chave_unidade(nome) in _EXEC_EXCLUIR:
             continue  # unidade excluída da rede comparável (pedido de Felipe)
         g = g.sort_values("_data")
         cur = mtd(g, ry, rm)
@@ -1980,7 +2109,7 @@ def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
         if fat_gate is None or fat_gate < _FAT_MIN_EXEC or (churn_cur is not None and churn_cur > 100.0):
             continue
         m1 = mtd(g, py, pm)
-        c = coords.get(normalizar_unidade(nome))
+        c = _coord_da_unidade(nome, uf_sel)
         rows.append(
             {
                 "nome": nome,
