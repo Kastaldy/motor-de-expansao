@@ -77,3 +77,49 @@ export function scoreBandToColor(
 export function bandSolid(i: number): string {
   return SCORE_BANDS_HEX[i]
 }
+
+/* ---------------------------------------------------------------------------
+   Faixa de oportunidade do M1 (BLK-MAPA-FAIXAS-01)
+
+   Porte de `constants.FAIXA_COLORS_POR_LABEL`. A camada 4 do funil ("Para onde
+   crescer") passa a ser colorida POR ESTA FAIXA, nao pelo score.
+
+   POR QUE: `faixa_oportunidade` NAO e' um corte de `score_priorizacao` — o M1 a
+   define cortando `score_percentil_nacional` em [35, 50, 65, 80]
+   (`m1/hex_enrichment._definir_faixa_oportunidade`). Como o mapa pintava por
+   `score_priorizacao`, rotular aquela rampa com os nomes do M1 afirmaria uma
+   correspondencia que nao existe: score 70 nao e' necessariamente "Alta".
+   O backend ja manda a faixa pronta em `Hex.faixa`, entao colorir por ela deixa a
+   legenda EXATA sem recalcular nada (READ-ONLY sobre o M1).
+   --------------------------------------------------------------------------- */
+
+/** Ordem de exibicao na legenda: da maior para a menor prioridade. */
+export const FAIXA_M1_ORDEM = [
+  'Prioridade máxima',
+  'Alta',
+  'Média',
+  'Baixa',
+  'Descartado',
+  'Inviável',
+] as const
+
+export type FaixaM1 = (typeof FAIXA_M1_ORDEM)[number]
+
+/** `constants.FAIXA_COLORS_POR_LABEL` — chaveado pelo rotulo acentuado que a API envia. */
+export const FAIXA_M1_HEX: Record<string, string> = {
+  'Prioridade máxima': '#14C850',
+  Alta: '#F59E0B',
+  Média: '#DC3232',
+  Baixa: '#B41E1E',
+  Descartado: '#78788C',
+  Inviável: '#2E3040',
+}
+
+/** Cor de preenchimento do hex pela faixa M1; faixa desconhecida/ausente -> NA_FILL. */
+export function faixaM1ToColor(faixa: string | null | undefined, alpha = HEX_FILL_ALPHA): RGBA {
+  if (!faixa) return [...NA_FILL]
+  const hex = FAIXA_M1_HEX[faixa]
+  if (!hex) return [...NA_FILL]
+  const [r, g, b] = hexToRgb(hex)
+  return [r, g, b, alpha]
+}
