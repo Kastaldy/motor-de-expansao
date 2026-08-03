@@ -38,7 +38,7 @@ export interface RankItem {
   sub: string | null
   valor: number | null
   label: string
-  /** Rótulo curto que muda entre linhas (Quente / White space / Agora…). */
+  /** Rótulo curto que muda entre linhas (Quente / Livre / Agora…). */
   tag: string
   tom: Tom
 }

@@ -584,7 +584,7 @@ def _etiqueta(
     if metrica == "conc. 2 km":
         n = int(row.get("n_concorrentes_est") or 0)
         if n == 0:
-            return "White space", "green"
+            return "Livre", "green"
         if n <= 2:
             return "Adensar", "blue"
         return "Disputa", "red"
@@ -741,11 +741,11 @@ def montar_funil(
             "titulo": "Pressão concorrencial",
             "narrativa": (
                 f"Dessas {_fmt(len(residual))}, quais estão desguarnecidas? "
-                f"{_fmt(len(white))} são white space puro; as demais exigem entrar "
-                "protegendo o corredor Ultra contra a concorrência."
+                f"{_fmt(len(white))} não têm nenhum concorrente no hexágono; as demais "
+                "exigem entrar protegendo o corredor Ultra contra a concorrência."
             ),
             "funil_big": len(white),
-            "funil_unit": "white spaces livres",
+            "funil_unit": "áreas sem concorrência",
             "funil_from": f"{_fmt(len(residual))} regiões",
             "metrica": "conc. 2 km",
             "itens": _rank_items(residual, "oferta_efetiva_disponivel", "residual", "amber", bairros=bairros),
@@ -761,7 +761,7 @@ def montar_funil(
             ),
             "funil_big": len(fila),
             "funil_unit": "aberturas na fila",
-            "funil_from": f"{_fmt(len(white))} white spaces",
+            "funil_from": f"{_fmt(len(white))} áreas sem concorrência",
             "metrica": "residual",
             "itens": _rank_items(
                 fila.assign(_fila=True),
@@ -909,11 +909,11 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             "mode": "competitivo",
             "titulo": "Pressão concorrencial",
             "narrativa": (
-                f"Dessas regiões, {_fmt(len(white))} são white space puro — sem concorrente "
-                "no hexágono; as demais exigem entrar protegendo o corredor Ultra."
+                f"Dessas regiões, {_fmt(len(white))} não têm nenhum concorrente no "
+                "hexágono; as demais exigem entrar protegendo o corredor Ultra."
             ),
             "funil_big": len(white),
-            "funil_unit": "white spaces livres",
+            "funil_unit": "áreas sem concorrência",
             "funil_from": f"{_fmt(len(residual))} regiões",
             "metrica": "conc. 2 km",
             "itens": _rank_municipios(base_fila, "oferta_efetiva_disponivel", "sum", "residual", "amber"),
@@ -929,7 +929,7 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             ),
             "funil_big": n_reco,
             "funil_unit": "municípios na fila",
-            "funil_from": f"{_fmt(len(white))} white spaces",
+            "funil_from": f"{_fmt(len(white))} áreas sem concorrência",
             "metrica": "residual",
             "itens": _rank_municipios(
                 base_fila, "oferta_efetiva_disponivel", "sum", "residual", "blue", fila=True
