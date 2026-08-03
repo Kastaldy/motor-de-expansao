@@ -12,6 +12,7 @@ import {
 import { NotasMetodologicas } from '../components/ViabilityNotes'
 import { Aviso, Botao, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
+import { TEXTO_SEM_DADO } from '../lib/constants'
 import { coordenadaDoEstudo } from '../lib/coord'
 import { alunos, brl, brlCurto, coord, num, pctFrac, rotuloMes } from '../lib/format'
 import { infoImovelParaPdf } from '../lib/report'
@@ -476,7 +477,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                 className="num"
                 style={{ font: '700 14px/1 var(--f-num)', color: 'var(--tx-max)' }}
               >
-                {premissas ? brl(premissas.ticket_blended, false, 2) : 'n/d'}
+                {premissas ? brl(premissas.ticket_blended, false, 2) : TEXTO_SEM_DADO}
               </span>
             </div>
             <div
@@ -795,7 +796,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                 className="num"
                 style={{ font: '700 13px/1 var(--f-num)', color: 'var(--tx-max)' }}
               >
-                {retorno?.socio ? `${pctFrac(retorno.socio.taxa_minima_aa)} a.a.` : 'n/d'}
+                {retorno?.socio ? `${pctFrac(retorno.socio.taxa_minima_aa)} a.a.` : TEXTO_SEM_DADO}
               </span>
             </div>
             <div
@@ -1269,7 +1270,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               valor={
                 res?.faixa_alunos.p50 !== null && res?.faixa_alunos.p50 !== undefined
                   ? alunos(res.faixa_alunos.p50)
-                  : 'n/d'
+                  : TEXTO_SEM_DADO
               }
               sub={
                 res?.faixa_alunos.p10 != null && res?.faixa_alunos.p90 != null

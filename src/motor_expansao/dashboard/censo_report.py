@@ -1564,7 +1564,7 @@ def _big_numbers_page(
             "Fontes: pop/renda/domicílios/score = censo (interseção de setores IBGE 2022 com círculo de "
             f"{_RAIO_LABEL}, método {metodo}); SAM Fitness, Residual Fitness (em alunos) e consumo = lookup "
             "READ-ONLY do hex H3 (sem recálculo do M1). Fundo do card: verde = meta atingida, vermelho = "
-            "meta não atingida, cinza = 'n/d' (dado ausente para o ponto)."
+            f"meta não atingida, cinza = '{TEXTO_SEM_DADO}' (dado ausente para o ponto)."
         ),
     )
     _draw_footer(pdf, with_attribution=True)
@@ -1980,7 +1980,11 @@ def _classico_cover_page(
 
     lat = result.get("lat")
     lng = result.get("lng")
-    coord = f"{float(lat):.5f}, {float(lng):.5f}" if lat is not None and lng is not None else "coordenada n/d"
+    coord = (
+        f"{float(lat):.5f}, {float(lng):.5f}"
+        if lat is not None and lng is not None
+        else f"coordenada {TEXTO_SEM_DADO.lower()}"
+    )
     nome = str(rotulo or "").strip()
     endereco = nome if (nome and not _parece_coordenada(nome)) else f"Coordenada: {coord}"
     if len(endereco) > 72:

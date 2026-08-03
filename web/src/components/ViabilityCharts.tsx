@@ -6,6 +6,7 @@ import type {
   SerieMensalLinha,
 } from '../lib/types'
 import { Glass } from './primitives'
+import { TEXTO_SEM_DADO } from '../lib/constants'
 
 /* ---------------------------------------------------------------------------
    Graficos da Viabilidade. Formas herdadas do template de referencia.
@@ -495,7 +496,7 @@ export function CascataDre({
                           : 'var(--tx-soft)',
               }}
             >
-              {b.valor === null ? 'n/d' : brl(b.valor, true)}
+              {b.valor === null ? TEXTO_SEM_DADO : brl(b.valor, true)}
             </div>
             {b.pct != null && (
               <div
@@ -580,7 +581,7 @@ function LinhaReceita({
           color: destaque ? 'var(--ac-text)' : forte ? 'var(--tx-max)' : 'var(--tx-soft)',
         }}
       >
-        {valor === null ? 'n/d' : brl(valor, false, 2)}
+        {valor === null ? TEXTO_SEM_DADO : brl(valor, false, 2)}
       </div>
     </div>
   )
@@ -615,7 +616,7 @@ export function RampaAlunos({
           minWidth: 0,
         }}
       >
-        <Cabecalho titulo="Rampa de alunos" sub="série do motor" valor="n/d" cor="var(--tx-muted)" />
+        <Cabecalho titulo="Rampa de alunos" sub="série do motor" valor={TEXTO_SEM_DADO} cor="var(--tx-muted)" />
         <p style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginTop: 10 }}>
           Sem série mensal para este cenário.
         </p>
@@ -736,7 +737,7 @@ export function FluxoCaixa({
         <Cabecalho
           titulo="Fluxo de caixa acumulado"
           sub="M-4 a M+60"
-          valor="n/d"
+          valor={TEXTO_SEM_DADO}
           cor="var(--tx-muted)"
         />
         <p style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginTop: 10 }}>
@@ -943,7 +944,7 @@ export function FluxoCaixaOperacional({
         <Cabecalho
           titulo="Caixa operacional mês a mês"
           sub="por mês"
-          valor="n/d"
+          valor={TEXTO_SEM_DADO}
           cor="var(--tx-muted)"
         />
         <p style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginTop: 10 }}>

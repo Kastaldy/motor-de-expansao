@@ -1038,3 +1038,31 @@ def test_wrapper_censitario_e_identico_ao_classico_e_avisa_depreciacao():
         result, mapas, **kwargs, fotos=None, info_imovel=None, viabilidade=None
     )
     assert pdf_extra == pdf_classico
+
+
+def test_pdf_nao_contem_a_sigla_nd_em_lugar_nenhum(tmp_path):
+    """A sigla "n/d" NAO pode sobrar em NENHUM byte de texto do PDF (pedido de Juan).
+
+    Existe porque a troca por `TEXTO_SEM_DADO` foi feita em duas rodadas e as duas passaram
+    por cima de textos de INTERFACE que usavam a sigla dentro de uma string maior, com aspas
+    diferentes das que a varredura procurava: a legenda dos Big Numbers ("cinza = 'n/d'
+    (dado ausente para o ponto)") e o fallback da capa ("coordenada n/d"). Os dois saiam
+    impressos, entao o relatorio mostrava "Não disponível" nos cards e "n/d" logo abaixo.
+
+    Testar os FORMATADORES um a um nao pega isso -- nenhum dos dois passa por
+    `_format_number`. So a varredura dos bytes do artefato final pega, e e por isso que este
+    teste olha o PDF inteiro em vez de funcoes escolhidas a dedo.
+
+    Gera SEM imagens (`mapas=None` + `ultra_dir` vazio) pelo mesmo motivo do teste de
+    acentuacao: o binario PNG dos mapas/branding traria bytes arbitrarios e daria falso
+    positivo. `result` minimo de proposito -> as metricas caem no caminho "sem dado", que e
+    exatamente o cenario onde a sigla aparecia.
+    """
+    result = {"lat": -23.55, "lng": -46.63, "nome_municipio": "SAO PAULO", "uf": "SP", "raio_km": 1.5}
+    pdf = gerar_pdf_relatorio_pontual_classico(result, None, ultra_dir=tmp_path)
+
+    assert b"n/d" not in pdf, (
+        "a sigla 'n/d' voltou ao PDF -- todo texto de dado ausente tem de usar TEXTO_SEM_DADO"
+    )
+    # Sanity: o cenario de fato exercita o caminho "sem dado" (senao o teste seria vacuo).
+    assert TEXTO_SEM_DADO.encode("latin-1") in pdf
