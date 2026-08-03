@@ -194,7 +194,7 @@ Logos: servir o atlas de ícones (`build_icon_atlas`) como sprite pro `IconLayer
 | --- | --- |
 | `GET /ponto/entorno?lat=&lng=&raio_km=1.6` | `analisar_entorno_ponto` (H3) |
 | `POST /cenario/multihex` (lista de hex_id) | `agregar_cenario_multihex` |
-| `GET /ponto/censitario?lat=&lng=` (raio 1.5 km) | `analisar_ponto_censitario_setores` + `load_censo_geo_setores` |
+| `GET /ponto/censitario?lat=&lng=` (raio 1.0 km) | `analisar_ponto_censitario_setores` + `load_censo_geo_setores` |
 
 ### 6.4 Camadas operacionais
 | Endpoint | Reaproveita | Fonte |

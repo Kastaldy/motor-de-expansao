@@ -36,7 +36,7 @@ paths:
       description: >
         Recebe uma coordenada {lat,lng} OU um link do Google Maps (maps_url) e retorna o estudo
         do ponto. Por padrao devolve JSON com KPIs; com formato=pdf (ou Accept: application/pdf)
-        devolve o PDF de 8 paginas. Raio fixo 1.0 km (DEC-021). Importa, nao edita, a camada censo_*.
+        devolve o PDF de 7 paginas. Raio fixo 1.0 km (DEC-021). Importa, nao edita, a camada censo_*.
       operationId: postAnalisar
       parameters:
         - in: query
@@ -55,7 +55,7 @@ paths:
               $ref: "#/components/schemas/AnalisarRequest"
       responses:
         "200":
-          description: Estudo do ponto (JSON com KPIs ou PDF de 8 paginas).
+          description: Estudo do ponto (JSON com KPIs ou PDF de 7 paginas).
           content:
             application/json:
               schema:
@@ -231,7 +231,7 @@ components:
           example: ponderada_domicilios_estimados
         densidade_pop_raio_hab_km2:
           type: [number, "null"]
-          example: 2607.0
+          example: 5870.0
         score_setor_medio:
           type: [number, "null"]
           example: 64.2

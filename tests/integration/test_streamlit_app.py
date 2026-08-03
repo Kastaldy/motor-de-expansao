@@ -4955,7 +4955,7 @@ def test_render_relatorio_pontual_censitario_com_coordenada_gera_mapa_e_download
         "n_setores": 1,
         "pop_total_raio": 1234.0,
         "renda_per_capita_media_raio": 2100.0,
-        "densidade_pop_raio_hab_km2": 175.0,
+        "densidade_pop_raio_hab_km2": 393.0,
         "score_setor_medio": 77.0,
         "score_setor_max": 88.0,
         "n_concorrentes": 2,

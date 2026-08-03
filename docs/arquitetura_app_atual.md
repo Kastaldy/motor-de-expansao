@@ -14,7 +14,7 @@ ao vivo na carga/interatividade — CLAUDE.md §2) e renderiza mapas hexagonais 
 **pydeck** (deck.gl/WebGL no browser), tabelas, KPIs e gráficos. A superfície de UI tem
 **5 abas** (`Mapa`, `Executivo`, `Expansão de Domínio`, `Carteira e Plano`, `Viabilidade`)
 mais uma barra de busca por coordenada/endereço/link e geração de dois relatórios PDF
-(Pontual Censitário 1,5 km e Municipal).
+(Pontual Censitário 1,0 km e Municipal).
 
 O código do dashboard vive em **~14 módulos** sob `src/motor_expansao/dashboard/`
 (`data.py`, `components.py`, `pages.py`, `constants.py`, `censo_point.py`, `censo_map.py`,
