@@ -228,6 +228,31 @@ com o deploy; se os pipelines da cadeia mudarem, re-sincronizar o checkout manua
 > **Pendentes (futuro):** cron **mensal** dos agregadores WellHub/TotalPass (~20h, invocação separada);
 > integração deles ao residual com remodelagem (Huff por tipo de rede + dedup) usando as bases `NAO_ABRA/`.
 
+### Ingestão DIÁRIA da Growth API (Visão Executiva do piloto web)
+
+A **Visão Executiva** do piloto web (`/api/executiva/{uf}`) lê `data/staging/growth_api_historico.parquet`
+(rede Ultra real por UF — faturamento/ativos/pagantes/churn/NPS + split pagantes×agregadores). Os dados da
+Growth **atualizam todo dia**, então a ingestão é **diária** (não semanal como o GymScraping).
+
+- **Script canônico (repo):** `scripts/ingerir_growth_api.py` (ganhou `--out`/env `GROWTH_OUT_PARQUET` para
+  escrever fora do staging read-only). **Wrapper de cron:** `scripts/cron/run_growth_daily.sh`.
+- **Cron sugerido (root, servidor em UTC):** `30 6 * * *` (06:30 UTC = 03:30 BRT; fora da janela dom 06:00 do
+  GymScraping). Logs em `/var/log/growth/daily_<TS>.log` (+ symlink `daily_latest.log`).
+- **Fluxo do wrapper (one-shot, sem tocar na API viva):** (1) `docker run --rm` de um container **efêmero** com a
+  **imagem da API** (que já tem o motor + `scripts/ingerir_growth_api.py`), `--env-file` com as credenciais e o
+  **staging do host montado READ-WRITE** — ele lê o perf parquet e escreve `growth_api_historico.parquet` direto no
+  staging (os containers de longa duração montam o staging `:ro`, por isso o one-shot); (2) `docker restart
+  motor_expansao_web` (limpa o `lru_cache` de `_carregar_growth` e passa a servir o dado novo). Nenhum segredo mora
+  no container da API/bot; a API não reinicia.
+- **Detalhes do one-shot:** roda como **`--user 0:0` (root)** — a imagem roda como `appuser(1000)`, mas o staging e
+  o cache do host são `root:root`, então sem root o `to_parquet` falha com `PermissionError`. Monta um **cache
+  persistente** do host (`data/cache/growth_api`, = `config.CACHE_DIR`) para o **backfill de 52 meses não se repetir**:
+  o run diário só re-busca o mês corrente (cache hit no resto) → rápido apesar do rate limit da Growth (10 req/5 min).
+- **⚠️ PRÉ-REQUISITO (uma vez):** o arquivo de credenciais em `/opt/motor-expansao-infra/growth.env` (root-only,
+  `chmod 600`) com `GROWTH_API_USUARIO=...` e `GROWTH_API_SENHA=...`. Sem ele a ingestão aborta com "Credenciais
+  ausentes" e a Visão Executiva fica **404**. A chave **nunca** entra no repo/script.
+- **READ-ONLY sobre o M1** (camada Growth paralela, sem PII — `assert_sem_pii` antes de persistir; DEC-013).
+
 ### Transferir data/ultra (base Ultra)
 
 ```powershell

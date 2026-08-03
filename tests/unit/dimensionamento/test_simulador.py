@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import math
 
+import pytest
+
 from motor_expansao.dimensionamento.config import (
     SIM_ALUGUEL_MES,
     SIM_PERSONAL_MES_RECEITA,
@@ -225,7 +227,12 @@ def test_flag_viavel_com_payback_menor_igual_36() -> None:
     """
     r = viabilidade(**{**VIAVEL, "capex": 150_000})
     assert r.payback_meses <= 36
-    assert r.flag_viavel is True
+    # A REGUA DE MARGEM SUBIU PARA 30% (decisao de Felipe, 2026-07-25; era 10%). Este
+    # cenario legado fecha o payback em 22 meses mas so 18,27% de margem, entao o
+    # criterio COMBINADO agora reprova. Passar no payback deixou de bastar — e o
+    # proposito da regua nova. O que este teste trava e justamente isso.
+    assert r.margem_ebitda_pct == pytest.approx(0.1827, abs=0.001)
+    assert r.flag_viavel is False
 
 
 def test_flag_nao_viavel_com_payback_entre_37_e_60() -> None:
@@ -360,17 +367,25 @@ def test_financiamento_zero_resultado_identico() -> None:
     assert r_sem.flag_viavel == r_com.flag_viavel
 
 
-def test_financiamento_aumenta_payback() -> None:
-    """CA-10b: capex_financiado_pct=1.0 => payback estritamente maior que sem financiamento."""
-    r_sem = viabilidade(**VIAVEL)
-    r_com = viabilidade(
+def test_financiamento_alivia_desembolso_inicial() -> None:
+    """CA-10b: financiar ABATE o desembolso inicial. O principal financiado entra no
+    caixa na abertura (o banco paga o ativo), entao o FCF acumulado dos primeiros meses
+    fica MENOS negativo que a vista. Fix do duplo-pagamento: antes o capex saia CHEIO
+    e ainda as parcelas em cima, e financiar so afundava o caixa/payback.
+
+    (A direcao do payback e cenario-dependente: financiar alivia o inicio mas custa
+    juros, entao pode adiantar OU atrasar o payback conforme a PMT vs o caixa operacional.)
+    """
+    sem = gerar_serie_mensal(**VIAVEL)
+    com = gerar_serie_mensal(
         **VIAVEL,
         capex_financiado_pct=1.0,
         prazo_financiamento_meses=36,
         juros_financiamento_am=0.018,
     )
-    assert r_com.payback_meses > r_sem.payback_meses, (
-        f"payback com financiamento ({r_com.payback_meses}) deveria ser > sem ({r_sem.payback_meses})"
+    assert com[0]["fcf_acumulado"] > sem[0]["fcf_acumulado"], (
+        f"mes 1 com financiamento ({com[0]['fcf_acumulado']:.0f}) deveria ser menos "
+        f"negativo que a vista ({sem[0]['fcf_acumulado']:.0f})"
     )
 
 
@@ -401,8 +416,8 @@ def test_pmt_formula_correta() -> None:
         ~ 600000 * 0.03827...
         ~ 22965... (aprox R$22.960-23.000)
 
-    Valida via FCF: com financiamento 100%, os primeiros 36 meses do FCF acumulado
-    devem ser menores que sem financiamento (PMT subtraida).
+    Valida a PMT de referencia e, via serie, que financiar ALIVIA o desembolso inicial:
+    com 100% financiado o FCF acumulado do mes 1 fica menos negativo que a vista.
     """
     C = 600_000.0
     r = 0.018
@@ -412,21 +427,16 @@ def test_pmt_formula_correta() -> None:
         f"PMT de referencia fora do intervalo esperado: {pmt_esperada:.0f}"
     )
 
-    # Confirmar que o simulador subtrai a PMT: no mes 1, FCF com financiamento < sem
-    # (inferido via payback — financiamento sempre piora ou iguala o payback)
-    r_sem = viabilidade(
-        **VIAVEL,
-        capex_financiado_pct=0.0,
-        prazo_financiamento_meses=36,
-        juros_financiamento_am=0.018,
-    )
-    r_com = viabilidade(
+    # Financiar abate o desembolso inicial (o principal entra no caixa) -> FCF do mes 1
+    # menos negativo, mesmo com a PMT drenando o mensal (fix do duplo-pagamento).
+    sem = gerar_serie_mensal(**VIAVEL)
+    com = gerar_serie_mensal(
         **VIAVEL,
         capex_financiado_pct=1.0,
         prazo_financiamento_meses=36,
         juros_financiamento_am=0.018,
     )
-    assert r_com.payback_meses >= r_sem.payback_meses
+    assert com[0]["fcf_acumulado"] > sem[0]["fcf_acumulado"]
 
 
 # ---------------------------------------------------------------------------
@@ -504,12 +514,18 @@ def test_serie_mensal_alunos_cresce_ate_maturidade() -> None:
     )
 
 
-def test_serie_mensal_com_financiamento_payback_pior_ou_igual() -> None:
-    """CA-11h: com financiamento, o payback e pior ou igual ao sem financiamento (PMT drena FCF)."""
+def test_serie_mensal_com_financiamento_alivia_inicio_custa_juros() -> None:
+    """CA-11h: financiar ALIVIA o inicio (o principal entra no caixa) e CUSTA os juros
+    no fim. FCF acumulado do mes 1 com financiamento > sem; ao final (pos-quitacao) o
+    com fica < sem pela soma dos juros. Fix do duplo-pagamento do capex.
+    """
     serie_sem = gerar_serie_mensal(**VIAVEL)
-    serie_com = gerar_serie_mensal(**VIAVEL, capex_financiado_pct=1.0, prazo_financiamento_meses=36)
-    payback_sem = next((row["mes"] for row in serie_sem if row["fcf_acumulado"] >= 0), float("inf"))
-    payback_com = next((row["mes"] for row in serie_com if row["fcf_acumulado"] >= 0), float("inf"))
-    assert payback_com >= payback_sem, (
-        f"Payback com financiamento ({payback_com}) deveria ser >= sem ({payback_sem})"
+    serie_com = gerar_serie_mensal(
+        **VIAVEL, capex_financiado_pct=1.0, prazo_financiamento_meses=36, juros_financiamento_am=0.018
+    )
+    assert serie_com[0]["fcf_acumulado"] > serie_sem[0]["fcf_acumulado"], (
+        "financiamento deveria aliviar o desembolso inicial (FCF mes 1 menos negativo)"
+    )
+    assert serie_com[-1]["fcf_acumulado"] < serie_sem[-1]["fcf_acumulado"], (
+        "ao final, financiar custa os juros (FCF acumulado do mes 60 menor que a vista)"
     )

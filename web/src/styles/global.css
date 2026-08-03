@@ -1,0 +1,149 @@
+@import '@fontsource-variable/instrument-sans';
+@import '@fontsource/instrument-serif/400.css';
+@import '@fontsource/instrument-serif/400-italic.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+@import '@fontsource/ibm-plex-mono/700.css';
+@import './tokens.css';
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--tx-strong);
+  font-family: var(--f-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+input,
+textarea {
+  background: var(--surf-input);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 11px 13px;
+  color: var(--tx-strong);
+  font: 500 13px/1.2 var(--f-ui);
+  outline: none;
+  width: 100%;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--ac);
+  outline-offset: 2px;
+}
+
+::placeholder {
+  color: var(--tx-sub);
+}
+
+/* Selects nativos no tema escuro — o popup de opcoes seguia branco sem isto. */
+select {
+  color-scheme: dark;
+}
+
+select option {
+  background: #101a26;
+  color: var(--tx-strong);
+}
+
+/* Numeros SEMPRE em mono com figuras tabulares — leitura de coluna estavel. */
+.num {
+  font-family: var(--f-num);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Voz narrativa: o serif carrega o storytelling, o sans carrega a interface. */
+.story {
+  font-family: var(--f-story);
+  font-weight: 400;
+  letter-spacing: 0.005em;
+}
+
+/* Scrollbar discreta — some do caminho, mas continua alcançavel. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Atribuição do basemap (MapLibre) — crédito obrigatório OSM/CARTO. Sem tema, o
+   controle sai branco default e vira a "barra branca" sob o stepper do mapa. Aqui
+   tematizamos (escuro do tema) e reposicionamos, mantendo o crédito visível. Vale
+   para o Mapa Territorial (HexMap) e a Visão Executiva (ExecMap) de uma vez. */
+.maplibregl-ctrl-attrib {
+  background: rgba(16, 24, 34, 0.72) !important;
+  border-radius: 8px;
+  color: var(--tx-muted);
+}
+.maplibregl-ctrl-attrib a {
+  color: var(--tx-muted);
+}
+.maplibregl-ctrl-attrib-button {
+  filter: invert(1);
+  opacity: 0.7;
+}
+.maplibregl-ctrl-bottom-right {
+  bottom: 6px;
+  right: 6px;
+}

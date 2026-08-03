@@ -747,6 +747,8 @@ def _atribuicao_tiles() -> str:
 def _fetch_basemap(
     bounds_3857: tuple[float, float, float, float],
     width: int,
+    *,
+    zoom_bump: int | None = None,
 ) -> tuple[object, tuple[float, float, float, float]] | None:
     """Busca tiles de basemap claro (CartoDB Voyager No-Labels) via contextily.
 
@@ -755,9 +757,13 @@ def _fetch_basemap(
     Aplica realce de contraste `_BASEMAP_CONTRAST` p/ as ruas aparecerem sob o choropleth.
     Cache local em data/cache/basemap_tiles/. Retorna (img_array, extent_3857) ou None.
 
-    BLK-RELPON-14: o override `zoom_bump` (BLK-RELPON-11) saiu junto com a camada de quadra,
-    unico chamador que passava valor diferente do global. O bump volta a ser SEMPRE o
-    `_BASEMAP_ZOOM_BUMP` do modulo, que serve os frames de 1,5 km e 5 km.
+    BLK-RELPON-11 / BLK-RELPON-14: `zoom_bump` sobrescreve o `_BASEMAP_ZOOM_BUMP` GLOBAL apenas
+    nesta chamada (`None` = usa a constante, que continua `1`). Na `main` o parametro SAIU junto
+    com a camada de quadra do BLK-RELPON-11, seu unico chamador la. NESTA branch ele FICA porque
+    tem outros DOIS chamadores vivos, ambos por custo/timeout de tiles no piloto: a orquestradora
+    passa `zoom_bump=0` no frame de 1,5 km e `_render_camada_residual_hex` passa `-1` no de 5 km
+    (ver os comentarios nas duas chamadas). Remove-lo aqui reintroduziria o estouro de timeout do
+    Relatorio Pontual corrigido em `d6b9b65`.
     """
     try:
         import contextily as ctx  # lazy: so existe com o extra [basemap]
@@ -770,7 +776,10 @@ def _fetch_basemap(
         except Exception:
             pass
         minx, miny, maxx, maxy = bounds_3857
-        zoom = min(19, _zoom_for_bounds(minx, maxx, width) + _BASEMAP_ZOOM_BUMP)
+        bump = _BASEMAP_ZOOM_BUMP if zoom_bump is None else int(zoom_bump)
+        # `max(0, ...)` e' guarda barata contra bump negativo em bbox continental (o piloto
+        # passa `zoom_bump` -1/0 nos frames de 5 km e 1,5 km; ver as chamadas).
+        zoom = max(0, min(19, _zoom_for_bounds(minx, maxx, width) + bump))
         source = _basemap_source(ctx)
         img, extent = ctx.bounds2img(minx, miny, maxx, maxy, zoom=zoom, source=source, ll=False)
         if _BASEMAP_CONTRAST != 1.0:
@@ -782,6 +791,28 @@ def _fetch_basemap(
         return img, extent
     except Exception:
         return None
+
+
+def _crop_png_box(
+    png_bytes: bytes, left: int, top: int, right: int, bottom: int
+) -> bytes:
+    """Recorta um PNG a (left, top, right, bottom). Usado na camada Concorrentes p/ remover a
+    faixa de titulo (agora vazia) e a coluna de legenda (removida), deixando o mapa limpo e
+    centralizavel no slide. Preserva a barra de escala e a atribuicao CARTO (dentro do box).
+    Degrada gracioso (devolve o PNG original) em qualquer falha."""
+    try:
+        img = Image.open(BytesIO(png_bytes))
+        box = (
+            max(0, left),
+            max(0, top),
+            min(img.width, right),
+            min(img.height, bottom),
+        )
+        out = BytesIO()
+        img.crop(box).save(out, format="PNG", optimize=True)
+        return out.getvalue()
+    except Exception:
+        return png_bytes
 
 
 def _labels_grid(
@@ -958,6 +989,7 @@ def _render_camada(
     valor_ponto: str | None = None,
     destaque_3857: BaseGeometry | None = None,
     mostrar_legenda_pins: bool = True,
+    mostrar_legenda: bool = True,
     labels: tuple[Image.Image, tuple[float, float, float, float]] | None = None,
 ) -> bytes:
     """Desenha UMA camada (mesmos bbox/projecao/basemap/pins; varia fill + legenda).
@@ -974,6 +1006,14 @@ def _render_camada(
       1,5 km continuam passando circulo + raio e saem byte-a-byte identicas.
     - `destaque_3857` desenha uma BORDA FINA (`_HEX_CENTRAL_*`) por cima do choropleth, sem
       mexer no preenchimento: e' o que identifica o ponto nos paineis que perderam o circulo.
+
+    `mostrar_legenda` (piloto web, pedido Felipe 2026-07-23) suprime a coluna de legenda
+    INTEIRA — nao so a linha de pins do `mostrar_legenda_pins`. Usado SO pela camada
+    Concorrentes, que e' so-pins-com-logo e cujo PNG e' depois recortado por `_crop_png_box`.
+    Default `True` -> render byte-a-byte identico para as demais camadas.
+
+    `labels` (BLK-RELPON-07) e o mosaico so-de-rotulos de `_fetch_labels`, composto POR CIMA
+    do choropleth (e por BAIXO do circulo/pins). `None` = sem overlay, render anterior.
 
     `valor_ponto` (BLK-RELPON-05, faixa REVERTIDA p/ os agregados do raio pelo
     BLK-RELPON-06/D1): texto opcional da faixa superior ("<Variavel> no raio: <valor>"),
@@ -1156,10 +1196,14 @@ def _render_camada(
 
     meters_per_px = 1 / scale
     _draw_scale_bar(draw, map_box, meters_per_px)
-    _draw_legend_camada(
-        draw, legend_x, 96, legenda_titulo, legenda_entries,
-        mostrar_legenda_pins=mostrar_legenda_pins,
-    )
+    # BLK-RELPON (pedido Felipe 2026-07-23): a camada Concorrentes passa `mostrar_legenda=False`
+    # -> nenhuma legenda desenhada (o mapa e so-pins com logos; a legenda era redundante). Com o
+    # default `True` as demais camadas seguem byte-a-byte identicas.
+    if mostrar_legenda:
+        _draw_legend_camada(
+            draw, legend_x, 96, legenda_titulo, legenda_entries,
+            mostrar_legenda_pins=mostrar_legenda_pins,
+        )
 
     # D8=B (BLK-EST-02): rodape enxuto. Atribuicao CARTO (exigida pela licenca DEC-004)
     # permanece quando ha basemap; some no fallback offline (sem tile, sem atribuicao).
@@ -1408,7 +1452,13 @@ def _render_camada_residual_hex(
     # BLK-RELPON-10-FU1: esta camada NAO desenha pins (ver comentario na chamada de
     # `_render_camada` abaixo), entao o recorte de pontos por bbox do frame foi removido
     # junto com os parametros `competitors_df`/`ultra_df`.
-    basemap_tiles = _fetch_basemap(frame_3857.bounds, width) if basemap else None
+    #
+    # Zoom GROSSO para o overview de 5 km (piloto web): o frame do residual e ~10x mais largo
+    # que os mapas de 1,5 km, entao o zoom default (+1) baixaria CENTENAS de tiles (o Relatorio
+    # Pontual estourava o timeout). z13 (~14 m/px) casa com a resolucao de exibicao (1280 px p/
+    # ~18 km) e mostra vias/quadras principais — detalhe de rua nao e legivel a 5 km de qualquer
+    # forma. Vale nos DOIS modos de basemap (CartoDB e self-host `API_BASEMAP_TILES_URL`).
+    basemap_tiles = _fetch_basemap(frame_3857.bounds, width, zoom_bump=-1) if basemap else None
 
     eff_alpha = _CHOROPLETH_ALPHA if choropleth_alpha is None else int(choropleth_alpha)
     sem_dado = (_FILL_SEM_DADO[0], _FILL_SEM_DADO[1], _FILL_SEM_DADO[2], eff_alpha)
@@ -1477,7 +1527,7 @@ def render_mapas_censitarios_combinados(
     raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
-    width: int = 1000,
+    width: int = 1280,
     height: int = 760,
     basemap: bool = True,
     logos_dir: Path | None = None,
@@ -1650,7 +1700,12 @@ def render_mapas_censitarios_combinados(
     basemap_tiles = None
     labels_tiles = None
     if basemap:
-        basemap_tiles = _fetch_basemap(bounds_t, width)
+        # `zoom_bump=0` (em vez do +1 global): o frame de 1,5 km ficou mais largo (5,5 km) com
+        # os mapas retangulares, e o +1 baixava ~208 tiles/mapa (27 s, cache frio) -> o Relatorio
+        # Pontual estourava o timeout quando o CartoDB limitava o IP. z16 (~52 tiles, 6 s) casa
+        # com a resolucao de exibicao (1280 px p/ 5,5 km) — as ruas seguem nitidas ao reduzir
+        # (o tile ja era super-amostrado). 5x menos requisicoes de tile por relatorio.
+        basemap_tiles = _fetch_basemap(bounds_t, width, zoom_bump=0)
         # rotulos buscados UMA vez (compartilhados pelas 4 camadas de choropleth); so quando ha
         # basemap (mesma condicao de rede) e o overlay esta ligado. best-effort -> None nao quebra.
         # `zoom_bump=0` alinha o mosaico ao FRAME, nao ao basemap: o que decide se o nome sobrevive
@@ -1770,15 +1825,35 @@ def render_mapas_censitarios_combinados(
         valor_ponto=valor_raio_renda_dom,
         **common,
     )
+    # Camada Concorrentes (pedido Felipe 2026-07-23): SEM titulo interno ("Concorrentes e
+    # Ultra" ja esta na barra do slide) e SEM legenda. So basemap + pins com logo. O PNG e
+    # recortado (tira de titulo vazia no topo + coluna de legenda removida) p/ o mapa
+    # centralizar limpo e cheio no slide de Concorrentes.
     concorrentes_png = _render_camada(
-        titulo="Concorrentes e Ultra",
-        legenda_titulo="Pins: Ultra e concorrentes",
+        titulo="",
+        legenda_titulo="",
         legenda_entries=[],  # sem faixas de choropleth (camada so-pins)
         color_fn=_color_for_score,  # irrelevante quando pins_only=True
         source_values=score_series,  # irrelevante quando pins_only=True
         pins_only=True,
+        mostrar_legenda=False,
         **common,
     )
+    # Recorte do PNG de Concorrentes (pedido Felipe 2026-07-23, piloto web): tira a faixa de
+    # titulo (agora vazia) e a coluna de legenda (suprimida por `mostrar_legenda=False`), de modo
+    # que o mapa entre limpo e centralizado no slide. Barra de escala e atribuicao CARTO ficam
+    # DENTRO do box, entao a licenca (DEC-004) segue atendida.
+    concorrentes_png = _crop_png_box(
+        concorrentes_png, 0, _MAP_TOP - 16, width - _LEGEND_COL_W, height
+    )
+    # RECONCILIACAO: ficou de fora a `socioeconomia` do piloto web (o MESMO choropleth de score
+    # de SETOR a 1,5 km, via `_render_camada(**common)`). A main a redefiniu no BLK-RELPON-13
+    # como choropleth de `score_setor_2022_calibrado` por HEXAGONO H3 a 5 km, CONDICIONAL ao
+    # `hexes_df` (ver o bloco abaixo do dict). As duas nao podem coexistir na mesma chave; a
+    # versao da main e' a mais recente e passou pelo gate visual de Vinicius (2026-07-23).
+    # BLK-RELPON-14: a camada `entorno` (mapa de quadra) que era renderizada aqui SAIU por
+    # completo — funcao, pagina do PDF e constantes. Nada a renderizar no lugar.
+
     mapas: dict[str, bytes] = {
         "densidade": densidade_png,
         "renda": renda_png,
@@ -1843,7 +1918,7 @@ def render_mapa_censitario_estatico_png(
     metric_column: str = "pop_estimada_intersecao",
     competitors_df: pd.DataFrame | None = None,
     ultra_df: pd.DataFrame | None = None,
-    width: int = 1000,
+    width: int = 1280,
     height: int = 760,
     basemap: bool = False,
 ) -> bytes:

@@ -173,9 +173,20 @@ def test_anti_double_count_agregadores_escalam() -> None:
 
 
 def test_grade_aplica_split_internamente() -> None:
-    """A grade varre alunos TOTAIS; cada celula usa balcao=alunos*share + agr=alunos*(1-share)."""
-    from motor_expansao.dimensionamento.config import SIM_MENSALIDADE_BALCAO
-    from motor_expansao.dimensionamento.simulador import viabilidade as _viabilidade
+    """A grade varre alunos TOTAIS e roda o MESMO motor do cenario principal.
+
+    NUMERO MUDOU DE PROPOSITO (FIN-VIAB-01 — colapso das 5 series/9 KPIs duplicados
+    num motor unico). Este teste comparava a celula da grade com o ADAPTADOR legado
+    `simulador.viabilidade()` (folha ABSOLUTA de R$50.128, IR/CSLL efetivo sobre a
+    receita liquida, ticket de agregador ABSOLUTO de R$82, sem pre-abertura e sem
+    taxa de franquia). A grade passou a chamar `simular()` com as MESMAS Premissas e
+    o MESMO investimento do KPI exibido ao lado dela — a mesma celula (800 alunos,
+    fator 1,0) dava margem -34,57% pelo adaptador legado e +1,46% pelo motor do
+    cenario. Travar o legado aqui era travar exatamente a divergencia que o ciclo
+    corrigiu; o assert agora e contra o nucleo, sem afrouxar tolerancia.
+    """
+    from motor_expansao.dimensionamento.config import SIM_MENSALIDADE_BALCAO, SIM_TAXA_FRANQUIA
+    from motor_expansao.dimensionamento.simulador import Premissas, simular
 
     share = 0.69
     alunos_total = 800.0
@@ -183,15 +194,19 @@ def test_grade_aplica_split_internamente() -> None:
     aluguel_ref = 20000.0
 
     g = grade_sensibilidade(1500.0, aluguel_ref, 938.0, share_balcao=share)
-    esperado = _viabilidade(
-        alunos_total * share,
-        1500.0,
-        aluguel_ref * fator,
-        SIM_MENSALIDADE_BALCAO,
-        alunos_agregadores=alunos_total * (1.0 - share),
+    esperado = simular(
+        alunos_total,
+        Premissas(
+            ticket_cheio=SIM_MENSALIDADE_BALCAO,
+            share_balcao=share,
+            aluguel_mes=aluguel_ref * fator,
+        ),
+        taxa_franquia=SIM_TAXA_FRANQUIA,
     )
     linha = g[(g["alunos"] == alunos_total) & (g["fator_aluguel"] == fator)].iloc[0]
     assert linha["margem_liq"] == pytest.approx(esperado.margem_ebitda_pct)
+    assert linha["payback"] == esperado.payback_meses
+    assert bool(linha["viavel"]) is esperado.flag_viavel
 
 
 def test_share_balcao_default_aplicado() -> None:
@@ -208,42 +223,124 @@ def test_share_balcao_default_aplicado() -> None:
 # BLK-DIM-16 — Testes de critério de aceite (break-even + aluguel-teto)
 # ---------------------------------------------------------------------------
 
-def test_breakeven_menor_que_alunos_para_margem_alvo() -> None:
-    """Break-even (EBITDA=0%) deve ser menor que alunos para a margem-alvo (10%)."""
+def test_breakeven_ebitda_menor_ou_igual_ao_de_caixa() -> None:
+    """Break-even de EBITDA <= break-even de CAIXA (que ainda cobre a PMT).
+
+    (ex-`test_breakeven_menor_que_alunos_para_margem_alvo`.)
+    NUMERO MUDOU DE PROPOSITO (FIN-VIAB-01 / P0-2 — break-even canonico em alunos
+    TOTAIS): `alunos_para_margem_alvo` vinha de `alunos_minimos_viaveis(margem_alvo)`,
+    que variava SO o balcao com os agregadores CONGELADOS na premissa — numero nao
+    comparavel com a demanda TOTAL que o operador digita. Hoje sai de
+    `simulador.alunos_para_margem()`, em forma fechada e em alunos TOTAIS, na MESMA
+    regua de `alunos_breakeven` (`viabilidade_ponto.py:597`), entao a comparacao
+    antiga voltou a fazer sentido — e agora entre grandezas comparaveis.
+    O par novo e break-even de EBITDA x break-even de CAIXA, tambem em alunos TOTAIS
+    e tambem vindos do MESMO cenario do nucleo.
+    """
     r = analisar_viabilidade_ponto(
         -23.9, -46.3, 1500.0, 20000.0, 938.0,
         base_calibracao_df=_base_comparaveis(), setores_df=None,
     )
     assert math.isfinite(r.alunos_breakeven), "break-even deve ser finito"
-    assert math.isfinite(r.alunos_para_margem_alvo), "alunos_para_margem_alvo deve ser finito"
-    assert r.alunos_breakeven < r.alunos_para_margem_alvo, (
-        f"break-even ({r.alunos_breakeven:.1f}) deve ser < alunos para 10% EBITDA "
-        f"({r.alunos_para_margem_alvo:.1f})"
+    assert math.isfinite(r.alunos_breakeven_caixa), "break-even de caixa deve ser finito"
+    # Sem financiamento a PMT e zero -> os dois break-evens coincidem.
+    assert r.alunos_breakeven <= r.alunos_breakeven_caixa
+    # Margem-alvo de 10% exige MAIS alunos que a margem zero, na mesma unidade.
+    assert math.isfinite(r.alunos_para_margem_alvo), (
+        "alunos_para_margem_alvo deve ser finito (10% e atingivel neste cenario)"
     )
+    assert r.alunos_breakeven < r.alunos_para_margem_alvo, (
+        f"break-even ({r.alunos_breakeven:.1f}) deve ser < alunos para 10% de EBITDA "
+        f"({r.alunos_para_margem_alvo:.1f}) — ambos em alunos TOTAIS"
+    )
+
+    # Com equipamentos financiados a PMT entra no break-even de caixa e o separa
+    # estritamente do break-even de EBITDA.
+    r_fin = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 938.0,
+        base_calibracao_df=_base_comparaveis(), setores_df=None,
+        obra=600_000.0, equipamentos=1_400_000.0,
+        prazo_equipamentos=60, juros_equipamentos_am=0.018,
+    )
+    assert r_fin.alunos_breakeven_caixa > r_fin.alunos_breakeven
 
 
 def test_breakeven_resulta_ebitda_zero() -> None:
-    """Reinjetar alunos_breakeven em viabilidade() deve dar EBITDA ≈ 0%."""
+    """No break-even o EBITDA e zero — mas a folha fica na do cenario ASSUMIDO.
+
+    A FORMA DO TESTE MUDOU DE PROPOSITO (decisao de Felipe, 2026-07-24: folha FIXA
+    desde o mes 1). A folha deixou de ser percentual da receita do mes e passou a ser
+    dimensionada pela demanda ASSUMIDA (`Premissas.folha_fixa_mes`), entao
+    `break_even_alunos()` ganhou a demanda como argumento. Consequencia: REINJETAR o
+    break-even como nova demanda NAO da EBITDA zero — a reinjecao redimensiona a folha
+    para baixo e a operacao passa a sobrar (medido: +R$2.702,91). Nao e defeito; e o
+    enunciado do break-even: "montei a casa para 938 alunos; com quantos eu empato?".
+
+    A identidade continua exata, agora contra `custo_fixo_total_mes(demanda_assumida)`,
+    que ja soma a folha. E ha uma segunda propriedade travada aqui: o PONTO FIXO de
+    `break_even_alunos` (a demanda que e o proprio break-even dela mesma) e o unico
+    valor que reinjetado devolve EBITDA zero — e ele coincide, ao float, com o
+    break-even da regra ANTIGA (folha dentro do fator k).
+    """
     from motor_expansao.dimensionamento.config import SIM_MENSALIDADE_BALCAO
-    from motor_expansao.dimensionamento.simulador import viabilidade as _viabilidade
+    from motor_expansao.dimensionamento.simulador import Premissas, break_even_alunos
     from motor_expansao.dimensionamento.viabilidade_ponto import SHARE_BALCAO_DEFAULT
 
     m2, aluguel, demanda = 1500.0, 20000.0, 938.0
+    # Premissas EXPLICITAS: o teste precisa saber exatamente qual folha foi dimensionada.
+    p = Premissas(
+        ticket_cheio=float(SIM_MENSALIDADE_BALCAO),
+        share_balcao=SHARE_BALCAO_DEFAULT,
+        aluguel_mes=aluguel,
+    )
     r = analisar_viabilidade_ponto(
         -23.9, -46.3, m2, aluguel, demanda,
-        base_calibracao_df=None, setores_df=None,
+        premissas=p, base_calibracao_df=None, setores_df=None,
     )
-    # alunos_breakeven e em alunos de BALCAO; agregadores ficam FIXOS em demanda*(1-share)
-    # (idem ao que analisar_viabilidade_ponto passa para alunos_minimos_viaveis)
-    alunos_agr_fixo = demanda * (1.0 - SHARE_BALCAO_DEFAULT)
-    v = _viabilidade(
-        r.alunos_breakeven, m2, aluguel, SIM_MENSALIDADE_BALCAO,
-        alunos_agregadores=alunos_agr_fixo,
+    assert r.alunos_breakeven == pytest.approx(break_even_alunos(p, demanda), abs=1e-9)
+
+    # 1) Identidade fechada: no break-even o EBITDA e zero COM a folha da demanda
+    # assumida. `com_anuidade=True` porque o break-even mede o REGIME PLENO.
+    fat_be = p.faturamento(r.alunos_breakeven, com_anuidade=True)
+    ebitda_be = (
+        fat_be * p.fator_receita_para_ebitda
+        - p.custo_fixo_total_mes(demanda)
+        - p.aluguel_mes
     )
-    # tolerancia generosa para acomodar xtol=0.5 do brentq (rounding em alunos discretos)
-    assert abs(v.margem_ebitda_pct) < 0.05, (
-        f"EBITDA no break-even deveria ser ~0%; got {v.margem_ebitda_pct:.4f}"
+    assert abs(ebitda_be) < 1e-6, f"EBITDA no break-even deveria ser 0; got {ebitda_be:.6f}"
+
+    # 2) Reinjetar o break-even NAO zera o EBITDA (a folha encolhe junto). Trava o
+    # sinal para que ninguem "conserte" isso voltando a folha percentual.
+    r_re = analisar_viabilidade_ponto(
+        -23.9, -46.3, m2, aluguel, r.alunos_breakeven,
+        premissas=p, base_calibracao_df=None, setores_df=None,
     )
+    assert r_re.viabilidade.ebitda_mensal > 0
+    assert r_re.alunos_breakeven < r.alunos_breakeven  # folha menor -> break-even menor
+
+    # 3) O PONTO FIXO (be(d) == d) e o que reinjetado devolve EBITDA zero...
+    ponto_fixo = demanda
+    for _ in range(200):
+        ponto_fixo = break_even_alunos(p, ponto_fixo)
+    assert break_even_alunos(p, ponto_fixo) == pytest.approx(ponto_fixo, abs=1e-9)
+    r_fix = analisar_viabilidade_ponto(
+        -23.9, -46.3, m2, aluguel, ponto_fixo,
+        premissas=p, base_calibracao_df=None, setores_df=None,
+    )
+    assert abs(r_fix.viabilidade.ebitda_mensal) < 1e-6, (
+        f"EBITDA no ponto fixo deveria ser 0; got {r_fix.viabilidade.ebitda_mensal:.6f}"
+    )
+    assert abs(r_fix.viabilidade.margem_ebitda_pct) < 1e-9, (
+        f"margem no ponto fixo deveria ser 0; got {r_fix.viabilidade.margem_ebitda_pct:.10f}"
+    )
+
+    # ...e ele e, ao float, o break-even da regra ANTIGA (folha dentro do fator k).
+    k_antigo = p.fator_receita_para_ebitda - p.folha_efetiva_pct
+    be_antigo = (
+        (p.outros_fixos_mes + p.aluguel_mes) / k_antigo - p.personal_mes
+    ) / p.receita_por_aluno_total
+    assert ponto_fixo == pytest.approx(be_antigo, abs=1e-6)
+    assert r.alunos_breakeven > ponto_fixo  # a regra nova exige MAIS alunos
 
 
 def test_aluguel_teto_considera_agregadores_materiais() -> None:
@@ -286,14 +383,192 @@ def test_aluguel_teto_sem_agregadores_nao_regride() -> None:
     assert math.isfinite(teto), "teto deve ser finito"
 
 
-def test_alunos_para_margem_alvo_campo_presente() -> None:
-    """Campo alunos_para_margem_alvo existe no dataclass e tem valor nao-negativo."""
+def test_teto_p10_usa_a_mesma_regua_do_teto_canonico() -> None:
+    """`aluguel_teto_p10` e o teto canonico nao podem sair de faturamentos diferentes.
+
+    Os dois aparecem LADO A LADO na mesma tela. O canonico vem do faturamento de
+    steady-state do nucleo, que e o mes de REGIME PLENO (anuidade ja em cobranca).
+    O do p10 e calculado aqui, por `Premissas.faturamento()` — que tem
+    `com_anuidade=False` por DEFAULT. Omitir o argumento punha duas reguas na mesma
+    tela (medido no golden Boulevard Londrina: R$966,36/mes, 2,2% de divergencia),
+    exatamente a classe de defeito que o FIN-VIAB-01 existe para eliminar.
+
+    A trava e de FORMA, nao de valor: reconstruimos o teto do p10 fora do motor com
+    a anuidade LIGADA e exigimos que bata; e conferimos que a versao SEM anuidade
+    (o defeito) daria outro numero — senao o teste passaria de graca.
+    """
+    from motor_expansao.dimensionamento.config import SIM_MENSALIDADE_BALCAO
+    from motor_expansao.dimensionamento.simulador import Premissas, aluguel_teto_clusters
+
+    r = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 938.0,
+        base_calibracao_df=_base_comparaveis(), setores_df=None,
+    )
+    assert r.aluguel_teto_p10 is not None, "com base de comparaveis o teto do p10 existe"
+    p10 = r.faixa_alunos_p10
+    assert p10 is not None
+
+    # Mesmas premissas da chamada acima (ticket_medio default = SIM_MENSALIDADE_BALCAO).
+    p = Premissas(ticket_cheio=float(SIM_MENSALIDADE_BALCAO), aluguel_mes=r.aluguel_pedido)
+    esperado = float(aluguel_teto_clusters(p.faturamento(float(p10), com_anuidade=True))["canonico"])
+    assert r.aluguel_teto_p10 == pytest.approx(esperado, abs=0.01)
+
+    # Contraprova: sem a anuidade o numero seria OUTRO (o defeito nao passa despercebido).
+    defeito = float(aluguel_teto_clusters(p.faturamento(float(p10)))["canonico"])
+    assert defeito < esperado, "com anuidade o faturamento do p10 e maior, logo o teto tambem"
+    assert r.aluguel_teto_p10 != pytest.approx(defeito, abs=0.01)
+
+
+def test_alunos_para_margem_alvo_em_alunos_totais() -> None:
+    """Campo `alunos_para_margem_alvo` existe e vem em alunos TOTAIS.
+
+    UNIDADE MUDOU DE PROPOSITO (FIN-VIAB-01 / P0-2). O campo era alimentado por
+    `alunos_minimos_viaveis(margem_alvo=0,10)`, que variava SO os alunos de BALCAO
+    mantendo os agregadores congelados na premissa — numero nao comparavel com a
+    demanda TOTAL que o operador digita. O assert antigo (`>= 0.0`) passava
+    justamente porque nao olhava a unidade. Hoje o campo sai de
+    `simulador.alunos_para_margem()` (forma fechada, `viabilidade_ponto.py:597`), na
+    MESMA regua de `alunos_breakeven` e `alunos_breakeven_caixa`: e o que trava a
+    unidade e impede a regressao para o numero com rotulo errado.
+
+    O campo NAO entra no payload da API (`alunos_para_margem` devolve `inf` quando a
+    margem-alvo e inatingivel, e o payload e `allow_nan=False`); segue vivo para
+    `batch_viabilidade`/`backtest_viabilidade`/`excel_export`.
+    """
     r = analisar_viabilidade_ponto(
         -23.9, -46.3, 1500.0, 20000.0, 938.0,
         base_calibracao_df=None, setores_df=None,
     )
     assert hasattr(r, "alunos_para_margem_alvo")
-    assert r.alunos_para_margem_alvo >= 0.0
+    assert math.isfinite(r.alunos_para_margem_alvo)
+    # Os tres numeros de "quantos alunos preciso" vivem na MESMA unidade (TOTAIS) e
+    # se ordenam pela exigencia: margem zero <= cobre a PMT, e margem zero < margem 10%.
+    assert math.isfinite(r.alunos_breakeven) and r.alunos_breakeven >= 0.0
+    assert math.isfinite(r.alunos_breakeven_caixa) and r.alunos_breakeven_caixa >= 0.0
+    assert r.alunos_breakeven <= r.alunos_breakeven_caixa
+    assert r.alunos_breakeven < r.alunos_para_margem_alvo
+    # Regua: o valor e da ordem da demanda TOTAL, nao da fatia de balcao.
+    assert r.alunos_para_margem_alvo > r.alunos_breakeven * 1.05
+
+
+# ---------------------------------------------------------------------------
+# FIN-VIAB-01 (2026-07-24) — folha FIXA desde o mes 1 e franquia parcelada 4x
+# ---------------------------------------------------------------------------
+
+
+def test_folha_do_orquestrador_e_fixa_no_tempo_e_dimensionada_pela_demanda() -> None:
+    """Os DOIS fatos, no nivel do orquestrador (nao so do nucleo).
+
+    Folha FIXA desde o mes 1 (decisao de Felipe, 2026-07-24): dentro de um cenario ela
+    NAO varia entre os meses de operacao do ano 1 -- so reajusta no mes 13; entre
+    cenarios ela CAI quando a demanda assumida cai, porque e ela que dimensiona a
+    equipe. Antes a folha era `folha_pct` x faturamento DO MES e escalava com a rampa.
+    """
+    folhas = {}
+    for demanda in (600.0, 938.0, 1500.0):
+        r = analisar_viabilidade_ponto(
+            -23.9, -46.3, 1500.0, 20000.0, demanda,
+            base_calibracao_df=None, setores_df=None,
+        )
+        operacao = [x for x in r.viabilidade.serie_mensal if x["fase"] == "operacao"]
+        ano1 = operacao[:12]
+        # UM unico valor de folha em todo o ano 1...
+        assert len({round(x["folha"], 6) for x in ano1}) == 1, (
+            f"demanda {demanda}: a folha variou dentro do ano 1 (voltou a escalar?)"
+        )
+        assert ano1[0]["folha"] == pytest.approx(ano1[-1]["folha"], abs=1e-9)
+        assert ano1[0]["folha"] == pytest.approx(r.viabilidade.folha_mensal, abs=1e-9)
+        # ...e o unico degrau e o reajuste anual, a partir do mes 13.
+        assert operacao[12]["mes"] == 13
+        assert operacao[12]["folha"] > ano1[0]["folha"]
+        # A folha do mes 1 e MAIOR que o percentual do faturamento do mes 1: a equipe
+        # existe antes dos alunos.
+        assert ano1[0]["folha"] > 0.17 * ano1[0]["faturamento_mensal"]
+        folhas[demanda] = r.viabilidade.folha_mensal
+
+    assert folhas[600.0] < folhas[938.0] < folhas[1500.0]
+
+
+def test_breakeven_do_orquestrador_sobe_com_a_demanda_assumida() -> None:
+    """Break-even e margem-alvo passaram a depender da demanda ASSUMIDA.
+
+    E consequencia direta de a folha ser custo FIXO dimensionado por ela: quem monta a
+    casa para 1.500 alunos precisa de mais alunos para empatar do que quem monta para
+    600. Antes a folha era percentual da receita, entao o break-even NAO dependia da
+    demanda -- e por isso `break_even_alunos`/`alunos_para_margem` nao a recebiam.
+    """
+    resultados = {
+        d: analisar_viabilidade_ponto(
+            -23.9, -46.3, 1500.0, 20000.0, d,
+            base_calibracao_df=None, setores_df=None,
+        )
+        for d in (600.0, 938.0, 1500.0)
+    }
+    bes = [resultados[d].alunos_breakeven for d in (600.0, 938.0, 1500.0)]
+    margens = [resultados[d].alunos_para_margem_alvo for d in (600.0, 938.0, 1500.0)]
+    assert bes[0] < bes[1] < bes[2], f"break-even nao acompanhou a demanda assumida: {bes}"
+    assert margens[0] < margens[1] < margens[2]
+    for d in (600.0, 938.0, 1500.0):
+        r = resultados[d]
+        assert math.isfinite(r.alunos_breakeven)
+        assert r.alunos_breakeven <= r.alunos_breakeven_caixa
+        assert r.alunos_breakeven < r.alunos_para_margem_alvo
+
+
+def test_franquia_parcelada_chega_ao_nucleo_pelo_orquestrador() -> None:
+    """`parcelas_franquia` propaga; default 4x sem juros; N=1 = comportamento a vista.
+
+    Sem obra nem equipamentos, a linha `investimento` da serie e SO a taxa de franquia
+    — o que isola as parcelas sem aritmetica.
+    """
+    from motor_expansao.dimensionamento.config import (
+        SIM_PARCELAS_FRANQUIA_DEFAULT,
+        SIM_TAXA_FRANQUIA,
+    )
+
+    assert SIM_PARCELAS_FRANQUIA_DEFAULT == 4
+
+    padrao = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 938.0,
+        obra=0.0, equipamentos=0.0, base_calibracao_df=None, setores_df=None,
+    )
+    pre = [x for x in padrao.viabilidade.serie_mensal if x["fase"] == "pre_operacional"]
+    assert [x["mes"] for x in pre] == [-4, -3, -2, -1]
+    for x in pre:
+        assert x["investimento"] == pytest.approx(
+            SIM_TAXA_FRANQUIA / SIM_PARCELAS_FRANQUIA_DEFAULT, abs=0.01
+        )
+    assert sum(x["investimento"] for x in padrao.viabilidade.serie_mensal) == pytest.approx(
+        SIM_TAXA_FRANQUIA, abs=0.01
+    )
+
+    a_vista = analisar_viabilidade_ponto(
+        -23.9, -46.3, 1500.0, 20000.0, 938.0,
+        obra=0.0, equipamentos=0.0, parcelas_franquia=1,
+        base_calibracao_df=None, setores_df=None,
+    )
+    pre_vista = [x for x in a_vista.viabilidade.serie_mensal if x["fase"] == "pre_operacional"]
+    assert pre_vista[0]["investimento"] == pytest.approx(SIM_TAXA_FRANQUIA, abs=0.01)
+    assert all(x["investimento"] == 0.0 for x in pre_vista[1:])
+
+    # Parcelar e TIMING DE CAIXA: nada de resultado muda.
+    assert padrao.viabilidade.ebitda_mensal == pytest.approx(
+        a_vista.viabilidade.ebitda_mensal, abs=1e-12
+    )
+    assert padrao.viabilidade.margem_ebitda_pct == pytest.approx(
+        a_vista.viabilidade.margem_ebitda_pct, abs=1e-12
+    )
+    assert padrao.alunos_breakeven == pytest.approx(a_vista.alunos_breakeven, abs=1e-12)
+    assert padrao.alunos_breakeven_caixa == pytest.approx(
+        a_vista.alunos_breakeven_caixa, abs=1e-12
+    )
+    assert padrao.aluguel_teto_calculado == pytest.approx(
+        a_vista.aluguel_teto_calculado, abs=1e-12
+    )
+    # ...mas o caixa da pre-abertura melhora (o desembolso deixa de ser antecipado).
+    assert pre[0]["fcf_acumulado"] > pre_vista[0]["fcf_acumulado"]
+    assert padrao.viabilidade.vpl is not None and a_vista.viabilidade.vpl is not None
+    assert padrao.viabilidade.vpl > a_vista.viabilidade.vpl
 
 
 # ---------------------------------------------------------------------------

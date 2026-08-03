@@ -166,3 +166,9 @@ graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 # (45 rotulados por inspecao + 378 derivados) e o rebuild os REUSA. Sem versiona-los,
 # um clone novo perde os nomes e o relatorio volta a "Community 0/1/2...". 11 KB.
 !graphify-out/.graphify_labels.json
+
+# === Documentos TEMP de handoff (backlog reancorado no piloto) ===
+# Rascunho de trabalho, nao contrato: o backlog canonico e' tasks/backlog.md. Ficava
+# untracked E fora do ignore, entao um `git add -A` distraido o varria para dentro
+# de um commit — foi o que motivou commitar por path no lote de 2026-07-31.
+TEMP_backlog_piloto.md
