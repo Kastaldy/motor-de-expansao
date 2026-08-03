@@ -34,7 +34,7 @@ class ErrorResponse(BaseModel):
 
 
 class AnalisarRequest(BaseModel):
-    """Fornecer ``{lat,lng}`` OU ``maps_url``. Raio e fixo 1.5 km (nao e parametro)."""
+    """Fornecer ``{lat,lng}`` OU ``maps_url``. Raio e fixo 1.0 km (nao e parametro)."""
 
     lat: float | None = Field(default=None, examples=[-21.9180])
     lng: float | None = Field(default=None, examples=[-46.6855])
@@ -89,8 +89,8 @@ class AnalisarResponseJSON(BaseModel):
 
     lat: float
     lng: float
-    raio_km: float = Field(examples=[1.5])
-    area_km2: float | None = Field(default=None, examples=[7.07])
+    raio_km: float = Field(examples=[1.0])
+    area_km2: float | None = Field(default=None, examples=[3.14])
     metodo: str = Field(examples=["setor_censitario_intersecao_area_1km"])
     n_setores: int = 0
     pop_total_raio: float | None = None

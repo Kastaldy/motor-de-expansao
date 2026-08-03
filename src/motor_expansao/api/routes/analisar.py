@@ -32,7 +32,7 @@ _ERR: dict[int | str, dict[str, Any]] = {
     "/analisar",
     response_model=AnalisarResponseJSON,
     responses=_ERR,
-    summary="Analisa um ponto (Relatorio Pontual Censitario 1.5 km)",
+    summary="Analisa um ponto (Relatorio Pontual Censitario 1.0 km)",
 )
 async def analisar(
     payload: AnalisarRequest,

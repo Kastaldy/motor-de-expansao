@@ -11,7 +11,7 @@
 - **Proposito:** API complementar ao Motor de Expansao, on-demand, para integracao com bots de
   **Telegram/WhatsApp**, dando autonomia de estudos geoespaciais internos. O caso de uso central do
   MVP e: o usuario manda um ponto (coordenada ou link do Google Maps) ao bot e recebe o estudo do
-  **Relatorio Pontual Censitario 1.5 km** (KPIs em JSON e/ou o PDF de 7 paginas).
+  **Relatorio Pontual Censitario 1.0 km** (KPIs em JSON e/ou o PDF de 7 paginas; raio 1,5 km ate a DEC-021, 2026-07-29).
 - **ClickUp:** tarefa `86e1rtfe3` (G1), subtarefa de `86e1rtfcy` (projeto API GeoEspacial / `PROJETOS - DEG`).
 - **Papeis do projeto:** G1 = arquitetura/contrato (Felipe — este bloco); G2 = backend/rotas (Juan);
   G3 = integracao com o motor + testes fim-a-fim/observabilidade (Felipe+Juan); G4 = clientes
@@ -38,8 +38,10 @@ Fixadas por Felipe (2026-06-09) e reafirmadas na DEC-005 (2026-06-10):
    `score_priorizacao`, `hex_score_estrutural`, carteira, plano curto prazo, plano dominio ou
    qualquer artefato oficial do M1.
 6. **Parametros canonicos imutaveis.** `H3_RESOLUTION=7`, pesos `renda=0.40`/`pop=0.60`, **raio fixo
-   1.5 km** (`RAIO_CENSITARIO_DEFAULT_KM`) e o **metodo de intersecao** censitario
-   (`setor_censitario_intersecao_area_1p5km`) ficam INTOCADOS — apenas DESCRITOS aqui.
+   1.0 km** (`RAIO_CENSITARIO_DEFAULT_KM`) e o **metodo de intersecao** censitario
+   (`setor_censitario_intersecao_area_1km`) so mudam por DEC explicita — apenas DESCRITOS aqui.
+   (Emenda DEC-021, 2026-07-29: raio e rotulo do metodo passaram de 1,5 km/`..._1p5km` para
+   1,0 km/`..._1km`; o metodo de intersecao em si e os demais parametros seguem os da DEC-005.)
 
 ## 3. Layout do pacote `src/motor_expansao/api/` (descritivo — a CRIAR em G2)
 
@@ -129,7 +131,7 @@ certa via `read_censo_geo_partition`. Contrato (implementacao e G2/G3):
 Superficie minima do MVP:
 
 - `GET /health` — liveness. Resposta `200 {status, environment}`.
-- `POST /analisar` — analise de um ponto (Relatorio Pontual Censitario 1.5 km). Negociacao de conteudo
+- `POST /analisar` — analise de um ponto (Relatorio Pontual Censitario 1.0 km). Negociacao de conteudo
   JSON/PDF (Decisao 1 = (c)).
 
 **Alem do MVP (pos-contrato, ja em producao):** o Relatorio Municipal adicionou `GET /ufs`,
@@ -152,8 +154,8 @@ Superficie minima do MVP:
   "rotulo": "Pastel da Sueli - Av. ..."  // string, OPCIONAL: nome do local p/ a capa do PDF
 }
 ```
-- Regra de validacao: fornecer `{lat,lng}` OU `maps_url` (nao ambos vazios). Raio e **fixo 1.5 km**
-  (Decisao 5) — NAO e parametro de entrada.
+- Regra de validacao: fornecer `{lat,lng}` OU `maps_url` (nao ambos vazios). Raio e **fixo 1.0 km**
+  (Decisao 5, emendada pela DEC-021) — NAO e parametro de entrada.
 - `rotulo` (aditivo compativel em `v1`, §10): quando presente e nao for apenas `"lat,lng"`, vai para a
   capa do PDF no lugar de "Coordenada: ...". Ignorado na saida JSON. Adicionado pela trilha do bot
   (BLK-API-07) para carimbar o nome do local no relatorio.
@@ -164,9 +166,9 @@ KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
 {
   "lat": -23.95,
   "lng": -46.33,
-  "raio_km": 1.5,
-  "area_km2": 7.07,
-  "metodo": "setor_censitario_intersecao_area_1p5km",
+  "raio_km": 1.0,
+  "area_km2": 3.14,
+  "metodo": "setor_censitario_intersecao_area_1km",
   "n_setores": 12,
   "pop_total_raio": 18432.0,
   "renda_per_capita_media_raio": 5210.0,
@@ -306,8 +308,8 @@ Parametrizada pela Decisao 3 = (a) (MVP minimo). Mapeada a G2/G3/G4 do ClickUp `
   de API ao vivo no dashboard de producao.
 - **Fronteira "importa-nao-edita `censo_*`"** e **"on-demand, PostGIS fora do MVP"** (Felipe, 2026-06-09):
   invioláveis.
-- **Parametros canonicos imutaveis:** `H3_RESOLUTION=7`, pesos `renda=0.40`/`pop=0.60`, **raio 1.5 km**
-  e o **metodo de intersecao** censitario INTOCADOS.
+- **Parametros canonicos imutaveis:** `H3_RESOLUTION=7`, pesos `renda=0.40`/`pop=0.60`, **raio 1.0 km**
+  (DEC-021) e o **metodo de intersecao** censitario INTOCADOS.
 
 ## 15. Referencias
 
