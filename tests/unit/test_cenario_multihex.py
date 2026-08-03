@@ -4,7 +4,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-import streamlit_app
 from motor_expansao.dashboard.data import agregar_cenario_multihex
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -268,6 +267,10 @@ def test_hexes_selecionados_contem_apenas_hexes_pedidos():
     assert list(result["hexes_selecionados"]["hex_id"]) == ["h1"]
 
 
-def test_exportado_via_streamlit_app():
-    assert hasattr(streamlit_app, "agregar_cenario_multihex")
-    assert callable(streamlit_app.agregar_cenario_multihex)
+def test_exportado_pelo_modulo_data():
+    # A funcao e o contrato publico do motor compartilhado: precisa continuar
+    # importavel do modulo puro (data.py) mesmo apos o corte da UI Streamlit.
+    from motor_expansao.dashboard import data
+
+    assert hasattr(data, "agregar_cenario_multihex")
+    assert callable(data.agregar_cenario_multihex)

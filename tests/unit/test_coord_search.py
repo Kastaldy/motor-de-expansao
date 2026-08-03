@@ -339,40 +339,6 @@ def test_extract_any_coord_link_curto_nao_resolve_offline():
     assert extract_any_coord("https://maps.app.goo.gl/abc123") == (None, None)
 
 
-# ── helpers de roteamento da cascata (BLK-UI-09, funções de módulo puras) ──────
-
-
-@pytest.mark.parametrize(
-    "raw,expected",
-    [
-        ("https://www.google.com/maps/@-23.55,-46.63,15z", True),
-        ("http://maps.app.goo.gl/abc", True),
-        ("Av. Paulista 1000, Sao Paulo", False),
-        ("-23.55,-46.63", False),
-        ("", False),
-    ],
-)
-def test_parece_link(raw, expected):
-    from motor_expansao.dashboard.pages import _parece_link
-
-    assert _parece_link(raw) is expected
-
-
-@pytest.mark.parametrize(
-    "raw,expected",
-    [
-        ("https://maps.app.goo.gl/abc123", True),
-        ("https://goo.gl/maps/xyz", True),
-        ("https://www.google.com/maps/place/x/@-23.5,-46.6,17z", False),
-        ("Av. Paulista 1000", False),
-    ],
-)
-def test_e_link_curto_maps(raw, expected):
-    from motor_expansao.dashboard.pages import _e_link_curto_maps
-
-    assert _e_link_curto_maps(raw) is expected
-
-
 # ── resolve_short_link (BLK-UI-09 / DEC-010 emenda Opção B) — urllib MOCKADO ───
 
 
