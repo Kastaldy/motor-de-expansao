@@ -18,6 +18,7 @@ ZERO PII em disco; READ-ONLY sobre o M1.
 from __future__ import annotations
 
 import datetime as dt
+import os
 from pathlib import Path
 
 import click
@@ -79,11 +80,22 @@ def verificar_escopo_master(cliente: GrowthAPIClient, perf_df: pd.DataFrame) -> 
     default=False,
     help="Roda so a verificacao de escopo master e sai.",
 )
+@click.option(
+    "--out",
+    default=None,
+    help=(
+        "Caminho de saida do parquet. Default: env GROWTH_OUT_PARQUET ou "
+        "data/staging/growth_api_historico.parquet. Necessario no deploy porque o "
+        "staging e montado READ-ONLY nos containers: rode com --out /tmp/... e copie "
+        "para o staging do host (ver scripts/cron/run_growth_daily.sh)."
+    ),
+)
 def main(
     data_inicio: str,
     data_fim: str | None,
     force_refresh: bool,
     so_verificar_escopo: bool,
+    out: str | None,
 ) -> None:
     data_fim = data_fim or dt.date.today().isoformat()
     if not PERF_PARQUET.is_file():
@@ -133,12 +145,13 @@ def main(
 
     # Anti-PII OBRIGATORIO antes de persistir.
     assert_sem_pii(df)
-    OUT_PARQUET.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(OUT_PARQUET, index=False)
+    out_path = Path(out or os.environ.get("GROWTH_OUT_PARQUET") or OUT_PARQUET)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(out_path, index=False)
 
     aud = auditar_historico(df)
     click.echo("\n=== AUDITORIA growth_api_historico.parquet ===")
-    click.echo(f"arquivo: {OUT_PARQUET}")
+    click.echo(f"arquivo: {out_path}")
     click.echo(f"linhas: {aud['n_linhas']}")
     click.echo(f"unidades: {aud['n_unidades']}")
     click.echo(f"range datas: {aud['data_min']} -> {aud['data_max']}")

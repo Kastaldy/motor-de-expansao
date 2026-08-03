@@ -57,6 +57,13 @@ dev = [
     "pytest-xdist>=3.6.0,<4",
     "ruff>=0.15,<0.16",
     "mypy>=1.10.0,<2",
+    # FIN-VIAB-01 (decisao de Felipe, 2026-07-24): RECALCULA de verdade as formulas
+    # vivas do simulador XLSX nos testes. `openpyxl` nunca calcula nada, entao sem
+    # este pacote o nivel 2 de `tests/unit/dimensionamento/test_simulador_xlsx.py`
+    # (~4.293 formulas conferidas contra `simular()`) ficava SKIPPED via
+    # `pytest.importorskip("formulas")` — planilha com formula errada passava no CI.
+    # SO em [dev]: o Dockerfile instala sem [dev], entao nao entra na imagem publicada.
+    "formulas>=1.2.0,<2",
 ]
 # Subset MVP da API GeoEspacial on-demand (BLK-API-02+, §11 do contrato).
 # Isolado do bloco `api` legado (PostGIS/Prefect/Sentry) — NAO arrastar aquele.

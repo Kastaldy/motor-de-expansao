@@ -1,0 +1,95 @@
+/* ============================================================================
+   Tokens do piloto web — Motor de Expansao Ultra Academia
+   Paleta e escalas extraidas do template de referencia visual
+   ("Motor de Expansão - Referência (standalone).html").
+   Tipografia trocada por pedido do Felipe: Manrope/JetBrains Mono (comuns em
+   output de IA) -> Instrument Sans (UI) + Instrument Serif (voz narrativa) +
+   IBM Plex Mono (todo numero). Os PAPEIS do template sao preservados.
+   ============================================================================ */
+
+:root {
+  /* --- Fundos -------------------------------------------------------------- */
+  --bg-base: #080b10;
+  --bg-lift: #0e1824;
+  --bg-knob: #0e151e;
+
+  /* --- Superficies glass --------------------------------------------------- */
+  --surf-panel: rgba(14, 21, 30, 0.88);
+  --surf-card: rgba(14, 21, 30, 0.7);
+  --surf-sidebar: rgba(14, 21, 30, 0.8);
+  --surf-verdict: rgba(14, 21, 30, 0.72);
+  --surf-chrome: rgba(16, 24, 34, 0.8);
+  --surf-bar: rgba(16, 24, 34, 0.86);
+  --surf-raised: rgba(255, 255, 255, 0.03);
+  --surf-input: rgba(255, 255, 255, 0.04);
+  --surf-pending: rgba(255, 255, 255, 0.06);
+
+  /* --- Hairlines ----------------------------------------------------------- */
+  --line: rgba(255, 255, 255, 0.08);
+  --line-soft: rgba(255, 255, 255, 0.07);
+  --line-mid: rgba(255, 255, 255, 0.1);
+  --line-strong: rgba(255, 255, 255, 0.12);
+  --line-dashed: rgba(255, 255, 255, 0.16);
+
+  /* --- Texto (6 niveis do template) ---------------------------------------- */
+  --tx-max: #eef3f8;
+  --tx-strong: #e6edf3;
+  --tx-soft: #cdd8e2;
+  --tx-narrative: #9aa7b5;
+  --tx-label: #8b97a5;
+  --tx-muted: #7b8794;
+  --tx-sub: #6f7b89;
+  --tx-off: #5a6675;
+  --tx-rank: #4a5765;
+
+  /* --- Acento turquesa (identidade do produto) ----------------------------- */
+  --ac: #35c9d6;
+  --ac-text: #4fd3df;
+  --ac-chip: #7de3ec;
+  --ac-on: #06232a; /* texto SOBRE o turquesa */
+  --ac-a08: rgba(53, 201, 214, 0.08);
+  --ac-a10: rgba(53, 201, 214, 0.1);
+  --ac-a12: rgba(53, 201, 214, 0.12);
+  --ac-a14: rgba(53, 201, 214, 0.14);
+  --ac-a16: rgba(53, 201, 214, 0.16);
+  --ac-a22: rgba(53, 201, 214, 0.22);
+  --ac-a24: rgba(53, 201, 214, 0.24);
+  --ac-a25: rgba(53, 201, 214, 0.25);
+  --ac-a30: rgba(53, 201, 214, 0.3);
+  --ac-a60: rgba(53, 201, 214, 0.6);
+  --ac-glow: 0 6px 16px -4px rgba(53, 201, 214, 0.5);
+
+  /* --- Marca Ultra --------------------------------------------------------- */
+  --ultra: #c8001e;
+
+  /* --- Semantica ----------------------------------------------------------- */
+  --pos: #2ec86e;
+  --pos-text: #4fe08a;
+  --pos-pill: #7fe6a6;
+  --neg: #ff7a8a;
+  --neg-bar: #d9556a;
+  --warn: #d9a441;
+  --warn-text: #e9c07a;
+  --info: #2f6bed;
+
+  /* --- Tipografia ---------------------------------------------------------- */
+  --f-ui: 'Instrument Sans Variable', 'Instrument Sans', system-ui, sans-serif;
+  --f-story: 'Instrument Serif', Georgia, serif;
+  --f-num: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* --- Raios --------------------------------------------------------------- */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 12px;
+  --r-xl: 14px;
+  --r-2xl: 16px;
+
+  /* --- Sombras ------------------------------------------------------------- */
+  --sh-pin: 0 5px 12px rgba(0, 0, 0, 0.5);
+  --sh-frame: 0 30px 70px -30px rgba(0, 0, 0, 0.6);
+}
+
+/* As rampas --ramp-indigo-* / --ramp-green-*, herdadas do prototipo standalone,
+   sairam daqui (N8): nenhum arquivo de web/src as referenciava. A cor de score do
+   piloto vem de src/lib/colors.ts (SCORE_BANDS_HEX), espelho de
+   constants.RESIDUAL_SCORE_BANDS. */

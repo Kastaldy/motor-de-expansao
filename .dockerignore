@@ -1,6 +1,11 @@
 # Dados — montados via volume em runtime
 data/
 
+# Piloto web: deps e build do frontend NAO entram no COPY . . (o Dockerfile.web
+# faz `npm ci`/`npm run build` num estagio Node isolado e copia so o dist/).
+web/node_modules/
+web/dist/
+
 # Desenvolvimento e docs
 tests/
 docs/

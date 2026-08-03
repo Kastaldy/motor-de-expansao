@@ -153,6 +153,61 @@ services:
     healthcheck:
       disable: true
 
+  # ── Piloto Web (frontend Vite + backend FastAPI, num UNICO container) ────────
+  # Serve o SPA (dist/) E a API na mesma porta 8899; o Caddy so faz reverse_proxy
+  # (igual ao dashboard->streamlit), atras do Authelia. Consome os MESMOS volumes de
+  # dados (:ro) do host. Sem porta no host. PILOTO: numeros da Viabilidade em
+  # calibracao (rotulo "preliminar" na UI). READ-ONLY sobre o M1.
+  web:
+    # Modo PULL por digest (igual aos demais): o CI (job publish-web) publica
+    # `motor-expansao-web` no GHCR; a VPS pina por digest no .env. Fail-closed.
+    #   WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest>
+    # Build local de sanity: `docker build -f Dockerfile.web -t motor-expansao-web:local .`
+    image: ${WEB_IMAGE:?defina WEB_IMAGE com o digest imutavel ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest> — ver docs/deploy_piloto_web.md}
+    container_name: motor_expansao_web
+    restart: unless-stopped
+    expose:
+      - "8899"
+    environment:
+      # O backend deriva OUTPUTS/STAGING/IBGE/ULTRA/CENSO_GEO/ENRICHED de MOTOR_DATA_DIR.
+      MOTOR_DATA_DIR: "/app/data"
+      WEB_DIST_DIR: "/app/web/dist"
+      # BLK-SAT-01: chave do ArcGIS Location Platform p/ a vista aerea (satelite) do
+      # Relatorio Pontual. Sem a var -> render devolve None -> pagina omitida (PDF sai igual).
+      API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}
+      # Fundo de ruas dos PDFs pelo tileserver proprio (BLK-BASEMAP-02, emenda DEC-004/011).
+      # MESMA URL INTERNA que `streamlit` e `api` usam: a emenda diz, com todas as letras, que os
+      # relatorios saem "da mesma caixa" e que apontar para tileservers diferentes so criaria
+      # divergencia visual entre eles. Opcional; sem ela cai no CartoDB Voyager de antes.
+      #   API_BASEMAP_TILES_URL=http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png
+      #
+      # CORRECAO DE DERIVA (2026-07-29): a producao JA passava esta variavel ao `web` — o compose
+      # do servidor foi editado a mao e ficou A FRENTE do repo. Sem esta linha, restaurar o compose
+      # versionado por cima do servidor DESLIGARIA o tileserver no piloto, em silencio (o PDF
+      # continuaria saindo, pelo CartoDB). Conferido por diff do arquivo real do VPS.
+      API_BASEMAP_TILES_URL: ${API_BASEMAP_TILES_URL:-}
+      # Rotulos (nomes de rua/avenida/bairro) compostos POR CIMA do choropleth, do MESMO
+      # tileserver — estilo `ultra-labels` (BLK-BASEMAP-06). Sem esta var NAO ha overlay e os
+      # mapas de calor saem sem nome nenhum; nao ha mais fallback para o CARTO.
+      #   API_BASEMAP_LABELS_URL=http://motor_expansao_tileserver:8080/styles/ultra-labels/{z}/{x}/{y}@2x.png
+      API_BASEMAP_LABELS_URL: ${API_BASEMAP_LABELS_URL:-}
+    volumes:
+      - /opt/motor-expansao/data/outputs:/app/data/outputs:ro    # censo geo + enriquecido + base_calibracao
+      - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + renda domiciliar
+      - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal
+      - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF
+      - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)
+    networks:
+      - app_net
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8899/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
   # ── Caddy (reverse proxy + TLS automático) ─────────────────────────────────
   caddy:
     image: caddy:2-alpine
@@ -161,6 +216,7 @@ services:
     depends_on:
       - authelia
       - streamlit
+      - web
     ports:
       - "80:80"
       - "80:80/udp"

@@ -1,0 +1,94 @@
+# syntax=docker/dockerfile:1
+# Imagem do PILOTO WEB (Motor de Expansao Ultra Academia). Multi-stage:
+#   1) Node builda o frontend Vite (web/ -> dist/)
+#   2) Python (espelha Dockerfile.api) roda o backend FastAPI, que serve o dist/
+#      E a API na MESMA porta 8899. Um unico container; o Caddy so faz reverse_proxy
+#      (igual ao dashboard->streamlit), atras do Authelia.
+#
+# READ-ONLY sobre o M1: o container so LE os parquets montados :ro; nao recalcula
+# score_priorizacao/pesos nem escreve artefato oficial (guardrail do backend).
+
+# --------------------------------------------------------------------------
+# Estagio 1 — build do frontend (Vite)
+# --------------------------------------------------------------------------
+FROM node:20-slim AS frontend
+WORKDIR /web
+# Cache das deps: copia so os manifests antes do `npm ci`.
+COPY web/package.json web/package-lock.json* ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+# --------------------------------------------------------------------------
+# Estagio 2 — backend Python + SPA estatico
+# --------------------------------------------------------------------------
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HOME=/home/appuser \
+    MOTOR_DATA_DIR=/app/data \
+    WEB_DIST_DIR=/app/web/dist
+WORKDIR /app
+
+# curl (healthcheck) + libexpat1 (runtime do rasterio/contextily do Relatorio Pontual)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates libexpat1 \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# Motor (funcoes puras) + FastAPI/uvicorn (api_mvp) + contextily (basemap, p/ o PDF).
+# streamlit ja vem nas dependencias base. SEMPRE com o lockfile universal.
+# (COPY . . respeita o .dockerignore: nao traz data/, tests/, web/node_modules, web/dist.)
+COPY . .
+RUN python -m pip install --upgrade pip \
+    && python -m pip install ".[basemap,api_mvp]" -c constraints.txt
+
+# dist/ vem do estagio Node (o COPY . . nao o traz, por causa do .dockerignore)
+COPY --from=frontend /web/dist ./web/dist
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BLK-SEC-04 — camada final de SEGURANCA. Fica por ULTIMO de proposito.
+#
+# PROBLEMA 1 (o que travou o deploy em 2026-07-30): o CI builda com
+# `cache-from: type=gha` e a linha do `apt-get` acima nunca muda -> a camada de
+# pacotes de SO ficava CONGELADA no estado da primeira vez que foi cacheada.
+# Atualizacao de seguranca do Debian NUNCA chegava, por mais rebuilds que se
+# fizesse. Foi assim que o `libexpat1` ficou preso em 2.7.1-2 com 2.8.2-1~deb13u1
+# disponivel em `trixie-security` e 5 HIGH abertos.
+# O `ARG APT_REFRESH` recebe o `github.run_id` no CI: muda a cada execucao, entao
+# ESTA camada e' sempre refeita. Ela vem depois do `pip install` justamente para
+# nao invalidar a camada cara — o custo e' ~20s de apt, nao o build inteiro.
+#
+# PROBLEMA 2: `pip`/`setuptools`/`wheel` ficavam na imagem de RUNTIME e arrastavam
+# CVE de ferramenta de build (inclusive o `msgpack` VENDORIZADO dentro do pip).
+# Era a divida que o proprio `.trivyignore` nomeava: "remediar de verdade = imagem
+# sem build tools no runtime". Nenhum servico importa isso em runtime — os unicos
+# usos de `setuptools_scm` no venv (matplotlib, pyarrow) estao sob `try` e so valem
+# para checkout de git.
+#
+# Os DOIS smokes existem para que uma remocao errada quebre o BUILD, nunca a
+# producao: se algum import parar de funcionar, a imagem nao e' publicada.
+ARG APT_REFRESH=0
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -c "import fastapi, uvicorn, contextily, rasterio, matplotlib, pyarrow, motor_expansao" \
+    && (python -m pip uninstall -y wheel || true) \
+    && (python -m pip uninstall -y setuptools || true) \
+    && (python -m pip uninstall -y pip || true) \
+    && python -c "import fastapi, uvicorn, contextily, rasterio, matplotlib, pyarrow, motor_expansao" \
+    && echo "BLK-SEC-04: build tools removidos, imports intactos"
+
+# Usuario non-root (padrao dos demais servicos)
+RUN useradd --create-home --shell /usr/sbin/nologin appuser \
+    && mkdir -p /app/data \
+    && chown -R appuser:appuser /app /home/appuser
+USER appuser
+
+EXPOSE 8899
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8899/api/health || exit 1
+
+# Um processo serve o SPA (dist/, via StaticFiles) e a API na :8899.
+CMD ["uvicorn", "app:app", "--app-dir", "web/server", "--host", "0.0.0.0", "--port", "8899"]
