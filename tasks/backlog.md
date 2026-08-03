@@ -2755,6 +2755,100 @@ crash); checklist da §15; validação humana de UX (<60s jr., "uma decisão por
 
 ---
 
+### BLK-WEB-18 — Merge grande `piloto-web` → `main` (DEC-022)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (traz `web/`, `Dockerfile.web`, CI novo e FIN-VIAB-01 à main; toca `ci.yml`, `pyproject.toml`, `constraints.txt`). |
+| **Prioridade** | Máxima (destrava o corte da DEC-022). |
+| **Esteira** | manual (Felipe + sessão). |
+| **Status** | Pendente. |
+| **Depende de** | Bloco de governança da DEC-022 mergeado (guard `^web/` na base). |
+| **Autonomia** | **manual (NÃO loop-safe)** — merge de 126 arquivos com política de resolução por grupo; `critica-aprovada` + admin-merge. |
+
+**Contexto.** DEC-022: merge verdadeiro (nunca squash/`-s theirs`) em `sync/piloto-web-main`; main vence em
+`loop_guard.py`/`vulnerabilidade/`/handoffs; piloto vence em `web/**`/FIN-VIAB-01/testes do piloto; `backlog.md` por
+união manual; `ci.yml` por união (jobs `web`+`publish-web` entram; nada do Streamlit sai ainda). Na resolução:
+`git rm` de `repro*.png` e `data/reports/Poc_Satelite/`; linha DEC-020 do CLAUDE.md ganha link markdown.
+
+---
+
+### BLK-WEB-19 — Reancoragem dos testes do motor compartilhado (pré-corte)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (só `tests/`; sem `conftest.py`). |
+| **Prioridade** | Alta (bloqueia o BLK-WEB-20). |
+| **Esteira** | Builder → QA. |
+| **Status** | Pendente. |
+| **Autonomia** | loop-safe (fronteira exclusiva em `tests/`). |
+
+**Contexto.** ~⅓ dos 255 testes de `test_streamlit_app.py` cobre motor compartilhado SÓ via UI
+(`analisar_entorno_ponto`, `score_band_to_color`, `parse_hex_ids_from_text`, bloco `relatorio_municipal`,
+`enrich_dashboard_data`). Reancorar em testes diretos + splits (`test_cenario_multihex`, `test_ultra_pins`,
+`test_renda_domiciliar_hex`, `test_coord_search`, `test_relatorio_pontual_ui_relviab06`,
+`test_motor_expansao_import`, `tests/contracts/test_docs_vs_codigo.py`). Aceite: cobertura de
+`src/motor_expansao/dashboard/` SEM `test_streamlit_app.py` ≥ baseline com ele.
+
+---
+
+### BLK-WEB-20 — O corte: remoção atômica do Streamlit (DEC-022)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (deleta o app legado; toca `pyproject.toml`, `constraints.txt`, `ci.yml`, compose, CLAUDE.md). |
+| **Prioridade** | Máxima. |
+| **Esteira** | manual (Felipe + sessão). |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-18** + **BLK-WEB-19** + compose sincronizado com o servidor. |
+| **Autonomia** | **manual (NÃO loop-safe)** — `critica-aprovada` + admin-merge. |
+
+**Contexto.** Um único PR: deletes (`streamlit_app.py`, `dashboard/{pages,components,ui_theme,ui_proto,ui_spike_deckgl}.py`,
+`.streamlit/`, `Dockerfile.streamlit`, scripts rev/perf, 2 funções UI duck-typed, testes UI-only incl.
+`test_streamlit_app.py`); `streamlit` sai das deps BASE + refresh do `constraints.txt`; `ci.yml` sem `Smoke import`/
+`publish`/`build-sanity`/branch legada + pin `setup-node` + `trivyignores` no `publish-web`; compose sem `streamlit`
+(+ `mem_limit` para o `web`); docs (~225 linhas/30 arquivos; CLAUDE.md §2 e §4 emendados). Verificação: `rg streamlit`
+limpo fora de histórico; builds `Dockerfile.api`/`Dockerfile.web` + `/api/health`; suíte completa; pip-audit.
+
+---
+
+### BLK-WEB-21 — Descomissionamento do Streamlit no VPS (DEC-022)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (produção; Caddy/Authelia/compose do servidor). |
+| **Prioridade** | Máxima (fecha a DEC-022). |
+| **Esteira** | manual — **comando a comando com Felipe (CLAUDE.md §6)**. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-20** deployado e validado. |
+| **Autonomia** | **manual (NÃO loop-safe)**. |
+
+**Contexto.** Ordem obrigatória: (1) Caddy — bloco `dashboard.` mantém SÓ `/tiles/*` + 301 raiz→`piloto.`,
+re-cifrar `secrets/Caddyfile.enc`; (2) validar basemap nos PDFs (api + piloto); (3) PR do `healthcheck_vps.sh`
+(EDGE_URL→`piloto.`); (4) `stop`/`rm` do container + `.env` sem `STREAMLIT_IMAGE`; (5) Authelia intocada
+(`/tiles/` segue atrás do login); (6) `ps` todos healthy; (7) tag `arquivo/piloto-web-final` + delete da branch
+`piloto-web`. Imagem GHCR retida por semanas (rollback = revert do BLK-WEB-20 + imagem existente).
+
+---
+
+### BLK-WEB-22 — Porte prioritário pós-corte: fila/lote de relatórios no piloto
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (feature de produção no piloto; READ-ONLY sobre o M1). |
+| **Prioridade** | Alta (primeira dívida de paridade da DEC-022). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | **BLK-WEB-20**. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca `web/**` (governança DEC-022). |
+
+**Contexto.** Único porte escolhido por Felipe na DEC-022: fila do Relatório Pontual (adicionar endereços, gerar
+i/N com progresso, N downloads) e lote do Relatório Municipal (N municípios), como existiam no Streamlit
+(`render_relatorio_pontual_lote` / `render_relatorio_municipal_download_topo`). Backend provável: endpoint de lote
+ou orquestração client-side sobre `POST /api/relatorio/pontual`/`municipal`; UX a especificar contra o piloto.
+
+---
+
 ### BLK-BASEMAP-03 — Quita a dívida do overlay de rótulos + nomes de rua no Relatório Municipal
 
 | Campo | Valor |

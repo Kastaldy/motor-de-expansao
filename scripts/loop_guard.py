@@ -168,6 +168,10 @@ _DENY_GOVERNANCA: list[tuple[str, str]] = [
     ),
     (r"^streamlit_app\.py$", "entrypoint do dashboard de producao"),
     (r"^src/motor_expansao/api/", "API/bot servidos em producao"),
+    # DEC-022 — o piloto web e' o app de producao que substitui o Streamlit. O backend
+    # (web/server) calcula/exibe os numeros do comite e o frontend define o que o usuario
+    # ve; nenhum dos dois entra por bloco "Media" auto-mergeavel sem olho humano.
+    (r"^web/", "piloto web servido em producao (frontend + backend FastAPI)"),
     (
         r"^src/motor_expansao/dimensionamento/viabilidade_ponto\.py$",
         "motor de viabilidade (DEC-009)",
