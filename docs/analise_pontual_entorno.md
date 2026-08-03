@@ -1,4 +1,4 @@
-> **[HISTORICO]** Contrato de ciclo concluido (maio/2026, raio 1.6 km). Estado atual do app em `docs/arquitetura_app_atual.md`.
+> **[HISTORICO]** Contrato de ciclo concluido (maio/2026, raio 1.6 km) do dashboard Streamlit, aposentado pela DEC-022 (2026-08-03). A Analise Pontual de Entorno como painel navegavel e perda aceita do corte — nao tem equivalente no piloto web (`web/`), o app atual.
 
 # Contrato: Visao Executiva Ultra e Analise Pontual de Entorno
 

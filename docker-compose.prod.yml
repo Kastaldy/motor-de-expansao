@@ -1,7 +1,7 @@
 # docker-compose.prod.yml — Motor de Expansão Ultra Academia
 #
 # Serviços:
-#   streamlit  — dashboard Streamlit (sem porta exposta no host; acessível apenas via rede interna)
+#   web        — piloto web (SPA + API FastAPI; sem porta no host, acessível via rede interna)
 #   caddy      — reverse proxy com HTTPS automático via Let's Encrypt
 #   authelia   — autenticação self-hosted com tela de login e suporte a 2FA opcional
 #
@@ -14,59 +14,6 @@
 #      camadas paralelas; sem o bind, os overlays do Mapa Territorial somem em silencio)
 
 services:
-
-  # ── Streamlit ──────────────────────────────────────────────────────────────
-  streamlit:
-    # Modo PULL: o servidor PUXA a imagem publicada no GHCR pelo job `publish` do
-    # workflow CI (.github/workflows/ci.yml); NAO faz build local. O pin e
-    # OBRIGATORIO por digest imutavel via STREAMLIT_IMAGE — nao ha default cego.
-    # Producao DEVE definir, ex.:
-    #   STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit@sha256:<digest>
-    # Fail-closed: `docker compose up` SEM STREAMLIT_IMAGE definido falha de
-    # proposito com mensagem clara (evita puxar imagem errada/:latest movel).
-    # Runbook (Atualizar/Rollback por digest): docs/infra_producao.md e docs/deploy.md.
-    # Build local de sanity continua via
-    # `docker build -f Dockerfile.streamlit -t test:ci .` (independe deste compose).
-    image: ${STREAMLIT_IMAGE:?defina STREAMLIT_IMAGE com o digest imutavel ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit@sha256:<digest> — ver docs/infra_producao.md (Atualizar/Rollback)}
-    container_name: motor_expansao_streamlit
-    restart: unless-stopped
-    # Porta NÃO exposta no host — acesso apenas via caddy na rede interna
-    mem_limit: 10g
-    memswap_limit: 12g
-    environment:
-      STREAMLIT_SERVER_HEADLESS: "true"
-      STREAMLIT_SERVER_ADDRESS: "0.0.0.0"
-      STREAMLIT_SERVER_PORT: "8501"
-      STREAMLIT_BROWSER_GATHER_USAGE_STATS: "false"
-      # Vista aerea (satelite Esri) no PDF do dashboard — lida via os.environ pelo
-      # fallback `_sat_api_key()`. Opcional; sem ela a pagina e omitida (DEC-018).
-      API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}
-      # Fundo de ruas dos PDFs pelo tileserver OpenMapTiles proprio (BLK-BASEMAP-02, emenda
-      # DEC-004/011). URL INTERNA da rede app_net — a rota publica /tiles/ esta atras do Authelia
-      # e um fetch server-side nao tem cookie -> 302 e o PDF sairia sem ruas, em silencio.
-      # Opcional: SEM ela o basemap cai no CartoDB Voyager de antes, sem quebrar nada.
-      #   API_BASEMAP_TILES_URL=http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png
-      API_BASEMAP_TILES_URL: ${API_BASEMAP_TILES_URL:-}
-      # Rotulos (nomes de rua/avenida/bairro) compostos POR CIMA do choropleth, do MESMO
-      # tileserver — estilo `ultra-labels` (BLK-BASEMAP-06). Sem esta var NAO ha overlay e os
-      # mapas de calor saem sem nome nenhum; nao ha mais fallback para o CARTO.
-      #   API_BASEMAP_LABELS_URL=http://motor_expansao_tileserver:8080/styles/ultra-labels/{z}/{x}/{y}@2x.png
-      API_BASEMAP_LABELS_URL: ${API_BASEMAP_LABELS_URL:-}
-    volumes:
-      - /opt/motor-expansao/data/outputs:/app/data/outputs:ro
-      - /opt/motor-expansao/data/staging:/app/data/staging:ro    # overlays do Mapa Territorial (vazios competitivos)
-      - /opt/motor-expansao/concorrentes:/app/concorrentes:ro
-      - /opt/motor-expansao/data/ultra:/app/data/ultra:ro
-    networks:
-      - app_net
-    security_opt:
-      - no-new-privileges:true
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8501/_stcore/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 45s
 
   # ── API GeoEspacial (on-demand, interna) ───────────────────────────────────
   # Container separado, mesma VPS/rede. Consome os MESMOS volumes de dados (:ro)
@@ -101,8 +48,8 @@ services:
       # (BLK-SAT-01/DEC-018). Opcional: sem ela a pagina de satelite e omitida e o
       # resto do PDF sai igual. Defina no .env do servidor: API_ARCGIS_API_KEY=...
       API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}
-      # Fundo de ruas dos PDFs pelo tileserver proprio (BLK-BASEMAP-02). Mesma URL INTERNA do
-      # servico streamlit — os dois relatorios saem da mesma caixa e apontar para tileservers
+      # Fundo de ruas dos PDFs pelo tileserver proprio (BLK-BASEMAP-02). MESMA URL INTERNA
+      # que o servico `web` usa — os relatorios saem da mesma caixa e apontar para tileservers
       # diferentes so criaria divergencia visual. Opcional; sem ela cai no Voyager de antes.
       API_BASEMAP_TILES_URL: ${API_BASEMAP_TILES_URL:-}
       # Rotulos (nomes de rua/avenida/bairro) compostos POR CIMA do choropleth, do MESMO
@@ -155,7 +102,7 @@ services:
 
   # ── Piloto Web (frontend Vite + backend FastAPI, num UNICO container) ────────
   # Serve o SPA (dist/) E a API na mesma porta 8899; o Caddy so faz reverse_proxy
-  # (igual ao dashboard->streamlit), atras do Authelia. Consome os MESMOS volumes de
+  # (um bloco por subdominio), atras do Authelia. Consome os MESMOS volumes de
   # dados (:ro) do host. Sem porta no host. PILOTO: numeros da Viabilidade em
   # calibracao (rotulo "preliminar" na UI). READ-ONLY sobre o M1.
   web:
@@ -166,6 +113,10 @@ services:
     image: ${WEB_IMAGE:?defina WEB_IMAGE com o digest imutavel ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest> — ver docs/deploy_piloto_web.md}
     container_name: motor_expansao_web
     restart: unless-stopped
+    # DEC-022: teto herdado da funcao do streamlit (que tinha 10g/12g) — o web e o app
+    # principal e carrega particoes de UF inteiras em memoria na 1a leitura.
+    mem_limit: 8g
+    memswap_limit: 10g
     expose:
       - "8899"
     environment:
@@ -176,7 +127,7 @@ services:
       # Relatorio Pontual. Sem a var -> render devolve None -> pagina omitida (PDF sai igual).
       API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}
       # Fundo de ruas dos PDFs pelo tileserver proprio (BLK-BASEMAP-02, emenda DEC-004/011).
-      # MESMA URL INTERNA que `streamlit` e `api` usam: a emenda diz, com todas as letras, que os
+      # MESMA URL INTERNA que a `api` usa: a emenda diz, com todas as letras, que os
       # relatorios saem "da mesma caixa" e que apontar para tileservers diferentes so criaria
       # divergencia visual entre eles. Opcional; sem ela cai no CartoDB Voyager de antes.
       #   API_BASEMAP_TILES_URL=http://motor_expansao_tileserver:8080/styles/ultra-maptiler/{z}/{x}/{y}@2x.png
@@ -215,7 +166,6 @@ services:
     restart: unless-stopped
     depends_on:
       - authelia
-      - streamlit
       - web
     ports:
       - "80:80"

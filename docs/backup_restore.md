@@ -6,7 +6,8 @@
 > e validacao anti-vazamento.
 >
 > Quem mantem: Felipe Silva (Estrategia / Growth — Ultra Academia).
-> Atualizado em: 2026-05-28 (ciclo BLK-OPS-01).
+> Atualizado em: 2026-05-28 (ciclo BLK-OPS-01); revisado em 2026-08-03 (DEC-022 —
+> Streamlit aposentado, app de producao passa a ser o piloto web).
 
 ---
 
@@ -23,7 +24,7 @@
 **NAO cobre:**
 - Backup remoto automatizado (rclone, S3, Backblaze). Anexo opcional, nao
   implementado neste ciclo.
-- Alteracoes em `docker-compose.prod.yml`, `Dockerfile.streamlit`, pipeline
+- Alteracoes em `docker-compose.prod.yml`, `Dockerfile.web`, pipeline
   M1, `config.py` ou parametros canonicos (`score_priorizacao`,
   `hex_score_estrutural`).
 - Snapshot binario do VPS (Hostinger oferece backup proprio — fora de escopo).
@@ -417,13 +418,19 @@ mkdir -p /opt/motor-expansao/data/outputs/ /opt/motor-expansao/data/ultra/ /opt/
 
 ### 10.8. Subir o stack
 
+O compose nao builda nada no servidor (modo PULL por digest — DEC-022): o `.env`
+restaurado precisa ter `WEB_IMAGE` e `API_IMAGE` pinados por digest do GHCR
+(ver `docs/deploy_piloto_web.md` e `docs/deploy_api_bot.md`; se o pacote GHCR
+for privado, `docker login ghcr.io` antes).
+
 ```bash
 cd /opt/motor-expansao/app/
-docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
 docker compose -f docker-compose.prod.yml ps
 ```
 
-Esperado: 3 containers `healthy` em ate 2 min.
+Esperado: 5 containers `healthy` em ate 2 min (web, api, telegram-bot, caddy, authelia).
 
 ### 10.9. Validar (vai para §14)
 
@@ -523,22 +530,20 @@ docker compose -f docker-compose.prod.yml restart authelia
 
 ```powershell
 # 1. Base H3 res 7 — todas as UFs
-python base_h3_brasil.py
+python -m motor_expansao.pipelines.m1.base_h3_brasil
 # Output: data/staging/brasil/uf=XX/hexagonos.parquet (27 particoes)
 # Tempo esperado: ~25-40 min (depende de latencia IBGE)
-# Equivalente moderno: python -m motor_expansao.pipelines.m1.base_h3_brasil
 
 # 2. Enriquecimento + score oficial
-python hex_enrichment.py
+python -m motor_expansao.pipelines.m1.hex_enrichment
 # Outputs:
 #   data/staging/brasil_estrutural.parquet
 #   data/staging/brasil_priorizados.parquet
 #   data/staging/hexagonos_brasil_oportunidades.parquet
 # Tempo esperado: ~15-25 min
-# Equivalente moderno: python -m motor_expansao.pipelines.m1.hex_enrichment
 
 # 3. Exports BI executivos
-python fase1_bi_exports.py
+python -m motor_expansao.pipelines.m1.fase1_bi_exports
 # Outputs:
 #   data/outputs/hexagonos_brasil_dashboard.parquet
 #   data/outputs/hexagonos_mapa_sample.parquet
@@ -546,7 +551,6 @@ python fase1_bi_exports.py
 #   data/outputs/resumo_por_uf.csv
 #   data/outputs/hexagonos_dashboard_enriquecido/uf=XX/parte-*.parquet (derivado)
 # Tempo esperado: ~5-10 min
-# Equivalente moderno: python -m motor_expansao.pipelines.m1.fase1_bi_exports
 ```
 
 **Tempo total esperado:** ~45-75 min (rede IBGE como gargalo).
@@ -563,8 +567,8 @@ python scripts/check_artifacts.py
 
 Se a carteira de mercado tambem precisar ser regenerada:
 ```powershell
-python jobs/pipelines/gerar_carteira_acionavel.py
-python jobs/pipelines/gerar_plano_expansao_curto_prazo.py
+python -m motor_expansao.pipelines.gerar_carteira_acionavel
+python -m motor_expansao.pipelines.gerar_plano_expansao_curto_prazo
 ```
 **Nao** faz parte do escopo oficial M1; rode somente se necessario.
 
@@ -581,22 +585,25 @@ Checklist apos `docker compose up -d`:
 ```bash
 # 1. Containers
 docker compose -f docker-compose.prod.yml ps
-# Esperado: streamlit, caddy, authelia todos 'healthy' ou 'running'
+# Esperado: web, api, telegram-bot, caddy, authelia todos 'healthy' ou 'running'
 
-# 2. Healthcheck Streamlit
-curl -fsS https://dashboard.ultra-expansao.tech/_stcore/health
-# Esperado: HTTP 200 + body "ok"
+# 2. Healthcheck do piloto web
+curl -fsS https://piloto.ultra-expansao.tech/api/health
+# Esperado: HTTP 200 + {"status":"ok"}
+# (Alternativa por dentro do container, sem passar pelo edge:
+#  docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health)
 
 # 3. Login Authelia
 # Abrir em navegador: https://auth.ultra-expansao.tech
 # Esperado: tela de login do Authelia
 
-# 4. Login Dashboard (cookie via Authelia)
-# Abrir em navegador: https://dashboard.ultra-expansao.tech
-# Esperado: redirect para Authelia, login, retorno ao Streamlit
+# 4. Login no piloto (cookie via Authelia)
+# Abrir em navegador: https://piloto.ultra-expansao.tech
+# Esperado: redirect para Authelia, login, retorno ao SPA do piloto
 
 # 5. Logs sem erro
-docker compose -f docker-compose.prod.yml logs --tail=50 streamlit
+docker compose -f docker-compose.prod.yml logs --tail=50 web
+docker compose -f docker-compose.prod.yml logs --tail=50 api
 docker compose -f docker-compose.prod.yml logs --tail=50 caddy
 docker compose -f docker-compose.prod.yml logs --tail=50 authelia
 ```

@@ -15,7 +15,7 @@
 ## Arquitetura
 
 ```
-caddy ─► streamlit (dashboard)        [já existia]
+caddy ─► web (piloto)                 [app de produção — DEC-022]
      └─► authelia  (login)            [já existia]
 
 telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ibge + staging + ultra)
@@ -26,7 +26,7 @@ telegram-bot ──HTTP interno──► api ──► volumes :ro (outputs + ib
 - **Imagem única** (`Dockerfile.api`) para os dois serviços; o bot inclui Google Chrome
   porque o geocoder de endereço+CEP usa Selenium (`maps_geocoder`).
 - A API **não tem porta no host**; só o bot a consome via `http://api:8077`.
-- Não afeta a imagem do Streamlit (`Dockerfile.streamlit`, `.[basemap]`).
+- Não afeta a imagem do piloto web (`Dockerfile.web`, `motor-expansao-web`).
 
 ## Pré-condições de dados na VPS (READ-ONLY, montados via volume)
 
@@ -78,7 +78,7 @@ Acrescentar ao `/opt/motor-expansao/app/.env` (modelo em `.env.example`):
 
 Gerar tokens fortes: `openssl rand -hex 24`.
 
-## Subir/atualizar (PULL por digest, igual ao Streamlit)
+## Subir/atualizar (PULL por digest, igual ao web)
 
 A imagem `motor-expansao-api` é publicada no GHCR pelo job **`publish-api`** do CI
 (`.github/workflows/ci.yml`) — **filtrado por caminho**: só rebuilda/publica quando mudam
@@ -89,9 +89,10 @@ A imagem `motor-expansao-api` é publicada no GHCR pelo job **`publish-api`** do
 > **contém e executa** o código de `src/motor_expansao/dashboard/**` (o bot gera o PDF via
 > `censo_report`/`censo_map`/`censo_point`). Mas o filtro de caminho do `publish-api` só olha
 > `api/`/`Dockerfile.api`/`pyproject.toml` — então uma feature de **dashboard** (ex.: novo
-> choropleth no Relatório Pontual, ajuste de legenda) sobe no **streamlit** pelo push na `main`,
-> mas a imagem da **API/bot fica STALE**. Para propagar ao bot, **republique a API manualmente**
-> após o merge: `gh workflow run ci.yml --ref main -f publish_api=true -f dispatch_build_sanity=false`,
+> choropleth no Relatório Pontual, ajuste de legenda) sobe no **web** pelo push na `main` (o
+> path-filter do `publish-web` cobre `src/motor_expansao/dashboard/**`), mas a imagem da
+> **API/bot fica STALE**. Para propagar ao bot, **republique a API manualmente**
+> após o merge: `gh workflow run ci.yml --ref main -f publish_api=true`,
 > pegue o "API digest imutavel publicado" e faça o pull+up abaixo. Verificação de fechamento:
 > `docker compose -f docker-compose.prod.yml exec -T api python -c "from motor_expansao.dashboard import censo_map as m; print(len(m.CAMADAS_CENSITARIAS), m.CAMADAS_CENSITARIAS)"`
 > deve refletir o código novo. **Esperado hoje (pós-BLK-RELPON-14): 7 chaves** — `densidade`,
@@ -113,7 +114,7 @@ docker exec motor_expansao_api curl -fsS http://127.0.0.1:8077/health   # sem po
 docker compose -f docker-compose.prod.yml logs --tail=50 telegram-bot
 ```
 
-- Caddy/Authelia/Streamlit **não** reiniciam.
+- Caddy/Authelia/web **não** reiniciam.
 - Sessões do bot persistem no volume `bot_data` (restart não desloga usuários).
 - O primeiro geocode por endereço baixa o chromedriver (webdriver-manager) — precisa de
   internet na VPS (já tem). `lat,lng`/link do Maps não dependem disso.

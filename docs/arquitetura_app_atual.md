@@ -1,10 +1,132 @@
 # Arquitetura do app atual — inventário e mapa de dependências
 
-> Artefato do BLK-REV-02 (epic BLK-REV). READ-ONLY sobre o M1: este documento
-> descreve o estado atual do app Streamlit sem alterar código, score ou artefatos.
-> Fontes: leitura do código-fonte em `src/motor_expansao/dashboard/`, `streamlit_app.py`,
-> `src/motor_expansao/api/`, e o baseline de performance `data/analysis/perf_baseline_app_2026.md`
-> (BLK-REV-01). Gerado em 2026-07-08.
+> Nasceu como artefato do BLK-REV-02 (epic BLK-REV, 2026-07-08), descrevendo o
+> dashboard Streamlit. Atualizado em **2026-08-03 (DEC-022)**: o Streamlit foi
+> aposentado e o app de produção passou a ser o **piloto web**. A **parte A**
+> descreve o app atual; a **parte B** preserva, como HISTÓRIA, o inventário do
+> Streamlit (é o registro mais detalhado da arquitetura que o corte removeu, e o
+> motor compartilhado descrito lá continua vivo). READ-ONLY sobre o M1 nas duas
+> partes.
+
+---
+
+# Parte A — O app atual: piloto web (desde 2026-08-03, DEC-022)
+
+## A.1 Visão geral
+
+O app de produção é o **piloto web** em `web/`: uma SPA **React + Vite + deck.gl**
+(`web/src/`) servida por um backend **FastAPI** (`web/server/app.py`, porta `8899`)
+que embrulha as funções puras do motor compartilhado e lê os Parquets read-only
+(`MOTOR_DATA_DIR`). Em produção, **um único container** (`motor_expansao_web`,
+imagem `motor-expansao-web`) serve o `dist/` do Vite via `StaticFiles` e a API em
+`/api/*` na mesma porta, atrás de Caddy + Authelia no subdomínio
+`piloto.ultra-expansao.tech`. O subdomínio `dashboard.ultra-expansao.tech` ficou
+vivo **apenas** como host de `/tiles/*` (tileserver que alimenta o basemap dos
+PDFs); a raiz redireciona 301 para o piloto (DEC-022 §3).
+
+São **3 superfícies** (DEC-020 definiu esse escopo; "substituir 100% o Streamlit"
+= paridade destas três):
+
+- **Mapa Territorial** (default) — porta de entrada por UF, funil de 4 camadas
+  (Potencial → setores quentes → residual → white spaces → aberturas) com
+  drill-down até o município, multi-hex, filtro "MELHORES", busca por
+  coordenada/link/endereço e geração dos Relatórios Municipal e Pontual.
+- **Visão Executiva** — a rede Ultra REAL por estado (Growth API,
+  `growth_api_historico.parquet`, ingestão semanal — DEC-013): bubble map,
+  KPIs com variação vs M-1, ranking de unidades, seletor de competência.
+- **Viabilidade do ponto** — stress-test determinístico de um imóvel; o backend
+  chama `simular()` (`dimensionamento/simulador.py`) e serve o
+  `viabilidade_payload_v1` único que tela, API e PDF consomem sem recalcular.
+
+O Dock mostra `Expansão de domínio` e `Carteira e plano` desabilitadas de
+propósito: a DEC-020 decidiu que Domínio não vira tela (a Fase 4 do Mapa cobre a
+análise) e que Carteira/Plano vira, no futuro, "Oportunidades Imobiliárias"
+(placeholder; epic própria pendente de DEC + spec).
+
+## A.2 Peças e dependências
+
+```
+web/
+  server/app.py         backend FastAPI do piloto (paralelo a src/motor_expansao/api/)
+  src/
+    lib/                contrato de tipos, cliente HTTP, formatação pt-BR
+    components/         dock, mapa deck.gl, painel narrativo, stepper, gráficos
+    screens/            MapScreen, ViabilityScreen
+    styles/tokens.css   paleta e escalas
+```
+
+Endpoints do backend (`web/server/app.py`): `GET /api/health`, `/api/ufs`,
+`/api/geocode`, `/api/municipios/{uf}`, `/api/uf/{uf}`,
+`/api/municipio/{uf}/{municipio}`, `/api/faixa-alunos`, `/api/executiva/{uf}`;
+`POST /api/viabilidade`, `/api/relatorio/municipal`, `/api/relatorio/pontual`,
+`/api/simulador/xlsx`.
+
+O backend **importa, não duplica** o motor compartilhado em
+`src/motor_expansao/dashboard/` — que sobreviveu ao corte por inteiro:
+`data.py` (carga lazy por UF via `read_enriched_uf_partition`, agregadores puros),
+`constants.py`, `schemas.py`, `utils.py`, `competitors.py`, `censo_point.py`,
+`censo_map.py`, `censo_report.py`, `relatorio_municipal.py` e
+`viabilidade_charts.py`. Esses módulos são consumidos por 4 clientes: o piloto,
+a API GeoEspacial (`src/motor_expansao/api/`, container `motor_expansao_api`,
+consumida pelo bot Telegram), o próprio bot e o `fase1_bi_exports` (que
+materializa o dataset enriquecido). O que saiu no corte foi só o subgrafo
+Streamlit-only: `pages.py`, `components.py`, `ui_theme.py`, `ui_proto.py`,
+`ui_spike_deckgl.py`, `streamlit_app.py` e `.streamlit/` (detalhe na parte B —
+o inventário histórico descreve esses módulos como vivos).
+
+## A.3 Modelo de interação (por que a arquitetura mudou)
+
+O diagnóstico do ciclo BLK-REV (ver `docs/system_design_referencia.md` §2 e a
+parte B §6 abaixo) mostrou que o gargalo do app antigo era o ciclo
+rerun/reserialização do Streamlit + pydeck, não o volume de dados. O piloto adota
+o padrão dos produtos de referência: **instância deck.gl persistente no cliente**
+— trocar cor/camada muta só o atributo alterado (`updateTriggers`/`visible`), sem
+reenviar hexes nem re-executar backend. O backend só entra quando há dado novo
+(troca de UF/município, geocoding, relatório, viabilidade).
+
+A carga continua **lazy por UF**: o backend lê só a partição `uf=XX` de
+`data/outputs/hexagonos_dashboard_enriquecido/` (a 1ª leitura de uma UF carrega a
+partição inteira e demora alguns segundos — esperado). Cores e tooltip do mapa
+são porte 1:1 do dashboard antigo (`score_band_to_color`, faixas de 10 pontos,
+corte `<5k hab` em cinza), então a leitura visual não mudou com a troca de stack.
+
+## A.4 Dados consumidos
+
+| Artefato | Uso |
+| --- | --- |
+| `data/outputs/hexagonos_dashboard_enriquecido/uf=XX/` | fonte principal do Mapa (obrigatório) |
+| `data/outputs/setores_censitarios_2022_geo/` | Relatório Pontual (malha real IBGE) |
+| `data/ibge/municipios_XX.geojson` | malha municipal dos relatórios |
+| `data/staging/concorrentes_mapeados.parquet` + `unidades_ultra_performance_hex.parquet` | pins no mapa |
+| `data/staging/growth_api_historico.parquet` | Visão Executiva (404 sem ele) |
+| `data/staging/base_calibracao_maduras.parquet` | semente p50 da Viabilidade |
+| `data/staging/hexagonos_mercado_mapeado.parquet` | residual do ponto no Relatório Pontual |
+| `data/staging/uplift_*.parquet` + `fator_temporal_renda.json` | renda domiciliar municipal (fallback nacional sem eles) |
+
+Tudo montado `:ro` em produção; guardrail permanente: o piloto **não recalcula**
+`score_priorizacao`, `hex_score_estrutural`, carteira, plano nem artefato oficial.
+
+## A.5 O que o corte removeu (perdas aceitas)
+
+A DEC-022 §1 lista os fluxos do Streamlit que deixaram de existir sem equivalente
+no piloto (fila/lote de relatórios, export CSV de setores, painel de entorno H3
+1,6 km, 20 dos 25 KPIs do multi-hex, ranking completo de 1.000 linhas, grade de
+sensibilidade na UI, filtro por rede, Visão Executiva territorial M1, rodapé de
+proveniência). O porte prioritário pós-corte é a **fila/lote de relatórios**
+(BLK-WEB-22). Deploy: `docs/deploy_piloto_web.md`.
+
+---
+
+# Parte B — HISTÓRIA: arquitetura do dashboard Streamlit (aposentado em 2026-08-03)
+
+> **Tudo abaixo descreve o app como era em 2026-07-08** (artefato do BLK-REV-02;
+> fontes: código em `src/motor_expansao/dashboard/`, `streamlit_app.py`,
+> `src/motor_expansao/api/` e o baseline `data/analysis/perf_baseline_app_2026.md`).
+> O dashboard de 5 abas foi aposentado pela **DEC-022** (escopo do corte na
+> **DEC-020**); `streamlit_app.py`, `pages.py`, `components.py` e os `ui_*` citados
+> adiante **não existem mais no repo**. O texto é preservado no tempo verbal
+> original porque documenta decisões (carga lazy por UF, render lazy, fonte de
+> mapa enxuta, caps) que continuam explicando o desenho do motor compartilhado.
 
 ## 1. Sumário executivo
 

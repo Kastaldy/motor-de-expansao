@@ -36,9 +36,10 @@ para os **mesmos caminhos relativos** dentro do clone. Total essencial ≈ 1,71 
 
 - [ ] Python 3.11 (paridade com o CI). `pip install -e ".[dev]"` (+ `".[basemap]"` se for mexer no
   fundo de ruas do relatório censitário).
-- [ ] Validar local: `python -m pytest -q` (verde), `ruff check .`, `mypy src/`,
-  `python -c "import streamlit_app"`.
-- [ ] Rodar o dashboard: `streamlit run streamlit_app.py` (lê os parquets de `data/outputs/`).
+- [ ] Validar local: `python -m pytest -q` (verde), `ruff check .`, `mypy src/`.
+- [ ] Rodar o app (piloto web, DEC-022): `iniciar-piloto-web.cmd` na raiz — sobe o front Vite
+  (`:5000`) e o back FastAPI (`:8899`), que lê os parquets via `MOTOR_DATA_DIR`
+  (ver `web/README.md`).
 
 ## 4. Fluxo de trabalho (por bloco)
 

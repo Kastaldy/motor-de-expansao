@@ -104,9 +104,9 @@ _DENY_CRITICO: list[tuple[str, str]] = [
     ),
     (r"(^|/)hexagonos_dashboard_enriquecido/", "artefato enriquecido servido ao dashboard"),
     (r"^deploy/", "deploy/ (VPS)"),
-    # `^Dockerfile\.` (nao so streamlit|api): o `Dockerfile.loop` - imagem do proprio loop autonomo -
+    # `^Dockerfile\.` (nao so web|api): o `Dockerfile.loop` - imagem do proprio loop autonomo -
     # ficava de fora do regex antigo.
-    (r"^Dockerfile\.", "imagem Docker (streamlit/api/loop)"),
+    (r"^Dockerfile\.", "imagem Docker (web/api/loop)"),
     (r"^\.dockerignore$", "contexto de build da imagem"),
     (r"docker-compose", "compose de producao"),
     (r"(^|/)Caddyfile", "Caddy (VPS)"),
@@ -166,7 +166,6 @@ _DENY_GOVERNANCA: list[tuple[str, str]] = [
         r"^src/motor_expansao/dashboard/(data|utils|censo_point|censo_map|censo_report)\.py$",
         "camada que calcula/exibe os numeros do dashboard",
     ),
-    (r"^streamlit_app\.py$", "entrypoint do dashboard de producao"),
     (r"^src/motor_expansao/api/", "API/bot servidos em producao"),
     # DEC-022 — o piloto web e' o app de producao que substitui o Streamlit. O backend
     # (web/server) calcula/exibe os numeros do comite e o frontend define o que o usuario
@@ -188,7 +187,6 @@ _DENY_GOVERNANCA: list[tuple[str, str]] = [
     (r"^\.codex/", "config do harness Codex"),
     (r"^scripts/housekeeping_move_block\.py$", "housekeeping do backlog"),
     (r"^data/osm_cache/", "cache de oferta versionado"),
-    (r"^\.streamlit/", "config do dashboard de producao"),
 ]
 
 _DENY_CRITICO_RES = [(re.compile(p), motivo) for p, motivo in _DENY_CRITICO]

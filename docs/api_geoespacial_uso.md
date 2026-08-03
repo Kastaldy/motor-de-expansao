@@ -11,7 +11,7 @@
 ## 1. Visão geral e arquitetura
 
 A API GeoEspacial é uma camada de consumo **on-demand** do Motor de Expansão, complementar ao
-dashboard Streamlit. Ela expõe o **Relatório Pontual Censitário 1,0 km** (KPIs em JSON e PDF de
+piloto web (o app de produção — DEC-022). Ela expõe o **Relatório Pontual Censitário 1,0 km** (KPIs em JSON e PDF de
 7 páginas) e o **Relatório Municipal** (PDF) para qualquer cliente HTTP com token — incluindo o
 bot Telegram "Paulo".
 

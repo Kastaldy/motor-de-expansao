@@ -2477,27 +2477,3 @@ def gerar_payloads_download_relatorio_municipal(
         pdf_bytes=pdf_bytes,
         pdf_filename=f"{prefix}.pdf",
     )
-
-
-def render_download_relatorio_municipal(
-    st_module: Any,
-    municipio_result: dict[str, Any],
-    mapas: dict[str, bytes] | None = None,
-    *,
-    filename_prefix: str | None = None,
-    ultra_dir: Path | str | None = None,
-    solicitante: str | None = None,
-    versao: str | None = None,
-) -> RelatorioMunicipalDownloadPayloads:
-    """Renderiza o botao de download Streamlit e retorna os mesmos bytes (testavel)."""
-    payloads = gerar_payloads_download_relatorio_municipal(
-        municipio_result, mapas, filename_prefix=filename_prefix,
-        ultra_dir=ultra_dir, solicitante=solicitante, versao=versao,
-    )
-    st_module.download_button(
-        "Baixar PDF do Relatorio Municipal",
-        data=payloads.pdf_bytes,
-        file_name=payloads.pdf_filename,
-        mime="application/pdf",
-    )
-    return payloads

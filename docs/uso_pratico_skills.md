@@ -258,7 +258,7 @@ após cada escrita em `context/handoff.md`:
 
 | Skill | Quando acionar |
 |---|---|
-| Frontend Builder | Features de dashboard, UI, componentes Streamlit |
+| Frontend Builder | Features de dashboard, UI (na época, componentes Streamlit; hoje o front é o piloto web React/Vite) |
 | Backend Builder | Pipelines, jobs, regras de negócio, contratos de dados |
 | Cybersecurity Agent | Deploy, autenticação, LGPD, APIs externas |
 | Designer/UI | Redesenho de telas, novo produto visual |

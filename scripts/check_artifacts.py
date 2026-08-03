@@ -1,5 +1,5 @@
 """
-Valida presenca dos artefatos minimos para o dashboard Streamlit.
+Valida presenca dos artefatos minimos para o piloto web e os relatorios.
 Apenas leitura de metadados — nao modifica nenhum arquivo.
 
 Uso: python scripts/check_artifacts.py
@@ -10,7 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Sem esses 4 o dashboard nao sobe
+# Sem estes, os pipelines e o piloto web nao tem insumo (DEC-022)
 CRITICOS = [
     ("data/outputs/hexagonos_brasil_dashboard.parquet",
      "Mapa executivo principal — gerado por fase1_bi_exports.py"),
@@ -50,7 +50,7 @@ def _check_group(artifacts: list) -> list[str]:
 def main() -> None:
     print(f"check_artifacts | raiz: {ROOT}\n")
 
-    print("Criticos (dashboard nao sobe sem eles):")
+    print("Criticos (piloto/pipelines nao sobem sem eles):")
     faltando_criticos = _check_group(CRITICOS)
 
     print("\nStaging opcional (abas Censitario/Hibrido):")

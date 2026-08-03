@@ -24,13 +24,12 @@ LOG_FILE="${MONITOR_LOG_FILE:-/var/log/motor-monitoring/healthcheck.log}"
 REMIND_SECS="${MONITOR_REMIND_SECS:-3600}"
 DISK_PCT_MAX="${MONITOR_DISK_PCT_MAX:-80}"
 MEM_AVAIL_PCT_MIN="${MONITOR_MEM_AVAIL_PCT_MIN:-10}"
-EDGE_URL="${MONITOR_EDGE_URL:-https://dashboard.ultra-expansao.tech}"
+EDGE_URL="${MONITOR_EDGE_URL:-https://piloto.ultra-expansao.tech}"
 GYM_REPORT_DIR="${MONITOR_GYM_REPORT_DIR:-/opt/gymscraping-infra}"
 GYM_LOG_HINT="/var/log/gymscraping/weekly_latest.log"
 CONTAINERS=(
     motor_expansao_caddy
     motor_expansao_authelia
-    motor_expansao_streamlit
     motor_expansao_api
     motor_expansao_telegram_bot
     # Tileserver do basemap self-host (BLK-BASEMAP-01, stack em /opt/openmaptiles-infra).
@@ -38,10 +37,8 @@ CONTAINERS=(
     # `_fetch_basemap` engole a falha e o relatorio sai SEM ruas, em silencio. Sem este alerta,
     # a degradacao so apareceria quando alguem olhasse um PDF.
     motor_expansao_tileserver
-    # Piloto web (`Dockerfile.web`, servico `web` do compose de producao). Estava rodando em
-    # producao SEM NENHUMA VIGILANCIA: nem este script nem a versao do BLK-BASEMAP-01 o
-    # listavam, porque a `main` nao descrevia o piloto — ele subiu a partir da branch
-    # `piloto-web` com o compose do servidor editado a mao. Total vai de 5 para 7.
+    # Piloto web (`Dockerfile.web`, servico `web` do compose): o app de producao desde a
+    # DEC-022 (o container motor_expansao_streamlit saiu da vigilancia no corte). Total: 6.
     motor_expansao_web
 )
 

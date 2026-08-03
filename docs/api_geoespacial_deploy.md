@@ -60,7 +60,7 @@ O serviço `api` monta os seguintes volumes read-only do host:
 | `/opt/motor-expansao/data/ultra` | `/app/data/ultra` | `API_ULTRA_DIR` | Não (branding PDF) |
 | `/opt/motor-expansao/concorrentes` | `/app/concorrentes` | `API_COMPETITORS_LOGOS_DIR` | Não (logos pins) |
 
-> O diretório `/opt/motor-expansao/concorrentes` já existe no host (usado pelo serviço `streamlit`).
+> O diretório `/opt/motor-expansao/concorrentes` já existe no host (usado também pelo serviço `web`).
 > Sem este volume, os pins do mapa de Concorrentes caem em sigla de texto (fallback gracioso).
 
 ## 4. Configuração — variáveis de ambiente
@@ -156,12 +156,13 @@ A API loga em stdout pelo logger `motor_expansao.api` (handler próprio, idempot
 
 Para enviar a um coletor, redirecione o stdout dos processos (systemd journal, Docker logs, etc.).
 
-## 8. Empacotamento (opcional)
+## 8. Empacotamento
 
-Não há `Dockerfile` dedicado da API (o `Dockerfile.streamlit` é do dashboard; o
-`fora_primeira_fase/api_postgis/Dockerfile.api` é legado PostGIS — não usar). Para containerizar,
-parta da base Python 3.11+, instale `".[api_mvp,basemap,geocoder]"` + Google Chrome, monte os dados
-como volume read-only e exponha a 8077 com o uvicorn do §5.
+A API é containerizada pelo `Dockerfile.api` da raiz (imagem `motor-expansao-api`, compartilhada
+com o bot — runbook em `docs/deploy_api_bot.md`; o `Dockerfile.web` é do piloto e o
+`fora_primeira_fase/api_postgis/Dockerfile.api` é legado PostGIS — não usar). A receita: base
+Python 3.11+, `".[api_mvp,basemap,geocoder]"` + Google Chrome, dados montados como volume
+read-only e porta 8077 com o uvicorn do §5.
 
 ## 9. Referências
 

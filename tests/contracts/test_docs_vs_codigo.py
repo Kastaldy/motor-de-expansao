@@ -32,7 +32,6 @@ import pytest
 
 from motor_expansao import config as config_mod
 from motor_expansao.core import constants as core_constants
-from motor_expansao.dashboard import pages as pages_mod
 from motor_expansao.dashboard import relatorio_municipal as relmun_mod
 
 RAIZ = Path(__file__).resolve().parents[2]
@@ -169,36 +168,6 @@ def test_formula_do_score_em_prosa_bate_com_os_pesos(caminho, heading, origem):
         f"CUIDADO ao ler: 0.60/0.40 E' legitimo no `score_dominio_hibrido` e no "
         f"`score_setor_2022_calibrado` -- e essa coincidencia que fez o erro passar. "
         f"Pesos do M1 so mudam com DEC (DEC-001). {_COMO_CONSERTAR}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# 3. Abas do dashboard em prosa  <->  DASHBOARD_TAB_LABELS
-# ---------------------------------------------------------------------------
-
-
-def test_contagem_e_nomes_das_abas_batem_com_o_dashboard():
-    """Trava contagem E rotulos. O defeito real teve as duas faces: 4->5 abas (BLK-DIM-12/PR #34)
-    e rename dos rotulos (BLK-UI-01/PR #36); nenhum dos dois PRs tocou o CLAUDE.md."""
-    labels = list(pages_mod.DASHBOARD_TAB_LABELS)
-    texto = _ler(CLAUDE_MD)
-
-    m = re.search(r"Dashboard tem \*\*(\d+) tabs?\*\*", texto)
-    assert m is not None, (
-        "CLAUDE.md §5: nao achei a frase `Dashboard tem **N tabs**`. Se o texto mudou, "
-        "atualize a ancora neste teste de proposito."
-    )
-    declarado = int(m.group(1))
-    assert declarado == len(labels), (
-        f"CLAUDE.md §5 declara {declarado} tabs, mas DASHBOARD_TAB_LABELS tem {len(labels)} "
-        f"({labels}). {_COMO_CONSERTAR}"
-    )
-
-    linha = next(ln for ln in texto.splitlines() if "Dashboard tem **" in ln)
-    ausentes = [lb for lb in labels if f"`{lb}`" not in linha]
-    assert not ausentes, (
-        f"CLAUDE.md §5 nao cita o(s) rotulo(s) reais {ausentes} entre crases. "
-        f"Rotulos vigentes: {labels}. {_COMO_CONSERTAR}"
     )
 
 

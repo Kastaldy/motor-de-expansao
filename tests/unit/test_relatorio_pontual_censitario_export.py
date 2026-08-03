@@ -27,7 +27,6 @@ from motor_expansao.dashboard.censo_report import (
     gerar_payloads_download_relatorio_censitario,
     gerar_pdf_relatorio_pontual_censitario,
     gerar_pdf_relatorio_pontual_classico,
-    render_downloads_relatorio_censitario,
 )
 from motor_expansao.dashboard.constants import RENDA_MEDIA_DOMICILIAR_BANDS, TEXTO_SEM_DADO
 
@@ -550,29 +549,16 @@ def test_payloads_e_helper_streamlit_expoem_downloads_csv_pdf():
     assert payloads.csv_bytes
     assert payloads.pdf_bytes.startswith(b"%PDF")
 
-    class DummyStreamlit:
-        def __init__(self):
-            self.calls = []
-
-        def download_button(self, label, *, data, file_name, mime):
-            self.calls.append(
-                {"label": label, "data": data, "file_name": file_name, "mime": mime}
-            )
-
-    dummy = DummyStreamlit()
-    rendered = render_downloads_relatorio_censitario(
-        dummy,
+    # DEC-022: o wrapper Streamlit (render_downloads_*) saiu com o corte; o contrato
+    # que importa — bytes e filenames canonicos por prefixo — segue travado aqui.
+    payloads_prefixados = gerar_payloads_download_relatorio_censitario(
         result,
         mapas,
         filename_prefix="teste_relatorio",
     )
-
-    assert rendered.pdf_bytes.startswith(b"%PDF")
-    assert [call["mime"] for call in dummy.calls] == ["text/csv", "application/pdf"]
-    assert [call["file_name"] for call in dummy.calls] == [
-        "teste_relatorio_setores.csv",
-        "teste_relatorio.pdf",
-    ]
+    assert payloads_prefixados.pdf_bytes.startswith(b"%PDF")
+    assert payloads_prefixados.csv_filename == "teste_relatorio_setores.csv"
+    assert payloads_prefixados.pdf_filename == "teste_relatorio.pdf"
 
 
 # ---------------------------------------------------------------------------

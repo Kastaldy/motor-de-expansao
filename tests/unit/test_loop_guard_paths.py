@@ -75,7 +75,7 @@ def _classe(path: str) -> str | None:
         "data/outputs/hexagonos_dashboard_enriquecido/uf=SP/parte-0.parquet",
         # Producao / VPS / segredos / CI.
         "deploy/deploy.sh",
-        "Dockerfile.streamlit",
+        "Dockerfile.web",
         "Dockerfile.api",
         "Dockerfile.loop",  # o regex antigo `^Dockerfile\.(streamlit|api)$` deixava o loop de fora
         ".dockerignore",
@@ -142,7 +142,6 @@ def test_caminhos_criticos(path: str) -> None:
         "src/motor_expansao/dashboard/censo_point.py",
         "src/motor_expansao/dashboard/censo_map.py",
         "src/motor_expansao/dashboard/censo_report.py",
-        "streamlit_app.py",
         # DEC-022 — piloto web servido em producao: backend E frontend sob governanca.
         "web/server/app.py",
         "web/src/screens/MapScreen.tsx",
@@ -161,7 +160,6 @@ def test_caminhos_criticos(path: str) -> None:
         ".codex/skills/codex-run-cycle/SKILL.md",
         "scripts/housekeeping_move_block.py",
         "data/osm_cache/bbox_ok_test.json",
-        ".streamlit/config.toml",
     ],
 )
 def test_caminhos_governanca(path: str) -> None:
@@ -180,9 +178,10 @@ def test_caminhos_governanca(path: str) -> None:
         "tests/integration/test_streamlit_app.py",
         "docs/x.md",
         "docs/infra_producao.md",
-        # DISPLAY PURO do dashboard (cor, layout, widget) — de proposito FORA da GOVERNANCA.
-        "src/motor_expansao/dashboard/components.py",
-        "src/motor_expansao/dashboard/pages.py",
+        # Modulos do dashboard fora das listas nominais de GOVERNANCA seguem limpos
+        # (DEC-022: a UI Streamlit saiu; schemas/viabilidade_charts sao motor auxiliar).
+        "src/motor_expansao/dashboard/schemas.py",
+        "src/motor_expansao/dashboard/viabilidade_charts.py",
         "context/handoff/20260713-000000-planner.md",
         "tasks/completed.md",
         # Guardrail que ja existia: NAO casar `config.py`/`constants.py` de modulo paralelo
@@ -404,10 +403,10 @@ def test_stdin_pr_de_display_puro_segue_auto_mergeavel(
     rc = _run_stdin(
         monkeypatch,
         [
-            "src/motor_expansao/dashboard/components.py",
-            "src/motor_expansao/dashboard/pages.py",
-            "tests/unit/test_streamlit_app.py",
-            "docs/streamlit_dashboard_m1.md",
+            "src/motor_expansao/dashboard/schemas.py",
+            "src/motor_expansao/dashboard/viabilidade_charts.py",
+            "tests/unit/test_entorno_ponto_motor.py",
+            "docs/relatorio_pontual_censitario.md",
         ],
         json_out=True,
     )

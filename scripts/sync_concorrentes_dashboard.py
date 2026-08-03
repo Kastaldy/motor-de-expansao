@@ -7,7 +7,7 @@ PROBLEMA QUE ESTE SCRIPT RESOLVE
 O ciclo semanal (`/opt/gymscraping-infra/run_weekly_90.sh`) monta
 `GymScraping/Unidades` como `/app/concorrentes:ro` SO dentro do container de regen,
 para o `normalizar_concorrentes` gerar `data/staging/concorrentes_mapeados.parquet`.
-O diretorio `/opt/motor-expansao/concorrentes` -- que os servicos `streamlit`, `api`
+O diretorio `/opt/motor-expansao/concorrentes` -- que os servicos `web`, `api`
 e `web` montam em `/app/concorrentes` -- nunca era tocado por esse ciclo. Resultado
 medido em 2026-07-29: o parquet tinha 106 redes, mas o diretorio estava congelado em
 39 CSVs e 39 logos de 2026-05-28. Efeitos visiveis em producao:

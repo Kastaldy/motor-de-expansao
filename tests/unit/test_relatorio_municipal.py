@@ -36,7 +36,6 @@ from motor_expansao.dashboard.relatorio_municipal import (
     agregar_municipio,
     gerar_payloads_download_relatorio_municipal,
     gerar_pdf_relatorio_municipal,
-    render_download_relatorio_municipal,
     render_mapas_municipio,
 )
 
@@ -889,17 +888,8 @@ def test_payloads_e_helper_streamlit_download():
     assert payloads.pdf_bytes.startswith(b"%PDF")
     assert payloads.pdf_filename == "relatorio_municipal_sp_sao_paulo.pdf"
 
-    class DummyStreamlit:
-        def __init__(self):
-            self.calls = []
-
-        def download_button(self, label, *, data, file_name, mime):
-            self.calls.append({"label": label, "data": data, "file_name": file_name, "mime": mime})
-
-    dummy = DummyStreamlit()
-    rendered = render_download_relatorio_municipal(dummy, res, mapas)
-    assert rendered.pdf_bytes.startswith(b"%PDF")
-    assert [c["mime"] for c in dummy.calls] == ["application/pdf"]
+    # DEC-022: o wrapper Streamlit (render_download_*) saiu com o corte; o payload
+    # canonico (bytes + filename) ja esta travado nas asserções acima.
 
 
 # ---------------------------------------------------------------------------

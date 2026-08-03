@@ -8,6 +8,14 @@
 > **Guardrail:** READ-ONLY sobre o M1 (§5) — pesquisa/planejamento, não implementa produção.
 > **Data:** 2026-07-16
 
+> **Nota de status (2026-08-03, DEC-022):** documento HISTÓRICO de pesquisa, preservado como
+> foi escrito. À época, "o app/mapa atual" era o dashboard Streamlit — aposentado pela DEC-022
+> (escopo do corte na DEC-020). O rumo que este benchmark recomendou virou o app de produção:
+> o **piloto web** (`web/` — SPA React/Vite + deck.gl persistente client-side + FastAPI), que
+> implementa o diagnóstico do §2 (fim do ciclo rerun/reserialização; cor/camada via
+> `updateTriggers`/`visible`) e boa parte dos §§3–9 (mapa full-bleed, funil macro→micro em H3,
+> score humano, PDFs paginados). Arquitetura atual: `docs/arquitetura_app_atual.md`.
+
 ---
 
 ## 0. Sumário executivo — o que este documento conclui
