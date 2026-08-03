@@ -3081,7 +3081,7 @@ def render_pdf_download_topo(
     gerar = st.button(
         "Gerar PDF do relatório do ponto",
         key="btn_gerar_pdf_topo",
-        help="Gera o Relatório Pontual Censitário (1,5 km) da coordenada pesquisada.",
+        help="Gera o Relatório Pontual Censitário (1,0 km) da coordenada pesquisada.",
     )
     if gerar:
         with st.spinner("Gerando PDF..."):
@@ -3209,7 +3209,7 @@ def render_relatorio_pontual_lote(
     gerar = st.button(
         f"Gerar Relatórios Pontuais ({n})",
         key=f"btn_gerar_relpon_lote_{key_suffix}",
-        help="Gera um Relatório Pontual Censitário (1,5 km) para cada endereço da fila.",
+        help="Gera um Relatório Pontual Censitário (1,0 km) para cada endereço da fila.",
     )
     if gerar:
         prog = st.progress(0.0, text=f"Gerando 0/{n}...")
@@ -3437,7 +3437,7 @@ def render_relatorio_pontual_censitario(
     ultra_df: pd.DataFrame | None = None,
     raio_km: float = RAIO_CENSITARIO_DEFAULT_KM,
 ) -> None:
-    """Renderiza o fluxo Streamlit do relatorio pontual censitario 1.5 km."""
+    """Renderiza o fluxo Streamlit do relatorio pontual censitario 1.0 km."""
     st.caption(
         "Usa setores censitários reais IBGE 2022 e interseção geométrica com raio fixo de "
         f"{raio_km:.1f} km. Camada complementar: não altera M1, carteira ou plano."

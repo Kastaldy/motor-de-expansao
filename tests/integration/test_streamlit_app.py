@@ -4950,8 +4950,8 @@ def test_render_relatorio_pontual_censitario_com_coordenada_gera_mapa_e_download
     result = {
         "lat": lat,
         "lng": lng,
-        "raio_km": 1.5,
-        "metodo": "setor_censitario_intersecao_area_1p5km",
+        "raio_km": 1.0,
+        "metodo": "setor_censitario_intersecao_area_1km",
         "n_setores": 1,
         "pop_total_raio": 1234.0,
         "renda_per_capita_media_raio": 2100.0,
