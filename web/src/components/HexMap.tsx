@@ -1,7 +1,8 @@
 import { FlyToInterpolator, type Layer } from '@deck.gl/core'
 import { H3HexagonLayer } from '@deck.gl/geo-layers'
-import { IconLayer, ScatterplotLayer } from '@deck.gl/layers'
+import { IconLayer, ScatterplotLayer, TextLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
+import { cellToLatLng } from 'h3-js'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
@@ -74,6 +75,24 @@ function fillDoHex(h: Hex, passoN: number, noPasso: boolean): RGBA {
   }
   if (noPasso) return base
   return [base[0], base[1], base[2], Math.round(base[3] * DIM_FORA_DO_PASSO)]
+}
+
+/* --- Numeros do ranking sobre o mapa ---------------------------------------
+   O rank so existia no painel lateral, entao nao havia como casar "a 3a
+   recomendacao" com um hexagono na tela. O rotulo vem de `passo.itens` (que ja
+   chega aqui) e e' TETADO em RANK_LABEL_MAX: rotular os ~35k hexes do mapa
+   derrubaria o WebGL. --------------------------------------------------------- */
+const RANK_LABEL_MAX = 10
+
+interface RotuloRank {
+  hexId: string
+  texto: string
+  position: [number, number]
+}
+
+/** Mesma formatacao do painel lateral (NarrativePanel): "1º" no passo 4, "01" nos demais. */
+function textoRank(rank: number, passoN: number): string {
+  return passoN === 4 ? `${rank}º` : String(rank).padStart(2, '0')
 }
 
 export interface HexMapProps {
@@ -170,6 +189,25 @@ export default function HexMap({
   const destaque = useMemo(() => new Set(passo.hexes), [passo.hexes])
   const cenarioSet = useMemo(() => new Set(cenario ?? []), [cenario])
   const cenarioKey = (cenario ?? []).join(',')
+
+  // Posicao do rotulo = centro do proprio H3 (nao o lat/lng servido), para o numero
+  // cair no meio do hexagono mesmo quando o filtro de faixa tira o hex do `hexes`.
+  const rotulosRank = useMemo(() => {
+    const vistos = new Set<string>()
+    const out: RotuloRank[] = []
+    for (const it of passo.itens) {
+      if (out.length >= RANK_LABEL_MAX) break
+      if (!it.hex_id || vistos.has(it.hex_id)) continue
+      vistos.add(it.hex_id)
+      try {
+        const [lat, lng] = cellToLatLng(it.hex_id)
+        out.push({ hexId: it.hex_id, texto: textoRank(it.rank, passo.n), position: [lng, lat] })
+      } catch {
+        // hex_id invalido: o item continua no painel, so nao ganha rotulo no mapa.
+      }
+    }
+    return out
+  }, [passo.itens, passo.n])
 
   const camadas = useMemo(() => {
     const base: Layer[] = [
@@ -289,6 +327,35 @@ export default function HexMap({
       )
     }
 
+    // Numero do ranking, por ULTIMO para ficar acima dos pins. `pickable: false`
+    // mantem o clique/hover chegando ao H3HexagonLayer por baixo.
+    if (rotulosRank.length) {
+      base.push(
+        new TextLayer<RotuloRank>({
+          id: 'rank-labels',
+          data: rotulosRank,
+          getPosition: (d) => d.position,
+          getText: (d) => d.texto,
+          getSize: 13,
+          sizeUnits: 'pixels',
+          fontFamily: "'IBM Plex Mono', ui-monospace, monospace", // --f-num
+          fontWeight: 700,
+          // O "º" do passo 4 esta fora do characterSet ASCII padrao do TextLayer.
+          characterSet: 'auto',
+          getColor: [238, 243, 248, 255],
+          // Chip escuro: a rampa vai do azul ao vermelho, entao nenhuma cor de texto
+          // sozinha fica legivel sobre todas as faixas — o fundo e' que garante o contraste.
+          background: true,
+          getBackgroundColor: [8, 11, 16, 214],
+          getBorderColor: [53, 201, 214, 170],
+          getBorderWidth: 1,
+          backgroundPadding: [6, 4, 6, 4],
+          backgroundBorderRadius: 5,
+          pickable: false,
+        }),
+      )
+    }
+
     return base
   }, [
     hexes,
@@ -301,6 +368,7 @@ export default function HexMap({
     searchPin,
     pins,
     iconObjs,
+    rotulosRank,
   ])
 
   return (

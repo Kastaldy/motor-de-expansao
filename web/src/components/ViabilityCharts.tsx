@@ -295,7 +295,17 @@ export function CascataDre({
   /** Mês de operação a que TODA esta DRE se refere (regime pleno). */
   const mesRef = premissas?.mes_referencia_steady ?? null
 
-  const barras = [
+  // % do faturamento das duas linhas de RESULTADO: chega PRONTO no bloco `dre`
+  // (FIN-VIAB-01 — a tela não divide número financeiro, só renderiza). Campos
+  // OPCIONAIS no contrato: payload antigo simplesmente não exibe o percentual.
+
+  const barras: {
+    rotulo: string
+    valor: number | null
+    tipo: 'pos' | 'neg' | 'res' | 'fin' | 'anu'
+    /** Fração do faturamento bruto servida pelo backend; ausente = não exibir. */
+    pct?: number | null
+  }[] = [
     temAnuidade
       ? { rotulo: 'Mensalidades', valor: mensalidades, tipo: 'pos' as const }
       : { rotulo: 'Fat. bruto', valor: d.faturamento, tipo: 'pos' as const },
@@ -308,9 +318,19 @@ export function CascataDre({
     // nao acompanha a rampa (decisao de Felipe, 2026-07-24).
     { rotulo: 'Folha (fixa)', valor: d.folha, tipo: 'neg' as const },
     { rotulo: 'Fixos + aluguel', valor: d.custos_fixos, tipo: 'neg' as const },
-    { rotulo: 'EBITDA', valor: d.ebitda, tipo: 'res' as const },
+    {
+      rotulo: 'EBITDA',
+      valor: d.ebitda,
+      tipo: 'res' as const,
+      pct: d.ebitda_pct_faturamento ?? null,
+    },
     { rotulo: 'IR/CSLL', valor: d.ir_csll, tipo: 'neg' as const },
-    { rotulo: 'Result. após IR', valor: d.resultado_apos_ir, tipo: 'res' as const },
+    {
+      rotulo: 'Result. após IR',
+      valor: d.resultado_apos_ir,
+      tipo: 'res' as const,
+      pct: d.resultado_apos_ir_pct_faturamento ?? null,
+    },
     { rotulo: 'Desp. financeira', valor: d.despesa_financeira, tipo: 'fin' as const },
   ]
 
@@ -477,6 +497,19 @@ export function CascataDre({
             >
               {b.valor === null ? 'n/d' : brl(b.valor, true)}
             </div>
+            {b.pct != null && (
+              <div
+                className="num"
+                title={`${b.rotulo}: ${pctFrac(b.pct)} do faturamento bruto`}
+                style={{
+                  font: '400 9px/1.2 var(--f-num)',
+                  color: 'var(--tx-muted)',
+                  marginTop: 2,
+                }}
+              >
+                {pctFrac(b.pct)}
+              </div>
+            )}
             <div
               style={{
                 font: '400 9px/1.2 var(--f-ui)',
@@ -509,7 +542,9 @@ export function CascataDre({
         — a equipe é contratada antes dos alunos, então ela NÃO acompanha a rampa e só o
         reajuste anual a move. Neste mês de regime pleno o valor coincide com a base; nos
         meses de rampa é ela que segura o EBITDA no negativo. A despesa financeira (juros da
-        parcela) aparece à parte: o resultado após IR é DESALAVANCADO, antes da PMT.
+        parcela) aparece à parte: o resultado após IR é DESALAVANCADO, antes da PMT. O
+        percentual menor sob o EBITDA e sob o resultado após IR é a fatia de cada um no{' '}
+        <strong>faturamento bruto</strong> deste mês.
       </p>
     </Glass>
   )
@@ -1234,7 +1269,12 @@ export function Veredito({
           className="story"
           style={{ font: '400 19px/1.2 var(--f-story)', color: 'var(--tx-max)' }}
         >
-          {aprovado ? 'Viável no cenário assumido' : 'Abaixo do ponto de equilíbrio'}
+          {/* A régua do selo é a do motor (margem >= margem_viavel_min E payback <=
+              payback_viavel_max), NÃO o break-even: um cenário pode estar acima do
+              ponto de equilíbrio e ainda assim reprovar por margem/payback. Dizer
+              "abaixo do ponto de equilíbrio" aqui contradizia a margem positiva
+              impressa duas linhas abaixo. */}
+          {aprovado ? 'Viável no cenário assumido' : 'Fora da régua de viabilidade'}
         </div>
         <div
           style={{
@@ -1271,20 +1311,53 @@ export function Veredito({
           )}
         </div>
       </div>
-      <span
+      {/* Carimbo do veredito. Era um pill de 11px encostado no canto: o operador lia
+          a frase inteira antes de saber a conclusao. Escolha de Felipe (2026-07-31):
+          bater o olho na tela e ja ter o veredito. A cor segue a semantica de antes
+          (--pos aprovado / --warn reprovado); "requer revisao" nao e' reprovacao
+          definitiva, entao continua ambar, nao vermelho. */}
+      <div
+        role="status"
+        aria-label={aprovado ? 'Aprovado para comitê' : 'Requer revisão de premissas'}
         style={{
-          alignSelf: 'flex-start',
-          font: '600 11px/1 var(--f-ui)',
-          padding: '7px 11px',
-          borderRadius: 8,
-          whiteSpace: 'nowrap',
-          background: aprovado ? 'rgba(46,200,110,.16)' : 'rgba(217,164,65,.16)',
-          border: `1px solid ${aprovado ? 'rgba(46,200,110,.35)' : 'rgba(217,164,65,.4)'}`,
+          alignSelf: 'center',
+          flexShrink: 0,
+          width: 152,
+          padding: '15px 10px',
+          borderRadius: 'var(--r-md)',
+          textAlign: 'center',
+          background: aprovado ? 'rgba(46,200,110,.13)' : 'rgba(217,164,65,.13)',
+          border: `2px solid ${cor}`,
           color: aprovado ? 'var(--pos-pill)' : 'var(--warn-text)',
         }}
       >
-        {aprovado ? 'Aprovado para comitê' : 'Requer revisão de premissas'}
-      </span>
+        <span aria-hidden style={{ display: 'block', font: '700 28px/1 var(--f-ui)', color: cor }}>
+          {aprovado ? '✓' : '✕'}
+        </span>
+        <span
+          style={{
+            display: 'block',
+            marginTop: 8,
+            font: '800 12.5px/1.2 var(--f-ui)',
+            letterSpacing: '.06em',
+            textTransform: 'uppercase',
+          }}
+        >
+          {aprovado ? 'Aprovado' : 'Requer revisão'}
+        </span>
+        <span
+          style={{
+            display: 'block',
+            marginTop: 3,
+            font: '600 10px/1.2 var(--f-ui)',
+            letterSpacing: '.05em',
+            textTransform: 'uppercase',
+            opacity: 0.82,
+          }}
+        >
+          {aprovado ? 'para comitê' : 'de premissas'}
+        </span>
+      </div>
     </div>
   )
 }

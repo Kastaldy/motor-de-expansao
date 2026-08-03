@@ -196,6 +196,38 @@ export function Botao({
   )
 }
 
+/**
+ * Indicador de carregamento inline. Anima por SMIL (`animateTransform`) e nao por
+ * keyframes CSS: nao ha folha de estilo global aqui e assim o icone e' autocontido.
+ * Herda a cor do texto de quem o envolve (`currentColor`).
+ */
+export function Spinner({ tamanho = 14 }: { tamanho?: number }) {
+  return (
+    <svg width={tamanho} height={tamanho} viewBox="0 0 24 24" aria-hidden>
+      <circle
+        cx="12"
+        cy="12"
+        r="9"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeDasharray="42 14"
+        opacity="0.9"
+      >
+        <animateTransform
+          attributeName="transform"
+          type="rotate"
+          from="0 12 12"
+          to="360 12 12"
+          dur="0.8s"
+          repeatCount="indefinite"
+        />
+      </circle>
+    </svg>
+  )
+}
+
 /** Estado vazio / erro — sempre diz o que fazer, nunca so o que falhou. */
 export function Aviso({
   titulo,

@@ -6,6 +6,10 @@ import type { Passo } from '../lib/types'
 
    O ultimo passo troca o CTA de "próxima camada" por "Gerar Relatório
    Municipal" — a sintese das 4 camadas vira o PDF (pedido do Felipe).
+
+   Voltar SEMPRE foi possivel (clicar num passo ja percorrido), mas nada dizia
+   isso: o CTA era de mao unica e a palavra "voltar" nao aparecia. Dai o botao
+   secundario ao lado do CTA e o aria-label/title explicito em cada passo.
    --------------------------------------------------------------------------- */
 
 export interface StepperBarProps {
@@ -29,6 +33,7 @@ export default function StepperBar({
   const ultimo = atual >= 4
   // No nível da UF, o último passo guia para escolher um município (não gera PDF).
   const ctaUf = ultimo && nivelUf
+  const podeVoltar = atual > 1
 
   return (
     <div
@@ -58,6 +63,10 @@ export default function StepperBar({
         {passos.map((p, i) => {
           const feito = p.n < atual
           const ativo = p.n === atual
+          // O passo é clicável nos dois sentidos; o rótulo precisa dizer isso.
+          const rotulo = `${
+            ativo ? 'Camada atual,' : feito ? 'Voltar para a camada' : 'Avançar para a camada'
+          } ${p.n} de ${passos.length}: ${p.titulo} (${num(p.funil_big)} ${p.funil_unit})`
           return (
             <li
               key={p.n}
@@ -67,6 +76,8 @@ export default function StepperBar({
                 type="button"
                 onClick={() => onIr(p.n)}
                 aria-current={ativo ? 'step' : undefined}
+                aria-label={rotulo}
+                title={rotulo}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -148,6 +159,28 @@ export default function StepperBar({
           )
         })}
       </ol>
+
+      {podeVoltar && (
+        <button
+          type="button"
+          onClick={() => onIr(atual - 1)}
+          disabled={gerando}
+          aria-label={`Voltar para a camada ${atual - 1} de ${passos.length}`}
+          title="Voltar uma camada"
+          style={{
+            flexShrink: 0,
+            background: 'var(--surf-pending)',
+            color: 'var(--tx-soft)',
+            font: '600 12px/1 var(--f-ui)',
+            padding: '10px 13px',
+            borderRadius: 10,
+            border: '1px solid var(--line-strong)',
+            opacity: gerando ? 0.6 : 1,
+          }}
+        >
+          ← Camada anterior
+        </button>
+      )}
 
       <button
         type="button"

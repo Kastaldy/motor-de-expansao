@@ -1,3 +1,6 @@
+/* Os literais abaixo sao COPIA da paleta do nucleo: este arquivo fica verde mesmo se
+   RESIDUAL_SCORE_BANDS (Python) mudar. Quem trava a paridade e o teste Python
+   tests/unit/test_paridade_paleta_web.py — ao mexer em SCORE_BANDS_HEX, rode-o. */
 import { describe, expect, it } from 'vitest'
 import {
   NA_FILL,
