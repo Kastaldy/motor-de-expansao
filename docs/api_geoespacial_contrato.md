@@ -179,7 +179,7 @@ KPIs derivados do `result` de `analisar_ponto_censitario_setores` (READ-ONLY):
   "renda_domiciliar_total_raio": 25740.0,
   "domicilios_total_raio": 6084.0,
   "metodo_renda_domiciliar_raio": "ponderada_domicilios_estimados",
-  "densidade_pop_raio_hab_km2": 2607.0,
+  "densidade_pop_raio_hab_km2": 5870.0,
   "score_setor_medio": 64.2,
   "score_setor_max": 91.0,
   "n_concorrentes": 3,
