@@ -72,7 +72,7 @@ Dentro do escopo:
 - Camadas paralelas: censitaria, hibrida, mercado/residual e Expansao de Dominio.
 - Dashboard offline com quatro abas (ver §6).
 - Analises pontuais: Analise Pontual de Entorno (H3) e Relatorio Pontual Censitario
-  1.5 km.
+  1.0 km.
 - Multi-hex (composicao de cenarios a partir de varios hexagonos).
 - Backup e plano de regeneracao (DR) de segredos e dados.
 
@@ -140,8 +140,8 @@ ranking, carteira nem artefatos oficiais.
 - Analise Pontual de Entorno (H3): analise radial de entorno (raio descritivo de
   1.6 km como feature) que retorna populacao, renda, consumo de concorrentes e consumo
   Ultra no raio, sem mutar inputs nem recalcular o score.
-- Relatorio Pontual Censitario 1.5 km: cruza setor censitario real (geometria IBGE
-  2022) com circulo de raio fixo 1.5 km, com export de PDF/CSV em memoria e mapa
+- Relatorio Pontual Censitario 1.0 km: cruza setor censitario real (geometria IBGE
+  2022) com circulo de raio fixo 1.0 km, com export de PDF/CSV em memoria e mapa
   censitario offline.
 - Multi-hex: composicao de cenarios a partir de varios hexagonos, com hex_id copiavel
   e parsing flexivel de identificadores.

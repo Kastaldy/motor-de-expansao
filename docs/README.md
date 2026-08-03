@@ -13,7 +13,7 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 - [m1_1_arquitetura_enriquecimento.md](m1_1_arquitetura_enriquecimento.md) — design da camada M1.1.
 - [modelo_mercado_hexagonos.md](modelo_mercado_hexagonos.md) — **[canônico]** contrato de colunas/cálculos de mercado/residual.
 - [vulnerabilidade_ma_contrato.md](vulnerabilidade_ma_contrato.md) — **[canônico]** contrato dos sinais de vulnerabilidade de academias independentes (funil de M&A, Plano B, READ-ONLY M1).
-- [relatorio_pontual_censitario.md](relatorio_pontual_censitario.md) — **[canônico]** contrato do Relatório Pontual Censitário (1,5 km).
+- [relatorio_pontual_censitario.md](relatorio_pontual_censitario.md) — **[canônico]** contrato do Relatório Pontual Censitário (1,0 km).
 - [relatorio_municipal_template.md](relatorio_municipal_template.md) — template do Relatório Municipal.
 - [artefatos_dados.md](artefatos_dados.md) · [fontes_dados_gratuitas.md](fontes_dados_gratuitas.md) — insumos e fontes de dados.
 - [analise_pontual_entorno.md](analise_pontual_entorno.md) · [expansao_dominio.md](expansao_dominio.md) · [mapa_territorial_unificado.md](mapa_territorial_unificado.md) — **[histórico]** contratos de ciclos de maio/2026.
