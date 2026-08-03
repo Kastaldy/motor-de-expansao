@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { alunos, brl, coord, num, pct, pctFrac, rotuloMes } from './format'
+import { TEXTO_SEM_DADO } from './constants'
 
 describe('num', () => {
   it('formata inteiro com separador de milhar pt-BR', () => {
@@ -8,11 +9,11 @@ describe('num', () => {
   it('respeita casas decimais', () => {
     expect(num(1234.5, 2)).toBe('1.234,50')
   })
-  it('zero e um numero valido (nao vira n/d)', () => {
+  it('zero e um numero valido (nao vira sem-dado)', () => {
     expect(num(0)).toBe('0')
   })
-  it.each([null, undefined, NaN])('null/undefined/NaN -> "n/d" (nunca "0")', (v) => {
-    expect(num(v)).toBe('n/d')
+  it.each([null, undefined, NaN])('null/undefined/NaN -> sem-dado (nunca "0")', (v) => {
+    expect(num(v)).toBe(TEXTO_SEM_DADO)
   })
 })
 
@@ -32,8 +33,8 @@ describe('brl', () => {
   it('casas exibe o centavo (ticket do agregador)', () => {
     expect(brl(88.2, false, 2)).toBe('R$ 88,20')
   })
-  it('null -> n/d', () => {
-    expect(brl(null)).toBe('n/d')
+  it('null -> sem-dado', () => {
+    expect(brl(null)).toBe(TEXTO_SEM_DADO)
   })
 })
 
@@ -41,11 +42,11 @@ describe('pct', () => {
   it('uma casa por padrao com sinal de %', () => {
     expect(pct(12.34)).toBe('12,3%')
   })
-  it('zero formata (nao vira n/d)', () => {
+  it('zero formata (nao vira sem-dado)', () => {
     expect(pct(0)).toBe('0,0%')
   })
-  it('null -> n/d', () => {
-    expect(pct(null)).toBe('n/d')
+  it('null -> sem-dado', () => {
+    expect(pct(null)).toBe(TEXTO_SEM_DADO)
   })
 })
 
@@ -59,8 +60,8 @@ describe('pctFrac', () => {
   it('negativo mantem o sinal', () => {
     expect(pctFrac(-0.05)).toBe('-5,0%')
   })
-  it.each([null, undefined, NaN, Infinity])('null/NaN/Infinity -> n/d', (v) => {
-    expect(pctFrac(v)).toBe('n/d')
+  it.each([null, undefined, NaN, Infinity])('null/NaN/Infinity -> sem-dado', (v) => {
+    expect(pctFrac(v)).toBe(TEXTO_SEM_DADO)
   })
 })
 
@@ -71,8 +72,8 @@ describe('rotuloMes', () => {
   it('mes positivo e operacao', () => {
     expect(rotuloMes(1)).toBe('mês 1')
   })
-  it('null -> n/d', () => {
-    expect(rotuloMes(null)).toBe('n/d')
+  it('null -> sem-dado', () => {
+    expect(rotuloMes(null)).toBe(TEXTO_SEM_DADO)
   })
 })
 
@@ -89,7 +90,7 @@ describe('alunos', () => {
   it('arredonda e formata inteiro', () => {
     expect(alunos(1234.6)).toBe('1.235')
   })
-  it('null -> n/d', () => {
-    expect(alunos(null)).toBe('n/d')
+  it('null -> sem-dado', () => {
+    expect(alunos(null)).toBe(TEXTO_SEM_DADO)
   })
 })
