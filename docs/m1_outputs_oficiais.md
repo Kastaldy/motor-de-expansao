@@ -10,7 +10,7 @@ Contrato curto e canonico dos artefatos do fechamento nacional do M1.
 | `data/staging/brasil_priorizados.parquet` | recorte oficial de priorizacao top 20% por UF | `score_priorizacao` |
 | `data/staging/hexagonos_brasil_oportunidades.parquet` | camada canonica de oportunidade com ranking | `score_priorizacao` |
 | `data/outputs/hexagonos_brasil_dashboard.parquet` | dataset oficial exportado para BI | `score_oficial` |
-| `data/outputs/hexagonos_mapa_sample.parquet` | amostra oficial do dashboard para mapas no Streamlit | `score_oficial` |
+| `data/outputs/hexagonos_mapa_sample.parquet` | amostra oficial do dashboard para mapas (o consumidor Streamlit foi aposentado pela DEC-022; o artefato segue gerado) | `score_oficial` |
 | `data/outputs/top_oportunidades_resumo.csv` | resumo executivo das oportunidades viaveis | `score_oficial` |
 | `data/outputs/resumo_por_uf.csv` | resumo agregado por UF | `score_oficial` |
 

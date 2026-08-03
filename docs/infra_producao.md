@@ -7,14 +7,23 @@
 | Provedor | Hostinger KVM4 |
 | IP | 2.25.137.241 |
 | Domínio | ultra-expansao.tech |
-| Dashboard | https://dashboard.ultra-expansao.tech |
+| Piloto (app de produção) | https://piloto.ultra-expansao.tech |
+| Tiles (basemap self-host) | https://dashboard.ultra-expansao.tech/tiles/* |
 | Portal de login | https://auth.ultra-expansao.tech |
 | SO | Ubuntu 22.04 LTS |
 | Recursos | 4 vCPU, 16 GB RAM, 200 GB NVMe, 4 GB swap |
 
+> **DEC-022 (2026-08-03):** o dashboard Streamlit foi aposentado; o app de produção é o
+> **piloto web** (`web/` — SPA React/Vite + FastAPI). O subdomínio
+> `dashboard.ultra-expansao.tech` segue vivo **apenas** como host de `/tiles/*` (o
+> tileserver que alimenta o basemap dos PDFs de api, web e bot; `publicUrl` e styles do
+> openmaptiles INALTERADOS) — a raiz do subdomínio redireciona **301** para
+> `piloto.ultra-expansao.tech`.
+
 ## Stack
 
-- **Streamlit** — dashboard Python, container `motor_expansao_streamlit`
+- **web (SPA + FastAPI)** — piloto web (React/Vite + FastAPI num único container, porta interna `8899`), container `motor_expansao_web`
+- **API GeoEspacial + bot Telegram** — containers `motor_expansao_api` e `motor_expansao_telegram_bot` (mesma imagem; ver `docs/deploy_api_bot.md`)
 - **Caddy** — reverse proxy com TLS automático (Let's Encrypt), container `motor_expansao_caddy`
 - **Authelia 4.38** — autenticação self-hosted (login + 2FA opcional), container `motor_expansao_authelia`
 
@@ -30,34 +39,37 @@ Chave privada local: `~/.ssh/id_ultra` (Windows: `C:\Users\Felipe Silva\.ssh\id_
 
 ---
 
-## Atualizar o dashboard (modo PULL, sem build)
+## Atualizar o web (modo PULL, sem build)
 
-> Modelo PULL: o VPS PUXA a imagem publicada no GHCR pelo job `publish` do workflow `CI`
-> (`.github/workflows/ci.yml`). NAO se faz `--build` no servidor. Runbook canonico: `docs/deploy.md`.
+> Modelo PULL: o VPS PUXA a imagem publicada no GHCR pelo job `publish-web` do workflow `CI`
+> (`.github/workflows/ci.yml` — roda no push da `main`, com path-filter). NAO se faz
+> `--build` no servidor. Runbook canonico: `docs/deploy_piloto_web.md`.
 > GUARDRAIL CLAUDE.md §6: execucao no VPS e SEMPRE passo humano, comando a comando.
 
 ```bash
 cd /opt/motor-expansao/app
 
-# 1. Pinar a imagem por DIGEST imutavel (recomendado p/ producao). Obter o digest:
-#    - do output "Digest imutavel publicado:" do job publish no Actions, ou
+# 1. Pinar a imagem por DIGEST imutavel no .env (o compose EXIGE WEB_IMAGE — fail-closed).
+#    Obter o digest:
+#    - do output "WEB digest imutavel publicado:" do job publish-web no Actions, ou
 #    - via: docker buildx imagetools inspect \
-#        ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit:sha-<commit>
-export STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit@sha256:<digest>
+#        ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web:sha-<commit>
+#    No .env: WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest>
 
-# 2. Pull + up -d SOMENTE do streamlit (SEM --build)
-docker compose -f docker-compose.prod.yml pull streamlit
-docker compose -f docker-compose.prod.yml up -d streamlit
+# 2. Pull + up -d SOMENTE do web (SEM --build)
+docker compose -f docker-compose.prod.yml pull web
+docker compose -f docker-compose.prod.yml up -d web
 
-# 3. Conferir saude
+# 3. Conferir saude (o web NAO expoe porta no host — checar de dentro do container)
 docker compose -f docker-compose.prod.yml ps
-curl -fsS http://127.0.0.1:8501/_stcore/health
+docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health
 ```
 
 - Caddy e Authelia **nao** reiniciam.
+- API e bot seguem o mesmo modelo com `API_IMAGE` — ver `docs/deploy_api_bot.md`.
 - Dados em `/opt/motor-expansao/data/outputs/` sao preservados (bind mount read-only).
 - Se o pacote GHCR for privado, autenticar antes: `docker login ghcr.io` com PAT `read:packages`
-  (credencial de runtime do servidor; NUNCA no repo). Ver `docs/deploy.md`.
+  (credencial de runtime do servidor; NUNCA no repo). Ver `docs/deploy_piloto_web.md`.
 
 ---
 
@@ -68,17 +80,17 @@ Para voltar a imagem anterior conhecida sem reconstruir nada:
 ```bash
 cd /opt/motor-expansao/app
 
-# 1. Apontar para o DIGEST imutavel do deploy anterior (anote sempre o digest vigente
-#    antes de atualizar; ou recupere via imagetools inspect da tag sha-<commit_anterior>)
-export STREAMLIT_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-streamlit@sha256:<digest_anterior>
+# 1. Apontar o .env para o DIGEST imutavel do deploy anterior (anote sempre o digest
+#    vigente antes de atualizar; ou recupere via imagetools inspect da tag sha-<commit_anterior>)
+#    No .env: WEB_IMAGE=ghcr.io/kastaldy/motor-de-expansao/motor-expansao-web@sha256:<digest_anterior>
 
 # 2. Pull + up -d (SEM --build)
-docker compose -f docker-compose.prod.yml pull streamlit
-docker compose -f docker-compose.prod.yml up -d streamlit
+docker compose -f docker-compose.prod.yml pull web
+docker compose -f docker-compose.prod.yml up -d web
 
 # 3. Conferir
 docker compose -f docker-compose.prod.yml ps
-docker compose -f docker-compose.prod.yml logs --tail=80 streamlit
+docker compose -f docker-compose.prod.yml logs --tail=80 web
 ```
 
 - Digest imutavel (`@sha256:...`) garante reproducao byte-identica da imagem anterior; a tag
@@ -115,7 +127,9 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra" data/outputs/hexagonos_mapa_sample.parqu
 scp -i "$env:USERPROFILE\.ssh\id_ultra" -r data/outputs/hexagonos_dashboard_enriquecido root@2.25.137.241:/opt/motor-expansao/data/outputs/
 ```
 
-O Streamlit lê do volume na próxima requisição — **não é necessário reiniciar o container**.
+O web lê do volume na próxima requisição — em geral **não é necessário reiniciar o container**.
+Exceção: dados que o backend cacheia em memória (`lru_cache` — ex.: Growth, logos de
+concorrentes) só aparecem após `docker compose -f docker-compose.prod.yml restart web`.
 
 ---
 
@@ -141,14 +155,15 @@ O Streamlit lê do volume na próxima requisição — **não é necessário rei
      e `relatorio_crescimento_<data>.txt`;
   4. **Integração ao motor** (regen camada paralela, READ-ONLY M1 — ver abaixo);
   5. **Sync do diretório de concorrentes dos apps** (`sync_concorrentes_dashboard.py` — ver abaixo);
-  6. **Restart** de `streamlit`/`api`/`telegram-bot`/`web`.
+  6. **Restart** de `api`/`telegram-bot`/`web` (o `streamlit` saiu da lista com a DEC-022).
 - **Cron:** `0 6 * * 0` (domingo **06:00 UTC = 03:00 BRT**; o servidor é UTC). `crontab -l` no root.
 - **Logs:** `/var/log/gymscraping/weekly_<TS>.log` (+ symlink `weekly_latest.log`).
 
 ### Integração ao motor (regen mercado/residual — READ-ONLY M1)
 
-A coleta atualiza só os CSVs `Unidades/unidades_<rede>.csv`. A propagação para o dashboard roda a cadeia
-**paralela** via o checkout do motor em **`/opt/motor-expansao/app`** (imagem do `streamlit`, `PYTHONPATH=/app/src`,
+A coleta atualiza só os CSVs `Unidades/unidades_<rede>.csv`. A propagação para os apps roda a cadeia
+**paralela** via o checkout do motor em **`/opt/motor-expansao/app`** (imagem da `api`, que carrega o motor
+completo — desde a DEC-022; antes rodava na imagem do `streamlit` —, `PYTHONPATH=/app/src`,
 `ROOT=/app`, dados em `/app/data`):
 
 ```
@@ -170,13 +185,13 @@ host são de root e o usuário não-root da imagem não consegue sobrescrevê-lo
 
 > **Por que existe:** o mount `$REPO/Unidades:/app/concorrentes:ro` do passo anterior vale **só dentro do
 > container de regen** — ele alimenta o *parquet*. O diretório **`/opt/motor-expansao/concorrentes`**, que os
-> serviços `streamlit`, `api` e `web` montam em `/app/concorrentes`, **não era tocado por ninguém**. Medido em
+> serviços `api` e `web` montam em `/app/concorrentes`, **não era tocado por ninguém**. Medido em
 > 2026-07-29: estava congelado desde 2026-05-28 com 39 CSVs e 39 logos, enquanto o parquet já tinha 106 redes.
 > Efeito visível: o Streamlit (que lê os CSVs, não o parquet) perdia **68 das 107 redes** no mapa, e os pins do
 > piloto web e dos PDFs caíam no **fallback de sigla** por falta de `logo_<slug>.png`.
 
 O passo roda `scripts/sync_concorrentes_dashboard.py` (cópia instalada em `/opt/gymscraping-infra/`) dentro da
-imagem do `streamlit`, com `GymScraping` em `:ro` e o diretório dos apps como destino. Duas regras importam:
+imagem da `api`, com `GymScraping` em `:ro` e o diretório dos apps como destino. Duas regras importam:
 
 - **Normalização de nome:** o coletor guarda parte das artes fora do padrão (`AD3_logo.png`, `Malibu_logo.png`,
   `companhiafit_logo.png`). O canônico é sempre `logo_<slug>.png`, definido por `COMPETITOR_LOGO_FILES`; o
@@ -197,7 +212,7 @@ O `web` entra no restart porque o piloto carrega as logos em `@app.on_event("sta
 rede em `lru_cache` — sem restart, logo nova não aparece nele. Rodar sob demanda (é idempotente):
 
 ```bash
-IMG=$(docker inspect --format '{{.Image}}' motor_expansao_streamlit)
+IMG=$(docker inspect --format '{{.Image}}' motor_expansao_api)
 docker run --rm --user 0:0 -e PYTHONIOENCODING=utf-8 \
   -v /opt/gymscraping-infra/sync_concorrentes_dashboard.py:/tmp/sync.py:ro \
   -v /opt/gymscraping:/gymscraping:ro -v /opt/motor-expansao/concorrentes:/destino \
@@ -221,7 +236,7 @@ cat /opt/gymscraping-infra/relatorio_crescimento_*.txt | tail -100
 ```
 
 Falhas individuais de coletor **não** abortam o lote; redes que falham mantêm o CSV anterior e aparecem como
-"defasadas" no relatório de crescimento. Se o regen falhar, o dashboard mantém os dados anteriores (sem restart).
+"defasadas" no relatório de crescimento. Se o regen falhar, os apps mantêm os dados anteriores (sem restart).
 **Nota:** o runner **não** faz `git pull` do checkout do motor (`/opt/motor-expansao/app`) para não conflitar
 com o deploy; se os pipelines da cadeia mudarem, re-sincronizar o checkout manualmente.
 
@@ -261,7 +276,10 @@ scp -i "$env:USERPROFILE\.ssh\id_ultra" -r data/ultra/ root@2.25.137.241:/opt/mo
 
 ---
 
-## Gerenciar usuários do dashboard
+## Gerenciar usuários do login (Authelia)
+
+> O login continua igual após a DEC-022: o Authelia protege `piloto.ultra-expansao.tech`
+> e `/tiles/` em `dashboard.ultra-expansao.tech` com a mesma base de usuários.
 
 ### Adicionar usuário
 
@@ -342,7 +360,8 @@ cd /opt/motor-expansao/app && docker compose -f docker-compose.prod.yml ps
 ### Ver logs em tempo real
 
 ```bash
-docker compose -f docker-compose.prod.yml logs -f streamlit
+docker compose -f docker-compose.prod.yml logs -f web
+docker compose -f docker-compose.prod.yml logs -f api
 docker compose -f docker-compose.prod.yml logs -f caddy
 docker compose -f docker-compose.prod.yml logs -f authelia
 ```
@@ -357,7 +376,7 @@ free -h
 ### Reiniciar um serviço específico
 
 ```bash
-docker compose -f docker-compose.prod.yml restart streamlit
+docker compose -f docker-compose.prod.yml restart web
 docker compose -f docker-compose.prod.yml restart authelia
 docker compose -f docker-compose.prod.yml restart caddy
 ```
@@ -384,7 +403,7 @@ grupo de ops — `MONITOR_TELEGRAM_CHAT_ID` no `.env`). Script versionado no rep
 O que é vigiado e a cadência (crontab do root):
 
 ```cron
-*/5 * * * * /opt/motor-monitoring/healthcheck_vps.sh containers  # 5 containers + edge HTTPS
+*/5 * * * * /opt/motor-monitoring/healthcheck_vps.sh containers  # 6 containers (web, api, bot, caddy, authelia, tileserver) + edge HTTPS
 0 * * * *   /opt/motor-monitoring/healthcheck_vps.sh host        # disco >80% / memória <10%
 0 11 * * *  /opt/motor-monitoring/healthcheck_vps.sh authelia    # resumo diário de falhas de login (08h BRT)
 0 18 * * 0  /opt/motor-monitoring/healthcheck_vps.sh coleta      # domingo 15h BRT: resumo/falha da coleta semanal
@@ -402,10 +421,10 @@ daemon (`/etc/docker/daemon.json`, json-file 10m×3) — não é papel deste scr
 
 ## Runbook de incidente
 
-Proporcional a um dashboard interno — 3 cenários. Em todos: **quem aciona é quem viu o
+Proporcional a um app interno — 3 cenários. Em todos: **quem aciona é quem viu o
 alerta primeiro** (grupo de ops); Felipe é o dono da decisão de contenção.
 
-**1. Indisponibilidade (dashboard/API/bot fora do ar).**
+**1. Indisponibilidade (piloto/API/bot fora do ar).**
 Diagnóstico: `docker compose -f docker-compose.prod.yml ps` + logs do serviço caído.
 Ação: restart do serviço (seção acima). Se o restart não segurar (crash-loop), rollback
 de imagem por digest (seção "Rollback"). Se o host estiver sem recurso (disco/memória do
@@ -446,16 +465,16 @@ docker compose -f docker-compose.prod.yml logs caddy | grep -i "certificate\|tls
 /opt/motor-expansao/
 ├── app/                          # Código-fonte (git clone)
 │   ├── docker-compose.prod.yml
-│   ├── Dockerfile.streamlit
+│   ├── Dockerfile.web            # build fica no CI; produção puxa imagem do GHCR
+│   ├── Dockerfile.api
 │   ├── Caddyfile                 # NÃO está no git
-│   ├── .env                      # NÃO está no git
+│   ├── .env                      # NÃO está no git (WEB_IMAGE/API_IMAGE pinados por digest)
 │   ├── authelia/
 │   │   ├── configuration.yml     # NÃO está no git
 │   │   ├── users_database.yml    # NÃO está no git
 │   │   └── db.sqlite3            # banco de sessões Authelia
-│   ├── streamlit_app.py
-│   ├── src/
-│   └── dashboard/
+│   ├── web/                      # SPA + backend FastAPI do piloto
+│   └── src/
 └── data/
     ├── outputs/                  # Parquets do M1 (~1,6 GB)
     │   ├── hexagonos_brasil_dashboard.parquet
@@ -485,5 +504,5 @@ docker compose -f docker-compose.prod.yml logs caddy | grep -i "certificate\|tls
 - **Nunca commitar** `.env`, `Caddyfile`, `authelia/users_database.yml` ou `authelia/configuration.yml` com dados reais
 - **Backup dos parquets:** manter cópia local em `data/outputs/` na máquina de desenvolvimento
 - **Scrapers M2/M3:** agendar em janela noturna 2h–5h BRT para não competir com usuários ativos
-- **Memória:** limite de 10 GB no container Streamlit + 4 GB swap; monitorar com `docker stats` se houver lentidão
+- **Memória:** limite de 8 GB no container `web` (`memswap_limit` 10 GB; teto herdado da função do Streamlit — DEC-022); monitorar com `docker stats` se houver lentidão
 - **Atualizações de sistema:** rodar mensalmente `apt-get update && apt-get upgrade -y` no servidor

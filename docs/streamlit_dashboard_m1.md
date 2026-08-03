@@ -1,4 +1,4 @@
-> **[HISTORICO]** Descreve o dashboard de 4 abas (maio/2026). O app atual tem 5 abas — ver o canonico `docs/arquitetura_app_atual.md`.
+> **[HISTORICO — app aposentado pela DEC-022, 2026-08-03]** Descreve o dashboard Streamlit de 4 abas (maio/2026). O Streamlit saiu de producao; o app atual e o piloto web (`web/`) — ver `docs/deploy_piloto_web.md` e `docs/decisions/DEC-022.md`.
 
 # Dashboard Executivo M1 + Hibrido no Streamlit
 

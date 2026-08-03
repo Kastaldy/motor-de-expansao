@@ -4,9 +4,7 @@ import motor_expansao.core.constants
 import motor_expansao.core.scoring
 import motor_expansao.dashboard
 import motor_expansao.dashboard.competitors
-import motor_expansao.dashboard.components
 import motor_expansao.dashboard.data
-import motor_expansao.dashboard.pages
 import motor_expansao.data
 import motor_expansao.pipelines
 import motor_expansao.pipelines.m1
@@ -39,11 +37,11 @@ def test_core_modules_importable():
 
 
 def test_dashboard_modules_importable():
+    # DEC-022: pages/components (UI Streamlit) sairam; o pacote dashboard segue como
+    # motor compartilhado (censo_*, relatorio_municipal, competitors, data).
     for mod in (
         motor_expansao.dashboard.competitors,
         motor_expansao.dashboard.data,
-        motor_expansao.dashboard.components,
-        motor_expansao.dashboard.pages,
     ):
         assert mod is not None
 
@@ -65,26 +63,6 @@ def test_dashboard_competitors_exports():
     )
 
     assert all(callable(f) for f in [competitor_icon_data, load_competitor_points])
-
-
-def test_dashboard_components_exports():
-    from motor_expansao.dashboard.components import (
-        _sort_carteira_by_m1,
-        build_hybrid_kpis,
-        build_kpis,
-        build_map_figure,
-    )
-    assert all(callable(f) for f in [build_kpis, build_hybrid_kpis, build_map_figure, _sort_carteira_by_m1])
-
-
-def test_dashboard_pages_exports():
-    from motor_expansao.dashboard.pages import (
-        inject_styles,
-        render_header,
-        render_sidebar_filters,
-        render_visao_executiva,
-    )
-    assert all(callable(f) for f in [inject_styles, render_header, render_sidebar_filters, render_visao_executiva])
 
 
 def test_m1_pipeline_modules_importable():

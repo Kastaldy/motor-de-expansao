@@ -1,4 +1,4 @@
-> **[HISTORICO]** Plano PRE-deploy (placeholders, ex.: SEU_DOMINIO). Superado — infra real em `docs/infra_producao.md`.
+> **[HISTORICO]** Plano PRE-deploy do dashboard Streamlit (placeholders, ex.: SEU_DOMINIO). Superado — infra real em `docs/infra_producao.md`; o Streamlit foi aposentado na DEC-022 (2026-08-03) e o app de producao e o piloto web (`docs/deploy_piloto_web.md`).
 
 # Deploy — Motor de Expansão Dashboard
 

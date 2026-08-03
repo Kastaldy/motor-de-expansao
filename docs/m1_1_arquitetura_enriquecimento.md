@@ -143,7 +143,7 @@ score_territorial_expandido  (novo, experimental, nao oficial)
 
 - Nasce como coluna **experimental** no parquet `brasil_territorial_enriquecido.parquet`.
 - **NAO substitui** `score_priorizacao` em nenhum artefato oficial.
-- **NAO aparece** no dashboard executivo (Streamlit ou Power BI) ate aprovacao explicita.
+- **NAO aparece** no app executivo (piloto web ou Power BI) ate aprovacao explicita.
 - Formula inicial proposta (sujeita a calibracao):
 
 ```python

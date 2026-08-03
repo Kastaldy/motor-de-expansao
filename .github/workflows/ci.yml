@@ -2,15 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [main, codex-dashboard-m1-streamlit]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
     inputs:
-      dispatch_build_sanity:
-        description: "Buildar a imagem (SEM publicar) para sanity em branch de ciclo"
-        type: boolean
-        default: true
       publish_api:
         description: "Forcar build+publish da imagem da API/bot (motor-expansao-api) — bootstrap/manual"
         type: boolean
@@ -42,7 +38,7 @@ jobs:
 
       - name: Instalar dependencias
         # inclui [api_mvp] (fastapi/uvicorn/pydantic) p/ a suite da API GeoEspacial
-        # rodar no CI. NAO arrasta p/ a imagem: Dockerfile.streamlit usa .[basemap].
+        # rodar no CI. NAO arrasta p/ as imagens: Dockerfile.web/.api instalam so seus extras.
         # BLK-OPS-12: -c constraints.txt PINA todas as deps transitivas (lockfile
         # universal gerado por uv p/ >=3.11; mesmo arquivo usado nos Dockerfiles) ->
         # CI, imagens e local instalam as MESMAS versoes. Refresh do lock:
@@ -62,9 +58,6 @@ jobs:
 
       - name: Testes (suite completa)
         run: python -m pytest -q
-
-      - name: Smoke import
-        run: python -c "import streamlit_app; print('ok')"
 
       # BLK-SEC-02: gitleaks como gate BLOQUEANTE (qualquer segredo reprova o CI).
       # Reusa .gitleaks.toml/.gitleaksignore (BLK-OPS-01). Imagem pinada por digest.
@@ -90,7 +83,7 @@ jobs:
       # ALLOWLIST (revisar ate 2026-09):
       #  - GHSA-6w46-j5rx-g56g (pytest<=9.0.2): DoS/priv-esc LOCAL via path previsivel
       #    /tmp/pytest-of-{user}. Dev/test only — pytest NAO entra na imagem de prod
-      #    (Dockerfile.streamlit roda `pip install .` sem [dev]) -> zero exposicao em
+      #    (Dockerfile.web/.api rodam `pip install .` sem [dev]) -> zero exposicao em
       #    producao. Fix em pytest 9.0.3 (major 8->9) fica para bloco de migracao proprio.
       - name: Install pip-audit (CI only)
         # Upgrade do proprio pip p/ >=26.1.2 REMEDIA PYSEC-2026-196 (pip 26.1.1: entry
@@ -125,9 +118,7 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      # TODO(pin de governanca): fixar setup-node por SHA como os demais actions do
-      # arquivo. @v4 e funcional; falta so a pinagem por digest (revisao do ci.yml).
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
           cache: npm
@@ -138,126 +129,6 @@ jobs:
         run: npm run test
       - name: Typecheck + build (tsc --noEmit + vite build)
         run: npm run build
-
-  # Gate de publicacao (BLK-SEC-01): a imagem so e publicada no GHCR quando o job
-  # `test` conclui com sucesso (needs: [test]) E o gatilho e push na default branch.
-  # Sem CI verde, este job (e seus steps de push) e pulado — fecha o gap do antigo
-  # docker-publish.yml (que publicava a cada push em main SEM depender do CI).
-  publish:
-    needs: [test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Login no GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Metadata (tags/labels)
-        id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
-        with:
-          images: ghcr.io/${{ github.repository }}/motor-expansao-streamlit
-          tags: |
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
-      - name: Build (local, p/ scan antes do push)
-        id: build
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
-        with:
-          context: .
-          file: Dockerfile.streamlit
-          load: true
-          tags: motor-expansao-streamlit:scan
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # BLK-SEC-04: muda a cada execucao -> a camada final de seguranca do Dockerfile
-          # e' SEMPRE refeita. Sem isto o `cache-from: type=gha` congela os pacotes de SO
-          # no estado da primeira vez que a camada foi cacheada e atualizacao de seguranca
-          # nunca chega (foi o que prendeu o libexpat1 em 2.7.1-2 com o fix disponivel).
-          # A camada vem DEPOIS do `pip install`, entao o build caro segue cacheado.
-          build-args: |
-            APT_REFRESH=${{ github.run_id }}
-      # BLK-SEC-02: Trivy bloqueia HIGH/CRITICAL antes do push (ignore-unfixed: nao
-      # bloqueia CVE sem patch upstream -> controle de ruido). Imagem vulneravel NAO publica.
-      - name: Image scan (Trivy, HIGH/CRITICAL block)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: motor-expansao-streamlit:scan
-          format: table
-          exit-code: "1"
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          vuln-type: os,library
-          trivyignores: .trivyignore
-      - name: Push (apos scan verde)
-        id: push
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
-        with:
-          context: .
-          file: Dockerfile.streamlit
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # BLK-SEC-04: muda a cada execucao -> a camada final de seguranca do Dockerfile
-          # e' SEMPRE refeita. Sem isto o `cache-from: type=gha` congela os pacotes de SO
-          # no estado da primeira vez que a camada foi cacheada e atualizacao de seguranca
-          # nunca chega (foi o que prendeu o libexpat1 em 2.7.1-2 com o fix disponivel).
-          # A camada vem DEPOIS do `pip install`, entao o build caro segue cacheado.
-          build-args: |
-            APT_REFRESH=${{ github.run_id }}
-      - name: Exibir digest publicado (pin de prod)
-        run: 'echo "Digest imutavel publicado: ${{ steps.push.outputs.digest }}"'
-
-  # Sanity de build manual (workflow_dispatch em branch de ciclo): builda a imagem
-  # SEM publicar (load: true, sem push). Nunca faz login no GHCR nem gera tag :latest.
-  build-sanity:
-    needs: [test]
-    if: github.event_name == 'workflow_dispatch' && inputs.dispatch_build_sanity
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
-      - name: Build (sanity, load p/ scan)
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
-        with:
-          context: .
-          file: Dockerfile.streamlit
-          load: true
-          tags: motor-expansao-streamlit:sanity
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # BLK-SEC-04: muda a cada execucao -> a camada final de seguranca do Dockerfile
-          # e' SEMPRE refeita. Sem isto o `cache-from: type=gha` congela os pacotes de SO
-          # no estado da primeira vez que a camada foi cacheada e atualizacao de seguranca
-          # nunca chega (foi o que prendeu o libexpat1 em 2.7.1-2 com o fix disponivel).
-          # A camada vem DEPOIS do `pip install`, entao o build caro segue cacheado.
-          build-args: |
-            APT_REFRESH=${{ github.run_id }}
-      # BLK-SEC-02: mesmo gate de imagem do publish, aqui como sanity bloqueante
-      # (decisao travada) -> build de ciclo com HIGH/CRITICAL reprova antes de virar prod.
-      - name: Image scan (Trivy, HIGH/CRITICAL block)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: motor-expansao-streamlit:sanity
-          format: table
-          exit-code: "1"
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          vuln-type: os,library
-          trivyignores: .trivyignore
 
   # CD da imagem da API/bot: publica `motor-expansao-api` no GHCR p/ deploy por digest
   # (igual ao Streamlit). FILTRADO POR CAMINHO via git-diff: o build pesado (Google
@@ -371,7 +242,7 @@ jobs:
   # (dashboard/dimensionamento/api) — senao a imagem fica stale quando um deles muda
   # (mesmo gotcha do publish-api). Trivy BLOQUEANTE: exposto publicamente atras do
   # Authelia e sem Chrome (diferente da API). needs: test. Republish manual:
-  #   gh workflow run ci.yml --ref main -f publish_web=true -f dispatch_build_sanity=false
+  #   gh workflow run ci.yml --ref main -f publish_web=true
   publish-web:
     needs: [test]
     if: >-
@@ -449,6 +320,7 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           vuln-type: os,library
+          trivyignores: .trivyignore
       - name: Push (apos scan)
         id: push
         if: steps.filter.outputs.changed == 'true'

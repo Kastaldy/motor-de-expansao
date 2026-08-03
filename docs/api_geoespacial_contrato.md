@@ -31,9 +31,11 @@ Fixadas por Felipe (2026-06-09) e reafirmadas na DEC-005 (2026-06-10):
    `censo_report.py` como interface ESTAVEL; nunca os edita (trilha do Vini — dashboard/PDF/UX).
    Mudancas nesses modulos sao solicitadas, nao feitas pela trilha da API.
 3. **Codigo novo so em `src/motor_expansao/api/`** (pasta disjunta). Nada de logica da API fora dela.
-4. **Dependencias so em extra opcional** do `pyproject.toml`, fora do deploy base do Streamlit.
-   Materializado no extra `[api_mvp]` (mais `[basemap]`/`[geocoder]`, pos-contrato) — o `[api]` e o
-   bloco LEGADO PostGIS e nao deve ser instalado (§11).
+4. **Dependencias so em extra opcional** do `pyproject.toml`, fora do install base (regra escrita
+   quando o deploy base era o Streamlit, aposentado pela DEC-022, 2026-08-03; segue valendo para nao
+   inflar as imagens `motor-expansao-web`/`motor-expansao-api`). Materializado no extra `[api_mvp]`
+   (mais `[basemap]`/`[geocoder]`, pos-contrato) — o `[api]` e o bloco LEGADO PostGIS e nao deve ser
+   instalado (§11).
 5. **READ-ONLY sobre o M1 (§5).** A API e camada paralela de consumo: NAO recalcula nem altera
    `score_priorizacao`, `hex_score_estrutural`, carteira, plano curto prazo, plano dominio ou
    qualquer artefato oficial do M1.
@@ -263,9 +265,11 @@ isolado do bloco legado `[api]` (isolamento pedido por esta secao).
 `passlib`. G1 recomenda que G2 instale apenas o subset MVP (idealmente isolando-o do bloco legado do
 extra `[api]`); essas libs sao do desenho PostGIS antigo e nao tem uso no MVP on-demand.
 
-**Guardrail de deploy:** as deps da API ficam fora do deploy base do Streamlit (extras `[api_mvp]`
-+ `[basemap]`/`[geocoder]`), para nao acoplar o dashboard as deps da API. (Ha um import
-dashboard -> `api.maps_geocoder`, mas sem arrastar dependencia — ver a excecao no §4.)
+**Guardrail de deploy:** as deps da API ficam em extras (`[api_mvp]` + `[basemap]`/`[geocoder]`),
+fora do install base, para nao acoplar o motor compartilhado `dashboard/` — e as imagens que o
+embarcam, como a `motor-expansao-web` — as deps da API (a regra nasceu para proteger o deploy base
+do Streamlit, aposentado pela DEC-022, 2026-08-03). (Ha um import dashboard -> `api.maps_geocoder`,
+mas sem arrastar dependencia — ver a excecao no §4.)
 
 ## 12. O que se aproveita do scaffold legado (`fora_primeira_fase/api_postgis/main.py`)
 

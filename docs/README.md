@@ -19,8 +19,8 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 - [analise_pontual_entorno.md](analise_pontual_entorno.md) · [expansao_dominio.md](expansao_dominio.md) · [mapa_territorial_unificado.md](mapa_territorial_unificado.md) — **[histórico]** contratos de ciclos de maio/2026.
 
 ## 2. App e Dashboard
-- [arquitetura_app_atual.md](arquitetura_app_atual.md) — **[canônico]** arquitetura do app atual (5 abas, módulos, camada API).
-- [streamlit_dashboard_m1.md](streamlit_dashboard_m1.md) — **[histórico]** governança do dashboard de 4 abas (ver `arquitetura_app_atual.md`).
+- [arquitetura_app_atual.md](arquitetura_app_atual.md) — **[canônico]** arquitetura do app atual (piloto web: 3 superfícies + motor compartilhado; Parte B preserva a história do Streamlit).
+- [streamlit_dashboard_m1.md](streamlit_dashboard_m1.md) — **[histórico]** governança do dashboard Streamlit de 4 abas — app aposentado pela DEC-022 (2026-08-03); o app de produção é o piloto web (`deploy_piloto_web.md`).
 
 ## 3. API GeoEspacial
 - [api_geoespacial_contrato.md](api_geoespacial_contrato.md) — **[canônico]** contrato da API on-demand.
@@ -32,7 +32,8 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 - [deploy.md](deploy.md) — runbook curto de deploy (modo PULL do GHCR).
 - [deploy_api_bot.md](deploy_api_bot.md) — containerização/deploy da API + bot Telegram.
 - [backup_restore.md](backup_restore.md) — **[canônico]** backup e regeneração (DR) de segredos e dados.
-- [deploy_plan.md](deploy_plan.md) · [deploy_vps_streamlit.md](deploy_vps_streamlit.md) — **[histórico]** planos/runbooks antigos de deploy (ver `infra_producao.md`).
+- [deploy_piloto_web.md](deploy_piloto_web.md) — **[canônico]** runbook completo de deploy do piloto web (imagem `motor-expansao-web` por digest).
+- [deploy_plan.md](deploy_plan.md) · [archive/deploy_vps_streamlit.md](archive/deploy_vps_streamlit.md) — **[histórico]** planos/runbooks antigos de deploy (ver `infra_producao.md`).
 
 ## 5. Orquestração, Loop e Governança
 - [portao_merge_orq21.md](portao_merge_orq21.md) — **[canônico]** runbook do portão de merge (DEC-016/BLK-ORQ-21).
@@ -50,4 +51,4 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 
 ## 7. Histórico e arquivo
 - [archive/](archive/README.md) — planos e prompts já implementados/superados, preservados para auditoria.
-- [rev08_spike_perf_runbook.md](rev08_spike_perf_runbook.md) — **[spike]** medição descartável do BLK-REV-08.
+- [rev08_spike_perf_runbook.md](rev08_spike_perf_runbook.md) — **[histórico]** medição descartável do BLK-REV-08 (os scripts do spike saíram do repo com a DEC-022).

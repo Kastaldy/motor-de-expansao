@@ -8,17 +8,15 @@ version = "0.1.0"
 description = "Motor de Expansão Ativa — Ultra Academia"
 requires-python = ">=3.11"
 
-# Dependencias minimas: dashboard Streamlit + pipelines essenciais.
-# API, PostGIS, Prefect e scraping ficam nos extras abaixo.
+# Dependencias minimas: motor compartilhado (relatorios/PDF/geo) + pipelines essenciais.
+# API, PostGIS, Prefect e scraping ficam nos extras abaixo. O app de producao e o piloto
+# web (web/ — FastAPI + Vite); streamlit/pydeck/plotly sairam com o corte da DEC-022.
 dependencies = [
-    # Dashboard
-    "streamlit>=1.35.0,<2",
+    # Relatorios e dados
     "pandas>=2.2.0,<3",
     "pyarrow>=16.0.0,<24",
     "numpy>=1.26.0,<2.4",
     "openpyxl>=3.1.0",
-    "plotly>=5.20.0",
-    "pydeck>=0.8.1",
     # >=10.1: `ImageFont.load_default(size=)` (fonte TrueType embutida, escalavel) e usada
     # por `censo_map._font` desde o BLK-RELPON-06 — em 10.0.x levantaria TypeError no render.
     "pillow>=10.1",

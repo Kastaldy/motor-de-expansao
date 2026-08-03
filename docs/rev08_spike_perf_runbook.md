@@ -1,3 +1,9 @@
+> **[HISTORICO — 2026-08-03, DEC-022]** O dashboard Streamlit medido aqui foi aposentado e os
+> artefatos do spike (`ui_spike_deckgl.py`, `scripts/rev08_spike_app.py`,
+> `scripts/rev08_spike_playwright.py`) sairam do repo com o corte. O runbook fica preservado como
+> registro da medicao que embasou o mapa client-side (deck.gl) do piloto web — os comandos abaixo
+> nao sao mais executaveis neste repo.
+
 > **[SPIKE]** Artefato de medicao descartavel do BLK-REV-08 (tabelas propositalmente em branco).
 
 # Runbook de medição — Spike deck.gl (BLK-REV-08)

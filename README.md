@@ -3,25 +3,37 @@
 Base territorial do MVP nacional do `motor-de-expansao`.
 
 O contrato canonico do projeto esta em `CLAUDE.md`; detalhes do ciclo ativo ficam em `PRD.md`.
-O dashboard Streamlit esta estabilizado (ciclos Blocos 1-19 concluidos em 2026-05-21): Visao Executiva Ultra-only, Analise Pontual de Entorno com populacao/renda/pins de concorrentes, Cenario Multi-Hex com agregacao de potencial regional, Expansao de Dominio por score hibrido censitario-residual, consumo fitness instalado em todo o app, regua visual 10-em-10 para M1/Censitario/Hibrido/Residual, captura por clique com centroide de hex e Relatorio Pontual Censitario 1.0 km com setor real, mapa PNG e export CSV/PDF. Roda offline com Parquets locais, sem API ao vivo, sem PostGIS obrigatorio e sem recalculo do M1 no deploy inicial.
-O ciclo `Performance e Refatoracao do Dashboard` (concluido em 2026-05-22) tornou a carga lazy por UF: o app le apenas a particao `uf=XX` do dataset enriquecido materializado (`data/outputs/hexagonos_dashboard_enriquecido/`), renderiza so a aba ativa e usa fonte de mapa enxuta. Medicoes em `data/reports/perf_baseline_dashboard.md`.
+
+O app de producao e o **piloto web** (`web/` — SPA React/Vite + deck.gl no front, FastAPI em `web/server/app.py` no back), com **3 superficies**: **Mapa Territorial** (porta de entrada por UF, funil de 4 camadas ate a recomendacao por municipio), **Visao Executiva** (a rede Ultra real, via Growth API) e **Viabilidade do ponto** (stress-test deterministico de um imovel). Os relatorios em PDF (Pontual Censitario 1,0 km e Municipal) saem do Mapa e da Viabilidade. Em producao tudo roda num unico container (`motor_expansao_web`) em `piloto.ultra-expansao.tech`, atras de Caddy + Authelia. Detalhes de produto em `web/README.md`; arquitetura em `docs/arquitetura_app_atual.md`.
+
+O dashboard Streamlit — o app original, estabilizado nos ciclos de mai/2026 — foi **aposentado em 2026-08-03 pela DEC-022** (escopo do corte definido na DEC-020: paridade de Mapa + Visao Executiva + Viabilidade; Expansao de Dominio e Carteira/Plano nao viraram telas). O **motor compartilhado** que ele usava (`src/motor_expansao/dashboard/` — dados, censo, relatorios, concorrentes, viabilidade) continua vivo e e consumido pelo piloto, pela API GeoEspacial, pelo bot Telegram e pelo `fase1_bi_exports`; so a UI Streamlit saiu do repo. Historia dos ciclos: `tasks/completed.md` e `docs/decisions/DEC-020.md`/`DEC-022.md`.
 
 ## Quickstart local
 
+Requisitos: Python 3.11+, Node.js (npm) e os Parquets locais (gitignored — ver `docs/artefatos_dados.md`).
+
 ```bash
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,api_mvp]"
 copy .env.example .env
-python -m streamlit run streamlit_app.py
+iniciar-piloto-web.cmd
 ```
 
-O instalar `.[dev]` inclui apenas as dependencias do dashboard e dos testes rapidos.
-Extras opcionais: `.[api]` (FastAPI/PostGIS), `.[ml]` (XGBoost/LightGBM), `.[scraping]`.
+O `.cmd` sobe as duas pecas e abre o browser: back-end FastAPI em `127.0.0.1:8899` e front Vite em `localhost:5000`. Ele aponta `MOTOR_DATA_DIR` para o `data/` do checkout; sobrescreva a variavel se o seu caminho for outro. Manual, se preferir:
+
+```bash
+cd web/server && MOTOR_DATA_DIR=<repo>/data python -m uvicorn app:app --port 8899 --reload
+cd web && npm run dev
+```
+
+O `.[dev]` traz o motor compartilhado e os testes rapidos; o `.[api_mvp]` traz
+FastAPI/uvicorn, necessarios ao back do piloto. Extras opcionais: `.[basemap]`
+(tiles dos PDFs), `.[ml]`, `.[scraping]`.
 
 Validacao rapida recomendada antes de handoff:
 
 ```bash
-python -m pytest -q tests/integration/test_streamlit_app.py tests/integration/test_carteira_plano_nacional.py
-python -c "import streamlit_app; print('ok')"
+python -m pytest -q tests/unit/test_enrich_dashboard_data.py tests/unit/test_data_io_e_filtros.py
+cd web && npm test
 ```
 
 Suite de mercado (requer artefatos de staging):
@@ -30,113 +42,71 @@ Suite de mercado (requer artefatos de staging):
 python -m pytest -q tests/integration/test_modelo_mercado_hexagonos.py
 ```
 
-## Dashboard Streamlit
+## Piloto web
 
-Arquivo principal: `streamlit_app.py`.
+Backend: `web/server/app.py` (le os Parquets read-only e embrulha as funcoes puras do motor compartilhado). Frontend: `web/src/` (React + Vite + deck.gl).
 
-O app roda offline e le Parquets locais. Para a experiencia completa do dashboard atual, manter estes artefatos em `data/outputs/`:
+O app le Parquets locais apontados por `MOTOR_DATA_DIR` (montados `:ro` em producao). Para a experiencia completa, manter estes artefatos:
 
-| arquivo | uso no dashboard | obrigatoriedade |
+| arquivo | uso no piloto | obrigatoriedade |
 | --- | --- | --- |
-| `hexagonos_brasil_dashboard.parquet` | base oficial M1, KPIs, ranking e mapa executivo | obrigatorio |
-| `oportunidades_expansao_hibrido.parquet` | enriquecimento hibrido/censitario e filtros combinados | obrigatorio no app atual |
-| `carteira_expansao_acionavel.parquet` | aba de carteira operacional | recomendado |
-| `plano_expansao_curto_prazo.parquet` | aba de plano curto prazo | recomendado |
-| `setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN/part-000.parquet` | Relatorio Pontual Censitario 1.0 km | opcional, por municipio |
+| `data/outputs/hexagonos_dashboard_enriquecido/uf=XX/` | Mapa Territorial (carga lazy por UF) | obrigatorio |
+| `data/outputs/setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN/part-000.parquet` | Relatorio Pontual Censitario 1,0 km | por municipio |
+| `data/staging/concorrentes_mapeados.parquet` e `unidades_ultra_performance_hex.parquet` | pins de concorrentes/Ultra no mapa | recomendado |
+| `data/staging/growth_api_historico.parquet` | Visao Executiva (numeros reais da rede) | recomendado; sem ele a tela responde 404 |
+| `data/staging/base_calibracao_maduras.parquet` | semente p50 da demanda na Viabilidade | recomendado |
+| `data/staging/hexagonos_mercado_mapeado.parquet` | residual fitness do ponto no Relatorio Pontual | opcional |
+| `data/staging/uplift_renda_domiciliar_municipio.parquet`, `uplift_composicao_setor.parquet`, `fator_temporal_renda.json` | renda media domiciliar municipal (tooltip e PDF) | opcional (fallback nacional) |
 
-Camadas de apoio em `data/staging/` podem enriquecer rastreabilidade censitaria, mas dados brutos e staging nacionais grandes devem ser tratados como artefatos externos ao codigo.
+Dados brutos e staging nacionais grandes sao artefatos externos ao codigo (`docs/artefatos_dados.md`).
 
-### Pins de concorrentes no mapa
+### Pins de concorrentes e Ultra no mapa
 
-O dashboard tambem pode sobrepor pins dos concorrentes nos mapas principal e hibrido. A camada e visual: nao altera `score_priorizacao`, ranking, carteira nem nenhum artefato oficial.
+O piloto sobrepoe pins de concorrentes e das unidades Ultra no Mapa Territorial. A camada e visual: nao altera `score_priorizacao`, ranking nem nenhum artefato oficial.
 
-Arquivos usados:
-
-- CSVs em `concorrentes/` (`unidades_smart_fit.csv`, `unidades_bluefit.csv`, `unidades_panobianco.csv`, `SkyFit_unidades_geocodificado.csv`)
-- Loader: `src/motor_expansao/dashboard/competitors.py`
-- Camada de mapa: `src/motor_expansao/dashboard/components.py`
-
-Como alterar imagem/cor das logos:
-
-1. Para mudar cores ou iniciais dos pins atuais, edite `COMPETITOR_BRANDS` em `src/motor_expansao/dashboard/competitors.py`.
-2. Para usar logos oficiais em vez do SVG com iniciais, altere `competitor_icon_data()` no mesmo arquivo para retornar um `url` da imagem, de preferencia em `data:image/png;base64,...` ou `data:image/svg+xml;base64,...` para manter o dashboard offline.
-3. Mantenha o retorno no formato esperado pelo `pydeck.IconLayer`: `{"url": "...", "width": 128, "height": 128, "anchorY": 122}`.
-
-Como diminuir o tamanho dos pins:
-
-1. Abra `src/motor_expansao/dashboard/components.py`.
-2. Na funcao `_build_competitor_icon_layer()`, reduza `comp["icon_size"] = 34`.
-3. Se necessario, ajuste tambem `size_min_pixels=24` e `size_max_pixels=42` na criacao do `pdk.Layer("IconLayer", ...)`.
-4. Rode `python -m pytest -q tests/integration/test_streamlit_app.py` para validar a camada.
-
-### Pins das unidades Ultra no mapa
-
-O dashboard sobrepoe pins das unidades proprias da Ultra Academia nos mapas principal e hibrido. A camada e visual e nao altera `score_priorizacao`, ranking nem artefatos do M1.
-
-- Arquivo: `data/ultra/Ultra.csv` (opcional; formato: `sep=";"`, `encoding=latin-1`, 1 linha de metadado antes do cabecalho)
-- Loader: `load_ultra_points` em `src/motor_expansao/dashboard/competitors.py`
-- Pin vermelho (#C8001E) com sigla `UA`; tamanho ligeiramente maior que concorrentes para distincao visual
-- Sem o arquivo, o app funciona normalmente sem a sobreposicao de pins Ultra
+- Pontos: `data/staging/concorrentes_mapeados.parquet` (concorrentes) e `unidades_ultra_performance_hex.parquet` (Ultra).
+- Logos: `logo_<rede>.png` em `concorrentes/` (gitignored; sobrescreva com `MOTOR_COMPETITORS_LOGO_DIR`). Sem o PNG, fallback de sigla + cor da marca (`COMPETITOR_BRANDS` em `src/motor_expansao/dashboard/competitors.py`).
+- Os CSVs em `concorrentes/` (`unidades_smart_fit.csv` etc.) continuam sendo a FONTE do pipeline: `normalizar_concorrentes.py` os consolida no parquet que o piloto e os PDFs consomem.
 
 ### Busca por coordenada
 
-A sidebar do dashboard inclui um campo de busca de hexagono por coordenada geografica.
+A lupa no cabecalho do piloto aceita coordenada (`lat, lng`, ponto ou virgula decimal), link do Google Maps ou endereco livre. Coordenada/link resolvem offline (parser puro, bbox do Brasil); endereco cai no geocoding (`/api/geocode`, Nominatim — DEC-010, com cache e fallback gracioso). Ao encontrar, o mapa voa ate o ponto, marca o hexagono H3 res-7 e abre o atalho "Estudo pontual" para a Viabilidade.
 
-- Formatos aceitos: `lat, lng` (ex: `-23.55, -46.63`) ou `lat lng` separado por espaco
-- O mapa centraliza na coordenada pesquisada com zoom 10
-- O hex correspondente recebe destaque em amarelo em ambos os mapas (aparece mesmo fora dos filtros ou descartado pela regua 5k)
-- Um card de detalhe acima das abas exibe `hex_id`, score, ranking, renda e populacao do hex
-- Funciona offline sem API externa; nao altera score nem artefatos oficiais
+### Relatorios em PDF
 
-### Analise Pontual de Entorno
+- **Relatorio Pontual Censitario 1,0 km** (`POST /api/relatorio/pontual`): intersecao real setor censitario x circulo em CRS metrico (`setor_censitario_intersecao_area_1km`; raio 1,0 km desde a DEC-021). Contrato: `docs/relatorio_pontual_censitario.md`.
+- **Relatorio Municipal** (`POST /api/relatorio/municipal`): 9 paginas, gerado no 4o passo do funil do Mapa. Contrato: `docs/relatorio_municipal_template.md`.
 
-A aba `Mapa Territorial` inclui uma analise de raio ao redor de uma coordenada.
-
-- Raio default: `1.6 km` (area circular aproximada de `8.04 km2`)
-- Clique via `st.pydeck_chart` retorna centroide do hex (decisao tecnica concluida no Bloco 12; pydeck mantido, folium descartado)
-- Populacao total, renda per capita media e pins de concorrentes/Ultra filtrados por distancia haversine dentro do raio
-- Nota visual exibida quando clique ativo; fallback por campo `lat,lng` na sidebar para coordenada exata
-- Guardrail: a analise e visual/analitica e nao altera `score_priorizacao`, carteira, plano ou artefatos oficiais
-
-### Relatorio Pontual Censitario 1.0 km
-
-O expander `Relatorio Pontual Censitario`, na aba `Mapa Territorial`, usa a coordenada ativa do clique ou da busca da sidebar e raio fixo `1.0 km`.
-
-- Base: `data/outputs/setores_censitarios_2022_geo/uf=XX/cod_municipio=NNNNNNN/part-000.parquet`
-- Metodo: intersecao real setor censitario x circulo em CRS metrico local (`setor_censitario_intersecao_area_1km`)
-- Saidas: KPIs, mapa PNG offline, tabela de setores intersectados e downloads CSV/PDF em memoria
-- Sem base municipal, o app mostra mensagem clara e nao carrega shapefile nacional
-- Guardrail: feature paralela; nao recalcula `score_priorizacao`, carteira, plano nem artefatos oficiais
+Ambos usam os geradores do motor compartilhado (`censo_report.py`, `relatorio_municipal.py`) — os mesmos da API GeoEspacial e do bot Telegram.
 
 ### Regua visual de populacao minima (5k hab)
 
-Hexagonos com menos de 5.000 habitantes sao descartados das abas Carteira e Plano e recebem cor cinza nos mapas.
+Hexagonos com menos de 5.000 habitantes sao pintados de cinza no mapa e ficam fora do passo 1 (Potencial) do funil — o corte propaga pelas 4 camadas.
 
-- Constante: `POP_MIN_ACIONAVEL = 5_000` em `dashboard/constants.py`
-- Fonte preferencial de populacao: `pop_total_setor_2022` (granular, UFs A/B); fallback: `populacao_proxy` = `pop_total` municipal (alterado 2026-05-15: removida trava 18-45)
-- Cor dos hexes descartados nos mapas: `[120, 120, 140, 70]` (cinza semitransparente)
-- Legenda "Descartado <5k hab" visivel nos mapas principal e hibrido
+- Constante: `POP_MIN_ACIONAVEL = 5_000` em `src/motor_expansao/dashboard/constants.py`
+- Fonte preferencial de populacao: `pop_total_setor_2022` (granular); fallback: `populacao_proxy` = `pop_total` municipal
 - M1 (`score_priorizacao`) nao e alterado por este corte
 
-## Deploy VPS Streamlit
+## Deploy VPS (piloto web)
 
-O deploy inicial de producao usa somente o dashboard Streamlit, com dados locais montados como volume.
+O deploy de producao e por **imagem publicada no GHCR e pinada por digest** — nunca build na VPS, nunca `:latest`. O job `publish-web` do CI roda em todo push na `main` que toque `web/**`, `Dockerfile.web`, o motor compartilhado ou o `pyproject.toml` (path-filter).
 
 ```bash
 python scripts/check_artifacts.py
-docker compose -f docker-compose.prod.yml build
-docker compose -f docker-compose.prod.yml up -d
-curl -fsS http://127.0.0.1:8501/_stcore/health
+# na VPS (comando a comando, com aprovacao — CLAUDE.md §6):
+docker compose -f docker-compose.prod.yml pull web && docker compose -f docker-compose.prod.yml up -d web
+docker compose -f docker-compose.prod.yml exec web curl -fsS http://127.0.0.1:8899/api/health
 ```
 
-Contrato completo: `docs/deploy_vps_streamlit.md`.
+Runbook completo: `docs/deploy_piloto_web.md`. API GeoEspacial + bot: `docs/deploy_api_bot.md`.
 
 Recomendacoes operacionais:
 
-- montar `data/outputs/` na VPS com os 4 Parquets minimos do dashboard;
-- expor o app por proxy HTTPS com autenticacao, VPN ou allowlist;
+- montar `/opt/motor-expansao/data/{outputs,staging,ibge,ultra}` e `concorrentes/` como volumes `:ro`;
+- expor o app somente atras do Caddy + Authelia (subdominio `piloto.ultra-expansao.tech`);
+- `dashboard.ultra-expansao.tech` fica vivo APENAS para `/tiles/*` (tileserver dos PDFs); a raiz redireciona 301 para o piloto (DEC-022);
 - nao embutir dados ou secrets na imagem Docker;
-- manter API/FastAPI, PostGIS, Prefect e pipelines pesados fora deste deploy inicial.
+- deploy e sempre passo manual do Felipe, por digest (DEC-016/§6 do CLAUDE.md — auto-merge nao deploya).
 
 ## Contrato oficial do M1
 
@@ -144,7 +114,7 @@ Fluxo oficial:
 
 1. `base_h3_brasil.py` gera a base H3 nacional particionada por UF em `data/staging/brasil/uf=XX/hexagonos.parquet`.
 2. `hex_enrichment.py` enriquece a base estrutural nacional, calcula score estrutural, ajuste executivo, score de priorizacao, corte top 20% por UF e camada de oportunidade.
-3. `fase1_bi_exports.py` gera os artefatos executivos/BI estaveis em `data/outputs/`.
+3. `fase1_bi_exports.py` gera os artefatos executivos/BI estaveis em `data/outputs/` (inclusive o dataset enriquecido particionado que alimenta o piloto).
 
 Regra canonica de score:
 
@@ -201,13 +171,15 @@ O contrato de handoff do repositorio esta em `docs/handoff_repositorio.md`.
 
 - `CLAUDE.md`: contrato canonico curto e guardrails permanentes.
 - `PRD.md`: ciclo operacional atual e status dos blocos.
+- `web/README.md`: produto e telas do piloto web.
+- `docs/arquitetura_app_atual.md`: arquitetura do app atual (piloto web) + historia do Streamlit.
+- `docs/deploy_piloto_web.md`: runbook de deploy do piloto na VPS (digest, Caddy, Authelia).
 - `docs/handoff_repositorio.md`: checklist para compartilhar o repo com a equipe.
 - `docs/artefatos_dados.md`: manifesto de dados, politica de versionamento e artefatos externos.
-- `docs/deploy_vps_streamlit.md`: runbook Docker/Streamlit para VPS.
-- `docs/streamlit_dashboard_m1.md`: governanca e uso do dashboard.
+- `docs/streamlit_dashboard_m1.md`: governanca do dashboard Streamlit (HISTORICO — app aposentado pela DEC-022).
 - `docs/analise_pontual_entorno.md`: contrato de UX, metricas de raio e limites tecnicos da analise pontual e Visao Executiva Ultra.
 - `docs/modelo_mercado_hexagonos.md`: contrato tecnico da camada de mercado.
-- `docs/api_geoespacial_contrato.md`: contrato da API GeoEspacial on-demand (status G1/BLK-API-01; ver DEC-005 no CLAUDE.md §8 e o esboco `docs/api_geoespacial_openapi.yaml`). Apenas contrato — sem API implementada.
+- `docs/api_geoespacial_contrato.md`: contrato da API GeoEspacial on-demand (implementada; container `motor_expansao_api`, consumida pelo bot Telegram — runbook em `docs/deploy_api_bot.md`).
 - `fora_primeira_fase/README.md`: inventario dos codigos, docs e dados separados do deploy inicial.
 
 ## Orquestração de Agentes
@@ -253,7 +225,7 @@ Qualquer tarefa que toque `score_priorizacao`, `hex_score_estrutural`, pesos do 
 Acione o comando `/run-cycle` com a descrição objetiva do bloco:
 
 ```text
-/run-cycle "Adicionar filtro de renda mínima no painel de carteira"
+/run-cycle "Adicionar filtro de renda mínima no funil do Mapa Territorial"
 ```
 
 O Claude Code lê `CLAUDE.md`, verifica `tasks/current_task.md`, classifica a criticidade, registra a tarefa ativa, executa a esteira correta e atualiza `context/handoff.md` entre as etapas. Se a criticidade for alta, crítica ou estratégica, o ciclo pausa antes do Builder e aguarda aprovação explícita.
@@ -265,13 +237,13 @@ No Codex, peça explicitamente para usar a skill `codex-run-cycle` e descreva a 
 Exemplo de documentação simples:
 
 ```text
-Use codex-run-cycle para atualizar o README.md com instruções de uso da carteira operacional.
+Use codex-run-cycle para atualizar o README.md com instruções de uso do piloto web.
 ```
 
 Exemplo de melhoria média:
 
 ```text
-Use codex-run-cycle para adicionar um filtro de UF na aba Carteira e Plano.
+Use codex-run-cycle para adicionar um filtro de UF na Visão Executiva do piloto.
 ```
 
 Exemplo crítico:
@@ -296,7 +268,7 @@ Para tarefas simples de documentação, o ciclo costuma ser: delimitar escopo, e
 
 ## Recalculo do M1
 
-Estes comandos sao de pipeline analitico, nao do deploy Streamlit inicial:
+Estes comandos sao de pipeline analitico, nao do deploy do piloto:
 
 ```bash
 python base_h3_brasil.py
@@ -339,17 +311,21 @@ python -m pytest tests/integration/test_modelo_hibrido_expansao.py tests/integra
 
 UFs com `qualidade_join_uf=C` (AM, RR, AL, AP, CE, MA, PA, PB, PE, RO, SE) sao filtradas automaticamente pelo modelo hibrido; nao afetam a carteira final.
 
-## Docker, API e PostGIS
+## Docker, imagens e API
 
-O deploy inicial deste ciclo usa `Dockerfile.streamlit` e `docker-compose.prod.yml`.
-O legado de API/PostGIS/Prefect foi movido para `fora_primeira_fase/api_postgis/` e nao entra no caminho de producao do dashboard.
+O caminho de producao usa duas imagens publicadas no GHCR pelo CI e pinadas por digest no `.env` da VPS (`docker-compose.prod.yml`):
 
-## Fora do deploy inicial
+- `motor-expansao-web` (`Dockerfile.web`): o piloto — estagio Node builda o Vite, estagio Python serve SPA + API na porta 8899.
+- `motor-expansao-api` (`Dockerfile.api`): API GeoEspacial on-demand + bot Telegram (mesma imagem, dois containers).
 
-- API/FastAPI
+A imagem `motor-expansao-streamlit` morreu com o corte (DEC-022); fica retida no GHCR por algumas semanas so para rollback. O legado de PostGIS/Prefect segue em `fora_primeira_fase/api_postgis/` e nao entra no caminho de producao.
+
+## Fora do caminho de producao
+
 - PostGIS obrigatorio
 - Prefect
-- pipelines nacionais pesados
+- pipelines nacionais pesados (rodam offline, fora dos containers)
 - modulos M2/M3, pesquisas e legados em `fora_primeira_fase/`
 - dados brutos e staging grandes dentro do repositorio compartilhavel
-- dependencia de internet/API externa para o dashboard em producao
+
+Pipelines e artefatos do M1 seguem offline (Parquet local, sem API ao vivo NELES). O piloto web e um app de API ao vivo por decisao explicita (DEC-022), mas READ-ONLY sobre os artefatos: nenhum score e recalculado em runtime.

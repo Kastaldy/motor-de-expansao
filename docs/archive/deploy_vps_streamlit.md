@@ -1,4 +1,5 @@
-> **[HISTORICO]** Runbook generico de VPS Streamlit, sobreposto por `docs/infra_producao.md` + `docs/deploy.md`.
+> **[HISTORICO]** O servico Streamlit morreu na DEC-022 (2026-08-03) — o app de producao e o piloto web (`docs/deploy_piloto_web.md`).
+> Runbook generico de VPS Streamlit, sobreposto a epoca por `docs/infra_producao.md` + `docs/deploy.md`.
 
 # Deploy Streamlit em VPS
 

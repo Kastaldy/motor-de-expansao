@@ -319,7 +319,7 @@ painel de métricas.
 
 ## O que ainda não é
 
-Piloto. O corte do Streamlit está fora de escopo e depende de decisão + DEC.
+Piloto. O corte do Streamlit foi decidido e executado pela DEC-022 (2026-08-03) — este app é o único de produção.
 As outras três abas do dock aparecem desabilitadas de propósito, para deixar
 explícito que isto é um recorte.
 

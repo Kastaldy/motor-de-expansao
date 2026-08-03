@@ -55,7 +55,7 @@ O loop também **respeita `Depende de`**: só inicia um bloco cujas dependência
    `CLICKUP_WRITE`, `DEPLOY_KEY`, `GROWTH_API_*` no ambiente. Sem chave de VPS → impossível deployar.
 2. **Guard de M1/VPS** (`scripts/loop_guard.py`) — após cada iteração, inspeciona o `git diff` do loop
    e **aborta + escreve `RELATORIO-BLOQUEIO.md`** se tocar `config.py`, `pipelines/m1/`, `*scoring*`,
-   artefatos M1 (`brasil_*`/`hexagonos_brasil*`), `deploy/`, `Dockerfile.{streamlit,api}`,
+   artefatos M1 (`brasil_*`/`hexagonos_brasil*`), `deploy/`, qualquer `Dockerfile.*` (web/api/loop),
    `docker-compose*`, `Caddyfile*`, `authelia/`, `.env*`, `secrets/`, `.github/workflows/`.
 3. **Testes = gate** — `ruff check .` + `pytest -q` no QA, **sem bypass**; não avança com teste vermelho.
 4. **Sem merge/push/deploy** — o loop só **commita por path** no branch atual. Revisão e merge são seus.

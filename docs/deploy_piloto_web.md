@@ -2,7 +2,9 @@
 
 Runbook do serviço **`web`** do `docker-compose.prod.yml` — o piloto (frontend Vite +
 backend FastAPI num único container, servindo o SPA e a API na porta interna `8899`),
-publicado no subdomínio próprio, atrás do Caddy + Authelia.
+publicado em `piloto.ultra-expansao.tech`, atrás do Caddy + Authelia. Desde a **DEC-022
+(2026-08-03)** o piloto é **O app de produção** — o dashboard Streamlit foi aposentado, não
+há mais app paralelo.
 
 > **Guardrails.** Execução no VPS é **sempre passo humano, comando a comando** (CLAUDE.md §6).
 > Deploy é **por digest imutável**, nunca `:latest` cego. O piloto é **READ-ONLY sobre o M1**
@@ -12,7 +14,9 @@ publicado no subdomínio próprio, atrás do Caddy + Authelia.
 
 Arquitetura: **um container** serve tudo. O `web/server/app.py` monta o `dist/` (build do
 Vite) na raiz via `StaticFiles` e expõe a API em `/api/*` na mesma porta `8899`. O Caddy só
-faz `reverse_proxy web:8899` (idêntico ao `dashboard → streamlit`). Nada de porta no host.
+faz `reverse_proxy web:8899`. Nada de porta no host. O subdomínio `dashboard.ultra-expansao.tech`
+ficou vivo **só** para `/tiles/*` (tileserver do basemap dos PDFs; `publicUrl` e styles
+inalterados), com **301 da raiz para o piloto** — DEC-022.
 
 ---
 
@@ -30,11 +34,12 @@ O job **`publish-web`** (`.github/workflows/ci.yml`) builda `Dockerfile.web` (es
 para o Vite + estágio Python para o backend) e publica `ghcr.io/kastaldy/motor-de-expansao/
 motor-expansao-web` no GHCR, com **Trivy bloqueante** (HIGH/CRITICAL).
 
-- **Automático**: todo push na `main` que toque `web/**`, `Dockerfile.web`,
-  `src/motor_expansao/(dashboard|dimensionamento|api)/**` ou `pyproject.toml` (path-filter).
-- **Manual / bootstrap** (ex.: primeira publicação, ou mudança que o filtro não pega):
+- **Automático**: o job roda em **todo push na `main`** (DEC-022 — a imagem `motor-expansao-web`
+  é a imagem principal de UI) e publica quando o path-filter acusa mudança em `web/**`,
+  `Dockerfile.web`, `src/motor_expansao/(dashboard|dimensionamento|api)/**` ou `pyproject.toml`.
+- **Manual / bootstrap** (ex.: mudança que o filtro não pega):
   ```bash
-  gh workflow run ci.yml --ref main -f publish_web=true -f dispatch_build_sanity=false
+  gh workflow run ci.yml --ref main -f publish_web=true
   ```
 - Pegar o **digest** no fim do job (step "WEB digest imutavel publicado: sha256:...") ou:
   ```bash
@@ -48,7 +53,7 @@ motor-expansao-web` no GHCR, com **Trivy bloqueante** (HIGH/CRITICAL).
 
 ## 2. Dados no VPS (montados `:ro`)
 
-O serviço `web` monta os mesmos diretórios da `api`/`streamlit`:
+O serviço `web` monta os mesmos diretórios da `api`:
 `/opt/motor-expansao/data/{outputs,staging,ibge,ultra}` e `/opt/motor-expansao/concorrentes`.
 O backend deriva tudo de `MOTOR_DATA_DIR=/app/data`.
 
@@ -74,7 +79,8 @@ scp -i ~/.ssh/id_ultra_mcp <arquivo> root@2.25.137.241:/opt/motor-expansao/data/
 ## 3. Caddy — bloco do subdomínio (editar na VPS)
 
 O `Caddyfile` **não está no git** (gitignored, backup cifrado em `secrets/Caddyfile.enc`);
-vive em `/opt/motor-expansao/app/Caddyfile`. Adicione um bloco espelhando o do dashboard:
+vive em `/opt/motor-expansao/app/Caddyfile`. O bloco do piloto (o bloco de `dashboard.` hoje só
+serve `/tiles/*` e redireciona a raiz 301 para cá — DEC-022):
 
 ```caddyfile
 piloto.ultra-expansao.tech {

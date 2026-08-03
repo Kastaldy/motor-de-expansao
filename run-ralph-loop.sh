@@ -91,7 +91,7 @@ for i in $(seq 1 "$MAX_ITERS"); do
       echo "O loop tentou alterar um caminho proibido para o modo autonomo."
       echo "Revise antes de qualquer merge:  git diff $BASE_REF...HEAD"
       echo "Caminhos proibidos: config.py, src/motor_expansao/pipelines/m1/, *scoring*,"
-      echo "artefatos M1 (brasil_*, hexagonos_brasil*), deploy/, Dockerfile.{streamlit,api},"
+      echo "artefatos M1 (brasil_*, hexagonos_brasil*), deploy/, Dockerfile.{web,api},"
       echo "docker-compose*, Caddyfile*, authelia/, .env*, secrets/, .github/workflows/."
     } >> RELATORIO-BLOQUEIO.md
     break
