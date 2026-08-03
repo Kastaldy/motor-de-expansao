@@ -7,7 +7,7 @@
 > (números) sai do motor censitário/mercado/residual por município. Camada de
 > visualização/relatório — **READ-ONLY sobre o M1** (§5 guardrail).
 
-O Relatório Municipal **coexiste** com o Relatório Pontual Censitário (raio 1,5 km),
+O Relatório Municipal **coexiste** com o Relatório Pontual Censitário (raio 1,0 km),
 não o substitui. Unidade de análise = **município inteiro** (selecionado no dashboard);
 gerável e baixável após a seleção do município. Estética = a mesma família visual do
 template GeoFusion/Ultra (turquesa + magenta + laranja; capa escura com hexágonos).

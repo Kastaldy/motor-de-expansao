@@ -11,7 +11,7 @@
 ## 1. Visão geral e arquitetura
 
 A API GeoEspacial é uma camada de consumo **on-demand** do Motor de Expansão, complementar ao
-dashboard Streamlit. Ela expõe o **Relatório Pontual Censitário 1,5 km** (KPIs em JSON e PDF de
+dashboard Streamlit. Ela expõe o **Relatório Pontual Censitário 1,0 km** (KPIs em JSON e PDF de
 7 páginas) e o **Relatório Municipal** (PDF) para qualquer cliente HTTP com token — incluindo o
 bot Telegram "Paulo".
 
@@ -40,8 +40,8 @@ telegram-bot ──HTTP──> api ──Parquets locais──> motor censo_*
 **Docs interativos** (`/docs` Swagger UI e `/redoc`): disponíveis **apenas** quando
 `API_ENVIRONMENT != "production"`. Em produção, usar `docs/api_geoespacial_openapi.yaml` localmente.
 
-**Raio fixo: 1,5 km — no Relatório Pontual.** Não é parâmetro de entrada — é o método canônico
-`setor_censitario_intersecao_area_1p5km`, INTOCÁVEL (CLAUDE.md §4). O Relatório Municipal não usa
+**Raio fixo: 1,0 km — no Relatório Pontual.** Não é parâmetro de entrada — é o método canônico
+`setor_censitario_intersecao_area_1km`, INTOCÁVEL (CLAUDE.md §4). O Relatório Municipal não usa
 raio: agrega o município inteiro.
 Dois mapas do PDF pontual usam escala só de **render** (nunca de análise): os painéis de
 Socioeconomia e de Residual Fitness são **enquadrados** a 5 km (`RAIO_RESIDUAL_DISPLAY_KM`), ambos
@@ -146,9 +146,9 @@ JSON é o padrão. PDF é ativado por qualquer das 3 formas abaixo (em ordem de 
 |---|---|---|
 | `lat` | `float` | Latitude resolvida |
 | `lng` | `float` | Longitude resolvida |
-| `raio_km` | `float` | Raio do estudo (1,5 km) |
+| `raio_km` | `float` | Raio do estudo (1,0 km) |
 | `area_km2` | `float \| null` | Área da interseção em km² |
-| `metodo` | `string` | `"setor_censitario_intersecao_area_1p5km"` |
+| `metodo` | `string` | `"setor_censitario_intersecao_area_1km"` |
 | `n_setores` | `int` | Setores IBGE 2022 cruzados |
 | `pop_total_raio` | `float \| null` | População total no raio |
 | `renda_per_capita_media_raio` | `float \| null` | Renda per capita média ponderada |
@@ -477,7 +477,7 @@ API_TELEGRAM_TOKEN=<token-do-botfather> python -m motor_expansao.api.telegram_bo
 
 | Limitação | Detalhe |
 |---|---|
-| **Raio fixo 1,5 km (Relatório Pontual)** | Não é parâmetro de entrada — é o método canônico `setor_censitario_intersecao_area_1p5km`, INTOCÁVEL (CLAUDE.md §4). O Relatório Municipal não usa raio |
+| **Raio fixo 1,0 km (Relatório Pontual)** | Não é parâmetro de entrada — é o método canônico `setor_censitario_intersecao_area_1km`, INTOCÁVEL (CLAUDE.md §4). O Relatório Municipal não usa raio |
 | **PostGIS fora do MVP** | Persistência e queries geoespaciais em banco; evolução futura (BLK-API-05) |
 | **Docs interativas em produção** | `/docs` e `/redoc` desabilitados quando `API_ENVIRONMENT=production`; usar `api_geoespacial_openapi.yaml` localmente |
 | **Geocoding de endereço+CEP** | Requer Google Chrome instalado no host (extra `[geocoder]`); sem Chrome, cai em Nominatim (gratuito, menos preciso para localidades brasileiras) |

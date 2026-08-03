@@ -53,7 +53,7 @@ def create_app() -> FastAPI:
         title="API GeoEspacial — Motor de Expansao Ultra Academia",
         description=(
             "API complementar on-demand para o Relatorio Pontual Censitario "
-            "1.5 km. READ-ONLY sobre o M1; importa, nao edita, a camada censo_*."
+            "1.0 km. READ-ONLY sobre o M1; importa, nao edita, a camada censo_*."
         ),
         version=__version__,
         # Docs interativa so fora de producao.

@@ -36,8 +36,8 @@ def test_analisar_aguas_da_prata_ok(client: TestClient) -> None:
     resp = client.post("/api/v1/analisar", json=AGUAS_DA_PRATA, headers=AUTH)
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["metodo"] == "setor_censitario_intersecao_area_1p5km"
-    assert body["raio_km"] == 1.5
+    assert body["metodo"] == "setor_censitario_intersecao_area_1km"
+    assert body["raio_km"] == 1.0
     assert body["versao_contrato"] == "api-geoespacial/v1"
     assert body["versao_score"] == "score_setor_2022_calibrado"
     assert body["consumidor"] == get_settings().tokens.get("dev-token")

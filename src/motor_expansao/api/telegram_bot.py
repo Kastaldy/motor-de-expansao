@@ -2,7 +2,7 @@
 
 Bot de long-polling (via `requests`), DESACOPLADO: consome o `POST /analisar` por
 HTTP. Proposito unico: receber uma localizacao e devolver o Relatorio Pontual
-Censitario 1.5 km (PDF). Maquina simples por chat:
+Censitario 1,0 km (PDF). Maquina simples por chat:
 
   acesso por SENHA -> menu (/start) -> [Relatorio | Ajuda]
   qualquer localizacao enviada (Maps link / "lat,lng" / endereco+CEP) -> PDF.
@@ -58,7 +58,7 @@ def _kb_ufs() -> list[list[str]]:
 
 _MENU = (
     "📋 *Menu* — o que voce quer gerar?\n\n"
-    "• *Relatorio Pontual* — estudo de um ponto (raio 1.5 km)\n"
+    "• *Relatorio Pontual* — estudo de um ponto (raio 1,0 km)\n"
     "• *Relatorio Municipal* — estudo de um municipio inteiro\n"
     "• *Ajuda* — como funciona\n\n"
     "Toque em uma opcao abaixo. 👇"
@@ -82,7 +82,7 @@ _GERANDO_MUNI = (
 
 _SAUDACAO = (
     "👋 Olá! Eu sou o *Paulo*, assistente de estudos geoespaciais da *Ultra*.\n\n"
-    "Eu gero dois estudos em PDF: o *Relatorio Pontual Censitario* (raio de 1.5 km de um "
+    "Eu gero dois estudos em PDF: o *Relatorio Pontual Censitario* (raio de 1,0 km de um "
     "ponto) e o *Relatorio Municipal* (um municipio inteiro).\n\n"
     "🔒 Este bot e de uso restrito.\n"
     "Para continuar, envie a *senha* de acesso."
@@ -115,7 +115,7 @@ _AJUDA = (
     "ℹ️ *Sobre o Paulo*\n\n"
     "Sou o assistente de estudos geoespaciais da *Ultra*. Gero dois estudos em PDF:\n\n"
     "📍 *Relatorio Pontual* — a partir de um ponto (link do Maps, `lat,lng` ou "
-    "endereco+CEP), estuda o entorno num raio de 1.5 km.\n"
+    "endereco+CEP), estuda o entorno num raio de 1,0 km.\n"
     "🏙️ *Relatorio Municipal* — a partir de um *estado* + *municipio*, estuda o "
     "municipio inteiro (cobertura, score, residual, dominio, bairros).\n\n"
     "*Comandos:*\n"
@@ -416,7 +416,7 @@ def _configurar_menu_comandos(token: str) -> None:
     """Define o menu de comandos do bot (substitui qualquer lista antiga, ex.: /analisar)."""
     comandos = [
         {"command": "start", "description": "Menu / pedir acesso"},
-        {"command": "relatorio", "description": "Relatorio Pontual (raio 1.5 km)"},
+        {"command": "relatorio", "description": "Relatorio Pontual (raio 1,0 km)"},
         {"command": "municipal", "description": "Relatorio Municipal (municipio inteiro)"},
         {"command": "ajuda", "description": "Sobre o bot"},
     ]
