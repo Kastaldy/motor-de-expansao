@@ -1,5 +1,6 @@
 import { num } from '../lib/format'
 import type { Passo } from '../lib/types'
+import { Spinner } from './primitives'
 
 /* ---------------------------------------------------------------------------
    Os 4 passos da recomendacao, na barra inferior do mapa.
@@ -215,32 +216,5 @@ export default function StepperBar({
         )}
       </button>
     </div>
-  )
-}
-
-function Spinner() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden>
-      <circle
-        cx="12"
-        cy="12"
-        r="9"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="3"
-        strokeLinecap="round"
-        strokeDasharray="42 14"
-        opacity="0.9"
-      >
-        <animateTransform
-          attributeName="transform"
-          type="rotate"
-          from="0 12 12"
-          to="360 12 12"
-          dur="0.8s"
-          repeatCount="indefinite"
-        />
-      </circle>
-    </svg>
   )
 }

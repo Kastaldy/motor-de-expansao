@@ -36,9 +36,21 @@ export function coordenadaDoEstudo(ponto: {
   lat?: number
   lng?: number
 }): Coord {
-  return ponto.lat != null && ponto.lng != null
-    ? { lat: ponto.lat, lng: ponto.lng }
-    : { lat: ponto.hex.lat, lng: ponto.hex.lng }
+  return ehCentroideDoHex(ponto)
+    ? { lat: ponto.hex.lat, lng: ponto.hex.lng }
+    : { lat: ponto.lat as number, lng: ponto.lng as number }
+}
+
+/**
+ * O estudo caiu no CENTROIDE do hexagono (em vez do endereco exato)?
+ *
+ * Mesmo teste de `coordenadaDoEstudo` — extraido para que quem precisa AVISAR o
+ * usuario sobre a aproximacao (o rotulo do PDF) leia a MESMA regra que escolhe a
+ * coordenada, e nao uma copia livre para divergir. `true` = ponto veio do clique
+ * num hexagono do ranking; `false` = busca por endereco/lat,lng, coordenada exata.
+ */
+export function ehCentroideDoHex(ponto: { lat?: number; lng?: number }): boolean {
+  return ponto.lat == null || ponto.lng == null
 }
 
 /**

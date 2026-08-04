@@ -69,7 +69,7 @@ cd web && npm run dev
 ## Como as telas se ligam
 
 O **mapa** conta a história em quatro camadas, e cada uma declara de onde veio e o
-que sobrou — no DF: `999 hexágonos → 99 setores quentes → 38 com residual →
+que sobrou — no DF: `999 hexágonos → 99 hexágonos quentes → 38 com residual →
 23 white spaces → 4 aberturas`. Os números saem do dado real, não são mock. O
 passo 1 (Potencial) só conta regiões com **≥ 5.000 habitantes** (mesma régua
 `POP_MIN_ACIONAVEL` do mapa, que pinta `<5k` em cinza); o corte propaga por todo o

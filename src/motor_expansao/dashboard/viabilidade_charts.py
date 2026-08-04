@@ -81,6 +81,16 @@ def _brl(value: float) -> str:
     return "R$ " + f"{value:,.0f}".replace(",", ".")
 
 
+def _pct_fracao(fracao: float) -> str:
+    """FRACAO ja pronta do payload -> percentual pt-BR (0.3873 -> '38,7%').
+
+    O x100 e RENDER (mesma regra do `pctFrac` da tela), nao aritmetica financeira:
+    a divisao pelo faturamento ja foi feita no motor/backend. Nenhum numero novo
+    nasce aqui (FIN-VIAB-01). Sem separador de milhar: percentual nao chega la.
+    """
+    return f"{fracao * 100:.1f}".replace(".", ",") + "%"
+
+
 def _finite(value: Any) -> float | None:
     """float finito ou None (NaN/inf/None viram None)."""
     try:
@@ -273,6 +283,7 @@ def grafico_dre_waterfall(
     ebitda: float,
     receita_anuidade: float | None = None,
     mes_referencia: int | None = None,
+    ebitda_pct: float | None = None,
 ) -> bytes:
     """Waterfall do DRE: Fat. bruto -> Deducoes -> Impostos -> Custos op. -> EBITDA.
 
@@ -288,6 +299,18 @@ def grafico_dre_waterfall(
     a que este DRE se refere. NUNCA recalcular a partir de `maturacao_meses`: era esse
     recalculo que fazia o waterfall apontar um mes e o card ao lado, no MESMO slide,
     apontar outro. None -> titulo generico, sem inventar mes.
+
+    `ebitda_pct` e a FRACAO do faturamento bruto ja pronta (montador CANONICO, payload-v1:
+    `dre.margem`; montador DEPRECIADO `montar_payload_viabilidade`:
+    `viabilidade.margem_ebitda_pct`, o numero de que aquele deriva) e, quando vem
+    preenchida, aparece entre parenteses ao lado do R$ na barra do EBITDA — o PDF dizia so
+    o valor absoluto enquanto a tela ja mostrava os dois. Os DOIS montadores a passam:
+    enquanto so o canonico passava, o MESMO ponto saia com "(38,7%)" por um caminho e sem
+    % pelo outro. Segue OPCIONAL para nao quebrar chamador de fora (e para o grafico
+    degradar sem inventar numero). Nao ha divisao aqui (FIN-VIAB-01),
+    so formatacao; e nenhuma barra nova entra no grafico por causa dela. So a barra de
+    EBITDA ganha percentual porque e' a unica linha de RESULTADO da cascata — o resultado
+    apos IR nao tem barra aqui, e por isso nao tem parametro: seria kwarg morto.
     """
     fat = float(faturamento_bruto or 0.0)
     r_liq = float(receita_liquida or 0.0)
@@ -311,14 +334,22 @@ def grafico_dre_waterfall(
         ("EBITDA", 0.0, eb, _VERDE),
     ]
 
+    # % do faturamento POR BARRA: so a linha de RESULTADO da cascata (EBITDA) tem
+    # percentual, e so quando o payload manda. A busca e pelo rotulo — uma barra de
+    # resultado que um dia entre na cascata entra aqui JUNTO com o parametro dela, nao
+    # antes: percentual sem barra correspondente e' codigo que nunca executa.
+    pct_por_rotulo: dict[str, float | None] = {"EBITDA": _finite(ebitda_pct)}
+
     fig, ax = plt.subplots(figsize=(_FIG_W, _FIG_H), dpi=_DPI)
     topo_max = max(fat, eb, 1.0)
-    for i, (_rotulo, base, topo, cor) in enumerate(passos):
+    for i, (rotulo, base, topo, cor) in enumerate(passos):
         altura = topo - base
         ax.bar(i, altura, bottom=base, color=cor, width=0.6)
-        # Valor em R$ acima de cada barra.
+        # Valor em R$ acima de cada barra, com o % do faturamento quando existir.
+        pct = pct_por_rotulo.get(rotulo)
+        texto = _brl(altura) if pct is None else f"{_brl(altura)} ({_pct_fracao(pct)})"
         ax.text(
-            i, topo + topo_max * 0.015, _brl(altura),
+            i, topo + topo_max * 0.015, texto,
             ha="center", va="bottom", fontsize=7, color=_CINZA,
         )
     ax.set_ylim(top=topo_max * 1.14)  # headroom p/ os rotulos R$
@@ -500,6 +531,13 @@ def _graficos_do_payload(
                 # mesmo numero que o card ao lado imprime.
                 receita_anuidade=dre.get("receita_anuidade"),
                 mes_referencia=_ler(payload, "premissas", "mes_referencia_steady"),
+                # % do faturamento da barra de EBITDA, servido pronto: e' `margem` (o
+                # motor define `margem_ebitda_pct = ebitda / faturamento`) — nao ha
+                # campo `ebitda_pct_faturamento`, servir os dois deixava duas rotas
+                # para o mesmo numero, livres para divergir. O percentual do resultado
+                # apos IR NAO vem para ca: a cascata termina no EBITDA e nao ha barra
+                # onde imprimi-lo (a TELA o consome, do mesmo payload).
+                ebitda_pct=dre.get("margem"),
             )
         )
     return graficos
@@ -558,6 +596,12 @@ def montar_payload_viabilidade(
                 receita_liquida=v.receita_liquida,
                 receita_pos_impostos=v.receita_pos_impostos,
                 ebitda=v.ebitda_mensal,
+                # MESMO numero que o montador canonico estampa: la o backend serve
+                # `dre.margem`, que e' este `margem_ebitda_pct` arredondado. Sem isto o
+                # MESMO ponto saia com "(38,7%)" pelo caminho canonico e sem % por este,
+                # o depreciado. Ja esta a mao (linha `margem_ebitda_pct` do payload logo
+                # acima) — nao ha divisao nova aqui, o modulo nao faz aritmetica financeira.
+                ebitda_pct=v.margem_ebitda_pct,
             )
         )
         payload["graficos"] = graficos

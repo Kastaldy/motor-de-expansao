@@ -203,6 +203,27 @@ _WATERMARK_MARGIN = 20.0
 _CLASSICO_MARGIN = 20.0
 _CLASSICO_CORNER_RADIUS = 16.0
 _CLASSICO_BAND_H = 58.0
+# --- Geometria da CAPA classica (pagina 960x540 pt) --------------------------------------
+# A arte `relatorio_capa_bg.png` (1360x763 px) NAO e' um fundo chapado: ela tem uma FAIXA DE
+# RODAPE com os logos das marcas (Ultra, Spider Kick, The Flame) desenhados em BRANCO. Texto
+# branco dali para baixo fica ilegivel E risca o logo — na pagina 1 de um PDF que vai para
+# terceiros. Numeros abaixo MEDIDOS por varredura de pixel do proprio asset (2026-08-03):
+#   * linha divisoria branca do rodape: px y=652 de 763 -> pt y=461,4 (99% de pixel branco);
+#   * logos do rodape ocupam pt x~140-270 (Ultra), ~400-560 (Spider Kick), ~700-810 (Flame);
+#   * a coluna x>=460 pt entre y=300 e y=450 pt e' turquesa CHAPADO: 0,000 de pixel
+#     nao-turquesa. E' a unica area limpa larga da capa (o resto e' foto, logo ou rodape).
+# Todo texto da capa mora nessa coluna e ACIMA de `_CAPA_RODAPE_LOGOS_TOP`.
+_CAPA_RODAPE_LOGOS_TOP = 461.4
+_CAPA_BASE_X_COM_ARTE = 478.0
+_CAPA_BASE_X_SEM_ARTE = 80.0
+_CAPA_AVISO_Y = 402.0
+_CAPA_ENDERECO_Y = 430.0
+_CAPA_SUBTITULO_Y = 455.0
+_CAPA_AVISO_FONT_PT = 10.0
+_CAPA_ENDERECO_FONT_PT = 26.0
+# Piso de encolhimento do endereco: abaixo disso ele briga com o subtitulo (13 pt) e o corte
+# por largura passa a ser preferivel a uma linha minuscula.
+_CAPA_ENDERECO_FONT_MIN_PT = 15.0
 # Banda magenta de rodape full-width, encostada na borda inferior da pagina
 # (offset 0 = flush-baixo; estava 13 pt acima e subia sobre o credito do rodape).
 _CLASSICO_MAGENTA_BANDA_H = 13.0
@@ -302,6 +323,27 @@ def _ajustar_fonte_para_largura(
         corpo -= 1.0
         pdf.set_font(familia, estilo, corpo)
     return corpo
+
+
+def _truncar_por_largura(
+    pdf: FPDF, texto: str, largura: float, *, reticencias: str = "..."
+) -> str:
+    """Corta `texto` pela largura RENDERIZADA na fonte ATIVA do `pdf`, nao por nº de chars.
+
+    Helvetica e' proporcional: 37 caracteres podem medir 480 pt ("Galpao Comercial Avenida
+    Brasil, 4500" a 26 pt bold) ou 200 pt, conforme as letras. Cortar por CONTAGEM (o que a
+    capa fazia: >72 chars -> 69 + "...") nao protege borda nenhuma — o rotulo e' texto livre
+    do operador e vazava para fora da pagina muito antes de chegar a 72 caracteres.
+
+    Devolve o texto intacto quando ja cabe (rotulo curto = comportamento historico, sem
+    reticencias); senao encurta ate que `texto + reticencias` caiba em `largura`.
+    """
+    if pdf.get_string_width(texto) <= largura:
+        return texto
+    corte = texto.rstrip()
+    while corte and pdf.get_string_width(corte + reticencias) > largura:
+        corte = corte[:-1].rstrip()
+    return corte + reticencias
 
 
 def _watermark_text(solicitante: str | None) -> str:
@@ -1418,6 +1460,22 @@ def _parece_coordenada(texto: str) -> bool:
         return False
 
 
+# Aviso de ORIGEM do estudo, impresso quando o chamador passa `origem_centroide_hex=True`
+# (hoje: o piloto web, quando o ponto veio do clique num hexagono e nao ha endereco — a
+# coordenada e' o centroide do hex res-7, a ate ~1,5 km do imovel que o operador imagina).
+# Quem le o PDF precisa saber que o raio foi tracado dali; nao ha aviso equivalente na tela.
+#
+# String FIXA de proposito: e' texto de PRODUTO, controlado aqui, nao texto do usuario. A
+# versao anterior deste aviso viajava anexada ao proprio `rotulo` entre parenteses e era
+# reextraida por heuristica no gerador — o que mutilava rotulo legitimo com parenteses
+# ("Av. Paulista, 1500 (Shopping Center 3)"). O marcador agora e' um parametro explicito.
+#
+# Latin-1 puro (fpdf2 core font): acentos portugueses OK, sem travessao/reticencias/bullet.
+_AVISO_ORIGEM_CENTROIDE_HEX = (
+    "Estudo a partir do centroide do hexágono - não de um endereço exato."
+)
+
+
 def _cor_por_meta(valor: Any, meta: float) -> tuple[int, int, int]:
     """Cor de fundo do card: verde se valor >= meta, vermelho se < meta, neutro quando sem dado.
 
@@ -1954,7 +2012,13 @@ def _classico_title_band(
 
 
 def _classico_banda_texto(result: dict[str, Any], rotulo: str | None) -> str:
-    """Texto da banda turquesa: endereco/nome quando ha rotulo real, senao a coordenada."""
+    """Texto da banda turquesa: endereco/nome quando ha rotulo real, senao a coordenada.
+
+    O `rotulo` chega INTEIRO e sai inteiro (so' truncado em 80 chars por largura da banda):
+    ele e' texto livre do operador e nada dele e' reinterpretado aqui. O aviso de origem
+    (`origem_centroide_hex`) e' um parametro separado e NAO entra na banda — ele sai em
+    linha propria na capa e na Realizacao.
+    """
     nome = str(rotulo or "").strip()
     if nome and not _parece_coordenada(nome):
         return nome if len(nome) <= 80 else nome[:77] + "..."
@@ -1972,8 +2036,14 @@ def _classico_cover_page(
     *,
     rotulo: str | None = None,
     now: datetime | None = None,
+    origem_centroide_hex: bool = False,
 ) -> None:
-    """Capa classica: endereco ACIMA do subtitulo, texto por baseline (base ~y455)."""
+    """Capa classica: texto por baseline, todo na coluna limpa da arte (x>=460, y 300-450).
+
+    Empilhamento de cima para baixo: aviso de origem (condicional, y=402) -> endereco (y=430)
+    -> subtitulo (y=455). Nada desce abaixo de `_CAPA_RODAPE_LOGOS_TOP` (y=461,4), onde comeca
+    a faixa de logos BRANCOS da arte, nem passa da margem direita da pagina.
+    """
     pdf.add_page()
     has_bg = assets.get("capa") is not None
     _draw_full_page_background(pdf, assets.get("capa"), ULTRA_TURQUESA)
@@ -1986,19 +2056,39 @@ def _classico_cover_page(
         else f"coordenada {TEXTO_SEM_DADO.lower()}"
     )
     nome = str(rotulo or "").strip()
-    endereco = nome if (nome and not _parece_coordenada(nome)) else f"Coordenada: {coord}"
-    if len(endereco) > 72:
-        endereco = endereco[:69] + "..."
+    endereco = _ascii(nome if (nome and not _parece_coordenada(nome)) else f"Coordenada: {coord}")
     subtitulo = f"Relatório Pontual Censitário - Raio {_RAIO_LABEL} | {_classico_mes_ano(now)}"
 
     # Zona limpa inferior-direita quando ha fundo de marca; centro quando nao ha.
-    base_x = 478.0 if has_bg else 80.0
+    base_x = _CAPA_BASE_X_COM_ARTE if has_bg else _CAPA_BASE_X_SEM_ARTE
+    largura_util = _PAGE_W - base_x - _CLASSICO_MARGIN
     pdf.set_text_color(*_BRANCO)
-    # Endereco ACIMA (baseline ~y430), subtitulo ABAIXO (baseline ~y455, acima da linha ~y460).
-    pdf.set_font("Helvetica", "B", 26)
-    pdf.text(base_x, 430.0, _ascii(endereco))
+
+    # Aviso de ORIGEM (string FIXA do modulo) em LINHA PROPRIA, na MESMA coluna do endereco e
+    # ACIMA dele. Ficava a x=20 / baseline y=518, ou seja DENTRO da faixa de rodape da arte
+    # (comeca em y=461,4) e por cima do logo BRANCO da Ultra (x~140-270) — texto branco sobre
+    # logo branco: ilegivel e riscando a marca. Aqui a caixa e' turquesa chapado medido.
+    # Largura: 314,1 pt a 10 pt contra 462 pt uteis (base_x=478 ate a margem direita) -> 147,9
+    # pt de folga em UMA linha; a string e' texto de produto, fixa, entao a folga nao varia.
+    if origem_centroide_hex:
+        pdf.set_font("Helvetica", "", _CAPA_AVISO_FONT_PT)
+        pdf.text(base_x, _CAPA_AVISO_Y, _ascii(_AVISO_ORIGEM_CENTROIDE_HEX))
+
+    # Endereco ACIMA (baseline y=430), subtitulo ABAIXO (baseline y=455, acima da linha y=461,4).
+    # O endereco e' TEXTO LIVRE do operador e precisa caber nos `largura_util` pt ate a margem
+    # direita: primeiro encolhe a fonte (26 -> 15 pt), e so' se ainda nao couber corta pela
+    # largura REAL. "Galpao Comercial Avenida Brasil, 4500" mede 481,2 pt a 26 pt (vazava a
+    # borda) e passa a sair inteiro a 24 pt; rotulo que ja cabia continua a 26 pt e sem corte.
+    _ajustar_fonte_para_largura(
+        pdf,
+        endereco,
+        largura_util,
+        tamanho=_CAPA_ENDERECO_FONT_PT,
+        minimo=_CAPA_ENDERECO_FONT_MIN_PT,
+    )
+    pdf.text(base_x, _CAPA_ENDERECO_Y, _truncar_por_largura(pdf, endereco, largura_util))
     pdf.set_font("Helvetica", "", 13)
-    pdf.text(base_x, 455.0, _ascii(subtitulo))
+    pdf.text(base_x, _CAPA_SUBTITULO_Y, _ascii(subtitulo))
 
 
 # Topo da area de conteudo do template CLASSICO (abaixo da banda + titulo de secao ~y122).
@@ -2206,6 +2296,7 @@ def _classico_credit_page(
     *,
     rotulo: str | None = None,
     now: datetime | None = None,
+    origem_centroide_hex: bool = False,
 ) -> None:
     """Realizacao/Credito: fundo turquesa solido + credito/metodo/READ-ONLY + link clicavel
     do ponto + data por extenso.
@@ -2249,7 +2340,9 @@ def _classico_credit_page(
         align="C",
     )
 
-    # Bloco "Link para localizacao do ponto:" + endereco como link clicavel.
+    # Bloco "Link para localizacao do ponto:" + endereco como link clicavel. A query e' o
+    # `rotulo` INTEIRO, como o operador digitou — o aviso de origem e' parametro proprio e
+    # nunca entrou aqui (dentro da busca do Google Maps so atrapalharia o resultado).
     nome = str(rotulo or "").strip()
     if nome and not _parece_coordenada(nome):
         link_query = nome
@@ -2278,6 +2371,15 @@ def _classico_credit_page(
         align="C",
     )
 
+    # Segunda (e ultima) aparicao do aviso de origem, em linha propria e centrada. Repetido
+    # de proposito: capa e Realizacao sao as duas paginas que quem recebe o PDF olha inteiro,
+    # e o aviso nao pode depender de uma unica linha. Largura medida: ~293 pt a 10 pt na
+    # celula de 880 pt — uma linha, sem risco de estouro (string fixa do modulo).
+    if origem_centroide_hex:
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_xy(40, 408)
+        pdf.cell(_PAGE_W - 80, 14, _ascii(_AVISO_ORIGEM_CENTROIDE_HEX), align="C")
+
     pdf.set_font("Helvetica", "", 9)
     pdf.set_xy(40, _PAGE_H - 40)
     pdf.cell(_PAGE_W - 80, 12, _ascii(f"Fundo de ruas: {_ATRIBUICAO_TILES}."), align="C")
@@ -2298,6 +2400,7 @@ def gerar_pdf_relatorio_pontual_classico(
     viabilidade: dict[str, Any] | None = None,
     foto_satelite: bytes | None = None,
     foto_satelite_grande: bool = False,
+    origem_centroide_hex: bool = False,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
@@ -2318,7 +2421,13 @@ def gerar_pdf_relatorio_pontual_classico(
     maximo mais 4 -> teto de 11 paginas (era 12 com o entorno); `foto_satelite` (BLK-SAT, so no
     caminho API/bot) soma mais uma quando presente.
 
-    `rotulo` e o nome/endereco do ponto (capa + banda + texto do link). `perfil_bairro`
+    `rotulo` e o nome/endereco do ponto (capa + banda + texto do link) — TEXTO LIVRE de quem
+    chama, impresso e usado na busca do link SEM reinterpretacao (parenteses, virgulas e
+    numeros no fim continuam parte do endereco). `origem_centroide_hex=True` acrescenta, em
+    linha propria na CAPA e na REALIZACAO, o aviso fixo de que o estudo saiu do centroide do
+    hexagono e nao de um endereco exato; default `False` = nenhuma linha nova (comportamento
+    historico intacto para bot e API). O aviso NAO entra na banda das paginas de
+    conteudo (largura fixa) nem na query do link. `perfil_bairro`
     (BLK-RELPON-07) e o dict de `agregar_perfil_bairro_distrito`; `None` (default) produz a
     pagina com `TEXTO_SEM_DADO` gracioso. `now` e injetavel para data determinista em teste. `solicitante`
     (BLK-EST-01) carimba a marca d'agua de rastreabilidade em TODAS as paginas: None -> so
@@ -2344,7 +2453,9 @@ def gerar_pdf_relatorio_pontual_classico(
     p4, s4 = _tema_bicolor(4)
 
     pdf = _UltraPDF()
-    _classico_cover_page(pdf, result, assets, rotulo=rotulo, now=now)
+    _classico_cover_page(
+        pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex
+    )
     # Imovel: FOTOS primeiro, DEPOIS a vista aerea (item Felipe 2026-07-23) — cada uma em
     # pagina propria; nao disputam vagas entre si. A intencao do BLK-SAT-01 fica preservada:
     # a vista aerea NAO ocupa nenhuma das 2 vagas de `fotos`, tem pagina propria e continua
@@ -2376,7 +2487,9 @@ def gerar_pdf_relatorio_pontual_classico(
     _classico_banda_magenta_rodape(pdf)
     if viabilidade:
         _viabilidade_page(pdf, viabilidade, assets, primary=p1, secondary=p2)
-    _classico_credit_page(pdf, result, assets, rotulo=rotulo, now=now)
+    _classico_credit_page(
+        pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex
+    )
 
     # Marca d'agua POR CIMA do conteudo de cada pagina (BLK-EST-01, D2=todas as paginas).
     # Escrever na pagina `n` via `pdf.page = n` ANEXA ao stream dessa pagina -> sobreposicao.
@@ -2424,6 +2537,7 @@ def gerar_pdf_relatorio_pontual_censitario(
     viabilidade: dict[str, Any] | None = None,
     foto_satelite: bytes | None = None,
     foto_satelite_grande: bool = False,
+    origem_centroide_hex: bool = False,
 ) -> bytes:
     """DEPRECIADA (BLK-RELPON-14): wrapper fino de `gerar_pdf_relatorio_pontual_classico`.
 
@@ -2434,8 +2548,9 @@ def gerar_pdf_relatorio_pontual_censitario(
     Prefira chamar `gerar_pdf_relatorio_pontual_classico` diretamente.
 
     A assinatura e' um SUPERSET da anterior: alem dos kwargs historicos, aceita `now`,
-    `foto_satelite` e `foto_satelite_grande`, que so a classica aceitava. Qualquer chamada que
-    funcionava antes continua funcionando (os novos parametros tem default inerte).
+    `foto_satelite`, `foto_satelite_grande` e `origem_centroide_hex`, que so a classica
+    aceitava. Qualquer chamada que funcionava antes continua funcionando (os novos parametros
+    tem default inerte).
     """
     warnings.warn(
         "gerar_pdf_relatorio_pontual_censitario esta depreciada (BLK-RELPON-14): o template "
@@ -2457,6 +2572,7 @@ def gerar_pdf_relatorio_pontual_censitario(
         viabilidade=viabilidade,
         foto_satelite=foto_satelite,
         foto_satelite_grande=foto_satelite_grande,
+        origem_centroide_hex=origem_centroide_hex,
     )
 
 

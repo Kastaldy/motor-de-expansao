@@ -292,14 +292,9 @@ export interface DreViabilidade {
   despesa_financeira: number | null
   /** EBITDA - IR/CSLL (ótica DO NEGÓCIO: antes da parcela do financiamento). */
   resultado_apos_ir: number | null
-  /**
-   * Fração do faturamento bruto, servida PRONTA (FIN-VIAB-01: a tela não divide).
-   * ATENÇÃO: numericamente IGUAL a `margem` — o motor define
-   * `margem_ebitda_pct = ebitda / faturamento`. São duas rotas para o mesmo número;
-   * se a definição de `margem` mudar, as duas divergem em silêncio.
-   */
-  ebitda_pct_faturamento?: number | null
-  /** Fração do faturamento bruto do resultado após IR (idem: servida pronta). */
+  /** Fração do faturamento bruto do resultado após IR, servida PRONTA
+   *  (FIN-VIAB-01: a tela não divide). O percentual do EBITDA NÃO tem campo
+   *  próprio — é o `margem` acima (`margem_ebitda_pct = ebitda / faturamento`). */
   resultado_apos_ir_pct_faturamento?: number | null
   /** viável? (decidido pelo motor: margem mínima + payback máximo). */
   flag_viavel?: boolean

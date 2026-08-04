@@ -614,13 +614,20 @@ def _rank_items(
     casas: int = 0,
     bairros: dict[str, str] | None = None,
     limite: int = 10,
+    metrica_etiqueta: str | None = None,
 ) -> list[dict[str, Any]]:
     """Top-N localidades por uma coluna, no formato do painel de ranking.
 
     `limite` = 10: mostra ate as 10 melhores. Como o df ja chega FILTRADO pelo
     funil (quentes / residual >= 2000 / white space), todo item e viavel por
     construcao; se houver menos de 10 localidades distintas, a lista encurta
-    sozinha (Felipe 2026-07-20: "as 10 melhores, apenas se forem viaveis")."""
+    sozinha (Felipe 2026-07-20: "as 10 melhores, apenas se forem viaveis").
+
+    `label_metrica` e' TEXTO EXIBIDO sob o valor no painel (unidade do numero);
+    `metrica_etiqueta`, quando dado, e' a CHAVE que escolhe o ramo do `_etiqueta`.
+    Sao coisas diferentes: no passo 3 o valor continua sendo residual (em alunos),
+    mas a etiqueta e' a leitura competitiva (Livre / Adensar / Disputa). Enquanto
+    os dois andavam juntos no mesmo parametro, o ramo "conc. 2 km" nunca rodava."""
     from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 
     if col not in df.columns:
@@ -646,7 +653,7 @@ def _rank_items(
         vistos.add(chave)
         valor = _num(r.get(col), casas)
         rank = len(itens) + 1
-        etiqueta, tom_item = _etiqueta(label_metrica, valor, rank, r)
+        etiqueta, tom_item = _etiqueta(metrica_etiqueta or label_metrica, valor, rank, r)
         itens.append(
             {
                 "rank": rank,
@@ -662,6 +669,34 @@ def _rank_items(
         if len(itens) == limite:
             break
     return itens
+
+
+def _narrativa_concorrencia(n_residual: int, n_white: int) -> str:
+    """Texto do passo 3, com o caso `n_white == 0` dito por extenso.
+
+    Compartilhada pelos dois niveis (municipio e UF) porque a regra e a mesma: sem
+    fallback, `n_white == 0` deixa os passos 3 e 4 SEM itens — e a lista vazia so nao
+    parece bug se a narrativa disser que nao ha area sem concorrencia no recorte. Alem
+    disso a frase antiga saia agramatical no zero ("0 nao tem nenhum concorrente").
+    """
+    if n_residual == 0:
+        return (
+            "Nenhuma região chegou com residual até aqui, então não há pressão "
+            "concorrencial a avaliar neste recorte."
+        )
+    if n_white == 0:
+        return (
+            f"Dessas {_fmt(n_residual)}, quais estão desguarnecidas? Nenhuma: todas já "
+            "têm concorrente dentro do hexágono. Não há área sem concorrência neste "
+            "recorte — por isso a lista abaixo fica vazia. Entrar aqui significa "
+            "disputar espaço, protegendo o corredor Ultra."
+        )
+    verbo = "não tem" if n_white == 1 else "não têm"
+    return (
+        f"Dessas {_fmt(n_residual)}, quais estão desguarnecidas? {_fmt(n_white)} {verbo} "
+        "nenhum concorrente no hexágono; as demais exigem entrar protegendo o corredor "
+        "Ultra contra a concorrência."
+    )
 
 
 def montar_funil(
@@ -693,19 +728,20 @@ def montar_funil(
     )
     alunos_residual = _num(residual["oferta_efetiva_disponivel"].sum()) if len(residual) else 0
 
-    # Passo 3 — Concorrencia: dos residuais, quais estao desguarnecidos
+    # Passo 3 — Concorrencia: dos residuais, quais estao desguarnecidos. `white` e a
+    # base UNICA dos passos 3 e 4 — SEM fallback para o residual (decisao do dono,
+    # 2026-08-03: "os top 10 deverao se referir aos hexagonos livres"). O passo 3 ja
+    # destacava so o white no mapa (`hexes`) e contava so o white no numerao
+    # (`funil_big`); ranquear o residual quando nao havia white enchia o painel de
+    # hexagono APAGADO e contradizia o proprio numerao (0). Municipio saturado passa a
+    # ter os passos 3 e 4 sem NENHUM item, e a lista vazia e a resposta CORRETA ("nao
+    # ha area livre aqui") — o texto do passo (`_narrativa_concorrencia`) diz isso.
     white = residual[residual["n_concorrentes_est"] == 0] if len(residual) else residual
 
-    # Passo 4 — Recomendacao: fila de ate 10 aberturas priorizada por residual.
-    # So entra quem passou o funil (white space, senao residual >= 2000): a fila e
-    # 100% viavel; encurta sozinha quando ha menos de 10 candidatos.
-    fila = (
-        white.nlargest(10, "oferta_efetiva_disponivel")
-        if len(white)
-        else residual.nlargest(10, "oferta_efetiva_disponivel")
-        if len(residual)
-        else residual
-    )
+    # Passo 4 — Recomendacao: fila de ate 10 aberturas priorizada por residual, so com
+    # white space. A fila e 100% viavel; encurta sozinha com menos de 10 candidatos e
+    # fica vazia quando nao ha nenhum (o `if` so protege o df sem a coluna).
+    fila = white.nlargest(10, "oferta_efetiva_disponivel") if len(white) else white
 
     passos = [
         {
@@ -744,16 +780,19 @@ def montar_funil(
             "n": 3,
             "mode": "competitivo",
             "titulo": "Pressão concorrencial",
-            "narrativa": (
-                f"Dessas {_fmt(len(residual))}, quais estão desguarnecidas? "
-                f"{_fmt(len(white))} não têm nenhum concorrente no hexágono; as demais "
-                "exigem entrar protegendo o corredor Ultra contra a concorrência."
-            ),
+            "narrativa": _narrativa_concorrencia(len(residual), len(white)),
             "funil_big": len(white),
             "funil_unit": "áreas sem concorrência",
             "funil_from": f"{_fmt(len(residual))} regiões",
             "metrica": "conc. 2 km",
-            "itens": _rank_items(residual, "oferta_efetiva_disponivel", "residual", "amber", bairros=bairros),
+            "itens": _rank_items(
+                white,
+                "oferta_efetiva_disponivel",
+                "residual",
+                "amber",
+                bairros=bairros,
+                metrica_etiqueta="conc. 2 km",
+            ),
             "hexes": white["hex_id"].tolist(),
         },
         {
@@ -763,6 +802,10 @@ def montar_funil(
             "narrativa": (
                 f"A síntese das camadas vira ação: uma fila de {_fmt(len(fila))} aberturas "
                 "que captura o máximo de residual sem canibalizar a rede atual."
+                if len(fila)
+                else "A síntese das camadas não gera fila aqui: sem nenhuma área livre de "
+                "concorrência, não há abertura a recomendar neste recorte. Avalie outro "
+                "município — ou uma entrada disputando espaço, que é decisão à parte."
             ),
             "funil_big": len(fila),
             "funil_unit": "aberturas na fila",
@@ -812,6 +855,30 @@ def _etiqueta_muni(
     return "Baixa", "gray"
 
 
+def _hex_representativo(df: pd.DataFrame, value_col: str | None) -> dict[str, str]:
+    """Um hex ancora por municipio, para o numero do ranking pousar no mapa.
+
+    Enquanto o item de municipio saia com `hex_id` vazio, o TextLayer do front
+    (que pula item sem hex_id) nao desenhava numero NENHUM na visao de estado.
+    Criterio explicito e deterministico: o melhor hex do municipio pela coluna que
+    esta sendo agregada; no modo de contagem (sem `value_col`) cai para o maior
+    score censitario e, na falta dele, populacao/oferta. Desempate por `hex_id`
+    para nunca depender da ordem acidental das linhas.
+    """
+    if "hex_id" not in df.columns or "nome_municipio" not in df.columns or not len(df):
+        return {}
+    candidatas = [value_col] if value_col else []
+    candidatas += ["score_setor_2022_calibrado", "pop_leitura", "oferta_efetiva_disponivel"]
+    col = next((c for c in candidatas if c and c in df.columns), None)
+    if col is None:
+        ordenado = df.sort_values("hex_id")
+    else:
+        # na_position="last": hex sem a metrica so e ancora se nao houver outro.
+        ordenado = df.sort_values([col, "hex_id"], ascending=[False, True], na_position="last")
+    serie = ordenado.groupby("nome_municipio", observed=True)["hex_id"].first()
+    return {str(muni): str(hid) for muni, hid in serie.items() if pd.notna(hid)}
+
+
 def _rank_municipios(
     df: pd.DataFrame,
     value_col: str | None,
@@ -832,6 +899,10 @@ def _rank_municipios(
     g = df.groupby("nome_municipio", observed=True)
     serie = g.size() if modo == "count" else g[value_col].sum()
     serie = serie[serie > 0].sort_values(ascending=False).head(10)
+    # Ancora so' dos 10 que entram no painel (evita ordenar a UF inteira).
+    ancoras = _hex_representativo(
+        df[df["nome_municipio"].isin(list(serie.index))], value_col if modo != "count" else None
+    )
     itens: list[dict[str, Any]] = []
     for i, (muni, val) in enumerate(serie.items(), 1):
         valor = _num(val)
@@ -839,7 +910,7 @@ def _rank_municipios(
         itens.append(
             {
                 "rank": i,
-                "hex_id": "",
+                "hex_id": ancoras.get(str(muni), ""),
                 "municipio": str(muni),
                 "titulo": str(muni),
                 "sub": None,
@@ -871,10 +942,13 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     )
     alunos_res = _num(residual["oferta_efetiva_disponivel"].sum()) if len(residual) else 0
     white = residual[residual["n_concorrentes_est"] == 0] if len(residual) else residual
-    base_fila = white if len(white) else residual
+    # Base dos passos 3 e 4: SOMENTE o white space, igual ao funil municipal (decisao
+    # do dono, 2026-08-03). Sem hexagono livre a UF inteira sai com os passos 3 e 4
+    # vazios — e isso e o certo: o numerao ja diz 0 e o mapa nao acende nada; ranquear
+    # o residual ali fazia o painel prometer municipios que o passo acabara de excluir.
     n_reco = (
-        int(base_fila.groupby("nome_municipio", observed=True)["oferta_efetiva_disponivel"].sum().gt(0).sum())
-        if len(base_fila)
+        int(white.groupby("nome_municipio", observed=True)["oferta_efetiva_disponivel"].sum().gt(0).sum())
+        if len(white)
         else 0
     )
 
@@ -913,15 +987,12 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             "n": 3,
             "mode": "competitivo",
             "titulo": "Pressão concorrencial",
-            "narrativa": (
-                f"Dessas regiões, {_fmt(len(white))} não têm nenhum concorrente no "
-                "hexágono; as demais exigem entrar protegendo o corredor Ultra."
-            ),
+            "narrativa": _narrativa_concorrencia(len(residual), len(white)),
             "funil_big": len(white),
             "funil_unit": "áreas sem concorrência",
             "funil_from": f"{_fmt(len(residual))} regiões",
             "metrica": "conc. 2 km",
-            "itens": _rank_municipios(base_fila, "oferta_efetiva_disponivel", "sum", "residual", "amber"),
+            "itens": _rank_municipios(white, "oferta_efetiva_disponivel", "sum", "residual", "amber"),
             "hexes": (white["hex_id"].tolist() if len(white) else []),
         },
         {
@@ -931,15 +1002,19 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             "narrativa": (
                 f"A fila de municípios para entrar: {_fmt(n_reco)} onde o residual é maior e a "
                 "rede Ultra ainda tem espaço. Clique num município para aprofundar."
+                if n_reco
+                else "Nenhum município deste estado tem área livre de concorrência com "
+                "residual: a fila fica vazia. Amplie o recorte ou avalie uma entrada "
+                "disputando espaço, que é decisão à parte."
             ),
             "funil_big": n_reco,
             "funil_unit": "municípios na fila",
             "funil_from": f"{_fmt(len(white))} áreas sem concorrência",
             "metrica": "residual",
             "itens": _rank_municipios(
-                base_fila, "oferta_efetiva_disponivel", "sum", "residual", "blue", fila=True
+                white, "oferta_efetiva_disponivel", "sum", "residual", "blue", fila=True
             ),
-            "hexes": base_fila["hex_id"].tolist(),
+            "hexes": (white["hex_id"].tolist() if len(white) else []),
         },
     ]
 
@@ -1590,13 +1665,13 @@ def _payload_viabilidade(body: ViabilidadeIn) -> dict[str, Any]:
             "ir_csll": _num(r.ir_csll_mensal, 2),
             "despesa_financeira": _num(r.despesa_financeira_mensal, 2),
             "resultado_apos_ir": _num(r.resultado_apos_ir_mensal, 2),
-            # FRACAO do faturamento bruto de steady das duas linhas de RESULTADO da
+            # FRACAO do faturamento bruto de steady da linha de RESULTADO APOS IR da
             # cascata. Servido aqui porque a tela nao faz conta financeira
             # (FIN-VIAB-01) — ela so renderiza. `None` quando o faturamento e zero
             # (cenario degenerado): a tela omite o % em vez de exibir infinito.
-            "ebitda_pct_faturamento": _pct_do_faturamento(
-                r.ebitda_mensal, r.faturamento_mensal_steady
-            ),
+            # NAO existe campo irmao para o EBITDA: o percentual dele ja e' `margem`
+            # (o motor define `margem_ebitda_pct = ebitda / faturamento`) e servir os
+            # dois abria a porta para divergirem em silencio se a definicao mudasse.
             "resultado_apos_ir_pct_faturamento": _pct_do_faturamento(
                 r.resultado_apos_ir_mensal, r.faturamento_mensal_steady
             ),
@@ -2417,6 +2492,7 @@ async def relatorio_pontual(
     info_imovel: str | None = None,
     viabilidade_json: str | None = None,
     viabilidade_inputs_json: str | None = None,
+    origem_centroide_hex: bool = False,
     fotos: list[UploadFile] | None = None,
 ) -> Response:
     """Relatorio Pontual Censitario 1,0 km (DEC-021) — fotos, dados do imovel e viabilidade.
@@ -2427,6 +2503,14 @@ async def relatorio_pontual(
 
     `info_imovel` e `viabilidade_json` chegam como JSON serializado porque o corpo
     e multipart (por causa das fotos).
+
+    `origem_centroide_hex` (OPCIONAL, default False) e' o MARCADOR EXPLICITO de que a
+    coordenada nao e' um endereco exato e sim o centroide do hexagono: o gerador imprime o
+    aviso na capa e na Realizacao. Fica em parametro proprio, e nao anexado ao `rotulo`,
+    porque `rotulo` e' texto livre do operador — endereco com parenteses ("Av. Paulista,
+    1500 (Shopping Center 3)") seria mutilado por qualquer convencao sobre o texto.
+    Esta rota e' consumida SO pelo front deste repo; a API publica
+    (`src/motor_expansao/api/`) nao muda.
 
     Esta funcao so faz a parte ASSINCRONA (ler os uploads) e delega o resto ao
     threadpool — ver `_gerar_relatorio_pontual_pdf`.
@@ -2456,6 +2540,7 @@ async def relatorio_pontual(
             viabilidade_json,
             viabilidade_inputs_json,
             fotos_bytes,
+            origem_centroide_hex,
         )
 
 
@@ -2468,6 +2553,7 @@ def _gerar_relatorio_pontual_pdf(
     viabilidade_json: str | None,
     viabilidade_inputs_json: str | None,
     fotos_bytes: list[bytes],
+    origem_centroide_hex: bool = False,
 ) -> Response:
     """Corpo SINCRONO do Relatorio Pontual — roda no threadpool, nunca no event loop.
 
@@ -2624,6 +2710,8 @@ def _gerar_relatorio_pontual_pdf(
         info_imovel=json.loads(info_imovel) if info_imovel else None,
         viabilidade=viab_pdf,
         foto_satelite=foto_satelite,
+        # Marcador EXPLICITO de origem (parametro proprio, nunca embutido no `rotulo`).
+        origem_centroide_hex=origem_centroide_hex,
     )
     return Response(
         content=pdf,

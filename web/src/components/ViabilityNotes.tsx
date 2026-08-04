@@ -201,10 +201,18 @@ function montarSecoes(p: PremissasViabilidade, demandaPremissa: number | null): 
         },
         {
           kpi: 'Régua de aprovação',
+          // Os dois numeros saem do payload (constantes de `dimensionamento/config.py`),
+          // como o resto das notas: cravados a mao, mentiriam no dia em que a regua
+          // mudasse. `casas=0` porque o default do formatador escreveria "30,0%".
+          // O HISTORICO fica (e' metodologia: explica por que um cenario aprovado antes
+          // pode reprovar hoje), mas SEM repetir os valores — a data e' fato, os numeros
+          // sao os do payload logo acima. Esta e a unica superficie onde o operador le isso.
           como:
             'O veredito exige DUAS coisas ao mesmo tempo: margem EBITDA de pelo menos ' +
-            '30% e payback dentro de 36 meses de operação. Passar só no payback deixou ' +
-            'de bastar — a régua de margem subiu de 10% para 30% em 2026-07-25.',
+            `${pctFrac(p.margem_viavel_min, 0)} e payback dentro de ` +
+            `${p.payback_viavel_max} meses de operação. Passar só no payback deixou de ` +
+            'bastar: a exigência de margem foi ELEVADA em 2026-07-25, e cenários ' +
+            'aprovados antes dessa data podem reprovar agora.',
         },
         {
           kpi: 'Aluguel-teto',
