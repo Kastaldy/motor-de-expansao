@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 
 import type { PontoEscolhido } from '../App'
 import HexMap, { type SearchPin } from '../components/HexMap'
+import MethodologyPanel from '../components/MethodologyPanel'
 import NarrativePanel from '../components/NarrativePanel'
 import ScoreLegend from '../components/ScoreLegend'
 import Select from '../components/Select'
@@ -46,6 +47,7 @@ export default function MapScreen({
   onAnalisarPonto,
 }: MapScreenProps) {
   const [passoN, setPassoN] = useState(1)
+  const [metodologiaAberta, setMetodologiaAberta] = useState(false)
   const [selecionado, setSelecionado] = useState<string | null>(null)
   const [gerando, setGerando] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
@@ -407,6 +409,29 @@ export default function MapScreen({
           />
         </label>
 
+        {/* Manual do funil. Ao lado do MELHORES e ANTES do `flex:1`: ocupa a folga do
+            meio, entao o bloco de metricas segue ancorado na borda direita.
+
+            A quebra do header em duas linhas a 100% de zoom NAO vem daqui — a 1280 px
+            logicos (notebook Full HD com escala 150% do Windows, padrao de fabrica)
+            todos os paineis da tela quebram, com ou sem este botao. E' aperto geral de
+            layout, assunto separado. */}
+        <Botao
+          variante="ghost"
+          onClick={() => setMetodologiaAberta((v) => !v)}
+          title="Metodologia — o que cada camada mede e onde corta"
+          style={{
+            padding: '6px 11px',
+            font: '600 11.5px/1 var(--f-ui)',
+            whiteSpace: 'nowrap',
+            ...(metodologiaAberta
+              ? { color: 'var(--ac)', borderColor: 'var(--ac)', background: 'var(--ac-a12)' }
+              : {}),
+          }}
+        >
+          Metodologia
+        </Botao>
+
         <div style={{ flex: 1 }} />
 
         {dados && (
@@ -667,6 +692,15 @@ export default function MapScreen({
           />
         </div>
       )}
+
+      {/* Gaveta da metodologia. Ultima na arvore e com zIndex acima do header para
+          cobrir o chrome do mapa; o mapa em si continua visivel a' esquerda. */}
+      <MethodologyPanel
+        aberto={metodologiaAberta}
+        onFechar={() => setMetodologiaAberta(false)}
+        passoAtivo={passoN}
+        escopo={nivelUf ? 'uf' : 'municipio'}
+      />
     </div>
   )
 }

@@ -56,6 +56,55 @@ export interface Passo {
   hexes: string[]
 }
 
+/* --- Metodologia (manual do funil, /api/metodologia) ---------------------- */
+
+/** Uma métrica de uma camada, em dois níveis: `resumo` + `fonte` sempre visíveis,
+ *  `regra` revelada sob demanda. `coluna` é o nome no parquet, para quem auditar.
+ *  `ressalva` só existe onde o número tem limite conhecido — e aí é sempre visível,
+ *  porque esconder limitação é o que faz tratarem estimativa como contagem. */
+export interface MetricaMetodologia {
+  nome: string
+  coluna: string
+  /** De onde vem o dado — o "com o quê" da conta. */
+  fonte: string
+  resumo: string
+  regra: string
+  ressalva?: string
+}
+
+/** Base de dados que alimenta o funil. */
+export interface FonteMetodologia {
+  nome: string
+  detalhe: string
+}
+
+/** Faixa de etiqueta. `escopo` vazio vale nos dois funis; senão, 'municipio' | 'uf'. */
+export interface FaixaMetodologia {
+  etiqueta: string
+  condicao: string
+  tom: Tom
+  escopo: string
+}
+
+export interface CamadaMetodologia {
+  n: 1 | 2 | 3 | 4
+  titulo: string
+  pergunta: string
+  corte: string
+  metricas: MetricaMetodologia[]
+  faixas: FaixaMetodologia[]
+  /** Ressalva da camada, quando o que a tela mostra pede aviso. */
+  nota?: string
+}
+
+export interface MetodologiaPayload {
+  /** Como ler o funil, antes de entrar nas camadas. */
+  intro: string
+  fontes: FonteMetodologia[]
+  camadas: CamadaMetodologia[]
+  parametros: { nome: string; valor: string }[]
+}
+
 export interface Resumo {
   residual_total: number | null
   pop_total: number | null

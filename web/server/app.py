@@ -74,6 +74,23 @@ CAPACIDADE_CONCORRENTE_PADRAO = 2500.0
 OFERTA_DESTAQUE_MIN = 2000.0  # espelha relatorio_municipal (emenda BLK-RELMUN-03)
 POP_MIN_ACIONAVEL = 5000  # regua operacional do dashboard (<5k = descartado)
 
+# --- Reguas do funil e das etiquetas -----------------------------------------
+# Estavam como literais espalhados dentro de _etiqueta/_etiqueta_muni/montar_funil.
+# Subiram para ca' porque o painel de Metodologia (/api/metodologia) publica estes
+# MESMOS nomes na tela: com o numero escrito em dois lugares, ajustar um parametro
+# fazia a explicacao mentir sem ninguem perceber. Mudou aqui, muda no funil E no texto.
+SCORE_CORTE_QUENTE = 70.0  # piso do passo 1 (hexagono "quente")
+FAIXA_SCORE_QUENTE = 90.0  # etiqueta Quente
+FAIXA_SCORE_FORTE = 80.0  # etiqueta Forte; abaixo disso, Solido
+FAIXA_RESIDUAL_ALTA_HEX = 6000.0  # etiqueta Alta, residual de UM hexagono
+FAIXA_RESIDUAL_MEDIA_HEX = 3000.0  # etiqueta Media; abaixo, Baixa
+FAIXA_RESIDUAL_ALTA_UF = 20000.0  # idem, somado por municipio (patamar maior)
+FAIXA_RESIDUAL_MEDIA_UF = 8000.0
+FAIXA_HEXES_POLO = 30  # etiqueta Polo, em nº de hexes quentes do municipio
+FAIXA_HEXES_FORTE = 8  # etiqueta Forte; abaixo, Emergente
+CONC_ADENSAR_MAX = 2  # ate' 2 concorrentes estimados = cabe adensar
+FILA_MAX = 10  # tamanho maximo da fila do passo 4
+
 app = FastAPI(title="Piloto Web — Motor de Expansao", version="0.1.0")
 # Em producao o SPA e a API sao servidos pela MESMA origem (mesmo container atras do
 # Caddy), entao CORS e irrelevante ali; estas origens sao so para o dev (Vite :5000).
@@ -581,16 +598,16 @@ def _etiqueta(
     """
     v = valor or 0
     if metrica == "score":
-        if v >= 90:
+        if v >= FAIXA_SCORE_QUENTE:
             return "Quente", "blue"
-        if v >= 80:
+        if v >= FAIXA_SCORE_FORTE:
             return "Forte", "green"
         return "Sólido", "gray"
     if metrica == "conc. 2 km":
         n = int(row.get("n_concorrentes_est") or 0)
         if n == 0:
             return "Livre", "green"
-        if n <= 2:
+        if n <= CONC_ADENSAR_MAX:
             return "Adensar", "blue"
         return "Disputa", "red"
     if metrica == "residual":
@@ -598,9 +615,9 @@ def _etiqueta(
         # rotulo de urgencia; do 4o ao 10o e "Espera" (a fila vai ate 10).
         if row.get("_fila"):
             return {1: "Agora", 2: "Próximo", 3: "Fila"}.get(rank, "Espera"), None
-        if v >= 6000:
+        if v >= FAIXA_RESIDUAL_ALTA_HEX:
             return "Alta", "green"
-        if v >= 3000:
+        if v >= FAIXA_RESIDUAL_MEDIA_HEX:
             return "Média", "amber"
         return "Baixa", "gray"
     return "", None
@@ -613,7 +630,7 @@ def _rank_items(
     tom: str,
     casas: int = 0,
     bairros: dict[str, str] | None = None,
-    limite: int = 10,
+    limite: int = FILA_MAX,
 ) -> list[dict[str, Any]]:
     """Top-N localidades por uma coluna, no formato do painel de ranking.
 
@@ -681,7 +698,7 @@ def montar_funil(
     col_censo = "score_setor_2022_calibrado"
     if col_censo in df_muni.columns:
         pop = df_muni["pop_leitura"] if "pop_leitura" in df_muni.columns else float("nan")
-        quentes = df_muni[(df_muni[col_censo] >= 70) & (pop >= POP_MIN_ACIONAVEL)]
+        quentes = df_muni[(df_muni[col_censo] >= SCORE_CORTE_QUENTE) & (pop >= POP_MIN_ACIONAVEL)]
     else:
         quentes = df_muni.iloc[0:0]
 
@@ -700,9 +717,9 @@ def montar_funil(
     # So entra quem passou o funil (white space, senao residual >= 2000): a fila e
     # 100% viavel; encurta sozinha quando ha menos de 10 candidatos.
     fila = (
-        white.nlargest(10, "oferta_efetiva_disponivel")
+        white.nlargest(FILA_MAX, "oferta_efetiva_disponivel")
         if len(white)
-        else residual.nlargest(10, "oferta_efetiva_disponivel")
+        else residual.nlargest(FILA_MAX, "oferta_efetiva_disponivel")
         if len(residual)
         else residual
     )
@@ -746,8 +763,9 @@ def montar_funil(
             "titulo": "Pressão concorrencial",
             "narrativa": (
                 f"Dessas {_fmt(len(residual))}, quais estão desguarnecidas? "
-                f"{_fmt(len(white))} não têm nenhum concorrente no hexágono; as demais "
-                "exigem entrar protegendo o corredor Ultra contra a concorrência."
+                f"{_fmt(len(white))} não têm nenhum concorrente mapeado num raio de "
+                "2 km; as demais exigem entrar protegendo o corredor Ultra contra a "
+                "concorrência."
             ),
             "funil_big": len(white),
             "funil_unit": "áreas sem concorrência",
@@ -799,15 +817,15 @@ def _etiqueta_muni(
     if fila:
         return {1: "Agora", 2: "Próximo", 3: "Fila"}.get(rank, "Espera"), None
     if modo == "count":
-        if v >= 30:
+        if v >= FAIXA_HEXES_POLO:
             return "Polo", "blue"
-        if v >= 8:
+        if v >= FAIXA_HEXES_FORTE:
             return "Forte", "green"
         return "Emergente", "gray"
     # residual (soma municipal — patamares maiores que o de 1 hex)
-    if v >= 20000:
+    if v >= FAIXA_RESIDUAL_ALTA_UF:
         return "Alta", "green"
-    if v >= 8000:
+    if v >= FAIXA_RESIDUAL_MEDIA_UF:
         return "Média", "amber"
     return "Baixa", "gray"
 
@@ -831,7 +849,7 @@ def _rank_municipios(
     # gerar ~4,6k grupos vazios (e silencia o FutureWarning do pandas).
     g = df.groupby("nome_municipio", observed=True)
     serie = g.size() if modo == "count" else g[value_col].sum()
-    serie = serie[serie > 0].sort_values(ascending=False).head(10)
+    serie = serie[serie > 0].sort_values(ascending=False).head(FILA_MAX)
     itens: list[dict[str, Any]] = []
     for i, (muni, val) in enumerate(serie.items(), 1):
         valor = _num(val)
@@ -860,7 +878,7 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     col = "score_setor_2022_calibrado"
     if col in df_uf.columns:
         pop = df_uf["pop_leitura"] if "pop_leitura" in df_uf.columns else float("nan")
-        quentes = df_uf[(df_uf[col] >= 70) & (pop >= POP_MIN_ACIONAVEL)]
+        quentes = df_uf[(df_uf[col] >= SCORE_CORTE_QUENTE) & (pop >= POP_MIN_ACIONAVEL)]
     else:
         quentes = df_uf.iloc[0:0]
 
@@ -914,8 +932,8 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             "mode": "competitivo",
             "titulo": "Pressão concorrencial",
             "narrativa": (
-                f"Dessas regiões, {_fmt(len(white))} não têm nenhum concorrente no "
-                "hexágono; as demais exigem entrar protegendo o corredor Ultra."
+                f"Dessas regiões, {_fmt(len(white))} não têm nenhum concorrente mapeado "
+                "num raio de 2 km; as demais exigem entrar protegendo o corredor Ultra."
             ),
             "funil_big": len(white),
             "funil_unit": "áreas sem concorrência",
@@ -1026,6 +1044,296 @@ def health() -> dict[str, Any]:
 @app.get("/api/ufs")
 def ufs() -> dict[str, Any]:
     return {"ufs": listar_ufs()}
+
+
+# ============================================================================
+# Metodologia — o "manual" do funil do Mapa
+# ============================================================================
+
+
+def _mil(v: float) -> str:
+    """Milhar com ponto, do jeito brasileiro. Existe para o texto NAO precisar de
+    `.replace(",", ".")` no fim de uma string concatenada — ali o replace pega junto as
+    virgulas da PROSA e vira pontuacao errada ("senao, proxy" -> "senao. proxy")."""
+    return f"{v:,.0f}".replace(",", ".")
+
+
+def _fx(etiqueta: str, condicao: str, tom: str, escopo: str = "") -> dict[str, Any]:
+    """Uma faixa de etiqueta. `escopo` vazio = vale nos dois funis."""
+    return {"etiqueta": etiqueta, "condicao": condicao, "tom": tom, "escopo": escopo}
+
+
+def _faixas_residual() -> list[dict[str, Any]]:
+    """Faixas de residual — iguais nas camadas 2 e 3. A 3 FILTRA por concorrencia mas
+    rotula cada linha pelo residual; ver a `nota` da camada 3."""
+    return [
+        _fx("Alta", f"≥ {_mil(FAIXA_RESIDUAL_ALTA_HEX)} alunos", "green", "municipio"),
+        _fx("Média", f"≥ {_mil(FAIXA_RESIDUAL_MEDIA_HEX)} alunos", "amber", "municipio"),
+        _fx("Baixa", f"< {_mil(FAIXA_RESIDUAL_MEDIA_HEX)} alunos", "gray", "municipio"),
+        _fx("Alta", f"≥ {_mil(FAIXA_RESIDUAL_ALTA_UF)} alunos somados", "green", "uf"),
+        _fx("Média", f"≥ {_mil(FAIXA_RESIDUAL_MEDIA_UF)} alunos somados", "amber", "uf"),
+        _fx("Baixa", f"< {_mil(FAIXA_RESIDUAL_MEDIA_UF)} alunos somados", "gray", "uf"),
+    ]
+
+
+def montar_metodologia() -> dict[str, Any]:
+    """As 4 camadas do funil explicadas para quem LE a tela, nao para quem escreveu.
+
+    Espelha o `NotasMetodologicas` da Viabilidade e segue a mesma regra: nenhum numero
+    e' escrito a mao — todo corte sai da constante que o proprio funil usa, entao
+    ajustar um parametro corrige o funil E este texto de uma vez.
+
+    Cada metrica responde duas perguntas, nesta ordem: COM O QUE foi calculada (`fonte`)
+    e COMO (`regra`, em portugues corrido — a formula fica no docs/; aqui o leitor
+    precisa entender o raciocinio). `ressalva` existe onde o numero tem limite conhecido:
+    esconder isso e' o que faz alguem tratar estimativa como contagem.
+
+    NOTA DE ESTILO: os comentarios deste arquivo sao sem acento por convencao do repo,
+    mas TUDO que sai daqui e' texto de usuario e vai acentuado.
+    """
+    cap = _mil(CAPACIDADE_CONCORRENTE_PADRAO)
+    pop = _mil(POP_MIN_ACIONAVEL)
+    res = _mil(OFERTA_DESTAQUE_MIN)
+    score = f"{SCORE_CORTE_QUENTE:.0f}"
+
+    F_CENSO = "Censo 2022 (IBGE)"
+    F_CONC = "Mapeamento de concorrentes"
+    F_ULTRA = "Rede Ultra (Growth API)"
+
+    return {
+        "intro": (
+            "O mapa divide o território em hexágonos de cerca de 5 km² — mais ou menos "
+            "o tamanho de um bairro grande. Cada camada do funil recebe apenas o que a "
+            "anterior aprovou e aplica mais uma régua. No fim sobra uma fila de aberturas "
+            "em que toda posição já passou por todos os filtros."
+        ),
+        "fontes": [
+            {
+                "nome": F_CENSO,
+                "detalhe": (
+                    "Renda, domicílios e população por setor censitário — recortes de "
+                    "algumas centenas de domicílios cada. É a base de tudo que o funil "
+                    "chama de potencial: nenhuma estimativa de demanda é arbitrada, toda "
+                    "ela sai do setor onde o hexágono cai."
+                ),
+            },
+            {
+                "nome": F_CONC,
+                "detalhe": (
+                    "Endereços das academias das redes concorrentes monitoradas, "
+                    "geocodificados e contados por raio. É o que permite dizer se uma "
+                    "região está disputada ou livre."
+                ),
+            },
+            {
+                "nome": F_ULTRA,
+                "detalhe": (
+                    "As unidades próprias e, quando disponível, o número real de alunos de "
+                    "cada uma. Entra como oferta já atendida: o funil desconta a própria "
+                    "Ultra para não recomendar canibalizar a rede."
+                ),
+            },
+        ],
+        "camadas": [
+            {
+                "n": 1,
+                "titulo": "Potencial socioeconômico",
+                "pergunta": "Onde mora gente com renda e perfil para treinar?",
+                "corte": f"score ≥ {score} e população ≥ {pop}",
+                "metricas": [
+                    {
+                        "nome": "Score socioeconômico",
+                        "coluna": "score_setor_2022_calibrado",
+                        "fonte": F_CENSO,
+                        "resumo": (
+                            "Uma nota de 0 a 100 que responde a uma pergunta só: o perfil de "
+                            "quem mora aqui se parece com o de quem assina academia? Quanto "
+                            "maior, mais perto a região está do público que a rede converte."
+                        ),
+                        "regra": (
+                            "O IBGE publica renda, composição dos domicílios e perfil das "
+                            "famílias por setor censitário. Esses indicadores são combinados "
+                            "numa nota única, calibrada DENTRO de cada estado — assim um "
+                            "bairro de São Paulo não é comparado com um do Acre na mesma "
+                            "escala absoluta. A nota do setor passa para o hexágono que o "
+                            f"cobre. Abaixo de {score} o hexágono não entra em nenhuma camada "
+                            "seguinte."
+                        ),
+                    },
+                    {
+                        "nome": "População da área",
+                        "coluna": "pop_leitura",
+                        "fonte": F_CENSO,
+                        "resumo": (
+                            "Quantas pessoas moram no hexágono. Uma região pode ter o perfil "
+                            "perfeito e ainda assim não sustentar uma unidade, se houver "
+                            "pouca gente."
+                        ),
+                        "regra": (
+                            "Soma dos moradores dos setores censitários que caem dentro do "
+                            f"hexágono. O corte em {pop} habitantes é régua operacional do "
+                            "time, não do censo: abaixo disso o mapa já pinta a área em cinza "
+                            "e o funil descarta."
+                        ),
+                    },
+                ],
+                "faixas": [
+                    _fx("Quente", f"score ≥ {FAIXA_SCORE_QUENTE:.0f}", "blue", "municipio"),
+                    _fx("Forte", f"score ≥ {FAIXA_SCORE_FORTE:.0f}", "green", "municipio"),
+                    _fx("Sólido", f"score < {FAIXA_SCORE_FORTE:.0f}", "gray", "municipio"),
+                    _fx("Polo", f"≥ {FAIXA_HEXES_POLO} hexágonos quentes", "blue", "uf"),
+                    _fx("Forte", f"≥ {FAIXA_HEXES_FORTE} hexágonos quentes", "green", "uf"),
+                    _fx("Emergente", f"< {FAIXA_HEXES_FORTE} hexágonos quentes", "gray", "uf"),
+                ],
+            },
+            {
+                "n": 2,
+                "titulo": "Demanda não atendida",
+                "pergunta": "Desses, onde ainda sobra gente para atender?",
+                "corte": f"residual ≥ {res} alunos",
+                "metricas": [
+                    {
+                        "nome": "Residual de alunos",
+                        "coluna": "oferta_efetiva_disponivel",
+                        "fonte": f"{F_CENSO} + {F_CONC} + {F_ULTRA}",
+                        "resumo": (
+                            "Quantos alunos cabem na região que hoje ninguém atende. É o "
+                            "tamanho da oportunidade medido em PESSOAS — não em porcentagem, "
+                            "não em índice."
+                        ),
+                        "regra": (
+                            "São três passos. Primeiro, estima-se quantos moradores do "
+                            "hexágono são público de academia, a partir do perfil do censo. "
+                            "Depois, desconta-se quem já é atendido: os alunos dos "
+                            "concorrentes da região mais os da própria Ultra. O que sobra é o "
+                            "residual. Onde a oferta já supera a demanda o resultado é zero, "
+                            f"nunca negativo. Segue no funil quem tem {res} ou mais."
+                        ),
+                        "ressalva": (
+                            "É uma estimativa de mercado, não uma lista de pessoas. Serve para "
+                            "ordenar regiões entre si e dimensionar a oportunidade — não para "
+                            "prever a matrícula de uma unidade específica."
+                        ),
+                    },
+                    {
+                        "nome": "Oferta já atendida",
+                        "coluna": "oferta_consumida_total_estimada",
+                        "fonte": f"{F_CONC} + {F_ULTRA}",
+                        "resumo": (
+                            "Quantos alunos a região já absorve hoje, somando concorrentes e "
+                            "unidades Ultra. É exatamente o que se subtrai do potencial."
+                        ),
+                        "regra": (
+                            "Do lado dos concorrentes, cada unidade mapeada num raio de 2 km "
+                            f"conta como {cap} alunos — a capacidade média de uma academia "
+                            "grande. Do lado da Ultra, quando existe o número real de alunos "
+                            "da unidade ele é usado no lugar da estimativa; quando não existe, "
+                            "vale a mesma média."
+                        ),
+                    },
+                ],
+                "faixas": _faixas_residual(),
+            },
+            {
+                "n": 3,
+                "titulo": "Pressão concorrencial",
+                "pergunta": "Dessas, quais estão desguarnecidas?",
+                "corte": "nenhum concorrente estimado num raio de 2 km",
+                "metricas": [
+                    {
+                        "nome": "Concorrentes em 2 km",
+                        "coluna": "n_concorrentes_est",
+                        "fonte": F_CONC,
+                        "resumo": (
+                            "Quantas academias concorrentes existem na vizinhança imediata. "
+                            "Zero significa que ninguém disputa esse público hoje — a "
+                            "situação mais confortável para abrir."
+                        ),
+                        "regra": (
+                            "O modelo mede a oferta concorrente num raio de 2 km do hexágono e "
+                            "converte esse volume em número de unidades, dividindo pela "
+                            f"capacidade média de {cap} alunos. Só segue para a última camada "
+                            "quem tem zero."
+                        ),
+                        "ressalva": (
+                            "É uma estimativa derivada do volume de oferta, não a contagem de "
+                            "endereços na rua. E cobre apenas as redes monitoradas: uma "
+                            "academia de bairro sem presença digital pode não estar no "
+                            "mapeamento — então zero concorrentes quer dizer nenhum "
+                            "concorrente CONHECIDO."
+                        ),
+                    },
+                    {
+                        "nome": "Capacidade média por academia",
+                        "coluna": "capacidade_default_concorrente_alunos",
+                        "fonte": "Premissa do modelo",
+                        "resumo": (
+                            "Quantos alunos o modelo assume que uma academia concorrente "
+                            f"atende: {cap}."
+                        ),
+                        "regra": (
+                            "Um número único para todas as redes, escolhido de forma "
+                            "conservadora enquanto não há capacidade real por bandeira. É a "
+                            "régua que converte oferta em número de concorrentes: subir esse "
+                            "valor faz o modelo enxergar MENOS concorrentes; descer faz "
+                            "enxergar mais."
+                        ),
+                    },
+                ],
+                "faixas": _faixas_residual(),
+                "nota": (
+                    "Ao ler o ranking desta camada: a concorrência define QUEM aparece na "
+                    "lista, mas a etiqueta de cada linha continua mostrando o residual, igual "
+                    "à camada anterior. Quem conta as áreas livres é o número grande do topo."
+                ),
+            },
+            {
+                "n": 4,
+                "titulo": "Para onde crescer",
+                "pergunta": "Em que ordem abrir?",
+                "corte": f"as {FILA_MAX} maiores por residual, entre as aprovadas",
+                "metricas": [
+                    {
+                        "nome": "Fila de aberturas",
+                        "coluna": "oferta_efetiva_disponivel",
+                        "fonte": "Resultado das três camadas anteriores",
+                        "resumo": (
+                            f"A ordem sugerida para abrir, com até {FILA_MAX} posições. Toda "
+                            "posição já passou pelos três filtros — não há candidato inviável "
+                            "na fila."
+                        ),
+                        "regra": (
+                            "Entre as regiões que chegaram sem concorrência, ordena-se pelo "
+                            "residual: quem tem mais alunos desatendidos vem primeiro. Se "
+                            "nenhuma passar limpa pela concorrência, a fila recorre às que têm "
+                            "residual acima do corte, aceitando disputa. Por isso ela encurta "
+                            "sozinha em cidade pequena, em vez de completar com candidato ruim."
+                        ),
+                    },
+                ],
+                "faixas": [
+                    _fx("Agora", "1º da fila", "green"),
+                    _fx("Próximo", "2º da fila", "green"),
+                    _fx("Fila", "3º da fila", "amber"),
+                    _fx("Espera", f"4º ao {FILA_MAX}º", "gray"),
+                ],
+            },
+        ],
+        "parametros": [
+            {"nome": "Score mínimo para entrar no funil", "valor": score},
+            {"nome": "População mínima do hexágono", "valor": f"{pop} habitantes"},
+            {"nome": "Residual mínimo", "valor": f"{res} alunos"},
+            {"nome": "Capacidade média por academia", "valor": f"{cap} alunos"},
+            {"nome": "Raio de concorrência", "valor": "2 km"},
+            {"nome": "Tamanho máximo da fila", "valor": str(FILA_MAX)},
+        ],
+    }
+
+
+@app.get("/api/metodologia")
+def metodologia() -> dict[str, Any]:
+    """Manual do funil: o que cada camada mede e com que régua corta."""
+    return montar_metodologia()
 
 
 # --- Geocoding de endereço (Nominatim, DEC-010: cache + timeout + fallback) ---
