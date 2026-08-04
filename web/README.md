@@ -2,7 +2,7 @@
 
 Substituição faseada do Streamlit por um app web. Três telas: **Mapa Territorial**
 (porta de entrada por estado → funil de 4 camadas → município), **Visão Executiva**
-(a rede Ultra real por estado — Growth API) e **Viabilidade do ponto** (stress-test
+(a rede Ultra real como carteira acionável — Growth API) e **Viabilidade do ponto** (stress-test
 de um imóvel real). Os relatórios em PDF saem do Mapa e da Viabilidade.
 
 ## Porta de entrada por UF e drill-down
@@ -14,26 +14,50 @@ estado, o Mapa mostra a leitura territorial da **UF inteira** e o painel recomen
 (comparar vários hexes e somar residual/população/score) e um **filtro global**
 "MELHORES" (mostra só os hexes de faixa M1 mais alta).
 
-## Visão Executiva (rede real por estado)
+## Visão Executiva — a rede como carteira acionável (DEC-023)
 
-Escolhido um estado, mostra as unidades Ultra num **bubble map** (tamanho ∝
-faturamento) e os números REAIS da Growth API (`growth_api_historico.parquet`,
-ingestão semanal — DEC-013): faturamento, alunos ativos, churn, NPS e a
-**proporção pagantes × agregadores** (Gympass/TotalPass), com o **ranking de
-unidades por faturamento**. Cada card traz a variação **vs M-1** (verde/vermelho).
+Não é um mapa com painel: é um **dashboard de dois níveis** sobre a base Growth
+(`growth_api_historico.parquet`, ingestão diária — DEC-013). O alvo é aposentar o
+trabalho manual do time de campo, que hoje importa um `.xlsx` num HTML próprio todo
+dia para montar ranking, "% vs média da rede" e comparação com M-1 à mão.
 
-Há um **seletor de PERÍODO** (competência) no topo — escolha o mês a analisar
-(evita ficar preso ao mês corrente parcial); o **ranking de unidades** pode ser por
-qualquer KPI (faturamento, alunos ativos, churn, NPS, ticket); e churn/NPS mostram a
-variação em **pontos percentuais** (`pp`/`pts`), não em % relativo (menos confuso).
+**Nível 1 — carteira.** A rede do Brasil inteiro, ordenada por prioridade de visita.
+Cada linha traz o semáforo do diagnóstico, a sparkline de 12 meses e, por métrica, o
+**quarteto de contexto** que o time já usa: `MÊS | M-1 | Ranking N/total | % vs Média
+Rede` (o ranking e a % vs média ficam no `title` da célula e na ficha; em oito colunas
+não cabe tudo em texto, mas o dado tem de estar lá porque é assim que eles leem).
+Filtros de UF, consultor, master, maturidade e competência; chips de severidade;
+busca local. O mapa é um **card ao lado**, com bolha ∝ faturamento e cor = diagnóstico.
+
+**Nível 2 — ficha da unidade.** Substitui o corpo da aba (Voltar do browser e Esc
+funcionam, via `history.pushState`): série de 12 meses fechados, funil comercial,
+comparação contra os pares de mesma **maturidade**, NPS contra a meta oficial da rede,
+novos alunos dia a dia e as recomendações do diagnóstico. Ali também se **atribui
+consultor / master franqueado** — a única escrita do piloto.
+
+**Diagnóstico por régua absoluta, não por quartil.** Quartil acendia alerta em 85% da
+rede; réguas absolutas + persistência (saldo operacional exige 3 meses fechados
+seguidos) + severidade em dois níveis deixam a fila entre 5% e 30% da rede, e há um
+teste-guardião que reprova o CI se ela sair dessa banda. As **réguas vigentes são
+servidas no payload** e impressas no rodapé do PDF: é impossível a tela mostrar uma
+régua e o motor aplicar outra. Meta ≠ alerta: a meta de NPS (60) é exibida, o alerta
+dispara em 40.
+
+**Exports**: CSV (`;` + `utf-8-sig`, com número em pt-BR), XLSX com aba de método, PDF
+da carteira e PDF da ficha. Todos saem do MESMO payload da tela — não há um segundo
+cálculo que possa divergir.
 
 **ETL (atenção — a base tem peculiaridades):** os dados são DIÁRIOS e `faturamento`,
 `cancelados`, `visitas` e `vendas` **acumulam no mês (MTD) e resetam no dia 1**,
 enquanto `pagantes`, `ativos_total` e `NPS` são a foto do dia. Tratar uma cumulativa
 como snapshot subestima o número pelo tanto de mês que ainda não passou — foi o que
-acontecia com o "ticket médio" até a **DEC-023**. Por isso as razões que precisam de
+acontecia com o "ticket médio" até a DEC-023. Por isso as razões que precisam de
 janela (receita por recorrente, churn) são reconstruídas em **30 dias** (mês + cauda
 do mês anterior), e o M-1 compara sempre o **mesmo dia-do-mês**.
+
+O número que a aba chama de **receita por recorrente** NÃO é o `TICKET_MEDIO` do
+PowerBI: aquele é o ticket da VENDA e vem de uma tabela que a API Growth não expõe
+(correlação de 0,285 entre os dois). O nome importa — o time compara com o PowerBI.
 
 Todo o cálculo vive em `src/motor_expansao/dashboard/rede_*` (`rede_metricas`,
 `rede_diagnostico`, `rede_coorte`, `rede_cadastro`, `rede_export`); `web/server/app.py`
@@ -43,6 +67,10 @@ normalizada derrubava a academia `AGUAS CLARAS` junto com o studio `AGUAS CLARAS
 e unidades sem dado no mês. Unidade **inaugurada dentro da competência** aparece na
 carteira, mas fica fora do ranking, da média da rede e do diagnóstico — é o gate que
 substituiu o antigo piso de R$ 20 mil. Camada PARALELA, sem PII, READ-ONLY sobre o M1.
+
+A aba **nunca herda a UF** do Mapa Territorial: abre com o Brasil inteiro e filtra por
+dentro. Rotas: `/api/rede/{filtros,carteira,unidade/{id}}` + os exports; a v1
+`/api/executiva/{uf}` continua registrada, servida pelo mesmo núcleo.
 
 > **READ-ONLY sobre o M1.** Nada aqui recalcula `score_priorizacao`, pesos ou
 > `hex_score_estrutural`, e nenhum artefato oficial é escrito. A camada só lê
