@@ -15,7 +15,7 @@ import { api, ApiError, baixar } from '../lib/api'
 import { TEXTO_SEM_DADO } from '../lib/constants'
 import { coordenadaDoEstudo } from '../lib/coord'
 import { alunos, brl, brlCurto, coord, num, pctFrac, rotuloMes } from '../lib/format'
-import { infoImovelParaPdf } from '../lib/report'
+import { infoImovelParaPdf, parametrosRelatorioPontual } from '../lib/report'
 import type {
   FaixaAlunos,
   InfoImovel,
@@ -214,9 +214,12 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
     setErro(null)
     try {
       const { blob, filename } = await api.relatorioPontual({
-        lat: alvoLat!,
-        lng: alvoLng!,
-        rotulo: info.nome || ponto.rotulo,
+        // Coordenada do estudo + rótulo + AVISO DE ORIGEM saem prontos de
+        // `parametrosRelatorioPontual` (lib/report.ts), que é onde essa decisão pode
+        // ser testada. Ela responde às duas coisas pela MESMA regra de `lib/coord.ts`:
+        // qual coordenada usar e se o PDF precisa avisar que ela é o CENTROIDE do
+        // hexágono (a até ~1,5 km), e não um endereço. Aqui a tela só repassa.
+        ...parametrosRelatorioPontual(ponto, { rotuloManual: info.nome }),
         // Metragem/aluguel vêm do Cenário e as chaves são remapeadas para o contrato
         // do PDF (senão o imóvel saía "n/d" mesmo preenchido — lib/report.ts).
         infoImovel: infoImovelParaPdf(info, { m2, aluguel }),

@@ -202,6 +202,13 @@ export const api = {
     lng: number
     rotulo?: string
     solicitante?: string
+    /**
+     * Marca que a coordenada é o CENTROIDE do hexágono, não um endereço exato — o
+     * gerador imprime o aviso na capa e na Realização do PDF. Parâmetro PRÓPRIO de
+     * propósito: `rotulo` é texto livre do operador e não pode carregar convenção
+     * nenhuma (endereço com parênteses seria mutilado). Omitido = sem aviso.
+     */
+    origemCentroideHex?: boolean
     infoImovel?: Record<string, unknown>
     viabilidadeInputs?: ViabilidadeIn
     fotos?: File[]
@@ -212,6 +219,7 @@ export const api = {
     })
     if (opts.rotulo) q.set('rotulo', opts.rotulo)
     if (opts.solicitante) q.set('solicitante', opts.solicitante)
+    if (opts.origemCentroideHex) q.set('origem_centroide_hex', 'true')
     if (opts.infoImovel && Object.keys(opts.infoImovel).length) {
       q.set('info_imovel', JSON.stringify(opts.infoImovel))
     }

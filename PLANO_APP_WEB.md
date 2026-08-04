@@ -291,7 +291,7 @@ formas básicas (rect/circle/line/path simples). Um por destino: Mapa (pin), Exe
 1. **Organizar por perguntas, não por abas.** A pergunta do usuário ("onde abrir, qual
    bairro, em que ordem") guia a navegação — não a lista de features.
 2. **Narrativa em funil.** A análise avança em camadas que **estreitam** o território:
-   `999 hexágonos → 12 setores quentes → 5 regiões com residual → 3 white spaces → fila de 4`.
+   `999 hexágonos → 12 hexágonos quentes → 5 regiões com residual → 3 white spaces → fila de 4`.
    Cada camada recolore o mapa e escreve uma frase que se apoia na anterior. É o coração do produto.
 3. **Uma decisão por tela.** Nada de scroll infinito. O que importa aparece sem rolar; o
    detalhe fica em progressive disclosure (expanders, "ver detalhes").

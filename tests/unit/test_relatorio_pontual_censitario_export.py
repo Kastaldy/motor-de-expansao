@@ -1,6 +1,14 @@
 from __future__ import annotations
 
+import re
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
 import pandas as pd
+import pytest
+from fpdf import FPDF
+from PIL import Image
 from pyproj import Transformer
 from shapely.geometry import box
 from shapely.ops import transform
@@ -14,15 +22,30 @@ from motor_expansao.dashboard.censo_point import (
     analisar_ponto_censitario_setores,
 )
 from motor_expansao.dashboard.censo_report import (
+    _AVISO_ORIGEM_CENTROIDE_HEX,
+    _CAPA_AVISO_FONT_PT,
+    _CAPA_AVISO_Y,
+    _CAPA_BASE_X_COM_ARTE,
+    _CAPA_ENDERECO_Y,
+    _CAPA_RODAPE_LOGOS_TOP,
+    _CAPA_SUBTITULO_Y,
     _CARD_NEUTRO_RGB,
     _CARD_VERDE_RGB,
     _CARD_VERMELHO_RGB,
+    _CLASSICO_MARGIN,
     _META_DOMICILIOS_TOTAL_RAIO,
     _META_POP_TOTAL_RAIO,
     _META_RENDA_DOMICILIAR_TOTAL_RAIO,
+    _PAGE_H,
+    _PAGE_W,
     PDF_SECTION_HEADERS,
+    ULTRA_TURQUESA,
+    _ascii,
+    _classico_cover_page,
     _cor_consumo_concorrentes,
     _cor_por_meta,
+    _load_branding_assets,
+    _UltraPDF,
     gerar_csv_setores_censitarios,
     gerar_payloads_download_relatorio_censitario,
     gerar_pdf_relatorio_pontual_censitario,
@@ -1052,3 +1075,444 @@ def test_pdf_nao_contem_a_sigla_nd_em_lugar_nenhum(tmp_path):
     )
     # Sanity: o cenario de fato exercita o caminho "sem dado" (senao o teste seria vacuo).
     assert TEXTO_SEM_DADO.encode("latin-1") in pdf
+
+
+# ---------------------------------------------------------------------------
+# AVISO DE ORIGEM CENTROIDE na capa/Realizacao do PDF
+#
+# Contexto: quando o ponto vem do clique num hexagono do ranking nao existe endereco, e o
+# estudo sai do CENTROIDE do hex res-7 (a ate ~1,5 km do imovel que o operador imagina).
+# Como nao ha aviso equivalente na tela, o PDF e o UNICO canal desse alerta.
+#
+# Estes testes olham o COMPORTAMENTO OBSERVAVEL -- os bytes do artefato final --, nunca o
+# mecanismo. O aviso ja trocou de implementacao uma vez: nasceu concatenado ao `rotulo`
+# entre parenteses, com um separador por heuristica dentro do gerador, e virou o parametro
+# explicito `origem_centroide_hex`. Foi exatamente aquela heuristica que criou a regressao
+# travada em (c). Testar "o aviso saiu impresso?" e "o endereco chegou inteiro?" sobrevive
+# as duas implementacoes e a proxima; testar o separador teria morrido junto com ele.
+# ---------------------------------------------------------------------------
+
+# Nucleo estavel do aviso, imune a redacao: cobre tanto a versao antiga ("(estudo do
+# centroide do hexagono)") quanto a atual ("Estudo a partir do centroide do hexagono - nao
+# de um endereco exato."). Comparado em minusculas.
+_MARCA_AVISO_CENTROIDE = "centroide do hex"
+
+# Nome de imovel LONGO de proposito (66 chars). No mecanismo antigo o aviso viajava colado
+# ao FIM do rotulo, e era justamente o fim da string que morria no truncamento (72 chars na
+# capa, 80 na banda e no rotulo do link) -- com nome preenchido pelo operador, o caso mais
+# provavel, o alerta sumia em silencio. Com um nome curto este teste passaria ate na
+# implementacao quebrada, e nao travaria nada.
+_NOME_IMOVEL_LONGO = "Galpão Comercial Avenida Brasil, 4500 - Loja 12, Bairro Industrial"
+
+# Endereco LEGITIMO terminado em parenteses: a entrada exata que a heuristica mutilava,
+# porque nao havia como distinguir "parenteses de aviso" de "parenteses de endereco".
+_ENDERECO_COM_PARENTESES = "Av. Paulista, 1500 (Shopping Center 3)"
+
+
+def _texto_do_pdf(pdf_bytes: bytes) -> str:
+    """Texto legivel dos bytes crus do PDF (o writer gera com compressao OFF).
+
+    Mesma varredura de `test_pdf_nao_contem_a_sigla_nd_em_lugar_nenhum`, com um passo a
+    mais: desfaz o escape de literal string do PDF. O fpdf2 grava
+    "Av. Paulista, 1500 \\(Shopping Center 3\\)" -- sem desescapar, um endereco com
+    parenteses jamais casaria e o teste (c) seria vacuo.
+    """
+    texto = pdf_bytes.decode("latin-1", errors="replace")
+    return texto.replace("\\\\", "\\").replace("\\(", "(").replace("\\)", ")")
+
+
+def _pdf_do_ponto(tmp_path, *, rotulo: str, origem_centroide_hex: bool) -> bytes:
+    """PDF do fluxo pedido, SEM imagens embutidas.
+
+    `mapas=None` + `ultra_dir` vazio pelo mesmo motivo do teste da sigla "n/d" e do de
+    acentuacao: o binario PNG dos mapas de calor e do branding traria bytes arbitrarios e
+    daria falso positivo na varredura de texto. Reusa `_sample_result()`, o fixture ja
+    usado pelo arquivo inteiro -- so descarta os mapas.
+    """
+    result, _ = _sample_result()
+    return gerar_pdf_relatorio_pontual_classico(
+        result,
+        None,
+        residual=_RESIDUAL_OK,
+        rotulo=rotulo,
+        origem_centroide_hex=origem_centroide_hex,
+        ultra_dir=tmp_path,
+    )
+
+
+def test_pdf_avisa_quando_o_estudo_saiu_do_centroide_do_hexagono(tmp_path):
+    """(a) Fluxo do centroide: o aviso SAI IMPRESSO -- e sobrevive a um rotulo longo."""
+    texto = _texto_do_pdf(
+        _pdf_do_ponto(tmp_path, rotulo=_NOME_IMOVEL_LONGO, origem_centroide_hex=True)
+    )
+
+    assert _MARCA_AVISO_CENTROIDE in texto.lower(), (
+        "o PDF do fluxo de centroide tem de avisar que o raio foi tracado do centroide do "
+        "hexagono; sem isso o relatorio tem cara de laudo de endereco exato"
+    )
+    # O aviso NAO pode comer o rotulo: os dois convivem no PDF (foi o sintoma inverso da
+    # regressao -- ora sumia o aviso, ora sumia um pedaco do endereco).
+    assert _NOME_IMOVEL_LONGO in texto
+
+
+def test_pdf_de_coordenada_exata_nao_avisa_centroide(tmp_path):
+    """(b) Fluxo de coordenada exata: NENHUM aviso de centroide (ali ele seria mentira)."""
+    texto = _texto_do_pdf(
+        _pdf_do_ponto(tmp_path, rotulo=_NOME_IMOVEL_LONGO, origem_centroide_hex=False)
+    )
+
+    assert _MARCA_AVISO_CENTROIDE not in texto.lower(), (
+        "busca por endereco entrega coordenada exata; avisar de centroide ali desqualifica "
+        "um estudo que esta correto"
+    )
+
+
+@pytest.mark.parametrize("origem_centroide_hex", [False, True])
+def test_endereco_terminado_em_parenteses_chega_inteiro_ao_pdf(tmp_path, origem_centroide_hex):
+    """(c) REGRESSAO: endereco legitimo que termina em parenteses nao pode ser mutilado.
+
+    "Av. Paulista, 1500 (Shopping Center 3)" e endereco inteiro, nao endereco + aviso. Com
+    o aviso viajando anexado ao `rotulo`, o gerador arrancava o "(Shopping Center 3)" e o
+    reimprimia como se fosse nota de metodo -- o endereco saia pela metade na capa, na
+    banda e no rotulo do link. Nenhuma convencao dentro do `rotulo`: ele e texto livre do
+    operador.
+
+    Parametrizado nos DOIS ramos de proposito. So com `origem_centroide_hex=False` este
+    teste ficava cego ao caso que mais importa: a heuristica antiga era acionada JUSTAMENTE
+    quando havia aviso a extrair, isto e, no ramo True. Reintroduzi-la ali (e so ali)
+    deixava (a), (b) e a versao antiga de (c) verdes -- os tres cobriam "parenteses com
+    False" e "True sem parenteses", nunca o cruzamento. Aqui o endereco tem de sair inteiro
+    NOS DOIS ramos, e o aviso acompanha o ramo (presente no True, ausente no False).
+    """
+    texto = _texto_do_pdf(
+        _pdf_do_ponto(
+            tmp_path,
+            rotulo=_ENDERECO_COM_PARENTESES,
+            origem_centroide_hex=origem_centroide_hex,
+        )
+    )
+
+    assert _ENDERECO_COM_PARENTESES in texto, (
+        "o endereco perdeu o trecho entre parenteses no PDF -- `rotulo` e texto livre do "
+        "operador e nao pode ser reinterpretado pelo gerador "
+        f"(origem_centroide_hex={origem_centroide_hex})"
+    )
+    # O aviso segue o parametro, nunca o formato do rotulo.
+    assert (_MARCA_AVISO_CENTROIDE in texto.lower()) is origem_centroide_hex
+
+
+# ---------------------------------------------------------------------------
+# GEOMETRIA DA CAPA contra a ARTE REAL (`data/ultra/relatorio_capa_bg.png`)
+#
+# Todo o resto deste arquivo gera PDF com `ultra_dir=tmp_path` (vazio) de proposito: assim o
+# binario dos PNGs nao polui a varredura de texto. O preco disso e' que NENHUM teste via a
+# arte -- e a arte nao e um fundo chapado. Ela tem uma FAIXA DE RODAPE com os logos das
+# marcas em BRANCO. O aviso de centroide nasceu desenhado em branco, 9 pt, x=20, baseline
+# y=518: dentro dessa faixa e EM CIMA do logo da Ultra. Ilegivel e riscando a marca, na
+# pagina 1 de um documento que vai para terceiros -- e verde em todos os testes, porque a
+# string estava la, so nao dava para ler.
+#
+# Os testes abaixo medem PIXEL do asset real e/ou da pagina rasterizada. Numeros medidos em
+# 2026-08-03 estao anotados em cada assercao; sao limiares com folga, nao valores exatos.
+# ---------------------------------------------------------------------------
+
+_ARTE_ULTRA_DIR = Path(__file__).resolve().parents[2] / "data" / "ultra"
+_ARTE_CAPA = _ARTE_ULTRA_DIR / "relatorio_capa_bg.png"
+
+# Posicao ORIGINAL do aviso (x=20, baseline y=518, 9 pt). Mantida aqui como CONTROLE: os
+# testes exigem que o detector acuse sujeira nela. Sem esse par, um teste que so' olha a
+# caixa nova poderia estar medindo errado e passar por sorte.
+_CAIXA_AVISO_ANTIGA = (20.0, 509.0, 302.7, 521.0)
+
+# Pixel "quase-branco": os logos da arte sao brancos puros sobre turquesa (0,167,157); o
+# limiar 200 no canal MINIMO separa logo/foto clara de qualquer tom da marca.
+_LIMIAR_BRANCO = 200
+
+# Rasterizacao a 2x (1920x1080 px) -- resolucao suficiente para separar glifo de 10 pt do
+# fundo sem deixar o teste lento.
+_ESCALA_RASTER = 2.0
+
+
+def _fracao_branco_na_arte(x0: float, y0: float, x1: float, y1: float) -> float:
+    """Fracao de pixels quase-brancos da ARTE DA CAPA dentro da caixa dada, em pt (960x540).
+
+    A arte tem 1360x763 px e e desenhada esticada na pagina inteira (`_draw_full_page_
+    background`), entao a conversao pt->px e uma regra de tres simples por eixo.
+    """
+    with Image.open(_ARTE_CAPA) as im:
+        arr = np.asarray(im.convert("RGB")).astype(int)
+    altura, largura = arr.shape[0], arr.shape[1]
+    px0, px1 = int(x0 / _PAGE_W * largura), int(x1 / _PAGE_W * largura)
+    py0, py1 = int(y0 / _PAGE_H * altura), int(y1 / _PAGE_H * altura)
+    recorte = arr[py0:py1, px0:px1].reshape(-1, 3)
+    assert recorte.size, "caixa vazia: coordenadas em pt fora da pagina"
+    return float((recorte.min(axis=1) >= _LIMIAR_BRANCO).mean())
+
+
+_RE_TEXTO_PDF = re.compile(
+    r"BT /F\d+ (?P<corpo>[\d.]+) Tf ET\s*"
+    r"q [\d.]+ [\d.]+ [\d.]+ rg BT (?P<x>[-\d.]+) (?P<y>[-\d.]+) Td \((?P<txt>.*?)\) Tj ET Q",
+    re.S,
+)
+
+
+def _ops_texto_da_capa(*, rotulo: str, origem_centroide_hex: bool) -> list[dict]:
+    """(corpo, x, baseline_y, texto) de CADA string desenhada na capa, lidos do PDF emitido.
+
+    Monta uma pagina de capa isolada com a ARTE REAL e le o content stream (o writer grava
+    com compressao OFF). Le o ARTEFATO, nao a intencao: se alguem mudar a constante e
+    esquecer o `pdf.text`, ou vice-versa, o teste ve a diferenca.
+
+    `Td` e bottom-up (origem no rodape); a geometria da capa raciocina de cima para baixo,
+    entao a baseline devolvida ja vem convertida (`_PAGE_H - y`).
+    """
+    pdf = _UltraPDF()
+    _classico_cover_page(
+        pdf,
+        {"lat": LAT_C, "lng": LNG_C},
+        _load_branding_assets(_ARTE_ULTRA_DIR),
+        rotulo=rotulo,
+        now=datetime(2026, 8, 3),
+        origem_centroide_hex=origem_centroide_hex,
+    )
+    raw = bytes(pdf.output()).decode("latin-1", errors="replace")
+    return [
+        {
+            "corpo": float(m["corpo"]),
+            "x": float(m["x"]),
+            "baseline_y": _PAGE_H - float(m["y"]),
+            "texto": m["txt"].replace("\\(", "(").replace("\\)", ")"),
+        }
+        for m in _RE_TEXTO_PDF.finditer(raw)
+    ]
+
+
+def _largura_teto(texto: str, corpo: float) -> float:
+    """Largura de `texto` em Helvetica-BOLD no corpo dado = TETO da largura real desenhada.
+
+    A capa usa bold (endereco) e regular (aviso e subtitulo). Em Helvetica o bold e mais
+    largo glifo a glifo, entao medir tudo como bold e um limite superior seguro -- e evita
+    ter de adivinhar o estilo a partir do nome do recurso (/F1, /F2) dentro do PDF.
+    """
+    medidor = FPDF(orientation="L", unit="pt", format=(540, 960))
+    medidor.add_page()
+    medidor.set_font("Helvetica", "B", corpo)
+    return float(medidor.get_string_width(texto))
+
+
+def test_arte_da_capa_tem_faixa_de_logos_brancos_e_coluna_limpa():
+    """Amarra as constantes de geometria da capa a ARTE REAL, por medicao de pixel.
+
+    Se a arte for trocada por uma com outro recorte, este teste cai ANTES de o aviso voltar
+    a cair em cima de um logo -- que foi exatamente o defeito.
+    """
+    if not _ARTE_CAPA.exists():  # pragma: no cover - repo completo tem o asset
+        pytest.skip(f"arte da capa ausente em {_ARTE_CAPA}")
+
+    with Image.open(_ARTE_CAPA) as im:
+        arr = np.asarray(im.convert("RGB")).astype(int)
+    altura = arr.shape[0]
+    brilho = arr.mean(axis=2)
+    linhas_divisorias = [y for y in range(altura) if (brilho[y] > 230).mean() > 0.9]
+    assert linhas_divisorias, "a arte nao tem a linha branca que separa a faixa de logos"
+    topo_rodape_pt = min(linhas_divisorias) / altura * _PAGE_H
+
+    # Medido: px y=652 de 763 -> 461,44 pt.
+    assert abs(topo_rodape_pt - _CAPA_RODAPE_LOGOS_TOP) <= 2.0, (
+        f"a faixa de logos da arte comeca em y={topo_rodape_pt:.2f} pt, mas o modulo assume "
+        f"{_CAPA_RODAPE_LOGOS_TOP}; as coordenadas da capa precisam ser refeitas"
+    )
+    # Ha mesmo logo branco no rodape (senao a assercao seguinte seria vacua). Medido: 4,36%.
+    assert _fracao_branco_na_arte(0.0, _CAPA_RODAPE_LOGOS_TOP, _PAGE_W, _PAGE_H) > 0.02
+    # E a coluna onde os textos moram e turquesa chapado. Medido: 0,000%.
+    assert _fracao_branco_na_arte(460.0, 300.0, _PAGE_W, 450.0) < 0.005
+
+
+@pytest.mark.parametrize(
+    "rotulo",
+    [
+        "Av. Paulista, 1500",
+        "Galpão Comercial Avenida Brasil, 4500",
+        _NOME_IMOVEL_LONGO,
+        _ENDERECO_COM_PARENTESES,
+    ],
+)
+def test_texto_da_capa_cabe_na_pagina_e_nao_invade_a_faixa_de_logos(rotulo):
+    """Nenhuma string da capa passa da margem direita nem desce ate os logos brancos.
+
+    O endereco era cortado por CONTAGEM de caracteres (>72 -> 69 + "..."), o que nao protege
+    borda nenhuma numa fonte proporcional a 26 pt: "Galpao Comercial Avenida Brasil, 4500"
+    tem 37 caracteres, escapava do corte e ia ate x=957 numa pagina de 960 pt.
+    """
+    if not _ARTE_CAPA.exists():  # pragma: no cover - repo completo tem o asset
+        pytest.skip(f"arte da capa ausente em {_ARTE_CAPA}")
+
+    ops = _ops_texto_da_capa(rotulo=rotulo, origem_centroide_hex=True)
+    assert len(ops) == 3, f"esperado aviso + endereco + subtitulo na capa, veio {len(ops)}"
+
+    limite_dir = _PAGE_W - _CLASSICO_MARGIN
+    for op in ops:
+        fim = op["x"] + _largura_teto(op["texto"], op["corpo"])
+        assert fim <= limite_dir, (
+            f"a linha {op['texto']!r} termina em x={fim:.1f} pt e passa da margem direita "
+            f"({limite_dir} pt) da pagina de {_PAGE_W} pt"
+        )
+        assert op["baseline_y"] < _CAPA_RODAPE_LOGOS_TOP - 3.0, (
+            f"a linha {op['texto']!r} tem baseline y={op['baseline_y']:.1f} pt, dentro da "
+            f"faixa de logos BRANCOS da arte (comeca em {_CAPA_RODAPE_LOGOS_TOP} pt)"
+        )
+
+    # Empilhamento preservado: aviso ACIMA do endereco, endereco ACIMA do subtitulo.
+    assert [op["baseline_y"] for op in ops] == [
+        _CAPA_AVISO_Y,
+        _CAPA_ENDERECO_Y,
+        _CAPA_SUBTITULO_Y,
+    ]
+
+
+def test_rotulo_curto_na_capa_sai_inteiro_e_no_corpo_cheio():
+    """Regua do "nao mexer no que funcionava": rotulo que ja cabia continua 26 pt e inteiro."""
+    if not _ARTE_CAPA.exists():  # pragma: no cover - repo completo tem o asset
+        pytest.skip(f"arte da capa ausente em {_ARTE_CAPA}")
+
+    (_, endereco, _) = _ops_texto_da_capa(rotulo="Av. Paulista, 1500", origem_centroide_hex=True)
+
+    assert endereco["texto"] == "Av. Paulista, 1500"
+    assert endereco["corpo"] == 26.0
+    assert "..." not in endereco["texto"]
+
+
+def test_aviso_de_centroide_na_capa_nao_cai_sobre_logo_branco_da_arte():
+    """O defeito: texto BRANCO desenhado por cima de LOGO BRANCO da arte da capa.
+
+    Mede a caixa em que o aviso e' realmente desenhado (posicao lida do PDF emitido, largura
+    medida com `get_string_width`) contra os pixels da arte. Zero pixel quase-branco embaixo
+    = zero chance de o texto sumir ou riscar a marca.
+    """
+    if not _ARTE_CAPA.exists():  # pragma: no cover - repo completo tem o asset
+        pytest.skip(f"arte da capa ausente em {_ARTE_CAPA}")
+
+    (aviso, _, _) = _ops_texto_da_capa(rotulo="Av. Paulista, 1500", origem_centroide_hex=True)
+    assert aviso["texto"] == _ascii(_AVISO_ORIGEM_CENTROIDE_HEX)
+
+    largura = _largura_teto(aviso["texto"], aviso["corpo"])  # medido: 314,1 pt a 10 pt
+    sujeira = _fracao_branco_na_arte(
+        aviso["x"] - 2.0,
+        aviso["baseline_y"] - aviso["corpo"],
+        aviso["x"] + largura + 2.0,
+        aviso["baseline_y"] + 3.0,
+    )
+    assert sujeira < 0.005, (
+        f"{sujeira:.1%} da caixa do aviso e pixel quase-branco da arte (logo/foto clara): "
+        "texto branco ali fica ilegivel e ainda risca a marca"
+    )
+
+    # CONTROLE: na posicao original a mesma medicao acusa o logo da Ultra. Medido: 17,6%.
+    controle = _fracao_branco_na_arte(*_CAIXA_AVISO_ANTIGA)
+    assert controle > 0.10, (
+        "o controle parou de acusar a posicao antiga -- a medicao acima virou vacua e o "
+        "teste nao protege mais nada"
+    )
+
+
+def _luminancia_relativa(rgb) -> float:
+    """Luminancia relativa WCAG de um RGB 0-255."""
+    canais = []
+    for valor in rgb:
+        c = float(valor) / 255.0
+        canais.append(c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * canais[0] + 0.7152 * canais[1] + 0.0722 * canais[2]
+
+
+def _contraste(rgb_a, rgb_b) -> float:
+    """Razao de contraste WCAG entre duas cores (1,0 = identicas; 21,0 = preto x branco)."""
+    la, lb = _luminancia_relativa(rgb_a), _luminancia_relativa(rgb_b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def test_capa_rasterizada_tem_contraste_sob_cada_pixel_do_aviso(tmp_path):
+    """PROVA fim-a-fim: gera o PDF com o asset real, RASTERIZA a pagina 1 e mede a cor.
+
+    Nao recorta por coordenada -- ACHA o aviso na pagina por DIFERENCA entre a capa com e
+    sem ele. Assim o teste continua valendo se as constantes de geometria mudarem: o que ele
+    afirma e "sob CADA pixel que o aviso pinta ha fundo turquesa", nunca "o aviso esta na
+    coordenada X". Recortar pela propria constante deixaria o recorte seguir o defeito.
+    """
+    pdfium = pytest.importorskip("pypdfium2")
+    if not _ARTE_CAPA.exists():  # pragma: no cover - repo completo tem o asset
+        pytest.skip(f"arte da capa ausente em {_ARTE_CAPA}")
+
+    result, _ = _sample_result()
+
+    def render(origem_centroide_hex: bool) -> np.ndarray:
+        pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+            result,
+            None,
+            residual=_RESIDUAL_OK,
+            rotulo="Av. Paulista, 1500",
+            origem_centroide_hex=origem_centroide_hex,
+            ultra_dir=_ARTE_ULTRA_DIR,
+        )
+        caminho = tmp_path / f"capa_{origem_centroide_hex}.pdf"
+        caminho.write_bytes(pdf_bytes)
+        pagina = pdfium.PdfDocument(caminho)[0]
+        assert (round(pagina.get_width()), round(pagina.get_height())) == (
+            round(_PAGE_W),
+            round(_PAGE_H),
+        )
+        return np.asarray(pagina.render(scale=_ESCALA_RASTER).to_pil().convert("RGB")).astype(int)
+
+    com_aviso, sem_aviso = render(True), render(False)
+
+    # Mascara dos pixels que SO existem por causa do aviso = a tinta do aviso, onde quer que
+    # ela esteja. Medido: ~4,6 mil pixels a 2x, todos na metade direita, y 780-810 px.
+    tinta = np.abs(com_aviso - sem_aviso).sum(axis=2) > 30
+    assert tinta.sum() > 1000, "o aviso nao pintou pixel nenhum na pagina rasterizada"
+
+    linhas, colunas = np.where(tinta)
+    topo_pt, base_pt = linhas.min() / _ESCALA_RASTER, linhas.max() / _ESCALA_RASTER
+    assert base_pt < _CAPA_RODAPE_LOGOS_TOP, (
+        f"a tinta do aviso desce ate y={base_pt:.1f} pt, dentro da faixa de logos brancos "
+        f"da arte (comeca em {_CAPA_RODAPE_LOGOS_TOP} pt)"
+    )
+    assert colunas.max() / _ESCALA_RASTER <= _PAGE_W - _CLASSICO_MARGIN
+    assert colunas.min() / _ESCALA_RASTER >= _CAPA_BASE_X_COM_ARTE - 1.0
+    assert base_pt - topo_pt < 2 * _CAPA_AVISO_FONT_PT, (
+        "o aviso deixou de caber em uma linha; a folga medida na coluna limpa da capa "
+        "(147,9 pt a 10 pt) foi calculada para uma linha so"
+    )
+
+    # O FUNDO exatamente sob a tinta do aviso (a capa SEM ele): nenhum pixel quase-branco.
+    # Era isso que o defeito produzia -- branco sobre o logo branco da Ultra.
+    fundo = sem_aviso[tinta]
+    branco = float((fundo.min(axis=1) >= _LIMIAR_BRANCO).mean())
+    assert branco == 0.0, (
+        f"{branco:.2%} dos pixels do aviso caem sobre area quase-branca da arte (logo): "
+        "texto branco ali fica ilegivel e risca a marca"
+    )
+
+    # Cor de fundo predominante sob o aviso = turquesa da marca. Medido: 100% dos pixels.
+    perto_do_turquesa = float(
+        (np.abs(fundo - np.array(ULTRA_TURQUESA)).sum(axis=1) < 30).mean()
+    )
+    assert perto_do_turquesa > 0.9, (
+        f"so {perto_do_turquesa:.1%} do fundo sob o aviso e o turquesa {ULTRA_TURQUESA}; "
+        "o aviso saiu da area chapada da capa"
+    )
+    # Mesmo contraste do subtitulo, que ja vive nesse fundo. Medido: 2,99:1 (branco x
+    # turquesa). Limiar conservador; o que o defeito produzia era ~1,0:1 (branco x branco).
+    razao = _contraste((255, 255, 255), ULTRA_TURQUESA)
+    assert razao > 2.5, f"contraste de {razao:.2f}:1 do texto branco sobre o fundo do aviso"
+
+    # CONTROLE: a caixa da posicao ORIGINAL continua clara na pagina renderizada (o logo
+    # esta la). Sem isso, as assercoes acima poderiam estar medindo o lugar errado.
+    x0, y0, x1, y1 = _CAIXA_AVISO_ANTIGA
+    antiga = sem_aviso[
+        int(y0 * _ESCALA_RASTER) : int(y1 * _ESCALA_RASTER),
+        int(x0 * _ESCALA_RASTER) : int(x1 * _ESCALA_RASTER),
+    ].reshape(-1, 3)
+    branco_antigo = float((antiga.min(axis=1) >= _LIMIAR_BRANCO).mean())
+    assert branco_antigo > 0.10, (  # medido: 16,8%
+        "o controle parou de acusar branco na posicao antiga -- a medicao acima virou vacua"
+    )
+
