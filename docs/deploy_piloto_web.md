@@ -76,6 +76,43 @@ scp -i ~/.ssh/id_ultra_mcp <arquivo> root@2.25.137.241:/opt/motor-expansao/data/
 
 ---
 
+## 2.1 Cadastro operacional (o ÚNICO volume `:rw`) — DEC-023
+
+A Visão Executiva 2.0 lê as dimensões que a API Growth não tem (consultor, master
+franquia, franqueado, cidade, Gold, LTV, modalidades) de um **cadastro próprio**, e a
+partir dela o time pode **atribuir consultor** pela própria aba. É a primeira escrita do
+piloto.
+
+Ela mora **fora** do `MOTOR_DATA_DIR` de propósito: assim nenhum artefato do M1 fica sob
+um mount de escrita e o guardrail READ-ONLY do backend continua valendo sem exceção.
+
+```bash
+# 1) criar o diretório no host (uma vez)
+mkdir -p /opt/motor-expansao/cadastro
+
+# 2) enviar a semeadura (gerada localmente da planilha do time de campo)
+scp -i ~/.ssh/id_ultra_mcp cadastro_unidades.json     root@2.25.137.241:/opt/motor-expansao/cadastro/
+```
+
+Gerar a semeadura localmente:
+```bash
+python scripts/semear_cadastro_unidades.py     --planilha "ANALISE DIARIA DASHBOARD.xlsx"     --growth data/staging/growth_api_historico.parquet     --saida data/cadastro
+```
+
+O compose já monta `/opt/motor-expansao/cadastro:/app/cadastro:rw` e passa
+`MOTOR_CADASTRO_DIR=/app/cadastro`. **Sem o diretório o piloto sobe igual** — a aba
+degrada: os filtros de consultor ficam vazios e o `PUT` devolve 503 com mensagem clara.
+
+Dois arquivos vivem ali: `cadastro_unidades.json` (estado, gravado de forma atômica por
+`os.replace`) e `cadastro_log.jsonl` (auditoria append-only: quem, quando, campo, de →
+para). O autor sai do header `Remote-User`, que o Caddy já repassa ao piloto.
+
+> **Não versionar o JSON.** Depois da semeadura, a fonte de verdade é o arquivo do
+> servidor — rodar o seeder de novo NÃO sobrescreve o que foi editado na tela (campos já
+> preenchidos vencem os da planilha, a menos que se passe `--forcar-planilha`).
+
+---
+
 ## 3. Caddy — bloco do subdomínio (editar na VPS)
 
 O `Caddyfile` **não está no git** (gitignored, backup cifrado em `secrets/Caddyfile.enc`);
@@ -158,6 +195,13 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
 - [ ] Relatório Pontual (PDF) gera sem erro (basemap/contextily presentes).
 - [ ] Tooltip de renda domiciliar mostra valor **municipal** (não o fallback nacional) —
       se cair no nacional, faltam os 3 parquets de renda domiciliar (§2).
+- [ ] **Visão Executiva** abre com a rede do Brasil inteiro (sem pedir UF) e a carteira
+      lista as unidades com semáforo. `GET /api/rede/carteira` deve responder em < 1 s.
+- [ ] Filtro de **consultor** tem nomes (se estiver vazio, falta o `cadastro_unidades.json` — §2.1).
+- [ ] A **receita por recorrente** está na casa de R$ 130–180, não de R$ 20 (o número da v1
+      era 76% subestimado; ver DEC-023).
+- [ ] Abrir uma unidade (ficha) e voltar com o **Voltar do browser**.
+- [ ] Baixar o **CSV da carteira** e conferir que abre no Excel em colunas.
 
 ---
 
