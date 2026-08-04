@@ -94,7 +94,7 @@ REGUAS_VIGENTES: dict[str, dict[str, object]] = {
         "unidade": "%",
     },
     "conversao": {
-        "rotulo": "Conversao de visitas",
+        "rotulo": "Conversão de visitas",
         "metrica": "conversao_pct",
         "sentido": "abaixo",
         "limiar": REGUA_CONVERSAO_PCT,
@@ -111,7 +111,7 @@ REGUAS_VIGENTES: dict[str, dict[str, object]] = {
         "meta": META_NPS,
     },
     "agregador": {
-        "rotulo": "Dependencia de agregador",
+        "rotulo": "Dependência de agregador",
         "metrica": "pct_agregador_alunos",
         "sentido": "acima",
         "limiar": REGUA_DEPENDENCIA_AGREGADOR_PCT,
@@ -132,7 +132,7 @@ REGUAS_VIGENTES: dict[str, dict[str, object]] = {
         "sentido": "abaixo",
         "limiar": REGUA_QUEDA_FATURAMENTO_PCT,
         "limiar_grave": REGUA_QUEDA_FATURAMENTO_GRAVE_PCT,
-        "unidade": "% vs media de 3 meses",
+        "unidade": "% vs média de 3 meses",
     },
 }
 
@@ -141,7 +141,7 @@ REGUAS_VIGENTES: dict[str, dict[str, object]] = {
 # tela -- sao faixas absolutas aplicadas igualmente a unidade de bairro e a flagship, sem
 # normalizar por porte ou idade; o benchmark por coorte e' o contrapeso.
 FAIXAS_FATURAMENTO: tuple[tuple[float, str, str], ...] = (
-    (150_000.0, "critico", "Critico"),
+    (150_000.0, "critico", "Crítico"),
     (200_000.0, "regular", "Regular"),
     (250_000.0, "bom", "Bom"),
     (300_000.0, "excelente", "Excelente"),
@@ -202,9 +202,9 @@ SEVERIDADES = ("alta", "media", "ok", "sem_base")
 
 ROTULO_SEVERIDADE = {
     "alta": "Prioridade alta",
-    "media": "Atencao",
+    "media": "Atenção",
     "ok": "Sem alerta",
-    "sem_base": "Sem base de comparacao",
+    "sem_base": "Sem base de comparação",
 }
 
 
@@ -266,7 +266,7 @@ def diagnosticar(
                 competencia=competencia,
                 severidade="sem_base",
                 prioridade=0.0,
-                resumo="Unidade inaugurada dentro do periodo: numeros ainda nao comparaveis.",
+                resumo="Unidade inaugurada dentro do período: números ainda não comparáveis.",
                 faixa_faturamento=chave_faixa,
                 faixa_faturamento_rotulo=rotulo_faixa,
             )
@@ -311,7 +311,7 @@ def _alertas_da_unidade(linha: dict, historico: list[dict]) -> tuple[Alerta, ...
             Alerta(
                 "churn",
                 "Churn alto",
-                f"Churn de {_pct(churn)} no mes, acima da regua de {_pct(REGUA_CHURN_PCT)}.",
+                f"Churn de {_pct(churn)} no mês, acima da régua de {_pct(REGUA_CHURN_PCT)}.",
                 "grave" if churn > REGUA_CHURN_GRAVE_PCT else "medio",
                 churn,
                 REGUA_CHURN_PCT,
@@ -323,8 +323,8 @@ def _alertas_da_unidade(linha: dict, historico: list[dict]) -> tuple[Alerta, ...
         alertas.append(
             Alerta(
                 "conversao",
-                "Conversao baixa",
-                f"Converte {_pct(conversao)} das visitas, abaixo da regua de "
+                "Conversão baixa",
+                f"Converte {_pct(conversao)} das visitas, abaixo da régua de "
                 f"{_pct(REGUA_CONVERSAO_PCT)}.",
                 "grave" if conversao < REGUA_CONVERSAO_GRAVE_PCT else "medio",
                 conversao,
@@ -338,8 +338,8 @@ def _alertas_da_unidade(linha: dict, historico: list[dict]) -> tuple[Alerta, ...
             Alerta(
                 "nps",
                 "NPS baixo",
-                f"NPS de {nps:.0f}, abaixo da regua de {REGUA_NPS:.0f} "
-                f"(a meta da rede e' {META_NPS:.0f}).",
+                f"NPS de {nps:.0f}, abaixo da régua de {REGUA_NPS:.0f} "
+                f"(a meta da rede é {META_NPS:.0f}).",
                 "grave" if nps < REGUA_NPS_GRAVE else "medio",
                 nps,
                 REGUA_NPS,
@@ -351,8 +351,8 @@ def _alertas_da_unidade(linha: dict, historico: list[dict]) -> tuple[Alerta, ...
         alertas.append(
             Alerta(
                 "agregador",
-                "Dependencia de agregador",
-                f"{_pct(dependencia)} dos alunos vem de Gympass/Totalpass, acima da regua "
+                "Dependência de agregador",
+                f"{_pct(dependencia)} dos alunos vêm de Gympass/Totalpass, acima da régua "
                 f"de {_pct(REGUA_DEPENDENCIA_AGREGADOR_PCT)}.",
                 "grave" if dependencia > REGUA_DEPENDENCIA_AGREGADOR_GRAVE_PCT else "medio",
                 dependencia,
@@ -368,8 +368,8 @@ def _alertas_da_unidade(linha: dict, historico: list[dict]) -> tuple[Alerta, ...
             Alerta(
                 "saldo",
                 "Saldo operacional negativo",
-                f"Vendas menos cancelamentos no vermelho ha {MESES_SALDO_NEGATIVO} meses "
-                f"seguidos ({total:+.0f} alunos no periodo).",
+                f"Vendas menos cancelamentos no vermelho há {MESES_SALDO_NEGATIVO} meses "
+                f"seguidos ({total:+.0f} alunos no período).",
                 "grave",
                 total,
                 0.0,
@@ -382,7 +382,7 @@ def _alertas_da_unidade(linha: dict, historico: list[dict]) -> tuple[Alerta, ...
             Alerta(
                 "queda_faturamento",
                 "Queda de faturamento",
-                f"Faturamento {_pct(abs(queda))} abaixo da media dos 3 meses anteriores.",
+                f"Faturamento {_pct(abs(queda))} abaixo da média dos 3 meses anteriores.",
                 "grave" if queda <= REGUA_QUEDA_FATURAMENTO_GRAVE_PCT else "medio",
                 queda,
                 REGUA_QUEDA_FATURAMENTO_PCT,
@@ -433,7 +433,7 @@ def _prioridade(alertas: Sequence[Alerta], porte: float) -> float:
 
 def _resumo(alertas: Sequence[Alerta]) -> str:
     if not alertas:
-        return "Nenhum alerta nas reguas vigentes."
+        return "Nenhum alerta nas réguas vigentes."
     return " ".join(a.detalhe for a in alertas)
 
 
@@ -443,37 +443,37 @@ def _resumo(alertas: Sequence[Alerta]) -> str:
 
 _RECOMENDACOES: dict[str, tuple[str, str]] = {
     "churn": (
-        "Atacar a retencao",
-        "Puxar a lista de cancelamentos do mes e separar motivo de saida de motivo de "
-        "cobranca. Cancelamento por inadimplencia se resolve na regua de cobranca; "
-        "cancelamento por uso se resolve com reativacao e agenda de treino.",
+        "Atacar a retenção",
+        "Puxar a lista de cancelamentos do mês e separar motivo de saída de motivo de "
+        "cobrança. Cancelamento por inadimplência se resolve na régua de cobrança; "
+        "cancelamento por uso se resolve com reativação e agenda de treino.",
     ),
     "conversao": (
         "Rever o atendimento da visita",
-        "A visita ja chegou na unidade: o gargalo esta na abordagem, na oferta ou no "
+        "A visita já chegou na unidade: o gargalo está na abordagem, na oferta ou no "
         "acompanhamento. Conferir o roteiro de visita e o tempo de resposta ao lead.",
     ),
     "nps": (
         "Tratar as pesquisas abertas",
         "Fechar o ciclo com quem respondeu mal antes de rodar nova pesquisa. NPS baixo com "
-        "pesquisa nao tratada costuma ser problema de manutencao ou de limpeza.",
+        "pesquisa não tratada costuma ser problema de manutenção ou de limpeza.",
     ),
     "agregador": (
-        "Reduzir a dependencia de agregador",
-        "A base de alunos esta concentrada em Gympass/Totalpass, que pagam menos por aluno "
-        "e podem sair em bloco por decisao do parceiro. Trabalhar conversao de agregador "
-        "em recorrente com oferta de migracao.",
+        "Reduzir a dependência de agregador",
+        "A base de alunos está concentrada em Gympass/Totalpass, que pagam menos por aluno "
+        "e podem sair em bloco por decisão do parceiro. Trabalhar conversão de agregador "
+        "em recorrente com oferta de migração.",
     ),
     "saldo": (
         "Reverter o saldo operacional",
-        "Ha tres meses a unidade cancela mais do que vende. Isso corroi a base mesmo com "
-        "faturamento estavel, porque o efeito aparece com atraso. Priorizar meta de vendas "
-        "e bloqueio de cancelamento evitavel.",
+        "Há três meses a unidade cancela mais do que vende. Isso corrói a base mesmo com "
+        "faturamento estável, porque o efeito aparece com atraso. Priorizar meta de vendas "
+        "e bloqueio de cancelamento evitável.",
     ),
     "queda_faturamento": (
         "Investigar a queda",
-        "Comparar com o mesmo mes do ano anterior antes de concluir: pode ser sazonal. Se "
-        "nao for, olhar mix de plano e inadimplencia no mesmo periodo.",
+        "Comparar com o mesmo mês do ano anterior antes de concluir: pode ser sazonal. Se "
+        "não for, olhar mix de plano e inadimplência no mesmo período.",
     ),
 }
 

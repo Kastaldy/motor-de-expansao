@@ -7,6 +7,8 @@ de campo volta para a planilha. Por isso ha um teste de BANDA, e nao so de limia
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import pytest
 
@@ -184,7 +186,7 @@ def test_prioridade_ordena_por_gravidade_antes_do_porte() -> None:
 
 
 def test_faixa_de_faturamento_e_a_do_time_de_campo() -> None:
-    assert rd.faixa_faturamento(149_000)[1] == "Critico"
+    assert rd.faixa_faturamento(149_000)[1] == "Crítico"
     assert rd.faixa_faturamento(199_000)[1] == "Regular"
     assert rd.faixa_faturamento(249_000)[1] == "Bom"
     assert rd.faixa_faturamento(299_000)[1] == "Excelente"
@@ -195,6 +197,51 @@ def test_faixa_de_faturamento_e_a_do_time_de_campo() -> None:
 # ---------------------------------------------------------------------------
 # Contrato de texto e de pureza
 # ---------------------------------------------------------------------------
+
+
+def _textos_de_usuario() -> list[str]:
+    """Toda string do motor que chega aos olhos de alguem (payload, tela, CSV, PDF)."""
+    fech = fechamento_sintetico(unidades=40)
+    textos: list[str] = [rd.ROTULO_SEVERIDADE[s] for s in rd.SEVERIDADES]
+    textos += [str(r["rotulo"]) for r in rd.REGUAS_VIGENTES.values()]
+    textos += [str(r.get("unidade", "")) for r in rd.REGUAS_VIGENTES.values()]
+    textos += [rotulo for _, _, rotulo in rd.FAIXAS_FATURAMENTO]
+    for diagnostico in rd.diagnosticar(fech, "2026-07").values():
+        textos.append(diagnostico.resumo)
+        textos.extend(a.titulo for a in diagnostico.alertas)
+        textos.extend(a.detalhe for a in diagnostico.alertas)
+        textos.extend(r.titulo for r in diagnostico.recomendacoes)
+        textos.extend(r.corpo for r in diagnostico.recomendacoes)
+    return textos
+
+
+# Palavras que em portugues SEMPRE levam acento. Ficam de fora as ambiguas ("sao"
+# aparece em nome cru de unidade, que e' dado e nao texto) e as que existem sem acento
+# noutro sentido.
+_SEMPRE_ACENTUADAS = (
+    "nao", "mes", "regua", "reguas", "periodo", "conversao", "dependencia", "diagnostico",
+    "numero", "numeros", "critico", "inadimplencia", "retencao", "decisao", "manutencao",
+    "migracao", "reativacao", "estavel", "evitavel", "saida", "cobranca", "tres", "corroi",
+    "comparavel", "comparaveis", "atencao", "comparacao", "media", "ja", "esta", "ha",
+    "e'",
+)
+
+
+def test_textos_de_usuario_sao_acentuados() -> None:
+    """Regra permanente do `CLAUDE.md` §2: texto de usuario leva acentuacao correta.
+
+    Acento portugues cabe inteiro em latin-1, entao a exigencia do PDF (ver o teste
+    seguinte) nunca foi motivo para escrever "nao" e "mes" na tela. O que o PDF proibe e'
+    a TIPOGRAFIA fora de latin-1, nao o acento.
+
+    Identificadores (chaves de payload, codigos de alerta, valores de enum) continuam SEM
+    acento de proposito -- so o que e' exibido passa por aqui.
+    """
+    padrao = re.compile(r"\b(?:" + "|".join(re.escape(p) for p in _SEMPRE_ACENTUADAS) + r")\b")
+    ofensas = sorted(
+        {(m, texto[:70]) for texto in _textos_de_usuario() for m in padrao.findall(texto.lower())}
+    )
+    assert not ofensas, f"texto de usuario sem acento (CLAUDE.md §2): {ofensas[:6]}"
 
 
 def test_textos_sobrevivem_a_latin1() -> None:

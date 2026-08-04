@@ -132,9 +132,9 @@ class Benchmark:
 
 ROTULO_DEGRADACAO = {
     "coorte": "pares da mesma maturidade",
-    "coorte_vizinha": "pares da maturidade vizinha (coorte propria pequena demais)",
+    "coorte_vizinha": "pares da maturidade vizinha (a coorte própria é pequena demais)",
     "rede": "rede toda (sem pares suficientes na maturidade)",
-    "sem_dado": "sem base de comparacao",
+    "sem_dado": "sem base de comparação",
 }
 
 

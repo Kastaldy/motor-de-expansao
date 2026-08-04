@@ -79,8 +79,8 @@ class ConflitoDeVersao(RuntimeError):
 
     def __init__(self, versao_atual: int) -> None:
         super().__init__(
-            "O cadastro foi alterado por outra pessoa enquanto esta edicao estava aberta. "
-            "Recarregue a tela e refaca a alteracao."
+            "O cadastro foi alterado por outra pessoa enquanto esta edição estava aberta. "
+            "Recarregue a tela e refaça a alteração."
         )
         self.versao_atual = versao_atual
 
@@ -146,8 +146,8 @@ def gravar_cadastro(cadastro: Cadastro, base: Path | None = None) -> Cadastro:
     diretorio = base or cadastro_dir()
     if not diretorio.is_dir():
         raise CadastroIndisponivel(
-            f"Diretorio de cadastro ausente ({diretorio}). "
-            "Em producao ele e' o volume :rw montado no compose."
+            f"Diretório de cadastro ausente ({diretorio}). "
+            "Em produção ele é o volume :rw montado no compose."
         )
     destino = diretorio / ARQUIVO_CADASTRO
     corpo = {
@@ -180,7 +180,7 @@ def atribuir(
     if invalidos:
         raise CampoNaoEditavel(
             f"Campo(s) fora da lista branca do cadastro: {', '.join(invalidos)}. "
-            f"Editaveis: {', '.join(CAMPOS_EDITAVEIS)}."
+            f"Editáveis: {', '.join(CAMPOS_EDITAVEIS)}."
         )
     if not str(unidade_id).strip():
         raise ValueError("unidade_id vazio.")
@@ -188,7 +188,7 @@ def atribuir(
     atual = ler_cadastro(base)
     if not atual.disponivel:
         raise CadastroIndisponivel(
-            "Cadastro nao disponivel para escrita neste ambiente (volume nao montado)."
+            "Cadastro não disponível para escrita neste ambiente (volume não montado)."
         )
     if versao_cliente is not None and int(versao_cliente) != atual.versao:
         raise ConflitoDeVersao(atual.versao)
