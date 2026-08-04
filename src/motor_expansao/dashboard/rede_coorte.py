@@ -80,13 +80,26 @@ def coorte_vizinha(chave: str) -> str | None:
     return ordem[i - 1] if i > 0 else None
 
 
+#: Fracao da janela que uma unidade precisa ter coletado para servir de referencia.
+#: E' RELATIVA ao resto do recorte de proposito -- ver `anotar_coortes`.
+COBERTURA_MINIMA_DA_JANELA = 0.8
+
+
 def anotar_coortes(mes: pd.DataFrame) -> pd.DataFrame:
     """Acrescenta `coorte`, `coorte_rotulo` e `no_peer_set` ao fechamento de um mes.
 
-    `no_peer_set` e' quem pode servir de REFERENCIA para os outros: mes com dado
-    suficiente, unidade que operou a janela inteira e maturidade conhecida. Uma unidade
-    inaugurada no dia 30 continua na carteira (e' academia de verdade e o time precisa
-    ve-la), mas nao entra na conta de ninguem.
+    `no_peer_set` e' quem pode servir de REFERENCIA para os outros: unidade que operou a
+    janela inteira, com maturidade conhecida e com dado suficiente. Uma unidade inaugurada
+    no dia 30 continua na carteira (e' academia de verdade e o time precisa ve-la), mas
+    nao entra na conta de ninguem.
+
+    "Dado suficiente" e' medido em RELACAO ao recorte, nao contra um numero fixo de dias.
+    A razao e' concreta: no dia 3 do mes, TODAS as unidades tem 3 dias de dado, e um piso
+    absoluto de 25 dias esvaziaria o peer set inteiro -- a ficha perdia a comparacao por
+    coorte justamente na competencia que o time abre todo dia. Com uma janela cortada no
+    mesmo dia para todo mundo, comparar parcial com parcial e' honesto; o que nao pode e'
+    entrar na conta quem coletou bem menos dias que os pares (unidade que parou de
+    reportar no meio do periodo teria um acumulado artificialmente baixo).
     """
     saida = mes.copy()
     if not len(saida):
@@ -96,8 +109,15 @@ def anotar_coortes(mes: pd.DataFrame) -> pd.DataFrame:
         return saida
     saida["coorte"] = saida["meses_operacao"].map(atribuir_coorte)
     saida["coorte_rotulo"] = saida["coorte"].map(ROTULOS_COORTE)
+
+    dias = pd.to_numeric(saida.get("dias_com_dado"), errors="coerce")
+    if dias is None or dias.isna().all():
+        cobertura_ok = pd.Series(True, index=saida.index)
+    else:
+        cobertura_ok = dias >= COBERTURA_MINIMA_DA_JANELA * float(dias.max())
+
     saida["no_peer_set"] = (
-        saida.get("mes_completo", pd.Series(True, index=saida.index)).fillna(False).astype(bool)
+        cobertura_ok.fillna(False).astype(bool)
         & saida.get("operacao_mes_cheio", pd.Series(True, index=saida.index)).fillna(False).astype(bool)
         & saida["coorte"].ne(COORTE_INDEFINIDA)
     )
