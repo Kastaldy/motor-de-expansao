@@ -61,10 +61,7 @@ _CACHED = [
 
 
 def _clear_caches() -> None:
-    for nome in _CACHED:
-        fn = getattr(pilot, nome, None)
-        if fn is not None and hasattr(fn, "cache_clear"):
-            fn.cache_clear()
+    pilot.limpar_caches()
 
 
 def _point_app_at(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:

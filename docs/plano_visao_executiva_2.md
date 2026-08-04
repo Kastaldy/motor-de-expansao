@@ -1,5 +1,24 @@
 # Visão Executiva 2.0 — de mapa com painel a dashboard acionável da rede
 
+> **Estado: EXECUTADO em 2026-08-04** (DEC-023, PRs #190/#191/#192). Este documento é o
+> plano **como foi aprovado**; ficou no repo porque é onde estão as medições que
+> justificam cada decisão. Onde a execução divergiu do plano, a divergência foi medida e
+> está registrada aqui:
+>
+> | ponto do plano | o que a execução mostrou |
+> |---|---|
+> | banda-alvo da fila `alta` em 5–25% | medida em 12–24% nos 5 últimos meses fechados; a banda virou **5–30%** para não deixar um guardião piscando a um ponto do teto, e `MEDIOS_PARA_ALTA` subiu de 2 para 3 |
+> | piso de faturamento `_FAT_MIN_EXEC` migrado para constante nomeada | **removido**: as 4 unidades abaixo do piso em jul/2026 são exatamente as que inauguraram no mês, então um gate semântico (`operacao_mes_cheio`) explica 100% dos casos sem literal financeiro nenhum |
+> | `ANDRE DE BARROS - PR` com `inauguracao = 31/12/1969` | a sentinela **não existe mais** na base atual (0 ocorrências); o gate ficou como rede de segurança |
+> | textos do motor "ASCII-safe" | corrigido para **latin-1 safe com acentuação correta** — o `CLAUDE.md` §2 proíbe a tipografia fora de latin-1, nunca o acento |
+> | `test_ultra_pdf_config_identica` | existe em `tests/unit/test_pdf_base.py` |
+>
+> Quatro defeitos que **este plano não previu** foram achados por revisão adversarial
+> antes do deploy e estão no commit `2697326`: a rota do PDF da ficha engolida pela rota
+> JSON, `mes_completo` declarando fechado o mês em curso, a janela de 30 dias rodando em
+> mês fechado, e o gráfico agregado rotulando cada barra com o mês seguinte.
+
+
 ## Context
 
 A aba **Visão Executiva** do piloto web (`web/src/screens/ExecutiveScreen.tsx` + `GET /api/executiva/{uf}`) nasceu como um **mapa deck.gl em tela cheia** com um painel lateral de 4 KPIs e uma lista ordenável. Ela responde bem a "onde estão as unidades", mas mal a "o que fazer com elas".

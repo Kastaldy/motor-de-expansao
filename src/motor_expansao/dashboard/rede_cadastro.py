@@ -36,7 +36,9 @@ usuarios e permissoes entrar, troca-se UMA implementacao, nao codigo espalhado.
 from __future__ import annotations
 
 import json
+import math
 import os
+import threading
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -68,6 +70,13 @@ CAMPOS_CADASTRO: tuple[str, ...] = (
 )
 
 _TAMANHO_MAXIMO_VALOR = 120
+
+# Serializa ler-conferir-gravar. Sem isto, dois PUTs simultaneos passam os DOIS pela
+# checagem de versao (ambos leem 5, ambos gravam 6) e uma das duas edicoes some do disco
+# com a tela mostrando sucesso -- perda silenciosa, o pior tipo. Cobre o processo do
+# uvicorn, que e' como o piloto roda; com varios workers, o passo seguinte e' o banco que
+# a DEC-023 ja aponta como destino.
+_TRAVA = threading.Lock()
 
 
 class CadastroIndisponivel(RuntimeError):
@@ -131,9 +140,25 @@ def ler_cadastro(base: Path | None = None) -> Cadastro:
     return Cadastro(
         versao=int(dados.get("versao") or 0),
         atualizado_em=dados.get("atualizado_em"),
-        unidades={str(k): dict(v) for k, v in unidades.items() if isinstance(v, dict)},
+        unidades={
+            str(k): _sanear(v) for k, v in unidades.items() if isinstance(v, dict)
+        },
         disponivel=True,
     )
+
+
+def _sanear(registro: dict[str, Any]) -> dict[str, Any]:
+    """NaN/Infinity viram None. O cadastro nasce de uma planilha mantida a mao, e uma
+    celula vazia de GOLD/LTV chegava como `NaN` -- que `json.loads` aceita e
+    `json.dumps(allow_nan=False)` do FastAPI recusa, derrubando a ficha daquela unidade
+    com 500 e sem nenhuma pista de que o problema esta no cadastro."""
+    limpo: dict[str, Any] = {}
+    for chave, valor in registro.items():
+        if isinstance(valor, float) and not math.isfinite(valor):
+            limpo[chave] = None
+        else:
+            limpo[chave] = valor
+    return limpo
 
 
 def gravar_cadastro(cadastro: Cadastro, base: Path | None = None) -> Cadastro:
@@ -155,9 +180,13 @@ def gravar_cadastro(cadastro: Cadastro, base: Path | None = None) -> Cadastro:
         "atualizado_em": cadastro.atualizado_em,
         "unidades": cadastro.unidades,
     }
-    temporario = destino.with_suffix(".json.tmp")
+    # Nome de temporario UNICO por processo: um `.tmp` fixo e' disputado por dois
+    # escritores simultaneos, e um deles morre com PermissionError/FileNotFoundError no
+    # meio do `os.replace` -- 500 no lugar de um 409 tratavel.
+    temporario = destino.with_name(f"{destino.name}.{os.getpid()}.tmp")
     temporario.write_text(
-        json.dumps(corpo, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8"
+        json.dumps(corpo, ensure_ascii=False, indent=1, sort_keys=True, allow_nan=False),
+        encoding="utf-8",
     )
     os.replace(temporario, destino)
     return cadastro
@@ -185,6 +214,19 @@ def atribuir(
     if not str(unidade_id).strip():
         raise ValueError("unidade_id vazio.")
 
+    with _TRAVA:
+        return _aplicar(unidade_id, campos, autor=autor, versao_cliente=versao_cliente, base=base)
+
+
+def _aplicar(
+    unidade_id: str,
+    campos: dict[str, Any],
+    *,
+    autor: str | None,
+    versao_cliente: int | None,
+    base: Path | None,
+) -> Cadastro:
+    """Corpo de `atribuir`, ja sob a trava: ler, conferir a versao e gravar sao um passo so."""
     atual = ler_cadastro(base)
     if not atual.disponivel:
         raise CadastroIndisponivel(

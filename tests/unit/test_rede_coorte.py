@@ -29,6 +29,7 @@ def _rede(quantidades: dict[str, int], **extras: object) -> pd.DataFrame:
                     "unidade_id": f"u{contador:03d}",
                     "competencia": "2026-07",
                     "meses_operacao": float(meio[coorte]),
+                    "dias_com_dado": 30,
                     "mes_completo": True,
                     "operacao_mes_cheio": True,
                     "faturamento": 100_000.0 + 1_000.0 * contador,
@@ -104,13 +105,28 @@ def test_a_unidade_nao_entra_na_propria_referencia() -> None:
     assert comparacao.referencias["faturamento"].n == 9
 
 
-def test_peer_set_exclui_mes_incompleto_e_unidade_nova() -> None:
+def test_peer_set_exclui_quem_coletou_menos_e_unidade_nova() -> None:
     rede = _rede({"12_23": 12})
-    rede.loc[rede["unidade_id"] == "u002", "mes_completo"] = False
+    rede.loc[rede["unidade_id"] == "u002", "dias_com_dado"] = 9  # parou de reportar
     rede.loc[rede["unidade_id"] == "u003", "operacao_mes_cheio"] = False
     rede = rc.anotar_coortes(rede)
     assert int(rede["no_peer_set"].sum()) == 10
     assert rc.comparar(rede, "u001", ["faturamento"]).n == 9
+
+
+def test_peer_set_sobrevive_ao_mes_em_curso() -> None:
+    """No dia 3 do mes TODAS as unidades tem 3 dias -- e a coorte tem de continuar de pe.
+
+    Um piso ABSOLUTO de dias esvaziaria o peer set inteiro justamente na competencia que
+    o time de campo abre todo dia, e a ficha perderia a comparacao por coorte. Com a
+    janela cortada no mesmo dia para todo mundo, parcial contra parcial e' honesto.
+    """
+    rede = _rede({"12_23": 12})
+    rede["dias_com_dado"] = 3
+    rede["mes_completo"] = False
+    rede = rc.anotar_coortes(rede)
+    assert int(rede["no_peer_set"].sum()) == 12
+    assert rc.comparar(rede, "u001", ["faturamento"]).degradacao == "coorte"
 
 
 def test_percentil_e_relativo_aos_pares() -> None:

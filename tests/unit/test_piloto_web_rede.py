@@ -31,7 +31,7 @@ if str(_SERVER) not in sys.path:
 
 import app as pilot  # noqa: E402
 
-from motor_expansao.dashboard import rede_cadastro, rede_export  # noqa: E402
+from motor_expansao.dashboard import rede_cadastro, rede_diagnostico, rede_export  # noqa: E402
 from tests.unit.rede_fixtures import mes as mes_sintetico  # noqa: E402
 
 _CACHES = (
@@ -48,10 +48,7 @@ _CACHES = (
 
 
 def _limpar_caches() -> None:
-    for nome in _CACHES:
-        fn = getattr(pilot, nome, None)
-        if fn is not None and hasattr(fn, "cache_clear"):
-            fn.cache_clear()
+    pilot.limpar_caches()
 
 
 def _base_sintetica() -> pd.DataFrame:
@@ -250,6 +247,25 @@ def test_ordenacao_poe_nulos_por_ultimo_nas_duas_direcoes(rede: Path) -> None:
         ordenadas = pilot._rede_ordenar(unidades, "nps", direcao)
         assert ordenadas[-1]["metricas"]["nps"]["atual"] is None, (
             f"nulo deveria ficar no fim tambem em {direcao}"
+        )
+        valores = [u["metricas"]["nps"]["atual"] for u in ordenadas[:-1]]
+        assert valores == sorted(valores, reverse=direcao == "desc")
+
+
+def test_empate_desempata_por_nome_na_mesma_ordem_das_duas_direcoes(rede: Path) -> None:
+    """A tela e o CSV nao podem discordar sobre a ordem de duas unidades empatadas.
+
+    Com `reverse=True`, o desempate por nome inverteria junto e as mesmas duas linhas
+    sairiam trocadas entre uma superficie e outra.
+    """
+    empatadas = [
+        {"nome": "ZULU", "prioridade": 1.0, "metricas": {"nps": {"atual": 50}}},
+        {"nome": "ALFA", "prioridade": 1.0, "metricas": {"nps": {"atual": 50}}},
+    ]
+    for direcao in ("asc", "desc"):
+        ordenadas = pilot._rede_ordenar(list(empatadas), "nps", direcao)
+        assert [u["nome"] for u in ordenadas] == ["ALFA", "ZULU"], (
+            f"empate deveria sair em ordem alfabetica tambem em {direcao}"
         )
 
 
@@ -473,3 +489,110 @@ def test_compose_monta_o_cadastro_como_unico_volume_de_escrita() -> None:
     assert "/opt/motor-expansao/data" not in "".join(escritas), (
         "nenhum artefato do M1 pode ficar sob mount de escrita"
     )
+
+
+# ---------------------------------------------------------------------------
+# Regressoes achadas na revisao adversarial (2026-08-04)
+# ---------------------------------------------------------------------------
+
+
+def test_pdf_da_ficha_nao_e_engolido_pela_rota_json() -> None:
+    """`{unidade_id}` casa "botafogo-rj.pdf" -- quem for declarado PRIMEIRO vence.
+
+    Com a rota JSON antes, o pedido do PDF caia nela, a unidade "botafogo-rj.pdf" nao
+    existia e o usuario recebia 404 dizendo que a unidade nao tinha dado. O PDF da ficha
+    nao saia para unidade nenhuma, em producao.
+    """
+    escopo = {"type": "http", "method": "GET", "path": "/api/rede/unidade/botafogo-rj.pdf"}
+    casadas = [
+        r
+        for r in pilot.app.router.routes
+        if getattr(r, "matches", None) and r.matches(escopo)[0].value >= 2
+    ]
+    assert casadas, "nenhuma rota casa o caminho do PDF"
+    assert casadas[0].endpoint is pilot.rede_unidade_pdf, (
+        f"quem atende o .pdf e' {casadas[0].endpoint.__name__} -- a rota JSON esta na frente"
+    )
+
+
+def test_pdf_da_ficha_sai_de_verdade(rede: Path) -> None:
+    assert pilot.rede_unidade_pdf("botafogo-rj", mes="2026-07").body[:5] == b"%PDF-"
+
+
+def test_mes_em_curso_nao_conta_como_fechado(rede: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do dia 25 ao fim do mes, o piso de dias sozinho declarava fechado o mes EM CURSO.
+
+    O diagnostico entao comparava um acumulado parcial contra a media de 3 meses inteiros
+    e acendia "queda de faturamento" na rede toda, todo fim de mes, em unidades cujo
+    faturamento diario nao variou.
+    """
+    base = _base_sintetica()
+    # julho para no dia 26: 26 dias de dado, mas o mes NAO acabou.
+    base = base[~((base["data"].str.endswith("/07/2026")) & (base["data"].str[:2].astype(int) > 26))]
+    staging = rede / "staging"
+    base.to_parquet(staging / "growth_api_historico.parquet")
+    _limpar_caches()
+
+    fech = pilot._rede_fechamento()
+    julho = fech[fech["competencia"] == "2026-07"]
+    assert int(julho["dias_com_dado"].max()) == 26
+    assert not bool(julho["mes_completo"].any()), "mes em curso nao pode ser 'completo'"
+    assert rede_diagnostico.competencia_base(fech, "2026-07") == "2026-06"
+
+    payload = pilot.rede_carteira(mes="2026-07")
+    assert payload["mes_completo"] is False
+    assert payload["competencia_diagnostico"] == "2026-06"
+    assert any("junho" in n or "2026-06" in n for n in payload["notas"]), (
+        "a tela tem de DIZER que o diagnostico vem de outro mes"
+    )
+
+
+def test_kpi_de_mes_fechado_bate_com_a_serie(rede: Path) -> None:
+    """Em mes fechado, o numero grande e o ultimo ponto do grafico sao o MESMO numero.
+
+    Aplicar a janela de 30 dias num mes fechado puxava cauda do mes anterior (em
+    fevereiro, 3 dias de janeiro) e a receita por recorrente da tela saia ~11% acima do
+    fechamento que o grafico mostrava logo abaixo.
+    """
+    carteira = pilot.rede_carteira(mes="2026-07")
+    assert carteira["mes_completo"] is True
+    ficha = pilot.rede_unidade("botafogo-rj", mes="2026-07")
+    ultimo = ficha["serie"]["meses"][-1]
+    assert ultimo == "2026-07"
+    for chave in ("receita_por_recorrente", "churn_pct", "faturamento"):
+        assert ficha["metricas"][chave]["atual"] == pytest.approx(
+            ficha["serie"][chave][-1], rel=1e-6
+        ), f"{chave}: o KPI diverge do ultimo ponto da serie"
+
+
+def test_serie_meses_vem_do_servidor_e_termina_no_ultimo_fechado(rede: Path) -> None:
+    """O cliente NAO consegue derivar os rotulos: com a competencia aberta, a serie
+    termina no mes anterior, e contar para tras a partir de `mes` desloca o grafico
+    inteiro em um mes."""
+    for mes, ultimo in (("2026-07", "2026-07"), ("2026-08", "2026-07")):
+        payload = pilot.rede_carteira(mes=mes)
+        assert payload["serie_meses"], "serie_meses vazia"
+        assert payload["serie_meses"][-1] == ultimo
+        assert payload["serie_meses"] == sorted(payload["serie_meses"])
+        tamanho = max(len(u["sparkline"]) for u in payload["unidades"])
+        assert tamanho == len(payload["serie_meses"])
+
+
+def test_delta_de_media_ponderada_usa_a_mesma_cesta(rede: Path) -> None:
+    """Comparar a media com as unidades novas dentro contra a de M-1 sem elas mostrava o
+    NPS da rede despencando num mes de inauguracao sem que nada tivesse caido."""
+    payload = pilot.rede_carteira(mes="2026-07")
+    nps = payload["kpis"]["nps"]
+    assert nps["atual"] is not None and nps["m1"] is not None
+    # BANGU inaugurou em 03/2026 e entra nos dois meses; o delta tem de ser modesto.
+    assert abs(nps["delta_pct"] or 0) < 5.0
+
+
+def test_csv_neutraliza_formula(rede: Path) -> None:
+    """O cadastro e' editavel pela tela: um `consultor` que comece com "=" viraria formula
+    viva ao abrir o CSV (HYPERLINK/WEBSERVICE exfiltram, DDE executa)."""
+    payload = pilot.rede_carteira(mes="2026-07")
+    payload = {**payload, "unidades": [{**payload["unidades"][0], "consultor": '=HYPERLINK("http://x")'}]}
+    linha = rede_export.carteira_csv(payload).decode("utf-8-sig").splitlines()[1]
+    assert "'=HYPERLINK" in linha
+    assert ";=HYPERLINK" not in linha

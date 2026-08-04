@@ -333,8 +333,16 @@ def catalogo_de(df: pd.DataFrame) -> dict[str, Unidade]:
 # ---------------------------------------------------------------------------
 
 # Um mes com menos que isto de dias coletados nao e' um mes: entra na serie marcado como
-# incompleto e fica FORA do peer set das coortes. Medido: 150 de 2.132 unidade-mes.
+# incompleto. Medido: 150 de 2.132 unidade-mes.
 DIAS_MINIMOS_MES_COMPLETO = 25
+
+# ...e o dia de referencia tem de ter CHEGADO ao fim do mes. So' o piso de dias nao basta:
+# do dia 25 em diante, o mes EM CURSO ja satisfazia `dias_com_dado >= 25` e era tratado como
+# fechado -- o diagnostico entao comparava um acumulado parcial contra a media de 3 meses
+# inteiros e acendia "queda de faturamento" na rede toda, todo fim de mes, em unidades cujo
+# faturamento diario nao tinha variado um centavo. A tolerancia de 1 dia existe porque a
+# ingestao perde a virada com frequencia (julho/2026 termina em 30/07 na base de producao).
+TOLERANCIA_FIM_DE_MES_DIAS = 1
 
 
 def fechamento_mensal(df: pd.DataFrame, dia_corte: int | None = None) -> pd.DataFrame:
@@ -406,7 +414,10 @@ def _derivar_metricas(fech: pd.DataFrame) -> pd.DataFrame:
     limite = f["dia_ref"].max()
     f.loc[f["inauguracao"].dt.year < _ANO_INAUGURACAO_MIN, "inauguracao"] = pd.NaT
     f.loc[f["inauguracao"] > limite, "inauguracao"] = pd.NaT
-    f["mes_completo"] = f["dias_com_dado"] >= DIAS_MINIMOS_MES_COMPLETO
+    fim_do_mes = f["competencia"].dt.to_timestamp(how="end").dt.normalize()
+    f["mes_completo"] = (f["dias_com_dado"] >= DIAS_MINIMOS_MES_COMPLETO) & (
+        f["dia_ref"] >= fim_do_mes - pd.Timedelta(days=TOLERANCIA_FIM_DE_MES_DIAS)
+    )
     # Unidade inaugurada DENTRO da competencia nao operou a janela inteira: o numero e'
     # real, mas nao e' comparavel com o de quem operou o mes todo. E' o gate que substitui
     # o piso de faturamento de R$ 20 mil da v1 -- um literal financeiro nao nomeado, que

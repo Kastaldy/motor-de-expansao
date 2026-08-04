@@ -309,6 +309,27 @@ def test_serie_diaria_desacumula_e_reseta_no_dia_1() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("coluna", ["master", "uf", "inauguracao"])
+def test_coluna_de_identidade_ausente_nao_derruba_a_aba(coluna: str) -> None:
+    """A API Growth pode deixar de mandar uma coluna de rótulo num ciclo de ingestão.
+
+    A Visão Executiva não pode cair por causa disso: o campo degrada para vazio e o
+    resto da leitura continua de pé.
+    """
+    df = base(unidade_saudavel("X", 2026, 5)).drop(columns=[coluna])
+    preparada = rm.preparar_base(df)
+    assert len(preparada)
+    fech = rm.fechamento_mensal(preparada)
+    assert len(fech) == 1
+    if coluna == "inauguracao":
+        assert pd.isna(fech.iloc[0]["inauguracao"])
+        assert pd.isna(fech.iloc[0]["meses_operacao"])
+    else:
+        assert str(fech.iloc[0][coluna]) == ""
+    # ...e o número que importa continua saindo.
+    assert float(fech.iloc[0]["faturamento"]) > 0
+
+
 def test_sem_base_nao_quebra() -> None:
     vazio = pd.DataFrame()
     assert not len(rm.preparar_base(vazio))

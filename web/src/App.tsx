@@ -137,7 +137,12 @@ export default function App() {
             onAnalisarPonto={irParaViabilidade}
           />
         ) : tela === 'executiva' ? (
-          <ExecutiveScreen ufs={ufs} uf={uf} onUf={aoTrocarUf} />
+          // A Executiva NÃO recebe `uf` nem `onUf` (DEC-023): ela abre com a rede do
+          // Brasil inteiro e filtra por dentro. Herdar a UF do Mapa Territorial, além
+          // de confundir dois produtos diferentes, disparava um refetch de
+          // `/api/uf/{uf}` no Mapa toda vez que se trocava o estado aqui — leitura que
+          // pode passar de 15 s.
+          <ExecutiveScreen />
         ) : (
           <ViabilityScreen
             ponto={ponto}
