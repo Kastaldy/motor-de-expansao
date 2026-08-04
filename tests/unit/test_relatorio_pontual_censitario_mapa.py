@@ -600,7 +600,7 @@ def test_fallback_offline_canvas_claro(monkeypatch):
     # BLK-RELPON-06 (D4): com `_MAP_TOP`/`_LEGEND_COL_W` novos a caixa 600x400 encolheu
     # o bastante para o pixel EXATAMENTE central cair na ponta do pin vermelho do ponto
     # central (sempre desenhado no centro do frame projetado). Amostra perto de um canto
-    # do interior da caixa -- fora do circulo de 1.5 km (que fica inscrito no frame) e do
+    # do interior da caixa -- fora do circulo de 1.0 km (que fica inscrito no frame) e do
     # pin -- para continuar testando so o fundo do canvas de fallback.
     cx, cy = left + 20, top + 20
     r, g, b = img.getpixel((cx, cy))
@@ -806,7 +806,7 @@ def test_camada_residual_nao_desenha_pins_blk_relpon_10_fu1():
     Teste DIFERENCIAL: renderiza duas vezes, com e sem pontos, e exige que o PNG do
     `residual` seja BYTE-IDENTICO -- prova que nenhum pixel do mapa depende dos pontos.
     BLK-RELPON-13: a `socioeconomia` virou hex a 5 km SEM pins -> tambem imune aos pontos
-    (byte-identica). A sentinela anti-vacuo passa a ser a camada `score` (setor a 1,5 km, que
+    (byte-identica). A sentinela anti-vacuo passa a ser a camada `score` (setor a 1,0 km, que
     MANTEM pins): sem ela, remover os pins de TODAS as camadas passaria trivialmente no teste.
     """
     setores = _setores_um_quadrado()
@@ -837,7 +837,7 @@ def test_camada_residual_nao_desenha_pins_blk_relpon_10_fu1():
     assert com["socioeconomia"] == sem["socioeconomia"], (
         "a camada `socioeconomia` (hex a 5 km) nao pode desenhar pins"
     )
-    # (4) trava anti-vacuo: `score` (setor a 1,5 km) CONTINUA com pins, senao o teste (1)
+    # (4) trava anti-vacuo: `score` (setor a 1,0 km) CONTINUA com pins, senao o teste (1)
     # passaria trivialmente caso alguem removesse os pins de todas as camadas.
     assert com["score"] != sem["score"], (
         "a camada `score` deveria continuar desenhando pins"
@@ -1078,7 +1078,7 @@ def test_frame_box_metric_puro_reproduz_o_calculo_do_caller():
 
 def test_raio_de_exibicao_nao_toca_o_raio_do_motor():
     """RD-1 (READ-ONLY M1): o raio de 5 km e' constante de RENDER de `censo_map`; o raio do motor
-    censitario segue 1,5 km e NAO vem de `config.py`.
+    censitario segue em 1,0 km (DEC-021) e NAO vem de `config.py`.
 
     BLK-RELPON-14: o VALOR nao muda — 5,0 km continua definindo o ENQUADRAMENTO dos paineis de
     hexagono. Encolhe-lo reintroduziria o mosaico chapado de 3 a 5 hexes da DEC-011. O que saiu
@@ -1128,7 +1128,7 @@ def test_paineis_de_hexagono_nao_desenham_o_circulo_do_raio(monkeypatch):
     "zero pixel azul": e' geometrica. O circulo do raio ficava INSCRITO no frame (lado menor
     quase inteiro); a borda do hex central ocupa uma fracao pequena em torno do centro. Logo,
     a extensao vertical dos pixels azuis tem de ser MUITO menor que a altura util do mapa.
-    A camada `densidade` (1,5 km, que MANTEM o circulo) e' a trava anti-vacuo: la a extensao
+    A camada `densidade` (1,0 km, que MANTEM o circulo) e' a trava anti-vacuo: la a extensao
     vertical do azul ocupa quase toda a altura util.
     """
     mapas = render_mapas_censitarios_combinados(
@@ -1329,7 +1329,7 @@ def test_simbolos_do_slide_de_quadra_sairam_do_modulo():
     assert censo_map._BASEMAP_ZOOM_BUMP == 1
     fonte = pathlib.Path(censo_map.__file__).read_text(encoding="utf-8")
     assert "zoom_bump=-1" in fonte, "frame de 5 km perdeu a mitigacao de zoom do piloto"
-    assert "zoom_bump=0" in fonte, "frame de 1,5 km perdeu a mitigacao de zoom do piloto"
+    assert "zoom_bump=0" in fonte, "frame de 1,0 km perdeu a mitigacao de zoom do piloto"
 
 
 def test_camadas_existentes_ficam_byte_identicas_com_os_defaults_novos():

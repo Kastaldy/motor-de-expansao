@@ -177,7 +177,7 @@ def analisar_ponto_censitario_setores(
     em EPSG:4674. A funcao e pura: nao muta os DataFrames recebidos e nao recalcula
     nenhum artefato oficial do M1.
 
-    BLK-RELPON-05: alem dos agregados ponderados do raio de 1.5 km, o `result` expoe
+    BLK-RELPON-05: alem dos agregados ponderados do raio de 1.0 km, o `result` expoe
     5 campos com o valor BRUTO do setor que CONTEM o ponto pesquisado (`covers()` no
     CRS metrico local, tie-break por maior `peso_area_setor`): `cod_setor_ponto`,
     `renda_per_capita_setor_ponto`, `densidade_pop_setor_ponto`,
@@ -526,7 +526,7 @@ def agregar_perfil_bairro_distrito(
     - D1 (prioridade de unidade): resolve por `cod_bairro` quando disponivel; senao cai para
       `nome_distrito` (fallback). `nome_subdistrito` NUNCA e usado como unidade (descartado).
     - D2 (escopo): agrega TODOS os setores da unidade administrativa que contem o ponto --
-      NAO o raio de 1.5 km do relatorio (essa e a diferenca fundamental para os outros
+      NAO o raio de 1.0 km do relatorio (essa e a diferenca fundamental para os outros
       agregados do modulo, que sao sempre "no raio").
     - D3.5 (formula da renda media, fechada pelo Planner): `renda_media_domiciliar` e a media
       de `renda_responsavel_media_setor_2022` PONDERADA por
