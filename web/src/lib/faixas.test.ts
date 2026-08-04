@@ -25,20 +25,20 @@ describe('faixas nomeadas por camada', () => {
     },
   )
 
-  it('camada 1 usa temperatura; camada 2 usa unidade — vocabularios distintos', () => {
+  it('camada 1 da veredito; camada 2 fala de saturacao — vocabularios distintos', () => {
     expect(FAIXAS_POTENCIAL.map((f) => f.nome)).toEqual([
-      'Frio',
-      'Morno',
-      'Aquecido',
-      'Quente',
-      'Muito quente',
+      'Desfavorável',
+      'Fraco',
+      'Promissor',
+      'Forte',
+      'Excelente',
     ])
     expect(FAIXAS_DEMANDA.map((f) => f.nome)).toEqual([
-      'Marginal',
-      'Pouco espaço',
-      'Meia unidade',
-      'Quase cheia',
-      'Unidade cheia',
+      'Saturado',
+      'Restrito',
+      'Moderado',
+      'Amplo',
+      'Livre',
     ])
     // O pedido do Juan foi explicito: os nomes VARIAM por camada.
     expect(FAIXAS_POTENCIAL.map((f) => f.nome)).not.toEqual(FAIXAS_DEMANDA.map((f) => f.nome))
@@ -54,17 +54,73 @@ describe('faixas nomeadas por camada', () => {
   })
 })
 
-describe('leitura em alunos da camada de demanda', () => {
+describe('etiqueta de alunos da camada de demanda', () => {
   it('ancora no 2.500 (capacidade de uma unidade)', () => {
     expect(CAPACIDADE_UNIDADE_ALUNOS).toBe(2500)
-    // score 40-60 -> 1.000-1.500 alunos, ou seja "meia unidade" de verdade.
-    expect(alunosDaFaixa(FAIXAS_DEMANDA[2])).toBe('1000–1500')
   })
 
-  it('a ultima faixa e aberta porque o score e CLIPADO em 100', () => {
+  it('usa separador de milhar pt-BR, como todo numero do app', () => {
+    // A primeira versao escrevia "1000-1500" cru e destoava do resto da tela.
+    expect(alunosDaFaixa(FAIXAS_DEMANDA[2])).toBe('1.000–1.500')
+  })
+
+  it('a ultima faixa e ABERTA porque o score e CLIPADO em 100', () => {
     // `score_oportunidade_residual` tem `.clip(upper=100)`: 2.500 e 10.000 alunos
     // marcam o mesmo 100. O rotulo nao pode prometer "mais de uma unidade".
-    expect(alunosDaFaixa(FAIXAS_DEMANDA[4])).toBe('2000+ alunos')
+    expect(alunosDaFaixa(FAIXAS_DEMANDA[4])).toBe('2.000+')
+  })
+
+  it('a unidade fica no TITULO, nao repetida em cada etiqueta', () => {
+    expect(tituloDaLegenda(2)).toContain('(alunos)')
+    for (const f of FAIXAS_DEMANDA) {
+      expect(alunosDaFaixa(f)).not.toContain('alunos')
+    }
+  })
+})
+
+/* --- Exemplo executavel: a legenda INTEIRA, camada por camada ---------------
+   Serve de duas coisas ao mesmo tempo: documenta o que o usuario ve (da para ler
+   o teste e saber a legenda de cor) e trava as strings contra mudanca acidental.
+   Se alguem renomear uma faixa, este teste aponta exatamente qual e o novo texto. */
+describe('exemplo de TODAS as faixas, como aparecem na legenda', () => {
+  it('camada 1 — Potencial socioeconomico (sem etiqueta de alunos)', () => {
+    expect(FAIXAS_POTENCIAL.map((f) => `${f.nome} [${f.de}-${f.ate}]`)).toEqual([
+      'Desfavorável [0-20]',
+      'Fraco [20-40]',
+      'Promissor [40-60]',
+      'Forte [60-80]',
+      'Excelente [80-100]',
+    ])
+  })
+
+  it('camada 2/3 — Demanda nao atendida (nome + alunos)', () => {
+    expect(FAIXAS_DEMANDA.map((f) => `${f.nome} ${alunosDaFaixa(f)}`)).toEqual([
+      'Saturado 0–500',
+      'Restrito 500–1.000',
+      'Moderado 1.000–1.500',
+      'Amplo 1.500–2.000',
+      'Livre 2.000+',
+    ])
+  })
+
+  it('camada 4 — faixa de oportunidade M1, na ordem da legenda', () => {
+    expect([...FAIXA_M1_ORDEM]).toEqual([
+      'Prioridade máxima',
+      'Alta',
+      'Média',
+      'Baixa',
+      'Descartado',
+      'Inviável',
+    ])
+  })
+
+  it('os titulos de cada camada', () => {
+    expect([1, 2, 3, 4].map(tituloDaLegenda)).toEqual([
+      'Potencial socioeconômico',
+      'Demanda não atendida (alunos)',
+      'Demanda não atendida (alunos)',
+      'Faixa de oportunidade M1',
+    ])
   })
 })
 
