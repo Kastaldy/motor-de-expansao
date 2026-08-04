@@ -83,6 +83,10 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
   const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
   const [baixando, setBaixando] = useState(false)
+  // Erro do DOWNLOAD, separado do erro de CARGA: falhar ao gerar o PDF não pode apagar a
+  // ficha inteira da tela — inclusive o que a pessoa já tinha digitado no formulário de
+  // atribuição.
+  const [erroPdf, setErroPdf] = useState<string | null>(null)
 
   useEffect(() => {
     let vivo = true
@@ -120,11 +124,12 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
 
   async function baixarPdf() {
     setBaixando(true)
+    setErroPdf(null)
     try {
       const { blob, filename } = await api.redeUnidadePdf(unidadeId, mes)
       baixar(blob, filename)
     } catch (e) {
-      setErro((e as ApiError).message)
+      setErroPdf((e as ApiError).message)
     } finally {
       setBaixando(false)
     }
@@ -156,9 +161,16 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
               .join(' · ')}
           </div>
         </div>
-        <Botao variante="ghost" onClick={baixarPdf} disabled={baixando}>
-          {baixando ? <Spinner /> : '↓'} Ficha em PDF
-        </Botao>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+          <Botao variante="ghost" onClick={baixarPdf} disabled={baixando}>
+            {baixando ? <Spinner /> : '↓'} Ficha em PDF
+          </Botao>
+          {erroPdf && (
+            <span style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--neg, #ff5a6e)', maxWidth: 240, textAlign: 'right' }}>
+              {erroPdf}
+            </span>
+          )}
+        </div>
       </div>
 
       <BannerRecomendacao
@@ -217,12 +229,10 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
                       className="num"
                       style={{
                         ...celulaNum,
-                        color:
-                          metrica.vs_media_pct === null
-                            ? 'var(--tx-muted)'
-                            : metrica.vs_media_pct >= 0
-                              ? 'var(--pos, #37b26b)'
-                              : 'var(--neg, #ff5a6e)',
+                        // A cor segue a DIREÇÃO da métrica, não o sinal. Churn 40% acima
+                        // da média da rede pintado de verde faz o consultor tratar como
+                        // ponto forte exatamente o número que está disparando o alerta.
+                        color: corDoDesvio(metrica.vs_media_pct, m.bomSubindo),
                       }}
                       title={`${rotuloRanking(metrica)} · ${rotuloVsMedia(metrica)}`}
                     >
@@ -446,6 +456,12 @@ function CadastroDaUnidade({
       </div>
     </Glass>
   )
+}
+
+/** Verde quando o desvio da média é BOM para esta métrica; vermelho quando é ruim. */
+function corDoDesvio(desvio: number | null, bomSubindo: boolean): string {
+  if (desvio === null || Math.abs(desvio) < 0.05) return 'var(--tx-muted)'
+  return desvio > 0 === bomSubindo ? 'var(--pos, #37b26b)' : 'var(--neg, #ff5a6e)'
 }
 
 const celulaNum = {

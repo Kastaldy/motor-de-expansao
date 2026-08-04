@@ -139,3 +139,65 @@ def test_diretorio_default_fica_fora_do_motor_data_dir(monkeypatch: pytest.Monke
     assert rcad.cadastro_dir() == Path("/opt/motor-expansao/cadastro")
     monkeypatch.delenv("MOTOR_CADASTRO_DIR")
     assert "data" in rcad.cadastro_dir().parts and rcad.cadastro_dir().name == "cadastro"
+
+
+def test_escritas_simultaneas_nao_perdem_edicao(base: Path) -> None:
+    """Sem trava, os DOIS passam pela checagem de versao e um dos dois some do disco.
+
+    Perda silenciosa e' o pior tipo: a tela do autor mostra sucesso e a atribuicao
+    simplesmente nao esta la. Com a trava, o segundo recebe conflito e a tela recarrega.
+    """
+    import threading
+
+    resultados: list[object] = []
+
+    def gravar(unidade: str, valor: str) -> None:
+        try:
+            resultados.append(rcad.atribuir(unidade, {"consultor": valor}, versao_cliente=1, base=base))
+        except rcad.ConflitoDeVersao as erro:
+            resultados.append(erro)
+
+    linhas = [
+        threading.Thread(target=gravar, args=("botafogo-rj", "A")),
+        threading.Thread(target=gravar, args=("orfa-sp", "B")),
+    ]
+    for linha in linhas:
+        linha.start()
+    for linha in linhas:
+        linha.join()
+
+    conflitos = [r for r in resultados if isinstance(r, rcad.ConflitoDeVersao)]
+    assert len(conflitos) == 1, "exatamente um dos dois tem de receber conflito"
+    final = rcad.ler_cadastro(base)
+    assert final.versao == 2, "so' uma das duas gravacoes pode ter valido"
+    assert not list(base.glob("*.tmp")), "temporario ficou para tras numa corrida"
+
+
+def test_valor_nao_finito_no_cadastro_nao_derruba_a_leitura(base: Path) -> None:
+    """A planilha e' mantida a mao: uma celula de GOLD/LTV vazia chega como NaN.
+
+    `json.loads` aceita `NaN`; o `json.dumps(allow_nan=False)` do FastAPI, nao — e a ficha
+    daquela unidade respondia 500 para todo mundo, sem pista de que o problema estava no
+    cadastro.
+    """
+    import json
+
+    caminho = base / rcad.ARQUIVO_CADASTRO
+    dados = json.loads(caminho.read_text(encoding="utf-8"))
+    dados["unidades"]["botafogo-rj"]["gold"] = float("nan")
+    caminho.write_text(json.dumps(dados, allow_nan=True), encoding="utf-8")
+
+    registro = rcad.ler_cadastro(base).de("botafogo-rj")
+    assert registro["gold"] is None
+    json.dumps(registro, allow_nan=False)
+
+
+def test_gravacao_recusa_valor_nao_finito(base: Path) -> None:
+    cadastro = rcad.ler_cadastro(base)
+    quebrado = rcad.Cadastro(
+        versao=cadastro.versao + 1,
+        atualizado_em=None,
+        unidades={"x": {"ltv": float("inf")}},
+    )
+    with pytest.raises(ValueError):
+        rcad.gravar_cadastro(quebrado, base)

@@ -1100,6 +1100,20 @@ def _pins_ultra_bbox(df: pd.DataFrame) -> dict[str, Any]:
 # ============================================================================
 
 
+def limpar_caches() -> None:
+    """Limpa TODOS os `lru_cache` do backend, sem lista para manter.
+
+    A suite reaponta os caminhos de dado por `monkeypatch` e precisa invalidar as cargas
+    lazy. Havia uma lista de nomes copiada em cada arquivo de teste, e as três
+    envelheceram de forma diferente: os caches novos da Visão Executiva 2.0 entraram só
+    numa delas e vazaram entre arquivos — um teste que passava sozinho falhava na suite
+    inteira. Varrer os globais elimina a lista paralela de vez.
+    """
+    for objeto in list(globals().values()):
+        if callable(objeto) and hasattr(objeto, "cache_clear"):
+            objeto.cache_clear()
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
     return {
@@ -2216,9 +2230,24 @@ def _rede_mes(mes_sel: str) -> dict[str, Any]:
     referencia = pd.Timestamp(no_mes["dia_ref"].max())
     dia_corte = int(referencia.day)
 
-    corte = rede_metricas.fechamento_mensal(base, dia_corte=dia_corte)
-    atual = _rede_janela(corte, cheio, mes_sel)
-    m1 = _rede_janela(corte, cheio, anterior)
+    # Fechado = a coleta chegou ao fim do mês (a tolerância de um dia cobre a ingestão
+    # que perde a virada: julho/2026 termina em 30/07 na base de produção).
+    fechado = bool(referencia.day >= periodo.days_in_month - rede_metricas.TOLERANCIA_FIM_DE_MES_DIAS)
+
+    if fechado:
+        # Mês inteiro: os números da tela são os do PRÓPRIO mês, iguais aos do gráfico
+        # histórico. Aplicar a janela de 30 dias aqui faria o KPI divergir do último
+        # ponto da série — em fevereiro, a janela puxaria 3 dias de janeiro e a receita
+        # por recorrente sairia ~11% acima do fechamento do mês.
+        corte = cheio
+        atual = cheio[cheio["competencia"] == mes_sel].copy()
+        m1 = cheio[cheio["competencia"] == anterior].copy()
+    else:
+        # Mês em curso: MTD até o dia de referência dos dois lados (comparação justa) e
+        # as razões reconstruídas em ~30 dias, senão elas valem só os dias já corridos.
+        corte = rede_metricas.fechamento_mensal(base, dia_corte=dia_corte)
+        atual = _rede_janela(corte, cheio, mes_sel)
+        m1 = _rede_janela(corte, cheio, anterior)
 
     contexto = rede_metricas.contexto_comparativo(atual)
     contexto = rede_coorte.anotar_coortes(contexto)
@@ -2237,17 +2266,32 @@ def _rede_mes(mes_sel: str) -> dict[str, Any]:
         "mes_anterior": anterior,
         "referencia": referencia,
         "dia_corte": dia_corte,
-        # Fechado = a coleta chegou ao fim do mês. `.all()` sobre as unidades daria
-        # False sempre que UMA unidade nova entrasse no meio do mês; a tolerância de um
-        # dia cobre a ingestão que perde a virada (julho/2026 termina em 30/07 na base).
-        "mes_completo": bool(referencia.day >= periodo.days_in_month - 1),
+        "mes_completo": fechado,
         "competencia_diagnostico": competencia_diagnostico,
         "atual": contexto,
         "m1": m1.set_index("unidade_id"),
         "cheio": cheio,
         "diagnosticos": diagnosticos,
         "sss": _rede_sss(corte, mes_sel),
+        "serie_meses": _rede_serie_meses(cheio, mes_sel),
     }
+
+
+def _rede_serie_meses(cheio: pd.DataFrame, mes_sel: str) -> list[str]:
+    """Competências FECHADAS que alimentam a sparkline e o gráfico da rede.
+
+    Vai no payload porque o cliente NÃO consegue derivá-las: quando a competência
+    escolhida está aberta, a série termina no mês anterior, e uma contagem regressiva a
+    partir de `mes` no frontend rotulava cada barra com o mês seguinte — o gráfico
+    inteiro saía deslocado em um mês.
+    """
+    fechados = cheio[
+        cheio["mes_completo"].fillna(False).astype(bool) & (cheio["competencia"] <= mes_sel)
+    ]
+    if not len(fechados):
+        return []
+    meses = sorted({str(c) for c in fechados["competencia"].unique()})
+    return meses[-_REDE_MESES_SERIE:]
 
 
 def _rede_janela(corte: pd.DataFrame, cheio: pd.DataFrame, competencia: str) -> pd.DataFrame:
@@ -2317,6 +2361,20 @@ def _rede_sss(corte: pd.DataFrame, mes_sel: str) -> dict[str, Any]:
     }
 
 
+def _rede_casas(chave: str) -> int:
+    """Casas decimais de uma métrica. UMA definição, usada no quarteto E na série.
+
+    Sem isso, o mesmo churn saía 3,3 no KPI e 3,33 no gráfico logo abaixo — divergência
+    de arredondamento que parece divergência de cálculo e manda o operador procurar bug
+    onde não há.
+    """
+    if chave == "receita_por_recorrente":
+        return 2
+    if chave.endswith("_pct") or chave == "nps":
+        return 1
+    return 0
+
+
 def _rede_quarteto(linha: pd.Series, m1: pd.Series | None, chave: str) -> dict[str, Any]:
     """`MÊS | M-1 | Ranking N/total | % vs Média Rede` para uma métrica.
 
@@ -2324,7 +2382,7 @@ def _rede_quarteto(linha: pd.Series, m1: pd.Series | None, chave: str) -> dict[s
     sou 79º de 89". Esse trio de contexto É o semáforo deles, e diz mais que um
     chip colorido porque informa o tamanho e a posição do problema.
     """
-    casas = 2 if chave in ("receita_por_recorrente",) else (1 if chave.endswith("_pct") or chave == "nps" else 0)
+    casas = _rede_casas(chave)
     atual = _numf(linha.get(chave))
     anterior = _numf(m1.get(chave)) if m1 is not None else None
     rank = _numf(linha.get(f"rank_{chave}"))
@@ -2439,10 +2497,17 @@ def _rede_kpis(unidades: pd.DataFrame, m1: pd.DataFrame) -> dict[str, Any]:
 
     for chave, peso in _REDE_KPIS_MEDIA.items():
         atual = _wavg(indexado[chave], indexado[peso])
+        # O delta sai da MESMA cesta dos dois lados. Comparar a média de hoje (com as
+        # unidades novas dentro) contra a de M-1 (sem elas) mostrava o NPS da rede
+        # despencando num mês de inauguração sem que nada tivesse caído: mudou a cesta,
+        # não o desempenho. `atual` segue sendo o número do recorte inteiro.
         anterior = _wavg(m1.loc[comuns, chave], m1.loc[comuns, peso]) if len(comuns) else None
-        # Churn e NPS variam em PONTOS, não em percentual do percentual: a variação
-        # relativa de um NPS de 2 para 4 seria "+100%", o que confunde mais que informa.
-        delta = 100.0 * (atual - anterior) / anterior if (atual is not None and anterior) else None
+        atual_cesta = _wavg(indexado.loc[comuns, chave], indexado.loc[comuns, peso]) if len(comuns) else None
+        delta = (
+            100.0 * (atual_cesta - anterior) / anterior
+            if (atual_cesta is not None and anterior)
+            else None
+        )
         saida[chave] = {"atual": _num(atual, 2), "m1": _num(anterior, 2), "delta_pct": _num(delta, 1)}
     return saida
 
@@ -2689,6 +2754,10 @@ def _rede_carteira_payload(
         "ultra_icon": _icone_ultra() if com_coordenada else None,
         "reguas": rede_diagnostico.REGUAS_VIGENTES,
         "meta_nps": rede_diagnostico.META_NPS,
+        # Rótulos das barras da sparkline e do gráfico agregado. Alinhados à DIREITA:
+        # a série de uma unidade nova é mais curta, e os meses anteriores à inauguração
+        # dela simplesmente não existem.
+        "serie_meses": contexto["serie_meses"],
         "unidades": unidades,
         "notas": _rede_notas(contexto, recorte),
     }
@@ -2787,7 +2856,10 @@ def _rede_ficha_payload(unidade_id: str, mes: str | None = None) -> dict[str, An
         "saldo_operacional",
         "conversao_pct",
     ):
-        serie[chave] = [_num(v, 2) for v in pd.to_numeric(historico[chave], errors="coerce")]
+        serie[chave] = [
+            _num(v, _rede_casas(chave))
+            for v in pd.to_numeric(historico[chave], errors="coerce")
+        ]
 
     diaria = _rede_serie_diaria(unidade_id, mes_sel)
     comparacao = rede_coorte.comparar(atual, unidade_id, list(_REDE_METRICAS))
@@ -2893,6 +2965,23 @@ def _rede_serie_diaria(unidade_id: str, mes_sel: str) -> dict[str, Any]:
     return saida
 
 
+# A rota do PDF vem ANTES da rota JSON de propósito. `{unidade_id}` casa qualquer coisa,
+# inclusive "botafogo-rj.pdf": declarada depois, a rota do PDF nunca era alcançada — o
+# pedido caía na rota JSON, que não achava a unidade e devolvia 404. O PDF da ficha não
+# saía para unidade nenhuma. O Starlette resolve por ORDEM DE DECLARAÇÃO, não por
+# especificidade.
+@app.get("/api/rede/unidade/{unidade_id}.pdf")
+def rede_unidade_pdf(unidade_id: str, mes: str | None = None) -> Response:
+    from motor_expansao.dashboard import rede_export
+
+    payload = _rede_ficha_payload(unidade_id, mes)
+    return _anexo(
+        rede_export.ficha_pdf(payload),
+        f"ficha_{unidade_id}_{str(payload.get('mes', '')).replace('-', '')}.pdf",
+        "application/pdf",
+    )
+
+
 @app.get("/api/rede/unidade/{unidade_id}")
 def rede_unidade(unidade_id: str, mes: str | None = None) -> dict[str, Any]:
     """Nível 2: a ficha da unidade — série de 12 meses, funil, coorte e recomendações."""
@@ -2986,18 +3075,6 @@ def rede_carteira_pdf(
     )
 
 
-@app.get("/api/rede/unidade/{unidade_id}.pdf")
-def rede_unidade_pdf(unidade_id: str, mes: str | None = None) -> Response:
-    from motor_expansao.dashboard import rede_export
-
-    payload = _rede_ficha_payload(unidade_id, mes)
-    return _anexo(
-        rede_export.ficha_pdf(payload),
-        f"ficha_{unidade_id}_{str(payload.get('mes', '')).replace('-', '')}.pdf",
-        "application/pdf",
-    )
-
-
 # --- Cadastro (a ÚNICA escrita do backend) ----------------------------------
 
 
@@ -3049,6 +3126,15 @@ def rede_cadastro_atribuir(
         raise HTTPException(422, str(erro)) from erro
     except rede_cadastro.CadastroIndisponivel as erro:
         raise HTTPException(503, str(erro)) from erro
+    except PermissionError as erro:
+        # O volume existe e e' legivel, mas nao gravavel pelo usuario do container.
+        # Sem esta mensagem, o operador ve um 500 opaco e o diretorio parece montado.
+        raise HTTPException(
+            503,
+            "Sem permissão de escrita no volume do cadastro. No servidor, o diretório "
+            "precisa pertencer ao usuário do container: "
+            "`chown -R 1000:1000 /opt/motor-expansao/cadastro`.",
+        ) from erro
     except ValueError as erro:
         raise HTTPException(422, str(erro)) from erro
 

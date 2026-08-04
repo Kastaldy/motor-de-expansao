@@ -87,8 +87,13 @@ Ela mora **fora** do `MOTOR_DATA_DIR` de propósito: assim nenhum artefato do M1
 um mount de escrita e o guardrail READ-ONLY do backend continua valendo sem exceção.
 
 ```bash
-# 1) criar o diretório no host (uma vez)
+# 1) criar o diretório no host (uma vez) E DAR O DONO CERTO.
+#    O container roda como `appuser`, UID 1000 (fixo no Dockerfile.web). Criado como
+#    root, o diretório fica legível — a aba sobe, os filtros de consultor aparecem, o
+#    checklist passa 100% — mas o primeiro PUT devolve 500. O `chown` é o passo que
+#    separa "parece que funcionou" de "funcionou".
 mkdir -p /opt/motor-expansao/cadastro
+chown -R 1000:1000 /opt/motor-expansao/cadastro
 
 # 2) enviar a semeadura (gerada localmente da planilha do time de campo)
 scp -i ~/.ssh/id_ultra_mcp cadastro_unidades.json     root@2.25.137.241:/opt/motor-expansao/cadastro/
@@ -202,6 +207,9 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
       era 76% subestimado; ver DEC-023).
 - [ ] Abrir uma unidade (ficha) e voltar com o **Voltar do browser**.
 - [ ] Baixar o **CSV da carteira** e conferir que abre no Excel em colunas.
+- [ ] **Atribuir um consultor** numa unidade e recarregar: se voltar 503/500, o dono de
+      `/opt/motor-expansao/cadastro` não é o UID 1000 (§2.1).
+- [ ] Baixar a **ficha em PDF** de uma unidade (a rota `.pdf` tem de vir antes da JSON).
 
 ---
 

@@ -656,6 +656,10 @@ export interface RedeCarteira {
   ultra_icon: string | null
   reguas: Record<string, RedeRegua>
   meta_nps: number
+  /** competências FECHADAS que rotulam a sparkline e o gráfico agregado, em ordem
+   *  cronológica. Vem do servidor: com a competência aberta, a série termina no mês
+   *  anterior, e contar para trás a partir de `mes` desloca o gráfico inteiro. */
+  serie_meses: string[]
   unidades: RedeUnidade[]
   notas: string[]
 }

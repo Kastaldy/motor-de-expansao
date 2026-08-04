@@ -94,13 +94,26 @@ def _br(valor: object, casas: int = 0) -> str:
     return texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
 
+#: Caracteres com que o Excel/LibreOffice comeca a interpretar a celula como FORMULA.
+_INICIO_DE_FORMULA = ('=', '+', '-', '@', chr(9), chr(13))
+
+
 def _celula(valor: object) -> str:
-    """Valor para a celula do CSV/XLSX: numero em pt-BR, texto como veio."""
+    """Valor para a celula do CSV/XLSX: numero em pt-BR, texto neutralizado."""
     if isinstance(valor, bool):
         return "Sim" if valor else "Não"
     if isinstance(valor, (int, float)):
         return _br(valor, 0 if float(valor).is_integer() else 2)
-    return "" if valor is None else str(valor)
+    if valor is None:
+        return ""
+    texto = str(valor)
+    # O cadastro e' EDITAVEL pela tela e semeado de uma planilha mantida a mao. Um
+    # `consultor` que comece com "=" vira formula viva ao abrir o CSV -- HYPERLINK e
+    # WEBSERVICE exfiltram, DDE executa. O apostrofo a frente e' o que o proprio Excel usa
+    # para dizer "isto e' texto"; ele nao aparece na celula.
+    if texto[:1] in _INICIO_DE_FORMULA:
+        return "'" + texto
+    return texto
 
 
 def _linhas_carteira(payload: Mapping[str, Any]) -> tuple[list[str], list[list[str]]]:

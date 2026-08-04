@@ -170,6 +170,17 @@ export default function ExecutiveScreen() {
     setDirecao(chave === 'churn_pct' || chave === 'nome' ? 'asc' : 'desc')
   }
 
+  const temRecorte = Boolean(uf || master || consultor || coorte || busca || severidades.length)
+
+  function limparRecorte() {
+    setUf('')
+    setMaster('')
+    setConsultor('')
+    setCoorte('')
+    setSeveridades([])
+    setBusca('')
+  }
+
   async function baixarArquivo(formato: 'csv' | 'xlsx' | 'pdf') {
     setBaixando(formato)
     try {
@@ -373,6 +384,11 @@ export default function ExecutiveScreen() {
           aria-label="Buscar unidade"
           style={{ width: 176 }}
         />
+        {temRecorte && (
+          <Botao variante="ghost" onClick={limparRecorte}>
+            Limpar filtros
+          </Botao>
+        )}
 
         <div style={{ flex: 1 }} />
 
@@ -444,8 +460,12 @@ export default function ExecutiveScreen() {
                   <div style={{ flex: 1 }} />
                   {ORDEM_SEVERIDADE.map((s) => {
                     const n = carteira.semaforo[s] ?? 0
-                    if (!n) return null
                     const ativo = severidades.includes(s)
+                    // Um chip com contagem zero continua na tela SE estiver ativo. Sem
+                    // isso, filtrar por "alta" e depois trocar para uma UF sem nenhuma
+                    // unidade alta fazia o chip sumir com o filtro ainda aplicado: a
+                    // carteira ficava vazia e não havia como desfazer, a não ser F5.
+                    if (!n && !ativo) return null
                     return (
                       <button
                         key={s}
@@ -568,12 +588,15 @@ export default function ExecutiveScreen() {
               <Glass style={{ flex: '1 1 420px', padding: '15px 17px', minWidth: 0 }}>
                 <Rotulo>Faturamento da rede no recorte</Rotulo>
                 <BarrasPeriodo
-                  meses={mesesDaRede(carteira)}
+                  meses={carteira.serie_meses}
                   valores={serieDaRede(carteira)}
                   formato="brl"
                 />
                 <div style={{ marginTop: 8, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
-                  Soma dos meses FECHADOS das unidades do recorte.
+                  Soma dos meses FECHADOS das unidades do recorte
+                  {carteira.mes_completo
+                    ? '.'
+                    : ` — a competência ${rotuloMesCompetencia(carteira.mes)} ainda está em curso e não entra aqui.`}
                 </div>
               </Glass>
               <Glass style={{ flex: '1 1 300px', padding: '15px 17px', minWidth: 0 }}>
@@ -617,20 +640,15 @@ export default function ExecutiveScreen() {
   )
 }
 
-/** Meses da série agregada do recorte (união das sparklines, que têm o mesmo tamanho). */
-function mesesDaRede(carteira: RedeCarteira): string[] {
-  const n = Math.max(0, ...carteira.unidades.map((u) => u.sparkline.length))
-  const base = new Date(`${carteira.mes}-01T00:00:00`)
-  return Array.from({ length: n }, (_, i) => {
-    const d = new Date(base)
-    d.setMonth(d.getMonth() - (n - 1 - i))
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-  })
-}
-
-/** Soma das sparklines do recorte, posição a posição (mês fechado a mês fechado). */
+/** Soma das sparklines do recorte, posição a posição (mês fechado a mês fechado).
+ *
+ *  Os RÓTULOS vêm do servidor (`carteira.serie_meses`), nunca de uma contagem regressiva
+ *  a partir de `mes`: com a competência aberta — o caso padrão, que é como a aba abre — a
+ *  série termina no mês ANTERIOR, e contar para trás rotulava cada barra com o mês
+ *  seguinte. O gráfico inteiro saía deslocado em um mês, e o card de KPI (MTD de 4 dias)
+ *  ficava ao lado de uma barra "ago" que na verdade era julho. */
 function serieDaRede(carteira: RedeCarteira): (number | null)[] {
-  const n = Math.max(0, ...carteira.unidades.map((u) => u.sparkline.length))
+  const n = carteira.serie_meses.length
   return Array.from({ length: n }, (_, i) => {
     let soma = 0
     let algum = false
