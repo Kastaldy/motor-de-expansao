@@ -51,6 +51,7 @@ _CACHED = [
     "_icone_ultra",
     "_carregar_concorrentes",
     "_carregar_ultra_pontos",
+    "_carregar_ultra_mapeadas",
     "bairros_por_hex",
     "_base_calibracao",
     "_carregar_growth",
@@ -79,6 +80,7 @@ def _point_app_at(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
     monkeypatch.setattr(pilot, "ENRICHED_DIR", outputs / "hexagonos_dashboard_enriquecido")
     monkeypatch.setattr(pilot, "CONCORRENTES_PARQUET", staging / "concorrentes_mapeados.parquet")
     monkeypatch.setattr(pilot, "ULTRA_PERF_PARQUET", staging / "unidades_ultra_performance_hex.parquet")
+    monkeypatch.setattr(pilot, "ULTRA_MAPEADAS_PARQUET", staging / "unidades_ultra_mapeadas.parquet")
     monkeypatch.setattr(pilot, "GROWTH_PARQUET", staging / "growth_api_historico.parquet")
     monkeypatch.setattr(pilot, "GEOCODE_CACHE_DIR", data_dir / "cache" / "geocode")
     _clear_caches()
