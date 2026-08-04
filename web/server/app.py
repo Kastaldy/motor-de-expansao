@@ -617,8 +617,17 @@ def _etiqueta(
     O passo 4 continua com vocabulario de FILA, nao de intensidade: ali a leitura e
     a ordem de ataque, nao o quanto o hexagono comporta.
 
-    O ramo antigo de `"conc. 2 km"` foi REMOVIDO: nenhum `_rank_items` passa esse
-    label (as tres chamadas usam "score" ou "residual"), entao era codigo morto.
+    O ramo `"conc. 2 km"` (camada 3) CONTINUA VIVO. Ele parecia codigo morto quando
+    este trabalho comecou — nenhuma chamada passava esse label — mas o PR #184
+    introduziu `metrica_etiqueta` justamente para reviva-lo, separando "unidade
+    exibida sob o numero" de "chave que escolhe o ramo". Removido, a camada 3 do
+    funil por MUNICIPIO saia com a etiqueta VAZIA (medido em Campinas). Nao se
+    reverte em silencio uma decisao ja mergeada.
+
+    ATENCAO ao homonimo: `Livre` existe nos DOIS vocabularios com sentidos
+    diferentes — aqui e' "nenhum concorrente no hexagono", na camada 2 e' "cabe uma
+    unidade inteira". A camada 3 pinta pelo residual mas rotula pela concorrencia,
+    entao os dois podem aparecer na mesma tela. Se incomodar, e' decisao de texto.
     """
     from motor_expansao.dashboard.constants import (
         CAPACIDADE_UNIDADE_ALUNOS,
@@ -630,6 +639,14 @@ def _etiqueta(
     if metrica == "score":
         # `valor` JA e' o score 0-100 (`score_setor_2022_calibrado`).
         return _faixa_para_chip(v, FAIXAS_MAPA_POTENCIAL)
+    if metrica == "conc. 2 km":
+        # Leitura COMPETITIVA da camada 3 (PR #184): quantos concorrentes ha no hex.
+        n = int(row.get("n_concorrentes_est") or 0)
+        if n == 0:
+            return "Livre", "green", None
+        if n <= 2:
+            return "Adensar", "blue", None
+        return "Disputa", "red", None
     if metrica == "residual":
         if row.get("_fila"):
             # Passo 4: a etiqueta e' a FAIXA DE OPORTUNIDADE do M1, a mesma que a
