@@ -251,6 +251,25 @@ def test_ordenacao_poe_nulos_por_ultimo_nas_duas_direcoes(rede: Path) -> None:
         assert ordenadas[-1]["metricas"]["nps"]["atual"] is None, (
             f"nulo deveria ficar no fim tambem em {direcao}"
         )
+        valores = [u["metricas"]["nps"]["atual"] for u in ordenadas[:-1]]
+        assert valores == sorted(valores, reverse=direcao == "desc")
+
+
+def test_empate_desempata_por_nome_na_mesma_ordem_das_duas_direcoes(rede: Path) -> None:
+    """A tela e o CSV nao podem discordar sobre a ordem de duas unidades empatadas.
+
+    Com `reverse=True`, o desempate por nome inverteria junto e as mesmas duas linhas
+    sairiam trocadas entre uma superficie e outra.
+    """
+    empatadas = [
+        {"nome": "ZULU", "prioridade": 1.0, "metricas": {"nps": {"atual": 50}}},
+        {"nome": "ALFA", "prioridade": 1.0, "metricas": {"nps": {"atual": 50}}},
+    ]
+    for direcao in ("asc", "desc"):
+        ordenadas = pilot._rede_ordenar(list(empatadas), "nps", direcao)
+        assert [u["nome"] for u in ordenadas] == ["ALFA", "ZULU"], (
+            f"empate deveria sair em ordem alfabetica tambem em {direcao}"
+        )
 
 
 def test_diagnostico_nunca_sai_de_mes_aberto(rede: Path) -> None:

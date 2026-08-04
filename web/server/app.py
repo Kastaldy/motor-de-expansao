@@ -2702,23 +2702,26 @@ def _rede_ordenar(
     O `?? -Infinity` da v1 só funcionava em `desc`: em `asc`, quem não tinha o
     número subia para o topo da lista de trabalho.
     """
-    reverso = direcao != "asc"
+    sinal = 1.0 if direcao == "asc" else -1.0
 
     def chave(unidade: dict[str, Any]) -> tuple[int, float, str]:
         if ordenar == "prioridade":
             valor = unidade.get("prioridade")
         elif ordenar == "nome":
-            return (0, 0.0, unidade.get("nome", ""))
+            valor = None
         else:
             valor = (unidade.get("metricas", {}).get(ordenar) or {}).get("atual")
-        ausente = valor is None
-        # `not reverso` inverte o marcador de ausência junto com a ordem, de forma
-        # que o `sort` decrescente e o crescente empurrem os nulos para o mesmo lado.
-        return (1 if ausente != reverso else 0, float(valor or 0.0), unidade.get("nome", ""))
+        nome = str(unidade.get("nome", ""))
+        # SEMPRE crescente, com o sinal embutido no número: `reverse=True` inverteria
+        # também o desempate por nome, e as mesmas duas unidades empatadas sairiam em
+        # ordem diferente na tela e no CSV. O marcador de ausência vem primeiro, então
+        # nulo fica no fim nas duas direções — o `?? -Infinity` da v1 só funcionava em
+        # `desc`, e em `asc` o dado ausente subia para o topo da lista de trabalho.
+        return (1 if valor is None else 0, sinal * float(valor or 0.0), nome)
 
     if ordenar == "nome":
-        return sorted(unidades, key=lambda u: u.get("nome", ""), reverse=not reverso)
-    return sorted(unidades, key=chave, reverse=reverso)
+        return sorted(unidades, key=lambda u: str(u.get("nome", "")), reverse=direcao != "asc")
+    return sorted(unidades, key=chave)
 
 
 @app.get("/api/rede/carteira")
