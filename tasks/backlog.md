@@ -1809,10 +1809,10 @@ ou explicitamente recusados com justificativa; suíte completa sem regressão (b
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Alta** (coluna nova num coletor de produção, no repo externo `VinhoAbencoado/GymScraping`; muda o schema de um CSV com 12.769 linhas já coletadas e estende o escopo de coleta autorizado pela DEC-013). **Exige emenda à DEC-013 registrada + gate humano obrigatório** antes do Builder. Não pode ser Média: `scripts/aplicar_criticidade_label.py:38` arma **auto-merge** para Baixa/Média, o que furaria o gate que este bloco declara. |
-| **Prioridade** | Depois do gate conjunto descrito abaixo, e antes do **BLK-MA-09**, que é o consumidor da coluna. |
-| **Esteira** | Block Orchestrator → Planner → `[GATE CONJUNTO — Vinicius: D-A/D-B/D-C do BLK-MA-09 + emenda de escopo da DEC-013]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | DEC-013 (emenda de escopo, a registrar no gate). |
+| **Prioridade** | **DESBLOQUEADO** — o gate foi resolvido pela **DEC-023** (2026-08-04). Antes do **BLK-MA-09**, que é o consumidor da coluna. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — RESOLVIDO pela DEC-023 em 2026-08-04; NÃO reabrir]` → Builder → QA. |
+| **Status** | Pendente — pronto para o Block Orchestrator. |
+| **Depende de** | **DEC-023** (autoriza o escopo de coleta, fixa o schema persistido e emenda as partes 2 e 3 da DEC-013). |
 | **Autonomia** | **manual (NÃO loop-safe)** — repo externo, coletor de produção que roda na VPS por cron; toca a trilha de scrapers. NÃO marcar loop-safe. |
 
 **Contexto (medido em 2026-07-30/31; evidência em `data/reports/sonda_rating_agregadores_2026-07-31.md`).**
@@ -1831,13 +1831,17 @@ WellHub e persistir os dois como agregados numéricos no CSV, sem coletar nenhum
 avaliação. Entregável: `Wellhub/csvs/unidades_wellhub_<uf>.csv` com as colunas novas, e o
 consolidado regenerado de forma íntegra.
 
-**STOP-RULE (ler antes de começar).** Este bloco **paga o custo** de uma decisão cujo valor só o
-**BLK-MA-09** materializa, e as três decisões de gate daquele bloco (D-A, D-B, D-C) são **100%
-decidíveis hoje** — nenhuma delas precisa da coluna existir. Por isso o gate é **conjunto**. Se o
-gate decidir **D-C = manter `{s1,s2}` provisório** e **D-B = segmentar por regime**, então este par
-de blocos entrega **zero** valor ordenável até o S3 amadurecer (~8 meses na cadência real), e a
-recomendação é **repriorizar os dois para depois do cron mensal dos agregadores**. Construir o MA-08
-antes desse gate é o caminho default para deixá-lo órfão.
+**STOP-RULE — RESOLVIDA em 2026-08-04 (ler o desfecho antes de começar).** Este bloco **paga o custo**
+de uma decisão cujo valor só o **BLK-MA-09** materializa. Se o gate do MA-09 decidir
+**D-C = manter `{s1,s2}` provisório** e **D-B = segmentar por regime**, este par de blocos entrega
+**zero** valor ordenável até o S3 amadurecer (~8 meses na cadência real). **Desfecho:** Vinicius
+**FATIOU o gate** (DEC-023) — o MA-08 avança com as decisões de schema, e D-A/D-B/D-C ficam para o
+gate do MA-09, sem serem pré-requisito deste bloco. O risco de o bloco ficar órfão foi **assumido
+explicitamente**. O que o compensa: a rodada de migração exigida por este bloco produz a nota das
+12.769 unidades com o `nome` ao lado, o que converte o pré-requisito do D-A — hoje uma sonda ao vivo
+**sem script versionado** (`data/reports/sonda_rating_agregadores_2026-07-31.md:130-131`) — numa
+consulta local ao CSV, com N grande e restrita a `independente`. Registrar a distribuição medida no
+handoff do QA: ela é o insumo do gate do MA-09.
 
 **Escopo permitido (repo `VinhoAbencoado/GymScraping`, clonado em `../GymScraping`).** Quatro pontos
 de código, todos já localizados: (1) constante `_RSC_PARTNER_RATING_BLOCK_RE` em `Wellhub/extracao.py`
@@ -1851,13 +1855,17 @@ agregadores). Testes em `Wellhub/tests/`. Docs: `CLAUDE.md:23` do GymScraping e
 `Wellhub/RECON.md:97` (contrato de colunas), mais as duas correções de carona de docs **já stale
 hoje** (`RECON.md:12` e `csv_writer.py:4`, ambos listando 9 colunas, sem `atividades`).
 
-**Duas decisões de produto para o gate.** (a) **Uma coluna ou duas?** O `label` embute a contagem
-(`(105 Avaliações)`); a recomendação é **duas** (`nota_wellhub` e `qtd_avaliacoes_wellhub`, ambas
-agregados numéricos), porque a contagem é o que permite ponderar confiança — 2/53 unidades têm menos
-de 30 avaliações, e 5,0 com 13 avaliações não vale o mesmo que 4,73 com 1.262. (b) **`value`
-inteiro.** Duas das 4 fixtures trazem `5`, não `5.0`; `_extract_number` devolve `float`, e
-`str(5.0)` grava `"5.0"`. Decidir entre fidelidade ao bruto (capturar string) e normalização
-numérica — e travar a escolha em teste.
+**Três decisões de produto — RESOLVIDAS pela DEC-023 (parte 5) em 2026-08-04. NÃO reabrir.**
+(a) **Duas colunas, não uma:** `nota_wellhub` e `qtd_avaliacoes_wellhub`, ambas agregados numéricos,
+em `FIELDNAMES` **antes** de `data_coleta`. O `label` embute a contagem (`(105 Avaliações)`) e ela vem
+de graça no mesmo bloco; é o que permite ponderar confiança — 2/53 unidades têm menos de 30
+avaliações, e 5,0 com 13 avaliações não vale o mesmo que 4,73 com 1.262. (b) **`value` como float
+normalizado** (`4.81`, `5.0`): duas das 4 fixtures trazem `5`, não `5.0`, mas `_extract_number` já
+devolve `float` e `str(5.0)` grava `"5.0"`, então normalizar é o comportamento default e custo zero,
+enquanto preservar o bruto exigiria código novo — e o único ganho do bruto (detectar mudança de
+formato) já está coberto por (c). **Travar a escolha em teste.** (c) **Os três estados se distinguem
+pelas duas colunas, sem coluna extra:** *tem nota* = `4.81` · `105`; *sem avaliações* = `""` · `0`;
+*bloco ausente do HTML* = `""` · `""`.
 
 **O estado "sem avaliações" tem forma DIFERENTE.** Numa das 54 unidades sondadas o campo vem como
 `\"partnerRating\":null` — o objeto inteiro nulo, **não** `{"value":null,...}` —, logo após

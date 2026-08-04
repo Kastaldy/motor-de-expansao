@@ -29,3 +29,8 @@ Emendas entram no próprio arquivo da DEC, não no índice.
 - [DEC-016](DEC-016.md) — Portão da `main` por checks de CI (0 aprovações) e auto-merge de blocos Baixa/Média
 - [DEC-017](DEC-017.md) — Normalização de EOL (`tasks/`+`docs/` em LF) + enxugamento do CODEOWNERS
 - [DEC-018](DEC-018.md) — Vista aérea por tiles de satélite (Esri) no Relatório Pontual Censitário (BLK-SAT-01) — **APROVADA** (2026-07-23)
+- [DEC-019](DEC-019.md) — Segundo dono autorizado a liberar merge Crítico (`@VinhoAbencoado`); emenda a blindagem #3 da DEC-016
+- [DEC-020](DEC-020.md) — Escopo do corte do Streamlit pelo piloto web (BLK-WEB-11); emendada pela DEC-022
+- [DEC-021](DEC-021.md) — Raio do Relatório Pontual Censitário passa de 1,5 km para 1,0 km; emenda a decisão-chave 5 da DEC-005
+- [DEC-022](DEC-022.md) — Substituição total do Streamlit pelo piloto web: corte imediato, `dashboard.` vira host só de `/tiles/` + 301
+- [DEC-023](DEC-023.md) — Extensão do escopo de coleta do GymScraping: nota in-app do WellHub (`partnerRating`) como agregado numérico (BLK-MA-08); emenda as partes 2 e 3 da DEC-013
