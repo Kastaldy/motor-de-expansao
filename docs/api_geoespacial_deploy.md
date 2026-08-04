@@ -104,6 +104,10 @@ API_BOT_SENHA=uma-senha-forte
 
 ## 5. Como rodar
 
+> **Produção é containerizada** — os serviços `api` + `bot` sobem via `docker-compose.prod.yml`
+> (runbook em [`deploy_api_bot.md`](deploy_api_bot.md)). O passo a passo manual abaixo vale para
+> desenvolvimento/diagnóstico local.
+
 A partir da raiz do repo, com o venv ativo:
 
 ```bash

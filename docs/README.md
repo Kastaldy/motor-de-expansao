@@ -1,8 +1,7 @@
 # Índice de `docs/`
 
 Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de status:
-**[canônico]** fonte atual · **[histórico]** descreve um estado antigo (ver o canônico apontado) ·
-**[spike]** artefato descartável de medição.
+**[canônico]** fonte atual · **[histórico]** descreve um estado antigo (ver o canônico apontado).
 
 > A fonte de verdade curta do projeto é o `CLAUDE.md` (raiz); o roadmap por bloco é `tasks/backlog.md`;
 > as decisões (DEC) ficam em [`docs/decisions/`](decisions/README.md).

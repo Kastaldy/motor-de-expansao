@@ -1,6 +1,6 @@
 """Relatorio Municipal (BLK-RELMUN-01) — PDF de 9 paginas por municipio selecionado.
 
-Modulo NOVO e disjunto. COEXISTE com o Relatorio Pontual Censitario (raio 1,5 km),
+Modulo NOVO e disjunto. COEXISTE com o Relatorio Pontual Censitario (raio 1,0 km),
 que fica BYTE-A-BYTE INTOCADO (este modulo NAO importa nenhum helper `_`-prefixado de
 `censo_report.py`/`censo_map.py`; os helpers de layout/desenho sao reimplementados aqui
 para isolamento total). READ-ONLY sobre o M1: nao recalcula `score_priorizacao`,

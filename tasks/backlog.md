@@ -283,8 +283,8 @@ ligado/desligado; ruff + mypy + pytest verdes; **gate visual do Felipe**.
 > **Criticidade Alta porque emenda a DEC-011** (Alta): a representação do raio de 5 km nos painéis
 > de Socioeconomia/Residual muda, e a emenda de 2026-07-22 daquela DEC dizia explicitamente "dois
 > raios distintos, cada um **ROTULADO** no próprio mapa". Nada de M1: é camada de visualização/
-> relatório (§5 guardrail permanente) — `setor_censitario_intersecao_area_1p5km`, raio de 1,5 km,
-> `score_priorizacao`, carteira, plano e artefatos oficiais ficam INTOCADOS.
+> relatório (§5 guardrail permanente) — `setor_censitario_intersecao_area_1km`, raio de 1,0 km
+> (DEC-021), `score_priorizacao`, carteira, plano e artefatos oficiais ficam INTOCADOS.
 
 **Escopo (4 partes, decididas por Felipe):**
 
@@ -310,7 +310,7 @@ ligado/desligado; ruff + mypy + pytest verdes; **gate visual do Felipe**.
    H3 res-7 que CONTÉM o ponto ganha uma borda fina de destaque** (`destaque_3857`,
    `_HEX_CENTRAL_EDGE_COLOR` = o mesmo azul do antigo círculo, `_HEX_CENTRAL_LINEWIDTH = 3`) — só a
    borda; o preenchimento continua vindo do `color_fn`, e sem hex central desenhável simplesmente
-   não há borda. As camadas de 1,5 km seguem com círculo + rótulo, byte-a-byte idênticas.
+   não há borda. As camadas de 1,0 km seguem com círculo + rótulo, byte-a-byte idênticas.
 4. **Cadastro de 68 redes** do coletor semanal (VinhoAbencoado/GymScraping, [DEC-013](../docs/decisions/DEC-013.md))
    em `dashboard/competitors.py`: as redes já tinham CSV em `concorrentes/Unidades/unidades_<slug>.csv`,
    mas caíam em `independente` porque `load_competitor_points` só itera `COMPETITOR_SPECS`. Entram nos
@@ -329,7 +329,7 @@ em `test_relatorio_pontual_viabilidade.py`/`test_relatorio_pontual_orquestracao.
 `CAMADAS_CENSITARIAS`; a bateria da camada/página `entorno` **removida**; ausência de círculo e de
 rótulo de raio nos dois painéis de 5 km; borda do hex central mudando pixels sem alterar a cor do
 choropleth; equivalência do wrapper depreciado com a clássica (mesmo PDF + `DeprecationWarning`);
-regressão de byte-identidade das camadas de 1,5 km.
+regressão de byte-identidade das camadas de 1,0 km.
 
 **Impacto cruzado:** `BLK-WEB-*` (piloto web) importa `gerar_pdf_relatorio_pontual_censitario` pelo
 nome — por isso o wrapper, e não a remoção do símbolo. Deploy: mudança em `dashboard/` **não**
@@ -2558,7 +2558,7 @@ pins com logo + cluster (M7/M16).
 
 **Contexto.** Helpers puros já retornam dicts prontos: `analisar_entorno_ponto` (`data.py:726`, raio 1.6 km),
 `agregar_cenario_multihex` (`data.py:863`, **25 campos**), `analisar_ponto_censitario_setores` (`censo_point.py:155`,
-raio fixo **1.5 km** `censo_point.py:23`), `parse_hex_ids_from_text` (`data.py:1015`), `lookup_hex_by_coord`.
+raio fixo **1.0 km** (DEC-021) `censo_point.py:34`), `parse_hex_ids_from_text` (`data.py:1015`), `lookup_hex_by_coord`.
 
 **Objetivo.** **`GET /ponto/entorno?lat=&lng=&raio_km=1.6`**; **`POST /cenario/multihex`** (lista de `hex_id` →
 `agregar_cenario_multihex`, aceitar colar lista via `parse_hex_ids_from_text`, devolver os 25 campos +
@@ -3166,7 +3166,7 @@ Emendas em DEC-004 e DEC-011.
 | **Status** | Pendente |
 | **Autonomia** | **manual (NÃO loop-safe)** — muda resolução de render, exige gate visual |
 
-**Contexto (medido no frame canônico do Pontual: raio 1,5 km, canvas 1000x760, lat −23,55).**
+**Contexto (medido no frame canônico do Pontual à época: raio 1,5 km, canvas 1000x760, lat −23,55 — raio de 1,0 km desde a DEC-021).**
 O mosaico de rótulos busca **624 tiles** por relatório contra 169 do basemap, e aloca um canvas de
 `13312x12288` RGBA ≈ **654 MB por chamada**. O `@2x` é **100% desperdiçado**: o mosaico sai a
 3,349 px/m contra 0,1548 px/m do frame — downsample de **21,6x** no render. O cache do
