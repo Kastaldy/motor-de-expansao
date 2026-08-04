@@ -509,7 +509,7 @@ def test_pdf_concorrentes_contagem_total_e_mais_n_quando_excede_10():
             _sector_record("355030801000002", box(0, -700, 700, 700), pop=1400, renda=2600, score=86),
         ]
     )
-    # 12 concorrentes + 1 Ultra = 13 redes (>10) bem dentro do raio de 1.5 km.
+    # 12 concorrentes + 1 Ultra = 13 redes (>10) bem dentro do raio de 1.0 km.
     competitors = pd.DataFrame(
         [
             {

@@ -102,8 +102,8 @@ _LABELS_ZOOM_BUMP = -1
 # `_BASEMAP_CACHE_DIR` porque o conteudo e' outro: PNG RGBA nosso, indexado por (z,x,y), e nao o
 # cache interno do contextily/requests-cache.
 _LABELS_CACHE_DIR = Path("data/cache/label_tiles")
-# Timeout POR TILE. Era 20 s, mas o mosaico do frame canonico do Pontual (raio 1,5 km, canvas
-# 1000x760) tem 624 tiles em 8 workers: contra um CDN que faz BLACKHOLE (nao recusa, so' nao
+# Timeout POR TILE. Era 20 s, mas o mosaico do frame canonico do Pontual (a epoca raio 1,5 km,
+# canvas 1000x760) tinha 624 tiles em 8 workers: contra um CDN que faz BLACKHOLE (nao recusa, so' nao
 # responde) o pior caso era 624/8 x 20 s ~= 26 min segurando a geracao do PDF. Com 8 s cai para
 # ~10 min. Ainda longo — o teto de verdade e' um orcamento de tempo do mosaico inteiro, anotado
 # como follow-up no BLK-BASEMAP-04 junto com o desperdicio do @2x.
@@ -117,7 +117,7 @@ _EARTH_M = 2.0 * np.pi * 6378137.0
 # circulo do raio (AZUL, pedido de Vini 2026-06-17) e barra de escala/labels em tinta ESCURA.
 # _CIRCLE_RGBA: azul vivido, visivel sobre o fundo claro do basemap. BLK-RELPON-14: nos paineis
 # de 5 km o circulo saiu e este mesmo azul passou a desenhar a borda do hex central
-# (`_HEX_CENTRAL_EDGE_COLOR`); nas camadas de 1,5 km ele segue sendo o circulo do raio.
+# (`_HEX_CENTRAL_EDGE_COLOR`); nas camadas de 1,0 km ele segue sendo o circulo do raio.
 # 2026-07-29 (Felipe): "um azul um pouco mais forte/escuro, nao muito". A saturacao ja era
 # 100%, entao so a luminosidade da p/ mexer: HSL(216,100%,50%) -> HSL(216,100%,43%).
 # ~14% mais escuro, mesma matiz, longe de azul-marinho. Limite pratico: os predicados de
@@ -135,7 +135,7 @@ _STREET_CEIL = 160
 _STREET_GAIN = 2.2
 _STREET_CAP = 210
 
-# Margem do frame do mapa em torno do circulo de 1.5 km. O choropleth (display) cobre TODO
+# Margem do frame do mapa em torno do circulo de 1.0 km. O choropleth (display) cobre TODO
 # o frame (setores recortados a este RETANGULO com a proporcao da area de mapa), nao so o
 # circulo — estilo GeoFusion, sem letterbox. A analise (KPIs) segue circular/INTOCADA; e so RENDER.
 _MAP_FRAME_MARGIN = 0.08
@@ -146,7 +146,7 @@ _MAP_FRAME_MARGIN = 0.08
 _PIN_LOGO_PX = 30
 
 # Web Mercator (CRS nativo dos tiles). A composicao do mapa novo acontece em 3857;
-# o motor (intersecao setor x circulo 1.5 km) segue intocado em aeqd local (censo_point).
+# o motor (intersecao setor x circulo 1.0 km) segue intocado em aeqd local (censo_point).
 CRS_WEB_MERCATOR = "EPSG:3857"
 
 MAPA_CENSITARIO_METRICAS = {
@@ -178,8 +178,8 @@ CAMADAS_CENSITARIAS = (
 
 # BLK-RELPON-10: raio de EXIBICAO do mapa de Residual Fitness por hexagono. NAO e' parametro de
 # motor — nao entra em `config.py` nem no §3 do CLAUDE.md, e nao toca
-# `setor_censitario_intersecao_area_1p5km`/`RAIO_CENSITARIO_DEFAULT_KM` (o motor censitario segue
-# em 1,5 km, INTOCADO). Motivo do raio maior: no circulo de 1,5 km cabem so 3 a 5 hexes res-7 ->
+# `setor_censitario_intersecao_area_1km`/`RAIO_CENSITARIO_DEFAULT_KM` (o motor censitario segue
+# em 1,0 km, INTOCADO). Motivo do raio maior: num circulo de 1,5 km cabem so 3 a 5 hexes res-7 ->
 # mosaico chapado, nao mapa de calor. READ-ONLY sobre o M1.
 RAIO_RESIDUAL_DISPLAY_KM = 5.0
 # Raio `k` do disco H3 (res-7) de hexes candidatos ao redor do hex central. O disco cobre no PIOR
@@ -389,7 +389,7 @@ def _metric_label(metric_column: str) -> str:
 
 # ── Faixa superior "<variavel> no raio" por camada (BLK-RELPON-05, faixa REVERTIDA p/ o
 # raio pelo BLK-RELPON-06/D1) ──────────────────────────────────────────────────────────
-# Formata o valor AGREGADO do raio de 1.5 km (densidade sobre area valida, renda e score
+# Formata o valor AGREGADO do raio de 1.0 km (densidade sobre area valida, renda e score
 # medios ponderados) -- NAO mais o valor bruto do setor que contem o ponto (BLK-RELPON-05
 # original). `TEXTO_SEM_DADO` para None/NaN (sem setores intersectados).
 #
@@ -508,7 +508,7 @@ def _paste_logo_pin(
     BLK-RELPON-09: saiu o balao teardrop com a logo mascarada em circulo; entra a
     propria logo num quadrado de `size` px, com borda branca e sombra leve. Ancora o
     CENTRO do quadrado no ponto (px, py) -- o marcador nao tem ponta, e ancorar a base
-    deslocaria a leitura ~15 px (~88 m no frame de 1,5 km). O ponto exato da analise
+    deslocaria a leitura ~15 px (~88 m no frame de 1,5 km da epoca). O ponto exato da analise
     segue marcado pelo pin vermelho central (`_draw_center_pin`, INALTERADO). Reusa a
     mascara alpha do tile RGBA. Logo real quando ha PNG no _ICON_CACHE; sigla no fallback.
     """
@@ -761,7 +761,7 @@ def _fetch_basemap(
     nesta chamada (`None` = usa a constante, que continua `1`). Na `main` o parametro SAIU junto
     com a camada de quadra do BLK-RELPON-11, seu unico chamador la. NESTA branch ele FICA porque
     tem outros DOIS chamadores vivos, ambos por custo/timeout de tiles no piloto: a orquestradora
-    passa `zoom_bump=0` no frame de 1,5 km e `_render_camada_residual_hex` passa `-1` no de 5 km
+    passa `zoom_bump=0` no frame de 1,0 km e `_render_camada_residual_hex` passa `-1` no de 5 km
     (ver os comentarios nas duas chamadas). Remove-lo aqui reintroduziria o estouro de timeout do
     Relatorio Pontual corrigido em `d6b9b65`.
     """
@@ -778,7 +778,7 @@ def _fetch_basemap(
         minx, miny, maxx, maxy = bounds_3857
         bump = _BASEMAP_ZOOM_BUMP if zoom_bump is None else int(zoom_bump)
         # `max(0, ...)` e' guarda barata contra bump negativo em bbox continental (o piloto
-        # passa `zoom_bump` -1/0 nos frames de 5 km e 1,5 km; ver as chamadas).
+        # passa `zoom_bump` -1/0 nos frames de 5 km e 1,0 km; ver as chamadas).
         zoom = max(0, min(19, _zoom_for_bounds(minx, maxx, width) + bump))
         source = _basemap_source(ctx)
         img, extent = ctx.bounds2img(minx, miny, maxx, maxy, zoom=zoom, source=source, ll=False)
@@ -1003,7 +1003,7 @@ def _render_camada(
       rodape (o resto — EPSG:3857 e atribuicao/fundo offline — fica). Os dois andam JUNTOS nos
       paineis de hexagono (Socioeconomia/Residual): a 5 km o circulo era so ENQUADRAMENTO, nao
       um raio de ANALISE, e desenha-lo contradizia o motor censitario de 1,5 km. As camadas de
-      1,5 km continuam passando circulo + raio e saem byte-a-byte identicas.
+      1,0 km continuam passando circulo + raio e saem byte-a-byte identicas.
     - `destaque_3857` desenha uma BORDA FINA (`_HEX_CENTRAL_*`) por cima do choropleth, sem
       mexer no preenchimento: e' o que identifica o ponto nos paineis que perderam o circulo.
 
@@ -1242,8 +1242,8 @@ def _score_legend_entries() -> list[tuple[str, tuple[int, int, int, int]]]:
 
 # ── BLK-RELPON-10: camada de Residual Fitness por HEXAGONO H3 (raio de EXIBICAO 5 km) ──────
 # READ-ONLY sobre o M1: `oferta_efetiva_disponivel` e' apenas LIDA do dataframe recebido; nada
-# aqui recalcula score/flag/carteira/plano nem escreve artefato. O motor censitario (raio 1,5 km,
-# `setor_censitario_intersecao_area_1p5km`) fica INTOCADO — esta camada e' um recorte visual
+# aqui recalcula score/flag/carteira/plano nem escreve artefato. O motor censitario (raio 1,0 km,
+# `setor_censitario_intersecao_area_1km`) fica INTOCADO — esta camada e' um recorte visual
 # paralelo, com escala PROPRIA e rotulada como tal.
 
 # BLK-RELPON-14: borda fina do hexagono que CONTEM o ponto. E' ela que passa a identificar o
@@ -1407,11 +1407,11 @@ def _render_camada_residual_hex(
 ) -> bytes | None:
     """Choropleth de `value_col` por hexagono H3 no raio de EXIBICAO de 5 km.
 
-    Monta o PROPRIO frame/basemap (bounds diferentes das camadas de 1,5 km) e delega o
+    Monta o PROPRIO frame/basemap (bounds diferentes das camadas de 1,0 km) e delega o
     desenho a `_render_camada`, cujo `sector_records_3857` ja e' generico (poligonos 3857 coloridos
     por `color_fn`) — nao precisa saber que sao hexes. Pins de concorrentes/Ultra sao filtrados
     pelo bbox do frame de 5 km (NAO reusa `result["concorrentes_raio"]`, que e' do recorte de
-    1,5 km e daria a impressao falsa de que so existem aqueles). Devolve `None` quando nao ha hex
+    1,0 km e daria a impressao falsa de que so existem aqueles). Devolve `None` quando nao ha hex
     desenhavel -> a chave `residual` some do dict e o slide cai no fallback textual do PDF.
 
     Generalizado no BLK-RELPON-13 (DEFAULT-PRESERVING): TODOS os parametros keyword-only novos
@@ -1454,7 +1454,8 @@ def _render_camada_residual_hex(
     # junto com os parametros `competitors_df`/`ultra_df`.
     #
     # Zoom GROSSO para o overview de 5 km (piloto web): o frame do residual e ~10x mais largo
-    # que os mapas de 1,5 km, entao o zoom default (+1) baixaria CENTENAS de tiles (o Relatorio
+    # que os mapas do raio do relatorio (a epoca 1,5 km; com o 1,0 km da DEC-021 a razao so
+    # cresce), entao o zoom default (+1) baixaria CENTENAS de tiles (o Relatorio
     # Pontual estourava o timeout). z13 (~14 m/px) casa com a resolucao de exibicao (1280 px p/
     # ~18 km) e mostra vias/quadras principais — detalhe de rua nao e legivel a 5 km de qualquer
     # forma. Vale nos DOIS modos de basemap (CartoDB e self-host `API_BASEMAP_TILES_URL`).
@@ -1553,7 +1554,7 @@ def render_mapas_censitarios_combinados(
     revisto no BLK-RELPON-13 (gate visual de Vinicius, 2026-07-23):
     - `socioeconomia` e o choropleth de `score_setor_2022_calibrado` por HEXAGONO H3 res-7 num
       raio de EXIBICAO de 5 km (disco `grid_disk` k=5), com a MESMA metrica/paleta do `score`
-      do grid 2x2 — o que a distingue e' a geometria/escala (hex a 5 km, nao setor a 1,5 km).
+      do grid 2x2 — o que a distingue e' a geometria/escala (hex a 5 km, nao setor a 1,0 km).
       Reusa o caminho de `_render_camada_residual_hex` (mesmo frame/basemap/clip do residual).
       CONDICIONAL como o `residual`: so entra no dict quando `hexes_df` traz `hex_id` +
       `score_setor_2022_calibrado` e ha >= 1 hex desenhavel; senao a chave e' AUSENTE e o PDF
@@ -1575,7 +1576,7 @@ def render_mapas_censitarios_combinados(
     camada `entorno` (mapa de quadra do BLK-RELPON-11): a pagina foi removida do PDF.
 
     READ-ONLY sobre o M1: o motor (`analisar_ponto_censitario_setores`,
-    `setor_censitario_intersecao_area_1p5km`, raio 1.5 km) e INTOCADO; toda a mudanca e
+    `setor_censitario_intersecao_area_1km`, raio 1.0 km) e INTOCADO; toda a mudanca e
     de RENDER. `basemap=False` forca o caminho offline (canvas branco sem ruas) — default
     seguro em CI/teste. `import contextily` e lazy: sem o extra `[basemap]` cai no offline.
 
@@ -1599,7 +1600,7 @@ def render_mapas_censitarios_combinados(
     dashboard quanto no PDF (que embute os mesmos PNGs). A camada `concorrentes` NAO
     recebe a faixa (fica byte-a-byte igual): e um mapa so-pins, sem variavel continua por
     setor. BLK-RELPON-06 (D1) REVERTEU a fonte da faixa: era o valor BRUTO do setor que
-    CONTEM o ponto, agora sao os agregados do RAIO de 1.5 km (densidade sobre area valida,
+    CONTEM o ponto, agora sao os agregados do RAIO de 1.0 km (densidade sobre area valida,
     renda e score medios ponderados) -- rotulo "no raio". Os 5 campos `*_setor_ponto`
     continuam no `result` para CSV/auditoria.
     """
@@ -1768,7 +1769,7 @@ def render_mapas_censitarios_combinados(
         street_cap=street_cap,
     )
 
-    # BLK-RELPON-06 (D1): faixa superior por camada, com os agregados do RAIO de 1.5 km
+    # BLK-RELPON-06 (D1): faixa superior por camada, com os agregados do RAIO de 1.0 km
     # (ja expostos por `result`, computados no proprio `analisar_ponto_censitario_setores`
     # acima) -- REVERTE a fonte do BLK-RELPON-05, que usava o valor BRUTO do setor que
     # CONTEM o ponto. `TEXTO_SEM_DADO` quando nao ha setores intersectados (sem area valida).
@@ -1864,7 +1865,7 @@ def render_mapas_censitarios_combinados(
 
     # BLK-RELPON-13: camada `socioeconomia` do slide-hero = `score_setor_2022_calibrado` por
     # HEXAGONO H3 res-7 no raio de EXIBICAO de 5 km (disco `grid_disk` k=5), MESMA metrica/paleta
-    # do `score` do grid 2x2 — o que muda e' a geometria/escala (hex a 5 km, nao setor a 1,5 km).
+    # do `score` do grid 2x2 — o que muda e' a geometria/escala (hex a 5 km, nao setor a 1,0 km).
     # Reusa `_render_camada_residual_hex` (mesmo frame/basemap/clip do residual), so trocando o
     # dado/titulo/legenda/cor. CONDICIONAL como o `residual`: sem `hexes_df`, sem a coluna
     # `score_setor_2022_calibrado` ou sem hex desenhavel -> chave AUSENTE, fallback textual do PDF.
