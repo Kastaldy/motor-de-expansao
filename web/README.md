@@ -27,15 +27,22 @@ Há um **seletor de PERÍODO** (competência) no topo — escolha o mês a anali
 qualquer KPI (faturamento, alunos ativos, churn, NPS, ticket); e churn/NPS mostram a
 variação em **pontos percentuais** (`pp`/`pts`), não em % relativo (menos confuso).
 
-**ETL (atenção — a base tem peculiaridades, Felipe 2026-07-20):** os dados são
-DIÁRIOS e `faturamento`/`churn`/`cancelados` **acumulam no mês (MTD) e resetam no
-dia 1**. Por isso **faturamento e churn são rolling 30 dias** (reconstruídos do
-cumulativo: mês + cauda do mês anterior — o MTD parcial mostra ~metade); o M-1
-compara a janela equivalente do mês anterior (mesmo dia-do-mês); snapshots
-(ativos/pagantes) comparam o mesmo dia. **Dado sujo filtrado**: entradas
-administrativas/de teste (faturamento < R$ 20k ou churn > 100%) e unidades paradas
-ficam fora; há também uma lista de exclusão explícita (`_EXEC_EXCLUIR`). Camada
-PARALELA, sem PII, READ-ONLY sobre o M1.
+**ETL (atenção — a base tem peculiaridades):** os dados são DIÁRIOS e `faturamento`,
+`cancelados`, `visitas` e `vendas` **acumulam no mês (MTD) e resetam no dia 1**,
+enquanto `pagantes`, `ativos_total` e `NPS` são a foto do dia. Tratar uma cumulativa
+como snapshot subestima o número pelo tanto de mês que ainda não passou — foi o que
+acontecia com o "ticket médio" até a **DEC-023**. Por isso as razões que precisam de
+janela (receita por recorrente, churn) são reconstruídas em **30 dias** (mês + cauda
+do mês anterior), e o M-1 compara sempre o **mesmo dia-do-mês**.
+
+Todo o cálculo vive em `src/motor_expansao/dashboard/rede_*` (`rede_metricas`,
+`rede_diagnostico`, `rede_coorte`, `rede_cadastro`, `rede_export`); `web/server/app.py`
+é adaptador. **Quem fica de fora da rede comparável**: as unidades que não são academias,
+casadas por **nome cru** em `rede_metricas.EXCLUIDAS_NOME_CRU` (casar por chave
+normalizada derrubava a academia `AGUAS CLARAS` junto com o studio `AGUAS CLARAS - DF`),
+e unidades sem dado no mês. Unidade **inaugurada dentro da competência** aparece na
+carteira, mas fica fora do ranking, da média da rede e do diagnóstico — é o gate que
+substituiu o antigo piso de R$ 20 mil. Camada PARALELA, sem PII, READ-ONLY sobre o M1.
 
 > **READ-ONLY sobre o M1.** Nada aqui recalcula `score_priorizacao`, pesos ou
 > `hex_score_estrutural`, e nenhum artefato oficial é escrito. A camada só lê

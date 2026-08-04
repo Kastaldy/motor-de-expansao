@@ -123,6 +123,13 @@ services:
       # O backend deriva OUTPUTS/STAGING/IBGE/ULTRA/CENSO_GEO/ENRICHED de MOTOR_DATA_DIR.
       MOTOR_DATA_DIR: "/app/data"
       WEB_DIST_DIR: "/app/web/dist"
+      # DEC-023 — cadastro operacional das unidades (consultor, master franquia). E a
+      # UNICA escrita do piloto, e por isso mora FORA do MOTOR_DATA_DIR: assim nenhum
+      # artefato do M1 fica sob um mount de escrita e o guardrail READ-ONLY do backend
+      # (test_backend_read_only_por_ast + test_leituras_nao_mutam_artefatos) continua
+      # valendo sem excecao nenhuma. Sem o volume, a aba sobe igual, so sem as dimensoes
+      # de cadastro (leitura degrada, escrita devolve 503).
+      MOTOR_CADASTRO_DIR: "/app/cadastro"
       # BLK-SAT-01: chave do ArcGIS Location Platform p/ a vista aerea (satelite) do
       # Relatorio Pontual. Sem a var -> render devolve None -> pagina omitida (PDF sai igual).
       API_ARCGIS_API_KEY: ${API_ARCGIS_API_KEY:-}
@@ -148,6 +155,8 @@ services:
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF
       - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)
+      # UNICO mount de ESCRITA do piloto (DEC-023). Fora de /app/data de proposito.
+      - /opt/motor-expansao/cadastro:/app/cadastro:rw            # cadastro operacional (consultor etc.)
     networks:
       - app_net
     security_opt:

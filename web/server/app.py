@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
@@ -58,6 +58,17 @@ _REPO_ROOT = _HERE.parents[2]
 _SRC = _REPO_ROOT / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+
+# Nucleo semantico da Visao Executiva 2.0 (DEC-023). Importado no topo, e nao de forma
+# lazy como o resto do modulo, porque e' consumido por helpers de modulo e nao so' dentro
+# de rotas; sao 4 modulos que dependem apenas de pandas (ja carregado). O gerador de
+# export (`rede_export`) segue lazy, dentro das rotas: ele puxa fpdf2 e openpyxl.
+from motor_expansao.dashboard import (  # noqa: E402
+    rede_cadastro,
+    rede_coorte,
+    rede_diagnostico,
+    rede_metricas,
+)
 
 _DEFAULT_DATA = Path(
     r"C:\Users\Felipe Silva\Downloads\motor-de-expansao\motor-de-expansao\data"
@@ -1887,24 +1898,24 @@ def _base_calibracao() -> tuple[pd.DataFrame | None, str]:
 
 
 # ============================================================================
-# Rotas — Visão Executiva por estado (rede Ultra real, camada PARALELA) — WEB-15
+# Rotas — Visão Executiva (rede Ultra real, camada PARALELA) — WEB-15, DEC-023
 #
-# Agrega `growth_api_historico.parquet` (ingestão semanal da Growth API, DEC-013)
-# por UF: alunos ativos/pagantes reais, faturamento, churn, split pagantes ×
+# Lê `growth_api_historico.parquet` (ingestão diária da Growth API, DEC-013):
+# alunos ativos/recorrentes reais, faturamento, churn, split recorrentes ×
 # agregadores. READ-ONLY sobre o M1; camada de rede PARALELA (sem PII — o parquet
 # é agregado por unidade/data).
+#
+# O que era `_FAT_MIN_EXEC = 20000.0` (piso de faturamento) saiu daqui na DEC-023:
+# era um literal financeiro não nomeado, que `dimensionamento/config.py` proíbe, e
+# foi substituído por um gate SEMÂNTICO em `rede_metricas` — unidade inaugurada
+# dentro da competência não é comparável. Medido em jul/2026: o gate semântico
+# explica 100% dos casos que o piso pegava, sem derrubar academia da carteira.
+# A lista de exclusão virou `rede_metricas.EXCLUIDAS_NOME_CRU`, casada por nome
+# CRU (a versão por chave normalizada derrubava a academia AGUAS CLARAS junto com
+# o studio AGUAS CLARAS - DF).
 # ============================================================================
 
 GROWTH_PARQUET = STAGING_DIR / "growth_api_historico.parquet"
-# Piso de faturamento (30d) para uma unidade contar como academia OPERANTE. Entradas
-# administrativas/de teste na base têm faturamento irrisório (R$ 1-5 mil) e churn
-# impossível (>100%) — "dado sujo" que polui ranking e totais. Academia real >> isto.
-_FAT_MIN_EXEC = 20000.0
-# Unidades a EXCLUIR da Visão Executiva (pedido de Felipe 2026-07-20): fora da rede
-# comparável. Casadas por nome normalizado (sem acento, sem sufixo " - UF").
-# "ADMINISTRACAO" não é unidade física — é a entrada administrativa da base Growth,
-# que nunca terá coordenada e não deve entrar em ranking nem em total.
-_EXEC_EXCLUIR = {"NATAL", "BATEL", "BACACHERI", "AGUAS CLARAS", "ADMINISTRACAO"}
 
 # Siglas de UF que aparecem como SUFIXO do nome da unidade, em três grafias que
 # convivem nas bases: "Bangú / RJ", "BANGU - RJ" e "Icaraí RJ". O separador é
@@ -2065,10 +2076,6 @@ def _wavg(valores: pd.Series, pesos: pd.Series) -> float | None:
     return _num(float((v[m] * w[m]).sum() / w[m].sum()), 2)
 
 
-def _prev_month(ano: int, mes: int) -> tuple[int, int]:
-    return (ano - 1, 12) if mes == 1 else (ano, mes - 1)
-
-
 def _numf(v: Any) -> float | None:
     """float JSON-safe SEM arredondar (NaN/inf -> None)."""
     try:
@@ -2078,211 +2085,1040 @@ def _numf(v: Any) -> float | None:
     return None if (math.isnan(f) or math.isinf(f)) else f
 
 
-@app.get("/api/executiva/{uf}")
-def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
-    """Rede Ultra por estado, com o ETL correto da base Growth.
+# ============================================================================
+# Rotas — Visão Executiva 2.0: a rede Ultra como carteira acionável (DEC-023)
+#
+# A v1 desta aba respondia bem a "onde estão as unidades" e mal a "o que fazer
+# com elas". Aqui a base Growth vira dois níveis — carteira priorizada e ficha
+# da unidade — sobre o núcleo semântico de `motor_expansao.dashboard.rede_*`.
+#
+# Todo o cálculo mora em `src/`; este arquivo é adaptador. Isso não é estética:
+# `web/**` é classe GOVERNANÇA no `loop_guard` (DEC-022) e cada linha aqui custa
+# um gate humano, enquanto `src/` é revisável em bloco.
+#
+# READ-ONLY sobre o M1. A ÚNICA escrita do backend é o cadastro operacional, num
+# diretório próprio fora do `MOTOR_DATA_DIR` (§11 do plano, DEC-023).
+# ============================================================================
 
-    Peculiaridades tratadas (Felipe 2026-07-20): a base é DIÁRIA e `faturamento`,
-    `churn` e `cancelados` ACUMULAM no mês (MTD) e resetam no dia 1. Logo:
-      - acumulados (faturamento) -> valor MTD no dia de referência; M-1 = MESMO
-        DIA-DO-MÊS do mês anterior (12/06 vs 12/05), comparação justa;
-      - snapshots (ativos/pagantes/agregadores/ticket/NPS) -> valor no mesmo dia;
-      - churn -> ROLLING 30 dias (reconstruído do cumulativo mensal), não o MTD
-        parcial que subestima;
-      - unidades sem dado no mês de referência (paradas) ficam FORA.
-    Todos os cards trazem `atual`, `m1` e `delta_pct`. READ-ONLY sobre o M1.
-    """
-    df = _carregar_growth()
-    if not len(df):
-        raise HTTPException(404, "Base de rede (growth_api_historico.parquet) ausente no servidor.")
-    sel = df[df["uf"].astype(str).str.upper() == uf.upper()].copy()
-    if not len(sel):
-        raise HTTPException(404, f"Sem unidades Ultra com dados de rede na UF {uf.upper()}.")
+CADASTRO_DIR = Path(os.environ.get("MOTOR_CADASTRO_DIR", str(_REPO_ROOT / "data" / "cadastro")))
 
-    # Período (competência) analisável: o operador escolhe o mês no topo — evita
-    # ficar preso ao mês corrente parcial. Default = mês mais recente com dado.
-    meses = sorted({str(p) for p in sel["_data"].dt.to_period("M").dropna().unique()}, reverse=True)
-    mes_sel = mes if (mes in meses) else (meses[0] if meses else None)
-    if mes_sel is None:
-        raise HTTPException(404, f"Sem competências com dado na UF {uf.upper()}.")
-    ry, rm = int(mes_sel[:4]), int(mes_sel[5:7])
-    # dia de referência = último dia COM DADO no mês escolhido (mês passado -> fim do
-    # mês; mês corrente -> último dia coletado).
-    ref = sel.loc[(sel["_data"].dt.year == ry) & (sel["_data"].dt.month == rm), "_data"].max()
-    dom = int(ref.day)
-    py, pm = _prev_month(ry, rm)
+# Métricas servidas com o quarteto de contexto (valor, M-1, ranking, % vs média).
+# É a leitura que o time de campo já faz na planilha; a ordem é a da carteira.
+#
+# A CARTEIRA leva um subconjunto e a FICHA leva tudo. Não é economia gratuita: o
+# quarteto custa ~110 bytes por métrica por unidade, e as 19 métricas em 92 linhas
+# levavam o payload a 277 KB. Com 12, fica em ~190 KB — e a ficha, que é uma unidade
+# só, continua com a lista inteira.
+_REDE_METRICAS: tuple[str, ...] = (
+    "faturamento",
+    "ativos",
+    "pagantes",
+    "agregadores",
+    "receita_por_recorrente",
+    "churn_pct",
+    "conversao_pct",
+    "nps",
+    "saldo_operacional",
+    "novos_alunos",
+    "vendas",
+    "cancelados",
+    "visitas",
+    "em_cobranca_pct",
+    "pct_agregador_alunos",
+    "faturamento_sem_agregador",
+    "faturamento_agregador",
+    "inadimplente",
+    "treino_ativo",
+)
 
-    uf_sel = uf.upper()
+#: O que a carteira serve por unidade (as demais só na ficha e no export da ficha).
+_REDE_METRICAS_CARTEIRA: tuple[str, ...] = (
+    "faturamento",
+    "ativos",
+    "pagantes",
+    "agregadores",
+    "receita_por_recorrente",
+    "churn_pct",
+    "conversao_pct",
+    "nps",
+    "saldo_operacional",
+    "pct_agregador_alunos",
+    "novos_alunos",
+    "em_cobranca_pct",
+)
 
-    def mtd(g: pd.DataFrame, ano: int, mes: int) -> pd.Series | None:
-        """Última linha do mês (ano,mes) com dia <= dom (valor MTD nesse dia)."""
-        m = g[(g["_data"].dt.year == ano) & (g["_data"].dt.month == mes) & (g["_data"].dt.day <= dom)]
-        return m.iloc[-1] if len(m) else None
+# KPIs do topo da tela. Soma para volume, média ponderada para taxa — somar churn
+# de 92 unidades daria um número sem significado nenhum.
+_REDE_KPIS_SOMA = ("faturamento", "ativos", "pagantes", "agregadores", "saldo_operacional")
+_REDE_KPIS_MEDIA = {
+    "churn_pct": "pagantes",
+    "receita_por_recorrente": "pagantes",
+    "nps": "ativos",
+    "conversao_pct": "visitas",
+}
 
-    def mes_cheio(g: pd.DataFrame, ano: int, mes: int) -> pd.Series | None:
-        m = g[(g["_data"].dt.year == ano) & (g["_data"].dt.month == mes)]
-        return m.iloc[-1] if len(m) else None
+# Meses oferecidos no seletor de competência.
+_REDE_MESES_NO_SELETOR = 24
+# Meses da série histórica da ficha e da sparkline da carteira.
+_REDE_MESES_SERIE = 12
+# Teto de segurança do payload da carteira (o cliente não pagina).
+_REDE_MAX_UNIDADES = 400
 
-    def rolling30(g: pd.DataFrame, ano: int, mes: int, colr: str) -> float | None:
-        """Soma dos ~30 dias que terminam no dia `dom` de (ano,mes) para uma coluna
-        CUMULATIVA mensal (faturamento, cancelados): MTD do mês + (mês anterior
-        COMPLETO − MTD do mês anterior até `dom`). Reconstrói a janela de 30 dias
-        sobre o cumulativo que reseta no dia 1. Ex.: faturamento de 12/06 = jun(1..12)
-        + mai(13..31) ≈ um mês cheio (não os 12 dias parciais)."""
-        atual = mtd(g, ano, mes)
-        if atual is None:
-            return None
-        v = _numf(atual.get(colr))
-        if v is None:
-            return None
-        pa, pmo = _prev_month(ano, mes)
-        cheio, ate_dom = mes_cheio(g, pa, pmo), mtd(g, pa, pmo)
-        extra = 0.0
-        if cheio is not None and ate_dom is not None:
-            fv, sv = _numf(cheio.get(colr)), _numf(ate_dom.get(colr))
-            if fv is not None and sv is not None:
-                extra = max(0.0, fv - sv)
-        return v + extra
 
-    def churn30(g: pd.DataFrame, ano: int, mes: int) -> float | None:
-        """Churn dos ~30 dias (cancelados rolling 30d / base de pagantes), em %."""
-        canc = rolling30(g, ano, mes, "cancelados")
-        atual = mtd(g, ano, mes)
-        pag = _numf(atual.get("pagantes")) if atual is not None else None
-        if canc is None or not pag:
-            return None
-        return 100.0 * canc / pag
+@functools.lru_cache(maxsize=1)
+def _rede_base() -> pd.DataFrame:
+    """Base Growth preparada: identidade resolvida e não-academias fora."""
+    return rede_metricas.carregar_base(GROWTH_PARQUET)
 
-    def agr(row: pd.Series | None) -> float | None:
-        if row is None:
-            return None
-        return (_numf(row.get("alunos_gympass")) or 0.0) + (_numf(row.get("alunos_totalpass")) or 0.0)
 
-    def val(row: pd.Series | None, c: str) -> float | None:
-        return _numf(row.get(c)) if row is not None else None
+@functools.lru_cache(maxsize=1)
+def _rede_fechamento() -> pd.DataFrame:
+    """Fechamento mensal de TODA a série, sem corte de dia (a base do histórico)."""
+    return rede_metricas.fechamento_mensal(_rede_base())
 
-    rows: list[dict[str, Any]] = []
-    for nome_u, g in sel.groupby("unidade", observed=True):
-        nome = _clean(nome_u)
-        if _chave_unidade(nome) in _EXEC_EXCLUIR:
-            continue  # unidade excluída da rede comparável (pedido de Felipe)
-        g = g.sort_values("_data")
-        cur = mtd(g, ry, rm)
-        if cur is None:
-            continue  # unidade sem dado no mês de referência (parada) -> fora
-        # Faturamento EXIBIDO = MTD (acumulado no mês até o dia de referência): o
-        # "faturamento até o dia disponível" que o Felipe pediu. O rolling30 (mês
-        # cheio reconstruído com a cauda do mês anterior) inflava o mês PARCIAL
-        # ~2x (SP jun 2,20x) e passa a servir SÓ como proxy de "unidade operante"
-        # no gate abaixo, para o piso de R$20k não derrubar unidade real no mês
-        # parcial (poucos dias de MTD ainda ficariam sob o piso).
-        fat_cur = _numf(cur.get("faturamento"))
-        fat_gate = rolling30(g, ry, rm, "faturamento")
-        churn_cur = churn30(g, ry, rm)
-        # Dado sujo: entradas administrativas/de teste (faturamento irrisório ou
-        # churn impossível >100%) poluem ranking e totais -> fora.
-        if fat_gate is None or fat_gate < _FAT_MIN_EXEC or (churn_cur is not None and churn_cur > 100.0):
-            continue
-        m1 = mtd(g, py, pm)
-        c = _coord_da_unidade(nome, uf_sel)
-        rows.append(
-            {
-                "nome": nome,
-                "lat": c[0] if c else None,
-                "lng": c[1] if c else None,
-                "inauguracao": _clean(cur.get("inauguracao")),
-                # faturamento = MTD (acumulado no mês até o dia de referência); M-1 =
-                # MTD do mês anterior até o MESMO dia-do-mês (mtd() já limita a day<=dom)
-                "fat_cur": fat_cur,
-                "fat_m1": _numf(m1.get("faturamento")) if m1 is not None else None,
-                "ativos_cur": val(cur, "ativos_total"),
-                "ativos_m1": val(m1, "ativos_total"),
-                "pag_cur": val(cur, "pagantes"),
-                "pag_m1": val(m1, "pagantes"),
-                "agr_cur": agr(cur),
-                "agr_m1": agr(m1),
-                "ticket_cur": val(cur, "ticket_medio_pagantes"),
-                "ticket_m1": val(m1, "ticket_medio_pagantes"),
-                "nps_cur": val(cur, "NPS"),
-                "nps_m1": val(m1, "NPS"),
-                "churn_cur": churn_cur,
-                "churn_m1": churn30(g, py, pm),
-            }
+
+@functools.lru_cache(maxsize=1)
+def _rede_cadastro() -> Any:
+    """Cadastro operacional (consultor, master franquia...). Degrada se não montado."""
+    return rede_cadastro.ler_cadastro(CADASTRO_DIR)
+
+
+def _rede_meses() -> list[str]:
+    fech = _rede_fechamento()
+    return sorted({str(c) for c in fech["competencia"].unique()}, reverse=True) if len(fech) else []
+
+
+def _rede_exigir_base() -> pd.DataFrame:
+    base = _rede_base()
+    if not len(base):
+        raise HTTPException(
+            404, "Base de rede (growth_api_historico.parquet) ausente no servidor."
         )
+    return base
 
-    if not rows:
-        raise HTTPException(404, f"Sem unidades com dados no mês de referência na UF {uf.upper()}.")
 
-    U = pd.DataFrame(rows)
-    for c in (
-        "fat_cur fat_m1 ativos_cur ativos_m1 pag_cur pag_m1 agr_cur agr_m1 "
-        "ticket_cur ticket_m1 nps_cur nps_m1 churn_cur churn_m1 lat lng"
-    ).split():
-        U[c] = pd.to_numeric(U[c], errors="coerce")
+@functools.lru_cache(maxsize=4)
+def _rede_mes(mes_sel: str) -> dict[str, Any]:
+    """Tudo que a competência `mes_sel` produz, calculado UMA vez.
 
-    def soma_metric(cur_c: str, m1_c: str) -> dict[str, Any]:
-        """Total (soma). `atual` = todos; `m1`/delta na cesta com M-1 (comparável)."""
-        both = U[U[cur_c].notna() & U[m1_c].notna()]
-        m1_sum = float(both[m1_c].sum()) if len(both) else None
-        cur_both = float(both[cur_c].sum()) if len(both) else None
-        delta = (100.0 * (cur_both - m1_sum) / m1_sum) if (m1_sum and cur_both is not None) else None
-        return {"atual": _num(U[cur_c].sum()), "m1": _num(m1_sum), "delta_pct": _num(delta, 1)}
+    Carteira, ficha, CSV, XLSX e PDF leem daqui. É a resposta ao defeito mais caro
+    deste projeto: a mesma unidade com dois números em duas superfícies (o
+    `test_carteira_e_ficha_concordam` existe para travar isso).
+    """
+    base = _rede_exigir_base()
+    cheio = _rede_fechamento()
+    periodo = pd.Period(mes_sel, freq="M")
+    anterior = str(periodo - 1)
 
-    def media_metric(cur_c: str, m1_c: str, w_cur: str, w_m1: str) -> dict[str, Any]:
-        atual, m1v = _wavg(U[cur_c], U[w_cur]), _wavg(U[m1_c], U[w_m1])
-        delta = (100.0 * (atual - m1v) / m1v) if (atual is not None and m1v) else None
-        return {"atual": _num(atual, 2), "m1": _num(m1v, 2), "delta_pct": _num(delta, 1)}
+    no_mes = cheio[cheio["competencia"] == mes_sel]
+    if not len(no_mes):
+        raise HTTPException(404, f"Sem dados da rede na competência {mes_sel}.")
+    referencia = pd.Timestamp(no_mes["dia_ref"].max())
+    dia_corte = int(referencia.day)
 
-    tot_pag = float(U["pag_cur"].fillna(0).sum())
-    tot_agr = float(U["agr_cur"].fillna(0).sum())
-    base_split = tot_pag + tot_agr
-    com_coord = U[U["lat"].notna()]
+    corte = rede_metricas.fechamento_mensal(base, dia_corte=dia_corte)
+    atual = _rede_janela(corte, cheio, mes_sel)
+    m1 = _rede_janela(corte, cheio, anterior)
 
-    unidades = [
-        {
-            "nome": r["nome"],
-            "lat": _num(r["lat"], 6),
-            "lng": _num(r["lng"], 6),
-            "faturamento": _num(r["fat_cur"]),
-            "ativos": _num(r["ativos_cur"]),
-            "pagantes": _num(r["pag_cur"]),
-            "agregadores": _num(r["agr_cur"]),
-            "churn": _num(r["churn_cur"], 2),
-            "ticket": _num(r["ticket_cur"], 2),
-            "nps": _num(r["nps_cur"], 1),
-            "inauguracao": r["inauguracao"],
-        }
-        for _, r in U.sort_values("fat_cur", ascending=False).iterrows()
-    ]
+    contexto = rede_metricas.contexto_comparativo(atual)
+    contexto = rede_coorte.anotar_coortes(contexto)
+
+    # O diagnóstico NUNCA roda sobre mês aberto: no dia 2, o acumulado de dois dias
+    # acenderia queda de faturamento na rede inteira. A tela diz de que mês ele vem.
+    competencia_diagnostico = rede_diagnostico.competencia_base(cheio, mes_sel)
+    diagnosticos = (
+        rede_diagnostico.diagnosticar(cheio, competencia_diagnostico)
+        if competencia_diagnostico
+        else {}
+    )
 
     return {
-        "uf": uf.upper(),
         "mes": mes_sel,
-        "meses": meses[:12],
-        "referencia": ref.strftime("%d/%m/%Y"),
-        # clampa o dia ao último do mês anterior (M-1 de 31/05 é 30/04, não 31/04)
-        "referencia_m1": (
-            f"{min(dom, pd.Period(freq='M', year=py, month=pm).days_in_month):02d}/{pm:02d}/{py}"
+        "mes_anterior": anterior,
+        "referencia": referencia,
+        "dia_corte": dia_corte,
+        # Fechado = a coleta chegou ao fim do mês. `.all()` sobre as unidades daria
+        # False sempre que UMA unidade nova entrasse no meio do mês; a tolerância de um
+        # dia cobre a ingestão que perde a virada (julho/2026 termina em 30/07 na base).
+        "mes_completo": bool(referencia.day >= periodo.days_in_month - 1),
+        "competencia_diagnostico": competencia_diagnostico,
+        "atual": contexto,
+        "m1": m1.set_index("unidade_id"),
+        "cheio": cheio,
+        "diagnosticos": diagnosticos,
+        "sss": _rede_sss(corte, mes_sel),
+    }
+
+
+def _rede_janela(corte: pd.DataFrame, cheio: pd.DataFrame, competencia: str) -> pd.DataFrame:
+    """Fechamento da competência com as RAZÕES corrigidas para a janela de 30 dias.
+
+    Cumulativas e snapshots já saem certos do fechamento com corte de dia (o mesmo
+    dia-do-mês dos dois lados da comparação). As duas razões abaixo, não: no dia 2
+    do mês, `faturamento_sem_agregador / pagantes` vale dois dias de receita sobre
+    a base inteira — é o R$ 20,28 que a v1 exibia contra R$ 163,67 reais.
+
+    Reconstrói-se então a janela de ~30 dias sobre a cumulativa que reseta no dia 1.
+    Em mês fechado a janela coincide com o próprio mês, e o número não muda.
+    """
+    linhas = corte[corte["competencia"] == competencia].copy()
+    if not len(linhas):
+        return linhas
+    indexado = linhas.set_index("unidade_id")
+
+    receita = rede_metricas.receita_por_recorrente_30d(corte, cheio, competencia)
+    indexado["receita_por_recorrente"] = receita.reindex(indexado.index)
+
+    cancelados = rede_metricas.rolling30(corte, cheio, competencia, "cancelados")
+    # Denominador = recorrentes com que a janela COMEÇOU (a base do mês anterior no
+    # mesmo dia-do-mês), como o `CHURN_DIA = [CANCELADOS_DIA] / [REC_MES_ANTERIOR]`.
+    periodo = pd.Period(competencia, freq="M")
+    base_anterior = corte[corte["competencia"] == str(periodo - 1)].set_index("unidade_id")
+    pagantes_inicio = pd.to_numeric(base_anterior.get("pagantes"), errors="coerce")
+    if pagantes_inicio is None:
+        pagantes_inicio = pd.Series(dtype="float64")
+    pagantes_inicio = pagantes_inicio.reindex(indexado.index)
+    indexado["churn_pct"] = 100.0 * cancelados.reindex(indexado.index) / pagantes_inicio.where(
+        pagantes_inicio.ne(0)
+    )
+    return indexado.reset_index()
+
+
+def _rede_sss(corte: pd.DataFrame, mes_sel: str) -> dict[str, Any]:
+    """Same Store Sales: ano contra ano em BASE COMPARÁVEL.
+
+    A rede abriu 33 unidades em 2025; comparar total contra total mede abertura de
+    loja, não desempenho. Entram só as unidades presentes nos DOIS períodos e que
+    operaram o mês inteiro nos dois — a definição de "mesma loja".
+    """
+    ano_anterior = str(pd.Period(mes_sel, freq="M") - 12)
+    agora = corte[(corte["competencia"] == mes_sel) & corte["operacao_mes_cheio"]]
+    antes = corte[(corte["competencia"] == ano_anterior) & corte["operacao_mes_cheio"]]
+    comuns = sorted(set(agora["unidade_id"]) & set(antes["unidade_id"]))
+    if not comuns:
+        return {"disponivel": False, "competencia_base": ano_anterior, "unidades": 0}
+
+    agora = agora[agora["unidade_id"].isin(comuns)]
+    antes = antes[antes["unidade_id"].isin(comuns)]
+    metricas: dict[str, Any] = {}
+    for chave in ("faturamento", "faturamento_sem_agregador", "agregadores", "ativos", "pagantes"):
+        atual = _numf(pd.to_numeric(agora[chave], errors="coerce").sum())
+        passado = _numf(pd.to_numeric(antes[chave], errors="coerce").sum())
+        metricas[chave] = {
+            "atual": _num(atual),
+            "ano_anterior": _num(passado),
+            "var_pct": _num(100.0 * (atual - passado) / passado, 1) if passado else None,
+        }
+    return {
+        "disponivel": True,
+        "competencia_base": ano_anterior,
+        "unidades": len(comuns),
+        "metricas": metricas,
+    }
+
+
+def _rede_quarteto(linha: pd.Series, m1: pd.Series | None, chave: str) -> dict[str, Any]:
+    """`MÊS | M-1 | Ranking N/total | % vs Média Rede` para uma métrica.
+
+    Eles nunca olham um número sozinho: leem "estou 64% abaixo da média da rede e
+    sou 79º de 89". Esse trio de contexto É o semáforo deles, e diz mais que um
+    chip colorido porque informa o tamanho e a posição do problema.
+    """
+    casas = 2 if chave in ("receita_por_recorrente",) else (1 if chave.endswith("_pct") or chave == "nps" else 0)
+    atual = _numf(linha.get(chave))
+    anterior = _numf(m1.get(chave)) if m1 is not None else None
+    rank = _numf(linha.get(f"rank_{chave}"))
+    total = _numf(linha.get(f"rank_total_{chave}"))
+    delta = (
+        100.0 * (atual - anterior) / anterior
+        if (atual is not None and anterior not in (None, 0))
+        else None
+    )
+    return {
+        "atual": _num(atual, casas),
+        "m1": _num(anterior, casas),
+        "delta_pct": _num(delta, 1),
+        "rank": int(rank) if rank else None,
+        "rank_total": int(total) if total else None,
+        "vs_media_pct": _num(_numf(linha.get(f"vs_media_{chave}")), 1),
+    }
+
+
+def _rede_serie(cheio: pd.DataFrame, unidade_id: str, ate: str, meses: int) -> pd.DataFrame:
+    """Últimas `meses` competências FECHADAS da unidade, em ordem cronológica."""
+    serie = cheio[
+        (cheio["unidade_id"] == unidade_id)
+        & (cheio["competencia"] <= ate)
+        & cheio["mes_completo"].fillna(False).astype(bool)
+    ]
+    return serie.sort_values("competencia", kind="stable").tail(meses)
+
+
+def _rede_unidade_dict(
+    linha: pd.Series,
+    m1: pd.DataFrame,
+    diagnosticos: dict[str, Any],
+    cadastro: Any,
+    cheio: pd.DataFrame,
+    mes_sel: str,
+    *,
+    com_serie: bool = True,
+    metricas: tuple[str, ...] = _REDE_METRICAS_CARTEIRA,
+) -> dict[str, Any]:
+    """Uma linha da carteira: identidade, cadastro, quarteto, diagnóstico e sparkline."""
+    unidade_id = str(linha["unidade_id"])
+    registro = cadastro.de(unidade_id)
+    anterior = m1.loc[unidade_id] if unidade_id in m1.index else None
+    diagnostico = diagnosticos.get(unidade_id)
+    coordenada = _coord_da_unidade(str(linha.get("unidade_cru", "")), str(linha.get("uf", "")))
+    inauguracao = linha.get("inauguracao")
+
+    serie: list[float | None] = []
+    if com_serie:
+        historico = _rede_serie(cheio, unidade_id, mes_sel, _REDE_MESES_SERIE)
+        serie = [_num(v) for v in pd.to_numeric(historico["faturamento"], errors="coerce")]
+
+    return {
+        "id": unidade_id,
+        "nome": str(linha.get("unidade_cru", "")).strip(),
+        "uf": str(linha.get("uf", "")),
+        "master": str(linha.get("master", "")),
+        "cidade": registro.get("cidade") or None,
+        "consultor": registro.get("consultor") or None,
+        "consultor_2": registro.get("consultor_2") or None,
+        "master_franquia": registro.get("master_franquia") or None,
+        "franqueado": registro.get("franqueado") or None,
+        "coorte": str(linha.get("coorte", rede_coorte.COORTE_INDEFINIDA)),
+        "coorte_rotulo": str(linha.get("coorte_rotulo", "")),
+        "meses_operacao": _num(_numf(linha.get("meses_operacao"))),
+        "inauguracao": (
+            pd.Timestamp(inauguracao).strftime("%d/%m/%Y") if pd.notna(inauguracao) else None
         ),
-        "centro": {
-            "lat": _num(com_coord["lat"].mean(), 6) if len(com_coord) else None,
-            "lng": _num(com_coord["lng"].mean(), 6) if len(com_coord) else None,
+        "lat": _num(coordenada[0], 6) if coordenada else None,
+        "lng": _num(coordenada[1], 6) if coordenada else None,
+        "comparavel": bool(linha.get("operacao_mes_cheio", True)),
+        "severidade": diagnostico.severidade if diagnostico else "sem_base",
+        "severidade_rotulo": (
+            rede_diagnostico.ROTULO_SEVERIDADE[diagnostico.severidade]
+            if diagnostico
+            else rede_diagnostico.ROTULO_SEVERIDADE["sem_base"]
+        ),
+        "prioridade": _num(diagnostico.prioridade, 3) if diagnostico else 0.0,
+        "resumo": diagnostico.resumo if diagnostico else "",
+        "faixa_faturamento": diagnostico.faixa_faturamento if diagnostico else "sem_dado",
+        "faixa_faturamento_rotulo": (
+            diagnostico.faixa_faturamento_rotulo if diagnostico else "Sem dado"
+        ),
+        "alertas": [
+            {"codigo": a.codigo, "titulo": a.titulo, "detalhe": a.detalhe, "nivel": a.nivel}
+            for a in (diagnostico.alertas if diagnostico else ())
+        ],
+        "metricas": {c: _rede_quarteto(linha, anterior, c) for c in metricas},
+        "sparkline": serie,
+    }
+
+
+def _rede_kpis(unidades: pd.DataFrame, m1: pd.DataFrame) -> dict[str, Any]:
+    """KPIs do recorte. `atual` = todos; `m1`/delta na cesta com M-1 (comparável)."""
+    if not len(unidades):
+        return {c: {"atual": None, "m1": None, "delta_pct": None} for c in _REDE_KPIS_SOMA}
+    indexado = unidades.set_index("unidade_id")
+    comuns = indexado.index.intersection(m1.index)
+    saida: dict[str, Any] = {}
+
+    for chave in _REDE_KPIS_SOMA:
+        atual = _numf(pd.to_numeric(indexado[chave], errors="coerce").sum())
+        anterior = _numf(pd.to_numeric(m1.loc[comuns, chave], errors="coerce").sum()) if len(comuns) else None
+        atual_cesta = _numf(pd.to_numeric(indexado.loc[comuns, chave], errors="coerce").sum()) if len(comuns) else None
+        delta = (
+            100.0 * (atual_cesta - anterior) / anterior
+            if (anterior and atual_cesta is not None)
+            else None
+        )
+        saida[chave] = {"atual": _num(atual), "m1": _num(anterior), "delta_pct": _num(delta, 1)}
+
+    for chave, peso in _REDE_KPIS_MEDIA.items():
+        atual = _wavg(indexado[chave], indexado[peso])
+        anterior = _wavg(m1.loc[comuns, chave], m1.loc[comuns, peso]) if len(comuns) else None
+        # Churn e NPS variam em PONTOS, não em percentual do percentual: a variação
+        # relativa de um NPS de 2 para 4 seria "+100%", o que confunde mais que informa.
+        delta = 100.0 * (atual - anterior) / anterior if (atual is not None and anterior) else None
+        saida[chave] = {"atual": _num(atual, 2), "m1": _num(anterior, 2), "delta_pct": _num(delta, 1)}
+    return saida
+
+
+def _rede_notas(contexto: dict[str, Any], recorte: pd.DataFrame) -> list[str]:
+    """Notas de método. Toda degradação é DITA, nunca silenciosa."""
+    notas = [
+        "Receita por recorrente = faturamento sem agregador dos últimos 30 dias "
+        "dividido pelos recorrentes ativos. NÃO é o TICKET_MEDIO do PowerBI, que vem "
+        "da venda individual (tabela que a API Growth não expõe).",
+        "O faturamento não bate com a planilha do time: lá o TEM SAÚDE é deduzido "
+        "(cerca de 0,7%).",
+    ]
+    if contexto["competencia_diagnostico"] and contexto["competencia_diagnostico"] != contexto["mes"]:
+        notas.append(
+            f"Diagnóstico e alertas calculados sobre {contexto['competencia_diagnostico']}, "
+            "o último mês fechado: mês em curso não acende alerta."
+        )
+    if len(recorte):
+        novas = int((~recorte["operacao_mes_cheio"].fillna(True).astype(bool)).sum())
+        if novas:
+            notas.append(
+                f"{novas} unidade(s) inauguradas dentro do período: aparecem na carteira, "
+                "mas ficam fora do ranking, da média da rede e do diagnóstico."
+            )
+        sem_nps = int((~recorte["nps_valido"].fillna(False).astype(bool)).sum())
+        if sem_nps:
+            notas.append(f"{sem_nps} unidade(s) sem pesquisa de NPS no período.")
+    notas.append(
+        "Inadimplentes e treino ativo são exibidos sem régua: o denominador ainda não "
+        "foi confirmado com a Growth."
+    )
+    return notas
+
+
+def _rede_filtrar(contexto: dict[str, Any], filtros: dict[str, str | None]) -> pd.DataFrame:
+    """Aplica os filtros da tela. A média da rede e o ranking já foram calculados ANTES.
+
+    A ordem importa: se o ranking fosse calculado depois do filtro, a mesma unidade
+    mudaria de posição ao mexer num filtro — é exatamente o defeito do semáforo
+    relativo que o HTML do time tem hoje.
+    """
+    dados = contexto["atual"]
+    cadastro = _rede_cadastro()
+    diagnosticos = contexto["diagnosticos"]
+
+    if filtros.get("uf"):
+        dados = dados[dados["uf"].astype(str).str.upper() == str(filtros["uf"]).upper()]
+    if filtros.get("master"):
+        dados = dados[dados["master"].astype(str) == filtros["master"]]
+    if filtros.get("coorte"):
+        dados = dados[dados["coorte"].astype(str) == filtros["coorte"]]
+    if filtros.get("consultor"):
+        alvo = str(filtros["consultor"])
+        ids = {
+            uid
+            for uid, registro in cadastro.unidades.items()
+            if str(registro.get("consultor") or "") == alvo
+        }
+        dados = dados[dados["unidade_id"].isin(ids)]
+    if filtros.get("severidade"):
+        alvos = {s.strip() for s in str(filtros["severidade"]).split(",") if s.strip()}
+        dados = dados[
+            dados["unidade_id"].map(
+                lambda uid: (diagnosticos[uid].severidade if uid in diagnosticos else "sem_base")
+                in alvos
+            )
+        ]
+    if filtros.get("busca"):
+        alvo = _chave_unidade(filtros["busca"])
+        if alvo:
+            dados = dados[dados["unidade_cru"].map(lambda n: alvo in _chave_unidade(n))]
+    return dados
+
+
+@app.get("/api/rede/filtros")
+def rede_filtros(mes: str | None = None) -> dict[str, Any]:
+    """Vocabulário dos filtros, réguas vigentes e contadores de qualidade.
+
+    As réguas são SERVIDAS, não repetidas no cliente: é impossível a tela mostrar
+    uma régua e o motor aplicar outra.
+    """
+    _rede_exigir_base()
+    meses = _rede_meses()
+    if not meses:
+        raise HTTPException(404, "Base de rede sem competências com dado.")
+    contexto = _rede_mes(mes if mes in meses else meses[0])
+    atual = contexto["atual"]
+    cadastro = _rede_cadastro()
+
+    com_coordenada = sum(
+        1
+        for linha in atual.itertuples()
+        if _coord_da_unidade(str(linha.unidade_cru), str(linha.uf)) is not None
+    )
+    return {
+        "meses": meses[:_REDE_MESES_NO_SELETOR],
+        "mes_padrao": meses[0],
+        "ufs": sorted({str(u) for u in atual["uf"].dropna().unique()}),
+        "masters": sorted({str(m) for m in atual["master"].dropna().unique() if str(m).strip()}),
+        "consultores": rede_cadastro.valores_distintos(cadastro, "consultor"),
+        "masters_franquia": rede_cadastro.valores_distintos(cadastro, "master_franquia"),
+        "coortes": rede_coorte.resumo_coortes(atual),
+        "severidades": [
+            {"chave": s, "rotulo": rede_diagnostico.ROTULO_SEVERIDADE[s]}
+            for s in rede_diagnostico.SEVERIDADES
+        ],
+        "metricas": [
+            {
+                "chave": m.chave,
+                "rotulo": m.rotulo,
+                "direcao": m.direcao,
+                "bom_subindo": m.bom_subindo,
+                "formato": m.formato,
+            }
+            for m in rede_metricas.METRICAS
+            if m.chave in _REDE_METRICAS
+        ],
+        "reguas": rede_diagnostico.REGUAS_VIGENTES,
+        "meta_nps": rede_diagnostico.META_NPS,
+        "medios_para_alta": rede_diagnostico.MEDIOS_PARA_ALTA,
+        "faixas_faturamento": [
+            {"ate": None if teto == float("inf") else teto, "chave": chave, "rotulo": rotulo}
+            for teto, chave, rotulo in rede_diagnostico.FAIXAS_FATURAMENTO
+        ],
+        "metricas_a_validar": sorted(rede_diagnostico.metricas_proibidas_em_alerta()),
+        "qualidade": {
+            "unidades": int(len(atual)),
+            "com_coordenada": com_coordenada,
+            "com_consultor": sum(
+                1
+                for uid in atual["unidade_id"]
+                if str(cadastro.de(str(uid)).get("consultor") or "").strip()
+            ),
+            "sem_nps": int((~atual["nps_valido"].fillna(False).astype(bool)).sum()),
         },
-        # Bandeira quadrada da Ultra (mesmo tile do Mapa Territorial) para plantar no
-        # centro de cada bolha de faturamento no mapa da rede.
-        "ultra_icon": _icone_ultra() if len(com_coord) else None,
+        "cadastro": {
+            "disponivel": bool(cadastro.disponivel),
+            "versao": int(cadastro.versao),
+            "campos_editaveis": list(rede_cadastro.CAMPOS_EDITAVEIS),
+        },
+        "referencia": pd.Timestamp(contexto["referencia"]).strftime("%d/%m/%Y"),
+        "fonte": "Growth API",
+    }
+
+
+def _rede_carteira_payload(
+    mes: str | None = None,
+    uf: str | None = None,
+    master: str | None = None,
+    consultor: str | None = None,
+    coorte: str | None = None,
+    severidade: str | None = None,
+    busca: str | None = None,
+    ordenar: str = "prioridade",
+    direcao: str = "desc",
+) -> dict[str, Any]:
+    """Payload da carteira. Uma função só, para que tela, CSV, XLSX e PDF nunca divirjam."""
+    meses = _rede_meses()
+    if not meses:
+        _rede_exigir_base()
+        raise HTTPException(404, "Base de rede sem competências com dado.")
+    mes_sel = mes if (mes in meses) else meses[0]
+    contexto = _rede_mes(mes_sel)
+
+    recorte = _rede_filtrar(
+        contexto,
+        {
+            "uf": uf,
+            "master": master,
+            "consultor": consultor,
+            "coorte": coorte,
+            "severidade": severidade,
+            "busca": busca,
+        },
+    )
+    cadastro = _rede_cadastro()
+    unidades = [
+        _rede_unidade_dict(
+            linha,
+            contexto["m1"],
+            contexto["diagnosticos"],
+            cadastro,
+            contexto["cheio"],
+            mes_sel,
+        )
+        for _, linha in recorte.iterrows()
+    ][:_REDE_MAX_UNIDADES]
+    unidades = _rede_ordenar(unidades, ordenar, direcao)
+
+    com_coordenada = [u for u in unidades if u["lat"] is not None]
+    semaforo = {s: 0 for s in rede_diagnostico.SEVERIDADES}
+    for unidade in unidades:
+        semaforo[unidade["severidade"]] = semaforo.get(unidade["severidade"], 0) + 1
+
+    total_pagantes = float(pd.to_numeric(recorte["pagantes"], errors="coerce").fillna(0).sum())
+    total_agregadores = float(pd.to_numeric(recorte["agregadores"], errors="coerce").fillna(0).sum())
+    base_split = total_pagantes + total_agregadores
+    referencia = pd.Timestamp(contexto["referencia"])
+    dia_m1 = pd.Period(contexto["mes_anterior"], freq="M")
+
+    return {
+        "mes": mes_sel,
+        "meses": meses[:_REDE_MESES_NO_SELETOR],
+        "referencia": referencia.strftime("%d/%m/%Y"),
+        "referencia_m1": (
+            f"{min(contexto['dia_corte'], dia_m1.days_in_month):02d}/"
+            f"{dia_m1.month:02d}/{dia_m1.year}"
+        ),
+        "mes_completo": bool(contexto["mes_completo"]),
+        "competencia_diagnostico": contexto["competencia_diagnostico"],
         "totais": {
-            "unidades": int(len(U)),
-            "com_coordenada": int(len(com_coord)),
-            "faturamento": soma_metric("fat_cur", "fat_m1"),
-            "ativos": soma_metric("ativos_cur", "ativos_m1"),
-            "pagantes": soma_metric("pag_cur", "pag_m1"),
-            "agregadores": soma_metric("agr_cur", "agr_m1"),
-            "churn": media_metric("churn_cur", "churn_m1", "pag_cur", "pag_m1"),
-            "ticket": media_metric("ticket_cur", "ticket_m1", "pag_cur", "pag_m1"),
-            "nps": media_metric("nps_cur", "nps_m1", "ativos_cur", "ativos_m1"),
-            "pct_pagantes": _num(100 * tot_pag / base_split, 1) if base_split > 0 else None,
-            "pct_agregadores": _num(100 * tot_agr / base_split, 1) if base_split > 0 else None,
+            "rede": int(len(contexto["atual"])),
+            "no_recorte": len(unidades),
+            "com_coordenada": len(com_coordenada),
+        },
+        "kpis": _rede_kpis(recorte, contexto["m1"]),
+        "split": {
+            "recorrentes": _num(total_pagantes),
+            "agregadores": _num(total_agregadores),
+            "pct_recorrentes": _num(100 * total_pagantes / base_split, 1) if base_split else None,
+            "pct_agregadores": _num(100 * total_agregadores / base_split, 1) if base_split else None,
+        },
+        "semaforo": semaforo,
+        "sss": contexto["sss"],
+        "centro": {
+            "lat": _num(sum(u["lat"] for u in com_coordenada) / len(com_coordenada), 6)
+            if com_coordenada
+            else None,
+            "lng": _num(sum(u["lng"] for u in com_coordenada) / len(com_coordenada), 6)
+            if com_coordenada
+            else None,
+        },
+        "bbox": (
+            {
+                "min_lat": _num(min(u["lat"] for u in com_coordenada), 6),
+                "min_lng": _num(min(u["lng"] for u in com_coordenada), 6),
+                "max_lat": _num(max(u["lat"] for u in com_coordenada), 6),
+                "max_lng": _num(max(u["lng"] for u in com_coordenada), 6),
+            }
+            if com_coordenada
+            else None
+        ),
+        "ultra_icon": _icone_ultra() if com_coordenada else None,
+        "reguas": rede_diagnostico.REGUAS_VIGENTES,
+        "meta_nps": rede_diagnostico.META_NPS,
+        "unidades": unidades,
+        "notas": _rede_notas(contexto, recorte),
+    }
+
+
+def _rede_ordenar(
+    unidades: list[dict[str, Any]], ordenar: str, direcao: str
+) -> list[dict[str, Any]]:
+    """Ordena a carteira. Nulos SEMPRE por último, nas duas direções.
+
+    O `?? -Infinity` da v1 só funcionava em `desc`: em `asc`, quem não tinha o
+    número subia para o topo da lista de trabalho.
+    """
+    reverso = direcao != "asc"
+
+    def chave(unidade: dict[str, Any]) -> tuple[int, float, str]:
+        if ordenar == "prioridade":
+            valor = unidade.get("prioridade")
+        elif ordenar == "nome":
+            return (0, 0.0, unidade.get("nome", ""))
+        else:
+            valor = (unidade.get("metricas", {}).get(ordenar) or {}).get("atual")
+        ausente = valor is None
+        # `not reverso` inverte o marcador de ausência junto com a ordem, de forma
+        # que o `sort` decrescente e o crescente empurrem os nulos para o mesmo lado.
+        return (1 if ausente != reverso else 0, float(valor or 0.0), unidade.get("nome", ""))
+
+    if ordenar == "nome":
+        return sorted(unidades, key=lambda u: u.get("nome", ""), reverse=not reverso)
+    return sorted(unidades, key=chave, reverse=reverso)
+
+
+@app.get("/api/rede/carteira")
+def rede_carteira(
+    mes: str | None = None,
+    uf: str | None = None,
+    master: str | None = None,
+    consultor: str | None = None,
+    coorte: str | None = None,
+    severidade: str | None = None,
+    busca: str | None = None,
+    ordenar: str = "prioridade",
+    direcao: str = "desc",
+) -> dict[str, Any]:
+    """Nível 1: a carteira da rede, priorizada, com o quarteto de contexto por métrica."""
+    return _rede_carteira_payload(
+        mes, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+    )
+
+
+def _rede_ficha_payload(unidade_id: str, mes: str | None = None) -> dict[str, Any]:
+    """Payload da ficha. Lê do MESMO `_rede_mes` que a carteira."""
+    meses = _rede_meses()
+    if not meses:
+        _rede_exigir_base()
+        raise HTTPException(404, "Base de rede sem competências com dado.")
+    mes_sel = mes if (mes in meses) else meses[0]
+    contexto = _rede_mes(mes_sel)
+    atual = contexto["atual"]
+
+    linhas = atual[atual["unidade_id"] == unidade_id]
+    if not len(linhas):
+        raise HTTPException(404, f"Unidade {unidade_id} sem dados na competência {mes_sel}.")
+    linha = linhas.iloc[0]
+    cadastro = _rede_cadastro()
+    registro = cadastro.de(unidade_id)
+
+    base_unidade = _rede_unidade_dict(
+        linha,
+        contexto["m1"],
+        contexto["diagnosticos"],
+        cadastro,
+        contexto["cheio"],
+        mes_sel,
+        com_serie=False,
+        metricas=_REDE_METRICAS,
+    )
+    diagnostico = contexto["diagnosticos"].get(unidade_id)
+
+    historico = _rede_serie(contexto["cheio"], unidade_id, mes_sel, _REDE_MESES_SERIE)
+    # Formato COLUNAR: 0,9 KB contra 2,2 KB do array de objetos, para o mesmo dado.
+    serie = {"meses": [str(c) for c in historico["competencia"]]}
+    for chave in (
+        "faturamento",
+        "faturamento_sem_agregador",
+        "faturamento_agregador",
+        "ativos",
+        "pagantes",
+        "agregadores",
+        "churn_pct",
+        "nps",
+        "receita_por_recorrente",
+        "saldo_operacional",
+        "conversao_pct",
+    ):
+        serie[chave] = [_num(v, 2) for v in pd.to_numeric(historico[chave], errors="coerce")]
+
+    diaria = _rede_serie_diaria(unidade_id, mes_sel)
+    comparacao = rede_coorte.comparar(atual, unidade_id, list(_REDE_METRICAS))
+    coorte_payload = {
+        "chave": comparacao.coorte,
+        "rotulo": comparacao.coorte_rotulo,
+        "degradacao": comparacao.degradacao,
+        "base_rotulo": comparacao.base_rotulo,
+        "n": comparacao.n,
+        "metricas": {
+            chave: {
+                "unidade": base_unidade["metricas"].get(chave, {}).get("atual"),
+                "p25": _num(referencia.p25, 2),
+                "p50": _num(referencia.p50, 2),
+                "p75": _num(referencia.p75, 2),
+                "percentil": _num(comparacao.percentis.get(chave), 0),
+            }
+            for chave, referencia in comparacao.referencias.items()
+        },
+    }
+
+    visitas = _numf(linha.get("visitas")) or 0.0
+    convertidos = _numf(linha.get("convertidos")) or 0.0
+    vendas = _numf(linha.get("vendas")) or 0.0
+    return {
+        "unidade": {
+            **{
+                c: base_unidade[c]
+                for c in (
+                    "id", "nome", "uf", "master", "cidade", "consultor", "consultor_2",
+                    "master_franquia", "franqueado", "coorte", "coorte_rotulo",
+                    "meses_operacao", "inauguracao", "lat", "lng", "comparavel",
+                )
+            },
+            "dpto": registro.get("dpto") or None,
+            "cod_unidade": registro.get("cod_unidade") or None,
+            "gold": registro.get("gold"),
+            "life_time": registro.get("life_time"),
+            "ltv": registro.get("ltv"),
+            "wellhub": registro.get("wellhub") or None,
+            "totalpass": registro.get("totalpass") or None,
+            "modalidades": registro.get("modalidades") or {},
+        },
+        "mes": mes_sel,
+        "meses": meses[:_REDE_MESES_NO_SELETOR],
+        "referencia": pd.Timestamp(contexto["referencia"]).strftime("%d/%m/%Y"),
+        "competencia_diagnostico": contexto["competencia_diagnostico"],
+        "metricas": base_unidade["metricas"],
+        "serie": serie,
+        "serie_diaria": diaria,
+        "funil": {
+            "visitas": _num(visitas),
+            "convertidos": _num(convertidos),
+            "vendas": _num(vendas),
+            "novos_alunos": _num(_numf(linha.get("novos_alunos"))),
+            "conversao_pct": _num(_numf(linha.get("conversao_pct")), 1),
+            # NUNCA clampar em 100%: `vendas > convertidos` em 75% das linhas da base.
+            # Clampar esconderia um problema de coleta em vez de mostrá-lo.
+            "aviso": (
+                "Há venda sem visita registrada no período: o funil não fecha."
+                if vendas > convertidos
+                else None
+            ),
+        },
+        "coorte": coorte_payload,
+        "diagnostico": {
+            "competencia": diagnostico.competencia if diagnostico else None,
+            "severidade": base_unidade["severidade"],
+            "severidade_rotulo": base_unidade["severidade_rotulo"],
+            "prioridade": base_unidade["prioridade"],
+            "resumo": base_unidade["resumo"],
+            "alertas": base_unidade["alertas"],
+            "recomendacoes": [
+                {"codigo": r.codigo, "titulo": r.titulo, "corpo": r.corpo}
+                for r in (diagnostico.recomendacoes if diagnostico else ())
+            ],
+        },
+        "cadastro": {
+            "disponivel": bool(cadastro.disponivel),
+            "versao": int(cadastro.versao),
+            "campos_editaveis": list(rede_cadastro.CAMPOS_EDITAVEIS),
+            "valores": {c: registro.get(c) or "" for c in rede_cadastro.CAMPOS_EDITAVEIS},
+        },
+        "reguas": rede_diagnostico.REGUAS_VIGENTES,
+        "meta_nps": rede_diagnostico.META_NPS,
+        "notas": _rede_notas(contexto, linhas),
+    }
+
+
+def _rede_serie_diaria(unidade_id: str, mes_sel: str) -> dict[str, Any]:
+    """Série DIÁRIA des-acumulada do mês — o bloco de 31 colunas que hoje é colado à mão."""
+    base = _rede_base()
+    saida: dict[str, Any] = {"datas": []}
+    for chave in ("novos_alunos", "vendas", "cancelados"):
+        serie = rede_metricas.serie_diaria(base, unidade_id, chave)
+        if not len(serie):
+            saida[chave] = []
+            continue
+        no_mes = serie[serie["data"].dt.to_period("M").astype(str) == mes_sel]
+        if not saida["datas"]:
+            saida["datas"] = [d.strftime("%d/%m") for d in no_mes["data"]]
+        saida[chave] = [_num(v) for v in pd.to_numeric(no_mes["valor"], errors="coerce")]
+    return saida
+
+
+@app.get("/api/rede/unidade/{unidade_id}")
+def rede_unidade(unidade_id: str, mes: str | None = None) -> dict[str, Any]:
+    """Nível 2: a ficha da unidade — série de 12 meses, funil, coorte e recomendações."""
+    return _rede_ficha_payload(unidade_id, mes)
+
+
+# --- Exports ----------------------------------------------------------------
+
+
+def _rede_nome_arquivo(prefixo: str, payload: dict[str, Any], extensao: str) -> str:
+    return f"{prefixo}_{str(payload.get('mes', '')).replace('-', '')}.{extensao}"
+
+
+def _anexo(conteudo: bytes, nome: str, media_type: str) -> Response:
+    return Response(
+        content=conteudo,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{nome}"'},
+    )
+
+
+@app.get("/api/rede/carteira.csv")
+def rede_carteira_csv(
+    mes: str | None = None,
+    uf: str | None = None,
+    master: str | None = None,
+    consultor: str | None = None,
+    coorte: str | None = None,
+    severidade: str | None = None,
+    busca: str | None = None,
+    ordenar: str = "prioridade",
+    direcao: str = "desc",
+) -> Response:
+    from motor_expansao.dashboard import rede_export
+
+    payload = _rede_carteira_payload(
+        mes, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+    )
+    return _anexo(
+        rede_export.carteira_csv(payload),
+        _rede_nome_arquivo("carteira_rede_ultra", payload, "csv"),
+        "text/csv; charset=utf-8",
+    )
+
+
+@app.get("/api/rede/carteira.xlsx")
+def rede_carteira_xlsx(
+    mes: str | None = None,
+    uf: str | None = None,
+    master: str | None = None,
+    consultor: str | None = None,
+    coorte: str | None = None,
+    severidade: str | None = None,
+    busca: str | None = None,
+    ordenar: str = "prioridade",
+    direcao: str = "desc",
+) -> Response:
+    from motor_expansao.dashboard import rede_export
+
+    payload = _rede_carteira_payload(
+        mes, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+    )
+    return _anexo(
+        rede_export.carteira_xlsx(payload),
+        _rede_nome_arquivo("carteira_rede_ultra", payload, "xlsx"),
+        XLSX_MEDIA_TYPE,
+    )
+
+
+@app.get("/api/rede/carteira.pdf")
+def rede_carteira_pdf(
+    mes: str | None = None,
+    uf: str | None = None,
+    master: str | None = None,
+    consultor: str | None = None,
+    coorte: str | None = None,
+    severidade: str | None = None,
+    busca: str | None = None,
+    ordenar: str = "prioridade",
+    direcao: str = "desc",
+) -> Response:
+    from motor_expansao.dashboard import rede_export
+
+    payload = _rede_carteira_payload(
+        mes, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+    )
+    return _anexo(
+        rede_export.carteira_pdf(payload),
+        _rede_nome_arquivo("carteira_rede_ultra", payload, "pdf"),
+        "application/pdf",
+    )
+
+
+@app.get("/api/rede/unidade/{unidade_id}.pdf")
+def rede_unidade_pdf(unidade_id: str, mes: str | None = None) -> Response:
+    from motor_expansao.dashboard import rede_export
+
+    payload = _rede_ficha_payload(unidade_id, mes)
+    return _anexo(
+        rede_export.ficha_pdf(payload),
+        f"ficha_{unidade_id}_{str(payload.get('mes', '')).replace('-', '')}.pdf",
+        "application/pdf",
+    )
+
+
+# --- Cadastro (a ÚNICA escrita do backend) ----------------------------------
+
+
+def _autor(*valores: Any) -> str | None:
+    """Primeiro header nao vazio, ou None.
+
+    Aceita ser chamada com a rota INVOCADA DIRETO (como faz a suite do piloto, sem
+    TestClient): ali o default do `Header(...)` chega como o proprio objeto `Header`, e
+    nao como `None`. Filtrar por `isinstance(str)` cobre os dois caminhos sem inventar um
+    autor de mentira no log de auditoria.
+    """
+    for valor in valores:
+        if isinstance(valor, str) and valor.strip():
+            return valor.strip()
+    return None
+
+
+class CadastroIn(BaseModel):
+    """Edição de cadastro. `versao` implementa a concorrência otimista."""
+
+    versao: int | None = None
+    campos: dict[str, str] = Field(default_factory=dict)
+
+
+@app.put("/api/rede/cadastro/{unidade_id}")
+def rede_cadastro_atribuir(
+    unidade_id: str,
+    body: CadastroIn,
+    remote_user: str | None = Header(default=None, alias="Remote-User"),
+    remote_email: str | None = Header(default=None, alias="Remote-Email"),
+) -> dict[str, Any]:
+    """Atribui consultor / master franqueado a uma unidade.
+
+    Única rota de escrita do piloto. Grava num diretório PRÓPRIO, fora do
+    `MOTOR_DATA_DIR` — nenhum artefato do M1 fica sob mount de escrita. O autor sai
+    do `Remote-User`, que o Caddy já repassa ao piloto atrás do Authelia.
+    """
+    try:
+        cadastro = rede_cadastro.atribuir(
+            unidade_id,
+            dict(body.campos),
+            autor=_autor(remote_user, remote_email),
+            versao_cliente=body.versao,
+            base=CADASTRO_DIR,
+        )
+    except rede_cadastro.ConflitoDeVersao as erro:
+        raise HTTPException(409, str(erro)) from erro
+    except rede_cadastro.CampoNaoEditavel as erro:
+        raise HTTPException(422, str(erro)) from erro
+    except rede_cadastro.CadastroIndisponivel as erro:
+        raise HTTPException(503, str(erro)) from erro
+    except ValueError as erro:
+        raise HTTPException(422, str(erro)) from erro
+
+    _rede_cadastro.cache_clear()
+    registro = cadastro.de(unidade_id)
+    return {
+        "unidade_id": unidade_id,
+        "versao": cadastro.versao,
+        "valores": {c: registro.get(c) or "" for c in rede_cadastro.CAMPOS_EDITAVEIS},
+    }
+
+
+@app.get("/api/executiva/{uf}")
+def executiva(uf: str, mes: str | None = None) -> dict[str, Any]:
+    """Contrato v1 da Visão Executiva, servido pelo núcleo novo (BLK-EXEC-02).
+
+    A rota continua registrada e com o MESMO payload de antes — só os números
+    mudaram, e mudaram porque estavam errados:
+
+      - o que a v1 chamava de `ticket` era `ticket_medio_pagantes`, uma coluna
+        CUMULATIVA no mês lida como se fosse a foto do dia. No dia 2 de junho, SP
+        aparecia com R$ 18,41 contra R$ 157,26 reais. Agora é a receita de balcão
+        dos últimos ~30 dias por recorrente ativo — e o nome dela, na tela nova, é
+        "receita por recorrente", nunca "ticket médio" (o `TICKET_MEDIO` do PowerBI
+        é o ticket da VENDA e vem de uma tabela que a API Growth não expõe);
+      - o `999` do NPS ("sem pesquisa no período") entrava na média sem filtro;
+      - a exclusão casava por chave normalizada e derrubava a academia
+        `AGUAS CLARAS` junto com o studio `AGUAS CLARAS - DF`.
+
+    O laço Python por unidade morreu junto: tudo vem de `_rede_mes`, vetorizado.
+    """
+    uf_sel = uf.upper()
+    payload = _rede_carteira_payload(mes=mes, uf=uf_sel)
+    if not payload["unidades"]:
+        raise HTTPException(404, f"Sem unidades Ultra com dados de rede na UF {uf_sel}.")
+
+    kpis = payload["kpis"]
+    unidades = [
+        {
+            "nome": u["nome"],
+            "lat": u["lat"],
+            "lng": u["lng"],
+            "faturamento": u["metricas"]["faturamento"]["atual"],
+            "ativos": u["metricas"]["ativos"]["atual"],
+            "pagantes": u["metricas"]["pagantes"]["atual"],
+            "agregadores": u["metricas"]["agregadores"]["atual"],
+            "churn": u["metricas"]["churn_pct"]["atual"],
+            "ticket": u["metricas"]["receita_por_recorrente"]["atual"],
+            "nps": u["metricas"]["nps"]["atual"],
+            "inauguracao": u["inauguracao"] or "",
+        }
+        for u in _rede_ordenar(payload["unidades"], "faturamento", "desc")
+    ]
+    return {
+        "uf": uf_sel,
+        "mes": payload["mes"],
+        "meses": payload["meses"][:12],
+        "referencia": payload["referencia"],
+        "referencia_m1": payload["referencia_m1"],
+        "centro": payload["centro"],
+        "ultra_icon": payload["ultra_icon"],
+        "totais": {
+            "unidades": payload["totais"]["no_recorte"],
+            "com_coordenada": payload["totais"]["com_coordenada"],
+            "faturamento": kpis["faturamento"],
+            "ativos": kpis["ativos"],
+            "pagantes": kpis["pagantes"],
+            "agregadores": kpis["agregadores"],
+            "churn": kpis["churn_pct"],
+            "ticket": kpis["receita_por_recorrente"],
+            "nps": kpis["nps"],
+            "pct_pagantes": payload["split"]["pct_recorrentes"],
+            "pct_agregadores": payload["split"]["pct_agregadores"],
         },
         "unidades": unidades,
     }

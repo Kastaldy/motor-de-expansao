@@ -172,7 +172,7 @@ def resolver_identidade(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Unida
     if not len(df):
         return df.assign(unidade_id=pd.Series(dtype="object")), {}
 
-    trabalho = df.copy()
+    trabalho = _com_colunas_de_identidade(df)
     if "_data" not in trabalho.columns:
         trabalho["_data"] = pd.to_datetime(trabalho["data"], format="%d/%m/%Y", errors="coerce")
     limite = trabalho["_data"].max()
@@ -238,6 +238,20 @@ def resolver_identidade(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Unida
     return trabalho, catalogo
 
 
+#: Colunas de identidade que a API traz hoje. Se alguma sumir num ciclo de ingestao, a
+#: aba degrada (campo vazio) em vez de estourar -- a Visao Executiva nao pode cair por
+#: causa de uma coluna de rotulo.
+_COLUNAS_IDENTIDADE = ("unidade", "uf", "master", "inauguracao")
+
+
+def _com_colunas_de_identidade(df: pd.DataFrame) -> pd.DataFrame:
+    trabalho = df.copy()
+    for coluna in _COLUNAS_IDENTIDADE:
+        if coluna not in trabalho.columns:
+            trabalho[coluna] = ""
+    return trabalho
+
+
 def _fundir(a, b) -> bool:
     """Regra de fusao: faixas de data DISJUNTAS **e** mesma `inauguracao`."""
     disjuntas = bool(a.fim < b.ini or b.fim < a.ini)
@@ -298,7 +312,7 @@ def preparar_base(df: pd.DataFrame) -> pd.DataFrame:
     """Normaliza data + identidade e derruba as unidades fora da rede comparavel."""
     if not len(df):
         return df
-    trabalho = df.copy()
+    trabalho = _com_colunas_de_identidade(df)
     trabalho["_data"] = pd.to_datetime(trabalho.get("data"), format="%d/%m/%Y", errors="coerce")
     trabalho = trabalho.dropna(subset=["_data"])
     trabalho, catalogo = resolver_identidade(trabalho)
