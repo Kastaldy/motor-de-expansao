@@ -4,7 +4,7 @@ Base territorial do MVP nacional do `motor-de-expansao`.
 
 O contrato canonico do projeto esta em `CLAUDE.md`; detalhes do ciclo ativo ficam em `PRD.md`.
 
-O app de producao e o **piloto web** (`web/` — SPA React/Vite + deck.gl no front, FastAPI em `web/server/app.py` no back), com **3 superficies**: **Mapa Territorial** (porta de entrada por UF, funil de 4 camadas ate a recomendacao por municipio), **Visao Executiva** (a rede Ultra real, via Growth API) e **Viabilidade do ponto** (stress-test deterministico de um imovel). Os relatorios em PDF (Pontual Censitario 1,0 km e Municipal) saem do Mapa e da Viabilidade. Em producao tudo roda num unico container (`motor_expansao_web`) em `piloto.ultra-expansao.tech`, atras de Caddy + Authelia. Detalhes de produto em `web/README.md`; arquitetura em `docs/arquitetura_app_atual.md`.
+O app de producao e o **piloto web** (`web/` — SPA React/Vite + deck.gl no front, FastAPI em `web/server/app.py` no back), com **3 superficies**: **Mapa Territorial** (porta de entrada por UF, funil de 5 camadas ate a recomendacao por municipio), **Visao Executiva** (a rede Ultra real, via Growth API) e **Viabilidade do ponto** (stress-test deterministico de um imovel). Os relatorios em PDF (Pontual Censitario 1,0 km e Municipal) saem do Mapa e da Viabilidade. Em producao tudo roda num unico container (`motor_expansao_web`) em `piloto.ultra-expansao.tech`, atras de Caddy + Authelia. Detalhes de produto em `web/README.md`; arquitetura em `docs/arquitetura_app_atual.md`.
 
 O dashboard Streamlit — o app original, estabilizado nos ciclos de mai/2026 — foi **aposentado em 2026-08-03 pela DEC-022** (escopo do corte definido na DEC-020: paridade de Mapa + Visao Executiva + Viabilidade; Expansao de Dominio e Carteira/Plano nao viraram telas). O **motor compartilhado** que ele usava (`src/motor_expansao/dashboard/` — dados, censo, relatorios, concorrentes, viabilidade) continua vivo e e consumido pelo piloto, pela API GeoEspacial, pelo bot Telegram e pelo `fase1_bi_exports`; so a UI Streamlit saiu do repo. Historia dos ciclos: `tasks/completed.md` e `docs/decisions/DEC-020.md`/`DEC-022.md`.
 
@@ -81,7 +81,7 @@ Ambos usam os geradores do motor compartilhado (`censo_report.py`, `relatorio_mu
 
 ### Regua visual de populacao minima (5k hab)
 
-Hexagonos com menos de 5.000 habitantes sao pintados de cinza no mapa e ficam fora do passo 1 (Potencial) do funil — o corte propaga pelas 4 camadas.
+Hexagonos com menos de 5.000 habitantes sao pintados de cinza no mapa e ficam fora do passo 1 (Potencial) do funil — o corte propaga pelas 5 camadas.
 
 - Constante: `POP_MIN_ACIONAVEL = 5_000` em `src/motor_expansao/dashboard/constants.py`
 - Fonte preferencial de populacao: `pop_total_setor_2022` (granular); fallback: `populacao_proxy` = `pop_total` municipal

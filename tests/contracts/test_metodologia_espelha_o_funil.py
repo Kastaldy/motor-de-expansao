@@ -56,9 +56,9 @@ def _camada(metodologia: dict, n: int) -> dict:
 
 
 # --------------------------------------------------------------------- contrato
-def test_payload_tem_as_4_camadas_completas(metodologia):
+def test_payload_tem_as_5_camadas_completas(metodologia):
     camadas = metodologia["camadas"]
-    assert [c["n"] for c in camadas] == [1, 2, 3, 4]
+    assert [c["n"] for c in camadas] == [1, 2, 3, 4, 5]
     for c in camadas:
         assert c["titulo"] and c["pergunta"] and c["corte"]
         assert c["faixas"], f"camada {c['n']} sem faixa publicada"
@@ -117,9 +117,37 @@ def test_camada_3_publica_o_vocabulario_competitivo_no_municipio(metodologia):
         assert etiqueta == esperada, f"{n} concorrentes -> {etiqueta}, painel diz {esperada}"
 
 
-def test_camada_4_publica_as_faixas_de_oportunidade_do_m1(metodologia):
+def test_camada_4_declara_que_nao_filtra(metodologia):
+    """A camada de crescimento e' CONTEXTO, e o painel tem que dizer isso.
+
+    As outras quatro cortam: cada uma recebe o que a anterior aprovou. Esta nao — ela
+    entra entre a concorrencia e a fila sem tirar ninguem e sem reordenar nada. Se o
+    texto deixar isso implicito, o leitor conclui que a fila foi filtrada por
+    crescimento, que e' exatamente o que os testes fora da amostra NAO sustentam.
+    """
+    c4 = _camada(metodologia, 4)
+    assert "não filtra" in c4["corte"]
+
+    # E o funil de fato nao corta aqui: o passo 5 recebe o mesmo conjunto que o 3
+    # aprovou, independente do que a camada 4 diz sobre a cidade.
+    df = pd.DataFrame(
+        {
+            "hex_id": ["8a1", "8a2"],
+            "nome_municipio": ["Cidade", "Cidade"],
+            "n_concorrentes_est": [0, 0],
+            "oferta_efetiva_disponivel": [9000.0, 8000.0],
+            "score_setor_2022_calibrado": [90.0, 88.0],
+            "pop_leitura": [30000, 28000],
+        }
+    )
+    passos = pilot.montar_funil(df, "Cidade", {})
+    assert [p["n"] for p in passos] == [1, 2, 3, 4, 5]
+    assert passos[4]["funil_big"] == passos[2]["funil_big"]
+
+
+def test_camada_5_publica_as_faixas_de_oportunidade_do_m1(metodologia):
     """A fila rotula pela faixa do M1 desde o BLK-MAPA-FAIXAS-01, nao por posicao."""
-    publicadas = _etiquetas(_camada(metodologia, 4), "municipio")
+    publicadas = _etiquetas(_camada(metodologia, 5), "municipio")
     assert publicadas == set(FAIXA_LABELS.values())
 
     for bruto, rotulo in FAIXA_LABELS.items():
@@ -156,14 +184,14 @@ def test_cortes_publicados_batem_com_as_constantes_do_funil(metodologia):
     c2 = _camada(metodologia, 2)["corte"]
     assert f"{pilot.OFERTA_DESTAQUE_MIN:,.0f}".replace(",", ".") in c2
 
-    assert str(pilot.FILA_MAX) in _camada(metodologia, 4)["corte"]
+    assert str(pilot.FILA_MAX) in _camada(metodologia, 5)["corte"]
 
 
 def test_a_fila_nao_promete_fallback_para_regiao_disputada(metodologia):
     """O #184 removeu o fallback por decisao do dono (2026-08-03); o painel dizia que
     ele existia. Municipio saturado mostra fila VAZIA — se o texto prometer recurso a
     hex disputado, o usuario conclui que a tela esta quebrada."""
-    regra = " ".join(m["regra"] for m in _camada(metodologia, 4)["metricas"])
+    regra = " ".join(m["regra"] for m in _camada(metodologia, 5)["metricas"])
     assert "aceitando disputa" not in regra
     assert "recorre" not in regra
 
@@ -179,4 +207,4 @@ def test_a_fila_nao_promete_fallback_para_regiao_disputada(metodologia):
         }
     )
     passos = pilot.montar_funil(df, "Cidade", {})
-    assert passos[3]["itens"] == []
+    assert passos[4]["itens"] == []

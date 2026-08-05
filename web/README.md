@@ -1,7 +1,7 @@
 # Piloto web — Motor de Expansão
 
 Substituição faseada do Streamlit por um app web. Três telas: **Mapa Territorial**
-(porta de entrada por estado → funil de 4 camadas → município), **Visão Executiva**
+(porta de entrada por estado → funil de 5 camadas → município), **Visão Executiva**
 (a rede Ultra real como carteira acionável — Growth API) e **Viabilidade do ponto** (stress-test
 de um imóvel real). Os relatórios em PDF saem do Mapa e da Viabilidade.
 
@@ -103,15 +103,19 @@ cd web && npm run dev
 
 ## Como as telas se ligam
 
-O **mapa** conta a história em quatro camadas, e cada uma declara de onde veio e o
+O **mapa** conta a história em cinco camadas, e cada uma declara de onde veio e o
 que sobrou — no DF: `999 hexágonos → 99 hexágonos quentes → 38 com residual →
 23 white spaces → 4 aberturas`. Os números saem do dado real, não são mock. O
 passo 1 (Potencial) só conta regiões com **≥ 5.000 habitantes** (mesma régua
 `POP_MIN_ACIONAVEL` do mapa, que pinta `<5k` em cinza); o corte propaga por todo o
-funil.
+funil. A cadeia acima tem quatro elos para cinco camadas porque o **passo 4 não
+corta**: ele entra entre o white space e a fila descrevendo as cidades que
+chegaram até ali, sem tirar nem reordenar ninguém.
 
-No **4º passo** o botão da barra inferior deixa de ser "próxima camada" e passa a
-gerar o **Relatório Municipal** (9 páginas).
+O **4º passo** ("Como a cidade está indo") é contexto sobre a praça — emprego
+formal, renda, população, empresas e área construída, com o veredito em uma frase
+e o detalhe atrás de um botão. No **5º passo** o botão da barra inferior deixa de
+ser "próxima camada" e passa a gerar o **Relatório Municipal** (9 páginas).
 
 O filtro de **UF e Município** é ordenado alfabeticamente e ganha um campo de
 **busca** (insensível a acento) quando há muitas opções. O painel lateral mostra
@@ -322,10 +326,13 @@ Idênticas ao dashboard Streamlit (CLAUDE.md §5): faixas de 10 pontos via
 `RESIDUAL_SCORE_BANDS` (vermelho→verde), corte de `<5k hab` em cinza e score NaN
 com fill próprio — porte 1:1 de `dashboard/utils.score_band_to_color`. O score que
 colore muda por passo, espelhando os modos do dashboard: passo 1 → censitário,
-passos 2–3 → residual, passo 4 → M1. Os hexágonos **do passo atual ficam em
-opacidade cheia e os de fora esmaecem** — um holofote no funil, sem contorno
-colorido (as 10 aberturas do passo 4 precisam se destacar no meio do mapa). Só o
-hex selecionado ganha um contorno claro.
+passos 2–3 → residual, passo 5 → faixa de oportunidade do M1. O **passo 4 é a
+exceção**: ele não usa a rampa de score, e sim três classes categóricas de
+crescimento da área construída do hexágono (`crescClasseToColor`) — não há nota
+ali, há direção. Os hexágonos **do passo atual ficam em opacidade cheia e os de
+fora esmaecem** — um holofote no funil, sem contorno colorido (as 10 aberturas do
+passo 5 precisam se destacar no meio do mapa). Só o hex selecionado ganha um
+contorno claro.
 
 ## Tooltip do hexágono
 

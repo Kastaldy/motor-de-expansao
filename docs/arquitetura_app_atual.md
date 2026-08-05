@@ -27,8 +27,9 @@ PDFs); a raiz redireciona 301 para o piloto (DEC-022 §3).
 São **3 superfícies** (DEC-020 definiu esse escopo; "substituir 100% o Streamlit"
 = paridade destas três):
 
-- **Mapa Territorial** (default) — porta de entrada por UF, funil de 4 camadas
-  (Potencial → setores quentes → residual → white spaces → aberturas) com
+- **Mapa Territorial** (default) — porta de entrada por UF, funil de 5 camadas
+  (Potencial → setores quentes → residual → white spaces → como a cidade está
+  indo → aberturas; a penúltima é contexto e não corta ninguém) com
   drill-down até o município, multi-hex, filtro "MELHORES", busca por
   coordenada/link/endereço e geração dos Relatórios Municipal e Pontual.
 - **Visão Executiva** — a rede Ultra REAL por estado (Growth API,

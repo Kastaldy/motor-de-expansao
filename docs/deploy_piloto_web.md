@@ -64,6 +64,10 @@ Confira o que o piloto precisa (senão a feature degrada em silêncio):
 - `data/staging/{uplift_renda_domiciliar_municipio,uplift_composicao_setor}.parquet` +
   `fator_temporal_renda.json` — **renda domiciliar municipal**; sem eles, o tooltip cai no
   fallback NACIONAL (~4,55×). Enviar por scp (ver [[project_deploy_pin_digest_prod]] / memória).
+- `data/staging/{crescimento_municipal,crescimento_hex}.parquet` — passo 4 do funil
+  ("Como a cidade está indo"). **OPCIONAIS**: sem eles o passo sobe, avisa que não há
+  leitura e o resto do piloto segue igual — mas a feature fica morta. Gerados por
+  `data/reports/crescimento/` (ordem obrigatória no README de lá).
 - `data/staging/{growth_api_historico,concorrentes_mapeados,unidades_ultra_performance_hex}.parquet`
   — Visão Executiva + pins.
 - `concorrentes/logo_<rede>.png` — **logos das bandeiras** (pendente; sem eles, fallback sigla+cor).

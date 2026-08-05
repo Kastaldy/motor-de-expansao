@@ -27,6 +27,32 @@ export interface Hex {
   faixa: string | null
   conc: number
   ultra: number
+  /* Passo 4 — Crescimento do município. Camada de CONTEXTO: repassa o que o
+     projeto Crescimento Regional TEC apura (CAGED, Receita Federal).
+     Os campos `cres_*` abaixo são MUNICIPAIS (iguais em todos os hexes da cidade)
+     e ficam aqui porque o tooltip os lê por hexágono. As strings longas
+     (dimensões e séries) NÃO ficam aqui — viajavam repetidas em cada hexágono e
+     levavam `/api/uf/SP` de 3,6 para 19,45 MB. Elas vêm uma vez em
+     `Passo.dims`/`Passo.series` ou em `RankItem.dims`/`RankItem.series`. */
+  /** "Em alta" | "Estável" | "Em queda" — null quando não há leitura confiável */
+  cres_tend: string | null
+  /** variação do emprego formal em %, dez/2022→jun/2026 (CAGED sobre estoque RAIS 2022) */
+  cres_emp: number | null
+  /** saldo de empresas abertas menos fechadas, 2020→2025 (Receita Federal) */
+  cres_empresas: number | null
+  /** "alta" | "media" | "baixa" | "muito_baixa" — o próprio projeto marca */
+  cres_confiab: string | null
+  /** salário médio de admissão nos últimos 12 meses (R$) */
+  cres_salario: number | null
+  /** setor cuja abertura de empresas está mais ACIMA do normal nesta cidade */
+  cres_setor: string | null
+  /** mediana de `cres_emp` na UF — dá escala ao número da cidade */
+  cres_uf_mediana: number | null
+  /** taxa de crescimento da área construída DESTE hexágono, 2016→2023, em % */
+  cres_hex_taxa: number | null
+  /** "Em alta" | "Estável" | "Sem obra nova" — é o que colore o mapa no passo 4.
+   *  Ver `CRESC_CLASSES` em lib/colors.ts: o acoplamento é por string literal. */
+  cres_hex_classe: string | null
 }
 
 export interface RankItem {
@@ -46,10 +72,14 @@ export interface RankItem {
    *  sem ela, "Excelente" saía azul enquanto o bloco na legenda é verde-escuro.
    *  `null` no ranking de municípios, que usa vocabulário próprio, não faixa. */
   tag_cor?: string | null
+  /** Visão de UF, passo 4: dimensões DESTE município, no formato de `Hex.cres_dims`. */
+  dims?: string | null
+  /** Visão de UF, passo 4: séries DESTE município, no formato de `Hex.cres_series`. */
+  series?: string | null
 }
 
 export interface Passo {
-  n: 1 | 2 | 3 | 4
+  n: 1 | 2 | 3 | 4 | 5
   mode: string
   titulo: string
   narrativa: string
@@ -59,6 +89,12 @@ export interface Passo {
   metrica: string
   itens: RankItem[]
   hexes: string[]
+  /** Passo 4, visão de município: dimensões da cidade, uma vez só.
+   *  Formato `"nome:valor:unidade:posição:período"` separadas por `;`. */
+  dims?: string | null
+  /** Passo 4, visão de município: uma série por dimensão, uma vez só.
+   *  Formato `"nome|unidade|ini|fim|v1,v2,…"` separadas por `;`. */
+  series?: string | null
 }
 
 /* --- Metodologia (manual do funil, /api/metodologia) ---------------------- */

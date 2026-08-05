@@ -180,6 +180,15 @@ export default function MapScreen({
       faixa: null,
       conc: 0,
       ultra: 0,
+      cres_tend: null,
+      cres_emp: null,
+      cres_empresas: null,
+      cres_confiab: null,
+      cres_salario: null,
+      cres_setor: null,
+      cres_uf_mediana: null,
+      cres_hex_taxa: null,
+      cres_hex_classe: null,
     }
     onAnalisarPonto({
       hex,
@@ -647,6 +656,7 @@ export default function MapScreen({
             <NarrativePanel
               passo={passo}
               hexes={dados.hexes}
+              totalPassos={dados.passos.length}
               selecionado={selecionado}
               onSelecionarHex={setSelecionado}
               onAnalisar={analisar}
@@ -685,7 +695,7 @@ export default function MapScreen({
           <StepperBar
             passos={dados.passos}
             atual={passoN}
-            onIr={(n) => setPassoN(Math.min(4, Math.max(1, n)))}
+            onIr={(n) => setPassoN(Math.min(5, Math.max(1, n)))}
             onGerarRelatorio={gerarRelatorioMunicipal}
             gerando={gerando}
             nivelUf={nivelUf}

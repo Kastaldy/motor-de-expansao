@@ -19,6 +19,8 @@ camadas paralelas por direito proprio).
 | `oportunidades_expansao_hibrido.parquet` | 109 MB | `jobs/pipelines/modelo_hibrido_expansao.py` | insumo do merge do enriquecido (hibrido/censitario/residual) |
 | `carteira_expansao_acionavel.parquet` | 600 KB | `jobs/pipelines/gerar_carteira_acionavel.py` | sem superficie de exibicao desde a DEC-022 (artefato oficial da camada de mercado; pipeline e testes seguem) |
 | `plano_expansao_curto_prazo.parquet` | 80 KB | `jobs/pipelines/gerar_plano_expansao_curto_prazo.py` | idem — perdeu superficie, continua produzido e valido |
+| `staging/crescimento_municipal.parquet` | 2 MB | `data/reports/crescimento/` (10 scripts, ordem no README) | piloto web, passo 4 do funil — OPCIONAL, ausente degrada so o passo |
+| `staging/crescimento_hex.parquet` | 370 KB | idem | piloto web, passo 4 — cor do mapa por taxa de crescimento do hexagono |
 
 Artefatos executivos complementares (nao bloqueantes):
 
