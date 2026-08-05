@@ -9,8 +9,6 @@ import (AST), rede pelo nome do arquivo de Unidades, e o smoke da re-validacao H
 
 from __future__ import annotations
 
-import ast
-import inspect
 from pathlib import Path
 
 import h3
@@ -210,21 +208,16 @@ def test_lat_lng_centroide(dirs_sinteticos: tuple[Path, Path, Path]) -> None:
 def test_isolamento_imports() -> None:
     # AST sobre os IMPORTS reais (nao a prosa do docstring, que cita os paths proibidos como
     # guardrail): nenhum import de topo nem interno pode casar M1/dashboard/censo/api/config raiz.
-    src = inspect.getsource(m)
-    tree = ast.parse(src)
-    nomes: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            nomes.append(node.module)
-        elif isinstance(node, ast.Import):
-            nomes.extend(a.name for a in node.names)
-    for n in nomes:
+    from .._ast_imports import casa_proibicao, nomes_importados
+
+    for n in nomes_importados(m):
         assert "pipelines.m1" not in n, n
-        assert not n.startswith("motor_expansao.dashboard"), n
-        assert not n.startswith("motor_expansao.api"), n
         assert "censo" not in n, n
+        # `casa_proibicao` tambem pega o import RELATIVO (`from .. import dashboard`), que a
+        # checagem anterior por `startswith` deixava passar: o AST so guarda o alias.
         # `dimensionamento.config` e paralelo/permitido; so o `config.py` raiz do M1 e proibido.
-        assert n not in ("motor_expansao.config", "config"), n
+        for proibido in ("motor_expansao.dashboard", "motor_expansao.api", "motor_expansao.config"):
+            assert not casa_proibicao(n, proibido), (n, proibido)
 
 
 # --------------------------------------------------------------------------- #

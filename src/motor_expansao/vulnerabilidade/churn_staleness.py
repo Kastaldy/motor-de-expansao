@@ -125,6 +125,25 @@ def _semanas_sem_mudanca(presentes: list[str], hashes: dict[str, str]) -> int:
     return sum(1 for w in presentes if w > semana_mudanca)
 
 
+def _houve_troca_de_chave(por_semana: dict[str, set[str]]) -> bool:
+    """O conjunto de `chave_origem` do escopo MUDOU entre semanas consecutivas?
+
+    Duas coisas que deliberadamente **não** caracterizam troca:
+
+    - **uma única semana observada** — sem duas semanas não há "ao longo da série";
+    - **mistura estável** — o mesmo conjunto de origens em todas as semanas. O feed TP/WH
+      rebaixa a chave POR LINHA, então `{slug, hash_estavel}` na mesma semana é o estado
+      NORMAL do escopo, não um evento.
+
+    O que a flag sinaliza ao consumidor é que a identidade da chave pode ter se partido ao
+    longo da série — e isso exige variação TEMPORAL.
+    """
+    if len(por_semana) < 2:
+        return False
+    conjuntos = [por_semana[semana] for semana in sorted(por_semana)]
+    return any(a != b for a, b in zip(conjuntos, conjuntos[1:], strict=False))
+
+
 def _estado_por_chave(
     longo: pd.DataFrame,
     obs: dict[tuple[str, str], set[str]],
@@ -135,10 +154,21 @@ def _estado_por_chave(
     if longo.empty:
         return _frame_churn_vazio()
 
-    # Escopo -> conjunto de `chave_origem` vistos (base do `flag_troca_chave_na_serie`).
-    origens_por_escopo: dict[tuple[str, str], set[str]] = {}
+    # Escopo -> {semana: conjunto de `chave_origem` observados NAQUELA semana}.
+    #
+    # A formula anterior era `|{chave_origem do escopo}| > 1`, que responde "o escopo tem
+    # origens MISTAS" -- pergunta diferente de "a chave TROCOU de politica ao longo da
+    # serie", que e' o que o nome da flag promete e o que o consumidor le. No feed TP/WH o
+    # rebaixamento de chave ocorre POR LINHA e convive com o `slug` na MESMA semana, entao
+    # a versao antiga nascia `True` para todo o universo, todo mes -- um sinal morto.
+    # Sonda do QA do BLK-MA-02: 4 semanas, mesmo escopo, uma chave sempre `slug` e outra
+    # sempre `hash_estavel`, ZERO troca temporal, e a flag saia `True` para as duas.
+    origens_por_semana: dict[tuple[str, str], dict[str, set[str]]] = {}
     for (fonte, rede), bloco in longo.groupby(["fonte", "rede"], sort=True):
-        origens_por_escopo[(str(fonte), str(rede))] = set(bloco["chave_origem"].astype(str))
+        origens_por_semana[(str(fonte), str(rede))] = {
+            str(semana): set(sub["chave_origem"].astype(str))
+            for semana, sub in bloco.groupby("semana", sort=True)
+        }
 
     linhas: list[dict[str, object]] = []
     for (fonte, chave), bloco in longo.groupby(["fonte", "chave_snapshot"], sort=True):
@@ -200,8 +230,8 @@ def _estado_por_chave(
                 "snapshot_date_ultimo": str(ultima["snapshot_date"]),
                 "flag_serie_imatura": bool(n_semanas_serie < int(min_semanas)),
                 "flag_staleness_interpretavel": bool(n_semanas_serie >= int(stale_semanas)),
-                "flag_troca_chave_na_serie": bool(
-                    len(origens_por_escopo.get((fonte, rede_ultima), set())) > 1
+                "flag_troca_chave_na_serie": _houve_troca_de_chave(
+                    origens_por_semana.get((fonte, rede_ultima), {})
                 ),
                 "versao_contrato": VERSAO_CONTRATO_CHURN,
             }

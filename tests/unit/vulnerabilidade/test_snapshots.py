@@ -13,7 +13,6 @@ do `slug` / rebaixamento de chave, e poda de retencao.
 from __future__ import annotations
 
 import ast
-import inspect
 from datetime import date
 from pathlib import Path
 
@@ -180,21 +179,96 @@ def test_isolamento_imports() -> None:
     """
     import motor_expansao.vulnerabilidade as pacote
 
+    from .._ast_imports import casa_proibicao, nomes_importados
+
     for modulo in (pacote, c, m, mchurn, mpresenca, mscore):
-        tree = ast.parse(inspect.getsource(modulo))
-        nomes: list[str] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module:
-                nomes.append(node.module)
-            elif isinstance(node, ast.Import):
-                nomes.extend(a.name for a in node.names)
-        for n in nomes:
+        for n in nomes_importados(modulo):
+            # As checagens por SUBSTRING são mantidas como estavam: são mais amplas que
+            # um prefixo (pegam `dashboard.censo_map`, por exemplo) e afrouxá-las para
+            # caber num laço uniforme reduziria o guardrail.
             assert "pipelines.m1" not in n, (modulo.__name__, n)
-            assert not n.startswith("motor_expansao.dashboard"), (modulo.__name__, n)
-            assert not n.startswith("motor_expansao.api"), (modulo.__name__, n)
             assert "censo" not in n, (modulo.__name__, n)
             assert "normalizar_concorrentes" not in n, (modulo.__name__, n)
-            assert n not in ("motor_expansao.config", "config"), (modulo.__name__, n)
+            # Estas passam por `casa_proibicao` porque o import RELATIVO
+            # (`from .. import dashboard`) deixa só o alias no AST, e o `startswith`
+            # anterior não o via.
+            for proibido in ("motor_expansao.dashboard", "motor_expansao.api", "motor_expansao.config"):
+                assert not casa_proibicao(n, proibido), (modulo.__name__, n, proibido)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "BLK-MA-02-FU1 item 2: vazamento TRANSITIVO de import, em aberto. "
+        "`snapshots.py` importa `classificar_rede` de `demanda_revelada`, cujo `__init__` "
+        "reexporta os 9 submodulos de forma eager e puxa sklearn/scipy/shapely/requests. "
+        "Bloqueante para o BLK-MA-06 (plug no cron). Quando a correcao entrar, este teste "
+        "PASSA e o `strict=True` avisa para remover a marca."
+    ),
+)
+def test_pacote_nao_carrega_dependencia_pesada() -> None:
+    """Isolamento por `sys.modules`, nao por AST — o AST so ve import DIRETO.
+
+    O `test_isolamento_imports` continua verde enquanto isto falha, e as duas coisas sao
+    verdadeiras ao mesmo tempo: o pacote nao escreve nenhum import proibido, mas o que ele
+    importa arrasta meio mundo junto. Um modulo destinado ao cron precisa das duas garantias.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    codigo = textwrap.dedent(
+        """
+        import sys
+        import motor_expansao.vulnerabilidade  # noqa: F401
+        pesados = sorted(
+            {m.split(".")[0] for m in sys.modules}
+            & {"sklearn", "scipy", "shapely", "requests", "matplotlib", "geopandas"}
+        )
+        dash = [m for m in sys.modules if m.startswith("motor_expansao.dashboard")]
+        print(";".join(pesados) + "|" + str(len(dash)))
+        """
+    )
+    saida = subprocess.run(
+        [sys.executable, "-c", codigo], capture_output=True, text=True, check=True
+    ).stdout.strip()
+    pesados, n_dashboard = saida.split("|")
+    assert not pesados, f"dependencias pesadas carregadas: {pesados}"
+    assert n_dashboard == "0", f"modulos de dashboard carregados: {n_dashboard}"
+
+
+def test_checagem_de_import_pega_as_cinco_formas() -> None:
+    """Sonda de injeção: a checagem de isolamento não pode ter ponto cego.
+
+    Antes da correção, das cinco formas de escrever o import proibido a checagem por
+    AST pegava **2** e deixava passar **3**: `from motor_expansao import dashboard`
+    (só o pai entrava na lista), `from .. import dashboard` (o nó era descartado
+    inteiro quando `node.module is None`) e `importlib.import_module(...)` (é uma
+    chamada, não um nó de import).
+
+    Este teste falha com a implementação antiga e é o que impede o guardrail de voltar
+    a ser decorativo.
+    """
+    from .._ast_imports import (
+        casa_proibicao,
+        fontes_com_import_injetado,
+        nomes_importados_da_fonte,
+    )
+
+    alvos = (
+        "motor_expansao.dashboard",
+        "motor_expansao.api",
+        "motor_expansao.config",
+        "motor_expansao.demanda_revelada",
+    )
+    for proibido in alvos:
+        for rotulo, fonte in fontes_com_import_injetado(proibido):
+            nomes = nomes_importados_da_fonte(fonte)
+            assert any(casa_proibicao(n, proibido) for n in nomes), (
+                proibido,
+                rotulo,
+                nomes,
+            )
 
 
 # --------------------------------------------------------------------------- #
