@@ -11159,3 +11159,301 @@ o problema em vez de administrá-lo.
 BLK-MA-10; e o **BLK-MA-07 ainda não tem seção própria** no backlog (existe só como bullet da
 decomposição do BLK-MA-01, `:1586`) — a seção precisa ser criada carregando o veredito acima e a
 hipótese do app mobile como linha de risco.
+
+
+---
+
+## Fechamento de ciclo — BLK-MAPA-FAIXAS-01 e painel de metodologia (2026-08-05)
+
+**Data:** 2026-08-05 · **PRs:** #187 (faixas nomeadas) + #185 (painel de metodologia) ·
+**Criticidade:** Alta (#187) / Média (#185) · **Esteira:** revisão adversarial → reparo → merge
+humano · **Impacto no M1:** NENHUM (READ-ONLY; nada em `config.py`, `pipelines/m1`, pesos ou
+artefatos oficiais).
+
+Registro tardio: os dois PRs entraram na main (`6bdd4f7` e `b7ea6a1`) **sem tocar `docs/` nem
+`tasks/`** — 2.405 linhas em `web/`, `src/` e `tests/` sem uma linha de bookkeeping. Esta entrada
+fecha o furo "mergeado-mas-não-registrado".
+
+**#187 — régua única entre a legenda do mapa e a etiqueta do ranking.** Cria
+`FAIXAS_MAPA_POTENCIAL` (Desfavorável · Fraco · Promissor · Forte · Excelente) e
+`FAIXAS_MAPA_DEMANDA` (Saturado · Restrito · Moderado · Amplo · Livre) em
+`dashboard/constants.py`, espelhadas em `web/src/lib/faixas.ts` e travadas por
+`tests/contracts/test_faixas_mapa_espelho.py`. O defeito que motivou: em Campinas, 2.400 alunos
+residuais saíam etiquetados "Baixa" no ranking e "Livre" na legenda ao lado — 96% de uma unidade
+cheia com dois nomes na mesma tela. A camada 4 passa a colorir por `faixa_oportunidade` do M1 (que
+NÃO é corte de `score_priorizacao`: o M1 a define cortando o percentil nacional em [35, 50, 65, 80]).
+
+**Cinco reparos aplicados na revisão, antes do merge:** (1) a legenda voltou a mostrar as 10 cores
+que o mapa pinta — cada bloco nomeado carrega as duas bandas de 10 pontos do seu intervalo
+(`bandasDaFaixa`/`fundoDoSwatch`), senão um hex de score 45 saía laranja no mapa sem bloco
+correspondente na legenda; (2) `test_passo3_etiqueta_pelo_vocabulario_competitivo` virou tautologia
+com o homônimo "Livre" e passou a discriminar por `tag_cor`; (3) score ausente deixou de virar 0 e
+de afirmar "Desfavorável"; (4) a faixa passou a sair do valor CRU, não do arredondado (79,6 virava
+80 e mudava de faixa na borda); (5) o espelho de `colors.ts` (`FAIXA_M1_HEX`, chaveado pelo LABEL
+acentuado) ficou travado por teste — sem isso, renomear `FAIXA_LABELS["media"]` pintaria de cinza
+todos os hexes daquela faixa, com o chip do ranking continuando colorido e nenhum teste vermelho.
+
+**#185 — painel de metodologia (`GET /api/metodologia`).** Gaveta lateral que explica as 4 camadas
+do funil: pergunta, régua de corte, métricas em dois níveis e os parâmetros do modelo. Contrato do
+payload em `docs/contrato_api_metodologia.md`.
+
+**Sete reparos aplicados antes do merge.** O conflito com a main foi resolvido tomando o lado da
+main nos pontos que **reverteriam o PR #184** (fila do passo 4 sem fallback — decisão do dono em
+2026-08-03 —, o parâmetro `metrica_etiqueta` e o bloco `ancoras`), preservando do PR só os literais
+virando constantes nomeadas. E o painel publicava **seis afirmações factualmente erradas**, todas
+verificadas contra o código: calibração "dentro de cada estado" (é percentil NACIONAL de renda com
+peso 0,60 + população relativa ao município com 0,40; `calibrar_renda_setor_2022.py` lista
+"multiplicativo por UF" entre as abordagens REJEITADAS); insumos "renda, composição dos domicílios e
+perfil das famílias" (são dois); "cada unidade em 2 km conta como 2.500 alunos" (a oferta é
+PONDERADA por distância — concorrente a 1,9 km desconta ~125, não 2.500); saturação como única causa
+de residual zero (falta o gate do SAM — DEC-006/007 —, em que "não avaliada" virava "já atendida");
+omissão do fallback municipal da população; e "Growth API" como fonte da oferta Ultra (sai da base de
+performance, por carga). As faixas publicadas passaram a DERIVAR de `constants.FAIXAS_MAPA_*` e
+`FAIXA_LABELS`, e `tests/contracts/test_metodologia_espelha_o_funil.py` trava a coerência.
+
+**DEFEITO CONHECIDO, não corrigido aqui:** a etiqueta do ranking virou CONSTANTE nas camadas 1, 2 e
+3, porque o corte de cada camada coincide com o piso da última faixa (camada 2: corte de 2.000
+alunos = score 80 = piso de "Livre"). Medido: 8 municípios com residual de 2.000 a 40.000 alunos —
+amplitude de 20× — saem todos como "Livre". O painel agrava, publicando 5 faixas das quais 4 nunca
+aparecem. Aberto como **BLK-MAPA-CHIP-01**; não foi corrigido junto porque os PRs #196 e #197 estão
+reescrevendo o mesmo arquivo.
+
+---
+
+## Fechamento de ciclo — BLK-RELPON-07 (mapas de calor legíveis) (concluído 2026-07-28, registrado 2026-08-05)
+
+**Data de conclusão:** 2026-07-28 (PR **#154**, "BLK-RELPON-07 (rebase) — mapas de calor legíveis:
+nomes de rua/bairro por cima do choropleth") · **Registrado em:** 2026-08-05 · **Impacto no M1:**
+NENHUM (leitura do Relatório Pontual).
+
+Registro tardio de bloco **mergeado-mas-não-registrado**: o PR entrou em 2026-07-28 e o bloco
+continuou aberto no backlog com `Status: Em revisão (PR aberto)` por mais de uma semana.
+
+**Como o furo passou despercebido — e por que quase virou perda de trabalho.** O ID `BLK-RELPON-07`
+foi **reusado três vezes** para assuntos diferentes: "Slide de perfil do Bairro/Distrito" e "refino
+visual do slide" (ambos concluídos em 2026-07-15) e este, "Mapas de calor legíveis". Como
+`housekeeping_move_block.is_done` casa por **token de ID, não por título**, o `--emit-delta` já
+listava o bloco como pronto para stub desde julho — com base em entradas de completed que falam de
+outro assunto. Quem executasse o helper mecanicamente teria stubado um bloco que se declarava "em
+revisão", e o ponteiro `ver tasks/completed.md` levaria ao registro errado. **Lição para o
+housekeeping em lote: conferir o TÍTULO do bloco, não só o ID, antes de aceitar o delta.**
+
+---
+
+---
+
+### BLK-MA-01 — Contrato e decisões do enriquecimento de vulnerabilidade (design, Plano B)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (camada de enriquecimento paralela que reusa dados já coletados + diff de snapshots; **sem dependência externa nova** e **sem DEC** — a rota Google Places/§2 foi descartada no Plano B; gera um score paralelo e um entregável comercial. **READ-ONLY sobre o M1**). |
+| **Prioridade** | A definir por Vinicius. |
+| **Esteira** | Block Orchestrator → Planner → `[confirmação humana — produto: pesos/limiares do score + definição de hex quente]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | DEC-013 (WellHub/TotalPass já coletados + **cron semanal que acumula os snapshots** — insumo de churn/staleness); camada mercado/residual + Demanda Revelada (para "hexágono quente"); `concorrentes_mapeados.parquet`. |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca a trilha de scrapers/VPS (integração ao cron, DEC-013) e define um score/entregável comercial; precisa de confirmação humana de produto. NÃO marcar loop-safe. |
+
+**Contexto (ancorado).** Os scrapers do Vini (`VinhoAbencoado/GymScraping`, DEC-013) já mapeiam a
+oferta concorrente **e rodam semanalmente**; a base entra no Motor via
+`normalizar_concorrentes → calcular_colunas_mercado` e alimenta o residual. Hoje esses registros têm
+oferta/rede/geo, mas **nenhum sinal de fragilidade do negócio**. O insight do Plano B: a **variação
+temporal** e a **última atualização** saem do **diff do próprio histórico de scraping** (nenhuma API
+externa), e a **reputação** vem do **rating in-app WellHub/TotalPass** que já é coletado. O BLK-MA-01
+**não escreve código de produção** — fixa o contrato dos sinais, a metodologia do score e as decisões
+de produto; os sucessores implementam.
+
+**Objetivo do epic.** Score de vulnerabilidade por academia independente + lista priorizada de M&A
+(academias mais vulneráveis próximas a hexágonos quentes) para o time comercial.
+
+**Sinais (Plano B — só fontes internas / já coletadas).**
+1. **Presença/ausência em agregadores** (WellHub/TotalPass) — já interno (DEC-013). Tese: ausência do
+   canal onde o público low-cost está → sinal de fragilidade.
+2. **Rating in-app WellHub/TotalPass** (subconjunto listado) — substitui a "avaliação média" do Google;
+   `n/d` para quem não está no agregador (ver D3). **[VERIFICAR no gate — checado por Claude em
+   2026-07-23]** o único caminho de ingestão que existe hoje,
+   `demanda_revelada/concorrentes_densos.py:_ler_csv_tp_wh` (linha 127), produz SÓ
+   `hex_id_res7`/`rede_normalizada`/`fonte` (drop-PII na fronteira), **sem coluna de rating**.
+   Confirmar que os CSVs BRUTOS TP/WH (que vivem na VPS, gitignored) carregam a nota ANTES que
+   BLK-MA-03/04 dependam dela — senão este sinal também é aquisição, não reuso, e o rótulo "já
+   coletado" cai. É a claim mais load-bearing do Plano B.
+3. **Churn/permanência** via **diff dos snapshots semanais** — apareceu/sumiu/reapareceu na base dos
+   scrapers → forte proxy de fechamento/venda. (Substitui a "variação de reviews".)
+4. **Staleness** via **diff dos snapshots** — tempo desde a última mudança nos campos raspados
+   (horário/preço/lista de unidades/endereço). (Substitui "tempo desde última atualização" — proxy mais
+   confiável que o "last-updated" do Google, que nem é exposto.)
+5. **(Opcional) Tendência de popularidade no agregador** — `membros`/`alunos_parceiras` da célula
+   subindo/caindo, quando a série permitir.
+6. **(Opcional, interno) Pressão competitiva** — proximidade a Smart Fit/rede Ultra + residual saturado
+   (de `concorrentes_mapeados` + Ultra + mercado/residual): independente espremida = mais vulnerável.
+   Colunas reais já materializadas por `hex_id` em `data/staging/hexagonos_mercado_mapeado.parquet`
+   (verificadas em 2026-07-23): `pressao_concorrencial_score_2km`, `n_concorrentes_mapeados_2km`,
+   `dist_concorrente_mais_proximo_m`, `n_unidades_ultra_2km`, `rede_dominante_2km`,
+   `share_smart_fit_2km` — nenhum sinal de "pressão" precisa ser recomputado do zero.
+
+**Mapa dos 4 sinais originais → Plano B:** avaliação média → (2) rating in-app; Δ reviews 3m → (3)
+churn + (5) tendência; presença agregadores → (1) [já interno]; última atualização → (4) staleness.
+
+**Decisões a resolver/confirmar (BLK-MA-01).**
+- **D1 — Definição de "academia independente".** Critério de não-rede/bairro sobre `concorrentes_mapeados`
+  (ex.: `rede` isolada / contagem de unidades da marca == 1) e o universo exato (os 28 scrapers citados
+  vs. os 90 coletores da DEC-013 — quais entram).
+- **D2 — Fonte/retenção dos snapshots semanais.** Onde vivem os snapshots dos scrapers (formato/retenção)
+  para computar churn/staleness; janela de staleness (nº de semanas sem mudança = "stale"); tratamento do
+  **ramp-up** (cron ativo desde 26/06 — ~1,5 mês hoje; a série cresce). Sem histórico → sinal marcado
+  como imaturo, não penaliza.
+- **D3 — Rating de agregador.** Usar como sinal só no subconjunto listado; como tratar `n/d` (não
+  penalizar quem não tem rating; a ausência de agregador já é o sinal 1).
+- **D4 — Fórmula/pesos do score.** Heurística transparente e auditável (composição ponderada normalizada
+  dos sinais), com direção de cada um (ausência de agregador ↑vuln.; rating baixo ↑; churn/sumiço ↑;
+  staleness alta ↑; popularidade caindo ↑; pressão competitiva alta ↑). NÃO é modelo preditivo treinado
+  em desfecho — se um dia se quiser validar que prevê aquisição/fechamento, entra a disciplina DEC-008
+  (out-of-fold vs baseline) em bloco próprio.
+- **D5 — "Hexágono quente" + proximidade.** Qual métrica define quente (`score_oportunidade_residual`,
+  SAM, demanda revelada) e o limiar de distância academia↔hex para entrar na lista de M&A.
+  Âncora verificada (2026-07-23): o hotness por hex já está materializado em
+  `data/outputs/carteira_expansao_acionavel.parquet` (4.899x62) — colunas `score_priorizacao`,
+  `score_setor_2022_calibrado`, `score_expansao_hibrido`, `score_oportunidade_residual`,
+  `oferta_efetiva_disponivel`, `tese_entrada` por `hex_id` — e casa direto com
+  `concorrentes_mapeados.hex_id_res7`. Fazer o join READ-ONLY no padrão defensivo de
+  `src/motor_expansao/pipelines/enriquecer_outputs_residual_mercado.py:68-82` (asserts de
+  `score_priorizacao`/ranks/cardinalidade inalterados após o join). **Nota de tese de M&A:** comprar
+  (não construir) quer demanda ALTA + residual BAIXO (mercado saturado); é a INVERSÃO do sinal de
+  abrir unidade nova (residual alto). Registrar a inversão no cálculo.
+- **D6 — Entregável.** Formato da lista priorizada (Parquet + CSV `sep=";"`/`utf-8-sig` para o comercial;
+  e/ou overlay no dashboard) e onde materializar (`data/staging` / `data/outputs`).
+- **D7 — Anti-PII.** Persistir **somente agregados** (rating médio, contagens, flags de churn/staleness);
+  **nunca** texto/autor de review nem PII. Fonte real fora do versionamento; fixtures sintéticas (DEC-012).
+- **D8 — Integração ao cron.** Rodar como passo do lote semanal da VPS (DEC-013) vs. cadência separada.
+
+**Escopo permitido (READ-ONLY M1).** Camada de enriquecimento nova (módulo isolado, ex.:
+`src/motor_expansao/vulnerabilidade/` ou extensão do pacote de mercado), consumindo o histórico de
+snapshots dos scrapers + o ativo WellHub/TotalPass + `concorrentes_mapeados`; materializa um Parquet
+paralelo com o score e a lista de M&A. NÃO altera artefatos oficiais do M1. **Sem dependência nova de
+base** e **sem API externa ao vivo**.
+
+**Fora de escopo.** `score_priorizacao`/`hex_score_estrutural`/pesos/carteira/plano/artefatos oficiais
+do M1; `flag_sam`/gate do SAM (DEC-006/DEC-007); **Google Places / qualquer API externa de reputação**
+(movido para o sucessor opcional BLK-MA-07, com gate/DEC próprios); persistir PII.
+
+**Guardrails.** §5 (score paralelo, não recalcula M1); DEC-012/anti-PII (só agregados; fonte real não
+versionada; fixtures sintéticas); DEC-013 (extensão do lote de scrapers, não pipeline novo). §2 NÃO é
+desafiado no Plano B — não há API ao vivo; o dashboard segue offline sobre Parquets.
+
+**Entregável.** Score de vulnerabilidade por academia independente + lista priorizada de alvos de M&A
+(vulneráveis × proximidade a hexágonos quentes) para o time comercial.
+
+**Decomposição sugerida (sucessores, a confirmar no BLK-MA-01).**
+- **BLK-MA-02** — extrator de **churn + staleness** a partir do histórico de snapshots semanais dos
+  scrapers (100% interno); flags de série imatura (ramp-up).
+- **BLK-MA-03** — join do sinal de agregadores (**presença + rating in-app** WellHub/TotalPass) por
+  dedup com `concorrentes_mapeados`; anti-PII por construção; fixtures sintéticas.
+- **BLK-MA-04** — score de vulnerabilidade (fórmula/pesos do D4) + normalização + flags de qualidade.
+- **BLK-MA-05** — lista priorizada de M&A (cruzamento com hexágonos quentes, D5) + entregável (D6).
+- **BLK-MA-06** — integração ao cron semanal da VPS (D8) e runbook.
+- **BLK-MA-07 (opcional/futuro, gate + DEC próprios)** — enriquecer com **reputação externa** (Google
+  Places ou outra) SE se quiser a nota do público geral; só aqui reaparece o desvio do §2.
+
+**Critério de aceite (BLK-MA-01).** Contrato dos sinais internos (1–4, + 5/6 opcionais) e do score
+definido; D1–D8 resolvidas/confirmadas no gate de produto; decomposição BLK-MA-02+ confirmada;
+guardrails §5/anti-PII/DEC-013 explicitados; **sem DEC de API externa** (rota Google descartada, movida
+ao BLK-MA-07); ZERO código de produção neste bloco (só docs/contrato).
+
+- BLK-MA-02 (concluído 2026-07-29) — ver tasks/completed.md
+
+---
+
+### BLK-MA-10 — TotalPass: a nota existe? (spike de viabilidade, sem código de produção)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (investigação time-boxed; ZERO código de produção, ZERO alteração de coletor, ZERO persistência). O resultado pode ser "não fazer" — e esse é um resultado válido. |
+| **Prioridade** | Antes do **BLK-MA-09**, não depois: o veredito é insumo do D-B daquele bloco (se o TotalPass puder ter nota, a régua deixa de ser permanentemente assimétrica e o D-B muda). Não bloqueia o **BLK-MA-08**. |
+| **Esteira** | Block Orchestrator → Builder → `[decisão humana — Vinicius: seguir, arquivar ou redirecionar ao BLK-MA-07]`. |
+| **Status** | Pendente. |
+| **Depende de** | — (não bloqueia nada; o sinal 2 já entrega valor só com o WellHub). |
+| **Autonomia** | **manual (NÃO loop-safe)** — investigação sobre alvo externo de produção, com decisão de ToS envolvida. NÃO marcar loop-safe. |
+
+**Contexto (medido em 2026-07-30/31; evidência em `data/reports/sonda_rating_agregadores_2026-07-31.md`).**
+Duas sondas sobre `https://totalpass.com/br/academias/{slug}/` deram **7/7 sem nenhum sinal de nota**.
+O JSON-LD é idêntico em todas as amostras — 9 chaves (`@context, @type, address, geo, image, name,
+openingHours, telephone, url`), **sem** `aggregateRating`. No HTML inteiro (54–63 KB): zero ocorrência
+de `aggregateRating`, `ratingValue`, `reviewCount`, `avalia`, `review`, `estrela` ou `nota`. A página é
+Next.js **App Router** (payload RSC, sem `__NEXT_DATA__`). Conclusão da sonda: **o produto web do
+TotalPass não tem sequer interface de avaliação de unidade** — não é uma nota escondida atrás de uma
+API web. Cobre 15.986 unidades já coletadas, universo maior que o do WellHub.
+
+**Objetivo.** Responder, com evidência e sem escrever código de produção, a uma pergunta binária: **a
+nota do TotalPass existe em alguma superfície acessível de forma legítima e sustentável?** E, se
+existe, a que custo. O entregável é uma recomendação — **seguir, arquivar ou redirecionar** —, não uma
+implementação.
+
+**Escopo permitido (time-box de 1 ciclo).** Investigar, em ordem de custo crescente: (1) as
+superfícies do próprio TotalPass que a sonda identificou mas **não** investigou —
+`booking.totalpass.com` e `cms.totalpass.com` são as candidatas óbvias, e são muito mais baratas que a
+hipótese mobile; (2) outras superfícies públicas (sitemap, feed, página de rede, área de parceiro);
+(3) se o app mobile expõe nota por unidade e por qual superfície — hipótese principal caso (1) e (2)
+falhem, já que o web não a tem; (4) o custo real dessa hipótese — API autenticada exige credencial de
+usuário pagante, certificate pinning é provável, e o contrato de dados pode mudar sem aviso.
+Entregável: relatório curto em `data/reports/` com veredito, evidência e estimativa de esforço/risco.
+
+**Os Termos de Uso decidem antes da engenharia.** Ler os ToS do TotalPass é passo **de abertura**, não
+de fechamento: se a coleta autenticada for vedada, a investigação **para em (3)** e a recomendação é
+arquivar, sem gastar o time-box em viabilidade técnica. A leitura vale para o alvo desta sonda; não é
+parecer jurídico e não se estende a outros coletores.
+
+**A alternativa mais provável.** Se o veredito for "inviável ou vedado", a recomendação natural **não**
+é insistir no TotalPass — é levar aquele universo para o **BLK-MA-07** (reputação externa, com gate e
+DEC próprios). Isso muda o desenho do sinal (reputação externa ≠ nota in-app, e o §2 do contrato
+reaparece) e é decisão de produto, não de engenharia. **Se este for o desfecho esperado, considerar
+não gastar um bloco:** mover a conclusão de duas linhas para o contexto do BLK-MA-07 e deixar a
+hipótese mobile como uma linha de risco lá é mais barato que um ciclo inteiro para confirmar um "não".
+
+**Guardrail.** READ-ONLY sobre o M1 e sobre o motor inteiro — este bloco **não escreve código de
+produção em repo nenhum**. Nenhuma credencial real em repositório, nenhuma persistência de dado
+coletado, nenhuma alteração no coletor ou no cron. Nenhuma tentativa de contornar autenticação,
+rate-limit ou proteção técnica: se o acesso exigir burlar controle, o veredito é **arquivar**. Volume
+de requisições de sondagem mínimo e espaçado, no mesmo padrão educado do coletor de produção.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; implementar coleta de nota no TotalPass —
+isso seria um bloco novo, **condicionado** ao veredito deste; o WellHub (**BLK-MA-08**) e a reativação
+do `v2` (**BLK-MA-09**); a reputação externa em si (**BLK-MA-07**).
+
+**Critério de aceite.** Relatório em `data/reports/` respondendo à pergunta binária com evidência
+reproduzível (URLs, superfícies testadas, o que se viu em cada uma); veredito explícito entre
+**seguir / arquivar / redirecionar ao BLK-MA-07**, com esforço e risco estimados; leitura dos ToS
+registrada com citação; ZERO alteração em código de produção, provada pelo diff; nenhuma credencial
+nem dado coletado versionado.
+
+---
+
+### BLK-RELPON-07 — Mapas de calor legíveis (nomes de rua/bairro POR CIMA do choropleth)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (melhora a LEITURA do Relatório Pontual; READ-ONLY sobre M1) |
+| **Esteira** | Block Orchestrator → Planner → `[GATE VISUAL — Felipe]` → Builder → QA |
+| **Depende de** | — (aditivo sobre `censo_map`; OpenMapTiles self-host é passo posterior/opcional) |
+| **Status** | Em revisão (PR aberto) |
+
+**Contexto:** nos mapas de calor do Relatório Pontual (densidade/renda/score/renda domiciliar) o
+choropleth **cobre as ruas e os nomes** — não dá para identificar QUAL área tem o número melhor/pior.
+O realce `_STREET_*` recupera só as LINHAS de rua; os TEXTOS (nomes) continuam soterrados sob a cor.
+
+**Objetivo:** ordem de camadas — o heat entra POR BAIXO e um tileset **só-rótulos** (transparente) é
+composto POR CIMA, deixando "Av. X", "Bairro Y" legíveis sobre a cor (identificação da área).
+
+**Escopo:** `_fetch_labels` (mosaico só-rótulos, lazy/best-effort via rede) + composição em
+`_render_camada` alinhada ao extent do basemap; rótulos buscados **1x** e compartilhados pelas 4
+camadas; flag `labels_overlay` (default on); a camada só-pins (concorrentes) não recebe overlay.
+Fonte atual = CartoDB Voyager Only-Labels (keyless, mesma licença/atribuição do basemap Voyager).
+Quando o OpenMapTiles self-host subir, trocar `_LABELS_TILE_URL` para o endpoint de rótulos do
+tileserver (`openmaptiles-infra`, estilo `ultra-maptiler` já com a camada `transportation_name`).
+
+**Fora de escopo (invioláveis):** score/pesos/intersecção de setores/raio/artefatos M1 (RENDER apenas);
+subir a infra (passo posterior); dado de carteira/residual.
+
+**Critérios de aceite:** nomes visíveis por cima do choropleth quando há basemap; **degradação graciosa**
+(offline/sem rede → mapa sem nomes, byte-compatível com o anterior); testes cobrindo overlay
+ligado/desligado; ruff + mypy + pytest verdes; **gate visual do Felipe**.
+
+**Risco:** baixo (aditivo, gated por flag e por rede; caminho `basemap=False`/offline preservado).
