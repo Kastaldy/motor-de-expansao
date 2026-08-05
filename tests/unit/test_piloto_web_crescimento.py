@@ -223,6 +223,25 @@ def test_chip_varia_dentro_de_um_top_10() -> None:
     assert len(set(etiquetas)) >= 3, f"chip quase constante no top-10: {set(etiquetas)}"
 
 
+def test_chip_atravessa_o_funil_de_verdade(com_crescimento: Path) -> None:
+    """Mesma checagem, mas POR `montar_funil_uf` — nao chamando a funcao direto.
+
+    `docs/contrato_api_metodologia.md` registra o modo de falha: um contrato de
+    etiqueta validado so por chamada direta passa verde sobre vocabulario que o funil
+    nunca emite (o caso citado la usa `n_concorrentes_est` = 2 e 99 quando a base do
+    passo e' `white`, com n == 0). Entao alem dos ramos, o chip tem que ser conferido
+    no caminho que a tela realmente percorre.
+    """
+    itens = _uf()["passos"][3]["itens"]
+    assert itens, "o passo 4 da UF saiu sem ranking — o teste nao provaria nada"
+    tags = {it["tag"] for it in itens}
+    assert all(tags), "item do ranking sem chip"
+    assert not (tags & CLASSES_HEX), f"o chip fala o idioma do mapa: {tags & CLASSES_HEX}"
+    assert not (tags & CLASSES_BRUTAS)
+    # E o chip tem que citar a regua que usa, senao o numero fica sem escala.
+    assert all("estado" in t or "média" in t for t in tags), tags
+
+
 def test_mediana_perto_de_zero_cai_no_ramo_de_pontos_percentuais() -> None:
     """Defesa: com mediana ~0 a razao explode e "10× a mediana" elogiaria um municipio
     que cresceu 5% num estado parado. Nenhuma UF do artefato atual chega la (a mediana
