@@ -37,7 +37,11 @@ def _muni(nome: str = "Sao Paulo") -> dict:
 def _uf() -> dict:
     return pilot.uf_view("SP")
 
+# O que a API ENVIA (rotulo de exibicao). O identificador no parquet e ASCII —
+# `CLASSES_BRUTAS` abaixo — e a traducao mora em `_ROTULO_CLASSE`. A paridade dos
+# dois com o `colors.ts` e travada em `test_paridade_classe_crescimento_web.py`.
 CLASSES_HEX = {"Em alta", "Estável", "Sem obra nova"}
+CLASSES_BRUTAS = {"Em alta", "Estavel", "Sem obra nova"}
 
 
 def _crescimento_municipal() -> pd.DataFrame:
@@ -91,9 +95,11 @@ def com_crescimento(synth_data: Path) -> Path:  # noqa: F811
         {
             "hex_id": enr["hex_id"].astype(str),
             "cres_hex_taxa": [12.0, 45.0, -3.0, 200.0] * (len(enr) // 4) + [0.0] * (len(enr) % 4),
-            "cres_hex_classe": ["Estável", "Em alta", "Sem obra nova", "Em alta"]
+            # Sem acento, como o gerador grava (08_populacao_e_hex.py, CORTES). Se a
+            # fixture gravasse o rotulo pronto, o teste de acentuacao passaria de graca.
+            "cres_hex_classe": ["Estavel", "Em alta", "Sem obra nova", "Em alta"]
             * (len(enr) // 4)
-            + ["Estável"] * (len(enr) % 4),
+            + ["Estavel"] * (len(enr) % 4),
         }
     ).to_parquet(staging / "crescimento_hex.parquet", index=False)
     pilot.carregar_crescimento.cache_clear()
@@ -190,13 +196,43 @@ def test_join_falha_alto_com_cod6_duplicado(com_crescimento: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_hex_nao_carrega_as_strings_municipais(com_crescimento: Path) -> None:
-    """`cres_dims`/`cres_series` sao municipais: repetidos por hexagono levavam
-    /api/uf/SP de 3,6 para 19,45 MB. Vao no passo e no item do ranking."""
+def test_hex_nao_carrega_nada_de_municipal(com_crescimento: Path) -> None:
+    """NENHUM valor broadcast municipal pode viajar por hexagono.
+
+    Duas rodadas do mesmo erro: primeiro `cres_dims`/`cres_series` (3,6 -> 19,45 MB em
+    /api/uf/SP), depois os seis campos do tooltip, que ficaram com a desculpa de serem
+    "curtos o bastante" — eram 1,87 MB em SP (6,58 -> 4,71). O hex so pode carregar o
+    que varia POR hexagono, mais a chave da cidade.
+    """
     hexes = _muni()["hexes"]
     assert hexes, "fixture sem hexagonos"
-    for proibido in ("cres_dims", "cres_series", "cres_serie"):
+    proibidos = (
+        "cres_dims", "cres_series", "cres_serie",          # strings longas
+        "cres_tend", "cres_emp", "cres_empresas",          # tooltip municipal
+        "cres_salario", "cres_setor", "cres_uf_mediana",
+        "cres_confiab",                                     # so server-side
+    )
+    for proibido in proibidos:
         assert proibido not in hexes[0], f"{proibido} voltou para o payload por hexagono"
+    # E o que SOBRA tem que continuar la, senao o mapa perde a cor da camada.
+    assert "cres_hex_classe" in hexes[0] and "cres_hex_taxa" in hexes[0]
+    assert "mun" in hexes[0], "sem a chave da cidade o tooltip nao acha o bloco municipal"
+
+
+def test_bloco_municipal_vem_uma_vez_por_cidade(com_crescimento: Path) -> None:
+    """O que saiu do hexagono tem que CHEGAR em algum lugar — senao a economia de
+    payload e so perda de informacao."""
+    for payload in (_muni(), _uf()):
+        blocos = payload["cres_mun"]
+        assert blocos, "nenhuma cidade com leitura no bloco municipal"
+        # Chaveado pelo mesmo nome que o hexagono carrega.
+        muns = {h["mun"] for h in payload["hexes"] if h.get("mun")}
+        assert set(blocos) & muns, "as chaves do bloco nao casam com nenhum `Hex.mun`"
+        um = next(iter(blocos.values()))
+        assert set(um) == {"tend", "emp", "empresas", "salario", "setor", "uf_mediana"}
+    # Uma entrada por cidade, nao por hexagono.
+    uf = _uf()
+    assert len(uf["cres_mun"]) <= len({h["mun"] for h in uf["hexes"] if h.get("mun")})
 
 
 def test_dims_e_series_vem_uma_vez_no_passo(com_crescimento: Path) -> None:
@@ -213,11 +249,18 @@ def test_tendencia_sai_acentuada(com_crescimento: Path) -> None:
     assert tends <= {"Em alta", "Estável", "Em queda"}
 
 
-def test_classe_do_hexagono_esta_no_vocabulario_do_front(com_crescimento: Path) -> None:
-    """`crescClasseToColor` compara string literal: classe fora do conjunto vira
-    "sem medicao" em silencio."""
+def test_classe_do_hexagono_sai_acentuada(com_crescimento: Path) -> None:
+    """Gemeo de `test_tendencia_sai_acentuada`, para a outra coluna do mesmo balao.
+
+    O parquet guarda o identificador ASCII; a tela mostra texto acentuado. Antes as
+    duas colunas apareciam no mesmo tooltip escritas de formas diferentes, e o
+    identificador acentuado era comparado por literal no `colors.ts` — regerar o
+    artefato normalizado pintava a camada inteira de cinza, em silencio.
+    """
     hexes = _muni()["hexes"]
     classes = {h.get("cres_hex_classe") for h in hexes if h.get("cres_hex_classe")}
+    assert classes, "fixture sem classe de hexagono"
+    assert "Estavel" not in classes, "a API vazou o identificador cru para a tela"
     assert classes <= CLASSES_HEX, f"classe fora do vocabulario do front: {classes - CLASSES_HEX}"
 
 

@@ -11,9 +11,53 @@ Os dois são **opcionais**: ausentes, os loaders devolvem `None`, o passo 4 exib
 narrativa de indisponibilidade e o resto do piloto segue igual. Nenhum deles é
 gravado no artefato do M1 — a camada é **READ-ONLY** sobre ele.
 
+## Onde os dados moram (variáveis de ambiente)
+
+Os caminhos **não** são mais literais dentro dos scripts: `_raizes.py` resolve as
+quatro raízes por variável de ambiente, com default para o layout do autor. Rodar em
+outra máquina é definir as variáveis, não editar 10 arquivos — e a falha vem como
+"defina `SOCIOECONOMICO_DIR`", não como um `FileNotFoundError` apontando para o disco
+de outra pessoa.
+
+| Variável | Serve para | Default |
+|---|---|---|
+| `MOTOR_DATA_DIR` | lê `outputs/`, **escreve `staging/`** | `data/` deste repo |
+| `CRESCIMENTO_TEC_DIR` | os 3 CSVs do projeto Crescimento Regional TEC | `…/Crescimento Regional TEC/output` |
+| `SOCIOECONOMICO_DIR` | `rais/`, `caged/`, `cnpj/`, `pib/` | `C:\dados\socioeconomico` |
+| `POC_SATELITE_DIR` | mosaicos `data/uf=XX/hex_google_temporal_YYYY.parquet` | `…/Google Engine/poc_satelite` |
+
+`MOTOR_DATA_DIR` é a **mesma** variável que `web/server/app.py` usa para achar
+`staging/`. Antes o destino era um literal aqui e uma env var lá: podiam divergir sem
+ninguém notar, e o piloto leria um artefato velho em silêncio.
+
+Os intermediários (`_mun_cresc_bruto`, `_cres_extra`, `_dims`) ficam ancorados **na
+pasta dos scripts**, não no CWD — rodar de outro diretório antes lia um intermediário
+de outra execução, sem avisar.
+
+### O que este repositório NÃO consegue reproduzir sozinho
+
+Ser honesto sobre isto importa mais do que parecer completo:
+
+- Os insumos são dezenas de GB de microdado (RAIS, CAGED, CNPJ) e de mosaicos de
+  satélite por UF. **Nada disso está aqui e nada disso pode estar.**
+- **`_eixo_trajetoria.parquet` não é gerado por nenhum destes 10 scripts.** Ele é lido
+  por `04`, `07` e `08` e vem do projeto irmão `poc_satelite`, em
+  `_proposta_camada_motor/prototipo/p2_eixo.py`, que por sua vez depende de
+  `p1_base.py`. Colocá-lo nesta pasta é pré-requisito do `04`. Contrato mínimo das
+  colunas: `hex_id`, `cod_municipio`, `n_pixels`, `mascara_urbana` (bool),
+  `p2016`…`p2023` (fração de presença de edificação, 0–1). Área construída =
+  `p{ano} × n_pixels × 400` (pixel de 20 m); `mascara_urbana = p2019 >= 0.005`.
+- Logo: reproduzir a camada do zero exige **este repo + `poc_satelite` +
+  `Crescimento Regional TEC` + a árvore de microdado**. O que os 10 scripts garantem é
+  serem executáveis onde esses dados existirem, e dizerem qual peça falta.
+
+Os dois artefatos são versionados como saída, não como código: estão em
+`STAGING_OPCIONAL` (`scripts/check_artifacts.py`), então **a ausência degrada a camada
+e não quebra o deploy**.
+
 ## Fontes
 
-Tudo fora do repositório, em `C:\dados\socioeconomico\` e nos projetos irmãos:
+Tudo fora do repositório, sob as raízes acima:
 
 - **CAGED** (`caged/caged_municipio_mensal_2020_2026.csv`) — saldo mensal por município, até jun/2026
 - **RAIS** (`rais/rais_municipio_{2020..2024}.csv`) — vínculos, massa salarial, remuneração
@@ -80,11 +124,16 @@ O front (`web/src/components/NarrativePanel.tsx`) faz `split` desses separadores
 **Nenhum valor pode conter `:`, `|` ou `;`.** Os separadores `→` e `–` dos períodos
 são seguros. Verificado em 26.129 blocos de dims e 26.140 de séries.
 
-O acoplamento por string literal também existe nas classes do hexágono: o front
-compara `'Em alta'`, `'Estável'` e `'Sem obra nova'` em `lib/colors.ts`. Mudar o
-rótulo em `08_populacao_e_hex.py` sem mudar lá faz o mapa inteiro virar "sem
-medição" — sem erro. Há teste de contrato cobrindo isso
-(`tests/unit/test_piloto_web_crescimento.py`).
+O mesmo acoplamento existe nas classes do hexágono, e ele agora tem três pontas:
+`08_populacao_e_hex.py` (`CORTES`) grava o identificador **sem acento** no parquet,
+`app.py` (`_ROTULO_CLASSE`) traduz para o rótulo acentuado que a API envia, e
+`lib/colors.ts` (`crescClasseToColor`) compara esse rótulo para escolher a cor.
+Quebrar qualquer elo pinta a camada 4 inteira de cinza — sem erro, sem log.
+
+O identificador é ASCII de propósito (CLAUDE.md §2): era gravado `'Estável'` enquanto
+o irmão `cres_tendencia` já saía `'Estavel'`, e os dois apareciam no mesmo balão de
+tooltip. `tests/unit/test_paridade_classe_crescimento_web.py` trava as três pontas —
+inclusive que o identificador continue sem acento.
 
 ## Decisões que os números não explicam sozinhos
 

@@ -180,12 +180,7 @@ export default function MapScreen({
       faixa: null,
       conc: 0,
       ultra: 0,
-      cres_tend: null,
-      cres_emp: null,
-      cres_empresas: null,
-      cres_salario: null,
-      cres_setor: null,
-      cres_uf_mediana: null,
+      mun: null,
       cres_hex_taxa: null,
       cres_hex_classe: null,
     }
@@ -242,6 +237,7 @@ export default function MapScreen({
         <HexMap
           hexes={hexesFiltrados}
           passo={passo}
+          cresMun={dados.cres_mun}
           centro={dados.centro}
           municipio={dados.municipio ?? undefined}
           uf={dados.uf}

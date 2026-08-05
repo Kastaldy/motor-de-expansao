@@ -3,9 +3,11 @@
 Formato por dimensao: nome|unidade|rotulo_ini|rotulo_fim|v1,v2,...   unidas por ';'."""
 import pandas as pd, numpy as np, glob, zipfile, unicodedata, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-D = r"C:\dados\socioeconomico"
-C = r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho\Crescimento Regional TEC\output"
-API = r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho\APIGeoEspacial"
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
+from _raizes import TRABALHO, artefato_municipal, entrada, raiz, trabalho  # noqa: E402
+ART = artefato_municipal()
+D = str(raiz("SOCIO"))
+C = str(raiz("TEC"))
 c6 = lambda s: s.astype(str).str.replace(r"\D", "", regex=True).str.zfill(6).str[:6]
 def norm(s):
     s = unicodedata.normalize("NFKD", str(s)).encode("ascii","ignore").decode().upper().strip()
@@ -57,7 +59,7 @@ S["empresas"] = ("Empresas", "saldo", str(int(anos_e[0])), str(int(anos_e[-1])),
 print(f"empresas: {len(emp):,} x {len(anos_e)} anos")
 
 # --- PREDIOS: area construida municipal 2016..2023 (satelite) --------------
-ex = pd.read_parquet("_eixo_trajetoria.parquet",
+ex = pd.read_parquet(entrada(TRABALHO, "_eixo_trajetoria.parquet"),
       columns=["cod_municipio","n_pixels","mascara_urbana"] + [f"p{a}" for a in range(2016,2024)])
 ex = ex[ex.mascara_urbana]
 for a in range(2016, 2024): ex[f"a{a}"] = ex[f"p{a}"] * ex.n_pixels * 400
@@ -90,10 +92,10 @@ def enc(cod6):
         out.append(f"{nome}|{un}|{ri}|{rf}|" + ",".join(f"{x:.0f}" for x in v))
     return ";".join(out) if out else None
 
-art = pd.read_parquet(rf"{API}\staging\crescimento_municipal.parquet")
+art = pd.read_parquet(ART)
 art["cod6"] = art.cod6.astype(str).str.zfill(6)
 art["cres_series"] = [enc(c) for c in art.cod6]
-art.to_parquet(rf"{API}\staging\crescimento_municipal.parquet", index=False)
+art.to_parquet(ART, index=False)
 n = art.cres_series.fillna("").str.count(";") + 1
 print(f"\n-> cres_series | com >=1 serie {art.cres_series.notna().mean():.1%} | com as 5 {(n==5).mean():.1%}")
 ex1 = art[art.cres_series.fillna('').str.count(';').eq(4)].iloc[0]

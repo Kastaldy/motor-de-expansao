@@ -22,6 +22,13 @@ camadas paralelas por direito proprio).
 | `staging/crescimento_municipal.parquet` | 2 MB | `data/reports/crescimento/` (10 scripts, ordem no README) | piloto web, passo 4 do funil — OPCIONAL, ausente degrada so o passo |
 | `staging/crescimento_hex.parquet` | 370 KB | idem | piloto web, passo 4 — cor do mapa por taxa de crescimento do hexagono |
 
+Os dois de crescimento **nao sao reproduziveis a partir deste repo sozinho**: os 10
+scripts leem microdado (RAIS, CAGED, CNPJ) e mosaicos de satelite que vivem fora, e um
+dos insumos (`_eixo_trajetoria.parquet`) e' produzido pelo projeto irmao `poc_satelite`.
+Os caminhos sao resolvidos por variavel de ambiente (`MOTOR_DATA_DIR`,
+`CRESCIMENTO_TEC_DIR`, `SOCIOECONOMICO_DIR`, `POC_SATELITE_DIR`) e o script diz qual
+peca falta em vez de estourar. Detalhe e contrato de colunas no README da pasta.
+
 Artefatos executivos complementares (nao bloqueantes):
 
 | Arquivo | Tam. aprox | Notas |

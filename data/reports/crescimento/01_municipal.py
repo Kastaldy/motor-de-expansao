@@ -3,7 +3,9 @@
 Nada de reconstruir, nada de validar: so ver o que existe e como ler facil."""
 import pandas as pd, numpy as np, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-C = r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho\Crescimento Regional TEC\output"
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
+from _raizes import raiz, trabalho  # noqa: E402
+C = str(raiz("TEC"))
 
 b  = pd.read_csv(rf"{C}\indices_crescimento_municipal.csv", low_memory=False)
 cm = pd.read_csv(rf"{C}\crescimento_municipio.csv", low_memory=False)
@@ -52,5 +54,5 @@ for c in ["Sorocaba","Goiânia","Extrema","Indaiatuba","Juazeiro"]:
         r = r.iloc[0]
         print(f"  {str(r.cidade)[:20]:<20}{r.uf}  {str(r.tendencia):<9} | emprego {r.emp_cresc_pct:>6.1f}% | "
               f"PIB {r.pib_cresc_pct:>6.1f}% | empresas {r.saldo:>+7,.0f} | conf. {r.confiabilidade}")
-d.to_parquet("_mun_cresc_bruto.parquet", index=False)
+d.to_parquet(trabalho("_mun_cresc_bruto.parquet"), index=False)
 print("\n-> _mun_cresc_bruto.parquet")

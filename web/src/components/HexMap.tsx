@@ -18,7 +18,7 @@ import {
   crescClasseToColor,
   type RGBA,
 } from '../lib/colors'
-import type { Hex, Passo, Pin, Pins } from '../lib/types'
+import type { CrescimentoMunicipal, Hex, Passo, Pin, Pins } from '../lib/types'
 
 /** Objeto de ícone do deck.gl a partir de um data URI (bandeira quadrada). */
 interface IconeDeck {
@@ -119,9 +119,38 @@ function textoRank(rank: number, passoN: number): string {
   return passoN === 5 ? `${rank}º` : String(rank).padStart(2, '0')
 }
 
+/** Uma leitura municipal do passo 4. Fora do JSX principal so por tamanho. */
+function BlocoMunicipal({ c }: { c: CrescimentoMunicipal }) {
+  return (
+    <>
+      <Divisoria />
+      {c.tend && <Linha rotulo="Emprego formal" valor={c.tend} />}
+      {c.emp !== null && (
+        <Linha
+          rotulo="Variação desde dez/2022"
+          valor={`${c.emp >= 0 ? '+' : ''}${num(c.emp, 1)}%`}
+        />
+      )}
+      {c.uf_mediana !== null && (
+        <Linha
+          rotulo="Mediana do estado"
+          valor={`${c.uf_mediana >= 0 ? '+' : ''}${num(c.uf_mediana, 1)}%`}
+        />
+      )}
+      {c.setor && <Linha rotulo="Setor que puxa" valor={c.setor} />}
+      {c.salario !== null && <Linha rotulo="Salário de admissão" valor={brl(c.salario)} />}
+      {c.empresas !== null && c.empresas > 0 && (
+        <Linha rotulo="Empresas a mais" valor={num(c.empresas)} />
+      )}
+    </>
+  )
+}
+
 export interface HexMapProps {
   hexes: Hex[]
   passo: Passo
+  /** Leitura de crescimento por cidade (passo 4). Chaveada por `Hex.mun`. */
+  cresMun?: Record<string, CrescimentoMunicipal>
   centro: { lat: number | null; lng: number | null }
   /** Nome do municipio carregado — cabecalho do tooltip (como o Streamlit). */
   municipio?: string
@@ -148,6 +177,7 @@ interface ViewState {
 export default function HexMap({
   hexes,
   passo,
+  cresMun,
   centro,
   municipio,
   uf,
@@ -161,6 +191,8 @@ export default function HexMap({
   // cortado quando o cursor estava na parte de baixo ou na direita do mapa. Medimos
   // a caixa do mapa e viramos o balao para o lado que tem espaco.
   const caixaRef = useRef<HTMLDivElement>(null)
+  /** Leitura da cidade do hexagono sob o cursor — `undefined` se ela nao tem leitura. */
+  const cresDoHex = (h: Hex) => (h.mun ? cresMun?.[h.mun] : undefined)
   function ancora(x: number, y: number, altura = 360, largura = 240) {
     const b = caixaRef.current?.getBoundingClientRect()
     const viraY = b ? y + altura + 14 > b.height : false
@@ -512,35 +544,10 @@ export default function HexMap({
               )}
             </>
           )}
-          {passo.n === 4 && hover.h.cres_tend && (
-            <>
-              <Divisoria />
-              <Linha rotulo="Emprego formal" valor={hover.h.cres_tend} />
-              {hover.h.cres_emp !== null && (
-                <Linha
-                  rotulo="Variação desde dez/2022"
-                  valor={`${hover.h.cres_emp >= 0 ? '+' : ''}${num(hover.h.cres_emp, 1)}%`}
-                />
-              )}
-              {hover.h.cres_uf_mediana !== null && (
-                <Linha
-                  rotulo="Mediana do estado"
-                  valor={`${hover.h.cres_uf_mediana >= 0 ? '+' : ''}${num(hover.h.cres_uf_mediana, 1)}%`}
-                />
-              )}
-              {hover.h.cres_setor && (
-                <Linha rotulo="Setor que puxa" valor={hover.h.cres_setor} />
-              )}
-              {hover.h.cres_salario !== null && (
-                <Linha
-                  rotulo="Salário de admissão"
-                  valor={brl(hover.h.cres_salario)}
-                />
-              )}
-              {hover.h.cres_empresas !== null && hover.h.cres_empresas > 0 && (
-                <Linha rotulo="Empresas a mais" valor={num(hover.h.cres_empresas)} />
-              )}
-            </>
+          {/* O bloco municipal vem de `cresMun`, nao do hexagono: e o mesmo valor
+              para a cidade inteira e repeti-lo em cada hex custava ~2,2 MB por UF. */}
+          {passo.n === 4 && cresDoHex(hover.h) && (
+            <BlocoMunicipal c={cresDoHex(hover.h)!} />
           )}
         </div>
       )}

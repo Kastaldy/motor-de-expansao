@@ -4,12 +4,14 @@ So repassa o que o Crescimento Regional TEC ja apura. Nao reconstroi, nao prediz
 nao ranqueia oportunidade. Cobertura nacional."""
 import pandas as pd, numpy as np, sys, glob
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-API = r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho\APIGeoEspacial"
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
+from _raizes import artefato_municipal, outputs, trabalho  # noqa: E402
+ART = artefato_municipal()
 
-d = pd.read_parquet("_mun_cresc_bruto.parquet")
+d = pd.read_parquet(trabalho("_mun_cresc_bruto.parquet"))
 
 # --- confiabilidade nas cidades que o piloto realmente mostra ----------------
-cart = pd.read_parquet(rf"{API}\outputs\carteira_expansao_acionavel.parquet",
+cart = pd.read_parquet(outputs("carteira_expansao_acionavel.parquet"),
                        columns=["cod_municipio","nome_municipio","uf"])
 cart["cod6"] = cart.cod_municipio.astype(str).str[:6]
 cc = d[d.cod6.isin(set(cart.cod6))]
@@ -38,13 +40,13 @@ art = d[["cod6","cres_tendencia","cres_ramp","emp_cresc_pct","saldo","confiabili
 art.columns = ["cod6","cres_tendencia","cres_ramp","cres_emp_pct","cres_saldo_empresas",
                "cres_confiab","cres_vinculos","cres_pop"]
 # as quatro leituras que um percentual sozinho nao da (ver t2_enriquecer.py)
-extra = pd.read_parquet("_cres_extra.parquet")
+extra = pd.read_parquet(trabalho("_cres_extra.parquet"))
 extra["cod6"] = extra.cod6.astype(str).str.zfill(6)
 art["cod6"] = art.cod6.astype(str).str.zfill(6)
 art = art.merge(extra, on="cod6", how="left")
 art["cres_emp_pct"] = art.cres_emp_pct.round(1)
 art["cod6"] = art.cod6.astype(str).str.zfill(6)
-p = rf"{API}\staging\crescimento_municipal.parquet"
+p = ART
 art.to_parquet(p, index=False)
 import os; print(f"\n-> crescimento_municipal.parquet  ({len(art):,} municipios, {os.path.getsize(p)/1024:.0f} KB)")
 

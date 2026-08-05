@@ -9,11 +9,13 @@ o que de fato aconteceu. Renda, populacao e predios ja eram nivel; faltavam empr
 e empresas."""
 import pandas as pd, numpy as np, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-D = r"C:\dados\socioeconomico"
-API = r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho\APIGeoEspacial"
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
+from _raizes import artefato_municipal, raiz  # noqa: E402
+ART = artefato_municipal()
+D = str(raiz("SOCIO"))
 c6 = lambda s: s.astype(str).str.replace(r"\D", "", regex=True).str.zfill(6).str[:6]
 
-art = pd.read_parquet(rf"{API}\staging\crescimento_municipal.parquet")
+art = pd.read_parquet(ART)
 art["cod6"] = art.cod6.astype(str).str.zfill(6)
 
 # ---- EMPREGO: estoque = RAIS 2022 + saldo acumulado desde 2023 -------------
@@ -56,7 +58,7 @@ def refaz(row):
     return ";".join("|".join(p) for p in d.values()) if d else None
 
 art["cres_series"] = art.apply(refaz, axis=1)
-art.to_parquet(rf"{API}\staging\crescimento_municipal.parquet", index=False)
+art.to_parquet(ART, index=False)
 
 # ---- conferencia: alguma serie ainda CAI enquanto a dimensao e positiva? ---
 def cai(s, nome):

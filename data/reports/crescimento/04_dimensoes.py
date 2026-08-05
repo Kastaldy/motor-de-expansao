@@ -5,9 +5,11 @@ Renda e nominal de proposito — a comparacao com a mediana nacional faz o papel
 deflator, e evita inventar um indice de inflacao que ninguem pode auditar aqui."""
 import pandas as pd, numpy as np, glob, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-D = r"C:\dados\socioeconomico"
-C = r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho\Crescimento Regional TEC\output"
-POC = r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho\Google Engine\poc_satelite"
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
+from _raizes import TRABALHO, entrada, raiz, trabalho  # noqa: E402
+D = str(raiz("SOCIO"))
+C = str(raiz("TEC"))
+POC = str(raiz("POC"))
 UFS = ["SP","MG","RJ","ES","PR","SC","RS","BA","PE","CE","GO","DF"]
 # Serve para codigo de 6 OU 7 digitos: a RAIS usa 6, a ponte do CRESCIMENTO usa 7.
 # zfill(7)+[:6] quebrava o de 6 ("110001" virava "011000").
@@ -51,7 +53,7 @@ cn["dim_empresas_valor"] = cn.saldo
 print(f"empresas: {len(cn):,} municipios | mediana {cn.dim_empresas_por1k.median():.1f} por 1.000 hab")
 
 # ---- 4. PREDIOS: area construida e altura media (satelite, 12 UFs) ----------
-eixo = pd.read_parquet("_eixo_trajetoria.parquet",
+eixo = pd.read_parquet(entrada(TRABALHO, "_eixo_trajetoria.parquet"),
                        columns=["hex_id","cod_municipio","p2016","p2023","n_pixels","mascara_urbana"])
 eixo = eixo[eixo.mascara_urbana].copy()
 eixo["a16"] = eixo.p2016 * eixo.n_pixels; eixo["a23"] = eixo.p2023 * eixo.n_pixels
@@ -101,7 +103,7 @@ d["dim_n"] = d[[f"pos_{k}" for k in DIMS]].notna().sum(axis=1)
 print("\n=== cobertura por dimensao ===")
 for k in DIMS: print(f"  {k:<10} {d['pos_'+k].notna().mean():>6.1%}")
 print(f"\n  media com >=4 dimensoes: {(d.dim_n>=4).mean():.1%} dos municipios")
-d.reset_index().to_parquet("_dims.parquet", index=False)
+d.reset_index().to_parquet(trabalho("_dims.parquet"), index=False)
 print("\n-> _dims.parquet")
 print("\n=== exemplo: Goianesia GO ===")
 g = d[d.cidade.astype(str).str.upper().str.startswith("GOIAN")].head(3)

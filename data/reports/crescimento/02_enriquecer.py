@@ -8,8 +8,10 @@ sozinho nao da:
 """
 import pandas as pd, numpy as np, unicodedata, zipfile, sys, os
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-C = r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho\Crescimento Regional TEC\output"
-D = r"C:\dados\socioeconomico"
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
+from _raizes import raiz, trabalho  # noqa: E402
+C = str(raiz("TEC"))
+D = str(raiz("SOCIO"))
 
 def norm(s):
     s = unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode().upper().strip()
@@ -120,7 +122,7 @@ out["cres_salario_var"] = out.cres_salario_var.round(1)
 # completo em todas, entao (uf, nome normalizado) recupera o que o codigo perde.
 out = out.merge(base[["cod6","cidade"]], on="cod6", how="left")
 out["cres_chave_nome"] = out.uf.map(norm) + "|" + out.cidade.map(norm)
-out.drop(columns=["uf","cidade"]).to_parquet("_cres_extra.parquet", index=False)
+out.drop(columns=["uf","cidade"]).to_parquet(trabalho("_cres_extra.parquet"), index=False)
 print(f"\n-> _cres_extra.parquet  ({len(out):,} municipios)")
 print("\ncobertura:", {c: f"{out[c].notna().mean():.0%}" for c in
       ["cres_serie","cres_salario","cres_setor","cres_uf_mediana"]})

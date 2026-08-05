@@ -122,8 +122,9 @@ def test_camada_4_declara_que_nao_filtra(metodologia):
 
     As outras quatro cortam: cada uma recebe o que a anterior aprovou. Esta nao — ela
     entra entre a concorrencia e a fila sem tirar ninguem e sem reordenar nada. Se o
-    texto deixar isso implicito, o leitor conclui que a fila foi filtrada por
-    crescimento, que e' exatamente o que os testes fora da amostra NAO sustentam.
+    texto deixar isso implicito, o leitor conclui que a fila foi ordenada por
+    crescimento — e ai atribui a esta camada um poder preditivo que ela declara nao
+    ter, e que nada no repo mede.
     """
     c4 = _camada(metodologia, 4)
     assert "não filtra" in c4["corte"]

@@ -4,9 +4,11 @@ decisao. A regra e simples e auditavel de proposito: conta quantas dimensoes est
 claramente acima da mediana nacional e cruza com o porte de mercado."""
 import pandas as pd, numpy as np, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-API = r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho\APIGeoEspacial"
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
+from _raizes import artefato_municipal, trabalho  # noqa: E402
+ART = artefato_municipal()
 
-d = pd.read_parquet("_dims.parquet")
+d = pd.read_parquet(trabalho("_dims.parquet"))
 d["cod6"] = d.cod6.astype(str).str.zfill(6)
 DIMS = ["renda","pop","empresas","predios","emprego"]
 ROT = {"renda":"renda","pop":"população","empresas":"empresas","predios":"prédios","emprego":"emprego"}
@@ -54,14 +56,14 @@ print("=== distribuicao do veredito ===")
 print(d.v_classe.value_counts().to_string())
 print(f"\n'entrar' que ainda NAO tem Ultra: nao medido aqui (depende do artefato do Motor)")
 
-art = pd.read_parquet(rf"{API}\staging\crescimento_municipal.parquet")
+art = pd.read_parquet(ART)
 art["cod6"] = art.cod6.astype(str).str.zfill(6)
 cols = (["cod6","dim_media","v_classe","v_frase","v_n_alta","v_n_baixa"]
         + [f"pos_{k}" for k in DIMS]
         + ["dim_renda_pct","dim_pop_pct","dim_empresas_por1k","dim_predios_pct",
            "dim_altura_pct","dim_emprego_pct"])
 art = art.merge(d[cols], on="cod6", how="left")
-art.to_parquet(rf"{API}\staging\crescimento_municipal.parquet", index=False)
+art.to_parquet(ART, index=False)
 print(f"\n-> artefato atualizado: {len(art):,} municipios, {len(art.columns)} colunas")
 
 print("\n=== exemplos ===")

@@ -3,8 +3,10 @@
 separados por ';'. Evita 10 colunas novas no contrato da API para a mesma informacao."""
 import pandas as pd, sys
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-API = r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho\APIGeoEspacial"
-a = pd.read_parquet(rf"{API}\staging\crescimento_municipal.parquet")
+sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent))
+from _raizes import artefato_municipal  # noqa: E402
+ART = artefato_municipal()
+a = pd.read_parquet(ART)
 
 SPEC = [("Renda",      "dim_renda_pct",       "%",   "pos_renda"),
         ("População",  "dim_pop_pct",         "%",   "pos_pop"),
@@ -22,7 +24,7 @@ def linha(r):
     return ";".join(out) if out else None
 
 a["cres_dims"] = a.apply(linha, axis=1)
-a.to_parquet(rf"{API}\staging\crescimento_municipal.parquet", index=False)
+a.to_parquet(ART, index=False)
 print(f"-> cres_dims gravado | preenchido em {a.cres_dims.notna().mean():.1%} dos municipios")
 print(f"   com as 5 dimensoes: {a.cres_dims.fillna('').str.count(';').eq(4).mean():.1%}")
 ex = a[a.cres_dims.notna()].iloc[0]

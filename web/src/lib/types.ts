@@ -29,29 +29,36 @@ export interface Hex {
   ultra: number
   /* Passo 4 — Crescimento do município. Camada de CONTEXTO: repassa o que o
      projeto Crescimento Regional TEC apura (CAGED, Receita Federal).
-     Os campos `cres_*` abaixo são MUNICIPAIS (iguais em todos os hexes da cidade)
-     e ficam aqui porque o tooltip os lê por hexágono. As strings longas
-     (dimensões e séries) NÃO ficam aqui — viajavam repetidas em cada hexágono e
-     levavam `/api/uf/SP` de 3,6 para 19,45 MB. Elas vêm uma vez em
-     `Passo.dims`/`Passo.series` ou em `RankItem.dims`/`RankItem.series`. */
-  /** "Em alta" | "Estável" | "Em queda" — null quando não há leitura confiável */
-  cres_tend: string | null
-  /** variação do emprego formal em %, dez/2022→jun/2026 (CAGED sobre estoque RAIS 2022) */
-  cres_emp: number | null
-  /** saldo de empresas abertas menos fechadas, 2020→2025 (Receita Federal) */
-  cres_empresas: number | null
-  /** "alta" | "media" | "baixa" | "muito_baixa" — o próprio projeto marca */
-  /** salário médio de admissão nos últimos 12 meses (R$) */
-  cres_salario: number | null
-  /** setor cuja abertura de empresas está mais ACIMA do normal nesta cidade */
-  cres_setor: string | null
-  /** mediana de `cres_emp` na UF — dá escala ao número da cidade */
-  cres_uf_mediana: number | null
+     NADA de municipal mora aqui. O que é igual em toda a cidade viaja UMA vez, em
+     `MapaResposta.cres_mun` (chaveado por `mun`), pelo mesmo motivo que já tinha
+     tirado `cres_dims`/`cres_series` do hexágono: repetido em 15.000 hexes eram
+     ~2,2 MB por carga de UF. Aqui ficam só os dois campos que variam POR hexágono. */
+  /** Nome do município — chave para `MapaResposta.cres_mun`. */
+  mun: string | null
   /** taxa de crescimento da área construída DESTE hexágono, 2016→2023, em % */
   cres_hex_taxa: number | null
   /** "Em alta" | "Estável" | "Sem obra nova" — é o que colore o mapa no passo 4.
-   *  Ver `crescClasseToColor` em lib/colors.ts: o acoplamento é por string literal. */
+   *  RÓTULO de exibição, já acentuado pela API (`_ROTULO_CLASSE` em app.py); o
+   *  identificador no parquet é ASCII. `crescClasseToColor` em lib/colors.ts compara
+   *  este rótulo por literal, e `test_paridade_classe_crescimento_web.py` trava os
+   *  dois lados — sem ele, renomear um rótulo pinta a camada inteira de cinza. */
   cres_hex_classe: string | null
+}
+
+/** Leitura de crescimento de uma cidade — a mesma para todos os hexes dela. */
+export interface CrescimentoMunicipal {
+  /** "Em alta" | "Estável" | "Em queda" — null quando não há leitura confiável */
+  tend: string | null
+  /** variação do emprego formal em %, dez/2022→jun/2026 (CAGED sobre estoque RAIS 2022) */
+  emp: number | null
+  /** saldo de empresas abertas menos fechadas, 2020→2025 (Receita Federal) */
+  empresas: number | null
+  /** salário médio de admissão nos últimos 12 meses (R$) */
+  salario: number | null
+  /** setor cuja abertura de empresas está mais ACIMA do normal nesta cidade */
+  setor: string | null
+  /** mediana de `emp` na UF — dá escala ao número da cidade */
+  uf_mediana: number | null
 }
 
 export interface RankItem {
@@ -181,6 +188,8 @@ export interface MunicipioPayload {
   resumo: Resumo
   passos: Passo[]
   hexes: Hex[]
+  /** Passo 4, uma entrada por cidade. Esparso: cidade sem leitura não aparece. */
+  cres_mun: Record<string, CrescimentoMunicipal>
   pins: Pins
 }
 

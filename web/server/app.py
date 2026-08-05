@@ -135,6 +135,9 @@ FAIXA_HEXES_POLO = 30  # etiqueta Polo, em nº de hexes quentes do municipio
 FAIXA_HEXES_FORTE = 8  # etiqueta Forte; abaixo, Emergente
 CONC_ADENSAR_MAX = 2  # ate' 2 concorrentes estimados = cabe adensar
 FILA_MAX = 10  # tamanho maximo da fila do ultimo passo
+# Abaixo disto a mediana da UF nao serve de divisor (a razao explode). Ver
+# `_etiqueta_crescimento`: no artefato vigente nenhuma UF chega perto, e o piso e defesa.
+_CRESC_PISO_MEDIANA = 1.0
 
 app = FastAPI(title="Piloto Web — Motor de Expansao", version="0.1.0")
 # Em producao o SPA e a API sao servidos pela MESMA origem (mesmo container atras do
@@ -274,10 +277,10 @@ def carregar_crescimento() -> pd.DataFrame | None:
     Broadcast municipal por construcao: todos os hexes da cidade recebem o mesmo
     valor, porque a pergunta e sobre a CIDADE.
 
-    `cres_ramp` mapeia cada tendencia para o CENTRO de uma faixa da rampa que o
-    piloto ja usa (RESIDUAL_SCORE_BANDS): 85/55/15 caem nas faixas 8/5/1. Nenhuma
-    cor nova. Municipio com confiabilidade muito baixa vem com ramp NULO — o
-    proprio projeto marca que ali o dado nao sustenta leitura.
+    O artefato tem uma coluna `cres_ramp` (tendencia mapeada para o centro de uma
+    faixa de RESIDUAL_SCORE_BANDS) que NAO e' carregada: a camada 4 nao usa a rampa
+    de score, colore por classe categorica. Ela fica no parquet, fora de
+    `_COLS_CRESCIMENTO`, e nao chega ao payload.
     """
     if not CRESCIMENTO_PATH.exists():
         return None
@@ -402,6 +405,17 @@ def _num(v: Any, casas: int = 0) -> float | None:
 # texto acentuado. Sem o mapa, o tooltip exibia "Estavel" tres linhas acima de
 # "Estável" (que vem de cres_hex_classe), no mesmo balao.
 _ROTULO_TEND = {"Estavel": "Estável", "Em alta": "Em alta", "Em queda": "Em queda"}
+# Mesma regra para a classe do hexagono, que ate o BLK-TRAJ-01 vinha ACENTUADA do
+# parquet e era comparada por literal no `colors.ts` — regerar o artefato com
+# normalizacao ASCII pintaria o mapa inteiro de cinza, sem erro e sem teste vermelho.
+# Agora o bruto e ASCII e a traducao mora aqui; o front passa a casar o ROTULO que a
+# API envia, igual ja faz com `FAIXA_LABELS`. `tests/unit/test_paridade_classe_
+# crescimento_web.py` trava os dois lados.
+_ROTULO_CLASSE = {
+    "Em alta": "Em alta",
+    "Estavel": "Estável",
+    "Sem obra nova": "Sem obra nova",
+}
 
 
 def _texto(v: Any) -> str | None:
@@ -961,11 +975,17 @@ def _mun_val(df_muni: pd.DataFrame, col: str) -> Any:
 
 
 def _narrativa_crescimento(df_muni: pd.DataFrame, municipio: str) -> str:
-    """Passo 4. Como a cidade esta indo — contexto, nao recomendacao.
+    """Passo 4. Como a cidade esta indo.
 
     So repassa o que o projeto Crescimento Regional TEC ja apura: a tendencia do
     emprego formal (CAGED, defasagem ~3 meses) e o saldo de empresas da Receita.
-    Nao ordena oportunidade e nao promete nada sobre desempenho de unidade.
+
+    O `v_frase` E' uma recomendacao — chega a dizer "vale ficar de olho, nao abrir
+    agora" — e chamar tudo isto de "contexto, nao recomendacao" escondia isso. A
+    distincao que vale e de NIVEL, nao de natureza: o veredito e' sobre a PRACA
+    (esta cidade merece atencao?) e nao escolhe nem ordena PONTO — quem faz isso e' o
+    passo 5, pelo residual, sem olhar para o crescimento. Nada aqui promete
+    desempenho de unidade.
     """
     tend = _mun_val(df_muni, "cres_tendencia")
     conf = _mun_val(df_muni, "cres_confiab")
@@ -1007,7 +1027,10 @@ def _narrativa_crescimento(df_muni: pd.DataFrame, municipio: str) -> str:
             aviso = " Confiabilidade baixa: poucos vínculos formais no município."
         return f"{veredito}{cauda} CAGED, RAIS, Receita Federal e satélite.{aviso}"
 
-    tend_txt = str(tend).lower().replace("estavel", "estável")
+    # Passa pelo MESMO mapa do tooltip. Antes havia um `.replace("estavel", ...)`
+    # ad-hoc aqui: dois dialetos para a mesma coluna, e so um deles saberia de um
+    # rotulo novo.
+    tend_txt = _ROTULO_TEND.get(str(tend), str(tend)).lower()
     partes = [f"O emprego formal em {municipio} está {tend_txt}"]
     if emp is not None:
         partes[0] += f": variou {emp:+.1f}% desde dez/2022"
@@ -1068,7 +1091,19 @@ def montar_funil(
     # ha area livre aqui") — o texto do passo (`_narrativa_concorrencia`) diz isso.
     white = residual[residual["n_concorrentes_est"] == 0] if len(residual) else residual
 
-    # Passo 4 — Recomendacao: fila de ate FILA_MAX aberturas priorizada por residual,
+    # Passo 4 — as areas do passo 3 que TEM leitura de satelite. A cobertura e parcial
+    # (41.135 hexes em 12 UFs, so na mancha urbana medida), e o numerao do passo antes
+    # contava os hexes medidos do MUNICIPIO INTEIRO enquanto o mapa acendia o white:
+    # com 60 medidos e 44 white, a caixa lia "60 de 60" e o mapa acendia 44. Nenhum dos
+    # dois conjuntos continha o outro. Toda a convencao do funil e `funil_big` contar
+    # exatamente o que `hexes` acende — este era o unico passo que a violava.
+    medidos = (
+        white[white["cres_hex_classe"].notna()]
+        if "cres_hex_classe" in white.columns
+        else white.iloc[0:0]
+    )
+
+    # Passo 5 — Recomendacao: fila de ate FILA_MAX aberturas priorizada por residual,
     # so com white space. A fila e 100% viavel; encurta sozinha com menos candidatos e
     # fica vazia quando nao ha nenhum (o `if` so protege o df sem a coluna).
     # SEM fallback para o residual disputado (decisao do dono, 2026-08-03, PR #184):
@@ -1135,15 +1170,13 @@ def montar_funil(
             # A caixa do funil e "N filtrados de M" em todos os passos. Um percentual
             # ali dentro virava "21 % de emprego formal filtrados de 0 areas", que nao
             # significa nada — e o `or 0` ainda afirmava "0%" quando o dado faltava.
-            # Aqui a contagem e quantos hexes tem medicao de satelite; a variacao %
-            # segue na narrativa e no Detalhes, onde tem contexto.
-            "funil_big": (
-                int(df_muni["cres_hex_classe"].notna().sum())
-                if "cres_hex_classe" in df_muni.columns
-                else 0
+            # Aqui a contagem e o `medidos`: as MESMAS areas que o mapa acende. A
+            # variacao % segue na narrativa e no Detalhes, onde tem contexto.
+            "funil_big": len(medidos),
+            "funil_unit": _unidade(
+                len(medidos), "área com medição de satélite", "áreas com medição de satélite"
             ),
-            "funil_unit": "hexágonos com medição de satélite",
-            "funil_from": f"{_fmt(total)} hexágonos",
+            "funil_from": f"{_fmt(len(white))} áreas sem concorrência",
             "metrica": "crescimento",
             # Sem lista propria: o passo 5 ja rankeia os mesmos hexes pela mesma
             # coluna (a lista saia identica, so mudando a etiqueta). A leitura deste
@@ -1151,7 +1184,7 @@ def montar_funil(
             "itens": [],
             "dims": _texto(_mun_val(df_muni, "cres_dims")),
             "series": _texto(_mun_val(df_muni, "cres_series")),
-            "hexes": white["hex_id"].tolist(),
+            "hexes": medidos["hex_id"].tolist(),
         },
         {
             "n": 5,
@@ -1205,20 +1238,63 @@ def _etiqueta_muni(
         if v >= FAIXA_HEXES_FORTE:
             return "Forte", "green"
         return "Emergente", "gray"
-    if modo == "crescimento":
-        # `valor` e a variacao do emprego formal em %, dez/2022 -> jun/2026 (CAGED).
-        # Distribuicao nacional medida: p10 -3,5 | p25 +1,3 | p50 +6,4 | p90 +19,4.
-        if v >= 15:
-            return "Em alta", "green"
-        if v >= 2:
-            return "Estável", "gray"
-        return "Em queda", "red"
     # residual (soma municipal — patamares maiores que o de 1 hex)
     if v >= FAIXA_RESIDUAL_ALTA_UF:
         return "Alta", "green"
     if v >= FAIXA_RESIDUAL_MEDIA_UF:
         return "Média", "amber"
     return "Baixa", "gray"
+
+
+def _etiqueta_crescimento(valor: float | None, mediana: float | None) -> tuple[str, str | None]:
+    """Chip do ranking do passo 4: POSICAO RELATIVA ao estado, nao nota absoluta.
+
+    O ramo anterior cortava a variacao do emprego em patamares fixos (>=15 "Em alta",
+    >=2 "Estável", senao "Em queda") e tinha tres defeitos que se resolvem juntos aqui:
+
+    1. VOCABULARIO COLIDIDO. "Em alta"/"Estável" sao as MESMAS palavras de
+       `cres_hex_classe`, que pinta o mapa desta mesma camada — so que o chip mede
+       emprego formal (CAGED, municipal) e o mapa mede area construida (satelite, por
+       hexagono). Uma cidade podia sair com chip verde "Em alta" e ter todos os
+       hexagonos cinza "Sem obra nova". Pior: o chip emitia "Em queda", que nao existe
+       em legenda nenhuma.
+    2. CHIP CONSTANTE. A lista JA e o top-10 da UF, entao um corte nacional nunca varia
+       dentro dela: simulado sobre a distribuicao nacional (p50 +6,4 | p90 +19,4), o
+       corte de 15% dava 10 "Em alta" de 10 em UFs de 50, 100, 300 e 645 municipios.
+    3. VERMELHO EM CIDADE QUE CRESCEU. "Estável" comecava em +2%, entao +1,0% recebia
+       chip vermelho "Em queda" — cerca de 7% dos municipios do pais.
+
+    A regua passa a ser `cres_uf_mediana`, que ja vinha no artefato e ja servia de
+    escala na narrativa municipal ("acima da mediana de SP"). Medido no artefato
+    vigente: a mediana por UF vai de +2,8% a +12,7% e nunca chega perto de zero, entao
+    a razao e estavel. O ramo por pontos percentuais fica so como defesa, para o dia em
+    que um recorte novo quebre isso — sem ele, "10x a mediana" elogiaria um municipio
+    que cresceu 5% num estado parado.
+    """
+    if valor is None:
+        return "", None
+    # Queda de verdade e a unica leitura ABSOLUTA que sobrevive: perder vinculo formal
+    # e ruim em qualquer estado. O rotulo nomeia a metrica ("emprego") justamente para
+    # nao ser lido como a classe do hexagono.
+    if valor < 0:
+        return "emprego em queda", "red"
+    if mediana is None or mediana < _CRESC_PISO_MEDIANA:
+        d = valor - (mediana or 0.0)
+        if d >= 10:
+            return "muito acima do estado", "green"
+        if d >= 2:
+            return "acima do estado", "green"
+        if d >= -2:
+            return "na média do estado", "gray"
+        return "abaixo do estado", "amber"
+    r = valor / mediana
+    if r >= 2:
+        return f"{r:.0f}× a mediana do estado", "green"
+    if r >= 1.2:
+        return "acima da mediana do estado", "green"
+    if r >= 0.8:
+        return "na mediana do estado", "gray"
+    return "abaixo da mediana do estado", "amber"
 
 
 def _hex_representativo(df: pd.DataFrame, value_col: str | None) -> dict[str, str]:
@@ -1348,6 +1424,9 @@ def _rank_municipios(
         df[df["nome_municipio"].isin(list(serie.index))], value_col if modo != "count" else None
     )
     melhor = _melhor_faixa_por_municipio(df, faixa_por) if faixa_por else {}
+    # Regua do chip de crescimento. `cres_uf_mediana` e constante na UF inteira (o
+    # artefato a calcula por estado), entao uma leitura basta para todo o ranking.
+    ref_uf = _numf(_mun_val(df, "cres_uf_mediana")) if modo == "crescimento" else None
     # Detalhe POR MUNICIPIO. Na visao de UF o painel mostrava sempre o mesmo bloco
     # (o do primeiro hex servido, que e o da capital) enquanto a lista rankeava
     # outras cidades — o leitor via numero de Sao Paulo com o nome de Osasco.
@@ -1371,6 +1450,10 @@ def _rank_municipios(
         if faixa_por:
             etiqueta, cor_item = melhor.get(str(muni), ("", None))
             tom_item = None
+        elif modo == "crescimento":
+            # Valor CRU na regua, nao o `valor` ja arredondado que vai para a tela.
+            etiqueta, tom_item = _etiqueta_crescimento(_numf(val), ref_uf)
+            cor_item = None
         else:
             etiqueta, tom_item = _etiqueta_muni(modo, valor, i, fila)
             cor_item = None
@@ -1417,6 +1500,16 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     # (o fallback por nome e o caminho principal em 21 das 27 UFs), e nesse caso a
     # coluna chega cheia de NaN — a prosa afirmava CAGED ao lado de 0 cidades.
     tem_cres = "cres_emp_pct" in white.columns and bool(white["cres_emp_pct"].notna().any())
+    # Passo 4 — as areas do passo 3 cujas CIDADES tem leitura de crescimento. O numerao
+    # antes contava cidades com emprego >= 15% enquanto o mapa acendia todo o white,
+    # inclusive as cidades estaveis e em queda: pelos percentis nacionais o corte cai
+    # entre a mediana e o p90, entao tipicamente 80-85% do que estava aceso ficava fora
+    # da conta — e o numero podia ser 0 com a camada inteira acesa. Sem contar que
+    # contava CIDADES e o `funil_from` dizia AREAS. O passo nao filtra: quem nao tem
+    # leitura simplesmente nao e descrito, e segue inteiro para a fila do passo 5.
+    cres_uf = white[white["cres_emp_pct"].notna()] if tem_cres else white.iloc[0:0]
+    n_cidades_cres = int(cres_uf["nome_municipio"].nunique()) if len(cres_uf) else 0
+    n_cidades_white = int(white["nome_municipio"].nunique()) if len(white) else 0
     # Base dos passos 3, 4 e 5: SOMENTE o white space, igual ao funil municipal
     # (decisao do dono, 2026-08-03). Sem hexagono livre a UF inteira sai com esses
     # passos vazios — e isso e o certo: o numerao ja diz 0 e o mapa nao acende nada;
@@ -1486,11 +1579,12 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             # com numero 0 e lista vazia.
             "narrativa": (
                 (
-                    "Contexto sobre a praça, não recomendação de ponto: como anda o emprego "
+                    "Uma leitura sobre a praça, não sobre o ponto: como anda o emprego "
                     "formal de cada cidade, medido pelo CAGED com defasagem de cerca de três "
                     "meses, e quantas empresas a mais do que fechou cada uma abriu segundo a "
                     "Receita Federal. É o dado mais recente da pilha — vai até junho de 2026, "
-                    "enquanto o censo é de 2022."
+                    "enquanto o censo é de 2022. Quem escolhe e ordena o ponto é a camada "
+                    "seguinte, pelo residual — esta aqui não entra nessa conta."
                 )
                 if tem_cres
                 else (
@@ -1498,27 +1592,18 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
                     "está disponível. As áreas sem concorrência seguem valendo."
                 )
             ),
-            "funil_big": (
-                int(
-                    (
-                        white.groupby("nome_municipio", observed=True)["cres_emp_pct"].max()
-                        >= 15
-                    ).sum()
-                )
-                if tem_cres
-                else 0
+            "funil_big": n_cidades_cres,
+            "funil_unit": _unidade(
+                n_cidades_cres, "cidade com leitura", "cidades com leitura"
             ),
-            "funil_unit": "cidades com emprego em alta",
-            "funil_from": f"{_fmt(len(white))} áreas sem concorrência",
+            "funil_from": f"{_fmt(n_cidades_white)} cidades sem concorrência",
             "metrica": "% emprego",
             "itens": (
-                _rank_municipios(
-                    white, "cres_emp_pct", "crescimento", "% emprego", "green"
-                )
+                _rank_municipios(cres_uf, "cres_emp_pct", "crescimento", "% emprego", "green")
                 if tem_cres
                 else []
             ),
-            "hexes": (white["hex_id"].tolist() if len(white) else []),
+            "hexes": (cres_uf["hex_id"].tolist() if len(cres_uf) else []),
         },
         {
             "n": 5,
@@ -1570,24 +1655,59 @@ def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
         "faixa": _faixa_label(r.get("faixa_oportunidade")),
         "conc": int(r.get("n_concorrentes_est") or 0),
         "ultra": int(r.get("n_ultra") or 0),
-        # Passo 4 — crescimento do municipio. Todos MUNICIPAIS (broadcast).
-        # `cres` existe so para a rampa de cor; o que se le e a tendencia e o %.
-        # Passo 4. So o que e POR HEXAGONO ou curto o bastante para repetir.
-        # `cres_dims`/`cres_series` sao municipais e viajavam repetidos em cada
-        # hexagono: /api/uf/SP saia de 3,6 para 19,45 MB, e o front usava UMA copia.
-        # Agora vao uma vez so, dentro do passo (visao de municipio) ou do item do
-        # ranking (visao de UF).
-        "cres_tend": _ROTULO_TEND.get(str(r.get("cres_tendencia") or ""))
-        or _texto(r.get("cres_tendencia")),
-        "cres_emp": _num(r.get("cres_emp_pct"), 1),
-        "cres_empresas": _num(r.get("cres_saldo_empresas")),
-        "cres_salario": _num(r.get("cres_salario")),        # salario medio de admissao
-        "cres_setor": _texto(r.get("cres_setor")),          # setor acima do normal na cidade
-        "cres_uf_mediana": _num(r.get("cres_uf_mediana"), 1),
+        # Chave para o bloco municipal do passo 4 (`cres_mun` na raiz do payload).
+        # Antes os seis campos MUNICIPAIS do crescimento viajavam repetidos em cada
+        # hexagono — o mesmo erro que ja tinha sido corrigido para `cres_dims`/
+        # `cres_series`, so que com a desculpa de serem "curtos o bastante". Nao eram.
+        # Medido em /api/uf: SP 6,58 -> 4,71 MB e RJ 3,62 -> 2,61 MB (-28% nos dois),
+        # trocando 15.000 copias por 163 cidades (21 KB). O hex carrega so o nome.
+        "mun": _texto(r.get("nome_municipio")),
         # Taxa de crescimento DESTE hexagono — e o que colore o mapa.
         "cres_hex_taxa": _num(r.get("cres_hex_taxa"), 1),
-        "cres_hex_classe": _texto(r.get("cres_hex_classe")),
+        "cres_hex_classe": _ROTULO_CLASSE.get(str(r.get("cres_hex_classe") or ""))
+        or _texto(r.get("cres_hex_classe")),
     }
+
+
+def _bloco_municipal(vis: pd.DataFrame) -> dict[str, dict[str, Any]]:
+    """Leitura de crescimento do passo 4, UMA vez por cidade em vez de por hexagono.
+
+    Sao todos broadcast municipal por construcao — `_juntar_crescimento` faz o merge
+    com `validate="m:1"`, entao N hexes recebem a MESMA linha. O consumidor tambem e um
+    so: o tooltip do `HexMap`, que le pelo nome do municipio (`Hex.mun`).
+
+    `cres_uf_mediana` e ainda mais grosso: e um numero por ESTADO, que viajava repetido
+    em todos os 15.000 hexes de /api/uf. Fica aqui junto porque o tooltip mostra os dois
+    lado a lado ("variou +8,8% / mediana do estado +6,0%") e separa-los custaria uma
+    segunda chave para nada.
+    """
+    cols = {
+        "cres_tendencia",
+        "cres_emp_pct",
+        "cres_saldo_empresas",
+        "cres_salario",
+        "cres_setor",
+        "cres_uf_mediana",
+    }
+    if "nome_municipio" not in vis.columns or not (cols & set(vis.columns)):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for muni, bloco in vis.groupby("nome_municipio", observed=True):
+        r = bloco.iloc[0]
+        item = {
+            "tend": _ROTULO_TEND.get(str(r.get("cres_tendencia") or ""))
+            or _texto(r.get("cres_tendencia")),
+            "emp": _num(r.get("cres_emp_pct"), 1),
+            "empresas": _num(r.get("cres_saldo_empresas")),
+            "salario": _num(r.get("cres_salario")),
+            "setor": _texto(r.get("cres_setor")),
+            "uf_mediana": _num(r.get("cres_uf_mediana"), 1),
+        }
+        # Cidade sem NENHUMA leitura nao entra: o dict e' esparso de proposito, e o
+        # tooltip ja sabe lidar com a ausencia (a secao inteira some).
+        if any(v is not None for v in item.values()):
+            out[str(muni)] = item
+    return out
 
 
 def _resumo(df: pd.DataFrame) -> dict[str, Any]:
@@ -2065,12 +2185,12 @@ def montar_metodologia() -> dict[str, Any]:
                 ],
                 "faixas": _faixas_crescimento(),
                 "nota": (
-                    "Esta camada NÃO é preditiva e não foi validada como preditor de "
-                    "desempenho de unidade — nos testes fora da amostra o emprego formal não "
-                    "antecipou abertura de academia. Ela responde outra pergunta: o M1 mede a "
-                    "POSIÇÃO do território hoje, e esta camada mede a DIREÇÃO em que ele vem "
-                    "andando. Duas praças com o mesmo score podem estar em rotas opostas, e é "
-                    "só isso que se afirma aqui."
+                    "Esta camada NÃO é preditiva: nada aqui foi validado como preditor "
+                    "de desempenho de unidade, e ela não entra em nenhum corte do funil. "
+                    "Ela responde outra pergunta: o M1 mede a POSIÇÃO do território hoje, e "
+                    "esta camada mede a DIREÇÃO em que ele vem andando. Duas praças com o "
+                    "mesmo score podem estar em rotas opostas, e é só isso que se afirma "
+                    "aqui."
                 ),
             },
             {
@@ -2250,6 +2370,7 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
         "resumo": _resumo(df),
         "passos": passos,
         "hexes": hexes,
+        "cres_mun": _bloco_municipal(vis),
         "pins": _pins_ultra_bbox(df),
     }
 
@@ -2303,6 +2424,7 @@ def municipio(uf: str, municipio: str, limite: int = 4000) -> dict[str, Any]:
         "resumo": _resumo(sel),
         "passos": passos,
         "hexes": hexes,
+        "cres_mun": _bloco_municipal(vis),
         "pins": _montar_pins(sel),
     }
 
