@@ -22,13 +22,17 @@ de outra pessoa.
 | Variável | Serve para | Default |
 |---|---|---|
 | `MOTOR_DATA_DIR` | lê `outputs/`, **escreve `staging/`** | `data/` deste repo |
-| `CRESCIMENTO_TEC_DIR` | os 3 CSVs do projeto Crescimento Regional TEC | `…/Crescimento Regional TEC/output` |
+| `CRESCIMENTO_TEC_DIR` | os 3 CSVs do projeto Crescimento Regional TEC | `C:\dados\crescimento_tec` |
 | `SOCIOECONOMICO_DIR` | `rais/`, `caged/`, `cnpj/`, `pib/` | `C:\dados\socioeconomico` |
-| `POC_SATELITE_DIR` | mosaicos `data/uf=XX/hex_google_temporal_YYYY.parquet` | `…/Google Engine/poc_satelite` |
+| `POC_SATELITE_DIR` | mosaicos `data/uf=XX/hex_google_temporal_YYYY.parquet` | `C:\dados\poc_satelite` |
 
 `MOTOR_DATA_DIR` é a **mesma** variável que `web/server/app.py` usa para achar
 `staging/`. Antes o destino era um literal aqui e uma env var lá: podiam divergir sem
 ninguém notar, e o piloto leria um artefato velho em silêncio.
+
+Os defaults são placeholders genéricos de propósito: caminho de pasta pessoal (nome de
+usuário, conta corporativa de nuvem) não entra em arquivo versionado — uma vez commitado
+fica no histórico do git para sempre. Aponte as variáveis para onde os dados estão.
 
 Os intermediários (`_mun_cresc_bruto`, `_cres_extra`, `_dims`) ficam ancorados **na
 pasta dos scripts**, não no CWD — rodar de outro diretório antes lia um intermediário

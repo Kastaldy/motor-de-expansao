@@ -14,7 +14,10 @@ lados, entao nao ha como escrever num `staging/` e ler de outro.
     SOCIOECONOMICO_DIR   RAIS, CAGED, CNPJ e PIB/populacao
     POC_SATELITE_DIR     projeto `poc_satelite` (mosaicos `hex_google_temporal_*`)
 
-Os defaults sao o layout do autor, para nao quebrar quem ja roda isto hoje.
+Os defaults sao PLACEHOLDERS genericos DE PROPOSITO. Caminho de pasta pessoal — nome de
+usuario, conta corporativa de nuvem — nao entra em arquivo versionado: uma vez commitado
+fica no historico do git para sempre. Quem roda aponta as variaveis para onde os dados de
+fato estao, e a mensagem de erro diz exatamente qual definir.
 
 O QUE ESTE MODULO **NAO** RESOLVE: os insumos nao estao no repositorio e nao podem
 estar — sao dezenas de GB de microdado (RAIS, CAGED, CNPJ) e de mosaicos de satelite
@@ -42,8 +45,7 @@ _RAIZES: dict[str, tuple[str, str, str]] = {
     ),
     "TEC": (
         "CRESCIMENTO_TEC_DIR",
-        r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho"
-        r"\Crescimento Regional TEC\output",
+        r"C:\dados\crescimento_tec",
         "saida do projeto Crescimento Regional TEC (os 3 CSVs municipais)",
     ),
     "SOCIO": (
@@ -53,8 +55,7 @@ _RAIZES: dict[str, tuple[str, str, str]] = {
     ),
     "POC": (
         "POC_SATELITE_DIR",
-        r"C:\Users\Juan.lima\OneDrive - Grupo Ultra\Área de Trabalho"
-        r"\Google Engine\poc_satelite",
+        r"C:\dados\poc_satelite",
         "projeto poc_satelite (data/uf=XX/hex_google_temporal_YYYY.parquet)",
     ),
 }

@@ -163,6 +163,77 @@ def test_degrada_sem_artefato(synth_data: Path) -> None:  # noqa: F811
 
 
 # ---------------------------------------------------------------------------
+# O chip do ranking — posicao relativa, nao corte absoluto
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("valor", "mediana", "etiqueta", "tom"),
+    [
+        # Queda de verdade: unica leitura ABSOLUTA que sobrevive, e nomeia a metrica
+        # ("emprego") para nao ser confundida com a classe do hexagono no mapa.
+        (-3.0, 6.0, "emprego em queda", "red"),
+        (-0.1, 6.0, "emprego em queda", "red"),
+        # Multiplos da mediana da UF.
+        (18.0, 6.0, "3× a mediana do estado", "green"),
+        (12.0, 6.0, "2× a mediana do estado", "green"),
+        (11.9, 6.0, "acima da mediana do estado", "green"),
+        (6.0, 6.0, "na mediana do estado", "gray"),
+        # Sem casos EXATOS na fronteira: 4.8/6.0 da 0.7999999999999999 em float, e o
+        # teste passaria a medir o binario em vez da regra.
+        (5.0, 6.0, "na mediana do estado", "gray"),
+        (4.5, 6.0, "abaixo da mediana do estado", "amber"),
+        # Sem valor: chip vazio, e nao um chip errado.
+        (None, 6.0, "", None),
+    ],
+)
+def test_chip_de_crescimento_por_ramo(valor, mediana, etiqueta, tom) -> None:
+    """Cada ramo de `_etiqueta_crescimento`, direto — sem passar pelo funil.
+
+    O ramo anterior era um corte absoluto (>=15 "Em alta", >=2 "Estável", senao "Em
+    queda") com tres defeitos: colidia com o vocabulario que pinta o mapa, era
+    CONSTANTE no top-10 (a lista ja e o topo, entao um corte nacional nunca varia
+    dentro dela) e dava chip VERMELHO para cidade que cresceu +1%.
+    """
+    assert pilot._etiqueta_crescimento(valor, mediana) == (etiqueta, tom)
+
+
+def test_chip_nunca_repete_o_vocabulario_do_mapa() -> None:
+    """A colisao que motivou a mudanca: chip e mapa mediam coisas diferentes com as
+    MESMAS palavras — emprego formal (CAGED, municipal) contra area construida
+    (satelite, por hexagono). Uma cidade podia sair verde "Em alta" com todos os
+    hexagonos cinza "Sem obra nova"."""
+    saidas = {
+        pilot._etiqueta_crescimento(v, m)[0]
+        for v in (-5.0, 0.5, 3.0, 7.0, 13.0, 40.0)
+        for m in (2.8, 6.0, 12.7)  # amplitude real da mediana por UF no artefato
+    }
+    assert not (saidas & CLASSES_HEX), f"o chip fala o idioma do mapa: {saidas & CLASSES_HEX}"
+    assert not (saidas & CLASSES_BRUTAS)
+
+
+def test_chip_varia_dentro_de_um_top_10() -> None:
+    """Um chip que nao varia no unico lugar onde aparece nao informa nada.
+
+    Top-10 plausivel de uma UF com mediana +6,0%: pelo corte antigo (>=15) os dez
+    sairiam "Em alta"; pela regua relativa eles se separam.
+    """
+    top10 = [31.0, 25.0, 25.0, 21.0, 20.0, 19.0, 19.0, 16.0, 16.0, 15.0]
+    etiquetas = [pilot._etiqueta_crescimento(v, 6.0)[0] for v in top10]
+    assert len(set(etiquetas)) >= 3, f"chip quase constante no top-10: {set(etiquetas)}"
+
+
+def test_mediana_perto_de_zero_cai_no_ramo_de_pontos_percentuais() -> None:
+    """Defesa: com mediana ~0 a razao explode e "10× a mediana" elogiaria um municipio
+    que cresceu 5% num estado parado. Nenhuma UF do artefato atual chega la (a mediana
+    vai de +2,8% a +12,7%), mas um recorte novo pode."""
+    assert pilot._etiqueta_crescimento(5.0, 0.2) == ("acima do estado", "green")
+    assert pilot._etiqueta_crescimento(15.0, 0.2) == ("muito acima do estado", "green")
+    assert pilot._etiqueta_crescimento(1.0, 0.2) == ("na média do estado", "gray")
+    assert pilot._etiqueta_crescimento(5.0, None) == ("acima do estado", "green")
+
+
+# ---------------------------------------------------------------------------
 # O join: por codigo e pelo fallback de nome
 # ---------------------------------------------------------------------------
 

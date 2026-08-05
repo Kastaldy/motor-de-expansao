@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import { type Linha, type Serie, parseDims, parseSeries } from '../lib/crescimento'
 import { alunos, num } from '../lib/format'
 import type { Hex, Passo } from '../lib/types'
 import { Chip, Eyebrow } from './primitives'
@@ -33,52 +34,6 @@ export interface NarrativePanelProps {
    ve as cinco dimensoes e o grafico. Cada dimensao e um botao: clicar troca a
    serie do grafico, entao o mesmo espaco serve as cinco.
    --------------------------------------------------------------------------- */
-
-interface Serie {
-  nome: string
-  unidade: string
-  ini: string
-  fim: string
-  valores: number[]
-}
-
-interface Linha {
-  nome: string
-  valor: number
-  unidade: string
-  pos: number
-  periodo: string
-}
-
-function parseDims(s: string): Linha[] {
-  return s
-    .split(';')
-    .map((p) => p.split(':'))
-    .filter((p) => p.length >= 4)
-    .map(([nome, valor, unidade, pos, periodo]) => ({
-      nome,
-      valor: Number(valor),
-      unidade,
-      pos: Number(pos),
-      periodo: periodo ?? '',
-    }))
-    .filter((l) => Number.isFinite(l.valor) && Number.isFinite(l.pos))
-}
-
-function parseSeries(s: string): Serie[] {
-  return s
-    .split(';')
-    .map((bloco) => bloco.split('|'))
-    .filter((p) => p.length === 5)
-    .map(([nome, unidade, ini, fim, vs]) => ({
-      nome,
-      unidade,
-      ini,
-      fim,
-      valores: vs.split(',').map(Number).filter(Number.isFinite),
-    }))
-    .filter((s) => s.valores.length >= 3)
-}
 
 /** Grafico da serie selecionada. Generico: escala sai dos proprios dados.
  *  O cabecalho carrega a leitura INTEIRA — nome, periodo, variacao e os valores
