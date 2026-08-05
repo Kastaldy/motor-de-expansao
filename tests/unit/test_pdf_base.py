@@ -117,7 +117,8 @@ _SEMPRE_ACENTUADAS = (
     "diagnostico", "numero", "numeros", "critico", "inadimplencia", "retencao", "decisao",
     "manutencao", "migracao", "reativacao", "estavel", "evitavel", "saida", "cobranca",
     "tres", "corroi", "comparavel", "comparaveis", "atencao", "comparacao", "competencia",
-    "rodape", "media", "ja", "esta", "ha", "so",
+    "rodape", "media", "ja", "esta", "ha", "so", "composicao", "posicao", "relatorio",
+    "analise", "grafico", "graficos", "metrica", "metricas", "referencia", "usuario",
 )
 
 
@@ -146,3 +147,98 @@ def test_pdf_nao_imprime_texto_sem_acento() -> None:
         cru = _texto_cru_do_pdf(gerar(payload))
         ofensas = sorted(set(padrao.findall(cru)))
         assert not ofensas, f"PDF da {nome} imprime texto sem acento (CLAUDE.md §2): {ofensas}"
+
+
+# ---------------------------------------------------------------------------
+# Graficos: o que os renders mostraram e nenhum teste pegava
+# ---------------------------------------------------------------------------
+
+
+def _pdf_de_uma_pagina(desenhar) -> str:
+    """Texto cru de um PDF de uma pagina.
+
+    Os parenteses delimitam string no PDF e saem ESCAPADOS (`\(100%\)`); tira-se a
+    barra para que a asercao possa procurar o texto como ele e' lido.
+    """
+    pdf = pdf_base.UltraPDF()
+    pdf.add_page()
+    desenhar(pdf)
+    cru = bytes(pdf.output()).decode("latin-1", errors="replace")
+    return cru.replace("\(", "(").replace("\)", ")")
+
+
+def test_barras_imprimem_o_valor_de_cada_mes() -> None:
+    """Comparar alturas responde "subiu ou caiu"; só o número responde "quanto"."""
+    cru = _pdf_de_uma_pagina(
+        lambda pdf: pdf_base.barras(
+            pdf, 36, 100, 400, 120, ["jan", "fev", "mar"], [100.0, 250.0, 175.0]
+        )
+    )
+    for esperado in ("100", "250", "175"):
+        assert esperado in cru, f"o valor {esperado} não foi impresso sobre a barra"
+
+
+def test_linha_imprime_valor_mes_a_mes_e_nao_so_os_extremos() -> None:
+    """Antes saíam só o mínimo e o máximo, e no papel não há como passar o mouse."""
+    valores = [10.0, 20.0, 30.0, 40.0]
+    cru = _pdf_de_uma_pagina(
+        lambda pdf: pdf_base.linha(pdf, 36, 100, 400, 80, valores)
+    )
+    impressos = [v for v in ("10", "20", "30", "40") if v in cru]
+    assert len(impressos) >= 3, f"esperava o valor de quase todos os pontos, saíram {impressos}"
+
+
+def test_rosca_de_fatia_unica_desenha_o_anel_inteiro() -> None:
+    """`solid_arc` de 0 a 360 graus não fecha a volta e sai como um setor mordido.
+
+    Aconteceu de verdade: uma unidade sem nenhum agregador aparecia com 100% desenhado
+    como se fosse ~85%. Uma fatia só passa a ser um círculo.
+    """
+    def desenhar(pdf: pdf_base.UltraPDF) -> None:
+        pdf_base.rosca(
+            pdf,
+            40,
+            40,
+            80,
+            [("Recorrentes", 3870.0, pdf_base.ULTRA_TURQUESA), ("Agregadores", 0.0, pdf_base.ULTRA_MAGENTA)],
+            centro_valor="0%",
+        )
+
+    cru = _pdf_de_uma_pagina(desenhar)
+    assert "(100%)" in cru and "(0%)" in cru
+    assert "3.870" in cru
+
+
+def test_rosca_com_duas_fatias_soma_cem_por_cento() -> None:
+    def desenhar(pdf: pdf_base.UltraPDF) -> None:
+        pdf_base.rosca(
+            pdf,
+            40,
+            40,
+            80,
+            [("Recorrentes", 906.0, pdf_base.ULTRA_TURQUESA), ("Agregadores", 713.0, pdf_base.ULTRA_MAGENTA)],
+            centro_valor="44%",
+            legenda_abaixo=True,
+        )
+
+    cru = _pdf_de_uma_pagina(desenhar)
+    assert "(56%)" in cru and "(44%)" in cru
+    assert "44%" in cru
+
+
+def test_rosca_sem_dado_nao_divide_por_zero() -> None:
+    cru = _pdf_de_uma_pagina(
+        lambda pdf: pdf_base.rosca(
+            pdf, 40, 40, 80, [("A", 0.0, pdf_base.ULTRA_TURQUESA), ("B", 0.0, pdf_base.ULTRA_MAGENTA)]
+        )
+    )
+    assert "%PDF" in cru[:10] or cru.startswith("%PDF")
+
+
+def test_titulo_de_grafico_respeita_a_largura_do_bloco() -> None:
+    """Sem o limite, o texto de apoio de um bloco escrevia por cima do bloco vizinho."""
+    import inspect
+
+    assinatura = inspect.signature(pdf_base.titulo_de_grafico)
+    assert "largura" in assinatura.parameters
+    assert assinatura.parameters["largura"].default == 340.0

@@ -13,7 +13,6 @@ import type { RedeCoorteComparacao } from '../../lib/types'
    --------------------------------------------------------------------------- */
 
 const EIXO = 'var(--line-mid)'
-const ROTULO = { font: '500 9.5px/1 var(--f-num)', fill: 'var(--tx-muted)' } as const
 
 export function BarrasPeriodo({
   meses,
@@ -52,6 +51,22 @@ export function BarrasPeriodo({
               title={`${m}: ${fmt(valor)}`}
               style={{ width: `${largura}%`, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', height: '100%' }}
             >
+              {/* O número vai SOBRE a barra. Comparar alturas responde "subiu ou caiu";
+                  só o valor responde "quanto" — e é o valor que vai para a conversa com
+                  o franqueado. */}
+              <span
+                className="num"
+                style={{
+                  font: '600 9px/1 var(--f-num)',
+                  color: 'var(--tx-sub)',
+                  textAlign: 'center',
+                  marginBottom: 3,
+                  whiteSpace: 'nowrap',
+                  overflow: 'visible',
+                }}
+              >
+                {valor === null ? '' : fmt(valor)}
+              </span>
               <div
                 style={{
                   height: `${Math.max(fracao * 100, valor === null ? 0 : 1.5)}%`,
@@ -82,7 +97,7 @@ export function BarrasPeriodo({
 export function LinhaPeriodo({
   meses,
   valores,
-  altura = 96,
+  altura = 108,
   cor = 'var(--ac)',
   titulo,
   formato = 'int',
@@ -94,9 +109,14 @@ export function LinhaPeriodo({
   titulo?: string
   formato?: 'brl' | 'int' | 'pct'
 }) {
-  const largura = 320
-  const s = caminhoSparkline(valores, largura, altura, 6)
+  const largura = 340
+  const topo = 14 // espaço reservado para os rótulos de valor, que ficam ACIMA dos pontos
+  const s = caminhoSparkline(valores, largura, altura - topo, 6)
   const fmt = (v: number) => (formato === 'brl' ? brlCurto(v) : formato === 'pct' ? pct(v, 1) : num(v, 1))
+  const passo = valores.length > 1 ? (largura - 12) / (valores.length - 1) : 0
+  // Com 12 meses os rótulos se encavalariam; alterna para caber sem sobrepor.
+  const alternar = valores.filter((v) => v !== null).length > 7
+
   return (
     <figure style={{ margin: 0 }}>
       {titulo && (
@@ -105,24 +125,51 @@ export function LinhaPeriodo({
         </figcaption>
       )}
       <svg viewBox={`0 0 ${largura} ${altura}`} width="100%" height={altura} role="img" aria-label={titulo}>
-        <line x1={0} y1={altura - 1} x2={largura} y2={altura - 1} stroke={EIXO} strokeWidth={1} />
-        {s.area && <path d={s.area} fill={cor} opacity={0.12} />}
-        <path d={s.linha} fill="none" stroke={cor} strokeWidth={1.8} strokeLinejoin="round" />
-        {s.ultimo && <circle cx={s.ultimo.x} cy={s.ultimo.y} r={3} fill={cor} />}
-        <text x={2} y={11} {...ROTULO}>
-          {fmt(s.maximo)}
-        </text>
-        <text x={2} y={altura - 6} {...ROTULO}>
-          {fmt(s.minimo)}
-        </text>
+        <g transform={`translate(0 ${topo})`}>
+          <line x1={0} y1={altura - topo - 1} x2={largura} y2={altura - topo - 1} stroke={EIXO} strokeWidth={1} />
+          {s.area && <path d={s.area} fill={cor} opacity={0.12} />}
+          <path d={s.linha} fill="none" stroke={cor} strokeWidth={1.8} strokeLinejoin="round" />
+          {s.ultimo && <circle cx={s.ultimo.x} cy={s.ultimo.y} r={3} fill={cor} />}
+        </g>
+        {/* Valor MÊS A MÊS. Antes só saíam o mínimo e o máximo, e o operador não
+            conseguia ler nenhum ponto do meio da série sem passar o mouse. */}
+        {valores.map((v, i) => {
+          if (v === null || !Number.isFinite(v)) return null
+          if (alternar && i % 2 === 1 && i !== valores.length - 1) return null
+          const x = 6 + passo * i
+          const y =
+            topo +
+            (s.maximo === s.minimo
+              ? (altura - topo) / 2
+              : 6 + (altura - topo - 12) * (1 - (v - s.minimo) / (s.maximo - s.minimo)))
+          return (
+            <text
+              key={i}
+              x={Math.min(Math.max(x, 12), largura - 12)}
+              y={Math.max(y - 6, 9)}
+              textAnchor="middle"
+              style={{ font: '600 8.5px/1 var(--f-num)', fill: 'var(--tx-sub)' }}
+            >
+              {fmt(v)}
+            </text>
+          )
+        })}
       </svg>
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <span className="num" style={{ font: '500 9px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
-          {meses[0] ? rotuloMesCurto(meses[0]) : ''}
-        </span>
-        <span className="num" style={{ font: '500 9px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
-          {meses.length ? rotuloMesCurto(meses[meses.length - 1]) : ''}
-        </span>
+      <div style={{ display: 'flex', gap: 2 }}>
+        {meses.map((m) => (
+          <span
+            key={m}
+            className="num"
+            style={{
+              flex: 1,
+              font: '500 8.5px/1 var(--f-num)',
+              color: 'var(--tx-muted)',
+              textAlign: 'center',
+            }}
+          >
+            {rotuloMesCurto(m)}
+          </span>
+        ))}
       </div>
     </figure>
   )
@@ -338,6 +385,112 @@ export function BannerRecomendacao({
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+
+/**
+ * Rosca de duas fatias — recorrentes x agregadores.
+ *
+ * Duas fatias não pedem um gráfico, e uma barra segmentada bastaria; a rosca entra
+ * porque a composição da base é uma pergunta que o time faz sozinha ("quanto da minha
+ * base é agregador?"), e uma forma própria a separa do resto da leitura. O número vai no
+ * miolo: a fatia responde "muito ou pouco", só o número responde "quanto".
+ */
+export function Rosca({
+  partes,
+  tamanho = 132,
+  espessura = 20,
+  centroRotulo,
+  centroValor,
+}: {
+  partes: { rotulo: string; valor: number; cor: string }[]
+  tamanho?: number
+  espessura?: number
+  centroRotulo?: string
+  centroValor?: string
+}) {
+  const total = partes.reduce((s, p) => s + Math.max(p.valor, 0), 0)
+  const raio = (tamanho - espessura) / 2
+  const centro = tamanho / 2
+  const perimetro = 2 * Math.PI * raio
+
+  let percorrido = 0
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+      <svg width={tamanho} height={tamanho} role="img" aria-label={centroRotulo ?? 'Composição'}>
+        <circle
+          cx={centro}
+          cy={centro}
+          r={raio}
+          fill="none"
+          stroke="var(--surf-raised)"
+          strokeWidth={espessura}
+        />
+        {total > 0 &&
+          partes.map((p) => {
+            const fatia = Math.max(p.valor, 0) / total
+            const traco = `${perimetro * fatia} ${perimetro * (1 - fatia)}`
+            const deslocamento = -perimetro * percorrido
+            percorrido += fatia
+            return (
+              <circle
+                key={p.rotulo}
+                cx={centro}
+                cy={centro}
+                r={raio}
+                fill="none"
+                stroke={p.cor}
+                strokeWidth={espessura}
+                strokeDasharray={traco}
+                strokeDashoffset={deslocamento}
+                // -90° põe o início da primeira fatia no topo, que é onde o olho começa.
+                transform={`rotate(-90 ${centro} ${centro})`}
+              >
+                <title>{`${p.rotulo}: ${num(p.valor)} (${pct((100 * p.valor) / total, 0)})`}</title>
+              </circle>
+            )
+          })}
+        {centroValor && (
+          <text
+            x={centro}
+            y={centro - 1}
+            textAnchor="middle"
+            style={{ font: '700 19px/1 var(--f-num)', fill: 'var(--tx-max)' }}
+          >
+            {centroValor}
+          </text>
+        )}
+        {centroRotulo && (
+          <text
+            x={centro}
+            y={centro + 14}
+            textAnchor="middle"
+            style={{ font: '500 8.5px/1 var(--f-ui)', fill: 'var(--tx-muted)' }}
+          >
+            {centroRotulo}
+          </text>
+        )}
+      </svg>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 132 }}>
+        {partes.map((p) => (
+          <div key={p.rotulo} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+            <span
+              style={{ width: 9, height: 9, borderRadius: 2, background: p.cor, flexShrink: 0 }}
+            />
+            <span style={{ font: '400 11px/1.3 var(--f-ui)', color: 'var(--tx-label)', flex: 1 }}>
+              {p.rotulo}
+            </span>
+            <span className="num" style={{ font: '600 12px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
+              {num(p.valor)}
+            </span>
+            <span className="num" style={{ font: '500 10px/1 var(--f-num)', color: 'var(--tx-muted)', width: 34, textAlign: 'right' }}>
+              {total > 0 ? pct((100 * p.valor) / total, 0) : '—'}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
