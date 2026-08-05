@@ -17,7 +17,6 @@ Os testes que mais importam são os dois pares que travam a ORDEM do algoritmo:
 
 from __future__ import annotations
 
-import ast
 import inspect
 from pathlib import Path
 
@@ -448,14 +447,9 @@ def test_docstring_registra_o_limite_do_zero_agregadores() -> None:
 # --------------------------------------------------------------------------- #
 def test_modulo_nao_importa_demanda_revelada() -> None:
     """A tupla compartilhada de `test_isolamento_imports` NÃO proíbe isto — e não poderia."""
-    tree = ast.parse(inspect.getsource(m))
-    nomes: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            nomes.append(node.module)
-        elif isinstance(node, ast.Import):
-            nomes.extend(a.name for a in node.names)
-    for n in nomes:
+    from .._ast_imports import nomes_importados
+
+    for n in nomes_importados(m):
         assert "demanda_revelada" not in n, n
 
 
