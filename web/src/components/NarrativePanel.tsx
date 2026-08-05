@@ -1,3 +1,6 @@
+import { useState } from 'react'
+
+import { type Linha, type Serie, parseDims, parseSeries } from '../lib/crescimento'
 import { alunos, num } from '../lib/format'
 import type { Hex, Passo } from '../lib/types'
 import { Chip, Eyebrow } from './primitives'
@@ -19,6 +22,306 @@ export interface NarrativePanelProps {
   /** Visão de UF: clicar num item (município) filtra para ele (drill-down). */
   onDrillMunicipio?: (municipio: string) => void
   hexes: Hex[]
+  /** Total de passos do funil. Deriva do payload — não é literal, para o 6º passo
+   *  não repetir a caçada por "de 4" que este bloco já teve de fazer. */
+  totalPassos: number
+}
+
+/* ---------------------------------------------------------------------------
+   Passo 4 — bloco "Detalhes", recolhido por padrao.
+
+   O veredito de uma frase resolve a leitura rapida; quem quiser o porque abre e
+   ve as cinco dimensoes e o grafico. Cada dimensao e um botao: clicar troca a
+   serie do grafico, entao o mesmo espaco serve as cinco.
+   --------------------------------------------------------------------------- */
+
+/** Grafico da serie selecionada. Generico: escala sai dos proprios dados.
+ *  O cabecalho carrega a leitura INTEIRA — nome, periodo, variacao e os valores
+ *  das pontas — para nao ser preciso olhar a linha da dimensao acima nem rolar. */
+function Grafico({ serie, resumo }: { serie: Serie; resumo?: Linha }) {
+  const v = serie.valores
+  const W = 346
+  const H = 40
+  // A escala sai dos PROPRIOS dados. Ancorada no zero, a curva de Populacao virava
+  // uma reta em 91,6% dos municipios (amplitude mediana de 1,3 px num SVG de 40)
+  // enquanto o cabecalho ao lado anunciava a variacao.
+  const mn = Math.min(...v)
+  const mx = Math.max(...v)
+  const rg = mx - mn || 1
+  const X = (i: number) => (i * W) / (v.length - 1)
+  const Y = (n: number) => H - ((n - mn) / rg) * H
+  const linha = v.map((n, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(n).toFixed(1)}`).join(' ')
+  const ult = v[v.length - 1]
+  const pri = v[0]
+  const cor = ult >= pri ? 'var(--ac)' : 'var(--warn-text, #E0684B)'
+  const destaque = resumo
+    ? `${resumo.unidade === '%' && resumo.valor >= 0 ? '+' : ''}${num(
+        resumo.valor,
+        Math.abs(resumo.valor) < 10 ? 1 : 0,
+      )}${resumo.unidade}`
+    : num(ult)
+  return (
+    <div
+      style={{
+        marginTop: 12,
+        padding: '11px 12px 9px',
+        borderRadius: 'var(--r-lg)',
+        background: 'var(--surf-raised)',
+        border: '1px solid var(--line-soft)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'baseline',
+          gap: 10,
+          marginBottom: 8,
+        }}
+      >
+        <span style={{ font: '600 13px/1.2 var(--f-ui)', color: 'var(--tx-strong)' }}>
+          {serie.nome}
+          <span
+            className="num"
+            style={{
+              display: 'block',
+              font: '400 9.5px/1 var(--f-num)',
+              color: 'var(--tx-off)',
+              marginTop: 3,
+            }}
+          >
+            {resumo?.periodo || `${serie.ini} – ${serie.fim}`}
+          </span>
+        </span>
+        <span
+          className="num"
+          style={{ font: '700 17px/1 var(--f-num)', color: cor, whiteSpace: 'nowrap' }}
+        >
+          {destaque}
+        </span>
+      </div>
+      <svg
+        viewBox={`0 0 ${W} ${H}`}
+        style={{ display: 'block', width: '100%', height: 'auto', overflow: 'visible' }}
+        role="img"
+        aria-label={`${serie.nome}, de ${num(pri)} em ${serie.ini} a ${num(ult)} em ${serie.fim}`}
+      >
+        {mn < 0 && (
+          <line x1="0" x2={W} y1={Y(0)} y2={Y(0)} stroke="var(--line-mid)" strokeWidth="1" />
+        )}
+        <path d={`${linha} L${W} ${Y(mn)} L0 ${Y(mn)} Z`} fill={cor} opacity={0.13} />
+        <path d={linha} fill="none" stroke={cor} strokeWidth="1.8" strokeLinejoin="round" />
+        <circle cx={X(v.length - 1)} cy={Y(ult)} r="3" fill={cor} />
+      </svg>
+      {/* As pontas trazem ano E valor: quem olha so o grafico ja sabe de onde
+          para onde foi, sem consultar a linha da dimensao. */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          font: '400 9.5px/1 var(--f-num)',
+          color: 'var(--tx-sub)',
+          marginTop: 5,
+        }}
+      >
+        <span>
+          {serie.ini} · {num(pri)} {serie.unidade}
+        </span>
+        <span>
+          {serie.fim} · {num(ult)} {serie.unidade}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+/* As cinco dimensoes do crescimento municipal, cada uma com o NUMERO REAL e a
+   posicao no pais. O numero responde "quanto"; a barra responde "isso e muito?".
+   Sozinho, nenhum dos dois decide — juntos, sim. */
+function Dimensoes({
+  dims,
+  ativo,
+  onEscolher,
+  temSerie,
+}: {
+  dims: string
+  ativo: string | null
+  onEscolher: (nome: string) => void
+  temSerie: (nome: string) => boolean
+}) {
+  const linhas = parseDims(dims)
+  if (!linhas.length) return null
+  return (
+    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 3 }}>
+      {linhas.map((l) => {
+        const clicavel = temSerie(l.nome)
+        const on = ativo === l.nome
+        return (
+        <button
+          key={l.nome}
+          type="button"
+          onClick={clicavel ? () => onEscolher(l.nome) : undefined}
+          disabled={!clicavel}
+          aria-pressed={on}
+          title={clicavel ? `Ver o gráfico de ${l.nome.toLowerCase()}` : 'Sem série para esta dimensão'}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 9,
+            width: '100%',
+            padding: '4px 6px',
+            margin: '0 -6px',
+            borderRadius: 7,
+            background: on ? 'var(--ac-a10)' : 'transparent',
+            border: `1px solid ${on ? 'var(--ac-a30)' : 'transparent'}`,
+            cursor: clicavel ? 'pointer' : 'default',
+            textAlign: 'left',
+          }}
+        >
+          <span
+            style={{
+              font: `${on ? '600' : '400'} 11px/1 var(--f-ui)`,
+              color: on ? 'var(--ac-text)' : 'var(--tx-label)',
+              width: 74,
+              flexShrink: 0,
+            }}
+          >
+            {l.nome}
+          </span>
+          {/* Uma linha so. O periodo saiu daqui e foi para o cabecalho do grafico,
+              que mostra o indicador escolhido inteiro — assim as cinco linhas cabem
+              na tela junto com a curva, sem rolar. */}
+          <span
+            className="num"
+            title={l.periodo ? `Variação no período ${l.periodo}` : undefined}
+            style={{
+              font: '600 11.5px/1 var(--f-num)',
+              color: l.valor < 0 ? 'var(--warn-text, #E0684B)' : 'var(--tx-strong)',
+              width: 66,
+              textAlign: 'right',
+              flexShrink: 0,
+            }}
+          >
+            {l.unidade === '%' && l.valor >= 0 ? '+' : ''}
+            {num(l.valor, Math.abs(l.valor) < 10 ? 1 : 0)}
+            {l.unidade}
+          </span>
+          <span
+            aria-hidden
+            style={{
+              flex: 1,
+              height: 5,
+              borderRadius: 3,
+              background: 'var(--line-mid)',
+              overflow: 'hidden',
+              minWidth: 40,
+            }}
+          >
+            <span
+              style={{
+                display: 'block',
+                width: `${Math.max(2, Math.min(100, l.pos))}%`,
+                height: '100%',
+                background: 'var(--ac)',
+                borderRadius: 3,
+              }}
+            />
+          </span>
+          <span
+            className="num"
+            style={{
+              font: '400 9.5px/1 var(--f-num)',
+              color: 'var(--tx-off)',
+              width: 52,
+              flexShrink: 0,
+            }}
+          >
+            {l.pos > 50 ? `top ${Math.max(1, 100 - l.pos)}%` : `${l.pos}º pct`}
+          </span>
+        </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Bloco recolhivel do passo 4: dimensoes clicaveis + grafico da escolhida. */
+function Detalhes({
+  dims,
+  series,
+  de,
+}: {
+  dims: string | null
+  series: string | null
+  /** Nome do municipio, para o nome acessivel do botao. Na visao de UF sao dez
+   *  botoes "Detalhes" na mesma tela; sem isso o leitor de tela ouve dez vezes
+   *  o mesmo rotulo sem saber de qual cidade. */
+  de?: string
+}) {
+  const [aberto, setAberto] = useState(false)
+  const lista = series ? parseSeries(series) : []
+  const porNome = new Map(lista.map((s) => [s.nome, s]))
+  const [sel, setSel] = useState<string | null>(null)
+  if (!dims && !lista.length) return null
+  const atual = (sel && porNome.get(sel)) || lista[0] || null
+  return (
+    <div style={{ marginTop: 14 }}>
+      <button
+        type="button"
+        onClick={() => setAberto((a) => !a)}
+        aria-expanded={aberto}
+        aria-label={de ? `Detalhes de ${de}` : 'Detalhes'}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 7,
+          width: '100%',
+          padding: '8px 11px',
+          borderRadius: 'var(--r-lg)',
+          background: 'var(--surf-raised)',
+          border: '1px solid var(--line-soft)',
+          font: '600 11.5px/1 var(--f-ui)',
+          color: 'var(--tx-soft)',
+          cursor: 'pointer',
+        }}
+      >
+        <span aria-hidden style={{ font: '400 10px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+          {aberto ? '▾' : '▸'}
+        </span>
+        Detalhes
+        <span
+          style={{
+            marginLeft: 'auto',
+            font: '400 10px/1 var(--f-ui)',
+            color: 'var(--tx-muted)',
+          }}
+        >
+          {aberto ? 'ocultar' : 'renda, população, empresas, prédios, emprego'}
+        </span>
+      </button>
+
+      {aberto && (
+        <>
+          {/* O grafico vem ANTES das linhas: assim o indicador escolhido e a curva
+              ficam na mesma altura da tela, sem precisar rolar ate o fim da lista. */}
+          {atual && (
+            <Grafico
+              serie={atual}
+              resumo={dims ? parseDims(dims).find((l) => l.nome === atual.nome) : undefined}
+            />
+          )}
+          {dims && (
+            <Dimensoes
+              dims={dims}
+              ativo={atual?.nome ?? null}
+              onEscolher={setSel}
+              temSerie={(n) => porNome.has(n)}
+            />
+          )}
+        </>
+      )}
+    </div>
+  )
 }
 
 export default function NarrativePanel({
@@ -27,10 +330,15 @@ export default function NarrativePanel({
   onSelecionarHex,
   onAnalisar,
   onDrillMunicipio,
+  totalPassos,
 }: NarrativePanelProps) {
+  // Vem UMA vez no passo, nao repetido em cada hexagono (o payload de uma UF
+  // triplicava). Na visao de UF cada item do ranking traz o seu.
+  const series = passo.series ?? null
+  const dims = passo.dims ?? null
   return (
     <aside
-      aria-label={`Camada ${passo.n} de 4: ${passo.titulo}`}
+      aria-label={`Camada ${passo.n} de ${totalPassos}: ${passo.titulo}`}
       style={{
         width: 394,
         flexShrink: 0,
@@ -45,7 +353,7 @@ export default function NarrativePanel({
     >
       <header style={{ padding: '18px 20px 16px' }}>
         <Eyebrow dot>
-          Camada {passo.n} de 4 · {passo.mode}
+          Camada {passo.n} de {totalPassos} · {passo.mode}
         </Eyebrow>
 
         <h2
@@ -104,6 +412,7 @@ export default function NarrativePanel({
             filtrados de {passo.funil_from}
           </span>
         </div>
+
       </header>
 
       <div
@@ -116,6 +425,14 @@ export default function NarrativePanel({
           gap: 8,
         }}
       >
+        {/* O Detalhes fica DENTRO da area rolavel. No cabecalho ele era cortado:
+            ao abrir o grafico da renda nao dava para ver o numero e a curva juntos,
+            porque o header nao rola. Na visao de UF cada item traz o seu, entao
+            aqui so aparece quando a lista nao tem detalhe proprio. */}
+        {passo.n === 4 && !passo.itens.some((it) => it.dims || it.series) && (
+          <Detalhes dims={dims} series={series} />
+        )}
+
         {passo.itens.length === 0 ? (
           <p
             style={{
@@ -137,9 +454,18 @@ export default function NarrativePanel({
             const ativo = it.hex_id === selecionado
             const acionar = () =>
               it.municipio ? onDrillMunicipio?.(it.municipio) : onSelecionarHex(it.hex_id)
+            const temDetalhe = Boolean(it.dims || it.series)
             return (
               <div
                 key={it.municipio ?? it.hex_id}
+                style={{
+                  border: `1px solid ${ativo ? 'var(--ac-a30)' : 'var(--line-soft)'}`,
+                  borderRadius: 'var(--r-lg)',
+                  background: ativo ? 'var(--ac-a08)' : 'var(--surf-raised)',
+                  transition: 'background .15s ease, border-color .15s ease',
+                }}
+              >
+              <div
                 role="button"
                 tabIndex={0}
                 onClick={acionar}
@@ -151,14 +477,10 @@ export default function NarrativePanel({
                 }}
                 style={{
                   padding: '12px 13px',
-                  border: `1px solid ${ativo ? 'var(--ac-a30)' : 'var(--line-soft)'}`,
-                  borderRadius: 'var(--r-lg)',
-                  background: ativo ? 'var(--ac-a08)' : 'var(--surf-raised)',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 12,
                   cursor: 'pointer',
-                  transition: 'background .15s ease, border-color .15s ease',
                 }}
               >
                 <span
@@ -172,7 +494,7 @@ export default function NarrativePanel({
                     flexShrink: 0,
                   }}
                 >
-                  {passo.n === 4 ? `${it.rank}º` : String(it.rank).padStart(2, '0')}
+                  {passo.n === 5 ? `${it.rank}º` : String(it.rank).padStart(2, '0')}
                 </span>
 
                 <span style={{ flex: 1, minWidth: 0 }}>
@@ -234,6 +556,14 @@ export default function NarrativePanel({
                     {it.label}
                   </span>
                 </span>
+              </div>
+
+              {/* O detalhe e DESTE municipio, nao o da capital. */}
+              {temDetalhe && (
+                <div style={{ padding: '0 13px 12px' }}>
+                  <Detalhes dims={it.dims ?? null} series={it.series ?? null} de={it.titulo} />
+                </div>
+              )}
               </div>
             )
           })

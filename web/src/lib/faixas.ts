@@ -121,7 +121,7 @@ export function bandasDaFaixa(f: FaixaNomeada): string[] {
 
 /**
  * `background` do swatch da legenda: cor unica quando a camada e' categorica
- * (camada 4, faixa do M1) e as bandas lado a lado quando ela vem da rampa.
+ * (camada 5, faixa do M1) e as bandas lado a lado quando ela vem da rampa.
  */
 export function fundoDoSwatch(cores: string[]): string {
   if (cores.length === 0) return 'transparent'
@@ -134,10 +134,12 @@ export function fundoDoSwatch(cores: string[]): string {
 }
 
 /** Faixas nomeadas da camada, ou `null` quando a camada nao usa rampa de score
- *  (camada 4 colore pela faixa do M1 — ver `FAIXA_M1_ORDEM` em `colors.ts`). */
+ *  (camada 5 colore pela faixa do M1 — ver `FAIXA_M1_ORDEM` em `colors.ts`; a
+ *  camada 4 e' de crescimento e tem legenda propria em `ScoreLegend`). */
 export function faixasDoPasso(passoN: number): FaixaNomeada[] | null {
   if (passoN === 1) return FAIXAS_POTENCIAL
   if (passoN === 2 || passoN === 3) return FAIXAS_DEMANDA
+  // 4 = crescimento: nao usa rampa de score, tem legenda propria (LegendaCrescimento).
   return null
 }
 
@@ -146,5 +148,6 @@ export function faixasDoPasso(passoN: number): FaixaNomeada[] | null {
 export function tituloDaLegenda(passoN: number): string {
   if (passoN === 1) return 'Potencial socioeconômico'
   if (passoN === 2 || passoN === 3) return 'Demanda não atendida (alunos)'
+  if (passoN === 4) return 'Área construída 2016–2023'
   return 'Faixa de oportunidade M1'
 }

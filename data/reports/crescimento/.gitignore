@@ -1,0 +1,10 @@
+# Intermediarios da cadeia 01->10. Ancorados AQUI (e nao no CWD) por `_raizes.trabalho`,
+# entao precisam ser ignorados aqui. Nenhum deles e' entregavel: os dois artefatos finais
+# vao para `MOTOR_DATA_DIR/staging`.
+_mun_cresc_bruto.parquet
+_cres_extra.parquet
+_dims.parquet
+
+# Insumo VINDO DE FORA (projeto poc_satelite, `prototipo/p2_eixo.py`). Lido por 04, 07 e
+# 08; nenhum script daqui o gera. Ver o README.
+_eixo_trajetoria.parquet

@@ -57,9 +57,9 @@ describe('faixas nomeadas por camada', () => {
     expect(faixasDoPasso(3)).toBe(faixasDoPasso(2))
   })
 
-  it('camada 4 nao usa rampa de score — colore pela faixa do M1', () => {
-    expect(faixasDoPasso(4)).toBeNull()
-    expect(tituloDaLegenda(4)).toBe('Faixa de oportunidade M1')
+  it('camada 5 nao usa rampa de score — colore pela faixa do M1', () => {
+    expect(faixasDoPasso(5)).toBeNull()
+    expect(tituloDaLegenda(5)).toBe('Faixa de oportunidade M1')
   })
 })
 
@@ -112,7 +112,7 @@ describe('exemplo de TODAS as faixas, como aparecem na legenda', () => {
     ])
   })
 
-  it('camada 4 — faixa de oportunidade M1, na ordem da legenda', () => {
+  it('camada 5 — faixa de oportunidade M1, na ordem da legenda', () => {
     expect([...FAIXA_M1_ORDEM]).toEqual([
       'Prioridade máxima',
       'Alta',
@@ -124,7 +124,7 @@ describe('exemplo de TODAS as faixas, como aparecem na legenda', () => {
   })
 
   it('os titulos de cada camada', () => {
-    expect([1, 2, 3, 4].map(tituloDaLegenda)).toEqual([
+    expect([1, 2, 3, 5].map(tituloDaLegenda)).toEqual([
       'Potencial socioeconômico',
       'Demanda não atendida (alunos)',
       'Demanda não atendida (alunos)',

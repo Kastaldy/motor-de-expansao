@@ -27,6 +27,38 @@ export interface Hex {
   faixa: string | null
   conc: number
   ultra: number
+  /* Passo 4 — Crescimento do município. Camada de CONTEXTO: repassa o que o
+     projeto Crescimento Regional TEC apura (CAGED, Receita Federal).
+     NADA de municipal mora aqui. O que é igual em toda a cidade viaja UMA vez, em
+     `MapaResposta.cres_mun` (chaveado por `mun`), pelo mesmo motivo que já tinha
+     tirado `cres_dims`/`cres_series` do hexágono: repetido em 15.000 hexes eram
+     ~2,2 MB por carga de UF. Aqui ficam só os dois campos que variam POR hexágono. */
+  /** Nome do município — chave para `MapaResposta.cres_mun`. */
+  mun: string | null
+  /** taxa de crescimento da área construída DESTE hexágono, 2016→2023, em % */
+  cres_hex_taxa: number | null
+  /** "Em alta" | "Estável" | "Sem obra nova" — é o que colore o mapa no passo 4.
+   *  RÓTULO de exibição, já acentuado pela API (`_ROTULO_CLASSE` em app.py); o
+   *  identificador no parquet é ASCII. `crescClasseToColor` em lib/colors.ts compara
+   *  este rótulo por literal, e `test_paridade_classe_crescimento_web.py` trava os
+   *  dois lados — sem ele, renomear um rótulo pinta a camada inteira de cinza. */
+  cres_hex_classe: string | null
+}
+
+/** Leitura de crescimento de uma cidade — a mesma para todos os hexes dela. */
+export interface CrescimentoMunicipal {
+  /** "Em alta" | "Estável" | "Em queda" — null quando não há leitura confiável */
+  tend: string | null
+  /** variação do emprego formal em %, dez/2022→jun/2026 (CAGED sobre estoque RAIS 2022) */
+  emp: number | null
+  /** saldo de empresas abertas menos fechadas, 2020→2025 (Receita Federal) */
+  empresas: number | null
+  /** salário médio de admissão nos últimos 12 meses (R$) */
+  salario: number | null
+  /** setor cuja abertura de empresas está mais ACIMA do normal nesta cidade */
+  setor: string | null
+  /** mediana de `emp` na UF — dá escala ao número da cidade */
+  uf_mediana: number | null
 }
 
 export interface RankItem {
@@ -46,10 +78,14 @@ export interface RankItem {
    *  sem ela, "Excelente" saía azul enquanto o bloco na legenda é verde-escuro.
    *  `null` no ranking de municípios, que usa vocabulário próprio, não faixa. */
   tag_cor?: string | null
+  /** Visão de UF, passo 4: dimensões DESTE município, no formato produzido por `_dims_por_municipio`. */
+  dims?: string | null
+  /** Visão de UF, passo 4: séries DESTE município, no formato produzido por `_series_por_municipio`. */
+  series?: string | null
 }
 
 export interface Passo {
-  n: 1 | 2 | 3 | 4
+  n: 1 | 2 | 3 | 4 | 5
   mode: string
   titulo: string
   narrativa: string
@@ -59,6 +95,12 @@ export interface Passo {
   metrica: string
   itens: RankItem[]
   hexes: string[]
+  /** Passo 4, visão de município: dimensões da cidade, uma vez só.
+   *  Formato `"nome:valor:unidade:posição:período"` separadas por `;`. */
+  dims?: string | null
+  /** Passo 4, visão de município: uma série por dimensão, uma vez só.
+   *  Formato `"nome|unidade|ini|fim|v1,v2,…"` separadas por `;`. */
+  series?: string | null
 }
 
 /* --- Metodologia (manual do funil, /api/metodologia) ---------------------- */
@@ -146,6 +188,8 @@ export interface MunicipioPayload {
   resumo: Resumo
   passos: Passo[]
   hexes: Hex[]
+  /** Passo 4, uma entrada por cidade. Esparso: cidade sem leitura não aparece. */
+  cres_mun: Record<string, CrescimentoMunicipal>
   pins: Pins
 }
 

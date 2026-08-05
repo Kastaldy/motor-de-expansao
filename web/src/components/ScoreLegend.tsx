@@ -1,4 +1,10 @@
-import { FAIXA_M1_HEX, FAIXA_M1_ORDEM } from '../lib/colors'
+import {
+  CRESC_ALTA_HEX,
+  CRESC_ESTAVEL_HEX,
+  CRESC_PARADO_HEX,
+  FAIXA_M1_HEX,
+  FAIXA_M1_ORDEM,
+} from '../lib/colors'
 import {
   alunosDaFaixa,
   bandasDaFaixa,
@@ -64,7 +70,39 @@ function Bloco({ fundo, nome, sub }: { fundo: string; nome: string; sub?: string
   )
 }
 
+/* Camada 4 do funil — a taxa de crescimento da area construida do hexagono
+   (BLK-TRAJ-01). Tres estados, nao uma rampa: nao ha nota aqui, ha direcao.
+   Sem amarelo de proposito — no meio de uma escala vermelho-verde ele le como
+   ALERTA, e "estavel" nao e alerta. Cortes na distribuicao real dos 41.135 hexes
+   medidos (p50 = +19,2%, p75 = +30,6%). */
+const CLASSES_CRESCIMENTO: [string, string][] = [
+  [CRESC_ALTA_HEX, 'em alta (+30%)'],
+  [CRESC_ESTAVEL_HEX, 'estável'],
+  [CRESC_PARADO_HEX, 'sem obra nova'],
+  ['rgba(120,120,140,.45)', 'sem medição'],
+]
+
+function LegendaCrescimento() {
+  return (
+    <div style={CAIXA}>
+      <div style={TITULO}>Área construída 2016–2023</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+        {CLASSES_CRESCIMENTO.map(([cor, rotulo]) => (
+          <span key={rotulo} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 2, background: cor }} />
+            <span style={{ font: '400 8.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
+              {rotulo}
+            </span>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function ScoreLegend({ passoN }: { passoN: number }) {
+  // O passo 4 tem escala propria e categorica; os demais seguem pela rampa.
+  if (passoN === 4) return <LegendaCrescimento />
   const faixas = faixasDoPasso(passoN)
 
   return (
@@ -83,7 +121,7 @@ export default function ScoreLegend({ passoN }: { passoN: number }) {
                 sub={passoN === 1 ? undefined : alunosDaFaixa(f)}
               />
             ))
-          : // Camada 4: a faixa do M1 e' CATEGORICA e o mapa pinta a cor cheia
+          : // Camada 5: a faixa do M1 e' CATEGORICA e o mapa pinta a cor cheia
             // (`faixaM1ToColor`), entao aqui o swatch e' cor unica mesmo.
             FAIXA_M1_ORDEM.map((nome) => (
               <Bloco key={nome} fundo={FAIXA_M1_HEX[nome]} nome={nome} />

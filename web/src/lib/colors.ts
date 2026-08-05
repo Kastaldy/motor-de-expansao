@@ -10,7 +10,7 @@
    M1 colore por score_priorizacao, censo por score_setor_2022_calibrado,
    hibrido por score_expansao_hibrido, residual por score_oportunidade_residual.
 
-   EXCECAO (BLK-MAPA-FAIXAS-01): a camada 4 do funil do piloto NAO segue a rampa —
+   EXCECAO (BLK-MAPA-FAIXAS-01): a camada 5 do funil do piloto NAO segue a rampa —
    ela colore por `faixa_oportunidade` (categorica), porque essa faixa nao e' um
    corte de `score_priorizacao`: o M1 a define cortando `score_percentil_nacional`
    em [35, 50, 65, 80]. Pintar a rampa e rotular com os nomes do M1 afirmaria uma
@@ -88,7 +88,7 @@ export function bandSolid(i: number): string {
 /* ---------------------------------------------------------------------------
    Faixa de oportunidade do M1 (BLK-MAPA-FAIXAS-01)
 
-   Porte de `constants.FAIXA_COLORS_POR_LABEL`. A camada 4 do funil ("Para onde
+   Porte de `constants.FAIXA_COLORS_POR_LABEL`. A camada 5 do funil ("Para onde
    crescer") passa a ser colorida POR ESTA FAIXA, nao pelo score.
 
    POR QUE: `faixa_oportunidade` NAO e' um corte de `score_priorizacao` — o M1 a
@@ -129,4 +129,35 @@ export function faixaM1ToColor(faixa: string | null | undefined, alpha = HEX_FIL
   if (!hex) return [...NA_FILL]
   const [r, g, b] = hexToRgb(hex)
   return [r, g, b, alpha]
+}
+
+/* ---------------------------------------------------------------------------
+   Passo 4 — taxa de crescimento da area construida do hexagono.
+
+   NAO usa a rampa de score: aqui nao ha nota, ha tres estados. E nao usa amarelo
+   — amarelo no meio de uma escala vermelho-verde le como ALERTA, e "estavel" nao
+   e alerta (pedido do Juan). Em alta recebe o turquesa da identidade do piloto,
+   estavel recebe verde, em queda recebe vermelho.
+   --------------------------------------------------------------------------- */
+
+export const CRESC_ALTA_HEX = '#35C9D6'
+export const CRESC_ESTAVEL_HEX = '#19A832'
+export const CRESC_PARADO_HEX = '#6E7686'
+
+const CRESC_ALTA: RGBA = [53, 201, 214, 150]
+const CRESC_ESTAVEL: RGBA = [25, 168, 50, 120]
+/* "Sem obra nova" e cinza, nao vermelho. O vermelho fazia o leitor entender que
+   os predios foram DERRUBADOS; o que a medida diz e outra coisa — a area
+   construida parou de crescer e a variacao ficou ligeiramente negativa, que nessa
+   escala e obra encerrada mais ruido de medicao. Ausencia de obra nao e alarme. */
+const CRESC_PARADO: RGBA = [110, 118, 134, 110]
+/** Sem medicao de satelite (fora das 12 UFs ou fora da mancha urbana). */
+const CRESC_SEM: RGBA = [120, 120, 140, 45]
+
+/** Cor por classe de crescimento do hexágono. Categórica, sem ordenação de nota. */
+export function crescClasseToColor(classe: string | null | undefined): RGBA {
+  if (classe === 'Em alta') return [...CRESC_ALTA]
+  if (classe === 'Estável') return [...CRESC_ESTAVEL]
+  if (classe === 'Sem obra nova') return [...CRESC_PARADO]
+  return [...CRESC_SEM]
 }

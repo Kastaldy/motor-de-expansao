@@ -15,9 +15,10 @@ import {
   NAN_SCORE_FILL,
   POP_MIN_ACIONAVEL,
   scoreBandToColor,
+  crescClasseToColor,
   type RGBA,
 } from '../lib/colors'
-import type { Hex, Passo, Pin, Pins } from '../lib/types'
+import type { CrescimentoMunicipal, Hex, Passo, Pin, Pins } from '../lib/types'
 
 /** Objeto de ícone do deck.gl a partir de um data URI (bandeira quadrada). */
 interface IconeDeck {
@@ -56,11 +57,11 @@ export interface SearchPin {
 
 function scoreDoPasso(h: Hex, passoN: number): number | null {
   if (passoN === 1) return h.censo // score_setor_2022_calibrado
-  if (passoN === 4) return h.m1 // score_priorizacao
+  if (passoN === 5) return h.m1 // score_priorizacao
   return h.res // score_oportunidade_residual
 }
 
-/* A camada 4 ("Para onde crescer") pinta pela FAIXA DE OPORTUNIDADE do M1, nao
+/* A camada 5 ("Para onde crescer") pinta pela FAIXA DE OPORTUNIDADE do M1, nao
    pelo score (BLK-MAPA-FAIXAS-01). Motivo: `faixa_oportunidade` sai de um corte
    sobre `score_percentil_nacional` ([35,50,65,80] em
    `m1/hex_enrichment._definir_faixa_oportunidade`), NAO sobre `score_priorizacao`,
@@ -68,16 +69,26 @@ function scoreDoPasso(h: Hex, passoN: number): number | null {
    afirmaria que score 70 = "Alta", o que nao e' verdade. `Hex.faixa` ja chega
    pronta do backend, entao a cor passa a bater exatamente com o rotulo.
    READ-ONLY sobre o M1: so exibicao, nada e' recalculado. */
-const PASSO_POR_FAIXA_M1 = 4
+const PASSO_POR_FAIXA_M1 = 5
 
 /** Opacidade relativa dos hexes FORA do passo atual. O funil vira um holofote nos
  *  hexes da camada — sem precisar de borda colorida (pedido do Felipe: tirar as
- *  bordas azuis). Sem isso, as 10 aberturas do passo 4 sumiriam no meio do mapa. */
+ *  bordas azuis). Sem isso, as 10 aberturas do passo 5 sumiriam no meio do mapa. */
 const DIM_FORA_DO_PASSO = 0.5
 
 /** Precedencia do dashboard: pop<5k vence, senao NaN, senao faixa de score.
  *  Hexes fora do passo atual entram esmaecidos (holofote no funil). */
 function fillDoHex(h: Hex, passoN: number, noPasso: boolean): RGBA {
+  // Passo 4 — taxa de crescimento DESTE hexagono. Categorico, fora da rampa de
+  // score, e ANTES do corte de pop<5k: um hexagono com pouca gente pode ser
+  // justamente onde a obra esta, e escondê-lo apagaria o sinal.
+  if (passoN === 4) {
+    const c = crescClasseToColor(h.cres_hex_classe)
+    // O holofote do funil vale aqui tambem: sem ele os hexes do passo ficavam
+    // visualmente iguais aos vizinhos e os rotulos de rank pousavam no nada.
+    return noPasso ? c : [c[0], c[1], c[2], Math.round(c[3] * DIM_FORA_DO_PASSO)]
+  }
+
   let base: RGBA
   if (h.pop !== null && h.pop < POP_MIN_ACIONAVEL) base = [...DISCARDED_FILL]
   else if (passoN === PASSO_POR_FAIXA_M1) {
@@ -103,14 +114,43 @@ interface RotuloRank {
   position: [number, number]
 }
 
-/** Mesma formatacao do painel lateral (NarrativePanel): "1º" no passo 4, "01" nos demais. */
+/** Mesma formatacao do painel lateral (NarrativePanel): "1º" no passo 5, "01" nos demais. */
 function textoRank(rank: number, passoN: number): string {
-  return passoN === 4 ? `${rank}º` : String(rank).padStart(2, '0')
+  return passoN === 5 ? `${rank}º` : String(rank).padStart(2, '0')
+}
+
+/** Uma leitura municipal do passo 4. Fora do JSX principal so por tamanho. */
+function BlocoMunicipal({ c }: { c: CrescimentoMunicipal }) {
+  return (
+    <>
+      <Divisoria />
+      {c.tend && <Linha rotulo="Emprego formal" valor={c.tend} />}
+      {c.emp !== null && (
+        <Linha
+          rotulo="Variação desde dez/2022"
+          valor={`${c.emp >= 0 ? '+' : ''}${num(c.emp, 1)}%`}
+        />
+      )}
+      {c.uf_mediana !== null && (
+        <Linha
+          rotulo="Mediana do estado"
+          valor={`${c.uf_mediana >= 0 ? '+' : ''}${num(c.uf_mediana, 1)}%`}
+        />
+      )}
+      {c.setor && <Linha rotulo="Setor que puxa" valor={c.setor} />}
+      {c.salario !== null && <Linha rotulo="Salário de admissão" valor={brl(c.salario)} />}
+      {c.empresas !== null && c.empresas > 0 && (
+        <Linha rotulo="Empresas a mais" valor={num(c.empresas)} />
+      )}
+    </>
+  )
 }
 
 export interface HexMapProps {
   hexes: Hex[]
   passo: Passo
+  /** Leitura de crescimento por cidade (passo 4). Chaveada por `Hex.mun`. */
+  cresMun?: Record<string, CrescimentoMunicipal>
   centro: { lat: number | null; lng: number | null }
   /** Nome do municipio carregado — cabecalho do tooltip (como o Streamlit). */
   municipio?: string
@@ -137,6 +177,7 @@ interface ViewState {
 export default function HexMap({
   hexes,
   passo,
+  cresMun,
   centro,
   municipio,
   uf,
@@ -146,6 +187,23 @@ export default function HexMap({
   onSelecionar,
   searchPin,
 }: HexMapProps) {
+  // O tooltip do passo 4 ficou alto (porte, obra, setor, salario, empresas) e era
+  // cortado quando o cursor estava na parte de baixo ou na direita do mapa. Medimos
+  // a caixa do mapa e viramos o balao para o lado que tem espaco.
+  const caixaRef = useRef<HTMLDivElement>(null)
+  /** Leitura da cidade do hexagono sob o cursor — `undefined` se ela nao tem leitura. */
+  const cresDoHex = (h: Hex) => (h.mun ? cresMun?.[h.mun] : undefined)
+  function ancora(x: number, y: number, altura = 360, largura = 240) {
+    const b = caixaRef.current?.getBoundingClientRect()
+    const viraY = b ? y + altura + 14 > b.height : false
+    const viraX = b ? x + largura + 14 > b.width : false
+    return {
+      left: x + (viraX ? -14 : 14),
+      top: y + (viraY ? -14 : 14),
+      transform: `translate(${viraX ? '-100%' : '0'}, ${viraY ? '-100%' : '0'})`,
+    }
+  }
+
   const [hover, setHover] = useState<{ h: Hex; x: number; y: number } | null>(null)
   const [pinHover, setPinHover] = useState<{
     titulo: string
@@ -358,7 +416,7 @@ export default function HexMap({
           sizeUnits: 'pixels',
           fontFamily: "'IBM Plex Mono', ui-monospace, monospace", // --f-num
           fontWeight: 700,
-          // O "º" do passo 4 esta fora do characterSet ASCII padrao do TextLayer.
+          // O "º" do passo 5 esta fora do characterSet ASCII padrao do TextLayer.
           characterSet: 'auto',
           getColor: [238, 243, 248, 255],
           // Chip escuro: a rampa vai do azul ao vermelho, entao nenhuma cor de texto
@@ -391,6 +449,7 @@ export default function HexMap({
 
   return (
     <div
+      ref={caixaRef}
       onMouseLeave={() => {
         setHover(null)
         setPinHover(null)
@@ -418,8 +477,7 @@ export default function HexMap({
           role="tooltip"
           style={{
             position: 'absolute',
-            left: hover.x + 14,
-            top: hover.y + 14,
+            ...ancora(hover.x, hover.y),
             pointerEvents: 'none',
             background: 'var(--surf-panel)',
             border: '1px solid var(--line-mid)',
@@ -446,7 +504,7 @@ export default function HexMap({
 
           <Divisoria />
           {/* O score em destaque e o que colore o mapa NESTE passo (M1 / censo / residual) */}
-          <Linha rotulo="Score M1" valor={num(hover.h.m1, 1)} forte={passo.n === 4} />
+          <Linha rotulo="Score M1" valor={num(hover.h.m1, 1)} forte={passo.n === 5} />
           <Linha rotulo="Score censitário" valor={num(hover.h.censo, 1)} forte={passo.n === 1} />
           {hover.h.res !== null && (
             <Linha
@@ -465,6 +523,32 @@ export default function HexMap({
           <Linha rotulo="Residual Fitness" valor={`${alunos(hover.h.oferta)} alunos`} />
           <Linha rotulo="Concorrentes 2 km" valor={num(hover.h.conc)} />
           {hover.h.ultra > 0 && <Linha rotulo="Unidade Ultra" valor={num(hover.h.ultra)} />}
+
+          {/* Passo 4 — como a cidade esta indo. Valores MUNICIPAIS. */}
+          {passo.n === 4 && hover.h.cres_hex_classe && (
+            <>
+              <Divisoria />
+              <Linha rotulo="Crescimento do hexágono" valor={hover.h.cres_hex_classe} forte />
+              {hover.h.cres_hex_taxa !== null && (
+                <Linha
+                  rotulo="Área construída 16–23"
+                  valor={
+                    /* A taxa chega a +498.128% num hexagono com 1 pixel construido
+                       em 2016. A classe satura, o numero cru nao — e ele destroi a
+                       credibilidade do painel. Clamp na exibicao. */
+                    hover.h.cres_hex_taxa > 999
+                      ? '> +999%'
+                      : `${hover.h.cres_hex_taxa >= 0 ? '+' : ''}${num(hover.h.cres_hex_taxa, 1)}%`
+                  }
+                />
+              )}
+            </>
+          )}
+          {/* O bloco municipal vem de `cresMun`, nao do hexagono: e o mesmo valor
+              para a cidade inteira e repeti-lo em cada hex custava ~2,2 MB por UF. */}
+          {passo.n === 4 && cresDoHex(hover.h) && (
+            <BlocoMunicipal c={cresDoHex(hover.h)!} />
+          )}
         </div>
       )}
 
@@ -473,8 +557,7 @@ export default function HexMap({
           role="tooltip"
           style={{
             position: 'absolute',
-            left: pinHover.x + 14,
-            top: pinHover.y + 14,
+            ...ancora(pinHover.x, pinHover.y, 96, 200),
             pointerEvents: 'none',
             background: 'var(--surf-panel)',
             border: '1px solid var(--line-mid)',

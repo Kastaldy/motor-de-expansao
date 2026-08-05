@@ -56,9 +56,9 @@ def _camada(metodologia: dict, n: int) -> dict:
 
 
 # --------------------------------------------------------------------- contrato
-def test_payload_tem_as_4_camadas_completas(metodologia):
+def test_payload_tem_as_5_camadas_completas(metodologia):
     camadas = metodologia["camadas"]
-    assert [c["n"] for c in camadas] == [1, 2, 3, 4]
+    assert [c["n"] for c in camadas] == [1, 2, 3, 4, 5]
     for c in camadas:
         assert c["titulo"] and c["pergunta"] and c["corte"]
         assert c["faixas"], f"camada {c['n']} sem faixa publicada"
@@ -117,9 +117,69 @@ def test_camada_3_publica_o_vocabulario_competitivo_no_municipio(metodologia):
         assert etiqueta == esperada, f"{n} concorrentes -> {etiqueta}, painel diz {esperada}"
 
 
-def test_camada_4_publica_as_faixas_de_oportunidade_do_m1(metodologia):
+def test_camada_4_declara_que_nao_filtra(metodologia):
+    """A camada de crescimento e' CONTEXTO, e o painel tem que dizer isso.
+
+    As outras quatro cortam: cada uma recebe o que a anterior aprovou. Esta nao — ela
+    entra entre a concorrencia e a fila sem tirar ninguem e sem reordenar nada. Se o
+    texto deixar isso implicito, o leitor conclui que a fila foi ordenada por
+    crescimento — e ai atribui a esta camada um poder preditivo que ela declara nao
+    ter, e que nada no repo mede.
+    """
+    c4 = _camada(metodologia, 4)
+    assert "não filtra" in c4["corte"]
+
+    # A prova tem que ser A/B, e nao a igualdade `passos[4]["funil_big"] ==
+    # passos[2]["funil_big"]` que estava aqui: com 2 hexes ela era verdadeira POR
+    # ACIDENTE (a fila e' nlargest(FILA_MAX=10), entao coincide com o white space
+    # enquanto houver menos de 10 candidatos) e ficava vermelha com 15, sem nada
+    # estar filtrando. Pior: o df nao tinha NENHUMA coluna `cres_*`, entao o caminho
+    # COM dado de crescimento — o unico em que a filtragem poderia existir — nunca era
+    # exercido. Aqui rodamos o mesmo funil com e sem o dado e exigimos saida identica.
+    def _df(com_crescimento: bool) -> pd.DataFrame:
+        n = 15  # > FILA_MAX, para a comparacao nao ser trivial
+        base = {
+            "hex_id": [f"8a{i:02d}" for i in range(n)],
+            "nome_municipio": [f"Cidade{i % 4}" for i in range(n)],
+            "n_concorrentes_est": [0] * n,
+            "oferta_efetiva_disponivel": [9000.0 - i * 100 for i in range(n)],
+            "score_setor_2022_calibrado": [90.0 - i * 0.5 for i in range(n)],
+            "pop_leitura": [30000 - i * 100 for i in range(n)],
+        }
+        if com_crescimento:
+            # Municipal (broadcast) + por hexagono, como o join real entrega.
+            base["cres_emp_pct"] = [(-8.0 if i % 4 == 0 else 22.0) for i in range(n)]
+            base["cres_hex_classe"] = [
+                ("Sem obra nova" if i % 3 == 0 else "Em alta") for i in range(n)
+            ]
+        return pd.DataFrame(base)
+
+    sem, com = pilot.montar_funil(_df(False), "Cidade0", {}), pilot.montar_funil(_df(True), "Cidade0", {})
+    assert [p["n"] for p in com] == [1, 2, 3, 4, 5]
+
+    # ANTI-VACUIDADE: sem isto o teste passaria mesmo que o ramo com dado nunca
+    # rodasse — foi assim que a versao anterior deste teste ficou sem poder. O caso
+    # "com" tem que de fato ACENDER a camada 4, e o "sem" tem que degradar.
+    assert com[3]["funil_big"] > 0, "o caminho COM crescimento nao ativou a camada 4"
+    assert sem[3]["funil_big"] == 0, "o caminho SEM crescimento deveria degradar"
+    # O passo 5 (fila) tem que sair igual: mesmos hexes, mesma ordem.
+    assert com[4]["hexes"] == sem[4]["hexes"]
+    assert [i["hex_id"] for i in com[4]["itens"]] == [i["hex_id"] for i in sem[4]["itens"]]
+    # E os passos anteriores tambem — a camada 4 nao pode retroagir sobre eles.
+    for n_passo in (0, 1, 2):
+        assert com[n_passo]["hexes"] == sem[n_passo]["hexes"]
+
+    # Idem na visao de UF, onde a camada 4 ranqueia municipios.
+    sem_uf = pilot.montar_funil_uf(_df(False), "SP")
+    com_uf = pilot.montar_funil_uf(_df(True), "SP")
+    assert [i["municipio"] for i in com_uf[4]["itens"]] == [
+        i["municipio"] for i in sem_uf[4]["itens"]
+    ]
+
+
+def test_camada_5_publica_as_faixas_de_oportunidade_do_m1(metodologia):
     """A fila rotula pela faixa do M1 desde o BLK-MAPA-FAIXAS-01, nao por posicao."""
-    publicadas = _etiquetas(_camada(metodologia, 4), "municipio")
+    publicadas = _etiquetas(_camada(metodologia, 5), "municipio")
     assert publicadas == set(FAIXA_LABELS.values())
 
     for bruto, rotulo in FAIXA_LABELS.items():
@@ -156,14 +216,14 @@ def test_cortes_publicados_batem_com_as_constantes_do_funil(metodologia):
     c2 = _camada(metodologia, 2)["corte"]
     assert f"{pilot.OFERTA_DESTAQUE_MIN:,.0f}".replace(",", ".") in c2
 
-    assert str(pilot.FILA_MAX) in _camada(metodologia, 4)["corte"]
+    assert str(pilot.FILA_MAX) in _camada(metodologia, 5)["corte"]
 
 
 def test_a_fila_nao_promete_fallback_para_regiao_disputada(metodologia):
     """O #184 removeu o fallback por decisao do dono (2026-08-03); o painel dizia que
     ele existia. Municipio saturado mostra fila VAZIA — se o texto prometer recurso a
     hex disputado, o usuario conclui que a tela esta quebrada."""
-    regra = " ".join(m["regra"] for m in _camada(metodologia, 4)["metricas"])
+    regra = " ".join(m["regra"] for m in _camada(metodologia, 5)["metricas"])
     assert "aceitando disputa" not in regra
     assert "recorre" not in regra
 
@@ -179,4 +239,4 @@ def test_a_fila_nao_promete_fallback_para_regiao_disputada(metodologia):
         }
     )
     passos = pilot.montar_funil(df, "Cidade", {})
-    assert passos[3]["itens"] == []
+    assert passos[4]["itens"] == []

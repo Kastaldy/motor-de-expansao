@@ -3,10 +3,10 @@ import type { Passo } from '../lib/types'
 import { Spinner } from './primitives'
 
 /* ---------------------------------------------------------------------------
-   Os 4 passos da recomendacao, na barra inferior do mapa.
+   Os passos da recomendacao, na barra inferior do mapa.
 
    O ultimo passo troca o CTA de "próxima camada" por "Gerar Relatório
-   Municipal" — a sintese das 4 camadas vira o PDF (pedido do Felipe).
+   Municipal" — a sintese das camadas vira o PDF (pedido do Felipe).
 
    Voltar SEMPRE foi possivel (clicar num passo ja percorrido), mas nada dizia
    isso: o CTA era de mao unica e a palavra "voltar" nao aparecia. Dai o botao
@@ -19,7 +19,7 @@ export interface StepperBarProps {
   onIr: (n: number) => void
   onGerarRelatorio: () => void
   gerando: boolean
-  /** Na visão de UF inteira o passo 4 recomenda municípios — sem relatório. */
+  /** Na visão de UF inteira o último passo recomenda municípios — sem relatório. */
   nivelUf?: boolean
 }
 
@@ -31,7 +31,9 @@ export default function StepperBar({
   gerando,
   nivelUf = false,
 }: StepperBarProps) {
-  const ultimo = atual >= 4
+  // Deriva do proprio funil, como as linhas 69/144/168 ja faziam. Era o unico
+  // literal do stepper que precisava de edicao manual a cada passo novo.
+  const ultimo = atual >= passos.length
   // No nível da UF, o último passo guia para escolher um município (não gera PDF).
   const ctaUf = ultimo && nivelUf
   const podeVoltar = atual > 1

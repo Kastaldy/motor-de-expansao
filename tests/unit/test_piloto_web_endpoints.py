@@ -57,6 +57,10 @@ _CACHED = [
     "_base_calibracao",
     "_carregar_growth",
     "_ultra_coord_map",
+    # Passo 4 (BLK-TRAJ-01): sem estes dois o cache do processo vaza entre testes
+    # e o artefato da maquina de quem roda entra no lugar da fixture sintetica.
+    "carregar_crescimento",
+    "carregar_crescimento_hex",
 ]
 
 
@@ -80,6 +84,10 @@ def _point_app_at(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
     monkeypatch.setattr(pilot, "ULTRA_PERF_PARQUET", staging / "unidades_ultra_performance_hex.parquet")
     monkeypatch.setattr(pilot, "ULTRA_MAPEADAS_PARQUET", staging / "unidades_ultra_mapeadas.parquet")
     monkeypatch.setattr(pilot, "GROWTH_PARQUET", staging / "growth_api_historico.parquet")
+    # Calculadas no import, como as tres acima: monkeypatch em STAGING_DIR nao as
+    # alcanca, e sem isto o teste le o parquet real da maquina de quem roda.
+    monkeypatch.setattr(pilot, "CRESCIMENTO_PATH", staging / "crescimento_municipal.parquet")
+    monkeypatch.setattr(pilot, "CRESCIMENTO_HEX_PATH", staging / "crescimento_hex.parquet")
     monkeypatch.setattr(pilot, "GEOCODE_CACHE_DIR", data_dir / "cache" / "geocode")
     _clear_caches()
 
@@ -969,27 +977,27 @@ def test_passo3_ranqueia_os_hexes_que_o_mapa_destaca() -> None:
     assert passo3["funil_big"] == len(destacados)
 
 
-def test_passo4_so_recomenda_hexagono_livre() -> None:
-    """A fila do passo 4 sai do MESMO white space do passo 3, nunca do residual.
+def test_passo5_so_recomenda_hexagono_livre() -> None:
+    """A fila do passo 5 sai do MESMO white space do passo 3, nunca do residual.
 
     Complementa o N13 no passo da recomendacao: com hexes livres E disputados na mesma
     fixture, a fila nao pode "completar" as 10 vagas com hexagono que tem concorrente.
     """
     df, bairros = _funil_muni([0, 1, 2, 3])
     passos = pilot.montar_funil(df, "Sao Paulo", bairros)
-    passo3, passo4 = passos[2], passos[3]
+    passo3, passo5 = passos[2], passos[4]
 
     livres = set(passo3["hexes"])
     assert len(livres) == 1, "a fixture precisa ter livre E disputado para o teste valer"
-    assert set(passo4["hexes"]) <= livres, (
-        f"passo 4 recomendou hexagono com concorrente: {sorted(set(passo4['hexes']) - livres)}"
+    assert set(passo5["hexes"]) <= livres, (
+        f"passo 5 recomendou hexagono com concorrente: {sorted(set(passo5['hexes']) - livres)}"
     )
-    assert {i["hex_id"] for i in passo4["itens"]} <= livres
-    assert passo4["funil_big"] == len(passo4["hexes"]) == 1
+    assert {i["hex_id"] for i in passo5["itens"]} <= livres
+    assert passo5["funil_big"] == len(passo5["hexes"]) == 1
 
 
-def test_sem_hexagono_livre_os_passos_3_e_4_ficam_vazios() -> None:
-    """Sem white space, os passos 3 e 4 nao tem NENHUM item — e isso e o correto.
+def test_sem_hexagono_livre_os_passos_3_e_5_ficam_vazios() -> None:
+    """Sem white space, os passos 3 e 5 nao tem NENHUM item — e isso e o correto.
 
     Regra do dono (2026-08-03): "os top 10 deverao se referir aos hexagonos livres".
     Havia fallback — sem white space o ranking caia para o residual inteiro —, e ele
@@ -1002,12 +1010,16 @@ def test_sem_hexagono_livre_os_passos_3_e_4_ficam_vazios() -> None:
     """
     df, bairros = _funil_muni([1, 2, 3, 4])
     passos = pilot.montar_funil(df, "Sao Paulo", bairros)
-    passo3, passo4 = passos[2], passos[3]
+    passo3, passo5 = passos[2], passos[4]
 
     # Fixture com residual de sobra: o funil so morre no filtro de CONCORRENCIA.
     assert passos[1]["funil_big"] == 4, "a fixture perdeu o residual; o teste seria vago"
 
-    for passo in (passo3, passo4):
+    # O passo 4 (crescimento) tambem destaca o white space, entao apaga junto — mas por
+    # outro motivo (nao ha o que destacar), e nao pelo fallback que este teste trava.
+    assert passos[3]["hexes"] == [], "passo 4 destacou hexagono sem white space"
+
+    for passo in (passo3, passo5):
         assert passo["hexes"] == [], f"passo {passo['n']}: sem white space nada a destacar"
         assert passo["funil_big"] == 0
         assert passo["itens"] == [], (
@@ -1021,8 +1033,8 @@ def test_sem_hexagono_livre_os_passos_3_e_4_ficam_vazios() -> None:
         f"passo 3 nao explica a lista vazia: {passo3['narrativa']!r}"
     )
     assert "0 não têm" not in passo3["narrativa"], "frase agramatical do caso n=0"
-    assert "não há abertura a recomendar" in passo4["narrativa"], (
-        f"passo 4 nao explica a fila vazia: {passo4['narrativa']!r}"
+    assert "não há abertura a recomendar" in passo5["narrativa"], (
+        f"passo 5 nao explica a fila vazia: {passo5['narrativa']!r}"
     )
 
 
@@ -1035,17 +1047,18 @@ def _uf_saturada() -> pd.DataFrame:
     return df
 
 
-def test_uf_sem_hexagono_livre_tambem_fica_com_os_passos_3_e_4_vazios() -> None:
+def test_uf_sem_hexagono_livre_tambem_fica_com_os_passos_3_4_e_5_vazios() -> None:
     """Mesma regra no funil de UF — deixar um nivel com fallback so muda a incoerencia de lugar.
 
     A visao de estado ranqueia MUNICIPIOS; sem white space na UF inteira ela recomendava
     municipios que o proprio passo acabara de excluir (numerao 0, mapa apagado).
     """
     passos = pilot.montar_funil_uf(_uf_saturada(), "SP")
-    passo3, passo4 = passos[2], passos[3]
+    passo3, passo5 = passos[2], passos[4]
 
     assert passos[1]["funil_big"] == 8, "a fixture perdeu o residual; o teste seria vago"
-    for passo in (passo3, passo4):
+    # Os tres saem do mesmo `white`: o passo 4 le a base do funil, nao a UF inteira.
+    for passo in (passo3, passos[3], passo5):
         assert passo["hexes"] == [], f"passo {passo['n']} da UF destacou hex sem white space"
         assert passo["funil_big"] == 0
         assert passo["itens"] == [], (
@@ -1053,8 +1066,8 @@ def test_uf_sem_hexagono_livre_tambem_fica_com_os_passos_3_e_4_vazios() -> None:
             "fallback para o residual voltou no nivel de UF"
         )
     assert "Não há área sem concorrência" in passo3["narrativa"]
-    assert "a fila fica vazia" in passo4["narrativa"], (
-        f"passo 4 da UF nao explica a fila vazia: {passo4['narrativa']!r}"
+    assert "a fila fica vazia" in passo5["narrativa"], (
+        f"passo 5 da UF nao explica a fila vazia: {passo5['narrativa']!r}"
     )
 
 
@@ -1110,8 +1123,11 @@ def test_item_de_municipio_sai_com_ancora_resolvivel() -> None:
     por_municipio = df_uf.groupby("nome_municipio", observed=True)["hex_id"].apply(set).to_dict()
 
     passos = pilot.montar_funil_uf(df_uf, "SP")
-    assert len(passos) == 4
-    for passo in passos:
+    assert len(passos) == 5
+    # O passo 4 depende de `crescimento_municipal.parquet`, que e OPCIONAL e nao esta
+    # nesta fixture — sem ele a lista sai vazia de proposito (ver `test_degrada_sem_
+    # artefato`). Os outros quatro nao tem essa desculpa.
+    for passo in [p for p in passos if p["n"] != 4]:
         assert passo["itens"], f"passo {passo['n']} da UF saiu sem itens"
         for item in passo["itens"]:
             muni = item["municipio"]

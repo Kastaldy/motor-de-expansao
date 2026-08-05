@@ -30,6 +30,10 @@ STAGING_OPCIONAL = [
      "Aba Censitario — piloto expandido"),
     ("data/staging/censo2022_setores_validado_v2.parquet",
      "Aba Censitario — validado v2"),
+    ("data/staging/crescimento_municipal.parquet",
+     "Piloto web, passo 4 — gerado por data/reports/crescimento/ (BLK-TRAJ-01)"),
+    ("data/staging/crescimento_hex.parquet",
+     "Piloto web, passo 4 — idem; sem ele o mapa do passo fica sem cor"),
 ]
 
 
