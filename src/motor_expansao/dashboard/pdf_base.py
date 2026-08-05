@@ -165,16 +165,24 @@ def _milhar(valor: float) -> str:
     return f"{valor:,.0f}".replace(",", ".")
 
 
-def titulo_de_grafico(pdf: UltraPDF, x: float, y: float, texto: str, apoio: str = "") -> None:
+def titulo_de_grafico(
+    pdf: UltraPDF, x: float, y: float, texto: str, apoio: str = "", largura: float = 340.0
+) -> None:
+    """Titulo + apoio de um bloco. `largura` LIMITA o texto ao bloco.
+
+    Sem o limite, o `cell` de largura fixa escrevia por cima do bloco vizinho: a frase de
+    apoio da composicao da base atravessava a pagina e caia em cima do texto do NPS.
+    """
     pdf.set_text_color(90, 90, 90)
     pdf.set_font("Helvetica", "B", 9.5)
     pdf.set_xy(x, y)
-    pdf.cell(340, 11, ascii_seguro(texto))
+    pdf.cell(largura, 11, ascii_seguro(texto))
     if apoio:
         pdf.set_text_color(140, 140, 140)
         pdf.set_font("Helvetica", "", 7.5)
         pdf.set_xy(x, y + 11)
-        pdf.cell(420, 9, ascii_seguro(apoio))
+        # `multi_cell` quebra a linha DENTRO do bloco em vez de transbordar para o lado.
+        pdf.multi_cell(largura, 9, ascii_seguro(apoio), align="L")
 
 
 def barras(
@@ -209,16 +217,17 @@ def barras(
             ultimo = indice == len(rotulos) - 1
             pdf.set_fill_color(*(cor if ultimo else _clarear(cor, 0.45)))
             pdf.rect(centro - largura_barra / 2, y + altura - alto, largura_barra, alto, style="F")
+            # O VALOR vai sobre a barra. Comparar alturas responde "subiu ou caiu"; so o
+            # numero responde "quanto" -- e e' o numero que vai para a conversa com o
+            # franqueado, que le o PDF sem a tela ao lado.
+            pdf.set_text_color(*CINZA_TEXTO)
+            pdf.set_font("Helvetica", "B", 6.2)
+            pdf.set_xy(centro - passo / 2, y + altura - alto - 9)
+            pdf.cell(passo, 8, ascii_seguro(formatar(float(valor))), align="C")
         pdf.set_text_color(150, 150, 150)
         pdf.set_font("Helvetica", "", 6.5)
         pdf.set_xy(centro - passo / 2, y + altura + 3)
         pdf.cell(passo, 8, ascii_seguro(rotulo), align="C")
-
-    if finitos:
-        pdf.set_text_color(*CINZA_TEXTO)
-        pdf.set_font("Helvetica", "B", 7.5)
-        pdf.set_xy(x, y - 10)
-        pdf.cell(largura, 9, ascii_seguro(f"max {formatar(maximo)}"), align="R")
 
 
 def linha(
@@ -248,12 +257,14 @@ def linha(
 
     pdf.set_draw_color(*cor)
     pdf.set_line_width(1.4)
+    pontos: list[tuple[int, float, float, float]] = []
     anterior: tuple[float, float] | None = None
     for indice, valor in enumerate(valores):
         if valor is None or not math.isfinite(float(valor)):
             anterior = None
             continue
         ponto = (x + passo * indice, y + altura - altura * (float(valor) - minimo) / amplitude)
+        pontos.append((indice, ponto[0], ponto[1], float(valor)))
         if anterior is not None:
             pdf.line(anterior[0], anterior[1], ponto[0], ponto[1])
         anterior = ponto
@@ -261,12 +272,17 @@ def linha(
         pdf.set_fill_color(*cor)
         pdf.ellipse(anterior[0] - 2, anterior[1] - 2, 4, 4, style="F")
 
-    pdf.set_text_color(150, 150, 150)
-    pdf.set_font("Helvetica", "", 6.5)
-    pdf.set_xy(x, y - 9)
-    pdf.cell(largura, 8, ascii_seguro(formatar(maximo)))
-    pdf.set_xy(x, y + altura + 2)
-    pdf.cell(largura, 8, ascii_seguro(formatar(minimo)))
+    # Valor MES A MES, nao so o minimo e o maximo: sem isso nao ha como ler nenhum ponto
+    # do meio da serie num papel -- e no PDF nao existe passar o mouse por cima.
+    # Com muitos pontos os rotulos se encavalariam, entao alterna.
+    alternar = len(pontos) > 7
+    pdf.set_text_color(*CINZA_TEXTO)
+    pdf.set_font("Helvetica", "B", 5.8)
+    for indice, px, py, valor in pontos:
+        if alternar and indice % 2 == 1 and indice != pontos[-1][0]:
+            continue
+        pdf.set_xy(px - passo / 2, max(py - 9.5, y - 10))
+        pdf.cell(max(passo, 22.0), 8, ascii_seguro(formatar(valor)), align="C")
 
 
 def barras_horizontais(
@@ -396,3 +412,88 @@ def _clarear(cor: tuple[int, int, int], fator: float) -> tuple[int, int, int]:
         int(cor[1] + (255 - cor[1]) * fator),
         int(cor[2] + (255 - cor[2]) * fator),
     )
+
+
+def rosca(
+    pdf: UltraPDF,
+    x: float,
+    y: float,
+    diametro: float,
+    partes: Sequence[tuple[str, float, tuple[int, int, int]]],
+    *,
+    espessura: float = 16.0,
+    centro_valor: str = "",
+    centro_rotulo: str = "",
+    legenda_abaixo: bool = False,
+) -> None:
+    """Rosca de duas ou tres fatias, com o numero no miolo e a legenda a direita.
+
+    Desenhada com `solid_arc` (fpdf2) e um circulo branco por cima para abrir o furo --
+    e' o caminho que mantem tudo VETORIAL. A fatia responde "muito ou pouco"; so o numero
+    responde "quanto", e por isso ele fica no meio.
+    """
+    total = sum(max(v, 0.0) for _, v, _ in partes)
+    raio = diametro / 2
+    centro_x, centro_y = x + raio, y + raio
+
+    positivas = [(rotulo, valor, cor) for rotulo, valor, cor in partes if valor > 0]
+    if total <= 0:
+        pdf.set_fill_color(*CINZA_CLARO)
+        pdf.ellipse(x, y, diametro, diametro, style="F")
+    elif len(positivas) == 1:
+        # Uma fatia so' = circulo inteiro. `solid_arc` de 0 a 360 graus nao fecha a volta
+        # e sai como um setor mordido -- foi assim que uma unidade sem nenhum agregador
+        # apareceu com a rosca quebrada, mostrando 100% como se fosse ~85%.
+        pdf.set_fill_color(*positivas[0][2])
+        pdf.ellipse(x, y, diametro, diametro, style="F")
+    else:
+        angulo = -90.0  # comeca no topo, que e' onde o olho comeca
+        for _, valor, cor in positivas:
+            fatia = 360.0 * max(valor, 0.0) / total
+            pdf.set_fill_color(*cor)
+            pdf.set_draw_color(*cor)
+            # `a`/`b` do fpdf2 sao o DIAMETRO do bounding box, nao o semi-eixo, e
+            # `x`/`y` sao o canto superior esquerdo desse box. Passar o raio desenhava o
+            # anel com metade do tamanho e deslocado do furo -- a rosca saia torta.
+            pdf.solid_arc(
+                x=x,
+                y=y,
+                a=diametro,
+                b=diametro,
+                start_angle=angulo,
+                end_angle=angulo + fatia,
+                style="F",
+            )
+            angulo += fatia
+
+    # Furo: um circulo da cor do papel por cima do miolo.
+    pdf.set_fill_color(*BRANCO)
+    furo = diametro - 2 * espessura
+    pdf.ellipse(centro_x - furo / 2, centro_y - furo / 2, furo, furo, style="F")
+
+    if centro_valor:
+        pdf.set_text_color(*CINZA_TEXTO)
+        pdf.set_font("Helvetica", "B", 15)
+        pdf.set_xy(centro_x - raio, centro_y - 10)
+        pdf.cell(diametro, 14, ascii_seguro(centro_valor), align="C")
+    if centro_rotulo:
+        pdf.set_text_color(140, 140, 140)
+        pdf.set_font("Helvetica", "", 6.5)
+        pdf.set_xy(centro_x - raio, centro_y + 4)
+        pdf.cell(diametro, 8, ascii_seguro(centro_rotulo), align="C")
+
+    legenda_x = x if legenda_abaixo else x + diametro + 14
+    legenda_y = (y + diametro + 8) if legenda_abaixo else (y + 6)
+    for rotulo, valor, cor in partes:
+        pdf.set_fill_color(*cor)
+        pdf.rect(legenda_x, legenda_y + 2, 8, 8, style="F")
+        pdf.set_text_color(110, 110, 110)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_xy(legenda_x + 12, legenda_y)
+        pdf.cell(78, 11, ascii_seguro(rotulo))
+        pdf.set_text_color(*CINZA_TEXTO)
+        pdf.set_font("Helvetica", "B", 8.5)
+        pdf.set_xy(legenda_x + 92, legenda_y)
+        fracao = f" ({100.0 * valor / total:.0f}%)" if total > 0 else ""
+        pdf.cell(92, 11, ascii_seguro(_milhar(valor) + fracao))
+        legenda_y += 15.0

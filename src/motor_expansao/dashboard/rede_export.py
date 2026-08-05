@@ -44,6 +44,7 @@ from motor_expansao.dashboard.pdf_base import (
     faixa_de_titulo,
     linha_de_tabela,
     rodape,
+    rosca,
     titulo_de_grafico,
 )
 from motor_expansao.dashboard.pdf_base import (
@@ -105,6 +106,16 @@ def _br(valor: object, casas: int = 0) -> str:
 
 #: Caracteres com que o Excel/LibreOffice comeca a interpretar a celula como FORMULA.
 _INICIO_DE_FORMULA = ('=', '+', '-', '@', chr(9), chr(13))
+
+
+def _brl_compacto(valor: float) -> str:
+    """R$ 594k / R$ 1,2M. Numero cheio nao cabe sobre 12 barras sem encavalar."""
+    absoluto = abs(valor)
+    if absoluto >= 1_000_000:
+        return f"R$ {_br(valor / 1_000_000, 1)}M"
+    if absoluto >= 1_000:
+        return f"R$ {_br(valor / 1_000)}k"
+    return f"R$ {_br(valor)}"
 
 
 def _celula(valor: object) -> str:
@@ -535,6 +546,7 @@ def _pagina_de_graficos_da_rede(
             "Faturamento da rede no recorte",
             f"Soma dos meses FECHADOS das {payload.get('totais', {}).get('no_recorte', 0)} "
             "unidades do recorte. A competência em curso não entra.",
+            largura=PAGINA_LARGURA - 72,
         )
         barras(
             pdf,
@@ -544,11 +556,11 @@ def _pagina_de_graficos_da_rede(
             150,
             [_mes_curto(m) for m in meses],
             serie,
-            formatar=lambda v: f"R$ {_br(v)}",
+            formatar=_brl_compacto,
         )
 
     semaforo = payload.get("semaforo") or {}
-    titulo_de_grafico(pdf, 36, 316, "Fila de trabalho", "Severidade pelas réguas do rodapé.")
+    titulo_de_grafico(pdf, 36, 316, "Fila de trabalho", "Severidade pelas réguas do rodapé.", largura=420)
     barra_empilhada(
         pdf,
         36,
@@ -586,6 +598,7 @@ def _pagina_de_graficos_da_rede(
         316,
         "Recorrentes x agregadores",
         "Agregador paga menos por aluno e pode sair em bloco por decisão do parceiro.",
+        largura=PAGINA_LARGURA - 556,
     )
     barra_empilhada(
         pdf,
@@ -648,9 +661,7 @@ def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> N
     )
 
     titulo_de_grafico(pdf, 36, 76, "Faturamento nos 12 meses fechados")
-    barras(
-        pdf, 36, 116, 430, 118, meses, serie.get("faturamento") or [], formatar=lambda v: f"R$ {_br(v)}"
-    )
+    barras(pdf, 36, 118, 430, 108, meses, serie.get("faturamento") or [], formatar=_brl_compacto)
 
     titulo_de_grafico(pdf, 520, 76, "Alunos ativos")
     linha_de_grafico(pdf, 520, 116, PAGINA_LARGURA - 556, 52, serie.get("ativos") or [])
@@ -666,6 +677,9 @@ def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> N
         formatar=lambda v: f"{_br(v, 1)}%",
     )
 
+    # Faixa de baixo: funil | composicao da base | (NPS e coorte, na coluna da direita).
+    # As larguras sao explicitas porque os tres blocos dividem a mesma faixa -- foi a
+    # sobreposicao entre eles que os renders mostraram.
     funil = payload.get("funil") or {}
     titulo_de_grafico(
         pdf,
@@ -673,18 +687,46 @@ def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> N
         272,
         "Funil comercial do período",
         str(funil.get("aviso") or f"Conversão de visita em aluno: {_br(funil.get('conversao_pct'), 1)}%"),
+        largura=248,
     )
     barras_horizontais(
         pdf,
         36,
-        312,
-        430,
+        316,
+        248,
         [
             ("Visitas", funil.get("visitas"), _CORES_FUNIL[0]),
             ("Convertidos", funil.get("convertidos"), _CORES_FUNIL[1]),
             ("Vendas", funil.get("vendas"), _CORES_FUNIL[2]),
             ("Novos alunos", funil.get("novos_alunos"), _CORES_FUNIL[3]),
         ],
+    )
+
+    metricas = payload.get("metricas", {})
+    recorrentes = float((metricas.get("pagantes") or {}).get("atual") or 0.0)
+    agregadores = float((metricas.get("agregadores") or {}).get("atual") or 0.0)
+    dependencia = (metricas.get("pct_agregador_alunos") or {}).get("atual")
+    titulo_de_grafico(
+        pdf,
+        304,
+        272,
+        "Composição da base",
+        "Aluno de agregador paga menos e sai em bloco se o parceiro decidir.",
+        largura=196,
+    )
+    rosca(
+        pdf,
+        304,
+        318,
+        68,
+        [
+            ("Recorrentes", recorrentes, ULTRA_TURQUESA),
+            ("Agregadores", agregadores, ULTRA_MAGENTA),
+        ],
+        espessura=13,
+        centro_valor="-" if dependencia is None else f"{_br(dependencia, 0)}%",
+        centro_rotulo="agregadores",
+        legenda_abaixo=True,
     )
 
     meta = float(payload.get("meta_nps") or 60)
@@ -695,6 +737,7 @@ def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> N
         272,
         "NPS contra a meta da rede",
         f"Meta oficial {meta:.0f}. O alerta só dispara bem abaixo dela: meta não é alerta.",
+        largura=PAGINA_LARGURA - 556,
     )
     barra_de_meta(pdf, 520, 316, PAGINA_LARGURA - 556, valor=nps, meta=meta)
     pdf.set_text_color(*CINZA_TEXTO)
@@ -710,6 +753,7 @@ def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> N
         366,
         "Contra os pares de mesma maturidade",
         f"{coorte.get('n', 0)} unidades - {coorte.get('base_rotulo', '-')}",
+        largura=PAGINA_LARGURA - 556,
     )
     y = 404.0
     # "Churn - percentil 92" lê como elogio e é o oposto: 92% dos pares têm churn MENOR.

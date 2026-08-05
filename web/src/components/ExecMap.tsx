@@ -1,7 +1,7 @@
 import { FlyToInterpolator, type Layer } from '@deck.gl/core'
 import { IconLayer, ScatterplotLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
@@ -76,6 +76,28 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
 
   const alvo = useMemo(() => enquadrar(bbox, centro), [bbox, centro])
   const [view, setView] = useState<ViewState>(() => ({ ...alvo, pitch: 0, bearing: 0 }))
+  // Zoom pela roda do mouse fica ARMADO por um clique e desarma quando o ponteiro sai.
+  //
+  // Os dois extremos são ruins: com a roda sempre ativa, quem está só rolando a página
+  // passa o ponteiro por cima do card e o mapa engole a rolagem — a pessoa fica presa.
+  // Com a roda sempre desligada, não dá para aproximar de uma unidade, que é o que o
+  // mapa serve para fazer. Um clique resolve os dois: enquanto não houver clique, a roda
+  // rola a página; depois dele, aproxima. Os botões + e - funcionam sempre, para quem
+  // não descobrir o clique.
+  const [zoomArmado, setZoomArmado] = useState(false)
+
+  const aplicarZoom = useCallback((delta: number) => {
+    setView((v) => ({
+      ...v,
+      zoom: Math.min(16, Math.max(2.5, v.zoom + delta)),
+      transitionDuration: 220,
+      transitionInterpolator: undefined,
+    }))
+  }, [])
+
+  const enquadrarTudo = useCallback(() => {
+    setView((v) => ({ ...v, ...alvo, transitionDuration: 500, transitionInterpolator: FLY }))
+  }, [alvo])
 
   const chaveAlvo = `${alvo.latitude.toFixed(3)},${alvo.longitude.toFixed(3)},${alvo.zoom.toFixed(2)}`
   useEffect(() => {
@@ -134,7 +156,11 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
 
   return (
     <div
-      onMouseLeave={() => setHover(null)}
+      onMouseLeave={() => {
+        setHover(null)
+        setZoomArmado(false)
+      }}
+      onPointerDown={() => setZoomArmado(true)}
       style={{
         position: 'absolute',
         inset: 0,
@@ -144,15 +170,56 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
       <DeckGL
         viewState={view}
         onViewStateChange={(e) => setView(e.viewState as ViewState)}
-        // scrollZoom OFF: o mapa vive dentro do scroller da aba; com a roda ativa,
-        // rolar a página daria zoom no mapa e prenderia a pessoa no card.
-        controller={{ dragRotate: false, scrollZoom: false, doubleClickZoom: true }}
+        controller={{ dragRotate: false, scrollZoom: zoomArmado, doubleClickZoom: true }}
         layers={layers}
         style={{ position: 'absolute', top: '0', left: '0', width: '100%', height: '100%' }}
         getCursor={({ isHovering }) => (isHovering ? 'pointer' : 'grab')}
       >
         <Map mapStyle={BASEMAP_STYLE} attributionControl={{ compact: true }} reuseMaps />
       </DeckGL>
+
+      <div
+        style={{
+          position: 'absolute',
+          right: 10,
+          top: 10,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 4,
+          zIndex: 20,
+        }}
+      >
+        <BotaoMapa rotulo="Aproximar" onClick={() => aplicarZoom(1)}>
+          +
+        </BotaoMapa>
+        <BotaoMapa rotulo="Afastar" onClick={() => aplicarZoom(-1)}>
+          −
+        </BotaoMapa>
+        <BotaoMapa rotulo="Enquadrar todas as unidades" onClick={enquadrarTudo}>
+          ⤢
+        </BotaoMapa>
+      </div>
+
+      {!zoomArmado && (
+        <div
+          style={{
+            position: 'absolute',
+            left: 10,
+            bottom: 10,
+            padding: '5px 9px',
+            borderRadius: 'var(--r-sm)',
+            background: 'var(--surf-panel)',
+            border: '1px solid var(--line-soft)',
+            backdropFilter: 'blur(10px)',
+            font: '500 10px/1 var(--f-ui)',
+            color: 'var(--tx-muted)',
+            pointerEvents: 'none',
+            zIndex: 20,
+          }}
+        >
+          clique no mapa para a roda do mouse aproximar
+        </div>
+      )}
 
       {hover && (
         <div
@@ -226,5 +293,40 @@ function LinhaT({ rotulo, valor, forte }: { rotulo: string; valor: string; forte
         {valor}
       </span>
     </div>
+  )
+}
+
+
+function BotaoMapa({
+  children,
+  rotulo,
+  onClick,
+}: {
+  children: React.ReactNode
+  rotulo: string
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      title={rotulo}
+      aria-label={rotulo}
+      onClick={onClick}
+      style={{
+        width: 26,
+        height: 26,
+        display: 'grid',
+        placeItems: 'center',
+        borderRadius: 'var(--r-sm)',
+        border: '1px solid var(--line-soft)',
+        background: 'var(--surf-panel)',
+        backdropFilter: 'blur(10px)',
+        color: 'var(--tx-soft)',
+        font: '600 14px/1 var(--f-ui)',
+        cursor: 'pointer',
+      }}
+    >
+      {children}
+    </button>
   )
 }

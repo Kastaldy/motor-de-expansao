@@ -17,6 +17,7 @@ import {
   ComparativoCoorte,
   FunilComercial,
   LinhaPeriodo,
+  Rosca,
 } from './ExecCharts'
 
 /* ---------------------------------------------------------------------------
@@ -300,6 +301,30 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
               cor="#ff8a99"
               formato="pct"
             />
+          </div>
+        </Glass>
+
+        <Glass style={{ flex: '1 1 300px', padding: '16px 18px', minWidth: 0 }}>
+          <Titulo>Composição da base</Titulo>
+          <Rosca
+            partes={[
+              {
+                rotulo: 'Recorrentes',
+                valor: ficha.metricas.pagantes?.atual ?? 0,
+                cor: 'var(--ac)',
+              },
+              {
+                rotulo: 'Agregadores',
+                valor: ficha.metricas.agregadores?.atual ?? 0,
+                cor: '#d94a86',
+              },
+            ]}
+            centroValor={pct(ficha.metricas.pct_agregador_alunos?.atual ?? null, 0)}
+            centroRotulo="agregadores"
+          />
+          <div style={{ marginTop: 12, font: '400 10.5px/1.55 var(--f-ui)', color: 'var(--tx-muted)' }}>
+            Aluno de agregador paga menos e pode sair em bloco por decisão do parceiro. A
+            régua de alerta está em {ficha.reguas.agregador?.limiar ?? 70}% da base.
           </div>
         </Glass>
       </div>

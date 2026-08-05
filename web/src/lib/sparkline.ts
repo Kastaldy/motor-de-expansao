@@ -1,8 +1,12 @@
 /**
- * Caminho SVG de uma sparkline. Puro, sem React — testável sem DOM.
+ * Geometria de gráfico — sparkline e rosca. Puro, sem React: testável sem DOM.
  *
  * Deriva de `RampaAlunos` (`ViabilityCharts.tsx`), que já desenha série mensal à mão: o
  * projeto não tem biblioteca de gráficos, e não vai ganhar uma por causa de 12 pontos.
+ *
+ * A conta da rosca mora aqui pelo mesmo motivo que a da sparkline: ela existe DUAS vezes
+ * no produto — nesta tela e no gerador de PDF, em Python — e as duas precisam concordar
+ * sobre o que é 100%, o que é fatia vazia e o que acontece quando o total é zero.
  */
 
 export interface Sparkline {
@@ -68,4 +72,56 @@ export function escalaDeBarras(valores: (number | null | undefined)[]): number[]
   const maximo = finitos.length ? Math.max(...finitos.map(Math.abs)) : 0
   if (maximo === 0) return valores.map(() => 0)
   return valores.map((v) => (typeof v === 'number' && Number.isFinite(v) ? v / maximo : 0))
+}
+
+export interface FatiaDeRosca {
+  rotulo: string
+  valor: number
+  cor: string
+  /** fração do total, 0..1 */
+  fracao: number
+  /** `stroke-dasharray` do arco */
+  traco: string
+  /** `stroke-dashoffset` acumulado das fatias anteriores */
+  deslocamento: number
+}
+
+/**
+ * Fatias de uma rosca desenhada com `stroke-dasharray` num círculo.
+ *
+ * Três casos que a versão em Python errou e custaram um render para descobrir:
+ * total zero (não pode dividir), fatia de 100% (tem de fechar a volta inteira) e fatia
+ * de valor zero (não pode ocupar espaço nem deslocar as seguintes).
+ */
+export function fatiasDeRosca(
+  partes: { rotulo: string; valor: number; cor: string }[],
+  raio: number,
+): { fatias: FatiaDeRosca[]; total: number; perimetro: number } {
+  const perimetro = 2 * Math.PI * raio
+  const total = partes.reduce((s, p) => s + Math.max(p.valor, 0), 0)
+  if (total <= 0) {
+    return {
+      fatias: partes.map((p) => ({ ...p, fracao: 0, traco: `0 ${perimetro}`, deslocamento: 0 })),
+      total: 0,
+      perimetro,
+    }
+  }
+  let percorrido = 0
+  const fatias = partes.map((p) => {
+    const fracao = Math.max(p.valor, 0) / total
+    const fatia: FatiaDeRosca = {
+      ...p,
+      fracao,
+      traco: `${perimetro * fracao} ${perimetro * (1 - fracao)}`,
+      deslocamento: -perimetro * percorrido,
+    }
+    percorrido += fracao
+    return fatia
+  })
+  return { fatias, total, perimetro }
+}
+
+/** Percentual de uma fatia, para o rótulo. `null` quando não há base. */
+export function percentualDaFatia(valor: number, total: number): number | null {
+  return total > 0 ? (100 * valor) / total : null
 }
