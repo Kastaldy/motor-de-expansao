@@ -5,9 +5,23 @@ import type {
   FaixaAlunos,
   MunicipioItem,
   MunicipioPayload,
+  RedeCarteira,
+  RedeFicha,
+  RedeFiltros,
+  RedeQuery,
   ViabilidadeIn,
   ViabilidadeOut,
 } from './types'
+
+/** Query string da rede, omitindo o que esta vazio. */
+function queryRede(q: RedeQuery = {}): string {
+  const p = new URLSearchParams()
+  for (const [chave, valor] of Object.entries(q)) {
+    if (valor) p.set(chave, String(valor))
+  }
+  const texto = p.toString()
+  return texto ? `?${texto}` : ''
+}
 
 /** A primeira leitura de uma UF carrega a particao inteira — pode passar de 15 s. */
 const TIMEOUT_LEITURA = 90_000
@@ -138,6 +152,61 @@ export const api = {
   executiva: (uf: string, mes?: string) =>
     pedir<ExecutivaPayload>(
       `/api/executiva/${encodeURIComponent(uf)}${mes ? `?mes=${encodeURIComponent(mes)}` : ''}`,
+    ),
+
+  /* ---- Visão Executiva 2.0: a rede como carteira acionável (DEC-023) ---- */
+
+  /** Vocabulário dos filtros, RÉGUAS vigentes e contadores de qualidade.
+   *  As réguas vêm do servidor de propósito: a tela nunca as repete. */
+  redeFiltros: (mes?: string) =>
+    pedir<RedeFiltros>(`/api/rede/filtros${mes ? `?mes=${encodeURIComponent(mes)}` : ''}`),
+
+  /** Nível 1 — a carteira da rede inteira, priorizada. Sem filtro = Brasil todo. */
+  redeCarteira: (q: RedeQuery = {}) => pedir<RedeCarteira>(`/api/rede/carteira${queryRede(q)}`),
+
+  /** Nível 2 — a ficha de uma unidade (série de 12 meses, funil, coorte, recomendações). */
+  redeUnidade: (id: string, mes?: string) =>
+    pedir<RedeFicha>(
+      `/api/rede/unidade/${encodeURIComponent(id)}${mes ? `?mes=${encodeURIComponent(mes)}` : ''}`,
+    ),
+
+  /** Atribuição de consultor / master franqueado. Única escrita do piloto.
+   *  `versao` faz a concorrência otimista: 409 = outra pessoa gravou antes. */
+  redeCadastroAtribuir: (id: string, versao: number, campos: Record<string, string>) =>
+    pedir<{ unidade_id: string; versao: number; valores: Record<string, string> }>(
+      `/api/rede/cadastro/${encodeURIComponent(id)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ versao, campos }),
+      },
+      30_000,
+    ),
+
+  /** Exports da carteira. `formato` decide a extensão da rota. */
+  redeCarteiraArquivo: (formato: 'csv' | 'xlsx' | 'pdf', q: RedeQuery = {}) =>
+    pedirArquivo(
+      `/api/rede/carteira.${formato}${queryRede(q)}`,
+      { method: 'GET' },
+      `carteira_rede_ultra.${formato}`,
+      {
+        falha: 'Falha ao gerar o arquivo da carteira',
+        timeout: 'A geração demorou demais e o pedido foi cancelado. Tente de novo.',
+        rede: 'Não foi possível gerar o arquivo da carteira.',
+      },
+    ),
+
+  /** Ficha da unidade em PDF. */
+  redeUnidadePdf: (id: string, mes?: string) =>
+    pedirArquivo(
+      `/api/rede/unidade/${encodeURIComponent(id)}.pdf${mes ? `?mes=${encodeURIComponent(mes)}` : ''}`,
+      { method: 'GET' },
+      `ficha_${id}.pdf`,
+      {
+        falha: 'Falha ao gerar a ficha em PDF',
+        timeout: 'A geração demorou demais e o pedido foi cancelado.',
+        rede: 'Não foi possível gerar a ficha em PDF.',
+      },
     ),
 
   /** Geocoding de endereço livre -> lat/lng (Nominatim, DEC-010). */
