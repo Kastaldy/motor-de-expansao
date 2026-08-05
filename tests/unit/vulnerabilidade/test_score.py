@@ -19,7 +19,6 @@ Os testes que mais importam:
 
 from __future__ import annotations
 
-import ast
 import inspect
 from pathlib import Path
 
@@ -990,14 +989,9 @@ def test_insumo_vazio_devolve_frame_vazio_bem_formado() -> None:
 # CA-13 — isolamento de import (a tupla compartilhada NÃO proíbe `demanda_revelada`)
 # --------------------------------------------------------------------------- #
 def test_modulo_nao_importa_demanda_revelada() -> None:
-    tree = ast.parse(inspect.getsource(m))
-    nomes: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom) and node.module:
-            nomes.append(node.module)
-        elif isinstance(node, ast.Import):
-            nomes.extend(a.name for a in node.names)
-    for n in nomes:
+    from .._ast_imports import nomes_importados
+
+    for n in nomes_importados(m):
         assert "demanda_revelada" not in n, n
 
 

@@ -1,10 +1,24 @@
 """Camada paralela de Vulnerabilidade para M&A (snapshots semanais + churn/staleness).
 
-Pacote DISJUNTO (BLK-MA-02 / DEC-012): NUNCA importa de `pipelines/m1/`, `censo_*`, `dashboard/`,
-`api` nem `config.py` raiz; é **READ-ONLY sobre o M1** e usa só deps da base
-(pandas/pyarrow/h3 + stdlib). `pipelines/normalizar_concorrentes.py` e
-`pipelines/calcular_colunas_mercado.py` são `_DENY_CRITICO` do `loop_guard`: molde de leitura
-apenas — a fórmula do `concorrente_id` está REPLICADA em `contrato.py`, nunca importada.
+Pacote DISJUNTO (BLK-MA-02 / DEC-012): nunca importa **diretamente** de `pipelines/m1/`,
+`censo_*`, `dashboard/`, `api` nem `config.py` raiz; é **READ-ONLY sobre o M1**.
+`pipelines/normalizar_concorrentes.py` e `pipelines/calcular_colunas_mercado.py` são
+`_DENY_CRITICO` do `loop_guard`: molde de leitura apenas — a fórmula do `concorrente_id` está
+REPLICADA em `contrato.py`, nunca importada.
+
+**Ressalva medida (BLK-MA-02-FU1, item 2 — em aberto).** A frase acima vale para imports
+DIRETOS, que é o que o `test_isolamento_imports` prova. Transitivamente, porém, `import
+motor_expansao.vulnerabilidade` hoje carrega `sklearn`, `scipy`, `shapely`, `requests` e módulos
+de `dashboard/`. Causa: `snapshots.py` importa `classificar_rede` de
+`demanda_revelada.classificacao_rede_menor`, e o `__init__.py` daquele pacote reexporta os **9**
+submódulos de forma eager — medido em 2026-08-05: qualquer um dos 9 puxa o conjunto inteiro, logo
+não há import "leve" a escolher. **Não é regressão de READ-ONLY** (nada do M1, `config.py` ou
+`normalizar_concorrentes` entra), mas é **bloqueante para o BLK-MA-06**: este é o módulo que a D6
+ratificou plugar no `run_weekly_90.sh`, e sem `sklearn`/`scipy` no host do coletor o passo do cron
+quebra já no import. A correção (tornar aquele `__init__` lazy, ou replicar o classificador) é
+mudança na camada `demanda_revelada` e está registrada no `BLK-MA-02-FU1`. O teste
+`test_pacote_nao_carrega_dependencia_pesada` mede isso por `sys.modules` e está marcado `xfail`
+até lá.
 
 Fronteira dos módulos: `snapshots.py` transforma o CSV cru de UMA execução em UMA partição
 `semana=AAAA-SS`; `churn_staleness.py` lê a série dessas partições e devolve o estado de churn

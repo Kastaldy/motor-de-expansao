@@ -286,6 +286,50 @@ def test_sem_troca_de_chave_a_flag_fica_falsa(serie_10_semanas: list[pd.DataFram
     assert not bool(out["flag_troca_chave_na_serie"].any())
 
 
+def test_flag_troca_nao_liga_com_mistura_estavel_de_origens() -> None:
+    """Sonda do QA do BLK-MA-02, reproduzida: mistura ESTÁVEL não é troca.
+
+    Quatro semanas, mesmo escopo `(fonte, rede)`, uma chave sempre `slug` e outra sempre
+    `hash_estavel` — **zero** troca temporal. A fórmula antiga (`|{chave_origem do escopo}|
+    > 1`) marcava as duas como `True`.
+
+    Por que isso importa: no feed TP/WH o rebaixamento de chave ocorre **por linha** e
+    convive com o `slug` na mesma semana, então a flag antiga valeria `True` para todo o
+    universo, todo mês — um sinal morto entregue ao consumidor do score.
+    """
+    snaps = [
+        _snapshot(
+            _semana(i),
+            [
+                _linha("k_slug", chave_origem="slug"),
+                _linha("k_hash", chave_origem="hash_estavel"),
+            ],
+        )
+        for i in range(1, 5)
+    ]
+    out = extrair_churn_staleness(snapshots=snaps)
+    assert not bool(out["flag_troca_chave_na_serie"].any()), out[
+        ["chave_snapshot", "chave_origem", "flag_troca_chave_na_serie"]
+    ]
+
+
+def test_flag_troca_liga_quando_a_politica_muda_entre_semanas() -> None:
+    """O contraponto do teste acima: variação TEMPORAL do escopo liga a flag.
+
+    Mesma chave, mesmo escopo, mas o escopo inteiro migra de `slug` (semanas 1-2) para
+    `hash_estavel` (semanas 3-4). É este o evento que a flag promete sinalizar.
+    """
+    snaps = [
+        _snapshot(
+            _semana(i),
+            [_linha("k_unica", chave_origem="slug" if i <= 2 else "hash_estavel")],
+        )
+        for i in range(1, 5)
+    ]
+    out = extrair_churn_staleness(snapshots=snaps)
+    assert bool(out["flag_troca_chave_na_serie"].all())
+
+
 # --------------------------------------------------------------------------- #
 # CA-18 — o extrator NAO pontua
 # --------------------------------------------------------------------------- #
