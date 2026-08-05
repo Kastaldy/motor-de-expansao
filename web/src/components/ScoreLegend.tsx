@@ -1,5 +1,11 @@
 import { FAIXA_M1_HEX, FAIXA_M1_ORDEM } from '../lib/colors'
-import { alunosDaFaixa, faixasDoPasso, tituloDaLegenda } from '../lib/faixas'
+import {
+  alunosDaFaixa,
+  bandasDaFaixa,
+  faixasDoPasso,
+  fundoDoSwatch,
+  tituloDaLegenda,
+} from '../lib/faixas'
 
 /* Legenda das faixas do mapa (BLK-MAPA-FAIXAS-01).
 
@@ -36,11 +42,16 @@ const TITULO: React.CSSProperties = {
 const NOME: React.CSSProperties = { font: '400 8.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }
 const SUB: React.CSSProperties = { font: '400 7.5px/1 var(--f-num)', color: 'var(--tx-label)' }
 
-/** Um bloco: swatch de cor + nome (+ sublinha opcional com a leitura em alunos). */
-function Bloco({ cor, nome, sub }: { cor: string; nome: string; sub?: string }) {
+/** Um bloco: swatch + nome (+ sublinha opcional com a leitura em alunos).
+
+   `fundo` e' `background` e nao uma cor unica de proposito: nas camadas que vem da
+   rampa de score, o swatch mostra as DUAS bandas de 10 pontos que o mapa pinta
+   dentro daquela faixa (ver `bandasDaFaixa`). Com uma cor so', metade das cores do
+   mapa nao teria bloco correspondente na legenda. */
+function Bloco({ fundo, nome, sub }: { fundo: string; nome: string; sub?: string }) {
   return (
     <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-      <span style={{ width: 9, height: 9, borderRadius: 2, background: cor, flexShrink: 0 }} />
+      <span style={{ width: 14, height: 9, borderRadius: 2, background: fundo, flexShrink: 0 }} />
       <span style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
         <span style={NOME}>{nome}</span>
         {sub ? (
@@ -65,15 +76,17 @@ export default function ScoreLegend({ passoN }: { passoN: number }) {
           ? faixas.map((f) => (
               <Bloco
                 key={f.nome}
-                cor={f.cor}
+                fundo={fundoDoSwatch(bandasDaFaixa(f))}
                 nome={f.nome}
                 // So a camada de demanda traduz a faixa em alunos — na camada 1 o
                 // score censitario nao tem unidade fisica para mostrar.
                 sub={passoN === 1 ? undefined : alunosDaFaixa(f)}
               />
             ))
-          : FAIXA_M1_ORDEM.map((nome) => (
-              <Bloco key={nome} cor={FAIXA_M1_HEX[nome]} nome={nome} />
+          : // Camada 4: a faixa do M1 e' CATEGORICA e o mapa pinta a cor cheia
+            // (`faixaM1ToColor`), entao aqui o swatch e' cor unica mesmo.
+            FAIXA_M1_ORDEM.map((nome) => (
+              <Bloco key={nome} fundo={FAIXA_M1_HEX[nome]} nome={nome} />
             ))}
 
         {/* Corte operacional do dashboard (POP_MIN_ACIONAVEL): vale em toda camada. */}
@@ -86,7 +99,7 @@ export default function ScoreLegend({ passoN }: { passoN: number }) {
             borderLeft: '1px solid var(--line-mid)',
           }}
         >
-          <span style={{ width: 9, height: 9, borderRadius: 2, background: 'rgb(150,150,170)' }} />
+          <span style={{ width: 14, height: 9, borderRadius: 2, background: 'rgb(150,150,170)' }} />
           <span style={NOME}>&lt; 5k hab</span>
         </span>
       </div>

@@ -22,12 +22,16 @@ import pytest
 
 from motor_expansao.dashboard.constants import (
     CAPACIDADE_UNIDADE_ALUNOS,
+    FAIXA_COLORS_POR_LABEL,
+    FAIXA_LABELS,
+    FAIXA_ORDEM,
     FAIXAS_MAPA_DEMANDA,
     FAIXAS_MAPA_POTENCIAL,
     faixa_do_score,
 )
 
 _FAIXAS_TS = Path(__file__).resolve().parents[2] / "web" / "src" / "lib" / "faixas.ts"
+_COLORS_TS = Path(__file__).resolve().parents[2] / "web" / "src" / "lib" / "colors.ts"
 
 # `{ de: 0, ate: 20, nome: 'Saturado', cor: '#B92323' },`
 _LINHA = re.compile(
@@ -124,6 +128,54 @@ def test_narrativa_do_funil_nao_usa_vocabulario_de_faixa_extinta():
     assert not suspeitas, (
         "vocabulario de faixa extinta ('quente') voltou aos textos do funil; as faixas "
         f"atuais estao em constants.FAIXAS_MAPA_POTENCIAL. Linhas: {suspeitas}"
+    )
+
+
+# `'Prioridade máxima': '#14C850',` e tambem `Alta: '#F59E0B',` — o TS so' exige aspas
+# na chave quando ela tem acento ou espaco, entao o parse aceita as duas formas.
+_ENTRADA_COR = re.compile(
+    r"(?:'([^']+)'|([A-Za-zÀ-ÿ_][A-Za-zÀ-ÿ0-9_]*))\s*:\s*'(#[0-9A-Fa-f]{6})'"
+)
+
+
+def _faixa_m1_do_ts() -> tuple[list[str], dict[str, str]]:
+    """(FAIXA_M1_ORDEM, FAIXA_M1_HEX) lidos do `colors.ts` por parse textual."""
+    fonte = _COLORS_TS.read_text(encoding="utf-8")
+
+    ini_ordem = fonte.index("export const FAIXA_M1_ORDEM")
+    abre = fonte.index("= [", ini_ordem) + len("= [")
+    ordem = re.findall(r"'([^']+)'", fonte[abre : fonte.index("]", abre)])
+
+    ini_hex = fonte.index("export const FAIXA_M1_HEX")
+    abre_hex = fonte.index("{", ini_hex) + 1
+    bloco = fonte[abre_hex : fonte.index("}", abre_hex)]
+    cores = {(a or b): cor for a, b, cor in _ENTRADA_COR.findall(bloco)}
+    return ordem, cores
+
+
+def test_faixa_m1_do_ts_espelha_o_python():
+    """`colors.ts` (camada 4) espelha FAIXA_LABELS + FAIXA_COLORS.
+
+    Segundo espelho Python->TS do mapa, e o mais fragil dos dois: `FAIXA_M1_HEX` e
+    chaveado pelo LABEL DE EXIBICAO acentuado que a API manda em `Hex.faixa`. O
+    CLAUDE.md §2 permite renomear label livremente (e' camada de exibicao, nao
+    identificador) — mas aqui o label virou CHAVE de lookup de cor. Sem este teste,
+    trocar FAIXA_LABELS["media"] de "Média" para "Média prioridade" faria
+    `faixaM1ToColor` devolver NA_FILL e pintar de CINZA todos os hexes daquela faixa
+    no passo 4, enquanto o chip do ranking (colorido no Python por
+    FAIXA_COLORS_POR_LABEL) continuaria certo. Nenhum teste quebraria.
+    """
+    ordem_ts, cores_ts = _faixa_m1_do_ts()
+    ordem_py = [FAIXA_LABELS[bruto] for bruto in FAIXA_ORDEM]
+
+    assert ordem_ts == ordem_py, (
+        "FAIXA_M1_ORDEM em colors.ts divergiu de FAIXA_ORDEM+FAIXA_LABELS. O Python e' "
+        f"a FONTE DA VERDADE — ajuste o .ts.\n  python: {ordem_py}\n  ts ...: {ordem_ts}"
+    )
+    assert cores_ts == FAIXA_COLORS_POR_LABEL, (
+        "FAIXA_M1_HEX em colors.ts divergiu de FAIXA_COLORS_POR_LABEL. Como o lookup e' "
+        "pelo label acentuado, uma chave fora de sincronia pinta a faixa inteira de "
+        f"cinza (NA_FILL).\n  python: {FAIXA_COLORS_POR_LABEL}\n  ts ...: {cores_ts}"
     )
 
 

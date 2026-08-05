@@ -1,11 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { FAIXA_M1_HEX, FAIXA_M1_ORDEM, faixaM1ToColor, NA_FILL } from './colors'
+import {
+  FAIXA_M1_HEX,
+  FAIXA_M1_ORDEM,
+  faixaM1ToColor,
+  NA_FILL,
+  SCORE_BANDS_HEX,
+  scoreBandToColor,
+} from './colors'
 import {
   alunosDaFaixa,
+  bandasDaFaixa,
   CAPACIDADE_UNIDADE_ALUNOS,
   FAIXAS_DEMANDA,
   FAIXAS_POTENCIAL,
   faixasDoPasso,
+  fundoDoSwatch,
   tituloDaLegenda,
 } from './faixas'
 
@@ -121,6 +130,50 @@ describe('exemplo de TODAS as faixas, como aparecem na legenda', () => {
       'Demanda não atendida (alunos)',
       'Faixa de oportunidade M1',
     ])
+  })
+})
+
+describe('swatch da legenda cobre as cores que o mapa pinta', () => {
+  // O defeito que estes testes travam: a legenda passou de barra de gradiente (10
+  // bandas, as mesmas do mapa) para 5 blocos nomeados. Se cada bloco mostrar UMA cor,
+  // metade das cores do mapa some da legenda e o usuario le a faixa errada.
+  it.each([[FAIXAS_POTENCIAL], [FAIXAS_DEMANDA]])(
+    'toda cor da rampa aparece em algum bloco',
+    (faixas) => {
+      const naLegenda = faixas.flatMap(bandasDaFaixa)
+      expect(new Set(naLegenda)).toEqual(new Set(SCORE_BANDS_HEX))
+    },
+  )
+
+  it('cada faixa de 20 pontos carrega as 2 bandas de 10 que o mapa usa', () => {
+    for (const f of FAIXAS_DEMANDA) {
+      const cores = bandasDaFaixa(f)
+      expect(cores).toHaveLength(2)
+      // A cor que o mapa daria ao meio de cada meia-faixa tem que estar no bloco.
+      for (const amostra of [f.de + 5, f.de + 15]) {
+        const [r, g, b] = scoreBandToColor(amostra)
+        const hex = `#${[r, g, b].map((c) => c.toString(16).padStart(2, '0')).join('')}`
+        expect(cores.map((c) => c.toLowerCase())).toContain(hex)
+      }
+    }
+  })
+
+  it('score 45 nao e mais lido como Restrito: a cor dele esta no bloco Moderado', () => {
+    // Caso concreto do defeito: 45 pinta #F0941E (banda 40-50) e o unico bloco
+    // laranja da legenda antiga era o da faixa 20-40 ("Restrito").
+    const moderado = FAIXAS_DEMANDA.find((f) => f.nome === 'Moderado')!
+    expect(bandasDaFaixa(moderado)).toContain('#F0941E')
+    const restrito = FAIXAS_DEMANDA.find((f) => f.nome === 'Restrito')!
+    expect(bandasDaFaixa(restrito)).not.toContain('#F0941E')
+  })
+
+  it('fundoDoSwatch: uma cor vira solida, duas viram faixas lado a lado', () => {
+    expect(fundoDoSwatch(['#14C850'])).toBe('#14C850')
+    expect(fundoDoSwatch([])).toBe('transparent')
+    const fundo = fundoDoSwatch(['#941212', '#B92323'])
+    expect(fundo).toContain('linear-gradient')
+    expect(fundo).toContain('#941212 0.00% 50.00%')
+    expect(fundo).toContain('#B92323 50.00% 100.00%')
   })
 })
 

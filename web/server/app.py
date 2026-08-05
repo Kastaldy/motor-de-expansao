@@ -646,10 +646,12 @@ def _etiqueta(
         FAIXAS_MAPA_POTENCIAL,
     )
 
-    v = valor or 0
     if metrica == "score":
-        # `valor` JA e' o score 0-100 (`score_setor_2022_calibrado`).
-        return _faixa_para_chip(v, FAIXAS_MAPA_POTENCIAL)
+        # `valor` JA e' o score 0-100 (`score_setor_2022_calibrado`), e vai CRU: o
+        # contrato de `faixa_do_score` para score ausente e' ("", ""), ou seja, sem
+        # chip. Com o `or 0` que estava aqui, hex sem score caia na primeira faixa e
+        # a tela AFIRMAVA "Desfavorável" (chip vermelho) sobre um dado que nao existe.
+        return _faixa_para_chip(valor, FAIXAS_MAPA_POTENCIAL)
     if metrica == "conc. 2 km":
         # Leitura COMPETITIVA da camada 3 (PR #184): quantos concorrentes ha no hex.
         n = int(row.get("n_concorrentes_est") or 0)
@@ -673,8 +675,11 @@ def _etiqueta(
             return "", None, None
         # Aqui `valor` vem em ALUNOS (`oferta_efetiva_disponivel`), nao em score.
         # Converte pela MESMA formula do M1 (100 * alunos / 2.500, saturando em 100)
-        # para cair na faixa certa da legenda.
-        score = 100.0 * float(v) / CAPACIDADE_UNIDADE_ALUNOS
+        # para cair na faixa certa da legenda. Residual ausente NAO vira zero pelo
+        # mesmo motivo do ramo de score: "Saturado" e' uma afirmacao, e o dado falta.
+        if valor is None:
+            return "", None, None
+        score = 100.0 * float(valor) / CAPACIDADE_UNIDADE_ALUNOS
         return _faixa_para_chip(score, FAIXAS_MAPA_DEMANDA)
     return "", None, None
 
@@ -726,8 +731,12 @@ def _rank_items(
         vistos.add(chave)
         valor = _num(r.get(col), casas)
         rank = len(itens) + 1
+        # A etiqueta sai do valor CRU, nao do arredondado: com `casas=0`, um score
+        # 79,6 viraria 80 e o chip diria "Excelente" enquanto o mapa pinta a banda
+        # 70-80 e a visao de UF (que usa o valor sem arredondar) diz "Forte". Seria
+        # a divergencia de duas reguas que este bloco existe para eliminar, na borda.
         etiqueta, tom_item, cor_item = _etiqueta(
-            metrica_etiqueta or label_metrica, valor, rank, r
+            metrica_etiqueta or label_metrica, _numf(r.get(col)), rank, r
         )
         itens.append(
             {

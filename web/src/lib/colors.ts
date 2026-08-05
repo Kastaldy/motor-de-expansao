@@ -9,6 +9,13 @@
    Regra canonica (CLAUDE.md §5): faixas de 10 pontos via RESIDUAL_SCORE_BANDS.
    M1 colore por score_priorizacao, censo por score_setor_2022_calibrado,
    hibrido por score_expansao_hibrido, residual por score_oportunidade_residual.
+
+   EXCECAO (BLK-MAPA-FAIXAS-01): a camada 4 do funil do piloto NAO segue a rampa —
+   ela colore por `faixa_oportunidade` (categorica), porque essa faixa nao e' um
+   corte de `score_priorizacao`: o M1 a define cortando `score_percentil_nacional`
+   em [35, 50, 65, 80]. Pintar a rampa e rotular com os nomes do M1 afirmaria uma
+   correspondencia que nao existe (score 70 nao e' necessariamente "Alta"). Ver o
+   bloco FAIXA_M1_ORDEM adiante. As camadas 1/2/3 seguem a rampa normalmente.
    --------------------------------------------------------------------------- */
 
 export type RGBA = [number, number, number, number]

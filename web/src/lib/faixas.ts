@@ -24,6 +24,7 @@
    mudanca de comportamento que o Juan ja encaminhou por outro caminho.
    --------------------------------------------------------------------------- */
 
+import { bandSolid } from './colors'
 import { num } from './format'
 
 export interface FaixaNomeada {
@@ -96,6 +97,40 @@ export function alunosDaFaixa(f: FaixaNomeada): string {
   const de = num(Math.round((f.de / 100) * CAPACIDADE_UNIDADE_ALUNOS))
   const ate = num(Math.round((f.ate / 100) * CAPACIDADE_UNIDADE_ALUNOS))
   return f.ate >= 100 ? `${de}+` : `${de}–${ate}`
+}
+
+/**
+ * Cores que o MAPA de fato pinta dentro desta faixa.
+ *
+ * A faixa nomeada tem 20 pontos; a rampa que colore o hexagono
+ * (`scoreBandToColor`) tem bandas de 10. Cada faixa cobre, portanto, DUAS bandas,
+ * e a legenda precisa mostrar as duas — senao METADE das cores que aparecem no
+ * mapa nao existe na legenda. Concreto: um hex de score 45 sai laranja claro
+ * (#F0941E, banda 40-50), e o unico bloco laranja da legenda seria o da faixa
+ * 20-40; o usuario le "Restrito" onde o dado diz "Moderado". A barra de gradiente
+ * antiga nao tinha esse furo porque desenhava a rampa inteira — a troca por blocos
+ * nomeados so' fica fiel se cada bloco carregar as bandas que ele cobre.
+ */
+export function bandasDaFaixa(f: FaixaNomeada): string[] {
+  const primeira = Math.floor(f.de / 10)
+  const ultima = Math.min(9, Math.ceil(f.ate / 10) - 1)
+  const cores: string[] = []
+  for (let i = primeira; i <= ultima; i += 1) cores.push(bandSolid(i))
+  return cores
+}
+
+/**
+ * `background` do swatch da legenda: cor unica quando a camada e' categorica
+ * (camada 4, faixa do M1) e as bandas lado a lado quando ela vem da rampa.
+ */
+export function fundoDoSwatch(cores: string[]): string {
+  if (cores.length === 0) return 'transparent'
+  if (cores.length === 1) return cores[0]
+  const passo = 100 / cores.length
+  const paradas = cores
+    .map((c, i) => `${c} ${(i * passo).toFixed(2)}% ${((i + 1) * passo).toFixed(2)}%`)
+    .join(', ')
+  return `linear-gradient(to right, ${paradas})`
 }
 
 /** Faixas nomeadas da camada, ou `null` quando a camada nao usa rampa de score
