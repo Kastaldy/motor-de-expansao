@@ -55,11 +55,16 @@ const METRICAS_A_VALIDAR: { chave: string; rotulo: string }[] = [
   { chave: 'treino_ativo', rotulo: 'Treino ativo' },
 ]
 
+/** Rótulos do comparativo de coorte.
+ *
+ *  Onde MENOS é melhor, a direção vai escrita: "Churn — percentil 92" lê como elogio e é
+ *  o oposto (92% dos pares têm churn menor). Inverter o percentil em silêncio seria pior
+ *  que não mostrá-lo. */
 const ROTULOS_COORTE_GRAFICO: Record<string, string> = {
   faturamento: 'Faturamento',
   receita_por_recorrente: 'Receita por recorrente',
   ativos: 'Alunos ativos',
-  churn_pct: 'Churn',
+  churn_pct: 'Churn (menor é melhor)',
   conversao_pct: 'Conversão',
   nps: 'NPS',
 }

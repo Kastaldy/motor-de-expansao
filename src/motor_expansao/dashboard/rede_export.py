@@ -35,10 +35,19 @@ from motor_expansao.dashboard.pdf_base import (
     ULTRA_TURQUESA,
     UltraPDF,
     ascii_seguro,
+    barra_de_meta,
+    barra_empilhada,
+    barras,
+    barras_horizontais,
     cartao,
+    faixa_de_percentil,
     faixa_de_titulo,
     linha_de_tabela,
     rodape,
+    titulo_de_grafico,
+)
+from motor_expansao.dashboard.pdf_base import (
+    linha as linha_de_grafico,
 )
 
 CSV_SEPARADOR = ";"
@@ -244,6 +253,12 @@ def carteira_pdf(payload: Mapping[str, Any]) -> bytes:
     _resumo_do_semaforo(pdf, payload)
     rodape(pdf, _texto_do_rodape(payload))
 
+    # Os MESMOS graficos que a tela mostra, lendo os MESMOS numeros do payload. Quem
+    # recebe o PDF numa reuniao nao tem a tela ao lado para conferir; se as duas
+    # superficies desenharem series diferentes, a divergencia so aparece na frente do
+    # comite.
+    _pagina_de_graficos_da_rede(pdf, payload, subtitulo)
+
     cabecalho = [
         (30.0, "#", "L"),
         (176.0, "Unidade", "L"),
@@ -298,7 +313,7 @@ def _valor(metricas: Mapping[str, Any], chave: str) -> object:
 def _cartoes_da_rede(pdf: UltraPDF, payload: Mapping[str, Any]) -> None:
     kpis = payload.get("kpis", {})
     cartoes = [
-        ("Faturamento no período", _br(_valor(kpis, "faturamento")), "R$"),
+        ("Faturamento no período", "R$ " + _br(_valor(kpis, "faturamento")), "acumulado até o dia"),
         ("Alunos ativos", _br(_valor(kpis, "ativos")), ""),
         ("Churn", _br(_valor(kpis, "churn_pct"), 1) + "%", "média ponderada"),
         ("Receita por recorrente", "R$ " + _br(_valor(kpis, "receita_por_recorrente"), 2), ""),
@@ -455,6 +470,8 @@ def ficha_pdf(payload: Mapping[str, Any]) -> bytes:
         ),
     )
 
+    _pagina_de_graficos_da_ficha(pdf, payload)
+
     recomendacoes = diagnostico.get("recomendacoes") or []
     if recomendacoes:
         pdf.add_page()
@@ -480,3 +497,270 @@ def ficha_pdf(payload: Mapping[str, Any]) -> bytes:
                 break
     rodape(pdf, _texto_do_rodape(payload))
     return bytes(pdf.output())
+
+
+# ---------------------------------------------------------------------------
+# Paginas de grafico
+#
+# Espelham os cards do dashboard, na mesma ordem e com os mesmos numeros -- que vem
+# prontos do payload, nunca recalculados aqui. O PDF circula sem a tela ao lado: se as
+# duas desenharem series diferentes, a divergencia aparece na frente do comite.
+# ---------------------------------------------------------------------------
+
+_CORES_FUNIL = (
+    ULTRA_TURQUESA,
+    (111, 164, 247),
+    (217, 74, 134),
+    (95, 208, 140),
+)
+
+
+def _pagina_de_graficos_da_rede(
+    pdf: UltraPDF, payload: Mapping[str, Any], subtitulo: str
+) -> None:
+    """Faturamento da rede, distribuicao do semaforo e o split recorrentes x agregadores."""
+    meses = list(payload.get("serie_meses") or [])
+    serie = list(payload.get("serie_rede") or [])
+    if not meses and not payload.get("split"):
+        return
+
+    pdf.add_page()
+    faixa_de_titulo(pdf, "Como a rede chegou aqui", subtitulo)
+
+    if meses:
+        titulo_de_grafico(
+            pdf,
+            36,
+            80,
+            "Faturamento da rede no recorte",
+            f"Soma dos meses FECHADOS das {payload.get('totais', {}).get('no_recorte', 0)} "
+            "unidades do recorte. A competencia em curso nao entra.",
+        )
+        barras(
+            pdf,
+            36,
+            126,
+            PAGINA_LARGURA - 72,
+            150,
+            [_mes_curto(m) for m in meses],
+            serie,
+            formatar=lambda v: f"R$ {_br(v)}",
+        )
+
+    semaforo = payload.get("semaforo") or {}
+    titulo_de_grafico(pdf, 36, 316, "Fila de trabalho", "Severidade pelas reguas do rodape.")
+    barra_empilhada(
+        pdf,
+        36,
+        352,
+        420,
+        16,
+        [
+            (float(semaforo.get(chave, 0) or 0), COR_SEVERIDADE[chave])
+            for chave in ("alta", "media", "ok", "sem_base")
+        ],
+    )
+    legenda_x = 36.0
+    for chave, rotulo in (
+        ("alta", "Prioridade alta"),
+        ("media", "Atencao"),
+        ("ok", "Sem alerta"),
+        ("sem_base", "Sem base"),
+    ):
+        quantidade = int(semaforo.get(chave, 0) or 0)
+        pdf.set_fill_color(*COR_SEVERIDADE[chave])
+        pdf.rect(legenda_x, 380, 8, 8, style="F")
+        pdf.set_text_color(110, 110, 110)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_xy(legenda_x + 12, 379)
+        texto = f"{rotulo}: {quantidade}"
+        pdf.cell(96, 10, ascii_seguro(texto))
+        legenda_x += 108.0
+
+    split = payload.get("split") or {}
+    recorrentes = float(split.get("recorrentes") or 0)
+    agregadores = float(split.get("agregadores") or 0)
+    titulo_de_grafico(
+        pdf,
+        520,
+        316,
+        "Recorrentes x agregadores",
+        "Agregador paga menos por aluno e pode sair em bloco por decisao do parceiro.",
+    )
+    barra_empilhada(
+        pdf,
+        520,
+        352,
+        PAGINA_LARGURA - 556,
+        16,
+        [(recorrentes, ULTRA_TURQUESA), (agregadores, ULTRA_MAGENTA)],
+    )
+    pdf.set_text_color(110, 110, 110)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_xy(520, 379)
+    pdf.cell(
+        200,
+        10,
+        ascii_seguro(f"Recorrentes {_br(recorrentes)} ({_br(split.get('pct_recorrentes'), 0)}%)"),
+    )
+    pdf.set_xy(PAGINA_LARGURA - 300, 379)
+    pdf.cell(
+        264,
+        10,
+        ascii_seguro(f"Agregadores {_br(agregadores)} ({_br(split.get('pct_agregadores'), 0)}%)"),
+        align="R",
+    )
+
+    sss = payload.get("sss") or {}
+    if sss.get("disponivel") and sss.get("metricas"):
+        faturamento = sss["metricas"].get("faturamento") or {}
+        variacao = faturamento.get("var_pct")
+        pdf.set_text_color(*CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_xy(36, 424)
+        pdf.cell(
+            PAGINA_LARGURA - 72,
+            12,
+            ascii_seguro(
+                f"Mesma base ano a ano (SSS): {sss.get('unidades', 0)} unidades presentes nos "
+                f"dois periodos, faturamento {'+' if (variacao or 0) >= 0 else ''}"
+                f"{_br(variacao, 1)}% contra {sss.get('competencia_base', '')}."
+            ),
+        )
+
+    rodape(pdf, _texto_do_rodape(payload))
+
+
+def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> None:
+    """Serie de 12 meses, base de alunos, funil, NPS contra a meta e a coorte."""
+    unidade = payload.get("unidade", {})
+    serie = payload.get("serie") or {}
+    meses = [_mes_curto(m) for m in (serie.get("meses") or [])]
+    if not meses:
+        return
+
+    pdf.add_page()
+    faixa_de_titulo(
+        pdf,
+        "Como está a unidade",
+        f"{unidade.get('nome', '')} - competência {payload.get('mes', '')}",
+        rgb=ULTRA_MAGENTA,
+    )
+
+    titulo_de_grafico(pdf, 36, 76, "Faturamento nos 12 meses fechados")
+    barras(
+        pdf, 36, 116, 430, 118, meses, serie.get("faturamento") or [], formatar=lambda v: f"R$ {_br(v)}"
+    )
+
+    titulo_de_grafico(pdf, 520, 76, "Alunos ativos")
+    linha_de_grafico(pdf, 520, 116, PAGINA_LARGURA - 556, 52, serie.get("ativos") or [])
+    titulo_de_grafico(pdf, 520, 182, "Churn (%)")
+    linha_de_grafico(
+        pdf,
+        520,
+        212,
+        PAGINA_LARGURA - 556,
+        44,
+        serie.get("churn_pct") or [],
+        cor=COR_SEVERIDADE["alta"],
+        formatar=lambda v: f"{_br(v, 1)}%",
+    )
+
+    funil = payload.get("funil") or {}
+    titulo_de_grafico(
+        pdf,
+        36,
+        272,
+        "Funil comercial do periodo",
+        str(funil.get("aviso") or f"Conversao de visita em aluno: {_br(funil.get('conversao_pct'), 1)}%"),
+    )
+    barras_horizontais(
+        pdf,
+        36,
+        312,
+        430,
+        [
+            ("Visitas", funil.get("visitas"), _CORES_FUNIL[0]),
+            ("Convertidos", funil.get("convertidos"), _CORES_FUNIL[1]),
+            ("Vendas", funil.get("vendas"), _CORES_FUNIL[2]),
+            ("Novos alunos", funil.get("novos_alunos"), _CORES_FUNIL[3]),
+        ],
+    )
+
+    meta = float(payload.get("meta_nps") or 60)
+    nps = (payload.get("metricas", {}).get("nps") or {}).get("atual")
+    titulo_de_grafico(
+        pdf,
+        520,
+        272,
+        "NPS contra a meta da rede",
+        f"Meta oficial {meta:.0f}. O alerta so dispara bem abaixo dela -- meta nao e alerta.",
+    )
+    barra_de_meta(pdf, 520, 316, PAGINA_LARGURA - 556, valor=nps, meta=meta)
+    pdf.set_text_color(*CINZA_TEXTO)
+    pdf.set_font("Helvetica", "B", 15)
+    pdf.set_xy(520, 332)
+    pdf.cell(120, 18, ascii_seguro("-" if nps is None else _br(nps, 1)))
+
+    coorte = payload.get("coorte") or {}
+    referencias = coorte.get("metricas") or {}
+    titulo_de_grafico(
+        pdf,
+        520,
+        366,
+        "Contra os pares de mesma maturidade",
+        f"{coorte.get('n', 0)} unidades - {coorte.get('base_rotulo', '-')}",
+    )
+    y = 404.0
+    # "Churn - percentil 92" lê como elogio e é o oposto: 92% dos pares têm churn MENOR.
+    # A direção vai escrita ao lado do rótulo, e o percentil continua sendo o número cru
+    # (inverter em silêncio seria pior que não mostrar).
+    for chave, rotulo, casas in (
+        ("faturamento", "Faturamento", 0),
+        ("receita_por_recorrente", "Receita/recorrente", 0),
+        ("churn_pct", "Churn (menor é melhor)", 1),
+    ):
+        referencia = referencias.get(chave) or {}
+        if referencia.get("unidade") is None:
+            continue
+        pdf.set_text_color(110, 110, 110)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_xy(520, y - 11)
+        pdf.cell(200, 10, ascii_seguro(rotulo))
+        pdf.set_text_color(*CINZA_TEXTO)
+        pdf.set_font("Helvetica", "B", 8)
+        pdf.set_xy(PAGINA_LARGURA - 300, y - 11)
+        percentil = referencia.get("percentil")
+        pdf.cell(
+            264,
+            10,
+            ascii_seguro(
+                f"{_br(referencia.get('unidade'), casas)}"
+                + (f" - percentil {percentil:.0f}" if percentil is not None else "")
+            ),
+            align="R",
+        )
+        faixa_de_percentil(
+            pdf,
+            520,
+            y,
+            PAGINA_LARGURA - 556,
+            p25=referencia.get("p25"),
+            p50=referencia.get("p50"),
+            p75=referencia.get("p75"),
+            unidade=referencia.get("unidade"),
+        )
+        y += 38.0
+
+    rodape(pdf, _texto_do_rodape(payload))
+
+
+_MESES_PT = ("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez")
+
+
+def _mes_curto(competencia: str) -> str:
+    """"2026-06" -> "jun". No eixo, o ano e' redundante."""
+    partes = str(competencia).split("-")
+    if len(partes) < 2 or not partes[1].isdigit():
+        return str(competencia)
+    return _MESES_PT[int(partes[1]) - 1]

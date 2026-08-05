@@ -596,3 +596,45 @@ def test_csv_neutraliza_formula(rede: Path) -> None:
     linha = rede_export.carteira_csv(payload).decode("utf-8-sig").splitlines()[1]
     assert "'=HYPERLINK" in linha
     assert ";=HYPERLINK" not in linha
+
+
+def test_serie_da_rede_vem_pronta_e_bate_com_as_unidades(rede: Path) -> None:
+    """Tela, CSV e PDF desenham a MESMA série porque só existe uma conta, no servidor."""
+    payload = pilot.rede_carteira(mes="2026-07")
+    assert len(payload["serie_rede"]) == len(payload["serie_meses"])
+    # o último mês da série é a soma do faturamento fechado das unidades do recorte
+    esperado = sum(
+        u["sparkline"][-1] for u in payload["unidades"] if u["sparkline"] and u["sparkline"][-1]
+    )
+    assert payload["serie_rede"][-1] == pytest.approx(esperado, rel=1e-6)
+    # o recorte filtrado tem série menor que a rede inteira
+    so_rj = pilot.rede_carteira(mes="2026-07", uf="RJ")
+    assert so_rj["serie_rede"][-1] < payload["serie_rede"][-1]
+
+
+def test_pdf_traz_os_graficos_do_dashboard(rede: Path) -> None:
+    """O PDF circula sem a tela ao lado: os mesmos cards têm de estar nele."""
+    carteira = pilot.rede_carteira_pdf(mes="2026-07").body
+    for marcador in (
+        b"Faturamento da rede no recorte",
+        b"Fila de trabalho",
+        b"Recorrentes x agregadores",
+    ):
+        assert marcador in carteira, f"{marcador!r} ausente do PDF da carteira"
+
+    ficha = pilot.rede_unidade_pdf("botafogo-rj", mes="2026-07").body
+    for marcador in (
+        b"Faturamento nos 12 meses fechados",
+        b"Alunos ativos",
+        b"Funil comercial",
+        b"NPS contra a meta",
+        b"mesma maturidade",
+    ):
+        assert marcador in ficha, f"{marcador!r} ausente do PDF da ficha"
+    assert b"?" not in carteira and b"?" not in ficha
+
+
+def test_percentil_de_metrica_invertida_diz_a_direcao(rede: Path) -> None:
+    """"Churn - percentil 92" lê como elogio e é o oposto: 92% dos pares têm churn menor."""
+    ficha = pilot.rede_unidade_pdf("botafogo-rj", mes="2026-07").body
+    assert b"Churn (menor \xe9 melhor)" in ficha or b"menor \xe9 melhor" in ficha

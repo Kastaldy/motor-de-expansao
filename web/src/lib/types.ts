@@ -660,6 +660,9 @@ export interface RedeCarteira {
    *  cronológica. Vem do servidor: com a competência aberta, a série termina no mês
    *  anterior, e contar para trás a partir de `mes` desloca o gráfico inteiro. */
   serie_meses: string[]
+  /** faturamento somado do recorte, um valor por mês de `serie_meses`. Vem pronto do
+   *  servidor para que tela, CSV e PDF desenhem exatamente a mesma série. */
+  serie_rede: (number | null)[]
   unidades: RedeUnidade[]
   notas: string[]
 }
