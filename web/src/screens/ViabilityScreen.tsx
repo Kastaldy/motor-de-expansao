@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type { PontoEscolhido } from '../App'
+import CampoNumero from '../components/CampoNumero'
 import {
   CascataDre,
   FluxoCaixa,
@@ -15,6 +16,7 @@ import { api, ApiError, baixar } from '../lib/api'
 import { TEXTO_SEM_DADO } from '../lib/constants'
 import { coordenadaDoEstudo } from '../lib/coord'
 import { alunos, brl, brlCurto, coord, num, pctFrac, rotuloMes } from '../lib/format'
+import { formatarNumero } from '../lib/mascara'
 import { infoImovelParaPdf, parametrosRelatorioPontual } from '../lib/report'
 import type {
   FaixaAlunos,
@@ -52,12 +54,90 @@ const MARGEM_VIAVEL_MIN_FALLBACK = 0.3
  */
 const CHEQUE_AVISO_RAZAO = 1.2
 
-/** Texto -> numero opcional (aceita virgula decimal e separador de milhar). */
-function parseNum(txt: string): number | undefined {
-  const s = txt.trim().replace(/\./g, '').replace(',', '.')
-  if (!s) return undefined
-  const n = Number(s)
-  return Number.isFinite(n) ? n : undefined
+/* ---------------------------------------------------------------------------
+   PLACEHOLDER DOS CAMPOS OPCIONAIS DO INVESTIMENTO.
+
+   Regra dura: placeholder NUNCA afirma um padrão que não foi verificado no
+   backend — placeholder que mente é pior que placeholder ausente (já houve uma
+   reversão por causa disso).
+
+   A fonte mais honesta é o PRÓPRIO PAYLOAD do último cálculo: `investimento.*` e
+   `premissas.*` trazem o valor que o motor realmente usou, e acompanham sozinhos
+   qualquer mudança no `config.py`. Antes do primeiro cálculo não há payload, e aí
+   só entram os padrões PROVADOS abaixo; o resto fica no texto neutro.
+
+   PROVADOS (arquivo:linha conferidos neste worktree):
+     parcelas_obra = 4       web/server/app.py:1375 + config.py:154
+     parcelas_franquia = 4   web/server/app.py:1384 + config.py:158
+     taxa_franquia = 160.000 web/server/app.py:1372 + config.py:153
+     carencia = 0            web/server/app.py:1424/1430 + simulador.py:165 + config.py:235
+     taxa_minima_negocio = 25% a.a.  app.py:1415-1419 + simulador.py:172 + config.py:227
+
+   NÃO PROVADOS, e por isso SEM número no placeholder:
+     juros_equipamentos_am — o backend resolve `float(juros or 0.0)` (app.py:1382),
+       ou seja 0% a.m. O "1,8% a.m." é da planilha e do adaptador LEGADO
+       (simulador.py:986), que esta rota não percorre. Afirmar 1,8 seria mentir.
+     prazo_equipamentos — `int(... or 36) if equip > 0 else 0` (app.py:1379-1380):
+       o 36 é condicional a haver equipamento; sem ele o padrão é 0. E "36–60" é
+       faixa de validação errada — a real é ge=1, le=60 (app.py:1262).
+     obra / equipamentos — o CAPEX padrão só entra com OS DOIS vazios
+       (app.py:1357); preenchendo um, o outro vira 0,0 (app.py:1366-1367).
+   --------------------------------------------------------------------------- */
+const PADRAO_PARCELAS_OBRA = '4'
+const PADRAO_PARCELAS_FRANQUIA = '4'
+const PADRAO_TAXA_FRANQUIA = '160.000'
+const PADRAO_CARENCIA = '0'
+const PADRAO_TAXA_NEGOCIO = '25'
+
+/* SUGESTAO x PADRAO — a distincao NAO e' cosmetica ---------------------------
+   Acima, "padrao" e' o numero que o motor aplica quando o campo fica vazio, cada um
+   conferido no backend. Abaixo sao SUGESTOES de ponto de partida (pedido de Juan,
+   2026-08-05) que o motor NAO aplica:
+     Obra / Equipamentos -> nao tem padrao proprio. O CAPEX so' entra com OS DOIS
+       vazios (app.py:1357); preenchendo um, o outro vira 0,0.
+     Prazo financ.       -> o padrao real e' 36 (app.py:1379), nao 60.
+     Juros equip.        -> o padrao real e' 0% (app.py:1382, `float(juros or 0.0)`).
+       Os 1,8% da planilha vivem no adaptador legado simulador.py:986, que a rota web
+       nao chama.
+   O placeholder mostra SO' O NUMERO: "sugestao 1.500.000" nao cabia na caixa depois
+   que o adorno da unidade passou a ocupar a direita dela (Juan, 2026-08-05: "sem a
+   palavra sugestao, pois nao da' pra visualizar"). O preco assumido e' que estes
+   quatro ficam visualmente iguais aos que anunciam padrao de verdade — a ressalva
+   vive no `title` de cada campo, que nao disputa largura com o adorno.
+
+   O risco que sobra, e que o `title` do juros deixa explicito: deixar o campo vazio
+   vendo 1,8 na tela faz o calculo rodar SEM custo de financiamento — a PMT some do
+   fluxo de caixa e o payback melhora sozinho. Quem quiser a sugestao, digita. */
+const SUGESTAO_OBRA = '1.500.000'
+const SUGESTAO_EQUIPAMENTOS = '1.200.000'
+const SUGESTAO_PRAZO_EQUIP = '60'
+const SUGESTAO_JUROS_EQUIP = '1,8'
+
+/**
+ * Placeholder = valor usado pelo motor no último cálculo; sem cálculo ainda, o texto
+ * de reserva do chamador. Formatado por `formatarNumero` (e não por `num`) de
+ * propósito: é a MESMA grafia que o campo mostraria se o número fosse digitado — sem
+ * zero à direita, com a mesma vírgula.
+ *
+ * Serve aos campos cujo padrão do motor É o número certo a anunciar (parcelas, taxa de
+ * franquia, carência, taxa mínima). Para os quatro campos de SUGESTÃO existe `fixa()`.
+ */
+function dica(usado: number | null | undefined, reserva: string, casas = 0): string {
+  return formatarNumero(usado, casas) || reserva
+}
+
+/**
+ * Placeholder que NÃO ecoa o motor: a sugestão fica de pé antes e depois do cálculo.
+ *
+ * Existe porque, nestes quatro campos, o valor "usado" engana. Obra e Equipamentos não
+ * têm padrão próprio: com os dois vazios o motor aplica o CAPEX compartilhado
+ * (2.340.000, app.py:1357) e devolve isso como `investimento.obra` — então, depois do
+ * primeiro cálculo, a caixa da Obra passava a anunciar 2.340.000 como se fosse a
+ * referência, apagando a sugestão e escondendo que preencher um dos dois zera o outro.
+ * Prazo e juros têm o mesmo problema em menor escala (o eco vira 36 e 0).
+ */
+function fixa(sugestao: string): string {
+  return sugestao
 }
 
 export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProps) {
@@ -80,27 +160,34 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   const [nStudios, setNStudios] = useState(0)
 
   // --- Investimento: Obra (equity) x Equipamentos (financiado) --------------
+  // OS NOVE CAMPOS GUARDAM `number | undefined`, e nao mais texto cru: a mascara viva
+  // (CampoNumero) e' quem le a digitacao, entao o estado ja' recebe o NUMERO. O que se
+  // preserva palavra por palavra e' a semantica do vazio: `undefined` -> a chave nao
+  // entra no payload (JSON.stringify omite `undefined`) -> Pydantic ve None -> o motor
+  // aplica O PADRAO DELE. Vazio nunca pode virar 0: em taxa_franquia o backend usa
+  // `is None` (app.py:1372) e um 0 digitado vale R$ 0 de verdade, e em parcelas/prazo
+  // o 0 e' barrado por `gt=0`/`ge=1` e volta 422.
   // Obra = desembolso do franqueado, parcelado sem juros (base do ROIC/payback).
-  const [obraTxt, setObraTxt] = useState('')
-  const [parcelasObraTxt, setParcelasObraTxt] = useState('')
-  // Equipamentos = financiado (36–60m + juros a.m.); a PMT entra abaixo do EBITDA
-  // (dilui no tempo, melhora o payback). Padrão da planilha: 1,8% a.m.
-  const [equipTxt, setEquipTxt] = useState('')
-  const [prazoEquipTxt, setPrazoEquipTxt] = useState('')
-  const [jurosEquipTxt, setJurosEquipTxt] = useState('')
+  const [obra, setObra] = useState<number | undefined>(undefined)
+  const [parcelasObra, setParcelasObra] = useState<number | undefined>(undefined)
+  // Equipamentos = financiado (prazo em meses + juros a.m.); a PMT entra abaixo do
+  // EBITDA (dilui no tempo, melhora o payback).
+  const [equip, setEquip] = useState<number | undefined>(undefined)
+  const [prazoEquip, setPrazoEquip] = useState<number | undefined>(undefined)
+  const [jurosEquip, setJurosEquip] = useState<number | undefined>(undefined)
   // Carência de aluguel: meses iniciais sem pagar aluguel (melhora payback/FCF).
-  const [carenciaTxt, setCarenciaTxt] = useState('')
+  const [carencia, setCarencia] = useState<number | undefined>(undefined)
   // Taxa de franquia: R$160.000 é o padrão do motor, mas o operador pode sobrescrever
   // (decisão de Felipe, FIN-VIAB-01). Vazio = padrão; o payload devolve o valor usado.
-  const [taxaFranquiaTxt, setTaxaFranquiaTxt] = useState('')
+  const [taxaFranquia, setTaxaFranquia] = useState<number | undefined>(undefined)
   // Parcelas da taxa de franquia: 4x SEM JUROS por decisão de Felipe (2026-07-24).
   // Antes a taxa saía INTEIRA do caixa no M-4. Vazio = padrão do motor (4). É só
   // timing de caixa: mexe em TIR/VPL, não em EBITDA, margem ou break-even.
-  const [parcelasFranquiaTxt, setParcelasFranquiaTxt] = useState('')
+  const [parcelasFranquia, setParcelasFranquia] = useState<number | undefined>(undefined)
   // Taxa mínima do NEGÓCIO (% a.a.) — a ÚNICA taxa configurável. Vazio = padrão do
   // motor (25% a.a.). A taxa mínima do SÓCIO NÃO tem campo: ela é DERIVADA dentro do
   // motor, o que torna impossível digitar uma taxa de sócio abaixo do custo da dívida.
-  const [taxaNegocioTxt, setTaxaNegocioTxt] = useState('')
+  const [taxaNegocio, setTaxaNegocio] = useState<number | undefined>(undefined)
 
   // --- Dados opcionais do imóvel (entram no PDF completo) ------------------
   const [info, setInfo] = useState<InfoImovel>({})
@@ -121,10 +208,6 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   const alvoLng = alvo?.lng
 
   function montarPayload(demandaUsar: number): ViabilidadeIn {
-    const jurosEquip = parseNum(jurosEquipTxt)
-    // % a.a. digitado -> FRAÇÃO (o contrato do payload). Conversão de UNIDADE, igual à
-    // dos juros do financiamento; não é derivação de número financeiro.
-    const taxaNegocio = parseNum(taxaNegocioTxt)
     return {
       lat: alvoLat!,
       lng: alvoLng!,
@@ -133,15 +216,19 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
       ticket,
       demanda: demandaUsar,
       n_studios: nStudios,
-      obra: parseNum(obraTxt),
-      parcelas_obra: parseNum(parcelasObraTxt),
-      equipamentos: parseNum(equipTxt),
-      prazo_equipamentos: parseNum(prazoEquipTxt),
+      obra,
+      parcelas_obra: parcelasObra,
+      equipamentos: equip,
+      prazo_equipamentos: prazoEquip,
+      // % a.m. digitado -> FRAÇÃO (o contrato do payload). Conversão de UNIDADE; não é
+      // derivação de número financeiro. `undefined` atravessa intacto para a chave
+      // sumir do JSON — dividir `undefined` por 100 daria NaN e viraria `null`.
       juros_equipamentos_am: jurosEquip !== undefined ? jurosEquip / 100 : undefined,
-      carencia_aluguel_meses: parseNum(carenciaTxt),
+      carencia_aluguel_meses: carencia,
       rampa_meses: rampaMeses,
-      taxa_franquia: parseNum(taxaFranquiaTxt),
-      parcelas_franquia: parseNum(parcelasFranquiaTxt),
+      taxa_franquia: taxaFranquia,
+      parcelas_franquia: parcelasFranquia,
+      // % a.a. digitado -> FRAÇÃO, mesma conversão de unidade.
       taxa_minima_negocio_aa: taxaNegocio !== undefined ? taxaNegocio / 100 : undefined,
     }
   }
@@ -273,6 +360,8 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   // TUDO abaixo é LEITURA do viabilidade_payload_v1. A tela não deriva número
   // financeiro nenhum: o motor (dimensionamento/simulador.py) já entregou pronto.
   const premissas = res?.premissas ?? null
+  /** Investimento REALMENTE usado pelo motor — a fonte honesta dos placeholders. */
+  const inv = res?.investimento ?? null
   const dre = res?.dre ?? null
   const retorno = res?.retorno ?? null
   const serie = res?.serie_mensal ?? []
@@ -407,39 +496,70 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             prevê a demanda.
           </p>
 
+          {/* MASCARA VIVA nos campos do Cenario --------------------------------
+              O ponto de milhar e a unidade aparecem DENTRO da caixa, enquanto a
+              pessoa digita: "1500" ja' e' "1.500" na tecla, e o "m²"/"R$" fica
+              visivel o tempo todo (adorno absoluto, `aria-hidden` — o nome
+              acessivel vai no `rotulo`). O input nativo nao exibe separador
+              nenhum, entao isto exige `type="text"`: em `type="number"` o
+              `selectionStart` e' `null` no Chrome/Safari e o caret seria
+              impossivel de preservar. Ver components/CampoNumero.tsx.
+
+              O que se perde e' o SPINNER (os botoezinhos); o incremento volta em
+              ArrowUp/ArrowDown com o mesmo step, avisado no `title`. Nao se perde
+              clamp: `min`/`max` nativos nunca impediram digitacao — hoje ja' dava
+              para digitar 50 em Metragem com min=200 —, eles so' valiam para as
+              setas, e as setas continuam respeitando-os.
+
+              A unidade saiu do `sufixo` do `Campo` e virou adorno DENTRO da caixa:
+              ali ela nao concorre com o rotulo por espaco e fica ao lado do numero
+              que esta' sendo digitado, que e' o momento em que ela importa.
+
+              STUDIOS FICA COMO ESTA': 0..3, um digito, nunca tem separador de milhar
+              para exibir e a faixa ja' esta' no rotulo. Mascarar so' custaria o clamp
+              e as setas nativas, sem entregar nada. */}
           <div style={{ display: 'flex', gap: 10 }}>
-            <Campo label="Metragem" sufixo="m²">
-              <input
-                type="number"
-                value={m2}
-                min={200}
-                step={50}
-                onChange={(e) => {
-                  setM2(Number(e.target.value))
+            <Campo label="Metragem">
+              <CampoNumero
+                valor={m2}
+                onValor={(n) => {
+                  setM2(n)
                   // Nova metragem re-escala a demanda: solta o override manual.
                   setDemandaTocada(false)
                 }}
+                maxDigitos={5}
+                min={200}
+                step={50}
+                sufixo="m²"
+                rotulo="Metragem em m²"
+                title="Metragem do imóvel, em m². Use ↑/↓ para variar de 50 em 50."
               />
             </Campo>
             <Campo label="Aluguel" sufixo="/mês">
-              <input
-                type="number"
-                value={aluguel}
+              <CampoNumero
+                valor={aluguel}
+                onValor={setAluguel}
+                maxDigitos={7}
                 min={0}
                 step={1000}
-                onChange={(e) => setAluguel(Number(e.target.value))}
+                prefixo="R$"
+                rotulo="Aluguel em reais por mês"
+                title="Aluguel pedido, em R$/mês. Use ↑/↓ para variar de 1.000 em 1.000."
               />
             </Campo>
           </div>
 
           <div style={{ display: 'flex', gap: 10, marginTop: 10 }}>
             <Campo label="Ticket cheio do plano" sufixo="/mês">
-              <input
-                type="number"
-                value={ticket}
+              <CampoNumero
+                valor={ticket}
+                onValor={setTicket}
+                maxDigitos={4}
                 min={0}
                 step={5}
-                onChange={(e) => setTicket(Number(e.target.value))}
+                prefixo="R$"
+                rotulo="Ticket cheio do plano, em reais por mês"
+                title="Mensalidade cheia do plano de balcão, em R$/mês. Use ↑/↓ para variar de 5 em 5."
               />
             </Campo>
             <Campo label="Studios" sufixo="0–3">
@@ -546,11 +666,18 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span
-                className="num"
-                style={{ font: '700 22px/1 var(--f-num)', color: 'var(--tx-max)', flex: 1 }}
-              >
-                {alunos(demanda)}
+              {/* O numero grande saia sem unidade nenhuma ("800"). `alunos()` ja'
+                  aplica o separador de milhar; faltava a palavra. */}
+              <span style={{ flex: 1, display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                <span
+                  className="num"
+                  style={{ font: '700 22px/1 var(--f-num)', color: 'var(--tx-max)' }}
+                >
+                  {alunos(demanda)}
+                </span>
+                <span style={{ font: '500 11px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+                  alunos
+                </span>
               </span>
               <button
                 type="button"
@@ -677,65 +804,152 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
           </div>
           <p style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', margin: '7px 0 10px' }}>
             Obra + Equipamentos = CAPEX. Com a taxa de franquia formam o investimento total,
-            base do retorno do negócio e do payback. Vazio usa o padrão do modelo.
+            base do retorno do negócio e do payback. Campo vazio usa o padrão do modelo —
+            exceto no par Obra/Equipamentos: preenchendo só um dos dois, o outro entra
+            como R$ 0.
           </p>
+
+          {/* MASCARA VIVA tambem aqui — o mesmo CampoNumero do Cenario ---------------
+              O separador de milhar aparece na tecla e a UNIDADE (R$, meses, % a.m.,
+              % a.a.) fica DENTRO da caixa o tempo todo, como adorno. Antes a unidade
+              vivia no placeholder e sumia na primeira tecla: era exatamente a queixa.
+
+              DUAS DIFERENCAS em relacao ao Cenario, ambas resolvidas por prop:
+               - `onVazio`: aqui o vazio e' um VALOR ("use o padrao do motor"), entao o
+                 pai precisa ouvi-lo e guardar `undefined`. Sem essa prop o componente
+                 continua com a politica do Cenario, e por isso os 3 campos de la' nao
+                 precisaram de nenhuma edicao.
+               - `casas`: juros e taxa minima aceitam UMA virgula decimal. Nos 7 campos
+                 inteiros `casas` fica em 0, o que agora torna impossivel digitar "4,5"
+                 em Parcelas obra e levar um 422 do `int | None`.
+
+              O nome do campo saiu do placeholder e virou ROTULO (`Campo`): o adorno
+              come' ~60px da caixa, e "Parcelas franquia (meses)" nao caberia no que
+              sobra. O placeholder ficou para o PADRAO — ver `dica` e o bloco de
+              padroes verificados acima dela. */}
           <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              inputMode="numeric"
-              placeholder="Obra (R$)"
-              value={obraTxt}
-              onChange={(e) => setObraTxt(e.target.value)}
-            />
-            <input
-              inputMode="numeric"
-              placeholder="Parcelas obra (meses)"
-              value={parcelasObraTxt}
-              onChange={(e) => setParcelasObraTxt(e.target.value)}
-            />
+            <Campo label="Obra">
+              <CampoNumero
+                valor={obra}
+                onValor={setObra}
+                onVazio={() => setObra(undefined)}
+                maxDigitos={7}
+                min={0}
+                step={10000}
+                prefixo="R$"
+                rotulo="Obra, em reais"
+                placeholder={fixa(SUGESTAO_OBRA)}
+                title="Obra (equity do franqueado), em R$. O 1.500.000 da caixa é SUGESTÃO, não o padrão: Obra e Equipamentos não têm padrão próprio — com os dois vazios o motor usa um CAPEX único de 2.340.000, e preencher um zera o outro. Use as setas para variar de 10.000 em 10.000."
+              />
+            </Campo>
+            <Campo label="Parcelas obra">
+              <CampoNumero
+                valor={parcelasObra}
+                onValor={setParcelasObra}
+                onVazio={() => setParcelasObra(undefined)}
+                maxDigitos={2}
+                min={1}
+                max={12}
+                sufixo="meses"
+                rotulo="Parcelas da obra, em meses"
+                placeholder={dica(inv?.parcelas_obra, PADRAO_PARCELAS_OBRA)}
+                title="Em quantos meses a obra é desembolsada (1 a 12). Vazio usa o padrão do modelo."
+              />
+            </Campo>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <input
-              inputMode="numeric"
-              placeholder="Equipamentos (R$)"
-              value={equipTxt}
-              onChange={(e) => setEquipTxt(e.target.value)}
-            />
-            <input
-              inputMode="numeric"
-              placeholder="Prazo financ. (meses)"
-              value={prazoEquipTxt}
-              onChange={(e) => setPrazoEquipTxt(e.target.value)}
-            />
+            <Campo label="Equipamentos">
+              <CampoNumero
+                valor={equip}
+                onValor={setEquip}
+                onVazio={() => setEquip(undefined)}
+                maxDigitos={7}
+                min={0}
+                step={10000}
+                prefixo="R$"
+                rotulo="Equipamentos, em reais"
+                placeholder={fixa(SUGESTAO_EQUIPAMENTOS)}
+                title="Equipamentos (parcela financiada), em R$. O 1.200.000 da caixa é SUGESTÃO, não o padrão: vazio com a Obra preenchida vale ZERO equipamentos. Use as setas para variar de 10.000 em 10.000."
+              />
+            </Campo>
+            <Campo label="Prazo financ.">
+              <CampoNumero
+                valor={prazoEquip}
+                onValor={setPrazoEquip}
+                onVazio={() => setPrazoEquip(undefined)}
+                maxDigitos={2}
+                min={1}
+                max={60}
+                sufixo="meses"
+                rotulo="Prazo do financiamento dos equipamentos, em meses"
+                placeholder={fixa(SUGESTAO_PRAZO_EQUIP)}
+                title="Prazo do financiamento dos equipamentos, em meses (1 a 60). O 60 da caixa é SUGESTÃO; deixando vazio o motor usa 36. Sem equipamentos o prazo não tem efeito."
+              />
+            </Campo>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <input
-              inputMode="numeric"
-              placeholder="Juros equip. (% a.m.)"
-              value={jurosEquipTxt}
-              onChange={(e) => setJurosEquipTxt(e.target.value)}
-            />
-            <input
-              inputMode="numeric"
-              placeholder="Carência aluguel (meses)"
-              value={carenciaTxt}
-              onChange={(e) => setCarenciaTxt(e.target.value)}
-            />
+            <Campo label="Juros equip.">
+              <CampoNumero
+                valor={jurosEquip}
+                onValor={setJurosEquip}
+                onVazio={() => setJurosEquip(undefined)}
+                maxDigitos={3}
+                casas={2}
+                min={0}
+                max={100}
+                step={0.1}
+                sufixo="% a.m."
+                rotulo="Juros do financiamento dos equipamentos, em por cento ao mês"
+                placeholder={fixa(SUGESTAO_JUROS_EQUIP)}
+                title="Juros do financiamento dos equipamentos, em % ao mês (aceita vírgula). ATENÇÃO: o 1,8 da caixa é SUGESTÃO — deixando vazio o motor calcula com 0% e o financiamento sai sem custo, o que melhora o payback artificialmente. Use as setas para variar de 0,1 em 0,1."
+              />
+            </Campo>
+            <Campo label="Carência aluguel">
+              <CampoNumero
+                valor={carencia}
+                onValor={setCarencia}
+                onVazio={() => setCarencia(undefined)}
+                maxDigitos={2}
+                min={0}
+                max={60}
+                sufixo="meses"
+                rotulo="Carência de aluguel, em meses"
+                placeholder={dica(premissas?.carencia_aluguel_meses, PADRAO_CARENCIA)}
+                title="Meses iniciais sem pagar aluguel, contados da entrega (M-4). Vazio usa o padrão do modelo."
+              />
+            </Campo>
           </div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-            <input
-              inputMode="numeric"
-              placeholder="Taxa de franquia (R$)"
-              value={taxaFranquiaTxt}
-              onChange={(e) => setTaxaFranquiaTxt(e.target.value)}
-            />
+            <Campo label="Taxa de franquia">
+              <CampoNumero
+                valor={taxaFranquia}
+                onValor={setTaxaFranquia}
+                onVazio={() => setTaxaFranquia(undefined)}
+                maxDigitos={7}
+                min={0}
+                step={10000}
+                prefixo="R$"
+                rotulo="Taxa de franquia, em reais"
+                placeholder={dica(inv?.taxa_franquia, PADRAO_TAXA_FRANQUIA)}
+                title="Taxa de franquia, em R$. Vazio usa o padrão do modelo; digitar 0 é honrado como R$ 0."
+              />
+            </Campo>
             {/* Parcelas da franquia: mesmo par que "Obra + Parcelas obra", uma linha
                 abaixo — o número de parcelas fica ao lado do valor que ele divide. */}
-            <input
-              inputMode="numeric"
-              placeholder="Parcelas franquia (meses)"
-              value={parcelasFranquiaTxt}
-              onChange={(e) => setParcelasFranquiaTxt(e.target.value)}
-            />
+            <Campo label="Parcelas franquia">
+              <CampoNumero
+                valor={parcelasFranquia}
+                onValor={setParcelasFranquia}
+                onVazio={() => setParcelasFranquia(undefined)}
+                maxDigitos={2}
+                min={1}
+                max={12}
+                sufixo="meses"
+                rotulo="Parcelas da taxa de franquia, em meses"
+                placeholder={dica(inv?.parcelas_franquia, PADRAO_PARCELAS_FRANQUIA)}
+                title="Em quantas parcelas sem juros a taxa de franquia entra (1 a 12). Vazio usa o padrão do modelo."
+              />
+            </Campo>
           </div>
           <span style={{ display: 'block', font: '400 10px/1.4 var(--f-ui)', color: 'var(--tx-sub)', marginTop: 8 }}>
             A taxa de franquia é editável (vazio = padrão do modelo) e entra{' '}
@@ -764,16 +978,25 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
               Taxa mínima do negócio
             </span>
             <div style={{ marginTop: 8 }}>
-              <input
-                inputMode="decimal"
-                placeholder={
-                  premissas
-                    ? `${pctFrac(premissas.taxa_minima_negocio_aa)} a.a. (padrão)`
-                    : 'Taxa mínima do negócio (% a.a.)'
-                }
-                value={taxaNegocioTxt}
-                onChange={(e) => setTaxaNegocioTxt(e.target.value)}
-                title="Piso de retorno que o ativo tem de entregar, ao ano. Vazio usa o padrão do modelo."
+              <CampoNumero
+                valor={taxaNegocio}
+                onValor={setTaxaNegocio}
+                onVazio={() => setTaxaNegocio(undefined)}
+                maxDigitos={3}
+                casas={2}
+                min={0}
+                max={100}
+                sufixo="% a.a."
+                rotulo="Taxa mínima do negócio, em por cento ao ano"
+                // Este campo ja' era o unico a mostrar o padrao PROVADO, lendo o valor
+                // usado do proprio payload. A mudanca preserva a fonte e so' troca a
+                // formatacao para a mesma do que se digita (25, e nao "25,0% a.a.").
+                placeholder={dica(
+                  premissas == null ? undefined : premissas.taxa_minima_negocio_aa * 100,
+                  PADRAO_TAXA_NEGOCIO,
+                  2,
+                )}
+                title="Piso de retorno que o ativo tem de entregar, ao ano, em % (aceita vírgula: 12,5). Vazio usa o padrão do modelo."
               />
             </div>
             {/* Derivada: SOMENTE-LEITURA, com a fórmula no tooltip. */}
@@ -900,12 +1123,15 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
                     : brlCurto(res.investimento.taxa_franquia)
                 }
               />
+              {/* Sem financiamento, a informacao vai para o ROTULO e o valor vira "—".
+                  "sem financiamento" ocupava ~133px de 13px mono numa coluna de ~85px:
+                  o texto vazava da caixa, e "financiamento" sozinho ja' nao cabia (nao
+                  ha' onde quebrar dentro da palavra). No rotulo, a 9.5px, ele quebra em
+                  duas linhas e cabe. */}
               <ReadoutCapex
-                rotulo="PMT"
+                rotulo={res.investimento.pmt ? 'PMT' : 'PMT · sem financiamento'}
                 valor={
-                  res.investimento.pmt
-                    ? `${brlCurto(res.investimento.pmt)}/mês`
-                    : 'sem financiamento'
+                  res.investimento.pmt ? `${brlCurto(res.investimento.pmt)}/mês` : '—'
                 }
               />
             </div>
@@ -1371,7 +1597,16 @@ function ReadoutCapex({ rotulo, valor }: { rotulo: string; valor: string }) {
       <div style={{ font: '400 9.5px/1 var(--f-ui)', color: 'var(--tx-sub)', marginBottom: 4 }}>
         {rotulo}
       </div>
-      <div className="num" style={{ font: '600 13px/1 var(--f-num)', color: 'var(--tx-soft)' }}>
+      {/* `overflowWrap: anywhere` como rede: qualquer valor futuro mais largo que a
+          coluna quebra dentro da caixa em vez de vazar por cima do vizinho. */}
+      <div
+        className="num"
+        style={{
+          font: '600 13px/1 var(--f-num)',
+          color: 'var(--tx-soft)',
+          overflowWrap: 'anywhere',
+        }}
+      >
         {valor}
       </div>
     </div>
