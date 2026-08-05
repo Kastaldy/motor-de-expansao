@@ -38,9 +38,14 @@ export interface RankItem {
   sub: string | null
   valor: number | null
   label: string
-  /** Rótulo curto que muda entre linhas (Quente / Livre / Agora…). */
+  /** Rótulo curto que muda entre linhas (Excelente / Livre / Agora…). Nas camadas
+   *  1/2/3 sai das MESMAS faixas da legenda do mapa (`constants.FAIXAS_MAPA_*`). */
   tag: string
   tom: Tom
+  /** Cor EXATA da faixa da legenda (hex). Tem precedência sobre `tom` no Chip —
+   *  sem ela, "Excelente" saía azul enquanto o bloco na legenda é verde-escuro.
+   *  `null` no ranking de municípios, que usa vocabulário próprio, não faixa. */
+  tag_cor?: string | null
 }
 
 export interface Passo {
