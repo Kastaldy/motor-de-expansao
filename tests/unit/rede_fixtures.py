@@ -188,3 +188,144 @@ def unidade_saudavel(
     )
     padrao.update(kwargs)
     return mes(nome, ano, numero_mes, **padrao)  # type: ignore[arg-type]
+
+
+def payload_carteira_sintetico() -> dict[str, object]:
+    """Payload da carteira no formato que `rede_export` consome, sem tocar disco.
+
+    Exercita TODOS os textos do gerador: notas, reguas, semaforo, SSS, split e uma linha
+    de unidade com alerta.
+    """
+    return {
+        "mes": "2026-07",
+        "referencia": "31/07/2026",
+        "referencia_m1": "30/06/2026",
+        "mes_completo": True,
+        "competencia_diagnostico": "2026-07",
+        "totais": {"rede": 2, "no_recorte": 2, "com_coordenada": 2},
+        "kpis": {
+            chave: {"atual": valor, "m1": valor, "delta_pct": 0.0}
+            for chave, valor in (
+                ("faturamento", 400_000.0),
+                ("ativos", 2_400.0),
+                ("churn_pct", 5.4),
+                ("receita_por_recorrente", 152.3),
+                ("nps", 61.0),
+            )
+        },
+        "split": {
+            "recorrentes": 1_800.0,
+            "agregadores": 600.0,
+            "pct_recorrentes": 75.0,
+            "pct_agregadores": 25.0,
+        },
+        "semaforo": {"alta": 1, "media": 0, "ok": 1, "sem_base": 0},
+        "sss": {
+            "disponivel": True,
+            "competencia_base": "2025-07",
+            "unidades": 2,
+            "metricas": {"faturamento": {"atual": 400_000.0, "ano_anterior": 360_000.0, "var_pct": 11.1}},
+        },
+        "serie_meses": ["2026-05", "2026-06", "2026-07"],
+        "serie_rede": [380_000.0, 390_000.0, 400_000.0],
+        "reguas": _REGUAS_VIGENTES(),
+        "meta_nps": 60.0,
+        "unidades": [
+            {
+                "id": "botafogo-rj",
+                "nome": "BOTAFOGO",
+                "uf": "RJ",
+                "cidade": "Rio de Janeiro",
+                "consultor": "MARISE",
+                "master_franquia": "Franqueadora",
+                "master": "RJ/SP 01",
+                "coorte_rotulo": "2 a 4 anos",
+                "meses_operacao": 40,
+                "severidade": "alta",
+                "severidade_rotulo": "Prioridade alta",
+                "resumo": "Churn de 9,2% no mês, acima da régua de 8,0%.",
+                "faixa_faturamento_rotulo": "Excelente+",
+                "alertas": [{"codigo": "churn", "titulo": "Churn alto", "nivel": "grave"}],
+                "metricas": {
+                    "faturamento": {"atual": 250_000.0, "m1": 240_000.0, "rank": 1, "rank_total": 2, "vs_media_pct": 12.5},
+                    "ativos": {"atual": 1_400.0, "m1": 1_380.0, "rank": 1, "rank_total": 2, "vs_media_pct": 8.0},
+                    "churn_pct": {"atual": 9.2, "m1": 7.0, "rank": 2, "rank_total": 2, "vs_media_pct": 30.0},
+                    "nps": {"atual": 55.0, "m1": 58.0, "rank": 2, "rank_total": 2, "vs_media_pct": -9.0},
+                },
+                "sparkline": [240_000.0, 245_000.0, 250_000.0],
+            },
+        ],
+        "notas": ["Receita por recorrente não é o TICKET_MEDIO do PowerBI."],
+    }
+
+
+def payload_ficha_sintetico() -> dict[str, object]:
+    """Payload da ficha no formato que `rede_export.ficha_pdf` consome."""
+    return {
+        "unidade": {
+            "id": "botafogo-rj",
+            "nome": "BOTAFOGO",
+            "uf": "RJ",
+            "cidade": "Rio de Janeiro",
+            "consultor": "MARISE",
+            "master_franquia": "Franqueadora",
+            "coorte_rotulo": "2 a 4 anos",
+            "inauguracao": "01/01/2021",
+        },
+        "mes": "2026-07",
+        "meta_nps": 60.0,
+        "metricas": {
+            "faturamento": {"atual": 250_000.0, "m1": 240_000.0, "rank": 1, "rank_total": 2, "vs_media_pct": 12.5},
+            "receita_por_recorrente": {"atual": 152.3, "m1": 150.0, "rank": 1, "rank_total": 2, "vs_media_pct": 3.0},
+            "churn_pct": {"atual": 9.2, "m1": 7.0, "rank": 2, "rank_total": 2, "vs_media_pct": 30.0},
+            "nps": {"atual": 55.0, "m1": 58.0, "rank": 2, "rank_total": 2, "vs_media_pct": -9.0},
+        },
+        "serie": {
+            "meses": ["2026-05", "2026-06", "2026-07"],
+            "faturamento": [240_000.0, 245_000.0, 250_000.0],
+            "ativos": [1_380.0, 1_390.0, 1_400.0],
+            "churn_pct": [6.1, 7.0, 9.2],
+        },
+        "funil": {
+            "visitas": 200.0,
+            "convertidos": 90.0,
+            "vendas": 95.0,
+            "novos_alunos": 88.0,
+            "conversao_pct": 45.0,
+            "aviso": None,
+        },
+        "coorte": {
+            "chave": "24_47",
+            "rotulo": "2 a 4 anos",
+            "degradacao": "coorte",
+            "base_rotulo": "pares da mesma maturidade",
+            "n": 12,
+            "metricas": {
+                "faturamento": {"unidade": 250_000.0, "p25": 180_000.0, "p50": 220_000.0, "p75": 280_000.0, "percentil": 62.0},
+                "receita_por_recorrente": {"unidade": 152.3, "p25": 130.0, "p50": 150.0, "p75": 170.0, "percentil": 55.0},
+                "churn_pct": {"unidade": 9.2, "p25": 4.0, "p50": 5.5, "p75": 7.0, "percentil": 92.0},
+            },
+        },
+        "diagnostico": {
+            "competencia": "2026-07",
+            "severidade": "alta",
+            "severidade_rotulo": "Prioridade alta",
+            "resumo": "Churn de 9,2% no mês, acima da régua de 8,0%.",
+            "alertas": [{"codigo": "churn", "titulo": "Churn alto", "nivel": "grave"}],
+            "recomendacoes": [
+                {
+                    "codigo": "churn",
+                    "titulo": "Atacar a retenção",
+                    "corpo": "Separar motivo de saída de motivo de cobrança.",
+                }
+            ],
+        },
+        "reguas": _REGUAS_VIGENTES(),
+        "notas": ["Diagnóstico calculado sobre 2026-07."],
+    }
+
+
+def _REGUAS_VIGENTES() -> dict[str, dict[str, object]]:
+    from motor_expansao.dashboard.rede_diagnostico import REGUAS_VIGENTES
+
+    return dict(REGUAS_VIGENTES)

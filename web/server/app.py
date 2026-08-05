@@ -2834,6 +2834,23 @@ def _rede_mes(mes_sel: str) -> dict[str, Any]:
     }
 
 
+def _rede_serie_agregada(recorte: pd.DataFrame, contexto: dict[str, Any]) -> list[float | None]:
+    """Faturamento somado do recorte, um valor por competência FECHADA de `serie_meses`.
+
+    `None` num mês em que nenhuma unidade do recorte tinha operação — melhor um buraco
+    honesto no gráfico do que um zero que parece faturamento nulo.
+    """
+    meses = contexto["serie_meses"]
+    if not meses or not len(recorte):
+        return [None] * len(meses)
+    cheio = contexto["cheio"]
+    do_recorte = cheio[
+        cheio["unidade_id"].isin(set(recorte["unidade_id"])) & cheio["competencia"].isin(meses)
+    ]
+    somas = do_recorte.groupby("competencia", observed=True)["faturamento"].sum()
+    return [_num(somas.get(mes)) if mes in somas.index else None for mes in meses]
+
+
 def _rede_serie_meses(cheio: pd.DataFrame, mes_sel: str) -> list[str]:
     """Competências FECHADAS que alimentam a sparkline e o gráfico da rede.
 
@@ -3315,6 +3332,10 @@ def _rede_carteira_payload(
         # a série de uma unidade nova é mais curta, e os meses anteriores à inauguração
         # dela simplesmente não existem.
         "serie_meses": contexto["serie_meses"],
+        # A série AGREGADA do recorte vem pronta do servidor. A tela e o PDF liam cada um
+        # a sua soma das sparklines — duas contas para o mesmo gráfico, que é justamente
+        # como a mesma unidade acaba com dois números em duas superfícies.
+        "serie_rede": _rede_serie_agregada(recorte, contexto),
         "unidades": unidades,
         "notas": _rede_notas(contexto, recorte),
     }
