@@ -1,505 +1,728 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import ExecMap from '../components/ExecMap'
 import Select from '../components/Select'
-import { api, ApiError } from '../lib/api'
-import { brl, num, pct } from '../lib/format'
-import type { ExecMetric, ExecUnidade, ExecutivaPayload } from '../lib/types'
-
-/** KPIs pelos quais a lista de unidades pode ser ranqueada. */
-const ORDENAR_OPCOES = [
-  { value: 'faturamento', label: 'Faturamento' },
-  { value: 'ativos', label: 'Alunos ativos' },
-  { value: 'churn', label: 'Churn (30d)' },
-  { value: 'nps', label: 'NPS' },
-  { value: 'ticket', label: 'Ticket médio' },
-] as const
-type OrdenarKey = (typeof ORDENAR_OPCOES)[number]['value']
-
-function valorKpi(u: ExecUnidade, k: OrdenarKey): string {
-  if (k === 'ativos') return num(u.ativos)
-  if (k === 'churn') return pct(u.churn, 1)
-  if (k === 'nps') return num(u.nps)
-  if (k === 'ticket') return brl(u.ticket)
-  return brl(u.faturamento, true)
-}
-
-const MESES_PT = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez']
-function labelMes(m: string): string {
-  const [a, mm] = m.split('-')
-  const nome = MESES_PT[Number(mm) - 1] ?? mm
-  return `${nome.charAt(0).toUpperCase()}${nome.slice(1)}/${a}`
-}
+import Tabela, { type Coluna } from '../components/Tabela'
+import FichaUnidade from '../components/exec/FichaUnidade'
+import { BarrasPeriodo } from '../components/exec/ExecCharts'
+import {
+  Aviso,
+  BarraSegmentada,
+  Botao,
+  Delta,
+  Glass,
+  Semaforo,
+  SparklineSvg,
+  Spinner,
+} from '../components/primitives'
+import { api, ApiError, baixar } from '../lib/api'
+import {
+  COR_SEVERIDADE,
+  METRICAS_EM_PONTOS,
+  ORDEM_SEVERIDADE,
+  filtrarUnidades,
+  formatarMetrica,
+  lerDelta,
+  ordenarUnidades,
+  rotuloMesCompetencia,
+  tituloDaCelula,
+} from '../lib/exec'
+import { brlCurto, num, pct } from '../lib/format'
+import type { RedeCarteira, RedeFiltros, RedeSeveridade, RedeUnidade } from '../lib/types'
 
 /* ---------------------------------------------------------------------------
-   Visão Executiva — a rede Ultra REAL por estado (Growth API, camada paralela).
-   Escolhe-se um estado e vê-se: pins/bolhas das unidades, alunos ativos,
-   faturamento, churn e a proporção pagantes × agregadores. READ-ONLY sobre o M1.
+   Visão Executiva 2.0 — a rede Ultra como CARTEIRA acionável (DEC-023).
+
+   Dois níveis: carteira priorizada -> ficha da unidade. O mapa, que era o plano
+   de fundo em tela cheia, virou um card ao lado — a pergunta que a aba responde
+   deixou de ser "onde estão as unidades" e passou a ser "o que fazer com elas".
+
+   Um único scroller (o `body` tem `overflow: hidden`): nada de scroll aninhado.
+   A tela não declara componente nenhum além de composição — as primitivas vivem
+   em `components/`, para não repetir o erro da v1, que tinha `Kpi`/`Delta`/
+   `Legenda` locais divergentes dos homônimos de `primitives.tsx`.
+
+   A UF NUNCA é herdada do Mapa Territorial, nem na primeira montagem: a aba abre
+   com o Brasil inteiro e filtra por dentro.
    --------------------------------------------------------------------------- */
 
-export interface ExecutiveScreenProps {
-  ufs: string[]
-  uf: string
-  onUf: (uf: string) => void
-}
+const KPIS = [
+  { chave: 'faturamento', rotulo: 'Faturamento', formato: 'brl_curto' as const, bomSubindo: true, destaque: true },
+  { chave: 'ativos', rotulo: 'Alunos ativos', formato: 'int' as const, bomSubindo: true },
+  { chave: 'churn_pct', rotulo: 'Churn', formato: 'pct' as const, bomSubindo: false },
+  { chave: 'receita_por_recorrente', rotulo: 'Receita por recorrente', formato: 'brl' as const, bomSubindo: true },
+  { chave: 'nps', rotulo: 'NPS', formato: 'nota' as const, bomSubindo: true },
+  { chave: 'saldo_operacional', rotulo: 'Saldo operacional', formato: 'int' as const, bomSubindo: true },
+]
 
-export default function ExecutiveScreen({ ufs, uf, onUf }: ExecutiveScreenProps) {
-  const [dados, setDados] = useState<ExecutivaPayload | null>(null)
-  const [carregando, setCarregando] = useState(false)
+/** Colunas ordenáveis da carteira. Máximo de 8 visíveis — acima disso vira parede. */
+const COLUNAS_METRICA = [
+  { chave: 'faturamento', rotulo: 'Faturamento', formato: 'brl_curto' as const, bomSubindo: true, largura: 118 },
+  { chave: 'ativos', rotulo: 'Ativos', formato: 'int' as const, bomSubindo: true, largura: 92 },
+  { chave: 'churn_pct', rotulo: 'Churn', formato: 'pct' as const, bomSubindo: false, largura: 86 },
+  { chave: 'receita_por_recorrente', rotulo: 'R$/recorrente', formato: 'brl' as const, bomSubindo: true, largura: 106 },
+  { chave: 'nps', rotulo: 'NPS', formato: 'nota' as const, bomSubindo: true, largura: 74 },
+]
+
+const TODOS = '__todos__'
+
+export default function ExecutiveScreen() {
+  const [filtros, setFiltros] = useState<RedeFiltros | null>(null)
+  const [carteira, setCarteira] = useState<RedeCarteira | null>(null)
+  const [carregando, setCarregando] = useState(true)
   const [erro, setErro] = useState<string | null>(null)
-  // Competência selecionada (YYYY-MM); vazio = mais recente (default do backend).
-  const [mes, setMes] = useState('')
+  const [baixando, setBaixando] = useState<string | null>(null)
 
-  // Trocar de estado volta para a competência mais recente.
-  useEffect(() => setMes(''), [uf])
+  // Recorte. Tudo vazio = a rede do Brasil inteiro.
+  const [mes, setMes] = useState('')
+  const [uf, setUf] = useState('')
+  const [master, setMaster] = useState('')
+  const [consultor, setConsultor] = useState('')
+  const [coorte, setCoorte] = useState('')
+  const [severidades, setSeveridades] = useState<RedeSeveridade[]>([])
+  const [busca, setBusca] = useState('')
+
+  const [ordenar, setOrdenar] = useState('prioridade')
+  const [direcao, setDirecao] = useState<'asc' | 'desc'>('desc')
+  const [aberta, setAberta] = useState<string | null>(null)
+
+  const query = useMemo(
+    () => ({
+      mes: mes || undefined,
+      uf: uf || undefined,
+      master: master || undefined,
+      consultor: consultor || undefined,
+      coorte: coorte || undefined,
+      severidade: severidades.length ? severidades.join(',') : undefined,
+    }),
+    [mes, uf, master, consultor, coorte, severidades],
+  )
 
   useEffect(() => {
-    if (!uf) {
-      setDados(null)
-      return
+    let vivo = true
+    api
+      .redeFiltros(mes || undefined)
+      .then((f) => vivo && setFiltros(f))
+      .catch((e: ApiError) => vivo && setErro(e.message))
+    return () => {
+      vivo = false
     }
+  }, [mes])
+
+  useEffect(() => {
     let vivo = true
     setCarregando(true)
     setErro(null)
     api
-      .executiva(uf, mes || undefined)
-      .then((d) => {
-        if (vivo) setDados(d)
-      })
+      .redeCarteira(query)
+      .then((c) => vivo && setCarteira(c))
       .catch((e: ApiError) => {
         if (vivo) {
           setErro(e.message)
-          setDados(null)
+          setCarteira(null)
         }
       })
-      .finally(() => {
-        if (vivo) setCarregando(false)
-      })
+      .finally(() => vivo && setCarregando(false))
     return () => {
       vivo = false
     }
-  }, [uf, mes])
+  }, [query])
 
-  if (!uf) return <ExecLanding ufs={ufs} onUf={onUf} />
+  // Voltar do browser e Esc fecham a ficha — é o gesto natural de quem abriu uma.
+  useEffect(() => {
+    const aoVoltar = () => setAberta(null)
+    window.addEventListener('popstate', aoVoltar)
+    return () => window.removeEventListener('popstate', aoVoltar)
+  }, [])
+
+  useEffect(() => {
+    if (!aberta) return
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') fecharFicha()
+    }
+    window.addEventListener('keydown', aoTeclar)
+    return () => window.removeEventListener('keydown', aoTeclar)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aberta])
+
+  const abrirFicha = useCallback((u: RedeUnidade) => {
+    window.history.pushState({ unidade: u.id }, '', '')
+    setAberta(u.id)
+  }, [])
+
+  function fecharFicha() {
+    setAberta(null)
+    if (window.history.state?.unidade) window.history.back()
+  }
+
+  const unidades = useMemo(() => {
+    if (!carteira) return []
+    return ordenarUnidades(filtrarUnidades(carteira.unidades, busca), ordenar, direcao)
+  }, [carteira, busca, ordenar, direcao])
+
+  function aoOrdenar(chave: string) {
+    if (chave === ordenar) {
+      setDirecao((d) => (d === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setOrdenar(chave)
+    // Default por natureza da métrica: churn asc (menor é melhor), o resto desc.
+    setDirecao(chave === 'churn_pct' || chave === 'nome' ? 'asc' : 'desc')
+  }
+
+  const temRecorte = Boolean(uf || master || consultor || coorte || busca || severidades.length)
+
+  function limparRecorte() {
+    setUf('')
+    setMaster('')
+    setConsultor('')
+    setCoorte('')
+    setSeveridades([])
+    setBusca('')
+  }
+
+  async function baixarArquivo(formato: 'csv' | 'xlsx' | 'pdf') {
+    setBaixando(formato)
+    try {
+      const { blob, filename } = await api.redeCarteiraArquivo(formato, { ...query, ordenar, direcao })
+      baixar(blob, filename)
+    } catch (e) {
+      setErro((e as ApiError).message)
+    } finally {
+      setBaixando(null)
+    }
+  }
+
+  const colunas: Coluna<RedeUnidade>[] = useMemo(
+    () => [
+      {
+        chave: 'nome',
+        rotulo: 'Unidade',
+        largura: 230,
+        render: (u) => (
+          <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <Semaforo nivel={u.severidade} rotulo={u.severidade_rotulo} />
+            <span style={{ minWidth: 0 }}>
+              <span
+                style={{
+                  display: 'block',
+                  font: '600 12.5px/1.2 var(--f-ui)',
+                  color: 'var(--tx-strong)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                {u.nome}
+              </span>
+              <span style={{ display: 'block', font: '400 10px/1.2 var(--f-ui)', color: 'var(--tx-muted)', marginTop: 2 }}>
+                {[u.uf, u.consultor ?? 'sem consultor', u.coorte_rotulo].join(' · ')}
+              </span>
+            </span>
+          </span>
+        ),
+      },
+      {
+        chave: 'sparkline',
+        rotulo: '12 meses',
+        largura: 90,
+        ordenavel: false,
+        ajuda: 'Faturamento dos 12 meses fechados',
+        render: (u) => <SparklineSvg valores={u.sparkline} />,
+      },
+      ...COLUNAS_METRICA.map<Coluna<RedeUnidade>>((c) => ({
+        chave: c.chave,
+        rotulo: c.rotulo,
+        largura: c.largura,
+        alinhamento: 'right',
+        ajuda: `${c.rotulo} — clique para ordenar. Passe o mouse na célula para ver ranking e % vs média da rede.`,
+        render: (u) => {
+          const m = u.metricas[c.chave]
+          const leitura = lerDelta(m, c.bomSubindo, METRICAS_EM_PONTOS.has(c.chave))
+          return (
+            <span
+              title={tituloDaCelula(c.rotulo, m, c.formato)}
+              style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}
+            >
+              <span className="num" style={{ font: '600 12px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
+                {formatarMetrica(m?.atual, c.formato)}
+              </span>
+              <Delta leitura={leitura} tamanho={9.5} />
+            </span>
+          )
+        },
+      })),
+      {
+        chave: 'resumo',
+        rotulo: 'Diagnóstico',
+        largura: 260,
+        ordenavel: false,
+        render: (u) =>
+          u.alertas.length ? (
+            <span style={{ display: 'flex', gap: 5, flexWrap: 'nowrap', overflow: 'hidden' }}>
+              {u.alertas.slice(0, 3).map((a) => (
+                <span
+                  key={a.codigo}
+                  title={a.detalhe}
+                  style={{
+                    font: '600 9.5px/1 var(--f-ui)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '.04em',
+                    padding: '4px 7px',
+                    borderRadius: 'var(--r-sm)',
+                    color: a.nivel === 'grave' ? COR_SEVERIDADE.alta : COR_SEVERIDADE.media,
+                    background: `${a.nivel === 'grave' ? COR_SEVERIDADE.alta : COR_SEVERIDADE.media}1f`,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {a.titulo}
+                </span>
+              ))}
+              {u.alertas.length > 3 && (
+                <span style={{ font: '500 10px/1 var(--f-ui)', color: 'var(--tx-muted)', alignSelf: 'center' }}>
+                  +{u.alertas.length - 3}
+                </span>
+              )}
+            </span>
+          ) : (
+            <span style={{ font: '400 11px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>
+              {u.comparavel ? 'sem alerta' : 'unidade nova'}
+            </span>
+          ),
+      },
+    ],
+    [],
+  )
+
+  if (erro && !carteira) {
+    return <Aviso titulo="Rede indisponível" corpo={erro} />
+  }
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
-      {dados && (
-        <ExecMap unidades={dados.unidades} centro={dados.centro} iconeUltra={dados.ultra_icon} />
-      )}
-
       <header
         style={{
-          position: 'relative',
-          zIndex: 10,
+          flexShrink: 0,
           margin: '16px 16px 0',
-          padding: '9px 12px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
+          padding: '9px 14px 7px',
           background: 'var(--surf-chrome)',
           border: '1px solid var(--line-soft)',
           borderRadius: 'var(--r-xl)',
           backdropFilter: 'blur(14px)',
-          flexWrap: 'wrap',
+          // `position: relative` + `zIndex` são OBRIGATÓRIOS aqui, e não são enfeite:
+          // `backdropFilter` cria um CONTEXTO DE EMPILHAMENTO, então o `zIndex: 40` do
+          // popup do Select vale só dentro deste cabeçalho. Sem elevar o cabeçalho
+          // inteiro, o scroller — que vem depois no DOM e cujos cards também têm
+          // `backdropFilter` — pinta por cima, e a lista de opções abre ATRÁS dos cards.
+          position: 'relative',
+          zIndex: 30,
         }}
       >
+        {/* Faixa 1 — só o que o operador MANIPULA. O período de referência e a contagem
+            de unidades saíram daqui para a legenda de baixo: eram duas linhas de texto
+            no meio da fila de controles, e a cada filtro que entrava empurravam os
+            botões de export para a linha seguinte. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <h1 style={{ font: '600 14px/1 var(--f-ui)', letterSpacing: '-.01em', color: 'var(--tx-max)', margin: 0 }}>
           Rede Ultra
         </h1>
         <span aria-hidden style={{ width: 1, height: 20, background: 'var(--line-mid)' }} />
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
-            ESTADO
-          </span>
+
+        <Filtro rotulo="Período">
+          <Select
+            label="Competência"
+            value={carteira?.mes ?? ''}
+            onChange={setMes}
+            maxWidth={128}
+            options={(filtros?.meses ?? []).map((m) => ({ value: m, label: rotuloMesCompetencia(m) }))}
+          />
+        </Filtro>
+        <Filtro rotulo="UF">
           <Select
             label="Estado"
-            value={uf}
-            onChange={onUf}
-            maxWidth={74}
-            options={ufs.map((u) => ({ value: u, label: u }))}
+            value={uf || TODOS}
+            onChange={(v) => setUf(v === TODOS ? '' : v)}
+            maxWidth={96}
+            options={[
+              { value: TODOS, label: 'Brasil' },
+              ...(filtros?.ufs ?? []).map((u) => ({ value: u, label: u })),
+            ]}
           />
-        </label>
-        {dados && dados.meses.length > 0 && (
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
-              PERÍODO
-            </span>
-            <Select
-              label="Competência analisada"
-              value={dados.mes ?? ''}
-              onChange={setMes}
-              maxWidth={130}
-              options={dados.meses.map((m) => ({ value: m, label: labelMes(m) }))}
-            />
-          </label>
+        </Filtro>
+        <Filtro rotulo="Consultor">
+          <Select
+            label="Consultor"
+            value={consultor || TODOS}
+            onChange={(v) => setConsultor(v === TODOS ? '' : v)}
+            maxWidth={148}
+            options={[
+              { value: TODOS, label: 'Todos' },
+              ...(filtros?.consultores ?? []).map((c) => ({ value: c, label: c })),
+            ]}
+          />
+        </Filtro>
+        <Filtro rotulo="Master">
+          <Select
+            label="Master"
+            value={master || TODOS}
+            onChange={(v) => setMaster(v === TODOS ? '' : v)}
+            maxWidth={126}
+            options={[
+              { value: TODOS, label: 'Todos' },
+              ...(filtros?.masters ?? []).map((m) => ({ value: m, label: m })),
+            ]}
+          />
+        </Filtro>
+        <Filtro rotulo="Maturidade">
+          <Select
+            label="Coorte de maturidade"
+            value={coorte || TODOS}
+            onChange={(v) => setCoorte(v === TODOS ? '' : v)}
+            maxWidth={152}
+            options={[
+              { value: TODOS, label: 'Todas' },
+              ...(filtros?.coortes ?? []).map((c) => ({ value: c.chave, label: `${c.rotulo} (${c.n})` })),
+            ]}
+          />
+        </Filtro>
+
+        <input
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Buscar unidade, cidade…"
+          aria-label="Buscar unidade"
+          style={{ width: 176 }}
+        />
+        {temRecorte && (
+          <Botao variante="ghost" onClick={limparRecorte}>
+            Limpar filtros
+          </Botao>
         )}
-        {dados?.referencia && (
-          <span className="num" style={{ font: '500 11px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
-            até {dados.referencia} · vs {dados.referencia_m1} (M-1)
-          </span>
-        )}
+
         <div style={{ flex: 1 }} />
-        {dados && (
-          <span style={{ font: '400 11.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
-            {dados.totais.unidades} unidades · {dados.totais.com_coordenada} no mapa · Growth API · read-only
-          </span>
+
+        {(['csv', 'xlsx', 'pdf'] as const).map((f) => (
+          <Botao key={f} variante="ghost" onClick={() => baixarArquivo(f)} disabled={baixando !== null}>
+            {baixando === f ? <Spinner /> : '↓'} {f.toUpperCase()}
+          </Botao>
+        ))}
+        </div>
+
+        {/* Faixa 2 — legenda: o que o número em cima significa. Uma linha discreta, que
+            quebra sozinha em tela estreita sem empurrar controle nenhum. */}
+        {carteira && (
+          <div
+            style={{
+              marginTop: 7,
+              paddingTop: 6,
+              borderTop: '1px solid var(--line-soft)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              flexWrap: 'wrap',
+              font: '400 10.5px/1.4 var(--f-ui)',
+              color: 'var(--tx-muted)',
+            }}
+          >
+            <span>
+              Competência <strong style={{ color: 'var(--tx-sub)' }}>{rotuloMesCompetencia(carteira.mes)}</strong>
+              {carteira.mes_completo ? ' (fechada)' : ' (em curso)'}
+            </span>
+            <span className="num">
+              até {carteira.referencia} · compara com {carteira.referencia_m1}
+            </span>
+            <span className="num">
+              {carteira.totais.no_recorte} de {carteira.totais.rede} unidades
+              {carteira.totais.com_coordenada < carteira.totais.no_recorte
+                ? ` · ${carteira.totais.com_coordenada} no mapa`
+                : ''}
+            </span>
+            {carteira.competencia_diagnostico && carteira.competencia_diagnostico !== carteira.mes && (
+              <span>
+                diagnóstico de{' '}
+                <strong style={{ color: 'var(--tx-sub)' }}>
+                  {rotuloMesCompetencia(carteira.competencia_diagnostico)}
+                </strong>
+                , o último mês fechado
+              </span>
+            )}
+            <div style={{ flex: 1 }} />
+            <span>Growth API · read-only sobre o M1</span>
+          </div>
         )}
       </header>
 
       <div
         style={{
-          position: 'relative',
-          zIndex: 10,
           flex: 1,
-          display: 'flex',
-          justifyContent: 'flex-end',
-          padding: '14px 16px 16px',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          padding: '14px 16px 22px',
           minHeight: 0,
-          pointerEvents: 'none',
+          // Explícito para não voltar a competir com o cabeçalho por ordem de DOM.
+          position: 'relative',
+          zIndex: 0,
         }}
       >
-        <div style={{ pointerEvents: 'auto', display: 'flex', minHeight: 0 }}>
-          {carregando && !dados ? (
-            <PainelMsg>Lendo a rede Ultra em {uf}…</PainelMsg>
-          ) : erro ? (
-            <PainelMsg>{erro}</PainelMsg>
-          ) : dados ? (
-            <PainelExecutivo dados={dados} />
-          ) : null}
-        </div>
+        {carregando && !carteira ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 40, color: 'var(--tx-sub)' }}>
+            <Spinner /> Lendo a rede Ultra…
+          </div>
+        ) : !carteira ? null : aberta ? (
+          <FichaUnidade unidadeId={aberta} mes={carteira.mes} onVoltar={fecharFicha} />
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              {KPIS.map((k) => {
+                const m = carteira.kpis[k.chave]
+                return (
+                  <Glass key={k.chave} style={{ flex: '1 1 168px', padding: '13px 15px', minWidth: 0 }}>
+                    <div style={{ font: '500 10.5px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>{k.rotulo}</div>
+                    <div
+                      className="num"
+                      style={{
+                        font: '700 21px/1 var(--f-num)',
+                        color: k.destaque ? 'var(--ac-text)' : 'var(--tx-max)',
+                        marginTop: 7,
+                      }}
+                    >
+                      {formatarMetrica(m?.atual, k.formato)}
+                    </div>
+                    <div style={{ marginTop: 6 }}>
+                      <Delta leitura={lerDelta(m, k.bomSubindo, METRICAS_EM_PONTOS.has(k.chave))} />
+                      <span style={{ font: '400 9px/1 var(--f-ui)', color: 'var(--tx-muted)', marginLeft: 4 }}>
+                        vs M-1
+                      </span>
+                    </div>
+                  </Glass>
+                )
+              })}
+            </div>
+
+            {/* A carteira ocupa a LARGURA TODA. Dividindo a linha com o mapa, as oito
+                colunas não cabiam nos ~620 px que sobravam e a tabela virava uma barra
+                de rolagem horizontal: para ver o NPS era preciso arrastar o scroll de
+                baixo, perdendo de vista a coluna do nome. O mapa desceu para a faixa
+                seguinte — ele é apoio, e é assim que a DEC-023 o define. */}
+            <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+              <Glass style={{ flex: '1 1 100%', minWidth: 0, padding: 0, overflow: 'hidden' }}>
+                <div
+                  style={{
+                    padding: '13px 16px 11px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    flexWrap: 'wrap',
+                    borderBottom: '1px solid var(--line-soft)',
+                  }}
+                >
+                  <span style={{ font: '600 10.5px/1 var(--f-ui)', letterSpacing: '.09em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
+                    Carteira
+                  </span>
+                  <div style={{ flex: 1 }} />
+                  {ORDEM_SEVERIDADE.map((s) => {
+                    const n = carteira.semaforo[s] ?? 0
+                    const ativo = severidades.includes(s)
+                    // Um chip com contagem zero continua na tela SE estiver ativo. Sem
+                    // isso, filtrar por "alta" e depois trocar para uma UF sem nenhuma
+                    // unidade alta fazia o chip sumir com o filtro ainda aplicado: a
+                    // carteira ficava vazia e não havia como desfazer, a não ser F5.
+                    if (!n && !ativo) return null
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() =>
+                          setSeveridades((atual) =>
+                            atual.includes(s) ? atual.filter((x) => x !== s) : [...atual, s],
+                          )
+                        }
+                        title={`Filtrar por ${s}`}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '5px 9px',
+                          borderRadius: 'var(--r-sm)',
+                          border: `1px solid ${ativo ? COR_SEVERIDADE[s] : 'var(--line-soft)'}`,
+                          background: ativo ? `${COR_SEVERIDADE[s]}1f` : 'transparent',
+                          color: 'var(--tx-soft)',
+                          font: '600 10.5px/1 var(--f-ui)',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <Semaforo nivel={s} tamanho={7} />
+                        {n}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div style={{ maxHeight: 560, overflowY: 'auto' }}>
+                  <Tabela
+                    colunas={colunas}
+                    dados={unidades}
+                    chaveDe={(u) => u.id}
+                    ordenarPor={ordenar}
+                    direcao={direcao}
+                    onOrdenar={aoOrdenar}
+                    onLinha={abrirFicha}
+                    vazio="Nenhuma unidade neste recorte. Limpe um filtro ou a busca."
+                  />
+                </div>
+              </Glass>
+
+              <Glass style={{ flex: '1 1 460px', minWidth: 0, padding: 0, overflow: 'hidden' }}>
+                  <div style={{ padding: '13px 16px 9px', font: '600 10.5px/1 var(--f-ui)', letterSpacing: '.09em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
+                    Onde estão
+                  </div>
+                  <div style={{ position: 'relative', height: 320 }}>
+                    <ExecMap
+                      unidades={unidades}
+                      centro={carteira.centro}
+                      bbox={carteira.bbox}
+                      iconeUltra={carteira.ultra_icon}
+                      onUnidade={(id) => {
+                        const u = unidades.find((x) => x.id === id)
+                        if (u) abrirFicha(u)
+                      }}
+                    />
+                  </div>
+                  <div style={{ padding: '9px 16px 12px', font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                    {carteira.totais.com_coordenada} de {carteira.totais.no_recorte} unidades com
+                    coordenada. Tamanho da bolha = faturamento; cor = diagnóstico. Use a roda
+                    do mouse sobre o mapa para aproximar, ou os botões + e −.
+                  </div>
+              </Glass>
+
+                <Glass style={{ flex: '1 1 300px', minWidth: 0, padding: '14px 16px' }}>
+                  <Rotulo>Recorrentes × agregadores</Rotulo>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', font: '500 10.5px/1 var(--f-ui)', color: 'var(--tx-label)', marginBottom: 6 }}>
+                    <span>Recorrentes {pct(carteira.split.pct_recorrentes, 0)}</span>
+                    <span>Agregadores {pct(carteira.split.pct_agregadores, 0)}</span>
+                  </div>
+                  <BarraSegmentada
+                    partes={[
+                      { chave: 'rec', valor: carteira.split.recorrentes ?? 0, cor: 'var(--ac)', rotulo: 'Recorrentes' },
+                      { chave: 'agr', valor: carteira.split.agregadores ?? 0, cor: '#d94a86', rotulo: 'Agregadores' },
+                    ]}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 7, font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
+                    <span className="num">{num(carteira.split.recorrentes)}</span>
+                    <span className="num">{num(carteira.split.agregadores)}</span>
+                  </div>
+                </Glass>
+
+                {carteira.sss.disponivel && carteira.sss.metricas && (
+                  <Glass style={{ flex: '1 1 300px', minWidth: 0, padding: '14px 16px' }}>
+                    <Rotulo>Mesma base, ano a ano (SSS)</Rotulo>
+                    <div style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginBottom: 10 }}>
+                      {carteira.sss.unidades} unidades presentes nos dois períodos. Comparar total
+                      contra total infla o crescimento numa rede que abre lojas.
+                    </div>
+                    {(['faturamento', 'ativos'] as const).map((chave) => {
+                      const m = carteira.sss.metricas?.[chave]
+                      if (!m) return null
+                      return (
+                        <div key={chave} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 6 }}>
+                          <span style={{ font: '400 11.5px/1 var(--f-ui)', color: 'var(--tx-label)' }}>
+                            {chave === 'faturamento' ? 'Faturamento' : 'Alunos ativos'}
+                          </span>
+                          <span className="num" style={{ font: '600 12px/1 var(--f-num)', color: 'var(--tx-strong)' }}>
+                            {chave === 'faturamento' ? brlCurto(m.atual) : num(m.atual)}{' '}
+                            <span
+                              style={{
+                                color:
+                                  (m.var_pct ?? 0) >= 0 ? 'var(--pos, #37b26b)' : 'var(--neg, #ff5a6e)',
+                              }}
+                            >
+                              {m.var_pct === null ? '' : `${m.var_pct > 0 ? '+' : ''}${pct(m.var_pct, 1)}`}
+                            </span>
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </Glass>
+                )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+              <Glass style={{ flex: '1 1 420px', padding: '15px 17px', minWidth: 0 }}>
+                <Rotulo>Faturamento da rede no recorte</Rotulo>
+                <BarrasPeriodo
+                  meses={carteira.serie_meses}
+                  valores={carteira.serie_rede}
+                  formato="brl"
+                />
+                <div style={{ marginTop: 8, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                  Soma dos meses FECHADOS das unidades do recorte
+                  {carteira.mes_completo
+                    ? '.'
+                    : ` — a competência ${rotuloMesCompetencia(carteira.mes)} ainda está em curso e não entra aqui.`}
+                </div>
+              </Glass>
+              <Glass style={{ flex: '1 1 300px', padding: '15px 17px', minWidth: 0 }}>
+                <Rotulo>Réguas vigentes</Rotulo>
+                <ul style={{ margin: 0, paddingLeft: 16, font: '400 11.5px/1.7 var(--f-ui)', color: 'var(--tx-narrative)' }}>
+                  {Object.entries(carteira.reguas).map(([chave, r]) => (
+                    <li key={chave}>
+                      {r.rotulo}:{' '}
+                      <strong style={{ color: 'var(--tx-strong)' }}>
+                        {r.sentido === 'persistencia'
+                          ? `negativo por ${r.meses} meses fechados`
+                          : `${r.sentido === 'acima' ? 'acima de' : 'abaixo de'} ${num(r.limiar, 1)}${r.unidade === '%' ? '%' : ` ${r.unidade ?? ''}`}`}
+                      </strong>
+                    </li>
+                  ))}
+                  <li>
+                    Meta de NPS da rede: <strong style={{ color: 'var(--tx-strong)' }}>{carteira.meta_nps}</strong> —
+                    meta não é alerta.
+                  </li>
+                </ul>
+              </Glass>
+            </div>
+
+            <Glass style={{ padding: '14px 18px' }}>
+              <Rotulo>Notas de método</Rotulo>
+              <ul style={{ margin: 0, paddingLeft: 18, font: '400 11.5px/1.7 var(--f-ui)', color: 'var(--tx-narrative)' }}>
+                {carteira.notas.map((n) => (
+                  <li key={n}>{n}</li>
+                ))}
+                <li>
+                  Ranking e “% vs média da rede” saem sempre da rede inteira, nunca do recorte
+                  filtrado — mudar um filtro não muda a posição de ninguém.
+                </li>
+                <li>Fonte: Growth API · camada paralela · read-only sobre o M1.</li>
+              </ul>
+            </Glass>
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-function PainelExecutivo({ dados }: { dados: ExecutivaPayload }) {
-  const t = dados.totais
-  const pctPag = t.pct_pagantes ?? 0
-  const pctAgr = t.pct_agregadores ?? 0
-
-  const [ordenar, setOrdenar] = useState<OrdenarKey>('faturamento')
-  const unidades = useMemo(
-    () =>
-      [...dados.unidades].sort(
-        (a, b) =>
-          ((b[ordenar] as number | null) ?? -Infinity) -
-          ((a[ordenar] as number | null) ?? -Infinity),
-      ),
-    [dados.unidades, ordenar],
-  )
-
+function Filtro({ rotulo, children }: { rotulo: string; children: React.ReactNode }) {
   return (
-    <aside
-      style={{
-        width: 400,
-        flexShrink: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        background: 'var(--surf-panel)',
-        border: '1px solid var(--line-soft)',
-        borderRadius: 'var(--r-2xl)',
-        backdropFilter: 'blur(18px)',
-        overflow: 'hidden',
-      }}
-    >
-      <header style={{ padding: '18px 20px 14px' }}>
-        <span
-          style={{
-            font: '600 10.5px/1 var(--f-ui)',
-            letterSpacing: '.12em',
-            textTransform: 'uppercase',
-            color: 'var(--ac-text)',
-          }}
-        >
-          Rede instalada · {dados.uf}
-        </span>
-        <h2
-          className="story"
-          style={{ font: '400 25px/1.15 var(--f-story)', color: 'var(--tx-max)', margin: '10px 0 0' }}
-        >
-          Como está a operação
-        </h2>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 16 }}>
-          <Kpi rotulo="Faturamento no mês" valor={brl(t.faturamento.atual, true)} metric={t.faturamento} bomSubindo destaque />
-          <Kpi rotulo="Alunos ativos" valor={num(t.ativos.atual)} metric={t.ativos} bomSubindo />
-          <Kpi rotulo="Churn (30 dias)" valor={pct(t.churn.atual, 1)} metric={t.churn} bomSubindo={false} modo="pp" />
-          <Kpi rotulo="NPS médio" valor={num(t.nps.atual)} metric={t.nps} bomSubindo modo="pts" />
-        </div>
-
-        {/* Split pagantes × agregadores */}
-        <div style={{ marginTop: 16 }}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              font: '500 10.5px/1 var(--f-ui)',
-              color: 'var(--tx-label)',
-              marginBottom: 6,
-            }}
-          >
-            <span>Pagantes {pct(pctPag, 0)}</span>
-            <span>Agregadores {pct(pctAgr, 0)}</span>
-          </div>
-          <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', background: 'var(--surf-raised)' }}>
-            <div style={{ width: `${pctPag}%`, background: 'var(--ac)' }} />
-            <div style={{ width: `${pctAgr}%`, background: '#d94a86' }} />
-          </div>
-          <div style={{ display: 'flex', gap: 16, marginTop: 6 }}>
-            <Legenda cor="var(--ac)" texto={`${num(t.pagantes.atual)} pagantes`} delta={t.pagantes.delta_pct} />
-            <Legenda cor="#d94a86" texto={`${num(t.agregadores.atual)} agregadores`} delta={t.agregadores.delta_pct} />
-          </div>
-        </div>
-      </header>
-
-      <div
-        style={{
-          padding: '6px 14px 6px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 8,
-        }}
-      >
-        <span style={{ font: '600 10px/1 var(--f-ui)', letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
-          Unidades
-        </span>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ font: '500 10px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>ordenar por</span>
-          <Select
-            label="Ordenar unidades por"
-            value={ordenar}
-            onChange={(v) => setOrdenar(v as OrdenarKey)}
-            maxWidth={150}
-            options={ORDENAR_OPCOES.map((o) => ({ value: o.value, label: o.label }))}
-          />
-        </label>
-      </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '2px 14px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-        {unidades.map((u, i) => (
-          <div
-            key={`${u.nome}-${i}`}
-            style={{
-              padding: '10px 12px',
-              border: '1px solid var(--line-soft)',
-              borderRadius: 'var(--r-lg)',
-              background: 'var(--surf-raised)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-            }}
-          >
-            <span className="num" style={{ font: '700 12px/1 var(--f-num)', color: 'var(--tx-rank)', width: 22, textAlign: 'center', flexShrink: 0 }}>
-              {String(i + 1).padStart(2, '0')}
-            </span>
-            <span style={{ flex: 1, minWidth: 0 }}>
-              <span style={{ display: 'block', font: '600 13px/1.2 var(--f-ui)', color: 'var(--tx-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {u.nome}
-              </span>
-              <span style={{ display: 'block', font: '400 10.5px/1.2 var(--f-ui)', color: 'var(--tx-label)', marginTop: 3 }}>
-                {ordenar === 'faturamento'
-                  ? `${num(u.ativos)} ativos · churn ${pct(u.churn, 1)}`
-                  : `${brl(u.faturamento, true)} · ${num(u.ativos)} ativos`}
-              </span>
-            </span>
-            <span className="num" style={{ font: '700 13px/1 var(--f-num)', color: 'var(--tx-max)', flexShrink: 0 }}>
-              {valorKpi(u, ordenar)}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <footer style={{ padding: '11px 20px', borderTop: '1px solid var(--line-soft)' }}>
-        <span style={{ font: '400 11px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
-          Fonte: Growth API · camada paralela · read-only M1
-        </span>
-      </footer>
-    </aside>
+    <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <span className="num" style={{ font: '500 10px/1 var(--f-num)', color: 'var(--tx-muted)', textTransform: 'uppercase' }}>
+        {rotulo}
+      </span>
+      {children}
+    </label>
   )
 }
 
-function Kpi({
-  rotulo,
-  valor,
-  metric,
-  bomSubindo,
-  destaque,
-  modo = 'pct',
-}: {
-  rotulo: string
-  valor: string
-  metric?: ExecMetric
-  bomSubindo?: boolean
-  destaque?: boolean
-  /** 'pct' = variação relativa (%); 'pp'/'pts' = diferença absoluta (churn/NPS). */
-  modo?: 'pct' | 'pp' | 'pts'
-}) {
+function Rotulo({ children }: { children: React.ReactNode }) {
   return (
     <div
       style={{
-        padding: '11px 13px',
-        borderRadius: 'var(--r-lg)',
-        background: destaque ? 'var(--ac-a10)' : 'var(--surf-raised)',
-        border: `1px solid ${destaque ? 'var(--ac-a24)' : 'var(--line-soft)'}`,
-      }}
-    >
-      <div className="num" style={{ font: '700 20px/1 var(--f-num)', color: destaque ? 'var(--ac-text)' : 'var(--tx-max)' }}>
-        {valor}
-      </div>
-      <div style={{ font: '500 10px/1 var(--f-ui)', color: 'var(--tx-label)', marginTop: 5, textTransform: 'uppercase', letterSpacing: '.04em' }}>
-        {rotulo}
-      </div>
-      {metric && <Delta metric={metric} bomSubindo={bomSubindo ?? true} modo={modo} />}
-    </div>
-  )
-}
-
-/** Chip de variação vs M-1. `pct` = variação relativa; `pp`/`pts` = diferença
- *  ABSOLUTA em pontos (churn e NPS — percentual relativo confunde). Cor verde/
- *  vermelho conforme a métrica melhora ou piora. */
-function Delta({
-  metric,
-  bomSubindo,
-  modo,
-}: {
-  metric: ExecMetric
-  bomSubindo: boolean
-  modo: 'pct' | 'pp' | 'pts'
-}) {
-  let subiu: boolean
-  let mudou: boolean
-  let texto: string
-  if (modo === 'pct') {
-    const d = metric.delta_pct
-    if (d == null) return null
-    subiu = d > 0
-    mudou = Math.abs(d) >= 0.05
-    texto = pct(Math.abs(d), 1)
-  } else {
-    if (metric.atual == null || metric.m1 == null) return null
-    const d = metric.atual - metric.m1
-    subiu = d > 0
-    mudou = Math.abs(d) >= 0.05
-    texto = `${num(Math.abs(d), 1)} ${modo === 'pp' ? 'pp' : 'pts'}`
-  }
-  const bom = subiu === bomSubindo
-  const cor = !mudou ? 'var(--tx-muted)' : bom ? 'var(--pos, #37b26b)' : 'var(--neg, #ff5a6e)'
-  return (
-    <div style={{ marginTop: 7, display: 'flex', alignItems: 'baseline', gap: 4 }}>
-      <span className="num" style={{ font: '700 11px/1 var(--f-num)', color: cor }}>
-        {!mudou ? '—' : subiu ? '▲' : '▼'} {texto}
-      </span>
-      <span style={{ font: '400 9px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>vs M-1</span>
-    </div>
-  )
-}
-
-function Legenda({ cor, texto, delta }: { cor: string; texto: string; delta?: number | null }) {
-  return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
-      <span style={{ width: 8, height: 8, borderRadius: 2, background: cor }} />
-      {texto}
-      {delta != null && Math.abs(delta) >= 0.05 && (
-        <span className="num" style={{ font: '500 9.5px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
-          ({delta > 0 ? '+' : '−'}
-          {pct(Math.abs(delta), 1)})
-        </span>
-      )}
-    </span>
-  )
-}
-
-function PainelMsg({ children }: { children: React.ReactNode }) {
-  return (
-    <aside
-      style={{
-        width: 394,
-        padding: '22px 20px',
-        background: 'var(--surf-panel)',
-        border: '1px solid var(--line-soft)',
-        borderRadius: 'var(--r-2xl)',
-        backdropFilter: 'blur(18px)',
-        font: '400 13px/1.6 var(--f-ui)',
-        color: 'var(--tx-narrative)',
-        alignSelf: 'flex-start',
+        font: '600 10.5px/1 var(--f-ui)',
+        letterSpacing: '.09em',
+        textTransform: 'uppercase',
+        color: 'var(--tx-muted)',
+        marginBottom: 11,
       }}
     >
       {children}
-    </aside>
-  )
-}
-
-function ExecLanding({ ufs, onUf }: { ufs: string[]; onUf: (uf: string) => void }) {
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        display: 'grid',
-        placeItems: 'center',
-        padding: 24,
-        background: 'radial-gradient(120% 90% at 50% 30%, var(--bg-lift) 0%, var(--bg-base) 72%)',
-      }}
-    >
-      <div style={{ maxWidth: 540, textAlign: 'center' }}>
-        <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 8,
-            font: '600 11px/1 var(--f-ui)',
-            letterSpacing: '.14em',
-            textTransform: 'uppercase',
-            color: 'var(--ac-text)',
-          }}
-        >
-          <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--ac)' }} />
-          Visão executiva · rede Ultra
-        </span>
-        <h1
-          className="story"
-          style={{ font: '400 42px/1.05 var(--f-story)', color: 'var(--tx-max)', margin: '18px 0 0' }}
-        >
-          Como está a rede, por estado
-        </h1>
-        <p style={{ font: '400 15px/1.6 var(--f-ui)', color: 'var(--tx-narrative)', margin: '16px auto 0', maxWidth: 440 }}>
-          Escolha um <strong style={{ color: 'var(--tx-strong)' }}>estado</strong> para ver as unidades
-          Ultra no mapa e os números reais — faturamento, alunos ativos, churn e a proporção entre
-          pagantes e agregadores.
-        </p>
-        <div
-          style={{
-            marginTop: 30,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: '14px 16px',
-            background: 'var(--surf-panel)',
-            border: '1px solid var(--ac-a30)',
-            borderRadius: 'var(--r-lg)',
-            backdropFilter: 'blur(16px)',
-            boxShadow: 'var(--ac-glow)',
-          }}
-        >
-          <span style={{ font: '600 13px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>Selecione um estado</span>
-          {ufs.length ? (
-            <Select
-              label="Escolha um estado"
-              value=""
-              onChange={onUf}
-              maxWidth={260}
-              buscavel
-              placeholder="Escolha…"
-              options={ufs.map((u) => ({ value: u, label: u }))}
-            />
-          ) : (
-            <span className="num" style={{ font: '500 12px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
-              carregando estados…
-            </span>
-          )}
-        </div>
-      </div>
     </div>
   )
 }

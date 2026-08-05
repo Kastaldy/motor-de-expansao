@@ -61,10 +61,7 @@ _CACHED = [
 
 
 def _clear_caches() -> None:
-    for nome in _CACHED:
-        fn = getattr(pilot, nome, None)
-        if fn is not None and hasattr(fn, "cache_clear"):
-            fn.cache_clear()
+    pilot.limpar_caches()
 
 
 def _point_app_at(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
@@ -838,7 +835,12 @@ def test_relatorio_municipal_tambem_fora_do_event_loop():
 # Sao valores EXIBIDOS, por isso acentuados; o que nunca pode ser acentuado e a
 # CHAVE que escolhe o ramo (`"conc. 2 km"` / `"residual"`).
 _TAGS_COMPETITIVAS = {"Livre", "Adensar", "Disputa"}
-_TAGS_RESIDUAL_INTENSIDADE = {"Alta", "Média", "Baixa"}
+# Era {"Alta", "Média", "Baixa"} ate o BLK-MAPA-FAIXAS-01 unificar a regua da etiqueta
+# com a legenda do mapa; hoje o ramo `residual` fala o vocabulario de FAIXAS_MAPA_DEMANDA.
+# "Livre" fica FORA deste conjunto de proposito: e' HOMONIMO do vocabulario competitivo
+# ("nenhum concorrente" x "cabe uma unidade inteira"), entao nao discrimina ramo nenhum.
+# Quem discrimina os ramos e' `tag_cor` — ver a assercao no teste abaixo.
+_TAGS_RESIDUAL_INTENSIDADE = {"Saturado", "Restrito", "Moderado", "Amplo"}
 
 
 def _funil_muni(concorrentes: list[int]) -> tuple[pd.DataFrame, dict[str, str]]:
@@ -906,6 +908,17 @@ def test_passo3_etiqueta_pelo_vocabulario_competitivo(
     )
     assert set(tags) <= _TAGS_COMPETITIVAS
     assert not set(tags) & _TAGS_RESIDUAL_INTENSIDADE
+    # As duas asserts de conjunto acima NAO bastam desde o BLK-MAPA-FAIXAS-01: "Livre"
+    # passou a existir tambem na faixa de demanda (score 80-100), e todo item do passo 3
+    # chega com residual >= OFERTA_DESTAQUE_MIN (2.000 = score 80). Ou seja, se o ramo
+    # competitivo morrer de novo, o ramo `residual` devolve "Livre" e as duas asserts
+    # continuam VERDES com a regressao dentro. `tag_cor` e' o que separa os ramos: o
+    # competitivo manda cor None (o `tom` basta), o de demanda manda o hex da faixa.
+    assert all(i["tag_cor"] is None for i in itens), (
+        "itens do passo 3 vieram com `tag_cor` preenchido, assinatura do ramo de "
+        "demanda (FAIXAS_MAPA_DEMANDA). O ramo competitivo 'conc. 2 km' nao pinta "
+        f"chip por cor. tag_cor = {[i['tag_cor'] for i in itens]}"
+    )
 
 
 def test_passo3_rotula_o_valor_como_residual_e_nao_como_concorrencia() -> None:

@@ -10,6 +10,7 @@ import 'maplibre-gl/dist/maplibre-gl.css'
 import { alunos, brl, num } from '../lib/format'
 import {
   DISCARDED_FILL,
+  faixaM1ToColor,
   HEX_FILL_ALPHA,
   NAN_SCORE_FILL,
   POP_MIN_ACIONAVEL,
@@ -59,6 +60,16 @@ function scoreDoPasso(h: Hex, passoN: number): number | null {
   return h.res // score_oportunidade_residual
 }
 
+/* A camada 4 ("Para onde crescer") pinta pela FAIXA DE OPORTUNIDADE do M1, nao
+   pelo score (BLK-MAPA-FAIXAS-01). Motivo: `faixa_oportunidade` sai de um corte
+   sobre `score_percentil_nacional` ([35,50,65,80] em
+   `m1/hex_enrichment._definir_faixa_oportunidade`), NAO sobre `score_priorizacao`,
+   que era o que pintava aqui. Com a legenda nomeada, manter a cor pelo score
+   afirmaria que score 70 = "Alta", o que nao e' verdade. `Hex.faixa` ja chega
+   pronta do backend, entao a cor passa a bater exatamente com o rotulo.
+   READ-ONLY sobre o M1: so exibicao, nada e' recalculado. */
+const PASSO_POR_FAIXA_M1 = 4
+
 /** Opacidade relativa dos hexes FORA do passo atual. O funil vira um holofote nos
  *  hexes da camada — sem precisar de borda colorida (pedido do Felipe: tirar as
  *  bordas azuis). Sem isso, as 10 aberturas do passo 4 sumiriam no meio do mapa. */
@@ -69,7 +80,9 @@ const DIM_FORA_DO_PASSO = 0.5
 function fillDoHex(h: Hex, passoN: number, noPasso: boolean): RGBA {
   let base: RGBA
   if (h.pop !== null && h.pop < POP_MIN_ACIONAVEL) base = [...DISCARDED_FILL]
-  else {
+  else if (passoN === PASSO_POR_FAIXA_M1) {
+    base = h.faixa ? faixaM1ToColor(h.faixa, HEX_FILL_ALPHA) : [...NAN_SCORE_FILL]
+  } else {
     const score = scoreDoPasso(h, passoN)
     base = score === null ? [...NAN_SCORE_FILL] : scoreBandToColor(score, HEX_FILL_ALPHA)
   }

@@ -35,10 +35,7 @@ _CACHED = ("_carregar_ultra_pontos", "_carregar_ultra_mapeadas", "_ultra_coord_m
 
 
 def _clear_caches() -> None:
-    for nome in _CACHED:
-        fn = getattr(pilot, nome, None)
-        if fn is not None and hasattr(fn, "cache_clear"):
-            fn.cache_clear()
+    pilot.limpar_caches()
 
 
 # --- fixtures ---------------------------------------------------------------
