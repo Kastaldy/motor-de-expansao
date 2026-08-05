@@ -38,9 +38,14 @@ export interface RankItem {
   sub: string | null
   valor: number | null
   label: string
-  /** Rótulo curto que muda entre linhas (Quente / Livre / Agora…). */
+  /** Rótulo curto que muda entre linhas (Excelente / Livre / Agora…). Nas camadas
+   *  1/2/3 sai das MESMAS faixas da legenda do mapa (`constants.FAIXAS_MAPA_*`). */
   tag: string
   tom: Tom
+  /** Cor EXATA da faixa da legenda (hex). Tem precedência sobre `tom` no Chip —
+   *  sem ela, "Excelente" saía azul enquanto o bloco na legenda é verde-escuro.
+   *  `null` no ranking de municípios, que usa vocabulário próprio, não faixa. */
+  tag_cor?: string | null
 }
 
 export interface Passo {
@@ -54,6 +59,55 @@ export interface Passo {
   metrica: string
   itens: RankItem[]
   hexes: string[]
+}
+
+/* --- Metodologia (manual do funil, /api/metodologia) ---------------------- */
+
+/** Uma métrica de uma camada, em dois níveis: `resumo` + `fonte` sempre visíveis,
+ *  `regra` revelada sob demanda. `coluna` é o nome no parquet, para quem auditar.
+ *  `ressalva` só existe onde o número tem limite conhecido — e aí é sempre visível,
+ *  porque esconder limitação é o que faz tratarem estimativa como contagem. */
+export interface MetricaMetodologia {
+  nome: string
+  coluna: string
+  /** De onde vem o dado — o "com o quê" da conta. */
+  fonte: string
+  resumo: string
+  regra: string
+  ressalva?: string
+}
+
+/** Base de dados que alimenta o funil. */
+export interface FonteMetodologia {
+  nome: string
+  detalhe: string
+}
+
+/** Faixa de etiqueta. `escopo` vazio vale nos dois funis; senão, 'municipio' | 'uf'. */
+export interface FaixaMetodologia {
+  etiqueta: string
+  condicao: string
+  tom: Tom
+  escopo: string
+}
+
+export interface CamadaMetodologia {
+  n: 1 | 2 | 3 | 4
+  titulo: string
+  pergunta: string
+  corte: string
+  metricas: MetricaMetodologia[]
+  faixas: FaixaMetodologia[]
+  /** Ressalva da camada, quando o que a tela mostra pede aviso. */
+  nota?: string
+}
+
+export interface MetodologiaPayload {
+  /** Como ler o funil, antes de entrar nas camadas. */
+  intro: string
+  fontes: FonteMetodologia[]
+  camadas: CamadaMetodologia[]
+  parametros: { nome: string; valor: string }[]
 }
 
 export interface Resumo {
@@ -660,6 +714,9 @@ export interface RedeCarteira {
    *  cronológica. Vem do servidor: com a competência aberta, a série termina no mês
    *  anterior, e contar para trás a partir de `mes` desloca o gráfico inteiro. */
   serie_meses: string[]
+  /** faturamento somado do recorte, um valor por mês de `serie_meses`. Vem pronto do
+   *  servidor para que tela, CSV e PDF desenhem exatamente a mesma série. */
+  serie_rede: (number | null)[]
   unidades: RedeUnidade[]
   notas: string[]
 }

@@ -333,6 +333,66 @@ CENSO_SCORE_COLORS = {
     "50-75": [245, 158, 11, 140],
     "75-100": [20, 200, 80, 140],
 }
+
+# ---------------------------------------------------------------------------
+# Faixas NOMEADAS das camadas do mapa do piloto (BLK-MAPA-FAIXAS-01)
+# ---------------------------------------------------------------------------
+# FONTE DA VERDADE destas faixas. `web/src/lib/faixas.ts` e' um ESPELHO (mesmo
+# padrao de `SCORE_BANDS_HEX` x `RESIDUAL_SCORE_BANDS`), e um teste de contrato
+# quebra se os dois divergirem.
+#
+# Existem porque a legenda do mapa e a etiqueta de cada item do ranking usavam
+# REGUAS DIFERENTES para a mesma coisa. Medido em 2026-08-03 na demo de Campinas:
+# um hex com 2.400 alunos residuais recebia a etiqueta "Baixa" (o corte era 3.000
+# alunos) enquanto a legenda o classificava como "Livre" (2.400 = 96% da
+# capacidade de uma unidade). O mesmo hexagono era descrito como quase vazio e
+# quase cheio na mesma tela. Com uma definicao unica isso nao volta a acontecer.
+#
+# Tupla: (score_de, score_ate, nome exibido, cor solida, tom do chip no ranking).
+# `score_ate` e' EXCLUSIVO; a ultima faixa fecha em 100 inclusive.
+# READ-ONLY sobre o M1: sao rotulos de exibicao sobre a rampa de cor existente.
+
+# Camada 1 do funil — potencial socioeconomico (`score_setor_2022_calibrado`).
+# VEREDITO sobre a regiao: quem le o mapa decide abertura, e "Promissor" resolve
+# na hora o que "62 pontos" nao resolve.
+FAIXAS_MAPA_POTENCIAL: list[tuple[int, int, str, str, str]] = [
+    (0, 20, "Desfavorável", "#B92323", "red"),
+    (20, 40, "Fraco", "#DC6914", "amber"),
+    (40, 60, "Promissor", "#EEC828", "gray"),
+    (60, 80, "Forte", "#50C33C", "green"),
+    (80, 100, "Excelente", "#0A8226", "blue"),
+]
+
+# Camadas 2 e 3 — demanda nao atendida (`score_oportunidade_residual`).
+# Vocabulario de SATURACAO, em registro formal. O score aqui NAO e' abstrato:
+# `calcular_colunas_mercado` define score = 100 * oferta_efetiva_disponivel / 2.500,
+# e 2.500 alunos e' a capacidade de UMA unidade -> 100 = livre, 0 = saturado.
+FAIXAS_MAPA_DEMANDA: list[tuple[int, int, str, str, str]] = [
+    (0, 20, "Saturado", "#B92323", "red"),
+    (20, 40, "Restrito", "#DC6914", "amber"),
+    (40, 60, "Moderado", "#EEC828", "gray"),
+    (60, 80, "Amplo", "#50C33C", "green"),
+    (80, 100, "Livre", "#0A8226", "blue"),
+]
+
+# Ancora da camada de demanda: score 100 <=> uma unidade cheia.
+# Espelha SCORE_RESIDUAL_CAPACIDADE_REFERENCIA de `pipelines/calcular_colunas_mercado`.
+CAPACIDADE_UNIDADE_ALUNOS = 2500
+
+
+def faixa_do_score(
+    score: float | None, faixas: list[tuple[int, int, str, str, str]]
+) -> tuple[str, str]:
+    """(nome, tom) da faixa em que `score` cai. `None`/NaN -> ultima faixa nao se
+    aplica: devolve ("", "") e o chamador decide o fallback."""
+    if score is None or score != score:  # NaN
+        return "", ""
+    valor = max(0.0, min(100.0, float(score)))
+    for de, ate, nome, _cor, tom in faixas:
+        if de <= valor < ate:
+            return nome, tom
+    _de, _ate, nome, _cor, tom = faixas[-1]
+    return nome, tom
 RESIDUAL_SCORE_BANDS: list[tuple[str, str]] = [
     ("0-10",   "#941212"),
     ("10-20",  "#B92323"),

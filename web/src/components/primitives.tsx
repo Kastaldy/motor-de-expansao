@@ -18,8 +18,27 @@ const TONS: Record<Tom, { fg: string; bg: string }> = {
   gray: { fg: '#98a4b2', bg: 'rgba(255,255,255,.08)' },
 }
 
-export function Chip({ tom = 'gray', children }: { tom?: Tom; children: ReactNode }) {
-  const c = TONS[tom]
+/**
+ * Chip do ranking.
+ *
+ * `cor` (hex solido) tem PRECEDENCIA sobre `tom` e existe para o chip usar a cor
+ * EXATA da faixa da legenda (BLK-MAPA-FAIXAS-01). A paleta `TONS` tem 5 entradas
+ * nomeadas que nao cobrem as 5 cores das faixas 1:1 — mapeando por nome, a etiqueta
+ * "Excelente" saia AZUL enquanto o bloco dela na legenda e' verde-escuro (defeito
+ * apontado pelo Juan em 2026-08-03). Com a cor vindo junto do dado, chip e legenda
+ * nao tem como divergir.
+ */
+export function Chip({
+  tom = 'gray',
+  cor,
+  children,
+}: {
+  tom?: Tom
+  cor?: string | null
+  children: ReactNode
+}) {
+  // `26` = alpha ~15% em hex, a mesma proporcao de fundo dos TONS.
+  const c = cor ? { fg: cor, bg: `${cor}26` } : TONS[tom]
   return (
     <span
       style={{

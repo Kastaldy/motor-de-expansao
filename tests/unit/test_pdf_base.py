@@ -103,3 +103,46 @@ def test_nenhum_gerador_legado_foi_reapontado() -> None:
             __import__(f"motor_expansao.dashboard.{modulo}", fromlist=[modulo])
         )
         assert "class _UltraPDF(FPDF)" in fonte, f"{modulo} deixou de definir a propria classe"
+
+
+# ---------------------------------------------------------------------------
+# Guard de acentuacao NO PDF
+# ---------------------------------------------------------------------------
+
+#: Palavras que em portugues SEMPRE levam acento. Mesma lista de
+#: `test_rede_diagnostico.py`, sem as ambiguas ("sao" aparece em nome cru de unidade,
+#: que e' dado e nao texto).
+_SEMPRE_ACENTUADAS = (
+    "nao", "mes", "regua", "reguas", "periodo", "periodos", "conversao", "dependencia",
+    "diagnostico", "numero", "numeros", "critico", "inadimplencia", "retencao", "decisao",
+    "manutencao", "migracao", "reativacao", "estavel", "evitavel", "saida", "cobranca",
+    "tres", "corroi", "comparavel", "comparaveis", "atencao", "comparacao", "competencia",
+    "rodape", "media", "ja", "esta", "ha", "so",
+)
+
+
+def _texto_cru_do_pdf(pdf: bytes) -> str:
+    """Texto do PDF em minusculas. Funciona porque o `UltraPDF` desliga a compressao."""
+    return pdf.decode("latin-1", errors="replace").lower()
+
+
+def test_pdf_nao_imprime_texto_sem_acento() -> None:
+    """Guard que o teste do "?" NAO cobre -- e' por isso que ele existe.
+
+    Escrever "competencia" em vez de "competência" nao produz caractere fora de latin-1;
+    o PDF sai limpo, o `assert b"?" not in pdf` passa, e o defeito chega ao usuario. O
+    unico lugar onde ele aparece e' o texto CRU do arquivo gerado.
+    """
+    import re
+
+    from motor_expansao.dashboard import rede_export
+    from tests.unit.rede_fixtures import payload_carteira_sintetico, payload_ficha_sintetico
+
+    padrao = re.compile(r"\b(?:" + "|".join(_SEMPRE_ACENTUADAS) + r")\b")
+    for nome, gerar, payload in (
+        ("carteira", rede_export.carteira_pdf, payload_carteira_sintetico()),
+        ("ficha", rede_export.ficha_pdf, payload_ficha_sintetico()),
+    ):
+        cru = _texto_cru_do_pdf(gerar(payload))
+        ofensas = sorted(set(padrao.findall(cru)))
+        assert not ofensas, f"PDF da {nome} imprime texto sem acento (CLAUDE.md §2): {ofensas}"

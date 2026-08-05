@@ -3,6 +3,7 @@
 import type {
   ExecutivaPayload,
   FaixaAlunos,
+  MetodologiaPayload,
   MunicipioItem,
   MunicipioPayload,
   RedeCarteira,
@@ -143,6 +144,10 @@ export const api = {
   health: () => pedir<{ status: string; data_ok: boolean }>('/api/health', {}, 10_000),
 
   ufs: () => pedir<{ ufs: string[] }>('/api/ufs'),
+
+  /** Manual do funil: o que cada camada mede e com que régua corta. Estático —
+   *  não depende de UF nem de município, então a tela busca uma vez e guarda. */
+  metodologia: () => pedir<MetodologiaPayload>('/api/metodologia', {}, 15_000),
 
   /** Visão de UF inteira: funil por UF + recomendação de municípios. */
   ufView: (uf: string) => pedir<MunicipioPayload>(`/api/uf/${encodeURIComponent(uf)}`),
