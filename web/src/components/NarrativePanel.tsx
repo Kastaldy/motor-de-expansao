@@ -192,7 +192,11 @@ export default function NarrativePanel({
                     >
                       {it.titulo}
                     </span>
-                    {it.tag && <Chip tom={it.tom}>{it.tag}</Chip>}
+                    {it.tag && (
+                      <Chip tom={it.tom} cor={it.tag_cor}>
+                        {it.tag}
+                      </Chip>
+                    )}
                   </span>
                   {it.sub && (
                     <span
