@@ -303,15 +303,11 @@ export default function ExecutiveScreen() {
         style={{
           flexShrink: 0,
           margin: '16px 16px 0',
-          padding: '10px 14px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
+          padding: '9px 14px 7px',
           background: 'var(--surf-chrome)',
           border: '1px solid var(--line-soft)',
           borderRadius: 'var(--r-xl)',
           backdropFilter: 'blur(14px)',
-          flexWrap: 'wrap',
           // `position: relative` + `zIndex` são OBRIGATÓRIOS aqui, e não são enfeite:
           // `backdropFilter` cria um CONTEXTO DE EMPILHAMENTO, então o `zIndex: 40` do
           // popup do Select vale só dentro deste cabeçalho. Sem elevar o cabeçalho
@@ -321,6 +317,11 @@ export default function ExecutiveScreen() {
           zIndex: 30,
         }}
       >
+        {/* Faixa 1 — só o que o operador MANIPULA. O período de referência e a contagem
+            de unidades saíram daqui para a legenda de baixo: eram duas linhas de texto
+            no meio da fila de controles, e a cada filtro que entrava empurravam os
+            botões de export para a linha seguinte. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <h1 style={{ font: '600 14px/1 var(--f-ui)', letterSpacing: '-.01em', color: 'var(--tx-max)', margin: 0 }}>
           Rede Ultra
         </h1>
@@ -399,18 +400,55 @@ export default function ExecutiveScreen() {
 
         <div style={{ flex: 1 }} />
 
-        {carteira && (
-          <span className="num" style={{ font: '500 10.5px/1.4 var(--f-num)', color: 'var(--tx-sub)', textAlign: 'right' }}>
-            até {carteira.referencia} · vs {carteira.referencia_m1}
-            <br />
-            {carteira.totais.no_recorte} de {carteira.totais.rede} unidades
-          </span>
-        )}
         {(['csv', 'xlsx', 'pdf'] as const).map((f) => (
           <Botao key={f} variante="ghost" onClick={() => baixarArquivo(f)} disabled={baixando !== null}>
             {baixando === f ? <Spinner /> : '↓'} {f.toUpperCase()}
           </Botao>
         ))}
+        </div>
+
+        {/* Faixa 2 — legenda: o que o número em cima significa. Uma linha discreta, que
+            quebra sozinha em tela estreita sem empurrar controle nenhum. */}
+        {carteira && (
+          <div
+            style={{
+              marginTop: 7,
+              paddingTop: 6,
+              borderTop: '1px solid var(--line-soft)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              flexWrap: 'wrap',
+              font: '400 10.5px/1.4 var(--f-ui)',
+              color: 'var(--tx-muted)',
+            }}
+          >
+            <span>
+              Competência <strong style={{ color: 'var(--tx-sub)' }}>{rotuloMesCompetencia(carteira.mes)}</strong>
+              {carteira.mes_completo ? ' (fechada)' : ' (em curso)'}
+            </span>
+            <span className="num">
+              até {carteira.referencia} · compara com {carteira.referencia_m1}
+            </span>
+            <span className="num">
+              {carteira.totais.no_recorte} de {carteira.totais.rede} unidades
+              {carteira.totais.com_coordenada < carteira.totais.no_recorte
+                ? ` · ${carteira.totais.com_coordenada} no mapa`
+                : ''}
+            </span>
+            {carteira.competencia_diagnostico && carteira.competencia_diagnostico !== carteira.mes && (
+              <span>
+                diagnóstico de{' '}
+                <strong style={{ color: 'var(--tx-sub)' }}>
+                  {rotuloMesCompetencia(carteira.competencia_diagnostico)}
+                </strong>
+                , o último mês fechado
+              </span>
+            )}
+            <div style={{ flex: 1 }} />
+            <span>Growth API · read-only sobre o M1</span>
+          </div>
+        )}
       </header>
 
       <div
@@ -460,8 +498,13 @@ export default function ExecutiveScreen() {
               })}
             </div>
 
+            {/* A carteira ocupa a LARGURA TODA. Dividindo a linha com o mapa, as oito
+                colunas não cabiam nos ~620 px que sobravam e a tabela virava uma barra
+                de rolagem horizontal: para ver o NPS era preciso arrastar o scroll de
+                baixo, perdendo de vista a coluna do nome. O mapa desceu para a faixa
+                seguinte — ele é apoio, e é assim que a DEC-023 o define. */}
             <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              <Glass style={{ flex: '1 1 620px', minWidth: 0, padding: 0, overflow: 'hidden' }}>
+              <Glass style={{ flex: '1 1 100%', minWidth: 0, padding: 0, overflow: 'hidden' }}>
                 <div
                   style={{
                     padding: '13px 16px 11px',
@@ -513,7 +556,7 @@ export default function ExecutiveScreen() {
                     )
                   })}
                 </div>
-                <div style={{ maxHeight: 620, overflowY: 'auto' }}>
+                <div style={{ maxHeight: 560, overflowY: 'auto' }}>
                   <Tabela
                     colunas={colunas}
                     dados={unidades}
@@ -527,8 +570,7 @@ export default function ExecutiveScreen() {
                 </div>
               </Glass>
 
-              <div style={{ flex: '1 1 340px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                <Glass style={{ padding: 0, overflow: 'hidden' }}>
+              <Glass style={{ flex: '1 1 460px', minWidth: 0, padding: 0, overflow: 'hidden' }}>
                   <div style={{ padding: '13px 16px 9px', font: '600 10.5px/1 var(--f-ui)', letterSpacing: '.09em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
                     Onde estão
                   </div>
@@ -546,11 +588,12 @@ export default function ExecutiveScreen() {
                   </div>
                   <div style={{ padding: '9px 16px 12px', font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
                     {carteira.totais.com_coordenada} de {carteira.totais.no_recorte} unidades com
-                    coordenada. Tamanho da bolha = faturamento; cor = diagnóstico.
+                    coordenada. Tamanho da bolha = faturamento; cor = diagnóstico. Use a roda
+                    do mouse sobre o mapa para aproximar, ou os botões + e −.
                   </div>
-                </Glass>
+              </Glass>
 
-                <Glass style={{ padding: '14px 16px' }}>
+                <Glass style={{ flex: '1 1 300px', minWidth: 0, padding: '14px 16px' }}>
                   <Rotulo>Recorrentes × agregadores</Rotulo>
                   <div style={{ display: 'flex', justifyContent: 'space-between', font: '500 10.5px/1 var(--f-ui)', color: 'var(--tx-label)', marginBottom: 6 }}>
                     <span>Recorrentes {pct(carteira.split.pct_recorrentes, 0)}</span>
@@ -569,7 +612,7 @@ export default function ExecutiveScreen() {
                 </Glass>
 
                 {carteira.sss.disponivel && carteira.sss.metricas && (
-                  <Glass style={{ padding: '14px 16px' }}>
+                  <Glass style={{ flex: '1 1 300px', minWidth: 0, padding: '14px 16px' }}>
                     <Rotulo>Mesma base, ano a ano (SSS)</Rotulo>
                     <div style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginBottom: 10 }}>
                       {carteira.sss.unidades} unidades presentes nos dois períodos. Comparar total
@@ -599,7 +642,6 @@ export default function ExecutiveScreen() {
                     })}
                   </Glass>
                 )}
-              </div>
             </div>
 
             <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
