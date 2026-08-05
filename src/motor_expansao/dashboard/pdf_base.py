@@ -16,6 +16,9 @@ existe para deixar isso explicito no ponto de uso.
 
 from __future__ import annotations
 
+import math
+from collections.abc import Callable, Sequence
+
 from fpdf import FPDF
 
 #: Slide 16:9 widescreen, em pontos.
@@ -138,3 +141,258 @@ def linha_de_tabela(
         pdf.set_xy(cursor + 3, y + 3)
         pdf.cell(largura - 6, altura - 6, ascii_seguro(texto), align=alinhamento)
         cursor += largura
+
+
+# ---------------------------------------------------------------------------
+# Graficos
+#
+# Desenhados com as primitivas do proprio fpdf (rect/line/ellipse), nao com matplotlib:
+# sao quatro formas simples, saem VETORIAIS (o PDF e' lido em tela cheia numa reuniao) e o
+# gerador continua sem processar imagem dentro de uma rota HTTP.
+#
+# Regra que vale para todos, a mesma da tela: a base da escala e' ZERO. Comecar no minimo
+# da serie faz uma variacao de 2% parecer queda pela metade -- e' o defeito da escala
+# congelada da planilha que o time usa hoje.
+# ---------------------------------------------------------------------------
+
+
+def _finitos(valores: Sequence[float | None]) -> list[float]:
+    return [float(v) for v in valores if v is not None and math.isfinite(float(v))]
+
+
+def _milhar(valor: float) -> str:
+    """Separador de milhar em pt-BR, sem casas."""
+    return f"{valor:,.0f}".replace(",", ".")
+
+
+def titulo_de_grafico(pdf: UltraPDF, x: float, y: float, texto: str, apoio: str = "") -> None:
+    pdf.set_text_color(90, 90, 90)
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_xy(x, y)
+    pdf.cell(340, 11, ascii_seguro(texto))
+    if apoio:
+        pdf.set_text_color(140, 140, 140)
+        pdf.set_font("Helvetica", "", 7.5)
+        pdf.set_xy(x, y + 11)
+        pdf.cell(420, 9, ascii_seguro(apoio))
+
+
+def barras(
+    pdf: UltraPDF,
+    x: float,
+    y: float,
+    largura: float,
+    altura: float,
+    rotulos: Sequence[str],
+    valores: Sequence[float | None],
+    *,
+    cor: tuple[int, int, int] = ULTRA_TURQUESA,
+    formatar: Callable[[float], str] = _milhar,
+) -> None:
+    """Barras verticais com base em zero, eixo e o maximo anotado."""
+    if not rotulos:
+        return
+    finitos = _finitos(valores)
+    maximo = max(finitos) if finitos else 0.0
+    passo = largura / max(len(rotulos), 1)
+    largura_barra = min(passo * 0.66, 24.0)
+
+    pdf.set_draw_color(*CINZA_LINHA)
+    pdf.set_line_width(0.5)
+    pdf.line(x, y + altura, x + largura, y + altura)
+
+    for indice, rotulo in enumerate(rotulos):
+        valor = valores[indice] if indice < len(valores) else None
+        centro = x + passo * indice + passo / 2
+        if valor is not None and maximo > 0:
+            alto = max(altura * float(valor) / maximo, 0.8)
+            ultimo = indice == len(rotulos) - 1
+            pdf.set_fill_color(*(cor if ultimo else _clarear(cor, 0.45)))
+            pdf.rect(centro - largura_barra / 2, y + altura - alto, largura_barra, alto, style="F")
+        pdf.set_text_color(150, 150, 150)
+        pdf.set_font("Helvetica", "", 6.5)
+        pdf.set_xy(centro - passo / 2, y + altura + 3)
+        pdf.cell(passo, 8, ascii_seguro(rotulo), align="C")
+
+    if finitos:
+        pdf.set_text_color(*CINZA_TEXTO)
+        pdf.set_font("Helvetica", "B", 7.5)
+        pdf.set_xy(x, y - 10)
+        pdf.cell(largura, 9, ascii_seguro(f"max {formatar(maximo)}"), align="R")
+
+
+def linha(
+    pdf: UltraPDF,
+    x: float,
+    y: float,
+    largura: float,
+    altura: float,
+    valores: Sequence[float | None],
+    *,
+    cor: tuple[int, int, int] = ULTRA_TURQUESA,
+    formatar: Callable[[float], str] = _milhar,
+    base_zero: bool = True,
+) -> None:
+    """Polilinha simples, com o minimo e o maximo anotados. Buraco na serie corta a linha."""
+    finitos = _finitos(valores)
+    if len(finitos) < 2:
+        return
+    maximo = max(finitos)
+    minimo = 0.0 if (base_zero and min(finitos) >= 0) else min(finitos)
+    amplitude = (maximo - minimo) or 1.0
+    passo = largura / max(len(valores) - 1, 1)
+
+    pdf.set_draw_color(*CINZA_LINHA)
+    pdf.set_line_width(0.5)
+    pdf.line(x, y + altura, x + largura, y + altura)
+
+    pdf.set_draw_color(*cor)
+    pdf.set_line_width(1.4)
+    anterior: tuple[float, float] | None = None
+    for indice, valor in enumerate(valores):
+        if valor is None or not math.isfinite(float(valor)):
+            anterior = None
+            continue
+        ponto = (x + passo * indice, y + altura - altura * (float(valor) - minimo) / amplitude)
+        if anterior is not None:
+            pdf.line(anterior[0], anterior[1], ponto[0], ponto[1])
+        anterior = ponto
+    if anterior is not None:
+        pdf.set_fill_color(*cor)
+        pdf.ellipse(anterior[0] - 2, anterior[1] - 2, 4, 4, style="F")
+
+    pdf.set_text_color(150, 150, 150)
+    pdf.set_font("Helvetica", "", 6.5)
+    pdf.set_xy(x, y - 9)
+    pdf.cell(largura, 8, ascii_seguro(formatar(maximo)))
+    pdf.set_xy(x, y + altura + 2)
+    pdf.cell(largura, 8, ascii_seguro(formatar(minimo)))
+
+
+def barras_horizontais(
+    pdf: UltraPDF,
+    x: float,
+    y: float,
+    largura: float,
+    etapas: Sequence[tuple[str, float | None, tuple[int, int, int]]],
+    *,
+    altura_linha: float = 15.0,
+) -> None:
+    """Funil: rotulo a esquerda, barra proporcional ao MAIOR degrau, valor a direita.
+
+    Nao normaliza pelo primeiro degrau de proposito: na base real `vendas > convertidos`
+    em 75% das linhas, e forcar o funil a afunilar esconderia um problema de coleta.
+    """
+    valores = _finitos([v for _, v, _ in etapas])
+    maximo = max(valores) if valores else 0.0
+    rotulo_largura, valor_largura = 92.0, 52.0
+    barra_largura = largura - rotulo_largura - valor_largura
+
+    for indice, (rotulo, valor, cor) in enumerate(etapas):
+        topo = y + indice * altura_linha
+        pdf.set_text_color(110, 110, 110)
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_xy(x, topo + 2)
+        pdf.cell(rotulo_largura, 10, ascii_seguro(rotulo))
+
+        pdf.set_fill_color(*CINZA_CLARO)
+        pdf.rect(x + rotulo_largura, topo + 3, barra_largura, 8, style="F")
+        if valor is not None and maximo > 0:
+            pdf.set_fill_color(*cor)
+            pdf.rect(x + rotulo_largura, topo + 3, barra_largura * float(valor) / maximo, 8, style="F")
+
+        pdf.set_text_color(*CINZA_TEXTO)
+        pdf.set_font("Helvetica", "B", 8.5)
+        pdf.set_xy(x + rotulo_largura + barra_largura + 4, topo + 2)
+        pdf.cell(valor_largura - 8, 10, "-" if valor is None else _milhar(valor), align="R")
+
+
+def faixa_de_percentil(
+    pdf: UltraPDF,
+    x: float,
+    y: float,
+    largura: float,
+    *,
+    p25: float | None,
+    p50: float | None,
+    p75: float | None,
+    unidade: float | None,
+) -> None:
+    """Onde a unidade cai entre os pares: caixa p25-p75, tracinho da mediana, marca dela."""
+    pontos = _finitos([p25, p50, p75, unidade])
+    if not pontos or unidade is None:
+        return
+    minimo, maximo = min(0.0, min(pontos)), max(pontos)
+    amplitude = (maximo - minimo) or 1.0
+
+    def posicao(valor: float | None) -> float | None:
+        return None if valor is None else x + largura * (float(valor) - minimo) / amplitude
+
+    pdf.set_fill_color(*CINZA_CLARO)
+    pdf.rect(x, y + 3, largura, 6, style="F")
+    esquerda, direita = posicao(p25), posicao(p75)
+    if esquerda is not None and direita is not None:
+        pdf.set_fill_color(190, 190, 190)
+        pdf.rect(esquerda, y + 3, max(direita - esquerda, 0.6), 6, style="F")
+    mediana = posicao(p50)
+    if mediana is not None:
+        pdf.set_fill_color(110, 110, 110)
+        pdf.rect(mediana - 0.6, y + 1, 1.2, 10, style="F")
+    marca = posicao(unidade)
+    if marca is not None:
+        pdf.set_fill_color(*ULTRA_TURQUESA)
+        pdf.rect(marca - 2, y, 4, 12, style="F")
+
+
+def barra_de_meta(
+    pdf: UltraPDF,
+    x: float,
+    y: float,
+    largura: float,
+    *,
+    valor: float | None,
+    meta: float,
+    minimo: float = -100.0,
+    maximo: float = 100.0,
+) -> None:
+    """Regua com a meta marcada. Verde quando bate a meta, turquesa quando nao."""
+
+    def posicao(v: float) -> float:
+        return x + largura * min(max((v - minimo) / (maximo - minimo), 0.0), 1.0)
+
+    pdf.set_fill_color(*CINZA_CLARO)
+    pdf.rect(x, y, largura, 8, style="F")
+    if valor is not None:
+        pdf.set_fill_color(*(COR_SEVERIDADE["ok"] if valor >= meta else ULTRA_TURQUESA))
+        pdf.rect(x, y, max(posicao(valor) - x, 0.6), 8, style="F")
+    pdf.set_fill_color(80, 80, 80)
+    pdf.rect(posicao(meta) - 0.6, y - 2, 1.2, 12, style="F")
+
+
+def barra_empilhada(
+    pdf: UltraPDF,
+    x: float,
+    y: float,
+    largura: float,
+    altura: float,
+    partes: Sequence[tuple[float, tuple[int, int, int]]],
+) -> None:
+    """Barra segmentada (semaforo da rede, recorrentes x agregadores)."""
+    total = sum(max(v, 0.0) for v, _ in partes) or 1.0
+    cursor = x
+    for valor, cor in partes:
+        fatia = largura * max(valor, 0.0) / total
+        if fatia <= 0:
+            continue
+        pdf.set_fill_color(*cor)
+        pdf.rect(cursor, y, fatia, altura, style="F")
+        cursor += fatia
+
+
+def _clarear(cor: tuple[int, int, int], fator: float) -> tuple[int, int, int]:
+    """Mistura com branco -- distingue os meses anteriores do mes mais recente."""
+    return (
+        int(cor[0] + (255 - cor[0]) * fator),
+        int(cor[1] + (255 - cor[1]) * fator),
+        int(cor[2] + (255 - cor[2]) * fator),
+    )

@@ -312,6 +312,13 @@ export default function ExecutiveScreen() {
           borderRadius: 'var(--r-xl)',
           backdropFilter: 'blur(14px)',
           flexWrap: 'wrap',
+          // `position: relative` + `zIndex` são OBRIGATÓRIOS aqui, e não são enfeite:
+          // `backdropFilter` cria um CONTEXTO DE EMPILHAMENTO, então o `zIndex: 40` do
+          // popup do Select vale só dentro deste cabeçalho. Sem elevar o cabeçalho
+          // inteiro, o scroller — que vem depois no DOM e cujos cards também têm
+          // `backdropFilter` — pinta por cima, e a lista de opções abre ATRÁS dos cards.
+          position: 'relative',
+          zIndex: 30,
         }}
       >
         <h1 style={{ font: '600 14px/1 var(--f-ui)', letterSpacing: '-.01em', color: 'var(--tx-max)', margin: 0 }}>
@@ -406,7 +413,18 @@ export default function ExecutiveScreen() {
         ))}
       </header>
 
-      <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', padding: '14px 16px 22px', minHeight: 0 }}>
+      <div
+        style={{
+          flex: 1,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          padding: '14px 16px 22px',
+          minHeight: 0,
+          // Explícito para não voltar a competir com o cabeçalho por ordem de DOM.
+          position: 'relative',
+          zIndex: 0,
+        }}
+      >
         {carregando && !carteira ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 40, color: 'var(--tx-sub)' }}>
             <Spinner /> Lendo a rede Ultra…
@@ -589,7 +607,7 @@ export default function ExecutiveScreen() {
                 <Rotulo>Faturamento da rede no recorte</Rotulo>
                 <BarrasPeriodo
                   meses={carteira.serie_meses}
-                  valores={serieDaRede(carteira)}
+                  valores={carteira.serie_rede}
                   formato="brl"
                 />
                 <div style={{ marginTop: 8, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
@@ -638,31 +656,6 @@ export default function ExecutiveScreen() {
       </div>
     </div>
   )
-}
-
-/** Soma das sparklines do recorte, posição a posição (mês fechado a mês fechado).
- *
- *  Os RÓTULOS vêm do servidor (`carteira.serie_meses`), nunca de uma contagem regressiva
- *  a partir de `mes`: com a competência aberta — o caso padrão, que é como a aba abre — a
- *  série termina no mês ANTERIOR, e contar para trás rotulava cada barra com o mês
- *  seguinte. O gráfico inteiro saía deslocado em um mês, e o card de KPI (MTD de 4 dias)
- *  ficava ao lado de uma barra "ago" que na verdade era julho. */
-function serieDaRede(carteira: RedeCarteira): (number | null)[] {
-  const n = carteira.serie_meses.length
-  return Array.from({ length: n }, (_, i) => {
-    let soma = 0
-    let algum = false
-    for (const u of carteira.unidades) {
-      // Alinha pela DIREITA: a série de uma unidade nova é mais curta e os meses
-      // anteriores à inauguração dela simplesmente não existem.
-      const v = u.sparkline[u.sparkline.length - (n - i)]
-      if (typeof v === 'number' && Number.isFinite(v)) {
-        soma += v
-        algum = true
-      }
-    }
-    return algum ? soma : null
-  })
 }
 
 function Filtro({ rotulo, children }: { rotulo: string; children: React.ReactNode }) {
