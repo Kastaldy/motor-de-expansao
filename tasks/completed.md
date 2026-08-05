@@ -11106,3 +11106,56 @@ re-cifrar `secrets/Caddyfile.enc`; (2) validar basemap nos PDFs (api + piloto); 
 (EDGE_URL→`piloto.`); (4) `stop`/`rm` do container + `.env` sem `STREAMLIT_IMAGE`; (5) Authelia intocada
 (`/tiles/` segue atrás do login); (6) `ps` todos healthy; (7) tag `arquivo/piloto-web-final` + delete da branch
 `piloto-web`. Imagem GHCR retida por semanas (rollback = revert do BLK-WEB-20 + imagem existente).
+
+---
+
+## Fechamento de ciclo — BLK-MA-10 (2026-08-05)
+
+**VEREDITO: ARQUIVAR.** A nota por unidade do TotalPass **não existe** — e o achado que fecha a
+questão é o *motivo*: não é dado existente porém escondido atrás de proteção técnica; **a
+funcionalidade de avaliar academia não existe no produto**, nem para o usuário, nem para a academia
+parceira, nem no contrato de dados que alimenta o próprio site.
+
+Spike time-boxed, **zero código de produção**, READ-ONLY sobre o M1. Relatório completo com
+evidência, limites e estimativa de custo em `data/reports/spike_totalpass_nota_2026-08-05.md`.
+
+**O salto em relação à sonda de 2026-07-30/31.** Aquela provou ausência por **amostragem** (7 páginas
+de unidade, JSON-LD sem `aggregateRating`). Esta prova no **nível do produto**, por cinco vetores que
+não dependem de amostra: (1) `dev.totalpass.com` é portal de desenvolvedor **público e sem
+autenticação**, com ~65 endpoints em 3 APIs e **zero** campo de rating — fonte independente e de
+dentro da própria empresa; (2) o bundle JS do app de busca (20 chunks, ~1,3 MB, leitura autorizada
+por `Allow: /*.js` no robots) tem zero identificador de rating — o cliente **não sabe exibir** nota;
+(3) o BFF público `/api/website/gyms/` devolve 18 atributos por unidade, todos de elegibilidade de
+plano — o backend **não serve** nota; (4) nenhum dos dois lados do produto conhece a feature (central
+de ajuda sem artigo de avaliar, com toda ocorrência de "nota" sendo nota **fiscal**; Portal de
+Academias sem menção; e o próprio blog **ensinando o parceiro a rodar pesquisa de satisfação em
+Google Forms/NPS**); (5) no app, os 6 screenshots oficiais — inclusive a tela de mapa, onde a nota
+apareceria — não têm estrela, e em 05/10/2024 um cliente pagante **pediu a feature** numa resenha da
+App Store, o que é prova positiva de ausência.
+
+Único quase-acerto, verificado a fundo: `monthly_gyms_rankings` (`hr.totalpass.com`) é ranking por
+**contagem de check-in** dos beneficiários de **uma** empresa contratante — volume, não satisfação;
+inútil como proxy de qualidade e enviesado pelo contrato daquele cliente.
+
+**Conformidade.** Os ToS **não têm cláusula** contra scraping/crawler/acesso automatizado (têm
+restrição de uso comercial da marca e regra de 1 cadastro por pessoa, esta última inviabilizando
+conta dedicada à coleta); o `robots.txt` é permissivo. Ainda assim: só leitura pública espaçada,
+**nenhum login, nenhuma credencial, e nenhuma tentativa de contornar os `403`** encontrados
+(`api.`, `cms.`, Zendesk). Limites não verificados declarados na §5 do relatório.
+
+**DECISÃO HUMANA (Vinicius, 2026-08-05): arquivar + levar ao BLK-MA-07.** Sem follow-up técnico. As
+**15.986 unidades** TotalPass já coletadas — universo maior que o do WellHub — vão para o
+**BLK-MA-07** (reputação **externa**, com gate e DEC próprios); sem isso ficariam permanentemente sem
+sinal 2. Se a nota do TotalPass virar requisito de negócio, o caminho é **comercial** (pedir a fonte
+ao grupo SmartFit), não técnico.
+
+**Insumo para o gate do BLK-MA-09 (D-B).** Fica confirmado que a régua assimétrica por fonte é
+**PERMANENTE**, não transitória: a partição do universo entre WellHub (com `v2`) e TotalPass (sem)
+**não se resolve por engenharia**. O D-B precisa decidir sabendo disso — o que reforça a opção **(0)**
+já listada como preferida no backlog (propagar o rating como coluna-fato **sem peso**), que dissolve
+o problema em vez de administrá-lo.
+
+**Pendente para o housekeeping em lote** (modo auto-merge não toca `backlog.md`): o stub do
+BLK-MA-10; e o **BLK-MA-07 ainda não tem seção própria** no backlog (existe só como bullet da
+decomposição do BLK-MA-01, `:1586`) — a seção precisa ser criada carregando o veredito acima e a
+hipótese do app mobile como linha de risco.
