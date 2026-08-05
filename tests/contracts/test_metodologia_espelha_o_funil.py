@@ -128,21 +128,52 @@ def test_camada_4_declara_que_nao_filtra(metodologia):
     c4 = _camada(metodologia, 4)
     assert "não filtra" in c4["corte"]
 
-    # E o funil de fato nao corta aqui: o passo 5 recebe o mesmo conjunto que o 3
-    # aprovou, independente do que a camada 4 diz sobre a cidade.
-    df = pd.DataFrame(
-        {
-            "hex_id": ["8a1", "8a2"],
-            "nome_municipio": ["Cidade", "Cidade"],
-            "n_concorrentes_est": [0, 0],
-            "oferta_efetiva_disponivel": [9000.0, 8000.0],
-            "score_setor_2022_calibrado": [90.0, 88.0],
-            "pop_leitura": [30000, 28000],
+    # A prova tem que ser A/B, e nao a igualdade `passos[4]["funil_big"] ==
+    # passos[2]["funil_big"]` que estava aqui: com 2 hexes ela era verdadeira POR
+    # ACIDENTE (a fila e' nlargest(FILA_MAX=10), entao coincide com o white space
+    # enquanto houver menos de 10 candidatos) e ficava vermelha com 15, sem nada
+    # estar filtrando. Pior: o df nao tinha NENHUMA coluna `cres_*`, entao o caminho
+    # COM dado de crescimento — o unico em que a filtragem poderia existir — nunca era
+    # exercido. Aqui rodamos o mesmo funil com e sem o dado e exigimos saida identica.
+    def _df(com_crescimento: bool) -> pd.DataFrame:
+        n = 15  # > FILA_MAX, para a comparacao nao ser trivial
+        base = {
+            "hex_id": [f"8a{i:02d}" for i in range(n)],
+            "nome_municipio": [f"Cidade{i % 4}" for i in range(n)],
+            "n_concorrentes_est": [0] * n,
+            "oferta_efetiva_disponivel": [9000.0 - i * 100 for i in range(n)],
+            "score_setor_2022_calibrado": [90.0 - i * 0.5 for i in range(n)],
+            "pop_leitura": [30000 - i * 100 for i in range(n)],
         }
-    )
-    passos = pilot.montar_funil(df, "Cidade", {})
-    assert [p["n"] for p in passos] == [1, 2, 3, 4, 5]
-    assert passos[4]["funil_big"] == passos[2]["funil_big"]
+        if com_crescimento:
+            # Municipal (broadcast) + por hexagono, como o join real entrega.
+            base["cres_emp_pct"] = [(-8.0 if i % 4 == 0 else 22.0) for i in range(n)]
+            base["cres_hex_classe"] = [
+                ("Sem obra nova" if i % 3 == 0 else "Em alta") for i in range(n)
+            ]
+        return pd.DataFrame(base)
+
+    sem, com = pilot.montar_funil(_df(False), "Cidade0", {}), pilot.montar_funil(_df(True), "Cidade0", {})
+    assert [p["n"] for p in com] == [1, 2, 3, 4, 5]
+
+    # ANTI-VACUIDADE: sem isto o teste passaria mesmo que o ramo com dado nunca
+    # rodasse — foi assim que a versao anterior deste teste ficou sem poder. O caso
+    # "com" tem que de fato ACENDER a camada 4, e o "sem" tem que degradar.
+    assert com[3]["funil_big"] > 0, "o caminho COM crescimento nao ativou a camada 4"
+    assert sem[3]["funil_big"] == 0, "o caminho SEM crescimento deveria degradar"
+    # O passo 5 (fila) tem que sair igual: mesmos hexes, mesma ordem.
+    assert com[4]["hexes"] == sem[4]["hexes"]
+    assert [i["hex_id"] for i in com[4]["itens"]] == [i["hex_id"] for i in sem[4]["itens"]]
+    # E os passos anteriores tambem — a camada 4 nao pode retroagir sobre eles.
+    for n_passo in (0, 1, 2):
+        assert com[n_passo]["hexes"] == sem[n_passo]["hexes"]
+
+    # Idem na visao de UF, onde a camada 4 ranqueia municipios.
+    sem_uf = pilot.montar_funil_uf(_df(False), "SP")
+    com_uf = pilot.montar_funil_uf(_df(True), "SP")
+    assert [i["municipio"] for i in com_uf[4]["itens"]] == [
+        i["municipio"] for i in sem_uf[4]["itens"]
+    ]
 
 
 def test_camada_5_publica_as_faixas_de_oportunidade_do_m1(metodologia):

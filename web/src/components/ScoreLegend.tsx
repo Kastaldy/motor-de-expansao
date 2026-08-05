@@ -70,7 +70,7 @@ function Bloco({ fundo, nome, sub }: { fundo: string; nome: string; sub?: string
   )
 }
 
-/* Camada 5 do funil — a taxa de crescimento da area construida do hexagono
+/* Camada 4 do funil — a taxa de crescimento da area construida do hexagono
    (BLK-TRAJ-01). Tres estados, nao uma rampa: nao ha nota aqui, ha direcao.
    Sem amarelo de proposito — no meio de uma escala vermelho-verde ele le como
    ALERTA, e "estavel" nao e alerta. Cortes na distribuicao real dos 41.135 hexes

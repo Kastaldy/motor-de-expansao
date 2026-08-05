@@ -183,7 +183,6 @@ export default function MapScreen({
       cres_tend: null,
       cres_emp: null,
       cres_empresas: null,
-      cres_confiab: null,
       cres_salario: null,
       cres_setor: null,
       cres_uf_mediana: null,
@@ -695,7 +694,7 @@ export default function MapScreen({
           <StepperBar
             passos={dados.passos}
             atual={passoN}
-            onIr={(n) => setPassoN(Math.min(5, Math.max(1, n)))}
+            onIr={(n) => setPassoN(Math.min(dados.passos.length, Math.max(1, n)))}
             onGerarRelatorio={gerarRelatorioMunicipal}
             gerando={gerando}
             nivelUf={nivelUf}

@@ -139,6 +139,7 @@ export function fundoDoSwatch(cores: string[]): string {
 export function faixasDoPasso(passoN: number): FaixaNomeada[] | null {
   if (passoN === 1) return FAIXAS_POTENCIAL
   if (passoN === 2 || passoN === 3) return FAIXAS_DEMANDA
+  // 4 = crescimento: nao usa rampa de score, tem legenda propria (LegendaCrescimento).
   return null
 }
 
@@ -147,5 +148,6 @@ export function faixasDoPasso(passoN: number): FaixaNomeada[] | null {
 export function tituloDaLegenda(passoN: number): string {
   if (passoN === 1) return 'Potencial socioeconômico'
   if (passoN === 2 || passoN === 3) return 'Demanda não atendida (alunos)'
+  if (passoN === 4) return 'Área construída 2016–2023'
   return 'Faixa de oportunidade M1'
 }

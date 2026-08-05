@@ -1413,6 +1413,10 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     )
     alunos_res = _num(residual["oferta_efetiva_disponivel"].sum()) if len(residual) else 0
     white = residual[residual["n_concorrentes_est"] == 0] if len(residual) else residual
+    # Presenca de VALOR, nao de coluna: o artefato pode existir e o join nao casar
+    # (o fallback por nome e o caminho principal em 21 das 27 UFs), e nesse caso a
+    # coluna chega cheia de NaN — a prosa afirmava CAGED ao lado de 0 cidades.
+    tem_cres = "cres_emp_pct" in white.columns and bool(white["cres_emp_pct"].notna().any())
     # Base dos passos 3, 4 e 5: SOMENTE o white space, igual ao funil municipal
     # (decisao do dono, 2026-08-03). Sem hexagono livre a UF inteira sai com esses
     # passos vazios — e isso e o certo: o numerao ja diz 0 e o mapa nao acende nada;
@@ -1488,7 +1492,7 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
                     "Receita Federal. É o dado mais recente da pilha — vai até junho de 2026, "
                     "enquanto o censo é de 2022."
                 )
-                if "cres_emp_pct" in white.columns
+                if tem_cres
                 else (
                     "Sem leitura de crescimento para este estado — o artefato municipal não "
                     "está disponível. As áreas sem concorrência seguem valendo."
@@ -1501,7 +1505,7 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
                         >= 15
                     ).sum()
                 )
-                if "cres_emp_pct" in white.columns
+                if tem_cres
                 else 0
             ),
             "funil_unit": "cidades com emprego em alta",
@@ -1511,7 +1515,7 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
                 _rank_municipios(
                     white, "cres_emp_pct", "crescimento", "% emprego", "green"
                 )
-                if "cres_emp_pct" in white.columns
+                if tem_cres
                 else []
             ),
             "hexes": (white["hex_id"].tolist() if len(white) else []),
@@ -1577,7 +1581,6 @@ def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
         or _texto(r.get("cres_tendencia")),
         "cres_emp": _num(r.get("cres_emp_pct"), 1),
         "cres_empresas": _num(r.get("cres_saldo_empresas")),
-        "cres_confiab": _texto(r.get("cres_confiab")),
         "cres_salario": _num(r.get("cres_salario")),        # salario medio de admissao
         "cres_setor": _texto(r.get("cres_setor")),          # setor acima do normal na cidade
         "cres_uf_mediana": _num(r.get("cres_uf_mediana"), 1),

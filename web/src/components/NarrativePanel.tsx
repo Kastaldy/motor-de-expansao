@@ -383,7 +383,7 @@ export default function NarrativePanel({
   const dims = passo.dims ?? null
   return (
     <aside
-      aria-label={`Camada ${passo.n} de {totalPassos}: ${passo.titulo}`}
+      aria-label={`Camada ${passo.n} de ${totalPassos}: ${passo.titulo}`}
       style={{
         width: 394,
         flexShrink: 0,

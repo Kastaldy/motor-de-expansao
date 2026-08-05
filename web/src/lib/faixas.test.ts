@@ -124,7 +124,7 @@ describe('exemplo de TODAS as faixas, como aparecem na legenda', () => {
   })
 
   it('os titulos de cada camada', () => {
-    expect([1, 2, 3, 4].map(tituloDaLegenda)).toEqual([
+    expect([1, 2, 3, 5].map(tituloDaLegenda)).toEqual([
       'Potencial socioeconômico',
       'Demanda não atendida (alunos)',
       'Demanda não atendida (alunos)',

@@ -147,7 +147,7 @@ def test_veredito_aparece_mesmo_sem_tendencia(com_crescimento: Path) -> None:
     assert "Confiabilidade baixa" in narrativa
 
 
-def test_degrada_sem_artefato(empty_data: Path, synth_data: Path) -> None:  # noqa: F811
+def test_degrada_sem_artefato(synth_data: Path) -> None:  # noqa: F811
     """Sem os parquets o passo 4 existe, avisa, e nao derruba nada."""
     for payload in (_muni(), _uf()):
         p4 = payload["passos"][3]

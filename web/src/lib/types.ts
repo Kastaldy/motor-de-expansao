@@ -41,7 +41,6 @@ export interface Hex {
   /** saldo de empresas abertas menos fechadas, 2020→2025 (Receita Federal) */
   cres_empresas: number | null
   /** "alta" | "media" | "baixa" | "muito_baixa" — o próprio projeto marca */
-  cres_confiab: string | null
   /** salário médio de admissão nos últimos 12 meses (R$) */
   cres_salario: number | null
   /** setor cuja abertura de empresas está mais ACIMA do normal nesta cidade */
@@ -51,7 +50,7 @@ export interface Hex {
   /** taxa de crescimento da área construída DESTE hexágono, 2016→2023, em % */
   cres_hex_taxa: number | null
   /** "Em alta" | "Estável" | "Sem obra nova" — é o que colore o mapa no passo 4.
-   *  Ver `CRESC_CLASSES` em lib/colors.ts: o acoplamento é por string literal. */
+   *  Ver `crescClasseToColor` em lib/colors.ts: o acoplamento é por string literal. */
   cres_hex_classe: string | null
 }
 
@@ -72,9 +71,9 @@ export interface RankItem {
    *  sem ela, "Excelente" saía azul enquanto o bloco na legenda é verde-escuro.
    *  `null` no ranking de municípios, que usa vocabulário próprio, não faixa. */
   tag_cor?: string | null
-  /** Visão de UF, passo 4: dimensões DESTE município, no formato de `Hex.cres_dims`. */
+  /** Visão de UF, passo 4: dimensões DESTE município, no formato produzido por `_dims_por_municipio`. */
   dims?: string | null
-  /** Visão de UF, passo 4: séries DESTE município, no formato de `Hex.cres_series`. */
+  /** Visão de UF, passo 4: séries DESTE município, no formato produzido por `_series_por_municipio`. */
   series?: string | null
 }
 
