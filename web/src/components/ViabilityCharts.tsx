@@ -323,7 +323,10 @@ export function CascataDre({
       rotulo: 'EBITDA',
       valor: d.ebitda,
       tipo: 'res' as const,
-      pct: d.ebitda_pct_faturamento ?? null,
+      // % do faturamento do EBITDA = `margem` (o motor define
+      // `margem_ebitda_pct = ebitda / faturamento`). Nao ha campo dedicado: servir
+      // os dois deixava duas rotas para o mesmo numero, livres para divergir.
+      pct: d.margem ?? null,
     },
     { rotulo: 'IR/CSLL', valor: d.ir_csll, tipo: 'neg' as const },
     {

@@ -25,6 +25,7 @@ import json
 import sys
 from pathlib import Path
 
+import h3
 import pandas as pd
 import pytest
 from fastapi import HTTPException
@@ -60,10 +61,7 @@ _CACHED = [
 
 
 def _clear_caches() -> None:
-    for nome in _CACHED:
-        fn = getattr(pilot, nome, None)
-        if fn is not None and hasattr(fn, "cache_clear"):
-            fn.cache_clear()
+    pilot.limpar_caches()
 
 
 def _point_app_at(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
@@ -673,17 +671,37 @@ def test_relatorio_municipal_renderiza_e_passa_os_mapas(monkeypatch: pytest.Monk
     from motor_expansao.api import service as api_service
 
     df = pd.DataFrame(
-        {"nome_municipio": ["X"], "uf": ["DF"], "hex_id": ["8a"], "lat": [0.0], "lng": [0.0]}
+        {
+            "nome_municipio": ["X"],
+            "uf": ["DF"],
+            "hex_id": ["8a"],
+            "lat": [0.0],
+            "lng": [0.0],
+            # `cod_municipio` destrava os bairros: sem a coluna o endpoint curto-circuita
+            # (`bairros_por_hex(...) if cod_muni else None`) e a trava da B3 abaixo nao teria
+            # o que observar.
+            "cod_municipio": ["5300108"],
+        }
     )
     monkeypatch.setattr(pilot, "carregar_uf_completo", lambda uf: df)
     monkeypatch.setattr(
         relmun, "_municipio_mask", lambda d, nome: pd.Series([True] * len(d), index=d.index)
     )
-    monkeypatch.setattr(
-        relmun,
-        "agregar_municipio",
-        lambda *a, **k: {"uf": "DF", "nome_municipio": "X", "n_hex_total": 1},
-    )
+    # Sem estes dois patches o teste passaria a depender de `data/ibge` e da particao geo
+    # existirem na maquina (existem no dev, nao no CI): fonte de bairro e de divisa viram mock.
+    monkeypatch.setattr(pilot, "bairros_por_hex", lambda uf, cod: {"8a": "Asa Norte"})
+    monkeypatch.setattr(relmun, "carregar_poligono_municipio", lambda *a, **k: None)
+
+    # Um mock `lambda *a, **k` aceita QUALQUER assinatura: se o endpoint parar de passar um
+    # kwarg, o teste continua verde e o PDF degrada calado (foi assim que a B3 escapou).
+    # Por isso os kwargs sao capturados e conferidos um a um.
+    agregou: dict[str, object] = {}
+
+    def _fake_agregar(*a, **k):
+        agregou.update(k)
+        return {"uf": "DF", "nome_municipio": "X", "n_hex_total": 1}
+
+    monkeypatch.setattr(relmun, "agregar_municipio", _fake_agregar)
     monkeypatch.setattr(api_service, "_competitors_ultra", lambda cfg: (None, None))
 
     chamada: dict[str, object] = {}
@@ -727,6 +745,12 @@ def test_relatorio_municipal_renderiza_e_passa_os_mapas(monkeypatch: pytest.Monk
     assert chamada.get("poligono_kwarg") is True, (
         "BLK-RELMUN-05: o endpoint tem de passar `poligono_municipio` ao render, senao os "
         "pins do PDF voltam a vazar para os municipios vizinhos"
+    )
+    assert agregou.get("bairros_por_hex") is not None, (
+        "B3: o endpoint tem de passar `bairros_por_hex` ao `agregar_municipio`, senao o "
+        "agregador recebe None e a pagina de bairros degrada EM SILENCIO para "
+        "'N hexes - <tese>', ainda imprimindo a nota falsa de 'bairros nao mapeados na base "
+        "IBGE'. O caminho do bot/API ja passava; so o piloto web nao."
     )
     mapas = capturado.get("mapas")
     assert mapas is not None, "regressao: o gerador recebeu mapas=None (PDF sem mapas)"
@@ -799,3 +823,321 @@ def test_relatorio_municipal_tambem_fora_do_event_loop():
     import inspect
 
     assert not inspect.iscoroutinefunction(pilot.relatorio_municipal)
+
+
+# ===========================================================================
+# 6) Funil de 4 passos — etiqueta competitiva (C2/N5), ranking ancorado no
+#    destaque (N13) e ancora de municipio na visao de UF (N12)
+# ===========================================================================
+
+# Vocabularios de etiqueta, por RAMO do `_etiqueta`. Ficam nomeados aqui para os
+# testes falarem do contrato ("saiu do ramo competitivo") e nao de strings soltas.
+# Sao valores EXIBIDOS, por isso acentuados; o que nunca pode ser acentuado e a
+# CHAVE que escolhe o ramo (`"conc. 2 km"` / `"residual"`).
+_TAGS_COMPETITIVAS = {"Livre", "Adensar", "Disputa"}
+_TAGS_RESIDUAL_INTENSIDADE = {"Alta", "Média", "Baixa"}
+
+
+def _funil_muni(concorrentes: list[int]) -> tuple[pd.DataFrame, dict[str, str]]:
+    """Recorte de UM municipio + mapa de bairros, prontos para `montar_funil`.
+
+    Reusa o `_synthetic_enriched()` (o mesmo dataset sintetico do resto do arquivo) e
+    so troca a `oferta_consumida_mercado_estimada`: e dela que `_derivar` calcula
+    `n_concorrentes_est` (consumo / capacidade de 2.500), o campo que o ramo
+    competitivo do `_etiqueta` le. Passa pelo `_derivar` REAL de proposito — assim o
+    teste exercita a mesma coluna derivada que o endpoint entrega ao funil, em vez de
+    uma coluna plantada a mao que poderia divergir da derivacao de producao.
+
+    Cada hex ganha um BAIRRO proprio porque `_rank_items` guarda um item por
+    LOCALIDADE: sem bairros distintos o municipio inteiro colapsaria em 1 item e o
+    passo 3 nao teria como exibir mais de uma etiqueta.
+    """
+    base = _synthetic_enriched()
+    df = base[base["nome_municipio"] == "Sao Paulo"].head(len(concorrentes)).copy()
+    assert len(df) == len(concorrentes), "fixture sintetica encolheu; ajuste o recorte"
+    df["oferta_consumida_mercado_estimada"] = [2500.0 * n for n in concorrentes]
+    df = pilot._derivar(df)
+    # Sanity da propria fixture: se a derivacao mudar, o teste avisa AQUI em vez de
+    # falhar mais adiante com uma etiqueta inesperada e motivo obscuro.
+    assert df["n_concorrentes_est"].tolist() == concorrentes
+    return df, {hid: f"Bairro {i}" for i, hid in enumerate(df["hex_id"])}
+
+
+@pytest.mark.parametrize(
+    ("concorrentes", "tags_esperadas"),
+    [
+        # A base do passo 3 e SEMPRE o white space (sem fallback), entao todo item que
+        # chega ao painel tem n = 0 concorrentes -> "Livre". O que estes casos provam e
+        # que o ramo competitivo ROda: os hexes com concorrente somem da lista em vez de
+        # aparecer com etiqueta de intensidade de residual.
+        pytest.param([0, 0, 3], ["Livre", "Livre"], id="dois-livres-um-disputado"),
+        pytest.param([0, 1, 2, 3], ["Livre"], id="um-livre-tres-disputados"),
+    ],
+)
+def test_passo3_etiqueta_pelo_vocabulario_competitivo(
+    concorrentes: list[int], tags_esperadas: list[str]
+) -> None:
+    """C2/N5: o passo 3 etiqueta por CONCORRENCIA — o ramo "conc. 2 km" tem que rodar.
+
+    `_rank_items` recebia UM parametro para duas coisas diferentes: o texto exibido sob
+    o valor e a chave que escolhe o ramo do `_etiqueta`. Como o passo 3 exibe um valor
+    em alunos (residual), o parametro tinha de ser "residual" — e o ramo "conc. 2 km"
+    do `_etiqueta` ficou escrito, testado por ninguem e NUNCA executado. O lote separou
+    os dois papeis (`metrica_etiqueta`), e este teste e a prova de que o ramo executa.
+
+    Falha se alguem voltar a passar so o `label_metrica`: sem `metrica_etiqueta` as
+    etiquetas caem no ramo "residual" e viram Alta/Média/Baixa — nenhuma delas no
+    vocabulario competitivo, e "Livre" so existe no ramo "conc. 2 km".
+    """
+    df, bairros = _funil_muni(concorrentes)
+    passo3 = pilot.montar_funil(df, "Sao Paulo", bairros)[2]
+    itens = passo3["itens"]
+    assert itens, "passo 3 saiu sem itens: a fixture nao acendeu o funil"
+
+    tags = [i["tag"] for i in itens]
+    assert tags == tags_esperadas, (
+        f"C2/N5: etiquetas do passo 3 = {tags}, esperado {tags_esperadas}. "
+        f"n_concorrentes_est das linhas = {concorrentes}. Se vier "
+        f"{sorted(_TAGS_RESIDUAL_INTENSIDADE)}, o ramo 'conc. 2 km' do `_etiqueta` "
+        "voltou a nao executar (alguem passou so `label_metrica` ao `_rank_items`)."
+    )
+    assert set(tags) <= _TAGS_COMPETITIVAS
+    assert not set(tags) & _TAGS_RESIDUAL_INTENSIDADE
+
+
+def test_passo3_rotula_o_valor_como_residual_e_nao_como_concorrencia() -> None:
+    """A etiqueta virou competitiva; o ROTULO DO NUMERO continua "residual".
+
+    Regressao critica e o atalho obvio de quem for "consertar" a etiqueta de novo:
+    passar "conc. 2 km" como `label_metrica` faz o ramo competitivo rodar, sim — e de
+    quebra rotula o numerao do item (residual, em alunos) com a unidade de CONTAGEM DE
+    CONCORRENTES. O painel passaria a mostrar "4.000" sob o rotulo "conc. 2 km".
+
+    O cabecalho do passo continua "conc. 2 km" (`metrica`) — quem descreve a LEITURA do
+    passo e ele; o `label` de cada item descreve o NUMERO daquele item.
+    """
+    df, bairros = _funil_muni([0, 1, 2, 3])
+    passo3 = pilot.montar_funil(df, "Sao Paulo", bairros)[2]
+
+    assert passo3["metrica"] == "conc. 2 km", "cabecalho do passo 3 deixou de ser competitivo"
+    assert passo3["itens"], "passo 3 saiu sem itens: a fixture nao acendeu o funil"
+    for item in passo3["itens"]:
+        assert item["label"] == "residual", (
+            f"item {item['rank']} do passo 3 rotulou o valor como {item['label']!r}: o numero "
+            "e residual (alunos), nao contagem de concorrentes. `label_metrica` continua "
+            "'residual'; quem escolhe o ramo da etiqueta e `metrica_etiqueta`."
+        )
+        # E o valor rotulado e mesmo o residual da linha (nao o n de concorrentes).
+        assert item["valor"] >= pilot.OFERTA_DESTAQUE_MIN
+
+
+def test_passo3_ranqueia_os_hexes_que_o_mapa_destaca() -> None:
+    """N13: os itens 01-10 do passo 3 pousam nos hexes que o passo destaca.
+
+    O passo 3 destaca no mapa o white space (`hexes`) e conta o white space no numerao
+    (`funil_big`), mas ranqueava o RESIDUAL inteiro: os numeros do ranking caiam em
+    hexagono apagado e nao batiam com o numero grande do passo.
+    """
+    df, bairros = _funil_muni([0, 1, 2, 3])
+    passo3 = pilot.montar_funil(df, "Sao Paulo", bairros)[2]
+
+    destacados = set(passo3["hexes"])
+    ranqueados = {i["hex_id"] for i in passo3["itens"]}
+    assert destacados, "fixture sem white space: este teste nao seria sobre o ramo certo"
+    assert ranqueados, "passo 3 saiu sem itens"
+    assert ranqueados <= destacados, (
+        f"N13: itens do passo 3 fora do destaque: {sorted(ranqueados - destacados)}. "
+        "O ranking tem de sair da MESMA base que o mapa acende e que o `funil_big` conta."
+    )
+    # E o numerao do passo conta exatamente esses hexes destacados.
+    assert passo3["funil_big"] == len(destacados)
+
+
+def test_passo4_so_recomenda_hexagono_livre() -> None:
+    """A fila do passo 4 sai do MESMO white space do passo 3, nunca do residual.
+
+    Complementa o N13 no passo da recomendacao: com hexes livres E disputados na mesma
+    fixture, a fila nao pode "completar" as 10 vagas com hexagono que tem concorrente.
+    """
+    df, bairros = _funil_muni([0, 1, 2, 3])
+    passos = pilot.montar_funil(df, "Sao Paulo", bairros)
+    passo3, passo4 = passos[2], passos[3]
+
+    livres = set(passo3["hexes"])
+    assert len(livres) == 1, "a fixture precisa ter livre E disputado para o teste valer"
+    assert set(passo4["hexes"]) <= livres, (
+        f"passo 4 recomendou hexagono com concorrente: {sorted(set(passo4['hexes']) - livres)}"
+    )
+    assert {i["hex_id"] for i in passo4["itens"]} <= livres
+    assert passo4["funil_big"] == len(passo4["hexes"]) == 1
+
+
+def test_sem_hexagono_livre_os_passos_3_e_4_ficam_vazios() -> None:
+    """Sem white space, os passos 3 e 4 nao tem NENHUM item — e isso e o correto.
+
+    Regra do dono (2026-08-03): "os top 10 deverao se referir aos hexagonos livres".
+    Havia fallback — sem white space o ranking caia para o residual inteiro —, e ele
+    produzia a incoerencia que o dono rejeitou: numerao do passo em 0, mapa sem nenhum
+    hexagono aceso e, ao lado, um painel listando 01-10 regioes. Agora a lista vazia e a
+    RESPOSTA ("nao ha area sem concorrencia aqui"), coerente com o numerao e com o mapa.
+
+    Este teste substitui o `test_passo3_sem_white_space_cai_no_residual_e_o_destaque_
+    fica_vazio`, que travava exatamente o comportamento rejeitado.
+    """
+    df, bairros = _funil_muni([1, 2, 3, 4])
+    passos = pilot.montar_funil(df, "Sao Paulo", bairros)
+    passo3, passo4 = passos[2], passos[3]
+
+    # Fixture com residual de sobra: o funil so morre no filtro de CONCORRENCIA.
+    assert passos[1]["funil_big"] == 4, "a fixture perdeu o residual; o teste seria vago"
+
+    for passo in (passo3, passo4):
+        assert passo["hexes"] == [], f"passo {passo['n']}: sem white space nada a destacar"
+        assert passo["funil_big"] == 0
+        assert passo["itens"] == [], (
+            f"passo {passo['n']} listou {len(passo['itens'])} itens sem nenhum hexagono "
+            "livre — o fallback para o residual voltou (numerao 0, mapa apagado e painel "
+            "cheio: a incoerencia que o dono rejeitou)"
+        )
+
+    # E o estado vazio nao pode parecer bug: a narrativa explica em texto.
+    assert "Não há área sem concorrência" in passo3["narrativa"], (
+        f"passo 3 nao explica a lista vazia: {passo3['narrativa']!r}"
+    )
+    assert "0 não têm" not in passo3["narrativa"], "frase agramatical do caso n=0"
+    assert "não há abertura a recomendar" in passo4["narrativa"], (
+        f"passo 4 nao explica a fila vazia: {passo4['narrativa']!r}"
+    )
+
+
+def _uf_saturada() -> pd.DataFrame:
+    """UF sintetica sem NENHUM hexagono livre (todo hex com >= 1 concorrente)."""
+    base = _synthetic_enriched().copy()
+    base["oferta_consumida_mercado_estimada"] = 2500.0  # 1 concorrente por hex
+    df = pilot._derivar(base)
+    assert (df["n_concorrentes_est"] >= 1).all(), "fixture nao saturou"
+    return df
+
+
+def test_uf_sem_hexagono_livre_tambem_fica_com_os_passos_3_e_4_vazios() -> None:
+    """Mesma regra no funil de UF — deixar um nivel com fallback so muda a incoerencia de lugar.
+
+    A visao de estado ranqueia MUNICIPIOS; sem white space na UF inteira ela recomendava
+    municipios que o proprio passo acabara de excluir (numerao 0, mapa apagado).
+    """
+    passos = pilot.montar_funil_uf(_uf_saturada(), "SP")
+    passo3, passo4 = passos[2], passos[3]
+
+    assert passos[1]["funil_big"] == 8, "a fixture perdeu o residual; o teste seria vago"
+    for passo in (passo3, passo4):
+        assert passo["hexes"] == [], f"passo {passo['n']} da UF destacou hex sem white space"
+        assert passo["funil_big"] == 0
+        assert passo["itens"] == [], (
+            f"passo {passo['n']} da UF listou municipios sem nenhum hexagono livre — o "
+            "fallback para o residual voltou no nivel de UF"
+        )
+    assert "Não há área sem concorrência" in passo3["narrativa"]
+    assert "a fila fica vazia" in passo4["narrativa"], (
+        f"passo 4 da UF nao explica a fila vazia: {passo4['narrativa']!r}"
+    )
+
+
+def _uf_com_hex_reais() -> pd.DataFrame:
+    """UF sintetica cujos `hex_id` sao celulas H3 res-7 DE VERDADE, com empate.
+
+    O `_synthetic_enriched()` usa rotulos ficticios ("87a00000...", 17 chars) que nao
+    resolvem em H3. Aqui a ancora precisa ser resolvivel: o front usa o id para achar o
+    hexagono e desenhar o numero do ranking em cima dele.
+
+    Dentro de cada municipio, os dois primeiros hexes EMPATAM em score e em oferta — a
+    escolha da ancora so pode ser estavel se o desempate for explicito (por `hex_id`) e
+    nao a ordem acidental das linhas.
+    """
+    base = _synthetic_enriched().copy()
+    # ~5 km entre pontos: os 0,001 grau da fixture original cairiam todos no MESMO hex
+    # res-7 (aresta ~1,2 km) e nao haveria ancora distinta para comparar.
+    base["lat"] = [-23.55 - 0.05 * i for i in range(len(base))]
+    base["lng"] = [-46.63 - 0.05 * i for i in range(len(base))]
+    base["hex_id"] = [
+        h3.latlng_to_cell(la, lo, 7)
+        for la, lo in zip(base["lat"], base["lng"], strict=True)
+    ]
+    base["score_setor_2022_calibrado"] = [90.0, 90.0, 75.0, 74.0] * 2  # 2 munis x 4 hexes
+    base["oferta_efetiva_disponivel"] = [8000.0, 8000.0, 3000.0, 2500.0] * 2
+    return pilot._derivar(base)
+
+
+def _h3_resolve(hex_id: object) -> bool:
+    """`is_valid_cell` LEVANTA (OverflowError) em string vazia/lixo — normaliza p/ bool."""
+    try:
+        return bool(h3.is_valid_cell(str(hex_id)))
+    except Exception:  # noqa: BLE001 — qualquer erro aqui significa "nao resolve"
+        return False
+
+
+def _ancoras_por_passo(df_uf: pd.DataFrame) -> list[dict[str, str]]:
+    """{municipio: hex_id} de cada um dos 4 passos da visao de UF."""
+    return [
+        {i["municipio"]: i["hex_id"] for i in passo["itens"]}
+        for passo in pilot.montar_funil_uf(df_uf, "SP")
+    ]
+
+
+def test_item_de_municipio_sai_com_ancora_resolvivel() -> None:
+    """N12: todo item de municipio carrega um `hex_id` real do proprio municipio.
+
+    O item de municipio saia com `hex_id` vazio; o TextLayer do front pula item sem
+    hex_id, entao a visao de estado nao desenhava numero NENHUM sobre o mapa — o painel
+    listava 01-10 e o mapa nao dizia onde.
+    """
+    df_uf = _uf_com_hex_reais()
+    por_municipio = df_uf.groupby("nome_municipio", observed=True)["hex_id"].apply(set).to_dict()
+
+    passos = pilot.montar_funil_uf(df_uf, "SP")
+    assert len(passos) == 4
+    for passo in passos:
+        assert passo["itens"], f"passo {passo['n']} da UF saiu sem itens"
+        for item in passo["itens"]:
+            muni = item["municipio"]
+            hid = item["hex_id"]
+            assert hid, (
+                f"N12: item {item['rank']} ({muni}) do passo {passo['n']} saiu com hex_id "
+                "vazio — o numero do ranking nao tem onde pousar no mapa"
+            )
+            assert _h3_resolve(hid), f"hex_id {hid!r} nao resolve em H3 (passo {passo['n']})"
+            assert hid in por_municipio[muni], (
+                f"ancora {hid} do passo {passo['n']} nao e um hexagono de {muni}"
+            )
+
+
+def test_ancora_de_municipio_e_deterministica_e_desempata_estavel() -> None:
+    """A ancora nao pode depender da ordem em que as linhas chegaram.
+
+    Duas garantias: (1) a mesma entrada da sempre o mesmo `hex_id`; (2) com EMPATE na
+    metrica agregada, o desempate e explicito (menor `hex_id`) — reordenar as linhas do
+    parquet nao pode mudar qual hexagono recebe o numero no mapa.
+    """
+    df_uf = _uf_com_hex_reais()
+
+    # (1) idempotencia: duas execucoes sobre a MESMA entrada.
+    assert _ancoras_por_passo(df_uf) == _ancoras_por_passo(df_uf)
+
+    # (2) estabilidade sob reordenacao das linhas (o empate e resolvido por hex_id, nao
+    # pela posicao). Sem o desempate, o `.first()` do groupby seguiria a ordem de
+    # chegada e a linha invertida elegeria a OUTRA ancora do empate.
+    invertido = df_uf.iloc[::-1].copy()
+    assert _ancoras_por_passo(invertido) == _ancoras_por_passo(df_uf), (
+        "N12: a ancora mudou so por inverter a ordem das linhas — o desempate deixou de "
+        "ser explicito e virou ordem acidental do parquet"
+    )
+
+    # E o criterio e mesmo o MENOR hex_id entre os empatados no topo do municipio.
+    for muni, grupo in df_uf.groupby("nome_municipio", observed=True):
+        topo = grupo[grupo["oferta_efetiva_disponivel"] == grupo["oferta_efetiva_disponivel"].max()]
+        assert len(topo) > 1, "a fixture perdeu o empate; o teste nao provaria o desempate"
+        # Passo 2 agrega por `oferta_efetiva_disponivel`.
+        ancora = _ancoras_por_passo(df_uf)[1][muni]
+        assert ancora == min(topo["hex_id"]), (
+            f"N12: ancora de {muni} = {ancora!r}; com empate no topo o criterio e o MENOR "
+            f"hex_id ({min(topo['hex_id'])!r}), unico desempate que nao depende da ordem"
+        )

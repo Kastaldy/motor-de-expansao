@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { infoImovelParaPdf, viabilidadeParaPdf } from './report'
+import { infoImovelParaPdf, parametrosRelatorioPontual, viabilidadeParaPdf } from './report'
 import { VIABILIDADE_PAYLOAD_VERSAO } from './types'
 import type { SerieMensalLinha, ViabilidadeOut } from './types'
 
@@ -293,5 +293,89 @@ describe('infoImovelParaPdf', () => {
     expect(infoImovelParaPdf({ valor_venda: 'a combinar' }, cenario).valor_venda).toBe(
       'a combinar',
     )
+  })
+})
+
+describe('parametrosRelatorioPontual', () => {
+  // Primeiro elo do fio "origem da coordenada": tela -> api.ts -> rota -> PDF. Os elos
+  // seguintes ja tinham teste; este vivia dentro do ViabilityScreen.tsx, fora do alcance
+  // do vitest (que so ve `src/**/*.test.ts`) — fixar o flag em `false` deixava tudo verde
+  // e o PDF voltava a mentir sobre a origem da coordenada. Estes casos sao o controle.
+  // Centroide real do hex res-7 em Janga/Paulista-PE (o caso que quebrou em producao).
+  const hex = { lat: -7.942426, lng: -34.821732 }
+  const ponto = { hex, rotulo: 'Hexágono 8780...' }
+
+  it('coordenada EXATA (busca por endereço): usa a exata e NAO avisa aproximação', () => {
+    const p = parametrosRelatorioPontual({ ...ponto, lat: -7.93908, lng: -34.82566 })
+    expect(p.lat).toBe(-7.93908)
+    expect(p.lng).toBe(-34.82566)
+    expect(p.origemCentroideHex).toBe(false)
+    // Nao pode vazar o centroide para o PDF.
+    expect(p.lat).not.toBe(hex.lat)
+    expect(p.lng).not.toBe(hex.lng)
+  })
+
+  it('coordenada AUSENTE (clique no ranking): cai no centroide e AVISA', () => {
+    const p = parametrosRelatorioPontual(ponto)
+    expect(p.lat).toBe(hex.lat)
+    expect(p.lng).toBe(hex.lng)
+    // O aviso e o unico canal: nao existe equivalente na tela.
+    expect(p.origemCentroideHex).toBe(true)
+  })
+
+  it('coordenada pela metade também é centroide (e avisa)', () => {
+    expect(parametrosRelatorioPontual({ ...ponto, lat: -7.93908 })).toMatchObject({
+      lat: hex.lat,
+      lng: hex.lng,
+      origemCentroideHex: true,
+    })
+    expect(parametrosRelatorioPontual({ ...ponto, lng: -34.82566 })).toMatchObject({
+      lat: hex.lat,
+      lng: hex.lng,
+      origemCentroideHex: true,
+    })
+  })
+
+  it('lat=0/lng=0 é coordenada VÁLIDA: viaja como está e NÃO vira aviso', () => {
+    // Zero e falsy: um `!ponto.lat` no lugar do `== null` marcaria a Ilha Nula como
+    // centroide e o PDF sairia avisando de uma aproximacao que nao houve.
+    const p = parametrosRelatorioPontual({ ...ponto, lat: 0, lng: 0 })
+    expect(p.lat).toBe(0)
+    expect(p.lng).toBe(0)
+    expect(p.origemCentroideHex).toBe(false)
+  })
+
+  it('o aviso é verdadeiro EXATAMENTE quando a coordenada é a do hexágono', () => {
+    // Trava do controle negativo: com o flag fixo (em `false` ou em `true`) algum destes
+    // casos quebra, porque o flag e comparado com a coordenada REALMENTE devolvida.
+    const casos = [
+      {},
+      { lat: -7.93908, lng: -34.82566 },
+      { lat: -7.93908 },
+      { lng: -34.82566 },
+      { lat: 0, lng: 0 },
+    ]
+    for (const caso of casos) {
+      const p = parametrosRelatorioPontual({ ...ponto, ...caso })
+      const veioDoHex = p.lat === hex.lat && p.lng === hex.lng
+      expect(p.origemCentroideHex).toBe(veioDoHex)
+    }
+  })
+
+  it('rótulo digitado pelo operador vence e viaja INTACTO; vazio cede ao do ponto', () => {
+    expect(
+      parametrosRelatorioPontual(ponto, { rotuloManual: 'Av. Brasil, 100 (esquina)' }).rotulo,
+    ).toBe('Av. Brasil, 100 (esquina)')
+    expect(parametrosRelatorioPontual(ponto, { rotuloManual: '' }).rotulo).toBe(ponto.rotulo)
+    expect(parametrosRelatorioPontual(ponto).rotulo).toBe(ponto.rotulo)
+  })
+
+  it('devolve só o que o contrato de `api.relatorioPontual` identifica do ponto', () => {
+    expect(Object.keys(parametrosRelatorioPontual(ponto)).sort()).toEqual([
+      'lat',
+      'lng',
+      'origemCentroideHex',
+      'rotulo',
+    ])
   })
 })

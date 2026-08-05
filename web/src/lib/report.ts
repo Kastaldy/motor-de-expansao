@@ -11,6 +11,7 @@
    se um dia o PDF precisar de algo, entra no payload do motor — nao numa conta
    feita aqui.
    --------------------------------------------------------------------------- */
+import { coordenadaDoEstudo, ehCentroideDoHex } from './coord'
 import type { InfoImovel, ViabilidadeOut } from './types'
 
 /**
@@ -64,4 +65,57 @@ export function infoImovelParaPdf(
   }
   for (const k of Object.keys(out)) if (out[k] === undefined) delete out[k]
   return out
+}
+
+/**
+ * O ponto escolhido, visto pelo relatorio. Subconjunto estrutural de `PontoEscolhido`
+ * (App.tsx): so o que decide a coordenada e o rotulo. Fica aqui — e nao no `.tsx` —
+ * para que a decisao seja testavel sem montar a tela.
+ */
+export interface PontoDoRelatorio {
+  /** Centroide do hexagono res-7. Sempre existe; a ate ~1,5 km do endereco. */
+  hex: { lat: number; lng: number }
+  /** Rotulo herdado do hexagono/municipio quando o operador nao digita um nome. */
+  rotulo: string
+  /** Coordenada EXATA do imovel (busca por endereco/lat,lng). Ausente = clique no ranking. */
+  lat?: number
+  lng?: number
+}
+
+/** Parametros de identificacao do ponto no `api.relatorioPontual` (contrato dele). */
+export interface ParametrosRelatorioPontual {
+  lat: number
+  lng: number
+  rotulo: string
+  origemCentroideHex: boolean
+}
+
+/**
+ * Decide COM QUE COORDENADA o Relatorio Pontual e tirado e se o PDF precisa AVISAR
+ * que ela e uma aproximacao.
+ *
+ * Vivia dentro do `ViabilityScreen.tsx`, onde nenhum teste alcanca: trocar o flag por
+ * `false` mantinha tsc, vitest e a suite Python verdes e o PDF voltava a sair com cara
+ * de laudo de endereco embora o raio tivesse sido tracado de um centroide a ate ~1,5 km.
+ *
+ * As duas respostas saem da MESMA regra de `lib/coord.ts` (`coordenadaDoEstudo` e
+ * `ehCentroideDoHex`), nunca de uma copia: o aviso so e honesto se ele for verdadeiro
+ * exatamente quando a coordenada devolvida for a do hexagono. Cuidado permanente:
+ * `lat: 0`/`lng: 0` sao coordenadas VALIDAS (falsy em JS) e nao contam como ausentes.
+ *
+ * `rotuloManual` e o nome que o operador digitou em "Dados para o relatorio"; ele viaja
+ * INTACTO (texto livre — endereco com parenteses, complemento, esquina) e, vazio, cede
+ * lugar ao rotulo do proprio ponto.
+ */
+export function parametrosRelatorioPontual(
+  ponto: PontoDoRelatorio,
+  opts: { rotuloManual?: string } = {},
+): ParametrosRelatorioPontual {
+  const alvo = coordenadaDoEstudo(ponto)
+  return {
+    lat: alvo.lat,
+    lng: alvo.lng,
+    rotulo: opts.rotuloManual || ponto.rotulo,
+    origemCentroideHex: ehCentroideDoHex(ponto),
+  }
 }

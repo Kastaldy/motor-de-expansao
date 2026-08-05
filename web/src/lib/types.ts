@@ -341,14 +341,9 @@ export interface DreViabilidade {
   despesa_financeira: number | null
   /** EBITDA - IR/CSLL (ótica DO NEGÓCIO: antes da parcela do financiamento). */
   resultado_apos_ir: number | null
-  /**
-   * Fração do faturamento bruto, servida PRONTA (FIN-VIAB-01: a tela não divide).
-   * ATENÇÃO: numericamente IGUAL a `margem` — o motor define
-   * `margem_ebitda_pct = ebitda / faturamento`. São duas rotas para o mesmo número;
-   * se a definição de `margem` mudar, as duas divergem em silêncio.
-   */
-  ebitda_pct_faturamento?: number | null
-  /** Fração do faturamento bruto do resultado após IR (idem: servida pronta). */
+  /** Fração do faturamento bruto do resultado após IR, servida PRONTA
+   *  (FIN-VIAB-01: a tela não divide). O percentual do EBITDA NÃO tem campo
+   *  próprio — é o `margem` acima (`margem_ebitda_pct = ebitda / faturamento`). */
   resultado_apos_ir_pct_faturamento?: number | null
   /** viável? (decidido pelo motor: margem mínima + payback máximo). */
   flag_viavel?: boolean
@@ -608,4 +603,225 @@ export interface InfoImovel {
   vagas?: string
   tipo?: string
   observacoes?: string
+}
+
+/* ---- Visão Executiva 2.0 — a rede como carteira acionável (DEC-023) ---- */
+
+/**
+ * O QUARTETO DE CONTEXTO. Toda métrica da rede chega com os mesmos quatro valores,
+ * porque é assim que o time de campo lê: nunca um número sozinho, sempre
+ * `MÊS | M-1 | Ranking N/total | % vs Média Rede`. Eles não leem desempenho por cor
+ * — leem "estou 64% abaixo da média da rede e sou 79º de 89".
+ */
+export interface RedeMetrica {
+  atual: number | null
+  m1: number | null
+  /** variação relativa vs M-1, em % */
+  delta_pct: number | null
+  /** posição na rede (não no recorte filtrado); null se a unidade não é comparável */
+  rank: number | null
+  rank_total: number | null
+  /** distância da média da rede, em % */
+  vs_media_pct: number | null
+}
+
+export type RedeSeveridade = 'alta' | 'media' | 'ok' | 'sem_base'
+
+export interface RedeAlerta {
+  codigo: string
+  titulo: string
+  detalhe: string
+  nivel: 'grave' | 'medio'
+}
+
+export interface RedeUnidade {
+  id: string
+  nome: string
+  uf: string
+  master: string
+  cidade: string | null
+  consultor: string | null
+  consultor_2: string | null
+  master_franquia: string | null
+  franqueado: string | null
+  coorte: string
+  coorte_rotulo: string
+  meses_operacao: number | null
+  inauguracao: string | null
+  lat: number | null
+  lng: number | null
+  /** false quando a unidade inaugurou dentro da competência (fora de ranking/média) */
+  comparavel: boolean
+  severidade: RedeSeveridade
+  severidade_rotulo: string
+  prioridade: number
+  resumo: string
+  faixa_faturamento: string
+  faixa_faturamento_rotulo: string
+  alertas: RedeAlerta[]
+  metricas: Record<string, RedeMetrica>
+  /** faturamento dos últimos 12 meses fechados (sparkline da carteira) */
+  sparkline: (number | null)[]
+}
+
+export interface RedeRegua {
+  rotulo: string
+  metrica: string
+  sentido: 'acima' | 'abaixo' | 'persistencia'
+  limiar: number
+  limiar_grave?: number
+  unidade?: string
+  meses?: number
+  meta?: number
+}
+
+export interface RedeSss {
+  disponivel: boolean
+  competencia_base: string
+  unidades: number
+  metricas?: Record<string, { atual: number | null; ano_anterior: number | null; var_pct: number | null }>
+}
+
+export interface RedeCarteira {
+  mes: string
+  meses: string[]
+  referencia: string
+  referencia_m1: string
+  mes_completo: boolean
+  /** competência FECHADA de onde vêm alertas e severidade */
+  competencia_diagnostico: string | null
+  totais: { rede: number; no_recorte: number; com_coordenada: number }
+  kpis: Record<string, RedeMetrica>
+  split: {
+    recorrentes: number | null
+    agregadores: number | null
+    pct_recorrentes: number | null
+    pct_agregadores: number | null
+  }
+  semaforo: Record<RedeSeveridade, number>
+  sss: RedeSss
+  centro: { lat: number | null; lng: number | null }
+  bbox: { min_lat: number; min_lng: number; max_lat: number; max_lng: number } | null
+  ultra_icon: string | null
+  reguas: Record<string, RedeRegua>
+  meta_nps: number
+  /** competências FECHADAS que rotulam a sparkline e o gráfico agregado, em ordem
+   *  cronológica. Vem do servidor: com a competência aberta, a série termina no mês
+   *  anterior, e contar para trás a partir de `mes` desloca o gráfico inteiro. */
+  serie_meses: string[]
+  unidades: RedeUnidade[]
+  notas: string[]
+}
+
+export interface RedeFiltros {
+  meses: string[]
+  mes_padrao: string
+  ufs: string[]
+  masters: string[]
+  consultores: string[]
+  masters_franquia: string[]
+  coortes: { chave: string; rotulo: string; n: number }[]
+  severidades: { chave: RedeSeveridade; rotulo: string }[]
+  metricas: {
+    chave: string
+    rotulo: string
+    direcao: 'asc' | 'desc'
+    bom_subindo: boolean
+    formato: 'brl' | 'int' | 'pct' | 'nota'
+  }[]
+  reguas: Record<string, RedeRegua>
+  meta_nps: number
+  medios_para_alta: number
+  faixas_faturamento: { ate: number | null; chave: string; rotulo: string }[]
+  metricas_a_validar: string[]
+  qualidade: {
+    unidades: number
+    com_coordenada: number
+    com_consultor: number
+    sem_nps: number
+  }
+  cadastro: { disponivel: boolean; versao: number; campos_editaveis: string[] }
+  referencia: string
+  fonte: string
+}
+
+export interface RedeCoorteComparacao {
+  chave: string
+  rotulo: string
+  /** 'coorte' | 'coorte_vizinha' | 'rede' | 'sem_dado' — SEMPRE exibida */
+  degradacao: string
+  base_rotulo: string
+  n: number
+  metricas: Record<
+    string,
+    {
+      unidade: number | null
+      p25: number | null
+      p50: number | null
+      p75: number | null
+      percentil: number | null
+    }
+  >
+}
+
+export interface RedeFicha {
+  unidade: RedeUnidade & {
+    dpto: string | null
+    cod_unidade: string | null
+    gold: number | null
+    life_time: number | null
+    ltv: number | null
+    wellhub: string | null
+    totalpass: string | null
+    modalidades: Record<string, boolean>
+  }
+  mes: string
+  meses: string[]
+  referencia: string
+  competencia_diagnostico: string | null
+  metricas: Record<string, RedeMetrica>
+  /** série FECHADA de 12 meses, em formato colunar (2,4x menor que array de objetos) */
+  serie: { meses: string[] } & Record<string, (number | null)[]>
+  serie_diaria: { datas: string[] } & Record<string, (number | null)[]>
+  funil: {
+    visitas: number | null
+    convertidos: number | null
+    vendas: number | null
+    novos_alunos: number | null
+    conversao_pct: number | null
+    /** preenchido quando `vendas > convertidos` — o funil não fecha e isso é dito */
+    aviso: string | null
+  }
+  coorte: RedeCoorteComparacao
+  diagnostico: {
+    competencia: string | null
+    severidade: RedeSeveridade
+    severidade_rotulo: string
+    prioridade: number
+    resumo: string
+    alertas: RedeAlerta[]
+    recomendacoes: { codigo: string; titulo: string; corpo: string }[]
+  }
+  cadastro: {
+    disponivel: boolean
+    versao: number
+    campos_editaveis: string[]
+    valores: Record<string, string>
+  }
+  reguas: Record<string, RedeRegua>
+  meta_nps: number
+  notas: string[]
+}
+
+/** Query da carteira. Tudo opcional: sem filtro nenhum, vem a rede do Brasil inteiro. */
+export interface RedeQuery {
+  mes?: string
+  uf?: string
+  master?: string
+  consultor?: string
+  coorte?: string
+  severidade?: string
+  busca?: string
+  ordenar?: string
+  direcao?: 'asc' | 'desc'
 }

@@ -24,6 +24,7 @@ from motor_expansao.dashboard.viabilidade_charts import (
     grafico_rampa_alunos,
     limites_y_faturamento_ebitda,
     montar_payload_pdf_viabilidade,
+    montar_payload_viabilidade,
 )
 from motor_expansao.dimensionamento.simulador import gerar_serie_mensal
 
@@ -531,3 +532,145 @@ def test_pdf_aceita_o_payload_v1_cru():
     assert b"29 meses" in pdf_bytes        # retorno.payback
     assert b"R$ 900.925,18" in pdf_bytes   # investimento.juros_totais
     assert b"1.367" in pdf_bytes           # break_even.caixa
+
+
+# ---------------------------------------------------------------------------
+# % do faturamento no rotulo da barra de EBITDA do waterfall
+#
+# A tela ja mostrava valor + margem; o PDF so o valor absoluto. O percentual chega
+# SERVIDO no payload (`dre.margem`) -- nao ha divisao aqui (FIN-VIAB-01), so formatacao.
+# Estes testes olham o TEXTO DESENHADO no Axes, nao os bytes do PNG: so assim da para
+# afirmar QUAL barra ganhou o percentual e em que formato ele saiu.
+# ---------------------------------------------------------------------------
+
+_DRE_COMUM = dict(
+    faturamento_bruto=288_257.57,
+    receita_liquida=286_816.28,
+    receita_pos_impostos=267_743.00,
+    ebitda=113_159.69,
+)
+
+
+def _rotulos_desenhados(monkeypatch, fn) -> list[str]:
+    """Textos que o ULTIMO Axes desenhado por `fn()` traz -- os rotulos das barras.
+
+    Espiona o `plt.subplots` do modulo para guardar os `Axes` e le `ax.texts` -- ali entram
+    so os rotulos das barras (titulo, nomes de eixo e ticks sao outros artistas, fora de
+    `ax.texts`). Comparar PNG contra PNG diria apenas "mudou alguma coisa"; ler o texto diz
+    O QUE mudou e onde.
+
+    O ULTIMO Axes porque os montadores de payload desenham a serie temporal antes e o
+    waterfall por ultimo; chamando `grafico_dre_waterfall` direto so existe um.
+    """
+    from motor_expansao.dashboard import viabilidade_charts as vc
+
+    eixos = []
+    real_subplots = vc.plt.subplots
+
+    def _spy(*args, **kw):
+        fig, ax = real_subplots(*args, **kw)
+        eixos.append(ax)
+        return fig, ax
+
+    monkeypatch.setattr(vc.plt, "subplots", _spy)
+    fn()
+    assert eixos, "nenhum Axes desenhado"
+    return [t.get_text() for t in eixos[-1].texts]
+
+
+def _rotulos_das_barras(monkeypatch, **kwargs) -> list[str]:
+    """Rotulos das barras de UMA chamada direta ao waterfall."""
+    return _rotulos_desenhados(monkeypatch, lambda: grafico_dre_waterfall(**kwargs))
+
+
+def test_waterfall_estampa_o_percentual_do_ebitda_quando_o_payload_manda(monkeypatch):
+    """Com `ebitda_pct`, SO a barra de EBITDA ganha o percentual, em pt-BR e ao lado do R$."""
+    rotulos = _rotulos_das_barras(monkeypatch, **_DRE_COMUM, ebitda_pct=0.3873)
+
+    com_pct = [r for r in rotulos if "%" in r]
+    assert len(com_pct) == 1, (
+        f"o percentual e da linha de RESULTADO da cascata (EBITDA), de mais nenhuma; saiu: {rotulos}"
+    )
+    # Valor em R$ preservado e percentual entre parenteses ao lado, com VIRGULA (pt-BR).
+    assert com_pct[0] == "R$ 113.160 (38,7%)", (
+        f"rotulo da barra de EBITDA fora do contrato: {com_pct[0]!r}"
+    )
+
+
+def test_waterfall_sem_percentual_mantem_o_rotulo_so_em_reais(monkeypatch):
+    """Sem `ebitda_pct` (chamador de fora dos dois montadores): nada de percentual.
+
+    Complementa o teste acima: garante que o percentual e OPCIONAL de verdade e que
+    ninguem o inventou a partir de uma divisao local (FIN-VIAB-01 -- a camada de render
+    nao faz conta financeira; sem numero servido, nao ha numero).
+    """
+    rotulos = _rotulos_das_barras(monkeypatch, **_DRE_COMUM)
+
+    assert all("%" not in r for r in rotulos), f"percentual inventado sem payload: {rotulos}"
+    assert "R$ 113.160" in rotulos  # a barra de EBITDA continua rotulada, so em R$
+
+
+# --- Paridade entre os DOIS montadores que produzem o slide -----------------
+# O mesmo ponto sai pelo montador CANONICO (payload-v1) e pelo DEPRECIADO
+# `montar_payload_viabilidade`, que segue publico e exercitado so por esta suite.
+# Enquanto so o canonico passava o pct, o MESMO grafico do MESMO ponto saia com
+# "(38,7%)" por um lado e sem % pelo outro. A trava vale enquanto os dois existirem.
+
+_DRE_PARIDADE = _payload_v1()["dre"]  # faturamento 282.015,62 | ebitda 109.233,60 | margem 0,3873
+_EBITDA_ROTULADO = "R$ 109.234 (38,7%)"
+
+
+class _ViabFake:
+    """Duck type minimo de `ViabilidadePontoResult` com os MESMOS numeros do payload-v1.
+
+    `montar_payload_viabilidade` le o objeto do motor por duck typing (e o proprio
+    docstring dele diz isso), entao o dublê fixa os numeros e deixa a comparacao entre os
+    dois caminhos ser sobre o RENDER, nao sobre o motor.
+    """
+
+    class _V:
+        faturamento_mensal_steady = _DRE_PARIDADE["faturamento"]
+        receita_liquida = _DRE_PARIDADE["faturamento"] - _DRE_PARIDADE["deducoes"]
+        receita_pos_impostos = receita_liquida - _DRE_PARIDADE["impostos"]
+        ebitda_mensal = _DRE_PARIDADE["ebitda"]
+        margem_ebitda_pct = _DRE_PARIDADE["margem"]
+        payback_meses = 29.0
+        roic_anual = 0.4475
+        flag_viavel = True
+
+    viabilidade = _V()
+    alunos_breakeven = 859.6
+    aluguel_teto_calculado = 84_604.69
+    faixa_alunos_p10 = 1800
+    faixa_alunos_p90 = 2600
+    flag_fora_envelope = False
+
+
+def _rotulo_do_ebitda(monkeypatch, fn) -> str:
+    """Unico rotulo de barra com "%" desenhado por `fn()` (o da barra de EBITDA)."""
+    rotulos = _rotulos_desenhados(monkeypatch, fn)
+    com_pct = [r for r in rotulos if "%" in r]
+    assert len(com_pct) == 1, f"esperado exatamente 1 rotulo com %, saiu: {rotulos}"
+    return com_pct[0]
+
+
+def test_os_dois_caminhos_estampam_o_percentual_no_waterfall(monkeypatch):
+    """Paridade: montador CANONICO (payload-v1) x DEPRECIADO `montar_payload_viabilidade`.
+
+    Os dois montam o MESMO waterfall do MESMO ponto; o percentual do EBITDA tem de sair
+    identico nos dois. Falha se alguem servir o pct so de um lado -- que era o estado
+    antes deste lote (o montador depreciado chamava o waterfall sem `ebitda_pct`).
+    Enquanto os dois montadores conviverem, eles nao podem divergir.
+    """
+    pelo_payload_v1 = _rotulo_do_ebitda(
+        monkeypatch, lambda: montar_payload_pdf_viabilidade(_payload_v1())
+    )
+    pelo_montador_depreciado = _rotulo_do_ebitda(
+        monkeypatch, lambda: montar_payload_viabilidade(_ViabFake(), incluir_graficos=True)
+    )
+
+    assert pelo_payload_v1 == pelo_montador_depreciado == _EBITDA_ROTULADO, (
+        f"o mesmo ponto rotulou o EBITDA de dois jeitos: canonico (payload-v1) "
+        f"{pelo_payload_v1!r} x depreciado {pelo_montador_depreciado!r} "
+        f"(esperado {_EBITDA_ROTULADO!r} nos dois)"
+    )

@@ -256,10 +256,13 @@ export default function HexMap({
         data: pins?.concorrentes ?? [],
         getPosition: (d) => [d.lng, d.lat],
         getIcon: (d) => iconObjs[d.rede ?? ''] ?? iconObjs.__ultra__,
-        getSize: 16,
+        // A logo estava pequena demais para ser lida no mapa. A textura do atlas tem 128px
+        // (PNG de origem 320x320), entao ha folga ate ~64px CSS sem upscaling — subir para
+        // 30 (cap 34) so gasta resolucao que ja existia.
+        getSize: 30,
         sizeUnits: 'pixels',
         sizeMinPixels: 10,
-        sizeMaxPixels: 20,
+        sizeMaxPixels: 34,
         pickable: true,
         onHover: (info) => {
           const p = info.object as Pin | undefined
@@ -274,10 +277,12 @@ export default function HexMap({
         data: pins?.ultra ?? [],
         getPosition: (d) => [d.lng, d.lat],
         getIcon: () => iconObjs.__ultra__,
-        getSize: 23,
+        // Ultra segue um degrau acima do concorrente (PNG de origem 426x426; mesma folga
+        // de textura de 128px), para continuar destacando a rede propria.
+        getSize: 40,
         sizeUnits: 'pixels',
         sizeMinPixels: 14,
-        sizeMaxPixels: 28,
+        sizeMaxPixels: 44,
         pickable: true,
         onHover: (info) => {
           const p = info.object as Pin | undefined
