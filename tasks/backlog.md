@@ -3391,3 +3391,166 @@ tocado. `growth_api_client.normalizar_unidade` **não** foi alterada — é comp
 catchment e a consolidação do M1; a normalização mais larga vive só no backend do piloto.
 
 ---
+
+### EPIC BLK-EXEC — Visão Executiva 2.0: de mapa territorial a dashboard acionável (DEC-023)
+
+> Contexto completo, medições e alternativas descartadas: `docs/plano_visao_executiva_2.md`.
+> Decisão: [DEC-023](../docs/decisions/DEC-023.md). Tudo **READ-ONLY sobre o M1**.
+
+**O problema.** A aba responde bem a "onde estão as unidades" e mal a "o que fazer com elas".
+A matéria-prima está subaproveitada: `growth_api_historico.parquet` tem 102 unidades e 29
+colunas de série diária desde abr/2022; a tela usa 7 delas. E dois números exibidos estão
+errados — a receita por recorrente 76% subestimada (coluna cumulativa lida como snapshot) e
+o NPS inflado pela sentinela `999`.
+
+**O alvo.** Aposentar o trabalho manual do time de campo, que monta ranking, "% vs média da
+rede" e comparação com M-1 à mão numa planilha, todo dia.
+
+---
+
+#### BLK-EXEC-00 — Cadastro de unidades (leitura)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Esteira** | Builder → QA |
+| **Depende de** | — |
+| **Status** | **Feito** |
+| **Autonomia** | **loop-safe** — leitura, READ-ONLY sobre o M1 |
+
+**Objetivo.** As dimensões que o time usa todo dia não existem na API Growth (consultor,
+master franquia, franqueado, cidade, dpto, Gold, LTV, modalidades, tiers). Semear
+`cadastro_unidades.json` da aba `DADOS` da planilha, com reconciliação de chave e relatório
+de órfãs. **Bloqueia o filtro de consultor.**
+
+**Aceite:** join fecha em 92 de 92 unidades comparáveis (2 aliases conferidos:
+`CEILANDIA QNN32`→`QNM32` e `SAO GONCALO - CENTRO`); leitura degrada sem o volume montado.
+
+#### BLK-EXEC-00b — Cadastro editável (escrita)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Crítica** (toca `docker-compose.prod.yml` e a infra de produção) |
+| **Esteira** | Builder → QA → Felipe |
+| **Depende de** | BLK-EXEC-00 |
+| **Status** | **Feito** |
+| **Autonomia** | **futuro** — toca VPS/compose; nunca loop-safe |
+
+**Objetivo.** Volume `:rw` próprio fora do `MOTOR_DATA_DIR`, repositório de interface
+estreita, `PUT` com lista branca de 3 campos, concorrência otimista por versão e log de
+auditoria com `Remote-User`.
+
+**Guardrail.** O AST read-only fica **inalterado** (nada de `to_*` é introduzido) e um teste
+prova que a escrita acontece só no diretório do cadastro.
+
+#### BLK-EXEC-01 — Núcleo semântico
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Esteira** | Builder → QA |
+| **Depende de** | — |
+| **Status** | **Feito** |
+| **Autonomia** | **loop-safe** |
+
+**Objetivo.** `fechamento_mensal()` vetorizado (2.132 linhas em ~100 ms; mata o laço Python
+por unidade), resolvedor de identidade (funde série partida por encoding sse datas disjuntas
+E mesma inauguração), exclusão por **nome cru**, `nps_valido` na faixa canônica −100..100,
+receita por recorrente em janela de 30 dias, gate de inauguração no lugar do piso de R$ 20 mil.
+
+**Aceite:** MTD parcial < R$ 20 e rolling-30 concordando com o mês fechado em 0,7%; NPS 999
+vira nulo e NPS negativo é preservado; `cancelados` usa `last`, nunca `max`.
+
+#### BLK-EXEC-01b — Contexto comparativo (o quarteto do time)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Esteira** | Builder → QA |
+| **Depende de** | BLK-EXEC-01 |
+| **Status** | **Feito** |
+| **Autonomia** | **loop-safe** |
+
+**Objetivo.** `MÊS | M-1 | Ranking N/total | % vs Média Rede` por métrica, com a tabela de
+direção deduzida da planilha: churn ranqueia pela **taxa** e ascendente, "em cobrança" pelo
+**%**, NPS pela **nota**. Empates com a mesma posição (`RANK.EQ`). Série diária
+des-acumulada (o bloco de 31 colunas que hoje é colado à mão).
+
+#### BLK-EXEC-02 — Conserto do alicerce na tela atual
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (`web/**`, GOVERNANÇA) |
+| **Esteira** | Builder → QA → Felipe |
+| **Depende de** | BLK-EXEC-01 |
+| **Status** | **Feito** |
+| **Autonomia** | **futuro** — `web/**` nunca é loop-safe (DEC-022) |
+
+**Objetivo.** `/api/executiva/{uf}` vira adaptador fino sobre o núcleo: contrato v1 intacto,
+números certos. Entrega o conserto sem esperar a repaginação.
+
+#### BLK-EXEC-03 — Motor de diagnóstico
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Esteira** | Builder → QA |
+| **Depende de** | BLK-EXEC-01 |
+| **Status** | **Feito** |
+| **Autonomia** | **loop-safe** |
+
+**Objetivo.** Réguas absolutas (o corte por quartil acendia alerta em 85% da rede),
+persistência de 3 meses fechados para saldo operacional e severidade em dois níveis.
+Réguas num bloco único, servidas no payload e impressas no PDF. Teste-guardião de banda.
+
+**Aceite:** fatia `alta` entre 5% e 30%; `inadimplente` e `treino_ativo` nunca alertam;
+todo texto sobrevive a `latin-1`.
+
+#### BLK-EXEC-04 — Benchmark por coorte de maturidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | Média |
+| **Esteira** | Builder → QA |
+| **Depende de** | BLK-EXEC-01 |
+| **Status** | **Feito** |
+| **Autonomia** | **loop-safe** |
+
+**Objetivo.** Coortes por semântica operacional, peer set que exclui mês aberto e unidade
+nova, e escada de degradação **sempre servida** (lição do `fonte_base_calibracao`).
+
+**Guardrail.** DEC-014 em código: `test_benchmark_nao_usa_geografia` reprova qualquer
+referência a `lat`/`lng`/`uf`/`cidade` no módulo.
+
+#### BLK-EXEC-05..09 — Rotas `/api/rede/*` e a tela nova
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (`web/**`) |
+| **Esteira** | Builder → QA → Felipe |
+| **Depende de** | BLK-EXEC-01/01b/03/04 |
+| **Status** | **Feito** |
+| **Autonomia** | **futuro** |
+
+**Objetivo.** `GET /api/rede/{filtros,carteira,unidade/{id}}`; frontend com scroller único,
+tabela real (`<table>` com `aria-sort`), mapa como card, UF desacoplada do Mapa Territorial,
+ficha da unidade com `history.pushState`. Zero componente declarado dentro de `screens/`.
+
+#### BLK-EXEC-10/11 — Exports
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (`web/**`) |
+| **Esteira** | Builder → QA → Felipe |
+| **Depende de** | BLK-EXEC-06/08 |
+| **Status** | **Feito** |
+| **Autonomia** | **futuro** |
+
+**Objetivo.** CSV (`csv.writer`, `sep=";"`, `utf-8-sig` — **não** `df.to_csv`, que o AST
+guardrail reprova), XLSX por `openpyxl`, PDF da carteira e da ficha sobre `pdf_base.py`.
+
+**Guardrail.** `pdf_base.py` extrai as primitivas `_UltraPDF`; os dois geradores legados
+(`censo_report.py`, `relatorio_municipal.py`) **não** são reapontados neste epic — são
+geradores em produção com testes de regressão de bytes.
+
+---

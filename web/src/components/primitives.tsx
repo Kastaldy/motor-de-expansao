@@ -1,6 +1,9 @@
 import type { CSSProperties, ReactNode } from 'react'
 
-import type { Tom } from '../lib/types'
+import { COR_SEVERIDADE, type LeituraDelta } from '../lib/exec'
+import { num, pct } from '../lib/format'
+import { caminhoSparkline } from '../lib/sparkline'
+import type { RedeSeveridade, Tom } from '../lib/types'
 
 /* ---------------------------------------------------------------------------
    Primitivas compartilhadas. Os valores saem do template de referencia; o que
@@ -264,6 +267,175 @@ export function Aviso({
         {corpo}
       </div>
       {acao}
+    </div>
+  )
+}
+
+/* ---------------------------------------------------------------------------
+   Primitivas da Visão Executiva 2.0 (DEC-023).
+
+   Vivem AQUI, e não dentro de `screens/`, por uma razão medida: a
+   `ExecutiveScreen` v1 declarava `Kpi`, `Delta` e `Legenda` locais, homônimos
+   dos daqui e divergentes deles. Dois componentes com o mesmo nome e
+   comportamento diferente no mesmo produto é bug esperando data.
+   --------------------------------------------------------------------------- */
+
+/**
+ * Chip de variação vs M-1, com a direção CERTA para cada métrica.
+ *
+ * Promovido da `ExecutiveScreen` (era local). Recebe a leitura já pronta de
+ * `lib/exec.lerDelta`, que sabe que churn subindo é ruim e que churn/NPS variam em
+ * PONTOS, não em percentual do percentual.
+ */
+export function Delta({
+  leitura,
+  tamanho = 11,
+}: {
+  leitura: LeituraDelta | null
+  tamanho?: number
+}) {
+  if (!leitura) return null
+  const cor = leitura.estavel
+    ? 'var(--tx-muted)'
+    : leitura.bom
+      ? 'var(--pos, #37b26b)'
+      : 'var(--neg, #ff5a6e)'
+  const texto =
+    leitura.modo === 'pct'
+      ? pct(leitura.valor, 1)
+      : `${num(leitura.valor, 1)} ${'pts'}`
+  return (
+    <span
+      className="num"
+      style={{ font: `700 ${tamanho}px/1 var(--f-num)`, color: cor, whiteSpace: 'nowrap' }}
+    >
+      {leitura.estavel ? '—' : leitura.subiu ? '▲' : '▼'} {leitura.estavel ? '' : texto}
+    </span>
+  )
+}
+
+/** Bolinha do semáforo do diagnóstico. Uma cor por linha, e só uma. */
+export function Semaforo({
+  nivel,
+  rotulo,
+  tamanho = 9,
+}: {
+  nivel: RedeSeveridade
+  rotulo?: string
+  tamanho?: number
+}) {
+  return (
+    <span
+      title={rotulo}
+      aria-label={rotulo}
+      style={{
+        display: 'inline-block',
+        width: tamanho,
+        height: tamanho,
+        borderRadius: '50%',
+        background: COR_SEVERIDADE[nivel],
+        flexShrink: 0,
+        boxShadow: nivel === 'alta' ? `0 0 0 3px ${COR_SEVERIDADE.alta}22` : undefined,
+      }}
+    />
+  )
+}
+
+/** Barra segmentada (semáforo da rede, split recorrentes × agregadores). */
+export function BarraSegmentada({
+  partes,
+  altura = 10,
+  onParte,
+}: {
+  partes: { chave: string; valor: number; cor: string; rotulo: string }[]
+  altura?: number
+  onParte?: (chave: string) => void
+}) {
+  const total = partes.reduce((s, p) => s + p.valor, 0) || 1
+  return (
+    <div style={{ display: 'flex', height: altura, borderRadius: altura / 2, overflow: 'hidden', background: 'var(--surf-raised)' }}>
+      {partes.map((p) => (
+        <button
+          key={p.chave}
+          type="button"
+          title={`${p.rotulo}: ${p.valor}`}
+          onClick={onParte ? () => onParte(p.chave) : undefined}
+          style={{
+            width: `${(100 * p.valor) / total}%`,
+            background: p.cor,
+            border: 'none',
+            padding: 0,
+            cursor: onParte ? 'pointer' : 'default',
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+/** Sparkline de 12 meses. SVG à mão — o projeto não tem biblioteca de gráficos. */
+export function SparklineSvg({
+  valores,
+  largura = 76,
+  altura = 22,
+  cor = 'var(--ac)',
+}: {
+  valores: (number | null)[]
+  largura?: number
+  altura?: number
+  cor?: string
+}) {
+  const s = caminhoSparkline(valores, largura, altura)
+  if (!s.linha) {
+    return <span style={{ font: '400 10px/1 var(--f-ui)', color: 'var(--tx-muted)' }}>sem série</span>
+  }
+  return (
+    <svg width={largura} height={altura} aria-hidden style={{ display: 'block' }}>
+      {s.area && <path d={s.area} fill={cor} opacity={0.14} />}
+      <path d={s.linha} fill="none" stroke={cor} strokeWidth={1.4} strokeLinejoin="round" />
+      {s.ultimo && <circle cx={s.ultimo.x} cy={s.ultimo.y} r={1.9} fill={cor} />}
+    </svg>
+  )
+}
+
+/** Régua com meta marcada — usada no NPS, cuja meta oficial da rede é 60. */
+export function BarraMeta({
+  valor,
+  meta,
+  minimo = 0,
+  maximo = 100,
+  altura = 8,
+}: {
+  valor: number | null
+  meta: number
+  minimo?: number
+  maximo?: number
+  altura?: number
+}) {
+  const fatia = (v: number) => Math.min(100, Math.max(0, (100 * (v - minimo)) / (maximo - minimo)))
+  return (
+    <div style={{ position: 'relative', height: altura, background: 'var(--surf-raised)', borderRadius: altura / 2 }}>
+      {valor !== null && (
+        <div
+          style={{
+            width: `${fatia(valor)}%`,
+            height: '100%',
+            borderRadius: altura / 2,
+            background: valor >= meta ? 'var(--pos, #37b26b)' : 'var(--ac)',
+          }}
+        />
+      )}
+      <div
+        title={`Meta da rede: ${meta}`}
+        style={{
+          position: 'absolute',
+          left: `${fatia(meta)}%`,
+          top: -2,
+          width: 2,
+          height: altura + 4,
+          background: 'var(--tx-soft)',
+        }}
+      />
     </div>
   )
 }
