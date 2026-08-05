@@ -395,7 +395,7 @@ def ficha_pdf(payload: Mapping[str, Any]) -> bytes:
     faixa_de_titulo(
         pdf,
         str(unidade.get("nome", "Unidade")),
-        f"{unidade.get('uf', '')} - competencia {payload.get('mes', '')}",
+        f"{unidade.get('uf', '')} - competência {payload.get('mes', '')}",
     )
 
     pdf.set_text_color(*CINZA_TEXTO)
@@ -534,7 +534,7 @@ def _pagina_de_graficos_da_rede(
             80,
             "Faturamento da rede no recorte",
             f"Soma dos meses FECHADOS das {payload.get('totais', {}).get('no_recorte', 0)} "
-            "unidades do recorte. A competencia em curso nao entra.",
+            "unidades do recorte. A competência em curso não entra.",
         )
         barras(
             pdf,
@@ -548,7 +548,7 @@ def _pagina_de_graficos_da_rede(
         )
 
     semaforo = payload.get("semaforo") or {}
-    titulo_de_grafico(pdf, 36, 316, "Fila de trabalho", "Severidade pelas reguas do rodape.")
+    titulo_de_grafico(pdf, 36, 316, "Fila de trabalho", "Severidade pelas réguas do rodapé.")
     barra_empilhada(
         pdf,
         36,
@@ -563,7 +563,7 @@ def _pagina_de_graficos_da_rede(
     legenda_x = 36.0
     for chave, rotulo in (
         ("alta", "Prioridade alta"),
-        ("media", "Atencao"),
+        ("media", "Atenção"),
         ("ok", "Sem alerta"),
         ("sem_base", "Sem base"),
     ):
@@ -585,7 +585,7 @@ def _pagina_de_graficos_da_rede(
         520,
         316,
         "Recorrentes x agregadores",
-        "Agregador paga menos por aluno e pode sair em bloco por decisao do parceiro.",
+        "Agregador paga menos por aluno e pode sair em bloco por decisão do parceiro.",
     )
     barra_empilhada(
         pdf,
@@ -623,7 +623,7 @@ def _pagina_de_graficos_da_rede(
             12,
             ascii_seguro(
                 f"Mesma base ano a ano (SSS): {sss.get('unidades', 0)} unidades presentes nos "
-                f"dois periodos, faturamento {'+' if (variacao or 0) >= 0 else ''}"
+                f"dois períodos, faturamento {'+' if (variacao or 0) >= 0 else ''}"
                 f"{_br(variacao, 1)}% contra {sss.get('competencia_base', '')}."
             ),
         )
@@ -671,8 +671,8 @@ def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> N
         pdf,
         36,
         272,
-        "Funil comercial do periodo",
-        str(funil.get("aviso") or f"Conversao de visita em aluno: {_br(funil.get('conversao_pct'), 1)}%"),
+        "Funil comercial do período",
+        str(funil.get("aviso") or f"Conversão de visita em aluno: {_br(funil.get('conversao_pct'), 1)}%"),
     )
     barras_horizontais(
         pdf,
@@ -694,7 +694,7 @@ def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> N
         520,
         272,
         "NPS contra a meta da rede",
-        f"Meta oficial {meta:.0f}. O alerta so dispara bem abaixo dela -- meta nao e alerta.",
+        f"Meta oficial {meta:.0f}. O alerta só dispara bem abaixo dela: meta não é alerta.",
     )
     barra_de_meta(pdf, 520, 316, PAGINA_LARGURA - 556, valor=nps, meta=meta)
     pdf.set_text_color(*CINZA_TEXTO)
