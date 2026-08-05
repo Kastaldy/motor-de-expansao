@@ -1173,3 +1173,57 @@ def test_ancora_de_municipio_e_deterministica_e_desempata_estavel() -> None:
             f"N12: ancora de {muni} = {ancora!r}; com empate no topo o criterio e o MENOR "
             f"hex_id ({min(topo['hex_id'])!r}), unico desempate que nao depende da ordem"
         )
+
+
+def test_metodologia_nao_reescreve_o_tom_que_o_funil_pinta() -> None:
+    """O painel de Metodologia e o funil descrevem a MESMA camada 3 — se divergirem,
+    o painel mente para quem le a tela.
+
+    Regressao real: `_faixas_competitivas` copiava o tom a mao ("blue" para o
+    "Adensar"). Quando `_etiqueta` passou a devolver "gray" ali — para o chip nao
+    colidir com o azul da camada 1 —, o painel seguiu anunciando azul. Agora ele
+    PERGUNTA a `_etiqueta`, e este teste prova que continua perguntando.
+    """
+    import pandas as pd
+
+    from app import CONC_ADENSAR_MAX, _etiqueta, _faixas_competitivas
+
+    faixas = [f for f in _faixas_competitivas() if f["escopo"] == "municipio"]
+    casos = [0, CONC_ADENSAR_MAX, CONC_ADENSAR_MAX + 1]
+    assert len(faixas) == len(casos), (
+        "o painel deixou de publicar exatamente as tres faixas competitivas do municipio"
+    )
+
+    for faixa, n in zip(faixas, casos):
+        rotulo, tom, _ = _etiqueta(
+            "conc. 2 km", None, 1, pd.Series({"n_concorrentes_est": n})
+        )
+        assert (faixa["etiqueta"], faixa["tom"]) == (rotulo, tom), (
+            f"com {n} concorrente(s) o funil pinta {rotulo!r}/{tom!r}, mas o painel "
+            f"anuncia {faixa['etiqueta']!r}/{faixa['tom']!r} — duas verdades sobre a "
+            "mesma camada"
+        )
+
+
+def test_todo_tom_publicado_existe_no_tipo_Tom_do_front() -> None:
+    """Tom e' contrato de string entre Python e TypeScript, mantido a mao dos dois
+    lados. `Chip` (primitives.tsx) indexa `TONS[tom]` sem fallback, entao um tom novo
+    no backend sem o par no front quebra o chip em vez de degradar."""
+    import re
+    from pathlib import Path
+
+    from app import montar_metodologia
+
+    tipos = Path(__file__).resolve().parents[2] / "web" / "src" / "lib" / "types.ts"
+    linha = re.search(r"export type Tom =([^\n]+)", tipos.read_text(encoding="utf-8"))
+    assert linha, "types.ts deixou de declarar `export type Tom` numa linha so"
+    declarado = set(re.findall(r"'(\w+)'", linha.group(1)))
+
+    publicados = {
+        f["tom"] for c in montar_metodologia()["camadas"] for f in c["faixas"]
+    }
+    faltando = publicados - declarado
+    assert not faltando, (
+        f"o backend publica {sorted(faltando)} e o tipo Tom do front nao conhece: "
+        "o Chip indexa TONS[tom] sem fallback e quebraria a lista"
+    )

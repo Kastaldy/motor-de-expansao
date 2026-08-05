@@ -1870,10 +1870,19 @@ def _faixas_competitivas() -> list[dict[str, Any]]:
     diferentes, e por isso os dois escopos aparecem lado a lado no painel."""
     from motor_expansao.dashboard.constants import FAIXAS_MAPA_DEMANDA
 
+    # Rotulo E tom sao PERGUNTADOS a `_etiqueta` — a mesma funcao que pinta o chip na
+    # tela —, nunca reescritos aqui. Enquanto o tom era copiado a mao, mudar a cor do
+    # "Adensar" em `_etiqueta` (blue -> gray, para nao colidir com a camada 1) deixava
+    # este painel anunciando a cor antiga. O painel existe justamente para NAO haver
+    # uma segunda verdade sobre o funil.
+    def faixa(n: int, condicao: str) -> dict[str, Any]:
+        rotulo, tom, _ = _etiqueta("conc. 2 km", None, 1, pd.Series({"n_concorrentes_est": n}))
+        return _fx(rotulo, condicao, tom or "gray", "municipio")
+
     return [
-        _fx("Livre", "nenhum concorrente mapeado em 2 km", "green", "municipio"),
-        _fx("Adensar", f"até {CONC_ADENSAR_MAX} concorrentes estimados", "blue", "municipio"),
-        _fx("Disputa", f"mais de {CONC_ADENSAR_MAX} concorrentes estimados", "red", "municipio"),
+        faixa(0, "nenhum concorrente mapeado em 2 km"),
+        faixa(CONC_ADENSAR_MAX, f"até {CONC_ADENSAR_MAX} concorrentes estimados"),
+        faixa(CONC_ADENSAR_MAX + 1, f"mais de {CONC_ADENSAR_MAX} concorrentes estimados"),
     ] + _faixas_da_rampa(FAIXAS_MAPA_DEMANDA, "uf", em_alunos=True)
 
 
