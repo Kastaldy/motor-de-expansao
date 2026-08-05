@@ -242,3 +242,32 @@ def test_titulo_de_grafico_respeita_a_largura_do_bloco() -> None:
     assinatura = inspect.signature(pdf_base.titulo_de_grafico)
     assert "largura" in assinatura.parameters
     assert assinatura.parameters["largura"].default == 340.0
+
+
+@pytest.mark.parametrize(
+    "valor, esperado",
+    [
+        (0.0, "R$ 0"),
+        (1.0, "R$ 1"),
+        (999.0, "R$ 999"),
+        (1_000.0, "R$ 1k"),
+        (141_389.0, "R$ 141k"),
+        (999_499.0, "R$ 999k"),
+        # Fronteira consciente: 999.500 arredonda para "1.000k" em vez de virar "1,0M".
+        # Fica assim de propósito — a faixa é escolhida pelo valor CRU, e mudar isso
+        # tornaria a regra dependente do arredondamento, que é pior de explicar.
+        (999_500.0, "R$ 1.000k"),
+        (1_000_000.0, "R$ 1,0M"),
+        (18_635_051.0, "R$ 18,6M"),
+        (-250_000.0, "R$ -250k"),
+    ],
+)
+def test_brl_compacto(valor: float, esperado: str) -> None:
+    """O rótulo que vai sobre cada barra de faturamento do PDF.
+
+    Número cheio não cabe sobre doze barras; o compacto é o que o franqueado lê no papel,
+    então cada faixa está travada.
+    """
+    from motor_expansao.dashboard.rede_export import _brl_compacto
+
+    assert _brl_compacto(valor) == esperado
