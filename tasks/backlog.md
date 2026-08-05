@@ -1809,10 +1809,10 @@ ou explicitamente recusados com justificativa; suíte completa sem regressão (b
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Alta** (coluna nova num coletor de produção, no repo externo `VinhoAbencoado/GymScraping`; muda o schema de um CSV com 12.769 linhas já coletadas e estende o escopo de coleta autorizado pela DEC-013). **Exige emenda à DEC-013 registrada + gate humano obrigatório** antes do Builder. Não pode ser Média: `scripts/aplicar_criticidade_label.py:38` arma **auto-merge** para Baixa/Média, o que furaria o gate que este bloco declara. |
-| **Prioridade** | **DESBLOQUEADO** — o gate foi resolvido pela **DEC-023** (2026-08-04). Antes do **BLK-MA-09**, que é o consumidor da coluna. |
-| **Esteira** | Block Orchestrator → Planner → `[GATE — RESOLVIDO pela DEC-023 em 2026-08-04; NÃO reabrir]` → Builder → QA. |
+| **Prioridade** | **DESBLOQUEADO** — o gate foi resolvido pela **DEC-024** (2026-08-04). Antes do **BLK-MA-09**, que é o consumidor da coluna. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — RESOLVIDO pela DEC-024 em 2026-08-04; NÃO reabrir]` → Builder → QA. |
 | **Status** | Pendente — pronto para o Block Orchestrator. |
-| **Depende de** | **DEC-023** (autoriza o escopo de coleta, fixa o schema persistido e emenda as partes 2 e 3 da DEC-013). |
+| **Depende de** | **DEC-024** (autoriza o escopo de coleta, fixa o schema persistido e emenda as partes 2 e 3 da DEC-013). |
 | **Autonomia** | **manual (NÃO loop-safe)** — repo externo, coletor de produção que roda na VPS por cron; toca a trilha de scrapers. NÃO marcar loop-safe. |
 
 **Contexto (medido em 2026-07-30/31; evidência em `data/reports/sonda_rating_agregadores_2026-07-31.md`).**
@@ -1835,7 +1835,7 @@ consolidado regenerado de forma íntegra.
 de uma decisão cujo valor só o **BLK-MA-09** materializa. Se o gate do MA-09 decidir
 **D-C = manter `{s1,s2}` provisório** e **D-B = segmentar por regime**, este par de blocos entrega
 **zero** valor ordenável até o S3 amadurecer (~8 meses na cadência real). **Desfecho:** Vinicius
-**FATIOU o gate** (DEC-023) — o MA-08 avança com as decisões de schema, e D-A/D-B/D-C ficam para o
+**FATIOU o gate** (DEC-024) — o MA-08 avança com as decisões de schema, e D-A/D-B/D-C ficam para o
 gate do MA-09, sem serem pré-requisito deste bloco. O risco de o bloco ficar órfão foi **assumido
 explicitamente**. O que o compensa: a rodada de migração exigida por este bloco produz a nota das
 12.769 unidades com o `nome` ao lado, o que converte o pré-requisito do D-A — hoje uma sonda ao vivo
@@ -1855,7 +1855,7 @@ agregadores). Testes em `Wellhub/tests/`. Docs: `CLAUDE.md:23` do GymScraping e
 `Wellhub/RECON.md:97` (contrato de colunas), mais as duas correções de carona de docs **já stale
 hoje** (`RECON.md:12` e `csv_writer.py:4`, ambos listando 9 colunas, sem `atividades`).
 
-**Três decisões de produto — RESOLVIDAS pela DEC-023 (parte 5) em 2026-08-04. NÃO reabrir.**
+**Três decisões de produto — RESOLVIDAS pela DEC-024 (parte 5) em 2026-08-04. NÃO reabrir.**
 (a) **Duas colunas, não uma:** `nota_wellhub` e `qtd_avaliacoes_wellhub`, ambas agregados numéricos,
 em `FIELDNAMES` **antes** de `data_coleta`. O `label` embute a contagem (`(105 Avaliações)`) e ela vem
 de graça no mesmo bloco; é o que permite ponderar confiança — 2/53 unidades têm menos de 30
@@ -1920,7 +1920,7 @@ a partir da raiz do repo do scraper).
 |---|---|
 | **Criticidade** | **Alta** (liga um sinal do `score_vulnerabilidade`, o que **rebalanceia todos os pesos efetivos**: S3 cai de ≈0,467 para 0,35 e S4 de ≈0,333 para 0,25; muda o contrato de snapshot e força bump de versão. Camada **PARALELA e READ-ONLY sobre o M1** — não toca `score_priorizacao`, pesos, nem artefatos oficiais, e o score ainda não tem consumidor materializado; **volta a ser Crítica quando o BLK-MA-05 materializar o entregável**). **Exige emenda ao contrato ratificada no gate + gate humano obrigatório** antes do Builder. |
 | **Prioridade** | Depois do **BLK-MA-08**, que produz o insumo. Antes do **BLK-MA-05**, que é o consumidor do score — se o MA-05 sair antes, ordenará sobre uma régua que este bloco vai mudar. |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA — D-A/D-B/D-C, ratificadas no gate conjunto do BLK-MA-08]` → Builder → QA. |
+| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA — D-A/D-B/D-C, no gate PRÓPRIO deste bloco (o gate conjunto com o BLK-MA-08 foi FATIADO pela DEC-024)]` → Builder → QA. |
 | **Status** | Pendente (bloqueado pela coluna do coletor). |
 | **Depende de** | BLK-MA-08. |
 | **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
@@ -2039,7 +2039,7 @@ próprios); o cruzamento com hex quente e o entregável comercial (**BLK-MA-05**
 (**BLK-MA-06**); reabrir a fórmula, os pesos do D4 ou as decisões G-D1/G-D2/G-D3 **exceto** no ponto
 que o item 4 da emenda G-D3 explicitamente delega a este bloco (o §8.2).
 
-**Critério de aceite.** D-A, D-B e D-C decididas no gate conjunto e registradas como emenda ao
+**Critério de aceite.** D-A, D-B e D-C decididas no gate DESTE bloco (fatiado da DEC-024) e registradas como emenda ao
 contrato (§7, §8.1, §8.2, §8.4, §8.5), com DEC nova **apenas** se o D-B escolher algo que mude a
 arquitetura da entrega (duas listas, ou anulação por regime); `v2` ligado com teste do regime misto
 `{s1,s2,s3,s4}` × `{s1,s3,s4}` no mesmo frame, provando a política escolhida; teste de que a nota
