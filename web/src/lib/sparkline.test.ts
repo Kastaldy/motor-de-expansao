@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { caminhoSparkline, escalaDeBarras } from './sparkline'
+import { caminhoSparkline, escalaDeBarras, fatiasDeRosca, percentualDaFatia } from './sparkline'
 
 describe('caminhoSparkline', () => {
   it('desenha a série e marca o último ponto', () => {
@@ -59,5 +59,80 @@ describe('escalaDeBarras', () => {
 
   it('buraco vira zero, não NaN', () => {
     expect(escalaDeBarras([null, 10, undefined])).toEqual([0, 1, 0])
+  })
+})
+
+describe('fatiasDeRosca', () => {
+  const cores = { a: '#0a7', b: '#c39' }
+
+  it('duas fatias somam a volta inteira', () => {
+    const { fatias, total, perimetro } = fatiasDeRosca(
+      [
+        { rotulo: 'Recorrentes', valor: 906, cor: cores.a },
+        { rotulo: 'Agregadores', valor: 713, cor: cores.b },
+      ],
+      50,
+    )
+    expect(total).toBe(1619)
+    expect(fatias[0].fracao + fatias[1].fracao).toBeCloseTo(1)
+    // a segunda fatia começa exatamente onde a primeira termina
+    expect(fatias[1].deslocamento).toBeCloseTo(-perimetro * fatias[0].fracao)
+  })
+
+  it('fatia de 100% fecha a volta', () => {
+    // Foi o caso que a versão em Python errou: uma unidade sem NENHUM agregador
+    // desenhava 100% como um setor mordido.
+    const { fatias, perimetro } = fatiasDeRosca(
+      [
+        { rotulo: 'Recorrentes', valor: 3870, cor: cores.a },
+        { rotulo: 'Agregadores', valor: 0, cor: cores.b },
+      ],
+      50,
+    )
+    expect(fatias[0].fracao).toBe(1)
+    expect(fatias[0].traco).toBe(`${perimetro} 0`)
+    expect(fatias[1].fracao).toBe(0)
+  })
+
+  it('fatia vazia não desloca a seguinte', () => {
+    const { fatias } = fatiasDeRosca(
+      [
+        { rotulo: 'vazia', valor: 0, cor: cores.a },
+        { rotulo: 'cheia', valor: 10, cor: cores.b },
+      ],
+      50,
+    )
+    expect(fatias[1].deslocamento).toBe(-0)
+  })
+
+  it('total zero não divide por zero', () => {
+    const { fatias, total } = fatiasDeRosca(
+      [
+        { rotulo: 'a', valor: 0, cor: cores.a },
+        { rotulo: 'b', valor: 0, cor: cores.b },
+      ],
+      50,
+    )
+    expect(total).toBe(0)
+    expect(fatias.every((f) => f.fracao === 0 && !Number.isNaN(f.deslocamento))).toBe(true)
+    expect(fatias.every((f) => !f.traco.includes('NaN'))).toBe(true)
+  })
+
+  it('valor negativo não vira fatia', () => {
+    const { fatias, total } = fatiasDeRosca(
+      [
+        { rotulo: 'a', valor: -5, cor: cores.a },
+        { rotulo: 'b', valor: 10, cor: cores.b },
+      ],
+      50,
+    )
+    expect(total).toBe(10)
+    expect(fatias[0].fracao).toBe(0)
+    expect(fatias[1].fracao).toBe(1)
+  })
+
+  it('percentualDaFatia devolve null sem base', () => {
+    expect(percentualDaFatia(5, 20)).toBe(25)
+    expect(percentualDaFatia(0, 0)).toBeNull()
   })
 })

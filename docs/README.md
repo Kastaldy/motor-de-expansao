@@ -19,6 +19,7 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 
 ## 2. App e Dashboard
 - [arquitetura_app_atual.md](arquitetura_app_atual.md) — **[canônico]** arquitetura do app atual (piloto web: 3 superfícies + motor compartilhado; Parte B preserva a história do Streamlit).
+- [contrato_api_metodologia.md](contrato_api_metodologia.md) — **[canônico]** contrato do `GET /api/metodologia` (painel de metodologia do Mapa): payload, escopo das faixas e por que elas são DERIVADAS de `constants.FAIXAS_MAPA_*`.
 - [streamlit_dashboard_m1.md](streamlit_dashboard_m1.md) — **[histórico]** governança do dashboard Streamlit de 4 abas — app aposentado pela DEC-022 (2026-08-03); o app de produção é o piloto web (`deploy_piloto_web.md`).
 
 ## 3. API GeoEspacial
