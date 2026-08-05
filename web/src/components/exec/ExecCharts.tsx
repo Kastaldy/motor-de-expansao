@@ -1,6 +1,6 @@
 import { COR_SEVERIDADE, rotuloMesCurto } from '../../lib/exec'
 import { brlCurto, num, pct } from '../../lib/format'
-import { caminhoSparkline, escalaDeBarras } from '../../lib/sparkline'
+import { caminhoSparkline, escalaDeBarras, fatiasDeRosca, percentualDaFatia } from '../../lib/sparkline'
 import type { RedeCoorteComparacao } from '../../lib/types'
 
 /* ---------------------------------------------------------------------------
@@ -411,12 +411,13 @@ export function Rosca({
   centroRotulo?: string
   centroValor?: string
 }) {
-  const total = partes.reduce((s, p) => s + Math.max(p.valor, 0), 0)
   const raio = (tamanho - espessura) / 2
   const centro = tamanho / 2
-  const perimetro = 2 * Math.PI * raio
+  // A conta vive em `lib/sparkline` porque existe DUAS vezes no produto — aqui e no
+  // gerador de PDF, em Python — e as duas precisam concordar sobre 100%, fatia vazia e
+  // total zero. Foi exatamente nesses três casos que a versão Python errou.
+  const { fatias, total } = fatiasDeRosca(partes, raio)
 
-  let percorrido = 0
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
       <svg width={tamanho} height={tamanho} role="img" aria-label={centroRotulo ?? 'Composição'}>
@@ -429,29 +430,25 @@ export function Rosca({
           strokeWidth={espessura}
         />
         {total > 0 &&
-          partes.map((p) => {
-            const fatia = Math.max(p.valor, 0) / total
-            const traco = `${perimetro * fatia} ${perimetro * (1 - fatia)}`
-            const deslocamento = -perimetro * percorrido
-            percorrido += fatia
-            return (
+          fatias
+            .filter((f) => f.fracao > 0)
+            .map((f) => (
               <circle
-                key={p.rotulo}
+                key={f.rotulo}
                 cx={centro}
                 cy={centro}
                 r={raio}
                 fill="none"
-                stroke={p.cor}
+                stroke={f.cor}
                 strokeWidth={espessura}
-                strokeDasharray={traco}
-                strokeDashoffset={deslocamento}
+                strokeDasharray={f.traco}
+                strokeDashoffset={f.deslocamento}
                 // -90° põe o início da primeira fatia no topo, que é onde o olho começa.
                 transform={`rotate(-90 ${centro} ${centro})`}
               >
-                <title>{`${p.rotulo}: ${num(p.valor)} (${pct((100 * p.valor) / total, 0)})`}</title>
+                <title>{`${f.rotulo}: ${num(f.valor)} (${pct(percentualDaFatia(f.valor, total) ?? 0, 0)})`}</title>
               </circle>
-            )
-          })}
+            ))}
         {centroValor && (
           <text
             x={centro}
@@ -486,7 +483,7 @@ export function Rosca({
               {num(p.valor)}
             </span>
             <span className="num" style={{ font: '500 10px/1 var(--f-num)', color: 'var(--tx-muted)', width: 34, textAlign: 'right' }}>
-              {total > 0 ? pct((100 * p.valor) / total, 0) : '—'}
+              {percentualDaFatia(p.valor, total) === null ? '—' : pct(percentualDaFatia(p.valor, total)!, 0)}
             </span>
           </div>
         ))}
