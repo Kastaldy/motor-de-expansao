@@ -834,7 +834,11 @@ def _etiqueta(
         if n == 0:
             return "Livre", "green", None
         if n <= CONC_ADENSAR_MAX:
-            return "Adensar", "blue", None
+            # "gray" e nao "blue": azul e' a identidade da camada 1 (potencial
+            # censitario) e o chip "Quente"/"Polo" de la'. O mesmo pill azul
+            # significando "score altissimo" no passo 1 e "tem 1-2 concorrentes"
+            # no passo 3 era leitura dupla de escalas sem relacao.
+            return "Adensar", "gray", None
         return "Disputa", "red", None
     if metrica == "residual":
         if row.get("_fila"):
@@ -1110,6 +1114,11 @@ def montar_funil(
     # nao se reverte isso em silencio na resolucao de um conflito.
     fila = white.nlargest(FILA_MAX, "oferta_efetiva_disponivel") if len(white) else white
 
+    # O tom passado a `_rank_items` e o tom PADRAO do passo (identidade da camada:
+    # blue/violet/amber/teal = --l1..--l4 em web/src/styles/tokens.css). Ele so
+    # sobrevive quando `_etiqueta` devolve tom None, o que hoje acontece apenas na
+    # fila do passo 4 — nos demais o tom do ITEM (intensidade) prevalece, entao
+    # alinhar os passos 1-3 e coerencia, nao mudanca visual.
     passos = [
         {
             "n": 1,
@@ -1140,7 +1149,7 @@ def montar_funil(
             "funil_unit": _unidade(len(residual), "região com residual", "regiões com residual"),
             "funil_from": f"{_fmt(len(quentes))} hexágonos de alto potencial",
             "metrica": "residual",
-            "itens": _rank_items(residual, "oferta_efetiva_disponivel", "residual", "green", bairros=bairros),
+            "itens": _rank_items(residual, "oferta_efetiva_disponivel", "residual", "violet", bairros=bairros),
             "hexes": residual["hex_id"].tolist(),
         },
         {
@@ -1206,7 +1215,10 @@ def montar_funil(
                 fila.assign(_fila=True),
                 "oferta_efetiva_disponivel",
                 "residual",
-                "blue",
+                # "teal" e nao "blue": este e o UNICO tom de passo que chega a
+                # pintar (a fila e o unico caso de tom_item None) e ele colidia
+                # com o chip azul "Quente" do passo 1.
+                "teal",
                 bairros=bairros,
             ),
             "hexes": fila["hex_id"].tolist(),
@@ -1551,7 +1563,7 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
             "funil_unit": _unidade(len(residual), "região com residual", "regiões com residual"),
             "funil_from": f"{_fmt(len(quentes))} hexágonos de alto potencial",
             "metrica": "residual",
-            "itens": _rank_municipios(residual, "oferta_efetiva_disponivel", "sum", "residual", "green", faixa_por="demanda"),
+            "itens": _rank_municipios(residual, "oferta_efetiva_disponivel", "sum", "residual", "violet", faixa_por="demanda"),
             "hexes": residual["hex_id"].tolist(),
         },
         {
@@ -1626,7 +1638,10 @@ def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
                 "oferta_efetiva_disponivel",
                 "sum",
                 "residual",
-                "blue",
+                # "teal" = camada 4. Este e' o UNICO tom de passo que chega a pintar
+                # (nos demais o tom do ITEM prevalece) e colidia com o chip azul
+                # "Quente" do passo 1.
+                "teal",
                 fila=True,
                 # Passo 4 = faixa de oportunidade do M1, igual a legenda desta camada.
                 # A ordem da fila continua legivel no rank (1º, 2º, 3º) do proprio item.

@@ -1,6 +1,9 @@
 /** Contrato entre o front e o backend do piloto (web/server/app.py). */
 
-export type Tom = 'blue' | 'green' | 'amber' | 'red' | 'gray'
+/** Tom do chip do ranking. `teal`/`violet` entraram com a identidade de camada
+ *  (--l4/--l2): o chip da FILA do passo 4 era azul, igual ao "Quente" do passo 1.
+ *  Fronteira TS<->Python sem contrato gerado: o produtor e' web/server/app.py. */
+export type Tom = 'blue' | 'green' | 'amber' | 'red' | 'gray' | 'teal' | 'violet'
 
 export interface Hex {
   id: string

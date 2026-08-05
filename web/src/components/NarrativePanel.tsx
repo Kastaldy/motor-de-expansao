@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import { camadaCor } from '../lib/colors'
 import { type Linha, type Serie, parseDims, parseSeries } from '../lib/crescimento'
 import { alunos, num } from '../lib/format'
 import type { Hex, Passo } from '../lib/types'
@@ -12,6 +13,14 @@ import { Chip, Eyebrow } from './primitives'
    onde veio e o que sobrou (999 hexagonos -> 314 quentes -> 38 com residual ->
    23 white spaces -> 4 aberturas). A narrativa usa serif; o numero, mono. Essa
    separacao tipografica e o que faz a tela ler como um briefing, nao um painel.
+
+   COR (ver --l1..--l4 em tokens.css): o eyebrow e o bloco do funil vestem a cor da
+   camada — antes os 4 passos eram identicos em turquesa, a mesma cor do KPI do
+   header, e o usuario lia o contador da camada e o total do territorio como o
+   mesmo numero. A SELECAO saiu do turquesa e virou branca (--tx-max), casando com
+   o contorno branco que o mapa ja usa no hex selecionado: painel e mapa passam a
+   dizer "este esta selecionado" com a mesma cor. O turquesa fica so' na ACAO
+   (botao "Testar viabilidade") e no cenario multi-hex.
    --------------------------------------------------------------------------- */
 
 export interface NarrativePanelProps {
@@ -336,6 +345,7 @@ export default function NarrativePanel({
   // triplicava). Na visao de UF cada item do ranking traz o seu.
   const series = passo.series ?? null
   const dims = passo.dims ?? null
+  const cor = camadaCor(passo.n)
   return (
     <aside
       aria-label={`Camada ${passo.n} de ${totalPassos}: ${passo.titulo}`}
@@ -352,7 +362,10 @@ export default function NarrativePanel({
       }}
     >
       <header style={{ padding: '18px 20px 16px' }}>
-        <Eyebrow dot>
+        {/* O NUMERAL fica: a cor nunca e' o unico portador da identidade da
+            camada (daltonismo). O total vem do payload — o funil ja' passou de 4
+            para 5 camadas, entao numero cravado aqui mentiria. */}
+        <Eyebrow dot cor={cor.fg}>
           Camada {passo.n} de {totalPassos} · {passo.mode}
         </Eyebrow>
 
@@ -382,8 +395,8 @@ export default function NarrativePanel({
           style={{
             marginTop: 15,
             padding: '13px 15px',
-            background: 'var(--ac-a10)',
-            border: '1px solid var(--ac-a24)',
+            background: cor.bg,
+            border: `1px solid ${cor.borda}`,
             borderRadius: 'var(--r-lg)',
             display: 'flex',
             alignItems: 'baseline',
@@ -393,7 +406,7 @@ export default function NarrativePanel({
         >
           <span
             className="num"
-            style={{ font: '700 30px/1 var(--f-num)', color: 'var(--ac-text)' }}
+            style={{ font: '700 30px/1 var(--f-num)', color: cor.fg }}
           >
             {num(passo.funil_big)}
           </span>
@@ -459,9 +472,13 @@ export default function NarrativePanel({
               <div
                 key={it.municipio ?? it.hex_id}
                 style={{
-                  border: `1px solid ${ativo ? 'var(--ac-a30)' : 'var(--line-soft)'}`,
+                  // SELECAO = branco, a mesma cor do contorno do hex selecionado no
+                  // mapa (HexMap). Era turquesa 8%/30% — o MESMO retangulo do card de
+                  // KPI do header, entao um so' tratamento visual significava
+                  // "selecionado" aqui e "numero fixo do territorio" la'.
+                  border: `1px solid ${ativo ? 'var(--tx-max)' : 'var(--line-soft)'}`,
                   borderRadius: 'var(--r-lg)',
-                  background: ativo ? 'var(--ac-a08)' : 'var(--surf-raised)',
+                  background: ativo ? 'var(--surf-pending)' : 'var(--surf-raised)',
                   transition: 'background .15s ease, border-color .15s ease',
                 }}
               >
@@ -488,7 +505,7 @@ export default function NarrativePanel({
                   aria-hidden
                   style={{
                     font: '700 14px/1 var(--f-num)',
-                    color: ativo ? 'var(--ac-text)' : 'var(--tx-rank)',
+                    color: ativo ? 'var(--tx-max)' : 'var(--tx-rank)',
                     width: 24,
                     textAlign: 'center',
                     flexShrink: 0,
@@ -569,6 +586,7 @@ export default function NarrativePanel({
           })
         )}
 
+        {/* Turquesa continua aqui de proposito: e' ACAO (a unica desta lista). */}
         {selecionado && (
           <button
             type="button"

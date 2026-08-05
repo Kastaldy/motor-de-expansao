@@ -1,3 +1,4 @@
+import { camadaCor } from '../lib/colors'
 import { num } from '../lib/format'
 import type { Passo } from '../lib/types'
 import { Spinner } from './primitives'
@@ -11,6 +12,13 @@ import { Spinner } from './primitives'
    Voltar SEMPRE foi possivel (clicar num passo ja percorrido), mas nada dizia
    isso: o CTA era de mao unica e a palavra "voltar" nao aparecia. Dai o botao
    secundario ao lado do CTA e o aria-label/title explicito em cada passo.
+
+   COR: cada passo veste a SUA camada (--l1..--l4, tokens.css). Antes os 4 eram o
+   mesmo turquesa, entao a barra nao dava identidade nenhuma a' camada e ainda
+   repetia, na mesma cor, o par numero+unidade que o painel ja mostrava — o mesmo
+   valor em turquesa em tres lugares. O CTA a' direita segue turquesa: ele e' ACAO,
+   nao camada. O numero dentro da bolinha permanece (a cor nao pode ser o unico
+   portador da identidade).
    --------------------------------------------------------------------------- */
 
 export interface StepperBarProps {
@@ -66,6 +74,7 @@ export default function StepperBar({
         {passos.map((p, i) => {
           const feito = p.n < atual
           const ativo = p.n === atual
+          const cor = camadaCor(p.n)
           // O passo é clicável nos dois sentidos; o rótulo precisa dizer isso.
           const rotulo = `${
             ativo ? 'Camada atual,' : feito ? 'Voltar para a camada' : 'Avançar para a camada'
@@ -101,14 +110,15 @@ export default function StepperBar({
                     placeItems: 'center',
                     font: '700 11px/1 var(--f-num)',
                     flexShrink: 0,
-                    background: ativo
-                      ? 'var(--ac)'
-                      : feito
-                        ? 'rgba(53,201,214,.85)'
-                        : 'var(--surf-pending)',
+                    // Passo feito continua cheio (so' que na cor DELE, nao na do
+                    // passo atual): o rastro do funil fica legivel de relance.
+                    background: ativo || feito ? cor.fg : 'var(--surf-pending)',
+                    // Sem opacidade no passo feito: o ✓ e' texto escuro sobre a cor
+                    // da camada e rebaixar a bolinha rebaixaria junto o contraste
+                    // dele. Quem separa "atual" de "feito" e o anel + o ✓.
                     color: ativo || feito ? 'var(--ac-on)' : 'var(--tx-muted)',
                     border: ativo || feito ? 'none' : '1px solid var(--line-strong)',
-                    boxShadow: ativo ? '0 0 0 4px var(--ac-a22)' : 'none',
+                    boxShadow: ativo ? `0 0 0 4px ${cor.borda}` : 'none',
                     transition: 'background .2s ease, box-shadow .2s ease',
                   }}
                 >
@@ -131,11 +141,7 @@ export default function StepperBar({
                       display: 'block',
                       font: '500 9.5px/1.2 var(--f-num)',
                       marginTop: 2,
-                      color: ativo
-                        ? 'var(--ac)'
-                        : feito
-                          ? 'var(--tx-label)'
-                          : 'var(--tx-off)',
+                      color: ativo ? cor.fg : feito ? 'var(--tx-label)' : 'var(--tx-off)',
                       whiteSpace: 'nowrap',
                     }}
                   >
@@ -152,7 +158,8 @@ export default function StepperBar({
                     height: 2,
                     margin: '0 10px',
                     borderRadius: 1,
-                    background: feito ? 'var(--ac-a60)' : 'var(--line-mid)',
+                    // Conector percorrido = cor do passo da ESQUERDA (de onde veio).
+                    background: feito ? cor.conector : 'var(--line-mid)',
                     transition: 'background .2s ease',
                     minWidth: 12,
                   }}
