@@ -26,6 +26,25 @@ function comCaret(marcado: string): { bruto: string; caret: number } {
   return { bruto: marcado.replace('|', ''), caret: caret < 0 ? marcado.length : caret }
 }
 
+/**
+ * Digita `teclas` UMA A UMA no fim do campo, como o CampoNumero faz: o browser insere
+ * o caractere no `value` que ja' esta' na tela, o `onChange` chama `mascarar` com esse
+ * bruto, e o resultado volta a ser o texto da tela.
+ *
+ * Existe porque teste "de uma vez so'" (`mascarar('350,50', 6, 5)`) exercita um estado
+ * que o componente NUNCA apresenta — e por duas vezes escondeu bug real aqui.
+ */
+function digitando(teclas: string, maxDigitos: number, casas = 0) {
+  let texto = ''
+  let r = mascarar('', 0, maxDigitos, casas)
+  for (const tecla of teclas) {
+    const caret = texto.length
+    r = mascarar(texto + tecla, caret + 1, maxDigitos, casas)
+    texto = r.texto
+  }
+  return r
+}
+
 describe('formatarMilhar', () => {
   it('poe o ponto de milhar pt-BR', () => {
     expect(formatarMilhar('1500')).toBe('1.500')
@@ -111,7 +130,7 @@ describe('mascarar — digitacao normal', () => {
 })
 
 describe('mascarar — letra, sinal e pontuacao', () => {
-  it.each(['a', '-', '+', 'e', '.', ','])('tecla "%s" no fim nao deixa rastro', (c) => {
+  it.each(['a', '-', '+', 'e', '.'])('tecla "%s" no fim nao deixa rastro', (c) => {
     const bruto = `1.500${c}`
     const r = mascarar(bruto, bruto.length, 5)
     expect(r.texto).toBe('1.500')
@@ -119,6 +138,15 @@ describe('mascarar — letra, sinal e pontuacao', () => {
     // O caret volta para depois do ultimo digito — o React nao o joga para o fim
     // do campo porque o handler ja' escreveu esta mesma string no DOM.
     expect(r.caret).toBe(5)
+  })
+  it('a VIRGULA e a excecao: fica no texto, como tecla morta', () => {
+    // Ela precisa sobreviver ao evento — se sumir, o evento seguinte nao a ve' e os
+    // digitos concatenam na parte inteira (era o bug de "350,50" virar 35.050). O
+    // numero nao muda, e o blur normaliza "1.500," de volta para "1.500".
+    const r = mascarar('1.500,', 6, 5)
+    expect(r.texto).toBe('1.500,')
+    expect(r.digitos).toBe('1500')
+    expect(r.valor).toBe(1500)
   })
   it('letra digitada no MEIO nao move o caret nem muda o numero', () => {
     const { bruto, caret } = comCaret('1.5a|00')
@@ -372,15 +400,20 @@ describe('mascarar — valor e o unico numero confiavel', () => {
     expect(r.fracao).toBe('8')
     expect(r.valor).toBe(1.8)
   })
-  it('com casas = 0 a virgula ENCERRA o numero, nao concatena', () => {
-    // Este teste ja' afirmou o contrario ('18'). Concatenar as duas partes fazia
-    // "350,50" digitado num campo inteiro virar 35050 — CEM vezes o valor, com cara de
-    // numero legitimo e a caminho do motor. Campo inteiro nao tem casa decimal: o que
-    // vem depois da virgula e' descartado, como o input nativo faz ao recusar a tecla.
-    const r = mascarar('1,8', 3, 5)
-    expect(r.texto).toBe('1')
-    expect(r.valor).toBe(1)
-    expect(mascarar('350,50', 6, 5).valor).toBe(350)
+  it('com casas = 0 a virgula vira TECLA MORTA, digitando tecla a tecla', () => {
+    // Este teste ja' esteve errado DUAS vezes, e das duas por afirmar um estado que a
+    // digitacao nunca produz: primeiro dizendo que "1,8" de uma vez vira "18", depois
+    // que vira "1". Nenhum dos dois importa — o componente NUNCA entrega a string
+    // inteira de uma vez. Ele chama `mascarar` a cada tecla, com o texto que ja' esta'
+    // na tela. Enquanto a virgula era cortada do texto, o evento seguinte nao a via e
+    // os digitos concatenavam: "350,50" produzia 35.050, cem vezes o valor, a caminho
+    // do motor financeiro. So' o teste tecla a tecla pega isso.
+    expect(digitando('350,50', 5).texto).toBe('350,')
+    expect(digitando('350,50', 5).valor).toBe(350)
+    // Os casos que motivaram o achado, nos tetos reais de cada campo.
+    expect(digitando('20000,50', 7).valor).toBe(20000) // Aluguel
+    expect(digitando('199,90', 4).valor).toBe(199) // Ticket
+    expect(digitando('1500,00', 5).valor).toBe(1500) // Metragem
   })
   it('com casas > 0 o PONTO tambem separa decimal (teclado numerico)', () => {
     // "1.8" em Juros equip. virava 18: dezoito por cento ao mes passa no `le=1` do

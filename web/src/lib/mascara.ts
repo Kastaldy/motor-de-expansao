@@ -19,8 +19,10 @@
  * nao 35 mil.
  *
  * MODO INTEIRO x MODO DECIMAL: todo o pipeline recebe `casas` (default 0). Com
- * `casas = 0` a virgula e' ruido e o codigo percorrido e' EXATAMENTE o de antes —
- * e' por isso que a extensao decimal nao pode regredir os campos do Cenario.
+ * `casas = 0` a virgula SOBREVIVE no texto e a fracao e' truncada em zero digito —
+ * ela vira tecla morta, e nao caractere descartado. A diferenca importa: enquanto a
+ * virgula era cortada, ela sumia do DOM na propria tecla, o evento seguinte nao a via
+ * e os digitos CONCATENAVAM ("350,50" virava 35.050, cem vezes o valor).
  * Com `casas > 0` a primeira virgula e' aceita e a fracao e' TRUNCADA em `casas`
  * digitos ao digitar (arredondar no meio da digitacao engoliria a proxima tecla);
  * so' a COLAGEM arredonda. `maxDigitos` continua medindo a PARTE INTEIRA nos dois
@@ -49,9 +51,12 @@ function semZeroEsquerda(digitos: string): string {
 }
 
 /**
- * Teto de sanidade para colagem absurda. Acima de 1e15 o `String(n)` do V8 escorrega
- * para notacao exponencial ("1e+21") e a mascara viraria lixo. Como o teto de digitos
- * de cada campo e' 7, cortar aqui nao perde nada real.
+ * Teto de sanidade para colagem absurda: 1e15.
+ *
+ * O limite NAO e' o da notacao exponencial do V8 — essa comeca em 1e21, nao em 1e15
+ * (`String(1e15)` da' "1000000000000000"). 1e15 e' escolha conservadora: ja' e' mil
+ * vezes o maior numero plausivel em qualquer campo desta tela, e fica com folga
+ * abaixo de Number.MAX_SAFE_INTEGER (~9e15), onde a aritmetica ainda e' exata.
  */
 const VALOR_MAX = 1e15
 
@@ -146,9 +151,10 @@ export interface Mascarado {
  * substituicao de selecao, arrastar-e-soltar, autofill e undo do browser caírem
  * todos neste mesmo caminho, de graca.
  *
- * `maxDigitos` e' teto por CONTAGEM DE DIGITOS DA PARTE INTEIRA. Ao estourar, o valor
- * e' GRAMPEADO no maior numero representavel (todos 9), nunca cortado pelo prefixo —
- * ver o comentario no corpo. Digitar no fim de um campo cheio continua nao fazendo nada.
+ * `maxDigitos` e' teto por CONTAGEM DE DIGITOS DA PARTE INTEIRA. Ao estourar, o
+ * excedente e' IGNORADO (corte por prefixo), como no input nativo: digitar no fim de
+ * um campo cheio nao faz nada. O grampeamento no teto vive so' no `onPaste` do
+ * CampoNumero, que sabe que o excedente chegou de fora de uma vez — ver o corpo.
  *
  * `casas > 0` liga o modo decimal. A ANCORA DO CARET deixa de ser "quantos digitos ha'
  * a esquerda" e passa a ser o par (PARTE, quantos digitos dentro da parte): "1|,8" e
@@ -182,15 +188,19 @@ export function mascarar(
   // e sinal. Reinterpretar a ULTIMA como decimal transformaria "1,50," noutro numero
   // em silencio.
   //
-  // Em campo INTEIRO (`casas = 0`) nao ha' separador decimal: o que vier depois da
-  // virgula e' DESCARTADO, nunca concatenado. Concatenar fazia "350,50" virar 35050 —
-  // cem vezes o valor, com cara de numero legitimo.
-  const iBruta = normalizado.indexOf(',')
-  const base = nCasas === 0 && iBruta >= 0 ? normalizado.slice(0, iBruta) : normalizado
-  const iVirgula = nCasas > 0 ? base.indexOf(',') : -1
+  // A virgula SOBREVIVE no texto mesmo em campo inteiro (`casas = 0`), e ai' a fracao
+  // e' truncada em zero digito: o texto vira "350," e cada tecla seguinte cai numa
+  // fracao que nao guarda nada — tecla morta de verdade.
+  //
+  // Antes eu cortava a string na virgula aqui, e isso NAO funcionava: a virgula sumia
+  // do DOM na propria tecla, entao o evento seguinte ja' nao a via e os digitos
+  // CONCATENAVAM na parte inteira. Digitar "350,50" produzia 35.050 — cem vezes o
+  // valor, exatamente o erro que o corte dizia impedir. O estado que o corte tratava
+  // ("350,50" inteiro de uma vez) so' existe em teste; a digitacao nunca o apresenta.
+  const iVirgula = normalizado.indexOf(',')
   const temVirgula = iVirgula >= 0
-  const brutoInt = temVirgula ? base.slice(0, iVirgula) : base
-  const brutoFrac = temVirgula ? base.slice(iVirgula + 1) : ''
+  const brutoInt = temVirgula ? normalizado.slice(0, iVirgula) : normalizado
+  const brutoFrac = temVirgula ? normalizado.slice(iVirgula + 1) : ''
   // Classificacao da parte feita no BRUTO, antes de qualquer normalizacao.
   const naFracao = temVirgula && caret > iVirgula
 

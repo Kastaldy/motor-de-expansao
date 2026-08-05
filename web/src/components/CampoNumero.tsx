@@ -257,7 +257,17 @@ export default function CampoNumero({
           const el = e.currentTarget
           const ini = el.selectionStart ?? el.value.length
           const fim = el.selectionEnd ?? ini
-          const p = partesColadas(colado, casas)
+          // MESMA regra de ponto-como-decimal que a digitacao usa (ver `semMilhar` em
+          // mascara.ts): num campo decimal que nunca exibe milhar (ate' 3 digitos
+          // inteiros), o ponto so' pode ser separador decimal.
+          //
+          // Sem isto o MESMO texto dava numeros 10x diferentes conforme o gesto: colar
+          // "1.8" em Juros equip. virava 18 (0,18 no payload, que passa no `le=1` do
+          // backend e calcula 18% ao mes em silencio), enquanto DIGITAR "1.8" dava 1,8.
+          const semMilharAqui = casas > 0 && maxDigitos <= 3
+          const texto =
+            semMilharAqui && !colado.includes(',') ? colado.replace('.', ',') : colado
+          const p = partesColadas(texto, casas)
           // Colagem maior que o campo: GRAMPEIA no teto. E' o unico lugar onde grampear
           // e' certo — aqui o excedente veio de fora de uma vez, e cortar pelo prefixo
           // daria uma ORDEM DE GRANDEZA a menos ("12.000.000" num campo de 7 digitos
