@@ -16,6 +16,7 @@ READ-ONLY: só chama funções puras (`montar_metodologia`, `_etiqueta`), sem to
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -55,6 +56,17 @@ def _camada(metodologia: dict, n: int) -> dict:
     return next(c for c in metodologia["camadas"] if c["n"] == n)
 
 
+def _faixas_publicadas(camada: dict) -> list[dict]:
+    """TUDO que a camada publica como etiqueta: `faixas` + `legenda_mapa`.
+
+    Os guards deste arquivo varriam so' `faixas`. Quando a camada 4 mudou as cores do
+    mapa para o campo `legenda_mapa`, o vocabulario de `cres_hex_classe` saiu junto da
+    rede de protecao — passaria a deslizar em silencio exatamente como as `faixas`
+    deslizaram. Todo campo que vira chip na tela entra por aqui.
+    """
+    return [*camada["faixas"], *camada.get("legenda_mapa", [])]
+
+
 # --------------------------------------------------------------------- contrato
 def test_payload_tem_as_5_camadas_completas(metodologia):
     camadas = metodologia["camadas"]
@@ -70,7 +82,7 @@ def test_payload_tem_as_5_camadas_completas(metodologia):
 
 def test_toda_faixa_declara_escopo_valido(metodologia):
     for c in metodologia["camadas"]:
-        for f in c["faixas"]:
+        for f in _faixas_publicadas(c):
             assert f["escopo"] in ("", "municipio", "uf"), f
             assert f["etiqueta"] and f["condicao"]
 
@@ -177,6 +189,89 @@ def test_camada_4_declara_que_nao_filtra(metodologia):
     ]
 
 
+def test_camada_4_publica_as_etiquetas_que_o_ranking_emite(metodologia):
+    """A camada 4 tinha intersecao VAZIA entre publicado e emitido.
+
+    O painel publicava as quatro classes de `cres_hex_classe` (Em alta / Estável / Sem
+    obra nova / Sem medição) no slot que o front rotula "etiquetas do ranking", enquanto
+    o chip de cada item saia de `_etiqueta_crescimento`, com vocabulario inteiramente
+    outro (posicao relativa a mediana da UF). Nenhuma das quatro publicadas aparecia na
+    lista, e nenhuma das emitidas estava no manual.
+
+    O defeito nasceu de uma CORRECAO: `_etiqueta_crescimento` trocou o vocabulario para
+    fugir da colisao com `cres_hex_classe`, e o painel ficou com o vocabulario velho.
+    Por isso este teste compara CONJUNTOS de verdade, exercitando o funil — as camadas
+    1, 2, 3 e 5 ja tinham teste assim; a 4 so' tinha o de "nao filtra".
+
+    Escopo `uf`: no funil municipal o passo 4 sai com `itens: []`, entao nao ha chip.
+    """
+    c4 = _camada(metodologia, 4)
+    publicadas = _etiquetas(c4, "uf")
+    assert publicadas, "a camada 4 nao publica etiqueta de ranking nenhuma"
+
+    # Nenhuma etiqueta do escopo `municipio`: la nao existe ranking para explicar.
+    assert not _etiquetas(c4, "municipio") - publicadas
+
+    # As cores do MAPA continuam publicadas, mas fora do slot de ranking.
+    legenda = {f["etiqueta"] for f in c4.get("legenda_mapa", [])}
+    assert legenda == {"Em alta", "Estável", "Sem obra nova", "Sem medição"}
+    assert not (legenda & publicadas), (
+        "vocabulario da COR DO MAPA voltou para o slot de etiqueta do ranking: "
+        f"{sorted(legenda & publicadas)}"
+    )
+
+    # Agora o cruzamento de verdade: roda o funil e exige IGUALDADE entre publicado e
+    # emitido — a mesma forma das camadas 1, 2, 3 e 5, nao um subconjunto. Subconjunto
+    # deixaria passar o outro lado do defeito: etiqueta no manual que o ranking nunca
+    # emite, a "faixa inalcancavel" que este arquivo ja pegou tres vezes.
+    #
+    # O ramo do multiplicador vira `N×` no painel, porque o numero varia com o dado —
+    # normalizamos os dois lados para compara-los.
+    def _norma(s: str) -> str:
+        return re.sub(r"\d+×", "N×", s)
+
+    def _emitidas(cres: list[float], mediana: float) -> set[str]:
+        # `len(cres) <= FILA_MAX` de proposito: o passo 4 corta o ranking em
+        # `head(FILA_MAX)` por valor DESCENDENTE, entao uma lista maior descartaria
+        # justo o municipio em queda — foi assim que a 1a versao deste teste nunca
+        # exercitou o ramo "emprego em queda" e mesmo assim ficou verde.
+        assert len(cres) <= pilot.FILA_MAX, "o head(FILA_MAX) engoliria uma amostra"
+        n = len(cres)
+        df = pd.DataFrame(
+            {
+                "hex_id": [f"8a{i:02d}" for i in range(n)],
+                "nome_municipio": [f"Cidade{i}" for i in range(n)],
+                "n_concorrentes_est": [0] * n,
+                "oferta_efetiva_disponivel": [9000.0 - i * 100 for i in range(n)],
+                "score_setor_2022_calibrado": [90.0 - i * 0.5 for i in range(n)],
+                "pop_leitura": [30000 - i * 100 for i in range(n)],
+                "cres_emp_pct": cres,
+                "cres_uf_mediana": [mediana] * n,
+                "cres_hex_classe": ["Em alta"] * n,
+            }
+        )
+        return {
+            _norma(i["tag"])
+            for i in pilot.montar_funil_uf(df, "SP")[3]["itens"]
+            if i.get("tag")
+        }
+
+    # `_etiqueta_crescimento` tem DOIS caminhos, e so os dois juntos cobrem a lista
+    # publicada. Por RAZAO (mediana acima de `_CRESC_PISO_MEDIANA`): queda, multiplos
+    # da mediana, perto dela e abaixo.
+    razao = _emitidas([-2.0, 30.0, 12.0, 9.0, 6.0, 5.0, 4.0, 2.0, 1.0, 0.5], 5.0)
+    # Por DEFESA (mediana degenerada, abaixo do piso): o vocabulario em pontos
+    # percentuais, que so acorda no dia em que um recorte novo achatar a mediana da UF.
+    defesa = _emitidas([-2.0, 11.0, 3.0, 1.0], 0.5)
+    emitidas = razao | defesa
+    assert emitidas, "o passo 4 da UF nao emitiu nenhuma etiqueta"
+    assert emitidas == {_norma(e) for e in publicadas}, (
+        "camada 4 fora de sincronia. Emitidas e nao publicadas: "
+        f"{sorted(emitidas - {_norma(e) for e in publicadas})}; "
+        f"publicadas e nunca emitidas: {sorted({_norma(e) for e in publicadas} - emitidas)}"
+    )
+
+
 def test_camada_5_publica_as_faixas_de_oportunidade_do_m1(metodologia):
     """A fila rotula pela faixa do M1 desde o BLK-MAPA-FAIXAS-01, nao por posicao."""
     publicadas = _etiquetas(_camada(metodologia, 5), "municipio")
@@ -197,7 +292,7 @@ def test_nenhuma_etiqueta_extinta_sobrevive_no_painel(metodologia):
     intrusos = {
         (c["n"], f["etiqueta"])
         for c in metodologia["camadas"]
-        for f in c["faixas"]
+        for f in _faixas_publicadas(c)
         if f["etiqueta"] in _EXTINTOS
     }
     assert not intrusos, (
