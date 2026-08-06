@@ -834,7 +834,11 @@ def _etiqueta(
         if n == 0:
             return "Livre", "green", None
         if n <= CONC_ADENSAR_MAX:
-            return "Adensar", "blue", None
+            # "gray" e nao "blue": azul e' a identidade da camada 1 (potencial
+            # censitario) e o chip "Quente"/"Polo" de la'. O mesmo pill azul
+            # significando "score altissimo" no passo 1 e "tem 1-2 concorrentes"
+            # no passo 3 era leitura dupla de escalas sem relacao.
+            return "Adensar", "gray", None
         return "Disputa", "red", None
     if metrica == "residual":
         if row.get("_fila"):
@@ -1110,6 +1114,13 @@ def montar_funil(
     # nao se reverte isso em silencio na resolucao de um conflito.
     fila = white.nlargest(FILA_MAX, "oferta_efetiva_disponivel") if len(white) else white
 
+    # O tom passado a `_rank_items` e' o tom PADRAO do passo, e hoje ele NAO PINTA
+    # em lugar nenhum: `RankItem.tag_cor` (a cor exata da faixa da legenda) tem
+    # precedencia no `Chip` do front, e vem preenchido em todos os passos que
+    # rotulam por faixa. Ja' tentei trocar estes toms por cores de camada
+    # (teal/violet) neste PR: 121 itens saiam com o tom novo e ZERO chegavam ao
+    # pixel. Identidade de camada no piloto vive no stepper, no cabecalho do painel
+    # e no rotulo do mapa — nao no chip do item.
     passos = [
         {
             "n": 1,
@@ -1855,10 +1866,19 @@ def _faixas_competitivas() -> list[dict[str, Any]]:
     diferentes, e por isso os dois escopos aparecem lado a lado no painel."""
     from motor_expansao.dashboard.constants import FAIXAS_MAPA_DEMANDA
 
+    # Rotulo E tom sao PERGUNTADOS a `_etiqueta` — a mesma funcao que pinta o chip na
+    # tela —, nunca reescritos aqui. Enquanto o tom era copiado a mao, mudar a cor do
+    # "Adensar" em `_etiqueta` (blue -> gray, para nao colidir com a camada 1) deixava
+    # este painel anunciando a cor antiga. O painel existe justamente para NAO haver
+    # uma segunda verdade sobre o funil.
+    def faixa(n: int, condicao: str) -> dict[str, Any]:
+        rotulo, tom, _ = _etiqueta("conc. 2 km", None, 1, pd.Series({"n_concorrentes_est": n}))
+        return _fx(rotulo, condicao, tom or "gray", "municipio")
+
     return [
-        _fx("Livre", "nenhum concorrente mapeado em 2 km", "green", "municipio"),
-        _fx("Adensar", f"até {CONC_ADENSAR_MAX} concorrentes estimados", "blue", "municipio"),
-        _fx("Disputa", f"mais de {CONC_ADENSAR_MAX} concorrentes estimados", "red", "municipio"),
+        faixa(0, "nenhum concorrente mapeado em 2 km"),
+        faixa(CONC_ADENSAR_MAX, f"até {CONC_ADENSAR_MAX} concorrentes estimados"),
+        faixa(CONC_ADENSAR_MAX + 1, f"mais de {CONC_ADENSAR_MAX} concorrentes estimados"),
     ] + _faixas_da_rampa(FAIXAS_MAPA_DEMANDA, "uf", em_alunos=True)
 
 
@@ -1895,7 +1915,10 @@ def _faixas_m1() -> list[dict[str, Any]]:
 
 
 def montar_metodologia() -> dict[str, Any]:
-    """As 4 camadas do funil explicadas para quem LE a tela, nao para quem escreveu.
+    """As camadas do funil explicadas para quem LE a tela, nao para quem escreveu.
+
+    NAO cravar a quantidade aqui: o funil ja' passou de 4 para 5 camadas (entrou
+    "Como a cidade esta indo") e o docstring ficou dizendo 4 por um tempo.
 
     Espelha o `NotasMetodologicas` da Viabilidade e segue a mesma regra: nenhum numero
     e' escrito a mao — todo corte sai da constante que o proprio funil usa, entao
@@ -2176,10 +2199,14 @@ def montar_metodologia() -> dict[str, Any]:
                             "nova'. Os cortes saem da distribuição real dos hexágonos medidos."
                         ),
                         "ressalva": (
-                            "'Sem obra nova' não é demolição: é obra encerrada mais ruído de "
-                            "medição. E a cobertura é parcial — 41.135 hexágonos em 12 UFs, "
-                            "só onde há mancha urbana medida; fora disso a leitura é ausente, "
-                            "não é zero."
+                            "'Sem obra nova' não é demolição nem decadência: é obra encerrada "
+                            "mais ruído de medição — e, numa metrópole densa e madura, é "
+                            "SATURAÇÃO. Boa parte de São Paulo aparece assim justamente por já "
+                            "estar construída, o que não a torna um mercado pior; a leitura "
+                            "aqui é de movimento, não de qualidade. Onde a cidade já é o centro "
+                            "consolidado, quem responde pelo potencial são as camadas 1 e 2. "
+                            "A cobertura também é parcial — 41.135 hexágonos em 12 UFs, só onde "
+                            "há mancha urbana medida; fora disso a leitura é ausente, não é zero."
                         ),
                     },
                 ],
@@ -2190,7 +2217,8 @@ def montar_metodologia() -> dict[str, Any]:
                     "Ela responde outra pergunta: o M1 mede a POSIÇÃO do território hoje, e "
                     "esta camada mede a DIREÇÃO em que ele vem andando. Duas praças com o "
                     "mesmo score podem estar em rotas opostas, e é só isso que se afirma "
-                    "aqui."
+                    "aqui. O hexágono colorido mostra ONDE a cidade cresceu — não onde abrir: "
+                    "para isso existe a camada 5, que é a única que ordena a fila."
                 ),
             },
             {

@@ -824,6 +824,10 @@ const botaoGhost: React.CSSProperties = {
   font: '600 11.5px/1 var(--f-ui)',
 }
 
+/** Linha do resumo do CENARIO multi-hex. O `forte` continua turquesa de proposito:
+ *  o cenario e' o unico bloco que pertence ao modo turquesa (botao "◆ Comparando
+ *  hexes" + contorno turquesa do hex no mapa). Fora dele o turquesa nao significa
+ *  mais "numero importante" — ver --l1..--l4 em tokens.css. */
 function LinhaC({ rotulo, valor, forte }: { rotulo: string; valor: string; forte?: boolean }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 14 }}>
@@ -873,14 +877,39 @@ function Metrica({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 4,
-        background: destaque ? 'var(--ac-a08)' : 'transparent',
+        // O destaque e' FORMA, nao matiz: fundo neutro + regra vertical. Em turquesa
+        // este card usava a mesma familia do numero do funil (numero mono turquesa em
+        // caixa turquesa fraca) para grandezas opostas — aqui um TOTAL fixo do
+        // territorio, la' o CONTADOR da camada ativa. No passo 2, em que o funil
+        // tambem fala de residual, o olho concluia que eram o mesmo numero em dois
+        // lugares (relato de Juan, 2026-08-04: "leva o usuario a entender q sao as
+        // mesmas coisas").
+        //
+        // A regra ja' foi `--ultra` (vermelho da marca) e `--info` (azul), e as duas
+        // erraram pelo mesmo motivo: TODA matiz deste tema ja' significa outra coisa.
+        // Vermelho e' alerta, e este numero e' oportunidade (Juan, 2026-08-05: "deixar
+        // um azul para nao levar o usuario a entender q e' algo ruim"). Azul e' a
+        // camada 1, e ai' o card passou a parecer parente do Potencial socioeconomico
+        // (Juan, 2026-08-05: "o azul leva a entender q o potencial de socio e espaco
+        // sao a mesma coisa").
+        //
+        // Restam violeta (camada 2), ambar (camada 3), turquesa (acao e camada 4) e
+        // verde (positivo, e ainda por cima e' o topo da rampa de score do mapa). Nao
+        // ha' matiz livre — entao o destaque fica SEM matiz: regra clara e neutra.
+        // Ausencia de cor nao afirma parentesco com camada nenhuma, que era o defeito
+        // comum das duas tentativas. Quem diz "este e' o numero em destaque" continua
+        // sendo o par regra + fundo levantado, e nao o hue.
+        background: destaque ? 'var(--surf-pending)' : 'transparent',
+        borderLeft: destaque ? '2px solid var(--tx-max)' : undefined,
       }}
     >
       <div
         className="num"
         style={{
           font: '700 18px/1 var(--f-num)',
-          color: destaque ? 'var(--ac-text)' : 'var(--tx-max)',
+          // Neutro tambem no destaque: --ultra da' 3,26:1, serve como regra
+          // grafica e reprova como cor de texto (mais ainda no rotulo de 8px).
+          color: 'var(--tx-max)',
         }}
       >
         {valor}
@@ -888,7 +917,7 @@ function Metrica({
       <div
         style={{
           font: '600 8px/1 var(--f-ui)',
-          color: destaque ? 'var(--ac-text)' : 'var(--tx-label)',
+          color: 'var(--tx-label)',
           textTransform: 'uppercase',
           letterSpacing: '.05em',
           whiteSpace: 'nowrap',

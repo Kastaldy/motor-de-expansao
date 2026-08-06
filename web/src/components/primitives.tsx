@@ -10,6 +10,14 @@ import type { RedeSeveridade, Tom } from '../lib/types'
    muda aqui e a tipografia (serif para narrativa, mono para numero).
    --------------------------------------------------------------------------- */
 
+/* Tons do chip — paleta de INTENSIDADE ("quanto vale"), nao de identidade de camada.
+   Identidade de camada vive no stepper, no cabecalho do painel e no rotulo do mapa,
+   via `camadaCor` (lib/colors.ts).
+
+   Ja' tentei acrescentar `teal`/`violet` aqui, para o chip vestir a camada: NAO
+   pinta. `tag_cor` tem precedencia logo abaixo e vem preenchido em todo passo que
+   rotula por faixa da legenda — medido, 121 itens saiam com o tom novo e ZERO
+   chegavam ao pixel. Nao reintroduza sem antes resolver essa precedencia. */
 const TONS: Record<Tom, { fg: string; bg: string }> = {
   blue: { fg: '#6fa4f7', bg: 'rgba(75,139,245,.16)' },
   green: { fg: '#5fd08c', bg: 'rgba(60,200,120,.15)' },
@@ -133,7 +141,15 @@ export function Kpi({
   tone?: string
 }) {
   return (
-    <Glass style={{ flex: 1, padding: '15px 17px', minWidth: 0 }}>
+    // `minWidth` positivo, e nao 0: o valor e' 700 24px com `textOverflow: ellipsis`
+    // logo abaixo, entao um card espremido nao encolhe o texto — ele CORTA o numero.
+    // Foi o que Juan relatou (2026-08-05): "os numeros nao estao sendo possiveis de
+    // serem visualizados (exemplo 34 me... cheque total 2,6...)", numa fileira de 6
+    // cards a 1280px logicos (notebook Full HD com escala 150% do Windows).
+    // O piso faz a fileira QUEBRAR em duas linhas antes de espremer — em KPI, perder
+    // a linha e' melhor que perder o digito. O valor 176 foi calibrado no olho, nao
+    // medido: se a fileira voltar a cortar, suba o piso.
+    <Glass style={{ flex: 1, padding: '15px 17px', minWidth: 176 }}>
       <div style={{ font: '500 11px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>
         {label}
       </div>

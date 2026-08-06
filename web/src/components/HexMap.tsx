@@ -14,6 +14,7 @@ import {
   HEX_FILL_ALPHA,
   NAN_SCORE_FILL,
   POP_MIN_ACIONAVEL,
+  camadaCor,
   scoreBandToColor,
   crescClasseToColor,
   type RGBA,
@@ -257,6 +258,11 @@ export default function HexMap({
     }))
   }, [searchPin])
 
+  // Cor da camada ativa: veste o "score forte" do tooltip e a borda do rotulo de
+  // rank. Os dois dizem "isto e' da camada N" — antes diziam em turquesa, a mesma
+  // cor do cenario multi-hex e do pin de busca na MESMA superficie.
+  const cor = camadaCor(passo.n)
+
   const destaque = useMemo(() => new Set(passo.hexes), [passo.hexes])
   const cenarioSet = useMemo(() => new Set(cenario ?? []), [cenario])
   const cenarioKey = (cenario ?? []).join(',')
@@ -362,7 +368,10 @@ export default function HexMap({
       }),
     ]
 
-    // Ponto buscado: hexagono marcado + pin (anel branco + miolo turquesa).
+    // Ponto buscado: hexagono marcado + pin em BRANCO (anel claro, miolo escuro).
+    // Buscar um endereco e' uma forma de SELECIONAR, entao vale a mesma cor do hex
+    // selecionado e do item ativo do painel; o turquesa ficou exclusivo do cenario
+    // multi-hex, que era a unica marcacao turquesa deliberada do mapa.
     if (searchPin) {
       base.push(
         new H3HexagonLayer<{ id: string }>({
@@ -372,8 +381,8 @@ export default function HexMap({
           extruded: false,
           filled: true,
           stroked: true,
-          getFillColor: [53, 201, 214, 55],
-          getLineColor: [125, 227, 236, 255],
+          getFillColor: [238, 243, 248, 45],
+          getLineColor: [238, 243, 248, 255],
           getLineWidth: 3,
           lineWidthUnits: 'pixels',
           pickable: false,
@@ -397,7 +406,9 @@ export default function HexMap({
           getPosition: (d) => [d.lng, d.lat],
           getRadius: 6,
           radiusUnits: 'pixels',
-          getFillColor: [53, 201, 214, 255],
+          // Miolo no fundo do tema (--bg-base): o pin vira uma rosca branca em vez
+          // de uma bolha chapada, e continua sem usar matiz nenhuma.
+          getFillColor: [8, 11, 16, 255],
           pickable: false,
         }) as unknown as ScatterplotLayer<Hex>,
       )
@@ -423,7 +434,9 @@ export default function HexMap({
           // sozinha fica legivel sobre todas as faixas — o fundo e' que garante o contraste.
           background: true,
           getBackgroundColor: [8, 11, 16, 214],
-          getBorderColor: [53, 201, 214, 170],
+          // Borda na cor da CAMADA: o chip diz "01..10 desta camada" sem que
+          // nenhuma cor toque o fill dos hexes (que segue 100% rampa de score).
+          getBorderColor: [cor.rgb[0], cor.rgb[1], cor.rgb[2], 170],
           getBorderWidth: 1,
           backgroundPadding: [6, 4, 6, 4],
           backgroundBorderRadius: 5,
@@ -436,6 +449,7 @@ export default function HexMap({
   }, [
     hexes,
     passo.n,
+    cor,
     selecionado,
     destaque,
     cenarioSet,
@@ -503,14 +517,27 @@ export default function HexMap({
           {hover.h.faixa && <Linha rotulo="Faixa M1" valor={hover.h.faixa} />}
 
           <Divisoria />
-          {/* O score em destaque e o que colore o mapa NESTE passo (M1 / censo / residual) */}
-          <Linha rotulo="Score M1" valor={num(hover.h.m1, 1)} forte={passo.n === 5} />
-          <Linha rotulo="Score censitário" valor={num(hover.h.censo, 1)} forte={passo.n === 1} />
+          {/* O score em destaque e o que colore o mapa NESTE passo (M1 / censo /
+              residual) — informacao de CAMADA, entao vai na cor da camada. O M1
+              destaca no passo 5 (a main renumerou: a sintese virou a quinta). */}
+          <Linha
+            rotulo="Score M1"
+            valor={num(hover.h.m1, 1)}
+            forte={passo.n === 5}
+            cor={cor.fg}
+          />
+          <Linha
+            rotulo="Score censitário"
+            valor={num(hover.h.censo, 1)}
+            forte={passo.n === 1}
+            cor={cor.fg}
+          />
           {hover.h.res !== null && (
             <Linha
               rotulo="Score residual"
               valor={num(hover.h.res, 1)}
               forte={passo.n === 2 || passo.n === 3}
+              cor={cor.fg}
             />
           )}
 
@@ -598,7 +625,18 @@ function Divisoria() {
   )
 }
 
-function Linha({ rotulo, valor, forte }: { rotulo: string; valor: string; forte?: boolean }) {
+/** `cor` e' a cor do valor em DESTAQUE (cor da camada ativa); default neutro. */
+function Linha({
+  rotulo,
+  valor,
+  forte,
+  cor = 'var(--tx-max)',
+}: {
+  rotulo: string
+  valor: string
+  forte?: boolean
+  cor?: string
+}) {
   return (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginTop: 5 }}>
       <span style={{ font: '400 11.5px/1 var(--f-ui)', color: 'var(--tx-label)' }}>{rotulo}</span>
@@ -606,7 +644,7 @@ function Linha({ rotulo, valor, forte }: { rotulo: string; valor: string; forte?
         className="num"
         style={{
           font: `${forte ? 700 : 500} 11.5px/1 var(--f-num)`,
-          color: forte ? 'var(--ac-text)' : 'var(--tx-soft)',
+          color: forte ? cor : 'var(--tx-soft)',
         }}
       >
         {valor}
