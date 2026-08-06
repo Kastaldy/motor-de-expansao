@@ -230,6 +230,49 @@ Leitura:
 - `gap_competitivo_2km` e o espaco residual frente aos players mapeados.
 - `pressao_concorrencial_score_2km` vai de `0` a perto de `100`; quanto maior, maior a pressao dos players mapeados.
 
+#### 5.3.1 Base ALTERNATIVA: 1 km repartido por area (colunas paralelas, NAO em producao)
+
+Implementacao em `src/motor_expansao/pipelines/pressao_concorrencial_1km.py`
+(2026-08-05, a pedido de Felipe). Cada concorrente vira uma fonte com disco de
+influencia de **1 km** e a capacidade dele (`2500` alunos) e' repartida entre os
+hexagonos que o disco cobre, na proporcao da **area de intersecao**, com kernel
+uniforme (cada m2 do disco pesa igual):
+
+```
+share(concorrente c -> hex h) = area(disco_1km_c ∩ hex_h) / area(disco_1km_c)
+SOMA_h share(c -> h) = 1                     # conservacao de massa, exata
+oferta_efetiva_1km_area[h] = SOMA_c share(c -> h)
+```
+
+| coluna | tipo | regra exata |
+| --- | --- | --- |
+| `oferta_efetiva_1km_area` | float | soma dos `share` de todos os concorrentes que cobrem o hex |
+| `n_concorrentes_influencia_1km` | int | quantos concorrentes distintos tem `share > 0` no hex |
+| `consumo_concorrentes_1km_area` | float | `oferta_efetiva_1km_area * capacidade_default_concorrente_alunos` |
+| `gap_competitivo_1km_area` | float | `1 / (1 + oferta_efetiva_1km_area)` |
+| `pressao_concorrencial_score_1km_area` | float | `100 * (1 - gap_competitivo_1km_area)` |
+
+**Status: PARALELO, nao consumido pelo residual.** Nenhuma coluna do bloco 2 km muda, e
+`oferta_consumida_mercado_estimada` continua lendo `oferta_efetiva_mapeada_2km`. Migrar
+o residual para esta base exige DEC (afeta `som_indice_mapeado`, `tese_entrada`,
+`prioridade_mercado_mapeado`, carteira e plano).
+
+Diferencas medidas contra o modelo de 2 km (travadas em
+`tests/unit/test_pressao_concorrencial_1km.py`):
+
+- **Massa.** O modelo de 2 km injeta `0,73` a `0,98` unidade por concorrente conforme a
+  posicao dele dentro do hexagono (media `0,80`) — subestima o consumo em ~20%, de forma
+  desigual. O de 1 km por area injeta exatamente `1,00` em qualquer posicao.
+- **Alcance.** Contra-intuitivo: o raio de 2 km NAO espalha mais. Em res-7 os centroides
+  vizinhos ficam a `2.387-2.513 m`, entao 2 km partindo do centroide mal alcanca vizinho —
+  toca `2,4` hexes na media contra `3,3` do modelo novo.
+- **Direcao do efeito.** O alcance do modelo de 1 km CONTEM o do de 2 km (500 amostras,
+  zero excecoes). Logo nenhum hexagono passa de "com pressao" para "sem pressao": o
+  residual so' **cai ou fica igual**, nunca sobe.
+
+Comparativo executavel: `python scripts/comparar_pressao_1km.py` (usa os parquets reais
+se existirem; senao roda um cenario sintetico rotulado como DEMO).
+
 ### 5.4 Mercado atendivel (SAM)
 
 Colunas de corte de populacao (materializadas no pipeline via helper compartilhado
