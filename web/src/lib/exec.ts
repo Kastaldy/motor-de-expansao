@@ -189,26 +189,73 @@ export function rotuloMesCurto(m: string): string {
   return MESES_PT[Number(mes) - 1] ?? mes
 }
 
+/** Lado do tile do basemap: a escala de zoom do MapLibre/deck.gl é definida sobre ele. */
+const LADO_DO_TILE = 512
+/* Fração do card que o bbox ocupa. O respiro não é estética: o bbox enquadra o CENTRO
+   das unidades, e a bolha tem até 40 px de raio — com pouca folga, a unidade da ponta
+   aparece cortada pela borda do card. */
+const RESPIRO = 0.8
+
+/** Latitude -> fração da altura do mundo em Mercator (0 no topo, 1 embaixo). */
+function fracaoMercator(lat: number): number {
+  const rad = (Math.max(-85, Math.min(85, lat)) * Math.PI) / 180
+  return (1 - Math.log(Math.tan(rad) + 1 / Math.cos(rad)) / Math.PI) / 2
+}
+
 /**
  * Enquadramento do mapa a partir do bbox das unidades.
  *
  * A média das coordenadas (o que a v1 fazia) cai no meio do nada quando a rede é
  * nacional: com unidades de SC ao RN, o "centro" fica num ponto sem nenhuma unidade e o
  * zoom fixo corta metade do país.
+ *
+ * O `viewport` não é refinamento: sem ele, a conta embute a suposição de um card de
+ * 512x512. Num card estreito — que é o do mapa desde que ele voltou para o lado da
+ * carteira — a mesma conta devolve zoom alto demais e as unidades das pontas ficam
+ * FORA do quadro. Como as duas dimensões cortam, o zoom é o menor dos dois: o que faz
+ * a largura caber e o que faz a altura caber. A altura passa pela projeção de Mercator,
+ * senão o Brasil (que vai de +5 a -33 graus) sai apertado.
  */
 export function enquadrar(
   bbox: { min_lat: number; min_lng: number; max_lat: number; max_lng: number } | null,
   centro: { lat: number | null; lng: number | null },
+  viewport?: { largura: number; altura: number },
 ): { latitude: number; longitude: number; zoom: number } {
   if (!bbox) {
     return { latitude: centro.lat ?? -15.78, longitude: centro.lng ?? -47.93, zoom: 3.4 }
   }
+  const largura = viewport && viewport.largura > 40 ? viewport.largura : LADO_DO_TILE
+  const altura = viewport && viewport.altura > 40 ? viewport.altura : LADO_DO_TILE
   const latitude = (bbox.min_lat + bbox.max_lat) / 2
   const longitude = (bbox.min_lng + bbox.max_lng) / 2
-  const span = Math.max(bbox.max_lat - bbox.min_lat, (bbox.max_lng - bbox.min_lng) * 0.8, 0.05)
-  // log2 do quanto o span cabe na largura do mundo; o -0.4 dá respiro nas bordas.
-  const zoom = Math.min(11, Math.max(3, Math.log2(360 / span) - 0.4))
-  return { latitude, longitude, zoom }
+  // Piso em 1e-4 para o bbox degenerado (uma unidade só) não virar divisão por zero.
+  const fracaoLng = Math.max((bbox.max_lng - bbox.min_lng) / 360, 1e-4)
+  const fracaoLat = Math.max(
+    Math.abs(fracaoMercator(bbox.min_lat) - fracaoMercator(bbox.max_lat)),
+    1e-4,
+  )
+  const zoom = Math.min(
+    Math.log2((largura * RESPIRO) / (LADO_DO_TILE * fracaoLng)),
+    Math.log2((altura * RESPIRO) / (LADO_DO_TILE * fracaoLat)),
+  )
+  return { latitude, longitude, zoom: Math.min(11, Math.max(2, zoom)) }
+}
+
+/**
+ * O mapa deve voltar ao enquadramento automático?
+ *
+ * Duas coisas disparam o reenquadramento e elas NÃO valem o mesmo:
+ *
+ * - `recorte` — mudou o conjunto de unidades (outro filtro, outra competência). Reenquadra
+ *   sempre, mesmo por cima do ajuste manual: o pan antigo aponta para unidades que não
+ *   estão mais na tela.
+ * - `tamanho` — mudou só a caixa do mapa (janela redimensionada, trilho refluído). Aqui o
+ *   ajuste manual PREVALECE. Sem essa distinção, digitar na busca desfazia o zoom da
+ *   pessoa: a busca filtra só na tela, não muda o bbox, mas encolhe a tabela — e o trilho
+ *   acompanha a altura da carteira.
+ */
+export function deveReenquadrar(motivo: 'recorte' | 'tamanho', mexeu: boolean): boolean {
+  return motivo === 'recorte' || !mexeu
 }
 
 /** Query string da carteira, omitindo o que está vazio. */

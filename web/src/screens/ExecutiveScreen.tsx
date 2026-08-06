@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import ExecMap from '../components/ExecMap'
 import Select from '../components/Select'
@@ -55,14 +55,39 @@ const KPIS = [
   { chave: 'saldo_operacional', rotulo: 'Saldo operacional', formato: 'int' as const, bomSubindo: true },
 ]
 
-/** Colunas ordenáveis da carteira. Máximo de 8 visíveis — acima disso vira parede. */
+/* Colunas de métrica da carteira.
+
+   As larguras são PROPORÇÕES, não pixels: a `Tabela` usa `table-layout: fixed` com
+   `width: 100%`, e o navegador distribui a sobra na razão das larguras declaradas.
+   Por isso elas somam 1000 junto das colunas de texto — ler cada número como
+   "tantos por mil da largura da tabela" é o que evita a tabela arejada demais.
+
+   `R$/recorrente` saiu a pedido do Felipe (2026-08-06). O número continua no KPI do
+   topo, no `title` da célula de cada métrica e na ficha da unidade — o que saiu foi a
+   COLUNA, que era a mais larga de todas e a que menos entra na conversa de campo. */
 const COLUNAS_METRICA = [
-  { chave: 'faturamento', rotulo: 'Faturamento', formato: 'brl_curto' as const, bomSubindo: true, largura: 118 },
-  { chave: 'ativos', rotulo: 'Ativos', formato: 'int' as const, bomSubindo: true, largura: 92 },
-  { chave: 'churn_pct', rotulo: 'Churn', formato: 'pct' as const, bomSubindo: false, largura: 86 },
-  { chave: 'receita_por_recorrente', rotulo: 'R$/recorrente', formato: 'brl' as const, bomSubindo: true, largura: 106 },
-  { chave: 'nps', rotulo: 'NPS', formato: 'nota' as const, bomSubindo: true, largura: 74 },
+  // `folgada` / `apertada`: as proporções mudam com o espaço porque o que precisa caber
+  // muda de lugar. Apertada, "FATURAMENTO" (o RÓTULO, não o número) é o texto mais largo
+  // da tabela e sai com reticências se a coluna não crescer; a sparkline, que encolhe sem
+  // mentir, é quem cede o espaço.
+  { chave: 'faturamento', rotulo: 'Faturamento', formato: 'brl_curto' as const, bomSubindo: true, folgada: 100, apertada: 115 },
+  { chave: 'ativos', rotulo: 'Ativos', formato: 'int' as const, bomSubindo: true, folgada: 90, apertada: 92 },
+  // Churn e NPS não são as mais estreitas apesar de o VALOR ser curto: quem manda na
+  // largura é o delta embaixo ("▲ 11,9 pts"), bem mais largo que "22,6%". Apertadas, era
+  // o delta que saía com reticências — e delta cortado é número que engana.
+  { chave: 'churn_pct', rotulo: 'Churn', formato: 'pct' as const, bomSubindo: false, folgada: 95, apertada: 96 },
+  { chave: 'nps', rotulo: 'NPS', formato: 'nota' as const, bomSubindo: true, folgada: 90, apertada: 92 },
 ]
+
+/** Abaixo disto a carteira não comporta dois chips de diagnóstico sem cortar o segundo. */
+const LARGURA_CARTEIRA_FOLGADA = 1060
+
+/* A banda principal é uma grade de DUAS colunas que se repete faixa a faixa: o bloco
+   grande à esquerda e o trilho de apoio à direita, sempre nas mesmas proporções. É o
+   que faz as bordas verticais coincidirem da carteira até os gráficos de baixo — com
+   cada faixa escolhendo a sua própria divisão, nenhuma aresta batia com a de cima. */
+const COLUNA_PRINCIPAL = { flex: '3 1 640px', minWidth: 0 } as const
+const COLUNA_TRILHO = { flex: '1 1 330px', minWidth: 0, maxWidth: 430 } as const
 
 const TODOS = '__todos__'
 
@@ -85,6 +110,21 @@ export default function ExecutiveScreen() {
   const [ordenar, setOrdenar] = useState('prioridade')
   const [direcao, setDirecao] = useState<'asc' | 'desc'>('desc')
   const [aberta, setAberta] = useState<string | null>(null)
+
+  // Largura REAL da carteira, medida. Não dá para decidir por media query: a tabela divide
+  // a linha com o trilho do mapa, então a largura que ela tem depende também da janela do
+  // navegador, do dock e do recorte — e é o corte de conteúdo que muda, não só o estilo.
+  const [larguraCarteira, setLarguraCarteira] = useState(0)
+  const observador = useRef<ResizeObserver | null>(null)
+  const medirCarteira = useCallback((no: HTMLDivElement | null) => {
+    observador.current?.disconnect()
+    if (!no || typeof ResizeObserver === 'undefined') return
+    const obs = new ResizeObserver(([entrada]) => setLarguraCarteira(entrada.contentRect.width))
+    obs.observe(no)
+    observador.current = obs
+  }, [])
+  useEffect(() => () => observador.current?.disconnect(), [])
+  const carteiraFolgada = larguraCarteira === 0 || larguraCarteira >= LARGURA_CARTEIRA_FOLGADA
 
   const query = useMemo(
     () => ({
@@ -198,7 +238,7 @@ export default function ExecutiveScreen() {
       {
         chave: 'nome',
         rotulo: 'Unidade',
-        largura: 230,
+        largura: carteiraFolgada ? 250 : 232,
         render: (u) => (
           <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
             <Semaforo nivel={u.severidade} rotulo={u.severidade_rotulo} />
@@ -224,15 +264,15 @@ export default function ExecutiveScreen() {
       {
         chave: 'sparkline',
         rotulo: '12 meses',
-        largura: 90,
+        largura: carteiraFolgada ? 85 : 74,
         ordenavel: false,
         ajuda: 'Faturamento dos 12 meses fechados',
-        render: (u) => <SparklineSvg valores={u.sparkline} />,
+        render: (u) => <SparklineSvg valores={u.sparkline} largura={carteiraFolgada ? 76 : 46} />,
       },
       ...COLUNAS_METRICA.map<Coluna<RedeUnidade>>((c) => ({
         chave: c.chave,
         rotulo: c.rotulo,
-        largura: c.largura,
+        largura: carteiraFolgada ? c.folgada : c.apertada,
         alinhamento: 'right',
         ajuda: `${c.rotulo} — clique para ordenar. Passe o mouse na célula para ver ranking e % vs média da rede.`,
         render: (u) => {
@@ -254,12 +294,16 @@ export default function ExecutiveScreen() {
       {
         chave: 'resumo',
         rotulo: 'Diagnóstico',
-        largura: 260,
+        largura: carteiraFolgada ? 290 : 299,
         ordenavel: false,
         render: (u) =>
           u.alertas.length ? (
             <span style={{ display: 'flex', gap: 5, flexWrap: 'nowrap', overflow: 'hidden' }}>
-              {u.alertas.slice(0, 3).map((a) => (
+              {/* Quantos chips cabem depende da largura MEDIDA, não de um número fixo: com o
+                  mapa de volta ao lado, o corte antigo de três deixava o último cortado no
+                  meio da palavra, e chip pela metade parece defeito. O contador "+N" diz a
+                  mesma coisa e cabe; o resto está no `title` dele, na ficha e no PDF. */}
+              {u.alertas.slice(0, carteiraFolgada ? 2 : 1).map((a) => (
                 <span
                   key={a.codigo}
                   title={a.detalhe}
@@ -277,9 +321,12 @@ export default function ExecutiveScreen() {
                   {a.titulo}
                 </span>
               ))}
-              {u.alertas.length > 3 && (
-                <span style={{ font: '500 10px/1 var(--f-ui)', color: 'var(--tx-muted)', alignSelf: 'center' }}>
-                  +{u.alertas.length - 3}
+              {u.alertas.length > (carteiraFolgada ? 2 : 1) && (
+                <span
+                  title={u.alertas.slice(carteiraFolgada ? 2 : 1).map((a) => a.titulo).join(' · ')}
+                  style={{ font: '500 10px/1 var(--f-ui)', color: 'var(--tx-muted)', alignSelf: 'center' }}
+                >
+                  +{u.alertas.length - (carteiraFolgada ? 2 : 1)}
                 </span>
               )}
             </span>
@@ -290,7 +337,7 @@ export default function ExecutiveScreen() {
           ),
       },
     ],
-    [],
+    [carteiraFolgada],
   )
 
   if (erro && !carteira) {
@@ -498,13 +545,20 @@ export default function ExecutiveScreen() {
               })}
             </div>
 
-            {/* A carteira ocupa a LARGURA TODA. Dividindo a linha com o mapa, as oito
-                colunas não cabiam nos ~620 px que sobravam e a tabela virava uma barra
-                de rolagem horizontal: para ver o NPS era preciso arrastar o scroll de
-                baixo, perdendo de vista a coluna do nome. O mapa desceu para a faixa
-                seguinte — ele é apoio, e é assim que a DEC-023 o define. */}
-            <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              <Glass style={{ flex: '1 1 100%', minWidth: 0, padding: 0, overflow: 'hidden' }}>
+            {/* Carteira e mapa LADO A LADO (pedido do Felipe, 2026-08-06).
+                A tentativa anterior — carteira em largura total, mapa na faixa de baixo —
+                resolvia a falta de espaço das colunas e criava dois problemas piores: a
+                tabela esticada em ~1800 px virava um campo de vãos entre números, e o mapa
+                ficava numa faixa com dois cards curtos ao lado, cada um terminando numa
+                altura, o que jogava as bordas de todas as faixas seguintes fora de esquadro.
+
+                O que faz caber agora, e antes não cabia: uma coluna a menos
+                (`R$/recorrente` saiu) e larguras declaradas como PROPORÇÃO. O trilho da
+                direita empilha mapa, composição e SSS — assim ele termina na mesma linha
+                que a carteira, e o mapa absorve a diferença (`flex: 1`), em vez de sobrar
+                um vazio embaixo dos cards curtos. */}
+            <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
+              <Glass style={{ ...COLUNA_PRINCIPAL, padding: 0, overflow: 'hidden' }}>
                 <div
                   style={{
                     padding: '13px 16px 11px',
@@ -556,7 +610,7 @@ export default function ExecutiveScreen() {
                     )
                   })}
                 </div>
-                <div style={{ maxHeight: 560, overflowY: 'auto' }}>
+                <div ref={medirCarteira} style={{ maxHeight: 560, overflowY: 'auto' }}>
                   <Tabela
                     colunas={colunas}
                     dados={unidades}
@@ -570,11 +624,18 @@ export default function ExecutiveScreen() {
                 </div>
               </Glass>
 
-              <Glass style={{ flex: '1 1 460px', minWidth: 0, padding: 0, overflow: 'hidden' }}>
+              {/* Trilho de apoio. Empilhado numa coluna só, e não três cards soltos na
+                  mesma linha: soltos, cada um parava numa altura diferente e a faixa
+                  terminava em serrilha. */}
+              <div style={{ ...COLUNA_TRILHO, display: 'flex', flexDirection: 'column', gap: 14 }}>
+                <Glass style={{ flex: '1 1 auto', minHeight: 300, padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ padding: '13px 16px 9px', font: '600 10.5px/1 var(--f-ui)', letterSpacing: '.09em', textTransform: 'uppercase', color: 'var(--tx-muted)' }}>
                     Onde estão
                   </div>
-                  <div style={{ position: 'relative', height: 320 }}>
+                  {/* O mapa é quem ESTICA: `flex: 1` faz a altura dele ser a sobra da
+                      coluna, de modo que o trilho termine exatamente onde a carteira
+                      termina. Altura fixa aqui deixaria um vão no pé de uma das duas. */}
+                  <div style={{ position: 'relative', flex: 1, minHeight: 190 }}>
                     <ExecMap
                       unidades={unidades}
                       centro={carteira.centro}
@@ -586,14 +647,13 @@ export default function ExecutiveScreen() {
                       }}
                     />
                   </div>
-                  <div style={{ padding: '9px 16px 12px', font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                  <div style={{ padding: '9px 16px 12px', font: '400 10.5px/1.45 var(--f-ui)', color: 'var(--tx-muted)' }}>
                     {carteira.totais.com_coordenada} de {carteira.totais.no_recorte} unidades com
-                    coordenada. Tamanho da bolha = faturamento; cor = diagnóstico. Use a roda
-                    do mouse sobre o mapa para aproximar, ou os botões + e −.
+                    coordenada. Bolha = faturamento; cor = diagnóstico.
                   </div>
-              </Glass>
+                </Glass>
 
-                <Glass style={{ flex: '1 1 300px', minWidth: 0, padding: '14px 16px' }}>
+                <Glass style={{ flexShrink: 0, padding: '14px 16px' }}>
                   <Rotulo>Recorrentes × agregadores</Rotulo>
                   <div style={{ display: 'flex', justifyContent: 'space-between', font: '500 10.5px/1 var(--f-ui)', color: 'var(--tx-label)', marginBottom: 6 }}>
                     <span>Recorrentes {pct(carteira.split.pct_recorrentes, 0)}</span>
@@ -612,7 +672,7 @@ export default function ExecutiveScreen() {
                 </Glass>
 
                 {carteira.sss.disponivel && carteira.sss.metricas && (
-                  <Glass style={{ flex: '1 1 300px', minWidth: 0, padding: '14px 16px' }}>
+                  <Glass style={{ flexShrink: 0, padding: '14px 16px' }}>
                     <Rotulo>Mesma base, ano a ano (SSS)</Rotulo>
                     <div style={{ font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)', marginBottom: 10 }}>
                       {carteira.sss.unidades} unidades presentes nos dois períodos. Comparar total
@@ -642,10 +702,13 @@ export default function ExecutiveScreen() {
                     })}
                   </Glass>
                 )}
+              </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
-              <Glass style={{ flex: '1 1 420px', padding: '15px 17px', minWidth: 0 }}>
+            {/* Mesma divisão da faixa de cima — bloco grande + trilho — para as bordas
+                verticais correrem retas da carteira até aqui. */}
+            <div style={{ display: 'flex', gap: 14, alignItems: 'stretch', flexWrap: 'wrap' }}>
+              <Glass style={{ ...COLUNA_PRINCIPAL, padding: '15px 17px' }}>
                 <Rotulo>Faturamento da rede no recorte</Rotulo>
                 <BarrasPeriodo
                   meses={carteira.serie_meses}
@@ -659,7 +722,7 @@ export default function ExecutiveScreen() {
                     : ` — a competência ${rotuloMesCompetencia(carteira.mes)} ainda está em curso e não entra aqui.`}
                 </div>
               </Glass>
-              <Glass style={{ flex: '1 1 300px', padding: '15px 17px', minWidth: 0 }}>
+              <Glass style={{ ...COLUNA_TRILHO, padding: '15px 17px' }}>
                 <Rotulo>Réguas vigentes</Rotulo>
                 <ul style={{ margin: 0, paddingLeft: 16, font: '400 11.5px/1.7 var(--f-ui)', color: 'var(--tx-narrative)' }}>
                   {Object.entries(carteira.reguas).map(([chave, r]) => (

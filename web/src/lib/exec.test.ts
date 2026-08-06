@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  deveReenquadrar,
   enquadrar,
   filtrarUnidades,
   formatarMetrica,
@@ -201,6 +202,61 @@ describe('enquadrar', () => {
 
   it('sem bbox cai no Brasil inteiro', () => {
     expect(enquadrar(null, { lat: null, lng: null }).zoom).toBeLessThan(4)
+  })
+
+  const REDE_NACIONAL = { min_lat: -29, min_lng: -55, max_lat: 3, max_lng: -35 }
+
+  it('card estreito afasta o zoom, senão as unidades das pontas ficam fora', () => {
+    // O defeito real: com o mapa de volta ao lado da carteira, o card caiu para ~420x300
+    // e a conta antiga — que embutia uma viewport de 512x512 — deixava Boa Vista e o
+    // Nordeste fora do quadro.
+    const largo = enquadrar(REDE_NACIONAL, { lat: null, lng: null }, { largura: 900, altura: 700 })
+    const estreito = enquadrar(REDE_NACIONAL, { lat: null, lng: null }, { largura: 420, altura: 300 })
+    expect(estreito.zoom).toBeLessThan(largo.zoom)
+  })
+
+  it('cabe nas DUAS dimensões: quem manda é a mais apertada', () => {
+    // Card baixo e largo: é a ALTURA que corta. Ignorar isso era o erro da conta antiga,
+    // que só olhava o span de longitude.
+    const baixo = enquadrar(REDE_NACIONAL, { lat: null, lng: null }, { largura: 900, altura: 200 })
+    const quadrado = enquadrar(REDE_NACIONAL, { lat: null, lng: null }, { largura: 900, altura: 900 })
+    expect(baixo.zoom).toBeLessThan(quadrado.zoom)
+  })
+
+  it('a rede nacional inteira cabe no card estreito, com folga para a bolha', () => {
+    const { zoom, latitude, longitude } = enquadrar(
+      REDE_NACIONAL,
+      { lat: null, lng: null },
+      { largura: 420, altura: 300 },
+    )
+    // Graus de longitude que o card comporta neste zoom (512 px = 360 graus no zoom 0).
+    const grausNaLargura = (420 / (512 * 2 ** zoom)) * 360
+    expect(grausNaLargura).toBeGreaterThan(REDE_NACIONAL.max_lng - REDE_NACIONAL.min_lng)
+    expect(latitude).toBeCloseTo(-13)
+    expect(longitude).toBeCloseTo(-45)
+  })
+
+  it('viewport absurda (0x0, antes do primeiro layout) não zera o zoom', () => {
+    const v = enquadrar(REDE_NACIONAL, { lat: null, lng: null }, { largura: 0, altura: 0 })
+    expect(v.zoom).toBeGreaterThanOrEqual(2)
+    expect(Number.isFinite(v.zoom)).toBe(true)
+  })
+})
+
+describe('deveReenquadrar', () => {
+  it('recorte novo reenquadra mesmo com ajuste manual — o pan velho aponta para outra rede', () => {
+    expect(deveReenquadrar('recorte', true)).toBe(true)
+    expect(deveReenquadrar('recorte', false)).toBe(true)
+  })
+
+  it('card só mudando de tamanho NÃO desfaz o zoom da pessoa', () => {
+    // O caso real: digitar na busca encolhe a tabela, o trilho acompanha, o mapa
+    // redimensiona — e o zoom que a pessoa deu numa unidade voltava para a rede inteira.
+    expect(deveReenquadrar('tamanho', true)).toBe(false)
+  })
+
+  it('sem ajuste manual, mudar de tamanho reenquadra — é como o primeiro layout acerta', () => {
+    expect(deveReenquadrar('tamanho', false)).toBe(true)
   })
 })
 
