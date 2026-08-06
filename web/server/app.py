@@ -2203,10 +2203,14 @@ def montar_metodologia() -> dict[str, Any]:
                             "nova'. Os cortes saem da distribuição real dos hexágonos medidos."
                         ),
                         "ressalva": (
-                            "'Sem obra nova' não é demolição: é obra encerrada mais ruído de "
-                            "medição. E a cobertura é parcial — 41.135 hexágonos em 12 UFs, "
-                            "só onde há mancha urbana medida; fora disso a leitura é ausente, "
-                            "não é zero."
+                            "'Sem obra nova' não é demolição nem decadência: é obra encerrada "
+                            "mais ruído de medição — e, numa metrópole densa e madura, é "
+                            "SATURAÇÃO. Boa parte de São Paulo aparece assim justamente por já "
+                            "estar construída, o que não a torna um mercado pior; a leitura "
+                            "aqui é de movimento, não de qualidade. Onde a cidade já é o centro "
+                            "consolidado, quem responde pelo potencial são as camadas 1 e 2. "
+                            "A cobertura também é parcial — 41.135 hexágonos em 12 UFs, só onde "
+                            "há mancha urbana medida; fora disso a leitura é ausente, não é zero."
                         ),
                     },
                 ],
@@ -2217,7 +2221,8 @@ def montar_metodologia() -> dict[str, Any]:
                     "Ela responde outra pergunta: o M1 mede a POSIÇÃO do território hoje, e "
                     "esta camada mede a DIREÇÃO em que ele vem andando. Duas praças com o "
                     "mesmo score podem estar em rotas opostas, e é só isso que se afirma "
-                    "aqui."
+                    "aqui. O hexágono colorido mostra ONDE a cidade cresceu — não onde abrir: "
+                    "para isso existe a camada 5, que é a única que ordena a fila."
                 ),
             },
             {
