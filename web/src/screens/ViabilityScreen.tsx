@@ -66,22 +66,30 @@ const CHEQUE_AVISO_RAZAO = 1.2
    qualquer mudança no `config.py`. Antes do primeiro cálculo não há payload, e aí
    só entram os padrões PROVADOS abaixo; o resto fica no texto neutro.
 
-   PROVADOS (arquivo:linha conferidos neste worktree):
-     parcelas_obra = 4       web/server/app.py:1375 + config.py:154
-     parcelas_franquia = 4   web/server/app.py:1384 + config.py:158
-     taxa_franquia = 160.000 web/server/app.py:1372 + config.py:153
-     carencia = 0            web/server/app.py:1424/1430 + simulador.py:165 + config.py:235
-     taxa_minima_negocio = 25% a.a.  app.py:1415-1419 + simulador.py:172 + config.py:227
+   As citações abaixo são por SÍMBOLO, não por número de linha: a main andou três
+   vezes durante este PR e toda linha citada derivou. Bloco que se intitula
+   "conferido" com número errado é pior que bloco nenhum — afirma uma verificação
+   que não vale mais.
 
-   NÃO PROVADOS, e por isso SEM número no placeholder:
-     juros_equipamentos_am — o backend resolve `float(juros or 0.0)` (app.py:1382),
-       ou seja 0% a.m. O "1,8% a.m." é da planilha e do adaptador LEGADO
-       (simulador.py:986), que esta rota não percorre. Afirmar 1,8 seria mentir.
-     prazo_equipamentos — `int(... or 36) if equip > 0 else 0` (app.py:1379-1380):
-       o 36 é condicional a haver equipamento; sem ele o padrão é 0. E "36–60" é
-       faixa de validação errada — a real é ge=1, le=60 (app.py:1262).
-     obra / equipamentos — o CAPEX padrão só entra com OS DOIS vazios
-       (app.py:1357); preenchendo um, o outro vira 0,0 (app.py:1366-1367).
+   PADRÃO DO MOTOR (o campo vazio entrega exatamente este número):
+     parcelas_obra = 4              `_investimento` em web/server/app.py, via
+                                    SIM_PARCELAS_OBRA_DEFAULT (dimensionamento/config.py)
+     parcelas_franquia = 4          idem, SIM_PARCELAS_FRANQUIA_DEFAULT
+     taxa_franquia = 160.000        `_investimento`, via SIM_TAXA_FRANQUIA. Único que
+                                    usa `is None`, então digitar 0 é honrado como zero
+     carencia = 0                   entra por `opcionais` (None é filtrado) e cai no
+                                    default da dataclass `Premissas`, SIM_CARENCIA_ALUGUEL_MESES
+     taxa_minima_negocio = 25% a.a. mesmo caminho, SIM_TAXA_MINIMA_NEGOCIO_AA
+
+   SEM PADRÃO PRÓPRIO, e por isso sem número anunciado como padrão:
+     juros_equipamentos_am — o backend resolve `float(juros or 0.0)`, ou seja 0% a.m.
+       O "1,8% a.m." é da planilha e do adaptador LEGADO (`viabilidade()` em
+       dimensionamento/simulador.py), que esta rota não percorre. Afirmar 1,8 como
+       padrão seria mentir — por isso ele entra como SUGESTÃO, ver o bloco abaixo.
+     prazo_equipamentos — `int(... or 36) if equip > 0 else 0`: o 36 é condicional a
+       haver equipamento; sem ele o padrão é 0. A faixa validada é ge=1, le=60.
+     obra / equipamentos — o CAPEX padrão (SIM_CAPEX_DEFAULT) só entra com OS DOIS
+       vazios; preenchendo um, o outro vira 0,0.
    --------------------------------------------------------------------------- */
 const PADRAO_PARCELAS_OBRA = '4'
 const PADRAO_PARCELAS_FRANQUIA = '4'
@@ -94,11 +102,11 @@ const PADRAO_TAXA_NEGOCIO = '25'
    conferido no backend. Abaixo sao SUGESTOES de ponto de partida (pedido de Juan,
    2026-08-05) que o motor NAO aplica:
      Obra / Equipamentos -> nao tem padrao proprio. O CAPEX so' entra com OS DOIS
-       vazios (app.py:1357); preenchendo um, o outro vira 0,0.
-     Prazo financ.       -> o padrao real e' 36 (app.py:1379), nao 60.
-     Juros equip.        -> o padrao real e' 0% (app.py:1382, `float(juros or 0.0)`).
-       Os 1,8% da planilha vivem no adaptador legado simulador.py:986, que a rota web
-       nao chama.
+       vazios; preenchendo um, o outro vira 0,0.
+     Prazo financ.       -> o padrao real e' 36, nao 60.
+     Juros equip.        -> o padrao real e' 0% (`float(juros or 0.0)` em
+       `_investimento`). Os 1,8% da planilha vivem no adaptador legado
+       `viabilidade()` de dimensionamento/simulador.py, que a rota web nao chama.
    O placeholder mostra SO' O NUMERO: "sugestao 1.500.000" nao cabia na caixa depois
    que o adorno da unidade passou a ocupar a direita dela (Juan, 2026-08-05: "sem a
    palavra sugestao, pois nao da' pra visualizar"). O preco assumido e' que estes

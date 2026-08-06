@@ -83,12 +83,15 @@
      intensidade, entao a camada 2 exigiu matiz NOVA (violeta): um numero verde de
      30px no topo do painel seria lido como "score alto", nao como "camada 2".
 
-     A cor nunca e' o unico portador da identidade — o numeral "Camada N de 4" e o
+     A cor nunca e' o unico portador da identidade — o numeral "Camada N de M" e o
      numero dentro da bolinha do stepper continuam na tela, porque azul x violeta e
      ambar x rampa amarela sao pares fracos em deuteranopia/protanopia.
 
-     Contraste sobre --bg-base: l1 7,8:1 · l2 7,2:1 · l3 11,5:1 · l4 13,2:1.
-     O texto SOBRE a bolinha do stepper segue --ac-on (>=6:1 nas quatro).
+     As matizes foram escolhidas claras sobre o fundo escuro justamente para o texto
+     sobreviver; a razao exata de contraste de cada uma NAO esta medida aqui — havia
+     um numero por token neste comentario e ele nao batia com a conta WCAG, entao
+     saiu. Quem precisar do valor, meça: inventar razao de contraste e' pior que
+     omitir, porque parece auditado.
      Os -a10/-a24/-a60 sao a MESMA matiz em alfa: fundo de bloco, borda/anel e
      conector do stepper, na linha do que --ac-a* ja fazia para o turquesa. */
 
@@ -119,17 +122,15 @@
   --l3-a24: rgba(233, 192, 122, 0.24);
   --l3-a60: rgba(233, 192, 122, 0.6);
 
-  /* Camada 4 · recomendacao: e' a UNICA camada em que o turquesa converge — o CTA
-     vira "Gerar Relatório Municipal" e a fila de aberturas e' a resposta do produto.
-     Tom CLARO, para nao virar o turquesa cheio do botao.
+  /* Camada 4 · "Como a cidade esta indo" (crescimento da area construida).
+     Herda o TURQUESA que a propria camada ja' usa no mapa para "Em alta"
+     (CRESC_ALTA_HEX em lib/colors.ts): dar outra matiz ao cabecalho faria ele brigar
+     com o hexagono logo ao lado.
 
-     Hex literal pela mesma razao da camada 3: alias de --ac-chip/--ac-a* fazia
-     IDENTIDADE DE CAMADA e ACAO serem o mesmo token, contra a regra declarada no
-     topo deste bloco. Sao propositalmente parecidos, mas passam a ser
-     independentes — mexer no turquesa do botao nao mexe mais na camada 4. */
-  /* Camada 4 · "Como a cidade esta indo" (crescimento da area construida). Herda o
-     TURQUESA que a propria camada ja' usa no mapa para "Em alta" (CRESC_ALTA_HEX em
-     lib/colors.ts): dar outra matiz ao cabecalho faria ele brigar com o hexagono. */
+     E' o MESMO valor de --ac (#35c9d6), e isso e' deliberado, nao descuido: aqui a
+     convergencia com a cor de acao e' aceita porque a camada ja' escolheu esse
+     turquesa no mapa. Trocar --ac muda esta camada junto — se um dia isso incomodar,
+     separe os dois valores em vez de reescrever a paleta da camada. */
   --l4: #35c9d6;
   --l4-a10: rgba(53, 201, 214, 0.1);
   --l4-a24: rgba(53, 201, 214, 0.24);
@@ -139,7 +140,14 @@
      As quatro matizes livres ja' estao gastas (azul, violeta, ambar, turquesa) e
      qualquer uma que sobrasse afirmaria parentesco com a camada que ja' a usa. E' a
      mesma conclusao do KPI em destaque do header: ausencia de cor nao afirma
-     parentesco nenhum, e a camada da RESPOSTA e' a que resume as outras quatro. */
+     parentesco nenhum, e a camada da RESPOSTA e' a que resume as outras quatro.
+
+     ATENCAO ao mexer: o valor coincide com --tx-max, que neste mesmo arquivo e' a
+     cor de SELECAO (item ativo do ranking, contorno do hex selecionado). Um claro
+     neutro so' pode significar as duas coisas porque elas nunca dividem o mesmo
+     elemento — a selecao mora no item da lista, a identidade de camada mora no
+     cabecalho e no stepper. Se alguem levar um dos dois para o territorio do outro,
+     separe os valores ANTES. */
   --l5: #eef3f8;
   --l5-a10: rgba(238, 243, 248, 0.1);
   --l5-a24: rgba(238, 243, 248, 0.24);

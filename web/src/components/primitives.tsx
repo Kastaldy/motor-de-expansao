@@ -10,18 +10,20 @@ import type { RedeSeveridade, Tom } from '../lib/types'
    muda aqui e a tipografia (serif para narrativa, mono para numero).
    --------------------------------------------------------------------------- */
 
-/* Tons do chip. `teal` e `violet` espelham --l4 e --l2 (tokens.css): sao os chips
-   que carregam IDENTIDADE de camada (fila do passo 4, residual do passo 2), nao
-   intensidade — por isso reusam a matiz da camada em vez de entrar na familia
-   verde/ambar/vermelho, que significa "quanto vale". */
+/* Tons do chip — paleta de INTENSIDADE ("quanto vale"), nao de identidade de camada.
+   Identidade de camada vive no stepper, no cabecalho do painel e no rotulo do mapa,
+   via `camadaCor` (lib/colors.ts).
+
+   Ja' tentei acrescentar `teal`/`violet` aqui, para o chip vestir a camada: NAO
+   pinta. `tag_cor` tem precedencia logo abaixo e vem preenchido em todo passo que
+   rotula por faixa da legenda — medido, 121 itens saiam com o tom novo e ZERO
+   chegavam ao pixel. Nao reintroduza sem antes resolver essa precedencia. */
 const TONS: Record<Tom, { fg: string; bg: string }> = {
   blue: { fg: '#6fa4f7', bg: 'rgba(75,139,245,.16)' },
   green: { fg: '#5fd08c', bg: 'rgba(60,200,120,.15)' },
   amber: { fg: '#e0b25a', bg: 'rgba(217,164,65,.15)' },
   red: { fg: '#ff8a99', bg: 'rgba(255,90,110,.15)' },
   gray: { fg: '#98a4b2', bg: 'rgba(255,255,255,.08)' },
-  teal: { fg: 'var(--l4)', bg: 'var(--l4-a24)' },
-  violet: { fg: 'var(--l2)', bg: 'var(--l2-a24)' },
 }
 
 /**
@@ -141,11 +143,12 @@ export function Kpi({
   return (
     // `minWidth` positivo, e nao 0: o valor e' 700 24px com `textOverflow: ellipsis`
     // logo abaixo, entao um card espremido nao encolhe o texto — ele CORTA o numero.
-    // Com 6 cards numa fileira de ~900px (o que sobra a 1280px logicos, que e' o que
-    // um notebook Full HD com escala 150% do Windows entrega), cada um ficava com
-    // ~104px uteis e "34 meses" virava "34 me...", "R$ 2,6M" virava "2,6...".
-    // Com piso de 176px a fileira QUEBRA em duas linhas antes de cortar qualquer
-    // numero — em KPI, perder o digito e' pior que perder a linha.
+    // Foi o que Juan relatou (2026-08-05): "os numeros nao estao sendo possiveis de
+    // serem visualizados (exemplo 34 me... cheque total 2,6...)", numa fileira de 6
+    // cards a 1280px logicos (notebook Full HD com escala 150% do Windows).
+    // O piso faz a fileira QUEBRAR em duas linhas antes de espremer — em KPI, perder
+    // a linha e' melhor que perder o digito. O valor 176 foi calibrado no olho, nao
+    // medido: se a fileira voltar a cortar, suba o piso.
     <Glass style={{ flex: 1, padding: '15px 17px', minWidth: 176 }}>
       <div style={{ font: '500 11px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>
         {label}

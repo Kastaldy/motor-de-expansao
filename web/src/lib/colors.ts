@@ -163,7 +163,7 @@ export function crescClasseToColor(classe: string | null | undefined): RGBA {
 }
 
 /* ---------------------------------------------------------------------------
-   Identidade das camadas do funil — espelho de --l1..--l4 (styles/tokens.css),
+   Identidade das camadas do funil — espelho de --l1..--l5 (styles/tokens.css),
    onde esta o PORQUE da paleta. Aqui fica so' o acesso por numero de passo.
 
    Por que o RGB aparece de novo: o deck.gl pinta em array [r,g,b,a] e nao le

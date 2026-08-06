@@ -1,9 +1,10 @@
 /** Contrato entre o front e o backend do piloto (web/server/app.py). */
 
-/** Tom do chip do ranking. `teal`/`violet` entraram com a identidade de camada
- *  (--l4/--l2): o chip da FILA do passo 4 era azul, igual ao "Quente" do passo 1.
- *  Fronteira TS<->Python sem contrato gerado: o produtor e' web/server/app.py. */
-export type Tom = 'blue' | 'green' | 'amber' | 'red' | 'gray' | 'teal' | 'violet'
+/** Tom do chip do ranking. Fronteira TS<->Python sem contrato gerado: o produtor
+ *  e' web/server/app.py. Note que `RankItem.tag_cor` tem PRECEDENCIA sobre o tom no
+ *  `Chip` — onde a etiqueta sai de uma faixa da legenda, quem pinta e' a cor exata
+ *  da faixa, e o tom nem e' consultado. */
+export type Tom = 'blue' | 'green' | 'amber' | 'red' | 'gray'
 
 export interface Hex {
   id: string
