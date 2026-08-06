@@ -417,3 +417,70 @@ def test_comparar_modelos_traz_as_duas_bases_e_o_delta():
         assert coluna in out.columns
     esperado = out["consumo_concorrentes_1km_area"] - out["consumo_concorrentes_2km"]
     assert out["delta_consumo"].tolist() == pytest.approx(esperado.tolist())
+
+
+# ── Regressoes encontradas na revisao (2026-08-06) ────────────────────────────
+
+
+def test_comparar_usa_a_coluna_de_producao_quando_ela_existe():
+    """REGRESSAO: `comparar_modelos` sobrescrevia o valor de PRODUCAO pelo recalculado.
+
+    Esta funcao existe para decidir se o residual muda de base. Ao recalcular por cima
+    da coluna que o Bloco 3 materializou, o comparativo virava "modelo novo vs minha
+    copia do modelo antigo" — e uma divergencia entre a copia e o pipeline real (filtro
+    de concorrente, snapshot da coleta) ficaria invisivel bem no numero da decisao.
+    """
+    hex_id = _hex_de(*SP)
+    lat, lng = _centroide(hex_id)
+    df = _df_hex(hex_id)
+    df["oferta_efetiva_mapeada_2km"] = 9.99  # valor "oficial", diferente do recalculavel
+
+    out = comparar_modelos(df, _concorrentes((lat, lng)))
+
+    assert out["fonte_2km"].iloc[0] == "producao"
+    assert out["oferta_efetiva_mapeada_2km"].iloc[0] == pytest.approx(9.99)
+    assert out["consumo_concorrentes_2km"].iloc[0] == pytest.approx(
+        9.99 * CAPACIDADE_DEFAULT_CONCORRENTE_ALUNOS
+    )
+
+
+def test_comparar_recalcula_e_se_declara_quando_a_coluna_falta():
+    """Sem a coluna de producao, recalcula — mas DIZ que recalculou."""
+    hex_id = _hex_de(*SP)
+    lat, lng = _centroide(hex_id)
+    df = _df_hex(hex_id).drop(columns=["oferta_efetiva_mapeada_2km"])
+
+    out = comparar_modelos(df, _concorrentes((lat, lng)))
+
+    assert out["fonte_2km"].iloc[0] == "recalculado"
+    # concorrente no centroide -> peso 1 - 0/2000 = 1,0
+    assert out["oferta_efetiva_mapeada_2km"].iloc[0] == pytest.approx(1.0)
+
+
+def test_anexar_sem_nenhum_concorrente_nao_quebra():
+    """Ramo sem cobertura ate a revisao: agregado VAZIO entrando no merge."""
+    hex_id = _hex_de(*SP)
+    out = anexar_pressao_1km_area(_df_hex(hex_id), pd.DataFrame({"lat": [], "lng": []}))
+
+    assert len(out) == 1
+    linha = out.iloc[0]
+    assert linha["oferta_efetiva_1km_area"] == 0.0
+    assert int(linha["n_concorrentes_influencia_1km"]) == 0
+    assert linha["consumo_concorrentes_1km_area"] == 0.0
+    assert linha["gap_competitivo_1km_area"] == pytest.approx(1.0)
+    assert linha["pressao_concorrencial_score_1km_area"] == pytest.approx(0.0)
+
+
+def test_estado_vazio_do_mapa_nao_e_mutavel_por_engano():
+    """Espelha o congelamento de ESTADO_MAPA_VAZIO no front (lib/mapa-estado.ts).
+
+    Aqui so' documenta a simetria: no Python nao ha constante equivalente exposta a
+    mutacao — `COLUNAS_1KM_AREA` e' lida, nunca alterada.
+    """
+    from motor_expansao.pipelines import pressao_concorrencial_1km as mod
+
+    antes = list(mod.COLUNAS_1KM_AREA)
+    hex_id = _hex_de(*SP)
+    anexar_pressao_1km_area(_df_hex(hex_id), _concorrentes(SP))
+    anexar_pressao_1km_area(_df_hex(hex_id), _concorrentes(SP))
+    assert list(mod.COLUNAS_1KM_AREA) == antes

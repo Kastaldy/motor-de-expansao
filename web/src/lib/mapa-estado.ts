@@ -42,8 +42,17 @@ export interface EstadoMapa {
   camera: ViewState | null
 }
 
-/** Foto neutra: o mapa comeca como sempre comecou. */
-export const ESTADO_MAPA_VAZIO: EstadoMapa = {
+/**
+ * Foto neutra: o mapa comeca como sempre comecou.
+ *
+ * CONGELADA de proposito. Este objeto e' devolvido por `fotoAplicavel` sempre que a foto
+ * e' descartada, e o `MapScreen` usa os campos dele COMO ESTADO INICIAL do React —
+ * `useState(foto.cenario)` passa a guardar ESTA MESMA referencia de array. Um dia alguem
+ * escrever `cenario.push(hexId)` em vez de criar array novo corromperia a constante para
+ * a aplicacao inteira, e todo mapa aberto dali em diante nasceria com lixo. Congelado, o
+ * erro aparece na hora (TypeError em modo estrito) em vez de virar bug fantasma.
+ */
+export const ESTADO_MAPA_VAZIO: EstadoMapa = Object.freeze({
   uf: '',
   municipio: '',
   passoN: 1,
@@ -52,9 +61,9 @@ export const ESTADO_MAPA_VAZIO: EstadoMapa = {
   busca: '',
   filtroFaixa: '',
   modoCenario: false,
-  cenario: [],
+  cenario: Object.freeze([]) as readonly string[] as string[],
   camera: null,
-}
+})
 
 /** Chave de contexto: muda quando o operador troca de UF ou faz drill-down. */
 export function chaveContexto(uf: string, municipio: string): string {

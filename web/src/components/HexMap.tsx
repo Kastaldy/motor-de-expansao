@@ -246,15 +246,12 @@ export default function HexMap({
 
   // Sobe a camera para o pai a cada mudanca. Sem isso ela morre no unmount da tela
   // (App troca `mapa` por `viabilidade` com render condicional, o que DESMONTA a arvore).
-  // O callback fica num ref para NAO entrar nas dependencias: o pai o passa inline, e
-  // uma identidade nova a cada render faria o efeito disparar em todo render, nao so'
-  // quando a camera realmente muda. O efeito cobre todos os caminhos que mexem em
-  // `view` — arraste do usuario e os dois voos automaticos.
-  const onCameraRef = useRef(onCamera)
-  onCameraRef.current = onCamera
+  // Cobre todos os caminhos que mexem em `view`: arraste do usuario e os dois voos
+  // automaticos. `onCamera` PRECISA ser estavel no pai (useCallback) — com callback
+  // inline, a identidade nova a cada render faria isto disparar em todo render.
   useEffect(() => {
-    onCameraRef.current?.(view)
-  }, [view])
+    onCamera?.(view)
+  }, [view, onCamera])
 
   // Voa para o centro do municipio quando ele muda.
   const centroKey = `${centro.lat},${centro.lng}`

@@ -375,11 +375,33 @@ def comparar_modelos(
     Colunas: `hex_id`, oferta e consumo em cada modelo, e o delta de consumo
     (`delta_consumo` > 0 = o modelo novo cobra MAIS oferta consumida naquele hex, o que
     DERRUBA o residual dali; < 0 = alivia e o residual sobe).
+
+    LADO DE COMPARACAO: se `df_hex` ja traz `oferta_efetiva_mapeada_2km` — a coluna que o
+    Bloco 3 materializou em PRODUCAO — ela e' usada COMO ESTA. `oferta_2km_centroide` so'
+    roda quando a coluna nao existe.
+
+    Isto nao e' detalhe. Esta funcao existe para decidir se o residual muda de base. Se
+    ela sobrescrevesse o valor de producao pela reimplementacao local, o comparativo
+    viraria "modelo novo vs minha copia do modelo antigo", e qualquer divergencia entre a
+    copia e o pipeline real (filtro de concorrente, snapshot da coleta, raio) ficaria
+    INVISIVEL justamente no numero que sustenta a decisao. `fonte_2km` registra qual dos
+    dois caminhos alimentou a comparacao.
     """
     out = anexar_pressao_1km_area(
         df_hex, df_concorrentes, capacidade_alunos=capacidade_alunos
     )
-    out["oferta_efetiva_mapeada_2km"] = oferta_2km_centroide(df_hex, df_concorrentes).values
+    if "oferta_efetiva_mapeada_2km" in df_hex.columns:
+        out["oferta_efetiva_mapeada_2km"] = (
+            pd.to_numeric(df_hex["oferta_efetiva_mapeada_2km"], errors="coerce")
+            .fillna(0.0)
+            .to_numpy()
+        )
+        out["fonte_2km"] = "producao"
+    else:
+        out["oferta_efetiva_mapeada_2km"] = oferta_2km_centroide(
+            df_hex, df_concorrentes
+        ).to_numpy()
+        out["fonte_2km"] = "recalculado"
     out["consumo_concorrentes_2km"] = (
         out["oferta_efetiva_mapeada_2km"] * float(capacidade_alunos)
     )
@@ -388,6 +410,7 @@ def comparar_modelos(
     )
     colunas = [
         "hex_id",
+        "fonte_2km",
         "oferta_efetiva_mapeada_2km",
         "consumo_concorrentes_2km",
         "oferta_efetiva_1km_area",

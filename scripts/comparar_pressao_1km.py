@@ -30,6 +30,7 @@ from pathlib import Path
 import h3
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
@@ -53,7 +54,17 @@ DEMO_SEED = 20260805
 
 
 def _carregar_real(uf: str | None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    hexes = pd.read_parquet(HEX_PATH, columns=["hex_id", "lat", "lng", "uf"])
+    # `oferta_efetiva_mapeada_2km` entra de PROPOSITO: com ela, `comparar_modelos` usa o
+    # valor que o Bloco 3 materializou em producao em vez de recalcular. Sem ela, o
+    # comparativo mediria o modelo novo contra uma REIMPLEMENTACAO do antigo — e uma
+    # divergencia entre as duas (filtro de concorrente, snapshot da coleta) passaria
+    # despercebida bem no numero que decide a virada do residual. Se a coluna nao existir
+    # no parquet, o fallback recalcula e o relatorio avisa.
+    colunas = ["hex_id", "lat", "lng", "uf"]
+    disponiveis = set(pq.read_schema(HEX_PATH).names)
+    if "oferta_efetiva_mapeada_2km" in disponiveis:
+        colunas.append("oferta_efetiva_mapeada_2km")
+    hexes = pd.read_parquet(HEX_PATH, columns=colunas)
     conc = pd.read_parquet(CONC_PATH)
     conc = conc[conc["status_registro"] == "valido"]
     if uf:
@@ -134,6 +145,18 @@ def main() -> int:
 
     comp = comparar_modelos(hexes, conc)
 
+    # De onde veio o lado ESQUERDO da comparacao. "recalculado" significa que o parquet
+    # nao trazia a coluna de producao e o script reimplementou o Bloco 3 — o numero ainda
+    # serve para ler o COMPORTAMENTO, mas nao e' o valor oficial.
+    fonte = str(comp["fonte_2km"].iloc[0]) if len(comp) else "n/d"
+    print("LADO DE COMPARACAO (modelo atual 2 km)")
+    if fonte == "producao":
+        print(_linha("Fonte:", "coluna oferta_efetiva_mapeada_2km do parquet (PRODUCAO)"))
+    else:
+        print(_linha("Fonte:", "RECALCULADO aqui - o parquet nao trazia a coluna"))
+        print(_linha("", "compara comportamento, nao o valor oficial do Bloco 3"))
+    print()
+
     massa_2km = float(comp["oferta_efetiva_mapeada_2km"].sum())
     massa_1km = float(comp["oferta_efetiva_1km_area"].sum())
     n_conc = len(conc)
@@ -141,18 +164,26 @@ def main() -> int:
     # O desvio e' mostrado como DELTA (`x/esperado - 1`), nao como razao: escrever
     # "+80,2% vs esperado" para 96,24 de 120 le-se como "80% ACIMA do esperado", quando
     # e' 19,8% ABAIXO. O sinal tem de dizer a direcao certa.
+    def _desvio(x: float) -> str:
+        d = x / n_conc - 1.0 if n_conc else float("nan")
+        # Zera residuo de ponto flutuante: o modelo novo conserva massa por construcao,
+        # mas a soma de floats devolve -8e-15, que formatado vira "-0.0%" e sugere um
+        # deficit que nao existe.
+        if abs(d) < 1e-9:
+            d = 0.0
+        return f"{d:+.1%}"
     print("CONSERVACAO DE MASSA (unidades-equivalentes de concorrente no sistema)")
     print(_linha("Esperado (1 por concorrente):", f"{n_conc:,.2f}"))
     print(
         _linha(
             "Modelo atual 2 km centroide:",
-            f"{massa_2km:,.2f}  ({massa_2km / n_conc - 1:+.1%} vs esperado)",
+            f"{massa_2km:,.2f}  ({_desvio(massa_2km)} vs esperado)",
         )
     )
     print(
         _linha(
             "Modelo novo 1 km area:",
-            f"{massa_1km:,.2f}  ({massa_1km / n_conc - 1:+.1%} vs esperado)",
+            f"{massa_1km:,.2f}  ({_desvio(massa_1km)} vs esperado)",
         )
     )
     print()

@@ -1,5 +1,5 @@
 import { latLngToCell } from 'h3-js'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { PontoEscolhido } from '../App'
 import HexMap, { type SearchPin, type ViewState } from '../components/HexMap'
@@ -90,6 +90,13 @@ export default function MapScreen({
   // quadro re-renderizaria esta tela E o App inteiro (StepperBar, NarrativePanel,
   // MethodologyPanel...). Em ref, gravar e' de graca e a camera segue sempre atual.
   const cameraRef = useRef<ViewState | null>(foto.camera)
+
+  // Estavel de proposito (`[]`): o HexMap tem `onCamera` nas dependencias do efeito que
+  // publica a camera. Um callback inline mudaria de identidade a cada render e faria
+  // aquele efeito disparar em todo render, nao so' quando a camera muda.
+  const publicarCamera = useCallback((v: ViewState) => {
+    cameraRef.current = v
+  }, [])
 
   // Trocar de UF/município recomeça a história do passo 1 e limpa a busca/cenário.
   // O guarda por ref e' ESSENCIAL: sem ele o efeito rodaria tambem na MONTAGEM da tela
@@ -309,9 +316,7 @@ export default function MapScreen({
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
           cameraInicial={foto.camera}
-          onCamera={(v) => {
-            cameraRef.current = v
-          }}
+          onCamera={publicarCamera}
           onSelecionar={(h) => {
             setPin(null)
             if (modoCenario) {
