@@ -60,12 +60,6 @@ function semZeroEsquerda(digitos: string): string {
  */
 const VALOR_MAX = 1e15
 
-/** Digitos de um numero, sempre em notacao decimal simples. Negativo vira "0". */
-export function digitosDoNumero(v: number): string {
-  if (!Number.isFinite(v)) return ''
-  const n = Math.round(Math.min(Math.max(v, 0), VALOR_MAX))
-  return String(n)
-}
 
 /**
  * Texto exibido a partir de um NUMERO (sincronizacao valor -> campo). String vazia
@@ -94,13 +88,6 @@ export function formatarMilhar(digitos: string): string {
   return num(Number(d))
 }
 
-/** Numero do texto ja' mascarado. `undefined` para campo vazio — nunca 0, nunca NaN. */
-export function numeroDoTexto(texto: string): number | undefined {
-  const d = apenasDigitos(texto)
-  if (!d) return undefined
-  const n = Number(d)
-  return Number.isFinite(n) ? n : undefined
-}
 
 /**
  * Posicao do caret DEPOIS do n-esimo digito do texto formatado.
@@ -269,12 +256,6 @@ export function parsePtBr(txt: string): number | undefined {
   return Number.isFinite(n) ? n : undefined
 }
 
-/** Texto colado -> a sequencia de digitos que deve ser inserida no campo INTEIRO. */
-export function digitosColados(txt: string): string {
-  const v = parsePtBr(txt)
-  if (v === undefined) return ''
-  return digitosDoNumero(v)
-}
 
 /**
  * Texto colado -> as duas partes a inserir num campo DECIMAL. Existe porque

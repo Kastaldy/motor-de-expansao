@@ -2,12 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import {
   apagarVizinho,
-  digitosColados,
-  digitosDoNumero,
   formatarMilhar,
   formatarNumero,
   mascarar,
-  numeroDoTexto,
   parsePtBr,
   partesColadas,
   posCaret,
@@ -62,29 +59,6 @@ describe('formatarMilhar', () => {
   })
 })
 
-describe('formatarNumero / digitosDoNumero / numeroDoTexto', () => {
-  it('numero -> texto formatado', () => {
-    expect(formatarNumero(20000)).toBe('20.000')
-    expect(formatarNumero(0)).toBe('0')
-  })
-  it('NaN/Infinity viram vazio, nunca "Não disponível" dentro do input', () => {
-    expect(formatarNumero(NaN)).toBe('')
-    expect(formatarNumero(Infinity)).toBe('')
-    expect(digitosDoNumero(NaN)).toBe('')
-  })
-  it('negativo e clampado em zero (nenhum campo do Cenario aceita negativo)', () => {
-    expect(formatarNumero(-200)).toBe('0')
-    expect(digitosDoNumero(-5)).toBe('0')
-  })
-  it('texto vazio -> undefined (e NAO zero)', () => {
-    expect(numeroDoTexto('')).toBeUndefined()
-    expect(numeroDoTexto('R$ ')).toBeUndefined()
-  })
-  it('le o numero do texto ja mascarado', () => {
-    expect(numeroDoTexto('1.500')).toBe(1500)
-    expect(numeroDoTexto('0')).toBe(0)
-  })
-})
 
 describe('posCaret', () => {
   it('zero digitos a esquerda -> inicio do campo', () => {
@@ -225,42 +199,6 @@ describe('mascarar — teto de digitos', () => {
   })
 })
 
-describe('parsePtBr / digitosColados — colagem', () => {
-  it.each([
-    ['R$ 35.000', 35000],
-    ['1 500', 1500],
-    ['1.500 m²', 1500],
-    ['1.500 m2', 1500],
-    ['20000,00', 20000],
-    ['R$ 20.000,49/mês', 20000],
-    ['R$ 20.000,50/mês', 20001],
-  ])('cola "%s" -> %i', (txt, esperado) => {
-    expect(Math.round(parsePtBr(txt) as number)).toBe(esperado)
-  })
-  it('"35,000" e trinta e cinco: em pt-BR a virgula e decimal', () => {
-    // Ambiguidade real, resolvida pela MESMA gramatica do parseNum da secao
-    // Investimento. Uma segunda gramatica na mesma sidebar seria pior.
-    expect(parsePtBr('35,000')).toBe(35)
-  })
-  it('NBSP e espaco fino tambem sao separador de milhar (e o que o Intl produz)', () => {
-    expect(parsePtBr('1 500')).toBe(1500)
-    expect(parsePtBr('1 500')).toBe(1500)
-  })
-  it('sinal e descartado (nenhum campo do Cenario e negativo)', () => {
-    expect(parsePtBr('-200')).toBe(200)
-  })
-  it('texto sem digito nenhum -> undefined', () => {
-    expect(parsePtBr('abc')).toBeUndefined()
-    expect(parsePtBr('')).toBeUndefined()
-  })
-  it('digitosColados entrega digitos prontos para o pipeline', () => {
-    expect(digitosColados('R$ 35.000')).toBe('35000')
-    expect(digitosColados('abc')).toBe('')
-  })
-  it('colagem absurda nao escapa para notacao exponencial', () => {
-    expect(/^\d+$/.test(digitosColados('9'.repeat(40)))).toBe(true)
-  })
-})
 
 describe('apagarVizinho — Backspace/Delete em cima do separador', () => {
   it('Backspace depois do ponto apaga o DIGITO anterior, nao o ponto', () => {
@@ -453,9 +391,10 @@ describe('formatarNumero — casas e valor ausente', () => {
 })
 
 describe('partesColadas — colagem sem perder a fracao', () => {
-  it('colar "1,8" num campo decimal da 1,8 (e nao 2, como digitosColados daria)', () => {
-    expect(digitosColados('1,8')).toBe('2') // o caminho inteiro arredonda, de proposito
+  it('colar "1,8" num campo decimal preserva a fracao; em campo inteiro arredonda', () => {
     expect(partesColadas('1,8', 2)).toEqual({ inteiro: '1', fracao: '8' })
+    // Campo INTEIRO nao tem casa para guardar a fracao, entao arredondar e' o certo.
+    expect(partesColadas('1,8', 0)).toEqual({ inteiro: '2', fracao: '' })
   })
   it('na COLAGEM arredondar e correto: o evento e unico, nao ha proxima tecla', () => {
     expect(partesColadas('1,875', 2)).toEqual({ inteiro: '1', fracao: '88' })

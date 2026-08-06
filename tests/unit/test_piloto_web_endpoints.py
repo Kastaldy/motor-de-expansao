@@ -1185,7 +1185,6 @@ def test_metodologia_nao_reescreve_o_tom_que_o_funil_pinta() -> None:
     PERGUNTA a `_etiqueta`, e este teste prova que continua perguntando.
     """
     import pandas as pd
-
     from app import CONC_ADENSAR_MAX, _etiqueta, _faixas_competitivas
 
     faixas = [f for f in _faixas_competitivas() if f["escopo"] == "municipio"]
@@ -1194,7 +1193,9 @@ def test_metodologia_nao_reescreve_o_tom_que_o_funil_pinta() -> None:
         "o painel deixou de publicar exatamente as tres faixas competitivas do municipio"
     )
 
-    for faixa, n in zip(faixas, casos):
+    # `strict=True`: se o painel publicar um numero de faixas diferente dos casos de
+    # fronteira, o teste tem de EXPLODIR, nao emparelhar o que der e passar calado.
+    for faixa, n in zip(faixas, casos, strict=True):
         rotulo, tom, _ = _etiqueta(
             "conc. 2 km", None, 1, pd.Series({"n_concorrentes_est": n})
         )
@@ -1238,10 +1239,11 @@ def test_metodologia_documenta_TODAS_as_camadas_do_funil(monkeypatch) -> None:
     funil menor do que o que esta' na tela e' pior que painel nenhum: quem le
     conclui que a camada nao documentada nao existe.
 
-    Compara pelo NUMERO e pelo TITULO — so' contar deixaria passar renomeacao.
+    Compara pelo NUMERO do passo. O TITULO fica de fora de proposito: o mesmo passo
+    muda de texto entre escopos ("Como a cidade esta indo" no municipio, "Como as
+    cidades estao indo" na UF) e o painel documenta um deles.
     """
     import pandas as pd
-
     from app import montar_funil_uf, montar_metodologia
 
     # Funil sobre um dataframe minimo: os passos sao estruturais, nao dependem de
