@@ -74,7 +74,10 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
   )
   const [hover, setHover] = useState<{ u: RedeUnidade; x: number; y: number } | null>(null)
 
-  const alvo = useMemo(() => enquadrar(bbox, centro), [bbox, centro])
+  // O enquadramento depende do TAMANHO do card, que muda com a largura da janela e com
+  // a altura que sobra no trilho da direita. O deck.gl entrega isso pelo `onResize`.
+  const [tamanho, setTamanho] = useState<{ largura: number; altura: number } | null>(null)
+  const alvo = useMemo(() => enquadrar(bbox, centro, tamanho ?? undefined), [bbox, centro, tamanho])
   const [view, setView] = useState<ViewState>(() => ({ ...alvo, pitch: 0, bearing: 0 }))
   // Zoom pela roda do mouse fica ARMADO por um clique e desarma quando o ponteiro sai.
   //
@@ -89,7 +92,9 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
   const aplicarZoom = useCallback((delta: number) => {
     setView((v) => ({
       ...v,
-      zoom: Math.min(16, Math.max(2.5, v.zoom + delta)),
+      // Piso igual ao do `enquadrar`: com 2,5 aqui, apertar "−" na visão nacional
+      // APROXIMAVA em vez de afastar.
+      zoom: Math.min(16, Math.max(2, v.zoom + delta)),
       transitionDuration: 220,
       transitionInterpolator: undefined,
     }))
@@ -170,6 +175,11 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
       <DeckGL
         viewState={view}
         onViewStateChange={(e) => setView(e.viewState as ViewState)}
+        onResize={({ width, height }) =>
+          setTamanho((t) =>
+            t && t.largura === width && t.altura === height ? t : { largura: width, altura: height },
+          )
+        }
         controller={{ dragRotate: false, scrollZoom: zoomArmado, doubleClickZoom: true }}
         layers={layers}
         style={{ position: 'absolute', top: '0', left: '0', width: '100%', height: '100%' }}
@@ -204,8 +214,11 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
         <div
           style={{
             position: 'absolute',
+            // Canto de CIMA: embaixo, num card estreito, a dica cobria a atribuição do
+            // basemap (CARTO/OpenStreetMap), que é obrigação de licença.
             left: 10,
-            bottom: 10,
+            top: 10,
+            maxWidth: 'calc(100% - 60px)',
             padding: '5px 9px',
             borderRadius: 'var(--r-sm)',
             background: 'var(--surf-panel)',
