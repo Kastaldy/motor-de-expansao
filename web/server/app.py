@@ -1791,19 +1791,29 @@ def limpar_caches() -> None:
 # enquanto funcionava na maquina de quem gerou o artefato, e nada no sistema dizia isso.
 # `scripts/check_artifacts.py` responde a mesma pergunta, mas so' sobre um checkout
 # local; era o ambiente PUBLICADO que ninguem conseguia auditar sem entrar no VPS.
-_ARTEFATOS_OBSERVADOS: list[tuple[str, Path, str]] = [
-    ("enriquecido", ENRICHED_DIR, "hexágonos do mapa — sem ele o piloto não abre"),
-    (
-        "crescimento_municipal",
-        CRESCIMENTO_PATH,
-        "passo 4: emprego/empresas por cidade (CAGED, Receita)",
-    ),
-    (
-        "crescimento_hex",
-        CRESCIMENTO_HEX_PATH,
-        "passo 4: cor do mapa por hexágono (satélite 2016-2023)",
-    ),
-]
+def _artefatos_observados() -> list[tuple[str, Path, str]]:
+    """Monta a lista NA CHAMADA, lendo os globais de caminho — nunca no import.
+
+    Uma lista de modulo congelaria os `Path` no momento do import, e ai o
+    `_point_app_at` dos testes (que faz `monkeypatch.setattr` em `ENRICHED_DIR`,
+    `CRESCIMENTO_PATH` e `CRESCIMENTO_HEX_PATH`) nao alcancaria o health: com o app
+    apontado para um `tmp_path` vazio, ele responderia sobre o disco REAL de quem roda.
+    E' a mesma armadilha que o comentario do `_point_app_at` ja registra para as
+    constantes calculadas no import — vale igual aqui.
+    """
+    return [
+        ("enriquecido", ENRICHED_DIR, "hexágonos do mapa — sem ele o piloto não abre"),
+        (
+            "crescimento_municipal",
+            CRESCIMENTO_PATH,
+            "passo 4: emprego/empresas por cidade (CAGED, Receita)",
+        ),
+        (
+            "crescimento_hex",
+            CRESCIMENTO_HEX_PATH,
+            "passo 4: cor do mapa por hexágono (satélite 2016-2023)",
+        ),
+    ]
 
 
 @app.get("/api/health")
@@ -1815,7 +1825,7 @@ def health() -> dict[str, Any]:
     num try/except — um mount que sumiu no meio do voo devolve `erro`, nao 500.
     """
     artefatos: dict[str, Any] = {}
-    for nome, caminho, para_que in _ARTEFATOS_OBSERVADOS:
+    for nome, caminho, para_que in _artefatos_observados():
         item: dict[str, Any] = {"para_que": para_que, "caminho": str(caminho)}
         try:
             existe = caminho.exists()

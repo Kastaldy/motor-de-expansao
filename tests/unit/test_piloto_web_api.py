@@ -23,6 +23,21 @@ if str(_SERVER) not in sys.path:
 import app as pilot_app  # noqa: E402  (backend do piloto; web/server no sys.path acima)
 
 
+def _apontar(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
+    """Repointa os globais de caminho que o `/api/health` observa.
+
+    Espelha o `_point_app_at` de `test_piloto_web_endpoints.py` no subconjunto que
+    interessa aqui. Mexe nos GLOBAIS de proposito — e' a unica forma de provar que o
+    health resolve os caminhos na chamada e nao no import.
+    """
+    outputs = data_dir / "outputs"
+    staging = data_dir / "staging"
+    monkeypatch.setattr(pilot_app, "DATA_DIR", data_dir)
+    monkeypatch.setattr(pilot_app, "ENRICHED_DIR", outputs / "hexagonos_dashboard_enriquecido")
+    monkeypatch.setattr(pilot_app, "CRESCIMENTO_PATH", staging / "crescimento_municipal.parquet")
+    monkeypatch.setattr(pilot_app, "CRESCIMENTO_HEX_PATH", staging / "crescimento_hex.parquet")
+
+
 def test_health_ok() -> None:
     # /api/health: liveness + diagnostico (data_dir etc.); basta o status ok.
     assert pilot_app.health().get("status") == "ok"
@@ -64,25 +79,23 @@ def test_health_nao_estoura_com_data_dir_inexistente(monkeypatch) -> None:
     maquina. O health precisa responder 200 dizendo o que falta, e nao morrer junto.
     """
     fantasma = Path("Z:/mount/que/nao/existe/data")
-    monkeypatch.setattr(pilot_app, "DATA_DIR", fantasma)
-    monkeypatch.setattr(
-        pilot_app,
-        "_ARTEFATOS_OBSERVADOS",
-        [
-            ("enriquecido", fantasma / "outputs" / "x", "hexágonos do mapa"),
-            ("crescimento_municipal", fantasma / "staging" / "a.parquet", "passo 4"),
-            ("crescimento_hex", fantasma / "staging" / "b.parquet", "passo 4"),
-        ],
-    )
+    _apontar(monkeypatch, fantasma)
 
     h = pilot_app.health()
     assert h["status"] == "ok"
     assert h["data_ok"] is False
+    assert h["data_dir"] == str(fantasma)
     assert h["artefatos_faltando"] == [
         "crescimento_hex",
         "crescimento_municipal",
         "enriquecido",
     ]
+    # Os caminhos reportados tem de sair do data_dir REPONTADO. Se a lista de artefatos
+    # for montada no import, ela congela os `Path` originais e o health passa a falar do
+    # disco de quem roda — verde nesta maquina (onde o caminho do autor tambem nao
+    # existe) e mentiroso em qualquer outra.
+    for a in h["artefatos"].values():
+        assert str(fantasma) in a["caminho"], a
 
 
 def test_health_sobrevive_a_stat_que_levanta(monkeypatch) -> None:
@@ -106,15 +119,8 @@ def test_health_sobrevive_a_stat_que_levanta(monkeypatch) -> None:
         def __str__(self) -> str:
             return self._rotulo
 
-    monkeypatch.setattr(
-        pilot_app,
-        "_ARTEFATOS_OBSERVADOS",
-        [
-            ("enriquecido", _CaminhoQueCai("/app/data/outputs/enr"), "hexágonos"),
-            ("crescimento_municipal", _CaminhoQueCai("/app/data/staging/a"), "passo 4"),
-            ("crescimento_hex", _CaminhoQueCai("/app/data/staging/b"), "passo 4"),
-        ],
-    )
+    for glob in ("ENRICHED_DIR", "CRESCIMENTO_PATH", "CRESCIMENTO_HEX_PATH"):
+        monkeypatch.setattr(pilot_app, glob, _CaminhoQueCai(f"/app/data/{glob}"))
 
     h = pilot_app.health()
     assert h["status"] == "ok", "o health NAO pode cair junto com o mount"
