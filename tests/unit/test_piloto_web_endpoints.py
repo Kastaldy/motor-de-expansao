@@ -1227,3 +1227,50 @@ def test_todo_tom_publicado_existe_no_tipo_Tom_do_front() -> None:
         f"o backend publica {sorted(faltando)} e o tipo Tom do front nao conhece: "
         "o Chip indexa TONS[tom] sem fallback e quebraria a lista"
     )
+
+
+def test_metodologia_documenta_TODAS_as_camadas_do_funil(monkeypatch) -> None:
+    """O painel tem de acompanhar o funil, camada a camada.
+
+    Regressao real: o funil ganhou a 5a camada ("Como a cidade esta indo") e, por um
+    tempo, o docstring do painel seguiu dizendo "As 4 camadas" e o tipo
+    `CamadaMetodologia.n` do front seguiu `1 | 2 | 3 | 4`. Painel que descreve um
+    funil menor do que o que esta' na tela e' pior que painel nenhum: quem le
+    conclui que a camada nao documentada nao existe.
+
+    Compara pelo NUMERO e pelo TITULO — so' contar deixaria passar renomeacao.
+    """
+    import pandas as pd
+
+    from app import montar_funil_uf, montar_metodologia
+
+    # Funil sobre um dataframe minimo: os passos sao estruturais, nao dependem de
+    # ter dado — o que interessa aqui e' a lista de camadas, nao os numeros dela.
+    vazio = pd.DataFrame(
+        {
+            "hex_id": pd.Series(dtype="object"),
+            "nome_municipio": pd.Series(dtype="object"),
+            "oferta_efetiva_disponivel": pd.Series(dtype="float"),
+            "n_concorrentes_est": pd.Series(dtype="int64"),
+        }
+    )
+    do_funil = [p["n"] for p in montar_funil_uf(vazio, "GO")]
+    camadas = montar_metodologia()["camadas"]
+    do_painel = [c["n"] for c in camadas]
+
+    # Compara o CONJUNTO DE PASSOS, nao os titulos: o mesmo passo muda de texto entre
+    # escopos de proposito ("Como a cidade esta indo" no municipio, "Como as cidades
+    # estao indo" na UF), e o painel documenta um deles. O que nao pode e' o painel
+    # ignorar um passo — foi o que aconteceu quando a 5a camada entrou.
+    assert do_painel == do_funil, (
+        "o painel de Metodologia e o funil discordam das camadas. "
+        f"funil: {do_funil} | painel: {do_painel}. "
+        "Ao acrescentar ou remover um passo, atualize `montar_metodologia` E o tipo "
+        "`CamadaMetodologia.n` em web/src/lib/types.ts."
+    )
+    for c in camadas:
+        assert c["titulo"] and c["pergunta"] and c["corte"], (
+            f"camada {c['n']} entrou no painel sem titulo, pergunta ou corte — "
+            "documentacao pela metade e' pior que ausencia, porque parece completa"
+        )
+        assert c["metricas"], f"camada {c['n']} nao declara nenhuma metrica"

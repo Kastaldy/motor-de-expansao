@@ -137,7 +137,10 @@ export interface FaixaMetodologia {
 }
 
 export interface CamadaMetodologia {
-  n: 1 | 2 | 3 | 4
+  /** Mesma numeracao de `Passo.n` — o painel documenta o funil, camada a camada.
+   *  Ja' passou de 4 para 5 (entrou "Como a cidade está indo"); ao mexer num, mexa
+   *  no outro, senao o painel descreve um funil que nao existe mais. */
+  n: 1 | 2 | 3 | 4 | 5
   titulo: string
   pergunta: string
   corte: string

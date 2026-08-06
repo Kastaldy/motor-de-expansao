@@ -1919,7 +1919,10 @@ def _faixas_m1() -> list[dict[str, Any]]:
 
 
 def montar_metodologia() -> dict[str, Any]:
-    """As 4 camadas do funil explicadas para quem LE a tela, nao para quem escreveu.
+    """As camadas do funil explicadas para quem LE a tela, nao para quem escreveu.
+
+    NAO cravar a quantidade aqui: o funil ja' passou de 4 para 5 camadas (entrou
+    "Como a cidade esta indo") e o docstring ficou dizendo 4 por um tempo.
 
     Espelha o `NotasMetodologicas` da Viabilidade e segue a mesma regra: nenhum numero
     e' escrito a mao — todo corte sai da constante que o proprio funil usa, entao
