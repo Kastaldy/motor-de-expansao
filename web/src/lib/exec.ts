@@ -241,6 +241,23 @@ export function enquadrar(
   return { latitude, longitude, zoom: Math.min(11, Math.max(2, zoom)) }
 }
 
+/**
+ * O mapa deve voltar ao enquadramento automático?
+ *
+ * Duas coisas disparam o reenquadramento e elas NÃO valem o mesmo:
+ *
+ * - `recorte` — mudou o conjunto de unidades (outro filtro, outra competência). Reenquadra
+ *   sempre, mesmo por cima do ajuste manual: o pan antigo aponta para unidades que não
+ *   estão mais na tela.
+ * - `tamanho` — mudou só a caixa do mapa (janela redimensionada, trilho refluído). Aqui o
+ *   ajuste manual PREVALECE. Sem essa distinção, digitar na busca desfazia o zoom da
+ *   pessoa: a busca filtra só na tela, não muda o bbox, mas encolhe a tabela — e o trilho
+ *   acompanha a altura da carteira.
+ */
+export function deveReenquadrar(motivo: 'recorte' | 'tamanho', mexeu: boolean): boolean {
+  return motivo === 'recorte' || !mexeu
+}
+
 /** Query string da carteira, omitindo o que está vazio. */
 export function queryDaCarteira(filtros: Record<string, string | undefined>): string {
   const q = new URLSearchParams()

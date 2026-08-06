@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-import { COR_SEVERIDADE, enquadrar } from '../lib/exec'
+import { COR_SEVERIDADE, deveReenquadrar, enquadrar } from '../lib/exec'
 import { brl, num, pct } from '../lib/format'
 import type { RedeUnidade } from '../lib/types'
 
@@ -89,7 +89,15 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
   // não descobrir o clique.
   const [zoomArmado, setZoomArmado] = useState(false)
 
+  /* Reenquadrar é certo quando muda a PERGUNTA (outro recorte, outro bbox) e errado quando
+     muda só o TAMANHO do card. Sem essa distinção, digitar na busca desfazia o zoom manual:
+     a busca é filtro de tela, não muda o bbox do servidor, mas encolhe a tabela — e como o
+     trilho acompanha a altura da carteira, o mapa redimensiona e o enquadramento voltava
+     para a rede inteira, com a pessoa olhando uma unidade. */
+  const [mexeu, setMexeu] = useState(false)
+
   const aplicarZoom = useCallback((delta: number) => {
+    setMexeu(true)
     setView((v) => ({
       ...v,
       // Piso igual ao do `enquadrar`: com 2,5 aqui, apertar "−" na visão nacional
@@ -101,19 +109,24 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
   }, [])
 
   const enquadrarTudo = useCallback(() => {
+    setMexeu(false)
     setView((v) => ({ ...v, ...alvo, transitionDuration: 500, transitionInterpolator: FLY }))
   }, [alvo])
 
-  const chaveAlvo = `${alvo.latitude.toFixed(3)},${alvo.longitude.toFixed(3)},${alvo.zoom.toFixed(2)}`
+  const chaveRecorte =`${bbox?.min_lat ?? ''},${bbox?.min_lng ?? ''},${bbox?.max_lat ?? ''},${bbox?.max_lng ?? ''},${centro.lat ?? ''},${centro.lng ?? ''}`
   useEffect(() => {
-    setView((v) => ({
-      ...v,
-      ...alvo,
-      transitionDuration: 700,
-      transitionInterpolator: FLY,
-    }))
+    if (!deveReenquadrar('recorte', mexeu)) return
+    setMexeu(false)
+    setView((v) => ({ ...v, ...alvo, transitionDuration: 700, transitionInterpolator: FLY }))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chaveAlvo])
+  }, [chaveRecorte])
+
+  const chaveTamanho = tamanho ? `${tamanho.largura}x${tamanho.altura}` : ''
+  useEffect(() => {
+    if (!deveReenquadrar('tamanho', mexeu)) return
+    setView((v) => ({ ...v, ...alvo, transitionDuration: 300, transitionInterpolator: FLY }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chaveTamanho])
 
   const layers = useMemo(() => {
     const arr: Layer[] = [
@@ -174,7 +187,15 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
     >
       <DeckGL
         viewState={view}
-        onViewStateChange={(e) => setView(e.viewState as ViewState)}
+        onViewStateChange={(e) => {
+          // Só conta como "mexeu" o que veio da MÃO da pessoa: `interactionState` distingue
+          // arrastar/aproximar de uma transição que o próprio componente disparou. Sem essa
+          // distinção, o fly-to de enquadramento se marcaria como interação e travaria o
+          // reenquadramento seguinte.
+          const i = e.interactionState as { isDragging?: boolean; isZooming?: boolean; isPanning?: boolean } | undefined
+          if (i?.isDragging || i?.isZooming || i?.isPanning) setMexeu(true)
+          setView(e.viewState as ViewState)
+        }}
         onResize={({ width, height }) =>
           setTamanho((t) =>
             t && t.largura === width && t.altura === height ? t : { largura: width, altura: height },

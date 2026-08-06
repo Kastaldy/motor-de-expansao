@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  deveReenquadrar,
   enquadrar,
   filtrarUnidades,
   formatarMetrica,
@@ -239,6 +240,23 @@ describe('enquadrar', () => {
     const v = enquadrar(REDE_NACIONAL, { lat: null, lng: null }, { largura: 0, altura: 0 })
     expect(v.zoom).toBeGreaterThanOrEqual(2)
     expect(Number.isFinite(v.zoom)).toBe(true)
+  })
+})
+
+describe('deveReenquadrar', () => {
+  it('recorte novo reenquadra mesmo com ajuste manual — o pan velho aponta para outra rede', () => {
+    expect(deveReenquadrar('recorte', true)).toBe(true)
+    expect(deveReenquadrar('recorte', false)).toBe(true)
+  })
+
+  it('card só mudando de tamanho NÃO desfaz o zoom da pessoa', () => {
+    // O caso real: digitar na busca encolhe a tabela, o trilho acompanha, o mapa
+    // redimensiona — e o zoom que a pessoa deu numa unidade voltava para a rede inteira.
+    expect(deveReenquadrar('tamanho', true)).toBe(false)
+  })
+
+  it('sem ajuste manual, mudar de tamanho reenquadra — é como o primeiro layout acerta', () => {
+    expect(deveReenquadrar('tamanho', false)).toBe(true)
   })
 })
 
