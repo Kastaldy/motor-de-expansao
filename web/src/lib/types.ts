@@ -1,5 +1,9 @@
 /** Contrato entre o front e o backend do piloto (web/server/app.py). */
 
+/** Tom do chip do ranking. Fronteira TS<->Python sem contrato gerado: o produtor
+ *  e' web/server/app.py. Note que `RankItem.tag_cor` tem PRECEDENCIA sobre o tom no
+ *  `Chip` — onde a etiqueta sai de uma faixa da legenda, quem pinta e' a cor exata
+ *  da faixa, e o tom nem e' consultado. */
 export type Tom = 'blue' | 'green' | 'amber' | 'red' | 'gray'
 
 export interface Hex {
@@ -134,6 +138,9 @@ export interface FaixaMetodologia {
 }
 
 export interface CamadaMetodologia {
+  /** Mesma numeracao de `Passo.n` — o painel documenta o funil, camada a camada.
+   *  Ja' passou de 4 para 5 (entrou "Como a cidade está indo"); ao mexer num, mexa
+   *  no outro, senao o painel descreve um funil que nao existe mais. */
   n: 1 | 2 | 3 | 4 | 5
   titulo: string
   pergunta: string

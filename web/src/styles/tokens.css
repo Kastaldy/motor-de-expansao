@@ -61,6 +61,97 @@
 
   /* --- Marca Ultra --------------------------------------------------------- */
   --ultra: #c8001e;
+  /* 3,26:1 sobre --bg-base: passa como ELEMENTO GRAFICO (>=3:1) e reprova como
+     texto pequeno. So' pode virar regra/ponto/borda, nunca cor de rotulo. */
+
+  /* --- Identidade das 4 camadas do funil (--l1..--l4) -----------------------
+     Uma matiz por camada, EXCLUSIVA do chrome de navegacao: eyebrow "Camada N de
+     4", bloco do funil, bolinha/contador do stepper, borda do rotulo de rank e o
+     "score forte" do tooltip. NUNCA entra no fill dos hexes nem na ScoreLegend —
+     a superficie do mapa continua 100% rampa de score (lib/colors.ts).
+
+     A separacao e' por PAPEL antes de ser por camada. O turquesa carregava ~10
+     significados (marca, CTA, selecao do item, cenario multi-hex, pin de busca,
+     KPI do header, numero do funil, score ativo do tooltip) e era por isso que o
+     total do header e o contador do funil liam como o MESMO numero. Regra nova:
+       --ac*      = ACAO (botao/CTA) e CENARIO multi-hex
+       --tx-max   = SELECAO, no painel E no mapa (o mapa ja fazia assim)
+       rampa/chip = INTENSIDADE ("quanto vale")
+       --l1..--l4 = IDENTIDADE DE CAMADA ("qual camada")
+
+     Verde e vermelho estao ocupados pela rampa de score e pelos chips de
+     intensidade, entao a camada 2 exigiu matiz NOVA (violeta): um numero verde de
+     30px no topo do painel seria lido como "score alto", nao como "camada 2".
+
+     A cor nunca e' o unico portador da identidade — o numeral "Camada N de M" e o
+     numero dentro da bolinha do stepper continuam na tela, porque azul x violeta e
+     ambar x rampa amarela sao pares fracos em deuteranopia/protanopia.
+
+     As matizes foram escolhidas claras sobre o fundo escuro justamente para o texto
+     sobreviver; a razao exata de contraste de cada uma NAO esta medida aqui — havia
+     um numero por token neste comentario e ele nao batia com a conta WCAG, entao
+     saiu. Quem precisar do valor, meça: inventar razao de contraste e' pior que
+     omitir, porque parece auditado.
+     Os -a10/-a24/-a60 sao a MESMA matiz em alfa: fundo de bloco, borda/anel e
+     conector do stepper, na linha do que --ac-a* ja fazia para o turquesa. */
+
+  /* Camada 1 · potencial socioeconomico (censo): azul frio = dado demografico;
+     e' a mesma matiz do chip "Quente"/"Polo", que so' aparece nesta camada. */
+  --l1: #6fa4f7;
+  --l1-a10: rgba(111, 164, 247, 0.1);
+  --l1-a24: rgba(111, 164, 247, 0.24);
+  --l1-a60: rgba(111, 164, 247, 0.6);
+
+  /* Camada 2 · demanda nao atendida (residual): violeta, matiz AUSENTE da rampa
+     (que vai de #941212 a #0A8226) e dos chips — o unico lugar livre do sistema. */
+  --l2: #a98cf0;
+  --l2-a10: rgba(169, 140, 240, 0.1);
+  --l2-a24: rgba(169, 140, 240, 0.24);
+  --l2-a60: rgba(169, 140, 240, 0.6);
+
+  /* Camada 3 · pressao concorrencial: ambar = atrito, que e' o proprio sentido da
+     camada.
+
+     Hex LITERAL, e nao var(--warn-text): as camadas 1 e 2 derivam matiz e alfas do
+     MESMO numero, e aqui o alias quebrava isso — o texto saia #e9c07a e os alfas
+     rgba(217,164,65) (= --warn, outra luminancia), entao a camada aparecia em dois
+     ambares dentro do mesmo retangulo. Amarrar identidade de camada a um token de
+     AVISO tambem faz a camada mudar sozinha no dia em que o aviso mudar. */
+  --l3: #e9c07a;
+  --l3-a10: rgba(233, 192, 122, 0.1);
+  --l3-a24: rgba(233, 192, 122, 0.24);
+  --l3-a60: rgba(233, 192, 122, 0.6);
+
+  /* Camada 4 · "Como a cidade esta indo" (crescimento da area construida).
+     Herda o TURQUESA que a propria camada ja' usa no mapa para "Em alta"
+     (CRESC_ALTA_HEX em lib/colors.ts): dar outra matiz ao cabecalho faria ele brigar
+     com o hexagono logo ao lado.
+
+     E' o MESMO valor de --ac (#35c9d6), e isso e' deliberado, nao descuido: aqui a
+     convergencia com a cor de acao e' aceita porque a camada ja' escolheu esse
+     turquesa no mapa. Trocar --ac muda esta camada junto — se um dia isso incomodar,
+     separe os dois valores em vez de reescrever a paleta da camada. */
+  --l4: #35c9d6;
+  --l4-a10: rgba(53, 201, 214, 0.1);
+  --l4-a24: rgba(53, 201, 214, 0.24);
+  --l4-a60: rgba(53, 201, 214, 0.6);
+
+  /* Camada 5 · "Para onde crescer" — a SINTESE, sem matiz.
+     As quatro matizes livres ja' estao gastas (azul, violeta, ambar, turquesa) e
+     qualquer uma que sobrasse afirmaria parentesco com a camada que ja' a usa. E' a
+     mesma conclusao do KPI em destaque do header: ausencia de cor nao afirma
+     parentesco nenhum, e a camada da RESPOSTA e' a que resume as outras quatro.
+
+     ATENCAO ao mexer: o valor coincide com --tx-max, que neste mesmo arquivo e' a
+     cor de SELECAO (item ativo do ranking, contorno do hex selecionado). Um claro
+     neutro so' pode significar as duas coisas porque elas nunca dividem o mesmo
+     elemento — a selecao mora no item da lista, a identidade de camada mora no
+     cabecalho e no stepper. Se alguem levar um dos dois para o territorio do outro,
+     separe os valores ANTES. */
+  --l5: #eef3f8;
+  --l5-a10: rgba(238, 243, 248, 0.1);
+  --l5-a24: rgba(238, 243, 248, 0.24);
+  --l5-a60: rgba(238, 243, 248, 0.6);
 
   /* --- Semantica ----------------------------------------------------------- */
   --pos: #2ec86e;
@@ -70,6 +161,10 @@
   --neg-bar: #d9556a;
   --warn: #d9a441;
   --warn-text: #e9c07a;
+  /* Azul de INFORMACAO. Segue SEM uso: foi testado na regra do KPI em destaque do
+     header do mapa e reprovado — mesmo sendo outro azul que o da camada 1 (--l1
+     #6fa4f7), o parentesco de matiz fez o card parecer irmao do Potencial
+     socioeconomico. Fica aqui para quem precisar de azul informativo LONGE do funil. */
   --info: #2f6bed;
 
   /* --- Tipografia ---------------------------------------------------------- */

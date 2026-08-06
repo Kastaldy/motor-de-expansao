@@ -7,6 +7,7 @@ import {
   POP_MIN_ACIONAVEL,
   SCORE_BANDS_HEX,
   bandSolid,
+  camadaCor,
   scoreBandToColor,
 } from './colors'
 
@@ -49,5 +50,25 @@ describe('bandSolid / constantes', () => {
   })
   it('POP_MIN_ACIONAVEL espelha a regua do dashboard', () => {
     expect(POP_MIN_ACIONAVEL).toBe(5000)
+  })
+})
+
+describe('camadaCor', () => {
+  it('cada camada tem matiz PROPRIA — era a colisao que fazia os 4 passos parecerem iguais', () => {
+    const fgs = [1, 2, 3, 4].map((n) => camadaCor(n).fg)
+    expect(new Set(fgs).size).toBe(4)
+  })
+  it('aponta para os tokens --l1..--l4 (nunca hex solto na tela)', () => {
+    expect(camadaCor(1).fg).toBe('var(--l1)')
+    expect(camadaCor(4).borda).toBe('var(--l4-a24)')
+  })
+  it('o rgb do deck.gl acompanha o token da mesma camada', () => {
+    // --l1 #6fa4f7 e --l2 #a98cf0 (tokens.css). Se um mudar, este teste cai.
+    expect(camadaCor(1).rgb).toEqual([111, 164, 247])
+    expect(camadaCor(2).rgb).toEqual([169, 140, 240])
+  })
+  it('passo fora de 1..4 cai na camada 1 em vez de quebrar o painel', () => {
+    expect(camadaCor(9)).toBe(camadaCor(1))
+    expect(camadaCor(0)).toBe(camadaCor(1))
   })
 })

@@ -1173,3 +1173,106 @@ def test_ancora_de_municipio_e_deterministica_e_desempata_estavel() -> None:
             f"N12: ancora de {muni} = {ancora!r}; com empate no topo o criterio e o MENOR "
             f"hex_id ({min(topo['hex_id'])!r}), unico desempate que nao depende da ordem"
         )
+
+
+def test_metodologia_nao_reescreve_o_tom_que_o_funil_pinta() -> None:
+    """O painel de Metodologia e o funil descrevem a MESMA camada 3 — se divergirem,
+    o painel mente para quem le a tela.
+
+    Regressao real: `_faixas_competitivas` copiava o tom a mao ("blue" para o
+    "Adensar"). Quando `_etiqueta` passou a devolver "gray" ali — para o chip nao
+    colidir com o azul da camada 1 —, o painel seguiu anunciando azul. Agora ele
+    PERGUNTA a `_etiqueta`, e este teste prova que continua perguntando.
+    """
+    import pandas as pd
+    from app import CONC_ADENSAR_MAX, _etiqueta, _faixas_competitivas
+
+    faixas = [f for f in _faixas_competitivas() if f["escopo"] == "municipio"]
+    casos = [0, CONC_ADENSAR_MAX, CONC_ADENSAR_MAX + 1]
+    assert len(faixas) == len(casos), (
+        "o painel deixou de publicar exatamente as tres faixas competitivas do municipio"
+    )
+
+    # `strict=True`: se o painel publicar um numero de faixas diferente dos casos de
+    # fronteira, o teste tem de EXPLODIR, nao emparelhar o que der e passar calado.
+    for faixa, n in zip(faixas, casos, strict=True):
+        rotulo, tom, _ = _etiqueta(
+            "conc. 2 km", None, 1, pd.Series({"n_concorrentes_est": n})
+        )
+        assert (faixa["etiqueta"], faixa["tom"]) == (rotulo, tom), (
+            f"com {n} concorrente(s) o funil pinta {rotulo!r}/{tom!r}, mas o painel "
+            f"anuncia {faixa['etiqueta']!r}/{faixa['tom']!r} — duas verdades sobre a "
+            "mesma camada"
+        )
+
+
+def test_todo_tom_publicado_existe_no_tipo_Tom_do_front() -> None:
+    """Tom e' contrato de string entre Python e TypeScript, mantido a mao dos dois
+    lados. `Chip` (primitives.tsx) indexa `TONS[tom]` sem fallback, entao um tom novo
+    no backend sem o par no front quebra o chip em vez de degradar."""
+    import re
+    from pathlib import Path
+
+    from app import montar_metodologia
+
+    tipos = Path(__file__).resolve().parents[2] / "web" / "src" / "lib" / "types.ts"
+    linha = re.search(r"export type Tom =([^\n]+)", tipos.read_text(encoding="utf-8"))
+    assert linha, "types.ts deixou de declarar `export type Tom` numa linha so"
+    declarado = set(re.findall(r"'(\w+)'", linha.group(1)))
+
+    publicados = {
+        f["tom"] for c in montar_metodologia()["camadas"] for f in c["faixas"]
+    }
+    faltando = publicados - declarado
+    assert not faltando, (
+        f"o backend publica {sorted(faltando)} e o tipo Tom do front nao conhece: "
+        "o Chip indexa TONS[tom] sem fallback e quebraria a lista"
+    )
+
+
+def test_metodologia_documenta_TODAS_as_camadas_do_funil(monkeypatch) -> None:
+    """O painel tem de acompanhar o funil, camada a camada.
+
+    Regressao real: o funil ganhou a 5a camada ("Como a cidade esta indo") e, por um
+    tempo, o docstring do painel seguiu dizendo "As 4 camadas" e o tipo
+    `CamadaMetodologia.n` do front seguiu `1 | 2 | 3 | 4`. Painel que descreve um
+    funil menor do que o que esta' na tela e' pior que painel nenhum: quem le
+    conclui que a camada nao documentada nao existe.
+
+    Compara pelo NUMERO do passo. O TITULO fica de fora de proposito: o mesmo passo
+    muda de texto entre escopos ("Como a cidade esta indo" no municipio, "Como as
+    cidades estao indo" na UF) e o painel documenta um deles.
+    """
+    import pandas as pd
+    from app import montar_funil_uf, montar_metodologia
+
+    # Funil sobre um dataframe minimo: os passos sao estruturais, nao dependem de
+    # ter dado — o que interessa aqui e' a lista de camadas, nao os numeros dela.
+    vazio = pd.DataFrame(
+        {
+            "hex_id": pd.Series(dtype="object"),
+            "nome_municipio": pd.Series(dtype="object"),
+            "oferta_efetiva_disponivel": pd.Series(dtype="float"),
+            "n_concorrentes_est": pd.Series(dtype="int64"),
+        }
+    )
+    do_funil = [p["n"] for p in montar_funil_uf(vazio, "GO")]
+    camadas = montar_metodologia()["camadas"]
+    do_painel = [c["n"] for c in camadas]
+
+    # Compara o CONJUNTO DE PASSOS, nao os titulos: o mesmo passo muda de texto entre
+    # escopos de proposito ("Como a cidade esta indo" no municipio, "Como as cidades
+    # estao indo" na UF), e o painel documenta um deles. O que nao pode e' o painel
+    # ignorar um passo — foi o que aconteceu quando a 5a camada entrou.
+    assert do_painel == do_funil, (
+        "o painel de Metodologia e o funil discordam das camadas. "
+        f"funil: {do_funil} | painel: {do_painel}. "
+        "Ao acrescentar ou remover um passo, atualize `montar_metodologia` E o tipo "
+        "`CamadaMetodologia.n` em web/src/lib/types.ts."
+    )
+    for c in camadas:
+        assert c["titulo"] and c["pergunta"] and c["corte"], (
+            f"camada {c['n']} entrou no painel sem titulo, pergunta ou corte — "
+            "documentacao pela metade e' pior que ausencia, porque parece completa"
+        )
+        assert c["metricas"], f"camada {c['n']} nao declara nenhuma metrica"

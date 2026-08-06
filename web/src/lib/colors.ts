@@ -161,3 +161,82 @@ export function crescClasseToColor(classe: string | null | undefined): RGBA {
   if (classe === 'Sem obra nova') return [...CRESC_PARADO]
   return [...CRESC_SEM]
 }
+
+/* ---------------------------------------------------------------------------
+   Identidade das camadas do funil — espelho de --l1..--l5 (styles/tokens.css),
+   onde esta o PORQUE da paleta. Aqui fica so' o acesso por numero de passo.
+
+   Por que o RGB aparece de novo: o deck.gl pinta em array [r,g,b,a] e nao le
+   variavel CSS, entao a borda do rotulo de rank (HexMap) precisa do numero cru —
+   e' a mesma razao de SCORE_BANDS_HEX viver neste arquivo. As duas formas tem de
+   andar juntas: ao mexer num --lN de tokens.css, mexa no `rgb` do mesmo item.
+   --------------------------------------------------------------------------- */
+
+export interface CamadaCor {
+  /** Texto/numero da camada (var CSS). */
+  fg: string
+  /** Fundo do bloco do funil (10%). */
+  bg: string
+  /** Borda do bloco e anel da bolinha do stepper (24%). */
+  borda: string
+  /** Conector ja percorrido do stepper (60%). */
+  conector: string
+  /** Mesma matiz de `fg`, para camada WebGL (deck.gl nao le var CSS). */
+  rgb: [number, number, number]
+}
+
+const CAMADA_CORES: Record<1 | 2 | 3 | 4 | 5, CamadaCor> = {
+  1: {
+    fg: 'var(--l1)',
+    bg: 'var(--l1-a10)',
+    borda: 'var(--l1-a24)',
+    conector: 'var(--l1-a60)',
+    rgb: [111, 164, 247],
+  },
+  2: {
+    fg: 'var(--l2)',
+    bg: 'var(--l2-a10)',
+    borda: 'var(--l2-a24)',
+    conector: 'var(--l2-a60)',
+    rgb: [169, 140, 240],
+  },
+  3: {
+    fg: 'var(--l3)',
+    bg: 'var(--l3-a10)',
+    borda: 'var(--l3-a24)',
+    conector: 'var(--l3-a60)',
+    rgb: [233, 192, 122],
+  },
+  // Camada 4 = "Como a cidade esta indo" (crescimento por satelite). Herda o
+  // TURQUESA que a propria camada ja' usa no mapa para "Em alta"
+  // (`CRESC_ALTA_HEX`), decidido junto com o Juan: dar-lhe outra matiz aqui faria
+  // o cabecalho do painel brigar com o hexagono logo ao lado.
+  4: {
+    fg: 'var(--l4)',
+    bg: 'var(--l4-a10)',
+    borda: 'var(--l4-a24)',
+    conector: 'var(--l4-a60)',
+    rgb: [53, 201, 214],
+  },
+  // Camada 5 = "Para onde crescer", a SINTESE. Fica sem matiz, em claro neutro,
+  // pela mesma razao do KPI em destaque do header: as quatro matizes livres ja'
+  // estao gastas (azul, violeta, ambar, turquesa) e qualquer uma que sobrasse
+  // afirmaria parentesco com a camada que ja' a usa. Ausencia de cor nao afirma
+  // parentesco nenhum — e a camada da resposta e' justamente a que resume as outras.
+  5: {
+    fg: 'var(--l5)',
+    bg: 'var(--l5-a10)',
+    borda: 'var(--l5-a24)',
+    conector: 'var(--l5-a60)',
+    rgb: [238, 243, 248],
+  },
+}
+
+/**
+ * Cores da camada `n` (1..5). Numero fora da faixa cai na camada 1 em vez de
+ * quebrar: o passo chega do BACKEND, e o funil ja' passou de 4 para 5 camadas uma
+ * vez — a cor e' decoracao, o conteudo e' que importa.
+ */
+export function camadaCor(n: number): CamadaCor {
+  return CAMADA_CORES[n as 1 | 2 | 3 | 4 | 5] ?? CAMADA_CORES[1]
+}
