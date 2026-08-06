@@ -1899,16 +1899,23 @@ def _faixas_crescimento() -> list[dict[str, Any]]:
     vocabulario que o chip abandonou.
 
     Agora as etiquetas sao PRODUZIDAS chamando `_etiqueta_crescimento` num valor
-    representativo de cada ramo, na ordem em que a funcao os avalia. Mudar os cortes do
-    chip muda esta lista junto, sem ninguem precisar lembrar — que e' a regra escrita em
+    representativo de cada ramo. Mudar os cortes do chip muda esta lista junto, sem
+    ninguem precisar lembrar — que e' a regra escrita em
     `docs/contrato_api_metodologia.md` ("as faixas sao DERIVADAS, nunca escritas a mao").
 
     ESCOPO `uf`: so a visao de estado ranqueia municipios nesta camada. No funil
     municipal o passo 4 sai com `"itens": []` — nao ha chip para explicar.
     """
-    # (valor, mediana, condicao legivel). Um por ramo de `_etiqueta_crescimento`, na
-    # ordem de avaliacao. A mediana de 5,0 esta acima de `_CRESC_PISO_MEDIANA`, entao
-    # exercita o caminho por RAZAO; o ramo de defesa (mediana degenerada) usa 0,5.
+    # (valor, mediana, condicao legivel). Um por ramo ALCANCAVEL de
+    # `_etiqueta_crescimento`. A ordem aqui e' a de LEITURA, nao a de avaliacao: a
+    # funcao testa o caminho de DEFESA (mediana degenerada) antes do caminho por RAZAO,
+    # mas o painel abre pelo que o operador ve todo dia — a mediana de 5,0, acima de
+    # `_CRESC_PISO_MEDIANA`, exercita a razao; a defesa (mediana 0,5) fecha a lista.
+    #
+    # O ramo "abaixo do estado" NAO tem amostra porque e' inalcancavel: ele exige
+    # d < -2, e o caminho de defesa so roda com mediana < 1,0 tendo ja filtrado
+    # valor < 0, logo d > -1,0 sempre. Registrado no BLK-MAPA-CHIP-01 — remover ou
+    # reancorar a regua e' decisao de quem a escreveu, nao deste fix.
     amostras: list[tuple[float, float, str]] = [
         (-1.0, 5.0, "o emprego formal encolheu no período"),
         (12.0, 5.0, "cresce o dobro da mediana do estado, ou mais"),
@@ -1918,18 +1925,22 @@ def _faixas_crescimento() -> list[dict[str, Any]]:
         (11.0, 0.5, "estado parado: cresce 10 p.p. ou mais acima da mediana"),
         (3.0, 0.5, "estado parado: cresce acima da mediana"),
         (1.0, 0.5, "estado parado: cresce na média do estado"),
-        (-0.0, 0.5, "estado parado: cresce abaixo da mediana"),
     ]
     saida: list[dict[str, Any]] = []
     vistos: set[str] = set()
     for valor, mediana, condicao in amostras:
         nome, tom = _etiqueta_crescimento(valor, mediana)
-        if not nome or nome in vistos:
+        if not nome:
             continue
-        vistos.add(nome)
         # O ramo do multiplicador varia com o dado ("2x", "5x"...). Publicar o exemplo
         # concreto enganaria; `N×` diz a forma sem prometer um numero.
         rotulo = "N× a mediana do estado" if "× a mediana" in nome else nome
+        # Dedup pelo ROTULO, nao pelo `nome`: duas amostras que caiam no ramo do
+        # multiplicador ("2×" e "5×") sao nomes diferentes e o MESMO rotulo publicado —
+        # dedupar por `nome` publicaria a linha duas vezes.
+        if rotulo in vistos:
+            continue
+        vistos.add(rotulo)
         saida.append(_fx(rotulo, condicao, tom or "gray", "uf"))
     return saida
 
@@ -1942,13 +1953,25 @@ def _legenda_mapa_crescimento() -> list[dict[str, Any]]:
     Tres estados, nao uma rampa: aqui nao ha nota, ha direcao. Os cortes saem da
     distribuicao real dos hexes medidos (p50 = +19,2%, p75 = +30,6%), e por isso
     "Estável" nao e' um alarme — e' a maioria.
+
+    DERIVA de `_ROTULO_CLASSE`, a mesma traducao que o payload do mapa usa. Escrita a
+    mao, esta lista repetiria num campo novo o defeito de que as `faixas` acabaram de
+    sair: um vocabulario copiado que ninguem lembra de atualizar. Assim, trocar uma
+    classe la estoura com `KeyError` aqui — falha alta, nao deslize silencioso.
+    `Sem medição` nao vem do dict porque nao e' classe do artefato: e' a AUSENCIA dela
+    (hexagono fora da mancha urbana medida), e por isso mora so' aqui.
     """
-    return [
-        _fx("Em alta", "área construída cresceu mais de 30% entre 2016 e 2023", "green"),
-        _fx("Estável", "área construída cresceu, mas abaixo de 30%", "blue"),
-        _fx("Sem obra nova", "área construída parou de crescer no período", "gray"),
-        _fx("Sem medição", "fora da mancha urbana medida ou fora das 12 UFs", "gray"),
-    ]
+    condicao = {
+        "Em alta": "área construída cresceu mais de 30% entre 2016 e 2023",
+        "Estável": "área construída cresceu, mas abaixo de 30%",
+        "Sem obra nova": "área construída parou de crescer no período",
+    }
+    tom = {"Em alta": "green", "Estável": "blue", "Sem obra nova": "gray"}
+    saida = [_fx(r, condicao[r], tom[r]) for r in _ROTULO_CLASSE.values()]
+    saida.append(
+        _fx("Sem medição", "fora da mancha urbana medida ou fora das 12 UFs", "gray")
+    )
+    return saida
 
 
 def _faixas_m1() -> list[dict[str, Any]]:
