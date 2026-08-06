@@ -134,12 +134,18 @@ export interface FaixaMetodologia {
 }
 
 export interface CamadaMetodologia {
-  n: 1 | 2 | 3 | 4
+  n: 1 | 2 | 3 | 4 | 5
   titulo: string
   pergunta: string
   corte: string
   metricas: MetricaMetodologia[]
+  /** Etiquetas que o RANKING emite — o chip de cada item da lista. */
   faixas: FaixaMetodologia[]
+  /** Cores do MAPA, quando a camada pinta por categoria em vez da rampa de score.
+   *  Separado de `faixas` de proposito: cor de hexágono e etiqueta de item respondem
+   *  perguntas diferentes, e publicá-las no mesmo bloco fez o painel descrever a régua
+   *  errada na camada 4. */
+  legenda_mapa?: FaixaMetodologia[]
   /** Ressalva da camada, quando o que a tela mostra pede aviso. */
   nota?: string
 }

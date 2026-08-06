@@ -16,6 +16,7 @@ READ-ONLY: só chama funções puras (`montar_metodologia`, `_etiqueta`), sem to
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -175,6 +176,68 @@ def test_camada_4_declara_que_nao_filtra(metodologia):
     assert [i["municipio"] for i in com_uf[4]["itens"]] == [
         i["municipio"] for i in sem_uf[4]["itens"]
     ]
+
+
+def test_camada_4_publica_as_etiquetas_que_o_ranking_emite(metodologia):
+    """A camada 4 tinha intersecao VAZIA entre publicado e emitido.
+
+    O painel publicava as quatro classes de `cres_hex_classe` (Em alta / Estável / Sem
+    obra nova / Sem medição) no slot que o front rotula "etiquetas do ranking", enquanto
+    o chip de cada item saia de `_etiqueta_crescimento`, com vocabulario inteiramente
+    outro (posicao relativa a mediana da UF). Nenhuma das quatro publicadas aparecia na
+    lista, e nenhuma das emitidas estava no manual.
+
+    O defeito nasceu de uma CORRECAO: `_etiqueta_crescimento` trocou o vocabulario para
+    fugir da colisao com `cres_hex_classe`, e o painel ficou com o vocabulario velho.
+    Por isso este teste compara CONJUNTOS de verdade, exercitando o funil — as camadas
+    1, 2, 3 e 5 ja tinham teste assim; a 4 so' tinha o de "nao filtra".
+
+    Escopo `uf`: no funil municipal o passo 4 sai com `itens: []`, entao nao ha chip.
+    """
+    c4 = _camada(metodologia, 4)
+    publicadas = _etiquetas(c4, "uf")
+    assert publicadas, "a camada 4 nao publica etiqueta de ranking nenhuma"
+
+    # Nenhuma etiqueta do escopo `municipio`: la nao existe ranking para explicar.
+    assert not _etiquetas(c4, "municipio") - publicadas
+
+    # As cores do MAPA continuam publicadas, mas fora do slot de ranking.
+    legenda = {f["etiqueta"] for f in c4.get("legenda_mapa", [])}
+    assert legenda == {"Em alta", "Estável", "Sem obra nova", "Sem medição"}
+    assert not (legenda & publicadas), (
+        "vocabulario da COR DO MAPA voltou para o slot de etiqueta do ranking: "
+        f"{sorted(legenda & publicadas)}"
+    )
+
+    # Agora o cruzamento de verdade: roda o funil e confere que toda etiqueta que sai
+    # na tela esta publicada. O ramo do multiplicador vira `N×` no painel, porque o
+    # numero varia com o dado — normalizamos os dois lados para compara-los.
+    def _norma(s: str) -> str:
+        return re.sub(r"\d+×", "N×", s)
+
+    n = 12
+    df = pd.DataFrame(
+        {
+            "hex_id": [f"8a{i:02d}" for i in range(n)],
+            "nome_municipio": [f"Cidade{i}" for i in range(n)],
+            "n_concorrentes_est": [0] * n,
+            "oferta_efetiva_disponivel": [9000.0 - i * 100 for i in range(n)],
+            "score_setor_2022_calibrado": [90.0 - i * 0.5 for i in range(n)],
+            "pop_leitura": [30000 - i * 100 for i in range(n)],
+            # Cobre os ramos: queda, multiplos da mediana, perto dela e abaixo.
+            "cres_emp_pct": [-5.0, 30.0, 12.0, 9.0, 6.0, 5.0, 4.0, 2.0, 1.0, 0.5, 0.0, 25.0],
+            "cres_uf_mediana": [5.0] * n,
+            "cres_hex_classe": ["Em alta"] * n,
+        }
+    )
+    emitidas = {
+        _norma(i["tag"]) for i in pilot.montar_funil_uf(df, "SP")[3]["itens"] if i.get("tag")
+    }
+    assert emitidas, "o passo 4 da UF nao emitiu nenhuma etiqueta"
+    assert emitidas <= {_norma(e) for e in publicadas}, (
+        "o ranking da camada 4 emite etiqueta que o painel NAO publica: "
+        f"{sorted(emitidas - {_norma(e) for e in publicadas})}"
+    )
 
 
 def test_camada_5_publica_as_faixas_de_oportunidade_do_m1(metodologia):
