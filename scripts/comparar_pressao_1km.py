@@ -159,7 +159,20 @@ def main() -> int:
 
     massa_2km = float(comp["oferta_efetiva_mapeada_2km"].sum())
     massa_1km = float(comp["oferta_efetiva_1km_area"].sum())
-    n_conc = len(conc)
+
+    # O denominador NAO pode ser `len(conc)` quando a malha e' um RECORTE (--uf). Os
+    # concorrentes vem do Brasil inteiro; um de MG distribui a massa dele em hexagonos de
+    # MG, que nao estao no quadro. Comparar a soma de SP contra 3.179 concorrentes acusava
+    # "-60% vs esperado" no modelo que conserva massa POR CONSTRUCAO — o relatorio negava a
+    # propria tese que existe para demonstrar. O esperado e' o numero de concorrentes que
+    # de fato CAEM na malha analisada.
+    hexes_na_malha = set(comp["hex_id"].astype(str))
+    dentro = [
+        h3.latlng_to_cell(float(la), float(ln), H3_RESOLUTION) in hexes_na_malha
+        for la, ln in zip(conc["lat"], conc["lng"], strict=True)
+    ]
+    n_conc = int(sum(dentro))
+    n_conc_total = len(conc)
 
     # O desvio e' mostrado como DELTA (`x/esperado - 1`), nao como razao: escrever
     # "+80,2% vs esperado" para 96,24 de 120 le-se como "80% ACIMA do esperado", quando
@@ -173,7 +186,15 @@ def main() -> int:
             d = 0.0
         return f"{d:+.1%}"
     print("CONSERVACAO DE MASSA (unidades-equivalentes de concorrente no sistema)")
-    print(_linha("Esperado (1 por concorrente):", f"{n_conc:,.2f}"))
+    if n_conc != n_conc_total:
+        print(
+            _linha(
+                "Concorrentes DENTRO da malha analisada:",
+                f"{n_conc:,} de {n_conc_total:,}",
+            )
+        )
+        print(_linha("", "(os de fora distribuem massa em hexes fora do recorte)"))
+    print(_linha("Esperado (1 por concorrente dentro):", f"{n_conc:,.2f}"))
     print(
         _linha(
             "Modelo atual 2 km centroide:",
