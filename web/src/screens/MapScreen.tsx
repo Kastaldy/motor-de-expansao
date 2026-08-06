@@ -1,8 +1,8 @@
 import { latLngToCell } from 'h3-js'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { PontoEscolhido } from '../App'
-import HexMap, { type SearchPin } from '../components/HexMap'
+import HexMap, { type SearchPin, type ViewState } from '../components/HexMap'
 import MethodologyPanel from '../components/MethodologyPanel'
 import NarrativePanel from '../components/NarrativePanel'
 import ScoreLegend from '../components/ScoreLegend'
@@ -12,6 +12,7 @@ import { Botao } from '../components/primitives'
 import { api, ApiError, baixar } from '../lib/api'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
+import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
 import type { Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
@@ -32,6 +33,15 @@ export interface MapScreenProps {
   carregando: boolean
   erro: string | null
   onAnalisarPonto: (p: PontoEscolhido) => void
+  /**
+   * Foto do mapa guardada pelo App. O `App` renderiza as telas por CONDICIONAL, entao
+   * ir para a Viabilidade DESMONTA esta tela e mata todo o `useState` local: passo do
+   * funil, hexagono selecionado, pin da busca, cenario multi-hex e a camera do deck.gl.
+   * Era isso que fazia o mapa "resetar" na volta pelo breadcrumb "vindo do mapa".
+   * A UF e o municipio nunca se perderam — moram no App desde sempre.
+   */
+  estadoInicial: EstadoMapa
+  onEstado: (e: EstadoMapa) => void
 }
 
 export default function MapScreen({
@@ -45,28 +55,51 @@ export default function MapScreen({
   carregando,
   erro,
   onAnalisarPonto,
+  estadoInicial,
+  onEstado,
 }: MapScreenProps) {
-  const [passoN, setPassoN] = useState(1)
+  // A foto so' vale se tiver sido tirada NESTA uf/municipio — `fotoAplicavel` faz esse
+  // portao (lib/mapa-estado). Sem ele, um pin de Sao Paulo reapareceria depois de um
+  // drill-down em Campinas. `useState(() => ...)` roda so' na montagem: e' o unico
+  // momento em que a foto e' consumida.
+  const [foto] = useState(() => fotoAplicavel(estadoInicial, uf, municipio))
+
+  // Todo estado abaixo NASCE da foto, nao de um valor fixo — e' o que devolve a tela
+  // como estava quando o operador volta da Viabilidade.
+  const [passoN, setPassoN] = useState(foto.passoN)
   const [metodologiaAberta, setMetodologiaAberta] = useState(false)
-  const [selecionado, setSelecionado] = useState<string | null>(null)
+  const [selecionado, setSelecionado] = useState<string | null>(foto.selecionado)
   const [gerando, setGerando] = useState(false)
   const [aviso, setAviso] = useState<string | null>(null)
 
   // Busca por coordenada: solta um pin, marca o hexagono e habilita o estudo pontual.
-  const [busca, setBusca] = useState('')
-  const [pin, setPin] = useState<SearchPin | null>(null)
+  const [busca, setBusca] = useState(foto.busca)
+  const [pin, setPin] = useState<SearchPin | null>(foto.pin)
   const [buscaErro, setBuscaErro] = useState<string | null>(null)
   const [buscando, setBuscando] = useState(false)
 
   // Filtro global: mostra só os melhores hexes (por faixa M1).
-  const [filtroFaixa, setFiltroFaixa] = useState('')
+  const [filtroFaixa, setFiltroFaixa] = useState(foto.filtroFaixa)
   // Cenário multi-hex: seleção de vários hexes para somar.
-  const [modoCenario, setModoCenario] = useState(false)
-  const [cenario, setCenario] = useState<string[]>([])
+  const [modoCenario, setModoCenario] = useState(foto.modoCenario)
+  const [cenario, setCenario] = useState<string[]>(foto.cenario)
   const [copiado, setCopiado] = useState(false)
 
+  // Camera do deck.gl em REF, nao em state, de proposito: o `onViewStateChange` do
+  // deck dispara a cada quadro de um voo (centenas de vezes em 800 ms). Em state, cada
+  // quadro re-renderizaria esta tela E o App inteiro (StepperBar, NarrativePanel,
+  // MethodologyPanel...). Em ref, gravar e' de graca e a camera segue sempre atual.
+  const cameraRef = useRef<ViewState | null>(foto.camera)
+
   // Trocar de UF/município recomeça a história do passo 1 e limpa a busca/cenário.
+  // O guarda por ref e' ESSENCIAL: sem ele o efeito rodaria tambem na MONTAGEM da tela
+  // e apagaria na hora o estado que acabou de ser restaurado — o mapa continuaria
+  // "resetando" na volta, so' que por outro caminho.
+  const contextoAnterior = useRef(chaveContexto(uf, municipio))
   useEffect(() => {
+    const contexto = chaveContexto(uf, municipio)
+    if (contextoAnterior.current === contexto) return
+    contextoAnterior.current = contexto
     setPassoN(1)
     setSelecionado(null)
     setPin(null)
@@ -75,7 +108,38 @@ export default function MapScreen({
     setFiltroFaixa('')
     setModoCenario(false)
     setCenario([])
+    cameraRef.current = null
   }, [uf, municipio])
+
+  // Espelho SEMPRE atual do estado, mantido num ref. Existe para o cleanup do efeito
+  // abaixo poder ler valores frescos: um cleanup enxerga o closure do render em que foi
+  // criado, entao ler as variaveis de estado direto ali guardaria uma foto velha.
+  const estadoRef = useRef<EstadoMapa>(foto)
+  useEffect(() => {
+    estadoRef.current = {
+      // O contexto viaja COM a foto: e' o que permite descarta-la depois se o operador
+      // trocar de UF/municipio antes de voltar ao mapa.
+      uf,
+      municipio,
+      passoN,
+      selecionado,
+      pin,
+      busca,
+      filtroFaixa,
+      modoCenario,
+      cenario,
+      camera: cameraRef.current,
+    }
+  })
+
+  // Publica a foto no App UMA vez, ao desmontar — que e' exatamente quando ela passa a
+  // importar (o operador saiu para a Viabilidade). Publicar a cada mudanca faria o App
+  // re-renderizar a arvore inteira a cada clique no mapa, sem ganho nenhum.
+  // `onEstado` e' o `setEstadoMapa` do `useState` do App, cuja identidade o React
+  // garante estavel — o efeito nao remonta e nao publica antes da hora.
+  useEffect(() => {
+    return () => onEstado(estadoRef.current)
+  }, [onEstado])
 
   const passo = dados?.passos.find((p) => p.n === passoN) ?? dados?.passos[0] ?? null
   const nivelUf = dados?.nivel === 'uf'
@@ -244,6 +308,10 @@ export default function MapScreen({
           pins={dados.pins}
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
+          cameraInicial={foto.camera}
+          onCamera={(v) => {
+            cameraRef.current = v
+          }}
           onSelecionar={(h) => {
             setPin(null)
             if (modoCenario) {

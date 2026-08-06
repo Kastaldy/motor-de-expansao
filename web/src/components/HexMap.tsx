@@ -163,9 +163,18 @@ export interface HexMapProps {
   cenario?: string[]
   onSelecionar: (h: Hex) => void
   searchPin: SearchPin | null
+  /**
+   * Camera preservada de uma visita anterior ao mapa (ida e volta pela Viabilidade).
+   * Quando vem preenchida, o mapa REABRE nela em vez de recomecar no centro do
+   * municipio com zoom 9.6 — e o voo automatico ate o `searchPin` e' suprimido no
+   * primeiro render, senao ele sobrescreveria justamente o enquadramento restaurado.
+   */
+  cameraInicial?: ViewState | null
+  /** Reporta a camera ao pai a cada mudanca, para sobreviver ao unmount da tela. */
+  onCamera?: (v: ViewState) => void
 }
 
-interface ViewState {
+export interface ViewState {
   longitude: number
   latitude: number
   zoom: number
@@ -187,6 +196,8 @@ export default function HexMap({
   cenario,
   onSelecionar,
   searchPin,
+  cameraInicial,
+  onCamera,
 }: HexMapProps) {
   // O tooltip do passo 4 ficou alto (porte, obra, setor, salario, empresas) e era
   // cortado quando o cursor estava na parte de baixo ou na direita do mapa. Medimos
@@ -220,13 +231,30 @@ export default function HexMap({
     return m
   }, [pins?.icones])
 
-  const [view, setView] = useState<ViewState>(() => ({
-    longitude: centro.lng ?? -47.9,
-    latitude: centro.lat ?? -15.78,
-    zoom: 9.6,
-    pitch: 0,
-    bearing: 0,
-  }))
+  // Camera restaurada tem precedencia sobre o centro do municipio: e' ela que devolve
+  // o enquadramento de antes quando o operador volta do estudo pontual.
+  const [view, setView] = useState<ViewState>(
+    () =>
+      cameraInicial ?? {
+        longitude: centro.lng ?? -47.9,
+        latitude: centro.lat ?? -15.78,
+        zoom: 9.6,
+        pitch: 0,
+        bearing: 0,
+      },
+  )
+
+  // Sobe a camera para o pai a cada mudanca. Sem isso ela morre no unmount da tela
+  // (App troca `mapa` por `viabilidade` com render condicional, o que DESMONTA a arvore).
+  // O callback fica num ref para NAO entrar nas dependencias: o pai o passa inline, e
+  // uma identidade nova a cada render faria o efeito disparar em todo render, nao so'
+  // quando a camera realmente muda. O efeito cobre todos os caminhos que mexem em
+  // `view` — arraste do usuario e os dois voos automaticos.
+  const onCameraRef = useRef(onCamera)
+  onCameraRef.current = onCamera
+  useEffect(() => {
+    onCameraRef.current?.(view)
+  }, [view])
 
   // Voa para o centro do municipio quando ele muda.
   const centroKey = `${centro.lat},${centro.lng}`
@@ -245,9 +273,17 @@ export default function HexMap({
     }))
   }, [centroKey, centro.lat, centro.lng])
 
-  // Voa e aproxima quando um ponto e buscado.
+  // Voa e aproxima quando um ponto e buscado. No PRIMEIRO render com camera restaurada
+  // o voo e' pulado de proposito: o pin ja existia antes da ida a Viabilidade, e voar
+  // ate ele jogaria o zoom para >=13, desfazendo o enquadramento que acabou de voltar.
+  // O ref e' consumido no PRIMEIRO run do efeito, com ou sem pin. Consumi-lo so' quando
+  // ha pin deixaria a flag armada: uma busca feita depois (mapa restaurado sem pin)
+  // cairia no `return` e o mapa nao voaria para o endereco pesquisado.
+  const pularVooInicial = useRef(cameraInicial != null)
   useEffect(() => {
-    if (!searchPin) return
+    const restaurandoCamera = pularVooInicial.current
+    pularVooInicial.current = false
+    if (!searchPin || restaurandoCamera) return
     setView((v) => ({
       ...v,
       longitude: searchPin.lng,
