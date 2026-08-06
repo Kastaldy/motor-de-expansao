@@ -234,6 +234,38 @@ function Camada({
         </div>
       )}
 
+      {camada.legenda_mapa && camada.legenda_mapa.length > 0 && (
+        <div style={{ marginTop: 13 }}>
+          <span
+            className="num"
+            style={{
+              font: '600 9.5px/1 var(--f-num)',
+              textTransform: 'uppercase',
+              letterSpacing: '.07em',
+              color: 'var(--tx-muted)',
+            }}
+          >
+            cores do mapa
+          </span>
+          <div style={{ marginTop: 7, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {camada.legenda_mapa.map((f) => (
+              <div
+                key={f.etiqueta + f.condicao}
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
+                <Chip tom={f.tom}>{f.etiqueta}</Chip>
+                <span
+                  className="num"
+                  style={{ font: '400 11px/1.3 var(--f-num)', color: 'var(--tx-sub)' }}
+                >
+                  {f.condicao}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {camada.nota && (
         <div
           style={{

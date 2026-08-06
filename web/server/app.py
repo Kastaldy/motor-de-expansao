@@ -1883,15 +1883,95 @@ def _faixas_competitivas() -> list[dict[str, Any]]:
 
 
 def _faixas_crescimento() -> list[dict[str, Any]]:
-    """Camada 4. Tres estados, nao uma rampa: aqui nao ha nota, ha direcao. Os cortes
-    saem da distribuicao real dos hexes medidos (p50 = +19,2%, p75 = +30,6%), e por
-    isso "Estavel" nao e' um alarme — e' a maioria."""
-    return [
-        _fx("Em alta", "área construída cresceu mais de 30% entre 2016 e 2023", "green"),
-        _fx("Estável", "área construída cresceu, mas abaixo de 30%", "blue"),
-        _fx("Sem obra nova", "área construída parou de crescer no período", "gray"),
-        _fx("Sem medição", "fora da mancha urbana medida ou fora das 12 UFs", "gray"),
+    """Camada 4 — as etiquetas que o RANKING de fato emite, DERIVADAS do proprio chip.
+
+    Esta funcao publicava as quatro classes de `cres_hex_classe` (Em alta / Estável /
+    Sem obra nova / Sem medição), que sao a COR DO MAPA, no slot que o front rotula
+    "etiquetas do ranking". So que o chip do ranking sai de `_etiqueta_crescimento`,
+    com vocabulario totalmente outro (posicao relativa a mediana da UF). A intersecao
+    entre publicado e emitido era VAZIA: o usuario lia "Em alta = area construida
+    cresceu mais de 30%" ao lado de um item etiquetado "5x a mediana do estado", e
+    concluia que o chip media obra por satelite quando ele mede emprego formal.
+
+    Ironia registrada: foi a correcao do proprio chip que abriu o buraco —
+    `_etiqueta_crescimento` trocou o vocabulario JUSTAMENTE para fugir da colisao com
+    `cres_hex_classe` (defeito 1 do docstring de la), e o painel ficou publicando o
+    vocabulario que o chip abandonou.
+
+    Agora as etiquetas sao PRODUZIDAS chamando `_etiqueta_crescimento` num valor
+    representativo de cada ramo. Mudar os cortes do chip muda esta lista junto, sem
+    ninguem precisar lembrar — que e' a regra escrita em
+    `docs/contrato_api_metodologia.md` ("as faixas sao DERIVADAS, nunca escritas a mao").
+
+    ESCOPO `uf`: so a visao de estado ranqueia municipios nesta camada. No funil
+    municipal o passo 4 sai com `"itens": []` — nao ha chip para explicar.
+    """
+    # (valor, mediana, condicao legivel). Um por ramo ALCANCAVEL de
+    # `_etiqueta_crescimento`. A ordem aqui e' a de LEITURA, nao a de avaliacao: a
+    # funcao testa o caminho de DEFESA (mediana degenerada) antes do caminho por RAZAO,
+    # mas o painel abre pelo que o operador ve todo dia — a mediana de 5,0, acima de
+    # `_CRESC_PISO_MEDIANA`, exercita a razao; a defesa (mediana 0,5) fecha a lista.
+    #
+    # O ramo "abaixo do estado" NAO tem amostra porque e' inalcancavel: ele exige
+    # d < -2, e o caminho de defesa so roda com mediana < 1,0 tendo ja filtrado
+    # valor < 0, logo d > -1,0 sempre. Registrado no BLK-MAPA-CHIP-01 — remover ou
+    # reancorar a regua e' decisao de quem a escreveu, nao deste fix.
+    amostras: list[tuple[float, float, str]] = [
+        (-1.0, 5.0, "o emprego formal encolheu no período"),
+        (12.0, 5.0, "cresce o dobro da mediana do estado, ou mais"),
+        (7.0, 5.0, "cresce acima da mediana do estado"),
+        (5.0, 5.0, "cresce perto da mediana do estado"),
+        (2.0, 5.0, "cresce abaixo da mediana do estado"),
+        (11.0, 0.5, "estado parado: cresce 10 p.p. ou mais acima da mediana"),
+        (3.0, 0.5, "estado parado: cresce acima da mediana"),
+        (1.0, 0.5, "estado parado: cresce na média do estado"),
     ]
+    saida: list[dict[str, Any]] = []
+    vistos: set[str] = set()
+    for valor, mediana, condicao in amostras:
+        nome, tom = _etiqueta_crescimento(valor, mediana)
+        if not nome:
+            continue
+        # O ramo do multiplicador varia com o dado ("2x", "5x"...). Publicar o exemplo
+        # concreto enganaria; `N×` diz a forma sem prometer um numero.
+        rotulo = "N× a mediana do estado" if "× a mediana" in nome else nome
+        # Dedup pelo ROTULO, nao pelo `nome`: duas amostras que caiam no ramo do
+        # multiplicador ("2×" e "5×") sao nomes diferentes e o MESMO rotulo publicado —
+        # dedupar por `nome` publicaria a linha duas vezes.
+        if rotulo in vistos:
+            continue
+        vistos.add(rotulo)
+        saida.append(_fx(rotulo, condicao, tom or "gray", "uf"))
+    return saida
+
+
+def _legenda_mapa_crescimento() -> list[dict[str, Any]]:
+    """As cores do MAPA na camada 4 (`cres_hex_classe`) — outra coisa que a etiqueta.
+
+    Continua publicada, mas fora do slot de ranking: ela explica por que um hexagono
+    esta turquesa, verde ou cinza, e vale nos dois escopos (o mapa pinta nos dois).
+    Tres estados, nao uma rampa: aqui nao ha nota, ha direcao. Os cortes saem da
+    distribuicao real dos hexes medidos (p50 = +19,2%, p75 = +30,6%), e por isso
+    "Estável" nao e' um alarme — e' a maioria.
+
+    DERIVA de `_ROTULO_CLASSE`, a mesma traducao que o payload do mapa usa. Escrita a
+    mao, esta lista repetiria num campo novo o defeito de que as `faixas` acabaram de
+    sair: um vocabulario copiado que ninguem lembra de atualizar. Assim, trocar uma
+    classe la estoura com `KeyError` aqui — falha alta, nao deslize silencioso.
+    `Sem medição` nao vem do dict porque nao e' classe do artefato: e' a AUSENCIA dela
+    (hexagono fora da mancha urbana medida), e por isso mora so' aqui.
+    """
+    condicao = {
+        "Em alta": "área construída cresceu mais de 30% entre 2016 e 2023",
+        "Estável": "área construída cresceu, mas abaixo de 30%",
+        "Sem obra nova": "área construída parou de crescer no período",
+    }
+    tom = {"Em alta": "green", "Estável": "blue", "Sem obra nova": "gray"}
+    saida = [_fx(r, condicao[r], tom[r]) for r in _ROTULO_CLASSE.values()]
+    saida.append(
+        _fx("Sem medição", "fora da mancha urbana medida ou fora das 12 UFs", "gray")
+    )
+    return saida
 
 
 def _faixas_m1() -> list[dict[str, Any]]:
@@ -2211,6 +2291,7 @@ def montar_metodologia() -> dict[str, Any]:
                     },
                 ],
                 "faixas": _faixas_crescimento(),
+                "legenda_mapa": _legenda_mapa_crescimento(),
                 "nota": (
                     "Esta camada NÃO é preditiva: nada aqui foi validado como preditor "
                     "de desempenho de unidade, e ela não entra em nenhum corte do funil. "
