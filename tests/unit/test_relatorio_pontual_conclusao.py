@@ -24,6 +24,7 @@ from motor_expansao.dashboard.censo_report import (
     _viab_normalizado,
     gerar_pdf_relatorio_pontual_classico,
 )
+from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 
 _MIN_RESULT = {
     "lat": -23.55,
@@ -147,8 +148,9 @@ def test_aluguel_no_teto_exato_passa():
     assert _parecer(info={"aluguel_pedido": 66_000.0}).status == CONCLUSAO_APROVADO
 
 
-def test_gate_de_aluguel_nao_publica_nenhum_valor_de_teto():
-    """O teto e REGUA, nunca numero: imprimi-lo revelaria o faturamento (teto / 0,20)."""
+def test_observacoes_nao_repetem_os_valores_das_faixas():
+    """O teto sai no CARD (decisao de 2026-08-06); a `excecao` e a `ideal` seguem SO como
+    regua, e nenhuma das tres precisa ser repetida no texto do apontamento."""
     texto = _texto(_parecer(info={"aluguel_pedido": 99_001.0}))
     for proibido in ("66.000", "99.000", "50.000"):
         assert proibido not in texto
@@ -313,6 +315,68 @@ def test_com_viabilidade_a_pagina_entra_antes_do_credito():
     assert "Aprovado".encode("latin-1") in pdf_bytes
     # A pagina de credito continua sendo a ULTIMA do documento.
     assert pdf_bytes.rindex(_TIT_CONCLUSAO) < pdf_bytes.rindex("Realiza\xe7\xe3o".encode("latin-1"))
+
+
+def _bytes_da_faixa_de_aluguel(dados, info) -> bytes:
+    """Renderiza SO a faixa de cards de aluguel, isolada do resto do documento.
+
+    Necessario porque a pagina de Viabilidade tambem imprime "Aluguel-teto" e as TRES
+    faixas na linha de detalhe -- assertar ausencia sobre o PDF inteiro testaria a
+    pagina errada.
+    """
+    from motor_expansao.dashboard.censo_report import _conclusao_cards_aluguel, _UltraPDF
+
+    pdf = _UltraPDF()
+    pdf.add_page()
+    _conclusao_cards_aluguel(pdf, dados, info, 36.0, 888.0, (0, 167, 157))
+    return bytes(pdf.output())
+
+
+def test_card_publica_o_aluguel_teto_e_o_pedido():
+    """Decisao de Vinicius (2026-08-06): o teto passa a sair impresso, em card proprio."""
+    saida = _bytes_da_faixa_de_aluguel(
+        {"aluguel_teto": 66_000.0, "aluguel_teto_faixas": {"teto": 66_000.0, "excecao": 99_000.0}},
+        {"aluguel_pedido": 45_000.0},
+    )
+    # "(" e ")" sao delimitadores de string no PDF e saem escapados -- casar sem eles.
+    assert b"Aluguel-teto" in saida
+    assert b"Aluguel pedido" in saida
+    assert b"R$ 66.000,00" in saida  # o teto canonico (2a faixa)
+    assert b"R$ 45.000,00" in saida  # o pedido
+
+
+def test_card_de_teto_nunca_mostra_a_faixa_de_excecao():
+    """A 3a faixa (30%) e regua do eliminatorio E2 e nada alem disso."""
+    saida = _bytes_da_faixa_de_aluguel(
+        {"aluguel_teto": 66_000.0, "aluguel_teto_faixas": {"teto": 66_000.0, "excecao": 99_000.0}},
+        {"aluguel_pedido": 45_000.0},
+    )
+    assert b"R$ 99.000,00" not in saida
+
+
+def test_faixa_de_aluguel_cai_em_nd_gracioso_sem_dado():
+    """Ausencia do dado fica VISIVEL no parecer -- o card nao some."""
+    saida = _bytes_da_faixa_de_aluguel({}, None)
+    assert TEXTO_SEM_DADO.encode("latin-1") in saida
+
+
+def test_semaforo_do_aluguel_pedido():
+    from motor_expansao.dashboard.censo_report import (
+        _CARD_AMBAR_RGB,
+        _CARD_NEUTRO_RGB,
+        _CARD_VERDE_RGB,
+        _CARD_VERMELHO_RGB,
+        _cor_aluguel_pedido,
+    )
+
+    assert _cor_aluguel_pedido(40_000, 66_000, 99_000) == _CARD_VERDE_RGB
+    assert _cor_aluguel_pedido(66_000, 66_000, 99_000) == _CARD_VERDE_RGB  # inclusiva
+    assert _cor_aluguel_pedido(70_000, 66_000, 99_000) == _CARD_AMBAR_RGB
+    assert _cor_aluguel_pedido(99_001, 66_000, 99_000) == _CARD_VERMELHO_RGB
+    # Indecidivel -> neutro, nunca reprovacao visual (mesma regra de `_cor_por_meta`).
+    assert _cor_aluguel_pedido(None, 66_000, 99_000) == _CARD_NEUTRO_RGB
+    assert _cor_aluguel_pedido(40_000, None, None) == _CARD_NEUTRO_RGB
+    assert _cor_aluguel_pedido(float("nan"), 66_000, 99_000) == _CARD_NEUTRO_RGB
 
 
 def test_status_reprovado_chega_aos_bytes_do_pdf():

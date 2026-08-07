@@ -1484,13 +1484,16 @@ def _viabilidade_page(
 # falsa reprovacao. Todo gate eliminatorio so dispara com o dado em maos -- por isso
 # as comparacoes sao sempre `valor is not None and ...`, nunca truthiness.
 #
-# ZERO NUMERO DE FATURAMENTO (pedido de Vinicius, 2026-08-06). A pagina nao imprime
-# faturamento, EBITDA, aluguel-teto, investimento, VPL nem TIR, e as observacoes de
-# retorno sao QUALITATIVAS. O aluguel-teto segue como REGUA de E2/R2 e nunca como
-# numero: publica-lo aqui permitiria reconstruir o faturamento bruto dividindo por
-# SIM_ALUGUEL_TETO_TETO (0,20). Os unicos numeros exibidos sao FISICOS (metragem,
-# pe-direito) ou CENSITARIOS (populacao, domicilios, renda, SAM/residual em alunos)
-# -- todos ja visiveis em outras paginas do mesmo relatorio.
+# SEM FATURAMENTO, COM ALUGUEL-TETO (pedido de Vinicius, 2026-08-06, ajustado no mesmo
+# dia). A pagina NAO imprime faturamento, EBITDA, investimento, VPL nem TIR, e as
+# observacoes de retorno seguem QUALITATIVAS -- nem margem nem payback saem em numero.
+# O aluguel-teto ESTA impresso, em card proprio, por decisao explicita depois de a
+# implicacao ser levantada e aceita: o teto e' 20% do faturamento bruto, entao quem
+# conhecer a regra reconstroi o faturamento dividindo por 0,20. O que o card mostra e'
+# a faixa `teto` (a 2a, canonica), NUNCA a `excecao` -- esta ultima segue apenas como
+# REGUA do eliminatorio E2. Os demais numeros da pagina sao FISICOS (metragem,
+# pe-direito), de CUSTO DO IMOVEL (aluguel pedido, informado pelo operador) ou
+# CENSITARIOS (populacao, domicilios, renda, SAM/residual em alunos).
 #
 # READ-ONLY sobre o M1: nao recalcula score, carteira, plano nem artefatos oficiais.
 # ---------------------------------------------------------------------------
@@ -1545,6 +1548,13 @@ _CONCLUSAO_NOTA = (
 # cabe NAO vaza para a pagina seguinte -- ele some por baixo do rodape, em silencio.
 _CONCLUSAO_OBS_LIMITE_Y = _PAGE_H - 74.0
 _CONCLUSAO_NOTA_Y = _PAGE_H - 62.0
+# Geometria da faixa de cards. O card de status encolheu de 104 para 96 pt para abrir a
+# linha do aluguel sem comprimir a area de observacoes (que continua cabendo ~10 linhas).
+_CONCLUSAO_STATUS_Y = 72.0
+_CONCLUSAO_STATUS_H = 96.0
+_CONCLUSAO_ALUGUEL_Y = 182.0
+_CONCLUSAO_ALUGUEL_H = 84.0
+_CONCLUSAO_OBS_TITULO_Y = 286.0
 
 
 @dataclass(frozen=True)
@@ -1778,6 +1788,81 @@ def _avaliar_conclusao(
     )
 
 
+def _cor_aluguel_pedido(aluguel: Any, teto: Any, excecao: Any) -> tuple[int, int, int]:
+    """Semaforo do card "Aluguel pedido": verde ate o teto, ambar na excecao, vermelho acima.
+
+    Espelha a classificacao que a tela ja faz em `ViabilityScreen` (`tetoCls`), com uma
+    simplificacao deliberada: la sao 4 estados (`ideal` tem verde proprio), aqui o `ideal`
+    e o `teto` compartilham o verde, porque a pagina nao imprime a faixa `ideal` e um
+    quarto tom sem rotulo que o explique so confundiria. Sem dado -> neutro, nunca
+    reprovacao visual (mesma regra de `_cor_por_meta`). Funcao pura.
+    """
+    valor = _conclusao_valor(aluguel)
+    limite_teto = _conclusao_valor(teto)
+    limite_excecao = _conclusao_valor(excecao)
+    if valor is None or limite_teto is None:
+        return _CARD_NEUTRO_RGB
+    if valor <= limite_teto:
+        return _CARD_VERDE_RGB
+    if limite_excecao is not None and valor <= limite_excecao:
+        return _CARD_AMBAR_RGB
+    return _CARD_VERMELHO_RGB
+
+
+def _conclusao_cards_aluguel(
+    pdf: _UltraPDF,
+    dados: Mapping[str, Any],
+    info_imovel: Mapping[str, Any] | None,
+    margin_x: float,
+    largura: float,
+    accent: tuple[int, int, int],
+) -> None:
+    """Dois cards lado a lado: aluguel-teto (referencia) e aluguel pedido (com semaforo).
+
+    O teto impresso e' o CANONICO (`aluguel_teto`, a faixa de 20%), o mesmo numero que o
+    card da pagina de Viabilidade ja mostra -- nao a `excecao`, que fica so como regua do
+    eliminatorio E2. Sem payload de teto ou sem aluguel informado, o card cai em "n/d"
+    gracioso em vez de sumir, para a ausencia do dado ficar visivel no parecer.
+    """
+    info = info_imovel or {}
+    faixas = dados.get("aluguel_teto_faixas")
+    faixas = faixas if isinstance(faixas, Mapping) else {}
+    teto = dados.get("aluguel_teto")
+    if not _viab_tem(teto):
+        teto = faixas.get("teto")
+    aluguel = info.get("aluguel_pedido")
+
+    cards = (
+        ("Aluguel-teto (mês)", _viab_brl(teto), _CARD_NEUTRO_RGB),
+        (
+            "Aluguel pedido (mês)",
+            _viab_brl(aluguel),
+            _cor_aluguel_pedido(aluguel, teto, faixas.get("excecao")),
+        ),
+    )
+    gap = 12.0
+    card_w = (largura - gap) / 2
+    card_h = _CONCLUSAO_ALUGUEL_H
+    for index, (rotulo, valor, cor) in enumerate(cards):
+        x = margin_x + index * (card_w + gap)
+        y = _CONCLUSAO_ALUGUEL_Y
+        pdf.set_fill_color(*cor)
+        pdf.rect(x, y, card_w, card_h, style="F")
+        pdf.set_draw_color(225, 225, 228)
+        pdf.rect(x, y, card_w, card_h, style="D")
+        pdf.set_fill_color(*accent)
+        pdf.rect(x, y, card_w, 6.0, style="F")
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "", 11)
+        pdf.set_xy(x + 16, y + 18)
+        pdf.cell(card_w - 32, 14, _ascii(rotulo))
+        pdf.set_text_color(40, 40, 40)
+        valor_txt = _ascii(valor)
+        _ajustar_fonte_para_largura(pdf, valor_txt, card_w - 32, tamanho=22.0)
+        pdf.set_xy(x + 16, y + 46)
+        pdf.cell(card_w - 32, 26, valor_txt)
+
+
 def _conclusao_page(
     pdf: _UltraPDF,
     result: dict[str, Any],
@@ -1790,7 +1875,8 @@ def _conclusao_page(
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
 ) -> None:
     """Pagina de parecer do ponto: card de status + observacoes. READ-ONLY sobre o M1."""
-    parecer = _avaliar_conclusao(result, residual, info_imovel, _viab_normalizado(viabilidade))
+    dados = _viab_normalizado(viabilidade)
+    parecer = _avaliar_conclusao(result, residual, info_imovel, dados)
 
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
@@ -1801,7 +1887,7 @@ def _conclusao_page(
 
     # Card do parecer: mesma receita visual dos cards do Big Numbers (fundo pelo semaforo,
     # borda fina cinza, barra de acento de 6 pt no topo), em largura total.
-    card_y, card_h = 76.0, 104.0
+    card_y, card_h = _CONCLUSAO_STATUS_Y, _CONCLUSAO_STATUS_H
     pdf.set_fill_color(*_CONCLUSAO_CORES[parecer.status])
     pdf.rect(margin_x, card_y, largura, card_h, style="F")
     pdf.set_draw_color(225, 225, 228)
@@ -1810,15 +1896,20 @@ def _conclusao_page(
     pdf.rect(margin_x, card_y, largura, 6.0, style="F")
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "", 11)
-    pdf.set_xy(margin_x + 16, card_y + 22)
+    pdf.set_xy(margin_x + 16, card_y + 20)
     pdf.cell(largura - 32, 14, _ascii("Parecer sobre o ponto"))
     pdf.set_text_color(40, 40, 40)
-    pdf.set_font("Helvetica", "B", 34)
-    pdf.set_xy(margin_x + 16, card_y + 48)
-    pdf.cell(largura - 32, 40, _ascii(_CONCLUSAO_LABELS[parecer.status]))
+    pdf.set_font("Helvetica", "B", 32)
+    pdf.set_xy(margin_x + 16, card_y + 44)
+    pdf.cell(largura - 32, 38, _ascii(_CONCLUSAO_LABELS[parecer.status]))
+
+    # Faixa do aluguel: o teto (2a faixa, canonica) e o pedido lado a lado. So o card do
+    # PEDIDO tem semaforo -- o teto e' a referencia contra a qual ele e' lido, nao uma
+    # meta que o ponto atinge ou deixa de atingir.
+    _conclusao_cards_aluguel(pdf, dados, info_imovel, margin_x, largura, secondary)
 
     # Observacoes: eliminatorios primeiro (o que reprovou vem antes do que so ressalva).
-    y = card_y + card_h + 24.0
+    y = _CONCLUSAO_OBS_TITULO_Y
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_xy(margin_x, y)
