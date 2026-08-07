@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api } from './api'
+import { api, baixar, VIDA_DA_BLOB_URL_MS } from './api'
 import type { ViabilidadeIn } from './types'
 
 /**
@@ -103,5 +103,93 @@ describe('relatorioPontual — orçamento da query string', () => {
     })
     expect(cap.url()).not.toContain('fachada')
     expect((cap.url().split('?')[1] ?? '').length).toBeLessThan(ORCAMENTO_QUERY_BYTES)
+  })
+})
+
+/**
+ * Regressão do 404 no celular do Miguel (06/08/2026).
+ *
+ * O PDF gerava (`POST /api/relatorio/pontual` -> 200) e a tela virava
+ * `{"detail":"Not Found"}`. O log do servidor mostrou o que o browser pediu logo
+ * depois: `GET /03470ca0-da3b-4ee0-9f41-c1d32ff00d97` — o caminho de uma blob URL,
+ * navegado como se fosse URL do site.
+ *
+ * A causa: `click()`, `remove()` e `revokeObjectURL()` todos SÍNCRONOS. No desktop o
+ * download sai durante o `click()`; no celular ele é adiado e encontra o blob já
+ * revogado e a âncora já fora do DOM.
+ *
+ * O teste trava a ordem, que é o que importa: depois do clique, o blob continua vivo.
+ */
+describe('baixar', () => {
+  function palcoFalso() {
+    const ancora: Record<string, unknown> = { click: vi.fn(), remove: vi.fn() }
+    const doc = {
+      createElement: () => ancora,
+      body: { appendChild: vi.fn() },
+    }
+    const criadas: string[] = []
+    const revogadas: string[] = []
+    const globais = globalThis as unknown as Record<string, unknown>
+    const antes = { document: globais.document, URL: globais.URL }
+    globais.document = doc
+    globais.URL = {
+      createObjectURL: () => {
+        const u = `blob:https://piloto.ultra-expansao.tech/uuid-${criadas.length}`
+        criadas.push(u)
+        return u
+      },
+      revokeObjectURL: (u: string) => revogadas.push(u),
+    }
+    return {
+      ancora,
+      criadas,
+      revogadas,
+      restaurar: () => {
+        globais.document = antes.document
+        globais.URL = antes.URL
+      },
+    }
+  }
+
+  it('NÃO revoga a blob URL no mesmo tick do clique — era o defeito do celular', () => {
+    vi.useFakeTimers()
+    const palco = palcoFalso()
+    try {
+      baixar(new Blob(['%PDF-1.4']), 'relatorio_pontual.pdf')
+      expect(palco.ancora.click).toHaveBeenCalled()
+      // O ponto do teste: aqui o browser do celular ainda nem começou a baixar.
+      expect(palco.revogadas).toEqual([])
+      expect(palco.ancora.remove).not.toHaveBeenCalled()
+    } finally {
+      palco.restaurar()
+      vi.useRealTimers()
+    }
+  })
+
+  it('revoga depois da janela, para não segurar o arquivo na memória para sempre', () => {
+    vi.useFakeTimers()
+    const palco = palcoFalso()
+    try {
+      baixar(new Blob(['%PDF-1.4']), 'relatorio_pontual.pdf')
+      vi.advanceTimersByTime(VIDA_DA_BLOB_URL_MS + 1)
+      expect(palco.revogadas).toEqual(palco.criadas)
+      expect(palco.ancora.remove).toHaveBeenCalled()
+    } finally {
+      palco.restaurar()
+      vi.useRealTimers()
+    }
+  })
+
+  it('o nome do arquivo vai no atributo download, senão o browser navega', () => {
+    vi.useFakeTimers()
+    const palco = palcoFalso()
+    try {
+      baixar(new Blob(['%PDF-1.4']), 'ficha_berrini-sp.pdf')
+      expect(palco.ancora.download).toBe('ficha_berrini-sp.pdf')
+      expect(String(palco.ancora.href)).toContain('blob:')
+    } finally {
+      palco.restaurar()
+      vi.useRealTimers()
+    }
   })
 })

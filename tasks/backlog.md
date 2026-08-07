@@ -1458,7 +1458,7 @@ produção e exige DEC + gate humano.
 | **Criticidade** | **Média** (ajustes localizados numa camada paralela READ-ONLY sobre o M1, já entregue e coberta por testes; nenhum toca score/pesos/artefatos do M1 nem cria dependência externa). |
 | **Prioridade** | Antes do **BLK-MA-05/06** (item 1: quem EXIBIR a flag) e antes do **BLK-MA-06** (item 2). **NÃO bloqueia o BLK-MA-04** — verificado em 2026-07-30: o score não consome `flag_troca_chave_na_serie` nem a propaga (trava executável em `_assert_schema_score`). |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | Pendente. |
+| **Status** | **PARCIAL** (PR #194, merged 2026-08-05). ✅ Item 1 (`flag_troca_chave_na_serie` redefinida para troca TEMPORAL) e ✅ item 2-B (ponto cego do AST: era **2/5**, não 3/5 — hoje 5/5, helper único em `tests/unit/_ast_imports.py`, 4 cópias unificadas). 🟡 **Item 2 diagnosticado, NÃO corrigido** — a causa não é o import de `classificar_rede`: o `__init__` de `demanda_revelada` reexporta os **9** submódulos eager e qualquer um puxa sklearn/scipy/shapely/requests. Teste por `sys.modules` marcado `xfail(strict=True)`; segue bloqueante para o MA-06. ⬜ Os 6 menores. |
 | **Depende de** | BLK-MA-02 (concluído 2026-07-29). |
 | **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do BLK-MA-02: camada com insumo de PII na origem (DEC-012) e módulo destinado ao cron de produção. NÃO marcar loop-safe. |
 
@@ -1603,7 +1603,7 @@ acentuadas; teste do `fillna` com `pd.NA`; suíte completa sem regressão (basel
 | **Criticidade** | **Baixa** (um teste de isolamento endurecido, um regime sem cobertura, e 4 leves de precisão de texto/asserção; nenhuma mudança na fórmula nem nos pesos). |
 | **Prioridade** | Antes do **BLK-MA-05**, que é o consumidor do score. |
 | **Esteira** | Block Orchestrator → Builder. |
-| **Status** | Pendente. |
+| **Status** | **PARCIAL** (PR #194, merged 2026-08-05). ✅ Item 1 — a mesma correção do AST fechou o teste novo deste bloco, e a taxa foi medida em **2/5** (o item 2-B do MA-02-FU1 subcontava). ⬜ Item 2 (`test_regime_so_s3` + §8.5) e os 4 leves. |
 | **Depende de** | BLK-MA-04 (concluído 2026-07-30). |
 | **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
 
@@ -1667,7 +1667,7 @@ ou explicitamente recusados com justificativa; suíte completa sem regressão (b
 | **Criticidade** | **Alta** (coluna nova num coletor de produção, no repo externo `VinhoAbencoado/GymScraping`; muda o schema de um CSV com 12.769 linhas já coletadas e estende o escopo de coleta autorizado pela DEC-013). **Exige emenda à DEC-013 registrada + gate humano obrigatório** antes do Builder. Não pode ser Média: `scripts/aplicar_criticidade_label.py:38` arma **auto-merge** para Baixa/Média, o que furaria o gate que este bloco declara. |
 | **Prioridade** | **DESBLOQUEADO** — o gate foi resolvido pela **DEC-024** (2026-08-04). Antes do **BLK-MA-09**, que é o consumidor da coluna. |
 | **Esteira** | Block Orchestrator → Planner → `[GATE — RESOLVIDO pela DEC-024 em 2026-08-04; NÃO reabrir]` → Builder → QA. |
-| **Status** | Pendente — pronto para o Block Orchestrator. |
+| **Status** | **Implementado; PR aberto.** Código + testes (83→93) em `VinhoAbencoado/GymScraping` PR **#6**. A **migração foi EXECUTADA** (2026-08-05 19:47 → 2026-08-06 15:50, ~20 h): consolidado de **45.527 linhas** em 12 colunas, 36.940 com nota (81,1%), 8.587 sem avaliações, **0 não-lidas**, 158 falhas (0,35%). Resultado e desvios em `Wellhub/MIGRACAO_NOTA.md`. Falta só o merge do PR. |
 | **Depende de** | **DEC-024** (autoriza o escopo de coleta, fixa o schema persistido e emenda as partes 2 e 3 da DEC-013). |
 | **Autonomia** | **manual (NÃO loop-safe)** — repo externo, coletor de produção que roda na VPS por cron; toca a trilha de scrapers. NÃO marcar loop-safe. |
 
@@ -1777,7 +1777,7 @@ a partir da raiz do repo do scraper).
 | **Criticidade** | **Alta** (liga um sinal do `score_vulnerabilidade`, o que **rebalanceia todos os pesos efetivos**: S3 cai de ≈0,467 para 0,35 e S4 de ≈0,333 para 0,25; muda o contrato de snapshot e força bump de versão. Camada **PARALELA e READ-ONLY sobre o M1** — não toca `score_priorizacao`, pesos, nem artefatos oficiais, e o score ainda não tem consumidor materializado; **volta a ser Crítica quando o BLK-MA-05 materializar o entregável**). **Exige emenda ao contrato ratificada no gate + gate humano obrigatório** antes do Builder. |
 | **Prioridade** | Depois do **BLK-MA-08**, que produz o insumo. Antes do **BLK-MA-05**, que é o consumidor do score — se o MA-05 sair antes, ordenará sobre uma régua que este bloco vai mudar. |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA — D-A/D-B/D-C, no gate PRÓPRIO deste bloco (o gate conjunto com o BLK-MA-08 foi FATIADO pela DEC-024)]` → Builder → QA. |
-| **Status** | Pendente (bloqueado pela coluna do coletor). |
+| **Status** | **DESTRAVADO para o gate** (2026-08-06). O pré-requisito do **D-A** — a distribuição restrita a `independente` — existe: **n=34.035**, `min=1.0 · p1=4.23 · p5=4.59 · p10=4.69 · mediana=4.93 · desvio=0.192`; **158 (0,46%) abaixo de 4,0**. A sonda de julho (N=53) media `4,26–4,98` e **não via a cauda**, o que confirma o alerta contra fixar o limite inferior em 4,0. O **D-B** também ganhou insumo: o MA-10 provou que o TotalPass não tem nota como produto, logo a régua assimétrica é **permanente**, não transitória. Código ainda não iniciado. |
 | **Depende de** | BLK-MA-08. |
 | **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
 
@@ -1910,6 +1910,90 @@ hard-coded), `:725` (20 colunas), `tests/unit/vulnerabilidade/test_snapshots.py:
 suíte completa sem regressão contra baseline **medida no início do ciclo** por
 `pytest --collect-only -q` (em 2026-07-31, na `main`: **2334 coletados**); `ruff` limpo; `loop_guard`
 sem `CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
+
+---
+
+### BLK-MA-11 — Taxonomia de atividades do WellHub mudou e o filtro de musculação parou de reconhecê-la
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (muda o **critério de negócio** que define o universo de academias do coletor, e esse universo alimenta a camada paralela mercado/residual via `concorrentes/wellhub/csvs`. READ-ONLY sobre o M1). **Exige decisão humana de produto**, não é escolha de engenharia. |
+| **Prioridade** | Antes de qualquer sincronização do consolidado novo para o motor. |
+| **Esteira** | `[decisão humana — Vinicius: (a), (b) ou (c) abaixo]` → Builder → QA. |
+| **Status** | Pendente. |
+| **Depende de** | BLK-MA-08 (a rodada que expôs o problema). |
+| **Autonomia** | **manual (NÃO loop-safe)** — repo externo + critério de negócio. |
+
+**O que foi medido (2026-08-05/06).** O WellHub **renomeou a taxonomia de atividades** entre maio e
+agosto: "Musculação" virou **"Fisiculturismo"**, **"Treino de força"** e **"Treino Híbrido"**. O
+filtro `tem_musculacao` (`Wellhub/split_by_state.py`) procura a substring `"musculacao"` e não
+reconhece nenhum dos rótulos novos.
+
+Evidência, em duas escalas: na primeira tentativa de coleta, **2.994 dos 7.577 slugs descartados
+(39,5%) constavam no consolidado de maio** — ou seja, tinham musculação e estavam sendo perdidos; na
+rodada completa, `45.382 de 45.527 linhas excluídas pelo filtro`. Amostra de 10 dos afetados:
+"Fisiculturismo" em 8, "Treino de força" em 7.
+
+**Consequência viva.** `Wellhub/csvs_musculacao/` saiu com **144 linhas** contra 12.769 em maio e
+**não substitui a base anterior**. O `Wellhub/csvs/` (45.526 linhas) está íntegro mas **mudou de
+significado**: contém todas as unidades, não só academias de musculação. Os leitores do motor
+(`demanda_revelada/concorrentes_densos.py` e `vulnerabilidade/snapshots.py`) apontam para
+`concorrentes/wellhub/csvs` — sincronizar o estado atual sem decidir isto muda o universo daquelas
+camadas sem que ninguém tenha decidido.
+
+**As três saídas (é isto que o gate decide).**
+- **(a) Ampliar o vocabulário** de `tem_musculacao` com os rótulos novos. Restaura o volume, mas
+  **quebra a comparabilidade** com a série de maio: a mesma academia pode entrar hoje e não ter
+  entrado antes, e o churn medido pela camada de vulnerabilidade passa a misturar mudança real com
+  mudança de critério.
+- **(b) Manter o consolidado completo** e mover o recorte para o consumidor. Preserva o dado bruto e
+  torna o critério explícito onde ele é usado, mas exige tocar quem lê.
+- **(c) Aceitar a base sem filtro** como novo padrão, aposentando o subset.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; o `v2` e o contrato de snapshot
+(**BLK-MA-09**); o cron (**BLK-MA-06**).
+
+**Critério de aceite.** Decisão registrada (DEC se a escolha for (a) ou (c), por mudar critério de
+universo); `tem_musculacao` e/ou os consumidores ajustados com teste que falharia antes; o efeito
+sobre a comparabilidade da série declarado por escrito; suíte sem regressão.
+
+---
+
+### BLK-MA-07 — Reputação externa para o universo sem nota in-app (Google Places)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (fonte externa nova, com custo por chamada e ToS próprios; persistiria sinal de reputação para o score). **Exige DEC própria** antes do Builder. |
+| **Prioridade** | Depois do **BLK-MA-09** (que decide como o `v2` entra na régua). Não bloqueia nada hoje. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — DEC própria]` → Builder → QA. |
+| **Status** | Pendente — **criado em 2026-08-07 pela decisão de fechamento do BLK-MA-10**; até então existia só como bullet da decomposição do BLK-MA-01. |
+| **Depende de** | BLK-MA-10 (concluído 2026-08-05, veredito ARQUIVAR). |
+| **Autonomia** | **manual (NÃO loop-safe)** — fonte externa paga e decisão de ToS. |
+
+**Por que este bloco existe.** O **BLK-MA-10** provou que o TotalPass **não tem nota como produto** —
+não é dado escondido atrás de proteção: a documentação pública da API (~65 endpoints) não tem campo
+de rating, o bundle JS do site não sabe exibir nota, a central de ajuda não documenta a
+funcionalidade e um cliente pagante **pediu o recurso** numa resenha da App Store. Veredito:
+arquivar, sem follow-up técnico.
+
+Consequência: as **15.986 unidades TotalPass** já coletadas — universo **maior** que o do WellHub —
+ficariam permanentemente sem sinal 2. A decisão de Vinicius (2026-08-05) foi levar esse universo
+para reputação **externa**, que é este bloco.
+
+**Herança do MA-10, a considerar aqui.**
+- A hipótese do **app mobile** do TotalPass ficou como incógnita declarada (exigiria interceptar
+  tráfego autenticado com certificate pinning — vedado). Fica como **linha de risco**, não como
+  caminho.
+- Se a nota do TotalPass virar requisito de negócio, o caminho é **comercial** (pedir a fonte ao
+  grupo SmartFit), não técnico.
+- **Reputação externa ≠ nota in-app.** O §2 do contrato do epic reaparece: são construtos
+  diferentes, e misturá-los na mesma régua exige justificativa explícita.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; o WellHub (**BLK-MA-08**); a reativação do
+`v2` (**BLK-MA-09**); o entregável comercial (**BLK-MA-05**); o cron (**BLK-MA-06**).
+
+**Critério de aceite.** DEC própria aprovada (fonte, custo, ToS, limite anti-PII); contrato do sinal
+definido antes de qualquer código; validação com fixtures sintéticas; READ-ONLY sobre o M1.
 
 ---
 

@@ -128,16 +128,53 @@ async function pedirArquivo(
   }
 }
 
-/** Dispara o download no browser a partir do blob recebido. */
+/**
+ * Quanto tempo a blob URL fica viva depois do clique.
+ *
+ * NAO e' folga arbitraria: e' o tempo que o browser do CELULAR leva para pegar o
+ * arquivo. Ver `baixar`.
+ */
+export const VIDA_DA_BLOB_URL_MS = 60_000
+
+/**
+ * Dispara o download no browser a partir do blob recebido.
+ *
+ * **A ordem aqui é o conserto de um defeito de produção (06/08/2026).** O Miguel
+ * gerou o Relatório Pontual pelo celular, o PDF ficou pronto — o `POST
+ * /api/relatorio/pontual` respondeu 200 — e a tela virou um JSON `{"detail":"Not
+ * Found"}`. No log do servidor:
+ *
+ *     15:52:51  POST /api/relatorio/pontual...  200 OK
+ *     15:53:11  GET  /03470ca0-da3b-4ee0-9f41-c1d32ff00d97  404 Not Found
+ *
+ * Aquele UUID é o caminho de uma blob URL (`blob:https://host/<uuid>`): o browser
+ * navegou para ela como se fosse URL comum do site.
+ *
+ * A causa era a versão anterior fazer `click()`, `remove()` e `revokeObjectURL()`
+ * TUDO SÍNCRONO. No desktop o download é despachado durante o próprio `click()` e
+ * revogar logo depois não custa nada. No celular ele é adiado: quando o browser vai
+ * buscar o blob, ele já não existe — e a âncora que carregava o `download` também já
+ * saiu do DOM. Sem blob e sem atributo, sobra uma navegação para um caminho que o
+ * servidor não tem.
+ *
+ * Por isso a limpeza é agendada, não imediata. O custo é segurar o arquivo na memória
+ * do browser por um minuto; o benefício é o download funcionar em celular, que é onde
+ * o time de campo abre isto.
+ */
 export function baixar(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
   a.download = filename
+  a.rel = 'noopener'
   document.body.appendChild(a)
   a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
+  // A âncora sai do DOM junto com a revogação: removê-la antes de o browser
+  // processar o clique tira o `download` do caminho e vira navegação.
+  setTimeout(() => {
+    a.remove()
+    URL.revokeObjectURL(url)
+  }, VIDA_DA_BLOB_URL_MS)
 }
 
 export const api = {
