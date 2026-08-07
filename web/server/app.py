@@ -3253,6 +3253,13 @@ _EXEC_ALIAS_COORD: dict[tuple[str, str], str] = {
     # CORREÇÃO DE PIN ERRADO, não de pin ausente: sem o alias, "BOQUEIRAO - SP" não
     # casa por (chave, UF), cai no terceiro fallback — que é cego a UF — e herda a
     # coordenada de "Boqueirão / PR", em Curitiba, ~350 km de Santos.
+    #
+    # Cuidado: há DUAS unidades no bairro Boqueirão no litoral, e o cadastro não usa
+    # esse nome em nenhuma das duas — "Praia Grande / SP" (Bairro='Boqueirão', Praia
+    # Grande) e "Santos II - SP" (Bairro='Boqueirão', Santos). O alvo é a de SANTOS
+    # porque a de Praia Grande já é reivindicada pela própria "PRAIA GRANDE - SP" da
+    # Growth, que também está ativa. A geografia confirma: o ponto resolvido fica a
+    # 1,1 km do Gonzaga (bairro vizinho na orla de Santos) e a 11 km de Praia Grande.
     ("BOQUEIRAO", "SP"): "SANTOS II",
     ("VILLA BRANCA", "SP"): "JACAREI",  # Villa Branca é bairro de Jacareí
     ("VISCONDE DE RIO CLARO", "SP"): "RIO CLARO",
