@@ -637,6 +637,43 @@ def test_leituras_nao_mutam_artefatos(synth_data: Path) -> None:
     assert antes == depois, "backend escreveu/alterou artefato fora do cache durante leituras"
 
 
+def test_pins_ultra_das_rotas_incluem_o_cadastro_amplo(synth_data: Path) -> None:
+    """Regressao (defeito de prod 2026-08-07): as rotas do Mapa Territorial serviam pin
+    Ultra SO da planilha curada, congelada em 2026-06-29 (54 linhas). A rede inaugurada
+    depois disso — que existe no cadastro amplo, com coordenada valida — nao aparecia no
+    mapa, em nenhum dos dois niveis (UF e drill-down de municipio).
+
+    O bbox do enriquecido sintetico de Sao Paulo e lat[-23.550,-23.547] x lng[-46.630,-46.627];
+    as duas unidades abaixo caem dentro dele.
+    """
+    staging = synth_data / "staging"
+    staging.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        [{"unidade": "CURADA SP", "lat": -23.5490, "lng": -46.6290}]
+    ).to_parquet(staging / "unidades_ultra_performance_hex.parquet")
+    pd.DataFrame(
+        [
+            # so no cadastro: e a que nao aparecia
+            {"unidade": "Cadastro Novo / SP", "uf": "SP", "cidade": "Sao Paulo",
+             "lat": -23.5480, "lng": -46.6280, "flag_coord_valida": True},
+            # mesma unidade da curada, com ponto divergente: a curada tem de vencer
+            {"unidade": "Curada SP", "uf": "SP", "cidade": "Sao Paulo",
+             "lat": -23.5475, "lng": -46.6275, "flag_coord_valida": True},
+        ]
+    ).to_parquet(staging / "unidades_ultra_mapeadas.parquet")
+    pilot.limpar_caches()
+
+    for payload, rotulo in ((pilot.municipio("SP", "Sao Paulo"), "municipio"), (pilot.uf_view("SP"), "uf")):
+        ultra = payload["pins"]["ultra"]
+        nomes = {p["nome"] for p in ultra}
+        assert "Cadastro Novo / SP" in nomes, f"rota {rotulo}: cadastro amplo nao chegou ao pin"
+        assert "CURADA SP" in nomes, f"rota {rotulo}: a curada sumiu"
+        curada = next(p for p in ultra if p["nome"] == "CURADA SP")
+        assert (curada["lat"], curada["lng"]) == (-23.549, -46.629), "a curada perdeu a precedencia"
+        assert len(nomes) == len(ultra) == 2, f"rota {rotulo}: pin duplicado da mesma unidade"
+        json.dumps(payload, allow_nan=False)
+
+
 def test_municipios_ignora_categorias_fantasma(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
