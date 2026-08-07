@@ -5,6 +5,7 @@ import ExecutiveScreen from './screens/ExecutiveScreen'
 import MapScreen from './screens/MapScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
 import { api, ApiError } from './lib/api'
+import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Hex, MunicipioItem, MunicipioPayload } from './lib/types'
 
 export type Tela = 'mapa' | 'viabilidade' | 'executiva'
@@ -43,6 +44,10 @@ export default function App() {
   const [erro, setErro] = useState<string | null>(null)
 
   const [ponto, setPonto] = useState<PontoEscolhido | null>(null)
+
+  // Foto do Mapa Territorial (ver lib/mapa-estado): vive AQUI porque o App nao desmonta
+  // ao trocar de tela — e' o que devolve o mapa como estava na volta da Viabilidade.
+  const [estadoMapa, setEstadoMapa] = useState<EstadoMapa>(ESTADO_MAPA_VAZIO)
 
   // Catálogo de UFs, uma vez.
   useEffect(() => {
@@ -100,7 +105,9 @@ export default function App() {
     }
   }, [uf, municipio])
 
-  // Trocar de estado recomeça na visão da UF inteira.
+  // Trocar de estado recomeça na visão da UF inteira. Não é preciso limpar a foto aqui:
+  // ela carrega o contexto em que foi tirada e `fotoAplicavel` a descarta sozinha se a
+  // UF/município não bater (lib/mapa-estado).
   const aoTrocarUf = useCallback((u: string) => {
     setUf(u)
     setMunicipio('')
@@ -135,6 +142,8 @@ export default function App() {
             carregando={carregando}
             erro={erro}
             onAnalisarPonto={irParaViabilidade}
+            estadoInicial={estadoMapa}
+            onEstado={setEstadoMapa}
           />
         ) : tela === 'executiva' ? (
           // A Executiva NÃO recebe `uf` nem `onUf` (DEC-023): ela abre com a rede do
