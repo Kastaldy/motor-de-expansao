@@ -240,7 +240,7 @@ def test_pdf_do_payload_mantem_a_contagem_de_paginas():
         None,
         viabilidade=viab,
     )
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 10" in pdf_bytes
     assert b"R$ 84.604,69" in pdf_bytes      # aluguel-teto canonico
     assert b"29 meses" in pdf_bytes          # payback do payload
     assert b"R$ 900.925,18" in pdf_bytes     # juros totais (antes sumiam do relatorio)
@@ -339,7 +339,7 @@ def test_pdf_imprime_a_linha_de_anuidade_sem_mudar_a_contagem_de_paginas():
         None,
         viabilidade=viab,
     )
-    assert b"/Count 9" in pdf_bytes          # contagem/ordem de paginas INALTERADAS
+    assert b"/Count 10" in pdf_bytes         # +1: a Conclusao entra junto da Viabilidade
     assert b"R$ 288.257,57" in pdf_bytes      # faturamento bruto do mes 12
     assert b"R$ 6.241,94" in pdf_bytes        # a parcela de ANUIDADE, agora visivel
     assert b"R$ 99,00" in pdf_bytes           # valor cobrado 1x/ano
@@ -363,7 +363,7 @@ def test_pdf_sem_anuidade_nao_inventa_a_linha():
         None,
         viabilidade=viab,
     )
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 10" in pdf_bytes
     assert b"todo de mensalidades" in pdf_bytes
     assert b"Steady-state = m\xeas 8 \\(regime pleno\\)" in pdf_bytes
     assert b"R$ 6.241,94" not in pdf_bytes
@@ -422,7 +422,7 @@ def test_pdf_diz_que_a_folha_e_fixa_desde_o_mes_1():
         None,
         viabilidade=viab,
     )
-    assert b"/Count 9" in pdf_bytes             # contagem/ordem de paginas INALTERADAS
+    assert b"/Count 10" in pdf_bytes            # +1: a Conclusao entra junto da Viabilidade
     assert b"R$ 49.003,79" in pdf_bytes          # a folha, agora visivel como linha
     # "mes" sai acentuado em latin-1; o fpdf2 escapa os parenteses do literal PDF.
     assert b"FIXA desde o m\xeas 1" in pdf_bytes
@@ -441,7 +441,7 @@ def test_pdf_diz_que_a_taxa_de_franquia_e_parcelada_sem_juros():
         None,
         viabilidade=viab,
     )
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 10" in pdf_bytes
     assert b"parcelada em 4x sem juros" in pdf_bytes
     assert b"R$ 160.000,00 parcelada" in pdf_bytes
 
@@ -461,7 +461,7 @@ def test_pdf_sem_parcelas_franquia_nao_afirma_parcelamento():
         None,
         viabilidade=viab,
     )
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 10" in pdf_bytes
     assert b"sem juros" not in pdf_bytes
     assert b"Taxa de franquia" not in pdf_bytes
     # A linha de financiamento continua inteira.
@@ -479,7 +479,7 @@ def test_pdf_sem_folha_no_payload_nao_inventa_a_linha():
         None,
         viabilidade=viab,
     )
-    assert b"/Count 9" in pdf_bytes
+    assert b"/Count 10" in pdf_bytes
     assert b"FIXA desde o m\xeas 1" not in pdf_bytes
 
 
@@ -527,7 +527,7 @@ def test_pdf_aceita_o_payload_v1_cru():
         None,
         viabilidade=payload,
     )
-    assert b"/Count 8" in pdf_bytes
+    assert b"/Count 9" in pdf_bytes
     assert b"R$ 84.604,69" in pdf_bytes    # canonico do aluguel-teto, direto da secao v1
     assert b"29 meses" in pdf_bytes        # retorno.payback
     assert b"R$ 900.925,18" in pdf_bytes   # investimento.juros_totais

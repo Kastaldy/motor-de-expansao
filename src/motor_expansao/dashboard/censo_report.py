@@ -2072,11 +2072,19 @@ def _conclusao_altura_obs(pdf: _UltraPDF, texto: str, largura: float) -> float:
     conhecida DEPOIS de desenhar. Exige a fonte ja aplicada pelo chamador.
     """
     largura_texto = largura - 2 * _CONCLUSAO_OBS_PAD_X
-    linhas = pdf.multi_cell(
+    saida = pdf.multi_cell(
         largura_texto, _CONCLUSAO_OBS_LINHA_H, _ascii(texto), dry_run=True, output="LINES"
     )
-    n = max(1, len(linhas))
-    return _CONCLUSAO_OBS_ACENTO_H + n * _CONCLUSAO_OBS_LINHA_H + 2 * _CONCLUSAO_OBS_PAD_Y
+    # O retorno de `multi_cell` e' uma UNIAO que depende de `output` (bool, float, lista
+    # de linhas ou tuplas delas), e o mypy nao estreita isso pelo valor do argumento. A
+    # checagem explicita satisfaz o type checker E degrada para 1 linha caso a assinatura
+    # do fpdf2 mude -- um card de altura minima e' preferivel a um TypeError no relatorio.
+    n = len(saida) if isinstance(saida, (list, tuple)) else 1
+    return (
+        _CONCLUSAO_OBS_ACENTO_H
+        + max(1, n) * _CONCLUSAO_OBS_LINHA_H
+        + 2 * _CONCLUSAO_OBS_PAD_Y
+    )
 
 
 def _conclusao_bloco_observacoes(
