@@ -48,6 +48,10 @@ _RESIDUAL_OK = {
     "oferta_consumida_mercado_estimada": 3_000,
 }
 _INFO_OK = {"metragem_m2": 1_800, "aluguel_pedido": 45_000.0, "pe_direito_m": 4.0}
+# `_MIN_RESULT` sozinho NAO tem as metricas censitarias, e sem elas o parecer cai na
+# ressalva "metas censitarias nao avaliadas" (por design). Os testes que exercitam o
+# caminho APROVADO no PDF precisam do result com censo.
+_RESULT_PDF = {**_MIN_RESULT, **_RESULT_OK}
 _VIAB_OK = {
     "margem_ebitda_pct": 0.40,
     "payback_meses": 30.0,
@@ -256,7 +260,22 @@ def test_result_e_residual_vazios_nao_reprovam():
     """Sem censo/mercado os cards ficam NEUTROS (indecidiveis), nunca vermelhos."""
     parecer = _avaliar_conclusao(None, None, _INFO_OK, _VIAB_OK)
     assert parecer.eliminatorios == ()
-    assert parecer.status == CONCLUSAO_APROVADO
+
+
+def test_censo_ausente_nao_aprova_afirmando_o_que_nao_avaliou():
+    """O reverso do invariante de indecidivel, e um defeito REAL corrigido em 2026-08-07:
+    ponto sem nenhum setor no raio saia "Aprovado" AFIRMANDO no texto de confirmacao que
+    atendia "as metas censitarias do raio" -- que nunca chegaram a ser avaliadas."""
+    parecer = _avaliar_conclusao(None, None, _INFO_OK, _VIAB_OK)
+    assert parecer.status == CONCLUSAO_RESSALVAS
+    assert parecer.eliminatorios == ()  # falta de dado nao reprova
+    assert any("Metas censitárias não avaliadas" in linha for linha in parecer.ressalvas)
+
+
+def test_censo_parcial_nao_dispara_a_ressalva_de_censo_ausente():
+    """A ressalva e' para censo INTEIRO ausente; uma metrica faltando e' outro caso."""
+    parecer = _parecer(result={"renda_domiciliar_total_raio": None})
+    assert all("não avaliadas" not in linha for linha in parecer.ressalvas)
 
 
 def test_valores_nan_nao_disparam_gate():
@@ -308,7 +327,7 @@ def test_sem_viabilidade_nao_ha_pagina_de_conclusao():
 
 def test_com_viabilidade_a_pagina_entra_antes_do_credito():
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
-        _MIN_RESULT, None, residual=_RESIDUAL_OK, info_imovel=_INFO_OK, viabilidade=_VIAB_OK
+        _RESULT_PDF, None, residual=_RESIDUAL_OK, info_imovel=_INFO_OK, viabilidade=_VIAB_OK
     )
     assert b"/Count 10" in pdf_bytes  # 7 base + info + numeros + conclusao
     assert _TIT_CONCLUSAO in pdf_bytes
@@ -396,13 +415,216 @@ def test_selo_carimba_o_status_nos_bytes_do_pdf(viab_extra, esperado):
     "Aprovado" daria falso positivo em qualquer um dos tres estados.
     """
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
-        _MIN_RESULT,
+        _RESULT_PDF,
         None,
         residual=_RESIDUAL_OK,
         info_imovel=_INFO_OK,
         viabilidade={**_VIAB_OK, **viab_extra},
     )
     assert esperado in pdf_bytes
+
+
+# --------------------------------------------------------------------------- #
+# Layout: cards de observacao, corte e centralizacao vertical                  #
+# --------------------------------------------------------------------------- #
+def test_quantos_cabem_conta_ate_estourar_o_limite():
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_OBS_GAP,
+        _conclusao_quantos_cabem,
+    )
+
+    # gap entra ENTRE os cards, entao o 3o so cabe se sobrar altura para ele inteiro.
+    passo = 30.0 + _CONCLUSAO_OBS_GAP
+    assert _conclusao_quantos_cabem((30.0, 30.0, 30.0), 0.0, 2 * passo) == 2
+    assert _conclusao_quantos_cabem((30.0, 30.0, 30.0), 0.0, 500.0) == 3
+    assert _conclusao_quantos_cabem((30.0,), 0.0, 20.0) == 0
+    assert _conclusao_quantos_cabem((), 0.0, 500.0) == 0
+
+
+@pytest.mark.parametrize("altura", [20.0, 27.0, 33.0, 40.0, 46.0, 53.0, 61.0])
+def test_plano_reserva_espaco_para_o_aviso_de_truncamento(altura):
+    """REGRESSAO: o loop enchia a coluna ate o limite e a linha "(+N nao exibido(s))"
+    saia POR CIMA do ultimo card -- dois textos sobrepostos e ilegiveis.
+
+    Varias alturas de proposito: com UMA so o teste passava mesmo com a correcao
+    removida, porque para muitas alturas a reserva e' no-op (sobra folga de qualquer
+    jeito). O caso discriminante e' garantido pelo teste seguinte.
+    """
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_AREA_BASE,
+        _CONCLUSAO_OBS_AVISO_H,
+        _conclusao_plano_observacoes,
+    )
+
+    alturas = tuple([altura] * 40)  # muito mais do que a coluna comporta
+    cabem, y_aviso = _conclusao_plano_observacoes(alturas, 100.0)
+    assert 0 < cabem < len(alturas)
+    # O aviso tem de caber INTEIRO abaixo do ultimo card desenhado.
+    assert y_aviso + _CONCLUSAO_OBS_AVISO_H <= _CONCLUSAO_AREA_BASE
+
+
+def test_reserva_do_aviso_nao_e_no_op():
+    """Prova que a segunda passada de `_conclusao_plano_observacoes` faz efeito: existe
+    altura em que ela tira um card do que caberia sem a reserva.
+
+    Sem este teste, apagar o retry deixava a suite inteira VERDE (medido: 58 passed) --
+    a fixture antiga usava 40,0, altura em que a reserva nao muda nada.
+    """
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_AREA_BASE,
+        _conclusao_plano_observacoes,
+        _conclusao_quantos_cabem,
+    )
+
+    discriminantes = [
+        h
+        for h in range(15, 80)
+        if _conclusao_plano_observacoes(tuple([float(h)] * 40), 100.0)[0]
+        < _conclusao_quantos_cabem(tuple([float(h)] * 40), 100.0, _CONCLUSAO_AREA_BASE)
+    ]
+    assert discriminantes, "a reserva do aviso virou no-op para toda altura testada"
+
+
+def test_plano_sem_truncamento_nao_desperdica_espaco():
+    from motor_expansao.dashboard.censo_report import _conclusao_plano_observacoes
+
+    alturas = (30.0, 30.0)
+    cabem, _y = _conclusao_plano_observacoes(alturas, 100.0)
+    assert cabem == 2  # cabem folgados: a reserva do aviso nem entra na conta
+
+
+def test_severidade_colore_o_card_da_observacao():
+    """Eliminatorio tingido (salta), ressalva no cinza dos demais cards com a cor so na
+    barra -- com 8+ apontamentos, tingir todos deixaria a pagina inteira vermelha."""
+    from motor_expansao.dashboard.censo_report import (
+        _CARD_NEUTRO_RGB,
+        _CARD_VERDE_RGB,
+        _CARD_VERMELHO_RGB,
+        _CONCLUSAO_OBS_CORES,
+    )
+
+    assert _CONCLUSAO_OBS_CORES["eliminatorio"][0] == _CARD_VERMELHO_RGB
+    assert _CONCLUSAO_OBS_CORES["ressalva"][0] == _CARD_NEUTRO_RGB
+    assert _CONCLUSAO_OBS_CORES["confirmacao"][0] == _CARD_VERDE_RGB
+    # Toda severidade tem acento SOLIDO proprio, distinto do fundo.
+    for fundo, acento in _CONCLUSAO_OBS_CORES.values():
+        assert fundo != acento
+
+
+def test_itens_ordenam_eliminatorios_antes_das_ressalvas():
+    from motor_expansao.dashboard.censo_report import _conclusao_itens
+
+    parecer = _parecer(
+        info={"metragem_m2": 900},  # eliminatorio
+        viab={"flag_fora_envelope": True},  # ressalva
+    )
+    itens = _conclusao_itens(parecer)
+    severidades = [sev for _txt, sev in itens]
+    assert severidades == sorted(severidades, key=lambda s: s != "eliminatorio")
+
+
+def test_parecer_limpo_vira_um_card_de_confirmacao():
+    from motor_expansao.dashboard.censo_report import _conclusao_itens
+
+    itens = _conclusao_itens(_parecer())
+    assert len(itens) == 1
+    assert itens[0][1] == "confirmacao"
+
+
+def test_conteudo_e_centralizado_verticalmente_na_area():
+    """Com pouco conteudo a coluna NAO comeca colada na banda de titulo."""
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_AREA_BASE,
+        _CONCLUSAO_AREA_TOPO,
+        _CONCLUSAO_SELO_H,
+    )
+
+    folga = (_CONCLUSAO_AREA_BASE - _CONCLUSAO_AREA_TOPO - _CONCLUSAO_SELO_H) / 2
+    assert folga > 0  # o selo sobra espaco dos dois lados
+    # E a area de conteudo termina acima da nota metodologica.
+    from motor_expansao.dashboard.censo_report import _CONCLUSAO_NOTA_Y
+
+    assert _CONCLUSAO_AREA_BASE <= _CONCLUSAO_NOTA_Y
+
+
+# --------------------------------------------------------------------------- #
+# Correcoes da revisao adversarial de 2026-08-07                              #
+# --------------------------------------------------------------------------- #
+def test_texto_da_observacao_chega_aos_bytes_do_pdf():
+    """Sem este assert, trocar o desenho do card por `pass` deixava a suite VERDE
+    (medido: 76 passed) -- nenhum teste conferia o texto do apontamento no PDF."""
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        _RESULT_PDF,
+        None,
+        residual=_RESIDUAL_OK,
+        info_imovel={**_INFO_OK, "metragem_m2": 1_349},
+        viabilidade=_VIAB_OK,
+    )
+    assert "fora da faixa ideal".encode("latin-1") in pdf_bytes
+
+
+@pytest.mark.parametrize(
+    "bruto,esperado",
+    [
+        ("pop<5000", "população de captação abaixo de 5.000"),
+        ("renda<1600", "renda per capita de captação abaixo de R$ 1.600"),
+        # O motor junta com "; " quando pop E renda estao abaixo do piso -- o caso MAIS
+        # grave era o unico que nunca traduzia e saia com o token cru no PDF.
+        ("pop<5000; renda<1600",
+         "população de captação abaixo de 5.000; renda per capita de captação abaixo de R$ 1.600"),
+        ("token_novo", "token_novo"),  # desconhecido sai como veio
+    ],
+)
+def test_motivo_de_zona_morta_traduz_token_a_token(bruto, esperado):
+    from motor_expansao.dashboard.censo_report import _conclusao_motivo_zona_morta
+
+    assert _conclusao_motivo_zona_morta(bruto) == esperado
+
+
+def test_zona_morta_composta_nao_vaza_token_cru_para_o_parecer():
+    parecer = _parecer(
+        viab={"flag_zona_morta": True, "motivo_zona_morta": "pop<5000; renda<1600"}
+    )
+    texto = _texto(parecer)
+    assert "pop<5000" not in texto and "renda<1600" not in texto
+    assert "população de captação" in texto and "renda per capita de captação" in texto
+
+
+@pytest.mark.parametrize("flag", ["flag_zona_morta", "flag_fora_envelope"])
+def test_flag_nan_nao_dispara_gate(flag):
+    """`NaN` e TRUTHY em Python: com truthiness crua um flag corrompido REPROVAVA o ponto
+    por zona morta, contra o invariante de que indecidivel nunca reprova."""
+    parecer = _parecer(viab={flag: float("nan")})
+    assert parecer.status == CONCLUSAO_APROVADO
+    assert parecer.eliminatorios == ()
+
+
+def test_gate_e_card_de_aluguel_leem_o_mesmo_par_de_faixas():
+    """Payload com `aluguel_teto` ESCALAR e sem `aluguel_teto_faixas` (forma legada, ainda
+    aceita por `_viab_normalizado`): o gate ficava MUDO enquanto o card ao lado pintava
+    vermelho na mesma pagina -- a divergencia que o FIN-VIAB-01 combateu."""
+    from motor_expansao.dashboard.censo_report import (
+        _CARD_NEUTRO_RGB,
+        _conclusao_faixas_aluguel,
+        _cor_aluguel_pedido,
+    )
+
+    dados = {"aluguel_teto": 60_000.0}  # sem a chave de faixas
+    teto, excecao = _conclusao_faixas_aluguel(dados)
+    assert teto == 60_000.0  # o gate ENXERGA o teto pelo fallback
+    assert excecao is None
+
+    # E o parecer aponta o aluguel alto em vez de aprovar em silencio.
+    parecer = _avaliar_conclusao(
+        _RESULT_OK,
+        _RESIDUAL_OK,
+        {**_INFO_OK, "aluguel_pedido": 95_000.0},
+        {**_VIAB_OK, "aluguel_teto": 60_000.0, "aluguel_teto_faixas": None},
+    )
+    assert parecer.status == CONCLUSAO_RESSALVAS
+    assert "acima do teto" in _texto(parecer)
+    # O card usa o MESMO teto, entao nao contradiz o gate.
+    assert _cor_aluguel_pedido(95_000.0, teto, excecao) != _CARD_NEUTRO_RGB
 
 
 def test_pagina_de_conclusao_nao_usa_caractere_fora_de_latin1():

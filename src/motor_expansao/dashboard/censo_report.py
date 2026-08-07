@@ -1544,6 +1544,41 @@ _CONCLUSAO_NOTA = (
 # cabe NAO vaza para a pagina seguinte -- ele some por baixo do rodape, em silencio.
 _CONCLUSAO_OBS_LIMITE_Y = _PAGE_H - 74.0
 _CONCLUSAO_NOTA_Y = _PAGE_H - 62.0
+
+# Area de conteudo entre a banda de titulo e a nota metodologica. As duas colunas sao
+# centralizadas VERTICALMENTE nela (pedido de Vinicius, 2026-08-07); antes tudo nascia
+# colado no topo e sobrava um vazio grande embaixo em quase todo relatorio.
+_CONCLUSAO_AREA_TOPO = 66.0
+_CONCLUSAO_AREA_BASE = _CONCLUSAO_OBS_LIMITE_Y
+
+# Cada observacao vira um CARD, com o mesmo peso visual dos cards de valor (pedido de
+# Vinicius, 2026-08-07: em bullet de texto solto elas ficavam discretas demais e davam a
+# impressao de que so o valor tinha decidido o parecer). Barra de acento no topo, como
+# nos cards de aluguel, mas aqui a cor e' SEMANTICA -- diz a severidade do apontamento.
+_CONCLUSAO_OBS_LINHA_H = 13.0
+# Padding e gap ENXUTOS de proposito: com 8/8 a coluna comportava 6 cards, e o parecer de
+# um ponto ruim tipico tem 10 apontamentos -- 4 caiam no "(+N nao exibido(s))" justamente
+# onde a leitura mais importa. Com 5/6 cabem 8, sem apertar o texto de forma perceptivel.
+_CONCLUSAO_OBS_PAD_Y = 5.0
+_CONCLUSAO_OBS_PAD_X = 16.0
+_CONCLUSAO_OBS_GAP = 6.0
+_CONCLUSAO_OBS_ACENTO_H = 4.0
+_CONCLUSAO_OBS_TITULO_H = 16.0
+_CONCLUSAO_OBS_TITULO_GAP = 8.0
+_CONCLUSAO_ALUGUEL_OBS_GAP = 22.0
+# Altura reservada para a linha "(+N apontamento(s) nao exibido(s))". Sem reservar, o
+# loop enchia a coluna ate o limite e o aviso saia POR CIMA do ultimo card.
+_CONCLUSAO_OBS_AVISO_H = 16.0
+
+# Severidade da observacao -> (fundo, acento). Identificadores BRUTOS, sem acento.
+# Hierarquia deliberada: o que REPROVA leva fundo tingido e salta; a ressalva fica no
+# cinza neutro dos demais cards, com a cor so na barra -- com 8+ apontamentos, tingir
+# todos deixaria a pagina inteira vermelha e nada saltaria.
+_CONCLUSAO_OBS_CORES = {
+    "eliminatorio": (_CARD_VERMELHO_RGB, (198, 57, 57)),
+    "ressalva": (_CARD_NEUTRO_RGB, (198, 146, 44)),
+    "confirmacao": (_CARD_VERDE_RGB, (26, 170, 85)),
+}
 # Cor SOLIDA do selo por estado (traco e texto). Os `_CARD_*_RGB` sao pasteis de FUNDO e
 # nao teriam contraste como linha de 2 pt nem como tipografia; estas sao as mesmas
 # familias em versao cheia. Verde e ambar espelham a semantica de `--pos`/`--warn` do
@@ -1560,15 +1595,14 @@ _CONCLUSAO_SELO_TEXTOS = {
     "reprovado": ("REPROVADO", "FORA DA RÉGUA"),
 }
 
-# Geometria de 2 COLUNAS (reestruturacao pedida por Vinicius, 2026-08-07): observacoes a
-# ESQUERDA, selo + aluguel a DIREITA. A largura da coluna esquerda sai por subtracao para
-# a soma fechar sempre na pagina, mesmo se a coluna do selo mudar.
+# Geometria de 2 COLUNAS (reestruturacao pedida por Vinicius, 2026-08-07): cards de
+# aluguel + observacoes a ESQUERDA, selo sozinho a DIREITA. A largura da coluna esquerda
+# sai por subtracao para a soma fechar sempre na pagina, mesmo se a do selo mudar.
 _CONCLUSAO_MARGEM_X = 36.0
 _CONCLUSAO_COL_DIR_W = 240.0
 _CONCLUSAO_COL_GAP = 26.0
 _CONCLUSAO_COL_DIR_X = _PAGE_W - _CONCLUSAO_MARGEM_X - _CONCLUSAO_COL_DIR_W
 _CONCLUSAO_COL_ESQ_W = _CONCLUSAO_COL_DIR_X - _CONCLUSAO_MARGEM_X - _CONCLUSAO_COL_GAP
-_CONCLUSAO_TOPO = 76.0
 # 240 x 196 ~ 1,2:1 -- quase quadrado, como o carimbo da tela. Nao e' 1:1 exato porque o
 # rotulo mais longo ("COM RESSALVAS") precisa da largura para nao encolher demais.
 _CONCLUSAO_SELO_H = 196.0
@@ -1581,7 +1615,6 @@ _CONCLUSAO_SELO_RAIO = 13.0
 # (pedido de Vinicius, 2026-08-07). O gap e' HORIZONTAL desde entao.
 _CONCLUSAO_ALUGUEL_H = 72.0
 _CONCLUSAO_ALUGUEL_GAP = 12.0
-_CONCLUSAO_OBS_TITULO_Y = _CONCLUSAO_TOPO + _CONCLUSAO_ALUGUEL_H + 24.0
 
 
 @dataclass(frozen=True)
@@ -1614,6 +1647,51 @@ def _conclusao_valor(value: Any) -> float | None:
     if numero != numero or numero in (float("inf"), float("-inf")):
         return None
     return numero
+
+
+def _conclusao_flag(value: Any) -> bool:
+    """True SO quando o flag veio e e' verdadeiro. Ausente/NaN -> False.
+
+    Truthiness crua contrariava o invariante escrito no cabecalho desta secao: `NaN` e'
+    truthy em Python, entao um flag corrompido reprovava o ponto por zona morta. O
+    payload do browser manda `null`, mas um cliente que serialize com `allow_nan=True`
+    injeta `NaN` -- e indecidivel nao pode reprovar.
+    """
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    return bool(value)
+
+
+def _conclusao_faixas_aluguel(dados: Mapping[str, Any]) -> tuple[float | None, float | None]:
+    """(teto, excecao) resolvidos UMA vez, para o gate e o card lerem o MESMO par.
+
+    O payload chega em duas formas: `aluguel_teto_faixas` (dict das 3 faixas) ou
+    `aluguel_teto` ja achatado no canonico. Resolver isso em dois lugares diferentes
+    deixava o gate MUDO enquanto o card ao lado pintava vermelho na mesma pagina -- a
+    mesma classe de divergencia que o FIN-VIAB-01 combateu entre o PDF e a tela.
+    """
+    faixas = dados.get("aluguel_teto_faixas")
+    faixas = faixas if isinstance(faixas, Mapping) else {}
+    teto = _conclusao_valor(faixas.get("teto"))
+    if teto is None:
+        teto = _conclusao_valor(dados.get("aluguel_teto"))
+    return teto, _conclusao_valor(faixas.get("excecao"))
+
+
+def _conclusao_motivo_zona_morta(bruto: str) -> str:
+    """Traduz o motivo TOKEN A TOKEN.
+
+    `viabilidade_ponto` junta os motivos com "; " quando populacao E renda estao abaixo
+    do piso -- ou seja, o caso MAIS grave era o unico que nunca traduzia, e saia
+    "pop<5000; renda<1600" cru no PDF. Token desconhecido cai no fallback e sai como veio.
+    """
+    partes = [parte.strip() for parte in bruto.split(";") if parte.strip()]
+    return "; ".join(_CONCLUSAO_MOTIVO_ZONA_MORTA.get(parte, parte) for parte in partes)
 
 
 def _conclusao_metas_vermelhas(
@@ -1725,9 +1803,9 @@ def _avaliar_conclusao(
         ressalvas.append("Cenário fora da régua de viabilidade da Ultra.")
 
     # --- Zona morta (E4) ---
-    if dados_viab.get("flag_zona_morta"):
+    if _conclusao_flag(dados_viab.get("flag_zona_morta")):
         bruto = str(dados_viab.get("motivo_zona_morta") or "").strip()
-        motivo = _CONCLUSAO_MOTIVO_ZONA_MORTA.get(bruto, bruto)
+        motivo = _conclusao_motivo_zona_morta(bruto)
         eliminatorios.append(
             f"Ponto em zona morta para a operação ({motivo})."
             if motivo
@@ -1759,12 +1837,10 @@ def _avaliar_conclusao(
         )
 
     # --- Aluguel pedido x faixas de aluguel-teto (E2 / R2) ---
-    # As faixas entram como REGUA e nunca como numero impresso (ver cabecalho da secao).
-    faixas = dados_viab.get("aluguel_teto_faixas")
-    faixas = faixas if isinstance(faixas, Mapping) else {}
+    # MESMO par que o card imprime (`_conclusao_faixas_aluguel`): resolver separado fazia
+    # o gate ficar mudo com o card vermelho ao lado, na mesma pagina.
     aluguel = _conclusao_valor(info.get("aluguel_pedido"))
-    teto = _conclusao_valor(faixas.get("teto"))
-    excecao = _conclusao_valor(faixas.get("excecao"))
+    teto, excecao = _conclusao_faixas_aluguel(dados_viab)
     if aluguel is not None and excecao is not None and aluguel > excecao:
         eliminatorios.append(
             "Aluguel pedido acima do máximo admitido para este ponto: inviabiliza a "
@@ -1776,9 +1852,28 @@ def _avaliar_conclusao(
         )
 
     # --- Extrapolacao da base de calibracao (R5) ---
-    if dados_viab.get("flag_fora_envelope"):
+    if _conclusao_flag(dados_viab.get("flag_fora_envelope")):
         ressalvas.append(
             "Metragem fora do envelope da base de calibração: projeção com incerteza maior."
+        )
+
+    # --- Censo indisponivel para o ponto ---
+    # As 4 metricas censitarias ausentes AO MESMO TEMPO significam que nenhum setor caiu
+    # no raio (ponto no mar, particao geo do municipio ausente, borda da malha). Sem esta
+    # ressalva o parecer saia "Aprovado" AFIRMANDO que o ponto "atende as metas
+    # censitarias do raio" que nunca chegou a avaliar -- o reverso do invariante de
+    # indecidivel: nao reprova por falta de dado, mas tambem nao pode APROVAR por ela.
+    if all(
+        _conclusao_valor(result.get(chave)) is None
+        for chave in (
+            "pop_total_raio",
+            "renda_per_capita_media_raio",
+            "domicilios_total_raio",
+            "renda_domiciliar_total_raio",
+        )
+    ):
+        ressalvas.append(
+            "Metas censitárias não avaliadas: nenhum setor censitário no raio do ponto."
         )
 
     # --- Mercado e metas censitarias (R7 / R4) ---
@@ -1932,11 +2027,8 @@ def _conclusao_cards_aluguel(
     gracioso em vez de sumir, para a ausencia do dado ficar visivel no parecer.
     """
     info = info_imovel or {}
-    faixas = dados.get("aluguel_teto_faixas")
-    faixas = faixas if isinstance(faixas, Mapping) else {}
-    teto = dados.get("aluguel_teto")
-    if not _viab_tem(teto):
-        teto = faixas.get("teto")
+    # MESMO par que os gates E2/R2 usam -- ver `_conclusao_faixas_aluguel`.
+    teto, excecao = _conclusao_faixas_aluguel(dados)
     aluguel = info.get("aluguel_pedido")
 
     cards = (
@@ -1944,7 +2036,7 @@ def _conclusao_cards_aluguel(
         (
             "Aluguel pedido (mês)",
             _viab_brl(aluguel),
-            _cor_aluguel_pedido(aluguel, teto, faixas.get("excecao")),
+            _cor_aluguel_pedido(aluguel, teto, excecao),
         ),
     )
     card_h = _CONCLUSAO_ALUGUEL_H
@@ -1968,6 +2060,90 @@ def _conclusao_cards_aluguel(
         pdf.cell(card_w - 28, 22, valor_txt)
 
 
+def _conclusao_itens(parecer: _ConclusaoPonto) -> tuple[tuple[str, str], ...]:
+    """(texto, severidade) na ordem de leitura: o que reprovou antes do que so ressalva."""
+    itens = [(texto, "eliminatorio") for texto in parecer.eliminatorios]
+    itens += [(texto, "ressalva") for texto in parecer.ressalvas]
+    return tuple(itens) or ((_CONCLUSAO_APROVADO_TEXTO, "confirmacao"),)
+
+
+def _conclusao_altura_obs(pdf: _UltraPDF, texto: str, largura: float) -> float:
+    """Altura do card de UMA observacao, medida sem desenhar nada.
+
+    `dry_run` do `multi_cell` devolve as linhas que o texto ocuparia na largura dada; sem
+    isso nao daria para centralizar o bloco verticalmente, porque a altura so seria
+    conhecida DEPOIS de desenhar. Exige a fonte ja aplicada pelo chamador.
+    """
+    largura_texto = largura - 2 * _CONCLUSAO_OBS_PAD_X
+    linhas = pdf.multi_cell(
+        largura_texto, _CONCLUSAO_OBS_LINHA_H, _ascii(texto), dry_run=True, output="LINES"
+    )
+    n = max(1, len(linhas))
+    return _CONCLUSAO_OBS_ACENTO_H + n * _CONCLUSAO_OBS_LINHA_H + 2 * _CONCLUSAO_OBS_PAD_Y
+
+
+def _conclusao_bloco_observacoes(
+    pdf: _UltraPDF, itens: tuple[tuple[str, str], ...], largura: float
+) -> tuple[tuple[float, ...], float]:
+    """(altura de cada card, altura do bloco inteiro incluindo titulo e gaps)."""
+    pdf.set_font("Helvetica", "", 10)
+    alturas = tuple(_conclusao_altura_obs(pdf, texto, largura) for texto, _sev in itens)
+    total = _CONCLUSAO_OBS_TITULO_H + _CONCLUSAO_OBS_TITULO_GAP
+    total += sum(alturas) + _CONCLUSAO_OBS_GAP * max(0, len(alturas) - 1)
+    return alturas, total
+
+
+def _conclusao_quantos_cabem(alturas: tuple[float, ...], y: float, limite: float) -> int:
+    """Quantos cards, na ordem, cabem entre `y` e `limite`. Puro, sem tocar no PDF."""
+    topo = y
+    cabem = 0
+    for altura in alturas:
+        if topo + altura > limite:
+            break
+        topo += altura + _CONCLUSAO_OBS_GAP
+        cabem += 1
+    return cabem
+
+
+def _conclusao_plano_observacoes(alturas: tuple[float, ...], y: float) -> tuple[int, float]:
+    """(quantos cards desenhar, y onde a linha de aviso entra). Funcao pura.
+
+    Quando nem todos cabem, a conta e' REFEITA com a altura do aviso ja reservada. Sem
+    isso o loop enchia a coluna ate o limite e a linha "(+N nao exibido(s))" era escrita
+    POR CIMA do ultimo card -- os dois textos sobrepostos e ilegiveis.
+    """
+    cabem = _conclusao_quantos_cabem(alturas, y, _CONCLUSAO_AREA_BASE)
+    if cabem < len(alturas):
+        # Desconta o aviso E o gap: `_conclusao_quantos_cabem` garante que o ultimo CARD
+        # termina dentro do limite, mas o aviso comeca um gap depois disso. Sem descontar
+        # os dois, o aviso ainda estourava a area por ate `_CONCLUSAO_OBS_GAP` pt.
+        cabem = _conclusao_quantos_cabem(
+            alturas,
+            y,
+            _CONCLUSAO_AREA_BASE - _CONCLUSAO_OBS_AVISO_H - _CONCLUSAO_OBS_GAP,
+        )
+    return cabem, y + sum(alturas[:cabem]) + _CONCLUSAO_OBS_GAP * cabem
+
+
+def _conclusao_card_observacao(
+    pdf: _UltraPDF, texto: str, severidade: str, x: float, y: float, largura: float, altura: float
+) -> None:
+    """Um card de observacao: fundo + borda fina + barra de acento no topo + texto."""
+    fundo, acento = _CONCLUSAO_OBS_CORES[severidade]
+    pdf.set_fill_color(*fundo)
+    pdf.rect(x, y, largura, altura, style="F")
+    pdf.set_draw_color(225, 225, 228)
+    pdf.rect(x, y, largura, altura, style="D")
+    pdf.set_fill_color(*acento)
+    pdf.rect(x, y, largura, _CONCLUSAO_OBS_ACENTO_H, style="F")
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_xy(
+        x + _CONCLUSAO_OBS_PAD_X, y + _CONCLUSAO_OBS_ACENTO_H + _CONCLUSAO_OBS_PAD_Y
+    )
+    pdf.multi_cell(largura - 2 * _CONCLUSAO_OBS_PAD_X, _CONCLUSAO_OBS_LINHA_H, _ascii(texto))
+
+
 def _conclusao_page(
     pdf: _UltraPDF,
     result: dict[str, Any],
@@ -1984,8 +2160,9 @@ def _conclusao_page(
     Estrutura pedida por Vinicius (2026-08-07). A direita fica SO o selo, que segue a
     anatomia do carimbo de veredito da tela de Viabilidade (quadrado de cantos
     arredondados, simbolo em cima, rotulo embaixo, cor pelo estado). A esquerda ficam os
-    dois cards de aluguel, alinhados pelo topo com o selo, e as observacoes logo abaixo
-    deles. READ-ONLY sobre o M1.
+    dois cards de aluguel e, abaixo deles, as observacoes -- cada uma em CARD proprio,
+    com o mesmo peso visual dos cards de valor. As duas colunas sao centralizadas
+    VERTICALMENTE na area de conteudo, cada uma no seu proprio eixo. READ-ONLY sobre o M1.
     """
     dados = _viab_normalizado(viabilidade)
     parecer = _avaliar_conclusao(result, residual, info_imovel, dados)
@@ -1996,51 +2173,48 @@ def _conclusao_page(
 
     margem = _CONCLUSAO_MARGEM_X
     largura_esq = _CONCLUSAO_COL_ESQ_W
+    area_h = _CONCLUSAO_AREA_BASE - _CONCLUSAO_AREA_TOPO
 
-    # --- Coluna DIREITA: so o selo ---
+    # --- Coluna DIREITA: so o selo, centrado na vertical ---
     _conclusao_selo(
         pdf,
         parecer.status,
         _CONCLUSAO_COL_DIR_X,
-        _CONCLUSAO_TOPO,
+        _CONCLUSAO_AREA_TOPO + (area_h - _CONCLUSAO_SELO_H) / 2,
         _CONCLUSAO_COL_DIR_W,
         _CONCLUSAO_SELO_H,
     )
 
-    # --- Coluna ESQUERDA: cards de aluguel no topo, observacoes abaixo ---
-    # Os cards alinham pelo topo com o selo, o que fecha uma linha horizontal de leitura
-    # rapida (numero + veredito) antes do texto corrido.
-    _conclusao_cards_aluguel(
-        pdf, dados, info_imovel, margem, _CONCLUSAO_TOPO, largura_esq, secondary
-    )
+    # --- Coluna ESQUERDA: cards de aluguel + cards de observacao, centrados na vertical ---
+    itens = _conclusao_itens(parecer)
+    alturas, bloco_obs_h = _conclusao_bloco_observacoes(pdf, itens, largura_esq)
+    conteudo_h = _CONCLUSAO_ALUGUEL_H + _CONCLUSAO_ALUGUEL_OBS_GAP + bloco_obs_h
+    # `max(0, ...)`: conteudo mais alto que a area comeca no TOPO em vez de subir acima da
+    # banda de titulo -- e a guarda de altura mais abaixo corta o excedente com aviso.
+    y = _CONCLUSAO_AREA_TOPO + max(0.0, (area_h - conteudo_h) / 2)
 
-    # Observacoes: eliminatorios primeiro (o que reprovou vem antes do que so ressalva).
-    y = _CONCLUSAO_OBS_TITULO_Y
+    _conclusao_cards_aluguel(pdf, dados, info_imovel, margem, y, largura_esq, secondary)
+    y += _CONCLUSAO_ALUGUEL_H + _CONCLUSAO_ALUGUEL_OBS_GAP
+
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_xy(margem, y)
-    pdf.cell(largura_esq, 16, _ascii("Observações"))
-    y += 24.0
+    pdf.cell(largura_esq, _CONCLUSAO_OBS_TITULO_H, _ascii("Observações"))
+    y += _CONCLUSAO_OBS_TITULO_H + _CONCLUSAO_OBS_TITULO_GAP
 
-    linhas = list(parecer.eliminatorios) + list(parecer.ressalvas) or [_CONCLUSAO_APROVADO_TEXTO]
-    pdf.set_text_color(*_CINZA_TEXTO)
-    pdf.set_font("Helvetica", "", 10)
-    exibidas = 0
-    for linha in linhas:
-        if y + 14.0 > _CONCLUSAO_OBS_LIMITE_Y:
-            break
-        pdf.set_xy(margem, y)
-        # Bullet ASCII: "-". O "•" esta FORA do latin-1 e sairia como "?" silencioso.
-        pdf.multi_cell(largura_esq, 14, _ascii(f"- {linha}"))
-        y = pdf.get_y() + 4.0
-        exibidas += 1
-    restantes = len(linhas) - exibidas
+    cabem, y_aviso = _conclusao_plano_observacoes(alturas, y)
+    for (texto, severidade), altura in list(zip(itens, alturas, strict=True))[:cabem]:
+        _conclusao_card_observacao(pdf, texto, severidade, margem, y, largura_esq, altura)
+        y += altura + _CONCLUSAO_OBS_GAP
+    restantes = len(itens) - cabem
     if restantes > 0:
         # Truncar em SILENCIO faria a pagina parecer completa quando nao esta.
-        pdf.set_xy(margem, min(y, _CONCLUSAO_OBS_LIMITE_Y - 14.0))
-        pdf.multi_cell(
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_xy(margem, y_aviso)
+        pdf.cell(
             largura_esq,
-            14,
+            12,
             _ascii(f"(+{restantes} apontamento(s) não exibido(s) por falta de espaço.)"),
         )
 
