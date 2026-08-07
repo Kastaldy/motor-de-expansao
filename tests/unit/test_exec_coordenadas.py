@@ -66,6 +66,9 @@ def _mapeadas() -> pd.DataFrame:
             {"unidade": "Bangú / RJ", "uf": "RJ", "cidade": "Rio de Janeiro", "lat": -22.8798, "lng": -43.4690},
             # alvo de alias
             {"unidade": "Shopping Partage RJ", "uf": "RJ", "cidade": "São Gonçalo", "lat": -22.8209, "lng": -43.0462},
+            # alvo do alias de prefixo: a Growth chama de "CAXIAS", o cadastro de
+            # "Duque de Caxias" — nenhuma normalização liga os dois.
+            {"unidade": "Duque de Caxias", "uf": "RJ", "cidade": "Duque de Caxias", "lat": -22.7926, "lng": -43.3131},
             # divergente da curada: aqui o ponto está errado (Grande SP)
             {"unidade": "Taubaté / SP", "uf": "SP", "cidade": "São Paulo", "lat": _TAUBATE_ERRADO[0], "lng": _TAUBATE_ERRADO[1]},
             # UF divergente entre as bases: Growth marca DF, cadastro marca GO
@@ -188,8 +191,32 @@ def test_fallback_por_chave_quando_uf_diverge(app_com_dados) -> None:
     assert pilot._coord_da_unidade("NOVO GAMA - DF", "DF") == pytest.approx((-16.05, -48.04))
 
 
+def test_alias_resolve_prefixo_de_nome_que_a_normalizacao_nao_liga(app_com_dados) -> None:
+    """A Growth chama "CAXIAS - RJ"; o cadastro, "Duque de Caxias".
+
+    `_chave_unidade` remove SUFIXO de UF, nunca PREFIXO de nome — "CAXIAS" jamais
+    viraria "DUQUE DE CAXIAS". Sem o alias a unidade fica sem pin nas duas telas, que
+    foi o defeito relatado em produção em 2026-08-07.
+    """
+    assert pilot._coord_da_unidade("CAXIAS - RJ", "RJ") == pytest.approx((-22.7926, -43.3131))
+
+
+def test_valores_do_alias_sao_chaves_ja_normalizadas() -> None:
+    """Invariante do dict: o VALOR é comparado com `_chave_unidade(nome_do_cadastro)`.
+
+    Um valor que não seja ele mesmo uma chave normalizada não casa com nada e vira
+    no-op SILENCIOSO — o alias parece aplicado e a unidade continua sem pin. A pegadinha
+    real: `_chave_unidade` preserva espaços internos, então o alvo de "Duque de Caxias"
+    é "DUQUE DE CAXIAS" e não "DUQUEDECAXIAS".
+    """
+    for (chave_growth, uf), alvo in pilot._EXEC_ALIAS_COORD.items():
+        assert pilot._chave_unidade(alvo) == alvo, f"alvo nao normalizado: {alvo!r}"
+        assert pilot._chave_unidade(chave_growth) == chave_growth, f"chave nao normalizada: {chave_growth!r}"
+        assert uf == uf.upper().strip() and len(uf) == 2
+
+
 def test_sem_cadastro_devolve_none(app_com_dados) -> None:
-    assert pilot._coord_da_unidade("CAXIAS - RJ", "RJ") is None
+    assert pilot._coord_da_unidade("UNIDADE INEXISTENTE - RJ", "RJ") is None
     assert pilot._coord_da_unidade("", "RJ") is None
 
 
@@ -220,15 +247,62 @@ def test_executiva_conta_unidades_no_mapa(app_com_dados) -> None:
     assert "ADMINISTRACAO" not in nomes
     assert body["totais"]["unidades"] == 5
 
-    # 4 das 5 ganham pin; só CAXIAS fica sem (não há cadastro para ela).
+    # As 5 ganham pin; CAXIAS entrou pelo alias de prefixo ("Duque de Caxias").
     assert com_coord == {
         "BOTAFOGO - RJ",
         "ICARAI - RJ",
         "BANGU - RJ",
         "SAO GONCALO SHOPPING - RJ",
+        "CAXIAS - RJ",
     }
-    assert body["totais"]["com_coordenada"] == 4
-    assert "CAXIAS - RJ" in nomes
+    assert body["totais"]["com_coordenada"] == 5
+
+
+# --- pins do Mapa Territorial (`_ultra_pontos_mapa`) ------------------------
+
+
+def test_pins_do_mapa_unem_curada_e_cadastro(app_com_dados) -> None:
+    """Defeito de 2026-08-07: o Mapa Territorial só desenhava as 54 linhas da planilha
+    GeoFusion congelada, então a rede aberta depois disso não existia para ele."""
+    nomes = set(pilot._ultra_pontos_mapa()["nome"])
+    assert {"BOTAFOGO", "TAUBATE"} <= nomes, "as unidades da curada continuam no mapa"
+    assert {"Icaraí RJ", "Bangú / RJ", "Duque de Caxias"} <= nomes, "o cadastro completa o mapa"
+
+
+def test_pins_do_mapa_respeitam_a_precedencia_da_curada(app_com_dados) -> None:
+    """`TAUBATE` está nas duas fontes com pontos distintos: um pin só, o da curada."""
+    df = pilot._ultra_pontos_mapa()
+    taubate = df[df["nome"].map(pilot._chave_unidade).eq("TAUBATE")]
+    assert len(taubate) == 1, "a mesma unidade não pode virar dois pins"
+    ponto = (round(float(taubate.iloc[0]["lat"]), 4), round(float(taubate.iloc[0]["lng"]), 4))
+    assert ponto == _TAUBATE_OK
+    assert ponto != _TAUBATE_ERRADO
+
+
+def test_pins_do_mapa_descartam_flag_coord_invalida(app_com_dados) -> None:
+    assert "Fantasma / RJ" not in set(pilot._ultra_pontos_mapa()["nome"])
+
+
+def test_uniao_do_mapa_nao_contamina_o_indice_da_visao_executiva(app_com_dados) -> None:
+    """Guardrail de desenho: `_ultra_coord_map` separa as fontes porque a precedência é
+    ENTRE FONTES — foi misturando as duas que `TAUBATE` foi parar na Grande SP. O dict
+    `curada` tem de continuar vindo só da curada, mesmo com o mapa unindo as bases."""
+    curada, _, _ = pilot._ultra_coord_map()
+    assert set(curada) == {"BOTAFOGO", "TAUBATE"}, "o cadastro vazou para o índice da curada"
+    assert "DUQUE DE CAXIAS" not in curada
+
+
+def test_pins_do_mapa_sem_parquets_nao_quebra(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Degradação graciosa: sem os parquets (cenário do CI) o mapa fica vazio, não estoura."""
+    monkeypatch.setattr(pilot, "ULTRA_PERF_PARQUET", tmp_path / "nao_existe.parquet")
+    monkeypatch.setattr(pilot, "ULTRA_MAPEADAS_PARQUET", tmp_path / "tambem_nao.parquet")
+    _clear_caches()
+    try:
+        df = pilot._ultra_pontos_mapa()
+        assert len(df) == 0
+        assert list(df.columns) == ["nome", "lat", "lng"]
+    finally:
+        _clear_caches()
 
 
 def test_executiva_centro_usa_so_quem_tem_coordenada(app_com_dados) -> None:
