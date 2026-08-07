@@ -17,7 +17,6 @@ from motor_expansao.core.constants import (
     AREA_IDEAL_MAX_M2,
     AREA_IDEAL_MIN_M2,
     AREA_MIN_M2,
-    PE_DIREITO_MIN,
 )
 from motor_expansao.dashboard.censo_point import (
     METODO_RELATORIO_PONTUAL_CENSITARIO,
@@ -1463,7 +1462,7 @@ def _viabilidade_page(
 #   Eliminatorios -> Reprovado
 #     E1  margem abaixo da regua E payback acima da regua (falha nos DOIS lados)
 #     E2  aluguel pedido acima da 3a faixa de aluguel-teto (excecao)
-#     E3  metragem < AREA_MIN_M2 ou pe-direito < PE_DIREITO_MIN
+#     E3  metragem < AREA_MIN_M2  (pe-direito SAIU da regua: Vinicius, 2026-08-07)
 #     E4  cenario em zona morta (`flag_zona_morta`)
 #   Ressalvas -> Aprovado com ressalvas
 #     R1  falha em UM dos dois criterios de retorno
@@ -1515,10 +1514,11 @@ _CONCLUSAO_CORES = {
 # Campos do imovel que ALIMENTAM gate. `valor_venda`, `vagas` e `tipo_imovel` ficam de
 # fora de proposito: nao entram em nenhuma regra, e exigi-los faria todo relatorio sem
 # preco de venda (a maioria) nascer "com ressalvas" por um dado que nao muda o parecer.
+# `pe_direito_m` saiu daqui junto com o gate (Vinicius, 2026-08-07) -- cobrar um campo
+# que nao decide mais nada so geraria ressalva sem consequencia.
 _CONCLUSAO_CAMPOS_ESSENCIAIS = (
     ("metragem_m2", "Metragem"),
     ("aluguel_pedido", "Aluguel pedido"),
-    ("pe_direito_m", "Pé-direito"),
 )
 
 # `motivo_zona_morta` chega como token bruto do motor ("pop<5000"). Traduzir aqui mantem
@@ -1534,7 +1534,9 @@ _CONCLUSAO_APROVADO_TEXTO = (
     "censitárias do raio e aos critérios de retorno da Ultra."
 )
 _CONCLUSAO_NOTA = (
-    "Parecer automático das réguas da Ultra: envelope do imóvel (metragem e pé-direito), "
+    # "e pé-direito" saiu junto com o gate (Vinicius, 2026-08-07): a nota descreve a
+    # REGUA aplicada, e citar um criterio que nao decide mais nada seria mentir sobre ela.
+    "Parecer automático das réguas da Ultra: envelope do imóvel (metragem), "
     f"metas censitárias do raio de {_RAIO_LABEL}, leitura de mercado do hexágono e critérios "
     "de retorno do cenário simulado. Um item eliminatório reprova sozinho; os demais rebaixam "
     "para 'Aprovado com ressalvas'. Dado ausente nunca reprova, apenas deixa o item sem "
@@ -1813,9 +1815,11 @@ def _avaliar_conclusao(
         )
 
     # --- Envelope fisico do imovel (E3 / R3) ---
-    # Primeira aplicacao real de AREA_MIN_M2/AREA_IDEAL_*/PE_DIREITO_MIN: eram canonicos
-    # declarados em config.py e travados em teste de contrato, mas nao comparados com nada
-    # em lugar nenhum -- o pe-direito era so um campo digitado e impresso.
+    # Primeira aplicacao real de AREA_MIN_M2/AREA_IDEAL_*: eram canonicos declarados em
+    # config.py e travados em teste de contrato, mas nao comparados com nada em lugar
+    # nenhum. `PE_DIREITO_MIN` continua FORA daqui: o pe-direito foi retirado da regua a
+    # pedido de Vinicius (2026-08-07) e volta a ser so um campo digitado e impresso na
+    # pagina de informacoes do imovel.
     metragem = _conclusao_valor(info.get("metragem_m2"))
     if metragem is not None:
         if metragem < AREA_MIN_M2:
@@ -1829,13 +1833,6 @@ def _avaliar_conclusao(
                 f"{_format_number(AREA_IDEAL_MIN_M2, 0)} a "
                 f"{_format_number(AREA_IDEAL_MAX_M2, 0)} m2."
             )
-    pe_direito = _conclusao_valor(info.get("pe_direito_m"))
-    if pe_direito is not None and pe_direito < PE_DIREITO_MIN:
-        eliminatorios.append(
-            f"Pé-direito de {_format_number(pe_direito, 2)} m abaixo do mínimo de "
-            f"{_format_number(PE_DIREITO_MIN, 2)} m."
-        )
-
     # --- Aluguel pedido x faixas de aluguel-teto (E2 / R2) ---
     # MESMO par que o card imprime (`_conclusao_faixas_aluguel`): resolver separado fazia
     # o gate ficar mudo com o card vermelho ao lado, na mesma pagina.

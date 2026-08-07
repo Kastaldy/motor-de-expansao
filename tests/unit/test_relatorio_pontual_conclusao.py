@@ -14,7 +14,6 @@ from motor_expansao.core.constants import (
     AREA_IDEAL_MAX_M2,
     AREA_IDEAL_MIN_M2,
     AREA_MIN_M2,
-    PE_DIREITO_MIN,
 )
 from motor_expansao.dashboard.censo_report import (
     CONCLUSAO_APROVADO,
@@ -168,13 +167,14 @@ def test_e3_metragem_abaixo_do_minimo_reprova():
     assert parecer.status == CONCLUSAO_REPROVADO
 
 
-def test_e3_pe_direito_abaixo_do_minimo_reprova():
-    parecer = _parecer(info={"pe_direito_m": PE_DIREITO_MIN - 0.1})
-    assert parecer.status == CONCLUSAO_REPROVADO
-
-
-def test_pe_direito_no_minimo_exato_passa():
-    assert _parecer(info={"pe_direito_m": PE_DIREITO_MIN}).status == CONCLUSAO_APROVADO
+@pytest.mark.parametrize("pe_direito", [2.0, 3.49, None, float("nan")])
+def test_pe_direito_saiu_da_regua_e_nao_decide_mais_nada(pe_direito):
+    """Retirado por Vinicius (2026-08-07). Continua digitado e impresso na pagina de
+    informacoes do imovel, mas nao reprova, nao rebaixa e nao cobra preenchimento."""
+    parecer = _parecer(info={"pe_direito_m": pe_direito})
+    assert parecer.status == CONCLUSAO_APROVADO
+    assert parecer.ressalvas == ()
+    assert "direito" not in _texto(parecer)
 
 
 @pytest.mark.parametrize("metragem", [AREA_IDEAL_MIN_M2 - 1, AREA_IDEAL_MAX_M2 + 1])
@@ -242,7 +242,7 @@ def test_residual_curto_sem_sam_relevante_ainda_marca_a_meta():
 # --------------------------------------------------------------------------- #
 # INVARIANTE: indecidivel nunca reprova                                       #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("campo", ["metragem_m2", "aluguel_pedido", "pe_direito_m"])
+@pytest.mark.parametrize("campo", ["metragem_m2", "aluguel_pedido"])
 def test_r6_campo_essencial_ausente_vira_ressalva_nunca_reprovacao(campo):
     parecer = _parecer(info={campo: None})
     assert parecer.status == CONCLUSAO_RESSALVAS
@@ -279,7 +279,7 @@ def test_censo_parcial_nao_dispara_a_ressalva_de_censo_ausente():
 
 
 def test_valores_nan_nao_disparam_gate():
-    parecer = _parecer(info={"metragem_m2": float("nan"), "pe_direito_m": float("nan")})
+    parecer = _parecer(info={"metragem_m2": float("nan")})
     assert parecer.eliminatorios == ()
 
 
@@ -627,10 +627,69 @@ def test_gate_e_card_de_aluguel_leem_o_mesmo_par_de_faixas():
     assert _cor_aluguel_pedido(95_000.0, teto, excecao) != _CARD_NEUTRO_RGB
 
 
+# --------------------------------------------------------------------------- #
+# Coerencia com o SELO da tela de Viabilidade                                  #
+# --------------------------------------------------------------------------- #
+# O selo da tela (`ViabilityCharts.Veredito`) e' BINARIO e sai de `dre.flag_viavel`
+# (margem >= min E payback <= max). A Conclusao e' TRI-estado e olha mais coisas
+# (imovel, censo, mercado), entao os dois NAO sao o mesmo juizo -- e nem deveriam ser.
+# O que precisa valer e' COERENCIA, e ela tem duas metades:
+#   A) `flag_viavel=False` NUNCA pode virar "Aprovado" -- se o motor diz que o cenario
+#      nao fecha, o parecer nao pode aprovar. Este e' o invariante forte.
+#   B) `flag_viavel=True` PODE virar "Reprovado" por gate NAO-financeiro (aluguel acima
+#      do maximo, metragem abaixo do minimo, zona morta) -- mas nunca em silencio: tem
+#      de haver eliminatorio escrito explicando.
+def _matriz_cenarios():
+    """Produto de cenarios com `flag_viavel` DERIVADO da mesma regra do simulador."""
+    import itertools
+
+    for margem, payback, aluguel, metragem, censo, residual, env, zona in itertools.product(
+        (0.10, 0.2999, 0.30, 0.45),
+        (20.0, 36.0, 36.1, None),
+        (30_000.0, 66_000.0, 70_000.0, 99_001.0),
+        (1_000.0, 1_200.0, 1_800.0, 2_001.0),
+        ({}, _RESULT_OK),
+        (_RESIDUAL_OK, {"sam_fitness_potencial": 18_000, "oferta_efetiva_disponivel": 0}),
+        (False, True),
+        (False, True),
+    ):
+        paga = payback is not None and payback <= 36
+        viavel = margem >= 0.30 and paga
+        dados = {
+            "margem_ebitda_pct": margem, "payback_meses": payback,
+            "margem_viavel_min": 0.30, "payback_viavel_max": 36,
+            "flag_viavel": viavel, "flag_fora_envelope": env, "flag_zona_morta": zona,
+            "motivo_zona_morta": "pop<5000" if zona else None,
+            "aluguel_teto_faixas": {"teto": 66_000.0, "excecao": 99_000.0},
+        }
+        info = {"metragem_m2": metragem, "aluguel_pedido": aluguel}
+        yield viavel, _avaliar_conclusao(censo, residual, info, dados), dados, info
+
+
+def test_selo_reprovado_na_tela_nunca_vira_aprovado_na_conclusao():
+    """INVARIANTE FORTE: se o motor diz que o cenario nao fecha, o parecer nao aprova."""
+    for viavel, parecer, dados, info in _matriz_cenarios():
+        if not viavel:
+            assert parecer.status != CONCLUSAO_APROVADO, (
+                f"cenario inviavel aprovado: {dados} {info}"
+            )
+
+
+def test_conclusao_mais_dura_que_a_tela_sempre_diz_o_porque():
+    """A Conclusao pode reprovar o que a tela aprovou (ela olha o IMOVEL e a PRACA, nao
+    so o cenario financeiro) -- mas nunca em silencio."""
+    divergencias = 0
+    for viavel, parecer, _dados, _info in _matriz_cenarios():
+        if viavel and parecer.status == CONCLUSAO_REPROVADO:
+            divergencias += 1
+            assert parecer.eliminatorios, "reprovou sem eliminatorio que explique"
+    assert divergencias > 0  # a matriz precisa exercitar o caso, senao o teste e' vazio
+
+
 def test_pagina_de_conclusao_nao_usa_caractere_fora_de_latin1():
     """Fora de latin-1 (travessao, bullet, seta) vira '?' silencioso no core font."""
     parecer = _parecer(
-        info={"metragem_m2": 900, "pe_direito_m": 3.0, "aluguel_pedido": 99_999.0},
+        info={"metragem_m2": 900, "aluguel_pedido": 99_999.0},
         residual={"oferta_efetiva_disponivel": 0},
         result={"pop_total_raio": 10},
         viab={"flag_zona_morta": True, "motivo_zona_morta": "pop<5000", "flag_fora_envelope": True},
