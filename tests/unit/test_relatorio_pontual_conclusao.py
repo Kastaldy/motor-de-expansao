@@ -312,7 +312,8 @@ def test_com_viabilidade_a_pagina_entra_antes_do_credito():
     )
     assert b"/Count 10" in pdf_bytes  # 7 base + info + numeros + conclusao
     assert _TIT_CONCLUSAO in pdf_bytes
-    assert "Aprovado".encode("latin-1") in pdf_bytes
+    assert b"APROVADO" in pdf_bytes  # selo; ver `test_selo_carimba_o_status...`
+    assert b"PARA COMIT" in pdf_bytes  # linha de apoio do selo
     # A pagina de credito continua sendo a ULTIMA do documento.
     assert pdf_bytes.rindex(_TIT_CONCLUSAO) < pdf_bytes.rindex("Realiza\xe7\xe3o".encode("latin-1"))
 
@@ -328,7 +329,7 @@ def _bytes_da_faixa_de_aluguel(dados, info) -> bytes:
 
     pdf = _UltraPDF()
     pdf.add_page()
-    _conclusao_cards_aluguel(pdf, dados, info, 36.0, 888.0, (0, 167, 157))
+    _conclusao_cards_aluguel(pdf, dados, info, 656.0, 250.0, 268.0, (0, 167, 157))
     return bytes(pdf.output())
 
 
@@ -379,15 +380,29 @@ def test_semaforo_do_aluguel_pedido():
     assert _cor_aluguel_pedido(float("nan"), 66_000, 99_000) == _CARD_NEUTRO_RGB
 
 
-def test_status_reprovado_chega_aos_bytes_do_pdf():
+@pytest.mark.parametrize(
+    "viab_extra,esperado",
+    [
+        ({}, b"APROVADO"),
+        ({"payback_meses": 44.0}, b"COM RESSALVAS"),
+        ({"margem_ebitda_pct": 0.21, "payback_meses": None}, b"REPROVADO"),
+    ],
+    ids=["aprovado", "com_ressalvas", "reprovado"],
+)
+def test_selo_carimba_o_status_nos_bytes_do_pdf(viab_extra, esperado):
+    """CAIXA ALTA de proposito: o selo e o unico lugar da pagina com o status assim.
+
+    A nota metodologica cita "Aprovado com ressalvas" em caixa MISTA, entao casar por
+    "Aprovado" daria falso positivo em qualquer um dos tres estados.
+    """
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(
         _MIN_RESULT,
         None,
         residual=_RESIDUAL_OK,
         info_imovel=_INFO_OK,
-        viabilidade={**_VIAB_OK, "margem_ebitda_pct": 0.21, "payback_meses": None},
+        viabilidade={**_VIAB_OK, **viab_extra},
     )
-    assert b"Reprovado" in pdf_bytes
+    assert esperado in pdf_bytes
 
 
 def test_pagina_de_conclusao_nao_usa_caractere_fora_de_latin1():

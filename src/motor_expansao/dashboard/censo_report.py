@@ -1500,16 +1500,12 @@ def _viabilidade_page(
 _CONCLUSAO_PAGE_TITLE = "Conclusão"
 
 # Status BRUTOS: identificadores comparados em codigo/teste -- SEM acento, por regra.
-# A acentuacao vive so na camada de LABEL logo abaixo.
+# A acentuacao vive so na camada de LABEL (`_CONCLUSAO_SELO_TEXTOS`, mais abaixo), que e'
+# a UNICA forma de exibicao do status desde que o selo substituiu o card de largura total.
 CONCLUSAO_APROVADO = "aprovado"
 CONCLUSAO_RESSALVAS = "com_ressalvas"
 CONCLUSAO_REPROVADO = "reprovado"
 
-_CONCLUSAO_LABELS = {
-    CONCLUSAO_APROVADO: "Aprovado",
-    CONCLUSAO_RESSALVAS: "Aprovado com ressalvas",
-    CONCLUSAO_REPROVADO: "Reprovado",
-}
 _CONCLUSAO_CORES = {
     CONCLUSAO_APROVADO: _CARD_VERDE_RGB,
     CONCLUSAO_RESSALVAS: _CARD_AMBAR_RGB,
@@ -1548,13 +1544,36 @@ _CONCLUSAO_NOTA = (
 # cabe NAO vaza para a pagina seguinte -- ele some por baixo do rodape, em silencio.
 _CONCLUSAO_OBS_LIMITE_Y = _PAGE_H - 74.0
 _CONCLUSAO_NOTA_Y = _PAGE_H - 62.0
-# Geometria da faixa de cards. O card de status encolheu de 104 para 96 pt para abrir a
-# linha do aluguel sem comprimir a area de observacoes (que continua cabendo ~10 linhas).
-_CONCLUSAO_STATUS_Y = 72.0
-_CONCLUSAO_STATUS_H = 96.0
-_CONCLUSAO_ALUGUEL_Y = 182.0
-_CONCLUSAO_ALUGUEL_H = 84.0
-_CONCLUSAO_OBS_TITULO_Y = 286.0
+# Cor SOLIDA do selo por estado (traco e texto). Os `_CARD_*_RGB` sao pasteis de FUNDO e
+# nao teriam contraste como linha de 2 pt nem como tipografia; estas sao as mesmas
+# familias em versao cheia. Verde e ambar espelham a semantica de `--pos`/`--warn` do
+# carimbo da tela; o vermelho e' o terceiro estado, que la nao existe.
+_CONCLUSAO_SELO_RGB = {
+    "aprovado": (26, 170, 85),
+    "com_ressalvas": (198, 146, 44),
+    "reprovado": (198, 57, 57),
+}
+# (rotulo principal, linha de apoio). Espelha o par "APROVADO / PARA COMITÊ" da tela.
+_CONCLUSAO_SELO_TEXTOS = {
+    "aprovado": ("APROVADO", "PARA COMITÊ"),
+    "com_ressalvas": ("COM RESSALVAS", "REQUER REVISÃO"),
+    "reprovado": ("REPROVADO", "FORA DA RÉGUA"),
+}
+
+# Geometria de 2 COLUNAS (reestruturacao pedida por Vinicius, 2026-08-07): observacoes a
+# ESQUERDA, selo + aluguel a DIREITA. A largura da coluna esquerda sai por subtracao para
+# a soma fechar sempre na pagina, mesmo se a coluna do selo mudar.
+_CONCLUSAO_MARGEM_X = 36.0
+_CONCLUSAO_COL_DIR_W = 240.0
+_CONCLUSAO_COL_GAP = 26.0
+_CONCLUSAO_COL_DIR_X = _PAGE_W - _CONCLUSAO_MARGEM_X - _CONCLUSAO_COL_DIR_W
+_CONCLUSAO_COL_ESQ_W = _CONCLUSAO_COL_DIR_X - _CONCLUSAO_MARGEM_X - _CONCLUSAO_COL_GAP
+_CONCLUSAO_TOPO = 76.0
+# 240 x 196 ~ 1,2:1 -- quase quadrado, como o carimbo da tela. Nao e' 1:1 exato porque o
+# rotulo mais longo ("COM RESSALVAS") precisa da largura para nao encolher demais.
+_CONCLUSAO_SELO_H = 196.0
+_CONCLUSAO_ALUGUEL_H = 72.0
+_CONCLUSAO_ALUGUEL_GAP = 10.0
 
 
 @dataclass(frozen=True)
@@ -1809,15 +1828,85 @@ def _cor_aluguel_pedido(aluguel: Any, teto: Any, excecao: Any) -> tuple[int, int
     return _CARD_VERMELHO_RGB
 
 
+def _conclusao_simbolo(
+    pdf: _UltraPDF, status: str, cx: float, cy: float, tam: float, rgb: tuple[int, int, int]
+) -> None:
+    """Desenha o simbolo do selo em VETOR (linhas/retangulos), nao como glifo de fonte.
+
+    O selo da tela usa "✓" e "✕" (`ViabilityCharts.Veredito`), e os dois estao FORA do
+    latin-1 -- no core font Helvetica do fpdf2 sairiam como "?" em silencio, que e'
+    exatamente a armadilha que a regra de acentuacao do projeto descreve. Em vetor os
+    tres estados ainda ganham o mesmo peso otico, o que misturar desenho com um "!"
+    tipografico nao daria. Funcao de RENDER pura.
+    """
+    prev_lw = pdf.line_width
+    espessura = max(2.5, tam * 0.13)
+    pdf.set_draw_color(*rgb)
+    pdf.set_fill_color(*rgb)
+    pdf.set_line_width(espessura)
+    meio = tam / 2
+    if status == CONCLUSAO_APROVADO:
+        # Check: desce ate o vertice baixo e sobe mais alto do lado direito.
+        pdf.line(cx - meio, cy + tam * 0.04, cx - meio * 0.30, cy + meio * 0.66)
+        pdf.line(cx - meio * 0.30, cy + meio * 0.66, cx + meio, cy - meio * 0.60)
+    elif status == CONCLUSAO_REPROVADO:
+        pdf.line(cx - meio * 0.68, cy - meio * 0.68, cx + meio * 0.68, cy + meio * 0.68)
+        pdf.line(cx + meio * 0.68, cy - meio * 0.68, cx - meio * 0.68, cy + meio * 0.68)
+    else:
+        # Exclamacao: haste + ponto, preenchidos (nao ha traco "!" desenhavel a linha).
+        # A haste e' ~1,8x a espessura das linhas dos outros dois simbolos DE PROPOSITO:
+        # o "!" so ocupa uma faixa vertical estreita, entao com a mesma espessura ele
+        # pesava menos que o check e o X e o selo intermediario parecia mais fraco.
+        haste_w = espessura * 1.8
+        pdf.rect(cx - haste_w / 2, cy - meio * 0.92, haste_w, tam * 0.60, style="F")
+        pdf.rect(cx - haste_w / 2, cy + meio * 0.58, haste_w, haste_w, style="F")
+    pdf.set_line_width(prev_lw)
+
+
+def _conclusao_selo(
+    pdf: _UltraPDF, status: str, x: float, y: float, largura: float, altura: float
+) -> None:
+    """Selo do parecer: quadrado com simbolo em cima, rotulo embaixo, cor pelo estado.
+
+    Mesma anatomia do carimbo de veredito da tela de Viabilidade (`Veredito`, escolha de
+    Felipe em 2026-07-31: "bater o olho e ja ter o veredito"), portada para o PDF e
+    estendida de 2 para 3 estados. Fundo no pastel que o resto do relatorio ja usa
+    (`_CARD_*_RGB`); borda de 2 pt e simbolo/texto na cor SOLIDA correspondente, que
+    existe so aqui -- os pasteis nao teriam contraste como traco.
+    """
+    rgb = _CONCLUSAO_SELO_RGB[status]
+    principal, secundario = _CONCLUSAO_SELO_TEXTOS[status]
+    prev_lw = pdf.line_width
+
+    pdf.set_fill_color(*_CONCLUSAO_CORES[status])
+    pdf.rect(x, y, largura, altura, style="F")
+    pdf.set_draw_color(*rgb)
+    pdf.set_line_width(2.0)
+    pdf.rect(x, y, largura, altura, style="D")
+    pdf.set_line_width(prev_lw)
+
+    _conclusao_simbolo(pdf, status, x + largura / 2, y + altura * 0.30, 48.0, rgb)
+    pdf.set_text_color(*rgb)
+    # O rotulo principal encolhe se preciso: "COM RESSALVAS" e' bem mais largo que
+    # "APROVADO" e nao pode vazar a borda do selo.
+    pdf.set_xy(x, y + altura * 0.55)
+    _ajustar_fonte_para_largura(pdf, _ascii(principal), largura - 16, tamanho=17.0)
+    pdf.cell(largura, 22, _ascii(principal), align="C")
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_xy(x, y + altura * 0.74)
+    pdf.cell(largura, 14, _ascii(secundario), align="C")
+
+
 def _conclusao_cards_aluguel(
     pdf: _UltraPDF,
     dados: Mapping[str, Any],
     info_imovel: Mapping[str, Any] | None,
-    margin_x: float,
+    x: float,
+    y: float,
     largura: float,
     accent: tuple[int, int, int],
 ) -> None:
-    """Dois cards lado a lado: aluguel-teto (referencia) e aluguel pedido (com semaforo).
+    """Aluguel-teto (referencia) e aluguel pedido (com semaforo), EMPILHADOS.
 
     O teto impresso e' o CANONICO (`aluguel_teto`, a faixa de 20%), o mesmo numero que o
     card da pagina de Viabilidade ja mostra -- nao a `excecao`, que fica so como regua do
@@ -1840,27 +1929,24 @@ def _conclusao_cards_aluguel(
             _cor_aluguel_pedido(aluguel, teto, faixas.get("excecao")),
         ),
     )
-    gap = 12.0
-    card_w = (largura - gap) / 2
     card_h = _CONCLUSAO_ALUGUEL_H
     for index, (rotulo, valor, cor) in enumerate(cards):
-        x = margin_x + index * (card_w + gap)
-        y = _CONCLUSAO_ALUGUEL_Y
+        topo = y + index * (card_h + _CONCLUSAO_ALUGUEL_GAP)
         pdf.set_fill_color(*cor)
-        pdf.rect(x, y, card_w, card_h, style="F")
+        pdf.rect(x, topo, largura, card_h, style="F")
         pdf.set_draw_color(225, 225, 228)
-        pdf.rect(x, y, card_w, card_h, style="D")
+        pdf.rect(x, topo, largura, card_h, style="D")
         pdf.set_fill_color(*accent)
-        pdf.rect(x, y, card_w, 6.0, style="F")
+        pdf.rect(x, topo, largura, 5.0, style="F")
         pdf.set_text_color(45, 45, 45)
-        pdf.set_font("Helvetica", "", 11)
-        pdf.set_xy(x + 16, y + 18)
-        pdf.cell(card_w - 32, 14, _ascii(rotulo))
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_xy(x + 14, topo + 13)
+        pdf.cell(largura - 28, 13, _ascii(rotulo))
         pdf.set_text_color(40, 40, 40)
         valor_txt = _ascii(valor)
-        _ajustar_fonte_para_largura(pdf, valor_txt, card_w - 32, tamanho=22.0)
-        pdf.set_xy(x + 16, y + 46)
-        pdf.cell(card_w - 32, 26, valor_txt)
+        _ajustar_fonte_para_largura(pdf, valor_txt, largura - 28, tamanho=19.0)
+        pdf.set_xy(x + 14, topo + 34)
+        pdf.cell(largura - 28, 22, valor_txt)
 
 
 def _conclusao_page(
@@ -1874,7 +1960,13 @@ def _conclusao_page(
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
 ) -> None:
-    """Pagina de parecer do ponto: card de status + observacoes. READ-ONLY sobre o M1."""
+    """Pagina de parecer do ponto, em 2 COLUNAS: observacoes a esquerda, selo a direita.
+
+    Estrutura pedida por Vinicius (2026-08-07). O selo segue a anatomia do carimbo de
+    veredito da tela de Viabilidade -- quadrado, simbolo em cima, rotulo embaixo, cor
+    pelo estado -- e leva junto os dois cards de aluguel, que sao a leitura numerica que
+    sustenta o parecer. A coluna da esquerda fica so com o texto. READ-ONLY sobre o M1.
+    """
     dados = _viab_normalizado(viabilidade)
     parecer = _avaliar_conclusao(result, residual, info_imovel, dados)
 
@@ -1882,39 +1974,35 @@ def _conclusao_page(
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
     _draw_title_band(pdf, _CONCLUSAO_PAGE_TITLE, rgb=primary)
 
-    margin_x = 36.0
-    largura = _PAGE_W - 2 * margin_x
+    margem = _CONCLUSAO_MARGEM_X
+    largura_esq = _CONCLUSAO_COL_ESQ_W
 
-    # Card do parecer: mesma receita visual dos cards do Big Numbers (fundo pelo semaforo,
-    # borda fina cinza, barra de acento de 6 pt no topo), em largura total.
-    card_y, card_h = _CONCLUSAO_STATUS_Y, _CONCLUSAO_STATUS_H
-    pdf.set_fill_color(*_CONCLUSAO_CORES[parecer.status])
-    pdf.rect(margin_x, card_y, largura, card_h, style="F")
-    pdf.set_draw_color(225, 225, 228)
-    pdf.rect(margin_x, card_y, largura, card_h, style="D")
-    pdf.set_fill_color(*secondary)
-    pdf.rect(margin_x, card_y, largura, 6.0, style="F")
-    pdf.set_text_color(45, 45, 45)
-    pdf.set_font("Helvetica", "", 11)
-    pdf.set_xy(margin_x + 16, card_y + 20)
-    pdf.cell(largura - 32, 14, _ascii("Parecer sobre o ponto"))
-    pdf.set_text_color(40, 40, 40)
-    pdf.set_font("Helvetica", "B", 32)
-    pdf.set_xy(margin_x + 16, card_y + 44)
-    pdf.cell(largura - 32, 38, _ascii(_CONCLUSAO_LABELS[parecer.status]))
+    # --- Coluna DIREITA: selo + os dois cards de aluguel empilhados sob ele ---
+    _conclusao_selo(
+        pdf,
+        parecer.status,
+        _CONCLUSAO_COL_DIR_X,
+        _CONCLUSAO_TOPO,
+        _CONCLUSAO_COL_DIR_W,
+        _CONCLUSAO_SELO_H,
+    )
+    _conclusao_cards_aluguel(
+        pdf,
+        dados,
+        info_imovel,
+        _CONCLUSAO_COL_DIR_X,
+        _CONCLUSAO_TOPO + _CONCLUSAO_SELO_H + 18.0,
+        _CONCLUSAO_COL_DIR_W,
+        secondary,
+    )
 
-    # Faixa do aluguel: o teto (2a faixa, canonica) e o pedido lado a lado. So o card do
-    # PEDIDO tem semaforo -- o teto e' a referencia contra a qual ele e' lido, nao uma
-    # meta que o ponto atinge ou deixa de atingir.
-    _conclusao_cards_aluguel(pdf, dados, info_imovel, margin_x, largura, secondary)
-
-    # Observacoes: eliminatorios primeiro (o que reprovou vem antes do que so ressalva).
-    y = _CONCLUSAO_OBS_TITULO_Y
+    # --- Coluna ESQUERDA: observacoes (eliminatorios antes das ressalvas) ---
+    y = _CONCLUSAO_TOPO
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "B", 12)
-    pdf.set_xy(margin_x, y)
-    pdf.cell(largura, 16, _ascii("Observações"))
-    y += 22.0
+    pdf.set_xy(margem, y)
+    pdf.cell(largura_esq, 16, _ascii("Observações"))
+    y += 24.0
 
     linhas = list(parecer.eliminatorios) + list(parecer.ressalvas) or [_CONCLUSAO_APROVADO_TEXTO]
     pdf.set_text_color(*_CINZA_TEXTO)
@@ -1923,25 +2011,27 @@ def _conclusao_page(
     for linha in linhas:
         if y + 14.0 > _CONCLUSAO_OBS_LIMITE_Y:
             break
-        pdf.set_xy(margin_x, y)
+        pdf.set_xy(margem, y)
         # Bullet ASCII: "-". O "•" esta FORA do latin-1 e sairia como "?" silencioso.
-        pdf.multi_cell(largura, 14, _ascii(f"- {linha}"))
-        y = pdf.get_y() + 2.0
+        pdf.multi_cell(largura_esq, 14, _ascii(f"- {linha}"))
+        y = pdf.get_y() + 4.0
         exibidas += 1
     restantes = len(linhas) - exibidas
     if restantes > 0:
         # Truncar em SILENCIO faria a pagina parecer completa quando nao esta.
-        pdf.set_xy(margin_x, min(y, _CONCLUSAO_OBS_LIMITE_Y - 14.0))
+        pdf.set_xy(margem, min(y, _CONCLUSAO_OBS_LIMITE_Y - 14.0))
         pdf.multi_cell(
-            largura,
+            largura_esq,
             14,
             _ascii(f"(+{restantes} apontamento(s) não exibido(s) por falta de espaço.)"),
         )
 
+    # A nota metodologica volta a ocupar a largura TOTAL: ela fala da pagina inteira, nao
+    # da coluna de observacoes, e presa aos 604 pt da esquerda passaria de 2 para 4 linhas.
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 8)
-    pdf.set_xy(margin_x, _CONCLUSAO_NOTA_Y)
-    pdf.multi_cell(largura, 11, _ascii(_CONCLUSAO_NOTA))
+    pdf.set_xy(margem, _CONCLUSAO_NOTA_Y)
+    pdf.multi_cell(_PAGE_W - 2 * margem, 11, _ascii(_CONCLUSAO_NOTA))
     _draw_footer(pdf, with_attribution=False)
 
 
