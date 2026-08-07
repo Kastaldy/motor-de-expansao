@@ -500,7 +500,8 @@ export default function NarrativePanel({
         {passo.n === 4 && !temCoberturaSatelite(uf) && (
           /* A cor do hexágono no passo 4 vem de satélite, que cobre 12 UFs. Fora
              delas o mapa acende cinza — não é defeito, é ausência de dado, e sem
-             aviso vira chamado. O número do painel (CAGED) segue nacional. */
+             aviso vira chamado. O número do painel vem de OUTRA camada (CAGED) e
+             segue valendo — sempre contra a mediana deste estado. */
           <p
             style={{
               margin: '0 0 12px',
@@ -514,7 +515,8 @@ export default function NarrativePanel({
           >
             Os hexágonos aparecem cinza neste estado: a camada de área construída
             (satélite) cobre 12 UFs, e {uf ?? 'esta'} não está entre elas. Os números de
-            emprego abaixo continuam valendo — eles vêm do CAGED, com cobertura nacional.
+            emprego abaixo são de outra camada (CAGED) e continuam valendo — sempre
+            lidos contra a mediana deste estado, nunca como comparação entre estados.
           </p>
         )}
 
@@ -718,6 +720,12 @@ function EtiquetaCrescimento({ cres }: { cres?: CrescimentoMunicipio | null }) {
     : classe === 'abaixo' ? 'var(--neg)'
     : 'var(--tx-sub)'
 
+  /* O delta so' aparece quando ha margem ESTADUAL contra a qual ler o CAGED. Em
+     `sem-referencia` o numero existe mas nao pode ir para a tela: solto, ele convida
+     a comparar municipios de UFs diferentes — a leitura nacional que a regra proibe. */
+  // (regra do Juan, 2026-08-07: CAGED so' contra margem estadual/municipal.)
+  const mostraDelta = delta != null && (classe === 'acima' || classe === 'abaixo')
+
   return (
     <span
       style={{
@@ -731,7 +739,7 @@ function EtiquetaCrescimento({ cres }: { cres?: CrescimentoMunicipio | null }) {
     >
       <span aria-hidden style={{ width: 5, height: 5, borderRadius: '50%', background: cor }} />
       {rotulo}
-      {delta != null && classe !== 'na-mediana' && (
+      {mostraDelta && (
         <span className="num" style={{ font: '500 10px/1 var(--f-num)', opacity: 0.8 }}>
           ({delta > 0 ? '+' : ''}{delta.toFixed(1).replace('.', ',')} p.p.)
         </span>

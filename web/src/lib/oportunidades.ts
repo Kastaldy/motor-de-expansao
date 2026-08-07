@@ -12,10 +12,17 @@
  * sem mexer na ordem que o motor entregou.
  *
  * POR QUE `emp` E NAO `v_classe`. O veredito `v_classe`/`v_frase` combina CINCO
- * dimensoes, e uma delas (predios, por satelite) so' cobre 12 UFs — entao ele NAO
- * tem cobertura nacional uniforme, ao contrario do que parece. `cres_emp_pct` (aqui
- * `emp`) vem do CAGED e cobre o pais inteiro. Numa fila que o operador usa para
- * decidir onde abrir, cobertura desigual e' pior que dado mais simples.
+ * dimensoes, e uma delas (predios, por satelite) so' cobre 12 UFs — entao ele mistura
+ * numa etiqueta so' dimensoes com coberturas diferentes. `cres_emp_pct` (aqui `emp`)
+ * e' uma leitura unica, do CAGED, e o que ela significa fica explicito.
+ *
+ * O CAGED SO' VALE CONTRA UMA MARGEM ESTADUAL OU MUNICIPAL, NUNCA NACIONAL.
+ * (regra do Juan, 2026-08-07.) O numero cru de crescimento do emprego nao diz nada
+ * sozinho: 8,7% e' muito ou pouco dependendo do estado e do ano. Toda leitura daqui
+ * e' RELATIVA — `emp` contra `uf_mediana`, a mediana da propria UF. Sem essa
+ * referencia, `lerCrescimento` NAO classifica e NAO mostra o numero: devolve
+ * `sem-referencia`, porque exibir "8,7%" solto convida a comparar municipio de
+ * estados diferentes, que e' exatamente a leitura nacional que a regra proibe.
  */
 
 /** O que `MapaResposta.cres_mun[municipio]` traz. Todos opcionais: municipio sem
@@ -32,7 +39,17 @@ export interface CrescimentoMunicipio {
   setor?: string | null
 }
 
-export type ClasseCrescimento = 'acima' | 'na-mediana' | 'abaixo' | 'sem-dado'
+/**
+ * `sem-dado` = o municipio nao tem medicao de emprego.
+ * `sem-referencia` = ha o numero, mas nao ha margem estadual/municipal contra a qual
+ *   le-lo. Sao coisas diferentes e a tela precisa dizer qual das duas e'.
+ */
+export type ClasseCrescimento =
+  | 'acima'
+  | 'na-mediana'
+  | 'abaixo'
+  | 'sem-dado'
+  | 'sem-referencia'
 
 export interface LeituraCrescimento {
   classe: ClasseCrescimento
@@ -61,9 +78,16 @@ export function lerCrescimento(c: CrescimentoMunicipio | null | undefined): Leit
     return { classe: 'sem-dado', rotulo: 'Sem medição de crescimento', valor: null, delta: null }
   }
   if (mediana == null) {
-    // Ha o numero, mas nao ha contra o que compara-lo: mostrar o numero cru e' mais
-    // honesto do que classificar sem referencia.
-    return { classe: 'sem-dado', rotulo: `Emprego ${fmtPp(valor)}`, valor, delta: null }
+    /* Ha o numero, mas nao ha margem estadual para le-lo. NAO exibir o valor cru:
+       "8,7%" solto e' um numero sem escala, e duas cidades de UFs diferentes lado a
+       lado convidariam a comparacao NACIONAL que a regra proibe. O campo `valor`
+       segue preenchido para auditoria; quem desenha e' que nao deve mostra-lo. */
+    return {
+      classe: 'sem-referencia',
+      rotulo: 'Sem mediana estadual para comparar',
+      valor,
+      delta: null,
+    }
   }
 
   const delta = valor - mediana
@@ -73,11 +97,6 @@ export function lerCrescimento(c: CrescimentoMunicipio | null | undefined): Leit
   return delta > 0
     ? { classe: 'acima', rotulo: 'Cresce acima da mediana', valor, delta }
     : { classe: 'abaixo', rotulo: 'Cresce abaixo da mediana', valor, delta }
-}
-
-function fmtPp(v: number): string {
-  // Ponto decimal do JS -> virgula do pt-BR. Texto de usuario.
-  return `${v.toFixed(1).replace('.', ',')}%`
 }
 
 /** Item minimo da fila que este modulo precisa enxergar. */
@@ -148,6 +167,8 @@ export function leituraDoItem(
   if (c.classe === 'acima') return `${base} A cidade cresce acima da mediana do estado.`
   if (c.classe === 'abaixo') return `${base} A cidade cresce abaixo da mediana do estado.`
   if (c.classe === 'na-mediana') return `${base} A cidade cresce na mediana do estado.`
+  if (c.classe === 'sem-referencia')
+    return `${base} Há medição de emprego, mas sem mediana estadual para comparar.`
   return `${base} Sem medição de crescimento para a cidade.`
 }
 
@@ -155,8 +176,11 @@ export function leituraDoItem(
  * UFs com cobertura de satelite na camada de crescimento POR HEXAGONO.
  *
  * Fora destas, `cres_hex_classe` vem vazio e os hexagonos acendem CINZA no passo 4.
- * Nao e' defeito, e' ausencia de dado — e sem aviso explicito vira chamado. Esta
- * lista NAO afeta `emp` (CAGED), que e' nacional.
+ * Nao e' defeito, e' ausencia de dado — e sem aviso explicito vira chamado.
+ *
+ * Esta lista e' de OUTRA camada e nao tem relacao com `emp` (CAGED): satelite colore
+ * o hexagono, CAGED mede o emprego do municipio. Nem por isso o CAGED vira leitura
+ * nacional — ele continua so' valendo contra a mediana da propria UF.
  */
 export const UFS_COM_SATELITE: readonly string[] = Object.freeze([
   'BA', 'CE', 'DF', 'ES', 'GO', 'MG', 'PE', 'PR', 'RJ', 'RS', 'SC', 'SP',

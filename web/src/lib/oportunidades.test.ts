@@ -39,17 +39,28 @@ describe('lerCrescimento', () => {
   it('sem medicao devolve sem-dado, nao zero', () => {
     for (const c of [null, undefined, {}, { emp: null }] as (CrescimentoMunicipio | null)[]) {
       const r = lerCrescimento(c)
-      expect(r.classe).toBe('sem-dado')
+      expect(r.classe).toBe('sem-dado') // sem medicao != sem referencia
       expect(r.valor).toBeNull()
     }
   })
 
-  it('numero sem mediana mostra o valor cru em vez de classificar sem referencia', () => {
+  it('numero SEM mediana estadual nao vira leitura — e nem mostra o valor', () => {
+    // Regra do Juan (2026-08-07): o CAGED so' vale contra margem estadual ou
+    // municipal. "12,3%" solto convida a comparar municipios de UFs diferentes,
+    // que e' a leitura nacional proibida.
     const r = lerCrescimento({ emp: 12.3 })
-    expect(r.classe).toBe('sem-dado')
-    expect(r.valor).toBe(12.3)
+    expect(r.classe).toBe('sem-referencia')
     expect(r.delta).toBeNull()
-    expect(r.rotulo).toContain('12,3%') // pt-BR: virgula decimal
+    expect(r.rotulo).not.toContain('12,3')
+    expect(r.rotulo).toMatch(/mediana estadual/i)
+    // O valor segue no objeto para auditoria; quem desenha e' que nao o exibe.
+    expect(r.valor).toBe(12.3)
+  })
+
+  it('sem mediana NAO passa no filtro de "cresce acima"', () => {
+    const itens = [{ rank: 1, titulo: 'X', valor: 10 }]
+    const cres = { X: { emp: 99 } } // numero altissimo, mas sem referencia
+    expect(filtrarPorCrescimento(itens, cres, true)).toHaveLength(0)
   })
 })
 
