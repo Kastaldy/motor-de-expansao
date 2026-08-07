@@ -3260,6 +3260,7 @@ _EXEC_ALIAS_COORD: dict[tuple[str, str], str] = {
     # porque a de Praia Grande já é reivindicada pela própria "PRAIA GRANDE - SP" da
     # Growth, que também está ativa. A geografia confirma: o ponto resolvido fica a
     # 1,1 km do Gonzaga (bairro vizinho na orla de Santos) e a 11 km de Praia Grande.
+    # Felipe confirmou em 2026-08-07 que "BOQUEIRAO" no UX é a de Santos.
     ("BOQUEIRAO", "SP"): "SANTOS II",
     ("VILLA BRANCA", "SP"): "JACAREI",  # Villa Branca é bairro de Jacareí
     ("VISCONDE DE RIO CLARO", "SP"): "RIO CLARO",
