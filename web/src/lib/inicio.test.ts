@@ -20,8 +20,13 @@ describe('MODOS', () => {
 
   it('so aponta para telas que existem hoje', () => {
     for (const m of MODOS) {
-      expect(['mapa', 'viabilidade']).toContain(m.destino)
+      expect(['mapa', 'ponto']).toContain(m.destino)
     }
+  })
+
+  it('o modo de ponto abre a tela dedicada, nao mais a Viabilidade', () => {
+    // Etapa 1 mandava o card 1 para a Viabilidade porque a tela de ponto nao existia.
+    expect(modoPorId('ponto')?.destino).toBe('ponto')
   })
 
   it('todo card tem texto de usuario preenchido', () => {

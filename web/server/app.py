@@ -2443,6 +2443,231 @@ def geocode(q: str) -> dict[str, Any]:
     return out
 
 
+@app.get("/api/resolver-ponto")
+def resolver_ponto(q: str) -> dict[str, Any]:
+    """Texto colado pelo operador -> lat/lng. Cobre o LINK CURTO do celular.
+
+    Por que existe. O front resolve sozinho coordenada e link LONGO (`lib/coord.ts`),
+    mas o link que o botão "Compartilhar" do app do Maps gera (`maps.app.goo.gl/...`)
+    não tem coordenada nenhuma na URL — é um 30x. Sem esta rota ele seguia como texto
+    para o `/api/geocode`, que devolvia `{"found": false}`, e o operador via "não
+    encontrei esse endereço" para um link perfeitamente válido.
+
+    Ordem, do mais barato para o mais caro (rede só quando o passo puro falha):
+      1. `parse_maps_url` — puro, sem rede;
+      2. `expandir_link_curto` — segue o redirect e tenta o parse de novo;
+      3. `extrair_endereco_de_place_url` — link de place SEM coordenada: o endereço
+         está no próprio path, então geocodifica esse texto;
+      4. geocode do texto original.
+
+    Rede aqui é a MESMA exceção já aprovada para a barra de busca (DEC-010): é ação
+    do operador, não caminho de carga do app. READ-ONLY; não toca artefato nenhum.
+    """
+    from motor_expansao.api.coord import (
+        CoordenadaInvalidaError,
+        parse_maps_url,
+        validar_brasil,
+    )
+    from motor_expansao.api.geo import (
+        expandir_link_curto,
+        extrair_endereco_de_place_url,
+    )
+
+    termo = (q or "").strip()
+    if not termo:
+        return {"found": False, "motivo": "Cole um link do Google Maps, um endereço ou uma coordenada."}
+
+    def _coord(lat: float, lng: float, via: str) -> dict[str, Any]:
+        return {"found": True, "lat": _num(lat, 6), "lng": _num(lng, 6), "via": via}
+
+    # 1. Parse puro: link longo com @lat,lng / !3d!4d, ou "lat,lng" cru.
+    try:
+        lat, lng = validar_brasil(*parse_maps_url(termo))
+        return _coord(lat, lng, "coordenada")
+    except CoordenadaInvalidaError as exc:
+        # "Fora do Brasil" é DIFERENTE de "não parseei": a coordenada foi lida, e
+        # dizer "não reconheci" mandaria o operador procurar erro de digitação.
+        if "fora do Brasil" in str(exc):
+            return {
+                "found": False,
+                "motivo": "Essa coordenada está fora do Brasil. Confira se a latitude e a longitude não vieram trocadas.",
+            }
+
+    # 2. Link curto: segue o redirect e tenta o parse de novo.
+    expandida = expandir_link_curto(termo)
+    if expandida != termo:
+        try:
+            lat, lng = validar_brasil(*parse_maps_url(expandida))
+            return _coord(lat, lng, "link-expandido")
+        except CoordenadaInvalidaError:
+            pass
+
+    # 3. Link de place sem coordenada: o endereço está no path da URL expandida.
+    endereco = extrair_endereco_de_place_url(expandida)
+    if endereco:
+        achado = geocode(endereco)
+        if achado.get("found"):
+            return {**achado, "via": "endereco-do-link"}
+
+    # 4. Texto livre.
+    achado = geocode(termo)
+    if achado.get("found"):
+        return {**achado, "via": "endereco"}
+
+    return {
+        "found": False,
+        "motivo": (
+            "Não consegui resolver esse link. Abra-o no navegador e cole o endereço "
+            "da barra (o que começa com google.com/maps/…), ou cole a coordenada."
+        ),
+    }
+
+
+@app.get("/api/ponto")
+def ponto(lat: float, lng: float) -> dict[str, Any]:
+    """Ficha de UM ponto: censo real no raio de 1,0 km, mais mercado quando houver.
+
+    NÃO carrega a partição da UF. O mapa lê `hexagonos_dashboard_enriquecido/uf=XX`
+    inteiro (até 15.000 hexes, >15 s na primeira vez — por isso o `TIMEOUT_LEITURA` de
+    90 s no cliente). Um fluxo "cole o link, veja a ficha" que esperasse isso estaria
+    morto; aqui se lê só a partição do município e um punhado de hexes.
+
+    DEGRADAÇÃO POR BLOCO, e nunca em silêncio. Cada bloco devolve `disponivel` e, quando
+    falso, o `motivo` por extenso. O censo depende só da malha IBGE 2022; concorrência e
+    mercado dependem de `data/staging`, que pode não estar montado. Sem isso a tela
+    mostraria card em branco e o operador leria como defeito.
+
+    Raio 1,0 km = `RAIO_CENSITARIO_DEFAULT_KM` (DEC-021) — o MESMO do Relatório Pontual,
+    para a tela e o PDF contarem a mesma coisa.
+
+    READ-ONLY: nenhum score recalculado, nenhum artefato tocado.
+    """
+    from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
+    from motor_expansao.api.errors import APIError
+    from motor_expansao.api.service import (
+        _competitors_ultra,
+        _hexes_vizinhos_do_ponto,
+        _nome_municipio_de,
+        _residual_do_ponto,
+        _resolver_e_carregar,
+    )
+    from motor_expansao.api.settings import Settings
+    from motor_expansao.dashboard.censo_point import (
+        RAIO_CENSITARIO_DEFAULT_KM,
+        analisar_ponto_censitario_setores,
+    )
+
+    # `_resolver_e_carregar` NÃO valida o bounding box — sem isto, uma coordenada
+    # absurda seguiria direto para o ponto-em-polígono.
+    try:
+        validar_brasil(lat, lng)
+    except CoordenadaInvalidaError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    cfg = Settings(
+        censo_geo_dir=CENSO_GEO_DIR,
+        ibge_dir=IBGE_DIR,
+        ultra_dir=ULTRA_DIR,
+        staging_dir=STAGING_DIR,
+    )
+
+    try:
+        uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg)
+    except APIError as exc:
+        # `APIError` é do contrato da API de produção, que registra um handler próprio
+        # (`main.py`). O piloto NÃO registra — aqui ela vazaria como 500 sem código.
+        # Propagamos o status ORIGINAL de propósito: 400 é "coordenada fora da malha"
+        # (erro do operador) e 404 é "partição do município não materializada" (erro de
+        # implantação). O caminho do PDF (app.py, `_gerar_relatorio_pontual_pdf`) achata
+        # os dois em 400 e faz o operador ler "não foi possível resolver a coordenada"
+        # quando o problema é dado faltando no servidor.
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"Não foi possível resolver a coordenada: {exc}") from exc
+
+    # (None, None) quando `data/staging` não tem os parquets — é o caso previsto, não erro.
+    comp_df, ultra_df = _competitors_ultra(cfg)
+    tem_concorrentes = comp_df is not None or ultra_df is not None
+
+    res = analisar_ponto_censitario_setores(
+        lat, lng, setores_df,
+        raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+        competitors_df=comp_df,
+        ultra_df=ultra_df,
+    )
+
+    residual = _residual_do_ponto(lat, lng, cfg)
+    tem_mercado = any(v is not None for v in residual.values())
+
+    import h3
+
+    hex_id = h3.latlng_to_cell(lat, lng, 7)  # 7 = H3_RESOLUTION do M1, LIDO
+
+    # Vizinhança para o mini-mapa. k=2 (19 células) e não o k=5 do PDF: aqui é
+    # enquadramento de tela, não choropleth de relatório.
+    vizinhos: list[dict[str, Any]] = []
+    hexes_df = _hexes_vizinhos_do_ponto(lat, lng, cfg, k=2)
+    if hexes_df is not None:
+        for _, r in hexes_df.iterrows():
+            vizinhos.append(
+                {
+                    "hex_id": _texto(r.get("hex_id")),
+                    "residual": _num(r.get("oferta_efetiva_disponivel")),
+                    "score_censo": _num(r.get("score_setor_2022_calibrado"), 1),
+                }
+            )
+
+    return {
+        "lat": _num(lat, 6),
+        "lng": _num(lng, 6),
+        "raio_km": RAIO_CENSITARIO_DEFAULT_KM,
+        "hex_id": hex_id,
+        "local": {
+            # `uf` e o nome do município NÃO estão no dict de `analisar_ponto_...` (são
+            # 40 chaves, nenhuma delas é o município): vêm de `_resolver_e_carregar` e
+            # da própria partição. Ler `res["municipio_nome"]` daria None em silêncio.
+            "uf": uf,
+            "municipio": _texto(_nome_municipio_de(setores_df)),
+            "bairro": _texto(res.get("unidade_ponto_rotulo")),
+            # Identificador cru ("bairro"/"distrito"), NÃO acentuar — o rótulo de
+            # exibição é o `bairro` acima.
+            "unidade_tipo": _texto(res.get("unidade_ponto_tipo")),
+        },
+        "censo": {
+            "disponivel": True,
+            "motivo": None,
+            "populacao": _num(res.get("pop_total_raio")),
+            "domicilios": _num(res.get("domicilios_total_raio")),
+            "renda_per_capita": _num(res.get("renda_per_capita_media_raio")),
+            "renda_media_domiciliar": _num(res.get("renda_media_domiciliar_raio")),
+            # A densidade VÁLIDA divide pela área de setor realmente intersectada, e não
+            # por pi*r^2: num ponto com rio/mar no raio, a fixa subestima de propósito.
+            "densidade_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
+            "score_socioeconomico": _num(res.get("score_setor_2022_calibrado_ponto"), 1),
+            "n_setores": _num(res.get("n_setores")),
+        },
+        "concorrencia": {
+            "disponivel": tem_concorrentes,
+            "motivo": None if tem_concorrentes else (
+                "Sem base de concorrentes montada (data/staging/concorrentes_mapeados.parquet)."
+            ),
+            "n_concorrentes": _num(res.get("n_concorrentes")) if tem_concorrentes else None,
+            "n_ultra": _num(res.get("n_ultra")) if tem_concorrentes else None,
+        },
+        "mercado": {
+            "disponivel": tem_mercado,
+            "motivo": None if tem_mercado else (
+                "Sem leitura de mercado para este hexágono "
+                "(data/staging/hexagonos_mercado_mapeado.parquet ausente)."
+            ),
+            "sam": _num(residual.get("sam_fitness_potencial")),
+            "residual": _num(residual.get("oferta_efetiva_disponivel")),
+            "score_residual": _num(residual.get("score_oportunidade_residual"), 1),
+        },
+        "vizinhos": vizinhos,
+    }
+
+
 @app.get("/api/municipios/{uf}")
 def municipios(uf: str) -> dict[str, Any]:
     df = carregar_uf(uf)

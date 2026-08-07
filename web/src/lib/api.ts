@@ -6,6 +6,8 @@ import type {
   MetodologiaPayload,
   MunicipioItem,
   MunicipioPayload,
+  PontoPayload,
+  PontoResolvido,
   RedeCarteira,
   RedeFicha,
   RedeFiltros,
@@ -188,6 +190,25 @@ export const api = {
 
   /** Visão de UF inteira: funil por UF + recomendação de municípios. */
   ufView: (uf: string) => pedir<MunicipioPayload>(`/api/uf/${encodeURIComponent(uf)}`),
+
+  /* ---- Modo de PONTO ---- */
+
+  /**
+   * Ficha de um ponto. NÃO carrega a partição da UF — lê só a partição do município
+   * e um punhado de hexes, então cabe no timeout curto em vez dos 90 s da leitura de
+   * UF. É o que torna viável o fluxo "cole o link, veja a ficha".
+   */
+  ponto: (lat: number, lng: number) =>
+    pedir<PontoPayload>(`/api/ponto?lat=${lat}&lng=${lng}`, {}, 30_000),
+
+  /**
+   * Texto colado -> coordenada. Só é chamada quando o front NÃO resolveu sozinho
+   * (`lib/entrada-ponto`): link curto do celular, link de place sem coordenada, ou
+   * endereço escrito. Pode fazer requisição externa (expandir redirect + geocode),
+   * daí o timeout próprio.
+   */
+  resolverPonto: (q: string) =>
+    pedir<PontoResolvido>(`/api/resolver-ponto?q=${encodeURIComponent(q)}`, {}, 25_000),
 
   /** Visão Executiva: rede Ultra real agregada por estado (Growth API). `mes`
    *  opcional (YYYY-MM) escolhe a competência; sem ele, a mais recente. */

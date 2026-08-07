@@ -20,7 +20,7 @@ export type ModoInicio = 'ponto' | 'regiao' | 'oportunidades'
  * import dele de proposito: este modulo precisa continuar carregavel pelo vitest sem
  * arrastar React, deck.gl e o app inteiro para dentro do teste.
  */
-export type DestinoInicio = 'mapa' | 'viabilidade'
+export type DestinoInicio = 'mapa' | 'ponto'
 
 export interface ModoDefinicao {
   id: ModoInicio
@@ -51,14 +51,17 @@ export const MODOS: readonly ModoDefinicao[] = Object.freeze([
     eyebrow: 'Um endereço',
     titulo: 'Analisar um ponto ou imóvel',
     resumo:
-      'Você tem um imóvel na mão e quer saber se ele se sustenta: quem mora em volta, quantos concorrentes disputam o mesmo aluno e até quanto cabe de aluguel.',
+      'Você tem um imóvel na mão e quer ler o entorno dele: quem mora em volta, com que renda, e quantos concorrentes disputam o mesmo aluno.',
+    // Só prometer o que a tela entrega HOJE. Break-even, payback e teto de aluguel
+    // dependem de metragem e aluguel pedido, que este modo ainda não coleta — eles
+    // seguem na tela de Viabilidade até a etapa que trouxer os dois campos para cá.
     bullets: Object.freeze([
-      'Socioeconomia e população no raio de 1,0 km',
+      'Cole o link do Maps ou a coordenada',
+      'População, renda e densidade no raio de 1,0 km',
       'Concorrentes e unidades Ultra em volta',
-      'Break-even, payback e teto de aluguel',
     ]),
     chamada: 'Analisar um ponto',
-    destino: 'viabilidade',
+    destino: 'ponto',
     passoAlvo: null,
   }),
   Object.freeze({

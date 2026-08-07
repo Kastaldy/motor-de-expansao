@@ -890,3 +890,75 @@ export interface RedeQuery {
   ordenar?: string
   direcao?: 'asc' | 'desc'
 }
+
+/* ------------------------------------------------------------------------- *
+ * Modo de PONTO (GET /api/ponto)                                            *
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Bloco que pode não ter dado. O servidor manda `disponivel` e, quando falso, o
+ * `motivo` por extenso — a tela NUNCA inventa o texto do estado vazio nem some com
+ * o bloco em silêncio. Censo depende só da malha IBGE; concorrência e mercado
+ * dependem de `data/staging`, que pode não estar montado.
+ */
+export interface BlocoOpcional {
+  disponivel: boolean
+  motivo: string | null
+}
+
+export interface PontoCenso extends BlocoOpcional {
+  populacao: number | null
+  domicilios: number | null
+  renda_per_capita: number | null
+  renda_media_domiciliar: number | null
+  /** Densidade VÁLIDA: divide pela área de setor intersectada, não por pi*r². */
+  densidade_hab_km2: number | null
+  score_socioeconomico: number | null
+  n_setores: number | null
+}
+
+export interface PontoConcorrencia extends BlocoOpcional {
+  n_concorrentes: number | null
+  n_ultra: number | null
+}
+
+export interface PontoMercado extends BlocoOpcional {
+  sam: number | null
+  residual: number | null
+  score_residual: number | null
+}
+
+export interface PontoVizinho {
+  hex_id: string | null
+  residual: number | null
+  score_censo: number | null
+}
+
+export interface PontoPayload {
+  lat: number
+  lng: number
+  raio_km: number
+  hex_id: string
+  local: {
+    uf: string
+    municipio: string | null
+    bairro: string | null
+    /** Identificador cru ("bairro"/"distrito"), NÃO acentuado. Exibir `bairro`. */
+    unidade_tipo: string | null
+  }
+  censo: PontoCenso
+  concorrencia: PontoConcorrencia
+  mercado: PontoMercado
+  vizinhos: PontoVizinho[]
+}
+
+/** Resposta de GET /api/resolver-ponto: texto colado -> coordenada. */
+export interface PontoResolvido {
+  found: boolean
+  lat?: number
+  lng?: number
+  nome?: string
+  /** Como resolveu: coordenada | link-expandido | endereco-do-link | endereco. */
+  via?: string
+  motivo?: string
+}

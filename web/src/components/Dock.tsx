@@ -11,6 +11,12 @@ const ICONES: Record<string, React.JSX.Element> = {
       <path d="M9.5 21v-6h5v6" />
     </>
   ),
+  ponto: (
+    <>
+      <path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11Z" />
+      <path d="M9 10h6M12 7v6" />
+    </>
+  ),
   mapa: (
     <>
       <path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11Z" />
@@ -45,6 +51,7 @@ const ITENS: { id: string; tela: Tela | null; titulo: string }[] = [
   // O inicio abre a fila do Dock: e' a porta de entrada e, ao mesmo tempo, o caminho de
   // volta ao menu presente em TODAS as telas — o botao "Início" do header e o par dele.
   { id: 'inicio', tela: 'inicio', titulo: 'Início — escolher a análise' },
+  { id: 'ponto', tela: 'ponto', titulo: 'Análise de ponto' },
   { id: 'mapa', tela: 'mapa', titulo: 'Mapa territorial' },
   { id: 'exec', tela: 'executiva', titulo: 'Visão executiva' },
   { id: 'dom', tela: null, titulo: 'Expansão de domínio (fora do piloto)' },
