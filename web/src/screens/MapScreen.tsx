@@ -2,6 +2,7 @@ import { latLngToCell } from 'h3-js'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { PontoEscolhido } from '../App'
+import BotaoInicio from '../components/BotaoInicio'
 import HexMap, { type SearchPin, type ViewState } from '../components/HexMap'
 import MethodologyPanel from '../components/MethodologyPanel'
 import NarrativePanel from '../components/NarrativePanel'
@@ -42,6 +43,8 @@ export interface MapScreenProps {
    */
   estadoInicial: EstadoMapa
   onEstado: (e: EstadoMapa) => void
+  /** Volta ao menu de modos. Não limpa nada — ver `components/BotaoInicio`. */
+  onInicio: () => void
 }
 
 export default function MapScreen({
@@ -57,6 +60,7 @@ export default function MapScreen({
   onAnalisarPonto,
   estadoInicial,
   onEstado,
+  onInicio,
 }: MapScreenProps) {
   // A foto so' vale se tiver sido tirada NESTA uf/municipio — `fotoAplicavel` faz esse
   // portao (lib/mapa-estado). Sem ele, um pin de Sao Paulo reapareceria depois de um
@@ -319,9 +323,11 @@ export default function MapScreen({
     })
   }
 
-  // ---------------- Porta de entrada: escolha de estado ----------------
+  // ---------------- Passo 2 do modo de região: escolha de estado ----------------
+  // Já NÃO é a porta de entrada do produto — essa é a `InicioScreen`. Aqui só se
+  // pergunta o estado, e por isso o hero grande saiu daqui (ver `Landing`).
   if (!uf) {
-    return <Landing ufs={ufs} onUf={onUf} />
+    return <Landing ufs={ufs} onUf={onUf} onInicio={onInicio} />
   }
 
   return (
@@ -381,6 +387,8 @@ export default function MapScreen({
           flexWrap: 'wrap',
         }}
       >
+        <BotaoInicio onInicio={onInicio} />
+
         <h1
           style={{
             font: '600 14px/1 var(--f-ui)',
@@ -816,9 +824,22 @@ export default function MapScreen({
   )
 }
 
-/* ---------------- Porta de entrada: hero + seletor de estado ---------------- */
+/* ---------------- Passo 2 do modo de região: seletor de estado ----------------
+   Isto JA FOI a porta de entrada do produto, com o hero "Por onde a Ultra deve crescer?".
+   O hero migrou para a `InicioScreen`, que agora pergunta QUAL ANALISE antes de qualquer
+   coisa; aqui sobrou a pergunta que sempre foi desta tela — qual estado —, e por isso o
+   titulo encolheu de 44px para 26px. Manter os dois grandes deixava o operador diante de
+   duas telas de abertura em sequencia, com o mesmo titulo. */
 
-function Landing({ ufs, onUf }: { ufs: string[]; onUf: (uf: string) => void }) {
+function Landing({
+  ufs,
+  onUf,
+  onInicio,
+}: {
+  ufs: string[]
+  onUf: (uf: string) => void
+  onInicio: () => void
+}) {
   return (
     <div
       style={{
@@ -831,6 +852,11 @@ function Landing({ ufs, onUf }: { ufs: string[]; onUf: (uf: string) => void }) {
           'radial-gradient(120% 90% at 50% 30%, var(--bg-lift) 0%, var(--bg-base) 72%)',
       }}
     >
+      {/* Mesma posicao do botao nas outras telas: canto superior esquerdo. */}
+      <div style={{ position: 'absolute', top: 16, left: 16 }}>
+        <BotaoInicio onInicio={onInicio} />
+      </div>
+
       <div style={{ maxWidth: 560, textAlign: 'center' }}>
         <span
           style={{
@@ -844,32 +870,31 @@ function Landing({ ufs, onUf }: { ufs: string[]; onUf: (uf: string) => void }) {
           }}
         >
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--ac)' }} />
-          Inteligência de Expansão · Ultra Academia
+          Explorar uma região
         </span>
 
         <h1
           className="story"
           style={{
-            font: '400 44px/1.05 var(--f-story)',
+            font: '400 26px/1.15 var(--f-story)',
             color: 'var(--tx-max)',
-            margin: '18px 0 0',
+            margin: '14px 0 0',
             letterSpacing: '.005em',
           }}
         >
-          Por onde a Ultra deve crescer?
+          Escolha o estado
         </h1>
 
         <p
           style={{
             font: '400 15px/1.6 var(--f-ui)',
             color: 'var(--tx-narrative)',
-            margin: '16px auto 0',
+            margin: '14px auto 0',
             maxWidth: 460,
           }}
         >
-          Comece escolhendo um <strong style={{ color: 'var(--tx-strong)' }}>estado</strong>. O mapa
-          lê o território inteiro e monta a sequência de camadas — do potencial socioeconômico até os
-          municípios com mais espaço para abrir.
+          O mapa lê o território inteiro e monta a sequência de camadas — do potencial
+          socioeconômico até os municípios com mais espaço para abrir.
         </p>
 
         <div

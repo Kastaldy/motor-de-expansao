@@ -2,13 +2,15 @@ import { useCallback, useEffect, useState } from 'react'
 
 import Dock from './components/Dock'
 import ExecutiveScreen from './screens/ExecutiveScreen'
+import InicioScreen from './screens/InicioScreen'
 import MapScreen from './screens/MapScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
 import { api, ApiError } from './lib/api'
+import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Hex, MunicipioItem, MunicipioPayload } from './lib/types'
 
-export type Tela = 'mapa' | 'viabilidade' | 'executiva'
+export type Tela = 'inicio' | 'mapa' | 'viabilidade' | 'executiva'
 
 /** O ponto que viaja do mapa para a Viabilidade — a costura entre as duas telas. */
 export interface PontoEscolhido {
@@ -30,7 +32,9 @@ export interface PontoEscolhido {
 }
 
 export default function App() {
-  const [tela, setTela] = useState<Tela>('mapa')
+  // O app abre no MENU, nao no mapa: a primeira pergunta e' "qual analise?", nao
+  // "qual estado?". A escolha de UF continua existindo, como passo 2 do modo de regiao.
+  const [tela, setTela] = useState<Tela>('inicio')
 
   const [ufs, setUfs] = useState<string[]>([])
   // Começa SEM estado: o app abre na porta de entrada (escolha de UF).
@@ -48,6 +52,18 @@ export default function App() {
   // Foto do Mapa Territorial (ver lib/mapa-estado): vive AQUI porque o App nao desmonta
   // ao trocar de tela — e' o que devolve o mapa como estava na volta da Viabilidade.
   const [estadoMapa, setEstadoMapa] = useState<EstadoMapa>(ESTADO_MAPA_VAZIO)
+
+  /**
+   * Modo escolhido no menu que ainda nao pode ser aplicado porque falta a UF.
+   *
+   * POR QUE PRECISA EXISTIR. O card "melhores oportunidades" quer abrir o mapa direto no
+   * passo 5, mas no instante do clique nao ha UF nenhuma — e semear a foto com
+   * `uf: ''` seria inutil: `fotoAplicavel` (lib/mapa-estado) DESCARTA por desenho toda
+   * foto sem contexto, justamente para nao restaurar pin/camera de outro municipio.
+   * Entao a intencao fica pendurada aqui e e' convertida em foto no momento em que a UF
+   * aparece — ai o contexto casa e o passo sobrevive.
+   */
+  const [modoPendente, setModoPendente] = useState<ModoInicio | null>(null)
 
   // Catálogo de UFs, uma vez.
   useEffect(() => {
@@ -108,15 +124,49 @@ export default function App() {
   // Trocar de estado recomeça na visão da UF inteira. Não é preciso limpar a foto aqui:
   // ela carrega o contexto em que foi tirada e `fotoAplicavel` a descarta sozinha se a
   // UF/município não bater (lib/mapa-estado).
-  const aoTrocarUf = useCallback((u: string) => {
-    setUf(u)
-    setMunicipio('')
-  }, [])
+  const aoTrocarUf = useCallback(
+    (u: string) => {
+      setUf(u)
+      setMunicipio('')
+
+      // Agora que existe UF, a intenção guardada no menu vira foto — com o contexto
+      // certo, senão `fotoAplicavel` a jogaria fora. Consumimos a intenção aqui: ela
+      // vale para a PRIMEIRA entrada no mapa, não para toda troca de estado seguinte.
+      if (!modoPendente) return
+      const passo = passoAlvoDoModo(modoPendente)
+      setModoPendente(null)
+      if (passo === null) return
+      setEstadoMapa({ ...ESTADO_MAPA_VAZIO, uf: u, municipio: '', passoN: passo })
+    },
+    [modoPendente],
+  )
 
   const irParaViabilidade = useCallback((p: PontoEscolhido) => {
     setPonto(p)
     setTela('viabilidade')
   }, [])
+
+  /** Um card do menu foi escolhido: guarda a intenção e abre a tela que a atende hoje. */
+  const escolherModo = useCallback(
+    (modo: ModoInicio) => {
+      const def = modoPorId(modo)
+      if (!def) return
+      // Só faz sentido guardar a intenção enquanto ela ainda não pôde ser aplicada.
+      // Com UF já escolhida, aplicamos na hora — o operador que volta ao menu e pede a
+      // fila não deveria ter de trocar de estado para ela aparecer.
+      const passo = passoAlvoDoModo(modo)
+      if (passo !== null && uf) {
+        setEstadoMapa({ ...ESTADO_MAPA_VAZIO, uf, municipio, passoN: passo })
+        setModoPendente(null)
+      } else {
+        setModoPendente(passo !== null ? modo : null)
+      }
+      setTela(def.destino)
+    },
+    [uf, municipio],
+  )
+
+  const voltarAoInicio = useCallback(() => setTela('inicio'), [])
 
   return (
     <div
@@ -130,7 +180,9 @@ export default function App() {
       <Dock tela={tela} onTela={setTela} />
 
       <main style={{ flex: 1, position: 'relative', minWidth: 0 }}>
-        {tela === 'mapa' ? (
+        {tela === 'inicio' ? (
+          <InicioScreen onEscolher={escolherModo} />
+        ) : tela === 'mapa' ? (
           <MapScreen
             ufs={ufs}
             uf={uf}
@@ -144,6 +196,7 @@ export default function App() {
             onAnalisarPonto={irParaViabilidade}
             estadoInicial={estadoMapa}
             onEstado={setEstadoMapa}
+            onInicio={voltarAoInicio}
           />
         ) : tela === 'executiva' ? (
           // A Executiva NÃO recebe `uf` nem `onUf` (DEC-023): ela abre com a rede do
@@ -151,12 +204,13 @@ export default function App() {
           // de confundir dois produtos diferentes, disparava um refetch de
           // `/api/uf/{uf}` no Mapa toda vez que se trocava o estado aqui — leitura que
           // pode passar de 15 s.
-          <ExecutiveScreen />
+          <ExecutiveScreen onInicio={voltarAoInicio} />
         ) : (
           <ViabilityScreen
             ponto={ponto}
             dados={dados}
             onVoltar={() => setTela('mapa')}
+            onInicio={voltarAoInicio}
           />
         )}
       </main>

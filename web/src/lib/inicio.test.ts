@@ -1,0 +1,77 @@
+import { describe, expect, it } from 'vitest'
+
+import {
+  MODOS,
+  PASSO_MAX,
+  PASSO_MIN,
+  modoPorId,
+  passoAlvoDoModo,
+  type ModoInicio,
+} from './inicio'
+
+describe('MODOS', () => {
+  it('declara exatamente os 3 modos pedidos, na ordem do menu', () => {
+    expect(MODOS.map((m) => m.id)).toEqual(['ponto', 'regiao', 'oportunidades'])
+  })
+
+  it('nao repete id', () => {
+    expect(new Set(MODOS.map((m) => m.id)).size).toBe(MODOS.length)
+  })
+
+  it('so aponta para telas que existem hoje', () => {
+    for (const m of MODOS) {
+      expect(['mapa', 'viabilidade']).toContain(m.destino)
+    }
+  })
+
+  it('todo card tem texto de usuario preenchido', () => {
+    for (const m of MODOS) {
+      expect(m.eyebrow.trim()).not.toBe('')
+      expect(m.titulo.trim()).not.toBe('')
+      expect(m.resumo.trim()).not.toBe('')
+      expect(m.chamada.trim()).not.toBe('')
+      expect(m.bullets.length).toBeGreaterThan(0)
+      for (const b of m.bullets) expect(b.trim()).not.toBe('')
+    }
+  })
+
+  it('mantem os identificadores SEM acento (regra do CLAUDE.md §2)', () => {
+    // O texto de usuario e' acentuado de proposito; o `id` nunca.
+    for (const m of MODOS) expect(m.id).toMatch(/^[a-z]+$/)
+  })
+
+  it('e congelado: o menu nao pode ser mutado em runtime', () => {
+    expect(Object.isFrozen(MODOS)).toBe(true)
+    for (const m of MODOS) expect(Object.isFrozen(m)).toBe(true)
+  })
+})
+
+describe('modoPorId', () => {
+  it('acha cada modo declarado', () => {
+    for (const m of MODOS) expect(modoPorId(m.id)?.titulo).toBe(m.titulo)
+  })
+
+  it('devolve null para id desconhecido em vez de estourar', () => {
+    expect(modoPorId('inexistente')).toBeNull()
+    expect(modoPorId('')).toBeNull()
+  })
+})
+
+describe('passoAlvoDoModo', () => {
+  it('so o modo de oportunidades pede passo especifico', () => {
+    expect(passoAlvoDoModo('ponto')).toBeNull()
+    expect(passoAlvoDoModo('regiao')).toBeNull()
+    expect(passoAlvoDoModo('oportunidades')).toBe(PASSO_MAX)
+  })
+
+  it('o passo pedido cabe no funil servido pelo backend', () => {
+    const passo = passoAlvoDoModo('oportunidades')
+    expect(passo).not.toBeNull()
+    expect(passo as number).toBeGreaterThanOrEqual(PASSO_MIN)
+    expect(passo as number).toBeLessThanOrEqual(PASSO_MAX)
+  })
+
+  it('id desconhecido nao vira passo', () => {
+    expect(passoAlvoDoModo('nada' as ModoInicio)).toBeNull()
+  })
+})

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
+import BotaoInicio from '../components/BotaoInicio'
 import ExecMap from '../components/ExecMap'
 import Select from '../components/Select'
 import Tabela, { type Coluna } from '../components/Tabela'
@@ -91,7 +92,7 @@ const COLUNA_TRILHO = { flex: '1 1 330px', minWidth: 0, maxWidth: 430 } as const
 
 const TODOS = '__todos__'
 
-export default function ExecutiveScreen() {
+export default function ExecutiveScreen({ onInicio }: { onInicio: () => void }) {
   const [filtros, setFiltros] = useState<RedeFiltros | null>(null)
   const [carteira, setCarteira] = useState<RedeCarteira | null>(null)
   const [carregando, setCarregando] = useState(true)
@@ -369,6 +370,7 @@ export default function ExecutiveScreen() {
             no meio da fila de controles, e a cada filtro que entrava empurravam os
             botões de export para a linha seguinte. */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <BotaoInicio onInicio={onInicio} />
         <h1 style={{ font: '600 14px/1 var(--f-ui)', letterSpacing: '-.01em', color: 'var(--tx-max)', margin: 0 }}>
           Rede Ultra
         </h1>
