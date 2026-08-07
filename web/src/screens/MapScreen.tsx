@@ -6,6 +6,7 @@ import BotaoInicio from '../components/BotaoInicio'
 import HexMap, { type SearchPin, type ViewState } from '../components/HexMap'
 import MethodologyPanel from '../components/MethodologyPanel'
 import NarrativePanel from '../components/NarrativePanel'
+import PainelComparacao from '../components/PainelComparacao'
 import ScoreLegend from '../components/ScoreLegend'
 import Select from '../components/Select'
 import StepperBar from '../components/StepperBar'
@@ -200,6 +201,20 @@ export default function MapScreen({
     const permitidas = FAIXA_FILTROS[filtroFaixa]
     return permitidas ? hs.filter((h) => h.faixa != null && permitidas.has(h.faixa)) : hs
   }, [dados, filtroFaixa])
+
+  /**
+   * O par a COMPARAR: existe só com exatamente 2 hexes selecionados.
+   *
+   * Somar e comparar respondem perguntas diferentes ("quanto vale este pedaço junto"
+   * x "qual destes dois é melhor"), e o número de hexes escolhidos já diz qual delas
+   * o operador está fazendo — 2 é comparação, 1 ou 3+ é soma. Por isso o painel troca
+   * sozinho, sem mais um botão para ele decidir.
+   */
+  const parComparacao = useMemo(() => {
+    if (cenario.length !== 2) return null
+    const [a, b] = cenario.map((id) => porId.get(id))
+    return a && b ? ([a, b] as const) : null
+  }, [cenario, porId])
 
   // Agregação do cenário multi-hex (soma no cliente a partir dos hexes servidos).
   const resumoCenario = useMemo(() => {
@@ -697,7 +712,15 @@ export default function MapScreen({
                   {modoCenario ? '◆ Comparando hexes' : '◇ Comparar vários hexes'}
                 </button>
 
-                {modoCenario && (
+                {modoCenario && parComparacao && (
+                  <PainelComparacao
+                    a={parComparacao[0]}
+                    b={parComparacao[1]}
+                    onLimpar={() => setCenario([])}
+                  />
+                )}
+
+                {modoCenario && !parComparacao && (
                   <div
                     style={{
                       background: 'var(--surf-panel)',
@@ -721,6 +744,8 @@ export default function MapScreen({
                     ) : (
                       <p style={{ margin: '8px 0 0', font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
                         Clique nos hexágonos do mapa para somar residual, população e score.
+                        Com <strong style={{ color: 'var(--tx-soft)' }}>dois</strong> selecionados,
+                        este painel compara um contra o outro.
                       </p>
                     )}
                     {resumoCenario && (
