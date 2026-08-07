@@ -567,10 +567,19 @@ def test_hash_ignora_data_coleta() -> None:
     )
 
 
-def test_hash_ignora_ordem_das_modalidades() -> None:
-    assert _hash(_frame_tp(modalidades="Musculacao, Natacao")) == _hash(
-        _frame_tp(modalidades="Natacao; Musculacao")
-    )
+def test_hash_ignora_a_taxonomia_inteira() -> None:
+    """Sucessor de `test_hash_ignora_ordem_das_modalidades` (emenda BLK-MA-11 / DEC-025).
+
+    A versão anterior só provava invariância à ORDEM dos tokens. Desde a emenda, a taxonomia saiu
+    do hash por completo: trocar os próprios rótulos também não pode mexer no hash. Motivo medido:
+    o WellHub renomeou "Musculação" para "Treino de força"/"Fisiculturismo" e o campo mudou em
+    99,1% das unidades sem que uma só academia mudasse - com a taxonomia dentro, o sinal 4 morreria
+    de uma vez para a base inteira.
+    """
+    base = _hash(_frame_tp(modalidades="Musculacao, Natacao"))
+    assert base == _hash(_frame_tp(modalidades="Natacao; Musculacao")), "ordem"
+    assert base == _hash(_frame_tp(modalidades="Treino de forca, Natacao")), "rotulo renomeado"
+    assert base == _hash(_frame_tp(modalidades="")), "taxonomia ausente"
 
 
 def test_hash_ignora_slug() -> None:
@@ -587,7 +596,9 @@ def test_hash_ignora_slug() -> None:
         ("endereco_formatado", "Rua A, 999"),
         ("latitude", -23.6000),
         ("cep", "09000-000"),
-        ("modalidades", "Musculacao, Natacao, Crossfit"),
+        # `modalidades` saiu desta lista na emenda BLK-MA-11 / DEC-025: renomear taxonomia deixou
+        # de ser "mudança de cadastro". A invariância agora é asserida em
+        # `test_hash_ignora_a_taxonomia_inteira`.
     ],
 )
 def test_hash_muda_com_campo_real(campo: str, valor: object) -> None:

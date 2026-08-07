@@ -5,10 +5,12 @@ Fonte única de verdade do schema dos snapshots semanais
 churn/staleness derivado dele. **SEM I/O e SEM pandas** — só stdlib (BLK-MA-02 / DEC-012).
 
 Diferença consciente em relação ao molde `demanda_revelada/contrato.py` (só constantes): aqui as
-**primitivas de derivação também SÃO o contrato**. Alterar `normalizar_texto`, os campos da chave ou
-a resolução do hex **re-chaveia a série inteira** e produz churn artificial em massa — por isso elas
-ficam no mesmo arquivo que carrega `VERSAO_CONTRATO_SNAPSHOT`, e qualquer mudança **exige bump**
-dessa versão (o BLK-MA-04 deve tratar o bump como descontinuidade de série).
+**primitivas de derivação também SÃO o contrato**. Alterar `normalizar_texto`, os campos da chave,
+o conjunto de `CAMPOS_HASH_POR_FONTE` ou a resolução do hex **re-chaveia a série inteira** e produz
+churn artificial em massa — por isso elas ficam no mesmo arquivo que carrega
+`VERSAO_CONTRATO_SNAPSHOT`, e qualquer mudança **exige bump** dessa versão (o BLK-MA-04 deve tratar
+o bump como descontinuidade de série). Histórico de bumps: `v1` (BLK-MA-02) -> `v2` (BLK-MA-11 /
+DEC-025, saída da taxonomia do hash; feito com a série ainda VAZIA, logo sem migração).
 
 GUARDRAILS (CLAUDE.md §1/§2/§5; contrato `docs/vulnerabilidade_ma_contrato.md` §11/§14):
   - READ-ONLY sobre o M1: nada aqui recalcula `score_priorizacao`, `hex_score_estrutural`, os pesos
@@ -31,7 +33,7 @@ from datetime import date
 # --------------------------------------------------------------------------- #
 # Carimbos de reprodutibilidade e parâmetros do contrato
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v1"
+VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v2"
 VERSAO_CONTRATO_CHURN = "churn_staleness_v1"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
 VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v1"
@@ -157,7 +159,13 @@ _RE_RUIDO_TECNOLOGIA_TOTALPASS = [re.compile(p) for p in PADROES_RUIDO_TECNOLOGI
 # Impressão digital dos campos raspados (sinal 4 / staleness)
 # --------------------------------------------------------------------------- #
 # Conjunto FIXO por fonte. `data_coleta` NUNCA entra (senão `semanas_sem_mudanca` jamais sairia de
-# 0 e a staleness morreria); `slug` NUNCA entra (rotação de UUID no slug não é mudança de negócio).
+# 0 e a staleness morreria); `slug` NUNCA entra (rotação de UUID no slug não é mudança de negócio);
+# a TAXONOMIA de atividades (`atividades`/`modalidades`) NUNCA entra `[emenda BLK-MA-11, DEC-025]`
+# — ela é vocabulário da FONTE, não cadastro da academia. Medido em 2026-08-07: o WellHub renomeou
+# "Musculação" para "Treino de força"/"Fisiculturismo"/"Treino Híbrido" entre maio e agosto, e o
+# campo mudou em 12.314 dos 12.420 slugs comuns (**99,1%**) sem que uma única academia mudasse de
+# fato. Com a taxonomia dentro do hash, a renomeação seria lida como "cadastro atualizado agora"
+# para a base inteira e o sinal 4 morreria — o mesmo modo de falha que `data_coleta` já causava.
 CAMPOS_HASH_POR_FONTE: dict[str, tuple[str, ...]] = {
     "totalpass": (
         "nome",
@@ -167,7 +175,6 @@ CAMPOS_HASH_POR_FONTE: dict[str, tuple[str, ...]] = {
         "uf",
         "cep",
         "endereco_formatado",
-        "modalidades",
     ),
     "wellhub": (
         "nome",
@@ -177,11 +184,18 @@ CAMPOS_HASH_POR_FONTE: dict[str, tuple[str, ...]] = {
         "uf",
         "cep",
         "endereco_formatado",
-        "atividades",
     ),
     "unidades": ("nome_unidade", "latitude", "longitude"),
 }
-CAMPOS_NUNCA_HASHEADOS: frozenset[str] = frozenset({"data_coleta", "slug"})
+# Rede de segurança EXECUTÁVEL da regra acima: `test_campos_hash_por_fonte_exclui_os_proibidos`
+# falha se qualquer um destes voltar para uma tupla de `CAMPOS_HASH_POR_FONTE`.
+CAMPOS_NUNCA_HASHEADOS: frozenset[str] = frozenset(
+    {"data_coleta", "slug", "modalidades", "atividades"}
+)
+# Declaração de TIPO dos campos de lista (ordena + normaliza tokens antes de comparar). Hoje
+# nenhum campo hasheado é de lista — os dois saíram do hash pela emenda BLK-MA-11 —, então o ramo
+# correspondente em `hash_campos_raspados` é caminho RESERVADO, não código morto por descuido: ele
+# volta a valer se uma fonte futura hashear um campo multivalorado que NÃO seja taxonomia.
 CAMPOS_LISTA: frozenset[str] = frozenset({"modalidades", "atividades"})
 CAMPOS_NUMERICOS: frozenset[str] = frozenset({"latitude", "longitude"})
 

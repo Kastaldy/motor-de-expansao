@@ -1919,9 +1919,9 @@ sem `CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
 |---|---|
 | **Criticidade** | **Alta** (muda o **critério de negócio** que define o universo de academias do coletor, e esse universo alimenta a camada paralela mercado/residual via `concorrentes/wellhub/csvs`. READ-ONLY sobre o M1). **Exige decisão humana de produto**, não é escolha de engenharia. |
 | **Prioridade** | Antes de qualquer sincronização do consolidado novo para o motor. |
-| **Esteira** | `[decisão humana — Vinicius: (a), (b) ou (c) abaixo]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | BLK-MA-08 (a rodada que expôs o problema). |
+| **Esteira** | `[GATE — RESOLVIDO pela DEC-025 em 2026-08-07: escolhida a saída (a), com o vocabulário "V2". NÃO reabrir]` → Builder → QA. |
+| **Status** | **Em execução.** Gate decidido (DEC-025). Lado do **motor** feito: taxonomia fora do hash nas 2 fontes, bump `snapshots_concorrentes_v1` -> `v2`, 2 testes novos, emendas no §3/§6 do contrato. Falta o lado do **coletor** (`tem_musculacao` com o V2 + regeneração de `csvs_musculacao/`, repo externo). |
+| **Depende de** | BLK-MA-08 (a rodada que expôs o problema) e **DEC-025** (decide o vocabulário e a saída da taxonomia do hash). |
 | **Autonomia** | **manual (NÃO loop-safe)** — repo externo + critério de negócio. |
 
 **O que foi medido (2026-08-05/06).** O WellHub **renomeou a taxonomia de atividades** entre maio e
@@ -1941,21 +1941,39 @@ significado**: contém todas as unidades, não só academias de musculação. Os
 `concorrentes/wellhub/csvs` — sincronizar o estado atual sem decidir isto muda o universo daquelas
 camadas sem que ninguém tenha decidido.
 
-**As três saídas (é isto que o gate decide).**
-- **(a) Ampliar o vocabulário** de `tem_musculacao` com os rótulos novos. Restaura o volume, mas
-  **quebra a comparabilidade** com a série de maio: a mesma academia pode entrar hoje e não ter
-  entrado antes, e o churn medido pela camada de vulnerabilidade passa a misturar mudança real com
-  mudança de critério.
-- **(b) Manter o consolidado completo** e mover o recorte para o consumidor. Preserva o dado bruto e
-  torna o critério explícito onde ele é usado, mas exige tocar quem lê.
-- **(c) Aceitar a base sem filtro** como novo padrão, aposentando o subset.
+**As três saídas — DECIDIDO em 2026-08-07 (DEC-025): saída (a), vocabulário "V2". NÃO reabrir.**
+- **(a) Ampliar o vocabulário** de `tem_musculacao` com os rótulos novos. **ESCOLHIDA.** Restaura o
+  volume, mas **quebra a comparabilidade** com a série de maio — consequência aceita e quantificada
+  na DEC-025 (parte 4).
+- (b) Manter o consolidado completo e mover o recorte para o consumidor. *(não escolhida)*
+- (c) Aceitar a base sem filtro como novo padrão, aposentando o subset. *(não escolhida)*
 
-**Fora de escopo.** Qualquer artefato/score/peso do M1; o `v2` e o contrato de snapshot
-(**BLK-MA-09**); o cron (**BLK-MA-06**).
+**O vocabulário "V2", com a medição que o escolheu.** `{musculacao, treino de forca, fisiculturismo,
+levantamento de peso, treino hibrido}` sobre a string de atividades normalizada. Verdade-terreno: as
+**12.420** unidades de maio que ainda existem (todas aprovadas pelo filtro antigo, quando a taxonomia
+velha valia). Atual: 144 linhas · recall 1,1%. **V2: 22.174 linhas (48,7%) · recall 99,5%.** É o
+joelho da curva — do V2 para o V3 (`+cross training/crossfit`) custa **+2.831 linhas** para recuperar
+**+8** unidades, e o V4 (`+funcional`) mais **+3.840** para **+21**.
 
-**Critério de aceite.** Decisão registrada (DEC se a escolha for (a) ou (c), por mudar critério de
-universo); `tem_musculacao` e/ou os consumidores ajustados com teste que falharia antes; o efeito
-sobre a comparabilidade da série declarado por escrito; suíte sem regressão.
+**Achado que ENTROU no escopo deste bloco pela DEC-025 (não estava na redação original).** A mesma
+renomeação de taxonomia atinge o **sinal 4**: `atividades` está dentro de `CAMPOS_HASH_POR_FONTE`
+(`vulnerabilidade/contrato.py`) e mudou em **12.314 dos 12.420** slugs comuns (**99,1%**), contra
+`endereco_formatado` em 63 e `nome` em 33. Sem tratar isso, a primeira coleta pós-renomeação leria a
+base inteira como "cadastro atualizado agora" e o S4 morreria — **independentemente** de qual saída o
+filtro tomasse. A DEC-025 (parte 2) tira `atividades` **e** `modalidades` do hash nas duas fontes, com
+bump `snapshots_concorrentes_v1` -> `v2` (gratuito: a série está em zero semanas).
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; o sinal 2 / `v2` do rating, a régua, os pesos
+e o número de COLUNAS do snapshot (**BLK-MA-09**) — o que este bloco toca no contrato de snapshot é
+**só** o conjunto de campos hasheados e o carimbo de versão, por delegação explícita da DEC-025; o
+cron e o runbook (**BLK-MA-06**); a reputação externa (**BLK-MA-07**).
+
+**Critério de aceite.** DEC registrada (**DEC-025**, feita); `tem_musculacao` com o V2 e teste que
+falharia antes; `csvs_musculacao/` regenerado a partir do consolidado íntegro; taxonomia fora do hash
+nas 2 fontes, com teste que falharia antes, e bump de `VERSAO_CONTRATO_SNAPSHOT`; o efeito sobre a
+comparabilidade da série declarado por escrito (DEC-025 parte 4 + §6 do contrato); a sincronização de
+`Wellhub/csvs/` para o motor **bloqueada** até tudo acima estar aplicado; suíte sem regressão nos dois
+repos; `ruff` limpo; `loop_guard` sem `CRITICO`.
 
 ---
 

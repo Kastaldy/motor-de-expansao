@@ -35,3 +35,4 @@ Emendas entram no próprio arquivo da DEC, não no índice.
 - [DEC-022](DEC-022.md) — Substituição total do Streamlit pelo piloto web: corte imediato, `dashboard.` vira host só de `/tiles/` + 301
 - [DEC-023](DEC-023.md) — Visão Executiva 2.0: de mapa territorial a dashboard acionável da rede, com a primeira escrita do piloto; emenda a DEC-020 e a consequência (iii) da DEC-022
 - [DEC-024](DEC-024.md) — Extensão do escopo de coleta do GymScraping: nota in-app do WellHub (`partnerRating`) como agregado numérico (BLK-MA-08); emenda as partes 2 e 3 da DEC-013
+- [DEC-025](DEC-025.md) — Critério de universo do coletor WellHub (vocabulário "V2") + taxonomia fora do hash de staleness, com bump para `snapshots_concorrentes_v2` (BLK-MA-11); emenda a parte 3 da DEC-013

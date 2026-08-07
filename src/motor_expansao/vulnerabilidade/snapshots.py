@@ -258,9 +258,11 @@ def limpar_ruido(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
 def calcular_hash_campos_raspados(df: pd.DataFrame) -> pd.DataFrame:
     """Acrescenta `hash_campos_raspados` por linha, com o conjunto de campos da própria `fonte`.
 
-    `data_coleta` e `slug` **jamais** entram no hash (`CAMPOS_NUNCA_HASHEADOS`): com a data
-    dentro, `semanas_sem_mudanca` nunca sairia de 0 e a staleness morreria; com o slug dentro,
-    a rotação de UUID viraria falsa mudança de negócio.
+    `data_coleta`, `slug` e a taxonomia (`atividades`/`modalidades`) **jamais** entram no hash
+    (`CAMPOS_NUNCA_HASHEADOS`): com a data dentro, `semanas_sem_mudanca` nunca sairia de 0 e a
+    staleness morreria; com o slug dentro, a rotação de UUID viraria falsa mudança de negócio; com
+    a taxonomia dentro, uma renomeação de rótulo pela FONTE viraria "cadastro alterado" para o
+    universo inteiro (medido no WellHub em 2026-08-07: 99,1% — emenda BLK-MA-11 / DEC-025).
     """
     out = df.copy()
     valores = [
@@ -476,7 +478,11 @@ def montar_snapshot(
 
 
 def _assert_schema_snapshot(df: pd.DataFrame) -> None:
-    """Falha alto se o frame não é exatamente o contrato `snapshots_concorrentes_v1`."""
+    """Falha alto se o frame não é exatamente o contrato `VERSAO_CONTRATO_SNAPSHOT`.
+
+    A versão vive na constante, não neste texto: cravá-la aqui já ficou stale uma vez, no bump
+    `v1` -> `v2` da emenda BLK-MA-11.
+    """
     esperado = list(CONTRATO_COLUNAS_SNAPSHOT.keys())
     pii = sorted(set(df.columns) & COLUNAS_PII_PROIBIDAS)
     if pii:
