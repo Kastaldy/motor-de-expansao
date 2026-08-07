@@ -87,7 +87,9 @@ def test_loader_ultra_lida_com_metadado_encoding_e_uf_corrompida():
         pytest.skip(f"data/ultra/Ultra.csv ausente: {ULTRA_RAW_PATH}")
     raw = modulo.carregar_ultra(ULTRA_RAW_PATH)
 
-    assert len(raw) == 150
+    # Piso de sanidade: detecta CSV vazio/truncado sem rebote a cada refresh
+    # legitimo da base Ultra (150 unidades em 2026-06-12, 169 em 2026-08-07).
+    assert len(raw) >= 150
     assert {"unidade", "uf", "cidade", "lat_raw", "lng_raw", "lat", "lng"} <= set(raw.columns)
     assert raw["lat"].notna().all()
     assert raw["lng"].notna().all()

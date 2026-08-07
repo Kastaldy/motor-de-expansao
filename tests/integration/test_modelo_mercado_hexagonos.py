@@ -162,7 +162,9 @@ def test_ultra_loader_lida_com_metadado_e_encoding_legacy():
         pytest.skip(f"data/ultra/Ultra.csv ausente: {ULTRA_RAW_PATH}")
     df = carregar_ultra(ULTRA_RAW_PATH)
 
-    assert len(df) == 150
+    # Mesmo piso de sanidade do helper de CSV acima: a base Ultra cresce a cada
+    # refresh legitimo (150 unidades em 2026-06-12, 169 em 2026-08-07).
+    assert len(df) >= 150
     assert {"unidade", "uf", "cidade", "lat_raw", "lng_raw", "lat", "lng"} <= set(df.columns)
     assert df["lat"].notna().all()
     assert df["lng"].notna().all()
