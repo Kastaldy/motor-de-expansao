@@ -76,7 +76,9 @@ sobe". Vale separar o que esta PROVADO do que apenas foi observado:
   MEDIDO (dados reais, malha NACIONAL de 1.542.531 hexes): cada concorrente passa a
   valer 1,00 unidade em vez de ~0,80 em Sao Paulo, o consumo total sobe +27,9% e o
   residual cai na esmagadora maioria. Mas 81 hexes GANHAM residual — 68 no RS, 8 em SC,
-  5 no PR — com ganho maximo de 168 alunos (Pelotas/RS). Conter o alcance nao impede o
+  5 no PR — com ganho maximo de 168 alunos (Pelotas/RS). O criterio e' ganho MATERIAL,
+  `delta_consumo < -1 aluno`; pelo criterio estrito (`delta_consumo < 0`) sao 84 hexes
+  (71 RS, 8 SC, 5 PR), com 3 ganhando menos de 1 aluno. Conter o alcance nao impede o
   consumo de um hex especifico de diminuir. O fenomeno se concentra no SUL, onde a
   celula H3 e' menor: uma medicao restrita a SP/MG/RJ/PR/BA encontra so' 5 casos e da a
   impressao de que e' desprezivel.
@@ -259,7 +261,11 @@ def repartir_concorrentes(
       - `n_concorrentes_influencia_1km` quantos concorrentes distintos alcancam o hex
       - `consumo_concorrentes_1km_area` oferta * capacidade, em alunos
 
-    Invariante: `oferta_efetiva_1km_area.sum()` == numero de concorrentes de entrada.
+    Invariante, VALIDO SO' AQUI (antes do merge): `oferta_efetiva_1km_area.sum()` ==
+    numero de concorrentes de entrada com coordenada. A coluna HOMONIMA que sai de
+    `anexar_pressao_1km_area` soma MENOS — na base nacional, 3.151,6 para 3.179
+    concorrentes — porque o merge descarta o share caido fora dela. Ver LIMITACAO
+    CONHECIDA no docstring do modulo antes de usar essa soma como aferidor.
     """
     lats = pd.to_numeric(df_concorrentes[coluna_lat], errors="coerce")
     lngs = pd.to_numeric(df_concorrentes[coluna_lng], errors="coerce")
@@ -310,6 +316,14 @@ def anexar_pressao_1km_area(
     Preserva cardinalidade e todas as colunas existentes. Hexes nao alcancados por
     nenhum concorrente recebem oferta 0 -> `gap_competitivo_1km_area` = 1 e
     `pressao_concorrencial_score_1km_area` = 0 (mesma convencao do modelo de 2 km).
+
+    NAO CONSERVA MASSA — e' aqui que a perda acontece. O `merge` abaixo descarta, em
+    silencio, todo share que caiu em celula H3 ausente de `df_hex` (litoral, fronteira,
+    hexagono podado por `M1_HEX_LAND_FRACTION_MIN`). Medido na base nacional: 119 dos
+    3.179 concorrentes perdem parte da conta, 27,4 unidades no total. O `fillna(0.0)`
+    torna "tocado, mas fora da base" indistinguivel de "nunca tocado", e o assert de
+    cardinalidade no fim mede LINHAS, nao massa — nenhum dos dois acusa a perda. Ver
+    LIMITACAO CONHECIDA no docstring do modulo.
     """
     n_orig = len(df_hex)
     agregado = repartir_concorrentes(

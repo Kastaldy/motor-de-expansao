@@ -328,9 +328,11 @@ def test_centroide_do_hex_nao_alcanca_os_vizinhos_em_2km():
 def test_modelo_2km_nao_conserva_massa_e_o_de_1km_conserva():
     """A propriedade que separa os dois modelos, medida sobre 60 posicoes no hexagono.
 
-    O modelo de 2 km injeta entre 0,73 e 0,98 unidade por concorrente conforme a
-    posicao (media ~0,80): subestima o consumo em ~20% e de forma DESIGUAL. O modelo
-    de 1 km por area injeta exatamente 1,00 em qualquer posicao.
+    EM SAO PAULO, que e' onde este teste roda, o modelo de 2 km injeta entre 0,73 e
+    0,98 unidade por concorrente conforme a posicao (media ~0,80): subestima o consumo
+    em ~20% e de forma DESIGUAL. O sinal NAO se generaliza — em Porto Alegre a media e'
+    0,95, com posicoes acima de 1,00. O modelo de 1 km por area injeta exatamente 1,00
+    em qualquer posicao (antes do merge com a base de hexes).
     """
     hex_central = _hex_de(*SP)
     df = _df_hex(*h3.grid_disk(hex_central, 3))
@@ -363,9 +365,13 @@ def test_alcance_do_1km_area_contem_o_do_2km():
     posicoes: zero violacoes.
 
     ATENCAO AO QUE ISTO **NAO** PROVA. Conter o alcance nao implica que o consumo de um
-    hex nunca diminua — o hex continua alcancado, so' que com peso menor. Medido em
-    dados reais (294.513 hexes de 5 UFs), 5 deles (0,002%) ganham residual. O docstring
-    anterior concluia "nenhum hexagono GANHA residual", que e' um salto e e' falso.
+    hex nunca diminua — o hex continua alcancado, so' que com peso menor. Medido na
+    malha NACIONAL (1.542.531 hexes), 81 ganham residual — 68 no RS, 8 em SC, 5 no PR —
+    com ganho maximo de 168 alunos em Pelotas/RS (criterio: `delta_consumo < -1 aluno`;
+    pelo estrito `< 0` sao 84). Este teste NAO trava esses numeros: eles vem dos
+    parquets, que sao gitignored. Um docstring anterior citava "5 hexes em 5 UFs", que
+    era um recorte sem RS/SC e escondia a magnitude; e antes disso concluia-se "nenhum
+    hexagono GANHA residual", que e' um salto e e' falso.
 
     Razao geometrica: o hex res-7 tem ~2,4 km de ponta a ponta, entao um concorrente a
     1-2 km do centroide esta quase sempre a menos de 1 km da BORDA, e seu disco continua

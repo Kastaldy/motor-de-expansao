@@ -240,13 +240,17 @@ uniforme (cada m2 do disco pesa igual):
 
 ```
 share(concorrente c -> hex h) = area(disco_1km_c ∩ hex_h) / area(disco_1km_c)
-SOMA_h share(c -> h) = 1                     # conservacao de massa, exata
+SOMA_h share(c -> h) = 1                     # exata sobre a tesselacao H3 completa
 oferta_efetiva_1km_area[h] = SOMA_c share(c -> h)
 ```
 
+A igualdade acima vale sobre TODAS as celulas H3 que o disco cobre. Na coluna publicada
+ela nao fecha: `anexar_pressao_1km_area` faz `merge` contra a base de hexes e descarta o
+share que cai fora dela — ver **LIMITACAO CONHECIDA** abaixo.
+
 | coluna | tipo | regra exata |
 | --- | --- | --- |
-| `oferta_efetiva_1km_area` | float | soma dos `share` de todos os concorrentes que cobrem o hex |
+| `oferta_efetiva_1km_area` | float | soma dos `share` de todos os concorrentes que cobrem o hex (share caido fora da base e' descartado — ver LIMITACAO CONHECIDA) |
 | `n_concorrentes_influencia_1km` | int | quantos concorrentes distintos tem `share > 0` no hex |
 | `consumo_concorrentes_1km_area` | float | `oferta_efetiva_1km_area * capacidade_default_concorrente_alunos` |
 | `gap_competitivo_1km_area` | float | `1 / (1 + oferta_efetiva_1km_area)` |
@@ -267,7 +271,9 @@ travados por teste - os parquets sao gitignored, entao o CI nao regride se mudar
   **O sinal do desvio NAO e' universal** — em Porto Alegre a media e' `0,95` com 14 de 60
   posicoes ACIMA de `1,00` (max `1,04`, ou seja SOBRE-injeta), e em Belem a media cai para
   `0,68`. O que vale em geral e' a irregularidade, nao a direcao. O de 1 km por area
-  injeta exatamente `1,00` em qualquer posicao (conferido: 3.179,0 para 3.179 validos).
+  injeta exatamente `1,00` em qualquer posicao — mas isso e' a massa ANTES do merge
+  (`3.179,0` para 3.179 validos); na coluna publicada a soma cai para `3.151,6`, pela
+  LIMITACAO CONHECIDA abaixo.
 - **Alcance.** Contra-intuitivo: o raio de 2 km NAO espalha mais. Na malha NACIONAL a
   distancia entre centroides vizinhos vai de `1.999` a `2.682 m` (mediana `2.496`) — a
   faixa `2.387-2.513 m` citada antes era do hexagono de Sao Paulo, e 67% da malha cai
@@ -278,7 +284,11 @@ travados por teste - os parquets sao gitignored, entao o CI nao regride se mudar
   de 1 km CONTEM o do de 2 km, logo nenhum hexagono passa de "com pressao" para "sem
   pressao". MEDIDO na malha NACIONAL (1.542.531 hexes): o residual cai na esmagadora
   maioria, mas **81 hexes GANHAM residual** — 68 no RS, 8 em SC, 5 no PR — com ganho
-  maximo de `168` alunos (Pelotas/RS). Concentra-se no Sul, onde a celula e' menor: uma
+  maximo de `168` alunos (Pelotas/RS). O criterio e' ganho MATERIAL, `delta_consumo <
+  -1 aluno`; pelo criterio estrito (`delta_consumo < 0`) sao `84` hexes — 71 RS, 8 SC,
+  5 PR — a diferenca sendo 3 hexes que ganham menos de 1 aluno. Sem esse limiar escrito,
+  quem reproduzir chega a 84 e conclui que o numero esta errado.
+  Concentra-se no Sul, onde a celula e' menor: uma
   medicao restrita a SP/MG/RJ/PR/BA acha so' 5 casos e sugere que e' desprezivel.
   Conter o alcance nao impede o consumo de um hex especifico de diminuir; uma versao
   anterior deste paragrafo afirmava "nunca sobe", o que nao decorre do teste.
