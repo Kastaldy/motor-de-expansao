@@ -3,7 +3,12 @@
 A propriedade que define este modelo e' a CONSERVACAO DE MASSA: cada concorrente vale
 exatamente 1 unidade (2.500 alunos), repartida entre os hexagonos que seu disco de 1 km
 cobre, na proporcao da area de intersecao. E' isso que o modelo de 2 km do centroide nao
-garante — la a soma dos pesos varia entre 0,73 e 0,98 por concorrente.
+garante: em Sao Paulo a soma dos pesos varia entre 0,73 e 0,98 por concorrente (e em
+Porto Alegre chega a passar de 1,00 — o desvio e' irregular, nao tem sinal fixo).
+
+RECORTE DESTE ARQUIVO: tudo aqui roda sobre o hexagono de Sao Paulo. Os numeros de
+DADOS REAIS citados nos docstrings do modulo e do doc de metodologia nao sao travados
+por este teste — os parquets sao gitignored.
 
 READ-ONLY sobre o M1: nada aqui toca score_priorizacao, pesos, carteira ou artefatos.
 """
@@ -338,7 +343,14 @@ def test_modelo_2km_nao_conserva_massa_e_o_de_1km_conserva():
         assert sum(shares_por_hex(lat, lng).values()) == pytest.approx(1.0, abs=1e-9)
 
     assert min(massas_2km) < 0.80 < max(massas_2km), "a massa de 2 km deveria variar"
-    assert all(m < 1.0 for m in massas_2km), "2 km subestima o consumo em toda posicao"
+    # NAO afirmar "subestima em toda posicao": isso e' verdade em SAO PAULO, onde este
+    # teste roda, e FALSO em Porto Alegre (14 de 60 posicoes acima de 1,00, max 1,04).
+    # O que vale em geral e' a IRREGULARIDADE, nao o sinal do desvio. Um assert global
+    # aqui passaria por acidente de recorte e viraria evidencia de algo que nao foi
+    # medido fora de SP.
+    assert all(m < 1.0 for m in massas_2km), (
+        "em Sao Paulo o modelo de 2 km subestima em toda posicao (nao vale para o Sul)"
+    )
     media = sum(massas_2km) / len(massas_2km)
     assert 0.75 < media < 0.85
 

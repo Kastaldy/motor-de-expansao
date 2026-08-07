@@ -95,7 +95,19 @@ export default function MapScreen({
   // publica a camera. Um callback inline mudaria de identidade a cada render e faria
   // aquele efeito disparar em todo render, nao so' quando a camera muda.
   const publicarCamera = useCallback((v: ViewState) => {
-    cameraRef.current = v
+    /* Copia so' os campos de CAMERA. O `onViewStateChange` do deck.gl emite a cada
+       quadro DURANTE o voo, carregando `transitionDuration` e a instancia de
+       `FlyToInterpolator` junto. Guardando o objeto cru: (a) clicar em "Estudo pontual"
+       dentro dos 800 ms congelava um quadro do meio do caminho — e, na volta, o guard do
+       pin suprime o voo corretivo, entao o enquadramento intermediario virava
+       permanente; (b) a foto deixava de ser serializavel. */
+    cameraRef.current = {
+      longitude: v.longitude,
+      latitude: v.latitude,
+      zoom: v.zoom,
+      pitch: v.pitch,
+      bearing: v.bearing,
+    }
   }, [])
 
   // Trocar de UF/município recomeça a história do passo 1 e limpa a busca/cenário.
@@ -326,7 +338,17 @@ export default function MapScreen({
           pins={dados.pins}
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
-          cameraInicial={foto.camera}
+          /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
+             nao tem como zerar `foto.camera`. Sem este portao: SP/Sao Paulo -> volta da
+             Viabilidade (foto.camera = zoom 14 sobre SP) -> troca a UF -> a carga falha
+             e o App zera `dados`, o que DESMONTA o HexMap -> nova selecao remonta com a
+             camera de Sao Paulo e, como `centroAnterior` ja e' o centro novo, nem voa:
+             territorio novo com a camera parada sobre SP. */
+          cameraInicial={
+            chaveContexto(uf, municipio) === chaveContexto(foto.uf, foto.municipio)
+              ? foto.camera
+              : null
+          }
           onCamera={publicarCamera}
           onSelecionar={(h) => {
             setPin(null)

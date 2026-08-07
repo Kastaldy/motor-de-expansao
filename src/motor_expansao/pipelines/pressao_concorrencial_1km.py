@@ -11,20 +11,26 @@ Duas consequencias incomodas (numeros MEDIDOS sobre pontos sorteados dentro de u
 res-7 em Sao Paulo; `tests/unit/test_pressao_concorrencial_1km.py` trava as faixas com
 60 amostras):
 
-1. **Nao conserva massa, e o vazamento e' irregular.** A soma dos pesos que um unico
-   concorrente injeta no sistema varia entre **0,73 e 0,98** (media 0,80) conforme onde
-   ele cai dentro do hexagono. Ou seja: o modelo atual subestima o consumo de cada
-   concorrente em ~20% na media, e de forma DESIGUAL entre hexes — dois concorrentes
-   identicos contam diferente so' por causa da posicao relativa ao centroide.
+1. **Nao conserva massa, e o vazamento e' irregular.** Em SAO PAULO, a soma dos pesos
+   que um unico concorrente injeta varia entre **0,73 e 0,98** (media 0,80) conforme onde
+   ele cai dentro do hexagono: o modelo atual subestima o consumo em ~20% na media, e de
+   forma DESIGUAL entre hexes.
+   O RECORTE IMPORTA e a direcao NAO e' universal: em Porto Alegre a mesma medicao da
+   media 0,95, com 14 de 60 posicoes ACIMA de 1,00 (max 1,04) — la o modelo antigo
+   SOBRE-injeta. Em Belem a media cai para 0,68. O que vale em geral e' a irregularidade,
+   nao o sinal do desvio.
 2. **Ignora a geometria do hexagono.** So a distancia ao centroide conta. Um concorrente
    colado na fronteira entre dois hexes e' tratado como se pertencesse quase todo ao hex
    cujo centroide esta mais perto, mesmo atendendo os dois igualmente.
 
 Observacao contra-intuitiva, mas medida: o raio de 2 km NAO espalha para mais hexes que
-o de 1 km. Em res-7 os centroides vizinhos ficam a **2.387-2.513 m** um do outro, entao
-um raio de 2 km partindo do centroide mal alcanca os vizinhos — o modelo atual toca
-**2,4 hexes** na media (1 a 3). O modelo novo toca **3,3** (1 a 4), porque area de
-intersecao enxerga vizinho que distancia-ao-centroide nao enxerga.
+o de 1 km. Na malha NACIONAL a distancia entre centroides vizinhos vai de 1.999 a 2.682 m
+(mediana 2.496) — a faixa 2.387-2.513 m citada antes era do hexagono de Sao Paulo apenas,
+e 67% da malha cai fora dela. Como quase toda a malha fica acima de 2.000 m, um raio de
+2 km partindo do centroide quase sempre nao alcanca vizinho (ha 10 hexes no pais com
+vizinho a menos de 2.000 m). Medido em Sao Paulo: o modelo atual toca **2,4 hexes** na
+media (1 a 3) e o novo toca **3,3** (1 a 4), porque area de intersecao enxerga vizinho
+que distancia-ao-centroide nao enxerga.
 
 O QUE ESTE MODULO FAZ
 ---------------------
@@ -37,11 +43,24 @@ entre os hexagonos que o disco cobre, na proporcao da AREA DE INTERSECAO:
     oferta_efetiva_1km_area[h] = SOMA_c share(c -> h)
     consumo_concorrentes_1km_area[h] = oferta_efetiva_1km_area[h] * capacidade
 
+LIMITACAO CONHECIDA — MASSA RETIDA NA BORDA DA BASE. `shares_por_hex` conserva massa
+por construcao (soma 1,00 sobre TODAS as celulas H3 que o disco cobre), mas
+`anexar_pressao_1km_area` faz `merge` contra o DataFrame de hexes: o share que cai em
+celula FORA da base — litoral, fronteira, hexagono podado pelo criterio de fracao de
+terra (`M1_HEX_LAND_FRACTION_MIN`) — e' DESCARTADO em silencio. Medido na base real:
+**119 dos 3.179 concorrentes validos (3,7%) perdem parte da conta**, mediana 15,8% e ate
+100% nos casos em que o concorrente esta inteiramente fora da malha; no total somem
+**27,4 unidades = 68.431 alunos** de consumo. O efeito e' subestimar a pressao em hexes
+de borda. Fica REGISTRADO como limitacao ate a DEC; renormalizar (dividir o share pelo
+que ficou dentro) ou sinalizar a perda por hexagono sao os dois caminhos, e nenhum foi
+tomado aqui.
+
 Kernel UNIFORME por decisao de Felipe (2026-08-05): cada m2 do disco pesa igual, o
 share e' area pura. Alternativas avaliadas e recusadas nesta rodada: decaimento linear
 dentro do disco e raio variavel por porte de rede.
 
-Escala para calibrar expectativa: hex H3 res-7 = **5,21 km2**; disco de 1 km = 3,14 km2.
+Escala para calibrar expectativa: hex H3 res-7 = **5,16 km2** de area media oficial
+(a celula de Sao Paulo tem 5,21; Porto Alegre 4,41; Belem 6,08); disco de 1 km = 3,14 km2.
 O disco cabe dentro de um hexagono, mas raramente esta centrado nele: na pratica se
 reparte entre 1 e 4 hexes (media 3,3).
 
@@ -54,10 +73,13 @@ sobe". Vale separar o que esta PROVADO do que apenas foi observado:
   pressao". Motivo geometrico: os hexes tem ~2,4 km de ponta a ponta, entao um
   concorrente a 1-2 km do centroide quase sempre esta a menos de 1 km da BORDA.
 
-  MEDIDO (dados reais, 294.513 hexes de SP/MG/RJ/PR/BA): cada concorrente passa a valer
-  1,00 unidade em vez de 0,80, o consumo total sobe ~25% e o residual cai na esmagadora
-  maioria. Mas 5 hexes (0,002%, todos no PR) GANHAM residual, com ganho maximo de 23
-  alunos. Conter o alcance nao impede o consumo de um hex especifico de diminuir.
+  MEDIDO (dados reais, malha NACIONAL de 1.542.531 hexes): cada concorrente passa a
+  valer 1,00 unidade em vez de ~0,80 em Sao Paulo, o consumo total sobe +27,9% e o
+  residual cai na esmagadora maioria. Mas 81 hexes GANHAM residual — 68 no RS, 8 em SC,
+  5 no PR — com ganho maximo de 168 alunos (Pelotas/RS). Conter o alcance nao impede o
+  consumo de um hex especifico de diminuir. O fenomeno se concentra no SUL, onde a
+  celula H3 e' menor: uma medicao restrita a SP/MG/RJ/PR/BA encontra so' 5 casos e da a
+  impressao de que e' desprezivel.
 
 Uma versao anterior deste docstring afirmava "so' para baixo, NUNCA para cima" e tratava
 isso como travado em teste. Era um salto: do alcance conter (provado) para o consumo

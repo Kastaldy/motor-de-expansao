@@ -257,21 +257,40 @@ oferta_efetiva_1km_area[h] = SOMA_c share(c -> h)
 o residual para esta base exige DEC (afeta `som_indice_mapeado`, `tese_entrada`,
 `prioridade_mercado_mapeado`, carteira e plano).
 
-Diferencas medidas contra o modelo de 2 km (travadas em
-`tests/unit/test_pressao_concorrencial_1km.py`):
+Diferencas contra o modelo de 2 km. ATENCAO ao que o teste realmente trava: ele cobre a
+conservacao de massa do modelo novo, a contencao de alcance e a ordem `media_1km >
+media_2km`. Os extremos (`0,73`/`0,98`) e todos os numeros de DADOS REAIS abaixo NAO sao
+travados por teste - os parquets sao gitignored, entao o CI nao regride se mudarem:
 
-- **Massa.** O modelo de 2 km injeta `0,73` a `0,98` unidade por concorrente conforme a
-  posicao dele dentro do hexagono (media `0,80`) — subestima o consumo em ~20%, de forma
-  desigual. O de 1 km por area injeta exatamente `1,00` em qualquer posicao.
-- **Alcance.** Contra-intuitivo: o raio de 2 km NAO espalha mais. Em res-7 os centroides
-  vizinhos ficam a `2.387-2.513 m`, entao 2 km partindo do centroide mal alcanca vizinho —
-  toca `2,4` hexes na media contra `3,3` do modelo novo.
-- **Direcao do efeito.** PROVADO em teste (120 amostras): o alcance do modelo de 1 km
-  CONTEM o do de 2 km, logo nenhum hexagono passa de "com pressao" para "sem pressao".
-  MEDIDO em dados reais (294.513 hexes de SP/MG/RJ/PR/BA): o residual cai na esmagadora
-  maioria, mas **5 hexes (0,002%) GANHAM residual** — ganho maximo de 23 alunos, todos
-  no PR. Conter o alcance nao impede o consumo de um hex especifico de diminuir; a
-  versao anterior deste paragrafo afirmava "nunca sobe", o que nao decorre do teste.
+- **Massa.** Em SAO PAULO o modelo de 2 km injeta `0,73` a `0,98` unidade por concorrente
+  conforme a posicao dentro do hexagono (media `0,80`): subestima ~20%, de forma desigual.
+  **O sinal do desvio NAO e' universal** — em Porto Alegre a media e' `0,95` com 14 de 60
+  posicoes ACIMA de `1,00` (max `1,04`, ou seja SOBRE-injeta), e em Belem a media cai para
+  `0,68`. O que vale em geral e' a irregularidade, nao a direcao. O de 1 km por area
+  injeta exatamente `1,00` em qualquer posicao (conferido: 3.179,0 para 3.179 validos).
+- **Alcance.** Contra-intuitivo: o raio de 2 km NAO espalha mais. Na malha NACIONAL a
+  distancia entre centroides vizinhos vai de `1.999` a `2.682 m` (mediana `2.496`) — a
+  faixa `2.387-2.513 m` citada antes era do hexagono de Sao Paulo, e 67% da malha cai
+  fora dela. Como quase tudo fica acima de 2.000 m, 2 km do centroide quase sempre nao
+  alcanca vizinho (10 hexes no pais sao excecao). Em SP: `2,4` hexes na media contra
+  `3,3` do modelo novo.
+- **Direcao do efeito.** PROVADO em teste (120 amostras, so' em SP): o alcance do modelo
+  de 1 km CONTEM o do de 2 km, logo nenhum hexagono passa de "com pressao" para "sem
+  pressao". MEDIDO na malha NACIONAL (1.542.531 hexes): o residual cai na esmagadora
+  maioria, mas **81 hexes GANHAM residual** — 68 no RS, 8 em SC, 5 no PR — com ganho
+  maximo de `168` alunos (Pelotas/RS). Concentra-se no Sul, onde a celula e' menor: uma
+  medicao restrita a SP/MG/RJ/PR/BA acha so' 5 casos e sugere que e' desprezivel.
+  Conter o alcance nao impede o consumo de um hex especifico de diminuir; uma versao
+  anterior deste paragrafo afirmava "nunca sobe", o que nao decorre do teste.
+
+- **LIMITACAO CONHECIDA - massa retida na borda da base.** `shares_por_hex` conserva massa
+  sobre todas as celulas H3 que o disco cobre, mas `anexar_pressao_1km_area` faz `merge`
+  contra o DataFrame de hexes: o share que cai em celula FORA da base (litoral, fronteira,
+  hexagono podado por `M1_HEX_LAND_FRACTION_MIN`) e' descartado em silencio. Medido:
+  **119 dos 3.179 concorrentes (3,7%) perdem parte da conta** — mediana `15,8%`, ate
+  `100%` — somando `27,4` unidades (`68.431` alunos) que somem. Subestima a pressao em
+  hexes de borda. NAO corrigido neste ciclo; renormalizar ou sinalizar a perda por
+  hexagono sao os caminhos, e a escolha fica para a DEC.
 
 Comparativo executavel: `python scripts/comparar_pressao_1km.py` (usa os parquets reais
 se existirem; senao roda um cenario sintetico rotulado como DEMO).

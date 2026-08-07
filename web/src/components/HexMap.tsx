@@ -273,9 +273,6 @@ export default function HexMap({
   // Voa e aproxima quando um ponto e buscado. No PRIMEIRO render com camera restaurada
   // o voo e' pulado de proposito: o pin ja existia antes da ida a Viabilidade, e voar
   // ate ele jogaria o zoom para >=13, desfazendo o enquadramento que acabou de voltar.
-  // O ref e' consumido no PRIMEIRO run do efeito, com ou sem pin. Consumi-lo so' quando
-  // ha pin deixaria a flag armada: uma busca feita depois (mapa restaurado sem pin)
-  // cairia no `return` e o mapa nao voaria para o endereco pesquisado.
   /* IDENTIDADE, nao flag one-shot. A versao anterior era um ref consumido no primeiro
      run do efeito — e o StrictMode invoca efeitos DUAS vezes em dev (montar, limpar,
      montar). A primeira invocacao gastava a flag e a segunda voava assim mesmo, entao
