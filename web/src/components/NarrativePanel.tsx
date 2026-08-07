@@ -3,6 +3,13 @@ import { useState } from 'react'
 import { camadaCor } from '../lib/colors'
 import { type Linha, type Serie, parseDims, parseSeries } from '../lib/crescimento'
 import { alunos, num } from '../lib/format'
+import {
+  filtrarPorCrescimento,
+  lerCrescimento,
+  ordenarComDesempate,
+  temCoberturaSatelite,
+  type CrescimentoMunicipio,
+} from '../lib/oportunidades'
 import type { Hex, Passo } from '../lib/types'
 import { Chip, Eyebrow } from './primitives'
 
@@ -34,6 +41,10 @@ export interface NarrativePanelProps {
   /** Total de passos do funil. Deriva do payload — não é literal, para o 6º passo
    *  não repetir a caçada por "de 4" que este bloco já teve de fazer. */
   totalPassos: number
+  /** Crescimento por município (`MapaResposta.cres_mun`). Só o passo 5 usa. */
+  cresMun?: Record<string, CrescimentoMunicipio> | null
+  /** UF em tela, para avisar da cobertura de satélite no passo 4. */
+  uf?: string | null
 }
 
 /* ---------------------------------------------------------------------------
@@ -340,9 +351,23 @@ export default function NarrativePanel({
   onAnalisar,
   onDrillMunicipio,
   totalPassos,
+  cresMun,
+  uf,
 }: NarrativePanelProps) {
+  /** Filtro OPCIONAL do passo 5. Começa desligado: a fila que o motor entregou é a
+   *  resposta padrão, e esconder itens por default seria decidir pelo operador. */
+  const [soCrescendo, setSoCrescendo] = useState(false)
   // Vem UMA vez no passo, nao repetido em cada hexagono (o payload de uma UF
   // triplicava). Na visao de UF cada item do ranking traz o seu.
+  /* Só o passo 5 passa por aqui. Nos outros a lista é a do servidor, intocada.
+     `ordenarComDesempate` NÃO reordena por crescimento: a chave primária continua
+     sendo o residual, e o crescimento só decide entre empates. */
+  const itens =
+    passo.n === 5
+      ? filtrarPorCrescimento(ordenarComDesempate(passo.itens, cresMun), cresMun, soCrescendo)
+      : passo.itens
+  const escondidos = passo.n === 5 ? passo.itens.length - itens.length : 0
+
   const series = passo.series ?? null
   const dims = passo.dims ?? null
   const cor = camadaCor(passo.n)
@@ -446,7 +471,54 @@ export default function NarrativePanel({
           <Detalhes dims={dims} series={series} />
         )}
 
-        {passo.itens.length === 0 ? (
+        {passo.n === 5 && passo.itens.length > 0 && (
+          <div style={{ display: 'grid', gap: 8, margin: '0 0 12px' }}>
+            <label
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                font: '500 11.5px/1.3 var(--f-ui)', color: 'var(--tx-soft)',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={soCrescendo}
+                onChange={(e) => setSoCrescendo(e.target.checked)}
+              />
+              Só cidades crescendo acima da mediana do estado
+            </label>
+            {soCrescendo && escondidos > 0 && (
+              /* Dizer QUANTOS sumiram: filtro que encolhe a lista em silêncio faz o
+                 operador achar que a fila é menor do que é. */
+              <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
+                {escondidos} {escondidos === 1 ? 'item escondido' : 'itens escondidos'} pelo
+                filtro — a ordem da fila não muda, só a visibilidade.
+              </span>
+            )}
+          </div>
+        )}
+
+        {passo.n === 4 && !temCoberturaSatelite(uf) && (
+          /* A cor do hexágono no passo 4 vem de satélite, que cobre 12 UFs. Fora
+             delas o mapa acende cinza — não é defeito, é ausência de dado, e sem
+             aviso vira chamado. O número do painel (CAGED) segue nacional. */
+          <p
+            style={{
+              margin: '0 0 12px',
+              padding: '9px 11px',
+              borderRadius: 'var(--r-sm)',
+              background: 'var(--surf-raised)',
+              border: '1px dashed var(--line-strong)',
+              font: '400 11.5px/1.5 var(--f-ui)',
+              color: 'var(--tx-muted)',
+            }}
+          >
+            Os hexágonos aparecem cinza neste estado: a camada de área construída
+            (satélite) cobre 12 UFs, e {uf ?? 'esta'} não está entre elas. Os números de
+            emprego abaixo continuam valendo — eles vêm do CAGED, com cobertura nacional.
+          </p>
+        )}
+
+        {itens.length === 0 ? (
           <p
             style={{
               font: '400 12.5px/1.6 var(--f-ui)',
@@ -463,7 +535,7 @@ export default function NarrativePanel({
               : 'Nenhuma região passou neste filtro. Escolha outro município ou outro estado na barra de busca.'}
           </p>
         ) : (
-          passo.itens.map((it) => {
+          itens.map((it) => {
             const ativo = it.hex_id === selecionado
             const acionar = () =>
               it.municipio ? onDrillMunicipio?.(it.municipio) : onSelecionarHex(it.hex_id)
@@ -549,6 +621,9 @@ export default function NarrativePanel({
                       {it.sub}
                     </span>
                   )}
+                  {passo.n === 5 && (
+                    <EtiquetaCrescimento cres={cresMun?.[it.municipio ?? it.titulo ?? '']} />
+                  )}
                 </span>
 
                 <span style={{ textAlign: 'right', flexShrink: 0 }}>
@@ -621,5 +696,46 @@ export default function NarrativePanel({
         </span>
       </footer>
     </aside>
+  )
+}
+
+/**
+ * Etiqueta de crescimento do municipio, no passo 5.
+ *
+ * CONTEXTO, nao criterio: a fila continua ordenada pelo residual que o motor
+ * entregou. A etiqueta so' responde "e como essa cidade esta indo?", que era a
+ * pergunta que o operador tinha de ir buscar no passo 4.
+ *
+ * Sem medicao, aparece assim mesmo — o silencio leria como "cresce normal".
+ */
+function EtiquetaCrescimento({ cres }: { cres?: CrescimentoMunicipio | null }) {
+  const { classe, rotulo, delta } = lerCrescimento(cres)
+
+  // Semantica, nao acento: verde/vermelho aqui dizem "bom/ruim para expansao", e
+  // sao independentes do turquesa da marca.
+  const cor =
+    classe === 'acima' ? 'var(--pos-text)'
+    : classe === 'abaixo' ? 'var(--neg)'
+    : 'var(--tx-sub)'
+
+  return (
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 5,
+        marginTop: 5,
+        font: '500 10.5px/1.3 var(--f-ui)',
+        color: cor,
+      }}
+    >
+      <span aria-hidden style={{ width: 5, height: 5, borderRadius: '50%', background: cor }} />
+      {rotulo}
+      {delta != null && classe !== 'na-mediana' && (
+        <span className="num" style={{ font: '500 10px/1 var(--f-num)', opacity: 0.8 }}>
+          ({delta > 0 ? '+' : ''}{delta.toFixed(1).replace('.', ',')} p.p.)
+        </span>
+      )}
+    </span>
   )
 }
