@@ -1572,8 +1572,16 @@ _CONCLUSAO_TOPO = 76.0
 # 240 x 196 ~ 1,2:1 -- quase quadrado, como o carimbo da tela. Nao e' 1:1 exato porque o
 # rotulo mais longo ("COM RESSALVAS") precisa da largura para nao encolher demais.
 _CONCLUSAO_SELO_H = 196.0
+# Cantos arredondados do selo (pedido de Vinicius, 2026-08-07). Fica um pouco menor que
+# `_CLASSICO_CORNER_RADIUS` (16) porque a borda aqui tem 2 pt e o mesmo raio da banda
+# clássica deixaria o traco visivelmente achatado nas quinas. Os CARDS seguem retos, como
+# todos os outros do relatorio -- o arredondamento marca o selo como elemento a parte.
+_CONCLUSAO_SELO_RAIO = 13.0
+# Os dois cards de aluguel vivem na coluna ESQUERDA, lado a lado, acima das observacoes
+# (pedido de Vinicius, 2026-08-07). O gap e' HORIZONTAL desde entao.
 _CONCLUSAO_ALUGUEL_H = 72.0
-_CONCLUSAO_ALUGUEL_GAP = 10.0
+_CONCLUSAO_ALUGUEL_GAP = 12.0
+_CONCLUSAO_OBS_TITULO_Y = _CONCLUSAO_TOPO + _CONCLUSAO_ALUGUEL_H + 24.0
 
 
 @dataclass(frozen=True)
@@ -1879,10 +1887,16 @@ def _conclusao_selo(
     prev_lw = pdf.line_width
 
     pdf.set_fill_color(*_CONCLUSAO_CORES[status])
-    pdf.rect(x, y, largura, altura, style="F")
+    pdf.rect(
+        x, y, largura, altura,
+        style="F", round_corners=True, corner_radius=_CONCLUSAO_SELO_RAIO,
+    )
     pdf.set_draw_color(*rgb)
     pdf.set_line_width(2.0)
-    pdf.rect(x, y, largura, altura, style="D")
+    pdf.rect(
+        x, y, largura, altura,
+        style="D", round_corners=True, corner_radius=_CONCLUSAO_SELO_RAIO,
+    )
     pdf.set_line_width(prev_lw)
 
     _conclusao_simbolo(pdf, status, x + largura / 2, y + altura * 0.30, 48.0, rgb)
@@ -1906,7 +1920,11 @@ def _conclusao_cards_aluguel(
     largura: float,
     accent: tuple[int, int, int],
 ) -> None:
-    """Aluguel-teto (referencia) e aluguel pedido (com semaforo), EMPILHADOS.
+    """Aluguel-teto (referencia) e aluguel pedido (com semaforo), LADO A LADO.
+
+    Moram na coluna ESQUERDA, acima das observacoes (pedido de Vinicius, 2026-08-07):
+    a direita fica so com o selo. `largura` e' a da coluna inteira e os dois cards a
+    dividem com `_CONCLUSAO_ALUGUEL_GAP` entre eles.
 
     O teto impresso e' o CANONICO (`aluguel_teto`, a faixa de 20%), o mesmo numero que o
     card da pagina de Viabilidade ja mostra -- nao a `excecao`, que fica so como regua do
@@ -1930,23 +1948,24 @@ def _conclusao_cards_aluguel(
         ),
     )
     card_h = _CONCLUSAO_ALUGUEL_H
+    card_w = (largura - _CONCLUSAO_ALUGUEL_GAP) / 2
     for index, (rotulo, valor, cor) in enumerate(cards):
-        topo = y + index * (card_h + _CONCLUSAO_ALUGUEL_GAP)
+        esquerda = x + index * (card_w + _CONCLUSAO_ALUGUEL_GAP)
         pdf.set_fill_color(*cor)
-        pdf.rect(x, topo, largura, card_h, style="F")
+        pdf.rect(esquerda, y, card_w, card_h, style="F")
         pdf.set_draw_color(225, 225, 228)
-        pdf.rect(x, topo, largura, card_h, style="D")
+        pdf.rect(esquerda, y, card_w, card_h, style="D")
         pdf.set_fill_color(*accent)
-        pdf.rect(x, topo, largura, 5.0, style="F")
+        pdf.rect(esquerda, y, card_w, 5.0, style="F")
         pdf.set_text_color(45, 45, 45)
         pdf.set_font("Helvetica", "", 10)
-        pdf.set_xy(x + 14, topo + 13)
-        pdf.cell(largura - 28, 13, _ascii(rotulo))
+        pdf.set_xy(esquerda + 14, y + 13)
+        pdf.cell(card_w - 28, 13, _ascii(rotulo))
         pdf.set_text_color(40, 40, 40)
         valor_txt = _ascii(valor)
-        _ajustar_fonte_para_largura(pdf, valor_txt, largura - 28, tamanho=19.0)
-        pdf.set_xy(x + 14, topo + 34)
-        pdf.cell(largura - 28, 22, valor_txt)
+        _ajustar_fonte_para_largura(pdf, valor_txt, card_w - 28, tamanho=19.0)
+        pdf.set_xy(esquerda + 14, y + 34)
+        pdf.cell(card_w - 28, 22, valor_txt)
 
 
 def _conclusao_page(
@@ -1960,12 +1979,13 @@ def _conclusao_page(
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
 ) -> None:
-    """Pagina de parecer do ponto, em 2 COLUNAS: observacoes a esquerda, selo a direita.
+    """Pagina de parecer do ponto, em 2 COLUNAS: conteudo a esquerda, selo a direita.
 
-    Estrutura pedida por Vinicius (2026-08-07). O selo segue a anatomia do carimbo de
-    veredito da tela de Viabilidade -- quadrado, simbolo em cima, rotulo embaixo, cor
-    pelo estado -- e leva junto os dois cards de aluguel, que sao a leitura numerica que
-    sustenta o parecer. A coluna da esquerda fica so com o texto. READ-ONLY sobre o M1.
+    Estrutura pedida por Vinicius (2026-08-07). A direita fica SO o selo, que segue a
+    anatomia do carimbo de veredito da tela de Viabilidade (quadrado de cantos
+    arredondados, simbolo em cima, rotulo embaixo, cor pelo estado). A esquerda ficam os
+    dois cards de aluguel, alinhados pelo topo com o selo, e as observacoes logo abaixo
+    deles. READ-ONLY sobre o M1.
     """
     dados = _viab_normalizado(viabilidade)
     parecer = _avaliar_conclusao(result, residual, info_imovel, dados)
@@ -1977,7 +1997,7 @@ def _conclusao_page(
     margem = _CONCLUSAO_MARGEM_X
     largura_esq = _CONCLUSAO_COL_ESQ_W
 
-    # --- Coluna DIREITA: selo + os dois cards de aluguel empilhados sob ele ---
+    # --- Coluna DIREITA: so o selo ---
     _conclusao_selo(
         pdf,
         parecer.status,
@@ -1986,18 +2006,16 @@ def _conclusao_page(
         _CONCLUSAO_COL_DIR_W,
         _CONCLUSAO_SELO_H,
     )
+
+    # --- Coluna ESQUERDA: cards de aluguel no topo, observacoes abaixo ---
+    # Os cards alinham pelo topo com o selo, o que fecha uma linha horizontal de leitura
+    # rapida (numero + veredito) antes do texto corrido.
     _conclusao_cards_aluguel(
-        pdf,
-        dados,
-        info_imovel,
-        _CONCLUSAO_COL_DIR_X,
-        _CONCLUSAO_TOPO + _CONCLUSAO_SELO_H + 18.0,
-        _CONCLUSAO_COL_DIR_W,
-        secondary,
+        pdf, dados, info_imovel, margem, _CONCLUSAO_TOPO, largura_esq, secondary
     )
 
-    # --- Coluna ESQUERDA: observacoes (eliminatorios antes das ressalvas) ---
-    y = _CONCLUSAO_TOPO
+    # Observacoes: eliminatorios primeiro (o que reprovou vem antes do que so ressalva).
+    y = _CONCLUSAO_OBS_TITULO_Y
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "B", 12)
     pdf.set_xy(margem, y)
