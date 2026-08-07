@@ -7,8 +7,9 @@ todo concorrente ate 2 km com peso linear `max(0, 1 - d/2000)`:
 
     oferta_efetiva_mapeada_2km[hex] = SOMA_concorrentes max(0, 1 - d_centroide/2000)
 
-Duas consequencias incomodas (numeros MEDIDOS, 400 pontos sorteados dentro de um hex
-res-7 em Sao Paulo — `tests/unit/test_pressao_concorrencial_1km.py` trava as faixas):
+Duas consequencias incomodas (numeros MEDIDOS sobre pontos sorteados dentro de um hex
+res-7 em Sao Paulo; `tests/unit/test_pressao_concorrencial_1km.py` trava as faixas com
+60 amostras):
 
 1. **Nao conserva massa, e o vazamento e' irregular.** A soma dos pesos que um unico
    concorrente injeta no sistema varia entre **0,73 e 0,98** (media 0,80) conforme onde
@@ -44,21 +45,29 @@ Escala para calibrar expectativa: hex H3 res-7 = **5,21 km2**; disco de 1 km = 3
 O disco cabe dentro de um hexagono, mas raramente esta centrado nele: na pratica se
 reparte entre 1 e 4 hexes (media 3,3).
 
-EFEITO ESPERADO NO RESIDUAL — so' para baixo, NUNCA para cima. Duas medidas sustentam
-isso, ambas travadas em teste:
+EFEITO ESPERADO NO RESIDUAL — cai em praticamente todo lugar, mas NAO e' um "nunca
+sobe". Vale separar o que esta PROVADO do que apenas foi observado:
 
-  a) Cada concorrente passa a valer 1,00 unidade em vez de 0,80 -> o consumo total
-     atribuido a concorrentes SOBE ~25%. Residual = SAM - consumo, logo o residual cai.
-  b) O ALCANCE do modelo novo CONTEM o do antigo. Em 500 posicoes sorteadas, nao houve
-     UM caso de hex alcancado pelo raio de 2 km e nao alcancado pelo disco de 1 km — o
-     inverso ocorreu 396 vezes. Motivo geometrico: os hexes tem ~2,4 km de ponta a
-     ponta, entao um concorrente a 1-2 km do centroide quase sempre esta a menos de
-     1 km da BORDA, e seu disco ainda cobre pedaco do hex.
+  PROVADO (teste `test_alcance_do_1km_area_contem_o_do_2km`, 120 posicoes sorteadas):
+  o ALCANCE do modelo novo contem o do antigo — nenhum hex alcancado pelo raio de 2 km
+  fica de fora do disco de 1 km. Logo nenhum hexagono passa de "com pressao" para "sem
+  pressao". Motivo geometrico: os hexes tem ~2,4 km de ponta a ponta, entao um
+  concorrente a 1-2 km do centroide quase sempre esta a menos de 1 km da BORDA.
 
-Consequencia pratica: nenhum hexagono ganha residual com a mudanca. Uns perdem muito
-(onde ha concorrente colado), outros ficam iguais. O ganho nao e' de nivel, e' de
-justica distributiva — o consumo pousa nos hexes que o concorrente de fato cobre, em vez
-de vazar proporcional a distancia ate centroides.
+  MEDIDO (dados reais, 294.513 hexes de SP/MG/RJ/PR/BA): cada concorrente passa a valer
+  1,00 unidade em vez de 0,80, o consumo total sobe ~25% e o residual cai na esmagadora
+  maioria. Mas 5 hexes (0,002%, todos no PR) GANHAM residual, com ganho maximo de 23
+  alunos. Conter o alcance nao impede o consumo de um hex especifico de diminuir.
+
+Uma versao anterior deste docstring afirmava "so' para baixo, NUNCA para cima" e tratava
+isso como travado em teste. Era um salto: do alcance conter (provado) para o consumo
+nunca diminuir (nao decorre, e falso). Como este modulo alimenta a decisao de virar a
+base do residual, a diferenca importa — hexes de fronteira podem entrar no funil, e
+quem le precisa saber que isso e' possivel, ainda que raro.
+
+O ganho da mudanca nao e' de nivel, e' de justica distributiva: o consumo pousa nos
+hexes que o concorrente de fato cobre, em vez de vazar proporcional a distancia ate
+centroides.
 
 ESCOPO — colunas NOVAS, em paralelo (decisao de Felipe, 2026-08-05)
 -------------------------------------------------------------------

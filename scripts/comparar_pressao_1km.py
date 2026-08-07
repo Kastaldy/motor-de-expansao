@@ -101,8 +101,15 @@ def _gerar_demo(n_concorrentes: int = DEMO_N_CONCORRENTES) -> tuple[pd.DataFrame
     conc = pd.DataFrame({"lat": lats, "lng": lngs})
 
     # So' concorrentes que caem sobre a malha modelada (fora dela nao ha hex para receber).
-    dentro = [h3.latlng_to_cell(la, ln, H3_RESOLUTION) in set(hex_ids) for la, ln in zip(lats, lngs, strict=True)]
-    return hexes, conc[dentro].reset_index(drop=True)
+    # `np.asarray(..., dtype=bool)`, nao lista: no pandas, `df[[]]` com lista VAZIA e'
+    # selecao de COLUNAS, nao mascara de linhas — devolveria um frame 0x0, sem `lat`/`lng`,
+    # e `repartir_concorrentes` estouraria com KeyError. Acontecia com
+    # `--demo-concorrentes 0` ou com uma densidade tao baixa que nenhum ponto caisse na malha.
+    dentro = np.asarray(
+        [h3.latlng_to_cell(la, ln, H3_RESOLUTION) in set(hex_ids) for la, ln in zip(lats, lngs, strict=True)],
+        dtype=bool,
+    )
+    return hexes, conc.loc[dentro].reset_index(drop=True)
 
 
 def _linha(rotulo: str, valor: str) -> str:
@@ -133,6 +140,17 @@ def main() -> int:
             "  Numeros ILUSTRAM o comportamento dos modelos; NAO servem de evidencia\n"
             "  para virar a chave do residual."
         )
+
+    # Guard ANTES de imprimir qualquer coisa: com o recorte vazio, as divisoes por
+    # `len(comp)` mais abaixo levantavam ZeroDivisionError no MEIO do relatorio — o
+    # operador via 20 linhas e um traceback, sem saber que a causa foi o `--uf`. Pior:
+    # o trecho ja impresso mentia, declarando "RECALCULADO" mesmo com a coluna presente.
+    if hexes.empty:
+        print(
+            f"Nenhum hexagono para o recorte --uf {args.uf!r}. "
+            "Confira a sigla (maiuscula, ex.: SP) ou rode sem --uf."
+        )
+        return 1
 
     print("=" * 78)
     print("Comparativo de pressao concorrencial: 2 km centroide (atual) vs 1 km area")

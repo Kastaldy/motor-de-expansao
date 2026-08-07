@@ -276,11 +276,18 @@ export default function HexMap({
   // O ref e' consumido no PRIMEIRO run do efeito, com ou sem pin. Consumi-lo so' quando
   // ha pin deixaria a flag armada: uma busca feita depois (mapa restaurado sem pin)
   // cairia no `return` e o mapa nao voaria para o endereco pesquisado.
-  const pularVooInicial = useRef(cameraInicial != null)
+  /* IDENTIDADE, nao flag one-shot. A versao anterior era um ref consumido no primeiro
+     run do efeito — e o StrictMode invoca efeitos DUAS vezes em dev (montar, limpar,
+     montar). A primeira invocacao gastava a flag e a segunda voava assim mesmo, entao
+     em desenvolvimento o guard nunca valia e mascarava o bug da camera velha; so' em
+     build de producao ele funcionava. Comparando a IDENTIDADE do pin, a regra e'
+     idempotente: o voo e' pulado exatamente para o pin que ja existia quando a camera
+     foi restaurada, quantas vezes o efeito rodar. Uma busca NOVA gera outro objeto e
+     voa normalmente. */
+  const pinDaMontagem = useRef(searchPin)
   useEffect(() => {
-    const restaurandoCamera = pularVooInicial.current
-    pularVooInicial.current = false
-    if (!searchPin || restaurandoCamera) return
+    if (!searchPin) return
+    if (cameraInicial != null && searchPin === pinDaMontagem.current) return
     setView((v) => ({
       ...v,
       longitude: searchPin.lng,
@@ -289,7 +296,7 @@ export default function HexMap({
       transitionDuration: 800,
       transitionInterpolator: FLY,
     }))
-  }, [searchPin])
+  }, [searchPin, cameraInicial])
 
   // Cor da camada ativa: veste o "score forte" do tooltip e a borda do rotulo de
   // rank. Os dois dizem "isto e' da camada N" — antes diziam em turquesa, a mesma

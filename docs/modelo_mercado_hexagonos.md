@@ -266,9 +266,12 @@ Diferencas medidas contra o modelo de 2 km (travadas em
 - **Alcance.** Contra-intuitivo: o raio de 2 km NAO espalha mais. Em res-7 os centroides
   vizinhos ficam a `2.387-2.513 m`, entao 2 km partindo do centroide mal alcanca vizinho —
   toca `2,4` hexes na media contra `3,3` do modelo novo.
-- **Direcao do efeito.** O alcance do modelo de 1 km CONTEM o do de 2 km (500 amostras,
-  zero excecoes). Logo nenhum hexagono passa de "com pressao" para "sem pressao": o
-  residual so' **cai ou fica igual**, nunca sobe.
+- **Direcao do efeito.** PROVADO em teste (120 amostras): o alcance do modelo de 1 km
+  CONTEM o do de 2 km, logo nenhum hexagono passa de "com pressao" para "sem pressao".
+  MEDIDO em dados reais (294.513 hexes de SP/MG/RJ/PR/BA): o residual cai na esmagadora
+  maioria, mas **5 hexes (0,002%) GANHAM residual** — ganho maximo de 23 alunos, todos
+  no PR. Conter o alcance nao impede o consumo de um hex especifico de diminuir; a
+  versao anterior deste paragrafo afirmava "nunca sobe", o que nao decorre do teste.
 
 Comparativo executavel: `python scripts/comparar_pressao_1km.py` (usa os parquets reais
 se existirem; senao roda um cenario sintetico rotulado como DEMO).

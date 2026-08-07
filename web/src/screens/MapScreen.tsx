@@ -121,7 +121,9 @@ export default function MapScreen({
   // Espelho SEMPRE atual do estado, mantido num ref. Existe para o cleanup do efeito
   // abaixo poder ler valores frescos: um cleanup enxerga o closure do render em que foi
   // criado, entao ler as variaveis de estado direto ali guardaria uma foto velha.
-  const estadoRef = useRef<EstadoMapa>(foto)
+  // SEM `camera`: ela nao vive aqui de proposito (ver o efeito de publicacao abaixo).
+  // O tipo declara isso, para nao voltar por engano e reintroduzir a foto velha.
+  const estadoRef = useRef<Omit<EstadoMapa, 'camera'>>(foto)
   useEffect(() => {
     estadoRef.current = {
       // O contexto viaja COM a foto: e' o que permite descarta-la depois se o operador
@@ -135,17 +137,26 @@ export default function MapScreen({
       filtroFaixa,
       modoCenario,
       cenario,
-      camera: cameraRef.current,
     }
   })
 
-  // Publica a foto no App UMA vez, ao desmontar — que e' exatamente quando ela passa a
-  // importar (o operador saiu para a Viabilidade). Publicar a cada mudanca faria o App
-  // re-renderizar a arvore inteira a cada clique no mapa, sem ganho nenhum.
-  // `onEstado` e' o `setEstadoMapa` do `useState` do App, cuja identidade o React
-  // garante estavel — o efeito nao remonta e nao publica antes da hora.
+  /* Publica a foto no App UMA vez, ao desmontar — que e' exatamente quando ela passa a
+     importar (o operador saiu para a Viabilidade). Publicar a cada mudanca faria o App
+     re-renderizar a arvore inteira a cada clique no mapa, sem ganho nenhum.
+     `onEstado` e' o `setEstadoMapa` do `useState` do App, cuja identidade o React
+     garante estavel — o efeito nao remonta e nao publica antes da hora.
+
+     A CAMERA E' LIDA AQUI, do ref, e nao do `estadoRef`. Motivo: `estadoRef` so' e
+     atualizado quando o MapScreen RE-RENDERIZA, e a camera muda sem render — o voo ate
+     o pin acontece dentro do HexMap (setView local) DEPOIS do ultimo render do
+     MapScreen. Guardando a camera no espelho, o que se publicava era o enquadramento
+     de ANTES do voo: o operador buscava o endereco, ia ao estudo pontual e voltava para
+     o municipio inteiro em zoom 9.6 — e, como a camera restaurada nao e' nula, o voo de
+     aproximacao ficava suprimido e o enquadramento nunca voltava. Quebrava justamente o
+     caso de uso que motivou este PR. Mesmo caminho ao dar zoom num hex antes de
+     "Analisar". */
   useEffect(() => {
-    return () => onEstado(estadoRef.current)
+    return () => onEstado({ ...estadoRef.current, camera: cameraRef.current })
   }, [onEstado])
 
   const passo = dados?.passos.find((p) => p.n === passoN) ?? dados?.passos[0] ?? null

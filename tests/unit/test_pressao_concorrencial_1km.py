@@ -3,7 +3,7 @@
 A propriedade que define este modelo e' a CONSERVACAO DE MASSA: cada concorrente vale
 exatamente 1 unidade (2.500 alunos), repartida entre os hexagonos que seu disco de 1 km
 cobre, na proporcao da area de intersecao. E' isso que o modelo de 2 km do centroide nao
-garante — la o mesmo concorrente pinga peso em ~8-12 hexes com soma variavel.
+garante — la a soma dos pesos varia entre 0,73 e 0,98 por concorrente.
 
 READ-ONLY sobre o M1: nada aqui toca score_priorizacao, pesos, carteira ou artefatos.
 """
@@ -344,11 +344,16 @@ def test_modelo_2km_nao_conserva_massa_e_o_de_1km_conserva():
 
 
 def test_alcance_do_1km_area_contem_o_do_2km():
-    """A descoberta que decide o efeito no residual: ninguem PERDE pressao na troca.
+    """Contencao de alcance: nenhum hex sai de "com pressao" para "sem pressao".
 
     Se o conjunto de hexes alcancados pelo disco de 1 km contem sempre o alcancado pelo
-    raio de 2 km, entao nenhum hexagono passa de "com pressao" para "sem pressao" — logo
-    nenhum hexagono GANHA residual com a mudanca. Medido em 120 posicoes: zero violacoes.
+    raio de 2 km, nenhum hexagono deixa de ter pressao na troca. Medido aqui em 120
+    posicoes: zero violacoes.
+
+    ATENCAO AO QUE ISTO **NAO** PROVA. Conter o alcance nao implica que o consumo de um
+    hex nunca diminua — o hex continua alcancado, so' que com peso menor. Medido em
+    dados reais (294.513 hexes de 5 UFs), 5 deles (0,002%) ganham residual. O docstring
+    anterior concluia "nenhum hexagono GANHA residual", que e' um salto e e' falso.
 
     Razao geometrica: o hex res-7 tem ~2,4 km de ponta a ponta, entao um concorrente a
     1-2 km do centroide esta quase sempre a menos de 1 km da BORDA, e seu disco continua
