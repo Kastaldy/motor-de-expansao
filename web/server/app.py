@@ -1522,6 +1522,62 @@ def _rank_municipios(
     return itens
 
 
+def montar_crescimento_estado(df_uf: pd.DataFrame) -> dict[str, Any] | None:
+    """Ranking de crescimento sobre a UF INTEIRA — não sobre o white space.
+
+    POR QUE NÃO É REUSO DO PASSO 4. O passo 4 do funil descreve as cidades que
+    SOBREVIVERAM aos passos 1-3: `cres_uf = white[...]` (ver `montar_funil_uf`), e o
+    comentário lá diz por escrito que ele "não é o estado inteiro". Ler aquele ranking
+    como retrato do estado é o erro fácil: numa UF onde quase tudo tem concorrente, o
+    passo 4 lista meia dúzia de cidades e some com o resto.
+
+    Aqui a base é `df_uf` cru. É o único bloco do payload que fala do estado todo, e
+    por isso mora FORA da lista de passos — para ninguém confundi-lo com uma camada
+    do funil.
+
+    CAGED SÓ CONTRA MARGEM ESTADUAL. `cres_emp_pct` sozinho não diz nada: 8,7% é muito
+    ou pouco conforme o estado e o ano. `_rank_municipios(modo="crescimento")` já
+    etiqueta cada cidade contra `cres_uf_mediana`, que é constante na UF — e a mediana
+    viaja no payload para a tela poder dizer contra o que está comparando.
+
+    READ-ONLY: agrega coluna já servida, não recalcula nada.
+    """
+    if "cres_emp_pct" not in df_uf.columns:
+        return None
+    com_medicao = df_uf[df_uf["cres_emp_pct"].notna()]
+    if com_medicao.empty:
+        return None
+
+    # PISO DE POPULAÇÃO, e declarado. Sem ele o ranking é dominado por município
+    # minúsculo: medido em GO, o topo saía "Santa Terezinha de Goiás, 211% — 28x a
+    # mediana do estado", que é crescimento percentual sobre uma base de poucas
+    # centenas de empregos. O número não é falso, mas ranquear por ele põe ruído no
+    # lugar de sinal. O piso é o `POP_MIN_ACIONAVEL` que o funil já usa, e não um
+    # corte novo inventado aqui; quantos municípios ele tirou viaja no payload.
+    col_pop = "pop_total_setor_2022"
+    acionaveis = com_medicao
+    n_fora_do_piso = 0
+    if col_pop in com_medicao.columns:
+        pop_por_muni = com_medicao.groupby("nome_municipio", observed=True)[col_pop].sum()
+        grandes = set(pop_por_muni[pop_por_muni >= POP_MIN_ACIONAVEL].index)
+        n_fora_do_piso = int(com_medicao["nome_municipio"].nunique() - len(grandes))
+        if grandes:
+            acionaveis = com_medicao[com_medicao["nome_municipio"].isin(grandes)]
+
+    return {
+        "mediana_uf": _num(_mun_val(df_uf, "cres_uf_mediana"), 1),
+        # Municípios do estado COM medição de emprego — o denominador honesto do
+        # "N de M": sem ele a tela sugeriria cobertura total.
+        "n_municipios_com_medicao": int(com_medicao["nome_municipio"].nunique()),
+        "n_municipios_uf": int(df_uf["nome_municipio"].nunique()),
+        "pop_minima": POP_MIN_ACIONAVEL,
+        "n_fora_do_piso": n_fora_do_piso,
+        "itens": _rank_municipios(
+            acionaveis, "cres_emp_pct", "crescimento", "% emprego", "green"
+        ),
+    }
+
+
 def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     """Os 4 passos no nível da UF inteira; o ranking recomenda MUNICÍPIOS."""
     total = len(df_uf)
@@ -2737,6 +2793,9 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
         "centro": {"lat": _num(df["lat"].mean(), 6), "lng": _num(df["lng"].mean(), 6)},
         "resumo": _resumo(df),
         "passos": passos,
+        # FORA de `passos` de proposito: e o unico bloco que fala do estado inteiro,
+        # e nao uma camada do funil (que sempre descreve o que sobreviveu ao filtro).
+        "crescimento_estado": montar_crescimento_estado(df),
         "hexes": hexes,
         "cres_mun": _bloco_municipal(vis),
         "pins": _pins_ultra_bbox(df),

@@ -21,7 +21,6 @@ if str(_SERVER) not in sys.path:
     sys.path.insert(0, str(_SERVER))
 
 import app as pilot  # noqa: E402  (backend do piloto; web/server no sys.path acima)
-
 from fastapi import HTTPException  # noqa: E402
 
 # Av. Paulista 1000, Sao Paulo/SP — dentro da malha censitaria materializada.
@@ -170,3 +169,56 @@ def test_resolver_vazio_nao_vai_a_rede() -> None:
     r = pilot.resolver_ponto(q="   ")
     assert r["found"] is False
     assert r["motivo"]
+
+
+# --------------------------------------------------------------------------- #
+# Crescimento do ESTADO — bloco proprio, fora do funil                        #
+# --------------------------------------------------------------------------- #
+def _tem_enriquecido() -> bool:
+    return pilot.ENRICHED_DIR.is_dir() and any(pilot.ENRICHED_DIR.glob("uf=*"))
+
+
+requer_enriquecido = pytest.mark.skipif(
+    not _tem_enriquecido(), reason="particao enriquecida nao materializada neste worktree"
+)
+
+
+@requer_enriquecido
+def test_crescimento_estado_olha_a_uf_INTEIRA_nao_o_white_space() -> None:
+    """O passo 4 descreve so' quem sobreviveu aos filtros; este bloco, o estado todo.
+
+    Confundir os dois e' o erro facil: numa UF onde quase tudo tem concorrente, o
+    passo 4 lista meia duzia de cidades e some com o resto.
+    """
+    body = pilot.uf_view("GO")
+    bloco = body.get("crescimento_estado")
+    assert bloco is not None, "a visao de UF precisa trazer o bloco"
+
+    assert set(bloco) >= {
+        "mediana_uf", "n_municipios_com_medicao", "n_municipios_uf",
+        "pop_minima", "n_fora_do_piso", "itens",
+    }
+    # O universo do bloco e' MAIOR que o do passo 4 (que so' ve white space).
+    passo4 = next(p for p in body["passos"] if p["n"] == 4)
+    assert bloco["n_municipios_com_medicao"] > len(passo4["itens"])
+
+
+@requer_enriquecido
+def test_crescimento_estado_declara_o_piso_em_vez_de_cortar_em_silencio() -> None:
+    """Sem piso, o topo e' municipio minusculo com variacao percentual enorme sobre
+    base de poucas centenas de empregos. O corte existe, e o payload diz quanto cortou."""
+    bloco = pilot.uf_view("GO")["crescimento_estado"]
+    assert bloco["pop_minima"] == pilot.POP_MIN_ACIONAVEL
+    assert isinstance(bloco["n_fora_do_piso"], int)
+    assert bloco["n_fora_do_piso"] >= 0
+
+
+@requer_enriquecido
+def test_crescimento_estado_traz_a_mediana_da_propria_uf() -> None:
+    """O CAGED so' vale contra margem estadual: sem a mediana no payload a tela nao
+    teria contra o que dizer que a cidade cresce muito ou pouco."""
+    bloco = pilot.uf_view("GO")["crescimento_estado"]
+    assert bloco["mediana_uf"] is not None
+    for it in bloco["itens"]:
+        # A etiqueta e' RELATIVA a mediana, nunca um julgamento absoluto.
+        assert it.get("tag"), "cada item precisa da etiqueta contra a mediana"

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 
 import ComparadorCidades from './ComparadorCidades'
+import CrescimentoDoEstado from './CrescimentoDoEstado'
 import { camadaCor } from '../lib/colors'
 import { type Linha, type Serie, parseDims, parseSeries } from '../lib/crescimento'
 import { alunos, num } from '../lib/format'
@@ -11,7 +12,7 @@ import {
   temCoberturaSatelite,
   type CrescimentoMunicipio,
 } from '../lib/oportunidades'
-import type { Hex, Passo } from '../lib/types'
+import type { CrescimentoEstado, Hex, Passo } from '../lib/types'
 import { Chip, Eyebrow } from './primitives'
 
 /* ---------------------------------------------------------------------------
@@ -50,6 +51,8 @@ export interface NarrativePanelProps {
   passos?: readonly Passo[]
   /** `uf` = a lista é de cidades; `municipio` = de hexágonos. */
   nivel?: 'uf' | 'municipio'
+  /** Crescimento do estado inteiro — bloco próprio, não uma camada do funil. */
+  crescimentoEstado?: CrescimentoEstado | null
 }
 
 /* ---------------------------------------------------------------------------
@@ -360,6 +363,7 @@ export default function NarrativePanel({
   uf,
   passos,
   nivel,
+  crescimentoEstado,
 }: NarrativePanelProps) {
   /** Filtro OPCIONAL do passo 5. Começa desligado: a fila que o motor entregou é a
    *  resposta padrão, e esconder itens por default seria decidir pelo operador. */
@@ -476,6 +480,10 @@ export default function NarrativePanel({
             aqui so aparece quando a lista nao tem detalhe proprio. */}
         {passo.n === 4 && !passo.itens.some((it) => it.dims || it.series) && (
           <Detalhes dims={dims} series={series} />
+        )}
+
+        {nivel === 'uf' && crescimentoEstado && (
+          <CrescimentoDoEstado dados={crescimentoEstado} />
         )}
 
         {/* So' no nivel de UF: la os itens do funil SAO cidades. No municipio a

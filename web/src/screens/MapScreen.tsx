@@ -795,6 +795,7 @@ export default function MapScreen({
               uf={dados.uf}
               passos={dados.passos}
               nivel={dados.nivel}
+              crescimentoEstado={dados.crescimento_estado}
               selecionado={selecionado}
               onSelecionarHex={setSelecionado}
               onAnalisar={analisar}

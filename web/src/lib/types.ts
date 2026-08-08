@@ -193,6 +193,8 @@ export interface Pins {
 export interface MunicipioPayload {
   /** "uf" = visão de estado inteiro (recomenda municípios); "municipio" = drill-down. */
   nivel: 'uf' | 'municipio'
+  /** Só na visão de UF: crescimento do estado inteiro (ver `CrescimentoEstado`). */
+  crescimento_estado?: CrescimentoEstado | null
   uf: string
   municipio: string | null
   n_hex_total: number
@@ -961,4 +963,22 @@ export interface PontoResolvido {
   /** Como resolveu: coordenada | link-expandido | endereco-do-link | endereco. */
   via?: string
   motivo?: string
+}
+
+/**
+ * Crescimento do ESTADO INTEIRO — bloco próprio, fora de `passos`.
+ *
+ * Não confundir com o passo 4 do funil: aquele descreve as cidades que sobreviveram
+ * aos filtros 1-3 (só white space), e por isso lista uma dúzia. Este olha a UF toda.
+ */
+export interface CrescimentoEstado {
+  /** Mediana de crescimento do emprego na UF — a régua contra a qual tudo é lido. */
+  mediana_uf: number | null
+  n_municipios_com_medicao: number
+  n_municipios_uf: number
+  /** Piso de população aplicado ao ranking (`POP_MIN_ACIONAVEL`). */
+  pop_minima: number
+  /** Quantos municípios o piso deixou de fora — declarado, nunca silencioso. */
+  n_fora_do_piso: number
+  itens: RankItem[]
 }
