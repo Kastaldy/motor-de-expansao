@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import BlocoViabilidadePonto from '../components/BlocoViabilidadePonto'
 import BotaoInicio from '../components/BotaoInicio'
 import CampoPonto from '../components/CampoPonto'
 import { Aviso, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
@@ -204,12 +205,12 @@ function Ficha({ ficha }: { ficha: PontoPayload }) {
         </GradeKpi>
       </Secao>
 
-      {/* ---------------- Viabilidade: ainda não ---------------- */}
-      <Secao titulo="Fecha a conta?">
-        <Aviso
-          titulo="Viabilidade ainda não entra por aqui"
-          corpo="O break-even, o payback e o teto de aluguel dependem de metragem e aluguel pedido, que este modo ainda não coleta. Por enquanto eles ficam na tela de Viabilidade, com o ponto escolhido pelo mapa."
-        />
+      {/* ---------------- Viabilidade ---------------- */}
+      <Secao
+        titulo="Fecha a conta?"
+        nota="metragem e aluguel são seus; o resto vem do motor"
+      >
+        <BlocoViabilidadePonto lat={ficha.lat} lng={ficha.lng} />
       </Secao>
     </div>
   )
