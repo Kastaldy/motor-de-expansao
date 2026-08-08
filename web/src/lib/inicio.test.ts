@@ -20,13 +20,17 @@ describe('MODOS', () => {
 
   it('so aponta para telas que existem hoje', () => {
     for (const m of MODOS) {
-      expect(['mapa', 'ponto']).toContain(m.destino)
+      expect(['mapa', 'ponto', 'oportunidades']).toContain(m.destino)
     }
   })
 
-  it('o modo de ponto abre a tela dedicada, nao mais a Viabilidade', () => {
-    // Etapa 1 mandava o card 1 para a Viabilidade porque a tela de ponto nao existia.
+  it('cada modo abre a SUA tela dedicada', () => {
+    // As etapas 1-2 mandavam ponto para a Viabilidade e oportunidades para o mapa,
+    // porque as telas proprias ainda nao existiam.
     expect(modoPorId('ponto')?.destino).toBe('ponto')
+    expect(modoPorId('oportunidades')?.destino).toBe('oportunidades')
+    // Regiao continua no mapa DE PROPOSITO: o funil e' a tela dele.
+    expect(modoPorId('regiao')?.destino).toBe('mapa')
   })
 
   it('todo card tem texto de usuario preenchido', () => {
@@ -63,17 +67,16 @@ describe('modoPorId', () => {
 })
 
 describe('passoAlvoDoModo', () => {
-  it('so o modo de oportunidades pede passo especifico', () => {
-    expect(passoAlvoDoModo('ponto')).toBeNull()
-    expect(passoAlvoDoModo('regiao')).toBeNull()
-    expect(passoAlvoDoModo('oportunidades')).toBe(PASSO_MAX)
+  it('nenhum modo pede passo do mapa — todos tem tela propria ou o funil inteiro', () => {
+    // `oportunidades` pedia o passo 5 enquanto reusava o mapa; com tela propria a fila
+    // deixou de ser um passo do funil.
+    for (const m of MODOS) expect(passoAlvoDoModo(m.id)).toBeNull()
   })
 
-  it('o passo pedido cabe no funil servido pelo backend', () => {
-    const passo = passoAlvoDoModo('oportunidades')
-    expect(passo).not.toBeNull()
-    expect(passo as number).toBeGreaterThanOrEqual(PASSO_MIN)
-    expect(passo as number).toBeLessThanOrEqual(PASSO_MAX)
+  it('o guarda de faixa continua valendo para quem voltar a usar passo', () => {
+    // Protege o contrato: passo fora de 1..5 nunca deve chegar ao backend.
+    expect(PASSO_MIN).toBe(1)
+    expect(PASSO_MAX).toBe(5)
   })
 
   it('id desconhecido nao vira passo', () => {

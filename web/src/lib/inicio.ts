@@ -20,7 +20,7 @@ export type ModoInicio = 'ponto' | 'regiao' | 'oportunidades'
  * import dele de proposito: este modulo precisa continuar carregavel pelo vitest sem
  * arrastar React, deck.gl e o app inteiro para dentro do teste.
  */
-export type DestinoInicio = 'mapa' | 'ponto'
+export type DestinoInicio = 'mapa' | 'ponto' | 'oportunidades'
 
 export interface ModoDefinicao {
   id: ModoInicio
@@ -84,20 +84,21 @@ export const MODOS: readonly ModoDefinicao[] = Object.freeze([
     eyebrow: 'A fila pronta',
     titulo: 'Ver as melhores oportunidades',
     resumo:
-      'Você quer a resposta direta: os hexágonos com mais alunos não atendidos, já filtrados por potencial socioeconômico, população e ausência de concorrente.',
+      'Você quer a resposta direta: a fila de cidades com mais alunos não atendidos, já filtrada por potencial socioeconômico, população e ausência de concorrente.',
+    /* Na visao de estado os itens da fila sao CIDADES, nao hexagonos — o texto antigo
+       prometia hexagono e entregava municipio. */
     bullets: Object.freeze([
-      'Fila dos 10 hexágonos com maior residual',
+      'A fila pronta, com o porquê de cada posição',
       'Só onde não há concorrente mapeado',
       'Ordenada por alunos não atendidos',
     ]),
     chamada: 'Ver a fila',
-    destino: 'mapa',
-    // Passo 5 = "Para onde crescer", a fila que ja roda em producao. NAO ligamos tambem
-    // o filtro MELHORES: ele filtra os hexes DO MAPA por faixa M1, enquanto a fila e'
-    // montada no servidor por `oferta_efetiva_disponivel` — os dois recortes sao
-    // independentes, e combina-los esconderia do mapa itens que a fila continua
-    // listando. Item some sem explicacao e' exatamente o que o modo nao pode fazer.
-    passoAlvo: PASSO_MAX,
+    destino: 'oportunidades',
+    /* Desde que o modo ganhou tela propria (`OportunidadesScreen`), a fila NAO e' mais
+       um passo do mapa: ela e' a tela. O `passoAlvo` fica nulo — quem for ao mapa a
+       partir de um item vai para o MUNICIPIO daquele item, e ali o funil recomeca do
+       passo 1, que e' a leitura certa para quem acabou de escolher uma cidade. */
+    passoAlvo: null,
   }),
 ])
 

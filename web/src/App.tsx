@@ -4,6 +4,7 @@ import Dock from './components/Dock'
 import ExecutiveScreen from './screens/ExecutiveScreen'
 import InicioScreen from './screens/InicioScreen'
 import MapScreen from './screens/MapScreen'
+import OportunidadesScreen from './screens/OportunidadesScreen'
 import PontoScreen from './screens/PontoScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
 import { api, ApiError } from './lib/api'
@@ -11,7 +12,7 @@ import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Hex, MunicipioItem, MunicipioPayload } from './lib/types'
 
-export type Tela = 'inicio' | 'ponto' | 'mapa' | 'viabilidade' | 'executiva'
+export type Tela = 'inicio' | 'ponto' | 'oportunidades' | 'mapa' | 'viabilidade' | 'executiva'
 
 /** O ponto que viaja do mapa para a Viabilidade — a costura entre as duas telas. */
 export interface PontoEscolhido {
@@ -197,6 +198,20 @@ export default function App() {
           <InicioScreen onEscolher={escolherModo} />
         ) : tela === 'ponto' ? (
           <PontoScreen onInicio={voltarAoInicio} onAnalisarPonto={irParaViabilidade} />
+        ) : tela === 'oportunidades' ? (
+          <OportunidadesScreen
+            ufs={ufs}
+            uf={uf}
+            onUf={aoTrocarUf}
+            dados={dados}
+            carregando={carregando}
+            erro={erro}
+            onInicio={voltarAoInicio}
+            onVerNoMapa={(m) => {
+              setMunicipio(m)
+              setTela('mapa')
+            }}
+          />
         ) : tela === 'mapa' ? (
           <MapScreen
             ufs={ufs}
