@@ -3,6 +3,7 @@ import { useState } from 'react'
 import BlocoViabilidadePonto from '../components/BlocoViabilidadePonto'
 import BotaoInicio from '../components/BotaoInicio'
 import CampoPonto from '../components/CampoPonto'
+import MiniMapaPonto from '../components/MiniMapaPonto'
 import { Aviso, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
 import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
@@ -171,6 +172,30 @@ function Ficha({ ficha }: { ficha: PontoPayload }) {
           </a>
         </div>
       </Glass>
+
+      {/* ---------------- Vizinhança ----------------
+          Logo depois da identificação, e não no fim: um endereço pode estar num
+          hexágono saturado com residual sobrando a 1 km dali, e essa é justamente a
+          leitura que muda a decisão. Largura inteira em vez de coluna lateral fixa —
+          estilo inline não tem media query, e uma coluna de 380px fixa espremeria o
+          mapa em tela estreita. */}
+      {ficha.vizinhos.length > 0 ? (
+        <Secao titulo="O que há em volta" nota="o hexágono do imóvel e os 18 vizinhos">
+          <MiniMapaPonto
+            hexId={ficha.hex_id}
+            lat={ficha.lat}
+            lng={ficha.lng}
+            vizinhos={ficha.vizinhos}
+          />
+        </Secao>
+      ) : (
+        <Secao titulo="O que há em volta">
+          <Aviso
+            titulo="Sem leitura de mercado na vizinhança"
+            corpo="O mapa colore os hexágonos por residual, que vem da camada de mercado — e ela não está montada neste servidor."
+          />
+        </Secao>
+      )}
 
       {/* ---------------- Socioeconomia (sempre disponível) ---------------- */}
       <Secao titulo="Quem mora em volta" nota={`Censo 2022 (IBGE) · raio de ${num(ficha.raio_km * 1000)} m`}>
