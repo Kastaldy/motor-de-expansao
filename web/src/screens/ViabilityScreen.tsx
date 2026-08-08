@@ -33,6 +33,13 @@ export interface ViabilityScreenProps {
   onVoltar: () => void
   /** Volta ao menu de modos. Não limpa nada — ver `components/BotaoInicio`. */
   onInicio: () => void
+  /**
+   * De onde o operador veio, para o breadcrumb e o botão de volta dizerem a verdade.
+   * O ponto chega aqui por dois caminhos — clique num hexágono do mapa ou "Mais
+   * detalhes" na ficha do modo de ponto — e escrever "vindo do mapa" nos dois casos
+   * mandaria metade dos operadores para uma tela em que eles não estavam.
+   */
+  origemRotulo?: string
 }
 
 const DEMANDA_PASSO = 100
@@ -155,6 +162,7 @@ export default function ViabilityScreen({
   ponto,
   onVoltar,
   onInicio,
+  origemRotulo = 'mapa',
 }: ViabilityScreenProps) {
   // --- Cenário -------------------------------------------------------------
   const [m2, setM2] = useState(1500)
@@ -474,7 +482,7 @@ export default function ViabilityScreen({
             padding: '6px 10px',
           }}
         >
-          ↩ vindo do mapa · {ponto.rotulo}
+          ↩ vindo {origemRotulo} · {ponto.rotulo}
         </button>
 
         <div style={{ flex: 1 }} />

@@ -142,10 +142,22 @@ export default function App() {
     [modoPendente],
   )
 
-  const irParaViabilidade = useCallback((p: PontoEscolhido) => {
-    setPonto(p)
-    setTela('viabilidade')
-  }, [])
+  /**
+   * De qual tela o ponto veio. A Viabilidade e' alcancavel por DOIS caminhos (clique
+   * num hexagono do mapa, e "Mais detalhes" na ficha do modo de ponto), e sem isto o
+   * botao de volta devolvia sempre ao mapa — tirando do modo de ponto quem nunca
+   * esteve no mapa.
+   */
+  const [origemViab, setOrigemViab] = useState<Tela>('mapa')
+
+  const irParaViabilidade = useCallback(
+    (p: PontoEscolhido) => {
+      setPonto(p)
+      setOrigemViab(tela === 'ponto' ? 'ponto' : 'mapa')
+      setTela('viabilidade')
+    },
+    [tela],
+  )
 
   /** Um card do menu foi escolhido: guarda a intenção e abre a tela que a atende hoje. */
   const escolherModo = useCallback(
@@ -184,7 +196,7 @@ export default function App() {
         {tela === 'inicio' ? (
           <InicioScreen onEscolher={escolherModo} />
         ) : tela === 'ponto' ? (
-          <PontoScreen onInicio={voltarAoInicio} />
+          <PontoScreen onInicio={voltarAoInicio} onAnalisarPonto={irParaViabilidade} />
         ) : tela === 'mapa' ? (
           <MapScreen
             ufs={ufs}
@@ -212,8 +224,9 @@ export default function App() {
           <ViabilityScreen
             ponto={ponto}
             dados={dados}
-            onVoltar={() => setTela('mapa')}
+            onVoltar={() => setTela(origemViab)}
             onInicio={voltarAoInicio}
+            origemRotulo={origemViab === 'ponto' ? 'da análise de ponto' : 'do mapa'}
           />
         )}
       </main>

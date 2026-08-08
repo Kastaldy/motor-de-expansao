@@ -1,5 +1,7 @@
 import { useState } from 'react'
 
+import type { PontoEscolhido } from '../App'
+
 import BlocoViabilidadePonto from '../components/BlocoViabilidadePonto'
 import BotaoInicio from '../components/BotaoInicio'
 import CampoPonto from '../components/CampoPonto'
@@ -24,7 +26,14 @@ import type { BlocoOpcional, PontoPayload } from '../lib/types'
  * (staging ausente -> `(None, None)` sem excecao), entao um bloco que sumisse sozinho
  * seria lido como defeito. Nenhum texto de estado vazio e' inventado aqui.
  */
-export default function PontoScreen({ onInicio }: { onInicio: () => void }) {
+export default function PontoScreen({
+  onInicio,
+  onAnalisarPonto,
+}: {
+  onInicio: () => void
+  /** Leva ESTE ponto para a tela de Viabilidade (a costura com o resto do app). */
+  onAnalisarPonto: (p: PontoEscolhido) => void
+}) {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
   const [ficha, setFicha] = useState<PontoPayload | null>(null)
@@ -124,15 +133,54 @@ export default function PontoScreen({ onInicio }: { onInicio: () => void }) {
             />
           )}
 
-          {ficha && <Ficha ficha={ficha} />}
+          {ficha && <Ficha ficha={ficha} onAnalisarPonto={onAnalisarPonto} />}
         </div>
       </div>
     </div>
   )
 }
 
-function Ficha({ ficha }: { ficha: PontoPayload }) {
+function Ficha({
+  ficha,
+  onAnalisarPonto,
+}: {
+  ficha: PontoPayload
+  onAnalisarPonto: (p: PontoEscolhido) => void
+}) {
   const { local, censo, concorrencia, mercado } = ficha
+
+  /**
+   * Monta o `PontoEscolhido` que a tela de Viabilidade espera.
+   *
+   * Ela le so' `ponto.rotulo` (breadcrumb), `ponto.hex.id` (chave do efeito que
+   * semeia a faixa de alunos) e a coordenada via `coordenadaDoEstudo` — que prefere
+   * `lat`/`lng` quando existem. Aqui existem, e sao a coordenada EXATA que o operador
+   * colou: e' por isso que o estudo la nao cai no centroide do hexagono, que fica a
+   * ate ~1,5 km do imovel. Os demais campos do `Hex` a Viabilidade nao consulta;
+   * ficam `null` em vez de receber zero inventado.
+   */
+  const irParaDetalhes = () =>
+    onAnalisarPonto({
+      hex: {
+        id: ficha.hex_id,
+        lat: ficha.lat,
+        lng: ficha.lng,
+        m1: null, censo: censo.score_socioeconomico, hib: null,
+        res: mercado.score_residual, oferta: mercado.residual, sam: mercado.sam,
+        pop: censo.populacao, renda: censo.renda_per_capita,
+        renda_dom: censo.renda_media_domiciliar,
+        faixa: null,
+        conc: concorrencia.n_concorrentes ?? 0,
+        ultra: concorrencia.n_ultra ?? 0,
+        mun: local.municipio,
+        cres_hex_taxa: null, cres_hex_classe: null,
+      },
+      rotulo: local.bairro ?? local.municipio ?? 'Ponto analisado',
+      municipio: local.municipio ?? '',
+      uf: local.uf,
+      lat: ficha.lat,
+      lng: ficha.lng,
+    })
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -235,7 +283,7 @@ function Ficha({ ficha }: { ficha: PontoPayload }) {
         titulo="Fecha a conta?"
         nota="metragem e aluguel são seus; o resto vem do motor"
       >
-        <BlocoViabilidadePonto lat={ficha.lat} lng={ficha.lng} />
+        <BlocoViabilidadePonto lat={ficha.lat} lng={ficha.lng} onDetalhes={irParaDetalhes} />
       </Secao>
     </div>
   )
