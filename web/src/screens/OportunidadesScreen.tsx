@@ -1,34 +1,38 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 
 import BotaoInicio from '../components/BotaoInicio'
 import Select from '../components/Select'
 import { Aviso, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
+import { camadaCor } from '../lib/colors'
+import {
+  TOP_POR_CAMADA,
+  consolidar,
+  fraseConsolidada,
+  topPorCamada,
+  type CidadeConsolidada,
+} from '../lib/consolidado'
 import { alunos, num } from '../lib/format'
 import {
-  filtrarPorCrescimento,
   lerCrescimento,
-  leituraDoItem,
-  ordenarComDesempate,
   temCoberturaSatelite,
   type CrescimentoMunicipio,
 } from '../lib/oportunidades'
-import type { MunicipioPayload, RankItem } from '../lib/types'
+import type { MunicipioPayload, Passo, RankItem } from '../lib/types'
 
 /**
- * Modo 3 — a FILA de melhores oportunidades, em tela propria.
+ * Modo 3 — as melhores oportunidades, POR CAMADA e depois consolidadas.
  *
- * POR QUE NAO E' MAIS O MAPA NO PASSO 5. Ate aqui o card 3 abria o `MapScreen` com o
- * funil no ultimo passo. Funcionava, mas a pergunta do modo ("quais sao as melhores?")
- * ficava respondida de lado: o operador via o chrome do funil — camadas, stepper,
- * legenda, filtro de faixa — e a fila era uma lista no painel lateral. Aqui a fila E'
- * a tela, e cada item diz por que esta nela.
+ * POR QUE NAO E' UMA LISTA SO'. A fila do passo 5 e' a recomendacao do motor, mas
+ * sozinha ela esconde ONDE cada cidade se destaca: uma pode estar ali por residual
+ * bruto e outra por crescimento, e as duas aparecem iguais. Separando por camada, o
+ * operador ve o top 5 de cada leitura — potencial, demanda, concorrencia, crescimento
+ * e a fila — e entende o que cada cidade tem de melhor.
  *
- * A ORDEM E O CONTEUDO VEM DO SERVIDOR. Nada e' reordenado por criterio novo: a
- * cascata do passo 5 ja roda em producao (potencial >= 70, populacao >= 5.000,
- * residual >= 2.000, ZERO concorrente mapeado), ordenada por residual em alunos. O
- * unico rearranjo local e' o DESEMPATE por crescimento, e so' entre itens de residual
- * igual — `ordenarComDesempate` existe para isso e tem teste travando que crescimento
- * nunca vira peso.
+ * O CONSOLIDADO NO FIM NAO E' UM SCORE. Somar ou ponderar as cinco camadas criaria uma
+ * sexta definicao de prioridade sobre o M1 — criticidade Alta pela regua do
+ * CLAUDE.md §2, e o piloto e' "sem recalculo de score em runtime". O que ele faz e'
+ * CONTAR em quantas camadas a cidade aparece no topo, desempatando pela fila oficial.
+ * Contagem o operador confere a olho, somando os cartoes acima.
  */
 export default function OportunidadesScreen({
   ufs,
@@ -47,20 +51,13 @@ export default function OportunidadesScreen({
   carregando: boolean
   erro: string | null
   onInicio: () => void
-  /** Leva o operador ao mapa, no municipio escolhido. */
   onVerNoMapa: (municipio: string) => void
 }) {
-  const [soCrescendo, setSoCrescendo] = useState(false)
-
-  const passo = dados?.passos?.find((p) => p.n === 5) ?? null
+  const passos = dados?.passos ?? []
   const cres = dados?.cres_mun ?? null
 
-  const itens = useMemo(() => {
-    if (!passo) return []
-    return filtrarPorCrescimento(ordenarComDesempate(passo.itens, cres), cres, soCrescendo)
-  }, [passo, cres, soCrescendo])
-
-  const escondidos = passo ? passo.itens.length - itens.length : 0
+  const camadas = useMemo(() => topPorCamada(passos), [passos])
+  const consolidado = useMemo(() => consolidar(passos), [passos])
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
@@ -99,15 +96,15 @@ export default function OportunidadesScreen({
           placeholder="Estado…"
           options={ufs.map((u) => ({ value: u, label: u }))}
         />
-        {passo && <Chip>{passo.itens.length} na fila</Chip>}
+        {passos.length > 0 && <Chip>top {TOP_POR_CAMADA} por camada</Chip>}
       </header>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
-        <div style={{ maxWidth: 980, margin: '0 auto', display: 'grid', gap: 16 }}>
+        <div style={{ maxWidth: 1000, margin: '0 auto', display: 'grid', gap: 18 }}>
           {!uf && (
             <Aviso
               titulo="Escolha um estado"
-              corpo="A fila é montada por estado: o motor lê a partição inteira da UF e devolve os hexágonos com mais alunos não atendidos onde a rede ainda tem espaço."
+              corpo="As camadas são lidas por estado: o motor percorre a partição inteira da UF e devolve o topo de cada leitura — potencial, demanda, concorrência, crescimento e a fila de recomendação."
             />
           )}
 
@@ -127,93 +124,70 @@ export default function OportunidadesScreen({
 
           {erro && <Aviso titulo="Não deu para carregar" corpo={erro} />}
 
-          {passo && !carregando && (
+          {passos.length > 0 && !carregando && (
             <>
-              {/* ---- Por que ESTES são os melhores ---- */}
-              <Glass style={{ padding: 18, display: 'grid', gap: 10 }}>
-                <Eyebrow dot>Como esta fila é montada</Eyebrow>
-                <p
-                  style={{
-                    font: '400 14px/1.55 var(--f-story)',
-                    color: 'var(--tx-strong)',
-                    margin: 0,
-                  }}
-                >
-                  {passo.narrativa}
-                </p>
-                {/* O funil em UMA linha: de onde partiu e o que sobrou. É a resposta a
-                    "por que só estes?" sem o operador ter de percorrer 5 camadas. */}
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                  <Chip>{passo.funil_from}</Chip>
-                  <span aria-hidden style={{ color: 'var(--tx-rank)' }}>→</span>
-                  <Chip>
-                    {num(passo.funil_big)} {passo.funil_unit}
-                  </Chip>
-                </div>
-                <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-                  Ordenada por <strong style={{ color: 'var(--tx-soft)' }}>alunos não
-                  atendidos</strong>, não por score: o score de residual satura em 100 acima de
-                  2.500 alunos e empataria todo o topo da fila. Empates são desfeitos pelo
-                  crescimento da cidade — que nunca reordena quem tem mais residual.
-                </p>
-              </Glass>
+              {camadas.map(({ passo, itens }) => (
+                <BlocoCamada
+                  key={passo.n}
+                  passo={passo}
+                  itens={itens}
+                  cres={cres}
+                  onVerNoMapa={onVerNoMapa}
+                />
+              ))}
 
-              {/* ---- Filtro ---- */}
-              {passo.itens.length > 0 && (
+              {/* ---- Consolidado ---- */}
+              <Glass style={{ padding: 18, display: 'grid', gap: 14 }}>
                 <div style={{ display: 'grid', gap: 6 }}>
-                  <label
+                  <Eyebrow dot>Para onde ir</Eyebrow>
+                  <span
                     style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      font: '500 12px/1.3 var(--f-ui)',
-                      color: 'var(--tx-soft)',
+                      font: '400 21px/1.25 var(--f-story)',
+                      color: 'var(--tx-max)',
                     }}
                   >
-                    <input
-                      type="checkbox"
-                      checked={soCrescendo}
-                      onChange={(e) => setSoCrescendo(e.target.checked)}
-                    />
-                    Só cidades crescendo acima da mediana do estado
-                  </label>
-                  {soCrescendo && escondidos > 0 && (
-                    <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
-                      {escondidos} {escondidos === 1 ? 'item escondido' : 'itens escondidos'} pelo
-                      filtro — a ordem não muda, só a visibilidade.
-                    </span>
-                  )}
+                    Quem aparece no topo de mais camadas
+                  </span>
+                  <p
+                    style={{
+                      font: '400 11.5px/1.5 var(--f-ui)',
+                      color: 'var(--tx-sub)',
+                      margin: 0,
+                    }}
+                  >
+                    Isto é uma <strong style={{ color: 'var(--tx-soft)' }}>contagem</strong>, não
+                    um score: quantas das {passos.length} camadas trazem a cidade no top{' '}
+                    {TOP_POR_CAMADA}. Somar ou ponderar as camadas criaria uma definição nova de
+                    prioridade em cima do M1 — e elas medem coisas diferentes. Empate é desfeito
+                    pela posição na fila de recomendação.
+                  </p>
                 </div>
-              )}
 
-              {/* ---- A fila ---- */}
-              {itens.length === 0 ? (
-                <Aviso
-                  titulo={soCrescendo ? 'Nenhuma cidade passou no filtro' : 'Fila vazia neste estado'}
-                  corpo={
-                    soCrescendo
-                      ? 'Desligue o filtro de crescimento para ver a fila completa.'
-                      : 'Nenhum hexágono passou na cascata. Município saturado sai com fila vazia de propósito: a camada só aceita área sem concorrente mapeado.'
-                  }
-                />
-              ) : (
-                <div style={{ display: 'grid', gap: 10 }}>
-                  {itens.map((it) => (
-                    <Cartao
-                      key={`${it.rank}-${it.hex_id}`}
-                      item={it}
-                      cres={cres?.[it.municipio ?? it.titulo ?? '']}
-                      onVerNoMapa={onVerNoMapa}
-                    />
-                  ))}
-                </div>
-              )}
+                {consolidado.length === 0 ? (
+                  <Aviso
+                    titulo="Nenhuma cidade se repete entre as camadas"
+                    corpo="Cada camada destaca cidades diferentes neste estado. Sem repetição não há leitura consolidada — vale ler camada a camada acima."
+                  />
+                ) : (
+                  <div style={{ display: 'grid', gap: 10 }}>
+                    {consolidado.map((c, i) => (
+                      <LinhaConsolidada
+                        key={c.nome}
+                        posicao={i + 1}
+                        cidade={c}
+                        totalCamadas={passos.length}
+                        onVerNoMapa={onVerNoMapa}
+                      />
+                    ))}
+                  </div>
+                )}
+              </Glass>
 
               {!temCoberturaSatelite(dados?.uf) && (
                 <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
                   Neste estado a camada de área construída (satélite) não tem cobertura — ela
-                  colore o mapa em 12 UFs. Os números de emprego acima são de outra fonte
-                  (CAGED) e seguem valendo, sempre lidos contra a mediana deste estado.
+                  colore o mapa em 12 UFs. O crescimento acima vem de outra fonte (CAGED) e segue
+                  valendo, sempre lido contra a mediana deste estado.
                 </p>
               )}
             </>
@@ -224,95 +198,215 @@ export default function OportunidadesScreen({
   )
 }
 
-/** Um item da fila: o número que ordena, a leitura, e o caminho para o mapa. */
-function Cartao({
-  item,
+/** Uma camada: o topo dela, com a identidade de cor que o funil já usa. */
+function BlocoCamada({
+  passo,
+  itens,
   cres,
   onVerNoMapa,
 }: {
-  item: RankItem
-  cres?: CrescimentoMunicipio
+  passo: Passo
+  itens: RankItem[]
+  cres: Record<string, CrescimentoMunicipio> | null
   onVerNoMapa: (municipio: string) => void
 }) {
-  const leitura = lerCrescimento(cres)
-  const municipio = item.municipio ?? item.titulo ?? ''
-
-  const corCres =
-    leitura.classe === 'acima'
-      ? 'var(--pos-text)'
-      : leitura.classe === 'abaixo'
-        ? 'var(--neg)'
-        : 'var(--tx-sub)'
+  const cor = camadaCor(passo.n)
 
   return (
-    <Glass style={{ padding: 16, display: 'grid', gap: 10 }}>
+    <Glass style={{ padding: 18, display: 'grid', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <span
           className="num"
-          style={{ font: '700 13px/1 var(--f-num)', color: 'var(--ac-text)', width: 26 }}
-        >
-          {item.rank}º
-        </span>
-        <span
           style={{
-            flex: 1,
-            minWidth: 0,
-            font: '600 17px/1.2 var(--f-ui)',
-            color: 'var(--tx-max)',
-            letterSpacing: '-.01em',
+            font: '700 10.5px/1 var(--f-num)',
+            color: cor.fg,
+            background: cor.bg,
+            border: `1px solid ${cor.borda}`,
+            borderRadius: 6,
+            padding: '4px 7px',
           }}
         >
-          {item.titulo}
+          CAMADA {passo.n}
         </span>
-        {item.tag && <Chip cor={item.tag_cor} tom={item.tom}>{item.tag}</Chip>}
-        <span className="num" style={{ font: '700 17px/1 var(--f-num)', color: 'var(--tx-max)' }}>
-          {alunos(item.valor)}
+        <span style={{ font: '600 15px/1.2 var(--f-ui)', color: 'var(--tx-max)' }}>
+          {passo.titulo}
         </span>
-        <span style={{ font: '400 10px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
-          alunos de residual
+        <span style={{ font: '400 11px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
+          top {itens.length} · ordenado por {passo.metrica}
         </span>
       </div>
 
-      {/* A leitura POR REGRA: diz o que o item já garante por estar na fila. */}
-      <p style={{ font: '400 12px/1.55 var(--f-ui)', color: 'var(--tx-narrative)', margin: 0 }}>
-        {leituraDoItem(item, cres)}
-      </p>
+      {itens.length === 0 ? (
+        <p style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-muted)', margin: 0 }}>
+          Nenhuma cidade passou nesta camada.
+        </p>
+      ) : (
+        <div style={{ display: 'grid', gap: 4 }}>
+          {itens.map((it, i) => {
+            const municipio = it.municipio ?? it.titulo ?? ''
+            const leitura = lerCrescimento(cres?.[municipio])
+            return (
+              <button
+                key={`${passo.n}-${it.rank}-${municipio}`}
+                type="button"
+                onClick={() => onVerNoMapa(municipio)}
+                title={`Ver ${municipio} no mapa`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  gap: 10,
+                  padding: '7px 8px',
+                  borderRadius: 8,
+                  border: '1px solid transparent',
+                  background: 'transparent',
+                  textAlign: 'left',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--surf-raised)'
+                  e.currentTarget.style.borderColor = 'var(--line-soft)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent'
+                  e.currentTarget.style.borderColor = 'transparent'
+                }}
+              >
+                <span
+                  className="num"
+                  style={{ font: '600 11px/1 var(--f-num)', color: cor.fg, width: 18 }}
+                >
+                  {i + 1}º
+                </span>
+                <span
+                  style={{
+                    flex: 1,
+                    minWidth: 0,
+                    font: '500 13px/1.3 var(--f-ui)',
+                    color: 'var(--tx-strong)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {it.titulo}
+                </span>
+                {/* So' na camada de crescimento: nas outras a etiqueta seria ruido,
+                    porque o que ordena ali nao e o crescimento. */}
+                {passo.n === 4 && leitura.classe !== 'sem-dado' && (
+                  <span
+                    style={{
+                      font: '500 10px/1 var(--f-ui)',
+                      color:
+                        leitura.classe === 'acima'
+                          ? 'var(--pos-text)'
+                          : leitura.classe === 'abaixo'
+                            ? 'var(--neg)'
+                            : 'var(--tx-sub)',
+                    }}
+                  >
+                    {leitura.rotulo}
+                  </span>
+                )}
+                <span
+                  className="num"
+                  style={{
+                    font: '600 13px/1 var(--f-num)',
+                    color: 'var(--tx-max)',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {it.label === 'residual' ? alunos(it.valor) : num(it.valor)}
+                </span>
+                <span
+                  style={{
+                    font: '400 9.5px/1 var(--f-ui)',
+                    color: 'var(--tx-sub)',
+                    minWidth: 54,
+                  }}
+                >
+                  {it.label}
+                </span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </Glass>
+  )
+}
 
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+function LinhaConsolidada({
+  posicao,
+  cidade,
+  totalCamadas,
+  onVerNoMapa,
+}: {
+  posicao: number
+  cidade: CidadeConsolidada
+  totalCamadas: number
+  onVerNoMapa: (municipio: string) => void
+}) {
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gap: 8,
+        padding: '12px 14px',
+        borderRadius: 'var(--r-md)',
+        background: 'var(--surf-raised)',
+        border: '1px solid var(--line-soft)',
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
         <span
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 5,
-            font: '500 10.5px/1.3 var(--f-ui)',
-            color: corCres,
-          }}
+          className="num"
+          style={{ font: '700 14px/1 var(--f-num)', color: 'var(--ac-text)', width: 26 }}
         >
-          <span aria-hidden style={{ width: 5, height: 5, borderRadius: '50%', background: corCres }} />
-          {leitura.rotulo}
-          {leitura.delta != null && (leitura.classe === 'acima' || leitura.classe === 'abaixo') && (
-            <span className="num" style={{ font: '500 10px/1 var(--f-num)', opacity: 0.85 }}>
-              ({leitura.delta > 0 ? '+' : ''}
-              {leitura.delta.toFixed(1).replace('.', ',')} p.p.)
-            </span>
-          )}
+          {posicao}º
         </span>
-        <div style={{ flex: 1 }} />
+        <span style={{ flex: 1, minWidth: 0, font: '600 16px/1.2 var(--f-ui)', color: 'var(--tx-max)' }}>
+          {cidade.nome}
+        </span>
+        {/* As bolinhas dizem QUAIS camadas, na cor de cada uma: a evidencia da contagem
+            fica visivel sem o operador ter de rolar para cima e conferir. */}
+        <span style={{ display: 'inline-flex', gap: 4 }} aria-hidden>
+          {Array.from({ length: totalCamadas }, (_, i) => i + 1).map((n) => {
+            const presente = cidade.presencas.some((p) => p.n === n)
+            return (
+              <span
+                key={n}
+                title={`camada ${n}`}
+                style={{
+                  width: 9,
+                  height: 9,
+                  borderRadius: '50%',
+                  background: presente ? camadaCor(n).fg : 'transparent',
+                  border: `1px solid ${presente ? camadaCor(n).fg : 'var(--line-strong)'}`,
+                }}
+              />
+            )
+          })}
+        </span>
+        <span className="num" style={{ font: '700 14px/1 var(--f-num)', color: 'var(--tx-max)' }}>
+          {cidade.presencas.length}/{totalCamadas}
+        </span>
         <button
           type="button"
-          onClick={() => onVerNoMapa(municipio)}
+          onClick={() => onVerNoMapa(cidade.nome)}
           style={{
-            padding: '7px 11px',
+            padding: '6px 10px',
             borderRadius: 8,
             border: '1px solid var(--ac-a25)',
             background: 'var(--ac-a12)',
             color: 'var(--ac-chip)',
-            font: '600 11.5px/1 var(--f-ui)',
+            font: '600 11px/1 var(--f-ui)',
           }}
         >
           Ver no mapa →
         </button>
       </div>
-    </Glass>
+      <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-narrative)', margin: 0 }}>
+        {fraseConsolidada(cidade, totalCamadas)}
+      </p>
+    </div>
   )
 }
