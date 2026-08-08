@@ -1,3 +1,7 @@
+import type { CriterioPonto, ReguasPonto } from './recomendacao'
+
+export type { CriterioPonto, ReguasPonto }
+
 /** Contrato entre o front e o backend do piloto (web/server/app.py). */
 
 /** Tom do chip do ranking. Fronteira TS<->Python sem contrato gerado: o produtor
@@ -952,6 +956,10 @@ export interface PontoPayload {
   concorrencia: PontoConcorrencia
   mercado: PontoMercado
   vizinhos: PontoVizinho[]
+  /** Réguas do imóvel, legíveis por máquina (a metodologia traz as mesmas em texto). */
+  reguas: ReguasPonto | null
+  /** Cada métrica já comparada com a régua, NO SERVIDOR — a tela não re-decide. */
+  criterios: CriterioPonto[]
 }
 
 /** Resposta de GET /api/resolver-ponto: texto colado -> coordenada. */

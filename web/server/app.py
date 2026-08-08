@@ -2579,6 +2579,64 @@ def resolver_ponto(q: str) -> dict[str, Any]:
     }
 
 
+def _criterios_do_ponto(
+    censo: dict[str, Any], mercado: dict[str, Any], concorrencia: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Cada métrica do IMÓVEL contra a régua canônica que já existe no projeto.
+
+    NÃO cria veredito novo. As réguas são as MESMAS do funil e do `config.py`
+    (`SCORE_CORTE_QUENTE`, `POP_MIN_ACIONAVEL`, `OFERTA_DESTAQUE_MIN`, `RENDA_MIN`) —
+    inventar aqui um "score de aprovação do imóvel" seria uma definição nova de
+    viabilidade no sistema, o que exige DEC.
+
+    Avaliado no SERVIDOR de propósito: a régua e a comparação andam juntas. Mandar só
+    o número e deixar a tela comparar seria a primeira porta para o front e o backend
+    discordarem sobre o que é "aprovado".
+
+    `RENDA_MIN` é renda DOMICILIAR, não per capita (comentário literal em
+    `config.py:131`) — comparar contra a per capita reprovaria quase todo ponto.
+    """
+    from motor_expansao.config import settings
+
+    def crit(
+        chave: str, rotulo: str, valor: Any, regua: float, unidade: str, maior_melhor: bool = True
+    ) -> dict[str, Any]:
+        v = _numf(valor)
+        passa = None if v is None else (v >= regua if maior_melhor else v <= regua)
+        return {
+            "chave": chave,
+            "rotulo": rotulo,
+            "valor": _num(v, 1) if unidade == "score" else _num(v),
+            "regua": _num(regua, 1) if unidade == "score" else _num(regua),
+            "unidade": unidade,
+            "maior_melhor": maior_melhor,
+            "passa": passa,
+        }
+
+    itens = [
+        crit("populacao", "População no raio", censo.get("populacao"), POP_MIN_ACIONAVEL, "pessoas"),
+        crit(
+            "renda_domiciliar", "Renda domiciliar",
+            censo.get("renda_media_domiciliar"), float(settings.RENDA_MIN), "R$",
+        ),
+        crit(
+            "score", "Potencial socioeconômico",
+            censo.get("score_socioeconomico"), SCORE_CORTE_QUENTE, "score",
+        ),
+    ]
+    if mercado.get("disponivel"):
+        itens.append(
+            crit("residual", "Residual disponível", mercado.get("residual"), OFERTA_DESTAQUE_MIN, "alunos")
+        )
+    if concorrencia.get("disponivel"):
+        # White space e' o criterio do passo 5 (decisao de produto, 2026-08-03): a fila
+        # so aceita hexagono com ZERO concorrente mapeado, sem fallback para disputado.
+        itens.append(
+            crit("concorrentes", "Concorrentes no raio", concorrencia.get("n_concorrentes"), 0, "", False)
+        )
+    return itens
+
+
 @app.get("/api/ponto")
 def ponto(lat: float, lng: float) -> dict[str, Any]:
     """Ficha de UM ponto: censo real no raio de 1,0 km, mais mercado quando houver.
@@ -2673,6 +2731,45 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
                 }
             )
 
+    from motor_expansao.config import settings as _cfg
+
+    censo_bloco = {
+        "disponivel": True,
+        "motivo": None,
+        "populacao": _num(res.get("pop_total_raio")),
+        "domicilios": _num(res.get("domicilios_total_raio")),
+        "renda_per_capita": _num(res.get("renda_per_capita_media_raio")),
+        "renda_media_domiciliar": _num(res.get("renda_media_domiciliar_raio")),
+        # A densidade VÁLIDA divide pela área de setor realmente intersectada, e não
+        # por pi*r^2: num ponto com rio/mar no raio, a fixa subestima de propósito.
+        "densidade_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
+        "score_socioeconomico": _num(res.get("score_setor_2022_calibrado_ponto"), 1),
+        "n_setores": _num(res.get("n_setores")),
+    
+    }
+
+    conc_bloco = {
+        "disponivel": tem_concorrentes,
+        "motivo": None if tem_concorrentes else (
+            "Sem base de concorrentes montada (data/staging/concorrentes_mapeados.parquet)."
+        ),
+        "n_concorrentes": _num(res.get("n_concorrentes")) if tem_concorrentes else None,
+        "n_ultra": _num(res.get("n_ultra")) if tem_concorrentes else None,
+    
+    }
+
+    mercado_bloco = {
+        "disponivel": tem_mercado,
+        "motivo": None if tem_mercado else (
+            "Sem leitura de mercado para este hexágono "
+            "(data/staging/hexagonos_mercado_mapeado.parquet ausente)."
+        ),
+        "sam": _num(residual.get("sam_fitness_potencial")),
+        "residual": _num(residual.get("oferta_efetiva_disponivel")),
+        "score_residual": _num(residual.get("score_oportunidade_residual"), 1),
+    
+    }
+
     return {
         "lat": _num(lat, 6),
         "lng": _num(lng, 6),
@@ -2689,38 +2786,26 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
             # exibição é o `bairro` acima.
             "unidade_tipo": _texto(res.get("unidade_ponto_tipo")),
         },
-        "censo": {
-            "disponivel": True,
-            "motivo": None,
-            "populacao": _num(res.get("pop_total_raio")),
-            "domicilios": _num(res.get("domicilios_total_raio")),
-            "renda_per_capita": _num(res.get("renda_per_capita_media_raio")),
-            "renda_media_domiciliar": _num(res.get("renda_media_domiciliar_raio")),
-            # A densidade VÁLIDA divide pela área de setor realmente intersectada, e não
-            # por pi*r^2: num ponto com rio/mar no raio, a fixa subestima de propósito.
-            "densidade_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
-            "score_socioeconomico": _num(res.get("score_setor_2022_calibrado_ponto"), 1),
-            "n_setores": _num(res.get("n_setores")),
-        },
-        "concorrencia": {
-            "disponivel": tem_concorrentes,
-            "motivo": None if tem_concorrentes else (
-                "Sem base de concorrentes montada (data/staging/concorrentes_mapeados.parquet)."
-            ),
-            "n_concorrentes": _num(res.get("n_concorrentes")) if tem_concorrentes else None,
-            "n_ultra": _num(res.get("n_ultra")) if tem_concorrentes else None,
-        },
-        "mercado": {
-            "disponivel": tem_mercado,
-            "motivo": None if tem_mercado else (
-                "Sem leitura de mercado para este hexágono "
-                "(data/staging/hexagonos_mercado_mapeado.parquet ausente)."
-            ),
-            "sam": _num(residual.get("sam_fitness_potencial")),
-            "residual": _num(residual.get("oferta_efetiva_disponivel")),
-            "score_residual": _num(residual.get("score_oportunidade_residual"), 1),
-        },
+        "censo": censo_bloco,
+        "concorrencia": conc_bloco,
+        "mercado": mercado_bloco,
         "vizinhos": vizinhos,
+        # Reguas do IMOVEL, legiveis por maquina. A `/api/metodologia` traz as mesmas
+        # como TEXTO ("5.000 habitantes"), que serve para explicar e nao para comparar.
+        "reguas": {
+            "pop_minima": POP_MIN_ACIONAVEL,
+            "score_minimo": SCORE_CORTE_QUENTE,
+            "renda_domiciliar_minima": _num(float(_cfg.RENDA_MIN)),
+            "area_min_m2": _num(float(_cfg.AREA_MIN_M2)),
+            "area_ideal_min_m2": _num(float(_cfg.AREA_IDEAL_MIN_M2)),
+            "area_ideal_max_m2": _num(float(_cfg.AREA_IDEAL_MAX_M2)),
+            # Regra de BOLSO, nao modelo: a partir daqui a regiao e disputada. NAO
+            # deriva metragem de concorrencia -- isso viola a DEC-009, que fixou o
+            # motor como property-first (m2 e ENTRADA do operador, nunca previsto
+            # pela geografia).
+            "conc_regiao_disputada": 3,
+        },
+        "criterios": _criterios_do_ponto(censo_bloco, mercado_bloco, conc_bloco),
     }
 
 

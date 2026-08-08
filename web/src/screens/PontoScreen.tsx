@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 
 import type { PontoEscolhido } from '../App'
 
@@ -6,11 +6,12 @@ import BlocoViabilidadePonto from '../components/BlocoViabilidadePonto'
 import BotaoInicio from '../components/BotaoInicio'
 import CampoPonto from '../components/CampoPonto'
 import MiniMapaPonto from '../components/MiniMapaPonto'
+import Recomendacao from '../components/Recomendacao'
 import { Aviso, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
 import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { num } from '../lib/format'
-import type { BlocoOpcional, PontoPayload } from '../lib/types'
+import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
 
 /**
  * Modo 1 — analise de um PONTO/IMOVEL.
@@ -149,6 +150,15 @@ function Ficha({
 }) {
   const { local, censo, concorrencia, mercado } = ficha
 
+  /* A viabilidade e as entradas sobem do bloco filho porque a RECOMENDACAO precisa
+     das duas metades: os criterios do territorio (que vem do payload) e o veredito do
+     contrato (que so' existe depois de o operador calcular). Sem isso a secao teria de
+     opinar sobre aluguel sem saber se a conta fecha. */
+  const [viab, setViab] = useState<ViabilidadeOut | null>(null)
+  const [entradas, setEntradas] = useState({ m2: 1500, aluguel: 20000 })
+  // Estavel: o filho tem `onEntradas` nas dependencias de um efeito.
+  const guardarEntradas = useCallback((e: { m2: number; aluguel: number }) => setEntradas(e), [])
+
   /**
    * Monta o `PontoEscolhido` que a tela de Viabilidade espera.
    *
@@ -278,12 +288,41 @@ function Ficha({
         </GradeKpi>
       </Secao>
 
+      {/* ---------------- Recomendação ----------------
+          Antes da viabilidade de propósito: é a resposta à pergunta que trouxe o
+          operador aqui ("serve ou não?"), e os números acima são a evidência dela. */}
+      <Secao
+        titulo="Serve este imóvel?"
+        nota="cada métrica contra a régua da rede"
+      >
+        <Recomendacao
+          criterios={ficha.criterios}
+          reguas={ficha.reguas}
+          viavel={viab ? viab.dre?.flag_viavel === true : null}
+          m2={entradas.m2}
+          aluguel={entradas.aluguel}
+          tetoAluguel={viab?.aluguel_teto?.teto ?? null}
+          melhoria={viab?.melhoria_payback ?? null}
+          gradeSemViavel={
+            Array.isArray(viab?.grade) && viab.grade.length > 0
+              ? !viab.grade.some((c) => c.viavel)
+              : false
+          }
+        />
+      </Secao>
+
       {/* ---------------- Viabilidade ---------------- */}
       <Secao
         titulo="Fecha a conta?"
         nota="metragem e aluguel são seus; o resto vem do motor"
       >
-        <BlocoViabilidadePonto lat={ficha.lat} lng={ficha.lng} onDetalhes={irParaDetalhes} />
+        <BlocoViabilidadePonto
+          lat={ficha.lat}
+          lng={ficha.lng}
+          onDetalhes={irParaDetalhes}
+          onResultado={setViab}
+          onEntradas={guardarEntradas}
+        />
       </Secao>
     </div>
   )

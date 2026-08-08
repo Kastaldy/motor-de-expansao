@@ -30,11 +30,17 @@ export default function BlocoViabilidadePonto({
   lat,
   lng,
   onDetalhes,
+  onResultado,
+  onEntradas,
 }: {
   lat: number
   lng: number
   /** Abre a tela de Viabilidade neste mesmo ponto. */
   onDetalhes: () => void
+  /** Publica o resultado para a seção de recomendação ler. `null` = ainda não calculou. */
+  onResultado: (r: ViabilidadeOut | null) => void
+  /** Publica metragem e aluguel: a recomendação compara os dois com as réguas. */
+  onEntradas: (e: { m2: number; aluguel: number }) => void
 }) {
   const [m2, setM2] = useState(1500)
   const [aluguel, setAluguel] = useState(20000)
@@ -64,15 +70,24 @@ export default function BlocoViabilidadePonto({
     }
   }, [m2])
 
+  // Metragem e aluguel viajam para o pai a cada mudanca: a recomendacao compara os
+  // dois com as reguas ANTES de o operador calcular a viabilidade.
+  useEffect(() => {
+    onEntradas({ m2, aluguel })
+  }, [m2, aluguel, onEntradas])
+
   async function calcular() {
     if (!demanda) return
     setCarregando(true)
     setErro(null)
     try {
-      setRes(await api.viabilidade({ lat, lng, m2, aluguel, demanda }))
+      const r = await api.viabilidade({ lat, lng, m2, aluguel, demanda })
+      setRes(r)
+      onResultado(r)
     } catch (e) {
       setErro(e instanceof ApiError ? e.message : 'Falha ao calcular a viabilidade.')
       setRes(null)
+      onResultado(null)
     } finally {
       setCarregando(false)
     }
