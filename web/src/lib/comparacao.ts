@@ -21,13 +21,20 @@
 
 import type { Hex } from './types'
 
-/** Uma dimensao comparavel: de onde ler, como chamar, e o que significa "melhor". */
-export interface Dimensao {
+/**
+ * Uma dimensao comparavel: de onde ler, como chamar, e o que significa "melhor".
+ *
+ * GENERICA de proposito. As regras que importam — dois limiares, no maximo 3
+ * dimensoes na frase, separar vantagem de desvantagem com "porem" — valem igual
+ * comparando hexagonos ou municipios. Duplicar o nucleo para o segundo caso seria
+ * garantir que os dois divirjam no primeiro ajuste.
+ */
+export interface Dimensao<T> {
   chave: string
   /** Rotulo de exibicao (acentuado — texto de usuario). */
   rotulo: string
-  /** Le o valor do hexagono. `null` = dimensao ausente neste hex. */
-  ler: (h: Hex) => number | null
+  /** Le o valor do item. `null` = dimensao ausente neste item. */
+  ler: (x: T) => number | null
   unidade: string
   /** `true` = numero maior e' melhor. Concorrentes e' o unico onde menor ganha. */
   maiorEhMelhor: boolean
@@ -46,7 +53,7 @@ export interface Dimensao {
  * porque e' a pergunta do produto ("cabe quanta gente ainda?"); crescimento vem por
  * ultimo porque e' contexto municipal, nao atributo do hexagono.
  */
-export const DIMENSOES: readonly Dimensao[] = Object.freeze([
+export const DIMENSOES: readonly Dimensao<Hex>[] = Object.freeze([
   Object.freeze({
     chave: 'oferta',
     rotulo: 'Residual disponível',
@@ -104,8 +111,8 @@ export const DIMENSOES: readonly Dimensao[] = Object.freeze([
   }),
 ])
 
-export interface Delta {
-  dimensao: Dimensao
+export interface Delta<T = Hex> {
+  dimensao: Dimensao<T>
   a: number | null
   b: number | null
   /** Diferenca absoluta (a - b). `null` se algum lado nao tem o dado. */
@@ -118,9 +125,9 @@ export interface Delta {
   vencedor: 'a' | 'b' | 'empate'
 }
 
-/** Compara A e B em todas as dimensoes, na ordem de prioridade. */
-export function compararHexes(a: Hex, b: Hex): Delta[] {
-  return DIMENSOES.map((dim) => {
+/** Compara A e B nas dimensoes dadas, na ordem de prioridade. */
+export function comparar<T>(dims: readonly Dimensao<T>[], a: T, b: T): Delta<T>[] {
+  return dims.map((dim) => {
     const va = dim.ler(a)
     const vb = dim.ler(b)
 
@@ -151,13 +158,18 @@ export function compararHexes(a: Hex, b: Hex): Delta[] {
   })
 }
 
+/** Fachada para hexagonos — o caso mais usado. */
+export function compararHexes(a: Hex, b: Hex): Delta<Hex>[] {
+  return comparar(DIMENSOES, a, b)
+}
+
 /** Quantas dimensoes cabem numa frase antes de ela virar tabela em prosa. */
 export const MAX_DIMENSOES_NA_FRASE = 3
 
-export interface Comparacao {
-  deltas: Delta[]
+export interface Comparacao<T = Hex> {
+  deltas: Delta<T>[]
   /** As que entram na frase: relevantes, na ordem de prioridade, no maximo 3. */
-  destaques: Delta[]
+  destaques: Delta<T>[]
   /** Quem leva mais dimensoes relevantes. `empate` quando nenhuma passa do limiar. */
   vencedor: 'a' | 'b' | 'empate'
   frase: string
@@ -175,9 +187,47 @@ export function compararComFrase(
   b: Hex,
   rotuloA = 'O primeiro',
   rotuloB = 'o segundo',
-): Comparacao {
-  const deltas = compararHexes(a, b)
-  const destaques = deltas.filter((d) => d.relevante).slice(0, MAX_DIMENSOES_NA_FRASE)
+): Comparacao<Hex> {
+  return compararDimensoesComFrase(DIMENSOES, a, b, rotuloA, rotuloB)
+}
+
+/** O nucleo: vale para qualquer conjunto de dimensoes. */
+export function compararDimensoesComFrase<T>(
+  dims: readonly Dimensao<T>[],
+  a: T,
+  b: T,
+  rotuloA = 'O primeiro',
+  rotuloB = 'o segundo',
+): Comparacao<T> {
+  const deltas = comparar(dims, a, b)
+
+  /**
+   * QUAIS 3 dimensoes entram na frase.
+   *
+   * Pegar simplesmente as 3 primeiras da ordem de prioridade parecia certo e nao era:
+   * medido nas cidades de GO, as tres primeiras (residual na fila, demanda nao
+   * atendida, areas de alto potencial) sao CORRELACIONADAS — cidade maior ganha as
+   * tres —, entao toda comparacao saia com a mesma frase e o crescimento, que era a
+   * unica leitura realmente distinta, nunca aparecia.
+   *
+   * Regra: a dimensao de MAIOR PRIORIDADE relevante entra sempre (e' a pergunta do
+   * produto, e uma frase que nao fala de residual nao serve); as vagas restantes vao
+   * para as de MAIOR DESVIO, que sao as que de fato separam os dois. A APRESENTACAO
+   * volta para a ordem de prioridade, para a frase ler estavel.
+   */
+  const relevantes = deltas.filter((d) => d.relevante)
+  const prioridade = (d: Delta<T>) => deltas.indexOf(d)
+  const destaques = (
+    relevantes.length <= MAX_DIMENSOES_NA_FRASE
+      ? relevantes
+      : [
+          relevantes[0],
+          ...relevantes
+            .slice(1)
+            .sort((x, y) => (y.desvioRelativo ?? 0) - (x.desvioRelativo ?? 0))
+            .slice(0, MAX_DIMENSOES_NA_FRASE - 1),
+        ]
+  ).sort((x, y) => prioridade(x) - prioridade(y))
 
   if (!destaques.length) {
     return {
@@ -194,7 +244,7 @@ export function compararComFrase(
     pontosA === pontosB ? 'empate' : pontosA > pontosB ? 'a' : 'b'
 
   // Cada destaque vira um trecho na voz de A ("mais X", "menos Y").
-  const trecho = (d: Delta) =>
+  const trecho = (d: Delta<T>) =>
     `${(d.diferenca ?? 0) > 0 ? 'mais' : 'menos'} ${d.dimensao.rotulo.toLowerCase()}`
 
   /**

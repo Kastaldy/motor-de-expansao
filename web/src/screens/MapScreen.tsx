@@ -793,6 +793,8 @@ export default function MapScreen({
               totalPassos={dados.passos.length}
               cresMun={dados.cres_mun}
               uf={dados.uf}
+              passos={dados.passos}
+              nivel={dados.nivel}
               selecionado={selecionado}
               onSelecionarHex={setSelecionado}
               onAnalisar={analisar}

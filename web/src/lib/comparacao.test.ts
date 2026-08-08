@@ -120,8 +120,11 @@ describe('compararComFrase', () => {
     const c = compararComFrase(a, b)
     expect(c.deltas.filter((d) => d.relevante).length).toBe(5)
     expect(c.destaques).toHaveLength(MAX_DIMENSOES_NA_FRASE)
-    // E fica com as TRES PRIMEIRAS da ordem de prioridade.
-    expect(c.destaques.map((d) => d.dimensao.chave)).toEqual(['oferta', 'pop', 'conc'])
+    /* A de maior PRIORIDADE entra sempre (residual e' a pergunta do produto); as
+       outras duas vagas vao para as de maior DESVIO — aqui concorrentes (0 contra 8,
+       desvio 1,0) e crescimento (40 contra 2, desvio 0,95), que separam mais do que
+       populacao (0,875). A apresentacao volta a ordem de prioridade. */
+    expect(c.destaques.map((d) => d.dimensao.chave)).toEqual(['oferta', 'conc', 'cres'])
   })
 
   it('monta a frase na voz de A, com "mais" e "menos" corretos', () => {
@@ -171,6 +174,14 @@ describe('compararComFrase', () => {
     expect(c.vencedor).toBe('b')
     expect(c.frase).toContain('B leva a comparação.')
     expect(c.frase).toContain('menos residual disponível')
+  })
+
+  it('a dimensao de maior prioridade relevante nunca fica de fora', () => {
+    // Mesmo quando outras 4 dimensoes tem desvio maior, o residual entra.
+    const a = hex({ oferta: 5200, pop: 40000, conc: 0, renda: 3000, cres_hex_taxa: 40 })
+    const b = hex({ oferta: 4000, pop: 5000, conc: 9, renda: 800, cres_hex_taxa: 1 })
+    const c = compararComFrase(a, b)
+    expect(c.destaques[0].dimensao.chave).toBe('oferta')
   })
 
   it('a frase e DETERMINISTICA: mesma entrada, mesma saida', () => {

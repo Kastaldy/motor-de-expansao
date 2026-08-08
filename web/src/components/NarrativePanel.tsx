@@ -1,5 +1,6 @@
 import { useState } from 'react'
 
+import ComparadorCidades from './ComparadorCidades'
 import { camadaCor } from '../lib/colors'
 import { type Linha, type Serie, parseDims, parseSeries } from '../lib/crescimento'
 import { alunos, num } from '../lib/format'
@@ -45,6 +46,10 @@ export interface NarrativePanelProps {
   cresMun?: Record<string, CrescimentoMunicipio> | null
   /** UF em tela, para avisar da cobertura de satélite no passo 4. */
   uf?: string | null
+  /** Todos os passos — o comparador de cidades lê o valor de cada um. */
+  passos?: readonly Passo[]
+  /** `uf` = a lista é de cidades; `municipio` = de hexágonos. */
+  nivel?: 'uf' | 'municipio'
 }
 
 /* ---------------------------------------------------------------------------
@@ -353,6 +358,8 @@ export default function NarrativePanel({
   totalPassos,
   cresMun,
   uf,
+  passos,
+  nivel,
 }: NarrativePanelProps) {
   /** Filtro OPCIONAL do passo 5. Começa desligado: a fila que o motor entregou é a
    *  resposta padrão, e esconder itens por default seria decidir pelo operador. */
@@ -469,6 +476,12 @@ export default function NarrativePanel({
             aqui so aparece quando a lista nao tem detalhe proprio. */}
         {passo.n === 4 && !passo.itens.some((it) => it.dims || it.series) && (
           <Detalhes dims={dims} series={series} />
+        )}
+
+        {/* So' no nivel de UF: la os itens do funil SAO cidades. No municipio a
+            lista e' de hexagonos, e a comparacao deles ja vive no painel do mapa. */}
+        {nivel === 'uf' && passos && passos.length > 0 && (
+          <ComparadorCidades passos={passos} cresMun={cresMun} />
         )}
 
         {passo.n === 5 && passo.itens.length > 0 && (
