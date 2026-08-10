@@ -1798,16 +1798,51 @@ a partir da raiz do repo do scraper).
 
 ---
 
-### BLK-MA-09 — Reativar o sinal 2 (`v2`) no motor, com régua assimétrica por fonte
+### BLK-MA-09 — Ingerir a nota do WellHub até a saída do score, como COLUNA-FATO sem peso
 
 | Campo | Valor |
 |---|---|
 | **Criticidade** | **Alta** (liga um sinal do `score_vulnerabilidade`, o que **rebalanceia todos os pesos efetivos**: S3 cai de ≈0,467 para 0,35 e S4 de ≈0,333 para 0,25; muda o contrato de snapshot e força bump de versão. Camada **PARALELA e READ-ONLY sobre o M1** — não toca `score_priorizacao`, pesos, nem artefatos oficiais, e o score ainda não tem consumidor materializado; **volta a ser Crítica quando o BLK-MA-05 materializar o entregável**). **Exige emenda ao contrato ratificada no gate + gate humano obrigatório** antes do Builder. |
 | **Prioridade** | Depois do **BLK-MA-08**, que produz o insumo. Antes do **BLK-MA-05**, que é o consumidor do score — se o MA-05 sair antes, ordenará sobre uma régua que este bloco vai mudar. |
-| **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA — D-A/D-B/D-C, no gate PRÓPRIO deste bloco (o gate conjunto com o BLK-MA-08 foi FATIADO pela DEC-024)]` → Builder → QA. |
-| **Status** | **PRONTO PARA O GATE** (prep concluída em 2026-08-10). O pré-requisito do **D-A** foi cumprido e **reproduzido do dado bruto** (`n=34.035` independentes com nota): `min=1,0 · p1=4,23 · p5=4,59 · p10=4,69 · mediana=4,93 · desvio=0,192`; **158 (0,46%) abaixo de 4,0**. A medição **falsificou dois números** que o D-A usava — o domínio do `v2` e a taxa de baixa confiança —, e o parágrafo do D-A foi reescrito com os corretos (ver lá). O **D-B** ganhou insumo do MA-10: o TotalPass não tem nota como produto, logo a régua assimétrica é **permanente**. Ponteiros, tripwires, contagem de escopo e baseline de teste também foram corrigidos. **Falta só a decisão humana D-A/D-B/D-C.** Código não iniciado. |
-| **Depende de** | BLK-MA-08. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — RESOLVIDO pela DEC-026 em 2026-08-10: D-B = opção (0); D-A e D-C ficaram SEM OBJETO. NÃO reabrir]` → Builder → QA. |
+| **Status** | **GATE RESOLVIDO (DEC-026, 2026-08-10) — pronto para o Builder.** D-B = **opção (0)**: o rating entra como coluna-fato **sem peso**. **D-A e D-C ficaram SEM OBJETO** — não foram decididos, deixaram de existir como pergunta. Código não iniciado. |
+| **Criticidade REVISADA** | De **Alta** para **Média** `[DEC-026]`. A justificativa original era "liga um sinal do `score_vulnerabilidade`, o que rebalanceia todos os pesos efetivos" — **isso não acontece mais**: `SINAIS_INATIVOS` fica `("s2",)`, os pesos efetivos seguem `0,20/0,467/0,333` e nenhum tripwire de peso muda. O que resta é ingestão de coluna + bump de contrato de snapshot, sem tocar fórmula. Atenção ao efeito colateral de governança: **Média arma auto-merge** (`scripts/aplicar_criticidade_label.py:38`) — se o PR tocar `tasks/backlog.md` ou `CLAUDE.md`, o guard exige `aprovado-humano` de qualquer forma; se não tocar, entra sozinho com os 4 checks verdes. |
+| **Depende de** | BLK-MA-08 (concluído). **DEC-026** (resolve o gate). |
 | **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
+
+> ## ⚠️ LEIA ISTO ANTES DO RESTO DO BLOCO — o gate mudou o objetivo (DEC-026, 2026-08-10)
+>
+> **O bloco NÃO reativa mais o `v2`.** Tudo abaixo foi escrito supondo que reativaria; está
+> preservado como registro do que foi considerado, mas **o escopo executável é o desta caixa**.
+>
+> **O que decidiu.** D-B = **opção (0)**: nota e contagem propagadas como **coluna-fato, sem peso,
+> fora de `Σ(wi · vi)`**, no molde do G-D2. `SINAIS_INATIVOS` continua `("s2",)`.
+>
+> **Por quê.** Com peso, o `v2` **inverte o ranking**. Vale
+> `score_com_s2 = 0,75 · score_sem_s2 + 25 · v2`: ter nota cobra 25% dos outros três sinais e a
+> nota mediana devolve 0,44 ponto. Resultado — **99,97%** das 34.035 linhas com nota seriam
+> penalizadas, e a academia `sumiu_recente` + stale cai de **90,00 para 67,94**. As opções (1) e
+> (2) não se sustentam no território: **69,4% dos hexes são mistos**, 94,2% da massa vive em hex
+> misto e **100% dos 200 hexes mais densos** são mistos.
+>
+> **CONTINUA no escopo:** `_COLUNAS_TRABALHO`; `CONTRATO_COLUNAS_SNAPSHOT` de 10 para **12** colunas
+> com bump de `VERSAO_CONTRATO_SNAPSHOT`; **`ler_snapshots` com `schema=` explícito** (hoje a
+> leitura hive de esquema misto dropa a coluna nova **sem erro**); acréscimo ao
+> `CONTRATO_COLUNAS_SCORE`; as correções de contrato; o guardrail do hash.
+>
+> **SAIU do escopo:** remover `"s2"` de `SINAIS_INATIVOS`; a máscara `False` e o laço de inativos em
+> `score.py`; a tupla de `_derivar_componentes`; o biconditional `s2 ⟺ v2`; qualquer mexida em
+> `flag_score_provisorio` / `score_vulnerabilidade_ordenavel`. **Os tripwires de peso efetivo
+> sobrevivem intactos** — não há pesos a atualizar, e a tabela de tripwires do critério de aceite
+> encolhe: só as contagens de coluna mudam.
+>
+> **12 colunas, não 11 — vale independentemente de tudo.** Fechar em 11 economiza uma coluna hoje e
+> custa depois um segundo bump **mais um buraco no histórico**, porque o dado das semanas passadas
+> não existirá.
+>
+> **O D-A e o D-C não foram "decididos" — ficaram sem objeto.** Se um bloco futuro quiser ligar o
+> peso, os dois voltam a existir e exigem gate próprio. A medição que sustenta a recusa da régua
+> linear está no bullet do D-A abaixo.
 
 **Contexto.** O sinal 2 está `n/d` por decisão do gate 2 (D3, §7 do contrato), com a justificativa
 *"nenhum coletor emite nota"*. O **BLK-MA-08** derruba essa justificativa **para o WellHub apenas** —
@@ -2101,7 +2136,10 @@ de rating, o bundle JS do site não sabe exibir nota, a central de ajuda não do
 funcionalidade e um cliente pagante **pediu o recurso** numa resenha da App Store. Veredito:
 arquivar, sem follow-up técnico.
 
-Consequência: as **15.986 unidades TotalPass** já coletadas — universo **maior** que o do WellHub —
+Consequência: as **14.301 unidades TotalPass independentes** já coletadas *(número corrigido em
+2026-08-10 pela DEC-026: as 15.986 do consolidado incluem 1.685 cadeias, que saem pelo filtro de
+universo do §8.4; o WellHub tem 42.478 independentes, então o TotalPass é o universo **menor**, não
+o maior)* —
 ficariam permanentemente sem sinal 2. A decisão de Vinicius (2026-08-05) foi levar esse universo
 para reputação **externa**, que é este bloco.
 
