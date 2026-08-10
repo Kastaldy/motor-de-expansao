@@ -1,25 +1,30 @@
 import { useMemo, useState } from 'react'
 
 import Select from './Select'
-import TabelaComparacao from './TabelaComparacao'
+import TabelaRanking from './TabelaRanking'
 import {
-  compararMunicipios,
+  DIMENSOES_MUNICIPIO,
   montarMunicipio,
   municipiosDisponiveis,
 } from '../lib/comparacao-municipios'
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
+import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import type { Passo } from '../lib/types'
 
 /**
- * Comparar duas CIDADES, na visao de estado.
+ * Comparar ate 5 CIDADES, na visao de estado.
  *
  * POR QUE POR SELETOR, E NAO POR CLIQUE NA LISTA. No nivel de UF, clicar num item ja
  * significa DRILL-DOWN (entrar naquele municipio) — comportamento que o operador usa
  * o tempo todo. Sequestra-lo para "adicionar a comparacao" quebraria o fluxo
- * principal para servir o secundario. Dois seletores nao disputam nada.
+ * principal para servir o secundario.
  *
- * Recolhido por padrao: a resposta da tela continua sendo o funil; a comparacao e'
- * uma pergunta que o operador faz quando quer.
+ * O CRESCIMENTO MUNICIPAL entra como dimensao (`DIMENSOES_MUNICIPIO`), lida como
+ * DESVIO para a mediana da UF — nunca como numero absoluto. Comparar "8,7%" com "22%"
+ * solto convidaria a ler o CAGED como grandeza nacional, que e' o que a regra proibe;
+ * aqui os municipios sao todos da MESMA UF, entao a leitura e' estadual.
+ *
+ * Recolhido por padrao: a resposta da tela continua sendo o funil.
  */
 export default function ComparadorCidades({
   passos,
@@ -29,22 +34,23 @@ export default function ComparadorCidades({
   cresMun?: Record<string, CrescimentoMunicipio> | null
 }) {
   const [aberto, setAberto] = useState(false)
-  const [a, setA] = useState('')
-  const [b, setB] = useState('')
+  const [escolhidas, setEscolhidas] = useState<string[]>([])
 
   const cidades = useMemo(() => municipiosDisponiveis(passos), [passos])
 
-  const comparacao = useMemo(() => {
-    if (!a || !b || a === b) return null
-    return compararMunicipios(
-      montarMunicipio(a, passos, cresMun),
-      montarMunicipio(b, passos, cresMun),
-    )
-  }, [a, b, passos, cresMun])
+  const ranking = useMemo(() => {
+    const validas = escolhidas.filter(Boolean)
+    if (validas.length < 2) return null
+    const itens = validas.map((n) => montarMunicipio(n, passos, cresMun))
+    return ranquear(DIMENSOES_MUNICIPIO, itens, validas)
+  }, [escolhidas, passos, cresMun])
 
   // Menos de duas cidades no funil: nao ha o que comparar, e um seletor vazio so'
   // faria o operador procurar o que nao existe.
   if (cidades.length < 2) return null
+
+  const podeAdicionar = escolhidas.length < MAX_COMPARADOS
+  const disponiveis = cidades.filter((c) => !escolhidas.includes(c))
 
   return (
     <div
@@ -73,40 +79,73 @@ export default function ComparadorCidades({
           textAlign: 'left',
         }}
       >
-        Comparar duas cidades
+        Comparar cidades {escolhidas.length > 0 && `(${escolhidas.length})`}
         <span aria-hidden style={{ color: 'var(--tx-muted)' }}>{aberto ? '−' : '+'}</span>
       </button>
 
       {aberto && (
         <div style={{ padding: '0 11px 12px', display: 'grid', gap: 10 }}>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <Select
-              label="Primeira cidade"
-              value={a}
-              onChange={setA}
-              maxWidth={150}
-              buscavel
-              placeholder="Cidade A…"
-              options={cidades.map((c) => ({ value: c, label: c }))}
-            />
-            <Select
-              label="Segunda cidade"
-              value={b}
-              onChange={setB}
-              maxWidth={150}
-              buscavel
-              placeholder="Cidade B…"
-              options={cidades.map((c) => ({ value: c, label: c }))}
-            />
-          </div>
+          {/* Fichas das escolhidas, com remover. */}
+          {escolhidas.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {escolhidas.map((c) => (
+                <span
+                  key={c}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '5px 7px 5px 10px',
+                    borderRadius: 999,
+                    background: 'var(--ac-a12)',
+                    border: '1px solid var(--ac-a25)',
+                    font: '500 11px/1 var(--f-ui)',
+                    color: 'var(--ac-chip)',
+                  }}
+                >
+                  {c}
+                  <button
+                    type="button"
+                    onClick={() => setEscolhidas((xs) => xs.filter((x) => x !== c))}
+                    aria-label={`Remover ${c}`}
+                    style={{
+                      background: 'transparent',
+                      border: 0,
+                      padding: '0 2px',
+                      color: 'var(--tx-rank)',
+                      font: '700 12px/1 var(--f-ui)',
+                    }}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
 
-          {comparacao ? (
-            <TabelaComparacao comparacao={comparacao} rotuloA={a} rotuloB={b} />
+          {podeAdicionar && disponiveis.length > 0 ? (
+            <Select
+              label="Adicionar cidade à comparação"
+              value=""
+              onChange={(v) => v && setEscolhidas((xs) => [...xs, v])}
+              maxWidth={200}
+              buscavel
+              placeholder={escolhidas.length ? 'Adicionar cidade…' : 'Escolher cidade…'}
+              options={disponiveis.map((c) => ({ value: c, label: c }))}
+            />
+          ) : (
+            <span style={{ font: '400 10.5px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
+              {/* Teto declarado: sem isto o seletor sumiria sem explicacao. */}
+              Máximo de {MAX_COMPARADOS} cidades — remova uma para trocar.
+            </span>
+          )}
+
+          {ranking ? (
+            <TabelaRanking ranking={ranking} />
           ) : (
             <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
-              {a && a === b
-                ? 'Escolha duas cidades diferentes.'
-                : 'Escolha duas cidades do funil para ver onde cada uma leva vantagem.'}
+              Escolha ao menos duas cidades para ver onde cada uma leva vantagem — o
+              crescimento entra lido contra a mediana deste estado.
             </p>
           )}
         </div>

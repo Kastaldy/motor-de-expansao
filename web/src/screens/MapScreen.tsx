@@ -15,6 +15,7 @@ import { api, ApiError, baixar } from '../lib/api'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
+import { MAX_COMPARADOS } from '../lib/ranking-comparacao'
 import type { Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
@@ -203,17 +204,17 @@ export default function MapScreen({
   }, [dados, filtroFaixa])
 
   /**
-   * O par a COMPARAR: existe só com exatamente 2 hexes selecionados.
+   * Os hexes a COMPARAR: de 2 a 5 selecionados.
    *
    * Somar e comparar respondem perguntas diferentes ("quanto vale este pedaço junto"
-   * x "qual destes dois é melhor"), e o número de hexes escolhidos já diz qual delas
-   * o operador está fazendo — 2 é comparação, 1 ou 3+ é soma. Por isso o painel troca
-   * sozinho, sem mais um botão para ele decidir.
+   * x "qual destes é melhor"), e o número de hexes escolhidos já diz qual delas o
+   * operador está fazendo — 2 a 5 é comparação, 1 ou 6+ é soma. Por isso o painel
+   * troca sozinho, sem mais um botão para ele decidir.
    */
-  const parComparacao = useMemo(() => {
-    if (cenario.length !== 2) return null
-    const [a, b] = cenario.map((id) => porId.get(id))
-    return a && b ? ([a, b] as const) : null
+  const hexesComparacao = useMemo(() => {
+    if (cenario.length < 2 || cenario.length > MAX_COMPARADOS) return null
+    const hs = cenario.map((id) => porId.get(id)).filter(Boolean) as Hex[]
+    return hs.length === cenario.length ? hs : null
   }, [cenario, porId])
 
   // Agregação do cenário multi-hex (soma no cliente a partir dos hexes servidos).
@@ -712,15 +713,11 @@ export default function MapScreen({
                   {modoCenario ? '◆ Comparando hexes' : '◇ Comparar vários hexes'}
                 </button>
 
-                {modoCenario && parComparacao && (
-                  <PainelComparacao
-                    a={parComparacao[0]}
-                    b={parComparacao[1]}
-                    onLimpar={() => setCenario([])}
-                  />
+                {modoCenario && hexesComparacao && (
+                  <PainelComparacao hexes={hexesComparacao} onLimpar={() => setCenario([])} />
                 )}
 
-                {modoCenario && !parComparacao && (
+                {modoCenario && !hexesComparacao && (
                   <div
                     style={{
                       background: 'var(--surf-panel)',
@@ -744,8 +741,8 @@ export default function MapScreen({
                     ) : (
                       <p style={{ margin: '8px 0 0', font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
                         Clique nos hexágonos do mapa para somar residual, população e score.
-                        Com <strong style={{ color: 'var(--tx-soft)' }}>dois</strong> selecionados,
-                        este painel compara um contra o outro.
+                        De <strong style={{ color: 'var(--tx-soft)' }}>dois a {MAX_COMPARADOS}</strong>{' '}
+                        selecionados, este painel compara e diz qual é o melhor.
                       </p>
                     )}
                     {resumoCenario && (

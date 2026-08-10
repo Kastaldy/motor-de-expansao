@@ -1,30 +1,28 @@
-import TabelaComparacao from './TabelaComparacao'
-import { compararComFrase } from '../lib/comparacao'
+import TabelaRanking from './TabelaRanking'
+import { DIMENSOES } from '../lib/comparacao'
+import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import type { Hex } from '../lib/types'
 
 /**
- * Comparacao A x B de dois hexagonos, no mapa.
+ * Comparacao de 2 a 5 hexagonos, no mapa.
  *
  * NAO substitui o "Somar" (cenario multi-hex): sao perguntas diferentes. Somar
- * responde "quanto vale este pedaco de cidade junto"; comparar responde "qual
- * destes dois e' melhor, e por que". O painel troca sozinho quando ha exatamente
- * 2 hexes selecionados, e volta a somar com 1 ou 3+.
+ * responde "quanto vale este pedaco de cidade junto"; comparar responde "qual destes
+ * e' melhor, e por que". O painel troca sozinho quando ha 2..5 hexes selecionados.
  *
- * Nenhum numero e' derivado aqui: a regra (dimensoes, limiares, quem ganha, a frase)
- * vive em `lib/comparacao.ts`, e o desenho da tabela em `TabelaComparacao` — o mesmo
- * que a comparacao de cidades usa, para as duas lerem igual.
+ * O ranking CONTA vitorias por dimensao — nao soma posicoes. Somar assumiria que uma
+ * posicao em residual vale o mesmo que uma em renda, e isso e' um peso entre camadas
+ * do M1, decisao que exige DEC.
  */
 export default function PainelComparacao({
-  a,
-  b,
+  hexes,
   onLimpar,
 }: {
-  a: Hex
-  b: Hex
+  hexes: Hex[]
   onLimpar: () => void
 }) {
-  const rotuloA = a.mun ?? 'Hexágono A'
-  const rotuloB = b.mun ?? 'Hexágono B'
+  const rotulos = hexes.map((h, i) => h.mun ?? `Hexágono ${i + 1}`)
+  const ranking = ranquear(DIMENSOES, hexes, rotulos)
 
   return (
     <div
@@ -35,20 +33,16 @@ export default function PainelComparacao({
         padding: '11px 13px',
         backdropFilter: 'blur(16px)',
         minWidth: 300,
-        maxWidth: 360,
+        maxWidth: 420,
       }}
     >
       <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)', marginBottom: 10 }}>
-        Comparando 2 hexágonos
+        Comparando {hexes.length} hexágonos
       </div>
 
-      <TabelaComparacao
-        comparacao={compararComFrase(a, b, rotuloA, rotuloB)}
-        rotuloA={rotuloA}
-        rotuloB={rotuloB}
-      />
+      <TabelaRanking ranking={ranking} />
 
-      <div style={{ marginTop: 11, display: 'flex', gap: 8 }}>
+      <div style={{ marginTop: 11, display: 'flex', gap: 8, alignItems: 'center' }}>
         <button
           type="button"
           onClick={onLimpar}
@@ -64,6 +58,11 @@ export default function PainelComparacao({
         >
           Limpar
         </button>
+        {hexes.length < MAX_COMPARADOS && (
+          <span style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-sub)', flex: 1 }}>
+            Clique em mais hexágonos — até {MAX_COMPARADOS}.
+          </span>
+        )}
       </div>
     </div>
   )
