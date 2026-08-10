@@ -178,7 +178,13 @@ describe('mesmoPeriodo', () => {
       mesmoPeriodo({ inicio: '2026-08-01', fim: '2026-08-10' }, { inicio: '2026-08-01', fim: '2026-08-11' }),
     ).toBe(false)
   })
-  it('encostar numa ponta já é interseção; fora de vez, não', () => {
+  it('período ilegível não é igual a ninguém, nem a outro ilegível', () => {
+    // `mesmoPeriodo` decide se o campo digitado ainda é o período do pai. Devolver
+    // `true` para lixo faria o rascunho ser dado por sincronizado no meio da digitação.
+    expect(mesmoPeriodo({ inicio: '', fim: '' }, { inicio: '', fim: '' })).toBe(false)
+    expect(
+      mesmoPeriodo({ inicio: '2026-02-30', fim: '2026-08-10' }, { inicio: '2026-02-30', fim: '2026-08-10' }),
+    ).toBe(false)
   })
 })
 
