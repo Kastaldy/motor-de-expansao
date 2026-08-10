@@ -188,6 +188,28 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   nem a taxonomia — ver a emenda BLK-MA-11 abaixo). `fonte` não é opcional: o sinal 1 da seção 4 é derivado dela, e sem ela a regra de "gap
   de feed não vira churn" é impossível de implementar. `semana` **não** é coluna do arquivo — vive
   no caminho, como chave de partição hive.
+
+> **[emenda BLK-MA-09, 2026-08-10] Domínio da nota e normalização do par: degradar, nunca abortar.**
+> O domínio de `nota_wellhub` é **`[1,0 ; 5,0]`** (`NOTA_WELLHUB_MIN`/`NOTA_WELLHUB_MAX` em
+> `contrato.py`), não `[0 ; 5]`. Motivo: a nota é média de avaliações de 1 a 5 estrelas, logo `0.0`
+> é aritmeticamente inalcançável — "sem avaliação" tem forma própria (`NA`/`0`). A DEC-026 mediu
+> `min = 1,0` em 34.035 independentes com nota. O piso importa mais que o teto porque `0.0` é o
+> retorno NATURAL de um extrator quebrado: um piso em `0.0` aceitaria em silêncio justamente o valor
+> mais provável de um bug.
+>
+> **Toda violação DEGRADA a célula para "não lido" e é CONTADA em `rating_ilegivel`; nenhuma
+> levanta.** Vale para: nota fora do domínio, contagem negativa, contagem não-inteira (`1.262`, a UI
+> pt-BR) e qualquer **par** fora dos três estados da DEC-024 — `NA`/`105`, `4.81`/`0` e `4.81`/`NA`
+> viram `NA`/`NA`. A razão é a mesma do item 1 do `_coagir_rating`: `montar_snapshot` roda ANTES de
+> gravar e o `run_weekly_90.sh` sobrescreve os CSVs crus a cada coleta, então uma exceção não perde
+> uma linha — perde **a semana inteira, para sempre**, por causa de uma célula.
+>
+> A **ordem** é normativa: domínio por coluna primeiro, par depois. É ela que faz `0.0`/`0` — extrator
+> quebrado sobre unidade sem avaliações — cair em "sem avaliações" (`NA`/`0`) em vez de "não lido".
+>
+> `_assert_schema_snapshot` mantém as checagens como **rede para frames montados à mão** (metade dos
+> testes desta camada constrói o insumo assim). Pelo caminho público elas são inalcançáveis — é
+> justamente esse o invariante.
 - **Limpeza de ruído (BLK-MA-02, obrigatória antes de derivar churn).** O feed cru traz linhas que
   **não** são academias reais e distorceriam churn/universo: coords `0;0` e rótulos de teste (ex.:
   "Teste Raised"); **entradas de tecnologia/onboarding do TotalPass** ("Zon Tecnologia", "SAGAZ

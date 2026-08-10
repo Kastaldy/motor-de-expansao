@@ -1018,6 +1018,12 @@ def test_assert_schema_rejeita_rating_fora_do_dominio(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match=r"nota_wellhub fora de"):
         m._assert_schema_snapshot(ruim)
 
+    # `0.0` é o retorno natural de um parser quebrado e o piso do domínio é `1.0`, não `0.0`.
+    ruim = base.copy()
+    ruim.loc[0, "nota_wellhub"] = 0.0
+    with pytest.raises(ValueError, match=r"nota_wellhub fora de"):
+        m._assert_schema_snapshot(ruim)
+
     ruim = base.copy()
     ruim.loc[0, "qtd_avaliacoes_wellhub"] = -7
     with pytest.raises(ValueError, match="negativa"):
@@ -1027,6 +1033,95 @@ def test_assert_schema_rejeita_rating_fora_do_dominio(tmp_path: Path) -> None:
     ruim.loc[0, "nota_wellhub"] = pd.NA  # nota ausente com qtd = 105 -> o quarto estado
     with pytest.raises(ValueError, match="rating incoerente"):
         m._assert_schema_snapshot(ruim)
+
+    # Nota presente com ZERO avaliações: não há avaliação que sustente a média.
+    ruim = base.copy()
+    ruim.loc[0, "qtd_avaliacoes_wellhub"] = 0
+    with pytest.raises(ValueError, match="rating incoerente"):
+        m._assert_schema_snapshot(ruim)
+
+    # Nota presente com contagem ausente: o terceiro par que a DEC-024 não prevê.
+    ruim = base.copy()
+    ruim.loc[0, "qtd_avaliacoes_wellhub"] = pd.NA
+    with pytest.raises(ValueError, match="rating incoerente"):
+        m._assert_schema_snapshot(ruim)
+
+
+@pytest.mark.parametrize("nota_ruim", ["9.9", "481", "-1.0", "0.0"])
+def test_nota_fora_do_dominio_nao_aborta_a_semana(tmp_path: Path, nota_ruim: str) -> None:
+    """A assimetria que o PR original deixou: `1.262` degradava, mas `9.9` LEVANTAVA.
+
+    As duas células chegam pelo mesmo caminho (CSV do coletor -> `montar_snapshot`, que roda ANTES
+    de gravar) e têm a mesma consequência: como o `run_weekly_90.sh` sobrescreve os CSVs crus a cada
+    coleta, a exceção não perde uma linha — perde a semana inteira, para sempre.
+
+    `481` é `4.81` sem o separador decimal; `0.0`, o default de um parser que não achou o campo.
+    """
+    tp, wh, un = _dirs_com_rating(tmp_path, [nota_ruim, "4.70"], ["105", "88"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    snap = snap.sort_values("slug").reset_index(drop=True)
+
+    assert pd.isna(snap.loc[0, "nota_wellhub"]), f"{nota_ruim} entrou na serie como nota legitima"
+    assert pd.isna(snap.loc[0, "qtd_avaliacoes_wellhub"]), "par sobrou fora dos tres estados"
+    # A linha sã ao lado sobrevive: a degradação é por célula, não por semana.
+    assert snap.loc[1, "nota_wellhub"] == 4.70
+    assert snap.loc[1, "qtd_avaliacoes_wellhub"] == 88
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_contagem_negativa_nao_aborta_a_semana(tmp_path: Path) -> None:
+    """Mesma assimetria, na outra coluna: contagem negativa levantava em vez de degradar."""
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4.81", "4.70"], ["-7", "88"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    snap = snap.sort_values("slug").reset_index(drop=True)
+
+    assert pd.isna(snap.loc[0, "qtd_avaliacoes_wellhub"])
+    assert snap.loc[1, "qtd_avaliacoes_wellhub"] == 88
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_nota_zero_com_zero_avaliacoes_vira_SEM_AVALIACOES(tmp_path: Path) -> None:
+    """O caso que mais engana: `0.0`/`0` passava como "tem nota 0,0", que não é estado nenhum.
+
+    É o que um extrator quebrado produz sobre uma unidade que de fato não tem avaliação. O destino
+    correto é "sem avaliações" (`NA`/`0`) — e é a ORDEM das regras em `_coagir_rating` (domínio
+    antes do par) que o garante: a nota morre no domínio, e o par `NA`/`0` que sobra já é válido.
+    """
+    tp, wh, un = _dirs_com_rating(tmp_path, ["0.0"], ["0"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+
+    assert pd.isna(snap.loc[0, "nota_wellhub"])
+    assert snap.loc[0, "qtd_avaliacoes_wellhub"] == 0, "virou 'nao lido' em vez de 'sem avaliacoes'"
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_nota_com_zero_avaliacoes_vira_nao_lido(tmp_path: Path) -> None:
+    """Nota boa com contagem `0`: não existe média de zero avaliações — o par é impossível."""
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4.81"], ["0"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+
+    assert pd.isna(snap.loc[0, "nota_wellhub"])
+    assert pd.isna(snap.loc[0, "qtd_avaliacoes_wellhub"])
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_bordas_do_dominio_da_nota_sao_aceitas(tmp_path: Path) -> None:
+    """`1.0` e `5.0` são notas REAIS (DEC-026: `min = 1,0`), não devem degradar."""
+    tp, wh, un = _dirs_com_rating(tmp_path, ["1.0", "5.0"], ["3", "9"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    snap = snap.sort_values("slug").reset_index(drop=True)
+
+    assert snap.loc[0, "nota_wellhub"] == 1.0
+    assert snap.loc[1, "nota_wellhub"] == 5.0
+    assert auditoria["rating_ilegivel"] == 0
+
+
+def test_uma_linha_degradada_conta_UMA_vez(tmp_path: Path) -> None:
+    """`9.9`/`105` aciona domínio E par. A auditoria conta LINHAS, senão inflaria o alarme."""
+    tp, wh, un = _dirs_com_rating(tmp_path, ["9.9"], ["105"])
+    _, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+
+    assert auditoria["rating_ilegivel"] == 1
 
 
 def test_montar_snapshot_vazio_respeita_os_dtypes_do_contrato(tmp_path: Path) -> None:

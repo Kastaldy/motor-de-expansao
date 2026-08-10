@@ -59,6 +59,8 @@ from .contrato import (
     H3_RES_CONTRATO,
     LIMIAR_SLUG_ESTAVEL,
     MOTIVOS_DESCARTE,
+    NOTA_WELLHUB_MAX,
+    NOTA_WELLHUB_MIN,
     RE_SEMANA,
     RE_UUID,
     RETENCAO_SEMANAS,
@@ -450,26 +452,47 @@ def _coagir_rating(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
        4 dígitos existe no universo (a DEC-024 cita "4,73 com 1.262"). Medido em 2026-08-10: o
        consolidado atual traz as 45.527 contagens como inteiro puro, então isto é **latente**,
        não ativo.
-    2. **O quarto estado.** A DEC-024 (D-3) define TRÊS: `4.81`/`105` (tem nota), `NA`/`0` (sem
-       avaliações) e `NA`/`NA` (parser quebrou). Nota ilegível com contagem legível produz
-       `NA`/`105`, que não existe no contrato. Ele é normalizado para `NA`/`NA` — "não lido" é o
-       que de fato aconteceu — em vez de passar como se fosse "sem avaliações".
+    2. **Valor fora do domínio.** Nota fora de `[NOTA_WELLHUB_MIN, NOTA_WELLHUB_MAX]` ou contagem
+       negativa. `481` é `4.81` sem o separador decimal; `0.0` é o default de um parser que não
+       achou o campo. Antes estes valores só eram vistos pelo `_assert_schema_snapshot`, que
+       LEVANTA — mesma consequência do item 1, e pelo mesmo caminho.
+    3. **Par fora dos três estados.** A DEC-024 (D-3) define TRÊS: `4.81`/`105` (tem nota), `NA`/`0`
+       (sem avaliações) e `NA`/`NA` (parser quebrou). Qualquer outro par — `NA`/`105` (nota
+       ilegível com contagem boa), `4.81`/`0` (nota sem avaliação que a sustente), `4.81`/`NA` —
+       é normalizado para `NA`/`NA`, porque "não lido" é o que de fato aconteceu. Deixar passar
+       faria uma quebra de parser entrar no funil disfarçada de academia sem avaliação.
+
+    A ordem importa: o domínio primeiro, o par depois. É ela que faz `0.0`/`0` — extrator quebrado
+    sobre uma unidade sem avaliações — cair no estado CERTO (`NA`/`0`, "sem avaliações") em vez de
+    virar "não lido".
     """
     nota = pd.to_numeric(df["nota_wellhub"], errors="coerce")
     qtd = pd.to_numeric(df["qtd_avaliacoes_wellhub"], errors="coerce")
 
+    # (1) Domínio, por coluna. Um valor impossível é um valor NÃO LIDO — não um motivo para abortar.
+    fora_dominio = nota.notna() & ((nota < NOTA_WELLHUB_MIN) | (nota > NOTA_WELLHUB_MAX))
+    nota = nota.where(~fora_dominio)
+
     # `Int64` só aceita valor integral; não-integral vira "não lido" em vez de abortar a semana.
     nao_inteiro = qtd.notna() & (qtd != qtd.round())
-    qtd = qtd.where(~nao_inteiro)
+    negativa = qtd.notna() & (qtd < 0)
+    qtd = qtd.where(~(nao_inteiro | negativa))
 
-    # Quarto estado -> "não lido" nas DUAS colunas, para não se disfarçar de "sem avaliações".
-    incoerente = nota.isna() & qtd.notna() & (qtd > 0)
-    qtd = qtd.where(~incoerente)
+    # (2) Par: os três estados da DEC-024 são os ÚNICOS válidos; todo o resto vira "não lido".
+    tem_nota = nota.notna() & qtd.notna() & (qtd > 0)
+    sem_avaliacoes = nota.isna() & qtd.notna() & (qtd == 0)
+    nao_lido = nota.isna() & qtd.isna()
+    par_invalido = ~(tem_nota | sem_avaliacoes | nao_lido)
+    nota = nota.where(~par_invalido)
+    qtd = qtd.where(~par_invalido)
 
     out = df.copy()
     out["nota_wellhub"] = nota.astype("Float64")
     out["qtd_avaliacoes_wellhub"] = qtd.round().astype("Int64")
-    return out, int(nao_inteiro.sum() + incoerente.sum())
+    # Conta LINHAS degradadas, não ocorrências: uma nota `9.9` com contagem boa aciona o domínio e
+    # o par, e vale 1 — senão a auditoria inflaria e ninguém saberia quantas células se perderam.
+    degradadas = fora_dominio | nao_inteiro | negativa | par_invalido
+    return out, int(degradadas.sum())
 
 
 def montar_snapshot(
@@ -587,25 +610,35 @@ def _assert_schema_snapshot(df: pd.DataFrame) -> None:
     if dup > 0:
         raise ValueError(f"chave (fonte, chave_snapshot) duplicada: {dup} linha(s)")
 
-    # Rating (DEC-026). O caminho público já normaliza tudo isto em `_coagir_rating`; estas três
-    # checagens são a rede para frames montados à mão — que é como metade dos testes desta camada
-    # constrói o insumo, e como um bloco futuro provavelmente vai construir também.
+    # Rating (DEC-026). O caminho público normaliza TODOS estes casos em `_coagir_rating` — nenhum
+    # deles pode chegar aqui vindo de `montar_snapshot`, e é de propósito: levantar sobre dado do
+    # coletor custaria a semana inteira (ver a docstring de `_coagir_rating`). Estas checagens são
+    # a rede para frames montados à MÃO — que é como metade dos testes desta camada constrói o
+    # insumo, e como um bloco futuro provavelmente vai construir também.
     nota = df["nota_wellhub"]
     qtd = df["qtd_avaliacoes_wellhub"]
     fora = nota.dropna()
-    if len(fora) and (bool((fora < 0).any()) or bool((fora > 5).any())):
-        raise ValueError(f"nota_wellhub fora de [0, 5]: amostra {sorted(set(fora))[:5]}")
+    if len(fora) and (
+        bool((fora < NOTA_WELLHUB_MIN).any()) or bool((fora > NOTA_WELLHUB_MAX).any())
+    ):
+        raise ValueError(
+            f"nota_wellhub fora de [{NOTA_WELLHUB_MIN}, {NOTA_WELLHUB_MAX}]: "
+            f"amostra {sorted(set(fora))[:5]}"
+        )
     negativas = qtd.dropna()
     if len(negativas) and bool((negativas < 0).any()):
         raise ValueError("qtd_avaliacoes_wellhub negativa")
-    # O QUARTO estado (nota ausente com contagem > 0) não existe na DEC-024 (D-3): ou o par diz
-    # "tem nota", ou "sem avaliações" (`NA`/`0`), ou "não lido" (`NA`/`NA`). Deixá-lo passar faria
-    # uma quebra de parser entrar no funil disfarçada de academia sem avaliação.
-    incoerentes = int((nota.isna() & qtd.notna() & (qtd > 0)).sum())
+    # O PAR tem de ser um dos TRÊS estados da DEC-024 (D-3): "tem nota" (`4.81`/`105`), "sem
+    # avaliações" (`NA`/`0`) ou "não lido" (`NA`/`NA`). Os outros três pares possíveis — `NA`/`105`,
+    # `4.81`/`0` e `4.81`/`NA` — não existem no contrato. Deixá-los passar faria uma quebra de
+    # parser entrar no funil disfarçada de academia sem avaliação.
+    tem_nota = nota.notna() & qtd.notna() & (qtd > 0)
+    sem_avaliacoes = nota.isna() & qtd.notna() & (qtd == 0)
+    nao_lido = nota.isna() & qtd.isna()
+    incoerentes = int((~(tem_nota | sem_avaliacoes | nao_lido)).sum())
     if incoerentes:
         raise ValueError(
-            f"rating incoerente (nota ausente com qtd > 0) em {incoerentes} linha(s): "
-            "estado fora dos tres da DEC-024"
+            f"rating incoerente em {incoerentes} linha(s): estado fora dos tres da DEC-024"
         )
 
 

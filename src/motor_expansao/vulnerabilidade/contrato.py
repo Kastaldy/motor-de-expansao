@@ -222,10 +222,21 @@ CONTRATO_COLUNAS_SNAPSHOT: dict[str, str] = {
     # produto). Os TRÊS estados da DEC-024 sobrevivem no par: `4.81`/`105` = tem nota;
     # `NA`/`0` = existe e não tem avaliação; `NA`/`NA` = o parser não leu (scraper quebrado).
     # Ficam FORA de `CAMPOS_HASH_POR_FONTE` — a nota muda a cada avaliação e mataria o S4.
-    "nota_wellhub": "Float64",         # [0, 5]; nulável
+    "nota_wellhub": "Float64",         # [NOTA_WELLHUB_MIN, NOTA_WELLHUB_MAX]; nulável
     "qtd_avaliacoes_wellhub": "Int64", # >= 0; nulável
     "versao_contrato": "string",       # carimbo; mudança = descontinuidade de série
 }
+
+# Domínio da nota. O piso é `1.0`, NÃO `0.0`: a nota é média de avaliações de 1 a 5 estrelas, logo
+# `0.0` é aritmeticamente inalcançável — "sem avaliação" tem forma própria (`NA`/`0`). Medido na
+# DEC-026 sobre 34.035 independentes com nota: `min = 1,0`, `max = 5,0`.
+#
+# Por que o piso importa mais que o teto: `0.0` é o retorno NATURAL de um extrator quebrado (default
+# numérico de um parser que não achou o campo). Um piso em `0.0` aceitaria em silêncio justamente o
+# valor mais provável de um bug, e a nota falsa entraria na série como observação legítima. O teto
+# pega o modo simétrico — `481` é `4.81` sem o separador decimal.
+NOTA_WELLHUB_MIN: float = 1.0
+NOTA_WELLHUB_MAX: float = 5.0
 
 # Colunas do snapshot que PODEM ser nulas. `slug` porque o feed `unidades` não o emite; as duas de
 # rating porque só o WellHub as tem. O `_assert_schema_snapshot` exige não-nulo em todo o resto.
