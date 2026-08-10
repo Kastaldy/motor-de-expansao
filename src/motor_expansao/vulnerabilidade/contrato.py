@@ -9,8 +9,11 @@ Diferença consciente em relação ao molde `demanda_revelada/contrato.py` (só 
 o conjunto de `CAMPOS_HASH_POR_FONTE` ou a resolução do hex **re-chaveia a série inteira** e produz
 churn artificial em massa — por isso elas ficam no mesmo arquivo que carrega
 `VERSAO_CONTRATO_SNAPSHOT`, e qualquer mudança **exige bump** dessa versão (o BLK-MA-04 deve tratar
-o bump como descontinuidade de série). Histórico de bumps: `v1` (BLK-MA-02) -> `v2` (BLK-MA-11 /
-DEC-025, saída da taxonomia do hash; feito com a série ainda VAZIA, logo sem migração).
+o bump como descontinuidade de série). Histórico de bumps do snapshot: `v1` (BLK-MA-02) -> `v2`
+(BLK-MA-11 / DEC-025, saída da taxonomia do hash) -> `v3` (BLK-MA-09 / DEC-026, entrada das duas
+colunas-fato de rating). **Os três foram feitos com a série ainda VAZIA, logo sem migração** — a
+janela grátis fecha na primeira coleta do cron mensal. O `v3` levou junto o bump de
+`VERSAO_CONTRATO_CHURN` e de `VERSAO_CONTRATO_SCORE`, porque os dois schemas também mudaram.
 
 GUARDRAILS (CLAUDE.md §1/§2/§5; contrato `docs/vulnerabilidade_ma_contrato.md` §11/§14):
   - READ-ONLY sobre o M1: nada aqui recalcula `score_priorizacao`, `hex_score_estrutural`, os pesos
@@ -33,10 +36,10 @@ from datetime import date
 # --------------------------------------------------------------------------- #
 # Carimbos de reprodutibilidade e parâmetros do contrato
 # --------------------------------------------------------------------------- #
-VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v2"
-VERSAO_CONTRATO_CHURN = "churn_staleness_v1"
+VERSAO_CONTRATO_SNAPSHOT = "snapshots_concorrentes_v3"
+VERSAO_CONTRATO_CHURN = "churn_staleness_v2"
 VERSAO_CONTRATO_PRESENCA_AGREGADOR = "presenca_agregador_v1"
-VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v1"
+VERSAO_CONTRATO_SCORE = "score_vulnerabilidade_v2"
 
 # Resolução H3 da chave de join com o Motor (mesma do M1: H3_RESOLUTION=7) - cópia read-only.
 H3_RES_CONTRATO = 7
@@ -202,7 +205,7 @@ CAMPOS_NUMERICOS: frozenset[str] = frozenset({"latitude", "longitude"})
 # --------------------------------------------------------------------------- #
 # Schemas canônicos
 # --------------------------------------------------------------------------- #
-# Snapshot semanal: 10 colunas, nesta ORDEM. `semana` NÃO é coluna do arquivo — é chave de
+# Snapshot semanal: 12 colunas, nesta ORDEM. `semana` NÃO é coluna do arquivo — é chave de
 # partição hive (igual ao `uf` do enriquecido em `fase1_bi_exports.py`), materializada na leitura.
 CONTRATO_COLUNAS_SNAPSHOT: dict[str, str] = {
     "snapshot_date": "string",         # `data_coleta` POR LINHA (ISO) -> medidor de frescor
@@ -214,10 +217,23 @@ CONTRATO_COLUNAS_SNAPSHOT: dict[str, str] = {
     "rede": "string",                  # categoria de rede; metade do escopo de observabilidade
     "fonte": "string",                 # totalpass | wellhub | unidades (sinal 1 do contrato §4)
     "hash_campos_raspados": "string",  # impressão digital dos campos raspados (sinal 4)
+    # FATOS sem peso `[BLK-MA-09 / DEC-026]` — NÃO são componentes do score. Só o WellHub emite;
+    # no TotalPass são nulos por construção e para sempre (BLK-MA-10: a nota não existe no
+    # produto). Os TRÊS estados da DEC-024 sobrevivem no par: `4.81`/`105` = tem nota;
+    # `NA`/`0` = existe e não tem avaliação; `NA`/`NA` = o parser não leu (scraper quebrado).
+    # Ficam FORA de `CAMPOS_HASH_POR_FONTE` — a nota muda a cada avaliação e mataria o S4.
+    "nota_wellhub": "Float64",         # [0, 5]; nulável
+    "qtd_avaliacoes_wellhub": "Int64", # >= 0; nulável
     "versao_contrato": "string",       # carimbo; mudança = descontinuidade de série
 }
 
-# Extrator de churn/staleness: 17 colunas, nesta ORDEM. `v3`/`v4`/`score_vulnerabilidade`/
+# Colunas do snapshot que PODEM ser nulas. `slug` porque o feed `unidades` não o emite; as duas de
+# rating porque só o WellHub as tem. O `_assert_schema_snapshot` exige não-nulo em todo o resto.
+COLUNAS_SNAPSHOT_NULAVEIS: frozenset[str] = frozenset(
+    {"slug", "nota_wellhub", "qtd_avaliacoes_wellhub"}
+)
+
+# Extrator de churn/staleness: 19 colunas, nesta ORDEM. `v3`/`v4`/`score_vulnerabilidade`/
 # `n_sinais_disponiveis`/`flag_score_provisorio` estão AUSENTES DE PROPÓSITO — são BLK-MA-04.
 CONTRATO_COLUNAS_CHURN: dict[str, str] = {
     "chave_snapshot": "string",
@@ -233,6 +249,8 @@ CONTRATO_COLUNAS_CHURN: dict[str, str] = {
     "semana_primeira_observacao": "string",
     "semana_ultima_observacao": "string",
     "snapshot_date_ultimo": "string",
+    "nota_wellhub": "Float64",          # FATO sem peso, da ULTIMA observacao (DEC-026)
+    "qtd_avaliacoes_wellhub": "Int64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
     "flag_serie_imatura": "bool",
     "flag_staleness_interpretavel": "bool",
     "flag_troca_chave_na_serie": "bool",
@@ -288,7 +306,7 @@ V3_POR_STATUS_CHURN: dict[str, float | None] = {
     "sumiu_recente": 1.0,
 }
 
-# Score de vulnerabilidade (D4): 20 colunas, nesta ORDEM. Uma linha por ACADEMIA, isto é, por
+# Score de vulnerabilidade (D4): 22 colunas, nesta ORDEM. Uma linha por ACADEMIA, isto é, por
 # `(fonte, chave_snapshot)` do universo de M&A (TotalPass/WellHub x independente).
 #
 # `v2` está AUSENTE DE PROPÓSITO (S2 é `n/d` permanente, D3 — BLK-MA-08); `hex_quente`,
@@ -303,11 +321,13 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
     "rede": "string",                              # sempre `independente` (universo de M&A)
     "hex_id_res7": "string",                       # join com o sinal 1 e, no BLK-MA-05, hotness
     "status_churn": "string",                      # FATO propagado, sem peso (G-D2)
+    "nota_wellhub": "Float64",                     # FATO propagado, sem peso (DEC-026)
+    "qtd_avaliacoes_wellhub": "Int64",             # FATO propagado, sem peso (DEC-026)
     "v1": "float64",                               # componente do S1; {0.0, 0.5} ou nulo
     "v3": "float64",                               # componente do S3; {0.0, 0.7, 1.0} ou nulo
     "v4": "float64",                               # componente do S4; [0, 1] ou nulo
     "sinais_disponiveis": "string",                # subconjunto de SINAIS_ORDEM, unido por `,`
-    "n_sinais_disponiveis": "int64",               # 0..3 (4 quando o BLK-MA-08 ativar o S2)
+    "n_sinais_disponiveis": "int64",               # 0..3; NAO vai a 4 - o S2 nao tem peso (DEC-026)
     "score_vulnerabilidade": "float64",            # [0, 100]; nulo sse nenhum sinal disponível
     "score_vulnerabilidade_ordenavel": "float64",  # nulo enquanto `flag_score_provisorio` (G-D1)
     "flag_serie_imatura": "bool",                  # propagada do churn
@@ -598,6 +618,7 @@ __all__ = [
     "PADROES_RUIDO_TECNOLOGIA_TOTALPASS",
     "CAMPOS_HASH_POR_FONTE",
     "CAMPOS_NUNCA_HASHEADOS",
+    "COLUNAS_SNAPSHOT_NULAVEIS",
     "CAMPOS_LISTA",
     "CAMPOS_NUMERICOS",
     "CONTRATO_COLUNAS_SNAPSHOT",

@@ -17,6 +17,8 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from motor_expansao.vulnerabilidade import churn_staleness as mchurn
@@ -317,11 +319,14 @@ def test_defaults_iguais_aos_da_ingestao_existente() -> None:
 # --------------------------------------------------------------------------- #
 # CA-2 — contrato de 10 colunas + _assert_schema
 # --------------------------------------------------------------------------- #
-def test_schema_snapshot_10_colunas_em_ordem(dirs_sinteticos: tuple[Path, Path, Path]) -> None:
+def test_schema_snapshot_12_colunas_em_ordem(dirs_sinteticos: tuple[Path, Path, Path]) -> None:
     tp, wh, un = dirs_sinteticos
     snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
     assert list(snap.columns) == list(c.CONTRATO_COLUNAS_SNAPSHOT.keys())
-    assert len(list(snap.columns)) == 10
+    # 10 -> 12 no BLK-MA-09 / DEC-026: as duas colunas-fato de rating, sem peso.
+    assert len(list(snap.columns)) == 12
+    assert snap["nota_wellhub"].dtype == "Float64"
+    assert snap["qtd_avaliacoes_wellhub"].dtype == "Int64"
     assert len(snap) == 6
     assert set(snap["fonte"]) == {"totalpass", "wellhub", "unidades"}
     assert (snap["versao_contrato"] == c.VERSAO_CONTRATO_SNAPSHOT).all()
@@ -859,3 +864,219 @@ def test_materializar_sem_csv_frame_vazio_bem_formado(tmp_path: Path) -> None:
     assert list(snap.columns) == list(c.CONTRATO_COLUNAS_SNAPSHOT.keys())
     assert auditoria["linhas_lidas"] == 0
     assert auditoria["linhas_snapshot"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-09 / DEC-026 — colunas-fato de rating, sem peso
+# --------------------------------------------------------------------------- #
+def test_ler_snapshots_sobrevive_a_esquema_misto(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """O teste que justifica o `schema=` explícito em `ler_snapshots`.
+
+    Um bump de contrato produz, por definição, uma série com partições de esquemas diferentes.
+    Sem schema declarado o pyarrow infere o do PRIMEIRO arquivo: se a partição antiga for lida
+    primeiro, as colunas novas somem de TODAS as outras, e o laço de preenchimento as recria como
+    `pd.NA` — coluna nula para o universo inteiro, sem erro e sem log. Aqui a partição pré-bump é
+    a mais antiga E a primeira em ordem alfabética, que é a ordem em que o dataset varre.
+    """
+    base = tmp_path / "serie"
+    snap = _snapshot_valido(dirs_sinteticos)
+
+    # Semana 1: PRÉ-bump — grava sem as duas colunas novas, como faria o contrato v2.
+    pre = snap.drop(columns=["nota_wellhub", "qtd_avaliacoes_wellhub"]).copy()
+    pre["semana"] = "2026-01"
+    dir_pre = base / "semana=2026-01"
+    dir_pre.mkdir(parents=True)
+    pq.write_table(
+        pa.Table.from_pandas(pre.drop(columns=["semana"]), preserve_index=False),
+        str(dir_pre / "parte-0.parquet"),
+    )
+
+    # Semana 2: PÓS-bump, com nota preenchida.
+    pos = snap.copy()
+    pos.loc[:, "nota_wellhub"] = 4.25
+    pos.loc[:, "qtd_avaliacoes_wellhub"] = 88
+    m.escrever_particao_semana(pos, base, semana="2026-02")
+
+    lido = m.ler_snapshots(base)
+
+    assert set(lido["semana"]) == {"2026-01", "2026-02"}
+    antigo = lido[lido["semana"] == "2026-01"]
+    novo = lido[lido["semana"] == "2026-02"]
+    assert antigo["nota_wellhub"].isna().all(), "partição pré-bump deveria ficar nula"
+    # `notna()` ANTES da comparação, e não `(serie == 4.25).all()`: numa série toda-NA o `.all()`
+    # de pandas ignora os nulos e devolve `True`, então a versão ingênua deste teste passaria
+    # exatamente no cenário que ele existe para pegar. Medido: sem o `schema=` em
+    # `ler_snapshots`, a coluna volta 100% nula e a asserção ingênua fica verde.
+    assert novo["nota_wellhub"].notna().all(), (
+        "a partição pós-bump perdeu a nota — o schema do primeiro arquivo venceu"
+    )
+    assert (novo["nota_wellhub"] == 4.25).all()
+    assert novo["qtd_avaliacoes_wellhub"].notna().all()
+    assert (novo["qtd_avaliacoes_wellhub"] == 88).all()
+
+
+def _dirs_com_rating(tmp_path: Path, notas: list[str], qtds: list[str]) -> tuple[Path, Path, Path]:
+    """3 pastas de CSV em que o feed WellHub CARREGA as colunas de rating, como no coletor real.
+
+    A fixture `dirs_sinteticos` não tem essas colunas — por isso os testes que se apoiavam nela
+    asseriam as 12 colunas com a nota 100% nula e passavam mesmo quando a ingestão era removida.
+    """
+    tp, wh, un = tmp_path / "tp", tmp_path / "wh", tmp_path / "un"
+    n = len(notas)
+    _escrever_csv(
+        wh / "unidades_wellhub_rj.csv",
+        pd.DataFrame(
+            {
+                "slug": [f"academia-{i}" for i in range(n)],
+                "nome": [f"Academia {i}" for i in range(n)],
+                "latitude": [-22.91 - i * 0.01 for i in range(n)],
+                "longitude": [-43.18 - i * 0.01 for i in range(n)],
+                "cidade": ["Rio de Janeiro"] * n,
+                "uf": ["RJ"] * n,
+                "cep": ["20000-000"] * n,
+                "endereco_formatado": [f"Rua {i}, 100" for i in range(n)],
+                "atividades": ["Musculacao"] * n,
+                "nota_wellhub": notas,
+                "qtd_avaliacoes_wellhub": qtds,
+                "data_coleta": ["2026-07-26"] * n,
+            }
+        ),
+    )
+    for d in (tp, un):
+        d.mkdir(parents=True, exist_ok=True)
+    return tp, wh, un
+
+
+def test_tres_estados_do_rating_sobrevivem_a_INGESTAO_do_csv(tmp_path: Path) -> None:
+    """Os três estados da DEC-024 pelo caminho REAL: CSV -> `materializar` -> snapshot.
+
+    A versão anterior deste teste montava os três estados à mão sobre um frame já materializado e
+    só chamava `_assert_schema_snapshot` — era tautológica. Sonda de mutação provou: apagar as duas
+    colunas de `_COLUNAS_TRABALHO` (o rating nunca é lido do CSV) deixava a suíte inteira verde.
+    """
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4.81", "", ""], ["105", "0", ""])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    snap = snap.sort_values("slug").reset_index(drop=True)
+
+    assert snap["nota_wellhub"].dtype == "Float64"
+    assert snap["qtd_avaliacoes_wellhub"].dtype == "Int64"
+    # tem nota
+    assert snap.loc[0, "nota_wellhub"] == 4.81
+    assert snap.loc[0, "qtd_avaliacoes_wellhub"] == 105
+    # sem avaliações: a contagem `0` é o que o distingue de "não lido"
+    assert pd.isna(snap.loc[1, "nota_wellhub"])
+    assert snap.loc[1, "qtd_avaliacoes_wellhub"] == 0
+    # não lido (parser quebrado)
+    assert pd.isna(snap.loc[2, "nota_wellhub"])
+    assert pd.isna(snap.loc[2, "qtd_avaliacoes_wellhub"])
+    assert auditoria["rating_ilegivel"] == 0
+
+
+def test_contagem_nao_inteira_nao_aborta_a_semana(tmp_path: Path) -> None:
+    """O crítico: uma célula ruim NÃO pode custar a semana inteira.
+
+    `pd.to_numeric("1.262")` devolve `1.262`, e um `.astype("Int64")` direto levanta
+    `TypeError: cannot safely cast non-equivalent`. Como `montar_snapshot` roda antes de gravar e o
+    `run_weekly_90.sh` sobrescreve os CSVs a cada coleta, a exceção não perderia uma linha — perderia
+    a semana, para sempre. `1.262` é como a UI pt-BR renderiza 1262, e contagem de 4 dígitos existe
+    no universo (a DEC-024 cita "4,73 com 1.262").
+    """
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4.81", "4.70"], ["1.262", "88"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    snap = snap.sort_values("slug").reset_index(drop=True)
+
+    # A célula ilegível degrada para "não lido"; a linha sã ao lado é preservada.
+    assert pd.isna(snap.loc[0, "qtd_avaliacoes_wellhub"])
+    assert snap.loc[1, "qtd_avaliacoes_wellhub"] == 88
+    # E a degradação é VISÍVEL, não silenciosa.
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_quarto_estado_vira_nao_lido_e_e_contado(tmp_path: Path) -> None:
+    """Nota ilegível com contagem legível não existe na DEC-024 — não pode virar "sem avaliações".
+
+    É o que uma troca de locale no `value` produziria (`4,81` não parseia, `105` parseia). Deixar
+    passar faria uma quebra de parser entrar no funil disfarçada de academia sem avaliação.
+    """
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4,81"], ["105"])
+    snap, auditoria = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+
+    assert pd.isna(snap.loc[0, "nota_wellhub"])
+    assert pd.isna(snap.loc[0, "qtd_avaliacoes_wellhub"]), "virou 'sem avaliacoes' em vez de 'nao lido'"
+    assert auditoria["rating_ilegivel"] == 1
+
+
+def test_assert_schema_rejeita_rating_fora_do_dominio(tmp_path: Path) -> None:
+    """Rede para frames montados à mão — que é como boa parte desta camada constrói insumo."""
+    tp, wh, un = _dirs_com_rating(tmp_path, ["4.81"], ["105"])
+    base, _ = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+
+    ruim = base.copy()
+    ruim.loc[0, "nota_wellhub"] = 42.0
+    with pytest.raises(ValueError, match=r"nota_wellhub fora de"):
+        m._assert_schema_snapshot(ruim)
+
+    ruim = base.copy()
+    ruim.loc[0, "qtd_avaliacoes_wellhub"] = -7
+    with pytest.raises(ValueError, match="negativa"):
+        m._assert_schema_snapshot(ruim)
+
+    ruim = base.copy()
+    ruim.loc[0, "nota_wellhub"] = pd.NA  # nota ausente com qtd = 105 -> o quarto estado
+    with pytest.raises(ValueError, match="rating incoerente"):
+        m._assert_schema_snapshot(ruim)
+
+
+def test_montar_snapshot_vazio_respeita_os_dtypes_do_contrato(tmp_path: Path) -> None:
+    """O ramo vazio tipava as 12 colunas como `string`, contra o próprio contrato.
+
+    O gêmeo `_frame_snapshot_vazio` foi corrigido no mesmo diff e a docstring dele diz por quê
+    ("um frame vazio mal tipado quebraria o `concat` da serie"); este ramo tinha ficado para trás.
+    """
+    vazio, auditoria = m.montar_snapshot(pd.DataFrame(), REF)
+    assert vazio["nota_wellhub"].dtype == "Float64"
+    assert vazio["qtd_avaliacoes_wellhub"].dtype == "Int64"
+    assert dict(vazio.dtypes.astype(str)) == dict(c.CONTRATO_COLUNAS_SNAPSHOT)
+    assert auditoria["rating_ilegivel"] == 0
+
+
+def test_nota_nao_entra_no_hash_e_o_s4_sobrevive() -> None:
+    """Guardrail inviolável da DEC-026: a nota oscila entre coletas e mataria a staleness.
+
+    Medido no smoke do BLK-MA-08: uma unidade saiu de `4,81`/`105` para `4,76`/`97` entre duas
+    coletas. Se isso entrasse no hash, `semanas_sem_mudanca` nunca sairia de 0 para nenhuma
+    academia avaliada — o sinal 4 morreria em silêncio para o universo inteiro.
+    """
+    assert "nota_wellhub" not in c.CAMPOS_HASH_POR_FONTE["wellhub"]
+    assert "qtd_avaliacoes_wellhub" not in c.CAMPOS_HASH_POR_FONTE["wellhub"]
+
+    base = _frame_tp(fonte="wellhub", slug="academia-x")
+    base["nota_wellhub"] = 4.81
+    base["qtd_avaliacoes_wellhub"] = 105
+    oscilou = base.copy()
+    oscilou["nota_wellhub"] = 4.76
+    oscilou["qtd_avaliacoes_wellhub"] = 97
+
+    assert _hash(base) == _hash(oscilou), "a nota mudou o hash: o S4 morreria na próxima coleta"
+
+
+def test_particao_toda_nula_nasce_com_o_tipo_do_contrato(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """Trava a alegação do `schema=` na ESCRITA, que antes era código defensivo não exercitado.
+
+    Sem ele, uma semana em que ninguém tem nota gravaria `nota_wellhub` como tipo Arrow `null` (o
+    pandas não tem o que inferir), e a série passaria a misturar `null` com `double` entre semanas.
+    """
+    base = tmp_path / "serie"
+    snap = _snapshot_valido(dirs_sinteticos)  # a fixture não tem rating -> colunas 100% nulas
+    assert snap["nota_wellhub"].isna().all()
+
+    caminho = m.escrever_particao_semana(snap, base, semana="2026-31")
+    arquivo = next(caminho.glob("*.parquet"))
+    schema = pq.read_schema(arquivo)
+
+    assert schema.field("nota_wellhub").type == pa.float64()
+    assert schema.field("qtd_avaliacoes_wellhub").type == pa.int64()

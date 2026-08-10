@@ -1805,7 +1805,7 @@ a partir da raiz do repo do scraper).
 | **Criticidade** | **Alta** (liga um sinal do `score_vulnerabilidade`, o que **rebalanceia todos os pesos efetivos**: S3 cai de ≈0,467 para 0,35 e S4 de ≈0,333 para 0,25; muda o contrato de snapshot e força bump de versão. Camada **PARALELA e READ-ONLY sobre o M1** — não toca `score_priorizacao`, pesos, nem artefatos oficiais, e o score ainda não tem consumidor materializado; **volta a ser Crítica quando o BLK-MA-05 materializar o entregável**). **Exige emenda ao contrato ratificada no gate + gate humano obrigatório** antes do Builder. |
 | **Prioridade** | Depois do **BLK-MA-08**, que produz o insumo. Antes do **BLK-MA-05**, que é o consumidor do score — se o MA-05 sair antes, ordenará sobre uma régua que este bloco vai mudar. |
 | **Esteira** | Block Orchestrator → Planner → `[GATE — RESOLVIDO pela DEC-026 em 2026-08-10: D-B = opção (0); D-A e D-C ficaram SEM OBJETO. NÃO reabrir]` → Builder → QA. |
-| **Status** | **GATE RESOLVIDO (DEC-026, 2026-08-10) — pronto para o Builder.** D-B = **opção (0)**: o rating entra como coluna-fato **sem peso**. **D-A e D-C ficaram SEM OBJETO** — não foram decididos, deixaram de existir como pergunta. Código não iniciado. |
+| **Status** | **IMPLEMENTADO (2026-08-10).** Gate resolvido pela DEC-026 (D-B = opção 0). Snapshot de 10 -> **12 colunas**, churn de 17 -> **19**, score de 20 -> **22**; bumps `snapshots_concorrentes_v2 -> v3`, `churn_staleness_v1 -> v2`, `score_vulnerabilidade_v1 -> v2`. `ler_snapshots` e `escrever_particao_semana` passaram a declarar `schema=` explícito. **5 testes novos**, 258 -> 263 na camada. **Check de execução do critério de aceite: `data/staging/snapshots_concorrentes/` NÃO existe — série em zero semanas, logo o bump foi gratuito e nenhuma partição precisou de migração.** D-A e D-C seguem SEM OBJETO. |
 | **Criticidade REVISADA** | De **Alta** para **Média** `[DEC-026]`. A justificativa original era "liga um sinal do `score_vulnerabilidade`, o que rebalanceia todos os pesos efetivos" — **isso não acontece mais**: `SINAIS_INATIVOS` fica `("s2",)`, os pesos efetivos seguem `0,20/0,467/0,333` e nenhum tripwire de peso muda. O que resta é ingestão de coluna + bump de contrato de snapshot, sem tocar fórmula. Atenção ao efeito colateral de governança: **Média arma auto-merge** (`scripts/aplicar_criticidade_label.py:38`) — se o PR tocar `tasks/backlog.md` ou `CLAUDE.md`, o guard exige `aprovado-humano` de qualquer forma; se não tocar, entra sozinho com os 4 checks verdes. |
 | **Depende de** | BLK-MA-08 (concluído). **DEC-026** (resolve o gate). |
 | **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
@@ -2039,9 +2039,9 @@ nota no parágrafo de ponteiros):
 |---|---|---|
 | `test_score.py` | `test_pesos_alvo_sao_os_quatro_do_d4_e_somam_um` | pesos-alvo do D4 **e** `SINAIS_INATIVOS == ("s2",)` |
 | `test_score.py` | `test_pesos_efetivos_do_plano_b_sao_calculados_nao_digitados` | pesos efetivos `≈0,20 / 0,4667 / 0,3333` em `pytest.approx` |
-| `test_score.py` | `test_schema_20_colunas_em_ordem_e_dtypes` | saída do score com 20 colunas |
-| `test_snapshots.py` | `test_schema_snapshot_10_colunas_em_ordem` | snapshot com 10 colunas |
-| `test_churn_staleness.py` | `test_schema_churn_17_colunas_em_ordem` | **frame de churn com 17 colunas** |
+| `test_score.py` | `test_schema_22_colunas_em_ordem_e_dtypes` | saída do score com 22 colunas |
+| `test_snapshots.py` | `test_schema_snapshot_12_colunas_em_ordem` | snapshot com 12 colunas |
+| `test_churn_staleness.py` | `test_schema_churn_19_colunas_em_ordem` | **frame de churn com 19 colunas** |
 
 > O último **não estava na lista** e é condicional: ele só quebra se a rota de ingestão escolhida no
 > ponto 4 do escopo passar pelo frame de churn — que é uma das duas rotas que o próprio bloco deixa

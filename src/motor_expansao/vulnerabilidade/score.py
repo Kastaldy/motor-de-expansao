@@ -1,8 +1,8 @@
 """BLK-MA-04: score de vulnerabilidade (D4) — composição ponderada de S1/S3/S4.
 
 Módulo **PURO e sem I/O**: recebe (ou deriva, por conveniência) os dois insumos já entregues —
-`presenca_agregador_v1` (sinal 1, hex-level, BLK-MA-03) e `churn_staleness_v1` (sinais 3 e 4, por
-academia, BLK-MA-02) — e devolve o contrato de coluna `score_vulnerabilidade_v1` (20 colunas), com
+`presenca_agregador_v1` (sinal 1, hex-level, BLK-MA-03) e `churn_staleness_v2` (sinais 3 e 4, por
+academia, BLK-MA-02) — e devolve o contrato de coluna `score_vulnerabilidade_v2` (22 colunas), com
 `score_vulnerabilidade ∈ [0,100]`, os componentes `vi` para auditoria e as flags de qualidade do
 §8.4. Materializar artefato, cruzar com hexágono quente e montar a lista comercial são do
 **BLK-MA-05**; a flag de staleness do cron é do **BLK-MA-06**.
@@ -261,7 +261,7 @@ def _string_canonica(disponivel: dict[str, pd.Series], indice: pd.Index) -> pd.S
 
 
 def _compor_score(df: pd.DataFrame) -> pd.DataFrame:
-    """Renormaliza, soma, aplica as flags e projeta exatamente as 20 colunas do contrato.
+    """Renormaliza, soma, aplica as flags e projeta exatamente as 22 colunas do contrato.
 
     A renormalização é GENÉRICA (`renormalizar_pesos` sobre `PESOS_ALVO_SINAIS`): os pesos
     efetivos do Plano B são consequência de S2 estar inativo, e nenhum deles é digitado. Há no
@@ -306,7 +306,11 @@ def _compor_score(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _assert_schema_score(df: pd.DataFrame) -> None:
-    """Falha alto se o frame não é exatamente o contrato `score_vulnerabilidade_v1`."""
+    """Falha alto se o frame não é exatamente o contrato `VERSAO_CONTRATO_SCORE`.
+
+    A versão vive na constante, não neste texto — cravá-la aqui já ficou stale no bump
+    `v1` -> `v2` do BLK-MA-09 (mesma armadilha corrigida em `snapshots.py`).
+    """
     esperado = list(CONTRATO_COLUNAS_SCORE.keys())
     presentes = set(df.columns)
 
@@ -460,7 +464,7 @@ def calcular_score_vulnerabilidade(
     churn: pd.DataFrame | None = None,
     presenca: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    """Insumos de S1/S3/S4 -> frame `score_vulnerabilidade_v1` (20 colunas), 1 linha por academia.
+    """Insumos de S1/S3/S4 -> frame `score_vulnerabilidade_v2` (22 colunas), 1 linha por academia.
 
     Informe `base_dir` (conveniência: deriva os DOIS frames da MESMA série, numa só chamada) **ou**
     o par (`churn`, `presenca`) já pronto. Com o par injetado a função é **pura** — é assim que os

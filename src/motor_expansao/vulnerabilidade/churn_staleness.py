@@ -30,7 +30,7 @@ cadência real (mensal), 8 observações são ~8 MESES — ver `docs/vulnerabili
 
 GUARDRAILS: READ-ONLY sobre o M1; pacote DISJUNTO (nunca importa `pipelines/m1/`, `dashboard/`,
 `api`, `censo_*`, `config.py` raiz ou `normalizar_concorrentes.py`); anti-PII por construção (só
-lê as 10 colunas do snapshot, que já não têm PII); fixtures 100% sintéticas nos testes.
+lê as 12 colunas do snapshot, que já não têm PII); fixtures 100% sintéticas nos testes.
 """
 
 from __future__ import annotations
@@ -228,6 +228,12 @@ def _estado_por_chave(
                 "semana_primeira_observacao": primeira,
                 "semana_ultima_observacao": presentes[-1],
                 "snapshot_date_ultimo": str(ultima["snapshot_date"]),
+                # FATOS sem peso (DEC-026), da ÚLTIMA observação — mesmo critério de `rede_ultima`
+                # e `snapshot_date_ultimo`. A nota muda entre coletas, então "a última que vimos"
+                # é a única leitura defensável; NÃO se agrega a série (média/tendência seria
+                # sinal derivado, e sinal derivado precisa de peso e de gate).
+                "nota_wellhub": ultima["nota_wellhub"],
+                "qtd_avaliacoes_wellhub": ultima["qtd_avaliacoes_wellhub"],
                 "flag_serie_imatura": bool(n_semanas_serie < int(min_semanas)),
                 "flag_staleness_interpretavel": bool(n_semanas_serie >= int(stale_semanas)),
                 "flag_troca_chave_na_serie": _houve_troca_de_chave(
@@ -244,7 +250,10 @@ def _estado_por_chave(
 
 
 def _assert_schema_churn(df: pd.DataFrame) -> None:
-    """Falha alto se o frame não é exatamente o contrato `churn_staleness_v1`."""
+    """Falha alto se o frame não é exatamente o contrato `VERSAO_CONTRATO_CHURN`.
+
+    A versão vive na constante: cravada aqui ela já ficou stale no bump `v1` -> `v2`.
+    """
     esperado = list(CONTRATO_COLUNAS_CHURN.keys())
     score = sorted(set(df.columns) & _COLUNAS_DE_SCORE_PROIBIDAS)
     if score:
@@ -285,7 +294,7 @@ def extrair_churn_staleness(
     min_semanas: int = MIN_SEMANAS,
     stale_semanas: int = STALE_SEMANAS,
 ) -> pd.DataFrame:
-    """Série de snapshots -> frame `churn_staleness_v1` (17 colunas), uma linha por chave.
+    """Série de snapshots -> frame `churn_staleness_v2` (19 colunas), uma linha por chave.
 
     Exatamente UM entre `base_dir` (lê do disco) e `snapshots` (injetado; molde de
     `revalidar_huff_densa(..., df_join=...)`, `concorrentes_densos.py:427-444`) deve ser dado. Com
