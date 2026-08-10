@@ -6,10 +6,11 @@ import BlocoViabilidadePonto from '../components/BlocoViabilidadePonto'
 import BotaoInicio from '../components/BotaoInicio'
 import CampoPonto from '../components/CampoPonto'
 import DetalheRegiao from '../components/DetalheRegiao'
-import MiniMapaPonto from '../components/MiniMapaPonto'
+import GavetaFicha from '../components/GavetaFicha'
+import MapaPonto from '../components/MapaPonto'
 import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
-import { Aviso, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
+import { Aviso, Botao, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
 import { MAX_PONTOS } from '../lib/comparacao-pontos'
 import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
@@ -19,11 +20,16 @@ import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
 /**
  * Modo 1 — analise de um PONTO/IMOVEL.
  *
- * LAYOUT DE FICHA, nao o do mapa: sem funil e sem StepperBar. O funil e' um recorte
- * TERRITORIAL (estado -> municipio -> hexes) e nao diz nada sobre um endereco unico.
+ * LAYOUT DE MAPA, nao de ficha. A tela ABRE no mapa e a ficha vira uma GAVETA que se
+ * puxa por um unico botao. Antes era o contrario: a ficha era a tela e o mapa uma caixa
+ * de 300px no meio dela. A inversao e' pedido do Juan (2026-08-10) e tem uma razao de
+ * leitura: a pergunta do modo e' "o que ha' em volta deste endereco?", e a resposta e'
+ * geografica — a lista de numeros e' a evidencia, nao a manchete.
  *
- * O mapa NAO monta aqui. Enquanto a tela ativa nao for 'mapa' com UF preenchida, deck.gl
- * e MapLibre nem instanciam — o modo custa zero WebGL e zero leitura de particao de UF.
+ * CONTINUA SEM FUNIL e sem StepperBar. O funil e' um recorte TERRITORIAL (estado ->
+ * municipio -> hexes) e nao diz nada sobre um endereco unico. O mapa daqui e' o
+ * `MapaPonto`, que desenha so' o hexagono do imovel e os 18 vizinhos — nao carrega a
+ * particao da UF nem precisa de um `Passo`.
  *
  * ESTADO VAZIO POR BLOCO. Cada bloco pergunta ao SERVIDOR se tem dado (`disponivel`) e
  * mostra o `motivo` que ele devolveu. A cadeia de dados degrada em silencio por desenho
@@ -53,6 +59,14 @@ export default function PontoScreen({
   const [aberto, setAberto] = useState(0)
   /** A caixa de colar so' aparece quando pedida — depois do 1o ponto ela some. */
   const [colando, setColando] = useState(true)
+  /**
+   * A gaveta da ficha.
+   *
+   * Abre SOZINHA quando uma leitura chega: o operador colou o ponto justamente para
+   * saber se ele serve, e cobrar um clique a mais pela resposta seria burocracia. Depois
+   * disso quem manda e' ele — fechou, o mapa fica limpo ate' pedir de novo.
+   */
+  const [gaveta, setGaveta] = useState(false)
 
   const ficha = fichas[aberto] ?? null
 
@@ -79,6 +93,7 @@ export default function PontoScreen({
         return proximas
       })
       setColando(false)
+      setGaveta(true)
     } catch (e) {
       // NAO limpa os pontos ja lidos: perder tres leituras porque a quarta falhou
       // seria punir o operador por um endereco mal digitado.
@@ -88,88 +103,154 @@ export default function PontoScreen({
     }
   }
 
+  const mostrandoCaixa = colando || fichas.length === 0
+
   return (
-    <div
-      style={{
-        position: 'absolute',
-        inset: 0,
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-      }}
-    >
-      <header
+    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
+      {/* O mapa É a tela: fica no fundo, ocupando tudo, com o resto flutuando por cima. */}
+      <MapaPonto ficha={ficha} />
+
+      {/* ---------------- Chrome flutuante ----------------
+          Coluna flex em vez de peças com `top` fixo: o cabeçalho quebra em duas linhas
+          em tela estreita, e com posições fixas ele passaria por cima da caixa de colar.
+          `pointerEvents: none` no contêiner devolve ao mapa o mouse nos vãos entre as
+          peças — sem isso, uma faixa invisível no topo engoliria o arraste. */}
+      <div
         style={{
-          flexShrink: 0,
-          margin: '16px 16px 0',
-          padding: '9px 12px',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          flexWrap: 'wrap',
-          background: 'var(--surf-chrome)',
-          border: '1px solid var(--line-soft)',
-          borderRadius: 'var(--r-xl)',
-          backdropFilter: 'blur(14px)',
-          // `position: relative` + `zIndex` sao OBRIGATORIOS, nao enfeite. O
-          // `backdropFilter` cria um CONTEXTO DE EMPILHAMENTO, entao o zIndex do popup
-          // do Select so' vale DENTRO deste cabecalho — sem elevar o cabecalho inteiro,
-          // o conteudo que vem depois no DOM (que tambem tem backdropFilter) pinta por
-          // cima e a lista de estados abre ATRAS dos cards. Mesma armadilha ja
-          // documentada no ExecutiveScreen.
-          position: 'relative',
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
           zIndex: 30,
+          padding: 16,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+          pointerEvents: 'none',
         }}
       >
-        <BotaoInicio onInicio={onInicio} />
-        <h1
+        <header
           style={{
-            font: '600 14px/1 var(--f-ui)',
-            letterSpacing: '-.01em',
-            color: 'var(--tx-max)',
-            margin: 0,
+            pointerEvents: 'auto',
+            alignSelf: 'stretch',
+            padding: '9px 12px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
+            background: 'var(--surf-chrome)',
+            border: '1px solid var(--line-soft)',
+            borderRadius: 'var(--r-xl)',
+            backdropFilter: 'blur(14px)',
           }}
         >
-          Análise de ponto
-        </h1>
-        {ficha && (
-          <Chip>
-            {fichas.length > 1
-              ? `${fichas.length} pontos · raio de ${num(ficha.raio_km * 1000)} m`
-              : `raio de ${num(ficha.raio_km * 1000)} m · ${ficha.censo.n_setores ?? '—'} setores`}
-          </Chip>
-        )}
-      </header>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
-        <div style={{ maxWidth: 1100, margin: '0 auto', display: 'grid', gap: 16 }}>
-          {(colando || fichas.length === 0) && (
-            <Glass style={{ padding: 18, display: 'grid', gap: 10 }}>
-              <CampoPonto onResolver={resolver} ocupado={carregando} erro={erro} />
-              {fichas.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setColando(false)
-                    setErro(null)
-                  }}
-                  style={{
-                    justifySelf: 'start',
-                    padding: '6px 10px',
-                    borderRadius: 8,
-                    border: '1px solid var(--line-soft)',
-                    background: 'var(--surf-raised)',
-                    color: 'var(--tx-soft)',
-                    font: '600 11px/1 var(--f-ui)',
-                  }}
-                >
-                  Cancelar
-                </button>
-              )}
-            </Glass>
+          <BotaoInicio onInicio={onInicio} />
+          <h1
+            style={{
+              font: '600 14px/1 var(--f-ui)',
+              letterSpacing: '-.01em',
+              color: 'var(--tx-max)',
+              margin: 0,
+            }}
+          >
+            Análise de ponto
+          </h1>
+          {ficha && (
+            <Chip>
+              {fichas.length > 1
+                ? `${fichas.length} pontos · raio de ${num(ficha.raio_km * 1000)} m`
+                : `raio de ${num(ficha.raio_km * 1000)} m · ${ficha.censo.n_setores ?? '—'} setores`}
+            </Chip>
           )}
+        </header>
 
-          {fichas.length > 0 && (
+        {mostrandoCaixa && (
+          <Glass
+            style={{
+              pointerEvents: 'auto',
+              alignSelf: 'center',
+              width: 'min(620px, 100%)',
+              padding: 16,
+              display: 'grid',
+              gap: 10,
+            }}
+          >
+            <CampoPonto onResolver={resolver} ocupado={carregando} erro={erro} />
+            {fichas.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setColando(false)
+                  setErro(null)
+                }}
+                style={{
+                  justifySelf: 'start',
+                  padding: '6px 10px',
+                  borderRadius: 8,
+                  border: '1px solid var(--line-soft)',
+                  background: 'var(--surf-raised)',
+                  color: 'var(--tx-soft)',
+                  font: '600 11px/1 var(--f-ui)',
+                }}
+              >
+                Cancelar
+              </button>
+            ) : (
+              /* A régua e a fonte, que antes viviam no aviso de tela vazia. Sem isto,
+                 a origem do número sumiria junto com a tela de ficha. */
+              <p
+                style={{
+                  font: '400 11.5px/1.5 var(--f-ui)',
+                  color: 'var(--tx-sub)',
+                  margin: 0,
+                }}
+              >
+                A leitura sai do Censo 2022 do IBGE, no raio de 1,0 km — a mesma régua do
+                Relatório Pontual.
+              </p>
+            )}
+          </Glass>
+        )}
+
+        {carregando && (
+          <Glass
+            style={{
+              pointerEvents: 'auto',
+              alignSelf: 'center',
+              padding: '10px 14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              font: '400 12.5px/1 var(--f-ui)',
+              color: 'var(--tx-muted)',
+            }}
+          >
+            <Spinner /> Lendo os setores censitários do entorno…
+          </Glass>
+        )}
+      </div>
+
+      {/* ---------------- A ÚNICA opção que puxa a janela ----------------
+          Some enquanto a gaveta está aberta: quem já a tem na tela fecha pelo × ou Esc. */}
+      {ficha && !gaveta && (
+        <div style={{ position: 'absolute', right: 16, bottom: 16, zIndex: 25 }}>
+          <Botao onClick={() => setGaveta(true)}>
+            Ver a ficha {fichas.length > 1 ? `(${fichas.length} pontos)` : ''} ›
+          </Botao>
+        </div>
+      )}
+
+      {/* ---------------- A janela ---------------- */}
+      <GavetaFicha
+        aberta={gaveta && ficha != null}
+        titulo={ficha?.local.bairro ?? ficha?.local.municipio ?? 'Ponto analisado'}
+        subtitulo={
+          ficha ? [ficha.local.municipio, ficha.local.uf].filter(Boolean).join(' · ') : undefined
+        }
+        onFechar={() => setGaveta(false)}
+      >
+        {ficha && (
+          <div style={{ display: 'grid', gap: 16 }}>
             <PainelPontos
               fichas={fichas}
               aberto={aberto}
@@ -178,7 +259,12 @@ export default function PontoScreen({
                 setFichas((atuais) => {
                   const proximas = atuais.filter((_, k) => k !== i)
                   setAberto((k) => Math.max(0, Math.min(k, proximas.length - 1)))
-                  if (proximas.length === 0) setColando(true)
+                  if (proximas.length === 0) {
+                    setColando(true)
+                    // Sem ponto nao ha' ficha: a gaveta fecharia vazia, e uma gaveta
+                    // vazia por cima do mapa se le como defeito.
+                    setGaveta(false)
+                  }
                   return proximas
                 })
               }}
@@ -187,38 +273,14 @@ export default function PontoScreen({
                 setErro(null)
               }}
             />
-          )}
-
-          {carregando && (
-            <p
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                font: '400 13px/1 var(--f-ui)',
-                color: 'var(--tx-muted)',
-              }}
-            >
-              <Spinner /> Lendo os setores censitários do entorno…
-            </p>
-          )}
-
-          {fichas.length === 0 && !carregando && !erro && (
-            <Aviso
-              titulo="Cole um ponto para começar"
-              corpo="Funciona com o link do Google Maps (inclusive o curto que o celular compartilha), um endereço escrito ou o par de coordenadas. A leitura sai do Censo 2022 do IBGE, no raio de 1,0 km — a mesma régua do Relatório Pontual."
-            />
-          )}
-
-          {ficha && (
             <Ficha
               key={`${ficha.hex_id}-${aberto}`}
               ficha={ficha}
               onAnalisarPonto={onAnalisarPonto}
             />
-          )}
-        </div>
-      </div>
+          </div>
+        )}
+      </GavetaFicha>
     </div>
   )
 }
@@ -276,7 +338,9 @@ function Ficha({
 
   return (
     <div style={{ display: 'grid', gap: 16 }}>
-      {/* ---------------- Identificação ---------------- */}
+      {/* ---------------- Identificação ----------------
+          O mapa lá atrás mostra ONDE; esta seção diz QUAL. A coordenada e o link de
+          saída continuam aqui porque são conferência, não navegação. */}
       <Glass style={{ padding: 18, display: 'grid', gap: 10 }}>
         <Eyebrow dot>Ponto analisado</Eyebrow>
         <div
@@ -313,30 +377,6 @@ function Ficha({
         </div>
       </Glass>
 
-      {/* ---------------- Vizinhança ----------------
-          Logo depois da identificação, e não no fim: um endereço pode estar num
-          hexágono saturado com residual sobrando a 1 km dali, e essa é justamente a
-          leitura que muda a decisão. Largura inteira em vez de coluna lateral fixa —
-          estilo inline não tem media query, e uma coluna de 380px fixa espremeria o
-          mapa em tela estreita. */}
-      {ficha.vizinhos.length > 0 ? (
-        <Secao titulo="O que há em volta" nota="o hexágono do imóvel e os 18 vizinhos">
-          <MiniMapaPonto
-            hexId={ficha.hex_id}
-            lat={ficha.lat}
-            lng={ficha.lng}
-            vizinhos={ficha.vizinhos}
-          />
-        </Secao>
-      ) : (
-        <Secao titulo="O que há em volta">
-          <Aviso
-            titulo="Sem leitura de mercado na vizinhança"
-            corpo="O mapa colore os hexágonos por residual, que vem da camada de mercado — e ela não está montada neste servidor."
-          />
-        </Secao>
-      )}
-
       {/* ---------------- Socioeconomia (sempre disponível) ---------------- */}
       <Secao titulo="Quem mora em volta" nota={`Censo 2022 (IBGE) · raio de ${num(ficha.raio_km * 1000)} m`}>
         <GradeKpi>
@@ -371,6 +411,10 @@ function Ficha({
           <Kpi label="Residual disponível" valor={comSufixo(mercado.residual, ' alunos')} />
           <Kpi label="Score de residual" valor={num(mercado.score_residual, 1)} />
         </GradeKpi>
+        <Rodape>
+          O mapa atrás desta janela colore os vizinhos por este mesmo residual — um
+          hexágono saturado pode ter espaço sobrando a 1 km dali.
+        </Rodape>
       </Secao>
 
       {/* ---------------- Recomendação ----------------
