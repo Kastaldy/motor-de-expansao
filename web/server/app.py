@@ -174,6 +174,11 @@ _COLS_DESEJADAS = [
     "oferta_efetiva_disponivel",
     "oferta_consumida_mercado_estimada",
     "oferta_consumida_ultra_real",
+    # Insumo do modelo de 1 km: junto com `oferta_consumida_ultra_real` reproduz o
+    # `oferta_consumida_ultra_estimada` do Bloco 5, necessario para o residual sem
+    # concorrente em hexagono SATURADO. Leitura defensiva — se a UF nao materializar a
+    # coluna, `pressao_1km` devolve NaN ali em vez de um numero inflado.
+    "n_unidades_ultra_2km",
     "capacidade_default_concorrente_alunos",
     "sam_fitness_potencial",
     "populacao_corte_hex",

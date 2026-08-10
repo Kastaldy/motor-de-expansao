@@ -23,9 +23,15 @@ SCORE (que ja cai quanto mais concorrente consome) — nao de empilhar geometria
 COMO OS SCORES SAO DERIVADOS (so' colunas existentes; nao reimplementa o Bloco 5)
 ---------------------------------------------------------------------------------
 Do Bloco 5: `oferta_efetiva_disponivel = max(sam - consumo_mercado - consumo_ultra, 0)`.
-Isolando a parcela que NAO depende do raio das concorrentes:
+A parcela que NAO depende do raio das concorrentes e':
 
-    disponivel_sem_conc = oferta_efetiva_disponivel + oferta_consumida_mercado_estimada
+    disponivel_sem_conc = max(sam - consumo_ultra, 0)
+
+Ela vem de `pressao_1km.disponivel_sem_concorrente`, uma fonte so' para os dois modulos.
+NAO reconstruir aqui somando `oferta_efetiva_disponivel + oferta_consumida_mercado_...`:
+aquela coluna ja nasce clipada em zero e, em hexagono saturado, a soma infla o residual
+justamente onde a disputa e' maior. Hexagono cujo valor nao possa ser reproduzido sai da
+leitura (NaN), em vez de entrar com numero errado.
 
 Esse e' o residual que existiria se nao houvesse concorrente. Ele e' partido entre as
 duas regioes pela area (`f` = fracao coberta), e o consumo cai PRIMEIRO na coberta; o que
@@ -74,6 +80,7 @@ from typing import Any
 
 import h3
 import pandas as pd
+import pressao_1km  # regra unica do residual sem concorrente (evita a 2a copia do bug)
 import shapely
 from shapely.geometry import Point, Polygon
 from shapely.ops import unary_union
@@ -247,8 +254,11 @@ def cobertura(
     arvore = STRtree(discos)
 
     num = lambda s: pd.to_numeric(s, errors="coerce").fillna(0.0)  # noqa: E731
-    oferta = dict(zip(alvo["hex_id"].astype(str), num(alvo.get("oferta_efetiva_disponivel")), strict=True))
-    merc2k = dict(zip(alvo["hex_id"].astype(str), num(alvo.get("oferta_consumida_mercado_estimada")), strict=True))
+    # Residual sem concorrente pela MESMA regra do `pressao_1km` — nao somar a coluna
+    # clipada aqui de novo. Foram duas copias da mesma inversao ingenua que fizeram o
+    # bug aparecer nos dois lugares; agora ha uma fonte so'.
+    sem_conc_s = pressao_1km.disponivel_sem_concorrente(alvo)
+    sem_conc_por_hex = dict(zip(alvo["hex_id"].astype(str), sem_conc_s, strict=True))
     cons1k = dict(zip(alvo["hex_id"].astype(str), num(alvo.get("consumo_concorrentes_1km")), strict=True))
 
     # Contorno UNICO do alcance: fronteira da uniao de TODOS os discos da janela. E' a
@@ -288,9 +298,12 @@ def cobertura(
             continue
         frac_cob = min(1.0, max(0.0, coberto.area / area_hex))
 
-        # Residual que existiria SEM concorrente (a parcela Ultra ja esta descontada em
-        # `oferta_efetiva_disponivel`, e ela nao depende do raio das concorrentes).
-        sem_conc = float(oferta.get(hid, 0.0)) + float(merc2k.get(hid, 0.0))
+        # Residual que existiria SEM concorrente. NaN = nao foi possivel reproduzir o
+        # consumo Ultra num hexagono saturado; o hexagono sai da leitura em vez de
+        # entrar com numero inflado (ver `pressao_1km.disponivel_sem_concorrente`).
+        sem_conc = float(sem_conc_por_hex.get(hid, 0.0))
+        if sem_conc != sem_conc:  # NaN
+            continue
 
         base = _score(sem_conc)
         f = min(max(frac_cob, 0.0), 1.0)
