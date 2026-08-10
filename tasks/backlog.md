@@ -1458,7 +1458,7 @@ produção e exige DEC + gate humano.
 | **Criticidade** | **Média** (ajustes localizados numa camada paralela READ-ONLY sobre o M1, já entregue e coberta por testes; nenhum toca score/pesos/artefatos do M1 nem cria dependência externa). |
 | **Prioridade** | Antes do **BLK-MA-05/06** (item 1: quem EXIBIR a flag) e antes do **BLK-MA-06** (item 2). **NÃO bloqueia o BLK-MA-04** — verificado em 2026-07-30: o score não consome `flag_troca_chave_na_serie` nem a propaga (trava executável em `_assert_schema_score`). |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | **PARCIAL** (PR #194, merged 2026-08-05). ✅ Item 1 (`flag_troca_chave_na_serie` redefinida para troca TEMPORAL) e ✅ item 2-B (ponto cego do AST: era **2/5**, não 3/5 — hoje 5/5, helper único em `tests/unit/_ast_imports.py`, 4 cópias unificadas). 🟡 **Item 2 diagnosticado, NÃO corrigido** — a causa não é o import de `classificar_rede`: o `__init__` de `demanda_revelada` reexporta os **9** submódulos eager e qualquer um puxa sklearn/scipy/shapely/requests. Teste por `sys.modules` marcado `xfail(strict=True)`; segue bloqueante para o MA-06. ⬜ Os 6 menores. |
+| **Status** | **PARCIAL.** ✅ Item 1 (`flag_troca_chave_na_serie` redefinida para troca TEMPORAL) e ✅ item 2-B (ponto cego do AST: era **2/5**, não 3/5 — hoje 5/5, helper único em `tests/unit/_ast_imports.py`) — PR #194, merged 2026-08-05. ✅ **Item 2 CORRIGIDO em 2026-08-10**: o `__init__` de `demanda_revelada` passou a reexportar por `__getattr__` (PEP 562); `import motor_expansao.vulnerabilidade` caiu de **~18 s com sklearn/scipy/shapely/requests/pyproj + 5 módulos de `dashboard/`** para **~3 s com zero dos dois**. **Desbloqueia o BLK-MA-06.** ⬜ Os 6 menores (m1-m6). |
 | **Depende de** | BLK-MA-02 (concluído 2026-07-29). |
 | **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do BLK-MA-02: camada com insumo de PII na origem (DEC-012) e módulo destinado ao cron de produção. NÃO marcar loop-safe. |
 
@@ -1489,6 +1489,34 @@ ratificou plugar no `run_weekly_90.sh`: se `sklearn`/`scipy` não estiverem no h
 passo do cron quebra no import. Tornar o `__init__` do `demanda_revelada` lazy **ou** replicar o
 classificador (como já foi feito com o `concorrente_id`); no mínimo corrigir o docstring para "não
 importa **diretamente**". Acrescentar teste de isolamento por `sys.modules`, não só por AST.
+
+> **RESOLVIDO em 2026-08-10.** Escolhida a rota do `__init__` lazy, e não a réplica do
+> classificador: ela conserta o vazamento para **todos** os consumidores do `demanda_revelada`, não
+> só para o `vulnerabilidade/`, e não duplica código. `demanda_revelada/__init__.py` passou a
+> reexportar por `__getattr__` (PEP 562), com `_EXPORTS` mapeando cada nome público ao seu
+> submódulo e memoização em `globals()`; o bloco `TYPE_CHECKING` preserva o que o type checker
+> enxerga, e `__all__` fica intacto. Medido: **~18 s -> ~3 s**, de 5 módulos de `dashboard/` e 5
+> deps pesadas para **zero**, e de 12 submódulos de `demanda_revelada` carregados para 4 (todos
+> leves).
+>
+> **A causa registrada acima estava certa, mas incompleta em um ponto que importa.** Não é que
+> "qualquer um dos 9 puxa o conjunto": o peso vem de `backtest_tp05`, `calibracao_*`,
+> `estrutura_funil`, `huff_captura` e `validacao`, que importam `scipy`/`sklearn` no topo. O que o
+> `vulnerabilidade/` realmente precisa — `classificacao_rede_menor` — importa só `re`,
+> `unicodedata` e `pathlib`. O problema nunca foi o submódulo escolhido; era o `__init__` do pai,
+> que o interpretador executa antes de qualquer submódulo.
+>
+> **Dois defeitos do próprio teste, achados no caminho e corrigidos junto** (valem como lição de
+> método, não só como conserto):
+> 1. O subprocesso não recebia `PYTHONPATH` e resolvia `motor_expansao` pela **instalação
+>    editável** — que aponta para o clone principal, não para o worktree. Ele media outra árvore em
+>    silêncio. Agora recebe o `src` deste checkout e **assere a procedência** do que mediu.
+> 2. Sob a captura do pytest no Windows, o `subprocess` levantava
+>    `OSError: [WinError 6] Identificador inválido` antes de rodar qualquer coisa. Como o teste
+>    estava marcado `xfail(strict=True)`, essa OSError contava como "falha esperada": **o teste
+>    errava em vez de medir, e a marca escondia isso**. Corrigido com `stdin=DEVNULL`. Fica o
+>    princípio: `xfail` engole exceção de qualquer natureza, então um `xfail` de longa duração pode
+>    estar mascarando um teste quebrado em vez de um defeito real.
 
 **Item 2-B (médio, acrescentado pelo QA do BLK-MA-03 em 2026-07-29) — ponto cego de 1 linha no
 `test_isolamento_imports`, que enfraquece o guardrail nos DOIS blocos.** O QA do MA-03 construiu uma

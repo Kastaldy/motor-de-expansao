@@ -196,43 +196,63 @@ def test_isolamento_imports() -> None:
                 assert not casa_proibicao(n, proibido), (modulo.__name__, n, proibido)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "BLK-MA-02-FU1 item 2: vazamento TRANSITIVO de import, em aberto. "
-        "`snapshots.py` importa `classificar_rede` de `demanda_revelada`, cujo `__init__` "
-        "reexporta os 9 submodulos de forma eager e puxa sklearn/scipy/shapely/requests. "
-        "Bloqueante para o BLK-MA-06 (plug no cron). Quando a correcao entrar, este teste "
-        "PASSA e o `strict=True` avisa para remover a marca."
-    ),
-)
 def test_pacote_nao_carrega_dependencia_pesada() -> None:
-    """Isolamento por `sys.modules`, nao por AST — o AST so ve import DIRETO.
+    """Isolamento por `sys.modules`, não por AST — o AST só vê import DIRETO.
 
-    O `test_isolamento_imports` continua verde enquanto isto falha, e as duas coisas sao
-    verdadeiras ao mesmo tempo: o pacote nao escreve nenhum import proibido, mas o que ele
-    importa arrasta meio mundo junto. Um modulo destinado ao cron precisa das duas garantias.
+    O `test_isolamento_imports` fica verde mesmo quando isto falha, e as duas coisas são
+    verdadeiras ao mesmo tempo: o pacote não escreve nenhum import proibido, mas o que ele
+    importa pode arrastar meio mundo junto. Um módulo destinado ao cron precisa das duas
+    garantias — se `sklearn`/`scipy` não estiverem no host do coletor, o passo quebra no import.
+
+    Fechado pelo `BLK-MA-02-FU1` item 2: o `__init__` de `demanda_revelada` passou a reexportar
+    por `__getattr__` (PEP 562). Antes disto: ~18 s, com sklearn/scipy/shapely/requests/pyproj e
+    5 módulos de `dashboard/`. Depois: ~3 s e nenhum dos dois.
+
+    **O subprocesso precisa medir ESTE checkout.** Sem `PYTHONPATH` explícito ele resolveria
+    `motor_expansao` pela instalação editável — que aponta para o clone principal, não para o
+    worktree —, e o teste passaria a medir outra árvore em silêncio. Aconteceu de verdade durante
+    o desenvolvimento desta correção, daí a asserção de procedência abaixo.
     """
+    import os
     import subprocess
     import sys
     import textwrap
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[3] / "src"
+    assert (src / "motor_expansao").is_dir(), f"layout inesperado: {src}"
 
     codigo = textwrap.dedent(
         """
         import sys
-        import motor_expansao.vulnerabilidade  # noqa: F401
+        import motor_expansao.vulnerabilidade as alvo
         pesados = sorted(
             {m.split(".")[0] for m in sys.modules}
-            & {"sklearn", "scipy", "shapely", "requests", "matplotlib", "geopandas"}
+            & {"sklearn", "scipy", "shapely", "requests", "matplotlib", "geopandas", "pyproj"}
         )
         dash = [m for m in sys.modules if m.startswith("motor_expansao.dashboard")]
-        print(";".join(pesados) + "|" + str(len(dash)))
+        print(";".join(pesados) + "|" + str(len(dash)) + "|" + alvo.__file__)
         """
     )
+    # `stdin=DEVNULL` nao e' decorativo: sob a captura do pytest no Windows, o stdin herdado nao
+    # tem descritor real e o `subprocess` levanta `OSError: [WinError 6]` antes de rodar qualquer
+    # coisa. Enquanto este teste esteve marcado `xfail(strict=True)`, essa OSError contava como
+    # "falha esperada" — ou seja, o teste ERRAVA em vez de medir, e ninguem tinha como perceber.
+    env = {**os.environ, "PYTHONPATH": str(src)}
     saida = subprocess.run(
-        [sys.executable, "-c", codigo], capture_output=True, text=True, check=True
+        [sys.executable, "-c", codigo],
+        capture_output=True,
+        text=True,
+        check=True,
+        env=env,
+        stdin=subprocess.DEVNULL,
     ).stdout.strip()
-    pesados, n_dashboard = saida.split("|")
+    pesados, n_dashboard, origem = saida.split("|")
+
+    assert Path(origem).is_relative_to(src), (
+        f"o subprocesso mediu OUTRA arvore ({origem}), nao este checkout ({src}) - "
+        "a medicao seria sobre codigo que nao esta sob teste"
+    )
     assert not pesados, f"dependencias pesadas carregadas: {pesados}"
     assert n_dashboard == "0", f"modulos de dashboard carregados: {n_dashboard}"
 
