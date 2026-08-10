@@ -257,3 +257,53 @@ def test_estados_elegivel_nunca_passa_do_total() -> None:
         assert e["hexes_elegiveis"] <= e["hexes_total"], e["uf"]
         if e["residual_white_space"] is not None and e["residual_total"] is not None:
             assert e["residual_white_space"] <= e["residual_total"] + 1, e["uf"]
+
+
+# --------------------------------------------------------------------------- #
+# Detalhamento da regiao — o rastro por tras dos KPIs                          #
+# --------------------------------------------------------------------------- #
+@requer_malha
+def test_detalhe_expoe_o_rastro_do_calculo() -> None:
+    det = pilot.ponto(lat=LAT_SP, lng=LNG_SP)["censo"]["detalhe"]
+    assert det is not None
+    assert set(det) >= {
+        "metodo", "area_circulo_km2", "area_intersectada_km2",
+        "densidade_fixa_hab_km2", "densidade_valida_hab_km2",
+        "score_medio_raio", "score_max_raio", "setor_do_ponto", "renda",
+    }
+    # Raio de 1,0 km (DEC-021): o metodo carrega o sufixo no proprio nome.
+    assert det["metodo"].endswith("_1km")
+    # A area coberta por setor nunca passa a do circulo — se passar, a conta inverteu.
+    assert det["area_intersectada_km2"] <= det["area_circulo_km2"] + 0.01
+
+
+@requer_malha
+def test_detalhe_traz_AS_DUAS_densidades() -> None:
+    """A ficha mostra a valida; a fixa so' existe aqui. Sao numeros diferentes por
+    desenho (agua e vazio), e o operador precisa poder ver os dois."""
+    det = pilot.ponto(lat=LAT_SP, lng=LNG_SP)["censo"]["detalhe"]
+    assert det["densidade_fixa_hab_km2"] is not None
+    assert det["densidade_valida_hab_km2"] is not None
+
+
+@requer_malha
+def test_detalhe_NAO_expoe_renda_domiciliar_total() -> None:
+    """`renda_domiciliar_total_raio` nao e' um total (e' media ponderada de outra
+    grandeza): exibi-lo com esse nome seria numero financeiro mal rotulado."""
+    import json
+
+    texto = json.dumps(pilot.ponto(lat=LAT_SP, lng=LNG_SP))
+    assert "renda_domiciliar_total" not in texto
+
+
+@requer_malha
+def test_lista_de_concorrentes_vem_ordenada_por_distancia() -> None:
+    conc = pilot.ponto(lat=LAT_SP, lng=LNG_SP)["concorrencia"]
+    if not conc["disponivel"]:
+        pytest.skip("sem base de concorrentes montada")
+    lista = conc["lista"]
+    assert lista, "com concorrencia disponivel a lista nao pode vir vazia"
+    dists = [c["dist_km"] for c in lista if c["dist_km"] is not None]
+    assert dists == sorted(dists)
+    # DataFrame nao e' JSON: se vazasse cru, isto quebraria.
+    assert all(set(c) == {"rede", "dist_km"} for c in lista)

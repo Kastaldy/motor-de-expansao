@@ -2822,6 +2822,61 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
 
     from motor_expansao.config import settings as _cfg
 
+    # ---- Detalhe da regiao: os campos que o motor calcula e a ficha resumia ----
+    # Existe para o operador AUDITAR de onde cada numero saiu. Definido ANTES dos
+    # blocos porque eles o referenciam.
+    #
+    # `renda_domiciliar_total_raio` fica DE FORA de proposito: apesar do nome, nao e'
+    # um total — e' media ponderada de outra grandeza (`censo_point.py:460`). Numero
+    # financeiro com rotulo errado vira decisao errada; omitir e' menos pior.
+    detalhe_censo = {
+        "metodo": _texto(res.get("metodo")),
+        # Duas AREAS: o circulo inteiro, e o que a malha do IBGE cobre dentro dele.
+        "area_circulo_km2": _num(res.get("area_km2"), 2),
+        "area_intersectada_km2": _num((res.get("area_intersecao_total_m2") or 0) / 1e6, 2),
+        # Duas DENSIDADES, e a diferenca importa na orla: a fixa divide pelo circulo
+        # inteiro (inclui agua e vazio); a valida, so' pela area de setor real.
+        "densidade_fixa_hab_km2": _num(res.get("densidade_pop_raio_hab_km2")),
+        "densidade_valida_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
+        "score_medio_raio": _num(res.get("score_setor_medio"), 1),
+        "score_max_raio": _num(res.get("score_setor_max"), 1),
+        # O setor que CONTEM o ponto, cru. Pode divergir bastante da media do raio —
+        # e' a diferenca entre "a regiao" e "a esquina".
+        "setor_do_ponto": {
+            "encontrado": bool(res.get("flag_setor_ponto_encontrado")),
+            "cod_setor": _texto(res.get("cod_setor_ponto")),
+            "renda_per_capita": _num(res.get("renda_per_capita_setor_ponto")),
+            "densidade_hab_km2": _num(res.get("densidade_pop_setor_ponto")),
+            "score": _num(res.get("score_setor_2022_calibrado_ponto"), 1),
+            "bairro": _texto(res.get("nome_bairro_ponto")),
+            "distrito": _texto(res.get("nome_distrito_ponto")),
+        },
+        # COMO a renda foi construida — o rastro que permite conferir o numero.
+        "renda": {
+            "metodo_per_capita": _texto(res.get("metodo_renda_raio")),
+            "metodo_domiciliar": _texto(res.get("metodo_renda_domiciliar_raio")),
+            "uplift_domiciliar": _num(res.get("fator_uplift_renda_domiciliar"), 3),
+            "uplift_composicao": _num(res.get("fator_uplift_composicao"), 3),
+            "fator_temporal": _num(res.get("fator_temporal_renda"), 3),
+            "data_referencia": _texto(res.get("data_referencia_renda")),
+            "uf_uplift": _texto(res.get("uf_renda_uplift")),
+            "cod_municipio_uplift": _texto(res.get("cod_municipio_renda_uplift")),
+        },
+    }
+
+    # Concorrentes por distancia. `concorrentes_raio` e' DataFrame: serializar campo a
+    # campo, nunca o objeto cru — ele nao e' JSON e derrubaria a rota.
+    lista_conc: list[dict[str, Any]] = []
+    _cr = res.get("concorrentes_raio")
+    if _cr is not None and getattr(_cr, "empty", True) is False:
+        for _, _linha in _cr.sort_values("dist_km").head(30).iterrows():
+            lista_conc.append(
+                {
+                    "rede": _texto(_linha.get("rede")),
+                    "dist_km": _num(_linha.get("dist_km"), 2),
+                }
+            )
+
     censo_bloco = {
         "disponivel": True,
         "motivo": None,
@@ -2834,7 +2889,7 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         "densidade_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
         "score_socioeconomico": _num(res.get("score_setor_2022_calibrado_ponto"), 1),
         "n_setores": _num(res.get("n_setores")),
-    
+        "detalhe": detalhe_censo,
     }
 
     conc_bloco = {
@@ -2844,7 +2899,7 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         ),
         "n_concorrentes": _num(res.get("n_concorrentes")) if tem_concorrentes else None,
         "n_ultra": _num(res.get("n_ultra")) if tem_concorrentes else None,
-    
+        "lista": lista_conc,
     }
 
     mercado_bloco = {

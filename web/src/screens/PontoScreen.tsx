@@ -5,6 +5,7 @@ import type { PontoEscolhido } from '../App'
 import BlocoViabilidadePonto from '../components/BlocoViabilidadePonto'
 import BotaoInicio from '../components/BotaoInicio'
 import CampoPonto from '../components/CampoPonto'
+import DetalheRegiao from '../components/DetalheRegiao'
 import MiniMapaPonto from '../components/MiniMapaPonto'
 import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
@@ -350,6 +351,9 @@ function Ficha({
           A densidade desconta água e vazio: divide pela área de setor censitário
           realmente intersectada, não pela área do círculo.
         </Rodape>
+        {censo.detalhe && (
+          <DetalheRegiao detalhe={censo.detalhe} concorrencia={concorrencia} />
+        )}
       </Secao>
 
       {/* ---------------- Concorrência ---------------- */}

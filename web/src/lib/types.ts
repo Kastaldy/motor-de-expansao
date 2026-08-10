@@ -912,6 +912,39 @@ export interface BlocoOpcional {
   motivo: string | null
 }
 
+/** O rastro do cálculo: de onde cada número da região saiu. */
+export interface PontoCensoDetalhe {
+  metodo: string | null
+  /** Área do círculo (pi*r²) e a que a malha do IBGE realmente cobre dentro dele. */
+  area_circulo_km2: number | null
+  area_intersectada_km2: number | null
+  /** Fixa divide por pi*r² (inclui água e vazio); válida, só pela área de setor. */
+  densidade_fixa_hab_km2: number | null
+  densidade_valida_hab_km2: number | null
+  score_medio_raio: number | null
+  score_max_raio: number | null
+  /** O setor que CONTÉM o ponto — pode divergir da média do raio. */
+  setor_do_ponto: {
+    encontrado: boolean
+    cod_setor: string | null
+    renda_per_capita: number | null
+    densidade_hab_km2: number | null
+    score: number | null
+    bairro: string | null
+    distrito: string | null
+  }
+  renda: {
+    metodo_per_capita: string | null
+    metodo_domiciliar: string | null
+    uplift_domiciliar: number | null
+    uplift_composicao: number | null
+    fator_temporal: number | null
+    data_referencia: string | null
+    uf_uplift: string | null
+    cod_municipio_uplift: string | null
+  }
+}
+
 export interface PontoCenso extends BlocoOpcional {
   populacao: number | null
   domicilios: number | null
@@ -921,11 +954,14 @@ export interface PontoCenso extends BlocoOpcional {
   densidade_hab_km2: number | null
   score_socioeconomico: number | null
   n_setores: number | null
+  detalhe: PontoCensoDetalhe | null
 }
 
 export interface PontoConcorrencia extends BlocoOpcional {
   n_concorrentes: number | null
   n_ultra: number | null
+  /** Cada concorrente do raio, por distância. Vazio quando não há base montada. */
+  lista: { rede: string | null; dist_km: number | null }[]
 }
 
 export interface PontoMercado extends BlocoOpcional {
