@@ -1920,7 +1920,7 @@ sem `CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
 | **Criticidade** | **Alta** (muda o **critério de negócio** que define o universo de academias do coletor, e esse universo alimenta a camada paralela mercado/residual via `concorrentes/wellhub/csvs`. READ-ONLY sobre o M1). **Exige decisão humana de produto**, não é escolha de engenharia. |
 | **Prioridade** | Antes de qualquer sincronização do consolidado novo para o motor. |
 | **Esteira** | `[GATE — RESOLVIDO pela DEC-025 em 2026-08-07: escolhida a saída (a), com o vocabulário "V2". NÃO reabrir]` → Builder → QA. |
-| **Status** | **Em execução.** Gate decidido (DEC-025). Lado do **motor** feito: taxonomia fora do hash nas 2 fontes, bump `snapshots_concorrentes_v1` -> `v2`, 2 testes novos, emendas no §3/§6 do contrato. Falta o lado do **coletor** (`tem_musculacao` com o V2 + regeneração de `csvs_musculacao/`, repo externo). |
+| **Status** | **Em execução.** Gate decidido (DEC-025). Lado do **motor** feito: taxonomia fora do hash nas 2 fontes, bump `snapshots_concorrentes_v1` -> `v2`, 2 testes novos, emendas no §3/§6 do contrato. Lado do **coletor** feito no repo externo: `tem_musculacao` com o V2 no WellHub (`csvs_musculacao/` regenerado, 144 -> 22.173 linhas em 27 UFs) e o mesmo vocabulário no TotalPass por prevenção (emenda 1 da DEC-025; delta medido = 0). |
 | **Depende de** | BLK-MA-08 (a rodada que expôs o problema) e **DEC-025** (decide o vocabulário e a saída da taxonomia do hash). |
 | **Autonomia** | **manual (NÃO loop-safe)** — repo externo + critério de negócio. |
 
