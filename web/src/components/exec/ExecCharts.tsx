@@ -327,6 +327,14 @@ export function FunilComercial({
       </div>
       <div style={{ marginTop: 10, font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)' }}>
         Conversão de visita em aluno: <strong style={{ color: 'var(--tx-strong)' }}>{pct(conversao, 1)}</strong>
+        {/* O par absoluto vem junto do percentual: "40%" de 10 visitas e "40%" de 900 são
+            problemas de tamanho diferente, e sem os dois números o operador refazia a
+            conta de cabeça para saber de qual dos dois se tratava. */}
+        {visitas !== null && convertidos !== null && (
+          <span style={{ color: 'var(--tx-muted)' }}>
+            {' '}({num(convertidos)} de {num(visitas)} visitas)
+          </span>
+        )}
         {aviso && (
           <div style={{ marginTop: 4, color: COR_SEVERIDADE.media }}>{aviso}</div>
         )}

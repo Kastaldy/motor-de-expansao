@@ -32,7 +32,7 @@ import os
 import re
 import sys
 import unicodedata
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any
 
@@ -3436,6 +3436,10 @@ _REDE_METRICAS_CARTEIRA: tuple[str, ...] = (
     "agregadores",
     "receita_por_recorrente",
     "churn_pct",
+    # `cancelados` viaja junto do churn porque a tela passa a imprimir os dois: "5,7% (486)".
+    # Percentual sozinho esconde o tamanho — 10% de 80 alunos e 10% de 4.000 pedem conversas
+    # diferentes, e era o operador que fazia essa conta de cabeça (pedido do Felipe, 2026-08-10).
+    "cancelados",
     "conversao_pct",
     "nps",
     "saldo_operacional",
@@ -3446,13 +3450,45 @@ _REDE_METRICAS_CARTEIRA: tuple[str, ...] = (
 
 # KPIs do topo da tela. Soma para volume, média ponderada para taxa — somar churn
 # de 92 unidades daria um número sem significado nenhum.
-_REDE_KPIS_SOMA = ("faturamento", "ativos", "pagantes", "agregadores", "saldo_operacional")
+_REDE_KPIS_SOMA = (
+    "faturamento",
+    "ativos",
+    "pagantes",
+    "agregadores",
+    "saldo_operacional",
+    # Total de cancelamentos do recorte: o numero absoluto que acompanha o churn.
+    "cancelados",
+)
 _REDE_KPIS_MEDIA = {
     "churn_pct": "pagantes",
     "receita_por_recorrente": "pagantes",
     "nps": "ativos",
     "conversao_pct": "visitas",
 }
+
+# Métricas do painel de evolução (12 meses fechados). Mesma divisão dos KPIs — somar uma
+# taxa não significa nada — e os MESMOS pesos, para o ponto final da série concordar com o
+# KPI do topo quando a competência escolhida está fechada.
+_REDE_SERIES_SOMA = (
+    "faturamento",
+    "ativos",
+    "pagantes",
+    "agregadores",
+    "novos_alunos",
+    "saldo_operacional",
+)
+_REDE_SERIES_MEDIA = dict(_REDE_KPIS_MEDIA)
+
+# Métricas do SSS. `faturamento_agregador` fica de fora de propósito: é zero em toda a
+# base de produção (e −59.310 em 2026-01, ou seja, ruído de estorno), então uma linha
+# "receita de agregadores" no comparativo anual só mostraria zero contra zero.
+_REDE_SSS_METRICAS = (
+    "faturamento",
+    "faturamento_sem_agregador",
+    "ativos",
+    "pagantes",
+    "agregadores",
+)
 
 # Meses oferecidos no seletor de competência.
 _REDE_MESES_NO_SELETOR = 24
@@ -3494,50 +3530,167 @@ def _rede_exigir_base() -> pd.DataFrame:
     return base
 
 
-@functools.lru_cache(maxsize=4)
-def _rede_mes(mes_sel: str) -> dict[str, Any]:
-    """Tudo que a competência `mes_sel` produz, calculado UMA vez.
+@functools.lru_cache(maxsize=1)
+def _rede_limites() -> tuple[str, str]:
+    """Primeira e última data COM DADO da base, em ISO. É o limite do calendário."""
+    base = _rede_exigir_base()
+    return (
+        pd.Timestamp(base["_data"].min()).strftime("%Y-%m-%d"),
+        pd.Timestamp(base["_data"].max()).strftime("%Y-%m-%d"),
+    )
 
-    Carteira, ficha, CSV, XLSX e PDF leem daqui. É a resposta ao defeito mais caro
-    deste projeto: a mesma unidade com dois números em duas superfícies (o
+
+def _rede_periodo_valido(inicio: str, fim: str) -> tuple[str, str]:
+    """Valida e GRAMPEIA o intervalo pedido à cobertura da base.
+
+    Grampear em vez de recusar é deliberado: o operador que arrasta o calendário para
+    antes do primeiro dia coletado quer "desde o começo", não um erro. O que é recusado é
+    o que não tem leitura possível — data ilegível e fim antes do início.
+    """
+    try:
+        ini = pd.Timestamp(inicio).normalize()
+        term = pd.Timestamp(fim).normalize()
+    except (TypeError, ValueError) as erro:
+        raise HTTPException(400, f"Período inválido: {inicio} a {fim}.") from erro
+    if pd.isna(ini) or pd.isna(term):
+        raise HTTPException(400, f"Período inválido: {inicio} a {fim}.")
+    if ini > term:
+        raise HTTPException(400, "O fim do período é anterior ao início.")
+
+    limite_min, limite_max = _rede_limites()
+    ini = max(ini, pd.Timestamp(limite_min))
+    term = min(term, pd.Timestamp(limite_max))
+    if ini > term:
+        raise HTTPException(
+            404, f"A base cobre de {limite_min} a {limite_max}; o período pedido está fora."
+        )
+    return (ini.strftime("%Y-%m-%d"), term.strftime("%Y-%m-%d"))
+
+
+def _rede_periodo_do_mes(mes_sel: str) -> tuple[str, str]:
+    """Competência -> intervalo. Um mês em curso termina no último dia COM DADO.
+
+    É o que preserva o comportamento de antes do calendário: escolher `2026-08` no dia 3
+    continua mostrando o acumulado de 1 a 03/08, e não um mês inteiro com 28 dias vazios.
+    """
+    periodo = pd.Period(mes_sel, freq="M")
+    inicio = periodo.to_timestamp(how="start")
+    fim = periodo.to_timestamp(how="end").normalize()
+    _, ultimo_dado = _rede_limites()
+    return (inicio.strftime("%Y-%m-%d"), min(fim, pd.Timestamp(ultimo_dado)).strftime("%Y-%m-%d"))
+
+
+def _rede_periodo_anterior(inicio: pd.Timestamp, fim: pd.Timestamp) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """O intervalo com que o "vs anterior" das setas compara.
+
+    Três casos, e a regra é a mesma nos três: **preservar a âncora do período**.
+
+    1. Mês calendário INTEIRO compara com o mês anterior inteiro. É a leitura que o time
+       já tem e a que o mês fechado sempre usou.
+    2. Período ANCORADO NO DIA 1o mas que não fecha o mês (o acumulado do mês em curso,
+       que é o padrão da tela) compara com o mesmo intervalo de dias do mês anterior:
+       1 a 03/08 contra 1 a 03/07. Sem esta cláusula, o "mesmo tamanho" jogaria 1 a 03/08
+       contra 29 a 31/07 — e o faturamento da rede aparecia com **+190,3%** na abertura da
+       tela, medido em 2026-08-10. Não é crescimento: a mensalidade é cobrada no começo do
+       mês, então os três primeiros dias valem várias vezes os três últimos.
+    3. Qualquer outra janela compara com a imediatamente anterior de MESMO TAMANHO:
+       15 a 24/07 contra 5 a 14/07 (decisão do Felipe, 2026-08-10). Casar o dia-do-mês
+       aqui colocaria 28 dias de um lado e 31 do outro em fevereiro contra março.
+    """
+    if _eh_mes_inteiro(inicio, fim):
+        anterior = pd.Period(inicio, freq="M") - 1
+        return (anterior.to_timestamp(how="start"), anterior.to_timestamp(how="end").normalize())
+
+    dias = int((fim - inicio).days) + 1
+    if inicio.day == 1 and pd.Period(inicio, freq="M") == pd.Period(fim, freq="M"):
+        anterior = pd.Period(inicio, freq="M") - 1
+        comeco = anterior.to_timestamp(how="start")
+        # O mês anterior pode ser mais curto (03/03 não existe em fevereiro de 28 dias
+        # quando se pede o dia 30): o fim é grampeado no último dia dele.
+        fim_do_mes = anterior.to_timestamp(how="end").normalize()
+        return (comeco, min(comeco + pd.Timedelta(days=dias - 1), fim_do_mes))
+
+    return (inicio - pd.Timedelta(days=dias), fim - pd.Timedelta(days=dias))
+
+
+def _rede_periodo_ano_anterior(
+    inicio: pd.Timestamp, fim: pd.Timestamp
+) -> tuple[pd.Timestamp, pd.Timestamp]:
+    """O MESMO intervalo, doze meses antes — a base do SSS.
+
+    Mês inteiro vira o mesmo mês do ano passado (e não "o mesmo dia-do-mês"), que é o que
+    faz julho de 31 dias comparar com julho de 31 dias. Recorte solto anda 12 meses nas
+    duas pontas.
+    """
+    if _eh_mes_inteiro(inicio, fim):
+        base = pd.Period(inicio, freq="M") - 12
+        return (base.to_timestamp(how="start"), base.to_timestamp(how="end").normalize())
+    return (inicio - pd.DateOffset(months=12), fim - pd.DateOffset(months=12))
+
+
+def _eh_mes_inteiro(inicio: pd.Timestamp, fim: pd.Timestamp) -> bool:
+    """True quando o intervalo é exatamente um mês do calendário, ponta a ponta."""
+    periodo = pd.Period(inicio, freq="M")
+    return bool(
+        inicio.day == 1
+        and pd.Period(fim, freq="M") == periodo
+        and fim.day == periodo.days_in_month
+    )
+
+
+@functools.lru_cache(maxsize=8)
+def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
+    """Tudo que o intervalo `[inicio, fim]` produz, calculado UMA vez.
+
+    Carteira, ficha, CSV, XLSX e PDF leem daqui. É a resposta ao defeito mais caro deste
+    projeto: a mesma unidade com dois números em duas superfícies (o
     `test_carteira_e_ficha_concordam` existe para travar isso).
+
+    O que é do INTERVALO e o que é do MÊS
+    -------------------------------------
+    Só três coisas seguem o intervalo escolhido: os KPIs/quarteto (`atual`), a comparação
+    com o período anterior (`m1`) e o SSS. Série de 12 meses, faixas absolutas de
+    faturamento e diagnóstico continuam saindo de MÊS FECHADO, e por motivo, não por
+    preguiça: a série é uma linha do tempo mensal, as faixas são limiares de mês inteiro
+    (aplicá-las a 3 dias joga a rede toda em "Crítico") e o diagnóstico nunca roda sobre
+    competência aberta. A tela diz de que mês cada um desses três vem.
     """
     base = _rede_exigir_base()
     cheio = _rede_fechamento()
-    periodo = pd.Period(mes_sel, freq="M")
-    anterior = str(periodo - 1)
+    ini, term = pd.Timestamp(inicio).normalize(), pd.Timestamp(fim).normalize()
+    if ini > term:
+        raise HTTPException(400, "O fim do período é anterior ao início.")
 
-    no_mes = cheio[cheio["competencia"] == mes_sel]
-    if not len(no_mes):
-        raise HTTPException(404, f"Sem dados da rede na competência {mes_sel}.")
-    referencia = pd.Timestamp(no_mes["dia_ref"].max())
-    dia_corte = int(referencia.day)
+    atual_cru = rede_metricas.fechamento_periodo(base, ini, term)
+    if not len(atual_cru):
+        raise HTTPException(404, f"Sem dados da rede entre {inicio} e {fim}.")
 
-    # Fechado = a coleta chegou ao fim do mês (a tolerância de um dia cobre a ingestão
-    # que perde a virada: julho/2026 termina em 30/07 na base de produção).
-    fechado = bool(referencia.day >= periodo.days_in_month - rede_metricas.TOLERANCIA_FIM_DE_MES_DIAS)
+    ini_ant, fim_ant = _rede_periodo_anterior(ini, term)
+    anterior_cru = rede_metricas.fechamento_periodo(base, ini_ant, fim_ant)
 
-    if fechado:
-        # Mês inteiro: os números da tela são os do PRÓPRIO mês, iguais aos do gráfico
-        # histórico. Aplicar a janela de 30 dias aqui faria o KPI divergir do último
-        # ponto da série — em fevereiro, a janela puxaria 3 dias de janeiro e a receita
-        # por recorrente sairia ~11% acima do fechamento do mês.
-        corte = cheio
-        atual = cheio[cheio["competencia"] == mes_sel].copy()
-        m1 = cheio[cheio["competencia"] == anterior].copy()
-    else:
-        # Mês em curso: MTD até o dia de referência dos dois lados (comparação justa) e
-        # as razões reconstruídas em ~30 dias, senão elas valem só os dias já corridos.
-        corte = rede_metricas.fechamento_mensal(base, dia_corte=dia_corte)
-        atual = _rede_janela(corte, cheio, mes_sel)
-        m1 = _rede_janela(corte, cheio, anterior)
+    ini_sss, fim_sss = _rede_periodo_ano_anterior(ini, term)
+    ano_anterior = rede_metricas.fechamento_periodo(base, ini_sss, fim_sss)
 
-    contexto = rede_metricas.contexto_comparativo(atual)
+    # A receita por recorrente é um NÍVEL — R$ por recorrente NUM MÊS —, e só o mês
+    # calendário inteiro pode entregá-la direto. Fora dele, ela sai dos 30 dias que
+    # terminam no fim do período, e não do intervalo escolhido, porque o intervalo
+    # deforma a razão nas duas direções: 3 dias de receita sobre a base inteira davam
+    # R$ 20,28 contra R$ 163,67 reais (o defeito que a janela de 30 dias existe para
+    # consertar), e um trimestre sobre a mesma base davam R$ 461,60, que é a soma de três
+    # meses fingindo ser um. O resto do quadro continua sendo o do intervalo pedido: quem
+    # escolheu três dias quer o faturamento de três dias.
+    dias = int((term - ini).days) + 1
+    mes_inteiro = _eh_mes_inteiro(ini, term)
+    if not mes_inteiro:
+        atual_cru = _rede_nivel_de_receita(base, atual_cru, term)
+        anterior_cru = _rede_nivel_de_receita(base, anterior_cru, fim_ant)
+
+    contexto = rede_metricas.contexto_comparativo(atual_cru)
     contexto = rede_coorte.anotar_coortes(contexto)
 
-    # O diagnóstico NUNCA roda sobre mês aberto: no dia 2, o acumulado de dois dias
-    # acenderia queda de faturamento na rede inteira. A tela diz de que mês ele vem.
-    competencia_diagnostico = rede_diagnostico.competencia_base(cheio, mes_sel)
+    referencia = pd.Timestamp(atual_cru["dia_ref"].max())
+    competencia = str(pd.Period(term, freq="M"))
+    competencia_diagnostico = rede_diagnostico.competencia_base(cheio, competencia)
     diagnosticos = (
         rede_diagnostico.diagnosticar(cheio, competencia_diagnostico)
         if competencia_diagnostico
@@ -3545,36 +3698,232 @@ def _rede_mes(mes_sel: str) -> dict[str, Any]:
     )
 
     return {
-        "mes": mes_sel,
-        "mes_anterior": anterior,
+        "inicio": ini,
+        "fim": term,
+        "inicio_anterior": ini_ant,
+        "fim_anterior": fim_ant,
+        "inicio_sss": ini_sss,
+        "fim_sss": fim_sss,
+        "dias": dias,
+        "mes_inteiro": mes_inteiro,
+        # `mes` é a competência do FIM do intervalo: é ela que ancora a série de 12 meses,
+        # as faixas e o diagnóstico, que continuam mensais.
+        "mes": competencia,
         "referencia": referencia,
-        "dia_corte": dia_corte,
-        "mes_completo": fechado,
+        # Propriedade da JANELA e da coleta, nunca das unidades. A primeira versão pedia
+        # `periodo_completo` de todas elas, e uma única unidade inaugurada no meio de julho
+        # bastava para a tela anunciar "julho (mês em curso)" com o mês inteiro na mão.
+        "periodo_completo": bool(
+            _eh_mes_inteiro(ini, term)
+            and referencia >= term - pd.Timedelta(days=rede_metricas.TOLERANCIA_FIM_DE_MES_DIAS)
+        ),
         "competencia_diagnostico": competencia_diagnostico,
         "atual": contexto,
-        "m1": m1.set_index("unidade_id"),
+        "m1": anterior_cru.set_index("unidade_id"),
+        "ano_anterior": ano_anterior,
         "cheio": cheio,
         "diagnosticos": diagnosticos,
-        "sss": _rede_sss(corte, mes_sel),
-        "serie_meses": _rede_serie_meses(cheio, mes_sel),
+        "serie_meses": _rede_serie_meses(cheio, competencia),
     }
 
 
-def _rede_serie_agregada(recorte: pd.DataFrame, contexto: dict[str, Any]) -> list[float | None]:
-    """Faturamento somado do recorte, um valor por competência FECHADA de `serie_meses`.
+def _rede_nivel_de_receita(
+    base: pd.DataFrame, quadro: pd.DataFrame, fim: pd.Timestamp
+) -> pd.DataFrame:
+    """Troca `receita_por_recorrente` pela leitura de 30 dias que termina em `fim`.
+
+    Vale para todo intervalo que NÃO seja um mês calendário inteiro. Os demais números do
+    quadro seguem sendo os do intervalo escolhido.
+    """
+    if not len(quadro):
+        return quadro
+    janela = rede_metricas.fechamento_periodo(base, fim - pd.Timedelta(days=29), fim)
+    if not len(janela):
+        return quadro
+    receita = janela.set_index("unidade_id")["receita_por_recorrente"]
+    ajustado = quadro.set_index("unidade_id")
+    ajustado["receita_por_recorrente"] = pd.to_numeric(receita, errors="coerce").reindex(
+        ajustado.index
+    )
+    return ajustado.reset_index()
+
+
+def _rede_mes(mes_sel: str) -> dict[str, Any]:
+    """Ponte com quem ainda fala em COMPETÊNCIA: o contrato v1 e a ficha da unidade."""
+    inicio, fim = _rede_periodo_do_mes(mes_sel)
+    return _rede_periodo(inicio, fim)
+
+
+def _rede_series(recorte: pd.DataFrame, contexto: dict[str, Any]) -> dict[str, list[float | None]]:
+    """Séries de 12 meses FECHADOS do recorte, uma por métrica do painel.
+
+    Mesma regra de agregação dos KPIs do topo, e pelo mesmo motivo: **soma para volume,
+    média ponderada para taxa**. Somar o churn de 92 unidades daria um número sem
+    significado nenhum, e a média SIMPLES faria a unidade de 200 alunos pesar igual à de
+    4.000.
 
     `None` num mês em que nenhuma unidade do recorte tinha operação — melhor um buraco
     honesto no gráfico do que um zero que parece faturamento nulo.
+
+    `serie_rede` (que o CSV, o XLSX e o PDF já leem) passa a ser exatamente
+    `series["faturamento"]`: uma conta só para o mesmo gráfico, que é a regra desta aba
+    desde que tela e PDF somavam cada um a sua versão das sparklines.
     """
-    meses = contexto["serie_meses"]
+    meses: list[str] = contexto["serie_meses"]
+    chaves = (*_REDE_SERIES_SOMA, *_REDE_SERIES_MEDIA)
     if not meses or not len(recorte):
-        return [None] * len(meses)
+        return {chave: [None] * len(meses) for chave in chaves}
+
     cheio = contexto["cheio"]
-    do_recorte = cheio[
-        cheio["unidade_id"].isin(set(recorte["unidade_id"])) & cheio["competencia"].isin(meses)
+    do_recorte = cheio[cheio["unidade_id"].isin(set(recorte["unidade_id"]))]
+    # Agrupa UMA vez por competência (chave em texto: a coluna é `Period` e o resto do
+    # payload trafega mês como string).
+    grupos = {str(mes): grupo for mes, grupo in do_recorte.groupby("competencia", observed=True)}
+
+    series: dict[str, list[float | None]] = {}
+    for chave in _REDE_SERIES_SOMA:
+        series[chave] = [
+            _num(pd.to_numeric(grupos[mes][chave], errors="coerce").sum(), _rede_casas(chave))
+            if mes in grupos
+            else None
+            for mes in meses
+        ]
+    for chave, peso in _REDE_SERIES_MEDIA.items():
+        series[chave] = [
+            _wavg(grupos[mes][chave], grupos[mes][peso]) if mes in grupos else None for mes in meses
+        ]
+    return series
+
+
+def _rede_faturamento_fechado(contexto: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Faturamento do último mês FECHADO por unidade, e a variação contra o mês anterior.
+
+    "Quem puxa e quem segura" não pode sair da competência em curso. No dia 3 de agosto, a
+    variação contra os mesmos três dias de julho põe no topo da lista uma unidade que saiu
+    de R$ 400 para R$ 26 mil: +6.239% de ruído de janela curta, não de desempenho —
+    medido na base de produção em 2026-08-10, com as cinco primeiras colocadas entre
+    +178% e +6.239%. É a mesma razão pela qual o diagnóstico e as faixas de faturamento
+    rodam sempre sobre mês fechado.
+
+    Quando a competência escolhida JÁ está fechada, este número coincide com o
+    `delta_pct` do quarteto — é o mesmo mês contra o mesmo mês anterior.
+
+    A variação só existe para quem operou o mês INTEIRO nos dois meses **e** já tinha ao
+    menos um mês completo de operação antes do mês-base. Sem essa segunda condição o
+    painel vira uma lista de inaugurações: medido na base de produção, as cinco primeiras
+    colocadas de "quem puxa" em julho/2026 (+1.402%, +647%, +617%, +475%, +343%) eram
+    todas unidades abertas em JUNHO — Novo Gama abriu no dia 30 e faturou R$ 2,3 mil no
+    mês de estreia contra R$ 35 mil no primeiro mês cheio. Isso é rampa de abertura, e
+    quem lê a lista quer saber quem MEXEU o ponteiro.
+    """
+    meses: list[str] = contexto["serie_meses"]
+    if not meses:
+        return {}
+    atual = meses[-1]
+    anterior = str(pd.Period(atual, freq="M") - 1)
+    cheio = contexto["cheio"]
+
+    def por_unidade(competencia: str) -> pd.DataFrame:
+        return cheio[cheio["competencia"] == competencia].set_index("unidade_id")
+
+    agora, antes = por_unidade(atual), por_unidade(anterior)
+    fat_agora = pd.to_numeric(agora.get("faturamento"), errors="coerce")
+    fat_antes = pd.to_numeric(antes.get("faturamento"), errors="coerce")
+    inteiro_agora = agora["operacao_mes_cheio"].fillna(False).astype(bool)
+    inteiro_antes = antes["operacao_mes_cheio"].fillna(False).astype(bool)
+    # `>= 1` = o mês-base já era, no mínimo, o segundo mês da unidade. Cachamorra abriu
+    # no dia 1o de junho, então junho conta como mês inteiro, mas ainda é o mês ZERO dela.
+    maduro_antes = pd.to_numeric(antes.get("meses_operacao"), errors="coerce").fillna(0) >= 1
+
+    saida: dict[str, dict[str, Any]] = {}
+    for unidade_id in agora.index:
+        chave = str(unidade_id)
+        valor = _numf(fat_agora.get(unidade_id))
+        base = _numf(fat_antes.get(unidade_id))
+        comparavel = (
+            bool(inteiro_agora.get(unidade_id, False))
+            and bool(inteiro_antes.get(unidade_id, False))
+            and bool(maduro_antes.get(unidade_id, False))
+        )
+        saida[chave] = {
+            "competencia": atual,
+            "faturamento": _num(valor, 2),
+            "variacao_pct": (
+                _num(100.0 * (valor - base) / base, 1)
+                if (comparavel and valor is not None and base)
+                else None
+            ),
+        }
+    return saida
+
+
+def _rede_funil(recorte: pd.DataFrame, conversao_pct: float | None) -> dict[str, Any]:
+    """Funil comercial somado do recorte — as MESMAS quatro etapas da ficha da unidade.
+
+    A conversão NÃO é recalculada aqui: vem do KPI, que já a pondera por visitas. Duas
+    contas para o mesmo percentual é como a mesma unidade acaba com dois números em duas
+    superfícies desta aba.
+    """
+    def soma(chave: str) -> float | None:
+        return _num(pd.to_numeric(recorte[chave], errors="coerce").sum()) if len(recorte) else None
+
+    visitas, convertidos = soma("visitas"), soma("convertidos")
+    vendas, novos = soma("vendas"), soma("novos_alunos")
+    return {
+        "visitas": visitas,
+        "convertidos": convertidos,
+        "vendas": vendas,
+        "novos_alunos": novos,
+        "conversao_pct": conversao_pct,
+        # NUNCA clampar em 100%: `vendas > convertidos` em 75% das linhas da base.
+        # Clampar esconderia um problema de coleta em vez de mostrá-lo.
+        "aviso": (
+            "Há venda sem visita registrada no período: o funil não fecha."
+            if (vendas or 0) > (convertidos or 0)
+            else None
+        ),
+    }
+
+
+def _rede_faixas(recorte: pd.DataFrame, contexto: dict[str, Any]) -> dict[str, Any]:
+    """Quantas unidades do recorte em cada faixa ABSOLUTA de faturamento do time de campo.
+
+    Roda sempre sobre o último mês FECHADO, nunca sobre a competência em curso. As faixas
+    (`Crítico <150k … Excelente+ ≥300k`) são limiares de MÊS INTEIRO: aplicá-las ao
+    acumulado de três dias jogaria a rede inteira em "Crítico" — o mesmo motivo pelo qual
+    o diagnóstico não roda sobre mês aberto.
+    """
+    competencia = contexto["competencia_diagnostico"]
+    if not competencia or not len(recorte):
+        return {"competencia": competencia, "faixas": []}
+
+    cheio = contexto["cheio"]
+    fechado = cheio[
+        (cheio["competencia"] == competencia)
+        & cheio["unidade_id"].isin(set(recorte["unidade_id"]))
     ]
-    somas = do_recorte.groupby("competencia", observed=True)["faturamento"].sum()
-    return [_num(somas.get(mes)) if mes in somas.index else None for mes in meses]
+    if not len(fechado):
+        return {"competencia": competencia, "faixas": []}
+
+    chave_da_linha = fechado["faturamento"].map(lambda v: rede_diagnostico.faixa_faturamento(v)[0])
+    faturamento = pd.to_numeric(fechado["faturamento"], errors="coerce")
+    faixas: list[dict[str, Any]] = []
+    for _teto, chave, rotulo in rede_diagnostico.FAIXAS_FATURAMENTO:
+        marca = chave_da_linha == chave
+        faixas.append(
+            {
+                "chave": chave,
+                "rotulo": rotulo,
+                "n": int(marca.sum()),
+                "faturamento": _num(faturamento[marca].sum(), 2),
+            }
+        )
+    # A unidade sem faturamento no mês fechado não some da conta: sem este balde, a soma
+    # das faixas não fecharia com o total do recorte e a barra mentiria por omissão.
+    sem_dado = int((chave_da_linha == "sem_dado").sum())
+    if sem_dado:
+        faixas.append({"chave": "sem_dado", "rotulo": "Sem dado", "n": sem_dado, "faturamento": None})
+    return {"competencia": competencia, "faixas": faixas}
 
 
 def _rede_serie_meses(cheio: pd.DataFrame, mes_sel: str) -> list[str]:
@@ -3594,71 +3943,187 @@ def _rede_serie_meses(cheio: pd.DataFrame, mes_sel: str) -> list[str]:
     return meses[-_REDE_MESES_SERIE:]
 
 
-def _rede_janela(corte: pd.DataFrame, cheio: pd.DataFrame, competencia: str) -> pd.DataFrame:
-    """Fechamento da competência com as RAZÕES corrigidas para a janela de 30 dias.
+def _rede_sss(
+    atual: pd.DataFrame,
+    ano_anterior: pd.DataFrame,
+    ids: Collection[str] | None = None,
+) -> dict[str, Any]:
+    """Same Store Sales do RECORTE: o mesmo intervalo, doze meses antes, em BASE COMPARÁVEL.
 
-    Cumulativas e snapshots já saem certos do fechamento com corte de dia (o mesmo
-    dia-do-mês dos dois lados da comparação). As duas razões abaixo, não: no dia 2
-    do mês, `faturamento_sem_agregador / pagantes` vale dois dias de receita sobre
-    a base inteira — é o R$ 20,28 que a v1 exibia contra R$ 163,67 reais.
+    A rede abriu 33 unidades em 2025; comparar total contra total mede abertura de loja,
+    não desempenho. Entram só as unidades presentes nos DOIS períodos e que operaram o
+    período inteiro nos dois — a definição de "mesma loja".
 
-    Reconstrói-se então a janela de ~30 dias sobre a cumulativa que reseta no dia 1.
-    Em mês fechado a janela coincide com o próprio mês, e o número não muda.
+    `ids` é o recorte da tela (consultor, master, UF, maturidade, severidade, busca).
+    Sem ele, a conta valia a rede inteira **mesmo com filtro aplicado**: o SSS nascia
+    dentro do contexto do mês, que tem cache e nenhuma noção de filtro, então a carteira
+    de um consultor com 5 unidades exibia o crescimento das 60 comparáveis da rede.
+    Medido em 2026-08-10 na base de produção: MARISE (24 unidades), GUILHERME (5) e a
+    rede inteira (92) devolviam os TRÊS o mesmo `+6,2%` sobre `60 unidades`.
+
+    O que o filtro muda é só a CESTA somada. Ranking e "% vs média da rede" continuam
+    saindo da rede inteira — mexer num filtro não pode mudar a posição de ninguém.
     """
-    linhas = corte[corte["competencia"] == competencia].copy()
-    if not len(linhas):
-        return linhas
-    indexado = linhas.set_index("unidade_id")
-
-    receita = rede_metricas.receita_por_recorrente_30d(corte, cheio, competencia)
-    indexado["receita_por_recorrente"] = receita.reindex(indexado.index)
-
-    cancelados = rede_metricas.rolling30(corte, cheio, competencia, "cancelados")
-    # Denominador = recorrentes com que a janela COMEÇOU (a base do mês anterior no
-    # mesmo dia-do-mês), como o `CHURN_DIA = [CANCELADOS_DIA] / [REC_MES_ANTERIOR]`.
-    periodo = pd.Period(competencia, freq="M")
-    base_anterior = corte[corte["competencia"] == str(periodo - 1)].set_index("unidade_id")
-    pagantes_inicio = pd.to_numeric(base_anterior.get("pagantes"), errors="coerce")
-    if pagantes_inicio is None:
-        pagantes_inicio = pd.Series(dtype="float64")
-    pagantes_inicio = pagantes_inicio.reindex(indexado.index)
-    indexado["churn_pct"] = 100.0 * cancelados.reindex(indexado.index) / pagantes_inicio.where(
-        pagantes_inicio.ne(0)
-    )
-    return indexado.reset_index()
-
-
-def _rede_sss(corte: pd.DataFrame, mes_sel: str) -> dict[str, Any]:
-    """Same Store Sales: ano contra ano em BASE COMPARÁVEL.
-
-    A rede abriu 33 unidades em 2025; comparar total contra total mede abertura de
-    loja, não desempenho. Entram só as unidades presentes nos DOIS períodos e que
-    operaram o mês inteiro nos dois — a definição de "mesma loja".
-    """
-    ano_anterior = str(pd.Period(mes_sel, freq="M") - 12)
-    agora = corte[(corte["competencia"] == mes_sel) & corte["operacao_mes_cheio"]]
-    antes = corte[(corte["competencia"] == ano_anterior) & corte["operacao_mes_cheio"]]
+    agora, antes = _rede_comparaveis(atual), _rede_comparaveis(ano_anterior)
+    base_rotulo = _rede_rotulo_periodo(ano_anterior)
+    no_recorte = int(agora["unidade_id"].nunique()) if len(agora) else 0
+    if ids is not None:
+        alvo = set(ids)
+        no_recorte = len(alvo)
+        agora = agora[agora["unidade_id"].isin(alvo)]
+        antes = antes[antes["unidade_id"].isin(alvo)]
     comuns = sorted(set(agora["unidade_id"]) & set(antes["unidade_id"]))
     if not comuns:
-        return {"disponivel": False, "competencia_base": ano_anterior, "unidades": 0}
+        return {
+            "disponivel": False,
+            "competencia_base": base_rotulo,
+            "unidades": 0,
+            "unidades_recorte": no_recorte,
+            "unidades_fora": no_recorte,
+            "serie": {"meses": [], "var_pct": [], "unidades": []},
+        }
 
     agora = agora[agora["unidade_id"].isin(comuns)]
     antes = antes[antes["unidade_id"].isin(comuns)]
     metricas: dict[str, Any] = {}
-    for chave in ("faturamento", "faturamento_sem_agregador", "agregadores", "ativos", "pagantes"):
-        atual = _numf(pd.to_numeric(agora[chave], errors="coerce").sum())
+    for chave in _REDE_SSS_METRICAS:
+        casas = _rede_casas(chave)
+        atual_valor = _numf(pd.to_numeric(agora[chave], errors="coerce").sum())
         passado = _numf(pd.to_numeric(antes[chave], errors="coerce").sum())
         metricas[chave] = {
-            "atual": _num(atual),
-            "ano_anterior": _num(passado),
-            "var_pct": _num(100.0 * (atual - passado) / passado, 1) if passado else None,
+            "atual": _num(atual_valor, casas),
+            "ano_anterior": _num(passado, casas),
+            "var_pct": (
+                _num(100.0 * (atual_valor - passado) / passado, 1) if passado else None
+            ),
         }
     return {
         "disponivel": True,
-        "competencia_base": ano_anterior,
+        "competencia_base": base_rotulo,
         "unidades": len(comuns),
+        # Quantas unidades o recorte tem e quantas ficaram DE FORA da base comparável.
+        # É o número que impede a leitura errada: "+6,2%" de 18 unidades não é o
+        # crescimento das 24 do consultor — as outras 6 nem existiam há um ano.
+        "unidades_recorte": no_recorte,
+        "unidades_fora": max(no_recorte - len(comuns), 0),
         "metricas": metricas,
     }
+
+
+def _rede_sss_por_unidade(
+    atual: pd.DataFrame, ano_anterior: pd.DataFrame
+) -> dict[str, dict[str, Any]]:
+    """SSS de CADA unidade: o mesmo intervalo, um ano antes, unidade a unidade.
+
+    O agregado responde "a carteira cresceu?"; esta lista responde "por causa de quem?".
+    A regra de entrada é a mesma do SSS do recorte — operou o período inteiro nos DOIS
+    intervalos —, então uma unidade sem base comparável aparece com `var_pct` nulo em vez
+    de sumir: quem lê a lista precisa saber que ela existe e por que não entra na conta.
+    """
+    base_rotulo = _rede_rotulo_periodo(ano_anterior)
+    agora = _rede_comparaveis(atual).set_index("unidade_id")
+    antes = _rede_comparaveis(ano_anterior).set_index("unidade_id")
+    fat_agora = pd.to_numeric(agora.get("faturamento"), errors="coerce")
+    fat_antes = pd.to_numeric(antes.get("faturamento"), errors="coerce")
+
+    saida: dict[str, dict[str, Any]] = {}
+    for unidade_id in agora.index:
+        valor = _numf(fat_agora.get(unidade_id))
+        passado = _numf(fat_antes.get(unidade_id))
+        saida[str(unidade_id)] = {
+            "competencia_base": base_rotulo,
+            "faturamento": _num(valor, 2),
+            "ano_anterior": _num(passado, 2),
+            "var_pct": (
+                _num(100.0 * (valor - passado) / passado, 1)
+                if (valor is not None and passado)
+                else None
+            ),
+        }
+    return saida
+
+
+def _rede_comparaveis(quadro: pd.DataFrame) -> pd.DataFrame:
+    """Só quem operou o período INTEIRO. Unidade em rampa não é "mesma loja"."""
+    if not len(quadro):
+        return quadro
+    return quadro[quadro["operacao_periodo_cheio"].fillna(False).astype(bool)]
+
+
+def _rede_rotulo_periodo(quadro: pd.DataFrame) -> str:
+    """Rótulo do intervalo de um quadro de período: competência quando ele é um mês
+    inteiro, `DD/MM/AAAA a DD/MM/AAAA` quando não é.
+
+    A tela imprime este texto como está. Mês inteiro sai como `2025-08` porque a tela
+    já sabe traduzir competência em "Ago/2025"; recorte solto sai por extenso, que é o
+    único jeito de dizer "de 1 a 10 de agosto" sem mentir por arredondamento.
+    """
+    if not len(quadro):
+        return ""
+    inicio = pd.Timestamp(quadro["periodo_inicio"].iloc[0])
+    fim = pd.Timestamp(quadro["periodo_fim"].iloc[0])
+    if _eh_mes_inteiro(inicio, fim):
+        return str(pd.Period(inicio, freq="M"))
+    return f"{inicio.strftime('%d/%m/%Y')} a {fim.strftime('%d/%m/%Y')}"
+
+
+def _rede_sss_serie(
+    cheio: pd.DataFrame, meses: list[str], ids: Collection[str]
+) -> dict[str, list[Any]]:
+    """SSS mês a mês do recorte, alinhado a `serie_meses`.
+
+    Responde à pergunta que o total não responde numa rede que abre loja: *o
+    crescimento é da operação ou da expansão?* Cada ponto recalcula a própria base
+    comparável — as unidades do recorte que operaram o mês inteiro em `m` E em `m-12`.
+    A cesta muda de um ponto para o outro, e é por isso que `unidades` viaja junto:
+    sem ela, uma alta de base pequena parece uma alta da rede.
+    """
+    if not meses or not len(ids):
+        return {"meses": [], "var_pct": [], "unidades": []}
+
+    do_recorte = cheio[
+        cheio["unidade_id"].isin(set(ids)) & cheio["operacao_mes_cheio"].fillna(False).astype(bool)
+    ]
+    grupos = {str(mes): grupo for mes, grupo in do_recorte.groupby("competencia", observed=True)}
+
+    variacoes: list[float | None] = []
+    tamanhos: list[int] = []
+    for mes in meses:
+        base = str(pd.Period(mes, freq="M") - 12)
+        agora, antes = grupos.get(mes), grupos.get(base)
+        if agora is None or antes is None:
+            variacoes.append(None)
+            tamanhos.append(0)
+            continue
+        comuns = set(agora["unidade_id"]) & set(antes["unidade_id"])
+        if not comuns:
+            variacoes.append(None)
+            tamanhos.append(0)
+            continue
+        soma_agora = pd.to_numeric(
+            agora.loc[agora["unidade_id"].isin(comuns), "faturamento"], errors="coerce"
+        ).sum()
+        soma_antes = pd.to_numeric(
+            antes.loc[antes["unidade_id"].isin(comuns), "faturamento"], errors="coerce"
+        ).sum()
+        variacoes.append(
+            _num(100.0 * (soma_agora - soma_antes) / soma_antes, 1) if soma_antes else None
+        )
+        tamanhos.append(len(comuns))
+    return {"meses": meses, "var_pct": variacoes, "unidades": tamanhos}
+
+
+#: Métricas em REAIS. Vão para a tela com centavo desde 2026-08-10: o time de campo
+#: confere o faturamento contra o extrato, e um valor arredondado no servidor não se
+#: recupera no cliente — `R$ 18.470` e `R$ 18.470,37` são a mesma linha do payload.
+_REDE_METRICAS_EM_REAIS: frozenset[str] = frozenset(
+    {
+        "faturamento",
+        "faturamento_sem_agregador",
+        "faturamento_agregador",
+        "receita_por_recorrente",
+    }
+)
 
 
 def _rede_casas(chave: str) -> int:
@@ -3668,7 +4133,7 @@ def _rede_casas(chave: str) -> int:
     de arredondamento que parece divergência de cálculo e manda o operador procurar bug
     onde não há.
     """
-    if chave == "receita_por_recorrente":
+    if chave in _REDE_METRICAS_EM_REAIS:
         return 2
     if chave.endswith("_pct") or chave == "nps":
         return 1
@@ -3754,7 +4219,7 @@ def _rede_unidade_dict(
         ),
         "lat": _num(coordenada[0], 6) if coordenada else None,
         "lng": _num(coordenada[1], 6) if coordenada else None,
-        "comparavel": bool(linha.get("operacao_mes_cheio", True)),
+        "comparavel": bool(linha.get("operacao_periodo_cheio", linha.get("operacao_mes_cheio", True))),
         "severidade": diagnostico.severidade if diagnostico else "sem_base",
         "severidade_rotulo": (
             rede_diagnostico.ROTULO_SEVERIDADE[diagnostico.severidade]
@@ -3793,7 +4258,12 @@ def _rede_kpis(unidades: pd.DataFrame, m1: pd.DataFrame) -> dict[str, Any]:
             if (anterior and atual_cesta is not None)
             else None
         )
-        saida[chave] = {"atual": _num(atual), "m1": _num(anterior), "delta_pct": _num(delta, 1)}
+        casas = _rede_casas(chave)
+        saida[chave] = {
+            "atual": _num(atual, casas),
+            "m1": _num(anterior, casas),
+            "delta_pct": _num(delta, 1),
+        }
 
     for chave, peso in _REDE_KPIS_MEDIA.items():
         atual = _wavg(indexado[chave], indexado[peso])
@@ -3827,15 +4297,25 @@ def _rede_notas(contexto: dict[str, Any], recorte: pd.DataFrame) -> list[str]:
             "o último mês fechado: mês em curso não acende alerta."
         )
     if len(recorte):
-        novas = int((~recorte["operacao_mes_cheio"].fillna(True).astype(bool)).sum())
+        coluna = "operacao_periodo_cheio" if "operacao_periodo_cheio" in recorte else "operacao_mes_cheio"
+        novas = int((~recorte[coluna].fillna(True).astype(bool)).sum())
         if novas:
             notas.append(
-                f"{novas} unidade(s) inauguradas dentro do período: aparecem na carteira, "
+                f"{novas} unidade(s) inauguradas dentro do período analisado: aparecem na carteira, "
                 "mas ficam fora do ranking, da média da rede e do diagnóstico."
             )
         sem_nps = int((~recorte["nps_valido"].fillna(False).astype(bool)).sum())
         if sem_nps:
             notas.append(f"{sem_nps} unidade(s) sem pesquisa de NPS no período.")
+    notas.append(
+        "Mesma base ano a ano (SSS) acompanha os filtros: entram só as unidades DO "
+        "RECORTE que operaram o mês inteiro nos dois períodos. As demais ficam de fora "
+        "da comparação, porque abrir loja não é crescer."
+    )
+    notas.append(
+        "Faixas de faturamento saem sempre do último mês FECHADO: são limiares de mês "
+        "inteiro, e o acumulado de poucos dias jogaria a rede toda em Crítico."
+    )
     notas.append(
         "Inadimplentes e treino ativo são exibidos sem régua: o denominador ainda não "
         "foi confirmado com a Growth."
@@ -3956,6 +4436,8 @@ def rede_filtros(mes: str | None = None) -> dict[str, Any]:
 
 def _rede_carteira_payload(
     mes: str | None = None,
+    inicio: str | None = None,
+    fim: str | None = None,
     uf: str | None = None,
     master: str | None = None,
     consultor: str | None = None,
@@ -3965,13 +4447,24 @@ def _rede_carteira_payload(
     ordenar: str = "prioridade",
     direcao: str = "desc",
 ) -> dict[str, Any]:
-    """Payload da carteira. Uma função só, para que tela, CSV, XLSX e PDF nunca divirjam."""
+    """Payload da carteira. Uma função só, para que tela, CSV, XLSX e PDF nunca divirjam.
+
+    `inicio`/`fim` são o período de análise (ISO, as duas pontas dentro). `mes` continua
+    aceito e vira o intervalo daquela competência: é por ele que o contrato v1 da rota
+    `/api/executiva/{uf}` e os links antigos seguem funcionando sem saber que existe
+    calendário. Sem nenhum dos três, o padrão é a última competência com dado.
+    """
     meses = _rede_meses()
     if not meses:
         _rede_exigir_base()
         raise HTTPException(404, "Base de rede sem competências com dado.")
-    mes_sel = mes if (mes in meses) else meses[0]
-    contexto = _rede_mes(mes_sel)
+
+    if inicio and fim:
+        periodo_inicio, periodo_fim = _rede_periodo_valido(inicio, fim)
+    else:
+        periodo_inicio, periodo_fim = _rede_periodo_do_mes(mes if mes in meses else meses[0])
+    contexto = _rede_periodo(periodo_inicio, periodo_fim)
+    mes_sel = contexto["mes"]
 
     recorte = _rede_filtrar(
         contexto,
@@ -3998,6 +4491,18 @@ def _rede_carteira_payload(
     ][:_REDE_MAX_UNIDADES]
     unidades = _rede_ordenar(unidades, ordenar, direcao)
 
+    # O mês fechado viaja em cada unidade porque é ele que sustenta "quem puxa e quem
+    # segura": a variação da competência em curso, com poucos dias corridos, é ruído.
+    fechado = _rede_faturamento_fechado(contexto)
+    ultimo_fechado = contexto["serie_meses"][-1] if contexto["serie_meses"] else None
+    sss_unidade = _rede_sss_por_unidade(contexto["atual"], contexto["ano_anterior"])
+    for unidade in unidades:
+        unidade["fechado"] = fechado.get(
+            unidade["id"],
+            {"competencia": ultimo_fechado, "faturamento": None, "variacao_pct": None},
+        )
+        unidade["sss"] = sss_unidade.get(unidade["id"])
+
     com_coordenada = [u for u in unidades if u["lat"] is not None]
     semaforo = {s: 0 for s in rede_diagnostico.SEVERIDADES}
     for unidade in unidades:
@@ -4007,24 +4512,43 @@ def _rede_carteira_payload(
     total_agregadores = float(pd.to_numeric(recorte["agregadores"], errors="coerce").fillna(0).sum())
     base_split = total_pagantes + total_agregadores
     referencia = pd.Timestamp(contexto["referencia"])
-    dia_m1 = pd.Period(contexto["mes_anterior"], freq="M")
 
+    # Tudo daqui para baixo é do RECORTE, nunca da rede inteira. `ids` sai da carteira já
+    # filtrada e é o que faltava ao SSS.
+    ids = list(recorte["unidade_id"])
+    kpis = _rede_kpis(recorte, contexto["m1"])
+    series = _rede_series(recorte, contexto)
+    sss = _rede_sss(contexto["atual"], contexto["ano_anterior"], ids)
+    sss["serie"] = _rede_sss_serie(contexto["cheio"], contexto["serie_meses"], ids)
+
+    limite_min, limite_max = _rede_limites()
     return {
         "mes": mes_sel,
         "meses": meses[:_REDE_MESES_NO_SELETOR],
+        # O intervalo analisado, e o que ele compara. `referencia` e `referencia_m1`
+        # seguem no payload porque o CSV, o XLSX e o PDF os imprimem no cabeçalho — agora
+        # são as pontas do período, e não mais um dia-do-mês reconstruído.
+        "periodo": {
+            "inicio": contexto["inicio"].strftime("%Y-%m-%d"),
+            "fim": contexto["fim"].strftime("%Y-%m-%d"),
+            "dias": contexto["dias"],
+            "mes_inteiro": bool(contexto["mes_inteiro"]),
+        },
+        "periodo_anterior": {
+            "inicio": contexto["inicio_anterior"].strftime("%Y-%m-%d"),
+            "fim": contexto["fim_anterior"].strftime("%Y-%m-%d"),
+        },
+        "limites": {"min": limite_min, "max": limite_max},
         "referencia": referencia.strftime("%d/%m/%Y"),
-        "referencia_m1": (
-            f"{min(contexto['dia_corte'], dia_m1.days_in_month):02d}/"
-            f"{dia_m1.month:02d}/{dia_m1.year}"
-        ),
-        "mes_completo": bool(contexto["mes_completo"]),
+        "referencia_m1": pd.Timestamp(contexto["fim_anterior"]).strftime("%d/%m/%Y"),
+        "mes_completo": bool(contexto["periodo_completo"]),
         "competencia_diagnostico": contexto["competencia_diagnostico"],
         "totais": {
             "rede": int(len(contexto["atual"])),
             "no_recorte": len(unidades),
             "com_coordenada": len(com_coordenada),
         },
-        "kpis": _rede_kpis(recorte, contexto["m1"]),
+        "kpis": kpis,
         "split": {
             "recorrentes": _num(total_pagantes),
             "agregadores": _num(total_agregadores),
@@ -4032,7 +4556,10 @@ def _rede_carteira_payload(
             "pct_agregadores": _num(100 * total_agregadores / base_split, 1) if base_split else None,
         },
         "semaforo": semaforo,
-        "sss": contexto["sss"],
+        "sss": sss,
+        "funil": _rede_funil(recorte, (kpis.get("conversao_pct") or {}).get("atual")),
+        "faixas": _rede_faixas(recorte, contexto),
+        "coortes": rede_coorte.resumo_coortes(recorte),
         "centro": {
             "lat": _num(sum(u["lat"] for u in com_coordenada) / len(com_coordenada), 6)
             if com_coordenada
@@ -4060,8 +4587,10 @@ def _rede_carteira_payload(
         "serie_meses": contexto["serie_meses"],
         # A série AGREGADA do recorte vem pronta do servidor. A tela e o PDF liam cada um
         # a sua soma das sparklines — duas contas para o mesmo gráfico, que é justamente
-        # como a mesma unidade acaba com dois números em duas superfícies.
-        "serie_rede": _rede_serie_agregada(recorte, contexto),
+        # como a mesma unidade acaba com dois números em duas superfícies. `serie_rede` é
+        # literalmente `series["faturamento"]`: o painel novo não abriu uma segunda conta.
+        "serie_rede": series["faturamento"],
+        "series": series,
         "unidades": unidades,
         "notas": _rede_notas(contexto, recorte),
     }
@@ -4100,6 +4629,8 @@ def _rede_ordenar(
 @app.get("/api/rede/carteira")
 def rede_carteira(
     mes: str | None = None,
+    inicio: str | None = None,
+    fim: str | None = None,
     uf: str | None = None,
     master: str | None = None,
     consultor: str | None = None,
@@ -4111,7 +4642,7 @@ def rede_carteira(
 ) -> dict[str, Any]:
     """Nível 1: a carteira da rede, priorizada, com o quarteto de contexto por métrica."""
     return _rede_carteira_payload(
-        mes, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
     )
 
 
@@ -4310,6 +4841,8 @@ def _anexo(conteudo: bytes, nome: str, media_type: str) -> Response:
 @app.get("/api/rede/carteira.csv")
 def rede_carteira_csv(
     mes: str | None = None,
+    inicio: str | None = None,
+    fim: str | None = None,
     uf: str | None = None,
     master: str | None = None,
     consultor: str | None = None,
@@ -4322,7 +4855,7 @@ def rede_carteira_csv(
     from motor_expansao.dashboard import rede_export
 
     payload = _rede_carteira_payload(
-        mes, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
     )
     return _anexo(
         rede_export.carteira_csv(payload),
@@ -4334,6 +4867,8 @@ def rede_carteira_csv(
 @app.get("/api/rede/carteira.xlsx")
 def rede_carteira_xlsx(
     mes: str | None = None,
+    inicio: str | None = None,
+    fim: str | None = None,
     uf: str | None = None,
     master: str | None = None,
     consultor: str | None = None,
@@ -4346,7 +4881,7 @@ def rede_carteira_xlsx(
     from motor_expansao.dashboard import rede_export
 
     payload = _rede_carteira_payload(
-        mes, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
     )
     return _anexo(
         rede_export.carteira_xlsx(payload),
@@ -4358,6 +4893,8 @@ def rede_carteira_xlsx(
 @app.get("/api/rede/carteira.pdf")
 def rede_carteira_pdf(
     mes: str | None = None,
+    inicio: str | None = None,
+    fim: str | None = None,
     uf: str | None = None,
     master: str | None = None,
     consultor: str | None = None,
@@ -4370,7 +4907,7 @@ def rede_carteira_pdf(
     from motor_expansao.dashboard import rede_export
 
     payload = _rede_carteira_payload(
-        mes, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
+        mes, inicio, fim, uf, master, consultor, coorte, severidade, busca, ordenar, direcao
     )
     return _anexo(
         rede_export.carteira_pdf(payload),

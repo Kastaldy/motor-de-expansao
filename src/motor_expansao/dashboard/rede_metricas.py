@@ -407,26 +407,22 @@ def _fechamento_vazio() -> pd.DataFrame:
     return pd.DataFrame({c: pd.Series(dtype="float64") for c in colunas})
 
 
-def _derivar_metricas(fech: pd.DataFrame) -> pd.DataFrame:
-    """Deriva as metricas de negocio sobre o fechamento cru. Puro, sem IO."""
+def _derivar_comuns(fech: pd.DataFrame) -> pd.DataFrame:
+    """Métricas que NÃO dependem do formato da janela (mês fechado ou intervalo livre).
+
+    Vive separada de `_derivar_metricas` porque `fechamento_periodo` precisa exatamente
+    das MESMAS contas: duplicá-las faria as duas versões divergirem na primeira
+    manutenção, e a tela exibe as duas lado a lado -- "julho" e "01/07 a 20/07" têm de
+    responder com a mesma definição de ativos, de agregador e de NPS válido.
+
+    O que fica de fora é só o que a janela define: completude, gate de operação, churn
+    (o denominador muda de base) e maturidade.
+    """
     f = fech.copy()
     f["inauguracao"] = pd.to_datetime(f["inauguracao_cru"], format="%d/%m/%Y", errors="coerce")
     limite = f["dia_ref"].max()
     f.loc[f["inauguracao"].dt.year < _ANO_INAUGURACAO_MIN, "inauguracao"] = pd.NaT
     f.loc[f["inauguracao"] > limite, "inauguracao"] = pd.NaT
-    fim_do_mes = f["competencia"].dt.to_timestamp(how="end").dt.normalize()
-    f["mes_completo"] = (f["dias_com_dado"] >= DIAS_MINIMOS_MES_COMPLETO) & (
-        f["dia_ref"] >= fim_do_mes - pd.Timedelta(days=TOLERANCIA_FIM_DE_MES_DIAS)
-    )
-    # Unidade inaugurada DENTRO da competencia nao operou a janela inteira: o numero e'
-    # real, mas nao e' comparavel com o de quem operou o mes todo. E' o gate que substitui
-    # o piso de faturamento de R$ 20 mil da v1 -- um literal financeiro nao nomeado, que
-    # `dimensionamento/config.py` proibe. Medido em jul/2026: as 4 unicas unidades abaixo
-    # daquele piso (Paulinia, Limeira, Sao Goncalo Centro, Bonsucesso) sao exatamente as
-    # que inauguraram no proprio mes -- ou seja, o gate semantico explica 100% dos casos
-    # que o piso pegava, sem derrubar academia nenhuma da carteira.
-    inicio_competencia = f["competencia"].dt.to_timestamp(how="start")
-    f["operacao_mes_cheio"] = f["inauguracao"].isna() | (f["inauguracao"] <= inicio_competencia)
 
     for coluna in list(COLUNAS_CUMULATIVAS) + list(COLUNAS_SNAPSHOT):
         if coluna not in f.columns:
@@ -450,6 +446,36 @@ def _derivar_metricas(fech: pd.DataFrame) -> pd.DataFrame:
     nps = pd.to_numeric(f["NPS"], errors="coerce")
     f["nps_valido"] = nps.between(NPS_MIN, NPS_MAX)
     f["nps"] = nps.where(f["nps_valido"])
+    return f
+
+
+def _janela_completa(
+    dias_com_dado: pd.Series, dia_ref: pd.Series, fim_da_janela: pd.Series | pd.Timestamp
+) -> pd.Series:
+    """A janela tem dias coletados o bastante E a coleta CHEGOU ao fim dela.
+
+    Os dois lados são obrigatórios: só o piso de dias já fazia o mês EM CURSO passar por
+    fechado do dia 25 em diante (ver `TOLERANCIA_FIM_DE_MES_DIAS`).
+    """
+    return (dias_com_dado >= DIAS_MINIMOS_MES_COMPLETO) & (
+        dia_ref >= fim_da_janela - pd.Timedelta(days=TOLERANCIA_FIM_DE_MES_DIAS)
+    )
+
+
+def _derivar_metricas(fech: pd.DataFrame) -> pd.DataFrame:
+    """Deriva as metricas de negocio sobre o fechamento MENSAL cru. Puro, sem IO."""
+    f = _derivar_comuns(fech)
+    fim_do_mes = f["competencia"].dt.to_timestamp(how="end").dt.normalize()
+    f["mes_completo"] = _janela_completa(f["dias_com_dado"], f["dia_ref"], fim_do_mes)
+    # Unidade inaugurada DENTRO da competencia nao operou a janela inteira: o numero e'
+    # real, mas nao e' comparavel com o de quem operou o mes todo. E' o gate que substitui
+    # o piso de faturamento de R$ 20 mil da v1 -- um literal financeiro nao nomeado, que
+    # `dimensionamento/config.py` proibe. Medido em jul/2026: as 4 unicas unidades abaixo
+    # daquele piso (Paulinia, Limeira, Sao Goncalo Centro, Bonsucesso) sao exatamente as
+    # que inauguraram no proprio mes -- ou seja, o gate semantico explica 100% dos casos
+    # que o piso pegava, sem derrubar academia nenhuma da carteira.
+    inicio_competencia = f["competencia"].dt.to_timestamp(how="start")
+    f["operacao_mes_cheio"] = f["inauguracao"].isna() | (f["inauguracao"] <= inicio_competencia)
 
     # `CHURN_DIA = [CANCELADOS_DIA] / [REC_MES_ANTERIOR]` (DAX oficial): o denominador e'
     # a base de recorrentes com que o mes COMECOU, nao a do proprio mes. Merge (e nao
@@ -478,6 +504,209 @@ def _meses_operacao(inauguracao: pd.Series, competencia: pd.Series) -> pd.Series
     delta = (competencia - inaug).map(lambda p: p.n if pd.notna(p) else None)
     meses = pd.to_numeric(delta, errors="coerce")
     return meses.where(meses >= 0)
+
+
+# ---------------------------------------------------------------------------
+# Fechamento de um intervalo livre de datas
+# ---------------------------------------------------------------------------
+
+
+def fechamento_periodo(df: pd.DataFrame, inicio: pd.Timestamp, fim: pd.Timestamp) -> pd.DataFrame:
+    """Uma linha por unidade com o agregado de `[inicio, fim]` - as DUAS pontas dentro.
+
+    É o `fechamento_mensal` para uma janela que o calendário não define ("de 10/06 a
+    05/08"), e a conta muda por causa do reset do dia 1. Nenhuma das duas leituras
+    ingênuas serve para uma cumulativa:
+
+    * **somar os valores diários** conta o acumulado N vezes (a base já é MTD, não
+      diária);
+    * **pegar o último valor do intervalo** joga fora tudo o que aconteceu antes da
+      última virada de mês - de 20/06 a 05/07 o faturamento sairia com 5 dias de julho.
+
+    O certo é fatiar o intervalo por MÊS e somar as parcelas: dentro de cada mês,
+    `valor no último dia da porção - valor no último dia com dado ANTES dela` (e zero
+    quando a porção começa no dia 1, porque ali o cumulativo já começou do zero). Parcela
+    NEGATIVA é legítima e não se clampa: `cancelados` CAI dentro do mês em 36,7% dos
+    unidade-mês por estorno, e zerar isso inventaria cancelamento que não houve.
+
+    Snapshots seguem sendo foto: o valor do ÚLTIMO dia com dado até `fim`, sem soma nem
+    média - somar `pagantes` de 30 dias daria 30x a base de alunos.
+
+    `pagantes_inicio` (novo aqui) é a base de recorrentes com que o intervalo COMEÇOU: o
+    snapshot do último dia com dado ANTERIOR a `inicio`, em qualquer mês. É o denominador
+    do churn da janela, o análogo livre do `[REC_MES_ANTERIOR]` do PowerBI. NaN quando a
+    unidade não tem histórico antes do intervalo - churn sem base é desconhecido, nunca
+    zero (dividir por zero pintaria de vermelho quem só é nova).
+
+    Devolve DataFrame vazio (mesmas colunas) para base vazia, intervalo invertido ou
+    intervalo sem dado nenhum.
+    """
+    inicio = pd.Timestamp(inicio).normalize()
+    fim = pd.Timestamp(fim).normalize()
+    vazio = _fechamento_periodo_vazio()
+    if not len(df) or pd.isna(inicio) or pd.isna(fim) or inicio > fim:
+        return vazio
+
+    janela = df[(df["_data"] >= inicio) & (df["_data"] <= fim)]
+    if not len(janela):
+        return vazio
+    janela = janela.sort_values(["unidade_id", "_data"], kind="stable")
+
+    presentes_cum = [c for c in COLUNAS_CUMULATIVAS if c in janela.columns]
+    presentes_snap = [c for c in COLUNAS_SNAPSHOT if c in janela.columns]
+
+    # Passo 1: fechar cada (unidade, mês) tocado pelo intervalo. `last` - e nunca `max` -
+    # pelo mesmo motivo do fechamento mensal (estorno faz a cumulativa cair).
+    competencia = janela["_data"].dt.to_period("M")
+    agregacoes: dict[str, tuple[str, str]] = {
+        "dia_ref": ("_data", "max"),
+        "dias_com_dado": ("_data", "nunique"),
+        "uf": ("uf", "last"),
+        "master": ("master", "last"),
+        "unidade_cru": ("unidade", "last"),
+        "inauguracao_cru": ("inauguracao", "last"),
+    }
+    for coluna in presentes_cum + presentes_snap:
+        agregacoes[coluna] = (coluna, "last")
+    por_mes = (
+        janela.groupby(["unidade_id", competencia.rename("competencia")], observed=True)
+        .agg(**agregacoes)
+        .reset_index()
+        .sort_values(["unidade_id", "competencia"], kind="stable")
+    )
+
+    # Passo 2: colapsar os meses numa linha por unidade. Como `por_mes` está em ordem
+    # crescente de competência, o `last` de um snapshot já É o último dia com dado até
+    # `fim` -- e `dias_com_dado` soma porque um dia pertence a um mês só.
+    agregacoes_unidade: dict[str, tuple[str, str]] = {
+        "dia_ref": ("dia_ref", "max"),
+        "dias_com_dado": ("dias_com_dado", "sum"),
+        "uf": ("uf", "last"),
+        "master": ("master", "last"),
+        "unidade_cru": ("unidade_cru", "last"),
+        "inauguracao_cru": ("inauguracao_cru", "last"),
+    }
+    for coluna in presentes_snap:
+        agregacoes_unidade[coluna] = (coluna, "last")
+    fech = por_mes.groupby("unidade_id", observed=True).agg(**agregacoes_unidade).reset_index()
+
+    if presentes_cum:
+        parcelas = _parcelas_cumulativas(df, por_mes, presentes_cum, inicio)
+        for coluna in presentes_cum:
+            fech[coluna] = fech["unidade_id"].map(parcelas[coluna])
+
+    base_recorrentes = _ultimo_valor_antes(df, ["pagantes"], inicio)
+    fech["pagantes_inicio"] = pd.to_numeric(
+        fech["unidade_id"].map(base_recorrentes["pagantes"]), errors="coerce"
+    )
+    fech["periodo_inicio"] = inicio
+    fech["periodo_fim"] = fim
+    return _derivar_periodo(fech, inicio, fim)
+
+
+def _parcelas_cumulativas(
+    df: pd.DataFrame, por_mes: pd.DataFrame, colunas: list[str], inicio: pd.Timestamp
+) -> pd.DataFrame:
+    """Soma por unidade das parcelas `valor_fim - valor_base` de cada mês do intervalo.
+
+    Só o PRIMEIRO mês desconta base, e só quando o intervalo não começa no dia 1: nos
+    meses seguintes a porção começa na virada, onde o cumulativo já vale zero. Unidade sem
+    dado antes do início DENTRO daquele mês também desconta zero -- para ela o acumulado
+    do mês começou a existir dentro do próprio intervalo.
+    """
+    parcelas = por_mes[["unidade_id", "competencia"]].copy()
+    for coluna in colunas:
+        parcelas[coluna] = pd.to_numeric(por_mes[coluna], errors="coerce")
+
+    if inicio.day != 1:
+        mes_inicio = inicio.to_period("M")
+        base = _ultimo_valor_antes(df, colunas, inicio, desde=mes_inicio.to_timestamp())
+        primeiro_mes = parcelas["competencia"] == mes_inicio
+        for coluna in colunas:
+            desconto = parcelas.loc[primeiro_mes, "unidade_id"].map(base[coluna])
+            desconto = pd.to_numeric(desconto, errors="coerce").fillna(0.0)
+            parcelas.loc[primeiro_mes, coluna] = parcelas.loc[primeiro_mes, coluna] - desconto
+
+    # `min_count=1` preserva o NaN de quem não tem o dado: com o `sum` padrão, coluna
+    # ausente na ingestão viraria 0,0 e passaria por "faturou zero".
+    return parcelas.groupby("unidade_id", observed=True)[colunas].sum(min_count=1)
+
+
+def _ultimo_valor_antes(
+    df: pd.DataFrame,
+    colunas: list[str],
+    limite: pd.Timestamp,
+    desde: pd.Timestamp | None = None,
+) -> pd.DataFrame:
+    """Valor das `colunas` no último dia com dado ANTES de `limite` (>= `desde`), por unidade.
+
+    Indexado por `unidade_id` e possivelmente VAZIO - quem não aparece aqui não tinha dado
+    naquela janela, e cabe a quem chama decidir se isso é zero (base do cumulativo) ou
+    desconhecido (base do churn).
+    """
+    presentes = [c for c in colunas if c in df.columns]
+    anteriores = df[df["_data"] < limite] if len(df) else df
+    if desde is not None and len(anteriores):
+        anteriores = anteriores[anteriores["_data"] >= desde]
+    if not len(anteriores) or not presentes:
+        return pd.DataFrame({c: pd.Series(dtype="float64") for c in colunas})
+    valores = (
+        anteriores.sort_values(["unidade_id", "_data"], kind="stable")
+        .groupby("unidade_id", observed=True)[presentes]
+        .last()
+    )
+    for coluna in colunas:
+        valores[coluna] = (
+            pd.to_numeric(valores[coluna], errors="coerce")
+            if coluna in valores.columns
+            else float("nan")
+        )
+    return valores[colunas]
+
+
+def _derivar_periodo(
+    fech: pd.DataFrame, inicio: pd.Timestamp, fim: pd.Timestamp
+) -> pd.DataFrame:
+    """Deriva as métricas sobre o fechamento de intervalo. Puro, sem IO."""
+    f = _derivar_comuns(fech)
+
+    # "Completo" continua querendo dizer MÊS CIVIL fechado: as réguas do time (faixa de
+    # faturamento, diagnóstico) são limiares de mês inteiro. Um intervalo de 10 dias pode
+    # ter 10 dias de coleta perfeitos e ainda assim não ser comparável com elas.
+    mes_inicio = inicio.to_period("M")
+    mes_civil_inteiro = bool(
+        inicio == mes_inicio.to_timestamp(how="start").normalize()
+        and fim == mes_inicio.to_timestamp(how="end").normalize()
+    )
+    f["periodo_completo"] = (
+        _janela_completa(f["dias_com_dado"], f["dia_ref"], fim) if mes_civil_inteiro else False
+    )
+    # Mesmo gate do mensal, só que contra a ponta esquerda do intervalo: quem inaugurou
+    # DENTRO da janela não operou a janela inteira e não entra em ranking nem em média.
+    f["operacao_periodo_cheio"] = f["inauguracao"].isna() | (f["inauguracao"] <= inicio)
+    # Churn da janela: cancelados do intervalo sobre a base com que ele COMEÇOU. O
+    # `pagantes_m1` do mensal não serve aqui - o "mês anterior" de um intervalo livre não
+    # existe, e para um mês civil os dois coincidem (ver os testes de equivalência).
+    f["churn_pct"] = _divisao(100.0 * f["cancelados"], f["pagantes_inicio"])
+    competencia_fim = pd.Series([fim.to_period("M")] * len(f), index=f.index, dtype="period[M]")
+    f["meses_operacao"] = _meses_operacao(f["inauguracao"], competencia_fim)
+    return f.drop(columns=["inauguracao_cru", "ativos_total"], errors="ignore")
+
+
+#: Colunas do fechamento de intervalo: as do mensal, menos o que só o calendário define,
+#: mais as da janela livre. Derivada de `_fechamento_vazio` de propósito -- duas listas
+#: escritas à mão divergiriam, e o front quebra pela COLUNA que falta, não pelo cálculo.
+_TROCAS_PERIODO: tuple[str, ...] = ("competencia", "mes_completo", "operacao_mes_cheio")
+_EXTRAS_PERIODO: tuple[str, ...] = (
+    "periodo_inicio", "periodo_fim", "periodo_completo", "operacao_periodo_cheio",
+    "pagantes_inicio",
+)
+
+
+def _fechamento_periodo_vazio() -> pd.DataFrame:
+    colunas = [c for c in _fechamento_vazio().columns if c not in _TROCAS_PERIODO]
+    colunas.extend(_EXTRAS_PERIODO)
+    return pd.DataFrame({c: pd.Series(dtype="float64") for c in colunas})
 
 
 # ---------------------------------------------------------------------------
