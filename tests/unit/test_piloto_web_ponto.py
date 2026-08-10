@@ -267,14 +267,39 @@ def test_detalhe_expoe_o_rastro_do_calculo() -> None:
     det = pilot.ponto(lat=LAT_SP, lng=LNG_SP)["censo"]["detalhe"]
     assert det is not None
     assert set(det) >= {
-        "metodo", "area_circulo_km2", "area_intersectada_km2",
+        "n_setores", "area_circulo_km2", "area_intersectada_km2",
         "densidade_fixa_hab_km2", "densidade_valida_hab_km2",
-        "score_medio_raio", "score_max_raio", "setor_do_ponto", "renda",
+        "score_medio_raio", "score_max_raio", "distribuicao", "setor_do_ponto",
     }
-    # Raio de 1,0 km (DEC-021): o metodo carrega o sufixo no proprio nome.
-    assert det["metodo"].endswith("_1km")
     # A area coberta por setor nunca passa a do circulo — se passar, a conta inverteu.
     assert det["area_intersectada_km2"] <= det["area_circulo_km2"] + 0.01
+
+
+@requer_malha
+def test_distribuicao_mostra_o_que_a_media_esconde() -> None:
+    """A ficha da a media; o detalhamento da os EXTREMOS. Na Av. Paulista a renda
+    per capita media e' ~R$ 5.8 mil e os setores vao de ~R$ 780 a ~R$ 25 mil."""
+    body = pilot.ponto(lat=LAT_SP, lng=LNG_SP)
+    dist = body["censo"]["detalhe"]["distribuicao"]
+    assert set(dist) == {"renda_per_capita", "score", "populacao", "densidade_hab_km2"}
+
+    renda = dist["renda_per_capita"]
+    assert renda is not None
+    # Ordem interna coerente: min <= mediana <= max.
+    assert renda["min"] <= renda["p50"] <= renda["max"]
+    # A media da ficha cai DENTRO da amplitude — senao um dos dois esta errado.
+    media = body["censo"]["renda_per_capita"]
+    assert renda["min"] <= media <= renda["max"]
+    # Setores COM medicao podem ser menos que o total do raio (renda ausente).
+    assert 0 < renda["n"] <= body["censo"]["n_setores"]
+
+
+@requer_malha
+def test_distribuicao_do_score_respeita_a_escala() -> None:
+    dist = pilot.ponto(lat=LAT_SP, lng=LNG_SP)["censo"]["detalhe"]["distribuicao"]
+    score = dist["score"]
+    assert score is not None
+    assert 0 <= score["min"] <= score["max"] <= 100
 
 
 @requer_malha
@@ -294,6 +319,15 @@ def test_detalhe_NAO_expoe_renda_domiciliar_total() -> None:
 
     texto = json.dumps(pilot.ponto(lat=LAT_SP, lng=LNG_SP))
     assert "renda_domiciliar_total" not in texto
+
+
+@requer_malha
+def test_detalhe_NAO_e_o_rastro_do_calculo() -> None:
+    """O detalhamento devolve os numeros BRUTOS da area, nao como eles foram feitos
+    (pedido do Juan): uplift, fator temporal e nome de metodo saem do payload."""
+    det = pilot.ponto(lat=LAT_SP, lng=LNG_SP)["censo"]["detalhe"]
+    for chave in ("renda", "metodo", "uplift_domiciliar", "fator_temporal"):
+        assert chave not in det, chave
 
 
 @requer_malha

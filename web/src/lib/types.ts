@@ -912,9 +912,18 @@ export interface BlocoOpcional {
   motivo: string | null
 }
 
-/** O rastro do cálculo: de onde cada número da região saiu. */
+/** Min / mediana / max de uma leitura, entre os setores do raio. */
+export interface PontoDistribuicao {
+  min: number | null
+  p50: number | null
+  max: number | null
+  /** Setores COM medição desta leitura — pode ser menor que o total do raio. */
+  n: number
+}
+
+/** Os números BRUTOS da área: o que está por trás das médias da ficha. */
 export interface PontoCensoDetalhe {
-  metodo: string | null
+  n_setores: number | null
   /** Área do círculo (pi*r²) e a que a malha do IBGE realmente cobre dentro dele. */
   area_circulo_km2: number | null
   area_intersectada_km2: number | null
@@ -923,6 +932,13 @@ export interface PontoCensoDetalhe {
   densidade_valida_hab_km2: number | null
   score_medio_raio: number | null
   score_max_raio: number | null
+  /** Setor a setor: o que a média esconde. */
+  distribuicao: {
+    renda_per_capita: PontoDistribuicao | null
+    score: PontoDistribuicao | null
+    populacao: PontoDistribuicao | null
+    densidade_hab_km2: PontoDistribuicao | null
+  }
   /** O setor que CONTÉM o ponto — pode divergir da média do raio. */
   setor_do_ponto: {
     encontrado: boolean
@@ -933,16 +949,8 @@ export interface PontoCensoDetalhe {
     bairro: string | null
     distrito: string | null
   }
-  renda: {
-    metodo_per_capita: string | null
-    metodo_domiciliar: string | null
-    uplift_domiciliar: number | null
-    uplift_composicao: number | null
-    fator_temporal: number | null
-    data_referencia: string | null
-    uf_uplift: string | null
-    cod_municipio_uplift: string | null
-  }
+  /** Procedência, não método: de quando é o dado. */
+  data_referencia: string | null
 }
 
 export interface PontoCenso extends BlocoOpcional {

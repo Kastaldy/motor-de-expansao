@@ -2829,8 +2829,25 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
     # `renda_domiciliar_total_raio` fica DE FORA de proposito: apesar do nome, nao e'
     # um total — e' media ponderada de outra grandeza (`censo_point.py:460`). Numero
     # financeiro com rotulo errado vira decisao errada; omitir e' menos pior.
+    # Distribuicao BRUTA entre os setores do raio. A media esconde a variacao: na Av.
+    # Paulista a renda per capita media e' R$ 5.838, mas os setores vao de R$ 780 a
+    # R$ 25.272 — 32x de amplitude dentro de 1 km. Quem escolhe imovel precisa ver isso.
+    def _dist(coluna: str, casas: int = 0) -> dict[str, Any] | None:
+        setores = res.get("setores_intersectados")
+        if setores is None or getattr(setores, "empty", True) or coluna not in setores.columns:
+            return None
+        valores = pd.to_numeric(setores[coluna], errors="coerce").dropna()
+        if valores.empty:
+            return None
+        return {
+            "min": _num(valores.min(), casas),
+            "p50": _num(valores.median(), casas),
+            "max": _num(valores.max(), casas),
+            "n": int(len(valores)),
+        }
+
     detalhe_censo = {
-        "metodo": _texto(res.get("metodo")),
+        "n_setores": _num(res.get("n_setores")),
         # Duas AREAS: o circulo inteiro, e o que a malha do IBGE cobre dentro dele.
         "area_circulo_km2": _num(res.get("area_km2"), 2),
         "area_intersectada_km2": _num((res.get("area_intersecao_total_m2") or 0) / 1e6, 2),
@@ -2840,6 +2857,13 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
         "densidade_valida_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
         "score_medio_raio": _num(res.get("score_setor_medio"), 1),
         "score_max_raio": _num(res.get("score_setor_max"), 1),
+        # SETOR A SETOR: min / mediana / max do que o raio contem.
+        "distribuicao": {
+            "renda_per_capita": _dist("renda_per_capita_setor_2022_calibrada"),
+            "score": _dist("score_setor_2022_calibrado", 1),
+            "populacao": _dist("pop_total_setor_2022"),
+            "densidade_hab_km2": _dist("densidade_pop_setor_hab_km2"),
+        },
         # O setor que CONTEM o ponto, cru. Pode divergir bastante da media do raio —
         # e' a diferenca entre "a regiao" e "a esquina".
         "setor_do_ponto": {
@@ -2851,17 +2875,8 @@ def ponto(lat: float, lng: float) -> dict[str, Any]:
             "bairro": _texto(res.get("nome_bairro_ponto")),
             "distrito": _texto(res.get("nome_distrito_ponto")),
         },
-        # COMO a renda foi construida — o rastro que permite conferir o numero.
-        "renda": {
-            "metodo_per_capita": _texto(res.get("metodo_renda_raio")),
-            "metodo_domiciliar": _texto(res.get("metodo_renda_domiciliar_raio")),
-            "uplift_domiciliar": _num(res.get("fator_uplift_renda_domiciliar"), 3),
-            "uplift_composicao": _num(res.get("fator_uplift_composicao"), 3),
-            "fator_temporal": _num(res.get("fator_temporal_renda"), 3),
-            "data_referencia": _texto(res.get("data_referencia_renda")),
-            "uf_uplift": _texto(res.get("uf_renda_uplift")),
-            "cod_municipio_uplift": _texto(res.get("cod_municipio_renda_uplift")),
-        },
+        # Procedencia, nao metodo: de quando e' o dado.
+        "data_referencia": _texto(res.get("data_referencia_renda")),
     }
 
     # Concorrentes por distancia. `concorrentes_raio` e' DataFrame: serializar campo a
