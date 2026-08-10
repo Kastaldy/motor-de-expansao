@@ -31,6 +31,18 @@ export interface Hex {
   faixa: string | null
   conc: number
   ultra: number
+  /* PROTOTIPO da chave de raio (2 km centroide vs 1 km por area).
+     `conc1k` = quantas concorrentes ALCANCAM este hexagono pelo disco de 1 km — e o que
+     colore o mapa no modo novo. `oferta1k` = residual sob esse modelo.
+     Ausentes (undefined) quando o backend nao tem o parquet de concorrentes montado;
+     e' isso que faz a chave nem aparecer, em vez de mostrar zeros mentirosos. */
+  conc1k?: number | null
+  oferta1k?: number | null
+  /** Alunos que ESTE hexagono perde para concorrentes: rateado por area (1 km) e no
+   *  modelo atual (2 km). E' o par que deixa o rateio visivel — a concorrente na borda
+   *  cobra parte daqui e parte do vizinho, em vez dos 2.500 inteiros de um lado so'. */
+  cons1k?: number | null
+  cons2k?: number | null
   /* Passo 4 — Crescimento do município. Camada de CONTEXTO: repassa o que o
      projeto Crescimento Regional TEC apura (CAGED, Receita Federal).
      NADA de municipal mora aqui. O que é igual em toda a cidade viaja UMA vez, em
@@ -184,6 +196,32 @@ export interface Pin {
 }
 
 /** Pins do município + ícones quadrados por rede (data URI SVG). */
+/** PROTOTIPO — area coberta pelo raio de 1 km, ja recortada DENTRO dos hexagonos.
+ *  Cada anel e' [[lng, lat], ...]. `truncado` avisa que o teto de poligonos cortou a
+ *  devolucao: um corte silencioso mentiria sobre a extensao da cobertura. */
+export interface PecaCobertura {
+  hex: string
+  /** `coberto` = sob o raio de alguma concorrente; `livre` = o resto do hexagono. */
+  tipo: 'livre' | 'coberto'
+  /** Score 0-100 DAQUELE pedaco, na mesma regua das faixas do mapa. A parte livre
+   *  costuma pontuar mais alto: ali nenhuma concorrente desconta residual. */
+  score: number
+  anel: number[][]
+}
+
+export interface Cobertura1k {
+  pecas: PecaCobertura[]
+  /** UMA peca por (hexagono, concorrente). Empilhadas com alpha baixo, escurecem a area
+   *  proporcionalmente a quantas concorrentes cobrem aquele ponto. */
+  sombras: number[][][][]
+  /** Fronteira da UNIAO dos discos: UMA linha do alcance total, sem cruzamentos
+   *  internos. Substitui o desenho de um circulo por concorrente, que num aglomerado
+   *  virava um emaranhado de arcos. */
+  contorno: number[][][][]
+  n_discos: number
+  truncado: boolean
+}
+
 export interface Pins {
   concorrentes: Pin[]
   ultra: Pin[]
