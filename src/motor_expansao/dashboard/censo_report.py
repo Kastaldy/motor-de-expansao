@@ -13,6 +13,11 @@ from fpdf import FPDF
 from PIL import Image, ImageOps
 
 from motor_expansao.api.maps_geocoder import build_search_url
+from motor_expansao.core.constants import (
+    AREA_IDEAL_MAX_M2,
+    AREA_IDEAL_MIN_M2,
+    AREA_MIN_M2,
+)
 from motor_expansao.dashboard.censo_point import (
     METODO_RELATORIO_PONTUAL_CENSITARIO,
     RAIO_CENSITARIO_DEFAULT_KM,
@@ -157,6 +162,12 @@ _BIG_NUMBERS_COLS = 4
 _CARD_VERDE_RGB = (205, 236, 217)
 _CARD_VERMELHO_RGB = (248, 209, 209)
 _CARD_NEUTRO_RGB = (232, 233, 237)
+# Ambar do estado INTERMEDIARIO ("Aprovado com ressalvas") da pagina de Conclusao. Os 8 cards
+# do Big Numbers nao usam esta cor -- o semaforo de la e binario (bate/nao bate a meta) mais o
+# neutro do indecidivel. Mesma familia pastel das 3 acima: fundo claro o bastante para o rotulo
+# em (45,45,45) e o valor em (40,40,40) manterem contraste, e distinguivel do verde e do
+# vermelho tambem em impressao P&B (luminancia intermediaria).
+_CARD_AMBAR_RGB = (250, 233, 195)
 
 # BLK-RELPON-07 (refino visual "Microarea" GeoFusion): painel vertical do Perfil do
 # Bairro/Distrito. Moldura turquesa arredondada + cartao branco + metricas empilhadas
@@ -1089,6 +1100,17 @@ def _viab_normalizado(viabilidade: Mapping[str, Any]) -> dict[str, Any]:
         "flag_fora_envelope": viabilidade.get("flag_fora_envelope"),
         "flag_zona_morta": viabilidade.get("flag_zona_morta"),
         "motivo_zona_morta": viabilidade.get("motivo_zona_morta"),
+        # Reguas do veredito, servidas pelo proprio payload (`premissas.*`). A pagina de
+        # Conclusao precisa saber se `flag_viavel=False` falhou em UM criterio ou nos DOIS,
+        # e le os limites daqui em vez de importar `dimensionamento.config` -- e' a mesma
+        # fronteira de RENDER PURO do FIN-VIAB-01 (o slide LE o payload, nao recalcula nem
+        # crava constante propria que sairia de sincronia com a fonte unica).
+        "margem_viavel_min": _viab_campo(
+            viabilidade, "margem_viavel_min", "premissas", "margem_viavel_min"
+        ),
+        "payback_viavel_max": _viab_campo(
+            viabilidade, "payback_viavel_max", "premissas", "payback_viavel_max"
+        ),
     }
     # `flag_viavel` e opcional: sem ele o rodape simplesmente nao afirma viabilidade.
     viavel = _viab_campo(viabilidade, "flag_viavel", "dre", "flag_viavel")
@@ -1423,6 +1445,791 @@ def _viabilidade_page(
             pdf, pngs, top=60.0, bottom=_PAGE_H - 26.0, margin_x=20.0, gap=12.0
         )
         _draw_footer(pdf, with_attribution=False)
+
+
+# ---------------------------------------------------------------------------
+# Pagina de CONCLUSAO: parecer tri-estado do ponto + observacoes.
+#
+# Ate aqui o relatorio nao tinha veredito UNICO por ponto. O que existia era:
+#   * o semaforo por METRICA dos 8 Big Numbers (`_cor_por_meta`, BLK-RELPON-08);
+#   * o veredito BINARIO de viabilidade financeira (`dre.flag_viavel`);
+#   * o parecer tri-estado de `rede_diagnostico`, mas apontado para unidade MADURA.
+# Esta pagina compoe os tres num status por ponto CANDIDATO, com a mesma gramatica
+# de `rede_diagnostico` ("1 grave OU N medios"): um gate ELIMINATORIO reprova
+# sozinho; os demais apontamentos apenas rebaixam para "Aprovado com ressalvas".
+#
+# REGUA (aprovada por Vinicius, 2026-08-06):
+#   Eliminatorios -> Reprovado
+#     E1  margem abaixo da regua E payback acima da regua (falha nos DOIS lados)
+#     E2  aluguel pedido acima da 3a faixa de aluguel-teto (excecao)
+#     E3  metragem < AREA_MIN_M2  (pe-direito SAIU da regua: Vinicius, 2026-08-07)
+#     E4  cenario em zona morta (`flag_zona_morta`)
+#   Ressalvas -> Aprovado com ressalvas
+#     R1  falha em UM dos dois criterios de retorno
+#     R2  aluguel pedido acima da 2a faixa (teto) e dentro da excecao
+#     R3  metragem fora de AREA_IDEAL_MIN_M2..AREA_IDEAL_MAX_M2 (mas >= o minimo)
+#     R4  meta de Big Number nao atingida
+#     R5  metragem fora do envelope da base de calibracao (`flag_fora_envelope`)
+#     R6  campo essencial do imovel nao informado (o gate ficou sem avaliar)
+#     R7  mercado ja consumido pela oferta instalada
+#   Nenhum dos dois -> Aprovado.
+#
+# "Mercado consumido" nasceu ELIMINATORIO na proposta e virou RESSALVA por decisao
+# de Vinicius (2026-08-06): saturacao e' leitura de disputa, nao sentenca -- um ponto
+# com residual curto mas economia sadia continua negociavel.
+#
+# INDECIDIVEL NUNCA REPROVA. Dado ausente segue a regra ja estabelecida em
+# `_cor_por_meta` (BLK-RELPON-08 D3/Q2): condicao indecidivel vira neutra, jamais
+# falsa reprovacao. Todo gate eliminatorio so dispara com o dado em maos -- por isso
+# as comparacoes sao sempre `valor is not None and ...`, nunca truthiness.
+#
+# SEM FATURAMENTO, COM ALUGUEL-TETO (pedido de Vinicius, 2026-08-06, ajustado no mesmo
+# dia). A pagina NAO imprime faturamento, EBITDA, investimento, VPL nem TIR, e as
+# observacoes de retorno seguem QUALITATIVAS -- nem margem nem payback saem em numero.
+# O aluguel-teto ESTA impresso, em card proprio, por decisao explicita depois de a
+# implicacao ser levantada e aceita: o teto e' 20% do faturamento bruto, entao quem
+# conhecer a regra reconstroi o faturamento dividindo por 0,20. O que o card mostra e'
+# a faixa `teto` (a 2a, canonica), NUNCA a `excecao` -- esta ultima segue apenas como
+# REGUA do eliminatorio E2. Os demais numeros da pagina sao FISICOS (metragem,
+# pe-direito), de CUSTO DO IMOVEL (aluguel pedido, informado pelo operador) ou
+# CENSITARIOS (populacao, domicilios, renda, SAM/residual em alunos).
+#
+# READ-ONLY sobre o M1: nao recalcula score, carteira, plano nem artefatos oficiais.
+# ---------------------------------------------------------------------------
+_CONCLUSAO_PAGE_TITLE = "Conclusão"
+
+# Status BRUTOS: identificadores comparados em codigo/teste -- SEM acento, por regra.
+# A acentuacao vive so na camada de LABEL (`_CONCLUSAO_SELO_TEXTOS`, mais abaixo), que e'
+# a UNICA forma de exibicao do status desde que o selo substituiu o card de largura total.
+CONCLUSAO_APROVADO = "aprovado"
+CONCLUSAO_RESSALVAS = "com_ressalvas"
+CONCLUSAO_REPROVADO = "reprovado"
+
+_CONCLUSAO_CORES = {
+    CONCLUSAO_APROVADO: _CARD_VERDE_RGB,
+    CONCLUSAO_RESSALVAS: _CARD_AMBAR_RGB,
+    CONCLUSAO_REPROVADO: _CARD_VERMELHO_RGB,
+}
+
+# Campos do imovel que ALIMENTAM gate. `valor_venda`, `vagas` e `tipo_imovel` ficam de
+# fora de proposito: nao entram em nenhuma regra, e exigi-los faria todo relatorio sem
+# preco de venda (a maioria) nascer "com ressalvas" por um dado que nao muda o parecer.
+# `pe_direito_m` saiu daqui junto com o gate (Vinicius, 2026-08-07) -- cobrar um campo
+# que nao decide mais nada so geraria ressalva sem consequencia.
+_CONCLUSAO_CAMPOS_ESSENCIAIS = (
+    ("metragem_m2", "Metragem"),
+    ("aluguel_pedido", "Aluguel pedido"),
+)
+
+# `motivo_zona_morta` chega como token bruto do motor ("pop<5000"). Traduzir aqui mantem
+# o valor cru intacto e ainda assim legivel; token novo cai no fallback e sai como veio.
+_CONCLUSAO_MOTIVO_ZONA_MORTA = {
+    "pop<5000": "população de captação abaixo de 5.000",
+    "renda<1600": "renda per capita de captação abaixo de R$ 1.600",
+    "catchment_indisponivel": "captação indisponível",
+}
+
+_CONCLUSAO_APROVADO_TEXTO = (
+    "Nenhuma restrição encontrada: o ponto atende ao envelope do imóvel, às metas "
+    "censitárias do raio e aos critérios de retorno da Ultra."
+)
+_CONCLUSAO_NOTA = (
+    # "e pé-direito" saiu junto com o gate (Vinicius, 2026-08-07): a nota descreve a
+    # REGUA aplicada, e citar um criterio que nao decide mais nada seria mentir sobre ela.
+    "Parecer automático das réguas da Ultra: envelope do imóvel (metragem), "
+    f"metas censitárias do raio de {_RAIO_LABEL}, leitura de mercado do hexágono e critérios "
+    "de retorno do cenário simulado. Um item eliminatório reprova sozinho; os demais rebaixam "
+    "para 'Aprovado com ressalvas'. Dado ausente nunca reprova, apenas deixa o item sem "
+    "avaliar. READ-ONLY sobre o M1."
+)
+# Piso da area de observacoes: a pagina e FIXA (auto_page_break OFF), entao texto que nao
+# cabe NAO vaza para a pagina seguinte -- ele some por baixo do rodape, em silencio.
+_CONCLUSAO_OBS_LIMITE_Y = _PAGE_H - 74.0
+_CONCLUSAO_NOTA_Y = _PAGE_H - 62.0
+
+# Area de conteudo entre a banda de titulo e a nota metodologica. As duas colunas sao
+# centralizadas VERTICALMENTE nela (pedido de Vinicius, 2026-08-07); antes tudo nascia
+# colado no topo e sobrava um vazio grande embaixo em quase todo relatorio.
+_CONCLUSAO_AREA_TOPO = 66.0
+_CONCLUSAO_AREA_BASE = _CONCLUSAO_OBS_LIMITE_Y
+
+# Cada observacao vira um CARD, com o mesmo peso visual dos cards de valor (pedido de
+# Vinicius, 2026-08-07: em bullet de texto solto elas ficavam discretas demais e davam a
+# impressao de que so o valor tinha decidido o parecer). Barra de acento no topo, como
+# nos cards de aluguel, mas aqui a cor e' SEMANTICA -- diz a severidade do apontamento.
+_CONCLUSAO_OBS_LINHA_H = 13.0
+# Padding e gap ENXUTOS de proposito: com 8/8 a coluna comportava 6 cards, e o parecer de
+# um ponto ruim tipico tem 10 apontamentos -- 4 caiam no "(+N nao exibido(s))" justamente
+# onde a leitura mais importa. Com 5/6 cabem 8, sem apertar o texto de forma perceptivel.
+_CONCLUSAO_OBS_PAD_Y = 5.0
+_CONCLUSAO_OBS_PAD_X = 16.0
+_CONCLUSAO_OBS_GAP = 6.0
+_CONCLUSAO_OBS_ACENTO_H = 4.0
+_CONCLUSAO_OBS_TITULO_H = 16.0
+_CONCLUSAO_OBS_TITULO_GAP = 8.0
+_CONCLUSAO_ALUGUEL_OBS_GAP = 22.0
+# Altura reservada para a linha "(+N apontamento(s) nao exibido(s))". Sem reservar, o
+# loop enchia a coluna ate o limite e o aviso saia POR CIMA do ultimo card.
+_CONCLUSAO_OBS_AVISO_H = 16.0
+
+# Severidade da observacao -> (fundo, acento). Identificadores BRUTOS, sem acento.
+# Hierarquia deliberada: o que REPROVA leva fundo tingido e salta; a ressalva fica no
+# cinza neutro dos demais cards, com a cor so na barra -- com 8+ apontamentos, tingir
+# todos deixaria a pagina inteira vermelha e nada saltaria.
+_CONCLUSAO_OBS_CORES = {
+    "eliminatorio": (_CARD_VERMELHO_RGB, (198, 57, 57)),
+    "ressalva": (_CARD_NEUTRO_RGB, (198, 146, 44)),
+    "confirmacao": (_CARD_VERDE_RGB, (26, 170, 85)),
+}
+# Cor SOLIDA do selo por estado (traco e texto). Os `_CARD_*_RGB` sao pasteis de FUNDO e
+# nao teriam contraste como linha de 2 pt nem como tipografia; estas sao as mesmas
+# familias em versao cheia. Verde e ambar espelham a semantica de `--pos`/`--warn` do
+# carimbo da tela; o vermelho e' o terceiro estado, que la nao existe.
+_CONCLUSAO_SELO_RGB = {
+    "aprovado": (26, 170, 85),
+    "com_ressalvas": (198, 146, 44),
+    "reprovado": (198, 57, 57),
+}
+# (rotulo principal, linha de apoio). Espelha o par "APROVADO / PARA COMITÊ" da tela.
+_CONCLUSAO_SELO_TEXTOS = {
+    "aprovado": ("APROVADO", "PARA COMITÊ"),
+    "com_ressalvas": ("COM RESSALVAS", "REQUER REVISÃO"),
+    "reprovado": ("REPROVADO", "FORA DA RÉGUA"),
+}
+
+# Geometria de 2 COLUNAS (reestruturacao pedida por Vinicius, 2026-08-07): cards de
+# aluguel + observacoes a ESQUERDA, selo sozinho a DIREITA. A largura da coluna esquerda
+# sai por subtracao para a soma fechar sempre na pagina, mesmo se a do selo mudar.
+_CONCLUSAO_MARGEM_X = 36.0
+_CONCLUSAO_COL_DIR_W = 240.0
+_CONCLUSAO_COL_GAP = 26.0
+_CONCLUSAO_COL_DIR_X = _PAGE_W - _CONCLUSAO_MARGEM_X - _CONCLUSAO_COL_DIR_W
+_CONCLUSAO_COL_ESQ_W = _CONCLUSAO_COL_DIR_X - _CONCLUSAO_MARGEM_X - _CONCLUSAO_COL_GAP
+# 240 x 196 ~ 1,2:1 -- quase quadrado, como o carimbo da tela. Nao e' 1:1 exato porque o
+# rotulo mais longo ("COM RESSALVAS") precisa da largura para nao encolher demais.
+_CONCLUSAO_SELO_H = 196.0
+# Cantos arredondados do selo (pedido de Vinicius, 2026-08-07). Fica um pouco menor que
+# `_CLASSICO_CORNER_RADIUS` (16) porque a borda aqui tem 2 pt e o mesmo raio da banda
+# clássica deixaria o traco visivelmente achatado nas quinas. Os CARDS seguem retos, como
+# todos os outros do relatorio -- o arredondamento marca o selo como elemento a parte.
+_CONCLUSAO_SELO_RAIO = 13.0
+# Os dois cards de aluguel vivem na coluna ESQUERDA, lado a lado, acima das observacoes
+# (pedido de Vinicius, 2026-08-07). O gap e' HORIZONTAL desde entao.
+_CONCLUSAO_ALUGUEL_H = 72.0
+_CONCLUSAO_ALUGUEL_GAP = 12.0
+
+
+@dataclass(frozen=True)
+class _ConclusaoPonto:
+    """Parecer do ponto: status bruto + observacoes ja redigidas, na ordem de leitura."""
+
+    status: str
+    eliminatorios: tuple[str, ...]
+    ressalvas: tuple[str, ...]
+
+
+def _conclusao_valor(value: Any) -> float | None:
+    """float FINITO utilizavel, ou None quando ausente/NaN/infinito/nao numerico.
+
+    Infinito vira None de proposito: nenhum gate deve comparar contra `inf` por acidente.
+    O unico campo em que `inf` carrega significado e o payback, tratado a parte em
+    `_conclusao_retorno` (la `inf`/None quer dizer "nao paga no horizonte", nao "sem dado").
+    """
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    try:
+        numero = float(value)
+    except (TypeError, ValueError):
+        return None
+    if numero != numero or numero in (float("inf"), float("-inf")):
+        return None
+    return numero
+
+
+def _conclusao_flag(value: Any) -> bool:
+    """True SO quando o flag veio e e' verdadeiro. Ausente/NaN -> False.
+
+    Truthiness crua contrariava o invariante escrito no cabecalho desta secao: `NaN` e'
+    truthy em Python, entao um flag corrompido reprovava o ponto por zona morta. O
+    payload do browser manda `null`, mas um cliente que serialize com `allow_nan=True`
+    injeta `NaN` -- e indecidivel nao pode reprovar.
+    """
+    if value is None:
+        return False
+    try:
+        if pd.isna(value):
+            return False
+    except (TypeError, ValueError):
+        pass
+    return bool(value)
+
+
+def _conclusao_faixas_aluguel(dados: Mapping[str, Any]) -> tuple[float | None, float | None]:
+    """(teto, excecao) resolvidos UMA vez, para o gate e o card lerem o MESMO par.
+
+    O payload chega em duas formas: `aluguel_teto_faixas` (dict das 3 faixas) ou
+    `aluguel_teto` ja achatado no canonico. Resolver isso em dois lugares diferentes
+    deixava o gate MUDO enquanto o card ao lado pintava vermelho na mesma pagina -- a
+    mesma classe de divergencia que o FIN-VIAB-01 combateu entre o PDF e a tela.
+    """
+    faixas = dados.get("aluguel_teto_faixas")
+    faixas = faixas if isinstance(faixas, Mapping) else {}
+    teto = _conclusao_valor(faixas.get("teto"))
+    if teto is None:
+        teto = _conclusao_valor(dados.get("aluguel_teto"))
+    return teto, _conclusao_valor(faixas.get("excecao"))
+
+
+def _conclusao_motivo_zona_morta(bruto: str) -> str:
+    """Traduz o motivo TOKEN A TOKEN.
+
+    `viabilidade_ponto` junta os motivos com "; " quando populacao E renda estao abaixo
+    do piso -- ou seja, o caso MAIS grave era o unico que nunca traduzia, e saia
+    "pop<5000; renda<1600" cru no PDF. Token desconhecido cai no fallback e sai como veio.
+    """
+    partes = [parte.strip() for parte in bruto.split(";") if parte.strip()]
+    return "; ".join(_CONCLUSAO_MOTIVO_ZONA_MORTA.get(parte, parte) for parte in partes)
+
+
+def _conclusao_metas_vermelhas(
+    result: Mapping[str, Any], residual: Mapping[str, Any]
+) -> tuple[tuple[str, str, str], ...]:
+    """(rotulo, valor formatado, meta formatada) dos cards com meta NAO atingida.
+
+    Reusa `_cor_por_meta` e as mesmas constantes `_META_*` que colorem o Big Numbers, em
+    vez de reimplementar a comparacao: mexer numa meta muda o card E a conclusao juntos,
+    sem drift entre a pagina que mostra o numero e a que da o parecer.
+    """
+    def _brl(valor: Any) -> str:
+        return "R$ " + _format_number(valor, 2)
+
+    def _int(valor: Any) -> str:
+        return _format_number(valor, 0)
+
+    avaliados: tuple[tuple[str, Any, float, Any], ...] = (
+        ("População total no raio", result.get("pop_total_raio"), _META_POP_TOTAL_RAIO, _int),
+        (
+            "Renda per capita média",
+            result.get("renda_per_capita_media_raio"),
+            _META_RENDA_PER_CAPITA_MEDIA_RAIO,
+            _brl,
+        ),
+        (
+            "Número de domicílios",
+            result.get("domicilios_total_raio"),
+            _META_DOMICILIOS_TOTAL_RAIO,
+            _int,
+        ),
+        (
+            "Renda média domiciliar",
+            result.get("renda_domiciliar_total_raio"),
+            _META_RENDA_DOMICILIAR_TOTAL_RAIO,
+            _brl,
+        ),
+        (
+            "SAM Fitness",
+            residual.get("sam_fitness_potencial"),
+            _META_SAM_FITNESS_POTENCIAL,
+            _int,
+        ),
+        (
+            "Residual Fitness",
+            residual.get("oferta_efetiva_disponivel"),
+            _META_RESIDUAL_FITNESS_DISPONIVEL,
+            _int,
+        ),
+    )
+    return tuple(
+        (rotulo, formata(valor), formata(meta))
+        for rotulo, valor, meta, formata in avaliados
+        if _cor_por_meta(valor, meta) == _CARD_VERMELHO_RGB
+    )
+
+
+def _conclusao_retorno(dados: Mapping[str, Any]) -> tuple[bool, bool, bool]:
+    """(falha_margem, falha_payback, decidivel) da regua de retorno do cenario.
+
+    As reguas vem do PROPRIO payload (`margem_viavel_min` / `payback_viavel_max`, servidas
+    pelo backend a partir de `dimensionamento/config.py`). Sem elas -- payload legado --
+    sobra o veredito pronto `flag_viavel`, que basta para RESSALVA e nunca para reprovar:
+    sem os limites nao ha como saber se o cenario falhou em um criterio ou nos dois, e
+    reprovar por inferencia violaria o principio de que indecidivel nao reprova.
+
+    `payback` None ou infinito significa "nao paga dentro do horizonte" -- e' exatamente o
+    que `_viab_payback` ja imprime como "> 60 meses" na pagina anterior --, portanto FALHA
+    conhecida, nao dado ausente.
+    """
+    margem = _conclusao_valor(dados.get("margem_ebitda_pct"))
+    margem_min = _conclusao_valor(dados.get("margem_viavel_min"))
+    payback_max = _conclusao_valor(dados.get("payback_viavel_max"))
+    if margem_min is None or payback_max is None or margem is None:
+        return False, False, False
+    payback = _conclusao_valor(dados.get("payback_meses"))
+    return margem < margem_min, (payback is None or payback > payback_max), True
+
+
+def _avaliar_conclusao(
+    result: Mapping[str, Any] | None,
+    residual: Mapping[str, Any] | None,
+    info_imovel: Mapping[str, Any] | None,
+    dados_viab: Mapping[str, Any],
+) -> _ConclusaoPonto:
+    """Aplica a regua e devolve o parecer. FUNCAO PURA: sem I/O, sem motor, sem estado.
+
+    `dados_viab` e o dict ja achatado por `_viab_normalizado` -- a conclusao LE os mesmos
+    numeros que a pagina de Viabilidade imprime, nunca recalcula nenhum deles.
+    """
+    result = result or {}
+    residual = residual or {}
+    info = info_imovel or {}
+    eliminatorios: list[str] = []
+    ressalvas: list[str] = []
+
+    # --- Retorno do cenario (E1 / R1) ---
+    falha_margem, falha_payback, decidivel = _conclusao_retorno(dados_viab)
+    if decidivel and falha_margem and falha_payback:
+        eliminatorios.append(
+            "Retorno fora da régua da Ultra nos dois critérios ao mesmo tempo: margem "
+            "operacional e prazo de retorno do investimento."
+        )
+    elif decidivel and falha_margem:
+        ressalvas.append("Margem operacional abaixo do mínimo da régua da Ultra.")
+    elif decidivel and falha_payback:
+        ressalvas.append("Prazo de retorno do investimento acima do limite da régua da Ultra.")
+    elif dados_viab.get("flag_viavel") is False:
+        ressalvas.append("Cenário fora da régua de viabilidade da Ultra.")
+
+    # --- Zona morta (E4) ---
+    if _conclusao_flag(dados_viab.get("flag_zona_morta")):
+        bruto = str(dados_viab.get("motivo_zona_morta") or "").strip()
+        motivo = _conclusao_motivo_zona_morta(bruto)
+        eliminatorios.append(
+            f"Ponto em zona morta para a operação ({motivo})."
+            if motivo
+            else "Ponto em zona morta para a operação."
+        )
+
+    # --- Envelope fisico do imovel (E3 / R3) ---
+    # Primeira aplicacao real de AREA_MIN_M2/AREA_IDEAL_*: eram canonicos declarados em
+    # config.py e travados em teste de contrato, mas nao comparados com nada em lugar
+    # nenhum. `PE_DIREITO_MIN` continua FORA daqui: o pe-direito foi retirado da regua a
+    # pedido de Vinicius (2026-08-07) e volta a ser so um campo digitado e impresso na
+    # pagina de informacoes do imovel.
+    metragem = _conclusao_valor(info.get("metragem_m2"))
+    if metragem is not None:
+        if metragem < AREA_MIN_M2:
+            eliminatorios.append(
+                f"Metragem de {_format_number(metragem, 0)} m2 abaixo do mínimo de "
+                f"{_format_number(AREA_MIN_M2, 0)} m2."
+            )
+        elif not AREA_IDEAL_MIN_M2 <= metragem <= AREA_IDEAL_MAX_M2:
+            ressalvas.append(
+                f"Metragem de {_format_number(metragem, 0)} m2 fora da faixa ideal de "
+                f"{_format_number(AREA_IDEAL_MIN_M2, 0)} a "
+                f"{_format_number(AREA_IDEAL_MAX_M2, 0)} m2."
+            )
+    # --- Aluguel pedido x faixas de aluguel-teto (E2 / R2) ---
+    # MESMO par que o card imprime (`_conclusao_faixas_aluguel`): resolver separado fazia
+    # o gate ficar mudo com o card vermelho ao lado, na mesma pagina.
+    aluguel = _conclusao_valor(info.get("aluguel_pedido"))
+    teto, excecao = _conclusao_faixas_aluguel(dados_viab)
+    if aluguel is not None and excecao is not None and aluguel > excecao:
+        eliminatorios.append(
+            "Aluguel pedido acima do máximo admitido para este ponto: inviabiliza a "
+            "operação no valor atual."
+        )
+    elif aluguel is not None and teto is not None and aluguel > teto:
+        ressalvas.append(
+            "Aluguel pedido acima do teto recomendado para este ponto: exige renegociação."
+        )
+
+    # --- Extrapolacao da base de calibracao (R5) ---
+    if _conclusao_flag(dados_viab.get("flag_fora_envelope")):
+        ressalvas.append(
+            "Metragem fora do envelope da base de calibração: projeção com incerteza maior."
+        )
+
+    # --- Censo indisponivel para o ponto ---
+    # As 4 metricas censitarias ausentes AO MESMO TEMPO significam que nenhum setor caiu
+    # no raio (ponto no mar, particao geo do municipio ausente, borda da malha). Sem esta
+    # ressalva o parecer saia "Aprovado" AFIRMANDO que o ponto "atende as metas
+    # censitarias do raio" que nunca chegou a avaliar -- o reverso do invariante de
+    # indecidivel: nao reprova por falta de dado, mas tambem nao pode APROVAR por ela.
+    if all(
+        _conclusao_valor(result.get(chave)) is None
+        for chave in (
+            "pop_total_raio",
+            "renda_per_capita_media_raio",
+            "domicilios_total_raio",
+            "renda_domiciliar_total_raio",
+        )
+    ):
+        ressalvas.append(
+            "Metas censitárias não avaliadas: nenhum setor censitário no raio do ponto."
+        )
+
+    # --- Mercado e metas censitarias (R7 / R4) ---
+    sam = residual.get("sam_fitness_potencial")
+    disponivel = residual.get("oferta_efetiva_disponivel")
+    mercado_consumido = _cor_consumo_concorrentes(sam, disponivel) == _CARD_VERMELHO_RGB
+    if mercado_consumido:
+        ressalvas.append(
+            "Mercado já consumido pela oferta instalada: residual de "
+            f"{_format_number(disponivel, 0)} contra potencial de {_format_number(sam, 0)} alunos."
+        )
+    for rotulo, valor_txt, meta_txt in _conclusao_metas_vermelhas(result, residual):
+        # A meta do Residual ja foi dita, com mais contexto, na linha de mercado consumido
+        # logo acima -- repeti-la seria afirmar a mesma coisa duas vezes no mesmo parecer.
+        if mercado_consumido and rotulo == "Residual Fitness":
+            continue
+        ressalvas.append(f"Meta não atingida em {rotulo}: {valor_txt} para meta de {meta_txt}.")
+
+    # --- Campos essenciais nao informados (R6) ---
+    for chave, rotulo in _CONCLUSAO_CAMPOS_ESSENCIAIS:
+        if _conclusao_valor(info.get(chave)) is None:
+            ressalvas.append(
+                f"{rotulo} não informado: o critério correspondente não pôde ser avaliado."
+            )
+
+    if eliminatorios:
+        status = CONCLUSAO_REPROVADO
+    elif ressalvas:
+        status = CONCLUSAO_RESSALVAS
+    else:
+        status = CONCLUSAO_APROVADO
+    return _ConclusaoPonto(
+        status=status, eliminatorios=tuple(eliminatorios), ressalvas=tuple(ressalvas)
+    )
+
+
+def _cor_aluguel_pedido(aluguel: Any, teto: Any, excecao: Any) -> tuple[int, int, int]:
+    """Semaforo do card "Aluguel pedido": verde ate o teto, ambar na excecao, vermelho acima.
+
+    Espelha a classificacao que a tela ja faz em `ViabilityScreen` (`tetoCls`), com uma
+    simplificacao deliberada: la sao 4 estados (`ideal` tem verde proprio), aqui o `ideal`
+    e o `teto` compartilham o verde, porque a pagina nao imprime a faixa `ideal` e um
+    quarto tom sem rotulo que o explique so confundiria. Sem dado -> neutro, nunca
+    reprovacao visual (mesma regra de `_cor_por_meta`). Funcao pura.
+    """
+    valor = _conclusao_valor(aluguel)
+    limite_teto = _conclusao_valor(teto)
+    limite_excecao = _conclusao_valor(excecao)
+    if valor is None or limite_teto is None:
+        return _CARD_NEUTRO_RGB
+    if valor <= limite_teto:
+        return _CARD_VERDE_RGB
+    if limite_excecao is not None and valor <= limite_excecao:
+        return _CARD_AMBAR_RGB
+    return _CARD_VERMELHO_RGB
+
+
+def _conclusao_simbolo(
+    pdf: _UltraPDF, status: str, cx: float, cy: float, tam: float, rgb: tuple[int, int, int]
+) -> None:
+    """Desenha o simbolo do selo em VETOR (linhas/retangulos), nao como glifo de fonte.
+
+    O selo da tela usa "✓" e "✕" (`ViabilityCharts.Veredito`), e os dois estao FORA do
+    latin-1 -- no core font Helvetica do fpdf2 sairiam como "?" em silencio, que e'
+    exatamente a armadilha que a regra de acentuacao do projeto descreve. Em vetor os
+    tres estados ainda ganham o mesmo peso otico, o que misturar desenho com um "!"
+    tipografico nao daria. Funcao de RENDER pura.
+    """
+    prev_lw = pdf.line_width
+    espessura = max(2.5, tam * 0.13)
+    pdf.set_draw_color(*rgb)
+    pdf.set_fill_color(*rgb)
+    pdf.set_line_width(espessura)
+    meio = tam / 2
+    if status == CONCLUSAO_APROVADO:
+        # Check: desce ate o vertice baixo e sobe mais alto do lado direito.
+        pdf.line(cx - meio, cy + tam * 0.04, cx - meio * 0.30, cy + meio * 0.66)
+        pdf.line(cx - meio * 0.30, cy + meio * 0.66, cx + meio, cy - meio * 0.60)
+    elif status == CONCLUSAO_REPROVADO:
+        pdf.line(cx - meio * 0.68, cy - meio * 0.68, cx + meio * 0.68, cy + meio * 0.68)
+        pdf.line(cx + meio * 0.68, cy - meio * 0.68, cx - meio * 0.68, cy + meio * 0.68)
+    else:
+        # Exclamacao: haste + ponto, preenchidos (nao ha traco "!" desenhavel a linha).
+        # A haste e' ~1,8x a espessura das linhas dos outros dois simbolos DE PROPOSITO:
+        # o "!" so ocupa uma faixa vertical estreita, entao com a mesma espessura ele
+        # pesava menos que o check e o X e o selo intermediario parecia mais fraco.
+        haste_w = espessura * 1.8
+        pdf.rect(cx - haste_w / 2, cy - meio * 0.92, haste_w, tam * 0.60, style="F")
+        pdf.rect(cx - haste_w / 2, cy + meio * 0.58, haste_w, haste_w, style="F")
+    pdf.set_line_width(prev_lw)
+
+
+def _conclusao_selo(
+    pdf: _UltraPDF, status: str, x: float, y: float, largura: float, altura: float
+) -> None:
+    """Selo do parecer: quadrado com simbolo em cima, rotulo embaixo, cor pelo estado.
+
+    Mesma anatomia do carimbo de veredito da tela de Viabilidade (`Veredito`, escolha de
+    Felipe em 2026-07-31: "bater o olho e ja ter o veredito"), portada para o PDF e
+    estendida de 2 para 3 estados. Fundo no pastel que o resto do relatorio ja usa
+    (`_CARD_*_RGB`); borda de 2 pt e simbolo/texto na cor SOLIDA correspondente, que
+    existe so aqui -- os pasteis nao teriam contraste como traco.
+    """
+    rgb = _CONCLUSAO_SELO_RGB[status]
+    principal, secundario = _CONCLUSAO_SELO_TEXTOS[status]
+    prev_lw = pdf.line_width
+
+    pdf.set_fill_color(*_CONCLUSAO_CORES[status])
+    pdf.rect(
+        x, y, largura, altura,
+        style="F", round_corners=True, corner_radius=_CONCLUSAO_SELO_RAIO,
+    )
+    pdf.set_draw_color(*rgb)
+    pdf.set_line_width(2.0)
+    pdf.rect(
+        x, y, largura, altura,
+        style="D", round_corners=True, corner_radius=_CONCLUSAO_SELO_RAIO,
+    )
+    pdf.set_line_width(prev_lw)
+
+    _conclusao_simbolo(pdf, status, x + largura / 2, y + altura * 0.30, 48.0, rgb)
+    pdf.set_text_color(*rgb)
+    # O rotulo principal encolhe se preciso: "COM RESSALVAS" e' bem mais largo que
+    # "APROVADO" e nao pode vazar a borda do selo.
+    pdf.set_xy(x, y + altura * 0.55)
+    _ajustar_fonte_para_largura(pdf, _ascii(principal), largura - 16, tamanho=17.0)
+    pdf.cell(largura, 22, _ascii(principal), align="C")
+    pdf.set_font("Helvetica", "B", 9.5)
+    pdf.set_xy(x, y + altura * 0.74)
+    pdf.cell(largura, 14, _ascii(secundario), align="C")
+
+
+def _conclusao_cards_aluguel(
+    pdf: _UltraPDF,
+    dados: Mapping[str, Any],
+    info_imovel: Mapping[str, Any] | None,
+    x: float,
+    y: float,
+    largura: float,
+    accent: tuple[int, int, int],
+) -> None:
+    """Aluguel-teto (referencia) e aluguel pedido (com semaforo), LADO A LADO.
+
+    Moram na coluna ESQUERDA, acima das observacoes (pedido de Vinicius, 2026-08-07):
+    a direita fica so com o selo. `largura` e' a da coluna inteira e os dois cards a
+    dividem com `_CONCLUSAO_ALUGUEL_GAP` entre eles.
+
+    O teto impresso e' o CANONICO (`aluguel_teto`, a faixa de 20%), o mesmo numero que o
+    card da pagina de Viabilidade ja mostra -- nao a `excecao`, que fica so como regua do
+    eliminatorio E2. Sem payload de teto ou sem aluguel informado, o card cai em "n/d"
+    gracioso em vez de sumir, para a ausencia do dado ficar visivel no parecer.
+    """
+    info = info_imovel or {}
+    # MESMO par que os gates E2/R2 usam -- ver `_conclusao_faixas_aluguel`.
+    teto, excecao = _conclusao_faixas_aluguel(dados)
+    aluguel = info.get("aluguel_pedido")
+
+    cards = (
+        ("Aluguel-teto (mês)", _viab_brl(teto), _CARD_NEUTRO_RGB),
+        (
+            "Aluguel pedido (mês)",
+            _viab_brl(aluguel),
+            _cor_aluguel_pedido(aluguel, teto, excecao),
+        ),
+    )
+    card_h = _CONCLUSAO_ALUGUEL_H
+    card_w = (largura - _CONCLUSAO_ALUGUEL_GAP) / 2
+    for index, (rotulo, valor, cor) in enumerate(cards):
+        esquerda = x + index * (card_w + _CONCLUSAO_ALUGUEL_GAP)
+        pdf.set_fill_color(*cor)
+        pdf.rect(esquerda, y, card_w, card_h, style="F")
+        pdf.set_draw_color(225, 225, 228)
+        pdf.rect(esquerda, y, card_w, card_h, style="D")
+        pdf.set_fill_color(*accent)
+        pdf.rect(esquerda, y, card_w, 5.0, style="F")
+        pdf.set_text_color(45, 45, 45)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.set_xy(esquerda + 14, y + 13)
+        pdf.cell(card_w - 28, 13, _ascii(rotulo))
+        pdf.set_text_color(40, 40, 40)
+        valor_txt = _ascii(valor)
+        _ajustar_fonte_para_largura(pdf, valor_txt, card_w - 28, tamanho=19.0)
+        pdf.set_xy(esquerda + 14, y + 34)
+        pdf.cell(card_w - 28, 22, valor_txt)
+
+
+def _conclusao_itens(parecer: _ConclusaoPonto) -> tuple[tuple[str, str], ...]:
+    """(texto, severidade) na ordem de leitura: o que reprovou antes do que so ressalva."""
+    itens = [(texto, "eliminatorio") for texto in parecer.eliminatorios]
+    itens += [(texto, "ressalva") for texto in parecer.ressalvas]
+    return tuple(itens) or ((_CONCLUSAO_APROVADO_TEXTO, "confirmacao"),)
+
+
+def _conclusao_altura_obs(pdf: _UltraPDF, texto: str, largura: float) -> float:
+    """Altura do card de UMA observacao, medida sem desenhar nada.
+
+    `dry_run` do `multi_cell` devolve as linhas que o texto ocuparia na largura dada; sem
+    isso nao daria para centralizar o bloco verticalmente, porque a altura so seria
+    conhecida DEPOIS de desenhar. Exige a fonte ja aplicada pelo chamador.
+    """
+    largura_texto = largura - 2 * _CONCLUSAO_OBS_PAD_X
+    saida = pdf.multi_cell(
+        largura_texto, _CONCLUSAO_OBS_LINHA_H, _ascii(texto), dry_run=True, output="LINES"
+    )
+    # O retorno de `multi_cell` e' uma UNIAO que depende de `output` (bool, float, lista
+    # de linhas ou tuplas delas), e o mypy nao estreita isso pelo valor do argumento. A
+    # checagem explicita satisfaz o type checker E degrada para 1 linha caso a assinatura
+    # do fpdf2 mude -- um card de altura minima e' preferivel a um TypeError no relatorio.
+    n = len(saida) if isinstance(saida, (list, tuple)) else 1
+    return (
+        _CONCLUSAO_OBS_ACENTO_H
+        + max(1, n) * _CONCLUSAO_OBS_LINHA_H
+        + 2 * _CONCLUSAO_OBS_PAD_Y
+    )
+
+
+def _conclusao_bloco_observacoes(
+    pdf: _UltraPDF, itens: tuple[tuple[str, str], ...], largura: float
+) -> tuple[tuple[float, ...], float]:
+    """(altura de cada card, altura do bloco inteiro incluindo titulo e gaps)."""
+    pdf.set_font("Helvetica", "", 10)
+    alturas = tuple(_conclusao_altura_obs(pdf, texto, largura) for texto, _sev in itens)
+    total = _CONCLUSAO_OBS_TITULO_H + _CONCLUSAO_OBS_TITULO_GAP
+    total += sum(alturas) + _CONCLUSAO_OBS_GAP * max(0, len(alturas) - 1)
+    return alturas, total
+
+
+def _conclusao_quantos_cabem(alturas: tuple[float, ...], y: float, limite: float) -> int:
+    """Quantos cards, na ordem, cabem entre `y` e `limite`. Puro, sem tocar no PDF."""
+    topo = y
+    cabem = 0
+    for altura in alturas:
+        if topo + altura > limite:
+            break
+        topo += altura + _CONCLUSAO_OBS_GAP
+        cabem += 1
+    return cabem
+
+
+def _conclusao_plano_observacoes(alturas: tuple[float, ...], y: float) -> tuple[int, float]:
+    """(quantos cards desenhar, y onde a linha de aviso entra). Funcao pura.
+
+    Quando nem todos cabem, a conta e' REFEITA com a altura do aviso ja reservada. Sem
+    isso o loop enchia a coluna ate o limite e a linha "(+N nao exibido(s))" era escrita
+    POR CIMA do ultimo card -- os dois textos sobrepostos e ilegiveis.
+    """
+    cabem = _conclusao_quantos_cabem(alturas, y, _CONCLUSAO_AREA_BASE)
+    if cabem < len(alturas):
+        # Desconta o aviso E o gap: `_conclusao_quantos_cabem` garante que o ultimo CARD
+        # termina dentro do limite, mas o aviso comeca um gap depois disso. Sem descontar
+        # os dois, o aviso ainda estourava a area por ate `_CONCLUSAO_OBS_GAP` pt.
+        cabem = _conclusao_quantos_cabem(
+            alturas,
+            y,
+            _CONCLUSAO_AREA_BASE - _CONCLUSAO_OBS_AVISO_H - _CONCLUSAO_OBS_GAP,
+        )
+    return cabem, y + sum(alturas[:cabem]) + _CONCLUSAO_OBS_GAP * cabem
+
+
+def _conclusao_card_observacao(
+    pdf: _UltraPDF, texto: str, severidade: str, x: float, y: float, largura: float, altura: float
+) -> None:
+    """Um card de observacao: fundo + borda fina + barra de acento no topo + texto."""
+    fundo, acento = _CONCLUSAO_OBS_CORES[severidade]
+    pdf.set_fill_color(*fundo)
+    pdf.rect(x, y, largura, altura, style="F")
+    pdf.set_draw_color(225, 225, 228)
+    pdf.rect(x, y, largura, altura, style="D")
+    pdf.set_fill_color(*acento)
+    pdf.rect(x, y, largura, _CONCLUSAO_OBS_ACENTO_H, style="F")
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_xy(
+        x + _CONCLUSAO_OBS_PAD_X, y + _CONCLUSAO_OBS_ACENTO_H + _CONCLUSAO_OBS_PAD_Y
+    )
+    pdf.multi_cell(largura - 2 * _CONCLUSAO_OBS_PAD_X, _CONCLUSAO_OBS_LINHA_H, _ascii(texto))
+
+
+def _conclusao_page(
+    pdf: _UltraPDF,
+    result: dict[str, Any],
+    residual: dict[str, Any] | None,
+    info_imovel: dict[str, Any] | None,
+    viabilidade: dict[str, Any],
+    assets: dict[str, bytes | None],
+    *,
+    primary: tuple[int, int, int] = ULTRA_TURQUESA,
+    secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+) -> None:
+    """Pagina de parecer do ponto, em 2 COLUNAS: conteudo a esquerda, selo a direita.
+
+    Estrutura pedida por Vinicius (2026-08-07). A direita fica SO o selo, que segue a
+    anatomia do carimbo de veredito da tela de Viabilidade (quadrado de cantos
+    arredondados, simbolo em cima, rotulo embaixo, cor pelo estado). A esquerda ficam os
+    dois cards de aluguel e, abaixo deles, as observacoes -- cada uma em CARD proprio,
+    com o mesmo peso visual dos cards de valor. As duas colunas sao centralizadas
+    VERTICALMENTE na area de conteudo, cada uma no seu proprio eixo. READ-ONLY sobre o M1.
+    """
+    dados = _viab_normalizado(viabilidade)
+    parecer = _avaliar_conclusao(result, residual, info_imovel, dados)
+
+    pdf.add_page()
+    _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
+    _draw_title_band(pdf, _CONCLUSAO_PAGE_TITLE, rgb=primary)
+
+    margem = _CONCLUSAO_MARGEM_X
+    largura_esq = _CONCLUSAO_COL_ESQ_W
+    area_h = _CONCLUSAO_AREA_BASE - _CONCLUSAO_AREA_TOPO
+
+    # --- Coluna DIREITA: so o selo, centrado na vertical ---
+    _conclusao_selo(
+        pdf,
+        parecer.status,
+        _CONCLUSAO_COL_DIR_X,
+        _CONCLUSAO_AREA_TOPO + (area_h - _CONCLUSAO_SELO_H) / 2,
+        _CONCLUSAO_COL_DIR_W,
+        _CONCLUSAO_SELO_H,
+    )
+
+    # --- Coluna ESQUERDA: cards de aluguel + cards de observacao, centrados na vertical ---
+    itens = _conclusao_itens(parecer)
+    alturas, bloco_obs_h = _conclusao_bloco_observacoes(pdf, itens, largura_esq)
+    conteudo_h = _CONCLUSAO_ALUGUEL_H + _CONCLUSAO_ALUGUEL_OBS_GAP + bloco_obs_h
+    # `max(0, ...)`: conteudo mais alto que a area comeca no TOPO em vez de subir acima da
+    # banda de titulo -- e a guarda de altura mais abaixo corta o excedente com aviso.
+    y = _CONCLUSAO_AREA_TOPO + max(0.0, (area_h - conteudo_h) / 2)
+
+    _conclusao_cards_aluguel(pdf, dados, info_imovel, margem, y, largura_esq, secondary)
+    y += _CONCLUSAO_ALUGUEL_H + _CONCLUSAO_ALUGUEL_OBS_GAP
+
+    pdf.set_text_color(45, 45, 45)
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.set_xy(margem, y)
+    pdf.cell(largura_esq, _CONCLUSAO_OBS_TITULO_H, _ascii("Observações"))
+    y += _CONCLUSAO_OBS_TITULO_H + _CONCLUSAO_OBS_TITULO_GAP
+
+    cabem, y_aviso = _conclusao_plano_observacoes(alturas, y)
+    for (texto, severidade), altura in list(zip(itens, alturas, strict=True))[:cabem]:
+        _conclusao_card_observacao(pdf, texto, severidade, margem, y, largura_esq, altura)
+        y += altura + _CONCLUSAO_OBS_GAP
+    restantes = len(itens) - cabem
+    if restantes > 0:
+        # Truncar em SILENCIO faria a pagina parecer completa quando nao esta.
+        pdf.set_text_color(*_CINZA_TEXTO)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_xy(margem, y_aviso)
+        pdf.cell(
+            largura_esq,
+            12,
+            _ascii(f"(+{restantes} apontamento(s) não exibido(s) por falta de espaço.)"),
+        )
+
+    # A nota metodologica volta a ocupar a largura TOTAL: ela fala da pagina inteira, nao
+    # da coluna de observacoes, e presa aos 604 pt da esquerda passaria de 2 para 4 linhas.
+    pdf.set_text_color(*_CINZA_TEXTO)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_xy(margem, _CONCLUSAO_NOTA_Y)
+    pdf.multi_cell(_PAGE_W - 2 * margem, 11, _ascii(_CONCLUSAO_NOTA))
+    _draw_footer(pdf, with_attribution=False)
 
 
 def _draw_watermark(
@@ -2451,6 +3258,10 @@ def gerar_pdf_relatorio_pontual_classico(
     p2, s2 = _tema_bicolor(2)
     p3, s3 = _tema_bicolor(3)
     p4, s4 = _tema_bicolor(4)
+    # Ordinal 5: o primeiro LIVRE (0..4 em uso) e a pagina de Conclusao. Como os ordinais
+    # sao ABSOLUTOS -- nao um contador incremental de paginas --, tomar o 5 nao desloca a
+    # cor de nenhuma pagina existente. 5 e' impar -> turquesa primaria / magenta acento.
+    p5, s5 = _tema_bicolor(5)
 
     pdf = _UltraPDF()
     _classico_cover_page(
@@ -2487,6 +3298,20 @@ def gerar_pdf_relatorio_pontual_classico(
     _classico_banda_magenta_rodape(pdf)
     if viabilidade:
         _viabilidade_page(pdf, viabilidade, assets, primary=p1, secondary=p2)
+        # CONCLUSAO: fecha o relatorio com o parecer do ponto, logo antes do credito.
+        # Mesma condicao da pagina de Viabilidade, de proposito -- sem o payload nao ha
+        # regua de retorno nem aluguel-teto para avaliar, e a API/bot (que nao mandam
+        # `viabilidade`; ver `api/service.py`) seguem produzindo o PDF identico ao de hoje.
+        _conclusao_page(
+            pdf,
+            result,
+            residual,
+            info_imovel,
+            viabilidade,
+            assets,
+            primary=p5,
+            secondary=s5,
+        )
     _classico_credit_page(
         pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex
     )

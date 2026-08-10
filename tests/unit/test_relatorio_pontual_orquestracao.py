@@ -115,8 +115,9 @@ def test_dispatcher_com_fotos_info_viab_enriquecido():
         info_imovel={"metragem_m2": 1500},
         viabilidade=payload_viab,
     )
-    # capa + fotos + info + 5 conteudo + viab numeros + viab graficos + credito = 11
-    assert b"/Count 11" in payloads.pdf_bytes
+    # capa + fotos + info + 5 conteudo + viab numeros + viab graficos + conclusao
+    # + credito = 12
+    assert b"/Count 12" in payloads.pdf_bytes
 
 
 def test_dispatcher_censitario_tambem_aceita_params():
@@ -137,5 +138,5 @@ def test_end_to_end_motor_para_pdf():
     payloads = gerar_payloads_download_relatorio_censitario(
         _MIN_RESULT, None, template="classico", viabilidade=viabilidade
     )
-    assert b"/Count 9" in payloads.pdf_bytes  # numeros + graficos
+    assert b"/Count 10" in payloads.pdf_bytes  # numeros + graficos + conclusao
     assert len(payloads.pdf_bytes) > 30_000

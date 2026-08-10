@@ -3615,3 +3615,48 @@ guardrail reprova), XLSX por `openpyxl`, PDF da carteira e da ficha sobre `pdf_b
 geradores em produção com testes de regressão de bytes.
 
 ---
+
+### Epic BLK-CRESC — Blindagem da camada de crescimento municipal
+
+> Aberta em 2026-08-07, no deploy que ligou a camada em produção (`docs/camada_crescimento_municipal.md`).
+> Os dois blocos abaixo foram medidos em produção, não inferidos.
+
+#### BLK-CRESC-01 — Camada opcional não pode derrubar rota obrigatória
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (`web/**`) |
+| **Esteira** | Builder → QA → Felipe |
+| **Depende de** | — |
+| **Status** | Pendente |
+| **Autonomia** | **futuro** |
+
+**Defeito medido.** Com `crescimento_municipal.parquet` truncado ou de 0 bytes, `/api/uf/SP`,
+`/api/municipio/SP/Campinas` e `/api/municipios/SP` respondem **500** — as três. A camada é
+declarada OPCIONAL (o piloto sobe sem ela e o passo 4 fica vazio), mas as guardas de
+`carregar_crescimento`/`carregar_crescimento_hex` são `.exists()`, não leitura protegida:
+arquivo presente e ilegível vira exceção que sobe até a rota.
+
+**Objetivo.** Envolver a leitura dos dois parquets em `try/except` que degrade para o mesmo
+estado de "arquivo ausente" (passo 4 vazio, resto da tela intacto), com log de WARNING — hoje
+a falha é silenciosa em qualquer cenário. Teste de regressão com parquet corrompido em `tmp_path`.
+
+#### BLK-CRESC-02 — `/api/health` mente sobre o estado dos dados
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** |
+| **Esteira** | Builder → QA |
+| **Depende de** | BLK-CRESC-01 |
+| **Status** | Pendente |
+| **Autonomia** | **futuro** |
+
+**Defeito medido.** Com o piloto inteiro quebrado (500 nas três rotas de mapa acima),
+`/api/health` continua respondendo **200** e o HEALTHCHECK do compose fica verde. O Docker não
+reinicia nada e ninguém é avisado.
+
+**Objetivo.** Um sinal de saúde que cubra DADO, não só processo: subcomando no
+`scripts/healthcheck_vps.sh` que valide presença + schema dos parquets críticos de staging
+(contagem de colunas esperada), com alerta no Telegram como os demais checks. Alternativa mais
+barata e sem tocar `web/**`: cron que roda a validação HTTP da §5 do
+`docs/camada_crescimento_municipal.md` e alerta em divergência.

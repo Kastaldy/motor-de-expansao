@@ -553,10 +553,11 @@ def _faixa_label(v: Any) -> str | None:
 COMPETITOR_PIN_LIMIT = 6000  # espelha constants.COMPETITOR_PIN_LIMIT
 CONCORRENTES_PARQUET = STAGING_DIR / "concorrentes_mapeados.parquet"
 ULTRA_PERF_PARQUET = STAGING_DIR / "unidades_ultra_performance_hex.parquet"
-# Cadastro AMPLO das unidades Ultra (150 linhas, com `uf`/`cidade`/`flag_coord_valida`).
-# O `ULTRA_PERF_PARQUET` acima so tem as 54 unidades da planilha GeoFusion e esta
-# congelado; este cadastro cobre a rede atual e serve para COMPLETAR as coordenadas
-# da Visao Executiva (ver `_ultra_coord_map`). READ-ONLY, como todo o resto.
+# Cadastro AMPLO das unidades Ultra (169 linhas em 2026-08-07, com `uf`/`cidade`/
+# `flag_coord_valida`). O `ULTRA_PERF_PARQUET` acima so tem as 54 unidades da planilha
+# GeoFusion e esta congelado desde 2026-06-29; este cadastro cobre a rede atual e serve
+# para COMPLETAR as coordenadas da Visao Executiva (ver `_ultra_coord_map`) e para os
+# pins do Mapa Territorial (ver `_ultra_pontos_mapa`). READ-ONLY, como todo o resto.
 ULTRA_MAPEADAS_PARQUET = STAGING_DIR / "unidades_ultra_mapeadas.parquet"
 # Diretorio das logos PNG das redes (`logo_<rede>.png`). Canonico do motor =
 # <repo>/concorrentes (normalizar_concorrentes.CONCORRENTES_DIR); override por env.
@@ -683,6 +684,39 @@ def _carregar_ultra_pontos() -> pd.DataFrame:
     return df[["nome", "lat", "lng"]].reset_index(drop=True)
 
 
+@functools.lru_cache(maxsize=1)
+def _ultra_pontos_mapa() -> pd.DataFrame:
+    """Pontos Ultra dos PINS do mapa: a curada COMPLETADA pelo cadastro amplo.
+
+    Vive separada de `_carregar_ultra_pontos` de propósito, e não por estilo. Aquela
+    alimenta o dict `curada` de `_ultra_coord_map`, onde a precedência é entre FONTES:
+    unir o cadastro lá faria um acerto do cadastro (que é cego a UF no terceiro
+    fallback) ganhar de um acerto da curada — foi exatamente assim que `TAUBATE` foi
+    parar na Grande SP. Aqui não há precedência de fonte a preservar, só a união dos
+    pontos que existem, então a mistura é segura.
+
+    Antes desta função o mapa desenhava apenas as 54 linhas da planilha GeoFusion,
+    congelada em 2026-06-29: a rede aberta depois disso (Duque de Caxias, as Ceilândias,
+    Capim Macio…) simplesmente não existia para o Mapa Territorial, mesmo estando no
+    cadastro com coordenada válida.
+
+    A curada vence por chave normalizada: onde as duas bases têm a mesma unidade, o
+    ponto exibido continua sendo o que o mapa já mostrava.
+    """
+    cols = ["nome", "lat", "lng"]
+    curada = _carregar_ultra_pontos()
+    extra = _carregar_ultra_mapeadas()
+    if len(extra) and len(curada):
+        vistas = {_chave_unidade(n) for n in curada["nome"]}
+        extra = extra[~extra["nome"].map(_chave_unidade).isin(vistas)]
+    partes = [d[cols] for d in (curada, extra) if len(d)]
+    if not partes:
+        return pd.DataFrame(columns=cols)
+    df = pd.concat(partes, ignore_index=True) if len(partes) > 1 else partes[0]
+    df = df.dropna(subset=["lat", "lng"]).drop_duplicates(subset=["lat", "lng"])
+    return df[cols].reset_index(drop=True)
+
+
 def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
     """Pins de concorrentes (por hex do municipio) + Ultra (por bbox) + icones quadrados."""
     from motor_expansao.dashboard.competitors import COMPETITOR_BRANDS
@@ -698,7 +732,7 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
             no_muni = conc[conc["lat"].between(lat_min, lat_max) & conc["lng"].between(lng_min, lng_max)]
         conc = no_muni.head(COMPETITOR_PIN_LIMIT)
 
-    ultra = _carregar_ultra_pontos()
+    ultra = _ultra_pontos_mapa()
     if len(ultra):
         ultra = ultra[ultra["lat"].between(lat_min, lat_max) & ultra["lng"].between(lng_min, lng_max)]
 
@@ -1748,7 +1782,7 @@ def _resumo(df: pd.DataFrame) -> dict[str, Any]:
 def _pins_ultra_bbox(df: pd.DataFrame) -> dict[str, Any]:
     """Só os pins Ultra (a rede própria) no bbox — overview da UF sem poluir com
     milhares de concorrentes. Os concorrentes aparecem no drill-down do município."""
-    ultra = _carregar_ultra_pontos()
+    ultra = _ultra_pontos_mapa()
     if len(ultra):
         lat_min, lat_max = float(df["lat"].min()), float(df["lat"].max())
         lng_min, lng_max = float(df["lng"].min()), float(df["lng"].max())
@@ -3185,22 +3219,49 @@ def _chave_unidade(valor: object) -> str:
 
 # Unidades cujo nome COMERCIAL na base Growth não bate com o nome no cadastro, e que
 # nenhuma normalização resolve. Cada entrada foi conferida contra o cadastro em
-# 2026-08-03: o alvo existe, está livre (nenhuma outra unidade da Growth o reivindica)
-# e a `cidade` do cadastro confere. `(chave Growth, UF) -> chave no cadastro`.
+# 2026-08-03 (e o bloco de 2026-08-07 contra o cadastro de 169 unidades): o alvo existe,
+# está livre (nenhuma outra unidade da Growth o reivindica) e a `cidade` do cadastro
+# confere. `(chave Growth, UF) -> chave no cadastro`.
+#
+# O valor é a chave JÁ NORMALIZADA por `_chave_unidade`, que remove acento, caixa e
+# sufixo de UF mas PRESERVA os espaços internos: o alvo de "Duque de Caxias" é
+# "DUQUE DE CAXIAS", não "DUQUEDECAXIAS" — um valor sem os espaços não casa com nada e
+# vira um no-op silencioso.
 _EXEC_ALIAS_COORD: dict[tuple[str, str], str] = {
+    # Bairro='Boa Vista' no GeoFusion; a homônima "Vitoria da Conquista II" fica no
+    # Ibirapuera, e a Growth não tem nenhuma unidade "VITORIA DA CONQUISTA".
+    ("BOA VISTA", "BA"): "VITORIA DA CONQUISTA",
     ("PATIO BRASIL", "DF"): "PATIO SHOPPING BRASIL",
     # "Vicente Pires / DF" já é consumida pela unidade "VICENTE PIRES - DF" da Growth;
     # a da "Rua 8" é a segunda do bairro, cadastrada como "Vicente Pires 2".
     ("VICENTE PIRES RUA 8", "DF"): "VICENTE PIRES 2",
     ("CESARIO", "MG"): "CESARIO ALVIM",
     ("FLORIANO", "MG"): "FLORIANO PEIXOTO",
+    # Único registro dos 169 que menciona "Sagrada Familia": Rondonópolis, cujo
+    # Bairro no GeoFusion é 'Parque Sagrada Família'.
+    ("SAGRADA FAMILIA", "MT"): "RONDONOPOLIS",
     # Única unidade de PE nas duas bases; a av. Domingos Ferreira fica no Pina.
     ("DOMINGOS FERREIRA", "PE"): "RECIFE - PINA",
     ("FLOW", "PR"): "CURITIBA FLOW (UBERABA)",
+    # Única linha do cadastro no município de Duque de Caxias; a Growth a chama só de
+    # "CAXIAS" e `_chave_unidade` não expande prefixo de nome (nem deveria).
+    ("CAXIAS", "RJ"): "DUQUE DE CAXIAS",
     ("SAO GONCALO - CENTRO", "RJ"): "SAO GONCALO",
     ("SAO GONCALO SHOPPING", "RJ"): "SHOPPING PARTAGE",
     ("PICARRAS", "SC"): "BALNEARIO PICARRAS",
     ("AMERICANA CENTRO", "SP"): "AMERICANA",
+    # CORREÇÃO DE PIN ERRADO, não de pin ausente: sem o alias, "BOQUEIRAO - SP" não
+    # casa por (chave, UF), cai no terceiro fallback — que é cego a UF — e herda a
+    # coordenada de "Boqueirão / PR", em Curitiba, ~350 km de Santos.
+    #
+    # Cuidado: há DUAS unidades no bairro Boqueirão no litoral, e o cadastro não usa
+    # esse nome em nenhuma das duas — "Praia Grande / SP" (Bairro='Boqueirão', Praia
+    # Grande) e "Santos II - SP" (Bairro='Boqueirão', Santos). O alvo é a de SANTOS
+    # porque a de Praia Grande já é reivindicada pela própria "PRAIA GRANDE - SP" da
+    # Growth, que também está ativa. A geografia confirma: o ponto resolvido fica a
+    # 1,1 km do Gonzaga (bairro vizinho na orla de Santos) e a 11 km de Praia Grande.
+    # Felipe confirmou em 2026-08-07 que "BOQUEIRAO" no UX é a de Santos.
+    ("BOQUEIRAO", "SP"): "SANTOS II",
     ("VILLA BRANCA", "SP"): "JACAREI",  # Villa Branca é bairro de Jacareí
     ("VISCONDE DE RIO CLARO", "SP"): "RIO CLARO",
 }

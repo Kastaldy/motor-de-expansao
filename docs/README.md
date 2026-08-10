@@ -11,6 +11,7 @@ Mapa de navegação dos contratos e runbooks do Motor de Expansão. Legenda de s
 - [m1_outputs_oficiais.md](m1_outputs_oficiais.md) — **[canônico]** contrato curto dos outputs oficiais do M1.
 - [m1_1_arquitetura_enriquecimento.md](m1_1_arquitetura_enriquecimento.md) — design da camada M1.1.
 - [modelo_mercado_hexagonos.md](modelo_mercado_hexagonos.md) — **[canônico]** contrato de colunas/cálculos de mercado/residual.
+- [camada_crescimento_municipal.md](camada_crescimento_municipal.md) — **[canônico]** contrato + runbook de publicação da camada de crescimento (passo 4 do piloto): join `cod6`, domínios fechados, validação HTTP pós-deploy e rollback.
 - [vulnerabilidade_ma_contrato.md](vulnerabilidade_ma_contrato.md) — **[canônico]** contrato dos sinais de vulnerabilidade de academias independentes (funil de M&A, Plano B, READ-ONLY M1).
 - [relatorio_pontual_censitario.md](relatorio_pontual_censitario.md) — **[canônico]** contrato do Relatório Pontual Censitário (1,0 km).
 - [relatorio_municipal_template.md](relatorio_municipal_template.md) — template do Relatório Municipal.
