@@ -100,6 +100,15 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   materializar o universo (os independentes de bairro vivem nos agregadores WellHub/TotalPass; a camada
   anti-PII colapsa tudo `< 3 filiais` em `independente`, categoria sem identidade — daí a Opção B exigir
   a extensão de ingestão).
+- **Há um gate de universo ANTES deste, no coletor `[emenda BLK-MA-11 / DEC-025, 2026-08-07]`.** A
+  definição acima separa *independente* de *cadeia* — mas ela só se aplica ao que o coletor já
+  gravou. Quem decide o que é "academia" em primeiro lugar é o filtro de atividades do WellHub
+  (`tem_musculacao`, `Wellhub/split_by_state.py`), a montante deste contrato. Esse filtro **quebrou**
+  quando o WellHub renomeou a taxonomia, e a DEC-025 o redefiniu para o vocabulário
+  `{musculacao, treino de forca, fisiculturismo, levantamento de peso, treino hibrido}` ("V2":
+  22.174 das 45.527 linhas, 48,7%, com 99,5% de recall sobre a base de maio). Registrado aqui porque
+  o §3 descrevia o universo como se o único corte fosse rede-vs-independente — não é, e o corte de
+  cima é o que mais mexe no N.
 
 ---
 
@@ -169,8 +178,8 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
 - **Payload por linha (sem crus além do hash) `[emenda 2026-07-29]`.** 10 colunas, nesta ordem:
   `{snapshot_date, slug, concorrente_id, chave_snapshot, chave_origem, hex_id_res7, rede, fonte,
   hash_campos_raspados, versao_contrato}` — **sem** nome/coordenadas brutas; a única "impressão
-  digital" dos campos raspados é o `hash_campos_raspados` (que **não** inclui `data_coleta` nem
-  `slug`). `fonte` não é opcional: o sinal 1 da seção 4 é derivado dela, e sem ela a regra de "gap
+  digital" dos campos raspados é o `hash_campos_raspados` (que **não** inclui `data_coleta`, `slug`
+  nem a taxonomia — ver a emenda BLK-MA-11 abaixo). `fonte` não é opcional: o sinal 1 da seção 4 é derivado dela, e sem ela a regra de "gap
   de feed não vira churn" é impossível de implementar. `semana` **não** é coluna do arquivo — vive
   no caminho, como chave de partição hive.
 - **Limpeza de ruído (BLK-MA-02, obrigatória antes de derivar churn).** O feed cru traz linhas que
@@ -183,6 +192,29 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
 - **Derivação dos sinais.**
   - Churn (sinal 3): o `slug` (fallback `concorrente_id`) aparece / some / reaparece ("piscando") entre semanas.
   - Staleness (sinal 4): nº de semanas desde a última mudança de `hash_campos_raspados`.
+- **A TAXONOMIA sai do hash `[emenda BLK-MA-11 / DEC-025, 2026-08-07]` — e o contrato de snapshot
+  vai para `v2`.** `atividades` (WellHub) e `modalidades` (TotalPass) **saíram** de
+  `CAMPOS_HASH_POR_FONTE` e entraram em `CAMPOS_NUNCA_HASHEADOS`, ao lado de `data_coleta` e `slug`.
+  Razão categórica: taxonomia é vocabulário da **FONTE**, não cadastro da academia — renomear rótulo
+  não é "o negócio mudou". Razão medida: entre maio e agosto de 2026 o WellHub renomeou "Musculação"
+  para "Treino de força"/"Fisiculturismo"/"Treino Híbrido", e `atividades` mudou em **12.314 dos
+  12.420** slugs comuns (**99,1%**) — contra `endereco_formatado` em 63 e `nome` em 33 — sem que uma
+  única academia mudasse de fato. Com a taxonomia dentro do hash, a primeira coleta pós-renomeação
+  leria a base inteira como "cadastro atualizado agora", `semanas_sem_mudanca` nunca cresceria e **o
+  sinal 4 morreria** — o mesmo modo de falha que já excluía `data_coleta`. O TotalPass entra por
+  **simetria preventiva**, não por medição: só existe uma coleta dele (01/06/2026), logo não há
+  segunda observação para medir volatilidade, e ele **ainda usa** a taxonomia antiga ("Musculação"
+  em 15.970 de 15.986 unidades, 99,9%). `VERSAO_CONTRATO_SNAPSHOT` passa de `snapshots_concorrentes_v1`
+  para `..._v2`; a migração foi **gratuita** porque a série estava com zero semanas no momento da
+  mudança. Guardrail executável: `test_renomear_taxonomia_nao_mexe_no_hash` (`test_contrato.py`) e
+  `test_hash_ignora_a_taxonomia_inteira` (`test_snapshots.py`).
+- **Consequência de comparabilidade da mesma emenda, que o BLK-MA-06 precisa respeitar.** O critério
+  de universo do coletor WellHub também mudou (vocabulário "V2" da DEC-025, parte 1): o universo passa
+  de **12.769** (maio) para **22.174** unidades, e **9.816** desses slugs nunca estiveram na base de
+  maio. Como a coleta de maio **só gravava o que passava no filtro**, o negativo de maio não existe
+  como dado e é impossível separar "parceiro novo" de "existia e foi corretamente excluído". Portanto
+  a **primeira janela** de série após a mudança tem churn (sinal 3) **inutilizável**, e o cron deve
+  tratá-la como marco zero, não como semana comparável.
 - **Ramp-up / maturidade.** `flag_serie_imatura = True` até `MIN_SEMANAS = 8` snapshots; enquanto
   imatura, os sinais 3/4 **NÃO penalizam** (são renormalizados para fora do score — seção 8). Staleness
   só é interpretável após a série atingir `STALE_SEMANAS = 12`. Mitiga falso churn no início da série.

@@ -1458,7 +1458,7 @@ produção e exige DEC + gate humano.
 | **Criticidade** | **Média** (ajustes localizados numa camada paralela READ-ONLY sobre o M1, já entregue e coberta por testes; nenhum toca score/pesos/artefatos do M1 nem cria dependência externa). |
 | **Prioridade** | Antes do **BLK-MA-05/06** (item 1: quem EXIBIR a flag) e antes do **BLK-MA-06** (item 2). **NÃO bloqueia o BLK-MA-04** — verificado em 2026-07-30: o score não consome `flag_troca_chave_na_serie` nem a propaga (trava executável em `_assert_schema_score`). |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | **PARCIAL** (PR #194, merged 2026-08-05). ✅ Item 1 (`flag_troca_chave_na_serie` redefinida para troca TEMPORAL) e ✅ item 2-B (ponto cego do AST: era **2/5**, não 3/5 — hoje 5/5, helper único em `tests/unit/_ast_imports.py`, 4 cópias unificadas). 🟡 **Item 2 diagnosticado, NÃO corrigido** — a causa não é o import de `classificar_rede`: o `__init__` de `demanda_revelada` reexporta os **9** submódulos eager e qualquer um puxa sklearn/scipy/shapely/requests. Teste por `sys.modules` marcado `xfail(strict=True)`; segue bloqueante para o MA-06. ⬜ Os 6 menores. |
+| **Status** | **PARCIAL.** ✅ Item 1 (`flag_troca_chave_na_serie` redefinida para troca TEMPORAL) e ✅ item 2-B (ponto cego do AST: era **2/5**, não 3/5 — hoje 5/5, helper único em `tests/unit/_ast_imports.py`) — PR #194, merged 2026-08-05. ✅ **Item 2 CORRIGIDO em 2026-08-10**: o `__init__` de `demanda_revelada` passou a reexportar por `__getattr__` (PEP 562); `import motor_expansao.vulnerabilidade` caiu de **~18 s com sklearn/scipy/shapely/requests/pyproj + 5 módulos de `dashboard/`** para **~3 s com zero dos dois**. **Desbloqueia o BLK-MA-06.** ⬜ Os 6 menores (m1-m6). |
 | **Depende de** | BLK-MA-02 (concluído 2026-07-29). |
 | **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do BLK-MA-02: camada com insumo de PII na origem (DEC-012) e módulo destinado ao cron de produção. NÃO marcar loop-safe. |
 
@@ -1489,6 +1489,34 @@ ratificou plugar no `run_weekly_90.sh`: se `sklearn`/`scipy` não estiverem no h
 passo do cron quebra no import. Tornar o `__init__` do `demanda_revelada` lazy **ou** replicar o
 classificador (como já foi feito com o `concorrente_id`); no mínimo corrigir o docstring para "não
 importa **diretamente**". Acrescentar teste de isolamento por `sys.modules`, não só por AST.
+
+> **RESOLVIDO em 2026-08-10.** Escolhida a rota do `__init__` lazy, e não a réplica do
+> classificador: ela conserta o vazamento para **todos** os consumidores do `demanda_revelada`, não
+> só para o `vulnerabilidade/`, e não duplica código. `demanda_revelada/__init__.py` passou a
+> reexportar por `__getattr__` (PEP 562), com `_EXPORTS` mapeando cada nome público ao seu
+> submódulo e memoização em `globals()`; o bloco `TYPE_CHECKING` preserva o que o type checker
+> enxerga, e `__all__` fica intacto. Medido: **~18 s -> ~3 s**, de 5 módulos de `dashboard/` e 5
+> deps pesadas para **zero**, e de 12 submódulos de `demanda_revelada` carregados para 4 (todos
+> leves).
+>
+> **A causa registrada acima estava certa, mas incompleta em um ponto que importa.** Não é que
+> "qualquer um dos 9 puxa o conjunto": o peso vem de `backtest_tp05`, `calibracao_*`,
+> `estrutura_funil`, `huff_captura` e `validacao`, que importam `scipy`/`sklearn` no topo. O que o
+> `vulnerabilidade/` realmente precisa — `classificacao_rede_menor` — importa só `re`,
+> `unicodedata` e `pathlib`. O problema nunca foi o submódulo escolhido; era o `__init__` do pai,
+> que o interpretador executa antes de qualquer submódulo.
+>
+> **Dois defeitos do próprio teste, achados no caminho e corrigidos junto** (valem como lição de
+> método, não só como conserto):
+> 1. O subprocesso não recebia `PYTHONPATH` e resolvia `motor_expansao` pela **instalação
+>    editável** — que aponta para o clone principal, não para o worktree. Ele media outra árvore em
+>    silêncio. Agora recebe o `src` deste checkout e **assere a procedência** do que mediu.
+> 2. Sob a captura do pytest no Windows, o `subprocess` levantava
+>    `OSError: [WinError 6] Identificador inválido` antes de rodar qualquer coisa. Como o teste
+>    estava marcado `xfail(strict=True)`, essa OSError contava como "falha esperada": **o teste
+>    errava em vez de medir, e a marca escondia isso**. Corrigido com `stdin=DEVNULL`. Fica o
+>    princípio: `xfail` engole exceção de qualquer natureza, então um `xfail` de longa duração pode
+>    estar mascarando um teste quebrado em vez de um defeito real.
 
 **Item 2-B (médio, acrescentado pelo QA do BLK-MA-03 em 2026-07-29) — ponto cego de 1 linha no
 `test_isolamento_imports`, que enfraquece o guardrail nos DOIS blocos.** O QA do MA-03 construiu uma
@@ -1777,7 +1805,7 @@ a partir da raiz do repo do scraper).
 | **Criticidade** | **Alta** (liga um sinal do `score_vulnerabilidade`, o que **rebalanceia todos os pesos efetivos**: S3 cai de ≈0,467 para 0,35 e S4 de ≈0,333 para 0,25; muda o contrato de snapshot e força bump de versão. Camada **PARALELA e READ-ONLY sobre o M1** — não toca `score_priorizacao`, pesos, nem artefatos oficiais, e o score ainda não tem consumidor materializado; **volta a ser Crítica quando o BLK-MA-05 materializar o entregável**). **Exige emenda ao contrato ratificada no gate + gate humano obrigatório** antes do Builder. |
 | **Prioridade** | Depois do **BLK-MA-08**, que produz o insumo. Antes do **BLK-MA-05**, que é o consumidor do score — se o MA-05 sair antes, ordenará sobre uma régua que este bloco vai mudar. |
 | **Esteira** | Block Orchestrator → Planner → `[REVISÃO HUMANA OBRIGATÓRIA — D-A/D-B/D-C, no gate PRÓPRIO deste bloco (o gate conjunto com o BLK-MA-08 foi FATIADO pela DEC-024)]` → Builder → QA. |
-| **Status** | **DESTRAVADO para o gate** (2026-08-06). O pré-requisito do **D-A** — a distribuição restrita a `independente` — existe: **n=34.035**, `min=1.0 · p1=4.23 · p5=4.59 · p10=4.69 · mediana=4.93 · desvio=0.192`; **158 (0,46%) abaixo de 4,0**. A sonda de julho (N=53) media `4,26–4,98` e **não via a cauda**, o que confirma o alerta contra fixar o limite inferior em 4,0. O **D-B** também ganhou insumo: o MA-10 provou que o TotalPass não tem nota como produto, logo a régua assimétrica é **permanente**, não transitória. Código ainda não iniciado. |
+| **Status** | **PRONTO PARA O GATE** (prep concluída em 2026-08-10). O pré-requisito do **D-A** foi cumprido e **reproduzido do dado bruto** (`n=34.035` independentes com nota): `min=1,0 · p1=4,23 · p5=4,59 · p10=4,69 · mediana=4,93 · desvio=0,192`; **158 (0,46%) abaixo de 4,0**. A medição **falsificou dois números** que o D-A usava — o domínio do `v2` e a taxa de baixa confiança —, e o parágrafo do D-A foi reescrito com os corretos (ver lá). O **D-B** ganhou insumo do MA-10: o TotalPass não tem nota como produto, logo a régua assimétrica é **permanente**. Ponteiros, tripwires, contagem de escopo e baseline de teste também foram corrigidos. **Falta só a decisão humana D-A/D-B/D-C.** Código não iniciado. |
 | **Depende de** | BLK-MA-08. |
 | **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
 
@@ -1810,15 +1838,49 @@ dos 100 pontos. Todo o valor de curto prazo da dupla depende do **D-C**.
   (2026-07-30), que o deixou RESERVADO por não-monotonicidade e não-reprodutibilidade — motivos que
   valem igualmente para o rating. Mas, ao contrário do `v4`, a régua do `v2` está **genuinamente em
   aberto**: o §8.1 (`:271-272`) diz `1 − normaliza(rating)` e dá a razão linear apenas como
-  **exemplo** (`ex.:`). Medido nas **53 unidades com nota**, o `v2` linear sobre 1–5 ocupa **18% do
-  domínio** (0,005 a 0,185): contribui no máximo **~4,6** pontos de 100, com amplitude de **~4,5**
-  pontos entre a pior e a melhor nota. A distribuição **tem** variância real (desvio 0,127; decis de
-  4,62 a 4,92) — é a régua que a desperdiça, porque notas de app não ocupam a metade inferior da
-  escala. Terceira via a avaliar: **min-max sobre faixa fixa por decisão** (não por lote), o que
-  preserva monotonicidade e reprodutibilidade. **Pré-requisito:** re-medir a distribuição restrita a
-  `independente` (a sonda cobriu o universo WellHub inteiro), e escolher o limite inferior **abaixo**
-  do mínimo plausível de independente — não 4,0, que satura justamente a ponta vulnerável —, travando
-  o comportamento do clip em teste.
+  **exemplo** (`ex.:`).
+
+  > **O pré-requisito do D-A foi CUMPRIDO em 2026-08-10, e ele falsifica os números que este
+  > parágrafo trazia.** A medição antiga vinha da sonda de **N=53** sobre o universo WellHub
+  > inteiro; a nova é sobre o consolidado do BLK-MA-08, restrita a `independente` via
+  > `classificar_rede`, com **n=34.035** unidades com nota. Reprodutível: ler
+  > `GymScraping/Wellhub/unidades_wellhub.csv`, filtrar por `classificar_rede(nome) ==
+  > "independente"` e descartar `nota_wellhub` vazia.
+  >
+  > ```
+  > min=1,0   p1=4,23   p5=4,59   p10=4,69   mediana=4,93   max=5,0   desvio=0,192
+  > abaixo de 4,0: 158 (0,46%)      abaixo de 4,5: 947 (2,78%)
+  > ```
+  >
+  > **Correção 1 — o domínio NÃO é 18%.** A sonda mediu faixa `4,26–4,98` e daí saiu o "0,005 a
+  > 0,185 / no máximo ~4,6 pontos". Com N grande existem unidades em **1,0** (cinco delas), então o
+  > `v2` linear ocupa a escala **inteira**, `[0, 1]`. O que é estreito é o *corpo*, não o domínio.
+  > Sob a régua linear e o regime `{s1,s2,s3,s4}` (`w2 = 0,25`), a contribuição em pontos de 100 é:
+  >
+  > | | nota | `v2` | pontos |
+  > |---|---|---|---|
+  > | mediana | 4,93 | 0,018 | **0,44** |
+  > | p10 | 4,69 | 0,078 | 1,94 |
+  > | p5 | 4,59 | 0,103 | 2,56 |
+  > | p1 | 4,23 | 0,193 | 4,81 |
+  > | mínimo | 1,0 | 1,000 | **25,00** |
+  >
+  > Ou seja: para 99% do universo o S2 vale ≤ 4,8 pontos — mas a cauda que interessa ao M&A **não**
+  > está saturada, e é ela que a régua precisa tratar. Isso muda a pergunta do D-A: não é mais "a
+  > régua desperdiça a variância", é "a régua entrega quase tudo o que tem numa cauda de 0,46%".
+  >
+  > **Correção 2 — e esta é a mais séria: a cauda vulnerável é a MENOS confiável.** Das 158 unidades
+  > abaixo de 4,0, a **mediana é de 10,5 avaliações** e **47% têm menos de 10**. No universo com
+  > nota, **38,4% têm menos de 30 avaliações** (mediana geral: 46). A DEC-024 (parte 5, D-1)
+  > justificou a coluna de contagem dizendo que *"2 das 53 unidades da sonda têm menos de 30
+  > avaliações"* — **3,8%**. O número real é **dez vezes maior**. Consequência direta para o D-A:
+  > uma régua que **não** pondere confiança vai colocar no topo do ranking de M&A academias cujo
+  > "sinal" são três avaliações. A contagem deixa de ser refinamento e passa a ser parte da régua.
+  >
+  > Terceira via a avaliar (segue de pé, e agora com mais razão): **min-max sobre faixa fixa por
+  > decisão** (não por lote), preservando monotonicidade e reprodutibilidade. O alerta original
+  > continua válido — não fixar o limite inferior em **4,0**, que satura justamente a ponta
+  > vulnerável — e ganhou custo medido: **158 unidades**. Travar o comportamento do clip em teste.
 - **D-B — comparabilidade entre regimes.** Com S2 só-WellHub, o universo se parte em `{s1,s2,s3,s4}`
   (pesos `0,15/0,25/0,35/0,25`) e `{s1,s3,s4}` (`≈0,20/0,467/0,333`). Duas academias idênticas, uma
   listada em cada agregador, **saem com scores diferentes** — e o churn pesa 33% mais no grupo sem
@@ -1841,7 +1903,9 @@ dos 100 pontos. Todo o valor de curto prazo da dupla depende do **D-C**.
   que dá valor à dupla no curto prazo. **O gate precisa ver o composto que estará autorizando:**
   `{s1,s2}` = `0,375 · v1 + 0,625 · v2`, com domínio efetivo dado pela opção escolhida em D-A.
 
-**Escopo permitido (READ-ONLY M1) — 12 pontos.** `_COLUNAS_TRABALHO` (`snapshots.py:92-107`) — hoje a
+**Escopo permitido (READ-ONLY M1) — 13 pontos.** *(O cabeçalho dizia "12"; a enumeração sempre
+produziu 13 — 10 de código + correções de contrato + reabertura do §8.2 + consequência do §10.
+Corrigido em 2026-08-10.)* `_COLUNAS_TRABALHO` (`snapshots.py:92-107`) — hoje a
 coluna nova é **DROPADA em silêncio** em `snapshots.py:150`; `CONTRATO_COLUNAS_SNAPSHOT`
 (`contrato.py:193-204`), de 10 para 11/12 colunas, **com bump de `VERSAO_CONTRATO_SNAPSHOT`**
 (`contrato.py:34`); **`ler_snapshots`** — a leitura hive de esquema misto (partições pré e pós-bump)
@@ -1856,20 +1920,48 @@ antecipa: *"Reativar o sinal 2 é remover UMA entrada desta tupla"*); a máscara
 tocá-la a coluna `v2` nunca é criada e `_disponibilidade_efetiva` (`:246-247`) devolve `False` para
 sempre, tornando inócua a remoção de `SINAIS_INATIVOS`; `CONTRATO_COLUNAS_SCORE`
 (`contrato.py:286-307`), de 20 para 21 colunas; o biconditional `s2 ⟺ v2` (`score.py:402-411`); a
-flag de `:294` e o `ordenavel` de `:299` conforme D-B e D-C. Mais as correções de contrato: §1
-(`:60-62`), §7 (`:220-225`) e §13 (`:509`), que afirmam a premissa falsificada; a reabertura do §8.2
-exigida pelo item 4 da emenda G-D3; e a consequência para o `score_vulnerabilidade_medio` hex-level
-do §10, que agrega linhas de réguas diferentes.
+flag de `:294` e o `ordenavel` de `:299` conforme D-B e D-C. Mais as correções de contrato: §1, §7 e
+§13, que afirmam a premissa falsificada; a reabertura do §8.2; e a consequência para o
+`score_vulnerabilidade_medio` hex-level do §10, que agrega linhas de réguas diferentes.
+
+> **Duas precisões sobre as correções de contrato, medidas em 2026-08-10.**
+>
+> **(a) São QUATRO afirmações falsificadas, não três.** Além de §1, §7/D3 e §13, a **tabela dos 6
+> sinais do §4** traz, na linha do sinal 2, o insumo como *"**NÃO coletado hoje (nenhum coletor
+> emite nota)**"*. Isso é **factualmente falso** desde o BLK-MA-08 — não é rótulo desatualizado
+> como as menções `MA-08 -> MA-09`, é uma afirmação sobre o mundo que deixou de valer. O parágrafo
+> "Ponteiros a redirecionar" tratava o §4 como mera troca de rótulo; não é.
+>
+> **(b) A justificativa da reabertura do §8.2 estava errada — a conclusão, não.** Este bloco dizia
+> que a reabertura é "exigida pelo item 4 da emenda G-D3". O item 4 diz que a percentil fica
+> RESERVADA e que *"o bloco que a REATIVAR terá de reabrir esta seção"* — e o MA-09 **não** reativa
+> a percentil. O gatilho real é o **corpo do §8.2**, que lista *"percentil por universo … para os
+> sinais contínuos (**rating**, staleness, …)"*: é essa frase que passa a valer para um sinal ativo
+> quando o `v2` liga, e é ela que o D-A tem de resolver.
 
 **Ponteiros a redirecionar (consequência do fatiamento).** Sete comentários no código e um teste
 apontam para o **BLK-MA-08** como o bloco que reativa o S2 e produz o `v2` — o que passou a ser
 **este** bloco quando a frente foi partida em coletor (MA-08) e motor (MA-09):
-`contrato.py:230`, `:263`, `:280`, `:296`, `:540`; `presenca_agregador.py:80`; `score.py:123`; e
-`tests/unit/vulnerabilidade/test_presenca_agregador.py:400`. Redirecionar todos para `BLK-MA-09`,
-junto com as menções equivalentes no contrato (`docs/vulnerabilidade_ma_contrato.md:55`, `:61`,
-`:109`, `:116`, `:136`, `:220-225`, `:271`, `:499`, `:504`, `:509`). São comentários e prosa — nenhum
-altera comportamento —, mas deixá-los apontando para o bloco errado é exatamente o defeito de drift
-doc-vs-código que o §5 do `CLAUDE.md` registra.
+`contrato.py` (**5 ocorrências**), `presenca_agregador.py`, `score.py` e
+`tests/unit/vulnerabilidade/test_presenca_agregador.py`. Redirecionar todos para `BLK-MA-09`, junto
+com as menções equivalentes no contrato (`docs/vulnerabilidade_ma_contrato.md`, **15 ocorrências** de
+`MA-08` medidas em 2026-08-10 — a lista de 10 âncoras que este parágrafo trazia era incompleta). São
+comentários e prosa — nenhum altera comportamento —, mas deixá-los apontando para o bloco errado é
+exatamente o defeito de drift doc-vs-código que o §5 do `CLAUDE.md` registra.
+
+> **Os números de linha saíram deste parágrafo DE PROPÓSITO (2026-08-10).** Ele listava
+> `contrato.py:230/:263/:280/:296/:540`, `presenca_agregador.py:80`, `score.py:123` e
+> `test_presenca_agregador.py:400`. Auditoria de 2026-08-07 mediu que **os cinco de `contrato.py`
+> estavam certos e o do teste errado por 1**; os PRs #208 e #209 então deslocaram os de
+> `contrato.py` em ~14 linhas. Ou seja: a lista apodreceu **duas vezes em três dias**, e consertar
+> os números seria só rearmar o relógio. A forma correta de encontrar as âncoras é
+> `grep -rn "BLK-MA-08" src/motor_expansao/vulnerabilidade/ tests/unit/vulnerabilidade/` e
+> `grep -n "MA-08" docs/vulnerabilidade_ma_contrato.md`, que não envelhecem.
+>
+> **Um item que a lista original não tinha e que NÃO é prosa:** `presenca_agregador.py` traz `"v2"`
+> **hard-coded numa trava executável** (`_COLUNAS_DE_SCORE_PROIBIDAS`), logo abaixo do comentário
+> que a lista mandava redirecionar. Ela **levanta** quando o `v2` aparecer na saída do módulo —
+> então o MA-09 tem de tratá-la como código, não como comentário.
 
 **Guardrail (inviolável).** A nota **NUNCA** entra em `CAMPOS_HASH_POR_FONTE`
 (`contrato.py:161-183`). Ela muda a cada avaliação nova; hasheá-la faria toda unidade parecer
@@ -1903,13 +1995,28 @@ arquitetura da entrega (duas listas, ou anulação por regime); `v2` ligado com 
 com uma partição pré-bump e uma pós-bump provando que a coluna nova sobrevive; **check de execução**
 — se `ler_snapshots` devolver ≥ 1 semana no momento do ciclo, o procedimento de migração das
 partições passa a ser obrigatório (hoje é gratuito porque a série está vazia, mas isso é premissa a
-verificar, não a assumir); as três afirmações falsificadas corrigidas no contrato; os tripwires
-intencionais atualizados com justificativa — `tests/unit/vulnerabilidade/test_score.py:269`
-(`SINAIS_INATIVOS == ("s2",)`), `:264` (pesos-alvo), `:283-293` (pesos efetivos `pytest.approx`
-hard-coded), `:725` (20 colunas), `tests/unit/vulnerabilidade/test_snapshots.py:226` (10 colunas);
-suíte completa sem regressão contra baseline **medida no início do ciclo** por
-`pytest --collect-only -q` (em 2026-07-31, na `main`: **2334 coletados**); `ruff` limpo; `loop_guard`
-sem `CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
+verificar, não a assumir); as **quatro** afirmações falsificadas corrigidas no contrato (§1, §4, §7
+e §13 — ver a precisão (a) acima); os tripwires intencionais atualizados com justificativa,
+**referenciados pelo nome do teste, não pela linha** (a lista por linha apodreceu duas vezes; ver a
+nota no parágrafo de ponteiros):
+
+| Arquivo | Teste | O que trava |
+|---|---|---|
+| `test_score.py` | `test_pesos_alvo_sao_os_quatro_do_d4_e_somam_um` | pesos-alvo do D4 **e** `SINAIS_INATIVOS == ("s2",)` |
+| `test_score.py` | `test_pesos_efetivos_do_plano_b_sao_calculados_nao_digitados` | pesos efetivos `≈0,20 / 0,4667 / 0,3333` em `pytest.approx` |
+| `test_score.py` | `test_schema_20_colunas_em_ordem_e_dtypes` | saída do score com 20 colunas |
+| `test_snapshots.py` | `test_schema_snapshot_10_colunas_em_ordem` | snapshot com 10 colunas |
+| `test_churn_staleness.py` | `test_schema_churn_17_colunas_em_ordem` | **frame de churn com 17 colunas** |
+
+> O último **não estava na lista** e é condicional: ele só quebra se a rota de ingestão escolhida no
+> ponto 4 do escopo passar pelo frame de churn — que é uma das duas rotas que o próprio bloco deixa
+> em aberto. Quem escolher aquela rota precisa saber disto antes, não descobrir no vermelho.
+
+Suíte completa sem regressão contra baseline **medida no início do ciclo** — a regra do §5 do
+`CLAUDE.md` vale aqui e a linha abaixo envelhece por construção. Última medição real: **2638 passed
++ 100 skipped** em 2026-08-10, na `ciclo/BLK-MA-FU1-lote2`. *(O valor que este critério trazia,
+`2334 coletados` de 2026-07-31, estava 400 testes defasado.)* `ruff` limpo; `loop_guard` sem
+`CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
 
 ---
 
@@ -1919,9 +2026,9 @@ sem `CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
 |---|---|
 | **Criticidade** | **Alta** (muda o **critério de negócio** que define o universo de academias do coletor, e esse universo alimenta a camada paralela mercado/residual via `concorrentes/wellhub/csvs`. READ-ONLY sobre o M1). **Exige decisão humana de produto**, não é escolha de engenharia. |
 | **Prioridade** | Antes de qualquer sincronização do consolidado novo para o motor. |
-| **Esteira** | `[decisão humana — Vinicius: (a), (b) ou (c) abaixo]` → Builder → QA. |
-| **Status** | Pendente. |
-| **Depende de** | BLK-MA-08 (a rodada que expôs o problema). |
+| **Esteira** | `[GATE — RESOLVIDO pela DEC-025 em 2026-08-07: escolhida a saída (a), com o vocabulário "V2". NÃO reabrir]` → Builder → QA. |
+| **Status** | **Em execução.** Gate decidido (DEC-025). Lado do **motor** feito: taxonomia fora do hash nas 2 fontes, bump `snapshots_concorrentes_v1` -> `v2`, 2 testes novos, emendas no §3/§6 do contrato. Lado do **coletor** feito no repo externo: `tem_musculacao` com o V2 no WellHub (`csvs_musculacao/` regenerado, 144 -> 22.173 linhas em 27 UFs) e o mesmo vocabulário no TotalPass por prevenção (emenda 1 da DEC-025; delta medido = 0). |
+| **Depende de** | BLK-MA-08 (a rodada que expôs o problema) e **DEC-025** (decide o vocabulário e a saída da taxonomia do hash). |
 | **Autonomia** | **manual (NÃO loop-safe)** — repo externo + critério de negócio. |
 
 **O que foi medido (2026-08-05/06).** O WellHub **renomeou a taxonomia de atividades** entre maio e
@@ -1941,21 +2048,39 @@ significado**: contém todas as unidades, não só academias de musculação. Os
 `concorrentes/wellhub/csvs` — sincronizar o estado atual sem decidir isto muda o universo daquelas
 camadas sem que ninguém tenha decidido.
 
-**As três saídas (é isto que o gate decide).**
-- **(a) Ampliar o vocabulário** de `tem_musculacao` com os rótulos novos. Restaura o volume, mas
-  **quebra a comparabilidade** com a série de maio: a mesma academia pode entrar hoje e não ter
-  entrado antes, e o churn medido pela camada de vulnerabilidade passa a misturar mudança real com
-  mudança de critério.
-- **(b) Manter o consolidado completo** e mover o recorte para o consumidor. Preserva o dado bruto e
-  torna o critério explícito onde ele é usado, mas exige tocar quem lê.
-- **(c) Aceitar a base sem filtro** como novo padrão, aposentando o subset.
+**As três saídas — DECIDIDO em 2026-08-07 (DEC-025): saída (a), vocabulário "V2". NÃO reabrir.**
+- **(a) Ampliar o vocabulário** de `tem_musculacao` com os rótulos novos. **ESCOLHIDA.** Restaura o
+  volume, mas **quebra a comparabilidade** com a série de maio — consequência aceita e quantificada
+  na DEC-025 (parte 4).
+- (b) Manter o consolidado completo e mover o recorte para o consumidor. *(não escolhida)*
+- (c) Aceitar a base sem filtro como novo padrão, aposentando o subset. *(não escolhida)*
 
-**Fora de escopo.** Qualquer artefato/score/peso do M1; o `v2` e o contrato de snapshot
-(**BLK-MA-09**); o cron (**BLK-MA-06**).
+**O vocabulário "V2", com a medição que o escolheu.** `{musculacao, treino de forca, fisiculturismo,
+levantamento de peso, treino hibrido}` sobre a string de atividades normalizada. Verdade-terreno: as
+**12.420** unidades de maio que ainda existem (todas aprovadas pelo filtro antigo, quando a taxonomia
+velha valia). Atual: 144 linhas · recall 1,1%. **V2: 22.174 linhas (48,7%) · recall 99,5%.** É o
+joelho da curva — do V2 para o V3 (`+cross training/crossfit`) custa **+2.831 linhas** para recuperar
+**+8** unidades, e o V4 (`+funcional`) mais **+3.840** para **+21**.
 
-**Critério de aceite.** Decisão registrada (DEC se a escolha for (a) ou (c), por mudar critério de
-universo); `tem_musculacao` e/ou os consumidores ajustados com teste que falharia antes; o efeito
-sobre a comparabilidade da série declarado por escrito; suíte sem regressão.
+**Achado que ENTROU no escopo deste bloco pela DEC-025 (não estava na redação original).** A mesma
+renomeação de taxonomia atinge o **sinal 4**: `atividades` está dentro de `CAMPOS_HASH_POR_FONTE`
+(`vulnerabilidade/contrato.py`) e mudou em **12.314 dos 12.420** slugs comuns (**99,1%**), contra
+`endereco_formatado` em 63 e `nome` em 33. Sem tratar isso, a primeira coleta pós-renomeação leria a
+base inteira como "cadastro atualizado agora" e o S4 morreria — **independentemente** de qual saída o
+filtro tomasse. A DEC-025 (parte 2) tira `atividades` **e** `modalidades` do hash nas duas fontes, com
+bump `snapshots_concorrentes_v1` -> `v2` (gratuito: a série está em zero semanas).
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; o sinal 2 / `v2` do rating, a régua, os pesos
+e o número de COLUNAS do snapshot (**BLK-MA-09**) — o que este bloco toca no contrato de snapshot é
+**só** o conjunto de campos hasheados e o carimbo de versão, por delegação explícita da DEC-025; o
+cron e o runbook (**BLK-MA-06**); a reputação externa (**BLK-MA-07**).
+
+**Critério de aceite.** DEC registrada (**DEC-025**, feita); `tem_musculacao` com o V2 e teste que
+falharia antes; `csvs_musculacao/` regenerado a partir do consolidado íntegro; taxonomia fora do hash
+nas 2 fontes, com teste que falharia antes, e bump de `VERSAO_CONTRATO_SNAPSHOT`; o efeito sobre a
+comparabilidade da série declarado por escrito (DEC-025 parte 4 + §6 do contrato); a sincronização de
+`Wellhub/csvs/` para o motor **bloqueada** até tudo acima estar aplicado; suíte sem regressão nos dois
+repos; `ruff` limpo; `loop_guard` sem `CRITICO`.
 
 ---
 
