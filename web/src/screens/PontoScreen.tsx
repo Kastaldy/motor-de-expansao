@@ -6,9 +6,11 @@ import BlocoViabilidadePonto from '../components/BlocoViabilidadePonto'
 import BotaoInicio from '../components/BotaoInicio'
 import CampoPonto from '../components/CampoPonto'
 import MiniMapaPonto from '../components/MiniMapaPonto'
+import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
+import { MAX_PONTOS } from '../lib/comparacao-pontos'
 import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { num } from '../lib/format'
 import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
@@ -37,7 +39,21 @@ export default function PontoScreen({
 }) {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
-  const [ficha, setFicha] = useState<PontoPayload | null>(null)
+  /**
+   * Os pontos colados, na ordem em que entraram.
+   *
+   * Lista e nao objeto unico porque a pergunta do operador quase nunca e' "este imovel
+   * serve?" isolada — e' "qual DESTES serve mais?". Cada ponto e' uma leitura completa
+   * do `/api/ponto`; o teto de `MAX_PONTOS` existe porque cada um custa uma leitura de
+   * particao de municipio no servidor.
+   */
+  const [fichas, setFichas] = useState<PontoPayload[]>([])
+  /** Qual ficha esta aberta em detalhe. Com 1 ponto e' sempre ela. */
+  const [aberto, setAberto] = useState(0)
+  /** A caixa de colar so' aparece quando pedida — depois do 1o ponto ela some. */
+  const [colando, setColando] = useState(true)
+
+  const ficha = fichas[aberto] ?? null
 
   async function resolver(entrada: EntradaClassificada, texto: string) {
     setCarregando(true)
@@ -50,15 +66,22 @@ export default function PontoScreen({
         const r = await api.resolverPonto(texto)
         if (!r.found || r.lat == null || r.lng == null) {
           setErro(r.motivo ?? 'Não consegui resolver esse endereço.')
-          setFicha(null)
           return
         }
         coord = { lat: r.lat, lng: r.lng }
       }
-      setFicha(await api.ponto(coord.lat, coord.lng))
+      const nova = await api.ponto(coord.lat, coord.lng)
+      // O ponto novo entra no fim e vira o aberto: quem acabou de colar quer ver ele.
+      setFichas((atuais) => {
+        const proximas = [...atuais, nova].slice(0, MAX_PONTOS)
+        setAberto(proximas.length - 1)
+        return proximas
+      })
+      setColando(false)
     } catch (e) {
+      // NAO limpa os pontos ja lidos: perder tres leituras porque a quarta falhou
+      // seria punir o operador por um endereco mal digitado.
       setErro(e instanceof ApiError ? e.message : 'Falha ao analisar o ponto.')
-      setFicha(null)
     } finally {
       setCarregando(false)
     }
@@ -87,6 +110,14 @@ export default function PontoScreen({
           border: '1px solid var(--line-soft)',
           borderRadius: 'var(--r-xl)',
           backdropFilter: 'blur(14px)',
+          // `position: relative` + `zIndex` sao OBRIGATORIOS, nao enfeite. O
+          // `backdropFilter` cria um CONTEXTO DE EMPILHAMENTO, entao o zIndex do popup
+          // do Select so' vale DENTRO deste cabecalho — sem elevar o cabecalho inteiro,
+          // o conteudo que vem depois no DOM (que tambem tem backdropFilter) pinta por
+          // cima e a lista de estados abre ATRAS dos cards. Mesma armadilha ja
+          // documentada no ExecutiveScreen.
+          position: 'relative',
+          zIndex: 30,
         }}
       >
         <BotaoInicio onInicio={onInicio} />
@@ -102,16 +133,60 @@ export default function PontoScreen({
         </h1>
         {ficha && (
           <Chip>
-            raio de {num(ficha.raio_km * 1000)} m · {ficha.censo.n_setores ?? '—'} setores
+            {fichas.length > 1
+              ? `${fichas.length} pontos · raio de ${num(ficha.raio_km * 1000)} m`
+              : `raio de ${num(ficha.raio_km * 1000)} m · ${ficha.censo.n_setores ?? '—'} setores`}
           </Chip>
         )}
       </header>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
         <div style={{ maxWidth: 1100, margin: '0 auto', display: 'grid', gap: 16 }}>
-          <Glass style={{ padding: 18 }}>
-            <CampoPonto onResolver={resolver} ocupado={carregando} erro={erro} />
-          </Glass>
+          {(colando || fichas.length === 0) && (
+            <Glass style={{ padding: 18, display: 'grid', gap: 10 }}>
+              <CampoPonto onResolver={resolver} ocupado={carregando} erro={erro} />
+              {fichas.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setColando(false)
+                    setErro(null)
+                  }}
+                  style={{
+                    justifySelf: 'start',
+                    padding: '6px 10px',
+                    borderRadius: 8,
+                    border: '1px solid var(--line-soft)',
+                    background: 'var(--surf-raised)',
+                    color: 'var(--tx-soft)',
+                    font: '600 11px/1 var(--f-ui)',
+                  }}
+                >
+                  Cancelar
+                </button>
+              )}
+            </Glass>
+          )}
+
+          {fichas.length > 0 && (
+            <PainelPontos
+              fichas={fichas}
+              aberto={aberto}
+              onAbrir={setAberto}
+              onRemover={(i) => {
+                setFichas((atuais) => {
+                  const proximas = atuais.filter((_, k) => k !== i)
+                  setAberto((k) => Math.max(0, Math.min(k, proximas.length - 1)))
+                  if (proximas.length === 0) setColando(true)
+                  return proximas
+                })
+              }}
+              onAdicionar={() => {
+                setColando(true)
+                setErro(null)
+              }}
+            />
+          )}
 
           {carregando && (
             <p
@@ -127,14 +202,20 @@ export default function PontoScreen({
             </p>
           )}
 
-          {!ficha && !carregando && !erro && (
+          {fichas.length === 0 && !carregando && !erro && (
             <Aviso
               titulo="Cole um ponto para começar"
               corpo="Funciona com o link do Google Maps (inclusive o curto que o celular compartilha), um endereço escrito ou o par de coordenadas. A leitura sai do Censo 2022 do IBGE, no raio de 1,0 km — a mesma régua do Relatório Pontual."
             />
           )}
 
-          {ficha && <Ficha ficha={ficha} onAnalisarPonto={onAnalisarPonto} />}
+          {ficha && (
+            <Ficha
+              key={`${ficha.hex_id}-${aberto}`}
+              ficha={ficha}
+              onAnalisarPonto={onAnalisarPonto}
+            />
+          )}
         </div>
       </div>
     </div>

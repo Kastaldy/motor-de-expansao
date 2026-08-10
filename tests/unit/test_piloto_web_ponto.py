@@ -222,3 +222,38 @@ def test_crescimento_estado_traz_a_mediana_da_propria_uf() -> None:
     for it in bloco["itens"]:
         # A etiqueta e' RELATIVA a mediana, nunca um julgamento absoluto.
         assert it.get("tag"), "cada item precisa da etiqueta contra a mediana"
+
+
+# --------------------------------------------------------------------------- #
+# /api/estados — a unica rota que compara UFs                                 #
+# --------------------------------------------------------------------------- #
+@requer_enriquecido
+def test_estados_ranqueia_as_ufs_pelo_residual_em_white_space() -> None:
+    """A pergunta "por qual estado comecar?" nao tinha rota: o piloto le UMA particao
+    por vez. Aqui as 27 sao lidas com projecao de colunas."""
+    body = pilot.estados()
+    assert set(body) >= {"reguas", "estados"}
+    estados = body["estados"]
+    assert len(estados) >= 20, "esperado o pais quase todo"
+
+    # Ordenado por residual em white space, DECRESCENTE, e com rank coerente.
+    valores = [e["residual_white_space"] or 0 for e in estados]
+    assert valores == sorted(valores, reverse=True)
+    assert [e["rank"] for e in estados] == list(range(1, len(estados) + 1))
+
+
+@requer_enriquecido
+def test_estados_usa_as_reguas_do_funil_e_nao_um_criterio_novo() -> None:
+    reguas = pilot.estados()["reguas"]
+    assert reguas["score_minimo"] == pilot.SCORE_CORTE_QUENTE
+    assert reguas["pop_minima"] == pilot.POP_MIN_ACIONAVEL
+    assert reguas["capacidade_concorrente"] == pilot.CAPACIDADE_CONCORRENTE_PADRAO
+
+
+@requer_enriquecido
+def test_estados_elegivel_nunca_passa_do_total() -> None:
+    """O white space e' um SUBCONJUNTO do estado: se passar do total, o filtro inverteu."""
+    for e in pilot.estados()["estados"]:
+        assert e["hexes_elegiveis"] <= e["hexes_total"], e["uf"]
+        if e["residual_white_space"] is not None and e["residual_total"] is not None:
+            assert e["residual_white_space"] <= e["residual_total"] + 1, e["uf"]

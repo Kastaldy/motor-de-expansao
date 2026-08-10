@@ -990,3 +990,29 @@ export interface CrescimentoEstado {
   n_fora_do_piso: number
   itens: RankItem[]
 }
+
+/* ------------------------------------------------------------------------- *
+ * Ranking nacional por UF (GET /api/estados)                                *
+ * ------------------------------------------------------------------------- */
+
+export interface EstadoRanking {
+  rank: number
+  uf: string
+  /** Alunos não atendidos ONDE ainda cabe abrir — o número que ordena. */
+  residual_white_space: number | null
+  hexes_elegiveis: number
+  municipios_elegiveis: number | null
+  /** Contexto: o tamanho do estado por trás do número elegível. */
+  residual_total: number | null
+  hexes_total: number
+  pop_total: number | null
+}
+
+export interface EstadosPayload {
+  reguas: {
+    score_minimo: number
+    pop_minima: number
+    capacidade_concorrente: number
+  }
+  estados: EstadoRanking[]
+}

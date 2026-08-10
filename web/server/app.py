@@ -2499,6 +2499,95 @@ def geocode(q: str) -> dict[str, Any]:
     return out
 
 
+@functools.lru_cache(maxsize=1)
+def _ranking_estados() -> list[dict[str, Any]]:
+    """Ranking NACIONAL por UF — a pergunta "por qual estado começar?".
+
+    POR QUE NAO EXISTIA. O piloto lê UMA partição `uf=XX` por vez (`carregar_uf`,
+    `lru_cache(maxsize=6)`), e nenhuma rota comparava estados. Quem queria escolher a
+    UF tinha de abrir uma por uma e comparar de cabeça.
+
+    POR QUE DÁ PARA FAZER AGORA. Parquet é colunar: lendo só 4 colunas das 27
+    partições, os 1,54 milhão de hexágonos saem em ~3 s (medido). O `lru_cache` faz
+    isso uma vez por processo — o custo some depois da primeira chamada.
+
+    MESMA CASCATA DO FUNIL, aplicada nacionalmente. Nada de critério novo:
+    `score_setor_2022_calibrado >= SCORE_CORTE_QUENTE`, população do hexágono
+    `>= POP_MIN_ACIONAVEL`, e WHITE SPACE (`oferta_consumida_mercado_estimada` abaixo
+    de meia unidade de referência — o mesmo arredondamento que produz
+    `n_concorrentes_est == 0`). Ordena por residual em alunos, não por score: o score
+    satura em 100 acima de 2.500 alunos e empataria os estados grandes.
+
+    READ-ONLY sobre o M1: agrega colunas já materializadas, não recalcula nada.
+    """
+    import pyarrow.dataset as ds
+
+    if not ENRICHED_DIR.exists():
+        raise HTTPException(500, f"Base nao encontrada em {ENRICHED_DIR}.")
+
+    dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
+    disp = set(dset.schema.names)
+    col_pop = "pop_total_setor_2022" if "pop_total_setor_2022" in disp else "pop_hex_base"
+    cols = [
+        c
+        for c in (
+            "uf", "nome_municipio", "oferta_efetiva_disponivel",
+            "oferta_consumida_mercado_estimada", "score_setor_2022_calibrado", col_pop,
+        )
+        if c in disp
+    ]
+    df = dset.to_table(columns=cols).to_pandas()
+    if df.empty:
+        return []
+
+    quente = df["score_setor_2022_calibrado"] >= SCORE_CORTE_QUENTE
+    povoado = df[col_pop] >= POP_MIN_ACIONAVEL
+    # `n_concorrentes_est` e' DERIVADO (round(consumida / 2500)) e nao existe no
+    # artefato: reproduzimos o mesmo corte na origem, sem materializar a coluna.
+    livre = df["oferta_consumida_mercado_estimada"].fillna(0) < (
+        CAPACIDADE_CONCORRENTE_PADRAO / 2.0
+    )
+    elegivel = df[quente & povoado & livre]
+
+    out: list[dict[str, Any]] = []
+    for uf_nome, bloco in df.groupby("uf", observed=True):
+        eleg = elegivel[elegivel["uf"] == uf_nome]
+        out.append(
+            {
+                "uf": str(uf_nome),
+                # O numero que ORDENA: alunos nao atendidos onde ainda cabe abrir.
+                "residual_white_space": _num(eleg["oferta_efetiva_disponivel"].sum()),
+                "hexes_elegiveis": int(len(eleg)),
+                "municipios_elegiveis": int(eleg["nome_municipio"].nunique())
+                if "nome_municipio" in eleg.columns
+                else None,
+                # Contexto, para o operador ver o tamanho do estado por tras do numero.
+                "residual_total": _num(bloco["oferta_efetiva_disponivel"].sum()),
+                "hexes_total": int(len(bloco)),
+                "pop_total": _num(bloco[col_pop].sum()),
+            }
+        )
+
+    out.sort(key=lambda r: r["residual_white_space"] or 0, reverse=True)
+    for i, r in enumerate(out, 1):
+        r["rank"] = i
+    return out
+
+
+@app.get("/api/estados")
+def estados() -> dict[str, Any]:
+    """Por qual estado começar. Cascata do funil, aplicada às 27 UFs."""
+    ranking = _ranking_estados()
+    return {
+        "reguas": {
+            "score_minimo": SCORE_CORTE_QUENTE,
+            "pop_minima": POP_MIN_ACIONAVEL,
+            "capacidade_concorrente": CAPACIDADE_CONCORRENTE_PADRAO,
+        },
+        "estados": ranking,
+    }
+
+
 @app.get("/api/resolver-ponto")
 def resolver_ponto(q: str) -> dict[str, Any]:
     """Texto colado pelo operador -> lat/lng. Cobre o LINK CURTO do celular.

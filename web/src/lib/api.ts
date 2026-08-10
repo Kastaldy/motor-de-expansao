@@ -5,6 +5,7 @@ import type {
   FaixaAlunos,
   MetodologiaPayload,
   MunicipioItem,
+  EstadosPayload,
   MunicipioPayload,
   PontoPayload,
   PontoResolvido,
@@ -187,6 +188,13 @@ export const api = {
   /** Manual do funil: o que cada camada mede e com que régua corta. Estático —
    *  não depende de UF nem de município, então a tela busca uma vez e guarda. */
   metodologia: () => pedir<MetodologiaPayload>('/api/metodologia', {}, 15_000),
+
+  /**
+   * Ranking NACIONAL por estado. Lê as 27 partições com projeção de 4 colunas
+   * (~1,5 s na primeira vez, cacheado no servidor depois) — é a única rota que
+   * compara UFs, e por isso tem timeout próprio.
+   */
+  estados: () => pedir<EstadosPayload>('/api/estados', {}, 120_000),
 
   /** Visão de UF inteira: funil por UF + recomendação de municípios. */
   ufView: (uf: string) => pedir<MunicipioPayload>(`/api/uf/${encodeURIComponent(uf)}`),

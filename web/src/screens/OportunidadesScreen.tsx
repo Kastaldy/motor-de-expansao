@@ -1,6 +1,7 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 
 import BotaoInicio from '../components/BotaoInicio'
+import RankingEstados from '../components/RankingEstados'
 import Select from '../components/Select'
 import { Aviso, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { camadaCor } from '../lib/colors'
@@ -17,7 +18,7 @@ import {
   temCoberturaSatelite,
   type CrescimentoMunicipio,
 } from '../lib/oportunidades'
-import type { MunicipioPayload, Passo, RankItem } from '../lib/types'
+import type { MunicipioItem, MunicipioPayload, Passo, RankItem } from '../lib/types'
 
 /**
  * Modo 3 — as melhores oportunidades, POR CAMADA e depois consolidadas.
@@ -41,18 +42,26 @@ export default function OportunidadesScreen({
   dados,
   carregando,
   erro,
+  municipios,
+  municipio,
+  onMunicipio,
   onInicio,
   onVerNoMapa,
 }: {
   ufs: string[]
   uf: string
   onUf: (uf: string) => void
+  municipios: MunicipioItem[]
+  municipio: string
+  onMunicipio: (m: string) => void
   dados: MunicipioPayload | null
   carregando: boolean
   erro: string | null
   onInicio: () => void
   onVerNoMapa: (municipio: string) => void
 }) {
+  const [verTudo, setVerTudo] = useState(false)
+
   const passos = dados?.passos ?? []
   const cres = dados?.cres_mun ?? null
 
@@ -74,6 +83,14 @@ export default function OportunidadesScreen({
           border: '1px solid var(--line-soft)',
           borderRadius: 'var(--r-xl)',
           backdropFilter: 'blur(14px)',
+          // `position: relative` + `zIndex` sao OBRIGATORIOS, nao enfeite. O
+          // `backdropFilter` cria um CONTEXTO DE EMPILHAMENTO, entao o zIndex do popup
+          // do Select so' vale DENTRO deste cabecalho — sem elevar o cabecalho inteiro,
+          // o conteudo que vem depois no DOM (que tambem tem backdropFilter) pinta por
+          // cima e a lista de estados abre ATRAS dos cards. Mesma armadilha ja
+          // documentada no ExecutiveScreen.
+          position: 'relative',
+          zIndex: 30,
         }}
       >
         <BotaoInicio onInicio={onInicio} />
@@ -96,17 +113,37 @@ export default function OportunidadesScreen({
           placeholder="Estado…"
           options={ufs.map((u) => ({ value: u, label: u }))}
         />
-        {passos.length > 0 && <Chip>top {TOP_POR_CAMADA} por camada</Chip>}
+        {/* O drill-down para MUNICIPIO e' o que responde "quais bairros": no nivel de
+            municipio os itens do funil deixam de ser cidades e passam a ser bairros
+            (ex.: "U.T.P. Jardim Novo Mundo"). */}
+        {uf && (
+          <Select
+            label="Município"
+            value={municipio}
+            onChange={onMunicipio}
+            maxWidth={190}
+            buscavel
+            placeholder="Estado inteiro"
+            options={[
+              { value: '', label: 'Estado inteiro' },
+              ...municipios.map((m) => ({ value: m.nome, label: m.nome })),
+            ]}
+          />
+        )}
+        {passos.length > 0 && (
+          <Chip>
+            top {TOP_POR_CAMADA} · {municipio ? 'bairros' : 'cidades'}
+          </Chip>
+        )}
       </header>
 
       <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
         <div style={{ maxWidth: 1000, margin: '0 auto', display: 'grid', gap: 18 }}>
-          {!uf && (
-            <Aviso
-              titulo="Escolha um estado"
-              corpo="As camadas são lidas por estado: o motor percorre a partição inteira da UF e devolve o topo de cada leitura — potencial, demanda, concorrência, crescimento e a fila de recomendação."
-            />
-          )}
+          {/* O ranking E' o seletor de estado: antes o operador escolhia numa lista
+              alfabetica que nao dizia nada sobre qual valia a pena. */}
+          <Glass style={{ padding: 18 }}>
+            <RankingEstados ufSelecionada={uf} onEscolher={onUf} />
+          </Glass>
 
           {carregando && (
             <p
@@ -126,27 +163,18 @@ export default function OportunidadesScreen({
 
           {passos.length > 0 && !carregando && (
             <>
-              {camadas.map(({ passo, itens }) => (
-                <BlocoCamada
-                  key={passo.n}
-                  passo={passo}
-                  itens={itens}
-                  cres={cres}
-                  onVerNoMapa={onVerNoMapa}
-                />
-              ))}
-
               {/* ---- Consolidado ---- */}
               <Glass style={{ padding: 18, display: 'grid', gap: 14 }}>
                 <div style={{ display: 'grid', gap: 6 }}>
-                  <Eyebrow dot>Para onde ir</Eyebrow>
+                  <Eyebrow dot>A resposta</Eyebrow>
                   <span
                     style={{
-                      font: '400 21px/1.25 var(--f-story)',
+                      font: '400 24px/1.2 var(--f-story)',
                       color: 'var(--tx-max)',
                     }}
                   >
-                    Quem aparece no topo de mais camadas
+                    Top {Math.min(TOP_RESPOSTA, consolidado.length)}{' '}
+                    {municipio ? 'bairros' : 'cidades'} de {dados?.uf ?? 'estado'}
                   </span>
                   <p
                     style={{
@@ -156,8 +184,8 @@ export default function OportunidadesScreen({
                     }}
                   >
                     Isto é uma <strong style={{ color: 'var(--tx-soft)' }}>contagem</strong>, não
-                    um score: quantas das {passos.length} camadas trazem a cidade no top{' '}
-                    {TOP_POR_CAMADA}. Somar ou ponderar as camadas criaria uma definição nova de
+                    um score: quantas das {passos.length} camadas trazem{' '}
+                    {municipio ? 'o bairro' : 'a cidade'} no top {TOP_POR_CAMADA}. Somar ou ponderar as camadas criaria uma definição nova de
                     prioridade em cima do M1 — e elas medem coisas diferentes. Empate é desfeito
                     pela posição na fila de recomendação.
                   </p>
@@ -170,7 +198,7 @@ export default function OportunidadesScreen({
                   />
                 ) : (
                   <div style={{ display: 'grid', gap: 10 }}>
-                    {consolidado.map((c, i) => (
+                    {consolidado.slice(0, verTudo ? consolidado.length : TOP_RESPOSTA).map((c, i) => (
                       <LinhaConsolidada
                         key={c.nome}
                         posicao={i + 1}
@@ -179,9 +207,50 @@ export default function OportunidadesScreen({
                         onVerNoMapa={onVerNoMapa}
                       />
                     ))}
+                    {consolidado.length > TOP_RESPOSTA && (
+                      <button
+                        type="button"
+                        onClick={() => setVerTudo((v) => !v)}
+                        style={{
+                          justifySelf: 'start',
+                          padding: '6px 10px',
+                          borderRadius: 8,
+                          border: '1px solid var(--line-soft)',
+                          background: 'var(--surf-raised)',
+                          color: 'var(--tx-soft)',
+                          font: '600 11px/1 var(--f-ui)',
+                        }}
+                      >
+                        {verTudo
+                          ? `Mostrar só o top ${TOP_RESPOSTA}`
+                          : `Ver as ${consolidado.length} que se repetem`}
+                      </button>
+                    )}
                   </div>
                 )}
               </Glass>
+
+              {/* As camadas viram EVIDENCIA da resposta acima, e nao mais a resposta
+                  em si: o operador confere de onde cada nome saiu. */}
+              <div style={{ display: 'grid', gap: 4, marginTop: 2 }}>
+                <span style={{ font: '600 12px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
+                  De onde essa leitura sai
+                </span>
+                <span style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)' }}>
+                  O topo de cada camada do funil, com o número que ordena aquela leitura.
+                </span>
+              </div>
+
+              {camadas.map(({ passo, itens }) => (
+                <BlocoCamada
+                  key={passo.n}
+                  passo={passo}
+                  itens={itens}
+                  cres={cres}
+                  nivelMunicipio={Boolean(municipio)}
+                  onVerNoMapa={onVerNoMapa}
+                />
+              ))}
 
               {!temCoberturaSatelite(dados?.uf) && (
                 <p style={{ font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
@@ -198,16 +267,28 @@ export default function OportunidadesScreen({
   )
 }
 
+/**
+ * Quantas linhas a RESPOSTA mostra por padrao.
+ *
+ * Cinco porque e' o que cabe numa decisao — e o mesmo corte das camadas, para o
+ * operador comparar a resposta com a evidencia sem converter numero de cabeca. Quem
+ * quiser a lista inteira abre; quem so' quer saber para onde ir, le cinco linhas.
+ */
+const TOP_RESPOSTA = 5
+
 /** Uma camada: o topo dela, com a identidade de cor que o funil já usa. */
 function BlocoCamada({
   passo,
   itens,
   cres,
+  nivelMunicipio,
   onVerNoMapa,
 }: {
   passo: Passo
   itens: RankItem[]
   cres: Record<string, CrescimentoMunicipio> | null
+  /** Dentro de um município os itens são BAIRROS, não cidades. */
+  nivelMunicipio: boolean
   onVerNoMapa: (municipio: string) => void
 }) {
   const cor = camadaCor(passo.n)
@@ -238,7 +319,14 @@ function BlocoCamada({
 
       {itens.length === 0 ? (
         <p style={{ font: '400 12px/1.5 var(--f-ui)', color: 'var(--tx-muted)', margin: 0 }}>
-          Nenhuma cidade passou nesta camada.
+          {/* A camada 4 e' MUNICIPAL por natureza: dentro de uma cidade nao ha o que
+              ranquear entre bairros, e dizer "nenhum bairro passou" sugeriria que
+              todos foram reprovados. */}
+          {nivelMunicipio && passo.n === 4
+            ? 'O crescimento é medido por município — dentro de uma cidade não há o que comparar entre bairros. Volte ao estado inteiro para ver esta camada.'
+            : nivelMunicipio
+              ? 'Nenhum bairro passou nesta camada.'
+              : 'Nenhuma cidade passou nesta camada.'}
         </p>
       ) : (
         <div style={{ display: 'grid', gap: 4 }}>

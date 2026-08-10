@@ -203,6 +203,9 @@ export default function App() {
             ufs={ufs}
             uf={uf}
             onUf={aoTrocarUf}
+            municipios={municipios}
+            municipio={municipio}
+            onMunicipio={setMunicipio}
             dados={dados}
             carregando={carregando}
             erro={erro}
