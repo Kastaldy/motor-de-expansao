@@ -279,7 +279,7 @@ export const CONSUMO_1KM_CORTES = [625, 1250, 2500, 5000]
 export const CONSUMO_1KM_HEX = ['#F2C230', '#E8663C', '#B9455A', '#8A3550', '#6E7686']
 
 export const CONSUMO_1KM_ROTULOS = [
-  'ate 625 alunos',
+  'até 625 alunos',
   '625 a 1.250',
   '1.250 a 2.500',
   '2.500 a 5.000',
