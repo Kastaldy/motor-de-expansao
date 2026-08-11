@@ -139,6 +139,12 @@ export interface FaixaMetodologia {
   condicao: string
   tom: Tom
   escopo: string
+  /** Hex EXATO da faixa. Só as linhas de `legenda_mapa` derivadas da rampa o trazem:
+   *  ali o painel promete a cor que o mapa pinta, e a paleta de 5 `tom` nomeados não
+   *  cobre as 5 cores da rampa 1:1 — "Promissor" saía cinza no manual e amarelo no
+   *  mapa. Nulo nas etiquetas do ranking, que desde o BLK-MAPA-CHIP-01 não têm cor
+   *  de faixa, e na camada 4, cujas cores vivem em `crescClasseToColor`. */
+  cor?: string | null
 }
 
 export interface CamadaMetodologia {

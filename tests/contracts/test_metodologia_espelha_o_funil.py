@@ -30,7 +30,6 @@ if str(_SERVER) not in sys.path:
 import app as pilot  # noqa: E402  (backend do piloto; web/server no sys.path acima)
 
 from motor_expansao.dashboard.constants import (  # noqa: E402
-    CAPACIDADE_UNIDADE_ALUNOS,
     FAIXA_LABELS,
     FAIXAS_MAPA_DEMANDA,
     FAIXAS_MAPA_POTENCIAL,
@@ -73,7 +72,13 @@ def test_payload_tem_as_5_camadas_completas(metodologia):
     assert [c["n"] for c in camadas] == [1, 2, 3, 4, 5]
     for c in camadas:
         assert c["titulo"] and c["pergunta"] and c["corte"]
-        assert c["faixas"], f"camada {c['n']} sem faixa publicada"
+        # `faixas` PODE ser vazio desde o BLK-MAPA-CHIP-01: onde o corte da camada iguala
+        # todos os itens, ela nao emite chip e nao ha o que publicar como "etiqueta do
+        # ranking" (camada 5). O que nao pode e' a camada ficar MUDA — ou publica etiqueta,
+        # ou publica a rampa que pinta o mapa.
+        assert c["faixas"] or c.get("legenda_mapa"), (
+            f"camada {c['n']} nao publica nem etiqueta de ranking nem legenda de mapa"
+        )
         for m in c["metricas"]:
             # `fonte` primeiro: a duvida inicial de quem le e' "de onde veio esse numero".
             assert m["nome"] and m["fonte"] and m["resumo"] and m["regra"]
@@ -88,45 +93,85 @@ def test_toda_faixa_declara_escopo_valido(metodologia):
 
 
 # ------------------------------------------------------- coerencia painel x funil
-def test_camada_1_publica_as_faixas_de_potencial_que_o_funil_emite(metodologia):
-    publicadas = _etiquetas(_camada(metodologia, 1), "municipio")
-    do_codigo = {nome for _de, _ate, nome, _cor, _tom in FAIXAS_MAPA_POTENCIAL}
-    assert publicadas == do_codigo
+# BLK-MAPA-CHIP-01. Os tres testes que viviam aqui comparavam `faixas` com os nomes da
+# rampa e, em seguida, chamavam `pilot._etiqueta` DIRETO com valores que o funil nunca
+# entrega — `n_concorrentes_est` = 2 e 99 numa camada cuja base e o white space (n == 0).
+# Passavam verdes sobre um vocabulario inalcancavel: era esse o furo. Agora a rampa e
+# checada onde ela de fato vive (`legenda_mapa`, o universo que o mapa pinta) e a
+# etiqueta do ranking e checada ATRAVES do funil, em
+# `tests/unit/test_piloto_web_endpoints.py::test_metodologia_nao_reescreve_o_chip_*`.
+@pytest.mark.parametrize(
+    ("n", "faixas_do_codigo"),
+    [
+        (1, {nome for *_r, nome, _cor, _tom in FAIXAS_MAPA_POTENCIAL}),
+        (2, {nome for *_r, nome, _cor, _tom in FAIXAS_MAPA_DEMANDA}),
+        (3, {nome for *_r, nome, _cor, _tom in FAIXAS_MAPA_DEMANDA}),
+        (5, set(FAIXA_LABELS.values())),
+    ],
+    ids=["potencial", "demanda", "concorrencia", "oportunidade-m1"],
+)
+def test_a_rampa_do_mapa_vive_em_legenda_mapa(metodologia, n, faixas_do_codigo):
+    """A rampa continua publicada — no slot das CORES DO MAPA, com a cor exata.
 
-    # E o funil emite MESMO essas etiquetas, no meio de cada faixa.
-    linha = pd.Series({"n_concorrentes_est": 0})
-    for de, ate, nome, _cor, _tom in FAIXAS_MAPA_POTENCIAL:
-        etiqueta, _tom_item, _cor_item = pilot._etiqueta("score", (de + ate) / 2, 1, linha)
-        assert etiqueta == nome, f"score {(de + ate) / 2} -> {etiqueta}, painel diz {nome}"
-
-
-def test_camada_2_publica_as_faixas_de_demanda_em_alunos(metodologia):
-    publicadas = _etiquetas(_camada(metodologia, 2), "municipio")
-    do_codigo = {nome for _de, _ate, nome, _cor, _tom in FAIXAS_MAPA_DEMANDA}
-    assert publicadas == do_codigo
-
-    # A camada 2 recebe ALUNOS, nao score: a conversao publicada (100 = 2.500 alunos)
-    # tem que devolver a mesma faixa que a legenda mostra.
-    linha = pd.Series({"n_concorrentes_est": 0})
-    for de, ate, nome, _cor, _tom in FAIXAS_MAPA_DEMANDA:
-        alunos = ((de + ate) / 2) * CAPACIDADE_UNIDADE_ALUNOS / 100
-        etiqueta, _t, _c = pilot._etiqueta("residual", alunos, 1, linha)
-        assert etiqueta == nome, f"{alunos} alunos -> {etiqueta}, painel diz {nome}"
-
-
-def test_camada_3_publica_o_vocabulario_competitivo_no_municipio(metodologia):
-    """No municipio a camada 3 rotula por CONCORRENCIA — nao por intensidade de residual.
-
-    Era o defeito: o painel publicava Alta/Média/Baixa e a tela mostrava Livre em todas
-    as linhas, porque `montar_funil` passa `metrica_etiqueta="conc. 2 km"`.
+    Separar `faixas` de `legenda_mapa` nao pode virar "sumir com a legenda": o hexagono
+    de score 45 continua laranja no mapa e precisa do bloco correspondente no manual.
     """
-    publicadas = _etiquetas(_camada(metodologia, 3), "municipio")
-    assert publicadas == {"Livre", "Adensar", "Disputa"}
+    camada = _camada(metodologia, n)
+    legenda = camada.get("legenda_mapa") or []
+    assert {f["etiqueta"] for f in legenda} == faixas_do_codigo
 
-    for n, esperada in [(0, "Livre"), (pilot.CONC_ADENSAR_MAX, "Adensar"), (99, "Disputa")]:
-        linha = pd.Series({"n_concorrentes_est": n})
-        etiqueta, _t, _c = pilot._etiqueta("conc. 2 km", 5000.0, 1, linha)
-        assert etiqueta == esperada, f"{n} concorrentes -> {etiqueta}, painel diz {esperada}"
+    for f in legenda:
+        assert f["cor"], (
+            f"camada {n}: a faixa {f['etiqueta']!r} foi publicada sem cor. A paleta de 5 "
+            "`tom` nomeados nao cobre a rampa 1:1 — foi assim que 'Excelente' saiu azul no "
+            "manual e verde-escuro no ranking."
+        )
+        assert f["escopo"] == "", (
+            f"camada {n}: a rampa voltou a ser publicada por escopo ({f['escopo']!r}). O mapa "
+            "pinta igual nos dois, e publicar duas vezes duplica a linha e a `key` do React."
+        )
+
+
+def test_nenhum_nome_de_faixa_sobrou_na_etiqueta_do_ranking(metodologia):
+    """O outro lado: o slot "etiquetas do ranking" nao publica mais nome de faixa.
+
+    Era o defeito medido — o painel anunciava 5 faixas por camada e o ranking emitia UMA,
+    porque o corte de cada camada coincide com o piso da ultima. "Amplo: 1.500 a 2.000
+    alunos" aparecia logo abaixo de "corte: residual >= 2.000 alunos".
+    """
+    nomes = (
+        {nome for *_r, nome, _cor, _tom in FAIXAS_MAPA_POTENCIAL}
+        | {nome for *_r, nome, _cor, _tom in FAIXAS_MAPA_DEMANDA}
+        | set(FAIXA_LABELS.values())
+    )
+    intrusas = {
+        (c["n"], f["etiqueta"])
+        for c in metodologia["camadas"]
+        for f in c["faixas"]
+        if f["etiqueta"] in nomes
+    }
+    assert not intrusas, f"nome de faixa de volta no slot do ranking: {sorted(intrusas)}"
+
+
+def test_todo_corte_que_satura_declara_por_que(metodologia):
+    """Criterio de aceite 3, segunda porta: onde o chip nao pode discriminar, o painel diz.
+
+    Camadas 1, 3 e 5 tem itens sem etiqueta em pelo menos um escopo. Isso so nao e lido
+    como bug de render se o campo `corte` explicar que a faixa e constante POR CONSTRUCAO
+    do proprio corte.
+    """
+    esperado = {
+        1: "Forte ou Excelente",
+        2: "piso exato da faixa Livre",
+        3: "Adensar e Disputa",
+        5: "prioridade máxima",
+    }
+    for n, trecho in esperado.items():
+        corte = _camada(metodologia, n)["corte"]
+        assert trecho in corte, (
+            f"camada {n}: o campo `corte` deixou de declarar a saturacao (esperava conter "
+            f"{trecho!r}). Texto atual: {corte!r}"
+        )
 
 
 def test_camada_4_declara_que_nao_filtra(metodologia):
@@ -270,17 +315,6 @@ def test_camada_4_publica_as_etiquetas_que_o_ranking_emite(metodologia):
         f"{sorted(emitidas - {_norma(e) for e in publicadas})}; "
         f"publicadas e nunca emitidas: {sorted({_norma(e) for e in publicadas} - emitidas)}"
     )
-
-
-def test_camada_5_publica_as_faixas_de_oportunidade_do_m1(metodologia):
-    """A fila rotula pela faixa do M1 desde o BLK-MAPA-FAIXAS-01, nao por posicao."""
-    publicadas = _etiquetas(_camada(metodologia, 5), "municipio")
-    assert publicadas == set(FAIXA_LABELS.values())
-
-    for bruto, rotulo in FAIXA_LABELS.items():
-        linha = pd.Series({"_fila": True, "faixa_oportunidade": bruto, "n_concorrentes_est": 0})
-        etiqueta, _t, _c = pilot._etiqueta("residual", 5000.0, 1, linha)
-        assert etiqueta == rotulo
 
 
 def test_nenhuma_etiqueta_extinta_sobrevive_no_painel(metodologia):

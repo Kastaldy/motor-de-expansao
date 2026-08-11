@@ -22,6 +22,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -121,6 +122,10 @@ def _synthetic_enriched() -> pd.DataFrame:
                     "oferta_consumida_mercado_estimada": 2500.0 * h,  # h=0 -> white space
                     "sam_fitness_potencial": 4000.0 + h,
                     "populacao_corte_hex": 8000.0 + 100 * h,  # >=5000
+                    # Autoriza o chip de habitantes da camada 1 (BLK-MAPA-CHIP-01). O outro
+                    # valor possivel, "total_municipal", repete a populacao da cidade em cada
+                    # hexagono — e' o caso de 12 UFs, coberto por teste proprio.
+                    "fonte_populacao_corte": "setor_2022",
                     "pop_total": 8000.0 + 100 * h,
                     "pop_total_setor_2022": 8000.0 + 100 * h,
                     "renda_per_capita": 2500.0 + 10 * h,
@@ -888,6 +893,18 @@ _TAGS_COMPETITIVAS = {"Livre", "Adensar", "Disputa"}
 _TAGS_RESIDUAL_INTENSIDADE = {"Saturado", "Restrito", "Moderado", "Amplo"}
 
 
+def _forma(chip: str) -> str:
+    """A GRAMATICA de um chip: os digitos viram `N`, o resto fica.
+
+    Desde o BLK-MAPA-CHIP-01 o chip do ranking e NUMERICO ("2,4 academias", "52 mil hab.",
+    "26% sem disputa"), entao o painel nao pode publicar um conjunto fechado de rotulos —
+    ele publica a forma. Comparar por forma preserva o que importa e ignora o que varia:
+    "1,0 academia" e "375 academias" tem formas DIFERENTES (o plural e a grandeza ficam),
+    mas "375 academias" e "40 academias" tem a mesma.
+    """
+    return re.sub(r"\d+(?:[.,]\d+)*", "N", chip)
+
+
 def _funil_muni(concorrentes: list[int]) -> tuple[pd.DataFrame, dict[str, str]]:
     """Recorte de UM municipio + mapa de bairros, prontos para `montar_funil`.
 
@@ -914,56 +931,46 @@ def _funil_muni(concorrentes: list[int]) -> tuple[pd.DataFrame, dict[str, str]]:
 
 
 @pytest.mark.parametrize(
-    ("concorrentes", "tags_esperadas"),
+    ("concorrentes", "n_itens"),
     [
         # A base do passo 3 e SEMPRE o white space (sem fallback), entao todo item que
-        # chega ao painel tem n = 0 concorrentes -> "Livre". O que estes casos provam e
-        # que o ramo competitivo ROda: os hexes com concorrente somem da lista em vez de
-        # aparecer com etiqueta de intensidade de residual.
-        pytest.param([0, 0, 3], ["Livre", "Livre"], id="dois-livres-um-disputado"),
-        pytest.param([0, 1, 2, 3], ["Livre"], id="um-livre-tres-disputados"),
+        # chega ao painel tem n = 0 concorrentes. O que estes casos provam e que o FILTRO
+        # roda: os hexes com concorrente somem da lista em vez de aparecer nela.
+        pytest.param([0, 0, 3], 2, id="dois-livres-um-disputado"),
+        pytest.param([0, 1, 2, 3], 1, id="um-livre-tres-disputados"),
     ],
 )
-def test_passo3_etiqueta_pelo_vocabulario_competitivo(
-    concorrentes: list[int], tags_esperadas: list[str]
-) -> None:
-    """C2/N5: o passo 3 etiqueta por CONCORRENCIA — o ramo "conc. 2 km" tem que rodar.
+def test_passo3_no_municipio_nao_emite_chip(concorrentes: list[int], n_itens: int) -> None:
+    """BLK-MAPA-CHIP-01: no municipio a camada 3 sai SEM etiqueta, e isso e proposital.
 
-    `_rank_items` recebia UM parametro para duas coisas diferentes: o texto exibido sob
-    o valor e a chave que escolhe o ramo do `_etiqueta`. Como o passo 3 exibe um valor
-    em alunos (residual), o parametro tinha de ser "residual" — e o ramo "conc. 2 km"
-    do `_etiqueta` ficou escrito, testado por ninguem e NUNCA executado. O lote separou
-    os dois papeis (`metrica_etiqueta`), e este teste e a prova de que o ramo executa.
+    Ate aqui ela publicava o vocabulario competitivo (Livre / Adensar / Disputa) pelo ramo
+    "conc. 2 km" do `_etiqueta`. So que a base do passo e o white space, onde
+    `n_concorrentes_est == 0` por construcao do corte: dos tres rotulos, apenas "Livre"
+    era alcancavel, e ele saia em 100% dos itens — 4 de 4 em Campinas, 10 de 10 em
+    Goiania, com 3x de amplitude no residual. Etiqueta constante nao informa, ocupa
+    espaco e ainda colide com o "Livre" da faixa de demanda, que quer dizer outra coisa.
 
-    Falha se alguem voltar a passar so o `label_metrica`: sem `metrica_etiqueta` as
-    etiquetas caem no ramo "residual" e viram Alta/Média/Baixa — nenhuma delas no
-    vocabulario competitivo, e "Livre" so existe no ramo "conc. 2 km".
+    O vocabulario continua vivo em `_etiqueta` (decisao do PR #184, nao revertida em
+    silencio) e o motivo de ele nao ser mais alcancado esta DECLARADO no campo `corte`
+    desta camada em /api/metodologia — o que o teste
+    `test_corte_da_camada_3_declara_a_saturacao` verifica.
     """
     df, bairros = _funil_muni(concorrentes)
     passo3 = pilot.montar_funil(df, "Sao Paulo", bairros)[2]
     itens = passo3["itens"]
-    assert itens, "passo 3 saiu sem itens: a fixture nao acendeu o funil"
+    assert len(itens) == n_itens, (
+        f"passo 3 devolveu {len(itens)} itens para n_concorrentes_est = {concorrentes}; "
+        "o filtro do white space mudou"
+    )
 
     tags = [i["tag"] for i in itens]
-    assert tags == tags_esperadas, (
-        f"C2/N5: etiquetas do passo 3 = {tags}, esperado {tags_esperadas}. "
-        f"n_concorrentes_est das linhas = {concorrentes}. Se vier "
-        f"{sorted(_TAGS_RESIDUAL_INTENSIDADE)}, o ramo 'conc. 2 km' do `_etiqueta` "
-        "voltou a nao executar (alguem passou so `label_metrica` ao `_rank_items`)."
+    assert tags == [""] * n_itens, (
+        f"a camada 3 do funil municipal voltou a emitir chip: {tags}. Se vier "
+        f"{sorted(_TAGS_COMPETITIVAS)}, alguem repos `metrica_etiqueta='conc. 2 km'`; se "
+        f"vier {sorted(_TAGS_RESIDUAL_INTENSIDADE)} ou 'N academias', o `etiqueta=False` "
+        "caiu e a camada passou a repetir a leitura da camada 2."
     )
-    assert set(tags) <= _TAGS_COMPETITIVAS
-    assert not set(tags) & _TAGS_RESIDUAL_INTENSIDADE
-    # As duas asserts de conjunto acima NAO bastam desde o BLK-MAPA-FAIXAS-01: "Livre"
-    # passou a existir tambem na faixa de demanda (score 80-100), e todo item do passo 3
-    # chega com residual >= OFERTA_DESTAQUE_MIN (2.000 = score 80). Ou seja, se o ramo
-    # competitivo morrer de novo, o ramo `residual` devolve "Livre" e as duas asserts
-    # continuam VERDES com a regressao dentro. `tag_cor` e' o que separa os ramos: o
-    # competitivo manda cor None (o `tom` basta), o de demanda manda o hex da faixa.
-    assert all(i["tag_cor"] is None for i in itens), (
-        "itens do passo 3 vieram com `tag_cor` preenchido, assinatura do ramo de "
-        "demanda (FAIXAS_MAPA_DEMANDA). O ramo competitivo 'conc. 2 km' nao pinta "
-        f"chip por cor. tag_cor = {[i['tag_cor'] for i in itens]}"
-    )
+    assert all(i["tag_cor"] is None for i in itens)
 
 
 def test_passo3_rotula_o_valor_como_residual_e_nao_como_concorrencia() -> None:
@@ -1212,35 +1219,97 @@ def test_ancora_de_municipio_e_deterministica_e_desempata_estavel() -> None:
         )
 
 
-def test_metodologia_nao_reescreve_o_tom_que_o_funil_pinta() -> None:
-    """O painel de Metodologia e o funil descrevem a MESMA camada 3 — se divergirem,
-    o painel mente para quem le a tela.
+def test_metodologia_nao_reescreve_o_chip_que_o_funil_emite() -> None:
+    """O painel e o funil descrevem a MESMA camada — se divergirem, o painel mente.
 
-    Regressao real: `_faixas_competitivas` copiava o tom a mao ("blue" para o
-    "Adensar"). Quando `_etiqueta` passou a devolver "gray" ali — para o chip nao
-    colidir com o azul da camada 1 —, o painel seguiu anunciando azul. Agora ele
-    PERGUNTA a `_etiqueta`, e este teste prova que continua perguntando.
+    Regressao real que motivou o teste: `_faixas_competitivas` copiava o tom a mao
+    ("blue" para o "Adensar") e, quando `_etiqueta` passou a devolver "gray", o painel
+    seguiu anunciando azul.
+
+    BLK-MAPA-CHIP-01 muda o ALVO da comparacao, nao a regra. O painel nao publica mais
+    um vocabulario fechado: publica a GRAMATICA do chip pos-corte ("1,0 academia",
+    "5 mil hab.", "100% sem disputa"). Entao a checagem passa a ser de FORMATO — todo
+    chip que o funil emite tem de casar, com os digitos normalizados, com alguma linha
+    que o painel publica para aquela camada e escopo. E a comparacao roda ATRAVES de
+    `montar_funil`/`montar_funil_uf`, nunca chamando `_etiqueta` direto: era exatamente
+    esse atalho que deixava o contrato verde sobre um vocabulario inalcancavel
+    (validava com `n_concorrentes_est` = 2 e 99, que o funil nunca entrega).
     """
-    import pandas as pd
-    from app import CONC_ADENSAR_MAX, _etiqueta, _faixas_competitivas
+    from app import montar_funil, montar_funil_uf, montar_metodologia
 
-    faixas = [f for f in _faixas_competitivas() if f["escopo"] == "municipio"]
-    casos = [0, CONC_ADENSAR_MAX, CONC_ADENSAR_MAX + 1]
-    assert len(faixas) == len(casos), (
-        "o painel deixou de publicar exatamente as tres faixas competitivas do municipio"
+    df, bairros = _funil_muni([0, 0, 0, 0])
+    por_escopo = {
+        "municipio": montar_funil(df, "Sao Paulo", bairros),
+        "uf": montar_funil_uf(pilot._derivar(_synthetic_enriched()), "SP"),
+    }
+    camadas = {c["n"]: c for c in montar_metodologia()["camadas"]}
+
+    for escopo, passos in por_escopo.items():
+        for passo in passos:
+            emitidos = {i["tag"] for i in passo["itens"] if i["tag"]}
+            if not emitidos:
+                continue
+            publicados = {
+                _forma(f["etiqueta"])
+                for f in camadas[passo["n"]]["faixas"]
+                if f["escopo"] in ("", escopo)
+            }
+            for chip in emitidos:
+                assert _forma(chip) in publicados, (
+                    f"camada {passo['n']} ({escopo}): o funil emite {chip!r}, cuja forma e "
+                    f"{_forma(chip)!r}, e o painel publica {sorted(publicados)}. Duas "
+                    "verdades sobre a mesma camada."
+                )
+
+
+def test_painel_nao_publica_nome_de_faixa_como_etiqueta_do_ranking() -> None:
+    """Criterio de aceite 2 do BLK-MAPA-CHIP-01, no lado do painel.
+
+    O slot `faixas` e rotulado "etiquetas do ranking" na tela. Ele publicava as 5 faixas
+    da rampa enquanto o corte da camada deixava UMA alcancavel — o leitor via
+    "corte: residual >= 2.000 alunos" e, logo abaixo, "Amplo: 1.500 a 2.000 alunos", uma
+    faixa que a lista nunca mostra. Quatro das cinco eram ficcao.
+
+    A rampa continua publicada, agora em `legenda_mapa`: la ela descreve o UNIVERSO que o
+    mapa pinta, onde as 5 faixas existem de verdade. Este teste trava a separacao.
+    """
+    from app import montar_metodologia
+
+    from motor_expansao.dashboard.constants import (
+        FAIXA_LABELS,
+        FAIXAS_MAPA_DEMANDA,
+        FAIXAS_MAPA_POTENCIAL,
     )
 
-    # `strict=True`: se o painel publicar um numero de faixas diferente dos casos de
-    # fronteira, o teste tem de EXPLODIR, nao emparelhar o que der e passar calado.
-    for faixa, n in zip(faixas, casos, strict=True):
-        rotulo, tom, _ = _etiqueta(
-            "conc. 2 km", None, 1, pd.Series({"n_concorrentes_est": n})
+    nomes_de_faixa = (
+        {nome for *_, nome, _cor, _tom in FAIXAS_MAPA_POTENCIAL}
+        | {nome for *_, nome, _cor, _tom in FAIXAS_MAPA_DEMANDA}
+        | set(FAIXA_LABELS.values())
+    )
+
+    for camada in montar_metodologia()["camadas"]:
+        publicadas = {f["etiqueta"] for f in camada["faixas"]}
+        intrusas = publicadas & nomes_de_faixa
+        assert not intrusas, (
+            f"camada {camada['n']}: {sorted(intrusas)} sao nomes de FAIXA e voltaram ao slot "
+            "de etiqueta do ranking. O corte da camada torna quase todos inalcancaveis; o "
+            "lugar deles e `legenda_mapa`."
         )
-        assert (faixa["etiqueta"], faixa["tom"]) == (rotulo, tom), (
-            f"com {n} concorrente(s) o funil pinta {rotulo!r}/{tom!r}, mas o painel "
-            f"anuncia {faixa['etiqueta']!r}/{faixa['tom']!r} — duas verdades sobre a "
-            "mesma camada"
-        )
+        # E o contrapositivo: onde a camada pinta por rampa, a legenda tem de continuar
+        # publicando a rampa INTEIRA, com a cor exata. Sem isto, "separar" viraria "sumir".
+        if camada["n"] in (1, 2, 3, 5):
+            legenda = camada.get("legenda_mapa") or []
+            assert legenda, f"camada {camada['n']} ficou sem `legenda_mapa`"
+            assert all(f["cor"] for f in legenda), (
+                f"camada {camada['n']}: linha de `legenda_mapa` sem cor — o painel promete a "
+                f"cor do mapa e a paleta de `tom` nao cobre a rampa 1:1. "
+                f"{[(f['etiqueta'], f['cor']) for f in legenda]}"
+            )
+            chaves = [(f["etiqueta"], f["condicao"]) for f in legenda]
+            assert len(chaves) == len(set(chaves)), (
+                f"camada {camada['n']}: `legenda_mapa` tem linha duplicada — a rampa voltou a "
+                f"ser publicada uma vez por escopo, e a `key` do React repete. {chaves}"
+            )
 
 
 def test_todo_tom_publicado_existe_no_tipo_Tom_do_front() -> None:

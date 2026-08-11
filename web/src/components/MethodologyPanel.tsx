@@ -26,6 +26,14 @@ function faixasDoEscopo(camada: CamadaMetodologia, escopo: 'municipio' | 'uf') {
   return camada.faixas.filter((f) => !f.escopo || f.escopo === escopo)
 }
 
+/* O mesmo filtro para as cores do mapa. Hoje o backend publica a rampa uma unica vez,
+   com `escopo` vazio, entao este filtro nao remove nada — ele existe para que voltar a
+   publicar por escopo nao produza silenciosamente linhas duplicadas e chaves React
+   repetidas (a `key` e' `etiqueta + condicao`). */
+function legendaDoEscopo(camada: CamadaMetodologia, escopo: 'municipio' | 'uf') {
+  return (camada.legenda_mapa ?? []).filter((f) => !f.escopo || f.escopo === escopo)
+}
+
 function Metrica({ nome, coluna, fonte, resumo, regra, ressalva }: MetricaMetodologia) {
   const [aberta, setAberta] = useState(false)
   return (
@@ -221,7 +229,7 @@ function Camada({
                 key={f.etiqueta + f.condicao}
                 style={{ display: 'flex', alignItems: 'center', gap: 8 }}
               >
-                <Chip tom={f.tom}>{f.etiqueta}</Chip>
+                <Chip tom={f.tom} cor={f.cor}>{f.etiqueta}</Chip>
                 <span
                   className="num"
                   style={{ font: '400 11px/1.3 var(--f-num)', color: 'var(--tx-sub)' }}
@@ -248,12 +256,12 @@ function Camada({
             cores do mapa
           </span>
           <div style={{ marginTop: 7, display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {camada.legenda_mapa.map((f) => (
+            {legendaDoEscopo(camada, escopo).map((f) => (
               <div
                 key={f.etiqueta + f.condicao}
                 style={{ display: 'flex', alignItems: 'center', gap: 8 }}
               >
-                <Chip tom={f.tom}>{f.etiqueta}</Chip>
+                <Chip tom={f.tom} cor={f.cor}>{f.etiqueta}</Chip>
                 <span
                   className="num"
                   style={{ font: '400 11px/1.3 var(--f-num)', color: 'var(--tx-sub)' }}
