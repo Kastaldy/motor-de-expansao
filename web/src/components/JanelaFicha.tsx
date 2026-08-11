@@ -1,32 +1,45 @@
 import { useEffect, type ReactNode } from 'react'
 
 /**
- * A gaveta que traz a ficha por cima do mapa, no modo de ponto.
+ * A JANELA que traz a ficha por cima do mapa, no modo de ponto.
  *
- * NAO E' MODAL de proposito. O mapa continua vivo e clicavel ao lado: a leitura da ficha
- * e' sobre o que esta' desenhado ali, e escurecer o mapa para ler sobre ele seria
- * trabalhar contra a propria tela. Por isso nao ha' backdrop e o foco nao fica preso.
+ * ERA UMA GAVETA colada na borda direita (`GavetaFicha`, ate 2026-08-11). Virou janela
+ * solta a pedido do Juan: com o mapa da cidade inteira no fundo, um painel grudado na
+ * borda corta a faixa direita do territorio de alto a baixo, e e' justamente ali que o
+ * pin do imovel costuma cair depois do voo da camera. A janela flutua com respiro nos
+ * quatro lados, entao o mapa continua legivel EM VOLTA dela, nao so' ao lado.
+ *
+ * CONTINUA NAO SENDO MODAL. O mapa segue vivo e clicavel: a leitura da ficha e' sobre o
+ * que esta' desenhado ali, e escurecer o mapa para ler sobre ele seria trabalhar contra a
+ * propria tela. Por isso nao ha' backdrop e o foco nao fica preso.
  *
  * FICA MONTADA QUANDO FECHADA. So' o `transform` a tira da tela. Desmontar zeraria o que
- * o operador digitou em metragem e aluguel no bloco de viabilidade — fechar a gaveta para
- * olhar o mapa e perder a conta ao reabrir seria punir quem usou as duas coisas juntas.
+ * o operador digitou em metragem e aluguel no bloco de viabilidade — fechar para olhar o
+ * mapa e perder a conta ao reabrir seria punir quem usou as duas coisas juntas.
  * `visibility: hidden` no fim da transicao e' o que a tira da ordem de tabulacao; sem
  * isso, o Tab pescaria botoes invisiveis fora da tela.
  */
-export default function GavetaFicha({
+export default function JanelaFicha({
   aberta,
   titulo,
   subtitulo,
   onFechar,
+  recuoInferior = 16,
   children,
 }: {
   aberta: boolean
   titulo: string
   subtitulo?: string
   onFechar: () => void
+  /**
+   * Quanto a janela sobe do pe' da tela. Existe porque o stepper do funil ocupa a
+   * largura toda quando ha' territorio carregado: com o recuo padrao a janela cobriria
+   * os botoes das camadas. Mesmo numero que o botao de abrir ja' usa.
+   */
+  recuoInferior?: number
   children: ReactNode
 }) {
-  // Esc fecha. E' o gesto que todo mundo tenta primeiro numa gaveta.
+  // Esc fecha. E' o gesto que todo mundo tenta primeiro numa janela por cima de algo.
   useEffect(() => {
     if (!aberta) return
     const aoTeclar = (e: KeyboardEvent) => {
@@ -43,23 +56,32 @@ export default function GavetaFicha({
       aria-hidden={!aberta}
       style={{
         position: 'absolute',
-        top: 0,
-        right: 0,
-        bottom: 0,
-        /* 520px cabe a grade de KPI em 2 colunas e a comparacao A x B em 3, sem
-           espremer os numeros; 92vw impede a gaveta de cobrir a tela toda no celular. */
+        /* Abaixo do cabecalho flutuante, que tem 16 de padding e quebra em duas linhas em
+           tela estreita. */
+        top: 88,
+        right: 16,
+        bottom: recuoInferior,
+        /* 520px cabe a grade de KPI em 2 colunas e a comparacao A x B em 3, sem espremer
+           os numeros; 92vw impede a janela de cobrir a tela toda no celular. */
         width: 'min(520px, 92vw)',
         display: 'flex',
         flexDirection: 'column',
         background: 'var(--surf-panel)',
-        borderLeft: '1px solid var(--line)',
+        border: '1px solid var(--line)',
+        borderRadius: 'var(--r-xl)',
+        /* Sem isto o cabecalho interno pinta o proprio fundo por cima dos cantos
+           arredondados e a janela volta a parecer um retangulo cortado. */
+        overflow: 'hidden',
         backdropFilter: 'blur(18px)',
-        boxShadow: aberta ? '-24px 0 60px rgba(0,0,0,.42)' : 'none',
-        transform: aberta ? 'translateX(0)' : 'translateX(100%)',
+        boxShadow: aberta ? '0 24px 64px rgba(0,0,0,.46)' : 'none',
+        /* Sai INTEIRA pela direita: `100%` sozinho pararia com a borda de 16px ainda na
+           tela, deixando um talho vertical sobre o mapa com a janela "fechada". */
+        transform: aberta ? 'translateX(0)' : 'translateX(calc(100% + 24px))',
+        opacity: aberta ? 1 : 0,
         visibility: aberta ? 'visible' : 'hidden',
         transition:
-          'transform .26s cubic-bezier(.4,0,.2,1), visibility .26s, box-shadow .26s ease',
-        zIndex: 20,
+          'transform .26s cubic-bezier(.4,0,.2,1), opacity .2s ease, visibility .26s, box-shadow .26s ease',
+        zIndex: 26,
       }}
     >
       <header

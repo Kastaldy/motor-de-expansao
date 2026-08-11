@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { PontoEscolhido } from '../App'
 
@@ -6,16 +6,24 @@ import BlocoViabilidadePonto from '../components/BlocoViabilidadePonto'
 import BotaoInicio from '../components/BotaoInicio'
 import CampoPonto from '../components/CampoPonto'
 import DetalheRegiao from '../components/DetalheRegiao'
-import GavetaFicha from '../components/GavetaFicha'
+import HexMap, { type SearchPin } from '../components/HexMap'
+import JanelaFicha from '../components/JanelaFicha'
 import MapaPonto from '../components/MapaPonto'
 import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
+import ScoreLegend from '../components/ScoreLegend'
+import StepperBar from '../components/StepperBar'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
 import { MAX_PONTOS } from '../lib/comparacao-pontos'
 import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { num } from '../lib/format'
-import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
+import type {
+  BlocoOpcional,
+  MunicipioPayload,
+  PontoPayload,
+  ViabilidadeOut,
+} from '../lib/types'
 
 /**
  * Modo 1 — analise de um PONTO/IMOVEL.
@@ -26,10 +34,18 @@ import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
  * leitura: a pergunta do modo e' "o que ha' em volta deste endereco?", e a resposta e'
  * geografica — a lista de numeros e' a evidencia, nao a manchete.
  *
- * CONTINUA SEM FUNIL e sem StepperBar. O funil e' um recorte TERRITORIAL (estado ->
- * municipio -> hexes) e nao diz nada sobre um endereco unico. O mapa daqui e' o
- * `MapaPonto`, que desenha so' o hexagono do imovel e os 18 vizinhos — nao carrega a
- * particao da UF nem precisa de um `Passo`.
+ * O MAPA E' O MESMO DO "EXPLORAR" (`HexMap` + funil + stepper + legenda), centrado no
+ * ponto. REVERTE a decisao que este docstring registrava ate 2026-08-10 ("continua sem
+ * funil e sem StepperBar", com o `MapaPonto` desenhando so' o hexagono do imovel e os 18
+ * vizinhos). O pedido e' do Juan e a razao dele vence a minha: quem cola um endereco
+ * quer decidir, e decidir exige ver a cidade em volta na MESMA regua com que o resto do
+ * produto fala — nao um recorte de 19 hexagonos com vocabulario proprio. O custo
+ * (carregar a particao do municipio) e' o mesmo que o Explorar ja paga.
+ *
+ * O `MapaPonto` SOBREVIVE como degradacao. Municipio nao resolvido pelo `/api/ponto` (o
+ * campo e' `string | null`) ou falha na carga do territorio: em vez de tela preta, volta
+ * o mapa de vizinhanca, que so' precisa da propria ficha. Nao e' codigo morto — e' o
+ * caminho de quando o funil nao se aplica.
  *
  * ESTADO VAZIO POR BLOCO. Cada bloco pergunta ao SERVIDOR se tem dado (`disponivel`) e
  * mostra o `motivo` que ele devolveu. A cadeia de dados degrada em silencio por desenho
@@ -60,15 +76,88 @@ export default function PontoScreen({
   /** A caixa de colar so' aparece quando pedida — depois do 1o ponto ela some. */
   const [colando, setColando] = useState(true)
   /**
-   * A gaveta da ficha.
+   * A janela da ficha.
    *
    * Abre SOZINHA quando uma leitura chega: o operador colou o ponto justamente para
    * saber se ele serve, e cobrar um clique a mais pela resposta seria burocracia. Depois
    * disso quem manda e' ele — fechou, o mapa fica limpo ate' pedir de novo.
    */
-  const [gaveta, setGaveta] = useState(false)
+  const [janela, setJanela] = useState(false)
 
   const ficha = fichas[aberto] ?? null
+
+  /**
+   * O TERRITORIO em volta do ponto: a mesma carga que o "Explorar" faz no drill-down de
+   * um municipio (`/api/municipio/{uf}/{municipio}`), com os 5 passos do funil, os
+   * hexagonos e os pins de concorrentes.
+   *
+   * Municipio e nao UF: o `/api/ponto` ja devolve a cidade do endereco, e o estado
+   * inteiro seria contexto demais para a pergunta "este imovel serve?" — a partir de
+   * zoom 10 o operador nem enxerga o resto da UF. No servidor o custo e' o mesmo: os dois
+   * endpoints leem a MESMA particao `uf=XX`, cacheada por processo.
+   */
+  const [territorio, setTerritorio] = useState<MunicipioPayload | null>(null)
+  const [carregandoTerritorio, setCarregandoTerritorio] = useState(false)
+  /** Qual camada do funil colore o mapa. Mesma numeracao do "Explorar" (1..5). */
+  const [passoN, setPassoN] = useState(1)
+  const [hexSelecionado, setHexSelecionado] = useState<string | null>(null)
+
+  const uf = ficha?.local.uf ?? null
+  const municipio = ficha?.local.municipio ?? null
+
+  /**
+   * Carrega o territorio quando o ponto aberto muda de CIDADE.
+   *
+   * A chave e' `uf|municipio`, nao a ficha: comparar cinco pontos do mesmo municipio tem
+   * de custar UMA carga, nao cinco. O `cancelado` fecha a corrida — trocar de ponto
+   * durante a carga faria a resposta antiga chegar depois e pintar o mapa com a cidade
+   * errada.
+   */
+  const chaveCarregada = useRef<string | null>(null)
+  useEffect(() => {
+    if (!uf || !municipio) {
+      chaveCarregada.current = null
+      setTerritorio(null)
+      return
+    }
+    const chave = `${uf}|${municipio}`
+    // A chave JA TENTADA mora em ref, nao no `territorio`. Com `territorio` na lista de
+    // dependencias, uma carga que FALHA (-> setTerritorio(null)) mudava o estado e
+    // disparava o efeito de novo, refazendo a mesma requisicao que acabou de falhar.
+    if (chaveCarregada.current === chave) return
+    chaveCarregada.current = chave
+
+    let cancelado = false
+    setCarregandoTerritorio(true)
+    // Hexagono selecionado e' de OUTRA cidade a partir daqui: mante-lo deixaria um
+    // contorno branco sobre um hexagono que nao esta mais no `hexes`.
+    setHexSelecionado(null)
+    api
+      .municipio(uf, municipio)
+      .then((d) => {
+        if (!cancelado) setTerritorio(d)
+      })
+      .catch(() => {
+        // Silencioso DE PROPOSITO: a ficha ja esta na tela e o `MapaPonto` assume o
+        // fundo. Um erro vermelho aqui culparia o operador por uma degradacao que nao
+        // muda a resposta que ele veio buscar.
+        if (!cancelado) setTerritorio(null)
+      })
+      .finally(() => {
+        if (!cancelado) setCarregandoTerritorio(false)
+      })
+    return () => {
+      cancelado = true
+    }
+  }, [uf, municipio])
+
+  /** O passo que colore o mapa. `passos` vem com 5; o estado e' 1-based. */
+  const passo = territorio?.passos[passoN - 1] ?? null
+
+  /** O pin do imovel colado — a mesma marca que a busca por coordenada solta no Explorar. */
+  const pinDoPonto: SearchPin | null = ficha
+    ? { lat: ficha.lat, lng: ficha.lng, hexId: ficha.hex_id }
+    : null
 
   async function resolver(entrada: EntradaClassificada, texto: string) {
     setCarregando(true)
@@ -93,7 +182,7 @@ export default function PontoScreen({
         return proximas
       })
       setColando(false)
-      setGaveta(true)
+      setJanela(true)
     } catch (e) {
       // NAO limpa os pontos ja lidos: perder tres leituras porque a quarta falhou
       // seria punir o operador por um endereco mal digitado.
@@ -107,8 +196,28 @@ export default function PontoScreen({
 
   return (
     <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-      {/* O mapa É a tela: fica no fundo, ocupando tudo, com o resto flutuando por cima. */}
-      <MapaPonto ficha={ficha} />
+      {/* O mapa É a tela: fica no fundo, ocupando tudo, com o resto flutuando por cima.
+          É o MESMO `HexMap` do Explorar — mesmas camadas, mesma rampa, mesmos pins —,
+          centrado na cidade do imóvel. Sem o território (município não resolvido ou carga
+          falhou) cai no mapa de vizinhança, que só precisa da própria ficha. */}
+      {territorio && passo ? (
+        <HexMap
+          hexes={territorio.hexes}
+          passo={passo}
+          cresMun={territorio.cres_mun}
+          centro={territorio.centro}
+          municipio={territorio.municipio ?? undefined}
+          uf={territorio.uf}
+          pins={territorio.pins}
+          selecionado={hexSelecionado}
+          onSelecionar={(h) => setHexSelecionado(h.id)}
+          /* O pin é o IMÓVEL COLADO, não uma busca: é ele que manda a câmera voar para cá
+             na montagem, e é o que amarra a leitura da ficha ao que está desenhado. */
+          searchPin={pinDoPonto}
+        />
+      ) : (
+        <MapaPonto ficha={ficha} />
+      )}
 
       {/* ---------------- Chrome flutuante ----------------
           Coluna flex em vez de peças com `top` fixo: o cabeçalho quebra em duas linhas
@@ -230,24 +339,93 @@ export default function PontoScreen({
         )}
       </div>
 
+      {/* ---------------- Camadas do funil ----------------
+          As mesmas do Explorar: a legenda diz o que a cor significa e o stepper troca a
+          camada. Sem território (ou enquanto ele carrega) as duas somem — o mapa de
+          vizinhança não tem funil para explicar. */}
+      {territorio && passo && (
+        <>
+          <div style={{ position: 'absolute', left: 16, bottom: 84, zIndex: 25 }}>
+            <ScoreLegend passoN={passo.n} />
+          </div>
+
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 24,
+              padding: '0 16px 16px',
+            }}
+          >
+            <StepperBar
+              passos={territorio.passos}
+              atual={passoN}
+              onIr={(n) => setPassoN(Math.min(territorio.passos.length, Math.max(1, n)))}
+              /* O PDF municipal é a saída do modo "Explorar uma região", não deste. Aqui a
+                 entrega é a ficha do imóvel, que já tem o próprio caminho na janela —
+                 gerar um relatório da cidade inteira a partir de um endereço colado
+                 responderia outra pergunta. */
+              onGerarRelatorio={() => setJanela(true)}
+              rotuloFinal="Ver a ficha do imóvel ›"
+              gerando={false}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Enquanto o território não chegou, o mapa de vizinhança já está no fundo e o
+          operador merece saber que vem mais — a carga da partição leva segundos. */}
+      {carregandoTerritorio && (
+        <Glass
+          style={{
+            position: 'absolute',
+            left: 16,
+            bottom: 16,
+            zIndex: 25,
+            padding: '10px 14px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 9,
+            font: '400 12px/1 var(--f-ui)',
+            color: 'var(--tx-muted)',
+          }}
+        >
+          <Spinner /> Lendo o território de {municipio}…
+        </Glass>
+      )}
+
       {/* ---------------- A ÚNICA opção que puxa a janela ----------------
-          Some enquanto a gaveta está aberta: quem já a tem na tela fecha pelo × ou Esc. */}
-      {ficha && !gaveta && (
-        <div style={{ position: 'absolute', right: 16, bottom: 16, zIndex: 25 }}>
-          <Botao onClick={() => setGaveta(true)}>
+          Some enquanto a janela está aberta: quem já a tem na tela fecha pelo × ou Esc. */}
+      {ficha && !janela && (
+        <div
+          style={{
+            position: 'absolute',
+            right: 16,
+            /* Acima do stepper quando ele existe: os dois no mesmo `bottom` se sobrepõem
+               em tela estreita, e o stepper ocupa a largura toda. */
+            bottom: territorio && passo ? 84 : 16,
+            zIndex: 25,
+          }}
+        >
+          <Botao onClick={() => setJanela(true)}>
             Ver a ficha {fichas.length > 1 ? `(${fichas.length} pontos)` : ''} ›
           </Botao>
         </div>
       )}
 
       {/* ---------------- A janela ---------------- */}
-      <GavetaFicha
-        aberta={gaveta && ficha != null}
+      <JanelaFicha
+        aberta={janela && ficha != null}
         titulo={ficha?.local.bairro ?? ficha?.local.municipio ?? 'Ponto analisado'}
         subtitulo={
           ficha ? [ficha.local.municipio, ficha.local.uf].filter(Boolean).join(' · ') : undefined
         }
-        onFechar={() => setGaveta(false)}
+        onFechar={() => setJanela(false)}
+        /* Mesmo recuo do botão que a abre: com o funil na tela o stepper ocupa a largura
+           toda no pé, e a janela cobriria os botões das camadas. */
+        recuoInferior={territorio && passo ? 96 : 16}
       >
         {ficha && (
           <div style={{ display: 'grid', gap: 16 }}>
@@ -261,9 +439,9 @@ export default function PontoScreen({
                   setAberto((k) => Math.max(0, Math.min(k, proximas.length - 1)))
                   if (proximas.length === 0) {
                     setColando(true)
-                    // Sem ponto nao ha' ficha: a gaveta fecharia vazia, e uma gaveta
+                    // Sem ponto nao ha' ficha: a janela ficaria vazia, e uma janela
                     // vazia por cima do mapa se le como defeito.
-                    setGaveta(false)
+                    setJanela(false)
                   }
                   return proximas
                 })
@@ -280,7 +458,7 @@ export default function PontoScreen({
             />
           </div>
         )}
-      </GavetaFicha>
+      </JanelaFicha>
     </div>
   )
 }
