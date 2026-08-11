@@ -163,22 +163,42 @@ def ler_feeds(
     dir_totalpass: Path = DIR_TOTALPASS_DEFAULT,
     dir_wellhub: Path = DIR_WELLHUB_DEFAULT,
     dir_unidades: Path = DIR_UNIDADES_DEFAULT,
+    *,
+    fontes: Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Lê as 3 pastas de CSVs -> frame LONGO de trabalho (PII **só em memória**, nada persistido).
 
     `rede` = stem sem o prefixo `unidades_` para o feed de cadeias; `classificar_rede(nome)` para
     TotalPass/WellHub (espelha `concorrentes_densos.py:138`/`:153`). Colunas ausentes no arquivo
     entram como `""`. Diretório inexistente contribui 0 linhas e **nunca** levanta.
+
+    `fontes` restringe QUAIS feeds entram (default: todos). Existe por causa de um descasamento de
+    CADÊNCIA, não de gosto (BLK-MA-06): o cron semanal recoleta só o feed `unidades`; WellHub e
+    TotalPass dependem de um cron mensal que ainda **não existe**
+    (`docs/infra_producao.md`, "Pendentes"). Fotografar um feed que não foi recoletado produz
+    `hash_campos_raspados` idêntico semana após semana -> `semanas_sem_mudanca` cresce sozinho ->
+    o **S4 marcaria o universo inteiro de agregador como "parado"**, que é justamente o sinal de
+    vulnerabilidade. Passar `fontes` explicitamente deixa esse recorte auditável no log e na
+    auditoria, em vez de escondido num diretório apontado para lugar nenhum.
     """
+    ativas = FONTES_VALIDAS if fontes is None else frozenset(str(f) for f in fontes)
+    desconhecidas = sorted(ativas - FONTES_VALIDAS)
+    if desconhecidas:
+        raise ValueError(f"fonte fora do contrato: {desconhecidas}; aceitas: {sorted(FONTES_VALIDAS)}")
+    if not ativas:
+        raise ValueError("`fontes` vazio: nao ha o que ler")
     partes: list[pd.DataFrame] = []
-    for caminho in sorted(Path(dir_totalpass).glob("*.csv")):
-        partes.append(_preparar_parte(_ler_csv_bruto(caminho), "totalpass", None))
-    for caminho in sorted(Path(dir_wellhub).glob("*.csv")):
-        partes.append(_preparar_parte(_ler_csv_bruto(caminho), "wellhub", None))
-    for caminho in sorted(Path(dir_unidades).glob("*.csv")):
-        stem = caminho.stem
-        rede = stem[len(_PREFIXO_UNIDADES) :] if stem.startswith(_PREFIXO_UNIDADES) else stem
-        partes.append(_preparar_parte(_ler_csv_bruto(caminho), "unidades", rede))
+    if "totalpass" in ativas:
+        for caminho in sorted(Path(dir_totalpass).glob("*.csv")):
+            partes.append(_preparar_parte(_ler_csv_bruto(caminho), "totalpass", None))
+    if "wellhub" in ativas:
+        for caminho in sorted(Path(dir_wellhub).glob("*.csv")):
+            partes.append(_preparar_parte(_ler_csv_bruto(caminho), "wellhub", None))
+    if "unidades" in ativas:
+        for caminho in sorted(Path(dir_unidades).glob("*.csv")):
+            stem = caminho.stem
+            rede = stem[len(_PREFIXO_UNIDADES) :] if stem.startswith(_PREFIXO_UNIDADES) else stem
+            partes.append(_preparar_parte(_ler_csv_bruto(caminho), "unidades", rede))
 
     partes = [p for p in partes if not p.empty]
     if not partes:
@@ -832,6 +852,7 @@ def materializar(
     escrever: bool = True,
     taxa_slug_persistente: float | None = None,
     politica_chave: str = "auto",
+    fontes: Sequence[str] | None = None,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
     """CSV cru -> limpeza -> hash -> chave -> snapshot da semana (e, opcionalmente, a partição).
 
@@ -845,7 +866,7 @@ def materializar(
     referencia = data_referencia or date.today()
     semana = derivar_semana_iso(referencia)
 
-    bruto = ler_feeds(dir_totalpass, dir_wellhub, dir_unidades)
+    bruto = ler_feeds(dir_totalpass, dir_wellhub, dir_unidades, fontes=fontes)
     limpo, auditoria_limpeza = limpar_ruido(bruto)
     com_hash = calcular_hash_campos_raspados(limpo)
     com_chave = derivar_chave(
@@ -853,7 +874,15 @@ def materializar(
     )
     snapshot, auditoria_snapshot = montar_snapshot(com_chave)
 
-    auditoria: dict[str, object] = {"semana": semana, **auditoria_limpeza, **auditoria_snapshot}
+    auditoria: dict[str, object] = {
+        "semana": semana,
+        # Quais feeds ESTA partição fotografou. Fica no snapshot porque a resposta muda com a
+        # cadência (BLK-MA-06): quem ler a série meses depois precisa saber que as semanas antigas
+        # só tinham `unidades`, sob pena de ler ausência de agregador como churn.
+        "fontes_lidas": sorted(FONTES_VALIDAS if fontes is None else {str(f) for f in fontes}),
+        **auditoria_limpeza,
+        **auditoria_snapshot,
+    }
     if escrever:
         destino = escrever_particao_semana(snapshot, base_dir, semana=semana)
         _logger.info("snapshot semanal escrito: %s (%d linhas)", destino, len(snapshot))
@@ -868,6 +897,7 @@ def executar(
     data_referencia: date | None = None,
     retencao_semanas: int = RETENCAO_SEMANAS,
     dry_run: bool = False,
+    fontes: Sequence[str] | None = None,
 ) -> dict[str, object]:
     """Orquestrador de disco: materializa a semana corrente e aplica a retenção rolante.
 
@@ -886,6 +916,7 @@ def executar(
         base_dir,
         data_referencia,
         escrever=not dry_run,
+        fontes=fontes,
     )
     if dry_run:
         # A poda e' irreversivel; em modo seco ela nem e' consultada, so' anunciada.
@@ -935,6 +966,17 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="roda tudo sem gravar e SEM PODAR; use antes de ligar o cron",
     )
+    p.add_argument(
+        "--fontes",
+        nargs="+",
+        choices=sorted(FONTES_VALIDAS),
+        default=None,
+        help=(
+            "feeds a fotografar (default: todos). O cron SEMANAL deve passar `--fontes unidades`: "
+            "so' esse feed e' recoletado toda semana, e fotografar um feed estagnado faria o S4 "
+            "marcar o universo inteiro daquela fonte como parado (BLK-MA-06)"
+        ),
+    )
     return p.parse_args(argv)
 
 
@@ -950,6 +992,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         data_referencia=args.data_referencia,
         retencao_semanas=args.retencao_semanas,
         dry_run=args.dry_run,
+        fontes=args.fontes,
     )
     print(auditoria)
     return 0

@@ -1703,6 +1703,51 @@ ou explicitamente recusados com justificativa; suíte completa sem regressão (b
 
 ---
 
+### BLK-MA-06 — Snapshot semanal no cron da VPS: liga o relógio de S3/S4
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (o passo entra num **cron de produção na VPS** e o módulo invocado é o único do pacote que **apaga arquivo** — a poda de retenção. READ-ONLY sobre o M1: não toca `score_priorizacao`, pesos, `config.py`, `pipelines/m1` nem artefato oficial; escreve só em `data/staging/snapshots_concorrentes/`). |
+| **Prioridade** | **É o caminho crítico do epic, não o último passo.** Sem série não há S3/S4; sem S3/S4 o `score_vulnerabilidade_ordenavel` nasce nulo e o **BLK-MA-05 não tem o que ordenar**. Cada semana sem este bloco é uma semana a mais de espera. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA → `[aplicação na VPS: passo MANUAL do Felipe, comando a comando — §6]`. |
+| **Status** | **Código e runbook ENTREGUES (2026-08-11); aplicação na VPS pendente.** O que falta é humano, não técnico. |
+| **Depende de** | BLK-MA-02-FU1 (o m6 deu ao materializador a CLI com `--dry-run`/`--base-dir`; sem ela não se pluga isso num cron) e o item 2 do mesmo bloco (import lazy, que tirou `sklearn`/`scipy` do caminho). |
+| **Autonomia** | **manual (NÃO loop-safe)** — toca cron de produção. NUNCA marcar loop-safe. |
+
+**O que foi entregue.** `scripts/cron/run_snapshot_concorrentes.sh` (versionado, molde do
+`run_growth_daily.sh`: container efêmero na imagem da `api`, `--user 0:0`, concorrentes `:ro`), o
+recorte `--fontes` no materializador, e a seção de runbook em `docs/infra_producao.md` com a linha
+exata a inserir no `run_weekly_90.sh`.
+
+**Por que o runner não é um PR.** O `run_weekly_90.sh` vive em `/opt/gymscraping-infra/` **na VPS,
+fora de qualquer repo** (`docs/infra_producao.md`). Versionar o passo como script próprio reduz a
+superfície não versionada a **uma linha** de invocação — que é o que o Felipe aplica, com o
+guardrail do §6 valendo comando a comando.
+
+**A decisão que sustenta o bloco: `--fontes unidades`.** O cron semanal recoleta só os 90 coletores.
+WellHub e TotalPass dependem de um cron mensal que **não existe** (listado como pendente no runbook).
+Fotografar um feed não recoletado é **pior** que não fotografar: o `hash_campos_raspados` sai
+idêntico toda semana, `semanas_sem_mudanca` cresce sozinho e o **S4 marca o universo inteiro daquela
+fonte como "parado"** — o próprio sinal de vulnerabilidade. Falso positivo em massa, no sinal de
+segundo maior peso, e silencioso. O recorte de cada partição fica em `fontes_lidas`, na auditoria.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; o cron **mensal** dos agregadores (bloco
+próprio, e quando existir chama o MESMO script com `--fontes totalpass wellhub`); o entregável
+comercial (**BLK-MA-05**); a reputação externa (**BLK-MA-07**).
+
+**Pendência declarada — `MIN_SEMANAS` com a cadência real.** O valor `8` foi fixado no gate de
+2026-07-23 supondo cadência semanal; o contrato (D2) delega a revisão a ESTE bloco, "com a cadência
+real medida". Ela agora está medida: `unidades` semanal (S3/S4 maduros em ~2 meses), agregadores
+mensais (**~8 meses**). A decisão é do Felipe e **não bloqueia** a aplicação na VPS — mexer em
+`MIN_SEMANAS` depois é barato enquanto a série é curta, e caro depois.
+
+**Critério de aceite.** Script versionado com sintaxe validada; `--fontes` com teste que prove o
+recorte e que as duas metades reconstroem o todo; `fontes_lidas` na auditoria; runbook com o modo
+seco como passo obrigatório ANTES de agendar; suíte sem regressão; `ruff`/`mypy` limpos; `loop_guard`
+sem CRÍTICO. **Nenhum comando executado na VPS por agente.**
+
+---
+
 ### BLK-MA-07 — Reputação externa para o universo sem nota in-app (Google Places)
 
 | Campo | Valor |

@@ -243,6 +243,48 @@ com o deploy; se os pipelines da cadeia mudarem, re-sincronizar o checkout manua
 > **Pendentes (futuro):** cron **mensal** dos agregadores WellHub/TotalPass (~20h, invocação separada);
 > integração deles ao residual com remodelagem (Huff por tipo de rede + dedup) usando as bases `NAO_ABRA/`.
 
+### Snapshot semanal de concorrentes (BLK-MA-06 — insumo de churn/staleness)
+
+**Por que existe.** O runner **sobrescreve** os CSVs crus a cada coleta: toda semana não fotografada
+está perdida **para sempre**. O snapshot é o produtor da série que os sinais **S3 (churn)** e
+**S4 (staleness)** do score de vulnerabilidade consomem. READ-ONLY sobre o M1 — escreve só em
+`data/staging/snapshots_concorrentes/semana=AAAA-SS/`.
+
+**Script versionado:** `scripts/cron/run_snapshot_concorrentes.sh` (mesmo molde do
+`run_growth_daily.sh`: container efêmero na imagem da `api`, `--user 0:0`, concorrentes montado
+`:ro`). Instalação e a linha a inserir no `run_weekly_90.sh` estão no cabeçalho do próprio script.
+
+**`--fontes unidades`, e isto NÃO é detalhe de configuração.** O cron semanal recoleta só os 90
+coletores, que atualizam `Unidades/unidades_<rede>.csv`; WellHub e TotalPass dependem do cron mensal
+listado acima como pendente. **Fotografar um feed que não foi recoletado é pior do que não
+fotografar:** o `hash_campos_raspados` sai idêntico semana após semana, `semanas_sem_mudanca` cresce
+sozinho e o **S4 marca o universo inteiro daquela fonte como "parado"** — que é exatamente o sinal de
+vulnerabilidade que o funil de M&A procura. Falso positivo em massa, no sinal de segundo maior peso,
+e silencioso. Quando o cron mensal dos agregadores existir, ele chama o **mesmo** script com
+`--fontes totalpass wellhub`, na cadência dele. O recorte de cada partição fica registrado em
+`fontes_lidas`, na auditoria.
+
+**Antes de agendar, rode o modo seco** — o layout dos CSVs na VPS não é versionado e o script não
+tem como adivinhá-lo:
+
+```bash
+DRY_RUN=1 /opt/motor-expansao-infra/run_snapshot_concorrentes.sh
+```
+
+`--dry-run` roda a cadeia inteira **sem gravar e sem podar** (este é o único passo do pacote que
+**apaga** arquivo — a poda de retenção, `RETENCAO_SEMANAS = 26`). Se `linhas_snapshot` vier `0`, o
+caminho de `HOST_CONCORRENTES` está errado; só agende depois de ver contagem plausível.
+
+**Falha do snapshot não pode abortar o lote** — a linha sugerida termina em
+`|| echo "snapshot falhou"`, no mesmo espírito de "falhas individuais de coletor não abortam o lote".
+
+> **Maturidade da série (decisão em aberto, ler antes de esperar resultado).** `MIN_SEMANAS = 8` e
+> `STALE_SEMANAS = 12` foram fixados no gate de 2026-07-23 supondo cadência **semanal**. Com o feed
+> `unidades` semanal, o S3/S4 amadurecem em ~2 meses; para os agregadores, a cadência real é
+> **mensal**, então 8 snapshots = **~8 meses**. Enquanto `flag_score_provisorio` estiver ligada,
+> `score_vulnerabilidade_ordenavel` nasce **nula** e o BLK-MA-05 não tem o que ordenar. Revisitar
+> `MIN_SEMANAS` com a cadência medida é obrigação declarada do BLK-MA-06 (contrato, D2).
+
 ### Ingestão DIÁRIA da Growth API (Visão Executiva do piloto web)
 
 A **Visão Executiva** do piloto web (`/api/executiva/{uf}`) lê `data/staging/growth_api_historico.parquet`
