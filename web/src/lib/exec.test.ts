@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 
 import { TEXTO_SEM_DADO } from './constants'
 import {
+  COR_SEVERIDADE,
+  corComAlfa,
   destaquesDoRecorte,
   deveReenquadrar,
   enquadrar,
@@ -260,6 +262,30 @@ describe('deveReenquadrar', () => {
 
   it('sem ajuste manual, mudar de tamanho reenquadra — é como o primeiro layout acerta', () => {
     expect(deveReenquadrar('tamanho', false)).toBe(true)
+  })
+})
+
+describe('corComAlfa', () => {
+  it('mistura a cor com transparente na proporção pedida', () => {
+    expect(corComAlfa('#ff5a6e', 12)).toBe('color-mix(in srgb, #ff5a6e 12%, transparent)')
+  })
+
+  it('funciona sobre um TOKEN, que é a razão de existir', () => {
+    // O sufixo hexadecimal antigo (`${cor}1f`) só valia para `#rrggbb`. Com o semáforo em
+    // token, `var(--sev-alta)1f` não é cor nenhuma: o navegador descarta a declaração e o
+    // chip perde o fundo — sem erro, sem aviso e sem ninguém perceber.
+    expect(corComAlfa(COR_SEVERIDADE.alta, 12)).toBe(
+      'color-mix(in srgb, var(--sev-alta) 12%, transparent)',
+    )
+    expect(corComAlfa(COR_SEVERIDADE.media, 12)).toContain('var(--sev-media)')
+  })
+
+  it('as cores do semáforo são todas token, nunca hex', () => {
+    // Se alguma voltar a ser hex, o tema claro deixa de alcançá-la e ela fica com o valor
+    // do escuro no meio da tela branca.
+    for (const cor of Object.values(COR_SEVERIDADE)) {
+      expect(cor).toMatch(/^var\(--sev-[a-z-]+\)$/)
+    }
   })
 })
 
