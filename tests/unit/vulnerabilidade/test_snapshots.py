@@ -1,12 +1,12 @@
 """BLK-MA-02: testes offline do materializador de snapshots semanais.
 
-Fixtures 100% SINTETICAS em `tmp_path` (CSVs com `sep=";"` / `encoding="utf-8-sig"`, coordenadas
+Fixtures 100% SINTÉTICAS em `tmp_path` (CSVs com `sep=";"` / `encoding="utf-8-sig"`, coordenadas
 reais do Brasil, nomes inventados). NENHUM teste le a fonte real -- ela e gitignored, vive na VPS
 e carrega PII na origem (DEC-012).
 
 Cobre: isolamento de import (AST), contrato de 10 colunas + `_assert_schema`, anti-PII provado
-RELENDO o parquet do disco (inclusive nos bytes do arquivo), particao por semana ISO e
-idempotencia, limpeza de ruido com auditoria so de contagens, `hash_campos_raspados`, estabilidade
+RELENDO o parquet do disco (inclusive nos bytes do arquivo), partição por semana ISO e
+idempotência, limpeza de ruido com auditoria só de contagens, `hash_campos_raspados`, estabilidade
 do `slug` / rebaixamento de chave, e poda de retencao.
 """
 
@@ -136,7 +136,7 @@ def dirs_com_ruido(tmp_path: Path) -> tuple[Path, Path, Path]:
                     "SAGAZ Sistemas",
                     "TSITECH Solucoes",
                     "DATAFITNESS - TTP",
-                    # 3 boas (a ultima junto a divisa de UF)
+                    # 3 boas (a última junto a divisa de UF)
                     "Academia Boa Centro",
                     "Academia Boa Norte",
                     "Academia Boa Divisa",
@@ -236,7 +236,7 @@ def test_pacote_nao_carrega_dependencia_pesada() -> None:
         print(";".join(pesados) + "|" + str(len(dash)) + "|" + alvo.__file__)
         """
     )
-    # `stdin=DEVNULL` nao e' decorativo: sob a captura do pytest no Windows, o stdin herdado nao
+    # `stdin=DEVNULL` não e' decorativo: sob a captura do pytest no Windows, o stdin herdado não
     # tem descritor real e o `subprocess` levanta `OSError: [WinError 6]` antes de rodar qualquer
     # coisa. Enquanto este teste esteve marcado `xfail(strict=True)`, essa OSError contava como
     # "falha esperada" — ou seja, o teste ERRAVA em vez de medir, e ninguem tinha como perceber.
@@ -297,7 +297,7 @@ def test_checagem_de_import_pega_as_cinco_formas() -> None:
 # CA-12 — nenhum teste do pacote aponta para caminho de fonte real
 # --------------------------------------------------------------------------- #
 def test_sem_caminho_real_nos_testes() -> None:
-    """Os literais proibidos sao MONTADOS por concatenacao para nao se auto-acusarem."""
+    """Os literais proibidos são MONTADOS por concatenação para não se auto-acusarem."""
     proibidos = ["concorrentes" + "/", "data/" + "staging", "data/" + "outputs", "data/" + "raw"]
     for arquivo in sorted(Path(__file__).parent.glob("test_*.py")):
         tree = ast.parse(arquivo.read_text(encoding="utf-8"))
@@ -308,7 +308,7 @@ def test_sem_caminho_real_nos_testes() -> None:
 
 
 def test_defaults_iguais_aos_da_ingestao_existente() -> None:
-    """R6: os diretorios default NAO podem divergir dos ja usados pela ingestao densa."""
+    """R6: os diretórios default NÃO podem divergir dos já usados pela ingestão densa."""
     from motor_expansao.demanda_revelada import concorrentes_densos as densos
 
     assert m.DIR_TOTALPASS_DEFAULT == densos.DIR_TOTALPASS_DEFAULT
@@ -439,12 +439,12 @@ def test_parquet_sem_pii_relendo_do_disco(tmp_path: Path) -> None:
     assert list(relido.columns) == list(c.CONTRATO_COLUNAS_SNAPSHOT.keys())
     for coluna in relido.columns:
         assert not relido[coluna].astype(str).str.contains(marcador).any(), coluna
-    # O literal nao pode sobreviver nem em metadado/estatistica de coluna do proprio arquivo.
+    # O literal não pode sobreviver nem em metadado/estatística de coluna do próprio arquivo.
     assert marcador.encode() not in arquivos[0].read_bytes()
 
 
 # --------------------------------------------------------------------------- #
-# CA-4 / CA-17 — particao por semana ISO, idempotencia e escrita defensiva
+# CA-4 / CA-17 — partição por semana ISO, idempotência e escrita defensiva
 # --------------------------------------------------------------------------- #
 def test_particao_nomeada_por_semana_iso(
     dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
@@ -463,7 +463,7 @@ def test_particao_nomeada_por_semana_iso(
 def test_particao_usa_a_data_de_referencia_nao_o_data_coleta(
     dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
 ) -> None:
-    """P1: a semana sai da EXECUCAO. Um CSV velho (coletor falho) nao reescreve semana passada."""
+    """P1: a semana sai da EXECUÇÃO. Um CSV velho (coletor falho) não reescreve semana passada."""
     tp, wh, un = dirs_sinteticos  # data_coleta de 2026-07-25/26/27 (semana ISO 2026-30)
     base = tmp_path / "snapshots"
     ref_futura = date(2026, 8, 5)  # semana ISO 2026-32
@@ -490,7 +490,7 @@ def test_materializar_duas_vezes_mesma_semana_nao_duplica(
 def test_materializar_semana_menor_na_segunda_execucao(
     dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
 ) -> None:
-    """Prova do `delete_matching`: a 2a execucao SUBSTITUI a particao, nao soma a ela."""
+    """Prova do `delete_matching`: a 2a execução SUBSTITUI a partição, não soma a ela."""
     tp, wh, un = dirs_sinteticos
     base = tmp_path / "snapshots"
     m.materializar(tp, wh, un, base_dir=base, data_referencia=REF)
@@ -526,7 +526,7 @@ def test_ler_snapshots_base_inexistente_ou_vazia(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# CA-5 — limpeza de ruido com auditoria SO de contagens
+# CA-5 — limpeza de ruido com auditoria SÓ de contagens
 # --------------------------------------------------------------------------- #
 def test_limpar_ruido_conta_por_motivo(dirs_com_ruido: tuple[Path, Path, Path]) -> None:
     tp, wh, un = dirs_com_ruido
@@ -553,7 +553,7 @@ def test_limpar_ruido_preserva_linhas_boas(dirs_com_ruido: tuple[Path, Path, Pat
 
 
 def test_auditoria_so_tem_contagens(dirs_com_ruido: tuple[Path, Path, Path]) -> None:
-    """Anti-PII: a auditoria carrega SO inteiros, jamais o texto ofensor."""
+    """Anti-PII: a auditoria carrega SÓ inteiros, jamais o texto ofensor."""
     tp, wh, un = dirs_com_ruido
     _limpo, auditoria = m.limpar_ruido(m.ler_feeds(tp, wh, un))
 
@@ -608,7 +608,7 @@ def test_hash_ignora_a_taxonomia_inteira() -> None:
 
 
 def test_hash_ignora_slug() -> None:
-    """Rotacao de UUID no slug NAO e mudanca de negocio."""
+    """Rotacao de UUID no slug NÃO e mudanca de negocio."""
     assert _hash(_frame_tp(slug="academia-alfa-b8491478-1111-2222-3333-444455556666")) == _hash(
         _frame_tp(slug="academia-alfa-99999999-aaaa-bbbb-cccc-dddddddddddd")
     )
@@ -631,7 +631,7 @@ def test_hash_muda_com_campo_real(campo: str, valor: object) -> None:
 
 
 def test_hash_usa_o_conjunto_de_campos_da_propria_fonte() -> None:
-    """O feed `unidades` hasheia `nome_unidade` (nao `nome`) + coordenadas."""
+    """O feed `unidades` hasheia `nome_unidade` (não `nome`) + coordenadas."""
     base = _frame_tp(fonte="unidades", rede="selfit", nome="Selfit Norte",
                      nome_unidade="Selfit Norte", slug="")
     outro = base.copy()
@@ -718,7 +718,7 @@ def test_rebaixamento_global_so_com_taxa_injetada() -> None:
 
 
 def test_chave_origem_slug_duplicado_no_snapshot() -> None:
-    """Rebaixamento POR LINHA (so informacao local da semana): slug repetido nao serve de chave."""
+    """Rebaixamento POR LINHA (só informacao local da semana): slug repetido não serve de chave."""
     df = pd.concat(
         [_frame_tp(nome="Academia Alfa I"), _frame_tp(nome="Academia Alfa II", latitude=-23.9)],
         ignore_index=True,
@@ -810,7 +810,7 @@ def test_podar_valida_retencao_e_base_ausente(tmp_path: Path) -> None:
 def test_materializar_escrever_false_nao_poda(
     dirs_sinteticos: tuple[Path, Path, Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A poda APAGA disco: `materializar` nao pode alcanca-la em hipotese alguma."""
+    """A poda APAGA disco: `materializar` não pode alcanca-la em hipotese alguma."""
 
     def _explode(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("materializar NUNCA pode chamar podar_snapshots")
@@ -845,7 +845,7 @@ def test_rede_tp_wh_vem_do_classificador(dirs_sinteticos: tuple[Path, Path, Path
     tp, wh, un = dirs_sinteticos
     df = m.ler_feeds(tp, wh, un)
     tpwh = df[df["fonte"] != "unidades"]
-    assert set(tpwh["rede"]) == {"independente"}  # nomes sinteticos nao casam cadeia alguma
+    assert set(tpwh["rede"]) == {"independente"}  # nomes sinteticos não casam cadeia alguma
 
 
 def test_ler_feeds_diretorio_ausente_nao_levanta(tmp_path: Path) -> None:
@@ -905,7 +905,7 @@ def test_ler_snapshots_sobrevive_a_esquema_misto(
     antigo = lido[lido["semana"] == "2026-01"]
     novo = lido[lido["semana"] == "2026-02"]
     assert antigo["nota_wellhub"].isna().all(), "partição pré-bump deveria ficar nula"
-    # `notna()` ANTES da comparação, e não `(serie == 4.25).all()`: numa série toda-NA o `.all()`
+    # `notna()` ANTES da comparação, e não `(série == 4.25).all()`: numa série toda-NA o `.all()`
     # de pandas ignora os nulos e devolve `True`, então a versão ingênua deste teste passaria
     # exatamente no cenário que ele existe para pegar. Medido: sem o `schema=` em
     # `ler_snapshots`, a coluna volta 100% nula e a asserção ingênua fica verde.
@@ -1128,9 +1128,9 @@ def test_montar_snapshot_vazio_respeita_os_dtypes_do_contrato(tmp_path: Path) ->
     """O ramo vazio tipava as 12 colunas como `string`, contra o próprio contrato.
 
     O gêmeo `_frame_snapshot_vazio` foi corrigido no mesmo diff e a docstring dele diz por quê
-    ("um frame vazio mal tipado quebraria o `concat` da serie"); este ramo tinha ficado para trás.
+    ("um frame vazio mal tipado quebraria o `concat` da série"); este ramo tinha ficado para trás.
     """
-    vazio, auditoria = m.montar_snapshot(pd.DataFrame(), REF)
+    vazio, auditoria = m.montar_snapshot(pd.DataFrame())
     assert vazio["nota_wellhub"].dtype == "Float64"
     assert vazio["qtd_avaliacoes_wellhub"].dtype == "Int64"
     assert dict(vazio.dtypes.astype(str)) == dict(c.CONTRATO_COLUNAS_SNAPSHOT)
@@ -1175,3 +1175,111 @@ def test_particao_toda_nula_nasce_com_o_tipo_do_contrato(
 
     assert schema.field("nota_wellhub").type == pa.float64()
     assert schema.field("qtd_avaliacoes_wellhub").type == pa.int64()
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-02-FU1 (menores m1, m2, m3, m6) — ressalvas do QA de 2026-07-29
+# --------------------------------------------------------------------------- #
+def test_m6_dry_run_nao_grava_e_nao_poda(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """m6: `--dry-run` roda o caminho inteiro sem tocar disco — nem grava, nem PODA.
+
+    Este é o único ponto do pacote que APAGA arquivo, e é o que vai ao cron da VPS (BLK-MA-06).
+    Antes desta correção, `python -m ...snapshots` chamava `executar()` sem argumento nenhum:
+    gravava na raiz de staging default e podava, sem `--base-dir` e sem modo seco.
+    """
+    tp, wh, un = tmp_path / "tp", tmp_path / "wh", tmp_path / "un"
+    for d in (tp, wh, un):
+        d.mkdir(parents=True, exist_ok=True)
+    base = tmp_path / "serie"
+    # Uma partição ANTIGA, muito além da retenção: seria podada numa execução de verdade.
+    antiga = base / "semana=2020-01"
+    antiga.mkdir(parents=True)
+    (antiga / "parte-0.parquet").write_bytes(b"nao e' parquet valido, e nao precisa ser")
+
+    podou: list[object] = []
+    monkeypatch.setattr(m, "podar_snapshots", lambda *a, **k: podou.append(a) or [])
+
+    auditoria = m.executar(tp, wh, un, base_dir=base, data_referencia=REF, dry_run=True)
+
+    assert auditoria["dry_run"] is True
+    assert auditoria["semanas_removidas"] == 0
+    assert not podou, "dry-run chamou a poda"
+    assert (antiga / "parte-0.parquet").exists(), "dry-run apagou particao existente"
+    assert not (base / f"semana={c.derivar_semana_iso(REF)}").exists(), "dry-run gravou particao"
+
+
+def test_m6_cli_analisa_os_argumentos_do_cron() -> None:
+    """m6: os flags que o cron precisa existem e chegam com o tipo certo."""
+    args = m._parse_args(
+        ["--base-dir", "/tmp/serie", "--data-referencia", "2026-07-29", "--dry-run"]
+    )
+    assert args.base_dir == Path("/tmp/serie")
+    assert args.data_referencia == date(2026, 7, 29)
+    assert args.dry_run is True
+    assert args.retencao_semanas == c.RETENCAO_SEMANAS
+
+    padrao = m._parse_args([])
+    assert padrao.dry_run is False, "dry-run nao pode ser o default: o cron precisa gravar"
+    assert padrao.data_referencia is None
+
+
+def test_m1_frame_vazio_preserva_a_particao_existente(
+    dirs_sinteticos: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """m1: zero linha é sintoma de COLETA FALHA, não de universo vazio — não pode apagar a série.
+
+    O docstring prometia idempotência "mesmo quando a semana encolhe"; para o encolhimento TOTAL
+    isso não valia, e o comportamento (seguro) não tinha teste que o travasse.
+    """
+    base = tmp_path / "serie"
+    cheio = _snapshot_valido(dirs_sinteticos)
+    caminho = m.escrever_particao_semana(cheio, base, semana="2026-31")
+    antes = sorted(p.name for p in caminho.glob("*.parquet"))
+    assert antes, "pre-condicao: a particao foi gravada"
+
+    vazio = cheio.iloc[0:0]
+    devolvido = m.escrever_particao_semana(vazio, base, semana="2026-31")
+
+    assert devolvido == caminho
+    assert sorted(p.name for p in caminho.glob("*.parquet")) == antes, (
+        "frame vazio apagou a particao — trocaria falha transitoria por perda permanente"
+    )
+
+
+def test_m1_frame_vazio_em_semana_inedita_nao_cria_diretorio(tmp_path: Path) -> None:
+    """m1: e o caminho devolvido pode NÃO existir — está no docstring, agora está travado."""
+    base = tmp_path / "serie"
+    vazio = m._frame_snapshot_vazio(com_semana=False)
+
+    devolvido = m.escrever_particao_semana(vazio, base, semana="2026-31")
+
+    assert devolvido == base / "semana=2026-31"
+    assert not devolvido.exists()
+
+
+def test_m3_campo_nunca_hasheado_levanta_em_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
+    """m3: `CAMPOS_NUNCA_HASHEADOS` era só prosa — injetar `data_coleta` não levantava nada.
+
+    O efeito seria mudo e fatal: todo cadastro pareceria alterado a cada coleta,
+    `semanas_sem_mudanca` nunca cresceria e o S4 morreria.
+    """
+    proibido = sorted(c.CAMPOS_NUNCA_HASHEADOS)[0]
+    envenenado = dict(c.CAMPOS_HASH_POR_FONTE)
+    envenenado["wellhub"] = (*c.CAMPOS_HASH_POR_FONTE["wellhub"], proibido)
+    monkeypatch.setattr(c, "CAMPOS_HASH_POR_FONTE", envenenado)
+
+    with pytest.raises(ValueError, match="CAMPOS_NUNCA_HASHEADOS"):
+        c.hash_campos_raspados({"nome": "Academia X", proibido: "2026-08-11"}, "wellhub")
+
+
+def test_m3_contrato_vigente_passa_pela_guarda_nova() -> None:
+    """m3: a guarda não pode quebrar as fontes reais — nenhuma hasheia campo proibido hoje."""
+    for fonte in sorted(c.CAMPOS_HASH_POR_FONTE):
+        assert c.hash_campos_raspados({"nome": "Academia X"}, fonte)
+
+
+def test_m2_montar_snapshot_nao_recebe_mais_data_referencia() -> None:
+    """m2: o parâmetro era morto e sugeria que o `snapshot_date` saía dele. Não saía."""
+    import inspect
+
+    assert list(inspect.signature(m.montar_snapshot).parameters) == ["df"]

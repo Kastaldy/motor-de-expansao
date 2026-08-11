@@ -36,6 +36,7 @@ API h3 = v4 (`latlng_to_cell`).
 
 from __future__ import annotations
 
+import argparse
 import logging
 import re
 import shutil
@@ -495,10 +496,14 @@ def _coagir_rating(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     return out, int(degradadas.sum())
 
 
-def montar_snapshot(
-    df: pd.DataFrame, data_referencia: date
-) -> tuple[pd.DataFrame, dict[str, object]]:
+def montar_snapshot(df: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
     """Projeta as **12 colunas do contrato**, coage dtypes, colapsa colisões e valida o schema.
+
+    **Não recebe `data_referencia`** (removido no BLK-MA-02-FU1, m2). O parâmetro existia, nunca era
+    lido, e sugeria exatamente a coisa errada: que o `snapshot_date` saísse dele. Não sai — ele é
+    derivado POR LINHA de `parse_data_coleta(data_coleta, fonte)`, e é isso que o torna medidor de
+    frescor ("o CSV é o da semana passada?"). Quem usa a data da execução é a `semana` da partição,
+    decidida em `materializar`.
 
     A PII morre neste passo (molde `_COLUNAS_DROP_FRONTEIRA`, `concorrentes_densos.py:73-86`):
     `nome`/coords/cidade/CEP/endereço/modalidades simplesmente não são projetados.
@@ -654,9 +659,24 @@ def escrever_particao_semana(
     mesma semana apaga e regrava a partição inteira, então a idempotência vale mesmo quando a
     semana **encolhe**. O preço é que um frame PARCIAL apagaria o resto daquela semana — por isso a
     primeira coisa aqui é exigir **exatamente uma** semana ISO por chamada (CA-17/R7).
+
+    **EXCEÇÃO, e ela é deliberada (BLK-MA-02-FU1, m1):** frame **vazio** NÃO apaga a partição
+    existente e NÃO cria diretório — a função sai cedo, avisando em WARNING, e o caminho devolvido
+    **pode não existir**. A idempotência do parágrafo acima vale para "a semana encolheu", não para
+    "a semana sumiu". Motivo: zero linha quase sempre é **coleta que falhou**, não universo
+    realmente vazio; apagar aqui trocaria uma falha transitória por perda permanente de série, o
+    mesmo modo de falha que o `_coagir_rating` evita do lado do dado. Para zerar uma semana de
+    propósito, apague a partição à mão.
     """
     if not isinstance(semana, str) or not RE_SEMANA.match(semana):
         raise ValueError("escrever_particao_semana exige `semana` no formato ISO AAAA-SS")
+    if df.empty:
+        _logger.warning(
+            "frame vazio para semana=%s: nada gravado e particao existente PRESERVADA "
+            "(zero linha e' sintoma de coleta falha, nao de universo vazio)",
+            semana,
+        )
+        return Path(base_dir) / f"semana={semana}"
     frame = df.copy()
     if "semana" in frame.columns and not frame.empty:
         semanas_no_frame = {str(v) for v in frame["semana"]}
@@ -831,7 +851,7 @@ def materializar(
     com_chave = derivar_chave(
         com_hash, taxa_slug_persistente=taxa_slug_persistente, politica=politica_chave
     )
-    snapshot, auditoria_snapshot = montar_snapshot(com_chave, referencia)
+    snapshot, auditoria_snapshot = montar_snapshot(com_chave)
 
     auditoria: dict[str, object] = {"semana": semana, **auditoria_limpeza, **auditoria_snapshot}
     if escrever:
@@ -847,12 +867,17 @@ def executar(
     base_dir: Path = SNAPSHOTS_DIR_DEFAULT,
     data_referencia: date | None = None,
     retencao_semanas: int = RETENCAO_SEMANAS,
-) -> dict[str, object]:  # pragma: no cover - caminho de disco, nao chamado em teste
+    dry_run: bool = False,
+) -> dict[str, object]:
     """Orquestrador de disco: materializa a semana corrente e aplica a retenção rolante.
 
     É o ponto que o BLK-MA-06 plugará no `run_weekly_90.sh` (decisão de produto do gate
     2026-07-29), **depois** do passo de coleta — o snapshot tem de ser tirado DENTRO da execução do
     runner porque os CSVs crus são sobrescritos a cada coleta. **Único** lugar que poda.
+
+    `dry_run=True` roda o caminho inteiro e **não toca disco**: nada é gravado e **nada é podado**.
+    Existe porque este é o unico ponto do pacote que APAGA arquivo, e um cron novo precisa poder ser
+    validado antes de rodar para valer (BLK-MA-02-FU1, m6).
     """
     _snapshot, auditoria = materializar(
         dir_totalpass,
@@ -860,12 +885,74 @@ def executar(
         dir_unidades,
         base_dir,
         data_referencia,
-        escrever=True,
+        escrever=not dry_run,
     )
+    if dry_run:
+        # A poda e' irreversivel; em modo seco ela nem e' consultada, so' anunciada.
+        auditoria["dry_run"] = True
+        auditoria["semanas_removidas"] = 0
+        _logger.info("dry-run: nada gravado, nenhuma semana podada")
+        return auditoria
+    auditoria["dry_run"] = False
     removidas = podar_snapshots(base_dir, retencao_semanas)
     auditoria["semanas_removidas"] = len(removidas)
     _logger.info("retencao aplicada: %d semana(s) removida(s)", len(removidas))
     return auditoria
+
+
+def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """CLI do materializador. Sem ela, `python -m ...snapshots` gravava e PODAVA sem argumento."""
+    p = argparse.ArgumentParser(
+        prog="python -m motor_expansao.vulnerabilidade.snapshots",
+        description=(
+            "Materializa o snapshot semanal de concorrentes e aplica a retencao rolante. "
+            "E' o passo que o cron da VPS invoca (BLK-MA-06). READ-ONLY sobre o M1."
+        ),
+    )
+    p.add_argument("--dir-totalpass", type=Path, default=DIR_TOTALPASS_DEFAULT)
+    p.add_argument("--dir-wellhub", type=Path, default=DIR_WELLHUB_DEFAULT)
+    p.add_argument("--dir-unidades", type=Path, default=DIR_UNIDADES_DEFAULT)
+    p.add_argument(
+        "--base-dir",
+        type=Path,
+        default=SNAPSHOTS_DIR_DEFAULT,
+        help="raiz das particoes `semana=AAAA-SS` (grava E poda aqui)",
+    )
+    p.add_argument(
+        "--data-referencia",
+        type=date.fromisoformat,
+        default=None,
+        help="AAAA-MM-DD; default = hoje. Decide a particao `semana=` de destino.",
+    )
+    p.add_argument(
+        "--retencao-semanas",
+        type=int,
+        default=RETENCAO_SEMANAS,
+        help=f"semanas mantidas em disco (default {RETENCAO_SEMANAS})",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="roda tudo sem gravar e SEM PODAR; use antes de ligar o cron",
+    )
+    return p.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Entrada do `python -m`. Devolve 0 em sucesso — codigo de saida importa para o cron."""
+    args = _parse_args(argv)
+    logging.basicConfig(level=logging.INFO)
+    auditoria = executar(
+        dir_totalpass=args.dir_totalpass,
+        dir_wellhub=args.dir_wellhub,
+        dir_unidades=args.dir_unidades,
+        base_dir=args.base_dir,
+        data_referencia=args.data_referencia,
+        retencao_semanas=args.retencao_semanas,
+        dry_run=args.dry_run,
+    )
+    print(auditoria)
+    return 0
 
 
 __all__ = [
@@ -884,9 +971,9 @@ __all__ = [
     "podar_snapshots",
     "materializar",
     "executar",
+    "main",
 ]
 
 
 if __name__ == "__main__":  # pragma: no cover
-    logging.basicConfig(level=logging.INFO)
-    print(executar())
+    raise SystemExit(main())
