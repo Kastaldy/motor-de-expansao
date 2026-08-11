@@ -278,12 +278,26 @@ caminho de `HOST_CONCORRENTES` está errado; só agende depois de ver contagem p
 **Falha do snapshot não pode abortar o lote** — a linha sugerida termina em
 `|| echo "snapshot falhou"`, no mesmo espírito de "falhas individuais de coletor não abortam o lote".
 
-> **Maturidade da série (decisão em aberto, ler antes de esperar resultado).** `MIN_SEMANAS = 8` e
-> `STALE_SEMANAS = 12` foram fixados no gate de 2026-07-23 supondo cadência **semanal**. Com o feed
-> `unidades` semanal, o S3/S4 amadurecem em ~2 meses; para os agregadores, a cadência real é
-> **mensal**, então 8 snapshots = **~8 meses**. Enquanto `flag_score_provisorio` estiver ligada,
-> `score_vulnerabilidade_ordenavel` nasce **nula** e o BLK-MA-05 não tem o que ordenar. Revisitar
-> `MIN_SEMANAS` com a cadência medida é obrigação declarada do BLK-MA-06 (contrato, D2).
+> **Maturidade da série — DECIDIDO em 2026-08-11 por Vinicius: `MIN_SEMANAS` fica em 8.** Cumpre a
+> obrigação que o D2 do contrato delegou a este bloco ("revisitar com a cadência real medida"), e a
+> revisão foi feita: mantém-se o valor. **Não reabrir sem dado novo.**
+>
+> A medição que sustentou a decisão. Os parâmetros contam **observações, não meses**, e são dois,
+> com papéis distintos: `MIN_SEMANAS = 8` libera o sinal de churn (`s3`, via `flag_serie_imatura`),
+> enquanto `STALE_SEMANAS = 12` é o **denominador** do componente de estagnação
+> (`v4 = semanas_sem_mudanca / 12`, `score.py`). Baixar só o primeiro **desequilibra os dois**: o
+> score viraria ordenável com 6 observações enquanto o `v4` ainda estaria confinado a `≤ 0,5` —
+> metade da escala do sinal mais importante do ranking, inacessível justamente na largada.
+>
+> E o prazo longo não vem da régua, vem da **cadência**: com o feed `unidades` semanal (o único que
+> o snapshot fotografa hoje), 8 observações são **~2 meses**; os ~8 meses valem só para os
+> agregadores, cujo cron mensal **ainda não existe** — reduzir o parâmetro encurtaria um cronômetro
+> que não foi ligado. O caminho com retorno real para encurtar o prazo é **dar cron próprio aos
+> agregadores**, não afrouxar o critério.
+>
+> Fica registrado, para quando houver dado: o parâmetro é **global** e a cadência **não é**. Um valor
+> único não serve a um feed semanal e a outro mensal ao mesmo tempo; se isso incomodar no futuro, a
+> pergunta certa é torná-lo por fonte — escopo novo, fora do BLK-MA-06.
 
 ### Ingestão DIÁRIA da Growth API (Visão Executiva do piloto web)
 

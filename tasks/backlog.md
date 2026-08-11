@@ -1735,11 +1735,18 @@ segundo maior peso, e silencioso. O recorte de cada partição fica em `fontes_l
 próprio, e quando existir chama o MESMO script com `--fontes totalpass wellhub`); o entregável
 comercial (**BLK-MA-05**); a reputação externa (**BLK-MA-07**).
 
-**Pendência declarada — `MIN_SEMANAS` com a cadência real.** O valor `8` foi fixado no gate de
-2026-07-23 supondo cadência semanal; o contrato (D2) delega a revisão a ESTE bloco, "com a cadência
-real medida". Ela agora está medida: `unidades` semanal (S3/S4 maduros em ~2 meses), agregadores
-mensais (**~8 meses**). A decisão é do Felipe e **não bloqueia** a aplicação na VPS — mexer em
-`MIN_SEMANAS` depois é barato enquanto a série é curta, e caro depois.
+**`MIN_SEMANAS` — RESOLVIDO em 2026-08-11 (Vinicius): fica em 8. NÃO reabrir sem dado novo.**
+Cumpre a obrigação que o D2 do contrato delegou a este bloco. A revisão foi feita com a cadência
+medida e o veredito é manter. Três razões, nesta ordem: (1) são **dois** parâmetros com papéis
+distintos — `MIN_SEMANAS = 8` libera o `s3`, `STALE_SEMANAS = 12` é o **denominador** do `v4`
+(`score.py`) —, e baixar só o primeiro deixaria o score ordenável enquanto o `v4` ainda estivesse
+confinado a `≤ 0,5`, metade da escala do sinal mais importante, bem na largada; (2) o parâmetro
+conta **observações, não meses**: com o feed `unidades` semanal — o único que o snapshot fotografa
+hoje — 8 observações são **~2 meses**, e os ~8 meses valem só para os agregadores, cujo cron mensal
+**não existe** (reduzir encurtaria um cronômetro desligado); (3) o caminho com retorno real para
+encurtar o prazo é **dar cron próprio aos agregadores**, não afrouxar o critério. Registrado para o
+futuro: o parâmetro é **global** e a cadência **não é** — se voltar a incomodar, a pergunta certa é
+torná-lo por fonte, e isso é escopo novo.
 
 **Critério de aceite.** Script versionado com sintaxe validada; `--fontes` com teste que prove o
 recorte e que as duas metades reconstroem o todo; `fontes_lidas` na auditoria; runbook com o modo
