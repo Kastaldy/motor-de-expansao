@@ -23,9 +23,113 @@ if str(_SERVER) not in sys.path:
 import app as pilot_app  # noqa: E402  (backend do piloto; web/server no sys.path acima)
 
 
+def _apontar(monkeypatch: pytest.MonkeyPatch, data_dir: Path) -> None:
+    """Repointa os globais de caminho que o `/api/health` observa.
+
+    Espelha o `_point_app_at` de `test_piloto_web_endpoints.py` no subconjunto que
+    interessa aqui. Mexe nos GLOBAIS de proposito — e' a unica forma de provar que o
+    health resolve os caminhos na chamada e nao no import.
+    """
+    outputs = data_dir / "outputs"
+    staging = data_dir / "staging"
+    monkeypatch.setattr(pilot_app, "DATA_DIR", data_dir)
+    monkeypatch.setattr(pilot_app, "ENRICHED_DIR", outputs / "hexagonos_dashboard_enriquecido")
+    monkeypatch.setattr(pilot_app, "CRESCIMENTO_PATH", staging / "crescimento_municipal.parquet")
+    monkeypatch.setattr(pilot_app, "CRESCIMENTO_HEX_PATH", staging / "crescimento_hex.parquet")
+
+
 def test_health_ok() -> None:
     # /api/health: liveness + diagnostico (data_dir etc.); basta o status ok.
     assert pilot_app.health().get("status") == "ok"
+
+
+def test_health_reporta_os_artefatos_que_a_tela_depende() -> None:
+    """O health tem de ACUSAR artefato ausente — era o unico jeito de ver isso no ar.
+
+    Os parquets de crescimento nao vem do git (`.gitignore`: `data/staging/*`) nem da
+    imagem (`.dockerignore` corta `data/`): so' chegam pelo bind mount do compose. Sem
+    eles `carregar_crescimento*()` devolve None e o passo 4 sai vazio EM SILENCIO —
+    nenhum erro, nenhum log, e `scripts/check_artifacts.py` so' enxerga disco local.
+    """
+    h = pilot_app.health()
+
+    # Contrato antigo intacto: o healthcheck do container faz `curl -fsS` nesta rota.
+    assert {"status", "data_dir", "data_ok"} <= set(h)
+
+    artefatos = h["artefatos"]
+    assert set(artefatos) == {"enriquecido", "crescimento_municipal", "crescimento_hex"}
+    for nome, a in artefatos.items():
+        assert isinstance(a["ok"], bool), nome
+        # `para_que` e' o que transforma "faltou um arquivo" em "o passo 4 vai sair
+        # vazio". Sem ele o operador le um caminho e nao sabe o que perdeu.
+        assert a["para_que"] and a["caminho"], nome
+
+    # A lista resumida tem de bater com o dict — ela existe para o operador nao
+    # precisar abrir os tres blocos, e divergir dela seria pior que nao ter.
+    assert h["artefatos_faltando"] == sorted(
+        n for n, a in artefatos.items() if not a["ok"]
+    )
+    assert h["data_ok"] == artefatos["enriquecido"]["ok"]
+
+
+def test_health_nao_estoura_com_data_dir_inexistente(monkeypatch) -> None:
+    """Mount caido nao pode virar 500: `curl -fsS` falharia e o container reiniciaria.
+
+    Este e' o cenario REAL do defeito — o `data/` que o app aponta nao existe naquela
+    maquina. O health precisa responder 200 dizendo o que falta, e nao morrer junto.
+    """
+    fantasma = Path("Z:/mount/que/nao/existe/data")
+    _apontar(monkeypatch, fantasma)
+
+    h = pilot_app.health()
+    assert h["status"] == "ok"
+    assert h["data_ok"] is False
+    assert h["data_dir"] == str(fantasma)
+    assert h["artefatos_faltando"] == [
+        "crescimento_hex",
+        "crescimento_municipal",
+        "enriquecido",
+    ]
+    # Os caminhos reportados tem de sair do data_dir REPONTADO. Se a lista de artefatos
+    # for montada no import, ela congela os `Path` originais e o health passa a falar do
+    # disco de quem roda — verde nesta maquina (onde o caminho do autor tambem nao
+    # existe) e mentiroso em qualquer outra.
+    for a in h["artefatos"].values():
+        assert str(fantasma) in a["caminho"], a
+
+
+def test_health_sobrevive_a_stat_que_levanta(monkeypatch) -> None:
+    """Cobre o ramo `except OSError`, que o teste do caminho inexistente NAO alcanca.
+
+    No Windows, `Path("Z:/nao/existe").exists()` devolve False em vez de levantar — o
+    caminho fantasma exercita o `ok=False` normal, nunca o `except`. Mas em producao o
+    mount e' de rede e READ-ONLY: quando ele cai, o `exists()` levanta `OSError`, e sem
+    a protecao o health viraria 500. Ai o `curl -fsS` do healthcheck falha e o Docker
+    REINICIA o container por causa de um arquivo de dado ausente — justamente o
+    contrario do que este endpoint existe para fazer.
+    """
+
+    class _CaminhoQueCai:
+        def __init__(self, rotulo: str) -> None:
+            self._rotulo = rotulo
+
+        def exists(self) -> bool:
+            raise OSError(f"mount caiu: {self._rotulo}")
+
+        def __str__(self) -> str:
+            return self._rotulo
+
+    for glob in ("ENRICHED_DIR", "CRESCIMENTO_PATH", "CRESCIMENTO_HEX_PATH"):
+        monkeypatch.setattr(pilot_app, glob, _CaminhoQueCai(f"/app/data/{glob}"))
+
+    h = pilot_app.health()
+    assert h["status"] == "ok", "o health NAO pode cair junto com o mount"
+    assert h["data_ok"] is False
+    # O motivo tem de chegar ao operador: sem `erro`, "ok=False" nao distingue
+    # "arquivo nunca foi copiado" de "o mount de rede caiu agora".
+    for nome, a in h["artefatos"].items():
+        assert a["ok"] is False, nome
+        assert "mount caiu" in a["erro"], nome
 
 
 def test_faixa_alunos_contrato() -> None:

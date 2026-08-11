@@ -1818,12 +1818,68 @@ def limpar_caches() -> None:
             objeto.cache_clear()
 
 
+# Artefatos que o piloto LE mas que nao viajam com o codigo: `.gitignore` corta
+# `data/staging/*` e o `.dockerignore` corta `data/` inteiro da imagem. Em producao eles
+# so' chegam pelo bind mount de `docker-compose.prod.yml`. Quando faltam, cada leitor
+# devolve None e a tela degrada EM SILENCIO — foi assim que o passo 4 ficou vazio no ar
+# enquanto funcionava na maquina de quem gerou o artefato, e nada no sistema dizia isso.
+# `scripts/check_artifacts.py` responde a mesma pergunta, mas so' sobre um checkout
+# local; era o ambiente PUBLICADO que ninguem conseguia auditar sem entrar no VPS.
+def _artefatos_observados() -> list[tuple[str, Path, str]]:
+    """Monta a lista NA CHAMADA, lendo os globais de caminho — nunca no import.
+
+    Uma lista de modulo congelaria os `Path` no momento do import, e ai o
+    `_point_app_at` dos testes (que faz `monkeypatch.setattr` em `ENRICHED_DIR`,
+    `CRESCIMENTO_PATH` e `CRESCIMENTO_HEX_PATH`) nao alcancaria o health: com o app
+    apontado para um `tmp_path` vazio, ele responderia sobre o disco REAL de quem roda.
+    E' a mesma armadilha que o comentario do `_point_app_at` ja registra para as
+    constantes calculadas no import — vale igual aqui.
+    """
+    return [
+        ("enriquecido", ENRICHED_DIR, "hexágonos do mapa — sem ele o piloto não abre"),
+        (
+            "crescimento_municipal",
+            CRESCIMENTO_PATH,
+            "passo 4: emprego/empresas por cidade (CAGED, Receita)",
+        ),
+        (
+            "crescimento_hex",
+            CRESCIMENTO_HEX_PATH,
+            "passo 4: cor do mapa por hexágono (satélite 2016-2023)",
+        ),
+    ]
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    """Saude do processo + presenca dos artefatos que a tela depende.
+
+    O healthcheck do container so' olha o status HTTP (`curl -fsS`), entao os campos
+    novos sao informativos: nada aqui pode derrubar o container. Por isso o `stat` vive
+    num try/except — um mount que sumiu no meio do voo devolve `erro`, nao 500.
+    """
+    artefatos: dict[str, Any] = {}
+    for nome, caminho, para_que in _artefatos_observados():
+        item: dict[str, Any] = {"para_que": para_que, "caminho": str(caminho)}
+        try:
+            existe = caminho.exists()
+            item["ok"] = existe
+            # Diretorio (enriquecido) nao tem tamanho util; so' arquivo reporta MB.
+            if existe and caminho.is_file():
+                item["mb"] = round(caminho.stat().st_size / (1024 * 1024), 2)
+        except OSError as e:  # mount caiu, permissao, disco — nunca derrubar o health
+            item["ok"] = False
+            item["erro"] = str(e)
+        artefatos[nome] = item
+
+    faltando = sorted(n for n, a in artefatos.items() if not a.get("ok"))
     return {
         "status": "ok",
         "data_dir": str(DATA_DIR),
-        "data_ok": ENRICHED_DIR.exists(),
+        "data_ok": artefatos["enriquecido"]["ok"],
+        "artefatos": artefatos,
+        # Lista pronta para o operador ler sem abrir o dict inteiro.
+        "artefatos_faltando": faltando,
     }
 
 
