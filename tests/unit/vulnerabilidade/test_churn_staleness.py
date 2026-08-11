@@ -37,6 +37,8 @@ def _linha(
     hash_: str = "h0",
     chave_origem: str = "hash_estavel",
     snapshot_date: str = "2026-01-05",
+    nota: float | None = None,
+    qtd: int | None = None,
 ) -> dict[str, object]:
     return {
         "snapshot_date": snapshot_date,
@@ -48,6 +50,10 @@ def _linha(
         "rede": rede,
         "fonte": fonte,
         "hash_campos_raspados": hash_,
+        # Colunas-fato do rating (DEC-026). Default `None` -> o estado "nao lido", que e o
+        # correto para as fontes que nao sao WellHub.
+        "nota_wellhub": nota,
+        "qtd_avaliacoes_wellhub": qtd,
         "versao_contrato": c.VERSAO_CONTRATO_SNAPSHOT,
     }
 
@@ -354,10 +360,11 @@ def test_assert_schema_churn_falha_se_alguem_adiantar_o_score(
 # --------------------------------------------------------------------------- #
 # Contrato / bordas
 # --------------------------------------------------------------------------- #
-def test_schema_churn_17_colunas_em_ordem(serie_10_semanas: list[pd.DataFrame]) -> None:
+def test_schema_churn_19_colunas_em_ordem(serie_10_semanas: list[pd.DataFrame]) -> None:
     out = extrair_churn_staleness(snapshots=serie_10_semanas)
     assert list(out.columns) == list(c.CONTRATO_COLUNAS_CHURN.keys())
-    assert len(list(out.columns)) == 17
+    # 17 -> 19 no BLK-MA-09 / DEC-026: os dois fatos de rating, da ULTIMA observacao.
+    assert len(list(out.columns)) == 19
     assert (out["versao_contrato"] == c.VERSAO_CONTRATO_CHURN).all()
     assert set(out["status_churn"]) <= set(c.STATUS_CHURN_VALIDOS)
     assert out["n_semanas_serie"].dtype == "int64"
@@ -452,3 +459,39 @@ def test_roundtrip_materializar_e_extrair(tmp_path: Path) -> None:
     assert len(out) == 2
     assert set(out["status_churn"]) == {"novo", "sumiu_recente"}
     assert (out["rede"] == "selfit").all()
+
+
+def test_rating_vem_da_ULTIMA_observacao_presente() -> None:
+    """A única decisão de design do rating neste módulo, e ela não tinha teste.
+
+    Sonda de mutação provou o buraco: trocar `ultima[...]` por `bloco.iloc[0][...]` (a PRIMEIRA
+    observação, o oposto exato do que o comentário promete) deixava a suíte inteira verde, porque
+    as fixtures repetem a mesma nota em todas as semanas.
+
+    "Última PRESENTE" e não "última da série": a academia some na semana 3 e volta na 4 com nota
+    nova. É o cenário real — no smoke do BLK-MA-08 uma unidade saiu de `4,81`/`105` para
+    `4,76`/`97` entre coletas.
+    """
+    notas = [3.0, 3.5, None, 4.9]  # semana 3: ausente
+    frames = []
+    for i, nota in enumerate(notas, start=1):
+        if nota is None:
+            # Semana observada para o escopo, mas SEM esta chave -> ausência real, não gap.
+            frames.append(_snapshot(f"2026-0{i}", [_linha("outra", nota=1.0, qtd=1)]))
+            continue
+        frames.append(
+            _snapshot(
+                f"2026-0{i}",
+                [
+                    _linha("alvo", nota=nota, qtd=int(nota * 10)),
+                    _linha("outra", nota=1.0, qtd=1),
+                ],
+            )
+        )
+
+    out = extrair_churn_staleness(snapshots=frames)
+    alvo = out[out["chave_snapshot"] == "alvo"].iloc[0]
+
+    assert alvo["nota_wellhub"] == 4.9, "pegou uma observação que não é a última presente"
+    assert alvo["qtd_avaliacoes_wellhub"] == 49
+    assert alvo["semana_ultima_observacao"] == "2026-04"

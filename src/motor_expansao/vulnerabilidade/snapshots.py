@@ -27,7 +27,7 @@ GUARDRAILS (CLAUDE.md §1/§2/§5; DEC-012; DEC-013):
     raiz nem `pipelines/normalizar_concorrentes.py` (`_DENY_CRITICO` do loop_guard — molde de
     leitura apenas; a fórmula do `concorrente_id` foi REPLICADA em `contrato.py`).
   - Anti-PII (DEC-012 / contrato §11): `nome`/coordenadas/endereço/CEP existem **só em memória**;
-    o Parquet leva apenas as 10 colunas do contrato. A auditoria da limpeza carrega **só
+    o Parquet leva apenas as 12 colunas do contrato. A auditoria da limpeza carrega **só
     contagens**, jamais o texto ofensor. Testes com fixtures 100% sintéticas.
   - CSV do projeto: `sep=";"`, `encoding="utf-8-sig"`. Staging sempre em Parquet.
 
@@ -53,11 +53,14 @@ from motor_expansao.demanda_revelada.classificacao_rede_menor import classificar
 from .contrato import (
     CHAVE_ORIGEM_VALIDAS,
     COLUNAS_PII_PROIBIDAS,
+    COLUNAS_SNAPSHOT_NULAVEIS,
     CONTRATO_COLUNAS_SNAPSHOT,
     FONTES_VALIDAS,
     H3_RES_CONTRATO,
     LIMIAR_SLUG_ESTAVEL,
     MOTIVOS_DESCARTE,
+    NOTA_WELLHUB_MAX,
+    NOTA_WELLHUB_MIN,
     RE_SEMANA,
     RE_UUID,
     RETENCAO_SEMANAS,
@@ -103,6 +106,11 @@ _COLUNAS_TRABALHO: tuple[str, ...] = (
     "endereco_formatado",
     "modalidades",
     "atividades",
+    # Rating do WellHub (BLK-MA-08). NAO e PII (DEC-024) e, ao contrario das duas de cima,
+    # SOBREVIVE a fronteira: vira coluna-fato do snapshot (DEC-026). Ausente no feed TotalPass
+    # e no `unidades` -> `montar_snapshot` preenche com NA.
+    "nota_wellhub",
+    "qtd_avaliacoes_wellhub",
     "data_coleta",
 )
 
@@ -427,10 +435,70 @@ def avaliar_estabilidade_slug(snapshots: Sequence[pd.DataFrame]) -> dict[str, fl
 # --------------------------------------------------------------------------- #
 # 5. Montagem do snapshot (PURA) — aqui a PII morre
 # --------------------------------------------------------------------------- #
+def _coagir_rating(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+    """Coage as duas colunas-fato de rating. **NUNCA levanta** — devolve quantas ficaram ilegíveis.
+
+    Por que não pode levantar: `montar_snapshot` roda ANTES de `escrever_particao_semana`, e o
+    `run_weekly_90.sh` sobrescreve os CSVs a cada coleta. Uma exceção aqui não perde uma linha:
+    perde a **semana inteira**, para sempre, por causa de uma célula. Direção segura é degradar a
+    célula para "não lido" — que é um dos três estados do contrato — e **contar**, para que a
+    degradação apareça na auditoria em vez de virar silêncio.
+
+    Dois modos de falha, os dois medidos como reais:
+
+    1. **Contagem não-inteira.** `pd.to_numeric("1.262")` devolve `1.262` (float), e o
+       `.astype("Int64")` seguinte levanta `TypeError: cannot safely cast non-equivalent`. É a
+       forma que a contagem assume se o WellHub trocar o locale da UI para pt-BR — e contagem de
+       4 dígitos existe no universo (a DEC-024 cita "4,73 com 1.262"). Medido em 2026-08-10: o
+       consolidado atual traz as 45.527 contagens como inteiro puro, então isto é **latente**,
+       não ativo.
+    2. **Valor fora do domínio.** Nota fora de `[NOTA_WELLHUB_MIN, NOTA_WELLHUB_MAX]` ou contagem
+       negativa. `481` é `4.81` sem o separador decimal; `0.0` é o default de um parser que não
+       achou o campo. Antes estes valores só eram vistos pelo `_assert_schema_snapshot`, que
+       LEVANTA — mesma consequência do item 1, e pelo mesmo caminho.
+    3. **Par fora dos três estados.** A DEC-024 (D-3) define TRÊS: `4.81`/`105` (tem nota), `NA`/`0`
+       (sem avaliações) e `NA`/`NA` (parser quebrou). Qualquer outro par — `NA`/`105` (nota
+       ilegível com contagem boa), `4.81`/`0` (nota sem avaliação que a sustente), `4.81`/`NA` —
+       é normalizado para `NA`/`NA`, porque "não lido" é o que de fato aconteceu. Deixar passar
+       faria uma quebra de parser entrar no funil disfarçada de academia sem avaliação.
+
+    A ordem importa: o domínio primeiro, o par depois. É ela que faz `0.0`/`0` — extrator quebrado
+    sobre uma unidade sem avaliações — cair no estado CERTO (`NA`/`0`, "sem avaliações") em vez de
+    virar "não lido".
+    """
+    nota = pd.to_numeric(df["nota_wellhub"], errors="coerce")
+    qtd = pd.to_numeric(df["qtd_avaliacoes_wellhub"], errors="coerce")
+
+    # (1) Domínio, por coluna. Um valor impossível é um valor NÃO LIDO — não um motivo para abortar.
+    fora_dominio = nota.notna() & ((nota < NOTA_WELLHUB_MIN) | (nota > NOTA_WELLHUB_MAX))
+    nota = nota.where(~fora_dominio)
+
+    # `Int64` só aceita valor integral; não-integral vira "não lido" em vez de abortar a semana.
+    nao_inteiro = qtd.notna() & (qtd != qtd.round())
+    negativa = qtd.notna() & (qtd < 0)
+    qtd = qtd.where(~(nao_inteiro | negativa))
+
+    # (2) Par: os três estados da DEC-024 são os ÚNICOS válidos; todo o resto vira "não lido".
+    tem_nota = nota.notna() & qtd.notna() & (qtd > 0)
+    sem_avaliacoes = nota.isna() & qtd.notna() & (qtd == 0)
+    nao_lido = nota.isna() & qtd.isna()
+    par_invalido = ~(tem_nota | sem_avaliacoes | nao_lido)
+    nota = nota.where(~par_invalido)
+    qtd = qtd.where(~par_invalido)
+
+    out = df.copy()
+    out["nota_wellhub"] = nota.astype("Float64")
+    out["qtd_avaliacoes_wellhub"] = qtd.round().astype("Int64")
+    # Conta LINHAS degradadas, não ocorrências: uma nota `9.9` com contagem boa aciona o domínio e
+    # o par, e vale 1 — senão a auditoria inflaria e ninguém saberia quantas células se perderam.
+    degradadas = fora_dominio | nao_inteiro | negativa | par_invalido
+    return out, int(degradadas.sum())
+
+
 def montar_snapshot(
     df: pd.DataFrame, data_referencia: date
 ) -> tuple[pd.DataFrame, dict[str, object]]:
-    """Projeta as **10 colunas do contrato**, coage dtypes, colapsa colisões e valida o schema.
+    """Projeta as **12 colunas do contrato**, coage dtypes, colapsa colisões e valida o schema.
 
     A PII morre neste passo (molde `_COLUNAS_DROP_FRONTEIRA`, `concorrentes_densos.py:73-86`):
     `nome`/coords/cidade/CEP/endereço/modalidades simplesmente não são projetados.
@@ -443,21 +511,32 @@ def montar_snapshot(
     entrada = int(len(df))
     out = df.copy()
     if out.empty:
-        vazio = pd.DataFrame(
-            {col: pd.Series(dtype="string") for col in CONTRATO_COLUNAS_SNAPSHOT}
-        )
+        vazio = _frame_snapshot_vazio(com_semana=False)
         _assert_schema_snapshot(vazio)
-        return vazio, {"linhas_entrada": 0, "linhas_snapshot": 0, "chaves_colapsadas": 0}
+        return vazio, {
+            "linhas_entrada": 0,
+            "linhas_snapshot": 0,
+            "chaves_colapsadas": 0,
+            "rating_ilegivel": 0,
+        }
 
     out["snapshot_date"] = [
         parse_data_coleta(valor, fonte=str(fonte)).isoformat()
         for valor, fonte in zip(out["data_coleta"], out["fonte"], strict=False)
     ]
     out["versao_contrato"] = VERSAO_CONTRATO_SNAPSHOT
+    # As colunas-fato de rating só existem no feed do WellHub; TotalPass e `unidades` chegam sem
+    # elas e ficam nulas por construção (DEC-026). Sem este preenchimento a projeção abaixo levanta
+    # `KeyError` para essas duas fontes.
+    for coluna in ("nota_wellhub", "qtd_avaliacoes_wellhub"):
+        if coluna not in out.columns:
+            out[coluna] = pd.NA
     out = out[list(CONTRATO_COLUNAS_SNAPSHOT.keys())]
 
     for coluna in CONTRATO_COLUNAS_SNAPSHOT:
-        out[coluna] = out[coluna].astype("string")
+        if CONTRATO_COLUNAS_SNAPSHOT[coluna] == "string":
+            out[coluna] = out[coluna].astype("string")
+    out, rating_ilegivel = _coagir_rating(out)
     out["slug"] = out["slug"].where(out["slug"].fillna("").str.len() > 0, pd.NA)
 
     out = out.sort_values(
@@ -474,6 +553,9 @@ def montar_snapshot(
         "linhas_entrada": entrada,
         "linhas_snapshot": int(len(out)),
         "chaves_colapsadas": int(colapsadas),
+        # Degradações de rating desta semana. Zero é o normal; qualquer número > 0 é sinal de que
+        # o formato do coletor mudou e vale investigar ANTES de a série herdar o buraco.
+        "rating_ilegivel": int(rating_ilegivel),
     }
 
 
@@ -498,7 +580,7 @@ def _assert_schema_snapshot(df: pd.DataFrame) -> None:
     if df.empty:
         return
 
-    obrigatorias = [c for c in esperado if c != "slug"]
+    obrigatorias = [c for c in esperado if c not in COLUNAS_SNAPSHOT_NULAVEIS]
     for coluna in obrigatorias:
         serie = df[coluna]
         vazio = serie.isna() | (serie.astype(str).str.len() == 0)
@@ -527,6 +609,37 @@ def _assert_schema_snapshot(df: pd.DataFrame) -> None:
     dup = int(df.duplicated(subset=["fonte", "chave_snapshot"]).sum())
     if dup > 0:
         raise ValueError(f"chave (fonte, chave_snapshot) duplicada: {dup} linha(s)")
+
+    # Rating (DEC-026). O caminho público normaliza TODOS estes casos em `_coagir_rating` — nenhum
+    # deles pode chegar aqui vindo de `montar_snapshot`, e é de propósito: levantar sobre dado do
+    # coletor custaria a semana inteira (ver a docstring de `_coagir_rating`). Estas checagens são
+    # a rede para frames montados à MÃO — que é como metade dos testes desta camada constrói o
+    # insumo, e como um bloco futuro provavelmente vai construir também.
+    nota = df["nota_wellhub"]
+    qtd = df["qtd_avaliacoes_wellhub"]
+    fora = nota.dropna()
+    if len(fora) and (
+        bool((fora < NOTA_WELLHUB_MIN).any()) or bool((fora > NOTA_WELLHUB_MAX).any())
+    ):
+        raise ValueError(
+            f"nota_wellhub fora de [{NOTA_WELLHUB_MIN}, {NOTA_WELLHUB_MAX}]: "
+            f"amostra {sorted(set(fora))[:5]}"
+        )
+    negativas = qtd.dropna()
+    if len(negativas) and bool((negativas < 0).any()):
+        raise ValueError("qtd_avaliacoes_wellhub negativa")
+    # O PAR tem de ser um dos TRÊS estados da DEC-024 (D-3): "tem nota" (`4.81`/`105`), "sem
+    # avaliações" (`NA`/`0`) ou "não lido" (`NA`/`NA`). Os outros três pares possíveis — `NA`/`105`,
+    # `4.81`/`0` e `4.81`/`NA` — não existem no contrato. Deixá-los passar faria uma quebra de
+    # parser entrar no funil disfarçada de academia sem avaliação.
+    tem_nota = nota.notna() & qtd.notna() & (qtd > 0)
+    sem_avaliacoes = nota.isna() & qtd.notna() & (qtd == 0)
+    nao_lido = nota.isna() & qtd.isna()
+    incoerentes = int((~(tem_nota | sem_avaliacoes | nao_lido)).sum())
+    if incoerentes:
+        raise ValueError(
+            f"rating incoerente em {incoerentes} linha(s): estado fora dos tres da DEC-024"
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -561,7 +674,11 @@ def escrever_particao_semana(
     # (armadilha comentada em `fase1_bi_exports.py:596-598`).
     frame["semana"] = str(semana)
     frame["semana"] = frame["semana"].astype(str)
-    tabela = pa.Table.from_pandas(frame, preserve_index=False)
+    # `schema=` explícito na ESCRITA pelo mesmo motivo que na leitura: garante que o arquivo nasça
+    # com os tipos do contrato em vez dos que o pandas inferir. Sem isso, uma partição em que
+    # `nota_wellhub` fosse toda nula sairia como `null` em vez de `double`, e a leitura seguinte
+    # teria de conciliar tipos incompatíveis entre semanas.
+    tabela = pa.Table.from_pandas(frame, preserve_index=False, schema=_schema_arrow_snapshot())
     ds.write_dataset(
         tabela,
         base_dir=str(base_dir),
@@ -573,18 +690,53 @@ def escrever_particao_semana(
     return base_dir / f"semana={semana}"
 
 
+# Tradução dtype do contrato -> tipo Arrow, e a volta. Uma tabela só, para que a ida e a volta
+# não possam divergir (o `types_mapper` do `to_pandas` é a inversa desta).
+_TIPO_ARROW_POR_DTYPE: dict[str, pa.DataType] = {
+    "string": pa.string(),
+    "Float64": pa.float64(),
+    "Int64": pa.int64(),
+}
+_TIPO_PANDAS_POR_ARROW: dict[pa.DataType, object] = {
+    pa.string(): pd.StringDtype(),
+    pa.float64(): pd.Float64Dtype(),
+    pa.int64(): pd.Int64Dtype(),
+}
+
+
+def _schema_arrow_snapshot() -> pa.Schema:
+    """Schema Arrow do contrato de snapshot + a coluna de partição `semana`."""
+    campos = [
+        (col, _TIPO_ARROW_POR_DTYPE[dtype]) for col, dtype in CONTRATO_COLUNAS_SNAPSHOT.items()
+    ]
+    return pa.schema([*campos, ("semana", pa.string())])
+
+
 def _frame_snapshot_vazio(com_semana: bool = True) -> pd.DataFrame:
-    colunas = list(CONTRATO_COLUNAS_SNAPSHOT.keys()) + (["semana"] if com_semana else [])
-    return pd.DataFrame({col: pd.Series(dtype="string") for col in colunas})
+    """Frame vazio COM os dtypes do contrato — `nota_wellhub`/`qtd_avaliacoes_wellhub` sao
+    numericos nulaveis, nao `string`, e um frame vazio mal tipado quebraria o `concat` da serie.
+    """
+    dados = {col: pd.Series(dtype=dt) for col, dt in CONTRATO_COLUNAS_SNAPSHOT.items()}
+    if com_semana:
+        dados["semana"] = pd.Series(dtype="string")
+    return pd.DataFrame(dados)
 
 
 def ler_snapshots(
     base_dir: Path = SNAPSHOTS_DIR_DEFAULT, *, semanas: Sequence[str] | None = None
 ) -> pd.DataFrame:
-    """Lê a série de partições -> 10 colunas do contrato + `semana` (string, vinda do caminho).
+    """Lê a série de partições -> 12 colunas do contrato + `semana` (string, vinda do caminho).
 
     O `partitioning` é explícito também na LEITURA para o pyarrow não inferir tipo e devolver
     `semana` como algo diferente de string. Base inexistente/vazia -> frame vazio bem-formado.
+
+    **O `schema=` explícito não é otimização — é correção `[BLK-MA-09 / DEC-026]`.** Sem ele o
+    pyarrow infere o schema do PRIMEIRO arquivo do dataset. Numa série com partições de contratos
+    diferentes (pré e pós-bump, que é exatamente o que um bump produz), se a primeira lida for uma
+    partição antiga, as colunas novas são **descartadas de todas as outras**; o laço de
+    preenchimento abaixo então as recria como `pd.NA`, e o resultado é uma coluna **nula para o
+    universo inteiro, sem erro e sem log** — inclusive para as linhas que tinham valor. Com o
+    schema declarado, o pyarrow preenche o que falta **por arquivo**, que é a semântica certa.
     """
     base = Path(base_dir)
     if not base.exists() or not any(_RE_DIR_SEMANA.match(p.name) for p in base.iterdir()):
@@ -592,10 +744,11 @@ def ler_snapshots(
     dataset = ds.dataset(
         str(base),
         format="parquet",
+        schema=_schema_arrow_snapshot(),
         partitioning=ds.partitioning(pa.schema([("semana", pa.string())]), flavor="hive"),
     )
     tabela = dataset.to_table()
-    df = tabela.to_pandas()
+    df = tabela.to_pandas(types_mapper=_TIPO_PANDAS_POR_ARROW.get)
     if semanas is not None:
         alvo = {str(s) for s in semanas}
         df = df[df["semana"].astype(str).isin(alvo)]
@@ -603,7 +756,10 @@ def ler_snapshots(
     for coluna in colunas:
         if coluna not in df.columns:
             df[coluna] = pd.NA
-    return df[colunas].reset_index(drop=True)
+    out = df[colunas].reset_index(drop=True)
+    for coluna, dtype in CONTRATO_COLUNAS_SNAPSHOT.items():
+        out[coluna] = out[coluna].astype(dtype)
+    return out
 
 
 def podar_snapshots(
