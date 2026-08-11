@@ -198,6 +198,12 @@ Abrir `https://piloto.ultra-expansao.tech` → login Authelia → piloto.
 ## 6. Checklist de verificação pós-deploy
 
 - [ ] `GET /api/health` responde `{"status":"ok"}` no container.
+- [ ] **`artefatos_faltando` do `/api/health` vem vazio.** É o item que faltava aqui: os
+      parquets de crescimento (`crescimento_municipal`, `crescimento_hex`) não vêm no
+      git nem na imagem — chegam só pelo bind mount `/opt/motor-expansao/data/staging`.
+      Sem eles o piloto sobe normal e o **passo 4 sai vazio e sem cor, em silêncio**,
+      então nenhum outro item deste checklist acusa a falta. Se aparecer algum nome ali,
+      copiar o arquivo para o staging do VPS (juntos têm ~2,4 MB) e repetir o `up -d`.
 - [ ] `https://piloto.ultra-expansao.tech` exige login (Authelia) e abre o SPA depois.
 - [ ] Mapa Territorial carrega uma UF (a 1ª leitura carrega a partição inteira, demora).
 - [ ] Viabilidade calcula um ponto e mostra o **banner "preliminar"**.

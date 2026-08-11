@@ -60,7 +60,14 @@ services:
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro   # censo geo (obrigatorio)
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal (obrigatorio)
-      - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra (opcional)
+      # Mercado/SAM + concorrentes/Ultra + os DOIS parquets de crescimento do passo 4
+      # (`crescimento_municipal.parquet`, `crescimento_hex.parquet`). "Opcional" no
+      # sentido de que a API sobe sem eles — mas o passo 4 do funil sai VAZIO e sem cor,
+      # em silencio: `carregar_crescimento*()` devolve None quando o arquivo nao existe.
+      # Eles nao vem na imagem (`.dockerignore` corta `data/`) nem no git
+      # (`.gitignore`: `data/staging/*`); so chegam por este mount. Como sao gerados:
+      # `data/reports/crescimento/README.md`. Conferir no ar: `GET /api/health`.
+      - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + crescimento (passo 4)
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF (opcional)
       - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)
     networks:
@@ -151,7 +158,11 @@ services:
       API_BASEMAP_LABELS_URL: ${API_BASEMAP_LABELS_URL:-}
     volumes:
       - /opt/motor-expansao/data/outputs:/app/data/outputs:ro    # censo geo + enriquecido + base_calibracao
-      - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + renda domiciliar
+      # Idem ao servico acima: alem de mercado/SAM, concorrentes/Ultra e renda
+      # domiciliar, este mount carrega os dois parquets de crescimento do passo 4.
+      # Sem eles a camada "Como as cidades estao indo" fica vazia sem erro nenhum.
+      # Conferir no ar: `GET /api/health` -> `artefatos.crescimento_*`.
+      - /opt/motor-expansao/data/staging:/app/data/staging:ro    # mercado/SAM + concorrentes/Ultra + renda domiciliar + crescimento
       - /opt/motor-expansao/data/ibge:/app/data/ibge:ro          # malha municipal
       - /opt/motor-expansao/data/ultra:/app/data/ultra:ro        # branding do PDF
       - /opt/motor-expansao/concorrentes:/app/concorrentes:ro    # logos de pins (logo_<rede>.png)

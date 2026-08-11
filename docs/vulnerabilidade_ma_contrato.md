@@ -4,7 +4,7 @@
 > Responsável: Felipe Silva | Estratégia e Growth | Ultra Academia
 > Versão: 2026-07-23 (BLK-MA-01 — design/contrato; **ZERO código de produção**;
 > emenda pós-gate 2 do mesmo dia: distinção coletor-vs-ingestão, chave de snapshot `slug`, e BLK-MA-08)
-> **Emenda BLK-MA-02 (gate de engenharia de 2026-07-29, Vinicius):** seção 6 — payload de 10 colunas,
+> **Emenda BLK-MA-02 (gate de engenharia de 2026-07-29, Vinicius):** seção 6 — payload de 10 colunas (hoje 12, ver emenda DEC-026),
 > chave própria do snapshot, origem da `semana` e **cadência real** (os dois relógios); seção 12 —
 > plug do materializador no runner semanal e o cron mensal como caminho crítico. Marcadas com
 > `[emenda 2026-07-29]`.
@@ -179,13 +179,37 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   reescrever uma semana passada e, com `existing_data_behavior="delete_matching"`, **apagá-la**.
   Com a partição vindo da execução, o `snapshot_date` por linha passa a servir de **medidor de
   frescor** (é o único detector de "o CSV é o da semana passada").
-- **Payload por linha (sem crus além do hash) `[emenda 2026-07-29]`.** 10 colunas, nesta ordem:
+- **Payload por linha (sem crus além do hash) `[emenda 2026-07-29; 12 colunas desde a DEC-026]`.** 12 colunas, nesta ordem:
   `{snapshot_date, slug, concorrente_id, chave_snapshot, chave_origem, hex_id_res7, rede, fonte,
-  hash_campos_raspados, versao_contrato}` — **sem** nome/coordenadas brutas; a única "impressão
+  hash_campos_raspados, nota_wellhub, qtd_avaliacoes_wellhub, versao_contrato}` — as duas de rating
+  entraram pela DEC-026 como FATO sem peso, entre o hash e o carimbo de versão; são nuláveis
+  (`Float64`/`Int64`) e só o WellHub as preenche — **sem** nome/coordenadas brutas; a única "impressão
   digital" dos campos raspados é o `hash_campos_raspados` (que **não** inclui `data_coleta`, `slug`
   nem a taxonomia — ver a emenda BLK-MA-11 abaixo). `fonte` não é opcional: o sinal 1 da seção 4 é derivado dela, e sem ela a regra de "gap
   de feed não vira churn" é impossível de implementar. `semana` **não** é coluna do arquivo — vive
   no caminho, como chave de partição hive.
+
+> **[emenda BLK-MA-09, 2026-08-10] Domínio da nota e normalização do par: degradar, nunca abortar.**
+> O domínio de `nota_wellhub` é **`[1,0 ; 5,0]`** (`NOTA_WELLHUB_MIN`/`NOTA_WELLHUB_MAX` em
+> `contrato.py`), não `[0 ; 5]`. Motivo: a nota é média de avaliações de 1 a 5 estrelas, logo `0.0`
+> é aritmeticamente inalcançável — "sem avaliação" tem forma própria (`NA`/`0`). A DEC-026 mediu
+> `min = 1,0` em 34.035 independentes com nota. O piso importa mais que o teto porque `0.0` é o
+> retorno NATURAL de um extrator quebrado: um piso em `0.0` aceitaria em silêncio justamente o valor
+> mais provável de um bug.
+>
+> **Toda violação DEGRADA a célula para "não lido" e é CONTADA em `rating_ilegivel`; nenhuma
+> levanta.** Vale para: nota fora do domínio, contagem negativa, contagem não-inteira (`1.262`, a UI
+> pt-BR) e qualquer **par** fora dos três estados da DEC-024 — `NA`/`105`, `4.81`/`0` e `4.81`/`NA`
+> viram `NA`/`NA`. A razão é a mesma do item 1 do `_coagir_rating`: `montar_snapshot` roda ANTES de
+> gravar e o `run_weekly_90.sh` sobrescreve os CSVs crus a cada coleta, então uma exceção não perde
+> uma linha — perde **a semana inteira, para sempre**, por causa de uma célula.
+>
+> A **ordem** é normativa: domínio por coluna primeiro, par depois. É ela que faz `0.0`/`0` — extrator
+> quebrado sobre unidade sem avaliações — cair em "sem avaliações" (`NA`/`0`) em vez de "não lido".
+>
+> `_assert_schema_snapshot` mantém as checagens como **rede para frames montados à mão** (metade dos
+> testes desta camada constrói o insumo assim). Pelo caminho público elas são inalcançáveis — é
+> justamente esse o invariante.
 - **Limpeza de ruído (BLK-MA-02, obrigatória antes de derivar churn).** O feed cru traz linhas que
   **não** são academias reais e distorceriam churn/universo: coords `0;0` e rótulos de teste (ex.:
   "Teste Raised"); **entradas de tecnologia/onboarding do TotalPass** ("Zon Tecnologia", "SAGAZ
@@ -492,7 +516,7 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 > desfecho observado contra o qual calibrá-lo.
 
 > **[emenda BLK-MA-04, 2026-07-30] Grão da linha, contrato de coluna e a coluna de ordenação.**
-> A saída do score é o contrato **`score_vulnerabilidade_v1`, de 20 colunas**
+> A saída do score é o contrato **`score_vulnerabilidade_v2`, de 22 colunas** (`v1`/20 até a DEC-026)
 > (`CONTRATO_COLUNAS_SCORE` em `vulnerabilidade/contrato.py`; implementação em
 > `vulnerabilidade/score.py`, módulo **PURO, sem I/O**), com **uma linha por ACADEMIA** =
 > `(fonte, chave_snapshot)`. "Academia" aqui é uma **chave de snapshot**, não um estabelecimento
@@ -603,7 +627,7 @@ Ajustada pelo **D3 = Não** (rating não é coletado → sinal 2 depende de ajus
 |---|---|---|
 | **BLK-MA-02** | Extrator de churn+staleness do histórico de snapshots (100% interno) + **limpeza de ruído** (linhas `0;0`/teste, entradas de tecnologia/onboarding, coords inconsistentes) + flags de série imatura (ramp-up); chave `slug` + `data_coleta`. É o núcleo 100%-reuso do Plano B. | D2 (S3/S4) |
 | **BLK-MA-03** | Presença em agregador (**sinal 1**, reuso via `fonte`) + (opcional/deferido) extensão de **ingestão** para o universo NOMEADO (D1-B, retém `slug`/`nome_estabelecimento`; **só ingestão, SEM ajuste de coletor**); anti-PII por construção; fixtures sintéticas. **Rating (sinal 2) NÃO entra aqui** — depende do BLK-MA-08. Entregue como insumo BRUTO hex-level (contrato `presenca_agregador_v1`); `v1`/pesos são BLK-MA-04. | sinal 1 + D1 |
-| **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. Entregue como contrato de coluna `score_vulnerabilidade_v1` (20 colunas, módulo PURO sem I/O), uma linha por academia, com o **universo de M&A filtrado aqui**; os artefatos do D6 são BLK-MA-05. | D4 + D7 |
+| **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. Entregue como contrato de coluna `score_vulnerabilidade_v1` (20 colunas na época; hoje `v2`/22 pela DEC-026; módulo PURO sem I/O), uma linha por academia, com o **universo de M&A filtrado aqui**; os artefatos do D6 são BLK-MA-05. | D4 + D7 |
 | **BLK-MA-05** | Lista priorizada de M&A (cruzamento com o hex quente, D5, **COM a INVERSÃO**) + entregável. | D5 + D6 |
 | **BLK-MA-06** | Integração ao cron semanal da VPS + runbook. | D8 |
 | **BLK-MA-07** | (Opcional/futuro, **gate + DEC próprios**) reputação **EXTERNA** (Google Places ou outra, público geral). Único ponto que reabre o §2. | — |

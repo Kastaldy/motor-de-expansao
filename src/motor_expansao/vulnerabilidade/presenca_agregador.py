@@ -281,7 +281,7 @@ def extrair_presenca_agregador(
 
     | # | passo | por quê |
     |---|---|---|
-    | 1 | série longa validada | `semana` ISO, as 10 colunas do snapshot e unicidade da chave |
+    | 1 | série longa validada | `semana` ISO, as 12 colunas do snapshot e unicidade da chave |
     | 2 | **reduzir** cada `(fonte, chave_snapshot)` à observação de maior `semana` | não contar a mesma academia uma vez por semana |
     | 3 | **filtrar** TP/WH x independente, DEPOIS da redução | a classificação mais recente vence |
     | 4 | agregar por `hex_id_res7` | a única granularidade com variância |
