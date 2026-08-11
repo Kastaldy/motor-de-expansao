@@ -26,12 +26,6 @@ export interface StepperBarProps {
   atual: number
   onIr: (n: number) => void
   onGerarRelatorio: () => void
-  /**
-   * Texto do botão no ÚLTIMO passo. Existe porque o stepper passou a servir duas telas:
-   * no "Explorar" o fim do funil entrega o PDF do município; no modo de ponto entrega a
-   * ficha do imóvel. Um rótulo fixo prometeria relatório e abriria a ficha.
-   */
-  rotuloFinal?: string
   gerando: boolean
   /** Na visão de UF inteira o último passo recomenda municípios — sem relatório. */
   nivelUf?: boolean
@@ -44,7 +38,6 @@ export default function StepperBar({
   onGerarRelatorio,
   gerando,
   nivelUf = false,
-  rotuloFinal = 'Gerar Relatório Municipal ↓',
 }: StepperBarProps) {
   // Deriva do proprio funil, como as linhas 69/144/168 ja faziam. Era o unico
   // literal do stepper que precisava de edicao manual a cada passo novo.
@@ -226,7 +219,7 @@ export default function StepperBar({
         ) : ctaUf ? (
           'Escolha um município ↑'
         ) : ultimo ? (
-          rotuloFinal
+          'Gerar Relatório Municipal ↓'
         ) : (
           'Próxima camada →'
         )}

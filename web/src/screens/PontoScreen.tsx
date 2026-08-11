@@ -3,49 +3,39 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PontoEscolhido } from '../App'
 
 import BlocoViabilidadePonto from '../components/BlocoViabilidadePonto'
-import BotaoInicio from '../components/BotaoInicio'
 import CampoPonto from '../components/CampoPonto'
 import DetalheRegiao from '../components/DetalheRegiao'
-import HexMap, { type SearchPin } from '../components/HexMap'
+import type { SearchPin } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
-import MapaPonto from '../components/MapaPonto'
 import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
-import ScoreLegend from '../components/ScoreLegend'
-import StepperBar from '../components/StepperBar'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
 import { MAX_PONTOS } from '../lib/comparacao-pontos'
 import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { num } from '../lib/format'
-import type {
-  BlocoOpcional,
-  MunicipioPayload,
-  PontoPayload,
-  ViabilidadeOut,
-} from '../lib/types'
+import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
 
 /**
  * Modo 1 — analise de um PONTO/IMOVEL.
  *
- * LAYOUT DE MAPA, nao de ficha. A tela ABRE no mapa e a ficha vira uma GAVETA que se
- * puxa por um unico botao. Antes era o contrario: a ficha era a tela e o mapa uma caixa
- * de 300px no meio dela. A inversao e' pedido do Juan (2026-08-10) e tem uma razao de
- * leitura: a pergunta do modo e' "o que ha' em volta deste endereco?", e a resposta e'
- * geografica — a lista de numeros e' a evidencia, nao a manchete.
+ * ESTA TELA NAO DESENHA MAPA. Ela e' uma CAMADA por cima do "Explorar uma regiao": o
+ * `App` renderiza o `MapScreen` inteiro no fundo — mesmo cabecalho, mesmos seletores de
+ * UF/municipio, mesmo funil, mesma legenda, mesmo painel de ranking — e este componente
+ * poe por cima so' o que e' proprio do modo: a caixa de colar e a JANELA da ficha.
  *
- * O MAPA E' O MESMO DO "EXPLORAR" (`HexMap` + funil + stepper + legenda), centrado no
- * ponto. REVERTE a decisao que este docstring registrava ate 2026-08-10 ("continua sem
- * funil e sem StepperBar", com o `MapaPonto` desenhando so' o hexagono do imovel e os 18
- * vizinhos). O pedido e' do Juan e a razao dele vence a minha: quem cola um endereco
- * quer decidir, e decidir exige ver a cidade em volta na MESMA regua com que o resto do
- * produto fala — nao um recorte de 19 hexagonos com vocabulario proprio. O custo
- * (carregar a particao do municipio) e' o mesmo que o Explorar ja paga.
+ * POR QUE ASSIM (pedido do Juan, 2026-08-11: "deixe as duas iguais ao explorar regiao e
+ * so' ter a janela de analise"). As duas telas vinham DIVERGINDO: o modo de ponto tinha
+ * ganhado uma copia parcial do Explorar (mapa + funil + stepper + legenda, sem o painel
+ * de ranking), e copia parcial e' o pior dos mundos — parece a mesma tela, responde
+ * diferente, e cada melhoria no Explorar precisava ser reimplementada aqui. Agora nao ha'
+ * copia: e' o MESMO componente.
  *
- * O `MapaPonto` SOBREVIVE como degradacao. Municipio nao resolvido pelo `/api/ponto` (o
- * campo e' `string | null`) ou falha na carga do territorio: em vez de tela preta, volta
- * o mapa de vizinhanca, que so' precisa da propria ficha. Nao e' codigo morto — e' o
- * caminho de quando o funil nao se aplica.
+ * QUEM ESCOLHE O TERRITORIO E' O ENDERECO. Resolver o ponto devolve UF e municipio, e o
+ * `onLocalizar` os empurra para o `App`, que ja' sabe carregar o territorio (e' o mesmo
+ * caminho do drill-down do Explorar). Nada de carga propria aqui: a versao anterior
+ * chamava `/api/municipio` por conta e mantinha um segundo estado de territorio, que
+ * podia divergir do que o mapa mostrava.
  *
  * ESTADO VAZIO POR BLOCO. Cada bloco pergunta ao SERVIDOR se tem dado (`disponivel`) e
  * mostra o `motivo` que ele devolveu. A cadeia de dados degrada em silencio por desenho
@@ -53,12 +43,47 @@ import type {
  * seria lido como defeito. Nenhum texto de estado vazio e' inventado aqui.
  */
 export default function PontoScreen({
-  onInicio,
   onAnalisarPonto,
+  onLocalizar,
+  mapaPronto,
+  pedido,
+  onFocarBusca,
 }: {
-  onInicio: () => void
   /** Leva ESTE ponto para a tela de Viabilidade (a costura com o resto do app). */
   onAnalisarPonto: (p: PontoEscolhido) => void
+  /**
+   * Avisa o `App` de onde caiu o endereco, para o mapa do fundo ir para la'.
+   *
+   * `municipio` pode vir vazio: o `/api/ponto` declara o municipio como `string | null`.
+   * Nesse caso o `App` fica na visao da UF — o mapa continua util e honesto, so' menos
+   * fechado do que seria com a cidade resolvida.
+   */
+  onLocalizar: (uf: string, municipio: string, pin: SearchPin) => void
+  /**
+   * O Explorar ja' esta' com territorio na tela — e, portanto, com a busca dele no
+   * cabecalho.
+   *
+   * E' o que decide se a caixa de colar aparece. Com o mapa montado ela seria uma SEGUNDA
+   * caixa pedindo endereco, ao lado da que ja' existe; sem o mapa (nenhuma UF escolhida)
+   * ela e' a unica entrada que o modo tem, porque a tela vazia do Explorar so' oferece o
+   * seletor de estado.
+   */
+  mapaPronto: boolean
+  /**
+   * Coordenada resolvida pela busca do Explorar, para virar ficha aqui.
+   *
+   * Carrega um `n` que so' cresce porque a MESMA coordenada pode ser pedida duas vezes
+   * seguidas (buscar, fechar a janela, buscar igual): comparando so' lat/lng o efeito nao
+   * dispararia na segunda, e o operador ficaria olhando um botao que nao responde.
+   */
+  pedido: { lat: number; lng: number; n: number } | null
+  /**
+   * Pede o foco no campo de busca do cabecalho.
+   *
+   * E' o que faz "+ Adicionar mais um ponto" funcionar sem caixa propria: com o mapa na
+   * tela, adicionar um ponto e' digitar na lupa que ja' esta' la'.
+   */
+  onFocarBusca: () => void
 }) {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -73,8 +98,14 @@ export default function PontoScreen({
   const [fichas, setFichas] = useState<PontoPayload[]>([])
   /** Qual ficha esta aberta em detalhe. Com 1 ponto e' sempre ela. */
   const [aberto, setAberto] = useState(0)
-  /** A caixa de colar so' aparece quando pedida — depois do 1o ponto ela some. */
-  const [colando, setColando] = useState(true)
+  /**
+   * A caixa de colar so' aparece quando pedida — depois do 1o ponto ela some.
+   *
+   * Nasce FECHADA se o mapa ja' estava montado ao entrar no modo (quem explorou uma
+   * regiao e depois trocou para "analisar um ponto"): nesse caso a busca do cabecalho ja'
+   * esta' na tela e abrir a caixa seria duplica-la de saida.
+   */
+  const [colando, setColando] = useState(() => !mapaPronto)
   /**
    * A janela da ficha.
    *
@@ -87,192 +118,120 @@ export default function PontoScreen({
   const ficha = fichas[aberto] ?? null
 
   /**
-   * O TERRITORIO em volta do ponto: a mesma carga que o "Explorar" faz no drill-down de
-   * um municipio (`/api/municipio/{uf}/{municipio}`), com os 5 passos do funil, os
-   * hexagonos e os pins de concorrentes.
+   * De uma coordenada ja' resolvida ate' a ficha na tela.
    *
-   * Municipio e nao UF: o `/api/ponto` ja devolve a cidade do endereco, e o estado
-   * inteiro seria contexto demais para a pergunta "este imovel serve?" — a partir de
-   * zoom 10 o operador nem enxerga o resto da UF. No servidor o custo e' o mesmo: os dois
-   * endpoints leem a MESMA particao `uf=XX`, cacheada por processo.
+   * Separado de `resolver` porque agora ha' DUAS portas para o mesmo trabalho: a caixa de
+   * colar daqui e a busca do cabecalho do Explorar. As duas terminam neste ponto — e' o
+   * que garante que buscar um endereco pela lupa produza exatamente a mesma leitura que
+   * cola-lo aqui, em vez de so' soltar um pin no mapa.
    */
-  const [territorio, setTerritorio] = useState<MunicipioPayload | null>(null)
-  const [carregandoTerritorio, setCarregandoTerritorio] = useState(false)
-  /** Qual camada do funil colore o mapa. Mesma numeracao do "Explorar" (1..5). */
-  const [passoN, setPassoN] = useState(1)
-  const [hexSelecionado, setHexSelecionado] = useState<string | null>(null)
+  const analisarCoordenada = useCallback(
+    async (lat: number, lng: number) => {
+      setCarregando(true)
+      setErro(null)
+      try {
+        const nova = await api.ponto(lat, lng)
+        // O ponto novo entra no fim e vira o aberto: quem acabou de pedir quer ver ele.
+        setFichas((atuais) => {
+          const proximas = [...atuais, nova].slice(0, MAX_PONTOS)
+          setAberto(proximas.length - 1)
+          return proximas
+        })
+        setColando(false)
+        setJanela(true)
+        // O mapa do fundo vai para a cidade do endereco, com o pin na coordenada EXATA e
+        // o hexagono dela selecionado. Depois disto quem manda no territorio e' o
+        // operador: os seletores do cabecalho continuam valendo, como no Explorar.
+        onLocalizar(nova.local.uf ?? '', nova.local.municipio ?? '', {
+          lat: nova.lat,
+          lng: nova.lng,
+          hexId: nova.hex_id,
+        })
+      } catch (e) {
+        // NAO limpa os pontos ja lidos: perder tres leituras porque a quarta falhou
+        // seria punir o operador por um endereco mal digitado.
+        setErro(e instanceof ApiError ? e.message : 'Falha ao analisar o ponto.')
+      } finally {
+        setCarregando(false)
+      }
+    },
+    [onLocalizar],
+  )
 
-  const uf = ficha?.local.uf ?? null
-  const municipio = ficha?.local.municipio ?? null
-
-  /**
-   * Carrega o territorio quando o ponto aberto muda de CIDADE.
-   *
-   * A chave e' `uf|municipio`, nao a ficha: comparar cinco pontos do mesmo municipio tem
-   * de custar UMA carga, nao cinco. O `cancelado` fecha a corrida — trocar de ponto
-   * durante a carga faria a resposta antiga chegar depois e pintar o mapa com a cidade
-   * errada.
-   */
-  const chaveCarregada = useRef<string | null>(null)
+  /* A busca do Explorar pediu um ponto. O `n` e' a chave: a mesma coordenada pedida duas
+     vezes tem de produzir duas leituras. */
+  const ultimoPedido = useRef(0)
   useEffect(() => {
-    if (!uf || !municipio) {
-      chaveCarregada.current = null
-      setTerritorio(null)
-      return
-    }
-    const chave = `${uf}|${municipio}`
-    // A chave JA TENTADA mora em ref, nao no `territorio`. Com `territorio` na lista de
-    // dependencias, uma carga que FALHA (-> setTerritorio(null)) mudava o estado e
-    // disparava o efeito de novo, refazendo a mesma requisicao que acabou de falhar.
-    if (chaveCarregada.current === chave) return
-    chaveCarregada.current = chave
-
-    let cancelado = false
-    setCarregandoTerritorio(true)
-    // Hexagono selecionado e' de OUTRA cidade a partir daqui: mante-lo deixaria um
-    // contorno branco sobre um hexagono que nao esta mais no `hexes`.
-    setHexSelecionado(null)
-    api
-      .municipio(uf, municipio)
-      .then((d) => {
-        if (!cancelado) setTerritorio(d)
-      })
-      .catch(() => {
-        // Silencioso DE PROPOSITO: a ficha ja esta na tela e o `MapaPonto` assume o
-        // fundo. Um erro vermelho aqui culparia o operador por uma degradacao que nao
-        // muda a resposta que ele veio buscar.
-        if (!cancelado) setTerritorio(null)
-      })
-      .finally(() => {
-        if (!cancelado) setCarregandoTerritorio(false)
-      })
-    return () => {
-      cancelado = true
-    }
-  }, [uf, municipio])
-
-  /** O passo que colore o mapa. `passos` vem com 5; o estado e' 1-based. */
-  const passo = territorio?.passos[passoN - 1] ?? null
-
-  /** O pin do imovel colado — a mesma marca que a busca por coordenada solta no Explorar. */
-  const pinDoPonto: SearchPin | null = ficha
-    ? { lat: ficha.lat, lng: ficha.lng, hexId: ficha.hex_id }
-    : null
+    if (!pedido || pedido.n === ultimoPedido.current) return
+    ultimoPedido.current = pedido.n
+    void analisarCoordenada(pedido.lat, pedido.lng)
+  }, [pedido, analisarCoordenada])
 
   async function resolver(entrada: EntradaClassificada, texto: string) {
-    setCarregando(true)
-    setErro(null)
-    try {
-      // O front resolve coordenada e link longo sozinho; o resto custa uma ida ao
-      // servidor (expandir redirect do link curto, ou geocodificar endereço).
-      let coord = entrada.coord
-      if (!coord) {
+    // O front resolve coordenada e link longo sozinho; o resto custa uma ida ao servidor
+    // (expandir redirect do link curto, ou geocodificar endereço).
+    let coord = entrada.coord
+    if (!coord) {
+      setCarregando(true)
+      setErro(null)
+      try {
         const r = await api.resolverPonto(texto)
         if (!r.found || r.lat == null || r.lng == null) {
           setErro(r.motivo ?? 'Não consegui resolver esse endereço.')
           return
         }
         coord = { lat: r.lat, lng: r.lng }
+      } catch (e) {
+        setErro(e instanceof ApiError ? e.message : 'Falha ao resolver o endereço.')
+        return
+      } finally {
+        setCarregando(false)
       }
-      const nova = await api.ponto(coord.lat, coord.lng)
-      // O ponto novo entra no fim e vira o aberto: quem acabou de colar quer ver ele.
-      setFichas((atuais) => {
-        const proximas = [...atuais, nova].slice(0, MAX_PONTOS)
-        setAberto(proximas.length - 1)
-        return proximas
-      })
-      setColando(false)
-      setJanela(true)
-    } catch (e) {
-      // NAO limpa os pontos ja lidos: perder tres leituras porque a quarta falhou
-      // seria punir o operador por um endereco mal digitado.
-      setErro(e instanceof ApiError ? e.message : 'Falha ao analisar o ponto.')
-    } finally {
-      setCarregando(false)
     }
+    await analisarCoordenada(coord.lat, coord.lng)
   }
 
-  const mostrandoCaixa = colando || fichas.length === 0
+  /**
+   * A caixa e a busca do cabecalho NUNCA convivem.
+   *
+   * Regra dura, e nao "quase nunca": duas caixas pedindo endereco na mesma tela sao
+   * redundantes ainda que uma delas tenha sido aberta a pedido (foi o defeito que sobrou
+   * da primeira tentativa — o "+ Adicionar mais um ponto" reabria a caixa por cima da
+   * busca). Com o mapa montado a entrada e' a lupa do cabecalho, ponto final; sem mapa a
+   * caixa e' a unica entrada que existe, porque a tela vazia do Explorar so' oferece o
+   * seletor de estado.
+   */
+  const mostrandoCaixa = !mapaPronto && (colando || fichas.length === 0)
 
   return (
-    <div style={{ position: 'absolute', inset: 0, overflow: 'hidden' }}>
-      {/* O mapa É a tela: fica no fundo, ocupando tudo, com o resto flutuando por cima.
-          É o MESMO `HexMap` do Explorar — mesmas camadas, mesma rampa, mesmos pins —,
-          centrado na cidade do imóvel. Sem o território (município não resolvido ou carga
-          falhou) cai no mapa de vizinhança, que só precisa da própria ficha. */}
-      {territorio && passo ? (
-        <HexMap
-          hexes={territorio.hexes}
-          passo={passo}
-          cresMun={territorio.cres_mun}
-          centro={territorio.centro}
-          municipio={territorio.municipio ?? undefined}
-          uf={territorio.uf}
-          pins={territorio.pins}
-          selecionado={hexSelecionado}
-          onSelecionar={(h) => setHexSelecionado(h.id)}
-          /* O pin é o IMÓVEL COLADO, não uma busca: é ele que manda a câmera voar para cá
-             na montagem, e é o que amarra a leitura da ficha ao que está desenhado. */
-          searchPin={pinDoPonto}
-        />
-      ) : (
-        <MapaPonto ficha={ficha} />
-      )}
+    /* CAMADA, e nao tela. O `MapScreen` inteiro fica atrás — mapa, cabeçalho com os
+       seletores de UF/município, lupa, funil, legenda e painel de ranking. Aqui só entra
+       o que é próprio do modo de ponto.
 
-      {/* ---------------- Chrome flutuante ----------------
-          Coluna flex em vez de peças com `top` fixo: o cabeçalho quebra em duas linhas
-          em tela estreita, e com posições fixas ele passaria por cima da caixa de colar.
-          `pointerEvents: none` no contêiner devolve ao mapa o mouse nos vãos entre as
-          peças — sem isso, uma faixa invisível no topo engoliria o arraste. */}
+       `pointerEvents: none` no contêiner é o que devolve o mouse ao mapa nos vãos entre
+       as peças; cada peça reativa pede `auto` de volta. Sem isso, uma folha invisível
+       cobriria a tela inteira e o mapa do fundo não receberia nem arraste nem clique.
+
+       `zIndex` acima do chrome do Explorar (cabeçalho 10, stepper 24, legenda 25) para a
+       caixa de colar e a janela ficarem por cima dele — mas o clique nos seletores e no
+       stepper continua chegando, porque o contêiner não intercepta. */
+    <div style={{ position: 'absolute', inset: 0, zIndex: 40, pointerEvents: 'none' }}>
+      {/* ---------------- Caixa de colar ----------------
+          Abaixo do cabeçalho do Explorar, que continua sendo o de lá. NÃO há cabeçalho
+          próprio: era justamente ele — "Análise de ponto" com botão de início repetido —
+          que fazia as duas telas parecerem coisas diferentes. */}
       <div
         style={{
           position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          zIndex: 30,
-          padding: 16,
+          top: 88,
+          left: 16,
+          right: 16,
           display: 'flex',
           flexDirection: 'column',
+          alignItems: 'center',
           gap: 12,
-          pointerEvents: 'none',
         }}
       >
-        <header
-          style={{
-            pointerEvents: 'auto',
-            alignSelf: 'stretch',
-            padding: '9px 12px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            flexWrap: 'wrap',
-            background: 'var(--surf-chrome)',
-            border: '1px solid var(--line-soft)',
-            borderRadius: 'var(--r-xl)',
-            backdropFilter: 'blur(14px)',
-          }}
-        >
-          <BotaoInicio onInicio={onInicio} />
-          <h1
-            style={{
-              font: '600 14px/1 var(--f-ui)',
-              letterSpacing: '-.01em',
-              color: 'var(--tx-max)',
-              margin: 0,
-            }}
-          >
-            Análise de ponto
-          </h1>
-          {ficha && (
-            <Chip>
-              {fichas.length > 1
-                ? `${fichas.length} pontos · raio de ${num(ficha.raio_km * 1000)} m`
-                : `raio de ${num(ficha.raio_km * 1000)} m · ${ficha.censo.n_setores ?? '—'} setores`}
-            </Chip>
-          )}
-        </header>
-
         {mostrandoCaixa && (
           <Glass
             style={{
@@ -339,76 +298,11 @@ export default function PontoScreen({
         )}
       </div>
 
-      {/* ---------------- Camadas do funil ----------------
-          As mesmas do Explorar: a legenda diz o que a cor significa e o stepper troca a
-          camada. Sem território (ou enquanto ele carrega) as duas somem — o mapa de
-          vizinhança não tem funil para explicar. */}
-      {territorio && passo && (
-        <>
-          <div style={{ position: 'absolute', left: 16, bottom: 84, zIndex: 25 }}>
-            <ScoreLegend passoN={passo.n} />
-          </div>
-
-          <div
-            style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 24,
-              padding: '0 16px 16px',
-            }}
-          >
-            <StepperBar
-              passos={territorio.passos}
-              atual={passoN}
-              onIr={(n) => setPassoN(Math.min(territorio.passos.length, Math.max(1, n)))}
-              /* O PDF municipal é a saída do modo "Explorar uma região", não deste. Aqui a
-                 entrega é a ficha do imóvel, que já tem o próprio caminho na janela —
-                 gerar um relatório da cidade inteira a partir de um endereço colado
-                 responderia outra pergunta. */
-              onGerarRelatorio={() => setJanela(true)}
-              rotuloFinal="Ver a ficha do imóvel ›"
-              gerando={false}
-            />
-          </div>
-        </>
-      )}
-
-      {/* Enquanto o território não chegou, o mapa de vizinhança já está no fundo e o
-          operador merece saber que vem mais — a carga da partição leva segundos. */}
-      {carregandoTerritorio && (
-        <Glass
-          style={{
-            position: 'absolute',
-            left: 16,
-            bottom: 16,
-            zIndex: 25,
-            padding: '10px 14px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 9,
-            font: '400 12px/1 var(--f-ui)',
-            color: 'var(--tx-muted)',
-          }}
-        >
-          <Spinner /> Lendo o território de {municipio}…
-        </Glass>
-      )}
-
       {/* ---------------- A ÚNICA opção que puxa a janela ----------------
-          Some enquanto a janela está aberta: quem já a tem na tela fecha pelo × ou Esc. */}
+          Some enquanto a janela está aberta: quem já a tem na tela fecha pelo × ou Esc.
+          Sempre acima do stepper do Explorar, que ocupa a largura toda no pé. */}
       {ficha && !janela && (
-        <div
-          style={{
-            position: 'absolute',
-            right: 16,
-            /* Acima do stepper quando ele existe: os dois no mesmo `bottom` se sobrepõem
-               em tela estreita, e o stepper ocupa a largura toda. */
-            bottom: territorio && passo ? 84 : 16,
-            zIndex: 25,
-          }}
-        >
+        <div style={{ position: 'absolute', right: 16, bottom: 96, pointerEvents: 'auto' }}>
           <Botao onClick={() => setJanela(true)}>
             Ver a ficha {fichas.length > 1 ? `(${fichas.length} pontos)` : ''} ›
           </Botao>
@@ -419,13 +313,24 @@ export default function PontoScreen({
       <JanelaFicha
         aberta={janela && ficha != null}
         titulo={ficha?.local.bairro ?? ficha?.local.municipio ?? 'Ponto analisado'}
+        /* A régua e a contagem de setores vinham do cabeçalho próprio, que saiu junto com
+           a cópia do Explorar. Vivem aqui porque é a ficha que elas qualificam — e some
+           uma linha de chrome da tela. */
         subtitulo={
-          ficha ? [ficha.local.municipio, ficha.local.uf].filter(Boolean).join(' · ') : undefined
+          ficha
+            ? [
+                [ficha.local.municipio, ficha.local.uf].filter(Boolean).join(' · '),
+                `raio de ${num(ficha.raio_km * 1000)} m`,
+                ficha.censo.n_setores != null ? `${ficha.censo.n_setores} setores` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')
+            : undefined
         }
         onFechar={() => setJanela(false)}
-        /* Mesmo recuo do botão que a abre: com o funil na tela o stepper ocupa a largura
-           toda no pé, e a janela cobriria os botões das camadas. */
-        recuoInferior={territorio && passo ? 96 : 16}
+        /* O stepper do Explorar ocupa a largura toda no pé; sem este recuo a janela
+           cobriria os botões das camadas. */
+        recuoInferior={96}
       >
         {ficha && (
           <div style={{ display: 'grid', gap: 16 }}>
@@ -447,8 +352,12 @@ export default function PontoScreen({
                 })
               }}
               onAdicionar={() => {
-                setColando(true)
                 setErro(null)
+                // Com o mapa na tela NAO abre caixa nenhuma: leva o cursor para a busca
+                // do cabecalho, que e' a entrada unica. Abrir uma segunda caixa por cima
+                // dela era o defeito apontado — redundante ainda que sob pedido.
+                if (mapaPronto) onFocarBusca()
+                else setColando(true)
               }}
             />
             <Ficha

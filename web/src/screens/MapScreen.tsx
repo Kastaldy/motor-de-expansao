@@ -47,6 +47,33 @@ export interface MapScreenProps {
   onEstado: (e: EstadoMapa) => void
   /** Volta ao menu de modos. Não limpa nada — ver `components/BotaoInicio`. */
   onInicio: () => void
+  /**
+   * Pin imposto DE FORA, que vence o da busca local.
+   *
+   * Existe para o modo de ponto: la' quem escolhe o territorio e' o endereco colado, nao
+   * a lupa desta tela. Um pin em state local nao serviria — o efeito que zera a tela ao
+   * trocar de UF/municipio (logo abaixo) limpa `pin`, e a troca de municipio e'
+   * exatamente o que acontece quando o operador cola um endereco. Vindo do pai, ele
+   * sobrevive a essa limpeza, que continua valendo para a busca manual.
+   */
+  pinFixo?: SearchPin | null
+  /**
+   * Avisa que a busca do cabecalho resolveu uma coordenada.
+   *
+   * E' o que deixa o modo de ponto usar ESTA busca como entrada, em vez de por uma
+   * segunda caixa de colar por cima da tela — duas caixas pedindo a mesma coisa, lado a
+   * lado, e' o defeito que o Juan apontou em 2026-08-11. Quem escuta decide o que fazer
+   * com a coordenada; aqui o comportamento nao muda (pin + hexagono selecionado).
+   */
+  onPontoBuscado?: (lat: number, lng: number) => void
+  /**
+   * Contador que, ao mudar, poe o foco no campo de busca do cabecalho.
+   *
+   * E' assim que o "+ Adicionar mais um ponto" da janela do modo de ponto funciona sem
+   * abrir uma SEGUNDA caixa de endereco: em vez de duplicar o campo, ele leva o cursor
+   * para o que ja' esta' na tela. Contador e nao booleano porque o pedido se repete.
+   */
+  focarBusca?: number
 }
 
 export default function MapScreen({
@@ -63,6 +90,9 @@ export default function MapScreen({
   estadoInicial,
   onEstado,
   onInicio,
+  pinFixo = null,
+  onPontoBuscado,
+  focarBusca = 0,
 }: MapScreenProps) {
   // A foto so' vale se tiver sido tirada NESTA uf/municipio — `fotoAplicavel` faz esse
   // portao (lib/mapa-estado). Sem ele, um pin de Sao Paulo reapareceria depois de um
@@ -135,6 +165,35 @@ export default function MapScreen({
     setCenario([])
     cameraRef.current = null
   }, [uf, municipio])
+
+  /**
+   * O pin vindo de fora TAMBEM seleciona o hexagono dele.
+   *
+   * Sem isto o endereco colado no modo de ponto so' ganhava a marca e o voo da camera: o
+   * hexagono em que ele cai ficava sem o contorno de selecao, e o painel lateral seguia
+   * mostrando o item errado (ou nenhum). Selecionar e' o que amarra as tres leituras — o
+   * ponto no mapa, o hexagono em volta dele e a linha correspondente no ranking.
+   *
+   * DEPOIS do efeito que zera a tela ao trocar de UF/municipio, e nao antes: colar um
+   * endereco muda as duas coisas na mesma passagem, e aquele efeito poe `selecionado` em
+   * `null`. A ordem de declaracao e' a ordem de execucao — invertida, a limpeza apagaria
+   * a selecao que este acabou de fazer.
+   */
+  useEffect(() => {
+    if (!pinFixo) return
+    setSelecionado(pinFixo.hexId)
+  }, [pinFixo])
+
+  /* Foco pedido de fora (o "+ Adicionar mais um ponto" da janela do modo de ponto).
+     `select()` junto porque o campo costuma estar com a busca anterior dentro: sem isso o
+     operador teria de apagar a coordenada velha antes de digitar a nova. O `0` inicial
+     nunca dispara — so' mudancas contam. */
+  const campoBusca = useRef<HTMLInputElement | null>(null)
+  useEffect(() => {
+    if (!focarBusca) return
+    campoBusca.current?.focus()
+    campoBusca.current?.select()
+  }, [focarBusca])
 
   // Espelho SEMPRE atual do estado, mantido num ref. Existe para o cleanup do efeito
   // abaixo poder ler valores frescos: um cleanup enxerga o closure do render em que foi
@@ -244,6 +303,7 @@ export default function MapScreen({
     setBuscaErro(null)
     setPin({ lat, lng, hexId })
     setSelecionado(hexId)
+    onPontoBuscado?.(lat, lng)
   }
 
   async function buscarCoordenada() {
@@ -382,7 +442,7 @@ export default function MapScreen({
               setSelecionado(h.id)
             }
           }}
-          searchPin={pin}
+          searchPin={pinFixo ?? pin}
         />
       )}
 
@@ -489,6 +549,7 @@ export default function MapScreen({
             <path d="m21 21-4.3-4.3" />
           </svg>
           <input
+            ref={campoBusca}
             value={busca}
             onChange={(e) => {
               setBusca(e.target.value)
