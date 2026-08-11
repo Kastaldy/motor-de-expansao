@@ -243,6 +243,62 @@ com o deploy; se os pipelines da cadeia mudarem, re-sincronizar o checkout manua
 > **Pendentes (futuro):** cron **mensal** dos agregadores WellHub/TotalPass (~20h, invocação separada);
 > integração deles ao residual com remodelagem (Huff por tipo de rede + dedup) usando as bases `NAO_ABRA/`.
 
+### Snapshot semanal de concorrentes (BLK-MA-06 — insumo de churn/staleness)
+
+**Por que existe.** O runner **sobrescreve** os CSVs crus a cada coleta: toda semana não fotografada
+está perdida **para sempre**. O snapshot é o produtor da série que os sinais **S3 (churn)** e
+**S4 (staleness)** do score de vulnerabilidade consomem. READ-ONLY sobre o M1 — escreve só em
+`data/staging/snapshots_concorrentes/semana=AAAA-SS/`.
+
+**Script versionado:** `scripts/cron/run_snapshot_concorrentes.sh` (mesmo molde do
+`run_growth_daily.sh`: container efêmero na imagem da `api`, `--user 0:0`, concorrentes montado
+`:ro`). Instalação e a linha a inserir no `run_weekly_90.sh` estão no cabeçalho do próprio script.
+
+**`--fontes unidades`, e isto NÃO é detalhe de configuração.** O cron semanal recoleta só os 90
+coletores, que atualizam `Unidades/unidades_<rede>.csv`; WellHub e TotalPass dependem do cron mensal
+listado acima como pendente. **Fotografar um feed que não foi recoletado é pior do que não
+fotografar:** o `hash_campos_raspados` sai idêntico semana após semana, `semanas_sem_mudanca` cresce
+sozinho e o **S4 marca o universo inteiro daquela fonte como "parado"** — que é exatamente o sinal de
+vulnerabilidade que o funil de M&A procura. Falso positivo em massa, no sinal de segundo maior peso,
+e silencioso. Quando o cron mensal dos agregadores existir, ele chama o **mesmo** script com
+`--fontes totalpass wellhub`, na cadência dele. O recorte de cada partição fica registrado em
+`fontes_lidas`, na auditoria.
+
+**Antes de agendar, rode o modo seco** — o layout dos CSVs na VPS não é versionado e o script não
+tem como adivinhá-lo:
+
+```bash
+DRY_RUN=1 /opt/motor-expansao-infra/run_snapshot_concorrentes.sh
+```
+
+`--dry-run` roda a cadeia inteira **sem gravar e sem podar** (este é o único passo do pacote que
+**apaga** arquivo — a poda de retenção, `RETENCAO_SEMANAS = 26`). Se `linhas_snapshot` vier `0`, o
+caminho de `HOST_CONCORRENTES` está errado; só agende depois de ver contagem plausível.
+
+**Falha do snapshot não pode abortar o lote** — a linha sugerida termina em
+`|| echo "snapshot falhou"`, no mesmo espírito de "falhas individuais de coletor não abortam o lote".
+
+> **Maturidade da série — DECIDIDO em 2026-08-11 por Vinicius: `MIN_SEMANAS` fica em 8.** Cumpre a
+> obrigação que o D2 do contrato delegou a este bloco ("revisitar com a cadência real medida"), e a
+> revisão foi feita: mantém-se o valor. **Não reabrir sem dado novo.**
+>
+> A medição que sustentou a decisão. Os parâmetros contam **observações, não meses**, e são dois,
+> com papéis distintos: `MIN_SEMANAS = 8` libera o sinal de churn (`s3`, via `flag_serie_imatura`),
+> enquanto `STALE_SEMANAS = 12` é o **denominador** do componente de estagnação
+> (`v4 = semanas_sem_mudanca / 12`, `score.py`). Baixar só o primeiro **desequilibra os dois**: o
+> score viraria ordenável com 6 observações enquanto o `v4` ainda estaria confinado a `≤ 0,5` —
+> metade da escala do sinal mais importante do ranking, inacessível justamente na largada.
+>
+> E o prazo longo não vem da régua, vem da **cadência**: com o feed `unidades` semanal (o único que
+> o snapshot fotografa hoje), 8 observações são **~2 meses**; os ~8 meses valem só para os
+> agregadores, cujo cron mensal **ainda não existe** — reduzir o parâmetro encurtaria um cronômetro
+> que não foi ligado. O caminho com retorno real para encurtar o prazo é **dar cron próprio aos
+> agregadores**, não afrouxar o critério.
+>
+> Fica registrado, para quando houver dado: o parâmetro é **global** e a cadência **não é**. Um valor
+> único não serve a um feed semanal e a outro mensal ao mesmo tempo; se isso incomodar no futuro, a
+> pergunta certa é torná-lo por fonte — escopo novo, fora do BLK-MA-06.
+
 ### Ingestão DIÁRIA da Growth API (Visão Executiva do piloto web)
 
 A **Visão Executiva** do piloto web (`/api/executiva/{uf}`) lê `data/staging/growth_api_historico.parquet`

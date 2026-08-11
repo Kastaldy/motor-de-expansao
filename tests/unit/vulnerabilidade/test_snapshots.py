@@ -1283,3 +1283,69 @@ def test_m2_montar_snapshot_nao_recebe_mais_data_referencia() -> None:
     import inspect
 
     assert list(inspect.signature(m.montar_snapshot).parameters) == ["df"]
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-06 — recorte de fontes por CADÊNCIA de coleta
+# --------------------------------------------------------------------------- #
+def test_fontes_restringe_o_feed_lido(dirs_sinteticos: tuple[Path, Path, Path]) -> None:
+    """O cron semanal fotografa só `unidades` — os agregadores não são recoletados toda semana.
+
+    Este é o núcleo do BLK-MA-06: fotografar um feed estagnado é PIOR que não fotografar, porque o
+    `hash_campos_raspados` sai idêntico toda semana e o S4 marcaria o universo inteiro daquela
+    fonte como "parado" — o próprio sinal de vulnerabilidade.
+    """
+    tp, wh, un = dirs_sinteticos
+
+    todas = m.ler_feeds(tp, wh, un)
+    assert set(todas["fonte"]) == {"totalpass", "wellhub", "unidades"}, "pre-condicao da fixture"
+
+    so_unidades = m.ler_feeds(tp, wh, un, fontes=["unidades"])
+    assert set(so_unidades["fonte"]) == {"unidades"}
+    assert len(so_unidades) < len(todas)
+
+    so_agregadores = m.ler_feeds(tp, wh, un, fontes=["totalpass", "wellhub"])
+    assert set(so_agregadores["fonte"]) == {"totalpass", "wellhub"}
+    # As duas metades reconstroem o todo: o recorte não perde nem duplica linha.
+    assert len(so_unidades) + len(so_agregadores) == len(todas)
+
+
+def test_fontes_invalida_levanta(dirs_sinteticos: tuple[Path, Path, Path]) -> None:
+    """Fonte fora do contrato não pode virar recorte silencioso de zero linha."""
+    tp, wh, un = dirs_sinteticos
+    with pytest.raises(ValueError, match="fonte fora do contrato"):
+        m.ler_feeds(tp, wh, un, fontes=["unidade"])  # singular: erro de digitação plausível
+    with pytest.raises(ValueError, match="nao ha o que ler"):
+        m.ler_feeds(tp, wh, un, fontes=[])
+
+
+def test_materializar_propaga_fontes_e_audita_o_recorte(
+    dirs_sinteticos: tuple[Path, Path, Path],
+) -> None:
+    """O recorte tem de ficar VISÍVEL na auditoria.
+
+    Quem ler a série meses depois precisa saber que as semanas antigas só tinham `unidades`, sob
+    pena de interpretar a ausência de agregador como churn.
+    """
+    tp, wh, un = dirs_sinteticos
+
+    snap, auditoria = m.materializar(
+        tp, wh, un, data_referencia=REF, escrever=False, fontes=["unidades"]
+    )
+
+    assert set(snap["fonte"]) == {"unidades"}
+    assert auditoria["fontes_lidas"] == ["unidades"]
+
+    _, auditoria_todas = m.materializar(tp, wh, un, data_referencia=REF, escrever=False)
+    assert auditoria_todas["fontes_lidas"] == ["totalpass", "unidades", "wellhub"]
+
+
+def test_cli_aceita_fontes_do_cron_semanal() -> None:
+    """`--fontes unidades` é o que a linha do cron vai passar."""
+    args = m._parse_args(["--fontes", "unidades"])
+    assert args.fontes == ["unidades"]
+
+    assert m._parse_args([]).fontes is None, "default = todos os feeds"
+
+    with pytest.raises(SystemExit):
+        m._parse_args(["--fontes", "gympass"])  # nome antigo do WellHub: erro plausível
