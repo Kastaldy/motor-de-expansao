@@ -127,7 +127,7 @@ def _linha_churn(
     imatura: bool = False,
     interpretavel: bool = False,
 ) -> dict[str, object]:
-    """Uma linha no contrato `churn_staleness_v1`, com os campos do score parametrizáveis."""
+    """Uma linha no contrato de churn vigente, com os campos do score parametrizáveis."""
     return {
         "chave_snapshot": chave,
         "fonte": fonte,
@@ -721,11 +721,17 @@ def test_docstring_registra_por_que_as_colunas_ressalvadas_ficam_fora() -> None:
 # --------------------------------------------------------------------------- #
 # CA-11 — contrato de 20 colunas e `_assert_schema_score`
 # --------------------------------------------------------------------------- #
-def test_schema_20_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
+def test_schema_22_colunas_em_ordem_e_dtypes(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
     churn, presenca = _insumos(serie_madura_s3_s4)
     out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
     assert list(out.columns) == list(c.CONTRATO_COLUNAS_SCORE.keys())
-    assert len(list(out.columns)) == 20
+    # 20 -> 22 no BLK-MA-09 / DEC-026. Os dois novos sao FATOS, nao componentes: nao ha `v2`,
+    # e `n_sinais_disponiveis` continua limitado a 3.
+    assert len(list(out.columns)) == 22
+    assert "v2" not in out.columns
+    assert out["nota_wellhub"].dtype == "Float64"
+    assert out["qtd_avaliacoes_wellhub"].dtype == "Int64"
+    assert int(out["n_sinais_disponiveis"].max()) <= 3
     assert (out["versao_contrato"] == c.VERSAO_CONTRATO_SCORE).all()
     # `Int64` NULÁVEL, não `int64`: a linha sem par no sinal 1 precisa carregar nulo.
     assert out["n_agregadores_no_hex"].dtype == "Int64"
@@ -1003,3 +1009,64 @@ def test_saida_sem_coluna_de_pii(serie_madura_s3_s4: list[pd.DataFrame]) -> None
     out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
     assert not (set(out.columns) & c.COLUNAS_PII_PROIBIDAS)
     assert set(out.columns) == set(c.CONTRATO_COLUNAS_SCORE.keys())
+
+
+# --------------------------------------------------------------------------- #
+# BLK-MA-09 / DEC-026 — o rating é FATO, não sinal
+# --------------------------------------------------------------------------- #
+def test_rating_chega_ao_score_com_valor_e_sem_virar_sinal(
+    serie_madura_s3_s4: list[pd.DataFrame],
+) -> None:
+    """Prova de ponta a ponta: snapshot -> churn -> score, com o valor intacto e SEM peso.
+
+    O ponto do bloco inteiro. Se o rating aparecesse em `sinais_disponiveis`, ele entraria em
+    `Σ(wi · vi)` e o score mudaria — que é exatamente o que a DEC-026 recusou, porque
+    `score_com_s2 = 0,75 · score_sem_s2 + 25 · v2` penalizaria 99,97% das linhas com nota.
+    """
+    serie = [s.copy() for s in serie_madura_s3_s4]
+    for semana in serie:
+        wh = semana["fonte"] == "wellhub"
+        semana.loc[wh, "nota_wellhub"] = 4.25
+        semana.loc[wh, "qtd_avaliacoes_wellhub"] = 88
+
+    churn, presenca = _insumos(serie)
+    out = calcular_score_vulnerabilidade(churn=churn, presenca=presenca)
+    wh = out[out["fonte"] == "wellhub"]
+    assert not wh.empty, "fixture sem linha de wellhub — o teste não provaria nada"
+
+    # 1. O valor CHEGOU (e não apenas a coluna).
+    assert wh["nota_wellhub"].notna().all()
+    assert (wh["nota_wellhub"] == 4.25).all()
+    # `notna()` primeiro, pelo mesmo motivo da linha acima: `.all()` de serie toda-NA da True.
+    assert wh["qtd_avaliacoes_wellhub"].notna().all()
+    assert (wh["qtd_avaliacoes_wellhub"] == 88).all()
+
+    # 2. E NÃO virou sinal.
+    assert all("s2" not in str(s).split(",") for s in out["sinais_disponiveis"])
+    assert int(out["n_sinais_disponiveis"].max()) <= 3
+    assert c.SINAIS_INATIVOS == ("s2",)
+
+
+def test_rating_nao_altera_o_score(serie_madura_s3_s4: list[pd.DataFrame]) -> None:
+    """O score tem de ser BIT A BIT o mesmo com e sem nota — é o que "sem peso" significa.
+
+    Sem esta trava, uma futura entrada acidental do rating em `Σ(wi · vi)` passaria despercebida:
+    as colunas continuariam lá, os schemas continuariam válidos, e só o ranking mudaria.
+    """
+    sem_nota = [s.copy() for s in serie_madura_s3_s4]
+    com_nota = [s.copy() for s in serie_madura_s3_s4]
+    for semana in com_nota:
+        wh = semana["fonte"] == "wellhub"
+        semana.loc[wh, "nota_wellhub"] = 1.0  # pior nota possível: máximo estrago se tivesse peso
+        semana.loc[wh, "qtd_avaliacoes_wellhub"] = 4200
+
+    churn_a, presenca_a = _insumos(sem_nota)
+    churn_b, presenca_b = _insumos(com_nota)
+    a = calcular_score_vulnerabilidade(churn=churn_a, presenca=presenca_a)
+    b = calcular_score_vulnerabilidade(churn=churn_b, presenca=presenca_b)
+    pd.testing.assert_series_equal(
+        a["score_vulnerabilidade"], b["score_vulnerabilidade"], check_names=False
+    )
+    pd.testing.assert_series_equal(
+        a["sinais_disponiveis"], b["sinais_disponiveis"], check_names=False
+    )

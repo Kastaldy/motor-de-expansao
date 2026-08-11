@@ -13,7 +13,7 @@ import { api, ApiError, baixar } from '../lib/api'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
-import type { Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
+import type { Cobertura1k, Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
 const FAIXA_FILTROS: Record<string, Set<string>> = {
@@ -84,6 +84,42 @@ export default function MapScreen({
   const [modoCenario, setModoCenario] = useState(foto.modoCenario)
   const [cenario, setCenario] = useState<string[]>(foto.cenario)
   const [copiado, setCopiado] = useState(false)
+
+  // PROTOTIPO da chave de raio. Comeca SEMPRE em 2 km: o piloto abre identico ao de
+  // hoje e nenhum numero muda sem alguem clicar. Nao entra no EstadoMapa de proposito —
+  // e experimento, nao preferencia a preservar entre telas.
+  const [raio1km, setRaio1km] = useState(false)
+
+  /* Geometria do raio: buscada SOB DEMANDA, so' quando a chave liga. Fora do payload do
+     mapa de proposito — custa ~2,4 s e ~3,9 MB na UF de SP, e quem nunca liga a chave nao
+     deve pagar isso. Trocar de UF/municipio zera a geometria (ela e' daquele recorte) e
+     dispara nova busca se a chave estiver ligada. */
+  const [cobertura, setCobertura] = useState<Cobertura1k | null>(null)
+  const [carregandoRaio, setCarregandoRaio] = useState(false)
+
+  useEffect(() => {
+    if (!raio1km || !uf) {
+      setCobertura(null)
+      return
+    }
+    let vivo = true
+    setCarregandoRaio(true)
+    api
+      .cobertura(uf, municipio || undefined)
+      .then((c) => {
+        if (vivo) setCobertura(c)
+      })
+      .catch(() => {
+        // Sem geometria o mapa apenas nao desenha a cobertura — nao derruba a tela.
+        if (vivo) setCobertura(null)
+      })
+      .finally(() => {
+        if (vivo) setCarregandoRaio(false)
+      })
+    return () => {
+      vivo = false
+    }
+  }, [raio1km, uf, municipio])
 
   // Camera do deck.gl em REF, nao em state, de proposito: o `onViewStateChange` do
   // deck dispara a cada quadro de um voo (centenas de vezes em 800 ms). Em state, cada
@@ -196,6 +232,24 @@ export default function MapScreen({
     const permitidas = FAIXA_FILTROS[filtroFaixa]
     return permitidas ? hs.filter((h) => h.faixa != null && permitidas.has(h.faixa)) : hs
   }, [dados, filtroFaixa])
+
+  /* Comparativo ao vivo dos dois modelos, somado no cliente a partir dos hexes que o
+     backend serviu para o recorte atual. O funil (numeros grandes e narrativa) continua
+     vindo do modelo de 2 km — trocar aquilo exige mexer no payload do servidor, e este
+     experimento existe para VER o efeito, nao para virar a chave. */
+  const comparativoRaio = useMemo(() => {
+    const hs = dados?.hexes ?? []
+    if (!hs.length || hs[0].conc1k == null) return null
+    let res2 = 0
+    let res1 = 0
+    let comConc = 0
+    for (const h of hs) {
+      res2 += h.oferta ?? 0
+      res1 += h.oferta1k ?? 0
+      if ((h.conc1k ?? 0) > 0) comConc += 1
+    }
+    return { res2, res1, comConc, total: hs.length }
+  }, [dados])
 
   // Agregação do cenário multi-hex (soma no cliente a partir dos hexes servidos).
   const resumoCenario = useMemo(() => {
@@ -338,6 +392,8 @@ export default function MapScreen({
           pins={dados.pins}
           selecionado={modoCenario ? null : selecionado}
           cenario={cenario}
+          raio1km={raio1km}
+          cobertura1k={cobertura}
           /* A foto CONGELA na montagem, e trocar de UF/municipio zera `cameraRef` mas
              nao tem como zerar `foto.camera`. Sem este portao: SP/Sao Paulo -> volta da
              Viabilidade (foto.camera = zoom 14 sobre SP) -> troca a UF -> a carga falha
@@ -735,6 +791,17 @@ export default function MapScreen({
             )}
 
             <ScoreLegend passoN={passo.n} />
+
+            {/* PROTOTIPO — chave do raio de atuacao das concorrentes. So aparece nos
+                passos que falam de oferta e disputa, e so quando o backend serviu os
+                campos do modelo novo. */}
+            {comparativoRaio && (passo.n === 2 || passo.n === 3) && (
+              <PilulaRaio
+                ligado={raio1km}
+                carregando={carregandoRaio}
+                onToggle={() => setRaio1km((v) => !v)}
+              />
+            )}
           </div>
         )}
 
@@ -1061,5 +1128,70 @@ function PainelMensagem({ children }: { children: React.ReactNode }) {
     >
       {children}
     </aside>
+  )
+}
+
+/* --- PROTOTIPO: pilula do raio de atuacao das concorrentes ------------------
+   Substituiu um painel de texto que ficava embaixo das faixas: o Felipe pediu
+   leitura VISUAL, no mapa, nao um bloco de numeros na lateral. Aqui fica so o
+   liga/desliga; quem conta a historia sao os circulos de 1 km desenhados em volta
+   de cada concorrente e a cor dos hexagonos que eles alcancam.
+
+   Abre SEMPRE em 2 km — o piloto continua identico ao de hoje ate alguem clicar. */
+function PilulaRaio({
+  ligado,
+  carregando,
+  onToggle,
+}: {
+  ligado: boolean
+  carregando: boolean
+  onToggle: () => void
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        ligado
+          ? 'Mostrando o raio de 1 km de cada concorrente e os hexágonos que ela alcança'
+          : 'Modelo atual: peso linear até 2 km medido do centróide do hexágono'
+      }
+      style={{
+        // O container da legenda e' um overlay com `pointerEvents: 'none'` (para nao
+        // roubar o arraste do mapa). Sem devolver 'auto' AQUI, o clique atravessa o
+        // botao e vai para o mapa: a pilula aparece, mas nao liga nada. Era esse o
+        // motivo de "nenhuma mudanca" — a chave nunca chegava a ficar true.
+        pointerEvents: 'auto',
+        marginTop: 8,
+        width: '100%',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '7px 11px',
+        borderRadius: 9,
+        border: `1px solid ${ligado ? 'rgba(53,201,214,.45)' : 'rgba(255,255,255,.14)'}`,
+        // Fundo PRETO (pedido do Felipe): o botao fica sobre o mapa, e um fundo
+        // translucido deixava a legenda das faixas atravessar o texto.
+        background: '#000',
+        color: ligado ? '#7de3ec' : '#9aa7b5',
+      }}
+    >
+      <span
+        style={{
+          width: 9,
+          height: 9,
+          borderRadius: '50%',
+          background: carregando ? '#f2c230' : ligado ? '#4fd3df' : '#5a6472',
+          flexShrink: 0,
+        }}
+      />
+      {carregando
+        ? 'Carregando raio…'
+        : ligado
+          ? 'Raio 1 km por concorrente'
+          : 'Ver raio de 1 km das concorrentes'}
+    </button>
   )
 }
