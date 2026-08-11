@@ -314,7 +314,7 @@ export function CrescimentoComparavel({ sss }: { sss: RedeSss }) {
 const COR_FAIXA: Record<string, string> = {
   critico: 'var(--neg)',
   regular: 'var(--warn)',
-  bom: 'var(--tx-soft)',
+  bom: 'var(--faixa-neutra)',
   excelente: 'var(--ac)',
   excelente_mais: 'var(--pos)',
   sem_dado: 'var(--tx-off)',

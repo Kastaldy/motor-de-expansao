@@ -298,7 +298,7 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
               meses={ficha.serie.meses}
               valores={ficha.serie.churn_pct}
               titulo="Churn (%)"
-              cor="#ff8a99"
+              cor="var(--gr-coral)"
               formato="pct"
             />
           </div>
@@ -316,7 +316,7 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
               {
                 rotulo: 'Agregadores',
                 valor: ficha.metricas.agregadores?.atual ?? 0,
-                cor: '#d94a86',
+                cor: 'var(--gr-rosa)',
               },
             ]}
             centroValor={pct(ficha.metricas.pct_agregador_alunos?.atual ?? null, 0)}
@@ -354,7 +354,7 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
             {ficha.reguas.nps?.limiar ?? 40} — meta não é alerta.
           </div>
           <div style={{ marginTop: 12 }}>
-            <LinhaPeriodo meses={ficha.serie.meses} valores={ficha.serie.nps} titulo="NPS por mês" cor="#6fa4f7" />
+            <LinhaPeriodo meses={ficha.serie.meses} valores={ficha.serie.nps} titulo="NPS por mês" cor="var(--gr-azul)" />
           </div>
         </Glass>
         <Glass style={{ flex: '1 1 280px', padding: '16px 18px', minWidth: 0 }}>
@@ -364,7 +364,7 @@ export default function FichaUnidade({ unidadeId, mes, onVoltar }: FichaUnidadeP
             valores={ficha.serie_diaria.novos_alunos}
             altura={104}
             formato="int"
-            cor="#5fd08c"
+            cor="var(--gr-verde)"
           />
           <div style={{ marginTop: 8, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
             Derivado da série cumulativa da API — é o bloco que hoje é colado à mão na planilha.
