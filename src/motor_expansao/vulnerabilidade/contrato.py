@@ -514,11 +514,22 @@ def hash_campos_raspados(campos: Mapping[str, object], fonte: str) -> str:
 
     Payload = `"{fonte}|{campo}={valor_norm}|..."` na ordem de `CAMPOS_HASH_POR_FONTE[fonte]`.
     Campo ausente entra como `""`. `fonte` fora do contrato levanta `ValueError`.
+
+    `CAMPOS_NUNCA_HASHEADOS` e' imposto AQUI, em runtime (BLK-MA-02-FU1, m3). Antes era so' prosa:
+    injetar `data_coleta` em `CAMPOS_HASH_POR_FONTE` nao levantava nada, e o efeito seria mudo e
+    fatal — todo cadastro pareceria "alterado" a cada coleta, `semanas_sem_mudanca` nunca cresceria
+    e o S4 morreria. E' o mesmo modo de falha que motivou manter a nota fora do hash (DEC-026).
     """
     chave_fonte = str(fonte)
     campos_da_fonte = CAMPOS_HASH_POR_FONTE.get(chave_fonte)
     if campos_da_fonte is None:
         raise ValueError(f"fonte fora do contrato; aceitas: {sorted(CAMPOS_HASH_POR_FONTE)}")
+    proibidos = sorted(set(campos_da_fonte) & CAMPOS_NUNCA_HASHEADOS)
+    if proibidos:
+        raise ValueError(
+            f"campo(s) de `CAMPOS_NUNCA_HASHEADOS` em CAMPOS_HASH_POR_FONTE[{chave_fonte!r}]: "
+            f"{proibidos} — hashea-los mataria o S4 (staleness)"
+        )
     partes: list[str] = []
     for campo in campos_da_fonte:
         bruto = campos.get(campo, "")
