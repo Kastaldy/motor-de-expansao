@@ -4,6 +4,7 @@ import ExecMap from '../components/ExecMap'
 import PeriodoPicker from '../components/PeriodoPicker'
 import Select from '../components/Select'
 import Tabela, { type Coluna } from '../components/Tabela'
+import BotaoTema from '../components/exec/BotaoTema'
 import FichaUnidade from '../components/exec/FichaUnidade'
 import { FunilComercial } from '../components/exec/ExecCharts'
 import {
@@ -29,6 +30,7 @@ import {
   COR_SEVERIDADE,
   METRICAS_EM_PONTOS,
   ORDEM_SEVERIDADE,
+  corComAlfa,
   destaquesDoRecorte,
   filtrarUnidades,
   formatarMetrica,
@@ -41,6 +43,8 @@ import {
 import { brlCurto, num, pct } from '../lib/format'
 import type { Periodo } from '../lib/periodo'
 import { rotuloDoPeriodo } from '../lib/periodo'
+import type { Tema } from '../lib/tema'
+import { depositoDoNavegador, gravarTema, lerTema } from '../lib/tema'
 import type { RedeCarteira, RedeFiltros, RedeSeveridade, RedeUnidade } from '../lib/types'
 
 /* ---------------------------------------------------------------------------
@@ -146,6 +150,21 @@ export default function ExecutiveScreen() {
   // não pode fechar a lista que a pessoa acabou de abrir.
   const [baseDestaque, setBaseDestaque] = useState<BaseDoDestaque>('sss')
   const [destaquesAbertos, setDestaquesAbertos] = useState(false)
+
+  // Tema da ABA, não do app. Lido do depósito na PRIMEIRA renderização (inicializador
+  // preguiçoso do `useState`, que roda uma vez): num `useEffect` a tela pintaria escura e
+  // trocaria para clara logo depois, e quem escolheu o claro veria um flash preto a cada
+  // entrada.
+  const [tema, setTema] = useState<Tema>(() => lerTema(depositoDoNavegador()))
+  // Grava na AÇÃO, não num efeito sobre `tema`. O efeito também dispararia a cada
+  // montagem, com o valor que acabou de ser LIDO — e numa montagem em que a leitura
+  // falhasse (`localStorage` bloqueado por um instante) ele gravaria de volta o padrão
+  // escuro por cima da escolha guardada. Escrever só quando a pessoa clica torna isso
+  // impossível: o depósito nunca recebe um valor que ela não escolheu.
+  const trocarTema = useCallback((novo: Tema) => {
+    setTema(novo)
+    gravarTema(novo, depositoDoNavegador())
+  }, [])
 
   // Largura REAL da carteira, medida. Não dá para decidir por media query: a tabela divide
   // a linha com o trilho do mapa, então a largura que ela tem depende também da janela do
@@ -393,7 +412,10 @@ export default function ExecutiveScreen() {
                     padding: '4px 7px',
                     borderRadius: 'var(--r-sm)',
                     color: a.nivel === 'grave' ? COR_SEVERIDADE.alta : COR_SEVERIDADE.media,
-                    background: `${a.nivel === 'grave' ? COR_SEVERIDADE.alta : COR_SEVERIDADE.media}1f`,
+                    background: corComAlfa(
+                      a.nivel === 'grave' ? COR_SEVERIDADE.alta : COR_SEVERIDADE.media,
+                      12,
+                    ),
                     whiteSpace: 'nowrap',
                   }}
                 >
@@ -424,7 +446,22 @@ export default function ExecutiveScreen() {
   }
 
   return (
-    <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column' }}>
+    // `data-tema` mora AQUI, na raiz da aba, e não no <html>: é o que mantém o tema claro
+    // dentro da Executiva sem repintar o Mapa Territorial nem a Viabilidade, que não
+    // pediram tema nenhum (a paleta vive em `styles/tokens.css`). O `background` explícito
+    // é a outra metade disso — o fundo do app é pintado pelo `App`, que está FORA deste
+    // container, então sem esta linha o claro apareceria como uma ilha sobre fundo preto.
+    <div
+      data-tema={tema}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'var(--bg-base)',
+        color: 'var(--tx-strong)',
+      }}
+    >
       <header
         style={{
           flexShrink: 0,
@@ -524,6 +561,12 @@ export default function ExecutiveScreen() {
             Limpar filtros
           </Botao>
         )}
+
+        {/* O sol/lua encosta na borda direita. O vão flexível antes dele o separa dos
+            filtros — ele não recorta nada, só troca a pele da tela, e ficar colado na
+            busca o faria parecer mais um critério de recorte. */}
+        <div style={{ flex: 1, minWidth: 0 }} />
+        <BotaoTema tema={tema} onTema={trocarTema} />
 
         </div>
 
@@ -702,7 +745,7 @@ export default function ExecutiveScreen() {
                           padding: '5px 9px',
                           borderRadius: 'var(--r-sm)',
                           border: `1px solid ${ativo ? COR_SEVERIDADE[s] : 'var(--line-soft)'}`,
-                          background: ativo ? `${COR_SEVERIDADE[s]}1f` : 'transparent',
+                          background: ativo ? corComAlfa(COR_SEVERIDADE[s], 12) : 'transparent',
                           color: 'var(--tx-soft)',
                           font: '600 10.5px/1 var(--f-ui)',
                           cursor: 'pointer',
@@ -745,6 +788,7 @@ export default function ExecutiveScreen() {
                       centro={carteira.centro}
                       bbox={carteira.bbox}
                       iconeUltra={carteira.ultra_icon}
+                      tema={tema}
                       onUnidade={(id) => {
                         const u = unidades.find((x) => x.id === id)
                         if (u) abrirFicha(u)
@@ -766,7 +810,7 @@ export default function ExecutiveScreen() {
                   <BarraSegmentada
                     partes={[
                       { chave: 'rec', valor: carteira.split.recorrentes ?? 0, cor: 'var(--ac)', rotulo: 'Recorrentes' },
-                      { chave: 'agr', valor: carteira.split.agregadores ?? 0, cor: '#d94a86', rotulo: 'Agregadores' },
+                      { chave: 'agr', valor: carteira.split.agregadores ?? 0, cor: 'var(--gr-rosa)', rotulo: 'Agregadores' },
                     ]}
                   />
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 7, font: '400 10.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>

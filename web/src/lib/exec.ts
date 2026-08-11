@@ -10,12 +10,45 @@ import { rotuloDoPeriodo } from './periodo'
 import type { RedeCarteira, RedeMetrica, RedeSeveridade, RedeUnidade } from './types'
 import { brl, brlCurto, num, pct } from './format'
 
-/** Cor de cada nível do semáforo. Uma definição só, usada na tabela, no mapa e nos chips. */
+/**
+ * Cor de cada nível do semáforo. Uma definição só, usada na tabela, no mapa e nos chips.
+ *
+ * São `var()` e não hex desde que a Visão Executiva ganhou tema claro: o amarelo
+ * `#e0b25a` do "ATENÇÃO" dá ~1,9:1 sobre branco e o chip simplesmente sumia. Como a cor
+ * é aplicada em DOM e SVG, a cascata resolve o valor certo pelo `data-tema` do container
+ * — nenhum componente daqui precisa saber que existe tema. Os valores das duas paletas
+ * estão em `styles/tokens.css` (`--sev-*`).
+ *
+ * Duas consequências de virar `var()`, e as duas têm remédio no projeto:
+ *  - **não dá para concatenar alfa** (`${COR}1f` vira texto inválido): use
+ *    `corComAlfa`, que é `color-mix`;
+ *  - **WebGL não lê CSS**: o `ExecMap` resolve estes mesmos tokens em tempo de execução
+ *    com `getComputedStyle`, para não nascer uma segunda cópia da paleta.
+ */
 export const COR_SEVERIDADE: Record<RedeSeveridade, string> = {
-  alta: '#ff5a6e',
-  media: '#e0b25a',
-  ok: '#3cc878',
-  sem_base: '#7c8798',
+  alta: 'var(--sev-alta)',
+  media: 'var(--sev-media)',
+  ok: 'var(--sev-ok)',
+  sem_base: 'var(--sev-sem-base)',
+}
+
+/** Nomes dos tokens de severidade, na ordem em que `COR_SEVERIDADE` os usa. */
+export const TOKEN_SEVERIDADE: Record<RedeSeveridade, string> = {
+  alta: '--sev-alta',
+  media: '--sev-media',
+  ok: '--sev-ok',
+  sem_base: '--sev-sem-base',
+}
+
+/**
+ * A mesma cor, mais transparente — o fundo de um chip sobre a cor da sua borda.
+ *
+ * Era um sufixo hexadecimal colado no fim da cor (`${cor}1f`), que só funciona quando a
+ * cor é literalmente `#rrggbb`. Com token, `var(--sev-alta)1f` não é cor nenhuma: o
+ * navegador descarta a declaração e o chip perde o fundo, sem erro e sem aviso.
+ */
+export function corComAlfa(cor: string, pct: number): string {
+  return `color-mix(in srgb, ${cor} ${pct}%, transparent)`
 }
 
 export const ORDEM_SEVERIDADE: RedeSeveridade[] = ['alta', 'media', 'ok', 'sem_base']

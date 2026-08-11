@@ -1,13 +1,15 @@
 import { FlyToInterpolator, type Layer } from '@deck.gl/core'
 import { IconLayer, ScatterplotLayer } from '@deck.gl/layers'
 import DeckGL from '@deck.gl/react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-import { COR_SEVERIDADE, deveReenquadrar, enquadrar } from '../lib/exec'
+import { COR_SEVERIDADE, TOKEN_SEVERIDADE, deveReenquadrar, enquadrar } from '../lib/exec'
 import { brl, num, pct } from '../lib/format'
-import type { RedeUnidade } from '../lib/types'
+import type { Tema } from '../lib/tema'
+import { TEMA_PADRAO } from '../lib/tema'
+import type { RedeSeveridade, RedeUnidade } from '../lib/types'
 
 /* ---------------------------------------------------------------------------
    Mapa da rede Ultra — bubble map: cada unidade é um círculo cujo TAMANHO é o
@@ -24,7 +26,24 @@ import type { RedeUnidade } from '../lib/types'
      metade do país.
    --------------------------------------------------------------------------- */
 
-const BASEMAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+/* Dark Matter e Positron são o par claro/escuro do MESMO desenho cartográfico da CARTO:
+   as ruas, os rótulos e a hierarquia de vias ficam onde estavam, só a pele muda. Trocar
+   por um basemap de outra família mudaria o mapa, não o tema. */
+const BASEMAP: Record<Tema, string> = {
+  escuro: 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+  claro: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+}
+/* Anel em volta da bolha: separa unidades vizinhas que se sobrepõem. Tem de ser o
+   CONTRÁRIO do basemap — no Positron, o anel branco de antes desaparecia e as bolhas
+   viravam uma mancha só na Grande São Paulo. */
+const ANEL: Record<Tema, [number, number, number, number]> = {
+  escuro: [255, 255, 255, 220],
+  claro: [20, 32, 46, 150],
+}
+const REALCE: Record<Tema, [number, number, number, number]> = {
+  escuro: [255, 255, 255, 120],
+  claro: [13, 27, 42, 90],
+}
 const FLY = new FlyToInterpolator({ speed: 1.6 })
 
 interface ViewState {
@@ -37,8 +56,14 @@ interface ViewState {
   transitionInterpolator?: FlyToInterpolator
 }
 
+/** Cinza de `--sev-sem-base`. Cor de bolha quando o token não pôde ser lido. */
+const CINZA_NEUTRO: [number, number, number] = [124, 135, 152]
+
 function corHex(hex: string, alpha: number): [number, number, number, number] {
-  const h = hex.replace('#', '')
+  const h = hex.trim().replace('#', '')
+  // Token vazio ou em outro formato NÃO pode virar `NaN` no buffer do deck.gl: bolha com
+  // canal NaN some do mapa sem erro nenhum no console.
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return [...CINZA_NEUTRO, alpha]
   return [
     parseInt(h.slice(0, 2), 16),
     parseInt(h.slice(2, 4), 16),
@@ -47,16 +72,56 @@ function corHex(hex: string, alpha: number): [number, number, number, number] {
   ]
 }
 
+/**
+ * Os valores de `--sev-*` lidos do próprio DOM.
+ *
+ * O deck.gl desenha em WebGL e recebe cor como `[r,g,b,a]`: não há cascata de CSS lá
+ * dentro, então este é o único lugar da Executiva que precisa do hex de verdade. Ler os
+ * tokens do container — que está dentro do `data-tema` — mantém UMA paleta no projeto.
+ * Uma cópia em JS aqui divergiria da folha de estilo na primeira vez que alguém mexesse
+ * em um dos dois lados, e o mapa passaria a discordar do semáforo da tabela ao lado.
+ */
+function useCoresDaSeveridade(
+  raiz: React.RefObject<HTMLDivElement | null>,
+  tema: Tema,
+): Record<RedeSeveridade, string> | null {
+  const [cores, setCores] = useState<Record<RedeSeveridade, string> | null>(null)
+  useEffect(() => {
+    const no = raiz.current
+    if (!no || typeof getComputedStyle === 'undefined') return
+    const estilo = getComputedStyle(no)
+    const lidas = Object.fromEntries(
+      Object.entries(TOKEN_SEVERIDADE).map(([nivel, token]) => [
+        nivel,
+        estilo.getPropertyValue(token),
+      ]),
+    ) as Record<RedeSeveridade, string>
+    setCores(lidas)
+  }, [raiz, tema])
+  return cores
+}
+
 export interface ExecMapProps {
   unidades: RedeUnidade[]
   centro: { lat: number | null; lng: number | null }
   bbox: { min_lat: number; min_lng: number; max_lat: number; max_lng: number } | null
   /** Bandeira quadrada da Ultra (data URI SVG), plantada no centro de cada bolha. */
   iconeUltra?: string | null
+  /** Tema da aba. Governa o basemap e as cores que o WebGL não consegue ler do CSS. */
+  tema?: Tema
   onUnidade?: (id: string) => void
 }
 
-export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade }: ExecMapProps) {
+export default function ExecMap({
+  unidades,
+  centro,
+  bbox,
+  iconeUltra,
+  tema = TEMA_PADRAO,
+  onUnidade,
+}: ExecMapProps) {
+  const raiz = useRef<HTMLDivElement>(null)
+  const coresSeveridade = useCoresDaSeveridade(raiz, tema)
   const comCoord = useMemo(
     () => unidades.filter((u) => u.lat != null && u.lng != null),
     [unidades],
@@ -139,14 +204,19 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
         radiusUnits: 'pixels',
         radiusMinPixels: 5,
         radiusMaxPixels: 40,
-        getFillColor: (d) => corHex(COR_SEVERIDADE[d.severidade], 175),
-        getLineColor: [255, 255, 255, 220],
+        getFillColor: (d) => corHex(coresSeveridade?.[d.severidade] ?? '', 175),
+        getLineColor: ANEL[tema],
         lineWidthMinPixels: 1.2,
         stroked: true,
         pickable: true,
         autoHighlight: true,
-        highlightColor: [255, 255, 255, 120],
-        updateTriggers: { getFillColor: comCoord.map((u) => u.severidade).join() },
+        highlightColor: REALCE[tema],
+        // O tema entra no gatilho junto com as severidades: sem ele, trocar de tema
+        // repintaria o basemap e deixaria as bolhas na paleta antiga — o deck.gl guarda
+        // o buffer de cor e só o recalcula quando este texto muda.
+        updateTriggers: {
+          getFillColor: `${tema}|${comCoord.map((u) => u.severidade).join()}`,
+        },
         onHover: (info) =>
           setHover(info.object ? { u: info.object as RedeUnidade, x: info.x, y: info.y } : null),
         onClick: (info) => {
@@ -170,10 +240,11 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
       )
     }
     return arr
-  }, [comCoord, maxFat, ultraIcon, onUnidade])
+  }, [comCoord, maxFat, ultraIcon, onUnidade, coresSeveridade, tema])
 
   return (
     <div
+      ref={raiz}
       onMouseLeave={() => {
         setHover(null)
         setZoomArmado(false)
@@ -206,7 +277,15 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
         style={{ position: 'absolute', top: '0', left: '0', width: '100%', height: '100%' }}
         getCursor={({ isHovering }) => (isHovering ? 'pointer' : 'grab')}
       >
-        <Map mapStyle={BASEMAP_STYLE} attributionControl={{ compact: true }} reuseMaps />
+        {/* `key` força a remontagem do MapLibre ao trocar de tema. `reuseMaps` recicla a
+            instância entre montagens e, sem uma chave nova, ela mantinha o estilo antigo
+            e o basemap não mudava de cor. */}
+        <Map
+          key={tema}
+          mapStyle={BASEMAP[tema]}
+          attributionControl={{ compact: true }}
+          reuseMaps
+        />
       </DeckGL>
 
       <div
@@ -268,7 +347,7 @@ export default function ExecMap({ unidades, centro, bbox, iconeUltra, onUnidade 
             borderRadius: 'var(--r-md)',
             padding: '10px 12px',
             backdropFilter: 'blur(16px)',
-            boxShadow: '0 10px 30px -8px rgba(0,0,0,.7)',
+            boxShadow: 'var(--sh-pop)',
             zIndex: 30,
             minWidth: 178,
           }}
