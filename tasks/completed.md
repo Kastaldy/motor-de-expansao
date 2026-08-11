@@ -12012,3 +12012,158 @@ Suíte completa sem regressão contra baseline **medida no início do ciclo** �
 `CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
 
 ---
+
+---
+
+## Fechamento de ciclo — BLK-MA-02-FU1 (2026-08-11)
+
+**VEREDITO: CONCLUÍDO.** Todas as ressalvas do QA do BLK-MA-02 (2026-07-29) estão fechadas, em três
+PRs: **#194** (item 1 e item 2-B), **#208** (item 2) e **#220** (os 6 menores).
+
+**Item 1 — `flag_troca_chave_na_serie` nascia permanentemente ligada.** A fórmula media "o escopo tem
+origens MISTAS", não "a chave TROCOU de política ao longo da série"; no feed TP/WH a flag sairia
+`True` para todo o universo, todo mês, e o BLK-MA-04 receberia um sinal morto. Redefinida para troca
+TEMPORAL.
+
+**Item 2 — vazamento transitivo de import.** `import motor_expansao.vulnerabilidade` levava ~18 s e
+carregava `sklearn`/`scipy`/`shapely`/`requests`/`pyproj` + 5 módulos de `dashboard/`, contra o que o
+próprio docstring afirmava. O `__init__` de `demanda_revelada` passou a reexportar por `__getattr__`
+(PEP 562): caiu para **~3 s, com zero dos dois**. Era **bloqueante para o BLK-MA-06** — o passo do
+cron quebraria no import se `sklearn` não estivesse no host do coletor.
+
+**Item 2-B — ponto cego de 1 linha no `test_isolamento_imports`.** Das 5 formas de escrever o import
+proibido, o teste por AST pegava **2**; o filtro descartava o nó quando `node.module is None` (o caso
+`from .. import X`). Hoje 5/5, com helper único em `tests/unit/_ast_imports.py`.
+
+**Os 6 menores (#220, 2026-08-11).** O que importa é o **m6**: `python -m ...snapshots` era
+`print(executar())` **sem argumento nenhum** — gravava na raiz de staging default **e podava disco**.
+É o módulo que o BLK-MA-06 pluga no cron e o **único do pacote que apaga arquivo**. Ganhou
+`--base-dir`, `--data-referencia`, `--retencao-semanas` e **`--dry-run`** (não grava, não poda). Sem
+isso o MA-06 não existiria como bloco aplicável.
+
+Os outros cinco: (m3) `CAMPOS_NUNCA_HASHEADOS` passou a ser imposto em **runtime** — era só prosa, e
+injetar `data_coleta` mataria o S4 em silêncio; (m1) frame vazio **preserva** a partição e avisa em
+WARNING — corrigiu-se o docstring, não o comportamento, porque zero linha é sintoma de coleta falha,
+não de universo vazio; (m2) `data_referencia` saiu de `montar_snapshot`, parâmetro morto que sugeria
+que o `snapshot_date` vinha dele; (m4) 41 linhas de prosa acentuadas nos 2 arquivos de teste, **sem
+tocar literal de dado** (`"Sao Paulo"` das fixtures segue ASCII, §2); (m5) tabela D2 do contrato
+marcada como SUPERSEDED.
+
+**Duas escolhas de julgamento registradas.** No **m1**, o QA deixou em aberto corrigir o código ou o
+docstring — corrigiu-se o docstring, pela mesma lógica da guarda de rating do MA-09: apagar ali
+trocaria falha transitória por perda permanente de série. No **m4**, a acentuação usou `tokenize`/`ast`
+para tocar só comentário e docstring; literal de dado ficou intacto porque acentuá-lo mudaria
+normalização e hash.
+
+**Verificação.** 7 testes novos no lote final — 4 falham no código anterior (sonda executada), 3 são
+caracterização do comportamento que o QA pediu para travar. Camada 278 -> 285. Suíte **2814 passed,
+100 skipped**. `ruff`/`mypy` limpos, `loop_guard` sem CRÍTICO. READ-ONLY sobre o M1.
+
+---
+
+### BLK-MA-02-FU1 — Ajustes pós-QA do materializador/extrator de vulnerabilidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (ajustes localizados numa camada paralela READ-ONLY sobre o M1, já entregue e coberta por testes; nenhum toca score/pesos/artefatos do M1 nem cria dependência externa). |
+| **Prioridade** | Antes do **BLK-MA-05/06** (item 1: quem EXIBIR a flag) e antes do **BLK-MA-06** (item 2). **NÃO bloqueia o BLK-MA-04** — verificado em 2026-07-30: o score não consome `flag_troca_chave_na_serie` nem a propaga (trava executável em `_assert_schema_score`). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | **PARCIAL.** ✅ Item 1 (`flag_troca_chave_na_serie` redefinida para troca TEMPORAL) e ✅ item 2-B (ponto cego do AST: era **2/5**, não 3/5 — hoje 5/5, helper único em `tests/unit/_ast_imports.py`) — PR #194, merged 2026-08-05. ✅ **Item 2 CORRIGIDO em 2026-08-10**: o `__init__` de `demanda_revelada` passou a reexportar por `__getattr__` (PEP 562); `import motor_expansao.vulnerabilidade` caiu de **~18 s com sklearn/scipy/shapely/requests/pyproj + 5 módulos de `dashboard/`** para **~3 s com zero dos dois**. **Desbloqueia o BLK-MA-06.** ✅ **Os 6 menores, em 2026-08-11** — bloco **CONCLUÍDO**. (m6) `snapshots.py` ganhou CLI real: `--base-dir`, `--data-referencia`, `--retencao-semanas` e **`--dry-run`** que não grava e **não poda** — era `print(executar())` sem argumento, gravando e podando disco; pré-requisito do MA-06. (m3) `CAMPOS_NUNCA_HASHEADOS` passou a ser imposto em RUNTIME dentro de `hash_campos_raspados` — antes era só prosa, e injetar `data_coleta` mataria o S4 em silêncio. (m1) Frame vazio agora sai cedo, **preserva** a partição existente e avisa em WARNING: zero linha é sintoma de coleta falha, não de universo vazio — o docstring prometia idempotência que não valia para encolhimento total. (m2) `data_referencia` saiu de `montar_snapshot` (parâmetro morto que sugeria que o `snapshot_date` vinha dele; ele vem por linha de `parse_data_coleta`). (m4) 41 linhas de prosa acentuadas nos 2 arquivos de teste, **sem tocar literal de dado** (`"Sao Paulo"` das fixtures segue ASCII, por §2). (m5) Tabela D2 do contrato marcada como SUPERSEDED, apontando para a emenda do §6. **7 testes novos** (4 falham no código anterior; 3 são caracterização do comportamento que o QA pediu para travar); camada 278 -> **285**. |
+| **Depende de** | BLK-MA-02 (concluído 2026-07-29). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do BLK-MA-02: camada com insumo de PII na origem (DEC-012) e módulo destinado ao cron de produção. NÃO marcar loop-safe. |
+
+**Origem.** Ressalvas do QA do BLK-MA-02 (veredito APROVADO COM RESSALVAS em 2026-07-29; 0 críticos,
+3 médios, 6 menores). Snapshot: `context/handoff/20260729-134525-qa.md`.
+
+**Item 1 (médio, bloqueante para o BLK-MA-05/06) — `flag_troca_chave_na_serie` nasce permanentemente
+ligada.** A fórmula implementada (`churn_staleness.py:203-205`) é
+`|{chave_origem observados no escopo (fonte, rede_ultima)}| > 1`, que mede "o escopo tem origens
+MISTAS", não "a chave TROCOU de política ao longo da série". Sonda do QA: 4 semanas, mesmo escopo,
+uma chave sempre `slug` e outra sempre `hash_estavel`, **zero** troca temporal → a flag saiu `True`
+para as duas. No feed TP/WH o rebaixamento por linha convive com o `slug` na mesma semana, logo a
+flag será `True` para todo o universo, todo mês, e o BLK-MA-04 receberá um sinal morto. **Não é
+desvio do Builder** — é a fórmula que o Planner especificou e que o gate não vetou. Redefinir para
+"o conjunto de `chave_origem` da PRÓPRIA chave ao longo da sua série" ou "houve mudança entre semanas
+consecutivas do escopo", com teste que reproduza a sonda (o `test_flag_troca_chave_na_serie` atual
+passa por coincidência de desenho da fixture, onde a troca É temporal).
+
+**Item 2 (médio, bloqueante para o BLK-MA-06) — vazamento transitivo de import.** O docstring de
+`vulnerabilidade/__init__.py:3-4` afirma que o pacote "NUNCA importa de `dashboard/`"; medido pelo
+QA, `import motor_expansao.vulnerabilidade` leva **7,5 s** e carrega `motor_expansao.dashboard.*` +
+`sklearn`, `scipy`, `shapely`, `requests`. Causa: `snapshots.py:51` importa `classificar_rede` de
+`demanda_revelada.classificacao_rede_menor`, e o `__init__.py` do `demanda_revelada` reexporta o
+pacote inteiro. O `test_isolamento_imports` só olha imports **diretos** por AST, então não pega — o
+CA-1 está literalmente satisfeito. **Não é regressão** (nada do M1, `config.py` ou
+`normalizar_concorrentes` entra; o READ-ONLY continua íntegro), mas este é o módulo que a D6
+ratificou plugar no `run_weekly_90.sh`: se `sklearn`/`scipy` não estiverem no host do coletor, o
+passo do cron quebra no import. Tornar o `__init__` do `demanda_revelada` lazy **ou** replicar o
+classificador (como já foi feito com o `concorrente_id`); no mínimo corrigir o docstring para "não
+importa **diretamente**". Acrescentar teste de isolamento por `sys.modules`, não só por AST.
+
+> **RESOLVIDO em 2026-08-10.** Escolhida a rota do `__init__` lazy, e não a réplica do
+> classificador: ela conserta o vazamento para **todos** os consumidores do `demanda_revelada`, não
+> só para o `vulnerabilidade/`, e não duplica código. `demanda_revelada/__init__.py` passou a
+> reexportar por `__getattr__` (PEP 562), com `_EXPORTS` mapeando cada nome público ao seu
+> submódulo e memoização em `globals()`; o bloco `TYPE_CHECKING` preserva o que o type checker
+> enxerga, e `__all__` fica intacto. Medido: **~18 s -> ~3 s**, de 5 módulos de `dashboard/` e 5
+> deps pesadas para **zero**, e de 12 submódulos de `demanda_revelada` carregados para 4 (todos
+> leves).
+>
+> **A causa registrada acima estava certa, mas incompleta em um ponto que importa.** Não é que
+> "qualquer um dos 9 puxa o conjunto": o peso vem de `backtest_tp05`, `calibracao_*`,
+> `estrutura_funil`, `huff_captura` e `validacao`, que importam `scipy`/`sklearn` no topo. O que o
+> `vulnerabilidade/` realmente precisa — `classificacao_rede_menor` — importa só `re`,
+> `unicodedata` e `pathlib`. O problema nunca foi o submódulo escolhido; era o `__init__` do pai,
+> que o interpretador executa antes de qualquer submódulo.
+>
+> **Dois defeitos do próprio teste, achados no caminho e corrigidos junto** (valem como lição de
+> método, não só como conserto):
+> 1. O subprocesso não recebia `PYTHONPATH` e resolvia `motor_expansao` pela **instalação
+>    editável** — que aponta para o clone principal, não para o worktree. Ele media outra árvore em
+>    silêncio. Agora recebe o `src` deste checkout e **assere a procedência** do que mediu.
+> 2. Sob a captura do pytest no Windows, o `subprocess` levantava
+>    `OSError: [WinError 6] Identificador inválido` antes de rodar qualquer coisa. Como o teste
+>    estava marcado `xfail(strict=True)`, essa OSError contava como "falha esperada": **o teste
+>    errava em vez de medir, e a marca escondia isso**. Corrigido com `stdin=DEVNULL`. Fica o
+>    princípio: `xfail` engole exceção de qualquer natureza, então um `xfail` de longa duração pode
+>    estar mascarando um teste quebrado em vez de um defeito real.
+
+**Item 2-B (médio, acrescentado pelo QA do BLK-MA-03 em 2026-07-29) — ponto cego de 1 linha no
+`test_isolamento_imports`, que enfraquece o guardrail nos DOIS blocos.** O QA do MA-03 construiu uma
+sonda de injeção e mediu: das 5 formas de escrever o import proibido, o teste por AST pega 3 e
+**deixa passar 2** — `from .. import demanda_revelada` e
+`importlib.import_module("motor_expansao.demanda_revelada")`. Causa: o filtro
+`if isinstance(node, ast.ImportFrom) and node.module` **descarta o nó quando `node.module is None`**
+(que é exatamente o caso `from .. import X`), e os aliases nunca são coletados. O buraco vale para
+**todos** os módulos proibidos (`pipelines.m1`, `dashboard`, `api`, `censo`, `config`,
+`normalizar_concorrentes`), não só para `demanda_revelada`. **Impacto hoje: zero** — nenhum módulo
+entregue usa essas formas. **Correção (1 linha):** coletar `a.name for a in node.names` também quando
+`node.module is None`. Fica neste bloco porque a mesma linha fecha o teste compartilhado
+(`test_snapshots.py`) e o teste próprio do MA-03 (`test_presenca_agregador.py`), que se apoiou nele.
+
+**Item 3 (menores, 6).** (m1) `escrever_particao_semana` com frame vazio não limpa a partição
+anterior da mesma semana e devolve caminho inexistente — a direção é segura (preserva dado), mas
+contradiz o docstring e não tem teste. (m2) `montar_snapshot(df, data_referencia)` nunca usa
+`data_referencia` — parâmetro morto que sugere que o `snapshot_date` sai dele. (m3)
+`CAMPOS_NUNCA_HASHEADOS` não é imposto em runtime: injetando `data_coleta` em
+`CAMPOS_HASH_POR_FONTE` nada levanta; um `assert` dentro de `hash_campos_raspados` fecha o buraco no
+próprio caminho que ele protege. (m4) §2 acentuação: identificadores 100% ASCII em todos os 7
+arquivos, mas a **prosa** de `test_snapshots.py` (9 chars) e `test_churn_staleness.py` (5) não está
+acentuada. (m5) `docs/vulnerabilidade_ma_contrato.md:429` (tabela D2) ainda diz "chave = `slug`
+nativo + `data_coleta` (fallback `concorrente_id`)", afirmação que a emenda do §6 descartou — basta
+um ponteiro `[ver emenda 2026-07-29 no §6]`. (m6) `python -m motor_expansao.vulnerabilidade.snapshots`
+chama `executar()` sem argumento: escreve em `data/staging/` **e poda disco** sem `--base-dir`,
+`--data-referencia` nem `--dry-run` — faltam `argparse` e modo seco para o módulo que vai ao cron.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; `MIN_SEMANAS`/`STALE_SEMANAS` (valores do
+gate de 2026-07-23, revisitar só no BLK-MA-06); o plug no `run_weekly_90.sh` (BLK-MA-06); `v3`/`v4` e
+`score_vulnerabilidade` (BLK-MA-04).
+
+**Critério de aceite.** Itens 1 e 2 corrigidos com teste que falharia antes da correção (o do item 2
+por `sys.modules`); os 6 menores endereçados ou explicitamente recusados com justificativa; suíte
+completa sem regressão (baseline do BLK-MA-02: **2186 coletados**); `ruff` limpo;
+`python scripts/loop_guard.py` sem `CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
+
+---
+
+- BLK-MA-03 (concluído 2026-07-29) — ver tasks/completed.md
