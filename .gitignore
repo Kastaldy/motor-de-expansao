@@ -20,6 +20,10 @@ data/staging/*
 data/snapshots/
 data/ultra/
 data/osm_cache/
+# Cadastro operacional (consultor, franqueado, master franquia): dado real de negocio,
+# semeado da planilha do time de campo. E o default de MOTOR_CADASTRO_DIR, entao aparece
+# aqui em qualquer maquina que rode o piloto local — em producao ele vive num volume :rw.
+data/cadastro/
 data/models/*.pkl
 data/models/*.joblib
 concorrentes/
