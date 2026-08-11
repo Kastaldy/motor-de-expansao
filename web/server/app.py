@@ -63,6 +63,9 @@ if str(_SRC) not in sys.path:
 # lazy como o resto do modulo, porque e' consumido por helpers de modulo e nao so' dentro
 # de rotas; sao 4 modulos que dependem apenas de pandas (ja carregado). O gerador de
 # export (`rede_export`) segue lazy, dentro das rotas: ele puxa fpdf2 e openpyxl.
+import cobertura_1km  # noqa: E402  (PROTOTIPO — area coberta pelo raio, para desenhar)
+import pressao_1km  # noqa: E402  (PROTOTIPO — chave de raio 2 km / 1 km por area)
+
 from motor_expansao.dashboard import (  # noqa: E402
     rede_cadastro,
     rede_coorte,
@@ -84,6 +87,7 @@ ENRICHED_DIR = OUTPUTS_DIR / "hexagonos_dashboard_enriquecido"
 # projeto Crescimento Regional TEC ja apura por municipio (CAGED, RAIS, CNPJ da
 # Receita). Nao prediz, nao ranqueia oportunidade, nao reconstroi nada.
 # Artefato PARALELO e OPCIONAL; NAO e escrito no enriquecido — M1 READ-ONLY.
+CONCORRENTES_PATH = STAGING_DIR / "concorrentes_mapeados.parquet"
 CRESCIMENTO_PATH = STAGING_DIR / "crescimento_municipal.parquet"
 # Taxa de crescimento da area construida POR HEXAGONO (satelite 2016-2023). E o
 # que colore o mapa no passo 4: quem decide olha taxa de crescimento, nao emprego
@@ -170,6 +174,11 @@ _COLS_DESEJADAS = [
     "oferta_efetiva_disponivel",
     "oferta_consumida_mercado_estimada",
     "oferta_consumida_ultra_real",
+    # Insumo do modelo de 1 km: junto com `oferta_consumida_ultra_real` reproduz o
+    # `oferta_consumida_ultra_estimada` do Bloco 5, necessario para o residual sem
+    # concorrente em hexagono SATURADO. Leitura defensiva — se a UF nao materializar a
+    # coluna, `pressao_1km` devolve NaN ali em vez de um numero inflado.
+    "n_unidades_ultra_2km",
     "capacidade_default_concorrente_alunos",
     "sam_fitness_potencial",
     "populacao_corte_hex",
@@ -355,6 +364,16 @@ def _derivar(df: pd.DataFrame) -> pd.DataFrame:
             break
     else:
         out["renda_leitura"] = float("nan")
+
+    # PROTOTIPO (chave de raio): anexa o modelo de 1 km por AREA ao lado do de 2 km, sem
+    # tocar nenhuma coluna existente. Degrada em silencio se o parquet de concorrentes
+    # nao estiver montado — o front nao recebe os campos e a chave nem aparece.
+    # Ver web/server/pressao_1km.py.
+    if pressao_1km.disponivel(CONCORRENTES_PATH):
+        try:
+            out = pressao_1km.anexar(out, CONCORRENTES_PATH)
+        except Exception:  # pragma: no cover - experimento nao pode derrubar o piloto
+            pass
 
     return out
 
@@ -1700,6 +1719,20 @@ def _hex_dict(r: pd.Series, fator_dom: float | None) -> dict[str, Any]:
         "faixa": _faixa_label(r.get("faixa_oportunidade")),
         "conc": int(r.get("n_concorrentes_est") or 0),
         "ultra": int(r.get("n_ultra") or 0),
+        # PROTOTIPO da chave de raio. `conc1k` = quantas concorrentes ALCANCAM este hex
+        # pelo disco de 1 km (e o que colore o mapa no modo novo); `oferta1k` = o residual
+        # sob esse modelo. Ausentes quando o parquet de concorrentes nao esta montado —
+        # o front so' mostra a chave se os dois vierem.
+        "conc1k": (
+            int(r.get("n_concorrentes_influencia_1km"))
+            if r.get("n_concorrentes_influencia_1km") is not None
+            else None
+        ),
+        "oferta1k": _num(r.get("oferta_efetiva_disponivel_1km")),
+        # Alunos que ESTE hexagono perde para as concorrentes sob o rateio por area.
+        # E o numero que deixa o split visivel na tela.
+        "cons1k": _num(r.get("consumo_concorrentes_1km")),
+        "cons2k": _num(r.get("oferta_consumida_mercado_estimada")),
         # Chave para o bloco municipal do passo 4 (`cres_mun` na raiz do payload).
         # Antes os seis campos MUNICIPAIS do crescimento viajavam repetidos em cada
         # hexagono — o mesmo erro que ja tinha sido corrigido para `cres_dims`/
@@ -1781,7 +1814,13 @@ def _resumo(df: pd.DataFrame) -> dict[str, Any]:
 
 def _pins_ultra_bbox(df: pd.DataFrame) -> dict[str, Any]:
     """Só os pins Ultra (a rede própria) no bbox — overview da UF sem poluir com
-    milhares de concorrentes. Os concorrentes aparecem no drill-down do município."""
+    milhares de concorrentes. Os concorrentes aparecem no drill-down do município.
+
+    O protótipo do raio de 1 km chegou a trazer os concorrentes também para a UF, para
+    que a chave tivesse bandeirinha visível já no overview. Isso ficou FORA deste PR de
+    propósito: reverteria uma decisão de produto da `main` e o teto `COMPETITOR_PIN_LIMIT`
+    cortaria em silêncio numa UF grande, mentindo sobre a densidade da concorrência. A
+    camada de cobertura em si não depende disso — ela vem de `/api/cobertura/{uf}`."""
     ultra = _ultra_pontos_mapa()
     if len(ultra):
         lat_min, lat_max = float(df["lat"].min()), float(df["lat"].max())
@@ -2702,6 +2741,57 @@ class ViabilidadeIn(BaseModel):
     custo_pre_operacional_mes: float | None = Field(default=None, ge=0)
     valor_residual_mes_60: float | None = Field(default=None, ge=0)
     capex_renovacao: float | None = Field(default=None, ge=0)
+
+
+@functools.lru_cache(maxsize=32)
+def _cobertura_calc(uf: str, municipio: str | None, limite: int) -> str:
+    """Geometria da cobertura, em CACHE, serializada como JSON.
+
+    O cache existe porque a chave do raio e' um liga/desliga: sem ele, cada clique
+    repetia ~1,5 s de recorte geometrico para devolver exatamente o mesmo resultado —
+    era a maior parte dos ~3 s que o operador sentia. Devolve string (imutavel e
+    hashavel) para nao entregar o mesmo dict mutavel a varios chamadores.
+
+    `limpar_caches()` varre os globais com `cache_clear`, entao este entra junto.
+    """
+    df = carregar_uf(uf)
+    if municipio:
+        sel = df[df["nome_municipio"].str.casefold() == municipio.casefold()]
+        if sel.empty:
+            raise HTTPException(404, f"Municipio '{municipio}' nao encontrado na UF {uf}.")
+        vis = sel.nlargest(4000, "oferta_efetiva_disponivel") if len(sel) > 4000 else sel
+    else:
+        vis = df.nlargest(limite, "oferta_efetiva_disponivel") if len(df) > limite else df
+
+    # Sombras (adensamento) SO' no drill-down: na visao de estado o disco de 1 km tem
+    # ~5 px e o escurecimento por acumulo e' ilegivel — custaria ~1,8 MB para nada.
+    # No drill-down, so' as concorrentes DENTRO do municipio (pedido do Felipe). E'
+    # recorte de exibicao: o motor continua contando a concorrente vizinha.
+    return json.dumps(
+        cobertura_1km.cobertura(
+            vis,
+            CONCORRENTES_PATH,
+            com_sombras=bool(municipio),
+            apenas_dentro=bool(municipio),
+        )
+    )
+
+
+@app.get("/api/cobertura/{uf}")
+def cobertura_uf(uf: str, municipio: str | None = None, limite: int = 15000) -> Response:
+    """PROTOTIPO — geometria do raio de 1 km, SOB DEMANDA.
+
+    Vive fora de `/api/uf` e `/api/municipio` de proposito. Calcular a cobertura custa
+    ~2,4 s e ~3,9 MB na UF de SP; embutida no payload principal, TODO operador pagava
+    isso mesmo sem nunca ligar a chave. Aqui so' paga quem pede.
+
+    O recorte de hexes espelha o das rotas do mapa (mesmo `limite`, mesmo criterio), para
+    a geometria bater exatamente com os hexagonos desenhados.
+    """
+    return Response(
+        content=_cobertura_calc(uf, municipio, limite),
+        media_type="application/json",
+    )
 
 
 @app.get("/api/faixa-alunos")
