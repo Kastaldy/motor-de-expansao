@@ -298,19 +298,31 @@ def cobertura(
             continue
         frac_cob = min(1.0, max(0.0, coberto.area / area_hex))
 
-        # Residual que existiria SEM concorrente. NaN = nao foi possivel reproduzir o
+        # Residual que existiria SEM concorrente. Ausente = nao foi possivel reproduzir o
         # consumo Ultra num hexagono saturado; o hexagono sai da leitura em vez de
         # entrar com numero inflado (ver `pressao_1km.disponivel_sem_concorrente`).
-        sem_conc = float(sem_conc_por_hex.get(hid, 0.0))
-        if sem_conc != sem_conc:  # NaN
+        #
+        # `pd.isna` ANTES do `float`, e nao o teste `x != x` depois: a serie chega em dtype
+        # anulavel (`Float32`), cujo ausente e' `pd.NA` -- e `float(pd.NA)` levanta
+        # TypeError em vez de devolver NaN. O guard existia desde sempre e nunca era
+        # alcancado: a rota morria com 500 em 17 das 27 UFs (todas as densas), levando
+        # junto os raios e o mapa de calor da pressao concorrencial. Bastava UM hexagono
+        # com concorrente a menos de 1 km e valor ausente para derrubar a UF inteira.
+        bruto = sem_conc_por_hex.get(hid)
+        if bruto is None or pd.isna(bruto):
             continue
+        sem_conc = float(bruto)
 
         base = _score(sem_conc)
         f = min(max(frac_cob, 0.0), 1.0)
         demanda_coberta = sem_conc * f
         demanda_livre = sem_conc * (1.0 - f)
 
-        consumo = float(cons1k.get(hid, 0.0))
+        # Mesma defesa: hoje `cons1k` passa por `num()` (que preenche o ausente com 0) e
+        # nao carrega `pd.NA`, mas a assimetria entre os dois dicionarios foi exatamente o
+        # que escondeu o defeito acima por meses.
+        consumo_bruto = cons1k.get(hid, 0.0)
+        consumo = 0.0 if consumo_bruto is None or pd.isna(consumo_bruto) else float(consumo_bruto)
         # O consumo cai PRIMEIRO na area coberta; o que ela nao comporta transborda para
         # a livre (ver docstring: sem isto 57% das fatias zeravam por construcao).
         absorvido = min(consumo, demanda_coberta)

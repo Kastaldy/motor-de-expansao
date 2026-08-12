@@ -214,6 +214,7 @@ def carregar_uf(uf: str) -> pd.DataFrame:
     cols = [c for c in _COLS_DESEJADAS if c in disponiveis]
     df = pd.read_parquet(part, columns=cols)
     df["uf"] = uf.upper()
+    df = _completar_unidades_ultra_2km(df)
     cres = carregar_crescimento()
     if cres is not None:
         df = _juntar_crescimento(df, cres, uf.upper())
@@ -221,6 +222,55 @@ def carregar_uf(uf: str) -> pd.DataFrame:
     if chex is not None:
         df = df.merge(chex, on="hex_id", how="left", validate="m:1")
     return _derivar(df)
+
+
+#: Insumo do consumo Ultra que o artefato ENRIQUECIDO nao materializa. Vive no parquet de
+#: mercado, de onde o proprio artefato deriva.
+MERCADO_PARQUET = STAGING_DIR / "hexagonos_mercado_mapeado.parquet"
+
+
+@functools.lru_cache(maxsize=1)
+def _unidades_ultra_2km() -> dict[str, int]:
+    """`hex_id -> n_unidades_ultra_2km`, SO' dos hexagonos com pelo menos uma unidade.
+
+    Medido em 2026-08-12: 299 hexagonos dos 1.542.531 do parquet de mercado (0,02%), 0,03 MB.
+    Guardar so' os nao-zero e' o que torna este mapa barato -- ler as duas colunas inteiras
+    custa 0,7 s e 117 MB residentes, para uma informacao que e' zero em 99,98% da base.
+    """
+    if not MERCADO_PARQUET.exists():
+        return {}
+    try:
+        bruto = pd.read_parquet(MERCADO_PARQUET, columns=["hex_id", "n_unidades_ultra_2km"])
+    except (OSError, ValueError, KeyError) as erro:
+        print(f"[mapa] n_unidades_ultra_2km indisponivel ({erro})", file=sys.stderr)
+        return {}
+    n = pd.to_numeric(bruto["n_unidades_ultra_2km"], errors="coerce").fillna(0)
+    com_unidade = bruto.loc[n > 0, "hex_id"].astype(str)
+    return dict(zip(com_unidade, n[n > 0].astype(int), strict=True))
+
+
+def _completar_unidades_ultra_2km(df: pd.DataFrame) -> pd.DataFrame:
+    """Repoe `n_unidades_ultra_2km` quando a particao nao a materializa.
+
+    Sem ela, `pressao_1km._consumo_ultra` devolve `None` e TODO hexagono saturado sai da
+    leitura como ausente -- 94,6% de SP. O efeito visivel era a rota `/api/cobertura`
+    respondendo 500 em 17 das 27 UFs (todas as densas), o que apagava os raios e o mapa de
+    calor da pressao concorrencial e deixava so' a recoloracao dos hexagonos.
+
+    O conserto DEFINITIVO e' materializar a coluna no artefato enriquecido; enquanto ele
+    nao vier, isto a reconstroi do parquet de mercado, que e' a fonte de onde o proprio
+    artefato deriva. `_COLS_DESEJADAS` continua pedindo a coluna: no dia em que a particao
+    passar a te-la, este caminho nao roda.
+    """
+    if "n_unidades_ultra_2km" in df.columns:
+        return df
+    mapa = _unidades_ultra_2km()
+    if not mapa:
+        return df
+    df["n_unidades_ultra_2km"] = (
+        df["hex_id"].astype(str).map(mapa).fillna(0).astype("int32")
+    )
+    return df
 
 
 @functools.lru_cache(maxsize=1)
@@ -2764,15 +2814,21 @@ def _cobertura_calc(uf: str, municipio: str | None, limite: int) -> str:
     else:
         vis = df.nlargest(limite, "oferta_efetiva_disponivel") if len(df) > limite else df
 
-    # Sombras (adensamento) SO' no drill-down: na visao de estado o disco de 1 km tem
-    # ~5 px e o escurecimento por acumulo e' ilegivel — custaria ~1,8 MB para nada.
-    # No drill-down, so' as concorrentes DENTRO do municipio (pedido do Felipe). E'
-    # recorte de exibicao: o motor continua contando a concorrente vizinha.
+    # Sombras (adensamento) em TODA visao, inclusive a de estado. Ficaram restritas ao
+    # drill-down por uma estimativa de ~1,8 MB "para nada", feita quando a rota morria em
+    # 500 nas UFs densas e ninguem conseguia medir o resultado real. Medido em 2026-08-12,
+    # com a rota funcionando: SP sai de 1,32 MB / 0,7 s para 2,11 MB / 1,0 s -- +0,79 MB
+    # por 2.692 sombras. O outro argumento (disco de 1 km com ~5 px) so' vale no zoom
+    # INICIAL: a visao de estado e' navegavel, e quem aproxima passava a nao ter o mapa de
+    # calor sem trocar para o drill-down (pedido do Felipe, 2026-08-12).
+    #
+    # `apenas_dentro` segue preso ao drill-down: la' o recorte e' de EXIBICAO (so' as
+    # concorrentes dentro do municipio), e o motor continua contando a vizinha.
     return json.dumps(
         cobertura_1km.cobertura(
             vis,
             CONCORRENTES_PATH,
-            com_sombras=bool(municipio),
+            com_sombras=True,
             apenas_dentro=bool(municipio),
         )
     )
