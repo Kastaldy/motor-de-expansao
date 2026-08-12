@@ -72,12 +72,52 @@ def test_derivar_semana_iso_usa_iso_year(iso: str, esperado: str) -> None:
 # --------------------------------------------------------------------------- #
 # CA-6 — campos do hash
 # --------------------------------------------------------------------------- #
-def test_campos_hash_por_fonte_nao_inclui_data_coleta_nem_slug() -> None:
-    """`data_coleta` no hash zeraria a staleness; `slug` no hash faria UUID rotativo virar mudanca."""
+def test_campos_hash_por_fonte_exclui_os_proibidos() -> None:
+    """Cada proibido mata o sinal 4 de um jeito diferente.
+
+    `data_coleta` zeraria a staleness; `slug` faria a rotação de UUID virar mudança de negócio;
+    `atividades`/`modalidades` fariam uma renomeação de taxonomia da FONTE ser lida como cadastro
+    alterado na base inteira (emenda BLK-MA-11 / DEC-025).
+    """
     assert set(c.CAMPOS_HASH_POR_FONTE) == set(c.FONTES_VALIDAS)
     for fonte, campos in c.CAMPOS_HASH_POR_FONTE.items():
         assert not (set(campos) & c.CAMPOS_NUNCA_HASHEADOS), fonte
         assert len(set(campos)) == len(campos), f"campo repetido em {fonte}"
+
+
+@pytest.mark.parametrize(
+    ("fonte", "campo_taxonomia", "antes", "depois"),
+    [
+        # A renomeação real medida em 2026-08-07 sobre o consolidado do WellHub: 12.314 dos 12.420
+        # slugs comuns entre maio e agosto mudaram `atividades` sem mudar de academia (99,1%).
+        ("wellhub", "atividades", "Musculação, Pilates", "Treino de força, Fisiculturismo"),
+        ("totalpass", "modalidades", "Musculação, Jump", "Treino de força, Jump"),
+    ],
+)
+def test_renomear_taxonomia_nao_mexe_no_hash(
+    fonte: str, campo_taxonomia: str, antes: str, depois: str
+) -> None:
+    """Falharia antes da emenda BLK-MA-11: a taxonomia estava dentro do hash das duas fontes."""
+    base = {
+        "nome": "Academia do Bairro",
+        "latitude": -23.55,
+        "longitude": -46.63,
+        "cidade": "São Paulo",
+        "uf": "SP",
+        "cep": "01234-567",
+        "endereco_formatado": "Rua Um, 10",
+    }
+    hash_antes = c.hash_campos_raspados({**base, campo_taxonomia: antes}, fonte)
+    hash_depois = c.hash_campos_raspados({**base, campo_taxonomia: depois}, fonte)
+    assert hash_antes == hash_depois, (
+        f"renomear {campo_taxonomia} mudou o hash de {fonte}: o sinal 4 morreria na próxima coleta"
+    )
+
+    # Contraprova: o hash NÃO ficou insensível a tudo — mudança de cadastro de verdade ainda pega.
+    hash_mudou_endereco = c.hash_campos_raspados(
+        {**base, campo_taxonomia: antes, "endereco_formatado": "Rua Dois, 20"}, fonte
+    )
+    assert hash_mudou_endereco != hash_antes
 
 
 def test_normalizar_lista_ordena_e_normaliza_tokens() -> None:

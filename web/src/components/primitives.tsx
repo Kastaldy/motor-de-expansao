@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from 'react'
 
-import { COR_SEVERIDADE, type LeituraDelta } from '../lib/exec'
+import { COR_SEVERIDADE, corComAlfa, type LeituraDelta } from '../lib/exec'
 import { num, pct } from '../lib/format'
 import { caminhoSparkline } from '../lib/sparkline'
 import type { RedeSeveridade, Tom } from '../lib/types'
@@ -370,7 +370,7 @@ export function Semaforo({
         borderRadius: '50%',
         background: COR_SEVERIDADE[nivel],
         flexShrink: 0,
-        boxShadow: nivel === 'alta' ? `0 0 0 3px ${COR_SEVERIDADE.alta}22` : undefined,
+        boxShadow: nivel === 'alta' ? `0 0 0 3px ${corComAlfa(COR_SEVERIDADE.alta, 13)}` : undefined,
       }}
     />
   )

@@ -5,6 +5,7 @@ import type {
   FaixaAlunos,
   MetodologiaPayload,
   MunicipioItem,
+  Cobertura1k,
   EstadosPayload,
   MunicipioPayload,
   PontoPayload,
@@ -217,6 +218,14 @@ export const api = {
    */
   resolverPonto: (q: string) =>
     pedir<PontoResolvido>(`/api/resolver-ponto?q=${encodeURIComponent(q)}`, {}, 25_000),
+
+  /** PROTOTIPO — geometria do raio de 1 km, SOB DEMANDA. Fora do payload do mapa de
+   *  proposito: custa ~2,4 s e ~3,9 MB na UF de SP, e so' quem liga a chave deve pagar. */
+  cobertura: (uf: string, municipio?: string) =>
+    pedir<Cobertura1k>(
+      `/api/cobertura/${encodeURIComponent(uf)}` +
+        (municipio ? `?municipio=${encodeURIComponent(municipio)}` : ''),
+    ),
 
   /** Visão Executiva: rede Ultra real agregada por estado (Growth API). `mes`
    *  opcional (YYYY-MM) escolhe a competência; sem ele, a mais recente. */

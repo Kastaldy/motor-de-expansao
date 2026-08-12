@@ -4,12 +4,13 @@
 > Responsável: Felipe Silva | Estratégia e Growth | Ultra Academia
 > Versão: 2026-07-23 (BLK-MA-01 — design/contrato; **ZERO código de produção**;
 > emenda pós-gate 2 do mesmo dia: distinção coletor-vs-ingestão, chave de snapshot `slug`, e BLK-MA-08)
-> **Emenda BLK-MA-02 (gate de engenharia de 2026-07-29, Vinicius):** seção 6 — payload de 10 colunas,
+> **Emenda BLK-MA-02 (gate de engenharia de 2026-07-29, Vinicius):** seção 6 — payload de 10 colunas (hoje 12, ver emenda DEC-026),
 > chave própria do snapshot, origem da `semana` e **cadência real** (os dois relógios); seção 12 —
 > plug do materializador no runner semanal e o cron mensal como caminho crítico. Marcadas com
 > `[emenda 2026-07-29]`.
 > **Emenda BLK-MA-03 (2026-07-29):** seção 8.1 — granularidade de v1 (hex, não academia), domínio efetivo e tratamento no §8.2/§8.4. Marcada com [emenda BLK-MA-03].
 > **Emenda BLK-MA-04 (2026-07-30, gate humano — G-D1/G-D2/G-D3 ratificados):** §8.1 (v3 do estado `novo`), §8.2 (normalização de v4 — razão absoluta), §8.4 (universo do score, bordas de ausência e flags), §8.5 (grão da linha = academia e contrato de coluna). Marcadas com [emenda BLK-MA-04].
+> **Emenda BLK-MA-04-FU1 (2026-08-12):** §8.5 — alcance da coluna `score_vulnerabilidade_ordenavel`: ela não cobre regime de 1 sinal quando esse sinal é o S3, e o BLK-MA-05 deve segmentar por `n_sinais_disponiveis` antes de ordenar. Marcada com [emenda BLK-MA-04-FU1].
 > Regra de manutenção: manter curto; a implementação é dos blocos sucessores BLK-MA-02..08 (ver seção 13).
 
 Este documento fixa o contrato dos sinais de vulnerabilidade de concorrentes independentes, a
@@ -47,7 +48,11 @@ ou cron é escrito neste bloco.
 
 Conferência contra amostra real do coletor **TotalPass** (`unidades_totalpass_ac.csv`, **gitignored**,
 fora do versionamento — DEC-012). Colunas emitidas: `slug`, `nome`, `latitude`, `longitude`, `cidade`,
-`uf`, `cep`, `endereco_formatado`, `modalidades`, `data_coleta`. **NÃO há coluna de nota/rating.** Os
+`uf`, `cep`, `endereco_formatado`, `modalidades`, `data_coleta`. **NÃO há coluna de nota/rating**
+— afirmação **válida só para o TotalPass, e verificada até hoje** `[emenda DEC-026]`: o **WellHub
+passou a emitir `nota_wellhub` e `qtd_avaliacoes_wellhub`** (BLK-MA-08 / DEC-024), e o CSV dele tem
+**12 colunas**, não 10. Para o TotalPass a frase segue verdadeira e é **definitiva**: o BLK-MA-10
+provou que a nota não existe no produto. Os
 coletores de cadeia em `concorrentes/` (`unidades_*.csv`) emitem `nome_unidade`, `latitude`,
 `longitude`, `data_coleta` — também sem nota. Consequências canônicas que orientam as decisões abaixo:
 
@@ -100,6 +105,15 @@ tem demanda e interesse de presença). É um funil comercial, não uma decisão 
   materializar o universo (os independentes de bairro vivem nos agregadores WellHub/TotalPass; a camada
   anti-PII colapsa tudo `< 3 filiais` em `independente`, categoria sem identidade — daí a Opção B exigir
   a extensão de ingestão).
+- **Há um gate de universo ANTES deste, no coletor `[emenda BLK-MA-11 / DEC-025, 2026-08-07]`.** A
+  definição acima separa *independente* de *cadeia* — mas ela só se aplica ao que o coletor já
+  gravou. Quem decide o que é "academia" em primeiro lugar é o filtro de atividades do WellHub
+  (`tem_musculacao`, `Wellhub/split_by_state.py`), a montante deste contrato. Esse filtro **quebrou**
+  quando o WellHub renomeou a taxonomia, e a DEC-025 o redefiniu para o vocabulário
+  `{musculacao, treino de forca, fisiculturismo, levantamento de peso, treino hibrido}` ("V2":
+  22.174 das 45.527 linhas, 48,7%, com 99,5% de recall sobre a base de maio). Registrado aqui porque
+  o §3 descrevia o universo como se o único corte fosse rede-vs-independente — não é, e o corte de
+  cima é o que mais mexe no N.
 
 ---
 
@@ -113,7 +127,7 @@ vulnerabilidade` (seção 8).
 | # | Sinal | Direção ↑vuln | Fonte real | Coluna / artefato | Maturidade | Tratamento n/d / imaturo | Condicional? |
 |---|---|---|---|---|---|---|---|
 | 1 | Presença/ausência em agregadores WellHub/TotalPass | menos agregadores → mais vuln (canal do público low-cost) | ingestão TP/WH (reuso via `fonte`) | derivada da `fonte` do universo raspado | madura (cadência mensal do agregador) | ausência **é** o sinal (0 agregadores) `[ver emenda BLK-MA-03 no §8.1: inalcançável no grão hex]`; staleness do ativo mensal marcada | Não (obrigatório) |
-| 2 | Rating in-app WellHub/TotalPass | nota mais baixa → mais vuln | **NÃO coletado hoje (nenhum coletor emite nota)** | `rating` — **`n/d` até o BLK-MA-08** | inativo até ajuste de coletor | renormaliza para fora (seção 8) | **Sim** — `n/d` (ver seção 7 / D3); reativa via **BLK-MA-08** (ajuste de coletor) |
+| 2 | Rating in-app WellHub/TotalPass | nota mais baixa → mais vuln | **COLETADO no WellHub** (`nota_wellhub`, `qtd_avaliacoes_wellhub`, BLK-MA-08); **inexistente no TotalPass** (BLK-MA-10) `[emenda DEC-026]` | **nenhum** — não vira componente; propaga como **coluna-fato** | **INATIVO por decisão**, não por falta de dado | não entra em `Σ(wi·vi)`; nada a renormalizar | **Sim** — `SINAIS_INATIVOS = ("s2",)`; ligar o peso exige gate próprio (ver §7, emenda DEC-026) |
 | 3 | Churn/permanência (diff de snapshots) | sumiu recente / "piscando" → mais vuln | histórico de snapshots (seção 6) | derivada do `slug`/`concorrente_id` entre semanas | imatura até `MIN_SEMANAS=8` | série imatura → `flag_serie_imatura`, renormaliza (não penaliza) | Não (obrigatório, gated por maturidade) |
 | 4 | Staleness (diff de snapshots) | mais semanas sem mudança → mais vuln | histórico de snapshots (`hash_campos_raspados`) | `semanas_sem_mudanca` | só interpretável após série `>= STALE_SEMANAS=12` | série imatura → renormaliza (não penaliza) | Não (obrigatório, gated por maturidade) |
 | 5 | Tendência de popularidade no agregador | inclinação negativa de membros → mais vuln | série do agregador / Demanda Revelada | `membros` / `alunos_parceiras` | precisa de série; fora do MVP | fora do MVP → renormaliza | **Sim** (opcional) |
@@ -166,13 +180,37 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
   reescrever uma semana passada e, com `existing_data_behavior="delete_matching"`, **apagá-la**.
   Com a partição vindo da execução, o `snapshot_date` por linha passa a servir de **medidor de
   frescor** (é o único detector de "o CSV é o da semana passada").
-- **Payload por linha (sem crus além do hash) `[emenda 2026-07-29]`.** 10 colunas, nesta ordem:
+- **Payload por linha (sem crus além do hash) `[emenda 2026-07-29; 12 colunas desde a DEC-026]`.** 12 colunas, nesta ordem:
   `{snapshot_date, slug, concorrente_id, chave_snapshot, chave_origem, hex_id_res7, rede, fonte,
-  hash_campos_raspados, versao_contrato}` — **sem** nome/coordenadas brutas; a única "impressão
-  digital" dos campos raspados é o `hash_campos_raspados` (que **não** inclui `data_coleta` nem
-  `slug`). `fonte` não é opcional: o sinal 1 da seção 4 é derivado dela, e sem ela a regra de "gap
+  hash_campos_raspados, nota_wellhub, qtd_avaliacoes_wellhub, versao_contrato}` — as duas de rating
+  entraram pela DEC-026 como FATO sem peso, entre o hash e o carimbo de versão; são nuláveis
+  (`Float64`/`Int64`) e só o WellHub as preenche — **sem** nome/coordenadas brutas; a única "impressão
+  digital" dos campos raspados é o `hash_campos_raspados` (que **não** inclui `data_coleta`, `slug`
+  nem a taxonomia — ver a emenda BLK-MA-11 abaixo). `fonte` não é opcional: o sinal 1 da seção 4 é derivado dela, e sem ela a regra de "gap
   de feed não vira churn" é impossível de implementar. `semana` **não** é coluna do arquivo — vive
   no caminho, como chave de partição hive.
+
+> **[emenda BLK-MA-09, 2026-08-10] Domínio da nota e normalização do par: degradar, nunca abortar.**
+> O domínio de `nota_wellhub` é **`[1,0 ; 5,0]`** (`NOTA_WELLHUB_MIN`/`NOTA_WELLHUB_MAX` em
+> `contrato.py`), não `[0 ; 5]`. Motivo: a nota é média de avaliações de 1 a 5 estrelas, logo `0.0`
+> é aritmeticamente inalcançável — "sem avaliação" tem forma própria (`NA`/`0`). A DEC-026 mediu
+> `min = 1,0` em 34.035 independentes com nota. O piso importa mais que o teto porque `0.0` é o
+> retorno NATURAL de um extrator quebrado: um piso em `0.0` aceitaria em silêncio justamente o valor
+> mais provável de um bug.
+>
+> **Toda violação DEGRADA a célula para "não lido" e é CONTADA em `rating_ilegivel`; nenhuma
+> levanta.** Vale para: nota fora do domínio, contagem negativa, contagem não-inteira (`1.262`, a UI
+> pt-BR) e qualquer **par** fora dos três estados da DEC-024 — `NA`/`105`, `4.81`/`0` e `4.81`/`NA`
+> viram `NA`/`NA`. A razão é a mesma do item 1 do `_coagir_rating`: `montar_snapshot` roda ANTES de
+> gravar e o `run_weekly_90.sh` sobrescreve os CSVs crus a cada coleta, então uma exceção não perde
+> uma linha — perde **a semana inteira, para sempre**, por causa de uma célula.
+>
+> A **ordem** é normativa: domínio por coluna primeiro, par depois. É ela que faz `0.0`/`0` — extrator
+> quebrado sobre unidade sem avaliações — cair em "sem avaliações" (`NA`/`0`) em vez de "não lido".
+>
+> `_assert_schema_snapshot` mantém as checagens como **rede para frames montados à mão** (metade dos
+> testes desta camada constrói o insumo assim). Pelo caminho público elas são inalcançáveis — é
+> justamente esse o invariante.
 - **Limpeza de ruído (BLK-MA-02, obrigatória antes de derivar churn).** O feed cru traz linhas que
   **não** são academias reais e distorceriam churn/universo: coords `0;0` e rótulos de teste (ex.:
   "Teste Raised"); **entradas de tecnologia/onboarding do TotalPass** ("Zon Tecnologia", "SAGAZ
@@ -183,6 +221,29 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
 - **Derivação dos sinais.**
   - Churn (sinal 3): o `slug` (fallback `concorrente_id`) aparece / some / reaparece ("piscando") entre semanas.
   - Staleness (sinal 4): nº de semanas desde a última mudança de `hash_campos_raspados`.
+- **A TAXONOMIA sai do hash `[emenda BLK-MA-11 / DEC-025, 2026-08-07]` — e o contrato de snapshot
+  vai para `v2`.** `atividades` (WellHub) e `modalidades` (TotalPass) **saíram** de
+  `CAMPOS_HASH_POR_FONTE` e entraram em `CAMPOS_NUNCA_HASHEADOS`, ao lado de `data_coleta` e `slug`.
+  Razão categórica: taxonomia é vocabulário da **FONTE**, não cadastro da academia — renomear rótulo
+  não é "o negócio mudou". Razão medida: entre maio e agosto de 2026 o WellHub renomeou "Musculação"
+  para "Treino de força"/"Fisiculturismo"/"Treino Híbrido", e `atividades` mudou em **12.314 dos
+  12.420** slugs comuns (**99,1%**) — contra `endereco_formatado` em 63 e `nome` em 33 — sem que uma
+  única academia mudasse de fato. Com a taxonomia dentro do hash, a primeira coleta pós-renomeação
+  leria a base inteira como "cadastro atualizado agora", `semanas_sem_mudanca` nunca cresceria e **o
+  sinal 4 morreria** — o mesmo modo de falha que já excluía `data_coleta`. O TotalPass entra por
+  **simetria preventiva**, não por medição: só existe uma coleta dele (01/06/2026), logo não há
+  segunda observação para medir volatilidade, e ele **ainda usa** a taxonomia antiga ("Musculação"
+  em 15.970 de 15.986 unidades, 99,9%). `VERSAO_CONTRATO_SNAPSHOT` passa de `snapshots_concorrentes_v1`
+  para `..._v2`; a migração foi **gratuita** porque a série estava com zero semanas no momento da
+  mudança. Guardrail executável: `test_renomear_taxonomia_nao_mexe_no_hash` (`test_contrato.py`) e
+  `test_hash_ignora_a_taxonomia_inteira` (`test_snapshots.py`).
+- **Consequência de comparabilidade da mesma emenda, que o BLK-MA-06 precisa respeitar.** O critério
+  de universo do coletor WellHub também mudou (vocabulário "V2" da DEC-025, parte 1): o universo passa
+  de **12.769** (maio) para **22.174** unidades, e **9.816** desses slugs nunca estiveram na base de
+  maio. Como a coleta de maio **só gravava o que passava no filtro**, o negativo de maio não existe
+  como dado e é impossível separar "parceiro novo" de "existia e foi corretamente excluído". Portanto
+  a **primeira janela** de série após a mudança tem churn (sinal 3) **inutilizável**, e o cron deve
+  tratá-la como marco zero, não como semana comparável.
 - **Ramp-up / maturidade.** `flag_serie_imatura = True` até `MIN_SEMANAS = 8` snapshots; enquanto
   imatura, os sinais 3/4 **NÃO penalizam** (são renormalizados para fora do score — seção 8). Staleness
   só é interpretável após a série atingir `STALE_SEMANAS = 12`. Mitiga falso churn no início da série.
@@ -207,7 +268,30 @@ reviews" é aproximado pelos sinais internos (3) e (5), sem depender de nota ext
 
 ## 7. D3 — Rating de agregador (sinal 2)
 
-**Decisão do gate (D3 = NÃO carregam a nota).**
+> **[emenda DEC-026, 2026-08-10 — gate do BLK-MA-09] A premissa do D3 caiu, e o desfecho NÃO foi
+> ligar o sinal 2.** Tudo o que esta seção afirma abaixo repousa em *"nenhum coletor emite nota"*.
+> O **BLK-MA-08** falsificou isso **para o WellHub** (`partnerRating` no mesmo payload RSC que o
+> coletor já baixava; 36.940 unidades com nota no consolidado). O **BLK-MA-10** provou que o
+> **TotalPass não tem nota como produto** — não é dado escondido, a funcionalidade não existe —,
+> logo a partição do universo é **PERMANENTE**.
+>
+> **Decisão (DEC-026, D-B = opção 0):** a nota e a contagem são propagadas como **COLUNA-FATO, sem
+> peso, fora de `Σ(wi · vi)`**, no molde do G-D2 (o mesmo que já se aplica ao `status_churn`).
+> `SINAIS_INATIVOS` continua `("s2",)` e os pesos efetivos do Plano B seguem
+> `S1≈0,20 / S3≈0,467 / S4≈0,333`. **O sinal 2 permanece INATIVO** — o que muda é que o dado passa
+> a existir e a chegar ao consumidor.
+>
+> **Por quê, em uma linha:** com peso, o `v2` inverteria o ranking. Vale a identidade
+> `score_com_s2 = 0,75 · score_sem_s2 + 25 · v2`, então ter nota cobra um corte de 25% nos outros
+> três sinais; com a nota mediana medida (4,93), **99,97% das 34.035 linhas com nota seriam
+> penalizadas**, e a academia `sumiu_recente` + stale — o alvo de maior prioridade pela INVERSÃO do
+> §2 — cairia de 90,00 para 67,94. Racional completo, alternativas medidas e riscos assumidos na
+> DEC-026.
+>
+> **Correção de fato desta seção:** onde se lê que o rating exige "ajuste de COLETOR", isso está
+> **feito** para o WellHub (BLK-MA-08) e é **impossível** para o TotalPass (BLK-MA-10).
+
+**Decisão do gate (D3 = NÃO carregam a nota) — SUPERSEDED em parte pela emenda acima.**
 
 - **Fato de dado (corrigido com o insumo real, 2026-07-23).** A nota **não é dropada na ingestão — ela
   não é COLETADA.** Nenhum CSV de coletor tem coluna de rating (ver "Insumo real conferido", seção 1);
@@ -238,8 +322,8 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 
 > **[emenda BLK-MA-03, 2026-07-29] Granularidade e domínio efetivo de `v1`.** O texto acima descreve
 > `v1` **por academia**. Com o universo NOMEADO (Opção B / D1-B) **deferido** (decisão S1), não existe
-> identidade cross-provider: a chave do snapshot embute a `fonte` (`chave_do_slug` e
-> `chave_hash_estavel`, `vulnerabilidade/contrato.py:395-413`) e o `nome` não é persistido (anti-PII,
+> identidade cross-provider: a chave do snapshot embute a `fonte` (as funções `chave_do_slug` e
+> `chave_hash_estavel` de `vulnerabilidade/contrato.py`) e o `nome` não é persistido (anti-PII,
 > §11), logo a MESMA academia em TotalPass e WellHub é sempre DUAS chaves distintas e "quantos
 > agregadores cobrem esta linha" seria constante `1` — sinal sem variância. **`v1` passa a ser medido
 > por `hex_id_res7`** (quantos agregadores cobrem o hex) e propagado às academias do hex pelo
@@ -268,8 +352,14 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 > O insumo bruto hex-level é entregue pelo BLK-MA-03 no contrato de coluna `presenca_agregador_v1`
 > (`vulnerabilidade/presenca_agregador.py`), com os sufixos `_no_hex` carregando esta ressalva.
 
-- `v2` — rating in-app (CONDICIONAL, `n/d` no Plano B até o BLK-MA-08): `1 − normaliza(rating)`, ex.:
-  `1 − (rating − 1) / (5 − 1)`; `n/d` → renormaliza para fora.
+- `v2` — rating in-app. **`[emenda DEC-026]` NÃO EXISTE como componente.** A fórmula
+  `1 − normaliza(rating)` (ex.: `1 − (rating − 1) / (5 − 1)`) fica **RESERVADA**, sem escolha de
+  régua: o gate do BLK-MA-09 decidiu que o rating entra como **coluna-fato sem peso**, então não há
+  `v2` em `Σ(wi · vi)` e não há normalização a definir. O bloco que quiser ligar o peso **precisa
+  escolher a régua num gate próprio** — e a medição de 2026-08-10 mostra que a linear é
+  inadequada: ela comprime a nota mediana a 0,44 ponto de 100 e coloca no top-100 **58 unidades com
+  menos de 10 avaliações** (mediana de 8). O texto original está preservado acima só como ponto de
+  partida para esse gate futuro.
 - `v3` — churn/permanência: sumiu recente → `1.0`; "piscando" (some/reaparece) → `0.7`; estável →
   `0.0`.
 
@@ -293,6 +383,14 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 
 **Percentil por universo** (robusto a outliers) para os sinais contínuos (rating, staleness,
 popularidade, pressão); flags graduados para os categóricos (S1/S3). Tudo em `[0,1]`, com `↑ = ↑vuln`.
+
+> **[emenda DEC-026, 2026-08-10] O `rating` sai desta frase.** Ele não é mais um "sinal contínuo a
+> normalizar", porque não é sinal: entra como **coluna-fato sem peso** (§7, emenda DEC-026). Esta é
+> a reabertura do §8.2 que o BLK-MA-09 devia fazer — e o gatilho era **este parágrafo**, que
+> nomeava o `rating`, não o item 4 da emenda G-D3 (aquele fala de quem **reativar** a percentil, e o
+> MA-09 não a reativou). Com o `v4` já convertido em razão absoluta pela emenda BLK-MA-04 e o
+> `rating` fora, **nenhum componente do score usa percentil por universo hoje** — a percentil segue
+> RESERVADA, como o G-D3 deixou.
 
 > **[emenda BLK-MA-04, 2026-07-30 — G-D3 ratificado no gate] `v4` é RAZÃO ABSOLUTA, não percentil.**
 > O §8.1 e este §8.2 se contradiziam sobre o `v4` (`min(semanas_sem_mudanca / STALE_SEMANAS, 1)` vs
@@ -342,6 +440,18 @@ S5=0,10 · S6=0,10`.
 
 ### 8.4 Sinal ausente / imaturo
 
+> **[emenda DEC-026, 2026-08-10] O rating NÃO cria regime novo.** Como ele entra como coluna-fato
+> sem peso (§7), o `sinais_disponiveis` **não** ganha `"s2"`, o regime `{s1,s2}` **não passa a
+> existir** e a `flag_score_provisorio` fica **intocada** — o universo inteiro segue numa régua só,
+> `{s1,s3,s4}`, com ou sem nota. Foi o que dissolveu o **D-C** do gate.
+>
+> Registre-se, para quem reabrir o assunto, uma **correção ao enunciado do D-C** que circulou no
+> backlog: dizia-se que o parêntese *"(e S2 quando ativo)"* desta seção era um caso "que a
+> implementação não contempla". Não é. O parêntese **ESTENDE** a condição de provisório ao caso em
+> que o score repousa sobre S1+S2 — ou seja, afirma que `{s1,s2}` **é** provisório, exatamente como
+> `score.py` calcula. Tratar `{s1,s2}` como ordenável seria **emendar** este §8.4 e a decisão G-D1,
+> não corrigir um bug.
+
 **RENORMALIZAR** (dropar o peso do sinal ausente/imaturo e reescalar os restantes para somar `1`) — mais
 auditável que imputar um neutro `0,5`. Flags de qualidade obrigatórias:
 
@@ -390,10 +500,28 @@ auditável que imputar um neutro `0,5`. Flags de qualidade obrigatórias:
 `score_vulnerabilidade ∈ [0,100] = 100 · Σ(wi · vi)` com os pesos **renormalizados**, acompanhado dos
 componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 
+> **[emenda DEC-026, 2026-08-10] A saída ganha DOIS FATOS, não um componente.** `nota_wellhub` e
+> `qtd_avaliacoes_wellhub` são propagados na saída **fora de `Σ(wi · vi)`**, no mesmo molde do
+> `status_churn` (G-D2). Não têm peso, não entram em `sinais_disponiveis`, não mudam regime e não
+> afetam `score_vulnerabilidade`.
+>
+> **As duas colunas andam juntas — a contagem não é opcional.** Medido em 2026-08-10 sobre as
+> 34.035 independentes com nota: **38,4% têm menos de 30 avaliações** (mediana geral: 46), e a
+> cauda que mais interessa ao M&A é a **menos** confiável — das 158 unidades abaixo de nota 4,0, a
+> mediana é de **10,5 avaliações** e **47% têm menos de 10**. Uma leitura de nota sem a contagem ao
+> lado coloca no topo da shortlist academias cujo sinal são três avaliações.
+>
+> **Obrigação transferida ao BLK-MA-05.** Como a decisão de ranking sobre o rating sai do contrato
+> versionado, o entregável **deve documentar por escrito** qualquer corte que faça sobre nota ou
+> contagem. Esse corte é candidato natural a virar sinal com peso num bloco futuro, quando houver
+> desfecho observado contra o qual calibrá-lo.
+
 > **[emenda BLK-MA-04, 2026-07-30] Grão da linha, contrato de coluna e a coluna de ordenação.**
-> A saída do score é o contrato **`score_vulnerabilidade_v1`, de 20 colunas**
+> A saída do score é o contrato **`score_vulnerabilidade_v2`, de 22 colunas** (`v1`/20 até a DEC-026)
 > (`CONTRATO_COLUNAS_SCORE` em `vulnerabilidade/contrato.py`; implementação em
-> `vulnerabilidade/score.py`, módulo **PURO, sem I/O**), com **uma linha por ACADEMIA** =
+> `vulnerabilidade/score.py`, módulo **PURO quando os frames são injetados** — pelo modo de
+> conveniência `base_dir=` ele lê disco transitivamente, via extratores; o que vale em qualquer
+> modo é que ele nunca **escreve** `[precisão BLK-MA-04-FU1]`), com **uma linha por ACADEMIA** =
 > `(fonte, chave_snapshot)`. "Academia" aqui é uma **chave de snapshot**, não um estabelecimento
 > nomeado (universo NOMEADO / D1-B deferido): a mesma academia em TotalPass e WellHub são **duas
 > linhas** — intencional, e é a razão de o `v1` ser medido por hex (emenda BLK-MA-03).
@@ -408,6 +536,28 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 > exatamente para o BLK-MA-05 segmentar antes de ordenar.
 > O CSV **hex-level** do exemplo do §10/D6 é o entregável do **BLK-MA-05**, derivado por agregação
 > deste frame — não é a saída deste contrato.
+
+> **[emenda BLK-MA-04-FU1, 2026-08-12] LIMITE DA COLUNA ORDENÁVEL: ela NÃO cobre regime de 1 sinal
+> quando esse sinal é o S3.**
+>
+> `flag_score_provisorio` é a **conjunção** do §8.4 — "S3 **e** S4 indisponíveis". Com o S3 maduro
+> ela desliga, ainda que o S3 seja o **único** sinal da linha: o peso renormaliza para `1,00` e um
+> `sumiu_recente` sai com `score_vulnerabilidade_ordenavel = 100,0`, no topo de qualquer ordenação,
+> lado a lado com linhas `{S1,S3,S4}` que estão em outra régua. Medido em 2026-08-12; congelado por
+> `test_score.py::test_regime_so_s3` e `::test_ordenavel_nao_separa_regimes_de_tamanho_diferente`.
+>
+> **É fiel ao §8.4 ratificado, não um bug** (S3 maduro é sinal maduro, e o G-D1 mirava o ramp-up
+> só-S1, onde o score tem dois valores). O que se registra aqui é o **alcance** do guardrail: a
+> coluna ordenável resolve "score de dois valores", **não** resolve "regimes de tamanhos
+> diferentes na mesma coluna". São problemas distintos e só o primeiro virou tipo da saída.
+>
+> **Alcançabilidade.** Inalcançável pelo caminho `base_dir`: os dois extratores saem da MESMA série,
+> logo todo hex do churn tem par no sinal 1 e o S1 nunca fica ausente sozinho. **Alcançável por
+> frames injetados** — que é justamente o modo que o BLK-MA-05 pode usar.
+>
+> **Obrigação do BLK-MA-05 (dura, não sugerida):** segmentar por `n_sinais_disponiveis` **antes** de
+> ordenar. Ordenar o frame inteiro por `score_vulnerabilidade_ordenavel` sem segmentar mistura as
+> réguas em silêncio — não devolve `NaN`, não levanta, e o erro só aparece na shortlist.
 
 ---
 
@@ -502,11 +652,14 @@ Ajustada pelo **D3 = Não** (rating não é coletado → sinal 2 depende de ajus
 |---|---|---|
 | **BLK-MA-02** | Extrator de churn+staleness do histórico de snapshots (100% interno) + **limpeza de ruído** (linhas `0;0`/teste, entradas de tecnologia/onboarding, coords inconsistentes) + flags de série imatura (ramp-up); chave `slug` + `data_coleta`. É o núcleo 100%-reuso do Plano B. | D2 (S3/S4) |
 | **BLK-MA-03** | Presença em agregador (**sinal 1**, reuso via `fonte`) + (opcional/deferido) extensão de **ingestão** para o universo NOMEADO (D1-B, retém `slug`/`nome_estabelecimento`; **só ingestão, SEM ajuste de coletor**); anti-PII por construção; fixtures sintéticas. **Rating (sinal 2) NÃO entra aqui** — depende do BLK-MA-08. Entregue como insumo BRUTO hex-level (contrato `presenca_agregador_v1`); `v1`/pesos são BLK-MA-04. | sinal 1 + D1 |
-| **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. Entregue como contrato de coluna `score_vulnerabilidade_v1` (20 colunas, módulo PURO sem I/O), uma linha por academia, com o **universo de M&A filtrado aqui**; os artefatos do D6 são BLK-MA-05. | D4 + D7 |
+| **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. Entregue como contrato de coluna `score_vulnerabilidade_v1` (20 colunas na época; hoje `v2`/22 pela DEC-026; módulo PURO quando os frames são injetados — ver §8.5), uma linha por academia, com o **universo de M&A filtrado aqui**; os artefatos do D6 são BLK-MA-05. | D4 + D7 |
 | **BLK-MA-05** | Lista priorizada de M&A (cruzamento com o hex quente, D5, **COM a INVERSÃO**) + entregável. | D5 + D6 |
 | **BLK-MA-06** | Integração ao cron semanal da VPS + runbook. | D8 |
 | **BLK-MA-07** | (Opcional/futuro, **gate + DEC próprios**) reputação **EXTERNA** (Google Places ou outra, público geral). Único ponto que reabre o §2. | — |
-| **BLK-MA-08** | **(Near-term, decisão do gate 2) Ajustar os coletores TP/WH (GymScraping) para raspar a nota in-app** — pré-requisito EXPLÍCITO do sinal 2; persiste **só o agregado numérico** (anti-PII). **Toca a trilha de scrapers/VPS (não toca o M1, mas NÃO é READ-ONLY dos scrapers); NÃO loop-safe.** Vale para os DOIS coletores (WellHub segue o mesmo schema do TotalPass — sem nota). | sinal 2 (rating in-app) |
+| **BLK-MA-08** | **CONCLUÍDO (2026-08-06).** Ajuste do coletor **WellHub** para raspar a nota in-app; persiste **só os dois agregados numéricos** (anti-PII, DEC-024). `[emenda DEC-026]` A frase original — *"vale para os DOIS coletores (WellHub segue o mesmo schema do TotalPass — sem nota)"* — era **falsa nas duas metades**: o WellHub **tem** nota, e o TotalPass **nunca terá** (BLK-MA-10). | nota in-app do WellHub |
+| **BLK-MA-09** | Ingerir a nota até a saída do score **como coluna-fato sem peso** (DEC-026); snapshot de 10 para 12 colunas com bump de versão. **NÃO reativa o `v2`.** | coluna-fato de rating |
+| **BLK-MA-10** | **CONCLUÍDO (2026-08-05), veredito ARQUIVAR.** Spike do TotalPass: a nota não existe como produto. | — |
+| **BLK-MA-11** | **CONCLUÍDO (2026-08-10).** Vocabulário "V2" do filtro de musculação + taxonomia fora do hash de staleness (DEC-025). | — |
 
 D7 (anti-PII) é transversal a BLK-MA-02..05 e BLK-MA-08.
 
@@ -547,7 +700,7 @@ D7 (anti-PII) é transversal a BLK-MA-02..05 e BLK-MA-08.
 | # | Questão | Opção escolhida no gate | Default do Planner |
 |---|---|---|---|
 | **D1** | Universo de "academia independente" e fonte que retém identidade | **FASEADO** — MVP hex-level agregado (Opção A, anti-PII) entra já; nomeação por-academia (Opção B) **deferida** atrás de confirmação dos CSVs brutos (nome existe na fonte, é dado de negócio). Independente = fora das 28 cadeias (`independente` ou marca com unidades `== 1`); reconciliar 28 scrapers vs 90 coletores no BLK-MA-02. | Entregar Opção A primeiro; Opção B atrás de confirmação. |
-| **D2** | Fonte/retenção dos snapshots (churn/staleness) | **Default aceito + refino do insumo real:** chave = `slug` nativo + `data_coleta` (fallback `concorrente_id`), com limpeza de ruído (linhas `0;0`/teste/tecnologia) no BLK-MA-02; snapshots em `data/staging/snapshots_concorrentes/semana=AAAA-SS/` (gitignored, VPS); retenção 26 semanas; `MIN_SEMANAS=8`; `STALE_SEMANAS=12`; série imatura marcada e neutra. | snapshots por `concorrente_id` (Opção A). |
+| **D2** | Fonte/retenção dos snapshots (churn/staleness) | **Default aceito + refino do insumo real:** chave = `slug` nativo + `data_coleta` (fallback `concorrente_id`) — **SUPERSEDED, ver a emenda de 2026-07-29 no §6**: a chave de churn passou a ser própria (`chave_do_slug`/`chave_hash_estavel`), porque o `concorrente_id` de produção embute a coordenada com `:.6f` (~11 cm) e qualquer re-geocodificação geraria falso churn no sinal de maior peso —, com limpeza de ruído (linhas `0;0`/teste/tecnologia) no BLK-MA-02; snapshots em `data/staging/snapshots_concorrentes/semana=AAAA-SS/` (gitignored, VPS); retenção 26 semanas; `MIN_SEMANAS=8`; `STALE_SEMANAS=12`; série imatura marcada e neutra. | snapshots por `concorrente_id` (Opção A). |
 | **D3** | Rating de agregador (sinal 2) | **NÃO é coletado (ajuste de coletor, não de ingestão)** — sinal 2 fica `n/d` até o **BLK-MA-08** (near-term) ajustar os coletores TP/WH para raspar a nota; enquanto isso o score roda em S1/S3/S4 renormalizados. Reputação **externa** (Google) fica no BLK-MA-07. | Sinal 2 CONDICIONAL, `n/d` não penaliza, renormaliza. |
 | **D4** | Fórmula/pesos do score de vulnerabilidade | **Pesos S1=0,15 / S2=0,25 / S3=0,35 / S4=0,25** (churn domina); efetivos no Plano B (S2 fora): **S1≈0,20 / S3≈0,467 / S4≈0,333** (`0,15/0,75`, `0,35/0,75`, `0,25/0,75`); normalização percentil-por-universo **[ver emenda BLK-MA-04 no §8.2: `v4` é razão absoluta; o percentil fica reservado]**; RENORMALIZAÇÃO para sinal ausente/imaturo; flags de qualidade; **NÃO-preditivo**. Saída `score_vulnerabilidade ∈ [0,100] = 100·Σ(wi·vi)` + componentes `vi` + flags. | Idem, com S5/S6 fora do MVP. |
 | **D5** | Hexágono quente + distância + INVERSÃO | **Quente = `sam_fitness_potencial` alto (top quartil) AND `score_oportunidade_residual < 25` (saturado)**; distância **k=1** (`h3.grid_disk(k=1)`); **INVERSÃO** (demanda alta + residual baixo, oposto de `abrir_agora`) registrada; join READ-ONLY no molde `:68-82` com asserts de invariância. | Idem (Opção A + k=1 + join com asserts). |

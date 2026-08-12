@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { caminhoSparkline, escalaDeBarras, fatiasDeRosca, percentualDaFatia } from './sparkline'
+import {
+  ancoraDoRotulo,
+  caminhoSparkline,
+  escalaDeBarras,
+  fatiasDeRosca,
+  ladoDoRotulo,
+  percentualDaFatia,
+} from './sparkline'
 
 describe('caminhoSparkline', () => {
   it('desenha a série e marca o último ponto', () => {
@@ -39,6 +46,72 @@ describe('caminhoSparkline', () => {
   it('maior valor fica no topo da caixa', () => {
     const s = caminhoSparkline([0, 100], 100, 20, 0)
     expect(s.ultimo?.y).toBeCloseTo(0)
+  })
+
+  it('`xs` tem um x por índice, buracos inclusive', () => {
+    // Quem desenha o rótulo de cada mês indexa por posição na série, não por posição
+    // entre os pontos que sobreviveram: pular o buraco deslocaria todos os seguintes.
+    const s = caminhoSparkline([10, null, 30], 100, 20)
+    expect(s.xs).toHaveLength(3)
+    expect(s.xs[2]).toBeGreaterThan(s.xs[1])
+  })
+
+  it('série vazia ainda devolve os x — o eixo existe mesmo sem linha', () => {
+    expect(caminhoSparkline([null, null], 100, 20).xs).toHaveLength(2)
+  })
+
+  it('`ys` pousa na altura exata do ponto, e é null no buraco', () => {
+    // O rótulo de valor lê daqui. Se divergir do caminho, o número flutua ao lado do
+    // ponto que ele nomeia — e ninguém percebe, porque os dois continuam plausíveis.
+    const s = caminhoSparkline([10, null, 30], 100, 20, 0)
+    expect(s.ys[1]).toBeNull()
+    expect(s.ys[0]).toBeCloseTo(20) // menor valor, no pé da caixa
+    expect(s.ys[2]).toBeCloseTo(0) // maior valor, no topo
+    expect(s.ultimo?.y).toBeCloseTo(s.ys[2] as number)
+  })
+
+  it('a folga afasta o menor ponto do pé da caixa (é o que dá espaço ao rótulo)', () => {
+    // Com folga 6 o ponto mais baixo ficava a 5 px do eixo e o rótulo que desce saía
+    // riscado pela linha do eixo; a folga é o único parâmetro que abre esse espaço.
+    const justo = caminhoSparkline([1, 2], 100, 200, 6)
+    const folgado = caminhoSparkline([1, 2], 100, 200, 15)
+    expect(justo.ys[0]).toBeCloseTo(194)
+    expect(folgado.ys[0]).toBeCloseTo(185)
+  })
+
+  it('série toda igual põe todo mundo no meio, sem NaN', () => {
+    const s = caminhoSparkline([7, 7, 7], 100, 20)
+    expect(s.ys).toEqual([10, 10, 10])
+  })
+})
+
+describe('caminhoSparkline · distribuição', () => {
+  it('`pontas` encosta nas duas bordas', () => {
+    const s = caminhoSparkline([1, 2, 3], 100, 20, 0, 'pontas')
+    expect(s.xs).toEqual([0, 50, 100])
+  })
+
+  it('`faixas` centra cada ponto na sua fatia, como a barra do mesmo mês', () => {
+    // 4 fatias de 25 px: 12,5 / 37,5 / 62,5 / 87,5. É o x em que `BarrasPeriodo` põe a
+    // barra, e é onde o rótulo do eixo (um flex de 4 partes iguais) fica centrado.
+    expect(caminhoSparkline([1, 2, 3, 4], 100, 20, 0, 'faixas').xs).toEqual([12.5, 37.5, 62.5, 87.5])
+  })
+
+  it('em `faixas` nenhum ponto encosta na borda — nem com um valor só', () => {
+    // Encostar é o sintoma de ter voltado para `pontas`: com um ponto só, `pontas`
+    // devolveria o padding e a marca subiria na borda esquerda em vez do centro.
+    const s = caminhoSparkline([42], 100, 20, 6, 'faixas')
+    expect(s.xs).toEqual([50])
+    expect(s.ultimo?.x).toBe(50)
+  })
+
+  it('o desenho ocupa a largura INTEIRA que recebe', () => {
+    // A regressão de 2026-08-11 não estava aqui — estava no `viewBox` de 340 px que o
+    // componente passava para um cartão de 936 —, mas é aqui que ela fica visível: se a
+    // largura recebida crescer, o último ponto tem de crescer junto.
+    const estreito = caminhoSparkline([1, 2, 3], 340, 20, 6, 'faixas')
+    const largo = caminhoSparkline([1, 2, 3], 936, 20, 6, 'faixas')
+    expect(largo.xs[2] / estreito.xs[2]).toBeCloseTo(936 / 340)
   })
 })
 
@@ -134,5 +207,101 @@ describe('fatiasDeRosca', () => {
   it('percentualDaFatia devolve null sem base', () => {
     expect(percentualDaFatia(5, 20)).toBe(25)
     expect(percentualDaFatia(0, 0)).toBeNull()
+  })
+})
+
+describe('ladoDoRotulo', () => {
+  // A série do churn da rede em 2026-08, que é onde os dois defeitos apareceram.
+  const CHURN = [6.54, 6.54, 6.48, 6.23, 7.09, 7.64, 5.32, 6.31, 6.07, 5.37, 5.5, 5.93]
+
+  it('vale manda o rótulo para BAIXO — acima dele está o miolo do "V"', () => {
+    expect(ladoDoRotulo(CHURN, 6)).toBe('abaixo') // fev, o mínimo da série
+    expect(ladoDoRotulo(CHURN, 9)).toBe('abaixo') // mai
+    expect(ladoDoRotulo(CHURN, 3)).toBe('abaixo') // nov
+  })
+
+  it('pico mantém o rótulo acima e centrado', () => {
+    expect(ladoDoRotulo(CHURN, 5)).toBe('acima') // jan, o máximo
+    expect(ladoDoRotulo(CHURN, 7)).toBe('acima') // mar
+  })
+
+  it('rampa foge da perna que sobe', () => {
+    // Subindo, quem ocupa o espaço acima é a perna da DIREITA: o texto vai para a
+    // esquerda. Foi o "R$ 140" de novembro na receita por recorrente.
+    expect(ladoDoRotulo([1, 2, 3], 1)).toBe('acima-esquerda')
+    expect(ladoDoRotulo([3, 2, 1], 1)).toBe('acima-direita')
+  })
+
+  it('as pontas decidem com o único vizinho que têm', () => {
+    expect(ladoDoRotulo([1, 5], 0)).toBe('abaixo') // sobe à direita: pé de subida
+    expect(ladoDoRotulo([1, 5], 1)).toBe('acima') // topo, nada acima dele
+    expect(ladoDoRotulo([5, 1], 0)).toBe('acima')
+  })
+
+  it('trecho plano não tem lado ruim: fica acima', () => {
+    expect(ladoDoRotulo([4, 4, 4], 1)).toBe('acima')
+    expect(ladoDoRotulo([42], 0)).toBe('acima')
+  })
+
+  it('buraco e valor ilegível não escolhem lado nem estouram', () => {
+    expect(ladoDoRotulo([1, null, 3], 1)).toBe('acima')
+    // Vizinho ausente é IGNORADO, não tratado como zero: contado como zero, todo ponto
+    // ao lado de um buraco viraria pico e o rótulo subiria em cima da linha.
+    expect(ladoDoRotulo([null, 2, 9], 1)).toBe('abaixo')
+    expect(ladoDoRotulo([NaN, 5, 1], 1)).toBe('acima')
+  })
+})
+
+describe('ancoraDoRotulo', () => {
+  const LARGURA = 340
+  const MEIA = 17 // "1.808,0" a 8,5 px de mono ≈ 34 px de caixa
+
+  it('no meio do quadro, cada lado sai onde o nome diz', () => {
+    expect(ancoraDoRotulo('acima', 170, 100, MEIA, LARGURA)).toEqual({
+      x: 170,
+      y: 94,
+      textAnchor: 'middle',
+    })
+    expect(ancoraDoRotulo('abaixo', 170, 100, MEIA, LARGURA)).toEqual({
+      x: 170,
+      y: 110,
+      textAnchor: 'middle',
+    })
+    expect(ancoraDoRotulo('acima-esquerda', 170, 100, MEIA, LARGURA)).toMatchObject({
+      x: 166,
+      textAnchor: 'end',
+    })
+    expect(ancoraDoRotulo('acima-direita', 170, 100, MEIA, LARGURA)).toMatchObject({
+      x: 174,
+      textAnchor: 'start',
+    })
+  })
+
+  it('a CAIXA do texto não sai do quadro em nenhuma ponta', () => {
+    // Foi o defeito de "1.808,0" na ficha: grampeado só pelo x do ponto, o texto começava
+    // em −2 px e o número aparecia como ".808,0" — valor errado, não rótulo feio.
+    const esq = ancoraDoRotulo('abaixo', 2, 100, MEIA, LARGURA)
+    expect(esq.x - MEIA).toBeGreaterThanOrEqual(0)
+    const dir = ancoraDoRotulo('abaixo', LARGURA - 2, 100, MEIA, LARGURA)
+    expect(dir.x + MEIA).toBeLessThanOrEqual(LARGURA)
+    // Com âncora `end` o texto se estende para TRÁS do x; com `start`, para a frente.
+    expect(ancoraDoRotulo('acima-esquerda', 5, 100, MEIA, LARGURA).x - 2 * MEIA).toBeGreaterThanOrEqual(0)
+    expect(
+      ancoraDoRotulo('acima-direita', LARGURA - 5, 100, MEIA, LARGURA).x + 2 * MEIA,
+    ).toBeLessThanOrEqual(LARGURA)
+  })
+
+  it('rótulo alto não sobe além do teto do quadro', () => {
+    expect(ancoraDoRotulo('acima', 170, 2, MEIA, LARGURA).y).toBe(9)
+  })
+
+  it('texto mais largo que o quadro encosta na borda em vez de virar NaN', () => {
+    // Cartão espremido: sem o grampo defensivo, mínimo > máximo devolveria lixo e o
+    // rótulo sumiria do SVG sem nenhum erro no console.
+    for (const lado of ['acima', 'abaixo', 'acima-esquerda', 'acima-direita'] as const) {
+      const p = ancoraDoRotulo(lado, 20, 50, 60, 40)
+      expect(Number.isFinite(p.x)).toBe(true)
+      expect(Number.isFinite(p.y)).toBe(true)
+    }
   })
 })

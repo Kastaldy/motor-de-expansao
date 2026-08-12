@@ -634,10 +634,17 @@ def _pagina_de_graficos_da_rede(
         pdf.cell(
             PAGINA_LARGURA - 72,
             12,
+            # O denominador entra junto de propósito. "18 unidades, +9%" sozinho é lido
+            # como o crescimento da carteira inteira; o que o SSS mede é a parte dela que
+            # já existia um ano atrás, e o resto ficou de fora porque abrir loja não é
+            # crescer. Desde 2026-08 o SSS acompanha os filtros da tela, então este texto
+            # fala do RECORTE impresso, não da rede.
             ascii_seguro(
-                f"Mesma base ano a ano (SSS): {sss.get('unidades', 0)} unidades presentes nos "
-                f"dois períodos, faturamento {'+' if (variacao or 0) >= 0 else ''}"
-                f"{_br(variacao, 1)}% contra {sss.get('competencia_base', '')}."
+                f"Mesma base ano a ano (SSS): {sss.get('unidades', 0)} de "
+                f"{sss.get('unidades_recorte', sss.get('unidades', 0))} unidades do recorte "
+                f"estavam abertas nos dois períodos; faturamento "
+                f"{'+' if (variacao or 0) >= 0 else ''}{_br(variacao, 1)}% contra "
+                f"{sss.get('competencia_base', '')}."
             ),
         )
 

@@ -10742,7 +10742,7 @@ colunas (`hex_id_res7`, `fontes_presentes_no_hex`, `n_agregadores_no_hex`,
 
 **Decisão que exige gate humano — emenda ao §8.1 do contrato.** A granularidade de `v1` passa de
 **por academia** para **por hexágono**: com o universo NOMEADO (D1-B) deferido, a chave do snapshot
-embute a `fonte` (`contrato.py:395-413`) e o `nome` não é persistido, logo a mesma academia em TP e WH
+embute a `fonte` (`chave_do_slug`/`chave_hash_estavel` em `contrato.py`) e o `nome` não é persistido, logo a mesma academia em TP e WH
 é sempre duas chaves e "quantos agregadores cobrem esta linha" seria constante `1`. Consequências a
 registrar no contrato: viés conhecido (todas as academias do hex recebem o mesmo `v1`; erro
 sistemático nos hexes densos, direção de **falso negativo**); o ramo "0 agregadores → `v1=1,0`" é
@@ -11457,3 +11457,856 @@ subir a infra (passo posterior); dado de carteira/residual.
 ligado/desligado; ruff + mypy + pytest verdes; **gate visual do Felipe**.
 
 **Risco:** baixo (aditivo, gated por flag e por rede; caminho `basemap=False`/offline preservado).
+
+---
+
+## Fechamento de ciclo — BLK-MA-08 (2026-08-11)
+
+**VEREDITO: CONCLUÍDO.** O WellHub passou a emitir a nota in-app. Código e testes (83 -> 93) em
+`VinhoAbencoado/GymScraping` PR **#6**, mergeado em 2026-08-10; o lado do motor que a consome é o
+BLK-MA-09.
+
+Autorizado pela **DEC-024**, que fatiou o gate conjunto MA-08/MA-09 e fixou o schema: **duas colunas**
+(`nota_wellhub`, `qtd_avaliacoes_wellhub`), ambas agregados numéricos, antes de `data_coleta` em
+`FIELDNAMES`; `value` como float normalizado; e os **três estados distinguíveis** — `4.81`/`105` (tem
+nota), `""`/`0` (sem avaliações), `""`/`""` (bloco ausente do HTML).
+
+**A migração foi executada, não só documentada** (2026-08-05 19:47 -> 2026-08-06 15:50, ~20 h):
+consolidado de **45.527 linhas** em 12 colunas, **36.940 com nota (81,1%)**, 8.587 sem avaliações,
+**0 não-lidas**, 158 falhas (0,35%). Resultado e desvios em `Wellhub/MIGRACAO_NOTA.md`. A migração era
+obrigatória porque `ensure_header` só escreve cabeçalho em arquivo vazio e `append_rows` projeta em
+`FIELDNAMES`: rodar o coletor ampliado contra o CSV antigo corromperia o arquivo em silêncio.
+
+**O que a rodada produziu além do previsto.** A distribuição da nota restrita a `independente`
+(**n = 34.035**: `min = 1,0 · p1 = 4,23 · p5 = 4,59 · p10 = 4,69 · mediana = 4,93 · desvio = 0,192`;
+158 linhas — 0,46% — abaixo de 4,0) virou o insumo do gate do MA-09 e, depois, o domínio
+`[1,0 ; 5,0]` da guarda de rating. A sonda de julho (N = 53) media `4,26-4,98` e **não via a cauda**.
+
+**Efeito colateral que virou bloco próprio.** A rodada completa expôs que o WellHub renomeou a
+taxonomia de atividades e o filtro `tem_musculacao` parou de reconhecê-la — **BLK-MA-11**.
+
+**Risco assumido explicitamente:** o bloco pagou o custo de uma decisão cujo valor só o MA-09
+materializa, e o MA-09 acabou decidindo (DEC-026) **não** ligar o peso do sinal. A nota entrou como
+**coluna-fato**, não como componente do score — o dado é útil e propagado, mas não ordena.
+
+---
+
+## Fechamento de ciclo — BLK-MA-11 (2026-08-11)
+
+**VEREDITO: CONCLUÍDO.** Decidido pela **DEC-025**, saída **(a)** — ampliar o vocabulário — com o
+recorte "V2". Motor em `Kastaldy/motor-de-expansao` PR **#208**; coletor em
+`VinhoAbencoado/GymScraping` PR **#7**. Ambos mergeados em 2026-08-10.
+
+**O defeito.** O WellHub renomeou a taxonomia entre maio e agosto de 2026: "Musculação" virou
+"Treino de força", "Fisiculturismo" e "Treino Híbrido". O `tem_musculacao` procurava a substring
+literal `musculacao` e passou a casar **144 de 45.527 linhas** — descartava a base inteira **em
+silêncio**, sem levantar um único erro.
+
+**Como o vocabulário foi escolhido** (verdade-terreno: as 12.420 unidades de maio que ainda existem,
+todas aprovadas pelo filtro antigo). O **V2 é o joelho da curva**: recall de **99,5%** sobre maio com
+22.174 linhas; V1 -> V2 custa +175 linhas para recuperar +134 unidades, enquanto V2 -> V3 custa +2.831
+para recuperar +8, e o V4 mais +3.840 para +21. Dali em diante o ganho é ruído e o custo é categórico
+— entrariam box de CrossFit e estúdio de ginástica como academia de musculação.
+`csvs_musculacao/` regenerado: **144 -> 22.173 linhas**, de 7 para 27 UFs.
+
+**Duas consequências registradas.** (1) A **comparabilidade com a série de maio quebra**: a mesma
+academia pode entrar hoje e não ter entrado antes, então o churn medido pela camada de vulnerabilidade
+misturaria mudança real com mudança de critério — por isso a **taxonomia saiu do hash de staleness**
+nas duas fontes, com bump `snapshots_concorrentes_v1 -> v2` e emendas ao §3/§6 do contrato. (2) O
+mesmo vocabulário foi espelhado no TotalPass **por prevenção** (emenda 1 da DEC-025), com **delta
+medido = 0**: a fonte ainda usa a taxonomia antiga.
+
+---
+
+## Fechamento de ciclo — BLK-MA-09 (2026-08-11)
+
+**VEREDITO: CONCLUÍDO.** Gate resolvido pela **DEC-026** (PR #212) e implementação entregue pelo PR
+**#217** (que sucedeu o #215, fechado sem merge e reintegrado com duas correções limpas).
+
+**A decisão do gate — D-B = opção (0): o rating é coluna-fato SEM peso.** `SINAIS_INATIVOS` continua
+`("s2",)`, não existe `v2`, os pesos efetivos não mudam e nenhum tripwire de peso foi tocado. **D-A e
+D-C ficaram SEM OBJETO** — sem `v2` em `Σ(wi · vi)` não há régua a escolher nem regime `{s1,s2}` sobre
+o qual decidir a flag.
+
+**O que sustentou a decisão, verificado contra `renormalizar_pesos`:**
+
+```
+score_com_s2  =  0,75 · score_sem_s2  +  25 · v2
+```
+
+Ter nota cobra um corte de **25%** nos outros três sinais; a nota mediana (4,93) devolve 0,44 ponto.
+Break-even em 1,75 -> **99,97% das 34.035 linhas com nota seriam penalizadas por tê-la**. A academia
+que sumiu do agregador e está parada — alvo de maior prioridade pela inversão do §2 — perderia **22
+pontos** por estar listada no WellHub. As alternativas não se sustentaram: duas listas não segmentam
+território (**69,4% dos hexes são mistos**, e **100% dos 200 mais densos**), e anular fora do regime
+majoritário apagaria **22.744 academias** num 60/40 sem dominância.
+
+**Contrato.** Snapshot 10 -> **12** colunas (`snapshots_concorrentes_v2 -> v3`), churn 17 -> **19**
+(`churn_staleness_v1 -> v2`), score 20 -> **22** (`score_vulnerabilidade_v1 -> v2`). `ler_snapshots` e
+`escrever_particao_semana` passaram a declarar `schema=` explícito — sondado antes de aceitar a
+premissa: com pyarrow 23.0.1, `ds.dataset()` infere do **primeiro** arquivo, então numa série com
+partições pré e pós-bump a coluna nova seria dropada das demais **sem erro**. Check de execução do
+critério de aceite: `data/staging/snapshots_concorrentes/` não existia — série em zero semanas, bump
+gratuito, nenhuma partição migrada.
+
+**A guarda de rating, achada por revisão cética depois do CI verde.** A primeira versão degradava
+`qtd = 1.262` (locale pt-BR) mas **levantava `ValueError`** para nota fora do domínio e contagem
+negativa. Mesmo caminho, mesma consequência — a que o próprio PR classificara como crítica:
+`montar_snapshot` roda **antes** de gravar e o `run_weekly_90.sh` sobrescreve os CSVs crus, então a
+exceção não perde uma linha, perde **a semana inteira, para sempre**. Dois defeitos independentes:
+
+1. **Reação.** `_coagir_rating` passou a degradar todos os casos, e o **par** fora dos três estados da
+   DEC-024 (`NA`/`105`, `4.81`/`0`, `4.81`/`NA`) vira `NA`/`NA`. A ordem é **normativa**: domínio por
+   coluna primeiro, par depois — é ela que faz `0.0`/`0` cair em "sem avaliações", não em "não lido".
+2. **Predicado.** O domínio era `[0, 5]`; passou a **`[1,0 ; 5,0]`** (`NOTA_WELLHUB_MIN`/`MAX`). A nota
+   é média de avaliações de 1 a 5 estrelas, logo `0.0` é inalcançável — e é o retorno natural de um
+   extrator quebrado. A guarda barrava o improvável e deixava passar o provável: `0.0`/`105` entrava
+   como nota legítima, e `0.0`/`0` como um quinto estado que não existe no contrato.
+
+`_assert_schema_snapshot` seguiu como rede para frames montados à mão, agora com o domínio certo e
+cobrindo os três pares inválidos; pelo caminho público é inalcançável — esse é o invariante.
+`rating_ilegivel` conta **linhas**, não ocorrências. **9 testes novos**, todos pelo caminho real
+CSV -> `materializar`, e todos provados contra o código anterior por sonda executada.
+
+**Ponto de processo, para não se repetir.** O #215 ficou ~20 h travado por dois motivos que nada tinham
+a ver com o código: (i) PR **empilhado** sobre a branch do gate nunca dispara o `ci.yml`
+(`on: pull_request: branches: [main]`), então o check `test` — *required* — jamais rodou nele; e mudar
+a base gera `edited`, que também não dispara. Só um push (`update-branch`) resolve. (ii) O guard
+invalida `aprovado-humano` a cada `synchronize`/`edited` (fail-closed, `guard.yml:81-111`), então
+aprovar antes de atualizar a branch é trabalho perdido — a label caiu **três vezes**. A ordem correta
+é: mergear o PR de baixo -> `update-branch` -> CI verde -> **só então** pedir a label.
+
+**Guardrail.** READ-ONLY sobre o M1 — nada de `score_priorizacao`, pesos, `config.py`, `pipelines/m1`
+ou artefato oficial. A nota **não** entra em `CAMPOS_HASH_POR_FONTE`; nota e contagem não são PII.
+Suíte no CI: **2803 passed, 87 skipped**.
+
+---
+
+### BLK-MA-08 — Coletar a nota do WellHub (`partnerRating`) no GymScraping
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (coluna nova num coletor de produção, no repo externo `VinhoAbencoado/GymScraping`; muda o schema de um CSV com 12.769 linhas já coletadas e estende o escopo de coleta autorizado pela DEC-013). **Exige emenda à DEC-013 registrada + gate humano obrigatório** antes do Builder. Não pode ser Média: `scripts/aplicar_criticidade_label.py:38` arma **auto-merge** para Baixa/Média, o que furaria o gate que este bloco declara. |
+| **Prioridade** | **DESBLOQUEADO** — o gate foi resolvido pela **DEC-024** (2026-08-04). Antes do **BLK-MA-09**, que é o consumidor da coluna. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — RESOLVIDO pela DEC-024 em 2026-08-04; NÃO reabrir]` → Builder → QA. |
+| **Status** | **Implementado; PR aberto.** Código + testes (83→93) em `VinhoAbencoado/GymScraping` PR **#6**. A **migração foi EXECUTADA** (2026-08-05 19:47 → 2026-08-06 15:50, ~20 h): consolidado de **45.527 linhas** em 12 colunas, 36.940 com nota (81,1%), 8.587 sem avaliações, **0 não-lidas**, 158 falhas (0,35%). Resultado e desvios em `Wellhub/MIGRACAO_NOTA.md`. Falta só o merge do PR. |
+| **Depende de** | **DEC-024** (autoriza o escopo de coleta, fixa o schema persistido e emenda as partes 2 e 3 da DEC-013). |
+| **Autonomia** | **manual (NÃO loop-safe)** — repo externo, coletor de produção que roda na VPS por cron; toca a trilha de scrapers. NÃO marcar loop-safe. |
+
+**Contexto (medido em 2026-07-30/31; evidência em `data/reports/sonda_rating_agregadores_2026-07-31.md`).**
+O contrato afirma, em três lugares, que o WellHub não traz nota: §1
+(`docs/vulnerabilidade_ma_contrato.md:60-62`), §7/D3 (`:220-225`) e §13 (`:509`) — todos derivados da
+premissa *"WellHub = mesmo schema do TotalPass (confirmado por Vinicius, 2026-07-23)"*, registrada
+com a ressalva honesta de que **só havia amostra de TotalPass versionada**. Duas sondas sobre as
+páginas públicas **falsificaram a premissa**: a equivalência vale para o CSV de **saída**, não para o
+HTML de **origem**. A página de parceiro do WellHub traz, no mesmo payload RSC que o coletor já baixa
+e já parseia, o bloco `\"partnerRating\":{\"value\":4.81,\"label\":\"(105 Avaliações)\"}`. Cobertura
+medida: **53 de 54** unidades sorteadas (2 por UF nas 27 UFs), **98,1%**. O TotalPass, na mesma
+sonda, deu **7/7 sem nenhum sinal de nota** — ver **BLK-MA-10**.
+
+**Objetivo.** Passar a extrair `partnerRating` (nota **e** contagem de avaliações) no coletor do
+WellHub e persistir os dois como agregados numéricos no CSV, sem coletar nenhum texto ou autor de
+avaliação. Entregável: `Wellhub/csvs/unidades_wellhub_<uf>.csv` com as colunas novas, e o
+consolidado regenerado de forma íntegra.
+
+**STOP-RULE — RESOLVIDA em 2026-08-04 (ler o desfecho antes de começar).** Este bloco **paga o custo**
+de uma decisão cujo valor só o **BLK-MA-09** materializa. Se o gate do MA-09 decidir
+**D-C = manter `{s1,s2}` provisório** e **D-B = segmentar por regime**, este par de blocos entrega
+**zero** valor ordenável até o S3 amadurecer (~8 meses na cadência real). **Desfecho:** Vinicius
+**FATIOU o gate** (DEC-024) — o MA-08 avança com as decisões de schema, e D-A/D-B/D-C ficam para o
+gate do MA-09, sem serem pré-requisito deste bloco. O risco de o bloco ficar órfão foi **assumido
+explicitamente**. O que o compensa: a rodada de migração exigida por este bloco produz a nota das
+12.769 unidades com o `nome` ao lado, o que converte o pré-requisito do D-A — hoje uma sonda ao vivo
+**sem script versionado** (`data/reports/sonda_rating_agregadores_2026-07-31.md:130-131`) — numa
+consulta local ao CSV, com N grande e restrita a `independente`. Registrar a distribuição medida no
+handoff do QA: ela é o insumo do gate do MA-09.
+
+**Escopo permitido (repo `VinhoAbencoado/GymScraping`, clonado em `../GymScraping`).** Quatro pontos
+de código, todos já localizados: (1) constante `_RSC_PARTNER_RATING_BLOCK_RE` em `Wellhub/extracao.py`
+(após a linha 41), no **mesmo padrão** de `_RSC_ADDRESS_BLOCK_RE` — `r'\\"partnerRating\\":\{[^{}]*\}'`,
+já verificado casando nas 4 fixtures; (2) helper `_extract_partner_rating` entre as linhas 117 e 120,
+reusando `_extract_number(bloco, "value")` e `_extract_string(bloco, "label")`, que **funcionam sem
+modificação** sobre o bloco casado; (3) chamada em `extract` após a linha 171; (4) chaves novas no
+dict de saída entre 182 e 183. Mais a coluna em `FIELDNAMES` (`Wellhub/csv_writer.py`, entre as
+linhas 26 e 27 — **antes** de `data_coleta`, que é o último por convenção nos dois coletores
+agregadores). Testes em `Wellhub/tests/`. Docs: `CLAUDE.md:23` do GymScraping e
+`Wellhub/RECON.md:97` (contrato de colunas), mais as duas correções de carona de docs **já stale
+hoje** (`RECON.md:12` e `csv_writer.py:4`, ambos listando 9 colunas, sem `atividades`).
+
+**Três decisões de produto — RESOLVIDAS pela DEC-024 (parte 5) em 2026-08-04. NÃO reabrir.**
+(a) **Duas colunas, não uma:** `nota_wellhub` e `qtd_avaliacoes_wellhub`, ambas agregados numéricos,
+em `FIELDNAMES` **antes** de `data_coleta`. O `label` embute a contagem (`(105 Avaliações)`) e ela vem
+de graça no mesmo bloco; é o que permite ponderar confiança — 2/53 unidades têm menos de 30
+avaliações, e 5,0 com 13 avaliações não vale o mesmo que 4,73 com 1.262. (b) **`value` como float
+normalizado** (`4.81`, `5.0`): duas das 4 fixtures trazem `5`, não `5.0`, mas `_extract_number` já
+devolve `float` e `str(5.0)` grava `"5.0"`, então normalizar é o comportamento default e custo zero,
+enquanto preservar o bruto exigiria código novo — e o único ganho do bruto (detectar mudança de
+formato) já está coberto por (c). **Travar a escolha em teste.** (c) **Os três estados se distinguem
+pelas duas colunas, sem coluna extra:** *tem nota* = `4.81` · `105`; *sem avaliações* = `""` · `0`;
+*bloco ausente do HTML* = `""` · `""`.
+
+**O estado "sem avaliações" tem forma DIFERENTE.** Numa das 54 unidades sondadas o campo vem como
+`\"partnerRating\":null` — o objeto inteiro nulo, **não** `{"value":null,...}` —, logo após
+`\"newPartner\":{...}`. Um parser que só procure a forma preenchida reporta "ausente" tanto para
+*sem avaliações* (legítimo) quanto para *layout mudou* (quebra do scraper), e uma quebra silenciosa
+entraria no score como `n/d` sem ninguém perceber. As duas condições **têm de ser distinguíveis** —
+é critério de aceite, não detalhe de implementação.
+
+**Armadilha operacional (não é código, e corrompe em silêncio).** `ensure_header`
+(`Wellhub/csv_writer.py:36`) só escreve cabeçalho em arquivo inexistente ou vazio, e `append_rows`
+projeta cada linha em `{field: row.get(field, "") for field in FIELDNAMES}` (`:58`) — é essa projeção
+que descarta chave nova em silêncio (o `extrasaction="ignore"` da linha 55 nunca chega a disparar).
+O checkpoint atual está **completo** (`ok=12769, failed=175, filtered=30708`) e
+`Wellhub/unidades_wellhub.csv` tem 12.769 linhas sob um cabeçalho de **10 colunas**. Rodar o coletor
+com `FIELDNAMES` ampliado contra esse arquivo grava campos a mais sob o cabeçalho antigo — **arquivo
+corrompido, sem erro e sem log**. A migração exige CSV novo (`--output` limpo, ou remoção do arquivo
++ `--no-resume`); os 27 arquivos de `Wellhub/csvs/` se regeneram por `split_by_state`, mas só a
+partir de um consolidado íntegro. O bloco deve entregar o procedimento de migração **escrito e
+executado**, não só o código.
+
+**Guardrail.** READ-ONLY sobre o M1 por construção (o bloco não toca o repo do motor). Anti-PII
+(DEC-012): persistir **apenas** os agregados numéricos — nota e contagem; **nunca** texto ou autor de
+avaliação, que o §11 do contrato proíbe nominalmente, nem qualquer outro não-agregado (foto, data de
+review), pela regra geral de persistir só agregados. Nenhuma alteração no cron ou no runner da VPS
+neste bloco — isso é **BLK-MA-06**. Não tocar `gymscraping/core/contracts.py` (`OFFICIAL_COLUMNS`),
+do qual o WellHub vive fora por decisão explícita (`RECON.md:100`).
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; toda a reativação do sinal 2 no motor —
+ingestão, contrato de snapshot, `v2`, pesos e comparabilidade — que é **BLK-MA-09**; o TotalPass, que
+é **BLK-MA-10**; a reputação externa/Google Places, que segue no **BLK-MA-07** com gate e DEC
+próprios; o plug no cron da VPS e o runbook, que são **BLK-MA-06**; qualquer mudança em
+`CAMPOS_HASH_POR_FONTE` (ver o guardrail do **BLK-MA-09** — a nota **NUNCA** entra no hash).
+
+**Critério de aceite.** Coluna(s) nova(s) extraídas e gravadas, com teste que falharia antes,
+**100% offline** — as 4 fixtures em `Wellhub/tests/fixtures/` já contêm `partnerRating` (norpra
+`4.81`, gabi_marie `4.71`, ctf_londrina `5`, max_trainer `5`), verificado por execução, então nenhum
+teste novo pode tocar a rede; cobertura obrigatória de 4 casos — decimal, **inteiro** (`5`),
+**`partnerRating: null`** e **bloco ausente do HTML**, sendo os dois últimos distinguíveis entre si e
+cobertos por HTML forjado inline (molde em `Wellhub/tests/test_extracao.py:176-184`, já que nenhuma
+fixture os contém); os 2 testes que quebram por construção atualizados
+(`Wellhub/tests/test_extracao.py:29-35`, igualdade de conjunto de chaves, e
+`Wellhub/tests/test_pipeline.py:64`, string literal do cabeçalho); os 4 pontos de doc corrigidos;
+procedimento de migração do consolidado documentado e executado; suíte do WellHub sem regressão
+(baseline medida em 2026-07-31: **83 testes**, via `python -m unittest discover -s Wellhub/tests -t .`
+a partir da raiz do repo do scraper).
+
+---
+
+### BLK-MA-11 — Taxonomia de atividades do WellHub mudou e o filtro de musculação parou de reconhecê-la
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (muda o **critério de negócio** que define o universo de academias do coletor, e esse universo alimenta a camada paralela mercado/residual via `concorrentes/wellhub/csvs`. READ-ONLY sobre o M1). **Exige decisão humana de produto**, não é escolha de engenharia. |
+| **Prioridade** | Antes de qualquer sincronização do consolidado novo para o motor. |
+| **Esteira** | `[GATE — RESOLVIDO pela DEC-025 em 2026-08-07: escolhida a saída (a), com o vocabulário "V2". NÃO reabrir]` → Builder → QA. |
+| **Status** | **Em execução.** Gate decidido (DEC-025). Lado do **motor** feito: taxonomia fora do hash nas 2 fontes, bump `snapshots_concorrentes_v1` -> `v2`, 2 testes novos, emendas no §3/§6 do contrato. Lado do **coletor** feito no repo externo: `tem_musculacao` com o V2 no WellHub (`csvs_musculacao/` regenerado, 144 -> 22.173 linhas em 27 UFs) e o mesmo vocabulário no TotalPass por prevenção (emenda 1 da DEC-025; delta medido = 0). |
+| **Depende de** | BLK-MA-08 (a rodada que expôs o problema) e **DEC-025** (decide o vocabulário e a saída da taxonomia do hash). |
+| **Autonomia** | **manual (NÃO loop-safe)** — repo externo + critério de negócio. |
+
+**O que foi medido (2026-08-05/06).** O WellHub **renomeou a taxonomia de atividades** entre maio e
+agosto: "Musculação" virou **"Fisiculturismo"**, **"Treino de força"** e **"Treino Híbrido"**. O
+filtro `tem_musculacao` (`Wellhub/split_by_state.py`) procura a substring `"musculacao"` e não
+reconhece nenhum dos rótulos novos.
+
+Evidência, em duas escalas: na primeira tentativa de coleta, **2.994 dos 7.577 slugs descartados
+(39,5%) constavam no consolidado de maio** — ou seja, tinham musculação e estavam sendo perdidos; na
+rodada completa, `45.382 de 45.527 linhas excluídas pelo filtro`. Amostra de 10 dos afetados:
+"Fisiculturismo" em 8, "Treino de força" em 7.
+
+**Consequência viva.** `Wellhub/csvs_musculacao/` saiu com **144 linhas** contra 12.769 em maio e
+**não substitui a base anterior**. O `Wellhub/csvs/` (45.526 linhas) está íntegro mas **mudou de
+significado**: contém todas as unidades, não só academias de musculação. Os leitores do motor
+(`demanda_revelada/concorrentes_densos.py` e `vulnerabilidade/snapshots.py`) apontam para
+`concorrentes/wellhub/csvs` — sincronizar o estado atual sem decidir isto muda o universo daquelas
+camadas sem que ninguém tenha decidido.
+
+**As três saídas — DECIDIDO em 2026-08-07 (DEC-025): saída (a), vocabulário "V2". NÃO reabrir.**
+- **(a) Ampliar o vocabulário** de `tem_musculacao` com os rótulos novos. **ESCOLHIDA.** Restaura o
+  volume, mas **quebra a comparabilidade** com a série de maio — consequência aceita e quantificada
+  na DEC-025 (parte 4).
+- (b) Manter o consolidado completo e mover o recorte para o consumidor. *(não escolhida)*
+- (c) Aceitar a base sem filtro como novo padrão, aposentando o subset. *(não escolhida)*
+
+**O vocabulário "V2", com a medição que o escolheu.** `{musculacao, treino de forca, fisiculturismo,
+levantamento de peso, treino hibrido}` sobre a string de atividades normalizada. Verdade-terreno: as
+**12.420** unidades de maio que ainda existem (todas aprovadas pelo filtro antigo, quando a taxonomia
+velha valia). Atual: 144 linhas · recall 1,1%. **V2: 22.174 linhas (48,7%) · recall 99,5%.** É o
+joelho da curva — do V2 para o V3 (`+cross training/crossfit`) custa **+2.831 linhas** para recuperar
+**+8** unidades, e o V4 (`+funcional`) mais **+3.840** para **+21**.
+
+**Achado que ENTROU no escopo deste bloco pela DEC-025 (não estava na redação original).** A mesma
+renomeação de taxonomia atinge o **sinal 4**: `atividades` está dentro de `CAMPOS_HASH_POR_FONTE`
+(`vulnerabilidade/contrato.py`) e mudou em **12.314 dos 12.420** slugs comuns (**99,1%**), contra
+`endereco_formatado` em 63 e `nome` em 33. Sem tratar isso, a primeira coleta pós-renomeação leria a
+base inteira como "cadastro atualizado agora" e o S4 morreria — **independentemente** de qual saída o
+filtro tomasse. A DEC-025 (parte 2) tira `atividades` **e** `modalidades` do hash nas duas fontes, com
+bump `snapshots_concorrentes_v1` -> `v2` (gratuito: a série está em zero semanas).
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; o sinal 2 / `v2` do rating, a régua, os pesos
+e o número de COLUNAS do snapshot (**BLK-MA-09**) — o que este bloco toca no contrato de snapshot é
+**só** o conjunto de campos hasheados e o carimbo de versão, por delegação explícita da DEC-025; o
+cron e o runbook (**BLK-MA-06**); a reputação externa (**BLK-MA-07**).
+
+**Critério de aceite.** DEC registrada (**DEC-025**, feita); `tem_musculacao` com o V2 e teste que
+falharia antes; `csvs_musculacao/` regenerado a partir do consolidado íntegro; taxonomia fora do hash
+nas 2 fontes, com teste que falharia antes, e bump de `VERSAO_CONTRATO_SNAPSHOT`; o efeito sobre a
+comparabilidade da série declarado por escrito (DEC-025 parte 4 + §6 do contrato); a sincronização de
+`Wellhub/csvs/` para o motor **bloqueada** até tudo acima estar aplicado; suíte sem regressão nos dois
+repos; `ruff` limpo; `loop_guard` sem `CRITICO`.
+
+---
+
+### BLK-MA-09 — Ingerir a nota do WellHub até a saída do score, como COLUNA-FATO sem peso
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Alta** (liga um sinal do `score_vulnerabilidade`, o que **rebalanceia todos os pesos efetivos**: S3 cai de ≈0,467 para 0,35 e S4 de ≈0,333 para 0,25; muda o contrato de snapshot e força bump de versão. Camada **PARALELA e READ-ONLY sobre o M1** — não toca `score_priorizacao`, pesos, nem artefatos oficiais, e o score ainda não tem consumidor materializado; **volta a ser Crítica quando o BLK-MA-05 materializar o entregável**). **Exige emenda ao contrato ratificada no gate + gate humano obrigatório** antes do Builder. |
+| **Prioridade** | Depois do **BLK-MA-08**, que produz o insumo. Antes do **BLK-MA-05**, que é o consumidor do score — se o MA-05 sair antes, ordenará sobre uma régua que este bloco vai mudar. |
+| **Esteira** | Block Orchestrator → Planner → `[GATE — RESOLVIDO pela DEC-026 em 2026-08-10: D-B = opção (0); D-A e D-C ficaram SEM OBJETO. NÃO reabrir]` → Builder → QA. |
+| **Status** | **IMPLEMENTADO (2026-08-10).** Gate resolvido pela DEC-026 (D-B = opção 0). Snapshot de 10 -> **12 colunas**, churn de 17 -> **19**, score de 20 -> **22**; bumps `snapshots_concorrentes_v2 -> v3`, `churn_staleness_v1 -> v2`, `score_vulnerabilidade_v1 -> v2`. `ler_snapshots` e `escrever_particao_semana` passaram a declarar `schema=` explícito. **14 testes novos** (5 do contrato + 9 da guarda de domínio), camada em **278**. **Check de execução do critério de aceite: `data/staging/snapshots_concorrentes/` NÃO existe — série em zero semanas, logo o bump foi gratuito e nenhuma partição precisou de migração.** D-A e D-C seguem SEM OBJETO. **Emenda de 2026-08-10 (revisão cética):** a primeira versão tratava `qtd = 1.262` degradando, mas LEVANTAVA `ValueError` para nota fora do domínio e contagem negativa — mesma consequência que o próprio PR classificara como crítica (perder a semana inteira, porque `montar_snapshot` roda antes de gravar e o `run_weekly_90.sh` sobrescreve os CSVs). Corrigido: `_coagir_rating` degrada TODOS os casos e o domínio da nota passou de `[0, 5]` para **`[1,0 ; 5,0]`** — `0.0`, o retorno natural de um extrator quebrado, entrava como nota legítima; o par `4.81`/`0` também passava. |
+| **Criticidade REVISADA** | De **Alta** para **Média** `[DEC-026]`. A justificativa original era "liga um sinal do `score_vulnerabilidade`, o que rebalanceia todos os pesos efetivos" — **isso não acontece mais**: `SINAIS_INATIVOS` fica `("s2",)`, os pesos efetivos seguem `0,20/0,467/0,333` e nenhum tripwire de peso muda. O que resta é ingestão de coluna + bump de contrato de snapshot, sem tocar fórmula. Atenção ao efeito colateral de governança: **Média arma auto-merge** (`scripts/aplicar_criticidade_label.py:38`) — se o PR tocar `tasks/backlog.md` ou `CLAUDE.md`, o guard exige `aprovado-humano` de qualquer forma; se não tocar, entra sozinho com os 4 checks verdes. |
+| **Depende de** | BLK-MA-08 (concluído). **DEC-026** (resolve o gate). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
+
+> ## ⚠️ LEIA ISTO ANTES DO RESTO DO BLOCO — o gate mudou o objetivo (DEC-026, 2026-08-10)
+>
+> **O bloco NÃO reativa mais o `v2`.** Tudo abaixo foi escrito supondo que reativaria; está
+> preservado como registro do que foi considerado, mas **o escopo executável é o desta caixa**.
+>
+> **O que decidiu.** D-B = **opção (0)**: nota e contagem propagadas como **coluna-fato, sem peso,
+> fora de `Σ(wi · vi)`**, no molde do G-D2. `SINAIS_INATIVOS` continua `("s2",)`.
+>
+> **Por quê.** Com peso, o `v2` **inverte o ranking**. Vale
+> `score_com_s2 = 0,75 · score_sem_s2 + 25 · v2`: ter nota cobra 25% dos outros três sinais e a
+> nota mediana devolve 0,44 ponto. Resultado — **99,97%** das 34.035 linhas com nota seriam
+> penalizadas, e a academia `sumiu_recente` + stale cai de **90,00 para 67,94**. As opções (1) e
+> (2) não se sustentam no território: **69,4% dos hexes são mistos**, 94,2% da massa vive em hex
+> misto e **100% dos 200 hexes mais densos** são mistos.
+>
+> **CONTINUA no escopo:** `_COLUNAS_TRABALHO`; `CONTRATO_COLUNAS_SNAPSHOT` de 10 para **12** colunas
+> com bump de `VERSAO_CONTRATO_SNAPSHOT`; **`ler_snapshots` com `schema=` explícito** (hoje a
+> leitura hive de esquema misto dropa a coluna nova **sem erro**); acréscimo ao
+> `CONTRATO_COLUNAS_SCORE`; as correções de contrato; o guardrail do hash.
+>
+> **SAIU do escopo:** remover `"s2"` de `SINAIS_INATIVOS`; a máscara `False` e o laço de inativos em
+> `score.py`; a tupla de `_derivar_componentes`; o biconditional `s2 ⟺ v2`; qualquer mexida em
+> `flag_score_provisorio` / `score_vulnerabilidade_ordenavel`. **Os tripwires de peso efetivo
+> sobrevivem intactos** — não há pesos a atualizar, e a tabela de tripwires do critério de aceite
+> encolhe: só as contagens de coluna mudam.
+>
+> **12 colunas, não 11 — vale independentemente de tudo.** Fechar em 11 economiza uma coluna hoje e
+> custa depois um segundo bump **mais um buraco no histórico**, porque o dado das semanas passadas
+> não existirá.
+>
+> **O D-A e o D-C não foram "decididos" — ficaram sem objeto.** Se um bloco futuro quiser ligar o
+> peso, os dois voltam a existir e exigem gate próprio. A medição que sustenta a recusa da régua
+> linear está no bullet do D-A abaixo.
+
+**Contexto.** O sinal 2 está `n/d` por decisão do gate 2 (D3, §7 do contrato), com a justificativa
+*"nenhum coletor emite nota"*. O **BLK-MA-08** derruba essa justificativa **para o WellHub apenas** —
+o TotalPass segue sem nota (**BLK-MA-10**). O resultado é um cenário que o contrato **nunca
+contemplou**: sinal presente para um **subconjunto** do universo. A aritmética já suporta isso —
+`renormalizar_pesos` (`src/motor_expansao/vulnerabilidade/contrato.py:534-558`) e `_compor_score`
+(`.../score.py:263-305`) renormalizam **por linha, agrupando por padrão de disponibilidade**
+(`score.py:281-290`), e o helper `_saida_valida` (`tests/unit/vulnerabilidade/test_score.py:199-220`)
+já monta três regimes distintos num único frame. **O trabalho é ~20% aritmética e ~80% contrato e
+comparabilidade.**
+
+**Objetivo.** Ligar o `v2` para as linhas com nota, mantendo o score correto, reprodutível e
+**comparável**, e corrigir as três afirmações falsificadas do contrato.
+
+**O que o S2 realmente destrava (formulação corrigida).** O S2 **não** é o único sinal independente
+de maturidade de série: o S1 também é pontual (`score.py:201`, `n_agregadores_no_hex.notna()`), e é
+por isso que hoje, na primeira coleta, o regime é `{s1}` e o score vive em `{0, 50}` — `v1` é
+categórico de domínio efetivo `{0,0 · 0,5}`. O S2 é o **segundo** sinal pontual, e o único que pode
+ser **acrescentado** sem esperar série: com ele, o regime `{s1,s2}` produz
+`0,375 · v1 + 0,625 · v2`, um score **contínuo** já na semana 1 — mas **só para o subconjunto
+WellHub**. E, decisivo: com o código atual, `flag_score_provisorio` (`score.py:294`) marca `{s1,s2}`
+como provisório, e `score_vulnerabilidade_ordenavel` (`:299`) fica nulo — ou seja, **sem o D-C virar,
+o par MA-08+MA-09 não destrava nada ordenável**, e quando o S3 amadurecer o S2 valerá no máximo ~4,6
+dos 100 pontos. Todo o valor de curto prazo da dupla depende do **D-C**.
+
+**Decisões do gate — as três são UMA decisão conjunta (nenhuma é reversível de graça).**
+- **D-A — qual régua absoluta para o `v2`?** O percentil está **fechado** pela emenda G-D3
+  (2026-07-30), que o deixou RESERVADO por não-monotonicidade e não-reprodutibilidade — motivos que
+  valem igualmente para o rating. Mas, ao contrário do `v4`, a régua do `v2` está **genuinamente em
+  aberto**: o §8.1 (`:271-272`) diz `1 − normaliza(rating)` e dá a razão linear apenas como
+  **exemplo** (`ex.:`).
+
+  > **O pré-requisito do D-A foi CUMPRIDO em 2026-08-10, e ele falsifica os números que este
+  > parágrafo trazia.** A medição antiga vinha da sonda de **N=53** sobre o universo WellHub
+  > inteiro; a nova é sobre o consolidado do BLK-MA-08, restrita a `independente` via
+  > `classificar_rede`, com **n=34.035** unidades com nota. Reprodutível: ler
+  > `GymScraping/Wellhub/unidades_wellhub.csv`, filtrar por `classificar_rede(nome) ==
+  > "independente"` e descartar `nota_wellhub` vazia.
+  >
+  > ```
+  > min=1,0   p1=4,23   p5=4,59   p10=4,69   mediana=4,93   max=5,0   desvio=0,192
+  > abaixo de 4,0: 158 (0,46%)      abaixo de 4,5: 947 (2,78%)
+  > ```
+  >
+  > **Correção 1 — o domínio NÃO é 18%.** A sonda mediu faixa `4,26–4,98` e daí saiu o "0,005 a
+  > 0,185 / no máximo ~4,6 pontos". Com N grande existem unidades em **1,0** (cinco delas), então o
+  > `v2` linear ocupa a escala **inteira**, `[0, 1]`. O que é estreito é o *corpo*, não o domínio.
+  > Sob a régua linear e o regime `{s1,s2,s3,s4}` (`w2 = 0,25`), a contribuição em pontos de 100 é:
+  >
+  > | | nota | `v2` | pontos |
+  > |---|---|---|---|
+  > | mediana | 4,93 | 0,018 | **0,44** |
+  > | p10 | 4,69 | 0,078 | 1,94 |
+  > | p5 | 4,59 | 0,103 | 2,56 |
+  > | p1 | 4,23 | 0,193 | 4,81 |
+  > | mínimo | 1,0 | 1,000 | **25,00** |
+  >
+  > Ou seja: para 99% do universo o S2 vale ≤ 4,8 pontos — mas a cauda que interessa ao M&A **não**
+  > está saturada, e é ela que a régua precisa tratar. Isso muda a pergunta do D-A: não é mais "a
+  > régua desperdiça a variância", é "a régua entrega quase tudo o que tem numa cauda de 0,46%".
+  >
+  > **Correção 2 — e esta é a mais séria: a cauda vulnerável é a MENOS confiável.** Das 158 unidades
+  > abaixo de 4,0, a **mediana é de 10,5 avaliações** e **47% têm menos de 10**. No universo com
+  > nota, **38,4% têm menos de 30 avaliações** (mediana geral: 46). A DEC-024 (parte 5, D-1)
+  > justificou a coluna de contagem dizendo que *"2 das 53 unidades da sonda têm menos de 30
+  > avaliações"* — **3,8%**. O número real é **dez vezes maior**. Consequência direta para o D-A:
+  > uma régua que **não** pondere confiança vai colocar no topo do ranking de M&A academias cujo
+  > "sinal" são três avaliações. A contagem deixa de ser refinamento e passa a ser parte da régua.
+  >
+  > Terceira via a avaliar (segue de pé, e agora com mais razão): **min-max sobre faixa fixa por
+  > decisão** (não por lote), preservando monotonicidade e reprodutibilidade. O alerta original
+  > continua válido — não fixar o limite inferior em **4,0**, que satura justamente a ponta
+  > vulnerável — e ganhou custo medido: **158 unidades**. Travar o comportamento do clip em teste.
+- **D-B — comparabilidade entre regimes.** Com S2 só-WellHub, o universo se parte em `{s1,s2,s3,s4}`
+  (pesos `0,15/0,25/0,35/0,25`) e `{s1,s3,s4}` (`≈0,20/0,467/0,333`). Duas academias idênticas, uma
+  listada em cada agregador, **saem com scores diferentes** — e o churn pesa 33% mais no grupo sem
+  nota. O §8.5 (`:406-408`) já diz que regimes diferentes não são comparáveis, e o G-D1 blindou o
+  eixo **temporal**; o que é novo aqui é que a fragmentação deixa de ser transitória e passa a ser
+  **permanente e correlacionada com a fonte**, reduzindo o pool comparável. Três opções, nesta ordem
+  de preferência: **(0)** propagar o rating como **coluna-fato sem peso** (molde do G-D2), o que
+  dissolve D-A e D-C e entrega o dado ao MA-05 sem tocar a régua; **(1)** segmentação obrigatória por
+  regime antes de qualquer ordenação — e então a pergunta ao MA-05 é se ele entrega **duas listas**;
+  **(2)** anular o `ordenavel` fora do regime majoritário — só considerar após medir qual regime é
+  majoritário **no universo do score** (`fonte in FONTES_AGREGADORES` e `rede == independente`), não
+  no universo bruto.
+- **D-C — `flag_score_provisorio` e o valor real do S2.** `score.py:294` calcula
+  `provisorio = (~disponivel["s3"]) & (~disponivel["s4"])`, mas o §8.4 (`:350-351`) define a flag como
+  *"quando S3 e S4 estão imaturos e o score depende só de S1 **(e S2 quando ativo)**"* — parêntese que
+  a implementação não contempla. Com o cron dos agregadores ainda **mensal e pendente**
+  (`docs/infra_producao.md:228`; DEC-013, decisão parte 3, `docs/decisions/DEC-013.md:7`),
+  `MIN_SEMANAS = 8` significa **~8 meses** e `STALE_SEMANAS = 12`, **~12 meses**. Manter `{s1,s2}`
+  provisório é defensável (dois sinais pontuais não substituem série); tratá-lo como ordenável é o
+  que dá valor à dupla no curto prazo. **O gate precisa ver o composto que estará autorizando:**
+  `{s1,s2}` = `0,375 · v1 + 0,625 · v2`, com domínio efetivo dado pela opção escolhida em D-A.
+
+**Escopo permitido (READ-ONLY M1) — 13 pontos.** *(O cabeçalho dizia "12"; a enumeração sempre
+produziu 13 — 10 de código + correções de contrato + reabertura do §8.2 + consequência do §10.
+Corrigido em 2026-08-10.)* `_COLUNAS_TRABALHO` (`snapshots.py:92-107`) — hoje a
+coluna nova é **DROPADA em silêncio** em `snapshots.py:150`; `CONTRATO_COLUNAS_SNAPSHOT`
+(`contrato.py:193-204`), de 10 para 11/12 colunas, **com bump de `VERSAO_CONTRATO_SNAPSHOT`**
+(`contrato.py:34`); **`ler_snapshots`** — a leitura hive de esquema misto (partições pré e pós-bump)
+**dropa a coluna nova sem erro**, e o `v2` sairia nulo para o universo inteiro sem ninguém perceber:
+exige `schema=` explícito ou `unify_schemas`; a rota de ingestão do valor até o score —
+`CONTRATO_COLUNAS_CHURN` (`contrato.py:208-226`) e `vulnerabilidade/churn_staleness.py`, ou um
+terceiro parâmetro em `calcular_score_vulnerabilidade` (`score.py:457-462`), conforme a decisão de
+grão abaixo; remover `"s2"` de `SINAIS_INATIVOS` (`contrato.py:265` — o comentário `:263-264` já
+antecipa: *"Reativar o sinal 2 é remover UMA entrada desta tupla"*); a máscara literal `False` em
+`score.py:202` e o loop `:206-207`; **a tupla literal de `_derivar_componentes`**
+(`score.py:236`: `for sinal, bruto in (("s1", v1_bruto), ("s3", v3_bruto), ("s4", v4_bruto))`) — sem
+tocá-la a coluna `v2` nunca é criada e `_disponibilidade_efetiva` (`:246-247`) devolve `False` para
+sempre, tornando inócua a remoção de `SINAIS_INATIVOS`; `CONTRATO_COLUNAS_SCORE`
+(`contrato.py:286-307`), de 20 para 21 colunas; o biconditional `s2 ⟺ v2` (`score.py:402-411`); a
+flag de `:294` e o `ordenavel` de `:299` conforme D-B e D-C. Mais as correções de contrato: §1, §7 e
+§13, que afirmam a premissa falsificada; a reabertura do §8.2; e a consequência para o
+`score_vulnerabilidade_medio` hex-level do §10, que agrega linhas de réguas diferentes.
+
+> **Duas precisões sobre as correções de contrato, medidas em 2026-08-10.**
+>
+> **(a) São QUATRO afirmações falsificadas, não três.** Além de §1, §7/D3 e §13, a **tabela dos 6
+> sinais do §4** traz, na linha do sinal 2, o insumo como *"**NÃO coletado hoje (nenhum coletor
+> emite nota)**"*. Isso é **factualmente falso** desde o BLK-MA-08 — não é rótulo desatualizado
+> como as menções `MA-08 -> MA-09`, é uma afirmação sobre o mundo que deixou de valer. O parágrafo
+> "Ponteiros a redirecionar" tratava o §4 como mera troca de rótulo; não é.
+>
+> **(b) A justificativa da reabertura do §8.2 estava errada — a conclusão, não.** Este bloco dizia
+> que a reabertura é "exigida pelo item 4 da emenda G-D3". O item 4 diz que a percentil fica
+> RESERVADA e que *"o bloco que a REATIVAR terá de reabrir esta seção"* — e o MA-09 **não** reativa
+> a percentil. O gatilho real é o **corpo do §8.2**, que lista *"percentil por universo … para os
+> sinais contínuos (**rating**, staleness, …)"*: é essa frase que passa a valer para um sinal ativo
+> quando o `v2` liga, e é ela que o D-A tem de resolver.
+
+**Ponteiros a redirecionar (consequência do fatiamento).** Sete comentários no código e um teste
+apontam para o **BLK-MA-08** como o bloco que reativa o S2 e produz o `v2` — o que passou a ser
+**este** bloco quando a frente foi partida em coletor (MA-08) e motor (MA-09):
+`contrato.py` (**5 ocorrências**), `presenca_agregador.py`, `score.py` e
+`tests/unit/vulnerabilidade/test_presenca_agregador.py`. Redirecionar todos para `BLK-MA-09`, junto
+com as menções equivalentes no contrato (`docs/vulnerabilidade_ma_contrato.md`, **15 ocorrências** de
+`MA-08` medidas em 2026-08-10 — a lista de 10 âncoras que este parágrafo trazia era incompleta). São
+comentários e prosa — nenhum altera comportamento —, mas deixá-los apontando para o bloco errado é
+exatamente o defeito de drift doc-vs-código que o §5 do `CLAUDE.md` registra.
+
+> **Os números de linha saíram deste parágrafo DE PROPÓSITO (2026-08-10).** Ele listava
+> `contrato.py:230/:263/:280/:296/:540`, `presenca_agregador.py:80`, `score.py:123` e
+> `test_presenca_agregador.py:400`. Auditoria de 2026-08-07 mediu que **os cinco de `contrato.py`
+> estavam certos e o do teste errado por 1**; os PRs #208 e #209 então deslocaram os de
+> `contrato.py` em ~14 linhas. Ou seja: a lista apodreceu **duas vezes em três dias**, e consertar
+> os números seria só rearmar o relógio. A forma correta de encontrar as âncoras é
+> `grep -rn "BLK-MA-08" src/motor_expansao/vulnerabilidade/ tests/unit/vulnerabilidade/` e
+> `grep -n "MA-08" docs/vulnerabilidade_ma_contrato.md`, que não envelhecem.
+>
+> **Um item que a lista original não tinha e que NÃO é prosa:** `presenca_agregador.py` traz `"v2"`
+> **hard-coded numa trava executável** (`_COLUNAS_DE_SCORE_PROIBIDAS`), logo abaixo do comentário
+> que a lista mandava redirecionar. Ela **levanta** quando o `v2` aparecer na saída do módulo —
+> então o MA-09 tem de tratá-la como código, não como comentário.
+
+**Guardrail (inviolável).** A nota **NUNCA** entra em `CAMPOS_HASH_POR_FONTE`
+(`contrato.py:161-183`). Ela muda a cada avaliação nova; hasheá-la faria toda unidade parecer
+"cadastro alterado" a cada coleta, `semanas_sem_mudanca` nunca cresceria e **o S4 morreria** — é
+exatamente o modo de falha que o comentário `:159-160` descreve para `data_coleta`, que por isso vive
+em `CAMPOS_NUNCA_HASHEADOS` (`:184`). A nota deve ir para lá ou equivalente. Nota e contagem **não**
+são PII e não estão em `COLUNAS_PII_PROIBIDAS` (`contrato.py:311-333`), coerente com o §13
+(*"persiste só o agregado numérico"*); texto e autor de review continuam proibidos pelo §11.
+**A razão real de fazer isto agora:** mudar as primitivas CONGELADAS re-chaveia a série
+(`contrato.py:335-337`), e a série está em zero-a-poucas semanas — este é o único momento em que o
+bump é gratuito, e o custo só cresce.
+
+**Grão a decidir antes de escrever código.** O `v1` foi rebaixado para hex-level porque a chave de
+snapshot embute a `fonte` e "quantos agregadores cobrem esta linha" era constante `1` (emenda
+BLK-MA-03, contrato `:239-269`). O `v2` **não** tem esse problema: a nota é intrínseca à academia.
+Logo o `v2` é o **primeiro sinal genuinamente por-academia** do score — não deve herdar o sufixo
+`_no_hex` nem o join `many_to_one`, e isso decide qual módulo o produz e por onde ele entra em
+`calcular_score_vulnerabilidade`.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; o coletor e o CSV, que são **BLK-MA-08**; o
+TotalPass, que é **BLK-MA-10**; a reputação externa/Google Places (**BLK-MA-07**, gate e DEC
+próprios); o cruzamento com hex quente e o entregável comercial (**BLK-MA-05**); o cron e o runbook
+(**BLK-MA-06**); reabrir a fórmula, os pesos do D4 ou as decisões G-D1/G-D2/G-D3 **exceto** no ponto
+que o item 4 da emenda G-D3 explicitamente delega a este bloco (o §8.2).
+
+**Critério de aceite.** D-A, D-B e D-C decididas no gate DESTE bloco (fatiado da DEC-024) e registradas como emenda ao
+contrato (§7, §8.1, §8.2, §8.4, §8.5), com DEC nova **apenas** se o D-B escolher algo que mude a
+arquitetura da entrega (duas listas, ou anulação por regime); `v2` ligado com teste do regime misto
+`{s1,s2,s3,s4}` × `{s1,s3,s4}` no mesmo frame, provando a política escolhida; teste de que a nota
+**não** entra no hash e que o S4 sobrevive a uma nota oscilando entre coletas; teste de leitura hive
+com uma partição pré-bump e uma pós-bump provando que a coluna nova sobrevive; **check de execução**
+— se `ler_snapshots` devolver ≥ 1 semana no momento do ciclo, o procedimento de migração das
+partições passa a ser obrigatório (hoje é gratuito porque a série está vazia, mas isso é premissa a
+verificar, não a assumir); as **quatro** afirmações falsificadas corrigidas no contrato (§1, §4, §7
+e §13 — ver a precisão (a) acima); os tripwires intencionais atualizados com justificativa,
+**referenciados pelo nome do teste, não pela linha** (a lista por linha apodreceu duas vezes; ver a
+nota no parágrafo de ponteiros):
+
+| Arquivo | Teste | O que trava |
+|---|---|---|
+| `test_score.py` | `test_pesos_alvo_sao_os_quatro_do_d4_e_somam_um` | pesos-alvo do D4 **e** `SINAIS_INATIVOS == ("s2",)` |
+| `test_score.py` | `test_pesos_efetivos_do_plano_b_sao_calculados_nao_digitados` | pesos efetivos `≈0,20 / 0,4667 / 0,3333` em `pytest.approx` |
+| `test_score.py` | `test_schema_22_colunas_em_ordem_e_dtypes` | saída do score com 22 colunas |
+| `test_snapshots.py` | `test_schema_snapshot_12_colunas_em_ordem` | snapshot com 12 colunas |
+| `test_churn_staleness.py` | `test_schema_churn_19_colunas_em_ordem` | **frame de churn com 19 colunas** |
+
+> O último **não estava na lista** e é condicional: ele só quebra se a rota de ingestão escolhida no
+> ponto 4 do escopo passar pelo frame de churn — que é uma das duas rotas que o próprio bloco deixa
+> em aberto. Quem escolher aquela rota precisa saber disto antes, não descobrir no vermelho.
+
+Suíte completa sem regressão contra baseline **medida no início do ciclo** — a regra do §5 do
+`CLAUDE.md` vale aqui e a linha abaixo envelhece por construção. Última medição real: **2638 passed
++ 100 skipped** em 2026-08-10, na `ciclo/BLK-MA-FU1-lote2`. *(O valor que este critério trazia,
+`2334 coletados` de 2026-07-31, estava 400 testes defasado.)* `ruff` limpo; `loop_guard` sem
+`CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
+
+---
+
+---
+
+## Fechamento de ciclo — BLK-MA-02-FU1 (2026-08-11)
+
+**VEREDITO: CONCLUÍDO.** Todas as ressalvas do QA do BLK-MA-02 (2026-07-29) estão fechadas, em três
+PRs: **#194** (item 1 e item 2-B), **#208** (item 2) e **#220** (os 6 menores).
+
+**Item 1 — `flag_troca_chave_na_serie` nascia permanentemente ligada.** A fórmula media "o escopo tem
+origens MISTAS", não "a chave TROCOU de política ao longo da série"; no feed TP/WH a flag sairia
+`True` para todo o universo, todo mês, e o BLK-MA-04 receberia um sinal morto. Redefinida para troca
+TEMPORAL.
+
+**Item 2 — vazamento transitivo de import.** `import motor_expansao.vulnerabilidade` levava ~18 s e
+carregava `sklearn`/`scipy`/`shapely`/`requests`/`pyproj` + 5 módulos de `dashboard/`, contra o que o
+próprio docstring afirmava. O `__init__` de `demanda_revelada` passou a reexportar por `__getattr__`
+(PEP 562): caiu para **~3 s, com zero dos dois**. Era **bloqueante para o BLK-MA-06** — o passo do
+cron quebraria no import se `sklearn` não estivesse no host do coletor.
+
+**Item 2-B — ponto cego de 1 linha no `test_isolamento_imports`.** Das 5 formas de escrever o import
+proibido, o teste por AST pegava **2**; o filtro descartava o nó quando `node.module is None` (o caso
+`from .. import X`). Hoje 5/5, com helper único em `tests/unit/_ast_imports.py`.
+
+**Os 6 menores (#220, 2026-08-11).** O que importa é o **m6**: `python -m ...snapshots` era
+`print(executar())` **sem argumento nenhum** — gravava na raiz de staging default **e podava disco**.
+É o módulo que o BLK-MA-06 pluga no cron e o **único do pacote que apaga arquivo**. Ganhou
+`--base-dir`, `--data-referencia`, `--retencao-semanas` e **`--dry-run`** (não grava, não poda). Sem
+isso o MA-06 não existiria como bloco aplicável.
+
+Os outros cinco: (m3) `CAMPOS_NUNCA_HASHEADOS` passou a ser imposto em **runtime** — era só prosa, e
+injetar `data_coleta` mataria o S4 em silêncio; (m1) frame vazio **preserva** a partição e avisa em
+WARNING — corrigiu-se o docstring, não o comportamento, porque zero linha é sintoma de coleta falha,
+não de universo vazio; (m2) `data_referencia` saiu de `montar_snapshot`, parâmetro morto que sugeria
+que o `snapshot_date` vinha dele; (m4) 41 linhas de prosa acentuadas nos 2 arquivos de teste, **sem
+tocar literal de dado** (`"Sao Paulo"` das fixtures segue ASCII, §2); (m5) tabela D2 do contrato
+marcada como SUPERSEDED.
+
+**Duas escolhas de julgamento registradas.** No **m1**, o QA deixou em aberto corrigir o código ou o
+docstring — corrigiu-se o docstring, pela mesma lógica da guarda de rating do MA-09: apagar ali
+trocaria falha transitória por perda permanente de série. No **m4**, a acentuação usou `tokenize`/`ast`
+para tocar só comentário e docstring; literal de dado ficou intacto porque acentuá-lo mudaria
+normalização e hash.
+
+**Verificação.** 7 testes novos no lote final — 4 falham no código anterior (sonda executada), 3 são
+caracterização do comportamento que o QA pediu para travar. Camada 278 -> 285. Suíte **2814 passed,
+100 skipped**. `ruff`/`mypy` limpos, `loop_guard` sem CRÍTICO. READ-ONLY sobre o M1.
+
+---
+
+### BLK-MA-02-FU1 — Ajustes pós-QA do materializador/extrator de vulnerabilidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (ajustes localizados numa camada paralela READ-ONLY sobre o M1, já entregue e coberta por testes; nenhum toca score/pesos/artefatos do M1 nem cria dependência externa). |
+| **Prioridade** | Antes do **BLK-MA-05/06** (item 1: quem EXIBIR a flag) e antes do **BLK-MA-06** (item 2). **NÃO bloqueia o BLK-MA-04** — verificado em 2026-07-30: o score não consome `flag_troca_chave_na_serie` nem a propaga (trava executável em `_assert_schema_score`). |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | **PARCIAL.** ✅ Item 1 (`flag_troca_chave_na_serie` redefinida para troca TEMPORAL) e ✅ item 2-B (ponto cego do AST: era **2/5**, não 3/5 — hoje 5/5, helper único em `tests/unit/_ast_imports.py`) — PR #194, merged 2026-08-05. ✅ **Item 2 CORRIGIDO em 2026-08-10**: o `__init__` de `demanda_revelada` passou a reexportar por `__getattr__` (PEP 562); `import motor_expansao.vulnerabilidade` caiu de **~18 s com sklearn/scipy/shapely/requests/pyproj + 5 módulos de `dashboard/`** para **~3 s com zero dos dois**. **Desbloqueia o BLK-MA-06.** ✅ **Os 6 menores, em 2026-08-11** — bloco **CONCLUÍDO**. (m6) `snapshots.py` ganhou CLI real: `--base-dir`, `--data-referencia`, `--retencao-semanas` e **`--dry-run`** que não grava e **não poda** — era `print(executar())` sem argumento, gravando e podando disco; pré-requisito do MA-06. (m3) `CAMPOS_NUNCA_HASHEADOS` passou a ser imposto em RUNTIME dentro de `hash_campos_raspados` — antes era só prosa, e injetar `data_coleta` mataria o S4 em silêncio. (m1) Frame vazio agora sai cedo, **preserva** a partição existente e avisa em WARNING: zero linha é sintoma de coleta falha, não de universo vazio — o docstring prometia idempotência que não valia para encolhimento total. (m2) `data_referencia` saiu de `montar_snapshot` (parâmetro morto que sugeria que o `snapshot_date` vinha dele; ele vem por linha de `parse_data_coleta`). (m4) 41 linhas de prosa acentuadas nos 2 arquivos de teste, **sem tocar literal de dado** (`"Sao Paulo"` das fixtures segue ASCII, por §2). (m5) Tabela D2 do contrato marcada como SUPERSEDED, apontando para a emenda do §6. **7 testes novos** (4 falham no código anterior; 3 são caracterização do comportamento que o QA pediu para travar); camada 278 -> **285**. |
+| **Depende de** | BLK-MA-02 (concluído 2026-07-29). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do BLK-MA-02: camada com insumo de PII na origem (DEC-012) e módulo destinado ao cron de produção. NÃO marcar loop-safe. |
+
+**Origem.** Ressalvas do QA do BLK-MA-02 (veredito APROVADO COM RESSALVAS em 2026-07-29; 0 críticos,
+3 médios, 6 menores). Snapshot: `context/handoff/20260729-134525-qa.md`.
+
+**Item 1 (médio, bloqueante para o BLK-MA-05/06) — `flag_troca_chave_na_serie` nasce permanentemente
+ligada.** A fórmula implementada (`churn_staleness.py:203-205`) é
+`|{chave_origem observados no escopo (fonte, rede_ultima)}| > 1`, que mede "o escopo tem origens
+MISTAS", não "a chave TROCOU de política ao longo da série". Sonda do QA: 4 semanas, mesmo escopo,
+uma chave sempre `slug` e outra sempre `hash_estavel`, **zero** troca temporal → a flag saiu `True`
+para as duas. No feed TP/WH o rebaixamento por linha convive com o `slug` na mesma semana, logo a
+flag será `True` para todo o universo, todo mês, e o BLK-MA-04 receberá um sinal morto. **Não é
+desvio do Builder** — é a fórmula que o Planner especificou e que o gate não vetou. Redefinir para
+"o conjunto de `chave_origem` da PRÓPRIA chave ao longo da sua série" ou "houve mudança entre semanas
+consecutivas do escopo", com teste que reproduza a sonda (o `test_flag_troca_chave_na_serie` atual
+passa por coincidência de desenho da fixture, onde a troca É temporal).
+
+**Item 2 (médio, bloqueante para o BLK-MA-06) — vazamento transitivo de import.** O docstring de
+`vulnerabilidade/__init__.py:3-4` afirma que o pacote "NUNCA importa de `dashboard/`"; medido pelo
+QA, `import motor_expansao.vulnerabilidade` leva **7,5 s** e carrega `motor_expansao.dashboard.*` +
+`sklearn`, `scipy`, `shapely`, `requests`. Causa: `snapshots.py:51` importa `classificar_rede` de
+`demanda_revelada.classificacao_rede_menor`, e o `__init__.py` do `demanda_revelada` reexporta o
+pacote inteiro. O `test_isolamento_imports` só olha imports **diretos** por AST, então não pega — o
+CA-1 está literalmente satisfeito. **Não é regressão** (nada do M1, `config.py` ou
+`normalizar_concorrentes` entra; o READ-ONLY continua íntegro), mas este é o módulo que a D6
+ratificou plugar no `run_weekly_90.sh`: se `sklearn`/`scipy` não estiverem no host do coletor, o
+passo do cron quebra no import. Tornar o `__init__` do `demanda_revelada` lazy **ou** replicar o
+classificador (como já foi feito com o `concorrente_id`); no mínimo corrigir o docstring para "não
+importa **diretamente**". Acrescentar teste de isolamento por `sys.modules`, não só por AST.
+
+> **RESOLVIDO em 2026-08-10.** Escolhida a rota do `__init__` lazy, e não a réplica do
+> classificador: ela conserta o vazamento para **todos** os consumidores do `demanda_revelada`, não
+> só para o `vulnerabilidade/`, e não duplica código. `demanda_revelada/__init__.py` passou a
+> reexportar por `__getattr__` (PEP 562), com `_EXPORTS` mapeando cada nome público ao seu
+> submódulo e memoização em `globals()`; o bloco `TYPE_CHECKING` preserva o que o type checker
+> enxerga, e `__all__` fica intacto. Medido: **~18 s -> ~3 s**, de 5 módulos de `dashboard/` e 5
+> deps pesadas para **zero**, e de 12 submódulos de `demanda_revelada` carregados para 4 (todos
+> leves).
+>
+> **A causa registrada acima estava certa, mas incompleta em um ponto que importa.** Não é que
+> "qualquer um dos 9 puxa o conjunto": o peso vem de `backtest_tp05`, `calibracao_*`,
+> `estrutura_funil`, `huff_captura` e `validacao`, que importam `scipy`/`sklearn` no topo. O que o
+> `vulnerabilidade/` realmente precisa — `classificacao_rede_menor` — importa só `re`,
+> `unicodedata` e `pathlib`. O problema nunca foi o submódulo escolhido; era o `__init__` do pai,
+> que o interpretador executa antes de qualquer submódulo.
+>
+> **Dois defeitos do próprio teste, achados no caminho e corrigidos junto** (valem como lição de
+> método, não só como conserto):
+> 1. O subprocesso não recebia `PYTHONPATH` e resolvia `motor_expansao` pela **instalação
+>    editável** — que aponta para o clone principal, não para o worktree. Ele media outra árvore em
+>    silêncio. Agora recebe o `src` deste checkout e **assere a procedência** do que mediu.
+> 2. Sob a captura do pytest no Windows, o `subprocess` levantava
+>    `OSError: [WinError 6] Identificador inválido` antes de rodar qualquer coisa. Como o teste
+>    estava marcado `xfail(strict=True)`, essa OSError contava como "falha esperada": **o teste
+>    errava em vez de medir, e a marca escondia isso**. Corrigido com `stdin=DEVNULL`. Fica o
+>    princípio: `xfail` engole exceção de qualquer natureza, então um `xfail` de longa duração pode
+>    estar mascarando um teste quebrado em vez de um defeito real.
+
+**Item 2-B (médio, acrescentado pelo QA do BLK-MA-03 em 2026-07-29) — ponto cego de 1 linha no
+`test_isolamento_imports`, que enfraquece o guardrail nos DOIS blocos.** O QA do MA-03 construiu uma
+sonda de injeção e mediu: das 5 formas de escrever o import proibido, o teste por AST pega 3 e
+**deixa passar 2** — `from .. import demanda_revelada` e
+`importlib.import_module("motor_expansao.demanda_revelada")`. Causa: o filtro
+`if isinstance(node, ast.ImportFrom) and node.module` **descarta o nó quando `node.module is None`**
+(que é exatamente o caso `from .. import X`), e os aliases nunca são coletados. O buraco vale para
+**todos** os módulos proibidos (`pipelines.m1`, `dashboard`, `api`, `censo`, `config`,
+`normalizar_concorrentes`), não só para `demanda_revelada`. **Impacto hoje: zero** — nenhum módulo
+entregue usa essas formas. **Correção (1 linha):** coletar `a.name for a in node.names` também quando
+`node.module is None`. Fica neste bloco porque a mesma linha fecha o teste compartilhado
+(`test_snapshots.py`) e o teste próprio do MA-03 (`test_presenca_agregador.py`), que se apoiou nele.
+
+**Item 3 (menores, 6).** (m1) `escrever_particao_semana` com frame vazio não limpa a partição
+anterior da mesma semana e devolve caminho inexistente — a direção é segura (preserva dado), mas
+contradiz o docstring e não tem teste. (m2) `montar_snapshot(df, data_referencia)` nunca usa
+`data_referencia` — parâmetro morto que sugere que o `snapshot_date` sai dele. (m3)
+`CAMPOS_NUNCA_HASHEADOS` não é imposto em runtime: injetando `data_coleta` em
+`CAMPOS_HASH_POR_FONTE` nada levanta; um `assert` dentro de `hash_campos_raspados` fecha o buraco no
+próprio caminho que ele protege. (m4) §2 acentuação: identificadores 100% ASCII em todos os 7
+arquivos, mas a **prosa** de `test_snapshots.py` (9 chars) e `test_churn_staleness.py` (5) não está
+acentuada. (m5) `docs/vulnerabilidade_ma_contrato.md:429` (tabela D2) ainda diz "chave = `slug`
+nativo + `data_coleta` (fallback `concorrente_id`)", afirmação que a emenda do §6 descartou — basta
+um ponteiro `[ver emenda 2026-07-29 no §6]`. (m6) `python -m motor_expansao.vulnerabilidade.snapshots`
+chama `executar()` sem argumento: escreve em `data/staging/` **e poda disco** sem `--base-dir`,
+`--data-referencia` nem `--dry-run` — faltam `argparse` e modo seco para o módulo que vai ao cron.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; `MIN_SEMANAS`/`STALE_SEMANAS` (valores do
+gate de 2026-07-23, revisitar só no BLK-MA-06); o plug no `run_weekly_90.sh` (BLK-MA-06); `v3`/`v4` e
+`score_vulnerabilidade` (BLK-MA-04).
+
+**Critério de aceite.** Itens 1 e 2 corrigidos com teste que falharia antes da correção (o do item 2
+por `sys.modules`); os 6 menores endereçados ou explicitamente recusados com justificativa; suíte
+completa sem regressão (baseline do BLK-MA-02: **2186 coletados**); `ruff` limpo;
+`python scripts/loop_guard.py` sem `CRITICO`; READ-ONLY sobre o M1 provado pelo diff.
+
+---
+
+- BLK-MA-03 (concluído 2026-07-29) — ver tasks/completed.md
+
+---
+
+### BLK-MA-03-FU1 — Ajustes pós-QA do sinal 1 (presença em agregador)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (documentação de limite conhecido, um teste de congelamento, correção de ponteiro de linha e acentuação de prosa; nenhuma mudança de comportamento do sinal). |
+| **Prioridade** | Antes do **BLK-MA-05**, que é quem exibirá "densidade do alvo". **NÃO bloqueia o BLK-MA-04** — verificado em 2026-07-30: `v1` deriva de `n_agregadores_no_hex`, e as colunas `n_academias_independentes_*` não entram no score nem na sua saída. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | **CONCLUÍDO em 2026-08-12** (PR #223, merge commit `57bd5c7`). Itens 1, m1, m2 e m4 do critério de aceite entregues com sonda de prova. **m3, m5 e m6 RECUSADOS explicitamente** — não estão no critério de aceite e nenhum é defeito ativo: (m3) é imprecisão de um handoff já arquivado, sem artefato vivo a corrigir; (m5) é inalcançável pelo caminho público (o filtro do passo 3 garante o universo) e o `_assert_schema` já barra a saída — uma guarda privada duplicaria a trava sem fechar buraco algum; (m6) é divergência de contagem de warnings, pré-existente e alheia a este bloco. |
+| **Depende de** | BLK-MA-03 (concluído 2026-07-29). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
+
+**Origem.** Ressalvas do QA do BLK-MA-03 (APROVADO COM RESSALVAS em 2026-07-29; 0 críticos, 2 médios,
+6 menores). Snapshot: `context/handoff/20260729-162056-qa.md`. **O médio M1 (ponto cego do AST no
+`test_isolamento_imports`) NÃO está aqui** — foi para o `BLK-MA-02-FU1` (Item 2-B), porque a mesma
+correção de 1 linha fecha o teste compartilhado e o teste próprio deste bloco.
+
+**Item 1 (médio) — `n_academias_independentes_*` super-conta sob rotação de chave.** Sonda do QA: uma
+única academia observada nas semanas 1-2 sob `chave_origem = slug` e nas semanas 3-4 sob
+`hash_estavel` sai como `n_academias_independentes_totalpass = 2`. A redução dedupla por
+`(fonte, chave_snapshot)`, então as duas encarnações da MESMA academia sobrevivem como duas chaves.
+**Não contamina `n_agregadores_no_hex`** (segue `1`), que é o insumo real do `v1` — mas o contrato
+vende as colunas 4/5 ao consumidor como "densidade do alvo" ("hex com 6 independentes num agregador
+só é uma tese diferente de hex com 1"), e é essa leitura que fica inflada. O módulo irmão já tem
+`flag_troca_chave_na_serie` exatamente para este modo de falha; aqui não há menção no docstring, nem
+no comentário da coluna em `contrato.py`, nem teste. **Atenuante:** o rebaixamento global da chave só
+ocorre se o chamador INJETAR a taxa medida (default `None`, `contrato.py:47-51`), logo é raro e
+deliberado. **Correção:** registrar o limite no docstring do módulo e no comentário das colunas 4/5,
+mais um teste que congele o comportamento.
+
+**Item 2 (menores, 6).** (m1) A emenda G1 cita `vulnerabilidade/contrato.py:395-413` como prova de que
+`chave_do_slug`/`chave_hash_estavel` embutem a `fonte`; era verdade em `a0430b8`, mas o **mesmo
+commit** acrescentou 41 linhas acima delas — hoje estão em **432-450**, e `395-413` aponta para
+`rotulo_de_teste`/`entrada_tecnologia_totalpass`. O ponteiro errado está em **2 artefatos
+permanentes**: `docs/vulnerabilidade_ma_contrato.md:241` e este `tasks/backlog.md`. A afirmação é
+verdadeira e tem teste; só a referência precisa ir para `432-450`.
+**[correção 2026-08-12, BLK-MA-03-FU1] `432-450` também já envelheceu — o ponteiro foi ANCORADO POR
+NOME, e DE PROPÓSITO não reapontado para um novo intervalo.** Medido: `432-450` hoje aponta para
+`derivar_semana_iso`/`parse_data_coleta`, e as funções certas já se mudaram outra vez. O
+deslocamento acumulado desde o BLK-MA-03 é de **+115 linhas**, e a maior fatia **não** é dos blocos
+que se suspeitaria: `BLK-MA-04` sozinho vale **+59** (51%), contra `+20` do MA-09, `+14` do MA-11 e
+`+22` de dois follow-ups. Este seria o **terceiro** endereço da mesma afirmação em ~2 semanas — e
+escrever um quarto não resolveria nada: o próprio diff deste FU1 acrescenta 5 linhas a `contrato.py`
+acima das funções e invalidaria o número no ato. É o número de linha que é o defeito, não o valor
+dele, então os 3 artefatos passaram a citar **`chave_do_slug` e `chave_hash_estavel` pelo nome**,
+sem intervalo algum. Também medido: o ponteiro estava em **3** artefatos, não 2 —
+`tasks/completed.md` (fechamento do BLK-MA-03) carregava a mesma referência, e o endereço
+`docs/...:241` deste parágrafo era, ele próprio, stale (a linha real era a `325`). (m2) §2
+acentuação: 4 linhas de prosa sem acento — `presenca_agregador.py:69,308,309` e
+`test_presenca_agregador.py:34` (medido: a linha real é a **33**, `# Sao Paulo`) — contra a
+afirmação explícita do handoff do Builder de que a prosa estava acentuada. Mesma classe da ressalva
+`m4` do QA do MA-02. **Não** contam como defeito as mensagens de `raise` em ASCII (cópia deliberada do
+precedente em `churn_staleness.py:222`; §2 mira texto de usuário, não exceção de desenvolvedor).
+(m3) O handoff do Builder afirma "nada mais do texto do Planner foi alterado", mas o item (b) da
+emenda tem **2 linhas aditivas** além das 29 byte-idênticas — o acréscimo é útil, a afirmação é que
+está imprecisa. (m4) O `fillna("")` do `_assert_schema` (desvio 2 declarado pelo Builder) foi provado
+necessário pelo QA — sem ele, `fontes_presentes_no_hex = pd.NA` faz a comparação mascarada devolver
+`0` e a checagem passar em silêncio —, mas **nenhum teste o trava**: o teste existente usa
+`"wellhub"`, não `pd.NA`. (m5) `_agregar_por_hex` emite `n_agregadores_no_hex = 0` em silêncio se
+chamado direto com `fonte = "unidades"`; pelo caminho público é inalcançável (o filtro garante o
+universo) e o `_assert_schema` barra, mas a função privada não tem guarda própria. (m6) Divergência
+trivial de contagem de warnings no smoke de import (2 relatados vs 4 medidos), pré-existente.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; `v1`, pesos e `score_vulnerabilidade`
+(BLK-MA-04); a granularidade hex de `v1` (ratificada no gate G1 de 2026-07-29 — não reabrir); o ponto
+cego do AST (está no `BLK-MA-02-FU1`, Item 2-B).
+
+**Critério de aceite.** Limite da rotação de chave documentado no docstring e no comentário das
+colunas 4/5, com teste que o congele; ponteiro `432-450` corrigido nos 2 artefatos; 4 linhas de prosa
+acentuadas; teste do `fillna` com `pd.NA`; suíte completa sem regressão (baseline do BLK-MA-03:
+**2230 coletados**); `ruff` limpo; `loop_guard` sem `CRITICO`.
+**[nota 2026-08-12] A baseline `2230` é HISTÓRICA** (CLAUDE.md §5: contagem de ciclo envelhece a
+cada ciclo, não serve de tripwire). Medida no início deste FU1, na `main` em `4ab83f4`: **2918
+coletados**. O critério "sem regressão" foi lido contra ela, e o ponteiro foi ancorado por nome em
+**3** artefatos em vez de reapontado para um novo intervalo — ver a correção do m1 acima.
+
+---
+
+### BLK-MA-04-FU1 — Ajustes pós-QA do score de vulnerabilidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (um teste de isolamento endurecido, um regime sem cobertura, e 4 leves de precisão de texto/asserção; nenhuma mudança na fórmula nem nos pesos). |
+| **Prioridade** | Antes do **BLK-MA-05**, que é o consumidor do score. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | **CONCLUÍDO em 2026-08-12** (PR #223, merge commit `57bd5c7`; o Item 1 já viera no PR #194). ✅ Item 1 (PR #194, merged 2026-08-05) — a mesma correção do AST fechou o teste novo deste bloco, e a taxa foi medida em **2/5** (o item 2-B do MA-02-FU1 subcontava). ✅ Item 2 — `test_regime_so_s3` + `test_ordenavel_nao_separa_regimes_de_tamanho_diferente`, e a emenda ao §8.5 do contrato. ✅ Os 4 leves (a,b,c,d), mais as duas **observações do QA** que o bloco pediu para não perder (o comentário de `SINAIS_INATIVOS` em `renormalizar_pesos` e o registro de que as duas checagens por substring são heurísticas de defesa secundária). |
+| **Depende de** | BLK-MA-04 (concluído 2026-07-30). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
+
+**Origem.** Ressalvas do QA do BLK-MA-04 (APROVADO COM RESSALVAS em 2026-07-30; 0 críticos, 2 médios,
+7 leves). Snapshot: `context/handoff/20260730-110503-qa.md`.
+
+**Item 1 (médio) — o teste de isolamento novo prova 2 das 5 formas de import.** O Builder replicou,
+num arquivo NOVO (`tests/unit/vulnerabilidade/test_score.py::test_modulo_nao_importa_demanda_revelada`),
+o ponto cego do AST já registrado no `BLK-MA-02-FU1` Item 2-B. Aplicar ali a **mesma correção de 1
+linha** (coletar `a.name for a in node.names` também quando `node.module is None`) e **atualizar o
+texto do Item 2-B**, que agora subconta: são **3 arquivos** do pacote (4 com
+`tests/unit/demanda_revelada/test_concorrentes_densos.py`), e a taxa da checagem por substring é
+**2/5**, não 3/5. Teste que falharia antes: sonda de injeção com as 5 formas.
+
+**Item 2 (médio) — o regime de 1 sinal `{s3}` não tem teste, e o G-D1 não o cobre.** O QA mediu:
+`score = 100.0`, `flag_score_provisorio = False`, `score_vulnerabilidade_ordenavel = 100.0`. É **fiel
+ao §8.4 ratificado** (S3 maduro é sinal maduro), mas significa que a coluna ordenável — o guardrail
+que o G-D1 criou — **não protege** um regime de 1 sinal quando esse sinal é o S3. Inalcançável pelo
+caminho `base_dir`; alcançável por frames injetados, que é justamente o modo que o BLK-MA-05 pode
+usar. Acrescentar `test_regime_so_s3` asserindo `tokens == ["s3"]`, peso efetivo `1,00` e que a
+ordenável **fica preenchida** — para o comportamento ser escolha explícita, não descoberta do MA-05.
+Registrar no §8.5 que a ordenável não cobre regimes de 1 sinal com S3, e que o MA-05 deve segmentar
+por `n_sinais_disponiveis` antes de ordenar.
+
+**Item 3 (leves, 4).** (a) `test_score.py:567` tem **asserção morta**: o QA mediu que
+`float(score or 1.0) != 0.0` passa tanto para `NaN` quanto para `0.0`; trocar por
+`assert not (out["n_sinais_disponiveis"].eq(0) & out["score_vulnerabilidade"].eq(0.0)).any()`.
+(b) `test_snapshots.py:167` — o comentário de seção ainda diz "sobre os **4** módulos do pacote",
+mas a tupla passou a ter 5 módulos + o pacote. (c) O docstring de `score.py` abre com "Módulo **PURO
+e sem I/O**", mas o modo `base_dir` lê disco **transitivamente** pelos dois extratores; o texto do
+Planner era mais preciso ("pura quando os frames são injetados"), e o teste só prova que não
+**escreve**. (d) Faltam dois testes de borda: `presenca` bem-formada porém **vazia** com `churn` não
+vazio (comportamento sondado e correto, sem teste), e a **ordem de validação dos insumos** —
+`_assert_schema_presenca_agregador` **não roda** quando `churn.empty`, porque o retorno antecipado
+vem antes; direção segura (saída vazia e validada), mas sem teste que trave a ordem, e não declarada
+como desvio pelo Builder.
+
+**Observações do QA que NÃO viram item (registradas para não se perderem).** `renormalizar_pesos` não
+conhece `SINAIS_INATIVOS` (aceita `"s2"` porque ele está em `SINAIS_ORDEM`) — não é defeito, a
+primitiva é sobre pesos e `_disponibilidade_efetiva` força `s2` a `False`, mas vale 1 linha de
+comentário para o **BLK-MA-08** não se surpreender. E `test_modulo_nao_usa_funcao_de_percentil` /
+`test_modulo_nao_escreve_em_disco` são checagens por **substring da fonte**: não pegariam
+`scipy.stats.rankdata`, `np.percentile` sob alias, nem `Path.write_text` — são defesa secundária
+legítima (a primária, `test_v4_nao_depende_do_universo`, o QA reproduziu e é robusta), mas o
+docstring poderia dizer que são heurísticas.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; a fórmula, os pesos do D4 e as três decisões
+do gate G-D1/G-D2/G-D3 (ratificadas em 2026-07-30 — não reabrir); o cruzamento com hex quente e o
+entregável comercial (BLK-MA-05); o cron (BLK-MA-06).
+
+**Critério de aceite.** Itens 1 e 2 corrigidos com teste que falharia antes; os 4 leves endereçados
+ou explicitamente recusados com justificativa; suíte completa sem regressão (baseline do BLK-MA-04:
+**2311 coletados**); `ruff` limpo; `loop_guard` sem `CRITICO`.
+
+

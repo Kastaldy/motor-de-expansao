@@ -3,8 +3,10 @@
   "name": "Ultra Overlay (vias + rotulos, fundo transparente)",
   "metadata": {
     "ultra:desc": "Overlay TRANSPARENTE composto POR CIMA do choropleth: a MALHA VIARIA em branco (o que orienta a leitura) e, por cima dela, os nomes. Resolve a dor real: o choropleth de setores cobre as ruas do basemap e o mapa vira mancha de cor sem referencia urbana. As vias vem da camada `transportation` (existe ate z14 no mbtiles, ao contrario de `transportation_name`).",
-    "ultra:tamanhos": "O texto e' DELIBERADAMENTE maior que o de um basemap de tela. Este mosaico e' buscado no MESMO zoom do frame (bump 0) e depois o PNG de 1280x760 ainda e' reduzido ao entrar no PDF; com os tamanhos de um estilo normal os nomes chegariam ao relatorio com ~3 pt.",
-    "ultra:calibragem": "Tamanhos calibrados contra o PREVIEW REAL do frame de 1,5 km (mosaico reduzido ao map_box de 900 px) em 2026-07-29, com `zoom_bump=-1`. Nao sao tamanhos de basemap de tela: o mosaico ainda e ~2,5x mais denso que o PNG final, e o PNG e' reduzido de novo ao entrar no PDF.",
+    "ultra:tamanhos": "O texto e' DELIBERADAMENTE maior que o de um basemap de tela: o mosaico e' buscado no MESMO zoom do frame (bump 0) e depois reduzido ao `map_box`, e o PNG ainda encolhe de novo ao entrar no PDF; com os tamanhos de um estilo normal os nomes chegariam ao relatorio com ~3 pt. O fator de reducao NAO e' fixo — depende do raio vigente; o valor medido esta em `ultra:calibragem-vigente`.",
+    "ultra:calibragem": "OBSOLETA desde a DEC-021 — mantida so como historico: 'tamanhos calibrados contra o preview real do frame de 1,5 km (mosaico reduzido ao map_box de 900 px) em 2026-07-29, com zoom_bump=-1; o mosaico ainda e ~2,5x mais denso que o PNG final'. Ver `ultra:calibragem-vigente`.",
+    "ultra:calibragem-vigente": "MEDIDA em 2026-08-10 no caminho real do relatorio (`_frame_box_metric` + `_labels_grid(zoom_bump=0)`, canvas 1000x760, lat -16,7), com o raio de 1,0 km que a DEC-021 fixou em 2026-07-29: frame de 2,29 km x 2,16 km, `map_box` de 609 x 574 px (NAO 900), mosaico no zoom 15 a 2,288 m/px contra 3,763 m/px do PNG final. Logo o mosaico e' apenas **1,64x** mais denso que o PNG — nao os ~2,5x da calibragem antiga, porque encolher o raio de 1,5 para 1,0 km aproximou as duas densidades. ARMADILHA, e o motivo de este texto ter saido ERRADO na primeira versao: os tiles sao `@2x`, entao 1 tile = 512 DEVICE px cobrindo 256 STYLE px de chao. A densidade acima esta em DEVICE px, mas `text-size` esta em STYLE px — dividir um pelo outro subestima a chegada em exatamente 2x. O fator correto e' `2 / 1,64 = x1,216`. Consequencia pratica no z15: bairro 23,3 style px -> **~28 px** no PNG; via principal 28 -> ~34; localidade 36 -> ~44; agua 18 -> ~22. A trava de regressao da DEC-004 (densidade do mosaico <= 3x a do frame) segue satisfeita com margem. QUEM MEXER NO RAIO mexe nestes numeros: rodar de novo a medicao (script no PR do BLK-BASEMAP-07) antes de mexer em `text-size`, e NAO esquecer o fator 2 do `@2x`.",
+    "ultra:hierarquia-do-bairro": "2026-08-06 (Juan, gate visual dele): o `rotulo-bairro` era o MAIOR texto do mapa (24/34/40) e mais escuro (8%) que o nome de avenida (18/26/32 a 12%) — invertia a hierarquia e poluia o frame, ja que o nome de bairro e' referencia de contexto e nao o dado. VALORES ESCOLHIDOS: 16/22/26, tinta 28%, halo 2.2, `text-letter-spacing` 0.02, `text-max-width` 7, `text-padding` 14. O corpo cai ABAIXO do nome de avenida e encosta no de rua secundaria (21/26): o bairro passa a se ENCAIXAR na malha viaria em vez de domina-la, que era o pedido literal do Juan. `text-max-width` 7 resolve a outra metade da queixa ('os nomes estao muito grandes'): nome longo QUEBRA em duas/tres linhas em vez de virar faixa atravessando o mapa, e nao custa corpo. `text-padding` FICA em 6: a versao inicial subia para 14 alegando descartar 'rotulo concorrente', mas a alegacao estava INVERTIDA — o `rotulo-bairro` vem DEPOIS das camadas de nome de via e o MapLibre posiciona as camadas de tras para frente, entao e' o bairro que VENCE a colisao; engordar a caixa dele apagaria nome de AVENIDA, o oposto do desejado. SEPARACAO DE CAMADA (o ponto mais importante): `city`/`town`/`village` SAIRAM deste filtro para a camada nova `rotulo-localidade`, que mantem 24/34/40 e tinta 8% INTACTOS. Sem isso o corte vazava para o **Relatorio Municipal**, que compoe este mesmo estilo (`relatorio_municipal.py` -> `_fetch_labels`) nos zooms z11-z13: la o nome de MUNICIPIO passaria a sair menor (16-20 px) e mais claro que todo nome de avenida (18-23 px a 12%), justo onde a `rotulo-via-secundaria` (minzoom 15) nem desenha e o nome de cidade e' a unica ancora geografica. O gate visual cobriu SO o Pontual. COMO FOI DECIDIDO: comparador de tres vias (original x corte leve 20/28/33 x este) sobre o choropleth real de Goiania, avaliado pelo Juan em 2026-08-06; o corte leve foi testado e RECUSADO por ficar perto demais do original. LIMITE DA AVALIACAO, medido depois (2026-08-07): o comparador rodou a 3 km de largura, porem o frame vigente e' de 2,29 km (raio 1,0 km da DEC-021) — e nessa largura, no ponto testado, o centroide de 'Marista' cai FORA do quadro e os tres cortes ficam indistinguiveis. O rotulo de bairro e' um PONTO unico da camada `place`, ancorado no centroide: se ele nao cai no quadro, nao ha nome. Logo o ganho desta mudanca e' REAL porem INTERMITENTE — so aparece quando o centroide entra no frame, e ai o nome era de fato o texto mais pesado do mapa. AGUA: o `rotulo-agua` cai de 20/26 para 15/19, ganha `text-max-width` 8 e a tinta vai de 32% para 42% de luminosidade. Sem isso ele ficava com 24,5 px no z15 contra os 23,3 do bairro — ou seja, virava o MAIOR rotulo de contexto do frame, em azul saturado e SEM quebra de linha, reproduzindo pela camada de agua exatamente a queixa que originou este bloco. NAO confundir com o defeito sub-pixel da DEC-004 (texto chegando com 0,54 px): la o problema era o `zoom_bump`, resolvido e intocado aqui.",
     "ultra:limite-do-dado": "O `brazil.mbtiles` e' z0-14 e no schema OpenMapTiles a camada `transportation_name` so traz nome de via MENOR a partir de z16. O tileserver rasteriza por overzoom, mas nao inventa dado: no frame do relatorio saem BAIRROS e AVENIDAS, nao ruas residenciais. A classe `residential` fica no filtro de proposito — passa a valer sozinha se um dia o mbtiles for regerado com maxzoom >= 16 (custo: horas de processamento e varios GB)."
   },
   "sources": {
@@ -508,10 +510,68 @@
         [
           "suburb",
           "neighbourhood",
-          "quarter",
-          "village",
+          "quarter"
+        ],
+        true,
+        false
+      ],
+      "layout": {
+        "text-field": [
+          "coalesce",
+          [
+            "get",
+            "name:pt"
+          ],
+          [
+            "get",
+            "name"
+          ]
+        ],
+        "text-font": [
+          "Noto Sans Regular"
+        ],
+        "text-size": [
+          "interpolate",
+          [
+            "linear"
+          ],
+          [
+            "zoom"
+          ],
+          11,
+          16,
+          14,
+          22,
+          17,
+          26
+        ],
+        "text-letter-spacing": 0.02,
+        "text-max-width": 7,
+        "text-line-height": 1.1,
+        "text-padding": 6
+      },
+      "paint": {
+        "text-color": "hsl(0,0%,28%)",
+        "text-halo-color": "hsl(0,0%,100%)",
+        "text-halo-width": 2.2
+      }
+    },
+    {
+      "id": "rotulo-localidade",
+      "type": "symbol",
+      "source": "openmaptiles",
+      "source-layer": "place",
+      "minzoom": 11,
+      "filter": [
+        "match",
+        [
+          "get",
+          "class"
+        ],
+        [
+          "city",
           "town",
-          "city"
+          "village"
         ],
         true,
         false
@@ -547,6 +607,8 @@
           40
         ],
         "text-letter-spacing": 0.04,
+        "text-max-width": 8,
+        "text-line-height": 1.1,
         "text-padding": 6
       },
       "paint": {
@@ -585,13 +647,16 @@
             "zoom"
           ],
           12,
-          20,
+          15,
           16,
-          26
-        ]
+          19
+        ],
+        "text-max-width": 8,
+        "text-line-height": 1.1,
+        "text-padding": 6
       },
       "paint": {
-        "text-color": "hsl(205,42%,32%)",
+        "text-color": "hsl(205,42%,42%)",
         "text-halo-color": "hsl(0,0%,100%)",
         "text-halo-width": 2.0
       }

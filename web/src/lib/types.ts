@@ -35,6 +35,18 @@ export interface Hex {
   faixa: string | null
   conc: number
   ultra: number
+  /* PROTOTIPO da chave de raio (2 km centroide vs 1 km por area).
+     `conc1k` = quantas concorrentes ALCANCAM este hexagono pelo disco de 1 km — e o que
+     colore o mapa no modo novo. `oferta1k` = residual sob esse modelo.
+     Ausentes (undefined) quando o backend nao tem o parquet de concorrentes montado;
+     e' isso que faz a chave nem aparecer, em vez de mostrar zeros mentirosos. */
+  conc1k?: number | null
+  oferta1k?: number | null
+  /** Alunos que ESTE hexagono perde para concorrentes: rateado por area (1 km) e no
+   *  modelo atual (2 km). E' o par que deixa o rateio visivel — a concorrente na borda
+   *  cobra parte daqui e parte do vizinho, em vez dos 2.500 inteiros de um lado so'. */
+  cons1k?: number | null
+  cons2k?: number | null
   /* Passo 4 — Crescimento do município. Camada de CONTEXTO: repassa o que o
      projeto Crescimento Regional TEC apura (CAGED, Receita Federal).
      NADA de municipal mora aqui. O que é igual em toda a cidade viaja UMA vez, em
@@ -192,6 +204,32 @@ export interface Pin {
 }
 
 /** Pins do município + ícones quadrados por rede (data URI SVG). */
+/** PROTOTIPO — area coberta pelo raio de 1 km, ja recortada DENTRO dos hexagonos.
+ *  Cada anel e' [[lng, lat], ...]. `truncado` avisa que o teto de poligonos cortou a
+ *  devolucao: um corte silencioso mentiria sobre a extensao da cobertura. */
+export interface PecaCobertura {
+  hex: string
+  /** `coberto` = sob o raio de alguma concorrente; `livre` = o resto do hexagono. */
+  tipo: 'livre' | 'coberto'
+  /** Score 0-100 DAQUELE pedaco, na mesma regua das faixas do mapa. A parte livre
+   *  costuma pontuar mais alto: ali nenhuma concorrente desconta residual. */
+  score: number
+  anel: number[][]
+}
+
+export interface Cobertura1k {
+  pecas: PecaCobertura[]
+  /** UMA peca por (hexagono, concorrente). Empilhadas com alpha baixo, escurecem a area
+   *  proporcionalmente a quantas concorrentes cobrem aquele ponto. */
+  sombras: number[][][][]
+  /** Fronteira da UNIAO dos discos: UMA linha do alcance total, sem cruzamentos
+   *  internos. Substitui o desenho de um circulo por concorrente, que num aglomerado
+   *  virava um emaranhado de arcos. */
+  contorno: number[][][][]
+  n_discos: number
+  truncado: boolean
+}
+
 export interface Pins {
   concorrentes: Pin[]
   ultra: Pin[]
@@ -734,6 +772,24 @@ export interface RedeUnidade {
   metricas: Record<string, RedeMetrica>
   /** faturamento dos últimos 12 meses fechados (sparkline da carteira) */
   sparkline: (number | null)[]
+  /** faturamento do último mês FECHADO e sua variação contra o mês anterior. É o que
+   *  sustenta "quem puxa e quem segura": no dia 3 da competência em curso, a variação
+   *  contra os mesmos 3 dias do mês passado é ruído de janela curta (+6.239% na base
+   *  real). Ausente na ficha da unidade, que é outro payload. */
+  fechado?: {
+    competencia: string | null
+    faturamento: number | null
+    variacao_pct: number | null
+  }
+  /** SSS da unidade: o mesmo mês, um ano antes. `var_pct` nulo quando ela não operou o
+   *  mês inteiro nos dois períodos — a unidade continua na lista, dizendo por que não
+   *  entra na conta, em vez de sumir. Ausente na ficha, que é outro payload. */
+  sss?: {
+    competencia_base: string
+    faturamento: number | null
+    ano_anterior: number | null
+    var_pct: number | null
+  }
 }
 
 export interface RedeRegua {
@@ -750,15 +806,65 @@ export interface RedeRegua {
 export interface RedeSss {
   disponivel: boolean
   competencia_base: string
+  /** unidades COMPARÁVEIS: as do recorte que operaram o mês inteiro nos dois períodos */
   unidades: number
+  /** quantas unidades o recorte tem no mês escolhido */
+  unidades_recorte: number
+  /** `unidades_recorte - unidades` — as que não existiam há um ano e por isso não entram */
+  unidades_fora: number
   metricas?: Record<string, { atual: number | null; ano_anterior: number | null; var_pct: number | null }>
+  /** SSS mês a mês, alinhado a `serie_meses`. `unidades[i]` é a base comparável DAQUELE
+   *  mês: ela muda de ponto para ponto, e sem ela uma alta de base pequena parece alta
+   *  da rede inteira. */
+  serie: { meses: string[]; var_pct: (number | null)[]; unidades: number[] }
+}
+
+/** Funil comercial somado do recorte. Mesma forma do funil da ficha da unidade. */
+export interface RedeFunil {
+  visitas: number | null
+  convertidos: number | null
+  vendas: number | null
+  novos_alunos: number | null
+  conversao_pct: number | null
+  /** vem preenchido quando `vendas > convertidos`; o funil NÃO é clampado em 100% */
+  aviso: string | null
+}
+
+export interface RedeFaixa {
+  chave: string
+  rotulo: string
+  n: number
+  faturamento: number | null
+}
+
+/** Distribuição do recorte pelas faixas absolutas de faturamento do time de campo.
+ *  `competencia` é sempre o último mês FECHADO, nunca a competência em curso. */
+export interface RedeFaixas {
+  competencia: string | null
+  faixas: RedeFaixa[]
+}
+
+export interface RedeCoorteResumo {
+  chave: string
+  rotulo: string
+  n: number
 }
 
 export interface RedeCarteira {
+  /** competência do FIM do período: é ela que ancora a série de 12 meses, as faixas
+   *  absolutas e o diagnóstico, que continuam mensais mesmo com período livre. */
   mes: string
   meses: string[]
+  /** o intervalo analisado, as duas pontas inclusive */
+  periodo: { inicio: string; fim: string; dias: number; mes_inteiro: boolean }
+  /** contra o que as setas de variação comparam: mês inteiro -> mês anterior; qualquer
+   *  outro recorte -> a janela imediatamente anterior de MESMO tamanho */
+  periodo_anterior: { inicio: string; fim: string }
+  /** primeira e última data com dado na base — o limite do calendário */
+  limites: { min: string; max: string }
   referencia: string
   referencia_m1: string
+  /** true só quando o período é um mês do calendário INTEIRO e já fechado */
   mes_completo: boolean
   /** competência FECHADA de onde vêm alertas e severidade */
   competencia_diagnostico: string | null
@@ -782,8 +888,15 @@ export interface RedeCarteira {
    *  anterior, e contar para trás a partir de `mes` desloca o gráfico inteiro. */
   serie_meses: string[]
   /** faturamento somado do recorte, um valor por mês de `serie_meses`. Vem pronto do
-   *  servidor para que tela, CSV e PDF desenhem exatamente a mesma série. */
+   *  servidor para que tela, CSV e PDF desenhem exatamente a mesma série.
+   *  É literalmente `series.faturamento` — o painel de evolução não abriu segunda conta. */
   serie_rede: (number | null)[]
+  /** séries de 12 meses fechados do recorte, uma por métrica do painel de evolução.
+   *  Soma para volume, média PONDERADA para taxa — as mesmas regras dos KPIs do topo. */
+  series: Record<string, (number | null)[]>
+  funil: RedeFunil
+  faixas: RedeFaixas
+  coortes: RedeCoorteResumo[]
   unidades: RedeUnidade[]
   notas: string[]
 }
@@ -890,7 +1003,12 @@ export interface RedeFicha {
 
 /** Query da carteira. Tudo opcional: sem filtro nenhum, vem a rede do Brasil inteiro. */
 export interface RedeQuery {
+  /** competência (AAAA-MM). Continua aceita: é o que mantém os links antigos e o
+   *  contrato v1 funcionando. Quando `inicio`/`fim` vêm juntos, eles mandam. */
   mes?: string
+  /** período de análise, ISO AAAA-MM-DD, as duas pontas INCLUSIVE */
+  inicio?: string
+  fim?: string
   uf?: string
   master?: string
   consultor?: string

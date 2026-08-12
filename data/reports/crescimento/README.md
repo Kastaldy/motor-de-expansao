@@ -56,8 +56,20 @@ Ser honesto sobre isto importa mais do que parecer completo:
   serem executáveis onde esses dados existirem, e dizerem qual peça falta.
 
 Os dois artefatos são versionados como saída, não como código: estão em
-`STAGING_OPCIONAL` (`scripts/check_artifacts.py`), então **a ausência degrada a camada
+`PILOTO_CRESCIMENTO` (`scripts/check_artifacts.py`), então **a ausência degrada a camada
 e não quebra o deploy**.
+
+E é justamente por não quebrar nada que a ausência precisa ser dita em voz alta — o
+passo 4 sai vazio e sem cor, sem erro na tela e sem linha no log. Onde conferir:
+
+- **disco local:** `python scripts/check_artifacts.py` (respeita `MOTOR_DATA_DIR`, a
+  mesma raiz que `_raizes.py` e o backend usam);
+- **ambiente publicado:** `curl -fsS <host>/api/health` → campo `artefatos_faltando`.
+
+Eles não viajam com o código: o `.gitignore` corta `data/staging/*` e o `.dockerignore`
+corta `data/` da imagem. Em produção chegam **só** pelo bind mount declarado em
+`docker-compose.prod.yml`. Copiar os dois parquets para
+`/opt/motor-expansao/data/staging/` é o que acende a camada lá.
 
 ## Fontes
 

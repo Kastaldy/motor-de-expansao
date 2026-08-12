@@ -240,3 +240,88 @@ const CAMADA_CORES: Record<1 | 2 | 3 | 4 | 5, CamadaCor> = {
 export function camadaCor(n: number): CamadaCor {
   return CAMADA_CORES[n as 1 | 2 | 3 | 4 | 5] ?? CAMADA_CORES[1]
 }
+
+/* --- PROTOTIPO: pressao por numero de concorrentes no disco de 1 km -----------
+   Quantas concorrentes ALCANCAM o hexagono, nao quantas estao "dentro" dele. A
+   leitura pedida pelo Felipe: uma concorrente ja tinge a area em que ela atua; a
+   segunda cinza mais; da terceira em diante o hexagono vai apagando ate virar
+   chumbo — disputa alta, pouco espaco.
+
+   A rampa e DIVERGENTE de proposito (verde -> ambar -> vermelho -> cinza), nao um
+   gradiente de uma cor so: o operador precisa distinguir "ninguem" de "um" num
+   relance, e duas amostras da mesma matiz com alpha diferente nao resolvem isso
+   sobre um basemap escuro.
+
+   `0` NAO entra aqui: hexagono sem concorrente mantem a cor da propria camada
+   (residual/score), senao o mapa perderia a leitura que ja tinha. */
+/* Indexado a partir de 1 concorrente. O zero NAO tem entrada: hexagono sem
+   concorrente mantem a cor da propria camada, e dar uma cor a ele aqui faria a
+   legenda prometer um pintado que o mapa nao faz. */
+export const CONC_1KM_HEX = ['#F2C230', '#E8663C', '#B9455A', '#6E7686']
+
+export const CONC_1KM_ROTULOS = [
+  '1 concorrente',
+  '2 concorrentes',
+  '3 concorrentes',
+  '4 ou mais',
+]
+
+/* --- Cor pelo CONSUMO rateado (alunos que o hexagono perde) -----------------
+   A rampa por CONTAGEM de concorrentes nao mostrava o que o modelo faz: dois
+   hexagonos com "1 concorrente" ficavam iguais mesmo quando um perdia 2.400 alunos
+   (concorrente no meio dele) e o outro 100 (so' a beirada do disco encostou). O
+   rateio por area SO' fica visivel quando a cor responde ao VALOR.
+
+   Faixas em alunos, ancoradas na capacidade de 2.500 de uma unidade: ate 1/4 de
+   unidade, ate 1/2, ate 1, ate 2, acima disso. */
+export const CONSUMO_1KM_CORTES = [625, 1250, 2500, 5000]
+
+export const CONSUMO_1KM_HEX = ['#F2C230', '#E8663C', '#B9455A', '#8A3550', '#6E7686']
+
+export const CONSUMO_1KM_ROTULOS = [
+  'até 625 alunos',
+  '625 a 1.250',
+  '1.250 a 2.500',
+  '2.500 a 5.000',
+  'acima de 5.000',
+]
+
+/** Cor do hexagono pelo numero de ALUNOS que ele perde para concorrentes no rateio de
+ *  1 km. `<= 0` devolve `null` — o chamador mantem a cor da camada. */
+export function consumo1kmToColor(
+  alunos: number | null | undefined,
+  alpha = HEX_FILL_ALPHA,
+): RGBA | null {
+  if (alunos == null || alunos <= 0) return null
+  let i = CONSUMO_1KM_CORTES.length
+  for (let k = 0; k < CONSUMO_1KM_CORTES.length; k++) {
+    if (alunos <= CONSUMO_1KM_CORTES[k]) {
+      i = k
+      break
+    }
+  }
+  const hex = CONSUMO_1KM_HEX[i]
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+    alpha,
+  ]
+}
+
+/** Cor do hexagono pelo numero de concorrentes que o alcancam (disco de 1 km).
+ *  `n <= 0` devolve `null` — o chamador mantem a cor da camada. */
+export function conc1kmToColor(
+  n: number | null | undefined,
+  alpha = HEX_FILL_ALPHA,
+): RGBA | null {
+  if (n == null || n <= 0) return null
+  const i = Math.min(n - 1, CONC_1KM_HEX.length - 1)
+  const hex = CONC_1KM_HEX[i]
+  return [
+    parseInt(hex.slice(1, 3), 16),
+    parseInt(hex.slice(3, 5), 16),
+    parseInt(hex.slice(5, 7), 16),
+    alpha,
+  ]
+}

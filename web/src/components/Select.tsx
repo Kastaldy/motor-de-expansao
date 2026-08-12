@@ -148,7 +148,7 @@ export default function Select({
           alignItems: 'center',
           gap: 8,
           maxWidth,
-          background: '#101a26',
+          background: 'var(--surf-select)',
           border: `1px solid ${aberto ? 'var(--ac-a30)' : 'var(--line)'}`,
           borderRadius: 8,
           padding: '6px 9px',
@@ -201,7 +201,7 @@ export default function Select({
             border: '1px solid var(--line-mid)',
             borderRadius: 'var(--r-md)',
             backdropFilter: 'blur(16px)',
-            boxShadow: '0 14px 34px -10px rgba(0,0,0,.75)',
+            boxShadow: 'var(--sh-menu)',
             overflow: 'hidden',
           }}
         >

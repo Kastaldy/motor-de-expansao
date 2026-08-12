@@ -1,6 +1,15 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+
 import { COR_SEVERIDADE, rotuloMesCurto } from '../../lib/exec'
 import { brlCurto, num, pct } from '../../lib/format'
-import { caminhoSparkline, escalaDeBarras, fatiasDeRosca, percentualDaFatia } from '../../lib/sparkline'
+import {
+  ancoraDoRotulo,
+  caminhoSparkline,
+  escalaDeBarras,
+  fatiasDeRosca,
+  ladoDoRotulo,
+  percentualDaFatia,
+} from '../../lib/sparkline'
 import type { RedeCoorteComparacao } from '../../lib/types'
 
 /* ---------------------------------------------------------------------------
@@ -94,6 +103,72 @@ export function BarrasPeriodo({
   )
 }
 
+/** Largura assumida enquanto a medição não chegou (e onde não existe `ResizeObserver`). */
+const LARGURA_PROVISORIA = 340
+/** Abaixo disto, dois rótulos de valor vizinhos se encavalam e viram borrão. */
+const FATIA_MINIMA_DO_ROTULO = 44
+/**
+ * Folga vertical do desenho, nas DUAS pontas.
+ *
+ * 15, e não os 6 de uma sparkline nua, porque aqui cada ponto carrega o seu valor
+ * escrito: o mês de MENOR valor precisa de espaço abaixo dele para o rótulo que desce
+ * (ver `rotuloDesce`) não ser atravessado pelo eixo, e o de maior precisa de espaço
+ * acima. Com folga de 6 o ponto mais baixo ficava a 5 px do eixo e o "5,3%" de fevereiro
+ * saía riscado pela linha do eixo. O preço é uma curva um pouco menos alta — barato
+ * perto de um número ilegível.
+ */
+const FOLGA_VERTICAL = 15
+
+/**
+ * Meia largura de um caractere do rótulo, em px.
+ *
+ * O texto é IBM Plex Mono (`--f-num`) a 8,5 px, e mono quer dizer avanço FIXO: 0,6 em,
+ * ou 5,1 px por caractere. Dá para estimar a caixa do texto pelo comprimento da string
+ * sem medir nada no DOM — que aqui é o ponto, porque medir exigiria renderizar primeiro
+ * e reposicionar depois. É a única coisa que o desenho precisa saber sobre a fonte, e
+ * por isso `ancoraDoRotulo` recebe a meia-caixa pronta em vez de conhecer a tipografia.
+ */
+const MEIO_CARACTERE = 2.55
+
+/**
+ * Largura REAL do elemento, em pixels.
+ *
+ * O gráfico de linha é SVG e precisa desse número: `viewBox` fixo com `width: 100%`
+ * parece esticar, mas `preserveAspectRatio` (que por padrão é `xMidYMid meet`) escala de
+ * forma UNIFORME e centraliza a sobra. Num cartão de 936 px com `viewBox` de 340 e
+ * altura travada, a escala dá 1,0 e o desenho sai com 340 px de largura no MEIO do
+ * cartão — enquanto os rótulos dos meses, que são HTML, ocupam os 936. Era exatamente
+ * este o defeito relatado em 2026-08-11: no painel de evolução, as métricas de linha
+ * (churn, NPS, receita por recorrente, conversão) desenhavam a série inteira espremida
+ * sob dez/25..mar/26, e as de barra — que são `div`, não SVG — não sofriam nada.
+ *
+ * Com a largura medida, `viewBox` e caixa passam a ter a MESMA proporção, a escala é 1 e
+ * não sobra nada para centralizar.
+ */
+function useLargura(): [(no: HTMLElement | null) => void, number] {
+  const [largura, setLargura] = useState(0)
+  const observador = useRef<ResizeObserver | null>(null)
+  const medir = useCallback((no: HTMLElement | null) => {
+    observador.current?.disconnect()
+    if (!no) return
+    // Medida IMEDIATA, ainda no commit. O `ResizeObserver` sozinho não basta: ele só
+    // notifica no fim do frame, e o re-render que ele dispara pinta um frame DEPOIS —
+    // tempo de sobra para o gráfico aparecer espremido em `LARGURA_PROVISORIA` e saltar
+    // para a largura real. Como trocar de métrica remonta a figura (barra e linha são
+    // componentes diferentes), esse salto acontecia a cada clique nos chips: um flash do
+    // exato defeito que este componente acaba de corrigir.
+    setLargura(no.getBoundingClientRect().width)
+    if (typeof ResizeObserver === 'undefined') return
+    // Daqui em diante quem manda é o observador: janela redimensionada, dock recolhido,
+    // filtro que muda a altura da carteira — tudo mexe na largura deste cartão.
+    const obs = new ResizeObserver(([entrada]) => setLargura(entrada.contentRect.width))
+    obs.observe(no)
+    observador.current = obs
+  }, [])
+  useEffect(() => () => observador.current?.disconnect(), [])
+  return [medir, largura]
+}
+
 export function LinhaPeriodo({
   meses,
   valores,
@@ -109,16 +184,20 @@ export function LinhaPeriodo({
   titulo?: string
   formato?: 'brl' | 'int' | 'pct'
 }) {
-  const largura = 340
+  const [medir, medida] = useLargura()
+  const largura = medida > 0 ? medida : LARGURA_PROVISORIA
   const topo = 14 // espaço reservado para os rótulos de valor, que ficam ACIMA dos pontos
-  const s = caminhoSparkline(valores, largura, altura - topo, 6)
+  const caixa = altura - topo
+  // `faixas`: cada ponto no centro da sua fatia, no mesmo x em que `BarrasPeriodo` põe a
+  // barra daquele mês — é o que faz o ponto cair sobre o próprio rótulo do eixo.
+  const s = caminhoSparkline(valores, largura, caixa, FOLGA_VERTICAL, 'faixas')
   const fmt = (v: number) => (formato === 'brl' ? brlCurto(v) : formato === 'pct' ? pct(v, 1) : num(v, 1))
-  const passo = valores.length > 1 ? (largura - 12) / (valores.length - 1) : 0
-  // Com 12 meses os rótulos se encavalariam; alterna para caber sem sobrepor.
-  const alternar = valores.filter((v) => v !== null).length > 7
+  // Quantos rótulos cabem é conta de ESPAÇO, não de contagem: o corte fixo em 7 pontos
+  // escondia metade dos valores num cartão largo, onde os 12 cabiam com folga.
+  const alternar = largura / Math.max(valores.length, 1) < FATIA_MINIMA_DO_ROTULO
 
   return (
-    <figure style={{ margin: 0 }}>
+    <figure ref={medir} style={{ margin: 0 }}>
       {titulo && (
         <figcaption style={{ font: '500 11px/1.2 var(--f-ui)', color: 'var(--tx-label)', marginBottom: 6 }}>
           {titulo}
@@ -126,7 +205,7 @@ export function LinhaPeriodo({
       )}
       <svg viewBox={`0 0 ${largura} ${altura}`} width="100%" height={altura} role="img" aria-label={titulo}>
         <g transform={`translate(0 ${topo})`}>
-          <line x1={0} y1={altura - topo - 1} x2={largura} y2={altura - topo - 1} stroke={EIXO} strokeWidth={1} />
+          <line x1={0} y1={caixa - 1} x2={largura} y2={caixa - 1} stroke={EIXO} strokeWidth={1} />
           {s.area && <path d={s.area} fill={cor} opacity={0.12} />}
           <path d={s.linha} fill="none" stroke={cor} strokeWidth={1.8} strokeLinejoin="round" />
           {s.ultimo && <circle cx={s.ultimo.x} cy={s.ultimo.y} r={3} fill={cor} />}
@@ -134,34 +213,44 @@ export function LinhaPeriodo({
         {/* Valor MÊS A MÊS. Antes só saíam o mínimo e o máximo, e o operador não
             conseguia ler nenhum ponto do meio da série sem passar o mouse. */}
         {valores.map((v, i) => {
-          if (v === null || !Number.isFinite(v)) return null
+          // A altura vem do PRÓPRIO desenho (`s.ys`), não de uma segunda conta com o
+          // padding repetido aqui: era assim antes, e bastaria mexer na folga do gráfico
+          // para o número descolar do ponto que ele nomeia.
+          const yPonto = s.ys[i]
+          if (v === null || !Number.isFinite(v) || yPonto === null) return null
           if (alternar && i % 2 === 1 && i !== valores.length - 1) return null
-          const x = 6 + passo * i
-          const y =
-            topo +
-            (s.maximo === s.minimo
-              ? (altura - topo) / 2
-              : 6 + (altura - topo - 12) * (1 - (v - s.minimo) / (s.maximo - s.minimo)))
+          // O x sai de `s.xs`, a MESMA conta da linha: rótulo e ponto não podem divergir.
+          const texto = fmt(v)
+          const p = ancoraDoRotulo(
+            ladoDoRotulo(valores, i),
+            s.xs[i],
+            topo + yPonto,
+            texto.length * MEIO_CARACTERE,
+            largura,
+          )
           return (
             <text
               key={i}
-              x={Math.min(Math.max(x, 12), largura - 12)}
-              y={Math.max(y - 6, 9)}
-              textAnchor="middle"
+              x={p.x}
+              y={p.y}
+              textAnchor={p.textAnchor}
               style={{ font: '600 8.5px/1 var(--f-num)', fill: 'var(--tx-sub)' }}
             >
-              {fmt(v)}
+              {texto}
             </text>
           )
         })}
       </svg>
-      <div style={{ display: 'flex', gap: 2 }}>
+      {/* Uma fatia por mês, sem `gap`: é a mesma divisão que `caminhoSparkline` faz em
+          `faixas`, então o rótulo fica centrado exatamente sob o seu ponto. */}
+      <div style={{ display: 'flex' }}>
         {meses.map((m) => (
           <span
             key={m}
             className="num"
             style={{
               flex: 1,
+              minWidth: 0,
               font: '500 8.5px/1 var(--f-num)',
               color: 'var(--tx-muted)',
               textAlign: 'center',
@@ -296,9 +385,9 @@ export function FunilComercial({
 }) {
   const etapas = [
     { rotulo: 'Visitas', valor: visitas, cor: 'var(--ac)' },
-    { rotulo: 'Convertidos', valor: convertidos, cor: '#6fa4f7' },
-    { rotulo: 'Vendas', valor: vendas, cor: '#d94a86' },
-    { rotulo: 'Novos alunos', valor: novosAlunos, cor: '#5fd08c' },
+    { rotulo: 'Convertidos', valor: convertidos, cor: 'var(--gr-azul)' },
+    { rotulo: 'Vendas', valor: vendas, cor: 'var(--gr-rosa)' },
+    { rotulo: 'Novos alunos', valor: novosAlunos, cor: 'var(--gr-verde)' },
   ]
   const base = Math.max(...etapas.map((e) => e.valor ?? 0), 1)
   return (
@@ -327,6 +416,14 @@ export function FunilComercial({
       </div>
       <div style={{ marginTop: 10, font: '400 11px/1.5 var(--f-ui)', color: 'var(--tx-sub)' }}>
         Conversão de visita em aluno: <strong style={{ color: 'var(--tx-strong)' }}>{pct(conversao, 1)}</strong>
+        {/* O par absoluto vem junto do percentual: "40%" de 10 visitas e "40%" de 900 são
+            problemas de tamanho diferente, e sem os dois números o operador refazia a
+            conta de cabeça para saber de qual dos dois se tratava. */}
+        {visitas !== null && convertidos !== null && (
+          <span style={{ color: 'var(--tx-muted)' }}>
+            {' '}({num(convertidos)} de {num(visitas)} visitas)
+          </span>
+        )}
         {aviso && (
           <div style={{ marginTop: 4, color: COR_SEVERIDADE.media }}>{aviso}</div>
         )}
