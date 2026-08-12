@@ -889,6 +889,23 @@ export interface RedeCarteira {
   coortes: RedeCoorteResumo[]
   unidades: RedeUnidade[]
   notas: string[]
+  fonte_faturamento: RedeFonteFaturamento
+}
+
+/** De onde veio o faturamento de cada camada da aba.
+ *
+ *  A aba mistura duas fontes de propósito: os meses FECHADOS vêm da planilha do
+ *  Financeiro (base dos royalties) e o período em curso vem da Growth, porque a planilha é
+ *  mensal e não sabe responder por uma janela parcial. A diferença não é cosmética — a
+ *  Growth parou de mandar a receita de agregador em maio/2025 e fica ~20% abaixo —, então
+ *  a tela precisa dizer qual número é qual. */
+export interface RedeFonteFaturamento {
+  /** origem por competência de `serie_meses`. `misto` = o recorte tem unidades das duas. */
+  por_mes: Record<string, 'financeiro' | 'ux' | 'misto'>
+  /** o quarteto do topo e o SSS saem de janela livre, que nunca é sobreposta. */
+  periodo: 'financeiro' | 'ux' | 'misto'
+  /** unidades que faturam na planilha e não existem na Growth — ficam fora da carteira. */
+  unidades_sem_par: string[]
 }
 
 export interface RedeFiltros {

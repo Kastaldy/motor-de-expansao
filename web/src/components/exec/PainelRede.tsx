@@ -1,9 +1,15 @@
 import type { ReactNode } from 'react'
 
 import type { BaseDoDestaque, DestaqueDoRecorte, DestaquesDoRecorte } from '../../lib/exec'
-import { rotuloMesCompetencia, rotuloMesCurto } from '../../lib/exec'
+import { origemDaSerie, rotuloMesCompetencia, rotuloMesCurto } from '../../lib/exec'
 import { brl, brlCurto, num, pct } from '../../lib/format'
-import type { RedeCoorteResumo, RedeFaixas, RedeSss, RedeUnidade } from '../../lib/types'
+import type {
+  RedeCoorteResumo,
+  RedeFaixas,
+  RedeFonteFaturamento,
+  RedeSss,
+  RedeUnidade,
+} from '../../lib/types'
 import { BarraSegmentada, Glass, Semaforo } from '../primitives'
 import { BarrasPeriodo, LinhaPeriodo } from './ExecCharts'
 
@@ -59,11 +65,13 @@ export function EvolucaoRecorte({
   series,
   metrica,
   onMetrica,
+  fonte,
 }: {
   meses: string[]
   series: Record<string, (number | null)[]>
   metrica: string
   onMetrica: (chave: string) => void
+  fonte?: RedeFonteFaturamento
 }) {
   // Chave desconhecida cai na primeira métrica em vez de apagar o gráfico: o painel é
   // controlado pela tela, e um estado fora do catálogo não pode virar tela em branco.
@@ -76,6 +84,7 @@ export function EvolucaoRecorte({
   // Churn é a única série em que SUBIR é ruim. No turquesa das outras, uma curva de churn
   // crescendo passaria por boa notícia à primeira vista.
   const cor = escolhida.chave === 'churn_pct' ? 'var(--neg)' : 'var(--ac)'
+  const origem = origemDaSerie(escolhida.chave, meses, fonte)
 
   return (
     <Glass style={{ padding: '15px 17px', minWidth: 0 }}>
@@ -128,6 +137,7 @@ export function EvolucaoRecorte({
       <div style={{ marginTop: 9, font: '400 10.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
         Meses FECHADOS do recorte. Volume é soma; taxa é média ponderada — as mesmas regras
         dos KPIs do topo.
+        {origem && <span style={{ display: 'block', marginTop: 3 }}>{origem}</span>}
       </div>
     </Glass>
   )

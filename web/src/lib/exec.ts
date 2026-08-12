@@ -7,8 +7,46 @@
  */
 
 import { rotuloDoPeriodo } from './periodo'
-import type { RedeCarteira, RedeMetrica, RedeSeveridade, RedeUnidade } from './types'
+import type {
+  RedeCarteira,
+  RedeFonteFaturamento,
+  RedeMetrica,
+  RedeSeveridade,
+  RedeUnidade,
+} from './types'
 import { brl, brlCurto, num, pct } from './format'
+
+/**
+ * Métricas cujo número muda quando a fonte do faturamento muda.
+ *
+ * `receita_por_recorrente` entra porque o numerador dela é o faturamento SEM agregador, que
+ * também vem da planilha do Financeiro. As demais (alunos, churn, NPS, conversão…) vêm da
+ * Growth nas duas fontes — carimbá-las de "Financeiro" seria mentira.
+ */
+export const METRICAS_DO_FATURAMENTO = new Set(['faturamento', 'receita_por_recorrente'])
+
+/**
+ * Rótulo de procedência da série do painel de evolução.
+ *
+ * `null` quando não há o que dizer: métrica que não vem do faturamento, série vazia, ou
+ * payload sem `fonte_faturamento` (servidor antigo — a tela não pode quebrar por isso).
+ */
+export function origemDaSerie(
+  metrica: string,
+  meses: string[],
+  fonte?: RedeFonteFaturamento,
+): string | null {
+  if (!fonte?.por_mes || !METRICAS_DO_FATURAMENTO.has(metrica) || meses.length === 0) return null
+  const origens = new Set(meses.map((m) => fonte.por_mes[m]).filter(Boolean))
+  if (origens.size === 0) return null
+  if (origens.size === 1 && origens.has('financeiro')) {
+    return 'Fonte: planilha do Financeiro — a mesma base sobre a qual os royalties são cobrados.'
+  }
+  if (origens.has('financeiro')) {
+    return 'Fonte: planilha do Financeiro nos meses cobertos; os demais, base Growth.'
+  }
+  return 'Fonte: base Growth — sem a receita de agregador, que ela parou de enviar em mai/2025.'
+}
 
 /**
  * Cor de cada nível do semáforo. Uma definição só, usada na tabela, no mapa e nos chips.

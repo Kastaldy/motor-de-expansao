@@ -345,7 +345,133 @@ DIAS_MINIMOS_MES_COMPLETO = 25
 TOLERANCIA_FIM_DE_MES_DIAS = 1
 
 
-def fechamento_mensal(df: pd.DataFrame, dia_corte: int | None = None) -> pd.DataFrame:
+#: Rótulos da procedência do faturamento de cada linha do fechamento.
+ORIGEM_UX = "ux"
+ORIGEM_FINANCEIRO = "financeiro"
+
+#: Coluna do fechamento -> coluna da planilha do Financeiro. A substituição acontece no
+#: fechamento CRU, antes das derivadas: assim `faturamento_agregador`,
+#: `receita_por_recorrente` e `pct_agregador_receita` se recalculam sozinhas a partir da
+#: fonte nova, em vez de sobrarem coerentes com a antiga.
+_COLUNAS_DO_FINANCEIRO: dict[str, str] = {
+    "faturamento": "faturamento",
+    "faturamento_sem_agregador": "vendas_ux",
+}
+
+
+def aplicar_faturamento_financeiro(
+    fech: pd.DataFrame, financeiro: pd.DataFrame, catalogo: Mapping[str, Unidade]
+) -> pd.DataFrame:
+    """Sobrepoe o faturamento da planilha do Financeiro no fechamento MENSAL.
+
+    OVERRIDE, nunca INSERT: unidade que so existe na planilha nao vira linha nova na
+    carteira. Ela nao teria pagantes, churn nem NPS, e entraria na tela como uma unidade
+    pela metade -- alem de mexer no denominador de toda media ponderada da aba. Quem ficou
+    de fora sai em `attrs["financeiro_sem_par"]` para o operador cobrar a inclusao na
+    Growth (medido em 2026-07: Sao Carlos-SP, Jardim das Americas-MT e Vila Izabel-PR,
+    R$ 523 mil/mes invisiveis).
+
+    O join e' por nome CRU normalizado, atraves do catalogo -- nunca por `chave_unidade`.
+    A diferenca e' a mesma das "Aguas Claras": a chave normalizada colapsa a academia e o
+    studio numa coisa so, e o faturamento de uma iria parar na outra.
+    """
+    fora = fech.assign(origem_faturamento=ORIGEM_UX)
+    if not len(fech) or not len(financeiro) or not catalogo:
+        fora.attrs["financeiro_aplicado"] = 0
+        fora.attrs["financeiro_sem_par"] = []
+        return fora
+
+    por_nome = {
+        _sem_acento(nome): uid
+        for uid, unidade in catalogo.items()
+        for nome in unidade.nomes_crus
+    }
+    fin = financeiro.copy()
+    resgate = _resgate_por_aperto(por_nome, fin["unidade_ux"])
+    fin["unidade_id"] = fin["unidade_ux"].map(
+        lambda nome: por_nome.get(_sem_acento(nome)) or resgate.get(nome)
+    )
+    com_valor = fin[fin["faturamento"].notna()]
+    sem_par = sorted(
+        {
+            str(n)
+            for n in com_valor.loc[com_valor["unidade_id"].isna() & (com_valor["faturamento"] > 0), "unidade_ux"]
+            if not eh_excluida(n)
+        }
+    )
+    fin = fin[fin["unidade_id"].notna() & fin["faturamento"].notna()]
+
+    colunas = [c for c in _COLUNAS_DO_FINANCEIRO.values() if c in fin.columns]
+    # Dois codigos do Financeiro podem apontar para a MESMA unidade da Growth; o de-para
+    # dizendo isso e' o Financeiro afirmando que sao a mesma academia, entao somam.
+    fin = (
+        fin.groupby(["unidade_id", "competencia"], as_index=False)[colunas]
+        .sum(min_count=1)
+        .rename(columns={v: f"_fin_{k}" for k, v in _COLUNAS_DO_FINANCEIRO.items() if v in colunas})
+    )
+
+    fora["_competencia_txt"] = fora["competencia"].astype(str)
+    fora = fora.merge(
+        fin, left_on=["unidade_id", "_competencia_txt"], right_on=["unidade_id", "competencia"],
+        how="left", suffixes=("", "_fin"),
+    ).drop(columns=["competencia_fin", "_competencia_txt"], errors="ignore")
+
+    casou = fora["_fin_faturamento"].notna()
+    for destino in _COLUNAS_DO_FINANCEIRO:
+        origem = f"_fin_{destino}"
+        if origem in fora.columns and destino in fora.columns:
+            fora[destino] = fora[origem].where(casou, fora[destino])
+    fora.loc[casou, "origem_faturamento"] = ORIGEM_FINANCEIRO
+    fora = fora.drop(columns=[c for c in fora.columns if c.startswith("_fin_")], errors="ignore")
+
+    fora.attrs["financeiro_aplicado"] = int(casou.sum())
+    fora.attrs["financeiro_sem_par"] = sem_par
+    return fora
+
+
+def _apertar(valor: object) -> str:
+    """Chave "apertada": so letras e digitos, sem acento. PRESERVA o sufixo de UF.
+
+    E' o que casa "CEILANDIA QNN 32 - DF" com "CEILANDIA QNN32 - DF " e
+    "SAO GONCALO CENTRO - RJ" com "SAO GONCALO - CENTRO - RJ" -- variacoes de espaco e
+    hifen que o de-para do Financeiro ainda nao cobre. Como o sufixo de UF sobrevive,
+    "AGUAS CLARAS" e "AGUAS CLARAS - DF" continuam SEPARADAS, que e' o ponto todo.
+    """
+    return re.sub(r"[^A-Z0-9]+", "", _sem_acento(valor))
+
+
+def _resgate_por_aperto(
+    por_nome: Mapping[str, str], nomes_do_financeiro: Iterable[object]
+) -> dict[object, str]:
+    """Segunda passada do join, so' para o que sobrou -- e so' quando NAO ha ambiguidade.
+
+    Uma chave apertada que atrai duas unidades da Growth (ou dois nomes do Financeiro) fica
+    de fora: um palpite errado aqui joga o faturamento de uma academia na outra, e um
+    buraco visivel e' melhor que um numero silenciosamente trocado.
+    """
+    catalogo_apertado: dict[str, list[str]] = {}
+    for nome, uid in por_nome.items():
+        catalogo_apertado.setdefault(_apertar(nome), []).append(uid)
+
+    pendentes: dict[str, list[object]] = {}
+    for nome in nomes_do_financeiro:
+        if _sem_acento(nome) not in por_nome:
+            pendentes.setdefault(_apertar(nome), []).append(nome)
+
+    resgate: dict[object, str] = {}
+    for apertado, nomes in pendentes.items():
+        candidatos = set(catalogo_apertado.get(apertado, []))
+        if len(candidatos) == 1 and len(set(map(_sem_acento, nomes))) == 1:
+            for nome in nomes:
+                resgate[nome] = next(iter(candidatos))
+    return resgate
+
+
+def fechamento_mensal(
+    df: pd.DataFrame,
+    dia_corte: int | None = None,
+    financeiro: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Uma linha por (`unidade_id`, competencia) com o ultimo dia COM DADO do mes.
 
     `dia_corte` limita cada mes aos dias `<= dia_corte`, que e' como se compara mes
@@ -356,10 +482,17 @@ def fechamento_mensal(df: pd.DataFrame, dia_corte: int | None = None) -> pd.Data
     dentro do mes em 36,7% dos unidade-mes (estorno de cancelamento), e `max` congelaria
     o pico em vez do fechamento real.
 
+    `financeiro` sobrepoe o faturamento pela planilha do Financeiro (base dos royalties) e
+    so vale para o mes FECHADO: com `dia_corte` a janela e' parcial e a planilha, mensal,
+    nao sabe responder por ela -- ver `aplicar_faturamento_financeiro`.
+
     Vetorizado de proposito - substitui o laco Python por unidade da v1. Medido: 2.132
     linhas em ~17 ms para a rede inteira.
     """
-    vazio = _fechamento_vazio()
+    # `origem_faturamento` e' do fechamento MENSAL, nao da janela livre: so' aqui existe
+    # sobreposicao do Financeiro. Por isso entra aqui e nao em `_fechamento_vazio`, de onde
+    # `fechamento_periodo` tambem tira as colunas dele.
+    vazio = _fechamento_vazio().assign(origem_faturamento=pd.Series(dtype="object"))
     if not len(df):
         return vazio
 
@@ -390,7 +523,14 @@ def fechamento_mensal(df: pd.DataFrame, dia_corte: int | None = None) -> pd.Data
         .agg(**agregacoes)
         .reset_index()
     )
-    return _derivar_metricas(fech)
+    if financeiro is not None and dia_corte is None:
+        fech = aplicar_faturamento_financeiro(fech, financeiro, catalogo_de(df))
+    else:
+        fech = fech.assign(origem_faturamento=ORIGEM_UX)
+    diagnostico = dict(fech.attrs)
+    derivado = _derivar_metricas(fech)
+    derivado.attrs.update(diagnostico)
+    return derivado
 
 
 def _fechamento_vazio() -> pd.DataFrame:

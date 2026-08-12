@@ -140,6 +140,17 @@ REGUAS_VIGENTES: dict[str, dict[str, object]] = {
 # estao, de proposito: e' a lingua deles. Ressalva honesta, que vai na nota de metodo da
 # tela -- sao faixas absolutas aplicadas igualmente a unidade de bairro e a flagship, sem
 # normalizar por porte ou idade; o benchmark por coorte e' o contrapeso.
+#
+# Elas foram calibradas sobre o faturamento da planilha do FINANCEIRO, nao sobre o da
+# Growth. A prova esta na propria nota antiga da tela ("la o TEM SAUDE e' deduzido, cerca
+# de 0,7%"): TEM SAUDE e' uma linha que so' existe naquela planilha, e vale 0,74% do total
+# em 2026-07. Ou seja: enquanto a aba media faturamento pela Growth -- que desde maio/2025
+# nao manda a receita de agregador e fica ~20% abaixo --, as faixas eram aplicadas a um
+# numero MENOR do que aquele para o qual foram feitas, e a rede aparecia sistematicamente
+# pior. Medido em 2026-07 sobre as 86 unidades comparaveis: "Critico" cai de 33 para 17
+# unidades quando o faturamento passa a vir do Financeiro, e 39 unidades (45%) mudam de
+# faixa sem ter mudado de desempenho. Nao mexer nos limiares e' deliberado -- eles voltaram
+# a pousar sobre a grandeza certa. Ver `rede_faturamento_financeiro`.
 FAIXAS_FATURAMENTO: tuple[tuple[float, str, str], ...] = (
     (150_000.0, "critico", "Crítico"),
     (200_000.0, "regular", "Regular"),

@@ -70,6 +70,7 @@ from motor_expansao.dashboard import (  # noqa: E402
     rede_cadastro,
     rede_coorte,
     rede_diagnostico,
+    rede_faturamento_financeiro,
     rede_metricas,
 )
 
@@ -3332,6 +3333,11 @@ def _base_calibracao() -> tuple[pd.DataFrame | None, str]:
 # ============================================================================
 
 GROWTH_PARQUET = STAGING_DIR / "growth_api_historico.parquet"
+# Faturamento oficial (planilha do Financeiro, base dos royalties). Gerado por
+# `scripts/ingerir_faturamento_financeiro.py` uma vez por mes. AUSENTE = a aba continua
+# funcionando inteira com o faturamento da Growth: nenhuma tela pode cair porque a
+# ingestao mensal atrasou.
+FATURAMENTO_FINANCEIRO_PARQUET = STAGING_DIR / "faturamento_financeiro.parquet"
 
 # Siglas de UF que aparecem como SUFIXO do nome da unidade, em três grafias que
 # convivem nas bases: "Bangú / RJ", "BANGU - RJ" e "Icaraí RJ". O separador é
@@ -3651,9 +3657,31 @@ def _rede_base() -> pd.DataFrame:
 
 
 @functools.lru_cache(maxsize=1)
+def _rede_faturamento_financeiro() -> pd.DataFrame:
+    """Faturamento oficial da planilha do Financeiro. Vazio se a ingestão não rodou."""
+    try:
+        return rede_faturamento_financeiro.carregar(FATURAMENTO_FINANCEIRO_PARQUET)
+    except (ValueError, OSError) as erro:
+        # Parquet corrompido ou com esquema velho não pode derrubar a Visão Executiva: a
+        # aba volta a mostrar o faturamento da Growth, que é pior mas está lá.
+        print(f"[rede] faturamento do Financeiro ilegível ({erro}) — seguindo só com a Growth",
+              file=sys.stderr)
+        return pd.DataFrame()
+
+
+@functools.lru_cache(maxsize=1)
 def _rede_fechamento() -> pd.DataFrame:
-    """Fechamento mensal de TODA a série, sem corte de dia (a base do histórico)."""
-    return rede_metricas.fechamento_mensal(_rede_base())
+    """Fechamento mensal de TODA a série, sem corte de dia (a base do histórico).
+
+    O faturamento dos meses FECHADOS vem da planilha do Financeiro quando ela existe (base
+    dos royalties); o mês em curso continua na Growth, porque a planilha é mensal e não
+    sabe responder por uma janela parcial. Cada linha carrega `origem_faturamento` para a
+    tela poder dizer de onde veio o número.
+    """
+    financeiro = _rede_faturamento_financeiro()
+    return rede_metricas.fechamento_mensal(
+        _rede_base(), financeiro=financeiro if len(financeiro) else None
+    )
 
 
 @functools.lru_cache(maxsize=1)
@@ -4428,15 +4456,55 @@ def _rede_kpis(unidades: pd.DataFrame, m1: pd.DataFrame) -> dict[str, Any]:
     return saida
 
 
+def _notas_da_fonte(contexto: dict[str, Any], recorte: pd.DataFrame) -> list[str]:
+    """De onde vem o faturamento — e o degrau que a troca de fonte cria na série.
+
+    Sem planilha do Financeiro, a nota é a antiga: a Growth não deduz o TEM SAÚDE e por
+    isso não bate com o número do time. Com planilha, o faturamento dos meses fechados
+    passa a ser exatamente o dos royalties, e o que precisa ser dito é a COSTURA: mês
+    fechado vem do Financeiro (~20% acima da Growth, porque a Growth parou de mandar a
+    receita de agregador em maio/2025) e o período em curso continua na Growth. Quem não
+    souber disso vai ler o degrau como queda de faturamento.
+    """
+    fonte = _rede_fonte_faturamento(contexto, recorte)
+    origens = set(fonte["por_mes"].values())
+    if rede_metricas.ORIGEM_FINANCEIRO not in origens:
+        return [
+            "O faturamento não bate com a planilha do time: lá o TEM SAÚDE é deduzido "
+            "(cerca de 0,7%)."
+        ]
+
+    notas = [
+        "Faturamento dos meses FECHADOS: planilha do Financeiro, a mesma base sobre a qual "
+        "os royalties são cobrados (inclui Gympass e Totalpass, já deduzido o TEM SAÚDE). "
+        "O período em curso, no topo da tela, ainda vem da Growth — que não manda a receita "
+        "de agregador desde maio/2025 e por isso fica cerca de 20% abaixo. O degrau entre o "
+        "último mês fechado e o mês corrente é troca de fonte, não queda."
+    ]
+    if rede_metricas.ORIGEM_UX in origens:
+        meses_ux = sorted(m for m, o in fonte["por_mes"].items() if o != rede_metricas.ORIGEM_FINANCEIRO)
+        notas.append(
+            f"{len(meses_ux)} mês(es) da série ainda sem cobertura do Financeiro "
+            f"({', '.join(meses_ux[:4])}): esses seguem com o faturamento da Growth."
+        )
+    if fonte["unidades_sem_par"]:
+        sem_par = fonte["unidades_sem_par"]
+        notas.append(
+            f"{len(sem_par)} unidade(s) faturam na planilha do Financeiro e não existem na "
+            f"base Growth ({', '.join(sem_par[:4])}): ficam FORA da carteira, porque sem "
+            "alunos, churn e NPS entrariam pela metade."
+        )
+    return notas
+
+
 def _rede_notas(contexto: dict[str, Any], recorte: pd.DataFrame) -> list[str]:
     """Notas de método. Toda degradação é DITA, nunca silenciosa."""
     notas = [
         "Receita por recorrente = faturamento sem agregador dos últimos 30 dias "
         "dividido pelos recorrentes ativos. NÃO é o TICKET_MEDIO do PowerBI, que vem "
         "da venda individual (tabela que a API Growth não expõe).",
-        "O faturamento não bate com a planilha do time: lá o TEM SAÚDE é deduzido "
-        "(cerca de 0,7%).",
     ]
+    notas.extend(_notas_da_fonte(contexto, recorte))
     if contexto["competencia_diagnostico"] and contexto["competencia_diagnostico"] != contexto["mes"]:
         notas.append(
             f"Diagnóstico e alertas calculados sobre {contexto['competencia_diagnostico']}, "
@@ -4739,6 +4807,38 @@ def _rede_carteira_payload(
         "series": series,
         "unidades": unidades,
         "notas": _rede_notas(contexto, recorte),
+        "fonte_faturamento": _rede_fonte_faturamento(contexto, recorte),
+    }
+
+
+def _rede_fonte_faturamento(
+    contexto: dict[str, Any], recorte: pd.DataFrame
+) -> dict[str, Any]:
+    """De onde veio o faturamento de cada camada da aba.
+
+    A costura é real e a tela tem de dizê-la: os meses FECHADOS vêm da planilha do
+    Financeiro (base dos royalties, ~20% acima da Growth porque inclui a receita de
+    agregador que a Growth parou de mandar em maio/2025), e o período em curso continua na
+    Growth, porque a planilha é mensal. Sem o rótulo, o degrau entre o último mês fechado e
+    o mês corrente parece queda de faturamento.
+    """
+    cheio = contexto["cheio"]
+    meses: list[str] = contexto["serie_meses"]
+    if not len(cheio) or "origem_faturamento" not in cheio.columns:
+        return {"por_mes": {}, "periodo": rede_metricas.ORIGEM_UX, "unidades_sem_par": []}
+
+    do_recorte = cheio[cheio["unidade_id"].isin(set(recorte["unidade_id"]))]
+    por_mes: dict[str, str] = {}
+    for mes in meses:
+        origens = set(do_recorte.loc[do_recorte["competencia"] == mes, "origem_faturamento"])
+        if not origens:
+            continue
+        por_mes[mes] = origens.pop() if len(origens) == 1 else "misto"
+    return {
+        "por_mes": por_mes,
+        # O quarteto do topo e o SSS saem de `fechamento_periodo`, que nunca é sobreposto.
+        "periodo": rede_metricas.ORIGEM_UX,
+        "unidades_sem_par": list(cheio.attrs.get("financeiro_sem_par", [])),
     }
 
 

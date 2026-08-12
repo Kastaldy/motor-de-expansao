@@ -13,13 +13,19 @@ import {
   narrativaDoRecorte,
   normalizar,
   ordenarUnidades,
+  origemDaSerie,
   queryDaCarteira,
   rotuloMesCompetencia,
   rotuloRanking,
   rotuloVsMedia,
   tituloDaCelula,
 } from './exec'
-import type { RedeCarteira, RedeMetrica, RedeUnidade } from './types'
+import type {
+  RedeCarteira,
+  RedeFonteFaturamento,
+  RedeMetrica,
+  RedeUnidade,
+} from './types'
 
 function metrica(p: Partial<RedeMetrica> = {}): RedeMetrica {
   return { atual: null, m1: null, delta_pct: null, rank: null, rank_total: null, vs_media_pct: null, ...p }
@@ -648,5 +654,47 @@ describe('destaquesDoRecorte', () => {
     const original = [...lista]
     destaquesDoRecorte(lista)
     expect(lista).toEqual(original)
+  })
+})
+
+describe('origemDaSerie', () => {
+  const MESES = ['2026-05', '2026-06', '2026-07']
+  const fonte = (por_mes: Record<string, 'financeiro' | 'ux' | 'misto'>): RedeFonteFaturamento => ({
+    por_mes,
+    periodo: 'ux',
+    unidades_sem_par: [],
+  })
+  const todosFinanceiro = fonte({ '2026-05': 'financeiro', '2026-06': 'financeiro', '2026-07': 'financeiro' })
+
+  it('carimba a planilha quando a série inteira veio dela', () => {
+    expect(origemDaSerie('faturamento', MESES, todosFinanceiro)).toMatch(/planilha do Financeiro/)
+    expect(origemDaSerie('faturamento', MESES, todosFinanceiro)).not.toMatch(/Growth/)
+  })
+
+  it('avisa quando só parte dos meses tem cobertura', () => {
+    const misturado = fonte({ '2026-05': 'ux', '2026-06': 'financeiro', '2026-07': 'financeiro' })
+    expect(origemDaSerie('faturamento', MESES, misturado)).toMatch(/os demais, base Growth/)
+  })
+
+  it('sem planilha, diz Growth e por que ela fica baixa', () => {
+    const soUx = fonte({ '2026-05': 'ux', '2026-06': 'ux', '2026-07': 'ux' })
+    expect(origemDaSerie('faturamento', MESES, soUx)).toMatch(/mai\/2025/)
+  })
+
+  it('receita por recorrente também é do faturamento — o numerador vem da planilha', () => {
+    expect(origemDaSerie('receita_por_recorrente', MESES, todosFinanceiro)).toMatch(/Financeiro/)
+  })
+
+  it('métrica que NÃO vem do faturamento não recebe carimbo', () => {
+    // Carimbar churn ou NPS de "Financeiro" seria mentira: eles são da Growth nas duas fontes.
+    for (const chave of ['churn_pct', 'nps', 'ativos', 'conversao_pct']) {
+      expect(origemDaSerie(chave, MESES, todosFinanceiro)).toBeNull()
+    }
+  })
+
+  it('degrada em silêncio sem payload, sem meses ou com competência desconhecida', () => {
+    expect(origemDaSerie('faturamento', MESES, undefined)).toBeNull()
+    expect(origemDaSerie('faturamento', [], todosFinanceiro)).toBeNull()
+    expect(origemDaSerie('faturamento', ['2019-01'], todosFinanceiro)).toBeNull()
   })
 })

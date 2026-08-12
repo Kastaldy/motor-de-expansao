@@ -898,6 +898,7 @@ export default function ExecutiveScreen() {
                   series={carteira.series}
                   metrica={metricaEvolucao}
                   onMetrica={setMetricaEvolucao}
+                  fonte={carteira.fonte_faturamento}
                 />
               </div>
               <div style={{ ...COLUNA_TRILHO, display: 'grid' }}>
