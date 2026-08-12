@@ -3,7 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { PontoEscolhido } from '../App'
 import BotaoInicio from '../components/BotaoInicio'
+import FichaHex from '../components/FichaHex'
 import HexMap, { type SearchPin, type ViewState } from '../components/HexMap'
+import JanelaFicha from '../components/JanelaFicha'
 import MethodologyPanel from '../components/MethodologyPanel'
 import NarrativePanel from '../components/NarrativePanel'
 import PainelComparacao from '../components/PainelComparacao'
@@ -67,13 +69,15 @@ export interface MapScreenProps {
    */
   onPontoBuscado?: (lat: number, lng: number) => void
   /**
-   * Contador que, ao mudar, poe o foco no campo de busca do cabecalho.
+   * Se esta tela publica a janela da FICHA DO HEXAGONO.
    *
-   * E' assim que o "+ Adicionar mais um ponto" da janela do modo de ponto funciona sem
-   * abrir uma SEGUNDA caixa de endereco: em vez de duplicar o campo, ele leva o cursor
-   * para o que ja' esta' na tela. Contador e nao booleano porque o pedido se repete.
+   * `false` no modo de ponto: la' quem cola um endereco ja' recebe a janela DELE, e o
+   * endereco tambem seleciona o hexagono em que caiu — as duas janelas abriam juntas,
+   * uma por cima da outra, dizendo coisas diferentes sobre o mesmo lugar (relato do Juan,
+   * 2026-08-12). A selecao continua valendo: o contorno no mapa e o item do ranking
+   * seguem marcados, so' a segunda janela nao aparece.
    */
-  focarBusca?: number
+  janelaDoHex?: boolean
 }
 
 export default function MapScreen({
@@ -92,7 +96,7 @@ export default function MapScreen({
   onInicio,
   pinFixo = null,
   onPontoBuscado,
-  focarBusca = 0,
+  janelaDoHex = true,
 }: MapScreenProps) {
   // A foto so' vale se tiver sido tirada NESTA uf/municipio — `fotoAplicavel` faz esse
   // portao (lib/mapa-estado). Sem ele, um pin de Sao Paulo reapareceria depois de um
@@ -184,16 +188,6 @@ export default function MapScreen({
     setSelecionado(pinFixo.hexId)
   }, [pinFixo])
 
-  /* Foco pedido de fora (o "+ Adicionar mais um ponto" da janela do modo de ponto).
-     `select()` junto porque o campo costuma estar com a busca anterior dentro: sem isso o
-     operador teria de apagar a coordenada velha antes de digitar a nova. O `0` inicial
-     nunca dispara — so' mudancas contam. */
-  const campoBusca = useRef<HTMLInputElement | null>(null)
-  useEffect(() => {
-    if (!focarBusca) return
-    campoBusca.current?.focus()
-    campoBusca.current?.select()
-  }, [focarBusca])
 
   // Espelho SEMPRE atual do estado, mantido num ref. Existe para o cleanup do efeito
   // abaixo poder ler valores frescos: um cleanup enxerga o closure do render em que foi
@@ -243,6 +237,12 @@ export default function MapScreen({
     () => new Map((dados?.hexes ?? []).map((h) => [h.id, h])),
     [dados],
   )
+
+  /* O hexágono da janela da ficha. Sai do `porId` e não de uma cópia do payload: o mesmo
+     objeto que o mapa desenha é o que a janela lê, então não há como as duas leituras
+     divergirem depois de uma troca de município. */
+  const hexSelecionado = selecionado ? (porId.get(selecionado) ?? null) : null
+  const cresMunDoHex = hexSelecionado?.mun ? (dados?.cres_mun?.[hexSelecionado.mun] ?? null) : null
 
   // Municípios do dropdown: "Todos" (volta à UF) + lista alfabética.
   const opcoesMunicipio = useMemo(
@@ -297,6 +297,41 @@ export default function MapScreen({
       setTimeout(() => setCopiado(false), 1500)
     })
   }
+
+  /**
+   * Clique num item da LISTA: seleciona e LEVA A CAMERA ate' o hexagono.
+   *
+   * Antes so' desenhava o contorno branco. Num municipio grande o item escolhido podia
+   * estar fora do enquadramento, entao a tela respondia ao clique num lugar que o
+   * operador nao estava vendo — parecia que nada acontecia (Juan, 2026-08-12). O contorno
+   * CONTINUA: chegar sem marca nenhuma deixaria a duvida de qual dos hexagonos e' o item.
+   *
+   * O clique no proprio mapa segue por `setSelecionado` direto, sem voo: la' o hexagono
+   * ja' esta' sob o cursor, e recentrar seria mexer no que o operador acabou de mirar.
+   */
+  const [voo, setVoo] = useState<{ hexId: string; n: number } | null>(null)
+  const selecionarDaLista = useCallback((hexId: string) => {
+    setSelecionado(hexId)
+    setPin(null)
+    setVoo((v) => ({ hexId, n: (v?.n ?? 0) + 1 }))
+  }, [])
+
+  /**
+   * Poe ou tira um hexagono da comparacao, direto da lista.
+   *
+   * LIGA o modo cenario junto: sem isso o painel de comparacao — que so' aparece com
+   * `modoCenario` — ficaria escondido, e o operador veria o item marcado sem nenhum
+   * resultado na tela. O teto de `MAX_COMPARADOS` e' respeitado aqui tambem, e nao so'
+   * no clique do mapa.
+   */
+  const comparar = useCallback((hexId: string) => {
+    setModoCenario(true)
+    setCenario((cs) => {
+      if (cs.includes(hexId)) return cs.filter((x) => x !== hexId)
+      if (cs.length >= MAX_COMPARADOS) return cs
+      return [...cs, hexId]
+    })
+  }, [])
 
   function aplicarPonto(lat: number, lng: number) {
     const hexId = latLngToCell(lat, lng, 7)
@@ -443,6 +478,7 @@ export default function MapScreen({
             }
           }}
           searchPin={pinFixo ?? pin}
+          voarPara={voo}
         />
       )}
 
@@ -549,7 +585,6 @@ export default function MapScreen({
             <path d="m21 21-4.3-4.3" />
           </svg>
           <input
-            ref={campoBusca}
             value={busca}
             onChange={(e) => {
               setBusca(e.target.value)
@@ -774,54 +809,11 @@ export default function MapScreen({
                   {modoCenario ? '◆ Comparando hexes' : '◇ Comparar vários hexes'}
                 </button>
 
-                {modoCenario && hexesComparacao && (
-                  <PainelComparacao hexes={hexesComparacao} onLimpar={() => setCenario([])} />
-                )}
-
-                {modoCenario && !hexesComparacao && (
-                  <div
-                    style={{
-                      background: 'var(--surf-panel)',
-                      border: '1px solid var(--ac-a30)',
-                      borderRadius: 'var(--r-md)',
-                      padding: '11px 13px',
-                      backdropFilter: 'blur(16px)',
-                      minWidth: 232,
-                    }}
-                  >
-                    <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)' }}>
-                      Cenário multi-hex · {resumoCenario?.n ?? 0} hex
-                    </div>
-                    {resumoCenario ? (
-                      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
-                        <LinhaC rotulo="Residual somado" valor={`${alunos(resumoCenario.residual)} alunos`} forte />
-                        <LinhaC rotulo="População" valor={num(resumoCenario.pop)} />
-                        <LinhaC rotulo="Score censo médio" valor={num(resumoCenario.scoreMedio, 1)} />
-                        <LinhaC rotulo="Concorrentes 2 km" valor={num(resumoCenario.conc)} />
-                      </div>
-                    ) : (
-                      <p style={{ margin: '8px 0 0', font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
-                        Clique nos hexágonos do mapa para somar residual, população e score.
-                        De <strong style={{ color: 'var(--tx-soft)' }}>dois a {MAX_COMPARADOS}</strong>{' '}
-                        selecionados, este painel compara e diz qual é o melhor.
-                      </p>
-                    )}
-                    {resumoCenario && (
-                      <div style={{ marginTop: 11, display: 'flex', gap: 8 }}>
-                        <button
-                          type="button"
-                          onClick={() => setCenario([])}
-                          style={botaoGhost}
-                        >
-                          Limpar
-                        </button>
-                        <button type="button" onClick={copiarCenario} style={botaoGhost}>
-                          {copiado ? 'Copiado ✓' : 'Copiar IDs'}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* O conteúdo da comparação saiu daqui e foi para uma JANELA (abaixo, no
+                    fim da árvore). Como caixa presa ao canto, ela crescia sobre o mapa sem
+                    o operador poder tirá-la do caminho — e é justamente o território que
+                    ele está comparando que ficava coberto. Este botão continua sendo o
+                    liga/desliga do modo. */}
               </div>
             )}
 
@@ -855,9 +847,12 @@ export default function MapScreen({
               nivel={dados.nivel}
               crescimentoEstado={dados.crescimento_estado}
               selecionado={selecionado}
-              onSelecionarHex={setSelecionado}
+              onSelecionarHex={selecionarDaLista}
               onAnalisar={analisar}
               onDrillMunicipio={onMunicipio}
+              onComparar={comparar}
+              comparados={cenario}
+              maxComparados={MAX_COMPARADOS}
             />
           ) : null}
         </div>
@@ -902,6 +897,86 @@ export default function MapScreen({
 
       {/* Gaveta da metodologia. Ultima na arvore e com zIndex acima do header para
           cobrir o chrome do mapa; o mapa em si continua visivel a' esquerda. */}
+      {/* ---------------- Janela da FICHA DO HEXÁGONO ----------------
+          Mesma janela da análise de ponto (arrasta, redimensiona, recolhe), agora para o
+          hexágono escolhido. Antes o dado dele só existia em dois lugares efêmeros — o
+          tooltip, que some com o mouse, e a linha do ranking, que mostra UMA métrica (a da
+          camada ativa). Comparar dois bairros exigia trocar de camada quatro vezes.
+
+          Some no modo de comparação: ali quem manda é o conjunto, e duas janelas dizendo
+          coisas diferentes sobre a mesma seleção competiriam entre si. */}
+      <JanelaFicha
+        aberta={janelaDoHex && hexSelecionado != null && !modoCenario}
+        titulo={hexSelecionado?.mun ?? 'Hexágono'}
+        /* O id do hexágono NÃO entra abreviado aqui. H3 é hierárquico: vizinhos dividem o
+           prefixo, então `87a8c0ce…` é o mesmo texto para hexágonos diferentes — piorava
+           exatamente o que se quer resolver, que é saber qual é qual. A coordenada
+           distingue de imediato; o id inteiro fica no corpo da ficha. */
+        subtitulo={
+          hexSelecionado
+            ? [dados?.uf, coord(hexSelecionado.lat, hexSelecionado.lng)]
+                .filter(Boolean)
+                .join(' · ')
+            : undefined
+        }
+        onFechar={() => setSelecionado(null)}
+        recuoInferior={96}
+      >
+        {hexSelecionado && (
+          <FichaHex hex={hexSelecionado} cres={cresMunDoHex} />
+        )}
+      </JanelaFicha>
+
+      {/* ---------------- Janela da COMPARAÇÃO ----------------
+          À ESQUERDA de propósito: a ficha do hexágono nasce à direita, e duas janelas no
+          mesmo canto abririam uma sobre a outra. Arrastar continua livre para as duas. */}
+      <JanelaFicha
+        aberta={modoCenario}
+        titulo="Comparando hexágonos"
+        subtitulo={`${cenario.length} de ${MAX_COMPARADOS} selecionados`}
+        onFechar={() => {
+          setModoCenario(false)
+          setCenario([])
+        }}
+        ancora="esquerda"
+        recuoInferior={96}
+      >
+        {hexesComparacao ? (
+          <PainelComparacao hexes={hexesComparacao} onLimpar={() => setCenario([])} />
+        ) : (
+          <div>
+            <div style={{ font: '700 12px/1 var(--f-ui)', color: 'var(--tx-max)' }}>
+              Cenário multi-hex · {resumoCenario?.n ?? 0} hex
+            </div>
+            {resumoCenario ? (
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 5 }}>
+                <LinhaC rotulo="Residual somado" valor={`${alunos(resumoCenario.residual)} alunos`} forte />
+                <LinhaC rotulo="População" valor={num(resumoCenario.pop)} />
+                <LinhaC rotulo="Score censo médio" valor={num(resumoCenario.scoreMedio, 1)} />
+                <LinhaC rotulo="Concorrentes 2 km" valor={num(resumoCenario.conc)} />
+              </div>
+            ) : (
+              <p style={{ margin: '8px 0 0', font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-muted)' }}>
+                Clique nos hexágonos do mapa — ou no <strong style={{ color: 'var(--tx-soft)' }}>+</strong>{' '}
+                dos itens da lista — para somar residual, população e score. De{' '}
+                <strong style={{ color: 'var(--tx-soft)' }}>dois a {MAX_COMPARADOS}</strong>{' '}
+                selecionados, esta janela compara e diz qual é o melhor.
+              </p>
+            )}
+            {resumoCenario && (
+              <div style={{ marginTop: 11, display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => setCenario([])} style={botaoGhost}>
+                  Limpar
+                </button>
+                <button type="button" onClick={copiarCenario} style={botaoGhost}>
+                  {copiado ? 'Copiado ✓' : 'Copiar IDs'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+      </JanelaFicha>
+
       <MethodologyPanel
         aberto={metodologiaAberta}
         onFechar={() => setMetodologiaAberta(false)}

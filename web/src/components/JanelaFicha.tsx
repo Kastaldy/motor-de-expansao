@@ -6,6 +6,7 @@ import {
   mover,
   reajustar,
   redimensionar,
+  type Ancora,
   type Area,
   type Geometria,
 } from '../lib/janela'
@@ -43,12 +44,15 @@ export default function JanelaFicha({
   subtitulo,
   onFechar,
   recuoInferior = 16,
+  ancora = 'direita',
   children,
 }: {
   aberta: boolean
   titulo: string
   subtitulo?: string
   onFechar: () => void
+  /** De que lado a janela nasce. Duas na mesma tela precisam de lados distintos. */
+  ancora?: Ancora
   /**
    * Quanto a janela sobe do pe' da tela na posicao INICIAL. Existe porque o stepper do
    * funil ocupa a largura toda: com o recuo padrao a janela nasceria cobrindo os botoes
@@ -83,7 +87,7 @@ export default function JanelaFicha({
   }, [area])
 
   const atual =
-    geo ?? (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior) : null)
+    geo ?? (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior, ancora) : null)
 
   // Esc fecha. E' o gesto que todo mundo tenta primeiro numa janela por cima de algo.
   useEffect(() => {
@@ -157,6 +161,14 @@ export default function JanelaFicha({
         /* Sem isto o cabecalho interno pinta o proprio fundo por cima dos cantos
            arredondados e a janela volta a parecer um retangulo cortado. */
         overflow: 'hidden',
+        /* A janela PEDE O MOUSE DE VOLTA.
+           No modo de ponto ela vive dentro de uma camada com `pointerEvents: none` — que
+           existe para o mapa do Explorar receber arraste e clique nos vãos. `none` é
+           herdado, então sem esta linha a janela inteira ficava atravessável: os botões,
+           os campos de metragem e aluguel e a própria barra de arrasto não respondiam, e
+           o clique ia parar no mapa atrás (relato do Juan, 2026-08-12). Não aparecia nos
+           testes porque evento disparado por script não passa pelo teste de acerto. */
+        pointerEvents: 'auto',
         backdropFilter: 'blur(18px)',
         boxShadow: aberta ? '0 24px 64px rgba(0,0,0,.46)' : 'none',
         /* Sai INTEIRA pela direita: `100%` sozinho pararia com a borda de 16px ainda na

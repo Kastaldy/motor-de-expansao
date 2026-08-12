@@ -11,7 +11,7 @@ import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
-import { MAX_PONTOS } from '../lib/comparacao-pontos'
+import { MAX_PONTOS, indiceDoMesmoPonto, rotulosDosPontos } from '../lib/comparacao-pontos'
 import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
 import { num } from '../lib/format'
 import type { BlocoOpcional, PontoPayload, ViabilidadeOut } from '../lib/types'
@@ -47,7 +47,7 @@ export default function PontoScreen({
   onLocalizar,
   mapaPronto,
   pedido,
-  onFocarBusca,
+  onLimparPin,
 }: {
   /** Leva ESTE ponto para a tela de Viabilidade (a costura com o resto do app). */
   onAnalisarPonto: (p: PontoEscolhido) => void
@@ -77,13 +77,8 @@ export default function PontoScreen({
    * dispararia na segunda, e o operador ficaria olhando um botao que nao responde.
    */
   pedido: { lat: number; lng: number; n: number } | null
-  /**
-   * Pede o foco no campo de busca do cabecalho.
-   *
-   * E' o que faz "+ Adicionar mais um ponto" funcionar sem caixa propria: com o mapa na
-   * tela, adicionar um ponto e' digitar na lupa que ja' esta' la'.
-   */
-  onFocarBusca: () => void
+  /** Apaga a marca do endereço no mapa. Usado pela limpeza. */
+  onLimparPin: () => void
 }) {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -116,6 +111,8 @@ export default function PontoScreen({
   const [janela, setJanela] = useState(false)
 
   const ficha = fichas[aberto] ?? null
+  /* Os mesmos rótulos que o painel de abas usa — desambiguados entre si. */
+  const rotulos = rotulosDosPontos(fichas)
 
   /**
    * De uma coordenada ja' resolvida ate' a ficha na tela.
@@ -130,6 +127,16 @@ export default function PontoScreen({
       setCarregando(true)
       setErro(null)
       try {
+        // JA ESTA' NA LISTA? Abre a aba dele em vez de ler de novo. Dar Enter duas vezes
+        // na mesma coordenada é gesto normal de quem não viu a tela reagir; virar dois
+        // pontos idênticos, comparados contra si mesmos, não é resposta para isso.
+        const repetido = indiceDoMesmoPonto(fichas, lat, lng)
+        if (repetido >= 0) {
+          setAberto(repetido)
+          setColando(false)
+          setJanela(true)
+          return
+        }
         const nova = await api.ponto(lat, lng)
         // O ponto novo entra no fim e vira o aberto: quem acabou de pedir quer ver ele.
         setFichas((atuais) => {
@@ -139,14 +146,8 @@ export default function PontoScreen({
         })
         setColando(false)
         setJanela(true)
-        // O mapa do fundo vai para a cidade do endereco, com o pin na coordenada EXATA e
-        // o hexagono dela selecionado. Depois disto quem manda no territorio e' o
-        // operador: os seletores do cabecalho continuam valendo, como no Explorar.
-        onLocalizar(nova.local.uf ?? '', nova.local.municipio ?? '', {
-          lat: nova.lat,
-          lng: nova.lng,
-          hexId: nova.hex_id,
-        })
+        // O mapa vai para o ponto novo pelo efeito de `ficha` acima, que cuida TAMBEM da
+        // troca de aba. Localizar aqui de novo seria um segundo voo para o mesmo lugar.
       } catch (e) {
         // NAO limpa os pontos ja lidos: perder tres leituras porque a quarta falhou
         // seria punir o operador por um endereco mal digitado.
@@ -155,8 +156,45 @@ export default function PontoScreen({
         setCarregando(false)
       }
     },
-    [onLocalizar],
+    [onLocalizar, fichas],
   )
+
+  /** Tira TUDO da tela: os pontos, a janela e a marca do mapa. */
+  const limparPontos = useCallback(() => {
+    setFichas([])
+    setAberto(0)
+    setJanela(false)
+    setErro(null)
+    setColando(true)
+    onLimparPin()
+  }, [onLimparPin])
+
+  /**
+   * TROCAR DE ABA leva o mapa ate' o hexagono daquele ponto.
+   *
+   * Sem isto, comparar dois enderecos era cego: as abas trocavam os numeros da ficha mas
+   * o mapa continuava parado no ultimo ponto colado, entao nao dava para ver QUAL area
+   * cada coluna da comparacao descreve (relato do Juan, 2026-08-12).
+   *
+   * A chave e' o `hex_id` da ficha aberta, nao o indice: remover um ponto do meio muda o
+   * indice de todos os seguintes sem mudar o ponto que esta' aberto, e re-localizar ali
+   * seria um voo sem motivo. Trocar de aba entre pontos da MESMA cidade nao recarrega
+   * territorio nenhum — `uf`/`municipio` continuam iguais e so' o pin muda.
+   */
+  const ultimoLocalizado = useRef<string | null>(null)
+  useEffect(() => {
+    if (!ficha) {
+      ultimoLocalizado.current = null
+      return
+    }
+    if (ultimoLocalizado.current === ficha.hex_id) return
+    ultimoLocalizado.current = ficha.hex_id
+    onLocalizar(ficha.local.uf ?? '', ficha.local.municipio ?? '', {
+      lat: ficha.lat,
+      lng: ficha.lng,
+      hexId: ficha.hex_id,
+    })
+  }, [ficha, onLocalizar])
 
   /* A busca do Explorar pediu um ponto. O `n` e' a chave: a mesma coordenada pedida duas
      vezes tem de produzir duas leituras. */
@@ -312,7 +350,9 @@ export default function PontoScreen({
       {/* ---------------- A janela ---------------- */}
       <JanelaFicha
         aberta={janela && ficha != null}
-        titulo={ficha?.local.bairro ?? ficha?.local.municipio ?? 'Ponto analisado'}
+        /* O MESMO rótulo desambiguado das abas: com dois pontos da mesma cidade, o título
+           "Goiânia" não dizia qual dos dois estava aberto. */
+        titulo={rotulos[aberto] ?? 'Ponto analisado'}
         /* A régua e a contagem de setores vinham do cabeçalho próprio, que saiu junto com
            a cópia do Explorar. Vivem aqui porque é a ficha que elas qualificam — e some
            uma linha de chrome da tela. */
@@ -321,6 +361,9 @@ export default function PontoScreen({
             ? [
                 [ficha.local.municipio, ficha.local.uf].filter(Boolean).join(' · '),
                 `raio de ${num(ficha.raio_km * 1000)} m`,
+                /* A COORDENADA no subtítulo é o que resolve o empate de verdade: o número
+                   da aba diz "é o segundo", e isto diz QUAL endereço é. */
+                `${ficha.lat.toFixed(4)}, ${ficha.lng.toFixed(4)}`,
                 ficha.censo.n_setores != null ? `${ficha.censo.n_setores} setores` : null,
               ]
                 .filter(Boolean)
@@ -351,14 +394,10 @@ export default function PontoScreen({
                   return proximas
                 })
               }}
-              onAdicionar={() => {
-                setErro(null)
-                // Com o mapa na tela NAO abre caixa nenhuma: leva o cursor para a busca
-                // do cabecalho, que e' a entrada unica. Abrir uma segunda caixa por cima
-                // dela era o defeito apontado — redundante ainda que sob pedido.
-                if (mapaPronto) onFocarBusca()
-                else setColando(true)
-              }}
+              onResolver={resolver}
+              onLimpar={limparPontos}
+              carregando={carregando}
+              erro={erro}
             />
             <Ficha
               key={`${ficha.hex_id}-${aberto}`}

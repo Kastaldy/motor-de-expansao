@@ -51,6 +51,9 @@ export default function TabelaComparacao<T>({
               // Diferenca abaixo do limiar aparece, mas apagada: o numero continua
               // visivel para auditoria, sem virar argumento.
               apagada={!d.relevante}
+              fracaoA={fracao(d.a, d.b)}
+              fracaoB={fracao(d.b, d.a)}
+              maiorEhMelhor={d.dimensao.maiorEhMelhor}
             />
           )
         })}
@@ -91,7 +94,7 @@ function Cabecalho({ texto, destaque }: { texto: string; destaque: boolean }) {
 }
 
 function Linha({
-  rotulo, a, b, ganhaA, ganhaB, apagada,
+  rotulo, a, b, ganhaA, ganhaB, apagada, fracaoA, fracaoB, maiorEhMelhor,
 }: {
   rotulo: string
   a: string
@@ -99,6 +102,10 @@ function Linha({
   ganhaA: boolean
   ganhaB: boolean
   apagada: boolean
+  /** Quanto o valor de cada lado ocupa em relação ao maior dos dois (0 a 1). */
+  fracaoA: number | null
+  fracaoB: number | null
+  maiorEhMelhor: boolean
 }) {
   const cor = (ganha: boolean) =>
     ganha ? 'var(--tx-max)' : apagada ? 'var(--tx-off)' : 'var(--tx-soft)'
@@ -111,26 +118,81 @@ function Linha({
         }}
       >
         {rotulo}
+        {/* A DIREÇÃO precisa estar escrita. "Concorrentes: 4 contra 6" só se lê como bom
+            ou ruim sabendo que aqui menos é melhor — e a barra maior, nessa linha, é a
+            pior. Sem esta legenda o desenho mentiria para quem passa o olho. */}
+        {!maiorEhMelhor && (
+          <span style={{ font: '400 9.5px/1.6 var(--f-ui)', color: 'var(--tx-off)' }}>
+            {' '}
+            · menos é melhor
+          </span>
+        )}
       </span>
       {[
-        { v: a, ganha: ganhaA },
-        { v: b, ganha: ganhaB },
-      ].map(({ v, ganha }, i) => (
-        <span
-          key={i}
-          className="num"
-          style={{
-            font: `${ganha ? 700 : 500} 11.5px/1.6 var(--f-num)`,
-            color: cor(ganha),
-            textAlign: 'right',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {v}
+        { v: a, ganha: ganhaA, fr: fracaoA },
+        { v: b, ganha: ganhaB, fr: fracaoB },
+      ].map(({ v, ganha, fr }, i) => (
+        <span key={i} style={{ display: 'grid', gap: 3, justifyItems: 'end', minWidth: 72 }}>
+          <span
+            className="num"
+            style={{
+              font: `${ganha ? 700 : 500} 11.5px/1.4 var(--f-num)`,
+              color: cor(ganha),
+              textAlign: 'right',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {v}
+          </span>
+          {/* A barra é RELATIVA ao outro lado, não a uma régua absoluta: comparar dois
+              pontos responde "qual é maior", e o produto não tem corte publicado de
+              "residual bom". Inventar um aqui seria afirmar régua que não existe. */}
+          {fr != null && (
+            <span
+              aria-hidden
+              style={{
+                display: 'block',
+                width: '100%',
+                height: 4,
+                borderRadius: 2,
+                background: 'var(--line-soft)',
+                overflow: 'hidden',
+              }}
+            >
+              <span
+                style={{
+                  display: 'block',
+                  width: `${Math.round(fr * 100)}%`,
+                  height: '100%',
+                  borderRadius: 2,
+                  background: ganha
+                    ? 'var(--ac)'
+                    : apagada
+                      ? 'var(--line-mid)'
+                      : 'var(--tx-rank)',
+                }}
+              />
+            </span>
+          )}
         </span>
       ))}
     </>
   )
+}
+
+/**
+ * Quanto ESTE valor ocupa em relacao ao maior dos dois lados.
+ *
+ * `null` quando nao ha' o que comparar (um dos lados ausente) ou quando o maior e' zero —
+ * duas barras vazias nao dizem nada, e uma barra cheia sobre zero seria pior: afirmaria
+ * vantagem onde nao ha' grandeza. Negativos (crescimento pode ser negativo) entram pelo
+ * modulo, senao a barra sumiria justamente na linha que importa.
+ */
+function fracao(valor: number | null, outro: number | null): number | null {
+  if (valor == null || outro == null) return null
+  const teto = Math.max(Math.abs(valor), Math.abs(outro))
+  if (teto === 0) return null
+  return Math.abs(valor) / teto
 }
 
 /** `null` vira o travessão de `num`, nunca "R$ —" nem "0". */

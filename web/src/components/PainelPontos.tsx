@@ -1,12 +1,14 @@
 import { useMemo, useState } from 'react'
 
+import CampoPonto from './CampoPonto'
 import Select from './Select'
 import TabelaComparacao from './TabelaComparacao'
 import { Botao, Glass } from './primitives'
+import type { EntradaClassificada } from '../lib/entrada-ponto'
 import {
   MAX_PONTOS,
   compararPontos,
-  rotuloDoPonto,
+  rotulosDosPontos,
 } from '../lib/comparacao-pontos'
 import { alunos, num } from '../lib/format'
 import type { PontoPayload } from '../lib/types'
@@ -26,26 +28,41 @@ export default function PainelPontos({
   aberto,
   onAbrir,
   onRemover,
-  onAdicionar,
+  onResolver,
+  onLimpar,
+  carregando,
+  erro,
 }: {
   fichas: PontoPayload[]
   aberto: number
   onAbrir: (i: number) => void
   onRemover: (i: number) => void
-  onAdicionar: () => void
+  /** Resolve e acrescenta um ponto — o mesmo caminho da caixa de colar da tela. */
+  onResolver: (entrada: EntradaClassificada, texto: string) => Promise<void>
+  /** Tira os pontos, a janela e a marca do mapa. */
+  onLimpar: () => void
+  carregando: boolean
+  erro: string | null
 }) {
   const [a, setA] = useState(0)
   const [b, setB] = useState(1)
+  /** O campo de colar aberto aqui dentro, ao lado do botão que o pediu. */
+  const [adicionando, setAdicionando] = useState(false)
 
-  const rotulos = useMemo(() => fichas.map(rotuloDoPonto), [fichas])
+  /* Rotulos da LISTA, nao de cada ponto isolado: dois enderecos da mesma cidade sem
+     bairro resolvido tinham o mesmo nome, e as abas, os seletores e as duas colunas da
+     tabela ficavam indistinguiveis. */
+  const rotulos = useMemo(() => rotulosDosPontos(fichas), [fichas])
 
   // Com 3+ pontos o operador escolhe o par; com 2 nao ha o que escolher.
   const iA = Math.min(a, fichas.length - 1)
   const iB = Math.min(b, fichas.length - 1)
   const comparacao = useMemo(
     () =>
-      fichas.length >= 2 && iA !== iB ? compararPontos(fichas[iA], fichas[iB]) : null,
-    [fichas, iA, iB],
+      fichas.length >= 2 && iA !== iB
+        ? compararPontos(fichas[iA], fichas[iB], rotulos[iA], rotulos[iB])
+        : null,
+    [fichas, iA, iB, rotulos],
   )
 
   return (
@@ -105,8 +122,8 @@ export default function PainelPontos({
         })}
 
         {fichas.length < MAX_PONTOS ? (
-          <Botao variante="ghost" onClick={onAdicionar}>
-            + Adicionar mais um ponto
+          <Botao variante="ghost" onClick={() => setAdicionando((v) => !v)} aria-expanded={adicionando}>
+            {adicionando ? '− Fechar' : '+ Adicionar mais um ponto'}
           </Botao>
         ) : (
           <span style={{ font: '400 11px/1.4 var(--f-ui)', color: 'var(--tx-sub)' }}>
@@ -114,7 +131,42 @@ export default function PainelPontos({
             Máximo de {MAX_PONTOS} pontos — remova um para colar outro.
           </span>
         )}
+
+        {/* Limpeza. Só com ponto na tela — um "Limpar" sobre lista vazia é botão morto. */}
+        {fichas.length > 0 && (
+          <Botao variante="ghost" onClick={onLimpar} title="Tira os pontos, a janela e a marca do mapa">
+            Limpar tudo
+          </Botao>
+        )}
       </div>
+
+      {/* ---- Campo de colar, AQUI e não no cabeçalho ----
+          A versão anterior mandava o cursor para a lupa do topo, e o operador tinha de
+          procurar onde o foco caiu — longe do botão que ele acabou de clicar e longe da
+          lista que está montando. O campo aparece colado na ação que o pediu, e some
+          quando o ponto entra. Não é a caixa fixa que duplicava a lupa: existe só
+          enquanto está aberto, a pedido. */}
+      {adicionando && (
+        <div
+          style={{
+            padding: 12,
+            borderRadius: 'var(--r-lg)',
+            border: '1px solid var(--ac-a25)',
+            background: 'var(--surf-raised)',
+            display: 'grid',
+            gap: 8,
+          }}
+        >
+          <CampoPonto
+            onResolver={async (entrada, texto) => {
+              await onResolver(entrada, texto)
+              setAdicionando(false)
+            }}
+            ocupado={carregando}
+            erro={erro}
+          />
+        </div>
+      )}
 
       {/* ---- Comparação ---- */}
       {fichas.length >= 2 && (

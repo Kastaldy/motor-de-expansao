@@ -4,7 +4,9 @@ import {
   DIMENSOES_PONTO,
   MAX_PONTOS,
   compararPontos,
+  indiceDoMesmoPonto,
   rotuloDoPonto,
+  rotulosDosPontos,
 } from './comparacao-pontos'
 import type { PontoPayload } from './types'
 
@@ -108,6 +110,76 @@ describe('rotuloDoPonto', () => {
 
   it('cai na coordenada quando nao ha nem municipio', () => {
     expect(rotuloDoPonto(ponto({ bairro: null, municipio: null }))).toBe('-23.5613, -46.6565')
+  })
+})
+
+describe('indiceDoMesmoPonto', () => {
+  const p1 = ponto({ lat: -16.6869, lng: -49.2648 })
+  const p2 = ponto({ lat: -16.706, lng: -49.24 })
+
+  it('acha a coordenada repetida — o Enter dado duas vezes', () => {
+    expect(indiceDoMesmoPonto([p1, p2], -16.6869, -49.2648)).toBe(0)
+    expect(indiceDoMesmoPonto([p1, p2], -16.706, -49.24)).toBe(1)
+  })
+
+  it('devolve -1 para coordenada nova', () => {
+    expect(indiceDoMesmoPonto([p1, p2], -23.5613, -46.6565)).toBe(-1)
+  })
+
+  it('trata como o MESMO ponto uma diferença abaixo do metro', () => {
+    // 1e-7 de grau ≈ 1 cm: o mesmo imóvel, devolvido por caminhos diferentes.
+    expect(indiceDoMesmoPonto([p1], -16.6869001, -49.2648001)).toBe(0)
+  })
+
+  it('trata como pontos DIFERENTES uma diferença acima do metro', () => {
+    // 1e-4 de grau ≈ 11 m.
+    expect(indiceDoMesmoPonto([p1], -16.6870, -49.2648)).toBe(-1)
+  })
+
+  it('lista vazia devolve -1 em vez de quebrar', () => {
+    expect(indiceDoMesmoPonto([], -16.6869, -49.2648)).toBe(-1)
+  })
+})
+
+describe('rotulosDosPontos', () => {
+  it('nao numera quando os nomes ja se distinguem', () => {
+    const r = rotulosDosPontos([ponto({ bairro: 'Bueno' }), ponto({ bairro: 'Marista' })])
+    expect(r).toEqual(['Bueno', 'Marista'])
+  })
+
+  it('numera os EMPATADOS — o caso de dois endereços da mesma cidade sem bairro', () => {
+    const r = rotulosDosPontos([
+      ponto({ bairro: null }),
+      ponto({ bairro: null }),
+      ponto({ bairro: null }),
+    ])
+    expect(r).toEqual(['1 · São Paulo', '2 · São Paulo', '3 · São Paulo'])
+  })
+
+  it('numera SÓ quem empata, preservando o nome de quem é único', () => {
+    const r = rotulosDosPontos([
+      ponto({ bairro: null }),
+      ponto({ bairro: 'Bela Vista' }),
+      ponto({ bairro: null }),
+    ])
+    expect(r).toEqual(['1 · São Paulo', 'Bela Vista', '3 · São Paulo'])
+  })
+
+  it('o número é a POSIÇÃO na lista, não a ordem do empate', () => {
+    // O 3º ponto continua sendo "3", senão o rótulo não casaria com a aba nem com o mapa.
+    const r = rotulosDosPontos([ponto({ bairro: 'X' }), ponto({ bairro: null }), ponto({ bairro: null })])
+    expect(r[1]).toBe('2 · São Paulo')
+    expect(r[2]).toBe('3 · São Paulo')
+  })
+
+  it('resultado nunca tem duas entradas iguais', () => {
+    const r = rotulosDosPontos([ponto({ bairro: null }), ponto({ bairro: null })])
+    expect(new Set(r).size).toBe(r.length)
+  })
+
+  it('lista vazia e lista de um sobrevivem', () => {
+    expect(rotulosDosPontos([])).toEqual([])
+    expect(rotulosDosPontos([ponto()])).toEqual(['Bela Vista'])
   })
 })
 

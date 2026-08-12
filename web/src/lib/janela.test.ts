@@ -38,6 +38,16 @@ describe('geometriaPadrao', () => {
     const g = geometriaPadrao({ largura: 1200, altura: 150 }, TOPO, RECUO)
     expect(g.altura).toBe(ALTURA_MINIMA)
   })
+
+  it('ancorada à esquerda nasce na margem oposta, sem tocar no tamanho', () => {
+    const esq = geometriaPadrao(AREA, TOPO, RECUO, 'esquerda')
+    const dir = geometriaPadrao(AREA, TOPO, RECUO, 'direita')
+    expect(esq.x).toBe(MARGEM)
+    expect(esq.largura).toBe(dir.largura)
+    expect(esq.altura).toBe(dir.altura)
+    // Duas janelas na mesma tela não podem nascer uma sobre a outra.
+    expect(esq.x).not.toBe(dir.x)
+  })
 })
 
 describe('mover', () => {

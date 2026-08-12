@@ -20,6 +20,15 @@ export interface Area {
   altura: number
 }
 
+/**
+ * De que lado a janela nasce.
+ *
+ * Existe porque agora há mais de uma na mesma tela: sem lados distintos, a segunda
+ * abriria exatamente em cima da primeira e pareceria que só uma existe. Não trava nada —
+ * arrastar continua levando qualquer uma para qualquer canto.
+ */
+export type Ancora = 'direita' | 'esquerda'
+
 /** 520px cabe a grade de KPI em 2 colunas e a comparação A x B em 3, sem espremer. */
 export const LARGURA_PADRAO = 520
 /** Abaixo disto os KPIs quebram em 1 coluna e a janela deixa de valer a pena. */
@@ -45,10 +54,16 @@ export const VISIVEL_MINIMO = 120
  * stepper. Mesma posição que ela tinha quando era fixa — quem não arrastar nada não vê
  * diferença nenhuma.
  */
-export function geometriaPadrao(area: Area, topo: number, recuoInferior: number): Geometria {
+export function geometriaPadrao(
+  area: Area,
+  topo: number,
+  recuoInferior: number,
+  ancora: Ancora = 'direita',
+): Geometria {
   const largura = Math.min(LARGURA_PADRAO, Math.max(LARGURA_MINIMA, area.largura - 2 * MARGEM))
   const altura = Math.max(ALTURA_MINIMA, area.altura - topo - recuoInferior)
-  return { x: Math.max(MARGEM, area.largura - largura - MARGEM), y: topo, largura, altura }
+  const x = ancora === 'esquerda' ? MARGEM : Math.max(MARGEM, area.largura - largura - MARGEM)
+  return { x, y: topo, largura, altura }
 }
 
 /** Prende um valor entre dois limites. `max < min` devolve `min` — área minúscula não inverte a trava. */

@@ -88,10 +88,8 @@ export default function App() {
     setPedidoPonto((p) => ({ lat, lng, n: (p?.n ?? 0) + 1 }))
   }, [])
 
-  /* Foco no campo de busca do mapa, pedido pela janela do modo de ponto. Contador pelo
-     mesmo motivo do pedido acima: o gesto se repete e precisa disparar toda vez. */
-  const [focoBusca, setFocoBusca] = useState(0)
-  const pedirFocoBusca = useCallback(() => setFocoBusca((n) => n + 1), [])
+  /** Tira a marca do endereço do mapa (a limpeza do modo de ponto). */
+  const limparPinPonto = useCallback(() => setPinPonto(null), [])
 
   // Foto do Mapa Territorial (ver lib/mapa-estado): vive AQUI porque o App nao desmonta
   // ao trocar de tela — e' o que devolve o mapa como estava na volta da Viabilidade.
@@ -264,14 +262,16 @@ export default function App() {
                  ali produz a MESMA ficha que colá-lo. Sem isto havia duas caixas pedindo
                  endereço na mesma tela, e a de cima só soltava um pin. */
               onPontoBuscado={pedirPonto}
-              focarBusca={focoBusca}
+              /* A ficha aqui é a do PONTO, publicada pelo `PontoScreen`. Sem isto o
+                 endereço abria duas janelas: a dele e a do hexágono em que ele caiu. */
+              janelaDoHex={false}
             />
             <PontoScreen
               onAnalisarPonto={irParaViabilidade}
               onLocalizar={localizarPonto}
               mapaPronto={dados != null}
               pedido={pedidoPonto}
-              onFocarBusca={pedirFocoBusca}
+              onLimparPin={limparPinPonto}
             />
           </>
         ) : tela === 'oportunidades' ? (
