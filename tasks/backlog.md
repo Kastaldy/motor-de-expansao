@@ -1468,6 +1468,134 @@ produção e exige DEC + gate humano.
 
 ---
 
+### BLK-MA-05 — Lista priorizada de alvos de M&A: cruzamento com o hexágono quente + entregável
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Média** (materializa **dois artefatos novos** e faz join sobre a camada de mercado, mas **READ-ONLY** sobre ela e sobre o M1: não recalcula `score_priorizacao`, `hex_score_estrutural`, pesos, carteira, plano nem artefato oficial, e não escreve de volta em carteira/mercado. Não cria ingestão, não toca VPS, não apaga disco, não persiste PII nova no MVP hex-level. **Sobe para Alta** se a variante NOMEADA (uma linha por academia, com identidade) for materializada — aí persiste identidade e o artefato nasce `gitignored` por D1-B/D7.) |
+| **Prioridade** | **É o entregável final do epic** — a razão de existirem MA-01..04. Tudo antes dele produz insumo; ele é o único que sai do repositório e vai para a mesa do comercial. |
+| **Esteira** | Block Orchestrator → Planner → Builder → QA. |
+| **Status** | **Pendente — escrito em 2026-08-12.** Até esta data o bloco **não existia como bloco estruturado**, embora fosse citado **35 vezes** nos três artefatos permanentes (medido: 4 em `tasks/backlog.md`, 19 em `tasks/completed.md`, 12 em `docs/vulnerabilidade_ma_contrato.md`) — sempre como destino ("o entregável comercial é o BLK-MA-05", "fora de escopo → BLK-MA-05"), nunca como bloco. Mesmo furo que o fechamento do BLK-MA-02 já registrara na época para o BLK-MA-04. |
+| **Depende de** | **Para IMPLEMENTAR:** BLK-MA-04 (score, concluído 2026-07-30) + BLK-MA-03-FU1 e BLK-MA-04-FU1 (concluídos 2026-08-12) — os dois FU1 eram pré-requisito declarado e **já saíram do caminho**. **Para EXECUTAR contra dado real:** BLK-MA-06 aplicado na VPS + ~2 meses de série. Ver "A implementação NÃO espera a série" abaixo. |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012), e a saída é decisão comercial. NÃO marcar loop-safe. |
+
+**O que entrega (D5 + D6, já ratificados no gate de 2026-07-23 — não reabrir).**
+
+1. **Hexágono quente para M&A**, com a INVERSÃO do §2 (comprar quer demanda **ALTA** + residual
+   **BAIXO**, o oposto de `abrir_agora`): `sam_fitness_potencial` no **top quartil do universo**
+   **AND** `score_oportunidade_residual < 25`.
+2. **Adjacência k=1**: a academia é "próxima de hex quente" se o seu `hex_id_res7` **ou** qualquer
+   vizinho de `h3.grid_disk(hex, 1)` for quente (~2-3 km, sem geometria pesada).
+3. **Join READ-ONLY** do hotness na lista de academias, `validate="many_to_one"`, com asserts de
+   invariância (`len` inalterado; `score_priorizacao` e os 4 ranks idênticos por `.equals` antes/
+   depois). Molde: a função **`enriquecer_dataframe_com_residual`** em
+   `pipelines/enriquecer_outputs_residual_mercado.py` — ancorada por NOME de propósito.
+   **O ponteiro `:68-82` do §9 do contrato está 3 linhas curto, e nasceu assim:** o `base.merge(`
+   abre na **65** e o `on="hex_id"` está na **67**, então `68-82` começa em `how="left"` e deixa de
+   fora justamente as linhas que definem a chave do join. O intervalo fiel é **65-82** (asserts em
+   71 cardinalidade, 75 `score_priorizacao`, 79 os 4 ranks, 82 colunas residuais). Não é apodrecimento
+   — o arquivo tem um único commit desde 2026-05-30, anterior ao contrato. Mais uma razão para citar
+   a função pelo nome (ver o m1 do BLK-MA-03-FU1, que trocou 3 endereços em 2 semanas).
+4. **Dois artefatos** (D6): `data/staging/vulnerabilidade_ma_academias.parquet` (camada scored) e
+   `data/outputs/alvos_ma_priorizados.csv` (`sep=";"`, `encoding="utf-8-sig"`, hex-level no MVP,
+   **sem identidade**). Cabeçalho canônico no §10 do contrato.
+
+**O QUE EU MEDI (2026-08-12, sobre `data/outputs/carteira_expansao_acionavel.parquet`).** O bloco
+nasce dimensionado, não no escuro:
+
+| grandeza | medido |
+|---|---|
+| universo da carteira | **4.899** hexes |
+| top quartil de `sam_fitness_potencial` (`>= 7,5`) | **1.225** |
+| `score_oportunidade_residual < 25` | **4.510** |
+| **hex quente** (as duas condições) | **836** — 17,1% do universo |
+| hex quente **+ vizinhança k=1** (união) | **3.660** (fator **4,4x**) |
+| destes, dentro da carteira | 1.066 |
+
+**A CONJUNÇÃO DO D5 NÃO É DECORATIVA — e o denominador ingênuo faz parecer que é.** O corte
+`score_oportunidade_residual < 25` deixa passar **4.510 dos 4.899 hexes (92%)** do universo, o que
+sugere um filtro inerte. **É ilusão de denominador**: o corte só age *depois* do top quartil de SAM,
+e ali ele morde muito:
+
+| leitura | medido |
+|---|---|
+| removidos pelo `< 25`, sobre o **universo** | 389 / 4.899 = **7,9%** ← o número que engana |
+| removidos pelo `< 25`, sobre o **top quartil** | 389 / 1.225 = **31,8%** ← o número que vale |
+| taxa de `residual < 25` **dentro** do top quartil | 68,2% |
+| taxa de `residual < 25` **fora** do top quartil | **100,0%** |
+| `corr(sam_fitness_potencial, score_oportunidade_residual)` | **+0,79** |
+
+**100% das remoções ocorrem dentro do top quartil** — não há uma única linha com `residual >= 25`
+fora dele (o SAM mínimo dessas 389 é 664,6, contra um `q75` de 7,53). Ou seja: a metade "saturado"
+existe **exclusivamente** para depurar o conjunto que a outra metade seleciona, e sem ela o gate
+entregaria 1.225 hexes — **46,5% a mais**.
+
+O mecanismo: `residual` ALTO significa oportunidade residual **disponível** (menos saturado), e ele
+cresce junto com o SAM (`+0,79`). Hex de SAM alto é onde **sobra** demanda não atendida — por isso é
+justamente lá que o filtro de saturação descarta. As duas condições do D5 são fortemente
+correlacionadas **na direção que torna a conjunção não-trivial**: o gate faz trabalho real.
+
+Consequência para quem for mexer no limiar: medir o efeito **sobre o top quartil**, nunca sobre o
+universo — a razão entre as duas leituras é de **4x**. Reapertar o `< 25` continua sendo **mudança de
+produto** (gate/DEC, não bugfix), mas o número que instrui essa decisão é o `31,8%`, não o `7,9%`.
+
+**Concentração geográfica medida:** os 836 hexes quentes são majoritariamente do Nordeste — PB
+(148), PE (125), CE (113), MA (82), PI (81), AL (57), SE (51), PA (41). Coerente com a tese
+(demanda alta + oferta já instalada), mas o comercial deve saber disso **antes** de receber a lista,
+para não ler o recorte como viés de coleta.
+
+**A implementação NÃO espera a série — a execução sim.** Todo o pacote `vulnerabilidade/` é testado
+com **fixtures 100% sintéticas** e frames injetados, e `calcular_score_vulnerabilidade` aceita
+`churn=`/`presenca=` diretamente. Logo este bloco pode ser **escrito, testado e mergeado agora**,
+com a série em zero semanas. O que a série destrava é rodar contra dado real e entregar a lista ao
+comercial. **Não usar "a série está vazia" como razão para adiar o bloco.**
+
+**Obrigações herdadas que este bloco TEM de honrar (cada uma já é decisão fechada).**
+
+- **§8.5 / emenda BLK-MA-04-FU1 — obrigação DURA:** segmentar por `n_sinais_disponiveis` **antes**
+  de ordenar. `score_vulnerabilidade_ordenavel` resolve "score de dois valores", **não** resolve
+  "regimes de tamanhos diferentes na mesma coluna": uma linha `{s3}` sai com `100,0` e lidera uma
+  `{s1,s3,s4}` completa. Ordenar o frame inteiro sem segmentar mistura as réguas **em silêncio** —
+  não devolve `NaN`, não levanta, e o erro só aparece na shortlist. Travado por
+  `test_ordenavel_nao_separa_regimes_de_tamanho_diferente`.
+- **DEC-026 — obrigação transferida por escrito:** `nota_wellhub`/`qtd_avaliacoes_wellhub` são
+  **fatos sem peso**. O entregável **deve documentar** qualquer corte que faça sobre nota ou
+  contagem. E as duas colunas **andam juntas**: 38,4% das 34.035 independentes com nota têm < 30
+  avaliações, e das 158 abaixo de nota 4,0 a mediana é **10,5** avaliações. Nota sem contagem ao
+  lado põe no topo da shortlist academias cujo sinal são três avaliações.
+- **Ressalva do BLK-MA-03-FU1:** `n_academias_independentes_totalpass`/`_wellhub` são **TETO**, não
+  número exato (super-contam sob rotação de chave, que é acidente de coleta e não caso raro). Se o
+  entregável exibir "densidade do alvo", cruzar com `flag_troca_chave_na_serie`.
+- **D7 / DEC-012:** MVP hex-level **sem identidade**; a variante nomeada, se existir, nasce
+  `gitignored`. CSV do projeto em `sep=";"` + `utf-8-sig` (§2 do CLAUDE.md).
+
+**Detalhes de integração já medidos (poupam uma rodada de descoberta).**
+- A carteira vive em **`data/outputs/`**, não em `data/staging/` — o §9 do contrato não fixa o
+  caminho.
+- A chave de join é **`hex_id`** na carteira e **`hex_id_res7`** na academia: nomes diferentes,
+  mesmo conteúdo. As 5 colunas que o §9 exige (`score_oportunidade_residual`,
+  `oferta_efetiva_disponivel`, `sam_fitness_potencial`, `tese_entrada`, `score_priorizacao`) **estão
+  todas presentes**, junto de `uf`, num frame de 62 colunas.
+
+**Fora de escopo.** Qualquer artefato/score/peso/ranking do M1 (READ-ONLY, DEC-001); reabrir a
+fórmula, os pesos do D4 ou as decisões G-D1/G-D2/G-D3 (ratificadas 2026-07-30); reabrir o D5/D6
+(gate de 2026-07-23) — se o limiar de saturação mudar, é **DEC nova**; overlay no dashboard/piloto
+web (§10: "sem overlay no MVP"); reputação externa (BLK-MA-07); o cron (BLK-MA-06); escrever de
+volta em carteira, mercado ou plano.
+
+**Critério de aceite.** Hex quente implementado como a conjunção do D5 com adjacência k=1; join
+`many_to_one` com os asserts de invariância do molde, provados por teste que **falharia** se o join
+alterasse `len`, `score_priorizacao` ou qualquer um dos 4 ranks; segmentação por
+`n_sinais_disponiveis` antes de qualquer ordenação, com teste; os dois artefatos do D6 materializados
+no formato canônico (CSV `sep=";"` + `utf-8-sig`); qualquer decisão sobre o limiar `< 25` medida
+**sobre o top quartil**, nunca sobre o universo (a razão entre as duas leituras é 4x — ver a tabela
+acima), e alterá-lo exige gate/DEC; corte sobre nota/contagem documentado por escrito
+(DEC-026); fixtures 100% sintéticas, zero PII; suíte completa sem regressão (medir a baseline **no
+momento** — a de 2026-08-12 era **2925** coletados, e envelhece a cada ciclo); `ruff` limpo;
+`loop_guard` sem `CRITICO`.
+
+---
+
 - BLK-MA-08 (concluído 2026-08-11) — ver tasks/completed.md
 
 ---
