@@ -1463,7 +1463,7 @@ produção e exige DEC + gate humano.
 | **Criticidade** | **Baixa** (documentação de limite conhecido, um teste de congelamento, correção de ponteiro de linha e acentuação de prosa; nenhuma mudança de comportamento do sinal). |
 | **Prioridade** | Antes do **BLK-MA-05**, que é quem exibirá "densidade do alvo". **NÃO bloqueia o BLK-MA-04** — verificado em 2026-07-30: `v1` deriva de `n_agregadores_no_hex`, e as colunas `n_academias_independentes_*` não entram no score nem na sua saída. |
 | **Esteira** | Block Orchestrator → Builder. |
-| **Status** | Pendente. |
+| **Status** | **EXECUTADO em 2026-08-12** (branch `ciclo/BLK-MA-03-FU1`), aguardando merge. Itens 1, m1, m2 e m4 do critério de aceite entregues com sonda de prova. **m3, m5 e m6 RECUSADOS explicitamente** — não estão no critério de aceite e nenhum é defeito ativo: (m3) é imprecisão de um handoff já arquivado, sem artefato vivo a corrigir; (m5) é inalcançável pelo caminho público (o filtro do passo 3 garante o universo) e o `_assert_schema` já barra a saída — uma guarda privada duplicaria a trava sem fechar buraco algum; (m6) é divergência de contagem de warnings, pré-existente e alheia a este bloco. |
 | **Depende de** | BLK-MA-03 (concluído 2026-07-29). |
 | **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
 
@@ -1490,8 +1490,21 @@ mais um teste que congele o comportamento.
 commit** acrescentou 41 linhas acima delas — hoje estão em **432-450**, e `395-413` aponta para
 `rotulo_de_teste`/`entrada_tecnologia_totalpass`. O ponteiro errado está em **2 artefatos
 permanentes**: `docs/vulnerabilidade_ma_contrato.md:241` e este `tasks/backlog.md`. A afirmação é
-verdadeira e tem teste; só a referência precisa ir para `432-450`. (m2) §2 acentuação: 4 linhas de
-prosa sem acento — `presenca_agregador.py:69,308,309` e `test_presenca_agregador.py:34` — contra a
+verdadeira e tem teste; só a referência precisa ir para `432-450`.
+**[correção 2026-08-12, BLK-MA-03-FU1] `432-450` também já envelheceu — o ponteiro foi ANCORADO POR
+NOME, e DE PROPÓSITO não reapontado para um novo intervalo.** Medido: `432-450` hoje aponta para
+`derivar_semana_iso`/`parse_data_coleta`, e as funções certas já se mudaram outra vez. O
+deslocamento acumulado desde o BLK-MA-03 é de **+115 linhas**, e a maior fatia **não** é dos blocos
+que se suspeitaria: `BLK-MA-04` sozinho vale **+59** (51%), contra `+20` do MA-09, `+14` do MA-11 e
+`+22` de dois follow-ups. Este seria o **terceiro** endereço da mesma afirmação em ~2 semanas — e
+escrever um quarto não resolveria nada: o próprio diff deste FU1 acrescenta 5 linhas a `contrato.py`
+acima das funções e invalidaria o número no ato. É o número de linha que é o defeito, não o valor
+dele, então os 3 artefatos passaram a citar **`chave_do_slug` e `chave_hash_estavel` pelo nome**,
+sem intervalo algum. Também medido: o ponteiro estava em **3** artefatos, não 2 —
+`tasks/completed.md` (fechamento do BLK-MA-03) carregava a mesma referência, e o endereço
+`docs/...:241` deste parágrafo era, ele próprio, stale (a linha real era a `325`). (m2) §2
+acentuação: 4 linhas de prosa sem acento — `presenca_agregador.py:69,308,309` e
+`test_presenca_agregador.py:34` (medido: a linha real é a **33**, `# Sao Paulo`) — contra a
 afirmação explícita do handoff do Builder de que a prosa estava acentuada. Mesma classe da ressalva
 `m4` do QA do MA-02. **Não** contam como defeito as mensagens de `raise` em ASCII (cópia deliberada do
 precedente em `churn_staleness.py:222`; §2 mira texto de usuário, não exceção de desenvolvedor).
@@ -1513,6 +1526,10 @@ cego do AST (está no `BLK-MA-02-FU1`, Item 2-B).
 colunas 4/5, com teste que o congele; ponteiro `432-450` corrigido nos 2 artefatos; 4 linhas de prosa
 acentuadas; teste do `fillna` com `pd.NA`; suíte completa sem regressão (baseline do BLK-MA-03:
 **2230 coletados**); `ruff` limpo; `loop_guard` sem `CRITICO`.
+**[nota 2026-08-12] A baseline `2230` é HISTÓRICA** (CLAUDE.md §5: contagem de ciclo envelhece a
+cada ciclo, não serve de tripwire). Medida no início deste FU1, na `main` em `4ab83f4`: **2918
+coletados**. O critério "sem regressão" foi lido contra ela, e o ponteiro foi ancorado por nome em
+**3** artefatos em vez de reapontado para um novo intervalo — ver a correção do m1 acima.
 
 ---
 
@@ -1527,7 +1544,7 @@ acentuadas; teste do `fillna` com `pd.NA`; suíte completa sem regressão (basel
 | **Criticidade** | **Baixa** (um teste de isolamento endurecido, um regime sem cobertura, e 4 leves de precisão de texto/asserção; nenhuma mudança na fórmula nem nos pesos). |
 | **Prioridade** | Antes do **BLK-MA-05**, que é o consumidor do score. |
 | **Esteira** | Block Orchestrator → Builder. |
-| **Status** | **PARCIAL** (PR #194, merged 2026-08-05). ✅ Item 1 — a mesma correção do AST fechou o teste novo deste bloco, e a taxa foi medida em **2/5** (o item 2-B do MA-02-FU1 subcontava). ⬜ Item 2 (`test_regime_so_s3` + §8.5) e os 4 leves. |
+| **Status** | **COMPLETO em 2026-08-12** (branch `ciclo/BLK-MA-03-FU1`), aguardando merge. ✅ Item 1 (PR #194, merged 2026-08-05) — a mesma correção do AST fechou o teste novo deste bloco, e a taxa foi medida em **2/5** (o item 2-B do MA-02-FU1 subcontava). ✅ Item 2 — `test_regime_so_s3` + `test_ordenavel_nao_separa_regimes_de_tamanho_diferente`, e a emenda ao §8.5 do contrato. ✅ Os 4 leves (a,b,c,d), mais as duas **observações do QA** que o bloco pediu para não perder (o comentário de `SINAIS_INATIVOS` em `renormalizar_pesos` e o registro de que as duas checagens por substring são heurísticas de defesa secundária). |
 | **Depende de** | BLK-MA-04 (concluído 2026-07-30). |
 | **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
 

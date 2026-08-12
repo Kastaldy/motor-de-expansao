@@ -30,7 +30,7 @@ from motor_expansao.vulnerabilidade import presenca_agregador as m
 from motor_expansao.vulnerabilidade import snapshots as msnap
 from motor_expansao.vulnerabilidade.presenca_agregador import extrair_presenca_agregador
 
-HEX_A = h3.latlng_to_cell(-23.5500, -46.6300, 7)  # Sao Paulo
+HEX_A = h3.latlng_to_cell(-23.5500, -46.6300, 7)  # São Paulo
 HEX_B = h3.latlng_to_cell(-22.9100, -43.1800, 7)  # Rio de Janeiro
 
 
@@ -373,6 +373,21 @@ def test_assert_schema_rejeita_fontes_presentes_inconsistente_com_a_contagem() -
         m._assert_schema_presenca_agregador(ruim)
 
 
+def test_assert_schema_rejeita_fontes_presentes_nula() -> None:
+    """O `fillna("")` da comparação é o que impede o `pd.NA` de passar em SILÊNCIO.
+
+    Sem ele a comparação mascarada do pandas devolve `0` divergências para uma linha cujo
+    `fontes_presentes_no_hex` é nulo — ou seja, a checagem inteira passaria com a coluna vazia. O
+    teste irmão acima usa `"wellhub"` (um valor PRESENTE e errado) e não cobre este caminho:
+    medido em 2026-08-12, `(esperado != atual).sum()` dá `0` sem o `fillna` e `1` com ele.
+    """
+    ruim = _saida_valida().copy()
+    ruim.loc[0, "fontes_presentes_no_hex"] = pd.NA
+    assert pd.isna(ruim.loc[0, "fontes_presentes_no_hex"]), "a fixture precisa mesmo ficar nula"
+    with pytest.raises(ValueError, match="inconsistente"):
+        m._assert_schema_presenca_agregador(ruim)
+
+
 def test_assert_schema_rejeita_nulabilidade_inconsistente() -> None:
     """Os dois relógios são nulos SE E SOMENTE SE a contagem daquela fonte for 0."""
     ruim = _saida_valida().copy()
@@ -440,6 +455,45 @@ def test_docstring_registra_o_limite_do_zero_agregadores() -> None:
     doc = m.__doc__ or ""
     assert "0 agregadores" in doc
     assert "sinal 3" in doc, "o docstring precisa apontar onde o caso informativo vive"
+
+
+# --------------------------------------------------------------------------- #
+# CA-6b — segundo limite: as colunas 4/5 super-contam sob rotação de chave
+# --------------------------------------------------------------------------- #
+def test_rotacao_de_chave_super_conta_as_colunas_4_5() -> None:
+    """UMA academia, duas encarnações de chave -> `n_academias_independentes_totalpass = 2`.
+
+    Congela o limite do `BLK-MA-03-FU1` (Item 1). A redução dedupla por
+    `(fonte, chave_snapshot)`, e o rebaixamento de `chave_origem` (`slug` -> `hash_estavel`)
+    TROCA a chave: as duas encarnações sobrevivem como duas linhas e a contagem infla.
+
+    As duas asserções que importam são de sinais opostos, e é essa combinação que define o
+    limite: a contagem INFLA (é TETO, não número exato) enquanto `n_agregadores_no_hex` — o
+    insumo real do `v1` — fica INTACTO em `1`, e por isso o score do BLK-MA-04 não é afetado.
+    Se um bloco futuro deduplicar por academia, este teste quebra e a decisão fica explícita.
+    """
+    serie = [
+        _snapshot(_semana(1), [_linha("k_slug", chave_origem="slug")]),
+        _snapshot(_semana(2), [_linha("k_slug", chave_origem="slug")]),
+        # A MESMA academia, agora sob a chave de fallback (rebaixamento auditável do contrato).
+        _snapshot(_semana(3), [_linha("k_hash", chave_origem="hash_estavel")]),
+        _snapshot(_semana(4), [_linha("k_hash", chave_origem="hash_estavel")]),
+    ]
+    linha = _hex_de(extrair_presenca_agregador(snapshots=serie), HEX_A)
+
+    assert int(linha["n_academias_independentes_totalpass"]) == 2, "o limite: super-contagem"
+    assert int(linha["n_agregadores_no_hex"]) == 1, "o `v1` NÃO pode ser contaminado"
+    assert str(linha["fontes_presentes_no_hex"]) == "totalpass"
+
+
+def test_docstring_registra_o_limite_da_rotacao_de_chave() -> None:
+    """O limite acima só é aceitável enquanto estiver ESCRITO onde o consumidor lê."""
+    doc = m.__doc__ or ""
+    assert "SUPER-CONTAM" in doc
+    assert "TETO" in doc, "o docstring precisa dizer como LER as colunas 4/5"
+    assert "flag_troca_chave_na_serie" in doc, "e apontar o detector do modo de falha"
+    comentario = inspect.getsource(c)
+    assert "TETO" in comentario, "o comentário das colunas 4/5 em `contrato.py` também carrega"
 
 
 # --------------------------------------------------------------------------- #

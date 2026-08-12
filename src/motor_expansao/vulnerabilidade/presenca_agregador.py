@@ -32,6 +32,30 @@ LIMITE ESTRUTURAL, DOCUMENTADO E NÃO É BUG — o ramo "0 agregadores" é inalc
   capturado pelo **sinal 3** (`status_churn == "sumiu_recente"`, peso efetivo ~= 0,467), com peso
   2,3x maior do que este sinal.
 
+SEGUNDO LIMITE, DOCUMENTADO E TAMBÉM NÃO É BUG — as colunas 4/5 SUPER-CONTAM sob rotação de chave:
+
+  `n_academias_independentes_totalpass`/`_wellhub` contam CHAVES distintas, e a chave de uma
+  academia MUDA quando o `chave_origem` é rebaixado de `slug` para `hash_estavel`. A redução do
+  passo 2 dedupla por `(fonte, chave_snapshot)`, então as duas encarnações da MESMA academia
+  sobrevivem como duas chaves: observada sob `slug` nas semanas 1-2 e sob `hash_estavel` nas 3-4,
+  ela sai como `n_academias_independentes_totalpass = 2`. Medido em 2026-08-12 (BLK-MA-03-FU1) e
+  congelado por `test_rotacao_de_chave_super_conta_as_colunas_4_5`.
+
+  **`n_agregadores_no_hex` NÃO é contaminado** — segue `1`, e é ele o insumo real do `v1`: o score
+  do BLK-MA-04 não muda. O que fica inflado é a leitura de "densidade do alvo" que as colunas 4/5
+  vendem ao consumidor (um hex com 6 independentes num agregador só é uma tese diferente de um hex
+  com 1). Quem for exibi-las (BLK-MA-05) deve lê-las como **TETO**, nunca como número exato, e
+  cruzar com `flag_troca_chave_na_serie` do módulo irmão `churn_staleness`, que existe exatamente
+  para este modo de falha.
+
+  FREQUÊNCIA: `derivar_chave` rebaixa em DUAS camadas, e só uma delas é rara. A camada **GLOBAL**
+  de fato só dispara se o chamador INJETAR a taxa medida (default `None`, ver `LIMIAR_SLUG_ESTAVEL`
+  em `contrato.py`) — essa é deliberada. Mas a camada **POR LINHA é SEMPRE ATIVA** e não consulta
+  taxa alguma: basta o `slug` vir vazio numa semana, ou colidir com outra linha do próprio
+  snapshot, para aquela academia migrar para `hash_estavel` sozinha. É dirigida pela QUALIDADE DO
+  FEED, não por decisão de ninguém — ou seja, **é** acidente de coleta, e foi medida no feed real
+  (QA do BLK-MA-02). Por isso o cruzamento com `flag_troca_chave_na_serie` acima não é opcional.
+
 OS DOIS DEFEITOS QUE ESTE MÓDULO NEUTRALIZA POR DESENHO:
 
   **P1 — a redução para a observação mais recente ordena por `semana`, JAMAIS por
@@ -66,7 +90,7 @@ from pathlib import Path
 import h3
 import pandas as pd
 
-from .churn_staleness import _montar_serie_longa  # reuso deliberado (CA-11): a validacao e UMA so
+from .churn_staleness import _montar_serie_longa  # reuso deliberado (CA-11): a validação é UMA só
 from .contrato import (
     CATEGORIA_INDEPENDENTE,
     CONTRATO_COLUNAS_PRESENCA_AGREGADOR,
@@ -305,8 +329,8 @@ def extrair_presenca_agregador(
         _assert_schema_presenca_agregador(vazio)
         return vazio
 
-    # `_montar_serie_longa` coage `semana`/`fonte`/`rede`/chaves/`hex_id_res7`, mas nao o
-    # `snapshot_date` — que aqui e comparado como texto ISO.
+    # `_montar_serie_longa` coage `semana`/`fonte`/`rede`/chaves/`hex_id_res7`, mas não o
+    # `snapshot_date` — que aqui é comparado como texto ISO.
     longo = longo.copy()
     longo["snapshot_date"] = longo["snapshot_date"].astype(str)
 

@@ -10,6 +10,7 @@
 > `[emenda 2026-07-29]`.
 > **Emenda BLK-MA-03 (2026-07-29):** seção 8.1 — granularidade de v1 (hex, não academia), domínio efetivo e tratamento no §8.2/§8.4. Marcada com [emenda BLK-MA-03].
 > **Emenda BLK-MA-04 (2026-07-30, gate humano — G-D1/G-D2/G-D3 ratificados):** §8.1 (v3 do estado `novo`), §8.2 (normalização de v4 — razão absoluta), §8.4 (universo do score, bordas de ausência e flags), §8.5 (grão da linha = academia e contrato de coluna). Marcadas com [emenda BLK-MA-04].
+> **Emenda BLK-MA-04-FU1 (2026-08-12):** §8.5 — alcance da coluna `score_vulnerabilidade_ordenavel`: ela não cobre regime de 1 sinal quando esse sinal é o S3, e o BLK-MA-05 deve segmentar por `n_sinais_disponiveis` antes de ordenar. Marcada com [emenda BLK-MA-04-FU1].
 > Regra de manutenção: manter curto; a implementação é dos blocos sucessores BLK-MA-02..08 (ver seção 13).
 
 Este documento fixa o contrato dos sinais de vulnerabilidade de concorrentes independentes, a
@@ -321,8 +322,8 @@ DEC-008, com LOO/k-fold vs baseline, sem R² in-sample).
 
 > **[emenda BLK-MA-03, 2026-07-29] Granularidade e domínio efetivo de `v1`.** O texto acima descreve
 > `v1` **por academia**. Com o universo NOMEADO (Opção B / D1-B) **deferido** (decisão S1), não existe
-> identidade cross-provider: a chave do snapshot embute a `fonte` (`chave_do_slug` e
-> `chave_hash_estavel`, `vulnerabilidade/contrato.py:395-413`) e o `nome` não é persistido (anti-PII,
+> identidade cross-provider: a chave do snapshot embute a `fonte` (as funções `chave_do_slug` e
+> `chave_hash_estavel` de `vulnerabilidade/contrato.py`) e o `nome` não é persistido (anti-PII,
 > §11), logo a MESMA academia em TotalPass e WellHub é sempre DUAS chaves distintas e "quantos
 > agregadores cobrem esta linha" seria constante `1` — sinal sem variância. **`v1` passa a ser medido
 > por `hex_id_res7`** (quantos agregadores cobrem o hex) e propagado às academias do hex pelo
@@ -518,7 +519,9 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 > **[emenda BLK-MA-04, 2026-07-30] Grão da linha, contrato de coluna e a coluna de ordenação.**
 > A saída do score é o contrato **`score_vulnerabilidade_v2`, de 22 colunas** (`v1`/20 até a DEC-026)
 > (`CONTRATO_COLUNAS_SCORE` em `vulnerabilidade/contrato.py`; implementação em
-> `vulnerabilidade/score.py`, módulo **PURO, sem I/O**), com **uma linha por ACADEMIA** =
+> `vulnerabilidade/score.py`, módulo **PURO quando os frames são injetados** — pelo modo de
+> conveniência `base_dir=` ele lê disco transitivamente, via extratores; o que vale em qualquer
+> modo é que ele nunca **escreve** `[precisão BLK-MA-04-FU1]`), com **uma linha por ACADEMIA** =
 > `(fonte, chave_snapshot)`. "Academia" aqui é uma **chave de snapshot**, não um estabelecimento
 > nomeado (universo NOMEADO / D1-B deferido): a mesma academia em TotalPass e WellHub são **duas
 > linhas** — intencional, e é a razão de o `v1` ser medido por hex (emenda BLK-MA-03).
@@ -533,6 +536,28 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 > exatamente para o BLK-MA-05 segmentar antes de ordenar.
 > O CSV **hex-level** do exemplo do §10/D6 é o entregável do **BLK-MA-05**, derivado por agregação
 > deste frame — não é a saída deste contrato.
+
+> **[emenda BLK-MA-04-FU1, 2026-08-12] LIMITE DA COLUNA ORDENÁVEL: ela NÃO cobre regime de 1 sinal
+> quando esse sinal é o S3.**
+>
+> `flag_score_provisorio` é a **conjunção** do §8.4 — "S3 **e** S4 indisponíveis". Com o S3 maduro
+> ela desliga, ainda que o S3 seja o **único** sinal da linha: o peso renormaliza para `1,00` e um
+> `sumiu_recente` sai com `score_vulnerabilidade_ordenavel = 100,0`, no topo de qualquer ordenação,
+> lado a lado com linhas `{S1,S3,S4}` que estão em outra régua. Medido em 2026-08-12; congelado por
+> `test_score.py::test_regime_so_s3` e `::test_ordenavel_nao_separa_regimes_de_tamanho_diferente`.
+>
+> **É fiel ao §8.4 ratificado, não um bug** (S3 maduro é sinal maduro, e o G-D1 mirava o ramp-up
+> só-S1, onde o score tem dois valores). O que se registra aqui é o **alcance** do guardrail: a
+> coluna ordenável resolve "score de dois valores", **não** resolve "regimes de tamanhos
+> diferentes na mesma coluna". São problemas distintos e só o primeiro virou tipo da saída.
+>
+> **Alcançabilidade.** Inalcançável pelo caminho `base_dir`: os dois extratores saem da MESMA série,
+> logo todo hex do churn tem par no sinal 1 e o S1 nunca fica ausente sozinho. **Alcançável por
+> frames injetados** — que é justamente o modo que o BLK-MA-05 pode usar.
+>
+> **Obrigação do BLK-MA-05 (dura, não sugerida):** segmentar por `n_sinais_disponiveis` **antes** de
+> ordenar. Ordenar o frame inteiro por `score_vulnerabilidade_ordenavel` sem segmentar mistura as
+> réguas em silêncio — não devolve `NaN`, não levanta, e o erro só aparece na shortlist.
 
 ---
 
@@ -627,7 +652,7 @@ Ajustada pelo **D3 = Não** (rating não é coletado → sinal 2 depende de ajus
 |---|---|---|
 | **BLK-MA-02** | Extrator de churn+staleness do histórico de snapshots (100% interno) + **limpeza de ruído** (linhas `0;0`/teste, entradas de tecnologia/onboarding, coords inconsistentes) + flags de série imatura (ramp-up); chave `slug` + `data_coleta`. É o núcleo 100%-reuso do Plano B. | D2 (S3/S4) |
 | **BLK-MA-03** | Presença em agregador (**sinal 1**, reuso via `fonte`) + (opcional/deferido) extensão de **ingestão** para o universo NOMEADO (D1-B, retém `slug`/`nome_estabelecimento`; **só ingestão, SEM ajuste de coletor**); anti-PII por construção; fixtures sintéticas. **Rating (sinal 2) NÃO entra aqui** — depende do BLK-MA-08. Entregue como insumo BRUTO hex-level (contrato `presenca_agregador_v1`); `v1`/pesos são BLK-MA-04. | sinal 1 + D1 |
-| **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. Entregue como contrato de coluna `score_vulnerabilidade_v1` (20 colunas na época; hoje `v2`/22 pela DEC-026; módulo PURO sem I/O), uma linha por academia, com o **universo de M&A filtrado aqui**; os artefatos do D6 são BLK-MA-05. | D4 + D7 |
+| **BLK-MA-04** | Score de vulnerabilidade (D4) sobre S1/S3/S4 (Plano B) + normalização + flags de qualidade. Entregue como contrato de coluna `score_vulnerabilidade_v1` (20 colunas na época; hoje `v2`/22 pela DEC-026; módulo PURO quando os frames são injetados — ver §8.5), uma linha por academia, com o **universo de M&A filtrado aqui**; os artefatos do D6 são BLK-MA-05. | D4 + D7 |
 | **BLK-MA-05** | Lista priorizada de M&A (cruzamento com o hex quente, D5, **COM a INVERSÃO**) + entregável. | D5 + D6 |
 | **BLK-MA-06** | Integração ao cron semanal da VPS + runbook. | D8 |
 | **BLK-MA-07** | (Opcional/futuro, **gate + DEC próprios**) reputação **EXTERNA** (Google Places ou outra, público geral). Único ponto que reabre o §2. | — |

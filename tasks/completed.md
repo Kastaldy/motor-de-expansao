@@ -10742,7 +10742,7 @@ colunas (`hex_id_res7`, `fontes_presentes_no_hex`, `n_agregadores_no_hex`,
 
 **Decisão que exige gate humano — emenda ao §8.1 do contrato.** A granularidade de `v1` passa de
 **por academia** para **por hexágono**: com o universo NOMEADO (D1-B) deferido, a chave do snapshot
-embute a `fonte` (`contrato.py:395-413`) e o `nome` não é persistido, logo a mesma academia em TP e WH
+embute a `fonte` (`chave_do_slug`/`chave_hash_estavel` em `contrato.py`) e o `nome` não é persistido, logo a mesma academia em TP e WH
 é sempre duas chaves e "quantos agregadores cobrem esta linha" seria constante `1`. Consequências a
 registrar no contrato: viés conhecido (todas as academias do hex recebem o mesmo `v1`; erro
 sistemático nos hexes densos, direção de **falso negativo**); o ramo "0 agregadores → `v1=1,0`" é
