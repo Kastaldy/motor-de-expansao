@@ -5,12 +5,6 @@ import type { Tela } from '../App'
    viabilidade sao um recorte, nao o produto inteiro. */
 
 const ICONES: Record<string, React.JSX.Element> = {
-  mapa: (
-    <>
-      <path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11Z" />
-      <circle cx="12" cy="10" r="2.6" />
-    </>
-  ),
   exec: (
     <>
       <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" />
@@ -35,8 +29,19 @@ const ICONES: Record<string, React.JSX.Element> = {
   ),
 }
 
+/**
+ * O Dock NAO lista os MODOS DE ANALISE.
+ *
+ * "Análise de ponto" e "Explorar uma região" sairam daqui a pedido do Juan (2026-08-12):
+ * eles sao escolha de PERGUNTA, e essa escolha se faz na tela de inicio, onde cada card
+ * explica o que o modo responde e do que ele precisa. Repetidos como dois ícones sem
+ * rótulo, viravam um segundo caminho mudo para a mesma decisão — e dois pinos quase
+ * iguais, ainda por cima.
+ *
+ * O ícone de início tambem saiu: quem volta ao menu agora clica na LOGO, que ja estava
+ * ali em cima e nao fazia nada.
+ */
 const ITENS: { id: string; tela: Tela | null; titulo: string }[] = [
-  { id: 'mapa', tela: 'mapa', titulo: 'Mapa territorial' },
   { id: 'exec', tela: 'executiva', titulo: 'Visão executiva' },
   { id: 'dom', tela: null, titulo: 'Expansão de domínio (fora do piloto)' },
   { id: 'cart', tela: null, titulo: 'Carteira e plano (fora do piloto)' },
@@ -67,8 +72,16 @@ export default function Dock({
         zIndex: 20,
       }}
     >
-      <div
-        aria-hidden
+      {/* A LOGO É O INÍCIO. Ela já ocupava o topo do Dock sem fazer nada, enquanto um
+          ícone de casinha logo abaixo fazia o trabalho — dois elementos para uma função,
+          e o mais óbvio dos dois era o inerte. Clicar no logotipo para voltar ao começo é
+          a convenção que todo site carrega há vinte anos. */}
+      <button
+        type="button"
+        onClick={() => onTela('inicio')}
+        title="Início — escolher a análise"
+        aria-label="Início — escolher a análise"
+        aria-current={tela === 'inicio' ? 'page' : undefined}
         style={{
           width: 42,
           height: 42,
@@ -79,6 +92,12 @@ export default function Dock({
           background: '#fff',
           display: 'grid',
           placeItems: 'center',
+          cursor: 'pointer',
+          padding: 0,
+          /* O anel diz que ela é o lugar onde você está — mesmo tratamento que os itens
+             ativos do Dock recebem, para a logo não virar um botão sem estado. */
+          boxShadow: tela === 'inicio' ? '0 0 0 2px var(--ac)' : 'none',
+          transition: 'box-shadow .15s ease',
         }}
       >
         <img
@@ -86,7 +105,7 @@ export default function Dock({
           alt="Ultra Academia"
           style={{ width: '100%', height: '100%', objectFit: 'cover' }}
         />
-      </div>
+      </button>
 
       {ITENS.map((it) => {
         const ativo = it.tela !== null && it.tela === tela

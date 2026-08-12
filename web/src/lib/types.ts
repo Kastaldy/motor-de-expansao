@@ -1,3 +1,7 @@
+import type { CriterioPonto, ReguasPonto } from './recomendacao'
+
+export type { CriterioPonto, ReguasPonto }
+
 /** Contrato entre o front e o backend do piloto (web/server/app.py). */
 
 /** Tom do chip do ranking. Fronteira TS<->Python sem contrato gerado: o produtor
@@ -147,6 +151,10 @@ export interface FaixaMetodologia {
   condicao: string
   tom: Tom
   escopo: string
+  /** Hex EXATO da faixa. Só as derivadas da rampa o trazem: ali o painel promete a cor
+   *  que o mapa pinta, e a paleta de 5 `tom` nomeados não cobre as 5 cores da rampa 1:1
+   *  — "Promissor" saía cinza no manual e amarelo no mapa. */
+  cor?: string | null
 }
 
 export interface CamadaMetodologia {
@@ -231,6 +239,8 @@ export interface Pins {
 export interface MunicipioPayload {
   /** "uf" = visão de estado inteiro (recomenda municípios); "municipio" = drill-down. */
   nivel: 'uf' | 'municipio'
+  /** Só na visão de UF: crescimento do estado inteiro (ver `CrescimentoEstado`). */
+  crescimento_estado?: CrescimentoEstado | null
   uf: string
   municipio: string | null
   n_hex_total: number
@@ -1024,4 +1034,168 @@ export interface RedeQuery {
   busca?: string
   ordenar?: string
   direcao?: 'asc' | 'desc'
+}
+
+/* ------------------------------------------------------------------------- *
+ * Modo de PONTO (GET /api/ponto)                                            *
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Bloco que pode não ter dado. O servidor manda `disponivel` e, quando falso, o
+ * `motivo` por extenso — a tela NUNCA inventa o texto do estado vazio nem some com
+ * o bloco em silêncio. Censo depende só da malha IBGE; concorrência e mercado
+ * dependem de `data/staging`, que pode não estar montado.
+ */
+export interface BlocoOpcional {
+  disponivel: boolean
+  motivo: string | null
+}
+
+/** Min / mediana / max de uma leitura, entre os setores do raio. */
+export interface PontoDistribuicao {
+  min: number | null
+  p50: number | null
+  max: number | null
+  /** Setores COM medição desta leitura — pode ser menor que o total do raio. */
+  n: number
+}
+
+/** Os números BRUTOS da área: o que está por trás das médias da ficha. */
+export interface PontoCensoDetalhe {
+  n_setores: number | null
+  /** Área do círculo (pi*r²) e a que a malha do IBGE realmente cobre dentro dele. */
+  area_circulo_km2: number | null
+  area_intersectada_km2: number | null
+  /** Fixa divide por pi*r² (inclui água e vazio); válida, só pela área de setor. */
+  densidade_fixa_hab_km2: number | null
+  densidade_valida_hab_km2: number | null
+  score_medio_raio: number | null
+  score_max_raio: number | null
+  /** Setor a setor: o que a média esconde. */
+  distribuicao: {
+    renda_per_capita: PontoDistribuicao | null
+    score: PontoDistribuicao | null
+    populacao: PontoDistribuicao | null
+    densidade_hab_km2: PontoDistribuicao | null
+  }
+  /** O setor que CONTÉM o ponto — pode divergir da média do raio. */
+  setor_do_ponto: {
+    encontrado: boolean
+    cod_setor: string | null
+    renda_per_capita: number | null
+    densidade_hab_km2: number | null
+    score: number | null
+    bairro: string | null
+    distrito: string | null
+  }
+  /** Procedência, não método: de quando é o dado. */
+  data_referencia: string | null
+}
+
+export interface PontoCenso extends BlocoOpcional {
+  populacao: number | null
+  domicilios: number | null
+  renda_per_capita: number | null
+  renda_media_domiciliar: number | null
+  /** Densidade VÁLIDA: divide pela área de setor intersectada, não por pi*r². */
+  densidade_hab_km2: number | null
+  score_socioeconomico: number | null
+  n_setores: number | null
+  detalhe: PontoCensoDetalhe | null
+}
+
+export interface PontoConcorrencia extends BlocoOpcional {
+  n_concorrentes: number | null
+  n_ultra: number | null
+  /** Cada concorrente do raio, por distância. Vazio quando não há base montada. */
+  lista: { rede: string | null; dist_km: number | null }[]
+}
+
+export interface PontoMercado extends BlocoOpcional {
+  sam: number | null
+  residual: number | null
+  score_residual: number | null
+}
+
+export interface PontoVizinho {
+  hex_id: string | null
+  residual: number | null
+  score_censo: number | null
+}
+
+export interface PontoPayload {
+  lat: number
+  lng: number
+  raio_km: number
+  hex_id: string
+  local: {
+    uf: string
+    municipio: string | null
+    bairro: string | null
+    /** Identificador cru ("bairro"/"distrito"), NÃO acentuado. Exibir `bairro`. */
+    unidade_tipo: string | null
+  }
+  censo: PontoCenso
+  concorrencia: PontoConcorrencia
+  mercado: PontoMercado
+  vizinhos: PontoVizinho[]
+  /** Réguas do imóvel, legíveis por máquina (a metodologia traz as mesmas em texto). */
+  reguas: ReguasPonto | null
+  /** Cada métrica já comparada com a régua, NO SERVIDOR — a tela não re-decide. */
+  criterios: CriterioPonto[]
+}
+
+/** Resposta de GET /api/resolver-ponto: texto colado -> coordenada. */
+export interface PontoResolvido {
+  found: boolean
+  lat?: number
+  lng?: number
+  nome?: string
+  /** Como resolveu: coordenada | link-expandido | endereco-do-link | endereco. */
+  via?: string
+  motivo?: string
+}
+
+/**
+ * Crescimento do ESTADO INTEIRO — bloco próprio, fora de `passos`.
+ *
+ * Não confundir com o passo 4 do funil: aquele descreve as cidades que sobreviveram
+ * aos filtros 1-3 (só white space), e por isso lista uma dúzia. Este olha a UF toda.
+ */
+export interface CrescimentoEstado {
+  /** Mediana de crescimento do emprego na UF — a régua contra a qual tudo é lido. */
+  mediana_uf: number | null
+  n_municipios_com_medicao: number
+  n_municipios_uf: number
+  /** Piso de população aplicado ao ranking (`POP_MIN_ACIONAVEL`). */
+  pop_minima: number
+  /** Quantos municípios o piso deixou de fora — declarado, nunca silencioso. */
+  n_fora_do_piso: number
+  itens: RankItem[]
+}
+
+/* ------------------------------------------------------------------------- *
+ * Ranking nacional por UF (GET /api/estados)                                *
+ * ------------------------------------------------------------------------- */
+
+export interface EstadoRanking {
+  rank: number
+  uf: string
+  /** Alunos não atendidos ONDE ainda cabe abrir — o número que ordena. */
+  residual_white_space: number | null
+  hexes_elegiveis: number
+  municipios_elegiveis: number | null
+  /** Contexto: o tamanho do estado por trás do número elegível. */
+  residual_total: number | null
+  hexes_total: number
+  pop_total: number | null
+}
+
+export interface EstadosPayload {
+  reguas: {
+    score_minimo: number
+    pop_minima: number
+    capacidade_concorrente: number
+  }
+  estados: EstadoRanking[]
 }

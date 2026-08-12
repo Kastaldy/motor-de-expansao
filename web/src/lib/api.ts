@@ -6,7 +6,10 @@ import type {
   MetodologiaPayload,
   MunicipioItem,
   Cobertura1k,
+  EstadosPayload,
   MunicipioPayload,
+  PontoPayload,
+  PontoResolvido,
   RedeCarteira,
   RedeFicha,
   RedeFiltros,
@@ -187,8 +190,34 @@ export const api = {
    *  não depende de UF nem de município, então a tela busca uma vez e guarda. */
   metodologia: () => pedir<MetodologiaPayload>('/api/metodologia', {}, 15_000),
 
+  /**
+   * Ranking NACIONAL por estado. Lê as 27 partições com projeção de 4 colunas
+   * (~1,5 s na primeira vez, cacheado no servidor depois) — é a única rota que
+   * compara UFs, e por isso tem timeout próprio.
+   */
+  estados: () => pedir<EstadosPayload>('/api/estados', {}, 120_000),
+
   /** Visão de UF inteira: funil por UF + recomendação de municípios. */
   ufView: (uf: string) => pedir<MunicipioPayload>(`/api/uf/${encodeURIComponent(uf)}`),
+
+  /* ---- Modo de PONTO ---- */
+
+  /**
+   * Ficha de um ponto. NÃO carrega a partição da UF — lê só a partição do município
+   * e um punhado de hexes, então cabe no timeout curto em vez dos 90 s da leitura de
+   * UF. É o que torna viável o fluxo "cole o link, veja a ficha".
+   */
+  ponto: (lat: number, lng: number) =>
+    pedir<PontoPayload>(`/api/ponto?lat=${lat}&lng=${lng}`, {}, 30_000),
+
+  /**
+   * Texto colado -> coordenada. Só é chamada quando o front NÃO resolveu sozinho
+   * (`lib/entrada-ponto`): link curto do celular, link de place sem coordenada, ou
+   * endereço escrito. Pode fazer requisição externa (expandir redirect + geocode),
+   * daí o timeout próprio.
+   */
+  resolverPonto: (q: string) =>
+    pedir<PontoResolvido>(`/api/resolver-ponto?q=${encodeURIComponent(q)}`, {}, 25_000),
 
   /** PROTOTIPO — geometria do raio de 1 km, SOB DEMANDA. Fora do payload do mapa de
    *  proposito: custa ~2,4 s e ~3,9 MB na UF de SP, e so' quem liga a chave deve pagar. */

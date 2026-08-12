@@ -221,7 +221,9 @@ function Camada({
                 key={f.etiqueta + f.condicao}
                 style={{ display: 'flex', alignItems: 'center', gap: 8 }}
               >
-                <Chip tom={f.tom}>{f.etiqueta}</Chip>
+                <Chip tom={f.tom} cor={f.cor}>
+                  {f.etiqueta}
+                </Chip>
                 <span
                   className="num"
                   style={{ font: '400 11px/1.3 var(--f-num)', color: 'var(--tx-sub)' }}
@@ -253,7 +255,9 @@ function Camada({
                 key={f.etiqueta + f.condicao}
                 style={{ display: 'flex', alignItems: 'center', gap: 8 }}
               >
-                <Chip tom={f.tom}>{f.etiqueta}</Chip>
+                <Chip tom={f.tom} cor={f.cor}>
+                  {f.etiqueta}
+                </Chip>
                 <span
                   className="num"
                   style={{ font: '400 11px/1.3 var(--f-num)', color: 'var(--tx-sub)' }}

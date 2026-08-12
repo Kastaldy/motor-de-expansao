@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import Dock from './components/Dock'
+import type { SearchPin } from './components/HexMap'
 import ExecutiveScreen from './screens/ExecutiveScreen'
+import InicioScreen from './screens/InicioScreen'
 import MapScreen from './screens/MapScreen'
+import OportunidadesScreen from './screens/OportunidadesScreen'
+import PontoScreen from './screens/PontoScreen'
 import ViabilityScreen from './screens/ViabilityScreen'
 import { api, ApiError } from './lib/api'
+import { modoPorId, passoAlvoDoModo, type ModoInicio } from './lib/inicio'
 import { ESTADO_MAPA_VAZIO, type EstadoMapa } from './lib/mapa-estado'
 import type { Hex, MunicipioItem, MunicipioPayload } from './lib/types'
 
-export type Tela = 'mapa' | 'viabilidade' | 'executiva'
+export type Tela = 'inicio' | 'ponto' | 'oportunidades' | 'mapa' | 'viabilidade' | 'executiva'
 
 /** O ponto que viaja do mapa para a Viabilidade — a costura entre as duas telas. */
 export interface PontoEscolhido {
@@ -30,7 +35,9 @@ export interface PontoEscolhido {
 }
 
 export default function App() {
-  const [tela, setTela] = useState<Tela>('mapa')
+  // O app abre no MENU, nao no mapa: a primeira pergunta e' "qual analise?", nao
+  // "qual estado?". A escolha de UF continua existindo, como passo 2 do modo de regiao.
+  const [tela, setTela] = useState<Tela>('inicio')
 
   const [ufs, setUfs] = useState<string[]>([])
   // Começa SEM estado: o app abre na porta de entrada (escolha de UF).
@@ -45,9 +52,60 @@ export default function App() {
 
   const [ponto, setPonto] = useState<PontoEscolhido | null>(null)
 
+  /**
+   * Pin do endereco colado no modo de ponto, entregue ao `MapScreen` por `pinFixo`.
+   *
+   * Mora AQUI e nao no `PontoScreen` porque quem o consome e' o mapa, que e' irmao dele
+   * na arvore — e porque o pin da busca interna do `MapScreen` e' apagado toda vez que a
+   * UF ou o municipio mudam, que e' exatamente o que colar um endereco provoca.
+   */
+  const [pinPonto, setPinPonto] = useState<SearchPin | null>(null)
+
+  /**
+   * O endereco colado escolheu o territorio: leva o mapa do fundo para la'.
+   *
+   * `setUf` + `setMunicipio` na mesma passagem — o React agrupa as duas, entao o efeito
+   * de carga roda UMA vez, com o par ja' completo. Chamar `aoTrocarUf` aqui seria errado:
+   * ele zera o municipio de proposito (trocar de estado recomeca na visao da UF), o que
+   * desfaria o drill-down que o endereco acabou de determinar.
+   */
+  const localizarPonto = useCallback((u: string, m: string, pin: SearchPin) => {
+    setUf(u)
+    setMunicipio(m)
+    setPinPonto(pin)
+  }, [])
+
+  /**
+   * A busca do cabecalho do mapa pediu a analise de uma coordenada (so' no modo de ponto).
+   *
+   * O `n` que so' cresce e' o que permite pedir a MESMA coordenada duas vezes: sem ele, o
+   * objeto teria o mesmo conteudo e o efeito que ouve do outro lado nao dispararia.
+   */
+  const [pedidoPonto, setPedidoPonto] = useState<{ lat: number; lng: number; n: number } | null>(
+    null,
+  )
+  const pedirPonto = useCallback((lat: number, lng: number) => {
+    setPedidoPonto((p) => ({ lat, lng, n: (p?.n ?? 0) + 1 }))
+  }, [])
+
+  /** Tira a marca do endereço do mapa (a limpeza do modo de ponto). */
+  const limparPinPonto = useCallback(() => setPinPonto(null), [])
+
   // Foto do Mapa Territorial (ver lib/mapa-estado): vive AQUI porque o App nao desmonta
   // ao trocar de tela — e' o que devolve o mapa como estava na volta da Viabilidade.
   const [estadoMapa, setEstadoMapa] = useState<EstadoMapa>(ESTADO_MAPA_VAZIO)
+
+  /**
+   * Modo escolhido no menu que ainda nao pode ser aplicado porque falta a UF.
+   *
+   * POR QUE PRECISA EXISTIR. O card "melhores oportunidades" quer abrir o mapa direto no
+   * passo 5, mas no instante do clique nao ha UF nenhuma — e semear a foto com
+   * `uf: ''` seria inutil: `fotoAplicavel` (lib/mapa-estado) DESCARTA por desenho toda
+   * foto sem contexto, justamente para nao restaurar pin/camera de outro municipio.
+   * Entao a intencao fica pendurada aqui e e' convertida em foto no momento em que a UF
+   * aparece — ai o contexto casa e o passo sobrevive.
+   */
+  const [modoPendente, setModoPendente] = useState<ModoInicio | null>(null)
 
   // Catálogo de UFs, uma vez.
   useEffect(() => {
@@ -108,15 +166,61 @@ export default function App() {
   // Trocar de estado recomeça na visão da UF inteira. Não é preciso limpar a foto aqui:
   // ela carrega o contexto em que foi tirada e `fotoAplicavel` a descarta sozinha se a
   // UF/município não bater (lib/mapa-estado).
-  const aoTrocarUf = useCallback((u: string) => {
-    setUf(u)
-    setMunicipio('')
-  }, [])
+  const aoTrocarUf = useCallback(
+    (u: string) => {
+      setUf(u)
+      setMunicipio('')
 
-  const irParaViabilidade = useCallback((p: PontoEscolhido) => {
-    setPonto(p)
-    setTela('viabilidade')
-  }, [])
+      // Agora que existe UF, a intenção guardada no menu vira foto — com o contexto
+      // certo, senão `fotoAplicavel` a jogaria fora. Consumimos a intenção aqui: ela
+      // vale para a PRIMEIRA entrada no mapa, não para toda troca de estado seguinte.
+      if (!modoPendente) return
+      const passo = passoAlvoDoModo(modoPendente)
+      setModoPendente(null)
+      if (passo === null) return
+      setEstadoMapa({ ...ESTADO_MAPA_VAZIO, uf: u, municipio: '', passoN: passo })
+    },
+    [modoPendente],
+  )
+
+  /**
+   * De qual tela o ponto veio. A Viabilidade e' alcancavel por DOIS caminhos (clique
+   * num hexagono do mapa, e "Mais detalhes" na ficha do modo de ponto), e sem isto o
+   * botao de volta devolvia sempre ao mapa — tirando do modo de ponto quem nunca
+   * esteve no mapa.
+   */
+  const [origemViab, setOrigemViab] = useState<Tela>('mapa')
+
+  const irParaViabilidade = useCallback(
+    (p: PontoEscolhido) => {
+      setPonto(p)
+      setOrigemViab(tela === 'ponto' ? 'ponto' : 'mapa')
+      setTela('viabilidade')
+    },
+    [tela],
+  )
+
+  /** Um card do menu foi escolhido: guarda a intenção e abre a tela que a atende hoje. */
+  const escolherModo = useCallback(
+    (modo: ModoInicio) => {
+      const def = modoPorId(modo)
+      if (!def) return
+      // Só faz sentido guardar a intenção enquanto ela ainda não pôde ser aplicada.
+      // Com UF já escolhida, aplicamos na hora — o operador que volta ao menu e pede a
+      // fila não deveria ter de trocar de estado para ela aparecer.
+      const passo = passoAlvoDoModo(modo)
+      if (passo !== null && uf) {
+        setEstadoMapa({ ...ESTADO_MAPA_VAZIO, uf, municipio, passoN: passo })
+        setModoPendente(null)
+      } else {
+        setModoPendente(passo !== null ? modo : null)
+      }
+      setTela(def.destino)
+    },
+    [uf, municipio],
+  )
+
+  const voltarAoInicio = useCallback(() => setTela('inicio'), [])
 
   return (
     <div
@@ -130,7 +234,67 @@ export default function App() {
       <Dock tela={tela} onTela={setTela} />
 
       <main style={{ flex: 1, position: 'relative', minWidth: 0 }}>
-        {tela === 'mapa' ? (
+        {tela === 'inicio' ? (
+          <InicioScreen onEscolher={escolherModo} />
+        ) : tela === 'ponto' ? (
+          /* O modo de ponto É o Explorar, com a janela da ficha por cima (pedido do Juan,
+             2026-08-11). O `MapScreen` vem inteiro e com as MESMAS props do modo `mapa` —
+             não uma versão reduzida —, e o `PontoScreen` entra depois na árvore, por isso
+             flutua sobre ele. Antes o modo de ponto trazia uma cópia parcial do Explorar
+             e as duas telas divergiam. */
+          <>
+            <MapScreen
+              ufs={ufs}
+              uf={uf}
+              onUf={aoTrocarUf}
+              municipios={municipios}
+              municipio={municipio}
+              onMunicipio={setMunicipio}
+              dados={dados}
+              carregando={carregando}
+              erro={erro}
+              onAnalisarPonto={irParaViabilidade}
+              estadoInicial={estadoMapa}
+              onEstado={setEstadoMapa}
+              onInicio={voltarAoInicio}
+              pinFixo={pinPonto}
+              /* A lupa do cabeçalho vira a entrada do modo de ponto: buscar um endereço
+                 ali produz a MESMA ficha que colá-lo. Sem isto havia duas caixas pedindo
+                 endereço na mesma tela, e a de cima só soltava um pin. */
+              onPontoBuscado={pedirPonto}
+              /* A ficha aqui é a do PONTO, publicada pelo `PontoScreen`. Sem isto o
+                 endereço abria duas janelas: a dele e a do hexágono em que ele caiu. */
+              janelaDoHex={false}
+              /* O hero da tela vazia é o do modo de ponto, publicado pelo `PontoScreen`. */
+              semLanding
+            />
+            <PontoScreen
+              onAnalisarPonto={irParaViabilidade}
+              onLocalizar={localizarPonto}
+              mapaPronto={dados != null}
+              pedido={pedidoPonto}
+              onLimparPin={limparPinPonto}
+              onInicio={voltarAoInicio}
+            />
+          </>
+        ) : tela === 'oportunidades' ? (
+          <OportunidadesScreen
+            ufs={ufs}
+            uf={uf}
+            onUf={aoTrocarUf}
+            municipios={municipios}
+            municipio={municipio}
+            onMunicipio={setMunicipio}
+            dados={dados}
+            carregando={carregando}
+            erro={erro}
+            onInicio={voltarAoInicio}
+            onVerNoMapa={(m) => {
+              setMunicipio(m)
+              setTela('mapa')
+            }}
+          />
+        ) : tela === 'mapa' ? (
           <MapScreen
             ufs={ufs}
             uf={uf}
@@ -144,6 +308,7 @@ export default function App() {
             onAnalisarPonto={irParaViabilidade}
             estadoInicial={estadoMapa}
             onEstado={setEstadoMapa}
+            onInicio={voltarAoInicio}
           />
         ) : tela === 'executiva' ? (
           // A Executiva NÃO recebe `uf` nem `onUf` (DEC-023): ela abre com a rede do
@@ -151,12 +316,14 @@ export default function App() {
           // de confundir dois produtos diferentes, disparava um refetch de
           // `/api/uf/{uf}` no Mapa toda vez que se trocava o estado aqui — leitura que
           // pode passar de 15 s.
-          <ExecutiveScreen />
+          <ExecutiveScreen onInicio={voltarAoInicio} />
         ) : (
           <ViabilityScreen
             ponto={ponto}
             dados={dados}
-            onVoltar={() => setTela('mapa')}
+            onVoltar={() => setTela(origemViab)}
+            onInicio={voltarAoInicio}
+            origemRotulo={origemViab === 'ponto' ? 'da análise de ponto' : 'do mapa'}
           />
         )}
       </main>

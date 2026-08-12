@@ -207,6 +207,16 @@ export interface HexMapProps {
   /** Hexes do cenário multi-hex (contorno turquesa de seleção). */
   cenario?: string[]
   onSelecionar: (h: Hex) => void
+  /**
+   * Pedido de VOO ate' um hexagono, vindo de fora (o painel de ranking).
+   *
+   * Separado de `selecionado` de proposito: clicar um hexagono NO MAPA tambem seleciona,
+   * e ali voar seria recentrar o que o operador ja' tem sob o cursor. So' quem clica na
+   * lista precisa ser levado, porque o item pode estar em qualquer canto do municipio.
+   * O `n` que so' cresce permite pedir o MESMO hexagono duas vezes — voltar para ele
+   * depois de arrastar o mapa e' um gesto legitimo, e comparar so' o id nao dispararia.
+   */
+  voarPara?: { hexId: string; n: number } | null
   searchPin: SearchPin | null
   /**
    * Camera preservada de uma visita anterior ao mapa (ida e volta pela Viabilidade).
@@ -244,6 +254,7 @@ export default function HexMap({
   selecionado,
   cenario,
   onSelecionar,
+  voarPara = null,
   searchPin,
   raio1km = false,
   cobertura1k,
@@ -345,6 +356,28 @@ export default function HexMap({
       transitionInterpolator: FLY,
     }))
   }, [searchPin, cameraInicial])
+
+  /* Voa ate' o hexagono pedido pelo painel. A coordenada sai do proprio `hexes` (o `Hex`
+     ja' carrega lat/lng), entao nao ha' conversao de H3 aqui — e se o id nao estiver na
+     lista carregada, nao se voa para lugar nenhum em vez de voar para o centro do mundo.
+
+     `zoom: max(12, atual)` NUNCA AFASTA: quem ja' esta' com o mapa aproximado num bairro
+     e clica no proximo item da lista quer andar ate' ele, nao recomecar de longe. */
+  const vooAnterior = useRef(voarPara?.n ?? 0)
+  useEffect(() => {
+    if (!voarPara || voarPara.n === vooAnterior.current) return
+    vooAnterior.current = voarPara.n
+    const alvo = hexes.find((h) => h.id === voarPara.hexId)
+    if (!alvo) return
+    setView((v) => ({
+      ...v,
+      longitude: alvo.lng,
+      latitude: alvo.lat,
+      zoom: Math.max(12, v.zoom),
+      transitionDuration: 700,
+      transitionInterpolator: FLY,
+    }))
+  }, [voarPara, hexes])
 
   // Cor da camada ativa: veste o "score forte" do tooltip e a borda do rotulo de
   // rank. Os dois dizem "isto e' da camada N" — antes diziam em turquesa, a mesma

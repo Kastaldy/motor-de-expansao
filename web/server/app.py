@@ -123,6 +123,22 @@ POP_MIN_ACIONAVEL = 5000  # regua operacional do dashboard (<5k = descartado)
 # MESMOS nomes na tela: com o numero escrito em dois lugares, ajustar um parametro
 # fazia a explicacao mentir sem ninguem perceber. Mudou aqui, muda no funil E no texto.
 SCORE_CORTE_QUENTE = 70.0  # piso do passo 1 (hexagono "quente")
+
+# --- Reguas do CRITERIO DO IMOVEL ("Serve este imovel?"), so' do modo de ponto ---------
+# Decisao do Juan em 2026-08-12: afrouxar os dois cortes que mais reprovavam imovel.
+#
+# ATE ENTAO estas duas reguas eram AS MESMAS do funil — o score usava
+# `SCORE_CORTE_QUENTE` (piso do passo 1) e a concorrencia usava o white space do passo 5
+# (zero concorrente). A partir daqui elas DIVERGEM de proposito, e isso tem consequencia
+# que precisa estar escrita: um imovel pode passar no criterio da ficha e ficar de fora do
+# funil, porque o funil continua exigindo 70 e zero concorrente. Nao e' contradicao — sao
+# perguntas diferentes ("este imovel serve?" contra "quais hexagonos entram na fila") —,
+# mas quem comparar as duas telas vai notar, e a explicacao tem de existir.
+#
+# O FUNIL NAO FOI TOCADO. Mexer em `SCORE_CORTE_QUENTE` mudaria o passo 1 do mapa inteiro
+# e o texto da metodologia junto; o pedido era sobre a janela de analise de pontos.
+CRIT_PONTO_SCORE_MIN = 60.0  # era SCORE_CORTE_QUENTE (70,0)
+CRIT_PONTO_CONC_MAX = 3  # era 0 (white space do passo 5)
 # SEM USO desde o BLK-MAPA-FAIXAS-01 (regua unica legenda<->etiqueta): as quatro linhas
 # abaixo descrevem os cortes de Quente/Forte/Solido e Alta/Media/Baixa POR HEXAGONO,
 # vocabularios que `_etiqueta` nao emite mais — hoje ele deriva de FAIXAS_MAPA_* (de 20
@@ -1592,6 +1608,62 @@ def _rank_municipios(
     return itens
 
 
+def montar_crescimento_estado(df_uf: pd.DataFrame) -> dict[str, Any] | None:
+    """Ranking de crescimento sobre a UF INTEIRA — não sobre o white space.
+
+    POR QUE NÃO É REUSO DO PASSO 4. O passo 4 do funil descreve as cidades que
+    SOBREVIVERAM aos passos 1-3: `cres_uf = white[...]` (ver `montar_funil_uf`), e o
+    comentário lá diz por escrito que ele "não é o estado inteiro". Ler aquele ranking
+    como retrato do estado é o erro fácil: numa UF onde quase tudo tem concorrente, o
+    passo 4 lista meia dúzia de cidades e some com o resto.
+
+    Aqui a base é `df_uf` cru. É o único bloco do payload que fala do estado todo, e
+    por isso mora FORA da lista de passos — para ninguém confundi-lo com uma camada
+    do funil.
+
+    CAGED SÓ CONTRA MARGEM ESTADUAL. `cres_emp_pct` sozinho não diz nada: 8,7% é muito
+    ou pouco conforme o estado e o ano. `_rank_municipios(modo="crescimento")` já
+    etiqueta cada cidade contra `cres_uf_mediana`, que é constante na UF — e a mediana
+    viaja no payload para a tela poder dizer contra o que está comparando.
+
+    READ-ONLY: agrega coluna já servida, não recalcula nada.
+    """
+    if "cres_emp_pct" not in df_uf.columns:
+        return None
+    com_medicao = df_uf[df_uf["cres_emp_pct"].notna()]
+    if com_medicao.empty:
+        return None
+
+    # PISO DE POPULAÇÃO, e declarado. Sem ele o ranking é dominado por município
+    # minúsculo: medido em GO, o topo saía "Santa Terezinha de Goiás, 211% — 28x a
+    # mediana do estado", que é crescimento percentual sobre uma base de poucas
+    # centenas de empregos. O número não é falso, mas ranquear por ele põe ruído no
+    # lugar de sinal. O piso é o `POP_MIN_ACIONAVEL` que o funil já usa, e não um
+    # corte novo inventado aqui; quantos municípios ele tirou viaja no payload.
+    col_pop = "pop_total_setor_2022"
+    acionaveis = com_medicao
+    n_fora_do_piso = 0
+    if col_pop in com_medicao.columns:
+        pop_por_muni = com_medicao.groupby("nome_municipio", observed=True)[col_pop].sum()
+        grandes = set(pop_por_muni[pop_por_muni >= POP_MIN_ACIONAVEL].index)
+        n_fora_do_piso = int(com_medicao["nome_municipio"].nunique() - len(grandes))
+        if grandes:
+            acionaveis = com_medicao[com_medicao["nome_municipio"].isin(grandes)]
+
+    return {
+        "mediana_uf": _num(_mun_val(df_uf, "cres_uf_mediana"), 1),
+        # Municípios do estado COM medição de emprego — o denominador honesto do
+        # "N de M": sem ele a tela sugeriria cobertura total.
+        "n_municipios_com_medicao": int(com_medicao["nome_municipio"].nunique()),
+        "n_municipios_uf": int(df_uf["nome_municipio"].nunique()),
+        "pop_minima": POP_MIN_ACIONAVEL,
+        "n_fora_do_piso": n_fora_do_piso,
+        "itens": _rank_municipios(
+            acionaveis, "cres_emp_pct", "crescimento", "% emprego", "green"
+        ),
+    }
+
+
 def montar_funil_uf(df_uf: pd.DataFrame, uf: str) -> list[dict[str, Any]]:
     """Os 4 passos no nível da UF inteira; o ranking recomenda MUNICÍPIOS."""
     total = len(df_uf)
@@ -1990,9 +2062,25 @@ def _mil(v: float) -> str:
     return f"{v:,.0f}".replace(",", ".")
 
 
-def _fx(etiqueta: str, condicao: str, tom: str, escopo: str = "") -> dict[str, Any]:
-    """Uma faixa de etiqueta. `escopo` vazio = vale nos dois funis."""
-    return {"etiqueta": etiqueta, "condicao": condicao, "tom": tom, "escopo": escopo}
+def _fx(
+    etiqueta: str, condicao: str, tom: str, escopo: str = "", cor: str | None = None
+) -> dict[str, Any]:
+    """Uma faixa de etiqueta. `escopo` vazio = vale nos dois funis.
+
+    `cor` e' o HEX EXATO da faixa, e so' as faixas DERIVADAS DA RAMPA o trazem: ali o
+    painel promete a cor que o mapa pinta, e a paleta de 5 `tom` nomeados nao cobre as 5
+    cores da rampa 1:1 — "Promissor" saia cinza no manual e amarelo no mapa. Ausente nas
+    demais, que nao correspondem a cor de hexagono nenhuma.
+    """
+    saida: dict[str, Any] = {
+        "etiqueta": etiqueta,
+        "condicao": condicao,
+        "tom": tom,
+        "escopo": escopo,
+    }
+    if cor:
+        saida["cor"] = cor
+    return saida
 
 
 def _faixas_da_rampa(
@@ -2009,14 +2097,15 @@ def _faixas_da_rampa(
     from motor_expansao.dashboard.constants import CAPACIDADE_UNIDADE_ALUNOS
 
     saida: list[dict[str, Any]] = []
-    for de, ate, nome, _cor, tom in reversed(faixas):
+    for de, ate, nome, cor, tom in reversed(faixas):
         if em_alunos:
             piso = _mil(de * CAPACIDADE_UNIDADE_ALUNOS / 100)
             teto = _mil(ate * CAPACIDADE_UNIDADE_ALUNOS / 100)
             condicao = f"≥ {piso} alunos" if ate >= 100 else f"{piso} a {teto} alunos"
         else:
             condicao = f"score ≥ {de}" if ate >= 100 else f"score {de} a {ate}"
-        saida.append(_fx(nome, condicao, tom, escopo))
+        # A cor VIAJA JUNTO: esta lista é a que promete ao operador o que o mapa pinta.
+        saida.append(_fx(nome, condicao, tom, escopo, cor))
     return saida
 
 
@@ -2589,6 +2678,494 @@ def geocode(q: str) -> dict[str, Any]:
     return out
 
 
+@functools.lru_cache(maxsize=1)
+def _ranking_estados() -> list[dict[str, Any]]:
+    """Ranking NACIONAL por UF — a pergunta "por qual estado começar?".
+
+    POR QUE NAO EXISTIA. O piloto lê UMA partição `uf=XX` por vez (`carregar_uf`,
+    `lru_cache(maxsize=6)`), e nenhuma rota comparava estados. Quem queria escolher a
+    UF tinha de abrir uma por uma e comparar de cabeça.
+
+    POR QUE DÁ PARA FAZER AGORA. Parquet é colunar: lendo só 4 colunas das 27
+    partições, os 1,54 milhão de hexágonos saem em ~3 s (medido). O `lru_cache` faz
+    isso uma vez por processo — o custo some depois da primeira chamada.
+
+    MESMA CASCATA DO FUNIL, aplicada nacionalmente. Nada de critério novo:
+    `score_setor_2022_calibrado >= SCORE_CORTE_QUENTE`, população do hexágono
+    `>= POP_MIN_ACIONAVEL`, e WHITE SPACE (`oferta_consumida_mercado_estimada` abaixo
+    de meia unidade de referência — o mesmo arredondamento que produz
+    `n_concorrentes_est == 0`). Ordena por residual em alunos, não por score: o score
+    satura em 100 acima de 2.500 alunos e empataria os estados grandes.
+
+    READ-ONLY sobre o M1: agrega colunas já materializadas, não recalcula nada.
+    """
+    import pyarrow.dataset as ds
+
+    if not ENRICHED_DIR.exists():
+        raise HTTPException(500, f"Base nao encontrada em {ENRICHED_DIR}.")
+
+    dset = ds.dataset(str(ENRICHED_DIR), partitioning="hive")
+    disp = set(dset.schema.names)
+    col_pop = "pop_total_setor_2022" if "pop_total_setor_2022" in disp else "pop_hex_base"
+    cols = [
+        c
+        for c in (
+            "uf", "nome_municipio", "oferta_efetiva_disponivel",
+            "oferta_consumida_mercado_estimada", "score_setor_2022_calibrado", col_pop,
+        )
+        if c in disp
+    ]
+    df = dset.to_table(columns=cols).to_pandas()
+    if df.empty:
+        return []
+
+    quente = df["score_setor_2022_calibrado"] >= SCORE_CORTE_QUENTE
+    povoado = df[col_pop] >= POP_MIN_ACIONAVEL
+    # `n_concorrentes_est` e' DERIVADO (round(consumida / 2500)) e nao existe no
+    # artefato: reproduzimos o mesmo corte na origem, sem materializar a coluna.
+    livre = df["oferta_consumida_mercado_estimada"].fillna(0) < (
+        CAPACIDADE_CONCORRENTE_PADRAO / 2.0
+    )
+    elegivel = df[quente & povoado & livre]
+
+    out: list[dict[str, Any]] = []
+    for uf_nome, bloco in df.groupby("uf", observed=True):
+        eleg = elegivel[elegivel["uf"] == uf_nome]
+        out.append(
+            {
+                "uf": str(uf_nome),
+                # O numero que ORDENA: alunos nao atendidos onde ainda cabe abrir.
+                "residual_white_space": _num(eleg["oferta_efetiva_disponivel"].sum()),
+                "hexes_elegiveis": int(len(eleg)),
+                "municipios_elegiveis": int(eleg["nome_municipio"].nunique())
+                if "nome_municipio" in eleg.columns
+                else None,
+                # Contexto, para o operador ver o tamanho do estado por tras do numero.
+                "residual_total": _num(bloco["oferta_efetiva_disponivel"].sum()),
+                "hexes_total": int(len(bloco)),
+                "pop_total": _num(bloco[col_pop].sum()),
+            }
+        )
+
+    out.sort(key=lambda r: r["residual_white_space"] or 0, reverse=True)
+    for i, r in enumerate(out, 1):
+        r["rank"] = i
+    return out
+
+
+@app.get("/api/estados")
+def estados() -> dict[str, Any]:
+    """Por qual estado começar. Cascata do funil, aplicada às 27 UFs."""
+    ranking = _ranking_estados()
+    return {
+        "reguas": {
+            "score_minimo": SCORE_CORTE_QUENTE,
+            "pop_minima": POP_MIN_ACIONAVEL,
+            "capacidade_concorrente": CAPACIDADE_CONCORRENTE_PADRAO,
+        },
+        "estados": ranking,
+    }
+
+
+@app.get("/api/resolver-ponto")
+def resolver_ponto(q: str) -> dict[str, Any]:
+    """Texto colado pelo operador -> lat/lng. Cobre o LINK CURTO do celular.
+
+    Por que existe. O front resolve sozinho coordenada e link LONGO (`lib/coord.ts`),
+    mas o link que o botão "Compartilhar" do app do Maps gera (`maps.app.goo.gl/...`)
+    não tem coordenada nenhuma na URL — é um 30x. Sem esta rota ele seguia como texto
+    para o `/api/geocode`, que devolvia `{"found": false}`, e o operador via "não
+    encontrei esse endereço" para um link perfeitamente válido.
+
+    Ordem, do mais barato para o mais caro (rede só quando o passo puro falha):
+      1. `parse_maps_url` — puro, sem rede;
+      2. `expandir_link_curto` — segue o redirect e tenta o parse de novo;
+      3. `extrair_endereco_de_place_url` — link de place SEM coordenada: o endereço
+         está no próprio path, então geocodifica esse texto;
+      4. geocode do texto original.
+
+    Rede aqui é a MESMA exceção já aprovada para a barra de busca (DEC-010): é ação
+    do operador, não caminho de carga do app. READ-ONLY; não toca artefato nenhum.
+    """
+    from motor_expansao.api.coord import (
+        CoordenadaInvalidaError,
+        parse_maps_url,
+        validar_brasil,
+    )
+    from motor_expansao.api.geo import (
+        expandir_link_curto,
+        extrair_endereco_de_place_url,
+    )
+
+    termo = (q or "").strip()
+    if not termo:
+        return {"found": False, "motivo": "Cole um link do Google Maps, um endereço ou uma coordenada."}
+
+    def _coord(lat: float, lng: float, via: str) -> dict[str, Any]:
+        return {"found": True, "lat": _num(lat, 6), "lng": _num(lng, 6), "via": via}
+
+    # 1. Parse puro: link longo com @lat,lng / !3d!4d, ou "lat,lng" cru.
+    try:
+        lat, lng = validar_brasil(*parse_maps_url(termo))
+        return _coord(lat, lng, "coordenada")
+    except CoordenadaInvalidaError as exc:
+        # "Fora do Brasil" é DIFERENTE de "não parseei": a coordenada foi lida, e
+        # dizer "não reconheci" mandaria o operador procurar erro de digitação.
+        if "fora do Brasil" in str(exc):
+            return {
+                "found": False,
+                "motivo": "Essa coordenada está fora do Brasil. Confira se a latitude e a longitude não vieram trocadas.",
+            }
+
+    # 2. Link curto: segue o redirect e tenta o parse de novo.
+    expandida = expandir_link_curto(termo)
+    if expandida != termo:
+        try:
+            lat, lng = validar_brasil(*parse_maps_url(expandida))
+            return _coord(lat, lng, "link-expandido")
+        except CoordenadaInvalidaError:
+            pass
+
+    # 3. Link de place sem coordenada: o endereço está no path da URL expandida.
+    endereco = extrair_endereco_de_place_url(expandida)
+    if endereco:
+        achado = geocode(endereco)
+        if achado.get("found"):
+            return {**achado, "via": "endereco-do-link"}
+
+    # 4. Texto livre.
+    achado = geocode(termo)
+    if achado.get("found"):
+        return {**achado, "via": "endereco"}
+
+    return {
+        "found": False,
+        "motivo": (
+            "Não consegui resolver esse link. Abra-o no navegador e cole o endereço "
+            "da barra (o que começa com google.com/maps/…), ou cole a coordenada."
+        ),
+    }
+
+
+def _criterios_do_ponto(
+    censo: dict[str, Any], mercado: dict[str, Any], concorrencia: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Cada métrica do IMÓVEL contra a régua do critério do imóvel.
+
+    NÃO cria veredito novo — não há "score de aprovação do imóvel" aqui, o que seria
+    definição nova de viabilidade e exigiria DEC. Cada linha é UMA métrica contra UM
+    corte, e o operador lê as cinco.
+
+    DUAS DESSAS RÉGUAS DIVERGEM DO FUNIL desde 2026-08-12, por decisão do Juan:
+    `CRIT_PONTO_SCORE_MIN` (60, contra 70 do passo 1) e `CRIT_PONTO_CONC_MAX` (3, contra
+    o white space do passo 5). As outras três seguem canônicas do `config.py`
+    (`POP_MIN_ACIONAVEL`, `OFERTA_DESTAQUE_MIN`, `RENDA_MIN`). Consequência declarada: um
+    imóvel pode passar aqui e o hexágono dele não entrar na fila do mapa.
+
+    Avaliado no SERVIDOR de propósito: a régua e a comparação andam juntas. Mandar só
+    o número e deixar a tela comparar seria a primeira porta para o front e o backend
+    discordarem sobre o que é "aprovado".
+
+    `RENDA_MIN` é renda DOMICILIAR, não per capita (comentário literal em
+    `config.py:131`) — comparar contra a per capita reprovaria quase todo ponto.
+    """
+    from motor_expansao.config import settings
+
+    def crit(
+        chave: str, rotulo: str, valor: Any, regua: float, unidade: str, maior_melhor: bool = True
+    ) -> dict[str, Any]:
+        v = _numf(valor)
+        passa = None if v is None else (v >= regua if maior_melhor else v <= regua)
+        return {
+            "chave": chave,
+            "rotulo": rotulo,
+            "valor": _num(v, 1) if unidade == "score" else _num(v),
+            "regua": _num(regua, 1) if unidade == "score" else _num(regua),
+            "unidade": unidade,
+            "maior_melhor": maior_melhor,
+            "passa": passa,
+        }
+
+    itens = [
+        crit("populacao", "População no raio", censo.get("populacao"), POP_MIN_ACIONAVEL, "pessoas"),
+        crit(
+            "renda_domiciliar", "Renda domiciliar",
+            censo.get("renda_media_domiciliar"), float(settings.RENDA_MIN), "R$",
+        ),
+        crit(
+            "score", "Potencial socioeconômico",
+            censo.get("score_socioeconomico"), CRIT_PONTO_SCORE_MIN, "score",
+        ),
+    ]
+    if mercado.get("disponivel"):
+        itens.append(
+            crit("residual", "Residual disponível", mercado.get("residual"), OFERTA_DESTAQUE_MIN, "alunos")
+        )
+    if concorrencia.get("disponivel"):
+        # O teto e' `CRIT_PONTO_CONC_MAX`, NAO o white space do passo 5. A fila do funil
+        # continua exigindo zero concorrente mapeado; aqui a pergunta e' outra — um imovel
+        # com tres concorrentes no raio de 1 km nao esta descartado, esta disputado.
+        itens.append(
+            crit(
+                "concorrentes", "Concorrentes no raio",
+                concorrencia.get("n_concorrentes"), CRIT_PONTO_CONC_MAX, "", False,
+            )
+        )
+    return itens
+
+
+@app.get("/api/ponto")
+def ponto(lat: float, lng: float) -> dict[str, Any]:
+    """Ficha de UM ponto: censo real no raio de 1,0 km, mais mercado quando houver.
+
+    NÃO carrega a partição da UF. O mapa lê `hexagonos_dashboard_enriquecido/uf=XX`
+    inteiro (até 15.000 hexes, >15 s na primeira vez — por isso o `TIMEOUT_LEITURA` de
+    90 s no cliente). Um fluxo "cole o link, veja a ficha" que esperasse isso estaria
+    morto; aqui se lê só a partição do município e um punhado de hexes.
+
+    DEGRADAÇÃO POR BLOCO, e nunca em silêncio. Cada bloco devolve `disponivel` e, quando
+    falso, o `motivo` por extenso. O censo depende só da malha IBGE 2022; concorrência e
+    mercado dependem de `data/staging`, que pode não estar montado. Sem isso a tela
+    mostraria card em branco e o operador leria como defeito.
+
+    Raio 1,0 km = `RAIO_CENSITARIO_DEFAULT_KM` (DEC-021) — o MESMO do Relatório Pontual,
+    para a tela e o PDF contarem a mesma coisa.
+
+    READ-ONLY: nenhum score recalculado, nenhum artefato tocado.
+    """
+    from motor_expansao.api.coord import CoordenadaInvalidaError, validar_brasil
+    from motor_expansao.api.errors import APIError
+    from motor_expansao.api.service import (
+        _competitors_ultra,
+        _hexes_vizinhos_do_ponto,
+        _nome_municipio_de,
+        _residual_do_ponto,
+        _resolver_e_carregar,
+    )
+    from motor_expansao.api.settings import Settings
+    from motor_expansao.dashboard.censo_point import (
+        RAIO_CENSITARIO_DEFAULT_KM,
+        analisar_ponto_censitario_setores,
+    )
+
+    # `_resolver_e_carregar` NÃO valida o bounding box — sem isto, uma coordenada
+    # absurda seguiria direto para o ponto-em-polígono.
+    try:
+        validar_brasil(lat, lng)
+    except CoordenadaInvalidaError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    cfg = Settings(
+        censo_geo_dir=CENSO_GEO_DIR,
+        ibge_dir=IBGE_DIR,
+        ultra_dir=ULTRA_DIR,
+        staging_dir=STAGING_DIR,
+    )
+
+    try:
+        uf, _cod, setores_df = _resolver_e_carregar(lat, lng, cfg)
+    except APIError as exc:
+        # `APIError` é do contrato da API de produção, que registra um handler próprio
+        # (`main.py`). O piloto NÃO registra — aqui ela vazaria como 500 sem código.
+        # Propagamos o status ORIGINAL de propósito: 400 é "coordenada fora da malha"
+        # (erro do operador) e 404 é "partição do município não materializada" (erro de
+        # implantação). O caminho do PDF (app.py, `_gerar_relatorio_pontual_pdf`) achata
+        # os dois em 400 e faz o operador ler "não foi possível resolver a coordenada"
+        # quando o problema é dado faltando no servidor.
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"Não foi possível resolver a coordenada: {exc}") from exc
+
+    # (None, None) quando `data/staging` não tem os parquets — é o caso previsto, não erro.
+    comp_df, ultra_df = _competitors_ultra(cfg)
+    tem_concorrentes = comp_df is not None or ultra_df is not None
+
+    res = analisar_ponto_censitario_setores(
+        lat, lng, setores_df,
+        raio_km=RAIO_CENSITARIO_DEFAULT_KM,
+        competitors_df=comp_df,
+        ultra_df=ultra_df,
+    )
+
+    residual = _residual_do_ponto(lat, lng, cfg)
+    tem_mercado = any(v is not None for v in residual.values())
+
+    import h3
+
+    hex_id = h3.latlng_to_cell(lat, lng, 7)  # 7 = H3_RESOLUTION do M1, LIDO
+
+    # Vizinhança para o mini-mapa. k=2 (19 células) e não o k=5 do PDF: aqui é
+    # enquadramento de tela, não choropleth de relatório.
+    vizinhos: list[dict[str, Any]] = []
+    hexes_df = _hexes_vizinhos_do_ponto(lat, lng, cfg, k=2)
+    if hexes_df is not None:
+        for _, r in hexes_df.iterrows():
+            vizinhos.append(
+                {
+                    "hex_id": _texto(r.get("hex_id")),
+                    "residual": _num(r.get("oferta_efetiva_disponivel")),
+                    "score_censo": _num(r.get("score_setor_2022_calibrado"), 1),
+                }
+            )
+
+    from motor_expansao.config import settings as _cfg
+
+    # ---- Detalhe da regiao: os campos que o motor calcula e a ficha resumia ----
+    # Existe para o operador AUDITAR de onde cada numero saiu. Definido ANTES dos
+    # blocos porque eles o referenciam.
+    #
+    # `renda_domiciliar_total_raio` fica DE FORA de proposito: apesar do nome, nao e'
+    # um total — e' media ponderada de outra grandeza (`censo_point.py:460`). Numero
+    # financeiro com rotulo errado vira decisao errada; omitir e' menos pior.
+    # Distribuicao BRUTA entre os setores do raio. A media esconde a variacao: na Av.
+    # Paulista a renda per capita media e' R$ 5.838, mas os setores vao de R$ 780 a
+    # R$ 25.272 — 32x de amplitude dentro de 1 km. Quem escolhe imovel precisa ver isso.
+    def _dist(coluna: str, casas: int = 0) -> dict[str, Any] | None:
+        setores = res.get("setores_intersectados")
+        if setores is None or getattr(setores, "empty", True) or coluna not in setores.columns:
+            return None
+        valores = pd.to_numeric(setores[coluna], errors="coerce").dropna()
+        if valores.empty:
+            return None
+        return {
+            "min": _num(valores.min(), casas),
+            "p50": _num(valores.median(), casas),
+            "max": _num(valores.max(), casas),
+            "n": int(len(valores)),
+        }
+
+    detalhe_censo = {
+        "n_setores": _num(res.get("n_setores")),
+        # Duas AREAS: o circulo inteiro, e o que a malha do IBGE cobre dentro dele.
+        "area_circulo_km2": _num(res.get("area_km2"), 2),
+        "area_intersectada_km2": _num((res.get("area_intersecao_total_m2") or 0) / 1e6, 2),
+        # Duas DENSIDADES, e a diferenca importa na orla: a fixa divide pelo circulo
+        # inteiro (inclui agua e vazio); a valida, so' pela area de setor real.
+        "densidade_fixa_hab_km2": _num(res.get("densidade_pop_raio_hab_km2")),
+        "densidade_valida_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
+        "score_medio_raio": _num(res.get("score_setor_medio"), 1),
+        "score_max_raio": _num(res.get("score_setor_max"), 1),
+        # SETOR A SETOR: min / mediana / max do que o raio contem.
+        "distribuicao": {
+            "renda_per_capita": _dist("renda_per_capita_setor_2022_calibrada"),
+            "score": _dist("score_setor_2022_calibrado", 1),
+            "populacao": _dist("pop_total_setor_2022"),
+            "densidade_hab_km2": _dist("densidade_pop_setor_hab_km2"),
+        },
+        # O setor que CONTEM o ponto, cru. Pode divergir bastante da media do raio —
+        # e' a diferenca entre "a regiao" e "a esquina".
+        "setor_do_ponto": {
+            "encontrado": bool(res.get("flag_setor_ponto_encontrado")),
+            "cod_setor": _texto(res.get("cod_setor_ponto")),
+            "renda_per_capita": _num(res.get("renda_per_capita_setor_ponto")),
+            "densidade_hab_km2": _num(res.get("densidade_pop_setor_ponto")),
+            "score": _num(res.get("score_setor_2022_calibrado_ponto"), 1),
+            "bairro": _texto(res.get("nome_bairro_ponto")),
+            "distrito": _texto(res.get("nome_distrito_ponto")),
+        },
+        # Procedencia, nao metodo: de quando e' o dado.
+        "data_referencia": _texto(res.get("data_referencia_renda")),
+    }
+
+    # Concorrentes por distancia. `concorrentes_raio` e' DataFrame: serializar campo a
+    # campo, nunca o objeto cru — ele nao e' JSON e derrubaria a rota.
+    lista_conc: list[dict[str, Any]] = []
+    _cr = res.get("concorrentes_raio")
+    if _cr is not None and getattr(_cr, "empty", True) is False:
+        for _, _linha in _cr.sort_values("dist_km").head(30).iterrows():
+            lista_conc.append(
+                {
+                    "rede": _texto(_linha.get("rede")),
+                    "dist_km": _num(_linha.get("dist_km"), 2),
+                }
+            )
+
+    censo_bloco = {
+        "disponivel": True,
+        "motivo": None,
+        "populacao": _num(res.get("pop_total_raio")),
+        "domicilios": _num(res.get("domicilios_total_raio")),
+        "renda_per_capita": _num(res.get("renda_per_capita_media_raio")),
+        "renda_media_domiciliar": _num(res.get("renda_media_domiciliar_raio")),
+        # A densidade VÁLIDA divide pela área de setor realmente intersectada, e não
+        # por pi*r^2: num ponto com rio/mar no raio, a fixa subestima de propósito.
+        "densidade_hab_km2": _num(res.get("densidade_pop_raio_valida_hab_km2")),
+        "score_socioeconomico": _num(res.get("score_setor_2022_calibrado_ponto"), 1),
+        "n_setores": _num(res.get("n_setores")),
+        "detalhe": detalhe_censo,
+    }
+
+    conc_bloco = {
+        "disponivel": tem_concorrentes,
+        "motivo": None if tem_concorrentes else (
+            "Sem base de concorrentes montada (data/staging/concorrentes_mapeados.parquet)."
+        ),
+        "n_concorrentes": _num(res.get("n_concorrentes")) if tem_concorrentes else None,
+        "n_ultra": _num(res.get("n_ultra")) if tem_concorrentes else None,
+        "lista": lista_conc,
+    }
+
+    mercado_bloco = {
+        "disponivel": tem_mercado,
+        "motivo": None if tem_mercado else (
+            "Sem leitura de mercado para este hexágono "
+            "(data/staging/hexagonos_mercado_mapeado.parquet ausente)."
+        ),
+        "sam": _num(residual.get("sam_fitness_potencial")),
+        "residual": _num(residual.get("oferta_efetiva_disponivel")),
+        "score_residual": _num(residual.get("score_oportunidade_residual"), 1),
+    
+    }
+
+    return {
+        "lat": _num(lat, 6),
+        "lng": _num(lng, 6),
+        "raio_km": RAIO_CENSITARIO_DEFAULT_KM,
+        "hex_id": hex_id,
+        "local": {
+            # `uf` e o nome do município NÃO estão no dict de `analisar_ponto_...` (são
+            # 40 chaves, nenhuma delas é o município): vêm de `_resolver_e_carregar` e
+            # da própria partição. Ler `res["municipio_nome"]` daria None em silêncio.
+            "uf": uf,
+            "municipio": _texto(_nome_municipio_de(setores_df)),
+            "bairro": _texto(res.get("unidade_ponto_rotulo")),
+            # Identificador cru ("bairro"/"distrito"), NÃO acentuar — o rótulo de
+            # exibição é o `bairro` acima.
+            "unidade_tipo": _texto(res.get("unidade_ponto_tipo")),
+        },
+        "censo": censo_bloco,
+        "concorrencia": conc_bloco,
+        "mercado": mercado_bloco,
+        "vizinhos": vizinhos,
+        # Reguas do IMOVEL, legiveis por maquina. A `/api/metodologia` traz as mesmas
+        # como TEXTO ("5.000 habitantes"), que serve para explicar e nao para comparar.
+        "reguas": {
+            "pop_minima": POP_MIN_ACIONAVEL,
+            # A regua do IMOVEL, nao a do funil. Este bloco e' a versao legivel por
+            # maquina do que `criterios` avalia; publicar `SCORE_CORTE_QUENTE` aqui
+            # deixaria o MESMO payload dizendo 60 num campo e 70 no outro — foi o que o
+            # merge com a main criou, e e' exatamente a divergencia que este bloco existe
+            # para eliminar. O funil segue publicando 70 em `/api/estados`, que fala dele.
+            "score_minimo": CRIT_PONTO_SCORE_MIN,
+            "renda_domiciliar_minima": _num(float(_cfg.RENDA_MIN)),
+            "area_min_m2": _num(float(_cfg.AREA_MIN_M2)),
+            "area_ideal_min_m2": _num(float(_cfg.AREA_IDEAL_MIN_M2)),
+            "area_ideal_max_m2": _num(float(_cfg.AREA_IDEAL_MAX_M2)),
+            # Regra de BOLSO, nao modelo: a partir daqui a regiao e disputada. NAO
+            # deriva metragem de concorrencia -- isso viola a DEC-009, que fixou o
+            # motor como property-first (m2 e ENTRADA do operador, nunca previsto
+            # pela geografia).
+            #
+            # Aponta para `CRIT_PONTO_CONC_MAX` desde 2026-08-12: o teto do criterio
+            # passou a ser o mesmo numero em que o texto ja' chamava a regiao de
+            # disputada. Sao papeis diferentes — um aprova, o outro nomeia —, mas manter
+            # os dois no mesmo valor por construcao evita que divirjam em silencio.
+            "conc_regiao_disputada": CRIT_PONTO_CONC_MAX,
+        },
+        "criterios": _criterios_do_ponto(censo_bloco, mercado_bloco, conc_bloco),
+    }
+
+
 @app.get("/api/municipios/{uf}")
 def municipios(uf: str) -> dict[str, Any]:
     df = carregar_uf(uf)
@@ -2658,6 +3235,9 @@ def uf_view(uf: str, limite: int = 15000) -> dict[str, Any]:
         "centro": {"lat": _num(df["lat"].mean(), 6), "lng": _num(df["lng"].mean(), 6)},
         "resumo": _resumo(df),
         "passos": passos,
+        # FORA de `passos` de proposito: e o unico bloco que fala do estado inteiro,
+        # e nao uma camada do funil (que sempre descreve o que sobreviveu ao filtro).
+        "crescimento_estado": montar_crescimento_estado(df),
         "hexes": hexes,
         "cres_mun": _bloco_municipal(vis),
         "pins": _pins_ultra_bbox(df),

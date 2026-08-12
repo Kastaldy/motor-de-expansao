@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 import type { PontoEscolhido } from '../App'
+import BotaoInicio from '../components/BotaoInicio'
 import CampoNumero from '../components/CampoNumero'
 import {
   CascataDre,
@@ -30,6 +31,15 @@ export interface ViabilityScreenProps {
   ponto: PontoEscolhido | null
   dados: MunicipioPayload | null
   onVoltar: () => void
+  /** Volta ao menu de modos. Não limpa nada — ver `components/BotaoInicio`. */
+  onInicio: () => void
+  /**
+   * De onde o operador veio, para o breadcrumb e o botão de volta dizerem a verdade.
+   * O ponto chega aqui por dois caminhos — clique num hexágono do mapa ou "Mais
+   * detalhes" na ficha do modo de ponto — e escrever "vindo do mapa" nos dois casos
+   * mandaria metade dos operadores para uma tela em que eles não estavam.
+   */
+  origemRotulo?: string
 }
 
 const DEMANDA_PASSO = 100
@@ -148,7 +158,12 @@ function fixa(sugestao: string): string {
   return sugestao
 }
 
-export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProps) {
+export default function ViabilityScreen({
+  ponto,
+  onVoltar,
+  onInicio,
+  origemRotulo = 'mapa',
+}: ViabilityScreenProps) {
   // --- Cenário -------------------------------------------------------------
   const [m2, setM2] = useState(1500)
   const [aluguel, setAluguel] = useState(20000)
@@ -356,11 +371,22 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
   }
 
   if (!ponto) {
+    // Este é o estado em que o card "Analisar um ponto ou imóvel" cai HOJE: o campo de
+    // colar link do Maps / coordenada é a etapa seguinte do épico. Até lá, o caminho
+    // honesto é escolher o ponto pelo mapa — e daqui tem de dar para voltar ao menu,
+    // senão o card vira beco sem saída.
     return (
       <Aviso
         titulo="Nenhum ponto escolhido ainda"
-        corpo="A viabilidade testa um imóvel concreto. Volte ao mapa, chegue até a camada de recomendação e escolha um hexágono para trazer para cá."
-        acao={<Botao onClick={onVoltar}>Voltar ao mapa</Botao>}
+        corpo="A viabilidade testa um imóvel concreto. Escolha o ponto pelo mapa — chegue até a camada de recomendação e traga um hexágono para cá."
+        acao={
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <Botao onClick={onVoltar}>Escolher pelo mapa</Botao>
+            <Botao variante="ghost" onClick={onInicio}>
+              Voltar ao início
+            </Botao>
+          </div>
+        }
       />
     )
   }
@@ -438,6 +464,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
           flexWrap: 'wrap',
         }}
       >
+        <BotaoInicio onInicio={onInicio} />
         <h1 style={{ font: '600 15px/1 var(--f-ui)', color: 'var(--tx-max)', margin: 0 }}>
           Viabilidade do ponto
         </h1>
@@ -455,7 +482,7 @@ export default function ViabilityScreen({ ponto, onVoltar }: ViabilityScreenProp
             padding: '6px 10px',
           }}
         >
-          ↩ vindo do mapa · {ponto.rotulo}
+          ↩ vindo {origemRotulo} · {ponto.rotulo}
         </button>
 
         <div style={{ flex: 1 }} />

@@ -1,0 +1,200 @@
+/**
+ * Comparacao entre PONTOS colados no modo de imovel.
+ *
+ * Terceiro consumidor do mesmo nucleo (`compararDimensoesComFrase`), depois de
+ * hexagonos e municipios: as regras que importam — dois limiares, no maximo 3
+ * dimensoes na frase, "porem" separando vantagem de desvantagem — existem UMA vez.
+ *
+ * O QUE ENTRA NA COMPARACAO. So' o que o `/api/ponto` devolve para os DOIS lados. A
+ * viabilidade fica de fora de proposito: por DEC-009 a demanda e' premissa digitada, e
+ * dois imoveis com a mesma metragem e o mesmo aluguel produzem DRE identico — duas
+ * colunas com os mesmos numeros, que o operador leria como defeito. O que muda entre
+ * pontos e' o contexto (quem mora em volta, quanto sobra de mercado, quem ja disputa),
+ * e e' isso que a tabela compara.
+ */
+
+import { compararDimensoesComFrase, type Comparacao, type Dimensao } from './comparacao'
+import type { PontoPayload } from './types'
+
+/**
+ * Ordem de PRIORIDADE, a mesma dos hexagonos: residual primeiro (a pergunta do
+ * produto), contexto socioeconomico depois.
+ */
+export const DIMENSOES_PONTO: readonly Dimensao<PontoPayload>[] = Object.freeze([
+  Object.freeze({
+    chave: 'residual',
+    rotulo: 'Residual disponível',
+    ler: (p: PontoPayload) => p.mercado?.residual ?? null,
+    unidade: 'alunos',
+    maiorEhMelhor: true,
+    limiarRelativo: 0.1,
+    limiarAbsoluto: 100,
+  }),
+  Object.freeze({
+    chave: 'populacao',
+    rotulo: 'População no raio',
+    ler: (p: PontoPayload) => p.censo?.populacao ?? null,
+    unidade: 'pessoas',
+    maiorEhMelhor: true,
+    limiarRelativo: 0.1,
+    limiarAbsoluto: 500,
+  }),
+  Object.freeze({
+    chave: 'concorrentes',
+    rotulo: 'Concorrentes',
+    ler: (p: PontoPayload) => p.concorrencia?.n_concorrentes ?? null,
+    unidade: '',
+    // Unica invertida: menos concorrente e' melhor.
+    maiorEhMelhor: false,
+    limiarRelativo: 0.1,
+    /* Aqui o limiar pode ser 1, e nao 2 como nos hexagonos: no modo de ponto o numero
+       e' CONTAGEM REAL de pins dentro de 1,0 km (`_points_in_radius`), nao a oferta
+       ponderada por distancia que o mapa estima. Um concorrente a mais e' um
+       concorrente a mais. */
+    limiarAbsoluto: 1,
+  }),
+  Object.freeze({
+    chave: 'renda_domiciliar',
+    rotulo: 'Renda domiciliar',
+    ler: (p: PontoPayload) => p.censo?.renda_media_domiciliar ?? null,
+    unidade: 'R$',
+    maiorEhMelhor: true,
+    limiarRelativo: 0.1,
+    limiarAbsoluto: 300,
+  }),
+  Object.freeze({
+    chave: 'score',
+    rotulo: 'Potencial socioeconômico',
+    ler: (p: PontoPayload) => p.censo?.score_socioeconomico ?? null,
+    unidade: 'score',
+    maiorEhMelhor: true,
+    limiarRelativo: 0.1,
+    limiarAbsoluto: 5,
+  }),
+  Object.freeze({
+    chave: 'densidade',
+    rotulo: 'Densidade',
+    ler: (p: PontoPayload) => p.censo?.densidade_hab_km2 ?? null,
+    unidade: 'hab/km²',
+    maiorEhMelhor: true,
+    limiarRelativo: 0.1,
+    limiarAbsoluto: 500,
+  }),
+])
+
+/**
+ * Casas decimais que definem "a mesma coordenada". 5 casas ≈ 1 metro.
+ *
+ * Nao e' igualdade exata de ponto flutuante de proposito: o mesmo endereco pode voltar
+ * do servidor com o ultimo digito diferente conforme o caminho (coordenada colada, link
+ * curto expandido, geocodificacao), e duas leituras a 30 cm uma da outra sao o mesmo
+ * imovel para qualquer pergunta que este produto faz — o raio de analise e' de 1.000 m.
+ */
+export const CASAS_COORD = 5
+
+/**
+ * Onde este ponto JA ESTA na lista, ou -1.
+ *
+ * Existe porque dar Enter duas vezes na mesma coordenada acrescentava um segundo ponto
+ * identico: duas abas com o mesmo nome, e uma comparacao de um ponto contra ele mesmo,
+ * em que toda dimensao empata (relato do Juan, 2026-08-12). Repetir a busca e' um gesto
+ * normal — quem nao viu a tela reagir tenta de novo —, entao a tela e' que precisa
+ * absorver a repeticao, em vez de transformar cada Enter num item novo.
+ */
+export function indiceDoMesmoPonto(
+  pontos: readonly PontoPayload[],
+  lat: number,
+  lng: number,
+): number {
+  const chave = (a: number, b: number) => `${a.toFixed(CASAS_COORD)},${b.toFixed(CASAS_COORD)}`
+  const alvo = chave(lat, lng)
+  return pontos.findIndex((p) => chave(p.lat, p.lng) === alvo)
+}
+
+/**
+ * Uma cor por ponto analisado, para a aba e a coluna dele falarem a mesma coisa.
+ *
+ * POR QUE NAO E' O TURQUESA DA MARCA. Turquesa e' ACAO neste produto (botoes, cenario
+ * multi-hex, pin de busca): usa-lo para identificar um ponto o faria competir com o que
+ * ja' significa "clique aqui". Estas cinco sao IDENTIDADE — a mesma funcao das cores de
+ * serie num grafico —, escolhidas para se distinguirem entre si no fundo escuro.
+ *
+ * NAO SAO VEREDITO. Nenhuma delas diz bom ou ruim: a leitura de qualidade vem da rampa
+ * publicada (`lib/faixas.ts`), que colore os medidores. Um ponto vermelho aqui e' o
+ * terceiro da lista, nao um ponto ruim — por isso o vermelho da rampa (`#B92323`) fica
+ * fora desta paleta.
+ *
+ * Cinco porque `MAX_PONTOS` e' 5. Se o teto subir, a lista precisa subir junto: o `%`
+ * evita quebrar, mas repetir cor derruba o proposito.
+ */
+export const CORES_PONTO = [
+  '#4FA3F7',
+  '#F2A73B',
+  '#9B7BF0',
+  '#2FBF9E',
+  '#E8618C',
+] as const
+
+/** A cor do ponto na posicao `i`. Cicla se um dia houver mais pontos que cores. */
+export function corDoPonto(i: number): string {
+  return CORES_PONTO[((i % CORES_PONTO.length) + CORES_PONTO.length) % CORES_PONTO.length]
+}
+
+/** Rotulo curto de um ponto: bairro, senao municipio, senao a coordenada. */
+export function rotuloDoPonto(p: PontoPayload): string {
+  return (
+    p.local?.bairro ??
+    p.local?.municipio ??
+    `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`
+  )
+}
+
+/**
+ * Rotulos de uma LISTA de pontos, garantidamente distinguiveis entre si.
+ *
+ * POR QUE NAO BASTA O `rotuloDoPonto`. Ele olha um ponto por vez, e o nome de um ponto
+ * nao e' unico: dois enderecos da mesma cidade sem bairro resolvido viram "Goiânia" e
+ * "Goiânia". Nas abas, nos seletores e nos cabecalhos da tabela de comparacao, o operador
+ * ficava com duas colunas de nome identico — e a frase do veredito saia "Goiânia é o
+ * melhor... Goiânia é o pior" (relato do Juan, 2026-08-12).
+ *
+ * A DESAMBIGUACAO E' POSICIONAL, e so' entra quando ha' empate: um numero na frente, o
+ * MESMO que a aba mostra e o mapa usa para marcar o ponto. Numerar sempre seria ruido
+ * para quem comparou dois bairros de nomes distintos, que e' o caso comum.
+ *
+ * Nao inventa nome: nao ha' de onde tirar "Setor Bueno" quando o servidor devolveu
+ * bairro nulo. O que se pode garantir e' que duas linhas nunca digam a mesma coisa.
+ */
+export function rotulosDosPontos(pontos: PontoPayload[]): string[] {
+  const bases = pontos.map(rotuloDoPonto)
+  const vezes = new Map<string, number>()
+  for (const b of bases) vezes.set(b, (vezes.get(b) ?? 0) + 1)
+  return bases.map((b, i) => ((vezes.get(b) ?? 0) > 1 ? `${i + 1} · ${b}` : b))
+}
+
+export function compararPontos(
+  a: PontoPayload,
+  b: PontoPayload,
+  /* Rotulos JA DESAMBIGUADOS, vindos de `rotulosDosPontos`. Sao opcionais so' para nao
+     quebrar quem compara dois pontos soltos; a tela sempre os passa, porque a frase do
+     veredito nomeia os dois lados e com nomes iguais ela vira "X é o melhor, X é o pior". */
+  rotuloA?: string,
+  rotuloB?: string,
+): Comparacao<PontoPayload> {
+  return compararDimensoesComFrase(
+    DIMENSOES_PONTO,
+    a,
+    b,
+    rotuloA ?? rotuloDoPonto(a),
+    rotuloB ?? rotuloDoPonto(b),
+  )
+}
+
+/**
+ * Teto de pontos na comparacao.
+ *
+ * Quatro porque a tabela e' de DUAS colunas: acima disso o operador escolhe pares num
+ * seletor que ja e' mais trabalho do que colar de novo. E cada ponto custa uma leitura
+ * de particao de municipio no servidor.
+ */
+export const MAX_PONTOS = 4
