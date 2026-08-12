@@ -454,16 +454,16 @@ def _resgate_por_aperto(
         catalogo_apertado.setdefault(_apertar(nome), []).append(uid)
 
     pendentes: dict[str, list[object]] = {}
-    for nome in nomes_do_financeiro:
-        if _sem_acento(nome) not in por_nome:
-            pendentes.setdefault(_apertar(nome), []).append(nome)
+    for bruto in nomes_do_financeiro:
+        if _sem_acento(bruto) not in por_nome:
+            pendentes.setdefault(_apertar(bruto), []).append(bruto)
 
     resgate: dict[object, str] = {}
-    for apertado, nomes in pendentes.items():
+    for apertado, candidatos_do_fin in pendentes.items():
         candidatos = set(catalogo_apertado.get(apertado, []))
-        if len(candidatos) == 1 and len(set(map(_sem_acento, nomes))) == 1:
-            for nome in nomes:
-                resgate[nome] = next(iter(candidatos))
+        if len(candidatos) == 1 and len({_sem_acento(n) for n in candidatos_do_fin}) == 1:
+            for bruto in candidatos_do_fin:
+                resgate[bruto] = next(iter(candidatos))
     return resgate
 
 

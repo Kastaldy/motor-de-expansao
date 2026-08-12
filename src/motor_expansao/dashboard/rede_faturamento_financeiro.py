@@ -139,7 +139,8 @@ def _linha_de_meses(linhas: list[tuple[Any, ...]], ate: int = 12) -> tuple[int, 
     O layout já mudou uma vez dentro do mesmo arquivo (cabeçalho na linha 4 numa aba e na
     6 na outra). Procurar a linha com mais células de data sobrevive à próxima mudança.
     """
-    melhor_i, melhor_meses = -1, {}
+    melhor_i: int = -1
+    melhor_meses: dict[int, str] = {}
     for i, linha in enumerate(linhas[:ate]):
         meses = {
             j: pd.Timestamp(v).strftime("%Y-%m")
@@ -208,7 +209,13 @@ def ler_planilha(caminho: Path | str, aba: str = ABA_FATURAMENTO) -> pd.DataFram
             i += 1
             continue
 
+        # `_CABECALHO_RE` casa qualquer texto não vazio (o `.+?` do grupo `nome`), e o
+        # `rotulo.strip()` acima já é não vazio — mas o tipo diz `Match | None`, e um dia
+        # alguém mexe no padrão. Sem par, o bloco é pulado em vez de derrubar a leitura.
         casado = _CABECALHO_RE.match(rotulo.strip())
+        if casado is None:
+            i += 1
+            continue
         prefixo, nome = casado.group("prefixo"), casado.group("nome").strip()
         # Três casos, nesta ordem: código conhecido -> usa o de-para; UF (layout antigo)
         # -> descarta o prefixo; qualquer outro -> é código novo, ainda sem linha no
