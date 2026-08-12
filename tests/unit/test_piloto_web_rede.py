@@ -1098,10 +1098,3 @@ def test_origem_dominante_denuncia_recorte_misturado() -> None:
     discordam = pd.DataFrame({"origem_faturamento": ["financeiro", "ux"]})
     assert pilot._origem_dominante(discordam) == "misto"
 
-def test_debug_por_mes(rede_anual, monkeypatch, capsys):
-    _com_financeiro(monkeypatch, ("2025-07", "2026-06", "2026-07"))
-    p = pilot._rede_carteira_payload(mes="2026-07")
-    with capsys.disabled():
-        print("\nserie_meses:", p["serie_meses"])
-        print("por_mes:", p["fonte_faturamento"]["por_mes"])
-        print("periodo:", p["fonte_faturamento"]["periodo"])
