@@ -12167,3 +12167,146 @@ completa sem regressão (baseline do BLK-MA-02: **2186 coletados**); `ruff` limp
 ---
 
 - BLK-MA-03 (concluído 2026-07-29) — ver tasks/completed.md
+
+---
+
+### BLK-MA-03-FU1 — Ajustes pós-QA do sinal 1 (presença em agregador)
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (documentação de limite conhecido, um teste de congelamento, correção de ponteiro de linha e acentuação de prosa; nenhuma mudança de comportamento do sinal). |
+| **Prioridade** | Antes do **BLK-MA-05**, que é quem exibirá "densidade do alvo". **NÃO bloqueia o BLK-MA-04** — verificado em 2026-07-30: `v1` deriva de `n_agregadores_no_hex`, e as colunas `n_academias_independentes_*` não entram no score nem na sua saída. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | **CONCLUÍDO em 2026-08-12** (PR #223, merge commit `57bd5c7`). Itens 1, m1, m2 e m4 do critério de aceite entregues com sonda de prova. **m3, m5 e m6 RECUSADOS explicitamente** — não estão no critério de aceite e nenhum é defeito ativo: (m3) é imprecisão de um handoff já arquivado, sem artefato vivo a corrigir; (m5) é inalcançável pelo caminho público (o filtro do passo 3 garante o universo) e o `_assert_schema` já barra a saída — uma guarda privada duplicaria a trava sem fechar buraco algum; (m6) é divergência de contagem de warnings, pré-existente e alheia a este bloco. |
+| **Depende de** | BLK-MA-03 (concluído 2026-07-29). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
+
+**Origem.** Ressalvas do QA do BLK-MA-03 (APROVADO COM RESSALVAS em 2026-07-29; 0 críticos, 2 médios,
+6 menores). Snapshot: `context/handoff/20260729-162056-qa.md`. **O médio M1 (ponto cego do AST no
+`test_isolamento_imports`) NÃO está aqui** — foi para o `BLK-MA-02-FU1` (Item 2-B), porque a mesma
+correção de 1 linha fecha o teste compartilhado e o teste próprio deste bloco.
+
+**Item 1 (médio) — `n_academias_independentes_*` super-conta sob rotação de chave.** Sonda do QA: uma
+única academia observada nas semanas 1-2 sob `chave_origem = slug` e nas semanas 3-4 sob
+`hash_estavel` sai como `n_academias_independentes_totalpass = 2`. A redução dedupla por
+`(fonte, chave_snapshot)`, então as duas encarnações da MESMA academia sobrevivem como duas chaves.
+**Não contamina `n_agregadores_no_hex`** (segue `1`), que é o insumo real do `v1` — mas o contrato
+vende as colunas 4/5 ao consumidor como "densidade do alvo" ("hex com 6 independentes num agregador
+só é uma tese diferente de hex com 1"), e é essa leitura que fica inflada. O módulo irmão já tem
+`flag_troca_chave_na_serie` exatamente para este modo de falha; aqui não há menção no docstring, nem
+no comentário da coluna em `contrato.py`, nem teste. **Atenuante:** o rebaixamento global da chave só
+ocorre se o chamador INJETAR a taxa medida (default `None`, `contrato.py:47-51`), logo é raro e
+deliberado. **Correção:** registrar o limite no docstring do módulo e no comentário das colunas 4/5,
+mais um teste que congele o comportamento.
+
+**Item 2 (menores, 6).** (m1) A emenda G1 cita `vulnerabilidade/contrato.py:395-413` como prova de que
+`chave_do_slug`/`chave_hash_estavel` embutem a `fonte`; era verdade em `a0430b8`, mas o **mesmo
+commit** acrescentou 41 linhas acima delas — hoje estão em **432-450**, e `395-413` aponta para
+`rotulo_de_teste`/`entrada_tecnologia_totalpass`. O ponteiro errado está em **2 artefatos
+permanentes**: `docs/vulnerabilidade_ma_contrato.md:241` e este `tasks/backlog.md`. A afirmação é
+verdadeira e tem teste; só a referência precisa ir para `432-450`.
+**[correção 2026-08-12, BLK-MA-03-FU1] `432-450` também já envelheceu — o ponteiro foi ANCORADO POR
+NOME, e DE PROPÓSITO não reapontado para um novo intervalo.** Medido: `432-450` hoje aponta para
+`derivar_semana_iso`/`parse_data_coleta`, e as funções certas já se mudaram outra vez. O
+deslocamento acumulado desde o BLK-MA-03 é de **+115 linhas**, e a maior fatia **não** é dos blocos
+que se suspeitaria: `BLK-MA-04` sozinho vale **+59** (51%), contra `+20` do MA-09, `+14` do MA-11 e
+`+22` de dois follow-ups. Este seria o **terceiro** endereço da mesma afirmação em ~2 semanas — e
+escrever um quarto não resolveria nada: o próprio diff deste FU1 acrescenta 5 linhas a `contrato.py`
+acima das funções e invalidaria o número no ato. É o número de linha que é o defeito, não o valor
+dele, então os 3 artefatos passaram a citar **`chave_do_slug` e `chave_hash_estavel` pelo nome**,
+sem intervalo algum. Também medido: o ponteiro estava em **3** artefatos, não 2 —
+`tasks/completed.md` (fechamento do BLK-MA-03) carregava a mesma referência, e o endereço
+`docs/...:241` deste parágrafo era, ele próprio, stale (a linha real era a `325`). (m2) §2
+acentuação: 4 linhas de prosa sem acento — `presenca_agregador.py:69,308,309` e
+`test_presenca_agregador.py:34` (medido: a linha real é a **33**, `# Sao Paulo`) — contra a
+afirmação explícita do handoff do Builder de que a prosa estava acentuada. Mesma classe da ressalva
+`m4` do QA do MA-02. **Não** contam como defeito as mensagens de `raise` em ASCII (cópia deliberada do
+precedente em `churn_staleness.py:222`; §2 mira texto de usuário, não exceção de desenvolvedor).
+(m3) O handoff do Builder afirma "nada mais do texto do Planner foi alterado", mas o item (b) da
+emenda tem **2 linhas aditivas** além das 29 byte-idênticas — o acréscimo é útil, a afirmação é que
+está imprecisa. (m4) O `fillna("")` do `_assert_schema` (desvio 2 declarado pelo Builder) foi provado
+necessário pelo QA — sem ele, `fontes_presentes_no_hex = pd.NA` faz a comparação mascarada devolver
+`0` e a checagem passar em silêncio —, mas **nenhum teste o trava**: o teste existente usa
+`"wellhub"`, não `pd.NA`. (m5) `_agregar_por_hex` emite `n_agregadores_no_hex = 0` em silêncio se
+chamado direto com `fonte = "unidades"`; pelo caminho público é inalcançável (o filtro garante o
+universo) e o `_assert_schema` barra, mas a função privada não tem guarda própria. (m6) Divergência
+trivial de contagem de warnings no smoke de import (2 relatados vs 4 medidos), pré-existente.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; `v1`, pesos e `score_vulnerabilidade`
+(BLK-MA-04); a granularidade hex de `v1` (ratificada no gate G1 de 2026-07-29 — não reabrir); o ponto
+cego do AST (está no `BLK-MA-02-FU1`, Item 2-B).
+
+**Critério de aceite.** Limite da rotação de chave documentado no docstring e no comentário das
+colunas 4/5, com teste que o congele; ponteiro `432-450` corrigido nos 2 artefatos; 4 linhas de prosa
+acentuadas; teste do `fillna` com `pd.NA`; suíte completa sem regressão (baseline do BLK-MA-03:
+**2230 coletados**); `ruff` limpo; `loop_guard` sem `CRITICO`.
+**[nota 2026-08-12] A baseline `2230` é HISTÓRICA** (CLAUDE.md §5: contagem de ciclo envelhece a
+cada ciclo, não serve de tripwire). Medida no início deste FU1, na `main` em `4ab83f4`: **2918
+coletados**. O critério "sem regressão" foi lido contra ela, e o ponteiro foi ancorado por nome em
+**3** artefatos em vez de reapontado para um novo intervalo — ver a correção do m1 acima.
+
+---
+
+### BLK-MA-04-FU1 — Ajustes pós-QA do score de vulnerabilidade
+
+| Campo | Valor |
+|---|---|
+| **Criticidade** | **Baixa** (um teste de isolamento endurecido, um regime sem cobertura, e 4 leves de precisão de texto/asserção; nenhuma mudança na fórmula nem nos pesos). |
+| **Prioridade** | Antes do **BLK-MA-05**, que é o consumidor do score. |
+| **Esteira** | Block Orchestrator → Builder. |
+| **Status** | **CONCLUÍDO em 2026-08-12** (PR #223, merge commit `57bd5c7`; o Item 1 já viera no PR #194). ✅ Item 1 (PR #194, merged 2026-08-05) — a mesma correção do AST fechou o teste novo deste bloco, e a taxa foi medida em **2/5** (o item 2-B do MA-02-FU1 subcontava). ✅ Item 2 — `test_regime_so_s3` + `test_ordenavel_nao_separa_regimes_de_tamanho_diferente`, e a emenda ao §8.5 do contrato. ✅ Os 4 leves (a,b,c,d), mais as duas **observações do QA** que o bloco pediu para não perder (o comentário de `SINAIS_INATIVOS` em `renormalizar_pesos` e o registro de que as duas checagens por substring são heurísticas de defesa secundária). |
+| **Depende de** | BLK-MA-04 (concluído 2026-07-30). |
+| **Autonomia** | **manual (NÃO loop-safe)** — mesmo perfil do pacote `vulnerabilidade/`: camada com insumo de PII na origem (DEC-012). NÃO marcar loop-safe. |
+
+**Origem.** Ressalvas do QA do BLK-MA-04 (APROVADO COM RESSALVAS em 2026-07-30; 0 críticos, 2 médios,
+7 leves). Snapshot: `context/handoff/20260730-110503-qa.md`.
+
+**Item 1 (médio) — o teste de isolamento novo prova 2 das 5 formas de import.** O Builder replicou,
+num arquivo NOVO (`tests/unit/vulnerabilidade/test_score.py::test_modulo_nao_importa_demanda_revelada`),
+o ponto cego do AST já registrado no `BLK-MA-02-FU1` Item 2-B. Aplicar ali a **mesma correção de 1
+linha** (coletar `a.name for a in node.names` também quando `node.module is None`) e **atualizar o
+texto do Item 2-B**, que agora subconta: são **3 arquivos** do pacote (4 com
+`tests/unit/demanda_revelada/test_concorrentes_densos.py`), e a taxa da checagem por substring é
+**2/5**, não 3/5. Teste que falharia antes: sonda de injeção com as 5 formas.
+
+**Item 2 (médio) — o regime de 1 sinal `{s3}` não tem teste, e o G-D1 não o cobre.** O QA mediu:
+`score = 100.0`, `flag_score_provisorio = False`, `score_vulnerabilidade_ordenavel = 100.0`. É **fiel
+ao §8.4 ratificado** (S3 maduro é sinal maduro), mas significa que a coluna ordenável — o guardrail
+que o G-D1 criou — **não protege** um regime de 1 sinal quando esse sinal é o S3. Inalcançável pelo
+caminho `base_dir`; alcançável por frames injetados, que é justamente o modo que o BLK-MA-05 pode
+usar. Acrescentar `test_regime_so_s3` asserindo `tokens == ["s3"]`, peso efetivo `1,00` e que a
+ordenável **fica preenchida** — para o comportamento ser escolha explícita, não descoberta do MA-05.
+Registrar no §8.5 que a ordenável não cobre regimes de 1 sinal com S3, e que o MA-05 deve segmentar
+por `n_sinais_disponiveis` antes de ordenar.
+
+**Item 3 (leves, 4).** (a) `test_score.py:567` tem **asserção morta**: o QA mediu que
+`float(score or 1.0) != 0.0` passa tanto para `NaN` quanto para `0.0`; trocar por
+`assert not (out["n_sinais_disponiveis"].eq(0) & out["score_vulnerabilidade"].eq(0.0)).any()`.
+(b) `test_snapshots.py:167` — o comentário de seção ainda diz "sobre os **4** módulos do pacote",
+mas a tupla passou a ter 5 módulos + o pacote. (c) O docstring de `score.py` abre com "Módulo **PURO
+e sem I/O**", mas o modo `base_dir` lê disco **transitivamente** pelos dois extratores; o texto do
+Planner era mais preciso ("pura quando os frames são injetados"), e o teste só prova que não
+**escreve**. (d) Faltam dois testes de borda: `presenca` bem-formada porém **vazia** com `churn` não
+vazio (comportamento sondado e correto, sem teste), e a **ordem de validação dos insumos** —
+`_assert_schema_presenca_agregador` **não roda** quando `churn.empty`, porque o retorno antecipado
+vem antes; direção segura (saída vazia e validada), mas sem teste que trave a ordem, e não declarada
+como desvio pelo Builder.
+
+**Observações do QA que NÃO viram item (registradas para não se perderem).** `renormalizar_pesos` não
+conhece `SINAIS_INATIVOS` (aceita `"s2"` porque ele está em `SINAIS_ORDEM`) — não é defeito, a
+primitiva é sobre pesos e `_disponibilidade_efetiva` força `s2` a `False`, mas vale 1 linha de
+comentário para o **BLK-MA-08** não se surpreender. E `test_modulo_nao_usa_funcao_de_percentil` /
+`test_modulo_nao_escreve_em_disco` são checagens por **substring da fonte**: não pegariam
+`scipy.stats.rankdata`, `np.percentile` sob alias, nem `Path.write_text` — são defesa secundária
+legítima (a primária, `test_v4_nao_depende_do_universo`, o QA reproduziu e é robusta), mas o
+docstring poderia dizer que são heurísticas.
+
+**Fora de escopo.** Qualquer artefato/score/peso do M1; a fórmula, os pesos do D4 e as três decisões
+do gate G-D1/G-D2/G-D3 (ratificadas em 2026-07-30 — não reabrir); o cruzamento com hex quente e o
+entregável comercial (BLK-MA-05); o cron (BLK-MA-06).
+
+**Critério de aceite.** Itens 1 e 2 corrigidos com teste que falharia antes; os 4 leves endereçados
+ou explicitamente recusados com justificativa; suíte completa sem regressão (baseline do BLK-MA-04:
+**2311 coletados**); `ruff` limpo; `loop_guard` sem `CRITICO`.
+
+
