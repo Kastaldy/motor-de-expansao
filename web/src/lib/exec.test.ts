@@ -12,6 +12,7 @@ import {
   lerDelta,
   narrativaDoRecorte,
   normalizar,
+  creditoDaFonte,
   ordenarUnidades,
   origemDaSerie,
   queryDaCarteira,
@@ -696,5 +697,44 @@ describe('origemDaSerie', () => {
     expect(origemDaSerie('faturamento', MESES, undefined)).toBeNull()
     expect(origemDaSerie('faturamento', [], todosFinanceiro)).toBeNull()
     expect(origemDaSerie('faturamento', ['2019-01'], todosFinanceiro)).toBeNull()
+  })
+})
+
+describe('creditoDaFonte', () => {
+  const fonte = (
+    por_mes: Record<string, 'financeiro' | 'ux' | 'misto'>,
+    periodo: 'financeiro' | 'ux' | 'misto' = 'ux',
+  ): RedeFonteFaturamento => ({ por_mes, periodo, unidades_sem_par: [] })
+
+  it('sem planilha, credita só a Growth', () => {
+    const so_ux = fonte({ '2026-07': 'ux' }, 'ux')
+    expect(creditoDaFonte(so_ux)).toBe('Growth API · read-only sobre o M1')
+    expect(creditoDaFonte(so_ux, true)).toMatch(/^Fonte: Growth API/)
+  })
+
+  it('com planilha, nomeia o Financeiro como fonte do faturamento', () => {
+    const tudo = fonte({ '2026-07': 'financeiro' }, 'financeiro')
+    expect(creditoDaFonte(tudo)).toMatch(/Financeiro/)
+    expect(creditoDaFonte(tudo, true)).toMatch(/base dos royalties/)
+    expect(creditoDaFonte(tudo, true)).not.toMatch(/período parcial/)
+  })
+
+  it('fontes misturadas: a versão longa diz que só os meses fechados vêm do Financeiro', () => {
+    const misto = fonte({ '2026-06': 'ux', '2026-07': 'financeiro' }, 'ux')
+    expect(creditoDaFonte(misto, true)).toMatch(/meses fechados e da Growth API no período parcial/)
+  })
+
+  it('a versão curta cabe na linha dos exports', () => {
+    // Ela divide o cabeçalho com os botões CSV/XLSX/PDF: um crédito por extenso empurrava
+    // os três para uma terceira linha, que come a altura da carteira.
+    const antiga = 'Growth API · read-only sobre o M1'.length
+    for (const f of [fonte({ '2026-07': 'financeiro' }, 'financeiro'), fonte({ '2026-07': 'ux' })]) {
+      expect(creditoDaFonte(f).length).toBeLessThanOrEqual(antiga + 4)
+    }
+  })
+
+  it('payload sem o campo não quebra a tela', () => {
+    expect(creditoDaFonte(undefined)).toBe('Growth API · read-only sobre o M1')
+    expect(creditoDaFonte({} as RedeFonteFaturamento, true)).toMatch(/^Fonte: Growth API/)
   })
 })
