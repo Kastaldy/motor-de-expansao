@@ -1,4 +1,17 @@
-import { useEffect, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+
+import {
+  ALTURA_CABECALHO,
+  geometriaPadrao,
+  mover,
+  reajustar,
+  redimensionar,
+  type Area,
+  type Geometria,
+} from '../lib/janela'
+
+/** Onde a janela nasce no eixo Y: abaixo do cabeçalho flutuante do mapa. */
+const TOPO_PADRAO = 88
 
 /**
  * A JANELA que traz a ficha por cima do mapa, no modo de ponto.
@@ -6,8 +19,13 @@ import { useEffect, type ReactNode } from 'react'
  * ERA UMA GAVETA colada na borda direita (`GavetaFicha`, ate 2026-08-11). Virou janela
  * solta a pedido do Juan: com o mapa da cidade inteira no fundo, um painel grudado na
  * borda corta a faixa direita do territorio de alto a baixo, e e' justamente ali que o
- * pin do imovel costuma cair depois do voo da camera. A janela flutua com respiro nos
- * quatro lados, entao o mapa continua legivel EM VOLTA dela, nao so' ao lado.
+ * pin do imovel costuma cair depois do voo da camera.
+ *
+ * E AGORA E' UMA JANELA DE VERDADE: arrasta pela barra de titulo, redimensiona pelo canto
+ * inferior direito e recolhe para a barra. Sem isso ela era so' um painel com cantos
+ * arredondados — cobria o painel de ranking do Explorar e o operador nao tinha o que
+ * fazer a respeito a nao ser fecha-la inteira. A REGRA de onde ela pode ir vive em
+ * `lib/janela.ts`, testada; aqui so' se aplica o resultado.
  *
  * CONTINUA NAO SENDO MODAL. O mapa segue vivo e clicavel: a leitura da ficha e' sobre o
  * que esta' desenhado ali, e escurecer o mapa para ler sobre ele seria trabalhar contra a
@@ -32,13 +50,41 @@ export default function JanelaFicha({
   subtitulo?: string
   onFechar: () => void
   /**
-   * Quanto a janela sobe do pe' da tela. Existe porque o stepper do funil ocupa a
-   * largura toda quando ha' territorio carregado: com o recuo padrao a janela cobriria
-   * os botoes das camadas. Mesmo numero que o botao de abrir ja' usa.
+   * Quanto a janela sobe do pe' da tela na posicao INICIAL. Existe porque o stepper do
+   * funil ocupa a largura toda: com o recuo padrao a janela nasceria cobrindo os botoes
+   * das camadas. Depois que o operador arrasta, quem manda e' ele.
    */
   recuoInferior?: number
   children: ReactNode
 }) {
+  const ref = useRef<HTMLElement | null>(null)
+  /** A área onde a janela pode andar: o contêiner que a posiciona, não a tela toda. */
+  const [area, setArea] = useState<Area>({ largura: 0, altura: 0 })
+  /** `null` = ninguém arrastou nada ainda, então vale a posição de nascença. */
+  const [geo, setGeo] = useState<Geometria | null>(null)
+  const [recolhida, setRecolhida] = useState(false)
+  const [arrastando, setArrastando] = useState(false)
+
+  /* Mede o contêiner e continua medindo: encolher a janela do navegador com a ficha
+     aberta deixaria a geometria (que é absoluta) fora da área. */
+  useLayoutEffect(() => {
+    const pai = ref.current?.parentElement
+    if (!pai) return
+    const medir = () => setArea({ largura: pai.clientWidth, altura: pai.clientHeight })
+    medir()
+    const obs = new ResizeObserver(medir)
+    obs.observe(pai)
+    return () => obs.disconnect()
+  }, [])
+
+  useEffect(() => {
+    if (!area.largura || !area.altura) return
+    setGeo((g) => (g ? reajustar(g, area) : g))
+  }, [area])
+
+  const atual =
+    geo ?? (area.largura ? geometriaPadrao(area, TOPO_PADRAO, recuoInferior) : null)
+
   // Esc fecha. E' o gesto que todo mundo tenta primeiro numa janela por cima de algo.
   useEffect(() => {
     if (!aberta) return
@@ -49,21 +95,60 @@ export default function JanelaFicha({
     return () => window.removeEventListener('keydown', aoTeclar)
   }, [aberta, onFechar])
 
+  /**
+   * Arrasto e redimensionamento, no mesmo motor.
+   *
+   * `setPointerCapture` e' o que faz o gesto sobreviver a sair do elemento: sem ele,
+   * puxar rapido tira o cursor da barra de titulo e o movimento morre no meio. Os deltas
+   * sao aplicados sobre o estado ANTERIOR (`setGeo(g => ...)`), nao sobre uma foto do
+   * render — arrastar rapido dispara varios eventos entre dois renders, e uma foto velha
+   * faria a janela tremer para tras.
+   */
+  const gesto = useCallback(
+    (aplicar: (g: Geometria, dx: number, dy: number, a: Area) => Geometria) =>
+      (e: React.PointerEvent) => {
+        if (!atual) return
+        e.preventDefault()
+        const alvo = e.currentTarget as HTMLElement
+        alvo.setPointerCapture(e.pointerId)
+        let ultimoX = e.clientX
+        let ultimoY = e.clientY
+        setArrastando(true)
+
+        const aoMover = (ev: PointerEvent) => {
+          const dx = ev.clientX - ultimoX
+          const dy = ev.clientY - ultimoY
+          ultimoX = ev.clientX
+          ultimoY = ev.clientY
+          setGeo((g) => aplicar(g ?? atual, dx, dy, area))
+        }
+        const aoSoltar = () => {
+          setArrastando(false)
+          alvo.removeEventListener('pointermove', aoMover)
+          alvo.removeEventListener('pointerup', aoSoltar)
+          alvo.removeEventListener('pointercancel', aoSoltar)
+        }
+        alvo.addEventListener('pointermove', aoMover)
+        alvo.addEventListener('pointerup', aoSoltar)
+        alvo.addEventListener('pointercancel', aoSoltar)
+      },
+    [atual, area],
+  )
+
+  const alturaVisivel = recolhida ? ALTURA_CABECALHO : (atual?.altura ?? 0)
+
   return (
     <aside
+      ref={ref}
       role="dialog"
       aria-label={titulo}
       aria-hidden={!aberta}
       style={{
         position: 'absolute',
-        /* Abaixo do cabecalho flutuante, que tem 16 de padding e quebra em duas linhas em
-           tela estreita. */
-        top: 88,
-        right: 16,
-        bottom: recuoInferior,
-        /* 520px cabe a grade de KPI em 2 colunas e a comparacao A x B em 3, sem espremer
-           os numeros; 92vw impede a janela de cobrir a tela toda no celular. */
-        width: 'min(520px, 92vw)',
+        left: atual?.x ?? 0,
+        top: atual?.y ?? TOPO_PADRAO,
+        width: atual?.largura ?? 0,
+        height: alturaVisivel,
         display: 'flex',
         flexDirection: 'column',
         background: 'var(--surf-panel)',
@@ -79,19 +164,35 @@ export default function JanelaFicha({
         transform: aberta ? 'translateX(0)' : 'translateX(calc(100% + 24px))',
         opacity: aberta ? 1 : 0,
         visibility: aberta ? 'visible' : 'hidden',
-        transition:
-          'transform .26s cubic-bezier(.4,0,.2,1), opacity .2s ease, visibility .26s, box-shadow .26s ease',
+        /* Nada de transicao DURANTE o gesto: animar cada quadro do arrasto faz a janela
+           correr atras do cursor com atraso visivel.
+
+           E a ALTURA nunca entra na lista. Animar `height` custou caro: a janela monta com
+           altura 0 e cresce ate' a final, e uma aba em segundo plano CONGELA a transicao
+           no comeco — medido, a janela ficava com 1,33px de altura e conteudo invisivel,
+           parecendo defeito de layout. Recolher/expandir vira instantaneo, que e' um preco
+           menor do que uma janela que as vezes nao tem altura. */
+        transition: arrastando
+          ? 'none'
+          : 'transform .26s cubic-bezier(.4,0,.2,1), opacity .2s ease, visibility .26s, box-shadow .26s ease',
         zIndex: 26,
       }}
     >
       <header
+        onPointerDown={gesto(mover)}
         style={{
           flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
           gap: 12,
           padding: '14px 16px',
-          borderBottom: '1px solid var(--line-soft)',
+          height: ALTURA_CABECALHO,
+          borderBottom: recolhida ? 'none' : '1px solid var(--line-soft)',
+          /* A barra de título É a alça. `grab`/`grabbing` é o que anuncia isso. */
+          cursor: arrastando ? 'grabbing' : 'grab',
+          /* Sem isto o arrasto seleciona o texto do título em vez de mover a janela. */
+          userSelect: 'none',
+          touchAction: 'none',
         }}
       >
         <div style={{ display: 'grid', gap: 2, minWidth: 0, flex: 1 }}>
@@ -122,29 +223,82 @@ export default function JanelaFicha({
           )}
         </div>
 
-        <button
-          type="button"
-          onClick={onFechar}
-          title="Fechar a ficha (Esc)"
-          aria-label="Fechar a ficha"
-          style={{
-            flexShrink: 0,
-            width: 30,
-            height: 30,
-            display: 'grid',
-            placeItems: 'center',
-            borderRadius: 8,
-            border: '1px solid var(--line-soft)',
-            background: 'var(--surf-raised)',
-            color: 'var(--tx-soft)',
-            font: '600 15px/1 var(--f-ui)',
-          }}
+        <BotaoChrome
+          onClick={() => setRecolhida((r) => !r)}
+          title={recolhida ? 'Expandir a ficha' : 'Recolher para a barra'}
+          rotulo={recolhida ? 'Expandir a ficha' : 'Recolher a ficha'}
         >
+          {recolhida ? '▢' : '—'}
+        </BotaoChrome>
+        <BotaoChrome onClick={onFechar} title="Fechar a ficha (Esc)" rotulo="Fechar a ficha">
           ×
-        </button>
+        </BotaoChrome>
       </header>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>{children}</div>
+      {/* Recolhida, o conteúdo SAI da árvore de leitura mas a janela continua montada —
+          o que o operador digitou na viabilidade sobrevive, como no fechar. */}
+      {!recolhida && <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>{children}</div>}
+
+      {/* Alça de redimensionar, no canto inferior direito. Some quando recolhida: não há
+          altura para ajustar, e a alça ficaria sobre a barra de título. */}
+      {!recolhida && (
+        <div
+          onPointerDown={gesto(redimensionar)}
+          role="separator"
+          aria-label="Redimensionar a ficha"
+          style={{
+            position: 'absolute',
+            right: 0,
+            bottom: 0,
+            width: 18,
+            height: 18,
+            cursor: 'nwse-resize',
+            touchAction: 'none',
+            /* Duas riscas na diagonal — a convenção de canto redimensionável. */
+            background:
+              'linear-gradient(135deg, transparent 0 45%, var(--line-strong) 45% 55%, transparent 55% 70%, var(--line-strong) 70% 80%, transparent 80%)',
+          }}
+        />
+      )}
     </aside>
+  )
+}
+
+/** Os botões do canto da barra: mesmo desenho para recolher e fechar. */
+function BotaoChrome({
+  onClick,
+  title,
+  rotulo,
+  children,
+}: {
+  onClick: () => void
+  title: string
+  rotulo: string
+  children: ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={rotulo}
+      /* Impede que o clique no botão vire arrasto da barra que o contém. */
+      onPointerDown={(e) => e.stopPropagation()}
+      style={{
+        flexShrink: 0,
+        width: 30,
+        height: 30,
+        display: 'grid',
+        placeItems: 'center',
+        borderRadius: 8,
+        border: '1px solid var(--line-soft)',
+        background: 'var(--surf-raised)',
+        color: 'var(--tx-soft)',
+        font: '600 15px/1 var(--f-ui)',
+        cursor: 'pointer',
+      }}
+    >
+      {children}
+    </button>
   )
 }
