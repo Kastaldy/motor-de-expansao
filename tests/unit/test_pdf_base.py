@@ -271,6 +271,31 @@ def test_brl_da_barra(valor: float, esperado: str) -> None:
     assert _brl_da_barra(valor) == esperado
 
 
+def test_credito_da_fonte_no_rodape_e_acentuado_e_cabe_em_latin1() -> None:
+    """Texto que o franqueado lê: acentuado, e sem tipografia que vire "?" no PDF.
+
+    As duas coisas juntas, porque elas se confundem: acento português CABE em latin-1 e
+    deve estar lá; o que não cabe é travessão, aspas curvas e reticências. Escrever
+    "metricas" para "fugir" do encoder é resolver o problema errado.
+    """
+    from motor_expansao.dashboard.rede_export import _fonte_do_faturamento
+
+    casos = [
+        {},
+        {"fonte_faturamento": {"por_mes": {"2026-07": "financeiro"}, "periodo": "financeiro"}},
+        {"fonte_faturamento": {"por_mes": {"2026-06": "ux", "2026-07": "financeiro"}, "periodo": "ux"}},
+    ]
+    for payload in casos:
+        frase = _fonte_do_faturamento(payload)
+        assert frase.encode("latin-1", "replace").decode("latin-1") == frase, frase
+        assert "metricas" not in frase and "periodo" not in frase, f"sem acento: {frase}"
+
+    com_planilha = _fonte_do_faturamento(casos[1])
+    assert "métricas" in com_planilha
+    assert "Financeiro" in com_planilha
+    assert "período" in _fonte_do_faturamento(casos[2])
+
+
 def test_corpo_da_barra_encolhe_ate_caber_e_para_no_piso() -> None:
     """O rótulo inteiro tem de caber na fatia — e nunca sumir de página.
 

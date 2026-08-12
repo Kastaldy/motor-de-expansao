@@ -399,16 +399,19 @@ def _fonte_do_faturamento(payload: Mapping[str, Any]) -> str:
     """
     fonte = payload.get("fonte_faturamento") or {}
     origens = set((fonte.get("por_mes") or {}).values()) | {fonte.get("periodo")}
+    # Acentuado: e' texto que o FRANQUEADO le. O `ascii_seguro` reduz a latin-1, e acento
+    # portugues cabe em latin-1 -- quem vira "?" e' so' a tipografia de fora dela
+    # (travessao, aspas curvas). Ver `pdf_base.ascii_seguro` e o CLAUDE.md §2.
     if "financeiro" not in origens:
         return "Fonte: Growth API - camada paralela, read-only sobre o M1."
     if origens <= {"financeiro", None}:
         return (
             "Fonte: faturamento da planilha do Financeiro (base dos royalties); "
-            "demais metricas da Growth API, read-only sobre o M1."
+            "demais métricas da Growth API, read-only sobre o M1."
         )
     return (
         "Fonte: faturamento da planilha do Financeiro nos meses FECHADOS e da Growth API "
-        "no periodo parcial; demais metricas da Growth API, read-only sobre o M1."
+        "no período parcial; demais métricas da Growth API, read-only sobre o M1."
     )
 
 
