@@ -118,6 +118,22 @@ POP_MIN_ACIONAVEL = 5000  # regua operacional do dashboard (<5k = descartado)
 # MESMOS nomes na tela: com o numero escrito em dois lugares, ajustar um parametro
 # fazia a explicacao mentir sem ninguem perceber. Mudou aqui, muda no funil E no texto.
 SCORE_CORTE_QUENTE = 70.0  # piso do passo 1 (hexagono "quente")
+
+# --- Reguas do CRITERIO DO IMOVEL ("Serve este imovel?"), so' do modo de ponto ---------
+# Decisao do Juan em 2026-08-12: afrouxar os dois cortes que mais reprovavam imovel.
+#
+# ATE ENTAO estas duas reguas eram AS MESMAS do funil — o score usava
+# `SCORE_CORTE_QUENTE` (piso do passo 1) e a concorrencia usava o white space do passo 5
+# (zero concorrente). A partir daqui elas DIVERGEM de proposito, e isso tem consequencia
+# que precisa estar escrita: um imovel pode passar no criterio da ficha e ficar de fora do
+# funil, porque o funil continua exigindo 70 e zero concorrente. Nao e' contradicao — sao
+# perguntas diferentes ("este imovel serve?" contra "quais hexagonos entram na fila") —,
+# mas quem comparar as duas telas vai notar, e a explicacao tem de existir.
+#
+# O FUNIL NAO FOI TOCADO. Mexer em `SCORE_CORTE_QUENTE` mudaria o passo 1 do mapa inteiro
+# e o texto da metodologia junto; o pedido era sobre a janela de analise de pontos.
+CRIT_PONTO_SCORE_MIN = 60.0  # era SCORE_CORTE_QUENTE (70,0)
+CRIT_PONTO_CONC_MAX = 3  # era 0 (white space do passo 5)
 # SEM USO desde o BLK-MAPA-FAIXAS-01 (regua unica legenda<->etiqueta): as quatro linhas
 # abaixo descrevem os cortes de Quente/Forte/Solido e Alta/Media/Baixa POR HEXAGONO,
 # vocabularios que `_etiqueta` nao emite mais — hoje ele deriva de FAIXAS_MAPA_* (de 20
@@ -2688,12 +2704,17 @@ def resolver_ponto(q: str) -> dict[str, Any]:
 def _criterios_do_ponto(
     censo: dict[str, Any], mercado: dict[str, Any], concorrencia: dict[str, Any]
 ) -> list[dict[str, Any]]:
-    """Cada métrica do IMÓVEL contra a régua canônica que já existe no projeto.
+    """Cada métrica do IMÓVEL contra a régua do critério do imóvel.
 
-    NÃO cria veredito novo. As réguas são as MESMAS do funil e do `config.py`
-    (`SCORE_CORTE_QUENTE`, `POP_MIN_ACIONAVEL`, `OFERTA_DESTAQUE_MIN`, `RENDA_MIN`) —
-    inventar aqui um "score de aprovação do imóvel" seria uma definição nova de
-    viabilidade no sistema, o que exige DEC.
+    NÃO cria veredito novo — não há "score de aprovação do imóvel" aqui, o que seria
+    definição nova de viabilidade e exigiria DEC. Cada linha é UMA métrica contra UM
+    corte, e o operador lê as cinco.
+
+    DUAS DESSAS RÉGUAS DIVERGEM DO FUNIL desde 2026-08-12, por decisão do Juan:
+    `CRIT_PONTO_SCORE_MIN` (60, contra 70 do passo 1) e `CRIT_PONTO_CONC_MAX` (3, contra
+    o white space do passo 5). As outras três seguem canônicas do `config.py`
+    (`POP_MIN_ACIONAVEL`, `OFERTA_DESTAQUE_MIN`, `RENDA_MIN`). Consequência declarada: um
+    imóvel pode passar aqui e o hexágono dele não entrar na fila do mapa.
 
     Avaliado no SERVIDOR de propósito: a régua e a comparação andam juntas. Mandar só
     o número e deixar a tela comparar seria a primeira porta para o front e o backend
@@ -2727,7 +2748,7 @@ def _criterios_do_ponto(
         ),
         crit(
             "score", "Potencial socioeconômico",
-            censo.get("score_socioeconomico"), SCORE_CORTE_QUENTE, "score",
+            censo.get("score_socioeconomico"), CRIT_PONTO_SCORE_MIN, "score",
         ),
     ]
     if mercado.get("disponivel"):
@@ -2735,10 +2756,14 @@ def _criterios_do_ponto(
             crit("residual", "Residual disponível", mercado.get("residual"), OFERTA_DESTAQUE_MIN, "alunos")
         )
     if concorrencia.get("disponivel"):
-        # White space e' o criterio do passo 5 (decisao de produto, 2026-08-03): a fila
-        # so aceita hexagono com ZERO concorrente mapeado, sem fallback para disputado.
+        # O teto e' `CRIT_PONTO_CONC_MAX`, NAO o white space do passo 5. A fila do funil
+        # continua exigindo zero concorrente mapeado; aqui a pergunta e' outra — um imovel
+        # com tres concorrentes no raio de 1 km nao esta descartado, esta disputado.
         itens.append(
-            crit("concorrentes", "Concorrentes no raio", concorrencia.get("n_concorrentes"), 0, "", False)
+            crit(
+                "concorrentes", "Concorrentes no raio",
+                concorrencia.get("n_concorrentes"), CRIT_PONTO_CONC_MAX, "", False,
+            )
         )
     return itens
 
