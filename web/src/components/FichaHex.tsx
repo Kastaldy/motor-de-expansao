@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
 import { alunos, brl, num, pct } from '../lib/format'
 import type { Hex } from '../lib/types'
+import { BarraMercado, MedidorScore } from './LeiturasVisuais'
 import { Chip, Eyebrow, Kpi } from './primitives'
 
 /**
@@ -56,8 +57,8 @@ export default function FichaHex({
         <Kpi label="População" valor={num(hex.pop)} />
         <Kpi label="Renda per capita" valor={hex.renda == null ? '—' : brl(hex.renda)} />
         <Kpi label="Renda domiciliar" valor={hex.renda_dom == null ? '—' : brl(hex.renda_dom)} />
-        <Kpi label="Score censitário" valor={num(hex.censo, 1)} />
       </Bloco>
+      <MedidorScore rotulo="Score censitário" valor={hex.censo} />
 
       <Bloco titulo="Quem já disputa o aluno" nota="unidades mapeadas dentro do hexágono">
         <Kpi label="Concorrentes" valor={num(hex.conc)} />
@@ -67,9 +68,18 @@ export default function FichaHex({
       <Bloco titulo="Quanto de mercado sobra" nota="capacidade, não meta de abertura">
         <Kpi label="Mercado potencial (SAM)" valor={hex.sam == null ? '—' : alunos(hex.sam)} />
         <Kpi label="Residual disponível" valor={hex.oferta == null ? '—' : alunos(hex.oferta)} />
-        <Kpi label="Score de residual" valor={num(hex.res, 1)} />
-        <Kpi label="Score híbrido" valor={num(hex.hib, 1)} />
       </Bloco>
+      {/* A mesma leitura visual da ficha do ponto: a barra responde "sobra muito?" sem
+          conta de cabeça, e os dois scores viram medidor porque a escala é conhecida. */}
+      <div style={{ display: 'grid', gap: 12 }}>
+        <BarraMercado sam={hex.sam} residual={hex.oferta} />
+        <MedidorScore
+          rotulo="Score de residual"
+          valor={hex.res}
+          nota="satura em 100 acima de 2.500 alunos — uma unidade cheia"
+        />
+        <MedidorScore rotulo="Score híbrido" valor={hex.hib} />
+      </div>
 
       {/* O crescimento tem DUAS bases e elas não se misturam: a obra nova é DESTE
           hexágono (satélite); o emprego formal é do MUNICÍPIO inteiro (CAGED). Rotular as

@@ -7,6 +7,7 @@ import CampoPonto from '../components/CampoPonto'
 import DetalheRegiao from '../components/DetalheRegiao'
 import type { SearchPin } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
+import { BarraMercado, MedidorScore, ReguaDispersao } from '../components/LeiturasVisuais'
 import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
@@ -511,8 +512,41 @@ function Ficha({
           <Kpi label="Renda per capita" valor={comPrefixo('R$ ', censo.renda_per_capita)} />
           <Kpi label="Renda domiciliar" valor={comPrefixo('R$ ', censo.renda_media_domiciliar)} />
           <Kpi label="Densidade" valor={comSufixo(censo.densidade_hab_km2, ' hab/km²')} />
-          <Kpi label="Score socioeconômico" valor={num(censo.score_socioeconomico, 1)} />
         </GradeKpi>
+
+        {/* ---- Leitura visual ----
+            O score sai da grade de KPIs e vira MEDIDOR: 78 num card não diz se é muito,
+            e a escala dele é conhecida (0-100). As réguas ao lado mostram a dispersão
+            setor a setor — a média do raio esconde território dividido, e dois pontos com
+            a mesma média podem ser lugares completamente diferentes. */}
+        <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+          <MedidorScore
+            rotulo="Score socioeconômico"
+            valor={censo.score_socioeconomico}
+            nota="renda e densidade do censo, normalizadas na escala do produto"
+          />
+          {censo.detalhe && (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: 14,
+              }}
+            >
+              <ReguaDispersao
+                rotulo="Score, setor a setor"
+                dist={censo.detalhe.distribuicao.score}
+                formatar={(v) => num(v, 1)}
+              />
+              <ReguaDispersao
+                rotulo="Renda per capita, setor a setor"
+                dist={censo.detalhe.distribuicao.renda_per_capita}
+                formatar={(v) => `R$ ${num(v)}`}
+              />
+            </div>
+          )}
+        </div>
+
         <Rodape>
           A densidade desconta água e vazio: divide pela área de setor censitário
           realmente intersectada, não pela área do círculo.
@@ -535,8 +569,22 @@ function Ficha({
         <GradeKpi>
           <Kpi label="Mercado potencial (SAM)" valor={comSufixo(mercado.sam, ' alunos')} />
           <Kpi label="Residual disponível" valor={comSufixo(mercado.residual, ' alunos')} />
-          <Kpi label="Score de residual" valor={num(mercado.score_residual, 1)} />
         </GradeKpi>
+
+        {/* ---- Leitura visual ----
+            "SAM 12.000" e "residual 4.000" lado a lado exigem conta de cabeça para
+            responder o que interessa: a sobra é a maior parte do mercado ou uma margem?
+            A barra responde de relance. É subtração entre dois números já publicados,
+            não um indicador novo. */}
+        <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+          <BarraMercado sam={mercado.sam} residual={mercado.residual} />
+          <MedidorScore
+            rotulo="Score de residual"
+            valor={mercado.score_residual}
+            nota="satura em 100 acima de 2.500 alunos — uma unidade cheia"
+          />
+        </div>
+
         <Rodape>
           O mapa atrás desta janela colore os vizinhos por este mesmo residual — um
           hexágono saturado pode ter espaço sobrando a 1 km dali.
