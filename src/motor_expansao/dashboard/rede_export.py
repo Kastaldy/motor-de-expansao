@@ -81,7 +81,16 @@ METRICAS_CARTEIRA: tuple[tuple[str, str], ...] = (
     ("conversao_pct", "Conversão %"),
     ("nps", "NPS"),
     ("saldo_operacional", "Saldo operacional"),
-    ("pct_agregador_alunos", "Dependência de agregador %"),
+    ("pct_agregador_alunos", "Dependência de agregador (alunos) %"),
+)
+
+# A FICHA leva uma linha a mais: a dependencia de agregador por RECEITA. Ela nao entra no
+# export da carteira porque o payload da carteira nao a serve (sao ~110 bytes por unidade e
+# a carteira ja trafega 92 linhas); na ficha, que e' uma unidade so', ela cabe -- e e' a
+# leitura que fala de dinheiro. As duas discordam em 14,8 p.p. na mediana da rede.
+METRICAS_FICHA: tuple[tuple[str, str], ...] = (
+    *METRICAS_CARTEIRA,
+    ("pct_agregador_receita", "Dependência de agregador (receita) %"),
 )
 
 
@@ -108,13 +117,15 @@ def _br(valor: object, casas: int = 0) -> str:
 _INICIO_DE_FORMULA = ('=', '+', '-', '@', chr(9), chr(13))
 
 
-def _brl_compacto(valor: float) -> str:
-    """R$ 594k / R$ 1,2M. Numero cheio nao cabe sobre 12 barras sem encavalar."""
-    absoluto = abs(valor)
-    if absoluto >= 1_000_000:
-        return f"R$ {_br(valor / 1_000_000, 1)}M"
-    if absoluto >= 1_000:
-        return f"R$ {_br(valor / 1_000)}k"
+def _brl_da_barra(valor: float) -> str:
+    """R$ 21.982.435 -- o faturamento por INTEIRO sobre a barra.
+
+    Era compacto ("R$ 594k", "R$ 1,2M") porque o numero cheio nao cabia sobre 12 barras.
+    So' que o valor arredondado le como numero ajustado pelo sistema, e o painel hoje
+    promete o contrario: o faturamento vem da planilha do Financeiro, a mesma dos royalties
+    (pedido do Felipe, 2026-08-12). Quem cede e' o corpo da fonte -- `pdf_base.barras`
+    encolhe o rotulo ate caber na fatia, e a tela faz o mesmo em `corpoQueCabe`.
+    """
     return f"R$ {_br(valor)}"
 
 
@@ -379,6 +390,31 @@ def _resumo_do_semaforo(pdf: UltraPDF, payload: Mapping[str, Any]) -> None:
         pdf.cell(PAGINA_LARGURA - 72, 11, ascii_seguro(f"- {nota}"))
 
 
+def _fonte_do_faturamento(payload: Mapping[str, Any]) -> str:
+    """Uma frase dizendo de onde veio o dinheiro deste PDF.
+
+    O rodape dizia so' "Growth API" enquanto o faturamento vinha mesmo de la'. Desde que os
+    meses fechados passaram a sair da planilha do Financeiro, dizer so' Growth e' errado -- e
+    e' o rodape que o franqueado le' quando o numero nao bate com o que ele esperava.
+    """
+    fonte = payload.get("fonte_faturamento") or {}
+    origens = set((fonte.get("por_mes") or {}).values()) | {fonte.get("periodo")}
+    # Acentuado: e' texto que o FRANQUEADO le. O `ascii_seguro` reduz a latin-1, e acento
+    # portugues cabe em latin-1 -- quem vira "?" e' so' a tipografia de fora dela
+    # (travessao, aspas curvas). Ver `pdf_base.ascii_seguro` e o CLAUDE.md §2.
+    if "financeiro" not in origens:
+        return "Fonte: Growth API - camada paralela, read-only sobre o M1."
+    if origens <= {"financeiro", None}:
+        return (
+            "Fonte: faturamento da planilha do Financeiro (base dos royalties); "
+            "demais métricas da Growth API, read-only sobre o M1."
+        )
+    return (
+        "Fonte: faturamento da planilha do Financeiro nos meses FECHADOS e da Growth API "
+        "no período parcial; demais métricas da Growth API, read-only sobre o M1."
+    )
+
+
 def _texto_do_rodape(payload: Mapping[str, Any]) -> str:
     """As reguas vigentes VAO no rodape: e' impossivel a tela dizer uma e o motor aplicar
     outra."""
@@ -391,10 +427,7 @@ def _texto_do_rodape(payload: Mapping[str, Any]) -> str:
         else:
             sinal = ">" if regua.get("sentido") == "acima" else "<"
             partes.append(f"{regua.get('rotulo')}: {sinal} {_br(limiar, 1)}")
-    return ascii_seguro(
-        "Fonte: Growth API - camada paralela, read-only sobre o M1. Réguas: "
-        + " | ".join(partes)
-    )
+    return ascii_seguro(_fonte_do_faturamento(payload) + " Réguas: " + " | ".join(partes))
 
 
 def ficha_pdf(payload: Mapping[str, Any]) -> bytes:
@@ -446,7 +479,7 @@ def ficha_pdf(payload: Mapping[str, Any]) -> bytes:
     linha_de_tabela(pdf, 36.0, y, cabecalho, negrito=True, fundo=CINZA_CLARO)
     y += 18.0
     referencias = (payload.get("coorte") or {}).get("metricas", {})
-    for chave, rotulo in METRICAS_CARTEIRA:
+    for chave, rotulo in METRICAS_FICHA:
         metrica = metricas.get(chave) or {}
         if metrica.get("atual") is None:
             continue
@@ -556,7 +589,7 @@ def _pagina_de_graficos_da_rede(
             150,
             [_mes_curto(m) for m in meses],
             serie,
-            formatar=_brl_compacto,
+            formatar=_brl_da_barra,
         )
 
     semaforo = payload.get("semaforo") or {}
@@ -668,7 +701,7 @@ def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> N
     )
 
     titulo_de_grafico(pdf, 36, 76, "Faturamento nos 12 meses fechados")
-    barras(pdf, 36, 118, 430, 108, meses, serie.get("faturamento") or [], formatar=_brl_compacto)
+    barras(pdf, 36, 118, 430, 108, meses, serie.get("faturamento") or [], formatar=_brl_da_barra)
 
     titulo_de_grafico(pdf, 520, 76, "Alunos ativos")
     linha_de_grafico(pdf, 520, 116, PAGINA_LARGURA - 556, 52, serie.get("ativos") or [])
@@ -713,14 +746,18 @@ def _pagina_de_graficos_da_ficha(pdf: UltraPDF, payload: Mapping[str, Any]) -> N
     recorrentes = float((metricas.get("pagantes") or {}).get("atual") or 0.0)
     agregadores = float((metricas.get("agregadores") or {}).get("atual") or 0.0)
     dependencia = (metricas.get("pct_agregador_alunos") or {}).get("atual")
-    titulo_de_grafico(
-        pdf,
-        304,
-        272,
-        "Composição da base",
-        "Aluno de agregador paga menos e sai em bloco se o parceiro decidir.",
-        largura=196,
-    )
+    # A rosca é da BASE (cabeças), e o "paga menos" da legenda deixou de ser afirmação
+    # genérica: com o faturamento vindo da planilha do Financeiro dá para dizer quanto. As
+    # duas leituras discordam em 14,8 p.p. na mediana da rede, então mostrar só a de alunos
+    # faz a unidade parecer mais dependente do que o caixa dela mostra.
+    dep_receita = (metricas.get("pct_agregador_receita") or {}).get("atual")
+    legenda = "Aluno de agregador paga menos e sai em bloco se o parceiro decidir."
+    if dep_receita is not None:
+        legenda = (
+            f"Aluno de agregador paga menos: são {_br(dependencia, 0)}% da base e "
+            f"{_br(dep_receita, 0)}% da receita. E saem em bloco se o parceiro decidir."
+        )
+    titulo_de_grafico(pdf, 304, 272, "Composição da base", legenda, largura=196)
     rosca(
         pdf,
         304,

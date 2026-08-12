@@ -3,6 +3,9 @@ import { describe, expect, it } from 'vitest'
 import {
   ancoraDoRotulo,
   caminhoSparkline,
+  CORPO_ROTULO_MAX,
+  CORPO_ROTULO_MIN,
+  corpoQueCabe,
   escalaDeBarras,
   fatiasDeRosca,
   ladoDoRotulo,
@@ -303,5 +306,59 @@ describe('ancoraDoRotulo', () => {
       expect(Number.isFinite(p.x)).toBe(true)
       expect(Number.isFinite(p.y)).toBe(true)
     }
+  })
+})
+
+describe('corpoQueCabe', () => {
+  // "R$ 21.982.435" — o faturamento da rede escrito por INTEIRO, que é o caso que motivou
+  // a função. 13 caracteres.
+  const REDE = 'R$ 21.982.435'.length
+  // "R$ 186.000" — a mesma métrica na ficha de uma unidade. 10 caracteres.
+  const UNIDADE = 'R$ 186.000'.length
+
+  it('usa o corpo cheio quando a fatia é larga', () => {
+    // Painel de evolução medido em produção: 936 px para 12 barras = 78 px por fatia.
+    expect(corpoQueCabe(REDE, 936 / 12)).toBe(CORPO_ROTULO_MAX)
+  })
+
+  it('encolhe, em vez de abreviar, quando a fatia aperta', () => {
+    const corpo = corpoQueCabe(REDE, 55)
+    expect(corpo).not.toBeNull()
+    expect(corpo!).toBeLessThan(CORPO_ROTULO_MAX)
+    expect(corpo!).toBeGreaterThanOrEqual(CORPO_ROTULO_MIN)
+  })
+
+  it('o corpo devolvido REALMENTE cabe na fatia', () => {
+    // A garantia que importa: o rótulo não pode encostar no do vizinho.
+    for (const fatia of [40, 48, 55, 62, 70, 78, 120]) {
+      const corpo = corpoQueCabe(REDE, fatia)
+      if (corpo === null) continue
+      expect(REDE * 0.6 * corpo).toBeLessThanOrEqual(fatia)
+    }
+  })
+
+  it('devolve null só quando nem o mínimo cabe — o sinal para abreviar', () => {
+    expect(corpoQueCabe(REDE, 30)).toBeNull()
+    // A mesma fatia acomoda o número menor da ficha sem precisar abreviar.
+    expect(corpoQueCabe(UNIDADE, 45)).not.toBeNull()
+  })
+
+  it('a ficha da unidade escreve o valor inteiro, como o PDF dela', () => {
+    // Medido no DOM: a figura da ficha tem 505 px para doze barras -> 42,1 px de fatia.
+    // Com folga de 4 px isso errava por 0,9 px e a MESMA série saía "R$ 405k" na tela
+    // contra "R$ 405.196" no PDF — duas versões do mesmo número, em duas superfícies.
+    const corpo = corpoQueCabe(UNIDADE, 505 / 12)
+    expect(corpo).not.toBeNull()
+    expect(UNIDADE * 0.6 * corpo!).toBeLessThanOrEqual(505 / 12)
+  })
+
+  it('sem medição ainda, assume o corpo cheio em vez de piscar encolhido', () => {
+    expect(corpoQueCabe(REDE, 0)).toBe(CORPO_ROTULO_MAX)
+    expect(corpoQueCabe(REDE, Number.NaN)).toBe(CORPO_ROTULO_MAX)
+    expect(corpoQueCabe(REDE, -10)).toBe(CORPO_ROTULO_MAX)
+  })
+
+  it('série vazia não vira divisão por zero', () => {
+    expect(corpoQueCabe(0, 80)).toBe(CORPO_ROTULO_MAX)
   })
 })

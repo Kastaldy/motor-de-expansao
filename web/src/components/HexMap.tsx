@@ -96,9 +96,10 @@ const PASSO_POR_FAIXA_M1 = 5
  *  bordas azuis). Sem isso, as 10 aberturas do passo 5 sumiriam no meio do mapa. */
 const DIM_FORA_DO_PASSO = 0.5
 
-/* O raio so' faz sentido nos passos que falam de oferta e disputa: 2 (Demanda nao
-   atendida) e 3 (Pressao concorrencial). Nos demais a leitura e' outra e a cobertura
-   so' atrapalharia. */
+/* Onde a REGUA DO RESIDUAL vale: 2 (Demanda nao atendida) e 3 (Pressao concorrencial).
+   So' nestes passos o recorte livre/coberto pode ser pintado pelo score do modelo de 1 km
+   — nos demais o mapa mede outra coisa (1 = censo, 4 = crescimento, 5 = faixa do M1) e
+   duas reguas lado a lado dariam cores incongruentes, medindo grandezas diferentes. */
 const PASSOS_DA_PRESSAO = new Set([2, 3])
 
 /** Alpha das pecas de cobertura = o MESMO do hexagono normal (`HEX_FILL_ALPHA`).
@@ -499,8 +500,13 @@ export default function HexMap({
          peca unica (uniao) apaga por construcao.
          Sem contorno de proposito: a poluicao anterior vinha das BORDAS se cruzando, nao
          do empilhamento. Vem DEPOIS das pecas coloridas (escurece a cor da faixa) e ANTES
-         do contorno do alcance. */
-      ...(raio1km && PASSOS_DA_PRESSAO.has(passo.n) && cobertura1k?.sombras?.length
+         do contorno do alcance.
+
+         Desenha em TODOS os passos, e nao so' nos da regua do residual: a densidade de
+         concorrentes nao pertence a regua nenhuma — ela responde "quantas me alcancam
+         aqui?", que e' verdade em qualquer camada do funil. Quem depende da regua e' o
+         recorte COLORIDO acima, nao esta tinta escura (pedido do Felipe, 2026-08-12). */
+      ...(raio1km && cobertura1k?.sombras?.length
         ? [
             new PolygonLayer<number[][][]>({
               id: 'cobertura-sombra-1km',
@@ -520,8 +526,12 @@ export default function HexMap({
          Antes era um ScatterplotLayer com um circulo POR concorrente — num aglomerado as
          bordas se cruzavam umas sobre as outras e o mapa virava um emaranhado de arcos.
          A uniao nao tem linha interna: mostra ate onde a concorrencia alcanca, e nada
-         mais. Sem preenchimento: quem pinta a area sao as pecas livre/coberto. */
-      ...(raio1km && PASSOS_DA_PRESSAO.has(passo.n) && cobertura1k?.contorno?.length
+         mais. Sem preenchimento: quem pinta a area sao as pecas livre/coberto.
+
+         Tambem em TODOS os passos: "ate onde a concorrencia chega" e' um fato geografico,
+         nao uma leitura de regua. Enquanto estava preso aos passos 2 e 3, ligar a chave em
+         qualquer outra camada nao desenhava nada e parecia defeito. */
+      ...(raio1km && cobertura1k?.contorno?.length
         ? [
             new PolygonLayer<number[][][]>({
               id: 'conc-alcance-1km',

@@ -47,7 +47,12 @@ const METRICAS_FICHA: { chave: string; rotulo: string; formato: 'brl' | 'int' | 
   { chave: 'conversao_pct', rotulo: 'Conversão de visitas', formato: 'pct', bomSubindo: true },
   { chave: 'nps', rotulo: 'NPS', formato: 'nota', bomSubindo: true },
   { chave: 'em_cobranca_pct', rotulo: 'Em cobrança', formato: 'pct', bomSubindo: false },
-  { chave: 'pct_agregador_alunos', rotulo: 'Dependência de agregador', formato: 'pct', bomSubindo: false },
+  // As duas dependências, e o rótulo diz qual é qual. Elas discordam muito: medido em
+  // 2026-07, a rede tem 37,1% dos ALUNOS vindos de agregador e só 22,9% da RECEITA —
+  // mediana de 14,8 p.p. por unidade, até 33,3 p.p. no pior caso. Ler só a de alunos faz a
+  // unidade parecer mais dependente do que o caixa dela mostra.
+  { chave: 'pct_agregador_alunos', rotulo: 'Dependência de agregador (alunos)', formato: 'pct', bomSubindo: false },
+  { chave: 'pct_agregador_receita', rotulo: 'Dependência de agregador (receita)', formato: 'pct', bomSubindo: false },
 ]
 
 /** Exibidas com aviso e SEM régua: o denominador ainda não foi confirmado com a Growth. */

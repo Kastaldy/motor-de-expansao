@@ -996,3 +996,105 @@ def test_panorama_e_json_safe(rede_anual: Path) -> None:
     texto = json.dumps(payload, allow_nan=False)
     assert "NaN" not in texto
     assert "Infinity" not in texto
+
+
+def test_notas_cabem_no_pdf(rede_anual: Path) -> None:
+    """Nota com tipografia fora de latin-1 chega ao franqueado como "?".
+
+    O core font do fpdf2 e' latin-1 e `pdf_base.ascii_seguro` troca o que nao couber por
+    "?" DE PROPOSITO, para o autor consertar o texto-fonte. So' que isso nao falha em lugar
+    nenhum: o PDF sai valido, com um "?" no meio da frase, e so' quem OLHA o arquivo
+    percebe. Aconteceu com um travessao numa nota de fonte do faturamento, e a suite
+    inteira passou verde. Este teste fecha o buraco.
+    """
+    fora_de_latin1: list[tuple[str, str]] = []
+    for janela in ({"mes": "2026-07"}, {"inicio": "2026-07-01", "fim": "2026-07-10"}):
+        payload = pilot._rede_carteira_payload(**janela)
+        for nota in payload["notas"]:
+            ruins = sorted({c for c in nota if c.encode("latin-1", "replace") == b"?" and c != "?"})
+            if ruins:
+                fora_de_latin1.append((str(ruins), nota))
+    assert not fora_de_latin1, f"tipografia que vira '?' no PDF: {fora_de_latin1}"
+
+
+def test_todas_as_frases_de_fonte_cabem_no_pdf() -> None:
+    """Mesma trava, direto no catalogo: as tres frases de origem do faturamento."""
+    for frase in pilot._NOTA_DO_PERIODO.values():
+        assert frase.encode("latin-1", "replace").decode("latin-1") == frase, frase
+
+
+# ---------------------------------------------------------------------------
+# Procedencia do faturamento: o que a tela e o PDF DIZEM sobre a fonte
+# ---------------------------------------------------------------------------
+
+
+def _com_financeiro(mp: pytest.MonkeyPatch, competencias: tuple[str, ...]) -> None:
+    """Planilha do Financeiro sintetica, cobrindo so' as competencias pedidas.
+
+    E' o que permite exercitar `financeiro`/`ux`/`misto` sem parquet real: a fixture da
+    rede nao tem planilha, entao sem isto todo teste veria so' o caminho `ux`.
+    """
+    linhas = [
+        {
+            "cod_unidade": "01", "unidade_planilha": nome, "unidade_ux": nome,
+            "tem_depara": True, "competencia": mes, "faturamento": 999_000.0,
+            "vendas_ux": 800_000.0, "gympass": 199_000.0, "totalpass": 0.0, "tem_saude": 0.0,
+        }
+        for nome in ("ANTIGA A", "ANTIGA B", "NOVA C")
+        for mes in competencias
+    ]
+    mp.setattr(pilot, "_rede_faturamento_financeiro", lambda: pd.DataFrame(linhas))
+    _limpar_caches()
+
+
+def test_fonte_do_faturamento_sem_planilha_e_toda_ux(rede_anual: Path) -> None:
+    """Sem planilha, a aba segue inteira na Growth — e o payload diz isso."""
+    payload = pilot._rede_carteira_payload(mes="2026-07")
+    fonte = payload["fonte_faturamento"]
+    assert fonte["periodo"] == "ux"
+    assert set(fonte["por_mes"].values()) == {"ux"}
+    assert fonte["unidades_sem_par"] == []
+    assert any("TEM SAÚDE é deduzido" in n for n in payload["notas"])
+
+
+def test_fonte_do_faturamento_com_planilha_no_mes_fechado(
+    rede_anual: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mes fechado coberto: periodo E serie saem `financeiro`, e a nota muda junto."""
+    COBERTOS = ("2026-06", "2026-07")
+    _com_financeiro(monkeypatch, COBERTOS)
+
+    payload = pilot._rede_carteira_payload(mes="2026-07")
+    fonte = payload["fonte_faturamento"]
+
+    assert fonte["periodo"] == "financeiro"
+    # Mes que a planilha NAO cobre continua na Growth, e o payload nao mente sobre isso.
+    fora = {m for m in fonte["por_mes"] if m not in COBERTOS}
+    assert fora, "a serie tem de ter mes fora da cobertura, senao o teste nao prova nada"
+    assert {fonte["por_mes"][m] for m in COBERTOS} == {"financeiro"}
+    assert {fonte["por_mes"][m] for m in fora} == {"ux"}
+    assert any("planilha do Financeiro" in n for n in payload["notas"])
+    assert any("mês(es) da série ainda sem cobertura" in n for n in payload["notas"])
+    assert not any("TEM SAÚDE é deduzido" in n for n in payload["notas"])
+
+
+def test_periodo_parcial_avisa_que_o_topo_e_da_growth(
+    rede_anual: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A planilha e' MENSAL: numa janela parcial o quarteto do topo nao pode se dizer dela."""
+    _com_financeiro(monkeypatch, ("2026-06", "2026-07"))
+
+    payload = pilot._rede_carteira_payload(inicio="2026-07-01", fim="2026-07-10")
+
+    assert payload["fonte_faturamento"]["periodo"] == "ux"
+    assert pilot._NOTA_DO_PERIODO["ux"] in payload["notas"]
+
+
+def test_origem_dominante_denuncia_recorte_misturado() -> None:
+    """Recorte em que as unidades discordam sai `misto`, nunca uma das duas pontas."""
+    assert pilot._origem_dominante(pd.DataFrame()) == "ux"
+    so_uma = pd.DataFrame({"origem_faturamento": ["financeiro", "financeiro"]})
+    assert pilot._origem_dominante(so_uma) == "financeiro"
+    discordam = pd.DataFrame({"origem_faturamento": ["financeiro", "ux"]})
+    assert pilot._origem_dominante(discordam) == "misto"
+

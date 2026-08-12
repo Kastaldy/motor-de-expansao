@@ -80,12 +80,34 @@ def faixa_de_titulo(
         pdf.cell(324, 14, ascii_seguro(subtitulo), align="R")
 
 
+#: Corpos tentados no rodape, do preferido ao minimo legivel.
+_CORPOS_RODAPE: tuple[float, ...] = (8.0, 7.5, 7.0, 6.5, 6.0)
+
+
 def rodape(pdf: UltraPDF, texto: str) -> None:
-    """Rodape discreto com fonte e metodo -- e' onde a regua vigente e' impressa."""
+    """Rodape discreto com fonte e metodo -- e' onde a regua vigente e' impressa.
+
+    Encolhe ate caber e, no limite, quebra em duas linhas. `cell` do fpdf2 NAO quebra nem
+    avisa: o texto simplesmente sai pela margem direita e some. Aconteceu de verdade quando
+    o rodape passou a nomear a fonte do faturamento -- a ultima regua virou "Saldo
+    operacional negati" e o resto se perdeu, sem nenhum erro. A suite nao ve isso.
+    """
+    largura = PAGINA_LARGURA - 72
+    limpo = ascii_seguro(texto)
     pdf.set_text_color(140, 140, 140)
-    pdf.set_font("Helvetica", "", 8)
-    pdf.set_xy(36, PAGINA_ALTURA - 26)
-    pdf.cell(PAGINA_LARGURA - 72, 10, ascii_seguro(texto))
+
+    for corpo in _CORPOS_RODAPE:
+        pdf.set_font("Helvetica", "", corpo)
+        if pdf.get_string_width(limpo) <= largura:
+            pdf.set_xy(36, PAGINA_ALTURA - 26)
+            pdf.cell(largura, 10, limpo)
+            return
+
+    # Nem no menor corpo coube numa linha: duas linhas, subindo o bloco para nao invadir a
+    # borda inferior da pagina.
+    pdf.set_font("Helvetica", "", _CORPOS_RODAPE[-1])
+    pdf.set_xy(36, PAGINA_ALTURA - 34)
+    pdf.multi_cell(largura, 9, limpo, max_line_height=9)
 
 
 def cartao(
@@ -185,6 +207,32 @@ def titulo_de_grafico(
         pdf.multi_cell(largura, 9, ascii_seguro(apoio), align="L")
 
 
+#: Corpo do valor sobre a barra: preferido e minimo ainda legivel na impressao.
+CORPO_VALOR_BARRA = 6.2
+CORPO_VALOR_BARRA_MIN = 4.8
+
+
+def _corpo_que_cabe(pdf: UltraPDF, textos: Sequence[str], passo: float) -> float:
+    """Maior corpo em que o rotulo MAIS LARGO ainda cabe na fatia da barra.
+
+    Existe porque o faturamento passou a ser escrito por INTEIRO ("R$ 21.982.435") em vez de
+    abreviado ("R$ 22,0M"): a abreviacao existia para caber, e passava a impressao de numero
+    arredondado pelo sistema -- o oposto do que o painel promete agora que o faturamento vem
+    da planilha dos royalties. Quem cede e' o CORPO, que ninguem confunde com o valor.
+
+    Mede com `get_string_width` em vez de estimar por contagem de caracteres: Helvetica e'
+    proporcional, e "R$ 111.111" e' bem mais estreita que "R$ 888.888".
+    """
+    if not textos or passo <= 0:
+        return CORPO_VALOR_BARRA
+    pdf.set_font("Helvetica", "B", CORPO_VALOR_BARRA)
+    mais_largo = max(pdf.get_string_width(ascii_seguro(t)) for t in textos)
+    disponivel = passo - 2.0
+    if mais_largo <= disponivel or mais_largo <= 0:
+        return CORPO_VALOR_BARRA
+    return max(CORPO_VALOR_BARRA_MIN, CORPO_VALOR_BARRA * disponivel / mais_largo)
+
+
 def barras(
     pdf: UltraPDF,
     x: float,
@@ -204,6 +252,11 @@ def barras(
     maximo = max(finitos) if finitos else 0.0
     passo = largura / max(len(rotulos), 1)
     largura_barra = min(passo * 0.66, 24.0)
+    corpo_valor = _corpo_que_cabe(
+        pdf,
+        [formatar(float(v)) for v in valores if v is not None],
+        passo,
+    )
 
     pdf.set_draw_color(*CINZA_LINHA)
     pdf.set_line_width(0.5)
@@ -221,7 +274,7 @@ def barras(
             # numero responde "quanto" -- e e' o numero que vai para a conversa com o
             # franqueado, que le o PDF sem a tela ao lado.
             pdf.set_text_color(*CINZA_TEXTO)
-            pdf.set_font("Helvetica", "B", 6.2)
+            pdf.set_font("Helvetica", "B", corpo_valor)
             pdf.set_xy(centro - passo / 2, y + altura - alto - 9)
             pdf.cell(passo, 8, ascii_seguro(formatar(float(valor))), align="C")
         pdf.set_text_color(150, 150, 150)

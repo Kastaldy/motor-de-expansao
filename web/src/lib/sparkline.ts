@@ -260,3 +260,53 @@ export function ancoraDoRotulo(
       return { x: grampo(x, meiaCaixa, largura - meiaCaixa), y: acima, textAnchor: 'middle' }
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Rótulo de valor sobre a barra
+   --------------------------------------------------------------------------- */
+
+/**
+ * Avanço de um caractere do IBM Plex Mono, em fração do corpo.
+ *
+ * Mono quer dizer avanço FIXO: 0,6 em. É o que permite estimar a caixa do texto pelo
+ * comprimento da string, sem medir no DOM — que aqui é o ponto, porque medir exigiria
+ * renderizar primeiro e reposicionar depois.
+ */
+export const AVANCO_MONO = 0.6
+
+/** Corpo preferido do rótulo de valor, em px. */
+export const CORPO_ROTULO_MAX = 9
+/** Abaixo disto o número deixa de ser legível na tela, e encolher mais não ajuda ninguém. */
+export const CORPO_ROTULO_MIN = 6
+/**
+ * Respiro entre um rótulo e o do vizinho, em px.
+ *
+ * Três, e não quatro, por medição: no painel de evolução (936 px, doze barras) os rótulos
+ * ficam com exatamente 3 px de folga no corpo cheio e o gráfico lê bem. Com quatro, a
+ * ficha da unidade — 505 px, fatia de 42,1 px — errava por 0,9 px e caía na forma
+ * abreviada, deixando a MESMA série com "R$ 405k" na tela e "R$ 405.196" no PDF.
+ */
+export const FOLGA_ENTRE_ROTULOS = 3
+
+/**
+ * Maior corpo que faz o rótulo caber na fatia — ou `null` quando nem o mínimo cabe.
+ *
+ * Existe porque o faturamento da rede passou a ser escrito por INTEIRO ("R$ 21.982.435",
+ * 13 caracteres) em vez de abreviado ("R$ 22,0M", 8). A abreviação existia justamente para
+ * caber, e o Felipe a lia como número ajustado — o oposto do que a aba promete, agora que
+ * o faturamento vem da planilha do Financeiro. Então o número fica inteiro e é o CORPO que
+ * cede, que é a variável que ninguém confunde com o valor.
+ *
+ * `null` é o sinal de que a fatia é estreita demais para o número inteiro em qualquer
+ * corpo legível; aí quem chama decide (a barra cai para a forma curta).
+ */
+export function corpoQueCabe(caracteres: number, larguraDaFatia: number): number | null {
+  if (caracteres <= 0) return CORPO_ROTULO_MAX
+  // Sem medição ainda: assume o corpo cheio em vez de encolher à toa e piscar no primeiro
+  // frame — a medida imediata de `useLargura` chega no mesmo commit.
+  if (!(larguraDaFatia > 0)) return CORPO_ROTULO_MAX
+  const disponivel = larguraDaFatia - FOLGA_ENTRE_ROTULOS
+  const ideal = disponivel / (caracteres * AVANCO_MONO)
+  if (ideal < CORPO_ROTULO_MIN) return null
+  return Math.min(CORPO_ROTULO_MAX, ideal)
+}
