@@ -282,8 +282,15 @@ CONTRATO_COLUNAS_PRESENCA_AGREGADOR: dict[str, str] = {
     "hex_id_res7": "string",                          # a chave (anti-PII, DEC-012) e o join
     "fontes_presentes_no_hex": "string",              # subconjunto de FONTES_AGREGADORES, `,`
     "n_agregadores_no_hex": "int64",                  # {1, 2} — nunca 0 (ver docstring do módulo)
-    "n_academias_independentes_totalpass": "int64",   # chaves distintas de TP no hex
-    "n_academias_independentes_wellhub": "int64",     # chaves distintas de WH no hex
+    # COLUNAS 4/5 — leia-as como TETO, nunca como número exato `[ressalva BLK-MA-03-FU1]`: elas
+    # contam CHAVES distintas, e a chave muda quando `chave_origem` é rebaixado de `slug` para
+    # `hash_estavel`, então a MESMA academia observada nos dois regimes sai como 2 (medido em
+    # 2026-08-12). Não é caso raro: em `derivar_chave` o rebaixamento POR LINHA (slug ausente ou
+    # duplicado no snapshot) é SEMPRE ativo e depende só da qualidade do feed.
+    # `n_agregadores_no_hex` — e portanto o `v1` — NÃO é afetado. Quem exibir estas duas como
+    # "densidade do alvo" deve cruzar com `flag_troca_chave_na_serie` do churn.
+    "n_academias_independentes_totalpass": "int64",   # chaves distintas de TP no hex (TETO)
+    "n_academias_independentes_wellhub": "int64",     # chaves distintas de WH no hex (TETO)
     "semana_ultima_observacao_totalpass": "string",   # relógio do PIPELINE (nulo sse contagem 0)
     "semana_ultima_observacao_wellhub": "string",     # idem, WellHub
     "snapshot_date_ultimo_totalpass": "string",       # relógio do COLETOR (nulo sse contagem 0)
@@ -600,6 +607,12 @@ def renormalizar_pesos(disponiveis: Sequence[str]) -> dict[str, float]:
     como `0` (zero é uma afirmação de solidez; ausência é ausência). Itera `SINAIS_ORDEM` para o
     dicionário sair determinístico, e duplicatas na entrada colapsam. Sinal fora de
     `SINAIS_ORDEM` levanta `ValueError`.
+
+    **Esta primitiva NÃO conhece `SINAIS_INATIVOS`** e aceita `"s2"` de bom grado, porque ele está
+    em `SINAIS_ORDEM` `[registro BLK-MA-04-FU1]`. Não é defeito: a função é sobre PESOS, e quem
+    decide disponibilidade é `_disponibilidade_efetiva` em `score.py`, que força `s2` a `False`
+    enquanto ele estiver naquela tupla. Registrado aqui para quem for reativar o sinal 2 não
+    procurar o gate no lugar errado.
     """
     pedidos = {str(s) for s in disponiveis}
     desconhecidos = sorted(pedidos - set(SINAIS_ORDEM))

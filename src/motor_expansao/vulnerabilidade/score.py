@@ -1,6 +1,11 @@
 """BLK-MA-04: score de vulnerabilidade (D4) — composição ponderada de S1/S3/S4.
 
-Módulo **PURO e sem I/O**: recebe (ou deriva, por conveniência) os dois insumos já entregues —
+Módulo **PURO QUANDO OS FRAMES SÃO INJETADOS** — e essa ressalva não é preciosismo `[precisão
+BLK-MA-04-FU1]`: pelo modo de conveniência `base_dir=` ele lê disco **transitivamente**, delegando
+aos dois extratores, que chamam `ler_snapshots`. O que vale em QUALQUER modo é a metade forte: o
+módulo **nunca ESCREVE** (travado por `test_modulo_nao_escreve_em_disco`) e nada aqui depende do
+universo do lote (travado por `test_v4_nao_depende_do_universo`). Recebe (ou deriva, por
+conveniência) os dois insumos já entregues —
 `presenca_agregador_v1` (sinal 1, hex-level, BLK-MA-03) e `churn_staleness_v2` (sinais 3 e 4, por
 academia, BLK-MA-02) — e devolve o contrato de coluna `score_vulnerabilidade_v2` (22 colunas), com
 `score_vulnerabilidade ∈ [0,100]`, os componentes `vi` para auditoria e as flags de qualidade do

@@ -165,7 +165,7 @@ def dirs_com_ruido(tmp_path: Path) -> tuple[Path, Path, Path]:
 
 
 # --------------------------------------------------------------------------- #
-# CA-1 — isolamento de imports (AST) sobre os 4 modulos do pacote
+# CA-1 — isolamento de imports (AST) sobre os 5 módulos do pacote + o próprio pacote
 # --------------------------------------------------------------------------- #
 def test_isolamento_imports() -> None:
     """Pacote DISJUNTO: nenhum import pode casar M1/dashboard/api/censo/config raiz.
