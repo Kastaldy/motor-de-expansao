@@ -1,4 +1,6 @@
-import { LINHAS, reguaDeConcorrentes, semDistancia } from '../lib/concorrentes'
+import type { ReactNode } from 'react'
+
+import { reguaDeConcorrentes, semDistancia } from '../lib/concorrentes'
 import { alunos, num } from '../lib/format'
 import {
   SCORE_MAX,
@@ -18,6 +20,45 @@ import type { PontoDistribuicao } from '../lib/types'
  * ninguém aprovou viraria recomendação de abertura.
  */
 
+/**
+ * Título das leituras visuais. Mesmo peso do título de um bloco de KPI — a peça visual
+ * não é um adorno abaixo dos números, é o conteúdo principal do bloco.
+ */
+function Titulo({ children }: { children: ReactNode }) {
+  return (
+    <span style={{ font: '600 12.5px/1.2 var(--f-ui)', color: 'var(--tx-strong)' }}>{children}</span>
+  )
+}
+
+/**
+ * Número de APOIO: rótulo e valor na mesma linha, tipo pequeno.
+ *
+ * Substitui o card de KPI onde há gráfico. A hierarquia estava invertida (pedido do Juan,
+ * 2026-08-12): o número em 24px dominava o bloco e a barra virava rodapé, quando é a
+ * barra que responde "isso é muito?". O número continua inteiro e auditável — só deixa
+ * de ser a manchete.
+ */
+export function NumeroApoio({ rotulo, valor }: { rotulo: string; valor: string }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6, minWidth: 0 }}>
+      <span style={{ font: '400 10.5px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>{rotulo}</span>
+      <span
+        className="num"
+        style={{ font: '600 12px/1.3 var(--f-num)', color: 'var(--tx-strong)', whiteSpace: 'nowrap' }}
+      >
+        {valor}
+      </span>
+    </span>
+  )
+}
+
+/** Fila de números de apoio, quebrando em telas estreitas. */
+export function FilaApoio({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px' }}>{children}</div>
+  )
+}
+
 /** Medidor 0-100 para os scores do produto. Some quando não há score. */
 export function MedidorScore({
   rotulo,
@@ -31,23 +72,24 @@ export function MedidorScore({
   const fr = fracaoDoScore(valor)
   if (fr == null) return null
   return (
-    <div style={{ display: 'grid', gap: 6 }}>
+    <div style={{ display: 'grid', gap: 7 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-        <span style={{ font: '500 11px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>{rotulo}</span>
-        <span className="num" style={{ font: '700 15px/1 var(--f-num)', color: 'var(--tx-max)' }}>
+        <Titulo>{rotulo}</Titulo>
+        <span className="num" style={{ font: '700 20px/1 var(--f-num)', color: 'var(--tx-max)' }}>
           {num(valor, 1)}
-          <span style={{ font: '400 10px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
+          <span style={{ font: '400 11px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
             {' '}
             / {SCORE_MAX}
           </span>
         </span>
       </div>
-      <div style={{ height: 7, borderRadius: 4, background: 'var(--surf-pending)', overflow: 'hidden' }}>
+      {/* Barra ALTA: é a peça que se lê primeiro no bloco, não um fio abaixo do número. */}
+      <div style={{ height: 12, borderRadius: 6, background: 'var(--surf-pending)', overflow: 'hidden' }}>
         <div
           style={{
             width: `${Math.round(fr * 100)}%`,
             height: '100%',
-            borderRadius: 4,
+            borderRadius: 6,
             /* Cor ÚNICA em toda a escala. Um gradiente de vermelho a verde afirmaria que
                40 é ruim e 80 é bom — corte que o produto não publica para estes scores. */
             background: 'var(--ac)',
@@ -76,8 +118,15 @@ export function BarraMercado({
   if (!c) return null
   const pct = Math.round(c.fracaoDisponivel * 100)
   return (
-    <div style={{ display: 'grid', gap: 7 }}>
-      <div style={{ display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden', background: 'var(--surf-pending)' }}>
+    <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
+        <Titulo>Do mercado potencial, quanto sobra</Titulo>
+        <span className="num" style={{ font: '700 20px/1 var(--f-num)', color: 'var(--tx-max)' }}>
+          {pct}
+          <span style={{ font: '400 11px/1 var(--f-num)', color: 'var(--tx-sub)' }}>%</span>
+        </span>
+      </div>
+      <div style={{ display: 'flex', height: 16, borderRadius: 8, overflow: 'hidden', background: 'var(--surf-pending)' }}>
         <div
           title={`Já atendido: ${alunos(c.atendido)}`}
           style={{ width: `${100 - pct}%`, background: 'var(--tx-rank)' }}
@@ -89,7 +138,7 @@ export function BarraMercado({
       </div>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
         <Legenda cor="var(--tx-rank)" rotulo="Já atendido" valor={alunos(c.atendido)} />
-        <Legenda cor="var(--ac)" rotulo="Sobra" valor={`${alunos(c.disponivel)} · ${pct}%`} forte />
+        <Legenda cor="var(--ac)" rotulo="Sobra" valor={alunos(c.disponivel)} forte />
       </div>
     </div>
   )
@@ -144,75 +193,109 @@ export function ReguaConcorrentes({
   const ocultos = semDistancia(lista)
   if (pontos.length === 0 && ocultos === 0) return null
 
-  const alturaLinha = 15
   return (
-    <div style={{ display: 'grid', gap: 7, marginTop: 12 }}>
-      <span style={{ font: '500 11px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>
-        Onde eles estão, do imóvel até a borda do raio
-      </span>
+    <div style={{ display: 'grid', gap: 9 }}>
+      <Titulo>Onde eles estão, do imóvel até a borda do raio</Titulo>
 
       {pontos.length > 0 && (
-        <div style={{ position: 'relative', paddingTop: 4, paddingBottom: LINHAS * alturaLinha }}>
-          {/* O eixo. O imóvel é o zero — a ponta esquerda, marcada. */}
-          <div style={{ position: 'relative', height: 2, background: 'var(--line-mid)', borderRadius: 1 }}>
-            <span
-              aria-hidden
+        <div style={{ display: 'grid', gap: 7 }}>
+          {/* UMA LINHA POR CONCORRENTE. O nome tem coluna própria à esquerda e a distância
+              à direita — texto nunca disputa espaço com texto, que era o defeito do eixo
+              único com rótulos empilhados. */}
+          {pontos.map((p, i) => (
+            <div
+              key={`${p.rede}-${i}`}
               style={{
-                position: 'absolute',
-                left: 0,
-                top: -4,
-                width: 10,
-                height: 10,
-                borderRadius: '50%',
-                background: 'var(--tx-max)',
-                border: '2px solid var(--surf-panel)',
+                display: 'grid',
+                gridTemplateColumns: 'minmax(64px, 84px) 1fr auto',
+                alignItems: 'center',
+                gap: 10,
               }}
-            />
-            {pontos.map((p, i) => (
-              <span key={`${p.rede}-${i}`}>
+            >
+              <span
+                title={p.rede}
+                style={{
+                  font: '600 11px/1.2 var(--f-ui)',
+                  color: 'var(--tx-soft)',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {p.rede}
+              </span>
+              <span
+                aria-hidden
+                style={{ position: 'relative', height: 10, display: 'block' }}
+              >
                 <span
-                  aria-hidden
-                  title={`${p.rede} · ${num(p.dist, 2)} km`}
                   style={{
                     position: 'absolute',
-                    left: `calc(${p.fracao * 100}% - 4px)`,
-                    top: -3,
-                    width: 8,
-                    height: 8,
+                    left: 0,
+                    right: 0,
+                    top: 4,
+                    height: 2,
+                    borderRadius: 1,
+                    background: 'var(--line-soft)',
+                  }}
+                />
+                {/* O traço cheio vai do imóvel até o concorrente: o comprimento É a
+                    distância, e é ele que se lê de relance, não a posição do disco. */}
+                <span
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: 4,
+                    width: `${p.fracao * 100}%`,
+                    height: 2,
+                    borderRadius: 1,
+                    background: 'var(--ac-a30)',
+                  }}
+                />
+                <span
+                  style={{
+                    position: 'absolute',
+                    left: `calc(${p.fracao * 100}% - 5px)`,
+                    top: 0,
+                    width: 10,
+                    height: 10,
                     borderRadius: '50%',
                     background: 'var(--ac)',
                   }}
                 />
-                {/* Rótulo empilhado: vizinhos colados no eixo caem em linhas diferentes,
-                    senão os nomes viram um borrão. A linha vem de `lib/concorrentes`. */}
-                <span
-                  style={{
-                    position: 'absolute',
-                    left: `${p.fracao * 100}%`,
-                    top: 8 + p.linha * alturaLinha,
-                    transform: 'translateX(-50%)',
-                    display: 'grid',
-                    justifyItems: 'center',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  <span style={{ font: '600 9.5px/1.1 var(--f-ui)', color: 'var(--tx-soft)' }}>
-                    {p.rede}
-                  </span>
-                  <span className="num" style={{ font: '400 9px/1.1 var(--f-num)', color: 'var(--tx-off)' }}>
-                    {num(p.dist, 2)} km
-                  </span>
-                </span>
               </span>
-            ))}
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 5 }}>
-            <span className="num" style={{ font: '400 9.5px/1 var(--f-num)', color: 'var(--tx-off)' }}>
-              o imóvel
+              <span
+                className="num"
+                style={{
+                  font: '600 11.5px/1.2 var(--f-num)',
+                  color: 'var(--tx-strong)',
+                  fontVariantNumeric: 'tabular-nums',
+                }}
+              >
+                {num(p.dist, 2)} km
+              </span>
+            </div>
+          ))}
+
+          {/* A régua do eixo, uma vez só, embaixo de todas as linhas. */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(64px, 84px) 1fr auto',
+              gap: 10,
+              marginTop: 1,
+            }}
+          >
+            <span />
+            <span style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span style={{ font: '400 9.5px/1 var(--f-ui)', color: 'var(--tx-off)' }}>
+                o imóvel
+              </span>
+              <span className="num" style={{ font: '400 9.5px/1 var(--f-num)', color: 'var(--tx-off)' }}>
+                {num(raioKm * 1000)} m
+              </span>
             </span>
-            <span className="num" style={{ font: '400 9.5px/1 var(--f-num)', color: 'var(--tx-off)' }}>
-              {num(raioKm * 1000)} m
-            </span>
+            <span />
           </div>
         </div>
       )}

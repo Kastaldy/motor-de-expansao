@@ -38,24 +38,16 @@ export interface PontoRegua {
   dist: number
   /** Onde cai entre 0 e o raio, de 0 a 1. */
   fracao: number
-  /** Linha em que o rótulo é desenhado, para vizinhos não se sobreporem. */
-  linha: number
 }
 
 /**
- * Separação mínima, em fração do raio, para dois pontos caberem na MESMA linha.
+ * Ordena os concorrentes por distância.
  *
- * 0,12 = 12% do raio (120 m num raio de 1 km). Calibrado pelo rótulo, não pelo ponto: o
- * disco tem 8px, mas o nome da rede embaixo dele ocupa muito mais, e é o texto que
- * empasta primeiro.
- */
-export const SEPARACAO_MINIMA = 0.12
-
-/** Quantas linhas o empilhamento usa antes de recomeçar da primeira. */
-export const LINHAS = 3
-
-/**
- * Ordena os concorrentes por distância e distribui em linhas.
+ * SEM EMPILHAMENTO de rótulos, e isso é uma correção: a primeira versão punha todos num
+ * eixo só, com o nome centrado sob cada ponto, e vizinhos próximos grudavam o texto —
+ * ilegível justamente no caso que mais importa, o de concorrentes concentrados (relato do
+ * Juan, 2026-08-12). Escapar disso por regra de separação é administrar a colisão; uma
+ * LINHA POR CONCORRENTE a torna impossível. A ordem daqui é a ordem das linhas.
  *
  * FORA quem não tem distância: um concorrente sem `dist_km` não pode ser posicionado, e
  * plantá-lo no zero o poria colado no imóvel — a leitura mais alarmante possível, tirada
@@ -80,15 +72,7 @@ export function reguaDeConcorrentes(
     }))
     .sort((a, b) => a.fracao - b.fracao)
 
-  const saida: PontoRegua[] = []
-  for (const p of ordenados) {
-    // Compara com o ANTERIOR, não com o último da mesma linha: o que empasta é o vizinho
-    // imediato no eixo, e é dele que este precisa se afastar.
-    const anterior = saida[saida.length - 1]
-    const colado = anterior != null && p.fracao - anterior.fracao < SEPARACAO_MINIMA
-    saida.push({ ...p, linha: colado ? (anterior.linha + 1) % LINHAS : 0 })
-  }
-  return saida
+  return ordenados
 }
 
 /**

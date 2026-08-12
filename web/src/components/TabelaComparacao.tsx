@@ -132,11 +132,13 @@ function Linha({
         { v: a, ganha: ganhaA, fr: fracaoA },
         { v: b, ganha: ganhaB, fr: fracaoB },
       ].map(({ v, ganha, fr }, i) => (
-        <span key={i} style={{ display: 'grid', gap: 3, justifyItems: 'end', minWidth: 72 }}>
+        <span key={i} style={{ display: 'grid', gap: 4, justifyItems: 'end', minWidth: 72 }}>
           <span
             className="num"
             style={{
-              font: `${ganha ? 700 : 500} 11.5px/1.4 var(--f-num)`,
+              /* Menor que a barra em peso visual: aqui também o desenho é que responde
+                 "qual é maior", e o número fica como evidência auditável. */
+              font: `${ganha ? 700 : 500} 11px/1.3 var(--f-num)`,
               color: cor(ganha),
               textAlign: 'right',
               fontVariantNumeric: 'tabular-nums',
@@ -153,8 +155,8 @@ function Linha({
               style={{
                 display: 'block',
                 width: '100%',
-                height: 4,
-                borderRadius: 2,
+                height: 8,
+                borderRadius: 4,
                 background: 'var(--line-soft)',
                 overflow: 'hidden',
               }}
@@ -164,7 +166,7 @@ function Linha({
                   display: 'block',
                   width: `${Math.round(fr * 100)}%`,
                   height: '100%',
-                  borderRadius: 2,
+                  borderRadius: 4,
                   background: ganha
                     ? 'var(--ac)'
                     : apagada

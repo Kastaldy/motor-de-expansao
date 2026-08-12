@@ -9,13 +9,15 @@ import type { SearchPin } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
 import {
   BarraMercado,
+  FilaApoio,
   MedidorScore,
+  NumeroApoio,
   ReguaConcorrentes,
   ReguaDispersao,
 } from '../components/LeiturasVisuais'
 import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
-import { Aviso, Botao, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
+import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
 import { api, ApiError } from '../lib/api'
 import { MAX_PONTOS, indiceDoMesmoPonto, rotulosDosPontos } from '../lib/comparacao-pontos'
 import { linkGoogleMaps, type EntradaClassificada } from '../lib/entrada-ponto'
@@ -511,20 +513,12 @@ function Ficha({
 
       {/* ---------------- Socioeconomia (sempre disponível) ---------------- */}
       <Secao titulo="Quem mora em volta" nota={`Censo 2022 (IBGE) · raio de ${num(ficha.raio_km * 1000)} m`}>
-        <GradeKpi>
-          <Kpi label="População" valor={num(censo.populacao)} />
-          <Kpi label="Domicílios" valor={num(censo.domicilios)} />
-          <Kpi label="Renda per capita" valor={comPrefixo('R$ ', censo.renda_per_capita)} />
-          <Kpi label="Renda domiciliar" valor={comPrefixo('R$ ', censo.renda_media_domiciliar)} />
-          <Kpi label="Densidade" valor={comSufixo(censo.densidade_hab_km2, ' hab/km²')} />
-        </GradeKpi>
-
-        {/* ---- Leitura visual ----
-            O score sai da grade de KPIs e vira MEDIDOR: 78 num card não diz se é muito,
-            e a escala dele é conhecida (0-100). As réguas ao lado mostram a dispersão
-            setor a setor — a média do raio esconde território dividido, e dois pontos com
-            a mesma média podem ser lugares completamente diferentes. */}
-        <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+        {/* ---- O VISUAL VEM PRIMEIRO ----
+            A hierarquia estava invertida: cinco cards de 24px dominavam o bloco e a barra
+            aparecia como rodapé. Quem escolhe imóvel pergunta "isso é muito?", e essa
+            resposta é a do desenho. Os números continuam inteiros e auditáveis, logo
+            abaixo, em tipo de apoio. */}
+        <div style={{ display: 'grid', gap: 14 }}>
           <MedidorScore
             rotulo="Score socioeconômico"
             valor={censo.score_socioeconomico}
@@ -550,6 +544,14 @@ function Ficha({
               />
             </div>
           )}
+
+          <FilaApoio>
+            <NumeroApoio rotulo="População" valor={num(censo.populacao)} />
+            <NumeroApoio rotulo="Domicílios" valor={num(censo.domicilios)} />
+            <NumeroApoio rotulo="Renda per capita" valor={comPrefixo('R$ ', censo.renda_per_capita)} />
+            <NumeroApoio rotulo="Renda domiciliar" valor={comPrefixo('R$ ', censo.renda_media_domiciliar)} />
+            <NumeroApoio rotulo="Densidade" valor={comSufixo(censo.densidade_hab_km2, ' hab/km²')} />
+          </FilaApoio>
         </div>
 
         <Rodape>
@@ -563,32 +565,31 @@ function Ficha({
 
       {/* ---------------- Concorrência ---------------- */}
       <Secao titulo="Quem já disputa o aluno aqui" bloco={concorrencia}>
-        <GradeKpi>
-          <Kpi label="Concorrentes no raio" valor={num(concorrencia.n_concorrentes)} />
-          <Kpi label="Unidades Ultra no raio" valor={num(concorrencia.n_ultra)} />
-        </GradeKpi>
-        <ReguaConcorrentes lista={concorrencia.lista} raioKm={ficha.raio_km} />
+        <div style={{ display: 'grid', gap: 14 }}>
+          <ReguaConcorrentes lista={concorrencia.lista} raioKm={ficha.raio_km} />
+          <FilaApoio>
+            <NumeroApoio rotulo="Concorrentes no raio" valor={num(concorrencia.n_concorrentes)} />
+            <NumeroApoio rotulo="Unidades Ultra no raio" valor={num(concorrencia.n_ultra)} />
+          </FilaApoio>
+        </div>
       </Secao>
 
       {/* ---------------- Mercado / residual ---------------- */}
       <Secao titulo="Quanto de mercado sobra" bloco={mercado}>
-        <GradeKpi>
-          <Kpi label="Mercado potencial (SAM)" valor={comSufixo(mercado.sam, ' alunos')} />
-          <Kpi label="Residual disponível" valor={comSufixo(mercado.residual, ' alunos')} />
-        </GradeKpi>
-
-        {/* ---- Leitura visual ----
-            "SAM 12.000" e "residual 4.000" lado a lado exigem conta de cabeça para
-            responder o que interessa: a sobra é a maior parte do mercado ou uma margem?
-            A barra responde de relance. É subtração entre dois números já publicados,
-            não um indicador novo. */}
-        <div style={{ display: 'grid', gap: 12, marginTop: 12 }}>
+        {/* Barra primeiro: "SAM 12.000" e "residual 4.000" lado a lado exigem conta de
+            cabeça para responder o que interessa — a sobra é a maior parte do mercado ou
+            uma margem? Os dois números continuam abaixo, em tipo de apoio. */}
+        <div style={{ display: 'grid', gap: 14 }}>
           <BarraMercado sam={mercado.sam} residual={mercado.residual} />
           <MedidorScore
             rotulo="Score de residual"
             valor={mercado.score_residual}
             nota="satura em 100 acima de 2.500 alunos — uma unidade cheia"
           />
+          <FilaApoio>
+            <NumeroApoio rotulo="Mercado potencial (SAM)" valor={comSufixo(mercado.sam, ' alunos')} />
+            <NumeroApoio rotulo="Residual disponível" valor={comSufixo(mercado.residual, ' alunos')} />
+          </FilaApoio>
         </div>
 
         <Rodape>
@@ -679,20 +680,6 @@ function comPrefixo(prefixo: string, v: number | null): string {
 
 function comSufixo(v: number | null, sufixo: string): string {
   return v == null ? num(v) : `${num(v)}${sufixo}`
-}
-
-function GradeKpi({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-        gap: 12,
-      }}
-    >
-      {children}
-    </div>
-  )
 }
 
 function Rodape({ children }: { children: React.ReactNode }) {

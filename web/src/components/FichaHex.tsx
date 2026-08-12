@@ -3,7 +3,7 @@ import type { ReactNode } from 'react'
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
 import { alunos, brl, num, pct } from '../lib/format'
 import type { Hex } from '../lib/types'
-import { BarraMercado, MedidorScore } from './LeiturasVisuais'
+import { BarraMercado, FilaApoio, MedidorScore, NumeroApoio } from './LeiturasVisuais'
 import { Chip, Eyebrow, Kpi } from './primitives'
 
 /**
@@ -53,25 +53,28 @@ export default function FichaHex({
         </div>
       </div>
 
+      {/* MESMA HIERARQUIA da ficha do ponto: desenho primeiro, número como apoio. Duas
+          fichas que respondem à mesma pergunta não podem ler de jeitos diferentes. */}
       <Bloco titulo="Quem mora aqui" nota="Censo 2022 (IBGE), no hexágono">
-        <Kpi label="População" valor={num(hex.pop)} />
-        <Kpi label="Renda per capita" valor={hex.renda == null ? '—' : brl(hex.renda)} />
-        <Kpi label="Renda domiciliar" valor={hex.renda_dom == null ? '—' : brl(hex.renda_dom)} />
+        <MedidorScore rotulo="Score censitário" valor={hex.censo} />
+        <FilaApoio>
+          <NumeroApoio rotulo="População" valor={num(hex.pop)} />
+          <NumeroApoio rotulo="Renda per capita" valor={hex.renda == null ? '—' : brl(hex.renda)} />
+          <NumeroApoio
+            rotulo="Renda domiciliar"
+            valor={hex.renda_dom == null ? '—' : brl(hex.renda_dom)}
+          />
+        </FilaApoio>
       </Bloco>
-      <MedidorScore rotulo="Score censitário" valor={hex.censo} />
 
       <Bloco titulo="Quem já disputa o aluno" nota="unidades mapeadas dentro do hexágono">
-        <Kpi label="Concorrentes" valor={num(hex.conc)} />
-        <Kpi label="Unidades Ultra" valor={num(hex.ultra)} />
+        <FilaApoio>
+          <NumeroApoio rotulo="Concorrentes" valor={num(hex.conc)} />
+          <NumeroApoio rotulo="Unidades Ultra" valor={num(hex.ultra)} />
+        </FilaApoio>
       </Bloco>
 
       <Bloco titulo="Quanto de mercado sobra" nota="capacidade, não meta de abertura">
-        <Kpi label="Mercado potencial (SAM)" valor={hex.sam == null ? '—' : alunos(hex.sam)} />
-        <Kpi label="Residual disponível" valor={hex.oferta == null ? '—' : alunos(hex.oferta)} />
-      </Bloco>
-      {/* A mesma leitura visual da ficha do ponto: a barra responde "sobra muito?" sem
-          conta de cabeça, e os dois scores viram medidor porque a escala é conhecida. */}
-      <div style={{ display: 'grid', gap: 12 }}>
         <BarraMercado sam={hex.sam} residual={hex.oferta} />
         <MedidorScore
           rotulo="Score de residual"
@@ -79,7 +82,17 @@ export default function FichaHex({
           nota="satura em 100 acima de 2.500 alunos — uma unidade cheia"
         />
         <MedidorScore rotulo="Score híbrido" valor={hex.hib} />
-      </div>
+        <FilaApoio>
+          <NumeroApoio
+            rotulo="Mercado potencial (SAM)"
+            valor={hex.sam == null ? '—' : alunos(hex.sam)}
+          />
+          <NumeroApoio
+            rotulo="Residual disponível"
+            valor={hex.oferta == null ? '—' : alunos(hex.oferta)}
+          />
+        </FilaApoio>
+      </Bloco>
 
       {/* O crescimento tem DUAS bases e elas não se misturam: a obra nova é DESTE
           hexágono (satélite); o emprego formal é do MUNICÍPIO inteiro (CAGED). Rotular as
@@ -131,16 +144,7 @@ function Bloco({
           <span style={{ font: '400 11px/1.3 var(--f-ui)', color: 'var(--tx-sub)' }}>{nota}</span>
         )}
       </div>
-      <div
-        style={{
-          marginTop: 9,
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-          gap: 9,
-        }}
-      >
-        {children}
-      </div>
+      <div style={{ marginTop: 10, display: 'grid', gap: 12 }}>{children}</div>
     </section>
   )
 }
