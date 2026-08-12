@@ -111,7 +111,11 @@ REGUAS_VIGENTES: dict[str, dict[str, object]] = {
         "meta": META_NPS,
     },
     "agregador": {
-        "rotulo": "Dependência de agregador",
+        # O rotulo diz "(alunos)" desde que a dependencia por RECEITA passou a existir: a
+        # regua e' de cabecas, nao de dinheiro, e as duas discordam em 14,8 p.p. na mediana
+        # da rede. Sem o qualificador, o rodape do PDF anunciava "Dependencia de agregador:
+        # > 70,0" ao lado de duas linhas de dependencia com valores diferentes.
+        "rotulo": "Dependência de agregador (alunos)",
         "metrica": "pct_agregador_alunos",
         "sentido": "acima",
         "limiar": REGUA_DEPENDENCIA_AGREGADOR_PCT,

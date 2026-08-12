@@ -571,7 +571,17 @@ def _derivar_comuns(fech: pd.DataFrame) -> pd.DataFrame:
 
     f["ativos"] = f["ativos_total"]
     f["agregadores"] = f["alunos_gympass"].fillna(0) + f["alunos_totalpass"].fillna(0)
+    # A separacao entre receita de recorrente e de agregador so' e' CONHECIDA quando o
+    # faturamento veio da planilha do Financeiro. Na Growth, `faturamento` e
+    # `faturamento_sem_agregador` sao identicos em 100% das linhas desde maio/2025 -- a
+    # subtracao da zero, e zero aqui e' uma AFIRMACAO falsa ("esta unidade nao fatura com
+    # Gympass") e nao uma medida. Sem dado e' o que ela realmente e'. Sem isto, o painel de
+    # SSS anunciava "Receita de agregadores R$ 0 vs R$ 0" para uma rede que fatura R$ 5,1
+    # milhoes por mes com agregador.
     f["faturamento_agregador"] = f["faturamento"] - f["faturamento_sem_agregador"]
+    if "origem_faturamento" in f.columns:
+        do_financeiro = f["origem_faturamento"].eq(ORIGEM_FINANCEIRO)
+        f["faturamento_agregador"] = f["faturamento_agregador"].where(do_financeiro)
     f["conversao_pct"] = _divisao(100.0 * f["convertidos"], f["visitas"])
     # `SALDO_OPERACIONAL = [VENDAS_DIA] - [CANCELADOS_DIA]` (DAX oficial). NAO e'
     # `novos_alunos - cancelados`: `vendas > novos_alunos` em 78,6% das linhas e 23
@@ -651,7 +661,25 @@ def _meses_operacao(inauguracao: pd.Series, competencia: pd.Series) -> pd.Series
 # ---------------------------------------------------------------------------
 
 
-def fechamento_periodo(df: pd.DataFrame, inicio: pd.Timestamp, fim: pd.Timestamp) -> pd.DataFrame:
+def _meses_inteiros_na_janela(
+    competencias: pd.Series, inicio: pd.Timestamp, fim: pd.Timestamp
+) -> pd.Series:
+    """Quais competencias a janela cobre do dia 1 ao ultimo dia.
+
+    So' nelas a planilha do Financeiro pode entrar: ela conhece o TOTAL do mes e nada
+    abaixo disso. Numa janela de 10/06 a 05/08, junho e agosto ficam de fora e julho entra.
+    """
+    return (competencias.dt.to_timestamp(how="start") >= inicio) & (
+        competencias.dt.to_timestamp(how="end").dt.normalize() <= fim
+    )
+
+
+def fechamento_periodo(
+    df: pd.DataFrame,
+    inicio: pd.Timestamp,
+    fim: pd.Timestamp,
+    financeiro: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """Uma linha por unidade com o agregado de `[inicio, fim]` - as DUAS pontas dentro.
 
     É o `fechamento_mensal` para uma janela que o calendário não define ("de 10/06 a
@@ -677,6 +705,13 @@ def fechamento_periodo(df: pd.DataFrame, inicio: pd.Timestamp, fim: pd.Timestamp
     do churn da janela, o análogo livre do `[REC_MES_ANTERIOR]` do PowerBI. NaN quando a
     unidade não tem histórico antes do intervalo - churn sem base é desconhecido, nunca
     zero (dividir por zero pintaria de vermelho quem só é nova).
+
+    `financeiro` sobrepoe o faturamento pela planilha do Financeiro, mas SO' nas
+    competencias que a janela cobre inteiras -- e' o unico recorte para o qual a planilha,
+    que e' mensal, tem resposta. Numa competencia coberta inteira a parcela do intervalo E'
+    o total do mes (nao ha base a descontar: ou a janela comeca no dia 1, ou o mes comecou
+    na virada), entao a substituicao e' exata. `origem_faturamento` diz o que aconteceu com
+    cada unidade: `financeiro`, `ux`, ou `misto` quando a janela pega meses dos dois tipos.
 
     Devolve DataFrame vazio (mesmas colunas) para base vazia, intervalo invertido ou
     intervalo sem dado nenhum.
@@ -735,6 +770,8 @@ def fechamento_periodo(df: pd.DataFrame, inicio: pd.Timestamp, fim: pd.Timestamp
         for coluna in presentes_cum:
             fech[coluna] = fech["unidade_id"].map(parcelas[coluna])
 
+    fech = _sobrepor_periodo(fech, por_mes, financeiro, catalogo_de(df), inicio, fim)
+
     base_recorrentes = _ultimo_valor_antes(df, ["pagantes"], inicio)
     fech["pagantes_inicio"] = pd.to_numeric(
         fech["unidade_id"].map(base_recorrentes["pagantes"]), errors="coerce"
@@ -742,6 +779,73 @@ def fechamento_periodo(df: pd.DataFrame, inicio: pd.Timestamp, fim: pd.Timestamp
     fech["periodo_inicio"] = inicio
     fech["periodo_fim"] = fim
     return _derivar_periodo(fech, inicio, fim)
+
+
+ORIGEM_MISTA = "misto"
+
+
+def _sobrepor_periodo(
+    fech: pd.DataFrame,
+    por_mes: pd.DataFrame,
+    financeiro: pd.DataFrame | None,
+    catalogo: Mapping[str, Unidade],
+    inicio: pd.Timestamp,
+    fim: pd.Timestamp,
+) -> pd.DataFrame:
+    """Substitui, na janela livre, o faturamento das competencias cobertas INTEIRAS.
+
+    A parcela de um mes coberto inteiro E' o total daquele mes -- nao ha base a descontar,
+    porque ou a janela comeca no dia 1, ou o mes comecou na virada. Entao a soma do
+    intervalo pode ser recomposta como "o que a planilha diz dos meses inteiros" mais "o
+    que a Growth diz do resto", e a unidade recebe `misto` quando as duas parcelas existem.
+
+    Sem isso, escolher julho na tela mostrava o faturamento da Growth no topo e o do
+    Financeiro no grafico de 12 meses -- dois numeros para o mesmo mes, na mesma tela.
+    """
+    if financeiro is None or not len(fech):
+        return fech.assign(origem_faturamento=ORIGEM_UX)
+
+    inteiros = _meses_inteiros_na_janela(por_mes["competencia"], inicio, fim)
+    if not inteiros.any():
+        return fech.assign(origem_faturamento=ORIGEM_UX)
+
+    # `reset_index`: `aplicar_faturamento_financeiro` faz merge e devolve indice novo; sem
+    # zerar aqui, a subtracao do delta alinharia pelo indice antigo e trocaria as unidades.
+    dentro = por_mes.loc[inteiros, ["unidade_id", "competencia"]].reset_index(drop=True)
+    for coluna in _COLUNAS_DO_FINANCEIRO:
+        dentro[coluna] = (
+            pd.to_numeric(por_mes.loc[inteiros, coluna], errors="coerce").reset_index(drop=True)
+            if coluna in por_mes
+            else pd.NA
+        )
+    sobreposto = aplicar_faturamento_financeiro(dentro, financeiro, catalogo)
+    casou = sobreposto["origem_faturamento"] == ORIGEM_FINANCEIRO
+
+    fora = fech.copy()
+    for coluna in _COLUNAS_DO_FINANCEIRO:
+        if coluna not in fora.columns:
+            continue
+        # delta por unidade = (planilha - Growth) somado sobre os meses que casaram. Somar
+        # o DELTA, e nao substituir o total, preserva a parcela dos meses parciais da janela.
+        delta = (
+            (pd.to_numeric(sobreposto[coluna], errors="coerce") - pd.to_numeric(dentro[coluna], errors="coerce"))
+            .where(casou, 0.0)
+            .groupby(sobreposto["unidade_id"])
+            .sum()
+        )
+        fora[coluna] = pd.to_numeric(fora[coluna], errors="coerce") + fora["unidade_id"].map(delta).fillna(0.0)
+
+    meses_por_unidade = por_mes.groupby("unidade_id")["competencia"].nunique()
+    casados = sobreposto.loc[casou].groupby("unidade_id")["competencia"].nunique()
+    fora["origem_faturamento"] = [
+        ORIGEM_FINANCEIRO
+        if casados.get(uid, 0) and casados.get(uid, 0) == meses_por_unidade.get(uid, 0)
+        else ORIGEM_MISTA
+        if casados.get(uid, 0)
+        else ORIGEM_UX
+        for uid in fora["unidade_id"]
+    ]
+    return fora
 
 
 def _parcelas_cumulativas(
@@ -839,7 +943,7 @@ def _derivar_periodo(
 _TROCAS_PERIODO: tuple[str, ...] = ("competencia", "mes_completo", "operacao_mes_cheio")
 _EXTRAS_PERIODO: tuple[str, ...] = (
     "periodo_inicio", "periodo_fim", "periodo_completo", "operacao_periodo_cheio",
-    "pagantes_inicio",
+    "pagantes_inicio", "origem_faturamento",
 )
 
 
@@ -944,7 +1048,13 @@ METRICAS: tuple[EspecMetrica, ...] = (
     EspecMetrica("conversao_pct", "Conversao", "desc", True, "pct"),
     EspecMetrica("nps", "NPS", "desc", True, "nota"),
     EspecMetrica("em_cobranca_pct", "Em cobranca", "asc", False, "pct"),
-    EspecMetrica("pct_agregador_alunos", "Dependencia de agregador", "asc", False, "pct"),
+    # As duas dependencias de agregador convivem, e o rotulo diz QUAL porque elas discordam
+    # muito: medido em 2026-07, a rede tem 37,1% dos ALUNOS vindos de agregador e apenas
+    # 22,9% da RECEITA -- mediana de 14,8 p.p. de diferenca por unidade, e ate 33,3 p.p.
+    # (Sao Goncalo Shopping: 57,9% dos alunos, 24,5% da receita). Ate maio/2025 so' a de
+    # alunos existia de fato, porque a Growth zerava a receita de agregador.
+    EspecMetrica("pct_agregador_alunos", "Dependencia de agregador (alunos)", "asc", False, "pct"),
+    EspecMetrica("pct_agregador_receita", "Dependencia de agregador (receita)", "asc", False, "pct"),
     EspecMetrica("inadimplente", "Inadimplentes", "asc", False, "int"),
     EspecMetrica("treino_ativo", "Treino ativo", "desc", True, "int"),
 )

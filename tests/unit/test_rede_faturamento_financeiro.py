@@ -386,3 +386,107 @@ def test_base_vazia_com_planilha_nao_quebra() -> None:
     vazio = rm.fechamento_mensal(pd.DataFrame(), financeiro=_financeiro(AUGUSTA=(1.0, 1.0)))
     assert not len(vazio)
     assert "origem_faturamento" in vazio.columns
+
+
+# ---------------------------------------------------------------------------
+# Sobreposição na JANELA LIVRE — o que faz o topo da tela concordar com o gráfico
+# ---------------------------------------------------------------------------
+
+JUN, JUL = (pd.Timestamp("2026-06-01"), pd.Timestamp("2026-06-30")), (
+    pd.Timestamp("2026-07-01"),
+    pd.Timestamp("2026-07-31"),
+)
+
+
+def test_mes_fechado_pela_janela_livre_bate_com_o_fechamento_mensal() -> None:
+    """O KPI do topo e o último ponto do gráfico de 12 meses têm de ser o MESMO número.
+
+    Sem isto, escolher julho na tela mostrava R$ 18,6 mi no topo (Growth) e R$ 22,5 mi no
+    gráfico (Financeiro) — dois números para o mesmo mês, na mesma tela.
+    """
+    growth = _base_growth()
+    fin_df = _financeiro(AUGUSTA=(300_000.0, 250_000.0))
+    janela = rm.fechamento_periodo(growth, *JUL, financeiro=fin_df).set_index("unidade_cru")
+    mensal = rm.fechamento_mensal(growth, financeiro=fin_df)
+    mensal = mensal[mensal["competencia"] == "2026-07"].set_index("unidade_cru")
+    for coluna in ("faturamento", "faturamento_sem_agregador", "faturamento_agregador"):
+        assert janela.loc["AUGUSTA", coluna] == pytest.approx(mensal.loc["AUGUSTA", coluna])
+    assert janela.loc["AUGUSTA", "origem_faturamento"] == rm.ORIGEM_FINANCEIRO
+
+
+def test_janela_parcial_nao_recebe_a_planilha() -> None:
+    """A planilha conhece o TOTAL do mês e nada abaixo disso."""
+    growth = _base_growth()
+    parcial = rm.fechamento_periodo(
+        growth, pd.Timestamp("2026-07-01"), pd.Timestamp("2026-07-10"),
+        financeiro=_financeiro(AUGUSTA=(300_000.0, 250_000.0)),
+    ).set_index("unidade_cru")
+    assert set(parcial["origem_faturamento"]) == {rm.ORIGEM_UX}
+    assert parcial.loc["AUGUSTA", "faturamento"] < 300_000.0
+
+
+def test_janela_mista_soma_planilha_no_mes_inteiro_e_growth_no_pedaco() -> None:
+    """Junho inteiro (planilha) + 1 a 10 de julho (Growth) — e o rótulo diz `misto`."""
+    growth = _base_growth()
+    fin_df = _financeiro(AUGUSTA=(300_000.0, 250_000.0))
+    junho = rm.fechamento_periodo(growth, *JUN, financeiro=fin_df).set_index("unidade_cru")
+    julho_parcial = rm.fechamento_periodo(
+        growth, pd.Timestamp("2026-07-01"), pd.Timestamp("2026-07-10")
+    ).set_index("unidade_cru")
+    mista = rm.fechamento_periodo(
+        growth, pd.Timestamp("2026-06-01"), pd.Timestamp("2026-07-10"), financeiro=fin_df
+    ).set_index("unidade_cru")
+    esperado = junho.loc["AUGUSTA", "faturamento"] + julho_parcial.loc["AUGUSTA", "faturamento"]
+    assert mista.loc["AUGUSTA", "faturamento"] == pytest.approx(esperado)
+    assert mista.loc["AUGUSTA", "origem_faturamento"] == rm.ORIGEM_MISTA
+
+
+def test_janela_livre_sem_planilha_fica_identica_ao_que_era() -> None:
+    """Nenhum número se move quando a planilha não está lá — a degradação é limpa."""
+    growth = _base_growth()
+    antes = rm.fechamento_periodo(growth, *JUL)
+    depois = rm.fechamento_periodo(growth, *JUL, financeiro=None)
+    for coluna in ("faturamento", "faturamento_sem_agregador", "receita_por_recorrente"):
+        pd.testing.assert_series_equal(antes[coluna], depois[coluna], check_names=False)
+    assert set(depois["origem_faturamento"]) == {rm.ORIGEM_UX}
+
+
+def test_sss_compara_as_duas_pontas_pela_mesma_fonte() -> None:
+    """O SSS é uma RAZÃO: sobrepor uma ponta só inventaria crescimento.
+
+    É o defeito que a Growth produzia sozinha, ao trocar de conceito no meio da série —
+    Butantã aparecia com SSS de +586% contra os +154,5% reais, por comparar julho/2026
+    (com agregador) contra julho/2025 (sem).
+    """
+    growth = rm.preparar_base(
+        base(
+            unidade_saudavel("AUGUSTA", 2025, 7),
+            unidade_saudavel("AUGUSTA", 2026, 7),
+        )
+    )
+    fin_df = pd.DataFrame(
+        [
+            {
+                "cod_unidade": "01", "unidade_planilha": "AUGUSTA", "unidade_ux": "AUGUSTA",
+                "tem_depara": True, "competencia": mes, "faturamento": total,
+                "vendas_ux": total * 0.8, "gympass": total * 0.2, "totalpass": 0.0, "tem_saude": 0.0,
+            }
+            for mes, total in (("2025-07", 250_000.0), ("2026-07", 300_000.0))
+        ]
+    )
+    agora = rm.fechamento_periodo(growth, *JUL, financeiro=fin_df).set_index("unidade_cru")
+    antes = rm.fechamento_periodo(
+        growth, pd.Timestamp("2025-07-01"), pd.Timestamp("2025-07-31"), financeiro=fin_df
+    ).set_index("unidade_cru")
+    a, b = agora.loc["AUGUSTA", "faturamento"], antes.loc["AUGUSTA", "faturamento"]
+    assert a == pytest.approx(300_000.0)
+    assert b == pytest.approx(250_000.0)
+    assert 100.0 * (a - b) / b == pytest.approx(20.0)
+
+
+def test_meses_inteiros_na_janela() -> None:
+    comps = pd.Series(pd.period_range("2026-06", "2026-08", freq="M"))
+    dentro = rm._meses_inteiros_na_janela(comps, pd.Timestamp("2026-06-10"), pd.Timestamp("2026-08-05"))
+    assert list(dentro) == [False, True, False]
+    tudo = rm._meses_inteiros_na_janela(comps, pd.Timestamp("2026-06-01"), pd.Timestamp("2026-08-31"))
+    assert list(tudo) == [True, True, True]

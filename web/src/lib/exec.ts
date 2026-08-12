@@ -197,7 +197,13 @@ export function lerDelta(
 }
 
 /** Métricas cuja variação se lê em PONTOS, não em percentual do percentual. */
-export const METRICAS_EM_PONTOS = new Set(['churn_pct', 'nps', 'conversao_pct', 'pct_agregador_alunos'])
+export const METRICAS_EM_PONTOS = new Set([
+  'churn_pct',
+  'nps',
+  'conversao_pct',
+  'pct_agregador_alunos',
+  'pct_agregador_receita',
+])
 
 /**
  * Ordena a carteira no cliente. Nulos SEMPRE por último, **nas duas direções**.
@@ -615,4 +621,28 @@ export function destaquesDoRecorte(
       ? (unidades.find((u) => u.sss?.competencia_base)?.sss?.competencia_base ?? null)
       : (unidades.find((u) => u.fechado?.competencia)?.fechado?.competencia ?? null)
   return { puxam, seguram, todas: ordenadas, semBase, competencia }
+}
+
+/**
+ * Crédito da fonte, fiel ao que a aba está de fato mostrando.
+ *
+ * Enquanto o cabeçalho dizia só "Growth API", o gráfico de 12 meses já vinha da planilha do
+ * Financeiro — e crédito errado é o tipo de detalhe que derruba a confiança no painel
+ * inteiro. `longo` é a versão da lista de método, onde há espaço para a ressalva.
+ */
+export function creditoDaFonte(fonte?: RedeFonteFaturamento, longo = false): string {
+  const origens = new Set<string>()
+  for (const o of Object.values(fonte?.por_mes ?? {})) origens.add(o)
+  if (fonte?.periodo) origens.add(fonte.periodo)
+  const base = 'Growth API · read-only sobre o M1'
+  if (!origens.has('financeiro')) return longo ? `Fonte: ${base}.` : base
+
+  // Curto de propósito, e do tamanho do que substituiu ("Growth API · read-only sobre o
+  // M1", 33 caracteres): esta linha divide o cabeçalho com os botões de export, e um
+  // crédito por extenso empurrava os três para uma terceira linha — que come a altura da
+  // carteira, o defeito que motivou tirá-los da fila dos controles em 2026-08-10.
+  if (!longo) return 'Financeiro (faturamento) · Growth API'
+  return origens.size === 1
+    ? 'Fonte: faturamento da planilha do Financeiro (base dos royalties); demais métricas da Growth API, read-only sobre o M1.'
+    : 'Fonte: faturamento da planilha do Financeiro nos meses fechados e da Growth API no período parcial; demais métricas da Growth API, read-only sobre o M1.'
 }

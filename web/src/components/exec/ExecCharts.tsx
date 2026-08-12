@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { COR_SEVERIDADE, rotuloMesCurto } from '../../lib/exec'
-import { brlCurto, num, pct } from '../../lib/format'
+import { brl, brlCurto, num, pct } from '../../lib/format'
 import {
   ancoraDoRotulo,
   caminhoSparkline,
+  CORPO_ROTULO_MAX,
+  corpoQueCabe,
   escalaDeBarras,
   fatiasDeRosca,
   ladoDoRotulo,
@@ -39,12 +41,32 @@ export function BarrasPeriodo({
   titulo?: string
 }) {
   const escala = escalaDeBarras(valores)
-  const fmt = (v: number | null) =>
+  const [medir, medida] = useLargura()
+  const fatias = Math.max(meses.length, 1)
+
+  // O valor vai INTEIRO — "R$ 21.982.435", e não "R$ 22,0M". A forma curta existia para
+  // caber, e passa a impressão de número arredondado pelo sistema; num painel cujo
+  // faturamento agora vem da planilha dos royalties, isso é exatamente o oposto do que a
+  // tela promete (pedido do Felipe, 2026-08-12). Quem cede é o CORPO da fonte.
+  const inteiro = (v: number | null) =>
+    v === null ? '—' : formato === 'brl' ? brl(v) : formato === 'pct' ? pct(v, 1) : num(v)
+  const curto = (v: number | null) =>
     v === null ? '—' : formato === 'brl' ? brlCurto(v) : formato === 'pct' ? pct(v, 1) : num(v)
-  const largura = 100 / Math.max(meses.length, 1)
+
+  const maisLongo = Math.max(
+    ...valores.map((v) => (v === null ? 0 : inteiro(v).length)),
+    0,
+  )
+  // `gap: 3` sai da fatia útil de cada barra.
+  const corpo = corpoQueCabe(maisLongo, medida > 0 ? medida / fatias - 3 : 0)
+  // Só quando nem o corpo mínimo cabe é que a abreviação volta — e aí ela é a única forma
+  // de o número existir na tela.
+  const fmt = corpo === null ? curto : inteiro
+
+  const largura = 100 / fatias
 
   return (
-    <figure style={{ margin: 0 }}>
+    <figure style={{ margin: 0 }} ref={medir}>
       {titulo && (
         <figcaption style={{ font: '500 11px/1.2 var(--f-ui)', color: 'var(--tx-label)', marginBottom: 8 }}>
           {titulo}
@@ -66,7 +88,7 @@ export function BarrasPeriodo({
               <span
                 className="num"
                 style={{
-                  font: '600 9px/1 var(--f-num)',
+                  font: `600 ${corpo ?? CORPO_ROTULO_MAX}px/1 var(--f-num)`,
                   color: 'var(--tx-sub)',
                   textAlign: 'center',
                   marginBottom: 3,

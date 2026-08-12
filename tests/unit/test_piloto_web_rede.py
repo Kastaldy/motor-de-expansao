@@ -996,3 +996,28 @@ def test_panorama_e_json_safe(rede_anual: Path) -> None:
     texto = json.dumps(payload, allow_nan=False)
     assert "NaN" not in texto
     assert "Infinity" not in texto
+
+
+def test_notas_cabem_no_pdf(rede_anual: Path) -> None:
+    """Nota com tipografia fora de latin-1 chega ao franqueado como "?".
+
+    O core font do fpdf2 e' latin-1 e `pdf_base.ascii_seguro` troca o que nao couber por
+    "?" DE PROPOSITO, para o autor consertar o texto-fonte. So' que isso nao falha em lugar
+    nenhum: o PDF sai valido, com um "?" no meio da frase, e so' quem OLHA o arquivo
+    percebe. Aconteceu com um travessao numa nota de fonte do faturamento, e a suite
+    inteira passou verde. Este teste fecha o buraco.
+    """
+    fora_de_latin1: list[tuple[str, str]] = []
+    for janela in ({"mes": "2026-07"}, {"inicio": "2026-07-01", "fim": "2026-07-10"}):
+        payload = pilot._rede_carteira_payload(**janela)
+        for nota in payload["notas"]:
+            ruins = sorted({c for c in nota if c.encode("latin-1", "replace") == b"?" and c != "?"})
+            if ruins:
+                fora_de_latin1.append((str(ruins), nota))
+    assert not fora_de_latin1, f"tipografia que vira '?' no PDF: {fora_de_latin1}"
+
+
+def test_todas_as_frases_de_fonte_cabem_no_pdf() -> None:
+    """Mesma trava, direto no catalogo: as tres frases de origem do faturamento."""
+    for frase in pilot._NOTA_DO_PERIODO.values():
+        assert frase.encode("latin-1", "replace").decode("latin-1") == frase, frase

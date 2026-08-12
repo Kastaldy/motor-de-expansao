@@ -151,6 +151,12 @@ export function EvolucaoRecorte({
  *  crescendo é reajuste de preço, não crescimento. */
 const LINHAS_SSS: { chave: string; rotulo: string; formato: 'brl' | 'int' }[] = [
   { chave: 'faturamento_sem_agregador', rotulo: 'Receita de recorrentes', formato: 'brl' },
+  // A receita de agregadores entra desde que o faturamento passou a vir da planilha do
+  // Financeiro. Antes ela era zero contra zero (a Growth parou de enviá-la em mai/2025) e
+  // uma linha de zeros só ocupava espaço. Agora é a linha que EXPLICA o número grande:
+  // medido em 2026-07 contra 2025-07, o total cresce +4,2%, mas recorrentes crescem +0,8%
+  // e agregadores +14,7% — o crescimento da mesma loja é quase todo do agregador.
+  { chave: 'faturamento_agregador', rotulo: 'Receita de agregadores', formato: 'brl' },
   { chave: 'ativos', rotulo: 'Alunos ativos', formato: 'int' },
   { chave: 'pagantes', rotulo: 'Recorrentes', formato: 'int' },
 ]

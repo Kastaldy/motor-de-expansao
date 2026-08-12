@@ -31,6 +31,7 @@ import {
   METRICAS_EM_PONTOS,
   ORDEM_SEVERIDADE,
   corComAlfa,
+  creditoDaFonte,
   destaquesDoRecorte,
   filtrarUnidades,
   formatarMetrica,
@@ -614,7 +615,11 @@ export default function ExecutiveScreen() {
               </span>
             )}
             <div style={{ flex: 1 }} />
-            <span>Growth API · read-only sobre o M1</span>
+            {/* O crédito da fonte segue o que a aba REALMENTE está mostrando. Enquanto
+                dizia só "Growth API", já era faturamento da planilha do Financeiro no
+                gráfico de 12 meses — e o crédito errado é o tipo de detalhe que derruba a
+                confiança no painel inteiro. */}
+            <span>{creditoDaFonte(carteira.fonte_faturamento)}</span>
             {/* Os exports moram na faixa da LEGENDA desde 2026-08-10. Na fila dos
                 controles eles eram os primeiros a cair para uma segunda linha quando o
                 seletor de datas entrou — e cabeçalho de três linhas come a altura da
@@ -962,7 +967,7 @@ export default function ExecutiveScreen() {
                     Ranking e “% vs média da rede” saem sempre da rede inteira, nunca do recorte
                     filtrado — mudar um filtro não muda a posição de ninguém.
                   </li>
-                  <li>Fonte: Growth API · camada paralela · read-only sobre o M1.</li>
+                  <li>{creditoDaFonte(carteira.fonte_faturamento, true)}</li>
                 </ul>
               </Glass>
               <Glass style={{ ...COLUNA_TRILHO, padding: '15px 17px' }}>

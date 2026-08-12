@@ -3574,6 +3574,11 @@ _REDE_METRICAS: tuple[str, ...] = (
     "visitas",
     "em_cobranca_pct",
     "pct_agregador_alunos",
+    # A dependência de agregador por RECEITA só passou a existir de fato quando o
+    # faturamento veio da planilha: com a Growth ela era 0,00% em toda a base desde
+    # maio/2025. Vai para a ficha e para o benchmark de coorte, ao lado da de alunos —
+    # as duas discordam em 14,8 p.p. na mediana, e é a de receita que fala de dinheiro.
+    "pct_agregador_receita",
     "faturamento_sem_agregador",
     "faturamento_agregador",
     "inadimplente",
@@ -3631,12 +3636,17 @@ _REDE_SERIES_SOMA = (
 )
 _REDE_SERIES_MEDIA = dict(_REDE_KPIS_MEDIA)
 
-# Métricas do SSS. `faturamento_agregador` fica de fora de propósito: é zero em toda a
-# base de produção (e −59.310 em 2026-01, ou seja, ruído de estorno), então uma linha
-# "receita de agregadores" no comparativo anual só mostraria zero contra zero.
+# Métricas do SSS. `faturamento_agregador` esteve fora daqui enquanto era zero em toda a
+# base — a Growth parou de mandar receita de agregador em maio/2025, e a linha só mostraria
+# zero contra zero. Com o faturamento vindo da planilha do Financeiro ela volta, e é a linha
+# que mais explica a rede: medido em 2026-07 contra 2025-07, na mesma base de 60 unidades, o
+# faturamento cresce +4,2% — mas a receita de RECORRENTES cresce só +0,8% e a de AGREGADORES
+# +14,7%. Ou seja, o crescimento da mesma loja é quase todo do agregador. Sem esta linha, o
+# painel mostrava o +4,2% e deixava a pergunta "de onde ele veio?" sem resposta.
 _REDE_SSS_METRICAS = (
     "faturamento",
     "faturamento_sem_agregador",
+    "faturamento_agregador",
     "ativos",
     "pagantes",
     "agregadores",
@@ -3835,15 +3845,23 @@ def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
     if ini > term:
         raise HTTPException(400, "O fim do período é anterior ao início.")
 
-    atual_cru = rede_metricas.fechamento_periodo(base, ini, term)
+    # As TRÊS janelas recebem a mesma sobreposição, e isso não é zelo: o SSS e o delta
+    # contra o período anterior são RAZÕES entre duas pontas. Sobrepor uma só compararia
+    # faturamento com agregador contra faturamento sem — que é exatamente o defeito da
+    # Growth que este trabalho existe para consertar (Butantã aparecia com SSS de +586%
+    # contra os +154% reais, por comparar jul/2026 com agregador contra jul/2025 sem).
+    financeiro = _rede_faturamento_financeiro()
+    financeiro = financeiro if len(financeiro) else None
+
+    atual_cru = rede_metricas.fechamento_periodo(base, ini, term, financeiro=financeiro)
     if not len(atual_cru):
         raise HTTPException(404, f"Sem dados da rede entre {inicio} e {fim}.")
 
     ini_ant, fim_ant = _rede_periodo_anterior(ini, term)
-    anterior_cru = rede_metricas.fechamento_periodo(base, ini_ant, fim_ant)
+    anterior_cru = rede_metricas.fechamento_periodo(base, ini_ant, fim_ant, financeiro=financeiro)
 
     ini_sss, fim_sss = _rede_periodo_ano_anterior(ini, term)
-    ano_anterior = rede_metricas.fechamento_periodo(base, ini_sss, fim_sss)
+    ano_anterior = rede_metricas.fechamento_periodo(base, ini_sss, fim_sss, financeiro=financeiro)
 
     # A receita por recorrente é um NÍVEL — R$ por recorrente NUM MÊS —, e só o mês
     # calendário inteiro pode entregá-la direto. Fora dele, ela sai dos 30 dias que
@@ -3856,8 +3874,8 @@ def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
     dias = int((term - ini).days) + 1
     mes_inteiro = _eh_mes_inteiro(ini, term)
     if not mes_inteiro:
-        atual_cru = _rede_nivel_de_receita(base, atual_cru, term)
-        anterior_cru = _rede_nivel_de_receita(base, anterior_cru, fim_ant)
+        atual_cru = _rede_nivel_de_receita(base, atual_cru, term, financeiro)
+        anterior_cru = _rede_nivel_de_receita(base, anterior_cru, fim_ant, financeiro)
 
     contexto = rede_metricas.contexto_comparativo(atual_cru)
     contexto = rede_coorte.anotar_coortes(contexto)
@@ -3902,16 +3920,24 @@ def _rede_periodo(inicio: str, fim: str) -> dict[str, Any]:
 
 
 def _rede_nivel_de_receita(
-    base: pd.DataFrame, quadro: pd.DataFrame, fim: pd.Timestamp
+    base: pd.DataFrame, quadro: pd.DataFrame, fim: pd.Timestamp,
+    financeiro: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Troca `receita_por_recorrente` pela leitura de 30 dias que termina em `fim`.
 
     Vale para todo intervalo que NÃO seja um mês calendário inteiro. Os demais números do
     quadro seguem sendo os do intervalo escolhido.
+
+    A janela de 30 dias recebe a mesma sobreposição das outras: quando ela calha de cobrir
+    um mês civil inteiro — um mês de 30 dias, olhado do último dia — o numerador passa a ser
+    o do Financeiro, como em qualquer outra janela fechada. Nos demais casos ela cai fora do
+    alcance da planilha, que é mensal, e segue na Growth.
     """
     if not len(quadro):
         return quadro
-    janela = rede_metricas.fechamento_periodo(base, fim - pd.Timedelta(days=29), fim)
+    janela = rede_metricas.fechamento_periodo(
+        base, fim - pd.Timedelta(days=29), fim, financeiro=financeiro
+    )
     if not len(janela):
         return quadro
     receita = janela.set_index("unidade_id")["receita_por_recorrente"]
@@ -4162,8 +4188,12 @@ def _rede_sss(
     metricas: dict[str, Any] = {}
     for chave in _REDE_SSS_METRICAS:
         casas = _rede_casas(chave)
-        atual_valor = _numf(pd.to_numeric(agora[chave], errors="coerce").sum())
-        passado = _numf(pd.to_numeric(antes[chave], errors="coerce").sum())
+        # `min_count=1`: coluna INTEIRAMENTE sem dado tem de sair vazia, não como R$ 0. É o
+        # caso da receita de agregadores numa janela parcial — a Growth não a envia desde
+        # maio/2025, e o `sum` padrão transformava "não sabemos" em "a rede não fatura com
+        # Gympass", que é uma afirmação falsa sobre R$ 5,1 milhões por mês.
+        atual_valor = _numf(pd.to_numeric(agora[chave], errors="coerce").sum(min_count=1))
+        passado = _numf(pd.to_numeric(antes[chave], errors="coerce").sum(min_count=1))
         metricas[chave] = {
             "atual": _num(atual_valor, casas),
             "ano_anterior": _num(passado, casas),
@@ -4456,6 +4486,31 @@ def _rede_kpis(unidades: pd.DataFrame, m1: pd.DataFrame) -> dict[str, Any]:
     return saida
 
 
+#: O que dizer do faturamento do PERÍODO, conforme a janela alcance ou não a planilha.
+#: A planilha é mensal: ela responde por competência coberta INTEIRA e por mais nada.
+_NOTA_DO_PERIODO: dict[str, str] = {
+    # Sem travessão, aspas curvas ou reticências tipográficas: estas frases vão para o PDF,
+    # que roda no core font do fpdf2 (latin-1) e troca por "?" o que não couber. Ver
+    # `pdf_base.ascii_seguro` e o teste de tipografia das notas.
+    rede_metricas.ORIGEM_FINANCEIRO: (
+        "O período selecionado fecha meses inteiros, então o quarteto do topo e o SSS "
+        "saem da MESMA fonte da série: os dois números conversam."
+    ),
+    rede_metricas.ORIGEM_UX: (
+        "O período selecionado é PARCIAL e a planilha do Financeiro é mensal: o quarteto "
+        "do topo sai da base Growth, que não traz a receita de agregador desde maio/2025 e "
+        "fica cerca de 20% abaixo. O degrau contra o último mês fechado é troca de fonte, "
+        "não queda de faturamento."
+    ),
+    rede_metricas.ORIGEM_MISTA: (
+        "O período selecionado mistura meses inteiros com pedaços de mês: os inteiros vêm "
+        "da planilha do Financeiro e os pedaços da Growth, que fica cerca de 20% abaixo por "
+        "não trazer a receita de agregador. Para comparar fonte contra fonte, escolha um "
+        "mês fechado."
+    ),
+}
+
+
 def _notas_da_fonte(contexto: dict[str, Any], recorte: pd.DataFrame) -> list[str]:
     """De onde vem o faturamento — e o degrau que a troca de fonte cria na série.
 
@@ -4476,11 +4531,12 @@ def _notas_da_fonte(contexto: dict[str, Any], recorte: pd.DataFrame) -> list[str
 
     notas = [
         "Faturamento dos meses FECHADOS: planilha do Financeiro, a mesma base sobre a qual "
-        "os royalties são cobrados (inclui Gympass e Totalpass, já deduzido o TEM SAÚDE). "
-        "O período em curso, no topo da tela, ainda vem da Growth — que não manda a receita "
-        "de agregador desde maio/2025 e por isso fica cerca de 20% abaixo. O degrau entre o "
-        "último mês fechado e o mês corrente é troca de fonte, não queda."
+        "os royalties são cobrados (inclui Gympass e Totalpass, já deduzido o TEM SAÚDE)."
     ]
+    # A segunda frase muda com a JANELA escolhida, e tem de mudar: dizer "o topo vem da
+    # Growth" quando o operador selecionou um mês fechado seria falso, e é justamente a
+    # frase que ele lê para decidir se pode confiar no número.
+    notas.append(_NOTA_DO_PERIODO[fonte["periodo"]])
     if rede_metricas.ORIGEM_UX in origens:
         meses_ux = sorted(m for m, o in fonte["por_mes"].items() if o != rede_metricas.ORIGEM_FINANCEIRO)
         notas.append(
@@ -4831,15 +4887,25 @@ def _rede_fonte_faturamento(
     por_mes: dict[str, str] = {}
     for mes in meses:
         origens = set(do_recorte.loc[do_recorte["competencia"] == mes, "origem_faturamento"])
-        if not origens:
-            continue
-        por_mes[mes] = origens.pop() if len(origens) == 1 else "misto"
+        if origens:
+            por_mes[mes] = origens.pop() if len(origens) == 1 else rede_metricas.ORIGEM_MISTA
     return {
         "por_mes": por_mes,
-        # O quarteto do topo e o SSS saem de `fechamento_periodo`, que nunca é sobreposto.
-        "periodo": rede_metricas.ORIGEM_UX,
+        # O quarteto do topo segue a JANELA escolhida, e a planilha só alcança competência
+        # coberta inteira: mês fechado selecionado sai `financeiro`; mês em curso, `ux`.
+        "periodo": _origem_dominante(recorte),
         "unidades_sem_par": list(cheio.attrs.get("financeiro_sem_par", [])),
     }
+
+
+def _origem_dominante(quadro: pd.DataFrame) -> str:
+    """Origem única do recorte, ou `misto` quando as unidades não concordam."""
+    if not len(quadro) or "origem_faturamento" not in quadro.columns:
+        return rede_metricas.ORIGEM_UX
+    origens = set(quadro["origem_faturamento"].dropna())
+    if not origens:
+        return rede_metricas.ORIGEM_UX
+    return origens.pop() if len(origens) == 1 else rede_metricas.ORIGEM_MISTA
 
 
 def _rede_ordenar(
@@ -5027,6 +5093,10 @@ def _rede_ficha_payload(unidade_id: str, mes: str | None = None) -> dict[str, An
         "reguas": rede_diagnostico.REGUAS_VIGENTES,
         "meta_nps": rede_diagnostico.META_NPS,
         "notas": _rede_notas(contexto, linhas),
+        # A ficha mostra faturamento em quatro lugares (quarteto, série de 12 meses, rosca e
+        # benchmark de coorte) e o PDF dela vai para o franqueado. Sem isto, o rodapé do PDF
+        # continuava creditando a Growth por um número que já vem do Financeiro.
+        "fonte_faturamento": _rede_fonte_faturamento(contexto, linhas),
     }
 
 

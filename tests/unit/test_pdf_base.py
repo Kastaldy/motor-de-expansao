@@ -250,24 +250,49 @@ def test_titulo_de_grafico_respeita_a_largura_do_bloco() -> None:
         (0.0, "R$ 0"),
         (1.0, "R$ 1"),
         (999.0, "R$ 999"),
-        (1_000.0, "R$ 1k"),
-        (141_389.0, "R$ 141k"),
-        (999_499.0, "R$ 999k"),
-        # Fronteira consciente: 999.500 arredonda para "1.000k" em vez de virar "1,0M".
-        # Fica assim de propósito — a faixa é escolhida pelo valor CRU, e mudar isso
-        # tornaria a regra dependente do arredondamento, que é pior de explicar.
-        (999_500.0, "R$ 1.000k"),
-        (1_000_000.0, "R$ 1,0M"),
-        (18_635_051.0, "R$ 18,6M"),
-        (-250_000.0, "R$ -250k"),
+        (1_000.0, "R$ 1.000"),
+        (141_389.0, "R$ 141.389"),
+        (999_500.0, "R$ 999.500"),
+        (1_000_000.0, "R$ 1.000.000"),
+        (21_982_435.0, "R$ 21.982.435"),
+        (-250_000.0, "R$ -250.000"),
     ],
 )
-def test_brl_compacto(valor: float, esperado: str) -> None:
-    """O rótulo que vai sobre cada barra de faturamento do PDF.
+def test_brl_da_barra(valor: float, esperado: str) -> None:
+    """O rótulo que vai sobre cada barra de faturamento do PDF, por INTEIRO.
 
-    Número cheio não cabe sobre doze barras; o compacto é o que o franqueado lê no papel,
-    então cada faixa está travada.
+    Era compacto ("R$ 141k", "R$ 18,6M") porque o número cheio não cabia sobre doze barras.
+    Só que valor arredondado lê como número ajustado pelo sistema, e o painel hoje promete o
+    contrário — o faturamento vem da planilha do Financeiro, a mesma dos royalties (pedido
+    do Felipe, 2026-08-12). Quem cede é o CORPO da fonte, não o valor.
     """
-    from motor_expansao.dashboard.rede_export import _brl_compacto
+    from motor_expansao.dashboard.rede_export import _brl_da_barra
 
-    assert _brl_compacto(valor) == esperado
+    assert _brl_da_barra(valor) == esperado
+
+
+def test_corpo_da_barra_encolhe_ate_caber_e_para_no_piso() -> None:
+    """O rótulo inteiro tem de caber na fatia — e nunca sumir de página.
+
+    `cell` do fpdf2 não quebra nem avisa: rótulo largo demais invade o vizinho e o gráfico
+    vira borrão, sem nenhum erro. A suíte não vê isso, então a garantia é aritmética.
+    """
+    pdf = pdf_base.UltraPDF()
+    pdf.add_page()
+    largos = ["R$ 21.982.435"] * 12
+
+    # Fatia generosa: mantém o corpo preferido.
+    assert pdf_base._corpo_que_cabe(pdf, largos, 120.0) == pdf_base.CORPO_VALOR_BARRA
+
+    # Fatia da carteira (PAGINA_LARGURA - 72, doze barras): encolhe, e o resultado CABE.
+    passo = (pdf_base.PAGINA_LARGURA - 72) / 12
+    corpo = pdf_base._corpo_que_cabe(pdf, largos, passo)
+    assert pdf_base.CORPO_VALOR_BARRA_MIN <= corpo <= pdf_base.CORPO_VALOR_BARRA
+    pdf.set_font("Helvetica", "B", corpo)
+    assert pdf.get_string_width(largos[0]) <= passo
+
+    # Fatia impossível: para no piso em vez de virar corpo zero (texto invisível).
+    assert pdf_base._corpo_que_cabe(pdf, largos, 6.0) == pdf_base.CORPO_VALOR_BARRA_MIN
+
+    # Sem valor nenhum, nada a medir.
+    assert pdf_base._corpo_que_cabe(pdf, [], 40.0) == pdf_base.CORPO_VALOR_BARRA
