@@ -2004,8 +2004,8 @@ definido antes de qualquer código; validação com fixtures sintéticas; READ-O
 | **Criticidade** | **Média** (texto e leitura da tela do Mapa; READ-ONLY sobre o M1 — não toca score, pesos, `config.py`, `pipelines/m1` nem artefato oficial). |
 | **Prioridade** | Depois de **#196** e **#197**, que estão reescrevendo `web/server/app.py`, `faixas.ts` e `colors.ts`. Abrir antes cria um terceiro PR concorrente no mesmo arquivo — foi exatamente assim que #185 e #187 colidiram. |
 | **Esteira** | Block Orchestrator → Planner → Builder → QA. |
-| **Status** | **Implementado em 2026-08-10** (branch `feat/blk-web-modos-de-analise`, commit próprio). Medido depois do fix, nos mesmos 6 recortes: camada 2 vai de 1 para 8-10 rótulos distintos, camada 3 de 1 para 7-9, camada 5 de 1 para 3-5, camada 1 municipal de 1-2 para 5-9. Zero células ainda constantes. Falta só o registro em `completed.md` e o PR. |
-| **Depende de** | #196 e #197 mergeados (ordem, não conteúdo) — ambos já na `main`. |
+| **Status** | Pendente. |
+| **Depende de** | #196 e #197 mergeados (ordem, não conteúdo). |
 | **Autonomia** | **manual (NÃO loop-safe)** — decide o que a tela AFIRMA para quem escolhe ponto; a escolha de vocabulário é de produto. |
 
 **O defeito, medido em 2026-08-05 sobre a main `b7ea6a1`.** A etiqueta de cada item do ranking virou
@@ -2051,34 +2051,6 @@ adiciona o ramo `modo == "crescimento"` (Em alta / Estável / Em queda, sobre CA
 `_rank_municipios` sem `faixa_por` de propósito. Já as quatro `FAIXA_SCORE_QUENTE`,
 `FAIXA_SCORE_FORTE`, `FAIXA_RESIDUAL_ALTA_HEX` e `FAIXA_RESIDUAL_MEDIA_HEX` seguem órfãs (zero
 referência no repo) e podem sair junto deste bloco.
-
-**Dívida aberta por este bloco (2026-08-10).**
-
-- **BLK-CHIP-PALAVRA-01** — a decisão do Vinicius diz "unidades"; o chip saiu **"academias"**. A
-  régua e a âncora são as decididas (2.500 alunos); mudou só o substantivo, porque o cabeçalho da
-  mesma tela já diz "espaço p/ academias" com esta conta e "unidade" no vocabulário Ultra é unidade
-  PRÓPRIA — `375 UNIDADES` num estado com 19 unidades Ultra lê como plano de rede. Reversível numa
-  linha (`_chip_academias`). **Precisa do aval do Vinicius.**
-- **BLK-CHIP-REMOCAO-01** — em 5 das 10 células (camada 1/UF, 3/município, 4/município e a camada 5
-  nos dois escopos) o chip foi REMOVIDO em vez de substituído, porque nenhuma grandeza disponível
-  sobrevive ao corte daquela camada. O corte passou a ser declarado no painel. É perda de densidade
-  visual assumida; se incomodar, a saída é achar a grandeza, não repor o rótulo constante.
-  **A camada 5 chegou a ganhar um chip de crescimento e ele foi retirado na revisão**: o
-  `NarrativePanel` já renderiza `<EtiquetaCrescimento>` em todo item do passo 5, e as duas leituras
-  classificavam os mesmos dois números por réguas diferentes — o front por DELTA em pontos
-  percentuais (`lerCrescimento`, margem 0,5 p.p.) e o servidor por RAZÃO (`_etiqueta_crescimento`,
-  cortes 0,8/1,2/2,0). Medido em São José do Rio Preto (10,0 contra mediana 9,0 da UF): o chip diria
-  "na mediana" e a linha logo abaixo, "Cresce acima da mediana (+1,0 p.p.)".
-- **BLK-DADO-POP-01** — o chip da camada 1 fica vazio em 12 UFs (AL AM AP CE MA PA PB PE PI RO RR
-  SE), onde `fonte_populacao_corte` é `total_municipal` em 100% das linhas. Investigar se
-  `pop_total_setor_2022` permite reativá-lo. Qualquer proposta futura deve ser medida nas **27**
-  partições, nunca em três.
-- **BLK-FUNIL-DUP-01** — as camadas 3 e 5 publicam a mesma lista, com os mesmos valores, nos dois
-  escopos (medido em 6/6 recortes). O chip novo torna as telas distinguíveis mas **não** resolve a
-  duplicação: é decisão de produto (fundir os passos ou reordenar a fila por outro critério).
-- **Código morto declarado**: `_melhor_faixa_por_municipio`, o parâmetro `faixa_por`,
-  `_faixa_para_chip` e o ramo `"conc. 2 km"` de `_etiqueta` seguem sem chamador, preservados de
-  propósito (PR #184/#197). Remover só depois que o #197 fechar.
 
 - BLK-MA-10 (concluído 2026-08-05) — ver tasks/completed.md
 

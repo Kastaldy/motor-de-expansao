@@ -27,18 +27,10 @@ defeito mais cara deste endpoint, e ela **já aconteceu duas vezes**:
 2. **Seis afirmações factualmente erradas** sobre calibração, insumos do score, ponderação da oferta
    concorrente, causa do residual zero, origem da população e fonte da oferta Ultra.
 
-Por isso a regra: **as faixas são DERIVADAS, nunca escritas à mão.** As funções
-`_legenda_mapa_*()` leem `constants.FAIXAS_MAPA_*`, `FAIXA_LABELS` e `FAIXA_ORDEM` — as mesmas
-listas que a legenda do mapa desenha —, e as `_etiquetas_*()` produzem seus exemplos chamando os
-próprios formatadores `_chip_*` do funil. Trocar a régua num lugar troca no outro, ou o teste de
-contrato quebra.
-
-**Segunda regra, do BLK-MAPA-CHIP-01: `faixas` publica só o que o funil emite DEPOIS do corte; a
-rampa do universo vive em `legenda_mapa`.** São perguntas diferentes — "que etiqueta esta lista
-pode mostrar?" e "por que este hexágono está laranja?" — e publicá-las no mesmo slot fez o painel
-anunciar cinco faixas onde o ranking só alcançava uma. Quando o rótulo é numérico, o contrato de
-teste é de **formato** (`N academias`, `N mil hab.`), não de igualdade de conjunto: ver
-`_forma()` em `tests/unit/test_piloto_web_endpoints.py`.
+Por isso a regra: **as faixas são DERIVADAS, nunca escritas à mão.** `_faixas_potencial()`,
+`_faixas_residual()`, `_faixas_competitivas()` e `_faixas_m1()` leem `constants.FAIXAS_MAPA_*`,
+`FAIXA_LABELS` e `FAIXA_ORDEM` — as mesmas listas que o `_etiqueta` usa e que a legenda do mapa
+desenha. Trocar a régua num lugar troca no outro, ou o teste de contrato quebra.
 
 ## Payload
 
@@ -84,37 +76,18 @@ Todo texto do payload é **texto de usuário** e vai acentuado. As **chaves** (`
 > latin-1**. Em React renderizam normalmente; no gerador de PDF (`fpdf2`, core font Helvetica)
 > virariam `"?"` em silêncio. Sanitizar antes de reaproveitar este texto em relatório.
 
-## A etiqueta do ranking e a rampa do mapa são coisas separadas
+## Defeito conhecido em aberto
 
-Resolvido em **BLK-MAPA-CHIP-01** (2026-08-10). O defeito era estrutural: o corte de cada camada
-coincide com o piso da última faixa da régua, então o chip saía constante — camada 2 corta 2.000
-alunos, que são score 80 na âncora de 2.500, o piso exato de "Livre"; oito municípios de 2.000 a
-40.000 alunos saíam todos "Livre". Medido em 6 recortes reais (SP/MG/GO e Campinas/Guarulhos/
-Goiânia): camadas 2, 3 e 5 constantes em 6 de 6, camada 1 em 3 de 6.
+**As faixas publicadas incluem faixas inalcançáveis** — o corte de cada camada coincide com o piso
+da última faixa da régua, então o chip do ranking é constante (camada 2: corte de 2.000 alunos =
+score 80 = piso de "Livre"; 8 municípios de 2.000 a 40.000 alunos saem todos "Livre"). O painel
+agrava ao publicá-las como "etiquetas do ranking" no mesmo cartão que declara o corte. Tratado em
+**BLK-MAPA-CHIP-01**; a decisão de produto já tomada é trocar o chip pela leitura em unidades.
 
-**Regra permanente que ficou:** nenhum rótulo do ranking pode ser função monótona do próprio filtro
-da camada. Onde a régua do rótulo coincide com o corte, a constância é identidade algébrica, não
-azar de amostra.
-
-O que cada camada publica hoje:
-
-| Camada | `faixas` (etiqueta do ranking) | `legenda_mapa` (cores do mapa) |
-|---|---|---|
-| 1 | `N mil hab.` — só no escopo `municipio`, e só quando `fonte_populacao_corte == "setor_2022"` | rampa de potencial, 5 faixas com `cor` |
-| 2 | `N academia` / `N academias` — residual ÷ 2.500, nos dois escopos | rampa de demanda, 5 faixas com `cor` |
-| 3 | `N% sem disputa` — só no escopo `uf` | rampa de demanda |
-| 4 | inalterada (`_faixas_crescimento`) | `_legenda_mapa_crescimento` (cor vem do front) |
-| 5 | leitura de crescimento em texto curto, só no escopo `uf` | 6 faixas de oportunidade do M1, com `cor` |
-
-Onde a camada não emite etiqueta (1/`uf`, 3/`municipio`, 5/`municipio`), o campo **`corte` declara
-por que** — é a outra metade do critério de aceite, e sem ela a ausência do chip se lê como bug de
-render.
-
-**Cuidado ao escrever teste para isso:** o contrato antigo validava chamando `_etiqueta`
-diretamente, com valores que o funil nunca entrega (`n_concorrentes_est` = 2 e 99, quando a base do
-passo 3 é `white`, com `n == 0`). Passava verde sobre vocabulário inalcançável. Teste novo deve
-exercitar as etiquetas **através de `montar_funil` / `montar_funil_uf`** — ver
-`tests/contracts/test_chip_ranking_discrimina.py`.
+**Cuidado ao escrever teste para isso:** o contrato atual valida chamando `_etiqueta` diretamente,
+com valores que o funil nunca entrega (`n_concorrentes_est` = 2 e 99, quando a base do passo 3 é
+`white`, com `n == 0`). Passa verde sobre vocabulário inalcançável. Teste novo deve exercitar as
+etiquetas **através de `montar_funil` / `montar_funil_uf`**.
 
 ## Ver também
 
