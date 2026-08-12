@@ -7,7 +7,12 @@ import CampoPonto from '../components/CampoPonto'
 import DetalheRegiao from '../components/DetalheRegiao'
 import type { SearchPin } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
-import { BarraMercado, MedidorScore, ReguaDispersao } from '../components/LeiturasVisuais'
+import {
+  BarraMercado,
+  MedidorScore,
+  ReguaConcorrentes,
+  ReguaDispersao,
+} from '../components/LeiturasVisuais'
 import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Kpi, Spinner } from '../components/primitives'
@@ -562,6 +567,7 @@ function Ficha({
           <Kpi label="Concorrentes no raio" valor={num(concorrencia.n_concorrentes)} />
           <Kpi label="Unidades Ultra no raio" valor={num(concorrencia.n_ultra)} />
         </GradeKpi>
+        <ReguaConcorrentes lista={concorrencia.lista} raioKm={ficha.raio_km} />
       </Secao>
 
       {/* ---------------- Mercado / residual ---------------- */}
