@@ -1053,8 +1053,11 @@ METRICAS: tuple[EspecMetrica, ...] = (
     # 22,9% da RECEITA -- mediana de 14,8 p.p. de diferenca por unidade, e ate 33,3 p.p.
     # (Sao Goncalo Shopping: 57,9% dos alunos, 24,5% da receita). Ate maio/2025 so' a de
     # alunos existia de fato, porque a Growth zerava a receita de agregador.
-    EspecMetrica("pct_agregador_alunos", "Dependencia de agregador (alunos)", "asc", False, "pct"),
-    EspecMetrica("pct_agregador_receita", "Dependencia de agregador (receita)", "asc", False, "pct"),
+    # Acentuados: `rotulo` viaja no payload publico de `/api/rede/filtros` e vira cabecalho
+    # de coluna e item de ordenacao na tela. Os vizinhos sem acento sao anteriores a este
+    # trabalho e ficam como estao -- mexer neles alargaria o diff sem necessidade.
+    EspecMetrica("pct_agregador_alunos", "Dependência de agregador (alunos)", "asc", False, "pct"),
+    EspecMetrica("pct_agregador_receita", "Dependência de agregador (receita)", "asc", False, "pct"),
     EspecMetrica("inadimplente", "Inadimplentes", "asc", False, "int"),
     EspecMetrica("treino_ativo", "Treino ativo", "desc", True, "int"),
 )
