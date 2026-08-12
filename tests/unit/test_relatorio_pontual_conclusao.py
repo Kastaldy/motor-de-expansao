@@ -88,6 +88,194 @@ def test_cenario_limpo_e_aprovado_sem_observacoes():
 
 
 # --------------------------------------------------------------------------- #
+# Modo SO-ESTUDO (BLK-CONC-ESTUDO): regua sem imovel e sem financeiro          #
+# --------------------------------------------------------------------------- #
+def _parecer_estudo(*, result=None, residual=None, info=None, viab=None):
+    """Mesmo cenario base, avaliado SO pela base do estudo."""
+    return _avaliar_conclusao(
+        {**_RESULT_OK, **(result or {})},
+        {**_RESIDUAL_OK, **(residual or {})},
+        {**_INFO_OK, **(info or {})},
+        {**_VIAB_OK, **(viab or {})},
+        somente_estudo=True,
+    )
+
+
+def test_so_estudo_ignora_todos_os_gates_de_imovel_e_retorno():
+    """Cenario que reprova em CADA gate financeiro/fisico ao mesmo tempo -> aprovado.
+
+    E o invariante central do modo: esses criterios nao ficam "sem dado", ficam FORA da
+    regua. Se algum deles voltasse a disparar aqui, o parecer do bot passaria a reprovar
+    ponto por numero que o estudo nao viu.
+    """
+    parecer = _parecer_estudo(
+        info={"metragem_m2": 400, "aluguel_pedido": 500_000.0},
+        viab={
+            "margem_ebitda_pct": 0.01,
+            "payback_meses": 240.0,
+            "flag_viavel": False,
+            "flag_zona_morta": True,
+            "motivo_zona_morta": "pop<5000",
+            "flag_fora_envelope": True,
+        },
+    )
+    assert parecer.status == CONCLUSAO_APROVADO
+    assert parecer.eliminatorios == ()
+    assert parecer.ressalvas == ()
+
+
+def test_so_estudo_preserva_as_metas_censitarias_e_o_mercado():
+    """O que e' do ESTUDO continua valendo, com o mesmo texto do parecer completo."""
+    parecer = _parecer_estudo(
+        result={"pop_total_raio": 900},
+        residual={"oferta_efetiva_disponivel": 100, "oferta_consumida_mercado_estimada": 11_900},
+    )
+    assert parecer.status == CONCLUSAO_RESSALVAS
+    texto = _texto(parecer)
+    assert "População total no raio" in texto
+    assert "Mercado já consumido" in texto
+
+
+def test_so_estudo_nao_cobra_campo_do_imovel_que_nao_avalia():
+    """Sem o modo, um PDF do bot nasceria com 2 ressalvas de 'nao informado' sempre."""
+    parecer = _avaliar_conclusao(_RESULT_OK, _RESIDUAL_OK, None, {}, somente_estudo=True)
+    assert parecer.status == CONCLUSAO_APROVADO
+    assert parecer.ressalvas == ()
+
+
+def test_so_estudo_reprova_quando_as_metas_falham_em_bloco():
+    """E5: o unico eliminatorio alcancavel sem imovel e sem financeiro (corte de Juan)."""
+    parecer = _parecer_estudo(
+        result={
+            "pop_total_raio": 1,
+            "renda_per_capita_media_raio": 1.0,
+            "domicilios_total_raio": 1,
+            "renda_domiciliar_total_raio": 1.0,
+        },
+        residual={
+            "sam_fitness_potencial": 1,
+            "oferta_efetiva_disponivel": 0,
+            "oferta_consumida_mercado_estimada": 99_999,
+        },
+    )
+    assert parecer.status == CONCLUSAO_REPROVADO
+    assert len(parecer.eliminatorios) == 1
+    assert "metas censitárias" in parecer.eliminatorios[0]
+
+
+# --------------------------------------------------------------------------- #
+# E5: metas censitarias falhando EM BLOCO (corte N=4, BLK-CONC-ESTUDO)         #
+# --------------------------------------------------------------------------- #
+def _result_com_n_metas_vermelhas(n: int) -> dict:
+    """Cenario com EXATAMENTE `n` das 4 metas de `result` abaixo da meta (SAM/Residual ok)."""
+    abaixo = {
+        "pop_total_raio": 1,
+        "renda_per_capita_media_raio": 1.0,
+        "domicilios_total_raio": 1,
+        "renda_domiciliar_total_raio": 1.0,
+    }
+    return {chave: valor for chave, valor in list(abaixo.items())[:n]}
+
+
+@pytest.mark.parametrize("n", [0, 1, 2, 3])
+def test_e5_abaixo_do_corte_apenas_rebaixa(n):
+    """Ate N-1 metas vermelhas o parecer NAO reprova -- so acumula ressalvas."""
+    parecer = _parecer_estudo(result=_result_com_n_metas_vermelhas(n))
+    assert parecer.eliminatorios == ()
+    assert parecer.status == (CONCLUSAO_APROVADO if n == 0 else CONCLUSAO_RESSALVAS)
+
+
+def test_e5_no_corte_exato_reprova():
+    """A borda e' INCLUSIVA (`>=`): 4 metas vermelhas ja reprovam."""
+    from motor_expansao.dashboard.censo_report import _CONCLUSAO_METAS_ELIMINATORIO_MIN
+
+    assert _CONCLUSAO_METAS_ELIMINATORIO_MIN == 4
+    parecer = _parecer_estudo(result=_result_com_n_metas_vermelhas(4))
+    assert parecer.status == CONCLUSAO_REPROVADO
+    assert "4 das 6 metas censitárias" in parecer.eliminatorios[0]
+
+
+def test_e5_conta_a_lista_crua_e_nao_a_exibida():
+    """Com mercado consumido, a linha do Residual some da EXIBICAO -- o gate nao pode
+    perde-la junto, senao o mesmo ponto reprovaria ou nao conforme uma decisao de texto."""
+    parecer = _parecer_estudo(
+        result=_result_com_n_metas_vermelhas(3),
+        residual={
+            "sam_fitness_potencial": 12_000,
+            "oferta_efetiva_disponivel": 0,  # Residual vermelho E mercado consumido
+            "oferta_consumida_mercado_estimada": 12_000,
+        },
+    )
+    # 3 de `result` + Residual = 4 na lista crua -> reprova, embora o Residual nao apareca
+    # como linha propria entre as ressalvas (ja foi dito pela linha de mercado consumido).
+    assert parecer.status == CONCLUSAO_REPROVADO
+    assert "4 das 6" in parecer.eliminatorios[0]
+    assert not any(r.startswith("Meta não atingida em Residual") for r in parecer.ressalvas)
+
+
+def test_e5_constante_de_total_bate_com_a_funcao_real():
+    """`_CONCLUSAO_METAS_AVALIADAS` so compoe texto -- se divergir, o PDF mente."""
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_METAS_AVALIADAS,
+        _conclusao_metas_vermelhas,
+    )
+
+    tudo_zerado = _conclusao_metas_vermelhas(
+        {
+            "pop_total_raio": 0,
+            "renda_per_capita_media_raio": 0.0,
+            "domicilios_total_raio": 0,
+            "renda_domiciliar_total_raio": 0.0,
+        },
+        {"sam_fitness_potencial": 0, "oferta_efetiva_disponivel": 0},
+    )
+    assert len(tudo_zerado) == _CONCLUSAO_METAS_AVALIADAS
+
+
+def test_e5_nao_vale_no_modo_completo():
+    """Escopo fechado por Juan (2026-08-12): o E5 e' do PDF do bot, e so dele.
+
+    O relatorio do piloto web sai EXATAMENTE como antes deste bloco -- as metas seguem
+    rebaixando para "com ressalvas" e quem reprova sao os gates de imovel e retorno.
+    Divergencia conhecida e aceita: o MESMO ponto pode sair reprovado no bot e com
+    ressalvas no web.
+    """
+    comum = dict(result=_result_com_n_metas_vermelhas(4))
+    assert _parecer_estudo(**comum).status == CONCLUSAO_REPROVADO
+    completo = _parecer(**comum)
+    assert completo.status == CONCLUSAO_RESSALVAS
+    assert completo.eliminatorios == ()
+
+
+def test_e5_nao_desloca_o_golden_do_recife():
+    """Segunda linha de defesa: nem se o E5 vazar para o modo completo o golden vira.
+
+    O gate ja esta preso ao so-estudo (`test_e5_nao_vale_no_modo_completo`), mas os 5
+    pontos reais falham no MAXIMO 1 meta cada -- muito abaixo do corte. Se alguem um dia
+    estender o E5 ao modo completo, a calibracao de Vinicius continua de pe.
+    """
+    from motor_expansao.dashboard.censo_report import (
+        _CONCLUSAO_METAS_ELIMINATORIO_MIN,
+        _conclusao_metas_vermelhas,
+    )
+
+    for nome, _esperado, result, residual, _info, _viab in _RECIFE:
+        n = len(_conclusao_metas_vermelhas(result, residual))
+        assert n < _CONCLUSAO_METAS_ELIMINATORIO_MIN, f"{nome} passou a disparar o E5 ({n} metas)"
+
+
+def test_texto_de_aprovacao_so_estudo_nao_afirma_o_que_nao_avaliou():
+    """O card de confirmacao padrao cita envelope do imovel e retorno -- aqui seria mentira."""
+    from motor_expansao.dashboard.censo_report import _conclusao_itens
+
+    (texto, severidade), = _conclusao_itens(_parecer_estudo(), somente_estudo=True)
+    assert severidade == "confirmacao"
+    assert "imóvel" not in texto
+    assert "retorno" not in texto
+    assert "base do estudo" in texto
+
+
+# --------------------------------------------------------------------------- #
 # Retorno: E1 (falha nos DOIS) x R1 (falha em UM)                             #
 # --------------------------------------------------------------------------- #
 def test_e1_margem_e_payback_juntos_reprovam():
@@ -318,11 +506,76 @@ def test_parecer_de_retorno_e_qualitativo_sem_percentual_nem_prazo():
 _TIT_CONCLUSAO = "Conclus\xe3o".encode("latin-1")
 
 
-def test_sem_viabilidade_nao_ha_pagina_de_conclusao():
-    """API e bot nao mandam `viabilidade` -- o PDF deles segue identico ao de hoje."""
+def _pdf_so_estudo(**kwargs) -> bytes:
+    """PDF pelo caminho API/bot: sem `viabilidade` e COM o flag que pede a Conclusao."""
+    return gerar_pdf_relatorio_pontual_classico(
+        _RESULT_PDF, None, residual=_RESIDUAL_OK, conclusao_so_estudo=True, **kwargs
+    )
+
+
+def test_sem_viabilidade_e_sem_flag_nao_ha_pagina_de_conclusao():
+    """Default INTOCADO: quem nao pede, segue com as 7 paginas de sempre.
+
+    E o caminho do piloto web (`web/server/app.py` chama a classica sem o flag): quando o
+    operador nao preenche a Viabilidade, o relatorio dele sai exatamente como antes do
+    BLK-CONC-ESTUDO. Escopo fechado por Juan em 2026-08-12.
+    """
     pdf_bytes = gerar_pdf_relatorio_pontual_classico(_MIN_RESULT, None)
     assert b"/Count 7" in pdf_bytes
     assert _TIT_CONCLUSAO not in pdf_bytes
+
+
+def test_sem_viabilidade_com_flag_a_pagina_entra_em_modo_so_estudo():
+    """BLK-CONC-ESTUDO: com o flag, o caminho API/bot ganha o parecer da base do ESTUDO."""
+    pdf_bytes = gerar_pdf_relatorio_pontual_classico(
+        _MIN_RESULT, None, conclusao_so_estudo=True
+    )
+    assert b"/Count 8" in pdf_bytes
+    assert _TIT_CONCLUSAO in pdf_bytes
+
+
+def test_flag_e_inerte_quando_ha_viabilidade():
+    """Com o payload a pagina ja saia -- o flag nao pode duplica-la nem mudar nada."""
+    comum = dict(residual=_RESIDUAL_OK, info_imovel=_INFO_OK, viabilidade=_VIAB_OK)
+    sem_flag = gerar_pdf_relatorio_pontual_classico(_RESULT_PDF, None, **comum)
+    com_flag = gerar_pdf_relatorio_pontual_classico(
+        _RESULT_PDF, None, conclusao_so_estudo=True, **comum
+    )
+    assert sem_flag == com_flag
+
+
+def test_pagina_so_estudo_nao_imprime_nenhum_numero_financeiro():
+    """Sem viabilidade, os cards de aluguel SOMEM -- nao viram dois "n/d" no parecer.
+
+    Sem `info_imovel` de proposito: aquela pagina tambem imprime "Aluguel pedido", e
+    inclui-la testaria a pagina errada -- a mesma armadilha que `_bytes_da_faixa_de_aluguel`
+    contorna mais abaixo.
+    """
+    pdf_bytes = _pdf_so_estudo()
+    assert _TIT_CONCLUSAO in pdf_bytes
+    assert "Aluguel-teto".encode("latin-1") not in pdf_bytes
+    assert "Aluguel pedido".encode("latin-1") not in pdf_bytes
+
+
+def test_selo_aprovado_so_estudo_sem_mencao_a_comite():
+    """No PDF do bot o selo verde e' "APROVADO" seco (pedido de Juan, 2026-08-12).
+
+    Esse parecer nao viu imovel nem retorno, entao prometer encaminhamento a comite seria
+    prometer um rito que ele nao tem base para disparar. Par deste teste:
+    `test_com_viabilidade_a_pagina_entra_antes_do_credito` prova que o modo COMPLETO
+    manteve "PARA COMITÊ".
+    """
+    pdf_bytes = _pdf_so_estudo()
+    assert b"APROVADO" in pdf_bytes
+    assert b"PARA COMIT" not in pdf_bytes
+
+
+def test_nota_do_modo_so_estudo_declara_o_que_nao_foi_avaliado():
+    """A nota do modo completo AFIRMA ter avaliado imovel e retorno -- aqui seria falso."""
+    pdf_bytes = _pdf_so_estudo()
+    assert "r\xe9guas do ESTUDO".encode("latin-1") in pdf_bytes
+    # A nota declara o corte do E5 -- e' o unico jeito de reprovar neste modo.
+    assert b"4 das 6 metas falham ao mesmo tempo" in pdf_bytes
 
 
 def test_com_viabilidade_a_pagina_entra_antes_do_credito():
@@ -332,7 +585,9 @@ def test_com_viabilidade_a_pagina_entra_antes_do_credito():
     assert b"/Count 10" in pdf_bytes  # 7 base + info + numeros + conclusao
     assert _TIT_CONCLUSAO in pdf_bytes
     assert b"APROVADO" in pdf_bytes  # selo; ver `test_selo_carimba_o_status...`
-    assert b"PARA COMIT" in pdf_bytes  # linha de apoio do selo
+    # No modo COMPLETO o selo mantem a linha de apoio: a remocao de 2026-08-12 (pedido de
+    # Juan) vale so no PDF do bot -- ver `test_selo_aprovado_so_estudo_sem_mencao_a_comite`.
+    assert b"PARA COMIT" in pdf_bytes
     # A pagina de credito continua sendo a ULTIMA do documento.
     assert pdf_bytes.rindex(_TIT_CONCLUSAO) < pdf_bytes.rindex("Realiza\xe7\xe3o".encode("latin-1"))
 

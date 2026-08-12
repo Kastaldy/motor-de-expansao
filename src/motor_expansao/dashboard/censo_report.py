@@ -42,6 +42,8 @@ from motor_expansao.dashboard.constants import TEXTO_SEM_DADO
 # As paginas OPCIONAIS nao entram nesta tupla: fotos do imovel, info do imovel e as 2 de
 # viabilidade (numeros + graficos) levam o PDF ao teto de 11 paginas (era 12 com o entorno);
 # a vista aerea (BLK-SAT, so no caminho API/bot) soma mais uma quando presente.
+# "Conclusão" tambem NAO entra: ela e' condicional (`viabilidade` ou `conclusao_so_estudo`),
+# e po-la aqui faria esta tupla prometer um header que a maioria dos PDFs nao tem.
 PDF_SECTION_HEADERS = (
     "Relatório Pontual Censitário",
     "Socioeconomia e Residual Fitness",
@@ -1521,6 +1523,28 @@ _CONCLUSAO_CAMPOS_ESSENCIAIS = (
     ("aluguel_pedido", "Aluguel pedido"),
 )
 
+# E5 (BLK-CONC-ESTUDO, corte de Juan em 2026-08-11): N metas censitarias vermelhas AO MESMO
+# TEMPO valem um eliminatorio -- a mesma gramatica "1 grave OU N medios" que a pagina ja
+# herdou de `rede_diagnostico`. Antes deste bloco NENHUM criterio da praca reprovava, e o
+# parecer do caminho API/bot (que nao tem imovel nem financeiro) parava sempre em
+# "com ressalvas".
+#
+# Por que 4 e nao 3: medido em 40 pontos reais de SP sorteados entre hexes povoados, o corte
+# 3 reprovaria 65% deles e "Reprovado" viraria a resposta padrao do bot; 4 reprova 60% da
+# MESMA amostra, que puxa para cidade pequena (as metas sao ABSOLUTAS e calibradas para o
+# raio de 1,0 km urbano). Numeros no gate; mexer aqui pede remedir.
+#
+# Vale SO no modo so-estudo (escopo fechado por Juan em 2026-08-12). Consequencia conhecida
+# e ACEITA: um ponto com 4+ metas vermelhas e financeiro bom sai "Reprovado" no PDF do bot e
+# "Aprovado com ressalvas" no do piloto web. Quem levar os dois documentos para a mesma
+# conversa precisa saber disso. Estender ao modo completo e' UMA condicao (`somente_estudo`
+# no gate) -- e passaria a mexer no relatorio calibrado por Vinicius, que nao foi pedido.
+_CONCLUSAO_METAS_ELIMINATORIO_MIN = 4
+# Total avaliado por `_conclusao_metas_vermelhas` (pop, renda pc, domicilios, renda
+# domiciliar, SAM, Residual). So compoe o TEXTO ("4 das 6"); travado em teste contra a
+# funcao real, para nao virar prosa desatualizada se uma meta entrar ou sair.
+_CONCLUSAO_METAS_AVALIADAS = 6
+
 # `motivo_zona_morta` chega como token bruto do motor ("pop<5000"). Traduzir aqui mantem
 # o valor cru intacto e ainda assim legivel; token novo cai no fallback e sai como veio.
 _CONCLUSAO_MOTIVO_ZONA_MORTA = {
@@ -1541,6 +1565,24 @@ _CONCLUSAO_NOTA = (
     "de retorno do cenário simulado. Um item eliminatório reprova sozinho; os demais rebaixam "
     "para 'Aprovado com ressalvas'. Dado ausente nunca reprova, apenas deixa o item sem "
     "avaliar. READ-ONLY sobre o M1."
+)
+# Variantes do modo SO-ESTUDO (BLK-CONC-ESTUDO). Reusar as strings acima seria AFIRMAR que
+# o envelope do imovel e os criterios de retorno foram avaliados -- exatamente os que este
+# modo nao avalia. O texto de aprovacao e a nota tem de descrever a regua que rodou.
+_CONCLUSAO_APROVADO_TEXTO_ESTUDO = (
+    "Nenhuma restrição encontrada na base do estudo: o ponto atende às metas censitárias "
+    "do raio e à leitura de mercado do hexágono."
+)
+_CONCLUSAO_NOTA_ESTUDO = (
+    "Parecer automático das réguas do ESTUDO: metas censitárias do raio de "
+    f"{_RAIO_LABEL} e leitura de mercado do hexágono. NÃO avalia o imóvel (metragem, "
+    # Travessao (U+2014) NAO existe em latin-1 e sairia como "?" silencioso no PDF (fonte
+    # core do fpdf2) -- regra de acentuacao do CLAUDE.md, travada pelo teste de regressao.
+    "aluguel) nem o retorno do cenário - esses critérios exigem a análise financeira e "
+    "ficam fora deste parecer. Reprova quando "
+    f"{_CONCLUSAO_METAS_ELIMINATORIO_MIN} das {_CONCLUSAO_METAS_AVALIADAS} metas falham ao "
+    "mesmo tempo; as demais observações rebaixam para 'Aprovado com ressalvas'. Dado "
+    "ausente nunca reprova, apenas deixa o item sem avaliar. READ-ONLY sobre o M1."
 )
 # Piso da area de observacoes: a pagina e FIXA (auto_page_break OFF), entao texto que nao
 # cabe NAO vaza para a pagina seguinte -- ele some por baixo do rodape, em silencio.
@@ -1596,6 +1638,11 @@ _CONCLUSAO_SELO_TEXTOS = {
     "com_ressalvas": ("COM RESSALVAS", "REQUER REVISÃO"),
     "reprovado": ("REPROVADO", "FORA DA RÉGUA"),
 }
+# No modo SO-ESTUDO o selo verde sai como "APROVADO" seco (Juan, 2026-08-12): esse parecer
+# nao viu imovel nem retorno, entao prometer encaminhamento a comite seria prometer um rito
+# que ele nao tem base para disparar. O modo COMPLETO segue com "PARA COMITÊ", espelhando a
+# tela de Viabilidade -- o escopo pedido foi o PDF do bot, e so ele.
+_CONCLUSAO_SELO_APOIO_OCULTO_NO_ESTUDO = frozenset({CONCLUSAO_APROVADO})
 
 # Geometria de 2 COLUNAS (reestruturacao pedida por Vinicius, 2026-08-07): cards de
 # aluguel + observacoes a ESQUERDA, selo sozinho a DIREITA. A largura da coluna esquerda
@@ -1773,20 +1820,16 @@ def _conclusao_retorno(dados: Mapping[str, Any]) -> tuple[bool, bool, bool]:
     return margem < margem_min, (payback is None or payback > payback_max), True
 
 
-def _avaliar_conclusao(
-    result: Mapping[str, Any] | None,
-    residual: Mapping[str, Any] | None,
-    info_imovel: Mapping[str, Any] | None,
-    dados_viab: Mapping[str, Any],
-) -> _ConclusaoPonto:
-    """Aplica a regua e devolve o parecer. FUNCAO PURA: sem I/O, sem motor, sem estado.
+def _conclusao_regras_imovel(
+    info: Mapping[str, Any], dados_viab: Mapping[str, Any]
+) -> tuple[list[str], list[str]]:
+    """(eliminatorios, ressalvas) dos gates que dependem do IMOVEL e do cenario financeiro.
 
-    `dados_viab` e o dict ja achatado por `_viab_normalizado` -- a conclusao LE os mesmos
-    numeros que a pagina de Viabilidade imprime, nunca recalcula nenhum deles.
+    Extraidos de `_avaliar_conclusao` sem alterar uma linha da logica: sao exatamente os
+    criterios que o modo SO-ESTUDO (BLK-CONC-ESTUDO) desliga, porque nenhum deles tem
+    insumo no caminho API/bot -- que nunca envia `viabilidade` nem `info_imovel`. Manter os
+    itens nesta ordem preserva a ordem de leitura do parecer completo.
     """
-    result = result or {}
-    residual = residual or {}
-    info = info_imovel or {}
     eliminatorios: list[str] = []
     ressalvas: list[str] = []
 
@@ -1854,6 +1897,42 @@ def _avaliar_conclusao(
             "Metragem fora do envelope da base de calibração: projeção com incerteza maior."
         )
 
+    return eliminatorios, ressalvas
+
+
+def _avaliar_conclusao(
+    result: Mapping[str, Any] | None,
+    residual: Mapping[str, Any] | None,
+    info_imovel: Mapping[str, Any] | None,
+    dados_viab: Mapping[str, Any],
+    *,
+    somente_estudo: bool = False,
+) -> _ConclusaoPonto:
+    """Aplica a regua e devolve o parecer. FUNCAO PURA: sem I/O, sem motor, sem estado.
+
+    `dados_viab` e o dict ja achatado por `_viab_normalizado` -- a conclusao LE os mesmos
+    numeros que a pagina de Viabilidade imprime, nunca recalcula nenhum deles.
+
+    `somente_estudo=True` (BLK-CONC-ESTUDO) avalia SO a base do estudo: metas censitarias
+    do raio, leitura de mercado do hexagono e a ressalva de censo indisponivel. Os gates de
+    imovel e retorno (`_conclusao_regras_imovel`) ficam de fora INTEIROS -- nao "sem dado",
+    e sim fora da regua --, porque no caminho API/bot eles nunca tiveram insumo e sairiam
+    todos como "nao informado", enchendo o parecer de ressalvas que nao dizem nada sobre o
+    ponto. O que RESTA e' a praca: metas censitarias, mercado do hexagono e a ressalva de
+    censo indisponivel -- mais o gate E5, que reprova quando as metas falham EM BLOCO e e'
+    o unico eliminatorio alcancavel neste modo (ver `_CONCLUSAO_METAS_ELIMINATORIO_MIN`).
+    """
+    result = result or {}
+    residual = residual or {}
+    info = info_imovel or {}
+    eliminatorios: list[str] = []
+    ressalvas: list[str] = []
+
+    if not somente_estudo:
+        elim_imovel, ress_imovel = _conclusao_regras_imovel(info, dados_viab)
+        eliminatorios.extend(elim_imovel)
+        ressalvas.extend(ress_imovel)
+
     # --- Censo indisponivel para o ponto ---
     # As 4 metricas censitarias ausentes AO MESMO TEMPO significam que nenhum setor caiu
     # no raio (ponto no mar, particao geo do municipio ausente, borda da malha). Sem esta
@@ -1882,7 +1961,23 @@ def _avaliar_conclusao(
             "Mercado já consumido pela oferta instalada: residual de "
             f"{_format_number(disponivel, 0)} contra potencial de {_format_number(sam, 0)} alunos."
         )
-    for rotulo, valor_txt, meta_txt in _conclusao_metas_vermelhas(result, residual):
+
+    # --- E5: metas censitarias falhando EM BLOCO (BLK-CONC-ESTUDO) ---
+    # SO no modo so-estudo (escopo fechado por Juan em 2026-08-12: a mudanca e' do PDF do
+    # bot, e so dele). No modo completo a regua fica EXATAMENTE como estava -- as metas
+    # seguem rebaixando para "com ressalvas" e quem reprova sao os gates de imovel e
+    # retorno --, entao o relatorio do piloto web sai identico ao de antes deste bloco.
+    #
+    # Conta sobre a lista CRUA, nao sobre a exibida: a linha do Residual e' suprimida logo
+    # abaixo quando o mercado consumido ja a disse com mais contexto, e descontar isso do
+    # gate faria o mesmo ponto reprovar ou nao conforme uma decisao de TEXTO.
+    metas_vermelhas = _conclusao_metas_vermelhas(result, residual)
+    if somente_estudo and len(metas_vermelhas) >= _CONCLUSAO_METAS_ELIMINATORIO_MIN:
+        eliminatorios.append(
+            f"{len(metas_vermelhas)} das {_CONCLUSAO_METAS_AVALIADAS} metas censitárias do raio "
+            "não atingidas ao mesmo tempo: a praça não sustenta a operação."
+        )
+    for rotulo, valor_txt, meta_txt in metas_vermelhas:
         # A meta do Residual ja foi dita, com mais contexto, na linha de mercado consumido
         # logo acima -- repeti-la seria afirmar a mesma coisa duas vezes no mesmo parecer.
         if mercado_consumido and rotulo == "Residual Fitness":
@@ -1890,11 +1985,14 @@ def _avaliar_conclusao(
         ressalvas.append(f"Meta não atingida em {rotulo}: {valor_txt} para meta de {meta_txt}.")
 
     # --- Campos essenciais nao informados (R6) ---
-    for chave, rotulo in _CONCLUSAO_CAMPOS_ESSENCIAIS:
-        if _conclusao_valor(info.get(chave)) is None:
-            ressalvas.append(
-                f"{rotulo} não informado: o critério correspondente não pôde ser avaliado."
-            )
+    # Fica FORA de `_conclusao_regras_imovel` de proposito: la o bloco subiria na ordem de
+    # leitura do parecer completo, e estes itens sempre fecharam a lista. So o `if` e' novo.
+    if not somente_estudo:
+        for chave, rotulo in _CONCLUSAO_CAMPOS_ESSENCIAIS:
+            if _conclusao_valor(info.get(chave)) is None:
+                ressalvas.append(
+                    f"{rotulo} não informado: o critério correspondente não pôde ser avaliado."
+                )
 
     if eliminatorios:
         status = CONCLUSAO_REPROVADO
@@ -1964,7 +2062,14 @@ def _conclusao_simbolo(
 
 
 def _conclusao_selo(
-    pdf: _UltraPDF, status: str, x: float, y: float, largura: float, altura: float
+    pdf: _UltraPDF,
+    status: str,
+    x: float,
+    y: float,
+    largura: float,
+    altura: float,
+    *,
+    somente_estudo: bool = False,
 ) -> None:
     """Selo do parecer: quadrado com simbolo em cima, rotulo embaixo, cor pelo estado.
 
@@ -1976,6 +2081,8 @@ def _conclusao_selo(
     """
     rgb = _CONCLUSAO_SELO_RGB[status]
     principal, secundario = _CONCLUSAO_SELO_TEXTOS[status]
+    if somente_estudo and status in _CONCLUSAO_SELO_APOIO_OCULTO_NO_ESTUDO:
+        secundario = ""
     prev_lw = pdf.line_width
 
     pdf.set_fill_color(*_CONCLUSAO_CORES[status])
@@ -1995,12 +2102,18 @@ def _conclusao_selo(
     pdf.set_text_color(*rgb)
     # O rotulo principal encolhe se preciso: "COM RESSALVAS" e' bem mais largo que
     # "APROVADO" e nao pode vazar a borda do selo.
-    pdf.set_xy(x, y + altura * 0.55)
+    #
+    # Sem linha de apoio (so-estudo + "aprovado"), o rotulo DESCE de 0.55 para 0.62: o
+    # bloco de texto que ocupava 0.55..0.74 vira uma linha so, e mante-la no topo antigo
+    # deixaria o selo verde visivelmente desequilibrado ao lado dos outros dois. O 0.62
+    # poe o centro da linha unica onde ficava o centro do bloco de duas.
+    pdf.set_xy(x, y + altura * (0.55 if secundario else 0.62))
     _ajustar_fonte_para_largura(pdf, _ascii(principal), largura - 16, tamanho=17.0)
     pdf.cell(largura, 22, _ascii(principal), align="C")
-    pdf.set_font("Helvetica", "B", 9.5)
-    pdf.set_xy(x, y + altura * 0.74)
-    pdf.cell(largura, 14, _ascii(secundario), align="C")
+    if secundario:
+        pdf.set_font("Helvetica", "B", 9.5)
+        pdf.set_xy(x, y + altura * 0.74)
+        pdf.cell(largura, 14, _ascii(secundario), align="C")
 
 
 def _conclusao_cards_aluguel(
@@ -2057,11 +2170,19 @@ def _conclusao_cards_aluguel(
         pdf.cell(card_w - 28, 22, valor_txt)
 
 
-def _conclusao_itens(parecer: _ConclusaoPonto) -> tuple[tuple[str, str], ...]:
-    """(texto, severidade) na ordem de leitura: o que reprovou antes do que so ressalva."""
+def _conclusao_itens(
+    parecer: _ConclusaoPonto, *, somente_estudo: bool = False
+) -> tuple[tuple[str, str], ...]:
+    """(texto, severidade) na ordem de leitura: o que reprovou antes do que so ressalva.
+
+    Sem nenhum apontamento sobra o card de confirmacao, e e' ELE que precisa saber do modo:
+    o texto padrao cita envelope do imovel e criterios de retorno, que o modo so-estudo
+    nunca avaliou.
+    """
     itens = [(texto, "eliminatorio") for texto in parecer.eliminatorios]
     itens += [(texto, "ressalva") for texto in parecer.ressalvas]
-    return tuple(itens) or ((_CONCLUSAO_APROVADO_TEXTO, "confirmacao"),)
+    aprovado = _CONCLUSAO_APROVADO_TEXTO_ESTUDO if somente_estudo else _CONCLUSAO_APROVADO_TEXTO
+    return tuple(itens) or ((aprovado, "confirmacao"),)
 
 
 def _conclusao_altura_obs(pdf: _UltraPDF, texto: str, largura: float) -> float:
@@ -2154,11 +2275,12 @@ def _conclusao_page(
     result: dict[str, Any],
     residual: dict[str, Any] | None,
     info_imovel: dict[str, Any] | None,
-    viabilidade: dict[str, Any],
+    viabilidade: dict[str, Any] | None,
     assets: dict[str, bytes | None],
     *,
     primary: tuple[int, int, int] = ULTRA_TURQUESA,
     secondary: tuple[int, int, int] = ULTRA_MAGENTA,
+    somente_estudo: bool = False,
 ) -> None:
     """Pagina de parecer do ponto, em 2 COLUNAS: conteudo a esquerda, selo a direita.
 
@@ -2168,9 +2290,16 @@ def _conclusao_page(
     dois cards de aluguel e, abaixo deles, as observacoes -- cada uma em CARD proprio,
     com o mesmo peso visual dos cards de valor. As duas colunas sao centralizadas
     VERTICALMENTE na area de conteudo, cada uma no seu proprio eixo. READ-ONLY sobre o M1.
+
+    `somente_estudo=True` (BLK-CONC-ESTUDO) e' o modo do caminho API/bot: `viabilidade`
+    pode vir `None`, os dois cards de aluguel SOMEM (sao numeros financeiros, e sem payload
+    imprimiriam "n/d" duas vezes) e a coluna esquerda fica so com as observacoes, que
+    sobem para ocupar o espaco. A nota metodologica troca junto -- ver `_CONCLUSAO_NOTA_ESTUDO`.
     """
-    dados = _viab_normalizado(viabilidade)
-    parecer = _avaliar_conclusao(result, residual, info_imovel, dados)
+    dados = _viab_normalizado(viabilidade) if viabilidade else {}
+    parecer = _avaliar_conclusao(
+        result, residual, info_imovel, dados, somente_estudo=somente_estudo
+    )
 
     pdf.add_page()
     _draw_full_page_background(pdf, assets.get("conteudo"), ULTRA_BRANCO_GELO)
@@ -2188,18 +2317,23 @@ def _conclusao_page(
         _CONCLUSAO_AREA_TOPO + (area_h - _CONCLUSAO_SELO_H) / 2,
         _CONCLUSAO_COL_DIR_W,
         _CONCLUSAO_SELO_H,
+        somente_estudo=somente_estudo,
     )
 
     # --- Coluna ESQUERDA: cards de aluguel + cards de observacao, centrados na vertical ---
-    itens = _conclusao_itens(parecer)
+    itens = _conclusao_itens(parecer, somente_estudo=somente_estudo)
     alturas, bloco_obs_h = _conclusao_bloco_observacoes(pdf, itens, largura_esq)
-    conteudo_h = _CONCLUSAO_ALUGUEL_H + _CONCLUSAO_ALUGUEL_OBS_GAP + bloco_obs_h
+    # No modo so-estudo os cards de aluguel nao existem -- e a altura deles NAO pode entrar
+    # na conta, senao o bloco de observacoes nasce 94 pt abaixo do centro da area.
+    altura_aluguel = 0.0 if somente_estudo else _CONCLUSAO_ALUGUEL_H + _CONCLUSAO_ALUGUEL_OBS_GAP
+    conteudo_h = altura_aluguel + bloco_obs_h
     # `max(0, ...)`: conteudo mais alto que a area comeca no TOPO em vez de subir acima da
     # banda de titulo -- e a guarda de altura mais abaixo corta o excedente com aviso.
     y = _CONCLUSAO_AREA_TOPO + max(0.0, (area_h - conteudo_h) / 2)
 
-    _conclusao_cards_aluguel(pdf, dados, info_imovel, margem, y, largura_esq, secondary)
-    y += _CONCLUSAO_ALUGUEL_H + _CONCLUSAO_ALUGUEL_OBS_GAP
+    if not somente_estudo:
+        _conclusao_cards_aluguel(pdf, dados, info_imovel, margem, y, largura_esq, secondary)
+    y += altura_aluguel
 
     pdf.set_text_color(45, 45, 45)
     pdf.set_font("Helvetica", "B", 12)
@@ -2228,7 +2362,11 @@ def _conclusao_page(
     pdf.set_text_color(*_CINZA_TEXTO)
     pdf.set_font("Helvetica", "", 8)
     pdf.set_xy(margem, _CONCLUSAO_NOTA_Y)
-    pdf.multi_cell(_PAGE_W - 2 * margem, 11, _ascii(_CONCLUSAO_NOTA))
+    pdf.multi_cell(
+        _PAGE_W - 2 * margem,
+        11,
+        _ascii(_CONCLUSAO_NOTA_ESTUDO if somente_estudo else _CONCLUSAO_NOTA),
+    )
     _draw_footer(pdf, with_attribution=False)
 
 
@@ -3208,6 +3346,7 @@ def gerar_pdf_relatorio_pontual_classico(
     foto_satelite: bytes | None = None,
     foto_satelite_grande: bool = False,
     origem_centroide_hex: bool = False,
+    conclusao_so_estudo: bool = False,
 ) -> bytes:
     """Gera o PDF "Apresentacao Classica Ultra" (estetica GeoFusion antiga, motor novo).
 
@@ -3227,6 +3366,10 @@ def gerar_pdf_relatorio_pontual_classico(
     As paginas OPCIONAIS `fotos`, `info_imovel` e `viabilidade` (numeros + graficos) somam no
     maximo mais 4 -> teto de 11 paginas (era 12 com o entorno); `foto_satelite` (BLK-SAT, so no
     caminho API/bot) soma mais uma quando presente.
+
+    `conclusao_so_estudo=True` (BLK-CONC-ESTUDO) faz a pagina de Conclusao sair TAMBEM sem
+    `viabilidade`, em modo so-estudo -- e o que o caminho API/bot pede. Default `False`
+    preserva o comportamento historico: sem o payload, sem pagina.
 
     `rotulo` e o nome/endereco do ponto (capa + banda + texto do link) — TEXTO LIVRE de quem
     chama, impresso e usado na busca do link SEM reinterpretacao (parenteses, virgulas e
@@ -3298,10 +3441,19 @@ def gerar_pdf_relatorio_pontual_classico(
     _classico_banda_magenta_rodape(pdf)
     if viabilidade:
         _viabilidade_page(pdf, viabilidade, assets, primary=p1, secondary=p2)
-        # CONCLUSAO: fecha o relatorio com o parecer do ponto, logo antes do credito.
-        # Mesma condicao da pagina de Viabilidade, de proposito -- sem o payload nao ha
-        # regua de retorno nem aluguel-teto para avaliar, e a API/bot (que nao mandam
-        # `viabilidade`; ver `api/service.py`) seguem produzindo o PDF identico ao de hoje.
+    # CONCLUSAO: fecha o relatorio com o parecer do ponto, logo antes do credito.
+    #
+    # COM `viabilidade` -> parecer completo, como desde 2026-08-06.
+    # SEM `viabilidade` -> so entra se o chamador PEDIR (`conclusao_so_estudo=True`), e ai
+    # roda em modo so-estudo. Hoje quem pede e' `api/service.py` (caminho API/bot), que
+    # nunca teve o payload e por isso nunca via a pagina.
+    #
+    # O flag existe para CONFINAR o BLK-CONC-ESTUDO ao caminho da API (escopo fechado por
+    # Juan em 2026-08-12). Sem ele, o piloto web -- que chama esta funcao com
+    # `viabilidade=None` quando o operador nao preencheu o formulario (`web/server/app.py`)
+    # -- ganharia a pagina junto, fora do escopo pedido. Default `False` = comportamento
+    # historico intacto para todo chamador que nao se manifeste.
+    if viabilidade or conclusao_so_estudo:
         _conclusao_page(
             pdf,
             result,
@@ -3311,6 +3463,7 @@ def gerar_pdf_relatorio_pontual_classico(
             assets,
             primary=p5,
             secondary=s5,
+            somente_estudo=not viabilidade,
         )
     _classico_credit_page(
         pdf, result, assets, rotulo=rotulo, now=now, origem_centroide_hex=origem_centroide_hex
@@ -3363,6 +3516,7 @@ def gerar_pdf_relatorio_pontual_censitario(
     foto_satelite: bytes | None = None,
     foto_satelite_grande: bool = False,
     origem_centroide_hex: bool = False,
+    conclusao_so_estudo: bool = False,
 ) -> bytes:
     """DEPRECIADA (BLK-RELPON-14): wrapper fino de `gerar_pdf_relatorio_pontual_classico`.
 
@@ -3373,9 +3527,9 @@ def gerar_pdf_relatorio_pontual_censitario(
     Prefira chamar `gerar_pdf_relatorio_pontual_classico` diretamente.
 
     A assinatura e' um SUPERSET da anterior: alem dos kwargs historicos, aceita `now`,
-    `foto_satelite`, `foto_satelite_grande` e `origem_centroide_hex`, que so a classica
-    aceitava. Qualquer chamada que funcionava antes continua funcionando (os novos parametros
-    tem default inerte).
+    `foto_satelite`, `foto_satelite_grande`, `origem_centroide_hex` e `conclusao_so_estudo`,
+    que so a classica aceitava. Qualquer chamada que funcionava antes continua funcionando
+    (os novos parametros tem default inerte).
     """
     warnings.warn(
         "gerar_pdf_relatorio_pontual_censitario esta depreciada (BLK-RELPON-14): o template "
@@ -3398,6 +3552,7 @@ def gerar_pdf_relatorio_pontual_censitario(
         foto_satelite=foto_satelite,
         foto_satelite_grande=foto_satelite_grande,
         origem_centroide_hex=origem_centroide_hex,
+        conclusao_so_estudo=conclusao_so_estudo,
     )
 
 
