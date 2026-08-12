@@ -28,7 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import click
@@ -118,7 +118,7 @@ def main(planilha: Path | None, saida: Path, hoje: datetime | None,
     saida.parent.mkdir(parents=True, exist_ok=True)
     fat.to_parquet(saida, index=False)
     manifesto = {
-        "gerado_em": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "gerado_em": datetime.now(UTC).isoformat(timespec="seconds"),
         "planilha": origem.name,
         "sha256": sha256_de(origem),
         "linhas": int(len(fat)),
