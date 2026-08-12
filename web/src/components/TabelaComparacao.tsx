@@ -15,10 +15,19 @@ export default function TabelaComparacao<T>({
   comparacao,
   rotuloA,
   rotuloB,
+  corA,
+  corB,
 }: {
   comparacao: Comparacao<T>
   rotuloA: string
   rotuloB: string
+  /**
+   * Cor de IDENTIDADE de cada lado — a mesma da aba do ponto, para o operador ligar
+   * coluna e aba sem ler o rótulo. Não é veredito: quem ganha continua sendo dito pelo
+   * peso do número e pelo destaque do cabeçalho.
+   */
+  corA?: string
+  corB?: string
 }) {
   const { deltas, frase, vencedor } = comparacao
 
@@ -35,8 +44,8 @@ export default function TabelaComparacao<T>({
         }}
       >
         <span />
-        <Cabecalho texto={rotuloA} destaque={vencedor === 'a'} />
-        <Cabecalho texto={rotuloB} destaque={vencedor === 'b'} />
+        <Cabecalho texto={rotuloA} destaque={vencedor === 'a'} cor={corA} />
+        <Cabecalho texto={rotuloB} destaque={vencedor === 'b'} cor={corB} />
 
         {deltas.map((d) => {
           const indisponivel = d.a == null || d.b == null
@@ -53,6 +62,8 @@ export default function TabelaComparacao<T>({
               apagada={!d.relevante}
               fracaoA={fracao(d.a, d.b)}
               fracaoB={fracao(d.b, d.a)}
+              corA={corA}
+              corB={corB}
               maiorEhMelhor={d.dimensao.maiorEhMelhor}
             />
           )
@@ -74,13 +85,15 @@ export default function TabelaComparacao<T>({
   )
 }
 
-function Cabecalho({ texto, destaque }: { texto: string; destaque: boolean }) {
+function Cabecalho({ texto, destaque, cor }: { texto: string; destaque: boolean; cor?: string }) {
   return (
     <span
       title={texto}
       style={{
         font: `${destaque ? 700 : 500} 10.5px/1.2 var(--f-ui)`,
-        color: destaque ? 'var(--tx-max)' : 'var(--tx-muted)',
+        color: cor ?? (destaque ? 'var(--tx-max)' : 'var(--tx-muted)'),
+        borderBottom: cor ? `2px solid ${cor}` : undefined,
+        paddingBottom: cor ? 3 : undefined,
         textAlign: 'right',
         maxWidth: 96,
         overflow: 'hidden',
@@ -94,7 +107,7 @@ function Cabecalho({ texto, destaque }: { texto: string; destaque: boolean }) {
 }
 
 function Linha({
-  rotulo, a, b, ganhaA, ganhaB, apagada, fracaoA, fracaoB, maiorEhMelhor,
+  rotulo, a, b, ganhaA, ganhaB, apagada, fracaoA, fracaoB, maiorEhMelhor, corA, corB,
 }: {
   rotulo: string
   a: string
@@ -106,8 +119,10 @@ function Linha({
   fracaoA: number | null
   fracaoB: number | null
   maiorEhMelhor: boolean
+  corA?: string
+  corB?: string
 }) {
-  const cor = (ganha: boolean) =>
+  const corDoTexto = (ganha: boolean) =>
     ganha ? 'var(--tx-max)' : apagada ? 'var(--tx-off)' : 'var(--tx-soft)'
   return (
     <>
@@ -129,9 +144,9 @@ function Linha({
         )}
       </span>
       {[
-        { v: a, ganha: ganhaA, fr: fracaoA },
-        { v: b, ganha: ganhaB, fr: fracaoB },
-      ].map(({ v, ganha, fr }, i) => (
+        { v: a, ganha: ganhaA, fr: fracaoA, cor: corA },
+        { v: b, ganha: ganhaB, fr: fracaoB, cor: corB },
+      ].map(({ v, ganha, fr, cor }, i) => (
         <span key={i} style={{ display: 'grid', gap: 4, justifyItems: 'end', minWidth: 72 }}>
           <span
             className="num"
@@ -139,7 +154,7 @@ function Linha({
               /* Menor que a barra em peso visual: aqui também o desenho é que responde
                  "qual é maior", e o número fica como evidência auditável. */
               font: `${ganha ? 700 : 500} 11px/1.3 var(--f-num)`,
-              color: cor(ganha),
+              color: corDoTexto(ganha),
               textAlign: 'right',
               fontVariantNumeric: 'tabular-nums',
             }}
@@ -167,11 +182,11 @@ function Linha({
                   width: `${Math.round(fr * 100)}%`,
                   height: '100%',
                   borderRadius: 4,
-                  background: ganha
-                    ? 'var(--ac)'
-                    : apagada
-                      ? 'var(--line-mid)'
-                      : 'var(--tx-rank)',
+                  /* A barra veste a cor do PONTO; quem perde entra esmaecido pela
+                     opacidade, não por outra cor — trocar a cor apagaria a identidade
+                     justamente na linha em que se quer comparar os dois. */
+                  background: cor ?? 'var(--ac)',
+                  opacity: apagada ? 0.35 : ganha ? 1 : 0.55,
                 }}
               />
             </span>

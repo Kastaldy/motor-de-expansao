@@ -8,6 +8,7 @@ import type { EntradaClassificada } from '../lib/entrada-ponto'
 import {
   MAX_PONTOS,
   compararPontos,
+  corDoPonto,
   rotulosDosPontos,
 } from '../lib/comparacao-pontos'
 import { alunos, num } from '../lib/format'
@@ -80,8 +81,10 @@ export default function PainelPontos({
                 gap: 6,
                 padding: '7px 8px 7px 11px',
                 borderRadius: 999,
-                background: ativo ? 'var(--ac-a12)' : 'var(--surf-raised)',
-                border: `1px solid ${ativo ? 'var(--ac-a25)' : 'var(--line-soft)'}`,
+                /* A COR DO PONTO identifica a aba e volta na coluna da comparação: é
+                   como o operador liga "esta aba" a "esta coluna" sem ler o rótulo. */
+                background: ativo ? `${corDoPonto(i)}1F` : 'var(--surf-raised)',
+                border: `1px solid ${ativo ? corDoPonto(i) : 'var(--line-soft)'}`,
               }}
             >
               <button
@@ -92,7 +95,7 @@ export default function PainelPontos({
                   border: 0,
                   padding: 0,
                   font: `${ativo ? 700 : 500} 12px/1 var(--f-ui)`,
-                  color: ativo ? 'var(--ac-text)' : 'var(--tx-soft)',
+                  color: ativo ? corDoPonto(i) : 'var(--tx-soft)',
                 }}
               >
                 {rotulos[i]}
@@ -205,6 +208,8 @@ export default function PainelPontos({
               comparacao={comparacao}
               rotuloA={rotulos[iA]}
               rotuloB={rotulos[iB]}
+              corA={corDoPonto(iA)}
+              corB={corDoPonto(iB)}
             />
           ) : (
             <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>

@@ -12,6 +12,8 @@
  * régua inexistente — na tela isso vira decisão de abertura.
  */
 
+import type { FaixaNomeada } from './faixas'
+
 /** Escala dos scores do produto (censitário, residual, socioeconômico). */
 export const SCORE_MAX = 100
 
@@ -29,6 +31,27 @@ function preso01(v: number): number {
 export function fracaoDoScore(valor: number | null | undefined): number | null {
   if (valor == null || !Number.isFinite(valor)) return null
   return preso01(valor / SCORE_MAX)
+}
+
+/**
+ * Em que faixa NOMEADA um score cai — e, com ela, a cor e o veredito.
+ *
+ * É a régua PUBLICADA (`lib/faixas.ts`, espelho de `constants.py`), a mesma que pinta o
+ * hexágono no mapa. Por isso o medidor pode colorir sem inventar corte: "Promissor" na
+ * ficha é exatamente o "Promissor" que o operador vê no mapa e na legenda, na mesma cor.
+ * Um gradiente escolhido no olho seria outra coisa — afirmaria bom e ruim por conta
+ * própria, e na tela isso vira decisão de abertura.
+ */
+export function faixaDoValor(
+  valor: number | null | undefined,
+  faixas: readonly FaixaNomeada[],
+): FaixaNomeada | null {
+  if (valor == null || !Number.isFinite(valor)) return null
+  // O último bloco fecha em 100 (intervalo superior INCLUSIVO): sem isto, score 100 —
+  // uma unidade cheia na camada 2 — ficaria sem faixa e sem cor.
+  return (
+    faixas.find((f, i) => valor >= f.de && (valor < f.ate || i === faixas.length - 1)) ?? null
+  )
 }
 
 export interface ComposicaoMercado {
@@ -67,35 +90,8 @@ export function composicaoMercado(
   }
 }
 
-export interface FaixaDistribuicao {
-  /** Onde a mediana cai entre o mínimo e o máximo, de 0 a 1. */
-  posicaoMediana: number
-  min: number
-  p50: number
-  max: number
-}
-
-/**
- * A dispersão setor a setor, pronta para virar uma régua com a mediana marcada.
- *
- * POR QUE IMPORTA: a ficha mostra a MÉDIA do raio, e a média esconde o caso em que
- * metade dos setores é boa e a outra metade não — dois pontos com a mesma média podem
- * ser territórios completamente diferentes. O payload já traz min/p50/max; o que faltava
- * era mostrá-los.
- *
- * `null` quando falta qualquer extremo, quando há menos de 2 setores medidos (com um só,
- * "dispersão" não existe) ou quando min == max (a régua seria um ponto, e a marca da
- * mediana sugeriria variação onde não há).
- */
-export function faixaDaDistribuicao(
-  d: { min: number | null; p50: number | null; max: number | null; n: number } | null | undefined,
-): FaixaDistribuicao | null {
-  if (!d || d.min == null || d.p50 == null || d.max == null) return null
-  if (d.n < 2 || d.max <= d.min) return null
-  return {
-    posicaoMediana: preso01((d.p50 - d.min) / (d.max - d.min)),
-    min: d.min,
-    p50: d.p50,
-    max: d.max,
-  }
-}
+/* A régua de dispersão (mínimo / mediana / máximo por setor) FOI REMOVIDA em 2026-08-12:
+   "não faz sentido o usuário ver isso" (Juan). Era leitura de analista — quem escolhe
+   imóvel quer o número da região e o setor em que o imóvel caiu, não a estatística
+   descritiva do raio. O `/api/ponto` continua publicando `distribuicao`; se um dia ela
+   voltar, volta com um consumidor que a justifique. */

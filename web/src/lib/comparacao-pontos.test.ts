@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CORES_PONTO,
   DIMENSOES_PONTO,
   MAX_PONTOS,
+  corDoPonto,
   compararPontos,
   indiceDoMesmoPonto,
   rotuloDoPonto,
@@ -110,6 +112,22 @@ describe('rotuloDoPonto', () => {
 
   it('cai na coordenada quando nao ha nem municipio', () => {
     expect(rotuloDoPonto(ponto({ bairro: null, municipio: null }))).toBe('-23.5613, -46.6565')
+  })
+})
+
+describe('corDoPonto', () => {
+  it('dá cores distintas a todos os pontos que cabem na tela', () => {
+    const cores = Array.from({ length: MAX_PONTOS }, (_, i) => corDoPonto(i))
+    expect(new Set(cores).size).toBe(MAX_PONTOS)
+  })
+
+  it('cicla em vez de devolver indefinido acima do teto', () => {
+    expect(corDoPonto(CORES_PONTO.length)).toBe(corDoPonto(0))
+    expect(corDoPonto(-1)).toBe(CORES_PONTO[CORES_PONTO.length - 1])
+  })
+
+  it('não usa o vermelho da rampa — cor de ponto não é veredito', () => {
+    expect(CORES_PONTO).not.toContain('#B92323')
   })
 })
 

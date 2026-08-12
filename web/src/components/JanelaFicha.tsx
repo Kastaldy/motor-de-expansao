@@ -44,7 +44,10 @@ export default function JanelaFicha({
   subtitulo,
   onFechar,
   recuoInferior = 16,
-  ancora = 'direita',
+  /* ESQUERDA como padrão (pedido do Juan, 2026-08-12): as janelas do produto abrem todas
+     do mesmo lado. À direita elas nasciam sobre o painel de ranking do Explorar, que é
+     justamente o que se lê junto com a ficha. */
+  ancora = 'esquerda',
   children,
 }: {
   aberta: boolean

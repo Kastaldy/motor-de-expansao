@@ -2,13 +2,8 @@ import type { ReactNode } from 'react'
 
 import { reguaDeConcorrentes, semDistancia } from '../lib/concorrentes'
 import { alunos, num } from '../lib/format'
-import {
-  SCORE_MAX,
-  composicaoMercado,
-  faixaDaDistribuicao,
-  fracaoDoScore,
-} from '../lib/medidor'
-import type { PontoDistribuicao } from '../lib/types'
+import type { FaixaNomeada } from '../lib/faixas'
+import { SCORE_MAX, composicaoMercado, faixaDoValor, fracaoDoScore } from '../lib/medidor'
 
 /**
  * As peças VISUAIS da ficha: medidor de score, barra do mercado, régua de dispersão.
@@ -64,37 +59,57 @@ export function MedidorScore({
   rotulo,
   valor,
   nota,
+  faixas,
 }: {
   rotulo: string
   valor: number | null | undefined
   nota?: string
+  /**
+   * Régua NOMEADA para colorir e dar veredito. É a publicada em `lib/faixas.ts` — a mesma
+   * que pinta o hexágono no mapa e aparece na legenda. Sem ela o medidor fica na cor
+   * neutra: colorir por um limiar escolhido no olho afirmaria bom e ruim por conta
+   * própria, e na tela isso vira decisão de abertura.
+   */
+  faixas?: readonly FaixaNomeada[]
 }) {
   const fr = fracaoDoScore(valor)
   if (fr == null) return null
+  const faixa = faixas ? faixaDoValor(valor, faixas) : null
+  const cor = faixa?.cor ?? 'var(--ac)'
   return (
     <div style={{ display: 'grid', gap: 7 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
         <Titulo>{rotulo}</Titulo>
-        <span className="num" style={{ font: '700 20px/1 var(--f-num)', color: 'var(--tx-max)' }}>
-          {num(valor, 1)}
-          <span style={{ font: '400 11px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
-            {' '}
-            / {SCORE_MAX}
+        <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 8 }}>
+          {/* O NOME da faixa antes do número: "Excelente" resolve na hora o que "84,2"
+              não resolve, e é o mesmo rótulo que o mapa usa. */}
+          {faixa && (
+            <span
+              style={{
+                font: '700 10px/1 var(--f-ui)',
+                textTransform: 'uppercase',
+                letterSpacing: '.06em',
+                color: faixa.cor,
+                padding: '4px 7px',
+                borderRadius: 6,
+                background: `${faixa.cor}22`,
+              }}
+            >
+              {faixa.nome}
+            </span>
+          )}
+          <span className="num" style={{ font: '700 20px/1 var(--f-num)', color: 'var(--tx-max)' }}>
+            {num(valor, 1)}
+            <span style={{ font: '400 11px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
+              {' '}
+              / {SCORE_MAX}
+            </span>
           </span>
         </span>
       </div>
       {/* Barra ALTA: é a peça que se lê primeiro no bloco, não um fio abaixo do número. */}
       <div style={{ height: 12, borderRadius: 6, background: 'var(--surf-pending)', overflow: 'hidden' }}>
-        <div
-          style={{
-            width: `${Math.round(fr * 100)}%`,
-            height: '100%',
-            borderRadius: 6,
-            /* Cor ÚNICA em toda a escala. Um gradiente de vermelho a verde afirmaria que
-               40 é ruim e 80 é bom — corte que o produto não publica para estes scores. */
-            background: 'var(--ac)',
-          }}
-        />
+        <div style={{ width: `${Math.round(fr * 100)}%`, height: '100%', borderRadius: 6, background: cor }} />
       </div>
       {nota && <span style={{ font: '400 10.5px/1.35 var(--f-ui)', color: 'var(--tx-sub)' }}>{nota}</span>}
     </div>
@@ -309,61 +324,6 @@ export function ReguaConcorrentes({
             : `${ocultos} concorrentes sem distância medida não aparecem na régua — seguem contados acima.`}
         </span>
       )}
-    </div>
-  )
-}
-
-/**
- * A régua setor a setor, com a mediana marcada.
- *
- * A ficha mostra a MÉDIA do raio, e média esconde território dividido: dois pontos com a
- * mesma média podem ser lugares completamente diferentes. Os extremos e a mediana já vêm
- * no payload — faltava mostrá-los.
- */
-export function ReguaDispersao({
-  rotulo,
-  dist,
-  formatar = (v: number) => num(v),
-}: {
-  rotulo: string
-  dist: PontoDistribuicao | null | undefined
-  formatar?: (v: number) => string
-}) {
-  const f = faixaDaDistribuicao(dist)
-  if (!f) return null
-  return (
-    <div style={{ display: 'grid', gap: 5 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
-        <span style={{ font: '500 10.5px/1.2 var(--f-ui)', color: 'var(--tx-label)' }}>{rotulo}</span>
-        <span className="num" style={{ font: '500 10.5px/1.2 var(--f-num)', color: 'var(--tx-sub)' }}>
-          mediana {formatar(f.p50)}
-        </span>
-      </div>
-      <div style={{ position: 'relative', height: 6, borderRadius: 3, background: 'var(--surf-pending)' }}>
-        <div style={{ position: 'absolute', inset: 0, borderRadius: 3, background: 'var(--line-mid)' }} />
-        {/* A marca da mediana, e não uma barra que preenche: o que se lê aqui é ONDE o
-            meio cai entre os extremos, não "quanto" de alguma coisa. */}
-        <div
-          aria-hidden
-          style={{
-            position: 'absolute',
-            left: `calc(${Math.round(f.posicaoMediana * 100)}% - 1px)`,
-            top: -3,
-            width: 2,
-            height: 12,
-            borderRadius: 1,
-            background: 'var(--tx-max)',
-          }}
-        />
-      </div>
-      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-        <span className="num" style={{ font: '400 9.5px/1 var(--f-num)', color: 'var(--tx-off)' }}>
-          {formatar(f.min)}
-        </span>
-        <span className="num" style={{ font: '400 9.5px/1 var(--f-num)', color: 'var(--tx-off)' }}>
-          {formatar(f.max)}
-        </span>
-      </div>
     </div>
   )
 }

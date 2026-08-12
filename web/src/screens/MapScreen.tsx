@@ -1,5 +1,5 @@
 import { latLngToCell } from 'h3-js'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import type { PontoEscolhido } from '../App'
 import BotaoInicio from '../components/BotaoInicio'
@@ -78,6 +78,8 @@ export interface MapScreenProps {
    * seguem marcados, so' a segunda janela nao aparece.
    */
   janelaDoHex?: boolean
+  /** Sem UF escolhida, não desenha o hero — quem o publica é a camada de cima. */
+  semLanding?: boolean
 }
 
 export default function MapScreen({
@@ -97,6 +99,7 @@ export default function MapScreen({
   pinFixo = null,
   onPontoBuscado,
   janelaDoHex = true,
+  semLanding = false,
 }: MapScreenProps) {
   // A foto so' vale se tiver sido tirada NESTA uf/municipio — `fotoAplicavel` faz esse
   // portao (lib/mapa-estado). Sem ele, um pin de Sao Paulo reapareceria depois de um
@@ -438,7 +441,51 @@ export default function MapScreen({
   // Já NÃO é a porta de entrada do produto — essa é a `InicioScreen`. Aqui só se
   // pergunta o estado, e por isso o hero grande saiu daqui (ver `Landing`).
   if (!uf) {
-    return <Landing ufs={ufs} onUf={onUf} onInicio={onInicio} />
+    /* No modo de ponto quem manda na tela vazia é o `PontoScreen`, que publica o mesmo
+       hero com o texto DELE e a caixa de colar. Sem isto, os dois apareciam juntos:
+       "Escolha o estado" no fundo e a caixa de endereço por cima. */
+    if (semLanding) return null
+    return (
+      <Landing
+        marcador="Explorar uma região"
+        titulo="Escolha o estado"
+        explicacao="O mapa lê o território inteiro e monta a sequência de camadas — do potencial socioeconômico até os municípios com mais espaço para abrir."
+        onInicio={onInicio}
+      >
+        <div
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '14px 16px',
+            background: 'var(--surf-panel)',
+            border: '1px solid var(--ac-a30)',
+            borderRadius: 'var(--r-lg)',
+            backdropFilter: 'blur(16px)',
+            boxShadow: 'var(--ac-glow)',
+          }}
+        >
+          <span style={{ font: '600 13px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
+            Selecione um estado
+          </span>
+          {ufs.length ? (
+            <Select
+              label="Escolha um estado para começar"
+              value=""
+              onChange={onUf}
+              maxWidth={260}
+              buscavel
+              placeholder="Escolha…"
+              options={ufs.map((u) => ({ value: u, label: u }))}
+            />
+          ) : (
+            <span className="num" style={{ font: '500 12px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
+              carregando estados…
+            </span>
+          )}
+        </div>
+      </Landing>
+    )
   }
 
   return (
@@ -938,7 +985,6 @@ export default function MapScreen({
           setModoCenario(false)
           setCenario([])
         }}
-        ancora="esquerda"
         recuoInferior={96}
       >
         {hexesComparacao ? (
@@ -994,14 +1040,27 @@ export default function MapScreen({
    titulo encolheu de 44px para 26px. Manter os dois grandes deixava o operador diante de
    duas telas de abertura em sequencia, com o mesmo titulo. */
 
-function Landing({
-  ufs,
-  onUf,
+/**
+ * O HERO de entrada de um modo: marcador, titulo, explicacao e UM controle.
+ *
+ * Exportado porque o modo de ponto usa o MESMO desenho com o proprio texto e a caixa de
+ * colar no lugar do seletor de estado (pedido do Juan, 2026-08-12). Antes, entrar na
+ * analise de ponto sem endereco mostrava este hero falando de "Explorar uma regiao" com a
+ * caixa de colar flutuando por cima — dois assuntos disputando a mesma tela.
+ */
+export function Landing({
+  marcador,
+  titulo,
+  explicacao,
   onInicio,
+  children,
 }: {
-  ufs: string[]
-  onUf: (uf: string) => void
+  marcador: string
+  titulo: string
+  explicacao: ReactNode
   onInicio: () => void
+  /** O controle da tela: o seletor de estado, a caixa de colar, o que o modo pedir. */
+  children: ReactNode
 }) {
   return (
     <div
@@ -1033,7 +1092,7 @@ function Landing({
           }}
         >
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--ac)' }} />
-          Explorar uma região
+          {marcador}
         </span>
 
         <h1
@@ -1045,7 +1104,7 @@ function Landing({
             letterSpacing: '.005em',
           }}
         >
-          Escolha o estado
+          {titulo}
         </h1>
 
         <p
@@ -1056,43 +1115,10 @@ function Landing({
             maxWidth: 460,
           }}
         >
-          O mapa lê o território inteiro e monta a sequência de camadas — do potencial
-          socioeconômico até os municípios com mais espaço para abrir.
+          {explicacao}
         </p>
 
-        <div
-          style={{
-            marginTop: 30,
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: '14px 16px',
-            background: 'var(--surf-panel)',
-            border: '1px solid var(--ac-a30)',
-            borderRadius: 'var(--r-lg)',
-            backdropFilter: 'blur(16px)',
-            boxShadow: 'var(--ac-glow)',
-          }}
-        >
-          <span style={{ font: '600 13px/1 var(--f-ui)', color: 'var(--tx-soft)' }}>
-            Selecione um estado
-          </span>
-          {ufs.length ? (
-            <Select
-              label="Escolha um estado para começar"
-              value=""
-              onChange={onUf}
-              maxWidth={260}
-              buscavel
-              placeholder="Escolha…"
-              options={ufs.map((u) => ({ value: u, label: u }))}
-            />
-          ) : (
-            <span className="num" style={{ font: '500 12px/1 var(--f-num)', color: 'var(--tx-muted)' }}>
-              carregando estados…
-            </span>
-          )}
-        </div>
+        <div style={{ marginTop: 30 }}>{children}</div>
 
         <p
           style={{

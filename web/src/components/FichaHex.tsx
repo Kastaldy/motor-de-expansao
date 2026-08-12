@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import type { CrescimentoMunicipio } from '../lib/oportunidades'
 import { alunos, brl, num, pct } from '../lib/format'
 import type { Hex } from '../lib/types'
+import { FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import { BarraMercado, FilaApoio, MedidorScore, NumeroApoio } from './LeiturasVisuais'
 import { Chip, Eyebrow, Kpi } from './primitives'
 
@@ -50,13 +51,28 @@ export default function FichaHex({
             {hex.id}
           </span>
           {hex.faixa && <Chip tom="blue">{hex.faixa}</Chip>}
+          {/* O centroide no Maps: é assim que o operador sai da tela e vai ver a rua.
+              O hexágono tem ~5 km², então isto abre no CENTRO dele — não num endereço,
+              que o hexágono não tem. O rótulo diz isso para ninguém ler como "o imóvel". */}
+          <a
+            href={`https://www.google.com/maps/search/?api=1&query=${hex.lat},${hex.lng}`}
+            target="_blank"
+            rel="noreferrer"
+            style={{
+              font: '600 11px/1 var(--f-ui)',
+              color: 'var(--ac-text)',
+              textDecoration: 'underline',
+            }}
+          >
+            Abrir o centro no Google Maps ↗
+          </a>
         </div>
       </div>
 
       {/* MESMA HIERARQUIA da ficha do ponto: desenho primeiro, número como apoio. Duas
           fichas que respondem à mesma pergunta não podem ler de jeitos diferentes. */}
       <Bloco titulo="Quem mora aqui" nota="Censo 2022 (IBGE), no hexágono">
-        <MedidorScore rotulo="Score censitário" valor={hex.censo} />
+        <MedidorScore rotulo="Score censitário" valor={hex.censo} faixas={FAIXAS_POTENCIAL} />
         <FilaApoio>
           <NumeroApoio rotulo="População" valor={num(hex.pop)} />
           <NumeroApoio rotulo="Renda per capita" valor={hex.renda == null ? '—' : brl(hex.renda)} />
@@ -79,8 +95,12 @@ export default function FichaHex({
         <MedidorScore
           rotulo="Score de residual"
           valor={hex.res}
+          faixas={FAIXAS_DEMANDA}
           nota="satura em 100 acima de 2.500 alunos — uma unidade cheia"
         />
+        {/* SEM faixas: o híbrido combina duas escalas (censo e residual) e não tem régua
+            nomeada publicada. Colorir por analogia daria a ele um veredito que ninguém
+            aprovou. Fica na cor neutra. */}
         <MedidorScore rotulo="Score híbrido" valor={hex.hib} />
         <FilaApoio>
           <NumeroApoio

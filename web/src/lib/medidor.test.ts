@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { composicaoMercado, faixaDaDistribuicao, fracaoDoScore } from './medidor'
+import { FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from './faixas'
+import { composicaoMercado, faixaDoValor, fracaoDoScore } from './medidor'
 
 describe('fracaoDoScore', () => {
   it('mapeia 0-100 para 0-1', () => {
@@ -54,27 +55,24 @@ describe('composicaoMercado', () => {
   })
 })
 
-describe('faixaDaDistribuicao', () => {
-  it('posiciona a mediana entre os extremos', () => {
-    const f = faixaDaDistribuicao({ min: 0, p50: 25, max: 100, n: 8 })
-    expect(f?.posicaoMediana).toBe(0.25)
+describe('faixaDoValor', () => {
+  it('devolve a faixa nomeada e a cor da rampa publicada', () => {
+    expect(faixaDoValor(85, FAIXAS_POTENCIAL)?.nome).toBe('Excelente')
+    expect(faixaDoValor(45, FAIXAS_POTENCIAL)?.nome).toBe('Promissor')
+    expect(faixaDoValor(5, FAIXAS_POTENCIAL)?.nome).toBe('Desfavorável')
   })
 
-  it('mediana colada no mínimo e no máximo', () => {
-    expect(faixaDaDistribuicao({ min: 10, p50: 10, max: 50, n: 4 })?.posicaoMediana).toBe(0)
-    expect(faixaDaDistribuicao({ min: 10, p50: 50, max: 50, n: 4 })?.posicaoMediana).toBe(1)
+  it('o limite inferior pertence à faixa de cima', () => {
+    expect(faixaDoValor(60, FAIXAS_POTENCIAL)?.nome).toBe('Forte')
+    expect(faixaDoValor(59.9, FAIXAS_POTENCIAL)?.nome).toBe('Promissor')
   })
 
-  it('um setor só não tem dispersão', () => {
-    expect(faixaDaDistribuicao({ min: 10, p50: 10, max: 10, n: 1 })).toBeNull()
+  it('score 100 — uma unidade cheia — tem faixa; o topo é inclusivo', () => {
+    expect(faixaDoValor(100, FAIXAS_DEMANDA)).not.toBeNull()
   })
 
-  it('todos os setores iguais: régua de um ponto não vira barra', () => {
-    expect(faixaDaDistribuicao({ min: 30, p50: 30, max: 30, n: 9 })).toBeNull()
-  })
-
-  it('extremo ausente derruba a faixa inteira', () => {
-    expect(faixaDaDistribuicao({ min: null, p50: 5, max: 9, n: 5 })).toBeNull()
-    expect(faixaDaDistribuicao(null)).toBeNull()
+  it('sem score, sem faixa — e portanto sem cor inventada', () => {
+    expect(faixaDoValor(null, FAIXAS_POTENCIAL)).toBeNull()
+    expect(faixaDoValor(undefined, FAIXAS_POTENCIAL)).toBeNull()
   })
 })

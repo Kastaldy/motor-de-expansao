@@ -265,6 +265,8 @@ export default function App() {
               /* A ficha aqui é a do PONTO, publicada pelo `PontoScreen`. Sem isto o
                  endereço abria duas janelas: a dele e a do hexágono em que ele caiu. */
               janelaDoHex={false}
+              /* O hero da tela vazia é o do modo de ponto, publicado pelo `PontoScreen`. */
+              semLanding
             />
             <PontoScreen
               onAnalisarPonto={irParaViabilidade}
@@ -272,6 +274,7 @@ export default function App() {
               mapaPronto={dados != null}
               pedido={pedidoPonto}
               onLimparPin={limparPinPonto}
+              onInicio={voltarAoInicio}
             />
           </>
         ) : tela === 'oportunidades' ? (

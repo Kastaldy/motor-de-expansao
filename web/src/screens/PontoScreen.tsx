@@ -7,14 +7,15 @@ import CampoPonto from '../components/CampoPonto'
 import DetalheRegiao from '../components/DetalheRegiao'
 import type { SearchPin } from '../components/HexMap'
 import JanelaFicha from '../components/JanelaFicha'
+import { Landing } from './MapScreen'
 import {
   BarraMercado,
   FilaApoio,
   MedidorScore,
   NumeroApoio,
   ReguaConcorrentes,
-  ReguaDispersao,
 } from '../components/LeiturasVisuais'
+import { FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from '../lib/faixas'
 import PainelPontos from '../components/PainelPontos'
 import Recomendacao from '../components/Recomendacao'
 import { Aviso, Botao, Chip, Eyebrow, Glass, Spinner } from '../components/primitives'
@@ -56,6 +57,7 @@ export default function PontoScreen({
   mapaPronto,
   pedido,
   onLimparPin,
+  onInicio,
 }: {
   /** Leva ESTE ponto para a tela de Viabilidade (a costura com o resto do app). */
   onAnalisarPonto: (p: PontoEscolhido) => void
@@ -87,6 +89,8 @@ export default function PontoScreen({
   pedido: { lat: number; lng: number; n: number } | null
   /** Apaga a marca do endereço no mapa. Usado pela limpeza. */
   onLimparPin: () => void
+  /** Volta ao menu de modos — só o hero de entrada usa, como o Explorar faz. */
+  onInicio: () => void
 }) {
   const [carregando, setCarregando] = useState(false)
   const [erro, setErro] = useState<string | null>(null)
@@ -249,6 +253,35 @@ export default function PontoScreen({
    */
   const mostrandoCaixa = !mapaPronto && (colando || fichas.length === 0)
 
+  /* SEM MAPA AINDA: a tela é o HERO do modo — o mesmo desenho do "Explorar uma região",
+     com o texto desta análise e a caixa de colar no lugar do seletor de estado (pedido do
+     Juan, 2026-08-12). Antes, o hero do Explorar aparecia no fundo falando de território
+     enquanto a caixa de endereço flutuava por cima: dois assuntos na mesma tela. */
+  const semMapa = !mapaPronto && fichas.length === 0
+  if (semMapa) {
+    return (
+      <div style={{ position: 'absolute', inset: 0, zIndex: 40 }}>
+        <Landing
+          marcador="Analisar um ponto ou imóvel"
+          titulo="Cole o link do Google Maps ou a coordenada"
+          explicacao="A ficha lê quem mora no raio de 1,0 km, quanto de mercado sobra e quem já disputa o aluno ali — e o mapa abre na cidade do endereço, com as mesmas camadas do Explorar."
+          onInicio={onInicio}
+        >
+          <Glass style={{ width: 'min(620px, 100%)', padding: 16, display: 'grid', gap: 10, textAlign: 'left' }}>
+            {/* A linha "Funciona com o link da barra de endereço…" NÃO se repete aqui: o
+                próprio `CampoPonto` já a publica. Repeti-la foi um defeito da primeira
+                versão desta tela — a mesma frase duas vezes, uma embaixo da outra. */}
+            <CampoPonto onResolver={resolver} ocupado={carregando} erro={erro} />
+            <p style={{ font: '400 11.5px/1.5 var(--f-ui)', color: 'var(--tx-sub)', margin: 0 }}>
+              A leitura sai do Censo 2022 do IBGE, no raio de 1,0 km — a mesma régua do
+              Relatório Pontual.
+            </p>
+          </Glass>
+        </Landing>
+      </div>
+    )
+  }
+
   return (
     /* CAMADA, e nao tela. O `MapScreen` inteiro fica atrás — mapa, cabeçalho com os
        seletores de UF/município, lupa, funil, legenda e painel de ranking. Aqui só entra
@@ -278,7 +311,7 @@ export default function PontoScreen({
           gap: 12,
         }}
       >
-        {mostrandoCaixa && (
+        {mostrandoCaixa && !semMapa && (
           <Glass
             style={{
               pointerEvents: 'auto',
@@ -519,31 +552,15 @@ function Ficha({
             resposta é a do desenho. Os números continuam inteiros e auditáveis, logo
             abaixo, em tipo de apoio. */}
         <div style={{ display: 'grid', gap: 14 }}>
+          {/* As FAIXAS são as publicadas em `lib/faixas.ts` — a mesma régua e as mesmas
+              cores que o mapa pinta e a legenda explica. É o que permite colorir sem
+              inventar limiar: "Forte" aqui é o "Forte" de lá. */}
           <MedidorScore
             rotulo="Score socioeconômico"
             valor={censo.score_socioeconomico}
-            nota="renda e densidade do censo, normalizadas na escala do produto"
+            faixas={FAIXAS_POTENCIAL}
+            nota="renda e densidade do censo, na mesma régua que colore o mapa"
           />
-          {censo.detalhe && (
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-                gap: 14,
-              }}
-            >
-              <ReguaDispersao
-                rotulo="Score, setor a setor"
-                dist={censo.detalhe.distribuicao.score}
-                formatar={(v) => num(v, 1)}
-              />
-              <ReguaDispersao
-                rotulo="Renda per capita, setor a setor"
-                dist={censo.detalhe.distribuicao.renda_per_capita}
-                formatar={(v) => `R$ ${num(v)}`}
-              />
-            </div>
-          )}
 
           <FilaApoio>
             <NumeroApoio rotulo="População" valor={num(censo.populacao)} />
@@ -584,6 +601,7 @@ function Ficha({
           <MedidorScore
             rotulo="Score de residual"
             valor={mercado.score_residual}
+            faixas={FAIXAS_DEMANDA}
             nota="satura em 100 acima de 2.500 alunos — uma unidade cheia"
           />
           <FilaApoio>
