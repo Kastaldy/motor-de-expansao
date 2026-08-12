@@ -32,12 +32,24 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 import click
+import pandas as pd
 
 from motor_expansao.dashboard import rede_faturamento_financeiro as fin
 
 ENTRADA_DIR = Path("data/raw/financeiro")
 OUT_PARQUET = Path("data/staging/faturamento_financeiro.parquet")
-OUT_MANIFESTO = Path("data/staging/faturamento_financeiro.json")
+
+
+def manifesto_de(saida: Path) -> Path:
+    """O manifesto anda SEMPRE colado ao parquet que ele descreve.
+
+    Era um caminho fixo: rodar com `--saida` apontando para outro arquivo gravava o parquet
+    no destino pedido e sobrescrevia o manifesto de PRODUCAO com a procedencia (sha256,
+    competencias) de um arquivo que nao era o que estava la'. Parquet e manifesto
+    dessincronizados sao piores que manifesto nenhum -- ele existe justamente para dizer de
+    qual planilha aquele parquet saiu.
+    """
+    return saida.with_suffix(".json")
 
 
 def achar_planilha(pasta: Path) -> Path:
@@ -105,10 +117,17 @@ def main(planilha: Path | None, saida: Path, hoje: datetime | None,
 
     ultima = meses[-1]
     do_mes = fat[fat["competencia"] == ultima]
+
+    def zerado(coluna: str) -> pd.Series:
+        """`to_numeric` antes do `fillna`: componente inteiramente vazia chega como coluna
+        de objeto, e somar objeto com float dispara downcast silencioso no pandas."""
+        return pd.to_numeric(do_mes[coluna], errors="coerce").fillna(0.0)
+
+    agregador = zerado("gympass") + zerado("totalpass") - zerado("tem_saude")
     click.echo(
         f"\n{ultima}: R$ {do_mes['faturamento'].sum():,.2f} em "
-        f"{int((do_mes['faturamento'].fillna(0) > 0).sum())} unidades "
-        f"(agregador R$ {(do_mes['gympass'].fillna(0) + do_mes['totalpass'].fillna(0) - do_mes['tem_saude'].fillna(0)).sum():,.2f})"
+        f"{int((zerado('faturamento') > 0).sum())} unidades "
+        f"(agregador R$ {agregador.sum():,.2f})"
     )
 
     if simular:
@@ -127,10 +146,13 @@ def main(planilha: Path | None, saida: Path, hoje: datetime | None,
         "competencia_fim": ultima,
         "avisos": [str(a) for a in achados],
     }
-    OUT_MANIFESTO.parent.mkdir(parents=True, exist_ok=True)
-    OUT_MANIFESTO.write_text(json.dumps(manifesto, ensure_ascii=False, indent=2), encoding="utf-8")
+    destino_manifesto = manifesto_de(saida)
+    destino_manifesto.parent.mkdir(parents=True, exist_ok=True)
+    destino_manifesto.write_text(
+        json.dumps(manifesto, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     click.secho(f"\ngravado: {saida}  ({len(fat):,} linhas)", fg="green")
-    click.echo(f"manifesto: {OUT_MANIFESTO}")
+    click.echo(f"manifesto: {destino_manifesto}")
 
 
 if __name__ == "__main__":
