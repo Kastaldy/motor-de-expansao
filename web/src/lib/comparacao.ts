@@ -163,6 +163,59 @@ export function compararHexes(a: Hex, b: Hex): Delta<Hex>[] {
   return comparar(DIMENSOES, a, b)
 }
 
+/**
+ * Uma cor por item comparado, para a aba, a barra e o desenho no mapa falarem a mesma
+ * coisa.
+ *
+ * POR QUE NAO E' O TURQUESA DA MARCA. Turquesa e' ACAO neste produto (botoes, pin de
+ * busca): usa-lo para identificar um item o faria competir com o que ja' significa
+ * "clique aqui". Estas cinco sao IDENTIDADE — a mesma funcao das cores de serie num
+ * grafico —, escolhidas para se distinguirem entre si no fundo escuro.
+ *
+ * NAO SAO VEREDITO. Nenhuma delas diz bom ou ruim: a leitura de qualidade vem da rampa
+ * publicada (`lib/faixas.ts`), que colore os medidores. Um item vermelho aqui e' o
+ * terceiro da lista, nao um item ruim — por isso o vermelho da rampa (`#B92323`) fica
+ * fora desta paleta.
+ *
+ * Cinco porque os dois tetos sao 5 (`MAX_PONTOS` e `MAX_COMPARADOS`). Se algum subir, a
+ * lista precisa subir junto: o `%` evita quebrar, mas repetir cor derruba o proposito.
+ *
+ * MORAVA em `comparacao-pontos` ate 2026-08-13. Saiu de la' quando os hexagonos em
+ * comparacao passaram a usar a mesma paleta: a fonte da verdade nao podia continuar num
+ * modulo que so' descreve pontos.
+ */
+export const CORES_IDENTIDADE = [
+  '#4FA3F7',
+  '#F2A73B',
+  '#9B7BF0',
+  '#2FBF9E',
+  '#E8618C',
+] as const
+
+/** A cor do item na posicao `i`. Cicla se um dia houver mais itens que cores. */
+export function corDeIdentidade(i: number): string {
+  return CORES_IDENTIDADE[
+    ((i % CORES_IDENTIDADE.length) + CORES_IDENTIDADE.length) % CORES_IDENTIDADE.length
+  ]
+}
+
+/**
+ * A mesma cor em `[r, g, b, a]`, que e' o que o deck.gl aceita.
+ *
+ * Existe para o CONTORNO do hexagono no mapa usar exatamente a cor da barra dele no
+ * painel. Sem isso o mapa pintaria os cinco de turquesa e o operador nao teria como ligar
+ * "esta barra" a "aquele hexagono na tela" — que e' justamente o ponto de dar cor.
+ */
+export function corDeIdentidadeRgb(i: number, alfa = 255): [number, number, number, number] {
+  const h = corDeIdentidade(i)
+  return [
+    parseInt(h.slice(1, 3), 16),
+    parseInt(h.slice(3, 5), 16),
+    parseInt(h.slice(5, 7), 16),
+    alfa,
+  ]
+}
+
 /** O valor de UM item dentro do bloco de um parametro. */
 export interface ValorNoBloco {
   /** Indice na lista recebida — e' por ele que a tela acha a cor e o rotulo do item. */

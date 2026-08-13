@@ -2,7 +2,12 @@ import { useState } from 'react'
 
 import BlocosComparacao from './BlocosComparacao'
 import TabelaRanking from './TabelaRanking'
-import { type BlocoParametro, DIMENSOES, blocosPorParametro } from '../lib/comparacao'
+import {
+  type BlocoParametro,
+  DIMENSOES,
+  blocosPorParametro,
+  corDeIdentidade,
+} from '../lib/comparacao'
 import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
 import type { Hex } from '../lib/types'
 
@@ -43,9 +48,14 @@ export default function PainelComparacao({
           "qual ganha NESTE parâmetro" sem obrigar a ler a tabela inteira. Não ordena a
           lista: ordenar exigiria somar parâmetros num número único, que é score novo e só
           muda por DEC — o ranking abaixo continua CONTANDO vitórias, que é outra coisa. */}
+      {/* COR DE IDENTIDADE por hexágono (pedido do Juan, 2026-08-13). Sem ela as cinco
+          barras saíam todas turquesa e não havia como ligar "esta barra" ao hexágono
+          desenhado no mapa. É a MESMA paleta e a MESMA ordem que o mapa usa no contorno
+          do cenário — os dois leem `cenario` pelo índice. */}
       <BlocosComparacao
         blocos={blocos}
         rotulos={rotulos}
+        cor={corDeIdentidade}
         onRelatorio={() => setPedidoRelatorio(true)}
       />
 

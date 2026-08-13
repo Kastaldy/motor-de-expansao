@@ -111,34 +111,12 @@ export function indiceDoMesmoPonto(
   return pontos.findIndex((p) => chave(p.lat, p.lng) === alvo)
 }
 
-/**
- * Uma cor por ponto analisado, para a aba e a coluna dele falarem a mesma coisa.
- *
- * POR QUE NAO E' O TURQUESA DA MARCA. Turquesa e' ACAO neste produto (botoes, cenario
- * multi-hex, pin de busca): usa-lo para identificar um ponto o faria competir com o que
- * ja' significa "clique aqui". Estas cinco sao IDENTIDADE — a mesma funcao das cores de
- * serie num grafico —, escolhidas para se distinguirem entre si no fundo escuro.
- *
- * NAO SAO VEREDITO. Nenhuma delas diz bom ou ruim: a leitura de qualidade vem da rampa
- * publicada (`lib/faixas.ts`), que colore os medidores. Um ponto vermelho aqui e' o
- * terceiro da lista, nao um ponto ruim — por isso o vermelho da rampa (`#B92323`) fica
- * fora desta paleta.
- *
- * Cinco porque `MAX_PONTOS` e' 5. Se o teto subir, a lista precisa subir junto: o `%`
- * evita quebrar, mas repetir cor derruba o proposito.
- */
-export const CORES_PONTO = [
-  '#4FA3F7',
-  '#F2A73B',
-  '#9B7BF0',
-  '#2FBF9E',
-  '#E8618C',
-] as const
-
-/** A cor do ponto na posicao `i`. Cicla se um dia houver mais pontos que cores. */
-export function corDoPonto(i: number): string {
-  return CORES_PONTO[((i % CORES_PONTO.length) + CORES_PONTO.length) % CORES_PONTO.length]
-}
+/* A paleta de identidade MUDOU DE CASA em 2026-08-13: virou `CORES_IDENTIDADE` /
+   `corDeIdentidade` em `lib/comparacao`, porque deixou de ser "cor do ponto" — os
+   hexagonos em comparacao passaram a usar a MESMA paleta, e manter a fonte da verdade
+   dentro do modulo de pontos faria a segunda tela importar de um lugar que nao a
+   descreve. `corDoPonto` continua existindo aqui como o nome que a tela de pontos usa. */
+export { CORES_IDENTIDADE as CORES_PONTO, corDeIdentidade as corDoPonto } from './comparacao'
 
 /** Rotulo curto de um ponto: bairro, senao municipio, senao a coordenada. */
 export function rotuloDoPonto(p: PontoPayload): string {

@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CORES_IDENTIDADE,
   DIMENSOES,
   MAX_DIMENSOES_NA_FRASE,
   blocosPorParametro,
   compararComFrase,
   compararHexes,
+  corDeIdentidade,
+  corDeIdentidadeRgb,
 } from './comparacao'
 import type { Hex } from './types'
 
@@ -24,6 +27,33 @@ function hex(over: Partial<Hex> = {}): Hex {
     ...over,
   } as Hex
 }
+
+describe('corDeIdentidade', () => {
+  it('a versao RGB e a MESMA cor do painel, so que no formato do deck.gl', () => {
+    // E' este casamento que faz o contorno do hexagono no mapa bater com a barra dele na
+    // janela. Se as duas funcoes divergirem, o operador perde a ligacao e o motivo de
+    // existir a cor vai junto.
+    expect(corDeIdentidade(0)).toBe('#4FA3F7')
+    expect(corDeIdentidadeRgb(0)).toEqual([0x4f, 0xa3, 0xf7, 255])
+  })
+
+  it('cobre as cinco posicoes sem repetir', () => {
+    const cores = CORES_IDENTIDADE.map((_, i) => corDeIdentidade(i))
+    expect(new Set(cores).size).toBe(CORES_IDENTIDADE.length)
+  })
+
+  it('cicla em vez de estourar quando o indice passa da paleta', () => {
+    expect(corDeIdentidadeRgb(CORES_IDENTIDADE.length)).toEqual(corDeIdentidadeRgb(0))
+  })
+
+  it('aceita alfa proprio, sem mexer no RGB', () => {
+    expect(corDeIdentidadeRgb(1, 120)).toEqual([...corDeIdentidadeRgb(1).slice(0, 3), 120])
+  })
+
+  it('nenhuma cor de identidade e o vermelho da rampa — ali ele significa RUIM', () => {
+    expect(CORES_IDENTIDADE).not.toContain('#B92323')
+  })
+})
 
 describe('blocosPorParametro', () => {
   const bloco = (blocos: ReturnType<typeof blocosPorParametro<Hex>>, chave: string) =>

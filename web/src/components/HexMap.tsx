@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
+import { corDeIdentidadeRgb } from '../lib/comparacao'
 import { alunos, brl, num } from '../lib/format'
 import {
   DISCARDED_FILL,
@@ -204,7 +205,11 @@ export interface HexMapProps {
   /** Pins de concorrentes (bandeira quadrada) + Ultra + ícones por rede. */
   pins?: Pins
   selecionado: string | null
-  /** Hexes do cenário multi-hex (contorno turquesa de seleção). */
+  /**
+   * Hexes do cenário multi-hex, NA ORDEM em que entraram — a ordem é o dado, não um
+   * detalhe: o índice de cada um define a cor de identidade do contorno, que precisa bater
+   * com a barra dele no painel de comparação.
+   */
   cenario?: string[]
   onSelecionar: (h: Hex) => void
   /**
@@ -386,7 +391,14 @@ export default function HexMap({
 
   const destaque = useMemo(() => new Set(passo.hexes), [passo.hexes])
   const cenarioSet = useMemo(() => new Set(cenario ?? []), [cenario])
-  const cenarioKey = (cenario ?? []).join(',')
+  /* POSICAO na lista, e nao so' "esta ou nao esta": e' o indice que da a cor de identidade,
+     a MESMA que o painel usa na barra daquele hexagono. Sem isto os cinco saiam com o
+     mesmo contorno turquesa e nada ligava a barra ao desenho.
+     `indexOf` e nao um Map: `Map` esta' SOMBREADO neste arquivo pelo componente de mesmo
+     nome do `react-map-gl`, e a lista tem no maximo `MAX_COMPARADOS` (5) itens — o `Set`
+     acima ja' descarta os outros 15 mil hexagonos antes de chegar aqui. */
+  const cenarioLista = useMemo(() => cenario ?? [], [cenario])
+  const cenarioKey = cenarioLista.join(',')
 
   // Posicao do rotulo = centro do proprio H3 (nao o lat/lng servido), para o numero
   // cair no meio do hexagono mesmo quando o filtro de faixa tira o hex do `hexes`.
@@ -444,13 +456,13 @@ export default function HexMap({
           return fillDoHex(d, passo.n, destaque.has(d.id), comRaio)
         },
         // Borda neutra e fina; hex SELECIONADO -> contorno claro; hexes do CENÁRIO
-        // multi-hex -> contorno turquesa (seleção deliberada, não o funil).
-        getLineColor: (d) =>
-          d.id === selecionado
-            ? [238, 243, 248, 255]
-            : cenarioSet.has(d.id)
-              ? [53, 201, 214, 255]
-              : [8, 11, 16, 55],
+        // multi-hex -> a COR DE IDENTIDADE da posição dele na comparação, a mesma da barra
+        // no painel (antes eram todos turquesa, e nada ligava barra a hexágono na tela).
+        getLineColor: (d) => {
+          if (d.id === selecionado) return [238, 243, 248, 255]
+          if (!cenarioSet.has(d.id)) return [8, 11, 16, 55]
+          return corDeIdentidadeRgb(cenarioLista.indexOf(d.id))
+        },
         getLineWidth: (d) => (d.id === selecionado ? 55 : cenarioSet.has(d.id) ? 42 : 6),
         lineWidthUnits: 'meters',
         lineWidthMinPixels: 0.5,
