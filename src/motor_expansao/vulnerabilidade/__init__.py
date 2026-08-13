@@ -54,12 +54,16 @@ from .contrato import (
     CONTRATO_COLUNAS_ALVOS_MA,
     CONTRATO_COLUNAS_CHURN,
     CONTRATO_COLUNAS_PRESENCA_AGREGADOR,
+    CONTRATO_COLUNAS_PRESSAO,
     CONTRATO_COLUNAS_SCORE,
     CONTRATO_COLUNAS_SNAPSHOT,
     FONTES_AGREGADORES,
+    KERNEIS_PRESSAO,
     LIMIAR_RESIDUAL_SATURADO,
     MIN_SEMANAS,
     PESOS_ALVO_SINAIS,
+    PRESSAO_KERNEL_DEFAULT,
+    PRESSAO_RAIO_M,
     QUANTIL_SAM_QUENTE,
     RETENCAO_SEMANAS,
     SINAIS_INATIVOS,
@@ -69,11 +73,17 @@ from .contrato import (
     VERSAO_CONTRATO_ALVOS_MA,
     VERSAO_CONTRATO_CHURN,
     VERSAO_CONTRATO_PRESENCA_AGREGADOR,
+    VERSAO_CONTRATO_PRESSAO,
     VERSAO_CONTRATO_SCORE,
     VERSAO_CONTRATO_SNAPSHOT,
     renormalizar_pesos,
 )
 from .presenca_agregador import extrair_presenca_agregador
+from .pressao_competitiva import (
+    calcular_pressao_por_hex,
+    ler_concorrentes,
+    peso_por_distancia,
+)
 from .score import calcular_score_vulnerabilidade
 from .snapshots import (
     SNAPSHOTS_DIR_DEFAULT,
@@ -119,6 +129,15 @@ __all__ = [
     "SINAIS_INATIVOS",
     "V3_POR_STATUS_CHURN",
     "renormalizar_pesos",
+    # Sinal 6 - pressao competitiva com decaimento (fato sem peso)
+    "calcular_pressao_por_hex",
+    "peso_por_distancia",
+    "ler_concorrentes",
+    "CONTRATO_COLUNAS_PRESSAO",
+    "VERSAO_CONTRATO_PRESSAO",
+    "PRESSAO_RAIO_M",
+    "PRESSAO_KERNEL_DEFAULT",
+    "KERNEIS_PRESSAO",
     # Lista priorizada de M&A (D5/D6)
     "marcar_hex_quente",
     "academias_com_hotness",

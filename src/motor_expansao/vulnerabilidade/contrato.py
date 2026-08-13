@@ -63,9 +63,7 @@ TOLERANCIA_BBOX_UF_GRAUS = 0.5
 COLUNA_PARTICAO = "semana"
 
 RE_SEMANA = re.compile(r"^\d{4}-\d{2}$")
-RE_UUID = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
-)
+RE_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 
 FONTES_VALIDAS: frozenset[str] = frozenset({"totalpass", "wellhub", "unidades"})
 CHAVE_ORIGEM_VALIDAS: frozenset[str] = frozenset({"slug", "hash_estavel"})
@@ -208,23 +206,23 @@ CAMPOS_NUMERICOS: frozenset[str] = frozenset({"latitude", "longitude"})
 # Snapshot semanal: 12 colunas, nesta ORDEM. `semana` NÃO é coluna do arquivo — é chave de
 # partição hive (igual ao `uf` do enriquecido em `fase1_bi_exports.py`), materializada na leitura.
 CONTRATO_COLUNAS_SNAPSHOT: dict[str, str] = {
-    "snapshot_date": "string",         # `data_coleta` POR LINHA (ISO) -> medidor de frescor
-    "slug": "string",                  # ID nativo do provedor (nulável: `unidades` não emite)
-    "concorrente_id": "string",        # sha1 de produção replicado (rastreabilidade)
-    "chave_snapshot": "string",        # A CHAVE DE CHURN (sha1 hex 40)
-    "chave_origem": "string",          # slug | hash_estavel (rebaixamento auditável)
-    "hex_id_res7": "string",           # geometria anti-PII (DEC-012) e chave de join
-    "rede": "string",                  # categoria de rede; metade do escopo de observabilidade
-    "fonte": "string",                 # totalpass | wellhub | unidades (sinal 1 do contrato §4)
+    "snapshot_date": "string",  # `data_coleta` POR LINHA (ISO) -> medidor de frescor
+    "slug": "string",  # ID nativo do provedor (nulável: `unidades` não emite)
+    "concorrente_id": "string",  # sha1 de produção replicado (rastreabilidade)
+    "chave_snapshot": "string",  # A CHAVE DE CHURN (sha1 hex 40)
+    "chave_origem": "string",  # slug | hash_estavel (rebaixamento auditável)
+    "hex_id_res7": "string",  # geometria anti-PII (DEC-012) e chave de join
+    "rede": "string",  # categoria de rede; metade do escopo de observabilidade
+    "fonte": "string",  # totalpass | wellhub | unidades (sinal 1 do contrato §4)
     "hash_campos_raspados": "string",  # impressão digital dos campos raspados (sinal 4)
     # FATOS sem peso `[BLK-MA-09 / DEC-026]` — NÃO são componentes do score. Só o WellHub emite;
     # no TotalPass são nulos por construção e para sempre (BLK-MA-10: a nota não existe no
     # produto). Os TRÊS estados da DEC-024 sobrevivem no par: `4.81`/`105` = tem nota;
     # `NA`/`0` = existe e não tem avaliação; `NA`/`NA` = o parser não leu (scraper quebrado).
     # Ficam FORA de `CAMPOS_HASH_POR_FONTE` — a nota muda a cada avaliação e mataria o S4.
-    "nota_wellhub": "Float64",         # [NOTA_WELLHUB_MIN, NOTA_WELLHUB_MAX]; nulável
-    "qtd_avaliacoes_wellhub": "Int64", # >= 0; nulável
-    "versao_contrato": "string",       # carimbo; mudança = descontinuidade de série
+    "nota_wellhub": "Float64",  # [NOTA_WELLHUB_MIN, NOTA_WELLHUB_MAX]; nulável
+    "qtd_avaliacoes_wellhub": "Int64",  # >= 0; nulável
+    "versao_contrato": "string",  # carimbo; mudança = descontinuidade de série
 }
 
 # Domínio da nota. O piso é `1.0`, NÃO `0.0`: a nota é média de avaliações de 1 a 5 estrelas, logo
@@ -260,7 +258,7 @@ CONTRATO_COLUNAS_CHURN: dict[str, str] = {
     "semana_primeira_observacao": "string",
     "semana_ultima_observacao": "string",
     "snapshot_date_ultimo": "string",
-    "nota_wellhub": "Float64",          # FATO sem peso, da ULTIMA observacao (DEC-026)
+    "nota_wellhub": "Float64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
     "qtd_avaliacoes_wellhub": "Int64",  # FATO sem peso, da ULTIMA observacao (DEC-026)
     "flag_serie_imatura": "bool",
     "flag_staleness_interpretavel": "bool",
@@ -279,9 +277,9 @@ CONTRATO_COLUNAS_CHURN: dict[str, str] = {
 # `_no_hex` das colunas 2 e 3 é deliberado: ele carrega essa ressalva até todo consumidor futuro,
 # depois do join `many_to_one` do BLK-MA-04.
 CONTRATO_COLUNAS_PRESENCA_AGREGADOR: dict[str, str] = {
-    "hex_id_res7": "string",                          # a chave (anti-PII, DEC-012) e o join
-    "fontes_presentes_no_hex": "string",              # subconjunto de FONTES_AGREGADORES, `,`
-    "n_agregadores_no_hex": "int64",                  # {1, 2} — nunca 0 (ver docstring do módulo)
+    "hex_id_res7": "string",  # a chave (anti-PII, DEC-012) e o join
+    "fontes_presentes_no_hex": "string",  # subconjunto de FONTES_AGREGADORES, `,`
+    "n_agregadores_no_hex": "int64",  # {1, 2} — nunca 0 (ver docstring do módulo)
     # COLUNAS 4/5 — leia-as como TETO, nunca como número exato `[ressalva BLK-MA-03-FU1]`: elas
     # contam CHAVES distintas, e a chave muda quando `chave_origem` é rebaixado de `slug` para
     # `hash_estavel`, então a MESMA academia observada nos dois regimes sai como 2 (medido em
@@ -289,13 +287,13 @@ CONTRATO_COLUNAS_PRESENCA_AGREGADOR: dict[str, str] = {
     # duplicado no snapshot) é SEMPRE ativo e depende só da qualidade do feed.
     # `n_agregadores_no_hex` — e portanto o `v1` — NÃO é afetado. Quem exibir estas duas como
     # "densidade do alvo" deve cruzar com `flag_troca_chave_na_serie` do churn.
-    "n_academias_independentes_totalpass": "int64",   # chaves distintas de TP no hex (TETO)
-    "n_academias_independentes_wellhub": "int64",     # chaves distintas de WH no hex (TETO)
-    "semana_ultima_observacao_totalpass": "string",   # relógio do PIPELINE (nulo sse contagem 0)
-    "semana_ultima_observacao_wellhub": "string",     # idem, WellHub
-    "snapshot_date_ultimo_totalpass": "string",       # relógio do COLETOR (nulo sse contagem 0)
-    "snapshot_date_ultimo_wellhub": "string",         # idem, WellHub
-    "versao_contrato": "string",                      # carimbo; mudança = descontinuidade de série
+    "n_academias_independentes_totalpass": "int64",  # chaves distintas de TP no hex (TETO)
+    "n_academias_independentes_wellhub": "int64",  # chaves distintas de WH no hex (TETO)
+    "semana_ultima_observacao_totalpass": "string",  # relógio do PIPELINE (nulo sse contagem 0)
+    "semana_ultima_observacao_wellhub": "string",  # idem, WellHub
+    "snapshot_date_ultimo_totalpass": "string",  # relógio do COLETOR (nulo sse contagem 0)
+    "snapshot_date_ultimo_wellhub": "string",  # idem, WellHub
+    "versao_contrato": "string",  # carimbo; mudança = descontinuidade de série
 }
 
 # --------------------------------------------------------------------------- #
@@ -334,28 +332,62 @@ V3_POR_STATUS_CHURN: dict[str, float | None] = {
 # a linha cujo hex não casa no join com o sinal 1 fica com `v1` AUSENTE (renormalizado para
 # fora), e o `int64` nativo não carrega nulo — no miss o pandas promoveria a `float64` + `NaN`.
 CONTRATO_COLUNAS_SCORE: dict[str, str] = {
-    "chave_snapshot": "string",                    # a chave opaca (anti-PII); metade do grão
-    "fonte": "string",                             # totalpass | wellhub — NUNCA `unidades`
-    "rede": "string",                              # sempre `independente` (universo de M&A)
-    "hex_id_res7": "string",                       # join com o sinal 1 e, no BLK-MA-05, hotness
-    "status_churn": "string",                      # FATO propagado, sem peso (G-D2)
-    "nota_wellhub": "Float64",                     # FATO propagado, sem peso (DEC-026)
-    "qtd_avaliacoes_wellhub": "Int64",             # FATO propagado, sem peso (DEC-026)
-    "v1": "float64",                               # componente do S1; {0.0, 0.5} ou nulo
-    "v3": "float64",                               # componente do S3; {0.0, 0.7, 1.0} ou nulo
-    "v4": "float64",                               # componente do S4; [0, 1] ou nulo
-    "sinais_disponiveis": "string",                # subconjunto de SINAIS_ORDEM, unido por `,`
-    "n_sinais_disponiveis": "int64",               # 0..3; NAO vai a 4 - o S2 nao tem peso (DEC-026)
-    "score_vulnerabilidade": "float64",            # [0, 100]; nulo sse nenhum sinal disponível
+    "chave_snapshot": "string",  # a chave opaca (anti-PII); metade do grão
+    "fonte": "string",  # totalpass | wellhub — NUNCA `unidades`
+    "rede": "string",  # sempre `independente` (universo de M&A)
+    "hex_id_res7": "string",  # join com o sinal 1 e, no BLK-MA-05, hotness
+    "status_churn": "string",  # FATO propagado, sem peso (G-D2)
+    "nota_wellhub": "Float64",  # FATO propagado, sem peso (DEC-026)
+    "qtd_avaliacoes_wellhub": "Int64",  # FATO propagado, sem peso (DEC-026)
+    "v1": "float64",  # componente do S1; {0.0, 0.5} ou nulo
+    "v3": "float64",  # componente do S3; {0.0, 0.7, 1.0} ou nulo
+    "v4": "float64",  # componente do S4; [0, 1] ou nulo
+    "sinais_disponiveis": "string",  # subconjunto de SINAIS_ORDEM, unido por `,`
+    "n_sinais_disponiveis": "int64",  # 0..3; NAO vai a 4 - o S2 nao tem peso (DEC-026)
+    "score_vulnerabilidade": "float64",  # [0, 100]; nulo sse nenhum sinal disponível
     "score_vulnerabilidade_ordenavel": "float64",  # nulo enquanto `flag_score_provisorio` (G-D1)
-    "flag_serie_imatura": "bool",                  # propagada do churn
-    "flag_staleness_interpretavel": "bool",        # propagada do churn; condiciona o S4
-    "flag_score_provisorio": "bool",               # S3 E S4 indisponíveis (contrato §8.4)
-    "n_agregadores_no_hex": "Int64",               # auditoria do v1; NULÁVEL (ver acima)
-    "fontes_presentes_no_hex": "string",           # auditoria do v1; nulo sse a de cima for nula
-    "semana_ultima_observacao": "string",          # relógio do PIPELINE (vem do churn)
-    "snapshot_date_ultimo": "string",              # relógio do COLETOR (vem do churn)
-    "versao_contrato": "string",                   # carimbo; mudança = descontinuidade de série
+    "flag_serie_imatura": "bool",  # propagada do churn
+    "flag_staleness_interpretavel": "bool",  # propagada do churn; condiciona o S4
+    "flag_score_provisorio": "bool",  # S3 E S4 indisponíveis (contrato §8.4)
+    "n_agregadores_no_hex": "Int64",  # auditoria do v1; NULÁVEL (ver acima)
+    "fontes_presentes_no_hex": "string",  # auditoria do v1; nulo sse a de cima for nula
+    "semana_ultima_observacao": "string",  # relógio do PIPELINE (vem do churn)
+    "snapshot_date_ultimo": "string",  # relógio do COLETOR (vem do churn)
+    "versao_contrato": "string",  # carimbo; mudança = descontinuidade de série
+}
+
+# --------------------------------------------------------------------------- #
+# Sinal 6 — pressão competitiva com decaimento por distância (BLK-MA-12)
+# --------------------------------------------------------------------------- #
+VERSAO_CONTRATO_PRESSAO = "pressao_competitiva_v1"
+
+# Raio de TRUNCAMENTO, não de alcance: quem define o alcance efetivo é a forma do kernel. 2.000 m
+# é o mesmo do `pressao_concorrencial_score_2km` da camada de mercado — manter o número igual é o
+# que torna os dois comparáveis.
+PRESSAO_RAIO_M = 2000.0
+
+# `linear` é o kernel do contrato de mercado (triangular, zero na borda). `potencia` é o molde do
+# Huff, disponível para sensibilidade mas NÃO default: o `beta` do Huff é re-calibrado a cada
+# rodada contra desfecho observado (1,845 no dimensionamento vs 0,5 na demanda revelada), e o score
+# de vulnerabilidade não tem desfecho contra o qual calibrar (§8: heurística, não modelo).
+KERNEIS_PRESSAO: tuple[str, ...] = ("linear", "potencia")
+PRESSAO_KERNEL_DEFAULT = "linear"
+PRESSAO_BETA_POTENCIA = 1.5
+PRESSAO_DIST_MIN_M = 50.0  # piso anti-divisão-por-zero do kernel de potência
+
+# Frame de pressão por hex: 9 colunas, nesta ORDEM. O sufixo `_no_hex` das colunas 2-4 é
+# deliberado, no molde do `presenca_agregador`: a pressão é grandeza do TERRITÓRIO, e todas as
+# academias do mesmo hex herdam o mesmo valor pelo join.
+CONTRATO_COLUNAS_PRESSAO: dict[str, str] = {
+    "hex_id_res7": "string",
+    "pressao_competitiva_no_hex": "float64",  # [0, 100); mesma régua do mercado
+    "v6_no_hex": "float64",  # pressao/100 — o componente do §8.1
+    "oferta_ponderada_no_hex": "float64",  # soma dos pesos; auditoria do decaimento
+    "n_concorrentes_no_raio": "int64",  # contagem CRUA, para comparar com a ponderada
+    "dist_concorrente_mais_proximo_m": "float64",
+    "kernel_pressao": "string",  # carimbo: qual decaimento produziu o número
+    "raio_pressao_m": "float64",
+    "versao_contrato": "string",
 }
 
 # --------------------------------------------------------------------------- #
@@ -403,15 +435,20 @@ CONTRATO_COLUNAS_ACADEMIAS_MA: dict[str, str] = {
     "score_vulnerabilidade_ordenavel": "float64",
     "flag_serie_imatura": "bool",
     "flag_score_provisorio": "bool",
-    "hex_quente": "bool",                  # o hex da academia satisfaz a conjunção do D5
-    "hex_quente_vizinho": "bool",          # algum vizinho `grid_disk(k=1)` e' quente
-    "proximo_de_hex_quente": "bool",       # a disjuncao do §9: o proprio OU um vizinho
+    "hex_quente": "bool",  # o hex da academia satisfaz a conjunção do D5
+    "hex_quente_vizinho": "bool",  # algum vizinho `grid_disk(k=1)` e' quente
+    "proximo_de_hex_quente": "bool",  # a disjuncao do §9: o proprio OU um vizinho
+    # SINAL 6 (BLK-MA-12) — FATO SEM PESO, fora de `Σ(wi · vi)`. Molde do G-D2 / DEC-026.
+    # Nulo quando o frame de pressão não foi fornecido: ausência de cálculo, não pressão zero.
+    "pressao_competitiva_no_hex": "Float64",
+    "v6_no_hex": "Float64",
+    "n_concorrentes_no_raio": "Int64",
     "uf": "string",
     "sam_fitness_potencial": "float64",
     "score_oportunidade_residual": "float64",
     "oferta_efetiva_disponivel": "float64",
     "tese_entrada": "string",
-    "score_priorizacao": "float64",        # PROPAGADO do M1, nunca recalculado
+    "score_priorizacao": "float64",  # PROPAGADO do M1, nunca recalculado
     "versao_contrato": "string",
 }
 
@@ -435,8 +472,10 @@ CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
     "hex_quente": "bool",
     "proximo_de_hex_quente": "bool",
     "flag_serie_imatura": "bool",
-    "n_com_nota_wellhub": "int64",         # FATO sem peso (DEC-026): a nota anda com a contagem
+    "n_com_nota_wellhub": "int64",  # FATO sem peso (DEC-026): a nota anda com a contagem
     "nota_wellhub_mediana": "Float64",
+    "pressao_competitiva_no_hex": "Float64",  # FATO sem peso (BLK-MA-12); nulo se nao calculado
+    "v6_no_hex": "Float64",
     "versao_contrato": "string",
 }
 
@@ -699,9 +738,7 @@ def renormalizar_pesos(disponiveis: Sequence[str]) -> dict[str, float]:
     pedidos = {str(s) for s in disponiveis}
     desconhecidos = sorted(pedidos - set(SINAIS_ORDEM))
     if desconhecidos:
-        raise ValueError(
-            f"sinal fora de SINAIS_ORDEM {list(SINAIS_ORDEM)}: {desconhecidos}"
-        )
+        raise ValueError(f"sinal fora de SINAIS_ORDEM {list(SINAIS_ORDEM)}: {desconhecidos}")
     presentes = [s for s in SINAIS_ORDEM if s in pedidos]
     if not presentes:
         return {}
@@ -746,6 +783,13 @@ __all__ = [
     "SINAIS_INATIVOS",
     "PESOS_ALVO_SINAIS",
     "V3_POR_STATUS_CHURN",
+    "VERSAO_CONTRATO_PRESSAO",
+    "PRESSAO_RAIO_M",
+    "PRESSAO_KERNEL_DEFAULT",
+    "PRESSAO_BETA_POTENCIA",
+    "PRESSAO_DIST_MIN_M",
+    "KERNEIS_PRESSAO",
+    "CONTRATO_COLUNAS_PRESSAO",
     "VERSAO_CONTRATO_ALVOS_MA",
     "QUANTIL_SAM_QUENTE",
     "LIMIAR_RESIDUAL_SATURADO",

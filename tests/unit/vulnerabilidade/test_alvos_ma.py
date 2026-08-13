@@ -503,6 +503,77 @@ def test_carteira_sem_coluna_opcional_nao_quebra_o_astype() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Sinal 6 propagado como fato sem peso (BLK-MA-12)
+# --------------------------------------------------------------------------- #
+def test_ausencia_de_calculo_nao_vira_pressao_zero() -> None:
+    """O erro mais caro do sinal 6: na régua do §8.1, `0` é a leitura mais OTIMISTA.
+
+    "Não calculei a pressão" virando "não há pressão" rebaixaria o alvo por falta de dado — num
+    funil de aquisição, exatamente ao contrário do que se quer.
+    """
+    out = academias_com_hotness(_score_padrao(), _carteira())
+    assert out["pressao_competitiva_no_hex"].isna().all()
+    assert out["v6_no_hex"].isna().all()
+
+
+def test_pressao_propagada_por_hex_quando_fornecida() -> None:
+    from motor_expansao.vulnerabilidade.pressao_competitiva import calcular_pressao_por_hex
+
+    conc = pd.DataFrame(
+        [
+            {
+                "rede": "smart_fit",
+                "lat": h3.cell_to_latlng(HEX_Q)[0] + 0.004,
+                "lng": h3.cell_to_latlng(HEX_Q)[1],
+                "status_registro": "valido",
+            }
+        ]
+    )
+    pressao = calcular_pressao_por_hex([HEX_Q, HEX_VIZ, HEX_FRIO], conc)
+    out = academias_com_hotness(_score_padrao(), _carteira(), pressao=pressao)
+
+    q = _linha_por_chave(out, "k_q")
+    assert float(q["v6_no_hex"]) > 0.0, "o hex com concorrente perto tem pressao"
+    fora = _linha_por_chave(out, "k_fora")
+    assert pd.isna(fora["v6_no_hex"]), "hex sem par no frame de pressao fica NULO, nao zero"
+
+
+def test_pressao_nao_altera_a_ordenacao() -> None:
+    """Fato SEM PESO: entra na saída, não entra em nenhum critério de ordem."""
+    from motor_expansao.vulnerabilidade.pressao_competitiva import calcular_pressao_por_hex
+
+    base = agregar_alvos_por_hex(academias_com_hotness(_score_padrao(), _carteira()))
+    conc = pd.DataFrame(
+        [
+            {
+                "rede": "smart_fit",
+                "lat": h3.cell_to_latlng(HEX_FRIO)[0],
+                "lng": h3.cell_to_latlng(HEX_FRIO)[1],
+                "status_registro": "valido",
+            }
+        ]
+    )
+    pressao = calcular_pressao_por_hex([HEX_Q, HEX_VIZ, HEX_FRIO, HEX_FORA], conc)
+    com = agregar_alvos_por_hex(
+        academias_com_hotness(_score_padrao(), _carteira(), pressao=pressao)
+    )
+    pd.testing.assert_series_equal(base["hex_id_res7"], com["hex_id_res7"], check_names=False)
+
+
+def test_frame_de_pressao_com_hex_duplicado_levanta() -> None:
+    duplicado = pd.DataFrame(
+        {
+            "hex_id_res7": pd.Series([HEX_Q, HEX_Q], dtype="string"),
+            "pressao_competitiva_no_hex": [10.0, 20.0],
+            "v6_no_hex": [0.1, 0.2],
+            "n_concorrentes_no_raio": [1, 2],
+        }
+    )
+    with pytest.raises(AssertionError, match="duplicado"):
+        academias_com_hotness(_score_padrao(), _carteira(), pressao=duplicado)
+
+
+# --------------------------------------------------------------------------- #
 # Guardrails de pacote
 # --------------------------------------------------------------------------- #
 def test_modulo_nao_importa_demanda_revelada() -> None:

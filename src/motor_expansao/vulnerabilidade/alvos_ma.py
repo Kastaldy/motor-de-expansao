@@ -240,10 +240,42 @@ def _assert_invariancia_m1(
             raise AssertionError(f"`{coluna}` foi alterado pelo join de hotness")
 
 
+def _juntar_pressao(enriquecido: pd.DataFrame, pressao: pd.DataFrame | None) -> pd.DataFrame:
+    """Anexa o sinal 6 como FATO SEM PESO. `None` -> colunas NULAS, jamais zero.
+
+    A distinção importa mais aqui do que em qualquer outra coluna desta camada: na régua do §8.1,
+    `pressao = 0` significa "ninguém espremendo", que é a leitura mais OTIMISTA possível. Se
+    "não calculei" virasse `0`, a ausência de cálculo seria lida como ausência de concorrência —
+    e num funil de aquisição isso rebaixa o alvo justamente por falta de dado. Nulo é ausência;
+    zero é medição.
+    """
+    out = enriquecido
+    if pressao is None or pressao.empty:
+        out["pressao_competitiva_no_hex"] = pd.NA
+        out["v6_no_hex"] = pd.NA
+        out["n_concorrentes_no_raio"] = pd.NA
+        return out
+
+    colunas = ["hex_id_res7", "pressao_competitiva_no_hex", "v6_no_hex", "n_concorrentes_no_raio"]
+    faltando = [c for c in colunas if c not in pressao.columns]
+    if faltando:
+        raise AssertionError(f"frame de pressao fora do contrato: faltam {faltando}")
+    if pressao["hex_id_res7"].duplicated().any():
+        raise AssertionError("frame de pressao com `hex_id_res7` duplicado: join seria ambiguo")
+
+    return out.merge(
+        pressao[colunas].assign(hex_id_res7=lambda d: d["hex_id_res7"].astype("string")),
+        on=_COL_HEX_ACADEMIA,
+        how="left",
+        validate="many_to_one",
+    )
+
+
 def academias_com_hotness(
     score: pd.DataFrame,
     carteira: pd.DataFrame,
     *,
+    pressao: pd.DataFrame | None = None,
     quantil_sam: float = QUANTIL_SAM_QUENTE,
     limiar_residual: float = LIMIAR_RESIDUAL_SATURADO,
 ) -> pd.DataFrame:
@@ -297,6 +329,7 @@ def academias_com_hotness(
     enriquecido["proximo_de_hex_quente"] = (
         enriquecido["hex_quente"] | enriquecido["hex_quente_vizinho"]
     )
+    enriquecido = _juntar_pressao(enriquecido, pressao)
     for coluna in (*COLUNAS_HOTNESS_CARTEIRA, *COLUNAS_M1_INVARIANTES):
         if coluna not in enriquecido.columns:
             # `float("nan")`, NUNCA `pd.NA`: este ramo existe para tolerar carteira incompleta, e
@@ -385,6 +418,10 @@ def agregar_alvos_por_hex(academias: pd.DataFrame) -> pd.DataFrame:
         flag_serie_imatura=("flag_serie_imatura", "any"),
         n_com_nota_wellhub=("_tem_nota", "sum"),
         nota_wellhub_mediana=("nota_wellhub", "median"),
+        # `first` e não média: a pressão é constante por hex (vem do join `many_to_one`), então
+        # agregá-la seria fingir variância que não existe dentro do grupo.
+        pressao_competitiva_no_hex=("pressao_competitiva_no_hex", "first"),
+        v6_no_hex=("v6_no_hex", "first"),
     ).reset_index()
     out["versao_contrato"] = VERSAO_CONTRATO_ALVOS_MA
 
