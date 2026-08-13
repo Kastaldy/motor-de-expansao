@@ -122,6 +122,43 @@ para). O autor sai do header `Remote-User`, que o Caddy já repassa ao piloto.
 
 ---
 
+## 2.2 Controle temporário de acesso por aba (2026-08-13)
+
+O Authelia autentica; **quem autoriza por aba é o backend do piloto**
+(`web/server/acesso.py`), pelo header `Remote-User` e por um mapa
+`usuário -> [abas]` num JSON **no mesmo volume `:rw` do cadastro**:
+
+```
+/opt/motor-expansao/cadastro/acesso_abas.json
+```
+
+Formato (abas válidas: `mapa`, `oportunidades`, `executiva`, `viabilidade`;
+`"*"` é o default para usuário fora da lista; chave começando com `_` é comentário):
+
+```json
+{
+  "_comentario": "editar e salvar — vale na requisição seguinte, sem restart",
+  "felipe_castaldi": ["mapa", "oportunidades", "executiva", "viabilidade"],
+  "fulano_da_silva": ["executiva"],
+  "*": []
+}
+```
+
+Regras de operação:
+
+- **Editar o arquivo basta** — o backend relê por mtime; não precisa de restart.
+- **Validar o JSON antes de salvar** (`python -m json.tool acesso_abas.json`): arquivo
+  ilegível ou JSON inválido **desliga o controle** (fail-open, com warning no log) —
+  um typo devolve acesso cheio a todos, nunca um piloto morto.
+- **Sem o arquivo** (dev local, mount ausente) o controle fica desligado — todos veem
+  tudo, comportamento igual ao de antes da feature.
+- A SPA esconde as abas via `GET /api/me`; o bloqueio real é o middleware (403 nas
+  rotas da aba vetada). Rota nova sem regra reprova em
+  `tests/unit/test_piloto_web_acesso.py` (cobertura obrigatória).
+- Solução **temporária** até o banco de identidade (plano de 2026-08-07).
+
+---
+
 ## 3. Caddy — bloco do subdomínio (editar na VPS)
 
 O `Caddyfile` **não está no git** (gitignored, backup cifrado em `secrets/Caddyfile.enc`);

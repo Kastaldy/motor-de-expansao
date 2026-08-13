@@ -4,6 +4,14 @@ export type { CriterioPonto, ReguasPonto }
 
 /** Contrato entre o front e o backend do piloto (web/server/app.py). */
 
+/** Resposta do /api/me — controle temporário de acesso por aba (web/server/acesso.py).
+ *  `abas` chega como string[] cru de propósito: quem valida e estreita é
+ *  `abasDoPayload` em lib/acesso.ts, defensiva contra payload velho ou inesperado. */
+export interface MePayload {
+  usuario: string | null
+  abas: string[]
+}
+
 /** Tom do chip do ranking. Fronteira TS<->Python sem contrato gerado: o produtor
  *  e' web/server/app.py. Note que `RankItem.tag_cor` tem PRECEDENCIA sobre o tom no
  *  `Chip` — onde a etiqueta sai de uma faixa da legenda, quem pinta e' a cor exata
