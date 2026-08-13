@@ -1,20 +1,22 @@
-"""A ficha do hexagono conta unidades DENTRO do hexagono — nao o modelo de 2 km.
+"""A ficha do hexagono conta ENDERECOS mapeados dentro do hexagono.
 
 Regressao de 2026-08-13. O bloco "Quem ja disputa o aluno" do `FichaHex` promete
-"unidades mapeadas dentro do hexagono" e mostrava outra coisa:
+"unidades mapeadas dentro do hexagono" e mostrava outra coisa: `hex.conc` era
+`n_concorrentes_est` = `oferta_consumida_mercado_estimada / 2.500` — CAPACIDADE do
+modelo de 2 km ponderado por distancia, nao contagem; uma concorrente a 1,8 km do
+centroide entrava ali sem estar dentro do hexagono. E `hex.ultra` vinha da camada de
+performance. O mesmo defeito de redacao ja tinha sido corrigido no texto do funil
+(docstring "RAIO, NAO HEXAGONO" em `_texto_passo3`); a ficha ficou para tras.
 
-* `conc` era `n_concorrentes_est` = `oferta_consumida_mercado_estimada / 2.500` —
-  CAPACIDADE do modelo de 2 km ponderado por distancia, nao contagem. Uma concorrente a
-  1,8 km do centroide entrava ali sem estar dentro do hexagono;
-* `ultra` era `n_unidades_ultra_performance_hex`, da camada de performance.
+A primeira correcao contava LINHA e ainda discordava da tela: o Juan viu 8 pins onde a
+ficha dizia 11. Duas causas, as duas travadas aqui:
 
-O mesmo defeito de redacao ja tinha sido corrigido no texto do funil (docstring
-"RAIO, NAO HEXAGONO" em `_texto_passo3`); a ficha ficou para tras. Nada travava isso.
-
-Estes testes travam as tres coisas que a correcao precisa manter verdadeiras:
-1. a contagem e por CELULA H3 res-7, sobre os MESMOS pontos que viram pin no mapa;
-2. hexagono coberto pela base e sem unidade da `0` — afirmacao legitima;
-3. base de pontos AUSENTE da `None`, nunca `0` — ausencia nao afirma.
+* **Empilhamento.** A base tem 3.269 unidades em 3.111 coordenadas — 158 linhas caem
+  sobre um ponto ja' ocupado (65 `bodytech` numa unica coordenada no Rio; o trio
+  `aera_pilates`+`tonus_gym`+`vidya_studio` junto em 4 coordenadas). Os pins empilham no
+  mesmo pixel, entao a tela mostra menos marcadores do que linhas. Conta-se ENDERECO.
+* **Chave nula.** 90 de 3.269 linhas chegam com `hex_id_res7` NULO tendo coordenada
+  valida. Elas sumiam das duas pontas — nem pin, nem contagem.
 
 HERMETICO: os parquets de pontos sao sinteticos em `tmp_path`; nenhum `data/` real e
 lido. READ-ONLY sobre o M1 — nada aqui toca score, pesos ou artefato oficial.
@@ -37,39 +39,48 @@ import app as pilot  # noqa: E402  (backend do piloto; web/server no sys.path ac
 
 h3 = pytest.importorskip("h3")
 
-# Dois pontos vizinhos na Paulista e um longe. As celulas sao DERIVADAS pelo h3 no
-# proprio teste, nunca hardcoded: um id de celula colado a mao envelhece em silencio se
-# a resolucao mudar, e o teste passaria medindo a coisa errada.
+# As celulas sao DERIVADAS pelo h3 no proprio teste, nunca hardcoded: um id colado a mao
+# envelhece em silencio se a resolucao mudar, e o teste passaria medindo outra coisa.
 _LAT_A, _LNG_A = -23.5613, -46.6560  # Av. Paulista
-_LAT_B, _LNG_B = -23.5620, -46.6555  # ~90 m de A -> MESMA celula res-7
+_LAT_B, _LNG_B = -23.5620, -46.6555  # ~90 m de A -> MESMA celula, OUTRO endereco
 _LAT_C, _LNG_C = -23.4800, -46.4000  # ~28 km de A -> outra celula
 
 CELULA_A = h3.latlng_to_cell(_LAT_A, _LNG_A, 7)
 CELULA_C = h3.latlng_to_cell(_LAT_C, _LNG_C, 7)
 CELULA_VAZIA = h3.latlng_to_cell(-23.9600, -46.3300, 7)  # Santos: coberta, sem ponto
 
+# Segundo endereco DENTRO da celula C, para a linha de chave nula. Sai do centroide da
+# propria celula: assim esta' dentro por construcao, sem depender de eu acertar no olho.
+_LAT_D, _LNG_D = h3.cell_to_latlng(CELULA_C)
+
 
 def _escrever_bases(tmp_path: Path, *, com_concorrentes: bool, com_ultra: bool) -> None:
-    """Materializa os parquets de PONTO que o backend le, em tmp_path."""
+    """Materializa os parquets de PONTO que o backend le, em tmp_path.
+
+    O cenario embute os dois defeitos reais da base: `Vidya` divide a coordenada EXATA da
+    `Smart Fit` (endereco repetido sob outra rede) e `Bodytech` chega SEM `hex_id_res7`.
+    """
     if com_concorrentes:
         pd.DataFrame(
             {
-                "rede": ["Smart Fit", "Bluefit", "Panobianco"],
-                "nome_unidade": ["Paulista 1", "Paulista 2", "Longe"],
-                "lat": [_LAT_A, _LAT_B, _LAT_C],
-                "lng": [_LNG_A, _LNG_B, _LNG_C],
-                "hex_id_res7": [CELULA_A, CELULA_A, CELULA_C],
-                "flag_coord_valida": [True, True, True],
+                "rede": ["Smart Fit", "Bluefit", "Vidya", "Panobianco", "Bodytech"],
+                "nome_unidade": [
+                    "Paulista 1",
+                    "Paulista 2",
+                    "Mesmo endereco da Smart",
+                    "Longe",
+                    "Sem chave gravada",
+                ],
+                "lat": [_LAT_A, _LAT_B, _LAT_A, _LAT_C, _LAT_D],
+                "lng": [_LNG_A, _LNG_B, _LNG_A, _LNG_C, _LNG_D],
+                "hex_id_res7": [CELULA_A, CELULA_A, CELULA_A, CELULA_C, None],
+                "flag_coord_valida": [True, True, True, True, True],
             }
         ).to_parquet(tmp_path / "concorrentes_mapeados.parquet")
 
     if com_ultra:
         pd.DataFrame(
-            {
-                "unidade": ["Ultra Paulista"],
-                "lat": [_LAT_B],
-                "lng": [_LNG_B],
-            }
+            {"unidade": ["Ultra Paulista"], "lat": [_LAT_B], "lng": [_LNG_B]}
         ).to_parquet(tmp_path / "unidades_ultra_performance_hex.parquet")
 
 
@@ -108,11 +119,15 @@ def _limpar_caches() -> None:
         fn.cache_clear()
 
 
-def test_o_fixture_poe_dois_concorrentes_na_MESMA_celula() -> None:
-    """Guarda do proprio cenario: se A e B cairem em celulas diferentes, o teste de
-    contagem abaixo mediria 1+1 e passaria por acidente."""
+def test_o_cenario_esta_montado_como_o_teste_supoe() -> None:
+    """Guardas do proprio fixture. Sem elas um cenario mal montado faria os testes
+    abaixo passarem por acidente — A e B em celulas diferentes dariam 1+1=2 sem que a
+    deduplicacao por endereco estivesse funcionando."""
     assert h3.latlng_to_cell(_LAT_A, _LNG_A, 7) == h3.latlng_to_cell(_LAT_B, _LNG_B, 7)
     assert CELULA_A != CELULA_C
+    # O endereco do `Bodytech` (chave nula) cai na celula C e NAO repete a do Panobianco.
+    assert h3.latlng_to_cell(_LAT_D, _LNG_D, 7) == CELULA_C
+    assert (_LAT_D, _LNG_D) != (_LAT_C, _LNG_C)
 
 
 def test_conta_por_celula_e_nao_pelo_modelo_de_2km(bases) -> None:
@@ -121,9 +136,35 @@ def test_conta_por_celula_e_nao_pelo_modelo_de_2km(bases) -> None:
     n_conc, n_ultra = pilot._contagem_no_hexagono()
 
     assert n_conc is not None and n_ultra is not None
-    assert int(n_conc[CELULA_A]) == 2  # os dois da Paulista
-    assert int(n_conc[CELULA_C]) == 1  # o de longe, na propria celula
+    assert int(n_conc[CELULA_A]) == 2  # 3 linhas, 2 enderecos
+    assert int(n_conc[CELULA_C]) == 2  # Panobianco + a de chave nula, reposta
     assert int(n_ultra[CELULA_A]) == 1
+
+
+def test_mesmo_endereco_com_redes_diferentes_conta_UMA_vez(bases) -> None:
+    """`Vidya` divide a coordenada exata da `Smart Fit`. Sao 3 linhas na celula A e 2
+    enderecos — e o mapa desenha os 3 pins empilhados em 2 pixels. Contar linha era o que
+    fazia a ficha dizer 11 onde a tela mostra 8."""
+    bases()
+    n_conc, _ = pilot._contagem_no_hexagono()
+
+    linhas_na_celula = 3
+    assert int(n_conc[CELULA_A]) == 2 < linhas_na_celula
+
+
+def test_unidade_com_hex_id_nulo_e_reposta_pela_coordenada(bases) -> None:
+    """90 linhas reais chegam sem `hex_id_res7` e com coordenada valida. A reposicao mora
+    no CARREGADOR, nao na contagem, porque `_montar_pins` filtra por essa mesma coluna:
+    repor so' na contagem faria a ficha somar uma unidade que o mapa nao desenha."""
+    bases()
+    conc = pilot._carregar_concorrentes()
+
+    sem_chave = conc[conc["nome_unidade"] == "Sem chave gravada"]
+    assert len(sem_chave) == 1
+    assert str(sem_chave.iloc[0]["hex_id_res7"]) == CELULA_C
+
+    # E o mapa enxerga a linha reposta: ela entra na selecao de pins da celula C.
+    assert CELULA_C in set(conc["hex_id_res7"].astype(str))
 
 
 def test_hexagono_coberto_e_sem_unidade_da_zero_e_nao_ausencia(bases) -> None:
@@ -131,7 +172,7 @@ def test_hexagono_coberto_e_sem_unidade_da_zero_e_nao_ausencia(bases) -> None:
     bases()
     df = pilot._derivar(pd.DataFrame({"hex_id": [CELULA_A, CELULA_C, CELULA_VAZIA]}))
 
-    assert df["n_conc_no_hex"].tolist() == [2, 1, 0]
+    assert df["n_conc_no_hex"].tolist() == [2, 2, 0]
     assert df["n_ultra_no_hex"].tolist() == [1, 0, 0]
 
 
@@ -154,7 +195,7 @@ def test_base_de_pontos_ausente_vira_None_e_NUNCA_zero(bases) -> None:
 
 
 def test_payload_separa_a_contagem_do_hexagono_do_modelo_de_2km(bases) -> None:
-    """`conc` (2 km / 2.500) e `conc_hex` (contagem) sao campos DISTINTOS e podem
+    """`conc` (2 km / 2.500) e `conc_hex` (enderecos) sao campos DISTINTOS e podem
     divergir — era exatamente essa divergencia que a ficha exibia como se fosse
     contagem. O de 2 km continua servindo mapa, funil e ranking."""
     bases()
@@ -164,7 +205,7 @@ def test_payload_separa_a_contagem_do_hexagono_do_modelo_de_2km(bases) -> None:
             "lat": [_LAT_A],
             "lng": [_LNG_A],
             # 12.500 alunos consumidos / 2.500 = 5 "concorrentes" do modelo de 2 km,
-            # contra as 2 unidades realmente dentro do hexagono.
+            # contra os 2 enderecos realmente dentro do hexagono.
             "oferta_consumida_mercado_estimada": [12_500.0],
             "n_unidades_ultra_performance_hex": [7],
         }
@@ -173,7 +214,7 @@ def test_payload_separa_a_contagem_do_hexagono_do_modelo_de_2km(bases) -> None:
     payload = pilot._hex_dict(linha, None)
 
     assert payload["conc"] == 5  # modelo de 2 km, inalterado
-    assert payload["conc_hex"] == 2  # contagem dentro do hexagono
+    assert payload["conc_hex"] == 2  # enderecos dentro do hexagono
     assert payload["ultra"] == 7  # camada de performance, inalterada
     assert payload["ultra_hex"] == 1  # ponto dentro do hexagono
     assert isinstance(payload["conc_hex"], int)  # contagem nao sai como 3.0 no JSON

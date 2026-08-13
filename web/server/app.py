@@ -780,7 +780,23 @@ def _carregar_concorrentes() -> pd.DataFrame:
     if "flag_coord_valida" in df.columns:
         df = df[df["flag_coord_valida"].fillna(True).astype(bool)]
     df = df.dropna(subset=["lat", "lng"])
-    return df[cols].reset_index(drop=True)
+    df = df[cols].reset_index(drop=True)
+
+    # REPOE a celula quando o artefato nao a gravou. Medido em 2026-08-13: 90 de 3.269
+    # linhas chegam com `hex_id_res7` NULO tendo coordenada valida (64 bodytech, 8
+    # phd_sports, 3 selfit...). Sem isto elas somem das DUAS pontas — nao entram nos pins
+    # (que filtram por esta coluna) nem na contagem da ficha, e ninguem percebe.
+    # Reposicao, e nao troca de fonte: onde a chave existe ela bate com o h3 em 3.179 de
+    # 3.179 linhas, entao so' o que falta e' derivado.
+    vazio = df["hex_id_res7"].isna() | df["hex_id_res7"].astype(str).isin(("None", "nan", ""))
+    if bool(vazio.any()):
+        import h3
+
+        df.loc[vazio, "hex_id_res7"] = [
+            h3.latlng_to_cell(float(la), float(ln), 7)
+            for la, ln in zip(df.loc[vazio, "lat"], df.loc[vazio, "lng"], strict=True)
+        ]
+    return df
 
 
 @functools.lru_cache(maxsize=1)
@@ -845,8 +861,25 @@ def _contagem_no_hexagono() -> tuple[pd.Series | None, pd.Series | None]:
     de outra fonte faria a ficha dizer um numero e os pins mostrarem outro na mesma tela.
 
     As concorrentes ja trazem `hex_id_res7` no parquet — e' a MESMA chave por onde
-    `_montar_pins` seleciona os pins. Os pontos Ultra chegam so' com lat/lng (a curada nao
-    tem a coluna), entao a celula e' derivada com o mesmo `h3` res-7 do M1.
+    `_montar_pins` seleciona os pins (reposta a partir do ponto quando vem nula, ver
+    `_carregar_concorrentes`). Os pontos Ultra chegam so' com lat/lng (a curada nao tem a
+    coluna), entao a celula e' derivada com o mesmo `h3` res-7 do M1.
+
+    CONTA ENDERECOS, NAO LINHAS (decisao do Juan, 2026-08-13). A base traz 3.269 unidades
+    em 3.111 coordenadas: 158 linhas caem sobre um ponto ja' ocupado. Nao e' predio com
+    varias academias — e' geocodificacao de endereco. Os casos que provam: 65 unidades
+    `bodytech` numa UNICA coordenada no Rio, e o trio `aera_pilates`+`tonus_gym`+
+    `vidya_studio` repetido junto em 4 coordenadas diferentes (tres rotulos para o mesmo
+    endereco). Contar linha fazia a ficha dizer 11 onde a tela mostra 8 pins, porque os
+    pins empilham no mesmo pixel — foi assim que o defeito apareceu.
+
+    O `drop_duplicates` por (lat, lng) alinha as concorrentes a MESMA regra que a Ultra ja
+    seguia via `_ultra_pontos_mapa`: sem ele, os dois numeros do mesmo bloco mediam coisas
+    diferentes. Preco assumido: shopping com duas academias reais no mesmo ponto conta 1 —
+    erra para baixo, que e' o lado seguro de "quem ja disputa o aluno".
+
+    Os PINS seguem com uma peca por linha, de proposito: a rede de cada uma ainda precisa
+    aparecer ao clicar. O que a ficha promete e' quantos ENDERECOS disputam ali.
 
     Devolve `None` (e nao uma serie vazia) quando a base de pontos nao esta montada: o
     chamador precisa distinguir "nao ha unidade neste hexagono" de "nao sei".
@@ -854,7 +887,8 @@ def _contagem_no_hexagono() -> tuple[pd.Series | None, pd.Series | None]:
     conc = _carregar_concorrentes()
     n_conc: pd.Series | None = None
     if len(conc) and "hex_id_res7" in conc.columns:
-        n_conc = conc.groupby(conc["hex_id_res7"].astype(str)).size()
+        unicos = conc.drop_duplicates(subset=["lat", "lng"])
+        n_conc = unicos.groupby(unicos["hex_id_res7"].astype(str)).size()
 
     ultra = _ultra_pontos_mapa()
     n_ultra: pd.Series | None = None
