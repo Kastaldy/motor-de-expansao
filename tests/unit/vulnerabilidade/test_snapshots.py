@@ -21,6 +21,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from motor_expansao.vulnerabilidade import alvos_ma as malvos
 from motor_expansao.vulnerabilidade import churn_staleness as mchurn
 from motor_expansao.vulnerabilidade import contrato as c
 from motor_expansao.vulnerabilidade import presenca_agregador as mpresenca
@@ -183,7 +184,7 @@ def test_isolamento_imports() -> None:
 
     from .._ast_imports import casa_proibicao, nomes_importados
 
-    for modulo in (pacote, c, m, mchurn, mpresenca, mscore):
+    for modulo in (pacote, c, m, mchurn, mpresenca, mscore, malvos):
         for n in nomes_importados(modulo):
             # As checagens por SUBSTRING são mantidas como estavam: são mais amplas que
             # um prefixo (pegam `dashboard.censo_map`, por exemplo) e afrouxá-las para

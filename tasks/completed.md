@@ -12310,3 +12310,64 @@ ou explicitamente recusados com justificativa; suíte completa sem regressão (b
 **2311 coletados**); `ruff` limpo; `loop_guard` sem `CRITICO`.
 
 
+
+---
+
+## Fechamento de ciclo — BLK-MA-05 (2026-08-13)
+
+**Entregue: o último elo do epic M&A.** `src/motor_expansao/vulnerabilidade/alvos_ma.py` cruza a
+saída do score (grão academia) com o hexágono quente da carteira (grão hex) e materializa os dois
+artefatos do D6: `data/staging/vulnerabilidade_ma_academias.parquet` (camada scored) e
+`data/outputs/alvos_ma_priorizados.csv` (lista curada, `sep=";"` + `utf-8-sig`, sem identidade).
+Contratos de coluna novos em `contrato.py` (`CONTRATO_COLUNAS_ACADEMIAS_MA`,
+`CONTRATO_COLUNAS_ALVOS_MA`, `VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v1"`) mais as constantes do
+gate D5 (`QUANTIL_SAM_QUENTE`, `LIMIAR_RESIDUAL_SATURADO`, `ADJACENCIA_HEX_QUENTE_K`).
+
+**Duas decisões de projeto que divergem do texto do §10, ambas registradas como emenda no
+contrato do epic:**
+
+1. **A linha do CSV é `(hex, REGIME)`, não `(hex)`.** O cabeçalho do §10 era EXEMPLO (o backlog o
+   chamava de "canônico" — divergência resolvida em favor do contrato executável). A mudança é a
+   emenda `BLK-MA-04-FU1` aplicada à AGREGAÇÃO, e não só à ordenação: uma média por hex que
+   atravesse regimes mistura réguas ANTES de qualquer `sort`. **E segmentar pelo CONTADOR não
+   basta** — `{s1,s3}` e `{s3,s4}` têm ambos `n = 2` com renormalizações diferentes, então a chave
+   é a COMPOSIÇÃO (`sinais_disponiveis`); o contador vira a chave primária da ordenação.
+2. **`uf` é a única exceção anti-PII da saída.** Ela consta de `COLUNAS_PII_PROIBIDAS` porque ali é
+   a `uf` do FEED CRU, ao lado de `cep`/`endereco_formatado`. Aqui vem da CARTEIRA agregada — é a
+   UF do hexágono, como o próprio `hex_id_res7` — e o §10 a exige nominalmente. Documentado no
+   teste, não afrouxado em silêncio.
+
+**Declaração exigida pela DEC-026 — o entregável NÃO faz corte sobre nota/contagem.** Nota e
+contagem viajam como fatos agregados (`n_com_nota_wellhub`, `nota_wellhub_mediana`) e não entram
+em filtro, ordenação nem seleção. Razão medida: a ausência de nota é sistemática (8.443
+independentes do próprio WellHub, 14,9% do universo, todos com `qtd_avaliacoes = 0`) e concentra-se
+no perfil que o funil mais quer olhar; cortar por nota montaria, fora do contrato versionado, um
+ranking de um sinal só sobre 60% do universo. Travado por `test_nota_nao_altera_a_ordenacao`.
+
+**READ-ONLY executável, não prosa.** O join é `validate="many_to_one"` no molde do
+`enriquecer_dataframe_com_residual` (ancorado pelo NOME — o ponteiro de linha do §9 já apodreceu),
+com assert de cardinalidade, de não-mutação da carteira e de transporte intacto de
+`score_priorizacao` + os 4 ranks. `test_join_falharia_se_alterasse_o_m1` corrompe o transporte de
+propósito e prova que a função LEVANTA — sem ele o assert poderia passar por vacuidade.
+
+**Medições.** Suíte: **3062 coletados** (baseline medida no momento: 3029 antes; +33 testes novos),
+**3034 passam, 27 skipped**. `ruff` limpo. `loop_guard`: **nenhum CRÍTICO** (só GOVERNANÇA, que é
+inevitável — o pacote inteiro casa `^src/motor_expansao/(lifetime|demanda_revelada|vulnerabilidade)/`).
+Caminhos de saída conferidos contra o `_DENY_CRITICO` (`carteira_expansao*`/`plano_expansao*`/
+`hexagonos_mercado*`), travado por teste.
+
+**1 falha na suíte, PRÉ-EXISTENTE e local-only:**
+`test_score_retencao_territorial.py::test_run_readonly_m1_por_mtime` — é o **BLK-FIX-LTV-01**, aberto
+desde 2026-07-24: o teste guarda os artefatos M1 ausentes mas não a entrada
+`data/staging/unidade_territorio_retencao.parquet`. Em CI limpo `data/staging/` é gitignored, nenhum
+artefato M1 existe e o teste PULA — o portão da `main` não é afetado. Não corrigido aqui por ser
+bloco próprio.
+
+**O que este bloco NÃO destrava.** Os artefatos nascem VAZIOS: a série de snapshots está em zero
+semanas (BLK-MA-06 aguardando aplicação humana na VPS). Foi o previsto pelo próprio bloco — "a
+implementação não espera a série; a execução sim". Rodar contra dado real e entregar a lista ao
+comercial continua bloqueado pelo MA-06 + ~2 meses de acúmulo.
+
+**Governança do PR.** Criticidade Média armaria auto-merge, mas o PR toca `tasks/backlog.md` (do
+commit do BLK-MA-12) e `src/motor_expansao/vulnerabilidade/`, então o guard exige `aprovado-humano`
+de qualquer forma. Deploy segue manual e não se aplica (nada vai a produção).

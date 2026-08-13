@@ -600,6 +600,32 @@ componentes `vi` por sinal (para auditoria) e das flags de qualidade.
 - **Sem overlay de dashboard no MVP** (opcional/futuro). Se por-academia (nomeado), o artefato é
   **gitignored** (fonte real fora do versionamento, DEC-012).
 
+> ### [emenda BLK-MA-05, 2026-08-13] O cabeçalho acima era EXEMPLO; agora há contrato de coluna
+>
+> O texto original diz "**Exemplo** de cabeçalho" e o backlog o citava como "cabeçalho canônico" —
+> divergência resolvida em favor do contrato executável: `CONTRATO_COLUNAS_ALVOS_MA` e
+> `CONTRATO_COLUNAS_ACADEMIAS_MA` (`contrato.py`), travados por teste de ordem e dtype, com
+> `VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v1"`.
+>
+> **A linha do CSV é `(hex, REGIME)`, não `(hex)`** — e isso não é acréscimo cosmético, é a emenda
+> `BLK-MA-04-FU1` aplicada à AGREGAÇÃO. Uma média por hex que atravesse regimes mistura réguas
+> **antes** de qualquer `sort`: um `{s3}` com `sumiu_recente` vale 100,0 e um `{s1,s3,s4}` completo
+> está noutra escala. Daí duas diferenças em relação ao exemplo:
+>
+> 1. **`sinais_disponiveis` entra ao lado de `n_sinais_disponiveis`.** Segmentar pelo CONTADOR não
+>    basta: `{s1,s3}` e `{s3,s4}` têm ambos `n = 2` e renormalizações diferentes. A composição é a
+>    chave; o contador é a chave PRIMÁRIA da ordenação.
+> 2. **`score_vulnerabilidade_max`, `n_com_nota_wellhub` e `nota_wellhub_mediana` acompanham.** As
+>    duas últimas cumprem a DEC-026: a nota é fato sem peso e **nunca aparece sem a contagem ao
+>    lado**.
+>
+> **Declaração exigida pela DEC-026 — o entregável NÃO faz corte sobre nota/contagem.** Nota e
+> contagem não entram em filtro, ordenação nem seleção; a ordenação é por `n_sinais_disponiveis` e
+> depois pelo score. A razão é medida: a ausência de nota é sistemática (8.443 independentes do
+> próprio WellHub, 14,9% do universo, todos com `qtd_avaliacoes = 0`) e concentra-se no perfil que
+> o funil mais quer olhar. Cortar por nota aqui montaria, fora do contrato versionado, um ranking
+> de um sinal só sobre 60% do universo.
+
 ---
 
 ## 11. D7 — Anti-PII

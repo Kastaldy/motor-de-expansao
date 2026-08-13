@@ -358,6 +358,88 @@ CONTRATO_COLUNAS_SCORE: dict[str, str] = {
     "versao_contrato": "string",                   # carimbo; mudança = descontinuidade de série
 }
 
+# --------------------------------------------------------------------------- #
+# Lista priorizada de alvos de M&A (D5/D6) — BLK-MA-05
+# --------------------------------------------------------------------------- #
+VERSAO_CONTRATO_ALVOS_MA = "alvos_ma_v1"
+
+# Gate D5 (ratificado em 2026-07-23; reabrir exige DEC). A INVERSÃO do §2 mora aqui: comprar quer
+# demanda ALTA + residual BAIXO, o OPOSTO de `abrir_agora`.
+QUANTIL_SAM_QUENTE = 0.75
+LIMIAR_RESIDUAL_SATURADO = 25.0
+ADJACENCIA_HEX_QUENTE_K = 1
+
+# Colunas do M1/mercado que a camada de M&A LÊ da carteira e nunca reescreve. As 5 primeiras são as
+# que o §9 manda verificar; as 5 últimas são as invariantes do molde
+# `enriquecer_dataframe_com_residual` — se o join mexer numa delas, o assert derruba.
+COLUNAS_HOTNESS_CARTEIRA: tuple[str, ...] = (
+    "uf",
+    "sam_fitness_potencial",
+    "score_oportunidade_residual",
+    "oferta_efetiva_disponivel",
+    "tese_entrada",
+)
+COLUNAS_M1_INVARIANTES: tuple[str, ...] = (
+    "score_priorizacao",
+    "rank_brasil",
+    "rank_uf",
+    "rank_carteira_brasil",
+    "rank_carteira_uf",
+)
+
+# Camada scored (D6), grão ACADEMIA: as 22 do score + hotness + as invariantes do M1, propagadas
+# para auditoria. `hex_quente` é o nome que o §10 usa e que `score.py` reserva em
+# `_COLUNAS_PROIBIDAS_MA05` — é aqui, e só aqui, que ele passa a existir.
+CONTRATO_COLUNAS_ACADEMIAS_MA: dict[str, str] = {
+    "chave_snapshot": "string",
+    "fonte": "string",
+    "hex_id_res7": "string",
+    "status_churn": "string",
+    "nota_wellhub": "Float64",
+    "qtd_avaliacoes_wellhub": "Int64",
+    "sinais_disponiveis": "string",
+    "n_sinais_disponiveis": "int64",
+    "score_vulnerabilidade": "float64",
+    "score_vulnerabilidade_ordenavel": "float64",
+    "flag_serie_imatura": "bool",
+    "flag_score_provisorio": "bool",
+    "hex_quente": "bool",                  # o hex da academia satisfaz a conjunção do D5
+    "hex_quente_vizinho": "bool",          # algum vizinho `grid_disk(k=1)` e' quente
+    "proximo_de_hex_quente": "bool",       # a disjuncao do §9: o proprio OU um vizinho
+    "uf": "string",
+    "sam_fitness_potencial": "float64",
+    "score_oportunidade_residual": "float64",
+    "oferta_efetiva_disponivel": "float64",
+    "tese_entrada": "string",
+    "score_priorizacao": "float64",        # PROPAGADO do M1, nunca recalculado
+    "versao_contrato": "string",
+}
+
+# Lista curada (D6), grão (HEX x REGIME). O §10 traz um cabeçalho de EXEMPLO, não normativo; duas
+# diferenças deliberadas em relação a ele, ambas exigidas pela emenda BLK-MA-04-FU1:
+#   1. `sinais_disponiveis` entra ao lado de `n_sinais_disponiveis`. Segmentar só pelo CONTADOR
+#      ainda mistura réguas: `{s1,s3}` e `{s3,s4}` têm ambos `n = 2` e renormalizações diferentes.
+#      A composição é a chave estrita; o contador fica por legibilidade e ordenação.
+#   2. A linha é (hex, regime), não (hex). Uma média que atravessa regimes mistura réguas ANTES de
+#      qualquer `sort` — a obrigação do FU1 vale para a AGREGAÇÃO, não só para a ordenação.
+CONTRATO_COLUNAS_ALVOS_MA: dict[str, str] = {
+    "hex_id_res7": "string",
+    "uf": "string",
+    "sinais_disponiveis": "string",
+    "n_sinais_disponiveis": "int64",
+    "n_independentes_vulneraveis": "int64",
+    "score_vulnerabilidade_medio": "float64",
+    "score_vulnerabilidade_max": "float64",
+    "sam_fitness_potencial": "float64",
+    "score_oportunidade_residual": "float64",
+    "hex_quente": "bool",
+    "proximo_de_hex_quente": "bool",
+    "flag_serie_imatura": "bool",
+    "n_com_nota_wellhub": "int64",         # FATO sem peso (DEC-026): a nota anda com a contagem
+    "nota_wellhub_mediana": "Float64",
+    "versao_contrato": "string",
+}
+
 # Colunas PROIBIDAS nos artefatos desta camada (rede de segurança do teste anti-PII: a limpeza é
 # por construção, projetando só as 10 colunas do contrato).
 COLUNAS_PII_PROIBIDAS: frozenset[str] = frozenset(
@@ -664,6 +746,14 @@ __all__ = [
     "SINAIS_INATIVOS",
     "PESOS_ALVO_SINAIS",
     "V3_POR_STATUS_CHURN",
+    "VERSAO_CONTRATO_ALVOS_MA",
+    "QUANTIL_SAM_QUENTE",
+    "LIMIAR_RESIDUAL_SATURADO",
+    "ADJACENCIA_HEX_QUENTE_K",
+    "COLUNAS_HOTNESS_CARTEIRA",
+    "COLUNAS_M1_INVARIANTES",
+    "CONTRATO_COLUNAS_ACADEMIAS_MA",
+    "CONTRATO_COLUNAS_ALVOS_MA",
     "COLUNAS_PII_PROIBIDAS",
     "normalizar_texto",
     "normalizar_lista",
