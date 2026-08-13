@@ -17,7 +17,8 @@ import { api, ApiError, baixar } from '../lib/api'
 import { parseCoordinate } from '../lib/coord'
 import { alunos, coord, num } from '../lib/format'
 import { chaveContexto, fotoAplicavel, type EstadoMapa } from '../lib/mapa-estado'
-import { MAX_COMPARADOS } from '../lib/ranking-comparacao'
+import { MAX_COMPARADOS, ranquear } from '../lib/ranking-comparacao'
+import { DIMENSOES } from '../lib/comparacao'
 import type { Cobertura1k, Hex, MunicipioItem, MunicipioPayload } from '../lib/types'
 
 /** Filtro global "melhores hexes": faixas M1 permitidas por nível. */
@@ -373,6 +374,70 @@ export default function MapScreen({
     setVoo((v) => ({ hexId, n: (v?.n ?? 0) + 1 }))
   }, [])
 
+  /* ---- Deck de comparacao (PDF) --------------------------------------------
+     O MapScreen orquestra porque so' ele tem as duas pontas: o mapa (que captura) e a
+     lista comparada (que vira o ranking). O painel so' pede.
+
+     A ORDEM importa: primeiro as capturas, depois o POST. O ranking e' calculado AQUI, no
+     mesmo `ranquear` que a tela usa, e viaja pronto — o servidor so' desenha, para nao
+     existir uma segunda regra de "quem vence" que possa divergir da tela. */
+  const [pedidoCaptura, setPedidoCaptura] = useState<{ hexIds: string[]; n: number } | null>(null)
+  const [gerandoDeck, setGerandoDeck] = useState(false)
+
+  const rotulosComparacao = useCallback(
+    (hs: Hex[]) => hs.map((h, i) => h.mun ?? `Hexágono ${i + 1}`),
+    [],
+  )
+
+  const pedirDeck = useCallback(() => {
+    if (!hexesComparacao?.length || gerandoDeck) return
+    setGerandoDeck(true)
+    setPedidoCaptura((p) => ({
+      hexIds: hexesComparacao.map((h) => h.id),
+      n: (p?.n ?? 0) + 1,
+    }))
+  }, [hexesComparacao, gerandoDeck])
+
+  const aoCapturarMapas = useCallback(
+    async (imagens: string[]) => {
+      const hs = hexesComparacao
+      if (!hs?.length) {
+        setGerandoDeck(false)
+        return
+      }
+      try {
+        const rotulos = rotulosComparacao(hs)
+        const ranking = ranquear(DIMENSOES, hs, rotulos)
+        const cidade = hs[0]?.mun ? `${hs[0].mun} - ` : ''
+        const resposta = await fetch('/api/relatorio/comparacao', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...ranking,
+            titulo: 'Comparação de hexágonos',
+            subtitulo: `${cidade}${hs.length} áreas`,
+            imagens,
+          }),
+        })
+        if (!resposta.ok) throw new Error(`HTTP ${resposta.status}`)
+        const blob = await resposta.blob()
+        // Baixa pelo link temporario e REVOGA a URL: sem o revoke o blob fica retido pela
+        // aba enquanto ela viver, e um deck tem alguns MB de imagem dentro.
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = 'comparacao-hexagonos.pdf'
+        a.click()
+        URL.revokeObjectURL(url)
+      } catch (erro) {
+        console.error('[deck] falhou ao gerar o PDF da comparação', erro)
+      } finally {
+        setGerandoDeck(false)
+      }
+    },
+    [hexesComparacao, rotulosComparacao],
+  )
+
   /**
    * Poe ou tira um hexagono da comparacao, direto da lista.
    *
@@ -582,6 +647,8 @@ export default function MapScreen({
           }}
           searchPin={pinFixo ?? pin}
           voarPara={voo}
+          pedidoCaptura={pedidoCaptura}
+          onCapturas={aoCapturarMapas}
         />
       )}
 
@@ -1068,6 +1135,8 @@ export default function MapScreen({
                seleciona e pede o voo. Clicar no mapa continua sem voo, porque lá o
                hexágono já está sob o cursor. */
             onIrPara={selecionarDaLista}
+            onRelatorio={pedirDeck}
+            gerandoRelatorio={gerandoDeck}
           />
         ) : (
           <div>

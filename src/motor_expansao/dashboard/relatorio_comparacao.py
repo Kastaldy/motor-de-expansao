@@ -479,7 +479,111 @@ def _slide_matriz(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | None) -
 
 
 # ===========================================================================
-# Slide 4 - Tabela
+# Slide 4 - Mapas (um enquadramento por area, lado a lado)
+# ===========================================================================
+
+
+def _encaixar(
+    png: bytes, x: float, y: float, largura: float, altura: float
+) -> tuple[float, float, float, float]:
+    """Retangulo da imagem DENTRO da moldura, preservando a proporcao dela e centralizando.
+
+    `pdf.image(w=, h=)` ESTICA para caber. A captura do mapa nao tem a proporcao da
+    moldura — depende do tamanho da janela do operador —, entao forcar os dois eixos
+    deformava o entorno: um bairro quadrado virava oval, e as distancias entre os pins
+    deixavam de ser lidas corretamente. Numa peca cujo assunto E' distancia, isso nao e'
+    detalhe estetico.
+    """
+    from PIL import Image
+
+    with Image.open(BytesIO(png)) as img:
+        pw, ph = img.width, img.height
+    if not (pw > 0 and ph > 0):
+        return x, y, largura, altura
+
+    escala = min(largura / pw, altura / ph)
+    cw, ch = pw * escala, ph * escala
+    return x + (largura - cw) / 2, y + (altura - ch) / 2, cw, ch
+
+
+def _slide_mapas(
+    pdf: UltraPDF,
+    dados: Mapping[str, Any],
+    arte: bytes | None,
+    mapas: Sequence[bytes | None],
+) -> None:
+    """Os mapas capturados da tela, um por area, lado a lado.
+
+    As imagens vem do PILOTO (captura do canvas), e nao de um render no servidor: medido em
+    2026-08-13, o renderizador do Relatorio Pontual gasta ~7,8 s so' para carregar os
+    setores de UMA coordenada e trabalha num raio de 1 km, onde um hexagono de ~5 km2 sai
+    praticamente vazio. Capturar garante ainda que o PDF mostre o MESMO enquadramento e as
+    MESMAS cores que o operador viu.
+    """
+    pdf.add_page()
+    _fundo(pdf, arte, cor=BRANCO)
+    faixa_de_titulo(pdf, "Quem já disputa o aluno ali", "concorrentes e unidades Ultra no entorno")
+
+    itens = list(dados.get("itens") or [])[:MAX_ITENS]
+    n = len(itens)
+    if not n:
+        return
+
+    vao = 14.0
+    largura = (PAGINA_LARGURA - 72 - vao * (n - 1)) / n
+    # A moldura ocupa a altura util; a IMAGEM dentro dela preserva a proporcao propria
+    # (ver `_encaixar`). Fixar a altura pela largura esticava a captura, que nao tem 4:3.
+    disponivel = 470.0 - 108.0
+    altura = min(disponivel, largura * 1.05)
+    topo = 108.0 + (disponivel - altura) / 2
+
+    for i, item in enumerate(itens):
+        x = 36 + i * (largura + vao)
+        png = mapas[i] if i < len(mapas) else None
+
+        pdf.set_fill_color(*cor_do_item(i))
+        pdf.rect(x, topo - 22, 9, 9, style="F")
+        pdf.set_text_color(*CINZA_TEXTO)
+        pdf.set_font("Helvetica", "B", 9.5)
+        pdf.set_xy(x + 14, topo - 24)
+        pdf.cell(largura - 14, 13, ascii_seguro(str(item.get("rotulo") or f"Área {i + 1}")))
+
+        if png:
+            try:
+                cx, cy, cw, ch = _encaixar(png, x, topo, largura, altura)
+                pdf.image(BytesIO(png), x=cx, y=cy, w=cw, h=ch)
+            except Exception:  # noqa: BLE001 - captura corrompida nao derruba o deck
+                png = None
+
+        if not png:
+            # DECLARA a ausencia em vez de deixar um retangulo vazio: mapa que faltou por
+            # captura falha se parece com "nao ha concorrente aqui", que e' o oposto.
+            pdf.set_fill_color(246, 246, 246)
+            pdf.rect(x, topo, largura, altura, style="F")
+            pdf.set_draw_color(*CINZA_LINHA)
+            pdf.rect(x, topo, largura, altura, style="D")
+            pdf.set_text_color(140, 140, 140)
+            pdf.set_font("Helvetica", "", 8.5)
+            pdf.set_xy(x + 8, topo + altura / 2 - 12)
+            pdf.multi_cell(
+                largura - 16,
+                11,
+                ascii_seguro("Mapa não capturado para esta área."),
+                align="C",
+            )
+
+        pdf.set_draw_color(*CINZA_LINHA)
+        pdf.rect(x, topo, largura, altura, style="D")
+
+    rodape(
+        pdf,
+        "Imagens capturadas do próprio Mapa Territorial, no enquadramento de cada área - "
+        "mesmas camadas e mesmas cores da tela. Pins: concorrentes mapeados e unidades Ultra.",
+    )
+
+
+# ===========================================================================
+# Slide 5 - Tabela
 # ===========================================================================
 
 
@@ -666,6 +770,7 @@ def _slide_encerramento(pdf: UltraPDF, dados: Mapping[str, Any], arte: bytes | N
 def gerar_pdf_comparacao(
     dados: Mapping[str, Any],
     *,
+    mapas: Sequence[bytes | None] | None = None,
     ultra_dir: Path | str | None = None,
     quando: date | None = None,
 ) -> bytes:
@@ -684,6 +789,10 @@ def gerar_pdf_comparacao(
     _slide_capa(pdf, dados, arte["capa"], quando)
     _slide_graficos(pdf, dados, arte["conteudo"])
     _slide_matriz(pdf, dados, arte["conteudo"])
+    # O slide de mapas SO' entra se houver ao menos uma captura. Sem imagem nenhuma ele
+    # seria uma pagina de molduras vazias — pior que nao existir.
+    if mapas and any(mapas):
+        _slide_mapas(pdf, dados, arte["conteudo"], mapas)
     _slide_tabela(pdf, dados, arte["conteudo"])
     _slide_recomendacao(pdf, dados, arte["conteudo"])
     _slide_encerramento(pdf, dados, arte["capa"], quando)

@@ -1,5 +1,3 @@
-import { useState } from 'react'
-
 import BlocosComparacao from './BlocosComparacao'
 import TabelaRanking from './TabelaRanking'
 import {
@@ -26,13 +24,21 @@ export default function PainelComparacao({
   hexes,
   onLimpar,
   onIrPara,
+  onRelatorio,
+  gerandoRelatorio = false,
 }: {
   hexes: Hex[]
   onLimpar: () => void
   /** Leva o mapa até o hexágono. Recebe o id, que é o que o mapa conhece. */
   onIrPara?: (hexId: string) => void
+  /**
+   * Pede o deck em PDF. Fica no MapScreen, e não aqui, porque gerar exige as DUAS pontas:
+   * capturar o mapa (que este painel não tem) e montar o ranking.
+   */
+  onRelatorio?: () => void
+  /** Enquanto o mapa voa e captura, o botão precisa dizer que está trabalhando. */
+  gerandoRelatorio?: boolean
 }) {
-  const [pedidoRelatorio, setPedidoRelatorio] = useState(false)
   const rotulos = hexes.map((h, i) => h.mun ?? `Hexágono ${i + 1}`)
   const ranking = ranquear(DIMENSOES, hexes, rotulos)
   const blocos = blocosPorParametro(DIMENSOES, hexes) as BlocoParametro<unknown>[]
@@ -60,10 +66,15 @@ export default function PainelComparacao({
         rotulos={rotulos}
         cor={corDeIdentidade}
         onIrPara={onIrPara ? (i) => onIrPara(hexes[i].id) : undefined}
-        onRelatorio={() => setPedidoRelatorio(true)}
+        onRelatorio={onRelatorio}
+        rotuloRelatorio={
+          gerandoRelatorio ? 'Gerando o PDF - o mapa está sendo capturado...' : 'Gerar relatório em PDF'
+        }
       />
 
-      {pedidoRelatorio && (
+      {gerandoRelatorio && (
+        /* O mapa VOA até cada área antes de capturar, então a tela se mexe sozinha por
+           alguns segundos. Sem dizer isso, o movimento parece defeito. */
         <p
           style={{
             margin: 0,
@@ -74,8 +85,8 @@ export default function PainelComparacao({
             color: 'var(--tx-narrative)',
           }}
         >
-          O relatório desta comparação ainda não é gerado — o botão está aqui para o fluxo
-          ficar de pé enquanto o formato é definido.
+          O mapa vai passar por cada área para fotografar o entorno. Não mexa nele até o
+          download começar.
         </p>
       )}
 

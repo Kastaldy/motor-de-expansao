@@ -6689,6 +6689,65 @@ def _gerar_simulador_xlsx_response(body: ViabilidadeIn, rotulo: str | None) -> R
 
 
 # ============================================================================
+# Deck de comparacao (PDF)
+# ============================================================================
+
+
+def _png_de_data_url(valor: object) -> bytes | None:
+    """Decodifica um `data:image/png;base64,...` vindo da captura do mapa.
+
+    Devolve `None` — e nunca levanta — para captura vazia, truncada ou corrompida: o
+    gerador ja' sabe desenhar a moldura declarando "mapa nao capturado", e derrubar o
+    relatorio inteiro por causa de uma imagem seria trocar um slide incompleto por
+    nenhum PDF.
+    """
+    texto = str(valor or "")
+    marca = "base64,"
+    corte = texto.find(marca)
+    if corte < 0:
+        return None
+    try:
+        return base64.b64decode(texto[corte + len(marca) :], validate=True)
+    except Exception:  # noqa: BLE001 - captura ruim degrada, nao quebra
+        return None
+
+
+def _gerar_comparacao_pdf(payload: dict[str, Any]) -> bytes:
+    """Corpo SINCRONO do deck — roda no threadpool, nunca no event loop."""
+    from motor_expansao.dashboard.relatorio_comparacao import gerar_pdf_comparacao
+
+    imagens = [_png_de_data_url(v) for v in (payload.get("imagens") or [])]
+    return gerar_pdf_comparacao(payload, mapas=imagens, ultra_dir=ULTRA_DIR)
+
+
+@app.post("/api/relatorio/comparacao")
+async def relatorio_comparacao(payload: dict[str, Any]) -> Response:
+    """Deck de 6-7 slides da comparacao de areas.
+
+    O CORPO TRAZ O RANKING JA CALCULADO, e isso e' deliberado. A regra de comparacao —
+    dimensoes, limiares, quem lidera — vive em `web/src/lib/` e e' o que a TELA mostra;
+    recalcula-la aqui criaria uma segunda fonte da verdade para a mesma pergunta, e as duas
+    divergiriam no primeiro ajuste: o PDF apontaria um vencedor e o piloto, outro, sobre os
+    mesmos hexagonos. O servidor so' desenha.
+
+    As `imagens` sao capturas do proprio mapa (uma por area). Ver
+    `web/src/lib/captura-mapa.ts` para por que print, e nao render no servidor.
+
+    Threadpool + semaforo como o PDF Pontual: a montagem e' sincrona e pesada, e no event
+    loop do unico worker ela prendia TODAS as outras requisicoes — medido em producao em
+    2026-07-24, tres relatorios simultaneos serializaram em 12/21/31 s e um `/api/health`
+    levou 29 s.
+    """
+    async with _PDF_SEMAFORO:
+        pdf = await run_in_threadpool(_gerar_comparacao_pdf, payload)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="comparacao.pdf"'},
+    )
+
+
+# ============================================================================
 # SPA estatico (build do Vite) — producao
 # ============================================================================
 # Em producao UM container serve o frontend (dist/) E a API na mesma porta; o
