@@ -433,6 +433,76 @@ def test_materializar_sem_fonte_levanta() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Regressões achadas na revisão adversarial de 2026-08-13
+# --------------------------------------------------------------------------- #
+def test_quartil_degenerado_nao_marca_sam_zero_como_quente() -> None:
+    """D3: com >=75% de zeros, `q75 = 0` e `sam >= 0` valeria para TODO o universo.
+
+    Medido na carteira real: acontece em 12 das 27 UFs. Em SP marcaria 354 hexes de SAM **zero**
+    como "hexágono quente / demanda alta" — número errado, silencioso, na mesa do comercial.
+    """
+    linhas = [_linha_carteira(h, sam=0.0, residual=1.0) for h in _FILLERS]
+    linhas.append(_linha_carteira(HEX_Q, sam=50.0, residual=1.0))
+    carteira = pd.DataFrame(linhas)
+
+    out = marcar_hex_quente(carteira)
+    assert float(out.attrs["corte_sam"]) == 0.0, "o cenario precisa degenerar o quartil"
+    quentes = set(out.loc[out["hex_quente"], "hex_id"].astype(str))
+    assert quentes == {HEX_Q}, "SAM zero nunca e' demanda alta, mesmo com o quartil degenerado"
+
+
+def test_guarda_de_sam_positivo_nao_muda_o_resultado_quando_o_quartil_e_saudavel() -> None:
+    """A guarda do D3 não pode reabrir o D5: com quartil positivo, o conjunto é o mesmo."""
+    out = marcar_hex_quente(_carteira())
+    assert set(out.loc[out["hex_quente"], "hex_id"].astype(str)) == {HEX_Q}
+
+
+def test_carteira_com_dtype_nulavel_nao_acusa_violacao_do_m1() -> None:
+    """D2: `Series.equals` compara DTYPE. `Float64` vs `float64` acusava o M1 de ter sido alterado.
+
+    `dtype_backend="numpy_nullable"` é opção suportada de leitura sobre o MESMO arquivo de
+    produção — bastava alguém usá-la para o entregável parar de rodar com um erro que aponta para
+    o lugar errado (corrupção de artefato oficial que não aconteceu).
+    """
+    carteira = _carteira()
+    carteira["score_priorizacao"] = carteira["score_priorizacao"].astype("Float64")
+    for rank in ("rank_brasil", "rank_uf", "rank_carteira_brasil", "rank_carteira_uf"):
+        carteira[rank] = carteira[rank].astype("Int64")
+
+    out = academias_com_hotness(_score_padrao(), carteira)
+    assert float(_linha_por_chave(out, "k_q")["score_priorizacao"]) == 55.5
+
+
+def test_hex_invalido_alem_dos_cinco_primeiros_e_barrado() -> None:
+    """D4: o `[:5]` cortava a VARREDURA, não a amostra da mensagem — o guard nunca disparava.
+
+    Com dezenas de milhares de academias, a chance de o hex sujo cair nos 5 primeiros únicos é
+    ~0. Este é o único guard de geometria da camada.
+    """
+    score = _score_padrao()
+    linhas = [score.iloc[[i % len(score)]].copy() for i in range(8)]
+    for i, linha in enumerate(linhas):
+        linha["chave_snapshot"] = f"k_{i}"
+    inflado = pd.concat(linhas, ignore_index=True)
+    inflado.loc[inflado.index[-1], "hex_id_res7"] = "LIXO_NAO_H3"
+
+    with pytest.raises(AssertionError, match="fora de res-7"):
+        academias_com_hotness(inflado, _carteira())
+
+
+def test_carteira_sem_coluna_opcional_nao_quebra_o_astype() -> None:
+    """D1: o ramo que tolera carteira incompleta criava `pd.NA` e o `astype("float64")` levantava.
+
+    A defesa derrubava exatamente o caso que existia para salvar.
+    """
+    for coluna in ("oferta_efetiva_disponivel", "score_priorizacao", "uf", "tese_entrada"):
+        carteira = _carteira().drop(columns=[coluna])
+        out = academias_com_hotness(_score_padrao(), carteira)
+        assert len(out) == 4, coluna
+        assert out[coluna].isna().all(), coluna
+
+
+# --------------------------------------------------------------------------- #
 # Guardrails de pacote
 # --------------------------------------------------------------------------- #
 def test_modulo_nao_importa_demanda_revelada() -> None:

@@ -136,7 +136,24 @@ def marcar_hex_quente(
         quente = pd.Series(dtype="bool")
     else:
         corte_sam = float(sam.quantile(quantil_sam))
-        quente = (sam >= corte_sam) & (residual < float(limiar_residual))
+        # GUARDA CONTRA DEGENERAÇÃO DO QUARTIL, e ela não é hipotética: 63% da carteira tem
+        # `sam_fitness_potencial == 0`. Em qualquer recorte onde os zeros passem de 75% (medido:
+        # 12 das 27 UFs, SP entre elas), `corte_sam` vira `0.0` — e `sam >= 0` é verdade para o
+        # universo INTEIRO. A metade "demanda alta" do D5 desapareceria em silêncio e `hex_quente`
+        # colapsaria em `residual < 25`: em SP isso marcaria 354 hexes de SAM ZERO como quentes,
+        # na lista que vai para a mesa do comercial.
+        #
+        # Exigir SAM estritamente positivo **não reabre o D5** nem muda o resultado nacional (lá o
+        # corte é 7,53 e já exclui os zeros; 836 quentes antes e depois) — apenas impede que "top
+        # quartil" signifique "tudo" quando o quartil é zero.
+        if corte_sam <= 0.0:
+            _logger.warning(
+                "quartil de `sam_fitness_potencial` degenerado (q%.0f = %.4f): o recorte tem "
+                "zeros demais. Mantendo apenas SAM > 0 como demanda alta.",
+                quantil_sam * 100,
+                corte_sam,
+            )
+        quente = (sam >= corte_sam) & (sam > 0.0) & (residual < float(limiar_residual))
 
     out = pd.DataFrame({_COL_HEX_CARTEIRA: base[_COL_HEX_CARTEIRA].astype("string")})
     out["hex_quente"] = quente.fillna(False).astype(bool) if not base.empty else quente
@@ -201,8 +218,24 @@ def _assert_invariancia_m1(
     for coluna in COLUNAS_M1_INVARIANTES:
         if coluna not in referencia.columns or coluna not in enriquecido.columns:
             continue
-        esperado = pd.to_numeric(chave.map(mapa[coluna]), errors="coerce").reset_index(drop=True)
-        atual = pd.to_numeric(enriquecido[coluna], errors="coerce").reset_index(drop=True)
+        # `.astype("float64")` nos DOIS lados, e não só `pd.to_numeric`: `Series.equals` compara
+        # DTYPE além de valor, e `to_numeric` PRESERVA o nulável. Ler a carteira com
+        # `dtype_backend="numpy_nullable"` ou `"pyarrow"` (opções suportadas, sobre o mesmo arquivo
+        # de produção) traz `score_priorizacao` como `Float64`/`double[pyarrow]`, enquanto o lado
+        # do join já saiu como `float64` numpy — valores idênticos, dtypes diferentes, e o assert
+        # acusaria "o M1 foi alterado" sem que um único valor tivesse mudado. Falso alarme de
+        # violação de guardrail é pior que nenhum alarme: manda o leitor caçar corrupção de
+        # artefato oficial que não existe.
+        esperado = (
+            pd.to_numeric(chave.map(mapa[coluna]), errors="coerce")
+            .astype("float64")
+            .reset_index(drop=True)
+        )
+        atual = (
+            pd.to_numeric(enriquecido[coluna], errors="coerce")
+            .astype("float64")
+            .reset_index(drop=True)
+        )
         if not esperado.equals(atual):
             raise AssertionError(f"`{coluna}` foi alterado pelo join de hotness")
 
@@ -266,7 +299,12 @@ def academias_com_hotness(
     )
     for coluna in (*COLUNAS_HOTNESS_CARTEIRA, *COLUNAS_M1_INVARIANTES):
         if coluna not in enriquecido.columns:
-            enriquecido[coluna] = pd.NA
+            # `float("nan")`, NUNCA `pd.NA`: este ramo existe para tolerar carteira incompleta, e
+            # `pd.Series([pd.NA]).astype("float64")` LEVANTA `TypeError` (não há conversão de
+            # `NAType` para float nativo). Com `pd.NA` a defesa derrubava exatamente o caso que
+            # ela foi escrita para salvar — uma defesa que não defende é pior que nenhuma, porque
+            # some da revisão. `NaN` converte para todos os dtypes do contrato, texto inclusive.
+            enriquecido[coluna] = float("nan")
     enriquecido["versao_contrato"] = VERSAO_CONTRATO_ALVOS_MA
 
     out = _projetar(enriquecido, CONTRATO_COLUNAS_ACADEMIAS_MA)
@@ -284,13 +322,20 @@ def _assert_schema_academias(df: pd.DataFrame) -> None:
         return
     if bool(df.duplicated(subset=["fonte", "chave_snapshot"]).any()):
         raise AssertionError("camada scored com `(fonte, chave_snapshot)` duplicada")
+    # O `[:5]` corta a AMOSTRA DA MENSAGEM, nunca a varredura. Cortar o input (que é o erro fácil
+    # aqui) faria o guard olhar só os 5 primeiros hexes únicos: com dezenas de milhares de
+    # academias, a chance de um hex sujo cair nessa janela é ~0, e este é o ÚNICO guard de
+    # geometria da camada — ele passaria a nunca disparar.
     invalidos = [
         h
-        for h in df[_COL_HEX_ACADEMIA].astype(str).unique()[:5]
+        for h in df[_COL_HEX_ACADEMIA].astype(str).unique()
         if not h3.is_valid_cell(h) or h3.get_resolution(h) != H3_RES_CONTRATO
     ]
     if invalidos:
-        raise AssertionError(f"`hex_id_res7` fora de res-{H3_RES_CONTRATO}: {invalidos}")
+        raise AssertionError(
+            f"`hex_id_res7` fora de res-{H3_RES_CONTRATO}: {len(invalidos)} distinto(s), "
+            f"amostra {invalidos[:5]}"
+        )
     # A disjunção do §9 tem de ser reconstituível a partir da própria saída.
     disjuncao = df["hex_quente"].astype(bool) | df["hex_quente_vizinho"].astype(bool)
     if not disjuncao.equals(df["proximo_de_hex_quente"].astype(bool)):
