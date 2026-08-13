@@ -8,33 +8,39 @@ peso é decisão de gate (§8.3: os pesos são congelados e "só mudam com novo 
 
 POR QUE RECALCULAR EM VEZ DE LER `pressao_concorrencial_score_2km`. O §8.1 define
 `v6 = pressao_concorrencial_score_2km / 100`, coluna já materializada em
-`hexagonos_mercado_mapeado.parquet`. Este módulo reproduz essa coluna e foi **medido contra ela em
-2026-08-13: Pearson e Spearman = 1,0000 sobre os 4.899 hexes da carteira, mesma média, mesmos 227
-hexes com sinal.** Mesma fórmula, mesmo kernel, mesmo raio — a igualdade é o teste, não a
-coincidência.
+`hexagonos_mercado_mapeado.parquet`. Este módulo reproduz a fórmula daquela coluna, e a prova disso
+tem duas metades, ambas medidas em 2026-08-13 sobre os 4.899 hexes da carteira:
 
-**O que o recálculo NÃO conserta, e é preciso dizer alto:** ele NÃO atualiza o insumo. Os dois
-caminhos leem o MESMO `concorrentes_mapeados.parquet`, que está defasado — gerado de **28** arquivos
-de rede quando `concorrentes/unidades_*.csv` tem **104** em disco (medido 2026-08-13). São ~76 redes
-invisíveis, e o efeito não é ruído neutro: onde falta coleta a pressão sai **zero**, que na régua do
-§8.1 é a afirmação "não há concorrência espremendo" — a mais otimista possível. Corrigir isso é
-regenerar o parquet de pontos com `normalizar_concorrentes`, fora do escopo deste módulo; o que ele
-faz é **avisar** (ver `ler_concorrentes`) em vez de deixar o zero passar calado.
+  - **Contra o MESMO insumo, é idêntico:** Pearson e Spearman = **1,0000**, mesma média, mesmos 227
+    hexes com sinal. A igualdade é o teste da implementação.
+  - **Depois de regenerar o insumo, diverge — e é assim que tem de ser:** Pearson **0,9356**. A
+    coluna oficial continua calculada sobre 28 redes; este módulo passou a ver 104.
 
-O que o recálculo entrega de fato:
+`concorrentes_mapeados.parquet` foi regenerado em 2026-08-13 (28 -> **104** arquivos de rede, 3.179
+-> **4.366** pontos válidos, +37,3%), entrando redes inteiras que estavam invisíveis — `skyfit`
+sozinha tem 482 unidades. **A camada de mercado NÃO foi recalculada junto** (isso exige
+`enriquecimento_espacial_hexagonos`, 213 MB e dezenas de minutos, sobre artefato CRÍTICO), então a
+divergência acima é o estado atual e esperado: aqui o número está atualizado, lá não.
+
+O que o recálculo entrega:
 
   1. **O kernel vira parâmetro em vez de premissa embutida.** Trocar a curva ou o raio é argumento
      de chamada, e o carimbo (`kernel_pressao`, `raio_pressao_m`) viaja na saída — o número passa a
      ser interpretável sem abrir o pipeline de mercado.
-  2. **Independência do artefato de 213 MB.** Lê 255 KB de pontos e serve QUALQUER hex, inclusive os
-     de academias fora da malha da carteira — que é o caso do universo de M&A.
-  3. **Auditoria do decaimento.** A contagem CRUA viaja ao lado da oferta ponderada, então dá para
+  2. **Independência do artefato de 213 MB.** Lê ~350 KB de pontos e serve QUALQUER hex, inclusive
+     os de academias fora da malha da carteira — que é o caso do universo de M&A.
+  3. **Atualidade.** Ler a coluna materializada congelaria o sinal na última rodada do pipeline de
+     mercado; ler os pontos custa 1 s e reflete a coleta mais recente.
+  4. **Auditoria do decaimento.** A contagem CRUA viaja ao lado da oferta ponderada, então dá para
      distinguir "pouca gente" de "gente longe" — impossível olhando só o score final.
 
-**Cobertura, para calibrar expectativa antes de qualquer peso:** no recorte da carteira só
-**227 de 4.899 hexes (4,6%)** têm pressão positiva. Um sinal que é zero em 95,4% do universo não
-ordena nada, e parte desses zeros é a defasagem acima. É por isso que ele nasce como FATO, para ser
-LIDO antes de ser pesado.
+**COBERTURA — o número que calibra qualquer conversa sobre peso.** Mesmo com o insumo corrigido, só
+**268 de 4.899 hexes (5,5%)** da carteira têm pressão positiva. Antes da regeneração eram 227
+(4,6%): a defasagem do insumo explicava **cerca de 1 ponto percentual**, não a cobertura baixa. Os
+outros ~94% são reais — a maior parte da carteira não tem concorrente de cadeia num raio de 2 km.
+Um sinal que é zero em 94% do universo não ordena, ele empata; é por isso que nasce como FATO, para
+ser LIDO antes de ser pesado. (E o zero aqui é MEDIÇÃO, não ausência: o universo de pontos é
+conhecido. `ler_concorrentes` avisa se o insumo voltar a ficar defasado.)
 
 O DECAIMENTO, e por que ele importa. Contar concorrentes num raio trata quem está a 1,9 km igual a
 quem está na porta, e ignora quem está a 2,1 km. Com o kernel triangular do contrato de mercado
