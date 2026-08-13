@@ -773,30 +773,29 @@ def _carregar_concorrentes() -> pd.DataFrame:
     cols = ["rede", "nome_unidade", "lat", "lng", "hex_id_res7"]
     if not CONCORRENTES_PARQUET.exists():
         return pd.DataFrame(columns=cols)
-    df = pd.read_parquet(
-        CONCORRENTES_PARQUET,
-        columns=[*cols, "flag_coord_valida"],
-    )
+    import pyarrow.parquet as pq
+
+    disponiveis = set(pq.read_schema(CONCORRENTES_PARQUET).names)
+    extras = [c for c in ("flag_coord_valida", "status_registro") if c in disponiveis]
+    df = pd.read_parquet(CONCORRENTES_PARQUET, columns=[*cols, *extras])
     if "flag_coord_valida" in df.columns:
         df = df[df["flag_coord_valida"].fillna(True).astype(bool)]
+
+    # HONRA O DESCARTE DA COLETA. `status_registro` separa `valido` (3.179) de
+    # `descartado_duplicado` (90) e `descartado_coord` (27) — medido em 2026-08-13.
+    #
+    # Este filtro NAO existia, e a ausencia dele passou despercebida porque as 90
+    # duplicadas chegam com `hex_id_res7` NULO: `_montar_pins` filtra por essa coluna e as
+    # perdia por acidente. Ou seja, a chave nula NAO e' defeito do artefato — e' como a
+    # coleta marca o que descartou. Derivar a celula do ponto para "consertar" o nulo
+    # ressuscita justamente as linhas que a coleta jogou fora (as 65 `bodytech` empilhadas
+    # numa unica coordenada no Rio sao 64 descartes + 1 valida). Filtrar pelo status e' o
+    # que expressa a intencao, em vez de depender de um nulo que ninguem prometeu manter.
+    if "status_registro" in df.columns:
+        df = df[df["status_registro"].fillna("valido").astype(str) == "valido"]
+
     df = df.dropna(subset=["lat", "lng"])
-    df = df[cols].reset_index(drop=True)
-
-    # REPOE a celula quando o artefato nao a gravou. Medido em 2026-08-13: 90 de 3.269
-    # linhas chegam com `hex_id_res7` NULO tendo coordenada valida (64 bodytech, 8
-    # phd_sports, 3 selfit...). Sem isto elas somem das DUAS pontas — nao entram nos pins
-    # (que filtram por esta coluna) nem na contagem da ficha, e ninguem percebe.
-    # Reposicao, e nao troca de fonte: onde a chave existe ela bate com o h3 em 3.179 de
-    # 3.179 linhas, entao so' o que falta e' derivado.
-    vazio = df["hex_id_res7"].isna() | df["hex_id_res7"].astype(str).isin(("None", "nan", ""))
-    if bool(vazio.any()):
-        import h3
-
-        df.loc[vazio, "hex_id_res7"] = [
-            h3.latlng_to_cell(float(la), float(ln), 7)
-            for la, ln in zip(df.loc[vazio, "lat"], df.loc[vazio, "lng"], strict=True)
-        ]
-    return df
+    return df[cols].reset_index(drop=True)
 
 
 @functools.lru_cache(maxsize=1)
@@ -861,17 +860,17 @@ def _contagem_no_hexagono() -> tuple[pd.Series | None, pd.Series | None]:
     de outra fonte faria a ficha dizer um numero e os pins mostrarem outro na mesma tela.
 
     As concorrentes ja trazem `hex_id_res7` no parquet — e' a MESMA chave por onde
-    `_montar_pins` seleciona os pins (reposta a partir do ponto quando vem nula, ver
-    `_carregar_concorrentes`). Os pontos Ultra chegam so' com lat/lng (a curada nao tem a
-    coluna), entao a celula e' derivada com o mesmo `h3` res-7 do M1.
+    `_montar_pins` seleciona os pins. Os pontos Ultra chegam so' com lat/lng (a curada nao
+    tem a coluna), entao a celula e' derivada com o mesmo `h3` res-7 do M1.
 
-    CONTA ENDERECOS, NAO LINHAS (decisao do Juan, 2026-08-13). A base traz 3.269 unidades
-    em 3.111 coordenadas: 158 linhas caem sobre um ponto ja' ocupado. Nao e' predio com
-    varias academias — e' geocodificacao de endereco. Os casos que provam: 65 unidades
-    `bodytech` numa UNICA coordenada no Rio, e o trio `aera_pilates`+`tonus_gym`+
-    `vidya_studio` repetido junto em 4 coordenadas diferentes (tres rotulos para o mesmo
-    endereco). Contar linha fazia a ficha dizer 11 onde a tela mostra 8 pins, porque os
-    pins empilham no mesmo pixel — foi assim que o defeito apareceu.
+    CONTA ENDERECOS, NAO LINHAS (decisao do Juan, 2026-08-13). Mesmo depois de honrar o
+    descarte da coleta, sobram 3.179 unidades validas em 3.111 coordenadas: 68 linhas
+    caem sobre um ponto ja' ocupado — e a coleta NAO as marca como duplicadas
+    (`flag_duplicado_rede_coord` e' False nas 11 do hexagono que revelou isto), porque sao
+    redes DIFERENTES no mesmo endereco. O caso que prova: o trio `aera_pilates` +
+    `tonus_gym` + `vidya_studio` aparece junto em 4 coordenadas distintas — tres rotulos
+    para o mesmo endereco, nao tres academias. Contar linha fazia a ficha dizer 11 onde a
+    tela mostra 8 pins, porque os pins empilham no mesmo pixel; foi assim que apareceu.
 
     O `drop_duplicates` por (lat, lng) alinha as concorrentes a MESMA regra que a Ultra ja
     seguia via `_ultra_pontos_mapa`: sem ele, os dois numeros do mesmo bloco mediam coisas

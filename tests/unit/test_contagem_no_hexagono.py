@@ -11,12 +11,17 @@ performance. O mesmo defeito de redacao ja tinha sido corrigido no texto do funi
 A primeira correcao contava LINHA e ainda discordava da tela: o Juan viu 8 pins onde a
 ficha dizia 11. Duas causas, as duas travadas aqui:
 
-* **Empilhamento.** A base tem 3.269 unidades em 3.111 coordenadas — 158 linhas caem
-  sobre um ponto ja' ocupado (65 `bodytech` numa unica coordenada no Rio; o trio
-  `aera_pilates`+`tonus_gym`+`vidya_studio` junto em 4 coordenadas). Os pins empilham no
-  mesmo pixel, entao a tela mostra menos marcadores do que linhas. Conta-se ENDERECO.
-* **Chave nula.** 90 de 3.269 linhas chegam com `hex_id_res7` NULO tendo coordenada
-  valida. Elas sumiam das duas pontas — nem pin, nem contagem.
+* **Empilhamento.** Sobram 3.179 unidades validas em 3.111 coordenadas — 68 linhas caem
+  sobre um ponto ja' ocupado, com redes DIFERENTES (o trio `aera_pilates`+`tonus_gym`+
+  `vidya_studio` junto em 4 coordenadas), sem que a coleta as marque como duplicadas. Os
+  pins empilham no mesmo pixel, entao a tela mostra menos marcadores do que linhas.
+  Conta-se ENDERECO.
+* **Descarte da coleta ignorado.** `status_registro` separa `valido` de
+  `descartado_duplicado` (90) e `descartado_coord` (27), e o carregador nao olhava para
+  ele. Passava despercebido porque as 90 duplicadas vem com `hex_id_res7` NULO e
+  `_montar_pins` filtra por essa coluna — perdia-as por acidente. A chave nula NAO e'
+  defeito do artefato: e' como a coleta marca o descarte. Derivar a celula do ponto para
+  "consertar" o nulo ressuscitaria justamente o que ela jogou fora.
 
 HERMETICO: os parquets de pontos sao sinteticos em `tmp_path`; nenhum `data/` real e
 lido. READ-ONLY sobre o M1 — nada aqui toca score, pesos ou artefato oficial.
@@ -57,8 +62,9 @@ _LAT_D, _LNG_D = h3.cell_to_latlng(CELULA_C)
 def _escrever_bases(tmp_path: Path, *, com_concorrentes: bool, com_ultra: bool) -> None:
     """Materializa os parquets de PONTO que o backend le, em tmp_path.
 
-    O cenario embute os dois defeitos reais da base: `Vidya` divide a coordenada EXATA da
-    `Smart Fit` (endereco repetido sob outra rede) e `Bodytech` chega SEM `hex_id_res7`.
+    O cenario embute os dois casos reais da base: `Vidya` divide a coordenada EXATA da
+    `Smart Fit` (endereco repetido sob outra rede, e a coleta NAO marca como duplicado) e
+    `Bodytech` chega `descartado_duplicado` com `hex_id_res7` nulo — como as 90 reais.
     """
     if com_concorrentes:
         pd.DataFrame(
@@ -69,12 +75,19 @@ def _escrever_bases(tmp_path: Path, *, com_concorrentes: bool, com_ultra: bool) 
                     "Paulista 2",
                     "Mesmo endereco da Smart",
                     "Longe",
-                    "Sem chave gravada",
+                    "Descartada pela coleta",
                 ],
                 "lat": [_LAT_A, _LAT_B, _LAT_A, _LAT_C, _LAT_D],
                 "lng": [_LNG_A, _LNG_B, _LNG_A, _LNG_C, _LNG_D],
                 "hex_id_res7": [CELULA_A, CELULA_A, CELULA_A, CELULA_C, None],
                 "flag_coord_valida": [True, True, True, True, True],
+                "status_registro": [
+                    "valido",
+                    "valido",
+                    "valido",
+                    "valido",
+                    "descartado_duplicado",
+                ],
             }
         ).to_parquet(tmp_path / "concorrentes_mapeados.parquet")
 
@@ -137,7 +150,7 @@ def test_conta_por_celula_e_nao_pelo_modelo_de_2km(bases) -> None:
 
     assert n_conc is not None and n_ultra is not None
     assert int(n_conc[CELULA_A]) == 2  # 3 linhas, 2 enderecos
-    assert int(n_conc[CELULA_C]) == 2  # Panobianco + a de chave nula, reposta
+    assert int(n_conc[CELULA_C]) == 1  # so' o Panobianco: a Bodytech foi descartada
     assert int(n_ultra[CELULA_A]) == 1
 
 
@@ -152,19 +165,22 @@ def test_mesmo_endereco_com_redes_diferentes_conta_UMA_vez(bases) -> None:
     assert int(n_conc[CELULA_A]) == 2 < linhas_na_celula
 
 
-def test_unidade_com_hex_id_nulo_e_reposta_pela_coordenada(bases) -> None:
-    """90 linhas reais chegam sem `hex_id_res7` e com coordenada valida. A reposicao mora
-    no CARREGADOR, nao na contagem, porque `_montar_pins` filtra por essa mesma coluna:
-    repor so' na contagem faria a ficha somar uma unidade que o mapa nao desenha."""
+def test_descartado_pela_coleta_nao_entra_na_ficha_nem_nos_pins(bases) -> None:
+    """`status_registro` e a fonte da verdade sobre o descarte — nao o `hex_id_res7` nulo.
+
+    O filtro mora no CARREGADOR, que serve as DUAS pontas: `_montar_pins` (pins) e
+    `_contagem_no_hexagono` (ficha). Filtrar so' na contagem deixaria a duplicata virar
+    pin no mapa; e confiar no nulo faria o descarte depender de um detalhe que a coleta
+    nunca prometeu manter — bastaria ela passar a gravar a celula para as 90 voltarem.
+    """
     bases()
     conc = pilot._carregar_concorrentes()
 
-    sem_chave = conc[conc["nome_unidade"] == "Sem chave gravada"]
-    assert len(sem_chave) == 1
-    assert str(sem_chave.iloc[0]["hex_id_res7"]) == CELULA_C
+    assert "Descartada pela coleta" not in set(conc["nome_unidade"].astype(str))
+    assert len(conc) == 4  # 5 linhas no parquet, 1 descartada
 
-    # E o mapa enxerga a linha reposta: ela entra na selecao de pins da celula C.
-    assert CELULA_C in set(conc["hex_id_res7"].astype(str))
+    n_conc, _ = pilot._contagem_no_hexagono()
+    assert int(n_conc[CELULA_C]) == 1
 
 
 def test_hexagono_coberto_e_sem_unidade_da_zero_e_nao_ausencia(bases) -> None:
@@ -172,7 +188,7 @@ def test_hexagono_coberto_e_sem_unidade_da_zero_e_nao_ausencia(bases) -> None:
     bases()
     df = pilot._derivar(pd.DataFrame({"hex_id": [CELULA_A, CELULA_C, CELULA_VAZIA]}))
 
-    assert df["n_conc_no_hex"].tolist() == [2, 2, 0]
+    assert df["n_conc_no_hex"].tolist() == [2, 1, 0]
     assert df["n_ultra_no_hex"].tolist() == [1, 0, 0]
 
 
