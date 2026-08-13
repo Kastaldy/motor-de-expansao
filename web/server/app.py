@@ -422,13 +422,16 @@ def _derivar(df: pd.DataFrame) -> pd.DataFrame:
     # modelo de 2 km de proposito. Estas sao o que a FICHA promete: ponto por celula.
     # `Int64` (nullable) e nao `int64`: base de pontos ausente precisa chegar como NA ate'
     # o serializador, senao vira zero — que afirmaria "nao ha unidade aqui".
-    n_conc_hex, n_ultra_hex = _contagem_no_hexagono()
-    chave = out["hex_id"].astype(str)
+    # `hex_id` era o UNICO acesso nao defensivo desta funcao — todo o resto usa `.get` ou
+    # checa `in out.columns`, e `carregar_uf` monta a projecao a partir do schema real do
+    # parquet. Uma particao materializada sem a coluna degradava (mapa sem a camada de
+    # crescimento) e passaria a dar 500 no endpoint inteiro.
+    n_conc_hex, n_ultra_hex = _contagem_no_hexagono() if "hex_id" in out.columns else (None, None)
     for coluna, contagem in (("n_conc_no_hex", n_conc_hex), ("n_ultra_no_hex", n_ultra_hex)):
         if contagem is None:
             out[coluna] = pd.Series(pd.NA, index=out.index, dtype="Int64")
         else:
-            out[coluna] = chave.map(contagem).fillna(0).astype("Int64")
+            out[coluna] = out["hex_id"].astype(str).map(contagem).fillna(0).astype("Int64")
 
     # Populacao de leitura, com a mesma precedencia do dashboard.
     for origem in ("populacao_corte_hex", "pop_total_setor_2022", "pop_total"):
@@ -791,8 +794,15 @@ def _carregar_concorrentes() -> pd.DataFrame:
     # ressuscita justamente as linhas que a coleta jogou fora (as 65 `bodytech` empilhadas
     # numa unica coordenada no Rio sao 64 descartes + 1 valida). Filtrar pelo status e' o
     # que expressa a intencao, em vez de depender de um nulo que ninguem prometeu manter.
+    #
+    # Nulo cai FORA, e nao dentro. E' a convencao dos outros tres consumidores do mesmo
+    # parquet (`pressao_1km._reparticao`, `revalidacao_residual_candidatos`,
+    # `enriquecimento_espacial_hexagonos`): todos comparam direto com "valido". Tratar nulo
+    # como valido so' aqui faria a MESMA concorrente entrar em `conc_hex` e ficar fora de
+    # `conc1k`, lado a lado na mesma tela — a classe de incoerencia que este bloco veio
+    # eliminar.
     if "status_registro" in df.columns:
-        df = df[df["status_registro"].fillna("valido").astype(str) == "valido"]
+        df = df[df["status_registro"].astype(str) == "valido"]
 
     df = df.dropna(subset=["lat", "lng"])
     return df[cols].reset_index(drop=True)
@@ -889,16 +899,36 @@ def _contagem_no_hexagono() -> tuple[pd.Series | None, pd.Series | None]:
         unicos = conc.drop_duplicates(subset=["lat", "lng"])
         n_conc = unicos.groupby(unicos["hex_id_res7"].astype(str)).size()
 
+    # A conversao h3 roda no CAMINHO QUENTE: `_derivar` chama esta funcao em toda requisicao
+    # de UF/municipio. `_carregar_ultra_pontos` (planilha curada) so' faz `dropna` de
+    # lat/lng — nao tem `flag_coord_valida` nem checagem de dominio. Uma virgula decimal
+    # trocada na planilha (lat 235613.0) ou um `inf` levantaria `H3LatLngDomainError` de
+    # dentro do `_derivar` e derrubaria o MAPA INTEIRO, de todas as UFs, com 500. O
+    # experimento vizinho (`pressao_1km.anexar`) ja' e' embrulhado por esse motivo, com o
+    # comentario "experimento nao pode derrubar o piloto"; esta contagem merece o mesmo.
+    #
+    # Duas defesas, nesta ordem: filtrar o que esta' fora do dominio (preciso — um ponto
+    # ruim nao apaga os outros 53) e um `except` como rede, porque degradar para "nao sei"
+    # e' aceitavel e derrubar a tela nao e'.
     ultra = _ultra_pontos_mapa()
     n_ultra: pd.Series | None = None
     if len(ultra):
-        import h3
+        try:
+            import h3
 
-        celulas = [
-            h3.latlng_to_cell(float(la), float(ln), 7)
-            for la, ln in zip(ultra["lat"], ultra["lng"], strict=True)
-        ]
-        n_ultra = pd.Series(celulas, name="hex_id_res7").value_counts()
+            lat = pd.to_numeric(ultra["lat"], errors="coerce")
+            lng = pd.to_numeric(ultra["lng"], errors="coerce")
+            no_dominio = lat.between(-90, 90) & lng.between(-180, 180)
+            validos = ultra[no_dominio.fillna(False)]
+            if len(validos):
+                celulas = [
+                    h3.latlng_to_cell(float(la), float(ln), 7)
+                    for la, ln in zip(validos["lat"], validos["lng"], strict=True)
+                ]
+                n_ultra = pd.Series(celulas, name="hex_id_res7").value_counts()
+        except Exception as erro:  # pragma: no cover - rede: contagem nao derruba o mapa
+            print(f"[mapa] contagem de Ultra por hexagono indisponivel ({erro})", file=sys.stderr)
+            n_ultra = None
 
     return n_conc, n_ultra
 
@@ -913,14 +943,32 @@ def _montar_pins(sel: pd.DataFrame) -> dict[str, Any]:
 
     conc = _carregar_concorrentes()
     if len(conc):
-        no_muni = conc[conc["hex_id_res7"].astype(str).isin(hex_ids)]
-        if no_muni.empty:  # base antiga sem hex casavel -> cai no bbox
+        chaves = conc["hex_id_res7"].astype(str)
+        no_muni = conc[chaves.isin(hex_ids)]
+        # O fallback e' para BASE ANTIGA sem hex casavel — nao para "este municipio nao tem
+        # concorrente". Antes ele disparava sempre que `no_muni` vinha vazio, e ai plotava,
+        # pelo bbox NACIONAL de centroides, o pin da cidade vizinha num municipio onde toda
+        # ficha diz "0 concorrentes". A condicao certa e' a base inteira nao ter chave
+        # utilizavel; com chave, vazio significa vazio.
+        base_sem_chave = not chaves.str.startswith("8").any()
+        if no_muni.empty and base_sem_chave:
             no_muni = conc[conc["lat"].between(lat_min, lat_max) & conc["lng"].between(lng_min, lng_max)]
         conc = no_muni.head(COMPETITOR_PIN_LIMIT)
 
     ultra = _ultra_pontos_mapa()
     if len(ultra):
-        ultra = ultra[ultra["lat"].between(lat_min, lat_max) & ultra["lng"].between(lng_min, lng_max)]
+        # MARGEM de uma celula. O bbox vem dos CENTROIDES dos hexagonos (`sel`), mas a
+        # contagem da ficha usa a celula inteira: uma unidade dentro do hexagono de borda,
+        # do lado de fora do centroide dele, caia do bbox — a ficha dizia "Unidades Ultra:
+        # 1" e o mapa nao desenhava pin nenhum, que e' exatamente a divergencia que este
+        # bloco existe para impedir. Uma celula res-7 tem ~1,2 km do centro a borda; 0,02°
+        # (~2,2 km) cobre isso com folga em qualquer latitude do Brasil. O custo e' algum
+        # pin logo alem da divisa, que no mapa le como contexto, nao como erro.
+        margem = 0.02
+        ultra = ultra[
+            ultra["lat"].between(lat_min - margem, lat_max + margem)
+            & ultra["lng"].between(lng_min - margem, lng_max + margem)
+        ]
 
     redes = sorted(conc["rede"].dropna().astype(str).unique()) if len(conc) else []
     icones = {r: _icone_rede(r) for r in redes}

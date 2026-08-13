@@ -59,7 +59,9 @@ CELULA_VAZIA = h3.latlng_to_cell(-23.9600, -46.3300, 7)  # Santos: coberta, sem 
 _LAT_D, _LNG_D = h3.cell_to_latlng(CELULA_C)
 
 
-def _escrever_bases(tmp_path: Path, *, com_concorrentes: bool, com_ultra: bool) -> None:
+def _escrever_bases(
+    tmp_path: Path, *, com_concorrentes: bool, com_ultra: bool, ultra_quebrada: bool = False
+) -> None:
     """Materializa os parquets de PONTO que o backend le, em tmp_path.
 
     O cenario embute os dois casos reais da base: `Vidya` divide a coordenada EXATA da
@@ -92,9 +94,13 @@ def _escrever_bases(tmp_path: Path, *, com_concorrentes: bool, com_ultra: bool) 
         ).to_parquet(tmp_path / "concorrentes_mapeados.parquet")
 
     if com_ultra:
-        pd.DataFrame(
-            {"unidade": ["Ultra Paulista"], "lat": [_LAT_B], "lng": [_LNG_B]}
-        ).to_parquet(tmp_path / "unidades_ultra_performance_hex.parquet")
+        unidades = {"unidade": ["Ultra Paulista"], "lat": [_LAT_B], "lng": [_LNG_B]}
+        if ultra_quebrada:
+            # Virgula decimal perdida na planilha curada — fora do dominio do h3.
+            unidades["unidade"].append("Ultra com coordenada quebrada")
+            unidades["lat"].append(235613.0)
+            unidades["lng"].append(-46.65)
+        pd.DataFrame(unidades).to_parquet(tmp_path / "unidades_ultra_performance_hex.parquet")
 
 
 @pytest.fixture
@@ -105,8 +111,15 @@ def bases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     real de `data/staging` vazaria para os testes seguintes (e vice-versa).
     """
 
-    def _aplicar(*, com_concorrentes: bool = True, com_ultra: bool = True) -> None:
-        _escrever_bases(tmp_path, com_concorrentes=com_concorrentes, com_ultra=com_ultra)
+    def _aplicar(
+        *, com_concorrentes: bool = True, com_ultra: bool = True, ultra_quebrada: bool = False
+    ) -> None:
+        _escrever_bases(
+            tmp_path,
+            com_concorrentes=com_concorrentes,
+            com_ultra=com_ultra,
+            ultra_quebrada=ultra_quebrada,
+        )
         monkeypatch.setattr(pilot, "CONCORRENTES_PARQUET", tmp_path / "concorrentes_mapeados.parquet")
         # Mesmo arquivo por outro nome: `_derivar` usa este para o prototipo de 1 km.
         monkeypatch.setattr(pilot, "CONCORRENTES_PATH", tmp_path / "concorrentes_mapeados.parquet")
@@ -208,6 +221,54 @@ def test_base_de_pontos_ausente_vira_None_e_NUNCA_zero(bases) -> None:
     payload = pilot._hex_dict(df.iloc[0], None)
     assert payload["conc_hex"] is None
     assert payload["ultra_hex"] is None
+
+
+def test_coordenada_quebrada_na_curada_nao_derruba_o_mapa(bases) -> None:
+    """A contagem roda no CAMINHO QUENTE (`_derivar`, em toda requisicao de UF/municipio) e
+    a planilha curada nao tem `flag_coord_valida`. Uma virgula decimal perdida levantaria
+    `H3LatLngDomainError` de dentro do `_derivar` e daria 500 no mapa de TODAS as UFs.
+
+    O ponto fora do dominio e' descartado sozinho — os validos continuam contando.
+    """
+    bases(ultra_quebrada=True)
+
+    _, n_ultra = pilot._contagem_no_hexagono()
+
+    assert n_ultra is not None, "um ponto ruim nao pode apagar os bons"
+    assert int(n_ultra[CELULA_A]) == 1
+
+
+def test_particao_sem_hex_id_degrada_em_vez_de_estourar(bases) -> None:
+    """`hex_id` era o unico acesso nao defensivo de `_derivar` — todo o resto usa `.get` ou
+    checa `in out.columns`, e `carregar_uf` monta a projecao a partir do schema real. Uma
+    particao materializada sem a coluna degradava; nao pode passar a dar 500."""
+    bases()
+    df = pilot._derivar(pd.DataFrame({"lat": [_LAT_A], "lng": [_LNG_A]}))
+
+    assert df["n_conc_no_hex"].isna().all()
+    assert df["n_ultra_no_hex"].isna().all()
+
+
+def test_status_nulo_cai_fora_como_nos_outros_consumidores(bases, tmp_path) -> None:
+    """`pressao_1km`, `revalidacao_residual_candidatos` e `enriquecimento_espacial` todos
+    comparam direto com "valido", entao nulo cai fora nos tres. Tratar nulo como valido so'
+    aqui poria a MESMA concorrente dentro de `conc_hex` e fora de `conc1k`, na mesma tela."""
+    bases()
+    pd.DataFrame(
+        {
+            "rede": ["Fantasma"],
+            "nome_unidade": ["Status nulo"],
+            "lat": [_LAT_C],
+            "lng": [_LNG_C],
+            "hex_id_res7": [CELULA_C],
+            "flag_coord_valida": [True],
+            "status_registro": [None],
+        }
+    ).to_parquet(tmp_path / "concorrentes_mapeados.parquet")
+    pilot._carregar_concorrentes.cache_clear()
+    pilot._contagem_no_hexagono.cache_clear()
+
+    assert len(pilot._carregar_concorrentes()) == 0
 
 
 def test_payload_separa_a_contagem_do_hexagono_do_modelo_de_2km(bases) -> None:
