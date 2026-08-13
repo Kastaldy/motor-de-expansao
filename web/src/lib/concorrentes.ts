@@ -87,3 +87,63 @@ export function semDistancia(
   if (!lista?.length) return 0
   return lista.filter((c) => typeof c.dist_km !== 'number').length
 }
+
+/** A leitura de ONDE eles se concentram, dita por extenso. */
+export type LeituraAglomeracao = {
+  /** Quantos caem no terço mais próximo do imóvel. */
+  perto: number
+  /** Quantos caem no terço mais distante (a borda do raio). */
+  borda: number
+  total: number
+  /** O corte do terço, em METROS — o número que a frase cita. */
+  corteM: number
+  /** Frase pronta, por REGRA. Nunca LLM: o produto não tem chave de modelo. */
+  frase: string
+}
+
+/**
+ * Onde a concorrência se concentra dentro do raio.
+ *
+ * POR QUE EXISTE. O desenho responde "onde eles estão" só para quem para e compara os
+ * pontos entre si. A pergunta que o operador faz é outra e é binária: "a disputa é na
+ * minha porta ou lá longe?". Sem a frase, duas situações opostas — quatro academias
+ * coladas na esquina e quatro espalhadas até a borda — saem do mesmo bloco com a mesma
+ * cara, que é exatamente a queixa que originou este componente.
+ *
+ * REGRA DE BOLSO, e ela se declara. O corte é o TERÇO do raio, e a frase cita o número em
+ * metros para ninguém precisar adivinhar de onde saiu. Não é régua publicada do produto:
+ * é partição do próprio raio, para separar "colado" de "na borda" — por isso a frase diz
+ * a distância, e não um veredito de bom/ruim, que exigiria régua aprovada.
+ *
+ * `null` quando não há ponto posicionável: bloco sem dado declara o motivo, não inventa.
+ */
+export function leituraDeAglomeracao(
+  pontos: readonly PontoRegua[],
+  raioKm: number,
+): LeituraAglomeracao | null {
+  if (!pontos.length || !(raioKm > 0)) return null
+
+  const corteKm = raioKm / 3
+  const corteM = Math.round(corteKm * 1000)
+  const perto = pontos.filter((p) => p.dist <= corteKm).length
+  const borda = pontos.filter((p) => p.dist >= raioKm - corteKm).length
+  const total = pontos.length
+
+  const plural = (n: number) => (n === 1 ? 'concorrente' : 'concorrentes')
+
+  let frase: string
+  if (perto === total) {
+    frase =
+      total === 1
+        ? `O único concorrente do raio está a menos de ${corteM} m — a disputa é na porta.`
+        : `Todos os ${total} estão a menos de ${corteM} m: a disputa é na porta.`
+  } else if (perto === 0) {
+    frase = `Nenhum concorrente a menos de ${corteM} m — a pressão vem de fora, não da esquina.`
+  } else if (perto * 2 >= total) {
+    frase = `${perto} dos ${total} ${plural(perto)} estão a menos de ${corteM} m: o peso da disputa é perto do imóvel.`
+  } else {
+    frase = `Só ${perto} dos ${total} está a menos de ${corteM} m; o resto se espalha até a borda do raio.`
+  }
+
+  return { perto, borda, total, corteM, frase }
+}

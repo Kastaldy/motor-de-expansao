@@ -136,8 +136,12 @@ function Linha({
         {/* A DIREÇÃO precisa estar escrita. "Concorrentes: 4 contra 6" só se lê como bom
             ou ruim sabendo que aqui menos é melhor — e a barra maior, nessa linha, é a
             pior. Sem esta legenda o desenho mentiria para quem passa o olho. */}
+        {/* --tx-sub, e não --tx-off: esta legenda CARREGA SIGNIFICADO (é ela que diz a
+            direção), e o token de de-ênfase fica em 3,17:1, abaixo do mínimo de leitura.
+            Apagar justamente a linha que impede o desenho de mentir seria o pior lugar
+            para economizar contraste. */}
         {!maiorEhMelhor && (
-          <span style={{ font: '400 9.5px/1.6 var(--f-ui)', color: 'var(--tx-off)' }}>
+          <span style={{ font: '400 9.5px/1.6 var(--f-ui)', color: 'var(--tx-sub)' }}>
             {' '}
             · menos é melhor
           </span>

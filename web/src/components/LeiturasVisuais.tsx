@@ -1,9 +1,15 @@
 import type { ReactNode } from 'react'
 
-import { reguaDeConcorrentes, semDistancia } from '../lib/concorrentes'
+import { leituraDeAglomeracao, reguaDeConcorrentes, semDistancia } from '../lib/concorrentes'
 import { alunos, num } from '../lib/format'
 import type { FaixaNomeada } from '../lib/faixas'
-import { SCORE_MAX, composicaoMercado, faixaDoValor, fracaoDoScore } from '../lib/medidor'
+import {
+  SCORE_MAX,
+  composicaoMercado,
+  faixaDoValor,
+  fracaoDoScore,
+  leituraDeSaturacao,
+} from '../lib/medidor'
 
 /**
  * As peças VISUAIS da ficha: medidor de score, barra do mercado, régua de dispersão.
@@ -131,6 +137,7 @@ export function BarraMercado({
 }) {
   const c = composicaoMercado(sam, residual)
   if (!c) return null
+  const saturacao = leituraDeSaturacao(sam, residual)
   const pct = Math.round(c.fracaoDisponivel * 100)
   return (
     <div style={{ display: 'grid', gap: 8 }}>
@@ -155,6 +162,25 @@ export function BarraMercado({
         <Legenda cor="var(--tx-rank)" rotulo="Já atendido" valor={alunos(c.atendido)} />
         <Legenda cor="var(--ac)" rotulo="Sobra" valor={alunos(c.disponivel)} forte />
       </div>
+      {/* DÁ PARA ENTRAR? (pedido do Juan, 2026-08-13). "Sobra 900 alunos" não responde a
+          pergunta seguinte — se esses 900 sustentam uma unidade ou se abrir ali já nasce
+          brigando por aluno instalado. A frase vem de `leituraDeSaturacao`, por regra de
+          bolso que se declara: o corte é a capacidade de UMA unidade (2.500), constante
+          que o produto já publica, e o número aparece escrito na própria frase.
+          NÃO é veredito de viabilidade — isso é do simulador, sobre um imóvel concreto. */}
+      {saturacao && (
+        <p
+          style={{
+            margin: 0,
+            paddingTop: 8,
+            borderTop: '1px solid var(--line-soft)',
+            font: '400 11.5px/1.5 var(--f-ui)',
+            color: saturacao.tom === 'saturado' ? 'var(--tx-soft)' : 'var(--tx-narrative)',
+          }}
+        >
+          {saturacao.frase}
+        </p>
+      )}
     </div>
   )
 }
@@ -206,111 +232,120 @@ export function ReguaConcorrentes({
 }) {
   const pontos = reguaDeConcorrentes(lista, raioKm)
   const ocultos = semDistancia(lista)
+  const aglomeracao = leituraDeAglomeracao(pontos, raioKm)
   if (pontos.length === 0 && ocultos === 0) return null
 
   return (
-    <div style={{ display: 'grid', gap: 9 }}>
+    <div style={{ display: 'grid', gap: 10 }}>
       <Titulo>Onde eles estão, do imóvel até a borda do raio</Titulo>
 
       {pontos.length > 0 && (
-        <div style={{ display: 'grid', gap: 7 }}>
-          {/* UMA LINHA POR CONCORRENTE. O nome tem coluna própria à esquerda e a distância
-              à direita — texto nunca disputa espaço com texto, que era o defeito do eixo
-              único com rótulos empilhados. */}
-          {pontos.map((p, i) => (
-            <div
-              key={`${p.rede}-${i}`}
+        <div style={{ display: 'grid', gap: 10 }}>
+          {/* UM EIXO SÓ, com um disco por concorrente (relato do Juan, 2026-08-13: a
+              versão de uma barra por linha "não trazia o visual necessário"). E não é
+              volta ao desenho antigo: o que colidia ali eram os RÓTULOS centrados sob cada
+              ponto. Aqui o eixo carrega só posição — nome e distância moram na lista
+              abaixo, onde texto não disputa espaço com texto. Assim a pergunta que o bloco
+              promete no título ("colados na esquina ou espalhados até a borda?") passa a
+              ter resposta de relance, que N barras quase idênticas não davam. */}
+          <div aria-hidden style={{ position: 'relative', height: 14 }}>
+            <span
               style={{
-                display: 'grid',
-                gridTemplateColumns: 'minmax(64px, 84px) 1fr auto',
-                alignItems: 'center',
-                gap: 10,
+                position: 'absolute',
+                left: 0,
+                right: 0,
+                top: 6,
+                height: 2,
+                borderRadius: 1,
+                background: 'var(--line-soft)',
+              }}
+            />
+            {pontos.map((p, i) => (
+              <span
+                key={`${p.rede}-${i}`}
+                title={`${p.rede} · ${num(p.dist, 2)} km`}
+                style={{
+                  position: 'absolute',
+                  left: `calc(${p.fracao * 100}% - 5px)`,
+                  top: 2,
+                  width: 10,
+                  height: 10,
+                  borderRadius: '50%',
+                  background: 'var(--ac)',
+                  /* Discos sobrepostos são a INFORMAÇÃO aqui — dois colados no mesmo ponto
+                     devem escurecer, e não sumir um sob o outro. A borda separa os
+                     vizinhos sem exigir espalhamento artificial. */
+                  border: '1.5px solid var(--surf-panel)',
+                  boxSizing: 'border-box',
+                }}
+              />
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: -4 }}>
+            {/* --tx-sub e não --tx-off: são os rótulos do eixo, e sem eles o desenho não
+                tem escala. 3,17:1 é de-ênfase, não leitura. */}
+            <span style={{ font: '400 9.5px/1 var(--f-ui)', color: 'var(--tx-sub)' }}>
+              o imóvel
+            </span>
+            <span className="num" style={{ font: '400 9.5px/1 var(--f-num)', color: 'var(--tx-sub)' }}>
+              {num(raioKm * 1000)} m
+            </span>
+          </div>
+
+          {/* A leitura por extenso, por REGRA (`leituraDeAglomeracao`). O desenho responde
+              "onde eles estão" para quem para e compara; a frase responde a pergunta que o
+              operador realmente faz — "a disputa é na minha porta ou lá longe?". */}
+          {aglomeracao && (
+            <p
+              style={{
+                margin: 0,
+                font: '400 11.5px/1.5 var(--f-ui)',
+                color: 'var(--tx-narrative)',
               }}
             >
-              <span
-                title={p.rede}
-                style={{
-                  font: '600 11px/1.2 var(--f-ui)',
-                  color: 'var(--tx-soft)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {p.rede}
-              </span>
-              <span
-                aria-hidden
-                style={{ position: 'relative', height: 10, display: 'block' }}
-              >
-                <span
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    right: 0,
-                    top: 4,
-                    height: 2,
-                    borderRadius: 1,
-                    background: 'var(--line-soft)',
-                  }}
-                />
-                {/* O traço cheio vai do imóvel até o concorrente: o comprimento É a
-                    distância, e é ele que se lê de relance, não a posição do disco. */}
-                <span
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: 4,
-                    width: `${p.fracao * 100}%`,
-                    height: 2,
-                    borderRadius: 1,
-                    background: 'var(--ac-a30)',
-                  }}
-                />
-                <span
-                  style={{
-                    position: 'absolute',
-                    left: `calc(${p.fracao * 100}% - 5px)`,
-                    top: 0,
-                    width: 10,
-                    height: 10,
-                    borderRadius: '50%',
-                    background: 'var(--ac)',
-                  }}
-                />
-              </span>
-              <span
-                className="num"
-                style={{
-                  font: '600 11.5px/1.2 var(--f-num)',
-                  color: 'var(--tx-strong)',
-                  fontVariantNumeric: 'tabular-nums',
-                }}
-              >
-                {num(p.dist, 2)} km
-              </span>
-            </div>
-          ))}
+              {aglomeracao.frase}
+            </p>
+          )}
 
-          {/* A régua do eixo, uma vez só, embaixo de todas as linhas. */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(64px, 84px) 1fr auto',
-              gap: 10,
-              marginTop: 1,
-            }}
-          >
-            <span />
-            <span style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={{ font: '400 9.5px/1 var(--f-ui)', color: 'var(--tx-off)' }}>
-                o imóvel
-              </span>
-              <span className="num" style={{ font: '400 9.5px/1 var(--f-num)', color: 'var(--tx-off)' }}>
-                {num(raioKm * 1000)} m
-              </span>
-            </span>
-            <span />
+          {/* A lista: identidade e distância, SEM repetir a barra. Era ela que se
+              multiplicava por concorrente sem acrescentar leitura. */}
+          <div style={{ display: 'grid', gap: 4 }}>
+            {pontos.map((p, i) => (
+              <div
+                key={`${p.rede}-${i}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  justifyContent: 'space-between',
+                  gap: 10,
+                }}
+              >
+                <span
+                  title={p.rede}
+                  style={{
+                    font: '500 11px/1.5 var(--f-ui)',
+                    color: 'var(--tx-soft)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {p.rede}
+                </span>
+                <span
+                  className="num"
+                  style={{
+                    font: '600 11.5px/1.5 var(--f-num)',
+                    color: 'var(--tx-strong)',
+                    fontVariantNumeric: 'tabular-nums',
+                    flexShrink: 0,
+                  }}
+                >
+                  {num(p.dist, 2)} km
+                </span>
+              </div>
+            ))}
           </div>
         </div>
       )}

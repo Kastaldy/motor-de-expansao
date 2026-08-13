@@ -1,7 +1,48 @@
 import { describe, expect, it } from 'vitest'
 
 import { FAIXAS_DEMANDA, FAIXAS_POTENCIAL } from './faixas'
-import { composicaoMercado, faixaDoValor, fracaoDoScore } from './medidor'
+import {
+  composicaoMercado,
+  faixaDoValor,
+  fracaoDoScore,
+  leituraDeSaturacao,
+} from './medidor'
+
+describe('leituraDeSaturacao', () => {
+  it('sobra que comporta uma unidade cheia nao vira alerta', () => {
+    const l = leituraDeSaturacao(10_000, 3_000)
+    expect(l?.tom).toBe('folga')
+    expect(l?.frase).toContain('2.500')
+  })
+
+  it('no limite exato dos 2.500 ainda e folga', () => {
+    expect(leituraDeSaturacao(10_000, 2_500)?.tom).toBe('folga')
+  })
+
+  it('sobra menor que uma unidade diz que encher exige tirar aluno', () => {
+    const l = leituraDeSaturacao(10_000, 900)
+    expect(l?.tom).toBe('disputa')
+    expect(l?.frase).toBe(
+      'Sobram 900 alunos, menos que os 2.500 de uma unidade cheia: dá para entrar, mas encher a casa exige tirar aluno de concorrente.',
+    )
+  })
+
+  it('area saturada declara que cada aluno vem de um concorrente', () => {
+    const l = leituraDeSaturacao(10_000, 0)
+    expect(l?.tom).toBe('saturado')
+    expect(l?.frase).toContain('disputa direta')
+  })
+
+  it('residual negativo (arredondamento das duas fontes) le como saturado, nao como sobra', () => {
+    expect(leituraDeSaturacao(10_000, -50)?.tom).toBe('saturado')
+  })
+
+  it('sem dado nao inventa veredito', () => {
+    expect(leituraDeSaturacao(null, 900)).toBeNull()
+    expect(leituraDeSaturacao(10_000, null)).toBeNull()
+    expect(leituraDeSaturacao(0, 0)).toBeNull()
+  })
+})
 
 describe('fracaoDoScore', () => {
   it('mapeia 0-100 para 0-1', () => {

@@ -1,8 +1,60 @@
 import { describe, expect, it } from 'vitest'
 
-import { reguaDeConcorrentes, rotuloDaRede, semDistancia } from './concorrentes'
+import {
+  leituraDeAglomeracao,
+  reguaDeConcorrentes,
+  rotuloDaRede,
+  semDistancia,
+} from './concorrentes'
 
 const c = (rede: string | null, dist_km: number | null) => ({ rede, dist_km })
+
+describe('leituraDeAglomeracao', () => {
+  // Raio de 1,0 km (DEC-021) -> o terço do corte é 333 m.
+  const regua = (...dists: number[]) => reguaDeConcorrentes(dists.map((d) => c('SF', d)), 1)
+
+  it('separa os dois territórios que "4 concorrentes" funde: todos colados', () => {
+    const l = leituraDeAglomeracao(regua(0.1, 0.2, 0.3), 1)
+    expect(l?.perto).toBe(3)
+    expect(l?.frase).toBe('Todos os 3 estão a menos de 333 m: a disputa é na porta.')
+  })
+
+  it('...e todos na borda', () => {
+    const l = leituraDeAglomeracao(regua(0.8, 0.9, 1.0), 1)
+    expect(l?.perto).toBe(0)
+    expect(l?.borda).toBe(3)
+    expect(l?.frase).toBe('Nenhum concorrente a menos de 333 m — a pressão vem de fora, não da esquina.')
+  })
+
+  it('maioria perto ainda pesa como perto', () => {
+    const l = leituraDeAglomeracao(regua(0.1, 0.2, 0.9), 1)
+    expect(l?.frase).toBe(
+      '2 dos 3 concorrentes estão a menos de 333 m: o peso da disputa é perto do imóvel.',
+    )
+  })
+
+  it('minoria perto diz que o resto se espalha', () => {
+    const l = leituraDeAglomeracao(regua(0.1, 0.7, 0.8, 0.9), 1)
+    expect(l?.frase).toBe(
+      'Só 1 dos 4 está a menos de 333 m; o resto se espalha até a borda do raio.',
+    )
+  })
+
+  it('singular não sai agramatical', () => {
+    expect(leituraDeAglomeracao(regua(0.1), 1)?.frase).toBe(
+      'O único concorrente do raio está a menos de 333 m — a disputa é na porta.',
+    )
+  })
+
+  it('o corte acompanha o raio, em vez de ser 333 fixo', () => {
+    expect(leituraDeAglomeracao(regua(0.1), 1.5)?.corteM).toBe(500)
+  })
+
+  it('sem ponto posicionável não inventa leitura', () => {
+    expect(leituraDeAglomeracao([], 1)).toBeNull()
+    expect(leituraDeAglomeracao(regua(0.5), 0)).toBeNull()
+  })
+})
 
 describe('reguaDeConcorrentes', () => {
   it('ordena por distância e posiciona entre 0 e 1', () => {
