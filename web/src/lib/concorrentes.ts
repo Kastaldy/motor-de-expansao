@@ -129,7 +129,13 @@ export function leituraDeAglomeracao(
   const borda = pontos.filter((p) => p.dist >= raioKm - corteKm).length
   const total = pontos.length
 
-  const plural = (n: number) => (n === 1 ? 'concorrente' : 'concorrentes')
+  /* A concordância acompanha `perto` — o número de que a frase fala —, e NÃO `total`.
+     Este par estava errado e passou pelos testes: o substantivo concordava com `total`
+     ("1 dos 2 concorrenteS") e o verbo do último ramo era fixo no singular ("Só 2 dos 5
+     ESTÁ"). Frase gerada por regra vai direto para a tela; erro de concordância aqui lê
+     como defeito do produto. */
+  const substantivo = perto === 1 ? 'concorrente' : 'concorrentes'
+  const verbo = perto === 1 ? 'está' : 'estão'
 
   let frase: string
   if (perto === total) {
@@ -140,9 +146,9 @@ export function leituraDeAglomeracao(
   } else if (perto === 0) {
     frase = `Nenhum concorrente a menos de ${corteM} m — a pressão vem de fora, não da esquina.`
   } else if (perto * 2 >= total) {
-    frase = `${perto} dos ${total} ${plural(perto)} estão a menos de ${corteM} m: o peso da disputa é perto do imóvel.`
+    frase = `${perto} dos ${total} ${substantivo} ${verbo} a menos de ${corteM} m: o peso da disputa é perto do imóvel.`
   } else {
-    frase = `Só ${perto} dos ${total} está a menos de ${corteM} m; o resto se espalha até a borda do raio.`
+    frase = `Só ${perto} dos ${total} ${verbo} a menos de ${corteM} m; o resto se espalha até a borda do raio.`
   }
 
   return { perto, borda, total, corteM, frase }

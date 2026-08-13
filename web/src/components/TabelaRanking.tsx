@@ -144,11 +144,16 @@ function Linha({
 
   return (
     <>
+      {/* NADA de `--tx-off` sobre o trilho. Medido: 3,16:1 no painel, mas 2,96:1 sobre a
+          faixa — a faixa que EU acabei de introduzir empurrou o texto para baixo do piso
+          de 3:1, no mesmo ciclo em que subi o `--tx-sub` por esse exato motivo. A linha
+          não decisiva segue de-enfatizada pelo PESO e pela cor da barra, que não custam
+          legibilidade; `--tx-muted` dá 4,73:1 sobre a faixa e passa. */}
       <span
         style={{
           ...trilho,
           font: '500 11px/1.4 var(--f-ui)',
-          color: decisiva ? 'var(--tx-muted)' : 'var(--tx-off)',
+          color: decisiva ? 'var(--tx-soft)' : 'var(--tx-muted)',
           paddingLeft: 6,
           paddingRight: 10,
         }}
@@ -174,13 +179,15 @@ function Linha({
               className="num"
               style={{
                 font: `${c.melhor ? 700 : 500} 11px/1.3 var(--f-num)`,
+                // Mesmo motivo do rótulo acima: `--tx-off` reprova sobre a faixa, e este é
+                // o NÚMERO — o que se lê para auditar a linha que "não separou ninguém".
                 color: c.melhor
                   ? 'var(--tx-max)'
                   : c.pior
                     ? 'var(--neg)'
                     : decisiva
                       ? 'var(--tx-soft)'
-                      : 'var(--tx-off)',
+                      : 'var(--tx-muted)',
                 textAlign: 'right',
                 fontVariantNumeric: 'tabular-nums',
               }}

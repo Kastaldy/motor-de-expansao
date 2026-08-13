@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Map } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
-import { corDeIdentidadeRgb } from '../lib/comparacao'
+import { CORES_IDENTIDADE, corDeIdentidadeRgb } from '../lib/comparacao'
 import { alunos, brl, num } from '../lib/format'
 import {
   DISCARDED_FILL,
@@ -461,7 +461,14 @@ export default function HexMap({
         getLineColor: (d) => {
           if (d.id === selecionado) return [238, 243, 248, 255]
           if (!cenarioSet.has(d.id)) return [8, 11, 16, 55]
-          return corDeIdentidadeRgb(cenarioLista.indexOf(d.id))
+          // TETO na cor, e não no clique. O `cenario` cresce além de 5 de propósito — o
+          // painel troca para o modo SOMA e ali somar 8 hexágonos é legítimo. Mas a
+          // paleta tem 5 cores e `corDeIdentidade` cicla: o 6º hexágono sairia com a cor
+          // idêntica à do 1º, que é exatamente o que a paleta existe para impedir. Acima
+          // do teto o contorno volta ao turquesa neutro de seleção, que não afirma
+          // identidade nenhuma.
+          const i = cenarioLista.indexOf(d.id)
+          return i < CORES_IDENTIDADE.length ? corDeIdentidadeRgb(i) : [53, 201, 214, 255]
         },
         getLineWidth: (d) => (d.id === selecionado ? 55 : cenarioSet.has(d.id) ? 42 : 6),
         lineWidthUnits: 'meters',

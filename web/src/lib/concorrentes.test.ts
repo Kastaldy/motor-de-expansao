@@ -40,6 +40,21 @@ describe('leituraDeAglomeracao', () => {
     )
   })
 
+  /* Os dois casos abaixo passavam despercebidos: a concordância seguia `total` no
+     substantivo e o verbo do ramo "minoria" era fixo no singular. Os testes de cima
+     acertavam por coincidência (perto=2/total=3 e perto=1/total=4). */
+  it('UM perto entre dois nao sai "1 dos 2 concorrentes estao"', () => {
+    expect(leituraDeAglomeracao(regua(0.2, 0.9), 1)?.frase).toBe(
+      '1 dos 2 concorrente está a menos de 333 m: o peso da disputa é perto do imóvel.',
+    )
+  })
+
+  it('DOIS perto entre cinco nao sai "2 dos 5 esta"', () => {
+    expect(leituraDeAglomeracao(regua(0.1, 0.2, 0.7, 0.8, 0.9), 1)?.frase).toBe(
+      'Só 2 dos 5 estão a menos de 333 m; o resto se espalha até a borda do raio.',
+    )
+  })
+
   it('singular não sai agramatical', () => {
     expect(leituraDeAglomeracao(regua(0.1), 1)?.frase).toBe(
       'O único concorrente do raio está a menos de 333 m — a disputa é na porta.',

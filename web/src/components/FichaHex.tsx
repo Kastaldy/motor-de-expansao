@@ -28,15 +28,19 @@ export default function FichaHex({
   hex,
   cres,
   onComparar,
-  emComparacao = false,
 }: {
   hex: Hex
   /** Crescimento do MUNICÍPIO do hexágono (`MapaResposta.cres_mun`), quando houver. */
   cres?: CrescimentoMunicipio | null
-  /** Põe ESTE hexágono na comparação e liga o modo cenário. Ausente = o botão não aparece. */
+  /**
+   * Põe ESTE hexágono na comparação e liga o modo cenário. Ausente = o botão não aparece.
+   *
+   * SEM estado de "já está comparando", e isso é medido, não esquecimento: esta janela só
+   * abre com `!modoCenario` (`MapScreen`), e desligar o modo zera a lista. Logo o hexágono
+   * nunca está na comparação enquanto a ficha está aberta — um rótulo "tirar da
+   * comparação" seria um estado inalcançável prometendo comportamento que não existe.
+   */
   onComparar?: () => void
-  /** Já está na lista de comparação — o botão vira "tirar". */
-  emComparacao?: boolean
 }) {
   return (
     <div style={{ display: 'grid', gap: 16 }}>
@@ -81,21 +85,17 @@ export default function FichaHex({
             <button
               type="button"
               onClick={onComparar}
-              title={
-                emComparacao
-                  ? 'Tira este hexágono da comparação'
-                  : 'Põe este hexágono na comparação — clique em outro no mapa para comparar os dois'
-              }
+              title="Põe este hexágono na comparação — clique em outro no mapa para comparar os dois"
               style={{
                 padding: '4px 9px',
                 borderRadius: 999,
-                border: `1px solid ${emComparacao ? 'var(--ac)' : 'var(--line-soft)'}`,
-                background: emComparacao ? 'var(--ac-a15)' : 'var(--surf-raised)',
-                color: emComparacao ? 'var(--ac-text)' : 'var(--tx-soft)',
+                border: '1px solid var(--line-soft)',
+                background: 'var(--surf-raised)',
+                color: 'var(--tx-soft)',
                 font: '600 11px/1 var(--f-ui)',
               }}
             >
-              {emComparacao ? '− Tirar da comparação' : '+ Comparar com outro'}
+              + Comparar com outro
             </button>
           )}
         </div>
@@ -172,9 +172,14 @@ export default function FichaHex({
               participação: sem o `+`, "8,8%" não diz se a cidade cresceu ou se aquilo é
               um patamar — e o bloco inteiro existe para responder "como a região vem
               indo". O negativo já vinha; o positivo é que era mudo. */}
+          {/* A guarda `== null ? '—'` TEM de ficar: `pctVar` devolve `TEXTO_SEM_DADO`, que
+              é "Não disponível" por extenso, e este `Kpi` desenha o valor em 700 24px com
+              `nowrap` + `ellipsis` — o texto sairia truncado como "Não dispo…". Perdi a
+              guarda ao trocar `pct` por `pctVar`; o travessão curto é a regra deste
+              arquivo e a mesma nota que escrevi em `exec/PainelRede`. */}
           <Kpi
             label="Obra nova (2016→2023)"
-            valor={pctVar(hex.cres_hex_taxa)}
+            valor={hex.cres_hex_taxa == null ? '—' : pctVar(hex.cres_hex_taxa)}
             sub={hex.cres_hex_classe ?? undefined}
           />
           {/* O CAGED só é publicado com a mediana da UF ao lado: sem referência estadual
